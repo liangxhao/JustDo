@@ -11,6 +11,10 @@ exports.default = async function notarizing(context) {
     return;
   }
 
+  // Signing must not replace the frozen official Node distribution's bytes.
+  // Check after signing even when notarization credentials are unavailable.
+  require('./electron-builder-hooks.cjs').verifyPackagedNodeRuntime(context);
+
   if (!process.env.APPLE_ID || !process.env.APPLE_APP_SPECIFIC_PASSWORD) {
     console.warn('⚠️  跳过公证: 未设置 APPLE_ID 或 APPLE_APP_SPECIFIC_PASSWORD');
     console.warn('   如需启用公证，请创建 .env 文件并配置 Apple Developer 凭据');

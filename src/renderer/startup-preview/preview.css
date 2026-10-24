@@ -1,0 +1,54 @@
+.startup-preview-shell {
+  height: 100vh;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  background: var(--justdo-background);
+  color: var(--justdo-foreground);
+}
+.startup-preview-controls {
+  z-index: 100;
+  border-bottom: 2px solid var(--justdo-primary);
+  padding: 12px 20px;
+  background: var(--justdo-surface);
+  font:
+    13px/1.5 system-ui,
+    sans-serif;
+}
+.startup-preview-controls p {
+  margin: 3px 0;
+}
+.startup-preview-controls nav,
+.startup-preview-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 8px;
+  align-items: center;
+}
+.startup-preview-controls a,
+.startup-preview-controls button,
+.startup-preview-controls select {
+  border: 1px solid var(--justdo-border);
+  border-radius: 6px;
+  padding: 4px 8px;
+  background: var(--justdo-surface);
+  color: inherit;
+}
+.startup-preview-controls a[aria-current] {
+  background: var(--justdo-primary);
+  color: var(--justdo-primary-foreground);
+}
+.startup-preview-fields label {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.startup-preview-surface {
+  min-height: 0;
+  overflow: auto;
+  position: relative;
+}
+.startup-preview-surface > [data-startup-view] {
+  height: 100%;
+  min-height: 360px;
+}

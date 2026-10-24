@@ -12,8 +12,8 @@ Renderer 启动先通过既有 store bridge 恢复有界界面偏好，完成后
 该快照和现有主题 CSS，不读取 origin 的配置、不启动配置服务或网络工作。首次临时窗口不发送该 IPC，
 使用与产品一致的默认浅色；主题快照不包含模型配置、凭据或其他持久偏好，不新增存储记录。
 
-Main 的 `startup/` 在打开产品 Store 前只读判定首次安装、已发布 JSONL 历史升级、
-当前代际普通启动，冻结路由和同一个动画起始时钟，传给临时窗口与主窗口。
+Main 的 `startup/` 在打开产品 Store 前只读判定首次安装、已发布 JSONL 历史的迁移升级、
+当前代际的正常升级和正常启动，冻结路由和同一个动画起始时钟，传给临时窗口与主窗口。
 Renderer 不能凭展示标记改变路由。历史升级先做选择性备份与旧环境隔离，再准备当前环境；
 在离线原生导入、身份校验、产品映射和历史身份投影完成之前，Gateway 及外部聊天入口不开放。
 临时引导不查询运行管理器；初始化 IPC 由 Main 的 `startup/initialization` 拥有，原入口为薄转发。
@@ -33,7 +33,7 @@ Main 只接受当前主窗口主 frame，校验确实为目录缺失的历史会
 | 图片预览窗口                  | 同 origin 的独立图片展示                    | 独立最小 preload、沙箱窗口与受限参数                        |
 | Preload                       | contextBridge 与 Electron IPC               | 固定方法和可取消订阅                                        |
 | Main                          | 文件、数据库、网络、子进程、窗口            | 校验来自所有客户端的输入                                    |
-| Gateway                       | 原生执行与 transcript                       | 本地认证 RPC/event 和受控插件桥                             |
+| Gateway（独立随包 Node）      | 原生执行与 transcript                       | 本地认证 RPC/event 和受控插件桥                             |
 | Chrome 扩展                   | Side Panel、用户浏览器上下文                | Native Messaging 发现产品 app-server                        |
 | CLI / ACP / app-server client | 当前用户与产品 profile                      | 默认可用的受认证本机桥；共用会话及精确 run 执行权威         |
 
@@ -156,7 +156,7 @@ shell，窗口状态回传同一个 owner；不使用主窗口按钮的控制通
 
 Gateway 启动由 Main 管理运行包准备、配置与进程生命周期。9.6 版本未发布，按用户要求，本次 9.8 升级新增的旧 SQLite 数据迁移桥接、启动门禁及对应构建资产已移除；启动链不再包含该独立迁移子进程。
 
-原生数据库继续由 OpenClaw 管理，本软件不为此次未发布版本之间的切换新增兼容迁移。已有产品数据库初始化及旧 JSON 会话处理不因此扩大或重写；运行包补丁仍从锁定 pristine 包重新构建。
+原生数据库继续由 OpenClaw 管理。10.6 的正常升级使用当前版本锁定的原生 owner，在 Gateway 停止且产品 Store 尚未打开时完成备份、原生维护和复验；它只接纳当前 shared20、agent24/25 的维护合同，不恢复前述 shared18/agent23 兼容桥。维护子进程实际关闭数据库并退出后才能准入 Gateway。未知结果保留恢复阶段并重新检查，不能按旧成功标记跳过维护。已有产品数据库初始化及 JSONL 历史迁移保持各自所有权；运行包仍从锁定 pristine 包重新构建。
 
 热加载必须等待原生 applied／failed 回执，不能把 detected 当作成功。原生 coordinator 已接受的 deferred/coalesced 热重启保持其所有权，不竞争启动另一个进程。Windows 启动环境及两个 CJS 启动器都执行 9.8 的长编译缓存路径保护。
 
@@ -305,6 +305,13 @@ Main 先检查产品会话仍存在，再用 `sessions.describe` 读取精确原
 
 开发窗口跟随其 loopback Vite 服务：周期探测连续失败后进入正常退出，开发 URL 交接使旧探测结果失效。该行为不依赖终端父子进程关系，也不应影响安装版生命周期。
 
+Main 与开发启动器共享关闭监督预算，Gateway 关闭同一 child 的重复调用共享首次 deadline，
+实际正常 close/exit 才证明退休。原生清理允许 330 秒，强制后观察 15 秒；超时、信号或
+非零退出保留失败并阻止本进程重启 Gateway。Main 的启动资源、其他服务和 Gateway 分阶段
+退休，阶段超时只允许继续尝试其他清理，不代表原任务已 join；迟到结果不能进入成功分支。
+仅全部 owner 退休后关闭现存产品 Store，失败退出不继续安装更新。完整预算与开发监督边界见
+[开发说明](../development.md)和[启动与升级](../features/app/startup-and-history-upgrade.md)。
+
 ## 7. 错误要保留可操作的区别
 
 | 错误             | 通信层结果           | 消费方处理                   |
@@ -373,7 +380,7 @@ PTY。附着失败会提示终端不可用，需要用户新开标签，不会�
 当前原生接口缺少指定工程目录/PowerShell 参数和明确结束已共享 PTY的能力，
 由当前版本补丁 036 补齐 operator.admin 的 launch 和 terminate 参数。沙箱全隔离
 会话仍由原生终端策略拒绝，不通过主进程另建宿主终端绕过它。构建契约见
-[运行时补丁总账](../../scripts/patches/v2026.10.4/README.md)。
+[运行时补丁总账](../../scripts/patches/v2026.10.6/README.md)。
 
 新操作终端的欢迎句由补丁 037 在构建时读取 `package.json.productName`，显示
 `Welcome to the <productName>.` 并去掉原生龙虾 ASCII 图。软件图标缩成紧凑字符图后

@@ -112,7 +112,7 @@ describe('resolveMemoryWorkspace', () => {
 describe('buildMemoryCliEnvironment', () => {
   it('routes memory embedding commands through the outbound header proxy environment', async () => {
     const cli = {
-      env: {},
+      env: { JUSTDO_ELECTRON_PATH: process.execPath,},
       runtimeRoot: 'runtime',
       openclawEntry: 'openclaw.mjs',
       port: 1234,
@@ -129,7 +129,7 @@ describe('buildMemoryCliEnvironment', () => {
 
   it('uses the normal proxied CLI environment for native forced rebuilds', async () => {
     const cli = {
-      env: { EXISTING_VALUE: 'kept' },
+      env: { JUSTDO_ELECTRON_PATH: process.execPath, EXISTING_VALUE: 'kept' },
       runtimeRoot: 'runtime',
       openclawEntry: 'openclaw.mjs',
       port: 1234,
@@ -139,7 +139,7 @@ describe('buildMemoryCliEnvironment', () => {
     const manager = { buildCliEnvironment } as unknown as OpenClawEngineManager;
 
     await expect(buildMemoryRebuildCliEnvironment(manager)).resolves.toBe(cli);
-    expect(cli.env).toEqual({ EXISTING_VALUE: 'kept' });
+    expect(cli.env).toEqual({ JUSTDO_ELECTRON_PATH: process.execPath, EXISTING_VALUE: 'kept' });
     expect(buildCliEnvironment).toHaveBeenCalledWith({
       networkMode: OpenClawCliNetworkMode.OutboundProxy,
     });
@@ -311,7 +311,7 @@ function registerHandlers(
     getManager: () =>
       ({
         getConfigPath: () => configPath,
-        buildCliEnvironment: vi.fn().mockResolvedValue({ env: {}, openclawEntry: 'fixture.mjs' }),
+        buildCliEnvironment: vi.fn().mockResolvedValue({ env: { JUSTDO_ELECTRON_PATH: process.execPath,}, openclawEntry: 'fixture.mjs' }),
       }) as unknown as OpenClawEngineManager,
     requestGateway: gateway,
   });

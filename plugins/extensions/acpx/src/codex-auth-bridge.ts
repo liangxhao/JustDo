@@ -7,7 +7,6 @@ import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 
-import { readJsonFileWithFallback } from 'openclaw/plugin-sdk/json-store';
 import { isRecord as isConfigRecord } from 'openclaw/plugin-sdk/string-coerce-runtime';
 import {
   parse as parseToml,
@@ -68,11 +67,8 @@ async function resolveInstalledAcpPackageBinPath(
 ): Promise<string | undefined> {
   try {
     const packageJsonPath = requireFromHere.resolve(`${packageName}/package.json`);
-    const { value: manifest } = await readJsonFileWithFallback<PackageManifest>(
-      packageJsonPath,
-      {},
-    );
-    if (manifest.name !== packageName) {
+    const manifest: unknown = JSON.parse(await fs.readFile(packageJsonPath, 'utf8'));
+    if (!isConfigRecord(manifest) || manifest.name !== packageName) {
       return undefined;
     }
     const binPath = resolvePackageBinPath(packageJsonPath, manifest, binName);

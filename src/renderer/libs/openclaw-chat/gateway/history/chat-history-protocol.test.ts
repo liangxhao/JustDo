@@ -14,6 +14,48 @@ import {
 } from './chat-history-protocol';
 
 describe('OpenClaw chat history protocol', () => {
+  test('binds native message hydration and bounded fallback to the confirmed physical session', async () => {
+    const complete = { role: 'toolResult', content: 'complete original output' };
+    const request = vi.fn(async (method: string) =>
+      method === 'chat.message.get'
+        ? { ok: false, unavailableReason: 'oversized' }
+        : {
+            ok: true,
+            chunk: JSON.stringify(complete),
+            complete: true,
+            transferId: 'original-transfer',
+          },
+    );
+    const hydrated = await hydrateTruncatedHistoryMessages(
+      { request } as unknown as GatewayClient,
+      [{ role: 'toolResult', content: 'preview', __openclaw: { id: 'message', truncated: true } }],
+      'key',
+      () => true,
+      'physical-original',
+    );
+    expect(hydrated[0]).toMatchObject(complete);
+    expect(request.mock.calls).toEqual([
+      [
+        'chat.message.get',
+        {
+          sessionKey: 'key',
+          sessionId: 'physical-original',
+          messageId: 'message',
+          maxChars: 2_000_000,
+        },
+      ],
+      [
+        'runtimeServices.historyMessage',
+        {
+          sessionKey: 'key',
+          sessionId: 'physical-original',
+          messageId: 'message',
+          cursor: 0,
+          maxChars: 512 * 1024,
+        },
+      ],
+    ]);
+  });
   test('renders a generated assistant error once as a failure and retains actual partial replies', async () => {
     const error = 'LLM request failed: network connection was interrupted.';
     const timestamp = Date.now();

@@ -1,4 +1,5 @@
 import { isRecord } from '../configShape';
+import { normalizeNativeTtsConfig } from './nativeTtsConfig';
 
 export const resolveManagedOpenClawTtsConfig = (
   existingConfig: Record<string, unknown> | null,
@@ -8,15 +9,16 @@ export const resolveManagedOpenClawTtsConfig = (
     mode: 'online',
   },
 ): Record<string, unknown> | null => {
-  const existingTts = isRecord(existingConfig?.tts) ? existingConfig.tts : null;
-  if (!outputState.enabled) return existingTts ? { ...existingTts, enabled: false } : null;
+  const existingTts = normalizeNativeTtsConfig(existingConfig?.tts);
+  if (!outputState.enabled) return existingTts ? { ...existingTts, auto: 'off' } : null;
   if (outputState.mode === 'local') {
-    if (!localTtsConfig) return existingTts ? { ...existingTts, enabled: false } : null;
+    if (!localTtsConfig) return existingTts ? { ...existingTts, auto: 'off' } : null;
+    const localTts = normalizeNativeTtsConfig(localTtsConfig)!;
     const existingProviders = isRecord(existingTts?.providers) ? existingTts.providers : {};
-    const localProviders = isRecord(localTtsConfig.providers) ? localTtsConfig.providers : {};
+    const localProviders = isRecord(localTts.providers) ? localTts.providers : {};
     return {
       ...(existingTts ?? {}),
-      ...localTtsConfig,
+      ...localTts,
       providers: { ...existingProviders, ...localProviders },
     };
   }
@@ -24,13 +26,13 @@ export const resolveManagedOpenClawTtsConfig = (
   const currentProvider =
     typeof existingTts.provider === 'string' ? existingTts.provider.trim() : '';
   if (currentProvider === 'openai') {
-    return existingTts.enabled === false ? { ...existingTts, enabled: true } : existingTts;
+    return existingTts;
   }
   const providers = isRecord(existingTts.providers) ? existingTts.providers : {};
   const onlineProvider = isRecord(providers.openai) ? 'openai' : undefined;
   return onlineProvider
-    ? { ...existingTts, enabled: true, provider: onlineProvider }
-    : { ...existingTts, enabled: false };
+    ? { ...existingTts, provider: onlineProvider }
+    : { ...existingTts, auto: 'off' };
 };
 
 export const MANAGED_TTS_PLUGIN_IDS = new Set(['openai']);

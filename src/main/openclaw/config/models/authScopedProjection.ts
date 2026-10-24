@@ -5,7 +5,7 @@ import {
   mergeAgentEntriesWithManagedMainSettings,
   mergeManagedOpenClawSubagentConfig,
 } from '../agents/agentProjection';
-import { sanitizeOpenClawV2026_10_4Config } from '../configCompatibility';
+import { sanitizeOpenClawV2026_10_6Config } from '../configCompatibility';
 import { isRecord } from '../configShape';
 import { mergeOpenClawPluginConfig, mergeOpenClawSkillConfig } from '../plugins/pluginProjection';
 import {
@@ -30,7 +30,7 @@ export const buildAuthScopedOpenClawConfig = (
   managedConfig: Record<string, unknown>,
   reason: string,
 ): Record<string, unknown> => {
-  const canonicalExistingConfig = sanitizeOpenClawV2026_10_4Config(existingConfig);
+  const canonicalExistingConfig = sanitizeOpenClawV2026_10_6Config(existingConfig);
   const isLogin = reason === BuiltinModelSyncReason.AuthLogin;
   const existingModels = isRecord(canonicalExistingConfig.models)
     ? canonicalExistingConfig.models
@@ -282,7 +282,7 @@ export const buildAuthScopedOpenClawConfig = (
     delete models.providers;
   }
 
-  const result = sanitizeOpenClawV2026_10_4Config({
+  const result = sanitizeOpenClawV2026_10_6Config({
     ...canonicalExistingConfig,
     skills: mergeOpenClawSkillConfig(
       isRecord(canonicalExistingConfig.skills) ? canonicalExistingConfig.skills : {},

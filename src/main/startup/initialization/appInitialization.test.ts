@@ -39,6 +39,66 @@ afterEach(() => {
   for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 });
 
+test('continuing after a human confirmation starts the activity clock without resetting total startup time', () => {
+  const time = vi.spyOn(Date, 'now').mockReturnValue(1000);
+  const initialization = new AppInitialization(temporaryRoot(), StartupRoute.Upgrade, vi.fn());
+  initialization.setDowngradeConfirmation({ requestId: 'current-confirmation',
+    source: { appVersion: '2.0.0', runtimeVersion: '2026.10.7' },
+    target: { appVersion: '1.0.0', runtimeVersion: '2026.10.6' } });
+  time.mockReturnValue(121000);
+  initialization.setDowngradeConfirmation(undefined);
+  initialization.reportActivity(AppInitializationActivity.NativeInspect);
+  expect(initialization.getState()).toMatchObject({ startedAt: 1000, activityStartedAt: 121000,
+    activity: AppInitializationActivity.NativeInspect, downgradeConfirmation: undefined });
+  time.mockReturnValue(125000);
+  initialization.setDowngradeConfirmation(undefined);
+  expect(initialization.getState().activityStartedAt).toBe(121000);
+});
+
+test('publishes five real upgrade steps and never creates the first-install marker for adoption', async () => {
+  const userData = temporaryRoot();
+  const initialization = new AppInitialization(userData, StartupRoute.Upgrade, vi.fn());
+  expect(initialization.getState()).toMatchObject({
+    firstLaunch: true, route: StartupRoute.Upgrade, totalSteps: 5,
+    step: AppInitializationStep.DatabaseUpgrade, completedSteps: 0,
+    activity: AppInitializationActivity.NativeInspect,
+  });
+  for (const activity of [AppInitializationActivity.NativeBackup,
+    AppInitializationActivity.NativeUpgrade, AppInitializationActivity.NativeVerify]) {
+    initialization.reportActivity(activity);
+    expect(initialization.getState()).toMatchObject({
+      step: AppInitializationStep.DatabaseUpgrade, completedSteps: 0, activity,
+    });
+  }
+  initialization.advance(AppInitializationStep.UserData, 0);
+  expect(initialization.getState().completedSteps).toBe(1);
+  initialization.advance(AppInitializationStep.Runtime, 1);
+  expect(initialization.getState().completedSteps).toBe(2);
+  initialization.advance(AppInitializationStep.Configuration, 2);
+  expect(initialization.getState().completedSteps).toBe(3);
+  initialization.advance(AppInitializationStep.Engine, 3);
+  expect(initialization.getState().completedSteps).toBe(4);
+  await initialization.complete();
+  expect(initialization.getState()).toMatchObject({ completedSteps: 5, phase: AppInitializationPhase.Ready });
+  expect(fs.existsSync(path.join(userData, '.justdo-initialized'))).toBe(false);
+});
+
+test.each([
+  [StartupStage.UpgradePrepare, AppInitializationStep.DatabaseUpgrade, 0],
+  [StartupStage.UpgradeVerify, AppInitializationStep.DatabaseUpgrade, 0],
+  [StartupStage.Check, AppInitializationStep.DatabaseUpgrade, 0],
+] as const)('resumes upgrade presentation at its actual %s milestone', (stage, step, completedSteps) => {
+  const initialization = new AppInitialization(temporaryRoot(), StartupRoute.Upgrade,
+    vi.fn(), () => ({}), stage);
+  expect(initialization.getState()).toMatchObject({ totalSteps: 5, step, completedSteps });
+});
+
+test('keeps the original process startup clock after asynchronous routing inspection', () => {
+  const initialization = new AppInitialization(temporaryRoot(), StartupRoute.Upgrade,
+    vi.fn(), () => ({}), StartupStage.UpgradePrepare, 1000);
+  expect(initialization.getState()).toMatchObject({ startedAt: 1000, activityStartedAt: 1000 });
+});
+
 test('initializes a Chinese path containing spaces and remembers successful completion', async () => {
   const userData = path.join(temporaryRoot(), '用户 数据');
   const onChanged = vi.fn();

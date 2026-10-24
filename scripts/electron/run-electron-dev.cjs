@@ -42,7 +42,11 @@ const start = async () => {
     if (stopping) return;
     stopping = true;
     cancelStartup(false);
-    await stopElectron(electron);
+    try { await stopElectron(electron); }
+    catch (error) {
+      console.error('[Electron Dev] Application shutdown failed:', error.message);
+      code = 1;
+    }
     try { vite.kill(); } catch { /* Already exited. */ }
     process.exit(code);
   };

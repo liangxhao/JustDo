@@ -11,7 +11,6 @@ import {
   session,
 } from 'electron';
 import fs from 'fs';
-import os from 'os';
 import path from 'path';
 
 import packageJson from '../../package.json';
@@ -25,6 +24,7 @@ import {
   AppInitializationPhase,
   AppInitializationStep,
 } from '../shared/app/initialization';
+import { SHUTDOWN_BUDGET_MS } from '../shared/app/shutdownPolicy';
 import { normalizeBrowserDownloadSettings, normalizeBrowserMode } from '../shared/browser/browser';
 import { EmbeddedBrowserGateway } from '../shared/browser/embeddedBrowser';
 import { buildCoworkSessionKey } from '../shared/cowork/sessionKey';
@@ -38,10 +38,7 @@ import type { ProxySettings } from '../shared/network/proxy';
 import { WorkboardIpc } from '../shared/openclaw/workboard';
 import { OpenClawExtensionId } from '../shared/plugins/nativeIds';
 import { HOME_WORKSPACE_SESSION_ID } from '../shared/preview/filePreview';
-import {
-  DEFAULT_WORKSPACE_DIRECTORY_NAME,
-  USER_DATA_DIRECTORY_NAME,
-} from '../shared/productMetadata';
+import { USER_DATA_DIRECTORY_NAME } from '../shared/productMetadata';
 import {
   buildCustomProviderRenameAliases,
   listRetiredOpenClawProviderIds,
@@ -70,6 +67,7 @@ import { LoginService } from './core/app/auth/loginService';
 import { LoginUserInfoStore } from './core/app/auth/loginUserInfoStore';
 import { isAutoLaunched } from './core/app/autoLaunchManager';
 import { AutoUpdateService } from './core/app/autoUpdateService';
+import { runApplicationCleanup, settleCleanupTasks } from './core/app/cleanupPhases';
 import { CustomerRegistrationService } from './core/app/customerRegistrationService';
 import { isNsisInstalledApp } from './core/app/installedApp';
 import { createTray, destroyTray, updateTrayMenu } from './core/app/trayManager';
@@ -120,7 +118,7 @@ import { AgentTeamLaunchCoordinator } from './cowork/agent-team/agentTeamLaunchC
 import { orderDiagnosticMainLogs } from './cowork/diagnostics/logSources';
 import { readDiagnosticRuntimeArtifact } from './cowork/diagnostics/runtimeInfo';
 import { SessionDiagnosticsService } from './cowork/diagnostics/service';
-import { CoworkStore } from './data/coworkStore';
+import { CoworkStore, getDefaultWorkingDirectory } from './data/coworkStore';
 import { GroupStore } from './data/groupStore';
 import { SessionDiagnosticsStore } from './data/sessionDiagnosticsStore';
 import { SqliteStore } from './data/sqliteStore';
@@ -292,6 +290,7 @@ import { registerHistoryRecoveryHandlers } from './startup/history/historyRecove
 import { NativeHistoryRuntime } from './startup/history/nativeHistoryRuntime';
 import { registerStartupSupportHandlers } from './startup/initialization/startupSupport';
 import { StartupCoordinator } from './startup/routing/startupCoordinator';
+import { NativeDatabaseUpgradeRuntime } from './startup/upgrade/nativeDatabaseUpgradeRuntime';
 
 let outboundHeaderProxy: OutboundHeaderProxy | null = null;
 const getOutboundHeaderProxy = (): OutboundHeaderProxy => {
@@ -1744,8 +1743,23 @@ if (agentBridgeArgv) {
     }));
   const workspaceAppSessions = new WorkspaceAppSessions({
     getStore: getCoworkStore,
-    request: <T>(method: string, params?: unknown) =>
-      getCoworkEngineService().requestGateway<T>(method, params),
+    request: <T>(method: string, params?: unknown, options?: GatewayRequestOptions) =>
+      getCoworkEngineService().requestGateway<T>(method, params, options),
+    captureResponseContext: async () => {
+      const service = getCoworkEngineService();
+      await service.connectGatewayClient();
+      const adapter = service.getRuntimeAdapter();
+      const router = service.getCurrentRouter();
+      const manager = openClawEngineManager;
+      const context = adapter?.captureGatewayResponseContext();
+      if (!context || !adapter || !router || !manager) return null;
+      return {
+        isResponseError: context.isResponseError,
+        isCurrent: () => !appShutdown.isQuitting() && coworkEngineService === service &&
+          openClawEngineManager === manager && service.getCurrentRouter() === router &&
+          service.getRuntimeAdapter() === adapter && context.isCurrent(),
+      };
+    },
   });
   registerCoworkSessionExecutionHandlers({
     workspaceAppSessions,
@@ -2030,80 +2044,64 @@ if (agentBridgeArgv) {
   };
 
   const runAppCleanup = async (): Promise<void> => {
-    const appServerStopped = appServerIntegrationService?.stop().catch(() => {
-      console.error('[AppServer] Failed to stop local WebSocket service.');
+    startupHistoryAdmissionReady = false;
+    const admissionErrors: unknown[] = [];
+    for (const revokeAdmission of [
+      () => openClawEngineManager?.beginApplicationShutdown(),
+      () => startupCoordinator?.stop(),
+    ]) {
+      try { revokeAdmission(); } catch (error) { admissionErrors.push(error); }
+    }
+    const appServerStopped = Promise.resolve().then(() => appServerIntegrationService?.stop());
+    // Observe immediately while startup owners join; preserve the original rejection.
+    void appServerStopped.catch(error => console.error('[AppServer] Failed to stop local WebSocket service:', error));
+    await runApplicationCleanup({
+      retireStartup: () => settleCleanupTasks([
+        () => startupHistoryRuntime.stop(), () => startupDatabaseRuntime.stop(),
+        () => { if (admissionErrors.length) throw new AggregateError(admissionErrors, 'Startup admission revocation failed.'); },
+      ]),
+      retireServices: () => settleCleanupTasks([
+        () => { disposeComputerOverlay?.(); disposeComputerOverlay = undefined; },
+        () => devSessionLifecycle?.stop(),
+        () => detachDevelopmentParent?.(),
+        () => { if (store) getTeamDiscussionCoordinator().dispose(); },
+        () => builtinModelCredentialMonitor?.stop(),
+        () => loginService?.dispose(),
+        () => customerRegistrationService?.stop(),
+        () => builtinModelTokenExchange?.invalidate(),
+        () => builtinModelAuthCoordinator?.initialize(null),
+        () => clearActiveBuiltinModelCredential(),
+        () => clearBrowserExtensionAppServer(app.getPath('userData')),
+        async () => {
+          const server = browserExtensionChatServer;
+          await server?.stop();
+          if (browserExtensionChatServer === server) browserExtensionChatServer = null;
+        },
+        () => appServerStopped,
+        () => destroyTray(),
+        async () => {
+          const server = agentBridgeServer;
+          await server?.stop();
+          if (agentBridgeServer === server) agentBridgeServer = null;
+        },
+        async () => {
+          // Prevent scheduled work while the native runtime drains existing work.
+          try { getCronJobService().stopPolling(); } catch { /* Not initialized. */ }
+          await coworkEngineService?.getCurrentRouter()?.stopAllSessions();
+        },
+      ]),
+      retireGateway: () => openClawEngineManager?.stopGateway(),
+      retireRemainingServices: () => settleCleanupTasks([
+        () => browserAgentBridge.stop(), () => outboundHeaderProxy?.stop(),
+      ]),
+      // Never initialize a Store during shutdown, or close it underneath an unjoined owner.
+      closeStore: () => store?.close(),
     });
-    await startupHistoryRuntime.stop();
-    disposeComputerOverlay?.();
-    disposeComputerOverlay = undefined;
-    openClawEngineManager?.beginApplicationShutdown();
-    devSessionLifecycle?.stop();
-    detachDevelopmentParent?.();
-    console.log('[Main] App is quitting, starting cleanup...');
-    if (store) getTeamDiscussionCoordinator().dispose();
-    builtinModelCredentialMonitor?.stop();
-    loginService?.dispose();
-    customerRegistrationService?.stop();
-    try {
-      builtinModelTokenExchange?.invalidate();
-    } catch {
-      console.warn(
-        '[BuiltinModelTokenExchange] Snapshot revocation failed; continuing runtime shutdown.',
-      );
-    }
-    builtinModelAuthCoordinator?.initialize(null);
-    clearActiveBuiltinModelCredential();
-    await clearBrowserExtensionAppServer(app.getPath('userData')).catch(error => {
-      console.warn('[BrowserExtensionChat] Failed to clear app-server rendezvous:', error);
-    });
-    await browserExtensionChatServer?.stop();
-    browserExtensionChatServer = null;
-    if (!(await waitForAppServerShutdown(appServerStopped))) {
-      console.warn('[AppServer] Native cleanup is still pending; continuing runtime shutdown.');
-    }
-    destroyTray();
-    if (agentBridgeServer) {
-      await agentBridgeServer.stop().catch(error => {
-        console.error('[AgentBridge] Failed to stop:', error);
-      });
-      agentBridgeServer = null;
-    }
-    // Prevent scheduled work from starting while dependent runtimes are draining.
-    try {
-      getCronJobService().stopPolling();
-    } catch {
-      // CronJobService may not have been initialized — safe to ignore.
-    }
-    // Stop Cowork sessions before the Gateway and database are closed.
-    const coworkRouter = coworkEngineService?.getCurrentRouter();
-    if (coworkRouter) {
-      console.log('[Main] Stopping cowork sessions...');
-      await coworkRouter.stopAllSessions();
-    }
-
-    if (openClawEngineManager) {
-      await openClawEngineManager.stopGateway().catch(error => {
-        console.error('[OpenClaw] Failed to stop gateway on quit:', error);
-      });
-    }
-    await browserAgentBridge.stop();
-
-    outboundHeaderProxy?.stop();
-
-    // Close the SQLite database to flush the WAL and release the file lock.
-    try {
-      getStore().close();
-    } catch {
-      // Store may not have been initialized — safe to ignore.
-    }
   };
 
   const appShutdown = registerAppShutdown({
     cleanup: runAppCleanup,
-    cleanupTimeoutMs: isDev && !app.isPackaged ? 30_000 : undefined,
-    onCleanupTimeout: async () => {
-      await openClawEngineManager?.stopGateway();
-    },
+    cleanupTimeoutMs: SHUTDOWN_BUDGET_MS.applicationExit,
   });
   const developmentParentServerUrl = devServerUrl;
   const detachDevelopmentParent = !app.isPackaged
@@ -2180,7 +2178,21 @@ if (agentBridgeArgv) {
   });
   registerAutoUpdateHandlers(autoUpdateService);
 
-  const startupCoordinator = new StartupCoordinator(app.getPath('userData'));
+  let startupCoordinator: StartupCoordinator;
+  const startupStartedAt = Date.now();
+  const startupNativeStateDir = path.join(app.getPath('userData'), 'openclaw', 'state');
+  const startupDatabaseRuntime = new NativeDatabaseUpgradeRuntime({
+    getRuntimeRoot: () => (app.isPackaged
+      ? [path.join(process.resourcesPath, 'cfmind')]
+      : [path.join(app.getAppPath(), 'vendor', 'openclaw-runtime', 'current'),
+        path.join(process.cwd(), 'vendor', 'openclaw-runtime', 'current')])
+      .find(candidate => fs.existsSync(candidate)) ?? null,
+    stateDir: startupNativeStateDir,
+    configPath: path.join(startupNativeStateDir, 'openclaw.json'),
+    gatewayStopped: () => !openClawEngineManager ||
+      (!openClawEngineManager.getGatewayProcessId() &&
+        !['running', 'starting'].includes(openClawEngineManager.getStatus().phase)),
+  });
   const startupHistoryRuntime = new NativeHistoryRuntime({
     getEnvironment: () => getOpenClawEngineManager().buildCliEnvironment(),
     gatewayStopped: () =>
@@ -2188,34 +2200,48 @@ if (agentBridgeArgv) {
       !['running', 'starting'].includes(getOpenClawEngineManager().getStatus().phase),
     stateDir: () => getOpenClawEngineManager().getStateDir(),
   });
-  const initialization = new AppInitialization(
-    app.getPath('userData'),
-    startupCoordinator.route,
-    state => {
-      if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
-        try {
-          mainWindow.webContents.send(AppInitializationIpc.Changed, state);
-        } catch (error) {
-          console.warn('[AppInitialization] Failed to publish progress; startup continues:', error);
+  let initialization: AppInitialization;
+  const prepareStartup = async (): Promise<void> => {
+    startupCoordinator = await StartupCoordinator.prepare(app.getPath('userData'), {
+      appVersion: packageJson.version,
+      native: startupDatabaseRuntime,
+      startedAt: startupStartedAt,
+    });
+    initialization = new AppInitialization(
+      app.getPath('userData'),
+      startupCoordinator.route,
+      state => {
+        if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
+          try {
+            mainWindow.webContents.send(AppInitializationIpc.Changed, state);
+          } catch (error) {
+            console.warn('[AppInitialization] Failed to publish progress; startup continues:', error);
+          }
         }
-      }
-    },
-    () => ({ logPath: getLogFilePath() }),
-    startupCoordinator.stage,
-  );
-  registerAppInitializationHandlers(initialization);
-  registerStartupSupportHandlers({
-    getWindow: () => mainWindow,
-    getState: () => initialization.getState(),
-    getBackupDirectory: () => startupCoordinator.getHistoryBackupDirectory(),
-  });
-  registerHistoryRecoveryHandlers({
-    getWindow: () => mainWindow,
-    isReady: () =>
-      !appShutdown.isQuitting() && initialization.getState().phase === AppInitializationPhase.Ready,
-    getStore,
-    getCoworkStore,
-  });
+      },
+      () => ({ logPath: getLogFilePath() }),
+      startupCoordinator.stage,
+      startupCoordinator.startedAt,
+    );
+    initialization.setDowngradeConfirmation(startupCoordinator.getDowngradeConfirmation());
+    registerAppInitializationHandlers(initialization, {
+      getWindow: () => mainWindow,
+      canConfirm: () => !appShutdown.isQuitting(),
+      confirm: requestId => startupCoordinator.confirmDowngrade(requestId),
+    });
+    registerStartupSupportHandlers({
+      getWindow: () => mainWindow,
+      getState: () => initialization.getState(),
+      getBackupDirectory: () => startupCoordinator.getHistoryBackupDirectory(),
+    });
+    registerHistoryRecoveryHandlers({
+      getWindow: () => mainWindow,
+      isReady: () =>
+        !appShutdown.isQuitting() && initialization.getState().phase === AppInitializationPhase.Ready,
+      getStore,
+      getCoworkStore,
+    });
+  };
 
   const createStartupWindow = (): InitializationWindow => {
     const startup = createInitializationWindow({
@@ -2238,6 +2264,10 @@ if (agentBridgeArgv) {
     const initializationWindow = startup.window;
     mainWindow = initializationWindow;
     initializationWindow.on('closed', () => {
+      if (startupCoordinator.getDowngradeConfirmation()) {
+        startupCoordinator.stop();
+        app.quit();
+      }
       if (mainWindow === initializationWindow) mainWindow = null;
     });
     return startup;
@@ -2247,6 +2277,8 @@ if (agentBridgeArgv) {
   const initApp = async () => {
     registerLocalFileScheme();
     await app.whenReady();
+    await prepareStartup();
+    if (appShutdown.isQuitting()) return;
 
     const startup = initialization.getState().firstLaunch ? createStartupWindow() : null;
     // The packaged HTTP host starts asynchronously; wait for its actual navigation.
@@ -2356,7 +2388,7 @@ if (agentBridgeArgv) {
     // We don't trigger permission dialogs at startup to avoid annoying users
 
     // Ensure default working directory exists
-    const defaultProjectDir = path.join(os.homedir(), DEFAULT_WORKSPACE_DIRECTORY_NAME, 'project');
+    const defaultProjectDir = getDefaultWorkingDirectory();
     initialization.reportActivity(AppInitializationActivity.Workspace);
     await initialization.runOptionalTask('prepare default project directory', async () => {
       await fs.promises.mkdir(defaultProjectDir, { recursive: true });
@@ -2486,6 +2518,8 @@ if (agentBridgeArgv) {
       if (!result.success)
         throw new Error(`Historical assistant identities could not be prepared: ${result.error}`);
     }
+    await startupCoordinator.verifyNativeReady();
+    if (appShutdown.isQuitting()) return;
     startupHistoryAdmissionReady = true;
     initialization.reportActivity(AppInitializationActivity.Integrations);
     await startBrowserExtensionIngress();

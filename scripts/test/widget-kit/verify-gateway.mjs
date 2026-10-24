@@ -1,15 +1,15 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import http from 'node:http';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { Script } from 'node:vm';
-import WebSocket from 'ws';
+import { resolveNativeSmokeTarget } from '../../../tests/openclaw/runtime/native-smoke-target.mjs';
 
 const require = createRequire(import.meta.url);
 const {
@@ -59,12 +59,11 @@ const parsedViewerOrigin = new URL(viewerOrigin);
 assert.equal(parsedViewerOrigin.protocol, 'http:');
 assert.equal(parsedViewerOrigin.hostname, '127.0.0.1');
 assert.equal(parsedViewerOrigin.origin, viewerOrigin, 'Use one exact loopback viewer origin');
-const runtime = path.resolve(
-  (args[0] && !args[0].startsWith('--') ? args[0] : undefined) ??
-    path.join(root, 'vendor/openclaw-runtime/current'),
-);
+const requestedRuntime = args[0] && !args[0].startsWith('--') ? args[0] : process.env.OPENCLAW_TEST_NATIVE_RUNTIME_DIR;
+assert.ok(requestedRuntime, 'Select the final runtime explicitly.');
+const { runtimeRoot: runtime, identity: runtimeIdentity } = resolveNativeSmokeTarget(requestedRuntime);
 const runtimePackage = JSON.parse(await readFile(path.join(runtime, 'package.json'), 'utf8'));
-assert.equal(runtimePackage.version, '2026.10.4', 'Use the locked prepared runtime');
+assert.equal(runtimePackage.version, '2026.10.6', 'Use the locked prepared runtime');
 const buildInfo = JSON.parse(await readFile(path.join(runtime, 'runtime-build-info.json'), 'utf8'));
 const fixture = await mkdtemp(path.join(os.tmpdir(), 'widget-kit-gateway-'));
 const state = path.join(fixture, 'state');
@@ -184,6 +183,7 @@ const nativeDispatchResults = new Map();
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 const hash = value => createHash('sha256').update(value).digest('hex');
 let gateway;
+let launcherLifecycle;
 let gatewayLog = '';
 const sockets = new Set();
 const provider = http.createServer(async (request, response) => {
@@ -320,20 +320,31 @@ async function adjacentLoopbackPorts() {
 }
 
 async function stopGateway() {
-  for (const socket of sockets) socket.terminate();
+  const joins = [...sockets].map(socket => socket.stopAndWait());
+  if (gateway && gateway.exitCode === null) {
+    const child = gateway;
+    joins.push((async () => {
+      await new Promise(resolve => {
+        child.once('exit', resolve);
+        if (child.connected) child.send(launcherLifecycle.OPENCLAW_GATEWAY_SHUTDOWN_MESSAGE);
+        else child.kill();
+        const timer = setTimeout(() => child.kill(), 90_000);
+        child.once('exit', () => clearTimeout(timer));
+      });
+      assert.equal(child.exitCode, 0, 'Isolated Gateway closes its native resources cleanly');
+    })());
+  }
+  // Auth persistence may need the Gateway's state-writer lease to retire first.
+  const settled = await Promise.allSettled(joins);
   sockets.clear();
-  if (!gateway || gateway.exitCode !== null) return;
-  const child = gateway;
-  await new Promise(resolve => {
-    child.once('exit', resolve);
-    child.kill();
-  });
+  for (const result of settled) if (result.status === 'rejected') throw result.reason;
 }
 
 async function startGateway(port, env) {
   gateway = spawn(
     process.execPath,
     [
+      '--require', launcherLifecycle.ensureGatewayShutdownPreload(fixture),
       path.join(runtime, 'gateway-launcher.cjs'),
       'gateway',
       'run',
@@ -347,7 +358,7 @@ async function startGateway(port, env) {
       cwd: fixture,
       env,
       windowsHide: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
     },
   );
   gateway.stdout.on('data', chunk => {
@@ -361,7 +372,7 @@ async function startGateway(port, env) {
     if (gateway.exitCode !== null) throw new Error(`Isolated Gateway exited ${gateway.exitCode}`);
     try {
       if (
-        (await fetch(`http://127.0.0.1:${port}/healthz`, { signal: AbortSignal.timeout(500) })).ok
+        (await fetch(`http://127.0.0.1:${port}/startupz`, { signal: AbortSignal.timeout(500) })).ok
       )
         return;
     } catch {
@@ -373,54 +384,34 @@ async function startGateway(port, env) {
 }
 
 async function connectOnce(port, caps) {
-  const socket = new WebSocket(`ws://127.0.0.1:${port}`);
-  sockets.add(socket);
-  const pending = new Map();
+  const { GatewayClient } = await import(pathToFileURL(path.join(runtime, 'dist/plugin-sdk/gateway-runtime.js')).href);
   const events = [];
-  let sequence = 0;
-  socket.on('message', raw => {
-    const packet = JSON.parse(raw.toString());
-    if (packet.type === 'event') events.push(packet);
-    if (packet.type !== 'res') return;
-    const item = pending.get(packet.id);
-    if (!item) return;
-    pending.delete(packet.id);
-    clearTimeout(item.timer);
-    packet.ok
-      ? item.resolve(packet.payload)
-      : item.reject(new Error(`${item.method}: ${packet.error?.message ?? 'rejected'}`));
-  });
-  const rpc = (method, params) =>
-    new Promise((resolve, reject) => {
-      const id = String(++sequence);
-      const timer = setTimeout(() => {
-        pending.delete(id);
-        reject(new Error(`${method} timed out`));
-      }, 20_000);
-      pending.set(id, { method, timer, resolve, reject });
-      socket.send(JSON.stringify({ type: 'req', id, method, params }));
-    });
-  await new Promise((resolve, reject) => {
-    socket.once('open', resolve);
-    socket.once('error', reject);
-  });
-  let hello;
+  let socket;
   try {
-    hello = await rpc('connect', {
-      minProtocol: 4,
-      maxProtocol: 4,
-      client: { id: 'cli', version: 'isolated-fixture', platform: process.platform, mode: 'cli' },
-      role: 'operator',
-      scopes: ['operator.admin', 'operator.read', 'operator.write'],
-      auth: { token },
-      caps,
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('Isolated Gateway handshake timed out')), 60_000);
+      socket = new GatewayClient({
+        url: `ws://127.0.0.1:${port}`, token, clientName: 'gateway-client', mode: 'backend',
+        scopes: ['operator.admin', 'operator.read', 'operator.write'], caps,
+        requestTimeoutMs: 20_000, env: process.env,
+        onEvent: event => events.push(event),
+        onHelloOk: hello => {
+          clearTimeout(timer);
+          if (hello.protocol !== 4) reject(new Error('Unexpected native Gateway protocol'));
+          else resolve();
+        },
+        onConnectError: error => { clearTimeout(timer); reject(error); },
+      });
+      sockets.add(socket);
+      socket.start();
     });
   } catch (error) {
-    socket.terminate();
-    sockets.delete(socket);
+    // Retire transport now; final shutdown joins auth persistence with the Gateway.
+    socket?.stop();
     throw error;
   }
-  assert.equal(hello.protocol, 4);
+  // A business mutation is submitted once; an unknown response is never replayed.
+  const rpc = (method, params) => socket.request(method, params);
   for (let attempt = 0; attempt < 30; attempt++) {
     try {
       await rpc('health', {});
@@ -544,6 +535,12 @@ function assertDispatcherHistory(history, docId) {
 try {
   await mkdir(state);
   await mkdir(workspace);
+  const lifecycleFile = path.join(fixture, 'host-lifecycle.cjs');
+  require('esbuild').buildSync({
+    entryPoints: [path.join(root, 'src/main/openclaw/runtime/launch/openclawLauncher.ts')],
+    outfile: lifecycleFile, bundle: true, platform: 'node', format: 'cjs',
+  });
+  launcherLifecycle = require(lifecycleFile);
   await cp(path.join(root, 'plugins/extensions/widget-kit'), pluginRoot, { recursive: true });
   const print = console.log;
   try {
@@ -568,6 +565,7 @@ try {
       ownership: 'explicit',
       entries: { main: {} },
       defaults: {
+        embeddedAgent: { cyberFailover: { mode: 'off' } },
         workspace,
         skipBootstrap: true,
         heartbeat: { every: '0m' },
@@ -576,6 +574,7 @@ try {
     },
     models: {
       mode: 'replace',
+      catalogRefresh: { enabled: false },
       providers: {
         fixture: {
           baseUrl: `http://127.0.0.1:${providerPort}/v1`,
@@ -609,8 +608,10 @@ try {
     },
   };
   await writeFile(configPath, JSON.stringify(config));
-  const env = {
-    ...process.env,
+  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) =>
+    !key.toUpperCase().startsWith('OPENCLAW_') &&
+    !['NODE_OPTIONS', 'ELECTRON_RUN_AS_NODE'].includes(key.toUpperCase())));
+  Object.assign(env, {
     OPENCLAW_HOME: fixture,
     OPENCLAW_STATE_DIR: state,
     OPENCLAW_CONFIG_PATH: configPath,
@@ -620,7 +621,11 @@ try {
     OPENCLAW_SKIP_CHANNELS: '1',
     OPENCLAW_SKIP_CRON: '1',
     VITEST: 'true',
-  };
+  });
+  // Native device identity is created only inside this disposable profile.
+  for (const key of Object.keys(process.env))
+    if (key.toUpperCase().startsWith('OPENCLAW_')) delete process.env[key];
+  Object.assign(process.env, env);
   await startGateway(port, env);
   const headless = await connect(port, ['tool-events']);
   const inline = await connect(port, ['tool-events', 'inline-widgets']);
@@ -1034,6 +1039,7 @@ try {
     JSON.stringify({
       ok: true,
       runtime: runtimePackage.version,
+      runtimeIdentity,
       runtimePackageSha256: buildInfo.runtimePackageSha256,
       ...(verifyToolDispatch
         ? {
@@ -1115,6 +1121,21 @@ try {
   process.exitCode = 1;
 } finally {
   await stopGateway();
+  for (const [prefix, name] of [
+    ['openclaw-agent-db-lifecycle-', 'closeOpenClawAgentDatabasesAsync'],
+    ['openclaw-state-db-cache-', 'closeOpenClawStateDatabaseAsync'],
+  ]) {
+    const owners = (await readdir(path.join(runtime, 'dist'))).filter(file => {
+      if (!file.startsWith(prefix) || !file.endsWith('.mjs')) return false;
+      const source = require('node:fs').readFileSync(path.join(runtime, 'dist', file), 'utf8');
+      return source.includes(`function ${name}(`) || source.includes(`const ${name} =`);
+    });
+    assert.equal(owners.length, 1, `One native cleanup owner for ${name}`);
+    const module = await import(pathToFileURL(path.join(runtime, 'dist', owners[0])).href);
+    const cleanup = Object.values(module).filter(value => typeof value === 'function' && value.name === name);
+    assert.equal(cleanup.length, 1);
+    await cleanup[0]();
+  }
   provider.closeAllConnections();
   await new Promise(resolve => provider.close(resolve));
   // Cleanup is confined to the one freshly created absolute fixture directory.

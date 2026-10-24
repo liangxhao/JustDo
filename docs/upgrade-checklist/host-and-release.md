@@ -19,7 +19,7 @@
 
 ## Apps、Widget 与跨轮资源
 
-- [ ] 对照 031：手动 App 准备与模型运行使用原生 ingress resolver 的同一持久工作区，
+- [ ] 对照 030：手动 App 准备与模型运行使用原生 ingress resolver 的同一持久工作区，
       下一轮、切会话再返回后编辑和资源仍可用；准备期间身份变化拒绝旧结果。
       首页预览被首条输入采用时保留精确原生会话，未采用的预览仅清理自有会话。
 - [ ] App 文档/视图/update 身份、ETag 与订阅在原位更新、侧栏和独立窗口中保持一致。
@@ -54,13 +54,14 @@
 
 ## 插件发布、技能与离线资产
 
-- [ ] 对照 034：仅原生 extension directory 安装中匹配 rename 的 EPERM/EBUSY 可恢复；
+- [ ] 对照 033：仅原生 extension directory 安装中匹配 rename 的 EPERM/EBUSY 可恢复；
       同一 stage/backup/请求、固定本地 NTFS、目标不存在、原 guards/ownership 和每文件
       精确 bytes 均需成立，五秒总预算内重试。未知结果、发布后失败、远程卷或变更资产
       不重放安装；穷尽按原生失败与旧版本恢复处理。
 - [ ] 安装进度、能力同意、启用与实际生效分开确认。市场安装默认启用仍受准入限制；
       父扩展包含 Skill/MCP/Hook 的组合、部分提交和跨页迟到回包都需回归。
-- [ ] 技能刷新保留上游通用说明，适配仅围绕可用工具、原生提案、路径和离线依赖；
+- [ ] 技能刷新保留上游通用说明，适配仅围绕可用工具、原生 Workshop 版本/变更、路径和离线依赖；
+      同时扫描 bundled SKILL、角色模板和提示词中的已退役工具/RPC，不能只检查 TypeScript 调用；
       不引入要求用户另装 LibreOffice 等运行条件。`skills_search/read` 的发现/权限与
       实际模型选择分开验收，不能只看技能目录存在。
 - [ ] 所有来源按当前 `plugins/` 分类组装，运行资源在 `build/runtimes/`、下载缓存在
@@ -69,7 +70,7 @@
       interval，使用原生按用途的频率；不把 Gateway 环境策略扩散到应用/CLI 基础环境。
 
 依据：[插件系统](../architecture/07-plugin-system.md)、[Plugin Hub](../features/plugins/plugin-hub-experience.md)、
-[补丁总账](../../scripts/patches/v2026.10.4/README.md)、[离线准备](../offline-downloads.md)。
+[补丁总账](../../scripts/patches/v2026.10.6/README.md)、[离线准备](../offline-downloads.md)。
 
 ## 旧版聊天记录迁移与首次启动引导
 

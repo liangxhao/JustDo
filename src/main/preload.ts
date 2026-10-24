@@ -233,7 +233,13 @@ import {
 import { type ExtensionMcpEnabledInput, ExtensionMcpIpc } from '../shared/plugins/mcp';
 import type { PluginOperationContext } from '../shared/plugins/pluginOperation';
 import type { OpenClawSkillSource } from '../shared/plugins/skills';
-import { type SkillWorkshopDecision, SkillWorkshopIpc } from '../shared/plugins/skillWorkshop';
+import {
+  type SkillWorkshopArchiveInput,
+  type SkillWorkshopChangesInput,
+  SkillWorkshopIpc,
+  type SkillWorkshopReadInput,
+  type SkillWorkshopRestoreInput,
+} from '../shared/plugins/skillWorkshop';
 import {
   type FilePreviewEditAuthorizationRequest,
   type FilePreviewEditAuthorizationResult,
@@ -349,9 +355,10 @@ contextBridge.exposeInMainWorld('electron', {
   },
   skillWorkshop: {
     list: (agentId: string) => ipcRenderer.invoke(SkillWorkshopIpc.List, agentId),
-    inspect: (agentId: string, proposalId: string) =>
-      ipcRenderer.invoke(SkillWorkshopIpc.Inspect, agentId, proposalId),
-    decide: (input: SkillWorkshopDecision) => ipcRenderer.invoke(SkillWorkshopIpc.Decide, input),
+    changes: (input: SkillWorkshopChangesInput) => ipcRenderer.invoke(SkillWorkshopIpc.Changes, input),
+    read: (input: SkillWorkshopReadInput) => ipcRenderer.invoke(SkillWorkshopIpc.Read, input),
+    archive: (input: SkillWorkshopArchiveInput) => ipcRenderer.invoke(SkillWorkshopIpc.Archive, input),
+    restore: (input: SkillWorkshopRestoreInput) => ipcRenderer.invoke(SkillWorkshopIpc.Restore, input),
   },
   skills: {
     list: () => ipcRenderer.invoke('skills:list'),
@@ -1330,6 +1337,8 @@ contextBridge.exposeInMainWorld('electron', {
     ),
     getState: (): Promise<AppInitializationState> =>
       ipcRenderer.invoke(AppInitializationIpc.GetState),
+    confirmDowngrade: (input: { requestId: string }): Promise<{ confirmed: boolean }> =>
+      ipcRenderer.invoke(AppInitializationIpc.ConfirmDowngrade, input),
     relaunch: () => ipcRenderer.invoke(AppInitializationIpc.Relaunch),
     onChanged: (callback: (state: AppInitializationState) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, state: AppInitializationState) =>

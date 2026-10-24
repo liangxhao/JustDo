@@ -1,11 +1,12 @@
 import { app } from 'electron';
-import { chmodSync, existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from 'fs';
-import { dirname, join, win32 } from 'path';
+import { chmodSync, existsSync, mkdirSync, statSync, writeFileSync } from 'fs';
+import { join, win32 } from 'path';
 
 import { buildTrustedCertificatePreload } from '../../../core/network/trustedCertificates';
 import { coworkLog } from '../../../cowork/coworkLogger';
+import { resolveBundledNodeRuntimePaths } from './bundledNodeRuntime';
 
-let cachedElectronNodeRuntimePath: string | null = null;
+let cachedNodeRuntimePaths: ReturnType<typeof resolveBundledNodeRuntimePaths> | null = null;
 
 const assertSafeShimPath = (value: string): string => {
   if (/\r|\n/.test(value)) throw new Error('Runtime shim paths cannot contain line breaks.');
@@ -192,62 +193,33 @@ export const buildElectronNodeShimScripts = (
   };
 };
 
-function resolveElectronNodeRuntimePath(): string {
-  if (!app.isPackaged || process.platform !== 'darwin') {
-    return process.execPath;
-  }
-
-  try {
-    const appName = app.getName();
-    const frameworksDir = join(process.resourcesPath, '..', 'Frameworks');
-    if (!existsSync(frameworksDir)) return process.execPath;
-
-    const helperApps = readdirSync(frameworksDir)
-      .filter(entry => entry.startsWith(`${appName} Helper`) && entry.endsWith('.app'))
-      .sort((a, b) => {
-        const score = (name: string): number => {
-          if (name === `${appName} Helper.app`) return 0;
-          if (name === `${appName} Helper (Renderer).app`) return 1;
-          if (name === `${appName} Helper (Plugin).app`) return 2;
-          if (name === `${appName} Helper (GPU).app`) return 3;
-          return 10;
-        };
-        return score(a) - score(b);
-      });
-
-    for (const helperApp of helperApps) {
-      const helperExeName = helperApp.replace(/\.app$/, '');
-      const helperExePath = join(frameworksDir, helperApp, 'Contents', 'MacOS', helperExeName);
-      if (existsSync(helperExePath)) return helperExePath;
-    }
-  } catch (error) {
-    coworkLog(
-      'WARN',
-      'resolveNodeShim',
-      `Failed to resolve Electron helper runtime: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-
-  return process.execPath;
+function bundledNodePaths() {
+  // Runtime replacement is admitted only while the owning app is stopped.
+  // Validate once; repeated CLI queries must not hash the large executable on Main.
+  cachedNodeRuntimePaths ??= resolveBundledNodeRuntimePaths({
+    packaged: app.isPackaged,
+    resourcesPath: process.resourcesPath,
+    appPath: app.getAppPath(),
+    platform: process.platform,
+    arch: process.arch,
+  });
+  return cachedNodeRuntimePaths;
 }
 
+// Preserve the existing public helper name for callers. OpenClaw executes with
+// the independently bundled Node distribution, whose SQLite fixes are required.
 export function getElectronNodeRuntimePath(): string {
-  cachedElectronNodeRuntimePath ??= resolveElectronNodeRuntimePath();
-  return cachedElectronNodeRuntimePath;
+  return bundledNodePaths().executable;
 }
 
 export function resolvePackagedNpmBinDir(resourcesPath: string): string {
-  // Keep the logical app.asar path so npm can resolve its hoisted dependencies
-  // from app.asar. Electron transparently redirects npm's unpacked files.
-  return join(resourcesPath, 'app.asar', 'node_modules', 'npm', 'bin');
+  return resolveBundledNodeRuntimePaths({
+    packaged: true, resourcesPath, appPath: '', platform: process.platform, arch: process.arch,
+  }).npmBin;
 }
 
-export function resolveElectronNpmBinDir(): string | undefined {
-  if (app.isPackaged) return resolvePackagedNpmBinDir(process.resourcesPath);
-  const npmExecPath = process.env.npm_execpath?.trim();
-  if (npmExecPath) return dirname(npmExecPath);
-  const projectNpmBin = join(app.getAppPath(), 'node_modules', 'npm', 'bin');
-  return existsSync(projectNpmBin) ? projectNpmBin : undefined;
+export function resolveElectronNpmBinDir(): string {
+  return bundledNodePaths().npmBin;
 }
 
 export function ensureElectronNodeShim(

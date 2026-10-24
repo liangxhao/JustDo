@@ -12,7 +12,9 @@ import {
 } from '../../../src/main/openclaw/config/models/providerSecretFile';
 import { buildWindowsChildProcessPreload } from '../../../src/main/openclaw/runtime/launch/electronNodeRuntime';
 
-const dist = path.resolve('vendor/openclaw-runtime/current/dist');
+const dist = path.resolve(
+  process.env.OPENCLAW_TEST_NATIVE_RUNTIME_DIR ?? 'vendor/openclaw-runtime/current', 'dist',
+);
 
 test.skipIf(!fs.existsSync(dist))('the bundled OpenClaw resolves managed file credentials without provider environment variables', () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-native-provider-secret-'));
@@ -21,7 +23,7 @@ test.skipIf(!fs.existsSync(dist))('the bundled OpenClaw resolves managed file cr
     fs.writeFileSync(preload, buildWindowsChildProcessPreload());
     const resolver = fs.readdirSync(dist).filter(name => /^resolve-.*\.m?js$/.test(name)).find(name =>
       fs.readFileSync(path.join(dist, name), 'utf8').includes(
-        'export { isMissingSecretRefResolutionError, isProviderScopedSecretResolutionError, resolveSecretRefString,',
+        'export { resolveSecretRefString, resolveSecretRefValue };',
       ),
     );
     expect(resolver).toBeDefined();

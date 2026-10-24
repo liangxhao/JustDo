@@ -6,9 +6,9 @@ import type {
 } from '../../../shared/cowork/diagnostics/sessionDiagnostics';
 import type { GatewayClientLike } from '../../engine/gateway/types';
 import {
-  parseChatHistoryCursorResultV2026_10_4,
-  parseChatHistoryResultV2026_10_4,
-} from '../../engine/openclaw/wire/v2026_10_4';
+  parseChatHistoryCursorResultV2026_10_6,
+  parseChatHistoryResultV2026_10_6,
+} from '../../engine/openclaw/wire/v2026_10_6';
 import { redactDiagnosticLog } from './exportLogs';
 
 const record = (value: unknown): Record<string, unknown> =>
@@ -264,7 +264,7 @@ export async function collectDiagnosticHistory(
     evidence.status = 'partial';
     evidence.reason = 'page_limit';
     for (let pageNumber = 0; pageNumber < 100; pageNumber++) {
-      const page = parseChatHistoryResultV2026_10_4(
+      const page = parseChatHistoryResultV2026_10_6(
         await request({ limit: 200, offset, maxChars: 8000 }),
       );
       signal?.throwIfAborted();
@@ -289,7 +289,7 @@ export async function collectDiagnosticHistory(
       offset = page.nextOffset;
     }
     if (cursor) {
-      const delta = parseChatHistoryCursorResultV2026_10_4(await request({ cursor }));
+      const delta = parseChatHistoryCursorResultV2026_10_6(await request({ cursor }));
       needsVerification = false;
       if (delta.kind === 'reset') {
         evidence.status = 'changed';

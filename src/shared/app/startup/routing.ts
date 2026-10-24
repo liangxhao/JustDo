@@ -1,13 +1,16 @@
-/** Data generations, never installer/application version comparisons. */
+/** Data generation and completed application/native preparation determine the startup route. */
 export const StartupRoute = {
   Fresh: 'fresh',
   Migration: 'migration',
+  Upgrade: 'upgrade',
   Normal: 'normal',
 } as const;
 export type StartupRoute = (typeof StartupRoute)[keyof typeof StartupRoute];
 
 export const StartupStage = {
   Backup: 'backup',
+  UpgradePrepare: 'upgradePrepare',
+  UpgradeVerify: 'upgradeVerify',
   Isolate: 'isolate',
   Initialize: 'initialize',
   StageHistory: 'stageHistory',

@@ -1,13 +1,14 @@
 'use strict';
-// The locked 10.4 plugin natively probes its selected executor and emits SDK 0.8
+// The locked 10.6 plugin natively probes its selected executor and emits native SDK
 // lifecycle configuration. Retain only external read-only skills and capability SID recognition.
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { createRequire } = require('node:module');
 const nativeBinaries = require('../../src/shared/security/mxcNativeBinaries.json');
 const SUPPORTED_VERSION = nativeBinaries.pluginVersion;
-const MARKER = 'SANDBOX_EXTERNAL_READONLY_SKILLS_V2026_10_4';
-const HOST_PREP_MARKER = 'SANDBOX_CAPABILITY_SID_HOST_PREP_V2026_10_4';
+const MARKER = 'SANDBOX_EXTERNAL_READONLY_SKILLS_V2026_10_6';
+const HOST_PREP_MARKER = 'SANDBOX_CAPABILITY_SID_HOST_PREP_V2026_10_6';
 const ORIGINAL = `\treturn [
 \t\t{
 \t\t\thostPath: path.join(params.agentWorkspaceDir, "skills"),
@@ -126,8 +127,30 @@ function verifyMxcNativeBinaries(pluginDirectory, runtimeTarget) {
 function pruneMxcSandboxPluginForTarget(pluginDirectory, runtimeTarget) {
   const arch = resolveTargetArch(runtimeTarget);
   const sdkDirectory = path.join(pluginDirectory, 'node_modules', '@microsoft', 'mxc-sdk');
-  const binDirectory = path.join(sdkDirectory, 'bin');
-  if (!fs.existsSync(path.join(binDirectory, arch, 'wxc-exec.exe'))) {
+  const pluginRoot = fs.realpathSync(pluginDirectory);
+  const assertInsidePlugin = file => {
+    const resolved = fs.realpathSync(file);
+    const relative = path.relative(pluginRoot, resolved);
+    if (!relative || relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+      throw new Error('MXC SDK assets must resolve within its packaged plugin.');
+    }
+    return resolved;
+  };
+  const sdkPackagePath = assertInsidePlugin(path.join(sdkDirectory, 'package.json'));
+  const ptyPackagePath = assertInsidePlugin(createRequire(sdkPackagePath).resolve('node-pty/package.json'));
+  if (JSON.parse(fs.readFileSync(ptyPackagePath, 'utf8')).name !== 'node-pty') {
+    throw new Error('MXC SDK node-pty package identity does not match.');
+  }
+  const prebuildsDirectory = assertInsidePlugin(path.join(path.dirname(ptyPackagePath), 'prebuilds'));
+  const selectedPrebuild = `win32-${arch}`;
+  const selectedDirectory = path.join(prebuildsDirectory, selectedPrebuild);
+  if (!fs.statSync(selectedDirectory, { throwIfNoEntry: false })?.isDirectory()) {
+    throw new Error(`MXC SDK node-pty is missing ${selectedPrebuild} prebuilds.`);
+  }
+  assertInsidePlugin(selectedDirectory);
+  const binDirectory = assertInsidePlugin(path.join(sdkDirectory, 'bin'));
+  const selectedBin = assertInsidePlugin(path.join(binDirectory, arch));
+  if (!fs.existsSync(path.join(selectedBin, 'wxc-exec.exe'))) {
     throw new Error(`MXC SDK is missing wxc-exec.exe for ${runtimeTarget}.`);
   }
   for (const entry of fs.readdirSync(binDirectory, { withFileTypes: true })) {
@@ -137,13 +160,8 @@ function pruneMxcSandboxPluginForTarget(pluginDirectory, runtimeTarget) {
   }
   // The SDK's Linux branch is never selected by a Windows host. Keep the
   // Windows executor, WSL support DLLs and their pinned verification intact.
-  fs.rmSync(path.join(binDirectory, arch, 'lxc-exec'), { force: true });
+  fs.rmSync(path.join(selectedBin, 'lxc-exec'), { force: true });
 
-  const prebuildsDirectory = path.join(sdkDirectory, 'node_modules', 'node-pty', 'prebuilds');
-  const selectedPrebuild = `win32-${arch}`;
-  if (!fs.existsSync(path.join(prebuildsDirectory, selectedPrebuild))) {
-    throw new Error(`MXC SDK node-pty is missing ${selectedPrebuild} prebuilds.`);
-  }
   for (const entry of fs.readdirSync(prebuildsDirectory, { withFileTypes: true })) {
     if (entry.isDirectory() && entry.name !== selectedPrebuild) {
       fs.rmSync(path.join(prebuildsDirectory, entry.name), { recursive: true, force: true });

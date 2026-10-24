@@ -8,12 +8,15 @@ import vm from 'node:vm';
 import * as esbuild from 'esbuild';
 import { transformSync } from 'esbuild';
 import { afterEach, describe, expect, it } from 'vitest';
+import { historicalRuntime } from './historical-runtime';
 
 const patch27 = require('../../../../scripts/patches/v2026.10.4/027-canonical-readiness-owner-path.cjs');
 const patch28 = require('../../../../scripts/patches/v2026.10.4/028-prepared-history-response-publication.cjs');
 const patch29 = require('../../../../scripts/patches/v2026.10.4/029-reasoning-completions-streaming.cjs');
 const { PROVIDER_TRANSPORT_PATH, PROVIDER_PARTITIONER_PATH } =
-  require('../../../../scripts/openclaw/openclaw-patch-dependencies.cjs');
+  require('../../../../scripts/patches/v2026.10.4/openclaw-patch-dependencies.js');
+const historicalPristine = historicalRuntime(process.env.JUSTDO_EXECUTION_PRISTINE_DIR);
+const historicalFrozen = historicalRuntime(process.env.JUSTDO_EXECUTION_RUNTIME);
 const ownerName = 'session-canonical-key-D1TSJMmX.mjs';
 const cacheName = 'openclaw-agent-db-validation-cache-_HDeZNQr.mjs';
 const handlerName = 'chat-history-handler-BKMKq528.mjs';
@@ -247,7 +250,7 @@ it.each(['missing', 'extra', 'renamed'])(
   },
 );
 
-it.skipIf(!process.env.JUSTDO_EXECUTION_PRISTINE_DIR)(
+it.skipIf(!historicalPristine)(
   'applies all patches to the complete pristine package after real facade preparation, including native workers',
   async () => {
     const {
@@ -272,7 +275,7 @@ it.skipIf(!process.env.JUSTDO_EXECUTION_PRISTINE_DIR)(
     const ts = require('typescript');
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'prepared-read-contract-'));
     roots.push(root);
-    const pristine = process.env.JUSTDO_EXECUTION_PRISTINE_DIR!;
+    const pristine = historicalPristine!;
     fs.cpSync(pristine, root, {
       recursive: true,
       filter: (file: string) => path.resolve(file) !== path.resolve(pristine, 'node_modules'),
@@ -391,7 +394,7 @@ it.skipIf(!process.env.JUSTDO_EXECUTION_PRISTINE_DIR)(
       const currentWorker = fs.readFileSync(worker, 'utf8');
       fs.writeFileSync(
         worker,
-        fs.readFileSync(path.join(process.env.JUSTDO_EXECUTION_PRISTINE_DIR!, 'dist', workerName)),
+        fs.readFileSync(path.join(historicalPristine!, 'dist', workerName)),
       );
       expectNoWrites(root, patch27, [
         path.join(root, 'dist', ownerName),
@@ -410,7 +413,7 @@ it.skipIf(!process.env.JUSTDO_EXECUTION_PRISTINE_DIR)(
 );
 
 const configured = Boolean(
-  process.env.JUSTDO_EXECUTION_RUNTIME || process.env.JUSTDO_EXECUTION_PRISTINE_DIR,
+  historicalFrozen || historicalPristine,
 );
 it.skipIf(!configured)(
   'executes isolated native SQLite, cache, deferral and retry/publication behavior',
@@ -425,6 +428,6 @@ it.skipIf(!configured)(
     expect(result.checks).toBeGreaterThanOrEqual(26);
     expect(result.actualSqlite).toBe(true);
     expect(result.workerCovered).toBe(true);
-    expect(result.finalBundle).toBe(Boolean(process.env.JUSTDO_EXECUTION_RUNTIME));
+    expect(result.finalBundle).toBe(Boolean(historicalFrozen));
   },
 );

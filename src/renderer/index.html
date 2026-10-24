@@ -24,6 +24,7 @@
         const dictionaries = %STARTUP_TRANSLATIONS%;
         const firstLaunch = window.electron?.initialization?.firstLaunch === true;
         const migration = window.electron?.initialization?.route === 'migration';
+        const upgrade = window.electron?.initialization?.route === 'upgrade';
         const entryAt = window.electron?.initialization?.entryStartedAt;
         if (Number.isFinite(entryAt)) document.documentElement.setAttribute('data-startup-entry-started-at', String(entryAt));
         const template = document.getElementById(firstLaunch ? 'first-launch-document-template' : 'startup-document-template');
@@ -36,15 +37,21 @@
         document.documentElement.lang = language;
         const copy = dictionaries[language];
         const startup = document.getElementById('startup-document');
-        if (migration) {
-          startup.dataset.startupView = 'migration';
-          for (const element of startup.querySelectorAll('[data-migration-only],[data-migration-history]')) element.hidden = false;
+        if (migration || upgrade) {
+          startup.dataset.startupView = migration ? 'migration' : 'upgrade';
+          for (const element of startup.querySelectorAll(migration
+            ? '[data-migration-only],[data-migration-history]' : '[data-upgrade-only]')) element.hidden = false;
           const list = startup.querySelector('nav ol');
           [...list.children].filter(item => !item.hidden).forEach((item, index) => item.firstElementChild.textContent = String(index + 1).padStart(2, '0'));
           const caption = startup.querySelector('[data-startup-copy="initializationWelcome"]');
-          caption.dataset.startupCopy = 'initializationUpgradeWelcome';
-          startup.querySelector('h1').dataset.startupCopy = 'initializationUpgradeTitle';
-          document.getElementById('startup-document-hint').dataset.startupCopy = 'initializationUpgradeDescription';
+          caption.dataset.startupCopy = migration ? 'initializationUpgradeWelcome' : 'initializationNormalUpgradeWelcome';
+          startup.querySelector('h1').dataset.startupCopy = migration ? 'initializationUpgradeTitle' : 'initializationNormalUpgradeTitle';
+          document.getElementById('startup-document-hint').dataset.startupCopy = migration ? 'initializationUpgradeDescription' : 'initializationNormalUpgradeDescription';
+          if (upgrade) {
+            startup.querySelector('[data-startup-copy="initializationUserData"]').dataset.startupCopy = 'initializationRetainedData';
+            document.getElementById('startup-operation').dataset.startupCopy = 'initializationActivity_nativeInspect';
+            document.getElementById('startup-operation-detail').dataset.startupCopy = 'initializationActivity_nativeInspectDescription';
+          }
         }
         %STARTUP_MOTION_SCRIPT%
         startup.querySelectorAll('[data-startup-copy]').forEach(element => {
@@ -79,7 +86,7 @@
               activity = startup.dataset.activity;
               activityStartedAt = clock;
             }
-            const key = (firstLaunch ? 'initializationRenderer_' : 'startupRenderer_') + activity;
+            const key = (firstLaunch && !upgrade ? 'initializationRenderer_' : 'startupRenderer_') + activity;
             document.getElementById('startup-operation').textContent = copy[key];
             document.getElementById('startup-operation-detail').textContent = copy[key + 'Description'];
           }
@@ -90,7 +97,7 @@
           hint.dataset.waiting = String(!failed && waiting >= 30);
           hint.textContent = copy[waiting >= 30 && !failed
             ? (firstLaunch ? 'initialization' : 'startup') + (waiting >= 90 ? 'ExtendedWait' : 'LongWait')
-            : migration ? 'initializationUpgradeDescription' : firstLaunch ? 'firstLaunchDescription' : 'startupContinue'];
+            : migration ? 'initializationUpgradeDescription' : upgrade ? 'initializationNormalUpgradeDescription' : firstLaunch ? 'firstLaunchDescription' : 'startupContinue'];
         }, 1000);
       })();
     </script>

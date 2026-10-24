@@ -274,6 +274,7 @@ async function readChunkedHistoryMessage(
   sessionKey: string,
   messageId: string,
   isCurrent: () => boolean,
+  sessionId?: string | null,
 ): Promise<unknown | null> {
   let cursor = 0;
   let transferId: string | undefined;
@@ -288,6 +289,7 @@ async function readChunkedHistoryMessage(
       transferId?: string;
     }>('runtimeServices.historyMessage', {
       sessionKey,
+      ...(sessionId ? { sessionId } : {}),
       messageId,
       cursor,
       maxChars: HISTORY_MESSAGE_CHUNK_CHARS,
@@ -312,11 +314,13 @@ export async function readCompleteHistoryMessage(
   messageId: string,
   isCurrent: () => boolean,
   allowSourceFallback = true,
+  sessionId?: string | null,
 ): Promise<unknown | null> {
   let native: { ok?: boolean; message?: unknown; unavailableReason?: string } | undefined;
   try {
     native = await client.request('chat.message.get', {
       sessionKey,
+      ...(sessionId ? { sessionId } : {}),
       messageId,
       maxChars: CHAT_MESSAGE_GET_MAX_CHARS,
     });
@@ -325,7 +329,7 @@ export async function readCompleteHistoryMessage(
     // to return its explicit `oversized` result. The bounded bridge is also the
     // recovery path for that transport failure.
     return allowSourceFallback
-      ? readChunkedHistoryMessage(client, sessionKey, messageId, isCurrent)
+      ? readChunkedHistoryMessage(client, sessionKey, messageId, isCurrent, sessionId)
       : null;
   }
   if (!isCurrent()) return null;
@@ -334,7 +338,7 @@ export async function readCompleteHistoryMessage(
   }
   if (native?.unavailableReason !== 'oversized' && native?.ok !== true) return null;
   return allowSourceFallback
-    ? readChunkedHistoryMessage(client, sessionKey, messageId, isCurrent)
+    ? readChunkedHistoryMessage(client, sessionKey, messageId, isCurrent, sessionId)
     : null;
 }
 
@@ -343,6 +347,7 @@ export async function hydrateTruncatedHistoryMessages(
   messages: unknown[],
   sessionKey: string,
   isCurrent: () => boolean = () => true,
+  sessionId?: string | null,
 ): Promise<unknown[]> {
   if (!isCurrent()) return messages;
   const candidates = new Map<string, number[]>();
@@ -394,6 +399,7 @@ export async function hydrateTruncatedHistoryMessages(
               // display policy. It cannot safely replace a main projection
               // while its separately admitted commentary siblings remain.
               !commentarySourceIds.has(messageId),
+              sessionId,
             );
             if (fullMessage === null) continue;
             const firstIndex = indices[0];

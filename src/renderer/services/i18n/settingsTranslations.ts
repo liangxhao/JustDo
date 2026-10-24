@@ -75,6 +75,7 @@ export const settingsTranslations = {
     worktreeRemoveConfirm: '保存快照并移除这个 Worktree？',
     worktreeRemoveFailed: '未能移除这个 Worktree。',
     worktreeClean: '清理闲置 Worktree',
+    worktreeCleanupUnconfirmed: '上次 Worktree 清理结果尚未确认，请检查原任务状态。',
     settingsDescription_security: '管理沙箱与执行隔离设置。',
     settingsDescription_browser: '管理浏览器连接、扩展、浏览记录与下载。',
     computerControlTitle: '电脑操控',
@@ -210,7 +211,8 @@ export const settingsTranslations = {
     voiceModelLoadFailed: '无法读取本地模型状态，请重试。',
     speechExtensionModelSettings: '模型设置',
     speechExtensionModelNotReady: '默认模型未就绪，扩展暂不可用。点击下载或选择模型。',
-    speechExtensionModelHelp: '为此扩展单独选择本地模型。模型文件与语音设置共享，选择不会影响麦克风、朗读或扩展开关。',
+    speechExtensionModelHelp:
+      '为此扩展单独选择本地模型。模型文件与语音设置共享，选择不会影响麦克风、朗读或扩展开关。',
     speechExtensionSaveFailed: '模型设置未能保存或应用，请重试。',
     voiceModelReady: '本地模型已就绪',
     voiceModelNotInstalled: '模型尚未下载',
@@ -430,8 +432,7 @@ export const settingsTranslations = {
     agentCliSessionGroup: 'CLI',
     agentCliSessionReadOnly:
       '此会话通过本地 CLI 创建，仅供查看。请在发起会话的命令行或客户端中继续或停止任务。',
-    agentCliDescription:
-      '用于命令行任务和通过命令行连接的客户端。',
+    agentCliDescription: '用于命令行任务和通过命令行连接的客户端。',
     agentCliStatusFailed: '无法更新 CLI 状态，请稍后重试。',
     agentCliCopyFailed: '复制失败，请重试。',
     agentCliLoading: '正在读取状态…',
@@ -466,8 +467,10 @@ export const settingsTranslations = {
     appServerWebSocketCopyConfig: '复制 WebSocket 配置',
     appServerWebSocketCopied: '已复制 WebSocket 配置',
     appServerWebSocketCopyFailed: '无法复制连接配置，请重新检测后重试。',
-    appServerWebSocketAuthHint: '配置包含 Bearer 鉴权令牌，仅供本机连接。应用重启后请重新复制配置。',
-    applicationConnectionExamplesDescription: '在客户端中填写下方各项。此示例使用 Codex app-server 协议。',
+    appServerWebSocketAuthHint:
+      '配置包含 Bearer 鉴权令牌，仅供本机连接。应用重启后请重新复制配置。',
+    applicationConnectionExamplesDescription:
+      '在客户端中填写下方各项。此示例使用 Codex app-server 协议。',
     applicationConnectionExampleSummary: '接入示例：Multica',
     applicationConnectionSetupRuntime: '在 Multica 中新增运行时，基础协议选择 codex。',
     applicationConnectionSetupValues: '填写下方配置并保存。',
@@ -1034,6 +1037,8 @@ export const settingsTranslations = {
     worktreeRemoveConfirm: 'Snapshot and remove this worktree?',
     worktreeRemoveFailed: 'Could not remove this worktree.',
     worktreeClean: 'Clean up idle worktrees',
+    worktreeCleanupUnconfirmed:
+      'The previous Worktree cleanup is unconfirmed. Check the original task status.',
     settingsDescription_security: 'Manage sandbox and execution isolation settings.',
     settingsDescription_browser: 'Manage browser connections, extensions, history and downloads.',
     computerControlTitle: 'Computer control',
@@ -1184,8 +1189,10 @@ export const settingsTranslations = {
     voiceModelChecking: 'Checking local model…',
     voiceModelLoadFailed: 'Unable to load local model status. Please retry.',
     speechExtensionModelSettings: 'Model settings',
-    speechExtensionModelNotReady: 'The default model is not ready. Click to download or select a model before using this extension.',
-    speechExtensionModelHelp: 'Choose a local model for this extension. Downloads are shared with Voice settings; microphone, reply reading and extension switches stay independent.',
+    speechExtensionModelNotReady:
+      'The default model is not ready. Click to download or select a model before using this extension.',
+    speechExtensionModelHelp:
+      'Choose a local model for this extension. Downloads are shared with Voice settings; microphone, reply reading and extension switches stay independent.',
     speechExtensionSaveFailed: 'Unable to save or apply the model settings. Please retry.',
     voiceModelReady: 'Local model ready',
     voiceModelNotInstalled: 'Model not downloaded',
@@ -1386,8 +1393,10 @@ export const settingsTranslations = {
       'Share enabled stdio MCP servers; HTTP and SSE servers are not currently included.',
     externalAgentsFullAccessConfirm:
       'Full access lets external agents modify files and run commands. Enable it only when you trust the agent and its adapter. Continue?',
-    externalAgentsClaudeDescription: 'Delegate tasks to locally installed Claude. Separate installation required.',
-    externalAgentsCodexDescription: 'Delegate tasks to locally installed Codex. Separate installation required.',
+    externalAgentsClaudeDescription:
+      'Delegate tasks to locally installed Claude. Separate installation required.',
+    externalAgentsCodexDescription:
+      'Delegate tasks to locally installed Codex. Separate installation required.',
     externalAgentsOpenCodeDescription:
       'Allow the main Agent to delegate suitable tasks to OpenCode.',
     externalAgentsDeepSeekHarnessDescription:
@@ -1417,8 +1426,7 @@ export const settingsTranslations = {
     agentCliSessionGroup: 'CLI',
     agentCliSessionReadOnly:
       'This session was started through the local CLI and is read-only here. Continue or stop the task in the originating terminal or client.',
-    agentCliDescription:
-      'For command-line tasks and clients launched through this command.',
+    agentCliDescription: 'For command-line tasks and clients launched through this command.',
     agentCliStatusFailed: 'Unable to update CLI status. Please try again.',
     agentCliCopyFailed: 'Copy failed. Please try again.',
     agentCliLoading: 'Checking status…',
@@ -1431,19 +1439,22 @@ export const settingsTranslations = {
     agentCliCopyCommand: 'Copy path',
     agentCliCommandCopied: 'Path copied',
     agentCliCommonCommands: 'Common commands',
-    agentCliBackgroundHint: 'Keep the app running or in the tray while in use. App permissions still apply.',
+    agentCliBackgroundHint:
+      'Keep the app running or in the tray while in use. App permissions still apply.',
     agentCliCopyConfig: 'Copy ACP configuration',
     agentCliCopied: 'ACP configuration copied',
     agentProtocolCodexTitle: 'Codex app-server',
     agentProtocolCodexDescription:
       'Supports text, model lists, thread creation and resume, streaming updates, and interrupts. Choose a connection below.',
     agentProtocolStdioTitle: 'stdio (command line)',
-    agentProtocolStdioDescription: 'The client launches the command and connects through standard input and output.',
+    agentProtocolStdioDescription:
+      'The client launches the command and connects through standard input and output.',
     agentProtocolArguments: 'Launch arguments',
     agentProtocolCodexCopyConfig: 'Copy stdio configuration',
     agentProtocolCodexCopied: 'stdio configuration copied',
     appServerWebSocketTitle: 'WebSocket',
-    appServerWebSocketDescription: 'Local tools and native clients can connect directly to the app.',
+    appServerWebSocketDescription:
+      'Local tools and native clients can connect directly to the app.',
     appServerWebSocketAddress: 'Connection address',
     appServerWebSocketLoading: 'Checking…',
     appServerWebSocketReady: 'Service is ready',
@@ -1452,14 +1463,18 @@ export const settingsTranslations = {
     appServerWebSocketStatusFailed: 'Unable to read WebSocket status. Please recheck.',
     appServerWebSocketCopyConfig: 'Copy WebSocket configuration',
     appServerWebSocketCopied: 'WebSocket configuration copied',
-    appServerWebSocketCopyFailed: 'Unable to copy the connection configuration. Recheck and try again.',
-    appServerWebSocketAuthHint: 'The configuration includes a Bearer token for local connections only. Copy it again after restarting the app.',
+    appServerWebSocketCopyFailed:
+      'Unable to copy the connection configuration. Recheck and try again.',
+    appServerWebSocketAuthHint:
+      'The configuration includes a Bearer token for local connections only. Copy it again after restarting the app.',
     applicationConnectionExamplesDescription:
       'Enter the values below in your client. This example uses Codex app-server.',
     applicationConnectionExampleSummary: 'Connection example: Multica',
-    applicationConnectionSetupRuntime: 'Add a runtime in Multica and select codex as its Base protocol.',
+    applicationConnectionSetupRuntime:
+      'Add a runtime in Multica and select codex as its Base protocol.',
     applicationConnectionSetupValues: 'Enter the settings below and save.',
-    applicationConnectionSetupAgent: 'Select this runtime for your Agent, then create a workspace and start a conversation.',
+    applicationConnectionSetupAgent:
+      'Select this runtime for your Agent, then create a workspace and start a conversation.',
     applicationConnectionProtocol: 'Base protocol',
     applicationConnectionName: 'Display name',
     applicationConnectionDescription: 'Description',

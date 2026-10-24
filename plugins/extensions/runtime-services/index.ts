@@ -381,7 +381,9 @@ const plugin = {
         if (
           !isRecord(params) ||
           typeof params.sessionKey !== 'string' ||
-          typeof params.messageId !== 'string'
+          typeof params.messageId !== 'string' ||
+          (params.sessionId !== undefined &&
+            (typeof params.sessionId !== 'string' || !params.sessionId.trim()))
         ) {
           respond(false, undefined, {
             code: 'INVALID_REQUEST',
@@ -412,7 +414,10 @@ const plugin = {
           return;
         }
         const entry = getSessionEntry({ sessionKey, readConsistency: 'latest' });
-        if (!entry?.sessionId) {
+        if (
+          !entry?.sessionId ||
+          (params.sessionId !== undefined && params.sessionId !== entry.sessionId)
+        ) {
           respond(true, { ok: false, unavailableReason: 'not_found' });
           return;
         }

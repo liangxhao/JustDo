@@ -191,7 +191,7 @@ describe('readable diagnostic archive overview', () => {
     input.runtimeInfo = {
       scope: 'collection_environment',
       collectedAt: at,
-      wireVersion: 'v2026.10.4',
+      wireVersion: 'v2026.10.6',
       gateway: { status: 'connected', version: '2026.10.4' },
       installedArtifact: { version: '2026.10.5' },
     };

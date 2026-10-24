@@ -12,7 +12,6 @@ vi.mock('openclaw/plugin-sdk/string-coerce-runtime', () => ({
   normalizeLowercaseStringOrEmpty: (value: string) => value.trim().toLowerCase(),
   isRecord: (value: unknown) => Boolean(value) && typeof value === 'object' && !Array.isArray(value),
 }));
-vi.mock('openclaw/plugin-sdk/json-store', () => ({ readJsonFileWithFallback: vi.fn() }));
 
 import { OPENCLAW_CODEX_CONFIG_ARG } from '../src/codex-adapter.js';
 import { prepareAcpxCodexAuthConfig } from '../src/codex-auth-bridge.js';

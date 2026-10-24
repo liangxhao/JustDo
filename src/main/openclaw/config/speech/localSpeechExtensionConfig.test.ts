@@ -34,7 +34,7 @@ describe('extension speech model projection', () => {
   it('makes the prepared local tool available even when reply reading is off', () => {
     const existing = { enabled: false, auto: 'off', providers: { 'tts-local-cli': { command: 'voice.exe' } } };
     expect(mergeLocalSpeechExtensionTtsConfig(existing, local)).toMatchObject({
-      enabled: true, provider: 'tts-local-cli', providers: local.providers,
+      auto: 'off', provider: 'tts-local-cli', providers: local.providers,
     });
     expect(existing.providers['tts-local-cli'].command).toBe('voice.exe');
   });
@@ -43,7 +43,7 @@ describe('extension speech model projection', () => {
     expect(mergeLocalSpeechExtensionTtsConfig({
       enabled, provider: 'openai', auto: 'off', providers: { openai: { model: 'online' } },
     }, local)).toEqual({
-      enabled: true, provider: 'openai', auto: 'off',
+      provider: 'openai', auto: 'off',
       providers: { openai: { model: 'online' }, ...local.providers },
     });
   });
@@ -51,7 +51,7 @@ describe('extension speech model projection', () => {
   it('removes stale local parameters when the independently selected model is missing', () => {
     expect(mergeLocalSpeechExtensionTtsConfig({
       enabled: true, provider: 'tts-local-cli', providers: { ...local.providers, openai: {} },
-    }, null)).toEqual({ enabled: false, provider: 'tts-local-cli', providers: { openai: {} } });
+    }, null)).toEqual({ auto: 'off', provider: 'tts-local-cli', providers: { openai: {} } });
     expect(mergeLocalSpeechExtensionTtsConfig(undefined, null)).toBeNull();
   });
 });

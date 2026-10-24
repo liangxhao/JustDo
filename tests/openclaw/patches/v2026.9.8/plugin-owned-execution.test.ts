@@ -6,7 +6,11 @@ import vm from 'node:vm';
 import { describe, expect, it, vi } from 'vitest';
 
 const patch = require('../../../../scripts/patches/v2026.9.8/034-plugin-owned-execution.cjs');
-const pristine = process.env.JUSTDO_EXECUTION_PRISTINE_DIR;
+const pristineCandidate = process.env.JUSTDO_EXECUTION_PRISTINE_DIR;
+// A shared upgrade fixture must never be interpreted as a historical patch owner.
+const pristine = pristineCandidate && JSON.parse(
+  fs.readFileSync(path.join(pristineCandidate, 'package.json'), 'utf8'),
+).version === '2026.9.8' ? pristineCandidate : undefined;
 
 function harness() {
   const runs = new Map<string, any>();

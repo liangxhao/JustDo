@@ -6,16 +6,21 @@ import vm from 'node:vm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import developmentParent from '../../src/shared/app/developmentParent.json';
+import { SHUTDOWN_BUDGET_MS } from '../../src/shared/app/shutdownPolicy';
 
-const { stopElectron } = require('../../scripts/electron/electron-shutdown.cjs') as {
+const { stopElectron, observeElectron, ELECTRON_SHUTDOWN_GRACE_MS } = require('../../scripts/electron/electron-shutdown.cjs') as {
   stopElectron: (processChild: ReturnType<typeof child>, graceMs?: number) => Promise<void>;
+  observeElectron: (processChild: ReturnType<typeof child>) => void;
+  ELECTRON_SHUTDOWN_GRACE_MS: number;
 };
 
 function child() {
-  return Object.assign(new EventEmitter(), {
+  const value = Object.assign(new EventEmitter(), {
     pid: 1234, connected: true, exitCode: null as number | null,
     signalCode: null as string | null, send: vi.fn(), kill: vi.fn(),
   });
+  observeElectron(value);
+  return value;
 }
 
 beforeEach(() => {
@@ -25,12 +30,15 @@ beforeEach(() => {
 afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
 
 describe('owned development process shutdown', () => {
+  it('uses the same derived outer budget as Main', () => {
+    expect(ELECTRON_SHUTDOWN_GRACE_MS).toBe(SHUTDOWN_BUDGET_MS.launcherGrace);
+  });
   it('does not force-terminate an application adopted by a newer terminal', async () => {
     const electron = child();
     const stopped = stopElectron(electron);
     electron.emit('message', developmentParent.released);
     await stopped;
-    await vi.advanceTimersByTimeAsync(55_000);
+    await vi.advanceTimersByTimeAsync(SHUTDOWN_BUDGET_MS.launcherGrace + 15_000);
     expect(electron.kill).not.toHaveBeenCalled();
     expect(electron.listenerCount('message')).toBe(0);
     expect(vi.getTimerCount()).toBe(0);
@@ -52,7 +60,7 @@ describe('owned development process shutdown', () => {
     const electron = child();
     electron.send.mockImplementation(() => { throw new Error('channel closed'); });
     const stopped = stopElectron(electron);
-    await vi.advanceTimersByTimeAsync(49_999);
+    await vi.advanceTimersByTimeAsync(SHUTDOWN_BUDGET_MS.launcherGrace - 1);
     expect(electron.kill).not.toHaveBeenCalled();
     electron.emit('close', 0);
     await stopped;
@@ -63,8 +71,9 @@ describe('owned development process shutdown', () => {
     const electron = child();
     electron.kill.mockImplementation(() => electron.emit('close', null));
     const stopped = stopElectron(electron);
-    await vi.advanceTimersByTimeAsync(50_000);
-    await stopped;
+    const rejected = expect(stopped).rejects.toThrow('did not close cleanly');
+    await vi.advanceTimersByTimeAsync(SHUTDOWN_BUDGET_MS.launcherGrace);
+    await rejected;
     expect(electron.kill).toHaveBeenCalledExactlyOnceWith('SIGKILL');
     expect(vi.getTimerCount()).toBe(0);
   });
@@ -72,10 +81,80 @@ describe('owned development process shutdown', () => {
   it('also bounds waiting if a forced process never reports close', async () => {
     const electron = child();
     const stopped = stopElectron(electron);
-    await vi.advanceTimersByTimeAsync(55_000);
-    await stopped;
+    const rejected = expect(stopped).rejects.toThrow('retirement could not be confirmed');
+    await vi.advanceTimersByTimeAsync(SHUTDOWN_BUDGET_MS.launcherGrace + SHUTDOWN_BUDGET_MS.forceExitObservation);
+    await rejected;
     expect(electron.kill).toHaveBeenCalledOnce();
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('shares one child promise and never renews the outer shutdown deadline', async () => {
+    const electron = child();
+    const first = stopElectron(electron);
+    const rejected = expect(first).rejects.toThrow();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(stopElectron(electron)).toBe(first);
+    await vi.advanceTimersByTimeAsync(SHUTDOWN_BUDGET_MS.launcherGrace - 60_000);
+    expect(electron.kill).toHaveBeenCalledOnce();
+    electron.emit('close', null, 'SIGKILL');
+    await rejected;
+  });
+
+  it('waits for stdio close after exit without signalling a retired PID', async () => {
+    const electron = child();
+    const stopped = stopElectron(electron);
+    const rejected = expect(stopped).rejects.toThrow();
+    electron.exitCode = 0;
+    await vi.advanceTimersByTimeAsync(SHUTDOWN_BUDGET_MS.launcherGrace);
+    expect(electron.kill).not.toHaveBeenCalled();
+    electron.emit('close', 0, null);
+    await rejected;
+  });
+
+  it('retains a failed result after an unconfirmed child closes late', async () => {
+    const electron = child();
+    const stopped = stopElectron(electron);
+    const rejected = expect(stopped).rejects.toThrow();
+    await vi.advanceTimersByTimeAsync(SHUTDOWN_BUDGET_MS.launcherGrace + SHUTDOWN_BUDGET_MS.forceExitObservation);
+    await rejected;
+    electron.emit('close', 0, null);
+    expect(stopElectron(electron)).toBe(stopped);
+    await expect(stopped).rejects.toThrow();
+  });
+
+  it('a handoff arriving after forced termination cannot wash the failure', async () => {
+    const electron = child();
+    const rejected = expect(stopElectron(electron)).rejects.toThrow('did not close cleanly');
+    await vi.advanceTimersByTimeAsync(SHUTDOWN_BUDGET_MS.launcherGrace);
+    electron.emit('message', developmentParent.released);
+    await rejected;
+    electron.emit('close', 0, null);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('the direct launcher does not let close(0) overwrite a forced shutdown failure', async () => {
+    const electron = child();
+    electron.kill.mockImplementation(() => electron.emit('close', 0, null));
+    const host = Object.assign(new EventEmitter(), {
+      env: {}, argv: ['node', 'launch-electron.cjs'], exit: vi.fn(),
+    });
+    const entry = { exports: {} };
+    const modules: Record<string, unknown> = {
+      child_process: { spawn: () => electron }, path, electron: 'electron.exe',
+      './electron-shutdown.cjs': { stopElectron, observeElectron },
+      '../../package.json': { devServer: { port: 43127 } },
+    };
+    const requireStub = Object.assign((name: string) => {
+      if (!(name in modules)) throw new Error(`Unexpected module: ${name}`);
+      return modules[name];
+    }, { main: entry });
+    vm.runInNewContext(fs.readFileSync('scripts/electron/launch-electron.cjs', 'utf8'), {
+      require: requireStub, module: entry, process: host,
+      console: { log: vi.fn(), error: vi.fn() }, __dirname: path.resolve('scripts/electron'),
+    });
+    host.emit('SIGINT');
+    await vi.advanceTimersByTimeAsync(SHUTDOWN_BUDGET_MS.launcherGrace);
+    expect(host.exit).toHaveBeenCalledExactlyOnceWith(1);
   });
 });
 

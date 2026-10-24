@@ -734,7 +734,13 @@ export async function normalizeHistoryPage(
     this.state.transcript.historyGeneration === historyGeneration &&
     this.historyPagingGeneration === pagingGeneration;
   const hydratedFullMessages = client
-    ? await hydrateTruncatedHistoryMessages(client, projected, sessionKey, isCurrent)
+    ? await hydrateTruncatedHistoryMessages(
+        client,
+        projected,
+        sessionKey,
+        isCurrent,
+        this.state.currentSessionId,
+      )
     : projected;
   if (!isCurrent()) return projected;
   const normalized = await hydrateGatewayHistoryForDisplay(hydratedFullMessages, {
@@ -1056,6 +1062,7 @@ export async function loadHistory(
       projectedMessages,
       sessionKey,
       requestStillCurrent,
+      authoritativeSessionId,
     );
     if (!requestStillCurrent()) return false;
     const hydratedMessages = await hydrateGatewayHistoryForDisplay(hydratedFullMessages, {

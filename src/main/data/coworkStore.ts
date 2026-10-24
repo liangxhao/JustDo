@@ -54,7 +54,7 @@ import {
 import { isTeamDiscussionHoldingSessionKey } from '../openclaw/sessions/openclawSessionKeys';
 
 // Default working directory for new users
-const getDefaultWorkingDirectory = (): string => {
+export const getDefaultWorkingDirectory = (): string => {
   const developmentWorkspace =
     process.env.NODE_ENV === 'development' ? process.env.JUSTDO_DEV_WORKSPACE_DIR : undefined;
   if (developmentWorkspace && path.isAbsolute(developmentWorkspace)) return developmentWorkspace;

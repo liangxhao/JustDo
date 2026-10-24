@@ -90,7 +90,7 @@ it("runs the registered provider through the HTTP transport and back to host dec
   });
 });
 
-it.each([413, 422])(
+it.each([400, 413, 422])(
   "returns ordinary unsupported input for HTTP %s through registration, without retry or private details",
   async (status) => {
     const fetch = vi.fn(async () => new Response("synthetic-key: synthetic only", { status }));

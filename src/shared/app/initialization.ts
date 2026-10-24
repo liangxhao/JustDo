@@ -12,6 +12,7 @@ export const AppInitializationIpc = {
   GetState: 'app:initialization:getState',
   Changed: 'app:initialization:changed',
   Relaunch: 'app:initialization:relaunch',
+  ConfirmDowngrade: 'app:initialization:confirmDowngrade',
 } as const;
 
 export const INITIALIZATION_WINDOW_ARGUMENT = '--initialization-window';
@@ -48,6 +49,7 @@ export const AppInitializationPhase = {
 } as const;
 
 export const AppInitializationStep = {
+  DatabaseUpgrade: 'databaseUpgrade',
   Backup: 'backup',
   History: 'history',
   UserData: 'userData',
@@ -60,6 +62,10 @@ export type AppInitializationStep =
   (typeof AppInitializationStep)[keyof typeof AppInitializationStep];
 
 export const AppInitializationActivity = {
+  NativeInspect: 'nativeInspect',
+  NativeBackup: 'nativeBackup',
+  NativeUpgrade: 'nativeUpgrade',
+  NativeVerify: 'nativeVerify',
   HistoryBackup: 'historyBackup',
   HistoryImport: 'historyImport',
   HistoryMetadata: 'historyMetadata',
@@ -80,6 +86,12 @@ export const AppInitializationActivity = {
 export type AppInitializationActivity =
   (typeof AppInitializationActivity)[keyof typeof AppInitializationActivity];
 
+export type StartupDowngradeConfirmation = {
+  requestId: string;
+  source: { appVersion: string; runtimeVersion: string };
+  target: { appVersion: string; runtimeVersion: string };
+};
+
 export type AppInitializationState = {
   phase: (typeof AppInitializationPhase)[keyof typeof AppInitializationPhase];
   step: (typeof AppInitializationStep)[keyof typeof AppInitializationStep];
@@ -97,4 +109,5 @@ export type AppInitializationState = {
   updatedAt: number;
   error?: string;
   failure?: StartupFailure;
+  downgradeConfirmation?: StartupDowngradeConfirmation;
 };

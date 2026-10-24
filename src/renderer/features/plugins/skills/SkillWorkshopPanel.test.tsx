@@ -6,273 +6,227 @@ import { i18nService } from '@/services/i18n';
 
 import SkillWorkshopPanel from './SkillWorkshopPanel';
 
-const revision = 'a'.repeat(64);
-const proposal = {
-  id: 'draft-1',
-  kind: 'update',
-  status: 'pending',
-  title: 'Release checklist',
-  description: 'Repeated release procedure',
-  skillName: 'release',
-  skillKey: 'release',
-  createdAt: '',
-  updatedAt: '',
-  scanState: 'clean',
-  revisionHash: revision,
+const inventory = {
+  agentId: 'main',
+  mode: 'off',
+  root: '/native/workshop',
+  skills: [
+    {
+      name: 'release',
+      description: 'Release checklist',
+      updatedAtMs: 10,
+      sizeBytes: 40,
+      files: ['SKILL.md', 'references/check.md'],
+      useCount: 0,
+    },
+  ],
+  archived: [
+    {
+      name: 'release',
+      live: true,
+      versions: [{ id: 'before-patch', action: 'patch', createdAtMs: 9 }],
+    },
+    {
+      name: 'retired',
+      live: false,
+      versions: [{ id: 'before-archive', action: 'archive', createdAtMs: 8 }],
+    },
+  ],
 };
-const inspection = {
-  record: {
-    ...proposal,
-    target: { skillName: 'release' },
-    origin: { agentId: 'main' },
-    scan: { state: 'clean', findings: [] },
-  },
-  revisionHash: revision,
-  content: 'Complete proposed instructions\nFinal proposed line',
-  currentContent: 'Complete current instructions\nFinal current line',
-  supportFiles: [{ path: 'scripts/check.py', content: 'complete support contents' }],
+const change = {
+  id: 'c1',
+  agentId: 'main',
+  skillName: 'release',
+  action: 'patch',
+  actor: 'agent',
+  summary: 'Improved',
+  versionId: 'before-patch',
+  createdAtMs: 9,
 };
 const success = (value: unknown) => ({ success: true, value });
-
 function setup() {
   const api = {
-    list: vi.fn().mockResolvedValue(success([proposal])),
-    inspect: vi.fn().mockResolvedValue(success(inspection)),
-    decide: vi.fn().mockResolvedValue(success(undefined)),
+    list: vi.fn().mockResolvedValue(success(inventory)),
+    changes: vi.fn().mockResolvedValue(success([change])),
+    read: vi.fn().mockImplementation(async (input: { name: string; filePath: string }) =>
+      success({
+        name: input.name,
+        filePath: input.filePath,
+        content:
+          input.filePath === 'SKILL.md'
+            ? 'Complete instructions\nLast instruction'
+            : 'Full support content',
+        files: ['SKILL.md', 'references/check.md'],
+      }),
+    ),
+    archive: vi.fn().mockResolvedValue(success({ ...change, actor: 'user', action: 'archive' })),
+    restore: vi
+      .fn()
+      .mockResolvedValue(
+        success({ ...change, actor: 'user', action: 'restore', versionId: 'backup-current' }),
+      ),
   };
-  Object.defineProperty(window, 'electron', {
-    configurable: true,
-    value: { skillWorkshop: api },
-  });
+  Object.defineProperty(window, 'electron', { configurable: true, value: { skillWorkshop: api } });
   const onSkillsChanged = vi.fn().mockResolvedValue(undefined);
   const mount = () => {
     const result = render(<SkillWorkshopPanel onSkillsChanged={onSkillsChanged} />);
-    fireEvent.click(screen.getByRole('button', { name: 'Skill proposals' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Skill Workshop' }));
     return result;
   };
-  return { api, onSkillsChanged, mount };
+  return { api, mount, onSkillsChanged };
 }
-
 beforeEach(() => {
   vi.clearAllMocks();
   i18nService.setLanguage('en', { persist: false });
 });
 afterEach(cleanup);
-
-test('keeps pending decisions open and prevents duplicate writes', async () => {
+const current = async () =>
+  fireEvent.click(await screen.findByRole('button', { name: /release.*Release checklist/ }));
+test('loads only when open, shows immediate native semantics and distinguishes live history', async () => {
   const fixture = setup();
-  let finish!: (value: unknown) => void;
-  fixture.api.decide.mockReturnValue(
-    new Promise(resolve => {
-      finish = resolve;
+  render(<SkillWorkshopPanel onSkillsChanged={fixture.onSkillsChanged} />);
+  expect(fixture.api.list).not.toHaveBeenCalled();
+  const launcher = screen.getByRole('button', { name: 'Skill Workshop' });
+  fireEvent.click(launcher);
+  await screen.findByText('Current skills');
+  expect(await screen.findByText(/release · Live copy available/)).toBeTruthy();
+  expect(screen.getByText(/retired · Archived/)).toBeTruthy();
+  expect(screen.getByText(/Skill changes take effect immediately/)).toBeTruthy();
+  expect(screen.queryByText(/Approve and apply|Reject proposal/)).toBeNull();
+  fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
+  expect(screen.queryByRole('dialog')).toBeNull();
+  expect(document.activeElement).toBe(launcher);
+});
+test('reads complete live instructions and selected support file using native read', async () => {
+  const fixture = setup();
+  fixture.mount();
+  await current();
+  expect(await screen.findByText(/Last instruction/)).toBeTruthy();
+  fireEvent.change(screen.getByRole('combobox', { name: 'File' }), {
+    target: { value: 'references/check.md' },
+  });
+  expect(await screen.findByText('Full support content')).toBeTruthy();
+  expect(fixture.api.read).toHaveBeenLastCalledWith({
+    agentId: 'main',
+    name: 'release',
+    filePath: 'references/check.md',
+  });
+});
+test('restores an explicitly inspected version; returned backup is not reused as target', async () => {
+  const fixture = setup();
+  fixture.mount();
+  fireEvent.click(await screen.findByRole('button', { name: /before-patch$/ }));
+  await screen.findByText(/Last instruction/);
+  fireEvent.click(screen.getByRole('button', { name: 'Restore this version' }));
+  expect(fixture.api.restore).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole('button', { name: 'Confirm change' }));
+  await waitFor(() =>
+    expect(fixture.api.restore).toHaveBeenCalledExactlyOnceWith({
+      agentId: 'main',
+      name: 'release',
+      versionId: 'before-patch',
     }),
   );
+  await screen.findByText('The runtime confirmed the skill change.');
+  expect(fixture.onSkillsChanged).toHaveBeenCalledOnce();
+});
+test('archive confirmation submits once, retains dialog while pending and accepts optional reason', async () => {
+  const fixture = setup();
+  let finish!: (value: unknown) => void;
+  fixture.api.archive.mockImplementation(
+    () =>
+      new Promise(resolve => {
+        finish = resolve;
+      }),
+  );
   fixture.mount();
-  fireEvent.click(await screen.findByRole('button', { name: /Release checklist/ }));
-  const approve = await screen.findByRole('button', { name: 'Approve and apply' });
-  fireEvent.click(approve);
-  fireEvent.click(approve);
+  await current();
+  fireEvent.click(await screen.findByRole('button', { name: 'Archive skill' }));
+  fireEvent.change(screen.getByRole('textbox', { name: 'Archive reason (optional)' }), {
+    target: { value: 'Obsolete' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Confirm change' }));
   fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
   expect(screen.getByRole('dialog')).toBeTruthy();
   expect((screen.getByRole('button', { name: 'Close' }) as HTMLButtonElement).disabled).toBe(true);
-  expect(fixture.api.decide).toHaveBeenCalledOnce();
-  await act(async () => finish(success(undefined)));
+  expect(fixture.api.archive).toHaveBeenCalledExactlyOnceWith({
+    agentId: 'main',
+    name: 'release',
+    reason: 'Obsolete',
+  });
+  await act(async () => finish(success({ ...change, action: 'archive', actor: 'user' })));
   await waitFor(() =>
     expect((screen.getByRole('button', { name: 'Close' }) as HTMLButtonElement).disabled).toBe(
       false,
     ),
   );
 });
-
-test('shows full before/after instructions and support content, and binds approval to the reviewed revision', async () => {
+test('uncertain write clears selection, reconciles read-only and is never replayed on refresh', async () => {
   const fixture = setup();
+  fixture.api.archive.mockResolvedValue({
+    success: false,
+    error: 'skillWorkshopMutationUnconfirmed',
+  });
   fixture.mount();
-  await screen.findByRole('button', { name: /Release checklist/ });
-  fireEvent.click(screen.getByRole('button', { name: /Release checklist/ }));
-  expect(await screen.findByText(/Final proposed line/)).toBeTruthy();
-  expect(screen.getByText(/Final current line/)).toBeTruthy();
-  expect(screen.getByText('complete support contents')).toBeTruthy();
-  fireEvent.click(screen.getByRole('button', { name: 'Approve and apply' }));
-  await waitFor(() =>
-    expect(fixture.api.decide).toHaveBeenCalledWith({
-      agentId: 'main',
-      proposalId: 'draft-1',
-      expectedRevisionHash: revision,
-      action: 'apply',
-    }),
-  );
-  await waitFor(() => expect(fixture.onSkillsChanged).toHaveBeenCalledOnce());
-});
-
-test('clears the inspected revision after an uncertain write and never replays it on refresh', async () => {
-  const fixture = setup();
-  fixture.api.decide.mockResolvedValue({ success: false, error: 'timeout' });
-  fixture.mount();
-  await screen.findByRole('button', { name: /Release checklist/ });
-  fireEvent.click(screen.getByRole('button', { name: /Release checklist/ }));
-  fireEvent.click(await screen.findByRole('button', { name: 'Reject proposal' }));
+  await current();
+  fireEvent.click(await screen.findByRole('button', { name: 'Archive skill' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Confirm change' }));
   expect(await screen.findByRole('alert')).toHaveProperty(
     'textContent',
-    expect.stringContaining('timeout'),
+    expect.stringContaining('may have taken effect'),
   );
-  expect(screen.queryByRole('button', { name: 'Approve and apply' })).toBeNull();
-  await waitFor(() =>
-    expect((screen.getByRole('button', { name: 'Refresh' }) as HTMLButtonElement).disabled).toBe(
-      false,
-    ),
-  );
+  expect(screen.queryByRole('button', { name: 'Archive skill' })).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
   await waitFor(() => expect(fixture.api.list.mock.calls.length).toBeGreaterThan(2));
-  expect(fixture.api.decide).toHaveBeenCalledOnce();
+  expect(fixture.api.archive).toHaveBeenCalledOnce();
+  expect(fixture.api.restore).not.toHaveBeenCalled();
 });
-
-test('disables approval when current instructions cannot be compared', async () => {
+test('keeps a confirmed mutation distinct from a failed product-list refresh', async () => {
   const fixture = setup();
-  fixture.api.inspect.mockResolvedValue(
-    success({ ...inspection, currentContent: null, comparisonUnavailable: true }),
-  );
+  fixture.onSkillsChanged.mockRejectedValue(new Error('offline'));
   fixture.mount();
-  await screen.findByRole('button', { name: /Release checklist/ });
-  fireEvent.click(screen.getByRole('button', { name: /Release checklist/ }));
-  const approve = await screen.findByRole('button', { name: 'Approve and apply' });
-  expect((approve as HTMLButtonElement).disabled).toBe(true);
-});
-
-test('recovers proposal states on remount and releases panel polling on unmount', async () => {
-  const fixture = setup();
-  const first = fixture.mount();
-  await screen.findByRole('button', { name: /Release checklist/ });
-  const clear = vi.spyOn(window, 'clearInterval');
-  first.unmount();
-  expect(clear).toHaveBeenCalled();
-  fixture.api.list.mockResolvedValue(success([{ ...proposal, status: 'applied' }]));
-  fixture.mount();
-  await screen.findByRole('button', { name: /Release checklist/ });
-  await screen.findByRole('button', { name: /Release checklist\s*Applied/ });
-  expect(fixture.api.decide).not.toHaveBeenCalled();
-  clear.mockRestore();
-});
-
-test('loads only after opening and restores keyboard focus when closed', async () => {
-  const fixture = setup();
-  render(<SkillWorkshopPanel onSkillsChanged={fixture.onSkillsChanged} />);
-  expect(fixture.api.list).not.toHaveBeenCalled();
-  const launcher = screen.getByRole('button', { name: 'Skill proposals' });
-  fireEvent.click(launcher);
-  const dialog = screen.getByRole('dialog');
-  await screen.findByRole('button', { name: /Release checklist/ });
-  fireEvent.keyDown(dialog, { key: 'Escape' });
-  expect(screen.queryByRole('dialog')).toBeNull();
-  expect(document.activeElement).toBe(launcher);
-});
-
-test('clears the selected proposal when changing the status filter', async () => {
-  const fixture = setup();
-  fixture.mount();
-  await screen.findByRole('button', { name: /Release checklist/ });
-  fireEvent.click(screen.getByRole('button', { name: /Release checklist/ }));
-  await screen.findByRole('button', { name: 'Approve and apply' });
-  fireEvent.change(screen.getByRole('combobox'), { target: { value: 'applied' } });
-  expect(screen.queryByRole('button', { name: 'Approve and apply' })).toBeNull();
-  expect(fixture.api.decide).not.toHaveBeenCalled();
-});
-
-test('clears a transient read error after automatic recovery', async () => {
-  const fixture = setup();
-  fixture.api.list.mockResolvedValueOnce({ success: false, error: 'offline' });
-  fixture.mount();
+  await current();
+  fireEvent.click(await screen.findByRole('button', { name: 'Archive skill' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Confirm change' }));
+  await screen.findByText('The runtime confirmed the skill change.');
   expect(await screen.findByRole('alert')).toHaveProperty(
     'textContent',
-    expect.stringContaining('offline'),
+    expect.stringContaining('without repeating'),
   );
-  fireEvent.focus(window);
-  await screen.findByRole('button', { name: /Release checklist/ });
-  expect(screen.queryByRole('alert')).toBeNull();
+  expect(fixture.api.archive).toHaveBeenCalledOnce();
 });
-
-test.each(['status', 'revision', 'removed'] as const)(
-  'does not resurrect an inspection after a newer list changes its %s',
-  async change => {
-    const fixture = setup();
-    let finish!: (value: unknown) => void;
-    fixture.api.inspect.mockReturnValue(
+test('late read cannot resurrect a selection after a newer inventory refresh', async () => {
+  const fixture = setup();
+  let finish!: (value: unknown) => void;
+  fixture.api.read.mockImplementation(
+    () =>
       new Promise(resolve => {
         finish = resolve;
       }),
-    );
-    fixture.mount();
-    fireEvent.click(await screen.findByRole('button', { name: /Release checklist/ }));
-    fixture.api.list.mockResolvedValue(
-      success(
-        change === 'removed'
-          ? []
-          : [
-              {
-                ...proposal,
-                ...(change === 'status' ? { status: 'applied' } : { revisionHash: 'b'.repeat(64) }),
-              },
-            ],
-      ),
-    );
-    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
-    await waitFor(() =>
-      expect((screen.getByRole('button', { name: 'Refresh' }) as HTMLButtonElement).disabled).toBe(
-        false,
-      ),
-    );
-    await act(async () => finish(success(inspection)));
-    expect(screen.queryByRole('button', { name: 'Approve and apply' })).toBeNull();
-    expect(fixture.api.decide).not.toHaveBeenCalled();
-  },
-);
-
-test('keeps keyboard focus in the dialog when a decision removes the focused button', async () => {
-  const fixture = setup();
-  let finish!: (value: unknown) => void;
-  fixture.api.decide.mockReturnValue(
-    new Promise(resolve => {
-      finish = resolve;
-    }),
   );
   fixture.mount();
-  fireEvent.click(await screen.findByRole('button', { name: /Release checklist/ }));
-  const approve = await screen.findByRole('button', { name: 'Approve and apply' });
-  approve.focus();
-  fireEvent.click(approve);
-  expect(screen.getByRole('dialog').contains(document.activeElement)).toBe(true);
-  fireEvent.keyDown(document.activeElement!, { key: 'Tab' });
-  expect(document.activeElement).toBe(screen.getByRole('button', { name: 'How to use' }));
-  await act(async () => finish(success(undefined)));
-});
-
-test('discards an in-flight inspection when list refresh fails', async () => {
-  const fixture = setup();
-  let finish!: (value: unknown) => void;
-  fixture.api.inspect.mockReturnValue(
-    new Promise(resolve => {
-      finish = resolve;
-    }),
-  );
-  fixture.mount();
-  fireEvent.click(await screen.findByRole('button', { name: /Release checklist/ }));
-  fixture.api.list.mockResolvedValue({ success: false, error: 'offline' });
+  await current();
   fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
-  await screen.findByRole('alert');
-  await act(async () => finish(success(inspection)));
-  expect(screen.queryByRole('button', { name: 'Approve and apply' })).toBeNull();
-});
-
-test('restores dialog focus when polling removes the focused detail', async () => {
-  const fixture = setup();
-  fixture.mount();
-  fireEvent.click(await screen.findByRole('button', { name: /Release checklist/ }));
-  (await screen.findByRole('button', { name: 'Approve and apply' })).focus();
-  fixture.api.list.mockResolvedValue(success([{ ...proposal, status: 'applied' }]));
-  fireEvent.focus(window);
-  await waitFor(() =>
-    expect(screen.queryByRole('button', { name: 'Approve and apply' })).toBeNull(),
+  await waitFor(() => expect(fixture.api.list).toHaveBeenCalledTimes(2));
+  await act(async () =>
+    finish(
+      success({
+        name: 'release',
+        filePath: 'SKILL.md',
+        content: 'Late content',
+        files: ['SKILL.md'],
+      }),
+    ),
   );
-  expect(document.activeElement).toBe(screen.getByRole('dialog'));
-  fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
-  expect(screen.queryByRole('dialog')).toBeNull();
+  expect(screen.queryByText('Late content')).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Archive skill' })).toBeNull();
+});
+test('unmount releases focus listener and ignores pending native reads', async () => {
+  const fixture = setup();
+  const remove = vi.spyOn(window, 'removeEventListener');
+  const mounted = fixture.mount();
+  await current();
+  mounted.unmount();
+  expect(remove).toHaveBeenCalledWith('focus', expect.any(Function));
+  remove.mockRestore();
 });

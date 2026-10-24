@@ -3,6 +3,7 @@ import { defaultLocalSpeechSettings } from '../../../../shared/speech/localSpeec
 import { LOCAL_TTS_MODEL_ID, LOCAL_TTS_PROVIDER_ID } from '../../../../shared/speech/localTts';
 import { buildManagedLocalSttConfig } from './localSttConfig';
 import { buildManagedLocalTtsConfig } from './localTtsConfig';
+import { normalizeNativeTtsConfig } from './nativeTtsConfig';
 
 const record = (value: unknown): Record<string, unknown> =>
   value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -30,7 +31,7 @@ export function mergeLocalSpeechExtensionTtsConfig(
   existing: unknown,
   local: Record<string, unknown> | null,
 ): Record<string, unknown> | null {
-  const previous = record(existing);
+  const previous = normalizeNativeTtsConfig(existing) ?? {};
   const providers = { ...record(previous.providers) };
   delete providers[LOCAL_TTS_PROVIDER_ID];
   const localProvider = record(local?.providers)[LOCAL_TTS_PROVIDER_ID];
@@ -38,7 +39,6 @@ export function mergeLocalSpeechExtensionTtsConfig(
     providers[LOCAL_TTS_PROVIDER_ID] = localProvider;
     return {
       ...previous,
-      enabled: true,
       auto: previous.auto ?? 'off',
       provider: typeof previous.provider === 'string' && previous.provider && previous.provider !== LOCAL_TTS_PROVIDER_ID
         ? previous.provider : LOCAL_TTS_PROVIDER_ID,
@@ -48,7 +48,7 @@ export function mergeLocalSpeechExtensionTtsConfig(
   if (!Object.keys(previous).length) return null;
   return {
     ...previous,
-    ...(previous.provider === LOCAL_TTS_PROVIDER_ID ? { enabled: false } : {}),
+    ...(previous.provider === LOCAL_TTS_PROVIDER_ID ? { auto: 'off' } : {}),
     providers,
   };
 }

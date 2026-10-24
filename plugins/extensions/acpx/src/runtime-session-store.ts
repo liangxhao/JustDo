@@ -65,7 +65,7 @@ export type AcpxGeneration = {
   retired: boolean;
   activeOperations: number;
   pendingAdmissions: number;
-  admissionState: 'unadmitted' | 'failed' | 'admitted';
+  admitted: boolean;
   activeRecordOperations: Map<string, number>;
   closedRecordIds: Set<string>;
   afterReset: boolean;

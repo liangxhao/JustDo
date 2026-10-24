@@ -7,7 +7,7 @@ test('passes a server identity as data and projects only the native result', asy
   const manager = {
     buildCliEnvironment: vi.fn(async () => ({
       runtimeRoot: 'runtime',
-      env: { JUSTDO_ELECTRON_PATH: 'electron-node' },
+      env: { JUSTDO_ELECTRON_PATH: '/bundled/node.exe' },
     })),
   } as unknown as OpenClawEngineManager;
   const runner = vi.fn(async () => ({
@@ -18,12 +18,12 @@ test('passes a server identity as data and projects only the native result', asy
     available: true,
   });
   expect(runner).toHaveBeenCalledWith(
-    'electron-node',
+    '/bundled/node.exe',
     ['--input-type=module', '-e', expect.any(String)],
     {
       cwd: 'runtime',
       env: {
-        JUSTDO_ELECTRON_PATH: 'electron-node',
+        JUSTDO_ELECTRON_PATH: '/bundled/node.exe',
         ELECTRON_RUN_AS_NODE: '1',
         JUSTDO_EXTENSION_MCP_MODE: 'probe',
         JUSTDO_EXTENSION_MCP_ID: id,

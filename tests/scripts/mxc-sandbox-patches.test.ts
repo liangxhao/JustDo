@@ -1,9 +1,10 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 const pluginPatch = require('../../scripts/openclaw/patch-mxc-sandbox-plugin.cjs');
-const runtimePatch = require('../../scripts/patches/v2026.10.4/013-mxc-external-skill-paths.cjs');
+const runtimePatch = require('../../scripts/patches/v2026.10.6/013-mxc-external-skill-paths.cjs');
 const nativeContracts = [
   'assertMxcReadiness({ executablePath: mxcBinaryPath });',
   'probeMxcIsolationTier(params.executablePath)',
@@ -12,25 +13,77 @@ const nativeContracts = [
 ].join('\n');
 const pristine = () => [pluginPatch.__testing.ORIGINAL, pluginPatch.__testing.HOST_PREP_ORIGINAL, nativeContracts].join('\n');
 
-it.each(['x64', 'arm64'])('omits Linux executors from the Windows %s SDK while retaining native assets', arch => {
+it.each([
+  ['x64', true], ['arm64', true], ['x64', false], ['arm64', false],
+] as const)('retains selected Windows %s assets using SDK dependency resolution (hoisted=%s)', (arch, hoisted) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sandbox-target-'));
   const sdk = path.join(root, 'node_modules/@microsoft/mxc-sdk');
+  const pty = path.join(hoisted ? root : sdk, 'node_modules/node-pty');
   try {
+    fs.mkdirSync(sdk, { recursive: true });
+    fs.mkdirSync(pty, { recursive: true });
+    fs.writeFileSync(path.join(sdk, 'package.json'), JSON.stringify({ name: '@microsoft/mxc-sdk', version: '0.9.0' }));
+    fs.writeFileSync(path.join(pty, 'package.json'), JSON.stringify({ name: 'node-pty' }));
     for (const name of ['x64', 'arm64']) {
       const bin = path.join(sdk, 'bin', name);
       fs.mkdirSync(bin, { recursive: true });
       for (const file of ['wxc-exec.exe', 'lxc-exec', 'wslcsdk.dll']) fs.writeFileSync(path.join(bin, file), file);
-      fs.mkdirSync(path.join(sdk, 'node_modules/node-pty/prebuilds', 'win32-' + name), { recursive: true });
+      fs.mkdirSync(path.join(pty, 'prebuilds', 'win32-' + name), { recursive: true });
     }
     pluginPatch.pruneMxcSandboxPluginForTarget(root, 'win-' + arch);
     expect(fs.readdirSync(path.join(sdk, 'bin'))).toEqual([arch]);
     expect(fs.readdirSync(path.join(sdk, 'bin', arch)).sort()).toEqual(['wslcsdk.dll', 'wxc-exec.exe']);
-    expect(fs.readdirSync(path.join(sdk, 'node_modules/node-pty/prebuilds'))).toEqual(['win32-' + arch]);
+    expect(fs.readdirSync(path.join(pty, 'prebuilds'))).toEqual(['win32-' + arch]);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
-describe('MXC 10.4 native readiness and retained integration', () => {
+
+it('rejects node-pty resolved outside the packaged plugin before pruning anything', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sandbox-dependency-'));
+  const plugin = path.join(root, 'plugin');
+  const sdk = path.join(plugin, 'node_modules/@microsoft/mxc-sdk');
+  const pty = path.join(root, 'node_modules/node-pty');
+  try {
+    fs.mkdirSync(sdk, { recursive: true });
+    fs.mkdirSync(pty, { recursive: true });
+    fs.writeFileSync(path.join(sdk, 'package.json'), JSON.stringify({ name: '@microsoft/mxc-sdk', version: '0.9.0' }));
+    fs.writeFileSync(path.join(pty, 'package.json'), JSON.stringify({ name: 'node-pty' }));
+    for (const arch of ['x64', 'arm64']) fs.mkdirSync(path.join(sdk, 'bin', arch), { recursive: true });
+    expect(() => pluginPatch.pruneMxcSandboxPluginForTarget(plugin, 'win-x64')).toThrow(/within its packaged plugin/);
+    expect(fs.readdirSync(path.join(sdk, 'bin')).sort()).toEqual(['arm64', 'x64']);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+it.each(['bin', 'arch'])('rejects an external SDK %s link before deleting assets', link => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sandbox-bin-boundary-'));
+  const plugin = path.join(root, 'plugin');
+  const sdk = path.join(plugin, 'node_modules/@microsoft/mxc-sdk');
+  const pty = path.join(plugin, 'node_modules/node-pty');
+  const outside = path.join(root, 'outside');
+  try {
+    fs.mkdirSync(sdk, { recursive: true });
+    fs.mkdirSync(path.join(pty, 'prebuilds/win32-x64'), { recursive: true });
+    fs.mkdirSync(path.join(outside, 'x64'), { recursive: true });
+    fs.writeFileSync(path.join(sdk, 'package.json'), JSON.stringify({ name: '@microsoft/mxc-sdk', version: '0.9.0' }));
+    fs.writeFileSync(path.join(pty, 'package.json'), JSON.stringify({ name: 'node-pty' }));
+    fs.writeFileSync(path.join(outside, 'x64/wxc-exec.exe'), 'fixture');
+    fs.writeFileSync(path.join(outside, 'x64/lxc-exec'), 'must remain');
+    if (link === 'bin') fs.symlinkSync(outside, path.join(sdk, 'bin'), 'junction');
+    else {
+      fs.mkdirSync(path.join(sdk, 'bin/arm64'), { recursive: true });
+      fs.symlinkSync(path.join(outside, 'x64'), path.join(sdk, 'bin/x64'), 'junction');
+    }
+    expect(() => pluginPatch.pruneMxcSandboxPluginForTarget(plugin, 'win-x64')).toThrow(/within its packaged plugin/);
+    expect(fs.readFileSync(path.join(outside, 'x64/lxc-exec'), 'utf8')).toBe('must remain');
+    if (link === 'arch') expect(fs.existsSync(path.join(sdk, 'bin/arm64'))).toBe(true);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+describe('MXC 10.6 native readiness and retained integration', () => {
   it('keeps native executor probing and policy cleanup while projecting external skills', () => {
     const source = pristine();
     const current = pluginPatch.transformMxcPlugin(source);
@@ -61,7 +114,7 @@ describe('MXC 10.4 native readiness and retained integration', () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'sandbox-patch-'));
     try {
       fs.mkdirSync(path.join(directory, 'dist'));
-      fs.writeFileSync(path.join(directory, 'package.json'), JSON.stringify({ version: '2026.10.4' }));
+      fs.writeFileSync(path.join(directory, 'package.json'), JSON.stringify({ version: '2026.10.6' }));
       const entry = path.join(directory, 'dist/index.js');
       fs.writeFileSync(entry, current);
       expect(() => pluginPatch.verifyMxcSandboxPlugin(directory)).not.toThrow();
@@ -104,7 +157,7 @@ describe('MXC 10.4 native readiness and retained integration', () => {
     ).toBe('C:/Users/tester/skills-runtime');
   });
 
-  it('restores the verification marker stripped by esbuild without changing behavior', () => {
+  it('verifies the esbuild output while preserving its exact bytes', () => {
     const bundled =
       'const skillsPromptWorkspaceDir = params.sandbox.backendId === "mxc" && params.sandbox.skillsWorkspaceDir ? params.sandbox.skillsWorkspaceDir.replace(/\\\\/g, "/") : params.sandbox.workspaceAccess === "rw" && params.sandbox.skillsWorkspaceDir && params.sandbox.containerWorkdir ? containerJoin2(params.sandbox.containerWorkdir, ...MATERIALIZED_SKILLS_WORKSPACE_CONTAINER_PARTS) : params.sandbox.containerWorkdir ?? skillsWorkspaceDir;';
     const updated = runtimePatch.__testing.transformSkillRuntimePaths(
@@ -112,8 +165,7 @@ describe('MXC 10.4 native readiness and retained integration', () => {
       'gateway-bundle.mjs',
     );
 
-    expect(updated).toContain(runtimePatch.__testing.MARKER);
-    expect(updated.replace(` /*${runtimePatch.__testing.MARKER}*/`, '')).toBe(bundled);
+    expect(updated).toBe(bundled);
   });
 
   it('rejects marker-only or malformed runtime patch shapes', () => {

@@ -6,7 +6,9 @@ import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import cliRuntimeFiles from '../../../shared/openclaw/cliRuntimeFiles.json';
+import { setLanguage, t } from '../../core/i18n';
 import { GatewayConfigReloadMonitor } from './gatewayConfigReloadMonitor';
+import { getElectronNodeRuntimePath } from './launch/electronNodeRuntime';
 import { OpenClawEngineManager, type OpenClawEngineStatus } from './openclawEngineManager';
 
 vi.mock('electron', () => ({ app: { isPackaged: false, getPath: () => 'fixture-user-data' } }));
@@ -21,7 +23,7 @@ vi.mock('../../core/runtime/portableGitRuntime', () => ({ applyPortableGitRuntim
 vi.mock('../../core/runtime/pythonRuntime', () => ({ appendPythonRuntimeToEnv: vi.fn() }));
 vi.mock('./launch/electronNodeRuntime', async importOriginal => ({
   ...(await importOriginal<typeof import('./launch/electronNodeRuntime')>()),
-  getElectronNodeRuntimePath: () => process.execPath,
+  getElectronNodeRuntimePath: vi.fn(() => process.execPath),
   ensureElectronNodeShim: () => null,
   resolveElectronNpmBinDir: () => null,
 }));
@@ -52,9 +54,38 @@ function createManager(phase: 'starting' | 'running' = 'starting') {
   return { manager, harness, statuses };
 }
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => { vi.restoreAllMocks(); setLanguage('zh'); });
 
 describe('Gateway lifecycle during runtime environment reads', () => {
+  it.each(['zh', 'en'] as const)('localizes bundled Node admission failures in %s and keeps diagnostic secrets redacted', async language => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'gateway-status-'));
+    try {
+      for (const name of cliRuntimeFiles) fs.writeFileSync(path.join(directory, name), '');
+      const { manager, harness } = createManager('running');
+      harness.resolveRuntimeMetadata = () => ({ root: directory, version: 'test' });
+      harness.stateDir = directory;
+      harness.configPath = path.join(directory, 'openclaw.json');
+      harness.systemPromptReplacementRulesPath = path.join(directory, 'prompt-rules.json');
+      harness.gatewayPort = 14041;
+      harness.ensureBareEntryFiles = vi.fn();
+      harness.ensureGatewayToken = () => 'fixture-token';
+      harness.readGatewayPort = () => 14041;
+      harness.writeGatewayPort = vi.fn();
+      const cause = new Error('Bundled Node damaged; token=private-fixture-token');
+      vi.mocked(getElectronNodeRuntimePath).mockImplementationOnce(() => { throw cause; });
+      const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {});
+      setLanguage(language);
+
+      await expect(manager.buildCliEnvironment()).rejects.toMatchObject({
+        message: t('runtimeNodeUnavailable'), cause,
+      });
+      expect(JSON.stringify(diagnostic.mock.calls)).toContain('Bundled Node damaged');
+      expect(JSON.stringify(diagnostic.mock.calls)).not.toContain('private-fixture-token');
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it('binds diagnostics to the failure attempt, masks credentials and advances identity on retry', () => {
     const { manager } = createManager('running');
     const internal = manager as unknown as { gatewayProcessGeneration: number; setStatus: (status: OpenClawEngineStatus) => void };

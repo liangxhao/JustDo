@@ -260,7 +260,7 @@ flowchart LR
 
 修改时应同时核对 shared 合约、Main IPC/store/coordinator、扩展 service/guard、preload 和 Renderer，运行对应行为回归。不要只以文件存在或注册成功宣称功能完整；也不要将这份现行说明恢复成已完成计划和逐轮审查流水。
 
-当前 v2026.10.4 的 owned-run registry 接线通过原生 immutable actor 发布，Team 不接管该事务。目标版本的实际通过范围见[升级记录](../../openclaw-upgrades/v2026.10.4/README.md)，上述历史验证不自动延续为本版真实模型验收。
+当前 v2026.10.6 的 owned-run registry 接线通过原生 immutable actor 发布，Team 不接管该事务。目标版本的实际通过范围见[升级记录](../../openclaw-upgrades/v2026.10.6/README.md)，上述历史验证不自动延续为本版真实模型验收。
 
 ## 当前验证边界
 

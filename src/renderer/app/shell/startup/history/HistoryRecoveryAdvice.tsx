@@ -4,7 +4,11 @@ import { i18nService } from '@/services/i18n';
 
 import StartupSupportButton from './StartupSupportButton';
 
-export default function HistoryRecoveryAdvice({ kind }: { kind: HistoryRecoveryKind }) {
+export default function HistoryRecoveryAdvice({ kind, database = false }: {
+  kind: HistoryRecoveryKind;
+  database?: boolean;
+}) {
+  const prefix = database ? 'initializationDatabaseRecovery' : 'initializationRecovery';
   const taskManager =
     window.electron.platform === 'win32' &&
     [HistoryRecoveryKind.Busy, HistoryRecoveryKind.Access, HistoryRecoveryKind.Changing].some(
@@ -12,8 +16,8 @@ export default function HistoryRecoveryAdvice({ kind }: { kind: HistoryRecoveryK
     );
   return (
     <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100">
-      <p className="font-medium">{i18nService.t(`initializationRecovery_${kind}`)}</p>
-      <p className="mt-2">{i18nService.t(`initializationRecovery_${kind}Description`)}</p>
+      <p className="font-medium">{i18nService.t(`${prefix}_${kind}`)}</p>
+      <p className="mt-2">{i18nService.t(`${prefix}_${kind}Description`)}</p>
       {taskManager && (
         <p className="mt-2">{i18nService.t('initializationRecoveryTaskManagerHint')}</p>
       )}

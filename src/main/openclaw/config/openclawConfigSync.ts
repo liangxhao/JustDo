@@ -26,6 +26,7 @@ import {
   buildManagedOpenClawCompactionConfig,
   buildManagedOpenClawConnectivityConfig,
   buildManagedOpenClawCronConfig,
+  buildManagedOpenClawEmbeddedAgentConfig,
   buildManagedOpenClawHeartbeatConfig,
   buildManagedOpenClawModelCatalogConfig,
   buildManagedOpenClawSandboxConfig,
@@ -71,7 +72,7 @@ import {
   removeRetiredManagedToolDenyEntries,
   resolveManagedOpenClawTtsConfig,
   resolveOpenClawExecHost,
-  sanitizeOpenClawV2026_10_4Config,
+  sanitizeOpenClawV2026_10_6Config,
   verifyOpenClawConfigMatches,
   withMemorySearch,
 } from './openclawConfigBuilders';
@@ -79,6 +80,7 @@ import { buildManagedMcpConfig } from './plugins/mcpAppsConfig';
 import { withComputerControlPolicy } from './policies/computerControlConfig';
 import { mergeLocalSpeechExtensionTtsConfig } from './speech/localSpeechExtensionConfig';
 import { buildManagedLocalSpeechPluginEntries } from './speech/localSpeechPluginConfig';
+import { normalizeNativeTtsConfig } from './speech/nativeTtsConfig';
 export {
   applyDefaultOpenClawPluginEntries,
   applyManagedOpenClawHeartbeatConfig,
@@ -129,7 +131,7 @@ export {
   removeUnavailableOpenClawPluginRegistrations,
   resolveManagedOpenClawTtsConfig,
   resolveOpenClawExecHost,
-  sanitizeOpenClawV2026_10_4Config,
+  sanitizeOpenClawV2026_10_6Config,
   verifyLoggedOutOpenClawConfig,
 } from './openclawConfigBuilders';
 
@@ -279,6 +281,17 @@ export class OpenClawConfigSync {
   }
 
   private applyManagedRuntimeConfiguration(config: Record<string, unknown>): void {
+    const nativeTts = normalizeNativeTtsConfig(config.tts);
+    if (nativeTts) config.tts = nativeTts;
+    const agents = isRecord(config.agents) ? config.agents : {};
+    const defaults = isRecord(agents.defaults) ? agents.defaults : {};
+    config.agents = {
+      ...agents,
+      defaults: {
+        ...defaults,
+        embeddedAgent: buildManagedOpenClawEmbeddedAgentConfig(defaults.embeddedAgent),
+      },
+    };
     if (this.getLocalSpeechExtensionTtsConfig) {
       const tts = mergeLocalSpeechExtensionTtsConfig(config.tts, this.getLocalSpeechExtensionTtsConfig());
       if (tts) config.tts = tts;
@@ -524,6 +537,10 @@ export class OpenClawConfigSync {
         provider.models.map(model => `${providerId}/${model.id}`),
       ),
     );
+    const existingAgentDefaults =
+      isRecord(existingConfig?.agents) && isRecord(existingConfig.agents.defaults)
+        ? existingConfig.agents.defaults
+        : {};
 
     const managedConfig: Record<string, unknown> = {
       ...Object.fromEntries(
@@ -553,6 +570,7 @@ export class OpenClawConfigSync {
       },
       agents: {
         defaults: {
+          embeddedAgent: buildManagedOpenClawEmbeddedAgentConfig(existingAgentDefaults.embeddedAgent),
           timeoutSeconds: agentRuntimeSettings.agent.runTimeoutSeconds,
           ...(agentRuntimeSettings.agent.maxConcurrent === null
             ? {}
@@ -710,7 +728,7 @@ export class OpenClawConfigSync {
         error: 'Failed to prepare managed model provider credentials.',
       };
     }
-    const configToPersist = sanitizeOpenClawV2026_10_4Config(
+    const configToPersist = sanitizeOpenClawV2026_10_6Config(
       withComputerControlPolicy(preparedSecrets.config),
     );
     this.applyManagedRuntimeConfiguration(configToPersist);
@@ -1058,7 +1076,7 @@ export class OpenClawConfigSync {
       );
     }
     this.applyManagedRuntimeConfiguration(minimalConfig);
-    minimalConfig = sanitizeOpenClawV2026_10_4Config(withComputerControlPolicy(minimalConfig));
+    minimalConfig = sanitizeOpenClawV2026_10_6Config(withComputerControlPolicy(minimalConfig));
     const nextContent = `${JSON.stringify(minimalConfig, null, 2)}\n`;
     const buildMinimalSyncResult = (
       expectedConfig: Record<string, unknown>,
@@ -1110,7 +1128,7 @@ export class OpenClawConfigSync {
       try {
         const existing = previousConfig;
         if (isRecord(existing)) {
-          const canonicalExisting = sanitizeOpenClawV2026_10_4Config(existing);
+          const canonicalExisting = sanitizeOpenClawV2026_10_6Config(existing);
           const hasHookConfig = Object.keys(hookConfig).length > 0;
           const hasSubstantiveConfig =
             Boolean(isRecord(canonicalExisting.models) && canonicalExisting.models.providers) ||
@@ -1186,7 +1204,7 @@ export class OpenClawConfigSync {
                 existingConfig: canonicalExisting,
               }),
             );
-            const mergedConfig = sanitizeOpenClawV2026_10_4Config(
+            const mergedConfig = sanitizeOpenClawV2026_10_6Config(
               withMemorySearch(
                 {
                   ...canonicalExisting,

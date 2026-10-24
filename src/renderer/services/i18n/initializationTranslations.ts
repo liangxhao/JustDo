@@ -1,5 +1,40 @@
 export const initializationTranslations = {
   zh: {
+    initializationNormalUpgradeWelcome: '正常升级安装',
+    initializationNormalUpgradeTitle: '保留你的数据，完成本次升级',
+    initializationNormalUpgradeDescription:
+      '会话、设置、插件和定时任务都会保留。先检查并备份数据库，再完成必要的更新，最后启动应用。',
+    initializationNormalUpgradeFinishing: '升级准备已完成，正在打开工作区',
+    initializationDatabaseUpgrade: '检查并更新数据库',
+    initializationDatabaseRecovery_space: '数据库升级已暂停：磁盘空间不足',
+    initializationDatabaseRecovery_spaceDescription:
+      '请释放数据所在磁盘的空间后重新启动。现有数据和已完成的备份会保留。',
+    initializationDatabaseRecovery_busy: '数据库正在被其他进程使用',
+    initializationDatabaseRecovery_busyDescription:
+      '请退出其他应用实例及其后台引擎，再重新启动。升级不会绕过正在使用数据库的进程。',
+    initializationDatabaseRecovery_access: '数据库文件被占用或无权访问',
+    initializationDatabaseRecovery_accessDescription:
+      '请检查数据目录读写权限并退出占用它的其他实例，再重新启动重试。',
+    initializationDatabaseRecovery_changing: '数据库状态在检查后发生变化',
+    initializationDatabaseRecovery_changingDescription:
+      '请退出其他应用实例后重新启动。下次会重新检查数据库，不沿用失效的检查结果。',
+    initializationDatabaseRecovery_other: '数据库升级未完成',
+    initializationDatabaseRecovery_otherDescription:
+      '现有数据和升级进度会保留。请查看具体原因，处理后重新启动；应用会先检查实际结果再继续。',
+    initializationRetainedData: '载入已有数据',
+    initializationRetainedDataDescription: '保留现有用户目录，载入已保存的设置和任务索引。',
+    initializationActivity_nativeInspect: '检查本次升级需要的数据库变更',
+    initializationActivity_nativeInspectDescription:
+      '只读检查现有数据库和目标版本，确认需要执行的更新。',
+    initializationActivity_nativeBackup: '备份现有数据库',
+    initializationActivity_nativeBackupDescription:
+      '保存包含已提交数据的一致备份；完成前不开始更新数据库。',
+    initializationActivity_nativeUpgrade: '更新数据库结构',
+    initializationActivity_nativeUpgradeDescription:
+      '由内置引擎更新现有数据库，保留会话、身份和关联。请保持窗口打开。',
+    initializationActivity_nativeVerify: '核对数据库更新结果',
+    initializationActivity_nativeVerifyDescription:
+      '重新检查数据库完整性和目标版本，确认维护进程已完成并关闭。',
     initializationResultTitle: '历史会话已恢复',
     initializationResultDescription:
       '初始化和历史恢复已完成。打开历史会话后，模型和权限沿用当前的新会话默认配置。',
@@ -31,7 +66,7 @@ export const initializationTranslations = {
       '请先退出旧版应用，检查数据磁盘剩余空间及目录读写权限，再查看下方详细信息中的失败原因。处理后重新启动并重试，无需手动清空数据目录。',
     initializationRecoveryTaskManagerHint:
       '可在任务管理器中手动结束确认属于旧版应用的占用进程。请核对进程名称和位置，避免结束其他程序。',
-    initializationUpgradeWelcome: '升级与首次准备',
+    initializationUpgradeWelcome: '迁移升级安装',
     initializationUpgradeTitle: '让历史对话继续陪伴你',
     initializationUpgradeDescription:
       '先备份历史，再准备全新环境，最后恢复会话。设置、插件和定时任务将使用新版默认值。',
@@ -50,12 +85,12 @@ export const initializationTranslations = {
       '正在恢复对话列表、标题和准确的历史关联，完成后即可继续对话。',
     initializationRenderer_models: '载入可用模型',
     initializationRenderer_modelsDescription: '正在读取当前模型设置，准备工作区。',
-    initializationConnecting: '正在获取首次准备进度',
+    initializationConnecting: '正在获取启动准备进度',
     initializationInterfaceLoading: '本机准备已完成，正在进入首页',
-    initializationConnectingDescription: '正在读取本次首次启动的准备状态。',
+    initializationConnectingDescription: '正在读取本次启动的准备状态。',
     firstLaunchFinishing: '正在打开首次使用界面',
     initializationReload: '重新加载引导界面',
-    initializationInterfaceFailed: '首次使用界面加载失败，请重新加载引导界面。',
+    initializationInterfaceFailed: '工作界面加载失败，请重新加载引导界面。',
     initializationModeMismatch: '启动状态不一致，请重新加载窗口。',
     initializationRenderer_interface: '加载首次使用界面',
     initializationRenderer_interfaceDescription:
@@ -120,14 +155,50 @@ export const initializationTranslations = {
     initializationConfiguration: '准备本机文件',
     initializationEngine: '完成启动检查',
     initializationComplete: '初始化完成',
-    initializationFailed: '初始化未完成',
-    initializationFailedDescription: '初始化遇到问题，请查看下方原因，处理后重新启动。',
+    initializationFailed: '启动准备未完成',
+    initializationFailedDescription: '启动准备遇到问题，请查看下方原因，处理后重新启动。',
     initializationRetry: '重新启动并重试',
     initializationSteps: '已完成步骤',
     initializationLogPath: '日志位置',
     initializationError: '应用准备未完成，请重新启动后重试。',
   },
   en: {
+    initializationNormalUpgradeWelcome: 'Standard upgrade',
+    initializationNormalUpgradeTitle: 'Upgrade while keeping your data',
+    initializationNormalUpgradeDescription:
+      'Conversations, settings, plugins and scheduled tasks are retained. Databases are checked and backed up before any required updates, then the app starts.',
+    initializationNormalUpgradeFinishing: 'Upgrade preparation is complete. Opening your workspace',
+    initializationDatabaseUpgrade: 'Check and update databases',
+    initializationDatabaseRecovery_space: 'Database upgrade paused: insufficient disk space',
+    initializationDatabaseRecovery_spaceDescription:
+      'Free space on the data drive and restart. Existing data and completed backups are retained.',
+    initializationDatabaseRecovery_busy: 'Another process is using the database',
+    initializationDatabaseRecovery_busyDescription:
+      'Exit other application instances and their background engines, then restart. Upgrade will not bypass an active database owner.',
+    initializationDatabaseRecovery_access: 'Database files are locked or inaccessible',
+    initializationDatabaseRecovery_accessDescription:
+      'Check data directory permissions and close other instances using it, then restart and retry.',
+    initializationDatabaseRecovery_changing: 'Database state changed after inspection',
+    initializationDatabaseRecovery_changingDescription:
+      'Exit other application instances and restart. The database will be inspected again instead of reusing stale results.',
+    initializationDatabaseRecovery_other: 'Database upgrade did not finish',
+    initializationDatabaseRecovery_otherDescription:
+      'Existing data and upgrade progress are retained. Resolve the reported cause and restart; the app checks actual results before continuing.',
+    initializationRetainedData: 'Load existing data',
+    initializationRetainedDataDescription:
+      'Keep the existing data directory and load saved settings and task indexes.',
+    initializationActivity_nativeInspect: 'Checking required database updates',
+    initializationActivity_nativeInspectDescription:
+      'Inspect existing databases and the target version without changing data.',
+    initializationActivity_nativeBackup: 'Backing up existing databases',
+    initializationActivity_nativeBackupDescription:
+      'Save consistent backups including committed data before any database update begins.',
+    initializationActivity_nativeUpgrade: 'Updating database structures',
+    initializationActivity_nativeUpgradeDescription:
+      'The bundled engine updates existing databases while retaining conversations, identities and relationships. Keep this window open.',
+    initializationActivity_nativeVerify: 'Verifying database updates',
+    initializationActivity_nativeVerifyDescription:
+      'Recheck database integrity and the target version, and confirm maintenance has finished and closed.',
     initializationResultTitle: 'Your conversations are restored',
     initializationResultDescription:
       'Setup and history restoration are complete. Imported conversations start with the same current model and permission defaults as new conversations.',
@@ -160,7 +231,7 @@ export const initializationTranslations = {
       'Quit the previous application, check free disk space and folder access, then review the failure details below. Resolve the cause and restart to retry. You do not need to clear the data folder manually.',
     initializationRecoveryTaskManagerHint:
       'You can manually end a confirmed process belonging to the previous application in Task Manager. Check its name and location before ending it.',
-    initializationUpgradeWelcome: 'Upgrade and setup',
+    initializationUpgradeWelcome: 'Migration upgrade',
     initializationUpgradeTitle: 'Keep your conversations going',
     initializationUpgradeDescription:
       'Back up history, prepare a fresh environment, then restore conversations. Settings, plugins and scheduled tasks use current defaults.',
@@ -180,13 +251,13 @@ export const initializationTranslations = {
     initializationRenderer_models: 'Loading available models',
     initializationRenderer_modelsDescription:
       'Reading current model settings and preparing the workspace.',
-    initializationConnecting: 'Reading first-launch progress',
+    initializationConnecting: 'Reading startup progress',
     initializationInterfaceLoading: 'Local setup complete; opening the home page',
-    initializationConnectingDescription: 'Reading preparation status for this first launch.',
+    initializationConnectingDescription: 'Reading preparation status for this startup.',
     firstLaunchFinishing: 'Opening your first workspace',
     initializationReload: 'Reload setup screen',
     initializationInterfaceFailed:
-      'The first-use interface could not load. Reload this setup screen.',
+      'The workspace interface could not load. Reload this setup screen.',
     initializationModeMismatch: 'Startup state does not match this window. Reload the window.',
     initializationRenderer_interface: 'Loading the first-use interface',
     initializationRenderer_interfaceDescription:
@@ -265,7 +336,7 @@ export const initializationTranslations = {
     initializationConfiguration: 'Prepare local files',
     initializationEngine: 'Complete startup checks',
     initializationComplete: 'Initialization complete',
-    initializationFailed: 'Initialization could not finish',
+    initializationFailed: 'Startup preparation could not finish',
     initializationFailedDescription:
       'Review the issue below, resolve it, then restart the application.',
     initializationRetry: 'Restart and retry',

@@ -73,7 +73,7 @@ describe("TypeSafe HTTP evaluation", () => {
     expect(JSON.parse(body).model).toBe("jev-pinned");
   });
   it.each([
-    [400, "transport"],
+    [400, "unsupported-input"],
     [401, "authentication"],
     [403, "authentication"],
     [413, "unsupported-input"],

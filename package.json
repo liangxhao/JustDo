@@ -10,13 +10,13 @@
   "license": "MIT",
   "version": "v2026.10.20",
   "openclaw": {
-    "version": "v2026.10.4",
+    "version": "v2026.10.6",
     "repo": "https://github.com/openclaw/openclaw.git",
     "plugins": [
       {
         "id": "mxc",
         "npm": "@openclaw/mxc-sandbox",
-        "version": "2026.10.4",
+        "version": "2026.10.6",
         "platforms": [
           "win32"
         ]
@@ -28,10 +28,11 @@
   },
   "main": "dist-electron/main.js",
   "engines": {
-    "node": ">=24.16.0 <25"
+    "node": ">=24.22.1 <25"
   },
   "scripts": {
     "dev": "vite",
+    "startup:preview": "node scripts/startup/run-preview.cjs",
     "prebuild": "npm run validate:product-metadata",
     "build": "tsc && vite build",
     "validate:product-metadata": "node scripts/packaging/validate-product-metadata.cjs",
@@ -97,7 +98,8 @@
     "openclaw:runtime:linux-x64": "node scripts/openclaw/install-openclaw-runtime.cjs linux-x64 && node scripts/openclaw/sync-openclaw-runtime-current.cjs linux-x64 && npm run openclaw:bundle && npm run openclaw:plugins && npm run openclaw:resources && npm run openclaw:precompile && npm run openclaw:prune",
     "openclaw:runtime:linux-arm64": "node scripts/openclaw/install-openclaw-runtime.cjs linux-arm64 && node scripts/openclaw/sync-openclaw-runtime-current.cjs linux-arm64 && npm run openclaw:bundle && npm run openclaw:plugins && npm run openclaw:resources && npm run openclaw:precompile && npm run openclaw:prune",
     "regenerate:icon": "bash scripts/assets/mac-icon.sh regenerate",
-    "fix:mac-icon": "bash scripts/assets/mac-icon.sh fix-display"
+    "fix:mac-icon": "bash scripts/assets/mac-icon.sh fix-display",
+    "setup:node-runtime": "node scripts/runtime/setup-node-runtime.cjs"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "1.5.0",

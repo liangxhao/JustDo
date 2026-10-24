@@ -1,5 +1,5 @@
 // Opt-in, model-free storage/Gateway proof against the prepared runtime. Synthetic state only.
-// Usage: node scripts/test/verify-native-session-branching.mjs [runtime-directory]
+// Usage: <runtime>/node-runtime/node[.exe] scripts/test/verify-native-session-branching.mjs <runtime>
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
@@ -10,14 +10,18 @@ import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
+import { resolveNativeSmokeTarget } from '../../tests/openclaw/runtime/native-smoke-target.mjs';
+
 const root = fileURLToPath(new URL('../../', import.meta.url));
-const runtime = path.resolve(process.argv[2] ?? path.join(root, 'vendor/openclaw-runtime/current'));
+const { runtimeRoot: runtime, executable } = resolveNativeSmokeTarget();
 const artifacts = path.join(root, '.agent-tasks/runtime/session-branching');
 await fs.mkdir(artifacts, { recursive: true });
 const state = await fs.mkdtemp(path.join(artifacts, 'probe-'));
 for (const name of Object.keys(process.env)) {
   if (name.toUpperCase().startsWith('OPENCLAW_')) delete process.env[name];
 }
+delete process.env.NODE_OPTIONS;
+delete process.env.ELECTRON_RUN_AS_NODE;
 Object.assign(process.env, {
   OPENCLAW_HOME: state,
   OPENCLAW_STATE_DIR: state,
@@ -27,7 +31,8 @@ Object.assign(process.env, {
 await fs.writeFile(
   process.env.OPENCLAW_CONFIG_PATH,
   JSON.stringify({
-    agents: { ownership: 'explicit', entries: { main: {} } },
+    agents: { ownership: 'explicit', entries: { main: {} },
+      defaults: { embeddedAgent: { cyberFailover: { mode: 'off' } } } },
     plugins: { enabled: false, allow: [], entries: {} },
     update: { checkOnStart: false, auto: { enabled: false } },
   }),
@@ -38,13 +43,15 @@ async function native(prefix, symbol) {
   const matches = [];
   for (const file of files.filter(name => name.startsWith(prefix))) {
     const source = await fs.readFile(path.join(dist, file), 'utf8');
-    if (!source.includes(`function ${symbol}(`)) continue;
+    if (!source.includes(`function ${symbol}(`) && !source.includes(`const ${symbol} =`)) continue;
     const exports = source.slice(source.lastIndexOf('\nexport {'));
     const alias = exports.match(new RegExp(`\\b${symbol}(?: as (\\w+))?\\s*[,}]`));
     if (alias) matches.push({ file, alias: alias[1] ?? symbol });
   }
   assert.equal(matches.length, 1, `one pinned native export: ${symbol}`);
-  return (await import(pathToFileURL(path.join(dist, matches[0].file)).href))[matches[0].alias];
+  const value = (await import(pathToFileURL(path.join(dist, matches[0].file)).href))[matches[0].alias];
+  assert.equal(typeof value, 'function', `callable pinned native export: ${symbol}`);
+  return value;
 }
 const checks = [];
 async function verifyGateway(scope) {
@@ -70,7 +77,8 @@ async function verifyGateway(scope) {
       },
     },
   });
-  config.agents.defaults = { workspace: state, model: { primary: 'fixture/offline' } };
+  config.agents.defaults = { workspace: state, model: { primary: 'fixture/offline' },
+    embeddedAgent: { cyberFailover: { mode: 'off' } } };
   await fs.writeFile(process.env.OPENCLAW_CONFIG_PATH, JSON.stringify(config));
   const require = createRequire(import.meta.url);
   const { buildSync } = require('esbuild');
@@ -96,7 +104,7 @@ async function verifyGateway(scope) {
     pathToFileURL(path.join(runtime, 'dist/plugin-sdk/gateway-runtime.js'))
   );
   const child = spawn(
-    process.execPath,
+    executable,
     [
       '--require',
       ensureGatewayShutdownPreload(state),
@@ -226,8 +234,8 @@ try {
     'session-accessor.sqlite-transcript-write-',
     'appendTranscriptMessage',
   );
-  const load = await native('session-accessor-', 'loadTranscriptEvents');
-  const fork = await native('session-accessor-', 'forkSessionAtMessage');
+  const load = await native('session-transcript-events-', 'loadTranscriptEvents');
+  const fork = await native('session-accessor.sqlite-message-cut-', 'forkSessionAtMessage');
   const copy = await native('session-fork-', 'prepareSessionForkFromParent');
   const scope = {
     agentId: 'main',
@@ -369,6 +377,63 @@ try {
   assert.equal(rejected.status, 'not-user-message');
   assert.deepEqual(await load(scope), before);
   checks.push('unfinished tool-use cut rejected and source remains unchanged');
+  const supportsWorker = await native('openclaw-agent-execution-', 'supportsOpenClawAgentDatabaseExecution');
+  assert.equal(supportsWorker({ agentId: scope.agentId, env: process.env }), true);
+  checks.push('durable SQLite assistant cuts use the native worker execution route');
+
+  const captureExecution = await native('openclaw-agent-execution-', 'captureOpenClawAgentDatabaseExecution');
+  const withActor = await native('session-incognito-binding-', 'withIncognitoSessionActor');
+  const createWithTranscript = await native('session-accessor.entry-mutation-', 'createSessionEntryWithTranscript');
+  const actor = await captureExecution({
+    kind: 'ephemeral', agentId: 'main', env: process.env,
+    authority: { assertCurrent() {} }, existingOnly: false,
+  });
+  assert.ok(actor, 'isolated native incognito actor is admitted');
+  try {
+    await withActor(actor, async () => {
+      const actorScope = { agentId: 'main', storePath: actor.path,
+        sessionKey: 'agent:main:dashboard:incognito-branch-source', sessionId: 'actor-source' };
+      const actorEntry = { ...parentEntry, incognito: true, sessionId: actorScope.sessionId,
+        lifecycleRevision: 'actor-generation' };
+      const created = await createWithTranscript(actorScope, async () => ({
+        ok: true, entry: actorEntry,
+        transcriptEvents: events.map(event => ({ ...event,
+          ...(event.type === 'session' ? { id: actorScope.sessionId } : {}),
+          ...(event.type === 'message' ? { message: { ...event.message,
+            runId: event.id.endsWith('-2') ? 'run-2' : 'run-1' } } : {}),
+        })),
+      }), { cwd: state });
+      assert.equal(created.ok, true);
+      const actorBefore = await load(actorScope);
+      for (const [entryId, expectedIds] of [
+        ['answer-1', events.slice(1, 6).map(event => event.id)],
+        ['answer-2', events.slice(1).map(event => event.id)],
+      ]) {
+        const targetKey = `agent:main:dashboard:incognito-branch-${entryId}`;
+        const result = await fork({ ...actorScope, entryId, targetKey, includeEntry: true }, actorEntry);
+        assert.equal(result.status, 'created');
+        assert.equal(result.key, targetKey);
+        assert.notEqual(result.entry.sessionId, actorScope.sessionId);
+        assert.equal(result.entry.incognito, true);
+        const inherited = await load({ ...actorScope, sessionKey: targetKey, sessionId: result.entry.sessionId });
+        assert.deepEqual(inherited.filter(event => event.type !== 'session').map(event => event.id), expectedIds);
+        assert.equal(inherited.at(-1).id, entryId);
+        assert.deepEqual(inherited.find(event => event.id === 'store-1').data.set.report,
+          { count: 1, text: '中文' });
+      }
+      const rejectedActor = await fork({ ...actorScope, entryId: 'tool-call',
+        targetKey: 'agent:main:dashboard:incognito-branch-invalid', includeEntry: true }, actorEntry);
+      assert.equal(rejectedActor.status, 'not-user-message');
+      assert.deepEqual(await load(actorScope), actorBefore);
+    });
+    checks.push('native incognito SQLite actor includes completed assistant cuts, rejects unfinished tools and preserves source');
+  } finally {
+    try {
+      await actor.release();
+    } finally {
+      await actor.close();
+    }
+  }
   await (
     await native('openclaw-agent-db-lifecycle-', 'closeOpenClawAgentDatabasesAsync')
   )();

@@ -6,6 +6,7 @@ import {
   AppInitializationPhase,
   type AppInitializationState,
   AppInitializationStep,
+  type StartupDowngradeConfirmation,
 } from '../../../shared/app/initialization';
 import { HistoryRecoveryKind } from '../../../shared/app/startup/history';
 import {
@@ -54,6 +55,24 @@ const MIGRATION_RESUME_PROGRESS: Partial<
   },
 };
 
+const UPGRADE_RESUME_PROGRESS: Partial<Record<StartupStage, {
+  step: AppInitializationStep; activity: AppInitializationActivity; completed: number;
+}>> = {
+  [StartupStage.UpgradePrepare]: {
+    step: AppInitializationStep.DatabaseUpgrade, activity: AppInitializationActivity.NativeInspect,
+    completed: 0,
+  },
+  [StartupStage.UpgradeVerify]: {
+    step: AppInitializationStep.DatabaseUpgrade, activity: AppInitializationActivity.NativeVerify,
+    completed: 0,
+  },
+  [StartupStage.Check]: {
+    // Every resumed process rechecks native facts before admitting the product Store.
+    step: AppInitializationStep.DatabaseUpgrade, activity: AppInitializationActivity.NativeInspect,
+    completed: 0,
+  },
+};
+
 /** Tracks actual startup milestones; no estimated percentages or installer probes. */
 export class AppInitialization {
   private state: AppInitializationState;
@@ -64,29 +83,31 @@ export class AppInitialization {
     private readonly onChanged: (state: AppInitializationState) => void,
     private readonly getFailureContext: () => Record<string, string> = () => ({}),
     resumeStage?: StartupStage,
+    entryStartedAt?: number,
   ) {
-    const startedAt = Date.now();
-    const resume =
-      route === StartupRoute.Migration && resumeStage
-        ? MIGRATION_RESUME_PROGRESS[resumeStage]
-        : undefined;
+    const startedAt = entryStartedAt ?? Date.now();
+    const resume = resumeStage ? (route === StartupRoute.Migration
+      ? MIGRATION_RESUME_PROGRESS[resumeStage]
+      : route === StartupRoute.Upgrade ? UPGRADE_RESUME_PROGRESS[resumeStage] : undefined) : undefined;
     this.state = {
       phase: AppInitializationPhase.Preparing,
       step:
         resume?.step ??
         (route === StartupRoute.Migration
           ? AppInitializationStep.Backup
-          : AppInitializationStep.UserData),
+          : route === StartupRoute.Upgrade ? AppInitializationStep.DatabaseUpgrade
+            : AppInitializationStep.UserData),
       firstLaunch: route !== StartupRoute.Normal,
       route,
       completedSteps: resume?.completed ?? 0,
-      totalSteps: route === StartupRoute.Migration ? 6 : 4,
+      totalSteps: route === StartupRoute.Migration ? 6 : route === StartupRoute.Upgrade ? 5 : 4,
       userDataPath,
       activity:
         resume?.activity ??
         (route === StartupRoute.Migration
           ? AppInitializationActivity.HistoryBackup
-          : AppInitializationActivity.UserDirectory),
+          : route === StartupRoute.Upgrade ? AppInitializationActivity.NativeInspect
+            : AppInitializationActivity.UserDirectory),
       startedAt,
       activityStartedAt: startedAt,
       updatedAt: startedAt,
@@ -97,10 +118,19 @@ export class AppInitialization {
     return { ...this.state };
   }
 
+  setDowngradeConfirmation(downgradeConfirmation: StartupDowngradeConfirmation | undefined): void {
+    if (this.state.phase !== AppInitializationPhase.Preparing) return;
+    const now = Date.now();
+    this.state = { ...this.state, downgradeConfirmation, updatedAt: now,
+      ...(this.state.downgradeConfirmation && !downgradeConfirmation ? { activityStartedAt: now } : {}) };
+    this.onChanged(this.getState());
+  }
+
   advance(step: AppInitializationState['step'], completedSteps: number): void {
     if (this.state.phase !== AppInitializationPhase.Preparing) return;
     const activities = {
       [AppInitializationStep.Backup]: AppInitializationActivity.HistoryBackup,
+      [AppInitializationStep.DatabaseUpgrade]: AppInitializationActivity.NativeUpgrade,
       [AppInitializationStep.History]: AppInitializationActivity.HistoryImport,
       [AppInitializationStep.UserData]: AppInitializationActivity.UserDirectory,
       [AppInitializationStep.Runtime]: AppInitializationActivity.Python,
@@ -114,7 +144,8 @@ export class AppInitialization {
       step !== AppInitializationStep.Backup &&
       step !== AppInitializationStep.History
         ? completedSteps + (step === AppInitializationStep.Engine ? 2 : 1)
-        : completedSteps;
+        : this.state.route === StartupRoute.Upgrade && step !== AppInitializationStep.DatabaseUpgrade
+          ? completedSteps + 1 : completedSteps;
     this.state = {
       ...this.state,
       step: completed >= this.state.completedSteps ? step : this.state.step,
@@ -161,7 +192,7 @@ export class AppInitialization {
   }
 
   async complete(): Promise<void> {
-    if (this.state.firstLaunch) {
+    if (this.state.route === StartupRoute.Fresh || this.state.route === StartupRoute.Migration) {
       // Retain the old presentation receipt for existing tooling. Route admission
       // uses the data generation; failure cannot block an already usable shell.
       await this.runOptionalTask('remember initialization', () =>

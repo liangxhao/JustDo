@@ -1,3 +1,6 @@
+import fs from 'node:fs';
+import path from 'node:path';
+
 import { app } from 'electron';
 
 import { TerminalGateway } from '../../../shared/app/terminal';
@@ -21,6 +24,7 @@ import type {
   GatewayClientCtor,
   GatewayClientLike,
   GatewayEventFrame,
+  GatewayResponseContext,
   SessionTurn,
 } from '../gateway/types';
 import {
@@ -429,6 +433,10 @@ export async function loadGatewayClientCtor(
   clientEntryPath: string,
 ): Promise<GatewayClientCtor> {
   const loaded = require(clientEntryPath) as Record<string, unknown>;
+  return gatewayClientConstructor(loaded, clientEntryPath);
+}
+
+function gatewayClientConstructor(loaded: Record<string, unknown>, clientEntryPath: string): GatewayClientCtor {
   const direct = loaded.GatewayClient;
   if (typeof direct === 'function') return direct as GatewayClientCtor;
 
@@ -451,6 +459,44 @@ export async function loadGatewayClientCtor(
   }
 
   throw new Error(`Invalid OpenClaw gateway client module: ${clientEntryPath}`);
+}
+
+export function captureGatewayResponseContext(
+  this: RuntimeGatewayConnectionContext,
+): GatewayResponseContext | null {
+  const client = this.gatewayClient;
+  const generation = this.gatewayClientGeneration;
+  const entryPath = this.gatewayClientEntryPath;
+  if (!client || !entryPath) return null;
+  try {
+    const selected = require(entryPath) as Record<string, unknown>;
+    const constructor = gatewayClientConstructor(selected, entryPath);
+    const directory = path.dirname(entryPath);
+    let predicate: ((error: unknown) => unknown) | undefined;
+    // Hashed implementation entries need not expose the public protocol facade.
+    // Accept only a facade that re-exports the exact constructor already selected.
+    const candidates = new Set([entryPath, ...fs.readdirSync(directory)
+      .filter(name => /^client(?:-.*)?\.m?js$/i.test(name))
+      .map(name => path.join(directory, name))]);
+    for (const candidate of candidates) {
+      if (candidate !== entryPath && !fs.readFileSync(candidate, 'utf8').includes('isGatewayProtocolResponseError')) continue;
+      const facade = candidate === entryPath ? selected : require(candidate) as Record<string, unknown>;
+      if (facade.GatewayClient !== constructor || typeof facade.isGatewayProtocolResponseError !== 'function') continue;
+      if (predicate && predicate !== facade.isGatewayProtocolResponseError) return null;
+      predicate = facade.isGatewayProtocolResponseError as (error: unknown) => unknown;
+    }
+    if (!predicate) return null;
+    const isResponseError = predicate;
+    return {
+      isCurrent: () => this.gatewayClient === client && this.gatewayClientGeneration === generation &&
+        this.gatewayClientEntryPath === entryPath,
+      isResponseError: error => {
+        try { return isResponseError(error) === true; } catch { return false; }
+      },
+    };
+  } catch {
+    return null;
+  }
 }
 
 export function startTickWatchdog(this: RuntimeGatewayConnectionContext): void {

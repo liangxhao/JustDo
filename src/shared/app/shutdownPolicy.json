@@ -1,0 +1,8 @@
+{
+  "nativeShutdownMs": 325000,
+  "nativeExitMarginMs": 5000,
+  "forceExitObservationMs": 15000,
+  "startupAbortMs": 30000,
+  "otherAppCleanupMs": 30000,
+  "outerSchedulingMarginMs": 5000
+}

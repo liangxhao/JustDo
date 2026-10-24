@@ -6,9 +6,9 @@ const path = require('node:path');
 // Only these pinned modules are writable by the runtime patch transaction.
 const PROVIDER_PACKAGE_PATH = 'node_modules/@openclaw/ai/package.json';
 const PROVIDER_TRANSPORT_PATH =
-  'node_modules/@openclaw/ai/dist/openai-completions-transport-QYABn8Uz.mjs';
+  'node_modules/@openclaw/ai/dist/openai-completions-transport-BRjxCG1C.mjs';
 const PROVIDER_PARTITIONER_PATH =
-  'node_modules/@openclaw/ai/dist/reasoning-tag-text-partitioner-Ju9VpUGl.mjs';
+  'node_modules/@openclaw/ai/dist/reasoning-tag-text-partitioner-CpOy9-IQ.mjs';
 const FS_SAFE_PACKAGE_PATH = 'node_modules/@openclaw/fs-safe/package.json';
 const FS_SAFE_MOVE_PATH = 'node_modules/@openclaw/fs-safe/dist/move-path.js';
 const FS_SAFE_GUARDED_MUTATION_PATH = 'node_modules/@openclaw/fs-safe/dist/guarded-mutation.js';
@@ -25,7 +25,7 @@ const PATCH_DEPENDENCY_ARTIFACT_PATHS = Object.freeze([
   ...PATCH_DEPENDENCY_JAVASCRIPT_PATHS,
   'node_modules/@openclaw/ai/dist/transports.mjs',
   'node_modules/@openclaw/ai/dist/providers.mjs',
-  'node_modules/@openclaw/ai/dist/openai-completions-XvUwdvJc.mjs',
+  'node_modules/@openclaw/ai/dist/openai-completions-BkRt2Iy4.mjs',
   PLUGIN_PUBLICATION_SUPPORT_PATH,
 ]);
 
@@ -41,15 +41,15 @@ function isRuntimePatchDependencyTarget(runtimeDir, filePath) {
 }
 
 function runtimePatchDependencyArtifactPaths(runtimeDir, version) {
-  if (version !== 'v2026.10.4') return [];
+  if (version !== 'v2026.10.6') return [];
   const metadataPath = path.join(runtimeDir, PROVIDER_PACKAGE_PATH);
   const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf8'));
-  if (metadata.name !== '@openclaw/ai' || metadata.version !== '2026.10.4') {
-    throw new Error('Runtime patch dependency must be @openclaw/ai@2026.10.4');
+  if (metadata.name !== '@openclaw/ai' || metadata.version !== '2026.10.6') {
+    throw new Error('Runtime patch dependency must be @openclaw/ai@2026.10.6');
   }
   const filesystemMetadata = JSON.parse(fs.readFileSync(path.join(runtimeDir, FS_SAFE_PACKAGE_PATH), 'utf8'));
-  if (filesystemMetadata.name !== '@openclaw/fs-safe' || filesystemMetadata.version !== '0.24.2') {
-    throw new Error('Runtime patch dependency must be @openclaw/fs-safe@0.24.2');
+  if (filesystemMetadata.name !== '@openclaw/fs-safe' || filesystemMetadata.version !== '0.25.0') {
+    throw new Error('Runtime patch dependency must be @openclaw/fs-safe@0.25.0');
   }
   // Load after module initialization: pristine checks use the shared patch index.
   const { resolveNativeProviderTransportArtifact } = require('./verify-openclaw-pristine-contracts.cjs');

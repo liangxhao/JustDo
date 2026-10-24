@@ -1,0 +1,479 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
+import { afterEach, beforeEach, expect, test, vi } from 'vitest';
+
+import { StartupRoute, StartupStage } from '../../../shared/app/startup/routing';
+import * as versionPolicy from '../../../shared/app/startup/versionPolicy';
+import { classifyInstallation } from './classifyInstallation';
+import { StartupCoordinator } from './startupCoordinator';
+import {
+  newStartupJournal, readStartupJournal, STARTUP_STATE_FILE, type StartupIdentity, writeStartupJson,
+} from './startupState';
+
+vi.mock('./classifyInstallation', () => ({ classifyInstallation: vi.fn() }));
+const roots: string[] = [];
+const identity: StartupIdentity = {
+  appVersion: 'v2026.10.20', runtimeVersion: 'v2026.10.6', runtimeBuildId: 'a'.repeat(64),
+};
+let root: string;
+beforeEach(() => {
+  root = fs.mkdtempSync(path.join(os.tmpdir(), 'startup-upgrade-'));
+  roots.push(root);
+  vi.mocked(classifyInstallation).mockImplementation((directory, recovery = true) => ({
+    route: recovery && readStartupJournal(directory)?.stage !== StartupStage.Complete &&
+      readStartupJournal(directory)?.route === StartupRoute.Upgrade ? StartupRoute.Upgrade : StartupRoute.Normal,
+    journal: readStartupJournal(directory),
+  }));
+});
+afterEach(() => {
+  vi.restoreAllMocks();
+  for (const directory of roots.splice(0)) fs.rmSync(directory, { recursive: true, force: true });
+});
+const native = () => ({
+  identity: vi.fn(async () => ({ runtimeVersion: identity.runtimeVersion, runtimeBuildId: identity.runtimeBuildId })),
+  inspect: vi.fn(async () => ({ needsUpgrade: false })),
+  upgrade: vi.fn(async (_activity: (value: 'nativeInspect' | 'nativeBackup' | 'nativeUpgrade' | 'nativeVerify') => void) => {}),
+});
+const progress = () => ({ advance: vi.fn(), reportActivity: vi.fn(), setHistorySummary: vi.fn() });
+function receipt(completedIdentity = identity) {
+  writeStartupJson(path.join(root, STARTUP_STATE_FILE), {
+    ...newStartupJournal(StartupRoute.Normal), stage: StartupStage.Complete, completedIdentity,
+  });
+}
+
+test.each([StartupRoute.Fresh, StartupRoute.Migration])('preserves the actual %s data route instead of using a missing receipt', async route => {
+  vi.mocked(classifyInstallation).mockReturnValue({ route, journal: null });
+  const owner = native();
+  const coordinator = await StartupCoordinator.prepare(root, { appVersion: identity.appVersion, native: owner });
+  expect(coordinator.route).toBe(route);
+  expect(owner.inspect).not.toHaveBeenCalled();
+  expect(fs.readdirSync(root)).toEqual([]);
+});
+
+test.each(['missing receipt', 'different runtime version', 'native pending'])('selects an all-data-preserving upgrade for %s', async reason => {
+  if (reason !== 'missing receipt') receipt({ ...identity,
+    ...(reason === 'different runtime version' ? { runtimeVersion: 'v2026.9.8' } : {}),
+  });
+  const owner = native();
+  if (reason === 'native pending') owner.inspect.mockResolvedValue({ needsUpgrade: true });
+  const before = fs.existsSync(path.join(root, STARTUP_STATE_FILE))
+    ? fs.readFileSync(path.join(root, STARTUP_STATE_FILE), 'utf8') : null;
+  const coordinator = await StartupCoordinator.prepare(root, { appVersion: identity.appVersion, native: owner });
+  expect(coordinator.route).toBe(StartupRoute.Upgrade);
+  expect(owner.inspect).toHaveBeenCalledOnce();
+  expect(owner.upgrade).not.toHaveBeenCalled();
+  expect(before === null ? !fs.existsSync(path.join(root, STARTUP_STATE_FILE))
+    : fs.readFileSync(path.join(root, STARTUP_STATE_FILE), 'utf8') === before).toBe(true);
+});
+
+test('uses normal startup when the runtime version and live native facts match', async () => {
+  receipt();
+  const owner = native();
+  const coordinator = await StartupCoordinator.prepare(root, { appVersion: identity.appVersion, native: owner });
+  expect(coordinator.route).toBe(StartupRoute.Normal);
+  expect(owner.inspect).toHaveBeenCalledOnce();
+  expect(owner.upgrade).not.toHaveBeenCalled();
+});
+
+test.each([
+  { appVersion: 'v2026.10.19' },
+  { runtimeBuildId: 'b'.repeat(64) },
+  { appVersion: 'v2026.10.19', runtimeBuildId: 'b'.repeat(64) },
+  { appVersion: 'v2026.10.19', runtimeVersion: '2026.10.6', runtimeBuildId: 'b'.repeat(64) },
+])('normal startup retains all data and refreshes the delivery only after verification: %j', async change => {
+  const previous = { ...identity, ...change };
+  receipt(previous);
+  fs.writeFileSync(path.join(root, 'retained-settings'), 'exact user state');
+  const before = fs.readFileSync(path.join(root, STARTUP_STATE_FILE));
+  const owner = native();
+  const coordinator = await StartupCoordinator.prepare(root, { appVersion: identity.appVersion, native: owner });
+  expect(coordinator.route).toBe(StartupRoute.Normal);
+  expect(coordinator.getDowngradeConfirmation()).toBeUndefined();
+  expect(owner.inspect).toHaveBeenCalledOnce();
+  const observed = progress();
+  await coordinator.prepareBeforeStore(observed);
+  expect(fs.readFileSync(path.join(root, STARTUP_STATE_FILE))).toEqual(before);
+  expect(() => coordinator.complete()).toThrow(/startup checks/);
+  await coordinator.verifyNativeReady();
+  expect(readStartupJournal(root)?.completedIdentity).toEqual(previous);
+  coordinator.complete();
+  expect(readStartupJournal(root)).toMatchObject({ stage: StartupStage.Complete, completedIdentity: identity });
+  expect(readStartupJournal(root)?.targetIdentity).toBeUndefined();
+  expect(owner.inspect).toHaveBeenCalledTimes(2);
+  expect(owner.upgrade).not.toHaveBeenCalled();
+  expect(observed.advance).not.toHaveBeenCalled();
+  expect(observed.reportActivity).not.toHaveBeenCalled();
+  expect(fs.readFileSync(path.join(root, 'retained-settings'), 'utf8')).toBe('exact user state');
+  expect(fs.existsSync(path.join(root, 'backups'))).toBe(false);
+  const unchanged = vi.spyOn(fs, 'renameSync');
+  coordinator.complete();
+  expect(unchanged).not.toHaveBeenCalled();
+});
+
+test('an app-only update still selects upgrade when the actual native schema needs maintenance', async () => {
+  receipt({ ...identity, appVersion: 'v2026.10.19', runtimeBuildId: 'b'.repeat(64) });
+  const owner = native();
+  owner.inspect.mockResolvedValue({ needsUpgrade: true });
+  const coordinator = await StartupCoordinator.prepare(root, { appVersion: identity.appVersion, native: owner });
+  expect(coordinator.route).toBe(StartupRoute.Upgrade);
+  expect(owner.inspect).toHaveBeenCalledOnce();
+  expect(owner.upgrade).not.toHaveBeenCalled();
+});
+
+test('a pending upgrade of the same native version is resumed even when only the app changed', async () => {
+  const pending = { ...newStartupJournal(StartupRoute.Upgrade),
+    targetIdentity: identity, completedIdentity: { ...identity, appVersion: 'v2026.10.19' } };
+  writeStartupJson(path.join(root, STARTUP_STATE_FILE), pending);
+  const owner = native();
+  const coordinator = await StartupCoordinator.prepare(root, { appVersion: identity.appVersion, native: owner });
+  expect(coordinator.route).toBe(StartupRoute.Upgrade);
+  await coordinator.prepareBeforeStore(progress());
+  coordinator.complete();
+  expect(readStartupJournal(root)?.transactionId).toBe(pending.transactionId);
+  expect(readStartupJournal(root)?.completedIdentity).toEqual(identity);
+  expect(owner.upgrade).not.toHaveBeenCalled();
+});
+
+test('a normal completion write failure preserves the previous delivery and reports the failure', async () => {
+  receipt({ ...identity, appVersion: 'v2026.10.19', runtimeBuildId: 'b'.repeat(64) });
+  const before = fs.readFileSync(path.join(root, STARTUP_STATE_FILE));
+  const coordinator = await StartupCoordinator.prepare(root, { appVersion: identity.appVersion, native: native() });
+  await coordinator.prepareBeforeStore(progress());
+  await coordinator.verifyNativeReady();
+  vi.spyOn(fs, 'renameSync').mockImplementationOnce(() => { throw new Error('receipt publication failed'); });
+  expect(() => coordinator.complete()).toThrow(/receipt publication failed/);
+  expect(fs.readFileSync(path.join(root, STARTUP_STATE_FILE))).toEqual(before);
+});
+
+test('normal completion refreshes the source used by the next app-only downgrade warning', async () => {
+  receipt({ ...identity, appVersion: 'v2026.10.19', runtimeBuildId: 'b'.repeat(64) });
+  const coordinator = await StartupCoordinator.prepare(root, { appVersion: identity.appVersion, native: native() });
+  await coordinator.prepareBeforeStore(progress());
+  await coordinator.verifyNativeReady();
+  coordinator.complete();
+  const owner = native();
+  const previousApp = await StartupCoordinator.prepare(root, { appVersion: 'v2026.10.19', native: owner });
+  expect(previousApp.route).toBe(StartupRoute.Upgrade);
+  expect(previousApp.getDowngradeConfirmation()).toMatchObject({
+    source: { appVersion: identity.appVersion }, target: { appVersion: 'v2026.10.19' },
+  });
+  expect(owner.inspect).not.toHaveBeenCalled();
+  expect(owner.upgrade).not.toHaveBeenCalled();
+});
+
+test.each(['pending', 'unreadable'])('normal startup blocks if native readiness becomes %s before ingress', async change => {
+  receipt({ ...identity, appVersion: 'v2026.10.19', runtimeBuildId: 'b'.repeat(64) });
+  const owner = native();
+  const coordinator = await StartupCoordinator.prepare(root, { appVersion: identity.appVersion, native: owner });
+  expect(coordinator.route).toBe(StartupRoute.Normal);
+  await coordinator.prepareBeforeStore(progress());
+  const before = fs.readFileSync(path.join(root, STARTUP_STATE_FILE));
+  if (change === 'pending') {
+    owner.inspect.mockResolvedValue({ needsUpgrade: true });
+    await expect(coordinator.verifyNativeReady()).rejects.toMatchObject({
+      code: versionPolicy.StartupCompatibilityErrorCode.VersionUnconfirmed,
+    });
+  } else {
+    const failure = new Error('native snapshot is no longer readable');
+    owner.inspect.mockRejectedValue(failure);
+    await expect(coordinator.verifyNativeReady()).rejects.toBe(failure);
+  }
+  expect(() => coordinator.complete()).toThrow(/startup checks/);
+  expect(owner.upgrade).not.toHaveBeenCalled();
+  expect(fs.readFileSync(path.join(root, STARTUP_STATE_FILE))).toEqual(before);
+});
+
+test('waits for readonly inspection before publishing the route and preserves files on failure', async () => {
+  fs.writeFileSync(path.join(root, 'retained-config.json'), '{"keep":true}');
+  const owner = native();
+  let reject!: (error: Error) => void;
+  owner.inspect.mockImplementationOnce(() => new Promise((_resolve, failed) => { reject = failed; }));
+  let published = false;
+  const preparation = StartupCoordinator.prepare(root, { appVersion: identity.appVersion, native: owner, startedAt: 1000 })
+    .then(value => { published = true; return value; });
+  await vi.waitFor(() => expect(owner.inspect).toHaveBeenCalledOnce());
+  expect(published).toBe(false);
+  const error = new Error('Native inventory is unreadable');
+  reject(error);
+  const coordinator = await preparation;
+  expect(coordinator.startedAt).toBe(1000);
+  expect(coordinator.route).not.toBe(StartupRoute.Fresh);
+  await expect(coordinator.prepareBeforeStore(progress())).rejects.toBe(error);
+  expect(() => coordinator.complete()).toThrow(error.message);
+  expect(fs.readdirSync(root)).toEqual(['retained-config.json']);
+  expect(fs.readFileSync(path.join(root, 'retained-config.json'), 'utf8')).toBe('{"keep":true}');
+});
+
+test('preserves every unrelated file during adoption and records completion only after verification', async () => {
+  for (const file of ['product.sqlite', 'login.json', 'plugin-state.sqlite', 'permissions.json'])
+    fs.writeFileSync(path.join(root, file), 'retained:' + file);
+  const owner = native();
+  const coordinator = await StartupCoordinator.prepare(root, { appVersion: identity.appVersion, native: owner });
+  expect(() => coordinator.complete()).toThrow(/startup checks/);
+  await coordinator.prepareBeforeStore(progress());
+  expect(owner.upgrade).not.toHaveBeenCalled();
+  expect(readStartupJournal(root)).toMatchObject({ route: StartupRoute.Upgrade, stage: StartupStage.Check, targetIdentity: identity });
+  expect(readStartupJournal(root)?.completedIdentity).toBeUndefined();
+  coordinator.complete();
+  expect(readStartupJournal(root)).toMatchObject({ stage: StartupStage.Complete, completedIdentity: identity });
+  expect(readStartupJournal(root)?.targetIdentity).toBeUndefined();
+  for (const file of ['product.sqlite', 'login.json', 'plugin-state.sqlite', 'permissions.json'])
+    expect(fs.readFileSync(path.join(root, file), 'utf8')).toBe('retained:' + file);
+  expect(fs.existsSync(path.join(root, 'backups'))).toBe(false);
+});
+
+test('an interrupted native mutation retains its journal and reconciles before any new mutation', async () => {
+  const owner = native();
+  owner.inspect.mockResolvedValue({ needsUpgrade: true });
+  owner.upgrade.mockRejectedValueOnce(new Error('Unknown native child outcome'));
+  const first = await StartupCoordinator.prepare(root, { appVersion: identity.appVersion, native: owner });
+  await expect(first.prepareBeforeStore(progress())).rejects.toThrow('Unknown native child outcome');
+  const pending = readStartupJournal(root)!;
+  expect(pending.stage).toBe(StartupStage.UpgradePrepare);
+  expect(pending.completedIdentity).toBeUndefined();
+  const resumedOwner = native(); // Native facts confirm that the first process already committed.
+  const resumed = await StartupCoordinator.prepare(root, { appVersion: identity.appVersion, native: resumedOwner });
+  await resumed.prepareBeforeStore(progress());
+  resumed.complete();
+  expect(resumedOwner.upgrade).not.toHaveBeenCalled();
+  expect(readStartupJournal(root)?.transactionId).toBe(pending.transactionId);
+  expect(readStartupJournal(root)?.completedIdentity).toEqual(identity);
+});
+
+test('requires verified native readiness after a maintenance return and does not publish a false receipt', async () => {
+  const owner = native();
+  owner.inspect.mockResolvedValue({ needsUpgrade: true });
+  const coordinator = await StartupCoordinator.prepare(root, { appVersion: identity.appVersion, native: owner });
+  await expect(coordinator.prepareBeforeStore(progress())).rejects.toThrow(/still reports/);
+  expect(owner.upgrade).toHaveBeenCalledOnce();
+  expect(readStartupJournal(root)?.stage).toBe(StartupStage.UpgradeVerify);
+  expect(() => coordinator.complete()).toThrow(/startup checks/);
+});
+
+test('forwards actual native maintenance activity and verifies its result before completion', async () => {
+  const owner = native();
+  owner.inspect.mockResolvedValueOnce({ needsUpgrade: true })
+    .mockResolvedValueOnce({ needsUpgrade: true }).mockResolvedValueOnce({ needsUpgrade: false });
+  owner.upgrade.mockImplementation(async activity => {
+    for (const value of ['nativeInspect', 'nativeBackup', 'nativeUpgrade', 'nativeVerify'] as const)
+      activity(value);
+  });
+  const coordinator = await StartupCoordinator.prepare(root, { appVersion: identity.appVersion, native: owner });
+  const observed = progress();
+  await coordinator.prepareBeforeStore(observed);
+  expect(owner.upgrade).toHaveBeenCalledOnce();
+  expect(owner.inspect).toHaveBeenCalledTimes(3);
+  expect(observed.reportActivity.mock.calls.map(([value]) => value))
+    .toEqual(['nativeInspect', 'nativeInspect', 'nativeBackup', 'nativeUpgrade', 'nativeVerify', 'nativeVerify']);
+  expect(readStartupJournal(root)?.completedIdentity).toBeUndefined();
+  coordinator.complete();
+  expect(readStartupJournal(root)?.completedIdentity).toEqual(identity);
+});
+
+test('a product generation change across the native await keeps Store admission closed', async () => {
+  const owner = native();
+  owner.inspect.mockResolvedValue({ needsUpgrade: true });
+  owner.upgrade.mockImplementation(async () => {
+    vi.mocked(classifyInstallation).mockReturnValue({ route: StartupRoute.Fresh, journal: null });
+    owner.inspect.mockResolvedValue({ needsUpgrade: false });
+  });
+  const coordinator = await StartupCoordinator.prepare(root, { appVersion: identity.appVersion, native: owner });
+  await expect(coordinator.prepareBeforeStore(progress())).rejects.toThrow(/generation changed/);
+  expect(readStartupJournal(root)?.completedIdentity).toBeUndefined();
+  expect(() => coordinator.complete()).toThrow(/startup checks/);
+});
+
+test('fresh startup may retain settings access without claiming an unverified native identity', async () => {
+  vi.mocked(classifyInstallation).mockReturnValue({ route: StartupRoute.Fresh, journal: null });
+  const owner = native();
+  owner.inspect.mockRejectedValue(new Error('Native readiness unavailable'));
+  const coordinator = await StartupCoordinator.prepare(root, { appVersion: identity.appVersion, native: owner });
+  await coordinator.prepareBeforeStore(progress());
+  vi.spyOn(console, 'warn').mockImplementation(() => {});
+  await coordinator.verifyNativeReady();
+  coordinator.complete();
+  expect(readStartupJournal(root)).toMatchObject({ route: StartupRoute.Fresh, stage: StartupStage.Complete });
+  expect(readStartupJournal(root)?.completedIdentity).toBeUndefined();
+});
+
+test.each([{ appVersion: 'v2026.10.19' }, { runtimeBuildId: 'b'.repeat(64) }])('rejects an unfinished upgrade belonging to another target without rewriting it: %j', async change => {
+  writeStartupJson(path.join(root, STARTUP_STATE_FILE), {
+    ...newStartupJournal(StartupRoute.Upgrade), targetIdentity: { ...identity, ...change },
+  });
+  const before = fs.readFileSync(path.join(root, STARTUP_STATE_FILE));
+  const owner = native();
+  const coordinator = await StartupCoordinator.prepare(root, { appVersion: identity.appVersion, native: owner });
+  await expect(coordinator.prepareBeforeStore(progress())).rejects.toThrow(/different application runtime/);
+  expect(fs.readFileSync(path.join(root, STARTUP_STATE_FILE))).toEqual(before);
+  expect(owner.upgrade).not.toHaveBeenCalled();
+});
+
+test('a failed durable completion write cannot replace the pending receipt', async () => {
+  const coordinator = await StartupCoordinator.prepare(root, { appVersion: identity.appVersion, native: native() });
+  await coordinator.prepareBeforeStore(progress());
+  const before = fs.readFileSync(path.join(root, STARTUP_STATE_FILE));
+  vi.spyOn(fs, 'renameSync').mockImplementationOnce(() => { throw new Error('receipt publication failed'); });
+  expect(() => coordinator.complete()).toThrow(/receipt publication failed/);
+  expect(fs.readFileSync(path.join(root, STARTUP_STATE_FILE))).toEqual(before);
+});
+
+test.each([
+  { appVersion: 'v2026.10.21' }, { runtimeVersion: 'v2026.10.7' },
+  { appVersion: 'v2026.10.19', runtimeVersion: 'v2026.10.7' },
+])('requires confirmation for a completed newer delivery before native inspection or any file write: %j', async source => {
+    receipt({ ...identity, ...source });
+    fs.writeFileSync(path.join(root, 'retained-settings'), 'exact user state');
+    const before = fs.readFileSync(path.join(root, STARTUP_STATE_FILE));
+    const owner = native();
+    const coordinator = await StartupCoordinator.prepare(root, { appVersion: identity.appVersion, native: owner });
+    const pending = coordinator.getDowngradeConfirmation()!;
+    expect(pending.source).toEqual({ appVersion: source.appVersion ?? identity.appVersion,
+      runtimeVersion: source.runtimeVersion ?? identity.runtimeVersion });
+    expect(coordinator.route).toBe(StartupRoute.Upgrade);
+    let finished = false;
+    const continuation = coordinator.prepareBeforeStore(progress()).then(() => { finished = true; });
+    await Promise.resolve();
+    expect(finished).toBe(false);
+    expect(owner.inspect).not.toHaveBeenCalled();
+    expect(owner.upgrade).not.toHaveBeenCalled();
+    expect(fs.readFileSync(path.join(root, STARTUP_STATE_FILE))).toEqual(before);
+    expect(fs.readFileSync(path.join(root, 'retained-settings'), 'utf8')).toBe('exact user state');
+    expect(coordinator.confirmDowngrade('not-the-current-request')).toBe(false);
+    expect(coordinator.confirmDowngrade(pending.requestId)).toBe(true);
+    expect(coordinator.confirmDowngrade(pending.requestId)).toBe(false);
+    await continuation;
+    expect(finished).toBe(true);
+    expect(owner.inspect).toHaveBeenCalled();
+    expect(coordinator.route).toBe(StartupRoute.Upgrade);
+    expect(coordinator.getDowngradeConfirmation()).toBeUndefined();
+});
+
+test('does not discard a newer completed identity when classification selects history migration', async () => {
+  receipt({ ...identity, runtimeVersion: 'v2026.10.7' });
+  vi.mocked(classifyInstallation).mockReturnValue({ route: StartupRoute.Migration, journal: null });
+  const before = fs.readFileSync(path.join(root, STARTUP_STATE_FILE));
+  const owner = native();
+  const coordinator = await StartupCoordinator.prepare(root, { appVersion: identity.appVersion, native: owner });
+  expect(coordinator.getDowngradeConfirmation()).toBeDefined();
+  const continuation = coordinator.prepareBeforeStore(progress());
+  const rejected = expect(continuation).rejects.toThrow(/confirmation was cancelled/);
+  coordinator.stop();
+  await rejected;
+  expect(owner.inspect).not.toHaveBeenCalled();
+  expect(owner.upgrade).not.toHaveBeenCalled();
+  expect(fs.readFileSync(path.join(root, STARTUP_STATE_FILE))).toEqual(before);
+});
+
+test('human confirmation cannot grant native schema compatibility or publish an upgrade journal', async () => {
+  receipt({ ...identity, runtimeVersion: 'v2026.10.7' });
+  const before = fs.readFileSync(path.join(root, STARTUP_STATE_FILE));
+  const owner = native();
+  const failure = Object.assign(new Error('native schema is newer than supported'), {
+    code: versionPolicy.StartupCompatibilityErrorCode.NativeSchemaUnsupported,
+  });
+  owner.inspect.mockRejectedValue(failure);
+  const coordinator = await StartupCoordinator.prepare(root, { appVersion: identity.appVersion, native: owner });
+  const continuation = coordinator.prepareBeforeStore(progress());
+  const rejected = expect(continuation).rejects.toBe(failure);
+  expect(coordinator.confirmDowngrade(coordinator.getDowngradeConfirmation()!.requestId)).toBe(true);
+  await rejected;
+  expect(owner.upgrade).not.toHaveBeenCalled();
+  expect(fs.readFileSync(path.join(root, STARTUP_STATE_FILE))).toEqual(before);
+});
+
+test('shutdown rejects a pending confirmation without any native inspection or writes', async () => {
+  receipt({ ...identity, runtimeVersion: 'v2026.10.7' });
+  const before = fs.readFileSync(path.join(root, STARTUP_STATE_FILE));
+  const owner = native();
+  const coordinator = await StartupCoordinator.prepare(root, { appVersion: identity.appVersion, native: owner });
+  const pending = coordinator.getDowngradeConfirmation()!;
+  const continuation = coordinator.prepareBeforeStore(progress());
+  const rejected = expect(continuation).rejects.toThrow(/confirmation was cancelled/);
+  coordinator.stop();
+  await rejected;
+  expect(coordinator.confirmDowngrade(pending.requestId)).toBe(false);
+  expect(owner.inspect).not.toHaveBeenCalled();
+  expect(fs.readFileSync(path.join(root, STARTUP_STATE_FILE))).toEqual(before);
+});
+
+test('a receipt identity change while the warning is visible invalidates the click', async () => {
+  receipt({ ...identity, runtimeVersion: 'v2026.10.7' });
+  const owner = native();
+  const coordinator = await StartupCoordinator.prepare(root, { appVersion: identity.appVersion, native: owner });
+  const pending = coordinator.getDowngradeConfirmation()!;
+  receipt({ ...identity, runtimeVersion: 'v2026.10.8' });
+  const before = fs.readFileSync(path.join(root, STARTUP_STATE_FILE));
+  expect(coordinator.confirmDowngrade(pending.requestId)).toBe(false);
+  expect(owner.inspect).not.toHaveBeenCalled();
+  expect(fs.readFileSync(path.join(root, STARTUP_STATE_FILE))).toEqual(before);
+  coordinator.stop();
+});
+
+test.each(['appVersion', 'runtimeVersion'] as const)('blocks an uncomparable %s before profile admission', async field => {
+  receipt({ ...identity, [field]: '2026.10.6-preview' });
+  const owner = native();
+  const coordinator = await StartupCoordinator.prepare(root, { appVersion: identity.appVersion, native: owner });
+  await expect(coordinator.prepareBeforeStore(progress())).rejects.toMatchObject({
+    code: versionPolicy.StartupCompatibilityErrorCode.VersionUnconfirmed,
+  });
+  expect(owner.inspect).not.toHaveBeenCalled();
+  expect(owner.upgrade).not.toHaveBeenCalled();
+});
+
+test.each([StartupRoute.Fresh, StartupRoute.Migration])('rejects a foreign pending %s target before profile writes', async route => {
+  writeStartupJson(path.join(root, STARTUP_STATE_FILE), {
+    ...newStartupJournal(route), targetIdentity: { ...identity, runtimeVersion: 'v2026.10.7' },
+  });
+  vi.mocked(classifyInstallation).mockReturnValue({ route, journal: readStartupJournal(root) });
+  fs.writeFileSync(path.join(root, 'preserved-file'), 'unchanged');
+  const before = fs.readFileSync(path.join(root, STARTUP_STATE_FILE));
+  const owner = native();
+  const coordinator = await StartupCoordinator.prepare(root, { appVersion: identity.appVersion, native: owner });
+  await expect(coordinator.prepareBeforeStore(progress())).rejects.toMatchObject({
+    code: versionPolicy.StartupCompatibilityErrorCode.VersionUnconfirmed,
+  });
+  expect(owner.inspect).not.toHaveBeenCalled();
+  expect(owner.upgrade).not.toHaveBeenCalled();
+  expect(fs.readFileSync(path.join(root, STARTUP_STATE_FILE))).toEqual(before);
+  expect(fs.readFileSync(path.join(root, 'preserved-file'), 'utf8')).toBe('unchanged');
+  expect(fs.existsSync(path.join(root, 'backups'))).toBe(false);
+});
+
+test('records the fresh target before initialization and rejects another delivery on resume', async () => {
+  vi.mocked(classifyInstallation).mockImplementation(() => ({ route: StartupRoute.Fresh, journal: readStartupJournal(root) }));
+  const coordinator = await StartupCoordinator.prepare(root, { appVersion: identity.appVersion, native: native() });
+  await coordinator.prepareBeforeStore(progress());
+  expect(readStartupJournal(root)?.targetIdentity).toEqual(identity);
+  const before = fs.readFileSync(path.join(root, STARTUP_STATE_FILE));
+  const resumed = await StartupCoordinator.prepare(root, { appVersion: 'v2026.10.19', native: native() });
+  await expect(resumed.prepareBeforeStore(progress())).rejects.toMatchObject({
+    code: versionPolicy.StartupCompatibilityErrorCode.VersionUnconfirmed,
+  });
+  expect(fs.readFileSync(path.join(root, STARTUP_STATE_FILE))).toEqual(before);
+});
+
+test.each([false, true])('a future exact declaration only continues after actual native inspection: rejected=%s', async rejected => {
+  const previous = { ...identity, runtimeVersion: 'v2026.10.7' };
+  receipt(previous);
+  const actualAssessment = versionPolicy.assessStartupDelivery;
+  vi.spyOn(versionPolicy, 'assessStartupDelivery').mockImplementation(options => actualAssessment({ ...options,
+    declaredDowngrades: [{ evidenceId: 'all-persistent-domains-reviewed', source: previous, target: identity }],
+  }));
+  const owner = native();
+  if (rejected) owner.inspect.mockRejectedValue(new Error('native inspection rejected the source'));
+  const before = fs.readFileSync(path.join(root, STARTUP_STATE_FILE));
+  const coordinator = await StartupCoordinator.prepare(root, { appVersion: identity.appVersion, native: owner });
+  expect(owner.inspect).toHaveBeenCalledOnce();
+  expect(owner.upgrade).not.toHaveBeenCalled();
+  expect(fs.readFileSync(path.join(root, STARTUP_STATE_FILE))).toEqual(before);
+  if (rejected) await expect(coordinator.prepareBeforeStore(progress())).rejects.toThrow(/inspection rejected/);
+  else {
+    expect(coordinator.route).toBe(StartupRoute.Upgrade);
+    await coordinator.prepareBeforeStore(progress());
+    expect(readStartupJournal(root)?.completedIdentity).toEqual(previous);
+    coordinator.complete();
+    expect(readStartupJournal(root)?.completedIdentity).toEqual(identity);
+  }
+});

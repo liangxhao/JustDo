@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -5,8 +6,10 @@ import path from 'node:path';
 
 import { expect, test, vi } from 'vitest';
 
+import { SHUTDOWN_BUDGET_MS } from '../../../shared/app/shutdownPolicy';
 import cliRuntimeFiles from '../../../shared/openclaw/cliRuntimeFiles.json';
 import { PRODUCT_NAME_LOWERCASE } from '../../../shared/productMetadata';
+import { t } from '../../core/i18n';
 import { OPENCLAW_GATEWAY_SHUTDOWN_MESSAGE } from './launch/openclawLauncher';
 import {
   applyOpenClawCliNetworkMode,
@@ -28,6 +31,7 @@ test.each([false, true])(
       const child = Object.assign(new EventEmitter(), {
         pid: 1234,
         exitCode: null,
+        signalCode: null,
         connected: true,
         send: vi.fn(),
         kill: vi.fn(),
@@ -38,19 +42,21 @@ test.each([false, true])(
       };
       manager.expectedGatewayExits = new Set();
       const stopped = manager.stopGatewayProcess(child);
+      const outcome = unresponsive ? expect(stopped).rejects.toThrow('grace period') : stopped;
       expect(child.send).toHaveBeenCalledWith(
         OPENCLAW_GATEWAY_SHUTDOWN_MESSAGE,
         expect.any(Function),
       );
       expect(child.kill).not.toHaveBeenCalled();
       if (unresponsive) {
-        await vi.advanceTimersByTimeAsync(15_000);
+        await vi.advanceTimersByTimeAsync(SHUTDOWN_BUDGET_MS.gatewayGrace);
         expect(child.kill).toHaveBeenCalledOnce();
-        await vi.advanceTimersByTimeAsync(1_000);
+        child.emit('close', null, 'SIGTERM');
       } else {
-        child.emit('exit', 0);
+        child.emit('exit', 0, null);
+        child.emit('close', 0, null);
       }
-      await stopped;
+      await outcome;
       expect(vi.getTimerCount()).toBe(0);
       expect(child.listenerCount('exit')).toBe(0);
     } finally {
@@ -58,6 +64,46 @@ test.each([false, true])(
     }
   },
 );
+
+test('a signalled exit cannot clear pending close custody or the permanent restart fence', async () => {
+  vi.useFakeTimers();
+  try {
+    const child = Object.assign(new EventEmitter(), {
+      pid: 1234, exitCode: null, signalCode: null, connected: true,
+      send: vi.fn(), kill: vi.fn(),
+    });
+    const manager = Object.assign(Object.create(OpenClawEngineManager.prototype), {
+      expectedGatewayExits: new WeakSet(), gatewayProcess: child,
+      status: { phase: 'running', version: '2026.10.6', canRetry: false },
+      gatewayConfigReloadMonitor: { observeGatewayExit: vi.fn() },
+    });
+    manager.attachGatewayExitHandlers(child);
+    const stopped = manager.stopGatewayProcess(child);
+    const rejected = expect(stopped).rejects.toThrow();
+    await vi.advanceTimersByTimeAsync(SHUTDOWN_BUDGET_MS.gatewayGrace);
+    child.emit('exit', null, 'SIGTERM');
+    expect(manager.gatewayProcess).toBeNull();
+    let secondSettled = false;
+    const second = manager.stopGateway().catch(() => { secondSettled = true; });
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(secondSettled).toBe(false);
+    child.emit('close', null, 'SIGTERM');
+    await rejected;
+    await second;
+    expect(manager.getStatus()).toMatchObject({
+      phase: 'error', canRetry: false, message: t('gatewayShutdownUnconfirmed'),
+    });
+    const publicFailure = {
+      message: t('gatewayShutdownUnconfirmed'), cause: manager.gatewayShutdown.failure,
+    };
+    await expect(manager.startGateway()).rejects.toMatchObject(publicFailure);
+    await expect(manager.restartGateway()).rejects.toMatchObject(publicFailure);
+    await expect(manager.stopGateway()).rejects.toMatchObject(publicFailure);
+    expect(child.send).toHaveBeenCalledOnce();
+    expect(child.kill).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(0);
+  } finally { vi.useRealTimers(); }
+});
 
 test('resolves the OpenClaw v2026.9.2 runtime resource layout', () => {
   expect(resolveOpenClawRuntimeResourcePaths('C:\\runtime', 'C:\\state')).toEqual({
@@ -128,16 +174,35 @@ test('resolves the public OpenClaw CLI independently from the Gateway bundle', (
   }
 });
 
-test('uses a TTY-capable Node runtime for Windows CLI shims', () => {
+test('requires the admitted Node for CLI shims on both platforms', () => {
   const sources = buildOpenClawCliShimSources();
 
-  expect(sources.shell.indexOf('if [ -x "${JUSTDO_ELECTRON_PATH:-}" ]')).toBeLessThan(
-    sources.shell.indexOf('command -v node'),
-  );
+  expect(sources.shell).toContain('exec env ELECTRON_RUN_AS_NODE=1 "${JUSTDO_ELECTRON_PATH}"');
+  expect(sources.shell).not.toContain('command -v node');
   expect(sources.windows).toContain('setlocal');
-  expect(sources.windows.indexOf('where.exe node.exe')).toBeLessThan(
-    sources.windows.indexOf('goto run_electron'),
-  );
+  expect(sources.windows).not.toContain('where.exe');
+  expect(sources.windows).not.toContain('JUSTDO_CLI_NODE');
+  expect(sources.windows).toContain('"%JUSTDO_ELECTRON_PATH%" "%JUSTDO_OPENCLAW_ENTRY%" %*');
+});
+
+test.skipIf(process.platform !== 'win32')('the actual Windows CLI ignores PATH Node and preserves arguments and exit status', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'runtime-cli 中文 '));
+  try {
+    const shim = path.join(directory, 'openclaw.cmd');
+    const entry = path.join(directory, 'entry.cjs');
+    fs.writeFileSync(shim, buildOpenClawCliShimSources().windows);
+    fs.writeFileSync(entry, 'process.stdout.write(JSON.stringify({ executable: process.execPath, args: process.argv.slice(2) }));process.exitCode=7;');
+    const env = { ...process.env, JUSTDO_OPENCLAW_ENTRY: entry, JUSTDO_ELECTRON_PATH: process.execPath };
+    const admitted = spawnSync(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', `""${shim}" "hello world""`], { env, encoding: 'utf8', windowsHide: true, windowsVerbatimArguments: true });
+    expect(admitted.status).toBe(7);
+    expect(JSON.parse(admitted.stdout)).toEqual({ executable: process.execPath, args: ['hello world'] });
+    const missing = spawnSync(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', `""${shim}""`], { env: { ...env, JUSTDO_ELECTRON_PATH: '' }, encoding: 'utf8', windowsHide: true, windowsVerbatimArguments: true });
+    expect(missing.status).toBe(127);
+    expect(missing.stdout).toBe('');
+    expect(missing.stderr).toContain('admitted OpenClaw Node runtime is unavailable');
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test('exposes the lowercase product name as a CLI alias', () => {

@@ -17,7 +17,7 @@ import {
   projectDiagnosticEvent,
   type ProjectedDiagnostic,
 } from '../../engine/openclaw/runtimeDiagnostics';
-import { OPENCLAW_WIRE_VERSION } from '../../engine/openclaw/wire/v2026_10_4';
+import { OPENCLAW_WIRE_VERSION } from '../../engine/openclaw/wire/v2026_10_6';
 import { classifyDiagnostics } from './classifier';
 import { projectDiagnosticEnvironment } from './environment';
 import { DiagnosticExportLogs } from './exportLogs';

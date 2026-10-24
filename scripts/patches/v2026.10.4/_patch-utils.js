@@ -5,7 +5,7 @@ const path = require('path');
 const {
   isRuntimePatchDependencyTarget,
   listRuntimePatchDependencyTargets,
-} = require('../../openclaw/openclaw-patch-dependencies.cjs');
+} = require('./openclaw-patch-dependencies.js');
 
 let activeRuntimePhase = null;
 const atomicRenameWaitArray = new Int32Array(new SharedArrayBuffer(4));

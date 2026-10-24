@@ -1,3 +1,4 @@
+import { historicalRuntimeOrUnavailable } from './historical-runtime';
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -291,7 +292,7 @@ describe('dynamic-import recovery support initializers', () => {
 });
 
 const dist = path.join(
-  process.env.OPENCLAW_PRISTINE_DIR ?? path.join(root, 'vendor/openclaw-runtime/current'),
+  historicalRuntimeOrUnavailable(process.env.OPENCLAW_PRISTINE_DIR ?? path.join(root, 'vendor/openclaw-runtime/current')),
   'dist',
 );
 const nativeFile =

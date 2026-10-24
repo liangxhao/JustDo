@@ -49,7 +49,10 @@ async function main() {
   const stop = code => {
     if (stopping) return;
     stopping = true;
-    void stopElectron(electron).then(() => {
+    void stopElectron(electron).catch(error => {
+      console.error('[Isolated Dev] Application shutdown failed:', error.message);
+      code = 1;
+    }).then(() => {
       try { vite.kill(); } catch { /* Already exited. */ }
       process.exit(code);
     });
@@ -90,7 +93,7 @@ async function main() {
     console.error(error.message);
     stop(1);
   });
-  electron.on('exit', code => stop(code || 0));
+  electron.on('close', code => stop(code ?? 1));
 }
 main().catch(error => {
   console.error(error.message);

@@ -125,3 +125,76 @@ test('keeps a worktree visible when snapshot removal fails', async () => {
   expect(screen.getByText('unfinished')).toBeTruthy();
   expect(remove).toHaveBeenCalledTimes(1);
 });
+
+test('keeps cleanup busy until native completion and refreshes only after it', async () => {
+  let finish!: (value: unknown) => void;
+  const clean = vi.fn(
+    () =>
+      new Promise(resolve => {
+        finish = resolve;
+      }),
+  );
+  const list = vi.fn().mockResolvedValue({ success: true, value: [] });
+  vi.stubGlobal('electron', { openclaw: { worktrees: { list, clean } } });
+  render(<WorktreeSettingsPage />);
+  await screen.findByText('worktreeEmpty');
+  fireEvent.click(screen.getByRole('button', { name: 'worktreeClean' }));
+  expect(
+    (screen.getByRole('button', { name: 'worktreeClean' }) as HTMLButtonElement).disabled,
+  ).toBe(true);
+  expect(list).toHaveBeenCalledTimes(1);
+  finish({
+    success: true,
+    value: {
+      jobId: 'native-job',
+      state: 'completed',
+      removed: [],
+      orphansDeleted: 0,
+      snapshotsPruned: 0,
+    },
+  });
+  await waitFor(() => expect(list).toHaveBeenCalledTimes(2));
+  await waitFor(() =>
+    expect(
+      (screen.getByRole('button', { name: 'worktreeClean' }) as HTMLButtonElement).disabled,
+    ).toBe(false),
+  );
+  expect(clean).toHaveBeenCalledOnce();
+});
+
+test.each(['unconfirmed', 'ipc-rejected'])(
+  'keeps the list and releases busy after %s cleanup',
+  async mode => {
+    const list = vi.fn().mockResolvedValue({
+      success: true,
+      value: [
+        {
+          id: 'retained',
+          name: 'keep-this',
+          branch: 'openclaw/keep',
+          path: '/tree',
+          repoRoot: '/repo',
+          ownerKind: 'session',
+          lastActiveAt: 1,
+        },
+      ],
+    });
+    const clean =
+      mode === 'unconfirmed'
+        ? vi.fn().mockResolvedValue({ success: false, error: 'Original task is unconfirmed' })
+        : vi.fn().mockRejectedValue(new Error('IPC disconnected'));
+    vi.stubGlobal('electron', { openclaw: { worktrees: { list, clean } } });
+    render(<WorktreeSettingsPage />);
+    await screen.findByText('keep-this');
+    fireEvent.click(screen.getByRole('button', { name: 'worktreeClean' }));
+    expect((await screen.findByRole('alert')).textContent).toBe(
+      mode === 'unconfirmed' ? 'Original task is unconfirmed' : 'worktreeCleanupUnconfirmed',
+    );
+    expect(screen.getByText('keep-this')).toBeTruthy();
+    expect(list).toHaveBeenCalledTimes(1);
+    expect(
+      (screen.getByRole('button', { name: 'worktreeClean' }) as HTMLButtonElement).disabled,
+    ).toBe(false);
+    expect(clean).toHaveBeenCalledOnce();
+  },
+);

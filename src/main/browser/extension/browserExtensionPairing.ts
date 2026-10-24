@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
+import { requireOpenClawCliExecutable } from '../../openclaw/runtime/launch/cliNodeRuntime';
 import type { OpenClawCliEnvironment } from '../../openclaw/runtime/openclawEngineManager';
 
 const execFileAsync = promisify(execFile);
@@ -57,7 +58,7 @@ export async function readBrowserExtensionPairing(
     // forward that error to the extension, Renderer or application logs.
     try {
       const result = await execFileAsync(
-        cli.env.JUSTDO_ELECTRON_PATH?.trim() || process.execPath,
+        requireOpenClawCliExecutable(cli.env),
         buildBrowserExtensionPairingCommandArgs(cli.openclawEntry, transport),
         {
           cwd: cli.runtimeRoot,

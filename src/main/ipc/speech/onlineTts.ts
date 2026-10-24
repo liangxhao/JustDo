@@ -51,14 +51,14 @@ const readTtsConfig = (config: unknown): Record<string, unknown> =>
 const readProviderFields = (
   providerConfig: Record<string, unknown>,
 ): { baseUrl?: string; model?: string; voice?: string } => {
+  const voice = [providerConfig.speakerVoice, providerConfig.speakerVoiceId]
+    .find((value): value is string => typeof value === 'string' && Boolean(value.trim()))?.trim();
   return {
     ...(typeof providerConfig.baseUrl === 'string' ? { baseUrl: providerConfig.baseUrl } : {}),
     ...(typeof providerConfig.model === 'string'
       ? { model: providerConfig.model }
       : {}),
-    ...(typeof providerConfig.voice === 'string'
-      ? { voice: providerConfig.voice }
-      : {}),
+    ...(voice ? { voice } : {}),
   };
 };
 
@@ -198,11 +198,10 @@ export function registerOnlineTtsHandlers({
       if (!apiKey && (existingProvider !== provider || existingBaseUrl !== baseUrl)) {
         throw new Error('Online speech API key is required when changing the service URL.');
       }
-      const providerConfig = { baseUrl, ...(apiKey ? { apiKey } : {}), model, voice };
+      const providerConfig = { baseUrl, ...(apiKey ? { apiKey } : {}), model, speakerVoice: voice };
       await requestGateway('config.patch', {
         raw: JSON.stringify({
           tts: {
-            enabled: true,
             auto: 'off',
             provider,
             maxTextLength: 10_000,

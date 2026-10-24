@@ -3,6 +3,8 @@
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const { canonicalJson, verifyNativeDatabaseContract } = require('./native-database-contract.cjs');
+const { verifyNodeRuntime } = require('../runtime/setup-node-runtime.cjs');
 const {
   runtimePatchDependencyArtifactPaths,
 } = require('./openclaw-patch-dependencies.cjs');
@@ -22,6 +24,7 @@ const BUILD_RECIPE_FILES = [
   'electron-builder.json',
   'electron-builder.config.cjs',
   'scripts/packaging/electron-builder-hooks.cjs',
+  'scripts/packaging/notarize.js',
   'scripts/packaging/prepare-windows-build.cjs',
   'scripts/packaging/electron-builder-product-metadata.cjs',
   'scripts/openclaw/install-openclaw-runtime.cjs',
@@ -34,6 +37,7 @@ const BUILD_RECIPE_FILES = [
   'scripts/openclaw/openclaw-patch-dependencies.cjs',
   'scripts/openclaw/verify-openclaw-pristine-contracts.cjs',
   'scripts/openclaw/verify-openclaw-runtime-patches.cjs',
+  'scripts/openclaw/native-database-contract.cjs',
   'scripts/openclaw/sync-openclaw-runtime-current.cjs',
   'scripts/openclaw/bundle-openclaw-gateway.cjs',
   'scripts/openclaw/openclaw-shared-sdk-modules.cjs',
@@ -52,6 +56,9 @@ const BUILD_RECIPE_FILES = [
   'src/main/openclaw/runtime/openclawGatewayBundleLauncher.cjs',
   'src/main/openclaw/runtime/windowsRecursiveRemove.cjs',
   'src/main/openclaw/runtime/launch/electronNodeRuntime.ts',
+  'src/main/openclaw/runtime/launch/bundledNodeRuntime.ts',
+  'src/shared/openclaw/nodeRuntime.json',
+  'scripts/runtime/setup-node-runtime.cjs',
   'src/main/core/network/trustedCertificates.ts',
   'src/main/openclaw/runtime/mcpPackageRunner.ts',
   'src/main/openclaw/config/openclawConfigBuilders.ts',
@@ -67,6 +74,15 @@ const BUILD_RECIPE_FILES = [
   'src/main/openclaw/config/plugins/pluginProjection.ts',
   'src/main/openclaw/config/policies/executionPolicyProjection.ts',
   'src/main/openclaw/config/speech/onlineSpeechProjection.ts',
+  'src/main/openclaw/config/speech/nativeTtsConfig.ts',
+  'src/main/openclaw/config/speech/localTtsConfig.ts',
+  'src/main/openclaw/config/speech/localSpeechExtensionConfig.ts',
+  'src/main/startup/upgrade/nativeDatabaseContract.json',
+  'src/main/startup/upgrade/nativeDatabaseEnvironment.ts',
+  'src/main/startup/upgrade/nativeDatabaseIdentity.ts',
+  'src/main/startup/upgrade/nativeDatabaseUpgradeSource.ts',
+  'src/main/startup/upgrade/nativeDatabaseUpgradeRuntime.ts',
+  'src/shared/app/startup/versionPolicy.ts',
   'src/main/openclaw/runtime/native-support/plugin-owned-execution.mjs',
   'src/main/openclaw/runtime/native-support/compaction-lifecycle.mjs',
   'src/main/openclaw/runtime/native-support/goal-continuation.mjs',
@@ -201,6 +217,12 @@ function verifyFrozenOpenClawRuntime(runtimeRoot, options = {}) {
   const runtimePackagePath = path.join(runtimeRoot, 'package.json');
   const runtimePackageLockPath = path.join(runtimeRoot, RUNTIME_DEPENDENCY_LOCK_FILENAME);
   const requiredFiles = [gatewayAsarPath, runtimePackagePath, runtimePackageLockPath];
+  try {
+    verifyNodeRuntime(path.join(runtimeRoot, 'node-runtime'), buildInfo.target);
+    if (buildInfo.nodeRuntimeManifestSha256 !== hashFile(path.join(runtimeRoot, 'node-runtime', 'node-runtime-manifest.json'))) {
+      problems.push('bundled Node does not match runtime-build-info.json');
+    }
+  } catch (error) { problems.push(`bundled Node is invalid: ${error.message}`); }
   const isSha256 = value => typeof value === 'string' && /^[a-f0-9]{64}$/i.test(value);
 
   try {
@@ -309,6 +331,7 @@ function verifyFrozenOpenClawRuntime(runtimeRoot, options = {}) {
       runtimePackageSha256: buildInfo.runtimePackageSha256,
       runtimePackageLockPath: buildInfo.runtimePackageLockPath,
       runtimePackageLockSha256: buildInfo.runtimePackageLockSha256,
+      nodeRuntimeManifestSha256: buildInfo.nodeRuntimeManifestSha256,
     };
     if (JSON.stringify(manifest.sourceArtifacts) !== JSON.stringify(expectedSourceArtifacts)) {
       problems.push('patch manifest source artifacts do not match runtime-build-info.json');
@@ -492,6 +515,7 @@ function buildOpenClawPatchManifest(runtimeRoot, options = {}) {
   const buildRecipeSha256 = buildOpenClawBuildRecipeFingerprint(repoRoot, version);
   const sourceLock = readOpenClawSourceLock(repoRoot, version);
   const expectedNpmVersion = version.slice(1);
+  const nodeManifestPath = path.join(runtimeRoot, 'node-runtime', 'node-runtime-manifest.json');
   if (
     !buildInfo ||
     buildInfo.openclawVersion !== version ||
@@ -507,12 +531,18 @@ function buildOpenClawPatchManifest(runtimeRoot, options = {}) {
     !/^[a-f0-9]{64}$/i.test(buildInfo.gatewayAsarSha256 || '') ||
     (gatewayAsarExists && buildInfo.gatewayAsarSha256 !== hashFile(gatewayAsarPath)) ||
     buildInfo.runtimePackageSha256 !== hashFile(runtimePackagePath) ||
-    buildInfo.runtimePackageLockSha256 !== hashFile(runtimePackageLockPath)
+    buildInfo.runtimePackageLockSha256 !== hashFile(runtimePackageLockPath) ||
+    !fs.existsSync(nodeManifestPath) ||
+    buildInfo.nodeRuntimeManifestSha256 !== hashFile(nodeManifestPath)
   ) {
     throw new Error(
       'OpenClaw runtime source proof is missing, incomplete, or stale; rebuild from the target npm package.',
     );
   }
+  verifyNodeRuntime(path.join(runtimeRoot, 'node-runtime'), buildInfo.target);
+  const nativeDatabaseOwners = verifyNativeDatabaseContract(runtimeRoot, {
+    repoRoot, version, allowOmittedGatewayAsar: options.allowOmittedGatewayAsar,
+  });
 
   return {
     formatVersion: PATCH_MANIFEST_FORMAT_VERSION,
@@ -535,8 +565,10 @@ function buildOpenClawPatchManifest(runtimeRoot, options = {}) {
       runtimePackageSha256: buildInfo.runtimePackageSha256,
       runtimePackageLockPath: buildInfo.runtimePackageLockPath,
       runtimePackageLockSha256: buildInfo.runtimePackageLockSha256,
+      nodeRuntimeManifestSha256: buildInfo.nodeRuntimeManifestSha256,
     },
     patchDependencyArtifacts: buildRuntimePatchDependencyArtifacts(runtimeRoot, version),
+    nativeDatabaseOwners,
     patches: patchFiles.map(filePath => ({
       file: path.relative(repoRoot, filePath).replace(/\\/g, '/'),
       sha256: hashFile(filePath),
@@ -638,6 +670,9 @@ function verifyOpenClawPatchManifest(runtimeRoot, options = {}) {
   }
   if (JSON.stringify(actual.patchSupportFiles) !== JSON.stringify(expected.patchSupportFiles)) {
     problems.push('patch helper or source-lock checksums do not match the audited patch set');
+  }
+  if (canonicalJson(actual.nativeDatabaseOwners) !== canonicalJson(expected.nativeDatabaseOwners)) {
+    problems.push('native database selected-owner proof does not match the current contract');
   }
 
   if (problems.length > 0) {

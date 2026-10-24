@@ -1,6 +1,6 @@
 import type { CoworkSession, CoworkStore } from '../../data/coworkStore';
 import type { CoworkEngineRouter } from '../../engine';
-import { parseChatHistoryResultV2026_10_4 } from '../../engine/openclaw/wire/v2026_10_4';
+import { parseChatHistoryResultV2026_10_6 } from '../../engine/openclaw/wire/v2026_10_6';
 
 export type SessionBranchGatewayRequest = <T>(method: string, params?: unknown) => Promise<T>;
 
@@ -54,7 +54,7 @@ export async function readSessionBranchRunIds(
         ...(offset ? { offset } : {}),
       });
       if (!record(raw) || raw.sessionId !== sessionId) return unavailable;
-      const page = parseChatHistoryResultV2026_10_4(raw);
+      const page = parseChatHistoryResultV2026_10_6(raw);
       if (!page.deltaCursor || page.totalMessages === undefined) return unavailable;
       if (total !== undefined && page.totalMessages !== total) return unavailable;
       total = page.totalMessages;

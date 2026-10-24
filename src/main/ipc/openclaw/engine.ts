@@ -9,14 +9,13 @@ import {
   type OpenClawAssistantMediaRequest,
   type OpenClawAssistantMediaResult,
 } from '../../../shared/openclaw/assistantMedia';
-import { type EngineCommandResult,EngineIpc } from '../../../shared/openclaw/engineStatus';
+import { type EngineCommandResult, EngineIpc } from '../../../shared/openclaw/engineStatus';
 import {
   type OpenClawSessionMigrationConfirmRequest,
   OpenClawSessionMigrationIpc,
 } from '../../../shared/openclaw/sessionMigration';
 import {
   type ManagedWorktree,
-  type WorktreeCleanResult,
   WorktreeIpc,
   type WorktreeRemoveResult,
   type WorktreeResult,
@@ -34,6 +33,7 @@ import type {
   OpenClawEngineManager,
   OpenClawEngineStatus,
 } from '../../openclaw/runtime/openclawEngineManager';
+import { WorktreeCleanupCoordinator } from './worktreeCleanup';
 
 interface OpenClawEngineHandlerDependencies {
   getManager: () => OpenClawEngineManager;
@@ -109,11 +109,7 @@ const isCanonicalManagedInboundMediaSource = (source: string): boolean => {
   try {
     const id = decodeURIComponent(match[1]);
     return (
-      id !== '.' &&
-      id !== '..' &&
-      !id.includes('/') &&
-      !id.includes('\\') &&
-      !id.includes('\0')
+      id !== '.' && id !== '..' && !id.includes('/') && !id.includes('\\') && !id.includes('\0')
     );
   } catch {
     return false;
@@ -127,14 +123,13 @@ const cancelResponseBody = async (response: Response): Promise<void> => {
 const resolveQualifiedSessionAgentId = (sessionKey: string): string | undefined =>
   QUALIFIED_SESSION_AGENT_PATTERN.exec(sessionKey)?.[1]?.toLowerCase();
 
-const isCanonicalManagedOutgoingMediaSource = (
-  source: string,
-  sessionKey: string,
-): boolean => {
+const isCanonicalManagedOutgoingMediaSource = (source: string, sessionKey: string): boolean => {
   const match = MANAGED_OUTGOING_MEDIA_PATTERN.exec(source);
   if (!match?.[1]) return false;
   try {
-    return decodeURIComponent(match[1]) === sessionKey && match[1] === encodeURIComponent(sessionKey);
+    return (
+      decodeURIComponent(match[1]) === sessionKey && match[1] === encodeURIComponent(sessionKey)
+    );
   } catch {
     return false;
   }
@@ -190,19 +185,17 @@ export async function readOpenClawAssistantMedia(
       if (agentId) query.set('agentId', agentId);
       gatewayPath = `/__openclaw__/assistant-media?${query.toString()}`;
     }
-    const response = await fetch(
-      `http://127.0.0.1:${port}${gatewayPath}`,
-      {
-        headers,
-        redirect: 'error',
-        signal: controller.signal,
-      },
-    );
+    const response = await fetch(`http://127.0.0.1:${port}${gatewayPath}`, {
+      headers,
+      redirect: 'error',
+      signal: controller.signal,
+    });
     if (!response.ok) {
       await cancelResponseBody(response);
       return { success: false, error: `Gateway image is unavailable (${response.status})` };
     }
-    const mimeType = response.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase() ?? '';
+    const mimeType =
+      response.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase() ?? '';
     if (!mimeType.startsWith('image/')) {
       await cancelResponseBody(response);
       return { success: false, error: 'Gateway response is not an image' };
@@ -228,9 +221,7 @@ export async function readOpenClawAssistantMedia(
   }
 }
 
-const reconnectGatewayClientAfterRestart = (
-  reconnectGatewayClient: () => Promise<void>,
-): void => {
+const reconnectGatewayClientAfterRestart = (reconnectGatewayClient: () => Promise<void>): void => {
   try {
     void reconnectGatewayClient().catch(error => {
       // The adapter keeps its normal reconnect loop. A transient bridge failure
@@ -250,7 +241,10 @@ export const restartOpenClawGatewayForUser = async ({
   getManager,
   requestGateway,
   reconnectGatewayClient,
-}: Pick<OpenClawEngineHandlerDependencies, 'getManager' | 'requestGateway' | 'reconnectGatewayClient'>): Promise<OpenClawEngineStatus> => {
+}: Pick<
+  OpenClawEngineHandlerDependencies,
+  'getManager' | 'requestGateway' | 'reconnectGatewayClient'
+>): Promise<OpenClawEngineStatus> => {
   const manager = getManager();
   const status = manager.getStatus();
   if (status.phase === 'starting') {
@@ -259,8 +253,7 @@ export const restartOpenClawGatewayForUser = async ({
     return started;
   }
   const requiresLaunchArgumentRefresh =
-    status.phase === 'running' &&
-    manager.getGatewayPort() !== manager.getConfiguredGatewayPort();
+    status.phase === 'running' && manager.getGatewayPort() !== manager.getConfiguredGatewayPort();
   const requiresLaunchEnvironmentRefresh =
     status.phase === 'running' && manager.hasPendingGatewayLaunchEnvironmentChanges();
 
@@ -273,21 +266,20 @@ export const restartOpenClawGatewayForUser = async ({
     let result: GatewayRestartRequestResult | undefined;
     let unavailable = false;
     try {
-      result = await requestGateway<GatewayRestartRequestResult>(
-        GATEWAY_RESTART_REQUEST_METHOD,
-        {
-          reason: 'justdo-manual-restart',
-          // Preserve the existing manual-restart behavior: the explicit user
-          // action is not held for the automatic workload deferral window.
-          skipDeferral: true,
-        },
-      );
+      result = await requestGateway<GatewayRestartRequestResult>(GATEWAY_RESTART_REQUEST_METHOD, {
+        reason: 'justdo-manual-restart',
+        // Preserve the existing manual-restart behavior: the explicit user
+        // action is not held for the automatic workload deferral window.
+        skipDeferral: true,
+      });
     } catch (error) {
       if (!isGatewayRestartRequestUnavailable(error)) {
         throw new Error(`${t('engineRestartUnconfirmed')} ${String(error)}`);
       }
       unavailable = true;
-      console.warn(`[OpenClawEngine] Native restart request was not dispatched or is unsupported: ${String(error)}`);
+      console.warn(
+        `[OpenClawEngine] Native restart request was not dispatched or is unsupported: ${String(error)}`,
+      );
     }
     if (result && isAcceptedGatewayRestartRequest(result)) {
       // Native owns the accepted request, even through cooldown or a lost ready
@@ -307,8 +299,11 @@ export const restartOpenClawGatewayForUser = async ({
     if (!unavailable && result?.ok !== false) {
       throw new Error(t('engineRestartUnconfirmed'));
     }
-    if (manager.getGatewayLifecycleGeneration() !== lifecycleGeneration ||
-      manager.getStatus().phase !== 'running') return manager.getStatus();
+    if (
+      manager.getGatewayLifecycleGeneration() !== lifecycleGeneration ||
+      manager.getStatus().phase !== 'running'
+    )
+      return manager.getStatus();
   } else if (requiresLaunchArgumentRefresh) {
     console.log(
       '[OpenClawEngine] Gateway port changed; using a full restart to refresh launch arguments.',
@@ -408,8 +403,7 @@ export const getOpenClawTerminalEnvKeys = (env: NodeJS.ProcessEnv): string[] => 
     pythonUserBase.length > 0 &&
     env[JUSTDO_MANAGED_PYTHON_USER_BASE_ENV] === pythonUserBase;
   const keys = Object.keys(env).filter(
-    key =>
-      isOpenClawTerminalEnvKey(key) || (key === 'PYTHONUSERBASE' && hasManagedPythonUserBase),
+    key => isOpenClawTerminalEnvKey(key) || (key === 'PYTHONUSERBASE' && hasManagedPythonUserBase),
   );
   const orderedKeys = ['PATH', ...keys.filter(key => key !== 'PATH' && key !== 'Path').sort()];
   return Array.from(new Set(orderedKeys));
@@ -681,11 +675,7 @@ export const registerOpenClawEngineHandlers = ({
   ipcMain.handle(
     OpenClawSessionMigrationIpc.Confirm,
     async (_event, request: OpenClawSessionMigrationConfirmRequest) => {
-      if (
-        !request ||
-        typeof request.planId !== 'string' ||
-        typeof request.approved !== 'boolean'
-      ) {
+      if (!request || typeof request.planId !== 'string' || typeof request.approved !== 'boolean') {
         return { success: false, error: 'Invalid session migration confirmation.' };
       }
       try {
@@ -726,7 +716,9 @@ export const registerOpenClawEngineHandlers = ({
       return { success: false, error: error instanceof Error ? error.message : String(error) };
     }
   };
-  const worktreeSettings = new WorktreeSettingsService(requestGateway, () => getManager().getStateDir());
+  const worktreeSettings = new WorktreeSettingsService(requestGateway, () =>
+    getManager().getStateDir(),
+  );
   ipcMain.handle(WorktreeIpc.Settings, () => worktreeSettings.getSettings());
   ipcMain.handle(WorktreeIpc.SaveSettings, (_event, input: unknown) =>
     runConfigMutationExclusive(() => worktreeSettings.saveSettings(input)),
@@ -758,23 +750,28 @@ export const registerOpenClawEngineHandlers = ({
       if (!record) throw new Error('Worktree not found. Refresh the list.');
       const store = getCoworkStore();
       if (
-        store
-          .listSessions()
-          .some(
-            summary => {
-              const session = store.getSession(summary.id);
-              return session && isWorkspacePathWithin(session.cwd, record.path);
-            },
-          )
+        store.listSessions().some(summary => {
+          const session = store.getSession(summary.id);
+          return session && isWorkspacePathWithin(session.cwd, record.path);
+        })
       ) {
         throw new Error('Delete the linked conversation before removing this worktree.');
       }
       return requestGateway<WorktreeRemoveResult>('worktrees.remove', { id: targetId });
     }),
   );
-  ipcMain.handle(WorktreeIpc.Clean, () =>
-    worktreeResult(() => requestGateway<WorktreeCleanResult>('worktrees.gc', {})),
-  );
+  const worktreeCleanup = new WorktreeCleanupCoordinator({
+    request: params => requestGateway('worktrees.gc', params),
+    owner: () => {
+      const manager = getManager();
+      return {
+        manager,
+        generation: manager.getGatewayLifecycleGeneration(),
+        running: manager.getStatus().phase === 'running',
+      };
+    },
+  });
+  ipcMain.handle(WorktreeIpc.Clean, () => worktreeResult(() => worktreeCleanup.clean()));
 
   ipcMain.handle(SystemPromptReplacementIpc.GetRules, () => {
     try {
@@ -786,9 +783,7 @@ export const registerOpenClawEngineHandlers = ({
       return {
         success: false,
         error:
-          error instanceof Error
-            ? error.message
-            : 'Failed to get system prompt replacement rules',
+          error instanceof Error ? error.message : 'Failed to get system prompt replacement rules',
       };
     }
   });
@@ -803,9 +798,7 @@ export const registerOpenClawEngineHandlers = ({
       return {
         success: false,
         error:
-          error instanceof Error
-            ? error.message
-            : 'Failed to set system prompt replacement rules',
+          error instanceof Error ? error.message : 'Failed to set system prompt replacement rules',
       };
     }
   });
@@ -839,8 +832,14 @@ export const registerOpenClawEngineHandlers = ({
     try {
       const manager = getManager();
       const port = manager.getConfiguredGatewayPort();
-      const activePort = manager.getStatus().phase === 'running' ? manager.getGatewayPort() : undefined;
-      return { success: true, port, activePort, requiresRestart: activePort !== undefined && activePort !== port };
+      const activePort =
+        manager.getStatus().phase === 'running' ? manager.getGatewayPort() : undefined;
+      return {
+        success: true,
+        port,
+        activePort,
+        requiresRestart: activePort !== undefined && activePort !== port,
+      };
     } catch (error) {
       return {
         success: false,

@@ -9,12 +9,14 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
+import { resolveNativeSmokeTarget } from './native-smoke-target.mjs';
 
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 const require = createRequire(import.meta.url);
 const { buildSync } = require('esbuild');
 const execute = promisify(execFile);
 const artifacts = path.join(root, '.agent-tasks/plugin-hub');
+const { runtimeRoot, executable } = resolveNativeSmokeTarget();
 
 test('native multi-entry install, catalog and marketplace identity use the same package ownership', async () => {
   assert.equal(process.versions.electron, undefined);
@@ -22,7 +24,6 @@ test('native multi-entry install, catalog and marketplace identity use the same 
   const fixture = fs.mkdtempSync(path.join(artifacts, 'ownership-native-'));
   const state = path.join(fixture, 'state');
   const source = path.join(fixture, 'source');
-  const runtimeRoot = path.join(root, 'vendor/openclaw-runtime/current');
   const configPath = path.join(state, 'openclaw.json');
   const ownerId = 'multi-entry-fixture';
   const reservation = net.createServer();
@@ -38,13 +39,15 @@ test('native multi-entry install, catalog and marketplace identity use the same 
     OPENCLAW_CONFIG_PATH: configPath,
     OPENCLAW_GATEWAY_PORT: String(port),
     OPENCLAW_GATEWAY_TOKEN: randomBytes(24).toString('hex'),
+    JUSTDO_ELECTRON_PATH: executable,
   });
   try {
     fs.mkdirSync(state);
     fs.mkdirSync(source);
     fs.writeFileSync(configPath, JSON.stringify({
       gateway: { mode: 'local', port, auth: { mode: 'token', token: env.OPENCLAW_GATEWAY_TOKEN } },
-      agents: { defaults: { workspace: path.join(fixture, 'workspace') } },
+      agents: { ownership: 'explicit', entries: { main: {} }, defaults: { workspace: path.join(fixture, 'workspace'),
+        embeddedAgent: { cyberFailover: { mode: 'off' } } } },
       plugins: { allow: ['memory-core'] },
     }));
     fs.writeFileSync(path.join(source, 'openclaw.plugin.json'), JSON.stringify({
@@ -98,7 +101,7 @@ const listPlugins = await load('management-service-', 'listManagedPlugins');
 const catalog = await listPlugins({ config, env: process.env, metadata, officialCatalog: { entries: [] } });
 process.stdout.write('\nFIXTURE_NATIVE_CATALOG=' + JSON.stringify(catalog));
 `;
-    const listed = await execute(process.execPath, ['--input-type=module', '--eval', listingScript],
+    const listed = await execute(executable, ['--input-type=module', '--eval', listingScript],
       { cwd: runtimeRoot, env, windowsHide: true, timeout: 30_000, maxBuffer: 4_000_000 });
     const marker = 'FIXTURE_NATIVE_CATALOG=';
     const nativeCatalog = JSON.parse(listed.stdout.slice(listed.stdout.lastIndexOf(marker) + marker.length));

@@ -2,20 +2,58 @@ import { initializationTranslations } from './initializationTranslations';
 
 export const startupTranslations = {
   zh: {
-    startupActivity_historyBackup: initializationTranslations.zh.initializationActivity_historyBackup,
-    startupActivity_historyBackupDescription: initializationTranslations.zh.initializationActivity_historyBackupDescription,
-    startupActivity_historyImport: initializationTranslations.zh.initializationActivity_historyImport,
-    startupActivity_historyImportDescription: initializationTranslations.zh.initializationActivity_historyImportDescription,
-    startupActivity_historyMetadata: initializationTranslations.zh.initializationActivity_historyMetadata,
-    startupActivity_historyMetadataDescription: initializationTranslations.zh.initializationActivity_historyMetadataDescription,
+    startupDowngradeTitle: '检测到降级安装',
+    startupDowngradeWelcome: '确认启动版本',
+    startupDowngradeDescription:
+      '当前安装的版本低于此数据上次使用的版本，部分数据或设置可能不兼容。建议使用原版本或较新版本。你也可以选择“仍然启动”，继续正常启动流程；如检查或加载失败，会显示具体错误。',
+    startupDowngradePrevious: '上次使用',
+    startupDowngradeInstalled: '当前安装',
+    startupDowngradeContinue: '仍然启动',
+    startupDowngradeContinuing: '正在继续启动…',
+    startupDowngradeContinueFailed: '无法继续启动，请重新启动后重试。',
+    startupDowngradeWaiting: '等待确认',
+    startupCompatibilityUnknown: '无法确认版本兼容性',
+    startupCompatibilityUnknownDescription:
+      '无法可靠比较此数据的版本与当前安装版本，已停止启动并保留数据。请使用版本信息完整、支持现有数据格式的安装包。',
+    startupCompatibilitySchema: '此版本不支持现有数据格式',
+    startupCompatibilitySchemaDescription:
+      '现有数据库不在此版本声明的支持范围内，已停止启动并保留数据。请使用支持此数据格式的版本；跨版本升级也需要通过目标版本的兼容性检查。',
+    startupActivity_nativeInspect:
+      initializationTranslations.zh.initializationActivity_nativeInspect,
+    startupActivity_nativeInspectDescription:
+      initializationTranslations.zh.initializationActivity_nativeInspectDescription,
+    startupActivity_nativeBackup: initializationTranslations.zh.initializationActivity_nativeBackup,
+    startupActivity_nativeBackupDescription:
+      initializationTranslations.zh.initializationActivity_nativeBackupDescription,
+    startupActivity_nativeUpgrade:
+      initializationTranslations.zh.initializationActivity_nativeUpgrade,
+    startupActivity_nativeUpgradeDescription:
+      initializationTranslations.zh.initializationActivity_nativeUpgradeDescription,
+    startupActivity_nativeVerify: initializationTranslations.zh.initializationActivity_nativeVerify,
+    startupActivity_nativeVerifyDescription:
+      initializationTranslations.zh.initializationActivity_nativeVerifyDescription,
+    startupActivity_historyBackup:
+      initializationTranslations.zh.initializationActivity_historyBackup,
+    startupActivity_historyBackupDescription:
+      initializationTranslations.zh.initializationActivity_historyBackupDescription,
+    startupActivity_historyImport:
+      initializationTranslations.zh.initializationActivity_historyImport,
+    startupActivity_historyImportDescription:
+      initializationTranslations.zh.initializationActivity_historyImportDescription,
+    startupActivity_historyMetadata:
+      initializationTranslations.zh.initializationActivity_historyMetadata,
+    startupActivity_historyMetadataDescription:
+      initializationTranslations.zh.initializationActivity_historyMetadataDescription,
     startupRenderer_models: '载入可用模型',
     startupRenderer_modelsDescription: '正在读取已保存的模型设置。',
     startupHistoryUnavailable: '此会话的原始正文已缺失。标题已保留，可以继续发送新的消息。',
-    startupHistoryWorkspaceUnavailable: '原工作目录已不存在。选择一个本机目录后，即可在此会话继续对话。',
+    startupHistoryWorkspaceUnavailable:
+      '原工作目录已不存在。选择一个本机目录后，即可在此会话继续对话。',
     startupHistoryChooseWorkspace: '选择工作目录',
     startupHistoryWorkspaceFailed: '工作目录选择失败，请重试。',
     startupDiagnosticsDetails: '查看诊断详情',
-    startupDiagnosticsEvidence: '以下是实际捕获的错误与发生位置，原因尚未确认。复制分享前请检查路径等信息。',
+    startupDiagnosticsEvidence:
+      '以下是实际捕获的错误与发生位置，原因尚未确认。复制分享前请检查路径等信息。',
     startupDiagnosticsCopy: '复制诊断',
     startupDiagnosticsCopied: '已复制诊断',
     startupDiagnosticsCopyFailed: '复制失败，请重试',
@@ -93,20 +131,60 @@ export const startupTranslations = {
     startupRenderer_engineStatusDescription: '检查本机 AI 引擎的当前状态，随后打开工作区。',
   },
   en: {
-    startupActivity_historyBackup: initializationTranslations.en.initializationActivity_historyBackup,
-    startupActivity_historyBackupDescription: initializationTranslations.en.initializationActivity_historyBackupDescription,
-    startupActivity_historyImport: initializationTranslations.en.initializationActivity_historyImport,
-    startupActivity_historyImportDescription: initializationTranslations.en.initializationActivity_historyImportDescription,
-    startupActivity_historyMetadata: initializationTranslations.en.initializationActivity_historyMetadata,
-    startupActivity_historyMetadataDescription: initializationTranslations.en.initializationActivity_historyMetadataDescription,
+    startupDowngradeTitle: 'An older version is installed',
+    startupDowngradeWelcome: 'Confirm the startup version',
+    startupDowngradeDescription:
+      'This installation is older than the version last used with these data. Some data or settings may be incompatible. We recommend using that version or a newer one. You can also choose “Start anyway” to continue normal startup; any check or loading failure will display its error.',
+    startupDowngradePrevious: 'Previously used',
+    startupDowngradeInstalled: 'Currently installed',
+    startupDowngradeContinue: 'Start anyway',
+    startupDowngradeContinuing: 'Continuing startup…',
+    startupDowngradeContinueFailed:
+      'Startup could not continue. Restart the application and try again.',
+    startupDowngradeWaiting: 'Waiting for confirmation',
+    startupCompatibilityUnknown: 'Version compatibility could not be confirmed',
+    startupCompatibilityUnknownDescription:
+      'The saved and installed versions cannot be compared reliably. Startup has stopped and your data have been preserved. Use an installation with complete version information and support for the existing data format.',
+    startupCompatibilitySchema: 'This version does not support the existing data format',
+    startupCompatibilitySchemaDescription:
+      'The existing database is outside this version’s declared support range. Startup has stopped and your data have been preserved. Use a version that supports these data; upgrades that skip releases also require the target version’s compatibility checks.',
+    startupActivity_nativeInspect:
+      initializationTranslations.en.initializationActivity_nativeInspect,
+    startupActivity_nativeInspectDescription:
+      initializationTranslations.en.initializationActivity_nativeInspectDescription,
+    startupActivity_nativeBackup: initializationTranslations.en.initializationActivity_nativeBackup,
+    startupActivity_nativeBackupDescription:
+      initializationTranslations.en.initializationActivity_nativeBackupDescription,
+    startupActivity_nativeUpgrade:
+      initializationTranslations.en.initializationActivity_nativeUpgrade,
+    startupActivity_nativeUpgradeDescription:
+      initializationTranslations.en.initializationActivity_nativeUpgradeDescription,
+    startupActivity_nativeVerify: initializationTranslations.en.initializationActivity_nativeVerify,
+    startupActivity_nativeVerifyDescription:
+      initializationTranslations.en.initializationActivity_nativeVerifyDescription,
+    startupActivity_historyBackup:
+      initializationTranslations.en.initializationActivity_historyBackup,
+    startupActivity_historyBackupDescription:
+      initializationTranslations.en.initializationActivity_historyBackupDescription,
+    startupActivity_historyImport:
+      initializationTranslations.en.initializationActivity_historyImport,
+    startupActivity_historyImportDescription:
+      initializationTranslations.en.initializationActivity_historyImportDescription,
+    startupActivity_historyMetadata:
+      initializationTranslations.en.initializationActivity_historyMetadata,
+    startupActivity_historyMetadataDescription:
+      initializationTranslations.en.initializationActivity_historyMetadataDescription,
     startupRenderer_models: 'Loading available models',
     startupRenderer_modelsDescription: 'Reading saved model settings.',
-    startupHistoryUnavailable: 'The original transcript is unavailable. Its title is retained and you can continue with new messages.',
-    startupHistoryWorkspaceUnavailable: 'The original workspace no longer exists. Select a local folder to continue this conversation.',
+    startupHistoryUnavailable:
+      'The original transcript is unavailable. Its title is retained and you can continue with new messages.',
+    startupHistoryWorkspaceUnavailable:
+      'The original workspace no longer exists. Select a local folder to continue this conversation.',
     startupHistoryChooseWorkspace: 'Choose workspace',
     startupHistoryWorkspaceFailed: 'Could not select a workspace. Please try again.',
     startupDiagnosticsDetails: 'View diagnostic details',
-    startupDiagnosticsEvidence: 'These are the captured error and its location. The root cause is not yet confirmed. Check paths and other details before sharing.',
+    startupDiagnosticsEvidence:
+      'These are the captured error and its location. The root cause is not yet confirmed. Check paths and other details before sharing.',
     startupDiagnosticsCopy: 'Copy diagnostics',
     startupDiagnosticsCopied: 'Diagnostics copied',
     startupDiagnosticsCopyFailed: 'Copy failed. Try again.',

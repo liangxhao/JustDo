@@ -12,7 +12,7 @@ vi.mock('electron', () => ({
 }));
 import {
   buildManagedOpenClawConnectivityConfig,
-  sanitizeOpenClawV2026_10_4Config,
+  sanitizeOpenClawV2026_10_6Config,
 } from '../../../src/main/openclaw/config/openclawConfigBuilders';
 import {
   buildElectronNodeShimScripts,
@@ -26,7 +26,7 @@ const runtimeRoot = path.resolve(
 const nativeDist = path.join(runtimeRoot, 'dist');
 const electronPath =
   process.env.OPENCLAW_TEST_ELECTRON_PATH ??
-  path.resolve('node_modules/electron/dist/electron.exe');
+  path.join(runtimeRoot, 'node-runtime', 'node.exe');
 const nativeModule = (name: string, signature: string) =>
   fs.existsSync(nativeDist)
     ? fs
@@ -62,7 +62,7 @@ test.skipIf(
   'implicit user profiles in other modes resolve to the application launcher through the native browser resolver',
   () => {
     const configs = [BrowserMode.Isolated, BrowserMode.Extension].map(mode =>
-      sanitizeOpenClawV2026_10_4Config(buildManagedOpenClawConnectivityConfig(mode)),
+      sanitizeOpenClawV2026_10_6Config(buildManagedOpenClawConnectivityConfig(mode)),
     );
     const script = `
       import assert from 'node:assert/strict';
@@ -88,7 +88,7 @@ test.skipIf(
 );
 
 test.skipIf(process.platform !== 'win32' || !stdioModule || !fs.existsSync(electronPath))(
-  'application package-runner projection avoids batch diagnostics through the unpatched native MCP resolver',
+  'application and native package runners preserve the trusted preload without batch diagnostics',
   () => {
     const output = execFileSync(
       process.execPath,
@@ -116,9 +116,7 @@ test.skipIf(process.platform !== 'win32' || !stdioModule || !fs.existsSync(elect
         nodeMode: '1',
         preload: 'hiddenWindowsSpawn',
       });
-      expect(result.errors).toEqual(
-        result.mode === 'application' ? [] : ['Unexpected end of JSON input'],
-      );
+      expect(result.errors).toEqual([]);
       expect(result.stderr).toBe('');
     }
   },

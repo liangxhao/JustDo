@@ -1,6 +1,7 @@
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 
+import { requireOpenClawCliExecutable } from '../../openclaw/runtime/launch/cliNodeRuntime';
 import type { OpenClawEngineManager } from '../../openclaw/runtime/openclawEngineManager';
 
 const OUTPUT_PREFIX = 'JUSTDO_EXTENSION_MCP=';
@@ -181,7 +182,7 @@ export const runExtensionMcpOperation = async <T>(
 ): Promise<T> => {
   const cli = await manager.buildCliEnvironment();
   const result = await runner(
-    cli.env.JUSTDO_ELECTRON_PATH?.trim() || process.execPath,
+    requireOpenClawCliExecutable(cli.env),
     ['--input-type=module', '-e', EXTENSION_MCP_SCRIPT],
     {
       cwd: cli.runtimeRoot,

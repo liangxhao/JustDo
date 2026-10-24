@@ -73,3 +73,5 @@ Kie、Z.AI、Novita 不在受支持的视频提供方中，即使安装对应插
 ## 7. 回归检查
 
 验证同名/改名、手工模型保留、过时发现响应、完整 URL 规范化、多能力凭据隔离、voice 缺失、main 默认与助手 override，以及真实原生请求。入口在 settings/models、providers、mediaGenerationModels 和 onlineAsr/onlineTts IPC 及其测试。
+
+OpenClaw v2026.10.6 新增的 cyber-refusal 模型兜底不属于企业内网模型目录。Main 在完整、最小、设置保存、登录/退出的最终管理配置中显式设 `agents.defaults.embeddedAgent.cyberFailover.mode = off`，保留其他 embedded 策略及已有 model/cooloff 配置；不因上游默认 auto 而触发公共模型服务。

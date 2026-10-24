@@ -10,21 +10,31 @@ import {
   toOpenClawSessionPermissionMode,
 } from '../../../shared/security/approvals';
 import type { CoworkStore } from '../../data/coworkStore';
+import type { GatewayResponseContext } from '../../engine/gateway/types';
+import type { GatewayRequestOptions } from '../../engine/types';
 import { buildManagedSessionKey } from '../../openclaw/sessions/openclawSessionKeys';
 
 interface Dependencies {
   getStore: () => CoworkStore;
-  request: <T>(method: string, params: unknown) => Promise<T>;
+  request: <T>(method: string, params: unknown, options?: GatewayRequestOptions) => Promise<T>;
+  captureResponseContext: () => Promise<GatewayResponseContext | null>;
 }
 interface WorkspaceEntry {
   signature: string;
   released: boolean;
+  productSessionId: string;
+  sessionKey: string;
+  createIssued: boolean;
+  creationSettled: boolean;
+  responseContext: GatewayResponseContext | null;
   task: Promise<{
     binding: McpAppWorkspaceBinding;
     lifecycleRevision: string;
     productSessionId: string;
   }>;
   releaseTask?: Promise<null>;
+  replacementTask?: Promise<McpAppWorkspaceBinding>;
+  replacementEntry?: WorkspaceEntry;
 }
 
 /** Owned native preview sessions, without creating a product conversation. */
@@ -34,10 +44,21 @@ export class WorkspaceAppSessions {
 
   constructor(private readonly deps: Dependencies) {}
 
-  private async create(scope: ReturnType<WorkspaceAppSessions['scope']>) {
-    // Reserve the ordinary conversation identity without creating a product row.
-    const productSessionId = randomUUID();
-    const sessionKey = buildManagedSessionKey(productSessionId, scope.agentId);
+  private async create(
+    scope: ReturnType<WorkspaceAppSessions['scope']>,
+    entry: WorkspaceEntry,
+    assertCurrent: () => void,
+  ) {
+    const { productSessionId, sessionKey } = entry;
+    assertCurrent();
+    // The native observation waits for background agent admission. Only a
+    // refusal here proves that this owner has not dispatched any creation.
+    const preflight = await this.deps.request<{ session: unknown }>(
+      'sessions.describe', { key: sessionKey, agentId: scope.agentId }, { assertBeforeSend: assertCurrent },
+    );
+    assertCurrent();
+    if (preflight?.session !== null) throw new Error('Reserved native App workspace already exists or is unavailable');
+    entry.createIssued = true;
     const result = await this.deps.request<{
       key: string;
       sessionId: string;
@@ -48,7 +69,7 @@ export class WorkspaceAppSessions {
       agentId: scope.agentId,
       cwd: scope.cwd,
       permissionMode: scope.permissionMode,
-    });
+    }, { assertBeforeSend: assertCurrent });
     if (
       result.key !== sessionKey ||
       typeof result.sessionId !== 'string' ||
@@ -118,32 +139,100 @@ export class WorkspaceAppSessions {
       });
     }
     let entry = entries.get(scope.requestId);
-    const existing = Boolean(entry);
+    // Concurrent joiners of the same creation are not a later explicit re-read.
+    const existing = entry?.creationSettled === true;
     if (entry && (entry.released || entry.signature !== scope.signature))
       throw new Error('App workspace changed');
     if (!entry) {
       if (entries.size >= 8) throw new Error('Too many App workspaces');
+      const productSessionId = randomUUID();
+      const assertOwnerCurrent = () => {
+        if (
+          this.owners.get(owner) !== entries || entries.get(scope.requestId) !== next ||
+          next.released || owner.isDestroyed() || this.scope(raw).signature !== scope.signature
+        ) throw new Error('App workspace changed during preparation');
+      };
+      const assertCurrent = () => {
+        assertOwnerCurrent();
+        if (!next.responseContext?.isCurrent()) throw new Error('App workspace changed during preparation');
+      };
       const next: WorkspaceEntry = {
         signature: scope.signature,
         released: false,
-        task: this.create(scope),
+        productSessionId,
+        sessionKey: buildManagedSessionKey(productSessionId, scope.agentId),
+        createIssued: false,
+        creationSettled: false,
+        responseContext: null,
+        task: Promise.resolve().then(async () => {
+          assertOwnerCurrent();
+          next.responseContext = await this.deps.captureResponseContext();
+          assertCurrent();
+          return this.create(scope, next, assertCurrent);
+        }).then(result => {
+          next.creationSettled = true;
+          return result;
+        }).catch(error => {
+          let current = false;
+          try { assertCurrent(); current = true; } catch { /* Retain revoked or uncertain ownership. */ }
+          if (current && !next.createIssued && this.isInspectionPending(error, scope.agentId, next.responseContext)) {
+            // No automatic retry: a later explicit preparation may reserve a new
+            // owner only after this read-only, correlated rejection was observed.
+            if (this.owners.get(owner) === entries && entries.get(scope.requestId) === next) {
+              entries.delete(scope.requestId);
+              if (!entries.size) this.owners.delete(owner);
+            }
+          }
+          throw error;
+        }),
       };
       entries.set(scope.requestId, next);
       entry = next;
     }
     const { binding } = await entry.task;
-    if (entry.released || owner.isDestroyed() || this.scope(raw).signature !== entry.signature)
-      throw new Error('App workspace changed during preparation');
+    const responseContext = existing ? await this.deps.captureResponseContext() : entry.responseContext;
+    const assertReadCurrent = () => {
+      if (this.owners.get(owner) !== entries || entries.get(scope.requestId) !== entry ||
+        entry.released || owner.isDestroyed() || this.scope(raw).signature !== entry.signature ||
+        !responseContext?.isCurrent())
+        throw new Error('App workspace changed during preparation');
+    };
+    assertReadCurrent();
     const { session } = await this.deps.request<{ session?: Record<string, unknown> }>(
       'sessions.describe',
       { key: binding.sessionKey, agentId: binding.agentId },
+      { assertBeforeSend: assertReadCurrent },
     );
     // Only explicit preparation may replace a removed owned context. Existing
     // native identities must still match; live view lifecycle checks stay native.
-    if (!session && existing && !entry.released && !owner.isDestroyed()) {
-      if (entries.get(scope.requestId) === entry) entries.delete(scope.requestId);
-      return this.prepare(owner, raw);
+    if (!session && existing && !entry.released && !owner.isDestroyed() &&
+      this.scope(raw).signature === entry.signature && responseContext?.isCurrent()) {
+      // Concurrent absent reads may join the replacement owned by this entry;
+      // they cannot remove or recreate the successor that is already preparing.
+      if (!entry.replacementTask) {
+        assertReadCurrent();
+        entries.delete(scope.requestId);
+        entry.replacementTask = this.prepare(owner, raw);
+        entry.replacementEntry = entries.get(scope.requestId);
+      }
+      const successor = entry.replacementEntry;
+      const task = entry.replacementTask;
+      const assertSuccessorCurrent = () => {
+        if (!successor || this.owners.get(owner) !== entries || entries.get(scope.requestId) !== successor ||
+          successor.released || owner.isDestroyed() || this.scope(raw).signature !== successor.signature ||
+          !responseContext.isCurrent()) throw new Error('App workspace changed during replacement');
+      };
+      try {
+        assertSuccessorCurrent();
+        const replacement = await task;
+        assertSuccessorCurrent();
+        return replacement;
+      } catch (error) {
+        void task.catch((): undefined => undefined);
+        throw error;
+      }
     }
+    assertReadCurrent();
     if (
       entry.released ||
       owner.isDestroyed() ||
@@ -154,6 +243,17 @@ export class WorkspaceAppSessions {
     )
       throw new Error('Native App workspace changed');
     return binding;
+  }
+
+  private isInspectionPending(error: unknown, agentId: string, context: GatewayResponseContext | null): boolean {
+    try {
+      if (!context?.isResponseError(error)) return false;
+      const failure = mcpAppRecord(error);
+      const details = mcpAppRecord(failure?.details);
+      return failure?.code === 'UNAVAILABLE' && failure.gatewayCode === 'UNAVAILABLE' &&
+        failure.retryable === true && details?.code === 'agent-database-inspection-pending' &&
+        details.agentId === agentId;
+    } catch { return false; }
   }
 
   async release(owner: WebContents, requestId: unknown): Promise<null> {

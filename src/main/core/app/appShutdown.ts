@@ -1,5 +1,7 @@
 import { app } from 'electron';
 
+import { SHUTDOWN_BUDGET_MS } from '../../../shared/app/shutdownPolicy';
+
 type AppShutdownOptions = {
   cleanup: () => Promise<void>;
   cleanupTimeoutMs?: number;
@@ -27,23 +29,28 @@ export const registerAppShutdown = ({
     quitting = true;
     console.log(`[Main] ${context}, running cleanup before exit...`);
     let timedOut = false;
+    let cleanupFailed = false;
+    let exitRequested = false;
+    const exit = (code: number): void => {
+      if (exitRequested) return;
+      exitRequested = true;
+      app.exit(code);
+    };
 
     const timeout =
       cleanupTimeoutMs === undefined
         ? undefined
         : setTimeout(() => {
             timedOut = true;
-            console.error('[Main] Development cleanup timed out; stopping runtime before exit.');
-            // Gateway shutdown has its own 16s deadline. Still bound the fallback
-            // in case another cleanup implementation fails to settle.
-            const forceExit = setTimeout(() => app.exit(1), 17_000);
+            console.error('[Main] Application cleanup timed out; resource retirement remains unconfirmed.');
+            const forceExit = setTimeout(() => exit(1), SHUTDOWN_BUDGET_MS.forceExitObservation);
             forceExit.unref();
             void Promise.resolve()
               .then(onCleanupTimeout)
               .catch(error => console.error('[Main] Emergency runtime cleanup failed:', error))
               .finally(() => {
                 clearTimeout(forceExit);
-                app.exit(1);
+                exit(1);
               });
           }, cleanupTimeoutMs);
     timeout?.unref();
@@ -51,22 +58,27 @@ export const registerAppShutdown = ({
     void Promise.resolve()
       .then(cleanup)
       .catch(error => {
+        cleanupFailed = true;
         console.error(`[Main] Cleanup error (${context}):`, error);
       })
       .finally(() => {
         clearTimeout(timeout);
         if (timedOut) return;
+        if (cleanupFailed) {
+          exit(1);
+          return;
+        }
         cleanupFinished = true;
         cleanupInProgress = false;
         if (!afterCleanup) {
-          app.exit(0);
+          exit(0);
           return;
         }
         try {
           afterCleanup();
         } catch (error) {
           console.error('[Main] Failed to launch downloaded update:', error);
-          app.exit(1);
+          exit(1);
         }
       });
   };

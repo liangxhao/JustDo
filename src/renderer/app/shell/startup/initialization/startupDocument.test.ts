@@ -23,14 +23,14 @@ const dictionaries = {
   zh: { ...appTranslations.zh, ...startupTranslations.zh },
   en: { ...appTranslations.en, ...startupTranslations.en },
 };
-function openDocument(language: string, firstLaunch = false) {
+function openDocument(language: string, firstLaunch = false, route?: string) {
   vi.useFakeTimers();
   vi.spyOn(navigator, 'language', 'get').mockReturnValue(language);
   localStorage.clear();
   HTMLElement.prototype.animate = vi.fn(() => ({ currentTime: 0, cancel: vi.fn() })) as never;
   Object.defineProperty(window, 'electron', {
     configurable: true,
-    value: { initialization: { firstLaunch } },
+    value: { initialization: { firstLaunch, route } },
   });
   document.body.innerHTML = template.match(/<body>([\s\S]*)<\/body>/u)![1];
   const scripts = [...template.matchAll(/<script>([\s\S]*?)<\/script>/gu)];
@@ -116,3 +116,42 @@ test('selects the first-launch guide before any module executes and retains it o
   expect(document.getElementById('startup-document-error')?.hidden).toBe(false);
   expect(root.querySelector('[data-startup-view="launch"]')).toBeNull();
 });
+
+test.each(['zh-CN', 'en-US'])(
+  'paints four distinct startup routes before React without changing their meaning on failure (%s)', language => {
+    const locale = language === 'zh-CN' ? 'zh' : 'en';
+    const copy = initializationTranslations[locale];
+    for (const [route, view, heading, count] of [
+      ['fresh', 'first-launch', copy.firstLaunchTitle, 4],
+      ['migration', 'migration', copy.initializationUpgradeTitle, 6],
+      ['upgrade', 'upgrade', copy.initializationNormalUpgradeTitle, 5],
+      ['normal', 'launch', startupTranslations[locale].startupHeading, 0],
+    ] as const) {
+      openDocument(language, route !== 'normal', route);
+      const startup = document.getElementById('startup-document')!;
+      expect(startup.dataset.startupView).toBe(view);
+      expect(startup.querySelector('h1')?.textContent).toBe(heading);
+      const steps = [...startup.querySelectorAll('nav ol > li')].filter(item => !(item as HTMLElement).hidden);
+      expect(steps).toHaveLength(count);
+      expect(steps.map(item => item.firstElementChild?.textContent)).toEqual(
+        Array.from({ length: count }, (_, index) => String(index + 1).padStart(2, '0')),
+      );
+      if (route === 'upgrade') {
+        expect(startup.textContent).toContain(copy.initializationNormalUpgradeDescription);
+        expect(startup.querySelector('[data-upgrade-only]')?.hasAttribute('hidden')).toBe(false);
+        expect(startup.querySelector('[data-migration-only]')?.hasAttribute('hidden')).toBe(true);
+        startup.dataset.activity = 'conversations';
+        vi.advanceTimersByTime(1000);
+        expect(document.getElementById('startup-operation')?.textContent)
+          .toBe(startupTranslations[locale].startupRenderer_conversations);
+      }
+      window.dispatchEvent(new Event('error'));
+      vi.advanceTimersByTime(1000);
+      expect(startup.dataset.startupView).toBe(view);
+      startup.remove();
+      vi.advanceTimersByTime(1000);
+      vi.restoreAllMocks();
+      delete window.startupDiagnostics;
+    }
+  },
+);

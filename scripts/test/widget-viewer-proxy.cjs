@@ -9,12 +9,11 @@ const path = require('node:path');
 if (!process.versions.electron) {
   (async () => {
     const root = path.resolve(__dirname, '../..');
-    const runtime = path.resolve(
-      process.argv[2] || path.join(root, 'vendor/openclaw-runtime/current'),
-    );
+    const { resolveNativeSmokeTarget } = await import('../../tests/openclaw/runtime/native-smoke-target.mjs');
+    const { runtimeRoot: runtime } = resolveNativeSmokeTarget();
     assert.equal(
       JSON.parse(fs.readFileSync(path.join(runtime, 'package.json'))).version,
-      '2026.10.4',
+      '2026.10.6',
     );
     const sidebarMode = process.argv.includes('--sidebar');
     const fixtureRoot = sidebarMode ? path.join(root, '.agent-tasks/browser') : os.tmpdir();

@@ -5,7 +5,9 @@ import path from 'node:path';
 
 import { expect, test } from 'vitest';
 
-const runtimeRoot = path.resolve('vendor/openclaw-runtime/current');
+const runtimeRoot = path.resolve(
+  process.env.OPENCLAW_TEST_NATIVE_RUNTIME_DIR ?? 'vendor/openclaw-runtime/current',
+);
 const runtimeAvailable = fs.existsSync(path.join(runtimeRoot, 'openclaw.mjs'));
 
 test.skipIf(!runtimeAvailable)(
@@ -17,6 +19,7 @@ test.skipIf(!runtimeAvailable)(
       fs.writeFileSync(
         configPath,
         JSON.stringify({
+          agents: { entries: { main: {} }, defaults: { embeddedAgent: { cyberFailover: { mode: 'off' } } } },
           skills: {
             entries: {
               'extension-skill': { env: { PRESERVE: 'fixture' } },

@@ -30,7 +30,7 @@ Agent 正文时仍使用 Chat 兜底。不能按相同字符串或最长重叠�
 `assistant` 预览，在工具参数开始流入后将同一段归类为 commentary，并发布
 `item(kind=preamble, phase=update)`。如果只在 `message_end` 撤回预览，两份内容会在
 工具参数生成期间并存，结束时突然恢复一份。参数较长时，这个窗口可能持续数十秒。
-029 为这两条通路补充同源 `assistantTextScope.id`，Renderer 在收到非空 commentary
+028 为这两条通路补充同源 `assistantTextScope.id`，Renderer 在收到非空 commentary
 时原子隐藏同 scope 的预览；保留底层正文以承接 Gateway 的 delta-only 续写。
 真实 message_end 的空 assistant 替换继续清理原生 Chat buffer。
 身份从实际 source message 捕获，不能从当前消息指针、run 序号或相同文字猜测。
@@ -41,7 +41,7 @@ Agent 正文时仍使用 Chat 兜底。不能按相同字符串或最长重叠�
 还需检查临时工具回滚：模型可能先流出工具参数，最终却以 `stop` 结束，原生会
 移除临时工具及 commentary signature，正文恢复为普通回答。已发布的 preamble
 必须按同一原生消息的完整完成事实协调；只清正文预览或只查最终 `final_answer` ID 都
-不充分。029 只在真正 message_end 附上仍保留的 commentary IDs，Renderer 隐藏该 scope
+不充分。028 只在真正 message_end 附上仍保留的 commentary IDs，Renderer 隐藏该 scope
 已失效的 preamble，并恢复实际收到的最终正文；只含 metadata 的超限快照不能把旧预览
 提升为最终答案。重连优先回放原生 keyed snapshots，避免再追加 run 累计的 text。
 不同消息中的同文说明和合法 commentary／final 混合消息继续保留。
@@ -64,9 +64,9 @@ Tool/item flush，不能当成正文身份。两路正文分别累积，完整�
 commentary 先行和撤回；不包含原始用户日志或工具参数。临时正文/DOM详细抓取日志
 已移除，日常诊断继续使用现有可选时间线跟踪。
 
-## 029 逐项审查：原生缺陷、能力扩展与应用适配
+## 028 逐项审查：原生缺陷、能力扩展与应用适配
 
-本节对应锁定的 OpenClaw 2026.10.4。保留前提是：独立 reasoning 后的公开正文仍需
+本节对应锁定的 OpenClaw 2026.10.6（原 10.4 的 029 在本版编号为 028）。保留前提是：独立 reasoning 后的公开正文仍需
 及时展示，真实消息阶段和持久回复由原生决定，并支持切换／重连及历史接管。
 “保留”表示满足这些产品要求时有必要，不表示原生所有调用方式都必须打补丁。
 
@@ -109,11 +109,11 @@ Completions 消息均携带原生消息身份及实际完成事实，Renderer �
 | Renderer scope 归约、完成事实 Map、隐藏标记与真实正文恢复 | 我们的展示适配 | 即时交接和回滚在软件侧完成；隐藏时保留正文前缀以承接 delta，metadata-only 完成不能把旧预览提升成最终答案。Map 只存活动 turn 的身份／序号，不存第二份正文。 |
 | 展示层、浏览器 project/finish、side-chat 内容收集与截断补全都过滤隐藏项；clone 复制 Map | 我们的展示适配 | 这些读者不全部经过桌面 `projectTurnItems`；漏一处就会重新暴露旧预览。侧聊快照也不能与活动 turn 共用可变归属集合。 |
 | controller 回放 owned 快照后跳过累计 `text` | 我们的恢复适配 | 否则已恢复的旁白／正文会再被累计 buffer 追加一次。只有序号的旧 assistant marker 仍使用原有 text 兜底，不把无正文当成已恢复。 |
-| 精确 AST 形态、当前形态幂等、拒绝历史／部分形态及源码／bundle 原子校验 | 构建保护 | 属于仓库补丁契约，不是业务 bug 修复；防止锁定版本或构建绑定变化后静默误改。公共工具不是 029 专有实现。 |
+| 精确 AST 形态、当前形态幂等、拒绝历史／部分形态及源码／bundle 原子校验 | 构建保护 | 属于仓库补丁契约，不是业务 bug 修复；防止锁定版本或构建绑定变化后静默误改。公共工具不是 028 专有实现。 |
 
 安全边界、普通流式、合法同文、mixed phase、回滚、历史补载、metadata-only 超限、
 独立 owner 恢复及取消／失败的用例共同构成保留依据。补丁的当前形态与移除条件
-统一见[补丁总账](../../../scripts/patches/v2026.10.4/README.md)，不在功能文档保留已删除中间实现的逐项消融记录。
+统一见[补丁总账](../../../scripts/patches/v2026.10.6/README.md)，不在功能文档保留已删除中间实现的逐项消融记录。
 
 ## 正文在结束时集中出现
 
@@ -134,13 +134,13 @@ node tests/openclaw/runtime/completions-stream-latency.native-smoke.mjs --expect
 到达时透出；先发送 `reasoning_content` 时，运行时将正文留至 terminal 后合并透出，
 并标记 `openclawDelivery.textPhaseRequiresTerminal`。原生 Agent 订阅层还会依据该标记
 抑制提前正文。因此，删除 Renderer 播放队列或放行连续 Chat 快照无法释放这部分文本。
-当前 029 补丁按原生归一后的 thinking/text 通道提供可替换的实时 Agent 预览，
+当前 028 补丁按原生归一后的 thinking/text 通道提供可替换的实时 Agent 预览，
 不判断模型名、厂商或 endpoint。独立 reasoning 字段及类型化 thinking 保留私有通道；
 公开正文继续通过原生 Markdown/tag 解析。专用 structured 恢复模式保证未闭合的
 思考标签不会在成功结束、工具 flush、失败或取消时恢复成正文，显式 strict 保持
 原生整轮缓冲。正文仍需原生终态确定 final/commentary，失败或被归为 commentary
 的预览会按原 message/item 身份撤回，不提前触发持久回复。
-范围、原生接口不足的证据与移除条件见[补丁总账](../../../scripts/patches/v2026.10.4/README.md)。
+范围、原生接口不足的证据与移除条件见[补丁总账](../../../scripts/patches/v2026.10.6/README.md)。
 探针输出仅有相对耗时、事件类别和字符数，没有真实请求、凭据或用户正文。
 
 升级运行时后应重新运行探针，不能把当前产物行为当作所有模型、协议或版本的结论。
@@ -229,9 +229,9 @@ JSON/对象格式拒绝现在与 schema 拒绝一样，在当前原生 Agent 循
 此接线不改变整轮终态、重试额度或工具派发；历史探针与修复记录由 Git 追溯，
 真实环境验证见[工具格式纠正](../../architecture/05-agent-engine.md#工具调用格式纠正)。
 
-### OpenClaw 2026.10.4 接口适配
+### OpenClaw 2026.10.6 接口适配
 
-2026.10.4 的完整历史页返回消息本身，游标 delta 返回 `session.message` 包装。
+2026.10.6 的完整历史页返回消息本身，游标 delta 返回 `session.message` 包装。
 诊断对 delta 逐条核对精确 `sessionKey`，解包 `message`，补入原生 `messageId`
 与运行标识后，再与同页 activity 对照。包装与消息内的身份冲突时丢弃整次
 历史证据；包装损坏显示读取不完整，不能把跳过所有消息称为扫描完成。
@@ -254,13 +254,14 @@ target、带 idempotencyKey 的 prepared user 和 recorder，便会探测同一�
 并非只有用户点击重试或 Gateway 重启后才调用。第一次取得 witness 后，核心执行前
 还会重新读取并核对；没有初始 witness 时通常继续普通追加，但探测期间的版本竞争仍可报错。
 
-当前锁定 2026.10.4 的源码及 Windows x64 产物保留三个同文案抛错点：
+当前锁定 2026.10.6 的源码保留四个同文案抛错点：
 
 | 位置 | 精确拒绝条件 |
 | --- | --- |
 | `session-accessor.sqlite-current-turn.ts` 的 current-turn reader | 当前 generation、rawSeq 或 updatedAt 与准备快照不一致。rawSeq 来自 transcript 事件最大序号，updatedAt 是 transcript 更新时间。 |
-| `pre-persisted-user-turn.ts` 的第二次 readCurrentTurn | 无法重新找到匹配 user 的 witness，或 entryId / generation 不再匹配初始 anchor。 |
-| 同文件的 assertPreparedCurrentTurn | 已有 witness 后又回到 row 缺失、initialWriter 尚未提交且 transcript header 不存在的狭窄防御状态。普通 session/lifecycle/writer 失配通常先抛另一句 writer claim 错误。 |
+| `pre-persisted-user-turn.ts` 的 validate 回调 | 已有 prepared selection，但原生 reader 未确认同一 transcript context version。普通 session/lifecycle/writer 失配通常先抛另一句 writer claim 错误。 |
+| 同文件的 validate 收尾 | 异步 anchor 读取完成后没有在 reader 的 writer FIFO/native mutation witness 下调用 consume。 |
+| 同文件的第二次准入 accept | 无法重新找到 prepared witness，或 entryId / generation 不再匹配初始 anchor。 |
 
 有源码和原生测试支撑的候选包括：异步快照与 entry 读取之间发生 transcript 追加；
 准备后有新输入实际占据当前轮次（包括不进模型上下文的隐藏 user）；已出现 final、
@@ -271,15 +272,15 @@ reset、分支替换或历史重写；或导航碰到不能安全越过的未知
 正常的同轮中断尾部、已知 runtime/system update、metadata 和 compaction 有各自的
 受限导航规则。原生测试覆盖正常重复重启、pre-core compaction、成功 admit 后的内部
 重试及压缩；通常的 transient retry / overflow 会转为 internal prompt，并跳过原始
-prepared user。当前 030 工具格式纠正在同一个 native Agent loop 内进行，已删除旧的
+prepared user。当前 029 工具格式纠正在同一个 native Agent loop 内进行，已删除旧的
 outer-attempt retry。不能仅凭故障前有压缩、模型重试或格式纠正就把它们定为根因。
-网络错误、模型 HTTP 错误、电脑慢和系统时钟变化也不是上述三个拒绝条件；它们可能
+网络错误、模型 HTTP 错误、电脑慢和系统时钟变化也不是上述四个拒绝条件；它们可能
 影响准备流程或扩大时间窗口，仍需证实对应的历史或身份变化。
 
 排查应取得故障机器的应用版本、当时已加载 Gateway 身份、精确 run/session 与失败时间，
 并核对前后输入消费、attempt、retry、compaction、reset/分支及重启事件。现有 lane 和
 Embedded agent 错误日志通常只写消息摘要，不保证记录栈或 expected/current 版本值；
-因此诊断包也未必能区分三个位置，更不能从缺少记录推导没有写入。
+因此诊断包也未必能区分四个位置，更不能从缺少记录推导没有写入。
 证据不足时需要可控复现，或在锁定运行时的准确边界增加不含正文的受限诊断。
 保留原生身份与恢复保护，不能通过自动重发或放宽检查来消除提示，避免再次执行已消费的旧请求。
 

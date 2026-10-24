@@ -133,7 +133,7 @@ describe('OpenClawExtensionImportService', () => {
       getStateDir: () => stateDir,
       getConfigPath: () => configPath,
       buildCliEnvironment: async () => ({
-        env: { OPENCLAW_STATE_DIR: stateDir },
+        env: { JUSTDO_ELECTRON_PATH: process.execPath, OPENCLAW_STATE_DIR: stateDir },
         runtimeRoot: fixtureRoot,
         openclawEntry: path.join(fixtureRoot, 'openclaw.mjs'),
       }),
@@ -204,7 +204,7 @@ describe('OpenClawExtensionImportService', () => {
         getStateDir: () => stateDir,
         getConfigPath: () => path.join(stateDir, 'openclaw.json'),
         buildCliEnvironment: async () => ({
-          env: { OPENCLAW_STATE_DIR: stateDir },
+          env: { JUSTDO_ELECTRON_PATH: process.execPath, OPENCLAW_STATE_DIR: stateDir },
           runtimeRoot: fixtureRoot,
           openclawEntry: path.join(fixtureRoot, 'openclaw.mjs'),
         }),
@@ -251,7 +251,7 @@ describe('OpenClawExtensionImportService', () => {
         getStateDir: () => stateDir,
         getConfigPath: () => path.join(stateDir, 'openclaw.json'),
         buildCliEnvironment: async () => ({
-          env: { OPENCLAW_STATE_DIR: stateDir },
+          env: { JUSTDO_ELECTRON_PATH: process.execPath, OPENCLAW_STATE_DIR: stateDir },
           runtimeRoot: fixtureRoot,
           openclawEntry: path.join(fixtureRoot, 'openclaw.mjs'),
         }),
@@ -303,7 +303,7 @@ describe('OpenClawExtensionImportService', () => {
         getStateDir: () => stateDir,
         getConfigPath: () => configPath,
         buildCliEnvironment: async () => ({
-          env: { OPENCLAW_STATE_DIR: stateDir },
+          env: { JUSTDO_ELECTRON_PATH: process.execPath, OPENCLAW_STATE_DIR: stateDir },
           runtimeRoot: fixtureRoot,
           openclawEntry: path.join(fixtureRoot, 'openclaw.mjs'),
         }),
@@ -936,7 +936,7 @@ describe('OpenClawExtensionImportService', () => {
             getConfigPath: () => configPath,
             getBaseDir: () => stateDir,
             buildCliEnvironment: async () => ({
-              env: {},
+              env: { JUSTDO_ELECTRON_PATH: process.execPath,},
               runtimeRoot: fixtureRoot,
               openclawEntry: 'openclaw.mjs',
             }),
@@ -978,7 +978,7 @@ describe('OpenClawExtensionImportService', () => {
           getConfigPath: () => configPath,
           getBaseDir: () => stateDir,
           buildCliEnvironment: async () => ({
-            env: {},
+            env: { JUSTDO_ELECTRON_PATH: process.execPath,},
             runtimeRoot: fixtureRoot,
             openclawEntry: 'openclaw.mjs',
           }),
@@ -1131,7 +1131,7 @@ describe('OpenClawExtensionImportService', () => {
       getBaseDir: vi.fn(() => path.join(fixtureRoot, 'openclaw-home')),
       getConfigPath: vi.fn(() => path.join(stateDir, 'openclaw.json')),
       buildCliEnvironment: vi.fn().mockResolvedValue({
-        env: { OPENCLAW_STATE_DIR: stateDir },
+        env: { JUSTDO_ELECTRON_PATH: process.execPath, OPENCLAW_STATE_DIR: stateDir },
         runtimeRoot: path.join(fixtureRoot, 'runtime'),
         openclawEntry: path.join(fixtureRoot, 'runtime', 'openclaw.mjs'),
       }),
@@ -1324,7 +1324,7 @@ describe('OpenClawExtensionImportService', () => {
         getBaseDir: () => fixtureRoot,
         getConfigPath: () => path.join(stateDir, 'openclaw.json'),
         buildCliEnvironment: async () => ({
-          env: { OPENCLAW_STATE_DIR: stateDir },
+          env: { JUSTDO_ELECTRON_PATH: process.execPath, OPENCLAW_STATE_DIR: stateDir },
           runtimeRoot: fixtureRoot,
           openclawEntry: path.join(fixtureRoot, 'openclaw.mjs'),
         }),
@@ -1368,7 +1368,7 @@ describe('OpenClawExtensionImportService', () => {
       getBaseDir: vi.fn(() => path.join(fixtureRoot, 'openclaw-home')),
       getConfigPath: vi.fn(() => path.join(stateDir, 'openclaw.json')),
       buildCliEnvironment: vi.fn().mockResolvedValue({
-        env: { OPENCLAW_STATE_DIR: stateDir },
+        env: { JUSTDO_ELECTRON_PATH: process.execPath, OPENCLAW_STATE_DIR: stateDir },
         runtimeRoot: path.join(fixtureRoot, 'runtime'),
         openclawEntry: path.join(fixtureRoot, 'runtime', 'openclaw.mjs'),
       }),
@@ -1668,7 +1668,7 @@ describe('OpenClawExtensionImportService', () => {
           getBaseDir: () => fixtureRoot,
           getConfigPath: () => configPath,
           buildCliEnvironment: async () => ({
-            env: { OPENCLAW_STATE_DIR: stateDir },
+            env: { JUSTDO_ELECTRON_PATH: process.execPath, OPENCLAW_STATE_DIR: stateDir },
             runtimeRoot: fixtureRoot,
             openclawEntry: path.join(fixtureRoot, 'openclaw.mjs'),
           }),
@@ -2144,7 +2144,7 @@ describe('OpenClawExtensionImportService', () => {
         getStatus: vi.fn().mockReturnValue({ phase: 'running' }),
         getBaseDir: vi.fn().mockReturnValue(path.join(fixtureRoot, 'openclaw-home')),
         buildCliEnvironment: vi.fn().mockResolvedValue({
-          env: {
+          env: { JUSTDO_ELECTRON_PATH: process.execPath,
             OPENCLAW_STATE_DIR: stateDir,
             NPM_CONFIG_USERCONFIG: path.join(fixtureRoot, 'package-manager-config', '.npmrc'),
           },
@@ -2239,7 +2239,7 @@ describe('OpenClawExtensionImportService', () => {
         getStatus: () => ({ phase: 'running' }),
         getBaseDir: () => fixtureRoot,
         buildCliEnvironment: async () => ({
-          env: { OPENCLAW_STATE_DIR: stateDir },
+          env: { JUSTDO_ELECTRON_PATH: process.execPath, OPENCLAW_STATE_DIR: stateDir },
           runtimeRoot: fixtureRoot,
           openclawEntry: path.join(fixtureRoot, 'openclaw.mjs'),
         }),
@@ -2292,7 +2292,7 @@ describe('OpenClawExtensionImportService', () => {
             getStatus: () => ({ phase: 'running' }),
             getBaseDir: () => fixtureRoot,
             buildCliEnvironment: async () => ({
-              env: { OPENCLAW_STATE_DIR: stateDir },
+              env: { JUSTDO_ELECTRON_PATH: process.execPath, OPENCLAW_STATE_DIR: stateDir },
               runtimeRoot: fixtureRoot,
               openclawEntry: path.join(fixtureRoot, 'openclaw.mjs'),
             }),
@@ -2398,7 +2398,7 @@ describe('OpenClawExtensionImportService', () => {
       getStatus: vi.fn().mockReturnValue({ phase: 'ready' }),
       getBaseDir: vi.fn().mockReturnValue(path.join(fixtureRoot, 'openclaw-home')),
       buildCliEnvironment: vi.fn().mockResolvedValue({
-        env: { OPENCLAW_STATE_DIR: path.join(fixtureRoot, 'state') },
+        env: { JUSTDO_ELECTRON_PATH: process.execPath, OPENCLAW_STATE_DIR: path.join(fixtureRoot, 'state') },
         runtimeRoot: path.join(fixtureRoot, 'runtime'),
         openclawEntry: path.join(fixtureRoot, 'runtime', 'openclaw.mjs'),
       }),
@@ -2547,7 +2547,7 @@ describe('OpenClawExtensionImportService', () => {
             getStateDir: () => stateDir,
             getConfigPath: () => path.join(stateDir, 'openclaw.json'),
             buildCliEnvironment: async () => ({
-              env: { OPENCLAW_STATE_DIR: stateDir },
+              env: { JUSTDO_ELECTRON_PATH: process.execPath, OPENCLAW_STATE_DIR: stateDir },
               runtimeRoot: fixtureRoot,
               openclawEntry: path.join(fixtureRoot, 'openclaw.mjs'),
             }),
@@ -2612,7 +2612,7 @@ describe('OpenClawExtensionImportService', () => {
             getStateDir: () => stateDir,
             getConfigPath: () => path.join(stateDir, 'openclaw.json'),
             buildCliEnvironment: async () => ({
-              env: { OPENCLAW_STATE_DIR: stateDir },
+              env: { JUSTDO_ELECTRON_PATH: process.execPath, OPENCLAW_STATE_DIR: stateDir },
               runtimeRoot: fixtureRoot,
               openclawEntry: path.join(fixtureRoot, 'openclaw.mjs'),
             }),
@@ -2722,7 +2722,7 @@ describe('OpenClawExtensionImportService', () => {
           getStateDir: () => stateDir,
           getConfigPath: () => configPath,
           buildCliEnvironment: async () => ({
-            env: { OPENCLAW_STATE_DIR: stateDir },
+            env: { JUSTDO_ELECTRON_PATH: process.execPath, OPENCLAW_STATE_DIR: stateDir },
             runtimeRoot: fixtureRoot,
             openclawEntry: 'fixture.mjs',
           }),
@@ -2800,7 +2800,7 @@ describe('OpenClawExtensionImportService', () => {
             getStateDir: () => stateDir,
             getConfigPath: () => configPath,
             buildCliEnvironment: async () => ({
-              env: { OPENCLAW_STATE_DIR: stateDir },
+              env: { JUSTDO_ELECTRON_PATH: process.execPath, OPENCLAW_STATE_DIR: stateDir },
               runtimeRoot: fixtureRoot,
               openclawEntry: 'fixture.mjs',
             }),
@@ -2857,7 +2857,7 @@ describe('OpenClawExtensionImportService', () => {
             getStateDir: () => stateDir,
             getConfigPath: () => path.join(stateDir, 'openclaw.json'),
             buildCliEnvironment: async () => ({
-              env: { OPENCLAW_STATE_DIR: stateDir },
+              env: { JUSTDO_ELECTRON_PATH: process.execPath, OPENCLAW_STATE_DIR: stateDir },
               runtimeRoot: fixtureRoot,
               openclawEntry: 'fixture.mjs',
             }),
@@ -2887,12 +2887,18 @@ describe('OpenClawExtensionImportService', () => {
     },
   );
 
+  const nativeCapabilityRuntime = path.resolve(
+    process.env.OPENCLAW_TEST_NATIVE_RUNTIME_DIR ?? 'vendor/openclaw-runtime/current',
+  );
+  const nativeBrowserSource = path.join(
+    path.resolve(process.env.OPENCLAW_TEST_SOURCE_DIR ?? '../openclaw'), 'extensions/browser',
+  );
   it.skipIf(
-    !fs.existsSync(path.resolve('vendor/openclaw-runtime/current/dist')) ||
-      !fs.existsSync(path.resolve('../openclaw/extensions/browser')),
+    !fs.existsSync(path.join(nativeCapabilityRuntime, 'dist')) ||
+      !fs.existsSync(nativeBrowserSource),
   )('reads capability reviews through the locked OpenClaw runtime scanner', async () => {
-    const runtimeRoot = fs.realpathSync(path.resolve('vendor/openclaw-runtime/current'));
-    const sourceDir = path.resolve('../openclaw/extensions/browser');
+    const runtimeRoot = fs.realpathSync(nativeCapabilityRuntime);
+    const sourceDir = nativeBrowserSource;
     const stateDir = path.join(fixtureRoot, 'state');
     const configPath = path.join(stateDir, 'openclaw.json');
     fs.mkdirSync(stateDir, { recursive: true });
@@ -2902,7 +2908,7 @@ describe('OpenClawExtensionImportService', () => {
       getBaseDir: vi.fn().mockReturnValue(stateDir),
       getConfigPath: vi.fn().mockReturnValue(configPath),
       buildCliEnvironment: vi.fn().mockResolvedValue({
-        env: { OPENCLAW_STATE_DIR: stateDir },
+        env: { JUSTDO_ELECTRON_PATH: process.execPath, OPENCLAW_STATE_DIR: stateDir },
         runtimeRoot,
         openclawEntry: path.join(runtimeRoot, 'openclaw.mjs'),
       }),
@@ -2972,7 +2978,7 @@ describe('OpenClawExtensionImportService', () => {
       getBaseDir: vi.fn(() => path.join(fixtureRoot, 'openclaw-home')),
       getConfigPath: vi.fn(() => path.join(stateDir, 'openclaw.json')),
       buildCliEnvironment: vi.fn().mockResolvedValue({
-        env: { OPENCLAW_STATE_DIR: stateDir },
+        env: { JUSTDO_ELECTRON_PATH: process.execPath, OPENCLAW_STATE_DIR: stateDir },
         runtimeRoot: path.join(fixtureRoot, 'runtime'),
         openclawEntry: path.join(fixtureRoot, 'runtime', 'openclaw.mjs'),
       }),
@@ -3103,7 +3109,7 @@ describe('OpenClawExtensionImportService', () => {
       getStateDir: vi.fn(() => stateDir),
       getBaseDir: vi.fn(() => path.join(fixtureRoot, 'openclaw-home')),
       buildCliEnvironment: vi.fn().mockResolvedValue({
-        env: { OPENCLAW_STATE_DIR: stateDir },
+        env: { JUSTDO_ELECTRON_PATH: process.execPath, OPENCLAW_STATE_DIR: stateDir },
         runtimeRoot: path.join(fixtureRoot, 'runtime'),
         openclawEntry: path.join(fixtureRoot, 'runtime', 'openclaw.mjs'),
       }),
@@ -3153,7 +3159,7 @@ describe('OpenClawExtensionImportService', () => {
       getBaseDir: vi.fn(() => path.join(fixtureRoot, 'openclaw-home')),
       getConfigPath: vi.fn(() => path.join(stateDir, 'openclaw.json')),
       buildCliEnvironment: vi.fn().mockResolvedValue({
-        env: { OPENCLAW_STATE_DIR: stateDir },
+        env: { JUSTDO_ELECTRON_PATH: process.execPath, OPENCLAW_STATE_DIR: stateDir },
         runtimeRoot: path.join(fixtureRoot, 'runtime'),
         openclawEntry: path.join(fixtureRoot, 'runtime', 'openclaw.mjs'),
       }),
@@ -3194,7 +3200,7 @@ describe('OpenClawExtensionImportService', () => {
         getBaseDir: vi.fn().mockReturnValue(path.join(fixtureRoot, 'openclaw-home')),
         getConfigPath: vi.fn().mockReturnValue(path.join(stateDir, 'openclaw.json')),
         buildCliEnvironment: vi.fn().mockResolvedValue({
-          env: { OPENCLAW_STATE_DIR: stateDir },
+          env: { JUSTDO_ELECTRON_PATH: process.execPath, OPENCLAW_STATE_DIR: stateDir },
           runtimeRoot: path.join(fixtureRoot, 'runtime'),
           openclawEntry: path.join(fixtureRoot, 'runtime', 'openclaw.mjs'),
         }),
@@ -4003,7 +4009,7 @@ describe('OpenClawExtensionImportService', () => {
       getConfigPath: vi.fn().mockReturnValue(configPath),
       getStatus: vi.fn().mockReturnValue({ phase: 'starting' }),
       buildCliEnvironment: vi.fn().mockResolvedValue({
-        env: { OPENCLAW_STATE_DIR: stateDir },
+        env: { JUSTDO_ELECTRON_PATH: process.execPath, OPENCLAW_STATE_DIR: stateDir },
         runtimeRoot: path.join(fixtureRoot, 'runtime'),
         openclawEntry: path.join(fixtureRoot, 'runtime', 'openclaw.mjs'),
       }),
@@ -4060,7 +4066,7 @@ describe('OpenClawExtensionImportService', () => {
       getConfigPath: vi.fn().mockReturnValue(configPath),
       getStatus: vi.fn().mockReturnValue({ phase: 'running' }),
       buildCliEnvironment: vi.fn().mockResolvedValue({
-        env: { OPENCLAW_STATE_DIR: stateDir },
+        env: { JUSTDO_ELECTRON_PATH: process.execPath, OPENCLAW_STATE_DIR: stateDir },
         runtimeRoot: path.join(fixtureRoot, 'runtime'),
         openclawEntry: path.join(fixtureRoot, 'runtime', 'openclaw.mjs'),
       }),
@@ -4120,7 +4126,7 @@ describe('OpenClawExtensionImportService', () => {
       getConfigPath: vi.fn().mockReturnValue(path.join(stateDir, 'openclaw.json')),
       getStatus: vi.fn().mockReturnValue({ phase: 'starting' }),
       buildCliEnvironment: vi.fn().mockResolvedValue({
-        env: { OPENCLAW_STATE_DIR: stateDir },
+        env: { JUSTDO_ELECTRON_PATH: process.execPath, OPENCLAW_STATE_DIR: stateDir },
         runtimeRoot: path.join(fixtureRoot, 'runtime'),
         openclawEntry: path.join(fixtureRoot, 'runtime', 'openclaw.mjs'),
       }),
@@ -4178,7 +4184,7 @@ describe('OpenClawExtensionImportService', () => {
       getConfigPath: vi.fn().mockReturnValue(path.join(stateDir, 'openclaw.json')),
       getStatus: vi.fn().mockReturnValue({ phase: 'running' }),
       buildCliEnvironment: vi.fn().mockResolvedValue({
-        env: { OPENCLAW_STATE_DIR: stateDir },
+        env: { JUSTDO_ELECTRON_PATH: process.execPath, OPENCLAW_STATE_DIR: stateDir },
         runtimeRoot: path.join(fixtureRoot, 'runtime'),
         openclawEntry: path.join(fixtureRoot, 'runtime', 'openclaw.mjs'),
       }),
@@ -4220,7 +4226,7 @@ describe('OpenClawExtensionImportService', () => {
       getStatus: vi.fn().mockReturnValue({ phase: 'ready' }),
       getBaseDir: vi.fn().mockReturnValue(path.join(fixtureRoot, 'openclaw-home')),
       buildCliEnvironment: vi.fn().mockResolvedValue({
-        env: {
+        env: { JUSTDO_ELECTRON_PATH: process.execPath,
           NPM_CONFIG_USERCONFIG: path.join(fixtureRoot, 'package-manager-config', '.npmrc'),
           NPM_CONFIG_REGISTRY: 'https://injected.example.invalid',
           npm_config_registry: 'https://injected.example.invalid',
@@ -4281,7 +4287,7 @@ describe('OpenClawExtensionImportService', () => {
       getStatus: vi.fn().mockReturnValue({ phase: 'ready' }),
       getBaseDir: vi.fn().mockReturnValue(path.join(fixtureRoot, 'openclaw-home')),
       buildCliEnvironment: vi.fn().mockResolvedValue({
-        env: {},
+        env: { JUSTDO_ELECTRON_PATH: process.execPath,},
         runtimeRoot: path.join(fixtureRoot, 'runtime'),
         openclawEntry: path.join(fixtureRoot, 'runtime', 'openclaw.mjs'),
       }),

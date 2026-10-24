@@ -128,12 +128,16 @@ function renameExtensionIntoPlace(sourceDir, targetDir, options = {}) {
           throw error;
         }
         try {
-          fs.cpSync(sourceDir, targetDir, {
-            recursive: true,
-            force: false,
-            errorOnExist: true,
-            verbatimSymlinks: true,
-          });
+          // Node 24.22 also applies errorOnExist to the claimed root itself.
+          // Copy each absent child, retaining exclusive destination ownership.
+          for (const entry of fs.readdirSync(sourceDir)) {
+            fs.cpSync(path.join(sourceDir, entry), path.join(targetDir, entry), {
+              recursive: true,
+              force: false,
+              errorOnExist: true,
+              verbatimSymlinks: true,
+            });
+          }
         } catch (copyError) {
           throw new Error(
             `Extension rename and copy fallback failed: ${sourceDir} -> ${targetDir}. ` +

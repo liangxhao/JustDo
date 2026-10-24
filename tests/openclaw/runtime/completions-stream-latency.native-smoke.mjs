@@ -3,12 +3,12 @@ import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { setTimeout as delay } from 'node:timers/promises';
 import { parseArgs } from 'node:util';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { pathToFileURL } from 'node:url';
+import { resolveNativeSmokeTarget } from './native-smoke-target.mjs';
 
 // Isolated transport integration: all HTTP responses are generated in memory
 // through the AI package's supported scoped host. No Gateway, user state,
 // credentials, sockets or model services are used, including arbitrary endpoint cases.
-const projectRoot = fileURLToPath(new URL('../../../', import.meta.url));
 const { values } = parseArgs({ options: {
   'runtime-dir': { type: 'string' },
   'expect-streaming': { type: 'boolean' },
@@ -17,8 +17,8 @@ const { values } = parseArgs({ options: {
 assert.ok(!(values['expect-streaming'] && values['expect-buffered']),
   'Choose only one expected runtime behavior');
 const expectStreaming = values['expect-streaming'] === true;
-const runtimeDir = path.resolve(values['runtime-dir'] ??
-  path.join(projectRoot, 'vendor/openclaw-runtime/current'));
+assert.ok(values['runtime-dir'], 'Pass --runtime-dir with the final frozen runtime directory.');
+const { runtimeRoot: runtimeDir } = resolveNativeSmokeTarget(values['runtime-dir']);
 const aiDir = path.join(runtimeDir, 'node_modules/@openclaw/ai/dist');
 const { createAiTransportHost, runWithAiTransportHost, supportsScopedAiTransportHosts } =
   await import(pathToFileURL(path.join(aiDir, 'index.mjs')).href);

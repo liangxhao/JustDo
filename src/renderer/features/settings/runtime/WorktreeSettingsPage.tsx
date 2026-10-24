@@ -58,10 +58,15 @@ export default function WorktreeSettingsPage() {
 
   const clean = async () => {
     setBusy('gc');
-    const result = await window.electron.openclaw.worktrees.clean();
-    if (result.success) await load();
-    else setError(result.error);
-    setBusy(null);
+    try {
+      const result = await window.electron.openclaw.worktrees.clean();
+      if (result.success) await load();
+      else setError(result.error);
+    } catch {
+      setError(t('worktreeCleanupUnconfirmed'));
+    } finally {
+      setBusy(null);
+    }
   };
 
   const setShowCheckbox = async (showWorktreeCheckbox: boolean) => {

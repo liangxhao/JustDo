@@ -4,20 +4,24 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { pathToFileURL } from 'node:url';
+import { resolveNativeSmokeTarget } from './native-smoke-target.mjs';
+
+const { runtimeRoot } = resolveNativeSmokeTarget();
 
 test('native staging rejects a widened surface carrying an earlier UI review token', async () => {
   assert.equal(process.versions.electron, undefined, 'Run this isolated native probe with Node.js.');
-  const runtimeRoot = fs.realpathSync(path.resolve('vendor/openclaw-runtime/current'));
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'plugin-consent-native-'));
   const environment = { ...process.env };
   try {
     for (const name of Object.keys(process.env)) {
-      if (name.startsWith('OPENCLAW_')) delete process.env[name];
+      if (name.toUpperCase().startsWith('OPENCLAW_')) delete process.env[name];
     }
     process.env.OPENCLAW_HOME = root;
     process.env.OPENCLAW_STATE_DIR = path.join(root, 'state');
     process.env.OPENCLAW_CONFIG_PATH = path.join(root, 'openclaw.json');
-    fs.writeFileSync(process.env.OPENCLAW_CONFIG_PATH, '{}');
+    fs.writeFileSync(process.env.OPENCLAW_CONFIG_PATH, JSON.stringify({
+      agents: { ownership: 'explicit', entries: { main: {} }, defaults: { embeddedAgent: { cyberFailover: { mode: 'off' } } } },
+    }));
     const staged = path.join(root, 'package');
     fs.mkdirSync(staged);
     const pluginId = 'source-consent-fixture';
@@ -41,7 +45,10 @@ test('native staging rejects a widened surface carrying an earlier UI review tok
     const inspect = await load('capability-artifact-', 'inspectPluginCapabilityArtifact');
     const buildReview = await load('capability-summary-', 'buildPluginCapabilityConsentReview');
     const createConsent = await load('capability-consent-', 'createManagedPluginArtifactConsentHandler');
-    const config = { plugins: { allow: [pluginId] } };
+    const config = {
+      agents: { ownership: 'explicit', entries: { main: {} }, defaults: { embeddedAgent: { cyberFailover: { mode: 'off' } } } },
+      plugins: { allow: [pluginId] },
+    };
     const review = () => {
       const artifact = inspect(staged, process.env, { config });
       return buildReview({ pluginId, manifest: artifact.manifest, record: { source: 'path' }, config, declared: artifact.declared });

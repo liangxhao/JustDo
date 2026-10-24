@@ -11,7 +11,10 @@ import {
 } from '../../plugins/extensions/embedded-browser/browserPageSource';
 import { projectSessionSummaryResources } from '../../src/renderer/libs/openclaw-chat/model/timeline/session-summary-resources';
 
-const dist = path.resolve('vendor/openclaw-runtime/current/dist');
+const dist = path.join(
+  path.resolve(process.env.OPENCLAW_RUNTIME_DIR ?? 'vendor/openclaw-runtime/current'),
+  'dist',
+);
 const projectionFile = fs.existsSync(dist)
   ? fs
       .readdirSync(dist)
@@ -105,6 +108,7 @@ describe.skipIf(!projectionFile)('browser sources through locked native public h
         expect(publicResult.details).toEqual(
           result === chrome
             ? {
+                ok: true,
                 browserTab: {
                   targetId: page.targetId,
                   url: page.url,
@@ -113,7 +117,7 @@ describe.skipIf(!projectionFile)('browser sources through locked native public h
                   profile: 'user',
                 },
               }
-            : undefined,
+            : { ok: true },
         );
         expect(projectSessionSummaryResources(projected, []).sources).toEqual([
           {
@@ -204,7 +208,9 @@ describe.skipIf(!projectionFile)('browser sources through locked native public h
     const projected = projectHistory([message], { maxChars: 500_000 });
     const result = (projected[0] as { content: Array<Record<string, unknown>> }).content[1];
 
-    expect(result.details).toBeUndefined();
+    // The target native projection retains boolean result facts while dropping
+    // browser-private target and external-content metadata.
+    expect(result.details).toEqual({ ok: true });
     expect((result.content as Array<{ text: string }>)[0].text).toMatch(/\n…\(truncated\)…$/u);
     expect(projectSessionSummaryResources(projected, []).sources).toEqual([
       {

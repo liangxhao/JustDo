@@ -1,6 +1,6 @@
 # Gateway 能力归属与升级核对矩阵
 
-基线：锁定 OpenClaw v2026.10.4 与当前产品注册代码。本页帮助判断升级需要核对哪些原生契约；逐补丁清单与上游处置统一在[版本目录 README](../../scripts/patches/v2026.10.4/README.md)，不在此复制编号表。
+基线：锁定 OpenClaw v2026.10.6 与当前产品注册代码。本页帮助判断升级需要核对哪些原生契约；逐补丁清单与上游处置统一在[版本目录 README](../../scripts/patches/v2026.10.6/README.md)，不在此复制编号表。
 
 ## 1. 能力与产品消费方
 
@@ -15,6 +15,8 @@
 | progress_card | session 当前进度                 | 原样展示、显式刷新       | revision、scope、clear、refresh 幂等                             |
 | cron          | job/run、调度与 delivery         | CRUD、结果 receipt       | owner 保留、默认 delivery、分页                                  |
 | Skill         | 解析赢家、资格与启停             | 文件事务、来源提示       | 同名 fallback、extension scope                                   |
+| Workshop      | 当前技能、版本、变更与归档/恢复 | 读取、选定版本和显式确认 | 10.6 提案 API 已退役；未知写不重放、恢复回执是变更前快照            |
+| Worktree GC   | 异步任务、实际目录与快照回收     | 同任务观察与状态展示     | jobId/state、同 Gateway 代、queued 非完成、未知提交不重提           |
 | Extension     | inventory、启停、卸载与能力审查  | 导入入口、保护和 UI      | installed-index、reviewToken                                     |
 | peer send     | 原生 sessions_send               | 成员/轮次准入、回执      | 精确目标、可信 provenance、未知接收                              |
 | Agent files   | 原生角色文件                     | 档案管理与冲突检测       | 工作区/文件身份，删除保留历史                                    |
@@ -64,4 +66,8 @@ sessions.abort，不恢复已移除的结果重投递/忽略接口。
 
 报告失败时保留阶段、原生/产品身份和脱敏错误，不复制 raw transcript 或凭据。发现缺口写成明确限制，不通过恢复旧消息缓存、扩大权限或盲目重试把 UI 暂时修成绿色。
 
-10.4 的 registry 不可变事务发布、原生 peer writer 隔离和 SQLite final checkpoint 接线见当前总账；本轮实际通过范围和待人工验收项见[升级记录](../openclaw-upgrades/v2026.10.4/README.md)。
+逐模块对照必须检查实际 handler，而非仅方法目录或旧 mock；当前实例与测试 gate 见
+[10.6 专项报告](../openclaw-upgrades/v2026.10.6/module-api-audit.md)，流程见
+[模块审计清单](../upgrade-checklist/module-api-audit.md)。
+
+10.6 的 registry 不可变事务发布、原生 peer writer 隔离和 SQLite final checkpoint 接线见当前总账；本轮实际通过范围和待人工验收项见[升级记录](../openclaw-upgrades/v2026.10.6/README.md)。

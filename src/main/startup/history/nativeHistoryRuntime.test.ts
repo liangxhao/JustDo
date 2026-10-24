@@ -6,7 +6,7 @@ import { NativeHistoryRuntime } from './nativeHistoryRuntime';
 const { spawnMock } = vi.hoisted(() => ({ spawnMock: vi.fn() }));
 vi.mock('child_process', () => ({ spawn: spawnMock }));
 afterEach(() => vi.clearAllMocks());
-const environment = { runtimeRoot: '/bundled', openclawEntry: '/bundled/openclaw.mjs', env: {} };
+const environment = { runtimeRoot: '/bundled', openclawEntry: '/bundled/openclaw.mjs', env: { JUSTDO_ELECTRON_PATH: '/bundled/node.exe' } };
 
 test('a live Gateway cannot start an offline history operation', async () => {
   const getEnvironment = vi.fn();

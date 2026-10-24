@@ -81,7 +81,7 @@ it('exports current runtime identity and artifact fingerprints without claiming 
   input.runtimeInfo = {
     scope: 'collection_environment',
     collectedAt: 10,
-    wireVersion: 'v2026.10.4',
+    wireVersion: 'v2026.10.6',
     gateway: { status: 'connected', version: '2026.10.4', protocol: 3, buildId: 'abc1234' },
     installedArtifact: { version: 'v2026.10.5', patchSetSha256: 'a'.repeat(64) },
   };

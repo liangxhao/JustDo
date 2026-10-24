@@ -109,6 +109,7 @@ export async function refreshNativePendingInputs(
         const result = asRecord(
           await view.client.request('chat.message.get', {
             sessionKey: view.sessionKey,
+            ...(view.sessionId ? { sessionId: view.sessionId } : {}),
             messageId: id,
             maxChars: 2_000_000,
           }),

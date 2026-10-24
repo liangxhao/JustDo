@@ -1354,6 +1354,8 @@ export class JustDoChatElement extends LitElement {
           sessionKey,
           detail.messageId,
           isCurrent,
+          true,
+          sessionId,
         );
         if (isCurrent()) detail.complete(resolveFullToolOutput(message, detail));
       } catch {

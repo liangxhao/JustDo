@@ -23,7 +23,23 @@ export interface ManagedWorktree {
 
 export type WorktreeResult<T> = { success: true; value: T } | { success: false; error: string };
 export type WorktreeRemoveResult = { removed: boolean; snapshotError?: string };
-export type WorktreeCleanResult = { removed: string[]; orphansDeleted: number; snapshotsPruned: number };
+export const WorktreeCleanupState = {
+  Queued: 'queued',
+  Running: 'running',
+  Completed: 'completed',
+  Failed: 'failed',
+} as const;
+export type WorktreeCleanupReceipt = {
+  jobId: string;
+  state: (typeof WorktreeCleanupState)[keyof typeof WorktreeCleanupState];
+  removed: string[];
+  orphansDeleted: number;
+  snapshotsPruned: number;
+  error?: string | null;
+};
+export type WorktreeCleanResult = Omit<WorktreeCleanupReceipt, 'state' | 'error'> & {
+  state: typeof WorktreeCleanupState.Completed;
+};
 
 export interface WorktreeSettings {
   root: string | null;
@@ -40,7 +56,6 @@ export interface WorktreeSettingsUpdate {
 }
 
 export type WorktreeSettingsErrorCode =
-  | 'invalid' | 'configuration' | 'conflict' | 'forbidden' | 'unavailable' | 'busy' | 'unknown';
+  'invalid' | 'configuration' | 'conflict' | 'forbidden' | 'unavailable' | 'busy' | 'unknown';
 export type WorktreeSettingsResult =
-  | { success: true; value: WorktreeSettings }
-  | { success: false; code: WorktreeSettingsErrorCode };
+  { success: true; value: WorktreeSettings } | { success: false; code: WorktreeSettingsErrorCode };

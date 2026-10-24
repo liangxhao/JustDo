@@ -6,11 +6,11 @@ const {
   beginRuntimePatchPhase,
   endRuntimePatchPhase,
   readRuntimeTextFile,
-} = require('../patches/v2026.10.4/_patch-utils.js');
+} = require('../patches/v2026.10.6/_patch-utils.js');
 
-const TARGET_VERSION = '2026.10.4';
-const PROVIDER_TRANSPORT_BASENAME = 'openai-completions-transport-QYABn8Uz.mjs';
-const COMPLETIONS_PROVIDER_BASENAME = 'openai-completions-XvUwdvJc.mjs';
+const TARGET_VERSION = '2026.10.6';
+const PROVIDER_TRANSPORT_BASENAME = 'openai-completions-transport-BRjxCG1C.mjs';
+const COMPLETIONS_PROVIDER_BASENAME = 'openai-completions-BkRt2Iy4.mjs';
 
 function walkJavaScriptFiles(dir, output = []) {
   if (!fs.existsSync(dir)) return output;
@@ -96,7 +96,7 @@ function verifyNativeProviderTransportContracts(runtimeDir) {
   return findFileWithAll([artifact.file], [
     'function finalizeOpenAICompletionsToolCalls(',
     'options.allowSilentToolCallPromotion !== false',
-    'candidate.text.trim().length > 0',
+    'block.text.trim().length > 0',
     'output.stopReason = "toolUse"',
     'output.stopReason = "error"',
     'Provider returned an incomplete or malformed tool call',
@@ -348,8 +348,9 @@ function verifyPristineOpenClawContracts(runtimeDir, options = {}) {
         ),
         findFileWithAll(
           files,
-          ['compactionSafeguardDeps.summarizeInStages', 'previousSummary'],
-          'native safeguard compaction with staged summaries',
+          ['compactionSafeguardDeps.summarizeCompactionHistory', 'previousSummary',
+            'messages: reconciliationMessages', 'buildStructuredFallbackSummary(previousSummary)'],
+          'native safeguard compaction with previous-summary and split-turn reconciliation',
         ),
       ),
       'native-peer-writer-scope': uniqueEvidence(
@@ -360,13 +361,26 @@ function verifyPristineOpenClawContracts(runtimeDir, options = {}) {
         findFileWithAll(files, [
           'method === "agent" ? await runWithoutOwnedSessionTranscriptWrites(',
           'runOutsideOperatorToolGatewayAuthority(() => run(resolved))',
-          'captured.authority.assertCurrent()',
+          'captured?.authority.assertCurrent()',
           'releaseOperatorAuthority?.()',
         ], 'agent dispatch detaches the writer after capturing and checking authority'),
         findFileWithAll(files, [
           'function runWithoutOwnedSessionTranscriptWrites(run)',
           'ownedTranscriptWriteContext.exit(() => runWithCliHistoryWriter(void 0, run))',
         ], 'native detach clears transcript and CLI-history scope together'),
+      ),
+      'canonical-readiness-path-identity': uniqueEvidence(
+        findFileWithAll(files, [
+          'function resolveDatabasePathKey(databasePath)',
+          'normalizeDatabasePath(path.join(realpathSync.native(ancestor), ...missing))',
+          'ancestor = missingAncestorParent(ancestor, missing, error)',
+        ], 'native database keys canonicalize existing files and missing descendants'),
+        findFileWithAll(files, [
+          'function canonicalValidationReceipt(database)',
+          'validatedPaths.get(resolveDatabasePathKey(pathname))',
+          'validatedPaths.set(pathname, captured)',
+          'for (const alias of aliases) validatedPaths.set(alias,',
+        ], 'native validation receipts and published aliases share canonical database keys'),
       ),
       'openai-visible-stop-tool-safety': findFileWithAll(
         files,

@@ -15,6 +15,7 @@ const electronMocks = vi.hoisted(() => {
 
 vi.mock('electron', () => ({ app: electronMocks.app }));
 
+import { SHUTDOWN_BUDGET_MS } from '../../../shared/app/shutdownPolicy';
 import { registerAppShutdown } from './appShutdown';
 
 const flushPromises = () => new Promise<void>(resolve => setTimeout(resolve, 0));
@@ -71,7 +72,7 @@ describe('registerAppShutdown', () => {
     stopped();
     await vi.advanceTimersByTimeAsync(0);
     expect(electronMocks.app.exit).toHaveBeenCalledExactlyOnceWith(1);
-    await vi.advanceTimersByTimeAsync(17_000);
+    await vi.advanceTimersByTimeAsync(SHUTDOWN_BUDGET_MS.forceExitObservation);
     expect(electronMocks.app.exit).toHaveBeenCalledOnce();
   });
 
@@ -83,7 +84,7 @@ describe('registerAppShutdown', () => {
       onCleanupTimeout: () => new Promise(() => {}),
     });
     electronMocks.handlers.get('before-quit')?.({ preventDefault: vi.fn() });
-    await vi.advanceTimersByTimeAsync(27_000);
+    await vi.advanceTimersByTimeAsync(10_000 + SHUTDOWN_BUDGET_MS.forceExitObservation);
     expect(electronMocks.app.exit).toHaveBeenCalledExactlyOnceWith(1);
   });
 
@@ -154,7 +155,7 @@ describe('registerAppShutdown', () => {
     expect(electronMocks.app.exit).not.toHaveBeenCalled();
   });
 
-  test('still launches the update after cleanup rejects', async () => {
+  test('rejects update installation when cleanup did not retire its owners', async () => {
     const cleanup = vi.fn(async () => Promise.reject(new Error('cleanup failed')));
     const installUpdate = vi.fn();
     const controller = registerAppShutdown({ cleanup });
@@ -162,8 +163,17 @@ describe('registerAppShutdown', () => {
     controller.quitAndInstall(installUpdate);
     await flushPromises();
 
-    expect(installUpdate).toHaveBeenCalledOnce();
-    expect(electronMocks.app.exit).not.toHaveBeenCalled();
+    expect(installUpdate).not.toHaveBeenCalled();
+    expect(electronMocks.app.exit).toHaveBeenCalledExactlyOnceWith(1);
+  });
+
+  test.each([new Error('unconfirmed'), undefined, null])('failed cleanup never becomes a normal exit (%s)', async failure => {
+    registerAppShutdown({ cleanup: async () => Promise.reject(failure) });
+    electronMocks.handlers.get('before-quit')?.({ preventDefault: vi.fn() });
+    await flushPromises();
+    electronMocks.handlers.get('before-quit')?.({ preventDefault: vi.fn() });
+    await flushPromises();
+    expect(electronMocks.app.exit).toHaveBeenCalledExactlyOnceWith(1);
   });
 
   test('exits with failure when the installer cannot be launched', async () => {

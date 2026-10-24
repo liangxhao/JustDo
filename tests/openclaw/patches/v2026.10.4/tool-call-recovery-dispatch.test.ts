@@ -1,3 +1,4 @@
+import { historicalRuntimeOrUnavailable } from './historical-runtime';
 /* eslint-disable @typescript-eslint/no-explicit-any -- Execute the actual locked native dispatch with explicit boundary stubs. */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -8,7 +9,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { projectToolCallRecoveryFailureSummary } from '../../../../plugins/extensions/runtime-services/tool-call-recovery/policy.mjs';
 
 const { __testing: patch } = require('../../../../scripts/patches/v2026.10.4/030-tool-call-format-recovery.cjs');
-const runtime = process.env.OPENCLAW_PRISTINE_DIR ?? path.resolve('vendor/openclaw-runtime/current');
+const runtime = historicalRuntimeOrUnavailable(process.env.OPENCLAW_PRISTINE_DIR ?? path.resolve('vendor/openclaw-runtime/current'));
 const file = path.join(runtime, 'dist/agent-turn-service-CVZmpyt7.mjs');
 const source = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
 // In memory only: exercise both pristine/current shapes when using a built runtime.

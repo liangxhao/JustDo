@@ -2,7 +2,7 @@
 
 ## 范围
 
-当前运行时版本由 `package.json.openclaw.version` 锁定（v2026.10.4），保留插件和既有启用策略。
+当前运行时版本由 `package.json.openclaw.version` 锁定（v2026.10.6），保留插件和既有启用策略。
 原生卡片不暴露 taskId；停止和执行身份统一使用 sessionKey/runId。没有关联原生会话的卡片不提供停止入口，也不调用旧任务账本。
 四栏只负责展示；OpenClaw 继续拥有任务、存储、认领、调度和执行生命周期。
 

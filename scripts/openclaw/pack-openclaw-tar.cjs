@@ -168,6 +168,8 @@ function verifyLegalMetadataEntries(entries, prefix, sourceRoot, excludedPaths =
 function shouldExclude(entryPath, isDirectory = false) {
   const basename = path.basename(entryPath);
   const normalized = entryPath.replace(/\\/g, '/');
+  // The official Node distribution is closed by its own source/file manifest.
+  if (/^node-runtime(?:\/|$)/.test(normalized)) return false;
   // The prepared editor is a closed, hashed resource set, including legal files.
   if (/(?:^|\/)dist\/extensions\/(?:drawio|widget-kit)\/assets(?:\/|$)/.test(normalized)) return false;
   // Knowledge exceptions never admit credentials or local dependency caches.

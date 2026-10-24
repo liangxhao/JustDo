@@ -37,10 +37,13 @@ charges. Results use the existing OpenClaw stream, without a transcript cache.
 
 ## Native decision tool
 
-OpenClaw 2026.10.4 owns the provider-neutral `decision_evaluate` tool. It accepts
+OpenClaw 2026.10.6 owns the provider-neutral `decision_evaluate` tool. It accepts
 Boolean, Choice and Score questions and routes them through the selected agent's
 `decisionModel`. TypeSafe is a decision provider, with manifest-declared capabilities,
-lazy evaluator loading, and native unsupported-input fallback for HTTP 413/422.
+lazy evaluator loading, and native decision fallback for TypeSafe HTTP 400, 413
+and 422 responses classified as unavailable/unsupported-input. This classification
+does not retry transport requests or expose response bodies. HTTP 401/403 remain
+authentication errors; 429 remains rate-limited with retryAfter metadata.
 The former TypeSafe-specific optional tool, plugin model setting and bundled skill
 were removed upstream. The application uses the current native tool and model
 selection only; it does not move legacy plugin model selections or rename old tool

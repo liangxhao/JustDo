@@ -16,6 +16,10 @@ import appLogoUrl from '../../../../../../resources/icons/logo.png';
 import HistoryRecoveryAdvice from '../history/HistoryRecoveryAdvice';
 import HistoryUpgradeResult from '../history/HistoryUpgradeResult';
 import type { RendererStartupActivity } from '../routing/startupPresentation';
+import DowngradeConfirmation from './DowngradeConfirmation';
+import StartupCompatibilityAdvice, {
+  hasStartupCompatibilityAdvice,
+} from './StartupCompatibilityAdvice';
 import { prepareStartupEntry } from './startupMotion';
 
 const setupSteps = [
@@ -25,6 +29,7 @@ const setupSteps = [
   AppInitializationStep.Engine,
 ] as const;
 const stepKeys = {
+  [AppInitializationStep.DatabaseUpgrade]: 'initializationDatabaseUpgrade',
   [AppInitializationStep.Backup]: 'initializationBackup',
   [AppInitializationStep.History]: 'initializationHistory',
   [AppInitializationStep.UserData]: 'initializationUserData',
@@ -62,22 +67,32 @@ export default function FirstLaunchGuide({
 }) {
   const frame = useRef<HTMLElement>(null);
   const [openedAt] = useState(Date.now);
-  const fixedMigration = window.electron?.initialization?.route === StartupRoute.Migration;
+  const fixedRoute = snapshot?.route ?? window.electron?.initialization?.route;
+  const fixedMigration = fixedRoute === StartupRoute.Migration;
+  const upgrade = fixedRoute === StartupRoute.Upgrade;
   const state: AppInitializationState = snapshot ?? {
     firstLaunch: true,
     phase: AppInitializationPhase.Preparing,
-    step: fixedMigration ? AppInitializationStep.Backup : AppInitializationStep.UserData,
+    step: fixedMigration
+      ? AppInitializationStep.Backup
+      : upgrade
+        ? AppInitializationStep.DatabaseUpgrade
+        : AppInitializationStep.UserData,
     activity: fixedMigration
       ? AppInitializationActivity.HistoryBackup
-      : AppInitializationActivity.UserDirectory,
+      : upgrade
+        ? AppInitializationActivity.NativeInspect
+        : AppInitializationActivity.UserDirectory,
     completedSteps: 0,
-    totalSteps: fixedMigration ? 6 : 4,
+    totalSteps: fixedMigration ? 6 : upgrade ? 5 : 4,
     userDataPath: '',
     startedAt: openedAt,
     activityStartedAt: openedAt,
     updatedAt: openedAt,
   };
   const failed = state.phase === AppInitializationPhase.Failed || Boolean(error);
+  const confirmation = failed ? undefined : state.downgradeConfirmation;
+  const compatibilityCode = error ? undefined : state.failure?.error.code;
   const migration =
     (state.route ?? window.electron?.initialization?.route) === StartupRoute.Migration;
   const steps = migration
@@ -87,12 +102,16 @@ export default function FirstLaunchGuide({
         AppInitializationStep.History,
         AppInitializationStep.Engine,
       ]
-    : setupSteps;
+    : upgrade
+      ? [AppInitializationStep.DatabaseUpgrade, ...setupSteps]
+      : setupSteps;
   useLayoutEffect(() => {
     if (frame.current) return prepareStartupEntry(frame.current, failed);
   }, [failed]);
   const preparing =
-    !failed && (state.phase === AppInitializationPhase.Preparing || Boolean(rendererActivity));
+    !failed &&
+    !confirmation &&
+    (state.phase === AppInitializationPhase.Preparing || Boolean(rendererActivity));
   const loadingInterface = preparing && Boolean(rendererActivity);
   const [now, setNow] = useState(Date.now);
   const [logPath, setLogPath] = useState('');
@@ -128,14 +147,16 @@ export default function FirstLaunchGuide({
   );
   const waitingLong = preparing && activityElapsed >= LONG_ACTIVITY_SECONDS;
   const activityKey = rendererActivity
-    ? `initializationRenderer_${rendererActivity}`
+    ? `${upgrade ? 'startup' : 'initialization'}Renderer_${rendererActivity}`
     : snapshot
-      ? `initializationActivity_${state.activity}`
+      ? upgrade && state.activity === AppInitializationActivity.UserDirectory
+        ? 'initializationRetainedData'
+        : `${upgrade && !state.activity.startsWith('native') ? 'startup' : 'initialization'}Activity_${state.activity}`
       : 'initializationConnecting';
 
   return (
     <div
-      data-startup-view={migration ? 'migration' : 'first-launch'}
+      data-startup-view={migration ? 'migration' : upgrade ? 'upgrade' : 'first-launch'}
       data-failed={failed}
       className="flex h-screen flex-col bg-background text-foreground"
     >
@@ -168,20 +189,30 @@ export default function FirstLaunchGuide({
               <p className="mb-1 text-xs font-medium tracking-wide text-secondary">
                 {PRODUCT_NAME} /{' '}
                 {i18nService.t(
-                  migration ? 'initializationUpgradeWelcome' : 'initializationWelcome',
+                  migration
+                    ? 'initializationUpgradeWelcome'
+                    : upgrade
+                      ? 'initializationNormalUpgradeWelcome'
+                      : 'initializationWelcome',
                 )}
               </p>
               <h1 className="text-2xl font-semibold tracking-tight">
                 {i18nService.t(
-                  failed
-                    ? 'initializationFailed'
-                    : historyReady
-                      ? 'initializationResultTitle'
-                      : rendererActivity
-                        ? 'firstLaunchFinishing'
-                        : migration
-                          ? 'initializationUpgradeTitle'
-                          : 'firstLaunchTitle',
+                  confirmation
+                    ? 'startupDowngradeWelcome'
+                    : failed
+                      ? 'initializationFailed'
+                      : historyReady
+                        ? 'initializationResultTitle'
+                        : rendererActivity
+                          ? upgrade
+                            ? 'initializationNormalUpgradeFinishing'
+                            : 'firstLaunchFinishing'
+                          : migration
+                            ? 'initializationUpgradeTitle'
+                            : upgrade
+                              ? 'initializationNormalUpgradeTitle'
+                              : 'firstLaunchTitle',
                 )}
               </h1>
             </div>
@@ -223,16 +254,22 @@ export default function FirstLaunchGuide({
                           <p
                             className={`text-sm font-medium ${current || completed ? 'text-foreground' : 'text-secondary'}`}
                           >
-                            {i18nService.t(stepKeys[step as keyof typeof stepKeys])}
+                            {i18nService.t(
+                              upgrade && step === AppInitializationStep.UserData
+                                ? 'initializationRetainedData'
+                                : stepKeys[step as keyof typeof stepKeys],
+                            )}
                           </p>
                           <p className="mt-1 text-xs text-muted">
                             {i18nService.t(
                               completed
                                 ? 'initializationStepDone'
                                 : current
-                                  ? failed
-                                    ? 'initializationStepFailed'
-                                    : 'initializationStepActive'
+                                  ? confirmation
+                                    ? 'startupDowngradeWaiting'
+                                    : failed
+                                      ? 'initializationStepFailed'
+                                      : 'initializationStepActive'
                                   : 'initializationStepPending',
                             )}
                           </p>
@@ -249,6 +286,8 @@ export default function FirstLaunchGuide({
                     backupPath={state.historyBackupPath}
                     onContinue={onContinue}
                   />
+                ) : confirmation ? (
+                  <DowngradeConfirmation key={confirmation.requestId} confirmation={confirmation} />
                 ) : (
                   <>
                     <div className="mb-5 flex flex-wrap items-center justify-between gap-3 text-xs lg:mb-6">
@@ -346,17 +385,22 @@ export default function FirstLaunchGuide({
                                 : 'initializationLongWait'
                               : migration
                                 ? 'initializationUpgradeDescription'
-                                : 'firstLaunchDescription',
+                                : upgrade
+                                  ? 'initializationNormalUpgradeDescription'
+                                  : 'firstLaunchDescription',
                         )}
                       </p>
                     </div>
                     {failed && (
                       <div className="mt-5 space-y-4">
                         {state.historyRecovery && (
-                          <HistoryRecoveryAdvice kind={state.historyRecovery} />
+                          <HistoryRecoveryAdvice kind={state.historyRecovery} database={upgrade} />
                         )}
+                        <StartupCompatibilityAdvice code={compatibilityCode} />
                         <p
-                          role="alert"
+                          role={
+                            hasStartupCompatibilityAdvice(compatibilityCode) ? undefined : 'alert'
+                          }
                           className="break-words text-sm text-red-600 dark:text-red-300"
                         >
                           {error ?? state.error}

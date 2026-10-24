@@ -13,7 +13,7 @@ import {
 } from '../../../shared/cowork/sessionGoal';
 import type { CoworkSession, CoworkStore } from '../../data/coworkStore';
 import type { CoworkEngineRouter, OpenClawRuntimeAdapter } from '../../engine';
-import { OPENCLAW_COMPACT_SESSION_ROW_MODE } from '../../engine/openclaw/wire/v2026_10_4';
+import { OPENCLAW_COMPACT_SESSION_ROW_MODE } from '../../engine/openclaw/wire/v2026_10_6';
 import {
   buildGatewaySessionDetailStats,
   type GatewaySessionHistoryLoader,

@@ -134,7 +134,7 @@ it.each([
   });
   expect(fetch).toHaveBeenCalledOnce();
 });
-it.each([413, 422])(
+it.each([400, 413, 422])(
   "cancels HTTP %s without reading secret-reflecting error bodies",
   async (status) => {
     const pull = vi.fn(() => {
@@ -169,6 +169,7 @@ it("does not expose or consume HTTP error diagnostics", async () => {
 it.each([
   { status: 401, trigger: "http", reason: "authentication" },
   { status: 429, trigger: "http", reason: "rate-limited" },
+  { status: 400, trigger: "http", reason: "unsupported-input" },
   { status: 413, trigger: "http", reason: "unsupported-input" },
   { status: 422, trigger: "http", reason: "unsupported-input" },
   { status: 200, trigger: "abort", reason: "transport" },

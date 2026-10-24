@@ -28,12 +28,12 @@ describe('vendored ACPX plugin contract', () => {
 
     expect(packageJson).toMatchObject({
       name: 'acpx-runtime',
-      version: '2026.10.4-local.2',
+      version: '2026.10.6-local.3',
       private: true,
     });
     expect(dependencies).toMatchObject({
-      '@agentclientprotocol/claude-agent-acp': '0.79.0',
-      '@agentclientprotocol/codex-acp': '1.12.0',
+      '@agentclientprotocol/claude-agent-acp': '0.85.1',
+      '@agentclientprotocol/codex-acp': '2.1.1',
       acpx: '0.19.5',
     });
     expect(schema.properties).toHaveProperty('claudeExecutable');

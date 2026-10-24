@@ -24,7 +24,7 @@ import {
   diagnosticResponseIssues,
   diagnosticTimeoutPhases,
 } from '../../../shared/cowork/diagnostics/sessionDiagnostics';
-import { OPENCLAW_WIRE_VERSION } from '../../engine/openclaw/wire/v2026_10_4';
+import { OPENCLAW_WIRE_VERSION } from '../../engine/openclaw/wire/v2026_10_6';
 import type { DiagnosticExportLogBundle } from './exportLogs';
 import { redactDiagnosticLog } from './exportLogs';
 import { buildDiagnosticReadableFiles } from './exportSummary';

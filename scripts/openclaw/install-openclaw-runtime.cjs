@@ -17,6 +17,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { syncBundledSkills } = require('../runtime/sync-bundled-skills.cjs');
+const { prepareNodeRuntime, copyNodeRuntime } = require('../runtime/setup-node-runtime.cjs');
 const { patchOpenClawRuntime } = require('./patch-openclaw-runtime.cjs');
 const { patchFacadeRuntime } = require('./openclaw-facade-runtime-patch.cjs');
 const { decideRuntimeInstall } = require('./openclaw-runtime-freeze.cjs');
@@ -197,6 +198,7 @@ fs.mkdirSync(extractDir, { recursive: true });
 
 (async () => {
   try {
+    const nodeRuntimeRoot = await prepareNodeRuntime(targetId, { download: true });
     console.log(`[install-openclaw-runtime] [1/8] Downloading ${npmSpec} from npm...`);
     runNpm(['pack', npmSpec, '--pack-destination', packDir]);
 
@@ -269,6 +271,7 @@ fs.mkdirSync(extractDir, { recursive: true });
       targetArch,
       path.join(tmpDir, 'install-state'),
     );
+    copyNodeRuntime(nodeRuntimeRoot, path.join(stagingOutDir, 'node-runtime'), targetId);
     verifyNativeProviderTransportContracts(stagingOutDir);
 
     // ---------------------------------------------------------------------------
@@ -322,6 +325,7 @@ fs.mkdirSync(extractDir, { recursive: true });
       runtimePackageLockSha256: hashFile(
         path.join(stagingOutDir, RUNTIME_DEPENDENCY_LOCK_FILENAME),
       ),
+      nodeRuntimeManifestSha256: hashFile(path.join(stagingOutDir, 'node-runtime', 'node-runtime-manifest.json')),
     };
     fs.writeFileSync(
       path.join(stagingOutDir, 'runtime-build-info.json'),

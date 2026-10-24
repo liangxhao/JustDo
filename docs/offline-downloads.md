@@ -101,17 +101,17 @@ TypeScript 预编译时随 Runtime Services 打包。安装后无需另装 Node�
 
 | 下载地址 | 缓存文件 |
 | --- | --- |
-| [OpenClaw 2026.10.4](https://registry.npmjs.org/openclaw/-/openclaw-2026.10.4.tgz) | `cache/openclaw-publication-pristine/openclaw-2026.10.4.tgz` |
-| [fs-safe 0.24.2](https://registry.npmjs.org/@openclaw/fs-safe/-/fs-safe-0.24.2.tgz) | `cache/openclaw-publication-pristine/openclaw-fs-safe-0.24.2.tgz` |
-| [ai 2026.10.4](https://registry.npmjs.org/@openclaw/ai/-/ai-2026.10.4.tgz) | `cache/openclaw-publication-pristine/openclaw-ai-2026.10.4.tgz` |
+| [OpenClaw 2026.10.6](https://registry.npmjs.org/openclaw/-/openclaw-2026.10.6.tgz) | `cache/openclaw-publication-pristine/openclaw-2026.10.6.tgz` |
+| [fs-safe 0.25.0](https://registry.npmjs.org/@openclaw/fs-safe/-/fs-safe-0.25.0.tgz) | `cache/openclaw-publication-pristine/openclaw-fs-safe-0.25.0.tgz` |
+| [ai 2026.10.6](https://registry.npmjs.org/@openclaw/ai/-/ai-2026.10.6.tgz) | `cache/openclaw-publication-pristine/openclaw-ai-2026.10.6.tgz` |
 
 已经缓存这些归档时，以下命令只访问 npm 离线缓存；缺失就明确失败，不能在产品
 启动或测试中隐式联网补齐：
 
 ```powershell
-npm pack --offline openclaw@2026.10.4 --pack-destination cache/openclaw-publication-pristine
-npm pack --offline https://registry.npmjs.org/@openclaw/fs-safe/-/fs-safe-0.24.2.tgz --pack-destination cache/openclaw-publication-pristine
-npm pack --offline https://registry.npmjs.org/@openclaw/ai/-/ai-2026.10.4.tgz --pack-destination cache/openclaw-publication-pristine
+npm pack --offline openclaw@2026.10.6 --pack-destination cache/openclaw-publication-pristine
+npm pack --offline https://registry.npmjs.org/@openclaw/fs-safe/-/fs-safe-0.25.0.tgz --pack-destination cache/openclaw-publication-pristine
+npm pack --offline https://registry.npmjs.org/@openclaw/ai/-/ai-2026.10.6.tgz --pack-destination cache/openclaw-publication-pristine
 ```
 
 将校验后的原包解压到全新 `build/` 子目录，在完整同版本依赖中恢复这两个依赖
@@ -123,3 +123,18 @@ preinstall/postinstall 并释放所属锁，再执行现有 pristine 合同检�
 原包的 pending/legacy guard 或 lifecycle lock 仍存在时，最终 manifest、冻结验证和
 测试快照都必须拒绝；不能删除标记冒充原生安装脚本已经完成，也不能在补丁之后
 补跑会清理 dist 的上游 postinstall。
+
+## 8. 独立 Node 运行时
+
+OpenClaw 2026.10.6 要求 Node 24.22.1+。Electron 继续承载桌面 UI；Gateway、原生 CLI 与子任务使用完整随包 Node/npm，首启不下载。精确归档 SHA-256 锁定于 `src/shared/openclaw/nodeRuntime.json`，准备器验证归档并生成完整逐文件清单。
+
+| 平台 | 下载地址 | 缓存文件 |
+| --- | --- | --- |
+| win-x64 | [官方 node-v24.22.1-win-x64.zip](https://nodejs.org/dist/v24.22.1/node-v24.22.1-win-x64.zip) | `cache/node/node-v24.22.1-win-x64.zip` |
+| win-arm64 | [官方 node-v24.22.1-win-arm64.zip](https://nodejs.org/dist/v24.22.1/node-v24.22.1-win-arm64.zip) | `cache/node/node-v24.22.1-win-arm64.zip` |
+| mac-x64 | [官方 node-v24.22.1-darwin-x64.tar.gz](https://nodejs.org/dist/v24.22.1/node-v24.22.1-darwin-x64.tar.gz) | `cache/node/node-v24.22.1-darwin-x64.tar.gz` |
+| mac-arm64 | [官方 node-v24.22.1-darwin-arm64.tar.gz](https://nodejs.org/dist/v24.22.1/node-v24.22.1-darwin-arm64.tar.gz) | `cache/node/node-v24.22.1-darwin-arm64.tar.gz` |
+| linux-x64 | [官方 node-v24.22.1-linux-x64.tar.gz](https://nodejs.org/dist/v24.22.1/node-v24.22.1-linux-x64.tar.gz) | `cache/node/node-v24.22.1-linux-x64.tar.gz` |
+| linux-arm64 | [官方 node-v24.22.1-linux-arm64.tar.gz](https://nodejs.org/dist/v24.22.1/node-v24.22.1-linux-arm64.tar.gz) | `cache/node/node-v24.22.1-linux-arm64.tar.gz` |
+
+离线准备：`npm run setup:node-runtime -- win-x64`；仅构建准备联网下载时使用 `npm run setup:node-runtime -- win-x64 --download`。其他平台替换目标名。输出为 `build/runtimes/node/<target>/`，完整 OpenClaw 组装将其复制为运行时内 `node-runtime/`，包含 npm/npx、许可证和逐文件证明。缺失、哈希不符或平台不符必须失败。

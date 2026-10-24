@@ -23,8 +23,8 @@ const { verifyPristineOpenClawContracts, verifyNativeSessionStopContracts, verif
   };
 
 const temporaryRoots: string[] = [];
-const PROVIDER_TRANSPORT_BASENAME = 'openai-completions-transport-QYABn8Uz.mjs';
-const COMPLETIONS_PROVIDER_BASENAME = 'openai-completions-XvUwdvJc.mjs';
+const PROVIDER_TRANSPORT_BASENAME = 'openai-completions-transport-BRjxCG1C.mjs';
+const COMPLETIONS_PROVIDER_BASENAME = 'openai-completions-BkRt2Iy4.mjs';
 
 function createProviderTransportFixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'provider-contract-'));
@@ -32,7 +32,7 @@ function createProviderTransportFixture() {
   const ai = path.join(root, 'node_modules', '@openclaw', 'ai');
   fs.mkdirSync(path.join(ai, 'dist'), { recursive: true });
   const metadata = {
-    name: '@openclaw/ai', version: '2026.10.4',
+    name: '@openclaw/ai', version: '2026.10.6',
     exports: {
       './transports': { import: './dist/transports.mjs' },
       './providers': { import: './dist/providers.mjs' },
@@ -41,7 +41,7 @@ function createProviderTransportFixture() {
   const packagePath = path.join(ai, 'package.json');
   const sourcePath = path.join(ai, 'dist', PROVIDER_TRANSPORT_BASENAME);
   const source = `function finalizeOpenAICompletionsToolCalls(output, candidate, options) {
-    if (options.allowSilentToolCallPromotion !== false && candidate.text.trim().length > 0) output.stopReason = "toolUse";
+    if (options.allowSilentToolCallPromotion !== false && block.text.trim().length > 0) output.stopReason = "toolUse";
     else { output.stopReason = "error"; throw Error("Provider returned an incomplete or malformed tool call"); }
     finalizeTerminalToolCallArguments(output);
   }`;
@@ -84,14 +84,13 @@ const EXPECTED_PATCH_FILES = [
   '024-windows-plugin-recovery-junctions.cjs',
   '025-nonblocking-sqlite-retirement.cjs',
   '026-scoped-finalize-hook-admission.cjs',
-  '027-canonical-readiness-owner-path.cjs',
-  '028-prepared-history-response-publication.cjs',
-  '029-reasoning-completions-streaming.cjs',
-  '030-tool-call-format-recovery.cjs',
-  '031-mcp-app-session-workspace.cjs',
-  '032-goal-continuation-admission.cjs',
-  '033-run-progress-observations.cjs',
-  '034-windows-plugin-directory-publication.cjs',
+  '027-prepared-history-response-publication.cjs',
+  '028-reasoning-completions-streaming.cjs',
+  '029-tool-call-format-recovery.cjs',
+  '030-mcp-app-session-workspace.cjs',
+  '031-goal-continuation-admission.cjs',
+  '032-run-progress-observations.cjs',
+  '033-windows-plugin-directory-publication.cjs',
 ] as const;
 
 const UPSTREAM_CONTRACTS = [
@@ -106,6 +105,7 @@ const UPSTREAM_CONTRACTS = [
   'native-approval-timeouts',
   'compaction-and-context-budget',
   'native-peer-writer-scope',
+  'canonical-readiness-path-identity',
   'openai-visible-stop-tool-safety',
 ] as const;
 
@@ -145,7 +145,7 @@ function createPristineFixture(): string {
   fs.mkdirSync(path.join(root, 'dist'), { recursive: true });
   fs.writeFileSync(
     path.join(root, 'package.json'),
-    JSON.stringify({ name: 'openclaw', version: '2026.10.4', dependencies: { '@openclaw/ai': '2026.10.4' } }),
+    JSON.stringify({ name: 'openclaw', version: '2026.10.6', dependencies: { '@openclaw/ai': '2026.10.6' } }),
   );
   writeDistFile(
     root,
@@ -232,7 +232,7 @@ function createPristineFixture(): string {
   writeDistFile(
     root,
     'compaction-safeguard.js',
-    'compactionSafeguardDeps.summarizeInStages; previousSummary;',
+    'compactionSafeguardDeps.summarizeCompactionHistory; previousSummary; messages: reconciliationMessages; buildStructuredFallbackSummary(previousSummary);',
   );
   writeDistFile(
     root,
@@ -240,11 +240,13 @@ function createPristineFixture(): string {
     'wrapStreamFnSanitizeMalformedToolCalls(); wrapStreamFnPromoteStandaloneTextToolCalls(); wrapStreamFnHandleSensitiveStopReason();',
   );
   writeDistFile(root, 'peer-caller.js', 'const runInCallerContext = AsyncLocalStorage.snapshot(); runInCallerContext(() => callAgentToolGatewayRequestBound());');
-  writeDistFile(root, 'peer-dispatch.js', 'method === "agent" ? await runWithoutOwnedSessionTranscriptWrites(runOutsideOperatorToolGatewayAuthority(() => run(resolved))); captured.authority.assertCurrent(); releaseOperatorAuthority?.();');
+  writeDistFile(root, 'peer-dispatch.js', 'method === "agent" ? await runWithoutOwnedSessionTranscriptWrites(runOutsideOperatorToolGatewayAuthority(() => run(resolved))); captured?.authority.assertCurrent(); releaseOperatorAuthority?.();');
   writeDistFile(root, 'peer-writer.js', 'function runWithoutOwnedSessionTranscriptWrites(run) { return ownedTranscriptWriteContext.exit(() => runWithCliHistoryWriter(void 0, run)); }');
   for (const [name, content] of Object.entries(NATIVE_STOP_FIXTURES)) {
     writeDistFile(root, name, content);
   }
+  writeDistFile(root, 'canonical-key.js', 'function resolveDatabasePathKey(databasePath) { normalizeDatabasePath(path.join(realpathSync.native(ancestor), ...missing)); ancestor = missingAncestorParent(ancestor, missing, error); }');
+  writeDistFile(root, 'validation-cache.js', 'function canonicalValidationReceipt(database) { validatedPaths.get(resolveDatabasePathKey(pathname)); validatedPaths.set(pathname, captured); for (const alias of aliases) validatedPaths.set(alias, captured); }');
   return root;
 }
 
@@ -273,10 +275,10 @@ describe('OpenClaw pristine artifact contracts', () => {
       proofFiles: [packagePath, sourcePath, ...['transports.mjs', 'providers.mjs', COMPLETIONS_PROVIDER_BASENAME]
         .map(name => path.join(ai, 'dist', name))].sort(),
     });
-    const { runtimeJavaScriptFiles } = require('../../../scripts/patches/v2026.10.4/_patch-utils.js');
+    const { runtimeJavaScriptFiles } = require('../../../scripts/patches/v2026.10.6/_patch-utils.js');
     expect(runtimeJavaScriptFiles(root)).toEqual([sourcePath]);
     fs.writeFileSync(packagePath, JSON.stringify({ ...metadata, version: '2026.9.8' }));
-    expect(() => verifyNativeProviderTransportContracts(root)).toThrow('Expected @openclaw/ai@2026.10.4');
+    expect(() => verifyNativeProviderTransportContracts(root)).toThrow('Expected @openclaw/ai@2026.10.6');
     fs.writeFileSync(packagePath, JSON.stringify(metadata));
     fs.writeFileSync(sourcePath, source.replace('finalizeTerminalToolCallArguments(output);', ''));
     fs.writeFileSync(path.join(ai, 'dist/unrelated.mjs'), 'finalizeTerminalToolCallArguments(output);');
@@ -305,7 +307,7 @@ describe('OpenClaw pristine artifact contracts', () => {
     temporaryRoots.push(root);
     expect(resolveNativeProviderTransportArtifact(root)).toBeNull();
     expect(() => resolveNativeProviderTransportArtifact(root, { required: true })).toThrow('missing');
-    fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ dependencies: { '@openclaw/ai': '2026.10.4' } }));
+    fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ dependencies: { '@openclaw/ai': '2026.10.6' } }));
     expect(() => resolveNativeProviderTransportArtifact(root)).toThrow('missing');
     fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ dependencies: { '@openclaw/ai': '2026.9.8' } }));
     expect(() => resolveNativeProviderTransportArtifact(root)).toThrow('must pin');
@@ -342,8 +344,8 @@ describe('OpenClaw pristine artifact contracts', () => {
     );
   });
 
-  test('keeps the independently auditable v2026.10.4 patch inventory exact', () => {
-    const patchDir = path.resolve('scripts', 'patches', 'v2026.10.4');
+  test('keeps the independently auditable v2026.10.6 patch inventory exact', () => {
+    const patchDir = path.resolve('scripts', 'patches', 'v2026.10.6');
     const patchFiles = fs
       .readdirSync(patchDir)
       .filter(name => /^\d.*\.cjs$/.test(name))
@@ -354,10 +356,16 @@ describe('OpenClaw pristine artifact contracts', () => {
       // Fork admission audits schema, handler forwarding and native/worker
       // projections together, including rejection of partially applied fields.
       '012-managed-session-fork-target-key.cjs': 625,
-      '019-plugin-owned-execution.cjs': 1200,
+      // Async native preparation and the current-owner/settled-publication
+      // atomic groups remain in this capability; their bodies have separate
+      // full-function semantic guards. Keep the wiring's budget narrow.
+      '019-plugin-owned-execution.cjs': 1300,
       // The same recovery capability also binds the native accepted nested
       // receipt and terminal-dispatch owners; projection stays in Runtime Services.
-      '030-tool-call-format-recovery.cjs': 800,
+      '029-tool-call-format-recovery.cjs': 800,
+      // Eight native owners retain the Goal transaction, receipt/observation
+      // and cross-capability execution fences in the target native topology.
+      '031-goal-continuation-admission.cjs': 775,
     };
     for (const name of patchFiles) {
       const content = fs.readFileSync(path.join(patchDir, name), 'utf8');
@@ -368,7 +376,7 @@ describe('OpenClaw pristine artifact contracts', () => {
       // Owned execution audits multiple registry, dispatch and tool lifetime
       // seams together; keep its explicit budget bounded without relaxing others.
       const lineBudget = lineBudgets[name] ?? 600;
-      expect(content.split(/\r?\n/u).length).toBeLessThan(lineBudget);
+      expect(content.split(/\r?\n/u).length, `${name} exceeds its audited line budget`).toBeLessThan(lineBudget);
     }
   });
 
@@ -378,7 +386,7 @@ describe('OpenClaw pristine artifact contracts', () => {
       patchFiles: [writePatch(root, false)],
     });
 
-    expect(result.version).toBe('2026.10.4');
+    expect(result.version).toBe('2026.10.6');
     expect(Object.keys(result.upstream)).toEqual(UPSTREAM_CONTRACTS);
     expect(result.retainedGaps).toEqual(['required.cjs']);
   });

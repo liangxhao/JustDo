@@ -70,7 +70,6 @@ describe('local TTS OpenClaw configuration', () => {
         outputEnabled: true,
       }),
     ).toMatchObject({
-      enabled: true,
       auto: 'off',
       provider: LOCAL_TTS_PROVIDER_ID,
       providers: {

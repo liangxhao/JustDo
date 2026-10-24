@@ -11,8 +11,8 @@ import { enqueueSessionModelOperation } from '../../engine/gateway/sessionModelO
 import type { GatewayClientLike } from '../../engine/gateway/types';
 import {
   OPENCLAW_COMPACT_SESSION_ROW_MODE,
-  parseSessionsListResultV2026_10_4,
-} from '../../engine/openclaw/wire/v2026_10_4';
+  parseSessionsListResultV2026_10_6,
+} from '../../engine/openclaw/wire/v2026_10_6';
 import type {
   OpenClawEngineManager,
   OpenClawEngineStatus,
@@ -1287,7 +1287,7 @@ export class OpenClawConfigSyncService {
     const seenOffsets = new Set<number>();
     while (!seenOffsets.has(offset)) {
       seenOffsets.add(offset);
-      const page = parseSessionsListResultV2026_10_4(
+      const page = parseSessionsListResultV2026_10_6(
         await requestGateway('sessions.list', {
           rowMode: OPENCLAW_COMPACT_SESSION_ROW_MODE, limit, offset,
         }),

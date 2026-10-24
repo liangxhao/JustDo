@@ -1,6 +1,6 @@
 # 执行引擎：配置、准入与 Gateway 恢复
 
-当前 Cowork 执行引擎是 OpenClaw。Router 提供稳定产品接口，Adapter 隔离原生 wire 与生命周期，Manager 托管运行时进程。本文按当前 v2026.10.4 集成组织，运行时补丁清单只维护在[版本目录](../../scripts/patches/v2026.10.4/README.md)。
+当前 Cowork 执行引擎是 OpenClaw。Router 提供稳定产品接口，Adapter 隔离原生 wire 与生命周期，Manager 托管运行时进程。本文按当前 v2026.10.6 集成组织，运行时补丁清单只维护在[版本目录](../../scripts/patches/v2026.10.6/README.md)。
 
 ## Code Mode 工具编排
 
@@ -58,9 +58,27 @@ Gateway、本机合成模型和与产品相同的 `stateDir/skills` 导入位置
 
 Adapter 入口保留生命周期及状态，runtimeGatewayConnection、runtimeGatewayEvents、runtimeHistory、runtimePlanInteractions、runtimeGoalOperations、runtimeSessionStatus 处理各领域操作。它们通过显式实时上下文访问入口状态，不复制控制器状态，更不保存 transcript。
 
-Chrome 侧聊通过 Runtime 的窄 `getRunTerminalReceipt` 读取已准入 whole-run `executionSettled:true` 的有界原生身份与终态元数据；chat final 后保留精确退役绑定以接受迟到末端。OpenClaw 10.4 不把内部 `lifecycleGeneration` 序列化到公共事件，缺字段不阻止精确原生 session、run、序列及 Main 连接代次准入；双方提供时仍拒绝冲突，首次显式代次会固定到退役绑定。yield 不作为整轮完成；原生明确 timeout 优先于机械 `aborted` 标志，保留为失败。
+启动路由在产品 Store 与配置准备前确认当前原生 schema。正常升级由 `startup/upgrade`
+在 Gateway 停止时调用锁定当前版本的原生维护 owner，等待备份、更新、严格复验与
+数据库关闭、子进程退出，再允许引擎及外部入口启动。维护失败或结果未知时不能由
+EngineManager 的重试绕过此条件；正常启动也不能仅凭完成标记跳过只读检查。
+详细四路与失败恢复见[启动与历史升级](../features/app/startup-and-history-upgrade.md)。
+
+Chrome 侧聊通过 Runtime 的窄 `getRunTerminalReceipt` 读取已准入 whole-run `executionSettled:true` 的有界原生身份与终态元数据；chat final 后保留精确退役绑定以接受迟到末端。OpenClaw 10.6 不把内部 `lifecycleGeneration` 序列化到公共事件，缺字段不阻止精确原生 session、run、序列及 Main 连接代次准入；双方提供时仍拒绝冲突，首次显式代次会固定到退役绑定。yield 不作为整轮完成；原生明确 timeout 优先于机械 `aborted` 标志，保留为失败。
 
 live 回执缺失时，Controller 仅能使用本进程发送准备已捕获的物理 session/key/连接代次补查精确 `agent.wait({runId,timeoutMs:0})`，并在前后 `sessions.describe` 核对身份和生命周期 revision。合法整轮终态还须有匹配 run、有限 `endedAt` 且非 yield；普通 wait timeout、idle、Stop ACK 均不生成终态。已验证的 wait 结算只缓存最多 100 项结果与身份元数据，后续读取仍复核当前原生身份，避免原生 wait 缓存过期或后续轮询使已确认结果倒退；不保存正文、不伪造事件序列。冷重启、连接代次变化或缺少原发送绑定时证据不足仍保持 unknown，不用当前 session 为旧 run 补造授权，也不补发输入。
+
+10.6 的取消通知与真实执行结算仍是两个时刻。补丁 019 只为首次原生取消发布保留
+一次迟到结算名额，绑定原生 run、物理 session、agent 与内部生命周期代次；只有同一
+原生 producer 明确产生的 `end/error` 且 `executionSettled:true` 才能消费。缺失身份、
+重注册、过期代次及重复终态不得借用该名额，不把取消通知改写为结算，也不增加宿主
+终态缓存或重发事件。
+
+插件执行的会话读取已异步化。注册保持原生 admitted entry 返回值；异步准备后使用
+原生实时断言检查 sessionId、lifecycleRevision、pluginOwnerId，registry actor 的
+同步消费/写入回调及取消提交仍保持同步。工具准备的断言只属于原始 options 对象、
+run 与 native owner；跨 await 后重新核对调用者，不以 Promise、裸快照或缓存布尔值
+替代当前权限与身份。
 
 电脑控制设置每次读取仍获取原生 `config.get`。同一配置 hash 和 runtime 路径的全局
 工具权限判断复用一个进程内结果（并发读取共享 Promise），避免反复启动独立的原生
@@ -74,7 +92,7 @@ live 回执缺失时，Controller 仅能使用本进程发送准备已捕获的�
 
 产品提供的角色初始化模板、渠道说明和 Gateway 渠道配置说明集中在 `resources/openclaw/docs/`，由资源同步脚本写入原生 `docs/reference/templates/`、`docs/channels/` 和 `docs/gateway/config-channels.md`。这是构建时的运行时资源来源，不是产品开发文档，也不迁移或覆盖已有用户的角色工作区。
 
-开发路径和安装包资源路径不同，由 Manager 解析。Windows 命令通过 Electron-safe Node/npm runner 及 MinGit/Python 资源执行，不能把 Electron GUI 当通用 node。bundled Skills、Hooks、Plugins 使用显式运行时目录，不依赖 bundle 中的 import.meta.url 猜源码位置。
+开发路径和安装包资源路径不同，由 Manager 解析。Gateway、原生 CLI、历史导入/校验、插件管理、记忆和浏览器配对使用锁定的独立 Node 24.22.1/npm。构建准备完整官方发行树，按归档及逐文件清单校验后组装为运行时的 `node-runtime/`；开发与安装均从同一冻结运行时解析，不使用 PATH、Electron 内置 Node 或首次运行下载兜底。Electron 继续拥有桌面 UI 和产品数据库的 ABI。bundled Skills、Hooks、Plugins 使用显式运行时目录，不依赖 bundle 中的 import.meta.url 猜源码位置。
 
 Gateway bundle 位于运行时根目录，构建流程必须把原始 `dist/build-info.json` 同步到 bundle 旁，并作为必需 companion 验证。原生迁移检查从执行模块旁读取构建身份；缺失时会把检查点判为失效，每次启动重做迁移检查。这里保留原始构建身份和原生检查点规则，不伪造迁移完成状态；构建、配置或插件迁移指纹变化仍由 OpenClaw 判定是否需要重跑。
 
@@ -107,12 +125,9 @@ Runtime Services 的 Team 发起保护及可选 Workflow 分别按原生当前 S
 
 ### 原生历史读取的准备与响应
 
-新会话的 `chat.startup` 与历史读取均使用原生 canonical 准备边界。Windows 下 SQLite
-位置可能带 `\\?\` 命名空间前缀；补丁 027 让准备 locator 与缺省校验回执使用数据库
-打开时已经登记的规范 filename，避免同一物理文件出现两个缓存键。显式路径、agent、
-物理 generation 和撤销校验保持不变，不重新解析文件别名或制造 ready 事实。
+新会话的 `chat.startup` 与历史读取均使用原生 canonical 准备边界。v2026.10.6 的验证缓存统一通过原生 `resolveDatabasePathKey` 解析进程内 owner key，Windows 普通与命名空间路径映射到同一物理键；原 10.4 的 027 已删除。持久 locator 不改写，agent、物理身份、generation 与撤销仍由原生核对，不能凭路径相等伪造 ready 事实。
 
-内层读取可能捕获原生 deferred signal，但外层同步 frame 仍为 pending。补丁 028 在
+内层读取可能捕获原生 deferred signal，但外层同步 frame 仍为 pending。补丁 027 在
 history/startup 的响应发布前检查同一 frame；pending 时交回原生准备流程，真正完成
 后才发布。权限、共享范围及取消仍在原有 read view 中核对，不跨 await 保留失效视图，
 也不通过消息缓存、响应去重或重试次数上限掩盖无法准备的问题。
@@ -207,7 +222,11 @@ stateDiagram-v2
 
 开发时，本地源码扩展只在真正创建 Gateway 进程前异步复制，复用同一个启动任务；健康进程复用、运行时就绪查询和 CLI 环境读取不重写运行中的扩展。显式重启重新准备源码，已预编译的扩展保持不变。复制失败可重试；复制期间停止后，迟到结果不得创建进程或覆盖停止状态。文件复制不能阻塞 Electron 主线程与连接心跳。
 
-Windows Gateway 子进程通过专用 Node IPC 接收退出请求，宿主注入的 shutdown preload 转交给 OpenClaw 原生 SIGTERM 处理器释放数据库租约；父进程断开时也执行同一清理。不能把 Windows `child.kill()` 当作优雅退出，它会跳过清理，遗留租约在 PID 被系统进程复用且无法读取创建时间时可能阻塞下次启动。原生插件与连接清理可能超过 4 秒，退出请求 15 秒后仍未完成才强制结束，整个停止过程最多等待 16 秒。开发宿主清理预算为 30 秒，紧急清理额外等待最多 17 秒，避免宿主先于 Gateway 的退出截止时间结束。
+Windows Gateway 子进程通过专用 Node IPC 接收退出请求，宿主注入的 shutdown preload 转交给 OpenClaw 原生 SIGTERM 处理器释放数据库租约；父进程断开时也执行同一清理。不能把 Windows `child.kill()` 当作优雅退出，它会跳过清理，遗留租约在 PID 被系统进程复用且无法读取创建时间时可能阻塞下次启动。宿主以 `shared/app/shutdownPolicy.json` 的统一监督预算允许原生 325 秒清理及 5 秒退出余量，必要时强制结束后再观察最多 15 秒。测试直接读取锁定版本的原生预算模块，防止后续升级改变原生期限而宿主未同步。
+
+显式停止、完整重启和应用退出共用同一子进程的停止 owner、Promise 与首次请求截止时间。ChildProcess 必须实际正常 `close(0, null)`，同时确认进程与输出流已关闭；仅有 `exit` 不能提前放行，也不能再向其旧 PID 发信号。UtilityProcess 按原生 API 的实际 `exit` 判断。强制终止、非零或信号退出及未确认退出都保留为失败；迟到的关闭不能洗掉失败或开放再次启动。引擎显示需要退出并重新启动应用，而不是可重试的 stopped/ready 状态。单独的 agent 数据库 clean-close 回执也不代表插件、共享状态及整个 Gateway 已关闭。
+
+开发与安装态采用相同阶段顺序：启动维护 owner 最多 45 秒，Gateway 前后其它服务累计最多 30 秒，Gateway 停止最多 345 秒；Main 外层监督为 425 秒，开发启动器为 430 秒。阶段到期只是结果未知，仍保留对已启动清理任务的观察，并继续请求 Gateway 停止；不能把计时结束当作资源已退休。只有全部阶段真正成功后才能关闭产品 Store 并正常退出，失败或未知时返回非零退出码，并禁止继续安装已下载的更新。启动器收到明确的开发会话接管回执只释放自身所有权，不把接管称为进程自然退出，也不终止已被接管的应用。
 
 Gateway 运行期间不执行同步编译缓存序列化，缓存由 launcher 在正常退出时保存；一次性 CLI 在导入完成后保存。应用退出开始时先关闭 Manager 的启动准入，再清理依赖和停止 Gateway，避免后台读取或排队的重启在退出期间重新创建进程。
 
@@ -294,13 +313,15 @@ Adapter 接收产品会话身份，准备原生 session、模型和权限，再�
 
 可见 worktree 子会话由模型经原生 `sessions_spawn` 创建。产品会话列表读取 Gateway 原生会话，按 `parentSessionKey` / `spawnedBy` 与受管父会话关联，并持久绑定原生 session key。继续该会话时 Adapter 用 `sessions.describe` 核对 sessionId、worktree 元数据与实际目录（`sessionRoot`、`spawnedCwd` 或 `spawnedWorkspaceDir`），不再调用 `sessions.create`；Renderer 历史使用同一原生 key。设置页 Worktree 面板调用 `worktrees.list/restore/remove/gc` 管理原生登记的记录，不能管理模型通过 shell 自建的普通 Git worktree。
 
+原生 `worktrees.gc` 先返回后台任务回执。Main 在同一 Gateway 代次内仅按原任务 ID 观察，`completed` 才报告完成；断线或超时保留未知结果，不能重新提交替代清理。完整行为与验证边界见[Worktree](../features/workspace/worktree.md#恢复删除与清理)。
+
 原生绑定的权限变化通过 `sessions.patch` 同步，并使用 `expectedSessionId` / `expectedPermissionMode` 防止写入已替换的会话或覆盖查询后的权限变化；回执必须确认同一检出、权限和实际目录。采用子会话时保留原生 guarded/workspace/full 模式，未声明模式时使用 ask；无法表示的 read-only 模式不接入产品会话。事件关联先查询持久原生 key，保证首次打开之前和重启后仍可映射生命周期、问题和计划事件。设置移除保护必须读取完整会话目录，而不是会话摘要；任何仍被产品会话引用的检出均不允许移除，保护范围包含检出内的子目录。Worktree 会话暂不支持复制/分叉，避免副本共享原检出却没有托管所有权；删除所属会话前也必须先删除使用该检出或其子目录的其他会话。
 
 设置中的 `showWorktreeCheckbox` 默认关闭，仅控制新会话输入框右上角的 Worktree 选项是否显示。显示后每次新会话默认不勾选，既有会话和侧边提问不提供该选项。勾选时 Main 先绑定产品会话的原生 key，再调用无初始消息的 `sessions.create(worktree: true)`，校验原生权限、检出身份与实际目录后更新产品 `cwd`，最后才提交首轮消息。创建结果不确定时保留原生绑定与错误状态，避免重新分配目录；准备过程中取消不会发送首轮消息，创建完成后使用原生会话删除接口回收；只有明确的删除回执才能移除产品记录，清理失败时保留检查入口。明确的创建失败经原生查询确认会话不存在后移除产品记录。
 
 Worktree 设置页同时接入 Gateway 全局 `worktreeRoot` / `worktreeAcceleration`。Main 通过原生 `config.get` 读取并仅投影目录、加速、配置版本和应用状态；保存通过与应用配置同步共享的排他队列及带 `baseHash` 的 `config.patch`，回读核对结果。超时/断线不重试写入，配置版本冲突要求重新读取。完整、无模型与认证配置同步保留这两项原生设置。目录变更和加速开关只影响新分配，已登记目录、快照和恢复路径保持原生所有权；页面显示默认目录与固定 `openclaw/<名称>` 分支规则，不将全局目录解释为项目同级布局。
 
-原生 WS 中的文本流由 Renderer 消费；Adapter 只将运行状态、交互、审批、Goal 和会话变化映射为产品事件。wire validator 固定到 v2026.10.4，未知或不合法字段不能在各调用方随意猜测。
+原生 WS 中的文本流由 Renderer 消费；Adapter 只将运行状态、交互、审批、Goal 和会话变化映射为产品事件。wire validator 固定到 v2026.10.6，未知或不合法字段不能在各调用方随意猜测。
 
 网络超时可能发生在原生接收之后。run receipt 需要保留未知状态并查询原生事实；无条件重发将造成重复工具副作用。工具错误不必然是运行终态，late terminal 也不能结束新的 generation。
 
@@ -309,7 +330,7 @@ Worktree 设置页同时接入 Gateway 全局 `worktreeRoot` / `worktreeAccelera
 OpenClaw 先在 Completions producer 校验完整参数 JSON，再在 Agent 工具层校验 schema。
 原生 schema 参数拒绝生成工具错误结果，并在同一 Agent loop 中交给模型纠正；JSON
 解析或对象形状拒绝原本移除整批调用并返回 provider error，因此不会进入该循环。
-030 扩展这条原生循环：只对初始候选、完整响应、整批零派发的格式拒绝提供最多两次
+029 扩展这条原生循环：只对初始候选、完整响应、整批零派发的格式拒绝提供最多两次
 附加生成。schema、未知工具及执行异常继续使用各自原生处理，不重放用户输入或工具。
 
 Runtime Services 的 facts/policy 维护内容无关的诊断和纯策略；loop 模块维护精确 Agent
@@ -497,4 +518,4 @@ examples. See [CLI / ACP / app-server](../features/integrations/agent-cli.md).
 
 ### 目标版本 registry 发布边界
 
-v2026.10.4 的运行记录是不可变 postimage。产品 owned-run 元数据通过原生 `mutateSubagentRuns` 事务发布，保持物理 owner/generation、sessionId、epoch、revision 和提交回执核对；不直接修改已发布记录，也不调用已移除的持久化 API。取消、终态与清理继续依赖同一原生 owner；相同 runId 的新 owner 不继承旧回执。未知提交不启动第二次执行。
+v2026.10.6 的运行记录是不可变 postimage。产品 owned-run 元数据通过原生 `mutateSubagentRuns` 事务发布，保持物理 owner/generation、sessionId、epoch、revision 和提交回执核对；不直接修改已发布记录，也不调用已移除的持久化 API。取消、终态与清理继续依赖同一原生 owner；相同 runId 的新 owner 不继承旧回执。未知提交不启动第二次执行。

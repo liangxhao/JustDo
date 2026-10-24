@@ -12,12 +12,19 @@ const { transformSync } = require('esbuild');
 const repo = path.resolve(__dirname, '../..');
 const output = path.join(repo, '.agent-tasks/npx-mcp-smoke');
 const fixture = path.join(repo, 'tests/openclaw/fixtures/npx-mcp-smoke');
-const npmBinDir = path.join(repo, 'node_modules/npm/bin');
 const cache = path.join(output, 'npm-cache');
 const runtime = path.resolve(
   process.env.OPENCLAW_TEST_NATIVE_RUNTIME_DIR ??
     path.join(repo, 'vendor/openclaw-runtime/current'),
 );
+const { hostTarget, targetContract, verifyNodeRuntime } = require('../runtime/setup-node-runtime.cjs');
+const nodeRoot = path.join(runtime, 'node-runtime');
+const nodeTarget = hostTarget();
+verifyNodeRuntime(nodeRoot, nodeTarget);
+const nodeContract = targetContract(nodeTarget);
+const npmBinDir = path.join(nodeRoot, nodeContract.npmBin);
+const electronPath = process.env.OPENCLAW_TEST_ELECTRON_PATH ?? path.join(nodeRoot, nodeContract.executable);
+assert.equal(fs.realpathSync(electronPath), fs.realpathSync(path.join(nodeRoot, nodeContract.executable)));
 
 const loadSource = (relative, imports) => {
   const code = transformSync(fs.readFileSync(path.join(repo, relative), 'utf8'), {
@@ -38,8 +45,13 @@ async function main() {
   process.env.OPENCLAW_STATE_DIR = path.join(output, 'state');
   process.env.OPENCLAW_CONFIG_PATH = path.join(output, 'openclaw.json');
   const run = (cli, args, cwd) =>
-    execFileSync(process.execPath, [path.join(npmBinDir, cli), ...args], {
+    execFileSync(electronPath, [path.join(npmBinDir, cli), ...args], {
       cwd,
+      env: {
+        ...process.env,
+        PATH: path.dirname(electronPath) + path.delimiter + (process.env.PATH ?? process.env.Path ?? ''),
+        Path: path.dirname(electronPath) + path.delimiter + (process.env.PATH ?? process.env.Path ?? ''),
+      },
       windowsHide: true,
       timeout: 30_000,
       encoding: 'utf8',
@@ -77,6 +89,9 @@ async function main() {
       {},
     ),
     '../../../cowork/coworkLogger': { coworkLog: () => {} },
+    './bundledNodeRuntime': {
+      resolveBundledNodeRuntimePaths: () => ({ executable: electronPath, npmBin: npmBinDir }),
+    },
   });
   const { projectMcpPackageRunner } = loadSource('src/main/openclaw/runtime/mcpPackageRunner.ts', {
     electron: { app: {} },
@@ -85,9 +100,6 @@ async function main() {
   // Exercise Unicode and spaces in the Node shim/preload path too.
   const bin = path.join(output, '运行环境 bin');
   fs.mkdirSync(bin, { recursive: true });
-  const electronPath =
-    process.env.OPENCLAW_TEST_ELECTRON_PATH ??
-    path.join(repo, 'node_modules/electron/dist/electron.exe');
   const preloadPath = path.join(bin, 'hide-child-process-windows.cjs');
   fs.writeFileSync(preloadPath, nodeRuntime.buildWindowsChildProcessPreload());
   fs.writeFileSync(
@@ -143,7 +155,8 @@ async function main() {
     assert.equal(info.startedByNpx, true);
     assert.equal(info.electronNodeMode, true);
     assert.equal(info.windowsHidePreload, true);
-    assert.equal(typeof info.electronVersion, 'string');
+    assert.equal(info.electronVersion, null);
+    assert.equal(info.nodeVersion, require('../../src/shared/openclaw/nodeRuntime.json').version);
     await assert.rejects(
       client.callTool({ name: 'npx_smoke_echo', arguments: { text: 123 } }),
       /invalid tool arguments/,
@@ -181,7 +194,7 @@ async function main() {
 }
 
 if (process.platform !== 'win32')
-  throw new Error('This manual fixture verifies the Windows Electron npx launcher.');
+  throw new Error('This manual fixture verifies the Windows bundled Node npx launcher.');
 main().catch(error => {
   console.error(error.message);
   process.exitCode = 1;

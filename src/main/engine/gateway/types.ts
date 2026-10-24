@@ -25,6 +25,12 @@ export type GatewayClientLike = {
 
 export type GatewayClientCtor = new (options: Record<string, unknown>) => GatewayClientLike;
 
+/** Read-only evidence from one already selected native transport incarnation. */
+export type GatewayResponseContext = {
+  isCurrent: () => boolean;
+  isResponseError: (error: unknown) => boolean;
+};
+
 // ─── Chat Events ────────────────────────────────────────────────────────────
 
 export type ChatEventState = 'delta' | 'final' | 'aborted' | 'error';

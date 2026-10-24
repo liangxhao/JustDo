@@ -29,6 +29,9 @@ vi.mock('electron', () => ({
     getAppPath: () => process.cwd(),
   },
 }));
+vi.mock('../runtime/launch/electronNodeRuntime', () => ({
+  getElectronNodeRuntimePath: () => process.execPath,
+}));
 
 // Config projection tests must not depend on the developer runtime being installed or
 // replaced concurrently. Inventory discovery has its own filesystem tests.
@@ -98,7 +101,7 @@ test('marks only verified model-default projections for skipping historical sess
     engineManager: {
       getConfigPath: () => configPath,
       getStateDir: () => directory,
-      getDesiredVersion: () => '2026.10.4',
+      getDesiredVersion: () => '2026.10.6',
     },
     getCoworkConfig: () => ({ workingDirectory: '', executionMode: 'local', agentEngine: 'openclaw' }),
     getAgents: () => [],
@@ -403,6 +406,63 @@ test.each(['full', 'minimal'])(
     }
   },
   // Five real filesystem projections include startup and four policy updates.
+  15_000,
+);
+
+test.each(['full', 'minimal'])(
+  '%s sync disables native public cyber fallback across startup and authentication changes',
+  mode => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cyber-fallback-policy-'));
+    temporaryDirectories.push(stateDir);
+    const configPath = path.join(stateDir, 'openclaw.json');
+    setStoreGetter(() => ({
+      get: () => mode === 'full' ? {
+        model: { defaultModel: 'internal-model', defaultModelProvider: 'internal' },
+        providers: { internal: {
+          enabled: true,
+          baseUrl: 'http://model.test/v1',
+          apiFormat: 'openai',
+          models: [{ id: 'internal-model' }],
+        } },
+      } : {},
+    }) as never);
+    const sync = new OpenClawConfigSync({
+      engineManager: {
+        getConfigPath: () => configPath,
+        getStateDir: () => stateDir,
+        getDesiredVersion: () => '2026.10.6',
+      },
+      getCoworkConfig: () => ({
+        workingDirectory: '', executionMode: 'local', agentEngine: 'openclaw',
+      }),
+      getAgents: () => [],
+    } as never);
+
+    expect(sync.sync('startup').ok).toBe(true);
+    expect(JSON.parse(fs.readFileSync(configPath, 'utf8')).agents.defaults.embeddedAgent)
+      .toMatchObject({ cyberFailover: { mode: 'off' } });
+    for (const reason of [
+      'startup', 'app-config-change',
+      BuiltinModelSyncReason.AuthLogin, BuiltinModelSyncReason.AuthLogout,
+    ]) {
+      const existing = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+      existing.agents.defaults.embeddedAgent = {
+        projectSettingsPolicy: 'sanitize',
+        executionContract: 'strict-agentic',
+        cyberFailover: { mode: 'auto', model: 'internal/review', cooloffMs: 1000 },
+      };
+      fs.writeFileSync(configPath, JSON.stringify(existing), 'utf8');
+
+      expect(sync.sync(reason).ok).toBe(true);
+
+      const embedded = JSON.parse(fs.readFileSync(configPath, 'utf8')).agents.defaults.embeddedAgent;
+      expect(embedded.cyberFailover.mode).toBe('off');
+      expect(embedded.projectSettingsPolicy).toBe('sanitize');
+      expect(embedded.executionContract).toBe('strict-agentic');
+      expect(embedded.cyberFailover.model).toBe('internal/review');
+      expect(embedded.cyberFailover.cooloffMs).toBe(1000);
+    }
+  },
   15_000,
 );
 
@@ -1230,7 +1290,7 @@ describe('OpenClaw auth logout config sync', () => {
         plugins: { allow: ['openai'] },
         tts: {
           enabled: true, auto: 'off', provider: 'openai',
-          providers: { openai: { baseUrl: 'https://speech.example.test/v1', model: 'online', voice: 'test-voice' } },
+          providers: { openai: { baseUrl: 'https://speech.example.test/v1', model: 'online', speakerVoice: 'test-voice' } },
         },
       }));
       outputState.enabled = false;
@@ -1238,7 +1298,7 @@ describe('OpenClaw auth logout config sync', () => {
       expect(readConfig().tts).toMatchObject({
         provider: 'openai',
         providers: {
-          openai: { model: 'online', voice: 'test-voice' },
+          openai: { model: 'online', speakerVoice: 'test-voice' },
           'tts-local-cli': { command: 'extension-tts.exe' },
         },
       });
@@ -1285,7 +1345,8 @@ describe('OpenClaw auth logout config sync', () => {
           outputState.mode = enabled ? 'local' : 'online';
           expect(sync.sync(reason).ok).toBe(true);
           config = readConfig();
-          expect(config.tts.enabled).toBe(true);
+          expect(config.tts).not.toHaveProperty('enabled');
+          expect(config.tts.auto).toBe('off');
           expect(config.tts.providers['tts-local-cli']).toEqual({ command: 'extension-tts.exe' });
           for (const pluginId of ['tts-local-cli', 'stt-local-cli']) {
             expect(config.plugins.entries[pluginId].enabled).toBe(true);
@@ -1425,7 +1486,9 @@ describe('OpenClaw auth logout config sync', () => {
     ).toMatchObject({ ok: true });
 
     const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-    expect(config.tts).toEqual(tts);
+    expect(config.tts).toEqual({
+      auto: 'off', provider: tts.provider, providers: tts.providers,
+    });
     expect(config.plugins.entries['tts-local-cli']).toEqual({});
     expect(config.plugins.allow).toContain('tts-local-cli');
   });

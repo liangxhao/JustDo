@@ -12,6 +12,14 @@ const runtime = path.resolve(
   process.env.OPENCLAW_TEST_NATIVE_RUNTIME_DIR ??
     path.join(repo, 'vendor/openclaw-runtime/current'),
 );
+const { hostTarget, targetContract, verifyNodeRuntime } = require('../../../scripts/runtime/setup-node-runtime.cjs');
+const nodeRoot = path.join(runtime, 'node-runtime');
+const nodeTarget = hostTarget();
+verifyNodeRuntime(nodeRoot, nodeTarget);
+const nodeContract = targetContract(nodeTarget);
+const electron = process.env.OPENCLAW_TEST_ELECTRON_PATH ?? path.join(nodeRoot, nodeContract.executable);
+const runtimeNpmBin = path.join(nodeRoot, nodeContract.npmBin);
+require('node:assert/strict').equal(fs.realpathSync(electron), fs.realpathSync(path.join(nodeRoot, nodeContract.executable)));
 const dist = path.join(runtime, 'dist');
 const moduleSource = (prefix, name) => {
   const exportPattern = new RegExp(`\\b${name} as ([\\w$]+)`);
@@ -54,15 +62,15 @@ const nodeRuntime = loadSource('src/main/openclaw/runtime/launch/electronNodeRun
     {},
   ),
   '../../../cowork/coworkLogger': { coworkLog: () => {} },
+  './bundledNodeRuntime': {
+    resolveBundledNodeRuntimePaths: () => ({ executable: electron, npmBin: runtimeNpmBin }),
+  },
 });
 const { projectMcpPackageRunner } = loadSource('src/main/openclaw/runtime/mcpPackageRunner.ts', {
   electron: { app: {} },
   './launch/electronNodeRuntime': nodeRuntime,
 });
 const { buildElectronNodeShimScripts, buildWindowsChildProcessPreload } = nodeRuntime;
-const electron =
-  process.env.OPENCLAW_TEST_ELECTRON_PATH ??
-  path.join(repo, 'node_modules/electron/dist/electron.exe');
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-package 中文 '));
 try {
   const npm = path.join(root, 'npm');
@@ -93,7 +101,7 @@ try {
     path.join(runtime, 'node_modules/@modelcontextprotocol/sdk/dist/esm/client/index.js'),
   ).href;
   for (const runner of ['fixture', 'real']) {
-    const npmBinDir = runner === 'fixture' ? npm : path.join(repo, 'node_modules/npm/bin');
+    const npmBinDir = runner === 'fixture' ? npm : runtimeNpmBin;
     const shims = buildElectronNodeShimScripts(electron, root, npmBinDir);
     fs.writeFileSync(path.join(root, 'node.cmd'), shims.nodeCmd);
     for (const name of ['npm', 'npx'])

@@ -1,5 +1,6 @@
 import { type ChildProcess, spawn } from 'child_process';
 
+import { requireOpenClawCliExecutable } from '../../openclaw/runtime/launch/cliNodeRuntime';
 import { nativeHistoryError } from './historyFailure';
 import { NATIVE_HISTORY_VERIFICATION_SOURCE } from './nativeHistoryVerification';
 
@@ -59,7 +60,7 @@ export class NativeHistoryRuntime {
             '--json',
           ];
     return await new Promise<string>((resolve, reject) => {
-      const child = spawn(this.deps.executable ?? process.execPath, args, {
+      const child = spawn(this.deps.executable ?? requireOpenClawCliExecutable(cli.env), args, {
         cwd: cli.runtimeRoot,
         env: { ...cli.env, ELECTRON_RUN_AS_NODE: '1', OPENCLAW_NO_RESPAWN: '1' },
         windowsHide: true,

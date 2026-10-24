@@ -19,9 +19,10 @@ const {
   nativeSupportModule,
   nativeSupportImport,
 } = require('./_patch-utils.js');
+// Freeze the 10.4 factory from baseline 04716a465 independently of the current runtime.
 const {
   createPluginOwnedExecutionRuntime,
-} = require('../../../src/main/openclaw/runtime/native-support/plugin-owned-execution.mjs');
+} = require('./plugin-owned-execution-support.mjs');
 const helpers = createPluginOwnedExecutionRuntime(null);
 const CONTRACT = 'RUNTIME_PLUGIN_OWNED_EXECUTION_V2026_10_4';
 const names = Object.keys(helpers);
@@ -1159,7 +1160,7 @@ function processTargets(root, verify) {
     nativeSupportModule(
       root,
       'plugin-owned-execution.mjs',
-      path.resolve(__dirname, '../../../src/main/openclaw/runtime/native-support/plugin-owned-execution.mjs'),
+      path.resolve(__dirname, 'plugin-owned-execution-support.mjs'),
       true,
     );
   nativeSupportModule(
@@ -1167,7 +1168,7 @@ function processTargets(root, verify) {
     'plugin-owned-execution.mjs',
     path.resolve(
       __dirname,
-      '../../../src/main/openclaw/runtime/native-support/plugin-owned-execution.mjs',
+      'plugin-owned-execution-support.mjs',
     ),
     verify,
   );

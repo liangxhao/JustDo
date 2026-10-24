@@ -223,6 +223,7 @@ const { pathToFileURL } = require('node:url');
           fs.readFileSync(path.join(dist, file), 'utf8').includes('GatewayClient as t'),
       );
     const { t: GatewayClient } = await import(pathToFileURL(path.join(dist, clientFile)).href);
+    let clientGeneration = 0;
     const hello = await new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error('Isolated Gateway hello timed out')), 90000);
       client = new GatewayClient({
@@ -241,6 +242,7 @@ const { pathToFileURL } = require('node:url');
           'operator.questions',
         ],
         onHelloOk: value => {
+          clientGeneration++;
           clearTimeout(timer);
           resolve(value);
         },
@@ -281,7 +283,22 @@ const { pathToFileURL } = require('node:url');
           getConfig: () => ({ workingDirectory: workspace, permissionMode: 'auto' }),
           getAgent: () => ({ enabled: true }),
         }),
-        request: (method, params) => client.request(method, params),
+        request: (method, params, options) => {
+          options?.assertBeforeSend?.();
+          return client.request(method, params);
+        },
+        captureResponseContext: async () => {
+          const captured = client;
+          const generation = clientGeneration;
+          for (const name of fs.readdirSync(dist).filter(name => /^client(?:-.*)?\.m?js$/.test(name))) {
+            if (!fs.readFileSync(path.join(dist, name), 'utf8').includes('isGatewayProtocolResponseError')) continue;
+            const facade = await import(pathToFileURL(path.join(dist, name)).href);
+            if (facade.GatewayClient === GatewayClient && typeof facade.isGatewayProtocolResponseError === 'function')
+              return { isCurrent: () => client === captured && clientGeneration === generation && child.exitCode === null,
+                isResponseError: facade.isGatewayProtocolResponseError };
+          }
+          throw new Error('The native client public response facade is unavailable.');
+        },
       });
       appBinding = await appWorkspaces.prepare(appOwner, appScope);
       scope.sessionKey = appBinding.sessionKey;

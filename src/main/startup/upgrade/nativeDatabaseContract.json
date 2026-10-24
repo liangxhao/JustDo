@@ -1,0 +1,127 @@
+{
+  "formatVersion": 1,
+  "openclawVersion": "v2026.10.6",
+  "schemaVersions": {
+    "state": 20,
+    "agent": 25
+  },
+  "sourceSchemaVersions": {
+    "state": [20],
+    "agent": [24, 25]
+  },
+  "modules": {
+    "agent": {
+      "path": "dist/openclaw-agent-db-DwWR59YS.mjs",
+      "sha256": "3a39ef1d12a6701d09221e9dec0124bf4960e8a5caa116ebaaafe80d88c922c4",
+      "exports": {
+        "clearOpenClawAgentDatabaseOpenFailure": "n"
+      }
+    },
+    "agentLifecycle": {
+      "path": "dist/openclaw-agent-db-lifecycle-CsUDPIt5.mjs",
+      "sha256": "1479748d672a10b98d8b5f2dd113092dc47aa132c095526499067b0243a8fefa",
+      "exports": {
+        "closeOpenClawAgentDatabasesAsync": "s"
+      }
+    },
+    "backup": {
+      "path": "dist/doctor-migration-backup-BtMahFw7.mjs",
+      "sha256": "e0635157634f690cb2009491d67bcacd61c46ffe60e7c933c5e4da486a811ffb",
+      "exports": {
+        "backupDoctorSqliteDatabases": "n"
+      }
+    },
+    "backupCompletion": {
+      "path": "dist/doctor-migration-backup-artifacts-C7zRtter.mjs",
+      "sha256": "2796b86d2a90f7188c6fdbf363c08d8b481621cab3e852477ec8f7466ada2de9",
+      "exports": {
+        "completeDoctorMigrationBackups": "t"
+      }
+    },
+    "lease": {
+      "path": "dist/openclaw-agent-db-maintenance-lease-CbW3zwY9.mjs",
+      "sha256": "32a2a057bc2fb29cbae8ea0e7ace7716d5150266cb53df8150b4babc7b172141",
+      "exports": {
+        "withAgentDatabaseMaintenanceLease": "t"
+      }
+    },
+    "maintenanceLock": {
+      "path": "dist/doctor-sqlite-maintenance-lock-jr-IFWwg.mjs",
+      "sha256": "819c0ee1fb8c8b90b86f8413fdad51c835914b7e8be750c8abd8f827661c42b1",
+      "exports": {
+        "withDoctorSqliteMaintenanceLock": "i"
+      }
+    },
+    "migration": {
+      "path": "dist/openclaw-agent-db-maintenance-3hQWEmQn.mjs",
+      "sha256": "07775753bd1b9a454e61fd96354973c4d234c204bd852b2f7e13e5350a99620b",
+      "exports": {
+        "migrateOpenClawAgentDatabaseForMaintenance": "r"
+      }
+    },
+    "paths": {
+      "path": "dist/openclaw-state-db.paths-CmKkMYdo.mjs",
+      "sha256": "f592ef97e2b8fe65226210faa091ed58ca5008c2eb4da079907c63d08fe08032",
+      "exports": {
+        "resolveOpenClawStateSqlitePath": "c"
+      }
+    },
+    "preflight": {
+      "path": "dist/doctor-database-preflight-CbfDoybR.mjs",
+      "sha256": "3926f64fab8b6252d45f746f935a6f4ac43dd34a593dbe8d12a448bd1fc27292",
+      "exports": {
+        "prepareDoctorDatabasePreflight": "t"
+      }
+    },
+    "readiness": {
+      "path": "dist/openclaw-database-preflight-DZ6usrvy.mjs",
+      "sha256": "519c4435c3dd85181940a3651bd62aa0b6cd27c010010e86c44775243a5c2d10",
+      "exports": {
+        "assertOpenClawDatabasesReady": "t",
+        "preflightOpenClawDatabaseSchemas": "n"
+      }
+    },
+    "readScope": {
+      "path": "dist/sqlite-readonly-worker-Bl9PyGqh.mjs",
+      "sha256": "81d8787868e11f4a8068c9515705a6b11859abd38aabd005e678b94ef96c1b2b",
+      "exports": {
+        "withSqliteReadOnlyWorkerScope": "g"
+      }
+    },
+    "registry": {
+      "path": "dist/openclaw-agent-db-registry-BttOhg4r.mjs",
+      "sha256": "68d13f7b1150d1444cdc2e4d972debf41f08393a8a5b37082ba43fa9c7474c98",
+      "exports": {
+        "registerOpenClawAgentDatabase": "t"
+      }
+    },
+    "resourceScope": {
+      "path": "dist/openclaw-state-db-async-lifecycle-DwFy2ZTk.mjs",
+      "sha256": "7b10c0e8e299072e42342554dacea09aaf24555fe02ca7831aa8fe03f033c66e",
+      "exports": {
+        "getOpenClawDatabaseMaintenanceScope": "u"
+      }
+    },
+    "schemaContracts": {
+      "path": "dist/openclaw-database-schema-contracts-DxUwD7Ji.mjs",
+      "sha256": "38801858c36bac72d3b601f303ecb0f54d95e8ea72c4925859bad10473c28859",
+      "exports": {
+        "prepareOpenClawDatabaseSchemaContracts": "prepareOpenClawDatabaseSchemaContracts"
+      }
+    },
+    "state": {
+      "path": "dist/openclaw-state-db-C4vt0QCr.mjs",
+      "sha256": "79879cde22f3c5bb8e8757d36580c93aeaf909dea86d27059a8e518cda1e18e3",
+      "exports": {
+        "prepareOpenClawStateDatabaseSchema": "i"
+      }
+    },
+    "stateLifecycle": {
+      "path": "dist/openclaw-state-db-cache-C8EtTs-m.mjs",
+      "sha256": "60a1f0f7962b219df3239dff5f09d2b0cfd708311c46bdda3e02fc8cd353aa7d",
+      "exports": {
+        "closeOpenClawStateDatabaseAsync": "s"
+      }
+    }
+  }
+}

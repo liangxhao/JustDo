@@ -1621,6 +1621,7 @@ interface IElectronAPI {
       sessionId: string;
     }) => Promise<import('../../shared/app/startup/history').HistoryWorkspaceResult>;
     getState: () => Promise<AppInitializationState>;
+    confirmDowngrade: (input: { requestId: string }) => Promise<{ confirmed: boolean }>;
     relaunch: () => Promise<void>;
     onChanged: (callback: (state: AppInitializationState) => void) => () => void;
   };

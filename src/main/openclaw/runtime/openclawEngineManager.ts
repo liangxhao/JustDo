@@ -1,6 +1,6 @@
 import { type ChildProcess, spawn } from 'child_process';
 import crypto from 'crypto';
-import { app, type UtilityProcess, utilityProcess } from 'electron';
+import { app, type UtilityProcess } from 'electron';
 import { EventEmitter } from 'events';
 import fs from 'fs';
 import net from 'net';
@@ -21,6 +21,7 @@ import type {
 } from '../../../shared/openclaw/sessionMigration';
 import { PRODUCT_NAME_LOWERCASE } from '../../../shared/productMetadata';
 import type { SystemPromptReplacementRule } from '../../../shared/prompts/systemPromptReplacements';
+import { t } from '../../core/i18n';
 import { redactLogText } from '../../core/logRedaction';
 import {
   applyTrustedCertificateEnv,
@@ -40,10 +41,10 @@ import {
 import { buildGatewayLaunchArgs, buildGatewayLaunchEnvironment } from './launch/gatewayLaunchArgs';
 import { GatewayStdoutLogFilter } from './launch/gatewayLogFilter';
 import { ensureGatewayStartupPriority } from './launch/gatewayProcessPriority';
+import { GatewayProcessShutdown } from './launch/gatewayProcessShutdown';
 import { findAvailableLoopbackPort, isLoopbackPortAvailable } from './launch/loopbackPort';
 import {
   ensureGatewayShutdownPreload,
-  OPENCLAW_GATEWAY_SHUTDOWN_MESSAGE,
   OPENCLAW_LAUNCHER_KEEP_ALIVE_SOURCE,
 } from './launch/openclawLauncher';
 import {
@@ -208,10 +209,7 @@ export const buildOpenClawCliShimSources = (): {
     'if [ -x "${JUSTDO_ELECTRON_PATH:-}" ]; then',
     '  exec env ELECTRON_RUN_AS_NODE=1 "${JUSTDO_ELECTRON_PATH}" "${JUSTDO_OPENCLAW_ENTRY}" "$@"',
     'fi',
-    'if command -v node >/dev/null 2>&1; then',
-    '  exec node "${JUSTDO_OPENCLAW_ENTRY}" "$@"',
-    'fi',
-    'echo "Neither JUSTDO_ELECTRON_PATH nor node is available for OpenClaw CLI." >&2',
+    'echo "The admitted OpenClaw Node runtime is unavailable." >&2',
     'exit 127',
     '',
   ].join('\n'),
@@ -222,19 +220,12 @@ export const buildOpenClawCliShimSources = (): {
     '  echo JUSTDO_OPENCLAW_ENTRY is not set 1>&2',
     '  exit /b 127',
     ')',
-    'for /f "delims=" %%N in (\'where.exe node.exe 2^>nul\') do (',
-    '  set "JUSTDO_CLI_NODE=%%N"',
-    '  goto run_node',
-    ')',
-    'if not "%JUSTDO_ELECTRON_PATH%"=="" if exist "%JUSTDO_ELECTRON_PATH%" goto run_electron',
-    'echo Neither node.exe nor JUSTDO_ELECTRON_PATH is available for OpenClaw CLI. 1>&2',
+    'if not "%JUSTDO_ELECTRON_PATH%"=="" if exist "%JUSTDO_ELECTRON_PATH%" goto run_runtime',
+    'echo The admitted OpenClaw Node runtime is unavailable. 1>&2',
     'exit /b 127',
-    ':run_electron',
+    ':run_runtime',
     'set ELECTRON_RUN_AS_NODE=1',
     '"%JUSTDO_ELECTRON_PATH%" "%JUSTDO_OPENCLAW_ENTRY%" %*',
-    'exit /b %ERRORLEVEL%',
-    ':run_node',
-    '"%JUSTDO_CLI_NODE%" "%JUSTDO_OPENCLAW_ENTRY%" %*',
     'exit /b %ERRORLEVEL%',
     '',
   ].join('\r\n'),
@@ -312,6 +303,7 @@ export class OpenClawEngineManager extends EventEmitter {
   private gatewayProcess: GatewayProcess | null = null;
   private readonly gatewayNetworkEnvironments = new WeakMap<object, Readonly<NodeJS.ProcessEnv>>();
   private readonly expectedGatewayExits = new WeakSet<object>();
+  private gatewayShutdown: GatewayProcessShutdown | undefined;
   private gatewayRestartTimer: NodeJS.Timeout | null = null;
   private gatewayRestartAttempt = 0;
   private shutdownRequested = false;
@@ -666,6 +658,7 @@ export class OpenClawEngineManager extends EventEmitter {
   }
 
   async startGateway(): Promise<OpenClawEngineStatus> {
+    if (this.gatewayShutdown?.failure) throw this.gatewayShutdownFailure();
     if (!this.applicationShuttingDown && this.canStartGateway && !this.canStartGateway())
       throw new Error('Startup history preparation has not completed.');
     // Consumers need the final lifecycle result, including configuration restarts
@@ -674,6 +667,7 @@ export class OpenClawEngineManager extends EventEmitter {
     try {
       status = await (this.restartGatewayPromise ?? this.startGatewayOnce());
     } catch (error) {
+      if (this.gatewayShutdown?.failure) throw this.gatewayShutdownFailure();
       if (!this.restartGatewayPromise) throw error;
       status = await this.restartGatewayPromise;
     }
@@ -684,6 +678,7 @@ export class OpenClawEngineManager extends EventEmitter {
   }
 
   private startGatewayOnce(): Promise<OpenClawEngineStatus> {
+    if (this.gatewayShutdown?.failure) return Promise.reject(this.gatewayShutdownFailure());
     if (this.applicationShuttingDown) return Promise.resolve(this.getStatus());
     if (this.canStartGateway && !this.canStartGateway())
       return Promise.reject(new Error('Startup history preparation has not completed.'));
@@ -739,7 +734,14 @@ export class OpenClawEngineManager extends EventEmitter {
     this.ensureConfigFile();
 
     const compileCacheDir = path.join(this.stateDir, '.compile-cache');
-    const electronNodeRuntimePath = getElectronNodeRuntimePath();
+    let electronNodeRuntimePath: string;
+    try {
+      electronNodeRuntimePath = getElectronNodeRuntimePath();
+    } catch (error) {
+      console.error('[OpenClaw] Bundled Node admission failed:',
+        redactLogText(error instanceof Error ? error.message : String(error)));
+      throw new Error(t('runtimeNodeUnavailable'), { cause: error });
+    }
     const cliShimDir = this.ensureBundledCliShims();
     const runtimeResourcePaths = resolveOpenClawRuntimeResourcePaths(
       runtime.root,
@@ -851,7 +853,7 @@ export class OpenClawEngineManager extends EventEmitter {
   ): Promise<{ stdout: string; stderr: string }> {
     const maxOutputBytes = 4 * 1024 * 1024;
     return new Promise((resolve, reject) => {
-      const child = spawn(process.execPath, [cli.openclawEntry, ...args], {
+      const child = spawn(getElectronNodeRuntimePath(), [cli.openclawEntry, ...args], {
         cwd: cli.runtimeRoot,
         env: {
           ...cli.env,
@@ -974,6 +976,8 @@ export class OpenClawEngineManager extends EventEmitter {
   }
 
   private async doStartGateway(): Promise<OpenClawEngineStatus> {
+    if (this.gatewayShutdown?.failure) throw this.gatewayShutdownFailure();
+    await this.gatewayShutdown?.waitForStops();
     this.shutdownRequested = false;
     const t0 = Date.now();
     const elapsed = () => `${Date.now() - t0}ms`;
@@ -1207,29 +1211,18 @@ export class OpenClawEngineManager extends EventEmitter {
       `[OpenClaw] forking gateway: entry=${openclawEntry}, cwd=${runtime.root}, port=${port}, verbose=${forkArgs.includes('--verbose')}`,
     );
 
-    // On Windows, use child_process.spawn with ELECTRON_RUN_AS_NODE=1 instead of
-    // utilityProcess.fork(). Benchmark shows utilityProcess has ~5x overhead for
-    // cold ESM compilation on Windows (163s vs 34s for a 28MB bundle).
-    let child: GatewayProcess;
-    if (process.platform === 'win32') {
-      child = spawn(
-        process.execPath,
-        ['--require', ensureGatewayShutdownPreload(this.baseDir), openclawEntry, ...forkArgs],
-        {
-          cwd: runtime.root,
-          env: { ...gatewayEnv, ELECTRON_RUN_AS_NODE: '1' },
-          stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
-          windowsHide: true,
-        },
-      );
-    } else {
-      child = utilityProcess.fork(openclawEntry, forkArgs, {
+    // Use the supported bundled Node on every platform. Electron's embedded
+    // Node release can lag the native SQLite correctness floor.
+    const child: GatewayProcess = spawn(
+      getElectronNodeRuntimePath(),
+      ['--require', ensureGatewayShutdownPreload(this.baseDir), openclawEntry, ...forkArgs],
+      {
         cwd: runtime.root,
         env: gatewayEnv,
-        stdio: 'pipe',
-        serviceName: 'OpenClaw Gateway',
-      });
-    }
+        stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+        windowsHide: true,
+      },
+    );
     console.log(
       `[OpenClaw] startGateway: gateway process created (${elapsed()}), platform=${process.platform}`,
     );
@@ -1264,7 +1257,9 @@ export class OpenClawEngineManager extends EventEmitter {
         message: 'OpenClaw gateway failed to become healthy in time.',
         canRetry: true,
       });
-      this.stopGatewayProcess(child);
+      void this.stopGatewayProcess(child).catch(error => {
+        console.error('[OpenClaw] Failed startup process retirement remains unconfirmed:', error);
+      });
       return this.getStatus();
     }
 
@@ -1301,11 +1296,18 @@ export class OpenClawEngineManager extends EventEmitter {
     }
 
     if (this.gatewayProcess) {
+      const child = this.gatewayProcess;
       console.log('[OpenClaw] stopping gateway process...');
-      await this.stopGatewayProcess(this.gatewayProcess);
+      await this.stopGatewayProcess(child).catch(error => {
+        throw this.gatewayShutdown?.failure ? this.gatewayShutdownFailure() : error;
+      });
       console.log('[OpenClaw] gateway process stopped');
-      this.gatewayProcess = null;
+      if (this.gatewayProcess === child) this.gatewayProcess = null;
     }
+    await this.gatewayShutdown?.waitForStops().catch(error => {
+      throw this.gatewayShutdown?.failure ? this.gatewayShutdownFailure() : error;
+    });
+    if (this.gatewayShutdown?.failure) throw this.gatewayShutdownFailure();
 
     const runtime = this.resolveRuntimeMetadata();
     this.setStatus({
@@ -1325,6 +1327,7 @@ export class OpenClawEngineManager extends EventEmitter {
   async restartGateway(
     options: OpenClawGatewayRestartOptions = {},
   ): Promise<OpenClawEngineStatus> {
+    if (this.gatewayShutdown?.failure) throw this.gatewayShutdownFailure();
     if (this.applicationShuttingDown) return this.getStatus();
     if (this.restartGatewayPromise) {
       if (!options.afterCurrent) {
@@ -1372,6 +1375,7 @@ export class OpenClawEngineManager extends EventEmitter {
   }
 
   private async performGatewayRestart(): Promise<OpenClawEngineStatus> {
+    if (this.gatewayShutdown?.failure) throw this.gatewayShutdownFailure();
     if (this.applicationShuttingDown) return this.getStatus();
     this.gatewayRestartInProgress = true;
     this.setStatus({
@@ -1393,9 +1397,11 @@ export class OpenClawEngineManager extends EventEmitter {
       this.setStatus({
         phase: EnginePhase.Error,
         version: this.getStatus().version,
-        message: error instanceof Error ? error.message : String(error),
-        canRetry: true,
+        message: this.gatewayShutdown?.failure ? t('gatewayShutdownUnconfirmed') :
+          error instanceof Error ? error.message : String(error),
+        canRetry: !this.gatewayShutdown?.failure,
       });
+      if (this.gatewayShutdown?.failure) throw this.gatewayShutdownFailure();
       throw error;
     } finally {
       this.gatewayRestartInProgress = false;
@@ -2085,63 +2091,24 @@ export class OpenClawEngineManager extends EventEmitter {
 
   private stopGatewayProcess(child: GatewayProcess): Promise<void> {
     this.expectedGatewayExits.add(child);
+    return this.gatewayShutdownOwner().stop(child);
+  }
 
-    return new Promise<void>(resolve => {
-      // Already exited — resolve immediately.
-      if ('exitCode' in child && child.exitCode !== null) {
-        resolve();
-        return;
-      }
-
-      let settled = false;
-
-      const done = () => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(forceTimer);
-        clearTimeout(hardTimer);
-        child.removeListener('exit', done);
-        resolve();
-      };
-
-      // Listen for exit (ChildProcess) or exit (UtilityProcess).
-      child.once('exit', done);
-
-      // Windows kill() terminates immediately and skips native database lease cleanup.
-      // Give the preload's IPC shutdown request time to run OpenClaw's SIGTERM handler.
-      const forceTimer = setTimeout(() => {
-        try {
-          if ('pid' in child && typeof child.pid === 'number') {
-            child.kill();
-          }
-        } catch {
-          // ignore
-        }
-      }, 15_000);
-
-      const hardTimer = setTimeout(done, 16_000);
-      try {
-        if ('send' in child && child.connected) {
-          child.send(OPENCLAW_GATEWAY_SHUTDOWN_MESSAGE, error => {
-            if (error && !settled) {
-              try {
-                child.kill();
-              } catch {
-                /* already exited */
-              }
-            }
-          });
-        } else {
-          child.kill();
-        }
-      } catch {
-        try {
-          child.kill();
-        } catch {
-          /* already exited */
-        }
-      }
+  private gatewayShutdownOwner(): GatewayProcessShutdown {
+    this.gatewayShutdown ??= new GatewayProcessShutdown(failure => {
+      console.error('[OpenClaw] Gateway retirement failed:', failure);
+      this.setStatus({
+        phase: EnginePhase.Error,
+        version: this.status?.version ?? null,
+        message: t('gatewayShutdownUnconfirmed'),
+        canRetry: false,
+      });
     });
+    return this.gatewayShutdown;
+  }
+
+  private gatewayShutdownFailure(): Error {
+    return new Error(t('gatewayShutdownUnconfirmed'), { cause: this.gatewayShutdown?.failure });
   }
 
   // Workaround: Electron utilityProcess V8 isolate reports getTimezoneOffset()=0.
@@ -2222,6 +2189,7 @@ export class OpenClawEngineManager extends EventEmitter {
   }
 
   private attachGatewayExitHandlers(child: GatewayProcess): void {
+    this.gatewayShutdownOwner().observe(child);
     child.once('error', (...args: unknown[]) => {
       // UtilityProcess error: (type: string, location: string)
       // ChildProcess error: (err: Error)
@@ -2291,6 +2259,7 @@ export class OpenClawEngineManager extends EventEmitter {
   }
 
   private scheduleGatewayRestart(): void {
+    if (this.gatewayShutdown?.failure) return;
     if (this.shutdownRequested) return;
     if (this.gatewayRestartTimer) return;
 
@@ -2326,7 +2295,9 @@ export class OpenClawEngineManager extends EventEmitter {
     this.gatewayRestartTimer = setTimeout(() => {
       this.gatewayRestartTimer = null;
       if (this.shutdownRequested) return;
-      void this.startGateway();
+      void this.startGateway().catch(error => {
+        console.error('[OpenClaw] Gateway automatic restart failed:', error);
+      });
     }, delay);
   }
 

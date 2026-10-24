@@ -15,7 +15,7 @@ test('relies on the npm predist:win lifecycle without invoking it twice', () => 
   ) as { scripts: Record<string, string> };
 
   expect(packageJson.scripts['predist:win']).toBe(
-    'npm run drawio:prepare -- --ensure --download && npm run clean:release && node scripts/packaging/prepare-windows-build.cjs',
+    'npm run widget-kit:prepare && npm run drawio:prepare -- --ensure --download && npm run clean:release && node scripts/packaging/prepare-windows-build.cjs',
   );
   expect(packageJson.scripts['dist:win']).not.toContain('npm run predist:win');
   expect(packageJson.scripts['dist:win']).not.toMatch(/setup:(?:mingit|python-runtime)/);
@@ -29,7 +29,7 @@ test('preinstalls the official MXC sandbox only for Windows runtimes', () => {
   expect(packageJson.openclaw.plugins).toContainEqual({
     id: 'mxc',
     npm: '@openclaw/mxc-sandbox',
-    version: '2026.10.4',
+    version: '2026.10.6',
     platforms: ['win32'],
   });
 });

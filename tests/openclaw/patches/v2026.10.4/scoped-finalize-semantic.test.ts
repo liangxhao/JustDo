@@ -1,3 +1,4 @@
+import { historicalRuntime } from './historical-runtime';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -7,8 +8,8 @@ import { expect, it } from 'vitest';
 
 const { transformTypes } =
   require('../../../../scripts/patches/v2026.10.4/026-scoped-finalize-hook-admission.cjs').__testing;
-const pristine = process.env.JUSTDO_EXECUTION_PRISTINE_DIR;
-const frozen = process.env.JUSTDO_EXECUTION_RUNTIME;
+const pristine = historicalRuntime(process.env.JUSTDO_EXECUTION_PRISTINE_DIR);
+const frozen = historicalRuntime(process.env.JUSTDO_EXECUTION_RUNTIME);
 const sdkRoot = frozen ?? pristine;
 const { canonicalHelper, verifyNativeSupportBindings, extractNativeFunction } =
   require('../../../../scripts/openclaw/native-support-contract.cjs');

@@ -781,20 +781,24 @@ describe('homepage App adoption at first-message admission', () => {
       sessionRoot: cwd,
       permissionMode: 'workspace',
     };
-    const request = vi.fn(async (method: string, raw: unknown) =>
-      method === 'sessions.create'
-        ? {
+    let nativeCreated = false;
+    const request = vi.fn(async (method: string, raw: unknown) => {
+      if (method === 'sessions.create') {
+        nativeCreated = true;
+        return {
             key: (raw as { key: string }).key,
             sessionId: native.sessionId,
             entry: native,
             runStarted: false,
-          }
-        : { session: native },
-    );
+          };
+      }
+      return { session: nativeCreated ? native : null };
+    });
     const { WorkspaceAppSessions } = await import('../../plugins/mcp/workspaceAppSession');
     const workspaces = new WorkspaceAppSessions({
       getStore: () => store as unknown as CoworkStore,
       request: request as never,
+      captureResponseContext: async () => ({ isCurrent: () => true, isResponseError: () => false }),
     });
     const binding = await workspaces.prepare(owner as never, {
       requestId: input.appWorkspaceRequestId,

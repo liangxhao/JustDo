@@ -37,10 +37,11 @@ process.stdout.write('${OUTPUT_PREFIX}' + JSON.stringify(allowed));
 
 type PolicyRunner = (runtimeRoot: string, input: string) => Promise<string>;
 
-const runNativePolicy: PolicyRunner = (runtimeRoot, input) =>
-  new Promise((resolve, reject) => {
+const runNativePolicy: PolicyRunner = async (runtimeRoot, input) => {
+  const { getElectronNodeRuntimePath } = await import('../../runtime/launch/electronNodeRuntime');
+  return new Promise((resolve, reject) => {
     const child = spawn(
-      process.execPath,
+      getElectronNodeRuntimePath(),
       ['--input-type=module', '-e', POLICY_SCRIPT, runtimeRoot],
       {
         cwd: runtimeRoot,
@@ -72,6 +73,7 @@ const runNativePolicy: PolicyRunner = (runtimeRoot, input) =>
     child.on('close', code => finish(code !== 0));
     child.stdin.end(input);
   });
+};
 
 /** Project only the global settings choice; native execution still enforces all session policies. */
 export async function evaluateComputerControlNativePolicy(

@@ -39,13 +39,13 @@ interface NativeMethodRegistry {
 
 type NativeRegistryFactory = (descriptors: Array<Record<string, unknown>>) => NativeMethodRegistry;
 const nativeRuntime = path.resolve(
-  process.env.JUSTDO_EXECUTION_PRISTINE_DIR ??
+  process.env.OPENCLAW_TEST_NATIVE_RUNTIME_DIR ?? process.env.JUSTDO_EXECUTION_PRISTINE_DIR ??
     path.resolve(__dirname, '../../../../vendor/openclaw-runtime/current'),
 );
 
 function loadNativeRegistry(): NativeRegistryFactory {
   const metadata = JSON.parse(fs.readFileSync(path.join(nativeRuntime, 'package.json'), 'utf8'));
-  expect(metadata.version).toBe('2026.10.4');
+  expect(metadata.version).toBe('2026.10.6');
   const dist = path.join(nativeRuntime, 'dist');
   const registries = fs.readdirSync(dist).filter(
     name =>

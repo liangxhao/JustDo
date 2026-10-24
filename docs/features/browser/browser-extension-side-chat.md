@@ -189,3 +189,7 @@ fixture 和本开发机通过不代表已复现用户安装现场；真正安装
 历史 generation 显示作用域，不能承诺所有无可靠来源 ID 的历史更换都保留节点和选择；
 明确 reset 会隔开过程，但尚未复用桌面在非计划 reset 时清除旧显示前缀的完整投影。
 侧栏也不提供桌面 Widget、MCP App、计划审批、Monaco 工具差异和完整历史定位能力。
+
+## 上游 relay 基线
+
+v2026.10.6 对齐 tag `fe06181dc5ecc01cf8904abbfc26925925efefbc` 的原始浏览器扩展；`prepare.cjs` 锁定 29 项源码/资源校验。新增串行队列及 relay URL query 校验模块，与原生 Tab 授权、内部导航和恢复清理一起完整同步；产品 app-server、配对 transport、Side Panel 和固定扩展身份仍经既有 overlay 组合。构建校验不能代替安装版 Chrome Native Messaging/relay 实机验收。

@@ -21,6 +21,27 @@ that case remains an attribution and vendor-escalation issue.
 
 ## Required behavior
 
+### Data compatibility after installation
+
+Setup replaces application payloads; it does not open or migrate a user's databases.
+Main checks each actual profile before opening its product Store, rewriting runtime
+configuration or admitting Gateway. It distinguishes migration upgrade, normal
+upgrade, first installation and normal startup. Normal upgrades preserve existing
+data and use the target runtime's declared schema range and native maintenance.
+
+A decrease in either application or runtime version pauses startup with a
+localized warning and a “Start anyway” button. Human confirmation resumes the
+same normal startup checks for the exact current target; it neither marks startup
+ready nor persists a bypass. Unsupported data or loading failures still report
+their actual errors and preserve files. Uncomparable versions are not inferred
+to be compatible. See
+[startup and history upgrades](features/app/startup-and-history-upgrade.md).
+
+This is a data-use admission rule in builds containing this policy, not a claim
+that every historical installer prevents copying an older executable. Historical
+builds without the rule cannot be protected retroactively. Per-machine setup and
+automatic-update version selection do not substitute for per-profile data checks.
+
 ### Native Windows architecture
 
 The installed Electron application and its production runtime remain x64. The
@@ -482,3 +503,7 @@ rebuilding; inherited environment variables cannot silently enable networking.
 - A release check should continue to assert that the installed main executable
   and production native modules are x64. The check must distinguish these from
   the intentionally x86 NSIS installer, uninstaller, and elevation helper.
+
+## Bundled Node for OpenClaw 2026.10.6
+
+The Gateway and native CLI use the complete pinned Node 24.22.1 distribution inside the OpenClaw runtime at `node-runtime/`. Electron remains the UI and product-database host. The runtime manifest binds the Node manifest; freeze and archive verification validate the full file tree, npm/npx, symlink topology and executable bytes. Missing or changed files fail preparation instead of selecting an external Node or downloading on first launch. Windows archive extraction preserves this exact subtree and its license files. Preparation inputs are listed only in [offline downloads](offline-downloads.md). macOS signing/notarization and other architecture installation checks require separate platform acceptance.

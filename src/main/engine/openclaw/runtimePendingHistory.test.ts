@@ -93,6 +93,9 @@ test('hydrates pending messages natively without falling back to stored transcri
   });
   const result = await fetchNativePendingHistory({ request } as never, 'key');
   expect(result.pendingInputs[0].message.content).toBe('complete');
+  expect(request).toHaveBeenCalledWith('chat.message.get', {
+    sessionKey: 'key', sessionId: 'native-1', messageId: 'pending:1', maxChars: 2_000_000,
+  });
   expect(request.mock.calls.some(([method]) => method === 'runtimeServices.historyMessage')).toBe(false);
 });
 

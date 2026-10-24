@@ -16,7 +16,6 @@ export type OpenAiEmbeddingClient = RemoteEmbeddingClient & {
   outputDimensionality?: number;
 };
 
-const DEFAULT_OPENAI_BASE_URL = 'https://api.openai.com/v1';
 const OPENAI_MAX_INPUT_TOKENS: Record<string, number> = {
   'text-embedding-3-small': 8192,
   'text-embedding-3-large': 8192,
@@ -31,14 +30,37 @@ function normalizeOpenAiModel(model: string): string {
   });
 }
 
-function isNativeOpenAiBaseUrl(baseUrl: string): boolean {
-  return URL.parse(baseUrl)?.hostname.toLowerCase().replace(/\.+$/, '') === 'api.openai.com';
-}
-
 export async function createOpenAiEmbeddingProvider(
   options: MemoryEmbeddingProviderCreateOptions,
 ): Promise<{ provider: MemoryEmbeddingProvider; client: OpenAiEmbeddingClient }> {
-  const client = await resolveOpenAiEmbeddingClient(options);
+  const originalModel = options.model;
+  const provider = options.provider ?? 'openai';
+  const baseUrl = requireServiceBaseUrl(
+    options.remote?.baseUrl ?? options.config.models?.providers?.[provider]?.baseUrl,
+    'Embedding',
+  );
+  const resolvedClient = await resolveRemoteEmbeddingClient({
+    provider: options.provider ?? 'openai',
+    capability: 'embedding',
+    options,
+    defaultBaseUrl: baseUrl,
+    normalizeModel: normalizeOpenAiModel,
+  });
+  // Routers expect the provider-qualified model name; only native OpenAI strips it.
+  if (
+    URL.parse(resolvedClient.baseUrl)?.hostname.toLowerCase().replace(/\.+$/, '') !==
+      'api.openai.com' &&
+    originalModel.startsWith('openai/')
+  ) {
+    resolvedClient.model = `openai/${normalizeOpenAiModel(originalModel)}`;
+  }
+  const client: OpenAiEmbeddingClient = {
+    ...resolvedClient,
+    inputType: options.inputType,
+    queryInputType: options.queryInputType,
+    documentInputType: options.documentInputType,
+    outputDimensionality: options.dimensions,
+  };
   return {
     provider: createRemoteEmbeddingProvider({
       id: 'openai',
@@ -59,34 +81,5 @@ export async function createOpenAiEmbeddingProvider(
       },
     }),
     client,
-  };
-}
-
-async function resolveOpenAiEmbeddingClient(
-  options: MemoryEmbeddingProviderCreateOptions,
-): Promise<OpenAiEmbeddingClient> {
-  const originalModel = options.model;
-  const provider = options.provider ?? 'openai';
-  const baseUrl = requireServiceBaseUrl(
-    options.remote?.baseUrl ?? options.config.models?.providers?.[provider]?.baseUrl,
-    'Embedding',
-  );
-  const client = await resolveRemoteEmbeddingClient({
-    provider: options.provider ?? 'openai',
-    capability: 'embedding',
-    options,
-    defaultBaseUrl: baseUrl,
-    normalizeModel: normalizeOpenAiModel,
-  });
-  // Routers expect the provider-qualified model name; only native OpenAI strips it.
-  if (!isNativeOpenAiBaseUrl(client.baseUrl) && originalModel.startsWith('openai/')) {
-    client.model = `openai/${normalizeOpenAiModel(originalModel)}`;
-  }
-  return {
-    ...client,
-    inputType: options.inputType,
-    queryInputType: options.queryInputType,
-    documentInputType: options.documentInputType,
-    outputDimensionality: options.dimensions,
   };
 }

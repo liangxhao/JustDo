@@ -1,3 +1,7 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
 import { expect, test, vi } from 'vitest';
 
 const { sendToRenderer } = vi.hoisted(() => ({ sendToRenderer: vi.fn() }));
@@ -20,7 +24,7 @@ vi.mock('../../cowork/coworkLogger', () => ({
 import { createDefaultAgentRuntimeSettings } from '../../../shared/agents/agentRuntimeSettings';
 import type { GatewayClientCtor, GatewayClientLike, SessionTurn } from '../gateway/types';
 import { OpenClawRuntimeAdapter } from './openclawRuntimeAdapter';
-import { _ensureGatewayClientReadyImpl, type RuntimeGatewayConnectionContext } from './runtimeGatewayConnection';
+import { _ensureGatewayClientReadyImpl, captureGatewayResponseContext, type RuntimeGatewayConnectionContext } from './runtimeGatewayConnection';
 
 const createPreparedSessionReceipt = (key = 'agent:main:justdo:session-1') => ({
   key,
@@ -381,6 +385,57 @@ test('Gateway reconnect scheduling keeps only one cancellable timer', () => {
     vi.useRealTimers();
   }
 });
+
+test('captures the public response facade only for the exact loaded constructor and transport incarnation', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'gateway-response-context-'));
+  try {
+    fs.writeFileSync(path.join(directory, 'owner.cjs'),
+      'class GatewayClient {}\nmodule.exports={GatewayClient,responses:new WeakSet()};');
+    const entryPath = path.join(directory, 'client-implementation.js');
+    fs.writeFileSync(entryPath, "module.exports={t:require('./owner.cjs').GatewayClient};");
+    fs.writeFileSync(path.join(directory, 'client-public.js'),
+      "const owner=require('./owner.cjs'); module.exports={GatewayClient:owner.GatewayClient,isGatewayProtocolResponseError:value=>owner.responses.has(value)};");
+    const { responses } = require(path.join(directory, 'owner.cjs')) as { responses: WeakSet<Error> };
+    const client = { start: vi.fn(), stop: vi.fn(), request: vi.fn() };
+    const context = { gatewayClient: client, gatewayClientGeneration: 7, gatewayClientEntryPath: entryPath };
+    const captured = captureGatewayResponseContext.call(context as unknown as RuntimeGatewayConnectionContext);
+    expect(captured).not.toBeNull();
+    const unconfirmed = new Error('same shape is not a response');
+    expect(captured!.isResponseError(unconfirmed)).toBe(false);
+    responses.add(unconfirmed);
+    expect(captured!.isResponseError(unconfirmed)).toBe(true);
+    expect(captured!.isCurrent()).toBe(true);
+    context.gatewayClientGeneration++;
+    expect(captured!.isCurrent()).toBe(false);
+    context.gatewayClientGeneration--;
+    context.gatewayClient = { ...client };
+    expect(captured!.isCurrent()).toBe(false);
+    expect(client.start).not.toHaveBeenCalled();
+    expect(client.request).not.toHaveBeenCalled();
+  } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+});
+
+test.each(['missing', 'foreign-constructor', 'throwing-predicate', 'conflicting-predicates'] as const)(
+  'does not grant native response evidence for a %s facade', kind => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'gateway-response-context-'));
+    try {
+      fs.writeFileSync(path.join(directory, 'owner.cjs'), 'class GatewayClient {} module.exports={GatewayClient};');
+      const entryPath = path.join(directory, 'client-implementation.js');
+      fs.writeFileSync(entryPath, "module.exports={t:require('./owner.cjs').GatewayClient};");
+      if (kind !== 'missing') {
+        fs.writeFileSync(path.join(directory, 'client-public.js'),
+          `module.exports={GatewayClient:${kind === 'foreign-constructor' ? 'class GatewayClient {}' : "require('./owner.cjs').GatewayClient"},isGatewayProtocolResponseError:()=>{${kind === 'throwing-predicate' ? "throw new Error('unavailable')" : 'return true'}}};`);
+      }
+      if (kind === 'conflicting-predicates') fs.writeFileSync(path.join(directory, 'client-other.js'),
+        "module.exports={GatewayClient:require('./owner.cjs').GatewayClient,isGatewayProtocolResponseError:()=>true};");
+      const context = { gatewayClient: { start: vi.fn(), stop: vi.fn(), request: vi.fn() },
+        gatewayClientGeneration: 1, gatewayClientEntryPath: entryPath };
+      const captured = captureGatewayResponseContext.call(context as unknown as RuntimeGatewayConnectionContext);
+      if (kind === 'throwing-predicate') expect(captured!.isResponseError(new Error('pending'))).toBe(false);
+      else expect(captured).toBeNull();
+    } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+  },
+);
 
 test('ensureGatewayClientReady reuses an already connected Gateway client', async () => {
   const { store } = createEmptyStore();

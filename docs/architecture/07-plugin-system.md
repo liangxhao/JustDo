@@ -101,10 +101,10 @@ Plugin Hub 有四类插件概念；市场当前只开放 extension、skill、mcp
 
 ## 2. 从页面到运行时
 
-日常 Chrome 沿用原生 existing-session driver 和随包 Chrome MCP，设置页通过 Gateway 请求原生 Tab 查询来触发浏览器授权。Windows 的应用配置选择 `chrome-mcp.cmd`，Main 生成的 UTF-8 启动器用 Electron Node 模式启动锁定服务器；`npm.cmd`、`npx.cmd` 和 `node.cmd` 同样位于应用 PATH 前端。启动器内的 Node／可信预加载文件引用使用绝对路径，避免真实 npm 包的 `.cmd` 嵌套调用裸 `node` 时将 `%~dp0` 解析到调用方工作目录。受管 MCP 的裸 `npm/npx` 命令由 Main 配置投影为 Electron Node 的直接启动参数，显式加载可信窗口隐藏模块；用户保存的命令、参数、环境和其它原生字段不被改写，绝对路径自定义命令保留原样。配置投影与启动器共享 npm 路径解析，打包后继续使用逻辑 `app.asar` 路径。原生 MCP 仍过滤不安全环境变量，负责连接授权、进程身份核验与清理。普通插件来源仍可使用应用 PATH 中的自包含启动器。002/003 补丁已移除；真实 npm/npx 与原生配置解析器对照测试验证连接、工具发现、调用和清理，受管配置不产生批处理空帧诊断。真实本地包二进制启动另验证嵌套批处理和中文／空格启动器路径。批处理对照虽有空帧诊断仍能完成普通 Client 连接，不能把该诊断直接等同于功能不可用。
+日常 Chrome 沿用原生 existing-session driver 和随包 Chrome MCP，设置页通过 Gateway 请求原生 Tab 查询来触发浏览器授权。Windows 的应用配置选择 `chrome-mcp.cmd`，Main 生成的 UTF-8 启动器用锁定的独立 Node 启动服务器；`npm.cmd`、`npx.cmd` 和 `node.cmd` 同样位于应用 PATH 前端。启动器内的 Node／可信预加载文件引用使用绝对路径，避免真实 npm 包的 `.cmd` 嵌套调用裸 `node` 时将 `%~dp0` 解析到调用方工作目录。受管 MCP 的裸 `npm/npx` 命令由 Main 配置投影为锁定 Node 的直接启动参数，显式加载可信窗口隐藏模块；用户保存的命令、参数、环境和其它原生字段不被改写，绝对路径自定义命令保留原样。配置投影与启动器共享 npm 路径解析，安装包中指向同一冻结 `node-runtime/` 内的完整 npm 分发。原生 MCP 仍过滤不安全环境变量，负责连接授权、进程身份核验与清理。普通插件来源仍可使用应用 PATH 中的自包含启动器。002/003 补丁已移除；真实 npm/npx 与原生配置解析器对照测试验证连接、工具发现、调用和清理，受管配置不产生批处理空帧诊断。真实本地包二进制启动另验证嵌套批处理和中文／空格启动器路径。批处理对照虽有空帧诊断仍能完成普通 Client 连接，不能把该诊断直接等同于功能不可用。
 
 OpenAI 媒体适配由 `plugins/extensions/openai` 的完整本地源码实现，基线为原生
-v2026.10.4。资源同步完整替换原包目录；裁剪策略明确移除上游插件，本地保护只保留
+v2026.10.6。资源同步完整替换原包目录；裁剪策略明确移除上游插件，本地保护只保留
 替换后的唯一 `openai`。不合并源码、不备份 native-* 入口、不注册第二个同名插件。
 本地 manifest 和 setup 删除官网登录/API Key 引导、公网 catalog 和 usage；内网服务
 仍可配置 API Key/SecretRef，缺失能力地址时拒绝请求，不读取环境 Key 回退。
@@ -115,12 +115,12 @@ v2026.10.4。资源同步完整替换原包目录；裁剪策略明确移除上�
 保留图像、TTS、实时 STT、文件转录、embedding 和配置模型的原生协议能力，视频
 也由同一插件注册。官网账号/RTC 专属 Realtime Voice 不注册，不影响现有 TTS/STT。
 更新时先读[升级检查清单](../upgrade-checklist/checklist.md)，再三方比较上游基线、
-新上游与本地差异。020/021 补丁保持删除。Gateway bundle 和动态 SDK
-通过构建时共享原生会话访问模块实例完成授权注册表共享，移除 027 补丁。
+新上游与本地差异。Gateway bundle 和动态 SDK 通过构建时共享原生会话访问模块实例
+完成授权注册表共享，不通过运行时补丁建立第二个注册表。
 
 执行结算及压缩的普通实现放在 Main 领域的 `runtime/native-support/`，构建时作为
-原生运行时模块导入，并由构建配方和最终 bundle 校验绑定。034/038 仅保留原生接入
-和验证；原生恢复、worker 及准备/清理阶段需要这些能力，不能依赖可关闭插件的注册
+原生运行时模块导入，并由构建配方和最终 bundle 校验绑定。执行结算与压缩补丁仅保留
+原生接入和验证，具体编号见当前补丁总账；原生恢复、worker 及准备/清理阶段需要这些能力，不能依赖可关闭插件的注册
 时机。Runtime Services 继续通过受限 SDK 消费能力，不接管原生状态所有权。
 
 ```mermaid
@@ -161,7 +161,7 @@ Windows 原生扩展安装的最后一次目录发布支持五秒有界恢复：
 提交前仍执行原生父目录、权限和临时目录守卫；不重复下载、复制、能力审查或安装
 RPC。正常发布不增加卷探测或全树比较。网络目录、未知结果、文件变化、守卫与
 提交后错误不重试；持续占用耗尽预算后沿原生失败与旧版恢复流程处理。补丁的
-精确原生边界、产物证明及删除条件见[当前补丁总账](../../scripts/patches/v2026.10.4/README.md#windows-plugin-directory-publication)。
+精确原生边界、产物证明及删除条件见[当前补丁总账](../../scripts/patches/v2026.10.6/README.md#windows-plugin-directory-publication)。
 
 变更 IPC 可在最后传入有界 `PluginOperationContext.requestId`，Main 以
 `plugins:operation:progress` 仅向原请求窗口发布闭合的 kind、action、stage 和
@@ -222,7 +222,7 @@ Renderer 技能服务保留在途开关，同一技能的相同意图复用请�
 
 Extension 卡片的警告支持鼠标悬停、键盘聚焦和点击进入详情。红色表示原生错误，
 橙黄色表示缺少凭据；详情显示错误或缺失项，并提供密码输入框、已配置提示和保存反馈。
-OpenClaw 2026.10.4 的 `plugins.list` 分别返回配置期望状态与当前 Gateway 代次的
+OpenClaw 2026.10.6 的 `plugins.list` 分别返回配置期望状态与当前 Gateway 代次的
 `runtime` 状态。Main 保持 `enabled` 的配置含义，将 `runtime.error` 或
 `runtime.state: service-failed` 投影为错误警告；仅 `unloaded` 不推断失败。
 原生 `needs-setup` 同样显示配置警告，即使没有环境变量缺失项；不为展示错误修改开关、
@@ -254,11 +254,11 @@ Document Extraction 和 Web Readability Extraction 保持上游默认启用，�
 协作、记忆和本地语音可选插件继续保留用户明确禁用状态。TypeSafe 沿用模型设置的有条件托管；
 视频由同一个 OpenAI 适配器提供；清空默认视频模型只停止视频使用，不关闭整个插件。
 
-OpenClaw v2026.10.4 的插件管理 RPC 会直接应用运行时变更。CLI 导入等待最终运行时回执：Gateway 已应用则无需额外操作，仅保存到磁盘时调用 `plugins.reload`。卸载 RPC 仍请求重启时，以及 CLI 卸载和启停回退后，优先调用 `plugins.refresh`；原生确认已热应用且无需重启时直接完成，仍需重启、热加载失败或出站代理策略变化时再申请 Gateway 重启。扩展普通配置先等待配置 reload ACK，无环境变量变更时再尝试定向 `plugins.reload`；SecretRef 更新先调用 `secrets.reload` 刷新准备快照，失败报告并保留待刷新，不能靠重启掩盖。配置应用与重启协调见[引擎](05-agent-engine.md)；保留原生对活动任务的重启延迟，不能与宿主冷重启竞争。原生不支持热应用的运行时代码及网络策略仍可能需要重启；Windows 文件操作的目录锁恢复保持独立。
+OpenClaw v2026.10.6 的插件管理 RPC 会直接应用运行时变更。CLI 导入等待最终运行时回执：Gateway 已应用则无需额外操作，仅保存到磁盘时调用 `plugins.reload`。卸载 RPC 仍请求重启时，以及 CLI 卸载和启停回退后，优先调用 `plugins.refresh`；原生确认已热应用且无需重启时直接完成，仍需重启、热加载失败或出站代理策略变化时再申请 Gateway 重启。扩展普通配置先等待配置 reload ACK，无环境变量变更时再尝试定向 `plugins.reload`；SecretRef 更新先调用 `secrets.reload` 刷新准备快照，失败报告并保留待刷新，不能靠重启掩盖。配置应用与重启协调见[引擎](05-agent-engine.md)；保留原生对活动任务的重启延迟，不能与宿主冷重启竞争。原生不支持热应用的运行时代码及网络策略仍可能需要重启；Windows 文件操作的目录锁恢复保持独立。
 
 原生插件或配置操作的互斥租约忙碌时，Main 仅对锁定版本明确返回的“尚未进入写入”的 `UNAVAILABLE` 拒绝等待后重新申请准入：必须同时具有精确忙碌原因、`retryable: true` 和有效 `retryAfterMs`，且不含提交、运行时尝试或结果未知等元数据。等待最多 30 秒，并共享原请求总超时；等待期间进度进入排队阶段。重新申请必须保持原 Gateway PID 与进程代次、相同参数及能力确认令牌。Main 请求适配器在连接准备前和实际发送前再次校验身份与预算，校验回调不进入原生传输。超时、断连和任何结果未知的已发送操作均不重放；启停只有明确未发送的连接失败才允许既有 CLI 回退，不能用配置开关值推断运行时成功。Windows Gateway 沿生产启动环境使用轮询监听，集成测试也必须复用该环境，避免测试自身引入长期目录句柄；现存目录的占用检测与文件安全边界仍然保留。
 
-本地 Extension 的交互式能力审查由 Main 展示，确认后通过 `plugins.install` 将同一 `reviewToken` 交给 v2026.10.4 原生 staging 在提交前核验。不能用 CLI `--accept-capabilities` 代替已确认令牌，否则审查后改变的能力面会被无条件接受。安装 RPC 使用原 CLI 的 10 分钟等待窗口；确认原生提交及运行时代次回执后收敛出站策略和重启要求，超时不回退或重复安装。原生返回持久提交错误时保留提交事实；能力面变化则重新展示审查。可信市场及没有交互式审查的冷 CLI 安装保留现有路径。
+本地 Extension 的交互式能力审查由 Main 展示，确认后通过 `plugins.install` 将同一 `reviewToken` 交给 v2026.10.6 原生 staging 在提交前核验。不能用 CLI `--accept-capabilities` 代替已确认令牌，否则审查后改变的能力面会被无条件接受。安装 RPC 使用原 CLI 的 10 分钟等待窗口；确认原生提交及运行时代次回执后收敛出站策略和重启要求，超时不回退或重复安装。原生返回持久提交错误时保留提交事实；能力面变化则重新展示审查。可信市场及没有交互式审查的冷 CLI 安装保留现有路径。
 
 多入口包的 manifest owner 与原生运行条目 ID 分开处理。Main 按需使用独立只读进程调用原生 metadata snapshot 与 package ownership resolver，投影明确的 owner、条目集合及安装路径，再与本地包的精确路径核对。该结果仅用于本次清单和文件操作的对账，不执行插件入口、不启动 Gateway、不另存包归属；不能按 ID 前缀或包名猜路径。清单为子条目补齐已核验目录，并按其原生 ID 计算配置状态；安装结果以明确的代表条目统一市场身份，配置和卸载捕获使用同一包路径。读取失败报告无法确认，保留错误而不猜测可管理条目。
 
@@ -266,7 +266,7 @@ OpenClaw v2026.10.4 的插件管理 RPC 会直接应用运行时变更。CLI 导
 
 Extension CLI 文件变更的预检保留目录锁诊断，但关闭文件锁触发的 Gateway stop/mutate/start；占用者即使是 Gateway，也先报告真实失败，不通过重启或重复破坏性命令绕过。只有明确未发送的原生卸载请求允许 CLI 离线恢复；超时、断线或原生关联拒绝不证明未提交。响应丢失时先核对权威清单和本次原安装路径，确认已移除后只收敛运行态；无法确认时提示结果待确认，不重放卸载或通过重启绕过。
 
-扩展删除确认按钮在操作及清单更新期间显示旋转加载图标，并禁用重复提交与取消；完成后结束加载，失败恢复重试入口。Windows 原生插件恢复快照复制原有目录 junction 时，`fs.cpSync` 默认将它重新创建为普通 symlink，可能在替换准备阶段因权限不足报 EPERM。运行时补丁 042 仅在原生 filter 接受后，为绝对目标的目录链接保留 junction 类型；文件链接、相对或断开的链接、非 Windows 行为及原生文件引用校验保持不变，不遍历链接目标或改变卸载生命周期。补丁从锁定 pristine 包重建后生效，不修改正在使用的旧运行时。Main 沿完整错误 cause 优先识别链接创建失败，保留实际原因，不转成目录占用或失联后重复 CLI 卸载；未确认占用者时仅报告未确认的目录失败并附实际错误。
+扩展删除确认按钮在操作及清单更新期间显示旋转加载图标，并禁用重复提交与取消；完成后结束加载，失败恢复重试入口。Windows 原生插件恢复快照复制原有目录 junction 时，`fs.cpSync` 默认将它重新创建为普通 symlink，可能在替换准备阶段因权限不足报 EPERM。运行时补丁 024 仅在原生 filter 接受后，为外部已捕获宿主目录的绝对链接保留 junction 类型；原生内部 junction relocation 继续由原生执行；文件链接、相对或断开的链接、非 Windows 行为及原生文件引用校验保持不变，不遍历链接目标或改变卸载生命周期。补丁从锁定 pristine 包重建后生效，不修改正在使用的旧运行时。Main 沿完整错误 cause 优先识别链接创建失败，保留实际原因，不转成目录占用或失联后重复 CLI 卸载；未确认占用者时仅报告未确认的目录失败并附实际错误。
 
 本地扩展安装及更新直接使用原生接口，不新增 staging copy 补丁。Windows 文件夹导入仅在 `node_modules/openclaw` 为指向当前 CLI 运行时的绝对目录链接、包声明对应宿主依赖和原生入口、其余目录为真实目录且文件无额外硬链接时，异步生成一次性隔离副本并省略该宿主链接。原生安装器仍执行安全扫描、能力确认与发布，并重建宿主 junction。复制按已检查的文件身份读取，前后及全树成员变化会失败并清理；未知链接和其他输入原样交给原生处理，用户原目录不修改。能力确认和安装使用同一副本；能力确认返回、尚未发起安装或确认安装成功时清理临时源；安装已发起但 CLI 失败、超时或抛错时无法证明原生操作已结束，保留副本并记录路径，不自动重放。原生安装记录保留真实使用过的临时副本路径，不伪造原始来源；该路径在清理后不再可读，持久安装目录保持可用。本地 path 原生不支持自动更新，后续更新须重新导入，不引入长期来源副本管理。
 
@@ -276,7 +276,7 @@ Main 的 Skill 文件夹复制同样为绝对目标目录链接保留 junction�
 
 本地 Extension 的构建预编译同时覆盖主入口和独立的 `setup-api` 入口（插件根及 `dist/` 下的 TypeScript 文件）。即使主入口已经是 JavaScript，也必须处理 setup 入口；编译成功后移除对应 TypeScript 入口，避免 OpenClaw 优先选中源码。ACPX 的自动启用探针在配置、旧状态检查和重载时都会运行，遗漏其 setup 预编译会触发原生源码代际快照，重复复制、哈希和校验依赖树。预编译让 bundled JavaScript 使用原生快速加载路径，不改变用户插件的源码隔离或完整性校验。
 
-ACPX 本地封装以 OpenClaw v2026.10.4 为基线，底层运行库精确锁定为 acpx 0.19.5。
+ACPX 本地封装以 OpenClaw v2026.10.6 为基线，底层运行库精确锁定为 acpx 0.19.5。
 会话世代、持久资源绑定、reset 和探测沿用上游分层；产品继续拥有外部 Agent 目录、
 结构化受管命令、隔离认证、逐 Agent doctor 和默认不启动探测的策略。内置适配器的
 诊断也使用随包包装器，诊断不授予任务执行权限。服务停止先撤销后端，再等待运行库
@@ -342,35 +342,55 @@ Extension 发布技能的 scope 表示父插件管理，ownershipScope 表示产
 
 Main 的文件变更串行队列同时覆盖操作后的原生清单查询，供不同窗口和市场安装共用；文件服务自身的配置/目录锁仍独立，不嵌套同一锁。Renderer 的删除/启停回包如果跨越了更新的查询代次，也会重读当前原生清单，避免迟到的全量旧清单覆盖新版。
 
-### 技能提案审核
+### 技能工坊：当前技能、版本与变更
 
 学习直接使用现有聊天中的原生 `/learn`，遵循原生工具能力、会话权限与技能配置。
-JustDo 不再提供独立学习启动流程，也不通过审核入口修改全局学习或发布策略。
-技能页仅保留“技能提案”低频入口，独立模态弹窗打开后才读取和轮询主助手（main）的提案。
-技能列表默认显式查询 main，`openclaw-workshop` 来源展示为助手提炼技能，不走导入目录删除逻辑。
+技能页的“技能工坊”入口仅在打开后读取主助手（main）的工坊；关闭后不发后台请求。
+`openclaw-workshop` 来源仍展示为助手提炼技能，不走导入目录删除逻辑。
+
+OpenClaw 2026.10.6 的技能变更立即生效；旧 `skills.proposals.*` 虽仍在方法目录中，
+handler 已固定返回退役错误。应用完整采用 `skills.workshop.list/changes/read/archive/restore`，
+不把旧批准/拒绝按钮伪映射为归档/恢复，也不在 Main 建立技能文件、版本或变更账本。
 
 ```mermaid
 sequenceDiagram
   participant C as 现有聊天
-  participant U as 技能提案弹窗
+  participant U as 技能工坊弹窗
   participant M as Main / SkillWorkshopService
   participant G as OpenClaw
   C->>G: 用户发起 /learn
-  G-->>C: 学习进展与结果
-  U->>M: 读取主助手提案
-  M->>G: skills.proposals.list
-  U->>M: 查看提案
-  M->>G: skills.proposals.inspect / skills.workshop.read
-  U->>M: 批准或拒绝（expectedRevisionHash）
-  M->>G: skills.proposals.apply / reject
-  U->>M: 重新读取提案与有效技能清单
+  G-->>C: 学习进展与实际变更
+  U->>M: 读取 main 当前技能、保存版本、最近变更
+  M->>G: skills.workshop.list / changes
+  U->>M: 查看当前或选定版本的完整文件
+  M->>G: skills.workshop.read（name/filePath/versionId）
+  U->>M: 确认归档或恢复明确选定版本
+  M->>G: skills.workshop.archive / restore（仅一次）
+  G-->>M: 原生 change 回执
+  M-->>U: 确认或未确认结果
+  U->>M: 只读刷新原生工坊与有效技能清单
 ```
 
-审核页对更新提案并列显示完整当前指令与提案指令；新建提案只显示新指令，并展示完整支持文件及原生状态。
-更新提案读取当前技能并核对原生目标哈希；无法读取或目标变化时禁止批准。Main 校验 main 归属、pending 状态、
-expectedRevisionHash，按提案序列化并发决定，再调用原生审核 API。原生负责最终目标冲突、扫描与原子发布。
-超时不重放写操作；清除旧审核快照，刷新权威状态后要求重新打开提案。弹窗关闭/卸载停止轮询，
-重新打开从原生恢复；写入期间禁用关闭，切换筛选清空旧详情。学习执行和提案持久化仍由原生负责。
+界面分别展示当前技能、已保存版本和最近最多 200 条变更。原生 `archived[].live:true`
+表示该技能仍有当前副本且保留历史，不能标成已归档；`live:false` 才表示没有当前副本。
+版本/当前副本都支持读取 `SKILL.md` 与完整支持文件。变更的 `versionId` 指向**该次变更前**
+的快照，可用于撤销；restore 回执的备份 ID 不等于用户选定的恢复目标。
+原生 changes 只有排他时间戳 `beforeMs`，没有完整分页 cursor，本界面不宣称展示全部历史。
+
+归档先显示用途及可恢复提示，并允许填写原因；恢复必须查看并明确选择具体版本，再确认替换当前副本。
+原生没有 `expectedRevisionHash` 前置条件，界面明确说明其他任务也可能修改技能；
+归档作用于执行时的当前副本，恢复前由原生保存当前副本，应用不伪造 CAS。
+读取需要 `operator.read`，归档/恢复需要 `operator.admin`；Main 固定 main 归属、校验文件/版本参数，
+序列化同一技能的变更并检查原生回执 agent/name/action。
+
+原生文件发布与变更记录可能在不同阶段失败。包括 `INVALID_REQUEST` 在内的未确认写入，
+均保留“可能已生效”提示，不自动重试、不反向补偿；清除详情后只读刷新，要求用户重新核对和选择。
+即使原生变更成功、产品技能列表刷新失败，也分别显示已确认变更和刷新失败，不提示重复提交。
+写入期间禁用关闭；异步读取带本地 generation，刷新/卸载使迟到内容失效，不保存转录副本。
+
+验证分层：service/UI 行为测试覆盖当前/历史区分、支持文件、显式恢复、单次写入、未知结果和迟到读取；
+`management-protocol-native.test.ts` 直接执行目标 TypeBox schema、scope 目录及退役 handler，
+避免旧 proposal mock 掩盖原生实变。真实企业内网模型学习、Electron 窗口和安装版文件操作另行验收。
 
 ## 4. MCP：配置与原生发现的汇合
 
@@ -499,14 +519,14 @@ Extension 可用 outbound-header-policy.json 声明 HTTPS 目标、Header 名称
 
 从 `src/main/plugins/` 的文件事务、MCP/Hook 同步、Extension import/conversion 和 registry 测试检查产品层；从 `tests/openclaw/extensions/` 与 skill-resolution runtime contract 检查最终原生能力。市场增加 kind 前需完成安装、更新、启停、删除与状态对账闭环，详见[市场适配](16-skill-marketplace-adapter.md)。
 
-## OpenClaw 2026.10.4 integration
+## OpenClaw 2026.10.6 integration
 
 The runtime retains the native QuickJS Code Mode executor as an enabled application-managed
 adapter; Runtime settings control Code Mode use. CUA desktop control retains explicit
 opt-in through its dedicated Settings switch. Both retain explicit allowlist membership. Local
 extensions import named SDK subpaths. Agent-owned Workshop collections remain
 Gateway-owned; the application does not recreate workspace-based skill ownership.
-See [upgrade audit](../openclaw-upgrades/v2026.10.4/README.md).
+See [upgrade audit](../openclaw-upgrades/v2026.10.6/README.md).
 
 ### 可选本机电脑控制
 

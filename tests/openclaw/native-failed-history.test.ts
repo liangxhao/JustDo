@@ -8,11 +8,17 @@ import {
   isEmptyFailureSourceContent,
   projectFailurePartialContent,
 } from '../../plugins/extensions/runtime-services/history-failure';
-import { hydrateTruncatedHistoryMessages } from '../../src/renderer/libs/openclaw-chat/gateway/history/chat-history-protocol';
 import type { GatewayClient } from '../../src/renderer/libs/openclaw-chat/gateway/client';
+import { hydrateTruncatedHistoryMessages } from '../../src/renderer/libs/openclaw-chat/gateway/history/chat-history-protocol';
 import { normalizeGatewayHistoryForDisplay } from '../../src/renderer/libs/openclaw-chat/pipeline/history-display-normalizer';
 
-const dist = path.resolve('vendor/openclaw-runtime/current/dist');
+const dist = path.join(
+  path.resolve(
+    process.env.OPENCLAW_TEST_NATIVE_RUNTIME_DIR ??
+      process.env.OPENCLAW_RUNTIME_DIR ?? 'vendor/openclaw-runtime/current',
+  ),
+  'dist',
+);
 const projectionFile = fs.existsSync(dist)
   ? fs
       .readdirSync(dist)
@@ -24,6 +30,10 @@ const projectionFile = fs.existsSync(dist)
             .includes('function projectChatDisplayMessages('),
       )
   : undefined;
+
+if (process.env.OPENCLAW_RUNTIME_CONTRACT_REQUIRED === '1' && !projectionFile) {
+  throw new Error('Required native history projection is missing from the selected runtime.');
+}
 
 test.skipIf(!projectionFile)(
   'recovers failed commentary and reasoning omitted by the locked native history projection',
@@ -159,4 +169,6 @@ test.skipIf(!projectionFile)(
       '[assistant turn failed before producing content]',
     );
   },
+  // Cold imports traverse the complete published native module graph.
+  30_000,
 );

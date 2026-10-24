@@ -5,7 +5,12 @@ import path from 'node:path';
 
 import { afterEach, expect, test } from 'vitest';
 
-const runtimeEntry = path.resolve('vendor/openclaw-runtime/current/openclaw.mjs');
+const runtimeRoot = path.resolve(
+  process.env.OPENCLAW_TEST_NATIVE_RUNTIME_DIR ?? 'vendor/openclaw-runtime/current',
+);
+const runtimeEntry = path.join(runtimeRoot, 'openclaw.mjs');
+const { hostTarget, targetContract } = require('../../../scripts/runtime/setup-node-runtime.cjs');
+const runtimeNode = path.join(runtimeRoot, 'node-runtime', targetContract(hostTarget()).executable);
 const runtimeAvailable = fs.existsSync(runtimeEntry);
 const temporaryRoots: string[] = [];
 // Each case performs two real CLI cold starts against the published runtime.
@@ -41,7 +46,8 @@ const writeConfig = (
   fs.writeFileSync(
     configPath,
     JSON.stringify({
-      agents: { entries: { main: { workspace: workspaceDir } } },
+      agents: { entries: { main: { workspace: workspaceDir } },
+        defaults: { embeddedAgent: { cyberFailover: { mode: 'off' } } } },
       ...(enabled === undefined
         ? {}
         : { skills: { entries: { 'duplicate-skill': { enabled } } } }),
@@ -58,12 +64,13 @@ const listSkills = (fixture: ReturnType<typeof createFixture>, enabled?: boolean
   delete cliEnvironment.VITEST_POOL_ID;
   delete cliEnvironment.VITEST_WORKER_ID;
   const stdout = execFileSync(
-    process.execPath,
+    runtimeNode,
     [runtimeEntry, 'skills', '--json', '--agent', 'main', 'list'],
     {
       cwd: fixture.workspaceDir,
       env: {
         ...cliEnvironment,
+        OPENCLAW_HOME: fixture.root,
         OPENCLAW_STATE_DIR: fixture.stateDir,
         OPENCLAW_CONFIG_PATH: configPath,
         OPENCLAW_BUNDLED_SKILLS_DIR: fixture.bundledDir,

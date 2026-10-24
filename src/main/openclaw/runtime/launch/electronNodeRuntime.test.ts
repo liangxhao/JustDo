@@ -1,12 +1,19 @@
 import { execFileSync } from 'node:child_process';
 
-import path from 'path';
 import { describe, expect, it, vi } from 'vitest';
+
+const bundledPaths = vi.hoisted(() => vi.fn(() => ({
+  executable: '/verified-runtime/node',
+  npmBin: '/verified-runtime/node_modules/npm/bin',
+})));
+
+vi.mock('./bundledNodeRuntime', () => ({ resolveBundledNodeRuntimePaths: bundledPaths }));
 
 vi.mock('electron', () => ({
   app: {
     getName: () => 'JustDo',
     getPath: () => '',
+    getAppPath: () => '/application',
     isPackaged: false,
   },
 }));
@@ -15,17 +22,18 @@ import {
   appendNodeRequireOption,
   buildElectronNodeShimScripts,
   buildWindowsChildProcessPreload,
-  resolvePackagedNpmBinDir,
+  getElectronNodeRuntimePath,
+  resolveElectronNpmBinDir,
 } from './electronNodeRuntime';
 
 describe('Electron Node runtime', () => {
-  it('keeps packaged npm on its logical asar path for dependency resolution', () => {
-    const resourcesPath = path.join('application', 'resources');
+  it('keeps Node and npm on one admitted runtime for the Main process lifetime', () => {
+    expect(getElectronNodeRuntimePath()).toBe('/verified-runtime/node');
+    bundledPaths.mockReturnValue({ executable: '/replacement/node', npmBin: '/replacement/npm/bin' });
 
-    const npmBinDir = resolvePackagedNpmBinDir(resourcesPath);
-
-    expect(npmBinDir).toBe(path.join(resourcesPath, 'app.asar', 'node_modules', 'npm', 'bin'));
-    expect(npmBinDir).not.toContain('app.asar.unpacked');
+    expect(resolveElectronNpmBinDir()).toBe('/verified-runtime/node_modules/npm/bin');
+    expect(getElectronNodeRuntimePath()).toBe('/verified-runtime/node');
+    expect(bundledPaths).toHaveBeenCalledTimes(1);
   });
 
   it('builds self-contained Electron Node and package runner shims', () => {

@@ -12,7 +12,7 @@ const { transform, CONTRACT } = patch.__testing;
 const { functionRange, parse, collect, one } =
   require('../../../../scripts/patches/v2026.10.4/prepared-read-patch-shapes.js');
 const { PROVIDER_TRANSPORT_PATH, PROVIDER_PARTITIONER_PATH } =
-  require('../../../../scripts/openclaw/openclaw-patch-dependencies.cjs');
+  require('../../../../scripts/patches/v2026.10.4/openclaw-patch-dependencies.js');
 const subscriberPath = 'dist/builtin-openclaw-qVsnLx0N.mjs';
 const snapshotPath = 'dist/server-chat-state-BP63MB41.mjs';
 // Keep structural fixtures independent of whether the developer's runtime has

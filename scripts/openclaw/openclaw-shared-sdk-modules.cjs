@@ -64,7 +64,12 @@ function createSharedSdkModulesPlugin(runtimeDir, esbuild) {
   });
   const shared = new Map();
   for (const contract of ownerContracts) {
-    const matches = inputs.filter(input => input.content.includes(`function ${contract}(`));
+    // The target package emits this revision accessor as an arrow beside the
+    // actual mutable revision counter. Do not match its re-export facade.
+    const declaration = contract === 'getRuntimeAuthProfileStoreCredentialsRevision'
+      ? 'const getRuntimeAuthProfileStoreCredentialsRevision = () => runtimeAuthStoreCredentialsRevision;'
+      : `function ${contract}(`;
+    const matches = inputs.filter(input => input.content.includes(declaration));
     if (matches.length !== 1)
       throw new Error(`Expected one native SDK state owner for ${contract}.`);
     const input = matches[0].absolute;

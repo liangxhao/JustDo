@@ -33,6 +33,9 @@ function inspectProductDatabase(file: string): 'absent' | 'legacy' | 'current' {
 export function classifyInstallation(userData: string, includeRecovery = true): StartupDecision {
   const journal = includeRecovery ? readStartupJournal(userData) : null;
   if (journal && journal.stage !== StartupStage.Complete) {
+    if (journal.route === StartupRoute.Upgrade &&
+        classifyInstallation(userData, false).route !== StartupRoute.Normal)
+      throw new Error('The product data generation changed during database upgrade. Existing data has been preserved.');
     if (
       journal.stage === StartupStage.Backup &&
       classifyInstallation(userData, false).route !== StartupRoute.Migration

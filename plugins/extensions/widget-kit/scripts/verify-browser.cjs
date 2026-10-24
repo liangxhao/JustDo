@@ -288,8 +288,8 @@ async function main() {
   );
   const [{ n: buildSandboxHostDocument }, { t: buildWidgetDocument }, { t: cdnOrigins }] =
     await Promise.all([
-      import(pathToFileURL(path.join(runtimeRoot, 'sandbox-host-BRz3YO81.mjs')).href),
-      import(pathToFileURL(path.join(runtimeRoot, 'wrap-IO-k8BF1.mjs')).href),
+      import(pathToFileURL(path.join(runtimeRoot, 'sandbox-host-C4L4QQ2a.mjs')).href),
+      import(pathToFileURL(path.join(runtimeRoot, 'wrap-D-D-PZV6.mjs')).href),
       import(pathToFileURL(path.join(runtimeRoot, 'widget-html-DuR2hZeB.mjs')).href),
     ]);
   const manifest = JSON.parse(

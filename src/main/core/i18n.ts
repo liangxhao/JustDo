@@ -18,6 +18,8 @@ export type LanguageType = 'zh' | 'en';
 const translations: Record<LanguageType, Record<string, string>> = {
   zh: {
     ...startupWindowTranslations.zh,
+    runtimeNodeUnavailable: '运行时尚未准备就绪，请重新准备或修复应用。',
+    gatewayShutdownUnconfirmed: '引擎未能正常关闭，请退出并重新启动应用。',
     externalAgentModel: '模型',
     externalAgentAllowOnce: '允许一次',
     externalAgentReject: '拒绝',
@@ -65,6 +67,10 @@ const translations: Record<LanguageType, Record<string, string>> = {
     worktreePermissionIdentityChanged: '权限同步时无法确认原 Worktree 会话，操作已停止。',
     worktreeCreateUnavailable: 'Worktree 创建服务暂不可用。',
     worktreeCreateUnconfirmed: '未能确认 Worktree 创建结果，请检查设置中的 Worktree 列表。',
+    worktreeCleanupUnconfirmed:
+      '上次 Worktree 清理结果尚未确认。再次检查只会查询原任务，不会重新提交清理。',
+    worktreeCleanupUnavailable: '引擎尚未就绪，暂时无法清理 Worktree。',
+    worktreeCleanupFailed: 'Worktree 清理未能完成。',
     worktreeIdentityMissing: '无法确认待清理的 Worktree 会话。',
     worktreeCancellationRetained:
       '取消任务后的工作目录未能清理，已保留会话入口。请在设置中检查 Worktree。',
@@ -174,6 +180,9 @@ const translations: Record<LanguageType, Record<string, string>> = {
   },
   en: {
     ...startupWindowTranslations.en,
+    runtimeNodeUnavailable:
+      'The execution runtime is unavailable. Prepare the runtime or repair the application.',
+    gatewayShutdownUnconfirmed: 'The engine did not close cleanly. Quit and restart the application.',
     externalAgentModel: 'Model',
     externalAgentAllowOnce: 'Allow once',
     externalAgentReject: 'Reject',
@@ -235,6 +244,10 @@ const translations: Record<LanguageType, Record<string, string>> = {
     worktreePermissionIdentityChanged:
       'Could not confirm the original Worktree conversation during permission synchronization. The operation was stopped.',
     worktreeCreateUnavailable: 'Worktree creation is currently unavailable.',
+    worktreeCleanupUnconfirmed:
+      'The previous Worktree cleanup is unconfirmed. Checking again only queries that task; it does not submit another cleanup.',
+    worktreeCleanupUnavailable: 'The engine is not ready to clean up Worktrees.',
+    worktreeCleanupFailed: 'Worktree cleanup could not finish.',
     worktreeCreateUnconfirmed:
       'Could not confirm Worktree creation. Check the Worktree list in Settings.',
     worktreeIdentityMissing: 'Could not identify the Worktree conversation to clean up.',

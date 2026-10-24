@@ -12,7 +12,9 @@ import { MODEL_AUTH_SESSION_ENV } from '../../../plugins/extensions/runtime-serv
 import { sealBuiltinCredential, syncBuiltinCredentialFile } from '../../../src/main/openclaw/config/models/builtinCredentialFile';
 import { buildWindowsChildProcessPreload } from '../../../src/main/openclaw/runtime/launch/electronNodeRuntime';
 
-const runtime = path.resolve('vendor/openclaw-runtime/current');
+const runtime = path.resolve(
+  process.env.OPENCLAW_TEST_NATIVE_RUNTIME_DIR ?? 'vendor/openclaw-runtime/current',
+);
 const sdk = path.join(runtime, 'dist/plugin-sdk');
 const available = fs.existsSync(path.join(sdk, 'secret-ref-runtime.js'));
 
@@ -77,9 +79,9 @@ test.skipIf(!available)('a native task crosses a 30-minute JWT expiry and cannot
       import { createAiTransportHost, runWithAiTransportHost } from ${url(path.join(runtime, 'node_modules/@openclaw/ai/dist/index.mjs'))};
       import { createOpenAICompletionsTransportStreamFn } from ${url(path.join(runtime, 'node_modules/@openclaw/ai/dist/transports.mjs'))};
       const dist = ${JSON.stringify(path.join(runtime, 'dist'))};
-      const chunk = fs.readdirSync(dist).filter(name => /^attempt.*\\.mjs$/.test(name)).find(name =>
-        fs.readFileSync(path.join(dist, name), 'utf8').includes('function wrapEmbeddedAgentStreamApiKey('));
-      assert.ok(chunk, 'native run credential wrapper must be present');
+      const chunks = fs.readdirSync(dist).filter(name => /^session-boundary-prompt-cache-key-[A-Za-z0-9_-]+\\.mjs$/.test(name));
+      assert.equal(chunks.length, 1, 'target stream-resolution chunk must have one owner');
+      const chunk = chunks[0];
       const source = fs.readFileSync(path.join(dist, chunk), 'utf8');
       const extract = name => {
         const declaration = (name === 'resolveEmbeddedAgentApiKey' ? 'async ' : '') + 'function ' + name + '(';

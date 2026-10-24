@@ -129,6 +129,7 @@ import type {
   GatewayClientCtor,
   GatewayClientLike,
   GatewayEventFrame,
+  GatewayResponseContext,
   NativeRunTerminalReceipt,
   SessionTurn,
 } from '../gateway/types';
@@ -2582,6 +2583,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
   getGatewayClientGeneration(): number {
     return this.gatewayClientGeneration;
+  }
+
+  captureGatewayResponseContext(): GatewayResponseContext | null {
+    return runtimeGatewayConnection.captureGatewayResponseContext.call(this.runtimeGatewayConnectionContext);
   }
 
   getRunTerminalReceipt(runId: string): NativeRunTerminalReceipt | null {

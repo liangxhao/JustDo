@@ -49,7 +49,7 @@ describe('OpenClaw online speech IPC', () => {
               openai: {
                 baseUrl: 'http://speech.internal:8000/v1',
                 model: 'internal-tts',
-                voice: 'speaker-1',
+                speakerVoice: 'speaker-1',
               },
             },
           },
@@ -73,6 +73,19 @@ describe('OpenClaw online speech IPC', () => {
     const configuration = await handlers.get(OnlineTtsIpc.GetConfiguration)?.();
     expect(configuration).toMatchObject({ available: false, providers: [], credentialConfigured: false });
     expect(configuration).not.toHaveProperty('selectedProvider');
+  });
+
+  it.each([undefined, '   '])('reads a canonical speaker ID when its name is absent or blank (%j)', async speakerVoice => {
+    requestGateway.mockResolvedValueOnce({
+      active: 'openai', providers: [{ id: 'openai', configured: true }],
+    }).mockResolvedValueOnce({ config: { tts: {
+      provider: 'openai', providers: { openai: {
+        baseUrl: 'http://speech.internal/v1', model: 'internal-tts', speakerVoice, speakerVoiceId: 'speaker-id',
+      } },
+    } } });
+    await expect(handlers.get(OnlineTtsIpc.GetConfiguration)?.()).resolves.toMatchObject({
+      available: true, voice: 'speaker-id',
+    });
   });
 
   it('does not use registered plugin model or voice presets without explicit configuration', async () => {
@@ -136,12 +149,15 @@ describe('OpenClaw online speech IPC', () => {
             baseUrl: 'http://speech.internal:8000/v1',
             apiKey: 'secret',
             model: 'internal-tts',
-            voice: 'speaker-1',
+            speakerVoice: 'speaker-1',
           },
         },
       },
       plugins: { entries: { openai: { enabled: true } } },
     });
+    const patchedTts = JSON.parse((requestGateway.mock.calls[2]?.[1] as { raw: string }).raw).tts;
+    expect(patchedTts).not.toHaveProperty('enabled');
+    expect(patchedTts.providers.openai).not.toHaveProperty('voice');
   });
 
   it('rejects removed ElevenLabs speech settings before querying or mutating Gateway config', async () => {

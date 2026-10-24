@@ -2,6 +2,7 @@ import { execFile } from 'child_process';
 import { promisify } from 'util';
 
 import { t } from '../../core/i18n';
+import { requireOpenClawCliExecutable } from '../../openclaw/runtime/launch/cliNodeRuntime';
 import type { OpenClawEngineManager } from '../../openclaw/runtime/openclawEngineManager';
 
 const OUTPUT_PREFIX = 'PLUGIN_PACKAGE_OWNERSHIP=';
@@ -75,7 +76,7 @@ const readNativeMetadata = async (
   const cli = await manager.buildCliEnvironment();
   let stdout: string;
   try {
-    const result = await execute(process.execPath, ['--input-type=module', '--eval', script], {
+    const result = await execute(requireOpenClawCliExecutable(cli.env), ['--input-type=module', '--eval', script], {
       cwd: cli.runtimeRoot,
       env: {
         ...cli.env,

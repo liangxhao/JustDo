@@ -88,6 +88,12 @@ stt-local-cli 使用已安装 Sherpa 路径，支持限定音视频格式，当�
 
 回复朗读由原生 TTS 能力执行，本地使用 tts-local-cli 的模型布局；输出音频不作为 Redux 或 transcript 新正文。停止播放与停止 Agent 是不同动作。
 
+当前 OpenClaw 配置只写 `tts.auto` 和 provider 的 `speakerVoice` / `speakerVoiceId`。
+手动朗读及本地合成工具使用 `auto: off`，provider 参数与扩展启停决定能力是否可用，
+不再写 `tts.enabled`；应用朗读开关仍保存在产品语音设置中。设置页的声音输入在 IPC
+中映射为 `speakerVoice`。同步清理未发布开发版本留下的废弃字段，保留现有规范字段，
+不把旧声音别名或 enabled 自动迁移成新值；开发环境的旧声音选择可在设置页重新保存。
+
 聊天中的语音合成使用原生 `tts` 工具，`tts-local-cli` 注册本地 speech provider，不注册同名工具。应用配置不再全局禁止 `tts`，同步时清除旧配置中的该禁用项；插件启用状态和 provider 就绪状态仍独立决定合成是否可用。
 
 模型发布使用 setup:local-speech-models 和 build:local-speech-model-artifacts，上传生成的 speech-models/v1 产物。已发布文件不可原地换字节；模型变更或包装修订使用新身份/文件名并更新编译期大小与 hash，保留旧客户端所需旧包。

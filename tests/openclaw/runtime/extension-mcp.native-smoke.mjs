@@ -6,11 +6,11 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import { runExtensionMcpOperation } from '../../../src/main/plugins/mcp/extensionMcpRuntime.ts';
+import { resolveNativeSmokeTarget } from './native-smoke-target.mjs';
 
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 const require = createRequire(import.meta.url);
-const runtimeRoot = path.join(root, 'vendor/openclaw-runtime/current');
+const { runtimeRoot, executable } = resolveNativeSmokeTarget();
 const fixtureServer = String.raw`
 import readline from 'node:readline';
 if (process.cwd() !== process.env.EXPECTED_CWD) throw new Error('Wrong native working directory');
@@ -41,13 +41,23 @@ for await (const line of readline.createInterface({ input: process.stdin })) {
 test('native extension MCP inventory, targeted connection, resources, and parent disable', async () => {
   const stateDir = mkdtempSync(path.join(os.tmpdir(), 'justdo-extension-mcp-'));
   const configPath = path.join(stateDir, 'openclaw.json');
-  const config = { plugins: { allow: ['native-fixture', 'bundle-fixture'], load: { paths: [] }, entries: {
+  const config = { agents: { ownership: 'explicit', entries: { main: {} }, defaults: { embeddedAgent: { cyberFailover: { mode: 'off' } } } },
+    plugins: { allow: ['native-fixture', 'bundle-fixture'], load: { paths: [] }, entries: {
     'native-fixture': { enabled: true }, 'bundle-fixture': { enabled: true },
   } }, mcp: { servers: {} } };
-  const manager = { buildCliEnvironment: async () => ({ runtimeRoot, env: { ...process.env,
-    OPENCLAW_STATE_DIR: stateDir, OPENCLAW_CONFIG_PATH: configPath, JUSTDO_ELECTRON_PATH: require('electron'),
-  } }) };
+  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) =>
+    !key.toUpperCase().startsWith('OPENCLAW_') &&
+    !['NODE_OPTIONS', 'ELECTRON_RUN_AS_NODE'].includes(key.toUpperCase())));
+  Object.assign(env, { OPENCLAW_HOME: stateDir,
+    OPENCLAW_STATE_DIR: stateDir, OPENCLAW_CONFIG_PATH: configPath, JUSTDO_ELECTRON_PATH: executable });
+  const manager = { buildCliEnvironment: async () => ({ runtimeRoot, env }) };
   try {
+    const adapterFile = path.join(stateDir, 'mcp-adapter.cjs');
+    require('esbuild').buildSync({
+      entryPoints: [path.join(root, 'src/main/plugins/mcp/extensionMcpRuntime.ts')],
+      bundle: true, platform: 'node', format: 'cjs', packages: 'external', outfile: adapterFile,
+    });
+    const { runExtensionMcpOperation } = require(adapterFile);
     for (const format of ['native', 'bundle']) {
       const pluginDir = path.join(stateDir, `${format}-fixture`);
       mkdirSync(pluginDir);
@@ -67,7 +77,11 @@ test('native extension MCP inventory, targeted connection, resources, and parent
     }
     writeFileSync(configPath, JSON.stringify(config));
     const inventory = await runExtensionMcpOperation(manager, 'list');
-    assert.deepEqual(inventory.map(entry => entry.plugin.id).sort(), ['bundle-fixture', 'native-fixture']);
+    assert.deepEqual(inventory.filter(entry => ['bundle-fixture', 'native-fixture'].includes(entry.plugin.id))
+      .map(entry => entry.plugin.id).sort(), ['bundle-fixture', 'native-fixture']);
+    assert.ok(inventory.filter(entry => !['bundle-fixture', 'native-fixture'].includes(entry.plugin.id))
+      .every(entry => entry.mcpServers.every(server => server.enabled === false)),
+    'Other bundled metadata does not enable MCP outside the fixture allowlist');
     for (const format of ['native', 'bundle']) {
       const entry = inventory.find(entry => entry.plugin.id === `${format}-fixture`);
       assert.equal(entry.mcpServers.find(server => server.name === `${format}-echo`).enabled, true);

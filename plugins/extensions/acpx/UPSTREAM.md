@@ -1,8 +1,18 @@
 # ACPX source and integration record
 
-The source target is OpenClaw `v2026.10.4`, commit
-`383c124cc32ffee3f8e56f549b88da94d269a4af`, under `extensions/acpx/`.
-The local package is `2026.10.4-local.2`, requiring plugin API `>=2026.10.4`.
+The source target is OpenClaw `v2026.10.6`, commit
+`fe06181dc5ecc01cf8904abbfc26925925efefbc`, under `extensions/acpx/`.
+The local package is `2026.10.6-local.3`, requiring plugin API `>=2026.10.6`.
+
+The 10.6 refresh compares the 10.4 upstream source, the local fork and the target.
+It adopts launcher-based host discovery, a probe cwd inside the prepared wrapper
+directory, retirement of empty reads, and retained generation fences for returned
+history handles. One-shot restoration requires the exact persisted record,
+session name, agent, backend session and unused resumable state; a previous
+Gateway's process lease is never reused. Target Claude/Codex ACP protocol adapter
+versions are adopted, while the independently reviewed ACPX 0.19.5 pin is retained
+(the target upstream uses 0.19.4). Native-agent harness registration remains
+outside this product's integration.
 
 The previous local package label, `2026.9.8-local.1`, described SDK integration,
 not a complete upstream source refresh. Its actual source ancestor was
@@ -49,12 +59,15 @@ The product does not register upstream native-agent harnesses, a second model
 picker, `acpx.agents.list`, or runtime package installation. It does not adopt
 `<workspace>/state` into the managed state directory. Only the existing explicit
 offline owner repair remains; ambiguous histories stay intact. The public
-`json-store` SDK helper is retained in the customized auth bridge, so upstream's
+`json-store.readJsonFileWithFallback` SDK helper is no longer exported in 10.6.
+The customized bridge reads the installed package manifest with Node's existing
+filesystem API and validates its object/name before resolving its executable;
+missing or malformed manifests retain the same unavailable result. Upstream's
 direct `@openclaw/fs-safe` JSON-helper dependency is unnecessary there.
 
 ## Independently pinned ACPX 0.19.5
 
-OpenClaw 10.4 selects ACPX 0.19.1. This product additionally pins published ACPX
+The original OpenClaw 10.4 baseline selected ACPX 0.19.1. This product pins published ACPX
 0.19.5, evaluated against 0.19.1 using its release, source comparison, npm metadata
 and real synthetic stdio peers. Its runtime exports and method signatures remain
 compatible; permission policies and Node engine constraints remain compatible.
@@ -67,7 +80,7 @@ The npm-generated lock records integrity
 `sha512-V88l8w3Opv1xWmMmFyO4RrR6Y695RrRJ/q5WgIlE/BNetQgxRaM4p8h7BsKPjdDHVBKpesCnXNd3r5Cwzz2Lmw==`.
 Its transitive `@openclaw/fs-safe@0.22.0` optional platform packages remain in
 that lock. No integrity values were edited manually. The product's explicit
-Claude ACP 0.79.0 and Codex ACP 1.12.0 pins remain unchanged.
+Claude ACP and Codex ACP pins follow the 10.6 target at 0.85.1 and 2.1.1.
 
 The existing direct MCP SDK and TOML parser dependencies are also pinned to
 `@modelcontextprotocol/sdk@1.31.0` and `smol-toml@1.9.0` to address
@@ -81,7 +94,7 @@ vulnerabilities. The real wrapper/config-overlay regression uses the new parser.
 ## Validation boundary
 
 Run the ACPX Vitest configuration with `OPENCLAW_RUNTIME` pointing to the
-prepared 10.4 SDK. It includes the retained desktop tests and upstream-derived
+prepared 10.6 SDK. It includes the retained desktop tests and upstream-derived
 runtime, reset, probe, lease, reaper, proxy and lazy registration behavior tests.
 Test-only upstream SDK exports are replaced by local temporary-directory and
 keyed-store fixtures; native persistence remains the host's responsibility.

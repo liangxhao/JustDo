@@ -2,9 +2,9 @@
 
 This directory vendors `extensions/typesafe` from
 `https://github.com/openclaw/openclaw`, revision
-`383c124cc32ffee3f8e56f549b88da94d269a4af` (tag `v2026.10.4`, package
-version `2026.10.4`). The refresh was compared against the previous upstream
-baseline `b1c1c6d3af1f68bc82efbb6c92fb224c36df8683` (`2026.9.8`) and this local fork.
+`fe06181dc5ecc01cf8904abbfc26925925efefbc` (tag `v2026.10.6`, package
+version `2026.10.6`). The refresh was compared against the previous upstream
+baseline `383c124cc32ffee3f8e56f549b88da94d269a4af` (`2026.10.4`) and this local fork.
 The native decision semantics, response validation, assets and MIT license
 are preserved. One application transport seam adds `serviceUrl`: an authenticated
 HTTP(S) API base including `/v1` or another prefix. It accepts explicit intranet
@@ -31,6 +31,12 @@ lazy loading, cancellation, response cleanup and host-selected `decisionModel`
 remain intact. Existing behavior tests are retained instead of importing
 upstream test deletions; additional offline regressions exercise admission
 revocation during lazy loading and native DNS preparation.
+
+The v2026.10.6 refresh additionally classifies HTTP 400 alongside 413/422 as
+ordinary unsupported input. Registration and transport regressions verify that
+these responses do not retry, read potentially secret-reflecting error bodies,
+or expose provider details. Authentication, rate limits, cancellation and
+unknown transport failures retain their separate outcomes.
 
 Packaging-only changes:
 

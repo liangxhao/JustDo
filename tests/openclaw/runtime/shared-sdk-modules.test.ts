@@ -71,7 +71,7 @@ test('Gateway and separately loaded SDK share activation, rotation, revocation a
   );
   fs.writeFileSync(
     path.join(root, 'dist/auth.js'),
-    'export function getRuntimeAuthProfileStoreCredentialsRevision() {}',
+    'let runtimeAuthStoreCredentialsRevision = 0; export const getRuntimeAuthProfileStoreCredentialsRevision = () => runtimeAuthStoreCredentialsRevision;',
   );
   fs.writeFileSync(
     path.join(root, 'dist/scope.js'),

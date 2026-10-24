@@ -21,6 +21,7 @@ The build and cache directories are ignored by Git.
 | `browser/`   | Host adapters for browser content bundles and Native Messaging           |
 | `build/`     | Vite build integration                                                   |
 | `electron/`  | Electron development startup, ports and native module rebuilds           |
+| `startup/`   | Browser-only rehearsal of the four startup presentations                |
 | `external-agent/` | Shared console CLI generation and profile-bound development launchers |
 | `openclaw/`  | OpenClaw runtime installation, patching, verification and bundling       |
 | `packaging/` | Electron Builder hooks, installers, signing and update validation        |
@@ -35,6 +36,12 @@ helpers explicitly. Resolve repository paths relative to the script location;
 do not rely on the caller's working directory when locating repository assets.
 Versioned patches remain under `patches/`; runtime orchestration belongs in
 `openclaw/`.
+
+`npm run startup:preview -- --route upgrade --language zh --theme light` starts a
+loopback browser rehearsal using the actual startup components. Routes are
+`fresh`, `migration`, `upgrade` and `normal`; language and theme are closed choices.
+The page simulates progress and failures in memory without Main, a user profile,
+database maintenance or Gateway. It cannot replace native upgrade validation.
 
 The console executable provides CLI, ACP and the supported Codex app-server entry.
 Generation scripts live under `external-agent/`; development launchers are prepared
@@ -73,7 +80,7 @@ real isolated Gateway and QuickJS executor. It uses synthetic imported skills an
 a loopback model, checks exact whole-run terminals, restarts its own Gateway, and
 writes local evidence under `.agent-tasks/runtime/skill-state/`. It never reads
 user configuration or connects to the running app. Run it against the freshly
-prepared runtime; it also supports Electron in Node mode. This does not validate
+prepared runtime, using that runtime's standalone Node executable. This does not validate
 real model decisions or MXC isolation.
 
 If a run reached all 16 pre-restart checks but its shutdown checkpoint failed,
@@ -265,21 +272,28 @@ already patched runtimes run the fixed case. It never opens native user history.
 `node tests/openclaw/runtime/sqlite-retirement-lifecycle.native-smoke.mjs <runtime-directory>`
 checks the real prepared-runtime backup, update rollback, deletion exclusion,
 integrity receipts, exit callbacks and fresh-process recovery with synthetic
-databases. Run with Node and Electron's Node runtime. Successful fixture roots
+databases. Run with the standalone Node shipped in the target runtime. Successful fixture roots
 are removed; failures report and retain only their isolated state for diagnosis.
+
+`<runtime-directory>/node-runtime/node[.exe] tests/openclaw/runtime/plugin-session-current.native-smoke.mjs <runtime-directory>`
+verifies the frozen v2026.10.6 execution-session guard using actual native workers and SQLite.
+An owner-only update with the same session ID/revision must invalidate the live assertion;
+stale initial reads and lifecycle replacement must also fail. It retains synthetic evidence
+under `.agent-tasks/runtime/plugin-session-current/` and never starts a Gateway.
 
 `node scripts/openclaw/agent-team/probe-agent-team-peer-return.mjs <runtime-directory>`
 runs a local fixture model and isolated Gateway with a scoped exact-session send
 grant. It verifies repeated writer results start actual organizer executions and
 receive whole-run terminals under concurrent history/list reads. Run it with the
-Electron Node runtime as well as Node when investigating packaged behavior.
+standalone Node shipped in the target runtime when investigating packaged behavior.
 
-The SQLite probes target 10.4: final maintenance stop is awaited, rollback uses
+The SQLite probes target 10.6: final maintenance stop is awaited, rollback uses
 backup-bound migration write receipts, and logical writes invalidate stale authority.
 The contention probe imports the current 025 transformer. See the
-[current patch inventory](patches/v2026.10.4/README.md) and
-[upgrade evidence](../docs/openclaw-upgrades/v2026.10.4/README.md) for executed
-Node/Electron cases and the peer-return validation scope.
+[current patch inventory](patches/v2026.10.6/README.md) and
+[upgrade evidence](../docs/openclaw-upgrades/v2026.10.6/README.md) for executed
+cases and the remaining validation scope. Historical 10.4 Node/Electron results
+remain in their own upgrade record and do not establish target-version acceptance.
 
 `node scripts/openclaw/agent-team/probe-agent-team-gateway.mjs <runtime-directory>` additionally
 exercises the production team extension with Main coordinators: model-created

@@ -34,6 +34,10 @@
             %STARTUP_COPY_initializationSetupSteps%
           </p>
           <ol>
+            <li data-upgrade-only hidden>
+              <span>01</span><span data-startup-copy="initializationDatabaseUpgrade"
+                >%STARTUP_COPY_initializationDatabaseUpgrade%</span>
+            </li>
             <li data-migration-only hidden>
               <span>01</span
               ><span data-startup-copy="initializationBackup"

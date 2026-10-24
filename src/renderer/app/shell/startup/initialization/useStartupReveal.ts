@@ -5,7 +5,7 @@ import { STARTUP_REVEAL_DURATION_MS, startupEntryRemaining } from './startupMoti
 const RevealPhase = { Waiting: 'waiting', Revealing: 'revealing', Complete: 'complete' } as const;
 type RevealPhase = (typeof RevealPhase)[keyof typeof RevealPhase];
 
-/** All three routes share motion; actual readiness and errors alone own dismissal. */
+/** All four routes share motion; actual readiness and errors alone own dismissal. */
 export function useStartupReveal(firstLaunch: boolean, loading: boolean) {
   const [phase, setPhase] = useState<RevealPhase>(RevealPhase.Waiting);
   useEffect(() => {

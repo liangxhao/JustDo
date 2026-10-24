@@ -5,11 +5,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { Script } from 'node:vm';
+import { resolveNativeSmokeTarget } from '../../../tests/openclaw/runtime/native-smoke-target.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
-const runtime = path.resolve(process.argv[2] ?? path.join(root, 'vendor/openclaw-runtime/current'));
+const { runtimeRoot: runtime, identity: runtimeIdentity } = resolveNativeSmokeTarget();
 const runtimePackage = JSON.parse(await readFile(path.join(runtime, 'package.json'), 'utf8'));
-assert.equal(runtimePackage.version, '2026.10.4');
+assert.equal(runtimePackage.version, '2026.10.6');
 const output = await mkdtemp(path.join(os.tmpdir(), 'widget-kit-contract-'));
 try {
   await cp(path.join(root, 'plugins/extensions/widget-kit/assets'), path.join(output, 'assets'), {
@@ -24,10 +25,11 @@ try {
     target: 'es2022',
   });
   const plugin = (await import(pathToFileURL(path.join(output, 'plugin.mjs')).href)).default;
-  const filename = (await readdir(path.join(runtime, 'dist'))).find(name =>
+  const filenames = (await readdir(path.join(runtime, 'dist'))).filter(name =>
     /^board-widget-content-kinds-.*\.mjs$/.test(name),
   );
-  assert.ok(filename, 'Locked runtime registrar module missing');
+  assert.equal(filenames.length, 1, 'Locked runtime registrar has one owner');
+  const filename = filenames[0];
   const source = await readFile(path.join(runtime, 'dist', filename), 'utf8');
   const alias = source.match(/createPluginBoardWidgetContentKindRegistrar as (\w+)/)?.[1];
   assert.ok(alias, 'Locked runtime registrar export missing');
@@ -186,6 +188,7 @@ try {
   console.log(
     JSON.stringify({
       runtime: runtimePackage.version,
+      runtimeIdentity,
       kinds: [...registry.boardWidgetContentKinds.keys()].sort(),
       registered: true,
       samePluginAndKindNameAccepted: true,

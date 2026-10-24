@@ -4,7 +4,7 @@
 
 ## 1. 准备环境
 
-使用 `.nvmrc` 的 Node.js 24.21.0，支持范围为 `>=24.16.0 <25`，包管理器为 npm。Electron 的实际锁定版本是 42.7.0；不要把 package.json 的 `^42.6.2` 范围当成已安装版本。
+使用 `.nvmrc` 的 Node.js 24.22.1，支持范围为 `>=24.22.1 <25`，包管理器为 npm。Electron 的实际锁定版本是 42.7.0；不要把 package.json 的 `^42.6.2` 范围当成已安装版本。
 
 ```bash
 nvm use 24
@@ -20,8 +20,16 @@ npm run electron:dev:openclaw
 | `npm run electron:dev`          | 准备开发资源、编译 Main 并启动 Electron；适用于已准备 runtime                |
 | `npm run electron:dev:openclaw` | 校验并按需准备 draw.io 离线资源，再准备 host OpenClaw runtime 并启动开发应用 |
 | `npm run electron:dev:isolated` | 使用隔离开发配置；host runtime 仍需先准备                                    |
+| `npm run startup:preview -- --route upgrade --language zh --theme light` | 只演练启动界面，可切换四种路由、语言、主题、进度和失败状态 |
 
 默认 Vite 端口是 43127。隔离预览的目录及启动参数由 `scripts/electron/run-isolated-dev.cjs` 管理；不要把真实用户数据库、凭据或原生日志复制进仓库。
+
+开发版 Electron 与安装版采用同一四路判定：`fresh` 首次安装、`migration` 迁移升级、
+`upgrade` 正常升级、`normal` 正常启动。OpenClaw 版本变化、当前环境尚无完成回执或原生
+schema 待维护时，开发版同样显示正常升级引导。仅应用升版或构建指纹变化、且 OpenClaw
+版本相同并无需维护时使用正常启动；完整产物准入和实际数据库检查仍执行。
+单独查看界面可使用 `startup:preview`；终端显示随机 loopback 地址，页面有明确演练标识，
+复用真实启动组件，只在内存模拟事件，不连接 Main、用户数据或 Gateway。演练不能替代真实维护验收。
 
 开发版和安装版的 Chrome Native Host 均只发现并连接已运行的应用，不会自行启动或重启应用，
 也不通过第二实例处理扩展的重启请求。开发态 Main 与 Gateway 由开发命令启动，输出继承当前终端；
@@ -43,8 +51,12 @@ Hook 模块补充 React Refresh 签名；Vite 默认只为 JSX 模块生成这�
 开发启动器通过独立的父进程 Node IPC 管道
 管理 Electron；Ctrl+C 先请求当前子进程
 执行应用正常退出，等待 Main 停止运行及 Gateway、释放原生数据库租约后，再关闭
-Vite。Main 的退出预算为 30 秒，紧急 Gateway 清理另有 17 秒；启动器给予 50 秒，
-仍未退出才强制结束，并最多再等 5 秒。重复终止信号不提前缩短该窗口。
+Vite。监督预算统一来自 shared 的 shutdown policy：启动资源最多观察 45 秒，其他服务
+前后阶段合计 30 秒，Gateway 允许 330 秒原生清理，必要时强制终止后再观察 15 秒。
+Main 外层为 425 秒，启动器为 430 秒；启动器强制结束后最多再观察 15 秒并返回失败。
+这些是异常情况下的上限，资源实际关闭后立即继续。重复终止信号不重置或缩短窗口。
+超时、强杀、非零退出或缺少实际退出证明均不能计为成功；Main 保留失败并禁止继续安装更新，
+没有完成退休的资源也不能以计时器到期代替 join。
 准备阶段取消后，即使就绪检查迟到完成也不能再启动 Electron。隔离开发入口复用
 同一退出通道。正常单实例转交后，Vite 仍持续服务被接管的窗口，直到终端退出；
 该窗口沿用开发服务器丢失检测请求正常退出。切换开发服务器后，旧父进程收到释放

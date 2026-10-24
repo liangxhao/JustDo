@@ -40,7 +40,12 @@ export function registerMcpAppHandlers(deps: Dependencies): void {
   };
   const workspaces =
     deps.workspaceAppSessions ??
-    new WorkspaceAppSessions({ getStore: deps.getCoworkStore, request });
+    new WorkspaceAppSessions({
+      getStore: deps.getCoworkStore, request,
+      // A generic RPC port cannot establish native transport correlation.
+      // Production supplies Main's shared workspace owner with that evidence.
+      captureResponseContext: async () => null,
+    });
   const target = (id: unknown) => {
     const current = session(id);
     const sessionKey =

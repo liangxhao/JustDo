@@ -1,7 +1,7 @@
 import { modelRefFromIdentity, readModelRef } from '../../../shared/providers/modelRef';
 import { matchesModelSelectionIdentity } from '../../../shared/providers/modelSelectionIdentity';
 import { t } from '../../core/i18n';
-import { parseModelReferenceV2026_10_4 } from '../openclaw/wire/v2026_10_4';
+import { parseModelReferenceV2026_10_6 } from '../openclaw/wire/v2026_10_6';
 import { enqueueSessionModelOperation } from './sessionModelOperations';
 import type { GatewayClientLike } from './types';
 
@@ -15,10 +15,10 @@ export type ManagedSessionModelConfig = {
 
 /** Share route repair policy without retaining a second model catalog. */
 export function createManagedSessionModelPolicy(config?: ManagedSessionModelConfig) {
-  const defaults = parseModelReferenceV2026_10_4(config?.agents?.defaults?.model);
+  const defaults = parseModelReferenceV2026_10_6(config?.agents?.defaults?.model);
   const targets = new Map<string, string>();
   for (const [agentId, agent] of Object.entries(config?.agents?.entries ?? {})) {
-    const target = parseModelReferenceV2026_10_4(agent.model) ?? defaults;
+    const target = parseModelReferenceV2026_10_6(agent.model) ?? defaults;
     if (target) targets.set(agentId, target.reference);
   }
   if (defaults) targets.set('main', targets.get('main') ?? defaults.reference);

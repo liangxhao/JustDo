@@ -5,9 +5,9 @@
 运行时能够启动、TypeScript 编译通过或一次聊天成功，都不足以证明升级完成。
 
 升级时同时核对[流式与执行](streaming-and-execution.md)、
-[宿主与发行](host-and-release.md)中的专项检查项。
+[宿主与发行](host-and-release.md)和[逐模块上游接口审计](module-api-audit.md)中的专项检查项。
 
-当前仓库基线为 `openclaw@2026.10.4`；后续升级以 `package.json.openclaw.version`
+当前仓库基线为 `openclaw@2026.10.6`；后续升级以 `package.json.openclaw.version`
 为准。源包 integrity 以目标版本补丁目录的 `source-lock.json` 为准，逐补丁能力、
 上游证据、依赖与删除条件以该目录 `README.md` 为唯一总账。本文不固定补丁数量，
 也不把历史版本验收结果当作目标版本的通过记录。
@@ -21,6 +21,10 @@
 
 ## 1. 升级基线、范围与变更记录
 
+- [ ] 按[模块接口审计清单](module-api-audit.md)覆盖功能索引与全部生产原生调用，
+      在 `docs/openclaw-upgrades/<目标版本>/module-api-audit.md` 交付独立报告，
+      逐模块记录上游差异、适配结论、正反向用例、真实原生契约证据和未验收项；
+      同步本目录和升级记录 README 的入口。不得仅引用旧 mock 或测试总数宣布兼容。
 - [ ] 保留当前工作区改动，在隔离 worktree 中升级。记录应用提交、旧/新 OpenClaw
       版本、目标平台、Node/Electron 约束以及本地插件版本，避免混入无关修改。
 - [ ] 阅读旧版到目标版之间的 release notes、breaking changes 与实际代码差异。
@@ -39,6 +43,15 @@
 - [ ] 使用独立测试 profile，按各自边界备份产品数据库、Gateway state、插件状态及
       必要配置；凭据和原生日志不进入 Git。存储变更必须单独说明上游支持范围及恢复方法。
       不恢复已撤回的 9.6→9.8 原生 SQLite 迁移桥、启动门禁或构建资产，也不自动删库重建。
+- [ ] 分别验证迁移升级安装、正常升级安装、首次安装和正常启动。正常升级必须覆盖
+      跳过原生版本、实际 schema 待更新、失败/取消后恢复及全部现有数据保留。
+      仅应用升版或同 OpenClaw 版本新构建、且实际无需维护时直接正常启动；成功后刷新
+      完整交付回执，写入失败报错，未完成事务仍精确绑定目标。
+      集中声明目标 owner 与支持的来源 schema，不以相邻版本 if 分支串接升级。
+- [ ] 应用或 runtime 任一降低时先提示并等待用户选择“仍然启动”，确认后接回同一
+      正常启动流程，验证受信主 frame、精确请求/目标、单次消费和退出取消。确认不能
+      标记就绪或成为永久跳过；版本不可可靠比较、数据格式不支持及实际加载失败仍
+      显示具体错误并保留数据，相同 schema 数字或用户点击确认不能代替实际兼容性。
 
 工程流程见[补丁操作指南](../openclaw-runtime-patches.md)和
 [构建脚本说明](../../scripts/README.md)。离线资源地址、文件名和准备命令统一维护在
@@ -79,7 +92,7 @@
 
 MCP Apps 使用原生认证 WS 接口，不使用生命周期补丁。关闭视图停止本地交互，
 不保证后台取消；视图及临时授权按原生租约到期回收（当前创建后约十分钟）。
-工具调用格式纠正补丁 030 不提供 MCP Apps 生命周期能力。
+工具调用格式纠正补丁 029 不提供 MCP Apps 生命周期能力。
 完整契约见 [MCP Apps 宿主](../features/chat/mcp-apps.md#原生接口与插件替代审计)。
 
 - [ ] 重读目标版本 WS 派发、App view/disposer、SDK 与方法描述，核对是否新增公开的精确请求取消、可确认的最终视图释放和多窗口隔离接口；有则通过公开接口接入，无则保留原生行为，不恢复补丁或访问私有 store。
@@ -564,7 +577,7 @@ MCP Apps 使用原生认证 WS 接口，不使用生命周期补丁。关闭视�
 
 ## 13. 本地 OpenAI 完整源码替换
 
-`plugins/extensions/openai` 以原生 OpenAI 的 v2026.10.4 源码为起点，包含
+`plugins/extensions/openai` 以原生 OpenAI 的 v2026.10.6 源码为起点，包含
 MIT LICENSE。`upstream-source.json` 记录原始 tag、commit 和源文件 SHA-256；
 它描述上游基线，不要求已修改的本地文件等于原始 hash。测试辅助源码不发布。
 本地依赖使用独立 `package-lock.json`，不引用上游 `workspace:*` 开发依赖。
@@ -606,7 +619,7 @@ API Key/SecretRef 仍可用于用户显式选择的内网服务；删除的是�
 
 ## 14. 运行时补丁与宿主接缝复核
 
-逐项读取[当前版本总账](../../scripts/patches/v2026.10.4/README.md)和 transformer，
+逐项读取[当前版本总账](../../scripts/patches/v2026.10.6/README.md)和 transformer，
 升级后将链接更新为目标版本总账。下表按集成风险组织验证，不替代逐补丁删除条件。
 
 | 接缝（当前编号）                                  | 目标版本必须验证的重点                                                                                                                                                           |
@@ -619,11 +632,11 @@ API Key/SecretRef 仍可用于用户显式选择的内网服务；删除的是�
 | 共享终端（020/021）                               | native PTY launch/close、cwd/shell/args、viewer ownership、buffer/offset 与 attach；欢迎文字只影响展示，删除候选需单独说明用户影响                                               |
 | 压缩/转发（022/原生）                             | operation-scoped 状态/取消覆盖准备与清理，自动恢复压缩生命周期；恢复调用者授权后仅退出源 transcript/CLI-history 写入 scope，目标保持自己的写入 claim                             |
 | 电脑提示/Windows 恢复（023/024）                  | 内容无关的 activity start/end/heartbeat/release 与真实操作分别验收；原生 recovery capture 保留获准目录 junction，不改文件链接、hardlink、相对/坏链接或授权                       |
-| SQLite 退休/历史发布（025/027/028） | 非阻塞 checkpoint 保留 stop/join；Windows canonical readiness 使用已准入路径；deferred read 未就绪前不得发布成功或失败响应 |
-| 流式交接（026/029/033） | attempt 级 finalize admission、消息 scope 与真实完成关联、长参数无正文进度及有界恢复；详见[流式专题](streaming-and-execution.md) |
-| 格式恢复/Goal（030/032） | 同一原生循环的两请求纠正上限与精确整轮结算；Goal 前驱、回交 owner 和累计次数原子准入，未知发送不重放 |
-| 手动 Apps（031） | 手动准备与后续模型运行使用同一持久会话工作区，准备过程身份变化拒绝，下一轮不退役仍被使用的资源 |
-| Windows 插件发布（034） | 同一事务、stage 与精确字节的有界 rename 恢复；禁止重放安装，详见[宿主专题](host-and-release.md) |
+| SQLite 退休/历史发布（025/027；原 027 已原生覆盖） | 非阻塞 checkpoint 保留 stop/join；Windows canonical readiness 由原生物理键核对；deferred read 未就绪前不得发布成功或失败响应 |
+| 流式交接（026/028/032） | attempt 级 finalize admission、消息 scope 与真实完成关联、长参数无正文进度及有界恢复；详见[流式专题](streaming-and-execution.md) |
+| 格式恢复/Goal（029/031） | 同一原生循环的两请求纠正上限与精确整轮结算；Goal 前驱、回交 owner 和累计次数原子准入，未知发送不重放 |
+| 手动 Apps（030） | 手动准备与后续模型运行使用同一持久会话工作区，准备过程身份变化拒绝，下一轮不退役仍被使用的资源 |
+| Windows 插件发布（033） | 同一事务、stage 与精确字节的有界 rename 恢复；禁止重放安装，详见[宿主专题](host-and-release.md) |
 
 - [ ] 以下均指 9.8 旧编号：删除的 002/003 由 Main MCP/Chrome 启动器及配置投影承载，
       真实连接回归仍必需；020/021 由完整本地 OpenAI 源码替换承载，027 由构建时共享 SDK 模块承载。
@@ -694,8 +707,8 @@ git diff --check
 | 流/历史/过程         | chat `agent-event-reducer*`、`history-reconciler`、`chat-history-protocol`、`chunked-message-history`、`process-summary-takeover`、`browser-extension-stream` 与 components streaming tests                            |
 | 压缩/摘要            | chat `chat-controller.compaction*`、`chat-summary-resources`、`session-summary-resources`、`SessionSummaryPanel` / 资源列表 / `openSummaryResource`，当前补丁 `native-compaction-lifecycle`                            |
 | 配置/执行/身份       | Main adapter、wire validator、permissions、Goal/Plan、config sync/logout、worktree/sandbox 领域测试及当前版本补丁测试                                                                                                  |
-| 技能发现/Code Mode   | `node scripts/test/verify-native-skill-state-runtime.mjs <runtime-directory>` 验证真实隔离 Gateway 的技能发现、读取权限与 JSON 跨轮/重启保存；`node scripts/test/verify-code-mode-runtime.mjs <runtime-directory>` 验证 QuickJS 资产及执行/等待/取消；Node/Electron 分别运行 |
-| SQLite 关闭/恢复     | 先按目标版本适配 `scripts/openclaw/probe-sqlite-retirement.mjs`、`tests/openclaw/runtime/sqlite-retirement-lifecycle.native-smoke.mjs`；覆盖备份、回滚拒绝与成功、删除排他、退出租约及重启恢复；Node/Electron 分别验证 |
+| 技能发现/Code Mode   | `node scripts/test/verify-native-skill-state-runtime.mjs <runtime-directory>` 验证真实隔离 Gateway 的技能发现、读取权限与 JSON 跨轮/重启保存；`node scripts/test/verify-code-mode-runtime.mjs <runtime-directory>` 验证 QuickJS 资产及执行/等待/取消；开发 Node/随包 Node 分别运行 |
+| SQLite 关闭/恢复     | 先按目标版本适配 `scripts/openclaw/probe-sqlite-retirement.mjs`、`tests/openclaw/runtime/sqlite-retirement-lifecycle.native-smoke.mjs`；覆盖备份、回滚拒绝与成功、删除排他、退出租约及重启恢复；开发 Node/随包 Node 分别验证 |
 | 启动/历史升级       | `src/main/startup/routing/startupCoordinator.test.ts`、`src/main/startup/history/` 的 `historyRecovery`、`nativeHistoryRuntime`、`nativeHistoryFailure` 等测试；覆盖三类启动、备份完整性、导入身份和阶段恢复 |
 | 定时任务             | scheduler `cronJobService`、`scheduledTaskResultSyncService`、`scheduledTaskSessionHistory`、结果 Store/IPC/UI，`tests/openclaw/runtime/scheduled-task-permissions.test.ts`                                            |
 | 插件页生命周期      | `src/main/plugins/`、`src/main/ipc/plugins/`、`src/renderer/features/plugins/` 的安装、更新、卸载、归属、部分提交、状态刷新与迟到回包测试                                                                                      |
@@ -708,7 +721,7 @@ git diff --check
 旧版本目录测试保留为历史回归，不可作为目标版本通过证据；缺失关键场景时补齐。
 技能/Code Mode 探针使用隔离状态与本机合成模型；分阶段续验应分别保留前序失败与
 续验结果，不冒充一次全量通过。此类验证不证明真实模型会主动选择技能、正确编排
-Code Mode 或通过 MXC 实机准入；本版专项证据见[升级记录](../openclaw-upgrades/v2026.10.4/README.md)。
+Code Mode 或通过 MXC 实机准入；本版专项证据见[升级记录](../openclaw-upgrades/v2026.10.6/README.md)。
 
 插件还需按目标版本适配并运行 `tests/openclaw/runtime/` 下的实际原生验证：
 `plugin-management.native-smoke.mjs`（安装/更新/启停/卸载）、

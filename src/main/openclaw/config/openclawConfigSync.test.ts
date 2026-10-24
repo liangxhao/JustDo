@@ -67,7 +67,7 @@ import {
   removeUnavailableOpenClawPluginRegistrations,
   resolveManagedOpenClawTtsConfig,
   resolveOpenClawExecHost,
-  sanitizeOpenClawV2026_10_4Config,
+  sanitizeOpenClawV2026_10_6Config,
 } from './openclawConfigSync';
 
 test('keeps extension Hook dispatch available when every independent Hook is disabled', () => {
@@ -436,7 +436,7 @@ describe('OpenClaw managed model catalog config', () => {
 describe('OpenClaw v2026.9.8 config sanitization', () => {
   test('projects a missing Windows browser root without overriding native defaults or invalid input', () => {
     const input = { gateway: { mode: 'local' } };
-    const projected = sanitizeOpenClawV2026_10_4Config(input);
+    const projected = sanitizeOpenClawV2026_10_6Config(input);
     expect(input).not.toHaveProperty('browser');
     if (process.platform === 'win32') {
       expect(projected.browser).toEqual({
@@ -447,13 +447,13 @@ describe('OpenClaw v2026.9.8 config sanitization', () => {
     } else {
       expect(projected).not.toHaveProperty('browser');
     }
-    expect(sanitizeOpenClawV2026_10_4Config({ browser: null }).browser).toBeNull();
+    expect(sanitizeOpenClawV2026_10_6Config({ browser: null }).browser).toBeNull();
   });
   test.each([BrowserMode.Isolated, BrowserMode.Extension, BrowserMode.Embedded])(
     'projects the implicit user launcher in %s mode without changing its default',
     mode => {
       const input = buildManagedOpenClawConnectivityConfig(mode);
-      const projected = sanitizeOpenClawV2026_10_4Config(input);
+      const projected = sanitizeOpenClawV2026_10_6Config(input);
       expect(projected.browser.defaultProfile).toBe(input.browser.defaultProfile);
       if (process.platform === 'win32') {
         expect(projected.browser.profiles.user).toMatchObject({
@@ -466,7 +466,7 @@ describe('OpenClaw v2026.9.8 config sanitization', () => {
     },
   );
   test('selects the application Chrome launcher while preserving custom MCP commands', () => {
-    const config = sanitizeOpenClawV2026_10_4Config({
+    const config = sanitizeOpenClawV2026_10_6Config({
       browser: {
         profiles: {
           user: { driver: 'existing-session' },
@@ -489,7 +489,7 @@ describe('OpenClaw v2026.9.8 config sanitization', () => {
       mcpCommand: 'company-browser.cmd',
       mcpArgs: ['--owned'],
     };
-    const projected = sanitizeOpenClawV2026_10_4Config({
+    const projected = sanitizeOpenClawV2026_10_6Config({
       browser: { defaultProfile: 'openclaw', profiles: { user, chrome: { driver: 'extension' } } },
     });
     expect(projected.browser.defaultProfile).toBe('openclaw');
@@ -497,7 +497,7 @@ describe('OpenClaw v2026.9.8 config sanitization', () => {
     expect(projected.browser.profiles.chrome).toEqual({ driver: 'extension' });
   });
   test('removes retired fields and converts legacy managed surfaces', () => {
-    const config = sanitizeOpenClawV2026_10_4Config({
+    const config = sanitizeOpenClawV2026_10_6Config({
       meta: {
         lastTouchedVersion: '2026.9.2',
         lastTouchedAt: '2026-09-01T00:00:00.000Z',
@@ -587,7 +587,7 @@ describe('OpenClaw v2026.9.8 config sanitization', () => {
     expect(config.mcp.servers.docs).not.toHaveProperty('timeout');
     expect(config.tools).not.toHaveProperty('experimental');
     expect(config.agents).not.toHaveProperty('list');
-    expect(sanitizeOpenClawV2026_10_4Config(config)).toEqual(config);
+    expect(sanitizeOpenClawV2026_10_6Config(config)).toEqual(config);
   });
 });
 
@@ -1378,12 +1378,12 @@ describe('OpenClaw managed speech config', () => {
         openai: {
           baseUrl: 'http://speech.internal:8000/v1',
           model: 'internal-tts',
-          voice: 'speaker-1',
+          speakerVoice: 'speaker-1',
         },
       },
     };
 
-    expect(resolveManagedOpenClawTtsConfig({ tts: onlineTts }, null)).toBe(onlineTts);
+    expect(resolveManagedOpenClawTtsConfig({ tts: onlineTts }, null)).toEqual(onlineTts);
   });
 
   test('activates a local provider without discarding retained online TTS', () => {
@@ -1413,7 +1413,7 @@ describe('OpenClaw managed speech config', () => {
         enabled: false,
         mode: 'online',
       }),
-    ).toEqual({ enabled: false, provider: 'openai' });
+    ).toEqual({ auto: 'off', provider: 'openai' });
   });
 
   test.each(['openai'])(

@@ -13,7 +13,6 @@ vi.mock('openclaw/plugin-sdk/string-coerce-runtime', () => ({
   isRecord: (value: unknown) =>
     Boolean(value) && typeof value === 'object' && !Array.isArray(value),
 }));
-vi.mock('openclaw/plugin-sdk/json-store', () => ({ readJsonFileWithFallback: vi.fn() }));
 
 import { prepareAcpxCodexAuthConfig } from '../src/codex-auth-bridge.js';
 import { resolveAcpxPluginConfig } from '../src/config.js';

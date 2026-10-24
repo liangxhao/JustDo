@@ -71,7 +71,7 @@ flowchart TB
 
 Main 的 `core/` 分为 app、window、network、runtime、filesystem、development。浏览器、语音、外部集成和 Windows 沙盒有自己的领域，不塞入通用工具文件。`providers/` 管理产品模型配置与认证；`openclaw/config/` 管理它们向原生配置的投影。
 
-应用启动在 Main 的 `startup/` 与 Renderer 的 `app/shell/startup/` 下按 `routing`、`history`、`initialization` 三个子模块组织；窗口与 preload 保留安全创建和窄桥接职责。流程见[启动与历史升级](../features/app/startup-and-history-upgrade.md)。
+应用启动在 Main 的 `startup/` 下分为 `routing`、`history`、`upgrade`、`initialization`：分别拥有四路判定、历史迁移、正常升级的原生数据库维护和应用初始化。Renderer 的 `app/shell/startup/` 保留路由、历史结果和初始化展示，窗口与 preload 保留安全创建和窄桥接职责。流程见[启动与历史升级](../features/app/startup-and-history-upgrade.md)。
 
 `openclaw/config/` 内按 agents、models、speech、plugins、policies 组织原生配置投影；配置结构整理、校验与同步协调器留在根目录。`openclawConfigBuilders.ts` 保留现有聚合入口，各投影直接依赖所属能力和必要的纯配置辅助，不反向引用聚合入口。模型 SecretRef 投影仍归原生配置，产品凭据获取和轮换仍归 `main/providers/`。`openclaw/runtime/launch/` 管理运行包定位、启动参数、端口和进程辅助；EngineManager 继续持有 Gateway 的实例状态、启动和关闭生命周期，原生支持源码仍保留在 `runtime/native-support/`。
 
@@ -106,7 +106,13 @@ Shared 按契约所属领域组织，不能因为实现经由 OpenClaw 就把所
 ```mermaid
 flowchart LR
   Entry[启动参数 / 单实例 / 路径] --> Ready[app ready]
-  Ready --> Stores[数据库与产品 Store]
+  Ready --> Route[只读数据代际与交付方向检查]
+  Route --> Admission{版本和数据兼容?}
+  Admission -->|拒绝| Blocked[保留数据并显示原因]
+  Admission -->|降级待确认| Confirmation[提示并提供仍然启动]
+  Confirmation -->|用户确认| Prepare
+  Admission -->|允许| Prepare[相应四路准备与原生维护复验]
+  Prepare --> Stores[数据库与产品 Store]
   Stores --> Network[有效请求头策略 / 代理]
   Stores --> Identity[认证与模型准备]
   Network --> Sync[原生配置同步]
@@ -118,7 +124,7 @@ flowchart LR
   Static --> Renderer[主 Renderer / 图片预览]
 ```
 
-通用 Agent bridge client 模式在普通 UI 初始化之前处理。正常启动设置产品 userData、日志、依赖管理器环境和系统 CA；ready 后初始化数据库，整理上次中断的产品运行状态，恢复网络偏好，再准备内置模型与受管配置。
+通用 Agent bridge client 模式在普通 UI 初始化之前处理。正常启动设置产品 userData、日志、依赖管理器环境和系统 CA；ready 后先只读判定四类启动与交付兼容性，降级等待用户选择“仍然启动”，随后完成正常数据检查和必要的原生维护并关闭资源，再打开产品数据库，整理上次中断的运行状态，恢复网络偏好，准备内置模型与受管配置。降级确认不替代实际数据兼容性；未知数据格式仍正常报错。
 
 有效请求头策略由手工配置和已启用、验证通过的 Extension 声明合成，不能等 Gateway 已发出请求后才切换代理 generation。配置同步失败会记录原因，后续执行准入不得把失败状态当可用。
 

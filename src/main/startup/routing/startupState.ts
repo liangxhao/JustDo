@@ -9,6 +9,24 @@ import {
 } from '../../../shared/app/startup/routing';
 
 export const STARTUP_STATE_FILE = 'startup-state.json';
+export type StartupIdentity = {
+  appVersion: string;
+  runtimeVersion: string;
+  runtimeBuildId: string;
+};
+
+export function isStartupIdentity(value: unknown): value is StartupIdentity {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const identity = value as StartupIdentity;
+  return [identity.appVersion, identity.runtimeVersion].every(
+    version => typeof version === 'string' && version.length > 0 && version.length <= 128,
+  ) && typeof identity.runtimeBuildId === 'string' && /^[a-f0-9]{64}$/.test(identity.runtimeBuildId);
+}
+
+export function sameStartupIdentity(left: StartupIdentity | undefined, right: StartupIdentity): boolean {
+  return !!left && left.appVersion === right.appVersion &&
+    left.runtimeVersion === right.runtimeVersion && left.runtimeBuildId === right.runtimeBuildId;
+}
 export function startupPathExists(file: string): boolean {
   try {
     fs.lstatSync(file);
@@ -27,6 +45,8 @@ export type StartupJournal = {
   startedAt: number;
   isolatedEntries?: string[];
   historySummary?: StartupHistorySummary;
+  completedIdentity?: StartupIdentity;
+  targetIdentity?: StartupIdentity;
 };
 
 /** Atomic, durable phase boundary; no credentials, configuration or transcript body. */
@@ -54,6 +74,10 @@ export function readStartupJournal(userData: string): StartupJournal | null {
     !Object.values(StartupStage).includes(value.stage) ||
     !/^[a-f0-9-]{36}$/.test(value.transactionId) ||
     !Number.isFinite(value.startedAt) ||
+    (value.completedIdentity !== undefined && !isStartupIdentity(value.completedIdentity)) ||
+    (value.targetIdentity !== undefined && !isStartupIdentity(value.targetIdentity)) ||
+    (value.route === StartupRoute.Upgrade && value.stage !== StartupStage.Complete &&
+      !isStartupIdentity(value.targetIdentity)) ||
     (value.historySummary !== undefined &&
       (!value.historySummary ||
         Array.isArray(value.historySummary) ||
@@ -93,7 +117,8 @@ export function newStartupJournal(route: StartupRoute): StartupJournal {
     version: 1,
     generation: 'native-sqlite',
     route,
-    stage: route === StartupRoute.Migration ? StartupStage.Backup : StartupStage.Initialize,
+    stage: route === StartupRoute.Migration ? StartupStage.Backup
+      : route === StartupRoute.Upgrade ? StartupStage.UpgradePrepare : StartupStage.Initialize,
     transactionId: randomUUID(),
     startedAt: Date.now(),
   };

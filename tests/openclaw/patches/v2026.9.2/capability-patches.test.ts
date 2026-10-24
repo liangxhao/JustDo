@@ -17,7 +17,12 @@ type PatchModule = {
 };
 
 const patchRoot = path.resolve('scripts/patches/v2026.9.2');
-const runtimeRoot = path.resolve('vendor/openclaw-runtime/current');
+const runtimeRoot = path.resolve(
+  process.env.OPENCLAW_TEST_NATIVE_RUNTIME_DIR ?? 'vendor/openclaw-runtime/current',
+);
+const configuredOpenClawVersion = JSON.parse(
+  fs.readFileSync(path.resolve('package.json'), 'utf8'),
+).openclaw.version;
 const patchFiles = fs
   .readdirSync(patchRoot)
   .filter(name => /^\d{3}-.*\.cjs$/u.test(name))
@@ -155,8 +160,9 @@ function buildMediaProjectionFixture(): string {
 }
 
 describe('OpenClaw v2026.9.2 capability patches', () => {
-  test('requires the current live runtime proof when requested by CI', () => {
-    if (process.env.OPENCLAW_RUNTIME_CONTRACT_REQUIRED !== '1') return;
+  test('requires this historical live runtime proof when it is the configured CI target', () => {
+    if (process.env.OPENCLAW_RUNTIME_CONTRACT_REQUIRED !== '1' ||
+        configuredOpenClawVersion !== 'v2026.9.2') return;
     expect(runtimeIsV2026_9_2).toBe(true);
     expect(runtimePatchSetIsCurrent).toBe(true);
   });

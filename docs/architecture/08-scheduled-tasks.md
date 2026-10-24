@@ -124,7 +124,7 @@ OpenClaw v2026.9.8 按 Agent 投影每周整理任务，使用 `agentTurn` paylo
 统一开关通过 `config.patch` 修改 `skills.workshop.autonomous.mode`（开启 `auto`，关闭 `off`）。
 原生禁止 cron 客户端删除这些系统监控任务；关闭后原生仍保留禁用的任务，界面继续聚合。
 应用配置同步在未设置 mode 时显式写入 `off`，并保留已有显式选择，因此不依赖上游默认的 `auto`。
-手动学习使用当前聊天的原生 `/learn`，应用不另建学习启动器，也不由该卡片创建学习会话。技能页的提案弹窗只审核 main 的原生提案；现行流程见[插件系统](07-plugin-system.md)，真实内网验收见[现行说明与验证边界](07-plugin-system.md)。
+手动学习使用当前聊天的原生 `/learn`，应用不另建学习启动器，也不由该卡片创建学习会话。技能页的工坊弹窗管理 main 的当前技能、保存版本与已生效变更；现行流程见[插件系统](07-plugin-system.md)，真实内网验收见[现行说明与验证边界](07-plugin-system.md)。
 
 主要代码位于 `src/main/scheduler/`、`src/main/ipc/scheduledTask/`、`src/main/data/scheduledTaskResultStore.ts`、`src/shared/scheduledTask/` 和 Renderer scheduled-tasks feature。
 

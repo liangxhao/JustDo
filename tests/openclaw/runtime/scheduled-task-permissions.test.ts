@@ -7,7 +7,7 @@ import { describe, expect, test } from 'vitest';
 import { SCHEDULED_TASK_READ_ONLY_TOOLS } from '../../../src/shared/scheduledTask/permissions';
 
 const dist = path.resolve(
-  process.env.JUSTDO_TEST_PRISTINE_RUNTIME ?? 'vendor/openclaw-runtime/current',
+  process.env.OPENCLAW_TEST_NATIVE_RUNTIME_DIR ?? process.env.JUSTDO_TEST_PRISTINE_RUNTIME ?? 'vendor/openclaw-runtime/current',
   'dist',
 );
 const available = fs.existsSync(dist);

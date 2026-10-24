@@ -20,6 +20,7 @@ import {
   type MemorySearchResult,
 } from '../../../shared/openclaw/memory';
 import { t } from '../../core/i18n';
+import { requireOpenClawCliExecutable } from '../../openclaw/runtime/launch/cliNodeRuntime';
 import {
   type OpenClawCliEnvironment,
   OpenClawCliNetworkMode,
@@ -259,7 +260,7 @@ const runOpenClawCommand = (
   cwd: string,
 ): Promise<CommandResult> =>
   new Promise((resolve, reject) => {
-    const executable = cli.env.JUSTDO_ELECTRON_PATH || process.execPath;
+    const executable = requireOpenClawCliExecutable(cli.env);
     const child = spawn(executable, [cli.openclawEntry, ...args], {
       cwd,
       env: { ...cli.env, ELECTRON_RUN_AS_NODE: '1' },

@@ -251,6 +251,18 @@ export const buildManagedOpenClawAgentThinkingConfig = (
   settings: AgentRuntimeSettings = createDefaultAgentRuntimeSettings(),
 ) => (settings.agent.thinking ? { thinkingDefault: settings.agent.thinking } : {});
 
+/** Public-model fallback is unavailable in the intranet distribution. */
+export const buildManagedOpenClawEmbeddedAgentConfig = (value: unknown) => {
+  const existing = isRecord(value) ? value : {};
+  return {
+    ...existing,
+    cyberFailover: {
+      ...(isRecord(existing.cyberFailover) ? existing.cyberFailover : {}),
+      mode: 'off',
+    },
+  };
+};
+
 export const buildManagedOpenClawHeartbeatConfig = () => ({
   // JustDo has no external notification channel and v2026.9.8 automations
   // create/run through the native cron tool without a recurring heartbeat.

@@ -32,6 +32,7 @@ import { t } from '../../core/i18n';
 import type { EffectiveOutboundHeaderPolicySnapshot } from '../../core/network/outboundHeaderPolicyService';
 import type { GatewayRequestOptions } from '../../engine/types';
 import { restrictCredentialFile } from '../../openclaw/config/models/providerSecretFile';
+import { requireOpenClawCliExecutable } from '../../openclaw/runtime/launch/cliNodeRuntime';
 import type { OpenClawEngineManager } from '../../openclaw/runtime/openclawEngineManager';
 import { prepareExtensionForInstall } from './extensionConversion';
 import { prepareExtensionInstallSource } from './extensionInstallSource';
@@ -1047,7 +1048,7 @@ export class OpenClawExtensionImportService {
       const manager = this.deps.getOpenClawEngineManager();
       const cli = await manager.buildCliEnvironment();
       const result = await this.runCommand(
-        process.execPath,
+        requireOpenClawCliExecutable(cli.env),
         [
           cli.openclawEntry,
           'config',
@@ -1100,7 +1101,7 @@ export class OpenClawExtensionImportService {
         mode: 0o600,
       });
       const result = await this.runCommand(
-        process.execPath,
+        requireOpenClawCliExecutable(params.cli.env),
         ['--input-type=module', '--eval', CAPABILITY_REVIEW_SCRIPT],
         {
           cwd: params.cli.runtimeRoot,
@@ -1861,7 +1862,7 @@ export class OpenClawExtensionImportService {
       const command = await this.runDirectoryCommand(installed.installPath, async () => {
         onProgress?.(PluginOperationStage.UNINSTALLING);
         const result = await this.runCommand(
-          process.execPath,
+          requireOpenClawCliExecutable(cli.env),
           [cli.openclawEntry, 'plugins', 'uninstall', extensionId, '--force'],
           {
             cwd: cli.runtimeRoot,
@@ -2106,7 +2107,7 @@ export class OpenClawExtensionImportService {
       }
       onProgress?.(enabled ? PluginOperationStage.ENABLING : PluginOperationStage.DISABLING);
       const result = await this.runCommand(
-        process.execPath,
+        requireOpenClawCliExecutable(cli.env),
         [cli.openclawEntry, 'plugins', enabled ? 'enable' : 'disable', extensionId],
         {
           cwd: cli.runtimeRoot,
@@ -2470,7 +2471,7 @@ export class OpenClawExtensionImportService {
             throw error;
           }
         }
-        const result = await this.runCommand(process.execPath, installArgs, {
+        const result = await this.runCommand(requireOpenClawCliExecutable(cli.env), installArgs, {
           cwd: cli.runtimeRoot,
           env: installEnv,
           successPattern: createInstallSuccessPattern(extensionId),

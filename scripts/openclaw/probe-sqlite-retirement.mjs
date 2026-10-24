@@ -9,7 +9,7 @@ import { Worker } from 'node:worker_threads';
 
 const require = createRequire(import.meta.url);
 const nativeOnly = process.argv.includes('--native-only');
-const CONTRACT = 'SQLITE_RETIREMENT_CHECKPOINT_V2026_10_4';
+const CONTRACT = 'SQLITE_RETIREMENT_CHECKPOINT_V2026_10_6';
 const runtime = path.resolve(process.argv[2] ?? 'vendor/openclaw-runtime/current');
 const dist = path.join(runtime, 'dist');
 const file = readdirSync(dist).find(name => /^sqlite-wal-.*\.mjs$/.test(name));
@@ -128,7 +128,7 @@ async function check(moduleUrl, expectBlockedWrite) {
 
 if (!original.includes(CONTRACT)) await check(pathToFileURL(nativePath).href, true);
 if (!nativeOnly) {
-  const { transform } = require('../patches/v2026.10.4/025-nonblocking-sqlite-retirement.cjs').__testing;
+  const { transform } = require('../patches/v2026.10.6/025-nonblocking-sqlite-retirement.cjs').__testing;
   const patched = transform(original, nativePath).replace(/from ("[^"\n]+")/g, (all, specifier) => {
     const name = JSON.parse(specifier);
     if (name.startsWith('node:')) return all;

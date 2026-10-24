@@ -104,7 +104,8 @@
           "docs/**/*",
           "skills/**/*",
           "**/*.md",
-          "!dist/worker-artifacts{,/**}"
+          "!dist/worker-artifacts{,/**}",
+          "node-runtime/**/*"
         ]
       },
       {
@@ -173,7 +174,8 @@
           "docs/**/*",
           "skills/**/*",
           "**/*.md",
-          "!dist/worker-artifacts{,/**}"
+          "!dist/worker-artifacts{,/**}",
+          "node-runtime/**/*"
         ]
       },
       {

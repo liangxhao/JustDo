@@ -6,6 +6,7 @@ import { afterEach, expect, test, vi } from 'vitest';
 
 import { HistoryRecoveryKind } from '../../../shared/app/startup/history';
 import { StartupRoute, StartupStage } from '../../../shared/app/startup/routing';
+import { StartupCompatibilityErrorCode } from '../../../shared/app/startup/versionPolicy';
 import { DB_FILENAME } from '../../core/appConstants';
 import { CoworkStore } from '../../data/coworkStore';
 import { SqliteStore } from '../../data/sqliteStore';
@@ -114,6 +115,34 @@ function legacy(dir: string, wal = false) {
   return db;
 }
 
+test('a different delivery cannot resume a pending JSONL migration or modify its real product database and history', async () => {
+  const directory = root();
+  legacy(directory);
+  const target = { appVersion: 'v2026.10.20', runtimeVersion: 'v2026.10.7', runtimeBuildId: 'a'.repeat(64) };
+  writeStartupJson(path.join(directory, STARTUP_STATE_FILE), {
+    ...newStartupJournal(StartupRoute.Migration), targetIdentity: target,
+  });
+  const retained = [DB_FILENAME, 'credentials.json', STARTUP_STATE_FILE,
+    'openclaw/state/agents/main/sessions/sessions.json',
+    'openclaw/state/agents/main/sessions/original-native.jsonl',
+    'openclaw/state/agents/main/sessions/original-child.jsonl'];
+  const before = retained.map(file => fs.readFileSync(path.join(directory, file)));
+  const native = {
+    identity: vi.fn(async () => ({ runtimeVersion: 'v2026.10.6', runtimeBuildId: 'b'.repeat(64) })),
+    inspect: vi.fn(async () => ({ needsUpgrade: false })),
+    upgrade: vi.fn(async () => {}),
+  };
+  expect(classifyInstallation(directory).route).toBe(StartupRoute.Migration);
+  const coordinator = await StartupCoordinator.prepare(directory, { appVersion: target.appVersion, native });
+  await expect(coordinator.prepareBeforeStore(progress())).rejects.toMatchObject({
+    code: StartupCompatibilityErrorCode.VersionUnconfirmed,
+  });
+  expect(native.inspect).not.toHaveBeenCalled();
+  expect(native.upgrade).not.toHaveBeenCalled();
+  retained.forEach((file, index) => expect(fs.readFileSync(path.join(directory, file))).toEqual(before[index]));
+  expect(fs.existsSync(path.join(directory, 'backups'))).toBe(false);
+});
+
 test('classifies fresh, published JSONL upgrade and current reinstall from actual data, independent of display marker', () => {
   const fresh = root();
   expect(classifyInstallation(fresh).route).toBe(StartupRoute.Fresh);
@@ -135,6 +164,54 @@ test('classifies fresh, published JSONL upgrade and current reinstall from actua
   );
   expect(classifyInstallation(current).route).toBe(StartupRoute.Normal);
   expect(new StartupCoordinator(current).route).toBe(StartupRoute.Normal);
+});
+
+test('an unfinished normal upgrade requires the same current product generation and never recreates a missing index', () => {
+  const target = root();
+  const store = SqliteStore.create(target);
+  store.set('app_config', { retained: true });
+  store.close();
+  writeStartupJson(path.join(target, STARTUP_STATE_FILE), {
+    ...newStartupJournal(StartupRoute.Upgrade),
+    targetIdentity: { appVersion: 'v2026.10.20', runtimeVersion: 'v2026.10.6', runtimeBuildId: 'a'.repeat(64) },
+  });
+  expect(classifyInstallation(target).route).toBe(StartupRoute.Upgrade);
+  const retained = path.join(target, 'retained-product.sqlite');
+  fs.renameSync(path.join(target, DB_FILENAME), retained);
+  const before = fs.readFileSync(retained);
+  expect(() => classifyInstallation(target)).toThrow(/generation changed/);
+  expect(fs.existsSync(path.join(target, DB_FILENAME))).toBe(false);
+  expect(fs.readFileSync(retained)).toEqual(before);
+});
+
+test('an application-only release uses the normal screen and preserves the actual current product database', async () => {
+  const directory = root();
+  const store = SqliteStore.create(directory);
+  store.set('app_config', { language: 'en', retained: true });
+  store.close();
+  const previous = { appVersion: 'v2026.10.19', runtimeVersion: 'v2026.10.6', runtimeBuildId: 'a'.repeat(64) };
+  const target = { ...previous, appVersion: 'v2026.10.20', runtimeBuildId: 'b'.repeat(64) };
+  writeStartupJson(path.join(directory, STARTUP_STATE_FILE), {
+    ...newStartupJournal(StartupRoute.Normal), stage: StartupStage.Complete, completedIdentity: previous,
+  });
+  const before = fs.readFileSync(path.join(directory, DB_FILENAME));
+  const native = {
+    identity: vi.fn(async () => ({ runtimeVersion: target.runtimeVersion, runtimeBuildId: target.runtimeBuildId })),
+    inspect: vi.fn(async () => ({ needsUpgrade: false })),
+    upgrade: vi.fn(async () => {}),
+  };
+  const coordinator = await StartupCoordinator.prepare(directory, { appVersion: target.appVersion, native });
+  expect(coordinator.route).toBe(StartupRoute.Normal);
+  const initialization = new AppInitialization(directory, coordinator.route, vi.fn());
+  expect(initialization.getState()).toMatchObject({ route: StartupRoute.Normal, firstLaunch: false, totalSteps: 4 });
+  await coordinator.prepareBeforeStore(initialization);
+  await coordinator.verifyNativeReady();
+  coordinator.complete();
+  expect(native.inspect).toHaveBeenCalledTimes(2);
+  expect(native.upgrade).not.toHaveBeenCalled();
+  expect(readStartupJournal(directory)?.completedIdentity).toEqual(target);
+  expect(fs.readFileSync(path.join(directory, DB_FILENAME))).toEqual(before);
+  expect(fs.existsSync(path.join(directory, 'backups'))).toBe(false);
 });
 
 test.each([

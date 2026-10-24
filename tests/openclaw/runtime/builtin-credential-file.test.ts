@@ -10,7 +10,9 @@ import { sealBuiltinCredential,syncBuiltinCredentialFile } from '../../../src/ma
 import { buildBuiltinMemorySearchConfig,buildProviderSelection } from '../../../src/main/openclaw/config/openclawConfigSync';
 import { buildWindowsChildProcessPreload } from '../../../src/main/openclaw/runtime/launch/electronNodeRuntime';
 
-const dist = path.resolve('vendor/openclaw-runtime/current/dist');
+const dist = path.resolve(
+  process.env.OPENCLAW_TEST_NATIVE_RUNTIME_DIR ?? 'vendor/openclaw-runtime/current', 'dist',
+);
 test.skipIf(!fs.existsSync(dist))('native JWT references protect tokens without redacting ordinary account identity', () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-native-builtin 测试 '));
   try {
@@ -18,7 +20,7 @@ test.skipIf(!fs.existsSync(dist))('native JWT references protect tokens without 
     fs.writeFileSync(preload, buildWindowsChildProcessPreload());
     const resolver = fs.readdirSync(dist).filter(name => /^resolve-.*\.m?js$/.test(name)).find(name =>
       fs.readFileSync(path.join(dist, name), 'utf8').includes(
-        'export { isMissingSecretRefResolutionError, isProviderScopedSecretResolutionError, resolveSecretRefString,',
+        'export { resolveSecretRefString, resolveSecretRefValue };',
       ),
     );
     expect(resolver).toBeDefined();
@@ -35,7 +37,8 @@ test.skipIf(!fs.existsSync(dist))('native JWT references protect tokens without 
     }).providerConfig;
     const { config } = syncBuiltinCredentialFile({
       gateway: { mode: 'local' }, plugins: { enabled: false },
-      agents: { entries: { main: {} }, defaults: { systemAgent: { agentId: 'main' } } },
+      agents: { entries: { main: {} }, defaults: { systemAgent: { agentId: 'main' },
+        embeddedAgent: { cyberFailover: { mode: 'off' } } } },
       models: { mode: 'replace', providers: { builtin_models: provider } },
       memory: { search: buildBuiltinMemorySearchConfig([{
         providerName: 'builtin_models', apiKey: '', baseURL: 'http://127.0.0.1:9/v1', apiType: 'openai',

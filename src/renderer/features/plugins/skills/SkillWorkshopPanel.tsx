@@ -1,14 +1,10 @@
-import {
-  ChevronDownIcon,
-  DocumentTextIcon,
-  QuestionMarkCircleIcon,
-} from '@heroicons/react/24/outline';
+import { DocumentTextIcon } from '@heroicons/react/24/outline';
 import { MAIN_USER_AGENT_ID } from '@shared/agents/agents';
-import {
-  type SkillProposalInspection,
-  SkillProposalStatus,
-  type SkillProposalSummary,
-  type SkillWorkshopResult,
+import type {
+  SkillWorkshopChange,
+  SkillWorkshopFile,
+  SkillWorkshopInventory,
+  SkillWorkshopResult,
 } from '@shared/plugins/skillWorkshop';
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -22,42 +18,39 @@ const unwrap = <T,>(result: SkillWorkshopResult<T>): T => {
   return result.value;
 };
 const errorText = (error: unknown) => {
-  const message = error instanceof Error ? error.message : 'skillWorkshopUnavailable';
-  return message.startsWith('skillWorkshop')
-    ? t(message)
-    : `${t('skillWorkshopRequestFailed')} ${message}`;
+  const key = error instanceof Error ? error.message : '';
+  return t(key.startsWith('skillWorkshop') ? key : 'skillWorkshopUnavailable');
 };
 const button =
   'rounded-lg border border-border px-3 py-1.5 text-sm hover:bg-surface-raised disabled:opacity-50 disabled:cursor-not-allowed';
-
+type Selection = { name: string; versionId?: string };
 interface Props {
   onSkillsChanged: () => Promise<void>;
 }
 
-/** Low-frequency entry: no background requests until the workshop is opened. */
+/** Reads only while open; native files and history remain authoritative. */
 export default function SkillWorkshopPanel(props: Props) {
-  const [isOpen, setIsOpen] = useState(false);
+  const [open, setOpen] = useState(false);
   const launcher = useRef<HTMLButtonElement>(null);
   const titleId = useId();
-  const close = useCallback(() => {
-    setIsOpen(false);
+  const close = () => {
+    setOpen(false);
     launcher.current?.focus();
-  }, []);
+  };
   return (
     <>
-      <div className="flex items-center justify-end">
+      <div className="flex justify-end">
         <button
           ref={launcher}
           type="button"
-          className="flex items-center justify-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs text-secondary transition-colors hover:bg-surface-raised hover:text-foreground"
+          className={button}
           aria-haspopup="dialog"
-          onClick={() => setIsOpen(true)}
+          onClick={() => setOpen(true)}
         >
-          <DocumentTextIcon className="h-4 w-4" />
           {t('skillWorkshopTitle')}
         </button>
       </div>
-      {isOpen &&
+      {open &&
         createPortal(
           <Modal
             onClose={close}
@@ -72,165 +65,152 @@ export default function SkillWorkshopPanel(props: Props) {
   );
 }
 
-/** All proposal bodies remain dialog-local; reopening re-reads the native Workshop. */
 function WorkshopDialog({
   onSkillsChanged,
   onClose,
   titleId,
-}: Props & {
-  onClose: () => void;
-  titleId: string;
-}) {
+}: Props & { onClose: () => void; titleId: string }) {
   const dialog = useRef<HTMLDivElement>(null);
-  const [showGuide, setShowGuide] = useState(false);
-  const guideId = useId();
-  const [available, setAvailable] = useState(false);
-  const [proposals, setProposals] = useState<SkillProposalSummary[]>([]);
-  const [inspection, setInspection] = useState<SkillProposalInspection | null>(null);
-  const [filter, setFilter] = useState('all');
-  const [busy, setBusy] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-  const [readError, setReadError] = useState('');
   const mounted = useRef(false);
   const mutation = useRef(false);
   const generation = useRef(0);
-  const selectionGeneration = useRef(0);
-  const latestProposals = useRef<SkillProposalSummary[]>([]);
+  const readGeneration = useRef(0);
+  const [inventory, setInventory] = useState<SkillWorkshopInventory | null>(null);
+  const [changes, setChanges] = useState<SkillWorkshopChange[]>([]);
+  const [selection, setSelection] = useState<Selection | null>(null);
+  const [file, setFile] = useState<SkillWorkshopFile | null>(null);
+  const [confirm, setConfirm] = useState<'archive' | 'restore' | null>(null);
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
   const invalidateReads = useCallback(() => {
     generation.current++;
-    selectionGeneration.current++;
+    readGeneration.current++;
   }, []);
 
   const refresh = useCallback(async () => {
-    const version = ++generation.current;
+    const token = ++generation.current;
+    readGeneration.current++;
+    setSelection(null);
+    setFile(null);
+    setConfirm(null);
     setLoading(true);
     try {
       const api = window.electron.skillWorkshop;
-      const nextProposals = unwrap(await api.list(MAIN_USER_AGENT_ID));
-      if (!mounted.current || version !== generation.current) return;
-      latestProposals.current = nextProposals;
-      setReadError('');
-      setAvailable(true);
-      setProposals(nextProposals);
-      setInspection(current => {
-        const updated = nextProposals.find(item => item.id === current?.record.id);
-        return updated?.revisionHash === current?.revisionHash &&
-          updated?.status === current?.record.status
-          ? current
-          : null;
-      });
+      const [next, recent] = await Promise.all([
+        api.list(MAIN_USER_AGENT_ID).then(unwrap),
+        api.changes({ agentId: MAIN_USER_AGENT_ID, limit: 200 }).then(unwrap),
+      ]);
+      if (!mounted.current || token !== generation.current) return;
+      setInventory(next);
+      setChanges(recent);
+      setError('');
     } catch (failure) {
-      if (!mounted.current || version !== generation.current) return;
-      selectionGeneration.current++;
-      setAvailable(false);
-      setInspection(null);
-      setReadError(errorText(failure));
+      if (!mounted.current || token !== generation.current) return;
+      setInventory(null);
+      setChanges([]);
+      setError(errorText(failure));
     } finally {
-      if (mounted.current && version === generation.current) setLoading(false);
+      if (mounted.current && token === generation.current) setLoading(false);
     }
   }, []);
-
-  useEffect(() => {
-    const previousFocus = document.activeElement as HTMLElement | null;
-    dialog.current?.focus();
-    return () => previousFocus?.focus();
-  }, []);
-
-  useEffect(() => {
-    // Decisions and refreshes may remove the focused detail button.
-    // Restore focus before the next key press so the dialog trap stays active.
-    if (document.activeElement === document.body) {
-      dialog.current?.focus();
-    }
-  }, [inspection, busy]);
 
   useEffect(() => {
     mounted.current = true;
+    dialog.current?.focus();
     void refresh();
-    return () => {
-      mounted.current = false;
-      invalidateReads();
-    };
-  }, [refresh, invalidateReads]);
-
-  useEffect(() => {
     const onFocus = () => {
       if (!mutation.current) void refresh();
     };
     window.addEventListener('focus', onFocus);
-    // Only the visible review panel polls; writes are never replayed on reconnect.
-    const timer = window.setInterval(() => {
-      if (document.visibilityState === 'visible' && !mutation.current) void refresh();
-    }, 15000);
     return () => {
-      window.clearInterval(timer);
+      mounted.current = false;
+      invalidateReads();
       window.removeEventListener('focus', onFocus);
     };
-  }, [refresh]);
+  }, [refresh, invalidateReads]);
 
-  const inspect = async (id: string) => {
-    const version = ++selectionGeneration.current;
-    setInspection(null);
+  useEffect(() => {
+    if (document.activeElement === document.body) dialog.current?.focus();
+  }, [selection, confirm, busy]);
+
+  const read = async (next: Selection, filePath = 'SKILL.md') => {
+    const token = ++readGeneration.current;
+    setSelection(next);
+    setFile(null);
+    setConfirm(null);
+    setReason('');
     setError('');
+    setNotice('');
     try {
-      const result = unwrap(await window.electron.skillWorkshop.inspect(MAIN_USER_AGENT_ID, id));
-      if (!mounted.current || version !== selectionGeneration.current) return;
-      const latest = latestProposals.current.find(proposal => proposal.id === id);
-      if (latest?.revisionHash !== result.revisionHash || latest?.status !== result.record.status)
-        return;
-      setInspection(result);
+      const result = unwrap(
+        await window.electron.skillWorkshop.read({
+          agentId: MAIN_USER_AGENT_ID,
+          ...next,
+          filePath,
+        }),
+      );
+      if (mounted.current && token === readGeneration.current) setFile(result);
     } catch (failure) {
-      if (mounted.current && version === selectionGeneration.current) setError(errorText(failure));
+      if (mounted.current && token === readGeneration.current) setError(errorText(failure));
     }
   };
 
-  const mutate = async (operation: () => Promise<void>) => {
-    if (mutation.current) return;
+  const mutate = async () => {
+    if (mutation.current || !selection || !confirm || !file) return;
+    const selected = { ...selection };
+    const kind = confirm;
+    if (kind === 'restore' && !selected.versionId) return;
     mutation.current = true;
     setBusy(true);
     setError('');
-    selectionGeneration.current++;
+    setNotice('');
+    readGeneration.current++;
+    setSelection(null);
+    setFile(null);
+    setConfirm(null);
+    let receipt: SkillWorkshopChange | null = null;
+    let failureMessage = '';
     try {
-      await operation();
+      receipt = unwrap(
+        kind === 'archive'
+          ? await window.electron.skillWorkshop.archive({
+              agentId: MAIN_USER_AGENT_ID,
+              name: selected.name,
+              ...(reason.trim() ? { reason: reason.trim() } : {}),
+            })
+          : await window.electron.skillWorkshop.restore({
+              agentId: MAIN_USER_AGENT_ID,
+              name: selected.name,
+              versionId: selected.versionId!,
+            }),
+      );
     } catch (failure) {
-      if (mounted.current) setError(errorText(failure));
-    } finally {
-      mutation.current = false;
-      if (mounted.current) {
-        setBusy(false);
-        await refresh();
+      failureMessage = errorText(failure);
+    }
+    // Read-only reconciliation never resubmits an uncertain mutation.
+    if (mounted.current) {
+      await refresh();
+      if (receipt) {
+        setNotice(t('skillWorkshopChangeConfirmed'));
+        try {
+          await onSkillsChanged();
+        } catch {
+          setError(t('skillWorkshopRefreshAfterChangeFailed'));
+        }
+      } else {
+        setError(failureMessage);
       }
     }
+    mutation.current = false;
+    if (mounted.current) setBusy(false);
   };
-
-  const decide = (action: 'apply' | 'reject') => {
-    const reviewed = inspection;
-    if (!reviewed?.revisionHash) return;
-    void mutate(async () => {
-      // Never leave a stale approval button active after a timeout or conflict.
-      setInspection(null);
-      unwrap(
-        await window.electron.skillWorkshop.decide({
-          agentId: MAIN_USER_AGENT_ID,
-          proposalId: reviewed.record.id,
-          expectedRevisionHash: reviewed.revisionHash!,
-          action,
-        }),
-      );
-      await onSkillsChanged();
-      // Refresh the list after a decision; a changed status requires a fresh selection.
-    });
-  };
-
-  const pending = proposals.filter(item => item.status === SkillProposalStatus.Pending).length;
-  const visible = proposals.filter(item => filter === 'all' || item.status === filter);
-  const canDecide =
-    available &&
-    inspection?.record.status === SkillProposalStatus.Pending &&
-    Boolean(inspection.revisionHash) &&
-    !busy;
-
+  const live =
+    !!selection &&
+    !selection.versionId &&
+    inventory?.skills.some(skill => skill.name === selection.name);
   return (
     <div
       ref={dialog}
@@ -238,11 +218,11 @@ function WorkshopDialog({
       aria-modal="true"
       aria-labelledby={titleId}
       tabIndex={-1}
-      className="p-6 space-y-5 outline-none text-foreground"
+      className="space-y-5 p-6 text-foreground outline-none"
       onKeyDown={event => {
-        if (event.key === 'Escape' && !mutation.current) {
+        if (event.key === 'Escape') {
           event.stopPropagation();
-          onClose();
+          if (!mutation.current) onClose();
         }
         if (event.key !== 'Tab') return;
         const items = dialog.current?.querySelectorAll<HTMLElement>(
@@ -252,8 +232,8 @@ function WorkshopDialog({
           event.preventDefault();
           return;
         }
-        const first = items[0];
-        const last = items[items.length - 1];
+        const first = items[0],
+          last = items[items.length - 1];
         if (
           event.shiftKey &&
           (document.activeElement === first || document.activeElement === dialog.current)
@@ -269,265 +249,237 @@ function WorkshopDialog({
         }
       }}
     >
-      <div className="flex items-start justify-between gap-4">
+      <header className="flex items-start justify-between gap-4">
         <div>
-          <h2 id={titleId} className="text-xl font-semibold flex items-center gap-3">
-            <span className="rounded-xl bg-primary/10 p-2 text-primary">
-              <DocumentTextIcon className="h-6 w-6" />
-            </span>
+          <h2 id={titleId} className="flex items-center gap-2 text-xl font-semibold">
+            <DocumentTextIcon className="h-6 w-6" />
             {t('skillWorkshopTitle')}
           </h2>
           <p className="mt-2 text-sm text-secondary">{t('skillWorkshopIntro')}</p>
+          <p className="mt-1 text-xs text-secondary">{t('skillWorkshopConcurrencyHint')}</p>
         </div>
-        <div className="flex shrink-0 items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setShowGuide(value => !value)}
-            className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-primary/40 ${showGuide ? 'border-primary/40 bg-primary/10 text-primary' : 'border-border text-secondary hover:bg-surface-raised'}`}
-            aria-pressed={showGuide}
-            aria-expanded={showGuide}
-            aria-controls={guideId}
-          >
-            <QuestionMarkCircleIcon className="h-4 w-4" />
-            {t('skillWorkshopHelp')}
-          </button>
-          <button type="button" className={button} disabled={busy} onClick={onClose}>
-            {t('skillWorkshopClose')}
-          </button>
-        </div>
-      </div>
-      {showGuide && (
-        <section
-          id={guideId}
-          aria-label={t('skillWorkshopHelp')}
-          className="grid gap-3 rounded-2xl border border-primary/15 bg-gradient-to-br from-primary/[0.07] via-surface to-surface-raised/50 p-4 sm:grid-cols-3"
-        >
-          {[
-            {
-              key: 'Purpose',
-              tone: 'border-blue-500/20 bg-blue-500/5 text-blue-700 dark:text-blue-300',
-            },
-            {
-              key: 'Effect',
-              tone: 'border-emerald-500/20 bg-emerald-500/5 text-emerald-700 dark:text-emerald-300',
-            },
-            {
-              key: 'Choice',
-              tone: 'border-violet-500/20 bg-violet-500/5 text-violet-700 dark:text-violet-300',
-            },
-          ].map(({ key, tone }) => (
-            <div key={key} className={`space-y-2 rounded-xl border p-3 ${tone}`}>
-              <h3 className="text-sm font-semibold">{t(`skillWorkshop${key}Title`)}</h3>
-              <p className="text-xs leading-6">{t(`skillWorkshop${key}Body`)}</p>
-            </div>
-          ))}
-        </section>
-      )}
+        <button type="button" className={button} disabled={busy} onClick={onClose}>
+          {t('skillWorkshopClose')}
+        </button>
+      </header>
       <div className="flex items-center justify-between gap-3">
-        <p className="text-sm text-secondary">
-          {t('skillWorkshopReview')} ({pending})
-        </p>
+        <span className="text-sm text-secondary">
+          {inventory
+            ? t(inventory.mode === 'auto' ? 'skillWorkshopModeAuto' : 'skillWorkshopModeOff')
+            : ''}
+        </span>
         <button
           type="button"
-          className={`${button} ml-auto`}
+          className={button}
           disabled={busy || loading}
-          onClick={() => {
-            setError('');
-            void refresh();
-          }}
+          onClick={() => void refresh()}
         >
           {t('skillWorkshopRefresh')}
         </button>
       </div>
-      {(error || readError) && (
-        <p
-          role="alert"
-          className="rounded-lg border border-red-500/30 p-3 text-sm text-red-500 whitespace-pre-wrap"
-        >
-          {error || readError}
+      {loading && <p role="status">{t('skillWorkshopLoading')}</p>}
+      {notice && (
+        <p role="status" className="text-sm text-primary">
+          {notice}
         </p>
       )}
-      <div className="grid items-start gap-5 lg:grid-cols-[280px_minmax(0,1fr)]">
-        <aside className="space-y-4 lg:sticky lg:top-0">
-          {loading && (
-            <p role="status" className="text-sm text-secondary">
-              {t('skillWorkshopLoading')}
-            </p>
-          )}
-          <label className="flex items-center gap-2 text-sm">
-            {t('skillWorkshopFilter')}
-            <span className="relative w-28 shrink-0">
-              <select
-                className="w-full appearance-none cursor-pointer rounded-lg border border-border bg-surface-raised py-2 pl-3 pr-9 text-sm text-foreground shadow-sm transition-colors hover:border-primary/50 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-50"
-                disabled={busy}
-                value={filter}
-                onChange={event => {
-                  selectionGeneration.current++;
-                  setInspection(null);
-                  setFilter(event.target.value);
-                }}
+      {error && (
+        <p
+          role="alert"
+          className="whitespace-pre-wrap rounded-lg border border-red-500/30 p-3 text-sm text-red-500"
+        >
+          {error}
+        </p>
+      )}
+      <div className="grid items-start gap-5 lg:grid-cols-[300px_minmax(0,1fr)]">
+        <aside className="space-y-5 max-h-[65vh] overflow-y-auto">
+          <section className="space-y-2">
+            <h3 className="font-medium">{t('skillWorkshopCurrent')}</h3>
+            {inventory?.skills.length === 0 && (
+              <p className="text-sm text-secondary">{t('skillWorkshopNoSkills')}</p>
+            )}
+            {inventory?.skills.map(skill => (
+              <button
+                key={skill.name}
+                type="button"
+                className={button + ' block w-full text-left'}
+                disabled={busy || loading}
+                onClick={() => void read({ name: skill.name })}
               >
-                <option value="all">{t('skillWorkshopAll')}</option>
-                {Object.values(SkillProposalStatus).map(value => (
-                  <option key={value} value={value}>
-                    {t(`skillWorkshopStatus.${value}`)}
-                  </option>
-                ))}
-              </select>
-              <ChevronDownIcon
-                aria-hidden="true"
-                className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-secondary"
-              />
-            </span>
-          </label>
-          {visible.length === 0 && (
-            <p className="text-sm text-secondary">{t('skillWorkshopEmpty')}</p>
+                <span className="block font-medium">{skill.name}</span>
+                <span className="block text-xs text-secondary">{skill.description}</span>
+                {skill.useCount !== undefined && (
+                  <span className="block text-xs text-secondary">
+                    {t('skillWorkshopUseCount')} {skill.useCount}
+                  </span>
+                )}
+              </button>
+            ))}
+          </section>
+          <section className="space-y-2">
+            <h3 className="font-medium">{t('skillWorkshopVersions')}</h3>
+            <p className="text-xs text-secondary">{t('skillWorkshopVersionsHint')}</p>
+            {inventory?.archived.map(skill => (
+              <details key={skill.name} className="rounded-lg border border-border p-2">
+                <summary className="cursor-pointer text-sm">
+                  {skill.name} ·{' '}
+                  {t(skill.live ? 'skillWorkshopStillLive' : 'skillWorkshopArchived')}
+                </summary>
+                <ul className="mt-2 space-y-2">
+                  {skill.versions.map(version => (
+                    <li key={version.id}>
+                      <button
+                        type="button"
+                        disabled={busy || loading}
+                        className={button + ' w-full break-all text-left'}
+                        onClick={() => void read({ name: skill.name, versionId: version.id })}
+                      >
+                        {new Date(version.createdAtMs).toLocaleString()} ·{' '}
+                        {t('skillWorkshopAction.' + version.action)}
+                        <span className="block text-xs">{version.id}</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            ))}
+          </section>
+        </aside>
+        <article className="min-w-0 space-y-4 rounded-xl border border-border p-4">
+          {!selection && <p className="text-sm text-secondary">{t('skillWorkshopSelectHint')}</p>}
+          {selection && (
+            <>
+              <h3 className="break-all font-semibold">{selection.name}</h3>
+              <p className="break-all text-xs text-secondary">
+                {selection.versionId
+                  ? t('skillWorkshopSavedVersion') + ' ' + selection.versionId
+                  : t('skillWorkshopLiveVersion')}
+              </p>
+              {file && (
+                <>
+                  <label className="block text-sm">
+                    {t('skillWorkshopFile')}
+                    <select
+                      aria-label={t('skillWorkshopFile')}
+                      className="ml-2 rounded border border-border bg-surface p-1"
+                      value={file.filePath}
+                      disabled={busy}
+                      onChange={event => void read(selection, event.target.value)}
+                    >
+                      {file.files.map(path => (
+                        <option key={path} value={path}>
+                          {path}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <pre className="max-h-[28rem] overflow-auto whitespace-pre-wrap break-words bg-background p-4 text-xs leading-6 select-text">
+                    {file.content || t('skillWorkshopNoContent')}
+                  </pre>
+                  {!confirm && (
+                    <div className="flex gap-2">
+                      {live && (
+                        <button
+                          type="button"
+                          className={button}
+                          disabled={busy || loading}
+                          onClick={() => setConfirm('archive')}
+                        >
+                          {t('skillWorkshopArchive')}
+                        </button>
+                      )}
+                      {selection.versionId && (
+                        <button
+                          type="button"
+                          className={button}
+                          disabled={busy || loading}
+                          onClick={() => setConfirm('restore')}
+                        >
+                          {t('skillWorkshopRestore')}
+                        </button>
+                      )}
+                    </div>
+                  )}
+                  {confirm && (
+                    <section
+                      className="space-y-3 rounded-lg border border-primary/40 p-3"
+                      aria-label={t('skillWorkshopConfirmTitle')}
+                    >
+                      <p className="text-sm">
+                        {t(
+                          confirm === 'archive'
+                            ? 'skillWorkshopArchiveConfirm'
+                            : 'skillWorkshopRestoreConfirm',
+                        )}
+                      </p>
+                      <p className="break-all text-xs">
+                        {selection.name}
+                        {selection.versionId ? ' · ' + selection.versionId : ''}
+                      </p>
+                      {confirm === 'archive' && (
+                        <label className="block text-sm">
+                          {t('skillWorkshopReason')}
+                          <textarea
+                            maxLength={1000}
+                            value={reason}
+                            onChange={event => setReason(event.target.value)}
+                            className="mt-1 block w-full rounded border border-border bg-surface p-2"
+                          />
+                        </label>
+                      )}
+                      <button
+                        type="button"
+                        className={button}
+                        disabled={busy || loading}
+                        onClick={() => void mutate()}
+                      >
+                        {t('skillWorkshopConfirm')}
+                      </button>
+                      <button
+                        type="button"
+                        className={button + ' ml-2'}
+                        disabled={busy}
+                        onClick={() => setConfirm(null)}
+                      >
+                        {t('skillWorkshopCancel')}
+                      </button>
+                    </section>
+                  )}
+                </>
+              )}
+            </>
           )}
-          <ul className="space-y-2 max-h-[55vh] overflow-y-auto pr-1">
-            {visible.map(proposal => (
-              <li key={proposal.id}>
+        </article>
+      </div>
+      <section className="space-y-2 border-t border-border pt-4">
+        <h3 className="font-medium">{t('skillWorkshopChanges')}</h3>
+        <p className="text-xs text-secondary">{t('skillWorkshopChangesHint')}</p>
+        {changes.length === 0 && (
+          <p className="text-sm text-secondary">{t('skillWorkshopNoChanges')}</p>
+        )}
+        <ul className="max-h-64 space-y-2 overflow-y-auto">
+          {changes.map(change => (
+            <li key={change.id} className="rounded border border-border p-2 text-sm">
+              <span>
+                {change.skillName} · {t('skillWorkshopAction.' + change.action)} ·{' '}
+                {t('skillWorkshopActor.' + change.actor)} ·{' '}
+                {new Date(change.createdAtMs).toLocaleString()}
+              </span>
+              <p className="whitespace-pre-wrap text-secondary">{change.summary}</p>
+              {change.versionId && (
                 <button
                   type="button"
-                  className={`${button} w-full text-left ${inspection?.record.id === proposal.id ? 'border-primary bg-primary/5 ring-1 ring-primary' : 'bg-surface'}`}
-                  disabled={busy || !available}
-                  onClick={() => void inspect(proposal.id)}
+                  className={button + ' mt-1'}
+                  disabled={busy || loading}
+                  onClick={() => void read({ name: change.skillName, versionId: change.versionId })}
                 >
-                  <span className="flex items-center justify-between gap-2">
-                    <span className="min-w-0 truncate font-medium" title={proposal.title}>
-                      {proposal.title}
-                    </span>
-                    <span className="shrink-0 rounded bg-primary/10 px-1.5 py-0.5 text-xs text-primary">
-                      {t(`skillWorkshopStatus.${proposal.status}`)}
-                    </span>
-                  </span>
-                  <span className="block text-xs text-secondary mt-1">{proposal.description}</span>
-                  {proposal.degradedState && (
-                    <span className="block text-xs text-red-500">
-                      {t('skillWorkshopDraftMissing')}
-                    </span>
-                  )}
+                  {t('skillWorkshopBeforeChange')}
                 </button>
-              </li>
-            ))}
-          </ul>
-        </aside>
-        {!inspection && (
-          <div className="flex min-h-80 flex-col items-center justify-center rounded-xl border border-dashed border-border bg-background p-8 text-center">
-            <DocumentTextIcon className="mb-4 h-10 w-10 text-secondary" />
-            <h3 className="font-medium">{t('skillWorkshopSelectTitle')}</h3>
-            <p className="mt-2 max-w-sm text-sm leading-6 text-secondary">
-              {t('skillWorkshopSelectHint')}
-            </p>
-          </div>
-        )}
-        {inspection && (
-          <article className="min-w-0 space-y-5 rounded-xl border border-border bg-surface p-5">
-            <header className="space-y-3 border-b border-border pb-4">
-              <div className="flex flex-wrap items-center gap-2 text-xs">
-                <span className="rounded-md bg-primary/10 px-2 py-1 text-primary">
-                  {t(
-                    inspection.record.kind === 'create'
-                      ? 'skillWorkshopCreate'
-                      : 'skillWorkshopUpdate',
-                  )}
-                </span>
-                <span className="rounded-md bg-background px-2 py-1 text-secondary">
-                  {t(`skillWorkshopStatus.${inspection.record.status}`)}
-                </span>
-              </div>
-              <h4 className="text-lg font-semibold">{inspection.record.title}</h4>
-              <p className="text-sm leading-6 text-secondary whitespace-pre-wrap">
-                {inspection.record.description}
-              </p>
-              <p className="text-xs text-secondary">
-                {t('skillWorkshopTarget')}{' '}
-                <span className="font-mono break-all text-foreground">
-                  {inspection.record.target.skillName}
-                </span>
-              </p>
-            </header>
-            {inspection.record.goal && (
-              <section className="space-y-2">
-                <h5 className="text-sm font-medium">{t('skillWorkshopGoal')}</h5>
-                <p className="text-sm leading-6 whitespace-pre-wrap text-secondary">
-                  {inspection.record.goal}
-                </p>
-              </section>
-            )}
-            <section className="rounded-lg bg-background p-4 space-y-2">
-              <h5 className="text-sm font-medium">{t('skillWorkshopEvidence')}</h5>
-              <p className="text-sm leading-6 whitespace-pre-wrap text-secondary">
-                {inspection.record.evidence || t('skillWorkshopNoEvidence')}
-              </p>
-            </section>
-            <p className="text-xs leading-5 text-secondary">{t('skillWorkshopReviewHint')}</p>
-            {inspection.record.statusReason && (
-              <p className="text-sm whitespace-pre-wrap">{inspection.record.statusReason}</p>
-            )}
-            {(inspection.comparisonUnavailable || inspection.targetChanged) && (
-              <p role="alert" className="text-sm text-red-500">
-                {t('skillWorkshopTargetChanged')}
-              </p>
-            )}
-            <div
-              className={`grid grid-cols-1 ${inspection.record.kind === 'update' ? 'xl:grid-cols-2' : ''} gap-3`}
-            >
-              {inspection.record.kind === 'update' && (
-                <Instruction
-                  label={t('skillWorkshopBefore')}
-                  content={inspection.currentContent ?? t('skillWorkshopComparisonUnavailable')}
-                />
               )}
-              <Instruction label={t('skillWorkshopAfter')} content={inspection.content} />
-            </div>
-            {inspection.supportFiles?.map(file => (
-              <Instruction
-                key={file.path}
-                label={`${t('skillWorkshopSupportFile')} · ${file.path}`}
-                content={file.content}
-              />
-            ))}
-            {inspection.record.scan.findings.map((finding, index) => (
-              <p key={index} className="text-xs whitespace-pre-wrap text-secondary">
-                {finding.file}:{finding.line} · {finding.message}
-              </p>
-            ))}
-            <div className="sticky bottom-0 flex flex-wrap items-center gap-2 border-t border-border bg-surface pt-4 pb-1">
-              <button
-                type="button"
-                className={`${button} bg-primary text-white border-primary hover:opacity-90`}
-                disabled={
-                  !canDecide || inspection.comparisonUnavailable || inspection.targetChanged
-                }
-                onClick={() => decide('apply')}
-              >
-                {t('skillWorkshopApply')}
-              </button>
-              <button
-                type="button"
-                className={button}
-                disabled={!canDecide}
-                onClick={() => decide('reject')}
-              >
-                {t('skillWorkshopReject')}
-              </button>
-            </div>
-          </article>
-        )}
-      </div>
+            </li>
+          ))}
+        </ul>
+      </section>
     </div>
-  );
-}
-
-function Instruction({ label, content }: { label: string; content: string }) {
-  return (
-    <section className="min-w-0 overflow-hidden rounded-lg border border-border">
-      <h5 className="border-b border-border bg-background px-3 py-2 text-xs font-medium">
-        {label}
-      </h5>
-      <pre className="max-h-[28rem] overflow-auto whitespace-pre-wrap break-words rounded-lg bg-surface p-4 text-xs leading-6 select-text">
-        {content || t('skillWorkshopNoContent')}
-      </pre>
-    </section>
   );
 }

@@ -18,11 +18,11 @@ export const buildManagedOpenClawSurfaces = (existing: unknown): Record<string, 
 };
 
 /**
- * Remove JustDo-owned fields not accepted by OpenClaw v2026.9.8 and translate the
+ * Remove application-owned fields not accepted by OpenClaw v2026.10.6 and translate the
  * two renamed config surfaces. This is deliberately narrow: unrelated
  * operator-owned config remains untouched and is still validated by Gateway.
  */
-export const sanitizeOpenClawV2026_10_4Config = (
+export const sanitizeOpenClawV2026_10_6Config = (
   config: Record<string, unknown>,
 ): Record<string, unknown> => {
   const next = { ...config };
@@ -44,6 +44,13 @@ export const sanitizeOpenClawV2026_10_4Config = (
     const models = { ...config.models };
     delete models.pricing;
     next.models = models;
+  }
+
+  if (isRecord(config.skills) && isRecord(config.skills.workshop)) {
+    const workshop = { ...config.skills.workshop };
+    delete workshop.approvalPolicy;
+    delete workshop.maxPending;
+    next.skills = { ...config.skills, workshop };
   }
 
   if (isRecord(config.browser) || (process.platform === 'win32' && config.browser === undefined)) {

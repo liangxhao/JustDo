@@ -5,7 +5,7 @@
 
 ## 消息身份、Thinking 与 commentary 交接
 
-- [ ] 对照 026/029：finalize hook 的 admission 在本 attempt 首字节前固定；
+- [ ] 对照 026/028：finalize hook 的 admission 在本 attempt 首字节前固定；
       普通正文不会因无关 hook 全程缓冲，真实 finalize revision 仍能撤回被拒草稿。
 - [ ] 同一 Completions 源消息的 UUID/scope 在 plain、inline-only、strict 和
       structured reasoning 路径都保留。身份本身不放开私有内容或持久化门禁。
@@ -18,11 +18,11 @@
       reconnect 按 keyed owner 恢复，超大正文保留身份事实，不恢复 run 累计正文副本。
 
 依据：[聊天渲染](../architecture/15-chat-rendering.md)、
-[029 审计](../features/chat/session-diagnostics.md)、[补丁总账](../../scripts/patches/v2026.10.4/README.md)。
+[028 审计](../features/chat/session-diagnostics.md)、[补丁总账](../../scripts/patches/v2026.10.6/README.md)。
 
 ## 长参数与真实活动
 
-- [ ] 对照 033 的 `toolcall_start/delta/end` → 原生 status item → WS → Renderer 链路。
+- [ ] 对照 032 的 `toolcall_start/delta/end` → 原生 status item → WS → Renderer 链路。
       用 `tool_call → show_widget` 的长 HTML 参数验证执行前持续收到进度，不能仅测试
       直接工具或向 reducer 注入事件；参数接收期间不能错误显示无后续内容的等待提示。
 - [ ] 进度只保留 UTF-16 计数等闭合元数据，不解析/复制参数、正文或私有 Thinking；
@@ -41,7 +41,7 @@
 
 ## 格式纠正、Goal 与问答
 
-- [ ] 对照 030：完成且可信的派发前拒绝才进入同一原生 Agent 循环纠正，最多两次额外
+- [ ] 对照 029：完成且可信的派发前拒绝才进入同一原生 Agent 循环纠正，最多两次额外
       请求并计入原生预算；不重放此前已完成工具，不回到外层 attempt 开启新纠正链。
       JSON producer 整批拒绝与 schema 批次允许有效 siblings 执行分别验证。
 - [ ] JSON/对象格式纠正仅准入原生事实确认的初始模型候选与完整响应，当前响应的已执行
@@ -51,7 +51,7 @@
 - [ ] 纠正反馈仅含固定类别、索引、长度与可信偏移；不带参数原文或异常预览。
       Stop、审批、超时、yield、finalize rejection 保留原生语义；子任务/Workflow
       只显示当前精确终态的有界错误，不能被普通 `summary: failed` 吞掉或泄漏私有诊断。
-- [ ] 对照 032：`sessions.describe` 的 Goal continuation 前驱结算与 lastAccepted、
+- [ ] 对照 031：`sessions.describe` 的 Goal continuation 前驱结算与 lastAccepted、
       sessionId/revision、原生实例、队列和子任务回交 owner 参与最终原子准入。
       普通 final 仍可能有回交，不能仅判断 yielded 或 active subagent。
 - [ ] `GOAL_CONTINUATION_DEFERRED` 是提交前拒绝；超时或 ACK 失配则保留原候选 runId

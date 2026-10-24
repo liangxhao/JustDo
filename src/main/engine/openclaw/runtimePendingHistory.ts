@@ -9,7 +9,7 @@ import {
   FULL_HISTORY_SYNC_LIMIT,
   mergeGatewayHistoryPages,
 } from './runtimeAdapterSupport';
-import { parseChatHistoryCursorResultV2026_10_4, parseChatHistoryResultV2026_10_4 } from './wire/v2026_10_4';
+import { parseChatHistoryCursorResultV2026_10_6, parseChatHistoryResultV2026_10_6 } from './wire/v2026_10_6';
 
 const record = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -22,7 +22,7 @@ const historySessionId = (page: Record<string, unknown>): unknown => {
 };
 
 const isEmptyCanonicalHistoryWithoutCursor = (raw: Record<string, unknown>): boolean => {
-  const page = parseChatHistoryResultV2026_10_4(raw);
+  const page = parseChatHistoryResultV2026_10_6(raw);
   return (
     !page.deltaCursor &&
     !page.hasMore &&
@@ -76,7 +76,7 @@ export async function fetchNativePendingHistory(
       const checkIdentity = (page: Record<string, unknown>) => {
         if (historySessionId(page) !== sessionId) throw new Error('Native history session changed');
       };
-      let page = parseChatHistoryResultV2026_10_4(first);
+      let page = parseChatHistoryResultV2026_10_6(first);
       // A product thread can be read before sessions.create or before its first
       // transcript exists. Native 9.8 then returns an empty page without a cursor
       // (and possibly without sessionId). Confirm it without publishing a cache.
@@ -98,7 +98,7 @@ export async function fetchNativePendingHistory(
       if (cursor && cached && attempt === 0) {
         const raw = await read({ cursor: cached.deltaCursor });
         checkIdentity(raw);
-        const delta = parseChatHistoryCursorResultV2026_10_4(raw);
+        const delta = parseChatHistoryCursorResultV2026_10_6(raw);
         if (delta.kind === 'reset') throw new Error('Native cached history generation changed');
         messages = mergeGatewayHistoryPages(cached.messages, delta.messages);
         cursor = delta.deltaCursor;
@@ -111,7 +111,7 @@ export async function fetchNativePendingHistory(
         offset = page.nextOffset;
         const raw = await read({ limit: FULL_HISTORY_SYNC_LIMIT, offset });
         checkIdentity(raw);
-        page = parseChatHistoryResultV2026_10_4(raw);
+        page = parseChatHistoryResultV2026_10_6(raw);
         if (page.totalMessages !== total) throw new Error('Native history snapshot changed');
         messages = mergeGatewayHistoryPages(page.messages, messages);
       }
@@ -144,7 +144,7 @@ export async function fetchNativePendingHistory(
         // Pending inputs are not transcript records. Never fall back to raw
         // transcript chunk readers for an unavailable/withdrawn accepted input.
         const full = await client.request('chat.message.get', {
-          sessionKey, messageId: metadata.id, maxChars: 2_000_000,
+          sessionKey, sessionId, messageId: metadata.id, maxChars: 2_000_000,
         }).catch((): null => null);
         if (record(full) && full.ok === true && record(full.message) &&
             !(record(full.message.__openclaw) && full.message.__openclaw.truncated === true)) {
@@ -165,7 +165,7 @@ export async function fetchNativePendingHistory(
         });
         checkIdentity(raw);
         if (cursor) {
-          const delta = parseChatHistoryCursorResultV2026_10_4(raw);
+          const delta = parseChatHistoryCursorResultV2026_10_6(raw);
           if (delta.kind === 'reset') throw new Error('Native history generation changed');
           messages = mergeGatewayHistoryPages(messages, delta.messages);
           cursor = delta.deltaCursor;

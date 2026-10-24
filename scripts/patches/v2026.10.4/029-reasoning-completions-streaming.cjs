@@ -10,7 +10,7 @@ const path = require('node:path');
 const ts = require('typescript');
 const { canonicalHelper } = require('../../openclaw/native-support-contract.cjs');
 const { PROVIDER_TRANSPORT_PATH, PROVIDER_PARTITIONER_PATH } =
-  require('../../openclaw/openclaw-patch-dependencies.cjs');
+  require('./openclaw-patch-dependencies.js');
 const { transformReasoningTagPartitioner } = require('./structured-reasoning-stream.js');
 const { transformReasoningPreviewTerminal } =
   require('./reasoning-preview-terminal-shapes.js');

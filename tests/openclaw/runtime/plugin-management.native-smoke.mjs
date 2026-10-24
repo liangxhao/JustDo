@@ -10,6 +10,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
+import { resolveNativeSmokeTarget } from './native-smoke-target.mjs';
 
 assert.equal(process.versions.electron, undefined, 'Run this isolated CLI probe with Node.js 24');
 
@@ -17,7 +18,7 @@ const root = fileURLToPath(new URL('../../../', import.meta.url));
 const require = createRequire(import.meta.url);
 const { buildSync } = require('esbuild');
 const execute = promisify(execFile);
-const runtimeRoot = path.join(root, 'vendor/openclaw-runtime/current');
+const { runtimeRoot, executable } = resolveNativeSmokeTarget();
 const artifacts = path.join(root, '.agent-tasks/plugin-hub');
 
 test('native extension install, policy-preserving update, toggles and uninstall', async () => {
@@ -40,13 +41,15 @@ test('native extension install, policy-preserving update, toggles and uninstall'
     OPENCLAW_CONFIG_PATH: configPath,
     OPENCLAW_GATEWAY_PORT: String(port),
     OPENCLAW_GATEWAY_TOKEN: randomBytes(24).toString('hex'),
+    JUSTDO_ELECTRON_PATH: executable,
   });
   try {
     fs.mkdirSync(state);
     fs.mkdirSync(source);
     fs.writeFileSync(configPath, JSON.stringify({
       gateway: { mode: 'local', port, auth: { mode: 'token', token: env.OPENCLAW_GATEWAY_TOKEN } },
-      agents: { defaults: { workspace: path.join(fixture, 'workspace') } },
+      agents: { ownership: 'explicit', entries: { main: {} }, defaults: { workspace: path.join(fixture, 'workspace'),
+        embeddedAgent: { cyberFailover: { mode: 'off' } } } },
       plugins: { allow: [id] },
     }));
     fs.writeFileSync(path.join(source, 'openclaw.plugin.json'), JSON.stringify({
@@ -85,7 +88,7 @@ test('native extension install, policy-preserving update, toggles and uninstall'
     assert.equal(service.listInstalled().find(entry => entry.id === id)?.enabled, true);
     assert.equal((await service.delete(id)).success, true);
     assert.equal(service.listInstalled().some(entry => entry.id === id), false);
-    const listed = await execute(process.execPath, [path.join(runtimeRoot, 'openclaw.mjs'), 'plugins', 'list', '--json'],
+    const listed = await execute(executable, [path.join(runtimeRoot, 'openclaw.mjs'), 'plugins', 'list', '--json'],
       { cwd: runtimeRoot, env, windowsHide: true, timeout: 30_000, maxBuffer: 4_000_000 });
     const inventory = JSON.parse(listed.stdout.slice(listed.stdout.indexOf('{')));
     assert.equal(inventory.plugins.some(entry => entry.id === id), false);

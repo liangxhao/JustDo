@@ -140,7 +140,6 @@ export function buildManagedLocalTtsConfig(
     ];
   })();
   return {
-    enabled: true,
     auto: 'off',
     provider: LOCAL_TTS_PROVIDER_ID,
     timeoutMs: 120_000,

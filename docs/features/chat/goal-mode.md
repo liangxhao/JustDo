@@ -17,7 +17,7 @@ expectedExistingSessionLifecycleRevision，在原生准入时继续限制会话�
 合成续跑提示不写入原生用户消息历史。ACK 必须包含原运行 ID 和 accepted/in_flight 状态。
 
 自动请求还携带闭合的 `goalContinuation` 条件：goalId、精确 predecessorRunId、
-automatic=true 和当前 maxAutomaticContinuations。补丁 032 在原生最后接纳位置重新核对
+automatic=true 和当前 maxAutomaticContinuations。补丁 031 在原生最后接纳位置重新核对
 相同前驱的整轮结算、Goal、原生实例、主运行、排队输入及原生子任务回交 owner。
 普通主回合直接 final 也可能仍有回交，因此不能仅检查 yielded 或 hasActiveSubagentRun。
 待提交的 requester settle wake 也占有回交责任；回交转为新主运行期间不能出现准入空窗。
@@ -114,7 +114,7 @@ INVALID_REQUEST 结合结构化 details.reason 分类。receipt-invalid 和未�
 ## 暂停后继续补丁与验证
 
 运行中暂停先停止执行，再修改原生 Goal 为 paused。停止留下 abortedLastRun 标记；
-当前补丁 [006](../../../scripts/patches/v2026.10.4/006-goal-resume-after-pause.cjs)
+当前补丁 [006](../../../scripts/patches/v2026.10.6/006-goal-resume-after-pause.cjs)
 只允许明确 resume 请求通过该标记检查，仍保留空闲、历史、身份、执行归属和排队准入
 限制。上游支持同等语义并通过原生回归前保留此补丁。
 

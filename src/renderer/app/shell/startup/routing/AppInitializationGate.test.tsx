@@ -512,6 +512,39 @@ test('a migration waits for workspace readiness and explicit result confirmation
   );
 });
 
+test('a normal upgrade keeps the application closed until both Main maintenance and workspace readiness complete', async () => {
+  const preparing = { ...snapshot(true), route: StartupRoute.Upgrade,
+    step: AppInitializationStep.DatabaseUpgrade, activity: AppInitializationActivity.NativeUpgrade,
+    completedSteps: 0, totalSteps: 5 };
+  const api = bridge(true, Promise.resolve(preparing));
+  Object.assign(window.electron.initialization, { route: StartupRoute.Upgrade });
+  const workspace = deferred<void>();
+  const view = render(<AppInitializationGate><WorkspaceProbe completion={workspace.promise} /></AppInitializationGate>);
+  await screen.findByText('initializationActivity_nativeUpgrade');
+  expect(view.container.querySelector('[data-application-surface]')).toBeNull();
+  expect(view.container.querySelector('[data-startup-view="upgrade"]')).toBeTruthy();
+  api.emit({ ...preparing, phase: AppInitializationPhase.Ready,
+    step: AppInitializationStep.Complete, completedSteps: 5 });
+  await waitFor(() => expect(view.container.querySelector('[data-application-surface]')).toBeTruthy());
+  expect(view.container.querySelector('[data-application-surface]')?.hasAttribute('inert')).toBe(true);
+  expect(screen.queryByText('initializationResultTitle')).toBeNull();
+  await act(async () => workspace.resolve());
+  await waitFor(() => expect(view.container.querySelector('.initialization-overlay')).toBeNull());
+  expect(view.container.querySelector('[data-application-surface]')?.hasAttribute('inert')).toBe(false);
+  expect(screen.queryByRole('button', { name: 'initializationResultContinue' })).toBeNull();
+});
+
+test.each([StartupRoute.Fresh, StartupRoute.Migration, StartupRoute.Normal])(
+  'a normal-upgrade window rejects a late snapshot belonging to %s', async route => {
+    bridge(true, Promise.resolve({ ...snapshot(true), route }));
+    Object.assign(window.electron.initialization, { route: StartupRoute.Upgrade });
+    const view = render(<AppInitializationGate><div>application</div></AppInitializationGate>);
+    expect((await screen.findByRole('alert')).textContent).toContain('initializationModeMismatch');
+    expect(view.container.querySelector('[data-startup-view="upgrade"]')).toBeTruthy();
+    expect(view.container.querySelector('[data-application-surface]')).toBeNull();
+  },
+);
+
 test('a transient pre-backup guide never queries or subscribes to the runtime manager', async () => {
   bridge(true, Promise.resolve(snapshot(true)));
   const { engine } = engineBridge();

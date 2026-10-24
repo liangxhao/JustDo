@@ -212,7 +212,7 @@ for other areas. Current validation limits belong in the owning feature or archi
 | Models, speech, video, decision providers                  | [Model management](docs/features/models/model-management.md), [local speech](docs/features/models/local-tts.md), [Jev/TypeSafe](docs/features/models/jev-integration.md)        |
 | Login SDK and model authentication                         | [Login integration](docs/features/integrations/login-sdk-template.md), [model authentication](docs/features/integrations/authentication-builtin-model-lifecycle.md)             |
 | Scheduled tasks                                            | [Scheduled tasks](docs/architecture/08-scheduled-tasks.md)                                                                                                                      |
-| Runtime patches                                            | [Patch guide](docs/openclaw-runtime-patches.md), [current capability inventory](scripts/patches/v2026.10.4/README.md)                                                            |
+| Runtime patches                                            | [Patch guide](docs/openclaw-runtime-patches.md), [current capability inventory](scripts/patches/v2026.10.6/README.md)                                                            |
 | Windows installation, bundled runtimes                     | [Windows installer](docs/windows-installer.md), [offline downloads](docs/offline-downloads.md)                                                                                  |
 | Logs and session diagnostics                               | [Development](docs/development.md), [diagnostics](docs/features/chat/session-diagnostics.md)                                                                                    |
 

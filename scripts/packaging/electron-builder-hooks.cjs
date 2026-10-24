@@ -27,6 +27,7 @@ const {
 const yaml = require('js-yaml');
 const ts = require('typescript');
 const { prepareWindowsResources } = require('./prepare-windows-build.cjs');
+const { verifyNodeRuntime, targetContract } = require('../runtime/setup-node-runtime.cjs');
 const {
   resolveRuntimeInstallTarget,
   syncOpenClawRuntimeResources,
@@ -367,10 +368,14 @@ function verifyAcpxArtifactEntryPaths(entryPaths, prefix, installTarget, buildHi
   }
 }
 
-function verifyMxcArtifactEntryPaths(entryPaths, prefix, installTarget, buildHint) {
+function verifyMxcArtifactEntryPaths(entryPaths, prefix, installTarget, buildHint, runtimeRoot) {
   if (installTarget.os !== 'win32') return;
   const mxcPrefix = `${prefix}dist/extensions/mxc/`;
   const arch = installTarget.cpu === 'arm64' ? 'arm64' : 'x64';
+  const sdkRoot = 'node_modules/@microsoft/mxc-sdk';
+  const nestedPty = `${sdkRoot}/node_modules/node-pty`;
+  const ptyRoot = entryPaths.has(`${mxcPrefix}${nestedPty}/package.json`)
+    ? nestedPty : 'node_modules/node-pty';
   const requiredEntries = [
     'dist/index.js',
     'dist/mxc-spawn-launcher.mjs',
@@ -380,13 +385,24 @@ function verifyMxcArtifactEntryPaths(entryPaths, prefix, installTarget, buildHin
     `node_modules/@microsoft/mxc-sdk/bin/${arch}/wxc-host-prep.exe`,
     'node_modules/@microsoft/mxc-sdk/dist/index.js',
     'node_modules/@microsoft/mxc-sdk/LICENSE.md',
-    `node_modules/@microsoft/mxc-sdk/node_modules/node-pty/prebuilds/win32-${arch}/conpty.node`,
+    `${sdkRoot}/package.json`,
+    `${ptyRoot}/package.json`,
+    `${ptyRoot}/prebuilds/win32-${arch}/conpty.node`,
   ].map(entry => `${mxcPrefix}${entry}`);
   const missing = requiredEntries.filter(entry => !entryPaths.has(entry));
   if (missing.length > 0) {
     throw new Error(
       `[electron-builder-hooks] Packaged MXC validation FAILED for ${buildHint}. Missing: ${missing.join(', ')}`,
     );
+  }
+  const pluginRoot = path.join(runtimeRoot, 'dist/extensions/mxc');
+  const sdkPackage = JSON.parse(readFileSync(path.join(pluginRoot, sdkRoot, 'package.json'), 'utf8'));
+  const ptyPackage = JSON.parse(readFileSync(path.join(pluginRoot, ptyRoot, 'package.json'), 'utf8'));
+  const supported = require('../../src/shared/security/mxcNativeBinaries.json');
+  if (sdkPackage.name !== '@microsoft/mxc-sdk' || sdkPackage.version !== supported.sdkVersion ||
+      ptyPackage.name !== 'node-pty' || typeof sdkPackage.dependencies?.['node-pty'] !== 'string' ||
+      !require('semver').satisfies(ptyPackage.version, sdkPackage.dependencies['node-pty'])) {
+    throw new Error(`[electron-builder-hooks] Packaged MXC dependency identity mismatch for ${buildHint}.`);
   }
 }
 
@@ -1061,6 +1077,7 @@ async function beforePack(context) {
         path.join(__dirname, '../..', 'vendor', 'openclaw-runtime', 'current'),
       ),
       'Windows runtime tar',
+      path.join(__dirname, '../..', 'vendor', 'openclaw-runtime', 'current'),
     );
     const hasMinGit =
       tarEntryPaths.has('mingit/bin/git.exe') || tarEntryPaths.has('mingit/cmd/git.exe');
@@ -1335,24 +1352,35 @@ function verifyPackagedNodeRuntime(context) {
         'Resources',
       )
     : path.join(context.appOutDir, 'resources');
-  const appAsarPath = path.join(resourcesRoot, 'app.asar');
-  const electronExecutable = require('electron');
+  // Windows payloads are still in the resource archive at afterPack. The
+  // archive verifier separately validates their exact manifest and all bytes.
+  const target = resolveOpenClawRuntimeTargetId(context);
+  const runtimeRoot = isWindowsTarget(context)
+    ? path.join(__dirname, '../..', 'vendor/openclaw-runtime/current/node-runtime')
+    : path.join(resourcesRoot, 'cfmind/node-runtime');
+  verifyNodeRuntime(runtimeRoot, target);
+  const contract = targetContract(target);
+  const nodeExecutable = path.join(runtimeRoot, contract.executable);
+  const npmBin = path.join(runtimeRoot, contract.npmBin);
+  const hostPlatform = { win32: 'win', darwin: 'mac', linux: 'linux' }[process.platform];
+  if (target !== `${hostPlatform}-${process.arch}`) return;
   const commands = [
     { name: 'node', args: ['--version'] },
     {
       name: 'npm',
-      args: [path.join(appAsarPath, 'node_modules', 'npm', 'bin', 'npm-cli.js'), '--version'],
+      args: [path.join(npmBin, 'npm-cli.js'), '--version'],
     },
     {
       name: 'npx',
-      args: [path.join(appAsarPath, 'node_modules', 'npm', 'bin', 'npx-cli.js'), '--version'],
+      args: [path.join(npmBin, 'npx-cli.js'), '--version'],
     },
   ];
 
   for (const command of commands) {
-    const result = spawnSync(electronExecutable, command.args, {
+    const result = spawnSync(nodeExecutable, command.args, {
       encoding: 'utf8',
-      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+      env: { ...process.env },
+      windowsHide: true,
     });
     const output = String(result.stdout || '').trim();
     if (result.status !== 0 || !/^v?\d+\.\d+\.\d+$/.test(output)) {
@@ -1745,7 +1773,11 @@ async function afterAllArtifactBuild(context) {
   return [manifestPath, historyPath];
 }
 
-async function verifyPackagedOpenClawRuntime(context) {
+async function verifyPackagedOpenClawRuntime(context, options = {}) {
+  // Internal test injection preserves the same verifier without using a mutable real runtime.
+  const repoRoot = options.repoRoot || path.join(__dirname, '../..');
+  const packageVersion = JSON.parse(readFileSync(path.join(repoRoot, 'package.json'), 'utf8')).openclaw.version;
+  const nativeContract = require('../openclaw/native-database-contract.cjs').readNativeDatabaseContract(repoRoot, packageVersion);
   const resourcesRoot = isMacTarget(context)
     ? path.join(
         context.appOutDir,
@@ -1782,7 +1814,11 @@ async function verifyPackagedOpenClawRuntime(context) {
         'cfmind/dist/entry.js',
         'cfmind/dist/entry.mjs',
         'cfmind/npm-shrinkwrap.json',
+        ...Object.values(nativeContract.modules).map(owner => `cfmind/${owner.path}`),
         ...PATCH_DEPENDENCY_ARTIFACT_PATHS.map(name => `cfmind/${name}`),
+        'cfmind/dist/extensions/mxc/node_modules/@microsoft/mxc-sdk/package.json',
+        'cfmind/dist/extensions/mxc/node_modules/@microsoft/mxc-sdk/node_modules/node-pty/package.json',
+        'cfmind/dist/extensions/mxc/node_modules/node-pty/package.json',
       ]);
       const archiveEntryPaths = new Set();
       const tarModule = require(path.join(__dirname, '../..', 'node_modules', 'tar'));
@@ -1796,6 +1832,7 @@ async function verifyPackagedOpenClawRuntime(context) {
             archiveEntryPaths.add(normalized);
             return (
               requiredEntries.has(normalized) ||
+              normalized.startsWith('cfmind/node-runtime/') ||
               normalized.startsWith('cfmind/dist/extensions/widget-kit/assets/')
             );
           },
@@ -1821,6 +1858,7 @@ async function verifyPackagedOpenClawRuntime(context) {
         );
       }
       verifyOpenClawPatchManifest(path.join(temporaryRoot, 'cfmind'), {
+        repoRoot,
         expectedTarget: resolveOpenClawRuntimeTargetId(context),
         allowOmittedGatewayAsar: true,
       });
@@ -1843,11 +1881,12 @@ async function verifyPackagedOpenClawRuntime(context) {
         'cfmind/',
         packagedInstallTarget,
         'packaged Windows archive',
+        path.join(temporaryRoot, 'cfmind'),
       );
       verifyRuntimeWorkerEntries(
         archiveEntryPaths,
         'cfmind/',
-        path.join(__dirname, '../..', 'vendor', 'openclaw-runtime', 'current'),
+        path.join(repoRoot, 'vendor', 'openclaw-runtime', 'current'),
       );
       require('../../plugins/extensions/widget-kit/scripts/prepare.cjs').verifyWidgetLibraryAssets(
         path.join(temporaryRoot, 'cfmind/dist/extensions/widget-kit/assets'),
@@ -1859,6 +1898,7 @@ async function verifyPackagedOpenClawRuntime(context) {
   } else {
     const packagedRuntimeRoot = path.join(resourcesRoot, 'cfmind');
     verifyOpenClawPatchManifest(packagedRuntimeRoot, {
+      repoRoot,
       expectedTarget: resolveOpenClawRuntimeTargetId(context),
       allowOmittedGatewayAsar: true,
     });

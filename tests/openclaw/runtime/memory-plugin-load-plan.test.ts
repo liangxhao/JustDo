@@ -6,7 +6,7 @@ import { pathToFileURL } from 'node:url';
 import { beforeAll, describe, expect, test } from 'vitest';
 
 const distRoot = path.resolve(
-  process.env.JUSTDO_TEST_PRISTINE_RUNTIME ?? 'vendor/openclaw-runtime/current',
+  process.env.OPENCLAW_TEST_NATIVE_RUNTIME_DIR ?? process.env.JUSTDO_TEST_PRISTINE_RUNTIME ?? 'vendor/openclaw-runtime/current',
   'dist',
 );
 const cases = [

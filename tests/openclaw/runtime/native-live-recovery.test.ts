@@ -17,12 +17,12 @@ if (process.env.JUSTDO_TEST_PATCHED_RUNTIME && !moduleFile) {
 }
 
 test('current patch inventory excludes the retired segmented recovery patch', () => {
-  expect(fs.readdirSync(path.resolve('scripts/patches/v2026.10.4'))
+  expect(fs.readdirSync(path.resolve('scripts/patches/v2026.10.6'))
     .some(name => name.includes('segmented-live-progress'))).toBe(false);
 });
 
 test.skipIf(!moduleFile)('native runtime recovers buffered text and bounded tool progress without patch 017', () => {
-  // 10.4 has one native owner imported by workers, plus the Gateway bundle.
+  // 10.6 has one native owner imported by workers, plus the Gateway bundle.
   for (const file of [moduleFile!, path.join(runtime, 'gateway-bundle.mjs')]) {
     expect(fs.readFileSync(file, 'utf8')).not.toContain('JUSTDO_SEGMENTED_LIVE_PROGRESS');
   }

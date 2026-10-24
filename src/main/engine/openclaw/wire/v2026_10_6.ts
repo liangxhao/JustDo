@@ -1,4 +1,4 @@
-export const OPENCLAW_WIRE_VERSION = 'v2026.10.4' as const;
+export const OPENCLAW_WIRE_VERSION = 'v2026.10.6' as const;
 export const OPENCLAW_COMPACT_SESSION_ROW_MODE = 'compact' as const;
 
 type UnknownRecord = Record<string, unknown>;
@@ -22,22 +22,22 @@ const optionalNonNegativeInteger = (value: unknown, field: string): number | und
   return value as number;
 };
 
-export type OpenClawSessionRowV2026_10_4 = {
+export type OpenClawSessionRowV2026_10_6 = {
   key: string;
   modelProvider?: string;
   model?: string;
   [key: string]: unknown;
 };
 
-export type OpenClawSessionsListResultV2026_10_4 = {
-  sessions: OpenClawSessionRowV2026_10_4[];
+export type OpenClawSessionsListResultV2026_10_6 = {
+  sessions: OpenClawSessionRowV2026_10_6[];
   nextOffset?: number | null;
   hasMore?: boolean;
 };
 
-export const parseSessionsListResultV2026_10_4 = (
+export const parseSessionsListResultV2026_10_6 = (
   value: unknown,
-): OpenClawSessionsListResultV2026_10_4 => {
+): OpenClawSessionsListResultV2026_10_6 => {
   if (!isRecord(value) || !Array.isArray(value.sessions)) {
     throw new Error(`${OPENCLAW_WIRE_VERSION} sessions.list returned an invalid payload`);
   }
@@ -69,7 +69,7 @@ export const parseSessionsListResultV2026_10_4 = (
   };
 };
 
-export type OpenClawSessionsSearchHitV2026_10_4 = {
+export type OpenClawSessionsSearchHitV2026_10_6 = {
   sessionKey: string;
   sessionId: string;
   messageId: string;
@@ -79,23 +79,23 @@ export type OpenClawSessionsSearchHitV2026_10_4 = {
   score: number;
 };
 
-export type OpenClawSessionsSearchResultV2026_10_4 = {
-  results: OpenClawSessionsSearchHitV2026_10_4[];
+export type OpenClawSessionsSearchResultV2026_10_6 = {
+  results: OpenClawSessionsSearchHitV2026_10_6[];
   indexing: boolean;
   truncated: boolean;
   archivedTranscriptsExcluded: number;
 };
 
-export const parseSessionsSearchResultV2026_10_4 = (
+export const parseSessionsSearchResultV2026_10_6 = (
   value: unknown,
-): OpenClawSessionsSearchResultV2026_10_4 => {
+): OpenClawSessionsSearchResultV2026_10_6 => {
   if (!isRecord(value) || !Array.isArray(value.results)) {
     throw new Error(`${OPENCLAW_WIRE_VERSION} sessions.search returned an invalid payload`);
   }
   if (value.results.length > 25) {
     throw new Error(`${OPENCLAW_WIRE_VERSION} sessions.search returned more than 25 results`);
   }
-  const results = value.results.map((entry, index): OpenClawSessionsSearchHitV2026_10_4 => {
+  const results = value.results.map((entry, index): OpenClawSessionsSearchHitV2026_10_6 => {
     if (
       !isRecord(entry) ||
       typeof entry.sessionKey !== 'string' ||
@@ -145,7 +145,7 @@ export const parseSessionsSearchResultV2026_10_4 = (
   };
 };
 
-export const parseModelReferenceV2026_10_4 = (
+export const parseModelReferenceV2026_10_6 = (
   value: unknown,
 ): { provider: string; model: string; reference: string } | null => {
   const reference =
@@ -163,7 +163,7 @@ export const parseModelReferenceV2026_10_4 = (
   };
 };
 
-export type OpenClawChatHistoryResultV2026_10_4 = {
+export type OpenClawChatHistoryResultV2026_10_6 = {
   messages: unknown[];
   activity?: unknown[];
   hasMore: boolean;
@@ -189,9 +189,9 @@ const parseChatHistoryActivity = (value: unknown): unknown[] | undefined => {
   return value;
 };
 
-export const parseChatHistoryResultV2026_10_4 = (
+export const parseChatHistoryResultV2026_10_6 = (
   value: unknown,
-): OpenClawChatHistoryResultV2026_10_4 => {
+): OpenClawChatHistoryResultV2026_10_6 => {
   if (!isRecord(value) || !Array.isArray(value.messages)) {
     throw new Error(`${OPENCLAW_WIRE_VERSION} chat.history returned an invalid payload`);
   }
@@ -219,13 +219,13 @@ export const parseChatHistoryResultV2026_10_4 = (
   };
 };
 
-export type OpenClawChatHistoryCursorResultV2026_10_4 =
+export type OpenClawChatHistoryCursorResultV2026_10_6 =
   | { kind: 'reset' }
   | { kind: 'delta'; messages: unknown[]; activity?: unknown[]; deltaCursor: string };
 
-export const parseChatHistoryCursorResultV2026_10_4 = (
+export const parseChatHistoryCursorResultV2026_10_6 = (
   value: unknown,
-): OpenClawChatHistoryCursorResultV2026_10_4 => {
+): OpenClawChatHistoryCursorResultV2026_10_6 => {
   if (!isRecord(value)) {
     throw new Error(`${OPENCLAW_WIRE_VERSION} chat.history cursor returned an invalid payload`);
   }
@@ -246,7 +246,7 @@ export const parseChatHistoryCursorResultV2026_10_4 = (
   };
 };
 
-export type OpenClawHistoryDetailsResultV2026_10_4 = {
+export type OpenClawHistoryDetailsResultV2026_10_6 = {
   toolInputs: Record<string, { name?: string; input: unknown }>;
   compactionDetails: Record<
     string,
@@ -254,15 +254,15 @@ export type OpenClawHistoryDetailsResultV2026_10_4 = {
   >;
 };
 
-export const parseHistoryDetailsResultV2026_10_4 = (
+export const parseHistoryDetailsResultV2026_10_6 = (
   value: unknown,
-): OpenClawHistoryDetailsResultV2026_10_4 => {
+): OpenClawHistoryDetailsResultV2026_10_6 => {
   if (!isRecord(value) || !isRecord(value.toolInputs) || !isRecord(value.compactionDetails)) {
     throw new Error(
       `${OPENCLAW_WIRE_VERSION} runtimeServices.historyDetails returned an invalid payload`,
     );
   }
-  const toolInputs: OpenClawHistoryDetailsResultV2026_10_4['toolInputs'] = {};
+  const toolInputs: OpenClawHistoryDetailsResultV2026_10_6['toolInputs'] = {};
   for (const [id, detail] of Object.entries(value.toolInputs)) {
     if (!isRecord(detail) || !Object.hasOwn(detail, 'input')) {
       throw new Error(`${OPENCLAW_WIRE_VERSION} history tool input ${id} is malformed`);
@@ -270,7 +270,7 @@ export const parseHistoryDetailsResultV2026_10_4 = (
     const name = optionalString(detail.name, `history tool input ${id}.name`);
     toolInputs[id] = { ...(name ? { name } : {}), input: detail.input };
   }
-  const compactionDetails: OpenClawHistoryDetailsResultV2026_10_4['compactionDetails'] = {};
+  const compactionDetails: OpenClawHistoryDetailsResultV2026_10_6['compactionDetails'] = {};
   for (const [id, detail] of Object.entries(value.compactionDetails)) {
     if (!isRecord(detail)) {
       throw new Error(`${OPENCLAW_WIRE_VERSION} compaction detail ${id} is malformed`);

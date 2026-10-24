@@ -1,3 +1,4 @@
+import { historicalRuntime } from './historical-runtime';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -7,7 +8,7 @@ import vm from 'node:vm';
 import { describe, expect, it, vi } from 'vitest';
 
 const patch = require('../../../../scripts/patches/v2026.10.4/019-plugin-owned-execution.cjs');
-const pristine = process.env.JUSTDO_EXECUTION_PRISTINE_DIR;
+const pristine = historicalRuntime(process.env.JUSTDO_EXECUTION_PRISTINE_DIR);
 
 function harness() {
   const runs = new Map<string, any>();

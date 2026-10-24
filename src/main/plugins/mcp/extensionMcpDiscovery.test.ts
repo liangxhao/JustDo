@@ -182,7 +182,7 @@ describe('parseExtensionMcpInventory', () => {
       buildCliEnvironment: vi.fn(async () => ({
         env: {
           OPENCLAW_STATE_DIR: 'state',
-          JUSTDO_ELECTRON_PATH: 'electron-node-runtime',
+          JUSTDO_ELECTRON_PATH: process.execPath,
         },
         runtimeRoot: 'runtime',
         openclawEntry: 'openclaw.mjs',
@@ -192,13 +192,13 @@ describe('parseExtensionMcpInventory', () => {
 
     await expect(discoverExtensionMcpServers(manager, commandRunner)).resolves.toEqual([]);
     expect(commandRunner).toHaveBeenCalledWith(
-      'electron-node-runtime',
+      process.execPath,
       ['--input-type=module', '-e', expect.stringContaining('loadPluginManifestRegistryCore')],
       {
         cwd: 'runtime',
         env: {
           OPENCLAW_STATE_DIR: 'state',
-          JUSTDO_ELECTRON_PATH: 'electron-node-runtime',
+          JUSTDO_ELECTRON_PATH: process.execPath,
           ELECTRON_RUN_AS_NODE: '1',
           JUSTDO_EXTENSION_MCP_MODE: 'list',
           JUSTDO_EXTENSION_MCP_ID: '',
