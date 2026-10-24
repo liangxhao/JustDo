@@ -7,7 +7,11 @@ import {
 } from '@shared/browser/browser';
 import { parseRecordingContext, serializeRecording } from '@shared/browser/browserRecording';
 import { stripAgentTeamInstruction } from '@shared/cowork/agent-team/agentTeamPrompt';
-import { TEAM_DISCUSSION_CHANNEL } from '@shared/cowork/agent-team/teamDiscussion';
+import {
+  isTeamDiscussionAgentId,
+  isTeamDiscussionId,
+  TEAM_DISCUSSION_CHANNEL,
+} from '@shared/cowork/agent-team/teamDiscussion';
 import { parseCoworkSessionKey } from '@shared/cowork/sessionKey';
 import { stripSwarmInstruction } from '@shared/cowork/swarm';
 import { stripSwarmWorkflowInstruction } from '@shared/cowork/swarm-workflow';
@@ -62,6 +66,32 @@ export function isTeamDiscussionInput(message: unknown): boolean {
       provenance.sourceChannel === TEAM_DISCUSSION_CHANNEL &&
       provenance.sourceTool === 'team_discussion') ||
       transport?.channel === TEAM_DISCUSSION_CHANNEL)
+  );
+}
+
+/** Public group output belongs to the group timeline, not a member's execution history. */
+export function isTeamDiscussionReplyMirror(message: unknown): boolean {
+  const outer = asRecord(message);
+  const raw = asRecord(outer?.message) ?? outer;
+  const mirror = asRecord(raw?.openclawDeliveryMirror);
+  const delivery = asRecord(raw?.openclawDelivery);
+  if (
+    raw?.role !== 'assistant' ||
+    raw.provider !== 'openclaw' ||
+    raw.model !== 'delivery-mirror' ||
+    mirror?.kind !== 'channel-final' ||
+    !isTeamDiscussionAgentId(delivery?.speakerAgentId) ||
+    typeof mirror.sourceMessageId !== 'string'
+  )
+    return false;
+  const [channel, roomId, discussionId, sequence, extra] = mirror.sourceMessageId.split(':');
+  return (
+    channel === TEAM_DISCUSSION_CHANNEL &&
+    isTeamDiscussionId(roomId) &&
+    isTeamDiscussionId(discussionId) &&
+    /^[1-9]\d*$/.test(sequence ?? '') &&
+    Number.isSafeInteger(Number(sequence)) &&
+    extra === undefined
   );
 }
 

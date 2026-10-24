@@ -19,6 +19,7 @@ vi.mock('openclaw/plugin-sdk/channel-inbound', () => ({
 }));
 vi.mock('openclaw/plugin-sdk/reply-runtime', () => ({
   dispatchReplyWithBufferedBlockDispatcher: sdk.reply,
+  SILENT_REPLY_TOKEN: 'NO_REPLY',
 }));
 vi.mock('openclaw/plugin-sdk/session-store-runtime', () => ({
   getSessionEntry: sdk.getSessionEntry,
@@ -30,6 +31,11 @@ vi.mock('openclaw/plugin-sdk/session-transcript-runtime', () => ({
 beforeEach(() => {
   vi.clearAllMocks();
   sdk.dispatch.mockResolvedValue(undefined);
+  sdk.group.mockImplementation(async ({ cfg, runTurn }) => {
+    const group = Object.values(cfg.broadcast)[0] as { agents: string[] };
+    await runTurn({ agentId: group.agents[0], round: 1 });
+    return { failedTurns: 0 };
+  });
   sdk.getSessionEntry.mockImplementation(({ agentId }) => ({
     sessionId: agentId,
     lifecycleRevision: 'rev',

@@ -1268,7 +1268,9 @@ Swarm 节点派发前将实际发送的任务信封（message、createdAt）与�
 
 详见 [Agent Team 现行契约](../features/assistants/agent-team.md)。
 
-AgentTeamPanel 组合任务 Graph 与关联群聊页签。群聊头像打开共享 CollaborationMemberHistory；组织者消息按元数据归属到助手，用户输入仍显示在右侧。公开消息与成员内部原生历史分开显示。 详见[主会话组织团队](../features/assistants/agent-team.md)。
+AgentTeamPanel 组合任务 Graph 与关联群聊页签。群消息与成员列表的头像均打开共享 CollaborationMemberHistory；成员列表按该成员的原生会话定位，未准备或已删除成员不提供跳转，进入详情时关闭成员浮层，返回群聊保留输入草稿。组织者消息按元数据归属到助手，用户输入仍显示在右侧。公开消息与成员内部原生历史分开显示。 详见[主会话组织团队](../features/assistants/agent-team.md)。
+
+成员内部视角在时间线分组前排除明确的群公开回复镜像：同时核对原生 assistant、openclaw / delivery-mirror、channel-final、有效 speakerAgentId 及完整群批次输出定位。保留原始模型正文、Thinking 和 Tool，避免将公开镜像当作最后正文而把同一回复折入“处理过程”；承载借用来源发言的成员会话也排除该公开镜像。不按正文相等去重，身份不完整及其他通道的记录继续保留；此投影适用于已有历史，不改写原生记录、群公开时间线或导出。
 
 群聊草稿同时保留结构化收件人、轮数和未确认提交的 requestId / payload；切换 Graph 与群聊不会把定向草稿变成广播。不确定提交先按相同身份查询或重试，确认成功后统一清空已提交字段，迟到确认不得清空后续草稿。首次打开讨论采用房间轮数，随后保留用户选择。草稿只保存用户输入及引用标识，不保存读取的原生正文。
 

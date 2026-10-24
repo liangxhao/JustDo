@@ -100,6 +100,7 @@ import { buildChatItems } from '@/libs/openclaw-chat/pipeline/build-chat-items';
 import { extractTextCached } from '@/libs/openclaw-chat/pipeline/message-extract';
 import {
   isTeamDiscussionInput,
+  isTeamDiscussionReplyMirror,
   isTrustedPeerInput,
 } from '@/libs/openclaw-chat/pipeline/message-normalizer';
 import type {
@@ -602,11 +603,15 @@ export class JustDoChatElement extends LitElement {
         // Incoming peer messages can carry the native assistant role. Project
         // their display side before timeline grouping, not only inside bubbles,
         // so they reset the local assistant's consecutive-message avatar slot.
-        projected = messages.map(message =>
-          isTrustedPeerInput(message) && message.role === 'assistant'
-            ? { ...message, role: 'user' }
-            : message,
-        );
+        // A room-owned session also stores public group mirrors, including
+        // borrowed-source replies. They are not this member's model execution.
+        projected = messages
+          .filter(message => !isTeamDiscussionReplyMirror(message))
+          .map(message =>
+            isTrustedPeerInput(message) && message.role === 'assistant'
+              ? { ...message, role: 'user' }
+              : message,
+          );
         this.peerPerspectiveHistory.set(messages, projected);
       }
       return projected;

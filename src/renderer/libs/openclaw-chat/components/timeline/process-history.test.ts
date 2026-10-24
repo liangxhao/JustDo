@@ -5,6 +5,7 @@ import '../justdo-chat';
 import { html, render } from 'lit';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
+import { ChatController } from '../../gateway/chat-controller';
 import type { AssistantTurn } from '../../model/chat-transcript-state';
 import type { GatewayMessage } from '../../types';
 import type { JustDoChatElement } from '../justdo-chat';
@@ -73,6 +74,97 @@ function createChat(state: 'running' | 'completed' | 'failed' | 'aborted' = 'com
 }
 
 describe('completed chat process history', () => {
+  test.each([false, true])(
+    'shows the member reply once when expanding process history (controller: %s)',
+    async withController => {
+      const reply = 'There is no new information to add to my previous answer.';
+      const messages: GatewayMessage[] = [
+        {
+          role: 'assistant',
+          content: 'A public reply from the borrowed source assistant.',
+          provider: 'openclaw',
+          model: 'delivery-mirror',
+          openclawDeliveryMirror: {
+            kind: 'channel-final',
+            sourceMessageId: 'justdo-team:room:discussion:1',
+          },
+          openclawDelivery: { speakerAgentId: 'main', mediaUrls: [] },
+          __openclaw: { id: 'source-public-mirror' },
+        },
+        {
+          role: 'user',
+          content: 'Group thread round 2.',
+          __openclaw: {
+            id: 'group-input',
+            transport: { channel: 'justdo-team', messageId: 'group-thread:round2' },
+          },
+        },
+        {
+          role: 'assistant',
+          content: [
+            { type: 'thinking', thinking: 'Checking the previous answer.' },
+            { type: 'text', text: reply },
+          ],
+          __openclaw: { id: 'member-reply' },
+        },
+        {
+          role: 'assistant',
+          content: [{ type: 'text', text: reply }],
+          provider: 'openclaw',
+          model: 'delivery-mirror',
+          openclawDeliveryMirror: {
+            kind: 'channel-final',
+            sourceMessageId: 'justdo-team:room:discussion:2',
+          },
+          openclawDelivery: { speakerAgentId: 'review', mediaUrls: [] },
+          __openclaw: { id: 'public-mirror' },
+        },
+      ];
+      const chat = document.createElement('justdo-chat') as JustDoChatElement;
+      chat.peerPerspective = true;
+      chat.assistantId = 'review';
+      chat.assistantName = 'Review assistant';
+      if (withController) {
+        const controller = new ChatController();
+        controller.state.visibleChatMessages = messages;
+        chat.controller = controller;
+      } else chat.messages = messages;
+      document.body.append(chat);
+      await chat.updateComplete;
+
+      const root = chat.shadowRoot!;
+      const process = root.querySelector<HTMLDetailsElement>('.completed-process')!;
+      expect(process).not.toBeNull();
+      expect(process.open).toBe(false);
+      expect(root.textContent!.split(reply)).toHaveLength(2);
+      process.querySelector('summary')!.click();
+      materializeDisclosureContents(root);
+      expect(process.open).toBe(true);
+      expect(process.textContent).not.toContain(reply);
+      expect(root.textContent!.split(reply)).toHaveLength(2);
+      expect(root.textContent).not.toContain('A public reply from the borrowed source assistant.');
+      const final = root.querySelector('[data-entry-id="member-reply"]')!;
+      expect(final.closest('.completed-process')).toBeNull();
+      chat.processSummariesExpanded = true;
+      await inspectProcessHistory(chat);
+      expect(process.textContent).toContain('Checking the previous answer.');
+      expect(root.textContent!.split(reply)).toHaveLength(2);
+      expect(withController ? chat.controller!.state.visibleChatMessages : chat.messages).toBe(
+        messages,
+      );
+      expect(messages).toHaveLength(4);
+
+      chat.peerPerspective = false;
+      await inspectProcessHistory(chat);
+      expect(root.querySelector('[data-entry-id="public-mirror"]')).not.toBeNull();
+      expect(root.querySelector('[data-entry-id="source-public-mirror"]')).not.toBeNull();
+      chat.peerPerspective = true;
+      await inspectProcessHistory(chat);
+      expect(root.querySelector('[data-entry-id="public-mirror"]')).toBeNull();
+      expect(root.textContent!.split(reply)).toHaveLength(2);
+    },
+  );
+
   test('retains a native tool toggle when a render happens before the toggle event is dispatched', async () => {
     const chat = createChat();
     chat.processSummariesExpanded = true;

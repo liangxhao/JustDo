@@ -1097,6 +1097,7 @@ it('opens the clicked member native history and returns to the group input', asy
 });
 
 it('distinguishes the organizer conversation from its separate member execution', async () => {
+  updateDiscussionDraft('room', { text: 'Keep this draft', selected: ['bob'] });
   read.mockResolvedValue({
     success: true,
     value: {
@@ -1126,6 +1127,21 @@ it('distinguishes the organizer conversation from its separate member execution'
   expect(screen.getByText('Internal history: Alice').getAttribute('data-session-key')).toBe(
     'agent:alice:justdo:source',
   );
+  fireEvent.click(screen.getByRole('button', { name: 'teamBackToDiscussion' }));
+  fireEvent.click(screen.getByRole('button', { name: 'teamMembers' }));
+  const memberList = screen.getByRole('complementary', { name: 'teamMembers' });
+  fireEvent.click(within(memberList).getByRole('button', { name: 'teamInspectAgent · Alice' }));
+  expect(screen.getByText('Internal history: Alice').getAttribute('data-session-key')).toBe(
+    teamDiscussionSessionKey(room.id, 'alice'),
+  );
+  fireEvent.click(screen.getByRole('button', { name: 'teamBackToDiscussion' }));
+  expect(screen.queryByRole('complementary', { name: 'teamMembers' })).toBeNull();
+  expect(screen.getByRole('textbox', { name: 'teamMessage' })).toHaveProperty(
+    'value',
+    'Keep this draft',
+  );
+  expect(getDiscussionDraft('room')).toMatchObject({ text: 'Keep this draft', selected: ['bob'] });
+  expect(send).not.toHaveBeenCalled();
 });
 
 it('uses plugin defaults for a new draft and restores explicitly selected rounds and recipients', async () => {

@@ -1058,6 +1058,11 @@ export default function TeamDiscussionView({
             <TeamDiscussionMembersPanel
               members={room.members}
               executions={executions}
+              onOpenAgent={agentId => {
+                setDetailIsOrganizer(false);
+                setDetailAgentId(agentId);
+                setDrawer(false);
+              }}
               onClose={() => setDrawer(false)}
               participation={
                 room.summarySource &&

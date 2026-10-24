@@ -29,6 +29,7 @@ export default function TeamDiscussionMembersPanel({
   members,
   executions,
   participation,
+  onOpenAgent,
   onClose,
 }: {
   members: readonly TeamDiscussionMember[];
@@ -38,6 +39,7 @@ export default function TeamDiscussionMembersPanel({
     disabled: boolean;
     onChange: (enabled: boolean) => void;
   };
+  onOpenAgent: (agentId: string) => void;
   onClose: () => void;
 }) {
   return (
@@ -102,14 +104,22 @@ export default function TeamDiscussionMembersPanel({
                 key={member.agentId}
                 className="flex min-w-0 items-center gap-3 rounded-xl border border-border bg-background px-3 py-3"
               >
-                <ChatAvatar
-                  role="assistant"
-                  peer={{
-                    id: member.agentId,
-                    label: member.name,
-                    color: COLLABORATION_PALETTE[index % COLLABORATION_PALETTE.length].stroke,
-                  }}
-                />
+                <button
+                  type="button"
+                  disabled={!member.sessionId || member.deleted}
+                  onClick={() => onOpenAgent(member.agentId)}
+                  aria-label={`${i18nService.t('teamInspectAgent')} · ${member.name}`}
+                  className="shrink-0 rounded-full enabled:hover:ring-2 enabled:hover:ring-primary focus-visible:outline focus-visible:outline-2"
+                >
+                  <ChatAvatar
+                    role="assistant"
+                    peer={{
+                      id: member.agentId,
+                      label: member.name,
+                      color: COLLABORATION_PALETTE[index % COLLABORATION_PALETTE.length].stroke,
+                    }}
+                  />
+                </button>
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-[13px] font-medium leading-5" title={member.name}>
                     {member.name}
