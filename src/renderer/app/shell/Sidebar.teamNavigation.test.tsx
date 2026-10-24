@@ -18,6 +18,7 @@ vi.mock('@/store', () => ({ store: { getState: () => state } }));
 vi.mock('@/features/cowork/coworkService', () => ({ coworkService: { loadSession: vi.fn() } }));
 vi.mock('@/features/cowork/coworkSelectors', () => ({
   selectCoworkSessions: () => [],
+  selectSessionDirectory: () => [],
   selectCurrentSessionId: () => 'source',
   selectGroups: () => [],
   selectIsOpenClawEngine: () => true,

@@ -5,6 +5,8 @@ import { useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useSelector } from 'react-redux';
 
+import { selectSessionDirectory } from '@/features/cowork/coworkSelectors';
+import { coworkService } from '@/features/cowork/coworkService';
 import { i18nService } from '@/services/i18n';
 import Modal from '@/shared/components/ui/Modal';
 import { useOwnerDocument } from '@/shared/dom/ownerDocument';
@@ -37,10 +39,14 @@ export default function AgentTeamHistoryDialog({
   const [discussions, setDiscussions] = useState<TeamDiscussionRoom[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [dataError, setDataError] = useState(false);
+  const [retryRevision, setRetryRevision] = useState(0);
   const [opening, setOpening] = useState(false);
   const [filter, setFilter] = useState<'all' | 'task' | 'group'>('all');
   const [query, setQuery] = useState('');
   const sessions = useSelector((state: RootState) => state.cowork.sessions);
+  const directory = useSelector(selectSessionDirectory);
+  const directoryIdsKey = JSON.stringify(directory.map(session => session.id).sort());
   const agents = useSelector((state: RootState) => state.agent.agents);
   const t = i18nService.t.bind(i18nService);
   const entries = buildAgentTeamHistory(
@@ -66,25 +72,8 @@ export default function AgentTeamHistoryDialog({
   };
   useEffect(() => {
     live.current = true;
-    const id = ++metadataRequest.current;
     const previous = ownerDocument.activeElement as HTMLElement | null;
     content.current?.focus();
-    void Promise.allSettled([
-      Promise.resolve().then(() => window.electron.collaboration.list()),
-      Promise.resolve().then(() => window.electron.teamDiscussion.list()),
-    ]).then(([tasks, groups]) => {
-      if (!live.current || id !== metadataRequest.current) return;
-      if (tasks.status === 'fulfilled' && tasks.value.success) setCollaborations(tasks.value.value);
-      if (groups.status === 'fulfilled' && groups.value.success) setDiscussions(groups.value.value);
-      if (
-        tasks.status === 'rejected' ||
-        groups.status === 'rejected' ||
-        !tasks.value.success ||
-        !groups.value.success
-      )
-        setError('teamRecordsUnavailable');
-      setLoading(false);
-    });
     return () => {
       live.current = false;
       request.current += 1;
@@ -92,6 +81,44 @@ export default function AgentTeamHistoryDialog({
       if (previous?.isConnected) previous.focus();
     };
   }, [ownerDocument]);
+  useEffect(() => {
+    const id = ++metadataRequest.current;
+    const isCurrent = () => live.current && id === metadataRequest.current;
+    setLoading(true);
+    setDataError(false);
+    void (async () => {
+      const [tasks, groups] = await Promise.allSettled([
+        Promise.resolve().then(() => window.electron.collaboration.list()),
+        Promise.resolve().then(() => window.electron.teamDiscussion.list()),
+      ]);
+      if (!isCurrent()) return;
+      const availableTasks = tasks.status === 'fulfilled' && tasks.value.success
+        ? tasks.value.value : [];
+      const availableGroups = groups.status === 'fulfilled' && groups.value.success
+        ? groups.value.value : [];
+      if (tasks.status === 'fulfilled' && tasks.value.success) setCollaborations(availableTasks);
+      if (groups.status === 'fulfilled' && groups.value.success) setDiscussions(availableGroups);
+      const directoryIds = new Set(JSON.parse(directoryIdsKey) as string[]);
+      const sourceIds = [...new Set([
+        ...availableTasks.map(room => room.anchorSessionId),
+        ...availableGroups.flatMap(room => room.sourceSessionId ? [room.sourceSessionId] : []),
+      ])].filter(sessionId => directoryIds.has(sessionId));
+      let summariesAvailable = true;
+      if (sourceIds.length) {
+        try {
+          summariesAvailable = await coworkService.ensureSessionSummaries(sourceIds);
+        } catch {
+          summariesAvailable = false;
+        }
+      }
+      if (!isCurrent()) return;
+      setDataError(!summariesAvailable ||
+        tasks.status === 'rejected' || groups.status === 'rejected' ||
+        !tasks.value.success || !groups.value.success);
+      setLoading(false);
+    })();
+    return () => { metadataRequest.current += 1; };
+  }, [directoryIdsKey, ownerDocument, retryRevision]);
   return createPortal(
     <Modal
       onClose={close}
@@ -183,16 +210,25 @@ export default function AgentTeamHistoryDialog({
           </label>
         </div>
         <div className="min-h-0 overflow-y-auto p-3">
-          {error && (
+          {(error || dataError) && (
             <p role="alert" className="px-2 py-3 text-xs text-amber-600 dark:text-amber-400">
-              {t(error)}
+              {t(error || 'teamRecordsUnavailable')}
+              {dataError && (
+                <button
+                  type="button"
+                  onClick={() => setRetryRevision(revision => revision + 1)}
+                  className="ml-2 text-primary hover:underline"
+                >
+                  {t('sessionListRetry')}
+                </button>
+              )}
             </p>
           )}
           {loading ? (
             <p role="status" className="px-2 py-6 text-center text-sm text-secondary">
               {t('teamHistoryLoading')}
             </p>
-          ) : !visible.length && !error ? (
+          ) : !visible.length && !error && !dataError ? (
             <p className="px-2 py-8 text-center text-sm text-secondary">
               {t(entries.length ? 'teamHistoryNoMatches' : 'teamHistoryEmpty')}
             </p>

@@ -188,6 +188,9 @@ interface CoworkSession {
   title: string;
   status: 'idle' | 'running' | 'completed' | 'error';
   pinned: boolean;
+  groupId?: string | null;
+  nativeSessionKey?: string;
+  historyBinding?: import('../../shared/app/startup/history').HistorySessionBinding;
   cwd: string;
   executionMode: 'auto' | 'local' | 'sandbox';
   permissionMode: PermissionMode;
@@ -1268,6 +1271,19 @@ interface IElectronAPI {
     listSessions: (
       agentId?: string,
     ) => Promise<{ success: boolean; sessions?: CoworkSessionSummary[]; error?: string }>;
+    listSessionDirectory: (agentId?: string) => Promise<{
+      success: boolean;
+      entries?: import('@shared/cowork/sessionDirectory').SessionDirectoryEntry[];
+      error?: string;
+    }>;
+    readSessionSummaries: (
+      sessionIds: string[],
+    ) => Promise<{ success: boolean; sessions?: CoworkSessionSummary[]; error?: string }>;
+    listSessionSearchSummaries: () => Promise<{
+      success: boolean;
+      sessions?: CoworkSessionSummary[];
+      error?: string;
+    }>;
     searchSessionMessages: (
       query: string,
       options?: import('@shared/cowork/sessionSearch').CoworkSessionSearchOptions,

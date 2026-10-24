@@ -2,6 +2,10 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
 import { appendAgentTeamInstruction } from '../../../../plugins/extensions/agent-team/prompt/agentTeamPrompt';
 import { CoworkSessionCopyIpc } from '../../../shared/cowork/sessionCopy';
+import {
+  SESSION_SUMMARY_BATCH_LIMIT,
+  SessionDirectoryIpc,
+} from '../../../shared/cowork/sessionDirectory';
 import { CoworkSessionForkIpc } from '../../../shared/cowork/sessionFork';
 import { SessionRunBeginErrorCode } from '../../../shared/cowork/sessionRun';
 import { SessionRunIpc } from '../../../shared/cowork/sessionRun';
@@ -43,6 +47,102 @@ const registerHandlers = (stopSession: ReturnType<typeof vi.fn>): IpcHandler => 
 
 beforeEach(() => {
   mocks.handle.mockReset();
+});
+
+test('validates directory and summary inputs before reading product metadata', async () => {
+  const store = {
+    listSessionDirectory: vi.fn(() => []),
+    readSessionSummaries: vi.fn(() => []),
+    listSessionSearchSummaries: vi.fn(() => []),
+  };
+  registerCoworkSessionHandlers({
+    getCoworkStore: () => store as unknown as CoworkStore,
+    getCoworkEngineRouter: () => ({}) as CoworkEngineRouter,
+    setSessionPermissionMode: vi.fn(),
+  });
+  const directory = mocks.handle.mock.calls.find(
+    ([name]) => name === SessionDirectoryIpc.List,
+  )![1] as IpcHandler;
+  const summaries = mocks.handle.mock.calls.find(
+    ([name]) => name === SessionDirectoryIpc.ReadSummaries,
+  )![1] as IpcHandler;
+  const search = mocks.handle.mock.calls.find(
+    ([name]) => name === SessionDirectoryIpc.SearchSummaries,
+  )![1] as IpcHandler;
+  for (const invalid of [null, '', 1, {}, 'a'.repeat(513)]) {
+    await expect(directory(null, invalid)).resolves.toMatchObject({ success: false });
+  }
+  for (const invalid of [
+    undefined,
+    null,
+    {},
+    [''],
+    [1],
+    ['a'.repeat(513)],
+    Array.from({ length: SESSION_SUMMARY_BATCH_LIMIT + 1 }, () => 'one'),
+  ]) {
+    await expect(summaries(null, invalid)).resolves.toMatchObject({ success: false });
+  }
+  expect(store.listSessionDirectory).not.toHaveBeenCalled();
+  expect(store.readSessionSummaries).not.toHaveBeenCalled();
+  await expect(directory(null, 'main')).resolves.toEqual({ success: true, entries: [] });
+  await expect(summaries(null, ['one', 'one', 'two'])).resolves.toEqual({
+    success: true,
+    sessions: [],
+  });
+  expect(store.readSessionSummaries).toHaveBeenCalledExactlyOnceWith(['one', 'two']);
+  await expect(search(null)).resolves.toEqual({ success: true, sessions: [] });
+});
+
+test('returns directory before Gateway discovery, coalesces concurrent discovery and notifies after adoption', async () => {
+  const parent = { id: 'parent', agentId: 'main', nativeSessionKey: 'agent:main:justdo:parent' };
+  let resolveNative!: (value: unknown) => void;
+  const pendingNative = new Promise(resolve => {
+    resolveNative = resolve;
+  });
+  const requestGateway = vi.fn(async (method: string) =>
+    method === 'sessions.list'
+      ? pendingNative
+      : { session: { worktree: { id: 'tree' }, spawnedCwd: 'E:\\repo\\child' } },
+  );
+  const onSessionsChanged = vi.fn();
+  let adopted = false;
+  const store = {
+    listSessionDirectory: vi.fn(() => [parent]),
+    getSession: vi.fn(() => parent),
+    getSessionByNativeKey: vi.fn(() => (adopted ? { id: 'child' } : null)),
+    adoptNativeSession: vi.fn(() => {
+      adopted = true;
+      return { id: 'child' };
+    }),
+  };
+  registerCoworkSessionHandlers({
+    getCoworkStore: () => store as unknown as CoworkStore,
+    getCoworkEngineRouter: () => ({}) as CoworkEngineRouter,
+    setSessionPermissionMode: vi.fn(),
+    requestGateway: requestGateway as <T>(method: string, params?: unknown) => Promise<T>,
+    onSessionsChanged,
+  });
+  const handler = mocks.handle.mock.calls.find(
+    ([name]) => name === SessionDirectoryIpc.List,
+  )![1] as IpcHandler;
+
+  await expect(handler(null)).resolves.toEqual({ success: true, entries: [parent] });
+  await handler(null);
+  expect(requestGateway).toHaveBeenCalledTimes(1);
+  expect(onSessionsChanged).not.toHaveBeenCalled();
+  resolveNative({
+    sessions: [
+      {
+        key: 'agent:main:subagent:child',
+        parentSessionKey: parent.nativeSessionKey,
+        worktree: { id: 'tree' },
+      },
+    ],
+  });
+  await vi.waitFor(() => expect(onSessionsChanged).toHaveBeenCalledOnce());
+  expect(store.getSession).toHaveBeenCalledExactlyOnceWith('parent');
+  expect(store.adoptNativeSession).toHaveBeenCalledOnce();
 });
 
 test('validates search scopes before Gateway access and preserves message identity in IPC results', async () => {
@@ -287,12 +387,10 @@ test.each([CoworkSessionCopyIpc.Copy, CoworkSessionForkIpc.Fork])(
     const store = { getSession: () => source, createSession: vi.fn() };
     const router = {
       getSessionRuntimeStatus: vi.fn().mockResolvedValue({ known: true, running: false }),
-      prepareSession: vi
-        .fn()
-        .mockResolvedValue({
-          sessionKey: source.nativeSessionKey,
-          gatewaySessionId: 'replacement',
-        }),
+      prepareSession: vi.fn().mockResolvedValue({
+        sessionKey: source.nativeSessionKey,
+        gatewaySessionId: 'replacement',
+      }),
     };
     const requestGateway = vi.fn();
     registerCoworkSessionHandlers({

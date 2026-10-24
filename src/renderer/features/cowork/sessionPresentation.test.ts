@@ -86,38 +86,37 @@ describe('session date grouping', () => {
 });
 
 describe('sidebar source grouping', () => {
-  it('preserves historical external ownership without classifying by title or user group', () => {
-    const local = summary('local', 1);
+  it('groups CLI sessions by source without classifying by title or user group', () => {
+    const local = { ...summary('local', 1), title: 'CLI' };
     const olderExternal: CoworkSessionSummary = {
       ...summary('external-old', 2),
-      title: '# Historical Agent Runtime',
+      title: '# Agent Runtime',
       groupId: 'user-group',
       external: {
-        origin: 'multica',
+        origin: 'cli',
         readOnly: true,
         status: 'completed',
-        sessionKey: 'agent:main:multica:old',
+        sessionKey: 'agent:main:cli:old',
       },
     };
     const newerExternal: CoworkSessionSummary = {
       ...summary('external-new', 3),
       title: 'A useful title',
       external: {
-        origin: 'multica',
+        origin: 'cli',
         readOnly: true,
         status: 'running',
-        sessionKey: 'agent:main:multica:new',
+        sessionKey: 'agent:main:cli:new',
       },
     };
 
     expect(partitionSidebarSessions([olderExternal, local, newerExternal])).toEqual({
-      historicalAppServer: [newerExternal, olderExternal],
-      cli: [],
+      cli: [newerExternal, olderExternal],
       browserExtension: [],
       regular: [local],
     });
-    expect(olderExternal.external).toMatchObject({ origin: 'multica', readOnly: true });
-    expect(newerExternal.external).toMatchObject({ origin: 'multica', readOnly: true });
+    expect(olderExternal.external).toMatchObject({ origin: 'cli', readOnly: true });
+    expect(newerExternal.external).toMatchObject({ origin: 'cli', readOnly: true });
   });
 
   it('keeps extension sessions out of recent and user groups regardless of title or pin', () => {
@@ -132,7 +131,6 @@ describe('sidebar source grouping', () => {
     const input = [older, local, sameActivity, newer];
 
     expect(partitionSidebarSessions(input)).toEqual({
-      historicalAppServer: [],
       cli: [],
       browserExtension: [newer, sameActivity, older],
       regular: [local],

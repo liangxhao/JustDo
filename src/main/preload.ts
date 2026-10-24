@@ -124,6 +124,7 @@ import {
 } from '../shared/cowork/nativeSessionDispatch';
 import { type CopyCoworkSessionInput, CoworkSessionCopyIpc } from '../shared/cowork/sessionCopy';
 import { CoworkSessionDetailsIpc } from '../shared/cowork/sessionDetails';
+import { SessionDirectoryIpc } from '../shared/cowork/sessionDirectory';
 import { CoworkSessionForkIpc, type ForkCoworkSessionInput } from '../shared/cowork/sessionFork';
 import {
   GoalExecutionIpc,
@@ -976,6 +977,11 @@ contextBridge.exposeInMainWorld('electron', {
     getSessionModel: (options: { sessionId: string; agentId?: string }) =>
       ipcRenderer.invoke('cowork:session:model', options),
     listSessions: (agentId?: string) => ipcRenderer.invoke('cowork:session:list', agentId),
+    listSessionDirectory: (agentId?: string) =>
+      ipcRenderer.invoke(SessionDirectoryIpc.List, agentId),
+    readSessionSummaries: (sessionIds: string[]) =>
+      ipcRenderer.invoke(SessionDirectoryIpc.ReadSummaries, sessionIds),
+    listSessionSearchSummaries: () => ipcRenderer.invoke(SessionDirectoryIpc.SearchSummaries),
     searchSessionMessages: (query: string, options?: CoworkSessionSearchOptions) =>
       ipcRenderer.invoke(CoworkSessionSearchIpc.SearchMessages, query, options),
     getSessionGoal: (sessionId: string) => ipcRenderer.invoke('cowork:session:goal', sessionId),

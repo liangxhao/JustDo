@@ -54,6 +54,7 @@ interface CoworkSearchModalProps {
   isOpen: boolean;
   onClose: () => void;
   sessions: CoworkSessionSummary[];
+  scopeSessionIds?: string[];
   currentSessionId: string | null;
   groups?: SessionGroup[];
   onSelectSession: (
@@ -87,11 +88,46 @@ const INDEX_RETRY_DELAYS = [500, 1_000, 2_000, 3_000, 3_000] as const;
 const CoworkSearchModal: React.FC<CoworkSearchModalProps> = ({
   isOpen,
   onClose,
-  sessions,
+  sessions: providedSessions,
+  scopeSessionIds,
   currentSessionId,
   groups = EMPTY_GROUPS,
   onSelectSession,
 }) => {
+  const [searchIndex, setSearchIndex] = useState<CoworkSessionSummary[] | null>(null);
+  const [indexStatus, setIndexStatus] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [indexRevision, setIndexRevision] = useState(0);
+  const scopeIdsKey = scopeSessionIds
+    ? [...new Set(scopeSessionIds)].sort().join('\0')
+    : undefined;
+  const usesSearchIndex = Boolean(window.electron?.cowork?.listSessionSearchSummaries);
+  const sessions = useMemo(() => {
+    const entries = usesSearchIndex ? searchIndex ?? [] : providedSessions;
+    const ids = scopeIdsKey === undefined ? null : new Set(scopeIdsKey.split('\0'));
+    return ids ? entries.filter(entry => ids.has(entry.id)) : entries;
+  }, [providedSessions, scopeIdsKey, searchIndex, usesSearchIndex]);
+
+  useEffect(() => {
+    if (!isOpen || !usesSearchIndex) return;
+    let cancelled = false;
+    setIndexStatus('loading');
+    setSearchIndex(null);
+    void window.electron.cowork.listSessionSearchSummaries()
+      .then(result => {
+        if (cancelled) return;
+        if (!result.success || !result.sessions) {
+          setIndexStatus('error');
+          return;
+        }
+        setSearchIndex(result.sessions);
+        setIndexStatus('ready');
+      })
+      .catch(() => {
+        if (!cancelled) setIndexStatus('error');
+      });
+    return () => { cancelled = true; };
+  }, [isOpen, indexRevision, usesSearchIndex, scopeIdsKey]);
+
   const [searchQuery, setSearchQuery] = useState('');
   const [messageMatches, setMessageMatches] = useState<SearchSnapshot>(EMPTY_SEARCH);
   const [searchStatus, setSearchStatus] = useState<SearchStatus>('idle');
@@ -356,9 +392,10 @@ const CoworkSearchModal: React.FC<CoworkSearchModalProps> = ({
 
   const hasQuery = Boolean(searchQuery.trim());
   const hasSearchNotice =
-    currentSearch.partial || currentSearch.indexing || searchStatus === 'error';
+    currentSearch.partial || currentSearch.indexing || searchStatus === 'error' ||
+    (usesSearchIndex && indexStatus === 'error');
   const searchNotice = i18nService.t(
-    searchStatus === 'error'
+    searchStatus === 'error' || (usesSearchIndex && indexStatus === 'error')
       ? 'searchConversationsFailed'
       : currentSearch.indexing
         ? 'searchIndexingConversations'
@@ -496,7 +533,8 @@ const CoworkSearchModal: React.FC<CoworkSearchModalProps> = ({
           <span className="ml-1 h-px flex-1 bg-border-subtle" aria-hidden="true" />
         </div>
         <div className="cowork-search-body">
-          {searchStatus === 'searching' && searchResults.length === 0 && !hasSearchNotice ? (
+          {(searchStatus === 'searching' || (usesSearchIndex && indexStatus === 'loading')) &&
+          searchResults.length === 0 && !hasSearchNotice ? (
             <div className="cowork-search-empty" role="status" aria-live="polite">
               <div className="cowork-search-empty-icon" aria-hidden="true">
                 <ArrowPathIcon className="h-6 w-6 motion-safe:animate-spin" />
@@ -514,7 +552,13 @@ const CoworkSearchModal: React.FC<CoworkSearchModalProps> = ({
               <button
                 type="button"
                 className="cowork-search-retry"
-                onClick={() => setSearchRevision(revision => revision + 1)}
+                onClick={() => {
+                  if (usesSearchIndex && indexStatus === 'error') {
+                    setIndexRevision(revision => revision + 1);
+                  } else {
+                    setSearchRevision(revision => revision + 1);
+                  }
+                }}
               >
                 <ArrowPathIcon className="h-3.5 w-3.5" aria-hidden="true" />
                 {i18nService.t('searchConversationsRetry')}

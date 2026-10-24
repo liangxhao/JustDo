@@ -64,7 +64,7 @@ interface CoworkBrowserPanelsOptions {
   pendingBrowserAgentPanelStatesRef: React.MutableRefObject<
     Map<string, PendingBrowserAgentPanelState>
   >;
-  sessions: CoworkSessionSummary[];
+  sessions: Array<Pick<CoworkSessionSummary, 'id' | 'status'>>;
   availableAgentBrowserSessionIdsRef: React.MutableRefObject<string[]>;
   handleBrowserTargetChange: (targetId: string | null) => void;
   openBrowserTab: (targetSessionKey: string, tab: BrowserPanelTab, maximumTabs: number) => void;

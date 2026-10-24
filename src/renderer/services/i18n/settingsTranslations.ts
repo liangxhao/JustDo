@@ -486,7 +486,6 @@ export const settingsTranslations = {
     applicationConnectionCopyValue: '复制{field}',
     applicationConnectionValueCopied: '已复制{field}',
     externalClientSessionBadge: '外部',
-    externalClientSessionGroup: '外部客户端',
     externalClientSessionReadOnly: '这是由旧版外部客户端入口创建的历史会话，仅供查看。',
     agentRuntimeRetry: '重新加载',
     agentRuntimeUnsaved: '有未保存更改',
@@ -1486,7 +1485,6 @@ export const settingsTranslations = {
     applicationConnectionCopyValue: 'Copy {field}',
     applicationConnectionValueCopied: '{field} copied',
     externalClientSessionBadge: 'External',
-    externalClientSessionGroup: 'External clients',
     externalClientSessionReadOnly:
       'This historical session was created through an earlier external client entry and is read-only.',
     agentRuntimeRetry: 'Reload',

@@ -7,7 +7,7 @@ import {
   InformationCircleIcon,
   Square2StackIcon,
 } from '@heroicons/react/24/outline';
-import { CoworkSessionSource } from '@shared/cowork/sessionSource';
+import { isSourceGroupedSession } from '@shared/cowork/sessionSource';
 import { ExternalSessionSource } from '@shared/integrations/externalSession';
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
@@ -100,13 +100,13 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
     }, 100);
   };
 
+  const canMoveToGroup = !isSourceGroupedSession(session);
+
   // Draggable setup
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: session.id,
     data: { session },
-    disabled:
-      session.external?.readOnly === true ||
-      session.source === CoworkSessionSource.BrowserExtension,
+    disabled: !canMoveToGroup,
   });
 
   useEffect(() => {
@@ -474,7 +474,7 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
         tone: 'neutral' as const,
       });
     }
-    if (onMoveToGroup && groups.length > 0) {
+    if (canMoveToGroup && onMoveToGroup && groups.length > 0) {
       items.push({
         key: 'moveToGroup',
         label: moveToGroupLabel,
@@ -510,6 +510,7 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
     handleRenameClick,
     renameLabel,
     showBatchOption,
+    canMoveToGroup,
     onMoveToGroup,
     groups.length,
     moveToGroupLabel,
@@ -519,7 +520,7 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
   ]);
 
   const handleMoveToGroup = (groupId: string | null) => {
-    if (onMoveToGroup) {
+    if (canMoveToGroup && onMoveToGroup) {
       onMoveToGroup(groupId);
     }
     closeMenu();
@@ -752,7 +753,7 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
               </button>
             ))}
             {/* Group submenu */}
-            {showGroupSubMenu && onMoveToGroup && (
+            {showGroupSubMenu && canMoveToGroup && onMoveToGroup && (
               <div
                 className="border-t border-border pl-5"
                 onMouseEnter={openSubMenu}

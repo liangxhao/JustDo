@@ -59,6 +59,7 @@ export interface CoworkSession {
   title: string;
   status: CoworkSessionStatus;
   pinned: boolean;
+  groupId?: string | null;
   cwd: string;
   executionMode: CoworkExecutionMode;
   permissionMode: PermissionMode;

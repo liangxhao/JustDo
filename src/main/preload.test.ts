@@ -3,6 +3,7 @@ import { EventEmitter } from 'node:events';
 import { afterEach, expect, test, vi } from 'vitest';
 
 import { AppInitializationIpc, INITIALIZATION_WINDOW_ARGUMENT } from '../shared/app/initialization';
+import { SessionDirectoryIpc } from '../shared/cowork/sessionDirectory';
 import { AgentCliIntegrationIpc } from '../shared/integrations/agentCliIntegration';
 import { type ExtensionChangedEvent, ExtensionIpc } from '../shared/plugins/extensions';
 
@@ -41,6 +42,21 @@ test('exposes CLI status without access switches or a client-specific configurat
   expect(electronMocks.invoke).not.toHaveBeenCalled();
   await bridge.agentCli.getStatus();
   expect(electronMocks.invoke).toHaveBeenCalledExactlyOnceWith(AgentCliIntegrationIpc.GetStatus);
+});
+
+test('keeps session directory, bounded summary reads and search snapshots on separate bridge calls', async () => {
+  await import('./preload');
+  const bridge = electronMocks.expose.mock.calls[0][1];
+
+  await bridge.cowork.listSessionDirectory('main');
+  await bridge.cowork.readSessionSummaries(['one', 'two']);
+  await bridge.cowork.listSessionSearchSummaries();
+
+  expect(electronMocks.invoke.mock.calls).toEqual([
+    [SessionDirectoryIpc.List, 'main'],
+    [SessionDirectoryIpc.ReadSummaries, ['one', 'two']],
+    [SessionDirectoryIpc.SearchSummaries],
+  ]);
 });
 
 test.each([

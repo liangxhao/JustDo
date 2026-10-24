@@ -3,6 +3,7 @@ import type { BrowserAnnotationDraft } from '@shared/browser/browser';
 import type { BrowserRecordingDraft } from '@shared/browser/browserRecording';
 import type { AgentTeamMode } from '@shared/cowork/agent-team/agentTeamPrompt';
 import { DEFAULT_MAX_RETAINED_DISPLAY_TABS } from '@shared/cowork/displayTabRetention';
+import type { SessionDirectoryEntry } from '@shared/cowork/sessionDirectory';
 import { DEFAULT_MAX_GOAL_CONTINUATION_TURNS } from '@shared/cowork/sessionGoal';
 import type { SessionRuntimeSnapshot, SessionRunTiming } from '@shared/cowork/sessionRun';
 import { DEFAULT_PERMISSION_MODE, type PermissionMode } from '@shared/security/approvals';
@@ -33,6 +34,8 @@ export interface DraftAttachment {
 
 interface CoworkState {
   sessions: CoworkSessionSummary[];
+  /** Complete metadata directory; loaded row summaries are only a subset. */
+  sessionDirectory: SessionDirectoryEntry[] | null;
   sessionListStatus: 'loading' | 'ready' | 'error';
   groups: SessionGroup[];
   expandedGroupIds: string[];
@@ -69,6 +72,7 @@ interface CoworkState {
 
 const initialState: CoworkState = {
   sessions: [],
+  sessionDirectory: null,
   sessionListStatus: 'loading',
   groups: [],
   expandedGroupIds: [],
@@ -128,10 +132,89 @@ const clearSessionModelSelectionState = (state: CoworkState, sessionId: string) 
   delete state.userConfirmedSessionModelRefs[sessionId];
 };
 
+const updateDirectoryEntry = (
+  state: CoworkState,
+  sessionId: string,
+  changes: Partial<SessionDirectoryEntry>,
+): void => {
+  const entry = state.sessionDirectory?.find(item => item.id === sessionId);
+  if (entry) Object.assign(entry, changes);
+};
+
+const rememberDirectoryEntry = (state: CoworkState, session: CoworkSessionSummary): void => {
+  if (!state.sessionDirectory || session.id.startsWith('temp-')) return;
+  const index = state.sessionDirectory.findIndex(item => item.id === session.id);
+  const entry: SessionDirectoryEntry = {
+    id: session.id,
+    status: session.status,
+    pinned: session.pinned,
+    agentId: session.agentId,
+    groupId: session.groupId !== undefined ? session.groupId : state.sessionDirectory[index]?.groupId,
+    source: session.source,
+    external: session.external,
+    nativeSessionKey: session.nativeSessionKey,
+    createdAt: session.createdAt,
+    updatedAt: session.updatedAt,
+  };
+  if (index < 0) state.sessionDirectory.push(entry);
+  else state.sessionDirectory[index] = entry;
+};
+
 const coworkSlice = createSlice({
   name: 'cowork',
   initialState,
   reducers: {
+    setSessionDirectory(state, action: PayloadAction<SessionDirectoryEntry[]>) {
+      const previous = new Map(
+        (state.sessionDirectory ?? state.sessions).map(session => [session.id, session.updatedAt]),
+      );
+      state.sessionDirectory = action.payload.map(entry => ({
+        ...entry,
+        updatedAt: Math.max(entry.updatedAt, previous.get(entry.id) ?? 0),
+      }));
+      const directory = new Map(state.sessionDirectory.map(entry => [entry.id, entry]));
+      state.sessions = state.sessions
+        .filter(session => directory.has(session.id))
+        .map(session => ({ ...session, ...directory.get(session.id)! }));
+      const selected = state.currentSession && directory.get(state.currentSession.id);
+      if (selected && state.currentSession) {
+        state.currentSession.status = selected.status;
+        state.currentSession.external = selected.external;
+        state.currentSession.source = selected.source;
+        state.currentSession.pinned = selected.pinned;
+        state.currentSession.groupId = selected.groupId;
+        state.currentSession.updatedAt = Math.max(
+          state.currentSession.updatedAt, selected.updatedAt,
+        );
+      }
+      state.unreadSessionIds = state.unreadSessionIds.filter(
+        id => directory.has(id) && id !== state.currentSessionId,
+      );
+      state.sessionListStatus = 'ready';
+    },
+
+    upsertSessionSummaries(state, action: PayloadAction<CoworkSessionSummary[]>) {
+      const directory = state.sessionDirectory
+        ? new Map(state.sessionDirectory.map(entry => [entry.id, entry]))
+        : null;
+      const summaries = new Map(state.sessions.map(session => [session.id, session]));
+      for (const summary of action.payload) {
+        if (directory && !directory.has(summary.id)) continue;
+        const previous = summaries.get(summary.id);
+        summaries.set(summary.id, {
+          ...previous,
+          ...summary,
+          ...directory?.get(summary.id),
+          updatedAt: Math.max(
+            summary.updatedAt,
+            previous?.updatedAt ?? 0,
+            directory?.get(summary.id)?.updatedAt ?? 0,
+          ),
+        });
+      }
+      state.sessions = [...summaries.values()];
+    },
+
     setCoworkActive(state, action: PayloadAction<boolean>) {
       state.isCoworkActive = action.payload;
     },
@@ -184,6 +267,10 @@ const coworkSlice = createSlice({
       action: PayloadAction<{ sessionId: string; running: boolean }>,
     ) {
       const { sessionId, running } = action.payload;
+      const directoryEntry = state.sessionDirectory?.find(item => item.id === sessionId);
+      if (directoryEntry && (running || directoryEntry.status === 'running')) {
+        directoryEntry.status = running ? 'running' : 'idle';
+      }
       if (running) {
         state.sessionRuntimeActivity[sessionId] = true;
         const sessionIndex = state.sessions.findIndex(s => s.id === sessionId);
@@ -244,6 +331,7 @@ const coworkSlice = createSlice({
             ...(preservedModelRef ? { modelRef: preservedModelRef } : {}),
             updatedAt: Math.max(
               incomingSession.updatedAt,
+              state.sessionDirectory?.find(session => session.id === incomingSession.id)?.updatedAt ?? 0,
               state.sessions.find(session => session.id === incomingSession.id)?.updatedAt ?? 0,
               state.currentSession?.id === incomingSession.id ? state.currentSession.updatedAt : 0,
             ),
@@ -271,6 +359,9 @@ const coworkSlice = createSlice({
             status,
             pinned: pinned ?? false,
             agentId,
+            groupId: nextSession.groupId,
+            nativeSessionKey: nextSession.nativeSessionKey,
+            historyBinding: nextSession.historyBinding,
             external,
             source,
             createdAt,
@@ -286,6 +377,7 @@ const coworkSlice = createSlice({
             state.sessions.unshift(summary);
           }
         }
+        rememberDirectoryEntry(state, nextSession);
         markSessionRead(state, nextSession.id);
       }
     },
@@ -368,6 +460,7 @@ const coworkSlice = createSlice({
         status: session.status,
         pinned: session.pinned ?? false,
         agentId: session.agentId,
+        groupId: session.groupId,
         external: session.external,
         source: session.source,
         createdAt: session.createdAt,
@@ -377,6 +470,7 @@ const coworkSlice = createSlice({
       // startSession IPC resolves. Treat admission as an upsert so that race
       // cannot insert the same canonical session a second time.
       state.sessions = [summary, ...state.sessions.filter(item => item.id !== session.id)];
+      rememberDirectoryEntry(state, summary);
       if (select) {
         state.currentSession = session;
         state.currentSessionId = session.id;
@@ -389,6 +483,7 @@ const coworkSlice = createSlice({
       action: PayloadAction<{ sessionId: string; status: CoworkSessionStatus }>,
     ) {
       const { sessionId, status } = action.payload;
+      updateDirectoryEntry(state, sessionId, { status });
 
       // Update in sessions list
       const sessionIndex = state.sessions.findIndex(s => s.id === sessionId);
@@ -433,6 +528,8 @@ const coworkSlice = createSlice({
 
     touchSessionActivity(state, action: PayloadAction<{ sessionId: string; timestamp: number }>) {
       const { sessionId, timestamp } = action.payload;
+      const directoryEntry = state.sessionDirectory?.find(item => item.id === sessionId);
+      if (directoryEntry) directoryEntry.updatedAt = Math.max(directoryEntry.updatedAt, timestamp);
       if (state.currentSession?.id === sessionId) {
         state.currentSession.updatedAt = Math.max(state.currentSession.updatedAt, timestamp);
       }
@@ -451,6 +548,7 @@ const coworkSlice = createSlice({
 
     updateSessionPinned(state, action: PayloadAction<{ sessionId: string; pinned: boolean }>) {
       const { sessionId, pinned } = action.payload;
+      updateDirectoryEntry(state, sessionId, { pinned });
       const sessionIndex = state.sessions.findIndex(s => s.id === sessionId);
       if (sessionIndex !== -1) {
         state.sessions[sessionIndex].pinned = pinned;
@@ -546,6 +644,7 @@ const coworkSlice = createSlice({
         state.sessionRunTimings[sessionId] = timings;
       }
       const status = running ? 'running' : snapshot.timing?.state === 'failed' ? 'error' : 'idle';
+      updateDirectoryEntry(state, sessionId, { status });
       const sessionIndex = state.sessions.findIndex(session => session.id === sessionId);
       if (sessionIndex >= 0) state.sessions[sessionIndex].status = status;
       if (state.currentSession?.id === sessionId) {
@@ -811,6 +910,9 @@ const coworkSlice = createSlice({
     deleteGroup(state, action: PayloadAction<string>) {
       const groupId = action.payload;
       state.groups = state.groups.filter(g => g.id !== groupId);
+      for (const entry of state.sessionDirectory ?? []) {
+        if (entry.groupId === groupId) entry.groupId = null;
+      }
       state.expandedGroupIds = state.expandedGroupIds.filter(id => id !== groupId);
       // Update sessions to remove groupId reference
       state.sessions = state.sessions.map(session =>
@@ -832,6 +934,8 @@ const coworkSlice = createSlice({
       action: PayloadAction<{ sessionId: string; groupId: string | null }>,
     ) {
       const { sessionId, groupId } = action.payload;
+      updateDirectoryEntry(state, sessionId, { groupId });
+      if (state.currentSession?.id === sessionId) state.currentSession.groupId = groupId;
       const index = state.sessions.findIndex(s => s.id === sessionId);
       if (index !== -1) {
         state.sessions[index] = { ...state.sessions[index], groupId };
@@ -849,6 +953,8 @@ const coworkSlice = createSlice({
 });
 
 export const {
+  setSessionDirectory,
+  upsertSessionSummaries,
   setSessionListStatus,
   setCoworkActive,
   setSessions,

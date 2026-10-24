@@ -4,6 +4,7 @@ type SessionLike = {
 
 type CoworkDeleteStateShape = {
   sessions: SessionLike[];
+  sessionDirectory?: SessionLike[] | null;
   unreadSessionIds: string[];
   currentSessionId: string | null;
   currentSession: SessionLike | null;
@@ -15,6 +16,7 @@ type CoworkDeleteStateShape = {
 
 export const removeSessionFromState = (state: CoworkDeleteStateShape, sessionId: string): void => {
   state.sessions = state.sessions.filter(session => session.id !== sessionId);
+  if (state.sessionDirectory) state.sessionDirectory = state.sessionDirectory.filter(session => session.id !== sessionId);
   state.unreadSessionIds = state.unreadSessionIds.filter(id => id !== sessionId);
   if (state.sessionMainRuntimeActivity) {
     delete state.sessionMainRuntimeActivity[sessionId];
@@ -37,6 +39,7 @@ export const removeSessionsFromState = (
 ): void => {
   const sessionIdSet = new Set(sessionIds);
   state.sessions = state.sessions.filter(session => !sessionIdSet.has(session.id));
+  if (state.sessionDirectory) state.sessionDirectory = state.sessionDirectory.filter(session => !sessionIdSet.has(session.id));
   state.unreadSessionIds = state.unreadSessionIds.filter(id => !sessionIdSet.has(id));
   for (const sessionId of sessionIds) {
     if (state.sessionMainRuntimeActivity) {

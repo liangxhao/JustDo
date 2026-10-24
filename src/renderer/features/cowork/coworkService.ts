@@ -1,5 +1,6 @@
 import type { NativeSessionDispatchRequest } from '@shared/cowork/nativeSessionDispatch';
 import type { SessionDetailStats } from '@shared/cowork/sessionDetails';
+import { SESSION_SUMMARY_BATCH_LIMIT } from '@shared/cowork/sessionDirectory';
 import {
   type BeginSessionRunInput,
   SessionRunBeginErrorCode,
@@ -29,6 +30,7 @@ import {
   setGroups,
   setPlanMode as setPlanModeState,
   setRemoteManaged,
+  setSessionDirectory,
   setSessionListStatus,
   setSessionMainRuntimeActivity,
   setSessionRuntimeActivity,
@@ -43,6 +45,7 @@ import {
   updateSessionStatus,
   updateSessionTitle,
   upsertSessionRunTiming,
+  upsertSessionSummaries,
 } from '@/features/cowork/coworkSlice';
 import type {
   CoworkApiConfig,
@@ -102,6 +105,7 @@ export class CoworkService {
   private openClawStatusListeners = new Set<(status: OpenClawEngineStatus) => void>();
   private openClawEngineListenerAttached = false;
   private latestLoadSessionsRequestId = 0;
+  private readonly summaryReads = new Map<string, Promise<boolean>>();
   private sessionListRefreshTimer: number | null = null;
   private sessionListRefreshTask: Promise<void> | null = null;
   private sessionListRefreshPending = false;
@@ -140,6 +144,10 @@ export class CoworkService {
     await this.loadConfig();
     if (!isCurrent()) return;
 
+    // Install invalidation listeners before the first read starts background discovery.
+    this.setupStreamListeners();
+    this.setupOpenClawEngineListeners();
+
     // Load sessions list
     await this.loadSessions();
     if (!isCurrent()) return;
@@ -147,10 +155,6 @@ export class CoworkService {
     // Load session groups
     await this.loadGroups();
     if (!isCurrent()) return;
-
-    // Set up stream listeners
-    this.setupStreamListeners();
-    this.setupOpenClawEngineListeners();
 
     // Load OpenClaw status
     await this.loadOpenClawEngineStatus();
@@ -171,7 +175,9 @@ export class CoworkService {
     const activityCleanup = cowork.onSessionActivity(async ({ sessionId, kind, timestamp }) => {
       // Check if session exists in current list
       const state = store.getState().cowork;
-      const sessionExists = state.sessions.some(s => s.id === sessionId);
+      const sessionExists = (state.sessionDirectory ?? state.sessions).some(
+        session => session.id === sessionId,
+      );
       const currentSessionId = state.currentSession?.id;
       const isCurrentSession = currentSessionId === sessionId;
 
@@ -343,6 +349,22 @@ export class CoworkService {
   async loadSessions(agentId?: string): Promise<void> {
     const requestId = ++this.latestLoadSessionsRequestId;
     try {
+      if (window.electron?.cowork?.listSessionDirectory) {
+        const result = await window.electron.cowork.listSessionDirectory(agentId);
+        if (requestId !== this.latestLoadSessionsRequestId) return;
+        if (!result.success || !result.entries) {
+          store.dispatch(setSessionListStatus('error'));
+          return;
+        }
+        store.dispatch(setSessionDirectory(result.entries));
+        // Refresh only previously admitted row summaries. A cold directory read
+        // never hydrates hidden history; the mounted list requests its own rows.
+        await this.ensureSessionSummaries(
+          store.getState().cowork.sessions.map(session => session.id),
+          true,
+        );
+        return;
+      }
       const result = await window.electron?.cowork?.listSessions(agentId);
       // Only the latest request may update the list or its loading state.
       if (requestId !== this.latestLoadSessionsRequestId) return;
@@ -357,6 +379,78 @@ export class CoworkService {
       }
       throw error;
     }
+  }
+
+  async ensureSessionSummaries(sessionIds: string[], force = false): Promise<boolean> {
+    const generation = this.initializationGeneration;
+    if (force) {
+      const active = [...new Set(
+        sessionIds.map(id => this.summaryReads.get(id)).filter(
+          (task): task is Promise<boolean> => task !== undefined,
+        ),
+      )];
+      if (active.length) {
+        await Promise.all(active);
+        if (generation !== this.initializationGeneration) return false;
+        return this.ensureSessionSummaries(sessionIds, true);
+      }
+    }
+    const state = store.getState().cowork;
+    const loaded = new Set(state.sessions.map(session => session.id));
+    const directory = state.sessionDirectory
+      ? new Set(state.sessionDirectory.map(entry => entry.id))
+      : null;
+    const ids = [...new Set(sessionIds)].filter(
+      id => (!directory || directory.has(id)) && (force || !loaded.has(id)),
+    );
+    const pending = new Set<Promise<boolean>>();
+    const unread: string[] = [];
+    for (const id of ids) {
+      const task = this.summaryReads.get(id);
+      if (task) pending.add(task);
+      else unread.push(id);
+    }
+    const read = window.electron?.cowork?.readSessionSummaries;
+    if (unread.length && !read) return false;
+    for (let offset = 0; offset < unread.length; offset += SESSION_SUMMARY_BATCH_LIMIT) {
+      const batch = unread.slice(offset, offset + SESSION_SUMMARY_BATCH_LIMIT);
+      const generation = this.initializationGeneration;
+      const titlesAtRequest = new Map(
+        store.getState().cowork.sessions.map(session => [session.id, session.title]),
+      );
+      const task = Promise.resolve()
+        .then(async () => {
+          const result = await read!(batch);
+          if (generation !== this.initializationGeneration) return false;
+          if (!result.success || !result.sessions) return false;
+          const expected = new Set(batch);
+          if (result.sessions.some(session => !expected.has(session.id))) return false;
+          const currentTitles = new Map(
+            store.getState().cowork.sessions.map(session => [session.id, session.title]),
+          );
+          store.dispatch(upsertSessionSummaries(result.sessions.map(session => {
+            const title = currentTitles.get(session.id);
+            return title !== undefined && title !== titlesAtRequest.get(session.id)
+              ? { ...session, title }
+              : session;
+          })));
+          const current = store.getState().cowork;
+          const currentIds = current.sessionDirectory
+            ? new Set(current.sessionDirectory.map(entry => entry.id))
+            : null;
+          const available = new Set(current.sessions.map(session => session.id));
+          return batch.every(id => (currentIds && !currentIds.has(id)) || available.has(id));
+        })
+        .catch(() => false)
+        .finally(() => {
+          for (const id of batch) {
+            if (this.summaryReads.get(id) === task) this.summaryReads.delete(id);
+          }
+        });
+      for (const id of batch) this.summaryReads.set(id, task);
+      pending.add(task);
+    }
+    return (await Promise.all(pending)).every(Boolean);
   }
 
   async getSessionRuntimeStatus(
@@ -1705,6 +1799,7 @@ export class CoworkService {
 
   destroy(): void {
     this.initializationGeneration += 1;
+    this.summaryReads.clear();
     this.initializationTask = null;
     this.cleanupListeners();
     this.openClawStatusListeners.clear();

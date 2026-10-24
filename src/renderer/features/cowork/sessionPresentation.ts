@@ -7,16 +7,18 @@ export { sumSessionDetailTokenUsage } from '@shared/cowork/sessionDetails';
 export type SessionDateGroupKey =
   'pinned' | 'today' | 'yesterday' | 'previous7Days' | 'previous30Days' | 'earlier';
 
-export interface SessionDateGroup {
+type SidebarSession = Pick<CoworkSessionSummary,
+  'id' | 'updatedAt' | 'createdAt' | 'pinned' | 'external' | 'source'>;
+
+export interface SessionDateGroup<T extends SidebarSession = CoworkSessionSummary> {
   key: SessionDateGroupKey;
-  sessions: CoworkSessionSummary[];
+  sessions: T[];
 }
 
-export interface SidebarSessionBuckets {
-  cli: CoworkSessionSummary[];
-  historicalAppServer: CoworkSessionSummary[];
-  browserExtension: CoworkSessionSummary[];
-  regular: CoworkSessionSummary[];
+export interface SidebarSessionBuckets<T extends SidebarSession = CoworkSessionSummary> {
+  cli: T[];
+  browserExtension: T[];
+  regular: T[];
 }
 
 export const DEFAULT_COLLAPSED_SESSION_DATE_GROUP_KEYS: readonly SessionDateGroupKey[] = [
@@ -34,24 +36,21 @@ const DATE_GROUP_ORDER: SessionDateGroupKey[] = [
   'earlier',
 ];
 
-const sortByRecentActivity = (a: CoworkSessionSummary, b: CoworkSessionSummary): number => {
+const sortByRecentActivity = (a: SidebarSession, b: SidebarSession): number => {
   if (b.updatedAt !== a.updatedAt) return b.updatedAt - a.updatedAt;
-  return b.createdAt - a.createdAt;
+  return b.createdAt - a.createdAt || a.id.localeCompare(b.id);
 };
 
-export const partitionSidebarSessions = (
-  sessions: CoworkSessionSummary[],
-): SidebarSessionBuckets => {
-  const historicalAppServer: CoworkSessionSummary[] = [];
-  const cli: CoworkSessionSummary[] = [];
-  const browserExtension: CoworkSessionSummary[] = [];
-  const regular: CoworkSessionSummary[] = [];
+export const partitionSidebarSessions = <T extends SidebarSession>(
+  sessions: T[],
+): SidebarSessionBuckets<T> => {
+  const cli: T[] = [];
+  const browserExtension: T[] = [];
+  const regular: T[] = [];
 
   for (const session of sessions) {
     if (session.external?.origin === ExternalSessionSource.Cli) {
       cli.push(session);
-    } else if (session.external?.origin === ExternalSessionSource.HistoricalAppServer) {
-      historicalAppServer.push(session);
     } else if (session.source === CoworkSessionSource.BrowserExtension) {
       browserExtension.push(session);
     } else {
@@ -61,7 +60,6 @@ export const partitionSidebarSessions = (
 
   return {
     cli: cli.sort(sortByRecentActivity),
-    historicalAppServer: historicalAppServer.sort(sortByRecentActivity),
     browserExtension: browserExtension.sort(sortByRecentActivity),
     regular,
   };
@@ -73,7 +71,7 @@ const localCalendarDay = (timestamp: number): number => {
 };
 
 export const getSessionDateGroupKey = (
-  session: CoworkSessionSummary,
+  session: Pick<SidebarSession, 'pinned' | 'updatedAt'>,
   now: number = Date.now(),
 ): SessionDateGroupKey => {
   if (session.pinned) return 'pinned';
@@ -86,11 +84,11 @@ export const getSessionDateGroupKey = (
   return 'earlier';
 };
 
-export const groupSessionsByDate = (
-  sessions: CoworkSessionSummary[],
+export const groupSessionsByDate = <T extends SidebarSession>(
+  sessions: T[],
   now: number = Date.now(),
-): SessionDateGroup[] => {
-  const grouped = new Map<SessionDateGroupKey, CoworkSessionSummary[]>();
+): SessionDateGroup<T>[] => {
+  const grouped = new Map<SessionDateGroupKey, T[]>();
   for (const session of sessions) {
     const key = getSessionDateGroupKey(session, now);
     const values = grouped.get(key) ?? [];

@@ -1,15 +1,20 @@
 // @vitest-environment jsdom
 
+import type { DragEndEvent } from '@dnd-kit/core';
 import { configureStore } from '@reduxjs/toolkit';
 import type { CollaborationRoomEntry } from '@shared/cowork/agent-team/collaboration';
 import type { TeamDiscussionRoom } from '@shared/cowork/agent-team/teamDiscussion';
 import { CoworkSessionSource } from '@shared/cowork/sessionSource';
-import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { ExternalSessionSource, ExternalSessionStatus } from '@shared/integrations/externalSession';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import type { ComponentProps } from 'react';
 import { Provider, useSelector } from 'react-redux';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { coworkService } from '@/features/cowork/coworkService';
 import coworkReducer, {
   setGroups,
+  setSessionDirectory,
   setSessionRuntimeSnapshot,
   setSessions,
   toggleGroupExpanded,
@@ -19,6 +24,20 @@ import type { CoworkSessionSummary } from '@/features/cowork/coworkTypes';
 import { translations } from '@/services/i18n/translations';
 
 import CoworkSessionList from './CoworkSessionList';
+
+const dragHandlers = vi.hoisted(() => ({
+  onDragEnd: undefined as ((event: DragEndEvent) => void) | undefined,
+}));
+vi.mock('@dnd-kit/core', async importOriginal => {
+  const actual = await importOriginal<typeof import('@dnd-kit/core')>();
+  return {
+    ...actual,
+    DndContext: (props: ComponentProps<typeof actual.DndContext>) => {
+      dragHandlers.onDragEnd = props.onDragEnd;
+      return <actual.DndContext {...props} />;
+    },
+  };
+});
 
 const activities = vi.hoisted(() => ({
   collaborations: [] as CollaborationRoomEntry[],
@@ -37,7 +56,12 @@ vi.mock('@/features/plugins/extensions/useExtensionEnablement', () => ({
 vi.mock('@/features/cowork/components/swarm-workflow/useSwarmWorkflowActivity', () => ({
   useSwarmWorkflowActivity: () => activities.workflows,
 }));
-vi.mock('@/features/cowork/coworkService', () => ({ coworkService: {} }));
+vi.mock('@/features/cowork/coworkService', () => ({
+  coworkService: {
+    ensureSessionSummaries: vi.fn(async () => true),
+    moveSessionToGroup: vi.fn(async () => true),
+  },
+}));
 vi.mock('@/services/i18n', () => ({
   i18nService: { t: (key: string) => translations.en[key] ?? key },
 }));
@@ -48,6 +72,140 @@ afterEach(() => {
   activities.collaborations = [];
   activities.discussions = [];
   activities.workflows = {};
+  vi.mocked(coworkService.ensureSessionSummaries).mockReset().mockResolvedValue(true);
+  vi.mocked(coworkService.moveSessionToGroup).mockReset().mockResolvedValue(true);
+  dragHandlers.onDragEnd = undefined;
+});
+
+describe('session list pages', () => {
+  it('keeps complete counts while requesting only expanded date pages and retains page size after collapse', async () => {
+    const now = Date.now();
+    const historical = Array.from({ length: 45 }, (_, index) => summary(
+      `Historical ${index + 1}`, now - 12 * 86_400_000 - index,
+    ));
+    const today = summary('Today chat', now);
+    const sessions = [today, ...historical];
+    const directory = sessions.map(({ title: _title, ...entry }) => entry);
+    const store = createStore();
+    const onVisibleSessionIdsChange = vi.fn();
+    const ConnectedList = () => {
+      const summaries = useSelector((state: ReturnType<typeof store.getState>) => state.cowork.sessions);
+      return <CoworkSessionList
+        {...createProps(summaries)}
+        directory={directory}
+        groupRecentSessionsByDate
+        onVisibleSessionIdsChange={onVisibleSessionIdsChange}
+      />;
+    };
+    vi.mocked(coworkService.ensureSessionSummaries).mockImplementation(async ids => {
+      store.dispatch(setSessions([
+        ...store.getState().cowork.sessions,
+        ...sessions.filter(session => ids.includes(session.id)),
+      ]));
+      return true;
+    });
+    render(<Provider store={store}><ConnectedList /></Provider>);
+    await waitFor(() => expect(screen.getByText('Today chat')).toBeTruthy());
+    expect(coworkService.ensureSessionSummaries).toHaveBeenCalledExactlyOnceWith(['Today chat']);
+    const group = screen.getByRole('button', { name: /^Previous 30 Days · 45/ });
+    expect(group.getAttribute('aria-expanded')).toBe('false');
+    fireEvent.click(group);
+    await waitFor(() => expect(screen.getByText('Historical 20')).toBeTruthy());
+    expect(screen.queryByText('Historical 21')).toBeNull();
+    expect(vi.mocked(coworkService.ensureSessionSummaries).mock.calls[1][0]).toHaveLength(20);
+    expect(onVisibleSessionIdsChange).toHaveBeenLastCalledWith([
+      today.id, ...historical.slice(0, 20).map(session => session.id),
+    ]);
+    fireEvent.click(screen.getByRole('button', { name: 'Show more' }));
+    await waitFor(() => expect(screen.getByText('Historical 40')).toBeTruthy());
+    expect(screen.queryByText('Historical 41')).toBeNull();
+    fireEvent.click(group);
+    expect(screen.queryByText('Historical 40')).toBeNull();
+    expect(onVisibleSessionIdsChange).toHaveBeenLastCalledWith([today.id]);
+    const calls = vi.mocked(coworkService.ensureSessionSummaries).mock.calls.length;
+    fireEvent.click(group);
+    await waitFor(() => expect(screen.getByText('Historical 40')).toBeTruthy());
+    expect(vi.mocked(coworkService.ensureSessionSummaries).mock.calls).toHaveLength(calls);
+    fireEvent.click(screen.getByRole('button', { name: 'Show more' }));
+    await waitFor(() => expect(screen.getByText('Historical 45')).toBeTruthy());
+    expect(screen.queryByRole('button', { name: 'Show more' })).toBeNull();
+  });
+
+  it('pages manual and source groups separately while keeping the full header totals', () => {
+    const store = createStore();
+    store.dispatch(setGroups([{ id: 'work', name: 'Work', color: '#359daf', sortOrder: 0, createdAt: 1 }]));
+    const manual = Array.from({ length: 24 }, (_, index) => ({
+      ...summary(`Manual ${index + 1}`, 100 - index), groupId: 'work',
+    }));
+    const browser = Array.from({ length: 25 }, (_, index) => ({
+      ...summary(`Browser ${index + 1}`, 100 - index), source: CoworkSessionSource.BrowserExtension,
+    }));
+    render(<Provider store={store}>
+      <CoworkSessionList {...createProps([...manual, ...browser])} groupRecentSessionsByDate />
+    </Provider>);
+    const manualHeader = screen.getByText('Work').closest('.session-group-header')!;
+    const browserHeader = screen.getByRole('button', { name: /^Chrome\s*25$/ });
+    fireEvent.click(manualHeader);
+    expect(screen.getByText('Manual 20')).toBeTruthy();
+    expect(screen.queryByText('Manual 21')).toBeNull();
+    expect(screen.queryByText('Browser 1')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Show more' }));
+    expect(screen.getByText('Manual 24')).toBeTruthy();
+    fireEvent.click(browserHeader);
+    expect(screen.getByText('Browser 20')).toBeTruthy();
+    expect(screen.queryByText('Browser 21')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Show more' }));
+    expect(screen.getByText('Browser 25')).toBeTruthy();
+  });
+
+  it('preserves loaded rows after a page failure and retries only missing summaries', async () => {
+    const now = Date.now();
+    const sessions = Array.from({ length: 25 }, (_, index) => summary(
+      `History ${index + 1}`, now - 12 * 86_400_000 - index,
+    ));
+    const directory = sessions.map(({ title: _title, ...entry }) => entry);
+    const store = createStore();
+    store.dispatch(setSessions(sessions.slice(0, 20)));
+    const ConnectedList = () => {
+      const summaries = useSelector((state: ReturnType<typeof store.getState>) => state.cowork.sessions);
+      return <CoworkSessionList {...createProps(summaries)} directory={directory} groupRecentSessionsByDate />;
+    };
+    vi.mocked(coworkService.ensureSessionSummaries).mockResolvedValueOnce(false);
+    render(<Provider store={store}><ConnectedList /></Provider>);
+    fireEvent.click(screen.getByRole('button', { name: /^Previous 30 Days · 25/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Show more' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy());
+    expect(screen.getByText('History 20')).toBeTruthy();
+    expect(screen.queryByText('History 21')).toBeNull();
+    vi.mocked(coworkService.ensureSessionSummaries).mockImplementation(async ids => {
+      store.dispatch(setSessions(sessions));
+      expect(ids).toEqual(sessions.slice(20).map(session => session.id));
+      return true;
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(screen.getByText('History 25')).toBeTruthy());
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+  });
+
+  it('uses unloaded Team member directory activity when classifying its anchor', () => {
+    const now = Date.now();
+    const anchor = summary('Team anchor', now - 40 * 86_400_000);
+    const member = summary('Hidden member', now);
+    const store = createStore();
+    store.dispatch(setSessionDirectory([anchor, member]));
+    activities.collaborations = [{
+      id: 'team', anchorSessionId: anchor.id,
+      members: [{ agentId: 'worker', sessionId: member.id, sessionKey: 'member-key' }],
+      rounds: [],
+    }];
+    render(<Provider store={store}>
+      <CoworkSessionList {...createProps([anchor])} directory={[anchor]} groupRecentSessionsByDate />
+    </Provider>);
+    const today = screen.getByRole('button', { name: /^Today · 1/ }).closest('section')!;
+    expect(within(today).getByText(anchor.title)).toBeTruthy();
+    expect(screen.queryByText(member.title)).toBeNull();
+    expect(coworkService.ensureSessionSummaries).not.toHaveBeenCalled();
+  });
 });
 
 const summary = (id: string, updatedAt: number): CoworkSessionSummary => ({
@@ -85,6 +243,65 @@ const createStore = () =>
   configureStore({
     reducer: { cowork: coworkReducer, agent: () => ({ agents: [] }) },
   });
+
+describe('fixed source group membership', () => {
+  const dragTo = async (sessionId: string, targetId: string) => {
+    await act(async () => {
+      await dragHandlers.onDragEnd!({
+        active: { id: sessionId },
+        over: { id: targetId },
+      } as DragEndEvent);
+    });
+  };
+  const renderWithManualGroup = (session: CoworkSessionSummary) => {
+    const store = createStore();
+    store.dispatch(setSessions([session]));
+    store.dispatch(setGroups([{ id: 'work', name: 'Work', color: '#359daf', sortOrder: 0, createdAt: 1 }]));
+    render(<Provider store={store}><CoworkSessionList {...createProps([session])} /></Provider>);
+    return store;
+  };
+
+  it.each([
+    { source: CoworkSessionSource.BrowserExtension },
+    {
+      external: {
+        origin: ExternalSessionSource.Cli, readOnly: true as const,
+        status: ExternalSessionStatus.Completed, sessionKey: 'key',
+      },
+    },
+  ])('rejects dragging a source conversation to a manual group or ungrouped: %j', async metadata => {
+    renderWithManualGroup({ ...summary('Source chat', 1), ...metadata });
+    await dragTo('Source chat', 'group-work');
+    await dragTo('Source chat', 'ungrouped');
+    expect(coworkService.moveSessionToGroup).not.toHaveBeenCalled();
+  });
+
+  it.each(['cli', 'browserExtension', 'missing'])(
+    'rejects moving a regular conversation into a nonmanual target %s',
+    async targetId => {
+      const store = renderWithManualGroup(summary('Regular chat', 1));
+      await dragTo('Regular chat', 'group-' + targetId);
+      expect(coworkService.moveSessionToGroup).not.toHaveBeenCalled();
+      expect(store.getState().cowork.sessions[0].groupId).toBeUndefined();
+    },
+  );
+
+  it('keeps the current membership when Main rejects a move', async () => {
+    const store = renderWithManualGroup(summary('Regular chat', 1));
+    vi.mocked(coworkService.moveSessionToGroup).mockResolvedValue(false);
+    await dragTo('Regular chat', 'group-work');
+    expect(coworkService.moveSessionToGroup).toHaveBeenCalledExactlyOnceWith('Regular chat', 'work');
+    expect(store.getState().cowork.sessions[0].groupId).toBeUndefined();
+  });
+
+  it('continues to allow moving a regular conversation into and out of a manual group', async () => {
+    renderWithManualGroup(summary('Regular chat', 1));
+    await dragTo('Regular chat', 'group-work');
+    await dragTo('Regular chat', 'ungrouped');
+    expect(coworkService.moveSessionToGroup).toHaveBeenNthCalledWith(1, 'Regular chat', 'work');
+    expect(coworkService.moveSessionToGroup).toHaveBeenNthCalledWith(2, 'Regular chat', null);
+  });
+});
 
 it.each([1, 3, 15, 60])(
   'moves a conversation from %i days ago to the top of Today and keeps it there after a stale refresh',
@@ -246,7 +463,7 @@ it.each(['open', 'closing'] as const)(
 );
 
 describe('sidebar browser extension group', () => {
-  it('keeps browser sessions out of recent and user groups and preserves a neutral historical external group', () => {
+  it('shows only Chrome and CLI source groups and keeps browser sessions out of manual groups', () => {
     const store = createStore();
     store.dispatch(
       setGroups([{ id: 'work', name: 'Work', color: '#359daf', sortOrder: 0, createdAt: 1 }]),
@@ -256,12 +473,12 @@ describe('sidebar browser extension group', () => {
       ...browserSessions,
       summary('Desktop chat', 3),
       {
-        ...summary('Historical external chat', 4),
+        ...summary('CLI chat', 4),
         external: {
-          origin: 'multica',
+          origin: 'cli',
           readOnly: true,
           status: 'completed',
-          sessionKey: 'multica:one',
+          sessionKey: 'cli:one',
         },
       },
     ]);
@@ -278,46 +495,48 @@ describe('sidebar browser extension group', () => {
     expect(screen.queryByText('Browser older')).toBeNull();
     expect(screen.getByText('Desktop chat')).toBeTruthy();
     expect(
-      screen.getByRole('button', { name: /^External clients\s*1$/ }).getAttribute('aria-expanded'),
+      screen.getByRole('button', { name: /^CLI\s*1$/ }).getAttribute('aria-expanded'),
     ).toBe('false');
+    expect(screen.queryByText('External clients')).toBeNull();
+    expect(screen.getAllByRole('button').filter(button => button.classList.contains('session-group-header'))
+      .map(button => button.textContent)).toEqual(['CLI1', 'Chrome2', 'Work0']);
 
     fireEvent.click(browserGroup);
     const panel = browserGroup.nextElementSibling as HTMLElement;
     expect(within(panel).getByText('Browser newer')).toBeTruthy();
     expect(within(panel).getByText('Browser older')).toBeTruthy();
     expect(screen.getAllByText('Browser newer')).toHaveLength(1);
-    expect(screen.queryByText('Historical external chat')).toBeNull();
+    expect(screen.queryByText('CLI chat')).toBeNull();
     fireEvent.click(screen.getByText('Browser newer'));
     expect(props.onSelectSession).toHaveBeenCalledWith('Browser newer');
     fireEvent.click(browserGroup);
     expect(screen.queryByText('Browser newer')).toBeNull();
   });
 
-  it('opens a selected historical external session without relabeling its stored source as CLI', () => {
-    const historical: CoworkSessionSummary = {
-      ...summary('Historical external chat', 1),
+  it('opens the CLI group when a CLI conversation is selected', () => {
+    const cli: CoworkSessionSummary = {
+      ...summary('CLI chat', 1),
       external: {
-        origin: 'multica',
+        origin: 'cli',
         readOnly: true,
         status: 'completed',
-        sessionKey: 'agent:main:multica:original',
+        sessionKey: 'agent:main:cli:original',
       },
     };
     const store = createStore();
-    const props = { ...createProps([historical]), currentSessionId: historical.id };
+    const props = { ...createProps([cli]), currentSessionId: cli.id };
     render(<Provider store={store}><CoworkSessionList {...props} /></Provider>);
 
-    const group = screen.getByRole('button', { name: /^External clients\s*1$/ });
+    const group = screen.getByRole('button', { name: /^CLI\s*1$/ });
     expect(group.getAttribute('aria-expanded')).toBe('true');
-    expect(screen.getByText('External')).toBeTruthy();
-    expect(screen.queryByText('CLI')).toBeNull();
-    fireEvent.click(screen.getByText(historical.title));
-    expect(props.onSelectSession).toHaveBeenCalledExactlyOnceWith(historical.id);
-    expect(historical.external).toEqual({
-      origin: 'multica',
+    expect(screen.queryByText('External clients')).toBeNull();
+    fireEvent.click(screen.getByText(cli.title));
+    expect(props.onSelectSession).toHaveBeenCalledExactlyOnceWith(cli.id);
+    expect(cli.external).toEqual({
+      origin: 'cli',
       readOnly: true,
       status: 'completed',
-      sessionKey: 'agent:main:multica:original',
+      sessionKey: 'agent:main:cli:original',
     });
   });
 

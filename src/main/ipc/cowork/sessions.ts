@@ -1,12 +1,15 @@
 import { randomUUID } from 'crypto';
 import { ipcMain } from 'electron';
-import path from 'path';
 
 import { parsePlanModeState } from '../../../shared/cowork/interactions/planMode';
 import {
   type CopyCoworkSessionInput,
   CoworkSessionCopyIpc,
 } from '../../../shared/cowork/sessionCopy';
+import {
+  SESSION_SUMMARY_BATCH_LIMIT,
+  SessionDirectoryIpc,
+} from '../../../shared/cowork/sessionDirectory';
 import {
   CoworkSessionForkIpc,
   type ForkCoworkSessionInput,
@@ -34,12 +37,10 @@ import type { CollaborationCoordinator } from '../../cowork/agent-team/collabora
 import type { CoworkStore } from '../../data/coworkStore';
 import type { CoworkEngineRouter } from '../../engine';
 import { isWorkspacePathWithin } from '../../engine/openclaw/runtimeAdapterSupport';
-import { createPersistedGatewaySessionReader } from '../../engine/openclaw/subagentGateway';
 import type { PermissionModeOperationResult } from '../../openclaw/permissions/sessionPermissionModeCoordinator';
 import {
   buildManagedSessionKey,
   DEFAULT_MANAGED_AGENT_ID,
-  isTeamDiscussionHoldingSessionKey,
 } from '../../openclaw/sessions/openclawSessionKeys';
 import {
   parseCoworkSessionSearchOptions,
@@ -48,6 +49,7 @@ import {
 import type { WorkspaceAppSessions } from '../../plugins/mcp/workspaceAppSession';
 import { registerMcpAppHandlers } from '../plugins/mcpApps';
 import { cancelAgentTeamLaunchWithoutWaiting } from './agentTeamLaunchCancellation';
+import { createNativeWorktreeDiscovery } from './nativeWorktreeDiscovery';
 import {
   hasSessionBranchCreationResponse,
   readSessionBranchRunIds,
@@ -67,6 +69,7 @@ interface SessionHandlerDependencies {
     options?: { deferIfActive?: boolean },
   ) => Promise<PermissionModeOperationResult>;
   requestGateway?: <T>(method: string, params?: unknown) => Promise<T>;
+  onSessionsChanged?: () => void;
 }
 
 type GatewayRequest = NonNullable<SessionHandlerDependencies['requestGateway']>;
@@ -137,10 +140,13 @@ export const registerCoworkSessionHandlers = ({
   getCollaboration,
   getAgentTeamLaunch,
   workspaceAppSessions,
+  onSessionsChanged,
 }: SessionHandlerDependencies): void => {
-  const readNativeSessions = requestGateway
-    ? createPersistedGatewaySessionReader({ request: requestGateway })
-    : null;
+  const discoverNativeWorktrees = createNativeWorktreeDiscovery({
+    getCoworkStore,
+    requestGateway,
+    onSessionsChanged,
+  });
   registerMcpAppHandlers({
     getCoworkStore,
     getCoworkEngineRouter,
@@ -1396,69 +1402,61 @@ export const registerCoworkSessionHandlers = ({
 
   ipcMain.handle('cowork:session:list', async (_event, agentId?: string) => {
     try {
-      if (requestGateway && readNativeSessions) {
-        const store = getCoworkStore();
-        try {
-          const nativeSessions = await readNativeSessions();
-          const parents = new Map(
-            store
-              .listSessions()
-              .map(session => [
-                store.getSession(session.id)?.nativeSessionKey ||
-                  buildManagedSessionKey(session.id, session.agentId),
-                session.id,
-              ]),
-          );
-          for (const native of nativeSessions) {
-            if (typeof native.key !== 'string') continue;
-            if (isTeamDiscussionHoldingSessionKey(native.key)) continue;
-            if (!native.worktree || typeof native.worktree !== 'object') continue;
-            const parentKey =
-              typeof native.parentSessionKey === 'string'
-                ? native.parentSessionKey
-                : native.spawnedBy;
-            if (typeof parentKey !== 'string') continue;
-            const parentId = parents.get(parentKey);
-            if (!parentId || store.getSessionByNativeKey(native.key)) continue;
-            const parent = store.getSession(parentId);
-            if (!parent) continue;
-            if (!native.key.startsWith(`agent:${parent.agentId}:`)) continue;
-            const described = await requestGateway<{ session?: Record<string, unknown> | null }>(
-              'sessions.describe',
-              { key: native.key },
-            );
-            const entry = described.session;
-            if (!entry?.worktree || typeof entry.worktree !== 'object') continue;
-            const permissionMode: PermissionMode | undefined =
-              entry.permissionMode === 'full'
-                ? 'full'
-                : entry.permissionMode === 'workspace'
-                  ? 'auto'
-                  : entry.permissionMode === 'guarded' || entry.permissionMode === undefined
-                    ? 'ask'
-                    : undefined;
-            // Do not broaden a native mode that the product cannot represent.
-            if (!permissionMode) continue;
-            const cwd = entry?.sessionRoot ?? entry?.spawnedCwd ?? entry?.spawnedWorkspaceDir;
-            if (typeof cwd !== 'string' || !path.isAbsolute(cwd)) continue;
-            const title =
-              typeof entry?.label === 'string' && entry.label.trim()
-                ? entry.label.trim()
-                : typeof entry?.displayName === 'string' && entry.displayName.trim()
-                  ? entry.displayName.trim()
-                  : native.key;
-            const child = store.adoptNativeSession(native.key, parent, title, cwd, permissionMode);
-            parents.set(native.key, child.id);
-          }
-        } catch (error) {
-          console.warn('[CoworkSessions] Failed to discover native worktree sessions', error);
-        }
-      }
+      await discoverNativeWorktrees();
       return { success: true, sessions: getCoworkStore().listSessions(agentId) };
     } catch (error) {
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to list sessions',
+      };
+    }
+  });
+
+  ipcMain.handle(SessionDirectoryIpc.List, async (_event, rawAgentId: unknown) => {
+    try {
+      if (
+        rawAgentId !== undefined &&
+        (typeof rawAgentId !== 'string' || !rawAgentId.trim() || rawAgentId.length > 512)
+      )
+        throw new Error('Agent ID must be a non-empty bounded string.');
+      const entries = getCoworkStore().listSessionDirectory(rawAgentId as string | undefined);
+      void discoverNativeWorktrees();
+      return { success: true, entries };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to read session directory.',
+      };
+    }
+  });
+
+  ipcMain.handle(SessionDirectoryIpc.ReadSummaries, async (_event, rawIds: unknown) => {
+    try {
+      if (
+        !Array.isArray(rawIds) ||
+        rawIds.length > SESSION_SUMMARY_BATCH_LIMIT ||
+        rawIds.some(id => typeof id !== 'string' || !id.trim() || id.length > 512)
+      )
+        throw new Error(
+          `Session IDs must be a string array with at most ${SESSION_SUMMARY_BATCH_LIMIT} entries.`,
+        );
+      const sessions = getCoworkStore().readSessionSummaries([...new Set(rawIds as string[])]);
+      return { success: true, sessions };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to read session summaries.',
+      };
+    }
+  });
+
+  ipcMain.handle(SessionDirectoryIpc.SearchSummaries, async () => {
+    try {
+      return { success: true, sessions: getCoworkStore().listSessionSearchSummaries() };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to read search sessions.',
       };
     }
   });

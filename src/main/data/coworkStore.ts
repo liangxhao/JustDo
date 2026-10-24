@@ -22,6 +22,10 @@ import {
   type TransitionCoworkPlanHandoffInput,
 } from '../../shared/cowork/interactions/planHandoff';
 import {
+  SESSION_SUMMARY_BATCH_LIMIT,
+  type SessionDirectoryEntry,
+} from '../../shared/cowork/sessionDirectory';
+import {
   GoalExecutionPhase,
   type GoalExecutionSnapshot,
   normalizeMaxGoalContinuationTurns,
@@ -52,6 +56,7 @@ import {
   resolvePermissionMode,
 } from '../../shared/security/approvals';
 import { isTeamDiscussionHoldingSessionKey } from '../openclaw/sessions/openclawSessionKeys';
+import { readSessionDirectory, readSessionSummaryProjection } from './coworkSessionDirectory';
 
 // Default working directory for new users
 export const getDefaultWorkingDirectory = (): string => {
@@ -132,6 +137,7 @@ export interface CoworkSession {
   title: string;
   status: CoworkSessionStatus;
   pinned: boolean;
+  groupId?: string | null;
   cwd: string;
   executionMode: CoworkExecutionMode;
   permissionMode: PermissionMode;
@@ -714,6 +720,7 @@ export class CoworkStore {
       source?: string | null;
       native_session_key?: string | null;
       native_parent_session_id?: string | null;
+      group_id?: string | null;
       forked_from_session_id?: string | null;
       forked_from_session_title?: string | null;
       forked_from_entry_id?: string | null;
@@ -729,7 +736,7 @@ export class CoworkStore {
     const row = this.getOne<SessionRow>(
       `
       SELECT
-        session.id, session.title, session.status, session.pinned, session.cwd,
+        session.id, session.title, session.status, session.pinned, session.cwd, session.group_id,
         session.execution_mode, session.permission_mode, session.active_skill_ids,
         session.agent_id, session.model_ref, session.source, session.native_session_key,
         session.native_parent_session_id, session.forked_from_session_id,
@@ -766,6 +773,7 @@ export class CoworkStore {
       title: row.title,
       status: row.status as CoworkSessionStatus,
       pinned: Boolean(row.pinned),
+      groupId: row.group_id ?? null,
       cwd: row.cwd,
       executionMode: (row.execution_mode as CoworkExecutionMode) || 'local',
       permissionMode: resolvePermissionMode(row.permission_mode),
@@ -952,66 +960,24 @@ export class CoworkStore {
   }
 
   listSessions(agentId?: string): CoworkSessionSummary[] {
-    interface SessionSummaryRow {
-      native_session_key: string | null;
-      id: string;
-      title: string;
-      status: string;
-      pinned: number | null;
-      agent_id: string | null;
-      group_id: string | null;
-      source: string | null;
-      created_at: number;
-      updated_at: number;
-    }
+    return readSessionSummaryProjection(this.db, { agentId });
+  }
 
-    let rows: SessionSummaryRow[];
-    if (agentId) {
-      rows = this.getAll<SessionSummaryRow>(
-        `
-        SELECT id, title, status, pinned, agent_id, group_id, source, created_at, updated_at, native_session_key
-        FROM cowork_sessions
-        WHERE agent_id = ?
-        ORDER BY pinned DESC, updated_at DESC
-      `,
-        [agentId],
+  listSessionDirectory(agentId?: string): SessionDirectoryEntry[] {
+    return readSessionDirectory(this.db, agentId);
+  }
+
+  readSessionSummaries(sessionIds: string[]): CoworkSessionSummary[] {
+    if (sessionIds.length > SESSION_SUMMARY_BATCH_LIMIT) {
+      throw new Error(
+        `At most ${SESSION_SUMMARY_BATCH_LIMIT} session summaries can be read at once.`,
       );
-    } else {
-      rows = this.getAll<SessionSummaryRow>(`
-        SELECT id, title, status, pinned, agent_id, group_id, source, created_at, updated_at, native_session_key
-        FROM cowork_sessions
-        ORDER BY pinned DESC, updated_at DESC
-      `);
     }
+    return readSessionSummaryProjection(this.db, { sessionIds: [...new Set(sessionIds)] });
+  }
 
-    const externalBySessionId = this.listExternalSessionMetadata();
-    const pendingBranches = new Set(
-      this.getAll<{ key: string }>('SELECT key FROM cowork_config WHERE key GLOB ?', [
-        `${SESSION_BRANCH_PENDING_CONFIG_PREFIX}*`,
-      ]).map(row => row.key.slice(SESSION_BRANCH_PENDING_CONFIG_PREFIX.length)),
-    );
-    return rows
-      .filter(
-        row =>
-          !isTeamDiscussionHoldingSessionKey(
-            row.native_session_key || externalBySessionId.get(row.id)?.sessionKey,
-          ),
-      )
-      .map(row => ({
-        ...this.getHistorySessionPresentation(row.id),
-        ...(row.native_session_key ? { nativeSessionKey: row.native_session_key } : {}),
-        id: row.id,
-        ...(pendingBranches.has(row.id) ? { branchCreationPending: true } : {}),
-        title: row.title,
-        status: row.status as CoworkSessionStatus,
-        pinned: Boolean(row.pinned),
-        agentId: row.agent_id || 'main',
-        groupId: row.group_id,
-        ...(externalBySessionId.get(row.id) ? { external: externalBySessionId.get(row.id) } : {}),
-        ...(row.source === CoworkSessionSource.BrowserExtension ? { source: row.source } : {}),
-        createdAt: row.created_at,
-        updatedAt: row.updated_at,
-      }));
+  listSessionSearchSummaries(): CoworkSessionSummary[] {
+    return readSessionSummaryProjection(this.db);
   }
 
   /** Adopt the same current defaults as a new conversation once, before first use. */
@@ -1099,38 +1065,6 @@ export class CoworkStore {
       this.getOne<{ name: string }>(
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'cowork_external_sessions'",
       ),
-    );
-  }
-
-  private listExternalSessionMetadata(): Map<string, ExternalSessionMetadata> {
-    interface ExternalSessionRow {
-      cowork_session_id: string;
-      source: ExternalSessionMetadata['origin'];
-      status: ExternalSessionStatus;
-      openclaw_session_key: string | null;
-    }
-    let rows: ExternalSessionRow[];
-    try {
-      rows = this.getAll<ExternalSessionRow>(
-        `SELECT cowork_session_id, source, status, openclaw_session_key
-         FROM cowork_external_sessions
-         WHERE source IN (?, ?)`,
-        [ExternalSessionSource.HistoricalAppServer, ExternalSessionSource.Cli],
-      );
-    } catch (error) {
-      if (error instanceof Error && error.message.includes('no such table')) return new Map();
-      throw error;
-    }
-    return new Map(
-      rows.map(row => [
-        row.cowork_session_id,
-        {
-          origin: row.source,
-          readOnly: true,
-          status: row.status,
-          sessionKey: row.openclaw_session_key ?? '',
-        },
-      ]),
     );
   }
 

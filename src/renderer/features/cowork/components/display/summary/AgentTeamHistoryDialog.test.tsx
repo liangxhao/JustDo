@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import type { TeamDiscussionRoom } from '@shared/cowork/agent-team/teamDiscussion';
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import type { SessionDirectoryEntry } from '@shared/cowork/sessionDirectory';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 import { OwnerDocumentContext } from '@/shared/dom/ownerDocument';
@@ -11,9 +12,16 @@ import AgentTeamHistoryDialog from './AgentTeamHistoryDialog';
 vi.mock('@/services/i18n', () => ({
   i18nService: { t: (key: string) => key, getLanguage: () => 'en' },
 }));
+const state = vi.hoisted(() => ({
+  cowork: { sessions: [] as CoworkSessionSummary[], sessionDirectory: null as SessionDirectoryEntry[] | null },
+  agent: { agents: [] },
+}));
 vi.mock('react-redux', () => ({
   useSelector: (select: (state: unknown) => unknown) =>
-    select({ cowork: { sessions: [] }, agent: { agents: [] } }),
+    select(state),
+}));
+vi.mock('@/features/cowork/coworkService', () => ({
+  coworkService: { ensureSessionSummaries: vi.fn() },
 }));
 const rooms = [
   { id: 'linked', title: 'Linked group', sourceSessionId: 'source', members: [] },
@@ -22,6 +30,9 @@ const rooms = [
 ] as unknown as TeamDiscussionRoom[];
 const list = vi.fn();
 beforeEach(() => {
+  state.cowork.sessions = [];
+  state.cowork.sessionDirectory = null;
+  vi.mocked(coworkService.ensureSessionSummaries).mockReset().mockResolvedValue(true);
   list.mockReset().mockResolvedValue({ success: true, value: rooms });
   Object.defineProperty(window, 'electron', {
     configurable: true,
@@ -151,4 +162,64 @@ it('retains available groups and reports incomplete records when collaboration m
   render(<AgentTeamHistoryDialog onOpen={vi.fn()} onClose={vi.fn()} />);
   expect(await screen.findByRole('button', { name: /Retained group/ })).toBeTruthy();
   expect(screen.getByRole('alert').textContent).toContain('teamRecordsUnavailable');
+});
+import { coworkService } from '@/features/cowork/coworkService';
+import type { CoworkSessionSummary } from '@/features/cowork/coworkTypes';
+
+const sessionSummary = (id: string, title = id): CoworkSessionSummary => ({
+  id, title, status: 'idle', pinned: false, createdAt: 1, updatedAt: 1,
+});
+const addHistoricalTask = () => {
+  vi.mocked(window.electron.collaboration.list).mockResolvedValue({
+    success: true,
+    value: [{
+      id: 'historical', anchorSessionId: 'anchor',
+      members: [{ agentId: 'worker', sessionId: 'member', sessionKey: 'member-key' }],
+      rounds: [{ id: 'first', state: 'settled', pending: 0 }],
+    }],
+  });
+};
+
+it('loads only related source summaries and makes a previously unloaded anchor title searchable', async () => {
+  state.cowork.sessionDirectory = ['anchor', 'source', 'unrelated', 'member'].map(id => sessionSummary(id));
+  addHistoricalTask();
+  vi.mocked(coworkService.ensureSessionSummaries).mockImplementation(async () => {
+    state.cowork.sessions = [sessionSummary('anchor', 'Original historical title'), sessionSummary('source')];
+    return true;
+  });
+  render(<AgentTeamHistoryDialog onOpen={vi.fn()} onClose={vi.fn()} />);
+  expect(await screen.findByRole('button', { name: /Original historical title/ })).toBeTruthy();
+  expect(coworkService.ensureSessionSummaries).toHaveBeenCalledExactlyOnceWith(['anchor', 'source']);
+  fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Original historical title' } });
+  expect(screen.getByRole('button', { name: /Original historical title/ })).toBeTruthy();
+  expect(screen.queryByRole('button', { name: /Linked group/ })).toBeNull();
+});
+
+it('keeps deleted sources as retained metadata without requesting their summaries', async () => {
+  state.cowork.sessionDirectory = [];
+  addHistoricalTask();
+  render(<AgentTeamHistoryDialog onOpen={vi.fn()} onClose={vi.fn()} />);
+  expect(await screen.findByRole('button', { name: /Retained group/ })).toBeTruthy();
+  expect(screen.getByRole('button', { name: /teamTask · 1/ })).toBeTruthy();
+  expect(coworkService.ensureSessionSummaries).not.toHaveBeenCalled();
+  expect(screen.queryByRole('alert')).toBeNull();
+});
+
+it.each(['false', 'rejection'])('reports summary %s and retries without hiding available history', async failure => {
+  state.cowork.sessionDirectory = [sessionSummary('anchor')];
+  addHistoricalTask();
+  const ensure = vi.mocked(coworkService.ensureSessionSummaries);
+  if (failure === 'false') ensure.mockResolvedValueOnce(false);
+  else ensure.mockRejectedValueOnce(new Error('unavailable'));
+  render(<AgentTeamHistoryDialog onOpen={vi.fn()} onClose={vi.fn()} />);
+  expect((await screen.findByRole('alert')).textContent).toContain('teamRecordsUnavailable');
+  expect(screen.getByRole('button', { name: /Retained group/ })).toBeTruthy();
+  ensure.mockImplementation(async () => {
+    state.cowork.sessions = [sessionSummary('anchor', 'Restored title')];
+    return true;
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'sessionListRetry' }));
+  await waitFor(() => expect(screen.getByRole('button', { name: /Restored title/ })).toBeTruthy());
+  expect(ensure).toHaveBeenNthCalledWith(2, ['anchor']);
+  expect(screen.queryByRole('alert')).toBeNull();
 });

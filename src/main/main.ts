@@ -1775,6 +1775,7 @@ if (agentBridgeArgv) {
   });
 
   registerCoworkSessionHandlers({
+    onSessionsChanged: notifyCoworkSessionsChanged,
     workspaceAppSessions,
     getAgentTeamLaunch,
     getCollaboration: () => bindCollaboration.coordinator(),
@@ -1792,7 +1793,7 @@ if (agentBridgeArgv) {
     getRuntime: getOpenClawRuntimeAdapter,
   });
 
-  registerSessionGroupHandlers(getGroupStore);
+  registerSessionGroupHandlers(getGroupStore, getCoworkStore);
 
   registerSessionReviewHandlers({
     getRuntime: getOpenClawRuntimeAdapter,

@@ -87,10 +87,12 @@ describe('session change refreshes', () => {
     expect(listSessions).toHaveBeenCalledOnce();
   });
 
-  test('does not register listeners from an initialization destroyed during its first list read', async () => {
+  test('removes early listeners and does not register them again when an abandoned read finishes', async () => {
     service.destroy();
     const onSessionsChanged = vi.mocked(window.electron.cowork.onSessionsChanged);
     onSessionsChanged.mockClear();
+    const unsubscribe = vi.fn();
+    onSessionsChanged.mockImplementationOnce(() => unsubscribe);
     store.dispatch(setSessions([]));
     store.dispatch(setSessionListStatus('loading'));
     let finish!: (value: unknown) => void;
@@ -101,10 +103,11 @@ describe('session change refreshes', () => {
     finish({ success: true, sessions: [session] });
     await abandoned;
 
-    expect(onSessionsChanged).not.toHaveBeenCalled();
+    expect(onSessionsChanged).toHaveBeenCalledOnce();
+    expect(unsubscribe).toHaveBeenCalledOnce();
     expect(store.getState().cowork.sessions).toEqual([]);
     await service.init();
-    expect(onSessionsChanged).toHaveBeenCalledOnce();
+    expect(onSessionsChanged).toHaveBeenCalledTimes(2);
     expect(store.getState().cowork.sessionListStatus).toBe('ready');
   });
 
@@ -112,6 +115,8 @@ describe('session change refreshes', () => {
     service.destroy();
     const onSessionsChanged = vi.mocked(window.electron.cowork.onSessionsChanged);
     onSessionsChanged.mockClear();
+    const obsoleteUnsubscribe = vi.fn();
+    onSessionsChanged.mockImplementationOnce(() => obsoleteUnsubscribe);
     const completions: Array<(value: unknown) => void> = [];
     listSessions.mockImplementation(() => new Promise(resolve => { completions.push(resolve); }));
     const abandoned = service.init();
@@ -125,10 +130,11 @@ describe('session change refreshes', () => {
     await flush();
 
     expect(listSessions).toHaveBeenCalledTimes(2);
-    expect(onSessionsChanged).not.toHaveBeenCalled();
+    expect(onSessionsChanged).toHaveBeenCalledTimes(2);
+    expect(obsoleteUnsubscribe).toHaveBeenCalledOnce();
     completions[1]({ success: true, sessions: [session] });
     await Promise.all([replacement, joining]);
-    expect(onSessionsChanged).toHaveBeenCalledOnce();
+    expect(onSessionsChanged).toHaveBeenCalledTimes(2);
     expect(store.getState().cowork.sessions).toEqual([session]);
   });
 

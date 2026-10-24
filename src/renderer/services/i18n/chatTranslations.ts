@@ -220,6 +220,9 @@ export const chatTranslations = {
     sessionGroupYesterday: '昨天',
     sessionGroupPrevious7Days: '过去 7 天',
     sessionGroupPrevious30Days: '过去 30 天',
+    sessionListShowMore: '展示更多',
+    sessionListRetry: '重试',
+    sessionListPageLoadFailed: '会话加载失败。',
     sessionGroupEarlier: '更早',
     // 会话分组
     rename: '重命名',
@@ -980,6 +983,9 @@ export const chatTranslations = {
     sessionGroupYesterday: 'Yesterday',
     sessionGroupPrevious7Days: 'Previous 7 Days',
     sessionGroupPrevious30Days: 'Previous 30 Days',
+    sessionListShowMore: 'Show more',
+    sessionListRetry: 'Retry',
+    sessionListPageLoadFailed: 'Failed to load conversations.',
     sessionGroupEarlier: 'Earlier',
     // Session Groups
     rename: 'Rename',

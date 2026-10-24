@@ -8,6 +8,8 @@ import type { RootState } from '@/store';
 // so useSelector's default === check is enough to skip re-renders.
 
 export const selectCoworkSessions = (state: RootState) => state.cowork.sessions;
+export const selectSessionDirectory = (state: RootState) =>
+  state.cowork.sessionDirectory ?? state.cowork.sessions;
 export const selectCurrentSessionId = (state: RootState) => state.cowork.currentSessionId;
 export const selectCurrentSession = (state: RootState) => state.cowork.currentSession;
 export const selectIsStreaming = (state: RootState) => state.cowork.isStreaming;
@@ -78,6 +80,6 @@ export const selectIsGroupExpanded = createSelector(
 );
 
 export const selectGroupSessionCount = createSelector(
-  [selectCoworkSessions, (_: RootState, groupId: string) => groupId],
+  [selectSessionDirectory, (_: RootState, groupId: string) => groupId],
   (sessions, groupId) => sessions.filter(s => s.groupId === groupId).length,
 );

@@ -1,18 +1,28 @@
 // @vitest-environment jsdom
 import { DndContext } from '@dnd-kit/core';
 import { configureStore } from '@reduxjs/toolkit';
+import { CoworkSessionSource } from '@shared/cowork/sessionSource';
+import { ExternalSessionSource, ExternalSessionStatus } from '@shared/integrations/externalSession';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { Provider } from 'react-redux';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import type { CoworkSessionSummary } from '@/features/cowork/coworkTypes';
 import { i18nService } from '@/services/i18n';
 
 import CoworkSessionItem from './CoworkSessionItem';
 
-const renderSessionItem = (options?: { isRuntimeRunning?: boolean; collaboration?: boolean; worktree?: boolean }) => {
+const renderSessionItem = (options?: {
+  isRuntimeRunning?: boolean;
+  collaboration?: boolean;
+  worktree?: boolean;
+  metadata?: Pick<CoworkSessionSummary, 'source' | 'external'>;
+  withGroups?: boolean;
+}) => {
   const onSelect = vi.fn();
   const onExport = vi.fn();
   const onCopy = vi.fn();
+  const onMoveToGroup = vi.fn();
   const store = configureStore({ reducer: { agent: () => ({ agents: [] }) } });
   render(
     <Provider store={store}>
@@ -25,6 +35,7 @@ const renderSessionItem = (options?: { isRuntimeRunning?: boolean; collaboration
             pinned: false,
             createdAt: 1,
             updatedAt: 2,
+            ...options?.metadata,
             ...(options?.worktree ? { nativeSessionKey: 'agent:main:subagent:tree-1' } : {}),
             ...(options?.collaboration
               ? { collaboration: { memberCount: 3, deleting: false } }
@@ -43,17 +54,43 @@ const renderSessionItem = (options?: { isRuntimeRunning?: boolean; collaboration
           onTogglePinned={vi.fn()}
           onToggleSelection={vi.fn()}
           onEnterBatchMode={vi.fn()}
+          groups={options?.withGroups
+            ? [{ id: 'work', name: 'Work', color: '#359daf', sortOrder: 0, createdAt: 1 }]
+            : []}
+          onMoveToGroup={onMoveToGroup}
         />
       </DndContext>
     </Provider>,
   );
   fireEvent.contextMenu(screen.getByText('Planning'));
-  return { onExport, onCopy, onSelect };
+  return { onExport, onCopy, onSelect, onMoveToGroup };
 };
 
 afterEach(cleanup);
 
 describe('CoworkSessionItem context menu session actions', () => {
+  it.each([
+    { source: CoworkSessionSource.BrowserExtension },
+    ...Object.values(ExternalSessionSource).map(origin => ({
+      external: { origin, readOnly: true as const, status: ExternalSessionStatus.Completed, sessionKey: 'key' },
+    })),
+  ])('prevents manual grouping and dragging for source conversations: %j', metadata => {
+    i18nService.setLanguage('en', { persist: false });
+    const { onMoveToGroup } = renderSessionItem({ metadata, withGroups: true });
+    expect(screen.queryByRole('menuitem', { name: /Move to Group/ })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Planning' }).getAttribute('aria-disabled')).toBe('true');
+    expect(onMoveToGroup).not.toHaveBeenCalled();
+  });
+
+  it('keeps the move menu and dragging available for ordinary conversations', () => {
+    i18nService.setLanguage('en', { persist: false });
+    const { onMoveToGroup } = renderSessionItem({ withGroups: true });
+    fireEvent.mouseEnter(screen.getByRole('menuitem', { name: /Move to Group/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Work' }));
+    expect(onMoveToGroup).toHaveBeenCalledExactlyOnceWith('work');
+    expect(screen.getByRole('button', { name: 'Planning' }).getAttribute('aria-disabled')).toBe('false');
+  });
+
   it('opens diagnostics for the clicked running session without selecting its chat', async () => {
     i18nService.setLanguage('en', { persist: false });
     const read = vi.fn().mockResolvedValue({ success: false, reason: 'missing' });

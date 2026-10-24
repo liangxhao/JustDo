@@ -24,6 +24,7 @@ vi.mock('@/features/cowork/components/collaboration/CollaborationPanel', () => (
 }));
 vi.mock('@/features/cowork/coworkSelectors', () => ({
   selectCoworkSessions: () => [],
+  selectSessionDirectory: () => [],
   selectGroups: () => [],
   selectCurrentSessionId: () => 'existing-chat',
   selectIsOpenClawEngine: () => true,

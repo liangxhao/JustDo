@@ -505,3 +505,91 @@ describe('CoworkSearchModal', () => {
     expect(onClose).toHaveBeenCalledOnce();
   });
 });
+
+test('searches unloaded history through an independent complete search snapshot', async () => {
+  i18nService.setLanguage('en', { persist: false });
+  const searchSessionMessages = vi.fn().mockResolvedValue(searchResponse());
+  const hidden = { ...sessions[0], id: 'hidden-peer', title: 'Hidden member' };
+  const listSessionSearchSummaries = vi.fn().mockResolvedValue({ success: true, sessions: [...sessions, hidden] });
+  Object.defineProperty(window, 'electron', { configurable: true, value: { cowork: { searchSessionMessages, listSessionSearchSummaries } } });
+  render(<CoworkSearchModal isOpen sessions={[]} scopeSessionIds={sessions.map(row => row.id)} currentSessionId={null} onClose={vi.fn()} onSelectSession={vi.fn()} />);
+  await screen.findByText('Release checklist');
+  expect(screen.queryByText('Hidden member')).toBeNull();
+  fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'needle' } });
+  await waitFor(() => expect(searchSessionMessages).toHaveBeenCalledWith('needle', { sessionIds: ['message-match', 'title-match'] }));
+  expect(listSessionSearchSummaries).toHaveBeenCalledTimes(1);
+});
+
+test('retries a failed complete search snapshot instead of reporting an empty history', async () => {
+  i18nService.setLanguage('en', { persist: false });
+  const listSessionSearchSummaries = vi.fn().mockRejectedValueOnce(new Error('offline')).mockResolvedValueOnce({ success: true, sessions });
+  Object.defineProperty(window, 'electron', { configurable: true, value: { cowork: { searchSessionMessages: vi.fn().mockResolvedValue(searchResponse()), listSessionSearchSummaries } } });
+  render(<CoworkSearchModal isOpen sessions={[]} currentSessionId={null} onClose={vi.fn()} onSelectSession={vi.fn()} />);
+  const retry = await screen.findByRole('button', { name: i18nService.t('searchConversationsRetry') });
+  fireEvent.click(retry);
+  await screen.findByText('Release checklist');
+  expect(listSessionSearchSummaries).toHaveBeenCalledTimes(2);
+});
+
+test('preserves native matches and loaded pages when the same search scope is reordered', async () => {
+  vi.useFakeTimers();
+  i18nService.setLanguage('en', { persist: false });
+  const listSessionSearchSummaries = vi.fn().mockResolvedValue({ success: true, sessions });
+  const searchSessionMessages = vi.fn()
+    .mockResolvedValueOnce({ ...searchResponse([match('title-match')]), truncated: true })
+    .mockResolvedValueOnce(searchResponse([match('message-match')]))
+    .mockResolvedValue(searchResponse());
+  Object.defineProperty(window, 'electron', {
+    configurable: true,
+    value: { cowork: { searchSessionMessages, listSessionSearchSummaries } },
+  });
+  const props = {
+    isOpen: true, sessions: [], currentSessionId: null,
+    onClose: vi.fn(), onSelectSession: vi.fn(),
+  };
+  const view = render(
+    <CoworkSearchModal {...props} scopeSessionIds={['title-match', 'message-match']} />,
+  );
+  await act(async () => {});
+  fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'needle' } });
+  await act(async () => { await vi.advanceTimersByTimeAsync(200); });
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button', { name: 'Load more results' }));
+  });
+  expect(screen.getByText('Release checklist')).toBeTruthy();
+  expect(screen.getByText('Unrelated title')).toBeTruthy();
+
+  view.rerender(
+    <CoworkSearchModal {...props} scopeSessionIds={['message-match', 'title-match', 'message-match']} />,
+  );
+  await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+
+  expect(listSessionSearchSummaries).toHaveBeenCalledOnce();
+  expect(searchSessionMessages).toHaveBeenCalledTimes(2);
+  expect(screen.getByText('Release checklist')).toBeTruthy();
+  expect(screen.getByText('Unrelated title')).toBeTruthy();
+  expect(screen.queryByRole('status')).toBeNull();
+});
+
+test('refreshes the complete snapshot when search scope membership changes', async () => {
+  i18nService.setLanguage('en', { persist: false });
+  const listSessionSearchSummaries = vi.fn().mockResolvedValue({ success: true, sessions });
+  Object.defineProperty(window, 'electron', {
+    configurable: true,
+    value: { cowork: { listSessionSearchSummaries } },
+  });
+  const props = {
+    isOpen: true, sessions: [], currentSessionId: null,
+    onClose: vi.fn(), onSelectSession: vi.fn(),
+  };
+  const view = render(
+    <CoworkSearchModal {...props} scopeSessionIds={['title-match', 'message-match']} />,
+  );
+  await screen.findByText('Release checklist');
+
+  view.rerender(<CoworkSearchModal {...props} scopeSessionIds={['message-match']} />);
+
+  await screen.findByText('Unrelated title');
+  expect(screen.queryByText('Release checklist')).toBeNull();
+  expect(listSessionSearchSummaries).toHaveBeenCalledTimes(2);
+});

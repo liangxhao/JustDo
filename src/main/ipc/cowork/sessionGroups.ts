@@ -1,8 +1,13 @@
 import { ipcMain } from 'electron';
 
+import { isSourceGroupedSession } from '../../../shared/cowork/sessionSource';
+import type { CoworkStore } from '../../data/coworkStore';
 import type { GroupStore } from '../../data/groupStore';
 
-export const registerSessionGroupHandlers = (getStore: () => GroupStore): void => {
+export const registerSessionGroupHandlers = (
+  getStore: () => GroupStore,
+  getCoworkStore: () => Pick<CoworkStore, 'getSession'>,
+): void => {
   ipcMain.handle('sessionGroup:list', async () => {
     try {
       return { success: true, groups: getStore().listGroups() };
@@ -54,7 +59,24 @@ export const registerSessionGroupHandlers = (getStore: () => GroupStore): void =
     'sessionGroup:moveSession',
     async (_event, sessionId: string, groupId: string | null) => {
       try {
-        return { success: getStore().moveSessionToGroup(sessionId, groupId) };
+        if (
+          typeof sessionId !== 'string' || !sessionId ||
+          (groupId !== null && (typeof groupId !== 'string' || !groupId))
+        ) {
+          throw new Error('Invalid session group move.');
+        }
+        const session = getCoworkStore().getSession(sessionId);
+        if (!session) {
+          throw new Error('Conversation not found.');
+        }
+        if (isSourceGroupedSession(session)) {
+          throw new Error('Source conversations cannot be moved between groups.');
+        }
+        const store = getStore();
+        if (groupId !== null && !store.getGroup(groupId)) {
+          throw new Error('Manual conversation group not found.');
+        }
+        return { success: store.moveSessionToGroup(sessionId, groupId) };
       } catch (error) {
         return {
           success: false,

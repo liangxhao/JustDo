@@ -25,7 +25,7 @@ interface CoworkSessionActionsOptions {
   setIsDisplayPanelOpen: React.Dispatch<React.SetStateAction<boolean>>;
   setIsWorkspaceFilesOpen: React.Dispatch<React.SetStateAction<boolean>>;
   currentSessionRuntimeRunning: boolean;
-  sessions: CoworkSessionSummary[];
+  sessions: Array<Pick<CoworkSessionSummary, 'id' | 'status'>>;
   sessionTranscriptMutationRef: React.MutableRefObject<SessionTranscriptMutation | null>;
   setSessionTranscriptMutation: React.Dispatch<
     React.SetStateAction<SessionTranscriptMutation | null>

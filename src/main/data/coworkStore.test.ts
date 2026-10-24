@@ -15,6 +15,7 @@ import BetterSqlite3 from 'better-sqlite3';
 import path from 'path';
 
 import { createDefaultAgentRuntimeSettings } from '../../shared/agents/agentRuntimeSettings';
+import { SESSION_SUMMARY_BATCH_LIMIT } from '../../shared/cowork/sessionDirectory';
 import { createDefaultExternalAgentSettings } from '../../shared/integrations/externalAgents';
 import { CoworkStore } from './coworkStore';
 
@@ -118,6 +119,97 @@ function insertSession(id: string, updatedAt: number = Date.now()): void {
 
 beforeEach(() => {
   setupDb();
+});
+
+test('reads a lightweight complete directory and only requested summaries without session detail reads', () => {
+  for (let index = 0; index < 205; index += 1) insertSession(`session-${index}`, index);
+  db.prepare('UPDATE cowork_sessions SET group_id = ?, pinned = 1 WHERE id = ?').run(
+    'manual',
+    'session-0',
+  );
+  const details = vi.spyOn(store, 'getSession').mockImplementation(() => {
+    throw new Error('Navigation projections must not read full session details.');
+  });
+
+  const directory = store.listSessionDirectory();
+  const page = store.readSessionSummaries(['session-0', 'session-3', 'session-3', 'missing']);
+
+  expect(directory).toHaveLength(205);
+  expect(directory[0]).toMatchObject({ id: 'session-0', groupId: 'manual', pinned: true });
+  expect(directory[0]).not.toHaveProperty('title');
+  expect(directory[0]).not.toHaveProperty('historyBinding');
+  expect(page.map(session => session.id)).toEqual(['session-0', 'session-3']);
+  expect(page[0]).toMatchObject({ title: 'test', groupId: 'manual' });
+  expect(store.readSessionSummaries([])).toEqual([]);
+  expect(() =>
+    store.readSessionSummaries(
+      Array.from({ length: SESSION_SUMMARY_BATCH_LIMIT + 1 }, (_, index) => `session-${index}`),
+    ),
+  ).toThrow('At most');
+  expect(store.listSessionSearchSummaries()).toHaveLength(205);
+  expect(details).not.toHaveBeenCalled();
+});
+
+test('projects external origins and historical identities and hides holding sessions from every navigation read', () => {
+  db.exec(`CREATE TABLE cowork_external_sessions (
+    cowork_session_id TEXT PRIMARY KEY, source TEXT, status TEXT, openclaw_session_key TEXT
+  );
+  CREATE TABLE history_session_bindings (
+    session_id TEXT PRIMARY KEY, session_key TEXT, native_session_id TEXT, availability TEXT
+  );`);
+  insertSession('cli', 5);
+  insertSession('chrome', 4);
+  insertSession('historical', 3);
+  insertSession('holding', 2);
+  insertSession('other-agent', 1);
+  db.prepare('UPDATE cowork_sessions SET source = ? WHERE id = ?').run(
+    'browser-extension',
+    'chrome',
+  );
+  db.prepare('UPDATE cowork_sessions SET agent_id = ? WHERE id = ?').run(
+    'specialist',
+    'other-agent',
+  );
+  db.prepare('INSERT INTO cowork_external_sessions VALUES (?, ?, ?, ?)').run(
+    'cli',
+    'cli',
+    'completed',
+    'agent:main:cli:one',
+  );
+  const history = db.prepare('INSERT INTO history_session_bindings VALUES (?, ?, ?, ?)');
+  history.run('historical', 'agent:main:historical', 'native-history', 'native');
+  history.run('holding', 'agent:main:harness:justdo-team-holding:one', 'native-holding', 'native');
+
+  const directory = store.listSessionDirectory('main');
+  const summaries = store.readSessionSummaries(['historical', 'holding']);
+
+  expect(directory.map(session => session.id)).toEqual(['cli', 'chrome', 'historical']);
+  expect(directory[0].external).toEqual({
+    origin: 'cli',
+    status: 'completed',
+    readOnly: true,
+    sessionKey: 'agent:main:cli:one',
+  });
+  expect(directory[1]).toMatchObject({ source: 'browser-extension' });
+  expect(directory[2]).toMatchObject({ nativeSessionKey: 'agent:main:historical' });
+  expect(summaries).toEqual([
+    expect.objectContaining({
+      id: 'historical',
+      nativeSessionKey: 'agent:main:historical',
+      historyBinding: {
+        sessionKey: 'agent:main:historical',
+        nativeSessionId: 'native-history',
+        availability: 'native',
+      },
+    }),
+  ]);
+  expect(store.listSessionSearchSummaries().map(session => session.id)).not.toContain('holding');
+});
+
+test('preserves manual group metadata when a full conversation is opened', () => {
+  insertSession('grouped');
+  db.prepare('UPDATE cowork_sessions SET group_id = ? WHERE id = ?').run('manual', 'grouped');
+  expect(store.getSession('grouped')).toMatchObject({ groupId: 'manual' });
 });
 
 test('sessions do not expose a local transcript cache', () => {

@@ -3,7 +3,9 @@ import React from 'react';
 import CoworkSessionItem from '@/features/cowork/components/sessions/CoworkSessionItem';
 import type { CoworkSessionSummary, SessionGroup } from '@/features/cowork/coworkTypes';
 
-interface SessionGroupPanelProps {
+import SessionListPageFooter, { type SessionListPageFooterProps } from './SessionListPageFooter';
+
+interface SessionGroupPanelProps extends SessionListPageFooterProps {
   sessions: CoworkSessionSummary[];
   groups: SessionGroup[];
   isExpanded: boolean;
@@ -43,8 +45,13 @@ const SessionGroupPanel: React.FC<SessionGroupPanelProps> = ({
   onToggleSelection,
   onEnterBatchMode,
   onMoveToGroup,
+  isLoading,
+  loadFailed,
+  hasMore,
+  onShowMore,
+  onRetry,
 }) => {
-  if (!isExpanded || sessions.length === 0) return null;
+  if (!isExpanded) return null;
 
   return (
     <div className="session-group-panel">
@@ -72,6 +79,13 @@ const SessionGroupPanel: React.FC<SessionGroupPanelProps> = ({
           onMoveToGroup={onMoveToGroup ? groupId => onMoveToGroup(session.id, groupId) : undefined}
         />
       ))}
+      <SessionListPageFooter
+        isLoading={isLoading}
+        loadFailed={loadFailed}
+        hasMore={hasMore}
+        onShowMore={onShowMore}
+        onRetry={onRetry}
+      />
     </div>
   );
 };

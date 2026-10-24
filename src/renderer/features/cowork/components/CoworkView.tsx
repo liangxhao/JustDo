@@ -154,12 +154,12 @@ import { useSwarmWorkflowDiscovery } from '@/features/cowork/components/swarm-wo
 import TerminalPanel from '@/features/cowork/components/terminal/TerminalPanel';
 import {
   selectCoworkConfig,
-  selectCoworkSessions,
   selectCurrentSession,
   selectCurrentSessionMainRuntimeRunning,
   selectDraftBrowserAnnotations,
   selectIsOpenClawEngine,
   selectIsStreaming,
+  selectSessionDirectory,
   selectSessionRuntimeActivity,
   selectSessionRunTimings,
 } from '@/features/cowork/coworkSelectors';
@@ -401,7 +401,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     setIsDisplayPanelOpen(true);
     setIsWorkspaceFilesOpen(false);
   });
-  const sessions = useSelector(selectCoworkSessions);
+  const sessions = useSelector(selectSessionDirectory);
   const config = useSelector(selectCoworkConfig);
   const [collaborationSessionId, setCollaborationSessionId] = useState<string | null>(null);
   useEffect(() => {

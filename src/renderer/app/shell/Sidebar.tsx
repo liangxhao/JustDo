@@ -20,6 +20,7 @@ import {
   selectCurrentSessionId,
   selectGroups,
   selectIsOpenClawEngine,
+  selectSessionDirectory,
 } from '@/features/cowork/coworkSelectors';
 import { coworkService } from '@/features/cowork/coworkService';
 import {
@@ -78,6 +79,7 @@ const Sidebar: React.FC<SidebarProps> = ({
     };
   }, []);
   const sessions = useSelector(selectCoworkSessions);
+  const directory = useSelector(selectSessionDirectory);
   const groups = useSelector(selectGroups);
   const sessionListStatus = useSelector(
     (state: import('@/store').RootState) => state.cowork.sessionListStatus,
@@ -90,6 +92,13 @@ const Sidebar: React.FC<SidebarProps> = ({
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [isBatchMode, setIsBatchMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [displayedSessionIds, setDisplayedSessionIds] = useState<string[]>([]);
+  const handleVisibleSessionIdsChange = useCallback((ids: string[]) => {
+    setDisplayedSessionIds(current =>
+      current.length === ids.length && current.every((id, index) => id === ids[index])
+        ? current : ids,
+    );
+  }, []);
   const [showBatchDeleteConfirm, setShowBatchDeleteConfirm] = useState(false);
   const [developerMode, setDeveloperMode] = useState(
     () => configService.getConfig().developerMode ?? false,
@@ -180,13 +189,15 @@ const Sidebar: React.FC<SidebarProps> = ({
       room.members.map(member => [member.sessionId, room.anchorSessionId] as const),
     ),
   );
-  const visibleSessions = sessions.filter(session => {
+  const visibleDirectory = directory.filter(session => {
     const anchor = collaborationAnchors.get(session.id);
     if (anchor && anchor !== session.id) return false;
     return (
       Boolean(session.external) || (session.agentId || MAIN_USER_AGENT_ID) === MAIN_USER_AGENT_ID
     );
   });
+  const visibleDirectoryIds = new Set(visibleDirectory.map(session => session.id));
+  const visibleSessions = sessions.filter(session => visibleDirectoryIds.has(session.id));
   const handleSessionListAction = async (sessionId: string, action: CoworkSessionListAction) => {
     const requestId = ++sessionNavigationRequestRef.current;
     await runGuardedFilePreviewNavigation(
@@ -232,7 +243,7 @@ const Sidebar: React.FC<SidebarProps> = ({
     });
   }, []);
 
-  const visibleSessionIds = visibleSessions.map(session => session.id);
+  const visibleSessionIds = displayedSessionIds.filter(id => visibleDirectoryIds.has(id));
   const visibleSelection = new Set([...selectedIds].filter(id => visibleSessionIds.includes(id)));
   const handleSelectAll = () =>
     setSelectedIds(previous => toggleVisibleSessionSelection(previous, visibleSessionIds));
@@ -383,6 +394,8 @@ const Sidebar: React.FC<SidebarProps> = ({
           <CoworkSessionList
             groupRecentSessionsByDate
             sessions={visibleSessions}
+            directory={visibleDirectory}
+            onVisibleSessionIdsChange={handleVisibleSessionIdsChange}
             isLoading={sessionListStatus === 'loading'}
             loadFailed={sessionListStatus === 'error'}
             currentSessionId={collaborationAnchors.get(currentSessionId || '') || currentSessionId}
@@ -479,6 +492,7 @@ const Sidebar: React.FC<SidebarProps> = ({
         isOpen={isSearchOpen}
         onClose={() => setIsSearchOpen(false)}
         sessions={visibleSessions}
+        scopeSessionIds={visibleDirectory.map(session => session.id)}
         groups={groups}
         currentSessionId={currentSessionId}
         onSelectSession={handleSelectSession}
