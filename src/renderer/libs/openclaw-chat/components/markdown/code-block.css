@@ -1,10 +1,10 @@
 /* Shared by the Lit message surface and Markdown document previews.
- * Light syntax/font tokens: @openai/apps-sdk-ui 0.2.2 CodeBlock.
+ * Light syntax/font tokens: adapted from @openai/apps-sdk-ui 0.2.2 CodeBlock.
  * Dark syntax/card tokens: sampled from the supplied ChatGPT App screenshot.
  * The SDK's plugin CodeBlock uses a different dark palette than chat messages.
  */
 :is(.markdown-content, .file-preview-markdown) .code-block-wrapper:not(.mermaid-block) {
-  --code-surface: #fcfcfc;
+  --code-surface: #f1f2f4;
   --code-border: color-mix(in oklab, #0d0d0d 10%, transparent);
   --code-text: #0d0d0d;
   --code-muted: #5d5d5d;
@@ -12,7 +12,7 @@
   --code-comment: #6e6e73;
   --code-comment-style: normal;
   --code-keyword: #0169cc;
-  --code-string: #008635;
+  --code-string: #008030;
   --code-number: #8046d9;
   --code-title: #c0660d;
   --code-property: #e04c91;
