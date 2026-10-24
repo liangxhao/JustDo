@@ -36,6 +36,7 @@ import { store } from '@/store';
 
 import NavigationRail from './NavigationRail';
 import { SidebarView } from './sidebarNavigation';
+import { useSessionListResize } from './useSessionListResize';
 
 interface SidebarProps {
   onShowSettings: () => void;
@@ -94,6 +95,7 @@ const Sidebar: React.FC<SidebarProps> = ({
     () => configService.getConfig().developerMode ?? false,
   );
   const isHomePanelVisible = activeView === SidebarView.Home && !isCollapsed;
+  const sessionListResize = useSessionListResize(isHomePanelVisible);
 
   useEffect(() => {
     const handleSearch = () => {
@@ -325,11 +327,26 @@ const Sidebar: React.FC<SidebarProps> = ({
         onOpenChatWeb={developerMode && isOpenClawEngine ? handleOpenChatWeb : undefined}
       />
       <aside
+        ref={sessionListResize.panelRef}
         id={homePanelId}
         aria-label={i18nService.t('sidebarHome')}
         hidden={!isHomePanelVisible}
-        className={`col-start-2 row-start-2 w-60 min-h-0 shrink-0 flex-col border-r border-border bg-[var(--shell-sidebar-bg)] overflow-hidden ${isHomePanelVisible ? 'flex' : 'hidden'}`}
+        style={{ width: sessionListResize.width }}
+        className={`relative col-start-2 row-start-2 min-w-0 min-h-0 shrink-0 flex-col pr-1.5 border-r border-border bg-[var(--shell-sidebar-bg)] overflow-hidden ${isHomePanelVisible ? 'flex' : 'hidden'}`}
       >
+        <div
+          role="separator"
+          aria-label={i18nService.t('sidebarResizeSessions')}
+          aria-orientation="vertical"
+          aria-controls={homePanelId}
+          aria-valuemin={sessionListResize.minWidth}
+          aria-valuemax={sessionListResize.maxWidth}
+          aria-valuenow={sessionListResize.width}
+          tabIndex={isHomePanelVisible ? 0 : -1}
+          onPointerDown={sessionListResize.beginResize}
+          onKeyDown={sessionListResize.handleKeyDown}
+          className="non-draggable absolute inset-y-0 right-0 z-20 w-1.5 cursor-col-resize touch-none hover:bg-primary/20 focus-visible:bg-primary/30 focus-visible:outline-none"
+        />
         {sessionListStatus !== 'loading' && (
           <div className="px-2.5 pt-2 pb-1.5">
             <div className="flex items-center gap-1">

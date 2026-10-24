@@ -31,6 +31,7 @@ describe('renderer preferences across HTTP host restarts', () => {
     await first.initialize();
     const preferences = {
       'justdo-theme-id': 'midnight',
+      'shell.session-list-width': '320',
       'justdo-pet-floating-position': '{"x":120,"y":80}',
       'justdo-scheduled-task-result-preferences-v1': '{"includeRoutine":true}',
       'justdo:goal-completion-feedback:session-1': '{"completedGoalId":"goal-1"}',
