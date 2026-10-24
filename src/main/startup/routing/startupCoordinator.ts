@@ -208,7 +208,7 @@ export class StartupCoordinator {
   }
 
   /** Fresh/import paths may retain access to settings when optional engine preparation fails. */
-  async verifyNativeReady(onActivity?: Parameters<NativeStartupDatabaseRuntime['prepareCanonical']>[0]): Promise<boolean> {
+  async verifyNativeReady(onActivity?: (activity: AppInitializationActivity) => void): Promise<boolean> {
     if (this.preparationError) throw this.preparationError;
     if (this.stopped) throw new Error('Application startup was interrupted.');
     if (!this.native || this.canonicalPrepared) return true;
@@ -220,7 +220,13 @@ export class StartupCoordinator {
       if (!schemaReady) return false;
       // The native certifier owns persisted session proof and pending rows. Drain
       // it in an offline child before synchronous Gateway plugin registration.
-      await this.native.prepareCanonical(onActivity);
+      const sessionActivities = {
+        [AppInitializationActivity.NativeInspect]: AppInitializationActivity.SessionInspect,
+        [AppInitializationActivity.NativeBackup]: AppInitializationActivity.SessionBackup,
+        [AppInitializationActivity.NativeUpgrade]: AppInitializationActivity.SessionPrepare,
+        [AppInitializationActivity.NativeVerify]: AppInitializationActivity.SessionVerify,
+      } as const;
+      await this.native.prepareCanonical(activity => onActivity?.(sessionActivities[activity]));
       if (this.stopped) throw new Error('Application startup was interrupted.');
       this.nativeVerified = true;
       this.canonicalPrepared = true;

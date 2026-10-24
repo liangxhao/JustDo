@@ -4,6 +4,7 @@ import { lazy, Suspense } from 'react';
 
 import { i18nService } from '@/services/i18n';
 
+import StartupLogButton from './StartupLogButton';
 import type { useStartupEngine } from './useStartupEngine';
 
 const EngineDiagnostics = lazy(() =>
@@ -44,6 +45,7 @@ export function StartupEngineNotice({ engine }: Props) {
           >
             {i18nService.t('startupDiagnosticsView')}
           </button>
+          <StartupLogButton />
           {engine.status.canRetry && (
             <button
               className="startup-action"

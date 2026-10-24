@@ -412,6 +412,27 @@ function engineBridge() {
   };
 }
 
+test('connects actual engine and renderer readiness to the normal startup steps', async () => {
+  const read = deferred<AppInitializationState>();
+  const workspace = deferred<void>();
+  bridge(false, read.promise);
+  const { emit, status } = engineBridge();
+  const view = render(<AppInitializationGate><WorkspaceProbe completion={workspace.promise} /></AppInitializationGate>);
+  await screen.findByRole('button', { name: 'startupDiagnosticsView' });
+  await act(async () => read.resolve({ ...snapshot(false), phase: AppInitializationPhase.Ready,
+    step: AppInitializationStep.Complete, completedSteps: 4 }));
+  const steps = () => [...view.container.querySelectorAll('.startup-step')]
+    .map(step => step.getAttribute('data-status'));
+  expect(steps()).toEqual(['complete', 'complete', 'complete', 'failed', 'running']);
+  emit({ ...status, phase: 'starting' });
+  expect(steps()).toEqual(['complete', 'complete', 'complete', 'running', 'running']);
+  emit({ ...status, phase: 'running' });
+  expect(steps()).toEqual(['complete', 'complete', 'complete', 'complete', 'running']);
+  await act(async () => workspace.resolve());
+  expect(steps()).toEqual(Array(5).fill('complete'));
+  await waitFor(() => expect(view.container.querySelector('.initialization-overlay')).toBeNull());
+});
+
 test.each([true, false])(
   'uses the existing on-demand engine collector and holds the report through app readiness (firstLaunch=%s)',
   async firstLaunch => {

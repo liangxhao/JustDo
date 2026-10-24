@@ -2,6 +2,25 @@ import { initializationTranslations } from './initializationTranslations';
 
 export const startupTranslations = {
   zh: {
+    startupActivity_sessionInspect:
+      initializationTranslations.zh.initializationActivity_sessionInspect,
+    startupActivity_sessionInspectDescription:
+      initializationTranslations.zh.initializationActivity_sessionInspectDescription,
+    startupActivity_sessionBackup:
+      initializationTranslations.zh.initializationActivity_sessionBackup,
+    startupActivity_sessionBackupDescription:
+      initializationTranslations.zh.initializationActivity_sessionBackupDescription,
+    startupActivity_sessionPrepare:
+      initializationTranslations.zh.initializationActivity_sessionPrepare,
+    startupActivity_sessionPrepareDescription:
+      initializationTranslations.zh.initializationActivity_sessionPrepareDescription,
+    startupActivity_sessionVerify:
+      initializationTranslations.zh.initializationActivity_sessionVerify,
+    startupActivity_sessionVerifyDescription:
+      initializationTranslations.zh.initializationActivity_sessionVerifyDescription,
+    startupOpenLogs: '打开日志文件夹',
+    startupOpenLogsFailed: '无法打开日志文件夹，请查看诊断详情。',
+    startupStep_interface: '加载工作界面',
     startupDowngradeTitle: '检测到降级安装',
     startupDowngradeWelcome: '确认启动版本',
     startupDowngradeDescription:
@@ -68,7 +87,7 @@ export const startupTranslations = {
     startupStep_userData: '打开应用数据',
     startupStep_runtime: '检查运行环境',
     startupStep_configuration: '加载启动配置',
-    startupStep_engine: '启动后台服务',
+    startupStep_engine: '启动 AI 引擎',
     startupActivity_userDirectory: '访问应用数据目录',
     startupActivity_userDirectoryDescription: '访问本机已保存的应用数据目录。',
     startupActivity_database: '打开本机数据库',
@@ -91,7 +110,7 @@ export const startupTranslations = {
     startupActivity_defaultFilesDescription: '将当前模型、助手和工具设置同步到本机 AI 运行配置。',
     startupActivity_engineStart: '发起 AI 引擎启动',
     startupActivity_engineStartDescription:
-      '使用已保存的配置启动 AI 引擎，连接结果以引擎反馈为准。',
+      '使用已保存的配置加载已启用的插件并启动 AI 引擎，连接结果以引擎反馈为准。',
     startupActivity_finalize: '启用应用后台服务',
     startupActivity_finalizeDescription: '恢复系统托盘和应用后台状态，准备打开工作界面。',
     startupSteps: '启动进度',
@@ -131,6 +150,25 @@ export const startupTranslations = {
     startupRenderer_engineStatusDescription: '检查本机 AI 引擎的当前状态，随后打开工作区。',
   },
   en: {
+    startupActivity_sessionInspect:
+      initializationTranslations.en.initializationActivity_sessionInspect,
+    startupActivity_sessionInspectDescription:
+      initializationTranslations.en.initializationActivity_sessionInspectDescription,
+    startupActivity_sessionBackup:
+      initializationTranslations.en.initializationActivity_sessionBackup,
+    startupActivity_sessionBackupDescription:
+      initializationTranslations.en.initializationActivity_sessionBackupDescription,
+    startupActivity_sessionPrepare:
+      initializationTranslations.en.initializationActivity_sessionPrepare,
+    startupActivity_sessionPrepareDescription:
+      initializationTranslations.en.initializationActivity_sessionPrepareDescription,
+    startupActivity_sessionVerify:
+      initializationTranslations.en.initializationActivity_sessionVerify,
+    startupActivity_sessionVerifyDescription:
+      initializationTranslations.en.initializationActivity_sessionVerifyDescription,
+    startupOpenLogs: 'Open log folder',
+    startupOpenLogsFailed: 'Could not open the log folder. View diagnostic details.',
+    startupStep_interface: 'Load the workspace interface',
     startupDowngradeTitle: 'An older version is installed',
     startupDowngradeWelcome: 'Confirm the startup version',
     startupDowngradeDescription:
@@ -199,7 +237,7 @@ export const startupTranslations = {
     startupStep_userData: 'Open application data',
     startupStep_runtime: 'Check runtime',
     startupStep_configuration: 'Load startup settings',
-    startupStep_engine: 'Start background services',
+    startupStep_engine: 'Start the AI engine',
     startupActivity_userDirectory: 'Accessing the data directory',
     startupActivity_userDirectoryDescription: 'Accessing the existing application data directory.',
     startupActivity_database: 'Opening the local database',
@@ -228,7 +266,7 @@ export const startupTranslations = {
       'Applying current model, assistant, and tool settings to the local AI runtime.',
     startupActivity_engineStart: 'Requesting AI engine startup',
     startupActivity_engineStartDescription:
-      'Starting the AI engine with saved settings; its status confirms the connection result.',
+      'Loading enabled plugins and starting the AI engine with saved settings; its status confirms the connection result.',
     startupActivity_finalize: 'Enabling background services',
     startupActivity_finalizeDescription:
       'Restoring the system tray and background services before opening the workspace.',

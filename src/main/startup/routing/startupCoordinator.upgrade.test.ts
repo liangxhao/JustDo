@@ -4,10 +4,11 @@ import path from 'node:path';
 
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
+import { AppInitializationActivity } from '../../../shared/app/initialization';
 import { StartupRoute, StartupStage } from '../../../shared/app/startup/routing';
 import * as versionPolicy from '../../../shared/app/startup/versionPolicy';
 import { classifyInstallation } from './classifyInstallation';
-import { StartupCoordinator } from './startupCoordinator';
+import { type NativeStartupDatabaseRuntime,StartupCoordinator } from './startupCoordinator';
 import {
   newStartupJournal, readStartupJournal, STARTUP_STATE_FILE, type StartupIdentity, writeStartupJson,
 } from './startupState';
@@ -35,7 +36,7 @@ const native = () => ({
   identity: vi.fn(async () => ({ runtimeVersion: identity.runtimeVersion, runtimeBuildId: identity.runtimeBuildId })),
   inspect: vi.fn(async () => ({ needsUpgrade: false })),
   upgrade: vi.fn(async (_activity: (value: 'nativeInspect' | 'nativeBackup' | 'nativeUpgrade' | 'nativeVerify') => void) => {}),
-  prepareCanonical: vi.fn(async () => {}),
+  prepareCanonical: vi.fn(async (_activity?: Parameters<NativeStartupDatabaseRuntime['prepareCanonical']>[0]) => {}),
 });
 const progress = () => ({ advance: vi.fn(), reportActivity: vi.fn(), setHistorySummary: vi.fn() });
 function receipt(completedIdentity = identity) {
@@ -75,6 +76,26 @@ test('uses normal startup when the runtime version and live native facts match',
   const coordinator = await StartupCoordinator.prepare(root, { appVersion: identity.appVersion, native: owner });
   expect(coordinator.route).toBe(StartupRoute.Normal);
   expect(owner.inspect).toHaveBeenCalledOnce();
+  expect(owner.upgrade).not.toHaveBeenCalled();
+});
+
+test.each(Object.values(StartupRoute))('reports session validation separately from schema upgrades on %s startup', async route => {
+  if (route === StartupRoute.Normal) receipt();
+  if (route === StartupRoute.Fresh || route === StartupRoute.Migration)
+    vi.mocked(classifyInstallation).mockReturnValue({ route, journal: null });
+  const owner = native();
+  owner.prepareCanonical.mockImplementation(async report => {
+    for (const activity of [AppInitializationActivity.NativeInspect, AppInitializationActivity.NativeBackup,
+      AppInitializationActivity.NativeUpgrade, AppInitializationActivity.NativeVerify] as const)
+      report?.(activity);
+  });
+  const coordinator = await StartupCoordinator.prepare(root, { appVersion: identity.appVersion, native: owner });
+  expect(coordinator.route).toBe(route);
+  const report = vi.fn();
+  await coordinator.verifyNativeReady(report);
+  expect(report.mock.calls.flat()).toEqual([AppInitializationActivity.SessionInspect,
+    AppInitializationActivity.SessionBackup, AppInitializationActivity.SessionPrepare,
+    AppInitializationActivity.SessionVerify]);
   expect(owner.upgrade).not.toHaveBeenCalled();
 });
 

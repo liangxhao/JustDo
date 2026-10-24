@@ -1,4 +1,5 @@
 import { AppInitializationPhase, type AppInitializationState } from '@shared/app/initialization';
+import type { OpenClawEngineStatus } from '@shared/openclaw/engineStatus';
 import { type ReactNode, useEffect, useState } from 'react';
 
 import { i18nService } from '@/services/i18n';
@@ -11,18 +12,25 @@ import StartupCompatibilityAdvice, {
   hasStartupCompatibilityAdvice,
 } from './StartupCompatibilityAdvice';
 import StartupFrame, { startupDuration } from './StartupFrame';
+import StartupSteps, { startupStepStates, StepStatus } from './StartupSteps';
 
 /** Subsequent launches display runtime operations, never first-install preparation copy. */
 export default function StartupScreen({
   state,
   rendererActivity,
   rendererActivityStartedAt,
+  rendererReady = false,
+  engineStatus,
+  engineError,
   onRetry,
   diagnostics,
 }: {
   state: AppInitializationState;
   rendererActivity?: RendererStartupActivity;
   rendererActivityStartedAt?: number;
+  rendererReady?: boolean;
+  engineStatus?: OpenClawEngineStatus;
+  engineError?: boolean;
   onRetry?: () => void | Promise<void>;
   diagnostics?: ReactNode;
 }) {
@@ -34,6 +42,16 @@ export default function StartupScreen({
     !confirmation &&
     (state.phase === AppInitializationPhase.Preparing || Boolean(rendererActivity));
   const loadingInterface = preparing && Boolean(rendererActivity);
+  const stepProps = {
+    state,
+    failed,
+    engineStatus,
+    engineError,
+    rendererStarted: Boolean(rendererActivity),
+    rendererReady,
+  };
+  const steps = startupStepStates(stepProps);
+  const completedSteps = steps.filter(step => step.status === StepStatus.Complete).length;
   const [now, setNow] = useState(Date.now);
   const [restarting, setRestarting] = useState(false);
   const [restartError, setRestartError] = useState('');
@@ -87,6 +105,38 @@ export default function StartupScreen({
                 {i18nService.t(`${activityKey}Description`)}
               </p>
             </section>
+            <div className="startup-metrics">
+              <span>
+                {i18nService.t(
+                  failed
+                    ? 'startupFailed'
+                    : loadingInterface
+                      ? 'startupInterfaceLoading'
+                      : 'startupLoadingLabel',
+                )}
+              </span>
+              <span>
+                {i18nService.t('startupElapsed')} <strong>{startupDuration(elapsed)}</strong> ·{' '}
+                {i18nService.t('startupActivityElapsed')}{' '}
+                <strong>{startupDuration(activityElapsed)}</strong>
+              </span>
+            </div>
+            <div
+              className={`startup-progress${loadingInterface ? ' startup-progress--indeterminate' : ''}`}
+              role="progressbar"
+              aria-label={i18nService.t('startupSteps')}
+              aria-valuenow={loadingInterface ? undefined : completedSteps}
+              aria-valuemin={0}
+              aria-valuemax={steps.length}
+            >
+              <div
+                className="startup-progress-fill"
+                style={{
+                  width: loadingInterface ? undefined : `${(completedSteps / steps.length) * 100}%`,
+                }}
+              />
+            </div>
+            <StartupSteps {...stepProps} />
             {failed && (
               <div className="startup-recovery">
                 {state.historyRecovery && <HistoryRecoveryAdvice kind={state.historyRecovery} />}
@@ -113,35 +163,6 @@ export default function StartupScreen({
               </div>
             )}
             {diagnostics}
-            <div className="startup-metrics">
-              <span>
-                {loadingInterface
-                  ? i18nService.t('startupInterfaceLoading')
-                  : i18nService.t('startupLoadingLabel')}
-              </span>
-              <span>
-                {i18nService.t('startupElapsed')} <strong>{startupDuration(elapsed)}</strong> ·{' '}
-                {i18nService.t('startupActivityElapsed')}{' '}
-                <strong>{startupDuration(activityElapsed)}</strong>
-              </span>
-            </div>
-            <div
-              className={`startup-progress${loadingInterface ? ' startup-progress--indeterminate' : ''}`}
-              role="progressbar"
-              aria-label={i18nService.t('startupSteps')}
-              aria-valuenow={loadingInterface ? undefined : state.completedSteps}
-              aria-valuemin={0}
-              aria-valuemax={state.totalSteps}
-            >
-              <div
-                className="startup-progress-fill"
-                style={{
-                  width: loadingInterface
-                    ? undefined
-                    : `${state.totalSteps > 0 ? (state.completedSteps / state.totalSteps) * 100 : 0}%`,
-                }}
-              />
-            </div>
             <p className="startup-hint" data-waiting={preparing && activityElapsed >= 30}>
               {i18nService.t(
                 failed

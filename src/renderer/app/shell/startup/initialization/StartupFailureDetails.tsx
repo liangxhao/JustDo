@@ -3,6 +3,7 @@ import { useState } from 'react';
 
 import { i18nService } from '@/services/i18n';
 
+import StartupLogButton from './StartupLogButton';
 /** Shared diagnostic capability; each startup flow retains its own presentation. */
 export default function StartupFailureDetails({ failure }: { failure: StartupFailure }) {
   const [notice, setNotice] = useState('');
@@ -15,17 +16,20 @@ export default function StartupFailureDetails({ failure }: { failure: StartupFai
     }
   };
   return (
-    <details className="startup-failure-details">
-      <summary>
-        {i18nService.t('startupDiagnosticsDetails')} ·{' '}
-        {i18nService.t(`startupFailure_${failure.source}`)}
-      </summary>
-      <p>{i18nService.t('startupDiagnosticsEvidence')}</p>
-      <pre>{startupFailureText(failure)}</pre>
-      <button type="button" className="startup-action" onClick={() => void copy()}>
-        {i18nService.t('startupDiagnosticsCopy')}
-      </button>
-      {notice && <p role="status">{i18nService.t(notice)}</p>}
-    </details>
+    <div className="startup-failure-report">
+      <StartupLogButton />
+      <details className="startup-failure-details">
+        <summary>
+          {i18nService.t('startupDiagnosticsDetails')} ·{' '}
+          {i18nService.t(`startupFailure_${failure.source}`)}
+        </summary>
+        <p>{i18nService.t('startupDiagnosticsEvidence')}</p>
+        <pre>{startupFailureText(failure)}</pre>
+        <button type="button" className="startup-action" onClick={() => void copy()}>
+          {i18nService.t('startupDiagnosticsCopy')}
+        </button>
+        {notice && <p role="status">{i18nService.t(notice)}</p>}
+      </details>
+    </div>
   );
 }

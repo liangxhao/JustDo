@@ -222,10 +222,10 @@
 .startup-step[data-completed='true'] .startup-step-marker {
   color: var(--startup-accent);
 }
-.startup-step[aria-current='step'] .startup-step-marker {
+.startup-step[data-status='running'] .startup-step-marker {
   color: transparent;
 }
-.startup-step[aria-current='step'] .startup-step-marker::before {
+.startup-step[data-status='running'] .startup-step-marker::before {
   position: absolute;
   width: 7px;
   height: 7px;
@@ -289,7 +289,8 @@
 }
 
 .startup-screen[data-failed='true'] .startup-progress-fill,
-.startup-screen[data-failed='true'] .startup-step-marker {
+.startup-step[data-status='failed'] .startup-step-marker,
+.startup-step[data-status='failed'] .startup-step-status {
   color: #c34854;
   animation: none;
 }
@@ -297,8 +298,7 @@
   background: #c34854;
 }
 .startup-screen[data-failed='true'] .startup-progress::after,
-.startup-screen[data-failed='true'] .startup-hint::before,
-.startup-screen[data-failed='true'] .startup-step-marker::before {
+.startup-screen[data-failed='true'] .startup-hint::before {
   display: none;
 }
 

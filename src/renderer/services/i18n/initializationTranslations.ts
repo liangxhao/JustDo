@@ -35,6 +35,16 @@ export const initializationTranslations = {
     initializationActivity_nativeVerify: '核对数据库更新结果',
     initializationActivity_nativeVerifyDescription:
       '重新检查数据库完整性和目标版本，确认维护进程已完成并关闭。',
+    initializationActivity_sessionInspect: '检查会话数据',
+    initializationActivity_sessionInspectDescription:
+      '检查本机会话数据，确认启动引擎前需要完成的校验。',
+    initializationActivity_sessionBackup: '确认会话数据备份',
+    initializationActivity_sessionBackupDescription: '在会话校验前创建或核对已有的一致性备份。',
+    initializationActivity_sessionPrepare: '校验会话数据',
+    initializationActivity_sessionPrepareDescription:
+      '由内置引擎校验会话记录，保留已有会话、身份和关联。',
+    initializationActivity_sessionVerify: '核对会话准备结果',
+    initializationActivity_sessionVerifyDescription: '确认会话校验已完成，相关维护资源已关闭。',
     initializationResultTitle: '历史会话已恢复',
     initializationResultDescription:
       '初始化和历史恢复已完成。打开历史会话后，模型和权限沿用当前的新会话默认配置。',
@@ -163,6 +173,18 @@ export const initializationTranslations = {
     initializationError: '应用准备未完成，请重新启动后重试。',
   },
   en: {
+    initializationActivity_sessionInspect: 'Checking session data',
+    initializationActivity_sessionInspectDescription:
+      'Checking local session data for validation required before engine startup.',
+    initializationActivity_sessionBackup: 'Confirming the session data backup',
+    initializationActivity_sessionBackupDescription:
+      'Creating or verifying an existing consistent backup before session validation.',
+    initializationActivity_sessionPrepare: 'Validating session data',
+    initializationActivity_sessionPrepareDescription:
+      'The bundled engine validates session records, preserving existing sessions, identities, and relationships.',
+    initializationActivity_sessionVerify: 'Verifying session readiness',
+    initializationActivity_sessionVerifyDescription:
+      'Confirming session validation is complete and maintenance resources have closed.',
     initializationNormalUpgradeWelcome: 'Standard upgrade',
     initializationNormalUpgradeTitle: 'Upgrade while keeping your data',
     initializationNormalUpgradeDescription:

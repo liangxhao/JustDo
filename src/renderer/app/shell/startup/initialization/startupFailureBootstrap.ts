@@ -25,6 +25,12 @@ export function install(copy: Record<string, string>): void {
         activity: startup.dataset.activity || 'document',
       });
       startup.dataset.failed = 'true';
+      const interfaceStep = startup.querySelector<HTMLElement>('[data-startup-step="interface"]');
+      if (interfaceStep) {
+        interfaceStep.dataset.status = 'failed';
+        interfaceStep.querySelector('.startup-step-marker')!.textContent = '×';
+        interfaceStep.querySelector('.startup-step-status')!.textContent = copy.startupStepFailed;
+      }
       document.getElementById('startup-document-error')!.hidden = false;
       (startup.querySelector('[data-bootstrap-progress]') as HTMLElement).hidden = true;
       if (detail) detail.textContent = startupFailureText(capture.failure);

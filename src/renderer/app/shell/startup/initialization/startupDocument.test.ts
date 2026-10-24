@@ -70,6 +70,14 @@ test('keeps a visible recovery action when interface modules fail to load', () =
     dictionaries.en.startupReload,
   );
   expect((document.querySelector('.startup-progress') as HTMLElement).hidden).toBe(true);
+  expect(document.querySelectorAll('.startup-step')).toHaveLength(5);
+  expect(document.querySelectorAll('.startup-step[data-status="complete"]')).toHaveLength(0);
+  expect(
+    document.querySelector('[data-startup-step="interface"]')?.getAttribute('data-status'),
+  ).toBe('failed');
+  expect(
+    document.querySelector('[data-startup-step="interface"] .startup-step-marker')?.textContent,
+  ).toBe('×');
 });
 
 test.each([true, false])(
@@ -118,7 +126,8 @@ test('selects the first-launch guide before any module executes and retains it o
 });
 
 test.each(['zh-CN', 'en-US'])(
-  'paints four distinct startup routes before React without changing their meaning on failure (%s)', language => {
+  'paints four distinct startup routes before React without changing their meaning on failure (%s)',
+  language => {
     const locale = language === 'zh-CN' ? 'zh' : 'en';
     const copy = initializationTranslations[locale];
     for (const [route, view, heading, count] of [
@@ -131,7 +140,9 @@ test.each(['zh-CN', 'en-US'])(
       const startup = document.getElementById('startup-document')!;
       expect(startup.dataset.startupView).toBe(view);
       expect(startup.querySelector('h1')?.textContent).toBe(heading);
-      const steps = [...startup.querySelectorAll('nav ol > li')].filter(item => !(item as HTMLElement).hidden);
+      const steps = [...startup.querySelectorAll('nav ol > li')].filter(
+        item => !(item as HTMLElement).hidden,
+      );
       expect(steps).toHaveLength(count);
       expect(steps.map(item => item.firstElementChild?.textContent)).toEqual(
         Array.from({ length: count }, (_, index) => String(index + 1).padStart(2, '0')),
@@ -142,8 +153,9 @@ test.each(['zh-CN', 'en-US'])(
         expect(startup.querySelector('[data-migration-only]')?.hasAttribute('hidden')).toBe(true);
         startup.dataset.activity = 'conversations';
         vi.advanceTimersByTime(1000);
-        expect(document.getElementById('startup-operation')?.textContent)
-          .toBe(startupTranslations[locale].startupRenderer_conversations);
+        expect(document.getElementById('startup-operation')?.textContent).toBe(
+          startupTranslations[locale].startupRenderer_conversations,
+        );
       }
       window.dispatchEvent(new Event('error'));
       vi.advanceTimersByTime(1000);

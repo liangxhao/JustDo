@@ -20,7 +20,10 @@
   overflow-wrap: anywhere;
   user-select: text;
 }
-.startup-failure-details .startup-action,
+.startup-failure-report {
+  margin-top: 16px;
+}
+.startup-failure-report .startup-action,
 .startup-engine-error .startup-action,
 .startup-diagnostic-loading .startup-action {
   margin: 4px 8px 4px 0;

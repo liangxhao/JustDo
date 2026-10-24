@@ -53,7 +53,7 @@ export default function StartupLoading({
         >
           <div className="startup-progress-fill" />
         </div>
-        <StartupSteps />
+        <StartupSteps rendererStarted={Boolean(activity)} />
         <p className="startup-hint" data-waiting={activitySeconds >= 30}>
           {i18nService.t(
             activitySeconds >= 90

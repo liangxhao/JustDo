@@ -208,6 +208,9 @@ export function installPreviewBridge(
     }),
     log: Object.freeze({
       getPath: async () => (getLanguage() === 'zh' ? '演练无日志文件' : 'No log file in rehearsal'),
+      openFolder: async () => {
+        notify('logs');
+      },
     }),
   });
   Object.defineProperty(target, 'electron', { value: bridge, configurable: true });

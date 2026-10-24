@@ -6,9 +6,11 @@ import {
   type AppInitializationState,
 } from '@shared/app/initialization';
 import { StartupRoute } from '@shared/app/startup/routing';
+import { EnginePhase } from '@shared/openclaw/engineStatus';
 import { useEffect, useState } from 'react';
 
 import FirstLaunchGuide from '@/app/shell/startup/initialization/FirstLaunchGuide';
+import StartupFailureDetails from '@/app/shell/startup/initialization/StartupFailureDetails';
 import StartupScreen from '@/app/shell/startup/initialization/StartupScreen';
 import { i18nService } from '@/services/i18n';
 
@@ -149,11 +151,13 @@ export default function Preview({ options }: { options: PreviewOptions }) {
                 <option key={step} value={position}>
                   {position + 1} ·{' '}
                   {i18nService.t(
-                    step === 'databaseUpgrade'
-                      ? 'initializationDatabaseUpgrade'
-                      : options.route === StartupRoute.Upgrade && step === 'userData'
-                        ? 'initializationRetainedData'
-                        : `initialization${step[0].toUpperCase()}${step.slice(1)}`,
+                    options.route === StartupRoute.Normal
+                      ? `startupStep_${step}`
+                      : step === 'databaseUpgrade'
+                        ? 'initializationDatabaseUpgrade'
+                        : options.route === StartupRoute.Upgrade && step === 'userData'
+                          ? 'initializationRetainedData'
+                          : `initialization${step[0].toUpperCase()}${step.slice(1)}`,
                   )}
                 </option>
               ))}
@@ -192,7 +196,24 @@ export default function Preview({ options }: { options: PreviewOptions }) {
       </aside>
       <div className="startup-preview-surface" key={`${options.route}:${language}`}>
         {options.route === StartupRoute.Normal ? (
-          <StartupScreen state={state} onRetry={reset} />
+          <StartupScreen
+            state={state}
+            onRetry={reset}
+            engineStatus={{
+              phase:
+                phase === AppInitializationPhase.Ready
+                  ? EnginePhase.Running
+                  : index === steps.length - 1
+                    ? phase === AppInitializationPhase.Failed
+                      ? EnginePhase.Error
+                      : EnginePhase.Starting
+                    : EnginePhase.Ready,
+              version: null,
+              canRetry: false,
+            }}
+            rendererReady={phase === AppInitializationPhase.Ready}
+            diagnostics={state.failure && <StartupFailureDetails failure={state.failure} />}
+          />
         ) : (
           <FirstLaunchGuide
             state={state}

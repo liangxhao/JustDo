@@ -257,6 +257,9 @@ export default function AppInitializationGate({ children }: { children: React.Re
                   state={presentation}
                   rendererActivity={activity}
                   rendererActivityStartedAt={activityStartedAt}
+                  rendererReady={rendererReady}
+                  engineStatus={engine.status}
+                  engineError={Boolean(engine.commandError)}
                   onRetry={retryRenderer}
                   diagnostics={diagnostics}
                 />

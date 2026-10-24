@@ -46,11 +46,12 @@ test('shows real completed milestones and the active initialization step', () =>
   expect(screen.queryByRole('button')).toBeNull();
 });
 
-test('routes subsequent launches to their compact screen without setup steps', () => {
+test('routes subsequent launches to their compact screen with startup milestones', () => {
   const view = render(<InitializationScreen state={{ ...state, firstLaunch: false }} />);
   expect(view.container.querySelector('[data-startup-view="launch"]')).toBeTruthy();
   expect(view.container.querySelector('[data-startup-view="first-launch"]')).toBeNull();
-  expect(screen.queryByText('startupStep_userData')).toBeNull();
+  expect(screen.getByText('startupStep_userData')).toBeTruthy();
+  expect(screen.getAllByRole('listitem')).toHaveLength(5);
   expect(screen.getByText('startupActivity_defaultFiles')).toBeTruthy();
   expect(screen.queryByText('initializationUserData')).toBeNull();
   expect(screen.queryByText('firstLaunchTitle')).toBeNull();
