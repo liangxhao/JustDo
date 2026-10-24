@@ -789,14 +789,12 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
   });
   const pendingDownloads = new Set<Electron.DownloadItem>();
   const reservedDownloadPaths = new Set<string>();
-  const downloadDefaultDirectories = new WeakMap<Electron.DownloadItem, string>();
   const downloadIds = new WeakMap<Electron.DownloadItem, string>();
   const downloadUpdateTimers = new Map<Electron.DownloadItem, NodeJS.Timeout>();
   const pendingDownloadStates = new WeakMap<Electron.DownloadItem, 'progressing' | 'interrupted'>();
   const persistDownloadUpdate = (
     item: Electron.DownloadItem,
     state: 'queued' | 'progressing' | 'completed' | 'cancelled' | 'interrupted',
-    savePath?: string,
   ): void => {
     const id = downloadIds.get(item);
     if (!id) return;
@@ -805,7 +803,7 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
         state,
         receivedBytes: item.getReceivedBytes(),
         totalBytes: item.getTotalBytes(),
-        savePath,
+        savePath: item.getSavePath() || undefined,
       });
     } catch (error) {
       console.warn(
@@ -826,37 +824,6 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
     }, 300);
     timer.unref();
     downloadUpdateTimers.set(item, timer);
-  };
-  let downloadConfirmationQueue = Promise.resolve();
-  const confirmBrowserDownload = async (item: Electron.DownloadItem): Promise<void> => {
-    if (!pendingDownloads.has(item) || mainWindow.isDestroyed()) return;
-    const suggestedName = path.basename(item.getFilename()) || 'download';
-    const defaultDirectory = downloadDefaultDirectories.get(item) ?? app.getPath('downloads');
-    try {
-      const result = await dialog.showSaveDialog(workspaceManager?.focusedWindow() ?? mainWindow, {
-        defaultPath: path.join(defaultDirectory, suggestedName),
-      });
-      if (
-        result.canceled ||
-        !result.filePath ||
-        mainWindow.isDestroyed() ||
-        item.getState() !== 'progressing'
-      ) {
-        item.cancel();
-        return;
-      }
-      item.setSavePath(result.filePath);
-      persistDownloadUpdate(item, 'progressing', result.filePath);
-      item.resume();
-    } catch (error) {
-      item.cancel();
-      console.warn(
-        '[BrowserPanel] Failed to choose a download destination:',
-        error instanceof Error ? error.message : String(error),
-      );
-    } finally {
-      pendingDownloads.delete(item);
-    }
   };
   const handleBrowserDownload = (
     _event: Electron.Event,
@@ -887,7 +854,6 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
             candidate => reservedDownloadPaths.has(candidate) || fs.existsSync(candidate),
           ));
     downloadIds.set(item, id);
-    downloadDefaultDirectories.set(item, downloadDirectory);
     if (automaticSavePath) reservedDownloadPaths.add(automaticSavePath);
     try {
       recordBrowserDownload(
@@ -921,25 +887,25 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
       if (automaticSavePath) reservedDownloadPaths.delete(automaticSavePath);
       agentClaim?.settle(item, state);
     });
-    if (askWhereToSave) {
-      item.pause();
-      pendingDownloads.add(item);
-      downloadConfirmationQueue = downloadConfirmationQueue.then(
-        () => confirmBrowserDownload(item),
-        () => confirmBrowserDownload(item),
-      );
-    } else if (automaticSavePath) {
-      try {
+    try {
+      if (askWhereToSave) {
+        // Configure the native prompt before will-download returns. An async
+        // application dialog leaves Electron free to open a second save prompt.
+        item.setSaveDialogOptions({
+          defaultPath: path.join(downloadDirectory, path.basename(item.getFilename()) || 'download'),
+        });
+        pendingDownloads.add(item);
+      } else if (automaticSavePath) {
         item.setSavePath(automaticSavePath);
-      } catch (error) {
-        reservedDownloadPaths.delete(automaticSavePath);
-        item.cancel();
-        persistDownloadUpdate(item, 'cancelled');
-        console.warn(
-          '[BrowserPanel] Failed to apply the automatic download destination:',
-          error instanceof Error ? error.message : String(error),
-        );
       }
+    } catch (error) {
+      if (automaticSavePath) reservedDownloadPaths.delete(automaticSavePath);
+      item.cancel();
+      persistDownloadUpdate(item, 'cancelled');
+      console.warn(
+        '[BrowserPanel] Failed to configure the download destination:',
+        error instanceof Error ? error.message : String(error),
+      );
     }
   };
   browserPanelSessions.forEach(browserSession =>

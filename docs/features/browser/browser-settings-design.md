@@ -115,6 +115,11 @@ HTTP auth challenge 绑定随机 request 与 guest，只有主窗口主 frame �
 
 人工下载遵循询问/目录设置。Agent 上传必须是真实任务工作区文件；download/pdf 只写工作区并拒绝覆盖，以真实父目录形成 canonical reservation 防并发冲突。未指定输出路径的 PDF、等待下载及普通操作触发的下载默认保存至工作区 `.agent-tasks/browser-artifacts/`，与 Swarm 使用同一通用任务根目录。下载事件还需匹配具体 guest 与等待请求；失败或取消终止下载并清理部分文件。
 
+消息 `MEDIA` 下载链接复用内置浏览器的同一下载入口。询问保存位置时，Main 在
+`will-download` 同步回调内设置原生保存框的默认路径，由 Electron 展示一次保存框并处理
+选择或取消，不再叠加应用自己的异步保存框。自动保存和 Agent 下载仍在该同步回调内设置
+确切路径；原生进度与完成事件读取实际保存路径，包含用户改名以及没有进度事件的直接完成。
+
 本地和在线 PDF 统一使用 Chromium 原生查看器，不再维护自建查看器、专用 PDF 正文读取接口或 PDF.js 打包资源。内部 PDF 扩展的特殊子 frame 流导航有精确放行条件，不能为修白屏允许任意 chrome-extension 页面。打印使用原生 PDF 自带入口，避免打印外层空白页。
 
 侧栏的 PDF 操作状态统一由 Main 对顶层文档响应 `Content-Type: application/pdf` 的检测通知驱动。Renderer 只接受与当前标签文档地址匹配的检测结果，匹配时忽略页码等 fragment，同一文档内跳转保留已确认的 PDF 标记，不根据域名、路径或 `.pdf` 后缀预判；新文档开始加载时清除旧标记，等待该次响应重新确认。
