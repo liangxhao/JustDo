@@ -22,7 +22,7 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('node:os');
-const { randomUUID } = require('node:crypto');
+const { createHash, randomUUID } = require('node:crypto');
 const { spawn } = require('node:child_process');
 const { pipeline } = require('stream/promises');
 const tar = require('tar');
@@ -172,6 +172,9 @@ function shouldExclude(entryPath, isDirectory = false) {
   if (/^node-runtime(?:\/|$)/.test(normalized)) return false;
   // The prepared editor is a closed, hashed resource set, including legal files.
   if (/(?:^|\/)dist\/extensions\/(?:drawio|widget-kit)\/assets(?:\/|$)/.test(normalized)) return false;
+  // Native Control UI serves the unchanged identity asset when an optional
+  // encoded representation is absent. Keep its manifest and all original bytes.
+  if (/^dist\/control-ui\/assets\/.+\.(?:js|css)\.(?:br|gz)$/.test(normalized)) return true;
   // Knowledge exceptions never admit credentials or local dependency caches.
   if (EXCLUDED_ENVFILE.test(basename) || /(?:^|\/)(?:\.venv|\.bin)(?:\/|$)/.test(normalized))
     return true;
@@ -289,11 +292,10 @@ function packSingleSource(sourceDir, outputTar, prefix) {
  * Each source gets its own prefix (root directory name) in the tar.
  */
 function packMultipleSources(sources, outputTar) {
-  let totalFiles = 0;
   let totalSkipped = 0;
-
-  // Pack first source (creates the tar)
-  let first = true;
+  const directories = [];
+  const files = [];
+  const archivePaths = new Set();
   for (const { dir, prefix, exclude = [], preservePythonLicenses = false } of sources) {
     if (!fs.existsSync(dir)) {
       console.log(`[pack-openclaw-tar]   Skipping ${prefix}: ${dir} not found`);
@@ -302,62 +304,109 @@ function packMultipleSources(sources, outputTar) {
 
     console.log(`[pack-openclaw-tar]   Adding ${prefix} ← ${dir}`);
 
-    const entries = [];
-    function countFiles(d, relativeDir = '') {
+    const ancestors = new Set();
+    function collect(d, relativeDir = '') {
+      const realDirectory = fs.realpathSync(d);
+      if (ancestors.has(realDirectory)) throw new Error(`Runtime source contains a directory cycle: ${d}`);
+      ancestors.add(realDirectory);
       for (const item of fs.readdirSync(d, { withFileTypes: true })) {
-        if (item.isSymbolicLink()) continue;
         const fullPath = path.join(d, item.name);
         const relativePath = relativeDir ? `${relativeDir}/${item.name}` : item.name;
         if (shouldExcludeFromSource(relativePath, exclude)) {
           totalSkipped++;
           continue;
         }
-        if (item.isDirectory()) {
-          if (!shouldExcludeForSource(relativePath, preservePythonLicenses, true))
-            countFiles(fullPath, relativePath);
-        } else if (item.isFile()) {
-          if (!shouldExcludeForSource(relativePath, preservePythonLicenses))
-            entries.push(item.name);
-          else totalSkipped++;
+        // Match tar's existing follow:true behavior, including packaged aliases.
+        const stat = fs.statSync(fullPath);
+        if (shouldExcludeForSource(relativePath, preservePythonLicenses, stat.isDirectory())) {
+          totalSkipped++;
+          continue;
+        }
+        const archivePath = `${prefix}/${relativePath}`.replace(/\\/g, '/');
+        if (path.posix.isAbsolute(archivePath) || path.win32.isAbsolute(archivePath) || /^[A-Za-z]:/.test(archivePath) || archivePath.split('/').some(part => part === '..')) {
+          throw new Error(`Runtime archive path must be relative: ${archivePath}`);
+        }
+        if (archivePaths.has(archivePath)) throw new Error(`Duplicate runtime archive path: ${archivePath}`);
+        archivePaths.add(archivePath);
+        const entry = { absolute: path.resolve(fullPath), archivePath, relativePath, size: stat.size };
+        if (stat.isDirectory()) {
+          directories.push(entry);
+          collect(fullPath, relativePath);
+        } else if (stat.isFile()) {
+          files.push(entry);
         }
       }
+      ancestors.delete(realDirectory);
     }
-    countFiles(dir);
-    totalFiles += entries.length;
+    collect(dir);
+  }
 
-    const opts = {
-      file: outputTar,
-      cwd: dir,
-      prefix,
-      sync: true,
-      follow: true,
-      filter: (filePath, stat) =>
-        !shouldExcludeForSource(filePath, preservePythonLicenses, stat.isDirectory()) &&
-        !shouldExcludeFromSource(filePath, exclude),
-    };
+  // Similar dependency paths and duplicate files must stay within the decoder's
+  // existing 64 MiB window. Keep every file independent at installation time.
+  const key = entry => {
+    const marker = entry.archivePath.lastIndexOf('/node_modules/');
+    if (marker >= 0 && !entry.relativePath.startsWith('node-runtime/')) {
+      return `c_modules/${entry.archivePath.slice(marker + '/node_modules/'.length)}`;
+    }
+    if (entry.relativePath === 'gateway-bundle.mjs') return 'b_chunks/zzzzgateway-bundle.mjs';
+    if (/^dist\/[^/]+$/.test(entry.relativePath)) {
+      return `b_chunks/${entry.relativePath.slice('dist/'.length).replace(/-[A-Za-z0-9_-]+\.mjs$/, '.mjs')}`;
+    }
+    return `a_files/${entry.archivePath}`;
+  };
+  files.sort((left, right) => key(left).localeCompare(key(right)) || left.archivePath.localeCompare(right.archivePath));
+  directories.sort((left, right) => left.archivePath.localeCompare(right.archivePath));
 
-    if (first) {
-      // Create new tar
-      tar.create(
-        opts,
-        fs
-          .readdirSync(dir)
-          .filter(n => !shouldExclude(n, true) && !shouldExcludeFromSource(n, exclude)),
-      );
-      first = false;
-    } else {
-      // Append to existing tar (replace creates new, we need to use a different approach)
-      // npm tar doesn't support append directly, so we use replace with gzip:false
-      tar.replace(
-        opts,
-        fs
-          .readdirSync(dir)
-          .filter(n => !shouldExclude(n, true) && !shouldExcludeFromSource(n, exclude)),
-      );
+  const sizes = new Map();
+  for (const entry of files) {
+    const group = sizes.get(entry.size) || [];
+    group.push(entry);
+    sizes.set(entry.size, group);
+  }
+  const copies = new Map();
+  for (const group of sizes.values()) {
+    if (group.length < 2 || group[0].size === 0) continue;
+    for (const entry of group) {
+      entry.sha256 = createHash('sha256').update(fs.readFileSync(entry.absolute)).digest('hex');
+      const matches = copies.get(entry.sha256) || [];
+      matches.push(entry);
+      copies.set(entry.sha256, matches);
+    }
+  }
+  const ordered = [...directories];
+  const added = new Set();
+  for (const entry of files) {
+    if (added.has(entry)) continue;
+    for (const copy of entry.sha256 ? copies.get(entry.sha256) : [entry]) {
+      if (!added.has(copy)) { added.add(copy); ordered.push(copy); }
     }
   }
 
-  return { totalFiles, skipped: totalSkipped };
+  // The supported tar callback changes only the output name. Absolute source
+  // paths remain private build inputs; directory recursion is already complete.
+  const names = new Map();
+  for (const entry of ordered) {
+    const queue = names.get(entry.absolute) || [];
+    queue.push(entry.archivePath);
+    names.set(entry.absolute, queue);
+  }
+  class IndependentFileLinkCache extends Map {
+    get() { return undefined; }
+    set() { return this; }
+  }
+  tar.create({
+    file: outputTar, sync: true, follow: true, noDirRecurse: true,
+    preservePaths: true, linkCache: new IndependentFileLinkCache(),
+    onWriteEntry(entry) {
+      const archivePath = names.get(path.resolve(entry.absolute))?.shift();
+      if (!archivePath) throw new Error(`Unexpected runtime source entry: ${entry.absolute}`);
+      entry.path = entry.type === 'Directory' ? `${archivePath}/` : archivePath;
+    },
+  }, ordered.map(entry => entry.absolute));
+  const missing = [...names.values()].flat();
+  if (missing.length) throw new Error(`Runtime archive entries were not written: ${missing.join(', ')}`);
+
+  return { totalFiles: files.length, skipped: totalSkipped };
 }
 
 /**

@@ -8,6 +8,7 @@ import renderer from 'vite-plugin-electron-renderer';
 import packageJson from './package.json';
 import { reactHooksRefreshPlugin } from './scripts/build/vite-react-hooks-refresh.mjs';
 import { startupPresentationPlugin } from './scripts/build/startupPresentationPlugin.mjs';
+import applicationLicenses from './scripts/packaging/application-license-assets.cjs';
 
 // https://vitejs.dev/config/
 const devPort = Number(process.env.JUSTDO_DEV_SERVER_PORT || packageJson.devServer.port);
@@ -15,6 +16,7 @@ const isProductionBuild = process.env.NODE_ENV !== 'development';
 const projectRoot = path.resolve(__dirname);
 const rendererRoot = path.join(projectRoot, 'src/renderer');
 const dependencyRoot = fs.realpathSync(path.join(projectRoot, 'node_modules'));
+const { createApplicationLicensePlugin } = applicationLicenses;
 const escapedProductName = packageJson.productName.replace(
   /[&<>"']/g,
   character =>
@@ -33,6 +35,7 @@ export default defineConfig({
       },
     },
     startupPresentationPlugin(rendererRoot),
+    createApplicationLicensePlugin({ repoRoot: projectRoot, scope: 'renderer' }),
     reactHooksRefreshPlugin(projectRoot),
     react(),
     electron([
@@ -41,6 +44,7 @@ export default defineConfig({
         entry: 'src/main/main.ts',
         vite: {
           root: projectRoot,
+          plugins: [createApplicationLicensePlugin({ repoRoot: projectRoot, scope: 'main' })],
           build: {
             sourcemap: !isProductionBuild,
             outDir: 'dist-electron',
@@ -51,7 +55,6 @@ export default defineConfig({
                   'electron',
                   'electron-updater',
                   'better-sqlite3',
-                  'node-pty',
                   'discord.js',
                   'zlib-sync',
                   '@discordjs/opus',
@@ -88,6 +91,7 @@ export default defineConfig({
         entry: 'src/main/preload.ts',
         vite: {
           root: projectRoot,
+          plugins: [createApplicationLicensePlugin({ repoRoot: projectRoot, scope: 'preload' })],
           build: {
             sourcemap: !isProductionBuild,
             outDir: 'dist-electron',
@@ -106,6 +110,7 @@ export default defineConfig({
         entry: 'src/main/imagePreviewPreload.ts',
         vite: {
           root: projectRoot,
+          plugins: [createApplicationLicensePlugin({ repoRoot: projectRoot, scope: 'imagePreviewPreload' })],
           build: {
             sourcemap: !isProductionBuild,
             outDir: 'dist-electron',
@@ -124,6 +129,7 @@ export default defineConfig({
         entry: 'src/main/browserGuestPreload.ts',
         vite: {
           root: projectRoot,
+          plugins: [createApplicationLicensePlugin({ repoRoot: projectRoot, scope: 'browserGuestPreload' })],
           build: {
             sourcemap: !isProductionBuild,
             outDir: 'dist-electron',
@@ -137,6 +143,7 @@ export default defineConfig({
         entry: 'src/main/widgetViewerPreload.ts',
         vite: {
           root: projectRoot,
+          plugins: [createApplicationLicensePlugin({ repoRoot: projectRoot, scope: 'widgetViewerPreload' })],
           build: {
             outDir: 'dist-electron',
             sourcemap: !isProductionBuild,

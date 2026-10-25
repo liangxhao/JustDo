@@ -387,9 +387,22 @@ Windows runtime archives use Zstandard level 19 with long-distance matching and
 a 64 MiB window. The installer's default decoder limit remains unchanged.
 Same-input, same-window release measurements compare size, decode time and
 memory: the higher level primarily costs build time. Complete resource extraction
-is measured separately before release. Python bytecode caches,
-the Control UI's precompressed representations and native asset manifest remain
-intact.
+is measured separately before release. Python bytecode caches, original Control
+UI resources and its native asset manifest remain intact. Packaging omits the
+Control UI's optional JavaScript/CSS `.gz` and `.br` representations; native
+negotiation falls back to the unchanged identity bytes over loopback. Requests
+that explicitly disallow identity receive the native 406 response when no
+acceptable representation remains. Native retention still verifies the original
+asset hashes. Other plugins, knowledge and the complete Node distribution do
+not use this exclusion.
+
+Archive assembly orders directories first, then clusters dependency paths and
+related root chunks. Files with identical size and SHA-256 are adjacent, so the
+existing 64 MiB compression window can reuse their bytes. Each archive member
+remains an independent regular file: there are no hard links, shared installed
+inodes or changes to the extraction format. Directory permissions, empty
+directories and Unicode names remain represented. Assembly rejects unsafe or
+duplicate archive paths, directory-link cycles and skipped source entries.
 
 Windows builds reuse the complete prepared OpenClaw runtime only after its target,
 source proof, build recipe, bundle and all patches verify. A missing/stale proof
@@ -425,9 +438,23 @@ bundled dependency, including filtered development trees. Packaging checks the
 runtime archive's legal-file inventory and the application's notices against
 their source bytes; these materials are not treated as removable documentation.
 
+Dependencies already included in the compiled application stay build-time
+dependencies instead of contributing a second root `node_modules` copy. Vite
+records the actual third-party modules in all six application build scopes,
+including transitive dependencies, and preserves their original package
+metadata and legal files under `build/application-licenses/<scope>/`. The
+installer copies these public materials to
+`resources/licenses/application-dependencies/<scope>/`. Per-scope private source
+proofs stay in the build directory. Packaging rejects missing scopes, changed
+compiled output, changed legal inputs and missing or altered packaged notices.
+The host's five runtime dependencies remain production dependencies;
+Gateway extension dependencies and the complete Node/npm distribution retain
+their independent runtime ownership.
+
 Windows MXC keeps its selected Windows executables and WSL DLLs while excluding
-the Linux `lxc-exec`. The application keeps its target architecture's node-pty
-prebuilds and removes other architectures and redundant `third_party` copies.
+the Linux `lxc-exec`. PTY dependencies belong to the Gateway and MXC runtime
+trees; the application host no longer ships a separate Electron node-pty copy.
+Their selected platform prebuilds and sandbox capabilities remain bundled.
 draw.io removes Java-server directories and source maps during its own asset
 preparation, before generating the closed integrity manifest; generic packaging
 continues to copy that prepared set unchanged.
@@ -482,6 +509,15 @@ metadata remain. Archive validation rejects deployment bundles and missing local
 Workers. The pristine source runtime and its original inventories stay complete;
 packaging does not rewrite source proofs to conceal the intentional omission.
 Compression settings are unchanged by this removal.
+
+The same exclusion was rechecked against OpenClaw 2026.10.6 and its actual
+Windows resource archive. Do not broaden it to `dist/worker*` or
+`gateway/worker-environments`: local execution also uses those native modules
+and process entries without a `.worker.js` suffix. The bundled `node-runtime/`
+is required by this version and remains complete. See the
+[versioned verification record](openclaw-upgrades/v2026.10.6/validation.md#2026-10-24发布包-worker-裁剪复核)
+for measured sizes, local capability checks and the separate installer/desktop
+acceptance boundary.
 
 The default deployment has no update feed. An empty address does
 not produce `app-update.yml`, an update-configuration marker, `latest.yml` or

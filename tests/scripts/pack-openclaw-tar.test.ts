@@ -4,7 +4,7 @@ import path from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { createZstdDecompress } from 'node:zlib';
 
-import { list as listTar } from 'tar';
+import { extract as extractTar, list as listTar } from 'tar';
 import { expect, test, vi } from 'vitest';
 
 const {
@@ -71,6 +71,46 @@ test('omits the standalone deployment bundle while retaining every local Worker 
     }
     entries.delete(`cfmind/${workers[0]}`);
     expect(() => verifyRuntimeWorkerEntries(entries, 'cfmind/', runtime)).toThrow(/sqlite-store\.worker\.js/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('omits only optional Control UI encodings while preserving identity assets and source files', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'control-ui-encodings-'));
+  const source = path.join(root, 'source');
+  const omitted = [
+    'dist/control-ui/assets/app.js.br',
+    'dist/control-ui/assets/app.js.gz',
+    'dist/control-ui/assets/nested/app.css.br',
+    'dist/control-ui/assets/nested/app.css.gz',
+  ];
+  const retained = [
+    'dist/control-ui/index.html',
+    'dist/control-ui/asset-manifest.json',
+    'dist/control-ui/assets/app.js',
+    'dist/control-ui/assets/nested/app.css',
+    'dist/control-ui/assets/image.png.gz',
+    'dist/extensions/fixture/assets/app.js.gz',
+    'docs/control-ui/assets/app.js.gz',
+    'node-runtime/node_modules/npm/assets/app.js.br',
+    'LICENSE',
+  ];
+  try {
+    for (const relative of [...omitted, ...retained]) {
+      const target = path.join(source, relative);
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.writeFileSync(target, relative);
+    }
+    const archive = path.join(root, 'runtime.tar');
+    packMultipleSources([{ dir: source, prefix: 'cfmind' }], archive);
+    const entries = new Set<string>();
+    listTar({ file: archive, sync: true, onReadEntry: entry => entries.add(entry.path) });
+    for (const relative of retained) expect(entries.has(`cfmind/${relative}`), relative).toBe(true);
+    for (const relative of omitted) {
+      expect(entries.has(`cfmind/${relative}`), relative).toBe(false);
+      expect(fs.readFileSync(path.join(source, relative), 'utf8')).toBe(relative);
+    }
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -248,6 +288,100 @@ test('omits source-specific duplicate artifacts without removing runtime entries
     expect(entries).not.toContain('cfmind/gateway.asar');
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('clusters duplicate dependency bytes while preserving independent files, paths and metadata', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'runtime-archive-order-'));
+  const runtime = path.join(root, 'source 中文 空格');
+  const python = path.join(root, 'python');
+  const output = path.join(root, 'output');
+  const files = new Map([
+    ['dist/extensions/fixture/node_modules/sdk/index.js', 'repeated dependency'.repeat(128)],
+    ['node_modules/sdk/index.js', 'repeated dependency'.repeat(128)],
+    ['node-runtime/node_modules/sdk/index.js', 'complete bundled Node file'],
+    ['dist/alpha-ABC123.mjs', 'first compiled alpha'],
+    ['dist/alpha-DEF456.mjs', 'second compiled alpha'],
+    ['dist/beta-XYZ789.mjs', 'compiled beta'],
+    ['gateway-bundle.mjs', 'gateway'],
+    ['native/left.dll', 'shared source inode'],
+  ]);
+  try {
+    for (const [relative, content] of files) {
+      const target = path.join(runtime, relative);
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.writeFileSync(target, content);
+    }
+    fs.linkSync(path.join(runtime, 'native/left.dll'), path.join(runtime, 'native/right.dll'));
+    files.set('native/right.dll', 'shared source inode');
+    fs.mkdirSync(python);
+    fs.writeFileSync(path.join(python, 'python.exe'), 'Python binary');
+    fs.mkdirSync(path.join(runtime, 'empty'));
+    const archive = path.join(root, 'resources.tar');
+    packMultipleSources([{ dir: runtime, prefix: 'cfmind' }, { dir: python, prefix: 'python-win' }], archive);
+    const entries: Array<{ path: string; type: string; mode: number | undefined }> = [];
+    listTar({ file: archive, sync: true, onReadEntry: entry => entries.push({ path: entry.path, type: entry.type, mode: entry.mode }) });
+    const fileEntries = entries.filter(entry => entry.type === 'File');
+    const names = fileEntries.map(entry => entry.path);
+    expect(Math.abs(names.indexOf('cfmind/dist/extensions/fixture/node_modules/sdk/index.js') - names.indexOf('cfmind/node_modules/sdk/index.js'))).toBe(1);
+    expect(Math.abs(names.indexOf('cfmind/dist/alpha-ABC123.mjs') - names.indexOf('cfmind/dist/alpha-DEF456.mjs'))).toBe(1);
+    expect(entries.some(entry => entry.type === 'Link' || entry.type === 'SymbolicLink')).toBe(false);
+    expect(entries.some(entry => entry.path === 'cfmind/empty/' && entry.type === 'Directory')).toBe(true);
+    expect(entries.every(entry => !path.posix.isAbsolute(entry.path) && !path.win32.isAbsolute(entry.path))).toBe(true);
+    fs.mkdirSync(output);
+    extractTar({ file: archive, cwd: output, sync: true });
+    for (const [relative, content] of files) {
+      const installed = path.join(output, 'cfmind', relative);
+      expect(fs.readFileSync(installed, 'utf8'), relative).toBe(content);
+      expect(fileEntries.find(entry => entry.path === `cfmind/${relative}`)?.mode).toBe(fs.statSync(path.join(runtime, relative)).mode & 0o7777);
+    }
+    expect(fs.readFileSync(path.join(output, 'python-win/python.exe'), 'utf8')).toBe('Python binary');
+    expect(fs.statSync(path.join(output, 'cfmind/native/left.dll')).ino).not.toBe(fs.statSync(path.join(output, 'cfmind/native/right.dll')).ino);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('follows source directory aliases and rejects cyclic or escaping archive paths', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'runtime-archive-alias-'));
+  const runtime = path.join(root, 'source');
+  const alias = path.join(runtime, 'alias');
+  try {
+    fs.mkdirSync(path.join(runtime, 'original'), { recursive: true });
+    fs.writeFileSync(path.join(runtime, 'original/module.js'), 'module bytes');
+    fs.symlinkSync(path.join(runtime, 'original'), alias, process.platform === 'win32' ? 'junction' : 'dir');
+    const archive = path.join(root, 'resources.tar');
+    packMultipleSources([{ dir: runtime, prefix: 'cfmind' }], archive);
+    const entries: string[] = [];
+    listTar({ file: archive, sync: true, onReadEntry: entry => entries.push(entry.path) });
+    expect(entries).toContain('cfmind/alias/module.js');
+    expect(entries).toContain('cfmind/original/module.js');
+    for (const prefix of ['../escape', '/absolute', 'C:/absolute', 'C:relative']) {
+      expect(() => packMultipleSources([{ dir: runtime, prefix }], archive)).toThrow(/must be relative/);
+    }
+    fs.symlinkSync(runtime, path.join(runtime, 'cycle'), process.platform === 'win32' ? 'junction' : 'dir');
+    expect(() => packMultipleSources([{ dir: runtime, prefix: 'cfmind' }], archive)).toThrow(/directory cycle/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('maps the same source files into separate prefixes without absolute paths or hard links', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'runtime-archive-prefixes-'));
+  const source = path.join(root, 'source 中文 空格');
+  try {
+    fs.mkdirSync(source);
+    fs.writeFileSync(path.join(source, 'module.js'), 'same source file');
+    const archive = path.join(root, 'resources.tar');
+    packMultipleSources([{ dir: source, prefix: 'first' }, { dir: source, prefix: 'second' }], archive);
+    const entries: Array<{ path: string; type: string; linkpath?: string }> = [];
+    listTar({ file: archive, sync: true, onReadEntry: entry => entries.push({ path: entry.path, type: entry.type, linkpath: entry.linkpath }) });
+    expect(entries).toEqual([
+      { path: 'first/module.js', type: 'File', linkpath: undefined },
+      { path: 'second/module.js', type: 'File', linkpath: undefined },
+    ]);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
   }
 });
 

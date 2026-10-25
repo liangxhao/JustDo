@@ -27,6 +27,7 @@ const {
 const yaml = require('js-yaml');
 const ts = require('typescript');
 const { prepareWindowsResources } = require('./prepare-windows-build.cjs');
+const { verifyApplicationLicenseAssets } = require('./application-license-assets.cjs');
 const { verifyNodeRuntime, targetContract } = require('../runtime/setup-node-runtime.cjs');
 const {
   resolveRuntimeInstallTarget,
@@ -874,6 +875,7 @@ function installSkillDependencies() {
 }
 
 async function beforePack(context) {
+  await verifyApplicationLicenseAssets({ repoRoot: context.appDir || path.join(__dirname, '../..') });
   require('../../plugins/extensions/widget-kit/scripts/prepare.cjs').verifyWidgetLibraryAssets();
   require('../../plugins/extensions/drawio/scripts/prepare.cjs').verifyDrawioAssets();
   verifyPackagedBuiltinModelAuthConfig(context.appDir || path.join(__dirname, '../..'));
@@ -1151,6 +1153,10 @@ async function afterPack(context) {
       )
     : path.join(context.appOutDir, 'resources');
   await verifyPackagedApplicationLegalMetadata(path.join(diagramResourcesRoot, 'app.asar'));
+  await verifyApplicationLicenseAssets({
+    repoRoot: path.join(__dirname, '../..'),
+    packagedRoot: path.join(diagramResourcesRoot, 'licenses/application-dependencies'),
+  });
   await require('../../plugins/extensions/drawio/scripts/verify-packaged.cjs').verifyPackagedDrawioAssets(
     diagramResourcesRoot,
     isWindowsTarget(context),
@@ -1441,38 +1447,8 @@ function verifyPackagedWindowsNativeModules(context) {
     `[electron-builder-hooks] Verified packaged better-sqlite3 with Electron ABI ${result.stdout.trim()}.`,
   );
 
-  const nodePtyPrebuildDirectory = path.join(
-    context.appOutDir,
-    'resources',
-    'app.asar.unpacked',
-    'node_modules',
-    'node-pty',
-    'prebuilds',
-    `win32-${targetArch}`,
-  );
-  const nodePtyBindings = ['pty.node', 'conpty.node', 'conpty_console_list.node'].map(name =>
-    path.join(nodePtyPrebuildDirectory, name),
-  );
-  const nodePtyVerificationScript = [
-    ...nodePtyBindings.map(modulePath => `require(${JSON.stringify(modulePath)});`),
-    "process.stdout.write(process.versions.modules || 'unknown');",
-  ].join('');
-  const nodePtyResult = spawnSync(electronExecutable, ['-e', nodePtyVerificationScript], {
-    encoding: 'utf8',
-    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
-  });
-  if (nodePtyResult.status !== 0) {
-    const detail = String(
-      nodePtyResult.stderr || nodePtyResult.stdout || nodePtyResult.error || '',
-    ).trim();
-    throw new Error(
-      '[electron-builder-hooks] Packaged node-pty failed Electron ABI verification' +
-        (detail ? `: ${detail}` : '.'),
-    );
-  }
-  console.log(
-    `[electron-builder-hooks] Verified packaged node-pty with Electron ABI ${nodePtyResult.stdout.trim()}.`,
-  );
+  // PTYs are owned by the Gateway's bundled Node and MXC runtimes. Their
+  // prebuilds are validated in that resource archive, outside Electron's ABI.
 }
 
 function normalizeUpdateVersion(packageVersion) {

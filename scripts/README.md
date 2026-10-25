@@ -15,6 +15,16 @@ use `build/runtimes/`, Windows runtime archives use `build/tar/`, local speech m
 `build/speech-models/v1/`, and the browser package uses `build/browser-extension/`.
 The build and cache directories are ignored by Git.
 
+Vite's `scripts/packaging/application-license-assets.cjs` plugin records actual
+third-party modules for Renderer, Main and the four preload builds. It copies
+their original package metadata and legal materials, including transitive
+dependencies, to `build/application-licenses/<scope>/`. Each scope has a private
+`source-proof.json` binding the compiled output and source legal files. Builder
+hooks verify all six scopes before packaging and verify the copied public files
+under `resources/licenses/application-dependencies/` afterward; private scope
+proofs are excluded from the installer. Rebuild the application after changing
+compiled inputs or legal materials instead of updating a proof in place.
+
 | Directory    | Responsibility                                                           |
 | ------------ | ------------------------------------------------------------------------ |
 | `assets/`    | Application and tray icon generation, macOS icon repair                  |

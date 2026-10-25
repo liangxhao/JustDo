@@ -966,3 +966,236 @@ revision 均为原生字符串自有字段，未补 null；合法省略的正反
 
 三方独立设计/交叉复审覆盖生产函数、Main 组合、真实事件帧与门禁，无阻塞遗留。
 本轮没有追加 OpenClaw patch、修改扩展源码或重建核心；用户原会话与数据库均保留。
+
+## 2026-10-24：发布包 Worker 裁剪复核
+
+本轮只重新验证既有裁剪策略，没有修改生产打包、安装或运行时代码，也没有新增
+OpenClaw patch。三 agent 分别检查目标源码、打包和安装/初始化接缝，独立交叉复审
+实际验证脚本及最终回执。使用主目录的严格冻结 `win-x64` 产物，未更改用户运行中的
+Gateway、原会话或数据库；用户正在编辑的助手及角色模板保持原样。
+
+**结论仍适用，但只适用于精确的 `dist/worker-artifacts/` 部署包。** 目标 npm 产物
+仍将其作为独立 Worker/配对 node-host 的安装资源，`prepareWorkerBundle` 通过 lazy
+producer 在明确准备部署时读取。普通本地 Gateway、Code Mode、图像、SQLite 和
+PTY 使用自己的入口；不能据此扩大到删除所有 Worker、`dist/worker*` 或
+`gateway/worker-environments/`。同一 PC 上的 paired node-host 仍不属于发行范围。
+当前独立部署归档为 30,446,552 字节；源目录及 source proof 保持完整，仅发布归档省略。
+
+目标上游源码为 `v2026.10.6` 的精确提交
+`fe06181dc5ecc01cf8904abbfc26925925efefbc`，tracked clean；并对照 `v2026.10.4`
+核查部署读取/懒执行及本地入口变化。当前产物身份为：
+
+| 身份 | SHA-256 |
+| --- | --- |
+| core manifest | `75316448a9d09210d87ed4015f6878b54f1f53f5463c81ad4e6567aeabe6d5cc` |
+| build recipe | `8472b55d23124f0eaa64fa9e0e6050de96ec9416b86313ff5f6e306b436b4702` |
+| Gateway bundle | `9e8898bbb432d7ac6511e339a453c4e68d094255883cb9aedff8557feb2ce21b` |
+| 本轮组合 tar.zst | `42ad8f64b17cff8bc8ca8f1f65abd825ea6bbee271860538156f213a23bbfc40` |
+
+当前本地 `.worker.js` 是 **78 个**，旧回执的 73 个不再代表目标版本。归档还核对了
+原生 process registry 中源产物实际存在的 **70 个入口**，包含无该后缀的 PTY、spawn
+broker、service-child relay/anchor、SQLite readonly resource 等。registry 的另外两项
+`worker/memory-worker-entry.js`、`worker/skills-worker-entry.js` 在准备源中已经不存在，
+属于未交付 file-transfer 插件的配对工作区链路，不能将其当作本轮删包造成的缺失。
+完整独立 Node/npm/npx 必须保留，当前含清单共 1,995 文件、107,657,721 字节；
+因此旧版安装包体积与执行宿主的结论不能直接套用新版。
+
+本轮实际验证如下，不与前述历史批次相加：
+
+| 范围 | 实际结果与边界 |
+| --- | --- |
+| 打包/裁剪回归 | 6 文件、39 passed、1 skipped；跳过的是 Windows 下的 POSIX npm 符号链接场景，含 ACPX 第三方 agent 平台二进制排除检查 |
+| 正式组合资源 | 调用生产 `packMultipleSources`，包含 OpenClaw、Python、MinGit、语音四类资源；41,127 文件逐字节核对准备源，保留 1,547 个知识文件、1,004 个法律文件及全部本地入口 |
+| 正式归档校验 | 33 patches/source proof、完整 Node 文件树、CLI、bundle companions、ACPX/MXC 与 Worker 检查通过；使用私有 TEMP 的二次校验及临时目录清理也通过 |
+| 实际安装资源解压 | 同版本 Electron 的 Node 模式运行生产 `unpack-cfmind.cjs`，解到中文/空格路径；41,127 文件与归档 SHA 一致，约 178.1 秒；不代替 NSIS/UAC/注册表/覆盖安装验收 |
+| 初始化前置准入 | 实际 Main `admitNativeDatabaseRuntime` 接受解压产物，manifest、原生数据库 owner、Node 身份一致；不代替完整 Main/Gateway 首启 |
+| 本地 Code Mode | 原生执行返回 42、等待/恢复保持词法状态、取消返回 aborted、取消后再次执行成功 |
+| 图像 Worker | 两个并发 Worker 实际 BMP→PNG，检查签名和 1×1 尺寸 |
+| SQLite Worker | 公开 SDK 创建实际非主线程 backend，写读并持久化 42，关闭后重新只读打开检查；未使用用户数据库 |
+| PTY 与新增 Worker | 提取运行时的真实 Windows PTY 执行固定 cmd echo 并 exit0，通过公开 SIGHUP 路径收尾；新增磁盘预算 Worker 对全新空目录返回 0 |
+| Node 与扩展闭包 | 提取 Node 24.22.1、npm/npx 11.19.1 可执行；13 个扩展通过真实 loader inspection，服务只登记、不激活，不调用模型 |
+
+最终本地能力回执的 8 项操作全部自然 exit0；实际 8 个 Worker 均有唯一身份的退出
+配对，子进程没有未收尾记录。JS 护栏拒绝网络并限制 CJS/ESM 从提取运行时及私有
+profile 解析，5 次预期网络拒绝和 2 次宿主依赖拒绝作为负控；实际功能操作的
+unexpected 为零。这是固定本地探针的约束，不是 OS 网络/文件系统沙箱。
+
+全部操作结束后再次逐文件核对准备源和安装副本：41,127 个文件的 SHA 与安装文件
+mtime 均无变化、无新增文件，部署目录仍未生成；源/安装副本的严格证明再次通过。
+汇总回执为 `.agent-tasks/worker-compat-v2026.10.6/result.json`。
+
+保留探针修正和失败范围：源码 control 曾因 junction 的物理路径准入及过早读取
+PTY pid 失败，之后按真实路径和 onData 修正。首轮 installed 探针的默认 PTY kill
+没有释放探针持有的 Conout Worker，超时结果保留；最终使用公开 `kill('SIGHUP')`
+直接清理，不通过 `process.exit` 掩盖存活 Worker。因此本轮不认证默认 kill 的所有
+生命周期，也不将缺少完整 Gateway owner 的探针超时宣称为产品缺陷或裁剪回归。
+
+真实组合裸 tar 为 **1,051,525,632 字节**，Zstd 归档 **230,402,667 字节**；本机
+实际使用 4 个压缩线程，约 **91.3 秒**，仍为 level 19/LDM/64 MiB window。裸 tar
+距 1 GiB 的并行缓冲上限只余约 21.2 MiB，后续资源增长可能触发现有单线程回退，
+不能沿用旧版约一分钟的固定性能结论，也不能拿该资源归档大小当作完整 exe 大小。
+
+证据位于 `.agent-tasks/worker-compat-v2026.10.6/` 和
+`build/worker-compat-v2026.10.6/run-THS6rg/`；前者的
+`installed-probe-result-b.json` 为成功本地能力回执，`installed-probe-result.json`
+保留首轮失败，后者包含归档/解压清单、`result.json` 和 `postcheck-result.json`。
+6 文件测试日志为 `build/worker-compat-v2026.10.6/independent-tests-756597d9daec4a749b74aaf27a2ac788/packaging-tests.log`。
+
+本轮没有重建完整 NSIS 或启动安装版桌面，覆盖安装、卸载/回滚、无缓存阻断公网的
+完整桌面冷启仍属于上方未验收范围。当前 `release` 中 10 月 22 日的安装产物内
+`package.json.openclaw.version` 实际为 `v2026.10.4`，不能当作新版验收证据。
+
+## 2026-10-25：新版安装包体积优化
+
+本轮基准改为用户实际生成的 OpenClaw 2026.10.6 Windows 安装包，大小
+338,513,540 字节，SHA-256 为
+`bbc0d74c3d3945b05af46823c7ed3d1bf9bdb6bb24e5cae4566d515b95d52c65`。
+其资源归档为 230,411,892 字节，应用 ASAR 为 63,554,538 字节；上方旧版/单独
+资源归档的数字不能代替这次基准。基准副本保存在
+`build/size-optimization/baseline/`，新构建使用独立输出目录以保留原安装包。
+
+三 agent 分别审查上游执行入口、应用依赖与打包、安装和初始化，并交叉复审。
+本轮仅采用下列压缩方式，没有新增 OpenClaw patch：
+
+- 调整普通 tar 文件顺序，集中相似依赖路径、根模块和内容完全一致的文件，让原有
+  64 MiB 窗口覆盖更多重复数据。每个安装文件仍独立写入，不产生硬链接。
+- 仅省略 `dist/control-ui/assets/` 下 JS/CSS 的可选 `.gz`/`.br` 副本；原始资源、
+  manifest、其他插件资产和文档不变。原生协商在普通请求中返回 identity；显式
+  禁止 identity 且没有其他可用表示时仍为 406。保留原生 raw 资源哈希校验。
+- 12 个已编译进应用或只在开发/构建中使用的宿主包转为 devDependencies，版本不变。
+  其中宿主 node-pty 不再有生产调用；Gateway/MXC 仍保留自己的 PTY。应用保留
+  5 个宿主生产依赖，并从六个真实 Vite 输出收集编译组件及传递依赖的原始法律材料。
+  before/afterPack 分别校验构建证明与最终法律文件，私有证明不进入安装包。
+
+完整 Node/npm/npx、Agent Markdown、原生 docs/skills、全部本地 Worker、Python、
+MinGit、FFmpeg 与语音资源继续保留。压缩保持 Zstd 19/LDM/64 MiB，不提高安装端
+解码窗口或更换格式。改变构建配方后已从锁定 pristine npm 包重新构建；禁止通过
+刷新旧 source proof 接纳变更。
+
+同一份基准资源的策略实验先验证了 40,197 个保留文件的 SHA 全部一致，生产排序
+实现将归档从 230,411,892 降至 200,369,939 字节。最终重新准备的当版资源和安装器
+以下表为准，实验归档不作为交付成品。
+
+| 实际产物 | 基准字节数 | 新构建字节数 |
+| --- | ---: | ---: |
+| 完整 EXE | 338,513,540 | 305,031,009 |
+| 组合资源 tar.zst | 230,411,892 | 200,360,245 |
+| 应用 app.asar | 63,554,538 | 37,374,843 |
+
+完整 EXE 减少 33,482,531 字节（9.89%）；按十进制为 305.0 MB，按二进制为
+290.9 MiB，不能混用单位声称小于 300 MB。实际 tar 组装 63.2 秒，4 线程压缩
+66.6 秒；未改变安装解码参数。新输出目录为 `build/size-optimization/release/`。
+当前更新地址为空，按既有配置关闭自动更新；此本地验证产物不应生成更新清单或
+blockmap，不能把有意禁用认定为文件丢失。
+
+| 新构建身份 | SHA-256 |
+| --- | --- |
+| EXE | `e5b102fbc8fa0665bbb9f91522f24d47c5812ad7a6dc93b1d829905441c8ae01` |
+| 组合 tar.zst | `23fe5de9efa1b4ee42e8e706a837cd1252474f61430392c680c0c0fe7a70bce4` |
+| app.asar | `49a58088ce770ceb626140670e3a0d707ad0ab6e2c46abc40f4915153b578690` |
+| core manifest | `d2b0db62f1b41c0c274afb58cd3229ce004dfe4175f53198c1d7dc419e3d5b48` |
+| build recipe | `6e5796b876c33588dde17a50993158fc483fbfab073f12d83d224bfc5126b3a6` |
+
+Gateway bundle SHA 与上方冻结源一致。完整 builder 已 exit0，内嵌应用 7z 的
+NSIS 可解码过滤器及 CRC 校验通过；包内独立 Node 24.22.1、npm/npx 11.19.1、
+33 patches、离线编辑器、浏览器扩展及 Electron SQLite ABI 146 的检查均通过。
+
+应用 lint、完整 Vite build、Electron TypeScript compile 通过。两组相关回归共
+16 个测试文件、167 passed、1 skipped；跳过的是 Windows 下的 POSIX Node 链接
+场景。覆盖归档独立文件和路径边界、原始资源/文档保护、法律资产和传递依赖、
+ACPX/MXC、完整 Node，以及 NSIS 编译/解压/更新配置。法律检查在真实构建中覆盖
+6 scopes、170 条包记录和 329 个公开文件。独立 reviewer 重跑的重叠测试不再累加。
+日志分别为 `build/size-optimization/validation/targeted-final-tests.log`、
+`installer-tests.log`、`lint.log`、`build-final.log`、`compile-electron.log` 和
+`package.log`。
+
+实际 EXE 的资源块不能沿用旧探针的“查找首 64 字节”定位方法：新 Zstd 前缀也
+被 NSIS deflate 编码。验证按内嵌 7z 结束位置后的 NSIS 长度块解析，在偏移
+104,686,474 解码 200,162,894 字节，得到完整 200,360,245 字节资源，与构建输入
+全字节相同。EXE 提取的 430 个应用文件也逐项匹配构建副本。归档 44,892 个条目
+均为安全相对路径的普通文件/目录，40,197 文件逐项 SHA 匹配 freshly prepared 源。
+
+系统 tar 路径使用最终 EXE 内的 Electron 与生产 `unpack-cfmind.cjs`，解到全新
+中文/空格路径，220.655 秒自然退出 0；40,197 个安装文件、source proof、完整
+Node、78 Worker/1,547 知识/1,004 法律文件检查均通过。仅一个实际系统 tar
+子进程且自然收尾，没有宿主模块借用或网络事件。真实 Electron 的独立 5 项负控
+确认候选外 CJS/ESM、网络和任意子进程会被拒绝。此耗时发生在并行验证负载下，
+不能与上方历史 178 秒直接比较并宣称安装更快。
+
+另用同一个实际 Electron 42.7.0/Node 24.18.0，按 ABBA 顺序独立进程解码原/新
+资源流到 sink，均使用生产默认 Zstd decoder。原包 5.52/5.21 秒，新包
+5.07/5.12 秒；采样峰值 RSS 都约 197–202 MiB，未见这组测试中的解码负担增加。
+这只覆盖解码，不覆盖创建数万文件或安装向导；并发 QA 也可能影响采样。
+记录为 `build/size-optimization/decoder-6p7KP2/result.json`。
+
+强制 `JUSTDO_INSTALLER_DISABLE_NATIVE_TAR=1` 的另一个全新安装目录也自然 exit0，
+223.291 秒，40,197 文件全部匹配同一实际 NSIS 资源和源字节。此路径只加载
+候选 `app.asar/node_modules/tar` 的闭包，没有宿主模块、网络或子进程借用；两条
+提取都没有触发超时/强杀。实际提取的 `justdo-cli.exe --help/--version` 自然 exit0，
+分别约 0.235/0.1 秒；这覆盖本地元数据入口，不代替 ACP/bridge 会话验收。
+报告为 `build/size-optimization/release-qa-lVTx7s/result.json`，隔离负控为同目录
+`extractor-guard-controls.json`。
+
+最终安装副本的 8 项本地能力探针均自然 exit0：Code Mode 返回 42、wait/resume
+维持状态、cancel aborted 后重新执行；两个并发图像 Worker 完成 BMP→PNG；真实
+SQLite Worker 写读并持久化 42；Windows PTY 固定 echo/exit0 并经公开 SIGHUP
+收尾；磁盘预算空目录为 0；13 个扩展 inspect 全部 loaded，服务只登记不激活；
+Node/npm/npx 均使用安装副本。8 个 Worker 全 join，子进程未收尾和 unexpected
+均为空。回执为
+`.agent-tasks/packaging-size-v2026.10.6/final-runtime-probe-native-VvhWgI.json`。
+执行前后完整库存也一致：源树 39,548 文件、1,116,176,843 字节，安装 runtime
+38,084 文件、843,397,035 字节；path、size、SHA、mtime 与物理根全部相同，
+没有新增部署 Worker 或其他资源写入。记录为
+`build/size-optimization/final-runtime-probe-native-VvhWgI-immutability.json`。
+
+最终安装副本的原生 Control UI HTTP/retention 亦通过：930 个预压缩侧档均省略，
+489 个 raw 文件和原 manifest/hash 保留；identity 200/MIME/cache、显式禁止
+identity 的 406、HEAD/404/越界请求、缺失编码的 retention 及损坏 raw 拒绝均符合
+原生行为，2 个实际 Worker 均 join。没有启动 Gateway 或修改原生校验结果。
+报告为 `build/packaging-size-v2026.10.6/sidecars-6mg452/result.json`。
+
+### 最终桌面初始化、二次启动与独立审计边界
+
+最终 EXE 提取根另复制到
+`build/size-optimization/实际首启 中文 空格-SYR1l4/`，使用同版本 Electron host
+加载实际 Main/Preload/Renderer 和安装资源，全新私有 profile 跑 Fresh 与 Normal。
+两轮功能断言均通过，Main/Gateway 均自然 exit0，无超时或强杀；到稳定 ready 的
+本机耗时分别 63.671/125.781 秒，不作为受控性能比较。每轮前后 40,602 个资源
+的 path/size/SHA/mtime 一致。四个默认角色文件、必要扩展/技能、Settings DOM、
+preload bridge 和循环稳定性检查通过；首次启动后追加的 USER.md 内容在重启后
+保留，BOOTSTRAP.md 随包但默认不注入。
+原聚合脚本在护栏断言处退出，后续 role 保留与资源状态断言由独立只读
+`poststate-result.json` 补齐；其同时确认 fresh/normal 路由、真实 preload、六轮
+engine running、Renderer/Preload errors 为空及私有产品数据库/初始化标记。
+
+**原始聚合收据仍为 failed，不能称启动护栏全绿。** 原因是正向阶段的 5 次拒绝：
+两次阻止从宿主加载可选 `supports-color`，以及原生 broker 的负 self-PGID
+TERM/KILL 和 `/bin/ps` Windows 不支持探测。实际功能和资源断言已经通过，后续
+没有修改原始状态、退出码、证明或资源来消除告警。独立审计逐项分类，未分类为 0：
+
+- 扫描最终 ASAR 的可执行文件，仅 `debug@4.4.3` 的 optional peer catch-all
+  引用 supports-color。实际取其原始代码块分别抛 MODULE_NOT_FOUND/EACCES，
+  得到相同默认六色结果；宿主模块在执行前被拒绝，没有借用其实现。
+- 原生负 self-PGID 的 Windows ESRCH 与 guard EACCES 都由同一 catch-all 吞掉；
+  原生 spawnSync ENOENT 与 guard 同步拒绝也进入同一 census catch，均返回
+  undefined 并保留原生 5,250 ms 等待。未替造进程退出或 group 为空的证据。
+- 63 次子进程启动都有退出记录。46 个 Worker 中 41 个有显式 exit，另 5 个
+  随自然 exit0 且现已 ESRCH 的 owner 进程结束；不能写成 46 个显式 join。
+  独立只读 OS 后检确认 92 个记录过的 owned PID 都已不存在，没有残留候选进程。
+
+源字节、调用点、错误行为对照及进程/Worker 证据位于
+`.agent-tasks/packaging-size-v2026.10.6/startup-independent-audit-SYR1l4.json`，
+其状态为 `accepted-with-documented-probe-limits`；原始收据保持
+`build/size-optimization/实际首启 中文 空格-SYR1l4/result.json` 的 failed 状态。
+原 trace 没记录模块 parent、子进程 argv 或完整 census 参数，因此三个 POSIX
+探测的精确 callee 归因属于源码推断，不能宣称已捕获调用栈。OS 后检位于同安装
+验证根的 `owned-process-postcheck.json`。8 项真实随包 Node 护栏负控和两个
+spawn/fork 继承正控另有记录，未与产品正向断言混为一谈。
+
+本轮未操作真实 NSIS 向导、UAC、注册表/快捷方式、覆盖卸载或实际企业模型。
+Main QA 将窗口显示、系统集成写操作 stub；隐藏窗口没有 native capture surface，
+所以未认证截图视觉。外部 CLI 的兄弟路径按实际 host execPath 解析，完整 bridge
+启动仍在该 host 测法范围之外，独立 CLI 本地入口已由上方真实提取 EXE 验证。
+JS 网络/模块/子进程护栏不等同 OS 沙箱。当前结论是本轮优化没有发现生产阻塞，
+不把有限探针扩大为所有平台和安装流程的认证。三方最终独立交叉 review 无未解决
+生产 finding；生产代码在 pristine 重建前冻结，之后仅补验证和文档。

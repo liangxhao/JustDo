@@ -201,8 +201,8 @@ test('uses a target-aware and runtime-verified Electron-native rebuild', () => {
   expect(builderHooks).toContain('verifyPackagedWindowsNativeModules(context)');
   expect(builderHooks).toContain("'better_sqlite3.node'");
   expect(builderHooks).toContain('Packaged better-sqlite3 failed Electron ABI verification');
-  expect(builderHooks).toContain("['pty.node', 'conpty.node', 'conpty_console_list.node']");
-  expect(builderHooks).toContain('Packaged node-pty failed Electron ABI verification');
+  expect(builderHooks).not.toContain('Packaged node-pty failed Electron ABI verification');
+  expect(builderHooks).toContain('verifyMxcArtifactEntryPaths(');
 });
 
 test('restores Electron native modules after tests even when Vitest fails', () => {
@@ -241,13 +241,17 @@ test('keeps build-only dependencies and diagnostics out of the packaged app', ()
   expect(electronBuilderConfig.files).toContain('!node_modules/npm/docs/**');
   expect(electronBuilderConfig.asarUnpack).toEqual([
     'node_modules/better-sqlite3/build/Release/*.node',
-    'node_modules/node-pty/build/Release/**/*',
-    'node_modules/node-pty/prebuilds/**/*',
   ]);
   expect(packageJson.dependencies).toHaveProperty('better-sqlite3');
-  expect(packageJson.dependencies).toHaveProperty('node-pty');
-  expect(packageJson.dependencies).toHaveProperty('npm');
   expect(packageJson.dependencies).toHaveProperty('tar');
+  for (const dependency of [
+    '@agentclientprotocol/sdk', '@modelcontextprotocol/client', '@modelcontextprotocol/ext-apps',
+    '@tanstack/react-virtual', '@xterm/addon-fit', '@xterm/addon-search', '@xterm/addon-web-links',
+    '@xterm/addon-webgl', '@xterm/xterm', 'node-pty', 'npm', 'opencc-js',
+  ]) {
+    expect(packageJson.dependencies, dependency).not.toHaveProperty(dependency);
+    expect(packageJson.devDependencies, dependency).toHaveProperty(dependency);
+  }
   expect(packageJson.dependencies).not.toHaveProperty('mermaid');
   expect(packageJson.dependencies).not.toHaveProperty('react');
   expect(packageJson.devDependencies).toHaveProperty('mermaid');

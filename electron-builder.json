@@ -44,12 +44,15 @@
     "!node_modules/better-sqlite3/deps/**",
     "!node_modules/better-sqlite3/src/**",
     "!node_modules/better-sqlite3/binding.gyp",
-    "!node_modules/node-pty/prebuilds/win32-!(${arch})/**/*",
-    "!node_modules/node-pty/third_party/**/*",
     "!node_modules/npm/docs/**",
     "!node_modules/npm/man/**"
   ],
   "extraResources": [
+    {
+      "from": "build/application-licenses",
+      "to": "licenses/application-dependencies",
+      "filter": ["**/*", "!*/source-proof.json"]
+    },
     {
       "from": "resources/icons/tray",
       "to": "tray",
@@ -105,6 +108,10 @@
           "skills/**/*",
           "**/*.md",
           "!dist/worker-artifacts{,/**}",
+          "!dist/control-ui/assets/**/*.js.br",
+          "!dist/control-ui/assets/**/*.js.gz",
+          "!dist/control-ui/assets/**/*.css.br",
+          "!dist/control-ui/assets/**/*.css.gz",
           "node-runtime/**/*"
         ]
       },
@@ -175,6 +182,10 @@
           "skills/**/*",
           "**/*.md",
           "!dist/worker-artifacts{,/**}",
+          "!dist/control-ui/assets/**/*.js.br",
+          "!dist/control-ui/assets/**/*.js.gz",
+          "!dist/control-ui/assets/**/*.css.br",
+          "!dist/control-ui/assets/**/*.css.gz",
           "node-runtime/**/*"
         ]
       },
@@ -201,9 +212,7 @@
     "preCompressedFileExtensions": [".zst"]
   },
   "asarUnpack": [
-    "node_modules/better-sqlite3/build/Release/*.node",
-    "node_modules/node-pty/build/Release/**/*",
-    "node_modules/node-pty/prebuilds/**/*"
+    "node_modules/better-sqlite3/build/Release/*.node"
   ],
   "asar": true
 }

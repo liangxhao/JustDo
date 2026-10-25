@@ -47,38 +47,23 @@ test('normalized Windows configuration preserves the application file whitelist'
   }
 });
 
-test.each(['x64', 'arm64'])(
-  'Windows %s retains its terminal prebuild and excludes other architectures',
-  arch => {
+test('Windows preserves host-native SQLite and production dependency notices', () => {
     const { normalized, info } = normalizedBuild();
     const matcher = getNodeModuleFileMatcher(
       root,
       root,
-      (value: string) => value.replaceAll('${arch}', arch),
+      (value: string) => value.replaceAll('${arch}', 'x64'),
       normalized.win,
       info,
     );
     const filter = matcher.createFilter();
-    for (const candidate of ['x64', 'arm64']) {
-      expect(
-        filter(
-          path.join(root, `node_modules/node-pty/prebuilds/win32-${candidate}/conpty.node`),
-          file,
-        ),
-      ).toBe(candidate === arch);
-    }
     expect(
-      filter(path.join(root, 'node_modules/node-pty/third_party/conpty/OpenConsole.exe'), file),
-    ).toBe(false);
-    expect(filter(path.join(root, 'node_modules/node-pty/lib/index.js'), file)).toBe(true);
-    for (const dependency of ['node-pty', 'better-sqlite3', 'npm']) {
+      filter(path.join(root, 'node_modules/better-sqlite3/build/Release/better_sqlite3.node'), file),
+    ).toBe(true);
+    for (const dependency of ['better-sqlite3', 'tar', 'ws', 'electron-log', 'electron-updater']) {
       expect(filter(path.join(root, `node_modules/${dependency}/LICENSE`), file)).toBe(true);
     }
-    expect(
-      filter(path.join(root, 'node_modules/node-pty/prebuilds/darwin-arm64/pty.node'), file),
-    ).toBe(true);
-  },
-);
+});
 
 test.each(['mac', 'linux'])(
   '%s preserves native knowledge through generic resource filters',
@@ -98,5 +83,17 @@ test.each(['mac', 'linux'])(
     }
     expect(filter(path.join(root, 'docs/tests'), { isDirectory: () => true })).toBe(true);
     expect(filter(path.join(root, 'gateway.asar'), file)).toBe(false);
+    for (const extension of ['js', 'css']) {
+      for (const encoding of ['br', 'gz']) {
+        const asset = `assets/nested/app.${extension}.${encoding}`;
+        expect(filter(path.join(root, 'dist/control-ui', asset), file)).toBe(false);
+        for (const prefix of ['dist/extensions/fixture', 'docs/control-ui', 'node-runtime']) {
+          expect(filter(path.join(root, prefix, asset), file)).toBe(true);
+        }
+      }
+      expect(filter(path.join(root, `dist/control-ui/assets/app.${extension}`), file)).toBe(true);
+    }
+    expect(filter(path.join(root, 'dist/control-ui/asset-manifest.json'), file)).toBe(true);
+    expect(filter(path.join(root, 'dist/control-ui/assets/image.png.gz'), file)).toBe(true);
   },
 );
