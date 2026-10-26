@@ -179,6 +179,22 @@ function prepareStream(input, admission) {
  const subscription = subscribeEmbeddedAgentSession({onBeforeTerminalDelivery, deferTerminalDelivery: shouldRunBeforeAgentFinalize === true});
  return {subscription, queueHandle: {}};
 }
+function subscribeEmbeddedAgentSession(input) {
+ let params = input;
+ const onAgentEvent = params.onAgentEvent;
+ if (onAgentEvent) {
+  let transcriptStartPublished = false;
+  const sessionManager = params.session.sessionManager;
+  params = {...params, onAgentEvent: event => {
+   if (!transcriptStartPublished) {
+    transcriptStartPublished = true;
+    sessionManager.note?.();
+   }
+   return onAgentEvent(event);
+  }};
+ }
+ return captureSubscription(params);
+}
 async function runEmbeddedAttemptPromptPhase(input,promptState) {
  const {preparedStreamRuntime}=input;
  const promptAssembly = await prepareEmbeddedAttemptPromptAssembly(input);
@@ -246,6 +262,26 @@ describe('public atomic apply and verify', () => {
       fs.appendFileSync(bundle, `\n/*${prefix}_SCOPED_FINALIZE_ADMISSION_V2026_9_8*/`);
       expect(() => patch.applyPatch(root)).toThrow(/historical/);
       expect(fs.readFileSync(native, 'utf8')).toBe(seam);
+    },
+  );
+  it.each(['native', 'bundle'])(
+    'rejects the previous %s subscription shape before any writes',
+    target => {
+      const root = fixture(true);
+      patch.applyPatch(root);
+      const native = path.join(root, 'dist', 'native.mjs');
+      const bundle = path.join(root, 'gateway-bundle.mjs');
+      const file = target === 'native' ? native : bundle;
+      const source = fs.readFileSync(file, 'utf8');
+      const previous = source.replace('get deferTerminalDelivery() { return input.deferTerminalDelivery; },', '');
+      expect(previous).not.toBe(source);
+      fs.writeFileSync(file, previous);
+      const files = [native, bundle, path.join(root, 'dist', runnerFile)];
+      const before = files.map(target => fs.readFileSync(target));
+      for (const method of ['applyPatch', 'verifyPatch']) {
+        expect(() => patch[method](root)).toThrow(/partial/);
+        expect(files.map(target => fs.readFileSync(target))).toEqual(before);
+      }
     },
   );
   it.each(['options-pristine', 'registration-pristine', 'options-missing', 'registration-missing'])(
@@ -350,7 +386,7 @@ describe('locked source and bundle seams', () => {
       const context = vm.createContext({
         withAgentRunId: (event: any) => event,
         mergeBeforeAgentFinalize: () => undefined,
-        subscribeEmbeddedAgentSession: (value: any) => {
+        captureSubscription: (value: any) => {
           params.push(value);
           return value;
         },
@@ -407,10 +443,52 @@ describe('locked source and bundle seams', () => {
       value.replace('appliesToAgentRun:opts.appliesToAgentRun', 'appliesToAgentRun: () => false'),
     (value: string) => value.replace(`// ${CONTRACT}\n`, ''),
     (value: string) => value.replaceAll('V2026_10_6', 'V2026_9_8'),
+    (value: string) => value.replace('get deferTerminalDelivery() { return input.deferTerminalDelivery; },', ''),
+    (value: string) => value.replace('return input.deferTerminalDelivery;', 'return params.deferTerminalDelivery;'),
+    (value: string) => value.replace('return input.deferTerminalDelivery;', 'return false;'),
+    (value: string) => value.replace('return input.deferTerminalDelivery;', 'return true;'),
+    (value: string) => value.replace('get deferTerminalDelivery() { return input.deferTerminalDelivery; },',
+      'deferTerminalDelivery: input.deferTerminalDelivery,'),
+    (value: string) => value.replace('get deferTerminalDelivery() { return input.deferTerminalDelivery; },',
+      'get deferTerminalDelivery() { return input.deferTerminalDelivery; },get deferTerminalDelivery() { return input.deferTerminalDelivery; },'),
   ])('rejects a changed admission boundary rather than repairing it', mutate => {
     const changed = mutate(current);
     expect(changed).not.toBe(current);
     expect(() => transform(changed, 'seams.mjs')).toThrow();
+  });
+
+  it.each([false, true])('keeps the subscription policy live after a native parameter clone: compiled=%s', compiled => {
+    const source = compiled
+      ? transformSync(current, { minifySyntax: true, legalComments: 'none' }).code
+      : current;
+    const captured: any[] = [];
+    const context = vm.createContext({ captureSubscription: (params: any) => captured.push(params) });
+    vm.runInContext(source + ';globalThis.subscribe = subscribeEmbeddedAgentSession;', context);
+    const admission = harness([record(() => false)]).admission;
+    const onAgentEvent = vi.fn();
+    const original = { session: { sessionManager: {} }, onAgentEvent,
+      get deferTerminalDelivery() { return admission.required; } };
+    context.subscribe(original);
+    expect(captured[0]).not.toBe(original);
+    expect(captured[0].deferTerminalDelivery).toBe(true);
+    admission.lock(identity);
+    expect(captured[0].deferTerminalDelivery).toBe(false);
+    expect(Object.getOwnPropertyDescriptor(captured[0], 'deferTerminalDelivery')?.get).toBeTypeOf('function');
+    captured[0].onAgentEvent({ stream: 'assistant' });
+    expect(onAgentEvent).toHaveBeenCalledWith({ stream: 'assistant' });
+    expect(transform(source, compiled ? 'gateway-bundle.mjs' : 'seams.mjs')).toBe(source);
+  });
+
+  it('forwards the original native input after parameter and local binding renames', () => {
+    const subscribe = nativeFunction(seam, 'subscribeEmbeddedAgentSession')
+      .replaceAll(/\binput\b/g, 'input2')
+      .replaceAll(/\bparams\b/g, 'params2')
+      .replace('const onAgentEvent =', 'const onAgentEvent2 =')
+      .replace('if (onAgentEvent)', 'if (onAgentEvent2)')
+      .replace('return onAgentEvent(event)', 'return onAgentEvent2(event)');
+    const changed = transform(subscribe, 'subscriber.mjs');
+    expect(changed).toContain('return input2.deferTerminalDelivery;');
+    expect(transform(changed, 'subscriber.mjs')).toBe(changed);
   });
 });
 

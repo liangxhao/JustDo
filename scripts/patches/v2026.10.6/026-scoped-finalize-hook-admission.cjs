@@ -7,6 +7,7 @@
 // Remove when: native finalize hooks support per-attempt admission shared by streaming and dispatch.
 const fs = require('node:fs');
 const path = require('node:path');
+const acorn = require('acorn');
 const ts = require('typescript');
 const { createFinalizeHookAdmission } = require('./finalize-hook-admission.js');
 const {
@@ -22,7 +23,10 @@ const {
 } = require('./_patch-utils.js');
 const CONTRACT = 'RUNTIME_SCOPED_FINALIZE_ADMISSION_V2026_10_6';
 const HELPER = 'createFinalizeHookAdmission';
-const signatures = ['createHookRunner', 'prepareStream', 'runEmbeddedAttemptPromptPhase'];
+const signatures = [
+  'createHookRunner', 'prepareStream', 'runEmbeddedAttemptPromptPhase',
+  'subscribeEmbeddedAgentSession',
+];
 function same(actual, expected, label) {
   if (
     canonicalHelper(`function seam(){${actual}}`) !==
@@ -31,6 +35,16 @@ function same(actual, expected, label) {
     throw new Error(`${label}: historical or partial finalization admission`);
 }
 function functionRange(source, name) {
+  if (name === 'subscribeEmbeddedAgentSession') {
+    const matches = [...source.matchAll(/\bfunction subscribeEmbeddedAgentSession\(/g)];
+    const start = one(matches, name).index;
+    // This owner contains template interpolation and regular expressions;
+    // use JavaScript grammar to find its end instead of delimiter counting.
+    const node = acorn.parseExpressionAt(source, start, { ecmaVersion: 'latest', sourceType: 'module' });
+    if (node.type !== 'FunctionExpression' || node.id?.name !== name)
+      throw new Error('Native subscription declaration changed');
+    return { start, end: node.end, text: source.slice(start, node.end) };
+  }
   const part = extractNativeFunction(source, name, findMatchingDelimiter);
   if (!part) throw new Error(`${name}: native declaration changed`);
   return { ...part, text: part.body };
@@ -160,6 +174,54 @@ function transformFunction(body, name) {
       'lockBeforeAgentFinalize',
       'lockBeforeAgentFinalize: context => runFinalizeAdmission?.lock(context)',
     );
+  } else if (name === 'subscribeEmbeddedAgentSession') {
+    if (fn.parameters.length !== 1 || !ts.isIdentifier(fn.parameters[0].name))
+      throw new Error('Native subscription input changed');
+    const input = text(fn.parameters[0].name);
+    const params = one(
+      collect(fn, node => ts.isVariableDeclaration(node) &&
+        node.initializer && ts.isIdentifier(node.name) && text(node.initializer) === input),
+      name + '/original input',
+    );
+    const paramsName = text(params.name);
+    const callback = one(
+      collect(fn, node => ts.isVariableDeclaration(node) &&
+        node.initializer && text(node.initializer) === paramsName + '.onAgentEvent'),
+      name + '/event callback',
+    );
+    const callbackName = text(callback.name);
+    const guard = one(
+      collect(fn, node => ts.isIfStatement(node) && text(node.expression) === callbackName),
+      name + '/event wrapper',
+    );
+    const clone = one(
+      collect(guard.thenStatement, node => ts.isBinaryExpression(node) &&
+        node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+        text(node.left) === paramsName && ts.isObjectLiteralExpression(node.right)),
+      name + '/parameter clone',
+    ).right;
+    const spread = clone.properties[0];
+    const wrappedCallback = clone.properties.at(-1);
+    if (!ts.isSpreadAssignment(spread) || text(spread.expression) !== paramsName ||
+        !ts.isPropertyAssignment(wrappedCallback) || text(wrappedCallback.name) !== 'onAgentEvent' ||
+        !ts.isArrowFunction(wrappedCallback.initializer))
+      throw new Error('Native subscription parameter clone changed');
+    const getters = clone.properties.filter(node => node.name &&
+      text(node.name) === 'deferTerminalDelivery');
+    const getter = `get deferTerminalDelivery() { return ${input}.deferTerminalDelivery; }`;
+    if (getters.length) {
+      const current = one(getters, name + '/live delivery policy');
+      if (clone.properties.length !== 3 || clone.properties[1] !== current ||
+          !ts.isGetAccessor(current))
+        throw new Error('Partial native subscription delivery policy');
+      same(`return {${text(current)}};`, `return {${getter}};`, name + '/live delivery policy');
+    } else {
+      if (clone.properties.length !== 2)
+        throw new Error('Native subscription parameter clone changed');
+      // Native object spread eagerly evaluates the attempt's accessor before
+      // prompt admission is locked. Forward the original policy at every read.
+      add(wrappedCallback.getStart(ast), getter + ',\n');
+    }
   } else {
     const runtime = boundName('preparedStreamRuntime');
     const assembly = one(

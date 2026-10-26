@@ -7,6 +7,8 @@
 
 - [ ] 对照 026/028：finalize hook 的 admission 在本 attempt 首字节前固定；
       普通正文不会因无关 hook 全程缓冲，真实 finalize revision 仍能撤回被拒草稿。
+      经过真实订阅入口及其参数复制、事件包装和 agent/message reset 验证动态准入；
+      不能只将 getter 参数直接交给底层 delivery 来代替完整订阅链路。
 - [ ] 同一 Completions 源消息的 UUID/scope 在 plain、inline-only、strict 和
       structured reasoning 路径都保留。身份本身不放开私有内容或持久化门禁。
       Renderer 仅按同 scope 交接 preview/commentary，不能按相同文本或 run 顺序去重。

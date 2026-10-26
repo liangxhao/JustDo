@@ -117,6 +117,20 @@ Completions 消息均携带原生消息身份及实际完成事实，Renderer �
 
 ## 正文在结束时集中出现
 
+v2026.10.6 还需核对 026 的真实订阅入口：原生为了给事件附上 transcript-start 信息，
+在准入冻结前展开复制参数，会把动态 `deferTerminalDelivery` 提前固化为 `true`。
+因此即使 028 已释放模型正文、普通聊天的 finalize hook 已明确排除，订阅层仍可能把
+全部正文扣到结束。026 在这一次原生复制中保留指向原始输入的访问器，让后续
+`agent_start`／消息重置读取冻结后的同一准入；适用或未知的审核仍保持等待。
+回归必须经过真实 `subscribeEmbeddedAgentSession`，同时验证首个增量、后续增量、
+受保护运行和 transcript-start 回调。仅验证 transport 或复制前的参数不能覆盖此问题。
+旧运行时须从锁定 pristine 包完整重建，不能就地补写旧 manifest 或只改前端。
+
+日常可运行 `npm test -- tests/openclaw/patches/v2026.10.6/scoped-finalize-native-subscription.test.ts`。
+该回归优先使用显式指定的 pristine／frozen 产物，否则自动使用已准备的
+`vendor/openclaw-runtime/current`；修复路径和仅在内存移除访问器的故障对照都会执行。
+未准备原生运行时才条件跳过，因此发布验收仍须明确指定本次成品并检查用例实际执行。
+
 先对照完整原生 JSON 日志中的 Agent `thinking`、`assistant` 和 `usage` 事件，
 再判断问题属于模型服务、运行时适配还是 Renderer。控制台捕获会合并流事件，
 不能凭捕获文件中缺少增量就断言运行时没有发布。
