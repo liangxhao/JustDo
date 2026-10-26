@@ -27,7 +27,7 @@ flowchart LR
 
 真实探针只授命令处理器所在 System32 目录只读与单次独立临时目录读写，将工作目录和 TEMP/TMP 指向该临时目录，并在成功或失败后清理。显式环境只传必要 Windows 路径变量；BaseContainer API 需要 LOCALAPPDATA，但此变量不增加文件授权。不能将整个系统盘设为只读，或授整个用户临时目录读写：DACL 兼容隔离可能因此要求普通用户修改系统盘根目录的 ACL，造成错误拒绝。设置页保留有界的原生错误摘要，不显示执行参数中的配置编码及请求 envelope。
 
-IsoEnvBroker 属于 Windows 的实验性 IsolationSession，不能作为 ProcessContainer 的准入条件。OpenClaw 2026.10.6 插件原生通过同一个实际执行器的 `--probe` 核对就绪状态，旧构建替换已删除，同时保留层级警告与探测失败拒绝注册的边界。显式 mxcBinaryPath 覆盖也必须探测该覆盖路径。这个后端不要求启用 Windows 可选功能中的 Windows Sandbox，不能提供安装无关服务的按钮来处理误判。
+IsoEnvBroker 属于 Windows 的实验性 IsolationSession，不能作为 ProcessContainer 的准入条件。OpenClaw 2026.10.7 插件原生通过同一个实际执行器的 `--probe` 核对就绪状态，旧构建替换已删除，同时保留层级警告与探测失败拒绝注册的边界。显式 mxcBinaryPath 覆盖也必须探测该覆盖路径。这个后端不要求启用 Windows 可选功能中的 Windows Sandbox，不能提供安装无关服务的按钮来处理误判。
 
 系统盘准备仅针对 appcontainer-dacl 隔离层级，通过沙盒内读取根目录属性判断，不解析本地化 icacls 字符串。属性探针不额外授权系统盘根目录，不枚举目录内容，也不重定向到 NUL：原生 helper 仅授元数据 ACE，不授 FILE_LIST_DIRECTORY，NUL 则有独立的准备要求。base-container 和 appcontainer-bfs 无须系统盘 ACL 准备。缺少相关 ACE 可以是建议准备而不是完全不可用；UI 应区别“可运行但元数据访问受限”和“无法创建隔离进程”。
 
@@ -59,7 +59,7 @@ DACL 根目录属性探针失败时，Main 以只读 PowerShell/.NET ACL 检查�
 
 ## 6. 构建和升级责任
 
-Windows runtime 携带 @openclaw/mxc-sandbox@2026.10.6 与锁定 SDK 0.9.0。需检查插件 ID、backend 注册、执行器、host-prep、launcher、目标架构 node-pty 和第三方许可证。二进制清单在 shared/security/mxcNativeBinaries.json。
+Windows runtime 携带 @openclaw/mxc-sandbox@2026.10.7 与锁定 SDK 0.9.0。需检查插件 ID、backend 注册、执行器、host-prep、launcher、目标架构 node-pty 和第三方许可证。二进制清单在 shared/security/mxcNativeBinaries.json；本版验证范围见[升级验证](../openclaw-upgrades/v2026.10.7/validation.md)。
 
 裁剪按 SDK 的实际 Node 依赖解析定位 node-pty，允许 npm 将其提升到同一插件的
 node_modules。解析后的包、prebuild 目录和选中架构均核对 realpath，必须仍位于该

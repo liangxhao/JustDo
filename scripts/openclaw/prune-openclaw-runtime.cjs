@@ -201,6 +201,7 @@ function cleanDir(dirPath, stats, options = {}) {
     const fullPath = path.join(dirPath, entry.name);
 
     if (entry.isDirectory()) {
+      if (options.protectedDirectories?.has(path.resolve(fullPath))) continue;
       if (isLegalMetadataFile(entry.name)) continue;
       // Only reviewed SDKs with their compiled entry points present qualify.
       // Retain Markdown even inside these source trees for agent knowledge.
@@ -478,6 +479,22 @@ function main() {
     logSummary(stats);
     return;
   }
+  // Upstream bundled dependencies are source artifacts, including legal notices
+  // and any declared development-looking files. Keep their complete proven tree.
+  const bundledProof = path.join(runtimeRoot, 'runtime-bundled-dependencies.json');
+  const packageFile = path.join(runtimeRoot, 'package.json');
+  const metadata = fs.existsSync(packageFile) ? readJson(packageFile) : {};
+  let verifyBundled;
+  let protectedDirectories = new Set();
+  if (fs.existsSync(bundledProof) || 'bundleDependencies' in metadata || 'bundledDependencies' in metadata) {
+    const { verifyBundledDependencies } = require('./openclaw-bundled-dependencies.cjs');
+    const { readOpenClawSourceLock } = require('./verify-openclaw-runtime-patches.cjs');
+    const repoRoot = resolveRepoRoot();
+    const sourceLock = readOpenClawSourceLock(repoRoot, readJson(path.join(repoRoot, 'package.json')).openclaw.version);
+    verifyBundled = () => verifyBundledDependencies(fs.realpathSync(runtimeRoot), { sourceLock });
+    protectedDirectories = new Set(verifyBundled().dependencies.map(dependency =>
+      path.resolve(runtimeRoot, dependency.path)));
+  }
 
   // Step 1: Replace large unnecessary packages with stubs
   for (const pkgName of PACKAGES_TO_STUB) {
@@ -503,7 +520,7 @@ function main() {
   }
 
   // Step 2: Clean unnecessary files from node_modules only
-  cleanDir(nodeModulesDir, stats);
+  cleanDir(nodeModulesDir, stats, { protectedDirectories });
 
   // Step 3: Clean node_modules inside extensions (but not extension source files)
   const extensionsDir = path.join(runtimeRoot, 'dist', 'extensions');
@@ -523,6 +540,7 @@ function main() {
     }
   }
 
+  if (verifyBundled) verifyBundled();
   logSummary(stats);
 }
 

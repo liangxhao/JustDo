@@ -1,0 +1,19 @@
+// Frozen complete function from pristine openclaw@2026.10.7 dist/agent-tools-LS2RUMFH.mjs; test data only.
+async function createOpenClawCodingToolsInternalAsync(options, skillReadResources, onPolicyFilter, preparedSurface, preparation = {}) {
+	return withPreparedToolConstruction(options?.config, {
+		...preparation,
+		signal: options?.abortSignal && preparation.signal ? AbortSignal.any([options.abortSignal, preparation.signal]) : options?.abortSignal ?? preparation.signal
+	}, async (shared) => {
+		const assembly = assembleOpenClawCodingTools({
+			...options,
+			config: shared.config
+		}, skillReadResources, onPolicyFilter, preparedSurface);
+		let step = assembly.next();
+		while (!step.done) {
+			const tools = await createOpenClawToolsWithPreparation(step.value, shared);
+			shared.assertCurrent();
+			step = assembly.next(tools);
+		}
+		return step.value;
+	});
+}

@@ -10,7 +10,7 @@ import { resolveNativeSmokeTarget } from '../../../tests/openclaw/runtime/native
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 const { runtimeRoot: runtime, identity: runtimeIdentity } = resolveNativeSmokeTarget();
 const runtimePackage = JSON.parse(await readFile(path.join(runtime, 'package.json'), 'utf8'));
-assert.equal(runtimePackage.version, '2026.10.6');
+assert.equal(runtimePackage.version, '2026.10.7');
 const output = await mkdtemp(path.join(os.tmpdir(), 'widget-kit-contract-'));
 try {
   await cp(path.join(root, 'plugins/extensions/widget-kit/assets'), path.join(output, 'assets'), {

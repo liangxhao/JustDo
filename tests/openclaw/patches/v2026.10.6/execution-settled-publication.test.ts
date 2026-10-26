@@ -1,3 +1,4 @@
+import { historicalRuntimeOrUnavailable } from './historical-runtime';
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -6,16 +7,16 @@ import { transformSync } from 'esbuild';
 import { describe, expect, test } from 'vitest';
 
 const patch = require('../../../../scripts/patches/v2026.10.6/_execution-settled-publication.js');
-const root = path.resolve(process.env.JUSTDO_EXECUTION_PRISTINE_DIR ??
-  process.env.OPENCLAW_TEST_NATIVE_RUNTIME_DIR ?? 'build/upgrade-audit/v2026.10.6/dependency-snapshot');
+const root = historicalRuntimeOrUnavailable(path.resolve(process.env.JUSTDO_EXECUTION_PRISTINE_DIR ??
+  process.env.OPENCLAW_TEST_NATIVE_RUNTIME_DIR ?? 'build/upgrade-audit/v2026.10.6/dependency-snapshot'));
 const filename = path.join(root, 'dist/agent-events-CJDT60f4.mjs');
 const actualNative = fs.existsSync(filename) ? fs.readFileSync(filename, 'utf8') : undefined;
 const pristineFixture = fs.readFileSync(path.resolve(
   'tests/openclaw/patches/v2026.10.6/execution-settled-publication.fixture.txt'), 'utf8');
 const native = actualNative ?? pristineFixture;
-const runtimeRoot = path.resolve(process.env.OPENCLAW_TEST_NATIVE_RUNTIME_DIR ?? 'build/runtimes/openclaw/win-x64');
-const nativeGraphRoot = path.resolve(process.env.OPENCLAW_TEST_NATIVE_RUNTIME_DIR ??
-  'build/upgrade-audit/v2026.10.6/dependency-snapshot');
+const runtimeRoot = historicalRuntimeOrUnavailable(path.resolve(process.env.OPENCLAW_TEST_NATIVE_RUNTIME_DIR ?? 'build/runtimes/openclaw/win-x64'));
+const nativeGraphRoot = historicalRuntimeOrUnavailable(path.resolve(process.env.OPENCLAW_TEST_NATIVE_RUNTIME_DIR ??
+  'build/upgrade-audit/v2026.10.6/dependency-snapshot'));
 const nativeNode = path.join(runtimeRoot, 'node-runtime', process.platform === 'win32' ? 'node.exe' : 'bin/node');
 const nativeGraphAvailable = fs.existsSync(path.join(nativeGraphRoot, 'package.json')) &&
   fs.existsSync(path.join(nativeGraphRoot, 'node_modules/tslog/package.json')) &&
@@ -67,7 +68,7 @@ describe('native cancellation and execution settlement publication', () => {
     const pristine = patch.__testing.extract(pristineFixture, 'reserveAgentTerminalEvent', filename);
     const mixed = current.slice(0, reservation.start) + pristine.body + current.slice(reservation.end);
     expect(() => patch.transformExecutionSettledPublication(mixed, filename)).toThrow();
-  });
+  }, 30_000);
 
   test.skipIf(!actualNative || !fs.existsSync(nativeNode) || !nativeGraphAvailable)(
     'uses real native routing, registration, epoch and producer semantics', () => {

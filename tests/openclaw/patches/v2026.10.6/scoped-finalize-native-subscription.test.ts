@@ -7,15 +7,18 @@ import { build } from 'esbuild';
 import ts from 'typescript';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
+import { historicalRuntime } from './historical-runtime';
+
 const admissionPatch = require('../../../../scripts/patches/v2026.10.6/026-scoped-finalize-hook-admission.cjs').__testing;
 const reasoningPatch = require('../../../../scripts/patches/v2026.10.6/028-reasoning-completions-streaming.cjs').__testing;
 const { functionRange } = require('../../../../scripts/patches/v2026.10.6/prepared-read-patch-shapes.js');
-const pristine = process.env.JUSTDO_EXECUTION_PRISTINE_DIR;
+const pristine = historicalRuntime(process.env.JUSTDO_EXECUTION_PRISTINE_DIR);
 const preparedRuntime = path.resolve('vendor/openclaw-runtime/current');
-const frozenRuntime = process.env.JUSTDO_EXECUTION_RUNTIME ??
+const frozenRuntime = historicalRuntime(process.env.JUSTDO_EXECUTION_RUNTIME ??
   (!pristine && fs.existsSync(path.join(preparedRuntime, 'gateway-bundle.mjs'))
-    ? preparedRuntime : undefined);
+    ? preparedRuntime : undefined));
 const runtime = frozenRuntime ?? pristine;
+const runtimeNodeModulesRoot = historicalRuntime(process.env.OPENCLAW_RUNTIME_DIR) ?? runtime;
 
 type NativeEvent = { stream: string; data: Record<string, unknown>; transcriptStart?: unknown };
 type Subscription = { unsubscribe(): void; waitForPendingEvents(): Promise<void> };
@@ -170,7 +173,7 @@ async function loadSubscriber(source: string, file: string): Promise<NativeSubsc
     stdin: { contents, resolveDir: path.dirname(file), sourcefile: 'native-subscription-fixture.mjs' },
     bundle: true, write: false, platform: 'node', format: 'cjs', target: 'node24', logLevel: 'silent',
     nodePaths: [path.join(runtime!, 'node_modules'),
-      path.resolve(process.env.OPENCLAW_RUNTIME_DIR ?? 'vendor/openclaw-runtime/current', 'node_modules')],
+      path.join(runtimeNodeModulesRoot!, 'node_modules')],
     define: { 'import.meta.url': JSON.stringify(pathToFileURL(file).href) },
     plugins: [{ name: 'native-text-helper-closure', setup(builder) {
       builder.onLoad({ filter: /[/\\]helpers-BGZkS3pe\.mjs$/ }, async args => ({

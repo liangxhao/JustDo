@@ -20,7 +20,7 @@
       reconnect 按 keyed owner 恢复，超大正文保留身份事实，不恢复 run 累计正文副本。
 
 依据：[聊天渲染](../architecture/15-chat-rendering.md)、
-[028 审计](../features/chat/session-diagnostics.md)、[补丁总账](../../scripts/patches/v2026.10.6/README.md)。
+[028 审计](../features/chat/session-diagnostics.md)、[补丁总账](../../scripts/patches/v2026.10.7/README.md)。
 
 ## 长参数与真实活动
 

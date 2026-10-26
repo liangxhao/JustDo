@@ -38,6 +38,23 @@ const report = (): DiagnosticReport => ({
   ],
 });
 
+it.each(['en', 'zh'] as const)('exports the tool timeout phase and caution in %s without creating retry authorization', language => {
+  const input = report();
+  Object.assign(input.run!, { state: 'failed', endedAt: 3 });
+  Object.assign(input.conclusion, { reason: 'timeout', confidence: 'confirmed' });
+  Object.assign(input.events[0], { phase: 'error', executionSettled: true,
+    stopReason: 'timeout', timeoutPhase: 'tool_execution' });
+  const entries = buildDiagnosticArchive(input, '1.0.0', language);
+  expect(JSON.parse(entries['report.json']).events[0].timeoutPhase).toBe('tool_execution');
+  expect(entries['summary.md']).toContain(language === 'en'
+    ? 'executing tools; verify their state before repeating them'
+    : '工具执行；重复操作前请核对实际状态');
+  Object.assign(input.events[0], { timeoutPhase: 'PRIVATE_UNKNOWN_PHASE' });
+  const unknown = buildDiagnosticArchive(input, '1.0.0', language);
+  expect(JSON.parse(unknown['report.json']).events[0].timeoutPhase).toBe('unknown');
+  expect(JSON.stringify(unknown)).not.toContain('PRIVATE_UNKNOWN_PHASE');
+});
+
 it('exports a bounded replay rejection observation without changing settlement or inventing a site', () => {
   const input = report();
   input.events[0].phase = 'error';

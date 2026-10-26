@@ -1,3 +1,4 @@
+import { historicalRuntime } from './historical-runtime';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -5,7 +6,7 @@ import { pathToFileURL } from 'node:url';
 
 import { expect, it } from 'vitest';
 
-const pristine = process.env.JUSTDO_EXECUTION_PRISTINE_DIR;
+const pristine = historicalRuntime(process.env.JUSTDO_EXECUTION_PRISTINE_DIR);
 
 it.skipIf(!pristine || process.platform !== 'win32')(
   'native canonical validation keys unify Windows namespace aliases for existing and missing files',

@@ -6,6 +6,10 @@ const path = require('path');
 const { canonicalJson, verifyNativeDatabaseContract } = require('./native-database-contract.cjs');
 const { verifyNodeRuntime } = require('../runtime/setup-node-runtime.cjs');
 const {
+  RUNTIME_BUNDLED_DEPENDENCIES_FILENAME,
+  verifyBundledDependencies,
+} = require('./openclaw-bundled-dependencies.cjs');
+const {
   runtimePatchDependencyArtifactPaths,
 } = require('./openclaw-patch-dependencies.cjs');
 const {
@@ -30,6 +34,7 @@ const BUILD_RECIPE_FILES = [
   'vite.config.ts',
   'scripts/packaging/electron-builder-product-metadata.cjs',
   'scripts/openclaw/install-openclaw-runtime.cjs',
+  'scripts/openclaw/openclaw-bundled-dependencies.cjs',
   'scripts/openclaw/openclaw-facade-runtime-patch.cjs',
   'scripts/openclaw/openclaw-runtime-dev-lease.cjs',
   'scripts/openclaw/openclaw-runtime-freeze.cjs',
@@ -218,7 +223,8 @@ function verifyFrozenOpenClawRuntime(runtimeRoot, options = {}) {
   const gatewayAsarPath = path.join(runtimeRoot, 'gateway.asar');
   const runtimePackagePath = path.join(runtimeRoot, 'package.json');
   const runtimePackageLockPath = path.join(runtimeRoot, RUNTIME_DEPENDENCY_LOCK_FILENAME);
-  const requiredFiles = [gatewayAsarPath, runtimePackagePath, runtimePackageLockPath];
+  const bundledDependenciesPath = path.join(runtimeRoot, RUNTIME_BUNDLED_DEPENDENCIES_FILENAME);
+  const requiredFiles = [gatewayAsarPath, runtimePackagePath, runtimePackageLockPath, bundledDependenciesPath];
   try {
     verifyNodeRuntime(path.join(runtimeRoot, 'node-runtime'), buildInfo.target);
     if (buildInfo.nodeRuntimeManifestSha256 !== hashFile(path.join(runtimeRoot, 'node-runtime', 'node-runtime-manifest.json'))) {
@@ -253,6 +259,7 @@ function verifyFrozenOpenClawRuntime(runtimeRoot, options = {}) {
     'gatewayAsarSha256',
     'runtimePackageSha256',
     'runtimePackageLockSha256',
+    'runtimeBundledDependenciesSha256',
   ]) {
     if (!isSha256(buildInfo[field])) problems.push(`${field} is not a SHA-256 digest`);
   }
@@ -266,6 +273,9 @@ function verifyFrozenOpenClawRuntime(runtimeRoot, options = {}) {
   }
   if (buildInfo.runtimePackageLockPath !== RUNTIME_DEPENDENCY_LOCK_FILENAME) {
     problems.push('runtime dependency lock path is invalid');
+  }
+  if (buildInfo.runtimeBundledDependenciesPath !== RUNTIME_BUNDLED_DEPENDENCIES_FILENAME) {
+    problems.push('runtime bundled dependency proof path is invalid');
   }
   for (const filePath of requiredFiles) {
     if (!fs.existsSync(filePath))
@@ -281,6 +291,17 @@ function verifyFrozenOpenClawRuntime(runtimeRoot, options = {}) {
     if (buildInfo.runtimePackageLockSha256 !== hashFile(runtimePackageLockPath)) {
       problems.push(`${RUNTIME_DEPENDENCY_LOCK_FILENAME} does not match runtime-build-info.json`);
     }
+    if (buildInfo.runtimeBundledDependenciesSha256 !== hashFile(bundledDependenciesPath)) {
+      problems.push(`${RUNTIME_BUNDLED_DEPENDENCIES_FILENAME} does not match runtime-build-info.json`);
+    }
+  }
+  try {
+    verifyBundledDependencies(fs.realpathSync(runtimeRoot), { sourceLock: {
+      name: 'openclaw', version: buildInfo.npmPackageVersion,
+      integrity: buildInfo.npmIntegrity, tarballSha256: buildInfo.npmTarballSha256,
+    } });
+  } catch (error) {
+    problems.push(`runtime bundled dependencies are invalid: ${error.message}`);
   }
 
   let manifest;
@@ -334,6 +355,8 @@ function verifyFrozenOpenClawRuntime(runtimeRoot, options = {}) {
       runtimePackageLockPath: buildInfo.runtimePackageLockPath,
       runtimePackageLockSha256: buildInfo.runtimePackageLockSha256,
       nodeRuntimeManifestSha256: buildInfo.nodeRuntimeManifestSha256,
+      runtimeBundledDependenciesPath: buildInfo.runtimeBundledDependenciesPath,
+      runtimeBundledDependenciesSha256: buildInfo.runtimeBundledDependenciesSha256,
     };
     if (JSON.stringify(manifest.sourceArtifacts) !== JSON.stringify(expectedSourceArtifacts)) {
       problems.push('patch manifest source artifacts do not match runtime-build-info.json');
@@ -491,6 +514,7 @@ function buildOpenClawPatchManifest(runtimeRoot, options = {}) {
   const gatewayAsarPath = path.join(runtimeRoot, 'gateway.asar');
   const runtimePackagePath = path.join(runtimeRoot, 'package.json');
   const runtimePackageLockPath = path.join(runtimeRoot, RUNTIME_DEPENDENCY_LOCK_FILENAME);
+  const bundledDependenciesPath = path.join(runtimeRoot, RUNTIME_BUNDLED_DEPENDENCIES_FILENAME);
   if (!fs.existsSync(gatewayBundlePath)) {
     throw new Error(`Gateway bundle not found: ${gatewayBundlePath}`);
   }
@@ -498,7 +522,8 @@ function buildOpenClawPatchManifest(runtimeRoot, options = {}) {
   if (
     (!gatewayAsarExists && options.allowOmittedGatewayAsar !== true) ||
     !fs.existsSync(runtimePackagePath) ||
-    !fs.existsSync(runtimePackageLockPath)
+    !fs.existsSync(runtimePackageLockPath) ||
+    !fs.existsSync(bundledDependenciesPath)
   ) {
     throw new Error(`OpenClaw runtime source artifacts are incomplete: ${runtimeRoot}`);
   }
@@ -534,6 +559,8 @@ function buildOpenClawPatchManifest(runtimeRoot, options = {}) {
     (gatewayAsarExists && buildInfo.gatewayAsarSha256 !== hashFile(gatewayAsarPath)) ||
     buildInfo.runtimePackageSha256 !== hashFile(runtimePackagePath) ||
     buildInfo.runtimePackageLockSha256 !== hashFile(runtimePackageLockPath) ||
+    buildInfo.runtimeBundledDependenciesPath !== RUNTIME_BUNDLED_DEPENDENCIES_FILENAME ||
+    buildInfo.runtimeBundledDependenciesSha256 !== hashFile(bundledDependenciesPath) ||
     !fs.existsSync(nodeManifestPath) ||
     buildInfo.nodeRuntimeManifestSha256 !== hashFile(nodeManifestPath)
   ) {
@@ -542,6 +569,7 @@ function buildOpenClawPatchManifest(runtimeRoot, options = {}) {
     );
   }
   verifyNodeRuntime(path.join(runtimeRoot, 'node-runtime'), buildInfo.target);
+  verifyBundledDependencies(fs.realpathSync(runtimeRoot), { sourceLock });
   const nativeDatabaseOwners = verifyNativeDatabaseContract(runtimeRoot, {
     repoRoot, version, allowOmittedGatewayAsar: options.allowOmittedGatewayAsar,
   });
@@ -568,6 +596,8 @@ function buildOpenClawPatchManifest(runtimeRoot, options = {}) {
       runtimePackageLockPath: buildInfo.runtimePackageLockPath,
       runtimePackageLockSha256: buildInfo.runtimePackageLockSha256,
       nodeRuntimeManifestSha256: buildInfo.nodeRuntimeManifestSha256,
+      runtimeBundledDependenciesPath: buildInfo.runtimeBundledDependenciesPath,
+      runtimeBundledDependenciesSha256: buildInfo.runtimeBundledDependenciesSha256,
     },
     patchDependencyArtifacts: buildRuntimePatchDependencyArtifacts(runtimeRoot, version),
     nativeDatabaseOwners,

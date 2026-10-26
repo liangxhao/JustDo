@@ -41,6 +41,13 @@ identityPending，不清理运行、不生成新 ID 重发。现有恢复链通�
 查询失败、重复退避和停止失败后的恢复都保留这些约束。原生 reset 可沿用 sessionId，
 因此已知 revision 不能被重试时的新查询结果覆盖。
 
+OpenClaw 10.7 的 `tool_execution` 工具超时可能将原生会话投影为 `interrupted`。
+同一 active Goal 在精确整轮结算后仍按既有退避自动续跑，无需人工继续；它创建带上述
+条件的新后继 run，不重放原 run 或未知工具输入。后继轮提示先核对权威状态和现有结果，
+不得盲目重复可能产生副作用的调用。超时阶段与 interrupted 展示本身均不授权续跑，也
+不能证明工具副作用已回滚。原生 `safeToolsRequired` 的专用恢复路径不等同于普通 Goal
+后继轮，不能宣称这里自动具备只读工具限制；实际模型能否正确核对结果仍需端到端验收。
+
 ## 问答等待与超时
 
 ask_user_question 默认启用 10 分钟超时，实际时长沿用运行参数配置；只有确实必须
@@ -114,7 +121,7 @@ INVALID_REQUEST 结合结构化 details.reason 分类。receipt-invalid 和未�
 ## 暂停后继续补丁与验证
 
 运行中暂停先停止执行，再修改原生 Goal 为 paused。停止留下 abortedLastRun 标记；
-当前补丁 [006](../../../scripts/patches/v2026.10.6/006-goal-resume-after-pause.cjs)
+当前补丁 [006](../../../scripts/patches/v2026.10.7/006-goal-resume-after-pause.cjs)
 只允许明确 resume 请求通过该标记检查，仍保留空闲、历史、身份、执行归属和排队准入
 限制。上游支持同等语义并通过原生回归前保留此补丁。
 
@@ -127,4 +134,4 @@ INVALID_REQUEST 结合结构化 details.reason 分类。receipt-invalid 和未�
 
 ## 实现核对入口
 
-[续跑协调与身份检查](../../../src/main/openclaw/goals/goalContinuationCoordinator.ts)；[共享状态与回执合约](../../../src/shared/cowork/sessionGoal.ts)；[协调回归用例](../../../src/main/openclaw/goals/goalContinuationCoordinator.test.ts)。这些入口用于核对当前实现，测试文件列出回归场景，不表示本轮文档维护重新执行了相应测试。
+[续跑协调与身份检查](../../../src/main/openclaw/goals/goalContinuationCoordinator.ts)；[共享状态与回执合约](../../../src/shared/cowork/sessionGoal.ts)；[协调回归用例](../../../src/main/openclaw/goals/goalContinuationCoordinator.test.ts)；[10.7 工具超时自动续跑](../../../src/main/openclaw/goals/goalContinuationCoordinator.toolTimeout.test.ts)。新增工具超时用例在本轮实际通过：接入真实事件准入，验证新条件后继、未结算/旧身份/重复终态拒绝及未知 ACK 不重发；其余测试的本轮结果以[验证记录](../../openclaw-upgrades/v2026.10.7/validation.md)为准。

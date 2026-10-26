@@ -18,10 +18,11 @@ export const buildManagedOpenClawSurfaces = (existing: unknown): Record<string, 
 };
 
 /**
- * Remove application-owned fields not accepted by OpenClaw v2026.10.6 and translate the
+ * Remove application-owned fields not accepted by OpenClaw v2026.10.7 and translate the
  * two renamed config surfaces. This is deliberately narrow: unrelated
  * operator-owned config remains untouched and is still validated by Gateway.
  */
+// The retained symbol identifies the shared 10.6/10.7 configuration contract.
 export const sanitizeOpenClawV2026_10_6Config = (
   config: Record<string, unknown>,
 ): Record<string, unknown> => {

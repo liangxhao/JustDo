@@ -1,3 +1,4 @@
+import { historicalRuntime } from './historical-runtime';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
@@ -9,7 +10,7 @@ const { createPluginDirectoryPublicationRecovery } = require('../../../../src/ma
 const patch = require('../../../../scripts/patches/v2026.10.6/033-windows-plugin-directory-publication.cjs');
 const artifacts = path.resolve('.agent-tasks/plugin-publication-tests');
 const roots: string[] = [];
-const pristine = process.env.PLUGIN_PUBLICATION_PRISTINE;
+const pristine = historicalRuntime(process.env.PLUGIN_PUBLICATION_PRISTINE);
 
 afterEach(() => {
   vi.restoreAllMocks();

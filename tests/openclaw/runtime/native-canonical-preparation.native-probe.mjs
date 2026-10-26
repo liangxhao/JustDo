@@ -10,6 +10,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const require = createRequire(import.meta.url);
+const expectedVersion = `v${require('../../../package.json').openclaw.version.replace(/^v/u, '')}`;
 const repository = fileURLToPath(new URL('../../../', import.meta.url));
 const runtimeRoot = fs.realpathSync(process.argv[2]);
 const archivedDiagnostic = process.argv.includes('--archived-diagnostic');
@@ -41,13 +42,13 @@ if (observe >= 0) {
   const options = { agentId: process.argv[observe + 3] ?? 'main', env: p.env,
     ...(process.argv[observe + 2] !== '-' ? { path: path.resolve(process.argv[observe + 2]) } : {}) };
   const prepare = await owner('openclaw-database-schema-contracts-DxUwD7Ji.mjs', 'prepareOpenClawDatabaseSchemaContracts'); prepare();
-  const open = await owner('openclaw-agent-db-readonly-open-BCj4NoY3.mjs', 'openOpenClawAgentDatabaseReadOnly');
-  const ready = await owner('openclaw-agent-db-validation-cache-BNrrZWI-.mjs', 'hasOpenClawAgentCanonicalValidation');
-  const validation = await owner('openclaw-agent-db-validation-cache-BNrrZWI-.mjs', 'getOpenClawAgentDatabaseValidation');
-  const pending = await owner('session-canonical-validation-niO-sagy.mjs', 'hasPendingCanonicalSessionValidation');
-  const certify = await owner('session-canonical-validation-readiness-C_kdXYHx.mjs', 'certifySessionCanonicalValidationPending');
-  const closeAgents = await owner('openclaw-agent-db-lifecycle-CsUDPIt5.mjs', 'closeOpenClawAgentDatabasesAsync');
-  const closeState = await owner('openclaw-state-db-cache-C8EtTs-m.mjs', 'closeOpenClawStateDatabaseAsync');
+  const open = await owner('openclaw-agent-db-readonly-open-BstClAiL.mjs', 'openOpenClawAgentDatabaseReadOnly');
+  const ready = await owner('openclaw-agent-db-validation-cache-Blfx-KfM.mjs', 'hasOpenClawAgentCanonicalValidation');
+  const validation = await owner('openclaw-agent-db-validation-cache-Blfx-KfM.mjs', 'getOpenClawAgentDatabaseValidation');
+  const pending = await owner('session-canonical-validation-CEHXuR--.mjs', 'hasPendingCanonicalSessionValidation');
+  const certify = await owner('session-canonical-validation-readiness-CNCclwdx.mjs', 'certifySessionCanonicalValidationPending');
+  const closeAgents = await owner('openclaw-agent-db-lifecycle-BQIr8Oj2.mjs', 'closeOpenClawAgentDatabasesAsync');
+  const closeState = await owner('openclaw-state-db-cache-Cv7NmmpS.mjs', 'closeOpenClawStateDatabaseAsync');
   const read = open(options); assert.equal(read.found, true);
   const value = { ready: ready(read.database), pending: pending(read.database), integrityReceipt: !!validation(read.database), workers: 0 };
   read.database.close();
@@ -63,8 +64,8 @@ if (observe >= 0) {
   const verifier = require('../../../scripts/openclaw/verify-openclaw-runtime-patches.cjs');
   // Diagnostic mode never accepts an archived artifact as a current production build.
   const manifest = archivedDiagnostic
-    ? verifier.verifyFrozenOpenClawRuntime(runtimeRoot, { expectedVersion: 'v2026.10.6', requireBundle: true }).manifest
-    : verifier.verifyOpenClawPatchManifest(runtimeRoot, { expectedVersion: 'v2026.10.6', requireBundle: true });
+    ? verifier.verifyFrozenOpenClawRuntime(runtimeRoot, { expectedVersion, requireBundle: true }).manifest
+    : verifier.verifyOpenClawPatchManifest(runtimeRoot, { expectedVersion, requireBundle: true });
   for (const selected of Object.values(contract.modules)) {
     const bytes = fs.readFileSync(path.join(runtimeRoot, selected.path));
     assert.equal(digest(bytes), selected.sha256);
@@ -89,12 +90,12 @@ if (observe >= 0) {
   const cfg = { agents: { ownership: 'explicit', entries: { main: {} }, defaults: { systemAgent: { agentId: 'main' } } }, plugins: { enabled: false } };
   bind(fs.mkdtempSync(path.join(os.tmpdir(), 'canonical-import-')));
   const prepare = await owner('openclaw-database-schema-contracts-DxUwD7Ji.mjs', 'prepareOpenClawDatabaseSchemaContracts'); prepare();
-  const openState = await owner('openclaw-state-db-C4vt0QCr.mjs', 'openOpenClawStateDatabase');
-  const openAgent = await owner('openclaw-agent-db-DwWR59YS.mjs', 'openOpenClawAgentDatabase');
-  const write = await owner('openclaw-agent-db-DwWR59YS.mjs', 'runOpenClawAgentWriteTransaction');
-  const revoke = await owner('openclaw-agent-db-validation-cache-BNrrZWI-.mjs', 'invalidateOpenClawAgentCanonicalValidation');
-  const closeAgents = await owner('openclaw-agent-db-lifecycle-CsUDPIt5.mjs', 'closeOpenClawAgentDatabasesAsync');
-  const closeState = await owner('openclaw-state-db-cache-C8EtTs-m.mjs', 'closeOpenClawStateDatabaseAsync');
+  const openState = await owner('openclaw-state-db-RDcuGEfu.mjs', 'openOpenClawStateDatabase');
+  const openAgent = await owner('openclaw-agent-db-aORp2dHQ.mjs', 'openOpenClawAgentDatabase');
+  const write = await owner('openclaw-agent-db-aORp2dHQ.mjs', 'runOpenClawAgentWriteTransaction');
+  const revoke = await owner('openclaw-agent-db-validation-cache-Blfx-KfM.mjs', 'invalidateOpenClawAgentCanonicalValidation');
+  const closeAgents = await owner('openclaw-agent-db-lifecycle-BQIr8Oj2.mjs', 'closeOpenClawAgentDatabasesAsync');
+  const closeState = await owner('openclaw-state-db-cache-Cv7NmmpS.mjs', 'closeOpenClawStateDatabaseAsync');
   const rowEvent = JSON.stringify({ type: 'message', id: 'synthetic-message', parentId: null,
     message: { role: 'assistant', content: [{ type: 'text', text: 'Synthetic canonical preservation fixture.' }] } });
   async function seed() {

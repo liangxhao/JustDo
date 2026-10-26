@@ -93,25 +93,40 @@ ACP SDK 和 MCP client 的精确版本由根 `package.json` 管理，构建机�
 TypeScript 预编译时随 Runtime Services 打包。安装后无需另装 Node、npm 依赖或首启下载。
 客户端提供的 MCP 服务器应提前安装在本机，不由应用自动下载。
 
+新 worktree 运行源码 ACPX 插件单元测试前，还需按插件自身锁文件准备独立依赖；
+根目录的依赖安装不包含这份目录。离线命令如下，缺缓存即失败：
+
+```powershell
+npm --prefix plugins/extensions/acpx ci --offline --ignore-scripts --no-audit --no-fund --omit=dev
+```
+
+该准备仅写源码插件的 `node_modules/`，不修改包/锁文件或已冻结运行时。
+`smol-toml@1.9.0` 等依赖仍按插件 lock 的完整 integrity 验证。
+
 ## 8. OpenClaw 目录发布修复的 pristine 复验资源
 
 重建只使用锁定原包与完整的同版本依赖树，不能修改已经用于运行的冻结目录。
+原包声明的随包依赖也属于该归档的源码证明：`chrome-devtools-mcp@1.10.1`
+包含 OpenClaw 的快照身份和 frame 修复，不能用同版本公共 npm 包替代。
+准备器在 npm 安装后、生成 shrinkwrap 前，从已验证的 OpenClaw 原包恢复完整
+随包目录，并生成逐文件证明；无需另行下载 Chrome MCP。shrinkwrap 中的 registry
+integrity 仍只描述公共基础包，随包修复后的完整字节由 OpenClaw 原包和该证明约束。
 以下归档用于离线复验；OpenClaw 的 integrity 与 SHA-256 必须匹配当前补丁目录的
 `source-lock.json`，两个依赖的 integrity 必须匹配完整依赖树的 `npm-shrinkwrap.json`。
 
 | 下载地址 | 缓存文件 |
 | --- | --- |
-| [OpenClaw 2026.10.6](https://registry.npmjs.org/openclaw/-/openclaw-2026.10.6.tgz) | `cache/openclaw-publication-pristine/openclaw-2026.10.6.tgz` |
-| [fs-safe 0.25.0](https://registry.npmjs.org/@openclaw/fs-safe/-/fs-safe-0.25.0.tgz) | `cache/openclaw-publication-pristine/openclaw-fs-safe-0.25.0.tgz` |
-| [ai 2026.10.6](https://registry.npmjs.org/@openclaw/ai/-/ai-2026.10.6.tgz) | `cache/openclaw-publication-pristine/openclaw-ai-2026.10.6.tgz` |
+| [OpenClaw 2026.10.7](https://registry.npmjs.org/openclaw/-/openclaw-2026.10.7.tgz) | `cache/openclaw-publication-pristine/openclaw-2026.10.7.tgz` |
+| [fs-safe 0.26.0](https://registry.npmjs.org/@openclaw/fs-safe/-/fs-safe-0.26.0.tgz) | `cache/openclaw-publication-pristine/openclaw-fs-safe-0.26.0.tgz` |
+| [ai 2026.10.7](https://registry.npmjs.org/@openclaw/ai/-/ai-2026.10.7.tgz) | `cache/openclaw-publication-pristine/openclaw-ai-2026.10.7.tgz` |
 
 已经缓存这些归档时，以下命令只访问 npm 离线缓存；缺失就明确失败，不能在产品
 启动或测试中隐式联网补齐：
 
 ```powershell
-npm pack --offline openclaw@2026.10.6 --pack-destination cache/openclaw-publication-pristine
-npm pack --offline https://registry.npmjs.org/@openclaw/fs-safe/-/fs-safe-0.25.0.tgz --pack-destination cache/openclaw-publication-pristine
-npm pack --offline https://registry.npmjs.org/@openclaw/ai/-/ai-2026.10.6.tgz --pack-destination cache/openclaw-publication-pristine
+npm pack --offline openclaw@2026.10.7 --pack-destination cache/openclaw-publication-pristine
+npm pack --offline https://registry.npmjs.org/@openclaw/fs-safe/-/fs-safe-0.26.0.tgz --pack-destination cache/openclaw-publication-pristine
+npm pack --offline https://registry.npmjs.org/@openclaw/ai/-/ai-2026.10.7.tgz --pack-destination cache/openclaw-publication-pristine
 ```
 
 将校验后的原包解压到全新 `build/` 子目录，在完整同版本依赖中恢复这两个依赖
@@ -126,7 +141,7 @@ preinstall/postinstall 并释放所属锁，再执行现有 pristine 合同检�
 
 ## 8. 独立 Node 运行时
 
-OpenClaw 2026.10.6 要求 Node 24.22.1+。Electron 继续承载桌面 UI；Gateway、原生 CLI 与子任务使用完整随包 Node/npm，首启不下载。精确归档 SHA-256 锁定于 `src/shared/openclaw/nodeRuntime.json`，准备器验证归档并生成完整逐文件清单。
+OpenClaw 2026.10.7 要求 Node 24.22.1+。Electron 继续承载桌面 UI；Gateway、原生 CLI 与子任务使用完整随包 Node/npm，首启不下载。精确归档 SHA-256 锁定于 `src/shared/openclaw/nodeRuntime.json`，准备器验证归档并生成完整逐文件清单。
 
 | 平台 | 下载地址 | 缓存文件 |
 | --- | --- | --- |

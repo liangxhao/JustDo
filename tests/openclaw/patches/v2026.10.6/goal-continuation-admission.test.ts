@@ -1,3 +1,4 @@
+import { historicalRuntime } from './historical-runtime';
 import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
@@ -14,9 +15,10 @@ const ts = require('typescript');
 const { TARGETS, CONTRACT, NATIVE_ACCEPTED, NATIVE_EXPORTS, PLUGIN_EXECUTION_EXPORTS } = patch.__testing;
 const artifactRoot = path.resolve('.agent-tasks/goal-continuation');
 const roots: string[] = [];
-const pristine = process.env.GOAL_CONTINUATION_PRISTINE_DIR;
-const previousRuntime = process.env.GOAL_CONTINUATION_PREVIOUS_DIR;
-const fullGatewayBundle = process.env.GOAL_CONTINUATION_BUNDLE_FILE;
+const pristine = historicalRuntime(process.env.GOAL_CONTINUATION_PRISTINE_DIR);
+const previousRuntime = historicalRuntime(process.env.GOAL_CONTINUATION_PREVIOUS_DIR);
+const requestedBundle = process.env.GOAL_CONTINUATION_BUNDLE_FILE;
+const fullGatewayBundle = requestedBundle && historicalRuntime(path.dirname(requestedBundle)) ? requestedBundle : undefined;
 const queueChunk = pristine && path.join(pristine, 'dist/store-writer-queue-x_P9TrZs.mjs');
 const generationChunk = pristine && path.join(pristine, 'dist/subagent-session-read-scope-BxmKFZMd.mjs');
 const cohortChunk = pristine && path.join(pristine, 'dist/subagent-requester-settle-identity-BTPEwktB.mjs');

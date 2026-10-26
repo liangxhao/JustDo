@@ -1,3 +1,4 @@
+import { historicalRuntime } from './historical-runtime';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -7,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const patch = require('../../../../scripts/patches/v2026.10.6/022-native-compaction-lifecycle.cjs');
 const { justDoCreateCompactionHandlers, justDoRunRecoveryCompaction, transform, CONTRACT } = patch.__testing;
+const pristineRoot = historicalRuntime(process.env.JUSTDO_EXECUTION_PRISTINE_DIR);
 const key = 'agent:main:chat:compaction';
 const operationId = '9c57045e-05f0-4eec-9b2f-2118865b47bd';
 const deferred = () => {
@@ -40,8 +42,8 @@ const makeHandlers = (native: (options: any) => Promise<void>) => {
 
 afterEach(() => { vi.useRealTimers(); });
 
-it.skipIf(!process.env.JUSTDO_EXECUTION_PRISTINE_DIR)('binds the actual target handler-custody export and rejects the in-process authority alias', () => {
-  const pristine = process.env.JUSTDO_EXECUTION_PRISTINE_DIR!;
+it.skipIf(!pristineRoot)('binds the actual target handler-custody export and rejects the in-process authority alias', () => {
+  const pristine = pristineRoot!;
   const file = path.join(pristine, 'dist/sessions-compact-BM6UVlSB.mjs');
   const native = fs.readFileSync(file, 'utf8');
   expect(() => patch.__testing.assertNativeManualCustody(native, file)).not.toThrow();

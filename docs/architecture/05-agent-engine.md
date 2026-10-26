@@ -1,6 +1,6 @@
 # 执行引擎：配置、准入与 Gateway 恢复
 
-当前 Cowork 执行引擎是 OpenClaw。Router 提供稳定产品接口，Adapter 隔离原生 wire 与生命周期，Manager 托管运行时进程。本文按当前 v2026.10.6 集成组织，运行时补丁清单只维护在[版本目录](../../scripts/patches/v2026.10.6/README.md)。
+当前 Cowork 执行引擎是 OpenClaw。Router 提供稳定产品接口，Adapter 隔离原生 wire 与生命周期，Manager 托管运行时进程。本文按当前 v2026.10.7 集成组织，运行时补丁清单只维护在[版本目录](../../scripts/patches/v2026.10.7/README.md)。目标产物及尚未验收的范围见[本版验证](../openclaw-upgrades/v2026.10.7/validation.md)；文中较早版本的复现记录不自动扩展为本版通过证据。
 
 ## Code Mode 工具编排
 
@@ -67,11 +67,11 @@ EngineManager 的重试绕过此条件。普通打开记录与原生维护完成
 宿主预检伪造维护成功、引擎运行或任务执行终态。
 详细四路与失败恢复见[启动与历史升级](../features/app/startup-and-history-upgrade.md)。
 
-Chrome 侧聊通过 Runtime 的窄 `getRunTerminalReceipt` 读取已准入 whole-run `executionSettled:true` 的有界原生身份与终态元数据；chat final 后保留精确退役绑定以接受迟到末端。OpenClaw 10.6 不把内部 `lifecycleGeneration` 序列化到公共事件，缺字段不阻止精确原生 session、run、序列及 Main 连接代次准入；双方提供时仍拒绝冲突，首次显式代次会固定到退役绑定。yield 不作为整轮完成；原生明确 timeout 优先于机械 `aborted` 标志，保留为失败。
+Chrome 侧聊通过 Runtime 的窄 `getRunTerminalReceipt` 读取已准入 whole-run `executionSettled:true` 的有界原生身份与终态元数据；chat final 后保留精确退役绑定以接受迟到末端。OpenClaw 10.7 仍不把内部 `lifecycleGeneration` 序列化到公共事件，缺字段不阻止精确原生 session、run、序列及 Main 连接代次准入；双方提供时仍拒绝冲突，首次显式代次会固定到退役绑定。yield 不作为整轮完成；原生明确 timeout 优先于机械 `aborted` 标志，保留为失败。
 
 live 回执缺失时，Controller 仅能使用本进程发送准备已捕获的物理 session/key/连接代次补查精确 `agent.wait({runId,timeoutMs:0})`，并在前后 `sessions.describe` 核对身份和生命周期 revision。合法整轮终态还须有匹配 run、有限 `endedAt` 且非 yield；普通 wait timeout、idle、Stop ACK 均不生成终态。已验证的 wait 结算只缓存最多 100 项结果与身份元数据，后续读取仍复核当前原生身份，避免原生 wait 缓存过期或后续轮询使已确认结果倒退；不保存正文、不伪造事件序列。冷重启、连接代次变化或缺少原发送绑定时证据不足仍保持 unknown，不用当前 session 为旧 run 补造授权，也不补发输入。
 
-10.6 的取消通知与真实执行结算仍是两个时刻。补丁 019 只为首次原生取消发布保留
+10.7 的取消通知与真实执行结算仍是两个时刻。补丁 019 只为首次原生取消发布保留
 一次迟到结算名额，绑定原生 run、物理 session、agent 与内部生命周期代次；只有同一
 原生 producer 明确产生的 `end/error` 且 `executionSettled:true` 才能消费。缺失身份、
 重注册、过期代次及重复终态不得借用该名额，不把取消通知改写为结算，也不增加宿主
@@ -408,7 +408,7 @@ Goal 重放核对、会话用量和标题身份也使用同一目标的 `session
 
 Worktree 设置页同时接入 Gateway 全局 `worktreeRoot` / `worktreeAcceleration`。Main 通过原生 `config.get` 读取并仅投影目录、加速、配置版本和应用状态；保存通过与应用配置同步共享的排他队列及带 `baseHash` 的 `config.patch`，回读核对结果。超时/断线不重试写入，配置版本冲突要求重新读取。完整、无模型与认证配置同步保留这两项原生设置。目录变更和加速开关只影响新分配，已登记目录、快照和恢复路径保持原生所有权；页面显示默认目录与固定 `openclaw/<名称>` 分支规则，不将全局目录解释为项目同级布局。
 
-原生 WS 中的文本流由 Renderer 消费；Adapter 只将运行状态、交互、审批、Goal 和会话变化映射为产品事件。wire validator 固定到 v2026.10.6，未知或不合法字段不能在各调用方随意猜测。
+原生 WS 中的文本流由 Renderer 消费；Adapter 只将运行状态、交互、审批、Goal 和会话变化映射为产品事件。wire validator 当前目标为 v2026.10.7，保留 `v2026_10_6.ts` 既有入口以复用两版未变的协议；未知或不合法字段不能在各调用方随意猜测。
 
 网络超时可能发生在原生接收之后。run receipt 需要保留未知状态并查询原生事实；无条件重发将造成重复工具副作用。工具错误不必然是运行终态，late terminal 也不能结束新的 generation。
 
@@ -605,4 +605,4 @@ examples. See [CLI / ACP / app-server](../features/integrations/agent-cli.md).
 
 ### 目标版本 registry 发布边界
 
-v2026.10.6 的运行记录是不可变 postimage。产品 owned-run 元数据通过原生 `mutateSubagentRuns` 事务发布，保持物理 owner/generation、sessionId、epoch、revision 和提交回执核对；不直接修改已发布记录，也不调用已移除的持久化 API。取消、终态与清理继续依赖同一原生 owner；相同 runId 的新 owner 不继承旧回执。未知提交不启动第二次执行。
+v2026.10.7 的运行记录仍是不可变 postimage。产品 owned-run 元数据通过原生 `mutateSubagentRuns` 事务发布，保持物理 owner/generation、sessionId、epoch、revision 和提交回执核对；不直接修改已发布记录，也不调用已移除的持久化 API。取消、终态与清理继续依赖同一原生 owner；相同 runId 的新 owner 不继承旧回执。未知提交不启动第二次执行。

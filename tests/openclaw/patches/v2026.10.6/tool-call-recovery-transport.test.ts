@@ -1,3 +1,4 @@
+import { historicalRuntimeOrUnavailable } from './historical-runtime';
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -20,7 +21,7 @@ type AiHost = Record<string, unknown>;
 type AiModule = { getAiTransportHost(): AiHost; configureAiTransportHost(host: AiHost): void };
 type Transports = { createOpenAICompletionsTransportStreamFn(): (model: object, context: object, options: object) => NativeStream };
 
-const runtimeRoot = process.env.OPENCLAW_RUNTIME_DIR ?? path.resolve(__dirname, '../../../../build/runtimes/openclaw/win-x64');
+const runtimeRoot = historicalRuntimeOrUnavailable(process.env.OPENCLAW_RUNTIME_DIR ?? path.resolve(__dirname, '../../../../build/runtimes/openclaw/win-x64'));
 const sdkRoot = path.join(runtimeRoot, 'node_modules', '@openclaw', 'ai');
 const packagePath = path.join(sdkRoot, 'package.json');
 const hasRuntime = fs.existsSync(packagePath);

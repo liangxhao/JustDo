@@ -411,6 +411,18 @@ verification; no hashes are refreshed in place. `OPENCLAW_FORCE_INSTALL=1` alway
 forces that rebuild, including on repeated builds. Local resources and final
 packaged artifacts still pass their normal checks on every build.
 
+The locked OpenClaw archive also owns its declared bundled dependencies. After
+npm installs production dependencies, preparation restores each complete bundled
+tree from that authenticated pristine archive before generating the shrinkwrap.
+This retains OpenClaw's patched `chrome-devtools-mcp` snapshot and frame guards.
+The registry integrity remains evidence for the published base package; it is
+not presented as the integrity of the patched tree. A separate
+`runtime-bundled-dependencies.json` records the enclosing source identity and
+every bundled file's size and SHA-256. Its own hash is bound into the build proof
+and patch manifest. Pruning preserves the complete declared tree, and frozen
+runtime verification checks it again. Existing frozen artifacts cannot be
+repaired or re-signed through this preparation step.
+
 Python, MinGit and local speech preparation run in three separate processes with
 disjoint resource roots. All must finish successfully before archiving; a failure
 waits for the remaining processes before reporting the error. Windows' npm build
@@ -519,6 +531,10 @@ is required by this version and remains complete. See the
 for measured sizes, local capability checks and the separate installer/desktop
 acceptance boundary.
 
+That archive measurement remains historical 10.6 evidence. Current 10.7 resource,
+desktop and installer checks are recorded separately in the
+[current validation record](openclaw-upgrades/v2026.10.7/validation.md).
+
 The default deployment has no update feed. An empty address does
 not produce `app-update.yml`, an update-configuration marker, `latest.yml` or
 release history. Packaging also removes stale copies of those files. Installed
@@ -543,6 +559,6 @@ rebuilding; inherited environment variables cannot silently enable networking.
   and production native modules are x64. The check must distinguish these from
   the intentionally x86 NSIS installer, uninstaller, and elevation helper.
 
-## Bundled Node for OpenClaw 2026.10.6
+## Bundled Node for OpenClaw 2026.10.7
 
 The Gateway and native CLI use the complete pinned Node 24.22.1 distribution inside the OpenClaw runtime at `node-runtime/`. Electron remains the UI and product-database host. The runtime manifest binds the Node manifest; freeze and archive verification validate the full file tree, npm/npx, symlink topology and executable bytes. Missing or changed files fail preparation instead of selecting an external Node or downloading on first launch. Windows archive extraction preserves this exact subtree and its license files. Preparation inputs are listed only in [offline downloads](offline-downloads.md). macOS signing/notarization and other architecture installation checks require separate platform acceptance.

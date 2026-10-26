@@ -45,7 +45,7 @@ const nativeRuntime = path.resolve(
 
 function loadNativeRegistry(): NativeRegistryFactory {
   const metadata = JSON.parse(fs.readFileSync(path.join(nativeRuntime, 'package.json'), 'utf8'));
-  expect(metadata.version).toBe('2026.10.6');
+  expect(metadata.version).toBe('2026.10.7');
   const dist = path.join(nativeRuntime, 'dist');
   const registries = fs.readdirSync(dist).filter(
     name =>

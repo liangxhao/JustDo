@@ -30,6 +30,11 @@ const { prepareWindowsResources } = require('./prepare-windows-build.cjs');
 const { verifyApplicationLicenseAssets } = require('./application-license-assets.cjs');
 const { verifyNodeRuntime, targetContract } = require('../runtime/setup-node-runtime.cjs');
 const {
+  RUNTIME_BUNDLED_DEPENDENCIES_FILENAME,
+  assertBundledDependencyArchiveEntry,
+  readBundledDependencyPaths,
+} = require('../openclaw/openclaw-bundled-dependencies.cjs');
+const {
   resolveRuntimeInstallTarget,
   syncOpenClawRuntimeResources,
   verifyAcpxTargetDependencies,
@@ -122,6 +127,7 @@ const {
 } = require('../browser/prepare-browser-extension-dev-host.cjs');
 const {
   PATCH_MANIFEST_FILENAME,
+  readOpenClawSourceLock,
   verifyOpenClawPatchManifest,
 } = require('../openclaw/verify-openclaw-runtime-patches.cjs');
 const { PATCH_DEPENDENCY_ARTIFACT_PATHS } = require('../openclaw/openclaw-patch-dependencies.cjs');
@@ -1749,6 +1755,13 @@ async function afterAllArtifactBuild(context) {
   return [manifestPath, historyPath];
 }
 
+function isDeclaredBundledDependencyArchiveEntry(entryPath, entryType, directories) {
+  const normalized = entryPath.replace(/^\.\//, '').replace(/\\/g, '/');
+  if (!directories.some(directory => normalized === directory || normalized.startsWith(directory + '/'))) return false;
+  assertBundledDependencyArchiveEntry(normalized, entryType);
+  return true;
+}
+
 async function verifyPackagedOpenClawRuntime(context, options = {}) {
   // Internal test injection preserves the same verifier without using a mutable real runtime.
   const repoRoot = options.repoRoot || path.join(__dirname, '../..');
@@ -1784,6 +1797,7 @@ async function verifyPackagedOpenClawRuntime(context, options = {}) {
       const requiredEntries = new Set([
         `cfmind/${PATCH_MANIFEST_FILENAME}`,
         'cfmind/runtime-build-info.json',
+        `cfmind/${RUNTIME_BUNDLED_DEPENDENCIES_FILENAME}`,
         'cfmind/gateway-bundle.mjs',
         'cfmind/package.json',
         ...OPENCLAW_CLI_ROOT_FILES.map(name => `cfmind/${name}`),
@@ -1822,14 +1836,20 @@ async function verifyPackagedOpenClawRuntime(context, options = {}) {
           path.join(temporaryRoot, 'cfmind', 'gateway-bundle.mjs'),
         ).map(entry => `cfmind/${entry}`),
       );
-      if (companionEntries.size > 0) {
+      const bundledDirectories = readBundledDependencyPaths(path.join(temporaryRoot, 'cfmind'), {
+        sourceLock: readOpenClawSourceLock(repoRoot, packageVersion),
+      }).map(relative => `cfmind/${relative}`);
+      if (companionEntries.size > 0 || bundledDirectories.length > 0) {
         await pipeline(
           createReadStream(tarPath),
           createZstdDecompress(),
           tarModule.extract({
             cwd: temporaryRoot,
-            filter: entryPath =>
-              companionEntries.has(entryPath.replace(/^\.\//, '').replace(/\\/g, '/')),
+            filter: (entryPath, entry) => {
+              const normalized = entryPath.replace(/^\.\//, '').replace(/\\/g, '/');
+              return isDeclaredBundledDependencyArchiveEntry(normalized, entry.type, bundledDirectories) ||
+                companionEntries.has(normalized);
+            },
           }),
         );
       }
@@ -1912,6 +1932,7 @@ module.exports = {
   verifyPackagedNodeRuntime,
   verifyPackagedWindowsNativeModules,
   verifyPackagedOpenClawRuntime,
+  isDeclaredBundledDependencyArchiveEntry,
   verifyAcpxArtifactEntryPaths,
   verifyMxcArtifactEntryPaths,
   verifyPackagedBrowserExtension,

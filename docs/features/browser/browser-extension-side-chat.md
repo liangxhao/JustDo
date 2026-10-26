@@ -208,3 +208,7 @@ fixture 和本开发机通过不代表已复现用户安装现场；真正安装
 ## 上游 relay 基线
 
 v2026.10.6 对齐 tag `fe06181dc5ecc01cf8904abbfc26925925efefbc` 的原始浏览器扩展；`prepare.cjs` 锁定 29 项源码/资源校验。新增串行队列及 relay URL query 校验模块，与原生 Tab 授权、内部导航和恢复清理一起完整同步；产品 app-server、配对 transport、Side Panel 和固定扩展身份仍经既有 overlay 组合。构建校验不能代替安装版 Chrome Native Messaging/relay 实机验收。
+
+当前v2026.10.7的实际 `extensions/browser/chrome-extension` 与该10.6基线无差异，
+保留已锁定的源文件与overlay；上述来源提交仍说明源文件最初采用的版本。
+本版重新验证与未验收范围见[10.7验证记录](../../openclaw-upgrades/v2026.10.7/validation.md)。

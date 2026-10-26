@@ -1,0 +1,524 @@
+'use strict';
+
+// Capability: attach stable agent session/parent metadata, one-shot human initiation evidence,
+// and an internal chat.send user-turn visibility control.
+// Target: pristine openclaw@2026.10.7, which does not publish these fields to provider payloads.
+// Scope: chat.send schema/admission, native followup source identity, and the
+// builtin_models/openai-completions provider boundary.
+// Safety: parent identity is read through the v10.4 native read-only worker. Third-party providers
+// receive no added metadata, a human-run marker is consumed by its first model request only, and
+// hidden user turns require a local authenticated backend owner, remain in model context, and are
+// omitted by OpenClaw's native display projection.
+// Remove when: upstream exposes equivalent request metadata and chat user-turn visibility controls.
+
+const fs = require('fs');
+const path = require('path');
+const {
+  assertCurrentPatchContract,
+  findFilesContaining,
+  findMatchingDelimiter,
+  isGatewayBundlePath,
+  replaceUniquePattern,
+  writeIfChanged,
+} = require('./_patch-utils.js');
+
+const CONTRACT = 'RUNTIME_AGENT_REQUEST_METADATA_AND_HIDDEN_TURNS_V2026_10_7';
+const SCHEMA_MARKER = `${CONTRACT}: queued-input revision chat send schema`;
+const ADMISSION_MARKER = `${CONTRACT}: queued-input revision human run admission`;
+const VISIBILITY_MARKER = `${CONTRACT}: queued-input revision hidden user turn`;
+const STREAM_MARKER = `${CONTRACT}: queued-input revision built-in model service payload only`;
+const FOLLOWUP_MARKER = `${CONTRACT}: queued-input revision source initiation transfer`;
+const FOLLOWUP_TRANSFER = `// ${FOLLOWUP_MARKER}
+const justDoFollowupHumanRuns = globalThis[Symbol.for("justdo.builtin-models.human-runs")];
+if (justDoFollowupHumanRuns?.delete(sourceTurnId)) justDoFollowupHumanRuns.add(turn.runId);`;
+const ACCESSOR_ALIAS = 'loadJustDoSessionEntry';
+const TRANSPORT_FUNCTION = 'prepareEmbeddedAttemptTransport';
+const SUPPORTED_APIS = 'new Set(["openai-completions"])';
+const SUPPORTED_PROVIDERS = 'new Set(["builtin_models"])';
+const HUMAN_RUN_ADMISSION_PATTERN =
+  /if\s*\(\s*[A-Za-z_$][\w$]*\.justdoUserInitiated\s*===\s*true\s*\)\s*\{[\s\S]*?humanRuns\.add\(clientRunId\);[\s\S]*?\}/;
+const HIDDEN_USER_TURN_PATTERN =
+  /[A-Za-z_$][\w$]*\.justdoHideUserMessage\s*===\s*true\s*&&\s*[A-Za-z_$][\w$]*\?\.internal\?\.isLocalClient\s*===\s*true\s*&&\s*[A-Za-z_$][\w$]*\?\.connect\?\.client\?\.id\s*===\s*["']gateway-client["']\s*&&\s*[A-Za-z_$][\w$]*\?\.connect\?\.client\?\.mode\s*===\s*["']backend["']\s*&&\s*[A-Za-z_$][\w$]*\?\.connect\?\.scopes\?\.includes\(["']operator\.admin["']\)\s*\?\s*\{\s*\.\.\.[A-Za-z_$][\w$]*\?\.transcript,\s*display:\s*false\s*\}\s*:\s*[A-Za-z_$][\w$]*\?\.transcript/;
+
+const WRAPPER = `const justDoAgentMetadataApis = ${SUPPORTED_APIS};
+const justDoAgentMetadataProviders = ${SUPPORTED_PROVIDERS};
+// ${STREAM_MARKER}.
+async function wrapJustDoAgentRequestMetadata(streamFn, params) {
+\tconst humanRuns = globalThis[Symbol.for("justdo.builtin-models.human-runs")];
+\tif (!justDoAgentMetadataProviders.has(params.modelProvider) || !justDoAgentMetadataApis.has(params.modelApi)) {
+\t\thumanRuns?.delete(params.runId);
+\t\treturn streamFn;
+\t}
+\tconst sessionId = typeof params.sessionId === "string" ? params.sessionId.trim() : "";
+\tif (!sessionId) {
+\t\thumanRuns?.delete(params.runId);
+\t\treturn streamFn;
+\t}
+\tlet childEntry;
+\tif (params.sessionKey) try {
+\t\tchildEntry = await ${ACCESSOR_ALIAS}({
+\t\t\tagentId: params.agentId,
+\t\t\tsessionKey: params.sessionKey,
+\t\t\tstorePath: params.storePath,
+\t\t\treadConsistency: "latest"
+\t\t}, params.assertCurrent, async (read) => read.ok ? read.value : void 0);
+\t} catch {}
+\tparams.assertCurrent();
+\tconst storedSessionId = typeof childEntry?.sessionId === "string" ? childEntry.sessionId.trim() : "";
+\tconst persistedParentSessionId = storedSessionId === sessionId && typeof childEntry?.parentSessionId === "string"
+\t\t? childEntry.parentSessionId.trim()
+\t\t: "";
+\tconst parentSessionId = persistedParentSessionId && persistedParentSessionId !== sessionId
+\t\t? persistedParentSessionId
+\t\t: void 0;
+\tlet firstRequest = true;
+\tconst wrapped = (model, context, options) => streamWithPayloadPatch(streamFn, model, context, options, (payload) => {
+\t\tconst existing = payload.metadata && typeof payload.metadata === "object" && !Array.isArray(payload.metadata)
+\t\t\t? payload.metadata
+\t\t\t: {};
+\t\tpayload.metadata = { ...existing, session_id: sessionId, request_purpose: "agent" };
+\t\tif (parentSessionId) payload.metadata.parent_session_id = parentSessionId;
+\t\telse delete payload.metadata.parent_session_id;
+\t\tif (firstRequest && humanRuns?.delete(params.runId)) payload.metadata.user_initiated = true;
+\t\telse delete payload.metadata.user_initiated;
+\t\tfirstRequest = false;
+\t});
+\tconst metadataStreams = globalThis[Symbol.for("justdo.builtin-models.metadata-streams")] ??= new WeakSet();
+\tmetadataStreams.add(wrapped);
+\treturn wrapped;
+}`;
+
+function expectedCounts(runtimeDir) {
+  const withBundle = fs.existsSync(path.join(runtimeDir, 'gateway-bundle.mjs'));
+  return {
+    schema: withBundle ? 2 : 1,
+    registration: withBundle ? 2 : 1,
+    stream: withBundle ? 2 : 1,
+    followup: withBundle ? 2 : 1,
+  };
+}
+
+function patchSchema(content, filePath) {
+  assertCurrentPatchContract(content, CONTRACT, filePath, false);
+  const hasUserInitiated = content.includes('justdoUserInitiated:');
+  const hasHiddenUserMessage = content.includes('justdoHideUserMessage:');
+  if (hasUserInitiated || hasHiddenUserMessage) {
+    if (!hasUserInitiated || !hasHiddenUserMessage)
+      throw new Error(`${filePath}: historical or partial chat.send metadata schema`);
+    if (!isGatewayBundlePath(filePath) && !content.includes(SCHEMA_MARKER))
+      throw new Error(`${filePath}: historical or partial chat.send metadata schema`);
+    return content;
+  }
+  const objectPattern =
+    /(systemInputProvenance:\s*([A-Za-z_$][\w$]*)\.Optional\(InputProvenanceSchema\),\s*)(systemProvenanceReceipt:)/;
+  if (objectPattern.test(content)) {
+    return replaceUniquePattern(
+      content,
+      objectPattern,
+      (_match, prefix, typebox, suffix) =>
+        `${prefix}justdoUserInitiated: ${typebox}.Optional(${typebox}.Boolean()),\njustdoHideUserMessage: ${typebox}.Optional(${typebox}.Boolean()), // ${SCHEMA_MARKER}\n${suffix}`,
+      `${filePath}: chat.send human initiation schema`,
+    );
+  }
+  return replaceUniquePattern(
+    content,
+    /(systemInputProvenance:\s*([A-Za-z_$][\w$]*)\(InputProvenanceSchema\),\s*)(systemProvenanceReceipt:[\s\S]*?suppressCommandInterpretation:\s*\2\(([A-Za-z_$][\w$]*)\(\)\))/,
+    (_match, prefix, optional, suffix, boolean) =>
+      `${prefix}justdoUserInitiated:${optional}(${boolean}()),justdoHideUserMessage:${optional}(${boolean}()),/*${SCHEMA_MARKER}*/${suffix}`,
+    `${filePath}: worker chat.send human initiation schema`,
+  );
+}
+
+function patchChatRegistration(content, filePath) {
+  assertCurrentPatchContract(content, CONTRACT, filePath, false);
+  if (HUMAN_RUN_ADMISSION_PATTERN.test(content) !== HIDDEN_USER_TURN_PATTERN.test(content))
+    throw new Error(`${filePath}: historical or partial human admission and hidden user turn`);
+  let updated = content;
+  if (HUMAN_RUN_ADMISSION_PATTERN.test(updated)) {
+    if (!isGatewayBundlePath(filePath) && !content.includes(ADMISSION_MARKER))
+      throw new Error(`${filePath}: historical or partial human run admission`);
+  } else {
+    updated = replaceUniquePattern(
+      updated,
+      /(\b[A-Za-z_$][\w$]*\.addChatRun\(clientRunId,\s*\{\s*sessionKey,)/,
+      `// ${ADMISSION_MARKER}
+\t\tif (p.justdoUserInitiated === true) {
+\t\t\tconst humanRuns = globalThis[Symbol.for("justdo.builtin-models.human-runs")] ??= new Set();
+\t\t\thumanRuns.add(clientRunId);
+\t\t\tif (humanRuns.size > 4096) humanRuns.delete(humanRuns.values().next().value);
+\t\t}
+\t\t$1`,
+      `${filePath}: chat.send human run admission`,
+    );
+  }
+  if (HIDDEN_USER_TURN_PATTERN.test(updated)) {
+    if (!isGatewayBundlePath(filePath) && !updated.includes(VISIBILITY_MARKER))
+      throw new Error(`${filePath}: historical or partial hidden user turn`);
+    return updated;
+  }
+  return replaceUniquePattern(
+    updated,
+    /transcript:\s*([A-Za-z_$][\w$]*)\?\.transcript,/,
+    (_match, optionsName) =>
+      `transcript: p.justdoHideUserMessage === true && client?.internal?.isLocalClient === true && client?.connect?.client?.id === "gateway-client" && client?.connect?.client?.mode === "backend" && client?.connect?.scopes?.includes("operator.admin") ? { ...${optionsName}?.transcript, display: false } : ${optionsName}?.transcript, // ${VISIBILITY_MARKER}`,
+    `${filePath}: hidden chat.send user turn`,
+  );
+}
+
+function resolveAccessorImport(runtimeDir) {
+  const files = findFilesContaining(
+    runtimeDir,
+    ['async function withSessionEntryReadOnlyInWorker(', 'export {'],
+    {
+      includeBundle: false,
+    },
+  ).filter(
+    filePath =>
+      !['worker.mjs', 'sqlite-store.worker.mjs', 'package-update-activation-recovery.mjs'].includes(
+        path.basename(filePath),
+      ),
+  );
+  if (files.length !== 1)
+    throw new Error(`SQLite session accessor target count is ${files.length}, expected 1`);
+  const content = fs.readFileSync(files[0], 'utf8');
+  const exportAlias = /\bwithSessionEntryReadOnlyInWorker as ([A-Za-z_$][\w$]*)\b/.exec(
+    content,
+  )?.[1];
+  if (!exportAlias) throw new Error('SQLite session accessor export alias is missing');
+  return { exportAlias, fileName: path.basename(files[0]) };
+}
+
+function installAccessorAndWrapper(content, runtimeDir, filePath, functionIndex) {
+  assertCurrentPatchContract(content, CONTRACT, filePath, false);
+  if (/function\s+wrapJustDoAgentRequestMetadata\(/.test(content)) {
+    if (!isGatewayBundlePath(filePath) && !content.includes(STREAM_MARKER))
+      throw new Error(`${filePath}: historical or partial agent metadata wrapper`);
+    return content;
+  }
+  let updated = content;
+  if (
+    path.basename(filePath) === 'gateway-bundle.mjs' ||
+    ['worker.mjs', 'sqlite-store.worker.mjs', 'package-update-activation-recovery.mjs'].includes(
+      path.basename(filePath),
+    )
+  ) {
+    updated = `${updated.slice(0, functionIndex)}const ${ACCESSOR_ALIAS} = withSessionEntryReadOnlyInWorker;\n${WRAPPER}\n${updated.slice(functionIndex)}`;
+  } else {
+    const accessor = resolveAccessorImport(runtimeDir);
+    updated = `import { ${accessor.exportAlias} as ${ACCESSOR_ALIAS} } from "./${accessor.fileName}";\n${updated}`;
+    const shiftedIndex = updated.indexOf(`async function ${TRANSPORT_FUNCTION}(`);
+    updated = `${updated.slice(0, shiftedIndex)}${WRAPPER}\n${updated.slice(shiftedIndex)}`;
+  }
+  return updated;
+}
+
+function patchAgentStream(content, runtimeDir, filePath) {
+  const hadWrapper = /function\s+wrapJustDoAgentRequestMetadata\(/.test(content);
+  const signature = `async function ${TRANSPORT_FUNCTION}(`;
+  let functionIndex = content.indexOf(signature);
+  if (functionIndex < 0 || content.indexOf(signature, functionIndex + signature.length) >= 0)
+    throw new Error(`${filePath}: transport function is missing or ambiguous`);
+  let updated = installAccessorAndWrapper(content, runtimeDir, filePath, functionIndex);
+  functionIndex = updated.indexOf(signature);
+  const parameterStart = functionIndex + signature.length - 1;
+  const parameterEnd = findMatchingDelimiter(
+    updated,
+    parameterStart,
+    '(',
+    ')',
+    `${filePath}: transport parameters`,
+  );
+  const inputName = updated.slice(parameterStart + 1, parameterEnd).trim();
+  if (!/^[A-Za-z_$][\w$]*$/.test(inputName))
+    throw new Error(`${filePath}: transport input parameter is unknown`);
+  let bodyStart = parameterEnd + 1;
+  while (/\s/.test(updated[bodyStart] ?? '')) bodyStart += 1;
+  const bodyEnd = findMatchingDelimiter(
+    updated,
+    bodyStart,
+    '{',
+    '}',
+    `${filePath}: transport body`,
+  );
+  const body = updated.slice(bodyStart + 1, bodyEnd);
+  const attemptName = new RegExp(
+    `\\b([A-Za-z_$][\\w$]*)\\s*=\\s*${inputName.replace(/[$]/g, '\\$&')}\\.attempt\\b`,
+  ).exec(body)?.[1];
+  const sessionName = new RegExp(
+    `\\b([A-Za-z_$][\\w$]*)\\s*=\\s*${inputName.replace(/[$]/g, '\\$&')}\\.session\\b`,
+  ).exec(body)?.[1];
+  if (!attemptName || !sessionName)
+    throw new Error(`${filePath}: transport attempt/session variables are unknown`);
+  // Sharing the native authority owner keeps this resolver as an external ESM
+  // import. esbuild gives repeated imports numeric local suffixes in the bundle.
+  // Native source still requires its exact pinned name; neither missing nor
+  // ambiguous assertions may bypass the final provider boundary.
+  const resolver = isGatewayBundlePath(filePath)
+    ? 'resolveAdmittedRunActiveAssertion\\d*'
+    : 'resolveAdmittedRunActiveAssertion';
+  const assertions = [
+    ...body.matchAll(new RegExp(`\\b([A-Za-z_$][\\w$]*)\\s*=\\s*${resolver}\\(`, 'g')),
+  ];
+  if (assertions.length !== 1)
+    throw new Error(
+      `${filePath}: transport authority assertion is ${assertions.length ? 'ambiguous' : 'missing'}`,
+    );
+  const assertionName = assertions[0][1];
+  const installationNeedle = `${sessionName}.agent.streamFn = await wrapJustDoAgentRequestMetadata(`;
+  const installed = body.includes(installationNeedle);
+  if (hadWrapper !== installed)
+    throw new Error(`${filePath}: partial agent metadata wrapper installation`);
+  if (installed) return updated;
+  const installation = `${sessionName}.agent.streamFn = await wrapJustDoAgentRequestMetadata(${sessionName}.agent.streamFn, {
+\t\tassertCurrent: ${assertionName},
+\t\tsessionId: ${attemptName}.sessionId,
+\t\trunId: ${attemptName}.runId,
+\t\tsessionKey: ${attemptName}.sessionKey,
+\t\tagentId: ${inputName}.sessionAgentId,
+\t\tstorePath: ${attemptName}.sessionTarget?.storePath,
+\t\tmodelApi: ${attemptName}.model.api,
+\t\tmodelProvider: ${attemptName}.model.provider
+\t});`;
+  // 10.4 appends provider service-tier policy after the API-key wrapper. Install
+  // after both, retaining the final stream's metadata identity for compaction.
+  const patchedBody = replaceUniquePattern(
+    body,
+    /return\s*\{\s*serverToolClearingEnabled(?=[,:])/,
+    match => `${installation}\n${match}`,
+    `${filePath}: final transport observer boundary`,
+  );
+  return `${updated.slice(0, bodyStart + 1)}${patchedBody}${updated.slice(bodyEnd)}`;
+}
+
+function patchFollowupInitiation(content, filePath) {
+  assertCurrentPatchContract(content, CONTRACT, filePath, false);
+  const binding =
+    /replyRunRegistry\.bindSourceTurnId\(([A-Za-z_$][\w$]*)\.operation,\s*([A-Za-z_$][\w$]*)\)/;
+  const match = binding.exec(content);
+  if (!match) throw new Error(`${filePath}: queued source identity binding missing`);
+  const transfer = FOLLOWUP_TRANSFER.replaceAll('sourceTurnId', match[2]).replaceAll(
+    'turn.runId',
+    `${match[1]}.runId`,
+  );
+  if (content.includes(FOLLOWUP_MARKER)) {
+    if (!content.includes(transfer))
+      throw new Error(`${filePath}: partial queued human initiation transfer`);
+    return content;
+  }
+  if (content.includes('justDoFollowupHumanRuns')) {
+    // esbuild removes the source marker and may rename local bindings. Accept
+    // only the complete current transfer immediately after its native binding,
+    // with the same source/destination identities; never repair partial output.
+    const escapeIdentifier = value => value.replace(/[$]/g, '\\$&');
+    const compiledTransfer = new RegExp(
+      '^\\s*,\\s*\\(\\(\\)\\s*=>\\s*\\{\\s*' +
+        'const\\s+(justDoFollowupHumanRuns\\d*)\\s*=\\s*globalThis\\[\\s*' +
+        '(?:/\\*\\s*@__PURE__\\s*\\*/\\s*)?' +
+        'Symbol\\.for\\("justdo\\.builtin-models\\.human-runs"\\)\\s*\\];\\s*' +
+        `if\\s*\\(\\1\\?\\.delete\\(${escapeIdentifier(match[2])}\\)\\)\\s*` +
+        `\\1\\.add\\(${escapeIdentifier(match[1])}\\.runId\\);\\s*\\}\\)\\(\\)`,
+    );
+    if (
+      isGatewayBundlePath(filePath) &&
+      content.match(new RegExp(binding.source, 'g'))?.length === 1 &&
+      compiledTransfer.test(content.slice(match.index + match[0].length))
+    )
+      return content;
+    throw new Error(`${filePath}: historical or partial queued human initiation transfer`);
+  }
+  // Native source identity is already resolved and bound here, immediately
+  // before execution; never replace native run IDs or infer identity from text.
+  return replaceUniquePattern(
+    content,
+    binding,
+    nativeBinding => `(${nativeBinding}, (() => {\n${transfer}\n})())`,
+    `${filePath}: queued human initiation transfer`,
+  );
+}
+
+function targetFiles(runtimeDir) {
+  return {
+    schema: findFilesContaining(runtimeDir, [
+      'ChatSendParamsSchema',
+      'systemInputProvenance:',
+      'systemProvenanceReceipt:',
+    ]),
+    registration: findFilesContaining(runtimeDir, [
+      'addChatRun(clientRunId, {',
+      'chatSendReceivedAtMs',
+    ]),
+    stream: findFilesContaining(runtimeDir, [
+      `async function ${TRANSPORT_FUNCTION}(`,
+      'streamWithPayloadPatch',
+    ]),
+    followup: findFilesContaining(runtimeDir, ['async function executeFollowupTurn(']),
+  };
+}
+
+function assertTargetCounts(runtimeDir, files) {
+  const expected = expectedCounts(runtimeDir);
+  for (const key of ['schema', 'registration', 'stream', 'followup']) {
+    if (files[key].length !== expected[key])
+      throw new Error(
+        `${key} metadata target count is ${files[key].length}, expected ${expected[key]}`,
+      );
+  }
+}
+
+function applyPatch(runtimeDir) {
+  const files = targetFiles(runtimeDir);
+  assertTargetCounts(runtimeDir, files);
+  const transforms = new Map();
+  const add = (filePath, transform) => {
+    transforms.set(filePath, [...(transforms.get(filePath) ?? []), transform]);
+  };
+  for (const filePath of files.schema) add(filePath, patchSchema);
+  for (const filePath of files.registration) add(filePath, patchChatRegistration);
+  for (const filePath of files.stream)
+    add(filePath, (content, target) => patchAgentStream(content, runtimeDir, target));
+  for (const filePath of files.followup) add(filePath, patchFollowupInitiation);
+  const states = [];
+  const plans = [...transforms].map(([filePath, fileTransforms]) => {
+    const original = fs.readFileSync(filePath, 'utf8');
+    const updated = fileTransforms.reduce((current, transform) => {
+      const next = transform(current, filePath);
+      states.push(next === current);
+      return next;
+    }, original);
+    return { filePath, original, updated };
+  });
+  if (states.some(Boolean) && !states.every(Boolean))
+    throw new Error('Mixed pristine and patched agent metadata targets');
+  return plans.flatMap(({ filePath, original, updated }) =>
+    writeIfChanged(filePath, original, updated) ? [path.relative(runtimeDir, filePath)] : [],
+  );
+}
+
+function verifyAsyncSessionRead(content, filePath) {
+  const signature = 'async function wrapJustDoAgentRequestMetadata(';
+  const start = content.indexOf(signature);
+  if (start < 0) throw new Error(`${filePath}: async metadata helper is missing`);
+  const bodyStart = content.indexOf('{', start + signature.length);
+  const bodyEnd = findMatchingDelimiter(
+    content,
+    bodyStart,
+    '{',
+    '}',
+    `${filePath}: metadata helper`,
+  );
+  const helper = content.slice(start, bodyEnd + 1);
+  // esbuild resolves the imported alias in the final bundle. Source retains its
+  // explicit JustDo binding; never accept a matching read elsewhere in the file.
+  const accessor = isGatewayBundlePath(filePath)
+    ? 'withSessionEntryReadOnlyInWorker'
+    : 'loadJustDoSessionEntry';
+  if (!helper.includes(`await ${accessor}(`) || !helper.includes('readConsistency: "latest"'))
+    throw new Error(`${filePath}: async native metadata read is missing`);
+  if (helper.includes('sessions.json'))
+    throw new Error(`${filePath}: metadata helper reads legacy session files`);
+  const readStart = helper.indexOf(`await ${accessor}(`);
+  if (
+    !/\},\s*params\.assertCurrent,\s*async\s*\([A-Za-z_$][\w$]*\)/.test(helper) ||
+    helper.indexOf('params.assertCurrent()', readStart) < 0
+  )
+    throw new Error(`${filePath}: metadata read lacks current-run authority checks`);
+}
+
+function verifyPatch(runtimeDir) {
+  const files = targetFiles(runtimeDir);
+  assertTargetCounts(runtimeDir, files);
+  for (const filePath of files.followup) {
+    const content = fs.readFileSync(filePath, 'utf8');
+    if (!isGatewayBundlePath(filePath) && !content.includes(FOLLOWUP_MARKER))
+      throw new Error(`${filePath}: current queued human initiation transfer is missing`);
+    if (
+      !/justDoFollowupHumanRuns\w*\?\.delete\([A-Za-z_$][\w$]*\)/.test(content) ||
+      !/justDoFollowupHumanRuns\w*\.add\([A-Za-z_$][\w$]*\.runId\)/.test(content)
+    )
+      throw new Error(`${filePath}: queued human initiation transfer is missing`);
+    patchFollowupInitiation(content, filePath);
+  }
+  for (const filePath of files.schema) {
+    const content = fs.readFileSync(filePath, 'utf8');
+    assertCurrentPatchContract(content, CONTRACT, filePath, !isGatewayBundlePath(filePath));
+    if (!isGatewayBundlePath(filePath) && !content.includes(SCHEMA_MARKER))
+      throw new Error(`${filePath}: current chat.send metadata schema marker is missing`);
+    if (
+      !/justdoUserInitiated:\s*(?:[A-Za-z_$][\w$]*\.Optional\([A-Za-z_$][\w$]*\.Boolean\(\)\)|[A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*\(\)\))/.test(
+        content,
+      )
+    )
+      throw new Error(`${filePath}: chat.send human initiation schema is missing`);
+    if (
+      !/justdoHideUserMessage:\s*(?:[A-Za-z_$][\w$]*\.Optional\([A-Za-z_$][\w$]*\.Boolean\(\)\)|[A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*\(\)\))/.test(
+        content,
+      )
+    )
+      throw new Error(`${filePath}: hidden chat.send user message schema is missing`);
+  }
+  for (const filePath of files.registration) {
+    const content = fs.readFileSync(filePath, 'utf8');
+    assertCurrentPatchContract(content, CONTRACT, filePath, !isGatewayBundlePath(filePath));
+    if (!isGatewayBundlePath(filePath) && !content.includes(ADMISSION_MARKER))
+      throw new Error(`${filePath}: current human run admission marker is missing`);
+    if (!HUMAN_RUN_ADMISSION_PATTERN.test(content))
+      throw new Error(`${filePath}: human run admission is missing`);
+    if (!HIDDEN_USER_TURN_PATTERN.test(content))
+      throw new Error(`${filePath}: hidden chat.send user turn is missing`);
+    if (!isGatewayBundlePath(filePath) && !content.includes(VISIBILITY_MARKER))
+      throw new Error(`${filePath}: current hidden user turn marker is missing`);
+  }
+  for (const filePath of files.stream) {
+    const content = fs.readFileSync(filePath, 'utf8');
+    assertCurrentPatchContract(content, CONTRACT, filePath, !isGatewayBundlePath(filePath));
+    if (!isGatewayBundlePath(filePath) && !content.includes(STREAM_MARKER))
+      throw new Error(`${filePath}: current agent metadata wrapper marker is missing`);
+    for (const required of [
+      'new Set(["builtin_models"])',
+      'new Set(["openai-completions"])',
+      'session_id: sessionId',
+      'parent_session_id = parentSessionId',
+      'user_initiated = true',
+      'request_purpose: "agent"',
+      'metadataStreams.add(wrapped)',
+      '.sessionTarget?.storePath',
+      'readConsistency: "latest"',
+      'params.assertCurrent()',
+    ]) {
+      if (!content.includes(required)) throw new Error(`${filePath}: missing ${required}`);
+    }
+    verifyAsyncSessionRead(content, filePath);
+    const helperStart = content.indexOf('function wrapJustDoAgentRequestMetadata(');
+    const transportStart = content.indexOf(`async function ${TRANSPORT_FUNCTION}(`, helperStart);
+    if (content.slice(helperStart, transportStart).includes('sessions.json'))
+      throw new Error(`${filePath}: metadata patch contains a legacy sessions.json dependency`);
+    const installIndex = content.indexOf('.agent.streamFn = await wrapJustDoAgentRequestMetadata(');
+    const nextTransportStepIndex = content.indexOf(
+      'compactionReplayEnabled: resolveCompactionReplayEligibility(',
+      installIndex,
+    );
+    if (installIndex < 0 || nextTransportStepIndex < installIndex)
+      throw new Error(`${filePath}: metadata wrapper is outside the final provider boundary`);
+  }
+}
+
+module.exports = {
+  applyPatch,
+  patchAgentStream,
+  patchChatRegistration,
+  patchFollowupInitiation,
+  patchSchema,
+  verifyPatch,
+  __testing: {
+    verifyAsyncSessionRead,
+    ADMISSION_MARKER,
+    CONTRACT,
+    SCHEMA_MARKER,
+    STREAM_MARKER,
+    VISIBILITY_MARKER,
+    SUPPORTED_APIS,
+    SUPPORTED_PROVIDERS,
+    WRAPPER,
+    FOLLOWUP_TRANSFER,
+  },
+};

@@ -1,6 +1,6 @@
 # 原生 Worktree 与会话接入
 
-应用通过 OpenClaw 的托管接口创建和管理 Git worktree。分支、检出、快照、恢复与清理继续由原生运行时拥有；应用只保存产品会话映射、执行目录和入口偏好，不实现第二套 Git 生命周期。当前锁定运行时为 2026.10.6，未完成的真实 Gateway/模型验收见[现行说明与验证边界](#当前验证边界)。
+应用通过 OpenClaw 的托管接口创建和管理 Git worktree。分支、检出、快照、恢复与清理继续由原生运行时拥有；应用只保存产品会话映射、执行目录和入口偏好，不实现第二套 Git 生命周期。当前锁定运行时为 2026.10.7，未完成的真实 Gateway/模型验收见[现行说明与验证边界](#当前验证边界)。
 
 ## 用户入口
 
@@ -47,7 +47,7 @@ Worktree 会话暂不支持复制/分叉：普通消息 fork 不继承检出所�
 
 行为测试覆盖 `worktreeSession` 的创建回执、未知结果和保留检出，`worktreeSettingsService` 的版本冲突与应用确认，OpenClaw IPC 的引用保护，以及 Runtime Adapter 的继续和权限同步。这些入口不是本轮重新执行通过的声明。
 
-本轮新增清理任务测试覆盖 queued/running/completed/failed、原任务查询、跨窗口合并、超时/断线保留、错误任务 ID、过期 Gateway 和旧同步结果拒绝。原生协议用例从严格校验的 v2026.10.6 产物加载实际 maintenance owner，只控制 scheduler 与 `runGc`；它验证回执与提交次数，不执行真实文件回收，也不启动 Gateway。专项结果见[模块接口审计报告](../../openclaw-upgrades/v2026.10.6/module-api-audit.md)。
+10.6 升级时新增的清理任务测试覆盖 queued/running/completed/failed、原任务查询、跨窗口合并、超时/断线保留、错误任务 ID、过期 Gateway 和旧同步结果拒绝。当时的原生协议用例从严格校验的 v2026.10.6 产物加载实际 maintenance owner，只控制 scheduler 与 `runGc`；它验证回执与提交次数，不执行真实文件回收，也不启动 Gateway。历史结果见[10.6模块接口审计](../../openclaw-upgrades/v2026.10.6/module-api-audit.md)；本版重新执行范围见[10.7验证](../../openclaw-upgrades/v2026.10.7/validation.md)。
 
 真实运行验证边界见下节，不将协议测试视为完整产品验收。
 

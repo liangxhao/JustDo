@@ -1,3 +1,4 @@
+import { historicalRuntimeOrUnavailable } from './historical-runtime';
 /* eslint-disable @typescript-eslint/no-explicit-any -- Native VM fixtures exercise the locked JavaScript runtime's heterogeneous internal records. */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -10,7 +11,7 @@ const patch = require('../../../../scripts/patches/v2026.10.6/029-tool-call-form
 const { extractFunction } = patch.__testing;
 const root = path.resolve(__dirname, '../../../..');
 const dist = path.join(
-  process.env.OPENCLAW_PRISTINE_DIR ?? path.join(root, 'build/runtimes/openclaw/win-x64'),
+  historicalRuntimeOrUnavailable(process.env.OPENCLAW_PRISTINE_DIR ?? path.join(root, 'build/runtimes/openclaw/win-x64')),
   'dist',
 );
 const nativeFile =

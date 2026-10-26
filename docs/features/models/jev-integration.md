@@ -41,7 +41,7 @@ charges. Results use the existing OpenClaw stream, without a transcript cache.
 
 ## Native decision tool
 
-OpenClaw 2026.10.6 owns the provider-neutral `decision_evaluate` tool. It accepts
+OpenClaw 2026.10.7 owns the provider-neutral `decision_evaluate` tool. It accepts
 Boolean, Choice and Score questions and routes them through the selected agent's
 `decisionModel`. TypeSafe is a decision provider, with manifest-declared capabilities,
 lazy evaluator loading, and native decision fallback for TypeSafe HTTP 400, 413

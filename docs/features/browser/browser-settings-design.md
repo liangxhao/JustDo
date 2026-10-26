@@ -177,4 +177,10 @@ WebContentsView 迁移需单独验证 DPI/bounds、焦点、输入、实时标�
 
 ## 2026.10.6 上游基线复核
 
-当前原生基线取自锁定 tag 的 `extensions/browser/chrome-extension`；完整更新 background、native-bootstrap、relay-auth-v2/crypto、strict-json、relay URL 校验和串行队列，并重新生成锁定 hash 与产品 overlay。沿用上述四模式和配对/中继权限边界；本次自动化和仍需真实 Chrome 验收的范围见[升级记录](../../openclaw-upgrades/v2026.10.6/README.md)，9.8 的人工通过不自动延续。
+当时原生基线取自10.6锁定 tag 的 `extensions/browser/chrome-extension`；完整更新 background、native-bootstrap、relay-auth-v2/crypto、strict-json、relay URL 校验和串行队列，并重新生成锁定 hash 与产品 overlay。沿用上述四模式和配对/中继权限边界；当时自动化和仍需真实 Chrome 验收的范围见[10.6升级记录](../../openclaw-upgrades/v2026.10.6/README.md)，9.8 的人工通过不自动延续。
+
+## 2026.10.7 上游基线复核
+
+已对照实际 `extensions/browser/chrome-extension`：10.6至10.7无源码或资源差异，继续使用
+现有29项锁定校验和产品overlay。源码沿用不等于真实Chrome重新通过；当前运行时和
+安装版的实际验证范围见[10.7验证记录](../../openclaw-upgrades/v2026.10.7/validation.md)。

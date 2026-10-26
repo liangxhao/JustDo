@@ -13,7 +13,7 @@ if (!process.versions.electron) {
     const { runtimeRoot: runtime } = resolveNativeSmokeTarget();
     assert.equal(
       JSON.parse(fs.readFileSync(path.join(runtime, 'package.json'))).version,
-      '2026.10.6',
+      '2026.10.7',
     );
     const sidebarMode = process.argv.includes('--sidebar');
     const fixtureRoot = sidebarMode ? path.join(root, '.agent-tasks/browser') : os.tmpdir();

@@ -7,6 +7,7 @@ import { expect, test } from 'vitest';
 import { getSessionRuntimeStatus, invalidateTargetedSessionStatusChecks, type RuntimeSessionStatusContext } from './runtimeSessionStatus';
 
 const sourceRoot = process.env.OPENCLAW_SOURCE ?? process.env.OPENCLAW_TEST_UPSTREAM_ROOT;
+const targetVersion = JSON.parse(fs.readFileSync(path.resolve('package.json'), 'utf8')).openclaw.version.replace(/^v/u, '');
 const required = process.env.OPENCLAW_REQUIRE_MANAGED_CONFIG_CONTRACTS === '1' ||
   process.env.OPENCLAW_REQUIRE_MANAGEMENT_CONTRACTS === '1';
 if ((required || sourceRoot) && (!sourceRoot || !fs.existsSync(path.join(sourceRoot, 'src/gateway/session-utils-display.ts'))))
@@ -25,7 +26,7 @@ function nativeFunction(filename: string, name: string, dependencies: Record<str
 
 // Full target functions, controlled registry ports. No Gateway, database or user state.
 test.skipIf(!sourceRoot)('native descendant activity includes live, queued, nested and projected work and omits inactive flags', () => {
-  expect(JSON.parse(fs.readFileSync(path.join(sourceRoot!, 'package.json'), 'utf8')).version).toBe('2026.10.6');
+  expect(JSON.parse(fs.readFileSync(path.join(sourceRoot!, 'package.json'), 'utf8')).version).toBe(targetVersion);
   const state = { live: false, queued: false, descendants: 0, projected: false };
   const project = nativeFunction('src/gateway/session-utils-display.ts', 'projectGatewaySessionRunState', {
     normalizeOptionalString: (value: unknown) => typeof value === 'string' && value ? value : undefined,
@@ -89,7 +90,7 @@ test.skipIf(!sourceRoot)('native change publications distinguish a full independ
 });
 
 test.skipIf(!sourceRoot)('the complete native row materializer preserves omitted revisions through JSON and exact event reobservation', async () => {
-  expect(JSON.parse(fs.readFileSync(path.join(sourceRoot!, 'package.json'), 'utf8')).version).toBe('2026.10.6');
+  expect(JSON.parse(fs.readFileSync(path.join(sourceRoot!, 'package.json'), 'utf8')).version).toBe(targetVersion);
   const materialize = nativeFunction('src/gateway/session-utils-row.ts', 'materializeSessionRow', {
     projectSessionDeliveryFields: () => ({}), parseGroupKey: () => undefined,
     normalizeOptionalString: () => undefined, normalizeControlUiBasePath: () => '',

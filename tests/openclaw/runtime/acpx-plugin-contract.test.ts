@@ -28,7 +28,7 @@ describe('vendored ACPX plugin contract', () => {
 
     expect(packageJson).toMatchObject({
       name: 'acpx-runtime',
-      version: '2026.10.6-local.3',
+      version: '2026.10.7-local.1',
       private: true,
     });
     expect(dependencies).toMatchObject({

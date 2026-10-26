@@ -1,3 +1,4 @@
+import { historicalRuntimeOrUnavailable } from './historical-runtime';
 import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
@@ -6,7 +7,7 @@ import { transformSync } from 'esbuild';
 import { describe, expect, test } from 'vitest';
 
 const patch = require('../../../../scripts/patches/v2026.10.6/_plugin-session-current.js');
-const root = path.resolve(process.env.JUSTDO_EXECUTION_PRISTINE_DIR ?? 'vendor/openclaw-runtime/current');
+const root = historicalRuntimeOrUnavailable(path.resolve(process.env.JUSTDO_EXECUTION_PRISTINE_DIR ?? 'vendor/openclaw-runtime/current'));
 const filename = path.join(root, 'dist/session-binding-runtime-BErg3yzP.mjs');
 const nativeOnDisk = fs.existsSync(filename) ? fs.readFileSync(filename, 'utf8') : undefined;
 const native = nativeOnDisk ?? fs.readFileSync(

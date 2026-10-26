@@ -1,6 +1,6 @@
 # Gateway 能力归属与升级核对矩阵
 
-基线：锁定 OpenClaw v2026.10.6 与当前产品注册代码。本页帮助判断升级需要核对哪些原生契约；逐补丁清单与上游处置统一在[版本目录 README](../../scripts/patches/v2026.10.6/README.md)，不在此复制编号表。
+基线：锁定 OpenClaw v2026.10.7 与当前产品注册代码。本页帮助判断升级需要核对哪些原生契约；逐补丁清单与上游处置统一在[版本目录 README](../../scripts/patches/v2026.10.7/README.md)，不在此复制编号表。
 
 ## 1. 能力与产品消费方
 
@@ -67,7 +67,7 @@ sessions.abort，不恢复已移除的结果重投递/忽略接口。
 报告失败时保留阶段、原生/产品身份和脱敏错误，不复制 raw transcript 或凭据。发现缺口写成明确限制，不通过恢复旧消息缓存、扩大权限或盲目重试把 UI 暂时修成绿色。
 
 逐模块对照必须检查实际 handler，而非仅方法目录或旧 mock；当前实例与测试 gate 见
-[10.6 专项报告](../openclaw-upgrades/v2026.10.6/module-api-audit.md)，流程见
+[10.7 专项报告](../openclaw-upgrades/v2026.10.7/module-api-audit.md)，流程见
 [模块审计清单](../upgrade-checklist/module-api-audit.md)。
 
-10.6 的 registry 不可变事务发布、原生 peer writer 隔离和 SQLite final checkpoint 接线见当前总账；本轮实际通过范围和待人工验收项见[升级记录](../openclaw-upgrades/v2026.10.6/README.md)。
+10.7 继续使用 registry 不可变事务发布、原生 peer writer 隔离和 SQLite final checkpoint 接线，具体见当前总账；本版实际通过范围和待人工验收项见[验证记录](../openclaw-upgrades/v2026.10.7/validation.md)。旧版记录不自动成为本版通过证据。

@@ -4,7 +4,7 @@ import path from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 const pluginPatch = require('../../scripts/openclaw/patch-mxc-sandbox-plugin.cjs');
-const runtimePatch = require('../../scripts/patches/v2026.10.6/013-mxc-external-skill-paths.cjs');
+const runtimePatch = require('../../scripts/patches/v2026.10.7/013-mxc-external-skill-paths.cjs');
 const nativeContracts = [
   'assertMxcReadiness({ executablePath: mxcBinaryPath });',
   'probeMxcIsolationTier(params.executablePath)',
@@ -114,7 +114,7 @@ describe('MXC 10.6 native readiness and retained integration', () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'sandbox-patch-'));
     try {
       fs.mkdirSync(path.join(directory, 'dist'));
-      fs.writeFileSync(path.join(directory, 'package.json'), JSON.stringify({ version: '2026.10.6' }));
+      fs.writeFileSync(path.join(directory, 'package.json'), JSON.stringify({ version: '2026.10.7' }));
       const entry = path.join(directory, 'dist/index.js');
       fs.writeFileSync(entry, current);
       expect(() => pluginPatch.verifyMxcSandboxPlugin(directory)).not.toThrow();

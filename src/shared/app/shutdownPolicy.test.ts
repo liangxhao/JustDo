@@ -43,7 +43,8 @@ const nativeBudget = path.join(nativeRoot, 'gateway-shutdown-budget.mjs');
 if (explicitRoot && !fs.existsSync(nativeBudget)) throw new Error('Explicit native shutdown policy is missing.');
 test.skipIf(!fs.existsSync(nativeBudget))('the actual locked native budget still matches host supervision', async () => {
   const pkg = JSON.parse(fs.readFileSync(path.join(nativeRoot, 'package.json'), 'utf8'));
-  expect(pkg.version.replace(/^v/u, '')).toBe('2026.10.6');
+  const target = JSON.parse(fs.readFileSync(path.resolve('package.json'), 'utf8')).openclaw.version.replace(/^v/u, '');
+  expect(pkg.version.replace(/^v/u, '')).toBe(target);
   const native = await import(pathToFileURL(nativeBudget).href);
   expect(native.GATEWAY_SHUTDOWN_TIMEOUT_MS).toBe(policy.nativeShutdownMs);
   expect(native.GATEWAY_SUPERVISOR_EXIT_MARGIN_MS).toBe(policy.nativeExitMarginMs);

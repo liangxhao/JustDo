@@ -10,14 +10,15 @@ import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const require = createRequire(import.meta.url);
+const expectedVersion = `v${require('../../../package.json').openclaw.version.replace(/^v/u, '')}`;
 const repository = fileURLToPath(new URL('../../../', import.meta.url));
 const runtimeRoot = fs.realpathSync(process.argv[2]);
 const upstream = path.resolve(process.argv[3]);
 const archivedDiagnostic = process.argv.includes('--archived-diagnostic');
 const { verifyFrozenOpenClawRuntime, verifyOpenClawPatchManifest } = require('../../../scripts/openclaw/verify-openclaw-runtime-patches.cjs');
 const manifest = archivedDiagnostic
-  ? verifyFrozenOpenClawRuntime(runtimeRoot, { expectedVersion: 'v2026.10.6', requireBundle: true }).manifest
-  : verifyOpenClawPatchManifest(runtimeRoot, { expectedVersion: 'v2026.10.6', requireBundle: true });
+  ? verifyFrozenOpenClawRuntime(runtimeRoot, { expectedVersion, requireBundle: true }).manifest
+  : verifyOpenClawPatchManifest(runtimeRoot, { expectedVersion, requireBundle: true });
 assert.equal(fs.realpathSync(process.execPath), fs.realpathSync(path.join(runtimeRoot, 'node-runtime/node.exe')));
 const evidenceRoot = path.resolve('.agent-tasks/runtime/native-database-upgrade');
 fs.mkdirSync(evidenceRoot, { recursive: true });
@@ -65,10 +66,10 @@ async function owner(file, symbol) {
   return (await import(pathToFileURL(path.join(runtimeRoot, 'dist', file)).href))[match[1] ?? symbol];
 }
 const prepare = await owner('openclaw-database-schema-contracts-DxUwD7Ji.mjs', 'prepareOpenClawDatabaseSchemaContracts'); prepare();
-const openState = await owner('openclaw-state-db-C4vt0QCr.mjs', 'openOpenClawStateDatabase');
-const openAgent = await owner('openclaw-agent-db-DwWR59YS.mjs', 'openOpenClawAgentDatabase');
-const closeAgents = await owner('openclaw-agent-db-lifecycle-CsUDPIt5.mjs', 'closeOpenClawAgentDatabasesAsync');
-const closeState = await owner('openclaw-state-db-cache-C8EtTs-m.mjs', 'closeOpenClawStateDatabaseAsync');
+const openState = await owner('openclaw-state-db-RDcuGEfu.mjs', 'openOpenClawStateDatabase');
+const openAgent = await owner('openclaw-agent-db-aORp2dHQ.mjs', 'openOpenClawAgentDatabase');
+const closeAgents = await owner('openclaw-agent-db-lifecycle-BQIr8Oj2.mjs', 'closeOpenClawAgentDatabasesAsync');
+const closeState = await owner('openclaw-state-db-cache-Cv7NmmpS.mjs', 'closeOpenClawStateDatabaseAsync');
 const fixture24 = path.join(upstream, 'test/fixtures/sqlite/openclaw-agent-schema-v24.sql');
 assert.equal(digest(fs.readFileSync(fixture24)), 'dde8e6165f12b428f9fdbae0e8e4ce4d76802fc2f6f0443232b7a303bd6fe087');
 function adapter(p, extra = {}) {
@@ -131,7 +132,7 @@ try {
     fs.writeFileSync(path.join(packed, 'runtime-patch-manifest.json'), JSON.stringify(copiedManifest));
   }
   assert.equal(fs.existsSync(path.join(packed, 'gateway.asar')), false);
-  assert.equal((await admitNativeDatabaseRuntime(packed)).runtimeVersion, 'v2026.10.6');
+  assert.equal((await admitNativeDatabaseRuntime(packed)).runtimeVersion, expectedVersion);
   fs.appendFileSync(path.join(packed, contract.modules.agent.path), '\n// controlled copied-owner mutation');
   await assert.rejects(() => admitNativeDatabaseRuntime(packed), /missing or inconsistent/);
   report.checks.push('real packed-shape selected-owner admission without duplicate ASAR succeeds; copied native-owner tampering still refuses');

@@ -61,7 +61,7 @@
       "upstream": {
         "url": "https://github.com/anthropics/skills/tree/main/skills/skill-creator",
         "reviewedRevision": "dbd4588f9e1033efb41dad4bef2f7947c8993d44",
-        "strategy": "preserve-native-workshop-adaptation"
+        "strategy": "preserve-immediate-workshop-adaptation"
       }
     },
     {

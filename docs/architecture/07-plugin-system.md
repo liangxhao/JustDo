@@ -109,7 +109,9 @@ Plugin Hub 有四类插件概念；市场当前只开放 extension、skill、mcp
 日常 Chrome 沿用原生 existing-session driver 和随包 Chrome MCP，设置页通过 Gateway 请求原生 Tab 查询来触发浏览器授权。Windows 的应用配置选择 `chrome-mcp.cmd`，Main 生成的 UTF-8 启动器用锁定的独立 Node 启动服务器；`npm.cmd`、`npx.cmd` 和 `node.cmd` 同样位于应用 PATH 前端。启动器内的 Node／可信预加载文件引用使用绝对路径，避免真实 npm 包的 `.cmd` 嵌套调用裸 `node` 时将 `%~dp0` 解析到调用方工作目录。受管 MCP 的裸 `npm/npx` 命令由 Main 配置投影为锁定 Node 的直接启动参数，显式加载可信窗口隐藏模块；用户保存的命令、参数、环境和其它原生字段不被改写，绝对路径自定义命令保留原样。配置投影与启动器共享 npm 路径解析，安装包中指向同一冻结 `node-runtime/` 内的完整 npm 分发。原生 MCP 仍过滤不安全环境变量，负责连接授权、进程身份核验与清理。普通插件来源仍可使用应用 PATH 中的自包含启动器。002/003 补丁已移除；真实 npm/npx 与原生配置解析器对照测试验证连接、工具发现、调用和清理，受管配置不产生批处理空帧诊断。真实本地包二进制启动另验证嵌套批处理和中文／空格启动器路径。批处理对照虽有空帧诊断仍能完成普通 Client 连接，不能把该诊断直接等同于功能不可用。
 
 OpenAI 媒体适配由 `plugins/extensions/openai` 的完整本地源码实现，基线为原生
-v2026.10.6。资源同步完整替换原包目录；裁剪策略明确移除上游插件，本地保护只保留
+v2026.10.7。本次完整目录与旧基线对照后，85 个上游来源文件中仅 package 版本字节变化，
+协议源码、manifest 和两个 worker 均与旧上游字节一致；本地内网差异继续保留。
+资源同步完整替换原包目录；裁剪策略明确移除上游插件，本地保护只保留
 替换后的唯一 `openai`。不合并源码、不备份 native-* 入口、不注册第二个同名插件。
 本地 manifest 和 setup 删除官网登录/API Key 引导、公网 catalog 和 usage；内网服务
 仍可配置 API Key/SecretRef，缺失能力地址时拒绝请求，不读取环境 Key 回退。
@@ -166,7 +168,7 @@ Windows 原生扩展安装的最后一次目录发布支持五秒有界恢复：
 提交前仍执行原生父目录、权限和临时目录守卫；不重复下载、复制、能力审查或安装
 RPC。正常发布不增加卷探测或全树比较。网络目录、未知结果、文件变化、守卫与
 提交后错误不重试；持续占用耗尽预算后沿原生失败与旧版恢复流程处理。补丁的
-精确原生边界、产物证明及删除条件见[当前补丁总账](../../scripts/patches/v2026.10.6/README.md#windows-plugin-directory-publication)。
+精确原生边界、产物证明及删除条件见[当前补丁总账](../../scripts/patches/v2026.10.7/README.md#windows-plugin-directory-publication)。
 
 变更 IPC 可在最后传入有界 `PluginOperationContext.requestId`，Main 以
 `plugins:operation:progress` 仅向原请求窗口发布闭合的 kind、action、stage 和
@@ -227,7 +229,7 @@ Renderer 技能服务保留在途开关，同一技能的相同意图复用请�
 
 Extension 卡片的警告支持鼠标悬停、键盘聚焦和点击进入详情。红色表示原生错误，
 橙黄色表示缺少凭据；详情显示错误或缺失项，并提供密码输入框、已配置提示和保存反馈。
-OpenClaw 2026.10.6 的 `plugins.list` 分别返回配置期望状态与当前 Gateway 代次的
+OpenClaw 2026.10.7 的 `plugins.list` 分别返回配置期望状态与当前 Gateway 代次的
 `runtime` 状态。Main 保持 `enabled` 的配置含义，将 `runtime.error` 或
 `runtime.state: service-failed` 投影为错误警告；仅 `unloaded` 不推断失败。
 原生 `needs-setup` 同样显示配置警告，即使没有环境变量缺失项；不为展示错误修改开关、
@@ -259,11 +261,11 @@ Document Extraction 和 Web Readability Extraction 保持上游默认启用，�
 协作、记忆和本地语音可选插件继续保留用户明确禁用状态。TypeSafe 沿用模型设置的有条件托管；
 视频由同一个 OpenAI 适配器提供；清空默认视频模型只停止视频使用，不关闭整个插件。
 
-OpenClaw v2026.10.6 的插件管理 RPC 会直接应用运行时变更。CLI 导入等待最终运行时回执：Gateway 已应用则无需额外操作，仅保存到磁盘时调用 `plugins.reload`。卸载 RPC 仍请求重启时，以及 CLI 卸载和启停回退后，优先调用 `plugins.refresh`；原生确认已热应用且无需重启时直接完成，仍需重启、热加载失败或出站代理策略变化时再申请 Gateway 重启。扩展普通配置先等待配置 reload ACK，无环境变量变更时再尝试定向 `plugins.reload`；SecretRef 更新先调用 `secrets.reload` 刷新准备快照，失败报告并保留待刷新，不能靠重启掩盖。配置应用与重启协调见[引擎](05-agent-engine.md)；保留原生对活动任务的重启延迟，不能与宿主冷重启竞争。原生不支持热应用的运行时代码及网络策略仍可能需要重启；Windows 文件操作的目录锁恢复保持独立。
+OpenClaw v2026.10.7 的插件管理 RPC 会直接应用运行时变更。CLI 导入等待最终运行时回执：Gateway 已应用则无需额外操作，仅保存到磁盘时调用 `plugins.reload`。卸载 RPC 仍请求重启时，以及 CLI 卸载和启停回退后，优先调用 `plugins.refresh`；原生确认已热应用且无需重启时直接完成，仍需重启、热加载失败或出站代理策略变化时再申请 Gateway 重启。扩展普通配置先等待配置 reload ACK，无环境变量变更时再尝试定向 `plugins.reload`；SecretRef 更新先调用 `secrets.reload` 刷新准备快照，失败报告并保留待刷新，不能靠重启掩盖。配置应用与重启协调见[引擎](05-agent-engine.md)；保留原生对活动任务的重启延迟，不能与宿主冷重启竞争。原生不支持热应用的运行时代码及网络策略仍可能需要重启；Windows 文件操作的目录锁恢复保持独立。
 
 原生插件或配置操作的互斥租约忙碌时，Main 仅对锁定版本明确返回的“尚未进入写入”的 `UNAVAILABLE` 拒绝等待后重新申请准入：必须同时具有精确忙碌原因、`retryable: true` 和有效 `retryAfterMs`，且不含提交、运行时尝试或结果未知等元数据。等待最多 30 秒，并共享原请求总超时；等待期间进度进入排队阶段。重新申请必须保持原 Gateway PID 与进程代次、相同参数及能力确认令牌。Main 请求适配器在连接准备前和实际发送前再次校验身份与预算，校验回调不进入原生传输。超时、断连和任何结果未知的已发送操作均不重放；启停只有明确未发送的连接失败才允许既有 CLI 回退，不能用配置开关值推断运行时成功。Windows Gateway 沿生产启动环境使用轮询监听，集成测试也必须复用该环境，避免测试自身引入长期目录句柄；现存目录的占用检测与文件安全边界仍然保留。
 
-本地 Extension 的交互式能力审查由 Main 展示，确认后通过 `plugins.install` 将同一 `reviewToken` 交给 v2026.10.6 原生 staging 在提交前核验。不能用 CLI `--accept-capabilities` 代替已确认令牌，否则审查后改变的能力面会被无条件接受。安装 RPC 使用原 CLI 的 10 分钟等待窗口；确认原生提交及运行时代次回执后收敛出站策略和重启要求，超时不回退或重复安装。原生返回持久提交错误时保留提交事实；能力面变化则重新展示审查。可信市场及没有交互式审查的冷 CLI 安装保留现有路径。
+本地 Extension 的交互式能力审查由 Main 展示，确认后通过 `plugins.install` 将同一 `reviewToken` 交给 v2026.10.7 原生 staging 在提交前核验。不能用 CLI `--accept-capabilities` 代替已确认令牌，否则审查后改变的能力面会被无条件接受。安装 RPC 使用原 CLI 的 10 分钟等待窗口；确认原生提交及运行时代次回执后收敛出站策略和重启要求，超时不回退或重复安装。原生返回持久提交错误时保留提交事实；能力面变化则重新展示审查。可信市场及没有交互式审查的冷 CLI 安装保留现有路径。
 
 多入口包的 manifest owner 与原生运行条目 ID 分开处理。Main 按需使用独立只读进程调用原生 metadata snapshot 与 package ownership resolver，投影明确的 owner、条目集合及安装路径，再与本地包的精确路径核对。该结果仅用于本次清单和文件操作的对账，不执行插件入口、不启动 Gateway、不另存包归属；不能按 ID 前缀或包名猜路径。清单为子条目补齐已核验目录，并按其原生 ID 计算配置状态；安装结果以明确的代表条目统一市场身份，配置和卸载捕获使用同一包路径。读取失败报告无法确认，保留错误而不猜测可管理条目。
 
@@ -281,7 +283,7 @@ Main 的 Skill 文件夹复制同样为绝对目标目录链接保留 junction�
 
 本地 Extension 的构建预编译同时覆盖主入口和独立的 `setup-api` 入口（插件根及 `dist/` 下的 TypeScript 文件）。即使主入口已经是 JavaScript，也必须处理 setup 入口；编译成功后移除对应 TypeScript 入口，避免 OpenClaw 优先选中源码。ACPX 的自动启用探针在配置、旧状态检查和重载时都会运行，遗漏其 setup 预编译会触发原生源码代际快照，重复复制、哈希和校验依赖树。预编译让 bundled JavaScript 使用原生快速加载路径，不改变用户插件的源码隔离或完整性校验。
 
-ACPX 本地封装以 OpenClaw v2026.10.6 为基线，底层运行库精确锁定为 acpx 0.19.5。
+ACPX 本地封装以 OpenClaw v2026.10.7 为基线，底层运行库精确锁定为 acpx 0.19.5。
 会话世代、持久资源绑定、reset 和探测沿用上游分层；产品继续拥有外部 Agent 目录、
 结构化受管命令、隔离认证、逐 Agent doctor 和默认不启动探测的策略。内置适配器的
 诊断也使用随包包装器，诊断不授予任务执行权限。服务停止先撤销后端，再等待运行库
@@ -353,9 +355,13 @@ Main 的文件变更串行队列同时覆盖操作后的原生清单查询，供
 技能页的“技能工坊”入口仅在打开后读取主助手（main）的工坊；关闭后不发后台请求。
 `openclaw-workshop` 来源仍展示为助手提炼技能，不走导入目录删除逻辑。
 
-OpenClaw 2026.10.6 的技能变更立即生效；旧 `skills.proposals.*` 虽仍在方法目录中，
+OpenClaw 2026.10.7 的技能变更立即生效；旧 `skills.proposals.*` 虽仍在方法目录中，
 handler 已固定返回退役错误。应用完整采用 `skills.workshop.list/changes/read/archive/restore`，
 不把旧批准/拒绝按钮伪映射为归档/恢复，也不在 Main 建立技能文件、版本或变更账本。
+随包 `skill-creator` 遵循当前 `skill_workshop` 的原生 authoring owner 与实际 schema：
+普通 Workshop 修改立即生效并保留可恢复版本，个人库能力仅在实际提供时按技能 ID、
+revision 和当前用户授权发布。技能正文不创建待审核提案或要求额外人工 apply，
+也不直接改写已安装技能目录。
 
 ```mermaid
 sequenceDiagram
@@ -532,14 +538,16 @@ Extension 可用 outbound-header-policy.json 声明 HTTPS 目标、Header 名称
 
 从 `src/main/plugins/` 的文件事务、MCP/Hook 同步、Extension import/conversion 和 registry 测试检查产品层；从 `tests/openclaw/extensions/` 与 skill-resolution runtime contract 检查最终原生能力。市场增加 kind 前需完成安装、更新、启停、删除与状态对账闭环，详见[市场适配](16-skill-marketplace-adapter.md)。
 
-## OpenClaw 2026.10.6 integration
+## OpenClaw 2026.10.7 integration
 
 The runtime retains the native QuickJS Code Mode executor as an enabled application-managed
 adapter; Runtime settings control Code Mode use. CUA desktop control retains explicit
 opt-in through its dedicated Settings switch. Both retain explicit allowlist membership. Local
 extensions import named SDK subpaths. Agent-owned Workshop collections remain
 Gateway-owned; the application does not recreate workspace-based skill ownership.
-See [upgrade audit](../openclaw-upgrades/v2026.10.6/README.md).
+See the [current upgrade audit](../openclaw-upgrades/v2026.10.7/module-api-audit.md)
+and [versioned validation](../openclaw-upgrades/v2026.10.7/validation.md).
+Earlier 10.6 test evidence remains limited to its recorded artifact and scenarios.
 
 ### 可选本机电脑控制
 
@@ -783,4 +791,4 @@ Runtime Services 的发起账本位于 `stateDir/runtime-services/agent-team-lau
 
 ## 当前验证边界
 
-技能提案的 `/learn` → 审核 → 列表刷新流程尚未用真实公司模型与账号完成验证，包括冲突、断线及跨 Agent 隔离。公司 MCP 的身份与权限规范尚未确定，不将浏览器登录身份或公网可达性视为后台服务授权。
+`/learn` 触发的 Workshop 即时变更、版本读回和列表刷新尚未用真实公司模型与账号完成验证，包括冲突、断线及跨 Agent 隔离；写入仍遵循用户授权和当前原生 authoring 权限。公司 MCP 的身份与权限规范尚未确定，不将浏览器登录身份或公网可达性视为后台服务授权。

@@ -9,7 +9,7 @@ A skill for creating new skills and iteratively improving them.
 
 ## Runtime and persistence
 
-For a live skill, use native `skill_workshop` to create or revise a pending proposal; keep installed skill files unchanged until the user applies it through proposal review. Repository-owned skill sources use the repository's normal editing and review workflow. Preserve the existing directory name and `name` frontmatter when updating a skill. Drafts, snapshots, tests, and review artifacts belong under the current project's `.agent-tasks/skills/<skill-name>/`, outside the installed skill.
+For a live skill, use the currently advertised native `skill_workshop` schema and the authorization for this turn; do not edit installed skill files directly. Ordinary Workshop changes apply immediately, save versions, and support undo through the native archive/restore operations. View the current skill before editing and use only the actions and fields that its tool definition offers. A personal-library capability, when available, has its own list/read/create/update schema: use its returned skill ID and revision, supply the expected revision for an update, and publish only a user-requested change. Personal drafts are unsupported; the `proposal_content` field supplies the revision's content. Follow the current tool definition for activation and sharing. Repository-owned skill sources use the repository's normal editing and review workflow. Preserve the existing directory name and `name` frontmatter when updating a skill. Drafts, snapshots, tests, and review artifacts belong under the current project's `.agent-tasks/skills/<skill-name>/`, outside the installed skill.
 
 Use the bundled Python runtime; install missing Python packages only from a configured internal index or local wheels. Use subagents only when available and authorized; otherwise execute the same test cases sequentially. Record only actually observed timing/token data and label unavailable measurements. The packaged reviewer supports standalone offline HTML with `--static`; if the user cannot open it, present prompts, outputs, and feedback directly in the conversation.
 
@@ -373,7 +373,7 @@ The automated description loop requires the unsupported `claude -p` CLI and is n
 
 ### Step 4: Apply the result
 
-Update the draft or pending proposal's `description` with the reviewed result. Show the user before/after; report scores only for tests that actually ran.
+Update the draft's `description` with the reviewed result. Show the user before/after; report scores only for tests that actually ran. For an authorized live update, read the current native skill and apply the change with the actions and revision requirements offered by its `skill_workshop` schema. A successful native write confirms the change described by its native receipt; personal-library publication does not by itself activate the revision in this session.
 
 ---
 
@@ -385,14 +385,14 @@ Check whether you have access to the `present_files` tool. If you don't, skip th
 python "<skill-creator-path>/scripts/package_skill.py" <path/to/draft-skill-folder> <output-directory>
 ```
 
-After packaging, direct the user to the resulting `.skill` file path. For a live skill, keep publication in the native proposal-review flow.
+After packaging, direct the user to the resulting `.skill` file path. A packaged file is a delivery artifact. A live change requires a successful write through the current native `skill_workshop` capability; report the actual native result.
 
 ---
 
 ## Updating an existing skill
 
 - **Preserve the original name.** Use the existing skill directory name and `name` frontmatter unchanged, including the resulting `.skill` filename.
-- **Copy to a writable location before editing.** Keep the installed skill read-only. Draft and test in the project workspace, then update the native pending proposal; edit repository-owned source in place when that is the requested target.
+- **Copy to a writable location before editing.** Keep the installed directory read-only. Draft and test in the project workspace, then read and update the live skill through its current native `skill_workshop` schema within the existing authorization; edit repository-owned source in place when that is the requested target.
 - **Packaging:** stage the draft and output under the project workspace before presenting the archive. A packaged file is not evidence that a live skill was applied.
 
 ---

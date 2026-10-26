@@ -7,13 +7,13 @@ JustDo 是 OpenClaw 的桌面前端和运行时宿主，不维护 OpenClaw 核�
 当前版本来自 `package.json.openclaw.version`：
 
 ```text
-v2026.10.6
+v2026.10.7
 ```
 
 当前 patch 目录：
 
 ```text
-scripts/patches/v2026.10.6/
+scripts/patches/v2026.10.7/
 ```
 
 升级前必须先读[OpenClaw 升级检查清单](upgrade-checklist/checklist.md)，包括补丁、SDK 共享、本地 OpenAI 源码替换与产物验收。
@@ -24,7 +24,7 @@ Main 原生配置投影拆分后，构建 recipe 同时覆盖 `openclawConfigBui
 
 ## 2. 当前锁定供应链
 
-目标是未经修改的 `openclaw@2026.10.6` npm 产物。`source-lock.json` 记录精确 npm integrity 与 tarball SHA-256。项目 Node 支持范围为 `>=24.22.1 <25`。
+目标是未经修改的 `openclaw@2026.10.7` npm 产物。`source-lock.json` 记录精确 npm integrity 与 tarball SHA-256。项目 Node 支持范围为 `>=24.22.1 <25`。
 
 Patch 工具拒绝：
 
@@ -38,7 +38,7 @@ Patch 工具拒绝：
 
 ## 3. 当前补丁清单
 
-能力、上游原生证据、补丁文件和移除条件统一见[当前版本目录 README](../scripts/patches/v2026.10.6/README.md)。这里不再维护第二份逐文件清单，避免新增补丁后留下不完整的数量和能力声明。
+能力、上游原生证据、补丁文件和移除条件统一见[当前版本目录 README](../scripts/patches/v2026.10.7/README.md)。这里不再维护第二份逐文件清单，避免新增补丁后留下不完整的数量和能力声明。
 
 Thinking/history、工具发现、原生 task queue/join、审批和 compaction 等能力优先使用锁定版本的原生契约；Runtime Services 承接产品需要的受限读取和投影。新增缺口前先核对公开 plugin/Gateway API，再判断是否确实需要补丁。
 
@@ -146,7 +146,7 @@ patch 只接入显式原生依赖。支持模块通过事务工具复制并校�
 重连时避免累计文字重复追加均在 Renderer 完成。原生 assistant itemId 与 preamble
 signature 没有可推导的共同消息身份，公开 provider wrapper 又拿不到尚未解析的 SSE，
 因此这两处事实缺口仍需精确补丁。不得重新引入原生发布回执表、私有批量发布方法或 FIFO；
-撤除条件和具体契约见 [028 能力说明](../scripts/patches/v2026.10.6/README.md)。
+撤除条件和具体契约见 [028 能力说明](../scripts/patches/v2026.10.7/README.md)。
 
 任何 patch 重排、helper 改动、bundle 重建、cache 污染或打包遗漏都会使 manifest 失效。Electron Builder 在打包前和 staged product 上再次验证；Windows 还会流式解码并验证 `win-resources.tar.zst`。分发包按设计省略重复的 `gateway.asar` 和独立 Worker 部署归档 `dist/worker-artifacts/`，保留全部本机 Worker；原始 runtime、inventory 和来源证明保持完整，不改写哈希隐藏打包裁剪。
 
@@ -186,7 +186,7 @@ Patch 修改至少执行：
 1. 对锁定 pristine runtime 的首次应用；
 2. 对已 patch runtime 的第二次应用，确认零字节变化；
 3. `npm run openclaw:patches:verify`；
-4. 对应 `tests/openclaw/patches/v2026.10.6/` focused tests；
+4. 对应 `tests/openclaw/patches/v2026.10.7/` focused tests；
 5. 受影响 Main Adapter/Renderer tests；
 6. 真实 runtime smoke；
 7. 若涉及平台兼容，至少目标平台的打包/启动 smoke；
@@ -266,7 +266,7 @@ Patch 失败时保留完整错误中的 patch label、target file、anchor count
 
 ## 17. 文档责任
 
-- `scripts/patches/v2026.10.6/README.md`：当前能力事实与逐 patch 总账；
+- `scripts/patches/v2026.10.7/README.md`：当前能力事实与逐 patch 总账；
 - 本文：通用生命周期与操作规范；
 - `docs/architecture/openclaw-gateway-capability-matrix.md`：App 与 Gateway 能力边界；
 - feature docs：用户可见行为与维护约束；
@@ -280,7 +280,7 @@ Patch 失败时保留完整错误中的 patch label、target file、anchor count
 | --------------------- | ---------------------------------------------------------------- | ------------------------------------------------- |
 | Pristine contract     | `scripts/openclaw/verify-openclaw-pristine-contracts.cjs`        | provenance、上游已吸收能力、保留patch在原包未生效 |
 | Patch transaction     | `scripts/openclaw/patch-openclaw-runtime.cjs`                    | 顺序、快照、apply/verify、失败回滚、manifest写入  |
-| Patch utilities       | `scripts/patches/v2026.10.6/_patch-utils.js`                     | 唯一anchor、write-if-changed、索引一致性          |
+| Patch utilities       | `scripts/patches/v2026.10.7/_patch-utils.js`                     | 唯一anchor、write-if-changed、索引一致性          |
 | Runtime install/stage | `install-openclaw-runtime.cjs`、`openclaw-runtime-staging.cjs`   | 固定source到目标platform staging                  |
 | Gateway bundle        | `bundle-openclaw-gateway.cjs`、`openclaw-runtime-companions.cjs` | 固定 worker/module companion URL 并验证产物完整性 |
 | Freeze                | `openclaw-runtime-freeze.cjs`                                    | 构建输入和immutable artifact指纹                  |
@@ -304,7 +304,7 @@ Patch 失败时保留完整错误中的 patch label、target file、anchor count
 ## 20. 测试层级与不能互相替代的证据
 
 1. `tests/openclaw/runtime/pristine-contracts.test.ts`：证明锁定原包与原生契约。
-2. `tests/openclaw/patches/v2026.10.6/` 与目标版本总账对应测试：证明单项能力、负例和补丁安全；历史目录不作目标版本通过证据。
+2. `tests/openclaw/patches/v2026.10.7/` 与目标版本总账对应测试：证明单项能力、负例和补丁安全；历史目录不作目标版本通过证据。
 3. 当前版本 `_patch-utils.js` 的写入/索引回归：证明唯一 anchor、幂等及事务约束，具体入口以总账为准。
 4. `tests/openclaw/runtime/runtime-patch-manifest.test.ts`：证明 manifest 绑定与篡改检测。
 5. Runtime staging/freeze/prune tests：证明供应链与最终文件集。

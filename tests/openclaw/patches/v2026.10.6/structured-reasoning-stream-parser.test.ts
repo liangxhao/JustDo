@@ -1,3 +1,4 @@
+import { historicalRuntimeOrUnavailable } from './historical-runtime';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
@@ -11,9 +12,9 @@ import { PRISTINE_REASONING_PARSER } from './reasoning-stream-parser-fixture';
 const { transformReasoningTagPartitioner: transform, PARSER_CONTRACT } = require(
   '../../../../scripts/patches/v2026.10.6/structured-reasoning-stream.js',
 );
-const runtime = process.env.JUSTDO_EXECUTION_PRISTINE_DIR ?? process.env.OPENCLAW_TEST_NATIVE_RUNTIME_DIR ?? path.resolve('build/runtimes/openclaw/win-x64');
+const runtime = historicalRuntimeOrUnavailable(process.env.JUSTDO_EXECUTION_PRISTINE_DIR ?? process.env.OPENCLAW_TEST_NATIVE_RUNTIME_DIR ?? path.resolve('build/runtimes/openclaw/win-x64'));
 const file = path.join(runtime, 'node_modules/@openclaw/ai/dist/reasoning-tag-text-partitioner-CpOy9-IQ.mjs');
-const source = fs.readFileSync(file, 'utf8');
+const source = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
 type Delta = { kind: string; text: string };
 type Parser = {
   markStructured(): void;
@@ -49,11 +50,12 @@ const visible = (deltas: Delta[]) => deltas.filter(delta => delta.kind === 'text
 const thinking = (deltas: Delta[]) => deltas.filter(delta => delta.kind === 'thinking').map(delta => delta.text).join('');
 
 beforeAll(async () => {
+  if (!source) return;
   factory = await loadParser(transform(source, file)) as () => Parser;
   nativeFactory = await loadParser(source) as () => Parser;
 });
 
-describe('structured incremental reasoning parser', () => {
+describe.skipIf(!source)('structured incremental reasoning parser', () => {
   it('streams ordinary content immediately and never reclassifies it because of a later orphan close', () => {
     const parser = factory();
     parser.markStructured();
@@ -166,7 +168,7 @@ describe('structured parser patch shape', () => {
     expect(() => transform(partial, '<parser>')).toThrow();
   });
 
-  it('verifies the actual parser after a small real esbuild bundle', async () => {
+  it.skipIf(!source)('verifies the actual parser after a small real esbuild bundle', async () => {
     const current = transform(source, file);
     const bundled = await loadParser(current, true) as string;
     expect(transform(bundled, 'gateway-bundle.mjs')).toBe(bundled);

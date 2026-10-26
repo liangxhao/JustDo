@@ -1,5 +1,5 @@
 'use strict';
-// The locked 10.6 plugin natively probes its selected executor and emits native SDK
+// The locked 10.7 plugin natively probes its selected executor and emits native SDK
 // lifecycle configuration. Retain only external read-only skills and capability SID recognition.
 const fs = require('fs');
 const path = require('path');
@@ -7,8 +7,8 @@ const crypto = require('crypto');
 const { createRequire } = require('node:module');
 const nativeBinaries = require('../../src/shared/security/mxcNativeBinaries.json');
 const SUPPORTED_VERSION = nativeBinaries.pluginVersion;
-const MARKER = 'SANDBOX_EXTERNAL_READONLY_SKILLS_V2026_10_6';
-const HOST_PREP_MARKER = 'SANDBOX_CAPABILITY_SID_HOST_PREP_V2026_10_6';
+const MARKER = 'SANDBOX_EXTERNAL_READONLY_SKILLS_V2026_10_7';
+const HOST_PREP_MARKER = 'SANDBOX_CAPABILITY_SID_HOST_PREP_V2026_10_7';
 const ORIGINAL = `\treturn [
 \t\t{
 \t\t\thostPath: path.join(params.agentWorkspaceDir, "skills"),

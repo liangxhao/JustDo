@@ -2,9 +2,13 @@
 
 This directory vendors `extensions/typesafe` from
 `https://github.com/openclaw/openclaw`, revision
-`fe06181dc5ecc01cf8904abbfc26925925efefbc` (tag `v2026.10.6`, package
-version `2026.10.6`). The refresh was compared against the previous upstream
-baseline `383c124cc32ffee3f8e56f549b88da94d269a4af` (`2026.10.4`) and this local fork.
+`157d8c2bc3ea2fa183afdc11088e69690bf8e64e` (tag `v2026.10.7`, package
+version `2026.10.7`). The complete 10.6-to-10.7 directory comparison contains
+only package version, minimum plugin API and build metadata changes; source,
+manifest, dependencies and public SDK exports are unchanged. The local fork's
+transport and credential protections below are retained, with unchanged
+dependency integrities. The preceding 10.6 refresh compared upstream baseline
+`383c124cc32ffee3f8e56f549b88da94d269a4af` (`2026.10.4`) and this local fork.
 The native decision semantics, response validation, assets and MIT license
 are preserved. One application transport seam adds `serviceUrl`: an authenticated
 HTTP(S) API base including `/v1` or another prefix. It accepts explicit intranet

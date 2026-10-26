@@ -171,7 +171,7 @@ shell，窗口状态回传同一个 owner；不使用主窗口按钮的控制通
 
 Gateway 启动由 Main 管理运行包准备、配置与进程生命周期。9.6 版本未发布，按用户要求，本次 9.8 升级新增的旧 SQLite 数据迁移桥接、启动门禁及对应构建资产已移除；启动链不再包含该独立迁移子进程。
 
-原生数据库继续由 OpenClaw 管理。10.6 的正常升级使用当前版本锁定的原生 owner，在 Gateway 停止且产品 Store 尚未打开时完成备份、原生维护和复验；它只接纳当前 shared20、agent24/25 的维护合同，不恢复前述 shared18/agent23 兼容桥。维护子进程实际关闭数据库并退出后才能准入 Gateway。未知结果保留恢复阶段并重新检查，不能按旧成功标记跳过维护。已有产品数据库初始化及 JSONL 历史迁移保持各自所有权；运行包仍从锁定 pristine 包重新构建。
+原生数据库继续由 OpenClaw 管理。10.7 的正常升级使用当前版本锁定的原生 owner，在 Gateway 停止且产品 Store 尚未打开时完成备份、原生维护和复验；它只接纳当前 shared20、agent24/25 的维护合同，不恢复前述 shared18/agent23 兼容桥。维护子进程实际关闭数据库并退出后才能准入 Gateway。未知结果保留恢复阶段并重新检查，不能按旧成功标记跳过维护。已有产品数据库初始化及 JSONL 历史迁移保持各自所有权；运行包仍从锁定 pristine 包重新构建。
 
 热加载必须等待原生 applied／failed 回执，不能把 detected 当作成功。原生 coordinator 已接受的 deferred/coalesced 热重启保持其所有权，不竞争启动另一个进程。Windows 启动环境及两个 CJS 启动器都执行 9.8 的长编译缓存路径保护。
 
@@ -396,7 +396,7 @@ PTY。附着失败会提示终端不可用，需要用户新开标签，不会�
 当前原生接口缺少指定工程目录/PowerShell 参数和明确结束已共享 PTY的能力，
 由当前版本补丁 036 补齐 operator.admin 的 launch 和 terminate 参数。沙箱全隔离
 会话仍由原生终端策略拒绝，不通过主进程另建宿主终端绕过它。构建契约见
-[运行时补丁总账](../../scripts/patches/v2026.10.6/README.md)。
+[运行时补丁总账](../../scripts/patches/v2026.10.7/README.md)。
 
 新操作终端的欢迎句由补丁 037 在构建时读取 `package.json.productName`，显示
 `Welcome to the <productName>.` 并去掉原生龙虾 ASCII 图。软件图标缩成紧凑字符图后

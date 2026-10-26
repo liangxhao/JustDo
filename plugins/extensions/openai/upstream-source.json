@@ -1,8 +1,8 @@
 {
   "id": "openai",
-  "version": "2026.10.6",
-  "tag": "v2026.10.6",
-  "commit": "fe06181dc5ecc01cf8904abbfc26925925efefbc",
+  "version": "2026.10.7",
+  "tag": "v2026.10.7",
+  "commit": "157d8c2bc3ea2fa183afdc11088e69690bf8e64e",
   "files": {
     "account-models.ts": "09f03e2bef64e03f71dcfb2d4667237b88d7025577d7eb7a7455516a122a7f63",
     "api.ts": "3369e7acfa0b2dd15f2cb272ed97973bd1b4970fdbdf56dca167f18e812959a7",
@@ -87,7 +87,7 @@
     "transport-policy.ts": "e34b79877a4b39c0f473195d1b8e1772fd876d42fc525a2e6562129b9a84d109",
     "tts.ts": "fa5bceb7a71e40af93544153e1e037089bdf01e32610a7a389d6f4b97f5d8bf0",
     "usage.ts": "010f58413aec2baf4361660d0edc3e6365bf4fcd83f8834ef31821de1ddd24f5",
-    "package.json": "0556232350211d0776115cd0ee0b63d9395bdfd55b56fdeaf601eaff17b0faa7",
+    "package.json": "c1273af6033728728e5da498896a6926198a2d2f324f954ae5195a1d161ad8dc",
     "openclaw.plugin.json": "100780fe13039514f2324f20e4fe49aa2222afa9d5c4b4c82f03dc4292de6c2f"
   }
 }

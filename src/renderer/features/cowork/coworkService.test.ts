@@ -300,6 +300,7 @@ const setRuntimeStatusResponse = (response: {
 describe('cowork session permission selection', () => {
   afterEach(() => {
     store.dispatch(clearCurrentSession());
+    vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
 
@@ -673,56 +674,89 @@ describe('cowork session permission selection', () => {
     expect(store.getState().cowork.config.permissionMode).toBe('full');
   });
 
-  test.each(['session', 'model'] as const)(
-    'honors the selection boundary when its origin closes during the %s read',
-    async stage => {
+  test('does not select a linked task after its origin closes during the session read', async () => {
+    store.dispatch(clearCurrentSession());
+    const session: CoworkSession = {
+      id: 'cancelled-linked-task', title: 'Linked task', status: 'idle', pinned: false,
+      cwd: 'C:\\workspace', executionMode: 'local', permissionMode: 'ask', activeSkillIds: [],
+      agentId: 'main', createdAt: 1, updatedAt: 2,
+    };
+    let finishRead!: () => void;
+    const pending = new Promise<void>(resolve => { finishRead = resolve; });
+    const getSession = vi.fn(async () => {
+      await pending;
+      return { success: true, session };
+    });
+    const getSessionModel = vi.fn();
+    const remoteManaged = vi.fn();
+    vi.stubGlobal('window', {
+      electron: { cowork: { getSession, getSessionModel, remoteManaged } },
+    });
+    let originOpen = true;
+    const onSelected = vi.fn();
+    const loading = coworkService.loadSession(session.id, {
+      canSelect: () => originOpen, onSelected,
+    });
+    originOpen = false;
+    finishRead();
+
+    await expect(loading).resolves.toBeNull();
+    expect(store.getState().cowork.currentSession).toBeNull();
+    expect(getSessionModel).not.toHaveBeenCalled();
+    expect(remoteManaged).not.toHaveBeenCalled();
+    expect(onSelected).not.toHaveBeenCalled();
+  });
+
+  test.each(['origin_closed', 'closed', 'replaced'] as const)(
+    'selects before background model metadata and handles %s without changing another target',
+    async targetChange => {
       store.dispatch(clearCurrentSession());
       const session: CoworkSession = {
-        id: 'cancelled-linked-task',
-        title: 'Linked task',
-        status: 'idle',
-        pinned: false,
-        cwd: 'C:\\workspace',
-        executionMode: 'local',
-        permissionMode: 'ask',
-        activeSkillIds: [],
-        agentId: 'main',
-        createdAt: 1,
-        updatedAt: 2,
+        id: 'background-model-' + targetChange, title: 'Linked task', status: 'idle', pinned: false,
+        cwd: 'C:\\workspace', executionMode: 'local', permissionMode: 'ask', activeSkillIds: [],
+        agentId: 'main', createdAt: 1, updatedAt: 2,
       };
-      let finishRead!: () => void;
-      const pending = new Promise<void>(resolve => {
-        finishRead = resolve;
+      let finishModelRead!: (value: { success: true; source: 'gateway'; modelRef: string }) => void;
+      const modelRead = new Promise<{ success: true; source: 'gateway'; modelRef: string }>(resolve => {
+        finishModelRead = resolve;
       });
-      const getSession = vi.fn(async () => {
-        if (stage === 'session') await pending;
-        return { success: true, session };
-      });
-      const getSessionModel = vi.fn(async () => {
-        if (stage === 'model') await pending;
-        return { success: true };
-      });
-      const remoteManaged = vi.fn();
+      const getSession = vi.fn().mockResolvedValue({ success: true, session });
+      const getSessionModel = vi.fn(() => modelRead);
+      const remoteManaged = vi.fn().mockResolvedValue({ success: true, remoteManaged: false });
+      const refreshModel = vi.spyOn(coworkService, 'refreshSessionModel');
       vi.stubGlobal('window', {
         electron: { cowork: { getSession, getSessionModel, remoteManaged } },
       });
       let originOpen = true;
-
-      const onSelected = vi.fn();
-      const loading = coworkService.loadSession(session.id, {
-        canSelect: () => originOpen,
-        onSelected,
+      const onSelected = vi.fn(() => {
+        if (targetChange === 'origin_closed') originOpen = false;
       });
-      if (stage === 'model') await vi.waitFor(() => expect(getSessionModel).toHaveBeenCalledOnce());
-      originOpen = false;
-      finishRead();
+      const loading = coworkService.loadSession(session.id, {
+        canSelect: () => originOpen, onSelected,
+      });
+      await vi.waitFor(() => expect(getSessionModel).toHaveBeenCalledOnce());
 
-      // Session metadata gates selection; model metadata hydrates an already selected view.
-      await expect(loading).resolves.toEqual(stage === 'session' ? null : session);
-      expect(store.getState().cowork.currentSession?.id ?? null).toBe(stage === 'session' ? null : session.id);
-      expect(remoteManaged).toHaveBeenCalledTimes(stage === 'session' ? 0 : 1);
-      expect(onSelected).toHaveBeenCalledTimes(stage === 'session' ? 0 : 1);
-      if (stage === 'session') expect(getSessionModel).not.toHaveBeenCalled();
+      expect(store.getState().cowork.currentSession?.id).toBe(session.id);
+      expect(onSelected).toHaveBeenCalledOnce();
+      expect(originOpen).toBe(targetChange !== 'origin_closed');
+      await expect(loading).resolves.toEqual(session);
+      expect(remoteManaged).toHaveBeenCalledOnce();
+      expect(refreshModel).toHaveBeenCalledOnce();
+      const backgroundRead = refreshModel.mock.results[0].value as Promise<void>;
+      const replacement = { ...session, id: 'replacement-' + targetChange, modelRef: 'provider/current' };
+      if (targetChange === 'closed') coworkService.clearSession();
+      else if (targetChange === 'replaced') store.dispatch(setCurrentSession(replacement));
+      finishModelRead({ success: true, source: 'gateway', modelRef: 'provider/stale' });
+      await backgroundRead;
+
+      if (targetChange === 'origin_closed') {
+        expect(store.getState().cowork.currentSession).toEqual({ ...session, modelRef: 'provider/stale' });
+        expect(store.getState().cowork.userConfirmedSessionModelRefs[session.id]).toBe('provider/stale');
+      } else {
+        expect(store.getState().cowork.currentSession).toEqual(targetChange === 'closed' ? null : replacement);
+        expect(store.getState().cowork.userConfirmedSessionModelRefs[session.id]).toBeUndefined();
+      }
+      expect(onSelected).toHaveBeenCalledOnce();
     },
   );
 

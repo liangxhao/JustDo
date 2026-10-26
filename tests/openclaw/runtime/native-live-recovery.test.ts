@@ -17,7 +17,7 @@ if (process.env.JUSTDO_TEST_PATCHED_RUNTIME && !moduleFile) {
 }
 
 test('current patch inventory excludes the retired segmented recovery patch', () => {
-  expect(fs.readdirSync(path.resolve('scripts/patches/v2026.10.6'))
+  expect(fs.readdirSync(path.resolve('scripts/patches/v2026.10.7'))
     .some(name => name.includes('segmented-live-progress'))).toBe(false);
 });
 

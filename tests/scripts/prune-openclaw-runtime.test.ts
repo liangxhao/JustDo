@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -87,8 +88,52 @@ test('runtime root and all plugin dependencies preserve legal files without opt-
   }
 });
 
+test('pruning keeps every file in an authenticated upstream bundled tree and its proof', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bundled-prune-proof-'));
+  const pristine = path.join(root, 'pristine');
+  const runtime = path.join(root, 'runtime');
+  const { readOpenClawSourceLock } = require('../../scripts/openclaw/verify-openclaw-runtime-patches.cjs');
+  const { inspectPristineBundledDependencies, restorePristineBundledDependencies, verifyBundledDependencies } =
+    require('../../scripts/openclaw/openclaw-bundled-dependencies.cjs');
+  const sourceLock = readOpenClawSourceLock(process.cwd(),
+    JSON.parse(fs.readFileSync('package.json', 'utf8')).openclaw.version);
+  const pkg = { name: 'openclaw', version: sourceLock.version, bundleDependencies: ['fixture-bundled'],
+    dependencies: { 'fixture-bundled': '1.0.0' } };
+  const put = (owner: string, file: string, value: string) => {
+    const target = path.join(owner, file);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, value);
+  };
+  try {
+    for (const owner of [pristine, runtime]) {
+      put(owner, 'package.json', JSON.stringify(pkg));
+      put(owner, 'node_modules/fixture-bundled/package.json', JSON.stringify({ name: 'fixture-bundled', version: '1.0.0' }));
+    }
+    for (const file of ['index.js', 'index.d.ts', 'tests/identity.test.js', 'README.md', 'LICENSE', 'OPENCLAW_PATCH_NOTICE.md'])
+      put(pristine, 'node_modules/fixture-bundled/' + file, file);
+    put(runtime, 'npm-shrinkwrap.json', JSON.stringify({ name: pkg.name, version: pkg.version,
+      packages: { 'node_modules/fixture-bundled': { version: '1.0.0', inBundle: true,
+        resolved: 'https://registry.example.test/fixture-bundled.tgz',
+        integrity: `sha512-${Buffer.alloc(64, 1).toString('base64')}` } } }));
+    put(runtime, 'node_modules/unrelated/index.d.ts', 'remove this ordinary declaration');
+    const pristineProof = inspectPristineBundledDependencies(pristine, { sourceLock });
+    const proof = restorePristineBundledDependencies(runtime, pristine, { sourceLock, pristineProof });
+    const proofBytes = fs.readFileSync(path.join(runtime, 'runtime-bundled-dependencies.json'));
+    execFileSync(process.execPath, [path.resolve('scripts/openclaw/prune-openclaw-runtime.cjs'), runtime]);
+    expect(verifyBundledDependencies(runtime, { sourceLock })).toEqual(proof);
+    expect(fs.readFileSync(path.join(runtime, 'runtime-bundled-dependencies.json'))).toEqual(proofBytes);
+    expect(fs.existsSync(path.join(runtime, 'node_modules/unrelated/index.d.ts'))).toBe(false);
+  } finally {
+    expect(path.dirname(root)).toBe(os.tmpdir());
+    expect(path.basename(root)).toMatch(/^bundled-prune-proof-/u);
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('prunes public-cloud plugins while retaining the intranet OpenAI adapter and local extensions', () => {
   const repoRoot = path.resolve(__dirname, '../..');
+  const targetVersion = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'))
+    .openclaw.version.replace(/^v/u, '');
   const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-plugin-prune-'));
   const extensionsRoot = path.join(runtimeRoot, 'dist', 'extensions');
   const excluded = ['cloudflare', 'elevenlabs', 'kie', 'anthropic', 'github', 'x'];
@@ -110,7 +155,7 @@ test('prunes public-cloud plugins while retaining the intranet OpenAI adapter an
     const computerRoot = path.join(extensionsRoot, 'cua-computer');
     fs.writeFileSync(
       path.join(extensionsRoot, 'openai', 'package.json'),
-      JSON.stringify({ version: '2026.10.6', openclaw: { runtimeBundled: true } }),
+      JSON.stringify({ version: targetVersion, openclaw: { runtimeBundled: true } }),
     );
     const nativeRoot = path.join(
       computerRoot,
@@ -133,7 +178,7 @@ test('prunes public-cloud plugins while retaining the intranet OpenAI adapter an
     expect(fs.readdirSync(nativeRoot).sort()).toEqual([...nativeFiles].sort());
     fs.writeFileSync(
       path.join(extensionsRoot, 'openai', 'package.json'),
-      JSON.stringify({ version: '2026.10.6' }),
+      JSON.stringify({ version: targetVersion }),
     );
     expect(() => pruneRuntimeExtensions(runtimeRoot, stats, { repoRoot, label: 'test' })).toThrow(
       /Missing local source replacement: openai/,

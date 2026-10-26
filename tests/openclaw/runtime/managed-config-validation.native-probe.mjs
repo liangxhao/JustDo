@@ -7,12 +7,13 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const require = createRequire(import.meta.url);
+const expectedVersion = `v${require('../../../package.json').openclaw.version.replace(/^v/u, '')}`;
 const runtime = fs.realpathSync(process.argv[2]);
 const input = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
 assert.ok(Array.isArray(input));
 const { verifyFrozenOpenClawRuntime } = require('../../../scripts/openclaw/verify-openclaw-runtime-patches.cjs');
 const { hostTarget, targetContract } = require('../../../scripts/runtime/setup-node-runtime.cjs');
-const { manifest } = verifyFrozenOpenClawRuntime(runtime, { expectedVersion: 'v2026.10.6', requireBundle: true });
+const { manifest } = verifyFrozenOpenClawRuntime(runtime, { expectedVersion, requireBundle: true });
 assert.equal(manifest.target, hostTarget());
 const executable = path.join(runtime, 'node-runtime', targetContract(hostTarget()).executable);
 assert.equal(fs.realpathSync(process.execPath), fs.realpathSync(executable));

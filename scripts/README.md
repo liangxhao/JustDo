@@ -74,6 +74,13 @@ to select the upstream OpenClaw extensions retained in the runtime. The policy i
 reviewed for the locked OpenClaw version and included in the build fingerprint;
 local extension directories are protected separately.
 
+`openclaw/openclaw-bundled-dependencies.cjs` preserves complete dependencies
+declared by the authenticated pristine OpenClaw package after npm installation.
+Its `runtime-bundled-dependencies.json` records their source, registry base origin
+and complete file inventory. The build proof binds that inventory; pruning and
+frozen-runtime verification check it without replacing or re-signing existing
+artifacts. This keeps OpenClaw's bundled Chrome MCP fixes through preparation.
+
 Windows packaging uses `packaging/prepare-windows-build.cjs` to verify and reuse
 the prepared locked runtime, or rebuild it from pristine inputs when stale.
 `OPENCLAW_FORCE_INSTALL=1` deliberately disables reuse; remove that environment
@@ -286,7 +293,7 @@ databases. Run with the standalone Node shipped in the target runtime. Successfu
 are removed; failures report and retain only their isolated state for diagnosis.
 
 `<runtime-directory>/node-runtime/node[.exe] tests/openclaw/runtime/plugin-session-current.native-smoke.mjs <runtime-directory>`
-verifies the frozen v2026.10.6 execution-session guard using actual native workers and SQLite.
+verifies the frozen v2026.10.7 execution-session guard using actual native workers and SQLite.
 An owner-only update with the same session ID/revision must invalidate the live assertion;
 stale initial reads and lifecycle replacement must also fail. It retains synthetic evidence
 under `.agent-tasks/runtime/plugin-session-current/` and never starts a Gateway.
@@ -297,11 +304,11 @@ grant. It verifies repeated writer results start actual organizer executions and
 receive whole-run terminals under concurrent history/list reads. Run it with the
 standalone Node shipped in the target runtime when investigating packaged behavior.
 
-The SQLite probes target 10.6: final maintenance stop is awaited, rollback uses
+The SQLite probes target 10.7: final maintenance stop is awaited, rollback uses
 backup-bound migration write receipts, and logical writes invalidate stale authority.
 The contention probe imports the current 025 transformer. See the
-[current patch inventory](patches/v2026.10.6/README.md) and
-[upgrade evidence](../docs/openclaw-upgrades/v2026.10.6/README.md) for executed
+[current patch inventory](patches/v2026.10.7/README.md) and
+[upgrade evidence](../docs/openclaw-upgrades/v2026.10.7/README.md) for executed
 cases and the remaining validation scope. Historical 10.4 Node/Electron results
 remain in their own upgrade record and do not establish target-version acceptance.
 

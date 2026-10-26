@@ -1,0 +1,472 @@
+// Unmodified openclaw@2026.10.7 dist/agent-runner-run-Dma8wB1D.mjs candidate owners.
+// Source SHA-256: 45603e90c077891438a5b4bfc937cc24f97848f5aac6d5173e7fdf6e96d7b448
+async function runAgentFallbackCandidates(params) {
+	const turn = params.turn;
+	const sourceReplyDeliveryRuntimeOptions = turn.opts;
+	const sourceReplyDeliveryRuntime = readSourceReplyDeliveryRuntime(turn.followupRun.run) ?? createSourceReplyDeliveryRuntime({
+		origin: sourceReplyDeliveryRuntimeOptions?.sourceReplyDeliveryModeOrigin ?? "stable_policy",
+		initialMode: turn.followupRun.run.sourceReplyDeliveryMode ?? turn.opts?.sourceReplyDeliveryMode ?? "automatic",
+		projections: [turn.followupRun.run, ...turn.opts ? [turn.opts] : []],
+		promptComponentByMode: {
+			automatic: "",
+			message_tool_only: ""
+		},
+		promptComponentOffset: void 0,
+		onModeResolved: sourceReplyDeliveryRuntimeOptions?.onSourceReplyDeliveryModeResolved
+	});
+	sourceReplyDeliveryRuntime.track(turn.followupRun.run);
+	if (turn.opts) sourceReplyDeliveryRuntime.track(turn.opts);
+	bindSourceReplyDeliveryRuntime(turn.followupRun.run, sourceReplyDeliveryRuntime);
+	const sourceReplyDeliveryModeOrigin = sourceReplyDeliveryRuntime.origin;
+	const preserveProgressCallbackStartOrder = turn.opts?.preserveProgressCallbackStartOrder === true;
+	const runLane = turn.isHeartbeat || turn.followupRun.run.internalEventExecution ? "cron-nested" : "main";
+	let queuedUserMessagePersistedAcrossFallback = false;
+	const messageToolDeliveryState = {
+		toolCallIds: /* @__PURE__ */ new Set(),
+		completed: false
+	};
+	const userTurnTranscriptRecorder = turn.followupRun.userTurnTranscriptRecorder ?? turn.opts?.userTurnTranscriptRecorder;
+	const fastModeStartedAtMs = Date.now();
+	const fastModeAutoProgressState = {
+		offAnnounced: false,
+		resetAnnounced: false
+	};
+	const bootstrapContextRunKind = turn.opts?.isHeartbeat ? "heartbeat" : "default";
+	params.timing.logMilestoneIfSlow({
+		runId: params.runId,
+		sessionId: turn.followupRun.run.sessionId,
+		sessionKey: turn.sessionKey,
+		milestone: "before_model_fallback"
+	});
+	const selection = resolveModelFallbackOptions(params.effectiveRun, params.runtimeConfig);
+	const resolveCandidateRuntime = (provider, model, sessionRuntimeOverride) => {
+		const candidateRun = resolveFallbackCandidateRun(params.effectiveRun, provider, model);
+		const activeEntry = params.liveModelSwitchRuntimeEntry ?? turn.getActiveSessionEntry();
+		const selectedAuthProfile = resolveRunAuthProfile(candidateRun, provider, { config: params.runtimeConfig });
+		return {
+			candidateRun,
+			...resolveRunEntryCliRuntime({
+				config: params.runtimeConfig,
+				provider,
+				model,
+				agentId: turn.followupRun.run.agentId,
+				authProfileId: selectedAuthProfile.authProfileId,
+				sessionRuntimeOverride,
+				pinnedHarnessId: resolveSessionPinnedHarnessId(activeEntry)
+			})
+		};
+	};
+	return params.timing.measure("model_fallback", () => runEmbeddedAgentEntry({
+		preparedRunAdmission: params.preparedRunAdmission,
+		selection: buildRunEntrySelection(selection, turn.followupRun.run),
+		identity: {
+			runId: params.runId,
+			agentId: turn.followupRun.run.agentId,
+			sessionId: turn.followupRun.run.sessionId,
+			sessionKey: turn.sessionKey,
+			lane: runLane
+		},
+		harness: {
+			workspaceDir: turn.followupRun.run.workspaceDir,
+			sessionKey: turn.followupRun.run.runtimePolicySessionKey ?? turn.sessionKey,
+			preparation: {
+				kind: "measured",
+				run: (prepare) => params.timing.measure("fallback_prepare_harness", prepare)
+			},
+			resolveRuntimeOverride: (provider) => resolveSessionRuntimeOverrideForProvider({
+				provider,
+				entry: params.liveModelSwitchRuntimeEntry ?? turn.getActiveSessionEntry(),
+				cfg: params.runtimeConfig
+			}),
+			resolveContextEngineHost: (provider, model, runtimeOverride) => {
+				const runtime = resolveCandidateRuntime(provider, model, runtimeOverride);
+				if (!runtime.useCliExecution) return;
+				const backend = resolveCliBackendConfig(runtime.cliExecutionProvider, params.runtimeConfig, { agentId: turn.followupRun.run.agentId });
+				return buildGenericCliContextEngineHostSupport({
+					backendId: backend?.id ?? runtime.cliExecutionProvider,
+					...backend?.contextEngineHostCapabilities ? { capabilities: backend.contextEngineHostCapabilities } : {}
+				});
+			}
+		},
+		behavior: {
+			kind: "channel-delivery",
+			readDeliveryEvidence: () => ({
+				hasRetryBlockedDelivery: turn.blockReplyPipeline?.hasRetryBlockedDelivery() === true || params.directBlockDeliveries.some(hasBlockReplyDeliveryCustody),
+				hasDirectlySentBlockReply: params.directBlockDeliveries.some((delivery) => delivery.terminalDeliveryConfirmed === true),
+				hasBlockReplyPipelineOutput: Boolean(turn.blockReplyPipeline?.hasBuffered() || turn.blockReplyPipeline?.didStream())
+			})
+		},
+		sessionOverride: {
+			kind: "reconcile-completed",
+			reconcile: params.clearRecoveredAutoFallbackPrimaryProbe
+		},
+		onAcceptedTerminal: () => {
+			params.commitTerminalOutcome();
+			return turn.replyOperation ? beginReplyOperationFinalizationWork(turn.replyOperation, RUN_STALE_TAKEOVER_MS) : void 0;
+		},
+		abortSignal: params.runAbortSignal,
+		onFallbackStep: (step) => {
+			emitAgentEvent({
+				runId: params.runId,
+				...turn.sessionKey ? { sessionKey: turn.sessionKey } : {},
+				stream: "lifecycle",
+				data: {
+					phase: "fallback_step",
+					...step
+				}
+			});
+		},
+		runCandidate: async (provider, model, runOptions) => {
+			bindReplyFallbackSteeringRoute({
+				operation: turn.replyOperation,
+				provenance: runOptions.modelRoutingProvenance,
+				route: {
+					provider,
+					model
+				},
+				config: params.runtimeConfig,
+				workspaceDir: turn.followupRun.run.workspaceDir
+			});
+			clearAgentRunTerminalWriteContext(params.preparedRunAdmission.operationalRunInstance);
+			params.state.maintenanceAuthProfile = void 0;
+			params.state.compactionRequestBudget = void 0;
+			invalidateTurnCompactionContext(params.state.compaction);
+			params.state.attemptedRuntimeProvider = provider;
+			params.state.attemptedRuntimeModel = model;
+			const runtime = params.timing.measureSync("fallback_resolve_runtime", () => resolveCandidateRuntime(provider, model, runOptions.agentHarnessRuntimeOverride));
+			const candidateRun = runtime.candidateRun;
+			bindSourceReplyDeliveryRuntime(candidateRun, sourceReplyDeliveryRuntime);
+			const candidateSourceReplyDeliveryMode = sourceReplyDeliveryModeOrigin === "runtime_default" && runtime.useCliExecution ? candidateRun.cliSessionBindingFacts?.sourceReplyDeliveryMode ?? "automatic" : sourceReplyDeliveryRuntime.currentMode;
+			const applySourceReplyDeliveryModeBeforeInvocation = sourceReplyDeliveryModeOrigin !== "runtime_default" || runtime.useCliExecution;
+			if (candidateSourceReplyDeliveryMode && applySourceReplyDeliveryModeBeforeInvocation) sourceReplyDeliveryRuntime.applyMode(candidateRun, candidateSourceReplyDeliveryMode);
+			const candidateAgentRuntime = resolveCandidateAgentRuntime({
+				cfg: params.runtimeConfig,
+				provider,
+				modelId: model,
+				agentId: turn.followupRun.run.agentId,
+				sessionKey: turn.followupRun.run.runtimePolicySessionKey ?? turn.sessionKey,
+				sessionEntry: params.liveModelSwitchRuntimeEntry ?? turn.getActiveSessionEntry(),
+				agentRuntime: runOptions.agentHarnessRuntimeOverride
+			});
+			const candidateThinkLevel = resolveRunThinkingLevelForFallbackCandidate({
+				cfg: params.runtimeConfig,
+				provider,
+				modelId: model,
+				run: turn.followupRun.run,
+				catalog: turn.followupRun.run.thinkingCatalog,
+				agentId: turn.followupRun.run.agentId,
+				sessionKey: turn.followupRun.run.runtimePolicySessionKey ?? turn.sessionKey,
+				sessionEntry: params.liveModelSwitchRuntimeEntry ?? turn.getActiveSessionEntry(),
+				agentRuntime: candidateAgentRuntime
+			});
+			const candidateFastMode = resolveRunFastModeForFallbackCandidate({
+				run: candidateRun,
+				config: params.runtimeConfig,
+				provider,
+				model,
+				sessionEntry: turn.getActiveSessionEntry()
+			});
+			const activeProbe = params.effectiveRun.autoFallbackPrimaryProbe;
+			if (activeProbe && provider === activeProbe.provider && model === activeProbe.model) markAutoFallbackPrimaryProbe({
+				probe: activeProbe,
+				sessionKey: turn.sessionKey
+			});
+			turn.opts?.onModelSelected?.({
+				provider,
+				model,
+				thinkLevel: candidateThinkLevel
+			});
+			const runStart = params.createAgentRunStartCallbacks();
+			const signalExecutionPhaseForCandidate = (info) => {
+				if (params.state.compaction.count > 0 && (info.phase === "model_call_started" || info.phase === "process_spawned")) params.state.postCompactionModelAttempted = true;
+				runStart.signalExecutionPhaseForTyping(info);
+			};
+			const messageActionTurnCapability = mintReplyMessageActionTurnCapability(turn, params.runId);
+			try {
+				const common = {
+					...runOptions,
+					...params,
+					turn,
+					messageActionTurnCapability,
+					candidateRun,
+					provider,
+					model,
+					candidateThinkLevel,
+					candidateFastMode,
+					runLane,
+					suppressQueuedUserPersistenceForCandidate: (turn.followupRun.run.suppressNextUserMessagePersistence ?? false) || queuedUserMessagePersistedAcrossFallback,
+					userTurnTranscriptRecorder,
+					notifyUserMessagePersisted: () => {
+						queuedUserMessagePersistedAcrossFallback = true;
+					},
+					fastModeStartedAtMs,
+					fastModeAutoProgressState,
+					bootstrapContextRunKind,
+					bootstrapPromptWarningSignaturesSeen: params.state.bootstrapPromptWarningSignaturesSeen,
+					signalExecutionPhaseForTyping: signalExecutionPhaseForCandidate,
+					prepareAgentRunStart: runStart.prepareAgentRunStart,
+					notifyAgentRunStart: runStart.notifyAgentRunStart,
+					preserveProgressCallbackStartOrder,
+					onLifecycleBackstop: (backstop) => {
+						params.state.pendingLifecycleTerminal = {
+							provider,
+							model,
+							backstop
+						};
+					},
+					deferredLifecycle: params.state.deferredLifecycle
+				};
+				let result;
+				if (runtime.useCliExecution) result = await runCliFallbackCandidate({
+					...common,
+					cliExecutionProvider: runtime.cliExecutionProvider,
+					lifecycleGeneration: params.state.lifecycleGeneration,
+					onSessionWriter: (writer) => {
+						params.state.sessionWriter = writer;
+					}
+				});
+				else {
+					const candidate = await runEmbeddedFallbackCandidate({
+						...common,
+						candidateAgentRuntime,
+						getLifecycleGeneration: () => params.state.lifecycleGeneration,
+						onLifecycleGeneration: (generation) => {
+							params.state.lifecycleGeneration = generation;
+						},
+						messageToolDeliveryState,
+						onCompactionFacts: ({ accounting, postCompactionModelAttempted }) => {
+							if (accounting) recordTurnCompaction(params.state.compaction, accounting);
+							params.state.postCompactionModelAttempted ||= postCompactionModelAttempted;
+						}
+					});
+					params.state.maintenanceAuthProfile = candidate.maintenanceAuthProfile;
+					params.state.compactionRequestBudget = candidate.compactionRequestBudget;
+					result = candidate.result;
+				}
+				params.state.bootstrapPromptWarningSignaturesSeen = resolveBootstrapWarningSignaturesSeen(result.meta?.systemPromptReport);
+				return result;
+			} finally {
+				runStart.close();
+				revokeMessageActionTurnCapability(messageActionTurnCapability);
+			}
+		}
+	}));
+}
+
+async function runEmbeddedFallbackCandidate(params) {
+	const turn = params.turn;
+	let maintenanceAuthProfile;
+	let compactionRequestBudget;
+	const sourceReplyDeliveryRuntime = readSourceReplyDeliveryRuntime(params.candidateRun);
+	const candidateRun = {
+		...params.candidateRun,
+		...params.candidateFastMode,
+		thinkLevel: params.candidateThinkLevel
+	};
+	const runBaseParams = await buildEmbeddedRunExecutionParams({
+		run: candidateRun,
+		replyRoute: turn.followupRun,
+		sessionCtx: turn.sessionCtx,
+		hasRepliedRef: turn.opts?.hasRepliedRef,
+		provider: params.provider,
+		runId: params.runId,
+		promptCacheKey: turn.opts?.promptCacheKey,
+		allowTransientCooldownProbe: params.allowTransientCooldownProbe,
+		model: params.model,
+		agentRuntime: params.candidateAgentRuntime
+	});
+	if (sourceReplyDeliveryRuntime) bindSourceReplyDeliveryRuntime(runBaseParams, sourceReplyDeliveryRuntime);
+	const agentHarnessPolicy = params.agentHarnessRuntimeOverride ? {
+		runtime: params.agentHarnessRuntimeOverride,
+		runtimeSource: "model"
+	} : resolveAgentHarnessPolicy({
+		provider: params.provider,
+		modelId: params.model,
+		config: params.runtimeConfig,
+		agentId: turn.followupRun.run.agentId,
+		sessionKey: turn.followupRun.run.runtimePolicySessionKey ?? turn.sessionKey
+	});
+	const embeddedRunProvider = resolveOpenAIRuntimeProvider({
+		provider: params.provider,
+		harnessRuntime: agentHarnessPolicy.runtime,
+		authProfileProvider: runBaseParams.authProfileId?.split(":", 1)[0],
+		authProfileId: runBaseParams.authProfileId,
+		config: params.runtimeConfig,
+		workspaceDir: turn.followupRun.run.workspaceDir
+	});
+	const embeddedRunHarnessOverride = params.agentHarnessRuntimeOverride ?? (agentHarnessPolicy.runtime === "openclaw" && embeddedRunProvider !== params.provider ? "openclaw" : void 0);
+	let attemptCompactionCount = 0;
+	let postCompactionModelAttempted = false;
+	let compactionAccounting;
+	const lifecycleBackstop = createAgentLifecycleTerminalBackstop({
+		runId: params.runId,
+		sessionKey: turn.sessionKey,
+		getLifecycleGeneration: params.getLifecycleGeneration,
+		resolveTerminationFields: (error) => resolveReplyOperationTerminationFields(error, params.runAbortSignal, turn.replyOperation)
+	});
+	params.onLifecycleBackstop(lifecycleBackstop);
+	try {
+		params.timing.logMilestoneIfSlow({
+			runId: params.runId,
+			sessionId: turn.followupRun.run.sessionId,
+			sessionKey: turn.sessionKey,
+			milestone: "before_embedded_run"
+		});
+		let eventHandler;
+		const result = await params.timing.measure("embedded_run", () => {
+			const embeddedRunParams = {
+				...runBaseParams,
+				lifecycleGeneration: params.getLifecycleGeneration(),
+				allowGatewaySubagentBinding: true,
+				cronCreatorAuthorityCapability: turn.opts?.cronCreatorAuthorityCapability,
+				cronCreatorAuthorityUnavailableReason: turn.opts?.turnAdoptionLifecycle?.cronCreatorAuthorityUnavailable,
+				groupId: resolveGroupSessionKey(turn.sessionCtx)?.id,
+				groupChannel: normalizeOptionalString(turn.sessionCtx.GroupChannel) ?? normalizeOptionalString(turn.sessionCtx.GroupSubject),
+				groupSpace: normalizeOptionalString(turn.sessionCtx.GroupSpace),
+				...buildFallbackCandidateTurnParams(params),
+				contextWindow: turn.getActiveSessionEntry()?.contextWindow,
+				provider: embeddedRunProvider,
+				agentHarnessId: resolveSessionPinnedHarnessId(turn.getActiveSessionEntry()),
+				agentHarnessRuntimeOverride: embeddedRunHarnessOverride,
+				agentHarnessRuntimePreparationHint: agentHarnessPolicy.runtimeSource !== "implicit" ? agentHarnessPolicy.runtime : void 0,
+				sandboxSessionKey: turn.runtimePolicySessionKey,
+				explicitSkillSelections: turn.followupRun.explicitSkillSelections,
+				forceMessageTool: turn.followupRun.run.sourceReplyDeliveryMode === "message_tool_only",
+				suppressTranscriptOnlyAssistantPersistence: turn.followupRun.run.suppressTranscriptOnlyAssistantPersistence,
+				assistantErrorTranscript: params.assistantErrorTranscript,
+				authProfileFailurePolicy: params.authProfileFailurePolicy,
+				onAutoCompactionSucceeded: (count) => {
+					attemptCompactionCount = Math.max(attemptCompactionCount, count);
+				},
+				toolResultFormat: (() => {
+					const channel = resolveMessageChannel(turn.sessionCtx.Surface, turn.sessionCtx.Provider);
+					return !channel || isMarkdownCapableMessageChannel(channel) ? "markdown" : "plain";
+				})(),
+				toolProgressDetail: turn.toolProgressDetail,
+				toolAuthorityFingerprint: turn.replyOperation?.toolAuthorityFingerprint,
+				enableHeartbeatTool: turn.opts?.enableHeartbeatTool,
+				forceHeartbeatTool: turn.opts?.forceHeartbeatTool,
+				deferTerminalLifecycle: true,
+				onAttemptStart: lifecycleBackstop.beginAttempt,
+				onCompactionAccounting: (fact) => {
+					compactionAccounting = fact;
+				},
+				onCompactionRequestBudget: (budget) => {
+					compactionRequestBudget = budget;
+				},
+				onDeferredLifecycleOwner: params.deferredLifecycle.adopt,
+				onDeferredLifecycleAbort: params.deferredLifecycle.abort,
+				onRetryWait: params.deferredLifecycle.beginRetryWait,
+				onExecutionStarted: async (info) => {
+					if (info?.lifecycleGeneration) params.onLifecycleGeneration(info.lifecycleGeneration);
+					if (agentHarnessPolicy.runtime !== "openclaw" || info?.backend === "cloud-worker") await params.prepareAgentRunStart();
+				},
+				onExecutionPhase: (info) => {
+					if (info.phase === "model_call_started" && attemptCompactionCount > 0) postCompactionModelAttempted = true;
+					params.signalExecutionPhaseForTyping(info);
+				},
+				onLaneWait: ({ waiting }) => {
+					const replyOperation = turn.replyOperation;
+					if (waiting && replyOperation) markReplyOperationGlobalLaneWaitProgress(replyOperation);
+				},
+				blockReplyBreak: turn.resolvedBlockStreamingBreak,
+				blockReplyChunking: turn.blockReplyChunking,
+				onPartialReply: (payload) => params.presentation.presentPartialReply(payload, "embedded"),
+				onAssistantMessageStart: async () => {
+					await params.presentation.presentWithTyping(turn.typingSignals.signalMessageStart(), () => turn.opts?.onAssistantMessageStart?.());
+				},
+				onReasoningStream: turn.typingSignals.shouldStartOnReasoning || turn.opts?.onReasoningStream ? async (payload) => {
+					if (turn.followupRun.run.silentExpected) return;
+					await params.presentation.presentWithTyping(turn.typingSignals.signalReasoningDelta(), () => turn.opts?.onReasoningStream?.({
+						text: payload.text,
+						mediaUrls: payload.mediaUrls,
+						isReasoningSnapshot: payload.isReasoningSnapshot,
+						requiresReasoningProgressOptIn: payload.requiresReasoningProgressOptIn
+					}));
+				} : void 0,
+				streamReasoningInNonStreamModes: turn.opts?.streamReasoningInNonStreamModes,
+				onReasoningEnd: turn.opts?.onReasoningEnd ? async () => {
+					await turn.opts?.onReasoningEnd?.();
+				} : void 0,
+				onAgentEvent: (event) => {
+					eventHandler ??= createAgentRunEventHandler({
+						turn,
+						lifecycleBackstop,
+						prepareAgentRunStart: params.prepareAgentRunStart,
+						notifyAgentRunStart: params.notifyAgentRunStart,
+						sourceRepliesAreToolOnly: (sourceReplyDeliveryRuntime?.currentMode ?? turn.followupRun.run.sourceReplyDeliveryMode) === "message_tool_only",
+						messageToolDeliveryState: params.messageToolDeliveryState,
+						provider: params.provider,
+						model: params.model,
+						effectiveSessionId: params.effectiveRun.sessionId,
+						notifyUserAboutCompaction: params.notifyUserAboutCompaction,
+						onCompactionCompleted: () => {
+							attemptCompactionCount += 1;
+							return attemptCompactionCount;
+						}
+					});
+					return eventHandler(event);
+				},
+				onBlockReply: params.presentation.blockReplyHandler,
+				resolveReplyDelivery: (minimumAssistantMessageIndex) => resolveTerminalReplyDelivery({
+					blockReplyPipeline: turn.blockReplyPipeline,
+					directBlockDeliveries: params.directBlockDeliveries,
+					minimumAssistantMessageIndex,
+					resolveReplyDelivery: turn.opts?.resolveReplyDelivery
+				}),
+				onBlockReplyFlush: turn.blockStreamingEnabled && turn.blockReplyPipeline ? async () => {
+					await turn.blockReplyPipeline?.flush({ force: true });
+				} : void 0,
+				shouldEmitToolResult: turn.shouldEmitToolResult,
+				shouldEmitToolOutput: turn.shouldEmitToolOutput,
+				onToolResult: turn.opts?.onToolResult ? (() => {
+					let toolResultChain = Promise.resolve();
+					return (payload) => {
+						const delivery = toolResultChain.then(async () => {
+							turn.replyOperation?.recordActivity();
+							const { text, skip } = params.presentation.normalizeStreamingText(payload);
+							if (skip) return;
+							if (text !== void 0) await turn.typingSignals.signalTextDelta(text);
+							await turn.opts?.onToolResult?.({
+								...payload,
+								text
+							});
+						});
+						toolResultChain = delivery.catch((err) => {
+							logVerbose(`tool result delivery failed: ${String(err)}`);
+						});
+						const task = toolResultChain.finally(() => {
+							turn.pendingToolTasks.delete(task);
+						});
+						turn.pendingToolTasks.add(task);
+						return delivery;
+					};
+				})() : void 0
+			};
+			embeddedRunParams.onSuccessfulAuthProfile = (profileId) => {
+				maintenanceAuthProfile = {
+					authProfileId: profileId,
+					authProfileIdSource: profileId ? profileId === runBaseParams.authProfileId ? runBaseParams.authProfileIdSource : "auto" : void 0
+				};
+			};
+			return runEmbeddedAgent(embeddedRunParams);
+		});
+		const resultCompactionCount = Math.max(0, result.meta?.agentMeta?.compactionCount ?? 0);
+		attemptCompactionCount = Math.max(attemptCompactionCount, resultCompactionCount);
+		return {
+			result,
+			maintenanceAuthProfile,
+			compactionRequestBudget
+		};
+	} finally {
+		const accounting = compactionAccounting ?? (attemptCompactionCount > 0 ? {
+			kind: "presentation-only",
+			count: attemptCompactionCount,
+			currentContextSnapshot: { tokens: void 0 }
+		} : void 0);
+		params.onCompactionFacts({
+			accounting,
+			postCompactionModelAttempted
+		});
+	}
+}

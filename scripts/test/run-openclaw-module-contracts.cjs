@@ -42,6 +42,7 @@ const steps = [
   ['Main startup config, native schema, legacy rules and lifecycle policy', [
     path.join(path.dirname(require.resolve('vitest/package.json')), 'vitest.mjs'),
     'run', 'tests/openclaw/runtime/managed-config-native-schema.test.ts',
+    'tests/openclaw/runtime/runtime-bundled-dependencies-native-contract.test.ts',
     'src/shared/app/shutdownPolicy.test.ts',
     'tests/openclaw/runtime/workspace-preflight-native-contract.test.ts',
     '--pool=threads', '--maxWorkers=1',
@@ -63,7 +64,7 @@ const steps = [
   ]],
   ['native all-data database schema maintenance and ownership', [
     'tests/openclaw/runtime/native-database-upgrade.native-probe.mjs', runtime, source,
-  ]],
+  ], 600_000],
   ['real Electron Main native database archive admission', [
     'tests/openclaw/runtime/native-database-identity.electron-probe.cjs', runtime,
   ]],
@@ -83,7 +84,7 @@ for (const [label, command, timeout = 240_000] of steps) {
     cwd: root,
     env: { ...process.env, OPENCLAW_RUNTIME: runtime, OPENCLAW_TEST_NATIVE_RUNTIME_DIR: runtime, OPENCLAW_SOURCE: source,
       OPENCLAW_TEST_UPSTREAM_ROOT: source, OPENCLAW_REQUIRE_MANAGEMENT_CONTRACTS: '1',
-      OPENCLAW_REQUIRE_MANAGED_CONFIG_CONTRACTS: '1' },
+      OPENCLAW_REQUIRE_MANAGED_CONFIG_CONTRACTS: '1', OPENCLAW_REQUIRE_BUNDLED_DEPENDENCIES: '1' },
     windowsHide: true,
     stdio: 'inherit',
     timeout,

@@ -15,6 +15,7 @@ import { build } from 'esbuild';
 import { parse } from 'acorn';
 
 const require = createRequire(import.meta.url);
+const expectedVersion = `v${require('../../../package.json').openclaw.version.replace(/^v/u, '')}`;
 const shutdownPolicy = require('../../../src/shared/app/shutdownPolicy.json');
 const { GATEWAY_READY_MESSAGE } = require('../../../src/main/openclaw/runtime/openclawGatewayBundleLauncher.cjs');
 const repository = fileURLToPath(new URL('../../../', import.meta.url));
@@ -22,8 +23,8 @@ const runtime = fs.realpathSync(process.argv[2] ?? path.join(repository, 'vendor
 const { verifyOpenClawPatchManifest, verifyFrozenOpenClawRuntime } = require('../../../scripts/openclaw/verify-openclaw-runtime-patches.cjs');
 const archivedDiagnostic = process.argv.includes('--archived-diagnostic');
 const manifest = archivedDiagnostic
-  ? verifyFrozenOpenClawRuntime(runtime, { expectedVersion: 'v2026.10.6', requireBundle: true }).manifest
-  : verifyOpenClawPatchManifest(runtime, { repoRoot: repository, expectedVersion: 'v2026.10.6', requireBundle: true });
+  ? verifyFrozenOpenClawRuntime(runtime, { expectedVersion, requireBundle: true }).manifest
+  : verifyOpenClawPatchManifest(runtime, { repoRoot: repository, expectedVersion, requireBundle: true });
 assert.equal(fs.realpathSync(process.execPath), fs.realpathSync(path.join(runtime, 'node-runtime/node.exe')));
 const nativeLaunchGuard = parse(fs.readFileSync(path.join(runtime, 'dist/extensions/runtime-services/index.js'), 'utf8'),
   { ecmaVersion: 'latest', sourceType: 'module' });

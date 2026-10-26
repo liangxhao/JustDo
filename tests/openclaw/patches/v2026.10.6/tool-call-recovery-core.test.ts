@@ -1,3 +1,4 @@
+import { historicalRuntimeOrUnavailable } from './historical-runtime';
 /* eslint-disable @typescript-eslint/no-explicit-any -- Execute locked native owners with explicit integration seams. */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -13,11 +14,11 @@ import { resolveToolCallRecovery } from '../../../../plugins/extensions/runtime-
 
 const { __testing: patch } = require('../../../../scripts/patches/v2026.10.6/029-tool-call-format-recovery.cjs');
 const root = path.resolve(__dirname, '../../../..');
-const dist = path.join(process.env.OPENCLAW_PRISTINE_DIR ?? path.join(root, 'build/runtimes/openclaw/win-x64'), 'dist');
+const dist = path.join(historicalRuntimeOrUnavailable(process.env.OPENCLAW_PRISTINE_DIR ?? path.join(root, 'build/runtimes/openclaw/win-x64')), 'dist');
 const file = fs.existsSync(dist) && fs.readdirSync(dist).find(name => /^agent-core-.*\.mjs$/.test(name) &&
   fs.readFileSync(path.join(dist, name), 'utf8').includes('function streamAgentResponse('));
 const source = file ? patch.transformCore(fs.readFileSync(path.join(dist, file), 'utf8'), file) : '';
-const sdkRoot = path.join(process.env.OPENCLAW_RUNTIME_DIR ?? path.join(root, 'build/runtimes/openclaw/win-x64'), 'node_modules/@openclaw/ai');
+const sdkRoot = path.join(historicalRuntimeOrUnavailable(process.env.OPENCLAW_RUNTIME_DIR ?? path.join(root, 'build/runtimes/openclaw/win-x64')), 'node_modules/@openclaw/ai');
 const sdkDist = path.join(sdkRoot, 'dist');
 const completionsFile = path.join(sdkDist, 'openai-completions-transport-BRjxCG1C.mjs');
 const model = { api: 'openai-completions', provider: 'fixture', id: 'model' };

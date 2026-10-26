@@ -138,7 +138,7 @@ export function createPreviewState(
           downgradeConfirmation: {
             requestId: PREVIEW_DOWNGRADE_REQUEST_ID,
             source: { appVersion: '2027.1.1', runtimeVersion: '2027.1.1' },
-            target: { appVersion: '2026.10.20', runtimeVersion: '2026.10.6' },
+            target: { appVersion: '2026.10.20', runtimeVersion: '2026.10.7' },
           },
         }
       : {}),

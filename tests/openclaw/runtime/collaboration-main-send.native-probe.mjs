@@ -27,6 +27,7 @@ const evidenceRoot = path.join(repository, '.agent-tasks/runtime/collaboration-m
 fs.mkdirSync(evidenceRoot, { recursive: true });
 const evidence = fs.mkdtempSync(path.join(evidenceRoot, 'probe-'));
 const compiled = path.join(evidence, 'controller.cjs');
+const rawMarkdownSuffix = '.md?raw';
 const compilation = await build({ stdin: { contents: `
 export { ChatController } from './src/renderer/libs/openclaw-chat/gateway/chat-controller';
 export { dispatchInitialTurn } from './src/renderer/libs/openclaw-chat/gateway/input/initial-turn-dispatch';
@@ -36,6 +37,12 @@ export { GATEWAY_READY_MESSAGE } from './src/main/openclaw/runtime/openclawGatew
 `, resolveDir: repository, loader: 'ts' }, bundle: true, platform: 'node', format: 'cjs',
   target: 'node24', outfile: compiled, metafile: true,
   define: { 'import.meta.env': '{}' }, logOverride: { 'empty-import-meta': 'silent' },
+  plugins: [{ name: 'vite-raw-markdown', setup(builder) {
+    builder.onLoad({ filter: /\.md$/, namespace: 'file' }, args => {
+      if (args.suffix !== '?raw') return;
+      return { contents: fs.readFileSync(args.path, 'utf8'), loader: 'text', watchFiles: [args.path] };
+    });
+  } }],
   tsconfig: path.join(repository, 'tsconfig.json') });
 const storage = new Map();
 // Browser ambient ports only. There is no Electron, product Store or RPC stub.
@@ -46,9 +53,10 @@ const production = require(compiled);
 const controller = new production.ChatController();
 assert.equal(controller.state.connected, false);
 assert.equal(typeof controller.sendMessage, 'function');
-const sourceInputs = Object.keys(compilation.metafile.inputs).filter(relative => !relative.startsWith('<')).sort().map(relative => ({
-  path: relative.replaceAll('\\', '/'), sha256: hash(fs.readFileSync(path.resolve(repository, relative))),
-}));
+const sourceInputs = Object.keys(compilation.metafile.inputs).filter(relative => !relative.startsWith('<')).sort().map(relative => {
+  const file = relative.endsWith(rawMarkdownSuffix) ? relative.slice(0, -'?raw'.length) : relative;
+  return { path: relative.replaceAll('\\', '/'), sha256: hash(fs.readFileSync(path.resolve(repository, file))) };
+});
 const manifestSha256 = hash(fs.readFileSync(path.join(runtime, 'runtime-patch-manifest.json')));
 const report = { ...identity, assembly, manifestSha256, compiledControllerSha256: hash(fs.readFileSync(compiled)),
   sourceInputs, checks: [], verified: false, cleanClose: false,

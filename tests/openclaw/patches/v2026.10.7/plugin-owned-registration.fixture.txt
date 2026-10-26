@@ -1,0 +1,40 @@
+// Frozen complete function from pristine openclaw@2026.10.7 dist/agent-turn-service-DTOXX_Sj.mjs; test data only.
+async function registerPluginSubagentRunFromGateway(params) {
+	const { childSessionKey } = params;
+	const ownerSessionKey = resolveAgentMainSessionKey({
+		cfg: params.cfg,
+		agentId: resolveAgentIdFromSessionKey(childSessionKey)
+	});
+	const requesterSessionKey = params.requester?.sessionKey ?? ownerSessionKey;
+	const { adoptPausedSubagentRunForFollowUp, adoptPausedSubagentRunIntoSuccessor, registerSubagentRun } = await import("./subagent-registry-BGVR45lO.mjs");
+	const sessionEntry = params.assertCurrent();
+	if (!params.requester && await adoptPausedSubagentRunForFollowUp({
+		childSessionKey,
+		childAgentId: params.childAgentId,
+		runId: params.runId,
+		task: params.task,
+		gatewayContextResolver: params.gatewayContextResolver,
+		assertCurrent: params.assertCurrent
+	})) return;
+	await registerSubagentRun({
+		runId: params.runId,
+		childSessionKey,
+		childAgentId: params.childAgentId,
+		sessionEntry,
+		controllerSessionKey: ownerSessionKey,
+		requesterSessionKey,
+		requesterOrigin: params.requester?.origin,
+		requesterDisplayKey: params.requester ? requesterSessionKey : "main",
+		task: params.task,
+		cleanup: "keep",
+		...params.pluginId ? { label: `plugin:${params.pluginId}` } : {},
+		expectsCompletionMessage: params.requester !== void 0,
+		spawnMode: "run",
+		gatewayContextResolver: params.gatewayContextResolver
+	}, { assertCurrent: params.assertCurrent });
+	if (!params.requester) await adoptPausedSubagentRunIntoSuccessor({
+		childSessionKey,
+		childAgentId: params.childAgentId,
+		assertCurrent: params.assertCurrent
+	});
+}

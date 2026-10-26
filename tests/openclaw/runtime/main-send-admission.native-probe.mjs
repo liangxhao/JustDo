@@ -152,9 +152,12 @@ async function request(method, params, options) {
       hasActiveRun: result.session?.hasActiveRun, hasActiveRunType: typeof result.session?.hasActiveRun,
       hasActiveSubagentRun: result.session?.hasActiveSubagentRun,
       hasActiveSubagentRunPresent: Object.hasOwn(result.session ?? {}, 'hasActiveSubagentRun') });
-    if (pendingGate && pendingGate.key === params.key) {
+    if (pendingGate?.phase === 'admission' && pendingGate.key === params.key) {
       const gate = pendingGate;
+      assert.equal(result.session?.sessionId, gate.nativeSessionId,
+        'The delayed publication must be delivered within the prepared native incarnation');
       await until(() => gate.frame, 'authentic delayed create frame', 10_000);
+      assert.equal(pendingGate, gate, 'The delayed publication must retain its captured admission owner');
       pendingGate = undefined;
       assert.ok(adapter.targetedSessionStatusChecks.get(params.key)?.size > 0,
         'The real Adapter must have an in-flight point reader before the authentic event arrives');
@@ -169,10 +172,14 @@ async function request(method, params, options) {
 async function capturePreparation(source) {
   const key = host.buildManagedSessionKey(source.id, source.agentId);
   captureKey = key;
-  const gate = { key };
+  const gate = { key, phase: 'preparing' };
   pendingGate = gate;
   const prepared = await router.prepareSession(source.id);
   assert.equal(prepared.sessionKey, key);
+  assert.equal(pendingGate, gate, 'Preparation reads must not consume the delayed publication');
+  assert.equal(gate.phase, 'preparing');
+  gate.nativeSessionId = prepared.gatewaySessionId;
+  gate.phase = 'admission';
   assert.equal(store.getSession(source.id).nativeSessionKey, undefined, 'Normal preparation must retain the actual product shape');
   assert.equal(store.getSession(source.id).historyBinding, undefined);
   return { key, prepared, gate };

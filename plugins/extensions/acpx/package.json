@@ -1,6 +1,6 @@
 {
   "name": "acpx-runtime",
-  "version": "2026.10.6-local.3",
+  "version": "2026.10.7-local.1",
   "private": true,
   "description": "Vendored OpenClaw ACP runtime backend.",
   "repository": {
@@ -22,7 +22,7 @@
       "./index.ts"
     ],
     "compat": {
-      "pluginApi": ">=2026.10.6"
+      "pluginApi": ">=2026.10.7"
     }
   }
 }

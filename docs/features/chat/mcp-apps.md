@@ -287,7 +287,7 @@ Chromium 将已运行 iframe 跨 Document 移动会重载。消息 App 因此在
 
 2026-10-18 经源码审计和用户确认移除原 MCP Apps 生命周期补丁 `030-mcp-app-operation-lifecycle.cjs`（下文简称原 030），MCP Apps 不再增加生命周期补丁。当前原生 WebSocket 没有精确请求取消和显式视图释放接口；视图、临时工具授权与部分订阅按原生固定租约到期清理，最长为创建后约十分钟。关闭界面、SDK teardown 或本地 AbortSignal 都不构成后台取消、授权撤销或副作用回滚的证明。
 
-手动 App 与后续模型执行必须使用相同的原生会话工作目录。锁定 2026.10.6 的手动准备遗漏 `spawnedCwd`，会在角色 home 与项目目录不同时替换 MCP runtime，撤销仍显示中的旧视图交互并关闭其资源服务。`030-mcp-app-session-workspace.cjs` 仅将手动准备接至模型已有的 ingress workspace resolver，并把持久工作目录事实纳入准备 fingerprint；不改变授权、租约、取消或释放语义。宿主不能通过 App 参数自选目录或替换会话 owner。复现和验收见 [draw.io 当前画布](drawio-current-canvas.md#6-必须通过的验证)。
+手动 App 与后续模型执行必须使用相同的原生会话工作目录。当前锁定 2026.10.7 的手动准备仍遗漏 `spawnedCwd`，会在角色 home 与项目目录不同时替换 MCP runtime，撤销仍显示中的旧视图交互并关闭其资源服务。`030-mcp-app-session-workspace.cjs` 仅将手动准备接至模型已有的 ingress workspace resolver，并把持久工作目录事实纳入准备 fingerprint；不改变授权、租约、取消或释放语义。宿主不能通过 App 参数自选目录或替换会话 owner。复现和验收见 [draw.io 当前画布](drawio-current-canvas.md#6-必须通过的验证)；较早版本的通过记录不替代[本版验证](../../openclaw-upgrades/v2026.10.7/validation.md)。
 
 断线和未知结果不自动重试启动、工具调用、设置写入或文件写入。重新读取界面优先读取 `mcp.app.view`；仅下述已核验的插件恢复适配可在明确过期后读取原始结果。原生历史重建的只读视图不恢复工具授权。对于提交工单等写入操作，须核对实际结果，不能因界面关闭而重复提交。
 
@@ -390,6 +390,9 @@ App 内容及其后代 iframe 继承原生 opaque origin。外部插件内部的
 
 ## 当前验证边界
 
+本节保留10.6升级的隔离桌面与原生探针历史证据；当前10.7产物的重新验证和未验收项见
+[本版验证记录](../../openclaw-upgrades/v2026.10.7/validation.md)，不能由以下旧版通过结果替代。
+
 升级补查执行了当前 Main 原生客户端发现/加载/响应捕获函数，并在严格冻结产物中验证
 所选 constructor 与公共 facade 严格相同、共享原生响应相关性 WeakSet；未相关的同形错误
 仍被拒绝。受控请求验证只读 pending 后显式重试、创建后 pending 不重发及各所有权围栏。
@@ -404,7 +407,7 @@ App 内容及其后代 iframe 继承原生 opaque origin。外部插件内部的
 覆盖中文路径、开发/生产选择、相对 override、既有内容、自定义路径不自动创建及 await
 顺序；不构造 SQLite 或启动 Gateway。修复后隔离 Fresh 桌面已实际进入首页，原生
 describe/create/describe 成功；尚未发起模型任务或验收 draw.io 打开，其他路由的桌面结果
-统一见[本轮验证](../../openclaw-upgrades/v2026.10.6/validation.md)。
+统一见[10.6历史验证](../../openclaw-upgrades/v2026.10.6/validation.md)。
 
 窗口销毁的预览 release 当前是 best-effort，Main 未显式 join 该 owner，可能与 Gateway
 关闭竞争。本轮 Fresh 退出时一次原生 delete 在归档登记阶段返回 UNAVAILABLE；日志缺少

@@ -24,7 +24,7 @@ function nativeFunction(tree: ts.SourceFile, name: string, ports: Record<string,
 
 // Actual full target function bodies with controlled registry ports, not a Gateway/SQLite test.
 test.skipIf(!sourceRoot)('native exact activity exposes complete chat identities and preserves projected-owner uncertainty', () => {
-  expect(JSON.parse(fs.readFileSync(path.join(sourceRoot!, 'package.json'), 'utf8')).version).toBe('2026.10.6');
+  expect(JSON.parse(fs.readFileSync(path.join(sourceRoot!, 'package.json'), 'utf8')).version).toBe('2026.10.7');
   const tree = source('src/gateway/server-methods/session-active-runs.ts');
   const ownerPorts = {
     resolveChatRunOwnerAgentId: ({ agentId }: { agentId: string }) => agentId,

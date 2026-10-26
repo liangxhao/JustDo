@@ -45,8 +45,11 @@ PDF 的既有许可证保持原样，Office 三项继续使用原有 MIT-0 来�
   普通生成只读取配置，不创建文件，也不改写安装目录或建立全局个人配置。
 - 中文文件名可直接导出 SVG；非 ASCII 文件名使用稳定摘要区分元素 ID 前缀。
   三种导入格式的示例输入随脚本打包，上游第三方许可名称和归属保持原样。
-- `skill-creator` 继续通过原生 `skill_workshop` 创建待审核提案，不直接改写在线技能；
-  不引入 Claude CLI、外部评测服务或虚构的子代理计时结果。
+- `skill-creator` 按本轮原生 `skill_workshop` 的 schema 和授权修改在线技能，不直接
+  改写安装目录。普通 Workshop 修改立即生效、保存版本并可归档／恢复；个人库能力
+  仅在原生实际提供时使用，按技能 ID 与 revision 读写，更新携带 expected revision，
+  只发布用户请求的变更。个人库的 `proposal_content` 是版本正文，不是待审核提案。
+  不增加人工 apply 门槛，不引入 Claude CLI、外部评测服务或虚构的子代理计时结果。
   测试和评估资源放在项目 `.agent-tasks/skills/<skill-name>/`。静态 reviewer 保留
   原有评分、对比和反馈流程，字体使用本地后备，XLSX 提供下载入口；不加载 SheetJS CDN。
   反馈直接下载为 JSON，不向预览服务写入。缺少实测时间或 token 数时只报告断言和定性结果。
@@ -62,6 +65,11 @@ PDF 的既有许可证保持原样，Office 三项继续使用原有 MIT-0 来�
 `taskflow/` 未被 manifest 选中，不作为内置独立技能打包。原生技能另由
 manifest 的 `openclaw.skills` 与 `openclaw.custodianSkills` 筛选，当前分别保留
 `coding-agent` 与 `diagnose-gateway`；这两项不计入八个独立技能，也不替代原生可用性判断。
+
+ACPX 扩展另携带 `acp-router`。它只按产品当前配置且启用的外部 Agent 目录和实际
+原生 schema 发送；上游 acpx 别名不代表产品已安装或授权。缺少依赖、连接失败或
+结果未知不会触发下载安装、修改全局命令、启用 Agent、切换执行方式或重放输入。
+明确直连请求也须核实与受管路径相同的命令、认证、权限和生命周期归属。
 
 检查所有选中技能的 frontmatter、相对引用及 Python 语法，执行
 `tests/scripts/sync-bundled-skills.test.ts`、skill-creator 自带测试及绘图脚本的

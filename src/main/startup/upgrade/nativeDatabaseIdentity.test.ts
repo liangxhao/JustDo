@@ -22,7 +22,7 @@ function fixture() {
   const target = `${{ win32: 'win', darwin: 'mac', linux: 'linux' }[process.platform as 'win32' | 'darwin' | 'linux']}-${process.arch}`;
   const nodeTarget = nodeRuntime.targets[target as keyof typeof nodeRuntime.targets];
   const write = (file: string, content: string) => { fs.mkdirSync(path.dirname(path.join(root, file)), { recursive: true }); fs.writeFileSync(path.join(root, file), content); };
-  const pkg = JSON.stringify({ name: 'openclaw', version: '2026.10.6', openclaw: { schemaVersions: contract.schemaVersions } });
+  const pkg = JSON.stringify({ name: 'openclaw', version: contract.openclawVersion.slice(1), openclaw: { schemaVersions: contract.schemaVersions } });
   const nativeNode = JSON.stringify({ version: nodeRuntime.version, target, archive: nodeTarget.archive, archiveSha256: nodeTarget.sha256,
     executable: nodeTarget.executable, files: { [nodeTarget.executable]: { sha256: hash('fixture-node') } } });
   const proof = { contractSha256: hash(JSON.stringify(canonical(contract))),
@@ -67,7 +67,7 @@ describe('native runtime delivery metadata', () => {
   it.each(['package-name', 'package-version', 'manifest-version', 'manifest-format', 'manifest-null'])(
     'refuses inconsistent delivery metadata without falling back to runtime admission: %s', async kind => {
       const f = fixture();
-      if (kind === 'package-name') f.write('package.json', JSON.stringify({ name: 'other', version: '2026.10.6' }));
+      if (kind === 'package-name') f.write('package.json', JSON.stringify({ name: 'other', version: contract.openclawVersion.slice(1) }));
       if (kind === 'package-version') f.write('package.json', JSON.stringify({ name: 'openclaw', version: 'unknown' }));
       if (kind === 'manifest-version') f.write('runtime-patch-manifest.json', JSON.stringify({ ...f.manifest, openclawVersion: 'v2026.10.5' }));
       if (kind === 'manifest-format') f.write('runtime-patch-manifest.json', JSON.stringify({ ...f.manifest, formatVersion: 1 }));

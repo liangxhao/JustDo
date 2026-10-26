@@ -7,7 +7,7 @@
 升级时同时核对[流式与执行](streaming-and-execution.md)、
 [宿主与发行](host-and-release.md)和[逐模块上游接口审计](module-api-audit.md)中的专项检查项。
 
-当前仓库基线为 `openclaw@2026.10.6`；后续升级以 `package.json.openclaw.version`
+当前仓库基线为 `openclaw@2026.10.7`；后续升级以 `package.json.openclaw.version`
 为准。源包 integrity 以目标版本补丁目录的 `source-lock.json` 为准，逐补丁能力、
 上游证据、依赖与删除条件以该目录 `README.md` 为唯一总账。本文不固定补丁数量，
 也不把历史版本验收结果当作目标版本的通过记录。
@@ -577,7 +577,7 @@ MCP Apps 使用原生认证 WS 接口，不使用生命周期补丁。关闭视�
 
 ## 13. 本地 OpenAI 完整源码替换
 
-`plugins/extensions/openai` 以原生 OpenAI 的 v2026.10.6 源码为起点，包含
+`plugins/extensions/openai` 以原生 OpenAI 的 v2026.10.7 源码为起点，包含
 MIT LICENSE。`upstream-source.json` 记录原始 tag、commit 和源文件 SHA-256；
 它描述上游基线，不要求已修改的本地文件等于原始 hash。测试辅助源码不发布。
 本地依赖使用独立 `package-lock.json`，不引用上游 `workspace:*` 开发依赖。
@@ -619,7 +619,7 @@ API Key/SecretRef 仍可用于用户显式选择的内网服务；删除的是�
 
 ## 14. 运行时补丁与宿主接缝复核
 
-逐项读取[当前版本总账](../../scripts/patches/v2026.10.6/README.md)和 transformer，
+逐项读取[当前版本总账](../../scripts/patches/v2026.10.7/README.md)和 transformer，
 升级后将链接更新为目标版本总账。下表按集成风险组织验证，不替代逐补丁删除条件。
 
 | 接缝（当前编号）                                  | 目标版本必须验证的重点                                                                                                                                                           |
@@ -721,7 +721,7 @@ git diff --check
 旧版本目录测试保留为历史回归，不可作为目标版本通过证据；缺失关键场景时补齐。
 技能/Code Mode 探针使用隔离状态与本机合成模型；分阶段续验应分别保留前序失败与
 续验结果，不冒充一次全量通过。此类验证不证明真实模型会主动选择技能、正确编排
-Code Mode 或通过 MXC 实机准入；本版专项证据见[升级记录](../openclaw-upgrades/v2026.10.6/README.md)。
+Code Mode 或通过 MXC 实机准入；本版专项证据见[升级记录](../openclaw-upgrades/v2026.10.7/README.md)。
 
 插件还需按目标版本适配并运行 `tests/openclaw/runtime/` 下的实际原生验证：
 `plugin-management.native-smoke.mjs`（安装/更新/启停/卸载）、

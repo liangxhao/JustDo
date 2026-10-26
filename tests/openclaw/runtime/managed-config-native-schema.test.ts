@@ -31,6 +31,7 @@ vi.mock('../../../src/main/plugins/extensions/openclawLocalExtensions', async im
 
 const runtime = path.resolve(process.env.OPENCLAW_TEST_NATIVE_RUNTIME_DIR ??
   'build/runtimes/openclaw/win-x64');
+const targetVersion = `v${JSON.parse(fs.readFileSync(path.resolve('package.json'), 'utf8')).openclaw.version.replace(/^v/u, '')}`;
 const executable = path.join(runtime, 'node-runtime', process.platform === 'win32' ? 'node.exe' : 'bin/node');
 const nativeAvailable = fs.existsSync(executable) && fs.existsSync(path.join(runtime, 'gateway.asar'));
 const required = process.env.OPENCLAW_REQUIRE_MANAGED_CONFIG_CONTRACTS === '1';
@@ -70,7 +71,7 @@ function assess(cases: { label: string; config: unknown }[]): Assessment[] {
   const line = output.split(/\r?\n/).find(value => value.startsWith('NATIVE_MANAGED_CONFIG='));
   expect(line).toBeDefined();
   const parsed = JSON.parse(line!.slice('NATIVE_MANAGED_CONFIG='.length));
-  expect(parsed.identity.version).toBe('v2026.10.6');
+  expect(parsed.identity.version).toBe(targetVersion);
   expect(parsed.identity.nodeVersion).toBe('v24.22.1');
   return parsed.results;
 }
@@ -157,7 +158,7 @@ nativeTest('persisted login, logout and minimal startup projections prune obsole
       setStoreGetter(() => ({ get: () => appConfig }) as never);
       const sync = new OpenClawConfigSync({
         engineManager: { getConfigPath: () => configPath, getStateDir: () => directory,
-          getDesiredVersion: () => '2026.10.6' },
+          getDesiredVersion: () => targetVersion.slice(1) },
         getCoworkConfig: () => ({ workingDirectory: path.join(directory, '工作目录 with spaces'),
           executionMode: 'local', agentEngine: 'openclaw' }),
         getAgents: () => [], getBrowserMode: () => BrowserMode.User,

@@ -116,7 +116,7 @@ describe('projectDiagnosticEvent', () => {
     expect(value?.event).not.toHaveProperty('responseShape');
     expect(JSON.stringify(value)).not.toContain('SECRET');
   });
-  it('retains native timeout stage and reply disposition without reply content', () => {
+  it.each(['provider', 'tool_execution'] as const)('retains native %s timeout stage and reply disposition without reply content', timeoutPhase => {
     const make = (data: Record<string, unknown>) =>
       projectDiagnosticEvent(
         {
@@ -130,12 +130,12 @@ describe('projectDiagnosticEvent', () => {
         'epoch',
       );
     const value = make({
-      timeoutPhase: 'provider',
+      timeoutPhase,
       terminalReply: { disposition: 'silent', text: 'SECRET' },
       errorObservation: { failoverReason: 'empty_response' },
     });
     expect(value?.event).toMatchObject({
-      timeoutPhase: 'provider',
+      timeoutPhase,
       replyDisposition: 'silent',
       responseIssue: 'empty_response',
     });

@@ -16,6 +16,7 @@ const CONTINUATION_SYSTEM_PROMPT = [
   'This is an automatic continuation of the active session goal.',
   'The host has already confirmed that the same goal is still active.',
   'Review the existing conversation, artifacts, and tool results before acting.',
+  'After a tool timeout or an unknown tool result, first verify authoritative state and existing results; do not blindly repeat calls that may have side effects.',
   'First determine whether the existing evidence already proves the objective is achieved; do not repeat completed work merely to create activity.',
   'If achieved, perform only the verification still needed, then call update_goal with complete and a non-empty concise note describing the evidence; never mark complete without that evidence note.',
   'After any successful update_goal call, always provide one concise user-visible final answer; never end without one.',

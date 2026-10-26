@@ -1,8 +1,16 @@
 # ACPX source and integration record
 
-The source target is OpenClaw `v2026.10.6`, commit
-`fe06181dc5ecc01cf8904abbfc26925925efefbc`, under `extensions/acpx/`.
-The local package is `2026.10.6-local.3`, requiring plugin API `>=2026.10.6`.
+The source target is OpenClaw `v2026.10.7`, commit
+`157d8c2bc3ea2fa183afdc11088e69690bf8e64e`, under `extensions/acpx/`.
+The local package is `2026.10.7-local.1`, requiring plugin API `>=2026.10.7`.
+
+The 10.7 refresh compares the complete 10.6 and 10.7 upstream directories and
+the local fork. Upstream changes only its package version, plugin API/build
+metadata and direct `@openclaw/fs-safe` pin (0.25.0 to 0.26.0); implementation
+sources and the public SDK exports are unchanged. The local bridge still uses
+Node filesystem APIs instead of that direct dependency. Its independently
+locked ACPX 0.19.5 and transitive dependency integrities remain unchanged, as do
+the product's offline installation and process ownership policies below.
 
 The 10.6 refresh compares the 10.4 upstream source, the local fork and the target.
 It adopts launcher-based host discovery, a probe cwd inside the prepared wrapper
@@ -55,6 +63,16 @@ and final archive verification both enforce this boundary.
 | Narrow process ownership checks, including earlier JSON-quoted Windows argv              | `command-line.ts`, `process-reaper.ts`                                                                           | process-reaper and lease suites; wrapper process cleanup tests                       |
 | Managed state location and unknown-owner rejection                                       | `config.ts`, `session-owner.ts`, `session-resource.ts`, `session-owner-migration.ts`                             | state-directory, generation/reset and persisted 0.19.1-to-0.19.5 compatibility tests |
 
+The bundled `skills/acp-router/SKILL.md` is adapted to this product's configured
+and enabled external-agent catalog. It retains native ACP start, continuation,
+status, cancellation and result handling while removing unshipped harness
+routes, upstream alias/default-command tables, runtime installation/override
+repair and automatic direct fallback. Unknown acceptance is reconciled against
+the same native identity; it never authorizes a replacement session or prompt
+replay. Explicit direct requests still require an existing capability with the
+same command, authentication, permissions and lifecycle ownership. No native
+patch or additional permission is introduced by this skill adaptation.
+
 The product does not register upstream native-agent harnesses, a second model
 picker, `acpx.agents.list`, or runtime package installation. It does not adopt
 `<workspace>/state` into the managed state directory. Only the existing explicit
@@ -94,7 +112,7 @@ vulnerabilities. The real wrapper/config-overlay regression uses the new parser.
 ## Validation boundary
 
 Run the ACPX Vitest configuration with `OPENCLAW_RUNTIME` pointing to the
-prepared 10.6 SDK. It includes the retained desktop tests and upstream-derived
+prepared 10.7 SDK. It includes the retained desktop tests and upstream-derived
 runtime, reset, probe, lease, reaper, proxy and lazy registration behavior tests.
 Test-only upstream SDK exports are replaced by local temporary-directory and
 keyed-store fixtures; native persistence remains the host's responsibility.

@@ -41,15 +41,15 @@ function isRuntimePatchDependencyTarget(runtimeDir, filePath) {
 }
 
 function runtimePatchDependencyArtifactPaths(runtimeDir, version) {
-  if (version !== 'v2026.10.6') return [];
+  if (version !== 'v2026.10.7') return [];
   const metadataPath = path.join(runtimeDir, PROVIDER_PACKAGE_PATH);
   const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf8'));
-  if (metadata.name !== '@openclaw/ai' || metadata.version !== '2026.10.6') {
-    throw new Error('Runtime patch dependency must be @openclaw/ai@2026.10.6');
+  if (metadata.name !== '@openclaw/ai' || metadata.version !== '2026.10.7') {
+    throw new Error('Runtime patch dependency must be @openclaw/ai@2026.10.7');
   }
   const filesystemMetadata = JSON.parse(fs.readFileSync(path.join(runtimeDir, FS_SAFE_PACKAGE_PATH), 'utf8'));
-  if (filesystemMetadata.name !== '@openclaw/fs-safe' || filesystemMetadata.version !== '0.25.0') {
-    throw new Error('Runtime patch dependency must be @openclaw/fs-safe@0.25.0');
+  if (filesystemMetadata.name !== '@openclaw/fs-safe' || filesystemMetadata.version !== '0.26.0') {
+    throw new Error('Runtime patch dependency must be @openclaw/fs-safe@0.26.0');
   }
   // Load after module initialization: pristine checks use the shared patch index.
   const { resolveNativeProviderTransportArtifact } = require('./verify-openclaw-pristine-contracts.cjs');

@@ -63,7 +63,7 @@ const requestedRuntime = args[0] && !args[0].startsWith('--') ? args[0] : proces
 assert.ok(requestedRuntime, 'Select the final runtime explicitly.');
 const { runtimeRoot: runtime, identity: runtimeIdentity } = resolveNativeSmokeTarget(requestedRuntime);
 const runtimePackage = JSON.parse(await readFile(path.join(runtime, 'package.json'), 'utf8'));
-assert.equal(runtimePackage.version, '2026.10.6', 'Use the locked prepared runtime');
+assert.equal(runtimePackage.version, '2026.10.7', 'Use the locked prepared runtime');
 const buildInfo = JSON.parse(await readFile(path.join(runtime, 'runtime-build-info.json'), 'utf8'));
 const fixture = await mkdtemp(path.join(os.tmpdir(), 'widget-kit-gateway-'));
 const state = path.join(fixture, 'state');

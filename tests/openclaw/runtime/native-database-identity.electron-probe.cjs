@@ -9,12 +9,13 @@ const { createHash, randomUUID } = require('node:crypto');
 const { spawn } = require('node:child_process');
 
 const repository = path.resolve(__dirname, '../../..');
+const expectedVersion = `v${require('../../../package.json').openclaw.version.replace(/^v/u, '')}`;
 const runtimeRoot = fs.realpathSync(process.argv[2]);
 const diagnostic = process.argv.includes('--archived-diagnostic');
 const verifier = require('../../../scripts/openclaw/verify-openclaw-runtime-patches.cjs');
 const manifest = diagnostic
-  ? verifier.verifyFrozenOpenClawRuntime(runtimeRoot, { expectedVersion: 'v2026.10.6', requireBundle: true }).manifest
-  : verifier.verifyOpenClawPatchManifest(runtimeRoot, { repoRoot: repository, version: 'v2026.10.6' });
+  ? verifier.verifyFrozenOpenClawRuntime(runtimeRoot, { expectedVersion, requireBundle: true }).manifest
+  : verifier.verifyOpenClawPatchManifest(runtimeRoot, { repoRoot: repository, version: expectedVersion });
 assert.equal(fs.realpathSync(process.execPath), fs.realpathSync(path.join(runtimeRoot, 'node-runtime/node.exe')));
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 const manifestSha256 = digest(fs.readFileSync(path.join(runtimeRoot, 'runtime-patch-manifest.json')));

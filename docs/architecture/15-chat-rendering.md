@@ -356,7 +356,7 @@ Code Mode 继续使用相同的原生工具事件与历史投影。仅当工具�
 只包含 `kind:model|tool-input`、UTF-16 字符数，以及工具输入的原生 toolCallId、name、complete。
 参数块开始与结束即时更新，其余更新最多每 250ms 一次。原生既有通用 item 快照负责重连恢复，
 同一运行复用一个状态 item，不增加 IPC、RPC、产品持久化或消息缓存。唯一原生出口及其公开
-扩展替代审计见 [032 补丁说明](../../scripts/patches/v2026.10.6/README.md)。
+扩展替代审计见 [032 补丁说明](../../scripts/patches/v2026.10.7/README.md)。
 
 参数未结束显示“正在生成工具参数”，块结束显示“正在准备调用工具”，只有真实 Tool start
 才能显示执行状态；原生 `tool:input_delta` 是参数差异预览，不创建运行工具。所有活动先通过

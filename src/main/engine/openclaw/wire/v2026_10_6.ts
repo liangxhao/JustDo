@@ -1,4 +1,5 @@
-export const OPENCLAW_WIRE_VERSION = 'v2026.10.6' as const;
+// These validators retain the unchanged contracts introduced in 10.6.
+export const OPENCLAW_WIRE_VERSION = 'v2026.10.7' as const;
 export const OPENCLAW_COMPACT_SESSION_ROW_MODE = 'compact' as const;
 
 type UnknownRecord = Record<string, unknown>;

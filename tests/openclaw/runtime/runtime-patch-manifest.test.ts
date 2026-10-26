@@ -44,12 +44,13 @@ const {
     options: { repoRoot: string },
   ) => { manifestPath: string };
 };
-const { verifyPackagedOpenClawRuntime } =
+const { verifyPackagedOpenClawRuntime, isDeclaredBundledDependencyArchiveEntry } =
   require('../../../scripts/packaging/electron-builder-hooks.cjs') as {
     verifyPackagedOpenClawRuntime: (context: {
       appOutDir: string;
       electronPlatformName: string;
     }, options?: { repoRoot: string }) => Promise<void>;
+    isDeclaredBundledDependencyArchiveEntry: (entryPath: string, entryType: string, directories: string[]) => boolean;
   };
 const { compressTarArchive } = require('../../../scripts/openclaw/pack-openclaw-tar.cjs') as {
   compressTarArchive: (sourceTar: string, outputArchive: string) => Promise<void>;
@@ -68,6 +69,7 @@ const { ensureOpenClawRuntimePatches, patchOpenClawRuntime } =
 
 const temporaryRoots: string[] = [];
 const fixtureIntegrity = `sha512-${Buffer.alloc(64, 7).toString('base64')}`;
+const bundledDependenciesFilename = 'runtime-bundled-dependencies.json';
 const {
   PROVIDER_PACKAGE_PATH,
   PROVIDER_PARTITIONER_PATH,
@@ -89,7 +91,7 @@ const {
 function writeProviderFixture(runtimeRoot: string): void {
   addLockedAiDependency(runtimeRoot);
   fs.mkdirSync(path.dirname(path.join(runtimeRoot, FS_SAFE_MOVE_PATH)), { recursive: true });
-  fs.writeFileSync(path.join(runtimeRoot, FS_SAFE_PACKAGE_PATH), JSON.stringify({ name: '@openclaw/fs-safe', version: '0.25.0' }));
+  fs.writeFileSync(path.join(runtimeRoot, FS_SAFE_PACKAGE_PATH), JSON.stringify({ name: '@openclaw/fs-safe', version: '0.26.0' }));
   fs.writeFileSync(path.join(runtimeRoot, FS_SAFE_MOVE_PATH), 'const ownedMove = true;\n');
   fs.writeFileSync(path.join(runtimeRoot, FS_SAFE_GUARDED_MUTATION_PATH), 'const ownedRename = true;\n');
   fs.mkdirSync(path.dirname(path.join(runtimeRoot, PLUGIN_PUBLICATION_SUPPORT_PATH)), { recursive: true });
@@ -128,6 +130,7 @@ function writeFixtureBuildInfo(
 ) {
   const version = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'))
     .openclaw.version;
+  writeEmptyBundledDependenciesFixture(repoRoot, runtimeRoot);
   fs.writeFileSync(
     path.join(runtimeRoot, 'runtime-build-info.json'),
     JSON.stringify({
@@ -153,9 +156,56 @@ function writeFixtureBuildInfo(
         .createHash('sha256')
         .update(fs.readFileSync(path.join(runtimeRoot, 'npm-shrinkwrap.json')))
         .digest('hex'),
+      runtimeBundledDependenciesPath: bundledDependenciesFilename,
+      runtimeBundledDependenciesSha256: crypto
+        .createHash('sha256')
+        .update(fs.readFileSync(path.join(runtimeRoot, bundledDependenciesFilename)))
+        .digest('hex'),
       ...overrides,
     }),
   );
+}
+
+function writeEmptyBundledDependenciesFixture(repoRoot: string, runtimeRoot: string): void {
+  const target = path.join(runtimeRoot, bundledDependenciesFilename);
+  if (fs.existsSync(target)) return;
+  const version = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8')).openclaw.version;
+  const source = readOpenClawSourceLock(repoRoot, version);
+  fs.writeFileSync(target, JSON.stringify({
+    formatVersion: 1,
+    source: { name: 'openclaw', version: source.version, tarballSha256: source.tarballSha256, integrity: source.integrity },
+    dependencies: [],
+  }));
+}
+
+function writeBundledDependencyFixture(repoRoot: string, runtimeRoot: string): string {
+  const rootPackage = JSON.parse(fs.readFileSync(path.join(runtimeRoot, 'package.json'), 'utf8'));
+  rootPackage.bundleDependencies = ['fixture-bundled'];
+  rootPackage.dependencies = { ...rootPackage.dependencies, 'fixture-bundled': '1.0.0' };
+  fs.writeFileSync(path.join(runtimeRoot, 'package.json'), JSON.stringify(rootPackage));
+  const dependency = path.join(runtimeRoot, 'node_modules/fixture-bundled');
+  fs.mkdirSync(dependency, { recursive: true });
+  fs.writeFileSync(path.join(dependency, 'package.json'), JSON.stringify({ name: 'fixture-bundled', version: '1.0.0' }));
+  fs.writeFileSync(path.join(dependency, 'index.js'), 'export const patchedIdentity = true;\n');
+  const baseOrigin = { version: '1.0.0', resolved: 'https://registry.example.test/fixture-bundled-1.0.0.tgz',
+    integrity: fixtureIntegrity, inBundle: true };
+  const lockFile = path.join(runtimeRoot, 'npm-shrinkwrap.json');
+  const lock = JSON.parse(fs.readFileSync(lockFile, 'utf8'));
+  fs.writeFileSync(lockFile, JSON.stringify({ ...lock, name: rootPackage.name, version: rootPackage.version,
+    packages: { ...lock.packages, 'node_modules/fixture-bundled': baseOrigin },
+  }));
+  const files = ['index.js', 'package.json'].map(relative => {
+    const bytes = fs.readFileSync(path.join(dependency, relative));
+    return { path: relative, bytes: bytes.length, sha256: crypto.createHash('sha256').update(bytes).digest('hex') };
+  });
+  const source = readOpenClawSourceLock(repoRoot, `v${rootPackage.version}`);
+  fs.writeFileSync(path.join(runtimeRoot, bundledDependenciesFilename), JSON.stringify({
+    formatVersion: 1,
+    source: { name: 'openclaw', version: source.version, tarballSha256: source.tarballSha256, integrity: source.integrity },
+    dependencies: [{ name: 'fixture-bundled', version: '1.0.0', path: 'node_modules/fixture-bundled',
+      baseOrigin, files, treeSha256: crypto.createHash('sha256').update(JSON.stringify(files)).digest('hex') }],
+  }));
+  return dependency;
 }
 
 function writeNativeOwnerArchive(runtimeRoot: string, modules: Record<string, { path: string }>): void {
@@ -237,6 +287,7 @@ function createFixture(version = 'v2026.6.11') {
     'electron-builder-hooks.cjs',
     'electron-builder-product-metadata.cjs',
     'install-openclaw-runtime.cjs',
+    'openclaw-bundled-dependencies.cjs',
     'openclaw-facade-runtime-patch.cjs',
     'openclaw-runtime-companions.cjs',
     'openclaw-runtime-dev-lease.cjs',
@@ -328,7 +379,7 @@ module.exports = { applyPatch, verifyPatch };
       tarballSha256: 'a'.repeat(64),
     }),
   );
-  if (version === 'v2026.10.6') writeProviderFixture(runtimeRoot);
+  if (version === 'v2026.10.7') writeProviderFixture(runtimeRoot);
   writeFixtureBuildInfo(repoRoot, runtimeRoot);
   return { patchRoot, repoRoot, runtimeRoot };
 }
@@ -340,7 +391,7 @@ function addLockedAiDependency(runtimeRoot: string) {
   const target = path.join(root, 'dist', transport);
   fs.mkdirSync(path.dirname(target), { recursive: true });
   fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({
-    name: '@openclaw/ai', version: '2026.10.6',
+    name: '@openclaw/ai', version: '2026.10.7',
     exports: {
       './transports': { import: './dist/transports.mjs' },
       './providers': { import: './dist/providers.mjs' },
@@ -364,7 +415,7 @@ afterEach(() => {
 describe('OpenClaw runtime patch manifest', () => {
   test.each(['.openclaw-lifecycle-pending', 'dist/openclaw-install-guard', '.openclaw-lifecycle-lock'])(
     'rejects incomplete or unsettled lifecycle before trusting build proof: %s', marker => {
-      const { repoRoot, runtimeRoot } = createFixture('v2026.10.6');
+      const { repoRoot, runtimeRoot } = createFixture('v2026.10.7');
       writeOpenClawPatchManifest(runtimeRoot, { repoRoot });
       fs.mkdirSync(path.dirname(path.join(runtimeRoot, marker)), { recursive: true });
       fs.writeFileSync(path.join(runtimeRoot, marker), 'pending');
@@ -376,7 +427,7 @@ describe('OpenClaw runtime patch manifest', () => {
   test.each(['producer', 'managed importer', 'provider registry', 'direct provider', 'metadata'] as const)(
     'freezes the exact dependency %s independently of the Gateway bundle',
     artifact => {
-      const { repoRoot, runtimeRoot } = createFixture('v2026.10.6');
+      const { repoRoot, runtimeRoot } = createFixture('v2026.10.7');
       const target = path.join(runtimeRoot, PROVIDER_TRANSPORT_PATH);
       writeOpenClawPatchManifest(runtimeRoot, { repoRoot });
       const manifest = JSON.parse(fs.readFileSync(path.join(runtimeRoot, PATCH_MANIFEST_FILENAME), 'utf8'));
@@ -406,7 +457,7 @@ describe('OpenClaw runtime patch manifest', () => {
     const { patchRoot, repoRoot, runtimeRoot } = createFixture();
     const target = addLockedAiDependency(runtimeRoot);
     const original = fs.readFileSync(target);
-    const patchUtils = path.resolve(__dirname, '../../../scripts/patches/v2026.10.6/_patch-utils.js');
+    const patchUtils = path.resolve(__dirname, '../../../scripts/patches/v2026.10.7/_patch-utils.js');
     const pristineContracts = path.resolve(__dirname, '../../../scripts/openclaw/verify-openclaw-pristine-contracts.cjs');
     fs.writeFileSync(path.join(patchRoot, '_patch-utils.js'), `module.exports = require(${JSON.stringify(patchUtils)});`);
     fs.writeFileSync(path.join(patchRoot, '001-example.cjs'), `
@@ -521,9 +572,9 @@ describe('OpenClaw runtime patch manifest', () => {
     expect(() =>
       verifyFrozenOpenClawRuntime(runtimeRoot, {
         expectedTarget: 'win-x64',
-        expectedVersion: 'v2026.10.6',
+        expectedVersion: 'v2026.10.7',
       }),
-    ).toThrow(/OpenClaw version is v2026\.6\.11, expected v2026\.10\.6/);
+    ).toThrow(/OpenClaw version is v2026\.6\.11, expected v2026\.10\.7/);
   });
 
   test('rejects missing native workers in an otherwise valid frozen bundle', () => {
@@ -609,7 +660,7 @@ describe('OpenClaw runtime patch manifest', () => {
       '../../..',
       'scripts',
       'patches',
-      'v2026.10.6',
+      'v2026.10.7',
       '_patch-utils.js',
     );
     fs.writeFileSync(
@@ -667,7 +718,7 @@ describe('OpenClaw runtime patch manifest', () => {
   )(
     'indexes the exact provider module $target and restores its bytes after $failure failure',
     ({ target, failure }) => {
-      const { patchRoot, repoRoot, runtimeRoot } = createFixture('v2026.10.6');
+      const { patchRoot, repoRoot, runtimeRoot } = createFixture('v2026.10.7');
       const provider = path.join(runtimeRoot, target);
       const foreign = path.join(path.dirname(provider), 'unowned-provider.mjs');
       const original = fs.readFileSync(provider);
@@ -676,7 +727,7 @@ describe('OpenClaw runtime patch manifest', () => {
       const bundle = fs.readFileSync(path.join(runtimeRoot, 'gateway-bundle.mjs'));
       fs.writeFileSync(
         path.join(patchRoot, '_patch-utils.js'),
-        `module.exports = require(${JSON.stringify(path.resolve('scripts/patches/v2026.10.6/_patch-utils.js'))});\n`,
+        `module.exports = require(${JSON.stringify(path.resolve('scripts/patches/v2026.10.7/_patch-utils.js'))});\n`,
       );
       fs.writeFileSync(
         path.join(patchRoot, '001-example.cjs'),
@@ -726,7 +777,7 @@ describe('OpenClaw runtime patch manifest', () => {
   test.each(['transport', 'partitioner', 'metadata', 'missing-transport', 'missing-partitioner'])(
     'rejects a changed provider %s in both current and frozen runtime proofs',
     change => {
-      const { repoRoot, runtimeRoot } = createFixture('v2026.10.6');
+      const { repoRoot, runtimeRoot } = createFixture('v2026.10.7');
       patchOpenClawRuntime(runtimeRoot, { repoRoot, freshBundlePass: true });
       const manifest = JSON.parse(
         fs.readFileSync(path.join(runtimeRoot, PATCH_MANIFEST_FILENAME), 'utf8'),
@@ -764,19 +815,19 @@ describe('OpenClaw runtime patch manifest', () => {
   );
 
   test('rejects provider package identity mismatches before creating proof', () => {
-    const { repoRoot, runtimeRoot } = createFixture('v2026.10.6');
+    const { repoRoot, runtimeRoot } = createFixture('v2026.10.7');
     fs.writeFileSync(
       path.join(runtimeRoot, PROVIDER_PACKAGE_PATH),
       JSON.stringify({ name: '@openclaw/ai', version: '2026.10.3' }),
     );
     expect(() => writeOpenClawPatchManifest(runtimeRoot, { repoRoot })).toThrow(
-      'Runtime patch dependency must be @openclaw/ai@2026.10.6',
+      'Runtime patch dependency must be @openclaw/ai@2026.10.7',
     );
   });
 
   test.each([FS_SAFE_MOVE_PATH, FS_SAFE_GUARDED_MUTATION_PATH, FS_SAFE_PACKAGE_PATH, PLUGIN_PUBLICATION_SUPPORT_PATH])(
     'rejects changed filesystem publication dependency %s', artifact => {
-      const { repoRoot, runtimeRoot } = createFixture('v2026.10.6');
+      const { repoRoot, runtimeRoot } = createFixture('v2026.10.7');
       writeOpenClawPatchManifest(runtimeRoot, { repoRoot });
       fs.appendFileSync(path.join(runtimeRoot, artifact), '\n ');
       expect(() => verifyOpenClawPatchManifest(runtimeRoot, { repoRoot })).toThrow(/dependencies/);
@@ -785,9 +836,9 @@ describe('OpenClaw runtime patch manifest', () => {
   );
 
   test('rejects an unproven filesystem package version', () => {
-    const { repoRoot, runtimeRoot } = createFixture('v2026.10.6');
+    const { repoRoot, runtimeRoot } = createFixture('v2026.10.7');
     fs.writeFileSync(path.join(runtimeRoot, FS_SAFE_PACKAGE_PATH), JSON.stringify({ name: '@openclaw/fs-safe', version: '0.24.1' }));
-    expect(() => writeOpenClawPatchManifest(runtimeRoot, { repoRoot })).toThrow('@openclaw/fs-safe@0.25.0');
+    expect(() => writeOpenClawPatchManifest(runtimeRoot, { repoRoot })).toThrow('@openclaw/fs-safe@0.26.0');
   });
 
   test('skips the patch pass when the recorded patch set and bundle are unchanged', () => {
@@ -963,7 +1014,7 @@ module.exports = { applyPatch, verifyPatch };
   });
 
   test('freezes selected native database owners separately from complete runtime source proof', () => {
-    const { repoRoot, runtimeRoot } = createFixture('v2026.10.6');
+    const { repoRoot, runtimeRoot } = createFixture('v2026.10.7');
     const { manifestPath } = writeOpenClawPatchManifest(runtimeRoot, { repoRoot });
     const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
     const contract = JSON.parse(fs.readFileSync(path.join(repoRoot, 'src/main/startup/upgrade/nativeDatabaseContract.json'), 'utf8'));
@@ -980,16 +1031,16 @@ module.exports = { applyPatch, verifyPatch };
     const target = JSON.parse(fs.readFileSync(path.resolve('src/main/startup/upgrade/nativeDatabaseContract.json'), 'utf8'));
     expect(Object.keys(target.modules)).toHaveLength(18);
     expect(target.modules.canonicalValidation).toEqual({
-      path: 'dist/session-canonical-validation-readiness-C_kdXYHx.mjs',
-      sha256: '75e3258db0b6487a83b43bd6bfb5ec691ffc49447c19338d812699c75a29299e',
+      path: 'dist/session-canonical-validation-readiness-CNCclwdx.mjs',
+      sha256: '217ba6678a957289e3824833454a57d5bd5f2415ba7c247c3a8a2ac2ff5e6c9e',
       exports: { certifySessionCanonicalValidationPending: 'certifySessionCanonicalValidationPending' },
     });
     expect(target.modules.canonicalWorker).toEqual({
-      path: 'dist/session-accessor.sqlite-reclamation-worker-Ds8kYWwv.mjs',
-      sha256: '2c21c16da227cb99f7fcf43861d9cd4dbc69a38cba77229b4277f7df9f4070b3',
+      path: 'dist/session-accessor.sqlite-reclamation-worker-BUQH4_J_.mjs',
+      sha256: '3c34cc63bc18e6b199ddebbdb97819c9dbac6d05973d98314d015c72a5d8f8a3',
       exports: { withSqliteCanonicalValidationWorker: 't' },
     });
-    const { repoRoot, runtimeRoot } = createFixture('v2026.10.6');
+    const { repoRoot, runtimeRoot } = createFixture('v2026.10.7');
     const { manifestPath } = writeOpenClawPatchManifest(runtimeRoot, { repoRoot });
     const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
     expect(manifest.nativeDatabaseOwners.modules).toHaveLength(18);
@@ -1004,13 +1055,13 @@ module.exports = { applyPatch, verifyPatch };
     ['canonicalValidation', 'canonicalWorker'].flatMap(role =>
       ['source-bytes', 'archive-bytes', 'export-alias', 'imported-facade'].map(damage => ({ role, damage }))),
   )('rejects damaged canonical owner $role: $damage', ({ role, damage }) => {
-    const { repoRoot, runtimeRoot } = createFixture('v2026.10.6');
+    const { repoRoot, runtimeRoot } = createFixture('v2026.10.7');
     const contractPath = path.join(repoRoot, 'src/main/startup/upgrade/nativeDatabaseContract.json');
     const contract = JSON.parse(fs.readFileSync(contractPath, 'utf8'));
     const owner = contract.modules[role];
     const file = path.join(runtimeRoot, owner.path);
     const { verifyNativeDatabaseContract } = require('../../../scripts/openclaw/native-database-contract.cjs');
-    const options = { repoRoot, version: 'v2026.10.6' };
+    const options = { repoRoot, version: 'v2026.10.7' };
     expect(() => verifyNativeDatabaseContract(runtimeRoot, options)).not.toThrow();
     if (damage === 'source-bytes') fs.appendFileSync(file, '// damaged canonical source\n');
     if (damage === 'archive-bytes') {
@@ -1034,13 +1085,13 @@ module.exports = { applyPatch, verifyPatch };
 
   test.each(['owner-bytes', 'archive-bytes', 'export-alias', 'imported-facade', 'escaped-path', 'schema-generation'])(
     'rejects a damaged selected native database contract: %s', damage => {
-      const { repoRoot, runtimeRoot } = createFixture('v2026.10.6');
+      const { repoRoot, runtimeRoot } = createFixture('v2026.10.7');
       const contractPath = path.join(repoRoot, 'src/main/startup/upgrade/nativeDatabaseContract.json');
       const contract = JSON.parse(fs.readFileSync(contractPath, 'utf8'));
       const owner = contract.modules.preflight;
       const ownerPath = path.join(runtimeRoot, owner.path);
       const { verifyNativeDatabaseContract } = require('../../../scripts/openclaw/native-database-contract.cjs');
-      const options = { repoRoot, version: 'v2026.10.6' };
+      const options = { repoRoot, version: 'v2026.10.7' };
       expect(() => verifyNativeDatabaseContract(runtimeRoot, options)).not.toThrow();
       if (damage === 'owner-bytes') fs.appendFileSync(ownerPath, '// changed\n');
       if (damage === 'archive-bytes') {
@@ -1251,6 +1302,53 @@ module.exports = { applyPatch, verifyPatch };
     );
   });
 
+  test.each(['missing', 'bytes', 'source', 'unrecorded-file'])(
+    'freezes the complete bundled dependency proof and rejects %s drift', change => {
+      const { repoRoot, runtimeRoot } = createFixture();
+      const dependency = writeBundledDependencyFixture(repoRoot, runtimeRoot);
+      writeFixtureBuildInfo(repoRoot, runtimeRoot);
+      writeOpenClawPatchManifest(runtimeRoot, { repoRoot });
+      expect(() => verifyFrozenOpenClawRuntime(runtimeRoot, { requireBundle: true })).not.toThrow();
+
+      if (change === 'missing') fs.unlinkSync(path.join(runtimeRoot, bundledDependenciesFilename));
+      else if (change === 'bytes') fs.writeFileSync(path.join(dependency, 'index.js'), 'export const stockIdentity = true;\n');
+      else if (change === 'unrecorded-file') fs.writeFileSync(path.join(dependency, 'unexpected.js'), 'unrecorded');
+      else {
+        const proof = JSON.parse(fs.readFileSync(path.join(runtimeRoot, bundledDependenciesFilename), 'utf8'));
+        proof.source.tarballSha256 = 'b'.repeat(64);
+        fs.writeFileSync(path.join(runtimeRoot, bundledDependenciesFilename), JSON.stringify(proof));
+      }
+      expect(() => verifyFrozenOpenClawRuntime(runtimeRoot, { requireBundle: true })).toThrow(/bundled|source artifacts/);
+      expect(() => verifyOpenClawPatchManifest(runtimeRoot, { repoRoot })).toThrow(/bundled|source artifacts|source proof/);
+    },
+  );
+
+  test('binds the bundled dependency proof identity into source artifacts and the build recipe', () => {
+    const { repoRoot, runtimeRoot } = createFixture();
+    const { manifestPath } = writeOpenClawPatchManifest(runtimeRoot, { repoRoot });
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+    expect(manifest.sourceArtifacts.runtimeBundledDependenciesPath).toBe(bundledDependenciesFilename);
+    expect(manifest.sourceArtifacts.runtimeBundledDependenciesSha256).toBe(
+      crypto.createHash('sha256').update(fs.readFileSync(path.join(runtimeRoot, bundledDependenciesFilename))).digest('hex'),
+    );
+    const helper = path.join(repoRoot, 'scripts/openclaw/openclaw-bundled-dependencies.cjs');
+    expect(listBuildRecipeFiles(repoRoot)).toContain(helper);
+    fs.appendFileSync(helper, '// changed assembly contract\n');
+    expect(() => verifyOpenClawPatchManifest(runtimeRoot, { repoRoot })).toThrow(/stale|fingerprint/);
+  });
+
+  test('admits the existing current junction through its physical runtime and still rejects proof drift', () => {
+    const { repoRoot, runtimeRoot } = createFixture();
+    writeOpenClawPatchManifest(runtimeRoot, { repoRoot });
+    const current = path.join(repoRoot, 'current');
+    fs.symlinkSync(runtimeRoot, current, process.platform === 'win32' ? 'junction' : 'dir');
+    expect(() => verifyFrozenOpenClawRuntime(current, { requireBundle: true })).not.toThrow();
+    expect(() => verifyOpenClawPatchManifest(current, { repoRoot })).not.toThrow();
+    fs.appendFileSync(path.join(runtimeRoot, bundledDependenciesFilename), '\n');
+    expect(() => verifyFrozenOpenClawRuntime(current, { requireBundle: true })).toThrow(/bundled/);
+    expect(() => verifyOpenClawPatchManifest(current, { repoRoot })).toThrow(/source proof/);
+  });
+
   test('binds the manifest to npm source identity and target', () => {
     const { repoRoot, runtimeRoot } = createFixture();
     writeFixtureBuildInfo(repoRoot, runtimeRoot);
@@ -1296,9 +1394,11 @@ module.exports = { applyPatch, verifyPatch };
     { includeCompanion: true, providerChange: 'none', nativeChange: 'missing-proof' },
     { includeCompanion: true, providerChange: 'none', nativeChange: 'wrong-contract' },
     { includeCompanion: true, providerChange: 'none', nativeChange: 'owner-bytes' },
-  ])('checks archived proof: companion=$includeCompanion provider=$providerChange native=$nativeChange', async ({ includeCompanion, providerChange, nativeChange }) => {
-    const { repoRoot: repositoryRoot } = createFixture('v2026.10.6');
-    const sourceLock = readOpenClawSourceLock(repositoryRoot, 'v2026.10.6');
+    ...['changed', 'missing', 'extra', 'proof-missing', 'unsafe-declaration'].map(bundledChange =>
+      ({ includeCompanion: true, providerChange: 'none', nativeChange: 'none', bundledChange })),
+  ].map(entry => ({ bundledChange: 'none', ...entry })))('checks archived proof: companion=$includeCompanion provider=$providerChange native=$nativeChange bundled=$bundledChange', async ({ includeCompanion, providerChange, nativeChange, bundledChange }) => {
+    const { repoRoot: repositoryRoot } = createFixture('v2026.10.7');
+    const sourceLock = readOpenClawSourceLock(repositoryRoot, 'v2026.10.7');
     const appOutDir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-packaged-patch-test-'));
     temporaryRoots.push(appOutDir);
     const archiveRoot = path.join(appOutDir, 'archive-source');
@@ -1314,7 +1414,7 @@ module.exports = { applyPatch, verifyPatch };
     const workerPath = path.join(runtimeRoot, 'dist', 'agents', 'archive-proof.worker.js');
     fs.mkdirSync(path.dirname(workerPath), { recursive: true });
     fs.writeFileSync(workerPath, 'export {};\n');
-    writeNativeDatabaseFixture(repositoryRoot, runtimeRoot, 'v2026.10.6');
+    writeNativeDatabaseFixture(repositoryRoot, runtimeRoot, 'v2026.10.7');
     fs.writeFileSync(path.join(runtimeRoot, 'npm-shrinkwrap.json'), '{}\n');
     writeProviderFixture(runtimeRoot);
     for (const name of cliRuntimeFiles) {
@@ -1358,6 +1458,7 @@ module.exports = { applyPatch, verifyPatch };
     fs.writeFileSync(path.join(runtimeRoot, 'dist/extensions/mxc/node_modules/node-pty/package.json'),
       JSON.stringify({ name: 'node-pty', version: '1.2.0-beta.15' }));
     writeWidgetLibraryArchiveFixture(runtimeRoot);
+    writeBundledDependencyFixture(repositoryRoot, runtimeRoot);
     // Match the local Worker inventory used by the real packaging verifier.
     // These are inert archive fixtures; no installed runtime code is executed.
     const sourceRuntime = path.join(repositoryRoot, 'vendor/openclaw-runtime/current');
@@ -1375,15 +1476,15 @@ module.exports = { applyPatch, verifyPatch };
     fs.writeFileSync(
       path.join(runtimeRoot, 'runtime-build-info.json'),
       JSON.stringify({
-        openclawVersion: 'v2026.10.6',
+        openclawVersion: 'v2026.10.7',
         installMethod: 'npm-package',
         target: 'win-x64',
         nodeRuntimeManifestSha256: writeNodeFixture(runtimeRoot),
         npmPackageVersion: sourceLock.version,
         npmIntegrity: sourceLock.integrity,
         npmTarballSha256: sourceLock.tarballSha256,
-        patchSetSha256: buildOpenClawPatchSetFingerprint(repositoryRoot, 'v2026.10.6'),
-        buildRecipeSha256: buildOpenClawBuildRecipeFingerprint(repositoryRoot, 'v2026.10.6'),
+        patchSetSha256: buildOpenClawPatchSetFingerprint(repositoryRoot, 'v2026.10.7'),
+        buildRecipeSha256: buildOpenClawBuildRecipeFingerprint(repositoryRoot, 'v2026.10.7'),
         gatewayAsarSha256: crypto
           .createHash('sha256')
           .update(fs.readFileSync(path.join(runtimeRoot, 'gateway.asar')))
@@ -1396,6 +1497,11 @@ module.exports = { applyPatch, verifyPatch };
         runtimePackageLockSha256: crypto
           .createHash('sha256')
           .update(fs.readFileSync(path.join(runtimeRoot, 'npm-shrinkwrap.json')))
+          .digest('hex'),
+        runtimeBundledDependenciesPath: bundledDependenciesFilename,
+        runtimeBundledDependenciesSha256: crypto
+          .createHash('sha256')
+          .update(fs.readFileSync(path.join(runtimeRoot, bundledDependenciesFilename)))
           .digest('hex'),
       }),
     );
@@ -1419,6 +1525,16 @@ module.exports = { applyPatch, verifyPatch };
     );
     if (providerChange.endsWith('missing')) fs.unlinkSync(provider);
     if (providerChange.endsWith('changed')) fs.appendFileSync(provider, '// changed after proof\n');
+    const bundledRoot = path.join(runtimeRoot, 'node_modules/fixture-bundled');
+    if (bundledChange === 'changed') fs.appendFileSync(path.join(bundledRoot, 'index.js'), '// lost upstream repair\n');
+    else if (bundledChange === 'missing') fs.unlinkSync(path.join(bundledRoot, 'index.js'));
+    else if (bundledChange === 'extra') fs.writeFileSync(path.join(bundledRoot, 'extra.js'), 'unrecorded');
+    else if (bundledChange === 'proof-missing') fs.unlinkSync(path.join(runtimeRoot, bundledDependenciesFilename));
+    else if (bundledChange === 'unsafe-declaration') {
+      const metadata = JSON.parse(fs.readFileSync(path.join(runtimeRoot, 'package.json'), 'utf8'));
+      metadata.bundleDependencies = ['../outside'];
+      fs.writeFileSync(path.join(runtimeRoot, 'package.json'), JSON.stringify(metadata));
+    }
 
     const tar = require('tar') as {
       create: (options: { cwd: string; file: string; sync: boolean }, paths: string[]) => void;
@@ -1444,11 +1560,23 @@ module.exports = { applyPatch, verifyPatch };
         appOutDir,
         electronPlatformName: 'win32',
       }, { repoRoot: repositoryRoot });
-    if (nativeChange === 'missing-proof' || nativeChange === 'wrong-contract') await expect(verification).rejects.toThrow(/selected-owner proof/);
+    if (bundledChange !== 'none') await expect(verification).rejects.toThrow(/bundled|Bundled|source artifacts/);
+    else if (nativeChange === 'missing-proof' || nativeChange === 'wrong-contract') await expect(verification).rejects.toThrow(/selected-owner proof/);
     else if (nativeChange === 'owner-bytes') await expect(verification).rejects.toThrow(/owner bytes changed/);
     else if (!includeCompanion) await expect(verification).rejects.toThrow('dist/agents/archive-proof.worker.js');
     else if (providerChange.endsWith('missing')) await expect(verification).rejects.toThrow(/ENOENT/);
     else if (providerChange.endsWith('changed')) await expect(verification).rejects.toThrow(/dependencies/);
     else await expect(verification).resolves.toBeUndefined();
   }, 30_000);
+
+  test.each([
+    ['file.js:stream', 'File'], ['CON', 'File'], ['nested/trailing.', 'File'], ['nested/trailing ', 'File'],
+    ['../outside', 'File'], ['link', 'SymbolicLink'], ['hard-link', 'Link'], ['device', 'CharacterDevice'],
+  ])('rejects newly extracted bundled archive path/type before writing: %s %s', (relative, type) => {
+    const owner = 'cfmind/node_modules/fixture-bundled';
+    expect(() => isDeclaredBundledDependencyArchiveEntry(`${owner}/${relative}`, type, [owner])).toThrow();
+    expect(isDeclaredBundledDependencyArchiveEntry('cfmind/node_modules/unrelated/file.js', type, [owner])).toBe(false);
+    expect(isDeclaredBundledDependencyArchiveEntry(`${owner}/nested/`, 'Directory', [owner])).toBe(true);
+    expect(isDeclaredBundledDependencyArchiveEntry(`${owner}/nested/file.js`, 'File', [owner])).toBe(true);
+  });
 });

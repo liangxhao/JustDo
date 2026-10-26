@@ -7,17 +7,20 @@ import { buildSync } from 'esbuild';
 import { beforeAll, expect, test } from 'vitest';
 
 import { SkillWorkshopService } from '../../../src/main/plugins/skills/skillWorkshopService';
+import { projectDiagnosticEvent } from '../../../src/main/engine/openclaw/runtimeDiagnostics';
 
 const candidates = [process.env.OPENCLAW_TEST_UPSTREAM_ROOT, process.env.OPENCLAW_SOURCE, path.resolve('../openclaw'), path.resolve('../../../openclaw')].filter(Boolean) as string[];
 const upstream = candidates.find(root => fs.existsSync(path.join(root, 'packages/gateway-protocol/src/schema/agents-models-skills.ts')));
 const required = process.env.OPENCLAW_REQUIRE_MANAGEMENT_CONTRACTS === '1';
 if (required && !upstream) throw new Error('Required real OpenClaw management contract source is unavailable.');
 type Native = { check: (schema: string, value: unknown) => boolean;
-  retired: Record<string, (invocation: unknown) => unknown>; specs: unknown[][] };
+  retired: Record<string, (invocation: unknown) => unknown>; specs: unknown[][];
+  resolveAgentRunLifecycleTerminalFacts: (input: unknown) => Record<string, unknown> };
 let native: Native;
 beforeAll(() => {
   if (!upstream) return;
-  expect(JSON.parse(fs.readFileSync(path.join(upstream, 'package.json'), 'utf8')).version).toBe('2026.10.6');
+  const target = JSON.parse(fs.readFileSync(path.resolve('package.json'), 'utf8')).openclaw.version.replace(/^v/u, '');
+  expect(JSON.parse(fs.readFileSync(path.join(upstream, 'package.json'), 'utf8')).version).toBe(target);
   const source = (relative: string) => JSON.stringify(path.join(upstream, relative).replaceAll('\\', '/'));
   const code = [
     'import { Compile } from "typebox/schema";',
@@ -26,9 +29,11 @@ beforeAll(() => {
     'import * as config from ' + source('packages/gateway-protocol/src/schema/config.ts') + ';',
     'import * as plugins from ' + source('packages/gateway-protocol/src/schema/plugins.ts') + ';',
     'import * as hooks from ' + source('packages/gateway-protocol/src/schema/hooks.ts') + ';',
+    'import * as worker from ' + source('packages/gateway-protocol/src/schema/worker-admission.ts') + ';',
+    'export { resolveAgentRunLifecycleTerminalFacts } from ' + source('packages/normalization-core/src/agent-run-terminal-outcome.ts') + ';',
     'export { CORE_GATEWAY_METHOD_SPECS as specs } from ' + source('src/gateway/methods/core-descriptors.ts') + ';',
     'export { skillsRetiredHandlers as retired } from ' + source('src/gateway/server-methods/skills-retired.ts') + ';',
-    'const schemas = {...skills,...cron,...config,...plugins,...hooks};',
+    'const schemas = {...skills,...cron,...config,...plugins,...hooks,...worker};',
     'export const check=(name,value)=>{if(!schemas[name])throw Error("Missing upstream schema: "+name);return Compile(schemas[name]).Check(value)};',
   ].join('\n');
   const directory = path.resolve('build/upgrade-audit/module-contract-audit');
@@ -45,7 +50,7 @@ const inventory = { agentId: 'main', mode: 'off', root: '/native/skills',
 const change = { id: 'c1', agentId: 'main', skillName: 'release', action: 'restore',
   actor: 'user', summary: 'Restored', versionId: 'backup-current', createdAtMs: 11 };
 
-nativeTest('the real 10.6 closed Workshop validators accept all five product RPCs and reject old proposal fields', async () => {
+nativeTest('the locked target closed Workshop validators accept all five product RPCs and reject old proposal fields', async () => {
   const values: Record<string, unknown> = {
     List: { agentId: 'main' }, Changes: { agentId: 'main', limit: 200, beforeMs: 10 },
     Read: { agentId: 'main', name: 'release', filePath: 'SKILL.md', versionId: 'saved' },
@@ -64,6 +69,25 @@ nativeTest('the real 10.6 closed Workshop validators accept all five product RPC
   expect(native.check('SkillsWorkshopReadResultSchema', { name: 'release', filePath: 'SKILL.md', files: ['SKILL.md'], content: '' })).toBe(true);
   expect(native.check('SkillsWorkshopChangesParamsSchema', { limit: 501 })).toBe(false);
   expect(native.check('SkillsWorkshopArchiveParamsSchema', { name: 'release', reason: '' })).toBe(false);
+});
+
+nativeTest('the native tool execution timeout passes its real schema and retains its phase through the app projection', () => {
+  const payload = { phase: 'error', endedAt: 100, error: 'Tool execution timed out',
+    timeoutPhase: 'tool_execution', stopReason: 'timeout', aborted: true };
+  expect(native.check('WorkerLiveEventSchema', { kind: 'lifecycle', payload })).toBe(true);
+  expect(native.check('WorkerLiveEventSchema', { kind: 'lifecycle', payload: {
+    ...payload, timeoutPhase: 'unknown_tool_phase',
+  } })).toBe(false);
+  const facts = native.resolveAgentRunLifecycleTerminalFacts({ phase: 'error', data: payload });
+  expect(facts).toMatchObject({ reason: 'hard_timeout', status: 'timeout', timeoutPhase: 'tool_execution' });
+  const project = (data: Record<string, unknown>) => projectDiagnosticEvent({ event: 'agent', payload: {
+    runId: 'native-run', sessionKey: 'native-session', stream: 'lifecycle', data,
+  } }, 'connection-epoch');
+  expect(project({ ...payload, ...facts, executionSettled: true })?.event).toMatchObject({
+    phase: 'error', timeoutPhase: 'tool_execution', stopReason: 'timeout', executionSettled: true,
+  });
+  expect(project({ ...payload, timeoutPhase: 'unknown_tool_phase' })?.event.timeoutPhase).toBeUndefined();
+  expect(project(payload)?.event.executionSettled).toBeUndefined();
 });
 
 nativeTest('service outgoing requests and parsed receipts pass the actual target schemas, including the restore backup distinction', async () => {

@@ -21,7 +21,7 @@ const liveRuntimeHasContract = (() => {
       fs.readFileSync(path.join(runtimeRoot, 'runtime-build-info.json'), 'utf8'),
     ) as { openclawVersion?: string };
     return (
-      info.openclawVersion === 'v2026.10.6' &&
+      info.openclawVersion === 'v2026.10.7' &&
       fs
         .readdirSync(path.join(runtimeRoot, 'dist'))
         .some(
@@ -71,7 +71,7 @@ function pristineFacadeFixture(): string {
 }
 
 describe('OpenClaw facade runtime packaging transform', () => {
-  test('rewrites the v2026.10.6 loader shape, verifies it, and rejects historical markers', () => {
+  test('rewrites the v2026.10.7 loader shape, verifies it, and rejects historical markers', () => {
     const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-facade-runtime-'));
     const distRoot = path.join(fixtureRoot, 'dist');
     const facadePath = path.join(distRoot, 'facade-runtime-fixture.mjs');
@@ -84,9 +84,11 @@ describe('OpenClaw facade runtime packaging transform', () => {
       expect(() => verifyFacadeRuntime(fixtureRoot)).not.toThrow();
       expect(patchFacadeRuntime(fixtureRoot)).toEqual([]);
 
+      const historicalContract = CONTRACT.replace(/V\d+_\d+_\d+$/u, 'V2026_9_8');
+      expect(historicalContract).not.toBe(CONTRACT);
       fs.writeFileSync(
         facadePath,
-        fs.readFileSync(facadePath, 'utf8').replace(CONTRACT, CONTRACT.replace('10_6', '9_8')),
+        fs.readFileSync(facadePath, 'utf8').replace(CONTRACT, historicalContract),
       );
       expect(() => verifyFacadeRuntime(fixtureRoot)).toThrow('historical or partial');
       expect(() => patchFacadeRuntime(fixtureRoot)).toThrow('historical or partial');

@@ -10,13 +10,13 @@
   "license": "MIT",
   "version": "v2026.10.20",
   "openclaw": {
-    "version": "v2026.10.6",
+    "version": "v2026.10.7",
     "repo": "https://github.com/openclaw/openclaw.git",
     "plugins": [
       {
         "id": "mxc",
         "npm": "@openclaw/mxc-sandbox",
-        "version": "2026.10.6",
+        "version": "2026.10.7",
         "platforms": [
           "win32"
         ]

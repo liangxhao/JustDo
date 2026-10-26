@@ -1,0 +1,125 @@
+// Complete functions from locked pristine openclaw@2026.10.7 dist/agent-events-DwWyqfWg.mjs.
+function reserveAgentTerminalEvent(identity) {
+	const { runId } = identity;
+	const context = getAgentRunContext(runId);
+	return withAgentRunLifecycleGeneration(captureAgentRunLifecycleGeneration(runId), () => {
+		if (context) recordAgentEventRouting(runId, context);
+		const resolved = resolveAgentEventRouting(identity);
+		if (!resolved) return () => {};
+		const state = getAgentEventState();
+		const runState = resolved.routing?.eventState ?? state.runs.get(runId) ?? { seq: 0 };
+		const publication = Symbol("agent terminal publication");
+		runState.terminalPublication ??= publication;
+		if (!state.runs.has(runId)) state.runs.set(runId, runState);
+		const storage = getAgentEventExecutionContext();
+		const scope = storage.getStore();
+		let pending = true;
+		return (data) => {
+			if (pending) {
+				pending = false;
+				storage.run(scope, () => dispatchAgentEvent({
+					...identity,
+					stream: "lifecycle",
+					data
+				}, void 0, void 0, publication));
+			}
+		};
+	});
+}
+
+function enrichAgentEvent(state, event, claimId, expectedContext, reservedPublication, assistantSource, assistantProjection) {
+	const resolved = resolveAgentEventRouting(event, claimId, expectedContext);
+	if (!resolved || hasInvalidLifecycleStartTimestamp(event.stream, event.data)) return;
+	const { context, routing, capturedOwner, ownedLifecycleGeneration, currentLifecycleGeneration } = resolved;
+	if (event.stream === "lifecycle" && event.data.phase === "model") {
+		if (!context || claimId === void 0 && (expectedContext ?? capturedOwner) !== context) return;
+		const { provider, model } = event.data;
+		if (provider === null && model === null) recordAgentRunModel(event.runId, void 0);
+		else if (typeof provider === "string" && provider.trim() && typeof model === "string" && model.trim()) recordAgentRunModel(event.runId, {
+			provider,
+			model
+		});
+		else return;
+	}
+	const runState = routing?.eventState ?? state.runs.get(event.runId) ?? { seq: 0 };
+	let data = event.data;
+	if (routing && event.stream === "lifecycle") {
+		if (routing.completionSource) data = {
+			...data,
+			completionSource: routing.completionSource
+		};
+		if (data.phase === "start") {
+			if (context) context.lifecycleStartedAt = data.startedAt;
+		} else if ((data.phase === "end" || data.phase === "error") && data.startedAt === void 0 && routing.lifecycleStartedAt !== void 0) data = {
+			...data,
+			startedAt: routing.lifecycleStartedAt
+		};
+	}
+	if (context) recordAgentEventRouting(event.runId, context);
+	const nextSeq = Math.max(runState.seq, state.runs.get(event.runId)?.seq ?? 0) + 1;
+	runState.seq = nextSeq;
+	state.runs.set(event.runId, runState);
+	if (context) {
+		context.lastActiveAt = Date.now();
+		recordExecutionActivity(context, event);
+	}
+	const isControlUiVisible = routing?.isControlUiVisible ?? true;
+	const eventSessionKey = typeof event.sessionKey === "string" && event.sessionKey.trim() ? event.sessionKey : void 0;
+	const deliverySessionKey = claimId !== void 0 ? eventSessionKey ?? routing?.sessionKey : !isControlUiVisible && event.stream !== "lifecycle" ? routing?.sessionKey : void 0;
+	const sessionKey = isControlUiVisible || event.stream === "lifecycle" ? eventSessionKey ?? routing?.sessionKey : void 0;
+	const sessionId = event.stream === "lifecycle" ? event.sessionId ?? routing?.sessionId : event.sessionId;
+	const lifecycleGeneration = event.stream === "lifecycle" ? ownedLifecycleGeneration ?? currentLifecycleGeneration : ownedLifecycleGeneration;
+	const agentId = event.agentId ?? routing?.agentId;
+	const enriched = {
+		...event,
+		data,
+		sessionKey,
+		...sessionId ? { sessionId } : {},
+		...agentId ? { agentId } : {},
+		seq: nextSeq,
+		ts: Date.now()
+	};
+	if (event.stream === "lifecycle") {
+		const publication = reservedPublication ?? Symbol("agent lifecycle publication");
+		let consumed = false;
+		Object.defineProperty(enriched, "admitLifecyclePublication", { value: () => {
+			if (consumed || runState.terminalPublication && runState.terminalPublication !== publication) return false;
+			consumed = true;
+			if (isDefinitiveRunLifecycle({
+				phase: data.phase,
+				data
+			})) runState.terminalPublication = publication;
+			return true;
+		} });
+	}
+	Object.defineProperties(enriched, {
+		assistantSource: {
+			value: assistantSource,
+			enumerable: false
+		},
+		assistantProjection: {
+			value: assistantProjection,
+			enumerable: false
+		}
+	});
+	if (lifecycleGeneration) Object.defineProperty(enriched, "lifecycleGeneration", {
+		value: lifecycleGeneration,
+		enumerable: false
+	});
+	for (const [key, source] of AGENT_EVENT_ROUTING_FIELDS) {
+		const value = routing?.[source];
+		if (value !== void 0) Object.defineProperty(enriched, key, {
+			value,
+			enumerable: false
+		});
+	}
+	if (claimId !== void 0) Object.defineProperty(enriched, "contextClaimId", {
+		value: claimId,
+		enumerable: false
+	});
+	if (deliverySessionKey) Object.defineProperty(enriched, "deliverySessionKey", {
+		value: deliverySessionKey,
+		enumerable: false
+	});
+	return enriched;
+}

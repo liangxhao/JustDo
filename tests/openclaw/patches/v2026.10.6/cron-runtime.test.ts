@@ -1,3 +1,4 @@
+import { historicalRuntimeOrUnavailable } from './historical-runtime';
 import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -8,7 +9,7 @@ import { describe, expect, it, test } from 'vitest';
 const {
   __testing: { seams, transform },
 } = require('../../../../scripts/patches/v2026.10.6/016-cron-session-permission.cjs');
-const runtimeRoot = process.env.OPENCLAW_RUNTIME_DIR ?? path.resolve('build/runtimes/openclaw/win-x64');
+const runtimeRoot = historicalRuntimeOrUnavailable(process.env.OPENCLAW_RUNTIME_DIR ?? path.resolve('build/runtimes/openclaw/win-x64'));
 const runtimeDir = path.join(runtimeRoot, 'dist');
 const runtimePackage = path.join(runtimeDir, '..', 'package.json');
 const matchingRuntime =

@@ -1,3 +1,4 @@
+import { historicalRuntimeOrUnavailable } from './historical-runtime';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
@@ -50,13 +51,13 @@ type SubscriberApi = {
 };
 const { transform, CONTRACT } = require('../../../../scripts/patches/v2026.10.6/028-reasoning-completions-streaming.cjs').__testing;
 const { functionRange } = require('../../../../scripts/patches/v2026.10.6/prepared-read-patch-shapes.js');
-const runtime = process.env.JUSTDO_EXECUTION_PRISTINE_DIR ?? process.env.OPENCLAW_TEST_NATIVE_RUNTIME_DIR ?? path.resolve('build/runtimes/openclaw/win-x64');
-const runtimeNodeModules = path.join(process.env.OPENCLAW_RUNTIME_DIR ?? runtime, 'node_modules');
+const runtime = historicalRuntimeOrUnavailable(process.env.JUSTDO_EXECUTION_PRISTINE_DIR ?? process.env.OPENCLAW_TEST_NATIVE_RUNTIME_DIR ?? path.resolve('build/runtimes/openclaw/win-x64'));
+const runtimeNodeModules = path.join(historicalRuntimeOrUnavailable(process.env.OPENCLAW_RUNTIME_DIR ?? runtime), 'node_modules');
 const ai = path.join(runtime, 'node_modules/@openclaw/ai/dist');
-const transport = fs.readdirSync(ai).find(name => /^openai-completions-transport-.*\.mjs$/.test(name))!;
-const host = fs.readdirSync(ai).find(name => /^host-.*\.mjs$/.test(name) &&
+const transport = (fs.existsSync(ai) ? fs.readdirSync(ai) : []).find(name => /^openai-completions-transport-.*\.mjs$/.test(name))!;
+const host = (fs.existsSync(ai) ? fs.readdirSync(ai) : []).find(name => /^host-.*\.mjs$/.test(name) &&
   fs.readFileSync(path.join(ai, name), 'utf8').includes('function createAiTransportHost('))!;
-const sourceAlreadyPatched = fs.readFileSync(path.join(ai, transport), 'utf8').includes(CONTRACT);
+const sourceAlreadyPatched = transport ? fs.readFileSync(path.join(ai, transport), 'utf8').includes(CONTRACT) : false;
 const model = {
   id: 'arbitrary-reasoner', name: 'Synthetic fixture', api: 'openai-completions', provider: 'arbitrary-provider',
   baseUrl: 'https://fixture.invalid/v1', reasoning: true, input: ['text'],
@@ -285,6 +286,7 @@ function visibleContent(events: SubscriberEvent[]) {
     item.kind === 'content' ? [item.item.text] : []);
 }
 
+describe.skipIf(!transport || !host)('historical native completions runtime', () => {
 beforeAll(async () => {
   if (sourceAlreadyPatched) {
     pristine = patched = await loadTransport(true);
@@ -1096,4 +1098,6 @@ describe('real native subscriber and Renderer ownership', () => {
     expect(context.params.onPartialReply).not.toHaveBeenCalled();
     expect(context.params.onBlockReply).not.toHaveBeenCalled();
   });
+});
+
 });

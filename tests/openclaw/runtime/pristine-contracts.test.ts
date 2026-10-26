@@ -32,7 +32,7 @@ function createProviderTransportFixture() {
   const ai = path.join(root, 'node_modules', '@openclaw', 'ai');
   fs.mkdirSync(path.join(ai, 'dist'), { recursive: true });
   const metadata = {
-    name: '@openclaw/ai', version: '2026.10.6',
+    name: '@openclaw/ai', version: '2026.10.7',
     exports: {
       './transports': { import: './dist/transports.mjs' },
       './providers': { import: './dist/providers.mjs' },
@@ -145,7 +145,7 @@ function createPristineFixture(): string {
   fs.mkdirSync(path.join(root, 'dist'), { recursive: true });
   fs.writeFileSync(
     path.join(root, 'package.json'),
-    JSON.stringify({ name: 'openclaw', version: '2026.10.6', dependencies: { '@openclaw/ai': '2026.10.6' } }),
+    JSON.stringify({ name: 'openclaw', version: '2026.10.7', dependencies: { '@openclaw/ai': '2026.10.7' } }),
   );
   writeDistFile(
     root,
@@ -275,10 +275,10 @@ describe('OpenClaw pristine artifact contracts', () => {
       proofFiles: [packagePath, sourcePath, ...['transports.mjs', 'providers.mjs', COMPLETIONS_PROVIDER_BASENAME]
         .map(name => path.join(ai, 'dist', name))].sort(),
     });
-    const { runtimeJavaScriptFiles } = require('../../../scripts/patches/v2026.10.6/_patch-utils.js');
+    const { runtimeJavaScriptFiles } = require('../../../scripts/patches/v2026.10.7/_patch-utils.js');
     expect(runtimeJavaScriptFiles(root)).toEqual([sourcePath]);
     fs.writeFileSync(packagePath, JSON.stringify({ ...metadata, version: '2026.9.8' }));
-    expect(() => verifyNativeProviderTransportContracts(root)).toThrow('Expected @openclaw/ai@2026.10.6');
+    expect(() => verifyNativeProviderTransportContracts(root)).toThrow('Expected @openclaw/ai@2026.10.7');
     fs.writeFileSync(packagePath, JSON.stringify(metadata));
     fs.writeFileSync(sourcePath, source.replace('finalizeTerminalToolCallArguments(output);', ''));
     fs.writeFileSync(path.join(ai, 'dist/unrelated.mjs'), 'finalizeTerminalToolCallArguments(output);');
@@ -307,7 +307,7 @@ describe('OpenClaw pristine artifact contracts', () => {
     temporaryRoots.push(root);
     expect(resolveNativeProviderTransportArtifact(root)).toBeNull();
     expect(() => resolveNativeProviderTransportArtifact(root, { required: true })).toThrow('missing');
-    fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ dependencies: { '@openclaw/ai': '2026.10.6' } }));
+    fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ dependencies: { '@openclaw/ai': '2026.10.7' } }));
     expect(() => resolveNativeProviderTransportArtifact(root)).toThrow('missing');
     fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ dependencies: { '@openclaw/ai': '2026.9.8' } }));
     expect(() => resolveNativeProviderTransportArtifact(root)).toThrow('must pin');
@@ -344,8 +344,8 @@ describe('OpenClaw pristine artifact contracts', () => {
     );
   });
 
-  test('keeps the independently auditable v2026.10.6 patch inventory exact', () => {
-    const patchDir = path.resolve('scripts', 'patches', 'v2026.10.6');
+  test('keeps the independently auditable v2026.10.7 patch inventory exact', () => {
+    const patchDir = path.resolve('scripts', 'patches', 'v2026.10.7');
     const patchFiles = fs
       .readdirSync(patchDir)
       .filter(name => /^\d.*\.cjs$/.test(name))
@@ -386,7 +386,7 @@ describe('OpenClaw pristine artifact contracts', () => {
       patchFiles: [writePatch(root, false)],
     });
 
-    expect(result.version).toBe('2026.10.6');
+    expect(result.version).toBe('2026.10.7');
     expect(Object.keys(result.upstream)).toEqual(UPSTREAM_CONTRACTS);
     expect(result.retainedGaps).toEqual(['required.cjs']);
   });

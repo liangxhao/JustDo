@@ -39,6 +39,12 @@ const {
   verifyPublicCliArchiveEntries,
 } = require('./openclaw-runtime-companions.cjs');
 const {
+  RUNTIME_BUNDLED_DEPENDENCIES_FILENAME,
+  inspectPristineBundledDependencies,
+  restorePristineBundledDependencies,
+  verifyBundledDependencies,
+} = require('./openclaw-bundled-dependencies.cjs');
+const {
   buildOpenClawBuildRecipeFingerprint,
   buildOpenClawPatchSetFingerprint,
   hashFile,
@@ -250,6 +256,7 @@ fs.mkdirSync(extractDir, { recursive: true });
       );
     }
     const pristineAudit = verifyPristineOpenClawContracts(pkgDir, { repoRoot: rootDir });
+    const pristineBundledDependencies = inspectPristineBundledDependencies(pkgDir, { sourceLock });
     console.log(
       `[install-openclaw-runtime] Pristine contracts: ${Object.keys(pristineAudit.upstream).length} upstream, ` +
         `${pristineAudit.retainedGaps.length} retained gaps.`,
@@ -270,6 +277,7 @@ fs.mkdirSync(extractDir, { recursive: true });
       npmTargetPlatform,
       targetArch,
       path.join(tmpDir, 'install-state'),
+      { pristinePackageDir: pkgDir, pristineProof: pristineBundledDependencies, sourceLock },
     );
     copyNodeRuntime(nodeRuntimeRoot, path.join(stagingOutDir, 'node-runtime'), targetId);
     verifyNativeProviderTransportContracts(stagingOutDir);
@@ -325,6 +333,10 @@ fs.mkdirSync(extractDir, { recursive: true });
       runtimePackageLockSha256: hashFile(
         path.join(stagingOutDir, RUNTIME_DEPENDENCY_LOCK_FILENAME),
       ),
+      runtimeBundledDependenciesPath: RUNTIME_BUNDLED_DEPENDENCIES_FILENAME,
+      runtimeBundledDependenciesSha256: hashFile(
+        path.join(stagingOutDir, RUNTIME_BUNDLED_DEPENDENCIES_FILENAME),
+      ),
       nodeRuntimeManifestSha256: hashFile(path.join(stagingOutDir, 'node-runtime', 'node-runtime-manifest.json')),
     };
     fs.writeFileSync(
@@ -379,7 +391,7 @@ function processSkills(electronRoot, runtimeRoot) {
 // Install production dependencies
 // ===========================================================================
 
-function installProdDeps(runtimeDir, npmPlatform, npmArch, isolatedStateDir) {
+function installProdDeps(runtimeDir, npmPlatform, npmArch, isolatedStateDir, bundledSource) {
   // Remove existing node_modules and both npm lockfile forms. The v2026.9.2
   // package no longer ships npm-shrinkwrap.json, so the runtime build owns the
   // production dependency snapshot it later verifies and packages.
@@ -429,6 +441,11 @@ function installProdDeps(runtimeDir, npmPlatform, npmArch, isolatedStateDir) {
     },
   );
 
+  // npm replaces the upstream bundled snapshot-identity fork with the public
+  // same-version package. Restore the entire source-authenticated bundle before
+  // recording the installed graph; registry integrity still describes its base.
+  restorePristineBundledDependencies(runtimeDir, bundledSource.pristinePackageDir, bundledSource);
+
   // Keep the historical runtime artifact name, but generate it from the exact
   // production install instead of relying on a lockfile bundled upstream.
   runNpm(['shrinkwrap'], {
@@ -443,6 +460,7 @@ function installProdDeps(runtimeDir, npmPlatform, npmArch, isolatedStateDir) {
   if (!fs.existsSync(path.join(runtimeDir, RUNTIME_DEPENDENCY_LOCK_FILENAME))) {
     fail('npm shrinkwrap did not produce the runtime dependency lock.');
   }
+  verifyBundledDependencies(runtimeDir, { sourceLock: bundledSource.sourceLock });
 }
 
 // ===========================================================================

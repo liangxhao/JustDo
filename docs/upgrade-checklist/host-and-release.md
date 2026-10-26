@@ -70,7 +70,7 @@
       interval，使用原生按用途的频率；不把 Gateway 环境策略扩散到应用/CLI 基础环境。
 
 依据：[插件系统](../architecture/07-plugin-system.md)、[Plugin Hub](../features/plugins/plugin-hub-experience.md)、
-[补丁总账](../../scripts/patches/v2026.10.6/README.md)、[离线准备](../offline-downloads.md)。
+[补丁总账](../../scripts/patches/v2026.10.7/README.md)、[离线准备](../offline-downloads.md)。
 
 ## 旧版聊天记录迁移与首次启动引导
 

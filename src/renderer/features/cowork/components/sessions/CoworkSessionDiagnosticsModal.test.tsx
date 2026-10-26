@@ -129,7 +129,7 @@ describe('session diagnostics', () => {
     },
   );
 
-  it('keeps a specific timeout explanation expanded', async () => {
+  it.each(['provider', 'tool_execution'] as const)('keeps the %s timeout explanation expanded', async timeoutPhase => {
     bridge.read.mockResolvedValue({
       success: true,
       report: report({
@@ -149,13 +149,13 @@ describe('session diagnostics', () => {
             phase: 'error',
             executionSettled: true,
             stopReason: 'timeout',
-            timeoutPhase: 'provider',
+            timeoutPhase,
           },
         ],
       }),
     });
     open();
-    await screen.findByText(i18nService.t('diagnosticsTimeout_provider'));
+    await screen.findByText(i18nService.t(`diagnosticsTimeout_${timeoutPhase}`));
     expect(screen.queryByText(i18nService.t('diagnosticsAnswerExpand'))).toBeNull();
     expect(
       screen.getByRole('heading', { name: i18nService.t('diagnosticsAnswerEvidence') }),

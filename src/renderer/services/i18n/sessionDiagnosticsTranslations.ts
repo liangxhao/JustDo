@@ -68,6 +68,8 @@ export const sessionDiagnosticsTranslations = {
     diagnosticsTimeout_queue: 'Timed out while queued, before execution was admitted.',
     diagnosticsTimeout_preflight: 'Timed out during preparation, before the model request stage.',
     diagnosticsTimeout_provider: 'Timed out in the model-provider stage.',
+    diagnosticsTimeout_tool_execution:
+      'Tool execution timed out. Verify its state before repeating the operation.',
     diagnosticsTimeout_post_turn: 'Timed out while finalizing the turn after model execution.',
     diagnosticsTimeout_gateway_draining:
       'Timed out while the runtime was draining or shutting down.',
@@ -606,6 +608,7 @@ export const sessionDiagnosticsTranslations = {
     diagnosticsTimeout_queue: '排队阶段超时，尚未获准开始执行。',
     diagnosticsTimeout_preflight: '准备阶段超时，尚未进入模型请求阶段。',
     diagnosticsTimeout_provider: '模型服务阶段超时。',
+    diagnosticsTimeout_tool_execution: '工具执行阶段超时，重复操作前请核对实际状态。',
     diagnosticsTimeout_post_turn: '模型执行之后的本轮收尾阶段超时。',
     diagnosticsTimeout_gateway_draining: '运行服务排空或关闭阶段超时。',
     diagnosticsStopAdvice_reasoning_only:

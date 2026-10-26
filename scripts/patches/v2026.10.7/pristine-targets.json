@@ -1,0 +1,662 @@
+{
+  "version": "2026.10.7",
+  "sourceCommit": "157d8c2bc3ea2fa183afdc11088e69690bf8e64e",
+  "patches": [
+    {
+      "file": "001-managed-pip-config-environment.cjs",
+      "pristineRejected": true,
+      "sourceVerified": true,
+      "targets": [
+        "dist/host-env-security-DsfhifNr.mjs",
+        "dist/native-hook-relay/host-env-security-B3DKP9_D.mjs"
+      ]
+    },
+    {
+      "file": "002-final-system-prompt-replacements.cjs",
+      "pristineRejected": true,
+      "sourceVerified": true,
+      "targets": [
+        "dist/attempt-system-prompt-prepare-77TR2SVS.mjs"
+      ]
+    },
+    {
+      "file": "003-agent-request-metadata.cjs",
+      "pristineRejected": true,
+      "sourceVerified": true,
+      "targets": [
+        "dist/sessions-DD7AJdsX.mjs",
+        "dist/chat-send-handler-DngLINTE.mjs",
+        "dist/builtin-openclaw-Ci5YBsOb.mjs",
+        "dist/agent-runner-run-Dma8wB1D.mjs"
+      ]
+    },
+    {
+      "file": "004-request-purpose-metadata.cjs",
+      "pristineRejected": true,
+      "sourceVerified": true,
+      "targets": [
+        "dist/settings-manager-DipDVfMv.mjs",
+        "dist/simple-completion-execution-DJB-X6CQ.mjs",
+        "dist/exec-auto-reviewer-BZnNdjo5.mjs"
+      ]
+    },
+    {
+      "file": "005-app-startup-task-recovery-boundary.cjs",
+      "pristineRejected": true,
+      "sourceVerified": true,
+      "targets": [
+        "dist/main-session-restart-recovery-BePtcRv6.mjs"
+      ]
+    },
+    {
+      "file": "006-goal-resume-after-pause.cjs",
+      "pristineRejected": true,
+      "sourceVerified": true,
+      "targets": [
+        "dist/chat-send-handler-DngLINTE.mjs"
+      ]
+    },
+    {
+      "file": "007-assistant-display-block-replay.cjs",
+      "pristineRejected": true,
+      "sourceVerified": true,
+      "targets": [
+        "dist/ai-transport-runtime-host-BMqXXSo0.mjs"
+      ]
+    },
+    {
+      "file": "008-trusted-local-file-media.cjs",
+      "pristineRejected": true,
+      "sourceVerified": true,
+      "targets": [
+        "dist/managed-image-attachments-CJRLq6Or.mjs",
+        "dist/chat-display-projection.canvas-OCRpCKvQ.mjs"
+      ]
+    },
+    {
+      "file": "009-offline-official-plugin-catalog.cjs",
+      "pristineRejected": true,
+      "sourceVerified": true,
+      "targets": [
+        "dist/management-catalog-DhwpSUFl.mjs"
+      ]
+    },
+    {
+      "file": "010-disable-configured-plugin-auto-install.cjs",
+      "pristineRejected": true,
+      "sourceVerified": true,
+      "targets": [
+        "dist/missing-configured-plugin-install-DvHA_e--.mjs"
+      ]
+    },
+    {
+      "file": "011-reset-display-history.cjs",
+      "pristineRejected": true,
+      "sourceVerified": true,
+      "targets": [
+        "dist/session-accessor.sqlite-history-query-Dk-To-Gs.mjs",
+        "dist/session-accessor.sqlite-reset-window-1cTNDN6o.mjs"
+      ]
+    },
+    {
+      "file": "012-managed-session-fork-target-key.cjs",
+      "pristineRejected": true,
+      "sourceVerified": true,
+      "targets": [
+        "dist/sessions-DD7AJdsX.mjs",
+        "dist/sessions-rewind-BzbhdKUD.mjs",
+        "dist/session-accessor.sqlite-message-cut-DJZrvR55.mjs"
+      ]
+    },
+    {
+      "file": "013-mxc-external-skill-paths.cjs",
+      "pristineRejected": true,
+      "sourceVerified": true,
+      "targets": [
+        "dist/sandbox-skills-Dcyg2gP3.mjs"
+      ]
+    },
+    {
+      "file": "014-private-untrusted-context.cjs",
+      "pristineRejected": true,
+      "sourceVerified": true,
+      "targets": [
+        "dist/sessions-DD7AJdsX.mjs",
+        "dist/chat-send-handler-DngLINTE.mjs"
+      ]
+    },
+    {
+      "file": "015-admin-session-cwd.cjs",
+      "pristineRejected": true,
+      "sourceVerified": true,
+      "targets": [
+        "dist/sessions-create-96JImPdd.mjs"
+      ]
+    },
+    {
+      "file": "016-cron-session-permission.cjs",
+      "pristineRejected": true,
+      "sourceVerified": true,
+      "targets": [
+        "dist/src-BaGOtYrI.mjs",
+        "dist/jobs-Dy2-Rvck.mjs",
+        "dist/isolated-agent-B8PgrTVO.mjs",
+        "dist/run-executor.runtime-B5UysGXT.mjs",
+        "dist/cron-Ba1zX-fj.mjs"
+      ]
+    },
+    {
+      "file": "017-windows-servicing-credential-launcher.cjs",
+      "pristineRejected": true,
+      "sourceVerified": true,
+      "targets": [
+        "dist/native-hook-relay/resolve-CJB_ZyJe.mjs",
+        "dist/provider-integrations-5RARYxQz.mjs"
+      ]
+    },
+    {
+      "file": "018-windows-session-creation-path.cjs",
+      "pristineRejected": true,
+      "sourceVerified": true,
+      "targets": [
+        "dist/session-accessor.sqlite-entry-cache-publication-state-Fxd3P1w_.mjs"
+      ]
+    },
+    {
+      "file": "019-plugin-owned-execution.cjs",
+      "pristineRejected": true,
+      "sourceVerified": true,
+      "targets": [
+        "dist/server-plugins-BN7J9yLN.mjs",
+        "dist/subagent-registry-ClP8932r.mjs",
+        "dist/server-plugin-runtime-client-CvsL0x_P.mjs",
+        "dist/server-plugin-in-process-dispatch-CQ6TnlII.mjs",
+        "dist/agent-turn-service-DTOXX_Sj.mjs",
+        "dist/agent-tools-LS2RUMFH.mjs",
+        "dist/runtime-rseK5Ug0.mjs",
+        "dist/loader-runtime-load-CiKcVwTw.mjs",
+        "dist/registry-BwDJiK-z.mjs",
+        "dist/attempt-execution.runtime-D8n2qkby.mjs",
+        "dist/embedded-agent-DAqZgJpR.mjs",
+        "dist/code-mode-control-tools-FkhKD315.mjs",
+        "dist/session-binding-runtime-EiGMQwyv.mjs",
+        "dist/agent-events-DwWyqfWg.mjs",
+        "dist/config-contracts-Db6WHFol.d.ts"
+      ]
+    },
+    {
+      "file": "020-shared-terminal-launch.cjs",
+      "pristineRejected": true,
+      "sourceVerified": true,
+      "targets": [
+        "dist/src-BaGOtYrI.mjs",
+        "dist/terminal-DsZscJNQ.mjs",
+        "dist/session-manager-Dyr3p0sF.mjs"
+      ]
+    },
+    {
+      "file": "021-terminal-product-banner.cjs",
+      "pristineRejected": true,
+      "sourceVerified": true,
+      "targets": [
+        "dist/session-manager-Dyr3p0sF.mjs"
+      ]
+    },
+    {
+      "file": "022-native-compaction-lifecycle.cjs",
+      "pristineRejected": true,
+      "sourceVerified": true,
+      "targets": [
+        "dist/compact-Cn8Yr-Sj.mjs",
+        "dist/core-method-policy-DkntKRY_.mjs",
+        "dist/delegate-Dm6cUDjR.mjs",
+        "dist/embedded-agent-DAqZgJpR.mjs",
+        "dist/native-hook-relay/call-ByceWlwL.mjs",
+        "dist/session-method-policy-B7o-3I76.mjs",
+        "dist/sessions-DD7AJdsX.mjs",
+        "dist/sessions-compact-CvSoNiGn.mjs",
+        "dist/state/openclaw-state-read.worker.js"
+      ]
+    },
+    {
+      "file": "023-computer-overlay-activity.cjs",
+      "pristineRejected": true,
+      "sourceVerified": true,
+      "targets": [
+        "dist/computer-service-C6lOH7z0.mjs",
+        "dist/computer-B6nlongL.mjs",
+        "dist/server-start-CV36mvtI.mjs"
+      ]
+    },
+    {
+      "file": "024-windows-plugin-recovery-junctions.cjs",
+      "pristineRejected": true,
+      "sourceVerified": true,
+      "targets": [
+        "dist/plugin-generation-source-lookup-NKaFN9QS.mjs"
+      ]
+    },
+    {
+      "file": "025-nonblocking-sqlite-retirement.cjs",
+      "pristineRejected": true,
+      "sourceVerified": true,
+      "targets": [
+        "dist/infra/sqlite-readonly-location.worker.js",
+        "dist/managed-handoff-runtime.mjs",
+        "dist/native-hook-relay/openclaw-state-db-cache-CByAT_oB.mjs",
+        "dist/package-update-activation-recovery.mjs",
+        "dist/sqlite-wal-CAPx5bGS.mjs",
+        "dist/state/openclaw-state-read.worker.js"
+      ]
+    },
+    {
+      "file": "026-scoped-finalize-hook-admission.cjs",
+      "pristineRejected": true,
+      "sourceVerified": true,
+      "targets": [
+        "dist/hooks-DJ64650m.mjs",
+        "dist/builtin-openclaw-Ci5YBsOb.mjs",
+        "dist/registry-BwDJiK-z.mjs",
+        "dist/config-contracts-Db6WHFol.d.ts"
+      ]
+    },
+    {
+      "file": "027-prepared-history-response-publication.cjs",
+      "pristineRejected": true,
+      "sourceVerified": true,
+      "targets": [
+        "dist/session-canonical-key-BT9-Ydgk.mjs",
+        "dist/chat-history-handler-DIyNX568.mjs"
+      ]
+    },
+    {
+      "file": "028-reasoning-completions-streaming.cjs",
+      "pristineRejected": true,
+      "sourceVerified": true,
+      "targets": [
+        "node_modules/@openclaw/ai/dist/openai-completions-transport-BRjxCG1C.mjs",
+        "dist/builtin-openclaw-Ci5YBsOb.mjs",
+        "dist/server-chat-state-go3yND5C.mjs",
+        "node_modules/@openclaw/ai/dist/reasoning-tag-text-partitioner-CpOy9-IQ.mjs"
+      ]
+    },
+    {
+      "file": "029-tool-call-format-recovery.cjs",
+      "pristineRejected": true,
+      "sourceVerified": true,
+      "targets": [
+        "node_modules/@openclaw/ai/dist/openai-completions-transport-BRjxCG1C.mjs",
+        "dist/embedded-agent-DAqZgJpR.mjs",
+        "dist/agent-runner-run-Dma8wB1D.mjs",
+        "dist/attempt-system-prompt-prepare-77TR2SVS.mjs",
+        "dist/agent-core-_YGHB2FC.mjs",
+        "dist/agent-turn-service-DTOXX_Sj.mjs",
+        "dist/config-contracts-Db6WHFol.d.ts"
+      ]
+    },
+    {
+      "file": "030-mcp-app-session-workspace.cjs",
+      "pristineRejected": true,
+      "sourceVerified": true,
+      "targets": [
+        "dist/mcp-app-extensions-abaft4XG.mjs"
+      ]
+    },
+    {
+      "file": "031-goal-continuation-admission.cjs",
+      "pristineRejected": true,
+      "sourceVerified": true,
+      "targets": [
+        "dist/src-BaGOtYrI.mjs",
+        "dist/agent-request-preflight-DayS66Ki.mjs",
+        "dist/agent-turn-service-DTOXX_Sj.mjs",
+        "dist/session-event-payload-Cq41wHZJ.mjs",
+        "dist/session-lifecycle-admission-USS1EGbr.mjs",
+        "dist/subagent-registry-ClP8932r.mjs",
+        "dist/sessions-read-BXwTspcX.mjs",
+        "dist/session-entry-projection-CE63LQBt.mjs"
+      ]
+    },
+    {
+      "file": "032-run-progress-observations.cjs",
+      "pristineRejected": true,
+      "sourceVerified": true,
+      "targets": [
+        "dist/builtin-openclaw-Ci5YBsOb.mjs"
+      ]
+    },
+    {
+      "file": "033-windows-plugin-directory-publication.cjs",
+      "pristineRejected": true,
+      "sourceVerified": true,
+      "targets": [
+        "node_modules/@openclaw/fs-safe/dist/move-path.js",
+        "node_modules/@openclaw/fs-safe/dist/guarded-mutation.js",
+        "dist/install-package-dir-D5h3GpAL.mjs",
+        "dist/npm-managed-root-C6KnxuJp.mjs"
+      ]
+    }
+  ],
+  "targets": [
+    {
+      "file": "dist/agent-core-_YGHB2FC.mjs",
+      "sha256": "7377211e1fb3bdbf53df940a675e1683c6ce3d4d350657f3c362ace88c1c50db"
+    },
+    {
+      "file": "dist/agent-events-DwWyqfWg.mjs",
+      "sha256": "ca2ed31e215db8a711e2f3e0be83faf0eed6c597434a74d42e82ff09d6426d10"
+    },
+    {
+      "file": "dist/agent-request-preflight-DayS66Ki.mjs",
+      "sha256": "bab78f4740e81b798238f6c57e997a8f15784487021341c2e31e00dc08220a6b"
+    },
+    {
+      "file": "dist/agent-runner-run-Dma8wB1D.mjs",
+      "sha256": "45603e90c077891438a5b4bfc937cc24f97848f5aac6d5173e7fdf6e96d7b448"
+    },
+    {
+      "file": "dist/agent-tools-LS2RUMFH.mjs",
+      "sha256": "d460b9ef6b6ad46de4be5ada1c823a34e5f5ce6945f695d70dec385124008ecd"
+    },
+    {
+      "file": "dist/agent-turn-service-DTOXX_Sj.mjs",
+      "sha256": "264045d32ea4bdbd4ddf3f84932d1ac9873fb8ca6df20fae86422f789bef3662"
+    },
+    {
+      "file": "dist/ai-transport-runtime-host-BMqXXSo0.mjs",
+      "sha256": "45b5b8bcdd7aa1811be8c5b3e3630fde18f6a2a5b72d0b2aad7bbf7790162735"
+    },
+    {
+      "file": "dist/attempt-execution.runtime-D8n2qkby.mjs",
+      "sha256": "3a7aee079778fccf816ff2ea73e62009aa3c2a9a4b869187f0d6f0a5c6db34a9"
+    },
+    {
+      "file": "dist/attempt-system-prompt-prepare-77TR2SVS.mjs",
+      "sha256": "ac07fd6d0ed0e8dffee1d9b0e7db34d2136967bff11e5113cdd4fb2a1e7ad13f"
+    },
+    {
+      "file": "dist/builtin-openclaw-Ci5YBsOb.mjs",
+      "sha256": "0f8ed4873cbba263680bce67dba75c328ad2644a9a6a3867d32a0cc7f43435a4"
+    },
+    {
+      "file": "dist/chat-display-projection.canvas-OCRpCKvQ.mjs",
+      "sha256": "605c178b0e2f81ee4382eaa72abad5a2f6344931550528cec9fac6f9b643c85c"
+    },
+    {
+      "file": "dist/chat-history-handler-DIyNX568.mjs",
+      "sha256": "cd5df30b2600e0a25f79d8989e48a4d4b0868dd30459cb369acb57dc9765c97d"
+    },
+    {
+      "file": "dist/chat-send-handler-DngLINTE.mjs",
+      "sha256": "8cbb843e3c1730ee6c542ccb38e0a1d845978235aa30eac8a639b10e17b7f14d"
+    },
+    {
+      "file": "dist/code-mode-control-tools-FkhKD315.mjs",
+      "sha256": "acea1a42570d99dbdd25c7bea366a07a0c8b9739865dd4793702e84101f91a7d"
+    },
+    {
+      "file": "dist/compact-Cn8Yr-Sj.mjs",
+      "sha256": "e51b1ba702275af25e51cf80c4c0b20fa9fa0e838de0b1a980056c64596b42f4"
+    },
+    {
+      "file": "dist/computer-B6nlongL.mjs",
+      "sha256": "592dd645e68e00d6f79fdaad4a19bde3866305260cbef0f754bc07eabbbd6630"
+    },
+    {
+      "file": "dist/computer-service-C6lOH7z0.mjs",
+      "sha256": "42877aea3f965234e0f285bd3f63649d6d77359ed5fc2765d96e3ea6c7c8c809"
+    },
+    {
+      "file": "dist/config-contracts-Db6WHFol.d.ts",
+      "sha256": "48c2f15bb8041a49dd7da5d34663cab7f73081b2ed03f807c09c01ab61851a3d"
+    },
+    {
+      "file": "dist/core-method-policy-DkntKRY_.mjs",
+      "sha256": "76a772a67b4972ea170676f238bb57bb3622d1b17034ef923c1d255345e66c78"
+    },
+    {
+      "file": "dist/cron-Ba1zX-fj.mjs",
+      "sha256": "88f85ab65cf767c9e25f42c59ac0743a88ab2bd1ef8fd6af15c320732166d24f"
+    },
+    {
+      "file": "dist/delegate-Dm6cUDjR.mjs",
+      "sha256": "9f87fd5dd58a5c454b55fb6378ce0b9f782c661d4a00078ffdba43a619d46484"
+    },
+    {
+      "file": "dist/embedded-agent-DAqZgJpR.mjs",
+      "sha256": "5509752024405df6e1cdf89974af7ea5eb646aab8c20ed9dfee6ceb5f7191ed7"
+    },
+    {
+      "file": "dist/exec-auto-reviewer-BZnNdjo5.mjs",
+      "sha256": "c7b162d073ac1bba390026d5990ecb2edf5d55ef1800ffef17551570d3b69817"
+    },
+    {
+      "file": "dist/hooks-DJ64650m.mjs",
+      "sha256": "8e16b646bc9fb21b03262f14fdee78f802f3db20ba6d3fb14d14c7ad849f600a"
+    },
+    {
+      "file": "dist/host-env-security-DsfhifNr.mjs",
+      "sha256": "fe5c8615c86a600f62f5c776f44b6fb5fb2654780c8713b355f840b547bdc318"
+    },
+    {
+      "file": "dist/infra/sqlite-readonly-location.worker.js",
+      "sha256": "afe1ab1a0691c31d742d5cc95199ff6cd8fcca23e6a1dd2f818ce6cbb7cc9b9d"
+    },
+    {
+      "file": "dist/install-package-dir-D5h3GpAL.mjs",
+      "sha256": "3a2ef7d7c144d2b495bf723486a6b3dd35954f3c05a81eda5747ac3870b2edfd"
+    },
+    {
+      "file": "dist/isolated-agent-B8PgrTVO.mjs",
+      "sha256": "08a3afe026a5cd92d4f1ea37aa29cb809a73bd9cf89676e95c0354cdb53a418b"
+    },
+    {
+      "file": "dist/jobs-Dy2-Rvck.mjs",
+      "sha256": "dc976f45baa0d162ce70caa8fbaa350ecc73851f28f5ec7889af2a50fdf7e140"
+    },
+    {
+      "file": "dist/loader-runtime-load-CiKcVwTw.mjs",
+      "sha256": "fb27353db121e74cb3acbbd4dbf17cf5511e1ce21e09963348ff4fe25fd15d79"
+    },
+    {
+      "file": "dist/main-session-restart-recovery-BePtcRv6.mjs",
+      "sha256": "72bed3776424ab6f1701a31ea8143f284d1a22f2308bc5852fd903da43b43296"
+    },
+    {
+      "file": "dist/managed-handoff-runtime.mjs",
+      "sha256": "aacd9639ea197202ab598fcdde4077230caf7e21a68754355d5c724abb57fad6"
+    },
+    {
+      "file": "dist/managed-image-attachments-CJRLq6Or.mjs",
+      "sha256": "18c7dff0ac6e16da2f99387b1bbf5b7298e680891307a0e35f4113b2fdf43692"
+    },
+    {
+      "file": "dist/management-catalog-DhwpSUFl.mjs",
+      "sha256": "29bb4a1afd31efaea9f05a4d314eaeea8f8ae1e332be37a50eda746883fc854f"
+    },
+    {
+      "file": "dist/mcp-app-extensions-abaft4XG.mjs",
+      "sha256": "a89da5dc63edfadd2f50e3391cbc0a9ab10b2c76084811967e17917e1b43d75c"
+    },
+    {
+      "file": "dist/missing-configured-plugin-install-DvHA_e--.mjs",
+      "sha256": "9cf9af3111c284be0bc5030ec235d5d56870515c61089c6e7e16028e10e2b85c"
+    },
+    {
+      "file": "dist/native-hook-relay/call-ByceWlwL.mjs",
+      "sha256": "93d0f2e6c7a91f2a4132bd6f3bb11da2ed94c83d2e97f674b499fe9aa5517d76"
+    },
+    {
+      "file": "dist/native-hook-relay/host-env-security-B3DKP9_D.mjs",
+      "sha256": "dc25f8ccd2eebef26cf2429b0ab770fa0fbed33fd763822efa6ff4d880fbb778"
+    },
+    {
+      "file": "dist/native-hook-relay/openclaw-state-db-cache-CByAT_oB.mjs",
+      "sha256": "b0793724afe0df41cfd0fe288f473f6cf9a3e332a1c312b6a3639988d6848779"
+    },
+    {
+      "file": "dist/native-hook-relay/resolve-CJB_ZyJe.mjs",
+      "sha256": "bd960ff7a6c77288883dd19e1c93a4324a06626c8d00ebe6a2715bb9dff78b81"
+    },
+    {
+      "file": "dist/npm-managed-root-C6KnxuJp.mjs",
+      "sha256": "bfe0e77ffed38891e8df5c014a0fde28ead92a22972928a52493af63bb1af538"
+    },
+    {
+      "file": "dist/package-update-activation-recovery.mjs",
+      "sha256": "a69120f7e94879553ad42d0a28d7889c112d1af81e5f577caaac7c5b75b44fcc"
+    },
+    {
+      "file": "dist/plugin-generation-source-lookup-NKaFN9QS.mjs",
+      "sha256": "308cc66c76a17991e9ae799edc1036009483e7f449588f52a23704b927500e45"
+    },
+    {
+      "file": "dist/provider-integrations-5RARYxQz.mjs",
+      "sha256": "ec8b256c715df659243ac3d04a0311f55cbaeb0e6264eee9ee6f235171fb54ba"
+    },
+    {
+      "file": "dist/registry-BwDJiK-z.mjs",
+      "sha256": "37895af63f814f9bba2c24e20fdb910e27844717ccae69aab42aafe059f40489"
+    },
+    {
+      "file": "dist/run-executor.runtime-B5UysGXT.mjs",
+      "sha256": "149e3adce0c146ad2bb76612ddc05d2dd0340b4bcb4867bc939b32256ca670f4"
+    },
+    {
+      "file": "dist/runtime-rseK5Ug0.mjs",
+      "sha256": "2cb84bc15646e1dc6b7fcd11e6a8f4491762388ab5613d067dfa471f3e3f8c25"
+    },
+    {
+      "file": "dist/sandbox-skills-Dcyg2gP3.mjs",
+      "sha256": "bde7050c3ac2fd78ee62f0641427c78221a68249a902e174319e52bf23584977"
+    },
+    {
+      "file": "dist/server-chat-state-go3yND5C.mjs",
+      "sha256": "1d49b3a524e4d2a1261c3d017fd0da855cdf7b1d35a82d14144c697e127e4248"
+    },
+    {
+      "file": "dist/server-plugin-in-process-dispatch-CQ6TnlII.mjs",
+      "sha256": "a3ef0ea1a9000ce18ce643c3802ce3f870355522ed420db7bc3fca5ed84b678b"
+    },
+    {
+      "file": "dist/server-plugin-runtime-client-CvsL0x_P.mjs",
+      "sha256": "d0792b93f25fc9e404d12acda59eba36d9fc80871fada90f5d15fcbcc254392d"
+    },
+    {
+      "file": "dist/server-plugins-BN7J9yLN.mjs",
+      "sha256": "8de8193491239c4855ba417558e162fdcdce71b6a2a436003d8f35e24bad9efd"
+    },
+    {
+      "file": "dist/server-start-CV36mvtI.mjs",
+      "sha256": "890892e32cfefc729215bfd9744c09c4536117666360cc9f6907a96645eca403"
+    },
+    {
+      "file": "dist/session-accessor.sqlite-entry-cache-publication-state-Fxd3P1w_.mjs",
+      "sha256": "3e079f1ca066b8eb152a9b46cdff22ea7d601b77b97be07725da248b1ac32fe2"
+    },
+    {
+      "file": "dist/session-accessor.sqlite-history-query-Dk-To-Gs.mjs",
+      "sha256": "7add70468bf6a8780d082ad4d66d6f97dbb9c80e976be5638d23fc9abea2a3c2"
+    },
+    {
+      "file": "dist/session-accessor.sqlite-message-cut-DJZrvR55.mjs",
+      "sha256": "a8acc235e8c3a859e15768692f41b539eba78997cb3386d8b09dcdb16fcad837"
+    },
+    {
+      "file": "dist/session-accessor.sqlite-reset-window-1cTNDN6o.mjs",
+      "sha256": "64073aa04d27c59bef5ef9a5f900866a6673c8b3e5054e86dc9268767b0e6575"
+    },
+    {
+      "file": "dist/session-binding-runtime-EiGMQwyv.mjs",
+      "sha256": "e68847f9628c537e91bc56ff909153c73c7f2293006b768091aa49d5caf76dfd"
+    },
+    {
+      "file": "dist/session-canonical-key-BT9-Ydgk.mjs",
+      "sha256": "8b0ddf6005decf9a188d52aae3a48ca724ad075c5fafe2f343f43e3025e70567"
+    },
+    {
+      "file": "dist/session-entry-projection-CE63LQBt.mjs",
+      "sha256": "ca344d824cb02ba2ba6a8b3e23c0f56cf96953b1c7eb7e41a00233e4e1e38917"
+    },
+    {
+      "file": "dist/session-event-payload-Cq41wHZJ.mjs",
+      "sha256": "25668893512169034dab105e4cb55f82411a0d0727cd0029a425c692b0abc21b"
+    },
+    {
+      "file": "dist/session-lifecycle-admission-USS1EGbr.mjs",
+      "sha256": "b06c0b04b6a666a8d22ade672977c3429dc7bf8008df5f7146f81be072f0a465"
+    },
+    {
+      "file": "dist/session-manager-Dyr3p0sF.mjs",
+      "sha256": "a14b36f092a6d975119c841ba71f6ff193540a021910ca20ded2c884a9f57d20"
+    },
+    {
+      "file": "dist/session-method-policy-B7o-3I76.mjs",
+      "sha256": "e352776a2f8e05adb10ddd1da2a8f0bf5296ef7049b1829a4c41f96a38e35517"
+    },
+    {
+      "file": "dist/sessions-DD7AJdsX.mjs",
+      "sha256": "a2b27738969e6641f7556726ad6487ff52f2a2f36bd13b551a2426aa4d75bab6"
+    },
+    {
+      "file": "dist/sessions-compact-CvSoNiGn.mjs",
+      "sha256": "6a67a5e9e62a34bde066163afa1faca289ea5374764ea5bed9b2901818e8e0ac"
+    },
+    {
+      "file": "dist/sessions-create-96JImPdd.mjs",
+      "sha256": "541d00c8e2678e31961b80ad8e36fc1a43d7572d085b36368ced783de54f4fc9"
+    },
+    {
+      "file": "dist/sessions-read-BXwTspcX.mjs",
+      "sha256": "99177eb84c5f83e9ec139265a82d74a7b40b87dc65c79fb453b77310c29bb5e1"
+    },
+    {
+      "file": "dist/sessions-rewind-BzbhdKUD.mjs",
+      "sha256": "e421a77fec0a8a34b2d0c676e74332fa59405e3426e38df70b1800ac061c7d30"
+    },
+    {
+      "file": "dist/settings-manager-DipDVfMv.mjs",
+      "sha256": "d3666cc0db6f105fc1df9e8f41d573a3b1a89666b1ee817e89b392b672d0bd5a"
+    },
+    {
+      "file": "dist/simple-completion-execution-DJB-X6CQ.mjs",
+      "sha256": "4b3d9ecd221652ffda62793767983cc29fd1ea15021f3f63fd021ecdf4d593c5"
+    },
+    {
+      "file": "dist/sqlite-wal-CAPx5bGS.mjs",
+      "sha256": "0cb91bbda73bf7610f51867eb5c2a47e44dcd6ff1f9a7e02b667a3527dffa0d4"
+    },
+    {
+      "file": "dist/src-BaGOtYrI.mjs",
+      "sha256": "9e4d5e08d2dc62d87a1391540750cd722b541326e28d8d8f75542662f856777d"
+    },
+    {
+      "file": "dist/state/openclaw-state-read.worker.js",
+      "sha256": "95b606f91197936cbd97471fe09641b599a11ee37dd6deba4e083395c507f179"
+    },
+    {
+      "file": "dist/subagent-registry-ClP8932r.mjs",
+      "sha256": "2333ab29aacab48e3f74f73cad3c7f9ab0517f6defb8290b43b1d2fffa802b9e"
+    },
+    {
+      "file": "dist/terminal-DsZscJNQ.mjs",
+      "sha256": "1d6aba61f9039f02241024de7601e4f66ec31608db7ab5e7c296b5671e930f1e"
+    },
+    {
+      "file": "node_modules/@openclaw/ai/dist/openai-completions-transport-BRjxCG1C.mjs",
+      "sha256": "10a6f78522c8b99d8560c02e14110e3970ca206ff474fb3978b87ec15d8d9d36"
+    },
+    {
+      "file": "node_modules/@openclaw/ai/dist/reasoning-tag-text-partitioner-CpOy9-IQ.mjs",
+      "sha256": "2da9ed4347d19b41c0696d53a2bb3a82c666a027badfab631cc131cd2a51eea8"
+    },
+    {
+      "file": "node_modules/@openclaw/fs-safe/dist/guarded-mutation.js",
+      "sha256": "18ee02c09fce3717eb3007c7d4ef269f40278f9f04cde42abdc3d97a5ae87473"
+    },
+    {
+      "file": "node_modules/@openclaw/fs-safe/dist/move-path.js",
+      "sha256": "3fd1aacc3780465f4e92fda654297111fd35815a1220ec5db0199467948cf0e0"
+    }
+  ]
+}

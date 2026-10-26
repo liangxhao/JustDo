@@ -6,9 +6,9 @@ const {
   beginRuntimePatchPhase,
   endRuntimePatchPhase,
   readRuntimeTextFile,
-} = require('../patches/v2026.10.6/_patch-utils.js');
+} = require('../patches/v2026.10.7/_patch-utils.js');
 
-const TARGET_VERSION = '2026.10.6';
+const TARGET_VERSION = '2026.10.7';
 const PROVIDER_TRANSPORT_BASENAME = 'openai-completions-transport-BRjxCG1C.mjs';
 const COMPLETIONS_PROVIDER_BASENAME = 'openai-completions-BkRt2Iy4.mjs';
 

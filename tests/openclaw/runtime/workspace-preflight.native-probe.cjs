@@ -10,15 +10,16 @@ const { EventEmitter } = require('node:events');
 const ts = require('typescript');
 const esbuild = require('esbuild');
 const root = path.resolve(__dirname, '../../..');
+const expectedVersion = `v${require('../../../package.json').openclaw.version.replace(/^v/u, '')}`;
 const runtime = fs.realpathSync(process.argv[2]);
 const source = fs.realpathSync(process.argv[3]);
 const { targetContract, hostTarget } = require('../../../scripts/runtime/setup-node-runtime.cjs');
 const manifest = require('../../../scripts/openclaw/verify-openclaw-runtime-patches.cjs')
-  .verifyOpenClawPatchManifest(runtime, { repoRoot: root, version: 'v2026.10.6' });
+  .verifyOpenClawPatchManifest(runtime, { repoRoot: root, version: expectedVersion });
 const manifestSha256 = require('node:crypto').createHash('sha256')
   .update(fs.readFileSync(path.join(runtime, 'runtime-patch-manifest.json'))).digest('hex');
 assert.equal(fs.realpathSync(process.execPath), fs.realpathSync(path.join(runtime, 'node-runtime', targetContract(hostTarget()).executable)));
-assert.equal(JSON.parse(fs.readFileSync(path.join(source, 'package.json'), 'utf8')).version, '2026.10.6');
+assert.equal(JSON.parse(fs.readFileSync(path.join(source, 'package.json'), 'utf8')).version, expectedVersion.slice(1));
 const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'workspace-preflight-native-'));
 for (const name of Object.keys(process.env))
   if (/^OPENCLAW_/i.test(name) || /^(NODE_OPTIONS|NODE_PATH|ELECTRON_RUN_AS_NODE)$/i.test(name)) delete process.env[name];

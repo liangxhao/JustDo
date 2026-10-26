@@ -14,6 +14,7 @@ import {
   DiagnosticReason,
   type DiagnosticReport,
   diagnosticResponseIssues,
+  diagnosticTimeoutPhases,
 } from '../../../shared/cowork/diagnostics/sessionDiagnostics';
 import { type DiagnosticExportLogBundle, redactDiagnosticLog } from './exportLogs';
 import { exportSummaryTranslations } from './exportSummaryTranslations';
@@ -122,7 +123,7 @@ export function buildDiagnosticReadableFiles(
       `${strings.confidence}: ${certainty === 'confirmed' ? strings.confirmed : certainty === 'observed' ? strings.observed : strings.unknownConfidence}.`,
       ...(stop.timeoutPhase
         ? [
-            `${strings.timeoutStage}: ${strings[`timeout_${member(stop.timeoutPhase, ['queue', 'preflight', 'provider', 'post_turn', 'gateway_draining'])}` as keyof typeof strings] ?? strings.unknown}`,
+            `${strings.timeoutStage}: ${strings[`timeout_${member(stop.timeoutPhase, diagnosticTimeoutPhases)}` as keyof typeof strings] ?? strings.unknown}`,
           ]
         : []),
       ...(stop.outputIssue && stop.outputIssue !== stop.reason ? [strings[stop.outputIssue]] : []),

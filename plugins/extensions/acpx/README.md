@@ -1,8 +1,8 @@
 # ACPX runtime
 
 This directory vendors the OpenClaw `@openclaw/acpx` extension from the
-`v2026.10.6` source tree (commit
-`fe06181dc5ecc01cf8904abbfc26925925efefbc`). It is compiled and packaged with the desktop application,
+`v2026.10.7` source tree (commit
+`157d8c2bc3ea2fa183afdc11088e69690bf8e64e`). It is compiled and packaged with the desktop application,
 which does not download the plugin at runtime.
 
 OpenClaw remains responsible for ACP task scheduling, durable task state,
@@ -30,6 +30,13 @@ The generated wrappers resolve local `codex`/`claude` commands from PATH (or
 `CODEX_PATH`/`CLAUDE_CODE_EXECUTABLE`, including the plugin `claudeExecutable`
 setting) at launch. Missing commands fail connection tests with an installation
 diagnostic; they do not trigger a package runner or a bundled-agent fallback.
+The bundled `acp-router` skill follows the currently enabled product catalog and
+native tool schema. It does not advertise upstream Codex app-server commands or
+unconfigured acpx aliases, install packages, change global agent overrides, or
+restart the Gateway as repair. An unknown send retains its native identity for
+status reconciliation. Direct CLI control requires an explicit request and an
+existing capability with the same command, authentication, permissions and
+lifecycle ownership; it is never an availability fallback.
 Assembly removes agent platform packages at every nested `node_modules` boundary;
 packaging rejects their reintroduction at any depth. Dependency-directory links
 are rejected rather than followed outside the assembled tree.
@@ -58,17 +65,18 @@ with read-only permissions. The complete extension template is documented in
 ## Compatibility
 
 - Plugin id: `acpx`
-- Source baseline: OpenClaw `v2026.10.6`
-- Local package version: `2026.10.6-local.3`
-- Minimum plugin API: `2026.10.6`
+- Source baseline: OpenClaw `v2026.10.7`
+- Local package version: `2026.10.7-local.1`
+- Minimum plugin API: `2026.10.7`
 
 The desktop adapter retains its product-specific source fork. It uses acpx
-0.19.5, Claude ACP 0.85.1 and Codex ACP 2.1.1. OpenClaw 10.6 itself selects
+0.19.5, Claude ACP 0.85.1 and Codex ACP 2.1.1. OpenClaw 10.7 itself selects
 acpx 0.19.4; 0.19.5 is an independently evaluated, exact product dependency pin.
 The upstream native-agent model picker/harness registration is not enabled by
 this product: the managed external-agent catalog still owns admission and diagnostics.
 
-The 2026.10.6 integration keeps the managed state directory and external-agent
+The 2026.10.7 refresh changes only package and SDK baseline metadata; upstream
+implementation sources are unchanged from 10.6. The integration keeps the managed state directory and external-agent
 catalog while adopting the upstream generation, reset, native permission,
 process lifecycle, cleanup and Windows bridge contracts. Native harness
 registration and workspace-state-directory adoption remain excluded. Generated wrappers

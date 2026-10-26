@@ -1,3 +1,4 @@
+import { historicalRuntime } from './historical-runtime';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
@@ -11,8 +12,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const patch = require('../../../../scripts/patches/v2026.10.6/026-scoped-finalize-hook-admission.cjs');
 const { transform, transformTypes, createFinalizeHookAdmission, CONTRACT } = patch.__testing;
-const pristine = process.env.JUSTDO_EXECUTION_PRISTINE_DIR;
-const frozenRuntime = process.env.JUSTDO_EXECUTION_RUNTIME;
+const pristine = historicalRuntime(process.env.JUSTDO_EXECUTION_PRISTINE_DIR);
+const frozenRuntime = historicalRuntime(process.env.JUSTDO_EXECUTION_RUNTIME);
 const { findMatchingDelimiter } = require('../../../../scripts/patches/v2026.10.6/_patch-utils.js');
 const identity = {
   runId: 'run-one',

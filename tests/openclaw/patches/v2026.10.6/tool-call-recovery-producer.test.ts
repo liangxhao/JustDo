@@ -1,3 +1,4 @@
+import { historicalRuntimeOrUnavailable } from './historical-runtime';
 import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
@@ -59,7 +60,7 @@ const stream = `async function processCompletionsStream(response, output, model,
 const producer = `${finalizer}\n${stream}`;
 const streamingPatch = require('../../../../scripts/patches/v2026.10.6/028-reasoning-completions-streaming.cjs');
 const transportPath = path.join(
-  process.env.OPENCLAW_RUNTIME_DIR ?? path.resolve(__dirname, '../../../../build/runtimes/openclaw/win-x64'),
+  historicalRuntimeOrUnavailable(process.env.OPENCLAW_RUNTIME_DIR ?? path.resolve(__dirname, '../../../../build/runtimes/openclaw/win-x64')),
   'node_modules/@openclaw/ai/dist/openai-completions-transport-BRjxCG1C.mjs',
 );
 const malformed = (name = 'tool_describe', args = '<id>ask-user-question</id>') =>
@@ -198,7 +199,7 @@ describe('tool-call recovery producer', () => {
 });
 
 const root = path.resolve(__dirname, '../../../..');
-const candidateDist = path.join(process.env.OPENCLAW_PRISTINE_DIR ?? path.join(root, 'build/runtimes/openclaw/win-x64'), 'dist');
+const candidateDist = path.join(historicalRuntimeOrUnavailable(process.env.OPENCLAW_PRISTINE_DIR ?? path.join(root, 'build/runtimes/openclaw/win-x64')), 'dist');
 const candidateFile = fs.existsSync(candidateDist) && fs.readdirSync(candidateDist).find(name =>
   /^agent-runner-run-.*\.mjs$/.test(name) && fs.readFileSync(path.join(candidateDist, name), 'utf8').includes('function runAgentFallbackCandidates('));
 const nativeCandidates = candidateFile ? fs.readFileSync(path.join(candidateDist, candidateFile), 'utf8') : '';

@@ -159,10 +159,25 @@ describe('late native publication through actual Main admission layers', () => {
     expect(f.store.getSession(f.product.id)).not.toHaveProperty('historyBinding');
     expect(f.store.getSessionRuns(f.product.id)).toHaveLength(1);
     await expect(f.router.prepareSession(f.product.id)).resolves.toEqual({ sessionKey: f.key, gatewaySessionId: f.physicalId });
+    expect(f.methods).toEqual(['sessions.describe', 'sessions.create']);
+    const preparedMethods = f.methods.length;
+    const preparedReads = f.reads();
+    const prepare = vi.spyOn(f.router, 'prepareSession');
+    const publication = vi.fn(() => f.changed());
     expect(f.product.id).not.toBe(f.physicalId);
-    f.setRead((index, row) => { if (index === 1) f.changed(); return { ...row }; });
+    f.setRead((index, row) => { if (index === preparedReads + 1) publication(); return { ...row }; });
     await expect(f.send()).resolves.toMatchObject({ success: true, timing: { clientTurnId: 'next-input' } });
-    expect(f.methods.slice(1, 3)).toEqual(['sessions.describe', 'sessions.describe']);
+    expect(publication).toHaveBeenCalledOnce();
+    expect(f.methods.slice(preparedMethods)).toEqual([
+      'sessions.describe', 'sessions.describe', // BeforePreparation: discard the retired read, then reobserve.
+      'sessions.describe', 'sessions.create', // The explicit Team preparation waits, then creates once.
+      'sessions.describe', 'agentTeam.launch.inspect',
+      'sessions.describe', 'agentTeam.launch.register',
+    ]);
+    expect(prepare).toHaveBeenCalledExactlyOnceWith(f.product.id);
+    const preparationOrder = prepare.mock.invocationCallOrder[0];
+    expect(f.request.mock.invocationCallOrder[preparedMethods + 1]).toBeLessThan(preparationOrder);
+    expect(f.request.mock.invocationCallOrder[preparedMethods + 2]).toBeGreaterThan(preparationOrder);
     expect(f.store.getSessionRunByClientTurnId('previous-input')?.state).toBe('completed');
     f.assertNoExecution();
   });

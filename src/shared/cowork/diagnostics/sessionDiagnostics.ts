@@ -264,6 +264,7 @@ export const diagnosticTimeoutPhases = [
   'queue',
   'preflight',
   'provider',
+  'tool_execution',
   'post_turn',
   'gateway_draining',
 ] as const;
