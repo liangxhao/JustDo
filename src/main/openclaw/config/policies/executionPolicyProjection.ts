@@ -25,6 +25,7 @@ export const OPENCLAW_MANAGED_TOOL_DENY = [
   'message',
   'nodes',
   'gateway',
+  'openclaw',
   'file_fetch',
   'dir_list',
   'dir_fetch',

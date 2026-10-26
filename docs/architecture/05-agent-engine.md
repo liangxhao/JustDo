@@ -316,10 +316,10 @@ Gateway 首次拒绝的诊断日志仍可能出现。此恢复不重启运行时
 普通配置发布共用受限临时文件写入与重命名流程，各调用点仍负责变更判断、异常处理和回读验证。
 仅切换默认模型的发布保留独立的写前竞态检查与清理流程。
 
-产品禁用 OpenClaw 的门户、会话仪表盘、GitHub 身份诊断、在线人员/设备查询、
+产品禁用 OpenClaw 的设置修复委托、门户、会话仪表盘、GitHub 身份诊断、在线人员/设备查询、
 原生网页主题、会议记录、手机 UI 控制、事件提醒、聊天凭据管理和外部渠道会话等工具入口。
 全局 `tools.deny` 由一份固定名单统一管理：`ask_user`、
-`web_search`、`message`、`nodes`、`gateway`、`file_fetch`、`dir_list`、`dir_fetch`、
+`web_search`、`message`、`nodes`、`gateway`、`openclaw`、`file_fetch`、`dir_list`、`dir_fetch`、
 `file_write`、`portal`、`dashboard`、`github_identity_status`、`presence`、`theme`、
 `transcripts`、`mobile_ui`、`intent`、`secrets`、`conversations_send`、`conversations_list`、
 `conversations_turn`。完整配置、无模型配置及登录/退出同步均直接使用该名单，不合并旧配置的

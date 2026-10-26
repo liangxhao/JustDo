@@ -661,6 +661,7 @@ describe('OpenClaw managed connectivity config', () => {
           'message',
           'nodes',
           'gateway',
+          'openclaw',
           'file_fetch',
           'dir_list',
           'dir_fetch',
