@@ -11,6 +11,7 @@ import {
   browserPartitionForProfile,
   isBrowserClearDataRange,
 } from '../../../shared/browser/browser';
+import { reserveBackgroundBrowserStorageClear } from './backgroundBrowserStorage';
 import {
   clearBrowserDownloadsSince,
   clearBrowserHistoryFaviconDataSince,
@@ -48,18 +49,18 @@ export const isBrowserClearDataRequest = (value: unknown): value is BrowserClear
   return isBrowserClearDataRange(record.range) && isValidSelection(record.selection);
 };
 
-const cookieSiteCount = async (): Promise<number> => {
-  const partitions = new Set([
+const browserPartitions = (): string[] => [
+  ...new Set([
     BROWSER_PANEL_PARTITION,
     BROWSER_IMPORTED_PROFILE_PARTITION,
     ...listImportedBrowserProfiles().map(browserPartitionForProfile),
-  ]);
+  ]),
+];
+
+const cookieSiteCount = async (): Promise<number> => {
+  const partitions = browserPartitions();
   const cookies = (
-    await Promise.all(
-      [...partitions].map(partition =>
-        session.fromPartition(partition).cookies.get({}),
-      ),
-    )
+    await Promise.all(partitions.map(partition => session.fromPartition(partition).cookies.get({})))
   ).flat();
   return new Set(cookies.map(cookie => cookie.domain.replace(/^\./, '').toLowerCase())).size;
 };
@@ -101,14 +102,25 @@ export const clearBrowserData = async (
     downloads: 0,
     autofill: 0,
   };
-  const browserSessions = [
-    ...new Set([
-      BROWSER_PANEL_PARTITION,
-      BROWSER_IMPORTED_PROFILE_PARTITION,
-      ...listImportedBrowserProfiles().map(browserPartitionForProfile),
-    ]),
-  ].map(partition => session.fromPartition(partition));
-  if (request.selection.cookiesAndSiteData) {
+  let browserSessions: Electron.Session[] = [];
+  let releaseStorage: (() => void) | null = null;
+  let storageReady = true;
+  if (request.selection.cookiesAndSiteData || request.selection.cache) {
+    releaseStorage = reserveBackgroundBrowserStorageClear();
+    storageReady = releaseStorage !== null;
+    if (storageReady) {
+      try {
+        browserSessions = browserPartitions().map(partition => session.fromPartition(partition));
+      } catch {
+        storageReady = false;
+      }
+    }
+    if (!storageReady) {
+      if (request.selection.cookiesAndSiteData) failedCategories.push('cookiesAndSiteData');
+      if (request.selection.cache) failedCategories.push('cache');
+    }
+  }
+  if (request.selection.cookiesAndSiteData && storageReady) {
     try {
       let cookieSites = 0;
       try {
@@ -116,32 +128,40 @@ export const clearBrowserData = async (
       } catch {
         // The count is informational and must not prevent the requested deletion.
       }
-      await Promise.all(
+      const results = await Promise.allSettled(
         browserSessions.map(browserSession =>
-          browserSession.clearStorageData({
-            storages: [
-              'cookies',
-              'filesystem',
-              'indexdb',
-              'localstorage',
-              'websql',
-              'serviceworkers',
-              'cachestorage',
-            ],
-          }),
+          Promise.resolve().then(() =>
+            browserSession.clearStorageData({
+              storages: [
+                'cookies',
+                'filesystem',
+                'indexdb',
+                'localstorage',
+                'websql',
+                'serviceworkers',
+                'cachestorage',
+              ],
+            }),
+          ),
         ),
       );
+      if (results.some(result => result.status === 'rejected'))
+        throw new Error('Storage clear failed.');
       cleared.cookieSites = cookieSites;
     } catch {
       failedCategories.push('cookiesAndSiteData');
     }
   }
-  if (request.selection.cache) {
+  if (request.selection.cache && storageReady) {
     try {
       clearBrowserHistoryFaviconDataSince(since);
-      await Promise.all(
-        browserSessions.map(browserSession => browserSession.clearData({ dataTypes: ['cache'] })),
+      const results = await Promise.allSettled(
+        browserSessions.map(browserSession =>
+          Promise.resolve().then(() => browserSession.clearData({ dataTypes: ['cache'] })),
+        ),
       );
+      if (results.some(result => result.status === 'rejected'))
+        throw new Error('Cache clear failed.');
     } catch {
       failedCategories.push('cache');
     }
@@ -168,6 +188,7 @@ export const clearBrowserData = async (
     }
   }
 
+  releaseStorage?.();
   return failedCategories.length
     ? { success: false, errorCode: 'clear-failed', cleared, failedCategories }
     : { success: true, cleared };

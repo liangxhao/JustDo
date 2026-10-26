@@ -9,6 +9,7 @@ import { sanitizeBrowserUrl as sanitizeUrlForModel } from '../data/browserDataSa
 
 export type AgentBrowserCommand = {
   sessionKey: string;
+  headless?: boolean;
   action:
     | 'doctor'
     | 'status'
@@ -111,7 +112,16 @@ export const LEGACY_FLATTENED_ACT_KEYS = [
   'timeoutMs',
 ] as const;
 
-export type RegisteredTab = BrowserAgentTabRegistration & { ownerId: number };
+export type RegisteredTab = BrowserAgentTabRegistration & { ownerId: number; headless?: boolean };
+
+/** Prepared by the authenticated Gateway bridge, never read from model parameters. */
+export type BrowserExecutionScope = {
+  sessionId: string;
+  runId: string;
+  workspaceDir: string;
+  headlessOnly: boolean;
+  allowLocalFiles?: boolean;
+};
 
 export type BrowserSnapshot = {
   id: string;
@@ -147,6 +157,7 @@ export type BrowserDialogState = {
 };
 
 export type BrowserDialogResponse = {
+  assertActive?: () => void;
   accept: boolean;
   promptText?: string;
   timer: NodeJS.Timeout;
@@ -154,6 +165,7 @@ export type BrowserDialogResponse = {
 };
 
 export type BrowserUploadResponse = {
+  assertActive?: () => void;
   files: string[];
   timer: NodeJS.Timeout;
   resolve: () => void;
@@ -452,6 +464,7 @@ export const parseCommand = (value: unknown): AgentBrowserCommand | null => {
   }
   if ('node' in candidate || (candidate.target !== undefined && candidate.target !== 'host'))
     return null;
+  if (candidate.headless !== undefined && typeof candidate.headless !== 'boolean') return null;
   return candidate as AgentBrowserCommand;
 };
 

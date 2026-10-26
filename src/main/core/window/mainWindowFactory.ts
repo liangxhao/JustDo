@@ -32,12 +32,17 @@ import {
 } from '../../../shared/browser/browser';
 import type { WorkspaceWindowBounds } from '../../../shared/cowork/workspaceWindow';
 import {
+  configureBrowserSessionUi,
+  ensureBrowserSessionPolicy,
+  releaseBrowserSessionUi,
+} from '../../browser/browserSessionPolicy';
+import {
   recordBrowserDownload,
   updateBrowserDownload,
 } from '../../browser/data/browserDataImportService';
 import { sanitizeBrowserUrl } from '../../browser/data/browserDataSanitizers';
 import {
-  cancelAllBrowserAgentDownloads,
+  cancelBrowserAgentDownloadsForWebContents,
   claimBrowserAgentDownload,
 } from '../../browser/downloads/browserAgentDownloadCoordinator';
 import {
@@ -59,7 +64,6 @@ import {
   isAllowedBrowserPanelNavigationUrl,
   isAllowedExternalBrowserUrl,
   isAllowedMainWindowNavigation,
-  isBlockedBrowserMetadataHost,
   isBrowserPdfStreamNavigation,
   shouldAllowBrowserPanelPermission,
   shouldOpenMainWindowLinkExternally,
@@ -81,7 +85,10 @@ type MainWindowFactoryOptions = {
   appName: string;
   firstLaunch: boolean;
   getEntryStartedAt?: () => number;
-  startupPresentation?: { route?: import('../../../shared/app/startup/routing').StartupRoute; entryStartedAt?: number };
+  startupPresentation?: {
+    route?: import('../../../shared/app/startup/routing').StartupRoute;
+    entryStartedAt?: number;
+  };
   browserGuestPreloadPath: string;
   widgetViewerPreloadPath: string;
   devServerUrl: string;
@@ -139,7 +146,11 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
     icon: options.getIconPath(),
     ...getWindowChromeOptions(options.isMac, options.isWindows, options.getTitleBarOverlay()),
     webPreferences: {
-      additionalArguments: initializationWindowArguments(options.firstLaunch, false, options.startupPresentation),
+      additionalArguments: initializationWindowArguments(
+        options.firstLaunch,
+        false,
+        options.startupPresentation,
+      ),
       nodeIntegration: false,
       nodeIntegrationInSubFrames: false,
       contextIsolation: true,
@@ -162,7 +173,8 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
   });
 
   registerWindowAppearance(mainWindow.webContents, options.getRendererPreferenceStore);
-  if (options.getEntryStartedAt) registerStartupEntryClock(mainWindow.webContents, options.getEntryStartedAt);
+  if (options.getEntryStartedAt)
+    registerStartupEntryClock(mainWindow.webContents, options.getEntryStartedAt);
   const reportWindowFailure = registerAppWindowDiagnostics(mainWindow.webContents, 'MainWindow');
   if (options.isMac && options.isDev) {
     const iconPath = path.join(__dirname, '../resources/icons/png/512x512.png');
@@ -215,6 +227,8 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
     [BROWSER_PANEL_PARTITION, browserPanelSession],
     [BROWSER_IMPORTED_PROFILE_PARTITION, importedBrowserSession],
   ]);
+  const browserSessionPolicyOwner = Symbol('browser-session-ui');
+  const browserGuests = new Set<Electron.WebContents>();
   const browserPermissions = new BrowserPermissionState();
   const pendingBrowserHttpAuth = new BrowserHttpAuthRequests(
     BROWSER_HTTP_AUTH_TIMEOUT_MS,
@@ -261,8 +275,14 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
     return t('browserPermissionMicrophone');
   };
   const configureBrowserSessionPermissions = (browserSession: Electron.Session): void => {
-    browserSession.setPermissionCheckHandler(
-      (webContents, permission, requestingOrigin, details) => {
+    configureBrowserSessionUi(browserSession, browserSessionPolicyOwner, {
+      ownsGuest: (guest, id) =>
+        guest
+          ? browserGuests.has(guest) &&
+            !guest.isDestroyed() &&
+            (id === undefined || id === guest.id)
+          : [...browserGuests].some(candidate => candidate.id === id && !candidate.isDestroyed()),
+      checkPermission: (webContents, permission, requestingOrigin, details) => {
         if (shouldAllowBrowserPanelPermission(permission, Boolean(webContents?.isFocused()))) {
           return true;
         }
@@ -280,70 +300,76 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
           ]),
         );
       },
-    );
-    browserSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
-      if (shouldAllowBrowserPanelPermission(permission, webContents.isFocused())) {
-        callback(true);
-        return;
-      }
-      if (!shouldPromptBrowserPanelPermission(permission, webContents.isFocused())) {
-        callback(false);
-        return;
-      }
-      const requestDetails = details as BrowserPermissionRequestDetails;
-      const origin = browserPermissionOrigin(webContents, requestDetails);
-      if (!origin) {
-        callback(false);
-        return;
-      }
-      const keys = browserPermissionKeys(origin, permission, requestDetails.mediaTypes);
-      if (!keys.length) {
-        callback(false);
-        return;
-      }
-      if (browserPermissions.has(webContents.id, origin, permission, requestDetails.mediaTypes)) {
-        callback(true);
-        return;
-      }
-      const mediaType = browserPermissionMediaType(permission, requestDetails);
-      const generationIsCurrent = browserPermissions.capture(webContents.id);
-      const isCurrentDocument = (): boolean => !webContents.isDestroyed() && generationIsCurrent();
-      const requestPermission = async (): Promise<void> => {
-        try {
-          if (!isCurrentDocument() || !webContents.isFocused()) {
-            callback(false);
-            return;
-          }
-          const result = await dialog.showMessageBox(
-            workspaceManager?.presentationWindow(webContents.hostWebContents?.id) ?? mainWindow,
-            {
-              type: 'question',
-              title: t('browserPermissionTitle'),
-              message: t('browserPermissionMessage', {
-                site: new URL(origin).host,
-                permission: browserPermissionLabel(permission, mediaType),
-              }),
-              detail: origin,
-              buttons: [t('browserPermissionAllow'), t('browserPermissionDeny')],
-              defaultId: 1,
-              cancelId: 1,
-              noLink: true,
-            },
-          );
-          const stillSamePage = isCurrentDocument();
-          const granted = result.response === 0 && stillSamePage;
-          if (granted) {
-            browserPermissions.grant(webContents.id, origin, permission, requestDetails.mediaTypes);
-          }
-          callback(granted);
-        } catch {
-          callback(false);
+      requestPermission: (webContents, permission, callback, details) => {
+        if (shouldAllowBrowserPanelPermission(permission, webContents.isFocused())) {
+          callback(true);
+          return;
         }
-      };
-      browserPermissionPromptQueue = browserPermissionPromptQueue.then(
-        requestPermission,
-        requestPermission,
-      );
+        if (!shouldPromptBrowserPanelPermission(permission, webContents.isFocused())) {
+          callback(false);
+          return;
+        }
+        const requestDetails = details as BrowserPermissionRequestDetails;
+        const origin = browserPermissionOrigin(webContents, requestDetails);
+        if (!origin) {
+          callback(false);
+          return;
+        }
+        const keys = browserPermissionKeys(origin, permission, requestDetails.mediaTypes);
+        if (!keys.length) {
+          callback(false);
+          return;
+        }
+        if (browserPermissions.has(webContents.id, origin, permission, requestDetails.mediaTypes)) {
+          callback(true);
+          return;
+        }
+        const mediaType = browserPermissionMediaType(permission, requestDetails);
+        const generationIsCurrent = browserPermissions.capture(webContents.id);
+        const isCurrentDocument = (): boolean =>
+          !webContents.isDestroyed() && generationIsCurrent();
+        const requestPermission = async (): Promise<void> => {
+          try {
+            if (!isCurrentDocument() || !webContents.isFocused()) {
+              callback(false);
+              return;
+            }
+            const result = await dialog.showMessageBox(
+              workspaceManager?.presentationWindow(webContents.hostWebContents?.id) ?? mainWindow,
+              {
+                type: 'question',
+                title: t('browserPermissionTitle'),
+                message: t('browserPermissionMessage', {
+                  site: new URL(origin).host,
+                  permission: browserPermissionLabel(permission, mediaType),
+                }),
+                detail: origin,
+                buttons: [t('browserPermissionAllow'), t('browserPermissionDeny')],
+                defaultId: 1,
+                cancelId: 1,
+                noLink: true,
+              },
+            );
+            const stillSamePage = isCurrentDocument();
+            const granted = result.response === 0 && stillSamePage;
+            if (granted) {
+              browserPermissions.grant(
+                webContents.id,
+                origin,
+                permission,
+                requestDetails.mediaTypes,
+              );
+            }
+            callback(granted);
+          } catch {
+            callback(false);
+          }
+        };
+        browserPermissionPromptQueue = browserPermissionPromptQueue.then(
+          requestPermission,
+          requestPermission,
+        );
+      },
     });
   };
   let browserPanelShortcuts = DEFAULT_BROWSER_PANEL_SHORTCUTS;
@@ -506,13 +532,17 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
         browserPanelSessions.set(params.partition, browserSession);
         void registerBrowserProxySession(browserSession).catch(() => {});
         configureBrowserSessionPermissions(browserSession);
-        installBrowserRequestGuard(browserSession);
+        ensureBrowserSessionPolicy(browserSession);
         installBrowserPdfDetection(browserSession);
-        browserSession.on('will-download', handleBrowserDownload);
+        configureBrowserSessionUi(browserSession, browserSessionPolicyOwner, {
+          download: handleBrowserDownload,
+        });
       }
     });
     host.on('did-attach-webview', (_event, guestContents) => {
       if (widgetViewers.attach(guestContents, host)) return;
+      browserGuests.add(guestContents);
+      guestContents.once('destroyed', () => browserGuests.delete(guestContents));
       let externalProtocolPromptPending = false;
       const requestExternalProtocol = (url: string): void => {
         if (externalProtocolPromptPending || !isAllowedExternalBrowserUrl(url)) return;
@@ -733,62 +763,27 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
       });
     });
   };
-  const installBrowserRequestGuard = (browserSession: Electron.Session) =>
-    browserSession.webRequest.onBeforeRequest((details, callback) => {
-      const isMainFrame = details.resourceType === 'mainFrame';
-      if (isMainFrame && !isAllowedBrowserPanelNavigationUrl(details.url)) {
-        callback({ cancel: true });
-        return;
-      }
-      let requestUrl: URL;
-      try {
-        requestUrl = new URL(details.url);
-      } catch {
-        callback(isMainFrame ? { cancel: true } : {});
-        return;
-      }
-      if (!['http:', 'https:', 'ws:', 'wss:'].includes(requestUrl.protocol)) {
-        callback({});
-        return;
-      }
-      const hostname = requestUrl.hostname;
-      if (!hostname || isBlockedBrowserMetadataHost(hostname)) {
-        callback({ cancel: true });
-        return;
-      }
-      // Resolve through this exact partition so Chromium's subsequent connection
-      // shares the same host-resolver cache entry instead of racing a separate
-      // default-session lookup.
-      void browserSession
-        .resolveHost(hostname)
-        .then(result => {
-          const addresses = result.endpoints.map(endpoint => endpoint.address);
-          const allowRequest =
-            addresses.length > 0 &&
-            addresses.every(address => !isBlockedBrowserMetadataHost(address));
-          callback(allowRequest ? {} : { cancel: true });
-        })
-        .catch(() => callback({ cancel: true }));
-    });
   const installBrowserPdfDetection = (browserSession: Electron.Session) =>
-    browserSession.webRequest.onHeadersReceived((details, callback) => {
-      const contentType = Object.entries(details.responseHeaders ?? {}).find(
-        ([name]) => name.toLowerCase() === 'content-type',
-      )?.[1];
-      if (
-        details.resourceType === 'mainFrame' &&
-        details.webContentsId &&
-        contentType?.some(value => value.toLowerCase().includes('application/pdf'))
-      ) {
-        mainWindow.webContents.send(BrowserIpc.PanelPdfDetected, {
-          url: details.url,
-          guestId: details.webContentsId,
-        });
-      }
-      callback({});
+    configureBrowserSessionUi(browserSession, browserSessionPolicyOwner, {
+      headersReceived: (details, callback) => {
+        const contentType = Object.entries(details.responseHeaders ?? {}).find(
+          ([name]) => name.toLowerCase() === 'content-type',
+        )?.[1];
+        if (
+          details.resourceType === 'mainFrame' &&
+          details.webContentsId &&
+          contentType?.some(value => value.toLowerCase().includes('application/pdf'))
+        ) {
+          mainWindow.webContents.send(BrowserIpc.PanelPdfDetected, {
+            url: details.url,
+            guestId: details.webContentsId,
+          });
+        }
+        callback({});
+      },
     });
   browserPanelSessions.forEach(browserSession => {
-    installBrowserRequestGuard(browserSession);
+    ensureBrowserSessionPolicy(browserSession);
     installBrowserPdfDetection(browserSession);
   });
   const pendingDownloads = new Set<Electron.DownloadItem>();
@@ -896,7 +891,10 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
         // Configure the native prompt before will-download returns. An async
         // application dialog leaves Electron free to open a second save prompt.
         item.setSaveDialogOptions({
-          defaultPath: path.join(downloadDirectory, path.basename(item.getFilename()) || 'download'),
+          defaultPath: path.join(
+            downloadDirectory,
+            path.basename(item.getFilename()) || 'download',
+          ),
         });
         pendingDownloads.add(item);
       } else if (automaticSavePath) {
@@ -913,17 +911,20 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
     }
   };
   browserPanelSessions.forEach(browserSession =>
-    browserSession.on('will-download', handleBrowserDownload),
+    configureBrowserSessionUi(browserSession, browserSessionPolicyOwner, {
+      download: handleBrowserDownload,
+    }),
   );
   mainWindow.once('closed', () => {
     browserPanelSessions.forEach(browserSession =>
-      browserSession.off('will-download', handleBrowserDownload),
+      releaseBrowserSessionUi(browserSession, browserSessionPolicyOwner),
     );
     downloadUpdateTimers.forEach(timer => clearTimeout(timer));
     downloadUpdateTimers.clear();
     pendingDownloads.forEach(item => item.cancel());
     pendingDownloads.clear();
-    cancelAllBrowserAgentDownloads();
+    for (const guest of browserGuests) cancelBrowserAgentDownloadsForWebContents(guest.id);
+    browserGuests.clear();
     reservedDownloadPaths.clear();
   });
   if (options.isDev && process.env.JUSTDO_DEBUG_CHAT_TIMELINE === 'true') {

@@ -9,6 +9,7 @@ import {
   beginBrowserAgentDownload,
   reserveBrowserAgentOutputPath,
 } from '../downloads/browserAgentDownloadCoordinator';
+import { BrowserAgentCdpInput } from './browserAgentInput';
 import {
   ACT_DOWNLOAD_EVENT_GRACE_MS,
   ACT_DOWNLOAD_MAX_DRAIN_MS,
@@ -106,11 +107,13 @@ export interface BrowserAgentActionsContext {
   readonly lastNetworkActivity: Map<number, number>;
   readonly sendToRenderer: (channel: string, payload: unknown) => void;
   readonly discardTabRuntime: (tab: RegisteredTab) => void;
+  readonly closeTab?: (tab: RegisteredTab) => void | Promise<void>;
   readonly removeRegisteredTab: (sessionId: string, targetId: string) => string | null;
   readonly armUpload: (
     tab: RegisteredTab,
     guest: Electron.WebContents,
     files: string[],
+    assertActive?: () => void,
   ) => Promise<{ completion: Promise<void> }>;
   readonly clearArmedUpload: (
     webContentsId: number,
@@ -167,6 +170,7 @@ export async function executeAct(
   preserveSnapshot = false,
   assertActive: () => void = () => undefined,
 ): Promise<Record<string, unknown>> {
+  assertActive();
   const kind = typeof request.kind === 'string' ? request.kind : '';
   const beforeUrl = guest.getURL();
   const scopeId = browserScopeId(sessionId, profile);
@@ -176,6 +180,12 @@ export async function executeAct(
       throw new Error('Nested act targetId does not match the selected tab.');
     }
   }
+  const backgroundInput = async (): Promise<BrowserAgentCdpInput> => {
+    assertActive();
+    const guestDebugger = await this.enableDebuggerDomains(tab, guest);
+    assertActive();
+    return new BrowserAgentCdpInput(guestDebugger, assertActive, () => guest.isDestroyed());
+  };
   if (kind === 'batch') {
     const actions = Array.isArray(request.actions) ? request.actions : [];
     if (!actions.length || actions.length > MAX_BATCH_ACTIONS) {
@@ -184,6 +194,7 @@ export async function executeAct(
     const results: Array<Record<string, unknown>> = [];
     let mutated = false;
     for (let index = 0; index < actions.length; index += 1) {
+      assertActive();
       const nested = asRecord(actions[index]);
       if (!nested || nested.kind === 'batch') throw new Error('Nested batch actions are invalid.');
       try {
@@ -256,6 +267,7 @@ export async function executeAct(
           };
         }
       } catch (error) {
+        assertActive();
         results.push({ ok: false, error: sanitizeErrorForModel(error) });
         if (request.stopOnError !== false) break;
       }
@@ -321,6 +333,7 @@ export async function executeAct(
           };
         })()`,
     );
+    assertActive();
     if (!prepared) throw new Error('The element ref is stale. Take a new snapshot.');
     const frameOffset = await this.resolveTargetFrameOffset(tab, guest, target.frameSelector);
     prepared.x += frameOffset.x;
@@ -328,7 +341,11 @@ export async function executeAct(
     assertActive();
     if (kind === 'scrollIntoView') return { scrolled: target.label };
     if (kind === 'hover') {
-      guest.sendInputEvent({ type: 'mouseMove', x: prepared.x, y: prepared.y });
+      if (tab.headless === true) {
+        await (await backgroundInput()).move(prepared);
+      } else {
+        guest.sendInputEvent({ type: 'mouseMove', x: prepared.x, y: prepared.y });
+      }
       return { hovered: target.label };
     }
     if (kind === 'click') {
@@ -340,31 +357,39 @@ export async function executeAct(
         Math.max(0, Math.min(1_000, Number(request.delayMs) || 0)),
         assertActive,
       );
-      guest.sendInputEvent({
-        type: 'mouseMove',
-        x: prepared.x,
-        y: prepared.y,
-        modifiers: clickModifiers,
-      });
       const clickCount = request.doubleClick === true ? 2 : 1;
-      for (let count = 1; count <= clickCount; count += 1) {
-        assertActive();
+      if (tab.headless === true) {
+        const input = await backgroundInput();
+        await input.move(prepared, clickModifiers);
+        for (let count = 1; count <= clickCount; count += 1) {
+          await input.click(prepared, clickButton, count, clickModifiers, async () => undefined);
+        }
+      } else {
         guest.sendInputEvent({
-          type: 'mouseDown',
+          type: 'mouseMove',
           x: prepared.x,
           y: prepared.y,
-          button: clickButton,
-          clickCount: count,
           modifiers: clickModifiers,
         });
-        guest.sendInputEvent({
-          type: 'mouseUp',
-          x: prepared.x,
-          y: prepared.y,
-          button: clickButton,
-          clickCount: count,
-          modifiers: clickModifiers,
-        });
+        for (let count = 1; count <= clickCount; count += 1) {
+          assertActive();
+          guest.sendInputEvent({
+            type: 'mouseDown',
+            x: prepared.x,
+            y: prepared.y,
+            button: clickButton,
+            clickCount: count,
+            modifiers: clickModifiers,
+          });
+          guest.sendInputEvent({
+            type: 'mouseUp',
+            x: prepared.x,
+            y: prepared.y,
+            button: clickButton,
+            clickCount: count,
+            modifiers: clickModifiers,
+          });
+        }
       }
     } else {
       if (!prepared.editable) throw new Error('The selected element is not editable.');
@@ -373,8 +398,9 @@ export async function executeAct(
         value: string,
         data: string | null,
         inputType: 'deleteContentBackward' | 'insertText',
-      ): Promise<boolean> =>
-        this.executeInTargetWorld<boolean>(
+      ): Promise<boolean> => {
+        assertActive();
+        const applied = await this.executeInTargetWorld<boolean>(
           tab,
           guest,
           target.frameSelector,
@@ -411,6 +437,9 @@ export async function executeAct(
               return true;
             })()`,
         );
+        assertActive();
+        return applied;
+      };
       if (request.slowly === true) {
         const delayMs = Math.max(0, Math.min(1_000, Number(request.delayMs) || 50));
         if (!(await applyText('', null, 'deleteContentBackward'))) {
@@ -445,13 +474,18 @@ export async function executeAct(
             return actualText === ${JSON.stringify(text)};
           })()`,
       );
+      assertActive();
       if (!typedIntoTarget) {
         throw new Error('Browser text input did not reach the selected element.');
       }
       if (request.submit === true) {
-        this.focusGuestForKeyboardInput(guest);
-        guest.sendInputEvent({ type: 'keyDown', keyCode: 'Enter' });
-        guest.sendInputEvent({ type: 'keyUp', keyCode: 'Enter' });
+        if (tab.headless === true) {
+          await (await backgroundInput()).press('Enter', [], async () => undefined);
+        } else {
+          this.focusGuestForKeyboardInput(guest);
+          guest.sendInputEvent({ type: 'keyDown', keyCode: 'Enter' });
+          guest.sendInputEvent({ type: 'keyUp', keyCode: 'Enter' });
+        }
       }
     }
     if (!preserveSnapshot && (kind === 'click' || request.submit === true)) {
@@ -467,13 +501,23 @@ export async function executeAct(
     const button =
       request.button === 'right' || request.button === 'middle' ? request.button : 'left';
     const modifiers = normalizeInputModifiers(request.modifiers);
-    guest.sendInputEvent({ type: 'mouseDown', x, y, button, clickCount, modifiers });
-    try {
-      const delayMs = Math.max(0, Math.min(1_000, Number(request.delayMs) || 0));
-      if (delayMs > 0) await this.waitWhileActive(delayMs, assertActive);
-    } finally {
-      if (!guest.isDestroyed()) {
-        guest.sendInputEvent({ type: 'mouseUp', x, y, button, clickCount, modifiers });
+    const delayMs = Math.max(0, Math.min(1_000, Number(request.delayMs) || 0));
+    if (tab.headless === true) {
+      const input = await backgroundInput();
+      await input.move({ x, y }, modifiers);
+      for (let count = 1; count <= clickCount; count += 1) {
+        await input.click({ x, y }, button, count, modifiers, () =>
+          this.waitWhileActive(delayMs, assertActive),
+        );
+      }
+    } else {
+      guest.sendInputEvent({ type: 'mouseDown', x, y, button, clickCount, modifiers });
+      try {
+        if (delayMs > 0) await this.waitWhileActive(delayMs, assertActive);
+      } finally {
+        if (!guest.isDestroyed()) {
+          guest.sendInputEvent({ type: 'mouseUp', x, y, button, clickCount, modifiers });
+        }
       }
     }
     if (!preserveSnapshot) this.snapshots.delete(tab.webContentsId);
@@ -483,13 +527,19 @@ export async function executeAct(
     const key = typeof request.key === 'string' ? request.key.trim() : '';
     if (!key || key.length > 64) throw new Error('key is required.');
     const { keyCode, modifiers } = normalizeKeyChord(key);
-    this.focusGuestForKeyboardInput(guest);
-    guest.sendInputEvent({ type: 'keyDown', keyCode, modifiers });
-    try {
-      const delayMs = Math.max(0, Math.min(1_000, Number(request.delayMs) || 0));
-      if (delayMs > 0) await this.waitWhileActive(delayMs, assertActive);
-    } finally {
-      if (!guest.isDestroyed()) guest.sendInputEvent({ type: 'keyUp', keyCode, modifiers });
+    const delayMs = Math.max(0, Math.min(1_000, Number(request.delayMs) || 0));
+    if (tab.headless === true) {
+      await (
+        await backgroundInput()
+      ).press(keyCode, modifiers, () => this.waitWhileActive(delayMs, assertActive));
+    } else {
+      this.focusGuestForKeyboardInput(guest);
+      guest.sendInputEvent({ type: 'keyDown', keyCode, modifiers });
+      try {
+        if (delayMs > 0) await this.waitWhileActive(delayMs, assertActive);
+      } finally {
+        if (!guest.isDestroyed()) guest.sendInputEvent({ type: 'keyUp', keyCode, modifiers });
+      }
     }
     if (!preserveSnapshot) this.snapshots.delete(tab.webContentsId);
     return { pressed: key };
@@ -538,57 +588,18 @@ export async function executeAct(
           };
         })()`,
     );
+    assertActive();
     if (!points) throw new Error('The element ref is stale. Take a new snapshot.');
     const frameOffset = await this.resolveTargetFrameOffset(tab, guest, start.frameSelector);
     points.start.x += frameOffset.x;
     points.start.y += frameOffset.y;
     points.end.x += frameOffset.x;
     points.end.y += frameOffset.y;
-    const guestDebugger = await this.enableDebuggerDomains(tab, guest);
-    await guestDebugger.sendCommand('Input.dispatchMouseEvent', {
-      type: 'mouseMoved',
-      x: points.start.x,
-      y: points.start.y,
-      button: 'none',
-    });
-    await guestDebugger.sendCommand('Input.dispatchMouseEvent', {
-      type: 'mousePressed',
-      x: points.start.x,
-      y: points.start.y,
-      button: 'left',
-      buttons: 1,
-      clickCount: 1,
-    });
-    let lastPoint = points.start;
-    try {
-      await this.waitWhileActive(50, assertActive);
-      for (let step = 1; step <= 10; step += 1) {
-        const progress = step / 10;
-        lastPoint = {
-          x: points.start.x + (points.end.x - points.start.x) * progress,
-          y: points.start.y + (points.end.y - points.start.y) * progress,
-        };
-        await guestDebugger.sendCommand('Input.dispatchMouseEvent', {
-          type: 'mouseMoved',
-          x: lastPoint.x,
-          y: lastPoint.y,
-          button: 'left',
-          buttons: 1,
-        });
-        await this.waitWhileActive(16, assertActive);
-      }
-    } finally {
-      await guestDebugger
-        .sendCommand('Input.dispatchMouseEvent', {
-          type: 'mouseReleased',
-          x: lastPoint.x,
-          y: lastPoint.y,
-          button: 'left',
-          buttons: 0,
-          clickCount: 1,
-        })
-        .catch((): void => undefined);
-    }
+    await (
+      await backgroundInput()
+    ).drag(points.start, points.end, milliseconds =>
+      this.waitWhileActive(milliseconds, assertActive),
+    );
     if (!preserveSnapshot) this.snapshots.delete(tab.webContentsId);
     return { dragged: { from: start.label, to: end.label } };
   }
@@ -805,10 +816,16 @@ export async function executeAct(
     return { result: boundedJson(evaluated) };
   }
   if (kind === 'close') {
-    this.sendToRenderer(BrowserIpc.AgentCloseTab, {
-      sessionId,
-      targetId: tab.targetId,
-    });
+    assertActive();
+    if (tab.headless === true) {
+      if (!this.closeTab) throw new Error('Background browser tab close is unavailable.');
+      await this.closeTab(tab);
+    } else {
+      this.sendToRenderer(BrowserIpc.AgentCloseTab, {
+        sessionId,
+        targetId: tab.targetId,
+      });
+    }
     this.discardTabRuntime(tab);
     this.removeRegisteredTab(scopeId, tab.targetId);
     return { closed: true };
@@ -826,6 +843,7 @@ export async function setFileInputFiles(
   profile: BrowserAgentProfile,
   assertActive: () => void,
 ): Promise<void> {
+  assertActive();
   const inputRef = typeof command.inputRef === 'string' ? command.inputRef.trim() : '';
   const ref = typeof command.ref === 'string' ? command.ref.trim() : '';
   const elementSelector = typeof command.element === 'string' ? command.element.trim() : '';
@@ -836,9 +854,11 @@ export async function setFileInputFiles(
     throw new Error('inputRef and element are mutually exclusive.');
   }
   const guestDebugger = await this.enableDebuggerDomains(tab, guest);
+  assertActive();
   const reference = inputRef || ref;
   if (!reference && !elementSelector) {
-    await this.armUpload(tab, guest, files);
+    await this.armUpload(tab, guest, files, assertActive);
+    assertActive();
     return;
   }
   this.clearArmedUpload(
@@ -849,15 +869,18 @@ export async function setFileInputFiles(
   const marker = `justdo-upload-${randomBytes(12).toString('hex')}`;
   let referenceExpression = '';
   let referenceWorldFrameSelector = typeof command.frame === 'string' ? command.frame.trim() : '';
-  if (reference) {
-    const current = this.assertCurrentRef({ ref: reference }, tab, guest);
-    referenceExpression = current.expression;
-    referenceWorldFrameSelector = current.worldFrameSelector;
-    const targetType = await this.executeInTargetWorld<'input' | 'trigger' | null>(
-      tab,
-      guest,
-      referenceWorldFrameSelector,
-      `(() => {
+  let uploadedByTrigger = false;
+  try {
+    if (reference) {
+      const current = this.assertCurrentRef({ ref: reference }, tab, guest);
+      referenceExpression = current.expression;
+      referenceWorldFrameSelector = current.worldFrameSelector;
+      assertActive();
+      const targetType = await this.executeInTargetWorld<'input' | 'trigger' | null>(
+        tab,
+        guest,
+        referenceWorldFrameSelector,
+        `(() => {
           let element = ${current.expression};
           if (!element?.isConnected) return false;
           if (element?.tagName?.toLowerCase() !== 'input' || element.type !== 'file') {
@@ -869,35 +892,40 @@ export async function setFileInputFiles(
           element.setAttribute('data-justdo-upload-marker', ${JSON.stringify(marker)});
           return 'input';
         })()`,
-    );
-    if (!targetType) throw new Error('The selected upload element is stale.');
-    if (targetType === 'trigger') {
-      if (inputRef) throw new Error('inputRef must identify a file input.');
-      const armed = await this.armUpload(tab, guest, files);
-      try {
-        await this.executeAct(
-          { kind: 'click', ref: reference },
-          tab,
-          guest,
-          sessionId,
-          profile,
-          false,
-          assertActive,
-        );
-        await armed.completion;
-      } catch (error) {
-        this.clearArmedUpload(tab.webContentsId, guest);
-        throw error;
+      );
+      assertActive();
+      if (!targetType) throw new Error('The selected upload element is stale.');
+      if (targetType === 'trigger') {
+        if (inputRef) throw new Error('inputRef must identify a file input.');
+        const armed = await this.armUpload(tab, guest, files, assertActive);
+        try {
+          assertActive();
+          await this.executeAct(
+            { kind: 'click', ref: reference },
+            tab,
+            guest,
+            sessionId,
+            profile,
+            false,
+            assertActive,
+          );
+          assertActive();
+          await armed.completion;
+          assertActive();
+        } catch (error) {
+          this.clearArmedUpload(tab.webContentsId, guest);
+          throw error;
+        }
+        uploadedByTrigger = true;
       }
-      return;
     }
-  }
-  if (!reference) {
-    const marked = await this.executeInTargetWorld<boolean>(
-      tab,
-      guest,
-      referenceWorldFrameSelector,
-      `(() => {
+    if (!reference) {
+      assertActive();
+      const marked = await this.executeInTargetWorld<boolean>(
+        tab,
+        guest,
+        referenceWorldFrameSelector,
+        `(() => {
           const selector = ${JSON.stringify(elementSelector)};
           const findInOpenRoots = root => {
             const direct = root.querySelector(selector);
@@ -917,45 +945,62 @@ export async function setFileInputFiles(
           element.setAttribute('data-justdo-upload-marker', ${JSON.stringify(marker)});
           return true;
         })()`,
-    );
-    if (!marked) throw new Error('The file input was not found.');
-  }
-  try {
-    const selector = `[data-justdo-upload-marker="${marker}"]`;
-    let nodeId: number | undefined;
-    const search = (await guestDebugger.sendCommand('DOM.performSearch', {
-      query: selector,
-      includeUserAgentShadowDOM: true,
-    })) as { searchId?: string; resultCount?: number };
-    try {
-      if (search.searchId && (search.resultCount ?? 0) > 0) {
-        const results = (await guestDebugger.sendCommand('DOM.getSearchResults', {
-          searchId: search.searchId,
-          fromIndex: 0,
-          toIndex: 1,
-        })) as { nodeIds?: number[] };
-        nodeId = results.nodeIds?.[0];
-      }
-    } finally {
-      if (search.searchId) {
-        await guestDebugger
-          .sendCommand('DOM.discardSearchResults', { searchId: search.searchId })
-          .catch((): void => undefined);
-      }
+      );
+      assertActive();
+      if (!marked) throw new Error('The file input was not found.');
     }
-    if (!nodeId) throw new Error('The file input was not found.');
-    const verifiedFiles = this.resolveUploadPaths(sessionId, files);
-    await guestDebugger.sendCommand('DOM.setFileInputFiles', {
-      files: verifiedFiles,
-      nodeId,
-    });
+    if (!uploadedByTrigger) {
+      const selector = `[data-justdo-upload-marker="${marker}"]`;
+      let nodeId: number | undefined;
+      assertActive();
+      // Chromium assigns frontend node IDs only after the document is requested.
+      await guestDebugger.sendCommand('DOM.getDocument', { depth: 0, pierce: true });
+      assertActive();
+      const search = (await guestDebugger.sendCommand('DOM.performSearch', {
+        query: selector,
+        includeUserAgentShadowDOM: true,
+      })) as { searchId?: string; resultCount?: number };
+      try {
+        assertActive();
+        if (search.searchId && (search.resultCount ?? 0) > 0) {
+          const results = (await guestDebugger.sendCommand('DOM.getSearchResults', {
+            searchId: search.searchId,
+            fromIndex: 0,
+            toIndex: 1,
+          })) as { nodeIds?: number[] };
+          assertActive();
+          nodeId = results.nodeIds?.[0];
+        }
+      } finally {
+        if (search.searchId) {
+          await guestDebugger
+            .sendCommand('DOM.discardSearchResults', { searchId: search.searchId })
+            .catch((): void => undefined);
+        }
+      }
+      assertActive();
+      if (!nodeId) throw new Error('The file input was not found.');
+      const verifiedFiles = this.resolveUploadPaths(sessionId, files);
+      assertActive();
+      await guestDebugger.sendCommand('DOM.setFileInputFiles', {
+        files: verifiedFiles,
+        nodeId,
+      });
+      assertActive();
+    }
   } finally {
+    // Marker/search cleanup stays bound to this original target even after cancellation.
     if (reference) {
       await this.executeInTargetWorld(
         tab,
         guest,
         referenceWorldFrameSelector,
-        `(${referenceExpression || 'null'})?.removeAttribute('data-justdo-upload-marker')`,
+        `(() => {
+          const element = ${referenceExpression || 'null'};
+          if (element?.getAttribute('data-justdo-upload-marker') === ${JSON.stringify(marker)}) {
+            element.removeAttribute('data-justdo-upload-marker');
+          }
+        })()`,
       ).catch((): void => undefined);
     } else {
       await this.executeInTargetWorld(
@@ -978,6 +1023,7 @@ export async function setFileInputFiles(
       ).catch((): void => undefined);
     }
   }
+  assertActive();
 }
 
 export async function executeOnGuest(
@@ -1168,6 +1214,7 @@ export async function executeOnGuest(
     try {
       this.assertManagedOutputPath(sessionId, outputReservation.path);
       const pdf = await guest.printToPDF({ printBackground: true });
+      assertActive();
       this.assertManagedOutputPath(sessionId, outputReservation.path);
       fs.writeFileSync(outputReservation.path, pdf, { flag: 'wx' });
       return {
@@ -1231,6 +1278,7 @@ export async function executeOnGuest(
       profile,
       assertActive,
     );
+    assertActive();
     return {
       ok: true,
       targetId: tab.targetId,
@@ -1241,6 +1289,7 @@ export async function executeOnGuest(
     if (typeof command.accept !== 'boolean') throw new Error('accept is required.');
     const pending = this.dialogs.get(tab.webContentsId);
     if (!pending) {
+      assertActive();
       this.clearArmedDialog(tab.webContentsId);
       const timer = setTimeout(
         () => this.clearArmedDialog(tab.webContentsId),
@@ -1253,25 +1302,42 @@ export async function executeOnGuest(
         ),
       );
       timer.unref?.();
-      this.armedDialogs.set(tab.webContentsId, {
+      const armed: BrowserDialogResponse = {
         accept: command.accept === true,
         ...(command.promptText !== undefined ? { promptText: command.promptText } : {}),
         timer,
         leaseOwner: 'current',
-      });
+        assertActive,
+      };
+      try {
+        assertActive();
+        this.armedDialogs.set(tab.webContentsId, armed);
+        assertActive();
+      } catch (error) {
+        clearTimeout(timer);
+        if (this.armedDialogs.get(tab.webContentsId) === armed) {
+          this.clearArmedDialog(tab.webContentsId);
+        }
+        throw error;
+      }
       return { ok: true, targetId: tab.targetId, armed: true };
     }
     if (command.dialogId && command.dialogId !== pending.id) {
       throw new Error('The browser dialog is stale.');
     }
     const guestDebugger = await this.enableDebuggerDomains(tab, guest);
+    assertActive();
+    if (this.dialogs.get(tab.webContentsId) !== pending) {
+      throw new Error('The browser dialog is stale.');
+    }
     await guestDebugger.sendCommand('Page.handleJavaScriptDialog', {
       accept: command.accept === true,
       ...(command.accept === true && pending.type === 'prompt' && command.promptText !== undefined
         ? { promptText: command.promptText }
         : {}),
     });
-    this.dialogs.delete(tab.webContentsId);
+    assertActive();
+    if (this.dialogs.get(tab.webContentsId) === pending) this.dialogs.delete(tab.webContentsId);
     return { ok: true, targetId: tab.targetId, dialogId: pending.id };
   }
   if (command.action === 'act') {

@@ -12,6 +12,8 @@ const mocks = vi.hoisted(() => ({
   countHistory: vi.fn(),
   countCredentials: vi.fn(),
   listProfiles: vi.fn(),
+  reserveBackgroundClear: vi.fn(),
+  releaseBackgroundClear: vi.fn(),
 }));
 
 vi.mock('electron', () => ({
@@ -35,6 +37,13 @@ vi.mock('./browserDataImportService', () => ({
   listImportedBrowserProfiles: mocks.listProfiles,
 }));
 
+vi.mock('./backgroundBrowserStorage', () => ({
+  reserveBackgroundBrowserStorageClear: mocks.reserveBackgroundClear,
+}));
+
+import { session } from 'electron';
+
+import { browserPartitionForProfile } from '../../../shared/browser/browser';
 import {
   browserClearDataSince,
   clearBrowserData,
@@ -59,6 +68,7 @@ describe('browserClearDataService', () => {
     mocks.clearDownloads.mockReturnValue(2);
     mocks.clearCredentials.mockReturnValue(1);
     mocks.listProfiles.mockReturnValue([]);
+    mocks.reserveBackgroundClear.mockReturnValue(mocks.releaseBackgroundClear);
   });
 
   it('resolves bounded ranges and preserves all-time as an unbounded query', () => {
@@ -187,5 +197,86 @@ describe('browserClearDataService', () => {
       cleared: { cookieSites: 0 },
       failedCategories: ['cookiesAndSiteData'],
     });
+  });
+
+  it('cleans the existing shared profiles once for both sidebar and background pages', async () => {
+    const partition = browserPartitionForProfile('shared-account');
+    mocks.listProfiles.mockReturnValue(['shared-account', 'embedded', 'shared-account']);
+    await getBrowserClearDataSummary('all');
+    expect(session.fromPartition).toHaveBeenCalledWith(partition);
+    expect(session.fromPartition).toHaveBeenCalledTimes(3);
+    vi.mocked(session.fromPartition).mockClear();
+    await clearBrowserData({
+      range: 'all',
+      selection: {
+        cookiesAndSiteData: true,
+        cache: true,
+        history: false,
+        downloads: false,
+        autofill: false,
+      },
+    });
+    expect(session.fromPartition).toHaveBeenCalledWith(partition);
+    expect(
+      vi
+        .mocked(session.fromPartition)
+        .mock.calls.every(([value]) => !value.startsWith('persist:browser-background-')),
+    ).toBe(true);
+    expect(mocks.clearStorageData).toHaveBeenCalledTimes(3);
+    expect(mocks.clearData).toHaveBeenCalledTimes(3);
+    expect(mocks.releaseBackgroundClear).toHaveBeenCalledOnce();
+  });
+
+  it('refuses Chromium cleanup while a background execution owns storage, preserving independent records', async () => {
+    mocks.reserveBackgroundClear.mockReturnValue(null);
+    const result = await clearBrowserData({
+      range: 'all',
+      selection: {
+        cookiesAndSiteData: true,
+        cache: true,
+        history: true,
+        downloads: false,
+        autofill: false,
+      },
+    });
+    expect(result).toMatchObject({
+      success: false,
+      errorCode: 'clear-failed',
+      failedCategories: ['cookiesAndSiteData', 'cache'],
+      cleared: { history: 3 },
+    });
+    expect(mocks.clearStorageData).not.toHaveBeenCalled();
+    expect(mocks.clearData).not.toHaveBeenCalled();
+    expect(mocks.clearHistory).toHaveBeenCalledExactlyOnceWith(null);
+  });
+
+  it('holds the storage admission gate until every Chromium clear settles, including after a failure', async () => {
+    let releaseSecond!: () => void;
+    mocks.clearStorageData
+      .mockRejectedValueOnce(new Error('first profile failed'))
+      .mockImplementationOnce(
+        () =>
+          new Promise(resolve => {
+            releaseSecond = () => resolve(undefined);
+          }),
+      );
+    const clearing = clearBrowserData({
+      range: 'all',
+      selection: {
+        cookiesAndSiteData: true,
+        cache: false,
+        history: false,
+        downloads: false,
+        autofill: false,
+      },
+    });
+    await vi.waitFor(() => expect(mocks.clearStorageData).toHaveBeenCalledTimes(2));
+    expect(mocks.releaseBackgroundClear).not.toHaveBeenCalled();
+    releaseSecond();
+    await expect(clearing).resolves.toMatchObject({
+      success: false,
+      failedCategories: ['cookiesAndSiteData'],
+    });
+    expect(mocks.releaseBackgroundClear).toHaveBeenCalledOnce();
   });
 });

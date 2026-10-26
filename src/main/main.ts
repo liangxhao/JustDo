@@ -28,7 +28,7 @@ import {
 } from '../shared/app/initialization';
 import { SHUTDOWN_BUDGET_MS } from '../shared/app/shutdownPolicy';
 import { StartupRoute } from '../shared/app/startup/routing';
-import { normalizeBrowserDownloadSettings, normalizeBrowserMode } from '../shared/browser/browser';
+import { BrowserMode, normalizeBrowserDownloadSettings, normalizeBrowserMode } from '../shared/browser/browser';
 import { EmbeddedBrowserGateway } from '../shared/browser/embeddedBrowser';
 import { buildCoworkSessionKey } from '../shared/cowork/sessionKey';
 import { CoworkSubagentDetailsIpc } from '../shared/cowork/subagentDetails';
@@ -55,6 +55,7 @@ import { normalizeLocalSpeechSettings } from '../shared/speech/localSpeechSettin
 import { AppServerIntegrationService } from './appServer/appServerIntegrationService';
 import { waitForAppServerShutdown } from './appServer/appServerShutdown';
 import { BrowserAgentBridge } from './browser/browserAgentBridge';
+import { EmbeddedBrowserGatewayBridge } from './browser/embeddedBrowserGatewayBridge';
 import { BrowserExtensionChatController } from './browser/extension/browserExtensionChatController';
 import { BrowserExtensionChatServer } from './browser/extension/browserExtensionChatServer';
 import {
@@ -1209,96 +1210,27 @@ const browserAgentBridge = new BrowserAgentBridge(
   isWorkspaceBrowserHost,
   () => getStore().get<AppConfigSettings>('app_config')?.browserTabLimit,
 );
-const embeddedBrowserRequests = new Map<
-  string,
-  { controller: AbortController; sessionKey: string }
->();
-const completedEmbeddedBrowserRequests = new Set<string>();
-let embeddedBrowserGatewayBound = false;
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-
-const rememberEmbeddedBrowserRequest = (requestId: string): void => {
-  completedEmbeddedBrowserRequests.add(requestId);
-  if (completedEmbeddedBrowserRequests.size <= 1_024) return;
-  const oldestRequestId = completedEmbeddedBrowserRequests.values().next().value;
-  if (oldestRequestId) completedEmbeddedBrowserRequests.delete(oldestRequestId);
-};
+let embeddedBrowserGatewayBridge: EmbeddedBrowserGatewayBridge | null = null;
 
 const bindEmbeddedBrowserGateway = (): void => {
-  if (embeddedBrowserGatewayBound) return;
+  if (embeddedBrowserGatewayBridge) return;
   const runtimeAdapter = getOpenClawRuntimeAdapter();
   if (!runtimeAdapter) {
     throw new Error('OpenClaw runtime adapter was not initialized with the Cowork router.');
   }
-  runtimeAdapter.on('gatewayEvent', event => {
-    if (event.event === EmbeddedBrowserGateway.CANCELLED_EVENT) {
-      const payload = isRecord(event.payload) ? event.payload : {};
-      const requestId = typeof payload.requestId === 'string' ? payload.requestId.trim() : '';
-      const sessionKey = typeof payload.sessionKey === 'string' ? payload.sessionKey.trim() : '';
-      const pending = requestId ? embeddedBrowserRequests.get(requestId) : undefined;
-      if (pending && pending.sessionKey === sessionKey) {
-        pending.controller.abort();
-        embeddedBrowserRequests.delete(requestId);
-      }
-      return;
-    }
-    if (event.event !== EmbeddedBrowserGateway.REQUESTED_EVENT) return;
-
-    const payload = isRecord(event.payload) ? event.payload : {};
-    const requestId = typeof payload.requestId === 'string' ? payload.requestId.trim() : '';
-    const sessionKey = typeof payload.sessionKey === 'string' ? payload.sessionKey.trim() : '';
-    const command = isRecord(payload.command) ? payload.command : null;
-    const resolve = (response: Record<string, unknown>): Promise<unknown> =>
-      runtimeAdapter.requestGateway(EmbeddedBrowserGateway.RESOLVE, {
-        requestId,
-        ...response,
-      });
-
-    if (
-      !requestId ||
-      embeddedBrowserRequests.has(requestId) ||
-      completedEmbeddedBrowserRequests.has(requestId)
-    ) {
-      return;
-    }
-    if (!sessionKey || !command) {
-      rememberEmbeddedBrowserRequest(requestId);
-      if (requestId) {
-        void resolve({ ok: false, error: 'Invalid embedded browser request.' }).catch(error => {
-          console.warn('[BrowserAgentBridge] Failed to reject an invalid request:', String(error));
-        });
-      }
-      return;
-    }
-
-    const controller = new AbortController();
-    embeddedBrowserRequests.set(requestId, { controller, sessionKey });
-    void browserAgentBridge
-      .executeCommand(sessionKey, command, controller.signal)
-      .then(result => {
-        if (!controller.signal.aborted) return resolve({ ok: true, result });
-        return undefined;
-      })
-      .catch(error => {
-        if (controller.signal.aborted) return undefined;
-        return resolve({
-          ok: false,
-          error: error instanceof Error ? error.message : 'Browser action failed.',
-        });
-      })
-      .catch(error => {
-        console.warn('[BrowserAgentBridge] Failed to resolve a browser request:', String(error));
-      })
-      .finally(() => {
-        if (embeddedBrowserRequests.get(requestId)?.controller === controller) {
-          embeddedBrowserRequests.delete(requestId);
-        }
-        rememberEmbeddedBrowserRequest(requestId);
-      });
+  const bridge = new EmbeddedBrowserGatewayBridge({
+    isEnabled: () => normalizeBrowserMode(getStore().get<AppConfigSettings>('app_config')?.browserMode) === BrowserMode.Embedded,
+    getDesktopSession: sessionKey => getCoworkStore().getSessionByNativeKey(sessionKey),
+    getScheduledTask: jobId => getCronJobService().getJob(jobId),
+    execute: (sessionKey, command, signal, scope) => browserAgentBridge.executeCommand(sessionKey, command, signal, scope),
+    releaseScope: (sessionId, closePages) => browserAgentBridge.releaseExecutionScope(sessionId, closePages),
+    revokeAll: () => browserAgentBridge.revokeBackgroundPages(),
+    resolve: (requestId, response) => runtimeAdapter.requestGateway(EmbeddedBrowserGateway.RESOLVE, { requestId, ...response }),
   });
-  embeddedBrowserGatewayBound = true;
+  runtimeAdapter.on('gatewayEvent', event => bridge.handleEvent(event));
+  runtimeAdapter.on('gatewayDisconnected', () => bridge.revoke());
+  runtimeAdapter.on('sessionDeleted', sessionId => bridge.deleteSession(sessionId));
+  embeddedBrowserGatewayBridge = bridge;
 };
 
 let lastReloadAt = 0;
@@ -2117,6 +2049,7 @@ if (agentBridgeArgv) {
       ]),
       retireGateway: () => openClawEngineManager?.stopGateway(),
       retireRemainingServices: () => settleCleanupTasks([
+        () => embeddedBrowserGatewayBridge?.revoke(),
         () => browserAgentBridge.stop(), () => outboundHeaderProxy?.stop(),
       ]),
       // Never initialize a Store during shutdown, or close it underneath an unjoined owner.

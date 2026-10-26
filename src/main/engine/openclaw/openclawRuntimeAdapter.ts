@@ -2621,6 +2621,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     persistedSessionKeys: string[] = [],
     workspaceRoots: string[] = [],
   ): void {
+    this.emit('sessionDeleted', sessionId);
     const removedKeys: string[] = [
       ...new Set(persistedSessionKeys.map(key => key.trim()).filter(Boolean)),
     ];

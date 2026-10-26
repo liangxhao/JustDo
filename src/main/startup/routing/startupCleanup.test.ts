@@ -52,6 +52,7 @@ test.each([false, true, 'admission', 'integrations'] as const)('Main attempts ev
     getCronJobService: () => ({ stopPolling: () => { calls.push('scheduler'); } }),
     coworkEngineService: undefined,
     browserAgentBridge: { stop: async () => { calls.push('browser-bridge'); } },
+    embeddedBrowserGatewayBridge: { revoke: () => { calls.push('browser-routing'); } },
     outboundHeaderProxy: undefined,
     getStore: () => { throw new Error('Cleanup must never initialize a Store'); },
   };
@@ -62,7 +63,7 @@ test.each([false, true, 'admission', 'integrations'] as const)('Main attempts ev
   expect(owner.admitted()).toBe(false);
   expect(calls[0]).toBe('block-gateway');
   expect(calls).toEqual(['block-gateway', 'startup-confirmation', 'app-server', 'history', 'native', 'team',
-    'credentials', 'tray', 'scheduler', 'stop-gateway', 'browser-bridge', ...(rejects ? [] : ['product-db'])]);
+    'credentials', 'tray', 'scheduler', 'stop-gateway', 'browser-routing', 'browser-bridge', ...(rejects ? [] : ['product-db'])]);
   if (rejects) expect(console.error).toHaveBeenCalledWith(
     expect.stringContaining('retirement remains unconfirmed'), 'startup',
     expect.any(AggregateError),

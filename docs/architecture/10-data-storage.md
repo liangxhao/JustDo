@@ -25,6 +25,21 @@ sessionId/lifecycleRevision 清理自有会话；拒绝或未知结果不扩大�
 默认 20，可设置为 1–50 的整数。旧配置缺失时直接使用默认值，不新增表或迁移；
 Main 与 Renderer 共用数值校验。它只控制新建准入，不持久化网页或回收已有标签。
 
+内置后台页面与侧栏按 `browserPartitionForProfile(profile)` 使用同一 Chromium Session。
+普通会话和定时任务共享该 profile 的 Cookie、localStorage、IndexedDB、HTTP 认证缓存及
+站点 Service Worker；默认、导入和命名 profile 之间仍隔离，也不共享应用外壳或卡片登录。
+不复制凭据或创建后台专属存储。页面仍按会话/精确运行管理，sessionStorage 和页面 JS
+内存仍按标签隔离，与侧栏同 profile 新标签行为相同，并非所有站点都支持跨标签免登录。
+
+任务清理只撤销自身工具与页面许可并销毁自己的 guest，不清 profile 的站点存储/worker，
+不关闭共享连接，不影响侧栏及其他任务。站点 worker 无可证页面归属时沿用 profile 网络
+政策；不能因任务结束推断站点派生请求或已发请求已停止，也不自动重试未知写入。
+
+浏览器数据摘要和手动 Cookie／站点数据、缓存清理继续覆盖既有 profile 清单。
+清理与后台页面创建共用 Main 准入门；后台 profile 正在创建、使用或等待 guest 销毁时，站点数据及缓存
+类别报告既有清理失败，其他所选记录类别可继续。清理门直到所有已发起的 Chromium
+清理结束后才释放，不以首个失败代替其他操作已经停止。
+
 独立 `swarm-workflow` 扩展在 Gateway `stateDir/swarm-workflow/flows.sqlite` 保存流程目标、
 已校验 DAG、阶段结果、修订号、启动意图和原生运行引用。它是插件调度状态，
 不属于产品 SQLite 的消息表，也不复制原生 transcript。执行会话由插件拥有，

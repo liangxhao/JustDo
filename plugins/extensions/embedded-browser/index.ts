@@ -1,15 +1,27 @@
 import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
+import path from 'node:path';
 
 import type { OpenClawPluginApi, OpenClawPluginGatewayEvents } from 'openclaw/plugin-sdk/core';
 import { saveMediaBuffer } from 'openclaw/plugin-sdk/media-store';
+import { getSessionEntry } from 'openclaw/plugin-sdk/session-store-runtime';
 
+import {
+  type BrowserExecutionRun,
+  type BrowserReleasedEvent,
+  type BrowserRevokedEvent,
+} from './browserExecutionContract.js';
 import {
   BROWSER_CONTENT_NOTICE,
   BROWSER_PAGE_SOURCE_KIND,
   BROWSER_PAGE_SOURCE_PREFIX,
   readBrowserPageSource,
 } from './browserPageSource.js';
+import {
+  type AdmittedBrowserCall,
+  BrowserRunAdmission,
+  isBrowserSessionCandidate,
+} from './browserRunAdmission.js';
 import {
   BrowserToolOutputSchema,
   BrowserToolSchema,
@@ -31,6 +43,8 @@ type PendingRequest = {
   resolve: (response: BrowserResponse) => void;
   timeout: ReturnType<typeof setTimeout>;
   sessionKey: string;
+  run: BrowserExecutionRun;
+  toolCallId: string;
   removeAbortListener?: () => void;
 };
 
@@ -197,6 +211,12 @@ const appendPageSource = (
 
 class EmbeddedBrowserRequestManager {
   private readonly pending = new Map<string, PendingRequest>();
+  readonly admission = new BrowserRunAdmission(
+    sessionKey => getSessionEntry({ sessionKey, readConsistency: 'latest' }),
+    event => this.publishRelease(event),
+    event => this.publishRevocation(event),
+  );
+  private removeAgentEventListener?: () => void;
   private gatewayEventEmitter: {
     owner: symbol;
     emit: GatewayEventEmitter;
@@ -207,21 +227,43 @@ class EmbeddedBrowserRequestManager {
     owner: symbol,
     emitter: GatewayEventEmitter,
     logger: OpenClawPluginApi['logger'],
+    subscribe: OpenClawPluginApi['runtime']['events']['onAgentEvent'],
   ): void {
+    if (this.gatewayEventEmitter) {
+      this.clearGatewayEventEmitter(this.gatewayEventEmitter.owner);
+    }
     this.gatewayEventEmitter = { owner, emit: emitter, logger };
+    this.admission.activate();
+    this.removeAgentEventListener = subscribe(event => {
+      this.admission.observeLifecycle(event);
+    });
   }
 
   clearGatewayEventEmitter(owner: symbol): void {
     if (this.gatewayEventEmitter?.owner !== owner) return;
+    this.admission.revokeAll();
     this.cancelAll();
+    this.removeAgentEventListener?.();
+    this.removeAgentEventListener = undefined;
+    try {
+      // Includes conversation-owned pages whose original run already settled.
+      // A retired registry's stop is ignored by the owner check above.
+      this.gatewayEventEmitter.emit('stopped', {}, { scope: 'operator.read' });
+    } catch (error) {
+      this.gatewayEventEmitter.logger.warn(
+        `[embedded-browser] failed to publish service stop: ${String(error)}`,
+      );
+    }
     this.gatewayEventEmitter = null;
   }
 
   request(
-    sessionKey: string,
+    call: AdmittedBrowserCall,
     command: BrowserCommand,
+    policy: { allowLocalFiles: boolean },
     signal?: AbortSignal,
   ): Promise<BrowserResponse> {
+    call.assertCurrent();
     signal?.throwIfAborted();
     const emitGatewayEvent = this.gatewayEventEmitter?.emit;
     if (!emitGatewayEvent) throw new Error('Gateway event delivery is unavailable.');
@@ -238,7 +280,15 @@ class EmbeddedBrowserRequestManager {
       });
     }, REQUEST_TIMEOUT_MS);
     timeout.unref?.();
-    const pending: PendingRequest = { resolve: resolveResponse, timeout, sessionKey };
+    const { run, toolCallId } = call;
+    const { sessionKey } = run;
+    const pending: PendingRequest = {
+      resolve: resolveResponse,
+      timeout,
+      sessionKey,
+      run,
+      toolCallId,
+    };
     this.pending.set(requestId, pending);
 
     if (signal) {
@@ -250,7 +300,12 @@ class EmbeddedBrowserRequestManager {
     }
 
     try {
-      emitGatewayEvent('requested', { requestId, sessionKey, command }, { scope: 'operator.read' });
+      call.assertCurrent();
+      emitGatewayEvent(
+        'requested',
+        { requestId, sessionKey, run, toolCallId, command, policy },
+        { scope: 'operator.read' },
+      );
     } catch (error) {
       this.settle(requestId, {
         ok: false,
@@ -282,7 +337,12 @@ class EmbeddedBrowserRequestManager {
     try {
       this.gatewayEventEmitter?.emit(
         'cancelled',
-        { requestId, sessionKey: pending.sessionKey },
+        {
+          requestId,
+          sessionKey: pending.sessionKey,
+          run: pending.run,
+          toolCallId: pending.toolCallId,
+        },
         { scope: 'operator.read' },
       );
     } catch (error) {
@@ -301,6 +361,43 @@ class EmbeddedBrowserRequestManager {
     clearTimeout(pending.timeout);
     pending.removeAbortListener?.();
     pending.resolve(response);
+  }
+
+  private cancelRunRequests(run: BrowserExecutionRun): void {
+    for (const [requestId, request] of this.pending) {
+      if (
+        request.run.sessionKey === run.sessionKey &&
+        request.run.sessionId === run.sessionId &&
+        request.run.runId === run.runId
+      )
+        this.cancel(requestId, { ok: false, error: 'The native browser run is no longer active.' });
+    }
+  }
+
+  private publishRevocation(event: BrowserRevokedEvent): void {
+    // Tool signals also retire on successful native cleanup. Invalidate effects
+    // immediately without turning that cleanup into a whole-run outcome.
+    this.cancelRunRequests(event.run);
+    try {
+      this.gatewayEventEmitter?.emit('revoked', event, { scope: 'operator.read' });
+    } catch (error) {
+      this.gatewayEventEmitter?.logger.warn(
+        `[embedded-browser] failed to publish effect revocation: ${String(error)}`,
+      );
+    }
+  }
+
+  private publishRelease(event: BrowserReleasedEvent): void {
+    // Revoke pending transport before announcing resource cleanup. This is not
+    // evidence that a cancelled Main operation has already drained.
+    this.cancelRunRequests(event.run);
+    try {
+      this.gatewayEventEmitter?.emit('released', event, { scope: 'operator.read' });
+    } catch (error) {
+      this.gatewayEventEmitter?.logger.warn(
+        `[embedded-browser] failed to publish resource release: ${String(error)}`,
+      );
+    }
   }
 }
 
@@ -337,11 +434,44 @@ const plugin = {
       id: 'embedded-browser',
       start(ctx) {
         if (!ctx.gatewayEvents) throw new Error('Embedded browser requires plugin Gateway events.');
-        manager.setGatewayEventEmitter(serviceOwner, ctx.gatewayEvents.emit, api.logger);
+        manager.setGatewayEventEmitter(
+          serviceOwner,
+          ctx.gatewayEvents.emit,
+          api.logger,
+          api.runtime.events.onAgentEvent,
+        );
       },
       stop() {
         manager.clearGatewayEventEmitter(serviceOwner);
       },
+    });
+
+    api.on('before_prompt_build', (_event, context) => manager.admission.observeRun(context), {
+      requiresToolAuthority: true,
+    });
+    api.on(
+      'before_tool_call',
+      (event, context) => {
+        try {
+          if (event.toolName !== TOOL_NAME || context.toolName !== TOOL_NAME)
+            throw new Error('Browser tool identity does not match.');
+          if (event.runId !== undefined && event.runId !== context.runId)
+            throw new Error('Browser tool run identity does not match.');
+          if (event.toolCallId !== undefined && event.toolCallId !== context.toolCallId)
+            throw new Error('Browser tool call identity does not match.');
+          manager.admission.prepareToolCall(context);
+        } catch (error) {
+          return {
+            block: true,
+            blockReason:
+              error instanceof Error ? error.message : 'Browser execution is unavailable.',
+          };
+        }
+      },
+      { matcher: [TOOL_NAME] },
+    );
+    api.on('after_tool_call', (_event, context) => manager.admission.finishToolCall(context), {
+      matcher: [TOOL_NAME],
     });
 
     api.registerGatewayMethod(
@@ -371,44 +501,129 @@ const plugin = {
     );
 
     api.registerTool(
-      context => {
-        const sessionKey = context.sessionKey?.trim() ?? '';
-        if (!sessionKey.startsWith('justdo:') && !/^agent:[^:]+:justdo:/.test(sessionKey)) {
-          return null;
-        }
-        return {
-          name: TOOL_NAME,
-          label: 'Browser',
-          resultContentSource: 'network',
-          description: describeEmbeddedBrowserTool(),
-          parameters: BrowserToolSchema,
-          outputSchema: BrowserToolOutputSchema,
-          async execute(_toolCallId: string, params: unknown, signal?: AbortSignal) {
-            try {
-              const input = isRecord(params) ? params : {};
-              const deviceName =
-                readString(input.action) === 'emulate' ? readString(input.device) : '';
-              const deviceDescriptor = deviceName ? resolveDeviceDescriptor(deviceName) : undefined;
-              const response = await manager.request(
-                sessionKey,
-                deviceDescriptor ? { ...input, deviceDescriptor } : input,
-                signal,
-              );
-              if (!response.ok) throw new Error(response.error);
-              if (isRecord(response.result) && Array.isArray(response.result.content)) {
-                const details = isRecord(response.result.details) ? response.result.details : {};
-                const content =
-                  readString(input.action) === 'screenshot'
-                    ? await appendScreenshotShareHint(response.result.content)
-                    : response.result.content;
+      {
+        contextVersion: 2,
+        create: context => {
+          const sessionKey = context.sessionKey?.trim() ?? '';
+          const sessionId = context.sessionId?.trim() ?? '';
+          if (!sessionId || !isBrowserSessionCandidate(sessionKey)) return null;
+          return {
+            name: TOOL_NAME,
+            label: 'Browser',
+            resultContentSource: 'network',
+            description: describeEmbeddedBrowserTool(),
+            parameters: BrowserToolSchema,
+            outputSchema: BrowserToolOutputSchema,
+            async execute(toolCallId: string, params: unknown, signal?: AbortSignal) {
+              let call: AdmittedBrowserCall | undefined;
+              try {
+                call = manager.admission.claimToolCall(
+                  sessionKey,
+                  sessionId,
+                  toolCallId,
+                  context.assertInvocationCurrent,
+                );
+                if (
+                  context.browser?.allowHostControl === false ||
+                  (context.sandboxed === true && context.browser?.allowHostControl !== true) ||
+                  (context.browser?.sandboxBridgeUrl && context.browser?.allowHostControl !== true)
+                ) {
+                  throw new Error('This execution does not allow host browser control.');
+                }
+                const normalizeRoot = (value: string): string => {
+                  const resolved = path.resolve(value);
+                  return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+                };
+                if (
+                  context.fsPolicy?.root &&
+                  (!context.workspaceDir ||
+                    !path.isAbsolute(context.fsPolicy.root) ||
+                    normalizeRoot(context.fsPolicy.root) !== normalizeRoot(context.workspaceDir))
+                ) {
+                  throw new Error(
+                    'The embedded browser cannot satisfy this filesystem root policy.',
+                  );
+                }
+                const input: BrowserCommand = isRecord(params) ? { ...params } : {};
+                for (const key of [
+                  'run',
+                  'execution',
+                  'sessionKey',
+                  'sessionId',
+                  'runId',
+                  'toolCallId',
+                  'trigger',
+                  'jobId',
+                  'workspaceDir',
+                  'policy',
+                ])
+                  delete input[key];
+                if (input.headless !== undefined && typeof input.headless !== 'boolean')
+                  throw new Error('headless must be a boolean.');
+                if (call.run.trigger === 'cron' && input.headless === false)
+                  throw new Error(
+                    'Scheduled browser tasks must run in the background (headless=true).',
+                  );
+                const command = call.run.trigger === 'cron' ? { ...input, headless: true } : input;
+                const deviceName =
+                  readString(input.action) === 'emulate' ? readString(input.device) : '';
+                const deviceDescriptor = deviceName
+                  ? resolveDeviceDescriptor(deviceName)
+                  : undefined;
+                const operationSignal =
+                  signal && call.signal
+                    ? AbortSignal.any([signal, call.signal])
+                    : (signal ?? call.signal);
+                // Transport completion releases the pending response listener,
+                // while native cancellation remains bound to this browser run.
+                call.retainCancellation(signal);
+                const response = await manager.request(
+                  call,
+                  deviceDescriptor ? { ...command, deviceDescriptor } : command,
+                  { allowLocalFiles: context.fsPolicy?.workspaceOnly !== true },
+                  operationSignal,
+                );
+                operationSignal?.throwIfAborted();
+                call.assertCurrent();
+                if (!response.ok) throw new Error(response.error);
+                if (isRecord(response.result) && Array.isArray(response.result.content)) {
+                  const details = isRecord(response.result.details) ? response.result.details : {};
+                  const content =
+                    readString(input.action) === 'screenshot'
+                      ? await appendScreenshotShareHint(response.result.content)
+                      : response.result.content;
+                  operationSignal?.throwIfAborted();
+                  call.assertCurrent();
+                  return {
+                    ...response.result,
+                    content:
+                      response.result.isError === true
+                        ? content
+                        : appendPageSource(content, details, input.action),
+                    details: {
+                      ...details,
+                      externalContent: {
+                        untrusted: true,
+                        source: 'browser',
+                        kind: readString(input.action) || 'browser',
+                        wrapped: true,
+                      },
+                    },
+                  };
+                }
                 return {
-                  ...response.result,
-                  content:
-                    response.result.isError === true
-                      ? content
-                      : appendPageSource(content, details, input.action),
+                  content: appendPageSource(
+                    [
+                      {
+                        type: 'text',
+                        text: wrapBrowserContent(JSON.stringify(response.result, null, 2)),
+                      },
+                    ],
+                    isRecord(response.result) ? response.result : {},
+                    input.action,
+                  ),
                   details: {
-                    ...details,
+                    ...(isRecord(response.result) ? response.result : { result: response.result }),
                     externalContent: {
                       untrusted: true,
                       source: 'browser',
@@ -417,51 +632,32 @@ const plugin = {
                     },
                   },
                 };
-              }
-              return {
-                content: appendPageSource(
-                  [
+              } catch (error) {
+                return {
+                  content: [
                     {
                       type: 'text',
-                      text: wrapBrowserContent(JSON.stringify(response.result, null, 2)),
+                      text: wrapBrowserContent(
+                        `Browser action failed: ${error instanceof Error ? error.message : String(error)}`,
+                      ),
                     },
                   ],
-                  isRecord(response.result) ? response.result : {},
-                  input.action,
-                ),
-                details: {
-                  ...(isRecord(response.result) ? response.result : { result: response.result }),
-                  externalContent: {
-                    untrusted: true,
-                    source: 'browser',
-                    kind: readString(input.action) || 'browser',
-                    wrapped: true,
+                  isError: true,
+                  details: {
+                    externalContent: {
+                      untrusted: true,
+                      source: 'browser',
+                      kind: 'error',
+                      wrapped: true,
+                    },
                   },
-                },
-              };
-            } catch (error) {
-              return {
-                content: [
-                  {
-                    type: 'text',
-                    text: wrapBrowserContent(
-                      `Browser action failed: ${error instanceof Error ? error.message : String(error)}`,
-                    ),
-                  },
-                ],
-                isError: true,
-                details: {
-                  externalContent: {
-                    untrusted: true,
-                    source: 'browser',
-                    kind: 'error',
-                    wrapped: true,
-                  },
-                },
-              };
-            }
-          },
-        };
+                };
+              } finally {
+                call?.release();
+              }
+            },
+          };
+        },
       },
       { name: TOOL_NAME },
     );

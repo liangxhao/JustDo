@@ -2,10 +2,15 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
 const mediaStoreMocks = vi.hoisted(() => ({
   saveMediaBuffer: vi.fn(),
+  entries: new Map<string, { sessionId: string; lifecycleRevision: string }>(),
 }));
 
 vi.mock('openclaw/plugin-sdk/media-store', () => ({
   saveMediaBuffer: mediaStoreMocks.saveMediaBuffer,
+}));
+vi.mock('openclaw/plugin-sdk/session-store-runtime', () => ({
+  getSessionEntry: ({ sessionKey }: { sessionKey: string }) =>
+    mediaStoreMocks.entries.get(sessionKey),
 }));
 
 import {
@@ -49,18 +54,29 @@ type PluginService = {
   stop: () => void;
 };
 
-const registrations = (emit = vi.fn()) => {
-  let factory: ToolFactory | undefined;
+let nativeRunSequence = 0;
+const registrations = (emit = vi.fn(), start = true) => {
+  let nativeFactory:
+    | {
+        contextVersion: number;
+        create: (context: Record<string, unknown>) => ReturnType<ToolFactory>;
+      }
+    | undefined;
   let gatewayMethod: GatewayMethod | undefined;
   let service: PluginService | undefined;
-  const on = vi.fn();
+  const hooks = new Map<
+    string,
+    (event: Record<string, unknown>, context: Record<string, unknown>) => unknown
+  >();
+  const on = vi.fn((name, callback) => hooks.set(name, callback));
   let methodName = '';
   const logger = { warn: vi.fn() };
 
   embeddedBrowserPlugin.register({
     on,
-    registerTool: (candidate: ToolFactory) => {
-      factory = candidate;
+    runtime: { events: { onAgentEvent: () => () => undefined } },
+    registerTool: (candidate: typeof nativeFactory) => {
+      nativeFactory = candidate;
     },
     registerGatewayMethod: (name: string, handler: GatewayMethod) => {
       methodName = name;
@@ -71,10 +87,44 @@ const registrations = (emit = vi.fn()) => {
     },
     logger,
   } as never);
-  if (!factory || !gatewayMethod || !service) {
+  if (!nativeFactory || !gatewayMethod || !service) {
     throw new Error('Plugin registration is incomplete.');
   }
-  service.start({ gatewayEvents: { emit } });
+  expect(nativeFactory.contextVersion).toBe(2);
+  const create = nativeFactory.create;
+  // Simulate native policy/identity hooks at the host-plugin boundary. This is
+  // test authority; the actual plugin never accepts it from model arguments.
+  const factory: ToolFactory = context => {
+    const sessionKey = context.sessionKey ?? '';
+    const sequence = ++nativeRunSequence;
+    const sessionId = `native-${sequence}`;
+    const runId = `run-${sequence}`;
+    mediaStoreMocks.entries.set(sessionKey, { sessionId, lifecycleRevision: 'revision-1' });
+    const tool = create({ sessionKey, sessionId, assertInvocationCurrent: () => undefined });
+    if (!tool) return null;
+    return {
+      ...tool,
+      execute: (toolCallId, params, signal) => {
+        const identity = {
+          sessionKey,
+          sessionId,
+          runId,
+          trigger: 'user',
+          workspaceDir: 'C:\\workspace',
+        };
+        hooks.get('before_prompt_build')?.(
+          {},
+          { ...identity, toolAuthority: { assertActive: () => undefined, allows: () => true } },
+        );
+        const callContext = { ...identity, toolName: 'browser', toolCallId, abortSignal: signal };
+        hooks.get('before_tool_call')?.({ toolName: 'browser', runId, toolCallId }, callContext);
+        return tool
+          .execute(toolCallId, params, signal)
+          .finally(() => hooks.get('after_tool_call')?.({}, callContext));
+      },
+    };
+  };
+  if (start) service.start({ gatewayEvents: { emit } });
   return { on, emit, factory, gatewayMethod, logger, methodName, service };
 };
 
@@ -148,11 +198,16 @@ describe('Embedded browser extension', () => {
     service.stop();
   });
 
-  test('replaces the browser tool without registering conversation prompt hooks', () => {
+  test('uses native execution authority hooks without adding prompt text', () => {
     const { on, emit, factory, service } = registrations();
 
     expect(factory({ sessionKey: 'agent:main:justdo:session-1' })?.name).toBe('browser');
-    expect(on).not.toHaveBeenCalled();
+    expect(on).toHaveBeenCalledWith('before_prompt_build', expect.any(Function), {
+      requiresToolAuthority: true,
+    });
+    expect(on).toHaveBeenCalledWith('before_tool_call', expect.any(Function), {
+      matcher: ['browser'],
+    });
     expect(emit).not.toHaveBeenCalled();
     service.stop();
   });
@@ -423,24 +478,7 @@ describe('Embedded browser extension', () => {
 
   test('shares the live Gateway event service with tools assembled from another registry', async () => {
     const live = registrations();
-    let factory: ToolFactory | undefined;
-    let gatewayMethod: GatewayMethod | undefined;
-    let service: PluginService | undefined;
-    embeddedBrowserPlugin.register({
-      on: vi.fn(),
-      registerTool: (candidate: ToolFactory) => {
-        factory = candidate;
-      },
-      registerGatewayMethod: (_name: string, handler: GatewayMethod) => {
-        gatewayMethod = handler;
-      },
-      registerService: (candidate: PluginService) => {
-        service = candidate;
-      },
-      logger: { warn: vi.fn() },
-    } as never);
-    if (!factory || !gatewayMethod || !service)
-      throw new Error('Plugin registration is incomplete.');
+    const { factory, gatewayMethod, service } = registrations(vi.fn(), false);
 
     const tool = factory({ sessionKey: 'justdo:session-2' })!;
     const pending = tool.execute('call-1', { action: 'status' });
@@ -460,25 +498,7 @@ describe('Embedded browser extension', () => {
   test('keeps the newer Gateway service active when an older registry stops', async () => {
     const older = registrations();
     const newerEmit = vi.fn();
-    let factory: ToolFactory | undefined;
-    let gatewayMethod: GatewayMethod | undefined;
-    let service: PluginService | undefined;
-    embeddedBrowserPlugin.register({
-      on: vi.fn(),
-      registerTool: (candidate: ToolFactory) => {
-        factory = candidate;
-      },
-      registerGatewayMethod: (_name: string, handler: GatewayMethod) => {
-        gatewayMethod = handler;
-      },
-      registerService: (candidate: PluginService) => {
-        service = candidate;
-      },
-      logger: { warn: vi.fn() },
-    } as never);
-    if (!factory || !gatewayMethod || !service)
-      throw new Error('Plugin registration is incomplete.');
-    service.start({ gatewayEvents: { emit: newerEmit } });
+    const { factory, gatewayMethod, service } = registrations(newerEmit);
 
     older.service.stop();
     const pending = factory({ sessionKey: 'justdo:session-2' })!.execute('call-1', {
@@ -499,6 +519,7 @@ describe('Embedded browser extension', () => {
   test('restores request transport after disabling and re-enabling the provider', async () => {
     const previous = registrations();
     previous.service.stop();
+    previous.emit.mockClear();
     const current = registrations();
     try {
       const pending = current.factory({ sessionKey: 'justdo:session-1' })!.execute('call-1', {
@@ -595,14 +616,19 @@ describe('Embedded browser extension', () => {
 
     await expect(pending).resolves.toMatchObject({
       isError: true,
-      content: [{ text: expect.stringContaining('cancelled') }],
+      content: [{ text: expect.stringContaining('aborted') }],
     });
-    expect(emit).toHaveBeenLastCalledWith(
+    expect(emit).toHaveBeenCalledWith(
       'cancelled',
       expect.objectContaining({
         requestId: expect.stringMatching(/^browser_/),
         sessionKey: 'justdo:session-1',
       }),
+      { scope: 'operator.read' },
+    );
+    expect(emit).toHaveBeenLastCalledWith(
+      'released',
+      expect.objectContaining({ reason: 'revoked' }),
       { scope: 'operator.read' },
     );
     service.stop();
@@ -632,7 +658,7 @@ describe('Embedded browser extension', () => {
 
     await expect(pending).resolves.toMatchObject({
       isError: true,
-      content: [{ text: expect.stringContaining('service stopped') }],
+      content: [{ text: expect.stringContaining('no current native execution authority') }],
     });
   });
 

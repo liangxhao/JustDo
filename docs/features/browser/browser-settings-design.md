@@ -1,6 +1,6 @@
 # 浏览器：四种模式、实时工作区与控制权
 
-浏览器设置选择 Agent 使用哪个 browser Tool；右侧工作区提供用户可操作的真实网页。当前承载是 Electron webview guest，WebContentsView 仍是后续迁移候选，不能写成已交付架构。
+浏览器设置选择 Agent 使用哪个 browser Tool；右侧工作区提供用户可操作的真实网页。前台继续使用 Electron webview guest，内置后台页面由 Main 的隐藏离屏 BrowserWindow 承载。统一 WebContentsView 与同页前后台接管仍是后续迁移候选。
 
 源码保持两侧各自的生命周期入口：Main 的 `browser/browserAgentBridge.ts` 持有 guest、连接和操作上下文，辅助能力归 `agent`、`downloads`、`extension`、`history`、`data`、`recording`、`pdf` 和 `preview`；Renderer 的 `features/browser/BrowserPanel.tsx` 持有网页面板，标注、录制、人工介入、数据对话框与 PDF 分别归对应领域目录。测试与实现相邻。目录归位不改变进程边界、原生 browser Tool 语义、下载策略或扩展配对协议。
 
@@ -72,6 +72,36 @@ flowchart LR
 每个 Tab 绑定任务、profile、UI target 与真实 webContents。Main 复核主窗口归属、webview 类型、合法 partition 与真实存储路径，每次动作都不能只信前一次注册。
 
 默认 embedded、导入 imported 及合法命名 profile 使用隔离持久 partition。弹窗、复制、恢复和派生 Tab 继承来源 profile，不能意外共享应用壳 Cookie 或认证。后台任务可创建自身 Tab，但不抢用户当前工作区。
+
+### 内置浏览器的前台与后台执行
+
+内置模式仍只注册一个 `browser` 工具，新增可选布尔参数 `headless`；不新增 Chrome 适配或 OpenClaw patch，不改变四种模式的互斥配置。
+
+| 使用场景 | 创建新页面的行为 |
+| --- | --- |
+| 普通会话省略 headless，或显式 false | 打开当前会话的侧栏浏览器 |
+| 普通会话中用户明确要求无头/后台，传入 true | Main 创建隐藏页面，不显示侧栏或聚焦窗口 |
+| 支持的内置浏览器定时任务 | 受信运行绑定固定 true；显式 false 返回冲突 |
+
+`headless` 只决定内置页面展示。普通入口由 Main 处理默认 false；模型仅在用户明确要求时传 true，关闭侧栏本身不改变执行方式。start 或新建页面的明确模式可在同一受信原生轮次延续；下一轮新建上下文重新默认 false。已有 target 沿用其创建模式，省略参数不会切换；显式冲突需新建页面，不能重建同名 target 冒充原页面状态。
+
+前台沿用 Renderer 注册与交互遮罩。后台只接受 Main 私有 registry 登记，复核实际 WebContents、作用域、profile 和 target；Renderer 不能注册后台窗口。前后台页面与待创建请求共用会话标签上限。后台输入使用 CDP，不依赖窗口焦点，focus 只更新逻辑活动页；截图保留图像内容及原有不可信封装。“无头”表示 Electron 不显示窗口的离屏执行，仍有脚本、布局和绘制。
+
+前后台按 profile 共用同一个持久 Session：普通会话、定时任务和侧栏可实时使用相同的 Cookie（含 HttpOnly）、localStorage、IndexedDB、HTTP 认证缓存和站点 worker，不做 Cookie 快照或凭据复制。用户可在侧栏登录或登出；无头后续请求直接使用该 profile 的当前状态。默认、导入、命名 profile 之间仍隔离。共享语义等同同 profile 新标签：sessionStorage 和页面内存仍按标签隔离，不能保证仅把登录放在这些位置的站点跨标签免登录。
+
+共享 Session 的网络、权限和下载处理器由 Main 单一所有者安装，侧栏仅登记当前 UI 回调，后台只登记真实页面所有权。后台关闭时立即撤销该页面准入，异步 DNS 回来后复核原页面身份；销毁真实 guest 后释放自身存储占用。不按任务清除共享 Service Worker、缓存、登录数据或关闭 profile 连接，因此侧栏及其他任务可继续工作。无法归属页面的 worker 请求按 profile 网络政策处理，不获得工具或工作区权限；取消不代表站点派生或已发请求已经停止。
+
+手动数据清理在存在待创建、存活或待销毁后台页时报告相冲突类别失败，见[数据存储](../../architecture/10-data-storage.md)。后台不弹站点权限、网站 HTTP 认证或导入界面；匹配的浏览器代理认证和 profile 现有认证缓存继续可用。后台下载必须绑定真实存活页面并由 Agent 操作认领，否则取消；无页面归属的 worker 下载也取消，不能进入保存对话框。后台 PDF 不触发侧栏通知，window.open 被拒绝，新页面应使用 browser.open。主窗释放只移除自身 UI 回调和下载，不卸载共享保护或取消别的任务下载。
+
+公开 V2 factory、最终工具权限 hook 和 exact toolCall 共同准入，绑定原生 sessionId/lifecycleRevision、runId、jobId 与工作区；模型参数、key 形状或提示词不能授予权限。原生禁止 host-control、仅允许 sandbox 或提供不同文件根时拒绝执行。workspace-only 下上传/输出继续受 canonical 工作区约束，工具拒绝本地 file 文档及执行中的 file 跳转；用户手动侧栏浏览不因此改变。
+
+普通后台页在正常轮末保留，后续调用需新许可；失败或取消的确切终态销毁该会话自有后台页。原生工具信号在正常工具代次清理时也会 abort，不能把信号失效推断成整轮取消。任一原始信号失效先发布独立 revoked 事件，立即阻断本轮 browser 准入、取消 pending，并撤销已经返回 armed 的上传、对话框和 Agent 下载；保留确切运行身份，直到 whole-run end/error 且 executionSettled:true 才发布最终 released。普通页此时按真实终态决定保留或销毁，定时临时页在权限退役或最终释放时均回收。后续调用等待新一轮许可，不能借用已失效的工具代次。清理不代替原生运行结果证据，也不能撤回已经发出的站点请求。服务停用/替换、断连、原生 incarnation 改变、会话删除和应用退出撤销相应资源，不重试未知写入。
+
+首期通过截图、工具结果和文件观察后台过程，不支持同一后台原页面挂回侧栏、直接人工接管或原地切换前后台。运行 `node scripts/test/verify-background-browser.cjs` 可使用独立数据目录和 localhost 合成页面复验；验证包括实际 webview 与后台并发共享 Cookie/localStorage/IndexedDB、登录状态变更、profile 隔离及任务释放不影响侧栏 worker/连接。保留输入、截图、工作区上传/PDF/下载和实际 Main 执行链检查；该入口的身份、会话/job 查询、前台 UI 回调及 resolve 传输使用合成边界。共享 profile 不再采用此前独立 partition 的“清所有 worker、无迟到 POST”验收标准，页面销毁不能证明共享站点活动已排空。
+
+另有真实原生定时入口 `scripts/test/verify-browser-cron.cjs`，使用选定运行时的随包 Node 并传入 `--runtime-dir <runtime>`。Windows 隔离验证已通过冻结的 v2026.10.7 Gateway、当前源码的插件和 Main/Electron：只创建一次 at job，等待原生 timer 自动触发，通过认证 SDK 接收原始插件事件、实际 cron.get 和产品 mapper 准入；模型省略 headless，连续打开、读取网页和截图均实际执行，图像返回本地合成模型。核对同一原生运行的精确成功 executionSettled 终态、后续 settled release、cron.runs 成功记录、自有页面回收和两个进程正常退出，不调用 cron.run 冒充定时触发。测试关闭隔离目录的可选 Node 编译缓存，避免其退出时序列化拖延，不改变任务或工具授权。
+
+两种入口及边界见[隔离验证说明](../../../tests/browser-background-electron/README.md)。真实定时验证使用已校验完整性的冻结原生产物，报告明确 `strictCurrentSourceProof:false`：它不验证按当前完整源码重新组装的安装包。公司实际模型、业务站点/SSO、锁屏/睡眠和 macOS/Linux 尚未验收。
 
 ## 3. 工具动作与观察
 

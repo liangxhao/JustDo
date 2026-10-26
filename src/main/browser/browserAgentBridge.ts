@@ -39,6 +39,7 @@ import {
   BrowserAgentInteractionLease,
   BrowserDialogResponse,
   BrowserDialogState,
+  type BrowserExecutionScope,
   BrowserInteractionAckWaiter,
   BrowserLabelAnnotation,
   BrowserLogEntry,
@@ -66,6 +67,7 @@ import {
 import * as browserAgentSnapshots from './agent/browserAgentSnapshots';
 import { type BrowserAgentSnapshotsContext } from './agent/browserAgentSnapshots';
 import { BrowserIntervention } from './agent/browserIntervention';
+import { BackgroundBrowserHost } from './backgroundBrowserHost';
 import {
   importChromeData,
   listChromeImportSources,
@@ -76,6 +78,9 @@ import { sanitizeBrowserUrl as sanitizeUrlForModel } from './data/browserDataSan
 import { cancelBrowserAgentDownloadsForWebContents } from './downloads/browserAgentDownloadCoordinator';
 
 export class BrowserAgentBridge {
+  private readonly executionScopes = new Map<string, BrowserExecutionScope>();
+  private readonly runDisplayModes = new Map<string, { runId: string; headless: boolean }>();
+  private readonly pendingBackgroundTabs = new Map<string, number>();
   private readonly intervention = new BrowserIntervention();
   private readonly interventionOwners = new Map<string, number>();
   private readonly tabsBySession = new Map<string, Map<string, RegisteredTab>>();
@@ -145,6 +150,7 @@ export class BrowserAgentBridge {
       hostId,
     ) => ownerId === hostId,
     private readonly getBrowserTabLimit: () => unknown = () => DEFAULT_BROWSER_TAB_LIMIT,
+    private readonly backgroundHost = new BackgroundBrowserHost(),
   ) {
     try {
       for (const profile of listImportedBrowserProfiles()) {
@@ -392,6 +398,10 @@ export class BrowserAgentBridge {
       }
     }
     for (const reject of this.pendingCommandRejectors) reject(stoppedError);
+    this.backgroundHost.stop();
+    this.executionScopes.clear();
+    this.runDisplayModes.clear();
+    this.pendingBackgroundTabs.clear();
     this.pendingCommandRejectors.clear();
     this.tabsBySession.clear();
     this.activeTargets.clear();
@@ -440,6 +450,7 @@ export class BrowserAgentBridge {
       waiter.reject(stoppedError);
     }
     this.interactionAckWaiters.clear();
+    await this.backgroundHost.waitForDrain();
   }
 
   private rejectInteractionAcksForTab(webContentsId: number, error: Error): void {
@@ -537,6 +548,10 @@ export class BrowserAgentBridge {
     signal: AbortSignal,
     operation: () => Promise<T> | T,
   ): Promise<T> {
+    if (tab.headless) {
+      signal.throwIfAborted();
+      return await operation();
+    }
     this.assertNoRecording(profile);
     if (this.userInteractionLocks.has(tab.webContentsId)) {
       throw new Error('The user is annotating the browser. Retry after they finish.');
@@ -829,18 +844,55 @@ export class BrowserAgentBridge {
     return nextTarget;
   }
 
-  async executeCommand(sessionKey: string, value: unknown, signal?: AbortSignal): Promise<unknown> {
+  async executeCommand(
+    sessionKey: string,
+    value: unknown,
+    signal?: AbortSignal,
+    executionScope?: BrowserExecutionScope,
+  ): Promise<unknown> {
     const command = parseCommand(
       value && typeof value === 'object' && !Array.isArray(value)
         ? { ...(value as Record<string, unknown>), sessionKey }
         : null,
     );
     if (!command) throw new Error('Invalid browser command.');
+    if (executionScope) {
+      if (!executionScope.sessionId || !path.isAbsolute(executionScope.workspaceDir)) {
+        throw new Error('The browser execution scope is invalid.');
+      }
+      this.executionScopes.set(executionScope.sessionId, executionScope);
+    }
     try {
-      return await this.execute(command, signal);
+      return await this.execute(command, signal, executionScope);
     } catch (error) {
       throw new Error(sanitizeErrorForModel(error));
     }
+  }
+
+  releaseExecutionScope(sessionId: string, closeBackgroundPages: boolean): void {
+    for (const tab of this.listLiveTabsForSession(sessionId)) {
+      this.clearArmedDialog(tab.webContentsId);
+      this.clearArmedUpload(tab.webContentsId, webContents.fromId(tab.webContentsId) ?? undefined);
+      cancelBrowserAgentDownloadsForWebContents(
+        tab.webContentsId,
+        new Error('The native browser run has ended.'),
+      );
+      if (closeBackgroundPages && tab.headless) {
+        this.discardTabRuntime(tab);
+        this.removeRegisteredTab(browserScopeId(sessionId, tab.profile), tab.targetId);
+      }
+    }
+    if (closeBackgroundPages) {
+      this.backgroundHost.closeScope(sessionId);
+      this.executionScopes.delete(sessionId);
+      this.runDisplayModes.delete(sessionId);
+    }
+  }
+
+  revokeBackgroundPages(): void {
+    for (const sessionId of this.executionScopes.keys())
+      this.releaseExecutionScope(sessionId, true);
+    this.backgroundHost.stop();
   }
 
   private listLiveTabs(sessionId: string): RegisteredTab[] {
@@ -860,8 +912,14 @@ export class BrowserAgentBridge {
     return [...tabs.values()];
   }
 
-  private resolveTab(sessionId: string, targetReference?: string): RegisteredTab | null {
-    const tabs = this.listLiveTabs(sessionId);
+  private resolveTab(
+    sessionId: string,
+    targetReference?: string,
+    headless?: boolean,
+  ): RegisteredTab | null {
+    const tabs = this.listLiveTabs(sessionId).filter(
+      tab => targetReference || headless === undefined || (tab.headless === true) === headless,
+    );
     if (!tabs.length) return null;
     const reference = targetReference?.trim();
     if (reference) {
@@ -892,18 +950,23 @@ export class BrowserAgentBridge {
       targetId?: string;
       label?: string;
       forceNew?: boolean;
+      headless?: boolean;
     } = {},
   ): Promise<RegisteredTab> {
     signal?.throwIfAborted();
-    await registerBrowserProxySession(session.fromPartition(browserPartitionForProfile(profile)));
+    if (!options.headless) {
+      await registerBrowserProxySession(session.fromPartition(browserPartitionForProfile(profile)));
+    }
     signal?.throwIfAborted();
-    const existing = options.forceNew ? null : this.resolveTab(scopeId, options.targetId);
+    const existing = options.forceNew
+      ? null
+      : this.resolveTab(scopeId, options.targetId, options.headless === true);
     if (existing) return existing;
     if (options.targetId && !options.forceNew) {
       throw new Error(`Browser tab not found: ${options.targetId}`);
     }
     const maximumTabs = normalizeBrowserTabLimit(this.getBrowserTabLimit());
-    let occupiedTabs = 0;
+    let occupiedTabs = this.pendingBackgroundTabs.get(rendererSessionId) ?? 0;
     for (const candidateProfile of this.profiles) {
       const candidateScope = browserScopeId(rendererSessionId, candidateProfile);
       occupiedTabs +=
@@ -914,6 +977,57 @@ export class BrowserAgentBridge {
     }
 
     const requestedTargetId = options.targetId ?? `embedded-${randomUUID()}`;
+
+    if (options.headless) {
+      this.pendingBackgroundTabs.set(
+        rendererSessionId,
+        (this.pendingBackgroundTabs.get(rendererSessionId) ?? 0) + 1,
+      );
+      let guest: Electron.WebContents | undefined;
+      try {
+        guest = await this.backgroundHost.create({
+          scopeId,
+          sessionId: rendererSessionId,
+          profile,
+          targetId: requestedTargetId,
+          signal,
+        });
+        signal?.throwIfAborted();
+        const tab: RegisteredTab = {
+          sessionId: rendererSessionId,
+          profile,
+          targetId: requestedTargetId,
+          webContentsId: guest.id,
+          ownerId: -1,
+          headless: true,
+        };
+        const tabs = this.tabsBySession.get(scopeId) ?? new Map<string, RegisteredTab>();
+        tabs.set(tab.targetId, tab);
+        this.tabsBySession.set(scopeId, tabs);
+        this.startedSessions.add(scopeId);
+        this.activeTargets.set(scopeId, tab.targetId);
+        const handles = this.tabHandlesBySession.get(scopeId) ?? new Map<string, string>();
+        const next = this.nextTabHandleBySession.get(scopeId) ?? 1;
+        handles.set(tab.targetId, `t${next}`);
+        this.tabHandlesBySession.set(scopeId, handles);
+        this.nextTabHandleBySession.set(scopeId, next + 1);
+        this.installGuestRuntime(tab);
+        guest.once('destroyed', () => {
+          this.discardTabRuntime(tab);
+          this.removeRegisteredTab(scopeId, tab.targetId);
+        });
+        await this.enableDebuggerDomains(tab, guest);
+        signal?.throwIfAborted();
+        return tab;
+      } catch (error) {
+        if (guest) this.backgroundHost.close(guest.id);
+        throw error;
+      } finally {
+        const pending = (this.pendingBackgroundTabs.get(rendererSessionId) ?? 1) - 1;
+        if (pending > 0) this.pendingBackgroundTabs.set(rendererSessionId, pending);
+        else this.pendingBackgroundTabs.delete(rendererSessionId);
+      }
+    }
 
     return new Promise<RegisteredTab>((resolve, reject) => {
       const existingWaiters = this.tabWaiters.get(scopeId);
@@ -969,10 +1083,16 @@ export class BrowserAgentBridge {
     });
   }
 
-  private async execute(command: AgentBrowserCommand, signal?: AbortSignal): Promise<unknown> {
+  private async execute(
+    command: AgentBrowserCommand,
+    signal?: AbortSignal,
+    executionScope?: BrowserExecutionScope,
+  ): Promise<unknown> {
     let cancelled = false;
     let activeGuest: Electron.WebContents | null = null;
     let activeGuestId: number | null = null;
+    const fileNavigationGuards = new Map<number, () => void>();
+    let blockedFileNavigation = false;
     const operationController = new AbortController();
     const locksInteraction = AGENT_INTERACTION_ACTIONS.has(command.action);
     const nestedRequest =
@@ -1004,6 +1124,7 @@ export class BrowserAgentBridge {
           ? LONG_COMMAND_TIMEOUT_MS
           : COMMAND_TIMEOUT_MS;
     const assertActive = (): void => {
+      signal?.throwIfAborted();
       if (cancelled) throw new Error('Browser command timed out.');
       if (
         locksInteraction &&
@@ -1013,11 +1134,12 @@ export class BrowserAgentBridge {
         throw new Error('The user is annotating the browser. Retry after they finish.');
       }
     };
-    const interventionSessionId = normalizeSessionId(command.sessionKey);
+    const interventionSessionId =
+      executionScope?.sessionId ?? normalizeSessionId(command.sessionKey);
     const tracked = this.intervention.track(interventionSessionId);
     signal = signal ? AbortSignal.any([signal, tracked.signal]) : tracked.signal;
     const operation = (async () => {
-      const sessionId = normalizeSessionId(command.sessionKey);
+      const sessionId = interventionSessionId;
       if (!sessionId) throw new Error('This browser tool is only available in desktop tasks.');
       if (command.profile && !isBrowserAgentProfile(command.profile)) {
         throw new Error(`Browser profile not found: ${command.profile}`);
@@ -1026,9 +1148,87 @@ export class BrowserAgentBridge {
       const profile = (command.profile?.trim() || EMBEDDED_PROFILE) as BrowserAgentProfile;
       if (!this.profiles.has(profile)) throw new Error(`Browser profile not found: ${profile}`);
       const scopeId = browserScopeId(sessionId, profile);
+      const selectedTargetId =
+        command.targetId?.trim() ||
+        (command.action === 'act' && typeof nestedRequest?.targetId === 'string'
+          ? nestedRequest.targetId.trim()
+          : undefined);
+      const currentMode = this.runDisplayModes.get(sessionId);
+      const defaultHeadless =
+        executionScope?.headlessOnly === true ||
+        (command.headless ??
+          (executionScope && currentMode?.runId === executionScope.runId
+            ? currentMode.headless
+            : false));
+      const selectedTab =
+        command.action === 'open'
+          ? null
+          : this.resolveTab(scopeId, selectedTargetId, defaultHeadless);
+      if (
+        command.headless !== undefined &&
+        selectedTab &&
+        command.headless !== (selectedTab.headless === true)
+      ) {
+        throw new Error(
+          'The requested browser display mode differs from the existing page. Open a new page with the requested headless value.',
+        );
+      }
+      if (
+        executionScope?.headlessOnly &&
+        (command.headless === false || (selectedTab && !selectedTab.headless))
+      ) {
+        throw new Error('Scheduled browser execution requires headless=true.');
+      }
+      const headless = selectedTab ? selectedTab.headless === true : defaultHeadless;
+      if (
+        executionScope &&
+        (command.action === 'start' ||
+          command.action === 'open' ||
+          (command.action === 'navigate' && !selectedTab))
+      ) {
+        this.runDisplayModes.set(sessionId, { runId: executionScope.runId, headless });
+      }
+      const withPanelLease = <T>(operation: () => Promise<T> | T): Promise<T> =>
+        headless
+          ? Promise.resolve().then(() => {
+              operationController.signal.throwIfAborted();
+              return operation();
+            })
+          : this.withPanelInteractionLease(
+              sessionId,
+              profile,
+              operationController.signal,
+              operation,
+            );
+      const resolveGuest = (tab: RegisteredTab): Electron.WebContents => {
+        const guest = this.resolveRegisteredGuest(tab);
+        if (executionScope?.allowLocalFiles === false && /^file:/iu.test(guest.getURL())) {
+          throw new Error('Local file pages are unavailable under this browser filesystem policy.');
+        }
+        if (executionScope?.allowLocalFiles === false && !fileNavigationGuards.has(guest.id)) {
+          const blockFileNavigation = (
+            event: Electron.Event & { url?: string },
+            url?: string,
+          ): void => {
+            if (/^file:/iu.test(url ?? event.url ?? '')) {
+              blockedFileNavigation = true;
+              event.preventDefault();
+            }
+          };
+          guest.on('will-navigate', blockFileNavigation);
+          guest.on('will-frame-navigate', blockFileNavigation);
+          guest.on('will-redirect', blockFileNavigation);
+          fileNavigationGuards.set(guest.id, () => {
+            guest.off('will-navigate', blockFileNavigation);
+            guest.off('will-frame-navigate', blockFileNavigation);
+            guest.off('will-redirect', blockFileNavigation);
+          });
+        }
+        return guest;
+      };
 
       const describeTab = (tab: RegisteredTab) => {
-        const guest = this.resolveRegisteredGuest(tab);
+        const guest = resolveGuest(tab);
         const label = [...(this.labelsBySession.get(scopeId)?.entries() ?? [])].find(
           ([, targetId]) => targetId === tab.targetId,
         )?.[0];
@@ -1041,6 +1241,7 @@ export class BrowserAgentBridge {
           title: guest.getTitle(),
           url: sanitizeUrlForModel(guest.getURL()),
           type: 'page',
+          headless: tab.headless === true,
         };
       };
       const tabListResult = () => {
@@ -1072,7 +1273,7 @@ export class BrowserAgentBridge {
         detectError: null,
         userDataDir: null,
         color: EMBEDDED_PROFILE_COLOR,
-        headless: false,
+        headless,
         noSandbox: false,
         executablePath: process.execPath,
         attachOnly: true,
@@ -1122,28 +1323,23 @@ export class BrowserAgentBridge {
         };
       }
       if (command.action === 'stop') {
-        return this.withPanelInteractionLease(
-          sessionId,
-          profile,
-          operationController.signal,
-          () => {
-            const tabs = this.listLiveTabs(scopeId);
-            for (const tab of tabs) {
+        return withPanelLease(() => {
+          const tabs = this.listLiveTabs(scopeId).filter(
+            tab => (tab.headless === true) === headless,
+          );
+          for (const tab of tabs) {
+            if (tab.headless) this.backgroundHost.close(tab.webContentsId);
+            else
               this.sendToRenderer(BrowserIpc.AgentCloseTab, {
                 sessionId,
                 targetId: tab.targetId,
               });
-              this.discardTabRuntime(tab);
-            }
-            this.tabsBySession.delete(scopeId);
-            this.activeTargets.delete(scopeId);
-            this.labelsBySession.delete(scopeId);
-            this.tabHandlesBySession.delete(scopeId);
-            this.nextTabHandleBySession.delete(scopeId);
-            this.startedSessions.delete(scopeId);
-            return { ...statusResult(), running: false };
-          },
-        );
+            this.discardTabRuntime(tab);
+            this.removeRegisteredTab(scopeId, tab.targetId);
+          }
+          if (!this.listLiveTabs(scopeId).length) this.startedSessions.delete(scopeId);
+          return { ...statusResult(), running: false };
+        });
       }
       if (command.action === 'profiles') {
         return {
@@ -1170,6 +1366,8 @@ export class BrowserAgentBridge {
         };
       }
       if (command.action === 'importprofile') {
+        if (headless)
+          throw new Error('Browser profile import requires the visible browser settings.');
         const into = command.into?.trim() || IMPORTED_PROFILE;
         if (!isBrowserAgentProfile(into)) {
           throw new Error(`Browser profile not found: ${command.into}`);
@@ -1245,36 +1443,32 @@ export class BrowserAgentBridge {
         if (label && this.labelsBySession.get(scopeId)?.has(label)) {
           throw new Error(`Browser tab label already exists: ${label}`);
         }
-        return this.withPanelInteractionLease(
-          sessionId,
-          profile,
-          operationController.signal,
-          async () => {
-            const tab = await this.getActiveTab(
-              scopeId,
-              sessionId,
-              profile,
-              operationController.signal,
-              {
-                targetId: `embedded-${randomUUID()}`,
-                ...(label ? { label } : {}),
-                forceNew: true,
-              },
-            );
-            if (label) {
-              const labels = this.labelsBySession.get(scopeId) ?? new Map<string, string>();
-              labels.set(label, tab.targetId);
-              this.labelsBySession.set(scopeId, labels);
-            }
-            const guest = this.resolveRegisteredGuest(tab);
-            activeGuest = guest;
-            activeGuestId = tab.webContentsId;
-            if (guest.getURL() !== url) await guest.loadURL(url);
-            assertActive();
-            this.activeTargets.set(scopeId, tab.targetId);
-            return { ok: true, ...describeTab(tab) };
-          },
-        );
+        return withPanelLease(async () => {
+          const tab = await this.getActiveTab(
+            scopeId,
+            sessionId,
+            profile,
+            operationController.signal,
+            {
+              targetId: `embedded-${randomUUID()}`,
+              ...(label ? { label } : {}),
+              forceNew: true,
+              headless,
+            },
+          );
+          if (label) {
+            const labels = this.labelsBySession.get(scopeId) ?? new Map<string, string>();
+            labels.set(label, tab.targetId);
+            this.labelsBySession.set(scopeId, labels);
+          }
+          const guest = resolveGuest(tab);
+          activeGuest = guest;
+          activeGuestId = tab.webContentsId;
+          if (guest.getURL() !== url) await guest.loadURL(url);
+          assertActive();
+          this.activeTargets.set(scopeId, tab.targetId);
+          return { ok: true, ...describeTab(tab) };
+        });
       }
 
       const targetId =
@@ -1283,67 +1477,55 @@ export class BrowserAgentBridge {
           ? nestedRequest.targetId.trim()
           : undefined);
       if (command.action === 'focus' || command.action === 'close') {
-        const tab = this.resolveTab(scopeId, targetId);
+        const tab = this.resolveTab(scopeId, targetId, headless);
         if (!tab)
           throw new Error(targetId ? `Browser tab not found: ${targetId}` : 'No browser tab.');
         if (command.action === 'focus') {
-          return this.withPanelInteractionLease(
-            sessionId,
-            profile,
-            operationController.signal,
-            () => {
+          return withPanelLease(() => {
+            if (!tab.headless)
               this.sendToRenderer(BrowserIpc.AgentFocusTab, {
                 sessionId,
                 targetId: tab.targetId,
               });
-              this.activeTargets.set(scopeId, tab.targetId);
-              return { ok: true, ...describeTab(tab) };
-            },
-          );
+            this.activeTargets.set(scopeId, tab.targetId);
+            return { ok: true, ...describeTab(tab) };
+          });
         }
-        return this.withPanelInteractionLease(
-          sessionId,
-          profile,
-          operationController.signal,
-          () => {
-            this.sendToRenderer(BrowserIpc.AgentCloseTab, { sessionId, targetId: tab.targetId });
-            this.discardTabRuntime(tab);
-            this.removeRegisteredTab(scopeId, tab.targetId);
-            return { ok: true, targetId: tab.targetId };
-          },
-        );
+        return withPanelLease(() => {
+          if (tab.headless) this.backgroundHost.close(tab.webContentsId);
+          else this.sendToRenderer(BrowserIpc.AgentCloseTab, { sessionId, targetId: tab.targetId });
+          this.discardTabRuntime(tab);
+          this.removeRegisteredTab(scopeId, tab.targetId);
+          return { ok: true, targetId: tab.targetId };
+        });
       }
 
-      let tab = this.resolveTab(scopeId, targetId);
+      let tab = this.resolveTab(scopeId, targetId, headless);
       if (!tab && targetId) throw new Error(`Browser tab not found: ${targetId}`);
       if (!tab && command.action === 'navigate') {
-        return this.withPanelInteractionLease(
-          sessionId,
-          profile,
-          operationController.signal,
-          async () => {
-            const createdTab = await this.getActiveTab(
-              scopeId,
+        return withPanelLease(async () => {
+          const createdTab = await this.getActiveTab(
+            scopeId,
+            sessionId,
+            profile,
+            operationController.signal,
+            { headless },
+          );
+          return this.enqueue(createdTab.webContentsId, async () => {
+            const guest = resolveGuest(createdTab);
+            activeGuest = guest;
+            activeGuestId = createdTab.webContentsId;
+            return this.executeOnGuest(
+              command,
+              createdTab,
+              guest,
+              assertActive,
               sessionId,
               profile,
               operationController.signal,
             );
-            return this.enqueue(createdTab.webContentsId, async () => {
-              const guest = this.resolveRegisteredGuest(createdTab);
-              activeGuest = guest;
-              activeGuestId = createdTab.webContentsId;
-              return this.executeOnGuest(
-                command,
-                createdTab,
-                guest,
-                assertActive,
-                sessionId,
-                profile,
-                operationController.signal,
-              );
-            });
-          },
-        );
+          });
+        });
       }
       if (!tab) throw new Error('No browser tab is open. Use action=open first.');
       const lockedTabs = this.listLiveTabs(scopeId).filter(candidate =>
@@ -1372,7 +1554,7 @@ export class BrowserAgentBridge {
         ) {
           throw new Error('The user is annotating the browser. Retry after they finish.');
         }
-        const guest = this.resolveRegisteredGuest(tab);
+        const guest = resolveGuest(tab);
         activeGuest = guest;
         activeGuestId = tab.webContentsId;
         const executeOnGuest = () =>
@@ -1386,11 +1568,12 @@ export class BrowserAgentBridge {
             operationController.signal,
           );
         return locksInteraction
-          ? this.withPanelInteractionLease(sessionId, profile, operationController.signal, () => {
-              this.sendToRenderer(BrowserIpc.AgentFocusTab, {
-                sessionId,
-                targetId: tab.targetId,
-              });
+          ? withPanelLease(() => {
+              if (!tab.headless)
+                this.sendToRenderer(BrowserIpc.AgentFocusTab, {
+                  sessionId,
+                  targetId: tab.targetId,
+                });
               return this.withAgentInteractionLease(
                 tab,
                 sessionId,
@@ -1403,11 +1586,22 @@ export class BrowserAgentBridge {
       });
     })().finally(() => {
       try {
+        if (blockedFileNavigation)
+          throw new Error('Local file navigation was blocked by the browser filesystem policy.');
+        if (
+          activeGuest &&
+          !activeGuest.isDestroyed() &&
+          executionScope?.allowLocalFiles === false &&
+          /^file:/iu.test(activeGuest.getURL())
+        ) {
+          throw new Error('Local file pages are unavailable under this browser filesystem policy.');
+        }
         if (
           this.intervention.read(interventionSessionId)?.phase === BrowserInterventionPhase.Stopping
         )
           this.clearInterventionActions(interventionSessionId);
       } finally {
+        for (const removeGuard of fileNavigationGuards.values()) removeGuard();
         tracked.finish();
       }
     });
@@ -1423,6 +1617,9 @@ export class BrowserAgentBridge {
         }
         if (typeof activeGuest?.stop === 'function') activeGuest.stop();
         if (activeGuest) this.snapshots.delete(activeGuest.id);
+        if (activeGuestId !== null && this.backgroundHost.has(activeGuestId)) {
+          this.backgroundHost.close(activeGuestId);
+        }
         return error;
       },
       signal,
@@ -1720,11 +1917,14 @@ export class BrowserAgentBridge {
     if (!guest || !this.isRegisteredGuestAvailable(tab)) {
       throw new Error('The browser tab is no longer available.');
     }
+    const failure = tab.headless ? this.backgroundHost.getFailure(tab.webContentsId) : null;
+    if (failure) throw new Error(failure);
     return guest;
   }
 
   private isRegisteredGuestAvailable(tab: RegisteredTab): boolean {
     const guest = webContents.fromId(tab.webContentsId);
+    if (tab.headless) return Boolean(guest && this.backgroundHost.owns(tab, guest));
     // Ownership and webContents type are stable across Electron wrapper
     // recreation; Session object identity is not.
     return Boolean(
@@ -1760,6 +1960,10 @@ export class BrowserAgentBridge {
       guestDebugger.sendCommand('Network.enable'),
       guestDebugger.sendCommand('Runtime.enable'),
       guestDebugger.sendCommand('Page.enable'),
+      guestDebugger.sendCommand('DOM.enable'),
+      ...(tab.headless
+        ? [guestDebugger.sendCommand('Page.setInterceptFileChooserDialog', { enabled: true })]
+        : []),
     ]);
     return guestDebugger;
   }
@@ -1811,7 +2015,9 @@ export class BrowserAgentBridge {
     this.armedUploads.delete(webContentsId);
     if (guest && !guest.isDestroyed() && guest.debugger.isAttached()) {
       void guest.debugger
-        .sendCommand('Page.setInterceptFileChooserDialog', { enabled: false })
+        .sendCommand('Page.setInterceptFileChooserDialog', {
+          enabled: this.backgroundHost.has(webContentsId),
+        })
         .catch((): void => undefined);
     }
     return armed;
@@ -1821,9 +2027,12 @@ export class BrowserAgentBridge {
     tab: RegisteredTab,
     guest: Electron.WebContents,
     files: string[],
+    assertActive: () => void = () => undefined,
   ): Promise<{ completion: Promise<void> }> {
+    assertActive();
     this.clearArmedUpload(tab.webContentsId, guest);
     const guestDebugger = await this.enableDebuggerDomains(tab, guest);
+    assertActive();
     let resolveCompletion!: () => void;
     let rejectCompletion!: (error: Error) => void;
     const completion = new Promise<void>((resolve, reject) => {
@@ -1845,9 +2054,12 @@ export class BrowserAgentBridge {
       resolve: resolveCompletion,
       reject: rejectCompletion,
       leaseOwner: 'current',
+      assertActive,
     });
     try {
+      assertActive();
       await guestDebugger.sendCommand('Page.setInterceptFileChooserDialog', { enabled: true });
+      assertActive();
     } catch (error) {
       this.clearArmedUpload(tab.webContentsId, guest);
       throw error;
@@ -1974,14 +2186,20 @@ export class BrowserAgentBridge {
         if (armed) {
           clearTimeout(armed.timer);
           this.armedDialogs.delete(tab.webContentsId);
-          void guest.debugger
-            .sendCommand('Page.handleJavaScriptDialog', {
-              accept: armed.accept,
-              ...(armed.accept && dialogState.type === 'prompt' && armed.promptText !== undefined
-                ? { promptText: armed.promptText }
-                : {}),
+          void Promise.resolve()
+            .then(() => {
+              armed.assertActive?.();
+              return guest.debugger.sendCommand('Page.handleJavaScriptDialog', {
+                accept: armed.accept,
+                ...(armed.accept && dialogState.type === 'prompt' && armed.promptText !== undefined
+                  ? { promptText: armed.promptText }
+                  : {}),
+              });
             })
-            .then(() => this.dialogs.delete(tab.webContentsId))
+            .then(() => {
+              armed.assertActive?.();
+              this.dialogs.delete(tab.webContentsId);
+            })
             .catch(error =>
               this.appendLog(this.errorLogs, tab.webContentsId, {
                 timestamp: Date.now(),
@@ -2005,26 +2223,45 @@ export class BrowserAgentBridge {
           const backendNodeId = params.backendNodeId;
           void (async () => {
             try {
+              armed.assertActive?.();
               if (typeof backendNodeId !== 'number') {
                 throw new Error('The file chooser did not identify its input element.');
               }
               const files = this.resolveUploadPaths(tab.sessionId, armed.files);
+              armed.assertActive?.();
               await guest.debugger.sendCommand('DOM.setFileInputFiles', {
                 files,
                 backendNodeId,
               });
+              armed.assertActive?.();
               armed.resolve();
             } catch (error) {
               armed.reject(new Error(sanitizeErrorForModel(error)));
             } finally {
               await guest.debugger
-                .sendCommand('Page.setInterceptFileChooserDialog', { enabled: false })
+                .sendCommand('Page.setInterceptFileChooserDialog', {
+                  enabled: tab.headless === true,
+                })
                 .catch((): void => undefined);
               if (armed.leaseOwner === 'persistent') {
                 this.releaseAgentInteractionLease(tab.webContentsId);
               }
             }
           })();
+        } else if (tab.headless) {
+          this.appendLog(this.errorLogs, tab.webContentsId, {
+            timestamp: Date.now(),
+            level: 'error',
+            text: 'The background file chooser was blocked. Use action=upload with an authorized workspace file.',
+          });
+          if (typeof params.backendNodeId === 'number') {
+            void guest.debugger
+              .sendCommand('DOM.setFileInputFiles', {
+                files: [],
+                backendNodeId: params.backendNodeId,
+              })
+              .catch((): void => undefined);
+          }
         }
       }
     };
@@ -2128,7 +2365,8 @@ export class BrowserAgentBridge {
     requestedPath: string | undefined,
     defaultName: string,
   ): string {
-    const workspace = this.getSessionWorkspace(sessionId);
+    const workspace =
+      this.executionScopes.get(sessionId)?.workspaceDir ?? this.getSessionWorkspace(sessionId);
     if (!workspace || !path.isAbsolute(workspace)) {
       throw new Error('The task workspace is unavailable.');
     }
@@ -2201,7 +2439,8 @@ export class BrowserAgentBridge {
   }
 
   private assertManagedOutputPath(sessionId: string, outputPath: string): void {
-    const workspace = this.getSessionWorkspace(sessionId);
+    const workspace =
+      this.executionScopes.get(sessionId)?.workspaceDir ?? this.getSessionWorkspace(sessionId);
     if (!workspace || !path.isAbsolute(workspace)) {
       throw new Error('The task workspace is unavailable.');
     }
@@ -2220,7 +2459,8 @@ export class BrowserAgentBridge {
     if (!Array.isArray(requestedPaths) || requestedPaths.length < 1 || requestedPaths.length > 20) {
       throw new Error('paths required.');
     }
-    const workspace = this.getSessionWorkspace(sessionId);
+    const workspace =
+      this.executionScopes.get(sessionId)?.workspaceDir ?? this.getSessionWorkspace(sessionId);
     if (!workspace || !path.isAbsolute(workspace)) {
       throw new Error('The task workspace is unavailable.');
     }
@@ -2479,6 +2719,7 @@ export class BrowserAgentBridge {
       pendingNetworkRequests: { get: () => this.pendingNetworkRequests },
       lastNetworkActivity: { get: () => this.lastNetworkActivity },
       sendToRenderer: { get: () => this.sendToRenderer },
+      closeTab: { get: () => (tab: RegisteredTab) => this.backgroundHost.close(tab.webContentsId) },
       discardTabRuntime: { get: () => this.discardTabRuntime.bind(this) },
       removeRegisteredTab: { get: () => this.removeRegisteredTab.bind(this) },
       armUpload: { get: () => this.armUpload.bind(this) },

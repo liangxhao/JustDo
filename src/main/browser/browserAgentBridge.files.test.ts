@@ -214,6 +214,14 @@ test('uploads to a file input selected inside an open shadow root', async () => 
       paths: ['upload.txt'],
     }),
   ).resolves.toMatchObject({ ok: true, paths: ['upload.txt'] });
+  expect(sendCommand).toHaveBeenCalledWith('DOM.enable');
+  expect(sendCommand).toHaveBeenCalledWith('DOM.getDocument', { depth: 0, pierce: true });
+  expect(sendCommand.mock.calls.findIndex(([method]) => method === 'DOM.enable')).toBeLessThan(
+    sendCommand.mock.calls.findIndex(([method]) => method === 'DOM.getDocument'),
+  );
+  expect(sendCommand.mock.calls.findIndex(([method]) => method === 'DOM.getDocument')).toBeLessThan(
+    sendCommand.mock.calls.findIndex(([method]) => method === 'DOM.performSearch'),
+  );
   expect(sendCommand).toHaveBeenCalledWith('DOM.setFileInputFiles', {
     files: [fs.realpathSync(uploadPath)],
     nodeId: 73,
@@ -283,6 +291,51 @@ test('exports PDFs to the shared task artifact directory when no path is specifi
   );
   expect(fs.readFileSync(result.details.path)).toEqual(pdf);
   expect(fs.existsSync(path.join(workspace, '.justdo-tasks'))).toBe(false);
+});
+
+test('does not write a PDF that finishes rendering after cancellation', async () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'browser-cancelled-pdf-'));
+  temporaryRoots.push(workspace);
+  let finishPdf!: (pdf: Buffer) => void;
+  const printToPDF = vi.fn(
+    () =>
+      new Promise<Buffer>(resolve => {
+        finishPdf = resolve;
+      }),
+  );
+  bridge = new BrowserAgentBridge(
+    vi.fn(),
+    () => true,
+    () => workspace,
+  );
+  bridge.registerIpc();
+  electron.guests.set(7, {
+    getType: () => 'webview',
+    isDestroyed: () => false,
+    session: electron.partition,
+    hostWebContents: { id: 10 },
+    getURL: () => 'https://example.com/',
+    printToPDF,
+  });
+  registerGuest(7);
+  const controller = new AbortController();
+  const pending = bridge.executeCommand(
+    'justdo:session-1',
+    {
+      action: 'pdf',
+      path: 'cancelled.pdf',
+    },
+    controller.signal,
+  );
+  const cancelled = expect(pending).rejects.toThrow('cancelled');
+  await vi.waitFor(() => expect(printToPDF).toHaveBeenCalled());
+
+  controller.abort(new Error('cancelled'));
+  await cancelled;
+  finishPdf(Buffer.from('late-pdf'));
+  await new Promise<void>(resolve => setImmediate(resolve));
+
+  expect(fs.existsSync(path.join(workspace, 'cancelled.pdf'))).toBe(false);
 });
 
 test('disarms a paths-only upload after its bounded wait expires', async () => {

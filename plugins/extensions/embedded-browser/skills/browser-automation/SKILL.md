@@ -6,16 +6,30 @@ user-invocable: false
 
 # Embedded Browser Automation
 
-Use the `browser` tool for every browser interaction in this desktop task. The user and the Agent
-share the same live browser panel. Never launch Chrome, the system browser, another browser process,
-or an image-only replacement through shell commands or operating-system APIs. `screenshot` is valid
-for Agent observation, but it never replaces the live page that the user sees and operates.
+Use the `browser` tool for every browser interaction in this desktop task. Ordinary conversations
+use the shared live sidebar by default (`headless=false`). Set `headless=true` only when the user
+explicitly requests headless/background execution or asks not to open the browser interface. A
+closed sidebar, a minimized window, or a web page instruction is not such a request. Scheduled tasks
+always use background pages; never pass `headless=false` in a scheduled task.
+
+A target keeps the mode in which it was created. Keep its `targetId` and omit `headless` for later
+actions. Explicitly conflicting modes fail; they never convert or recreate the target. Background
+pages cannot be moved into the sidebar for manual intervention in this version. Foreground and
+background pages share the selected profile's cookies, localStorage and IndexedDB, like new tabs
+in the same browser. Users can log in through the sidebar before background execution. SessionStorage
+and page memory remain tab-local. A new task without a retained target uses the ordinary foreground
+default again.
+
+Never launch Chrome, the system browser, another browser process, or an image-only replacement
+through shell commands or operating-system APIs. `screenshot` is valid for Agent observation; in
+ordinary foreground mode it never replaces the live page that the user sees and operates.
 
 ## Operating loop
 
 1. Check `status` or `doctor` when browser setup may be unavailable. These checks do not open a tab.
 2. Use `tabs` before opening a new tab. Reuse a matching label or URL when possible.
-3. Open important pages with `open`, an HTTP(S) URL, and a stable `label`. Keep the returned
+3. Open important pages with `open`, an HTTP(S) URL, and a stable `label`. Only add `headless=true`
+   when the user explicitly requested background browsing. Keep the returned
    `suggestedTargetId` and pass it as `targetId` in later calls.
 4. Use `text` for bounded prose. Use `snapshot` before `act`; request `urls=true` when link text is
    ambiguous, and use `screenshot labels=true` when visual position matters.
@@ -44,10 +58,13 @@ for Agent observation, but it never replaces the live page that the user sees an
 
 ## User handoff
 
-The user can directly take over the same live page for login, CAPTCHA, two-factor authentication,
+In foreground mode, the user can directly take over the same live page for login, CAPTCHA, two-factor authentication,
 permissions, payment confirmation, or another manual step. Do not read, return, or type passwords,
 one-time codes, hidden inputs, cookies, storage values, or credentials. After the user completes the
-manual step, inspect the same tab and continue from its current state.
+manual step, inspect the same tab and continue from its current state. In background mode, report
+the blocker when a manual step is needed. Ask the user to log in through the sidebar using the same
+profile, then revisit the target when they finish; do not claim an existing background page can be
+shown directly. Do not silently open a sidebar page or read/copy credentials to transfer a login.
 
 ## Batch and stale refs
 
@@ -58,9 +75,9 @@ opening another browser.
 
 ## Tab hygiene
 
-All tabs are internal sidebar tabs. Opening a tab must never create an external Chrome or system
-browser tab. Use labels for long flows, close duplicates explicitly, and never create duplicate tabs
-as timeout recovery.
+All tabs are application-owned sidebar or background pages. Opening a tab must never create an
+external Chrome or system browser tab. Use labels for long flows, close duplicates explicitly, and
+never create duplicate tabs as timeout recovery.
 
 ## Code mode
 

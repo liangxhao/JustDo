@@ -38,6 +38,14 @@ JustDo 新建 job 默认显式发送 delivery mode=none，不依赖上游省略�
 
 模型发起任务变更时由 automation-permission 根据原生 session mode 审批。无人值守不意味着自动 full，也不能用某个 Agent 名称绕开审批。
 
+### 内置浏览器后台执行
+
+浏览器模式继续读取“设置 → 浏览器”。选择 embedded 时，产品可编辑、isolated 的 agentTurn job 可使用同一个 `browser` 后台执行；Main 从原生 job API 核对形态，不向 systemEvent、脚本/命令、托管或高级任务自动开放。原生最终工具权限仍是前提，只读任务不因无人值守获得浏览器权限。
+
+公开 prompt/tool hooks 及 V2 invocation guard 提供确切 jobId、runId、sessionKey、物理 sessionId、生命周期 revision 和工作区；模型参数不能建立这些绑定。Main 以完整原生运行身份创建后台 scope，强制 headless=true，不依赖打开详情或 Renderer ready ACK，显式 false 返回冲突。
+
+页面归当前运行，登录存储与侧栏同 profile 共享；用户在侧栏登录后，定时任务按同 profile 新标签的语义使用 Cookie、localStorage、IndexedDB 等站点数据。任务之间共享该账号状态，但不继承侧栏标签控制权或 Chrome 扩展授权。确切 whole-run lifecycle terminal 且 executionSettled:true 才产生最终轮末释放；原生工具代次的信号在成功清理时也会失效，单独 revoked 事件立即撤工具权限和 armed 效果、回收定时页，同时保留身份等待真实终态，不把它当作任务取消或完成。断连、停服和退出同样可终止自有页面，但不能代替运行结果证据。清理不清共享 Service Worker 或关闭 profile 连接，不能证明站点派生/已发请求已停止。能力、限制及真实验证范围见[浏览器设置](../features/browser/browser-settings-design.md#内置浏览器的前台与后台执行)。
+
 ## 3. 创建、手动运行与轮询
 
 ```mermaid
@@ -129,3 +137,5 @@ OpenClaw v2026.9.8 按 Agent 投影每周整理任务，使用 `agentTurn` paylo
 主要代码位于 `src/main/scheduler/`、`src/main/ipc/scheduledTask/`、`src/main/data/scheduledTaskResultStore.ts`、`src/shared/scheduledTask/` 和 Renderer scheduled-tasks feature。
 
 回归需覆盖 schedule 与时区、原生 owner 保留、默认 delivery、基线不泛滥未读、超过一页的追赶、中断重启、readAt 保留、删除和 reconcile 竞争、tombstone 幂等及原生历史缺失。测试应验证用户看到的结果，不只比对请求对象字段。
+
+内置无头浏览器另由 `scripts/test/verify-browser-cron.cjs` 验证真实 at timer 自动触发：使用隔离 Gateway 和本地合成模型，经认证插件事件、实际 job 查询与 Main/Electron 执行 browser open/text/screenshot，等待精确 whole-run 终态及同 job/session 的原生成功运行记录，检查页面回收和进程正常退出。已在 Windows 冻结 v2026.10.7 原生产物配合当前 Main/插件源码通过；不调用 cron.run，不证明业务模型/SSO 或当前完整安装包已验收，详见[验证边界](../features/browser/browser-settings-design.md#内置浏览器的前台与后台执行)。

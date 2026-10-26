@@ -1085,6 +1085,8 @@ export async function captureScreenshot(
   let labelClip: { x: number; y: number; width: number; height: number } | null = null;
   if (command.fullPage) {
     const guestDebugger = await this.enableDebuggerDomains(tab, guest);
+    // Flush layout after a preceding evaluate/resize before capturing the page.
+    await guestDebugger.sendCommand('Page.getLayoutMetrics');
     const captured = (await guestDebugger.sendCommand('Page.captureScreenshot', {
       format: imageType,
       ...(imageType === 'jpeg' ? { quality: 80 } : {}),
@@ -1163,11 +1165,24 @@ export async function captureScreenshot(
       if (typeof captured.data !== 'string') throw new Error('Browser screenshot failed.');
       data = captured.data;
     } else {
-      const image = await guest.capturePage();
-      data =
-        imageType === 'jpeg'
-          ? image.toJPEG(80).toString('base64')
-          : image.toPNG().toString('base64');
+      if (tab.headless) {
+        const guestDebugger = await this.enableDebuggerDomains(tab, guest);
+        await guestDebugger.sendCommand('Page.getLayoutMetrics');
+        const captured = (await guestDebugger.sendCommand('Page.captureScreenshot', {
+          format: imageType,
+          ...(imageType === 'jpeg' ? { quality: 80 } : {}),
+          captureBeyondViewport: false,
+          fromSurface: true,
+        })) as { data?: unknown };
+        if (typeof captured.data !== 'string') throw new Error('Browser screenshot failed.');
+        data = captured.data;
+      } else {
+        const image = await guest.capturePage();
+        data =
+          imageType === 'jpeg'
+            ? image.toJPEG(80).toString('base64')
+            : image.toPNG().toString('base64');
+      }
     }
   }
   const firstNormalization = this.normalizeScreenshotData(data, imageType);

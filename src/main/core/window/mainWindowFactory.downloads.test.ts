@@ -4,6 +4,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
 import { BROWSER_PANEL_PARTITION } from '../../../shared/browser/browser';
+import { registerBackgroundBrowserGuest } from '../../browser/backgroundBrowserGuestRegistry';
 
 const mocks = vi.hoisted(() => ({
   createWindow: vi.fn(),
@@ -12,7 +13,7 @@ const mocks = vi.hoisted(() => ({
   record: vi.fn(),
   update: vi.fn(),
   claim: vi.fn(),
-  cancelAll: vi.fn(),
+  cancelForGuest: vi.fn(),
   showSaveDialog: vi.fn(),
 }));
 vi.mock('electron', () => ({
@@ -32,7 +33,7 @@ vi.mock('../../browser/data/browserDataImportService', () => ({
 }));
 vi.mock('../../browser/downloads/browserAgentDownloadCoordinator', () => ({
   claimBrowserAgentDownload: mocks.claim,
-  cancelAllBrowserAgentDownloads: mocks.cancelAll,
+  cancelBrowserAgentDownloadsForWebContents: mocks.cancelForGuest,
 }));
 vi.mock('../network/systemProxyPreference', () => ({ registerBrowserProxySession: vi.fn() }));
 vi.mock('./appWindowFailure', () => ({ registerAppWindowDiagnostics: () => vi.fn() }));
@@ -40,7 +41,13 @@ vi.mock('./renderer/packagedRendererLoader', () => ({
   loadPackagedRenderer: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock('./windowAppearance', () => ({ registerWindowAppearance: vi.fn() }));
-vi.mock('./widgetViewerGuest', () => ({ createWidgetViewerGuests: () => ({}) }));
+vi.mock('./widgetViewerGuest', () => ({
+  createWidgetViewerGuests: () => ({ attach: () => false }),
+}));
+vi.mock('../../browser/history/browserHistoryTracking', () => ({
+  trackBrowserHistory: () => vi.fn(),
+}));
+vi.mock('../../browser/history/browserFavicon', () => ({ trackBrowserFavicon: vi.fn() }));
 
 import { createMainWindow } from './mainWindowFactory';
 
@@ -69,6 +76,11 @@ const directory = path.join(process.cwd(), 'build', '下载 文件');
 let browserSession: ReturnType<typeof makeSession>;
 let window: EventEmitter;
 let settings: { askWhereToSave: boolean; directory: string };
+let origin: EventEmitter & {
+  id: number;
+  session: typeof browserSession;
+  isDestroyed: () => boolean;
+};
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -116,6 +128,17 @@ beforeEach(() => {
     saveWorkspaceWindowBounds: vi.fn(),
   });
   browserSession = sessions.get(BROWSER_PANEL_PARTITION)!;
+  origin = Object.assign(new EventEmitter(), {
+    id: 9,
+    session: browserSession,
+    isDestroyed: () => false,
+    setWindowOpenHandler: vi.fn(),
+  });
+  (window as unknown as { webContents: EventEmitter }).webContents.emit(
+    'did-attach-webview',
+    {},
+    origin,
+  );
 });
 
 afterEach(() => {
@@ -127,7 +150,7 @@ afterEach(() => {
 test('uses one native save prompt configured synchronously for a download URL', async () => {
   const item = makeItem();
 
-  browserSession.emit('will-download', {}, item);
+  browserSession.emit('will-download', {}, item, origin);
 
   expect(item.setSaveDialogOptions).toHaveBeenCalledExactlyOnceWith({
     defaultPath: path.join(directory, 'report.zip'),
@@ -159,7 +182,7 @@ test.each(['cancelled', 'completed'] as const)(
   'records native %s even when no progress event was delivered',
   state => {
     const item = makeItem();
-    browserSession.emit('will-download', {}, item);
+    browserSession.emit('will-download', {}, item, origin);
     if (state === 'completed') item.getSavePath.mockReturnValue(path.join(directory, 'chosen.zip'));
 
     item.emit('done', {}, state);
@@ -178,8 +201,8 @@ test('keeps automatic downloads synchronous and reserves distinct filenames', ()
   const first = makeItem();
   const second = makeItem();
 
-  browserSession.emit('will-download', {}, first);
-  browserSession.emit('will-download', {}, second);
+  browserSession.emit('will-download', {}, first, origin);
+  browserSession.emit('will-download', {}, second, origin);
 
   expect(first.setSavePath).toHaveBeenCalledExactlyOnceWith(path.join(directory, 'report.zip'));
   expect(second.setSavePath).toHaveBeenCalledExactlyOnceWith(
@@ -194,7 +217,7 @@ test('keeps agent downloads on the claimed path without a save prompt', () => {
   const claim = { savePath: path.join(directory, 'agent.zip'), cancelled: false, settle: vi.fn() };
   mocks.claim.mockReturnValue(claim);
 
-  browserSession.emit('will-download', {}, item);
+  browserSession.emit('will-download', {}, item, origin);
 
   expect(item.setSavePath).toHaveBeenCalledExactlyOnceWith(claim.savePath);
   expect(item.setSaveDialogOptions).not.toHaveBeenCalled();
@@ -202,12 +225,41 @@ test('keeps agent downloads on the claimed path without a save prompt', () => {
   expect(claim.settle).toHaveBeenCalledExactlyOnceWith(item, 'completed');
 });
 
-test('cancels a pending native save and removes the handler when the window closes', () => {
+test('cancels its pending native save and releases UI while retaining the shared session guard', () => {
   const item = makeItem();
-  browserSession.emit('will-download', {}, item);
+  browserSession.emit('will-download', {}, item, origin);
 
   window.emit('closed');
 
   expect(item.cancel).toHaveBeenCalledOnce();
-  expect(browserSession.listenerCount('will-download')).toBe(0);
+  expect(browserSession.listenerCount('will-download')).toBe(1);
+  const late = makeItem();
+  browserSession.emit('will-download', {}, late, origin);
+  expect(late.cancel).toHaveBeenCalledOnce();
+  expect(late.setSaveDialogOptions).not.toHaveBeenCalled();
+});
+
+test('closing the UI preserves a different background page and its claimed download', () => {
+  const background = Object.assign(new EventEmitter(), {
+    id: 81,
+    session: browserSession,
+    isDestroyed: () => false,
+  }) as unknown as Electron.WebContents;
+  const lease = registerBackgroundBrowserGuest(background);
+  const claim = {
+    savePath: path.join(directory, 'background.zip'),
+    cancelled: false,
+    settle: vi.fn(),
+  };
+  mocks.claim.mockReturnValue(claim);
+
+  window.emit('closed');
+
+  expect(mocks.cancelForGuest).toHaveBeenCalledWith(origin.id);
+  expect(mocks.cancelForGuest).not.toHaveBeenCalledWith(background.id);
+  const download = makeItem();
+  browserSession.emit('will-download', {}, download, background);
+  expect(download.setSavePath).toHaveBeenCalledExactlyOnceWith(claim.savePath);
+  expect(download.setSaveDialogOptions).not.toHaveBeenCalled();
+  lease.release();
 });
