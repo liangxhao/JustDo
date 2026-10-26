@@ -1,4 +1,8 @@
-import { type AssistantTextScope, type NormalizedAgentEvent } from '@shared/openclaw/agentEvent';
+import {
+  type AssistantTextScope,
+  MESSAGE_COMMENTARY_SNAPSHOT,
+  type NormalizedAgentEvent,
+} from '@shared/openclaw/agentEvent';
 
 import type { AssistantTurn, ContentItem, TurnItem } from '../chat-transcript-state';
 
@@ -46,11 +50,25 @@ export function projectAssistantTextScope(
     (item): item is ContentItem => item.type === 'content' && item.assistantTextScopeId === scopeId,
   );
   const preambles = items.filter(item => item.preambleItemId !== undefined);
+  let latestSnapshot: ContentItem | undefined;
   for (const item of preambles) {
     if (completed && !completed.commentaryItemIds.includes(item.preambleItemId!)) {
       item.text = '';
       item.assistantTextScopeSuppressed = true;
+      continue;
     }
+    // Recompute preamble visibility only. Assistant previews have a separate
+    // ownership rule below, and native completion always takes precedence.
+    delete item.assistantTextScopeSuppressed;
+    if (
+      item.commentarySnapshot === MESSAGE_COMMENTARY_SNAPSHOT &&
+      (!latestSnapshot || (item.lastTextSeq ?? -1) > (latestSnapshot.lastTextSeq ?? -1))
+    )
+      latestSnapshot = item;
+  }
+  for (const item of preambles) {
+    if (item.commentarySnapshot === MESSAGE_COMMENTARY_SNAPSHOT && item !== latestSnapshot)
+      item.assistantTextScopeSuppressed = true;
   }
   for (const item of items) {
     if (item.preambleItemId !== undefined) continue;

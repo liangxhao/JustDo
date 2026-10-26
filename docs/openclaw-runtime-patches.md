@@ -148,6 +148,12 @@ signature 没有可推导的共同消息身份，公开 provider wrapper 又拿�
 因此这两处事实缺口仍需精确补丁。不得重新引入原生发布回执表、私有批量发布方法或 FIFO；
 撤除条件和具体契约见 [028 能力说明](../scripts/patches/v2026.10.7/README.md)。
 
+034 补充通用 commentary 的整消息累计范围事实，在现有 delivery 入口对有精确消息
+身份的非 Responses 说明使用完整 source message 的原生提取。028 仅在既有 scope
+中传递事实，Renderer 负责快照显示。不得拆块清洗正文或通过相似文字猜测覆盖关系；
+完成集合、原生身份、Responses、无消息身份的旧路径及 durable 交付保持原契约。最小复现、
+无法在公开 Adapter 层正确补齐的原因及删除条件见[034 能力说明](../scripts/patches/v2026.10.7/README.md#034-upstream-commentary-block-ownership-defect)。
+
 任何 patch 重排、helper 改动、bundle 重建、cache 污染或打包遗漏都会使 manifest 失效。Electron Builder 在打包前和 staged product 上再次验证；Windows 还会流式解码并验证 `win-resources.tar.zst`。分发包按设计省略重复的 `gateway.asar` 和独立 Worker 部署归档 `dist/worker-artifacts/`，保留全部本机 Worker；原始 runtime、inventory 和来源证明保持完整，不改写哈希隐藏打包裁剪。
 
 ## 10. 常用命令

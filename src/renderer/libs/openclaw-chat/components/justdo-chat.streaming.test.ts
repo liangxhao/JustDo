@@ -90,6 +90,81 @@ afterEach(() => {
 });
 
 describe('justdo-chat direct-property streaming', () => {
+  test.each(['', '执行完成。'])('renders a whole commentary snapshot in one Markdown container and preserves answer %j', async answer => {
+    const frames = createAnimationFrameHarness();
+    const controller = prepareController();
+    const handle = gatewayEventHandler(controller);
+    const chat = document.createElement('justdo-chat') as JustDoChatElement;
+    chat.controller = controller;
+    document.body.append(chat);
+    await chat.updateComplete;
+    await frames.drain(chat);
+    const scope = { id: 'native-commentary-source', commentarySnapshot: 'message' };
+    const first = '```xml';
+    const text = `${first}\n<function_calls>literal example</function_calls>\n\`\`\``;
+    const send = async (seq: number, stream: string, data: Record<string, unknown>) => {
+      handle({ event: 'agent', payload: {
+        sessionKey: controller.state.sessionKey, runId: 'whole-commentary', seq, stream, data,
+      } });
+      await frames.drain(chat);
+      await chat.updateComplete;
+    };
+    await send(1, 'item', { kind: 'preamble', phase: 'update', itemId: 'first',
+      progressText: first, assistantTextScope: scope });
+    await send(2, 'thinking', { text: 'Working.' });
+    await send(3, 'item', { kind: 'preamble', phase: 'update', itemId: 'second',
+      progressText: text, assistantTextScope: scope });
+    const completedScope = { ...scope, commentaryItemIds: ['first', 'second'] };
+    await send(4, 'assistant', { itemId: 'answer', text: answer, replace: true,
+      assistantTextScope: completedScope });
+    await send(5, 'item', { kind: 'preamble', phase: 'end', itemId: 'second',
+      progressText: text, assistantTextScope: completedScope });
+    const bubbles = Array.from(chat.shadowRoot?.querySelectorAll('.chat-bubble__text') ?? []);
+    expect(bubbles).toHaveLength(answer ? 2 : 1);
+    expect(bubbles[0].querySelectorAll('pre')).toHaveLength(1);
+    expect(bubbles[0].textContent).toContain('<function_calls>literal example</function_calls>');
+    if (answer) expect(bubbles[1].textContent).toContain(answer);
+  });
+
+  test.each(['', '执行完成。'])('renders each signed commentary block once and preserves final answer %j', async answer => {
+    const frames = createAnimationFrameHarness();
+    const controller = prepareController();
+    const handle = gatewayEventHandler(controller);
+    const chat = document.createElement('justdo-chat') as JustDoChatElement;
+    chat.controller = controller;
+    document.body.append(chat);
+    await chat.updateComplete;
+    await frames.drain(chat);
+    const first = '已理解流程。现在执行。';
+    const second = 'Phase0：检查框图与接口。';
+    const scope = { id: 'native-source-18' };
+    const completedScope = { ...scope, commentaryItemIds: ['commentary-0', 'commentary-1'] };
+    const visible = () => Array.from(chat.shadowRoot?.querySelectorAll('.chat-bubble__text') ?? [])
+      .map(element => element.textContent?.trim());
+    const send = async (seq: number, stream: string, data: Record<string, unknown>) => {
+      handle({ event: 'agent', payload: {
+        sessionKey: controller.state.sessionKey, runId: 'commentary-blocks', seq, stream, data,
+      } });
+      await frames.drain(chat);
+      await chat.updateComplete;
+    };
+    await send(759, 'assistant', { itemId: 'native-subscription:18', text: first + second, assistantTextScope: scope });
+    expect(visible()).toEqual([first + second]);
+    await send(777, 'item', { kind: 'preamble', phase: 'update', itemId: 'commentary-0', progressText: first,
+      assistantTextScope: scope });
+    expect(visible()).toEqual([first]);
+    for (const seq of [780, 782]) {
+      await send(seq, 'item', { kind: 'preamble', phase: 'update', itemId: 'commentary-1', progressText: second,
+        assistantTextScope: scope });
+      expect(visible()).toEqual([first, second]);
+    }
+    await send(784, 'assistant', { itemId: 'native-subscription:18', text: answer, delta: '', replace: true,
+      assistantTextScope: completedScope });
+    await send(785, 'item', { kind: 'preamble', phase: 'end', itemId: 'commentary-1', progressText: second,
+      assistantTextScope: completedScope });
+    expect(visible()).toEqual(answer ? [first, second, answer] : [first, second]);
+  });
+
   test('retains animated nodes across generic and detailed tool-call observations with reduced motion', async () => {
     vi.stubGlobal('matchMedia', (query: string) => ({
       matches: query.includes('prefers-reduced-motion'), media: query, onchange: null,

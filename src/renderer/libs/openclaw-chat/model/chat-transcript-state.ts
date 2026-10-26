@@ -1,4 +1,4 @@
-import type { NormalizedAgentEvent } from '@shared/openclaw/agentEvent';
+import type { AssistantTextScope, NormalizedAgentEvent } from '@shared/openclaw/agentEvent';
 import { messageSessionMatches, normalizeMessageSessionKey } from '@shared/openclaw/messageDomain';
 
 import type { GatewayMessage } from '../types';
@@ -64,6 +64,8 @@ export interface ContentItem extends BaseTurnItem {
   /** Explicit native model-message association across assistant/preamble lanes. */
   assistantTextScopeId?: string;
   assistantTextScopeSuppressed?: boolean;
+  /** Scope of this accepted preamble snapshot, never inferred from matching text. */
+  commentarySnapshot?: AssistantTextScope['commentarySnapshot'];
   followingToolCallId?: string;
   /** Authoritative history text awaiting a matching delayed Agent snapshot. */
   recoveredSnapshotText?: string;

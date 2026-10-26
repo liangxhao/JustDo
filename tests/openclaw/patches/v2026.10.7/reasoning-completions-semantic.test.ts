@@ -8,9 +8,9 @@ import { build } from 'esbuild';
 import ts from 'typescript';
 import { beforeAll, describe, expect, it, type Mock, vi } from 'vitest';
 
-import { reduceAgentEvent } from '../../../../src/renderer/libs/openclaw-chat/model/turn/agent-event-reducer';
 import { createChatTranscriptState } from '../../../../src/renderer/libs/openclaw-chat/model/chat-transcript-state';
 import { projectTurnItems } from '../../../../src/renderer/libs/openclaw-chat/model/timeline/project-turn-items';
+import { reduceAgentEvent } from '../../../../src/renderer/libs/openclaw-chat/model/turn/agent-event-reducer';
 
 type Message = {
   content: Array<{ type: string; text?: string; thinking?: string; textSignature?: string; arguments?: unknown }>;
@@ -37,6 +37,7 @@ type SubscriberContext = {
     [key: string]: unknown;
   };
   blockChunker: { hasBuffered(): boolean };
+  emitAssistantStreamData(data: Record<string, unknown>, options?: Record<string, unknown>): void;
   [key: string]: unknown;
 };
 type SubscriberApi = {
@@ -46,9 +47,11 @@ type SubscriberApi = {
   createEmbeddedAgentSubscribeState(params: object): object;
   createReplyDelivery(context: SubscriberContext): Record<string, unknown>;
   createStreamRendering(context: object): object;
+  extractAssistantCommentaryText(message: Message): string;
   EmbeddedBlockChunker: new () => SubscriberContext['blockChunker'];
 };
 const { transform, CONTRACT } = require('../../../../scripts/patches/v2026.10.7/028-reasoning-completions-streaming.cjs').__testing;
+const { transform: transformCommentary } = require('../../../../scripts/patches/v2026.10.7/034-commentary-block-ownership.cjs').__testing;
 const { functionRange } = require('../../../../scripts/patches/v2026.10.7/prepared-read-patch-shapes.js');
 const runtime = process.env.JUSTDO_EXECUTION_PRISTINE_DIR ?? process.env.OPENCLAW_TEST_NATIVE_RUNTIME_DIR ?? path.resolve('build/runtimes/openclaw/win-x64');
 const runtimeNodeModules = path.join(process.env.OPENCLAW_RUNTIME_DIR ?? runtime, 'node_modules');
@@ -125,9 +128,9 @@ async function loadSubscriber(applyPatch = true) {
   const nativeSource = fs.readFileSync(file, 'utf8');
   if (!applyPatch && nativeSource.includes(CONTRACT))
     throw new Error('Pristine subscriber control requires an unpatched source');
-  const source = nativeDeclarationClosure(applyPatch ? transform(nativeSource, file) : nativeSource, file, [
+  const source = nativeDeclarationClosure(applyPatch ? transformCommentary(transform(nativeSource, file), file) : nativeSource, file, [
     'handleMessageStart', 'handleMessageUpdate', 'handleMessageEnd', 'createEmbeddedAgentSubscribeState',
-    'createReplyDelivery', 'createStreamRendering', 'EmbeddedBlockChunker',
+    'createReplyDelivery', 'createStreamRendering', 'EmbeddedBlockChunker', 'extractAssistantCommentaryText',
   ]);
   const result = await build({
     stdin: { contents: source, resolveDir: path.dirname(file), sourcefile: 'subscriber-fixture.mjs' },
@@ -399,6 +402,51 @@ describe('native bounded message snapshots', () => {
 });
 
 describe('actual completions transport structured reasoning semantics', () => {
+  it.each([false, true])('projects naturally generated multiple commentary blocks as one full snapshot (tool first: %j)', async toolFirst => {
+    const context = subscriberContext();
+    const run = await fixture(patched, {}, undefined, false, context);
+    await run.send({ content: 'First paragraph.' });
+    if (toolFirst) await run.send({ tool_calls: [{ index: 0, id: 'native-first-tool', type: 'function',
+      function: { name: 'read_file', arguments: '{"path":' } }] });
+    await run.send({ reasoning_content: 'Reasoning resumes.' });
+    await run.send({ content: 'Second paragraph.' });
+    await run.send({ tool_calls: [{ index: 0, ...(toolFirst ? {} : { id: 'native-later-tool', type: 'function' }),
+      function: toolFirst ? { arguments: '"fixture"}' } : { name: 'read_file', arguments: '{"path":"fixture"}' } }] });
+    const result = await run.finish('tool_calls');
+    const blocks = result.content.filter(block => block.type === 'text');
+    expect(blocks.map(block => block.text)).toEqual(['First paragraph.', 'Second paragraph.']);
+    expect(blocks.map(block => JSON.parse(block.textSignature!).phase)).toEqual(['commentary', 'commentary']);
+    expect(new Set(blocks.map(block => JSON.parse(block.textSignature!).id)).size).toBe(2);
+    const captured = context.params.onAgentEvent.mock.calls.map(([event]) => event);
+    const preambles = captured.filter(event => event.stream === 'item' && event.data.kind === 'preamble');
+    expect(preambles.at(-1)?.data).toMatchObject({ progressText: 'First paragraph.\nSecond paragraph.',
+      assistantTextScope: { commentarySnapshot: 'message' } });
+    expect(visibleContent(captured)).toEqual(['First paragraph.\nSecond paragraph.']);
+    let snapshot: ProgressSnapshot | undefined;
+    for (const [index, event] of captured.entries()) snapshot = updateProgress(snapshot, {
+      ...event, runId: 'reasoning-stream-fixture', seq: index + 1,
+    });
+    expect(visibleContent(snapshot!.events)).toEqual(['First paragraph.\nSecond paragraph.']);
+  });
+
+  it('preserves cross-block runtime-context suppression through the actual completions SSE transport', async () => {
+    const context = subscriberContext();
+    const run = await fixture(patched, {}, undefined, false, context);
+    await run.send({ content: 'Public.\n<<<BEGIN_OPENCLAW_INTERNAL_CONTEXT>>>\ninternal first' });
+    await run.send({ reasoning_content: 'Reasoning resumes.' });
+    await run.send({ content: 'internal second\n<<<END_OPENCLAW_INTERNAL_CONTEXT>>>\nVisible.' });
+    await run.send({ tool_calls: [{ index: 0, id: 'native-context-tool', type: 'function',
+      function: { name: 'read_file', arguments: '{"path":"fixture"}' } }] });
+    const result = await run.finish('tool_calls');
+    expect(result.content.filter(block => block.type === 'text')).toHaveLength(2);
+    const whole = subscriber.extractAssistantCommentaryText(result);
+    expect(whole).toBe('Public.\n\nVisible.');
+    const captured = context.params.onAgentEvent.mock.calls.map(([event]) => event);
+    expect(visibleContent(captured)).toEqual([whole]);
+    expect(captured.filter(event => event.stream === 'item' && event.data.kind === 'preamble')
+      .every(event => event.data.progressText === whole)).toBe(true);
+  });
+
   it.skipIf(sourceAlreadyPatched)('audits unpatched subscriber behavior when stop rolls back a provisional tool', async () => {
     const context = subscriberContext({}, pristineSubscriber);
     const run = await fixture(pristine, {}, undefined, false, context, pristineSubscriber);
@@ -1043,6 +1091,88 @@ describe('real native subscriber and Renderer ownership', () => {
     expect(visibleContent(events(context))).toEqual(['Checking.', 'Done.']);
   });
 
+  it.each([false, true])('publishes a whole generic commentary snapshot (first already emitted: %j)', async firstAlreadyEmitted => {
+    const context = subscriberContext();
+    const first = message('First paragraph.');
+    first.content[0].textSignature = JSON.stringify({ v: 1, id: 'commentary-0', phase: 'commentary' });
+    if (firstAlreadyEmitted) {
+      update(context, 'First paragraph.', 'First paragraph.');
+      commentary(context, 'First paragraph.', 'native-message-1', 'commentary-0');
+    }
+    const partial = message('Second paragraph.');
+    partial.content = [...first.content, { type: 'text', text: 'Second paragraph.',
+      textSignature: JSON.stringify({ v: 1, id: 'commentary-1', phase: 'commentary' }) }];
+    subscriber.handleMessageUpdate(context, { type: 'message_update', message: partial,
+      assistantMessageEvent: { type: 'toolcall_delta' } });
+    expect(visibleContent(events(context))).toEqual(['First paragraph.\nSecond paragraph.']);
+    await subscriber.handleMessageEnd(context, { type: 'message_end', message: partial });
+    const preambles = events(context).filter(event => event.stream === 'item' && event.data.kind === 'preamble');
+    for (const event of preambles) {
+      expect(event.data.progressText).toBe(event.data.itemId === 'commentary-0' ? 'First paragraph.' : 'First paragraph.\nSecond paragraph.');
+      expect(event.data.assistantTextScope).toMatchObject({ id: 'native-message-1', commentarySnapshot: 'message' });
+    }
+    expect(preambles.filter(event => event.data.phase === 'end').map(event => event.data.itemId)).toEqual(['commentary-1']);
+    expect(events(context).filter(event => event.stream === 'assistant').at(-1)?.data).toMatchObject({
+      text: '', replace: true,
+      assistantTextScope: { id: 'native-message-1', commentaryItemIds: ['commentary-0', 'commentary-1'] },
+    });
+    expect(visibleContent(events(context))).toEqual(['First paragraph.\nSecond paragraph.']);
+  });
+
+  it('normalizes the mixed-phase direct commentary path to the same complete native snapshot', async () => {
+    const context = subscriberContext();
+    commentary(context, 'First.', 'native-message-1', 'commentary-0');
+    const partial = message('First.');
+    partial.content = ['First.', 'Second.'].map((value, index) => ({ type: 'text', text: value,
+      textSignature: JSON.stringify({ v: 1, id: `commentary-${index}`, phase: 'commentary' }) }));
+    partial.content.push({ type: 'text', text: 'Answer.',
+      textSignature: JSON.stringify({ v: 1, id: 'final-answer', phase: 'final_answer' }) });
+    for (const contentIndex of [1, 0]) {
+      // Native evt.message owns the complete source. The provider event may
+      // carry an independently snapshotted partial for the active block.
+      const activePartial = structuredClone(partial);
+      activePartial.content[0].text = 'Provider-local partial prefix.';
+      subscriber.handleMessageUpdate(context, { type: 'message_update', message: partial,
+        assistantMessageEvent: { type: 'text_end', contentIndex, content: partial.content[contentIndex].text,
+          partial: activePartial } });
+    }
+    const preambles = events(context).filter(event => event.stream === 'item' && event.data.kind === 'preamble');
+    expect(preambles.slice(-2).map(event => event.data.itemId)).toEqual(['commentary-1', 'commentary-0']);
+    expect(preambles.slice(-2).every(event => event.data.progressText === 'First.\nSecond.')).toBe(true);
+    expect(preambles.every(event => (event.data.assistantTextScope as { commentarySnapshot?: string })?.commentarySnapshot === 'message')).toBe(true);
+    expect(visibleContent(events(context))).toEqual(['First.\nSecond.']);
+    await subscriber.handleMessageEnd(context, { type: 'message_end', message: partial });
+    expect(visibleContent(events(context))).toEqual(['First.\nSecond.', 'Answer.']);
+  });
+
+  it.each([
+    ['protected runtime context', 'Public.\n<<<BEGIN_OPENCLAW_INTERNAL_CONTEXT>>>\ninternal first',
+      'internal second\n<<<END_OPENCLAW_INTERNAL_CONTEXT>>>\nVisible.', 'Public.\n\nVisible.'],
+    ['current runtime context', 'Public.\nOpenClaw runtime context:\ninternal first',
+      'internal second\nEnd OpenClaw runtime context.\nVisible.', 'Public.\n\nVisible.'],
+    ['fenced XML', '```xml\n', '<function_calls>\n<invoke name="read">literal sample</invoke>\n</function_calls>\n```',
+      '```xml\n<function_calls>\n<invoke name="read">literal sample</invoke>\n</function_calls>\n```'],
+  ])('retains complete native %s sanitization across block boundaries', async (_label, first, second, expected) => {
+    const context = subscriberContext();
+    const partial = message(first);
+    partial.content = [first, second].map((value, index) => ({ type: 'text', text: value,
+      textSignature: JSON.stringify({ v: 1, id: `commentary-${index}`, phase: 'commentary' }) }));
+    expect(subscriber.extractAssistantCommentaryText(partial)).toBe(expected);
+    await subscriber.handleMessageEnd(context, { type: 'message_end', message: partial });
+    expect(visibleContent(events(context))).toEqual([expected]);
+    const preamble = events(context).find(event => event.stream === 'item' && event.data.kind === 'preamble')!;
+    expect(preamble.data).toMatchObject({ progressText: expected, assistantTextScope: { commentarySnapshot: 'message' } });
+  });
+
+  it('keeps multiple commentary blocks sharing the same native item ID in one complete snapshot', async () => {
+    const context = subscriberContext();
+    const partial = message('First.');
+    partial.content = ['First.', 'Second.'].map(value => ({ type: 'text', text: value,
+      textSignature: JSON.stringify({ v: 1, id: 'native-caption', phase: 'commentary' }) }));
+    await subscriber.handleMessageEnd(context, { type: 'message_end', message: partial });
+    expect(visibleContent(events(context))).toEqual(['First.\nSecond.']);
+  });
+
   it('keeps identical text in two independent native messages', async () => {
     const context = subscriberContext();
     const partial = commentary(context, 'Same on purpose.');
@@ -1050,6 +1180,21 @@ describe('real native subscriber and Renderer ownership', () => {
     subscriber.handleMessageStart(context, { type: 'message_start', message: message('', 'native-message-2') });
     await subscriber.handleMessageEnd(context, { type: 'message_end', message: message('Same on purpose.', 'native-message-2') });
     expect(visibleContent(events(context))).toEqual(['Same on purpose.', 'Same on purpose.']);
+  });
+
+  it('retracts both provisional commentary blocks when native completion restores an ordinary answer', async () => {
+    const context = subscriberContext();
+    update(context, 'First.', 'First.');
+    const partial = message('First.');
+    partial.content = ['First.', 'Second.'].map((text, index) => ({ type: 'text', text,
+      textSignature: JSON.stringify({ v: 1, id: `commentary-${index}`, phase: 'commentary' }) }));
+    subscriber.handleMessageUpdate(context, { type: 'message_update', message: partial,
+      assistantMessageEvent: { type: 'toolcall_delta' } });
+    expect(visibleContent(events(context))).toEqual(['First.\nSecond.']);
+    await subscriber.handleMessageEnd(context, { type: 'message_end', message: message('First.\nSecond.') });
+    expect(visibleContent(events(context))).toEqual(['First.\nSecond.']);
+    expect(events(context).filter(event => event.stream === 'assistant').at(-1)?.data.assistantTextScope)
+      .toEqual({ id: 'native-message-1', commentaryItemIds: [] });
   });
 
   it('captures source facts before terminal callbacks advance the native message', async () => {
@@ -1086,6 +1231,31 @@ describe('real native subscriber and Renderer ownership', () => {
     expect(() => update(context, 'First.', 'First.')).not.toThrow();
     update(context, 'First. Second.', ' Second.');
     expect(visibleContent(events(context))).toEqual(['First. Second.']);
+  });
+
+  it('keeps full commentary source facts across callback failure, reentrancy and deferred answer delivery', () => {
+    const context = subscriberContext({ onBeforeTerminalDelivery: vi.fn() });
+    const source = message('First.');
+    source.content = ['First.', 'Second.'].map((value, index) => ({ type: 'text', text: value,
+      textSignature: JSON.stringify({ v: 1, id: `commentary-${index}`, phase: 'commentary' }) }));
+    (context.state as { lastAssistant: unknown }).lastAssistant = message('Other source.', 'native-message-2');
+    context.params.onAgentEvent.mockImplementationOnce(() => { throw new Error('Synthetic commentary callback failure'); });
+    const data = Object.freeze({ phase: 'commentary', text: 'Second.', delta: 'Second.', itemId: 'commentary-1' });
+    expect(() => context.emitAssistantStreamData(data, { sourceMessage: source })).not.toThrow();
+    const observed: SubscriberEvent[] = [];
+    context.params.onAgentEvent.mockImplementation(event => {
+      observed.push(structuredClone(event));
+      subscriber.handleMessageStart(context, { type: 'message_start', message: message('', 'native-message-2') });
+    });
+    context.emitAssistantStreamData(data, { sourceMessage: source, finalMessage: true, messageComplete: true });
+    expect(observed.find(event => event.stream === 'item' && event.data.kind === 'preamble')?.data).toMatchObject({
+      itemId: 'commentary-1', progressText: 'First.\nSecond.', assistantTextScope: {
+        id: 'native-message-1', commentarySnapshot: 'message', commentaryItemIds: ['commentary-0', 'commentary-1'],
+      },
+    });
+    expect(data.text).toBe('Second.');
+    expect(context.params.onPartialReply).not.toHaveBeenCalled();
+    expect(context.params.onBlockReply).not.toHaveBeenCalled();
   });
 
   it('preserves explicit finalization admission deferral', () => {

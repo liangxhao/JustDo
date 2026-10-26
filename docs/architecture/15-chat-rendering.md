@@ -635,6 +635,18 @@ run、toolCallId、entry id、preamble owner 和 sequence 共同决定时间线�
 
 `replace: true` 优先于 delta 追加语义，包括空字符串撤回。累计 chat 空替换按原生源序号撤回覆盖范围内的 assistant 文本，并阻止尚未到达的旧 owner 复活；Thinking、Tool 和独立 preamble 不受此水位影响。文本更新序号独立于 Tool 关闭段时的边界序号。普通空快照仍不构成段边界。
 
+同一个模型消息的 scope 可以包含多个独立 preamble 和最终答复，不能仅凭 scope
+合并。通用原生 publisher 可能以最新签名 ID 发布整条消息的累计 commentary；
+034 对具有明确原生消息身份的非 Responses commentary，在现有 delivery 入口统一
+使用完整 source message 的原生 commentary 提取结果，并明确标记
+`assistantTextScope.commentarySnapshot: 'message'`。整消息清洗保持完整上下文，不能
+拆块清洗：隐藏标记、代码围栏及字面 XML 都可能跨原生 block。
+028 仅在既有 scope 中传递这一事实；完成集合、原生 ID 和执行生命周期不变。
+Renderer 保留各原生 item 及正文，仅在同 scope 的明确整消息快照中，按最后正文
+事件序号选择一份显示。工具推进的边界序号不能改变选择；真实完成集合撤销的 ID
+不参与选择。独立 preamble、Responses 的活动块、缺少消息身份的旧路径和最终答复
+不受此规则合并。不比较字符串前缀或裁剪重叠正文，不增加发布回执表或转录缓存。
+
 运行恢复使用原生 `chat.history`：持久消息来自 `messages`；进行中的有身份正文、
 工具、preamble 和 usage 来自 `inFlightRun.events`。
 029 在现有有界／冻结快照中保留各 assistant owner 的最新正文和 scope 事实，

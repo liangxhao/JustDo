@@ -4,7 +4,7 @@ This inventory was audited against the unmodified `openclaw@2026.10.7` npm archi
 
 ## Disposition
 
-All 33 v2026.10.6 capabilities retain their original numbers after an independent target source, published artifact and public API audit. All 33 verifiers reject the pristine target, and all 33 transformations apply and verify on its actual source owners. The initial version rebase introduced no additional capability number or historical-shape migration. [pristine-targets.json](pristine-targets.json) records all 80 exact pristine target hashes and each capability's target file set; the source lock binds these to the npm archive. Matching names or old anchors alone do not establish this disposition.
+All 33 v2026.10.6 capabilities retain their original numbers after an independent target source, published artifact and public API audit. The initial version rebase introduced no additional capability number. The later 034 resolves an independently reproduced cumulative commentary ownership gap. All 34 verifiers reject the pristine target, and all 34 transformations apply and verify on its actual source owners. No historical-shape migration is introduced. [pristine-targets.json](pristine-targets.json) records all 80 exact pristine target hashes and each capability's target file set; 034 reuses the already-audited subscriber owner. The source lock binds these to the npm archive. Matching names or old anchors alone do not establish this disposition.
 
 The latest dev rebase refines existing capability 026 to preserve its live delivery policy through the native subscription parameter clone. The fresh C artifact was rebuilt from the locked pristine package and passed the current strict target matrix below. Earlier B source/import/SQLite records are explicitly historical and do not establish C artifact acceptance.
 
@@ -28,7 +28,7 @@ The parent, native-contract and provider/plugin agents independently cross-revie
 
 ## Capability gaps and removal conditions
 
-The old-ID column below refers to the pre-v2026.10.6 lineage. Current IDs are unchanged from v2026.10.6 to v2026.10.7.
+The old-ID column below refers to the pre-v2026.10.6 lineage. IDs 001–033 are unchanged from v2026.10.6 to v2026.10.7; 034 is a later independently removable fix.
 
 | Patch                                                                                            | Old ID | Retained capability / target gap                                                                                                                                      | Remove when                                                                                                                                    |
 | ------------------------------------------------------------------------------------------------ | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -65,6 +65,7 @@ The old-ID column below refers to the pre-v2026.10.6 lineage. Current IDs are un
 | [031-goal-continuation-admission.cjs](031-goal-continuation-admission.cjs)                       | 032    | admit a conditional backend Goal successor after exact settlement and native handoff arbitration, atomically recording acceptance and cumulative automatic count.     | upstream agent ingress supplies equivalent final admission, durable acceptance/count and exact settled predecessor observation.                |
 | [032-run-progress-observations.cjs](032-run-progress-observations.cjs)                           | 033    | expose exact tool/model counters and buffered-request activity through separate existing native status items.                                                                         | native Gateway publishes equivalent provider-independent stream progress before tool execution, including bounded replay.                      |
 | [033-windows-plugin-directory-publication.cjs](033-windows-plugin-directory-publication.cjs)     | 034    | recover a refused local Windows plugin-directory publication within the same copied artifact, guarded transaction and bounded wait.                                   | native plugin installs provide equivalent receipt-bound, bounded Windows publication recovery.                                                 |
+| [034-commentary-block-ownership.cjs](034-commentary-block-ownership.cjs)                       | —      | declare whole-message commentary snapshot ownership for scoped generic delivery, preserving complete native text filtering.                                         | native delivery exposes an equivalent explicit cumulative commentary range across updates, mixed phases and terminal publication.              |
 
 ## Locked target source owners
 
@@ -105,6 +106,7 @@ The following paths were returned by a clean application on the pristine target.
 | 031 | `dist/src-BaGOtYrI.mjs`<br>`dist/agent-request-preflight-DayS66Ki.mjs`<br>`dist/agent-turn-service-DTOXX_Sj.mjs`<br>`dist/session-event-payload-Cq41wHZJ.mjs`<br>`dist/session-lifecycle-admission-USS1EGbr.mjs`<br>`dist/subagent-registry-ClP8932r.mjs`<br>`dist/sessions-read-BXwTspcX.mjs`<br>`dist/session-entry-projection-CE63LQBt.mjs` |
 | 032 | `dist/builtin-openclaw-Ci5YBsOb.mjs` |
 | 033 | `node_modules/@openclaw/fs-safe/dist/move-path.js`<br>`node_modules/@openclaw/fs-safe/dist/guarded-mutation.js`<br>`dist/install-package-dir-D5h3GpAL.mjs`<br>`dist/npm-managed-root-C6KnxuJp.mjs` |
+| 034 | `dist/builtin-openclaw-Ci5YBsOb.mjs` |
 
 ## Test ownership
 
@@ -145,6 +147,58 @@ Focused target tests live in `tests/openclaw/patches/v2026.10.7/`. Historical pa
 | 031 | `goal-continuation-admission.test.ts`, `goal-tool-timeout-native.test.ts` |
 | 032 | `run-progress-observations.test.ts`, `buffered-run-progress.test.ts` |
 | 033 | `plugin-directory-publication.test.ts` |
+| 034 | `commentary-block-ownership.test.ts`, `reasoning-completions-semantic.test.ts`, Renderer `justdo-chat.streaming.test.ts` |
+
+### 034: upstream commentary block ownership defect
+
+The locked `emitAssistantCommentaryStreamData` scopes Responses snapshots to the active block,
+but extracts all generic commentary blocks together and keys that cumulative text to the last
+block signature. Two source blocks `A` and `B` therefore publish `id0:A` followed by `id1:A+B`;
+the source completion correctly retains both native IDs, so both live rows survive. A shared
+028 message scope cannot distinguish a cumulative snapshot from a separate paragraph.
+
+034 applies after 028 at the existing `createReplyDelivery` text entrance. Commentary with an
+exact native message scope and a non-Responses source is normalized through the original
+whole-message commentary extractor, including the direct mixed-phase publication path.
+The original native ID is retained. 028 carries only the explicit
+`assistantTextScope.commentarySnapshot: 'message'` fact in its existing scope, captured before
+callbacks. The Renderer keeps native items and text but displays the snapshot with the latest
+accepted text sequence within each explicitly cumulative scope. Terminal retained IDs take
+precedence. Ordinary unmarked preambles, different messages and the final answer remain separate.
+Responses and sources without an exact message scope retain their native behavior.
+
+Native blocks are not independent Markdown documents. In particular, internal-context markers
+and fenced XML examples can cross block boundaries. Splitting extraction per block changes
+the final whole-message sanitizer and is unsafe. This patch retains that complete extraction
+and one Markdown container; no markup parser, prefix trimming, text deduplication, publication
+ledger or transcript cache is added.
+
+The missing native fact is the publication range, rather than permission to split its body.
+The public event previously contained only rendered text and the latest ID; a shared message
+scope alone cannot distinguish cumulative commentary from independent blocks. Public provider
+wrappers do not control the subscriber's final delivery range. The small native normalization
+and explicit range fact let the application own presentation without guessing. Remove 034 when
+native delivery supplies equivalent cumulative commentary facts across update, mixed-phase
+and terminal paths. Source and bundle must have the same exact shape; historical/partial
+shapes, including the rejected per-block variant, require a pristine rebuild.
+
+The earlier 2026-10-26 per-block variant passed ordinary text tests and artifact checks but
+failed independent review of cross-block context and fenced XML. Those earlier test counts
+do not establish acceptance of this corrected shape. Current acceptance must include real
+native filtering, mixed phases, Renderer Markdown, source identity, rollback, public history
+and reconnect. Offline synthetic/native checks do not replace a live retest of the originally
+reported model/session.
+
+The corrected 2026-10-26 shape passed 2,416 chat tests, ten shared-event contract tests,
+and 247 native/patch tests against the freshly rebuilt runtime (five existing pristine-only
+controls were conditionally skipped). An independent agent also reran the native tests and
+the Renderer/DOM/public-history checks. The complete Windows x64 pristine build passed
+13 upstream contracts, rejection of all 34 retained gaps, source/final-bundle patching,
+resource preparation, extension precompilation and pruning. Final manifest verification
+accepted all 34 patches; reapplying 034 to the actual source and Gateway bundle changed
+zero bytes. The isolated bundled Node CLI reported `OpenClaw 2026.10.7 (157d8c2)`.
+Application lint/build and Electron type checking passed. These checks do not claim a live
+reproduction on the originally reported machine/provider.
 
 ## Validation boundary
 

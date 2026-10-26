@@ -335,6 +335,14 @@
         "dist/install-package-dir-D5h3GpAL.mjs",
         "dist/npm-managed-root-C6KnxuJp.mjs"
       ]
+    },
+    {
+      "file": "034-commentary-block-ownership.cjs",
+      "pristineRejected": true,
+      "sourceVerified": true,
+      "targets": [
+        "dist/builtin-openclaw-Ci5YBsOb.mjs"
+      ]
     }
   ],
   "targets": [

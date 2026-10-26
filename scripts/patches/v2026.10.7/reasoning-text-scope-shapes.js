@@ -105,6 +105,8 @@ function transformReasoningTextScope(source, file = '<runtime>') {
         delta: '', itemId: ${text(edit.variable('assistantItemId').name)} }),
         ...(${options}?.messageComplete === true ? { replace: true } : {}), assistantTextScope: {
         id: streamSourceMessage.openclawDelivery.messageScopeId,
+        ...(${data}.phase === 'commentary' && ${data}.commentarySnapshot === 'message'
+          ? { commentarySnapshot: 'message' } : {}),
         ...(${options}?.messageComplete === true && Array.isArray(streamSourceMessage.content)
           ? { commentaryItemIds: streamSourceMessage.content.flatMap(block => {
               const signature = ${parser}(block);

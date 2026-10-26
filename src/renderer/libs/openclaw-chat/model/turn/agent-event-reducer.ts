@@ -1437,7 +1437,13 @@ export function reduceAgentEvent(
     reduceTool(turn, event, dependencies, insertBySequence);
   } else if (event.stream === 'item' && readPreambleText(event.data) !== null) {
     const content = acceptsTextScope ? reducePreamble(turn, event, dependencies) : null;
-    if (content && textScope) content.assistantTextScopeId = textScope.id;
+    if (content) {
+      content.lastTextSeq = Math.max(content.lastTextSeq ?? -1, event.agentSeq);
+      if (textScope) content.assistantTextScopeId = textScope.id;
+      // Snapshot scope belongs to this text update, not permanently to its ID.
+      if (textScope?.commentarySnapshot) content.commentarySnapshot = textScope.commentarySnapshot;
+      else delete content.commentarySnapshot;
+    }
     if (content && hasChatFallback) {
       content.assistantTextSourcePending = true;
     }

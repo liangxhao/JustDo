@@ -25,21 +25,29 @@ export interface NormalizedAgentEvent {
   data: Record<string, unknown>;
 }
 
+export const MESSAGE_COMMENTARY_SNAPSHOT = 'message' as const;
+
 /** Native model-message identity; a present ID set proves message completion. */
 export interface AssistantTextScope {
   id: string;
   commentaryItemIds?: string[];
+  /** The preamble text is a complete commentary snapshot of this native message. */
+  commentarySnapshot?: typeof MESSAGE_COMMENTARY_SNAPSHOT;
 }
 
 export function readAssistantTextScope(data: Record<string, unknown>): AssistantTextScope | null {
   const scope = asRecord(data.assistantTextScope);
   const id = nonEmptyString(scope?.id);
   if (!scope || !id) return null;
-  if (scope.commentaryItemIds === undefined) return { id };
+  const snapshot =
+    scope.commentarySnapshot === MESSAGE_COMMENTARY_SNAPSHOT
+      ? { commentarySnapshot: MESSAGE_COMMENTARY_SNAPSHOT }
+      : {};
+  if (scope.commentaryItemIds === undefined) return { id, ...snapshot };
   if (!Array.isArray(scope.commentaryItemIds)) return null;
   const ids = scope.commentaryItemIds.map(nonEmptyString);
   if (ids.some(value => value === null)) return null;
-  return { id, commentaryItemIds: ids as string[] };
+  return { id, commentaryItemIds: ids as string[], ...snapshot };
 }
 
 export interface NormalizedChatEvent {

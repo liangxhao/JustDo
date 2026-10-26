@@ -46,6 +46,21 @@ Agent 正文时仍使用 Chat 兜底。不能按相同字符串或最长重叠�
 提升为最终答案。重连优先回放原生 keyed snapshots，避免再追加 run 累计的 text。
 不同消息中的同文说明和合法 commentary／final 混合消息继续保留。
 
+共同 scope 只证明同一条模型消息，不能把其中所有正文合并成一段。另一种重复是
+非 Responses 发布器先发送 `commentary-0:A`，随后把累计的 `A+B` 绑定到
+`commentary-1`；message_end 又明确保留两个 ID。此时空 assistant 替换已经清空
+预览，剩余重复来自两条 preamble。不能直接拆块提取正文：原生整消息清洗依赖
+跨块隐藏标记及 Markdown 上下文，分别清洗会泄漏内部文字或误删代码示例。
+034 在现有 delivery 入口为有原生消息身份的非 Responses commentary 保留完整消息
+提取，并明确声明整消息快照；028 通过既有 scope 传递
+`commentarySnapshot: 'message'`。Renderer 只在同 scope 且具有该事实的快照中显示
+正文序号最新的一份。底层原生 ID、正文及完成集合保留，未声明累计范围的独立说明、
+Responses 和最终答复继续显示。旧运行时没有该事实时，不按前缀相似或 scope 猜测覆盖。
+`commentaryItemIds: null` 与字段缺失不同：当前契约只接受缺失或字符串数组，
+字面 null 会使整份 scope 无效。核对原始 JSON，不能把诊断摘要补出的 null 当成
+实际传输字段。相关最小原生缺陷、删除条件和回归入口见
+[034 能力说明](../../../scripts/patches/v2026.10.7/README.md#034-upstream-commentary-block-ownership-defect)。
+
 ### Chat 兜底先到时的正文交接
 
 2026-10-21 的关联日志已确认一种应用交接缺口：原生 Chat `sourceSeq=256` 先发布
