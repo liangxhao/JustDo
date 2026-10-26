@@ -3,7 +3,7 @@ import type { CoworkStore } from '../../data/coworkStore';
 import { GoalContinuationCoordinator } from '../../openclaw/goals/goalContinuationCoordinator';
 import { buildManagedSessionKey, isTeamDiscussionHoldingSessionKey } from '../../openclaw/sessions/openclawSessionKeys';
 import { invalidateSessionListRequests } from '../gateway/sessionListClient';
-import type { GatewayClientLike } from '../gateway/types';
+import type { GatewayClientLike, GatewayResponseContext } from '../gateway/types';
 import type { CoworkRuntimeStatusOptions } from '../types';
 import {
   RUNTIME_SESSION_SNAPSHOT_TTL_MS,
@@ -28,6 +28,7 @@ export interface RuntimeSessionStatusContext {
   readonly ensureGatewayClientReady: () => Promise<void>;
   readonly gatewayClient: GatewayClientLike | null;
   readonly gatewayClientGeneration: number;
+  readonly captureGatewayResponseContext: () => GatewayResponseContext | null;
   readonly targetedSessionStatusChecks: Map<string, Set<symbol>>;
   readonly unknownSessionRuns: ReadonlyMap<string, unknown>;
   readonly subagentStatusGenerations: Map<string, number>;
@@ -503,6 +504,18 @@ export function invalidateRuntimeSessionSnapshot(this: RuntimeSessionStatusConte
   this.runtimeSessionSnapshotGeneration += 1;
 }
 
+const SNAPSHOT_RECOVERY_DELAYS_MS = [250, 750, 1_500, 2_500] as const;
+const SNAPSHOT_RECOVERY_BUDGET_MS = 10_000;
+
+function isRetiredPluginResponse(error: unknown, getResponse: () => GatewayResponseContext | null): boolean {
+  if (!(error instanceof Error)) return false;
+  const { gatewayCode, code } = error as Error & { gatewayCode?: unknown; code?: unknown };
+  if ((gatewayCode ?? code) !== 'UNAVAILABLE' ||
+    !/^PluginInstanceUnavailableError: Plugin [^\s]{1,128} was reloaded or disabled; use its current tools\.$/.test(error.message)) return false;
+  const response = getResponse();
+  return response?.isCurrent() === true && response.isResponseError(error);
+}
+
 export async function getRuntimeSessionSnapshot(
   this: RuntimeSessionStatusContext,
   forceRefresh = false,
@@ -552,36 +565,67 @@ export async function getRuntimeSessionSnapshot(
   const client = this.gatewayClient;
   if (!client) return { known: false, sessions: [], hasMore: false };
   if (forceRefresh) invalidateSessionListRequests(client);
-  const snapshotGeneration = this.runtimeSessionSnapshotGeneration;
+  const clientGeneration = this.gatewayClientGeneration;
+  const connectionCurrent = () => this.gatewayClient === client && this.gatewayClientGeneration === clientGeneration;
+  let snapshotGeneration = this.runtimeSessionSnapshotGeneration;
 
   this.runtimeSessionSnapshotPromise = (async (): Promise<RuntimeSessionSnapshot> => {
-    const sessions: Array<Record<string, unknown>> = [];
-    let offset = 0;
-    while (true) {
-      const result = await client.request<{
-        sessions?: Array<Record<string, unknown>>;
-        hasMore?: boolean;
-      }>('sessions.list', {
-        rowMode: OPENCLAW_COMPACT_SESSION_ROW_MODE,
-        limit: 500,
-        ...(offset > 0 ? { offset } : {}),
-      });
-      const page = result.sessions ?? [];
-      sessions.push(
-        ...page.filter(
-          row =>
-            !isTeamDiscussionHoldingSessionKey(typeof row.key === 'string' ? row.key : undefined),
-        ),
-      );
-      const hasMore =
-        result.hasMore === true || (result.hasMore === undefined && page.length >= 500);
-      if (!fullScan || !hasMore) {
-        return { known: true, sessions, hasMore };
+    let recoveryDeadline: number | undefined;
+    for (let attempt = 0; ; attempt += 1) {
+      // Every recovery is a new scan: never combine pages across a plugin reload.
+      const sessions: Array<Record<string, unknown>> = [];
+      let offset = 0;
+      try {
+        while (true) {
+          if (!connectionCurrent() || snapshotGeneration !== this.runtimeSessionSnapshotGeneration) {
+            return { known: false, sessions: [], hasMore: false };
+          }
+          const remaining = recoveryDeadline === undefined ? undefined
+            : Math.ceil(recoveryDeadline - performance.now());
+          if (remaining !== undefined && remaining <= 0) throw new Error('Session snapshot recovery timed out');
+          const args: Parameters<GatewayClientLike['request']> = ['sessions.list', {
+            rowMode: OPENCLAW_COMPACT_SESSION_ROW_MODE,
+            limit: 500,
+            ...(offset > 0 ? { offset } : {}),
+          }];
+          if (remaining !== undefined) args[2] = { timeoutMs: remaining, signal: AbortSignal.timeout(remaining) };
+          const result = await client.request<{
+            sessions?: Array<Record<string, unknown>>;
+            hasMore?: boolean;
+          }>(...args);
+          if (!connectionCurrent() || snapshotGeneration !== this.runtimeSessionSnapshotGeneration) {
+            return { known: false, sessions: [], hasMore: false };
+          }
+          if (recoveryDeadline !== undefined && performance.now() >= recoveryDeadline) {
+            throw new Error('Session snapshot recovery timed out');
+          }
+          const page = result.sessions ?? [];
+          sessions.push(
+            ...page.filter(
+              row =>
+                !isTeamDiscussionHoldingSessionKey(typeof row.key === 'string' ? row.key : undefined),
+            ),
+          );
+          const hasMore =
+            result.hasMore === true || (result.hasMore === undefined && page.length >= 500);
+          if (!fullScan || !hasMore) return { known: true, sessions, hasMore };
+          if (page.length === 0) return { known: true, sessions, hasMore: true };
+          offset += page.length;
+        }
+      } catch (error) {
+        if (!connectionCurrent()) return { known: false, sessions: [], hasMore: false };
+        if (attempt >= SNAPSHOT_RECOVERY_DELAYS_MS.length ||
+          !isRetiredPluginResponse(error, () => this.captureGatewayResponseContext())) throw error;
+        recoveryDeadline ??= performance.now() + SNAPSHOT_RECOVERY_BUDGET_MS;
+        const delay = SNAPSHOT_RECOVERY_DELAYS_MS[attempt];
+        if (performance.now() + delay >= recoveryDeadline) throw error;
+        await new Promise(resolve => setTimeout(resolve, delay));
+        if (!connectionCurrent()) return { known: false, sessions: [], hasMore: false };
+        if (performance.now() >= recoveryDeadline) throw error;
+        invalidateSessionListRequests(client);
+        // A fresh first page covers earlier invalidations; later events still retire it.
+        snapshotGeneration = this.runtimeSessionSnapshotGeneration;
       }
-      if (page.length === 0) {
-        return { known: true, sessions, hasMore: true };
-      }
-      offset += page.length;
     }
   })()
     .catch((error): RuntimeSessionSnapshot => {
@@ -594,7 +638,7 @@ export async function getRuntimeSessionSnapshot(
       return { known: false, sessions: [], hasMore: false };
     })
     .then(snapshot => {
-      if (snapshotGeneration !== this.runtimeSessionSnapshotGeneration) {
+      if (!connectionCurrent() || snapshotGeneration !== this.runtimeSessionSnapshotGeneration) {
         return { known: false, sessions: [], hasMore: false };
       }
 

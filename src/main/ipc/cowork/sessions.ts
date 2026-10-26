@@ -1385,12 +1385,16 @@ export const registerCoworkSessionHandlers = ({
     },
   );
 
-  ipcMain.handle('cowork:session:get', async (_event, sessionId: string) => {
+  ipcMain.handle('cowork:session:get', async (_event, sessionId: unknown) => {
+    if (typeof sessionId !== 'string' || !sessionId.trim() || sessionId.length > 512) {
+      return { success: false, error: 'Session ID must be a non-empty bounded string.' };
+    }
     try {
       const store = getCoworkStore();
       let session = store.getSession(sessionId);
       if (session?.historyBinding && store.applyHistorySessionDefaults?.(sessionId))
         session = store.getSession(sessionId);
+      if (!session) return { success: false, error: 'Session not found.' };
       return { success: true, session };
     } catch (error) {
       return {

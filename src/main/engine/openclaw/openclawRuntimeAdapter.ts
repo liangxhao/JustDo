@@ -3368,6 +3368,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       ensureGatewayClientReady: { get: () => this.ensureGatewayClientReady.bind(this) },
       gatewayClient: { get: () => this.gatewayClient },
       gatewayClientGeneration: { get: () => this.gatewayClientGeneration },
+      captureGatewayResponseContext: { get: () => this.captureGatewayResponseContext.bind(this) },
       targetedSessionStatusChecks: { get: () => this.targetedSessionStatusChecks },
       unknownSessionRuns: { get: () => this.unknownSessionRuns },
       subagentStatusGenerations: { get: () => this.subagentStatusGenerations },

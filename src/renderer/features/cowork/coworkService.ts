@@ -1195,6 +1195,7 @@ export class CoworkService {
   ): Promise<CoworkSession | null> {
     const cowork = window.electron?.cowork;
     if (!cowork || options.canSelect?.() === false) return null;
+    if (sessionId.startsWith('temp-')) return null;
     const requestId = ++this.latestLoadSessionRequestId;
     const modelRevision = this.sessionModelRevisions.get(sessionId) ?? 0;
     const confirmedModelRef = store.getState().cowork.userConfirmedSessionModelRefs[sessionId];
@@ -1203,11 +1204,9 @@ export class CoworkService {
 
     const result = await cowork.getSession(sessionId);
     if (options.canSelect?.() === false) return null;
+    // Superseded failures are as stale as superseded successful reads.
+    if (requestId !== this.latestLoadSessionRequestId) return result.success ? result.session ?? null : null;
     if (result.success && result.session) {
-      // Keep only the latest session load result to avoid stale async overwrites.
-      if (requestId !== this.latestLoadSessionRequestId) {
-        return result.session;
-      }
       const mainRuntimeRunning =
         store.getState().cowork.sessionMainRuntimeActivity[sessionId] === true ||
         result.session.status === 'running';
@@ -1270,7 +1269,11 @@ export class CoworkService {
       return result.session;
     }
 
-    console.error('Failed to load session:', result.error);
+    console.error(
+      'Failed to load session:',
+      new Error(result.error || 'Session response did not include a session.'),
+      `sessionId=${sessionId}`,
+    );
     return null;
   }
 

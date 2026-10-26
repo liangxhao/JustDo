@@ -674,7 +674,7 @@ describe('cowork session permission selection', () => {
   });
 
   test.each(['session', 'model'] as const)(
-    'does not select a linked task after its origin closes during the %s read',
+    'honors the selection boundary when its origin closes during the %s read',
     async stage => {
       store.dispatch(clearCurrentSession());
       const session: CoworkSession = {
@@ -717,10 +717,11 @@ describe('cowork session permission selection', () => {
       originOpen = false;
       finishRead();
 
-      await expect(loading).resolves.toBeNull();
-      expect(store.getState().cowork.currentSession).toBeNull();
-      expect(remoteManaged).not.toHaveBeenCalled();
-      expect(onSelected).not.toHaveBeenCalled();
+      // Session metadata gates selection; model metadata hydrates an already selected view.
+      await expect(loading).resolves.toEqual(stage === 'session' ? null : session);
+      expect(store.getState().cowork.currentSession?.id ?? null).toBe(stage === 'session' ? null : session.id);
+      expect(remoteManaged).toHaveBeenCalledTimes(stage === 'session' ? 0 : 1);
+      expect(onSelected).toHaveBeenCalledTimes(stage === 'session' ? 0 : 1);
       if (stage === 'session') expect(getSessionModel).not.toHaveBeenCalled();
     },
   );

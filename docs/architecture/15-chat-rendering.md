@@ -458,6 +458,13 @@ Composer 提交前只是草稿；Main 建立产品会话与 `clientTurnId`，并
 
 ## 2. 控制器和状态归属
 
+窗口重新获得焦点时，只为当前已持久化且仍运行的会话刷新产品元数据。
+首次发送前的 `temp-` 会话仅属于乐观界面，不通过 `cowork:session:get` 查库；
+切换、关闭或卸载后，旧焦点读取的选择资格立即失效，不能覆盖新会话或新临时草稿。
+该读取不加载原生正文、不重建缺失会话。Main 查不到产品记录时明确返回失败，
+Renderer 保留现有选择，诊断包含请求的会话 ID 与非空原因；过期失败不再报告为当前错误。
+产品会话缺失不证明原生历史已删除，也不触发关联讨论或原生会话清理。
+
 ChatController 入口持有连接、canonical session、订阅、transcript 和对外命令。session/history/recovery/compaction/progress 模块通过明确上下文操作；propertyContext 使用实时访问器，await 后不读取拆分时复制的旧状态。
 
 ChatTranscriptState 包含 session key/id、persistedMessages、historySource、historyGeneration、activeTurn、recentRuns、terminalRunIds 和 revision。historySource 只有 gateway 或 optimistic；后者是等待原生接管的暂态，不是另一个历史来源。

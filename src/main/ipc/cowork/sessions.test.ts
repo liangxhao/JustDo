@@ -49,6 +49,38 @@ beforeEach(() => {
   mocks.handle.mockReset();
 });
 
+test.each(['present', 'missing', 'removed-during-defaults', 'database-error'])(
+  'returns an explicit product session lookup result for %s', async kind => {
+    const session = { id: 'selected', historyBinding: { sessionKey: 'native-key' } };
+    const getSession = vi.fn().mockReturnValue(kind === 'missing' ? null : session);
+    if (kind === 'removed-during-defaults') getSession.mockReturnValueOnce(session).mockReturnValue(null);
+    if (kind === 'database-error') getSession.mockImplementation(() => { throw new Error('Database read failed'); });
+    const applyHistorySessionDefaults = vi.fn(() => kind === 'removed-during-defaults');
+    registerCoworkSessionHandlers({
+      getCoworkStore: () => ({ getSession, applyHistorySessionDefaults }) as unknown as CoworkStore,
+      getCoworkEngineRouter: () => ({}) as CoworkEngineRouter,
+      setSessionPermissionMode: vi.fn(),
+    });
+    const read = mocks.handle.mock.calls.find(([name]) => name === 'cowork:session:get')![1] as IpcHandler;
+    await expect(read(null, 'selected')).resolves.toEqual(kind === 'present' ? { success: true, session }
+      : { success: false, error: kind === 'database-error' ? 'Database read failed' : 'Session not found.' });
+  },
+);
+
+test('rejects invalid session lookup IDs before reading the product store', async () => {
+  const getSession = vi.fn();
+  registerCoworkSessionHandlers({
+    getCoworkStore: () => ({ getSession }) as unknown as CoworkStore,
+    getCoworkEngineRouter: () => ({}) as CoworkEngineRouter,
+    setSessionPermissionMode: vi.fn(),
+  });
+  const read = mocks.handle.mock.calls.find(([name]) => name === 'cowork:session:get')![1] as IpcHandler;
+  for (const invalid of [null, undefined, {}, '', ' ', 'x'.repeat(513)]) {
+    await expect(read(null, invalid)).resolves.toMatchObject({ success: false, error: expect.any(String) });
+  }
+  expect(getSession).not.toHaveBeenCalled();
+});
+
 test('validates directory and summary inputs before reading product metadata', async () => {
   const store = {
     listSessionDirectory: vi.fn(() => []),

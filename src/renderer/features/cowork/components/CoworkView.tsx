@@ -264,6 +264,7 @@ import SessionReviewPanel from './review/SessionReviewPanel';
 import type { SessionTranscriptMutation } from './sessions/useCoworkSessionActions';
 import { useCoworkSessionActions } from './sessions/useCoworkSessionActions';
 import { useCoworkRuntimePolling } from './status/useCoworkRuntimePolling';
+import { useSessionFocusRefresh } from './status/useSessionFocusRefresh';
 
 const DEBUG_COWORK_VIEW =
   typeof import.meta !== 'undefined' && import.meta.env?.VITE_DEBUG_COWORK_VIEW === 'true';
@@ -1714,20 +1715,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     };
   }, [onNewChat]);
 
-  useEffect(() => {
-    if (!isOpenClawEngine) return;
-    if (!currentSession || !currentSessionRuntimeRunning) return;
-
-    const runningSessionId = currentSession.id;
-    const handleWindowFocus = () => {
-      void coworkService.loadSession(runningSessionId);
-    };
-
-    window.addEventListener('focus', handleWindowFocus);
-    return () => {
-      window.removeEventListener('focus', handleWindowFocus);
-    };
-  }, [currentSession, currentSessionRuntimeRunning, isOpenClawEngine]);
+  useSessionFocusRefresh(currentSession?.id, isOpenClawEngine && currentSessionRuntimeRunning);
 
   useCoworkRuntimePolling({
     currentSessionId,

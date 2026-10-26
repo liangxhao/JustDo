@@ -291,6 +291,16 @@ Main Gateway 客户端仅共享参数与超时策略相同的在途 `sessions.li
 合并，收到事件时立即使较早结果失效，切会话或卸载时取消排队。手动刷新仍立即
 执行，权限、子任务完整性与原生身份校验保持原有责任边界。
 
+运行状态快照分页若遇到插件热重载拒绝，只对同一已认证连接的原生响应、
+`UNAVAILABLE` 及精确 `PluginInstanceUnavailableError` 文案启动恢复；普通不可用、
+权限拒绝、断线、超时和同文案本地异常不重试。首次匹配拒绝后有额外 10 秒预算，
+按 250/750/1500/2500 ms 最多重新读取四次，各页请求共用剩余超时与取消信号。
+每次清空部分结果及在途列表共享窗口，从第一页开始，并固定原客户端与连接代次；
+连接变化后不再请求或缓存结果。重新读取只在第一页开始时采用最新快照代次，
+之后的失效通知继续淘汰该次读取。耗尽预算仍返回未知，成功恢复不记录应用查询失败；
+Gateway 首次拒绝的诊断日志仍可能出现。此恢复不重启运行时、不重放发送或写操作，
+不绕过原生插件实例撤销检查。
+
 桌面主聊天的首轮原生发送支持由实际 Renderer 连接执行：Adapter 准备 session/root、权限、模型、运行 ID 与 Goal intent 后，向受信窗口交出同一份 `chat.send` 参数；Main 保留监听与运行状态。只有已挂载原生 viewer 的 HTTP(S) 聊天连接公告 `inline-widgets`，原生执行按 originating client capability 决定 `show_widget` 是否可用。Main 的后台连接保持 headless，未增加 UI capability 或 native runtime patch。一次 ACK 必须对应原始幂等 ID，停止控制回执和 structured Goal receipt 分别校验；不确定发送只恢复状态，不重新启动任务。
 
 产品配置来自 app_config、cowork_config、agents、MCP/Hook Store、Extension 开关与受管文件。ConfigSync 构建原生投影，ConfigSyncService 在串行 mutation 中应用并验证。
