@@ -346,9 +346,13 @@ it('shows initial history loading immediately, including an empty running sessio
   });
   render(<JustDoChatWrapper />);
   expect(screen.getByText('storageHistoryLoading')).toBeTruthy();
-  const spinner = screen.getByRole('status').querySelector('svg');
-  expect(spinner?.classList.contains('animate-spin')).toBe(true);
-  expect(spinner?.classList.contains('motion-reduce:animate-spin')).toBe(true);
+  const loadingDots = screen.getByRole('status').querySelectorAll('[aria-hidden="true"] > span');
+  expect(loadingDots).toHaveLength(3);
+  loadingDots.forEach((dot, index) => {
+    expect(dot.classList.contains('animate-bounce')).toBe(true);
+    expect(dot.classList.contains('motion-reduce:animate-bounce')).toBe(true);
+    expect((dot as HTMLElement).style.animationDelay).toBe(`${index * 150}ms`);
+  });
   await waitFor(() => expect(connect).toHaveBeenCalled());
   const controller = connect.mock.instances[0] as ChatController;
   const publish = () => (controller as unknown as { notify(): void }).notify();

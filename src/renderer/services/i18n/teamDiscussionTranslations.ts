@@ -226,6 +226,7 @@ export const teamDiscussionTranslations = {
     teamSend: '发送',
     teamRetry: '确认发送状态',
     teamMentionUseSelector: '请输入 @ 并从下拉列表选择助手，或移除未绑定的 @ 名称后再发送。',
+    teamDiscussionMessagesLoading: '首次加载群聊消息可能需要一些时间，请稍候',
     teamHistoryUnavailable: '暂时无法读取原生历史。恢复连接后会自动重试，当前显示保留上次结果。',
     teamState_submitting: '正在提交…',
     teamState_running: '成员正在讨论…',
@@ -493,6 +494,8 @@ export const teamDiscussionTranslations = {
     teamRetry: 'Check submission',
     teamMentionUseSelector:
       'Type @ and choose an assistant from the list, or remove the unbound mention before sending.',
+    teamDiscussionMessagesLoading:
+      'Loading group messages for the first time may take a moment. Please wait',
     teamHistoryUnavailable:
       'Native history is temporarily unavailable. Reconnecting automatically; the last visible result is retained.',
     teamState_submitting: 'Submitting…',

@@ -51,7 +51,7 @@ export const sessionStorageTranslations = {
     storageError_disabled: '归档策略尚未启用，请先保存启用设置。',
     storageError_busy: '已有操作正在进行，请稍后刷新。',
     storageError_unknown: '无法完成会话存储操作，请刷新核对状态。',
-    storageHistoryLoading: '正在加载历史；归档历史可能需要更长时间。',
+    storageHistoryLoading: '首次加载会话历史可能需要一些时间，请稍候',
     storageHistoryFailed: '历史读取失败，请重试。恢复完成前不能发送或导出。',
     storageHistoryPreparing: '会话正在准备，完成后会自动加载历史。',
     storageHistoryPreparationPending: '会话仍在准备，历史尚未读取。请稍后重试；读取完成前不能发送或导出。',
@@ -115,7 +115,8 @@ export const sessionStorageTranslations = {
     storageError_busy: 'Another operation is in progress. Refresh shortly.',
     storageError_unknown:
       'Unable to complete the session storage operation. Refresh to verify its state.',
-    storageHistoryLoading: 'Loading history. Archived history may take longer.',
+    storageHistoryLoading:
+      'Loading conversation history for the first time may take a moment. Please wait',
     storageHistoryFailed: 'History could not be read. Retry before sending or exporting.',
     storageHistoryPreparing: 'The session is preparing. History will load automatically when ready.',
     storageHistoryPreparationPending: 'The session is still preparing and history is not confirmed. Retry later before sending or exporting.',

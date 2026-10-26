@@ -154,6 +154,77 @@ afterEach(() => {
   document.querySelectorAll('iframe').forEach(frame => frame.remove());
 });
 
+it('shows a loading notice until the first messages arrive and keeps it hidden during later reads', async () => {
+  let resolveRead!: (result: unknown) => void;
+  read.mockReturnValueOnce(
+    new Promise(resolve => {
+      resolveRead = resolve;
+    }),
+  );
+  read.mockReturnValue(new Promise(() => {}));
+  render(<TeamDiscussionView entry={{ roomId: 'room' }} onClose={vi.fn()} />);
+  const notice = screen.getByText('teamDiscussionMessagesLoading').closest('[role="status"]')!;
+  expect(notice.querySelectorAll('[aria-hidden="true"] > span')).toHaveLength(3);
+  await waitFor(() => expect(read).toHaveBeenCalledOnce());
+
+  await act(async () => {
+    resolveRead({
+      success: true,
+      value: {
+        room,
+        messages: [
+          {
+            id: 'first',
+            discussionId: 'batch',
+            role: 'user',
+            text: 'Loaded group message',
+            sequence: 1,
+            timestamp: 1,
+            mediaUrls: [],
+          },
+        ],
+        historyUnavailable: false,
+      },
+    });
+  });
+
+  expect(screen.getByText('Loaded group message')).toBeTruthy();
+  expect(read).toHaveBeenCalledTimes(2);
+  expect(screen.queryByText('teamDiscussionMessagesLoading')).toBeNull();
+});
+
+it('settles initial loading even when the group has no messages', async () => {
+  render(<TeamDiscussionView entry={{ roomId: 'room' }} onClose={vi.fn()} />);
+  expect(screen.getByText('teamDiscussionMessagesLoading')).toBeTruthy();
+  await screen.findByText(room.title);
+  expect(screen.queryByText('teamDiscussionMessagesLoading')).toBeNull();
+});
+
+it.each(['rejected', 'failed', 'unavailable'] as const)(
+  'replaces initial loading with the existing notice when reading is %s', async state => {
+    if (state === 'rejected') read.mockRejectedValue(new Error('unavailable'));
+    else if (state === 'failed')
+      read.mockResolvedValue({ success: false, error: 'teamDiscussionUnavailable' });
+    else
+      read.mockResolvedValue({
+        success: true,
+        value: { room, messages: [], historyUnavailable: true },
+      });
+    render(<TeamDiscussionView entry={{ roomId: 'room' }} onClose={vi.fn()} />);
+    expect(screen.getByText('teamDiscussionMessagesLoading')).toBeTruthy();
+    await screen.findByText(
+      state === 'unavailable' ? 'teamHistoryUnavailable' : 'teamDiscussionUnavailable',
+    );
+    expect(screen.queryByText('teamDiscussionMessagesLoading')).toBeNull();
+  },
+);
+
+it('keeps the new-team screen free of a message loading notice', () => {
+  render(<TeamDiscussionView entry={{}} onClose={vi.fn()} />);
+  expect(screen.queryByText('teamDiscussionMessagesLoading')).toBeNull();
+  expect(read).not.toHaveBeenCalled();
+});
+
 it('preserves the scroll position on unchanged polls and follows new replies only near the bottom', async () => {
   vi.useFakeTimers();
   try {

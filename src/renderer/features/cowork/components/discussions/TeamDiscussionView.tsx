@@ -33,6 +33,7 @@ import AgentTeamSettingsDialog, {
 } from '@/features/plugins/extensions/AgentTeamSettingsDialog';
 import { useExtensionAvailability } from '@/features/plugins/extensions/useExtensionEnablement';
 import { i18nService } from '@/services/i18n';
+import LoadingDots from '@/shared/components/ui/LoadingDots';
 import { useOwnerDocument, useOwnerWindow } from '@/shared/dom/ownerDocument';
 import type { RootState } from '@/store';
 import { store } from '@/store';
@@ -226,6 +227,7 @@ export default function TeamDiscussionView({
   useEffect(() => {
     if (!enabled) setSettingsOpen(false);
   }, [enabled]);
+  const [initialHistoryLoading, setInitialHistoryLoading] = useState(Boolean(entry.roomId));
   const [historyUnavailable, setHistoryUnavailable] = useState(false);
   const [drawer, setDrawer] = useState(false);
   const [queueExpanded, setQueueExpanded] = useState(false);
@@ -273,6 +275,7 @@ export default function TeamDiscussionView({
     const version = ++refreshVersion.current;
     const result = await window.electron.teamDiscussion.read(id);
     if (!alive.current || version !== refreshVersion.current) return;
+    setInitialHistoryLoading(false);
     if (!result.success) {
       setError(result.error);
       return;
@@ -325,7 +328,10 @@ export default function TeamDiscussionView({
       try {
         await refresh(id);
       } catch {
-        if (!disposed) setError('teamDiscussionUnavailable');
+        if (!disposed) {
+          setInitialHistoryLoading(false);
+          setError('teamDiscussionUnavailable');
+        }
       }
       if (!disposed)
         timer = setTimeout(() => {
@@ -939,6 +945,15 @@ export default function TeamDiscussionView({
             }}
           >
             <div className="mx-auto max-w-3xl space-y-6">
+              {initialHistoryLoading && (
+                <div
+                  className="flex items-center justify-center gap-2 py-3 text-sm text-secondary"
+                  role="status"
+                >
+                  <span>{t('teamDiscussionMessagesLoading')}</span>
+                  <LoadingDots />
+                </div>
+              )}
               {previousCursor && (
                 <button
                   className={button}

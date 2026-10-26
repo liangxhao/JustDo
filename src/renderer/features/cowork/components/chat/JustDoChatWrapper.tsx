@@ -61,6 +61,7 @@ import {
 } from '@/libs/openclaw-chat/model/timeline/session-summary-resources';
 import type { GatewayMessage, UserMessageHistoryAction } from '@/libs/openclaw-chat/types';
 import { i18nService } from '@/services/i18n';
+import LoadingDots from '@/shared/components/ui/LoadingDots';
 
 import type { MessageQuoteHandler } from '../composer/draft/messageQuote';
 import { type McpAppComposerMenu, McpAppsControls } from '../mcpApps/McpAppsControls';
@@ -1065,28 +1066,13 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
             className="flex items-center justify-center gap-2 px-4 py-3 text-sm text-secondary"
             role={historyStatus === 'loading' ? 'status' : 'alert'}
           >
-            {historyStatus === 'loading' && (
-              <svg
-                className="h-4 w-4 shrink-0 animate-spin motion-reduce:animate-spin"
-                viewBox="0 0 24 24"
-                fill="none"
-                aria-hidden="true"
-              >
-                <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2" opacity="0.2" />
-                <path
-                  d="M12 3a9 9 0 0 1 9 9"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                />
-              </svg>
-            )}
             <span>
               {i18nService.t(
                 historyStatus === 'preparation-pending' ? 'storageHistoryPreparationPending' :
                   historyStatus === 'error' ? 'storageHistoryFailed' : 'storageHistoryLoading',
               )}
             </span>
+            {historyStatus === 'loading' && <LoadingDots />}
             {(historyStatus === 'error' || historyStatus === 'preparation-pending') && (
               <button
                 type="button"
