@@ -14,6 +14,7 @@ import {
   MAX_ASK_USER_QUESTIONS,
   parseQuestions,
 } from '../../../../plugins/extensions/ask-user-question/index';
+import { OpenClawToolName } from '../../../shared/plugins/nativeIds';
 
 const question = {
   id: 'deploy_target',
@@ -69,6 +70,9 @@ describe('AskUserQuestion extension', () => {
     } as never);
 
     expect(registerService).toHaveBeenCalledOnce();
+    expect(registerTool).toHaveBeenCalledOnce();
+    expect(registerTool.mock.calls[0][1]).toEqual({ name: 'ask_user_question' });
+    expect(OpenClawToolName.ASK_USER_QUESTION).toBe('ask_user_question');
     expect(registerGatewayMethod.mock.calls.map(call => [call[0], call[2]])).toEqual([
       ['askUserQuestion.list', { scope: 'operator.read' }],
       ['askUserQuestion.resolve', { scope: 'operator.write' }],
@@ -77,10 +81,10 @@ describe('AskUserQuestion extension', () => {
     expect(factory({ sessionKey: 'agent:main:subagent:child' })).toBeNull();
     expect(factory({ sessionKey: 'agent:main:unrelated:session' })).toBeNull();
     expect(factory({ sessionKey: 'agent:alice:justdo-team:group:room' })).toMatchObject({
-      name: 'AskUserQuestion',
+      name: 'ask_user_question',
     });
     expect(factory({ sessionKey: 'agent:main:justdo:session-1' })).toMatchObject({
-      name: 'AskUserQuestion',
+      name: 'ask_user_question',
       description: ASK_USER_QUESTION_DESCRIPTION,
     });
   });
@@ -160,9 +164,13 @@ describe('AskUserQuestion extension', () => {
     const extensionDir = path.join(process.cwd(), 'plugins/extensions', 'ask-user-question');
     const manifest = JSON.parse(
       fs.readFileSync(path.join(extensionDir, 'openclaw.plugin.json'), 'utf8'),
-    ) as { configSchema: { properties: Record<string, unknown> } };
+    ) as {
+      contracts: { tools: string[] };
+      configSchema: { properties: Record<string, unknown> };
+    };
     const source = fs.readFileSync(path.join(extensionDir, 'index.ts'), 'utf8');
 
+    expect(manifest.contracts.tools).toEqual([OpenClawToolName.ASK_USER_QUESTION]);
     expect(manifest.configSchema.properties).toEqual({
       timeoutMinutes: expect.objectContaining({ default: ASK_USER_TIMEOUT_MINUTES }),
     });

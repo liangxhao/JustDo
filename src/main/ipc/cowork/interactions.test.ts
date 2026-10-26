@@ -151,7 +151,7 @@ describe('cowork AskUserQuestion interaction IPC', () => {
       sessionId: 'session-1',
       request: {
         requestId: 'ask-1',
-        toolName: 'AskUserQuestion' as const,
+        toolName: 'ask_user_question' as const,
         interactionKind: 'structured-question' as const,
         toolInput: {
           sessionId: 'session-1',

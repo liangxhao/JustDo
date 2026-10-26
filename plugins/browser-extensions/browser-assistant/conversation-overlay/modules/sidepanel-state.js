@@ -1,5 +1,5 @@
 import { sidePanelText as t } from './sidepanel-i18n.js';
-import { foldBrowserExtensionEntries, isPresentPlanToolName } from './sidepanel-stream.js';
+import { foldBrowserExtensionEntries, isBrowserQuestionTool, isPresentPlanToolName } from './sidepanel-stream.js';
 
 const TOOL_TITLES = {
   api: 'API',
@@ -317,7 +317,14 @@ export function messagesFromThread(thread, options = {}) {
           ...(item.display ? { display: item.display } : {}),
           ...(item.rawMessage ? { rawMessage: item.rawMessage } : {}),
         };
-        if (item.toolName?.trim().toLowerCase() === 'progress_card') {
+        if (isBrowserQuestionTool(item)) {
+          flushProcesses();
+          entries.push({
+            role: 'question-presentation',
+            key: process.key,
+            item: { ...process, input: item.input, output: item.output, ...(item.questionResult ? { questionResult: item.questionResult } : {}) },
+          });
+        } else if (item.toolName?.trim().toLowerCase() === 'progress_card') {
           flushProcesses();
           entries.push({
             role: 'progress-receipt',

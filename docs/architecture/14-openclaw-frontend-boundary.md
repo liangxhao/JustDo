@@ -64,7 +64,7 @@ MCP 原生发现只补缺失 name，产品 mutation 后不从旧 config 复活�
 
 功能能通过原生 tool、turn hook、session extension、scoped RPC/event 表达时，优先 Extension。它拥有运行时 pending 或原生 policy；Main 桥只承担产品权限、文件/系统能力和 UI。
 
-AskUserQuestion、Plan mode、automation permission、embedded browser、agent-team 和 stt-local-cli 都是不同例子。不能因为都是插件就让它们共享全局 pending、绕过沙盒或每轮强制注入提示词。
+ask_user_question、Plan mode、automation permission、embedded browser、agent-team 和 stt-local-cli 都是不同例子。不能因为都是插件就让它们共享全局 pending、绕过沙盒或每轮强制注入提示词。
 
 Extension 运行于 Gateway 信任域；如果目标是限制恶意第三方代码，仅靠 manifest 或 sidecar 不够，应单独定义进程隔离与凭据边界。
 

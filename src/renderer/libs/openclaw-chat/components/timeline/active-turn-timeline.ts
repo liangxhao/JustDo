@@ -13,6 +13,11 @@ import { repeat } from 'lit/directives/repeat.js';
 
 import { i18nService } from '@/services/i18n';
 
+import {
+  questionPresentationResponse,
+  renderQuestionPresentation,
+} from '../../../../../../plugins/extensions/ask-user-question/browser/presentation';
+import { parseQuestions } from '../../../../../../plugins/extensions/ask-user-question/contracts/result';
 import { isTranscriptImage } from '../../attachments';
 import type { ThinkingItem, ToolItem } from '../../model/chat-transcript-state';
 import { formatActiveTurnDuration } from '../../model/timeline/active-turn-footer';
@@ -809,6 +814,28 @@ export function renderTimelineItem(
   if (item.kind === 'progress-receipt') {
     return renderProgressReceipt(item.item, showAvatar, assistantAvatar);
   }
+  if (item.kind === 'question-presentation') {
+    const result =
+      item.item.status === 'completed' ? item.item.presentation?.questionResult : undefined;
+    const questions =
+      result?.questions ?? parseQuestions((item.item.input as Record<string, unknown>)?.questions);
+    if (!questions) return html``;
+    return renderAssistantTimelineRow(
+      renderQuestionPresentation(
+        questions,
+        questionPresentationResponse(
+          item.item.status,
+          result?.response,
+          item.item.error ?? item.item.output,
+        ),
+        key => i18nService.t(key),
+      ),
+      showAvatar,
+      'chat-group--question',
+      'assistant',
+      assistantAvatar,
+    );
+  }
   if (item.kind === 'plan-presentation') {
     return renderPlanPresentation(item.item, showAvatar, assistantAvatar);
   }
@@ -867,7 +894,8 @@ export function renderTimelineItem(
         ${repeat(
           item.items,
           process => process.id,
-          process => renderProcessItem(process, depths, editDiffModes, onEditDiffModeChange, renderThinking),
+          process =>
+            renderProcessItem(process, depths, editDiffModes, onEditDiffModeChange, renderThinking),
         )}
       </ol>`;
     return renderAssistantTimelineRow(

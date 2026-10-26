@@ -1,8 +1,33 @@
 import { describe, expect, it } from 'vitest';
 
-import { readBrowserExtensionHistoryDisplay } from './browserExtensionHistoryDisplay';
+import { readBrowserExtensionHistoryDisplay, readBrowserQuestionResult } from './browserExtensionHistoryDisplay';
 
 describe('authenticated browser history display metadata', () => {
+  it('projects question answers only from their matched native result and structured envelope', () => {
+    const questionResult = {
+      version: 1,
+      questions: [{ id: 'stack', question: 'Which stack?', options: [{ id: 'react', label: 'React' }, { id: 'vue', label: 'Vue' }] }],
+      response: { status: 'answered', answers: { stack: { selected: ['react'] } } },
+    };
+    const result = {
+      role: 'toolResult', toolCallId: 'call-1', toolName: 'ask_user_question',
+      content: [{ type: 'text', text: JSON.stringify({ askUserQuestion: questionResult, summary: 'User selected: React' }) }],
+    };
+    expect(readBrowserQuestionResult(result, 'ask_user_question', 'call-1')).toMatchObject(questionResult);
+    expect(readBrowserQuestionResult({ ...result, content: undefined, result: { content: result.content } }, 'ask_user_question', 'call-1')).toMatchObject(questionResult);
+    const nested = { role: 'custom', customType: 'openclaw.nested-tool.v1', content: [{ ...result, type: 'toolResult' }] };
+    expect(readBrowserQuestionResult(nested, 'ask_user_question', 'call-1')).toMatchObject(questionResult);
+    for (const value of [
+      { ...result, role: 'assistant' },
+      { ...result, isError: true },
+      { ...result, content: 'User selected: React' },
+      { ...nested, customType: 'untrusted-custom' },
+      { ...nested, content: [nested.content[0], nested.content[0]] },
+    ]) expect(readBrowserQuestionResult(value, 'ask_user_question', 'call-1')).toBeNull();
+    expect(readBrowserQuestionResult(result, 'other_tool', 'call-1')).toBeNull();
+    expect(readBrowserQuestionResult(result, 'ask_user_question', 'other-call')).toBeNull();
+  });
+
   it('preserves the exact native commentary discriminator separately from its owner id', () => {
     expect(
       readBrowserExtensionHistoryDisplay({

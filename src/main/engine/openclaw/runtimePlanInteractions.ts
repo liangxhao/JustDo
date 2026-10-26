@@ -275,7 +275,7 @@ export function handleAskUserRequested(
 ): void {
   const request = parseAskUserRequest(payload);
   if (!request) {
-    coworkLog('WARN', 'OpenClawRuntime', 'Ignored malformed AskUserQuestion request');
+    coworkLog('WARN', 'OpenClawRuntime', 'Ignored malformed ask_user_question request');
     return;
   }
   if (this.terminalAskUserIds.has(request.requestId)) return;
@@ -458,13 +458,13 @@ export async function readPendingAskUserInteractions(
 ): Promise<AskUserInteractionEnvelope[]> {
   const result = await client.request(AskUserQuestionGateway.LIST, {});
   if (!isRecord(result) || !Array.isArray(result.requests)) {
-    throw new Error('AskUserQuestion list returned an invalid payload.');
+    throw new Error('ask_user_question list returned an invalid payload.');
   }
   const interactions: AskUserInteractionEnvelope[] = [];
   for (const [index, rawRequest] of result.requests.entries()) {
     const request = parseAskUserRequest(rawRequest);
     if (!request) {
-      coworkLog('WARN', 'OpenClawRuntime', 'Ignored malformed AskUserQuestion list entry', {
+      coworkLog('WARN', 'OpenClawRuntime', 'Ignored malformed ask_user_question list entry', {
         index,
       });
       continue;
@@ -1156,9 +1156,9 @@ export async function resolveAskUserInteraction(
   }
   const pending = this.pendingAskUserRequests.get(normalizedRequestId);
   if (!normalizedRequestId || !pending) {
-    throw new Error('This question is not an active JustDo AskUserQuestion interaction.');
+    throw new Error('This question is not an active JustDo ask_user_question interaction.');
   }
-  if (response.behavior === 'plan') throw new Error('Invalid AskUserQuestion response.');
+  if (response.behavior === 'plan') throw new Error('Invalid ask_user_question response.');
   const answers =
     response.behavior === 'submit'
       ? parseAskUserAnswers(response.answers, pending.questions)
@@ -1178,7 +1178,7 @@ export async function resolveAskUserInteraction(
     result.requestId !== normalizedRequestId ||
     !['answered', 'cancelled'].includes(String(result.status))
   ) {
-    throw new Error('AskUserQuestion resolve returned an invalid payload.');
+    throw new Error('ask_user_question resolve returned an invalid payload.');
   }
   this.rememberTerminalAskUser(normalizedRequestId);
   if (this.pendingAskUserRequests.delete(normalizedRequestId)) {
@@ -1221,7 +1221,7 @@ export async function reconcilePendingAskUserInteractions(
       }
     }
   } catch (error) {
-    coworkLog('WARN', 'OpenClawRuntime', 'Failed to recover pending AskUserQuestion requests', {
+    coworkLog('WARN', 'OpenClawRuntime', 'Failed to recover pending ask_user_question requests', {
       error: error instanceof Error ? error.message : String(error),
     });
   }

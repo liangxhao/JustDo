@@ -28,7 +28,7 @@
 
 先使用公开 Gateway/SDK。需要原生 tool/hook/session extension 时通过受控 Extension；只有锁定 pristine 包缺少且公开能力不能表达的语义才评估补丁。
 
-当前 Runtime Services 提供受限 history detail、回执和进度等投影；AskUserQuestion/Plan/automation/agent-team 等承担各自运行时能力。它们不建立第二份 transcript 或调度器。
+当前 Runtime Services 提供受限 history detail、回执和进度等投影；ask_user_question/Plan/automation/agent-team 等承担各自运行时能力。它们不建立第二份 transcript 或调度器。
 
 同一个功能可能同时依赖原生契约和窄补丁，例如原生 history 加产品 display-history 边界。不能标成“全部由补丁实现”，也不能因为主 API 原生存在就忽略打包后的补充契约。
 

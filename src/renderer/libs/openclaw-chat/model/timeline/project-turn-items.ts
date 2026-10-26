@@ -2,6 +2,10 @@ import { isPresentPlanToolName } from '@shared/cowork/interactions/planPreview';
 import type { McpAppContentReference } from '@shared/plugins/mcpAppReferences';
 import type { McpAppPreview } from '@shared/plugins/mcpApps';
 
+import {
+  ASK_USER_QUESTION_TOOL_NAME,
+  parseQuestions,
+} from '../../../../../../plugins/extensions/ask-user-question/contracts/result';
 import { decodeNativeAppReference } from '../../pipeline/native-app-reference';
 import {
   decodeNativeCanvasResult,
@@ -60,6 +64,12 @@ export interface PlanPresentationTimelineItem {
   item: ToolItem;
 }
 
+export interface QuestionPresentationTimelineItem {
+  kind: 'question-presentation';
+  key: string;
+  item: ToolItem;
+}
+
 export interface TerminalTimelineItem {
   kind: 'terminal';
   key: string;
@@ -107,11 +117,26 @@ export type ActiveTurnTimelineItem =
   | LiveProcessTimelineItem
   | ProgressReceiptTimelineItem
   | PlanPresentationTimelineItem
+  | QuestionPresentationTimelineItem
   | ContentTimelineItem
   | CompactionTimelineItem
   | TerminalTimelineItem
   | WaitingTimelineItem
   | WaitingStatusTimelineItem;
+
+/** Only a valid native question call or structured result gets the question view. */
+export function isQuestionPresentationTool(tool: ToolItem): boolean {
+  if (tool.name !== ASK_USER_QUESTION_TOOL_NAME) return false;
+  if (tool.status === 'completed' && tool.presentation?.questionResult) return true;
+  if (!['running', 'cancelled', 'interrupted', 'failed'].includes(tool.status)) return false;
+  const input = tool.input;
+  return Boolean(
+    input &&
+      typeof input === 'object' &&
+      !Array.isArray(input) &&
+      parseQuestions((input as Record<string, unknown>).questions),
+  );
+}
 
 function normalFailureText(value: string | undefined): string {
   return value?.trim().replace(/\s+/g, ' ').toLowerCase() ?? '';
@@ -235,6 +260,12 @@ export function projectTurnItems(
     if (item.type === 'thinking' || item.type === 'tool') {
       if (item.type === 'tool') {
         if (item.status === 'failed') failedTools.push(item);
+        if (isQuestionPresentationTool(item)) {
+          flushSummary();
+          projected.push({ kind: 'question-presentation', key: `question:${item.id}`, item });
+          summarySegment += 1;
+          continue;
+        }
         const normalizedName = item.name.trim().toLowerCase();
         const widget = widgets.get(item);
         const app = apps.get(item);

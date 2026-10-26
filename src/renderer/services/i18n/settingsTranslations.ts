@@ -544,7 +544,7 @@ export const settingsTranslations = {
       '可访问策略允许的全部会话；跨 Agent 访问仍需额外授权，沙盒会话会收窄为当前任务树。',
     agentRuntimeAskUserTimeoutTitle: '提问等待时限',
     agentRuntimeAskUserTimeoutDescription:
-      'AskUserQuestion 启用超时后等待用户回答的分钟数，范围 1–1440 分钟。',
+      'ask_user_question 启用超时后等待用户回答的分钟数，范围 1–1440 分钟。',
     agentRuntimeScheduledTaskApprovalTimeoutTitle: '计划任务审批时限',
     agentRuntimeScheduledTaskApprovalTimeoutDescription:
       '等待计划任务变更审批的时间，不影响命令或其他插件审批。',
@@ -1552,7 +1552,7 @@ export const settingsTranslations = {
       'Includes every policy-permitted session; cross-Agent access still requires separate authorization, and sandboxed sessions are narrowed to the current task tree.',
     agentRuntimeAskUserTimeoutTitle: 'Question response timeout',
     agentRuntimeAskUserTimeoutDescription:
-      'How many minutes AskUserQuestion waits for an answer when timeout is enabled. Range: 1–1440 minutes.',
+      'How many minutes ask_user_question waits for an answer when timeout is enabled. Range: 1–1440 minutes.',
     agentRuntimeScheduledTaskApprovalTimeoutTitle: 'Scheduled task approval timeout',
     agentRuntimeScheduledTaskApprovalTimeoutDescription:
       'How long scheduled task changes wait for approval. This does not affect command or other plugin approvals.',

@@ -2,6 +2,7 @@ import { browserInterventionTranslations } from '@/features/browser/intervention
 import { browserRecordingTranslations } from '@/features/browser/recording/browserRecordingTranslations';
 import type { LanguageType } from '@/services/i18n';
 
+import { askUserQuestionTranslations } from '../../../../plugins/extensions/ask-user-question/browser/translations';
 import { appTranslations } from './appTranslations';
 import { assistantTranslations } from './assistantTranslations';
 import { authTranslations } from './authTranslations';
@@ -30,6 +31,7 @@ import { workspaceDisplayTranslations } from './workspaceDisplayTranslations';
 
 export const translations: Record<LanguageType, Record<string, string>> = {
   zh: {
+    ...askUserQuestionTranslations.zh,
     ...appTranslations.zh,
     ...assistantTranslations.zh,
     ...authTranslations.zh,
@@ -59,6 +61,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     ...workspaceDisplayTranslations.zh,
   },
   en: {
+    ...askUserQuestionTranslations.en,
     ...appTranslations.en,
     ...assistantTranslations.en,
     ...authTranslations.en,

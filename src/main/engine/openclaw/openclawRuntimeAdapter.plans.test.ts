@@ -213,7 +213,7 @@ test.each(['answered', 'cancelled', 'timeout'])('forwards AskUserQuestion events
     sessionId: 'session-1',
     request: expect.objectContaining({
       requestId: request.requestId,
-      toolName: 'AskUserQuestion',
+      toolName: 'ask_user_question',
       toolInput: expect.objectContaining({ waitPolicy: { mode: 'required' } }),
     }),
   });

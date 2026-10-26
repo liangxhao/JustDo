@@ -160,7 +160,7 @@ it.each([false, true])(
 
       harness.coordinator.handleToolEvent({
         runId: 'parent-run', sessionKey, sessionId: nativeIdentity.sessionId,
-        name: 'AskUserQuestion', toolCallId: 'call-question', status: 'completed',
+        name: 'ask_user_question', toolCallId: 'call-question', status: 'completed',
         output: result, failed: false,
       });
       expect(harness.coordinator.getSnapshot(sessionId)?.phase).toBe(GoalExecutionPhase.Running);

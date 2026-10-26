@@ -309,7 +309,7 @@ it('shows a pending native room question and clears attention after it is answer
     {
       requestId: 'question',
       sessionId: 'native',
-      toolName: 'AskUserQuestion',
+      toolName: 'ask_user_question',
       interactionKind: CoworkInteractionKind.STRUCTURED_QUESTION,
       toolInput: { sessionKey: teamDiscussionSessionKey('room', 'bob') },
     },

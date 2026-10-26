@@ -1,4 +1,12 @@
 import { render } from 'lit';
+import {
+  questionPresentationResponse,
+  renderQuestionPresentation,
+} from '../../plugins/extensions/ask-user-question/browser/presentation';
+import {
+  parseQuestionResult,
+  parseQuestions,
+} from '../../plugins/extensions/ask-user-question/contracts/result';
 import { renderCompactionMessage } from '../../src/renderer/libs/openclaw-chat/components/timeline/compaction-divider';
 import { projectProgressReceipt } from '../../src/renderer/libs/openclaw-chat/model/tools/progress-receipt';
 import type { GatewayMessage } from '../../src/renderer/libs/openclaw-chat/types';
@@ -33,10 +41,42 @@ export function renderRichContent(
     role: string;
     text?: string;
     rawMessage?: Record<string, unknown>;
-    item?: { id?: string; input?: unknown; status?: string };
+    item?: {
+      id?: string;
+      input?: unknown;
+      status?: string;
+      questionResult?: unknown;
+      output?: unknown;
+    };
   },
   loadImage: (source: string) => Promise<string>,
 ) {
+  if (entry.role === 'question-presentation' && entry.item) {
+    const result =
+      entry.item.status === 'completed' ? parseQuestionResult(entry.item.questionResult) : null;
+    const input = entry.item.input;
+    const questions =
+      result?.questions ??
+      parseQuestions(
+        input && typeof input === 'object'
+          ? (input as Record<string, unknown>).questions
+          : undefined,
+      );
+    if (questions)
+      render(
+        renderQuestionPresentation(
+          questions,
+          questionPresentationResponse(
+            entry.item.status,
+            result?.response,
+            typeof entry.item.output === 'string' ? entry.item.output : undefined,
+          ),
+          key => i18nService.t(key),
+        ),
+        host,
+      );
+    return;
+  }
   if (entry.role === 'compaction') {
     let content = host.querySelector<HTMLElement>(':scope > .compaction-content');
     if (!content) {

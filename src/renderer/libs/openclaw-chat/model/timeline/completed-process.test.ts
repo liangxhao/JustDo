@@ -2,7 +2,7 @@ import { describe, expect, test } from 'vitest';
 
 import { foldCompletedProcessRows } from './completed-process';
 import type { PersistedTimelineItem } from './project-history-timeline';
-import type { ProcessSummaryTimelineItem, ProgressReceiptTimelineItem } from './project-turn-items';
+import type { ProcessSummaryTimelineItem, ProgressReceiptTimelineItem, QuestionPresentationTimelineItem } from './project-turn-items';
 import { prepareVisibleTimelineRows } from './timeline-avatar-state';
 
 function message(key: string, role = 'assistant', completed = false): PersistedTimelineItem {
@@ -50,7 +50,74 @@ function progressReceipt(
   };
 }
 
+function question(key: string): QuestionPresentationTimelineItem {
+  return {
+    kind: 'question-presentation',
+    key,
+    item: { ...progressReceipt(key, 'running').item, name: 'ask_user_question' },
+  };
+}
+
 describe('foldCompletedProcessRows', () => {
+  test.each(['cancelled', 'interrupted', 'failed'] as const)(
+    'keeps a %s unanswered question folded without hiding another running tool or requiring final text',
+    status => {
+      const stopped = question('stopped');
+      stopped.item.status = status;
+      const otherTool: PersistedTimelineItem = {
+        kind: 'live-process', key: 'other-tool',
+        item: { ...progressReceipt('other-tool', 'running').item, name: 'read' },
+      };
+      const result = foldCompletedProcessRows(prepareVisibleTimelineRows([otherTool, stopped]), { protectTrailingTurn: true });
+
+      expect(result.map(row => row.item.kind)).toEqual(['live-process', 'completed-process']);
+      expect(result[0].item).toBe(otherTool);
+      expect(result[1].item).toMatchObject({ items: [stopped] });
+      expect(stopped.item.status).toBe(status);
+    },
+  );
+
+  test('folds pending question history while protecting other active process and body rows', () => {
+    const source = [summary('thinking'), message('commentary'), question('question')];
+    const result = foldCompletedProcessRows(prepareVisibleTimelineRows(source), { protectTrailingTurn: true });
+
+    expect(result.map(row => row.item.kind)).toEqual(['process-summary', 'history-message', 'completed-process']);
+    expect(result[0].item).toBe(source[0]);
+    expect(result[1].item).toBe(source[1]);
+    expect(result[2].item).toMatchObject({ key: 'completed-process:question', items: [source[2]] });
+    expect(result[2].showAvatar).toBe(false);
+  });
+
+  test('folds question-only and trailing question records without requiring a final reply', () => {
+    const pending = question('pending');
+    const only = foldCompletedProcessRows(prepareVisibleTimelineRows([pending]));
+    expect(only).toMatchObject([{ item: { kind: 'completed-process', items: [pending] }, showAvatar: true }]);
+    const final = message('final', 'assistant', true);
+    const trailing = foldCompletedProcessRows(prepareVisibleTimelineRows([final, pending]));
+    expect(trailing.map(row => row.item.kind)).toEqual(['history-message', 'completed-process']);
+    expect(trailing[0].item).toBe(final);
+  });
+
+  test('merges cached pending question disclosures with adjacent settled process exactly once', () => {
+    const pending = question('question');
+    const protectedRows = foldCompletedProcessRows(prepareVisibleTimelineRows([summary('thinking'), pending]), { protectTrailingTurn: true });
+    const final = message('final', 'assistant', true);
+    const result = foldCompletedProcessRows([...protectedRows, ...prepareVisibleTimelineRows([summary('tool'), final])]);
+
+    expect(result.map(row => row.item.kind)).toEqual(['completed-process', 'history-message']);
+    expect(result[0].item).toMatchObject({ items: [summary('thinking'), pending, summary('tool')] });
+    if (result[0].item.kind !== 'completed-process') throw new Error('Missing process group');
+    expect(result[0].item.items.map(item => item.kind)).toEqual(['process-summary', 'question-presentation', 'process-summary']);
+  });
+
+  test('does not join question history across user or execution phase boundaries', () => {
+    const boundary: PersistedTimelineItem = { kind: 'phase-boundary', key: 'phase', label: 'Continuation' };
+    const source = [question('first'), message('user', 'user'), question('second'), boundary, question('third')];
+    const result = foldCompletedProcessRows(prepareVisibleTimelineRows(source));
+
+    expect(result.map(row => row.item.kind)).toEqual(['completed-process', 'history-message', 'completed-process', 'phase-boundary', 'completed-process']);
+  });
+
   test('keeps host-marked rich rows visible without splitting a protected trailing turn', () => {
     const source = [
       summary('before'),

@@ -29,7 +29,7 @@ const room: TeamDiscussionRoom = {
 const question = (agent: string, roomId = 'room'): CoworkInteractionRequest => ({
   sessionId: 'native',
   requestId: agent,
-  toolName: 'AskUserQuestion',
+  toolName: 'ask_user_question',
   interactionKind: CoworkInteractionKind.STRUCTURED_QUESTION,
   toolInput: { sessionKey: teamDiscussionSessionKey(roomId, agent) },
 });

@@ -8,7 +8,7 @@ import { createRunActivity, type RunActivity } from '../turn/run-activity';
 import { projectBrowserExtensionActivity } from './browser-extension-activity';
 import { prepareBrowserExtensionStreamEvent } from './browser-extension-display';
 
-export { foldBrowserExtensionEntries } from './browser-extension-timeline';
+export { foldBrowserExtensionEntries, isBrowserQuestionTool } from './browser-extension-timeline';
 export { isPresentPlanToolName } from '@shared/cowork/interactions/planPreview';
 
 type Item = Record<string, unknown> & {
@@ -44,6 +44,7 @@ function projectItem(item: Exclude<TurnItem, { type: 'compaction' }>): Item {
     progressText: item.progressText,
     status: item.status === 'running' ? 'inProgress' : item.status,
     isError: item.status === 'failed',
+    ...(item.presentation?.questionResult ? { questionResult: item.presentation.questionResult } : {}),
   };
 }
 

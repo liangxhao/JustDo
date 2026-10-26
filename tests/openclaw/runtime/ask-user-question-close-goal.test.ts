@@ -217,7 +217,7 @@ test.each([
         ...runIdentity,
         seq: 2,
         stream: 'tool',
-        data: { phase: 'result', name: 'AskUserQuestion', toolCallId: 'call-question', result },
+        data: { phase: 'result', name: 'ask_user_question', toolCallId: 'call-question', result },
       });
       return result;
     });
@@ -257,11 +257,12 @@ test.each([
       await act(async () => {
         fireEvent.click(screen.getByRole('button', { name: /^Close$|^关闭$/ }));
         await expect(respond.mock.results[0].value).resolves.toBe(true);
-        await expect(continuation).resolves.toEqual({
-          content: [
-            { type: 'text', text: 'The question was cancelled; proceed with best judgment.' },
-          ],
+        const resolution = await continuation;
+        expect(JSON.parse(resolution.content[0].text)).toMatchObject({
+          askUserQuestion: { version: 1, response: { status: 'cancelled' } },
+          summary: 'The question was cancelled; proceed with best judgment.',
         });
+        expect(resolution.details.askUserQuestion.questions).toHaveLength(questionCount);
       });
 
       expect(harness.request).toHaveBeenCalledWith(AskUserQuestionGateway.RESOLVE, {

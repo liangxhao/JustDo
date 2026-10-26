@@ -395,6 +395,38 @@ describe('buildBrowserExtensionContext', () => {
 });
 
 describe('BrowserExtensionChatController', () => {
+  it('preserves native structured question results for side chat history after restart', async () => {
+    const questionResult = {
+      version: 1,
+      questions: [{ id: 'stack', question: 'Which stack?', options: [{ id: 'react', label: 'React' }, { id: 'vue', label: 'Vue' }] }],
+      response: { status: 'answered', answers: { stack: { selected: ['react'] } } },
+    };
+    const controller = new BrowserExtensionChatController({
+      ensureEngineRunning: vi.fn(),
+      getRouter: vi.fn(),
+      getDefaultModelRef: () => 'provider/default',
+      getRuntime: () => ({
+        ensureReady: vi.fn(async () => undefined),
+        fetchSessionHistoryByKey: vi.fn(async () => ({
+          messages: [
+            { role: 'assistant', content: [{ type: 'toolCall', id: 'question-1', name: 'ask_user_question', arguments: { questions: questionResult.questions } }] },
+            { role: 'toolResult', toolCallId: 'question-1', toolName: 'ask_user_question', content: [{ type: 'text', text: JSON.stringify({ askUserQuestion: questionResult, summary: 'User selected: React' }) }] },
+          ],
+          sessionKey: 'agent:main:justdo:session-1',
+        })),
+        getSessionKeysForSession: () => ['agent:main:justdo:session-1'],
+      }) as never,
+      getStore: () => ({ getSession: () => ({ id: 'session-1', source: CoworkSessionSource.BrowserExtension }) }) as never,
+    });
+
+    const messages = await controller.getMessages('session-1');
+
+    expect(messages).toMatchObject([
+      { role: 'tool_use', toolName: 'ask_user_question' },
+      { role: 'tool_result', toolName: 'ask_user_question', questionResult },
+    ]);
+  });
+
   it('reads managed images with the native session scope and propagates authorization failures', async () => {
     const readAssistantMedia = vi
       .fn()

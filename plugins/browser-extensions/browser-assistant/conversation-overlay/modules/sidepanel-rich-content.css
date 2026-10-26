@@ -279,6 +279,126 @@
       stroke-linejoin: round;
       stroke-width: 1.35;
     }
+.question-answer {
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+  color: var(--chat-text);
+  overflow-wrap: anywhere;
+}
+
+.question-answer--human {
+  width: fit-content;
+  max-width: min(100%, 520px);
+  margin-inline-start: auto;
+}
+
+.question-answer__heading {
+  margin-bottom: 8px;
+  color: var(--chat-muted);
+  font-size: var(--justdo-chat-meta-font-size, 12px);
+}
+
+.question-answer__body {
+  padding: 14px 16px;
+  border-radius: 14px;
+  background: var(--chat-surface);
+}
+
+.question-answer--human .question-answer__body {
+  background: var(--chat-bubble);
+  color: var(--chat-text);
+}
+
+.question-answer__question {
+  margin-bottom: 8px;
+  padding-inline-start: 9px;
+  border-inline-start: 2px solid var(--chat-border);
+  color: var(--chat-muted);
+  font-size: var(--justdo-chat-meta-font-size, 12px);
+  white-space: pre-wrap;
+}
+
+.question-answer__value {
+  font-weight: 500;
+  white-space: pre-wrap;
+}
+
+.question-answer__note,
+.question-answer__failure,
+.question-answer__muted,
+.question-answer__waiting {
+  color: var(--chat-muted);
+  font-size: var(--justdo-chat-meta-font-size, 12px);
+  white-space: pre-wrap;
+}
+
+.question-answer__note,
+.question-answer__selection + .question-answer__selection {
+  margin-top: 6px;
+}
+
+.question-answer__failure {
+  margin-bottom: 12px;
+  color: var(--chat-error, var(--chat-text));
+  overflow-wrap: anywhere;
+}
+
+.question-answer--system > .question-answer__muted {
+  margin: -3px 0 12px;
+}
+
+.question-answer__pair + .question-answer__pair {
+  border-top: 1px solid var(--chat-border);
+  padding-top: 14px;
+  margin-top: 14px;
+}
+
+.question-answer__more {
+  margin-top: 12px;
+}
+
+.question-answer__more > summary {
+  color: var(--chat-muted);
+  font-size: var(--justdo-chat-meta-font-size, 12px);
+  cursor: pointer;
+}
+
+.question-answer__more > .question-answer__pair {
+  border-top: 1px solid var(--chat-border);
+  padding-top: 14px;
+  margin-top: 14px;
+}
+
+.question-answer__more-open,
+.question-answer__more[open] > summary .question-answer__more-closed {
+  display: none;
+}
+
+.question-answer__more[open] > summary .question-answer__more-open {
+  display: inline;
+}
+
+.question-answer__waiting {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.question-answer__waiting-marker {
+  flex: 0 0 8px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+@media (pointer: coarse) {
+  .question-answer__more > summary {
+    min-height: 44px;
+    align-content: center;
+  }
+}
 .recording-editor,
 .recording-draft {
   --rec-text: var(--justdo-foreground, #202631);

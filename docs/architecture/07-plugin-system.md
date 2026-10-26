@@ -462,10 +462,17 @@ runtime id。临时资源按来源与原生阶段清理：未提交或已确认�
 
 ## 7. 产品扩展各有生命周期
 
+结构化提问工具以 `ask_user_question` 注册；插件 ID 仍为 `ask-user-question`，
+配置及 `askUserQuestion.list` / `askUserQuestion.resolve` RPC 保持原契约。
+插件在成功工具结果中返回版本化问答快照，覆盖用户提交、超时默认、超时未答及取消。
+原生允许保留的完整 JSON text envelope 与实时 details 承载相同结果，历史不依赖自定义 details；
+插件 `contracts/` 负责纯校验，`browser/` 负责只读问答呈现，宿主仅适配原生工具投影与现有过程折叠。
+原生 transcript、问题窗口及响应 RPC 继续持有原所有权，不追加模拟用户消息或 runtime patch。
+
 | 扩展/能力             | 持有的状态                           | 产品桥接                     |
 | --------------------- | ------------------------------------ | ---------------------------- |
 | Runtime Services      | 原生历史、进度、回执的受限读取       | Main/Renderer 查询投影       |
-| AskUserQuestion       | pending、期限、默认及取消            | 问答 event/RPC、UI replay    |
+| ask_user_question       | pending、期限、默认及取消            | 问答 event/RPC、UI replay    |
 | Plan mode             | 原生 session mode、待审核交互        | Main 计划文件与 handoff      |
 | Automation permission | 按原生 session mode 进行任务变更审批 | 使用原生 plugin approval     |
 | Embedded browser      | 原生 browser 工具桥                  | Main guest 所有权与动作执行  |
@@ -649,7 +656,7 @@ Workboard 仍使用 OpenClaw 插件的 `workboard.cards.*` / `workboard.boards.*
 
 配置同步固定 `surfaces.justdo-team.silentReply.group: allow`，允许群成员按原生规则静默，避免 `NO_REPLY` 被空回答恢复强迫重试。该策略写入实际运行时配置，覆盖正常、最小及登录／登出同步；保留其他 surfaces 与显式插件状态，不改变主会话或来源汇总的回复要求，也不增加运行时补丁。
 
-agent-team 同时承载旧任务协作和 justdo-team 群组 Channel，保持默认关闭及用户开关。它提供 bundled-channel-entry 合约；Agent Team 注册只读 teamDiscussion.history，禁用后不可用，重新启用读取保留的原生历史；Runtime Services 保留 teamDiscussion.offlineControl，完成状态核对和关闭准入。群聊调用 AskUserQuestion 时沿用同一扩展和取消信号，Renderer 根据完整原生 room key 显示提问者。agent-team 与 runtime-services 的 package.json 声明 justdo.bundle，资源同步从产品源码预先 bundle 共享纯合约，SDK 保持 external；不增加 OpenClaw patch。
+agent-team 同时承载旧任务协作和 justdo-team 群组 Channel，保持默认关闭及用户开关。它提供 bundled-channel-entry 合约；Agent Team 注册只读 teamDiscussion.history，禁用后不可用，重新启用读取保留的原生历史；Runtime Services 保留 teamDiscussion.offlineControl，完成状态核对和关闭准入。群聊调用 ask_user_question 时沿用同一扩展和取消信号，Renderer 根据完整原生 room key 显示提问者。agent-team 与 runtime-services 的 package.json 声明 justdo.bundle，资源同步从产品源码预先 bundle 共享纯合约，SDK 保持 external；不增加 OpenClaw patch。
 
 详见 [Agent Team 现行契约](../features/assistants/agent-team.md)。
 

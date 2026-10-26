@@ -56,7 +56,9 @@ import type {
   PlanPresentationTimelineItem,
   ProcessSummaryTimelineItem,
   ProgressReceiptTimelineItem,
+  QuestionPresentationTimelineItem,
 } from './project-turn-items';
+import { isQuestionPresentationTool } from './project-turn-items';
 
 export type PersistedTimelineItem =
   | AppReferenceTimelineItem
@@ -77,6 +79,7 @@ export type PersistedTimelineItem =
   | ProcessSummaryTimelineItem
   | LiveProcessTimelineItem
   | PlanPresentationTimelineItem
+  | QuestionPresentationTimelineItem
   | ProgressReceiptTimelineItem
   | NativeWidgetTimelineItem
   | NativeMcpAppTimelineItem;
@@ -1000,9 +1003,12 @@ export function projectPersistedTimeline(
         if (terminalTiming || supersededTools.has(process.id)) {
           process.status = 'interrupted';
           process.updatedAt = Math.max(process.updatedAt, terminalTiming?.endedAt ?? 0);
-          settled.push(process);
-          continue;
         }
+      }
+      if (process.type === 'tool' && isQuestionPresentationTool(process)) {
+        flushSettled();
+        normalized.push({ kind: 'question-presentation', key: `history-question:${process.id}`, item: process });
+      } else if (process.status === 'running') {
         flushSettled();
         normalized.push({
           kind: 'live-process',

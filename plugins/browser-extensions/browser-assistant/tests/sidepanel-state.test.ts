@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { sidePanelText as t } from '../conversation-overlay/modules/sidepanel-i18n.js';
-import { BrowserExtensionStream } from '../conversation-overlay/modules/sidepanel-stream.js';
 
+import { sidePanelText as t } from '../conversation-overlay/modules/sidepanel-i18n.js';
 import {
   isCurrentThreadRunning,
   mergePendingUserMessage,
@@ -10,8 +9,35 @@ import {
   toolDisplayTitle,
   toolInputSummary,
 } from '../conversation-overlay/modules/sidepanel-state.js';
+import { BrowserExtensionStream } from '../conversation-overlay/modules/sidepanel-stream.js';
 
 describe('browser extension side panel state', () => {
+  it('folds pending and answered question history while retaining its structured values', () => {
+    const questions = [{ id: 'stack', question: 'Which stack?', options: [{ id: 'react', label: 'React' }, { id: 'vue', label: 'Vue' }] }];
+    const questionResult = { version: 1, questions, response: { status: 'answered', answers: { stack: { selected: ['react'] } } } };
+    const project = (item: Record<string, unknown>) => messagesFromThread({ id: 'one', turns: [{ id: 'turn', items: [item] }], activity: {} });
+    const pending = { type: 'toolCall', id: 'question-1', toolName: 'ask_user_question', status: 'inProgress', input: { questions } };
+    expect(project(pending)).toMatchObject([{ role: 'completed-process', items: [{ role: 'question-presentation', item: { input: { questions } } }] }]);
+    const answered = project({ ...pending, status: 'completed', questionResult });
+    expect(answered).toMatchObject([{ role: 'completed-process', items: [{ role: 'question-presentation', item: { questionResult } }] }]);
+    expect(answered[0].items[0].item.questionResult).toBe(questionResult);
+    expect(project({ ...pending, status: 'failed', isError: true, questionResult })[0].role).toBe('completed-process');
+    expect(project({ ...pending, input: { questions: [] } })[0].role).toBe('live-process');
+  });
+
+  it.each(['cancelled', 'interrupted', 'failed'])(
+    'folds a %s unanswered question with no final reply and preserves another live tool',
+    status => {
+      const questions = [{ id: 'stack', question: 'Which stack?', options: [{ id: 'react', label: 'React' }, { id: 'vue', label: 'Vue' }] }];
+      const entries = messagesFromThread({ id: 'one', activity: {}, turns: [{ id: 'turn', items: [
+        { type: 'toolCall', id: 'read-1', toolName: 'read', status: 'inProgress', input: { path: 'README.md' } },
+        { type: 'toolCall', id: 'question-1', toolName: 'ask_user_question', status, isError: status === 'failed', input: { questions }, output: 'Stopped waiting.' },
+      ] }] });
+      expect(entries.map(entry => entry.role)).toEqual(['live-process', 'completed-process']);
+      expect(entries[1]).toMatchObject({ items: [{ role: 'question-presentation', item: { status, output: 'Stopped waiting.' } }] });
+    },
+  );
+
   it('uses accepted run identity when same-text pending inputs change', () => {
     const pending = { threadId: 'one', text: 'same', runId: 'current', persistedMatches: 1 };
     const old = { role: 'user', text: 'same', pendingInput: { runId: 'other' } };

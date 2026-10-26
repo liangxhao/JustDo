@@ -323,7 +323,7 @@ test('does not authorize requests returned by a stale Gateway reconciliation', a
 
   await expect(
     adapter.resolveAskUserInteraction(pendingRequest.requestId, { behavior: 'cancel' }),
-  ).rejects.toThrow('not an active JustDo AskUserQuestion interaction');
+  ).rejects.toThrow('not an active JustDo ask_user_question interaction');
   expect(newClient.request).not.toHaveBeenCalled();
 });
 

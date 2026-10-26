@@ -9,6 +9,69 @@ import { projectPersistedTimeline } from './project-history-timeline';
 import { projectTurnItems } from './project-turn-items';
 
 describe('projectPersistedTimeline', () => {
+  test('retains a stopped unanswered native question after its run receipt interrupts the call', () => {
+    const questions = [{ id: 'stack', question: 'Which stack?', options: [{ id: 'react', label: 'React' }, { id: 'vue', label: 'Vue' }] }];
+    const result = projectPersistedTimeline([
+      { role: 'assistant', runId: 'question-run', timestamp: 1000, content: [{ type: 'toolCall', id: 'question-1', name: 'ask_user_question', arguments: { questions } }] },
+    ], [
+      { id: 'timing-1', sessionId: 'session-1', clientTurnId: 'client-1', rootRunId: 'question-run', startedAt: 1000, endedAt: 2000, state: 'aborted' },
+    ]);
+
+    expect(result).toMatchObject([{ kind: 'question-presentation', item: { toolCallId: 'question-1', status: 'interrupted', input: { questions }, updatedAt: 2000 } }]);
+  });
+
+  test('restores question input and native structured answer without rewriting transcript roles', () => {
+    const questions = [{
+      id: 'stack', question: 'Which stack?',
+      options: [{ id: 'react', label: 'React' }, { id: 'vue', label: 'Vue' }],
+      defaultOptionIds: ['react'],
+    }];
+    const call: GatewayMessage = {
+      role: 'assistant',
+      content: [{ type: 'toolCall', id: 'question-1', name: 'ask_user_question', arguments: { questions } }],
+    };
+    const pending = projectPersistedTimeline([call]);
+    expect(pending).toMatchObject([{ kind: 'question-presentation', item: { status: 'running', input: { questions } } }]);
+    const questionResult = {
+      version: 1,
+      questions,
+      response: { status: 'answered', timedOut: true, answers: { stack: { selected: ['react'] } } },
+    };
+    const receipt: GatewayMessage = {
+      role: 'toolResult', toolCallId: 'question-1', toolName: 'ask_user_question',
+      content: [{ type: 'text', text: JSON.stringify({ askUserQuestion: questionResult, summary: 'The configured defaults were selected automatically.' }) }],
+    };
+    const result = projectPersistedTimeline([call, receipt]);
+    expect(result).toMatchObject([{ kind: 'question-presentation', item: {
+      status: 'completed',
+      presentation: { questionResult: { questions, response: { timedOut: true } } },
+    } }]);
+    expect(call.role).toBe('assistant');
+    expect(receipt.role).toBe('toolResult');
+    expect(projectPersistedTimeline([receipt])).toMatchObject([{ kind: 'question-presentation' }]);
+  });
+
+  test('retains generic malformed calls and legacy prose while preserving a failed question request', () => {
+    const questions = [{ id: 'stack', question: 'Which stack?', options: [{ id: 'react', label: 'React' }, { id: 'vue', label: 'Vue' }] }];
+    const call: GatewayMessage = {
+      role: 'assistant', content: [{ type: 'toolCall', id: 'question-1', name: 'ask_user_question', arguments: { questions } }],
+    };
+    const result: GatewayMessage = {
+      role: 'toolResult', toolCallId: 'question-1', toolName: 'ask_user_question', content: 'User selected: React',
+    };
+    expect(projectPersistedTimeline([call, result]).map(item => item.kind)).toEqual(['process-summary']);
+    expect(projectPersistedTimeline([
+      { ...call, content: [{ type: 'toolCall', id: 'invalid', name: 'ask_user_question', arguments: { questions: [] } }] },
+    ]).map(item => item.kind)).toEqual(['live-process']);
+    const failed = projectPersistedTimeline([
+      call,
+      { role: 'assistant', content: 'Waiting for the tool outcome.' },
+      { ...result, isError: true, content: 'Gateway disconnected.' },
+    ]);
+    expect(failed.map(item => item.kind)).toEqual(['question-presentation', 'history-message']);
+    expect(failed[0]).toMatchObject({ item: { status: 'failed', output: 'Gateway disconnected.' } });
+  });
+
   test('reuses an unchanged native block message instead of cloning it on every page shift', () => {
     const message: GatewayMessage = {
       role: 'assistant',

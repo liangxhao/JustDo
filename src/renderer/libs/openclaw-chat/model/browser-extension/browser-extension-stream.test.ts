@@ -50,6 +50,21 @@ const chat = (
 const items = (view: BrowserExtensionStream) => view.project().turns.flatMap(turn => turn.items);
 
 describe('extension live projection', () => {
+  it('retains the structured question result for the browser presentation', () => {
+    const questionResult = {
+      version: 1,
+      questions: [{ id: 'stack', question: 'Which stack?', options: [{ id: 'react', label: 'React' }, { id: 'vue', label: 'Vue' }] }],
+      response: { status: 'answered', answers: { stack: { selected: ['react'] } } },
+    };
+    const view = new BrowserExtensionStream('one');
+    view.start('Question');
+    view.bindRun('run-1');
+    view.accept(agent(1, 'tool', { phase: 'start', toolCallId: 'question-1', name: 'ask_user_question', args: { questions: questionResult.questions } }));
+    view.accept(agent(2, 'tool', { phase: 'result', toolCallId: 'question-1', name: 'ask_user_question', result: { content: [{ type: 'text', text: JSON.stringify({ askUserQuestion: questionResult, summary: 'User selected: React' }) }] } }));
+
+    expect(items(view).find(item => item.type === 'toolCall')).toMatchObject({ status: 'completed', questionResult });
+  });
+
   it('buffers a pending send until the explicit native binding selects its events', () => {
     const view = new BrowserExtensionStream('one');
     view.start('Question');

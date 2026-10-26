@@ -9,7 +9,7 @@
 | 主 Agent thinking                  | null    | 保留继承/未指定语义                       |
 | 主 Agent run timeout               | 0       | 未设置正向运行时限，不是立刻超时          |
 | 主 Agent 并发                      | null    | 不强制产品覆盖                            |
-| AskUserQuestion                    | 10 分钟 | 默认启用超时；必须回答时显式关闭          |
+| ask_user_question                    | 10 分钟 | 默认启用超时；必须回答时显式关闭          |
 | automation approval                | 2 分钟  | 允许 2/5/10 三档                          |
 | MCP request timeout                | 60 秒   | 用户 server 的默认请求等待                |
 | MCP Apps                           | true    | 交互界面宿主开关，投影到 mcp.apps.enabled |
@@ -39,7 +39,7 @@ Goal 次数按当前目标在原生持久接纳的自动回合累计，准备、
 
 版本必须匹配共享合约，枚举、整数、范围和模型引用长度由 Main/shared 校验。部分 v1 早期字段缺失时填充受管默认，尤其 visibility=tree，避免升级后默默扩大访问。
 
-主 Agent／Subagent 并发范围均为 1–16（主 Agent 另允许 null），children 为 1–20，depth 为 1–5；正向 run timeout 为 60–86400 秒，0 的特殊意义按字段校验。AskUserQuestion 为 1–1440 分钟，MCP request timeout 为 1–86400 秒，archiveAfterMinutes 为 0–525600 分钟。不要在 Renderer 自己 clamp 后让 Main 接受任意数据。
+主 Agent／Subagent 并发范围均为 1–16（主 Agent 另允许 null），children 为 1–20，depth 为 1–5；正向 run timeout 为 60–86400 秒，0 的特殊意义按字段校验。ask_user_question 为 1–1440 分钟，MCP request timeout 为 1–86400 秒，archiveAfterMinutes 为 0–525600 分钟。不要在 Renderer 自己 clamp 后让 Main 接受任意数据。
 
 MCP Apps 当前只保存布尔值，旧记录的缺失值或 null 补为 true，明确的 false 保留；界面不再提供继承选项。该开关不负责安装插件或创建手动应用入口。
 
@@ -64,7 +64,7 @@ flowchart LR
 
 排队等待与真正 running 的计时不同；queued 没有 startedAt 时不显示虚构运行时长。限制达到应呈现原生拒绝/排队状态，而不是 UI 暗中放宽容量。
 
-### AskUserQuestion 的等待策略
+### ask_user_question 的等待策略
 
 结构化问答默认启用超时。工具调用省略 `timeoutEnabled` 或传入 `true` 时，按
 `timeoutMinutes` 等待，默认 10 分钟。只有确实必须获得用户明确回答、缺少回答无法

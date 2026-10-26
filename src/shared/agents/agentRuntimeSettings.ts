@@ -244,7 +244,7 @@ export const validateAgentRuntimeSettings = (
       AGENT_RUNTIME_LIMITS.askUserQuestionTimeoutMinutes.max,
     )
   ) {
-    return { ok: false, error: 'AskUserQuestion timeout is outside the supported range.' };
+    return { ok: false, error: 'ask_user_question timeout is outside the supported range.' };
   }
 
   const automation = isRecord(value.automation)

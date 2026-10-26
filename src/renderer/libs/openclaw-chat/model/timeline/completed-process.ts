@@ -27,6 +27,7 @@ function assistantMessage(item: VisibleTimelineItem) {
 }
 
 function canFold(item: VisibleTimelineItem): item is SourceTimelineItem {
+  if (item.kind === 'question-presentation') return true;
   if (item.kind === 'content') {
     return (
       item.item.status === 'completed' &&
@@ -124,7 +125,20 @@ export function foldCompletedProcessRows(
     flushPrefix();
     turn = [];
   };
-  for (const row of rows) {
+  // A pending question may already have its own disclosure in the cached
+  // persisted prefix. Rejoin it with adjacent settled process when a final
+  // answer arrives, without opening other completed process groups.
+  const sourceRows = rows.flatMap(row =>
+    row.item.kind === 'completed-process' &&
+    row.item.items.every(item => item.kind === 'question-presentation')
+      ? row.item.items.map((item, index) => ({
+          item,
+          showAvatar: index === 0 && row.showAvatar,
+          showFooter: false,
+        }))
+      : [row],
+  );
+  for (const row of sourceRows) {
     if (
       row.item.kind === 'phase-boundary' ||
       (row.item.kind === 'history-message' &&
@@ -138,7 +152,33 @@ export function foldCompletedProcessRows(
     }
   }
   flushTurn(options.protectTrailingTurn);
-  return result;
+  // Question history uses the existing process disclosure even while the
+  // active turn is protected or no final assistant text exists yet. Other
+  // live tools and interactive deliveries retain their visibility rules.
+  const folded: VisibleTimelineRow[] = [];
+  let questions: VisibleTimelineRow[] = [];
+  const flushQuestions = () => {
+    if (!questions.length) return;
+    folded.push({
+      item: {
+        kind: 'completed-process',
+        key: `completed-process:${questions[0].item.key}`,
+        items: questions.map(row => row.item as SourceTimelineItem),
+      },
+      showAvatar: questions.some(row => row.showAvatar),
+      showFooter: false,
+    });
+    questions = [];
+  };
+  for (const row of result) {
+    if (row.item.kind === 'question-presentation') questions.push(row);
+    else {
+      flushQuestions();
+      folded.push(row);
+    }
+  }
+  flushQuestions();
+  return folded;
 }
 
 export function unfoldProcessItems(items: readonly VisibleTimelineItem[]): SourceTimelineItem[] {

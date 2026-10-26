@@ -19,7 +19,7 @@ const buildInteraction = (
 ): CoworkInteractionRequest => ({
   sessionId: 'session-1',
   requestId,
-  toolName: 'AskUserQuestion',
+  toolName: 'ask_user_question',
   interactionKind: CoworkInteractionKind.STRUCTURED_QUESTION,
   toolInput: {
     questions: Array.from({ length: questionCount }, (_, index) => ({

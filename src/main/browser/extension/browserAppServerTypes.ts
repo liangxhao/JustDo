@@ -1,3 +1,4 @@
+import type { QuestionResult } from '../../../../plugins/extensions/ask-user-question/contracts/result';
 import type { BrowserExtensionMessageDisplay } from '../../../shared/browser/browserExtensionDisplay';
 import type { BrowserExtensionStreamEvent } from '../../../shared/browser/browserExtensionStream';
 import type { CoworkAttachmentPayload } from '../../../shared/cowork/attachments';
@@ -37,6 +38,7 @@ export interface BrowserExtensionThread {
 }
 
 export interface BrowserExtensionMessage {
+  questionResult?: QuestionResult;
   pendingInput?: { id: string; state: string; runId?: string; incomplete?: boolean };
   rawMessage?: Record<string, unknown>;
   display?: BrowserExtensionMessageDisplay;

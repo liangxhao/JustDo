@@ -37,7 +37,7 @@ describe('cowork interaction responses', () => {
       enqueuePendingInteraction({
         sessionId: 'session-1',
         requestId: 'request-1',
-        toolName: 'AskUserQuestion',
+        toolName: 'ask_user_question',
         interactionKind: 'structured-question',
         toolInput: {},
       }),

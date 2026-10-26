@@ -26,6 +26,43 @@ const tool = (id: string, overrides: Partial<ToolItem> = {}): ToolItem => ({
   ...overrides,
 });
 describe('native tool presentation', () => {
+  test('recovers the same question result from live details and native history text without details', () => {
+    const questionResult = {
+      version: 1,
+      questions: [
+        {
+          id: 'stack',
+          question: 'Which stack?',
+          options: [
+            { id: 'react', label: 'React' },
+            { id: 'vue', label: 'Vue' },
+          ],
+          defaultOptionIds: ['react'],
+        },
+      ],
+      response: { status: 'answered', timedOut: true, answers: { stack: { selected: ['react'] } } },
+    };
+    const live = readToolPresentation({ result: { details: { askUserQuestion: questionResult } } });
+    const history = readToolPresentation({
+      role: 'toolResult',
+      toolName: 'ask_user_question',
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify({ askUserQuestion: questionResult, summary: 'Readable summary' }),
+        },
+      ],
+    });
+    expect(live.questionResult).toEqual(history.questionResult);
+    expect(history.questionResult).toMatchObject({
+      response: { status: 'answered', timedOut: true },
+    });
+    expect(
+      readToolPresentation({
+        content: [{ type: 'text', text: 'The configured defaults were selected automatically.' }],
+      }).questionResult,
+    ).toBeUndefined();
+  });
   test.each([
     [
       'browser',
@@ -147,9 +184,13 @@ test('summarizes declared patch hunks without inventing complete before and afte
 });
 
 test('retains explicit tool media without guessing paths from text output', () => {
-  const media = readToolPresentation({ result: { content: [{ type: 'audio', mimeType: 'audio/wav', data: 'YWJj' }] } });
+  const media = readToolPresentation({
+    result: { content: [{ type: 'audio', mimeType: 'audio/wav', data: 'YWJj' }] },
+  });
   expect(media.media?.[0].path).toBe('data:audio/wav;base64,YWJj');
-  expect(readToolPresentation({ content: [{ type: 'text', text: 'C:/secret.wav' }] }).media).toBeUndefined();
+  expect(
+    readToolPresentation({ content: [{ type: 'text', text: 'C:/secret.wav' }] }).media,
+  ).toBeUndefined();
 });
 
 test.each([

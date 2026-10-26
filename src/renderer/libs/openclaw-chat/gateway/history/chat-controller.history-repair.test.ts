@@ -11,6 +11,35 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+test('hydrates a question answer from authenticated history into its existing live tool', async () => {
+  const sessionKey = 'agent:main:justdo:question-history';
+  const questions = [{ id: 'stack', question: 'Which stack?', options: [{ id: 'react', label: 'React' }, { id: 'vue', label: 'Vue' }] }];
+  const questionResult = {
+    version: 1,
+    questions,
+    response: { status: 'answered', answers: { stack: { selected: ['react'] } } },
+  };
+  const request = vi.fn().mockResolvedValue({ messages: [
+    { role: 'assistant', content: [{ type: 'toolCall', id: 'question-1', name: 'ask_user_question', arguments: { questions } }] },
+    { role: 'toolResult', toolCallId: 'question-1', toolName: 'ask_user_question', content: 'User selected: React', details: { askUserQuestion: questionResult } },
+  ] });
+  const controller = new ChatController();
+  controller.state.client = { request, stop: vi.fn() } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = sessionKey;
+  const handleEvent = (controller as unknown as { handleEvent(event: { event: string; payload: unknown }): void }).handleEvent.bind(controller);
+  handleEvent({ event: 'agent', payload: { session: sessionKey, runId: 'run-1', seq: 1, stream: 'lifecycle', data: { phase: 'start' } } });
+  handleEvent({ event: 'agent', payload: { session: sessionKey, runId: 'run-1', seq: 2, stream: 'tool', data: { phase: 'start', toolCallId: 'question-1', name: 'ask_user_question', args: { questions } } } });
+  const liveTool = controller.state.transcript.activeTurn?.toolById.get('question-1');
+
+  await controller.loadHistory();
+
+  expect(controller.state.transcript.activeTurn?.toolById.get('question-1')).toBe(liveTool);
+  expect(liveTool).toMatchObject({ status: 'completed', presentation: { questionResult } });
+  expect(projectTurnItems(controller.state.transcript.activeTurn)).toMatchObject([{ kind: 'question-presentation' }]);
+  controller.disconnect();
+});
+
 test('loads earlier peer history when live events arrive before the initial snapshot', async () => {
   vi.useFakeTimers();
   vi.setSystemTime(1000);

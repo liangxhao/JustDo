@@ -2,7 +2,7 @@ import { describe, expect, test } from 'vitest';
 
 import type { ContentItem } from '../chat-transcript-state';
 import type { PersistedTimelineItem } from './project-history-timeline';
-import type { ActiveTurnTimelineItem, ProcessSummaryTimelineItem } from './project-turn-items';
+import type { ActiveTurnTimelineItem, ProcessSummaryTimelineItem, QuestionPresentationTimelineItem } from './project-turn-items';
 import {
   PersistedTimelineRenderCache,
   projectIncrementalTimelineView,
@@ -38,6 +38,39 @@ function summary(key: string): ProcessSummaryTimelineItem {
 }
 
 describe('PersistedTimelineRenderCache', () => {
+  test('keeps live questions in process disclosure and merges them on settled history takeover', () => {
+    const question: QuestionPresentationTimelineItem = {
+      kind: 'question-presentation',
+      key: 'question-1',
+      item: {
+        type: 'tool', id: 'question-1', toolCallId: 'call-1', name: 'ask_user_question',
+        runId: 'run-live', firstSeq: 1, lastSeq: 1, startedAt: 1, updatedAt: 1,
+        status: 'running',
+      },
+    };
+    const cache = new PersistedTimelineRenderCache();
+    const live = projectIncrementalTimelineView({
+      persisted: cache.get([]),
+      activeTimeline: [summary('working'), question],
+      suppressTrailingAssistantFooter: true,
+    });
+    expect(live.activeRows.map(row => row.item.kind)).toEqual(['process-summary', 'completed-process']);
+
+    const final = activeContent('final answer', 4);
+    if (final.kind !== 'content') throw new Error('Missing final content');
+    final.item.status = 'completed';
+    question.item.status = 'completed';
+    const settled = projectIncrementalTimelineView({
+      persisted: cache.get([summary('working'), question], { protectTrailingTurn: true }),
+      activeTimeline: [summary('following'), final],
+      suppressTrailingAssistantFooter: true,
+      foldSettledTurn: true,
+    });
+    const combined = [...settled.persistedRows, ...settled.activeRows];
+    expect(combined.map(row => row.item.kind)).toEqual(['completed-process', 'content']);
+    expect(combined[0].item).toMatchObject({ items: [summary('working'), question, summary('following')] });
+  });
+
   test('folds a settled turn across its persisted/live seam while preserving final content', () => {
     const persistedSummary = summary('persisted-process');
     const activeSummary = summary('active-process');

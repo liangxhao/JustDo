@@ -1,5 +1,11 @@
 import type { BrowserExtensionMessageDisplay } from '@shared/browser/browserExtensionDisplay';
 
+import {
+  ASK_USER_QUESTION_TOOL_NAME,
+  parseQuestionResult,
+  parseQuestions,
+  type QuestionResult,
+} from '../../../../../../plugins/extensions/ask-user-question/contracts/result';
 import type { GatewayMessage } from '../../types';
 import type { ProcessStatus, ThinkingItem, ToolItem } from '../chat-transcript-state';
 import { foldCompletedProcessRows, type ProcessFoldOptions } from '../timeline/completed-process';
@@ -8,6 +14,7 @@ import { prepareVisibleTimelineRows } from '../timeline/timeline-avatar-state';
 import { FAILED_RUN_MESSAGE_FLAG } from '../turn/failed-run-message';
 
 export interface BrowserExtensionProcessItem {
+  questionResult?: QuestionResult;
   key: string;
   id?: string;
   type: 'thinking' | 'tool';
@@ -56,6 +63,11 @@ export type BrowserExtensionAtomicEntry =
       item: BrowserExtensionProcessItem;
     }
   | {
+      role: 'question-presentation';
+      key: string;
+      item: BrowserExtensionProcessItem;
+    }
+  | {
       role: 'compaction';
       key: string;
       status?: string;
@@ -77,6 +89,12 @@ function record(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null;
+}
+
+export function isBrowserQuestionTool(item: Record<string, unknown>): boolean {
+  if (item.toolName !== ASK_USER_QUESTION_TOOL_NAME) return false;
+  if (item.status === 'completed') return item.isError !== true && parseQuestionResult(item.questionResult) !== null;
+  return ['running', 'inProgress', 'cancelled', 'interrupted', 'failed'].includes(String(item.status)) && parseQuestions(record(item.input)?.questions) !== null;
 }
 
 /** Display categorization only. Unrecognized process states stay outside folded history. */
@@ -110,6 +128,7 @@ function asProcessItem(item: BrowserExtensionProcessItem): ThinkingItem | ToolIt
         toolCallId: item.id ?? item.key,
         name: item.name ?? item.title,
         input: item.input,
+        ...(item.questionResult ? { presentation: { questionResult: item.questionResult } } : {}),
         ...(typeof item.output === 'string' ? { output: item.output } : {}),
       };
 }
@@ -156,8 +175,10 @@ function sourceItem(entry: BrowserExtensionAtomicEntry): SourceTimelineItem {
       interruptedCount: entry.interruptedCount,
     };
   }
-  if (entry.role === 'live-process' || entry.role === 'progress-receipt') {
+  if (entry.role === 'live-process' || entry.role === 'progress-receipt' || entry.role === 'question-presentation') {
     const item = asProcessItem(entry.item);
+    if (entry.role === 'question-presentation' && item.type === 'tool')
+      return { kind: 'question-presentation', key: entry.key, item };
     return entry.role === 'progress-receipt' && item.type === 'tool'
       ? { kind: 'progress-receipt', key: entry.key, item }
       : { kind: 'live-process', key: entry.key, item };

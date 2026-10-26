@@ -59,7 +59,7 @@
 - [ ] `GOAL_CONTINUATION_DEFERRED` 是提交前拒绝；超时或 ACK 失配则保留原候选 runId
       与 `identityPending`，用精确 wait/回执核对。累计 `continuationTurns` 只在接纳时增加，
       重连不重置，配置 0 禁止自动追加；Stop 和旧 revision 围栏跨退避保留。
-- [ ] AskUserQuestion 默认启用配置的超时（当前默认十分钟）；超时返回原工具结果后
+- [ ] ask_user_question 默认启用配置的超时（当前默认十分钟）；超时返回原工具结果后
       当前轮继续。点击单题/多题弹窗的 × 取消时，开启和关闭超时两种设置都立即解除提问，清除计时器，
       不提交答案、不触发 Stop/Goal 暂停；问答结束本身不提前创建 Goal 后继轮。
 

@@ -1,4 +1,8 @@
 import {
+  ASK_USER_QUESTION_TOOL_NAME,
+  readQuestionResult,
+} from '../../../../plugins/extensions/ask-user-question/contracts/result';
+import {
   BrowserExtensionCompactionKind,
   type BrowserExtensionMessageDisplay,
 } from '../../../shared/browser/browserExtensionDisplay';
@@ -20,6 +24,31 @@ const PROCESS_BLOCK_TYPES = new Set([
   'toolresult',
 ]);
 const COMPACTION_KINDS = new Set<string>(Object.values(BrowserExtensionCompactionKind));
+
+/** Preserve only this tool's structured native result across the side chat DTO. */
+export function readBrowserQuestionResult(value: unknown, toolName: unknown, toolUseId: unknown) {
+  if (toolName !== ASK_USER_QUESTION_TOOL_NAME || typeof toolUseId !== 'string') return null;
+  const outer = record(value);
+  const message = record(outer?.message) ?? outer;
+  if (!message) return null;
+  const role = String(message.role ?? '').toLowerCase();
+  const candidates = ['tool', 'toolresult', 'tool_result', 'function'].includes(role)
+    ? [message]
+    : role === 'custom' && message.customType === 'openclaw.nested-tool.v1' && Array.isArray(message.content)
+      ? message.content.flatMap(block => {
+          const candidate = record(block);
+          return candidate && ['toolresult', 'tool_result'].includes(String(candidate.type).toLowerCase()) ? [candidate] : [];
+        })
+      : [];
+  const matches = candidates.filter(candidate =>
+    (candidate.toolCallId ?? candidate.tool_call_id ?? candidate.toolUseId ?? candidate.tool_use_id ?? candidate.id) === toolUseId,
+  );
+  if (matches.length !== 1) return null;
+  const source = matches[0];
+  const result = record(source.result);
+  if (source.isError === true || source.is_error === true || result?.isError === true) return null;
+  return readQuestionResult(result) ?? readQuestionResult(source);
+}
 
 export function readBrowserExtensionHistoryDisplay(value: unknown): {
   display?: BrowserExtensionMessageDisplay;

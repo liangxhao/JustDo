@@ -246,7 +246,7 @@ export function hydrateActiveToolItemsFromHistory(
             ? [item.item]
             : item.kind === 'progress-receipt'
               ? [item.item]
-              : item.kind === 'plan-presentation'
+              : item.kind === 'plan-presentation' || item.kind === 'question-presentation'
                 ? [item.item]
                 : [],
       )
@@ -314,6 +314,17 @@ export function hydrateActiveToolItemsFromHistory(
     }
     if (liveTool.error === undefined && persistedTool.error !== undefined) {
       liveTool.error = persistedTool.error;
+      changed = true;
+    }
+    if (
+      !liveTool.presentation?.questionResult &&
+      persistedTool.status === 'completed' &&
+      persistedTool.presentation?.questionResult
+    ) {
+      liveTool.presentation = {
+        ...liveTool.presentation,
+        questionResult: persistedTool.presentation.questionResult,
+      };
       changed = true;
     }
     const canApplyPersistedTerminalStatus =

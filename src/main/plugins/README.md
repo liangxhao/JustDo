@@ -10,7 +10,7 @@ areas live here with the marketplace and manager facade.
 - `mcp/` contains MCP server persistence, probing, and OpenClaw config sync.
 - `extensions/` contains the bundled extension registry, local extension runtime
   sync, import transactions, and retired-extension cleanup. Bundled extension
-  behavior, including `AskUserQuestion`, stays in `plugins/extensions/`.
+  behavior, including `ask_user_question`, stays in `plugins/extensions/`.
 - `hooks/` contains hook persistence and OpenClaw config sync.
 - `marketplace/` contains provider-neutral models, routing, and providers.
 

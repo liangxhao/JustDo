@@ -64,6 +64,33 @@ describe('side panel process presentation matches the desktop', () => {
   const disclosure = (key: string) => summary(key).parentElement as HTMLDetailsElement;
   const history = () => messages.querySelector<HTMLDetailsElement>('.completed-process')!;
 
+  it('renders question answers inside the existing disclosure and updates the same Lit host after timeout', () => {
+    const questions = [{
+      id: 'stack', question: 'Which stack?',
+      options: [{ id: 'react', label: 'React' }, { id: 'vue', label: 'Vue' }],
+      defaultOptionIds: ['react'],
+    }];
+    const entry = (timedOut: boolean) => ({
+      role: 'question-presentation', key: 'question',
+      item: { type: 'tool', key: 'question-tool', status: 'completed', input: { questions },
+        questionResult: { version: 1, questions, response: {
+          status: 'answered', timedOut, answers: { stack: { selected: ['react'] } },
+        } } },
+    });
+    renderer.render([completed('history', [entry(false)]), answer('final', 'Final answer')], 'question-session');
+    const outer = history();
+    expect(outer.open).toBe(false);
+    outer.querySelector<HTMLElement>('summary')!.click();
+    expect(outer.querySelector('.question-answer--human')?.textContent).toContain('Which stack?');
+    expect(outer.querySelector('.question-answer--human')?.textContent).toContain('React');
+    expect(messages.querySelector('.assistant')?.closest('.completed-process')).toBeNull();
+    renderer.render([completed('history', [entry(true)]), answer('final', 'Final answer')], 'question-session');
+    expect(history()).toBe(outer);
+    expect(outer.querySelector('.question-answer--human')).toBeNull();
+    expect(outer.querySelector('.question-answer--system')?.textContent).toContain('Which stack?');
+    expect(outer.querySelector('.question-answer--system')?.textContent).toContain('React');
+  });
+
   it('uses the desktop history trigger and lazy nested summaries, keeping the complete final answer outside', () => {
     const entries = [
       completed('history', [

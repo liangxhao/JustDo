@@ -509,7 +509,7 @@ export function createMessageRenderer(
       if (signature !== node.renderSignature) {
         // Compaction uses the App's Lit renderer. Keep its host and render
         // anchors so native enrichment patches the same disclosure in place.
-        if (entry.role !== 'compaction') node.replaceChildren();
+        if (entry.role !== 'compaction' && entry.role !== 'question-presentation') node.replaceChildren();
         const scope = currentScope;
         renderRichContent(node, entry, source => readImage(scope, source));
         if (entry.pendingInput) {

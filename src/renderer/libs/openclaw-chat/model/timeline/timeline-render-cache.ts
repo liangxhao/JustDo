@@ -191,7 +191,7 @@ export function projectIncrementalTimelineView(params: {
         : persisted.rowsWithoutLast
       : persistedRows,
     seamRow,
-    activeRows,
+    activeRows: foldCompletedProcessRows(activeRows, { protectTrailingTurn: true }),
     minimapPrefix: persisted.minimapPrefix,
     minimapTail,
     minimapKeySignature: persisted.minimapKeySignature,

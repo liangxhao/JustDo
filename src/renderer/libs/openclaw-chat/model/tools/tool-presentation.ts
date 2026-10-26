@@ -1,8 +1,13 @@
+import {
+  type QuestionResult,
+  readQuestionResult,
+} from '../../../../../../plugins/extensions/ask-user-question/contracts/result';
 import { getTranscriptMedia, type TranscriptMedia } from '../../attachments';
 import type { ToolItem } from '../chat-transcript-state';
 import { isToolResultType, readToolCallId, readToolOutput } from './tool-message-adapter';
 
 export interface ToolPresentation {
+  questionResult?: QuestionResult;
   title?: string;
   media?: TranscriptMedia[];
   fileDiff?: string;
@@ -29,21 +34,39 @@ export function readToolPresentation(source: Record<string, unknown>): ToolPrese
   const marker = record(source.__openclaw);
   const args = record(source.args ?? source.arguments ?? source.input ?? source.toolInput);
   const projection: ToolPresentation = {};
+  const questionResult = readQuestionResult(source.result) ?? readQuestionResult(source);
+  if (questionResult) projection.questionResult = questionResult;
   if (['text', 'truncated', 'image', 'not_found'].includes(String(details.kind))) {
-    projection.fileRead = { kind: details.kind as NonNullable<ToolPresentation['fileRead']>['kind'], ...(typeof details.content === 'string' ? { content: details.content } : {}) };
+    projection.fileRead = {
+      kind: details.kind as NonNullable<ToolPresentation['fileRead']>['kind'],
+      ...(typeof details.content === 'string' ? { content: details.content } : {}),
+    };
   }
-  if (details.changed !== false && typeof details.diff === 'string') projection.fileDiff = details.diff;
+  if (details.changed !== false && typeof details.diff === 'string')
+    projection.fileDiff = details.diff;
   const media = [...getTranscriptMedia(source), ...getTranscriptMedia(result)];
   const content = source.content ?? result.content;
   if (Array.isArray(content)) {
     for (const item of content) {
       const part = record(item);
-      if (['image', 'audio', 'video'].includes(String(part.type)) && typeof part.data === 'string' && typeof part.mimeType === 'string' && /^(image|audio|video)\/[a-z0-9.+-]+$/i.test(part.mimeType)) {
-        media.push({ path: `data:${part.mimeType};base64,${part.data}`, mimeType: part.mimeType, kind: String(part.type) });
+      if (
+        ['image', 'audio', 'video'].includes(String(part.type)) &&
+        typeof part.data === 'string' &&
+        typeof part.mimeType === 'string' &&
+        /^(image|audio|video)\/[a-z0-9.+-]+$/i.test(part.mimeType)
+      ) {
+        media.push({
+          path: `data:${part.mimeType};base64,${part.data}`,
+          mimeType: part.mimeType,
+          kind: String(part.type),
+        });
       }
     }
   }
-  if (media.length) projection.media = media.filter((item, index) => media.findIndex(other => other.path === item.path) === index);
+  if (media.length)
+    projection.media = media.filter(
+      (item, index) => media.findIndex(other => other.path === item.path) === index,
+    );
 
   const callId = source.toolCallId ?? source.id;
   const activity = Array.isArray(source.activity)

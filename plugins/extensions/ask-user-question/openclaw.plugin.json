@@ -1,13 +1,13 @@
 {
   "id": "ask-user-question",
-  "name": "AskUserQuestion",
+  "name": "Ask User Question",
   "description": "Rich structured questions for the desktop application.",
   "activation": {
     "onStartup": true,
     "onCapabilities": ["tool"]
   },
   "contracts": {
-    "tools": ["AskUserQuestion"]
+    "tools": ["ask_user_question"]
   },
   "configSchema": {
     "type": "object",

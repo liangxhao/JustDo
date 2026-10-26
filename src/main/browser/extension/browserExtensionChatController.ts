@@ -32,7 +32,7 @@ import type {
   BrowserExtensionPageContext,
   BrowserExtensionTurnState,
 } from './browserAppServerTypes';
-import { readBrowserExtensionHistoryDisplay } from './browserExtensionHistoryDisplay';
+import { readBrowserExtensionHistoryDisplay, readBrowserQuestionResult } from './browserExtensionHistoryDisplay';
 
 const MAX_PROMPT_LENGTH = 32_000;
 const MAX_TITLE_LENGTH = 500;
@@ -95,6 +95,7 @@ const readConfiguredModelOptions = (value: unknown): Array<{ id: string; name: s
 };
 
 type ExtensionHistoryEntry = GatewayHistoryEntry & {
+  questionResult?: NonNullable<ReturnType<typeof readBrowserQuestionResult>>;
   rawMessage?: Record<string, unknown>;
   display?: BrowserExtensionMessageDisplay;
 };
@@ -113,15 +114,21 @@ const projectRichHistory = (
       },
     ];
   }
-  const entries: ExtensionHistoryEntry[] = extractGatewayHistoryEntries([message]).map(entry => ({
-    ...entry,
+  const entries: ExtensionHistoryEntry[] = extractGatewayHistoryEntries([message]).map(entry => {
+    const questionResult = entry.role === 'tool_result'
+      ? readBrowserQuestionResult(message, entry.metadata?.toolName, entry.metadata?.toolUseId)
+      : null;
+    return {
+      ...entry,
+      ...(questionResult ? { questionResult } : {}),
     ...(presentation.display && (entry.role === 'assistant' || entry.role === 'system')
       ? { display: presentation.display }
       : presentation.display?.keepVisible &&
           (entry.role === 'tool_use' || entry.role === 'tool_result')
         ? { display: { keepVisible: true as const } }
         : {}),
-  }));
+    };
+  });
   if (!entries.length && presentation.display?.nativeFailure && isFailedRunMessage(message)) {
     const text = readFailedRunMessageText(message);
     if (text) entries.push({ role: 'assistant', text, display: presentation.display });
@@ -592,6 +599,7 @@ export class BrowserExtensionChatController implements BrowserExtensionChatApi {
           ...(pendingInput ? { pendingInput } : {}),
           ...(entry.rawMessage ? { rawMessage: entry.rawMessage } : {}),
           ...(entry.display ? { display: entry.display } : {}),
+          ...(entry.questionResult ? { questionResult: entry.questionResult } : {}),
           ...(entry.thinking ? { thinking: entry.thinking } : {}),
           ...(entry.modelName ? { modelName: entry.modelName } : {}),
           ...(toolName ? { toolName } : {}),

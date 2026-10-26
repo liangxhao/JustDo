@@ -42,6 +42,39 @@ function turn(items: TurnItem[]): AssistantTurn {
 }
 
 describe('projectTurnItems', () => {
+  test('projects only a validated pending question or structured answer as question history', () => {
+    const questions = [{
+      id: 'stack',
+      question: 'Which stack?',
+      options: [{ id: 'react', label: 'React' }, { id: 'vue', label: 'Vue' }],
+    }];
+    const pending = item('question', 'tool', 'running', {
+      name: 'ask_user_question',
+      input: { questions },
+    });
+    const answered = item('answer', 'tool', 'completed', {
+      name: 'ask_user_question',
+      presentation: { questionResult: {
+        version: 1,
+        questions,
+        response: { status: 'answered', answers: { stack: { selected: ['react'] } } },
+      } },
+    });
+
+    expect(projectTurnItems(turn([pending, answered]))).toMatchObject([
+      { kind: 'question-presentation', item: pending },
+      { kind: 'question-presentation', item: answered },
+    ]);
+    const fallback = projectTurnItems(turn([
+      item('malformed', 'tool', 'running', { name: 'ask_user_question', input: { questions: [] } }),
+      item('failed', 'tool', 'failed', { name: 'ask_user_question', input: { questions }, error: 'unavailable' }),
+      item('old-text', 'tool', 'completed', { name: 'ask_user_question', input: { questions }, output: 'User selected: React' }),
+      item('old-name', 'tool', 'running', { name: 'AskUserQuestion', input: { questions } }),
+      { ...answered, id: 'failed-stale-answer', status: 'failed' } as TurnItem,
+    ]));
+    expect(fallback.map(row => row.kind)).toEqual(['live-process', 'question-presentation', 'process-summary', 'live-process', 'process-summary']);
+  });
+
   test('keeps one working indicator through output and removes it at settlement', () => {
     const activity = {
       runId: 'run-1',

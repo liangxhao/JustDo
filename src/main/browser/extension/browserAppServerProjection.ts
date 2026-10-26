@@ -106,6 +106,7 @@ const toAppServerTurns = (
         matchingTool.output = message.text;
         matchingTool.isError = message.isError === true;
         matchingTool.status = message.isError === true ? 'failed' : 'completed';
+        if (message.questionResult) matchingTool.questionResult = message.questionResult;
         if (message.display?.keepVisible) matchingTool.display = { keepVisible: true };
       } else {
         items.push({
@@ -117,6 +118,7 @@ const toAppServerTurns = (
           toolName: message.toolName ?? 'tool',
           toolUseId: message.toolUseId ?? null,
           type: 'toolCall',
+          ...(message.questionResult ? { questionResult: message.questionResult } : {}),
           ...(message.display?.keepVisible ? { display: { keepVisible: true } } : {}),
         });
       }
