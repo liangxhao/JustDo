@@ -1,5 +1,6 @@
 // Offline integration: real Gateway/worker execution against a loopback-only model fixture.
 // Add --run-progress to check slow 64 KiB tool arguments, live metadata and whole-run settlement.
+// --buffered-run-progress uses legacy function_call frames to exercise pre-public-event activity.
 'use strict';
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -13,20 +14,23 @@ const { randomBytes } = require('node:crypto');
 const { pathToFileURL } = require('node:url');
 (async () => {
   const root = path.resolve(process.argv[2] || 'vendor/openclaw-runtime/current');
-  const checkRunProgress = process.argv.includes('--run-progress');
+  const bufferedRunProgress = process.argv.includes('--buffered-run-progress');
+  const checkRunProgress = bufferedRunProgress || process.argv.includes('--run-progress');
   const state = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-chat-stream-smoke-'));
   const workspace = path.join(state, 'workspace'); fs.mkdirSync(workspace);
   fs.writeFileSync(path.join(workspace, 'read-fixture.txt'), 'native-tool-read-evidence');
   const token = randomBytes(24).toString('hex');
   const events = []; let requests = 0; let toolRequested = false; let toolResultSeen = false;
   const toolCallId = 'fixture-read-call';
-  let expectedRunId; let providerFailure; let argumentChars = 0; let progressBeforeArgumentsEnd = false;
+  let expectedRunId; let expectedSessionKey; let replayActivityConfirmed = false; let providerFailure; let argumentChars = 0; let progressBeforeArgumentsEnd = false;
   const progressEvents = () => events.filter(event => event.event === 'agent' &&
     event.payload?.runId === expectedRunId && event.payload.stream === 'item' &&
     event.payload.data?.itemId === 'run-stream-progress');
-  const toolStarted = () => events.some(event => ['agent', 'session.tool'].includes(event.event) &&
-    event.payload?.runId === expectedRunId &&
-    (event.payload.data?.toolCallId ?? event.payload.toolCallId) === toolCallId &&
+  const requestActivityEvents = () => events.filter(event => event.event === 'agent' &&
+    event.payload?.runId === expectedRunId && event.payload.stream === 'item' &&
+    event.payload.data?.itemId === 'run-request-activity');
+  const toolStarted = () => events.some(event => event.payload?.runId === expectedRunId &&
+    (event.event === 'session.tool' || event.event === 'agent' && event.payload.stream === 'tool') &&
     (event.payload.data?.phase ?? event.payload.phase) === 'start');
   const provider = http.createServer(async (request, response) => {
     if (request.method !== 'POST' || request.url !== '/v1/chat/completions') { response.writeHead(404); response.end(); return; }
@@ -53,15 +57,42 @@ const { pathToFileURL } = require('node:url');
           for (let offset = 0; offset < streamedArgs.length; offset += 4096) {
             assert.equal(toolStarted(), false, 'native tool must wait for complete argument delivery');
             const first = offset === 0;
-            send({ tool_calls: [{ index: 0, ...(first ? { id: toolCallId, type: 'function' } : {}),
-              function: { ...(first ? { name: 'read' } : {}), arguments: streamedArgs.slice(offset, offset + 4096) } }] });
-            if (offset === 3 * 4096) {
-              await waitFor(() => progressEvents().filter(event => {
-                const progress = event.payload.data.progress;
-                return progress?.kind === 'tool-input' && progress.toolCallId === toolCallId &&
-                  progress.complete === false && progress.receivedChars > 0;
-              }).length >= 2, 'argument progress before remaining input is sent', 10_000);
+            const functionDelta = { ...(first ? { name: 'read' } : {}),
+              arguments: streamedArgs.slice(offset, offset + 4096) };
+            send(bufferedRunProgress ? { function_call: functionDelta } : { tool_calls: [{
+              index: 0, ...(first ? { id: toolCallId, type: 'function' } : {}), function: functionDelta,
+            }] });
+            if (offset === 5 * 4096) {
+              await waitFor(() => bufferedRunProgress ? requestActivityEvents().length >= 2 :
+                progressEvents().filter(event => {
+                  const progress = event.payload.data.progress;
+                  return progress?.kind === 'tool-input' && progress.toolCallId === toolCallId &&
+                    progress.complete === false && progress.receivedChars > 0;
+                }).length >= 2, 'argument progress before remaining input is sent', 10_000);
+              if (bufferedRunProgress) assert.equal(progressEvents().some(event =>
+                event.payload.data.progress?.kind === 'tool-input'), false,
+              'legacy arguments stay provisional until terminal');
               assert.equal(toolStarted(), false, 'argument observations cannot start the native tool');
+              // Only this request is open at the barrier; subsequent model calls have independent throttles.
+              const activityTimes = requestActivityEvents().map(event => event.payload.data.at);
+              assert.ok(activityTimes.length >= 2, 'request activity before argument completion');
+              for (let index = 1; index < activityTimes.length; index++)
+                assert.ok(activityTimes[index] - activityTimes[index - 1] >= 1000, 'per-request activity throttle');
+              const replay = await client.request('chat.history', { sessionKey: expectedSessionKey, limit: 1 });
+              assert.equal(replay.inFlightRun?.runId, expectedRunId);
+              const statusItems = replay.inFlightRun?.events?.filter(event => event.stream === 'item' &&
+                ['run-request-activity', 'run-stream-progress'].includes(event.data?.itemId)) || [];
+              assert.ok(statusItems.length <= 2, 'activity snapshots are bounded by the two item IDs');
+              const retainedActivity = statusItems.find(event => event.data.itemId === 'run-request-activity');
+              const retainedAt = retainedActivity?.data.at;
+              assert.ok(Number.isSafeInteger(retainedAt) && retainedAt >= activityTimes.at(-1),
+                'replay retains the source activity time without rewinding');
+              await waitFor(() => requestActivityEvents().some(event => event.payload.data.at === retainedAt),
+                'wire event matching the native activity snapshot', 5_000);
+              if (!bufferedRunProgress) assert.ok(statusItems.some(event =>
+                event.data.itemId === 'run-stream-progress' && event.data.progress?.kind === 'tool-input'),
+              'detailed argument progress is retained independently');
+              replayActivityConfirmed = true;
               progressBeforeArgumentsEnd = true;
             }
             await new Promise(resolve => setTimeout(resolve, 300));
@@ -74,7 +105,7 @@ const { pathToFileURL } = require('node:url');
       } else {
         send({ tool_calls: [{ index: 0, id: toolCallId, type: 'function', function: { name: 'read', arguments: args } }] });
       }
-      response.write('data: ' + JSON.stringify({ id: 'fixture-chat', object: 'chat.completion.chunk', choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] }) + '\n\n');
+      response.write('data: ' + JSON.stringify({ id: 'fixture-chat', object: 'chat.completion.chunk', choices: [{ index: 0, delta: {}, finish_reason: bufferedRunProgress ? 'function_call' : 'tool_calls' }] }) + '\n\n');
     } else {
       send({ reasoning_content: 'The file was checked.' });
       send({ content: 'Fixture verified: native-tool-read-evidence.' });
@@ -106,13 +137,14 @@ const { pathToFileURL } = require('node:url');
     const file = fs.readdirSync(path.join(root, 'dist')).find(name => /^client-.*\.mjs$/.test(name) && fs.readFileSync(path.join(root, 'dist', name), 'utf8').includes('GatewayClient as t'));
     const { t: GatewayClient } = await import(pathToFileURL(path.join(root, 'dist', file)).href);
     let connected = false;
-    client = new GatewayClient({ url: `ws://127.0.0.1:${port}`, token, clientName: 'gateway-client', mode: 'backend', caps: ['tool-events'], scopes: ['operator.admin'], onHelloOk: () => connected = true, onEvent: event => events.push(event) });
+    client = new GatewayClient({ url: `ws://127.0.0.1:${port}`, token, sharedStateMode: 'read-only', deviceIdentity: null, clientName: 'gateway-client', mode: 'backend', caps: ['tool-events'], scopes: ['operator.admin'], onHelloOk: () => connected = true, onEvent: event => events.push(event) });
     client.start(); await waitFor(() => connected, 'connect');
     const key = 'agent:main:justdo:stream-smoke';
     await client.request('sessions.create', { key, cwd: workspace, permissionMode: 'guarded' });
     await client.request('sessions.messages.subscribe', { key });
     const runId = 'fixture-run-' + randomBytes(6).toString('hex');
     expectedRunId = runId;
+    expectedSessionKey = key;
     await client.request('chat.send', { sessionKey: key, message: 'Read read-fixture.txt and confirm its exact contents.', idempotencyKey: runId });
     await waitFor(() => events.some(event => event.event === 'chat' && event.payload?.runId === runId && ['final','error','aborted'].includes(event.payload.state)), 'terminal');
     const terminal = events.find(event => event.event === 'chat' && event.payload?.runId === runId && ['final', 'error', 'aborted'].includes(event.payload.state));
@@ -134,7 +166,19 @@ const { pathToFileURL } = require('node:url');
       assert.equal(classifyTerminal(resolveTerminalFacts({ phase: 'end', data: settled.payload.data })), 'success',
         'whole-run settlement must be successful, not cancelled, timed out or failed');
       assert.equal(progressBeforeArgumentsEnd, true, 'progress must cross the real wire before all arguments arrive');
+      assert.equal(replayActivityConfirmed, true, 'native snapshots must retain activity during streaming');
       const observations = progressEvents();
+      const requestActivity = requestActivityEvents();
+      assert.ok(requestActivity.length >= 2, 'multiple real request activity observations');
+      for (const event of requestActivity) {
+        const data = event.payload.data;
+        assert.equal(event.payload.sessionKey, key);
+        assert.deepEqual(Object.keys(data).sort(), ['at', 'itemId', 'kind', 'phase', 'progress', 'status', 'title']);
+        assert.deepEqual(data.progress, { kind: 'model-activity' });
+        assert.ok(Number.isSafeInteger(data.at) && data.at > 0);
+        assert.equal(data.kind, 'status'); assert.equal(data.phase, 'update');
+        assert.equal(data.status, 'running');
+      }
       assert.ok(observations.length > 2, 'multiple live native progress observations');
       for (const event of observations) {
         const data = event.payload.data;
@@ -146,7 +190,9 @@ const { pathToFileURL } = require('node:url');
         assert.ok(Number.isSafeInteger(progress.receivedChars) && progress.receivedChars >= 0);
         if (progress.kind === 'tool-input') {
           assert.deepEqual(Object.keys(progress).sort(), ['complete', 'kind', 'name', 'receivedChars', 'toolCallId']);
-          assert.equal(progress.toolCallId, toolCallId); assert.equal(progress.name, 'read');
+          assert.equal(progress.name, 'read');
+          if (!bufferedRunProgress) assert.equal(progress.toolCallId, toolCallId);
+          else assert.match(progress.toolCallId, /^call_[0-9a-f]{24}$/);
         } else {
           assert.equal(progress.kind, 'model');
           assert.deepEqual(Object.keys(progress).sort(), ['kind', 'receivedChars']);
@@ -154,12 +200,14 @@ const { pathToFileURL } = require('node:url');
       }
       const toolInput = observations.filter(event => event.payload.data.progress.kind === 'tool-input');
       const counts = toolInput.map(event => event.payload.data.progress.receivedChars);
-      assert.ok(new Set(counts).size >= 3, 'argument counters must increase over the actual stream');
+      if (!bufferedRunProgress)
+        assert.ok(new Set(counts).size >= 3, 'argument counters must increase over the actual stream');
       assert.deepEqual(counts, [...counts].sort((a, b) => a - b));
       assert.deepEqual(toolInput.at(-1).payload.data.progress, {
-        kind: 'tool-input', toolCallId, name: 'read', receivedChars: argumentChars, complete: true,
+        kind: 'tool-input', toolCallId: bufferedRunProgress ? toolInput.at(-1).payload.data.progress.toolCallId : toolCallId,
+        name: 'read', receivedChars: argumentChars, complete: true,
       });
-      const metadata = JSON.stringify(observations.map(event => event.payload.data));
+      const metadata = JSON.stringify([...observations, ...requestActivity].map(event => event.payload.data));
       assert.ok(!metadata.includes('read-fixture.txt') && !metadata.includes(workspace), 'progress contains no argument path');
       assert.ok(!metadata.includes('Inspecting the isolated fixture') && !metadata.includes('The file was checked'), 'progress contains no model text');
       assert.ok(!metadata.includes(' '.repeat(4096)), 'progress contains no argument fragments');
@@ -203,7 +251,7 @@ const { pathToFileURL } = require('node:url');
       await client.request('progressCard.get', { sessionKey: key });
       await client.request('cron.runs', { scope: 'all', limit: 10, offset: 0, sortDir: 'desc' });
     }
-    console.log(JSON.stringify({ ok: true, requests, streams: [...streams], nativeRead: toolResultSeen, liveSessionTool: events.some(event => event.event === 'session.tool' && event.payload?.runId === runId), historyMessages: history.messages.length, ...(checkRunProgress ? { argumentChars, progressObservations: progressEvents().length, progressBeforeArgumentsEnd } : {}), state }));
+    console.log(JSON.stringify({ ok: true, requests, streams: [...streams], nativeRead: toolResultSeen, liveSessionTool: events.some(event => event.event === 'session.tool' && event.payload?.runId === runId), historyMessages: history.messages.length, ...(checkRunProgress ? { bufferedRunProgress, argumentChars, progressObservations: progressEvents().length, requestActivityObservations: requestActivityEvents().length, progressBeforeArgumentsEnd, replayActivityConfirmed } : {}), state }));
   } finally {
     clearTimeout(deadline); if(client) await client.stopAndWait().catch(() => client.stop()); child.kill(); provider.closeAllConnections(); await new Promise(resolve => provider.close(resolve));
     fs.writeFileSync(path.join(state, 'smoke.log'), output.replaceAll(token, '<fixture-token>')); console.log('Smoke log: '+path.join(state, 'smoke.log'));

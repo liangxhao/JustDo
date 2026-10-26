@@ -27,6 +27,10 @@
 - [ ] 对照 032 的 `toolcall_start/delta/end` → 原生 status item → WS → Renderer 链路。
       用 `tool_call → show_widget` 的长 HTML 参数验证执行前持续收到进度，不能仅测试
       直接工具或向 reducer 注入事件；参数接收期间不能错误显示无后续内容的等待提示。
+- [ ] 同一长参数分别经现代 `tool_calls` 与旧格式 `function_call` 传输；后者的正式工具
+      事件可延迟到终态，但实际请求活动仍需跨原生 callback、WS 和 Renderer。保活不算模型进展。
+      `run-request-activity` 与 `run-stream-progress` 分别恢复，源时间不重置，通用活动不清除
+      已有工具计数或阶段；取消、旧请求通知及发射失败不改变执行或 watchdog。
 - [ ] 进度只保留 UTF-16 计数等闭合元数据，不解析/复制参数、正文或私有 Thinking；
       保留节流、并行调用上限、原观察时间和精确 owner/generation。
       区分生成参数、准备调用、实际执行、重试与清理；字符数不是百分比或工具成功证明。
@@ -37,9 +41,17 @@
       历史占位不能证明数据库缺记录；不通过重放工具来验证。
 
 入口：`native-support/run-progress.mjs`、chat 的 `run-progress`/controller 测试、
-`node tests/openclaw/runtime/chat-stream-smoke.cjs <runtime-directory> --run-progress`。
+真实 SDK 的 `buffered-run-progress.test.ts`，以及以下两次隔离 Gateway 验证：
+
+```text
+node tests/openclaw/runtime/chat-stream-smoke.cjs <runtime-directory> --run-progress
+node tests/openclaw/runtime/chat-stream-smoke.cjs <runtime-directory> --buffered-run-progress
+```
+
 `<runtime-directory>` 必须指向本次构建的最终目标产物，不能省略或使用旧 runtime。
-模拟 64 KiB 参数通过不能替代真实内网模型完整调用链路的验证。
+两种 Gateway 用例均验证执行前的实际 WS 进度、原生快照的源时间、参数完整性及精确整轮成功结算。
+SDK 用例另行验证 `tool_call → show_widget` 的 70 KiB HTML 参数缓冲；Gateway 用例使用原生 `read`。
+这些隔离模型验证不能替代真实内网模型完整调用链路的验证。
 
 ## 格式纠正、Goal 与问答
 

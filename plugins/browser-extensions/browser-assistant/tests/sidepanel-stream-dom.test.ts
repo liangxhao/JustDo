@@ -182,6 +182,56 @@ describe('extension streaming DOM', () => {
     );
   });
 
+  it('projects buffered request activity through the generated stream without replacing tool counters or animation nodes', async () => {
+    const { emit } = await mountThread();
+    const now = vi.spyOn(Date, 'now').mockReturnValue(60_000);
+    try {
+      mock.notify('turn/started', { threadId: 'one', turn: { id: 'run-1', nativeRunId: 'run-1' } });
+      const activity = (at: number) => ({
+        itemId: 'run-request-activity', kind: 'status', phase: 'update', status: 'running',
+        at, progress: { kind: 'model-activity' },
+      });
+      emit(1, 'item', activity(35_000));
+      await vi.waitFor(() =>
+        expect(document.querySelector('.run-activity-label')?.textContent).toBe(t('receiving-model')),
+      );
+      const icon = document.querySelector('.run-activity-icon');
+      const label = document.querySelector('.run-activity-label');
+      expect(icon).not.toBeNull();
+      expect(document.querySelector('.run-activity-detail')?.textContent).toBe(
+        t('lastUpdate', { seconds: 25 }),
+      );
+      expect(document.querySelector('.run-activity-detail')?.textContent).not.toContain(
+        t('receivedChars', { count: '0' }),
+      );
+      expect(document.querySelector('.process-tool')).toBeNull();
+
+      emit(2, 'item', {
+        itemId: 'run-stream-progress', kind: 'status', phase: 'update', status: 'running',
+        progress: {
+          kind: 'tool-input', toolCallId: 'wrapper-1', name: 'tool_call', receivedChars: 64_000,
+        },
+      });
+      await vi.waitFor(() => expect(label?.textContent).toBe(t('generating-tool-input')));
+      expect(document.querySelector('.run-activity-detail')?.textContent).toContain('64,000');
+      const previousDetail = document.querySelector('.run-activity-detail')?.textContent;
+      expect(previousDetail).toContain(t('lastUpdate', { seconds: 59 }));
+
+      emit(3, 'item', activity(59_000));
+      await vi.waitFor(() =>
+        expect(document.querySelector('.run-activity-detail')?.textContent).not.toBe(previousDetail),
+      );
+      expect(label?.textContent).toBe(t('generating-tool-input'));
+      expect(document.querySelector('.run-activity-detail')?.textContent).toContain('64,000');
+      expect(document.querySelector('.run-activity-icon')).toBe(icon);
+      expect(document.querySelector('.run-activity-label')).toBe(label);
+      expect(document.querySelector('.run-activity-elapsed')?.getAttribute('aria-live')).toBe('off');
+      expect(document.querySelector('.process-tool')).toBeNull();
+    } finally {
+      now.mockRestore();
+    }
+  });
+
   it('keeps Stop acknowledgement and disconnect separate from settled execution', async () => {
     const { respond, emit } = await mountThread();
     mock.notify('turn/started', { threadId: 'one', turn: { id: 'run-1', nativeRunId: 'run-1' } });

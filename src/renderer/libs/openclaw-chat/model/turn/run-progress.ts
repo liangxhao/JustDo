@@ -2,6 +2,7 @@ import type { ToolItem } from '../chat-transcript-state';
 import type { RunActivityOptions, RunProgressStage } from './run-activity';
 
 export const RUN_STREAM_PROGRESS_ITEM_ID = 'run-stream-progress';
+export const RUN_REQUEST_ACTIVITY_ITEM_ID = 'run-request-activity';
 
 const startupStages: Readonly<Record<string, RunProgressStage>> = {
   waiting_for_state: 'preparing',
@@ -113,6 +114,29 @@ export function readRunProgress(
       retryAttempt: data.retryAttempt,
       maxRetries: data.maxRetries,
       retryDelayMs: count(data.delayMs),
+    };
+  }
+  if (
+    stream === 'item' &&
+    data.itemId === RUN_REQUEST_ACTIVITY_ITEM_ID &&
+    data.kind === 'status' &&
+    phase === 'update' &&
+    data.status === 'running'
+  ) {
+    const at = count(data.at);
+    if (
+      at === undefined ||
+      !data.progress ||
+      typeof data.progress !== 'object' ||
+      Array.isArray(data.progress) ||
+      (data.progress as Record<string, unknown>).kind !== 'model-activity'
+    )
+      return null;
+    return {
+      stage: 'receiving-model',
+      modelActivity: true,
+      progress: { kind: 'model-activity' },
+      at,
     };
   }
   if (

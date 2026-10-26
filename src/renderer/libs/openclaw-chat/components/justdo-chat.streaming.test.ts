@@ -90,6 +90,56 @@ afterEach(() => {
 });
 
 describe('justdo-chat direct-property streaming', () => {
+  test('retains animated nodes across generic and detailed tool-call observations with reduced motion', async () => {
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: query.includes('prefers-reduced-motion'), media: query, onchange: null,
+      addEventListener: vi.fn(), removeEventListener: vi.fn(),
+      addListener: vi.fn(), removeListener: vi.fn(), dispatchEvent: vi.fn(),
+    }));
+    const frames = createAnimationFrameHarness();
+    const controller = prepareController();
+    controller.state.connected = true;
+    controller.state.transportStatus = 'connected';
+    const handle = gatewayEventHandler(controller);
+    const chat = document.createElement('justdo-chat') as JustDoChatElement;
+    chat.controller = controller;
+    document.body.append(chat);
+    await chat.updateComplete;
+    await frames.drain(chat);
+    const send = (seq: number, detailed: boolean) => handle({ event: 'agent', payload: {
+      sessionKey: controller.state.sessionKey, runId: 'hidden-argument-progress', seq,
+      stream: 'item', ts: Date.now(),
+      data: {
+        itemId: detailed ? 'run-stream-progress' : 'run-request-activity',
+        kind: 'status', phase: 'update', status: 'running', at: Date.now(),
+        progress: detailed
+          ? { kind: 'tool-input', name: 'tool_call', toolCallId: 'call-1', receivedChars: 240 }
+          : { kind: 'model-activity' },
+      },
+    } });
+
+    send(1, false);
+    await frames.drain(chat);
+    const spark = chat.shadowRoot?.querySelector('.chat-working-indicator__spark');
+    const label = chat.shadowRoot?.querySelector('.chat-working-indicator__label');
+    expect(spark).toBeTruthy();
+    expect(label?.textContent).toContain(i18nService.t('coworkWorkingModelStream'));
+    expect(controller.state.runActivity?.progress).toEqual({ kind: 'model-activity' });
+    expect(chat.shadowRoot?.querySelector('.chat-working-indicator__detail')?.textContent).not.toContain('240');
+
+    send(2, true);
+    await frames.drain(chat);
+    expect(label?.textContent).toContain(i18nService.t('coworkWorkingToolInput'));
+    send(3, false);
+    await frames.drain(chat);
+    expect(chat.shadowRoot?.querySelector('.chat-working-indicator__spark')).toBe(spark);
+    expect(chat.shadowRoot?.querySelector('.chat-working-indicator__label')).toBe(label);
+    expect(label?.textContent).toContain(i18nService.t('coworkWorkingToolInput'));
+    expect(chat.shadowRoot?.querySelector('.chat-working-indicator__detail')?.textContent).toContain('240');
+    expect(chat.shadowRoot?.querySelector('.chat-working-indicator__detail')?.getAttribute('aria-live')).toBe('off');
+    expect(controller.state.transcript.activeTurn?.toolById.size).toBe(0);
+  });
+
   test('retains the animated indicator elements while argument counters update', async () => {
     const frames = createAnimationFrameHarness();
     const controller = prepareController();

@@ -40,6 +40,7 @@ export type RunProgressDetail =
       complete: boolean;
     }
   | { kind: 'model-stream'; receivedChars: number }
+  | { kind: 'model-activity' }
   | { kind: 'tool'; toolCallId: string; name: string; outputChars?: number; summary?: string };
 
 export interface RunActivityOptions {
@@ -160,10 +161,17 @@ export function advanceRunActivity(
 ): RunActivity {
   const next = { ...activity };
   const at = options.at ?? Date.now();
+  const genericModelActivity =
+    stage === 'receiving-model' && options.progress?.kind === 'model-activity';
+  const preserveDetailedProgress =
+    genericModelActivity &&
+    ['thinking', 'responding', 'generating-tool-input', 'preparing-tool', 'running-tool'].includes(
+      activity.stage,
+    );
   // A content-free heartbeat must not replace a more specific visible model stage.
   if (
     stage === 'receiving-model' &&
-    (activity.stage === 'thinking' || activity.stage === 'responding')
+    (preserveDetailedProgress || activity.stage === 'thinking' || activity.stage === 'responding')
   ) {
     stage = activity.stage;
   }
@@ -173,7 +181,9 @@ export function advanceRunActivity(
     next.stageChangedAt = at;
     delete next.progress;
   }
-  if (options.progress) next.progress = options.progress;
+  if (options.progress && (!genericModelActivity || !next.progress)) {
+    next.progress = options.progress;
+  }
   next.lastAgentEventAt = at;
   next.hasRunningTool = hasRunningTool;
   if (options.provider) next.provider = options.provider;

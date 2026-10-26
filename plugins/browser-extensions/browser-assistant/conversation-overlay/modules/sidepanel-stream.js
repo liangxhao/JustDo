@@ -7659,7 +7659,11 @@ function normalizeRunRetryProgress(reason, retryAttempt, maxRetries) {
 function advanceRunActivity(activity, stage, options, hasRunningTool) {
   const next = { ...activity };
   const at = options.at ?? Date.now();
-  if (stage === "receiving-model" && (activity.stage === "thinking" || activity.stage === "responding")) {
+  const genericModelActivity = stage === "receiving-model" && options.progress?.kind === "model-activity";
+  const preserveDetailedProgress = genericModelActivity && ["thinking", "responding", "generating-tool-input", "preparing-tool", "running-tool"].includes(
+    activity.stage
+  );
+  if (stage === "receiving-model" && (preserveDetailedProgress || activity.stage === "thinking" || activity.stage === "responding")) {
     stage = activity.stage;
   }
   const stageChanged = activity.stage !== stage;
@@ -7668,7 +7672,9 @@ function advanceRunActivity(activity, stage, options, hasRunningTool) {
     next.stageChangedAt = at;
     delete next.progress;
   }
-  if (options.progress) next.progress = options.progress;
+  if (options.progress && (!genericModelActivity || !next.progress)) {
+    next.progress = options.progress;
+  }
   next.lastAgentEventAt = at;
   next.hasRunningTool = hasRunningTool;
   if (options.provider) next.provider = options.provider;
@@ -7696,6 +7702,7 @@ function advanceRunActivity(activity, stage, options, hasRunningTool) {
 
 // src/renderer/libs/openclaw-chat/model/turn/run-progress.ts
 var RUN_STREAM_PROGRESS_ITEM_ID = "run-stream-progress";
+var RUN_REQUEST_ACTIVITY_ITEM_ID = "run-request-activity";
 var startupStages = {
   waiting_for_state: "preparing",
   preparing_workspace: "preparing-workspace",
@@ -7771,6 +7778,17 @@ function readRunProgress(stream, data) {
       retryAttempt: data.retryAttempt,
       maxRetries: data.maxRetries,
       retryDelayMs: count(data.delayMs)
+    };
+  }
+  if (stream === "item" && data.itemId === RUN_REQUEST_ACTIVITY_ITEM_ID && data.kind === "status" && phase === "update" && data.status === "running") {
+    const at = count(data.at);
+    if (at === void 0 || !data.progress || typeof data.progress !== "object" || Array.isArray(data.progress) || data.progress.kind !== "model-activity")
+      return null;
+    return {
+      stage: "receiving-model",
+      modelActivity: true,
+      progress: { kind: "model-activity" },
+      at
     };
   }
   if (stream === "item" && data.itemId === RUN_STREAM_PROGRESS_ITEM_ID && data.kind === "status" && phase === "update" && data.status === "running") {

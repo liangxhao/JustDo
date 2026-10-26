@@ -37,3 +37,13 @@ export function observeRunStreamProgress(state, event, publish, now = Date.now()
   progress.lastAt = now;
   try { publish(data); } catch { /* Observations must never interrupt execution. */ }
 }
+
+// Raw transport activity can precede public events while provisional calls are buffered.
+export function observeRunRequestActivity(state, publish, now = Date.now()) {
+  if (now - state.lastAt < 1_000) return;
+  state.lastAt = now;
+  try {
+    publish({ itemId: 'run-request-activity', kind: 'status', phase: 'update',
+      title: 'Model activity', status: 'running', at: now, progress: { kind: 'model-activity' } });
+  } catch { /* Observations must never interrupt execution. */ }
+}

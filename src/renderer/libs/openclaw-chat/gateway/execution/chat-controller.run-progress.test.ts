@@ -33,6 +33,14 @@ const progressItem = (progress: Record<string, unknown>) => ({
   status: 'running',
   progress,
 });
+const requestActivityItem = (at = Date.now()) => ({
+  itemId: 'run-request-activity',
+  kind: 'status',
+  phase: 'update',
+  status: 'running',
+  at,
+  progress: { kind: 'model-activity' },
+});
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -54,6 +62,51 @@ afterEach(() => {
 });
 
 describe('native run progress through the chat controller', () => {
+  test('keeps hidden model output active without inventing tool identity or character counts', () => {
+    emit('run_status', { phase: 'starting_model' });
+    for (let index = 1; index <= 65; index++) {
+      vi.setSystemTime(1_000 + index * 1_000);
+      emit('item', requestActivityItem());
+    }
+
+    expect(controller.state.runActivity).toMatchObject({
+      stage: 'receiving-model', hasRunningTool: false,
+      lastAgentEventAt: 66_000, lastModelActivityAt: 66_000,
+      progress: { kind: 'model-activity' },
+    });
+    expect(controller.state.runActivity?.progress).not.toHaveProperty('receivedChars');
+    expect(controller.state.transcript.activeTurn?.toolById.size).toBe(0);
+    expect(projectWaitingStatus({
+      activity: controller.state.runActivity, transportStatus: 'connected', now: 66_000,
+    })).toBeNull();
+    const items = projectTurnItems(
+      controller.state.transcript.activeTurn, true, null, controller.state.runActivity,
+    );
+    const waiting = items[items.length - 1];
+    expect(waiting).toMatchObject({ kind: 'waiting', stage: 'receiving-model' });
+    expect(runProgressDetail(controller.state.runActivity!, 66_000)).toBeTruthy();
+  });
+
+  test('retains counted model observations when generic request activity follows', () => {
+    emit('item', progressItem({ kind: 'model', receivedChars: 500 }));
+    vi.setSystemTime(2_000);
+    emit('item', requestActivityItem());
+    expect(controller.state.runActivity).toMatchObject({
+      stage: 'receiving-model', lastModelActivityAt: 2_000,
+      progress: { kind: 'model-stream', receivedChars: 500 },
+    });
+  });
+
+  test('rejects stale and foreign request activity through the same native ownership gates', () => {
+    emit('run_status', { phase: 'starting_model' });
+    for (const override of [
+      { runId: 'old-run' }, { sessionId: 'old-session' },
+      { lifecycleGeneration: 'old-generation' },
+      { sessionKey: 'agent:main:justdo:another-session' }, { seq: 1 },
+    ]) emit('item', requestActivityItem(), override);
+    expect(controller.state.runActivity?.stage).toBe('starting-model');
+  });
+
   test.each([
     ['preparing_workspace', 'preparing-workspace'],
     ['preparing_context', 'preparing'],
@@ -278,10 +331,22 @@ describe('native run progress through the chat controller', () => {
       stage: 'generating-tool-input',
       progress: { receivedChars: 5_000 },
     });
+    vi.setSystemTime(30_000);
+    replay(11, 'item', requestActivityItem(1_250));
+    expect(controller.state.runActivity).toMatchObject({
+      stage: 'generating-tool-input',
+      progress: { receivedChars: 5_000 },
+      lastModelActivityAt: 1_250,
+    });
+    expect(projectWaitingStatus({
+      activity: controller.state.runActivity, transportStatus: 'connected', now: 30_000,
+    })).not.toBeNull();
     emit('thinking', { text: 'Older queued visible text' }, { seq: 5 });
     expect(controller.state.runActivity?.stage).toBe('generating-tool-input');
     emit('tool', { phase: 'start', toolCallId: 'call-1', name: 'write', args: {} }, { seq: 12 });
     expect(controller.state.runActivity?.stage).toBe('running-tool');
+    replay(11, 'item', requestActivityItem(1_250));
+    expect(controller.state.runActivity?.lastModelActivityAt).toBe(30_000);
     replay(
       10,
       'item',
@@ -331,6 +396,33 @@ describe('native run progress through the chat controller', () => {
     );
   });
 
+  test.each([false, true])(
+    'retains background request activity with existing tool counters: %s',
+    async detailed => {
+      if (detailed) emit('item', progressItem({
+        kind: 'tool-input', toolCallId: 'call-1', name: 'tool_call', receivedChars: 5_000,
+      }));
+      controller.state.client!.request = vi.fn().mockResolvedValue({ messages: [] });
+      const away = controller.switchSession('agent:main:justdo:another-session');
+      await vi.advanceTimersByTimeAsync(5_000);
+      await away;
+      const observedAt = Date.now();
+      emit('item', requestActivityItem(observedAt));
+      const returned = controller.switchSession(sessionKey);
+      await vi.advanceTimersByTimeAsync(5_000);
+      await returned;
+
+      expect(controller.state.runActivity).toMatchObject({
+        stage: detailed ? 'generating-tool-input' : 'receiving-model',
+        lastModelActivityAt: observedAt,
+        progress: detailed
+          ? { kind: 'tool-input', receivedChars: 5_000 }
+          : { kind: 'model-activity' },
+      });
+      expect(controller.state.transcript.activeTurn?.toolById.size).toBe(0);
+    },
+  );
+
   test('does not wake a silent announce run for content-free native progress', () => {
     controller.disconnect();
     controller = new ChatController();
@@ -345,8 +437,10 @@ describe('native run progress through the chat controller', () => {
     emit('lifecycle', { phase: 'start' }, owner);
     emit('run_status', { phase: 'starting_model' }, owner);
     emit('item', progressItem({ kind: 'model', receivedChars: 0 }), owner);
+    emit('item', requestActivityItem(), owner);
     emit('assistant', { text: 'NO_RE' }, owner);
     emit('item', progressItem({ kind: 'model', receivedChars: 8 }), owner);
+    emit('item', requestActivityItem(), owner);
     emit('assistant', { text: 'NO_REPLY' }, owner);
     emit('lifecycle', { phase: 'end' }, owner);
 
@@ -405,6 +499,7 @@ describe('native run progress through the chat controller', () => {
     const owner = { runId: 'announce:v1:agent:main:subagent:silent-child' };
     emit('run_status', { phase: 'starting_model' }, owner);
     emit('item', progressItem({ kind: 'model', receivedChars: 8 }), owner);
+    emit('item', requestActivityItem(), owner);
     emit('assistant', { text: 'NO_REPLY' }, owner);
     const returned = controller.switchSession(sessionKey);
     await vi.advanceTimersByTimeAsync(5_000);
@@ -492,6 +587,7 @@ describe('native run progress through the chat controller', () => {
   });
 
   test('rejects malformed counters and prototype keys', () => {
+    expect(readRunProgress('item', progressItem({ kind: 'model' }))).toBeNull();
     for (const receivedChars of [-1, Infinity, 1.5, '30']) {
       expect(readRunProgress('item', progressItem({ kind: 'model', receivedChars }))).toBeNull();
     }
@@ -505,5 +601,25 @@ describe('native run progress through the chat controller', () => {
         itemId: 'unrelated-status',
       }),
     ).toBeNull();
+  });
+
+  test('accepts only the exact request-activity envelope with its original timestamp', () => {
+    expect(readRunProgress('item', requestActivityItem(1_250))).toEqual({
+      stage: 'receiving-model', modelActivity: true,
+      progress: { kind: 'model-activity' }, at: 1_250,
+    });
+    const invalid: Record<string, unknown>[] = [
+      { itemId: 'other-status' }, { kind: 'tool' }, { phase: 'end' }, { status: 'completed' },
+      { progress: { kind: 'model' } }, { progress: { kind: 'tool-input' } },
+      { progress: [] }, { progress: null },
+      ...[undefined, -1, Infinity, 1.5, '1250'].map(at => ({ at })),
+    ];
+    for (const override of invalid) {
+      expect(readRunProgress('item', { ...requestActivityItem(), ...override })).toBeNull();
+    }
+    expect(readRunProgress('lifecycle', requestActivityItem())).toBeNull();
+    expect(readRunProgress('item', {
+      ...progressItem({ kind: 'model-activity' }), at: 1_250,
+    })).toBeNull();
   });
 });

@@ -13,6 +13,7 @@
 | approval      | pending、期限、终态与撤销        | modal、选择校验          | stop/restart 及迟到回复                                          |
 | compaction    | context budget、压缩和恢复       | 进度、取消与详情         | operation identity、准备阶段取消、断线核对、无标记成功与后继身份 |
 | progress_card | session 当前进度                 | 原样展示、显式刷新       | revision、scope、clear、refresh 幂等                             |
+| run activity  | 模型实际传输活动、工具参数计数    | 阶段、耗时与原更新时间   | 现代/旧格式缓冲、保活排除、取消、两项有界快照、动画保持           |
 | cron          | job/run、调度与 delivery         | CRUD、结果 receipt       | owner 保留、默认 delivery、分页                                  |
 | Skill         | 解析赢家、资格与启停             | 文件事务、来源提示       | 同名 fallback、extension scope                                   |
 | Workshop      | 当前技能、版本、变更与归档/恢复 | 读取、选定版本和显式确认 | 10.6 提案 API 已退役；未知写不重放、恢复回执是变更前快照            |

@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  advanceRunActivity,
   projectWaitingStatus,
   RUN_LONG_NOTICE_MS,
   RUN_SLOW_NOTICE_MS,
   RUN_STALL_NOTICE_MS,
   type RunActivity,
+  type RunProgressDetail,
+  type RunProgressStage,
 } from './run-activity';
 
 const activity = (overrides: Partial<RunActivity> = {}): RunActivity => ({
@@ -19,6 +22,71 @@ const activity = (overrides: Partial<RunActivity> = {}): RunActivity => ({
   activeRunConfirmedAt: null,
   probeState: 'idle',
   ...overrides,
+});
+
+describe('content-free model activity', () => {
+  const details: Array<{ stage: RunProgressStage; progress: RunProgressDetail }> = [
+    { stage: 'thinking', progress: { kind: 'model-stream', receivedChars: 120 } },
+    { stage: 'responding', progress: { kind: 'model-stream', receivedChars: 240 } },
+    {
+      stage: 'generating-tool-input',
+      progress: {
+        kind: 'tool-input', toolCallId: 'call-1', name: 'tool_call',
+        receivedChars: 2_000, complete: false,
+      },
+    },
+    {
+      stage: 'preparing-tool',
+      progress: {
+        kind: 'tool-input', toolCallId: 'call-1', name: 'tool_call',
+        receivedChars: 2_000, complete: true,
+      },
+    },
+    {
+      stage: 'running-tool',
+      progress: { kind: 'tool', toolCallId: 'call-1', name: 'read', summary: 'Reading' },
+    },
+    { stage: 'receiving-model', progress: { kind: 'model-stream', receivedChars: 360 } },
+  ];
+
+  it.each(details)('preserves the $stage stage and its real detail', ({ stage, progress }) => {
+    const previous = activity({ stage, progress });
+    const next = advanceRunActivity(previous, 'receiving-model', {
+      modelActivity: true, progress: { kind: 'model-activity' }, at: 2_000,
+    }, stage === 'running-tool');
+
+    expect(next).toMatchObject({
+      stage, progress, lastAgentEventAt: 2_000, lastModelActivityAt: 2_000,
+      hasRunningTool: stage === 'running-tool',
+    });
+    expect(next.progress).toBe(progress);
+    expect(next.stageChangedAt).toBe(previous.stageChangedAt);
+    expect(previous.lastModelActivityAt).toBeNull();
+  });
+
+  it('supplies only activity freshness when thinking has no public counters', () => {
+    const next = advanceRunActivity(activity({ stage: 'thinking' }), 'receiving-model', {
+      modelActivity: true, progress: { kind: 'model-activity' }, at: 2_000,
+    }, false);
+    expect(next).toMatchObject({ stage: 'thinking', progress: { kind: 'model-activity' } });
+    expect(next.progress).not.toHaveProperty('receivedChars');
+  });
+
+  it('leaves a retry when the current model produces activity', () => {
+    const previous = activity({
+      stage: 'retrying', retryReason: 'timeout', retryAttempt: 1, maxRetries: 2,
+      retryAt: 8_000, progress: { kind: 'model-stream', receivedChars: 120 },
+    });
+    const next = advanceRunActivity(previous, 'receiving-model', {
+      modelActivity: true, progress: { kind: 'model-activity' }, at: 2_000,
+    }, false);
+    expect(next).toMatchObject({
+      stage: 'receiving-model', progress: { kind: 'model-activity' }, stageChangedAt: 2_000,
+    });
+    for (const field of ['retryReason', 'retryAttempt', 'maxRetries', 'retryAt']) {
+      expect(next).not.toHaveProperty(field);
+    }
+  });
 });
 
 describe('projectWaitingStatus', () => {
