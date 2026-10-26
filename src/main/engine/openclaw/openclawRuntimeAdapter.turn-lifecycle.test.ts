@@ -602,6 +602,7 @@ test('does not let a cancelled preparation clean up a newer turn', async () => {
   });
   let sessionCreateCount = 0;
   const request = vi.fn((method: string) => {
+    if (method === 'sessions.describe') return Promise.resolve({ session: null });
     if (method === 'sessions.create') {
       sessionCreateCount += 1;
       return sessionCreateCount === 1

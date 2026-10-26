@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import nodeRuntime from '../../../shared/openclaw/nodeRuntime.json';
 import contract from './nativeDatabaseContract.json';
-import { admitNativeDatabaseRuntime } from './nativeDatabaseIdentity';
+import { admitNativeDatabaseRuntime, readNativeDatabaseDeliveryIdentity } from './nativeDatabaseIdentity';
 
 const electronModule = vi.hoisted(() => vi.fn(() => { throw new Error('Node must not load original-fs.'); }));
 vi.mock('node:module', () => ({ createRequire: () => electronModule }));
@@ -40,6 +40,44 @@ function fixture() {
   return { root, manifest, build, write };
 }
 afterEach(() => { vi.restoreAllMocks(); for (const root of directories.splice(0)) fs.rmSync(root, { recursive: true, force: true }); });
+
+describe('native runtime delivery metadata', () => {
+  it('reads only the package and manifest without opening runtime payloads or native storage', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'native-delivery-metadata-'));
+    directories.push(root);
+    const pkgPath = path.join(root, 'package.json');
+    const manifestPath = path.join(root, 'runtime-patch-manifest.json');
+    const manifest = JSON.stringify({ formatVersion: 2, openclawVersion: 'v2026.10.6' });
+    fs.writeFileSync(pkgPath, JSON.stringify({ name: 'openclaw', version: '2026.10.6' }));
+    fs.writeFileSync(manifestPath, manifest);
+    const read = vi.spyOn(fs.promises, 'readFile');
+
+    await expect(readNativeDatabaseDeliveryIdentity(root)).resolves.toEqual({
+      runtimeVersion: 'v2026.10.6', runtimeBuildId: hash(manifest),
+    });
+
+    expect(read.mock.calls.map(call => call[0]).sort()).toEqual([pkgPath, manifestPath].sort());
+    expect(electronModule).not.toHaveBeenCalled();
+    fs.writeFileSync(manifestPath, manifest + '\n');
+    await expect(readNativeDatabaseDeliveryIdentity(root)).resolves.toMatchObject({
+      runtimeBuildId: hash(manifest + '\n'),
+    });
+  });
+
+  it.each(['package-name', 'package-version', 'manifest-version', 'manifest-format', 'manifest-null'])(
+    'refuses inconsistent delivery metadata without falling back to runtime admission: %s', async kind => {
+      const f = fixture();
+      if (kind === 'package-name') f.write('package.json', JSON.stringify({ name: 'other', version: '2026.10.6' }));
+      if (kind === 'package-version') f.write('package.json', JSON.stringify({ name: 'openclaw', version: 'unknown' }));
+      if (kind === 'manifest-version') f.write('runtime-patch-manifest.json', JSON.stringify({ ...f.manifest, openclawVersion: 'v2026.10.5' }));
+      if (kind === 'manifest-format') f.write('runtime-patch-manifest.json', JSON.stringify({ ...f.manifest, formatVersion: 1 }));
+      if (kind === 'manifest-null') f.write('runtime-patch-manifest.json', 'null');
+
+      await expect(readNativeDatabaseDeliveryIdentity(f.root)).rejects.toThrow(/delivery metadata/);
+      expect(electronModule).not.toHaveBeenCalled();
+    },
+  );
+});
 
 describe('native database immutable admission', () => {
   it('requires the actual selected owner bytes after all manifest and Node metadata admission checks', async () => {

@@ -10,6 +10,7 @@ import type { WindowAppearance } from './windowAppearance';
 
 export const AppInitializationIpc = {
   GetState: 'app:initialization:getState',
+  GetEntryClock: 'app:initialization:getEntryClock',
   Changed: 'app:initialization:changed',
   Relaunch: 'app:initialization:relaunch',
   ConfirmDowngrade: 'app:initialization:confirmDowngrade',
@@ -96,6 +97,21 @@ export type StartupDowngradeConfirmation = {
   target: { appVersion: string; runtimeVersion: string };
 };
 
+export const AppInitializationTask = {
+  UserData: 'userData',
+  Configuration: 'configuration',
+  Integrations: 'integrations',
+} as const;
+export type AppInitializationTask = (typeof AppInitializationTask)[keyof typeof AppInitializationTask];
+
+export const AppInitializationTaskStatus = {
+  Waiting: 'waiting',
+  Running: 'running',
+  Complete: 'complete',
+  Failed: 'failed',
+} as const;
+export type AppInitializationTaskStatus = (typeof AppInitializationTaskStatus)[keyof typeof AppInitializationTaskStatus];
+
 export type AppInitializationState = {
   phase: (typeof AppInitializationPhase)[keyof typeof AppInitializationPhase];
   step: (typeof AppInitializationStep)[keyof typeof AppInitializationStep];
@@ -114,4 +130,8 @@ export type AppInitializationState = {
   error?: string;
   failure?: StartupFailure;
   downgradeConfirmation?: StartupDowngradeConfirmation;
+  /** Main-owned ordinary startup tasks; Gateway and Renderer readiness have separate owners. */
+  tasks?: Partial<Record<AppInitializationTask, AppInitializationTaskStatus>>;
+  /** Shell readiness may precede this Normal-startup authenticated engine preparation. */
+  enginePreparationPending?: boolean;
 };

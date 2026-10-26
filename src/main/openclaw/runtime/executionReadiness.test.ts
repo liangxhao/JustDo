@@ -43,6 +43,19 @@ describe('ensureExecutionReady', () => {
     expect(dependencies.verifyPermissionPolicy).not.toHaveBeenCalled();
   });
 
+  it('does not treat HTTP Running as completion when authenticated startup admission rejects', async () => {
+    const dependencies = harness({ ...running, phase: 'starting' });
+    let rejectAdmission!: (error: Error) => void;
+    dependencies.startWithPermissionPolicy.mockImplementation(() => new Promise((_resolve, reject) => {
+      rejectAdmission = reject;
+    }));
+    const readiness = ensureExecutionReady(dependencies);
+    dependencies.manager.getStatus.mockReturnValue(running);
+    rejectAdmission(new Error('Authenticated permission admission failed'));
+    await expect(readiness).rejects.toThrow('Authenticated permission admission failed');
+    expect(dependencies.startWithPermissionPolicy).toHaveBeenCalledOnce();
+  });
+
   it('retains the failed-closed status from permission verification', async () => {
     const dependencies = harness();
     const failed: OpenClawEngineStatus = { ...running, phase: 'error' };

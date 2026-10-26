@@ -4,7 +4,12 @@ import path from 'node:path';
 import { StartupCompatibilityErrorCode } from '../../../shared/app/startup/versionPolicy';
 import contract from './nativeDatabaseContract.json';
 import { nativeDatabaseEnvironment } from './nativeDatabaseEnvironment';
-import { admitNativeDatabaseRuntime, type NativeDatabaseRuntimeIdentity } from './nativeDatabaseIdentity';
+import {
+  admitNativeDatabaseRuntime,
+  type NativeDatabaseDeliveryIdentity,
+  type NativeDatabaseRuntimeIdentity,
+  readNativeDatabaseDeliveryIdentity,
+} from './nativeDatabaseIdentity';
 import { NATIVE_DATABASE_UPGRADE_SOURCE } from './nativeDatabaseUpgradeSource';
 
 export type NativeDatabaseUpgradeActivity = 'nativeInspect' | 'nativeBackup' | 'nativeUpgrade' | 'nativeVerify';
@@ -59,8 +64,9 @@ export class NativeDatabaseUpgradeRuntime {
     stateDir: string;
     configPath: string;
     gatewayStopped: () => boolean;
-    // Injection keeps tests isolated; production always uses immutable runtime admission and native spawn.
+    // Injection keeps tests isolated; maintenance retains immutable runtime admission and native spawn.
     admit?: typeof admitNativeDatabaseRuntime;
+    readDeliveryIdentity?: typeof readNativeDatabaseDeliveryIdentity;
     spawn?: typeof spawn;
     terminate?: (child: ChildProcess) => Promise<void>;
     inspectTimeoutMs?: number;
@@ -84,6 +90,17 @@ export class NativeDatabaseUpgradeRuntime {
     const identity = await this.admitted();
     if (this.stopped) throw new Error('Native database startup was interrupted.');
     return { runtimeVersion: identity.runtimeVersion, runtimeBuildId: identity.runtimeBuildId };
+  }
+
+  async deliveryIdentity(): Promise<NativeDatabaseDeliveryIdentity> {
+    if (this.retirementFailure) throw this.retirementFailure;
+    if (this.stopped) throw new Error('Native database startup was interrupted.');
+    const root = this.deps.getRuntimeRoot();
+    if (!root) throw new Error('The bundled native runtime is unavailable.');
+    const identity = await (this.deps.readDeliveryIdentity ?? readNativeDatabaseDeliveryIdentity)(root);
+    if (this.retirementFailure) throw this.retirementFailure;
+    if (this.stopped) throw new Error('Native database startup was interrupted.');
+    return identity;
   }
 
   async inspect(): Promise<{ needsUpgrade: boolean }> {
@@ -111,7 +128,11 @@ export class NativeDatabaseUpgradeRuntime {
   ): Promise<NativeDatabaseResult> {
     if (this.retirementFailure) return Promise.reject(this.retirementFailure);
     if (this.operation || this.child) return Promise.reject(new Error('Another native database operation is active.'));
+    const startedAt = Date.now();
+    console.info('[NativeDatabaseStartup] Operation started:', operation);
     const running = this.execute(operation, onActivity).finally(() => {
+      console.info('[NativeDatabaseStartup] Operation retired:', { operation, elapsedMs: Date.now() - startedAt,
+        retirementConfirmed: !this.child });
       if (!this.child) this.abortOperation = null;
       if (this.operation === running) this.operation = null;
     });

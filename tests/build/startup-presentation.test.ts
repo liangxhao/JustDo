@@ -1,4 +1,5 @@
 import path from 'node:path';
+import fs from 'node:fs';
 
 import { expect, test } from 'vitest';
 
@@ -43,6 +44,34 @@ test('every published startup activity has matching operation and description tr
     for (const activity of Object.values(RendererStartupActivity)) {
       expect(guide[`initializationRenderer_${activity}`]).toBeTruthy();
       expect(guide[`initializationRenderer_${activity}Description`]).toBeTruthy();
+    }
+  }
+});
+
+test('embeds the route-neutral first paint without application scripts or external resources', () => {
+  const transform = startupPresentationPlugin(path.resolve('src/renderer')).transformIndexHtml.handler;
+  const result = transform(fs.readFileSync('src/renderer/startup-bootstrap.html', 'utf8'));
+  expect(result).toContain('data:image/png;base64,');
+  expect(result).toContain(startupTranslations.zh.startupBootstrap);
+  expect(result).toContain(startupTranslations.en.startupBootstrap);
+  expect(result).not.toContain('%STARTUP_');
+  expect(result).not.toMatch(/(?:src|href)=["'](?:https?:|[^"']+\.(?:js|css))/u);
+  expect(result).not.toContain('window.electron');
+});
+
+test('paints the bundled logo in every static startup route without another image request', () => {
+  const transform = startupPresentationPlugin(path.resolve('src/renderer')).transformIndexHtml.handler;
+  const logo = fs.readFileSync('resources/icons/logo.png');
+  for (const [entry, expectedImages] of [['index.html', 2], ['startup-bootstrap.html', 1]] as const) {
+    const result = transform(fs.readFileSync(path.join('src/renderer', entry), 'utf8'));
+    const images = [...result.matchAll(/<img\b[^>]*>/gu)].map(match => match[0]);
+    expect(images, entry).toHaveLength(expectedImages);
+    for (const image of images) {
+      const source = /\bsrc="data:image\/png;base64,([^"]+)"/u.exec(image)?.[1];
+      expect(source, `${entry}: logo must be embedded before modules run`).toBeTruthy();
+      expect(Buffer.from(source!, 'base64').equals(logo), `${entry}: bundled logo bytes`).toBe(true);
+      expect(image).toContain('loading="eager"');
+      expect(image).toContain('decoding="sync"');
     }
   }
 });

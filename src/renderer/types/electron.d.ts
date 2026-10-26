@@ -1112,6 +1112,7 @@ interface IElectronAPI {
       ) => Promise<SessionReviewFileResult>;
     };
     startSession: (options: {
+      modelRef?: string;
       appWorkspaceRequestId?: string;
       rendererDispatch?: boolean;
       prompt: string;

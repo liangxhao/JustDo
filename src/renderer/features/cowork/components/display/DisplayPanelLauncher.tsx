@@ -4,6 +4,7 @@ import {
   ArrowRightIcon,
   ChatBubbleLeftEllipsisIcon,
   CommandLineIcon,
+  ExclamationTriangleIcon,
   FolderIcon,
   GlobeAltIcon,
   MagnifyingGlassIcon,
@@ -114,6 +115,44 @@ function RecentVisitIcon({ visit, visible }: { visit: RecentBrowserVisit; visibl
         />
       )}
     </span>
+  );
+}
+
+function AppListLoading({ label }: { label: string }) {
+  return (
+    <div className="display-launcher__app-loading" role="status" aria-live="polite" aria-atomic="true">
+      <div className="display-launcher__app-loading-label">
+        <span className="display-launcher__app-loading-spinner" aria-hidden="true" />
+        <span>{label}</span>
+      </div>
+      <div className="display-launcher__app-skeletons" aria-hidden="true">
+        {Array.from({ length: 4 }, (_, index) => (
+          <div className="display-launcher__app-skeleton" key={index}>
+            <span className="display-launcher__app-skeleton-icon" />
+            <span className="display-launcher__app-skeleton-name" />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function AppListError({ item, disabled }: { item: ComposerFeatureItem; disabled: boolean }) {
+  return (
+    <div className="display-launcher__app-error rounded-lg border border-warning/20 bg-warning/5 p-3">
+      <div className="flex items-start gap-2 text-xs leading-5 text-warning" role="alert">
+        <ExclamationTriangleIcon className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+        <span>{item.description ?? item.label}</span>
+      </div>
+      <button
+        type="button"
+        disabled={disabled || item.disabled}
+        onClick={item.onSelect}
+        className="max-w-full self-start whitespace-normal rounded-lg border border-border bg-surface-raised px-3 py-2 text-left text-xs font-medium text-foreground transition-colors hover:bg-surface-overlay focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        {item.label}
+      </button>
+    </div>
   );
 }
 
@@ -275,10 +314,14 @@ const DisplayPanelLauncher = ({
           </div>
         </section>
         {appItems.length > 0 && (
-          <section aria-label={i18nService.t('mcpAppsTitle')}>
+          <section aria-label={i18nService.t('mcpAppsTitle')} aria-busy={appItems.some(item => item.loading) || undefined}>
             <h2 className="mb-3 text-xs font-semibold">{i18nService.t('mcpAppsTitle')}</h2>
             <div className="display-launcher__apps">
-              {appItems.map(item => (
+              {appItems.map(item => item.loading ? (
+                <AppListLoading key={item.id} label={item.label} />
+              ) : item.error ? (
+                <AppListError key={item.id} item={item} disabled={appsDisabled} />
+              ) : (
                 <button
                   key={item.id}
                   type="button"

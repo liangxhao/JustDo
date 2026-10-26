@@ -69,8 +69,9 @@ const RELOAD_RULES: ReloadRule[] = [
   { prefix: 'discovery', kind: 'restart' },
 ];
 
-const GATEWAY_RESTART_COMPLETION_TIMEOUT_MS = 10 * 60_000;
+export const GATEWAY_RESTART_COMPLETION_TIMEOUT_MS = 10 * 60_000;
 const GATEWAY_READY_LINE_PATTERN = /^(?:\S+\s+)?\[gateway\] ready\s*$/;
+const GATEWAY_RESTART_LINE_PATTERN = /^(?:\S+\s+)?\[gateway\] (?:received SIGUSR[12]; restarting|restart mode: in-process restart(?: \([^()\r\n]*\))?)\s*$/;
 
 const matchesPrefix = (configPath: string, prefix: string): boolean =>
   configPath === prefix || configPath.startsWith(`${prefix}.`);
@@ -170,10 +171,7 @@ export class GatewayConfigReloadMonitor {
       return;
     }
 
-    if (
-      line.includes('[gateway] received SIGUSR1; restarting') ||
-      line.includes('[gateway] restart mode: in-process restart')
-    ) {
+    if (GATEWAY_RESTART_LINE_PATTERN.test(line)) {
       this.gatewayRestartPending = true;
       this.notify();
       return;
@@ -264,7 +262,12 @@ export class GatewayConfigReloadMonitor {
     });
   }
 
-  waitForGatewayReadyAfter(generation: number, timeoutMs = 30_000): Promise<boolean> {
+  waitForGatewayReadyAfter(
+    generation: number,
+    timeoutMs = 30_000,
+    signal?: AbortSignal,
+  ): Promise<boolean> {
+    if (signal?.aborted) return Promise.resolve(false);
     const resolveCurrent = (): boolean | null => {
       const latestGeneration = Math.max(
         this.lastGatewayReadyGeneration,
@@ -289,8 +292,10 @@ export class GatewayConfigReloadMonitor {
         settled = true;
         clearTimeout(timer);
         this.listeners.delete(onChange);
+        signal?.removeEventListener('abort', onAbort);
         resolve(result);
       };
+      const onAbort = () => finish(false);
       const onChange = () => {
         const result = resolveCurrent();
         if (result !== null) finish(result);
@@ -298,6 +303,7 @@ export class GatewayConfigReloadMonitor {
       timer = setTimeout(() => finish(false), timeoutMs);
       timer.unref?.();
       this.listeners.add(onChange);
+      signal?.addEventListener('abort', onAbort, { once: true });
       onChange();
     });
   }

@@ -128,6 +128,7 @@ function setup(running = false) {
 test('keeps a stopped runtime lazy and opens files explicitly without mounting a chat', async () => {
   const { result, request } = setup();
   expect(f.prepare).not.toHaveBeenCalled();
+  expect(result.current.menu.items[0].loading).toBe(false);
   await act(async () => expect(await result.current.openFile(request)).toBe(true));
   const entry = f.open.mock.calls[0][0] as McpAppWorkspaceFileEntry;
   expect(entry).toMatchObject({
@@ -427,7 +428,7 @@ test('an authenticated reconnect refreshes the home catalog without launching an
   expect(f.launch).not.toHaveBeenCalled();
 });
 
-test('a close before the first hello cannot leave the prefetch failed or permanently loading', async () => {
+test('a close before the first hello keeps the same preparation loading through authentication', async () => {
   f.initiallyConnected = false;
   const { result } = setup(true);
   let finish!: (host: TestHost) => void;
@@ -443,15 +444,61 @@ test('a close before the first hello cannot leave the prefetch failed or permane
   act(() => {
     for (const listener of connection.listeners) listener();
   });
-  expect(result.current.menu.items[0].disabled).toBe(false);
+  expect(result.current.menu.items[0]).toMatchObject({ loading: true, error: false, disabled: true });
   await act(async () => {
     connection.connected = true;
     for (const listener of connection.listeners) listener();
+  });
+  expect(result.current.menu.items[0]).toMatchObject({ loading: true, error: false });
+  expect(f.prepare).toHaveBeenCalledOnce();
+  expect(f.discover).not.toHaveBeenCalled();
+  await act(async () => {
     finish(f.hosts[0]);
   });
-  expect(f.prepare).toHaveBeenCalledTimes(2);
+  expect(f.prepare).toHaveBeenCalledOnce();
   expect(f.discover).toHaveBeenCalledOnce();
   expect(result.current.menu.items).toEqual([]);
+  expect(f.launch).not.toHaveBeenCalled();
+});
+
+test('a terminal first connection failure ends the animation and exposes only an explicit retry', async () => {
+  f.initiallyConnected = false;
+  const { result } = setup(true);
+  let reject!: (error: Error) => void;
+  f.prepare.mockImplementationOnce(() => new Promise((_resolve, fail) => { reject = fail; }));
+  await act(async () => {});
+  act(() => {
+    for (const listener of f.connections[0].listeners) listener();
+  });
+  expect(result.current.menu.items[0].loading).toBe(true);
+  await act(async () => reject(new Error('Workspace Gateway connection timed out')));
+  expect(result.current.menu.items[0]).toMatchObject({ loading: false, error: true, disabled: false });
+  expect(f.prepare).toHaveBeenCalledOnce();
+  expect(f.discover).not.toHaveBeenCalled();
+  expect(f.launch).not.toHaveBeenCalled();
+});
+
+test('remembers the first authenticated connection across a subscription change before a disconnect', async () => {
+  f.initiallyConnected = false;
+  const h = setup(true);
+  let finish!: (host: TestHost) => void;
+  f.prepare.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  await act(async () => {});
+  const connection = f.connections[0];
+  act(() => {
+    connection.connected = true;
+    for (const listener of connection.listeners) listener();
+  });
+  connection.connected = false;
+  h.rerender({ ...h.options, enabled: false });
+  act(() => {
+    for (const listener of connection.listeners) listener();
+  });
+  h.rerender(h.options);
+  await act(async () => {});
+  expect(f.prepare).toHaveBeenCalledTimes(2);
+  await act(async () => finish(f.hosts[0]));
+  expect(f.discover).toHaveBeenCalledOnce();
   expect(f.launch).not.toHaveBeenCalled();
 });
 

@@ -13,10 +13,15 @@ const native = vi.hoisted(() => {
       chatMessages: [] as string[],
       transcript: { activeTurn: null as { text: string } | null },
       initialHistoryReady: false,
+      historyPreparationPending: false,
+      historyPreparationTimedOut: false,
+      historyReadFailed: false,
+      chatLoading: false,
       lastError: null as string | null,
     };
     listeners = new Set<(state: Controller['state']) => void>();
     disconnect = vi.fn();
+    loadHistory = vi.fn().mockResolvedValue(true);
     constructor() {
       instances.push(this);
     }
@@ -179,6 +184,41 @@ test('reports an initial history timeout and cancels the timeout after leaving t
   const view = render(<SwarmWorkflowNodeHistory {...props} />);
   await act(async () => vi.advanceTimersByTimeAsync(15_000));
   expect(screen.getByRole('status').textContent).toBe('History is unavailable. Please retry.');
+  view.unmount();
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+test('keeps cached node text while native preparation owns the deadline and permits an explicit retry', async () => {
+  const view = render(<SwarmWorkflowNodeHistory {...props} />);
+  await act(async () => {});
+  const controller = native.instances[0];
+  act(() => controller.publish({
+    chatMessages: ['Cached node text'], historyPreparationPending: true,
+  }));
+  await act(async () => vi.advanceTimersByTimeAsync(30_000));
+  expect(screen.getByRole('status').textContent).toBe(i18nService.t('storageHistoryPreparing'));
+  expect(screen.getByTestId('native-messages').textContent).toBe('Cached node text');
+  expect(screen.queryByRole('button', { name: i18nService.t('sessionDetailsRetry') })).toBeNull();
+  expect(native.connect).toHaveBeenCalledOnce();
+  act(() => controller.publish({
+    historyPreparationPending: false, historyPreparationTimedOut: true, historyReadFailed: true,
+  }));
+  expect(screen.getByRole('status').textContent).toBe(i18nService.t('storageHistoryPreparationPending'));
+  expect(screen.getByTestId('native-messages').textContent).toBe('Cached node text');
+  fireEvent.click(screen.getByRole('button', { name: i18nService.t('sessionDetailsRetry') }));
+  await act(async () => {});
+  expect(controller.loadHistory).toHaveBeenCalledExactlyOnceWith(true);
+  expect(native.instances).toHaveLength(1);
+  expect(controller.disconnect).not.toHaveBeenCalled();
+  expect(screen.getByTestId('native-messages').textContent).toBe('Cached node text');
+  act(() => controller.publish({
+    historyPreparationPending: true, historyPreparationTimedOut: false, historyReadFailed: false,
+  }));
+  expect(screen.getByRole('status').textContent).toBe(i18nService.t('storageHistoryPreparing'));
+  expect(screen.getByTestId('native-messages').textContent).toBe('Cached node text');
+  act(() => controller.publish({ initialHistoryReady: true, historyPreparationPending: false, chatMessages: ['Ready node'] }));
+  expect(screen.queryByRole('status')).toBeNull();
+  expect(screen.getByTestId('native-messages').textContent).toBe('Ready node');
   view.unmount();
   expect(vi.getTimerCount()).toBe(0);
 });

@@ -356,7 +356,7 @@ test('compacts once and hydrates the new native marker by entry identity', async
     sessionKey: controller.state.sessionKey,
     limit: 250,
     maxChars: 500_000,
-  });
+  }, expect.objectContaining({ signal: expect.any(AbortSignal) }));
   expect(request).toHaveBeenCalledTimes(2);
   expect(getCompactionDetails).toHaveBeenCalledWith({
     sessionKey: controller.state.sessionKey,

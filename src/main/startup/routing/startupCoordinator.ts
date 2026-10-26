@@ -17,6 +17,7 @@ import {
   assessStartupDelivery,
   StartupCompatibilityErrorCode,
 } from '../../../shared/app/startup/versionPolicy';
+import { DB_FILENAME } from '../../core/appConstants';
 import { createHistoryBackup, ownedPath, verifyHistoryBackup } from '../history/historyBackup';
 import { nativeHistoryError } from '../history/historyFailure';
 import {
@@ -39,9 +40,12 @@ import {
 } from './startupState';
 
 export type NativeStartupDatabaseRuntime = {
+  /** Small delivery metadata only; does not admit native storage or runtime payloads. */
+  deliveryIdentity(): Promise<{ runtimeVersion: string; runtimeBuildId: string }>;
   identity(): Promise<{ runtimeVersion: string; runtimeBuildId: string }>;
   inspect(): Promise<{ needsUpgrade: boolean }>;
   upgrade(onActivity: (activity: 'nativeInspect' | 'nativeBackup' | 'nativeUpgrade' | 'nativeVerify') => void): Promise<void>;
+  /** Rechecks live schemas and the routed physical inventory before preparing session proof. */
   prepareCanonical(onActivity?: (activity: 'nativeInspect' | 'nativeBackup' | 'nativeUpgrade' | 'nativeVerify') => void): Promise<void>;
 };
 type StartupPreparation = {
@@ -102,7 +106,7 @@ export class StartupCoordinator {
     }
   }
 
-  /** Freeze the real route before any window, Store, config projection or Gateway admission. */
+  /** Freeze the real route before any route-bearing window, Store, config projection or Gateway admission. */
   static async prepare(userData: string, options: {
     appVersion: string;
     native: NativeStartupDatabaseRuntime;
@@ -111,17 +115,36 @@ export class StartupCoordinator {
     const startedAt = options.startedAt ?? Date.now();
     let decision: StartupDecision = { route: StartupRoute.Normal, journal: null };
     try {
+      const previous = readStartupJournal(userData);
+      const identity = { appVersion: options.appVersion, ...await options.native.deliveryIdentity() };
+      const sourceIdentity = previous?.lastOpenedIdentity ?? previous?.completedIdentity;
+      const deliveryInput = { source: sourceIdentity, target: identity };
+      let delivery = assessStartupDelivery(deliveryInput);
+      // A completed installation of the same runtime opens directly. Do not open
+      // SQLite, scan agent folders, hash runtime payloads, or launch a preflight.
+      if (previous?.stage === StartupStage.Complete && previous.completedIdentity &&
+          !previous.targetIdentity && delivery.allowed &&
+          previous.completedIdentity.runtimeVersion.replace(/^v/, '') === identity.runtimeVersion.replace(/^v/, '')) {
+        if (!startupPathExists(path.join(userData, DB_FILENAME)))
+          throw new Error('The initialized product database is missing. Existing backups have been preserved.');
+        return new StartupCoordinator(userData, {
+          decision: { route: StartupRoute.Normal, journal: previous }, identity,
+          native: options.native, startedAt,
+        });
+      }
       decision = classifyInstallation(userData);
-      const identity = { appVersion: options.appVersion, ...await options.native.identity() };
+      // Maintenance paths still require the complete immutable runtime admission,
+      // and cannot switch deliveries after selecting their lightweight target.
+      const admittedIdentity = { appVersion: options.appVersion, ...await options.native.identity() };
+      if (!sameStartupIdentity(admittedIdentity, identity))
+        throw Object.assign(new Error('The application runtime changed during startup routing. Existing data has been preserved.'),
+          { code: StartupCompatibilityErrorCode.VersionUnconfirmed });
       // Classification may deliberately discard an old journal when selecting the
       // JSONL path. Its completed delivery still cannot authorize a downgrade.
-      const previous = readStartupJournal(userData);
       if (previous && previous.stage !== StartupStage.Complete && previous.targetIdentity &&
           !sameStartupIdentity(previous.targetIdentity, identity))
         throw Object.assign(new Error('An unfinished startup transaction belongs to a different application runtime. Existing data has been preserved.'),
           { code: StartupCompatibilityErrorCode.VersionUnconfirmed });
-      const deliveryInput = { source: previous?.completedIdentity, target: identity };
-      let delivery = assessStartupDelivery(deliveryInput);
       let inspected: { needsUpgrade: boolean } | undefined;
       let downgradeConfirmation: StartupDowngradeConfirmation | undefined;
       if (delivery.allowed === false && delivery.requiresNativeInspection) {
@@ -130,9 +153,9 @@ export class StartupCoordinator {
         inspected = await options.native.inspect();
         delivery = assessStartupDelivery({ ...deliveryInput, nativeCompatibilityConfirmed: true });
       }
-      if (delivery.allowed === false && delivery.blockReason === StartupCompatibilityErrorCode.DowngradeBlocked && previous?.completedIdentity) {
+      if (delivery.allowed === false && delivery.blockReason === StartupCompatibilityErrorCode.DowngradeBlocked && sourceIdentity) {
         const versions = ({ appVersion, runtimeVersion }: StartupIdentity) => ({ appVersion, runtimeVersion });
-        downgradeConfirmation = { requestId: randomUUID(), source: versions(previous.completedIdentity), target: versions(identity) };
+        downgradeConfirmation = { requestId: randomUUID(), source: versions(sourceIdentity), target: versions(identity) };
       } else if (delivery.allowed === false)
         throw Object.assign(new Error('This application delivery cannot safely open the existing data.'),
           { code: delivery.blockReason });
@@ -145,26 +168,29 @@ export class StartupCoordinator {
         // Exact identities still fence recovery, admission and completion.
         const requiresPreparation = !previousRuntimeVersion ||
           previousRuntimeVersion.replace(/^v/, '') !== identity.runtimeVersion.replace(/^v/, '') ||
-          !!downgradeConfirmation;
+          !!downgradeConfirmation || !!decision.journal?.targetIdentity;
         if (!pending && requiresPreparation) {
           decision = { route: StartupRoute.Upgrade, journal: {
             ...newStartupJournal(StartupRoute.Upgrade),
             completedIdentity: decision.journal?.completedIdentity,
+            lastOpenedIdentity: decision.journal?.lastOpenedIdentity,
             targetIdentity: identity,
           } };
         }
-        // A receipt is never a substitute for the current native schema facts.
-        if (!downgradeConfirmation) inspected ??= await options.native.inspect();
+        // Only upgrade/recovery paths run host-native inspection. Ordinary
+        // launches leave current schema/session admission to Gateway startup.
+        if (!downgradeConfirmation && (pending || requiresPreparation)) inspected ??= await options.native.inspect();
         if (pending || inspected?.needsUpgrade || requiresPreparation) {
           decision = { route: StartupRoute.Upgrade, journal: decision.route === StartupRoute.Upgrade ? decision.journal : {
             ...newStartupJournal(StartupRoute.Upgrade),
             completedIdentity: decision.journal?.completedIdentity,
+            lastOpenedIdentity: decision.journal?.lastOpenedIdentity,
             targetIdentity: identity,
           } };
         }
       }
       return new StartupCoordinator(userData, { decision, identity, native: options.native, startedAt,
-        downgradeConfirmation, downgradeSourceIdentity: downgradeConfirmation ? previous?.completedIdentity : undefined });
+        downgradeConfirmation, downgradeSourceIdentity: downgradeConfirmation ? sourceIdentity : undefined });
     } catch (error) {
       return new StartupCoordinator(userData, { decision, error, startedAt });
     }
@@ -183,8 +209,9 @@ export class StartupCoordinator {
     if (this.preparationError || this.stopped || this.downgradeConfirmed ||
         requestId !== this.downgradeConfirmation?.requestId) return false;
     try {
+      const current = readStartupJournal(this.userData);
       if (!this.downgradeSourceIdentity || !sameStartupIdentity(
-        readStartupJournal(this.userData)?.completedIdentity, this.downgradeSourceIdentity)) return false;
+        current?.lastOpenedIdentity ?? current?.completedIdentity, this.downgradeSourceIdentity)) return false;
     } catch { return false; }
     this.downgradeConfirmed = true;
     this.confirmationWaiter?.resolve();
@@ -207,17 +234,20 @@ export class StartupCoordinator {
     if (this.stopped) throw new Error('Application startup was interrupted.');
   }
 
-  /** Fresh/import paths may retain access to settings when optional engine preparation fails. */
+  /** Ordinary launches delegate admission to Gateway; maintenance routes prepare native storage offline. */
   async verifyNativeReady(onActivity?: (activity: AppInitializationActivity) => void): Promise<boolean> {
     if (this.preparationError) throw this.preparationError;
     if (this.stopped) throw new Error('Application startup was interrupted.');
+    if (this.route === StartupRoute.Normal) return true;
     if (!this.native || this.canonicalPrepared) return true;
     try {
-      const schemaReady = this.nativeVerified || !(await this.native.inspect()).needsUpgrade;
-      if (!schemaReady && (this.route === StartupRoute.Normal || this.route === StartupRoute.Upgrade))
-        throw Object.assign(new Error('Native database readiness changed after startup routing. Existing data has been preserved.'),
-          { code: StartupCompatibilityErrorCode.VersionUnconfirmed });
-      if (!schemaReady) return false;
+      if (!this.nativeVerified) {
+        const schemaReady = !(await this.native.inspect()).needsUpgrade;
+        if (!schemaReady && this.route === StartupRoute.Upgrade)
+          throw Object.assign(new Error('Native database readiness changed after startup routing. Existing data has been preserved.'),
+            { code: StartupCompatibilityErrorCode.VersionUnconfirmed });
+        if (!schemaReady) return false;
+      }
       // The native certifier owns persisted session proof and pending rows. Drain
       // it in an offline child before synchronous Gateway plugin registration.
       const sessionActivities = {
@@ -232,7 +262,7 @@ export class StartupCoordinator {
       this.canonicalPrepared = true;
       return true;
     } catch (error) {
-      if (this.route === StartupRoute.Upgrade || this.route === StartupRoute.Normal) throw error;
+      if (this.route === StartupRoute.Upgrade) throw error;
       console.warn('[StartupCoordinator] Native readiness was not confirmed; no completed identity will be recorded:', error);
       return false;
     }
@@ -475,7 +505,8 @@ export class StartupCoordinator {
 
   complete(): void {
     if (this.preparationError) throw this.preparationError;
-    if ((this.route === StartupRoute.Upgrade || (this.route === StartupRoute.Normal && this.native)) &&
+    if (this.stopped) throw new Error('Application startup was interrupted.');
+    if (this.route === StartupRoute.Upgrade &&
         (!this.nativeVerified || !this.canonicalPrepared))
       throw new Error('The application runtime has not completed its startup checks.');
     if (
@@ -485,12 +516,12 @@ export class StartupCoordinator {
     )
       throw new Error('History restoration is not complete.');
     if (this.route === StartupRoute.Normal) {
-      if (this.targetIdentity && this.nativeVerified) {
-        // A normal app update must become the next downgrade comparison source,
-        // but only after actual native readiness and application initialization.
+      if (this.targetIdentity) {
+        // Track application version ordering without claiming that this ordinary
+        // opening performed native database maintenance or certification.
         if (this.journal.stage !== StartupStage.Complete || this.journal.targetIdentity ||
-            !sameStartupIdentity(this.journal.completedIdentity, this.targetIdentity))
-          this.commit(StartupStage.Complete, { completedIdentity: this.targetIdentity, targetIdentity: undefined });
+            !sameStartupIdentity(this.journal.lastOpenedIdentity ?? this.journal.completedIdentity, this.targetIdentity))
+          this.commit(StartupStage.Complete, { lastOpenedIdentity: this.targetIdentity, targetIdentity: undefined });
       } else if (this.journal.stage !== StartupStage.Complete) {
         try {
           this.commit(StartupStage.Complete);
@@ -504,7 +535,7 @@ export class StartupCoordinator {
       return;
     }
     this.commit(StartupStage.Complete, this.targetIdentity && this.nativeVerified && this.canonicalPrepared
-      ? { completedIdentity: this.targetIdentity, targetIdentity: undefined } : {});
+      ? { completedIdentity: this.targetIdentity, lastOpenedIdentity: this.targetIdentity, targetIdentity: undefined } : {});
     if (this.route === StartupRoute.Migration) {
       // Temporary isolation is a same-volume rename, not a retained full-profile backup.
       const retired = ownedPath(

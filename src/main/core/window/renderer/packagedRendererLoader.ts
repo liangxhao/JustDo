@@ -20,6 +20,7 @@ export const loadPackagedRenderer = async (
   directory: string,
   onApplicationUrl: (url: string | undefined) => void,
   beforeLoad?: () => Promise<void>,
+  hostOptions?: { bootstrapOnly?: boolean },
 ): Promise<void> => {
   let stopped = false;
   let host: ApplicationRendererHost | undefined;
@@ -43,7 +44,7 @@ export const loadPackagedRenderer = async (
       stop();
       return;
     }
-    host = await startApplicationRendererHost(directory);
+    host = await startApplicationRendererHost(directory, hostOptions);
     if (stopped || window.isDestroyed()) {
       stop();
       await closeHost();

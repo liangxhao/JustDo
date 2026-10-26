@@ -7,11 +7,11 @@ afterEach(() => vi.restoreAllMocks());
 it.each([false, true])(
   'waits for authoritative history on reconnect with pending old read: %s',
   async queued => {
-    let resolveHistory!: (result: unknown) => void;
+    const resolveHistory: ((result: unknown) => void)[] = [];
     const request = vi.fn().mockImplementation((method: string) =>
       method === 'chat.history' || method === 'chat.startup'
         ? new Promise(resolve => {
-            resolveHistory = resolve;
+            resolveHistory.push(resolve);
           })
         : Promise.resolve({}),
     );
@@ -39,7 +39,7 @@ it.each([false, true])(
       await new Promise(resolve => setTimeout(resolve, 0));
       expect(controller.state.initialHistoryReady).toBe(false);
     }
-    resolveHistory({ messages: [{ role: 'assistant', content: 'stale' }] });
+    resolveHistory[0]({ messages: [{ role: 'assistant', content: 'stale' }] });
     expect(await staleRead).toBe(false);
     expect(controller.state.chatMessages).toEqual(messages);
     if (!queued) lifecycle.handleHello({});
@@ -51,7 +51,7 @@ it.each([false, true])(
       ).toHaveLength(2),
     );
     expect(controller.state.initialHistoryReady).toBe(false);
-    resolveHistory({ messages });
+    resolveHistory[1]({ messages });
     await vi.waitFor(() => expect(controller.state.initialHistoryReady).toBe(true));
     expect(controller.state.chatMessages).toEqual(messages);
     controller.disconnect();

@@ -132,6 +132,8 @@ export interface CoworkRuntimeEvents {
 import type { CoworkAttachmentPayload } from '../../shared/cowork/attachments';
 
 export type CoworkStartOptions = {
+  /** Main-validated composer selection for the initial native admission. */
+  initialModelRef?: string;
   /** Main-owned adoption of a prepared homepage App incarnation. Never accepted from IPC. */
   expectedInitialSessionId?: string;
   /** Main-owned preparation at the actual native send boundary. */
@@ -164,6 +166,10 @@ export type CoworkStopOptions = {
 };
 
 export type CoworkPrepareSessionOptions = {
+  /** Cancels read-only preparation before native creation or input admission. */
+  signal?: AbortSignal;
+  /** Explicit initial selection; ordinary continuation preparation preserves native choices. */
+  modelRef?: string;
   expectedSessionId?: string;
   /** Main's branch creation handler only; ordinary sends must respect the persistent fence. */
   pendingBranchPreparation?: true;

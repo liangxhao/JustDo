@@ -174,6 +174,7 @@ export default defineConfig({
     rollupOptions: {
       input: {
         main: path.join(rendererRoot, 'index.html'),
+        startupBootstrap: path.join(rendererRoot, 'startup-bootstrap.html'),
         imagePreview: path.join(rendererRoot, 'image-preview.html'),
         workspace: path.join(rendererRoot, 'workspace.html'),
         widgetViewer: path.join(rendererRoot, 'widget-viewer.html'),

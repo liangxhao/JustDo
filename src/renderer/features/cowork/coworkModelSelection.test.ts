@@ -4,7 +4,13 @@ import { configService } from '@/services/config';
 import { store } from '@/store';
 
 import { CoworkService } from './coworkService';
-import { confirmCurrentSessionModelSelection, setCurrentSession } from './coworkSlice';
+import { clearCurrentSession, confirmCurrentSessionModelSelection, setCurrentSession } from './coworkSlice';
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>(complete => { resolve = complete; });
+  return { promise, resolve };
+}
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -88,7 +94,78 @@ test('loading a conversation uses the native selection instead of the saved snap
     },
   });
   await service.loadSession(session.id);
-  expect(store.getState().cowork.currentSession?.modelRef).toBe('p/new');
+  await vi.waitFor(() => expect(store.getState().cowork.currentSession?.modelRef).toBe('p/new'));
+});
+
+test('selects history before model metadata and continues hydration after the origin unmounts', async () => {
+  const service = new CoworkService();
+  const selected = { ...session, id: 'history-before-model', agentId: 'review' };
+  const model = deferred<{ success: true; source: 'gateway'; modelRef: string }>();
+  const getSessionModel = vi.fn(() => model.promise);
+  vi.stubGlobal('window', { electron: { cowork: {
+    getSession: vi.fn(async () => ({ success: true, session: selected })),
+    getSessionModel,
+    remoteManaged: vi.fn(async () => ({ remoteManaged: false })),
+  } } });
+  let originMounted = true;
+  await service.loadSession(selected.id, {
+    canSelect: () => originMounted,
+    onSelected: () => { originMounted = false; },
+  });
+  expect(store.getState().cowork.currentSession?.id).toBe(selected.id);
+  expect(store.getState().cowork.currentSession?.modelRef).toBe('p/old');
+  expect(getSessionModel).toHaveBeenCalledWith({ sessionId: selected.id, agentId: 'review' });
+  model.resolve({ success: true, source: 'gateway', modelRef: 'p/native' });
+  await vi.waitFor(() => expect(store.getState().cowork.currentSession?.modelRef).toBe('p/native'));
+});
+
+test.each(['navigate', 'home', 'confirm', 'newer-read'] as const)(
+  'ignores late navigation model metadata after %s', async action => {
+    const service = new CoworkService();
+    const selected = { ...session, id: `late-navigation-model-${action}` };
+    const model = deferred<{ success: true; source: 'gateway'; modelRef: string }>();
+    const getSessionModel = vi.fn(() => model.promise);
+    vi.stubGlobal('window', { electron: { cowork: {
+      getSession: vi.fn(async () => ({ success: true, session: selected })),
+      getSessionModel,
+      remoteManaged: vi.fn(async () => ({ remoteManaged: false })),
+    } } });
+    await service.loadSession(selected.id);
+    if (action === 'navigate') store.dispatch(setCurrentSession({ ...session, id: 'other-model-session' }));
+    if (action === 'home') service.clearSession();
+    if (action === 'confirm') {
+      store.dispatch(confirmCurrentSessionModelSelection({ sessionId: selected.id, modelRef: 'p/confirmed' }));
+    }
+    if (action === 'newer-read') {
+      getSessionModel.mockImplementationOnce(async () => ({ success: true, source: 'gateway', modelRef: 'p/newer' }));
+      await service.refreshSessionModel(selected.id);
+    }
+    const before = store.getState().cowork;
+    model.resolve({ success: true, source: 'gateway', modelRef: 'p/stale' });
+    await model.promise;
+    await Promise.resolve();
+    expect(store.getState().cowork.currentSession).toEqual(before.currentSession);
+    expect(store.getState().cowork.userConfirmedSessionModelRefs[selected.id])
+      .toBe(before.userConfirmedSessionModelRefs[selected.id]);
+  },
+);
+
+test('keeps a user model confirmation made while navigation metadata was pending', async () => {
+  const service = new CoworkService();
+  const selected = { ...session, id: 'model-confirmed-during-navigation' };
+  const metadata = deferred<{ success: true; session: typeof selected }>();
+  const getSessionModel = vi.fn();
+  store.dispatch(clearCurrentSession());
+  vi.stubGlobal('window', { electron: { cowork: {
+    getSession: vi.fn(() => metadata.promise), getSessionModel,
+    remoteManaged: vi.fn(async () => ({ remoteManaged: false })),
+  } } });
+  const loading = service.loadSession(selected.id);
+  store.dispatch(confirmCurrentSessionModelSelection({ sessionId: selected.id, modelRef: 'p/confirmed' }));
+  metadata.resolve({ success: true, session: selected });
+  await loading;
+  expect(store.getState().cowork.currentSession?.modelRef).toBe('p/confirmed');
+  expect(getSessionModel).not.toHaveBeenCalled();
 });
 
 test('only a confirmed main default updates the settings cache', async () => {

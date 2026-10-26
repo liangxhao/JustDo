@@ -84,6 +84,7 @@ export interface ChatControllerSessionContext {
   subscribedMessageSessionKey: string | null;
   messageSubscriptionSeq: number;
   connectionInitializationSeq: number;
+  historyReadAbortController: AbortController | null;
   readonly isConnectionInitializationCurrent: (params: {
     client: GatewayClient;
     sessionKey: string;
@@ -116,7 +117,10 @@ export interface ChatControllerSessionContext {
   ) => void;
   readonly hydrateCurrentSessionImages: (messages: unknown[], sessionKey: string) => void;
   readonly loadProgressCard: (sessionKey: string, force?: boolean) => Promise<void>;
-  readonly syncMessageSessionSubscription: (sessionKey: string) => Promise<boolean>;
+  readonly syncMessageSessionSubscription: (
+    sessionKey: string,
+    options?: { propagateFailure?: boolean; signal?: AbortSignal },
+  ) => Promise<boolean>;
   readonly initialMessageSubscriptionBarrierTimeoutMs: number;
   suspendedRunId: string | null;
   readonly reconcileSuspendedRun: () => Promise<void>;
@@ -537,11 +541,13 @@ export function ensureTranscriptSessionIdentity(this: ChatControllerSessionConte
 export async function syncMessageSessionSubscription(
   this: ChatControllerSessionContext,
   sessionKey: string,
+  options: { propagateFailure?: boolean; signal?: AbortSignal } = {},
 ): Promise<boolean> {
   const client = this.state.client;
   if (!client || !this.state.connected || !sessionKey) return false;
 
   const previousSessionKey = this.subscribedMessageSessionKey;
+  const clientGeneration = client.generation;
   if (previousSessionKey === sessionKey) return true;
   const subscriptionSeq = ++this.messageSubscriptionSeq;
   // The previous subscription stops being a readiness guarantee as soon as
@@ -555,15 +561,21 @@ export async function syncMessageSessionSubscription(
   }
   if (
     this.state.client !== client ||
+    client.generation !== clientGeneration ||
+    options.signal?.aborted ||
     !this.state.connected ||
     subscriptionSeq !== this.messageSubscriptionSeq
   ) {
     return false;
   }
   try {
-    await client.request('sessions.messages.subscribe', { key: sessionKey });
+    await (options.signal
+      ? client.request('sessions.messages.subscribe', { key: sessionKey }, { signal: options.signal })
+      : client.request('sessions.messages.subscribe', { key: sessionKey }));
     if (
       this.state.client === client &&
+      client.generation === clientGeneration &&
+      !options.signal?.aborted &&
       this.state.connected &&
       subscriptionSeq === this.messageSubscriptionSeq
     ) {
@@ -572,15 +584,17 @@ export async function syncMessageSessionSubscription(
     } else {
       // A newer transition may have requested this same key again. Unsubscribe
       // is key-scoped, so cleaning up that older ACK would remove the new edge.
-      if (this.state.client !== client || !this.state.connected || this.state.sessionKey !== sessionKey) {
+      if (client.generation === clientGeneration &&
+        (this.state.client !== client || !this.state.connected || this.state.sessionKey !== sessionKey)) {
         await client.request('sessions.messages.unsubscribe', { key: sessionKey }).catch(() => {});
       }
       return false;
     }
-  } catch {
+  } catch (error) {
     if (subscriptionSeq === this.messageSubscriptionSeq) {
       this.subscribedMessageSessionKey = null;
     }
+    if (options.propagateFailure) throw error;
     return false;
   }
 }
@@ -624,9 +638,11 @@ export async function loadInitialHistory(
 ): Promise<void> {
   let initialHistoryError: string | null = null;
   try {
-    const initialLoadSucceeded = await this.loadHistory(true, { preferStartup: true });
+    // The initial snapshot does not consume startup model/account metadata.
+    const initialLoadSucceeded = await this.loadHistory(true);
+    if (!this.isConnectionInitializationCurrent(params) || this.state.historyPreparationTimedOut) return;
     if (!initialLoadSucceeded) initialHistoryError = this.state.lastError;
-    if (this.hasExpectedInitialHistory()) return;
+    if (!this.expectInitialHistory || this.state.initialHistoryReady) return;
 
     // A subagent's originating task can be older than the recent startup
     // page. Follow the native offset chain before treating the missing row
@@ -634,13 +650,15 @@ export async function loadInitialHistory(
     while (this.state.historyHasMore && this.state.historyNextCursor) {
       const cursor = this.state.historyNextCursor;
       await this.loadOlderHistory();
-      if (this.hasExpectedInitialHistory()) return;
+      if (!this.isConnectionInitializationCurrent(params)) return;
+      if (!this.expectInitialHistory || this.state.initialHistoryReady) return;
       if (this.state.historyNextCursor === cursor) break;
     }
 
     for (const delayMs of this.initialHistoryRetryDelaysMs) {
       if (!(await this.waitForInitialHistoryRetry(delayMs, params))) return;
       const retrySucceeded = await this.loadHistory(false);
+      if (!this.isConnectionInitializationCurrent(params) || this.state.historyPreparationTimedOut) return;
       if (retrySucceeded) {
         if (initialHistoryError !== null && this.state.lastError === initialHistoryError) {
           this.state.lastError = null;
@@ -649,10 +667,11 @@ export async function loadInitialHistory(
       } else {
         initialHistoryError = this.state.lastError;
       }
-      if (this.hasExpectedInitialHistory()) return;
+      if (!this.expectInitialHistory || this.state.initialHistoryReady) return;
     }
   } finally {
-    if (this.isConnectionInitializationCurrent(params) && !this.state.chatLoading) {
+    if (!this.expectInitialHistory && this.isConnectionInitializationCurrent(params) && !this.state.chatLoading &&
+      !this.state.historyReadFailed && !this.state.historyPreparationPending) {
       this.state.initialHistoryReady = true;
       this.notify();
     }
@@ -775,12 +794,15 @@ export async function initializeConnectedSession(
   if (pendingRunId || (params.resumedTransport && this.suspendedRunId)) {
     this.suspendedRunId = pendingRunId ?? this.suspendedRunId;
     await this.reconcileSuspendedRun();
+    if (this.state.historyPreparationTimedOut) return;
     for (const delayMs of this.initialHistoryRetryDelaysMs) {
       if (!this.suspendedRunId || !this.state.chatSending) break;
       if (!(await this.waitForInitialHistoryRetry(delayMs, params))) return;
       await this.reconcileSuspendedRun();
+      if (this.state.historyPreparationTimedOut) return;
     }
-    if (!this.state.initialHistoryReady && this.isConnectionInitializationCurrent(params)) {
+    if (!this.expectInitialHistory && !this.state.initialHistoryReady && this.isConnectionInitializationCurrent(params) &&
+      !this.state.historyReadFailed && !this.state.historyPreparationPending) {
       this.state.initialHistoryReady = true;
       this.notify();
     }
@@ -795,6 +817,10 @@ export async function connect(
   token: string,
   sessionKey: string,
 ): Promise<void> {
+  this.historyReadAbortController?.abort();
+  this.historyReadAbortController = null;
+  this.state.historyPreparationPending = false;
+  this.state.historyPreparationTimedOut = false;
   this.manualCompactionRecoveryGeneration += 1;
   for (const key of this.manualCompactionRequestIdsBySession.keys()) {
     this.settleCompactionRequest(key);
@@ -874,6 +900,10 @@ export async function switchSession(
   sessionKey: string,
   options: SwitchSessionOptions = {},
 ): Promise<void> {
+  this.historyReadAbortController?.abort();
+  this.historyReadAbortController = null;
+  this.state.historyPreparationPending = false;
+  this.state.historyPreparationTimedOut = false;
   const previousSessionKey = this.state.sessionKey;
   if (
     this.expectedPlanImplementationReset &&
@@ -952,6 +982,10 @@ export async function switchSession(
 }
 
 export function disconnect(this: ChatControllerSessionContext): void {
+  this.historyReadAbortController?.abort();
+  this.historyReadAbortController = null;
+  this.state.historyPreparationPending = false;
+  this.state.historyPreparationTimedOut = false;
   this.manualCompactionRecoveryGeneration += 1;
   this.manualCompactionRequestIdsBySession.clear();
   this.settledCompactionEventIds.clear();
@@ -1019,6 +1053,10 @@ export function handleHello(this: ChatControllerSessionContext, hello: GatewayHe
 }
 
 export function handleClose(this: ChatControllerSessionContext): void {
+  this.historyReadAbortController?.abort();
+  this.historyReadAbortController = null;
+  this.state.historyPreparationPending = false;
+  this.state.historyPreparationTimedOut = false;
   this.manualCompactionRecoveryGeneration += 1;
   // A reconnected socket must establish authoritative history again. Invalidate
   // requests on this transport even when GatewayClient reuses its identity.

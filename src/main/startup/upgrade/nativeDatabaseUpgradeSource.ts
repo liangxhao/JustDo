@@ -242,7 +242,6 @@ try {
             assert.equal(locked.needsUpgrade, false, 'Native schema changed before canonical preparation.');
             const lease = await native('lease', 'withAgentDatabaseMaintenanceLease');
             const certify = await native('canonicalValidation', 'certifySessionCanonicalValidationPending');
-            const withWorker = await native('canonicalWorker', 'withSqliteCanonicalValidationWorker');
             let backedUp = false;
             const assertSource = () => {
               authority.assertCurrent();
@@ -279,8 +278,16 @@ try {
               return needsWork;
             };
             await lease({ env: process.env, schemaPolicy: 'existing', processBound: true }, async (maintenance) => {
-              await inspectFleet();
-              if (await probe(maintenance)) {
+              const checked = await inspectFleet();
+              if (!(await probe(maintenance))) {
+                progress('nativeVerify');
+                await ready({ env: process.env, config: cfg, operation: 'doctor',
+                  configuredAgentDatabaseTargets: checked.targets });
+                maintenance.assertOwned();
+                assertSource();
+                result = { needsUpgrade: false, inventory: checked.inventory, verified: true };
+                return;
+              } else {
                 progress('nativeBackup');
                 const backup = await native('backup', 'backupDoctorSqliteDatabases');
                 const saved = await backup({ env: process.env, pendingDatabasePaths: paths,
@@ -296,10 +303,14 @@ try {
               maintenance.assertOwned();
               assertSource();
             });
+            // Persisted native proof with no pending rows needs no worker handoff.
+            // The read-only verification lease has fully retired before this return.
+            if (result) return;
             // Ordinary native workers intentionally cannot borrow the maintenance lease.
             // Release it normally; the Gateway/Doctor state lock remains held throughout.
             await inspectFleet();
             progress('nativeUpgrade');
+            const withWorker = await native('canonicalWorker', 'withSqliteCanonicalValidationWorker');
             await withWorker(async (useWorker) => {
               for (const target of locked.targets) {
                 assertSource();

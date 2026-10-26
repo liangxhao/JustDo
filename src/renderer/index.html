@@ -66,8 +66,13 @@
         });
         document.getElementById('startup-reload').addEventListener('click', () => window.location.reload());
         %STARTUP_FAILURE_SCRIPT%
-        const startedAt = Number.isFinite(entryAt) ? entryAt : Date.now();
-        let activityStartedAt = startedAt;
+        let startedAt;
+        // The motion clock begins at first paint; backend elapsed time comes
+        // only from Main's existing read-only startup snapshot.
+        window.electron?.initialization?.getState?.().then(state => {
+          if (Number.isFinite(state?.startedAt)) startedAt = state.startedAt;
+        }).catch(() => { /* The initialization Gate owns snapshot failures. */ });
+        let activityStartedAt = Date.now();
         let activity;
         let failedAt;
         const timer = window.setInterval(() => {
@@ -78,7 +83,7 @@
           const failed = startup.dataset.failed === 'true';
           if (failed && !failedAt) failedAt = Date.now();
           const clock = failedAt || Date.now();
-          const seconds = Math.floor((clock - startedAt) / 1000);
+          const seconds = Number.isFinite(startedAt) ? Math.max(0, Math.floor((clock - startedAt) / 1000)) : 0;
           document.getElementById('startup-clock').textContent =
             String(Math.floor(seconds / 60)).padStart(2, '0') + ':' + String(seconds % 60).padStart(2, '0');
           if (startup.dataset.activity) {

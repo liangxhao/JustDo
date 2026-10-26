@@ -1,5 +1,11 @@
-import { AppInitializationPhase, type AppInitializationState } from '@shared/app/initialization';
-import type { OpenClawEngineStatus } from '@shared/openclaw/engineStatus';
+import {
+  AppInitializationActivity,
+  AppInitializationPhase,
+  type AppInitializationState,
+  AppInitializationTask,
+  AppInitializationTaskStatus,
+} from '@shared/app/initialization';
+import { EnginePhase, type OpenClawEngineStatus } from '@shared/openclaw/engineStatus';
 import { type ReactNode, useEffect, useState } from 'react';
 
 import { i18nService } from '@/services/i18n';
@@ -37,11 +43,29 @@ export default function StartupScreen({
   const failed = state.phase === AppInitializationPhase.Failed;
   const confirmation = failed ? undefined : state.downgradeConfirmation;
   const compatibilityCode = state.failure?.error.code;
+  const rendererWorking = Boolean(rendererActivity) && !rendererReady;
+  const enginePending = state.enginePreparationPending === true || engineStatus?.phase === EnginePhase.Starting;
+  const mainTasksPending = Object.values(state.tasks ?? {}).some(status =>
+    status === AppInitializationTaskStatus.Waiting || status === AppInitializationTaskStatus.Running);
   const preparing =
     !failed &&
     !confirmation &&
-    (state.phase === AppInitializationPhase.Preparing || Boolean(rendererActivity));
-  const loadingInterface = preparing && Boolean(rendererActivity);
+    (state.phase === AppInitializationPhase.Preparing || rendererWorking || enginePending || mainTasksPending);
+  const loadingInterface = preparing && rendererWorking;
+  const pendingActivity = !failed && rendererReady
+    ? enginePending
+      ? AppInitializationActivity.EngineStart
+      : state.tasks?.[AppInitializationTask.Integrations] === AppInitializationTaskStatus.Running
+        ? AppInitializationActivity.Integrations
+        : undefined
+    : undefined;
+  const activityKey = rendererWorking
+    ? `startupRenderer_${rendererActivity}`
+    : pendingActivity
+      ? `startupActivity_${pendingActivity}`
+      : rendererReady && state.phase === AppInitializationPhase.Ready
+        ? 'startupPending'
+        : `startupActivity_${state.activity}`;
   const stepProps = {
     state,
     failed,
@@ -53,8 +77,14 @@ export default function StartupScreen({
   const steps = startupStepStates(stepProps);
   const completedSteps = steps.filter(step => step.status === StepStatus.Complete).length;
   const [now, setNow] = useState(Date.now);
+  const [observedActivity, setObservedActivity] = useState(() => ({ key: activityKey, startedAt: Date.now() }));
   const [restarting, setRestarting] = useState(false);
   const [restartError, setRestartError] = useState('');
+  useEffect(() => {
+    // Background owners may overlap the last Renderer activity. Their elapsed
+    // time starts at observation when no matching authoritative timestamp exists.
+    setObservedActivity({ key: activityKey, startedAt: Date.now() });
+  }, [activityKey]);
   useEffect(() => {
     if (!preparing) return;
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
@@ -62,19 +92,17 @@ export default function StartupScreen({
   }, [preparing]);
   const clock = preparing ? Math.max(now, state.updatedAt) : state.updatedAt;
   const elapsed = Math.max(0, Math.floor((clock - state.startedAt) / 1000));
+  const activityStartedAt = rendererWorking
+    ? (rendererActivityStartedAt ?? state.updatedAt)
+    : activityKey === `startupActivity_${state.activity}`
+      ? state.activityStartedAt
+      : observedActivity.key === activityKey
+        ? observedActivity.startedAt
+        : clock;
   const activityElapsed = Math.max(
     0,
-    Math.floor(
-      (clock -
-        (rendererActivity
-          ? (rendererActivityStartedAt ?? state.updatedAt)
-          : state.activityStartedAt)) /
-        1000,
-    ),
+    Math.floor((clock - activityStartedAt) / 1000),
   );
-  const activityKey = rendererActivity
-    ? `startupRenderer_${rendererActivity}`
-    : `startupActivity_${state.activity}`;
   const restart = async () => {
     setRestarting(true);
     setRestartError('');

@@ -93,7 +93,7 @@ test('keeps model clicks immediate and skips intermediate choices while native c
     localAsr: { getStatus: vi.fn().mockResolvedValue({ available: false }) },
     localSpeechModels: { onChanged: vi.fn().mockReturnValue(() => undefined) },
   });
-  const onSubmit = vi.fn();
+  const onSubmit = vi.fn(() => false);
   const Composer = () => {
     const modelRef = useSelector(
       (state: ReturnType<typeof store.getState>) =>
@@ -134,7 +134,10 @@ test('keeps model clicks immediate and skips intermediate choices while native c
   await waitFor(() => expect(patchSessionModel).toHaveBeenCalledTimes(1));
   select('First', 'Intermediate');
   select('Intermediate', 'Latest');
-  expect(send.disabled).toBe(true);
+  expect(send.disabled).toBe(false);
+  fireEvent.click(send);
+  fireEvent.click(send);
+  expect(onSubmit).not.toHaveBeenCalled();
   expect(input.value).toBe('Keep this draft');
   expect(listModels).toHaveBeenCalledTimes(1);
   expect(getSessionModel).toHaveBeenCalledTimes(1);
@@ -156,7 +159,7 @@ test('keeps model clicks immediate and skips intermediate choices while native c
     expect.objectContaining({ modelId: 'latest' }),
   );
   expect(input.value).toBe('Keep this draft');
-  expect(onSubmit).not.toHaveBeenCalled();
+  await waitFor(() => expect(onSubmit).toHaveBeenCalledOnce());
 
   await act(async () => {
     finishDefaults({ success: true });
@@ -356,6 +359,7 @@ test.each(['current', 'draft', 'selection'] as const)(
         'Review this project\n\n<swarm-workflow/>',
         false,
         { mode: 'auto', verify: true },
+        { startedAt: expect.any(Number) },
       );
     } else {
       expect(onSubmit).not.toHaveBeenCalled();

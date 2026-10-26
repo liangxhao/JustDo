@@ -203,6 +203,7 @@ test('cancels a goal turn stopped while its Gateway session is being prepared', 
     resolveSessionCreate = resolve;
   });
   const request = vi.fn((method: string) => {
+    if (method === 'sessions.describe') return Promise.resolve({ session: null });
     if (method === 'sessions.create') return sessionCreate;
     if (method === 'sessions.list') return Promise.resolve({ sessions: [] });
     if (method === 'tasks.list') return Promise.resolve({ tasks: [] });
@@ -438,7 +439,7 @@ test('does not bind a replayed resume run to a replacement canonical goal', asyn
     status: 'active' as const,
     updatedAt: 3,
   };
-  let describeCalls = 0;
+  let resumeIssued = false;
   let resumeRunId = '';
   const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
     if (method === 'automationPermission.info') {
@@ -446,16 +447,16 @@ test('does not bind a replayed resume run to a replacement canonical goal', asyn
     }
     if (method === 'sessions.create') return createPreparedSessionReceipt();
     if (method === 'sessions.describe') {
-      describeCalls += 1;
       return {
         session: {
           key: 'agent:main:justdo:session-1',
           sessionId: 'gateway-session-1',
-          goal: describeCalls === 1 ? pausedGoal : replacementGoal,
+          goal: resumeIssued ? replacementGoal : pausedGoal,
         },
       };
     }
     if (method === 'sessions.goal.update') {
+      resumeIssued = true;
       resumeRunId = String(params?.operationId);
       return {
         operationId: resumeRunId,
@@ -543,23 +544,23 @@ test.each(['missing-run-ids', 'malformed-run-ids', 'wrong-sid', 'read-failure', 
     const adapter = new OpenClawRuntimeAdapter(store, {});
     const paused = { schemaVersion: 1, id: 'goal-1', objective: 'Ship', status: 'paused',
       createdAt: 1, updatedAt: 2, tokenStart: 0, tokensUsed: 0, continuationTurns: 0 };
-    let reads = 0, runId = '';
+    let mutationIssued = false, runId = '';
     const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
       if (method === 'automationPermission.info') return { loaded: true, policyId: 'native-session-automation-permission' };
       if (method === 'sessions.create') return createPreparedSessionReceipt();
       if (method === 'sessions.goal.update') {
+        mutationIssued = true;
         runId = String(params?.operationId);
         return { operationId: runId, action: 'resume', sessionId: 'gateway-session-1', goalId: 'goal-1',
           runId, status: 'started', replayed: true };
       }
       expect(method).toBe('sessions.describe');
-      reads += 1;
-      if (reads > 1 && failure === 'read-failure') throw new Error('Observation unavailable after ACK');
-      if (reads > 1 && failure === 'product-identity-change') session.agentId = 'other';
+      if (mutationIssued && failure === 'read-failure') throw new Error('Observation unavailable after ACK');
+      if (mutationIssued && failure === 'product-identity-change') session.agentId = 'other';
       return { session: { key: 'agent:main:justdo:session-1',
-        sessionId: reads > 1 && failure === 'wrong-sid' ? 'other' : 'gateway-session-1',
+        sessionId: mutationIssued && failure === 'wrong-sid' ? 'other' : 'gateway-session-1',
         ...(failure === 'missing-run-ids' ? {} : { activeRunIds: failure === 'malformed-run-ids' ? [true] : [runId] }),
-        goal: { ...paused, status: reads === 1 ? 'paused' : 'active' } } };
+        goal: { ...paused, status: mutationIssued ? 'active' : 'paused' } } };
     });
     const internals = adapter as unknown as { gatewayClient: GatewayClientLike; goalMutationOperations: Map<string, unknown> };
     internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
@@ -832,6 +833,7 @@ test('refreshes a replayed clear receipt and preserves a newer canonical goal', 
     updatedAt: 3,
   };
   let describeCalls = 0;
+  let clearIssued = false;
   const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
     if (method === 'automationPermission.info') {
       return { loaded: true, policyId: 'native-session-automation-permission' };
@@ -843,11 +845,12 @@ test('refreshes a replayed clear receipt and preserves a newer canonical goal', 
         session: {
           key: 'agent:main:justdo:session-1',
           sessionId: 'gateway-session-1',
-          goal: describeCalls === 1 ? oldGoal : newGoal,
+          goal: clearIssued ? newGoal : oldGoal,
         },
       };
     }
     if (method === 'sessions.goal.clear') {
+      clearIssued = true;
       return {
         operationId: params?.operationId,
         action: 'clear',
@@ -872,7 +875,7 @@ test('refreshes a replayed clear receipt and preserves a newer canonical goal', 
     goal: { id: 'goal-2', status: 'active' },
     execution: { goalId: 'goal-2' },
   });
-  expect(describeCalls).toBe(2);
+  expect(describeCalls).toBe(3);
 });
 
 test('clears a completed goal before returning its objective for combined feedback', async () => {

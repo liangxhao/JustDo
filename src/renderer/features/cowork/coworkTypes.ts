@@ -183,6 +183,8 @@ export interface CoworkStartOptions {
   title?: string;
   activeSkillIds?: string[];
   agentId?: string;
+  /** Qualified model choice captured before first-turn preparation. */
+  modelRef?: string;
   attachments?: CoworkAttachmentPayload[];
   clientTurnId?: string;
   startedAt?: number;

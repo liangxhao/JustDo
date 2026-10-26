@@ -100,9 +100,10 @@ const Sidebar: React.FC<SidebarProps> = ({
     );
   }, []);
   const [showBatchDeleteConfirm, setShowBatchDeleteConfirm] = useState(false);
-  const [developerMode, setDeveloperMode] = useState(
-    () => configService.getConfig().developerMode ?? false,
-  );
+  const [controlUiEnabled, setControlUiEnabled] = useState(() => {
+    const config = configService.getConfig();
+    return config.developerMode === true && config.controlUiEnabled === true;
+  });
   const isHomePanelVisible = activeView === SidebarView.Home && !isCollapsed;
   const sessionListResize = useSessionListResize(isHomePanelVisible);
 
@@ -128,13 +129,14 @@ const Sidebar: React.FC<SidebarProps> = ({
   }, [isHomePanelVisible]);
 
   useEffect(() => {
-    const syncDeveloperMode = () => {
-      setDeveloperMode(configService.getConfig().developerMode ?? false);
+    const syncControlUiEnabled = () => {
+      const config = configService.getConfig();
+      setControlUiEnabled(config.developerMode === true && config.controlUiEnabled === true);
     };
 
-    window.addEventListener('config-updated', syncDeveloperMode);
+    window.addEventListener('config-updated', syncControlUiEnabled);
     return () => {
-      window.removeEventListener('config-updated', syncDeveloperMode);
+      window.removeEventListener('config-updated', syncControlUiEnabled);
     };
   }, []);
 
@@ -268,7 +270,8 @@ const Sidebar: React.FC<SidebarProps> = ({
   };
 
   const handleOpenChatWeb = async () => {
-    if (!developerMode || !isOpenClawEngine) return;
+    const config = configService.getConfig();
+    if (config.developerMode !== true || config.controlUiEnabled !== true || !isOpenClawEngine) return;
     try {
       // Defensive check: ensure openclaw engine API is available
       if (
@@ -284,6 +287,8 @@ const Sidebar: React.FC<SidebarProps> = ({
 
       const portResult = await window.electron.openclaw.engine.getPort();
       const tokenResult = await window.electron.openclaw.engine.getToken();
+      const currentConfig = configService.getConfig();
+      if (currentConfig.developerMode !== true || currentConfig.controlUiEnabled !== true) return;
 
       const port = portResult.success ? portResult.port : null;
       const token = tokenResult.success ? tokenResult.token : null;
@@ -335,7 +340,7 @@ const Sidebar: React.FC<SidebarProps> = ({
         onShowMemory={() => navigateFromRail(onShowMemory)}
         onShowWorkboard={() => navigateFromRail(onShowWorkboard)}
         onShowSettings={() => navigateFromRail(onShowSettings)}
-        onOpenChatWeb={developerMode && isOpenClawEngine ? handleOpenChatWeb : undefined}
+        onOpenChatWeb={controlUiEnabled && isOpenClawEngine ? handleOpenChatWeb : undefined}
       />
       <aside
         ref={sessionListResize.panelRef}

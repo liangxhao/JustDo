@@ -347,7 +347,7 @@ test('stops cached background timing when an external final arrives', async () =
 
 test('moves the message subscription when switching connected sessions', async () => {
   const request = vi.fn().mockImplementation((method: string) => {
-    if (method === 'chat.startup') return Promise.resolve({ messages: [] });
+    if (method === 'chat.history') return Promise.resolve({ messages: [] });
     return Promise.resolve({});
   });
   const controller = new ChatController();
@@ -366,11 +366,11 @@ test('moves the message subscription when switching connected sessions', async (
   expect(request).toHaveBeenNthCalledWith(2, 'sessions.messages.subscribe', {
     key: 'agent:main:justdo:session-2',
   });
-  expect(request).toHaveBeenNthCalledWith(3, 'chat.startup', {
+  expect(request).toHaveBeenNthCalledWith(3, 'chat.history', {
     sessionKey: 'agent:main:justdo:session-2',
     limit: 250,
     maxChars: 500_000,
-  });
+  }, expect.objectContaining({ signal: expect.any(AbortSignal) }));
 });
 
 test('subscribes to session messages before taking the initial history snapshot', async () => {
@@ -381,7 +381,7 @@ test('subscribes to session messages before taking the initial history snapshot'
   const historyMessage = { role: 'user', content: 'persisted task' };
   const request = vi.fn().mockImplementation((method: string) => {
     if (method === 'sessions.messages.subscribe') return subscriptionGate;
-    if (method === 'chat.startup') return Promise.resolve({ messages: [historyMessage] });
+    if (method === 'chat.history') return Promise.resolve({ messages: [historyMessage] });
     return Promise.resolve({});
   });
   const controller = new ChatController();
@@ -398,7 +398,7 @@ test('subscribes to session messages before taking the initial history snapshot'
   expect(request).toHaveBeenCalledWith('sessions.messages.subscribe', {
     key: 'agent:main:subagent:child-1',
   });
-  expect(request).not.toHaveBeenCalledWith('chat.startup', expect.anything());
+  expect(request).not.toHaveBeenCalledWith('chat.history', expect.anything(), expect.objectContaining({ signal: expect.any(AbortSignal) }));
   expect(controller.state.initialHistoryReady).toBe(false);
 
   resolveMessageSubscription?.();
@@ -406,7 +406,7 @@ test('subscribes to session messages before taking the initial history snapshot'
 
   const methods = request.mock.calls.map(([method]) => method);
   expect(methods.indexOf('sessions.messages.subscribe')).toBeLessThan(
-    methods.indexOf('chat.startup'),
+    methods.indexOf('chat.history'),
   );
   expect(controller.state.chatMessages).toEqual([historyMessage]);
 });
@@ -415,7 +415,7 @@ test('makes prepared dispatch ready before the initial history request resolves'
   let resolveHistory!: (value: unknown) => void;
   const history = new Promise(resolve => { resolveHistory = resolve; });
   const request = vi.fn((method: string) =>
-    method === 'chat.startup' ? history : Promise.resolve({}),
+    method === 'chat.history' ? history : Promise.resolve({}),
   );
   const controller = new ChatController();
   const sessionKey = 'agent:main:justdo:new-session';
@@ -427,7 +427,7 @@ test('makes prepared dispatch ready before the initial history request resolves'
   };
   expect(controller.isInitialDispatchReady(sessionKey)).toBe(false);
   internal.handleHello({});
-  await vi.waitFor(() => expect(request).toHaveBeenCalledWith('chat.startup', expect.anything()));
+  await vi.waitFor(() => expect(request).toHaveBeenCalledWith('chat.history', expect.anything(), expect.objectContaining({ signal: expect.any(AbortSignal) })));
   expect(controller.state.initialHistoryReady).toBe(false);
   expect(controller.isInitialDispatchReady(sessionKey)).toBe(true);
   internal.handleEvent({ event: 'agent', payload: {
@@ -443,7 +443,7 @@ test('admits the promoted optimistic first send without recovering its local act
   let resolveHistory!: (value: unknown) => void;
   const history = new Promise(resolve => { resolveHistory = resolve; });
   const request = vi.fn((method: string) =>
-    method === 'chat.startup' ? history : Promise.resolve({ session: { hasActiveRun: false } }),
+    method === 'chat.history' ? history : Promise.resolve({ session: { hasActiveRun: false } }),
   );
   const controller = new ChatController();
   const temporaryKey = 'agent:main:justdo:temp-prepared';
@@ -453,7 +453,7 @@ test('admits the promoted optimistic first send without recovering its local act
   controller.state.sessionKey = temporaryKey;
   controller.setPendingUserMessage('First prompt');
   const switching = controller.switchSession(sessionKey, { promoteFromSessionKey: temporaryKey });
-  await vi.waitFor(() => expect(request).toHaveBeenCalledWith('chat.startup', expect.anything()));
+  await vi.waitFor(() => expect(request).toHaveBeenCalledWith('chat.history', expect.anything(), expect.objectContaining({ signal: expect.any(AbortSignal) })));
   expect(controller.state.pendingUserMessage?.text).toBe('First prompt');
   expect(controller.state.chatSending).toBe(true);
   expect(controller.state.initialHistoryReady).toBe(false);
@@ -469,8 +469,9 @@ test.each([null, 'native-pending-run'])(
   async runId => {
     let resolveHistory!: (value: unknown) => void;
     const history = new Promise(resolve => { resolveHistory = resolve; });
+    const initialMethod = runId ? 'chat.startup' : 'chat.history';
     const request = vi.fn((method: string) =>
-      method === 'chat.startup' ? history : Promise.resolve({ session: { hasActiveRun: true } }),
+      method === initialMethod ? history : Promise.resolve({ session: { hasActiveRun: true } }),
     );
     const controller = new ChatController();
     const sessionKey = 'agent:main:justdo:prepared-reconnect';
@@ -488,7 +489,7 @@ test.each([null, 'native-pending-run'])(
     expect(internal.suspendedRunId).toBe(runId);
     expect(controller.isInitialDispatchReady(sessionKey)).toBe(false);
     internal.handleHello({});
-    await vi.waitFor(() => expect(request).toHaveBeenCalledWith('chat.startup', expect.anything()));
+    await vi.waitFor(() => expect(request).toHaveBeenCalledWith(initialMethod, expect.anything(), expect.objectContaining({ signal: expect.any(AbortSignal) })));
     expect(controller.isInitialDispatchReady(sessionKey)).toBe(runId === null);
     resolveHistory({ sessionId: 'physical-prepared', messages: [] });
     await vi.waitFor(() => expect(controller.state.initialHistoryReady).toBe(true));
@@ -498,7 +499,7 @@ test.each([null, 'native-pending-run'])(
   },
 );
 
-test('bounds a stalled initial message subscription and catches up after it resolves', async () => {
+test('reads history without waiting for subscription ACK and catches up after it resolves', async () => {
   vi.useFakeTimers();
   let resolveMessageSubscription: (() => void) | undefined;
   const subscriptionGate = new Promise<void>(resolve => {
@@ -506,15 +507,15 @@ test('bounds a stalled initial message subscription and catches up after it reso
   });
   const initialHistory = [{ role: 'user', content: 'persisted task' }];
   const caughtUpHistory = [...initialHistory, { role: 'assistant', content: 'persisted result' }];
+  let historyReads = 0;
   const request = vi.fn().mockImplementation((method: string) => {
     if (method === 'sessions.messages.subscribe') return subscriptionGate;
-    if (method === 'chat.startup') return Promise.resolve({ messages: initialHistory });
-    if (method === 'chat.history') return Promise.resolve({ messages: caughtUpHistory });
+    if (method === 'chat.history') {
+      return Promise.resolve({ messages: historyReads++ === 0 ? initialHistory : caughtUpHistory });
+    }
     return Promise.resolve({});
   });
-  const controller = new ChatController({
-    initialMessageSubscriptionBarrierTimeoutMs: 10,
-  });
+  const controller = new ChatController();
   controller.state.client = { request } as never;
   controller.state.sessionKey = 'agent:main:subagent:child-1';
 
@@ -523,26 +524,89 @@ test('bounds a stalled initial message subscription and catches up after it reso
       handleHello(hello: Record<string, unknown>): void;
     }
   ).handleHello({});
-  await vi.advanceTimersByTimeAsync(10);
+  await vi.advanceTimersByTimeAsync(0);
   await vi.waitFor(() => expect(controller.state.initialHistoryReady).toBe(true));
 
   expect(controller.state.chatMessages).toEqual(initialHistory);
+  expect(controller.isInitialDispatchReady(controller.state.sessionKey)).toBe(false);
+  expect(request).not.toHaveBeenCalledWith('chat.startup', expect.anything(), expect.objectContaining({ signal: expect.any(AbortSignal) }));
   resolveMessageSubscription?.();
   await vi.waitFor(() =>
     expect(request).toHaveBeenCalledWith('chat.history', {
       sessionKey: 'agent:main:subagent:child-1',
       limit: 250,
       maxChars: 500_000,
-    }),
+    }, expect.objectContaining({ signal: expect.any(AbortSignal) })),
   );
   await vi.waitFor(() => expect(controller.state.chatMessages).toEqual(caughtUpHistory));
+  expect(controller.isInitialDispatchReady(controller.state.sessionKey)).toBe(true);
+});
+
+test('queues the late subscription catch-up while the initial history read is still pending', async () => {
+  vi.useFakeTimers();
+  let finishSubscription!: () => void;
+  let finishHistory!: (value: unknown) => void;
+  const subscription = new Promise<void>(resolve => { finishSubscription = resolve; });
+  const initial = new Promise(resolve => { finishHistory = resolve; });
+  const messages = [{ role: 'user', content: 'persisted task' }];
+  let historyReads = 0;
+  const request = vi.fn((method: string) => {
+    if (method === 'sessions.messages.subscribe') return subscription;
+    if (method === 'chat.history') {
+      return historyReads++ === 0 ? initial : Promise.resolve({ messages });
+    }
+    return Promise.resolve({});
+  });
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.sessionKey = 'agent:main:justdo:initial-inflight';
+  (controller as unknown as { handleHello(hello: Record<string, unknown>): void }).handleHello({});
+  await vi.advanceTimersByTimeAsync(0);
+  expect(historyReads).toBe(1);
+  expect(controller.state.initialHistoryReady).toBe(false);
+  finishSubscription();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(historyReads).toBe(1);
+  expect(controller.isInitialDispatchReady(controller.state.sessionKey)).toBe(true);
+  finishHistory({ messages });
+  await vi.advanceTimersByTimeAsync(0);
+  expect(historyReads).toBe(2);
+  expect(controller.state.chatMessages).toEqual(messages);
+});
+
+test('a late subscription ACK cannot refresh a different selected generation', async () => {
+  vi.useFakeTimers();
+  let finishSubscription!: () => void;
+  const subscription = new Promise<void>(resolve => { finishSubscription = resolve; });
+  const first = 'agent:main:justdo:late-subscription-first';
+  const second = 'agent:main:justdo:late-subscription-second';
+  const request = vi.fn((method: string, params: { key?: string }) => {
+    if (method === 'sessions.messages.subscribe' && params.key === first) return subscription;
+    return Promise.resolve(method === 'chat.history' ? { messages: [] } : {});
+  });
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.sessionKey = first;
+  (controller as unknown as { handleHello(hello: Record<string, unknown>): void }).handleHello({});
+  await vi.advanceTimersByTimeAsync(0);
+  await controller.switchSession(second);
+  const historyCalls = request.mock.calls.filter(([method]) => method === 'chat.history');
+  finishSubscription();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(request.mock.calls.filter(([method]) => method === 'chat.history')).toEqual(historyCalls);
+  expect(controller.state.sessionKey).toBe(second);
+  expect(controller.isInitialDispatchReady(second)).toBe(true);
 });
 
 test('clears a transient initial history error after a successful empty retry', async () => {
   const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+  let historyReads = 0;
   const request = vi.fn().mockImplementation((method: string) => {
-    if (method === 'chat.startup') return Promise.reject(new Error('temporary history failure'));
-    if (method === 'chat.history') return Promise.resolve({ messages: [] });
+    if (method === 'chat.history') {
+      return historyReads++ === 0
+        ? Promise.reject(new Error('temporary history failure'))
+        : Promise.resolve({ messages: [] });
+    }
     return Promise.resolve({});
   });
   const controller = new ChatController({
@@ -558,7 +622,8 @@ test('clears a transient initial history error after a successful empty retry', 
     }
   ).handleHello({});
 
-  await vi.waitFor(() => expect(controller.state.initialHistoryReady).toBe(true));
+  await vi.waitFor(() => expect(historyReads).toBe(2));
+  expect(controller.state.initialHistoryReady).toBe(false);
   expect(controller.state.chatMessages).toEqual([]);
   expect(controller.state.lastError).toBeNull();
   expect(consoleError).toHaveBeenCalledWith(
@@ -568,10 +633,12 @@ test('clears a transient initial history error after a successful empty retry', 
 });
 
 test('retries an unexpectedly empty initial subagent history before revealing the transcript', async () => {
-  const historyMessage = { role: 'user', content: 'persisted subagent task' };
+  const historyMessage = { role: 'user', content: '[Subagent Context] You are running as a subagent (depth 1/1).\n[Subagent Task]\npersisted subagent task' };
+  let historyReads = 0;
   const request = vi.fn().mockImplementation((method: string) => {
-    if (method === 'chat.startup') return Promise.resolve({ messages: [] });
-    if (method === 'chat.history') return Promise.resolve({ messages: [historyMessage] });
+    if (method === 'chat.history') {
+      return Promise.resolve({ messages: historyReads++ === 0 ? [] : [historyMessage] });
+    }
     return Promise.resolve({});
   });
   const controller = new ChatController({
@@ -588,26 +655,24 @@ test('retries an unexpectedly empty initial subagent history before revealing th
   ).handleHello({});
 
   await vi.waitFor(() => expect(controller.state.initialHistoryReady).toBe(true));
-  expect(request).toHaveBeenCalledWith('chat.startup', {
-    sessionKey: 'agent:main:subagent:child-1',
-    limit: 250,
-    maxChars: 500_000,
-  });
+  expect(historyReads).toBe(2);
   expect(request).toHaveBeenCalledWith('chat.history', {
     sessionKey: 'agent:main:subagent:child-1',
     limit: 250,
     maxChars: 500_000,
-  });
+  }, expect.objectContaining({ signal: expect.any(AbortSignal) }));
   expect(controller.state.chatMessages).toEqual([historyMessage]);
 });
 
 test('retries an assistant-only subagent tail until the originating task is present', async () => {
   const sessionKey = 'agent:main:subagent:assistant-tail-child';
   const assistantTail = { role: 'assistant', content: 'completed result' };
-  const completeHistory = [{ role: 'user', content: 'persisted subagent task' }, assistantTail];
+  const completeHistory = [{ role: 'user', content: '[Subagent Context] You are running as a subagent (depth 1/1).\n[Subagent Task]\npersisted subagent task' }, assistantTail];
+  let historyReads = 0;
   const request = vi.fn().mockImplementation((method: string) => {
-    if (method === 'chat.startup') return Promise.resolve({ messages: [assistantTail] });
-    if (method === 'chat.history') return Promise.resolve({ messages: completeHistory });
+    if (method === 'chat.history') {
+      return Promise.resolve({ messages: historyReads++ === 0 ? [assistantTail] : completeHistory });
+    }
     return Promise.resolve({});
   });
   const controller = new ChatController({
@@ -624,8 +689,8 @@ test('retries an assistant-only subagent tail until the originating task is pres
   ).handleHello({});
 
   await vi.waitFor(() => expect(controller.state.initialHistoryReady).toBe(true));
-  expect(request.mock.calls.filter(([method]) => method === 'chat.startup')).toHaveLength(1);
-  expect(request.mock.calls.filter(([method]) => method === 'chat.history')).toHaveLength(1);
+  expect(request).not.toHaveBeenCalledWith('chat.startup', expect.anything(), expect.objectContaining({ signal: expect.any(AbortSignal) }));
+  expect(request.mock.calls.filter(([method]) => method === 'chat.history')).toHaveLength(2);
   expect(controller.state.chatMessages).toEqual(completeHistory);
 });
 
@@ -698,7 +763,7 @@ test('catches up a missing subagent task during an active streamed turn', async 
     sessionKey,
     limit: 250,
     maxChars: 500_000,
-  });
+  }, expect.objectContaining({ signal: expect.any(AbortSignal) }));
   expect(controller.state.chatSending).toBe(true);
   expect(controller.state.transcript.activeTurn).toBe(activeTurn);
   expect(controller.state.transcript.activeTurn?.items).toEqual([

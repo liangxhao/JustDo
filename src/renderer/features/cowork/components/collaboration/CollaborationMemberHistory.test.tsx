@@ -15,6 +15,10 @@ const mocks = vi.hoisted(() => ({
       connected: boolean;
       currentSessionId: string | null;
       initialHistoryReady: boolean;
+      historyPreparationPending: boolean;
+      historyPreparationTimedOut: boolean;
+      historyReadFailed: boolean;
+      chatLoading: boolean;
       historyWindowStart: number;
       historyHasMore: boolean;
       historyNextCursor: string | null;
@@ -35,6 +39,7 @@ const mocks = vi.hoisted(() => ({
     notify: () => void;
     notifyStream: () => void;
     disconnect: ReturnType<typeof vi.fn>;
+    loadHistory: ReturnType<typeof vi.fn>;
   }>,
   options: [] as unknown[],
 }));
@@ -55,6 +60,10 @@ vi.mock('@/libs/openclaw-chat/gateway/chat-controller', () => ({
       connected: true,
       currentSessionId: 'native-peer',
       initialHistoryReady: false,
+      historyPreparationPending: false,
+      historyPreparationTimedOut: false,
+      historyReadFailed: false,
+      chatLoading: false,
       historyWindowStart: 0,
       historyHasMore: false,
       historyNextCursor: null as string | null,
@@ -73,6 +82,7 @@ vi.mock('@/libs/openclaw-chat/gateway/chat-controller', () => ({
     loadedMessages?: unknown[];
     getLoadedMessages = () => this.loadedMessages ?? this.state.chatMessages;
     disconnect = vi.fn();
+    loadHistory = vi.fn().mockResolvedValue(true);
     notify = () => {};
     notifyStream = () => {};
     constructor(options?: unknown) {
@@ -136,6 +146,66 @@ const mount = () =>
   );
 
 describe('peer native history lifecycle', () => {
+  it('retains cached peer history during native preparation and retries only after its bounded timeout', async () => {
+    const changed = vi.fn();
+    const view = render(<CollaborationMemberHistory member={member} name="Review"
+      workingDirectory="" onControllerChange={changed} />);
+    await act(async () => {});
+    const controller = mocks.instances[0];
+    const cached = [{ role: 'assistant', content: 'Cached peer text' }];
+    act(() => {
+      controller.state.chatMessages = cached;
+      controller.state.historyPreparationPending = true;
+      controller.notify();
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(30_000));
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.getByRole('status').textContent).toBe(i18nService.t('storageHistoryPreparing'));
+    expect(controller.state.chatMessages).toBe(cached);
+    expect(mocks.display.mock.calls[mocks.display.mock.calls.length - 1]?.[0].controller).toBe(controller);
+    expect(changed).toHaveBeenLastCalledWith(null);
+    expect(mocks.connect).toHaveBeenCalledOnce();
+    act(() => {
+      controller.state.historyPreparationPending = false;
+      controller.state.historyPreparationTimedOut = true;
+      controller.state.historyReadFailed = true;
+      controller.notify();
+    });
+    expect(screen.getByRole('alert').textContent).toBe(i18nService.t('storageHistoryPreparationPending'));
+    expect(controller.state.chatMessages).toBe(cached);
+    fireEvent.click(screen.getByRole('button', { name: i18nService.t('sessionDetailsRetry') }));
+    await act(async () => {});
+    expect(controller.loadHistory).toHaveBeenCalledExactlyOnceWith(true);
+    expect(mocks.instances).toHaveLength(1);
+    expect(controller.disconnect).not.toHaveBeenCalled();
+    expect(controller.state.chatMessages).toBe(cached);
+    expect(changed).toHaveBeenLastCalledWith(null);
+    act(() => {
+      controller.state.historyPreparationTimedOut = false;
+      controller.state.chatLoading = true;
+      controller.notify();
+    });
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.getByRole('status').textContent).toBe(i18nService.t('collaborationHistoryLoading'));
+    act(() => {
+      controller.state.historyReadFailed = false;
+      controller.state.historyPreparationPending = true;
+      controller.notify();
+    });
+    expect(screen.getByRole('status').textContent).toBe(i18nService.t('storageHistoryPreparing'));
+    expect(changed).toHaveBeenLastCalledWith(null);
+    act(() => {
+      controller.state.initialHistoryReady = true;
+      controller.state.historyPreparationPending = false;
+      controller.state.chatLoading = false;
+      controller.notify();
+    });
+    expect(changed).toHaveBeenLastCalledWith(controller);
+    expect(controller.state.chatMessages).toBe(cached);
+    view.unmount();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it('exposes only the current member controller after authoritative history is ready', async () => {
     const changed = vi.fn();
     const view = render(

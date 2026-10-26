@@ -23,6 +23,7 @@ vi.mock('./renderer/packagedRendererLoader', () => ({ loadPackagedRenderer: vi.f
 import { registerContentSecurityPolicy } from './contentSecurityPolicy';
 import { createInitializationWindow } from './initializationWindow';
 import { loadPackagedRenderer } from './renderer/packagedRendererLoader';
+import { createStartupBootstrapWindow } from './startupBootstrapWindow';
 
 const options = {
   appName: 'SampleProduct',
@@ -86,6 +87,22 @@ test('loads the packaged HTTP renderer in memory and waits for its real load com
   finish();
   await startup.loaded;
   expect(loaded).toHaveBeenCalledOnce();
+});
+
+test('shows a neutral bootstrap without preload or profile access and denies navigation', async () => {
+  const bootstrap = createStartupBootstrapWindow(options);
+  await bootstrap.loaded;
+  const preferences = electronMocks.createWindow.mock.calls[0][0].webPreferences;
+  expect(preferences).toMatchObject({ partition: 'startup-bootstrap', sandbox: true, nodeIntegration: false });
+  expect(preferences.preload).toBeUndefined();
+  expect(preferences.additionalArguments).toBeUndefined();
+  expect(loadPackagedRenderer).toHaveBeenCalledWith(window, electronMocks.app,
+    expect.stringMatching(/[/\\]dist$/u), expect.any(Function), undefined, { bootstrapOnly: true });
+  for (const event of ['will-navigate', 'will-frame-navigate', 'will-redirect']) {
+    const preventDefault = vi.fn();
+    window.webContents.emit(event, { preventDefault });
+    expect(preventDefault).toHaveBeenCalledOnce();
+  }
 });
 
 test('logs the actual host failure without blocking user-data preparation', async () => {

@@ -128,6 +128,7 @@ test('a different delivery cannot resume a pending JSONL migration or modify its
     'openclaw/state/agents/main/sessions/original-child.jsonl'];
   const before = retained.map(file => fs.readFileSync(path.join(directory, file)));
   const native = {
+    deliveryIdentity: vi.fn(async () => ({ runtimeVersion: 'v2026.10.6', runtimeBuildId: 'b'.repeat(64) })),
     identity: vi.fn(async () => ({ runtimeVersion: 'v2026.10.6', runtimeBuildId: 'b'.repeat(64) })),
     inspect: vi.fn(async () => ({ needsUpgrade: false })),
     upgrade: vi.fn(async () => {}),
@@ -197,6 +198,7 @@ test('an application-only release uses the normal screen and preserves the actua
   });
   const before = fs.readFileSync(path.join(directory, DB_FILENAME));
   const native = {
+    deliveryIdentity: vi.fn(async () => ({ runtimeVersion: target.runtimeVersion, runtimeBuildId: target.runtimeBuildId })),
     identity: vi.fn(async () => ({ runtimeVersion: target.runtimeVersion, runtimeBuildId: target.runtimeBuildId })),
     inspect: vi.fn(async () => ({ needsUpgrade: false })),
     upgrade: vi.fn(async () => {}),
@@ -209,9 +211,12 @@ test('an application-only release uses the normal screen and preserves the actua
   await coordinator.prepareBeforeStore(initialization);
   await coordinator.verifyNativeReady();
   coordinator.complete();
-  expect(native.inspect).toHaveBeenCalledTimes(2);
+  expect(native.identity).not.toHaveBeenCalled();
+  expect(native.inspect).not.toHaveBeenCalled();
+  expect(native.prepareCanonical).not.toHaveBeenCalled();
   expect(native.upgrade).not.toHaveBeenCalled();
-  expect(readStartupJournal(directory)?.completedIdentity).toEqual(target);
+  expect(readStartupJournal(directory)?.completedIdentity).toEqual(previous);
+  expect(readStartupJournal(directory)?.lastOpenedIdentity).toEqual(target);
   expect(fs.readFileSync(path.join(directory, DB_FILENAME))).toEqual(before);
   expect(fs.existsSync(path.join(directory, 'backups'))).toBe(false);
 });

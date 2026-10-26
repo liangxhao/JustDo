@@ -858,7 +858,7 @@ test('reconciles a pending transcript invalidation after a renderable final mess
     sessionKey: 'agent:main:justdo:session-1',
     limit: 250,
     maxChars: 500_000,
-  });
+  }, expect.objectContaining({ signal: expect.any(AbortSignal) }));
   expect(controller.state.chatMessages).toEqual([
     expect.objectContaining({
       role: 'assistant',
@@ -932,7 +932,7 @@ test('never lets a truncated final overwrite the complete live assistant snapsho
     sessionKey,
     limit: 250,
     maxChars: 500_000,
-  });
+  }, expect.objectContaining({ signal: expect.any(AbortSignal) }));
   expect(JSON.stringify(controller.state.chatMessages)).not.toContain('...(truncated)...');
 });
 
@@ -1107,7 +1107,7 @@ test('replays deferred session.message reload after silent final message', async
     sessionKey: 'agent:main:justdo:session-1',
     limit: 250,
     maxChars: 500_000,
-  });
+  }, expect.objectContaining({ signal: expect.any(AbortSignal) }));
 });
 
 test('bounds missing-final recovery when history only gains a tool result', async () => {

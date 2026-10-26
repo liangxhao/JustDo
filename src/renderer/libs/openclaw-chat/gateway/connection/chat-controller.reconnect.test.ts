@@ -184,7 +184,8 @@ test('keeps pending Main work when reconnect startup fails', async () => {
 
   (controller as unknown as { handleHello(hello: Record<string, unknown>): void }).handleHello({});
 
-  await vi.waitFor(() => expect(controller.state.initialHistoryReady).toBe(true));
+  await vi.waitFor(() => expect(controller.state.historyReadFailed).toBe(true));
+  expect(controller.state.initialHistoryReady).toBe(false);
   expect(controller.state.chatSending).toBe(true);
   expect(controller.state.chatRunId).toBe('pending-run');
   expect(controller.state.pendingUserMessage).not.toBeNull();

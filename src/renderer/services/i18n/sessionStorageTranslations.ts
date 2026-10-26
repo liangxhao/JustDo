@@ -53,6 +53,8 @@ export const sessionStorageTranslations = {
     storageError_unknown: '无法完成会话存储操作，请刷新核对状态。',
     storageHistoryLoading: '正在加载历史；归档历史可能需要更长时间。',
     storageHistoryFailed: '历史读取失败，请重试。恢复完成前不能发送或导出。',
+    storageHistoryPreparing: '会话正在准备，完成后会自动加载历史。',
+    storageHistoryPreparationPending: '会话仍在准备，历史尚未读取。请稍后重试；读取完成前不能发送或导出。',
     storageHistoryRetry: '重新读取历史',
     storageExportScope: '导出当前聊天快照，不包含全部会话、归档文件或附件文件，不能代替完整备份。',
   },
@@ -115,6 +117,8 @@ export const sessionStorageTranslations = {
       'Unable to complete the session storage operation. Refresh to verify its state.',
     storageHistoryLoading: 'Loading history. Archived history may take longer.',
     storageHistoryFailed: 'History could not be read. Retry before sending or exporting.',
+    storageHistoryPreparing: 'The session is preparing. History will load automatically when ready.',
+    storageHistoryPreparationPending: 'The session is still preparing and history is not confirmed. Retry later before sending or exporting.',
     storageHistoryRetry: 'Reload history',
     storageExportScope:
       'Exports the current chat snapshot, not all sessions, archive files or attachment files. This is not a complete backup.',

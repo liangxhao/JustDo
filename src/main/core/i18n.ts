@@ -99,6 +99,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
     sessionModelConfigurationUnavailable: '无法读取模型配置，请稍后重试。',
     sessionModelIdentityChanged: '模型准备期间会话身份发生变化，操作已停止。',
     sessionModelPreparationUnconfirmed: '未能确认会话模型已生效，请重新选择模型后重试。',
+    sessionStoragePreparationTimeout: '新会话仍在准备中，请稍后重新发送。',
+    sessionStoragePreparationChanged: '准备期间会话或连接已变更，请重新发送。',
     extensionConversionNotImplemented: `该扩展不满足 ${PRODUCT_NAME} 的扩展格式。请使用包含 openclaw.plugin.json 和已编译运行入口的原生扩展包；其他插件格式不能直接导入。`,
     extensionImportSourceChanged: '导入准备期间源目录发生变化，请重试。',
     agentTeamSkillSyncFailed: '扩展开关已保存，但 Agent Team 技能同步未完成。请重试同一开关操作。',
@@ -106,6 +108,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     engineRestartReadyUnconfirmed: '引擎已接受重启，但尚未确认就绪。未追加重启，请稍后查看状态。',
     engineConfigApplicationUnconfirmed:
       '设置已保存，但重启请求的结果尚未确认。未追加重启，设置是否生效仍待确认。',
+    modelDefaultConfigSyncFailed: '默认模型配置同步失败，请重试。',
     extensionCredentialRefreshUnconfirmed: '扩展凭据已保存，但尚未确认运行时刷新成功。',
     extensionRuntimeServiceFailed: '扩展服务启动失败，请查看运行时诊断。',
     extensionOperationBusy: '另一个插件或配置操作仍在处理中，请等待完成后再试。',
@@ -294,6 +297,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
       'The session identity changed while preparing the model. The operation has stopped.',
     sessionModelPreparationUnconfirmed:
       'The session model could not be confirmed. Select the model again and retry.',
+    sessionStoragePreparationTimeout: 'The new conversation is still being prepared. Please send again later.',
+    sessionStoragePreparationChanged: 'The conversation or connection changed during preparation. Please send again.',
     extensionConversionNotImplemented: `This extension does not meet ${PRODUCT_NAME}'s extension format requirements. Use a native extension package containing openclaw.plugin.json and a compiled runtime entry. Other plugin formats cannot be imported directly.`,
     extensionImportSourceChanged: 'The import source changed during preparation. Please try again.',
     agentTeamSkillSyncFailed:
@@ -304,6 +309,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
       'The engine accepted the restart, but readiness is unconfirmed. No additional restart was requested. Check its status later.',
     engineConfigApplicationUnconfirmed:
       'Settings were saved, but the restart request outcome is unconfirmed. No additional restart was requested; application is still unconfirmed.',
+    modelDefaultConfigSyncFailed: 'Could not synchronize the default model configuration. Please retry.',
     extensionCredentialRefreshUnconfirmed:
       'Extension credentials were saved, but runtime refresh is unconfirmed.',
     extensionRuntimeServiceFailed:

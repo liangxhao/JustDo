@@ -45,6 +45,7 @@ export function useHomeFileApps(options: Options): {
     session: McpWorkspaceSession;
     targetSessionId?: string;
     valid: boolean;
+    hasAuthenticatedConnection: boolean;
   };
   const owned = useRef<Owner>();
   const retained = useRef(new Set<Owner>());
@@ -181,7 +182,7 @@ export function useHomeFileApps(options: Options): {
           },
         },
       );
-      created = { key: scope.key, requestId, session, valid: true };
+      created = { key: scope.key, requestId, session, valid: true, hasAuthenticatedConnection: false };
       owner = created;
       owned.current = owner;
     }
@@ -236,11 +237,16 @@ export function useHomeFileApps(options: Options): {
     if (!runtimeReady || !options.cwd || !options.agentId) return;
     const scope = owner();
     let active = true;
-    let authenticated = scope.session.connected;
+    if (scope.session.connected) scope.hasAuthenticatedConnection = true;
     let disconnected = false;
     const stop = scope.session.subscribeConnection(() => {
       if (!active || latest.current.key !== scope.key || owned.current !== scope) return;
       if (!scope.session.connected) {
+        // A failed socket before the first hello is still owned by the same
+        // bounded connection wait. Keep that real preparation visible until
+        // it succeeds or rejects, instead of cancelling it as a read failure.
+        if (!scope.hasAuthenticatedConnection &&
+            pending.current?.revision === discovery.revision) return;
         disconnected = true;
         discovery.revision++;
         pending.current?.abort.abort();
@@ -251,12 +257,13 @@ export function useHomeFileApps(options: Options): {
       }
       // Initial preparation is already waiting for the first hello. After a
       // reconnect, let that old attempt settle before preparing the new owner.
-      if (!authenticated && !disconnected) {
-        authenticated = true;
+      const wasAuthenticated = scope.hasAuthenticatedConnection;
+      scope.hasAuthenticatedConnection = true;
+      if (!wasAuthenticated && !disconnected) {
         return;
       }
-      authenticated = true;
       disconnected = false;
+      setRequestState({ key: scope.key, failed: false });
       void (pending.current?.task ?? Promise.resolve()).then(() => {
         if (active && owned.current === scope && scope.session.connected) void discover();
       });
@@ -493,9 +500,11 @@ export function useHomeFileApps(options: Options): {
                       : 'mcpAppsUnavailable',
                 ),
                 description: state?.failed ? i18nService.t('mcpAppsDiscoveryFailed') : undefined,
+                loading: !state?.failed && (Boolean(state) || runtimeReady),
+                error: state?.failed === true,
                 section: i18nService.t('mcpAppsTitle'),
                 icon: createElement(ArrowPathIcon, {
-                  className: `h-4 w-4${state && !state.failed ? ' animate-spin' : ''}`,
+                  className: 'h-4 w-4',
                 }),
                 disabled: !state?.failed,
                 onSelect: () => void discover(),

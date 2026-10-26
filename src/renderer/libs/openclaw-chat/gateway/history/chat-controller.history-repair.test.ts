@@ -1774,7 +1774,7 @@ test('catches up a missed sessions_yield after a later session.message reveals a
     sessionKey,
     limit: 250,
     maxChars: 500_000,
-  });
+  }, expect.objectContaining({ signal: expect.any(AbortSignal) }));
   expect(controller.state.runActivity).toMatchObject({
     runId: 'run-current',
     stage: 'running-tool',

@@ -250,6 +250,93 @@ describe('GatewayConfigReloadMonitor', () => {
     expect(monitor.isGatewayRestartPending()).toBe(false);
   });
 
+  it.each([
+    '[gateway] received SIGUSR1; restarting',
+    '2026-10-25T22:35:57.133+08:00 [gateway] received SIGUSR2; restarting',
+    '[gateway] restart mode: in-process restart (OPENCLAW_NO_RESPAWN)',
+    '[gateway] restart mode: in-process restart',
+  ])('recognizes the complete native restart marker: %s', line => {
+    const monitor = new GatewayConfigReloadMonitor();
+
+    monitor.observeLine(line);
+
+    expect(monitor.isGatewayRestartPending()).toBe(true);
+  });
+
+  it.each([
+    '[ws] event preview="[gateway] received SIGUSR2; restarting"',
+    '[plugin] message: [gateway] restart mode: in-process restart',
+    '[gateway] received SIGUSR2; restarting failed',
+  ])('ignores restart text embedded in unrelated log content: %s', line => {
+    const monitor = new GatewayConfigReloadMonitor();
+
+    monitor.observeLine(line);
+
+    expect(monitor.isGatewayRestartPending()).toBe(false);
+  });
+
+  it('cancels a ready waiter and releases its timer and abort subscription', async () => {
+    vi.useFakeTimers();
+    const monitor = new GatewayConfigReloadMonitor();
+    const controller = new AbortController();
+    const removeListener = vi.spyOn(controller.signal, 'removeEventListener');
+    const result = monitor.waitForGatewayReadyAfter(
+      monitor.getGatewayLifecycleGeneration(),
+      600_000,
+      controller.signal,
+    );
+    expect(vi.getTimerCount()).toBe(1);
+
+    controller.abort();
+
+    await expect(result).resolves.toBe(false);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(removeListener).toHaveBeenCalledWith('abort', expect.any(Function));
+    const nextResult = monitor.waitForGatewayReadyAfter(
+      monitor.getGatewayLifecycleGeneration(),
+      100,
+    );
+    monitor.observeLine('[gateway] ready');
+    await expect(nextResult).resolves.toBe(true);
+    await expect(result).resolves.toBe(false);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('does not subscribe or accept cached ready for an already cancelled waiter', async () => {
+    vi.useFakeTimers();
+    const monitor = new GatewayConfigReloadMonitor();
+    const controller = new AbortController();
+    const addListener = vi.spyOn(controller.signal, 'addEventListener');
+    controller.abort();
+    monitor.observeLine('[gateway] ready');
+
+    await expect(monitor.waitForGatewayReadyAfter(0, 100, controller.signal)).resolves.toBe(false);
+
+    expect(addListener).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it.each(['ready', 'exit', 'timeout'] as const)(
+    'releases a cancellable waiter after %s',
+    async outcome => {
+      vi.useFakeTimers();
+      const monitor = new GatewayConfigReloadMonitor();
+      const controller = new AbortController();
+      const removeListener = vi.spyOn(controller.signal, 'removeEventListener');
+      const result = monitor.waitForGatewayReadyAfter(0, 100, controller.signal);
+
+      if (outcome === 'ready') monitor.observeLine('[gateway] ready');
+      if (outcome === 'exit') monitor.observeGatewayExit();
+      if (outcome === 'timeout') await vi.advanceTimersByTimeAsync(100);
+
+      await expect(result).resolves.toBe(outcome === 'ready');
+      expect(vi.getTimerCount()).toBe(0);
+      expect(removeListener).toHaveBeenCalledWith('abort', expect.any(Function));
+      controller.abort();
+      await expect(result).resolves.toBe(outcome === 'ready');
+    },
+  );
+
   it('tracks Gateway ready independently from config reload records', async () => {
     const monitor = new GatewayConfigReloadMonitor();
     const generation = monitor.getGatewayLifecycleGeneration();

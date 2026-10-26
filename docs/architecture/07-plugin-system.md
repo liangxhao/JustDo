@@ -10,6 +10,11 @@ MCP client 使用根工程精确版本生产依赖，其发布代码已内嵌 Aj
 MCP 进程前拒绝该能力。锁定的公开 MCP SDK 不提供 detached 进程组创建选项，原生清理
 API 也不能清理 macOS 上 attached wrapper 的后代，因此本轮不声明该平台的进程树清理保证。
 
+Runtime Services 在注册时立即建立外部 MCP 的策略、工具工厂与清理回调，传输客户端在
+首次连接时才初始化。异步加载结束后、创建子进程前，重新核对租约、当前原生会话身份、
+管理员及客户端授权和插件状态；加载期间撤销任一权限不得启动新进程。离线打包仍内嵌
+传输依赖，不把延迟初始化变成首次使用下载。
+
 插件页组合多种能力，但它们不是同一种安装单元。本文以 Main 插件服务、原生 API、配置同步和 Extension 注册为依据，说明读取、启停、安装和恢复各由谁负责。
 
 内置插件源码统一位于仓库根目录的 `plugins/`，按 `extensions/`、`skills/`、`mcp-servers/`、`hooks/`、`browser-extensions/` 分类。OpenClaw 扩展位于 `plugins/extensions/<plugin-id>/`，独立技能及筛选清单位于 `plugins/skills/`；扩展自带的技能保留在所属扩展内部。`mcp-servers/`、`hooks/` 当前仅预留目录，尚无内置加载逻辑。构建仍将 OpenClaw 扩展和选中技能组装到原生的 `dist/extensions/`、`skills/`、`custodian-skills/`，开发源码发现读取对应扩展目录。图标、文档模板和运行时准备缓存继续由 `resources/` 管理。目录约定见[内置插件说明](../../plugins/README.md)。

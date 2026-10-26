@@ -68,6 +68,7 @@ import {
   toolResultCallIds,
 } from '../chat-controller-support';
 import { refreshNativePendingInputs } from '../input/chat-pending-inputs';
+import { HistoryPreparationTimeoutError, readHistoryAfterPreparation } from './history-preparation';
 export interface ChatControllerHistoryContext {
   readonly currentMessageHistory: ChunkedMessageHistory;
   readonly state: ChatState;
@@ -119,6 +120,7 @@ export interface ChatControllerHistoryContext {
     },
   ) => Promise<boolean>;
   readonly scheduleDeferredHistoryReload: (sessionKey: string, reason: string) => void;
+  readonly clearDeferredHistoryReload: () => void;
   readonly transcriptImageCache: Map<string, Promise<string | null>>;
   transcriptImageReadsActive: number;
   readonly transcriptImageReadWaiters: (() => void)[];
@@ -137,6 +139,11 @@ export interface ChatControllerHistoryContext {
   readonly rememberHistoryPagination: (sessionKey: string) => void;
   readonly ensureTranscriptSessionIdentity: () => void;
   readonly historyLoadsInFlight: Set<string>;
+  historyReadAbortController: AbortController | null;
+  readonly syncMessageSessionSubscription: (
+    sessionKey: string,
+    options?: { propagateFailure?: boolean; signal?: AbortSignal },
+  ) => Promise<boolean>;
   readonly historyReloadRequested: Set<string>;
   readonly immediateHistoryReloadRequested: Set<string>;
   readonly _snap: () => Record<string, unknown>;
@@ -806,6 +813,7 @@ export async function loadOlderHistory(this: ChatControllerHistoryContext): Prom
         this.state.historyNextCursor = null;
         this.rememberHistoryPagination(sessionKey);
         this.setCurrentSessionMessages(messages, { resetLoadedHistory: true });
+        this.state.initialHistoryReady = true;
         this.state.transcript.revision += 1;
         this.notify();
         return true;
@@ -906,7 +914,16 @@ export async function loadHistory(
   let pagingGeneration = ++this.historyPagingGeneration;
   const loadSeq = ++this.historyLoadSeq;
   let transcriptHistoryGeneration = this.state.transcript.historyGeneration;
+  const clientGeneration = client.generation;
+  const readController = new AbortController();
+  this.historyReadAbortController = readController;
+  let sawPreparationPending = false;
+  this.state.historyPreparationTimedOut = false;
   let requestedSessionId = this.state.transcript.sessionId;
+  const readIsCurrent = () => this.state.client === client && client.generation === clientGeneration &&
+    this.state.connected && this.state.sessionKey === sessionKey &&
+    this.historyPagingGeneration === pagingGeneration &&
+    this.state.transcript.historyGeneration === transcriptHistoryGeneration;
   this.historyLoadsInFlight.add(sessionKey);
   const previousMessages = this.state.chatMessages;
   const requestRunId = this.state.chatRunId;
@@ -927,11 +944,42 @@ export async function loadHistory(
     // owns both the recent page and its offset cursor; no REST/IPC fallback or
     // second independently timed snapshot is needed.
     const method = options.preferStartup ? 'chat.startup' : 'chat.history';
-    const result = await client.request<ChatHistorySnapshot>(method, {
+    const result = await readHistoryAfterPreparation<ChatHistorySnapshot>({
       sessionKey,
-      limit: CHAT_HISTORY_INITIAL_LIMIT,
-      maxChars: CHAT_HISTORY_MAX_CHARS,
+      controller: readController,
+      isCurrent: readIsCurrent,
+      read: async signal => {
+        if (sawPreparationPending) {
+          const subscribed = await this.syncMessageSessionSubscription(sessionKey, {
+            propagateFailure: true, signal,
+          });
+          if (!subscribed) throw new DOMException('History subscription owner changed', 'AbortError');
+        }
+        signal.throwIfAborted();
+        if (!readIsCurrent()) throw new DOMException('History owner changed', 'AbortError');
+        if (sawPreparationPending) {
+          // This subscribed snapshot covers notifications queued before dispatch.
+          this.clearDeferredHistoryReload();
+          this.historyReloadRequested.delete(sessionKey);
+          this.immediateHistoryReloadRequested.delete(sessionKey);
+        }
+        return client.request<ChatHistorySnapshot>(method, {
+          sessionKey, limit: CHAT_HISTORY_INITIAL_LIMIT, maxChars: CHAT_HISTORY_MAX_CHARS,
+        }, { signal });
+      },
+      onPending: () => {
+        sawPreparationPending = true;
+        this.state.historyPreparationPending = true;
+        this.state.historyReadFailed = false;
+        this.state.initialHistoryReady = false;
+        this.state.lastError = null;
+        this.notify();
+      },
     });
+    if (!readIsCurrent()) return false;
+    // A current native snapshot ends preparation even when later reconciliation
+    // deliberately declines to apply this page. It does not establish UI readiness.
+    this.state.historyPreparationPending = false;
     const pagedHistory = parseChatHistoryPage(result);
     debugLog('[ChatCtrl] loadHistory RPC OK', {
       seq: loadSeq,
@@ -945,6 +993,7 @@ export async function loadHistory(
     if (
       this.state.sessionKey !== sessionKey ||
       this.state.client !== client ||
+      client.generation !== clientGeneration ||
       !this.state.connected ||
       this.historyPagingGeneration !== pagingGeneration ||
       this.state.transcript.historyGeneration !== transcriptHistoryGeneration
@@ -1031,6 +1080,7 @@ export async function loadHistory(
     }
     const requestStillCurrent = (): boolean =>
       this.state.client === client &&
+      client.generation === clientGeneration &&
       this.state.connected &&
       this.state.sessionKey === sessionKey &&
       this.historyPagingGeneration === pagingGeneration &&
@@ -1352,20 +1402,39 @@ export async function loadHistory(
     this.hydrateCurrentSessionImages(messages, sessionKey);
     if (this.state.historyReadFailed) this.state.lastError = null;
     this.state.historyReadFailed = false;
-    if (!this.expectInitialHistory) this.state.initialHistoryReady = true;
+    this.state.historyPreparationPending = false;
+    this.state.historyPreparationTimedOut = false;
+    if (!this.expectInitialHistory || this.findExpectedInitialHistoryIndex(hydratedMessages) >= 0)
+      this.state.initialHistoryReady = true;
     this.notify();
     return true;
   } catch (err) {
     if (
       this.state.sessionKey !== sessionKey ||
       this.state.client !== client ||
+      client.generation !== clientGeneration ||
+      !this.state.connected ||
       this.historyPagingGeneration !== pagingGeneration ||
       this.state.transcript.historyGeneration !== transcriptHistoryGeneration
     )
       return false;
+    if (readController.signal.aborted && !(err instanceof HistoryPreparationTimeoutError)) return false;
     this.state.chatLoading = false;
+    this.state.historyPreparationPending = false;
     this.state.historyReadFailed = true;
+    this.state.historyPreparationTimedOut = err instanceof HistoryPreparationTimeoutError;
     this.state.lastError = (err as Error).message;
+    if (sawPreparationPending) {
+      this.clearDeferredHistoryReload();
+      this.historyReloadRequested.delete(sessionKey);
+      this.immediateHistoryReloadRequested.delete(sessionKey);
+    }
+    if (err instanceof HistoryPreparationTimeoutError) {
+      this.historyReloadRequested.delete(sessionKey);
+      this.immediateHistoryReloadRequested.delete(sessionKey);
+      this.notify();
+      return false;
+    }
     console.error('[ChatCtrl] loadHistory FAILED:', (err as Error).message);
     debugLog('[ChatCtrl] loadHistory FAILED', {
       seq: loadSeq,
@@ -1383,6 +1452,7 @@ export async function loadHistory(
     this.notify();
     return false;
   } finally {
+    if (this.historyReadAbortController === readController) this.historyReadAbortController = null;
     this.historyLoadsInFlight.delete(sessionKey);
     const reloadRequested = this.historyReloadRequested.delete(sessionKey);
     const immediateReloadRequested = this.immediateHistoryReloadRequested.delete(sessionKey);

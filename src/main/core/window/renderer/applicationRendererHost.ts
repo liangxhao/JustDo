@@ -74,7 +74,7 @@ const allowedPackagedAsset = (relative: string): boolean => {
   )
     return false;
   if (
-    ['index.html', 'image-preview.html', 'workspace.html', 'widget-viewer.html'].includes(relative)
+    ['index.html', 'startup-bootstrap.html', 'image-preview.html', 'workspace.html', 'widget-viewer.html'].includes(relative)
   )
     return true;
   const extension = path.extname(relative).toLowerCase();
@@ -155,6 +155,7 @@ const readPackagedAsset = async (
 
 const collectPackagedAssets = async (
   directory: string,
+  bootstrapOnly: boolean,
 ): Promise<{ root: string; assets: Map<string, PackagedAsset> }> => {
   const absolute = path.resolve(directory);
   const rootStats = await lstat(absolute);
@@ -172,10 +173,12 @@ const collectPackagedAssets = async (
     )
       return;
     if (stats.isDirectory()) {
+      if (bootstrapOnly && relative) return;
       if (relative && !/^assets(?:[/\\]|$)/u.test(relative)) return;
       if (relative.split(path.sep).length > 16)
         throw new Error('Packaged renderer asset tree too deep');
       for (const child of await readdir(candidate)) {
+        if (bootstrapOnly && child !== 'startup-bootstrap.html') continue;
         if (!child.startsWith('.')) await visit(path.join(relative, child));
       }
       return;
@@ -188,16 +191,19 @@ const collectPackagedAssets = async (
     assets.set(resource, { ...metadata, digest: digestAsset(bytes) });
   };
   await visit('');
-  if (!assets.has('index.html')) throw new Error('Packaged renderer entry missing');
+  if (!assets.has(bootstrapOnly ? 'startup-bootstrap.html' : 'index.html'))
+    throw new Error('Packaged renderer entry missing');
   return { root, assets };
 };
 
 /** A read-only artifact server: no workspace roots, routes, credentials or IPC endpoints. */
 export const startApplicationRendererHost = async (
   directory: string,
+  options: { bootstrapOnly?: boolean } = {},
 ): Promise<ApplicationRendererHost> => {
-  const { root, assets } = await collectPackagedAssets(directory);
-  const index = await readPackagedAsset(root, assets.get('index.html')!);
+  const entry = options.bootstrapOnly ? 'startup-bootstrap.html' : 'index.html';
+  const { root, assets } = await collectPackagedAssets(directory, options.bootstrapOnly === true);
+  const index = await readPackagedAsset(root, assets.get(entry)!);
   const inlineScriptHashes = [
     ...index.toString('utf8').matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script\s*>/giu),
   ]
@@ -292,7 +298,7 @@ export const startApplicationRendererHost = async (
   let closing: Promise<void> | undefined;
   return {
     origin,
-    url: `${origin}/index.html`,
+    url: `${origin}/${entry}`,
     close: () => {
       closing ??= new Promise<void>(resolve => {
         closed = true;

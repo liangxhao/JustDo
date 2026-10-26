@@ -26,8 +26,9 @@ export async function sendQueuedInput(
   const sessionId = state.currentSessionId;
   if (!client || !state.connected || !sessionId || sessionKey !== expectedSessionKey)
     throw new Error(i18nService.t('coworkQueueUnavailable'));
-  if (state.historyReadFailed || state.compactionInFlight)
-    throw new Error(i18nService.t('coworkQueueUnavailable'));
+  if (state.historyReadFailed || state.historyPreparationPending || state.compactionInFlight)
+    throw new Error(i18nService.t(state.historyPreparationPending || state.historyPreparationTimedOut
+      ? 'storageHistoryPreparationPending' : 'coworkQueueUnavailable'));
   const gatewayAttachments = attachments.filter(item => item.base64Data).map(toGatewayAttachment);
   const signature = JSON.stringify([sessionId, message, gatewayAttachments]);
   const scope = JSON.stringify([sessionKey, sessionId]);

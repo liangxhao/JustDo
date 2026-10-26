@@ -2,23 +2,47 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const mocks = vi.hoisted(() => ({ options: [] as unknown[], connect: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  options: [] as unknown[], connect: vi.fn(),
+  instances: [] as Array<{
+    state: {
+      sessionKey: string; initialHistoryReady: boolean; chatMessages: string[];
+      historyPreparationPending: boolean; historyPreparationTimedOut: boolean; historyReadFailed: boolean;
+      chatLoading: boolean;
+      transcript: { activeTurn: null }; lastError: string | null;
+    };
+    notify: () => void; disconnect: ReturnType<typeof vi.fn>; loadHistory: ReturnType<typeof vi.fn>;
+  }>,
+}));
 vi.mock('../chat/JustDoChatWrapper', () => ({ connectToGateway: mocks.connect }));
-vi.mock('../chat/ChatMessageDisplay', () => ({ default: () => <div>Native history</div> }));
+vi.mock('../chat/ChatMessageDisplay', () => ({
+  default: ({ controller }: { controller: (typeof mocks.instances)[number] | null }) =>
+    <div>Native history {controller?.state.chatMessages.join('\n')}</div>,
+}));
 vi.mock('@/libs/openclaw-chat/gateway/chat-controller', () => ({
   ChatController: class {
     state = {
       sessionKey: '',
       initialHistoryReady: false,
-      chatMessages: [],
+      historyPreparationPending: false,
+      historyPreparationTimedOut: false,
+      historyReadFailed: false,
+      chatLoading: false,
+      chatMessages: [] as string[],
       transcript: { activeTurn: null },
-      lastError: null,
+      lastError: null as string | null,
     };
     constructor(options: unknown) {
       mocks.options.push(options);
+      mocks.instances.push(this);
     }
-    subscribe = () => () => {};
+    notify = () => {};
+    subscribe = (callback: (state: typeof this.state) => void) => {
+      this.notify = () => callback(this.state);
+      return () => { this.notify = () => {}; };
+    };
     disconnect = vi.fn();
+    loadHistory = vi.fn().mockResolvedValue(true);
   },
 }));
 
@@ -51,6 +75,7 @@ const stats = {
 beforeEach(() => {
   i18nService.setLanguage('en', { persist: false });
   mocks.options.length = 0;
+  mocks.instances.length = 0;
   mocks.connect.mockReset().mockResolvedValue(true);
   Object.defineProperty(window, 'electron', {
     configurable: true,
@@ -59,9 +84,117 @@ beforeEach(() => {
     },
   });
 });
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+});
 
 describe('subagent transcript initialization', () => {
+  it.each([false, true])('bounds preparation recovery without task proof and cancels on genuine readiness (%s)', async becomesReady => {
+    vi.useFakeTimers();
+    const view = render(<SubagentMessageDrawer parentSessionId="parent"
+      subagent={{ ...task, status: 'done' }} onClose={vi.fn()} />);
+    await act(async () => {});
+    const controller = mocks.instances[0];
+    act(() => {
+      controller.state.chatMessages = ['Cached task text'];
+      controller.state.historyPreparationPending = true;
+      controller.notify();
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(30_000));
+    expect(screen.queryByRole('alert')).toBeNull();
+    act(() => {
+      controller.state.historyPreparationPending = false;
+      controller.notify();
+    });
+    expect(controller.state.initialHistoryReady).toBe(false);
+    expect(screen.getByRole('status').textContent).toBe(i18nService.t('loading'));
+    await act(async () => vi.advanceTimersByTimeAsync(10_000));
+    act(() => {
+      controller.state.initialHistoryReady = becomesReady;
+      controller.notify();
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(5_000));
+    if (becomesReady) {
+      expect(screen.queryByRole('alert')).toBeNull();
+      expect(screen.queryByRole('status')).toBeNull();
+      expect(screen.queryByRole('button', { name: i18nService.t('storageHistoryRetry') })).toBeNull();
+    } else {
+      expect(controller.state.initialHistoryReady).toBe(false);
+      expect(controller.state.historyPreparationTimedOut).toBe(false);
+      expect(screen.getByRole('alert').textContent).toContain(i18nService.t('subtaskMessagesLoadFailed'));
+      expect(screen.getByRole('button', { name: i18nService.t('storageHistoryRetry') })).toBeTruthy();
+    }
+    expect(screen.getByText(/Cached task text/)).toBeTruthy();
+    expect(mocks.instances).toHaveLength(1);
+    view.unmount();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('preserves cached task history during native preparation and exposes a bounded manual retry', async () => {
+    vi.useFakeTimers();
+    const view = render(<SubagentMessageDrawer parentSessionId="parent"
+      subagent={{ ...task, status: 'done' }} onClose={vi.fn()} />);
+    await act(async () => {});
+    const controller = mocks.instances[0];
+    act(() => {
+      controller.state.chatMessages = ['Cached task text'];
+      controller.state.historyPreparationPending = true;
+      controller.notify();
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(30_000));
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.getByRole('status').textContent).toBe(i18nService.t('storageHistoryPreparing'));
+    expect(screen.getByText(/Cached task text/)).toBeTruthy();
+    expect(mocks.connect).toHaveBeenCalledOnce();
+    act(() => {
+      controller.state.historyPreparationPending = false;
+      controller.state.historyPreparationTimedOut = true;
+      controller.state.historyReadFailed = true;
+      controller.notify();
+    });
+    expect(screen.getByRole('alert').textContent).toContain(i18nService.t('storageHistoryPreparationPending'));
+    expect(screen.getByText(/Cached task text/)).toBeTruthy();
+    controller.loadHistory.mockImplementationOnce(async () => {
+      controller.state.historyPreparationTimedOut = false;
+      controller.state.historyReadFailed = false;
+      controller.state.chatLoading = false;
+      controller.notify();
+      return true;
+    });
+    fireEvent.click(screen.getByRole('button', { name: i18nService.t('storageHistoryRetry') }));
+    await act(async () => {});
+    expect(controller.loadHistory).toHaveBeenCalledExactlyOnceWith(true);
+    expect(mocks.instances).toHaveLength(1);
+    expect(controller.disconnect).not.toHaveBeenCalled();
+    expect(screen.getByText(/Cached task text/)).toBeTruthy();
+    expect(controller.state.initialHistoryReady).toBe(false);
+    expect(screen.getByRole('alert').textContent).toContain(i18nService.t('subtaskMessagesLoadFailed'));
+    expect(screen.getByRole('alert').textContent).not.toContain(i18nService.t('storageHistoryPreparationPending'));
+    fireEvent.click(screen.getByRole('button', { name: i18nService.t('storageHistoryRetry') }));
+    await act(async () => {});
+    expect(controller.loadHistory).toHaveBeenCalledTimes(2);
+    expect(mocks.instances).toHaveLength(1);
+    act(() => {
+      controller.state.historyPreparationTimedOut = false;
+      controller.state.historyReadFailed = false;
+      controller.state.historyPreparationPending = true;
+      controller.state.chatLoading = true;
+      controller.notify();
+    });
+    expect(screen.getByRole('status').textContent).toBe(i18nService.t('storageHistoryPreparing'));
+    act(() => {
+      controller.state.initialHistoryReady = true;
+      controller.state.historyPreparationPending = false;
+      controller.state.chatLoading = false;
+      controller.notify();
+    });
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.getByText(/Cached task text/)).toBeTruthy();
+    view.unmount();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it.each(['subagent', 'acp'] as const)(
     'uses the %s initial task message format',
     async runtime => {

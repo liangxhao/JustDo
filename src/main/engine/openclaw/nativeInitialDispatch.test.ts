@@ -14,8 +14,11 @@ vi.mock('../../core/filesystem/projectGit', () => ({
 }));
 
 import { createDefaultAgentRuntimeSettings } from '../../../shared/agents/agentRuntimeSettings';
+import { t } from '../../core/i18n';
 import type { CoworkStore } from '../../data/coworkStore';
 import type { OpenClawEngineManager } from '../../openclaw/runtime/openclawEngineManager';
+import { enqueueSessionModelOperation } from '../gateway/sessionModelOperations';
+import { SESSION_STORAGE_PREPARATION_TIMEOUT_MS } from '../gateway/sessionStoragePreparation';
 import type { GatewayClientLike, SessionTurn } from '../gateway/types';
 import type { CoworkStartOptions } from '../types';
 import { OpenClawRuntimeAdapter } from './openclawRuntimeAdapter';
@@ -28,20 +31,24 @@ const startedAt = 1700000000042;
 
 type DispatchInternals = {
   gatewayClient: GatewayClientLike | null;
+  gatewayClientGeneration: number;
   ensureGatewayClientReady: () => Promise<void>;
   activeTurns: Map<string, SessionTurn>;
   unknownSessionRuns: Map<string, { runId: string; cancelled: boolean }>;
   resolveTurn: (id: string) => void;
   cleanupSessionTurn: (id: string) => void;
+  persistTerminalGoalSnapshot: () => Promise<void>;
 };
 
 const cleanup = new Set<() => void>();
 afterEach(() => {
   for (const dispose of cleanup) dispose();
   cleanup.clear();
+  vi.useRealTimers();
 });
 
 function setup(sendReceipt?: Record<string, unknown>) {
+  let configGeneration = 0;
   const session = {
     id: sessionId,
     title: 'Synthetic initial dispatch',
@@ -72,6 +79,7 @@ function setup(sendReceipt?: Record<string, unknown>) {
     finishSessionRun,
   };
   const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+    if (method === 'sessions.describe') return { session: null };
     if (method === 'sessions.create') {
       return {
         key: sessionKey,
@@ -85,7 +93,7 @@ function setup(sendReceipt?: Record<string, unknown>) {
   });
   const adapter = new OpenClawRuntimeAdapter(
     store as unknown as CoworkStore,
-    {} as OpenClawEngineManager,
+    { getGatewayConfigReloadGeneration: () => configGeneration } as OpenClawEngineManager,
   );
   adapter.on('error', vi.fn());
   const internals = adapter as unknown as DispatchInternals;
@@ -99,16 +107,298 @@ function setup(sendReceipt?: Record<string, unknown>) {
   };
   return {
     adapter,
+    session,
     internals,
     request,
     updateSession,
     bindSessionRunRootRun,
     finishSessionRun,
     finish,
+    reloadConfig: () => { configGeneration += 1; },
   };
 }
 
+const initialSelection = () => ({
+  key: sessionKey, sessionId: gatewaySessionId,
+  entry: { sessionId: gatewaySessionId, sessionRoot: process.cwd(), permissionMode: 'full',
+    providerOverride: 'fixture', modelOverride: 'new' },
+  resolved: { modelProvider: 'fixture', model: 'new' },
+});
+
+const initialSelectionRow = () => ({
+  key: sessionKey, sessionId: gatewaySessionId, sessionRoot: process.cwd(), permissionMode: 'full',
+  modelProvider: 'fixture', model: 'new', modelOverrideSource: 'user',
+  activeModelProvider: 'previous', activeModel: 'execution',
+});
+
+function useInitialSelection(s: ReturnType<typeof setup>) {
+  const original = s.request.getMockImplementation()!;
+  let created = false;
+  s.request.mockImplementation(async (method, params) => {
+    if (method === 'sessions.create') {
+      created = true;
+      s.reloadConfig();
+      return initialSelection();
+    }
+    if (method === 'sessions.describe') return { session: created ? initialSelectionRow() : null };
+    return original(method, params);
+  });
+}
+
+const pendingStorage = () => Object.assign(new Error('Session access facts are unavailable'), {
+  code: 'UNAVAILABLE', gatewayCode: 'UNAVAILABLE',
+});
+
+describe('initial native storage preparation', () => {
+  it('waits only on the read, then creates and sends once with the captured model', async () => {
+    vi.useFakeTimers();
+    const s = setup();
+    useInitialSelection(s);
+    s.request.mockRejectedValueOnce(pendingStorage());
+    const accepted = vi.fn();
+    const running = s.adapter.startSession(sessionId, 'Use the captured selection', {
+      clientTurnId, initialModelRef: 'fixture/new', onAccepted: accepted,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(s.request.mock.calls.map(([method]) => method)).toEqual(['sessions.describe']);
+    s.reloadConfig();
+    s.session.modelRef = 'fixture/background-default';
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(accepted).toHaveBeenCalledOnce();
+    expect(s.request.mock.calls.filter(([method]) => method === 'sessions.create')).toHaveLength(1);
+    expect(s.request.mock.calls.filter(([method]) => method === 'chat.send')).toHaveLength(1);
+    expect(s.request).toHaveBeenCalledWith('sessions.create', {
+      key: sessionKey, cwd: process.cwd(), permissionMode: 'full', model: 'fixture/new',
+    });
+    expect(s.request.mock.calls.filter(([method]) => method === 'sessions.describe')).toHaveLength(3);
+    await s.finish(running);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('stops a hanging read immediately and never creates after Stop', async () => {
+    vi.useFakeTimers();
+    const s = setup();
+    vi.spyOn(s.internals, 'persistTerminalGoalSnapshot').mockResolvedValue(undefined);
+    let releaseRead!: (value: unknown) => void;
+    s.request.mockImplementationOnce(async () => new Promise(resolve => { releaseRead = resolve; }));
+    const running = s.adapter.startSession(sessionId, 'Cancelled before create', { clientTurnId });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(s.request).toHaveBeenCalledOnce();
+    await s.adapter.stopSession(sessionId);
+    await running;
+    releaseRead({ session: null });
+    await Promise.resolve();
+    expect(s.request.mock.calls.every(([method]) => method === 'sessions.describe')).toBe(true);
+    expect(s.session.status).toBe('idle');
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('aborts the preceding preparation when a new turn takes its place', async () => {
+    vi.useFakeTimers();
+    const s = setup();
+    useInitialSelection(s);
+    s.request.mockImplementationOnce(async () => new Promise(() => {}));
+    const first = s.adapter.startSession(sessionId, 'Superseded input', {
+      clientTurnId, initialModelRef: 'fixture/new',
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    const accepted = vi.fn();
+    const second = s.adapter.startSession(sessionId, 'Current input', {
+      clientTurnId: 'justdo-1700000000001-replacement', initialModelRef: 'fixture/new', onAccepted: accepted,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    await first;
+    expect(accepted).toHaveBeenCalledOnce();
+    expect(s.request.mock.calls.filter(([method]) => method === 'sessions.create')).toHaveLength(1);
+    expect(s.request.mock.calls.filter(([method]) => method === 'chat.send')).toHaveLength(1);
+    expect(s.request.mock.calls.find(([method]) => method === 'chat.send')?.[1]?.message).toBe('Current input');
+    await s.finish(second);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('does not create when the captured connection changes during a hanging read', async () => {
+    vi.useFakeTimers();
+    const s = setup();
+    s.request.mockImplementation(async () => new Promise(() => {}));
+    const running = s.adapter.startSession(sessionId, 'Keep the native owner', { clientTurnId });
+    const rejected = expect(running).rejects.toThrow(t('sessionStoragePreparationChanged'));
+    await vi.advanceTimersByTimeAsync(0);
+    s.internals.gatewayClientGeneration += 1;
+    await vi.advanceTimersByTimeAsync(250);
+    await rejected;
+    expect(s.request.mock.calls.map(([method]) => method)).toEqual(['sessions.describe']);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it.each(['agent', 'workspace', 'permission', 'binding', 'native-key', 'branch'] as const)(
+    'does not create after its product %s context changes', async changed => {
+      vi.useFakeTimers();
+      const s = setup();
+      s.request.mockImplementation(async () => new Promise(() => {}));
+      const running = s.adapter.startSession(sessionId, 'Keep the captured context', { clientTurnId });
+      const rejected = expect(running).rejects.toThrow(t('sessionStoragePreparationChanged'));
+      await vi.advanceTimersByTimeAsync(0);
+      if (changed === 'agent') s.session.agentId = 'other';
+      if (changed === 'workspace') s.session.cwd = `${process.cwd()}-replacement`;
+      if (changed === 'permission') s.session.permissionMode = 'ask';
+      if (changed === 'binding') Object.assign(s.session, { historyBinding: {
+        sessionKey, nativeSessionId: 'replacement-native-session',
+      } });
+      if (changed === 'native-key') Object.assign(s.session, { nativeSessionKey: 'replacement-key' });
+      if (changed === 'branch') Object.assign(s.session, { branchCreationPending: true });
+      await vi.advanceTimersByTimeAsync(250);
+      await rejected;
+      expect(s.request.mock.calls.map(([method]) => method)).toEqual(['sessions.describe']);
+      expect(vi.getTimerCount()).toBe(0);
+    },
+  );
+
+  it('ends the bounded wait without creating or sending', async () => {
+    vi.useFakeTimers();
+    const s = setup();
+    s.request.mockRejectedValue(pendingStorage());
+    const running = s.adapter.startSession(sessionId, 'Storage is still preparing', { clientTurnId });
+    const rejected = expect(running).rejects.toThrow(t('sessionStoragePreparationTimeout'));
+    await vi.advanceTimersByTimeAsync(SESSION_STORAGE_PREPARATION_TIMEOUT_MS);
+    await rejected;
+    expect(s.request.mock.calls.every(([method]) => method === 'sessions.describe')).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('does not retry a create already dispatched even when its error says storage is unavailable', async () => {
+    const s = setup();
+    const request = s.request.getMockImplementation()!;
+    const uncertainCreate = pendingStorage();
+    s.request.mockImplementation(async (method, params) => {
+      if (method === 'sessions.create') throw uncertainCreate;
+      return request(method, params);
+    });
+    await expect(s.adapter.startSession(sessionId, 'A single creation attempt', { clientTurnId }))
+      .rejects.toBe(uncertainCreate);
+    expect(s.request.mock.calls.map(([method]) => method)).toEqual(['sessions.describe', 'sessions.create']);
+  });
+});
+
 describe('Main initial turn delegated to the presenting Renderer', () => {
+  it('confirms the captured first-message model before delegating the only native send', async () => {
+    const s = setup();
+    useInitialSelection(s);
+    const dispatch = vi.fn<NonNullable<CoworkStartOptions['dispatchChatSend']>>().mockResolvedValue({
+      runId: clientTurnId, status: 'started',
+    });
+    const accepted = vi.fn();
+    const running = s.adapter.startSession(sessionId, 'Use the model I just selected', {
+      clientTurnId, initialModelRef: 'fixture/new', dispatchChatSend: dispatch, onAccepted: accepted,
+    });
+    await vi.waitFor(() => expect(accepted).toHaveBeenCalledOnce());
+    expect(s.request).toHaveBeenCalledWith('sessions.create', {
+      key: sessionKey, cwd: process.cwd(), permissionMode: 'full', model: 'fixture/new',
+    });
+    expect(s.updateSession).toHaveBeenCalledWith(sessionId, { modelRef: 'fixture/new' });
+    expect(dispatch).toHaveBeenCalledOnce();
+    expect(dispatch.mock.calls[0][0]).toMatchObject({ sessionKey, sessionId: gatewaySessionId });
+    expect(s.request.mock.invocationCallOrder[0]).toBeLessThan(dispatch.mock.invocationCallOrder[0]);
+    await s.finish(running);
+  });
+
+  it('refuses an intervening model change instead of sending with the later model', async () => {
+    const s = setup();
+    useInitialSelection(s);
+    const dispatch = vi.fn<NonNullable<CoworkStartOptions['dispatchChatSend']>>();
+    const beforeNativeSend = async () => {
+      s.request.mockResolvedValueOnce({ session: {
+        ...initialSelectionRow(), model: 'later-selection',
+      } });
+    };
+    await expect(s.adapter.startSession(sessionId, 'Use the captured choice', {
+      clientTurnId, initialModelRef: 'fixture/new', dispatchChatSend: dispatch, beforeNativeSend,
+    })).rejects.toMatchObject({ requestSent: false });
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(s.request.mock.calls.map(([method]) => method)).toEqual(['sessions.describe', 'sessions.create', 'sessions.describe']);
+  });
+
+  it('refuses a changed connection before sending a previously prepared selection', async () => {
+    const s = setup();
+    useInitialSelection(s);
+    const dispatch = vi.fn<NonNullable<CoworkStartOptions['dispatchChatSend']>>();
+    await expect(s.adapter.startSession(sessionId, 'Keep this selection', {
+      clientTurnId, initialModelRef: 'fixture/new', dispatchChatSend: dispatch,
+      beforeNativeSend: async () => { s.internals.gatewayClientGeneration += 1; },
+    })).rejects.toMatchObject({ requestSent: false });
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(s.request.mock.calls.map(([method]) => method)).toEqual(['sessions.describe', 'sessions.create']);
+  });
+
+  it('refuses an unpinned default even when its current model still matches the captured selection', async () => {
+    const s = setup();
+    useInitialSelection(s);
+    const dispatch = vi.fn<NonNullable<CoworkStartOptions['dispatchChatSend']>>();
+    await expect(s.adapter.startSession(sessionId, 'Keep my explicit choice', {
+      clientTurnId, initialModelRef: 'fixture/new', dispatchChatSend: dispatch,
+      beforeNativeSend: async () => {
+        s.request.mockResolvedValueOnce({ session: {
+          ...initialSelectionRow(), modelOverrideSource: null,
+        } });
+      },
+    })).rejects.toMatchObject({ requestSent: false });
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it('refuses the same native session ID returned under a different session key', async () => {
+    const s = setup();
+    useInitialSelection(s);
+    const dispatch = vi.fn<NonNullable<CoworkStartOptions['dispatchChatSend']>>();
+    await expect(s.adapter.startSession(sessionId, 'Keep the prepared identity', {
+      clientTurnId, initialModelRef: 'fixture/new', dispatchChatSend: dispatch,
+      beforeNativeSend: async () => {
+        s.request.mockResolvedValueOnce({ session: {
+          ...initialSelectionRow(), key: 'replacement-key',
+        } });
+      },
+    })).rejects.toMatchObject({ requestSent: false });
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it('holds model ordering through send acknowledgement and releases it before the run completes', async () => {
+    const s = setup();
+    useInitialSelection(s);
+    let acknowledge!: (value: unknown) => void;
+    const dispatch = vi.fn<NonNullable<CoworkStartOptions['dispatchChatSend']>>(() => new Promise(resolve => {
+      acknowledge = resolve;
+    }));
+    const accepted = vi.fn();
+    const running = s.adapter.startSession(sessionId, 'Use the captured model', {
+      clientTurnId, initialModelRef: 'fixture/new', dispatchChatSend: dispatch, onAccepted: accepted,
+    });
+    await vi.waitFor(() => expect(dispatch).toHaveBeenCalledOnce());
+    const laterPatch = vi.fn(async () => undefined);
+    const later = enqueueSessionModelOperation(sessionKey, laterPatch);
+    await Promise.resolve();
+    expect(laterPatch).not.toHaveBeenCalled();
+    acknowledge({ runId: clientTurnId, status: 'started' });
+    await later;
+    expect(laterPatch).toHaveBeenCalledOnce();
+    await vi.waitFor(() => expect(accepted).toHaveBeenCalledOnce());
+    await s.finish(running);
+  });
+
+  it('does not send when native preparation returns the preceding model', async () => {
+    const s = setup();
+    s.request.mockResolvedValueOnce({ session: null });
+    s.request.mockResolvedValueOnce({
+      key: sessionKey, sessionId: gatewaySessionId,
+      entry: { sessionId: gatewaySessionId, sessionRoot: process.cwd(), permissionMode: 'full',
+        providerOverride: 'fixture', modelOverride: 'old' },
+      resolved: { modelProvider: 'fixture', model: 'old' },
+    });
+    const dispatch = vi.fn<NonNullable<CoworkStartOptions['dispatchChatSend']>>();
+    await expect(s.adapter.startSession(sessionId, 'Use my latest model', {
+      clientTurnId, initialModelRef: 'fixture/new', dispatchChatSend: dispatch,
+    })).rejects.toThrow();
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(s.request.mock.calls.map(([method]) => method)).toEqual(['sessions.describe', 'sessions.create']);
+  });
+
   it.each(['/stop', '停止！', 'please stop'])(
     'settles the native non-executing control receipt for %s',
     async message => {
@@ -154,6 +444,7 @@ describe('Main initial turn delegated to the presenting Renderer', () => {
     await s.adapter.startSession(sessionId, '/stop', { clientTurnId, onAccepted: accepted });
 
     expect(s.request.mock.calls.map(([method]) => method)).toEqual([
+      'sessions.describe',
       'sessions.create',
       'chat.send',
     ]);
@@ -206,7 +497,7 @@ describe('Main initial turn delegated to the presenting Renderer', () => {
 
     await vi.waitFor(() => expect(s.bindSessionRunRootRun).toHaveBeenCalled());
 
-    expect(s.request).toHaveBeenCalledExactlyOnceWith('sessions.create', {
+    expect(s.request).toHaveBeenCalledWith('sessions.create', {
       key: sessionKey,
       cwd: process.cwd(),
       permissionMode: 'full',
@@ -245,6 +536,7 @@ describe('Main initial turn delegated to the presenting Renderer', () => {
     await vi.waitFor(() => expect(s.bindSessionRunRootRun).toHaveBeenCalled());
 
     expect(s.request.mock.calls.map(([method]) => method)).toEqual([
+      'sessions.describe',
       'sessions.create',
       'chat.send',
     ]);

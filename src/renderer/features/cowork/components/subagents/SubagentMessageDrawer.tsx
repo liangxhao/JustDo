@@ -53,6 +53,9 @@ const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({
   const [isLoading, setIsLoading] = useState(false);
   const [isEmpty, setIsEmpty] = useState(false);
   const [hasError, setHasError] = useState(false);
+  const [historyPreparationPending, setHistoryPreparationPending] = useState(false);
+  const [historyPreparationTimedOut, setHistoryPreparationTimedOut] = useState(false);
+  const [retryHistoryUnconfirmed, setRetryHistoryUnconfirmed] = useState(false);
   const [hasActiveChildTurn, setHasActiveChildTurn] = useState(false);
   const [isInfoOpen, setIsInfoOpen] = useState(false);
   const [detailStats, setDetailStats] = useState<SessionDetailStats>();
@@ -63,6 +66,10 @@ const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({
   const [drawerWidth, setDrawerWidth] = useState(DRAWER_DEFAULT_WIDTH);
   const [clock, setClock] = useState(Date.now());
   const drawerRef = useRef<HTMLElement>(null);
+  const retryHistoryRef = useRef<{
+    controller: ChatController;
+    retry: () => Promise<void>;
+  } | null>(null);
   const detailStatsSessionKeyRef = useRef<string>();
   const detailStatsRef = useRef<SessionDetailStats>();
   const lifecycleRequestSequenceRef = useRef(0);
@@ -95,48 +102,113 @@ const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({
     nextController.state.sessionKey = subagentSessionKey;
     let cancelled = false;
     let initialHistoryTimedOut = false;
+    let historyRemainsUnconfirmed = false;
+    let manualRetryInFlight = false;
+    let wasPreparingHistory = false;
+    let initialHistoryTimeout: number | undefined;
+    const observeInitialHistory = (afterPreparation = false) => {
+      window.clearTimeout(initialHistoryTimeout);
+      initialHistoryTimedOut = false;
+      initialHistoryTimeout = window.setTimeout(() => {
+        if (cancelled || nextController.state.initialHistoryReady ||
+          nextController.state.historyPreparationPending) return;
+        initialHistoryTimedOut = true;
+        if (afterPreparation) {
+          historyRemainsUnconfirmed = true;
+          setRetryHistoryUnconfirmed(true);
+        }
+        const hasTranscript =
+          nextController.state.chatMessages.length > 0 ||
+          nextController.state.transcript.activeTurn !== null;
+        setIsLoading(false);
+        setHasError(afterPreparation || !hasTranscript);
+        setIsEmpty(false);
+      }, SUBAGENT_INITIAL_HISTORY_TIMEOUT_MS);
+    };
+    setHistoryPreparationPending(false);
+    setHistoryPreparationTimedOut(false);
+    setRetryHistoryUnconfirmed(false);
     const unsubscribe = nextController.subscribe(state => {
       if (cancelled) return;
       const hasVisibleTranscript =
         state.chatMessages.length > 0 || state.transcript.activeTurn !== null;
       setHasActiveChildTurn(state.transcript.activeTurn !== null);
+      setHistoryPreparationPending(state.historyPreparationPending === true);
+      setHistoryPreparationTimedOut(state.historyPreparationTimedOut === true);
+      const preparationFinished = wasPreparingHistory && !state.historyPreparationPending;
+      wasPreparingHistory = state.historyPreparationPending === true;
+      if (state.historyPreparationPending || state.initialHistoryReady || state.historyReadFailed)
+        window.clearTimeout(initialHistoryTimeout);
+      if (preparationFinished && !state.initialHistoryReady && !state.historyReadFailed &&
+        !manualRetryInFlight) observeInitialHistory(true);
+      if (state.historyPreparationPending) {
+        historyRemainsUnconfirmed = false;
+        setRetryHistoryUnconfirmed(false);
+        setIsLoading(true);
+        setHasError(false);
+        setIsEmpty(false);
+        return;
+      }
+      if (state.historyReadFailed) {
+        setIsLoading(state.chatLoading);
+        setHasError(!state.chatLoading);
+        setIsEmpty(false);
+        return;
+      }
       if (!state.initialHistoryReady) {
         setIsLoading(!initialHistoryTimedOut);
         if (initialHistoryTimedOut) {
-          setHasError(!hasVisibleTranscript);
+          setHasError(historyRemainsUnconfirmed || !hasVisibleTranscript);
           setIsEmpty(false);
         }
         return;
       }
+      historyRemainsUnconfirmed = false;
+      setRetryHistoryUnconfirmed(false);
       setIsLoading(false);
       setHasError(!hasVisibleTranscript && Boolean(state.lastError));
       setIsEmpty(!hasVisibleTranscript && !state.lastError);
     });
-    let initialHistoryTimeout: number | undefined;
+    const retryHistory = async () => {
+      if (cancelled || manualRetryInFlight ||
+        nextController.state.sessionKey !== subagentSessionKey) return;
+      manualRetryInFlight = true;
+      window.clearTimeout(initialHistoryTimeout);
+      initialHistoryTimedOut = false;
+      historyRemainsUnconfirmed = false;
+      setRetryHistoryUnconfirmed(false);
+      setIsLoading(true);
+      setHasError(false);
+      setIsEmpty(false);
+      await nextController.loadHistory(true);
+      if (cancelled || nextController.state.sessionKey !== subagentSessionKey) return;
+      manualRetryInFlight = false;
+      const state = nextController.state;
+      if (!state.initialHistoryReady && !state.historyPreparationPending &&
+        !state.historyReadFailed && !state.chatLoading) {
+        initialHistoryTimedOut = true;
+        historyRemainsUnconfirmed = true;
+        setRetryHistoryUnconfirmed(true);
+        setIsLoading(false);
+        setHasError(true);
+        setIsEmpty(false);
+      }
+    };
+    const retryHistoryOwner = { controller: nextController, retry: retryHistory };
+    retryHistoryRef.current = retryHistoryOwner;
     setController(nextController);
     const stopConnection = startSubagentGatewayConnection({
       controller: nextController,
       connect: connectToGateway,
       subscribeProgress: window.electron?.openclaw?.engine?.onProgress,
       onConnecting: () => {
-        window.clearTimeout(initialHistoryTimeout);
-        initialHistoryTimedOut = false;
+        observeInitialHistory();
         const hasVisibleTranscript =
           nextController.state.chatMessages.length > 0 ||
           nextController.state.transcript.activeTurn !== null;
         setIsLoading(!hasVisibleTranscript);
         setIsEmpty(false);
         setHasError(false);
-        initialHistoryTimeout = window.setTimeout(() => {
-          if (cancelled || nextController.state.initialHistoryReady) return;
-          initialHistoryTimedOut = true;
-          const hasTranscript =
-            nextController.state.chatMessages.length > 0 ||
-            nextController.state.transcript.activeTurn !== null;
-          setIsLoading(false);
-          setHasError(!hasTranscript);
-          setIsEmpty(false);
-        }, SUBAGENT_INITIAL_HISTORY_TIMEOUT_MS);
       },
       onFailure: () => {
         setIsLoading(false);
@@ -149,6 +221,7 @@ const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({
 
     return () => {
       cancelled = true;
+      if (retryHistoryRef.current === retryHistoryOwner) retryHistoryRef.current = null;
       window.clearTimeout(initialHistoryTimeout);
       unsubscribe();
       stopConnection();
@@ -422,7 +495,10 @@ const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({
     [i18nService.t('subtaskInfoSessionId'), displaySubagent.sessionId, true],
   ];
 
-  const emptyText = hasError
+  const emptyText = historyPreparationPending
+    ? i18nService.t('storageHistoryPreparing')
+    : historyPreparationTimedOut ? i18nService.t('storageHistoryPreparationPending')
+    : hasError
     ? i18nService.t('subtaskMessagesLoadFailed')
     : isLoading
       ? i18nService.t('loading')
@@ -483,14 +559,23 @@ const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({
             </button>
           </div>
         </div>
-        <div className="flex min-h-0 flex-1 bg-background">
-          {hasError || isLoading || isEmpty ? (
-            <div className="flex flex-1 items-center justify-center px-3 text-center text-sm text-secondary">
+        <div className="flex min-h-0 flex-1 flex-col bg-background">
+          {(hasError || isLoading || isEmpty) && (
+            <div role={hasError ? 'alert' : 'status'} className="flex shrink-0 items-center justify-center gap-2 px-3 py-3 text-center text-sm text-secondary">
               {emptyText}
+              {(historyPreparationTimedOut || retryHistoryUnconfirmed) && (
+                <button type="button" className="underline" onClick={() => {
+                  const target = controller;
+                  const retryOwner = retryHistoryRef.current;
+                  if (target && target.state.sessionKey === subagentSessionKey &&
+                    retryOwner?.controller === target) void retryOwner.retry();
+                }}>
+                  {i18nService.t('storageHistoryRetry')}
+                </button>
+              )}
             </div>
-          ) : (
-            <ChatMessageDisplay className="flex-1 min-h-0" controller={controller} fullWidth />
           )}
+          <ChatMessageDisplay className="flex-1 min-h-0" controller={controller} fullWidth />
         </div>
       </aside>
 

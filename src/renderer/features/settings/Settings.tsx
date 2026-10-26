@@ -229,6 +229,7 @@ const Settings: React.FC<SettingsProps> = ({
     normalizeProxySettings(configService.getConfig().browserProxy, ProxyMode.SYSTEM),
   );
   const [developerMode, setDeveloperMode] = useState(false);
+  const [controlUiEnabled, setControlUiEnabled] = useState(false);
   const [voice, setVoice] = useState<LocalSpeechSettings>(() =>
     normalizeLocalSpeechSettings(configService.getConfig().voice),
   );
@@ -595,6 +596,7 @@ const Settings: React.FC<SettingsProps> = ({
       });
       setBrowserProxy(normalizeProxySettings(config.browserProxy, ProxyMode.SYSTEM));
       setDeveloperMode(config.developerMode ?? false);
+      setControlUiEnabled(config.controlUiEnabled === true);
       setVoice(normalizeLocalSpeechSettings(config.voice));
       setNonLanguageModelProviders(structuredClone(config.onlineModelProviders ?? {}));
 
@@ -1308,6 +1310,7 @@ const Settings: React.FC<SettingsProps> = ({
                 proxy: normalizedProxy,
                 browserProxy: normalizedBrowserProxy,
                 developerMode,
+                controlUiEnabled,
                 voice: normalizedVoice,
                 shortcuts,
                 onlineModelProviders: normalizedConfigurations,
@@ -1621,6 +1624,8 @@ const Settings: React.FC<SettingsProps> = ({
             developerModeAvailable={developerModeAvailable}
             developerMode={developerMode}
             setDeveloperMode={setDeveloperMode}
+            controlUiEnabled={controlUiEnabled}
+            setControlUiEnabled={setControlUiEnabled}
             proxyMode={proxyMode}
             handleProxyModeChange={handleProxyModeChange}
             customProxy={customProxy}

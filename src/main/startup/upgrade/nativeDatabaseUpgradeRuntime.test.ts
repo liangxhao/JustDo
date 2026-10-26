@@ -33,13 +33,16 @@ function fixture() {
   const children: FixtureChild[] = [];
   const spawnChild = vi.fn(() => { const child = new FixtureChild(); children.push(child); return child as unknown as ChildProcess; });
   const admit = vi.fn(async () => identity);
+  const readDeliveryIdentity = vi.fn(async () => ({
+    runtimeVersion: identity.runtimeVersion, runtimeBuildId: identity.runtimeBuildId,
+  }));
   const stoppedGateway = vi.fn(() => true);
   const terminate = vi.fn(async () => {});
   const runtime = new NativeDatabaseUpgradeRuntime({ getRuntimeRoot: () => identity.runtimeRoot,
     stateDir: path.resolve('state'), configPath: path.resolve('state/openclaw.json'),
-    gatewayStopped: stoppedGateway, admit, spawn: spawnChild as unknown as typeof spawn,
+    gatewayStopped: stoppedGateway, admit, readDeliveryIdentity, spawn: spawnChild as unknown as typeof spawn,
     terminate, inspectTimeoutMs: 100, upgradeTimeoutMs: 1000, abortGraceMs: 30, retirementObservationMs: 50 });
-  return { runtime, children, spawnChild, admit, stoppedGateway, terminate };
+  return { runtime, children, spawnChild, admit, readDeliveryIdentity, stoppedGateway, terminate };
 }
 const flush = async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); };
 function receipt(child: FixtureChild, changes: Record<string, unknown> = {}): void {
@@ -49,6 +52,36 @@ function receipt(child: FixtureChild, changes: Record<string, unknown> = {}): vo
 afterEach(() => vi.useRealTimers());
 
 describe('native database startup owner', () => {
+  it('reads delivery metadata without native admission, Gateway ownership checks or subprocesses', async () => {
+    const f = fixture();
+    await expect(f.runtime.deliveryIdentity()).resolves.toEqual({
+      runtimeVersion: identity.runtimeVersion, runtimeBuildId: identity.runtimeBuildId,
+    });
+    expect(f.readDeliveryIdentity).toHaveBeenCalledExactlyOnceWith(identity.runtimeRoot);
+    expect(f.admit).not.toHaveBeenCalled();
+    expect(f.spawnChild).not.toHaveBeenCalled();
+    expect(f.stoppedGateway).not.toHaveBeenCalled();
+
+    await f.runtime.identity();
+    expect(f.admit).toHaveBeenCalledOnce();
+  });
+  it('rejects metadata reads before and after shutdown without publishing a late identity', async () => {
+    const stopped = fixture();
+    await stopped.runtime.stop();
+    await expect(stopped.runtime.deliveryIdentity()).rejects.toThrow(/interrupted/);
+    expect(stopped.readDeliveryIdentity).not.toHaveBeenCalled();
+
+    const pending = fixture();
+    let release!: (value: Awaited<ReturnType<typeof pending.readDeliveryIdentity>>) => void;
+    pending.readDeliveryIdentity.mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
+    const reading = pending.runtime.deliveryIdentity();
+    const rejected = expect(reading).rejects.toThrow(/interrupted/);
+    await pending.runtime.stop();
+    release({ runtimeVersion: identity.runtimeVersion, runtimeBuildId: identity.runtimeBuildId });
+    await rejected;
+    expect(pending.admit).not.toHaveBeenCalled();
+    expect(pending.spawnChild).not.toHaveBeenCalled();
+  });
   it('reads immutable identity without launching native storage or building a Gateway environment', async () => {
     const f = fixture();
     await expect(f.runtime.identity()).resolves.toEqual({ runtimeVersion: identity.runtimeVersion, runtimeBuildId: identity.runtimeBuildId });
@@ -196,5 +229,7 @@ describe('native database startup owner', () => {
     if (mode !== 'helper-pending-after-close') f.children[0].close(1);
     release?.(); await flush();
     await expect(f.runtime.identity()).rejects.toThrow(/restart is required/);
+    await expect(f.runtime.deliveryIdentity()).rejects.toThrow(/restart is required/);
+    expect(f.readDeliveryIdentity).not.toHaveBeenCalled();
   });
 });

@@ -21,13 +21,14 @@ const javascript = ts.transpileModule('const ' + matches[0].getText(source) + ';
 }).outputText;
 afterEach(() => vi.restoreAllMocks());
 
-test.each([false, true, 'admission'] as const)('Main attempts every retirement when shutdown failure is %s', async rejects => {
+test.each([false, true, 'admission', 'integrations'] as const)('Main attempts every retirement when shutdown failure is %s', async rejects => {
   vi.spyOn(console, 'log').mockImplementation(() => {});
   vi.spyOn(console, 'error').mockImplementation(() => {});
   const calls: string[] = [];
   const retired = new Error('Native child retirement remains unconfirmed');
   const context = {
     startupHistoryAdmissionReady: true,
+    startupIntegrationPreparation: rejects === 'integrations' ? Promise.reject(retired) : undefined,
     runApplicationCleanup, settleCleanupTasks,
     startupCoordinator: { stop: () => { calls.push('startup-confirmation'); } },
     appServerIntegrationService: { stop: async () => { calls.push('app-server'); } },

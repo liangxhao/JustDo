@@ -7,6 +7,12 @@ import { hasMessageInput } from '../../../shared/cowork/messageInput';
 import { NativeSessionDispatchIpc } from '../../../shared/cowork/nativeSessionDispatch';
 import { type CancelSessionStartInput, SessionStartIpc } from '../../../shared/cowork/sessionStart';
 import type { McpAppWorkspaceBinding } from '../../../shared/plugins/mcpApps';
+import {
+  getEffectiveCustomProviderDisplayName,
+  isJustDoCustomProviderKey,
+  normalizeOpenClawProviderId,
+} from '../../../shared/providers';
+import { matchesModelSelectionIdentity } from '../../../shared/providers/modelSelectionIdentity';
 import { resolvePermissionMode } from '../../../shared/security/approvals';
 import { resolveTaskWorkingDirectory } from '../../core/filesystem/taskWorkspace';
 import { t } from '../../core/i18n';
@@ -19,6 +25,7 @@ import {
   discardPreparedWorktreeSession,
 } from '../../openclaw/sessions/worktreeSession';
 import type { WorkspaceAppSessions } from '../../plugins/mcp/workspaceAppSession';
+import { resolveAllEnabledProviderConfigs } from '../../providers/providerApiConfig';
 import { cancelAgentTeamLaunchWithoutWaiting } from './agentTeamLaunchCancellation';
 import { captureInitialDispatchLease, NativeSessionDispatcher } from './nativeSessionDispatch';
 
@@ -50,6 +57,7 @@ interface StartSessionOptions {
   activeSkillIds?: string[];
   attachments?: CoworkAttachmentPayload[];
   agentId?: string;
+  modelRef?: string;
   clientTurnId?: string;
   startedAt?: number;
   planMode?: boolean;
@@ -61,6 +69,20 @@ const broadcastSessionError = (sessionId: string, error: unknown): void => {
     if (window.isDestroyed()) return;
     window.webContents.send('cowork:stream:error', { sessionId, error: errorMessage });
   });
+};
+
+const resolveConfiguredInitialModelRef = (requested: string): string | undefined => {
+  const routes = resolveAllEnabledProviderConfigs().flatMap(provider => {
+    const providerId = isJustDoCustomProviderKey(provider.providerName)
+      ? normalizeOpenClawProviderId(getEffectiveCustomProviderDisplayName(
+          provider.providerName, provider.displayName,
+        ))
+      : normalizeOpenClawProviderId(provider.providerName);
+    return provider.models.map(model => `${providerId}/${model.id.trim()}`);
+  });
+  // A concrete user-provider route wins over a built-in model's short alias.
+  return routes.find(route => route === requested) ??
+    routes.find(route => matchesModelSelectionIdentity(route, requested));
 };
 
 export const registerCoworkSessionExecutionHandlers = ({
@@ -156,6 +178,10 @@ export const registerCoworkSessionExecutionHandlers = ({
       if (!options || typeof options.prompt !== 'string' || !hasMessageInput(options)) {
         return { success: false, error: 'Prompt is required.' };
       }
+      if (options.modelRef !== undefined && (
+        typeof options.modelRef !== 'string' || !options.modelRef.trim() ||
+        !options.modelRef.trim().includes('/')
+      )) return { success: false, error: t('selectedModelUnavailable') };
       if (options.rendererDispatch !== undefined && typeof options.rendererDispatch !== 'boolean') {
         return { success: false, error: t('coworkInitialDispatchInvalid') };
       }
@@ -257,7 +283,17 @@ export const registerCoworkSessionExecutionHandlers = ({
       const agent = store.getAgent(agentId);
       if (!agent || !agent.enabled || agent.deletedAt)
         return { success: false, error: 'agentUnavailable' };
-      const initialModelRef = agentId === 'main' ? undefined : agent.model.trim() || undefined;
+      let selectedModelRef: string | undefined;
+      if (options.modelRef !== undefined) {
+        selectedModelRef = resolveConfiguredInitialModelRef(options.modelRef.trim());
+        if (!selectedModelRef) return { success: false, error: t('selectedModelUnavailable') };
+      }
+      const assertInitialModelAvailable = () => {
+        if (selectedModelRef && resolveConfiguredInitialModelRef(selectedModelRef) !== selectedModelRef)
+          throw Object.assign(new Error(t('selectedModelUnavailable')), { requestSent: false });
+      };
+      const initialModelRef = selectedModelRef ??
+        (agentId === 'main' ? undefined : agent.model.trim() || undefined);
       let resolvedWorkspaceRoot = resolveTaskWorkingDirectory(selectedWorkspaceRoot);
       const createSession = (reservedSessionId?: string) =>
         store.createSession(
@@ -341,6 +377,7 @@ export const registerCoworkSessionExecutionHandlers = ({
           confirmationMode: 'modal',
           attachments: options.attachments,
           agentId,
+          ...(selectedModelRef ? { initialModelRef: selectedModelRef } : {}),
           clientTurnId: options.clientTurnId,
           planMode: options.planMode === true,
           ...(appBinding ? { expectedInitialSessionId: appBinding.gatewaySessionId } : {}),
@@ -365,6 +402,7 @@ export const registerCoworkSessionExecutionHandlers = ({
           ...(explicitTeam
             ? {
                 beforeNativeSend: async () => {
+                  assertInitialModelAvailable();
                   if (operation?.cancelled) throw new Error('teamLaunchContractUnavailable');
                   await getAgentTeamLaunch!().markSubmissionStarted(
                     session.id,
@@ -375,6 +413,9 @@ export const registerCoworkSessionExecutionHandlers = ({
                   await getAgentTeamLaunch!().abortBeforeSend(session.id, options.clientTurnId!);
                 },
               }
+            : {}),
+          ...(selectedModelRef && !explicitTeam
+            ? { beforeNativeSend: async () => assertInitialModelAvailable() }
             : {}),
           onAccepted: () => {
             admissionSettled = true;

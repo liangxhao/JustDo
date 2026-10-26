@@ -49,6 +49,7 @@ describe('settings app config updates', () => {
         proxy: defaultConfig.proxy,
         browserProxy: defaultConfig.browserProxy,
         developerMode: defaultConfig.developerMode,
+        controlUiEnabled: defaultConfig.controlUiEnabled,
         voice: defaultConfig.voice,
         shortcuts: defaultConfig.shortcuts!,
         onlineModelProviders: defaultConfig.onlineModelProviders!,
@@ -80,6 +81,7 @@ describe('settings app config updates', () => {
         proxy: defaultConfig.proxy,
         browserProxy: defaultConfig.browserProxy,
         developerMode: defaultConfig.developerMode,
+        controlUiEnabled: defaultConfig.controlUiEnabled,
         voice: defaultConfig.voice,
         shortcuts: defaultConfig.shortcuts!,
         onlineModelProviders: defaultConfig.onlineModelProviders!,
@@ -102,6 +104,7 @@ describe('settings app config updates', () => {
         proxy: defaultConfig.proxy,
         browserProxy: defaultConfig.browserProxy,
         developerMode: defaultConfig.developerMode,
+        controlUiEnabled: defaultConfig.controlUiEnabled,
         voice: defaultConfig.voice,
         shortcuts: defaultConfig.shortcuts!,
         onlineModelProviders: defaultConfig.onlineModelProviders!,
@@ -128,6 +131,7 @@ describe('settings app config updates', () => {
         proxy: defaultConfig.proxy,
         browserProxy: defaultConfig.browserProxy,
         developerMode: defaultConfig.developerMode,
+        controlUiEnabled: defaultConfig.controlUiEnabled,
         voice,
         shortcuts: defaultConfig.shortcuts!,
         onlineModelProviders: defaultConfig.onlineModelProviders!,
@@ -162,11 +166,45 @@ describe('settings app config updates', () => {
         proxy: defaultConfig.proxy,
         browserProxy: defaultConfig.browserProxy,
         developerMode: defaultConfig.developerMode,
+        controlUiEnabled: defaultConfig.controlUiEnabled,
         voice: defaultConfig.voice,
         shortcuts: defaultConfig.shortcuts!,
         onlineModelProviders,
       }),
     ).toEqual({ onlineModelProviders });
+  });
+});
+
+describe('Control UI preference persistence', () => {
+  const draft = {
+    ...defaultConfig,
+    providers: defaultConfig.providers!,
+    currentProviders: defaultConfig.providers!,
+    shortcuts: defaultConfig.shortcuts!,
+    onlineModelProviders: defaultConfig.onlineModelProviders!,
+  };
+
+  test('defaults to disabled without writing an unchanged or missing legacy preference', () => {
+    expect(defaultConfig.controlUiEnabled).toBe(false);
+    expect(buildSettingsAppConfigUpdate(defaultConfig, draft)).toEqual({});
+    const legacy = { ...defaultConfig };
+    Reflect.deleteProperty(legacy, 'controlUiEnabled');
+    expect(buildSettingsAppConfigUpdate(legacy, draft)).toEqual({});
+  });
+
+  test('persists only the changed Control UI preference', () => {
+    expect(buildSettingsAppConfigUpdate(defaultConfig, { ...draft, controlUiEnabled: true }))
+      .toEqual({ controlUiEnabled: true });
+    expect(buildSettingsAppConfigUpdate({ ...defaultConfig, controlUiEnabled: true }, draft))
+      .toEqual({ controlUiEnabled: false });
+  });
+
+  test('retains the preference when developer mode is disabled', () => {
+    const current = { ...defaultConfig, developerMode: true, controlUiEnabled: true };
+    expect(buildSettingsAppConfigUpdate(current, {
+      ...draft, controlUiEnabled: true, developerMode: false,
+    })).toEqual({ developerMode: false });
+    expect(current.controlUiEnabled).toBe(true);
   });
 });
 

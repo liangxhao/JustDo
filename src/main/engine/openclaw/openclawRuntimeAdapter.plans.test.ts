@@ -387,7 +387,7 @@ test('admits an approved plan when chat.send acknowledgement is lost but activit
       return { requestId: planRequest.requestId, decision: 'implement' };
     }
     if (method === 'sessions.describe') {
-      return { session: { sessionId: 'gateway-session-1' } };
+      return { session: { key: planRequest.sessionKey, agentId: 'main', sessionId: 'gateway-session-1' } };
     }
     if (method === 'sessions.reset') {
       return {

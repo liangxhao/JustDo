@@ -50,12 +50,17 @@ test('routes subsequent launches to their compact screen with startup milestones
   const view = render(<InitializationScreen state={{ ...state, firstLaunch: false }} />);
   expect(view.container.querySelector('[data-startup-view="launch"]')).toBeTruthy();
   expect(view.container.querySelector('[data-startup-view="first-launch"]')).toBeNull();
+  expect(screen.getByText('startupStep_engine')).toBeTruthy();
+  expect(screen.getByText('startupStep_interface')).toBeTruthy();
   expect(screen.getByText('startupStep_userData')).toBeTruthy();
+  expect(screen.getByText('startupStep_configuration')).toBeTruthy();
+  expect(screen.getByText('startupStep_integrations')).toBeTruthy();
+  expect(screen.queryByText('startupStep_runtime')).toBeNull();
   expect(screen.getAllByRole('listitem')).toHaveLength(5);
   expect(screen.getByText('startupActivity_defaultFiles')).toBeTruthy();
   expect(screen.queryByText('initializationUserData')).toBeNull();
   expect(screen.queryByText('firstLaunchTitle')).toBeNull();
-  expect(screen.getByRole('progressbar').getAttribute('aria-valuenow')).toBe('2');
+  expect(screen.getByRole('progressbar').getAttribute('aria-valuenow')).toBe('0');
 });
 
 test.each([

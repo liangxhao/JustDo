@@ -106,6 +106,7 @@ export type RuntimeSessionSnapshot = {
 
 export type PendingTurnStart = {
   cancelled: boolean;
+  preparationAbortController: AbortController;
   cancellationAbortError?: unknown;
   phase: 'preparing' | 'sending' | 'settled';
   settled: Promise<void>;

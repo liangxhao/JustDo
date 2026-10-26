@@ -58,10 +58,13 @@ Gateway、本机合成模型和与产品相同的 `stateDir/skills` 导入位置
 
 Adapter 入口保留生命周期及状态，runtimeGatewayConnection、runtimeGatewayEvents、runtimeHistory、runtimePlanInteractions、runtimeGoalOperations、runtimeSessionStatus 处理各领域操作。它们通过显式实时上下文访问入口状态，不复制控制器状态，更不保存 transcript。
 
-启动路由在产品 Store 与配置准备前确认当前原生 schema。正常升级由 `startup/upgrade`
+普通启动只读取轻量交付信息与已完成安装记录，打开已有产品数据、加载必要配置后直接
+启动 Gateway，不执行宿主数据库预检、会话目录扫描、运行包全量哈希或离线会话规范准备。
+当前 schema、会话与插件的准入由 Gateway 自己在启动时负责。正常升级由 `startup/upgrade`
 在 Gateway 停止时调用锁定当前版本的原生维护 owner，等待备份、更新、严格复验与
 数据库关闭、子进程退出，再允许引擎及外部入口启动。维护失败或结果未知时不能由
-EngineManager 的重试绕过此条件；正常启动也不能仅凭完成标记跳过只读检查。
+EngineManager 的重试绕过此条件。普通打开记录与原生维护完成回执分别保存，不以跳过
+宿主预检伪造维护成功、引擎运行或任务执行终态。
 详细四路与失败恢复见[启动与历史升级](../features/app/startup-and-history-upgrade.md)。
 
 Chrome 侧聊通过 Runtime 的窄 `getRunTerminalReceipt` 读取已准入 whole-run `executionSettled:true` 的有界原生身份与终态元数据；chat final 后保留精确退役绑定以接受迟到末端。OpenClaw 10.6 不把内部 `lifecycleGeneration` 序列化到公共事件，缺字段不阻止精确原生 session、run、序列及 Main 连接代次准入；双方提供时仍拒绝冲突，首次显式代次会固定到退役绑定。yield 不作为整轮完成；原生明确 timeout 优先于机械 `aborted` 标志，保留为失败。
@@ -134,9 +137,27 @@ history/startup 的响应发布前检查同一 frame；pending 时交回原生�
 
 ## 3. 启动与重启状态
 
+原生 Control UI 默认关闭；仅“设置 → 通用”中的开发者模式与 Control UI 开关都明确开启时，
+配置同步才设置 `gateway.controlUi.enabled: true`，开发运行与打包应用采用同一规则。
+关闭开发者模式保留开关偏好，但关闭原生能力；有效值变化沿用现有配置同步及运行时更新。
+完整、无模型、登录状态变化和兼容配置持久化都覆盖旧开关值，合并时保留其它字段；
+不增加原生补丁或改变主聊天的认证 Gateway 连接。
+
 Manager 对外 phase 为 ready、starting、running、error；canRetry 与 message 用于产品反馈。共享契约位于 `src/shared/openclaw/engineStatus.ts`；`starting` 上的 `restarting: true` 由 Main 提供，用于区分首次启动与真实重启。它们不是单个 Agent run 的状态。
 
 运行时文件就绪检查与 CLI 环境读取不改变正在启动或运行中的 Gateway phase；CLI 读取复用该进程已选定的端口，不因端口已被启动进程占用而重新分配。冷启动的异步资源准备已属于 starting，不能在此期间展示尚未启动的按钮。资源缺失或版本元数据无效仍报告 error。
+
+原生 `SIGUSR1`、`SIGUSR2` 或 in-process restart 的完整生命周期日志使当前受管进程进入
+`starting/restarting`；日志载荷中嵌入的相似文本不构成信号。并发启动共享原生重启的等待，
+与配置重载使用相同的 10 分钟完成观察上限。观察超时仅代表尚未确认，不停止仍存活的
+同一进程、不发起第二次冷启动，也不提前报告 running；原生当前进程的真实 ready/exit
+继续决定结果。等待跨越进程或 generation 变更后，不能停止后继进程。
+
+退出、停止和明确的宿主重启在加入在途启动前取消原地重启等待；取消清理计时器与监听，
+退出后的迟到 ready 不再发布 running。原进程真正退出仍走既有退出恢复流程，明确的
+宿主重启仍由原停止/启动流程执行。非注销配置同步等待后若当前状态仍为 starting，
+返回未确认结果，保留原生正在读取的配置快照，不继续写入或据此停止进程；注销保留
+原有凭据撤销与安全清理规则。
 
 ### 标题栏提示与入口清单
 
@@ -194,7 +215,8 @@ Main 为完整重启的停止/准备阶段及崩溃恢复退避阶段连续发�
 | 操作或触发条件                                               | 生效方式与重启边界                                                                                                                             |
 | ------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
 | Gateway 断线、心跳恢复、审批桥重连                           | running 时直接重新进行认证握手，不调用启动健康检查；starting 时加入已有启动，真实退出由 Manager 恢复                                           |
-| 普通设置、模型、MCP、Hook、技能变更                          | 原生配置热更新；仅凭据值变化使用 `secrets.reload`；热更新未完成才请求原生协调重启                                                              |
+| 输入框语言模型选择及默认值回滚                              | 原生会话选择与模型字段热更新；默认确认不占用发送准入队列，未确认不触发停止或重启                                                             |
+| 普通设置、模型目录、MCP、Hook、技能变更                      | 原生配置热更新；仅凭据值变化使用 `secrets.reload`；热更新未完成才请求原生协调重启                                                              |
 | Agent Team / Swarm 等扩展启停                                | 原生插件运行时回执；Team 仍单独 `skills.update`，不再保留 9.8 技能发现的强制重启；仅原生要求或网络策略变化才重启                               |
 | 扩展安装、卸载及离线 CLI 回退                                | 优先使用原生运行时回执、`plugins.reload` / `plugins.refresh`；Windows 真实目录锁恢复仍保留暂停、停止、重试、恢复流程                           |
 | 扩展普通配置或 SecretRef 凭据轮换                            | 优先配置 reload ACK；无环境变量变更时可刷新 native secrets 后定向 `plugins.reload`，只有原生不能热应用才重启；凭据刷新失败保留待刷新并报告错误 |
@@ -218,7 +240,7 @@ stateDiagram-v2
   running --> ready: stop 完成
 ```
 
-启动使用有界健康轮询，当前 boot timeout 为 300 秒，同进程重启等待上限 60 秒；异常重启最多 5 次并递增退避。调用者应消费状态，不自行启动第二个 Gateway。端口选择限定 loopback，保存端口还需校验范围与占用。
+启动使用有界健康轮询，当前 boot timeout 为 300 秒，同进程重启使用 10 分钟的完成观察窗口；观察超时保留仍存活的原进程并报告未确认，不追加冷启动。真实异常退出最多恢复 5 次并递增退避。调用者应消费状态，不自行启动第二个 Gateway。端口选择限定 loopback，保存端口还需校验范围与占用。
 
 开发时，本地源码扩展只在真正创建 Gateway 进程前异步复制，复用同一个启动任务；健康进程复用、运行时就绪查询和 CLI 环境读取不重写运行中的扩展。显式重启重新准备源码，已预编译的扩展保持不变。复制失败可重试；复制期间停止后，迟到结果不得创建进程或覆盖停止状态。文件复制不能阻塞 Electron 主线程与连接心跳。
 
@@ -241,6 +263,18 @@ Gateway 运行期间不执行同步编译缓存序列化，缓存由 launcher �
 字段与日志缺口见[会话诊断](../features/chat/session-diagnostics.md#已保存用户轮次的准入错误)。
 
 配置投影由启动及设置变更流程负责；聊天发送等待已有配置 mutation 完成，复用运行中的 Gateway，不再以 `ensureRunning` 为由重新执行全量配置同步。运行中的执行准入仅并行读取 `config.get` 与 `exec.approvals.get`，验证当前宿主执行/文件边界和审批底线；不启动扩展 MCP 发现、不扫描历史会话模型、不清理凭据，也不修复审批配置。冷启动在同一配置队列中等待进程就绪，并通过原生审批 RPC 初始化必要的底线，再回读验证；不重复配置投影。权限不符仍拒绝准入，进程代次变化时旧校验不能放行、修改或停止新进程。原生会话自身的 mode/root 与身份准备继续保留。
+
+普通受管会话在唯一一次 `sessions.create` 之前，以认证连接定向调用
+`sessions.describe({key, agentId})`，让原生 startup-read 路径等待该 Agent 的后台存储准备。
+同 Agent 的结构化 `agent-database-inspection-pending`，以及没有结构化故障码的原生
+`UNAVAILABLE`，只允许在这个只读探针内按 1/2/4/8 秒退避等待；完整请求和退避共用
+120 秒总期限。明确 inspection-failed、其他结构化故障、目标不符及非原生拒绝立即返回。
+成功必须明确返回 `session:null`，或 key 与可选 Agent 字段匹配的公共行；不能将缺字段视为就绪。
+这不是宿主启动检查或写授权，后续 create、原生会话回执及发送准入仍保持原有保护。
+停止和替换 pending start 立即取消该等待，连接代次或产品会话的 Agent、绑定、目录、权限
+变化也撤销准备；每次异步完成及创建前重新核对。已经派发的 create/send 不因
+`SessionMutationFactsUnavailableError`、超时或断线再次提交，结果未知仍保持未知。
+等待保留原发送身份与点击时间，属于首 token 延迟，不额外请求 Gateway 重启。
 
 冷启动成功后单次后台检查遗留受管凭据，发现过程不占配置队列；实际孤立候选逐个进入短队列，重新读取当前配置和认证状态，只删除仍未配置供应商的精确受管默认 API key profile。配置回滚、手工凭据、客户端或进程替换均中止对应清理；任务只使用已有连接，不因后台维护启动 Gateway。普通受管会话准备若发现持久模型覆盖，则只核对当前会话的有效路由，在同一模型操作排序中重新描述并修复已删除的路由；有效原生选择保持，修复沿用设置同步的路由匹配与助手默认规则，并核对原生 session incarnation。无覆盖的新会话不增加此检查，不在首轮发送前扫描全量历史。
 

@@ -131,6 +131,7 @@ export interface AppConfig {
   browserProxy: ProxySettings;
   // 是否启用开发者模式
   developerMode: boolean;
+  controlUiEnabled: boolean;
   // 用户固定到功能侧边栏的可选入口，按固定顺序排列
   sidebarPinnedItems?: string[];
   // 本地语音输入与朗读配置
@@ -220,6 +221,7 @@ export const defaultConfig: AppConfig = {
   proxy: defaultProxySettings,
   browserProxy: defaultBrowserProxySettings,
   developerMode: false,
+  controlUiEnabled: false,
   computerOverlayRemotePreview: false,
   sidebarPinnedItems: [],
   voice: defaultLocalSpeechSettings,

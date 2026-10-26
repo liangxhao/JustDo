@@ -91,6 +91,24 @@ describe('packaged application renderer host', () => {
     expect(index.headers['cache-control']).toBe('no-store');
   });
 
+  it('admits the bootstrap alone without reading the application asset tree', async () => {
+    const script = "document.documentElement.lang = 'en';";
+    await writeFile(path.join(dist, 'startup-bootstrap.html'), `<html><script>${script}</script>Starting</html>`);
+    // A broken full application must not delay or prevent its neutral first paint.
+    await rm(path.join(dist, 'index.html'));
+    host = await startApplicationRendererHost(dist, { bootstrapOnly: true });
+    expect(host.url).toBe(`${host.origin}/startup-bootstrap.html`);
+    const bootstrap = await read(host, '/startup-bootstrap.html');
+    expect(bootstrap.status).toBe(200);
+    expect(bootstrap.headers['content-security-policy']).toContain(
+      `sha256-${createHash('sha256').update(script).digest('base64')}`,
+    );
+    expect((await read(host, '/index.html')).status).toBe(404);
+    expect((await read(host, '/assets/main.js')).status).toBe(404);
+    await writeFile(path.join(dist, 'startup-bootstrap.html'), '<html>changed</html>');
+    expect((await read(host, '/startup-bootstrap.html')).status).toBe(404);
+  });
+
   it('serves the immutable widget viewer with only its bounded mount query', async () => {
     host = await startApplicationRendererHost(dist);
     const mount = '2e4ec192-521e-4b76-b132-e34598e41bb2';

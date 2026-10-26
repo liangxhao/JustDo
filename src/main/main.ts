@@ -23,8 +23,11 @@ import {
   AppInitializationIpc,
   AppInitializationPhase,
   AppInitializationStep,
+  AppInitializationTask,
+  AppInitializationTaskStatus,
 } from '../shared/app/initialization';
 import { SHUTDOWN_BUDGET_MS } from '../shared/app/shutdownPolicy';
+import { StartupRoute } from '../shared/app/startup/routing';
 import { normalizeBrowserDownloadSettings, normalizeBrowserMode } from '../shared/browser/browser';
 import { EmbeddedBrowserGateway } from '../shared/browser/embeddedBrowser';
 import { buildCoworkSessionKey } from '../shared/cowork/sessionKey';
@@ -35,6 +38,7 @@ import {
   type WorkspaceWindowBounds,
 } from '../shared/cowork/workspaceWindow';
 import type { ProxySettings } from '../shared/network/proxy';
+import { EnginePhase } from '../shared/openclaw/engineStatus';
 import { WorkboardIpc } from '../shared/openclaw/workboard';
 import { OpenClawExtensionId } from '../shared/plugins/nativeIds';
 import { HOME_WORKSPACE_SESSION_ID } from '../shared/preview/filePreview';
@@ -110,6 +114,8 @@ import {
   registerLocalFileScheme,
 } from './core/window/localFileProtocol';
 import { createMainWindow } from './core/window/mainWindowFactory';
+import { createStartupBootstrapWindow } from './core/window/startupBootstrapWindow';
+import { StartupWindowHandoff } from './core/window/startupWindowHandoff';
 import {
   getWorkspaceWindowManager,
   isWorkspaceBrowserHost,
@@ -812,6 +818,10 @@ const getOpenClawConfigSyncService = (): OpenClawConfigSyncService => {
       getModelAuthSessionId: getActiveBuiltinModelCredentialSessionId,
       getBrowserMode: () =>
         normalizeBrowserMode(getStore().get<{ browserMode?: unknown }>('app_config')?.browserMode),
+      getControlUiEnabled: () => {
+        const config = getStore().get<AppConfigSettings>('app_config');
+        return config?.developerMode === true && config.controlUiEnabled === true;
+      },
       getDecisionModelCategory: () =>
         getStore().get<AppConfigSettings>('app_config')?.onlineModelProviders?.decision,
       getNativeVideoCategory: () =>
@@ -1297,6 +1307,8 @@ const APP_UPDATE_CHECK_FREQUENCY_KEY = 'app_update_check_frequency';
 const APP_UPDATE_LAST_AUTOMATIC_CHECK_AT_KEY = 'app_update_last_automatic_check_at';
 type AppConfigSettings = {
   api?: unknown;
+  developerMode?: unknown;
+  controlUiEnabled?: unknown;
   browserMode?: unknown;
   browserTabLimit?: unknown;
   browserDownloadDirectory?: unknown;
@@ -1318,6 +1330,7 @@ const getOpenClawAppConfigSignature = (config: unknown): string => {
   const voice = normalizeLocalSpeechSettings(appConfig.voice);
   return JSON.stringify({
     api: appConfig.api,
+    controlUiEnabled: appConfig.developerMode === true && appConfig.controlUiEnabled === true,
     browserMode: appConfig.browserMode,
     model: appConfig.model,
     providers: appConfig.providers,
@@ -1950,22 +1963,32 @@ if (agentBridgeArgv) {
     getSession: id => getCoworkStore().getSession(id),
   });
 
+  const startupWindowHandoff = new StartupWindowHandoff({
+    canShow: () => !isAutoLaunched(),
+    isQuitting: () => appShutdown.isQuitting(),
+    onCancelled: () => app.quit(),
+  });
+
   // 创建主窗口
   const createWindow = () => {
+    if (appShutdown.isQuitting()) return;
     if (mainWindow) {
       if (mainWindow.isMinimized()) mainWindow.restore();
       if (!mainWindow.isVisible()) mainWindow.show();
       if (!mainWindow.isFocused()) mainWindow.focus();
       return;
     }
-    if (!store) return;
+    if (!store) {
+      startupWindowHandoff.showCurrent();
+      return;
+    }
 
     mainWindow = createMainWindow({
       appName: APP_NAME,
       firstLaunch: initialization.getState().firstLaunch,
+      getEntryStartedAt: startupWindowHandoff.getEntryStartedAt,
       startupPresentation: {
         route: startupCoordinator.route,
-        entryStartedAt: initialization.getState().startedAt,
       },
       readWorkspaceWindowBounds: () =>
         getStore().get<WorkspaceWindowBounds>(WORKSPACE_WINDOW_BOUNDS_KEY),
@@ -2018,10 +2041,9 @@ if (agentBridgeArgv) {
         }
       },
       onReadyToShow: window => {
+        if (appShutdown.isQuitting()) return;
         emitWindowState(window);
-        if (!isAutoLaunched()) {
-          window.show();
-        }
+        startupWindowHandoff.present(window);
         const initLang = getStore().get<{ language?: string }>('app_config')?.language;
         setLanguage(initLang === 'en' ? 'en' : 'zh');
         createTray(() => mainWindow);
@@ -2035,6 +2057,7 @@ if (agentBridgeArgv) {
       preloadPath: PRELOAD_PATH,
       scheduleReload,
     });
+    startupWindowHandoff.prepare(mainWindow);
 
     mainWindow.on('closed', () => {
       mainWindow = null;
@@ -2059,6 +2082,7 @@ if (agentBridgeArgv) {
     await runApplicationCleanup({
       retireStartup: () => settleCleanupTasks([
         () => startupHistoryRuntime.stop(), () => startupDatabaseRuntime.stop(),
+        () => startupIntegrationPreparation,
         () => { if (admissionErrors.length) throw new AggregateError(admissionErrors, 'Startup admission revocation failed.'); },
       ]),
       retireServices: () => settleCleanupTasks([
@@ -2103,6 +2127,14 @@ if (agentBridgeArgv) {
   const appShutdown = registerAppShutdown({
     cleanup: runAppCleanup,
     cleanupTimeoutMs: SHUTDOWN_BUDGET_MS.applicationExit,
+    onBeginCleanup: () => {
+      startupWindowHandoff.stop();
+      // Retire the visible shell immediately while native owners close safely.
+      for (const window of BrowserWindow.getAllWindows()) {
+        if (!window.isDestroyed()) window.hide();
+      }
+      destroyTray();
+    },
   });
   const developmentParentServerUrl = devServerUrl;
   const detachDevelopmentParent = !app.isPackaged
@@ -2248,9 +2280,9 @@ if (agentBridgeArgv) {
     const startup = createInitializationWindow({
       appName: APP_NAME,
       firstLaunch: initialization.getState().firstLaunch,
+      getEntryStartedAt: startupWindowHandoff.getEntryStartedAt,
       startupPresentation: {
         route: startupCoordinator.route,
-        entryStartedAt: initialization.getState().startedAt,
       },
       preloadPath: PRELOAD_PATH,
       isWindows,
@@ -2259,10 +2291,11 @@ if (agentBridgeArgv) {
       devServerPort: Number(process.env.JUSTDO_DEV_SERVER_PORT || packageJson.devServer.port),
       onReady: window => {
         emitWindowState(window);
-        if (!isAutoLaunched()) window.show();
+        startupWindowHandoff.present(window);
       },
     });
     const initializationWindow = startup.window;
+    startupWindowHandoff.prepare(initializationWindow, false);
     mainWindow = initializationWindow;
     initializationWindow.on('closed', () => {
       if (startupCoordinator.getDowngradeConfirmation()) {
@@ -2275,9 +2308,39 @@ if (agentBridgeArgv) {
   };
 
   // 初始化应用
+  let startupEnginePreparation: Promise<void> | undefined;
+  let startupIntegrationPreparation: Promise<void> | undefined;
+  let startupExecutionGeneration: number | undefined;
+  const completeEnginePreparation = () => {
+    if (appShutdown.isQuitting() || initialization.getState().phase === AppInitializationPhase.Failed)
+      return;
+    const manager = getOpenClawEngineManager();
+    const phase = manager.getStatus().phase;
+    if (phase !== EnginePhase.Error && (startupExecutionGeneration === undefined ||
+        startupExecutionGeneration !== manager.getGatewayProcessGeneration() || phase !== EnginePhase.Running))
+      throw new Error(t('runtimeNodeUnavailable'), {
+        cause: new Error('Startup execution readiness was not confirmed for the current Gateway process.'),
+      });
+    initialization.setEnginePreparationPending(false);
+  };
   const initApp = async () => {
     registerLocalFileScheme();
     await app.whenReady();
+    if (appShutdown.isQuitting()) return;
+    try {
+      const startupBootstrap = createStartupBootstrapWindow({
+        appName: APP_NAME,
+        isDev,
+        isWindows,
+        devServerUrl,
+        onReady: window => {
+          startupWindowHandoff.showBootstrap(window);
+        },
+      });
+      startupWindowHandoff.setBootstrap(startupBootstrap.window);
+    } catch (error) {
+      console.warn('[StartupBootstrap] Could not create first paint:', error);
+    }
     await prepareStartup();
     if (appShutdown.isQuitting()) return;
 
@@ -2285,41 +2348,39 @@ if (agentBridgeArgv) {
     // The packaged HTTP host starts asynchronously; wait for its actual navigation.
     // Load failures are logged by the window and do not block real data preparation.
     if (startup) await startup.loaded;
-    const initializationWindow = startup?.window;
     if (appShutdown.isQuitting()) return;
     if (startupPreparationError) throw startupPreparationError;
+    initialization.setTaskStatus(AppInitializationTask.UserData, AppInitializationTaskStatus.Running);
     await startupCoordinator.prepareBeforeStore(initialization);
     await initialization.prepareUserData();
     if (appShutdown.isQuitting()) return;
     initialization.reportActivity(AppInitializationActivity.Database);
     store = await initStore();
     if (appShutdown.isQuitting()) return;
+    initialization.setTaskStatus(AppInitializationTask.UserData, AppInitializationTaskStatus.Complete);
     mainWindow = null;
     registerContentSecurityPolicy({
       isDev,
       devServerPort: Number(process.env.JUSTDO_DEV_SERVER_PORT || packageJson.devServer.port),
     });
     createWindow();
-    // Keep a window alive during the handoff; closing the last window quits on Windows.
-    if (initializationWindow) {
-      mainWindow?.once('ready-to-show', () => {
-        if (!initializationWindow.isDestroyed()) initializationWindow.close();
+    if (startupCoordinator.route !== StartupRoute.Normal) {
+      initialization.advance(AppInitializationStep.Runtime, 1);
+      await initialization.runOptionalTask('prepare Python runtime', async () => {
+        const runtimeResult = await ensurePythonRuntimeReady();
+        if (!runtimeResult.success) {
+          console.error(
+            '[AppInitialization] Python runtime preparation failed; continuing:',
+            runtimeResult.error,
+          );
+        }
       });
     }
-    initialization.advance(AppInitializationStep.Runtime, 1);
-    await initialization.runOptionalTask('prepare Python runtime', async () => {
-      const runtimeResult = await ensurePythonRuntimeReady();
-      if (!runtimeResult.success) {
-        console.error(
-          '[AppInitialization] Python runtime preparation failed; continuing:',
-          runtimeResult.error,
-        );
-      }
-    });
     if (appShutdown.isQuitting()) return;
     initialization.advance(AppInitializationStep.Configuration, 2);
+    initialization.setTaskStatus(AppInitializationTask.Configuration, AppInitializationTaskStatus.Running);
     initialization.reportActivity(AppInitializationActivity.LocalServices);
-    const startBrowserExtensionIngress = async () => {
+    const startBrowserExtensionIngress = async (): Promise<boolean> => {
       const browserExtensionChatToken = randomBytes(32).toString('hex');
       const extensionChatServer = new BrowserExtensionChatServer(
         new BrowserExtensionChatController({
@@ -2343,7 +2404,7 @@ if (agentBridgeArgv) {
         await extensionChatServer.start();
         if (appShutdown.isQuitting()) {
           await extensionChatServer.stop();
-          return;
+          return false;
         }
         browserExtensionChatServer = extensionChatServer;
         await publishBrowserExtensionAppServer(
@@ -2357,7 +2418,7 @@ if (agentBridgeArgv) {
               error,
             );
           });
-          return;
+          return false;
         }
         if (app.isPackaged) {
           await registerBrowserExtensionNativeHost(
@@ -2371,8 +2432,10 @@ if (agentBridgeArgv) {
           );
         }
         console.info('[BrowserExtensionChat] WebSocket app-server is listening on loopback.');
+        return true;
       } catch (error) {
         console.error('[BrowserExtensionChat] Failed to start loopback service:', error);
+        return false;
       }
     };
     if (appShutdown.isQuitting()) return;
@@ -2519,57 +2582,80 @@ if (agentBridgeArgv) {
       if (!result.success)
         throw new Error(`Historical assistant identities could not be prepared: ${result.error}`);
     }
+    initialization.setTaskStatus(AppInitializationTask.Configuration, startupSync?.success
+      ? AppInitializationTaskStatus.Complete : AppInitializationTaskStatus.Failed);
+    initialization.advance(AppInitializationStep.Engine, 3);
     startupHistoryAdmissionReady = await startupCoordinator.verifyNativeReady(activity => initialization.reportActivity(activity));
     if (appShutdown.isQuitting()) return;
-    initialization.reportActivity(AppInitializationActivity.Integrations);
-    await startBrowserExtensionIngress();
-    if (appShutdown.isQuitting()) return;
-    try {
-      getAgentCliIntegrationService().prepare();
-    } catch (error) {
-      console.warn(
-        '[AgentCli] Launcher preparation failed:',
-        error instanceof Error ? error.message : String(error),
-      );
-    }
-    await ensureAgentBridgeRunning().catch(error => {
-      console.error('[AgentBridge] Failed to start:', error);
-      agentBridgeServer = null;
-    });
-    if (!appShutdown.isQuitting()) {
-      await getAppServerIntegrationService().start().catch(() => {
-        console.error('[AppServer] Failed to start local WebSocket service.');
-      });
-    }
-    if (appShutdown.isQuitting()) {
-      await waitForAppServerShutdown(appServerIntegrationService?.stop().catch(() => {
-        console.error('[AppServer] Failed to stop local WebSocket service.');
-      }));
-      await agentBridgeServer?.stop();
-      agentBridgeServer = null;
-      return;
-    }
-
-    initialization.advance(AppInitializationStep.Engine, 3);
-    if (startupSync?.success && startupHistoryAdmissionReady) {
+    const normalStartup = startupCoordinator.route === StartupRoute.Normal;
+    const startStartupEngine = async (): Promise<void> => {
+      if (!startupSync?.success || !startupHistoryAdmissionReady || appShutdown.isQuitting()) return;
+      initialization.reportActivity(AppInitializationActivity.EngineStart);
+      if (normalStartup) initialization.setEnginePreparationPending(true);
       const startEngine = initialization.runOptionalTask('start assistant engine', async () => {
         const status = await ensureOpenClawRunningForCowork();
         if (status.phase !== 'running') {
-          console.error(
-            '[OpenClaw] Startup engine unavailable; settings remain accessible:',
-            status,
-          );
+          console.error('[OpenClaw] Startup engine unavailable; settings remain accessible:', status);
           return;
         }
-        if (appShutdown.isQuitting()) return;
+        if (appShutdown.isQuitting() || initialization.getState().phase === AppInitializationPhase.Failed)
+          return;
+        startupExecutionGeneration = getOpenClawEngineManager().getGatewayProcessGeneration();
         getCronJobService().startPolling();
       });
-      if (initialization.getState().firstLaunch) {
-        await startEngine;
-      } else {
-        void startEngine;
+      startupEnginePreparation = startEngine;
+      if (!normalStartup) await startEngine;
+    };
+    // Start the ordinary Gateway immediately after its real configuration is
+    // loaded; local integration setup can overlap its native startup.
+    if (normalStartup) await startStartupEngine();
+    if (appShutdown.isQuitting()) return;
+    const prepareStartupIntegrations = async (): Promise<void> => {
+      if (appShutdown.isQuitting()) return;
+      initialization.reportActivity(AppInitializationActivity.Integrations);
+      initialization.setTaskStatus(AppInitializationTask.Integrations, AppInitializationTaskStatus.Running);
+      let integrationsSucceeded = await startBrowserExtensionIngress();
+      if (appShutdown.isQuitting()) return;
+      try {
+        getAgentCliIntegrationService().prepare();
+      } catch (error) {
+        integrationsSucceeded = false;
+        console.warn('[AgentCli] Launcher preparation failed:', error instanceof Error ? error.message : String(error));
       }
-    }
+      await ensureAgentBridgeRunning().catch(error => {
+        integrationsSucceeded = false;
+        console.error('[AgentBridge] Failed to start:', error);
+        agentBridgeServer = null;
+      });
+      if (!appShutdown.isQuitting()) {
+        await getAppServerIntegrationService().start().catch(() => {
+          integrationsSucceeded = false;
+          console.error('[AppServer] Failed to start local WebSocket service.');
+        });
+      }
+      if (appShutdown.isQuitting()) {
+        await waitForAppServerShutdown(appServerIntegrationService?.stop().catch(() => {
+          console.error('[AppServer] Failed to stop local WebSocket service.');
+        }));
+        await agentBridgeServer?.stop();
+        agentBridgeServer = null;
+        return;
+      }
+      initialization.setTaskStatus(AppInitializationTask.Integrations, integrationsSucceeded
+        ? AppInitializationTaskStatus.Complete : AppInitializationTaskStatus.Failed);
+    };
+    startupIntegrationPreparation = prepareStartupIntegrations();
+    // Keep one cleanup owner and observe failures even while the core shell and
+    // workspace mount independently of optional local integration connections.
+    void startupIntegrationPreparation.catch(error => {
+      console.error('[AppInitialization] Local integration preparation failed:', error);
+      if (!appShutdown.isQuitting()) {
+        initialization.setTaskStatus(AppInitializationTask.Integrations, AppInitializationTaskStatus.Failed);
+        initialization.fail(error);
+      }
+    });
+    if (!normalStartup) await startupIntegrationPreparation;
+    if (!normalStartup) await startStartupEngine();
     if (appShutdown.isQuitting()) return;
 
     initialization.reportActivity(AppInitializationActivity.Finalize);
@@ -2685,6 +2771,7 @@ if (agentBridgeArgv) {
 
     // 在 macOS 上，当点击 dock 图标时显示已有窗口或重新创建
     app.on('activate', () => {
+      if (appShutdown.isQuitting()) return;
       if (mainWindow && !mainWindow.isDestroyed()) {
         if (!mainWindow.isVisible()) mainWindow.show();
         if (!mainWindow.isFocused()) mainWindow.focus();
@@ -2698,10 +2785,16 @@ if (agentBridgeArgv) {
 
   // 启动应用
   void initApp()
-    .then(() => {
-      if (!appShutdown.isQuitting()) {
+    .then(async () => {
+      if (!appShutdown.isQuitting() && initialization.getState().phase !== AppInitializationPhase.Failed) {
+        if (startupEnginePreparation && initialization.getState().firstLaunch)
+          completeEnginePreparation();
         startupCoordinator.complete();
-        return initialization.complete();
+        await initialization.complete();
+        // Keep the original App mounting time while its existing overlay waits for execution admission.
+        if (!startupEnginePreparation || initialization.getState().firstLaunch) return;
+        await startupEnginePreparation;
+        completeEnginePreparation();
       }
     })
     .catch(error => {

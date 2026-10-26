@@ -25,9 +25,11 @@ npm run electron:dev:openclaw
 默认 Vite 端口是 43127。隔离预览的目录及启动参数由 `scripts/electron/run-isolated-dev.cjs` 管理；不要把真实用户数据库、凭据或原生日志复制进仓库。
 
 开发版 Electron 与安装版采用同一四路判定：`fresh` 首次安装、`migration` 迁移升级、
-`upgrade` 正常升级、`normal` 正常启动。OpenClaw 版本变化、当前环境尚无完成回执或原生
-schema 待维护时，开发版同样显示正常升级引导。仅应用升版或构建指纹变化、且 OpenClaw
-版本相同并无需维护时使用正常启动；完整产物准入和实际数据库检查仍执行。
+`upgrade` 正常升级、`normal` 正常启动。OpenClaw 版本变化、当前环境尚无完成回执或有
+未完成升级事务时，开发版同样显示正常升级引导。仅应用升版或构建指纹变化、且 OpenClaw
+版本相同则使用正常启动，跳过宿主数据预检、会话扫描、完整产物哈希及离线会话校验，
+必要配置加载后直接启动 Gateway。当前原生 schema 和会话准入交由 Gateway 自身处理；
+升级及恢复路径仍执行严格产物准入与原生数据库维护。
 单独查看界面可使用 `startup:preview`；终端显示随机 loopback 地址，页面有明确演练标识，
 复用真实启动组件，只在内存模拟事件，不连接 Main、用户数据或 Gateway。演练不能替代真实维护验收。
 

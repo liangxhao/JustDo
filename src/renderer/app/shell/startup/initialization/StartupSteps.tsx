@@ -1,14 +1,13 @@
-import { type AppInitializationState, AppInitializationStep } from '@shared/app/initialization';
+import {
+  type AppInitializationState,
+  AppInitializationStep,
+  AppInitializationTask,
+  AppInitializationTaskStatus,
+} from '@shared/app/initialization';
 import { StartupFailureSource } from '@shared/app/startupFailure';
 import { EnginePhase, type OpenClawEngineStatus } from '@shared/openclaw/engineStatus';
 
 import { i18nService } from '@/services/i18n';
-
-const mainSteps = [
-  AppInitializationStep.UserData,
-  AppInitializationStep.Runtime,
-  AppInitializationStep.Configuration,
-] as const;
 
 export const StepStatus = {
   Complete: 'complete',
@@ -31,7 +30,7 @@ type Props = {
   rendererReady?: boolean;
 };
 
-/** Main preparation, engine readiness and interface readiness have separate owners. */
+/** Every ordinary-startup task reports its own state; task order never implies readiness. */
 export function startupStepStates({
   state,
   failed = false,
@@ -42,19 +41,14 @@ export function startupStepStates({
 }: Props) {
   const rendererFailed =
     failed &&
-    (rendererStarted || (state?.failure && state.failure.source !== StartupFailureSource.Main));
-  const steps = mainSteps.map((step, index) => ({
-    step: step as string,
-    status:
-      index < (state?.completedSteps ?? 0)
-        ? StepStatus.Complete
-        : state?.step === step && !rendererFailed
-          ? failed
-            ? StepStatus.Failed
-            : StepStatus.Running
-          : StepStatus.Waiting,
-  }));
-  steps.push(
+    (state?.failure ? state.failure.source !== StartupFailureSource.Main : rendererStarted);
+  const mainTask = (task: AppInitializationTask) => ({
+    step: task,
+    status: state?.tasks?.[task] ?? AppInitializationTaskStatus.Waiting,
+  });
+  return [
+    mainTask(AppInitializationTask.UserData),
+    mainTask(AppInitializationTask.Configuration),
     {
       step: AppInitializationStep.Engine,
       status:
@@ -66,6 +60,7 @@ export function startupStepStates({
               ? StepStatus.Running
               : StepStatus.Waiting,
     },
+    mainTask(AppInitializationTask.Integrations),
     {
       step: 'interface',
       status: rendererFailed
@@ -76,8 +71,7 @@ export function startupStepStates({
             ? StepStatus.Running
             : StepStatus.Waiting,
     },
-  );
-  return steps;
+  ];
 }
 
 export default function StartupSteps(props: Props) {
@@ -85,12 +79,10 @@ export default function StartupSteps(props: Props) {
     <ol className="startup-steps" aria-label={i18nService.t('startupSteps')}>
       {startupStepStates(props).map(({ step, status }) => {
         const completed = status === StepStatus.Complete;
-        const current = status === StepStatus.Running || status === StepStatus.Failed;
         return (
           <li
             key={step}
             className="startup-step"
-            aria-current={current ? 'step' : undefined}
             data-completed={completed}
             data-status={status}
           >

@@ -45,7 +45,8 @@ export default function CollaborationMemberHistory({
   const receiptId = receipt?.id;
   const receiptDeliveryId = receipt?.deliveryId;
   const [controller, setController] = useState<ChatController | null>(null);
-  const [status, setStatus] = useState<'loading' | 'ready' | 'empty' | 'error'>('loading');
+  const [status, setStatus] = useState<'loading' | 'preparing' | 'ready' | 'empty' | 'error'>('loading');
+  const [preparationTimedOut, setPreparationTimedOut] = useState(false);
   const [running, setRunning] = useState(false);
   const [canStopMemberRun, setCanStopMemberRun] = useState(false);
   const [receiptRetry, setReceiptRetry] = useState(0);
@@ -61,6 +62,7 @@ export default function CollaborationMemberHistory({
     setController(null);
     onControllerChange?.(null);
     setStatus('loading');
+    setPreparationTimedOut(false);
     setRunning(false);
     setCanStopMemberRun(false);
     setReceiptResult({ key: receiptKey, messages: [] });
@@ -97,6 +99,7 @@ export default function CollaborationMemberHistory({
           state.sessionKey === member.sessionKey &&
           !!state.currentSessionId &&
           state.initialHistoryReady &&
+          !state.historyPreparationPending &&
           !state.historyReadFailed &&
           !state.chatSending &&
           state.transcript.activeTurn?.status !== 'running'
@@ -115,7 +118,10 @@ export default function CollaborationMemberHistory({
       const hasVisibleTranscript =
         state.chatMessages.length > 0 || state.transcript.activeTurn !== null;
       if (!receiptDeliveryId) {
-        if (hasVisibleTranscript) setStatus('ready');
+        setPreparationTimedOut(state.historyPreparationTimedOut === true);
+        if (state.historyPreparationPending) setStatus('preparing');
+        else if (state.historyReadFailed) setStatus(state.chatLoading ? 'loading' : 'error');
+        else if (hasVisibleTranscript) setStatus('ready');
         else if (state.initialHistoryReady) setStatus(state.lastError ? 'error' : 'empty');
       }
     };
@@ -128,6 +134,7 @@ export default function CollaborationMemberHistory({
         if (
           !disposed &&
           !receiptDeliveryId &&
+          !next.state.historyPreparationPending &&
           !next.state.initialHistoryReady &&
           next.state.chatMessages.length === 0 &&
           next.state.transcript.activeTurn === null
@@ -180,7 +187,8 @@ export default function CollaborationMemberHistory({
       attempt = 0;
       if (!receiptDeliveryId)
         setStatus(
-          next.state.chatMessages.length || next.state.transcript.activeTurn ? 'ready' : 'loading',
+          next.state.historyPreparationPending ? 'preparing' :
+            next.state.chatMessages.length || next.state.transcript.activeTurn ? 'ready' : 'loading',
         );
       resetHistoryDeadline();
       // A restarted Gateway can publish a different port/token. Serialize the
@@ -286,7 +294,10 @@ export default function CollaborationMemberHistory({
       {status !== 'ready' && (
         <p role={status === 'error' ? 'alert' : 'status'} className="p-3 text-sm text-secondary">
           {i18nService.t(
-            status === 'loading'
+            status === 'preparing'
+              ? 'storageHistoryPreparing'
+              : preparationTimedOut ? 'storageHistoryPreparationPending'
+              : status === 'loading'
               ? 'collaborationHistoryLoading'
               : status === 'empty'
                 ? receipt
@@ -298,11 +309,15 @@ export default function CollaborationMemberHistory({
           )}
         </p>
       )}
-      {receipt && (status === 'error' || status === 'empty') && (
+      {((receipt && (status === 'error' || status === 'empty')) || preparationTimedOut) && (
         <button
           type="button"
           className="mb-3 self-start text-sm text-primary"
-          onClick={() => setReceiptRetry(value => value + 1)}
+          onClick={() => {
+            if (preparationTimedOut && !receipt) {
+              if (controller?.state.sessionKey === member.sessionKey) void controller.loadHistory(true);
+            } else setReceiptRetry(value => value + 1);
+          }}
         >
           {i18nService.t('sessionDetailsRetry')}
         </button>

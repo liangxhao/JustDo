@@ -3,6 +3,8 @@ import os from 'os';
 import path from 'path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { EnginePhase } from '../../../shared/openclaw/engineStatus';
+import { BuiltinModelSyncReason } from '../../../shared/providers/builtinModels';
 import {
   ManagedDirectoryOperationCoordinator,
   managedDirectorySuccess,
@@ -13,6 +15,7 @@ import type { GatewayClientLike } from '../../engine/gateway/types';
 import { ensureExecutionReady } from '../runtime/executionReadiness';
 import { resolveManagedCredentialReloadTimeoutMs } from './models/credentialTimeouts';
 import {
+  MODEL_DEFAULTS_HOT_RELOAD_TIMEOUT_MS,
   OpenClawConfigSyncService,
   resolveDeferredGatewayRestartAction,
   resolveOpenClawConfigApplyMode,
@@ -344,6 +347,7 @@ describe('OpenClawConfigSyncService', () => {
       getGatewayLaunchEnvVars: vi.fn(() => options.previousSecrets ?? {}),
       setGatewayLaunchEnvVars: vi.fn(),
       getGatewayProcessGeneration: vi.fn(() => processGeneration),
+      getGatewayProcessId: vi.fn(() => phase === 'ready' || phase === 'error' ? null : 123),
       getDesiredVersion: vi.fn(() => 'v2026.6.11'),
       startGateway,
       stopGateway,
@@ -470,6 +474,19 @@ describe('OpenClawConfigSyncService', () => {
       getWindowsSandboxEnvironment: vi.fn(() => ({})),
     } as never);
     const configSync = {
+      syncModelDefaults: vi.fn(() => ({
+        result: {
+          ok: !options.syncError,
+          changed: options.configChanged ?? true,
+          configChanged: options.configChanged ?? true,
+          modelDefaultsOnly: options.modelDefaultsOnly ?? true,
+          requiresGatewayRestart: false,
+          secretsChanged: options.secretsChanged ?? false,
+          configPath: options.configPath ?? 'openclaw.json',
+        },
+        isCurrent: vi.fn(() => true),
+        matchesRuntimeConfig: vi.fn(() => true),
+      })),
       sync: vi.fn(() =>
         options.syncError
           ? { ok: false, error: options.syncError }
@@ -857,6 +874,9 @@ describe('OpenClawConfigSyncService', () => {
 
   it.each([true, false])('skips historical model scans for a verified default-only change (config changed: %s)', async configChanged => {
     const harness = createHarness({ modelDefaultsOnly: true, configChanged });
+    await harness.service.syncConfig({ reason: 'startup' });
+    harness.engineManager.waitForGatewayConfigReload.mockClear();
+    harness.configSync.sync.mockClear();
     const reconciliation = vi.spyOn(harness.service as unknown as {
       syncManagedSessionModelsViaGateway: () => Promise<void>;
     }, 'syncManagedSessionModelsViaGateway').mockResolvedValue();
@@ -875,6 +895,10 @@ describe('OpenClawConfigSyncService', () => {
     }
 
     await expect(saving).resolves.toMatchObject({ success: true, hostPolicyVerified: true });
+    expect(harness.configSync.sync).not.toHaveBeenCalled();
+    expect(harness.configSync.syncModelDefaults).toHaveBeenCalledOnce();
+    if (configChanged) expect(harness.engineManager.waitForGatewayConfigReload)
+      .toHaveBeenCalledWith(7, MODEL_DEFAULTS_HOT_RELOAD_TIMEOUT_MS);
     expect(harness.requestGateway).toHaveBeenCalledWith('config.get');
     expect(harness.requestGateway).toHaveBeenCalledWith('exec.approvals.get');
     expect(reconciliation).not.toHaveBeenCalled();
@@ -882,19 +906,210 @@ describe('OpenClawConfigSyncService', () => {
 
   it.each([
     { modelDefaultsOnly: false },
-    { modelDefaultsOnly: undefined },
     { modelDefaultsOnly: true, secretsChanged: true },
-    { modelDefaultsOnly: true, nextSecrets: { MANAGED_KEY: 'test-value' } },
-  ])('retains reconciliation when a model-default fast path cannot be verified: %j', async options => {
+  ])('rejects unsafe model-default publications without a full sync or restart: %j', async options => {
     const harness = createHarness(options);
     const reconciliation = vi.spyOn(harness.service as unknown as {
       syncManagedSessionModelsViaGateway: () => Promise<void>;
     }, 'syncManagedSessionModelsViaGateway').mockResolvedValue();
 
-    await expect(harness.service.syncConfig({ reason: 'default-model-change' }))
-      .resolves.toMatchObject({ success: true, hostPolicyVerified: true });
+    const result = await harness.service.syncConfig({ reason: 'default-model-change' });
+    expect(result).toMatchObject({ success: false, configSynced: false });
+    expect(result.modelDefaultsApplicationPending).toBeUndefined();
+    expect(result.error).toBe(t('modelDefaultConfigSyncFailed'));
 
-    expect(reconciliation).toHaveBeenCalledOnce();
+    expect(reconciliation).not.toHaveBeenCalled();
+    expect(harness.configSync.sync).not.toHaveBeenCalled();
+    expect(harness.stopGateway).not.toHaveBeenCalled();
+    expect(harness.startGateway).not.toHaveBeenCalled();
+    expect(harness.requestGateway).not.toHaveBeenCalled();
+  });
+
+  it('releases execution admission while a model-default hot observation is pending', async () => {
+    const harness = createHarness();
+    await harness.service.syncConfig({ reason: 'startup' });
+    let finishReload!: (applied: boolean) => void;
+    harness.engineManager.waitForGatewayConfigReload.mockImplementationOnce(() => new Promise(resolve => {
+      finishReload = resolve;
+    }));
+    harness.requestGateway.mockClear();
+    const finished = vi.fn();
+    const saving = harness.service.syncConfig({ reason: 'default-model-change' }).then(result => {
+      finished(); return result;
+    });
+    await vi.waitFor(() => expect(finishReload).toBeTypeOf('function'));
+    await expect(harness.service.verifyExecutionPermissionPolicy()).resolves.toMatchObject({ success: true });
+    expect(finished).not.toHaveBeenCalled();
+    expect(harness.requestGateway.mock.calls.map(([method]) => method)).toEqual(['config.get', 'exec.approvals.get']);
+    finishReload(true);
+    await expect(saving).resolves.toMatchObject({ success: true });
+  });
+
+  it('keeps a rejected model publication separate from pending runtime application', async () => {
+    const harness = createHarness();
+    const publication = harness.configSync.syncModelDefaults.getMockImplementation()!();
+    Object.assign(publication.result, { ok: false, error: 'Model configuration write failed' });
+    harness.configSync.syncModelDefaults.mockReturnValue(publication);
+
+    const result = await harness.service.syncConfig({ reason: 'default-model-change' });
+
+    expect(result).toMatchObject({
+      success: false, configSynced: false, error: 'Model configuration write failed',
+    });
+    expect(result.modelDefaultsApplicationPending).toBeUndefined();
+    expect(harness.engineManager.waitForGatewayConfigReload).not.toHaveBeenCalled();
+    expect(harness.engineManager.restartGateway).not.toHaveBeenCalled();
+  });
+
+  it('keeps general permission mutations serialized for their complete native application', async () => {
+    const harness = createHarness();
+    let finishReload!: (applied: boolean) => void;
+    harness.engineManager.waitForGatewayConfigReload.mockImplementationOnce(() => new Promise(resolve => {
+      finishReload = resolve;
+    }));
+    const general = harness.service.syncConfig({ reason: 'permission-change' });
+    await vi.waitFor(() => expect(finishReload).toBeTypeOf('function'));
+    const saving = harness.service.syncConfig({ reason: 'default-model-change' });
+    const verify = harness.service.verifyExecutionPermissionPolicy();
+    expect(harness.configSync.syncModelDefaults).not.toHaveBeenCalled();
+    finishReload(true);
+    await expect(general).resolves.toMatchObject({ success: true });
+    await expect(saving).resolves.toMatchObject({ success: true });
+    await expect(verify).resolves.toMatchObject({ success: true });
+  });
+
+  it.each(['default-model-change', 'default-model-change-rollback'])(
+    'never restarts or stops on an unconfirmed model observation: %s', async reason => {
+      const harness = createHarness({ waitForReload: false });
+      const result = await harness.service.syncConfig({ reason });
+      expect(result).toMatchObject({ success: false, configSynced: false, modelDefaultsApplicationPending: true });
+      expect(result.error).toBeUndefined();
+      expect(harness.engineManager.waitForGatewayConfigReload).toHaveBeenCalledWith(7, MODEL_DEFAULTS_HOT_RELOAD_TIMEOUT_MS);
+      expect(harness.configSync.sync).not.toHaveBeenCalled();
+      expect(harness.requestGateway).not.toHaveBeenCalled();
+      expect(harness.stopGateway).not.toHaveBeenCalled();
+      expect(harness.startGateway).not.toHaveBeenCalled();
+      expect(harness.engineManager.restartGateway).not.toHaveBeenCalled();
+    },
+  );
+
+  it('keeps a rejected hot observation unconfirmed without stopping or restarting', async () => {
+    const harness = createHarness();
+    harness.engineManager.waitForGatewayConfigReload.mockRejectedValueOnce(new Error('observer unavailable'));
+    const result = await harness.service.syncConfig({ reason: 'default-model-change' });
+    expect(result).toMatchObject({ success: false, configSynced: false, modelDefaultsApplicationPending: true });
+    expect(result.error).toBeUndefined();
+    expect(harness.stopGateway).not.toHaveBeenCalled();
+    expect(harness.engineManager.restartGateway).not.toHaveBeenCalled();
+    expect(harness.requestGateway).not.toHaveBeenCalled();
+  });
+
+  it.each(['revision', 'model', 'permissions'] as const)(
+    'requires current native application and policy evidence after hot reload (%s)', async invalid => {
+      const harness = createHarness();
+      await harness.service.syncConfig({ reason: 'startup' });
+      const publication = harness.configSync.syncModelDefaults.getMockImplementation()!();
+      if (invalid === 'model') publication.matchesRuntimeConfig.mockReturnValue(false);
+      harness.configSync.syncModelDefaults.mockReturnValue(publication);
+      const request = harness.requestGateway.getMockImplementation()!;
+      harness.requestGateway.mockImplementation(async (method, params) => {
+        const result = await request(method, params);
+        if (invalid === 'revision' && method === 'config.get') return { ...result, appliedConfigHash: 'previous-revision' };
+        if (invalid === 'permissions' && method === 'exec.approvals.get') return { hash: 'unsafe', file: { version: 1, defaults: {} } };
+        return result;
+      });
+      const result = await harness.service.syncConfig({ reason: 'default-model-change' });
+      expect(result).toMatchObject({ success: false, configSynced: false, modelDefaultsApplicationPending: true });
+      expect(result.error).toBeUndefined();
+      expect(result.hostPolicyVerified).toBeUndefined();
+      expect(harness.stopGateway).not.toHaveBeenCalled();
+      expect(harness.engineManager.restartGateway).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(['pending-input', 'changed-input'])('does not publish defaults across an unapplied launch environment (%s)', async source => {
+    const harness = createHarness(source === 'changed-input' ? { nextSecrets: { MANAGED_KEY: 'test-value' } } : {});
+    harness.engineManager.hasPendingGatewayLaunchEnvironmentChanges.mockReturnValue(source === 'pending-input');
+    const result = await harness.service.syncConfig({ reason: 'default-model-change' });
+    expect(result).toMatchObject({ success: false, configSynced: false, modelDefaultsApplicationPending: true });
+    expect(result.error).toBeUndefined();
+    expect(harness.configSync.syncModelDefaults).not.toHaveBeenCalled();
+    expect(harness.stopGateway).not.toHaveBeenCalled();
+  });
+
+  it.each(['retiredProviderIds', 'retiredMcpServerNames'] as const)(
+    'rejects a default reason carrying unrelated %s obligations before publication', async field => {
+      const harness = createHarness();
+      await expect(harness.service.syncConfig({ reason: 'default-model-change', [field]: ['retired'] }))
+        .resolves.toMatchObject({ success: false, configSynced: false });
+      expect(harness.configSync.syncModelDefaults).not.toHaveBeenCalled();
+      expect(harness.configSync.sync).not.toHaveBeenCalled();
+      expect(harness.stopGateway).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(['client', 'process', 'lifecycle', 'authentication', 'file'] as const)(
+    'does not confirm a model observation after its %s owner changes', async owner => {
+      let authId = 'initial';
+      const harness = createHarness({ getModelAuthSessionId: () => authId });
+      await harness.service.syncConfig({ reason: 'startup' });
+      let finishReload!: (applied: boolean) => void;
+      harness.engineManager.waitForGatewayConfigReload.mockImplementationOnce(() => new Promise(resolve => {
+        finishReload = resolve;
+      }));
+      const publication = harness.configSync.syncModelDefaults.getMockImplementation()!();
+      harness.configSync.syncModelDefaults.mockReturnValue(publication);
+      const saving = harness.service.syncConfig({ reason: 'default-model-change' });
+      await vi.waitFor(() => expect(finishReload).toBeTypeOf('function'));
+      if (owner === 'client') (harness.service as unknown as { deps: { getGatewayClient: () => null } }).deps.getGatewayClient = () => null;
+      if (owner === 'process') harness.advanceProcessGeneration();
+      if (owner === 'lifecycle') harness.engineManager.getGatewayLifecycleGeneration.mockReturnValue(2);
+      if (owner === 'authentication') authId = 'replacement';
+      if (owner === 'file') publication.isCurrent.mockReturnValue(false);
+      harness.requestGateway.mockClear();
+      finishReload(true);
+      await expect(saving).resolves.toMatchObject({ success: false, configSynced: false });
+      expect(harness.requestGateway).not.toHaveBeenCalled();
+      expect(harness.stopGateway).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(['ready', 'error'] as const)('saves only model defaults while offline (%s)', async phase => {
+    const harness = createHarness({ phase });
+    const result = await harness.service.syncConfig({ reason: 'default-model-change' });
+    expect(result).toMatchObject({ success: true, configSynced: true });
+    expect(result).not.toHaveProperty('hostPolicyVerified');
+    expect(harness.configSync.syncModelDefaults).toHaveBeenCalledOnce();
+    expect(harness.configSync.sync).not.toHaveBeenCalled();
+    expect(harness.requestGateway).not.toHaveBeenCalled();
+    expect(harness.startGateway).not.toHaveBeenCalled();
+  });
+
+  it('does not write a model default into an in-flight Gateway startup snapshot', async () => {
+    const harness = createHarness({ phase: 'starting' });
+    const result = await harness.service.syncConfig({ reason: 'default-model-change' });
+    expect(result).toMatchObject({ success: false, configSynced: false, modelDefaultsApplicationPending: true });
+    expect(result.error).toBeUndefined();
+    expect(result.hostPolicyVerified).toBeUndefined();
+    expect(harness.configSync.syncModelDefaults).not.toHaveBeenCalled();
+    expect(harness.startGateway).not.toHaveBeenCalled();
+    expect(harness.stopGateway).not.toHaveBeenCalled();
+  });
+
+  it('preserves an existing credential application obligation instead of publishing a model default', async () => {
+    const harness = await createPendingCredentialHarness();
+    await expect(harness.service.syncConfig({ reason: 'default-model-change' }))
+      .resolves.toMatchObject({ success: false, configSynced: false });
+    expect(harness.configSync.syncModelDefaults).not.toHaveBeenCalled();
+    expect(harness.stopGateway).not.toHaveBeenCalled();
+  });
+
+  it('confirms a model default inside an explicit mutation context without reentering its queue', async () => {
+    const harness = createHarness();
+    await harness.service.syncConfig({ reason: 'startup' });
+    await expect(harness.service.runConfigMutationExclusive(context =>
+      context.syncConfig({ reason: 'default-model-change' })))
+      .resolves.toMatchObject({ success: true });
   });
 
   it('stops a running Gateway instead of falling back when the sandbox is not ready', async () => {
@@ -2295,6 +2510,43 @@ describe('OpenClawConfigSyncService', () => {
     });
     expect(harness.startGateway).toHaveBeenCalledTimes(2);
     expect(harness.stopGateway).toHaveBeenCalledOnce();
+  });
+
+  it.each([false, true])('preserves a still-starting native snapshot after joining its observation (restarting: %s)', async restarting => {
+    const harness = createHarness({ phase: EnginePhase.Starting });
+    harness.getStatus.mockImplementation(() => ({ ...runningStatus, phase: EnginePhase.Starting,
+      ...(restarting ? { restarting: true } : {}) }));
+    // The current owner, rather than an earlier returned result, controls publication.
+    harness.startGateway.mockResolvedValueOnce(runningStatus);
+
+    await expect(harness.service.syncConfig({ reason: 'settings', discoverExternalMcpServers: false }))
+      .resolves.toMatchObject({
+        success: false, changed: false, configSynced: false,
+        status: { phase: EnginePhase.Starting }, error: t('engineConfigApplicationUnconfirmed'),
+      });
+
+    expect(harness.startGateway).toHaveBeenCalledOnce();
+    expect(harness.configSync.sync).not.toHaveBeenCalled();
+    expect(harness.configSync.collectGatewayLaunchEnvVars).not.toHaveBeenCalled();
+    expect(harness.engineManager.setGatewayLaunchEnvVars).not.toHaveBeenCalled();
+    expect(harness.requestGateway).not.toHaveBeenCalled();
+    expect(harness.stopGateway).not.toHaveBeenCalled();
+    expect(harness.engineManager.restartGateway).not.toHaveBeenCalled();
+    expect(harness.disconnectGatewayClient).not.toHaveBeenCalled();
+  });
+
+  it('keeps logout cleanup independent of a pending native startup observation', async () => {
+    const harness = createHarness({ phase: EnginePhase.Starting, syncError: 'logout publication failed' });
+
+    await expect(harness.service.syncConfig({ reason: BuiltinModelSyncReason.AuthLogout,
+      discoverExternalMcpServers: false })).resolves.toMatchObject({
+      success: false, configSynced: false, error: expect.stringContaining('logout publication failed'),
+    });
+
+    expect(harness.startGateway).not.toHaveBeenCalled();
+    expect(harness.configSync.sync).toHaveBeenCalledOnce();
+    expect(harness.stopGateway).toHaveBeenCalledOnce();
+    expect(harness.disconnectGatewayClient).toHaveBeenCalledOnce();
   });
 
   it('does not revive a Gateway stopped while a hard restart is deferred', async () => {

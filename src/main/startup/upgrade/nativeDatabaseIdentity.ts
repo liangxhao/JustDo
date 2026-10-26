@@ -42,6 +42,26 @@ export type NativeDatabaseRuntimeIdentity = {
   schemaVersions: { state: number; agent: number };
 };
 
+export type NativeDatabaseDeliveryIdentity = Pick<NativeDatabaseRuntimeIdentity,
+  'runtimeVersion' | 'runtimeBuildId'>;
+
+/** Delivery routing facts only; this does not admit runtime bytes or native storage. */
+export async function readNativeDatabaseDeliveryIdentity(
+  runtimeRoot: string,
+): Promise<NativeDatabaseDeliveryIdentity> {
+  const [pkgBytes, manifestBytes] = await Promise.all([
+    fs.readFile(path.join(runtimeRoot, 'package.json')),
+    fs.readFile(path.join(runtimeRoot, 'runtime-patch-manifest.json')),
+  ]);
+  const pkg: unknown = JSON.parse(pkgBytes.toString('utf8'));
+  const manifest: unknown = JSON.parse(manifestBytes.toString('utf8'));
+  if (!isRecord(pkg) || pkg.name !== 'openclaw' || typeof pkg.version !== 'string' ||
+      pkg.version.length > 128 || !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/u.test(pkg.version) ||
+      !isRecord(manifest) || manifest.formatVersion !== 2 || manifest.openclawVersion !== `v${pkg.version}`)
+    throw new Error('The bundled native runtime delivery metadata is missing or inconsistent.');
+  return { runtimeVersion: `v${pkg.version}`, runtimeBuildId: digest(manifestBytes) };
+}
+
 /** Selected owners have a version-locked contract; the build separately freezes the dependency graph. */
 export async function admitNativeDatabaseRuntime(
   requestedRoot: string,

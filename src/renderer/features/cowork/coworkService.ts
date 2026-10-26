@@ -1197,20 +1197,13 @@ export class CoworkService {
     if (!cowork || options.canSelect?.() === false) return null;
     const requestId = ++this.latestLoadSessionRequestId;
     const modelRevision = this.sessionModelRevisions.get(sessionId) ?? 0;
+    const confirmedModelRef = store.getState().cowork.userConfirmedSessionModelRefs[sessionId];
     const modelReadVersion = (this.sessionModelReadVersions.get(sessionId) ?? 0) + 1;
     this.sessionModelReadVersions.set(sessionId, modelReadVersion);
 
     const result = await cowork.getSession(sessionId);
     if (options.canSelect?.() === false) return null;
     if (result.success && result.session) {
-      const selectedModel = cowork.getSessionModel
-        ? await cowork
-            .getSessionModel({ sessionId, agentId: result.session.agentId })
-            .catch(() => null)
-        : null;
-      // A navigation origin may disappear while either metadata read is pending.
-      // Once selected, normal session hydration must continue even if that selection unmounts it.
-      if (options.canSelect?.() === false) return null;
       // Keep only the latest session load result to avoid stale async overwrites.
       if (requestId !== this.latestLoadSessionRequestId) {
         return result.session;
@@ -1223,16 +1216,23 @@ export class CoworkService {
         : result.session;
       const modelChangedDuringRead =
         modelRevision !== (this.sessionModelRevisions.get(sessionId) ?? 0) ||
-        modelReadVersion !== this.sessionModelReadVersions.get(sessionId);
+        modelReadVersion !== this.sessionModelReadVersions.get(sessionId) ||
+        confirmedModelRef !== store.getState().cowork.userConfirmedSessionModelRefs[sessionId];
       session = {
         ...session,
         modelRef: modelChangedDuringRead
           ? store.getState().cowork.userConfirmedSessionModelRefs[sessionId]
-          : selectedModel?.success && selectedModel.source === 'gateway'
-            ? selectedModel.modelRef
-            : session.modelRef,
+          : session.modelRef,
       };
       store.dispatch(setCurrentSession(session));
+      // Mount the authenticated history reader without waiting for model metadata.
+      if (!modelChangedDuringRead) {
+        void this.refreshSessionModel(sessionId, session.agentId?.trim() || 'main', {
+          canApply: () =>
+            requestId === this.latestLoadSessionRequestId &&
+            store.getState().cowork.currentSession?.id === sessionId,
+        });
+      }
       if (cowork.getPlanMode) {
         const planModeBeforeLoad = store.getState().cowork.planModeBySession[sessionId];
         void cowork
@@ -1635,17 +1635,24 @@ export class CoworkService {
     return window.electron.cowork.getSessionModel(options);
   }
 
-  async refreshSessionModel(sessionId: string, agentId = 'main'): Promise<void> {
+  async refreshSessionModel(
+    sessionId: string,
+    agentId = 'main',
+    options: { canApply?: () => boolean } = {},
+  ): Promise<void> {
     if (sessionId.startsWith('temp-')) return;
     const revision = this.sessionModelRevisions.get(sessionId) ?? 0;
+    const confirmedModelRef = store.getState().cowork.userConfirmedSessionModelRefs[sessionId];
     const contextKey = `${sessionId}\0${agentId}`;
     if (store.getState().cowork.pendingModelSelectionTaskIds[contextKey] !== undefined) return;
     const readVersion = (this.sessionModelReadVersions.get(sessionId) ?? 0) + 1;
     this.sessionModelReadVersions.set(sessionId, readVersion);
     try {
       const result = await this.getSessionModel({ sessionId, agentId });
+      if (options.canApply?.() === false) return;
       if (revision !== (this.sessionModelRevisions.get(sessionId) ?? 0)) return;
       if (readVersion !== this.sessionModelReadVersions.get(sessionId)) return;
+      if (confirmedModelRef !== store.getState().cowork.userConfirmedSessionModelRefs[sessionId]) return;
       if (result.success && result.source === 'gateway' && result.modelRef) {
         store.dispatch(
           receiveSessionModelSelection({ sessionId, agentId, modelRef: result.modelRef }),

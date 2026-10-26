@@ -51,6 +51,25 @@ describe('registerAppShutdown', () => {
     expect(electronMocks.app.exit).toHaveBeenCalledExactlyOnceWith(0);
   });
 
+  test('retires presentation immediately once while waiting for real cleanup', async () => {
+    let finish!: () => void;
+    const onBeginCleanup = vi.fn();
+    const controller = registerAppShutdown({
+      onBeginCleanup,
+      cleanup: () => new Promise<void>(resolve => { finish = resolve; }),
+    });
+    electronMocks.handlers.get('before-quit')?.({ preventDefault: vi.fn() });
+    expect(controller.isQuitting()).toBe(true);
+    expect(onBeginCleanup).toHaveBeenCalledOnce();
+    await flushPromises();
+    electronMocks.handlers.get('before-quit')?.({ preventDefault: vi.fn() });
+    expect(onBeginCleanup).toHaveBeenCalledOnce();
+    expect(electronMocks.app.exit).not.toHaveBeenCalled();
+    finish();
+    await flushPromises();
+    expect(electronMocks.app.exit).toHaveBeenCalledExactlyOnceWith(0);
+  });
+
   test('stops the runtime independently when session cleanup hangs, then exits', async () => {
     vi.useFakeTimers();
     let stopped!: () => void;

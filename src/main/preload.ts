@@ -898,6 +898,7 @@ contextBridge.exposeInMainWorld('electron', {
     },
     // Session management
     startSession: (options: {
+      modelRef?: string;
       rendererDispatch?: boolean;
       prompt: string;
       gatewayPrompt?: string;
@@ -1331,12 +1332,21 @@ contextBridge.exposeInMainWorld('electron', {
     route: Object.values(StartupRoute).find(route =>
       process.argv.includes(`${STARTUP_ROUTE_ARGUMENT}${route}`),
     ),
-    entryStartedAt:
-      Number(
+    entryStartedAt: (() => {
+      const fallback = Number(
         process.argv
           .find(argument => argument.startsWith(STARTUP_CLOCK_ARGUMENT))
           ?.slice(STARTUP_CLOCK_ARGUMENT.length),
-      ) || undefined,
+      ) || undefined;
+      if (!process.argv.some(argument => argument.startsWith(STARTUP_ROUTE_ARGUMENT))) return fallback;
+      try {
+        const startedAt: unknown = ipcRenderer.sendSync(AppInitializationIpc.GetEntryClock);
+        return typeof startedAt === 'number' && Number.isFinite(startedAt) && startedAt > 0
+          ? startedAt : fallback ?? Date.now();
+      } catch {
+        return fallback ?? Date.now();
+      }
+    })(),
     appearance: readWindowAppearance(
       () => ipcRenderer.sendSync(WindowAppearanceIpc.Get),
       process.argv.includes(INITIALIZATION_WINDOW_ARGUMENT),

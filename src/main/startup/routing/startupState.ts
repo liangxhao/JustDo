@@ -46,6 +46,8 @@ export type StartupJournal = {
   isolatedEntries?: string[];
   historySummary?: StartupHistorySummary;
   completedIdentity?: StartupIdentity;
+  /** Last application opening; not a native database maintenance receipt. */
+  lastOpenedIdentity?: StartupIdentity;
   targetIdentity?: StartupIdentity;
 };
 
@@ -75,6 +77,7 @@ export function readStartupJournal(userData: string): StartupJournal | null {
     !/^[a-f0-9-]{36}$/.test(value.transactionId) ||
     !Number.isFinite(value.startedAt) ||
     (value.completedIdentity !== undefined && !isStartupIdentity(value.completedIdentity)) ||
+    (value.lastOpenedIdentity !== undefined && !isStartupIdentity(value.lastOpenedIdentity)) ||
     (value.targetIdentity !== undefined && !isStartupIdentity(value.targetIdentity)) ||
     (value.route === StartupRoute.Upgrade && value.stage !== StartupStage.Complete &&
       !isStartupIdentity(value.targetIdentity)) ||

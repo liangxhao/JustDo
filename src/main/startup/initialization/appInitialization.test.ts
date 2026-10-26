@@ -7,6 +7,8 @@ import {
   AppInitializationActivity,
   AppInitializationPhase,
   AppInitializationStep,
+  AppInitializationTask,
+  AppInitializationTaskStatus,
 } from '../../../shared/app/initialization';
 import { StartupRoute, StartupStage } from '../../../shared/app/startup/routing';
 import { AppInitialization } from './appInitialization';
@@ -37,6 +39,43 @@ function temporaryRoot(): string {
 afterEach(() => {
   vi.restoreAllMocks();
   for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('keeps Normal engine preparation pending across shell readiness and publishes its later settlement', async () => {
+  const onChanged = vi.fn();
+  const initialization = new AppInitialization(temporaryRoot(), StartupRoute.Normal, onChanged);
+  initialization.setEnginePreparationPending(true);
+  await initialization.complete();
+  expect(initialization.getState()).toMatchObject({
+    phase: AppInitializationPhase.Ready, enginePreparationPending: true,
+  });
+  initialization.setEnginePreparationPending(false);
+  expect(onChanged.mock.lastCall?.[0]).toMatchObject({
+    phase: AppInitializationPhase.Ready, enginePreparationPending: false,
+  });
+  initialization.setEnginePreparationPending(true);
+  expect(initialization.getState().enginePreparationPending).toBe(false);
+});
+
+test.each([StartupRoute.Fresh, StartupRoute.Migration, StartupRoute.Upgrade])(
+  'keeps the original first-launch engine waiting contract without a Normal pending flag (%s)', route => {
+    const initialization = new AppInitialization(temporaryRoot(), route, vi.fn());
+    initialization.setEnginePreparationPending(true);
+    initialization.setEnginePreparationPending(false);
+    expect(initialization.getState().enginePreparationPending).toBeUndefined();
+  },
+);
+
+test('rejects a late engine settlement after startup failed', () => {
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+  const onChanged = vi.fn();
+  const initialization = new AppInitialization(temporaryRoot(), StartupRoute.Normal, onChanged);
+  initialization.setEnginePreparationPending(true);
+  initialization.fail(new Error('Startup failed'));
+  const failed = initialization.getState();
+  initialization.setEnginePreparationPending(false);
+  expect(initialization.getState()).toEqual(failed);
+  expect(onChanged.mock.lastCall?.[0]).toEqual(failed);
 });
 
 test('continuing after a human confirmation starts the activity clock without resetting total startup time', () => {
@@ -246,6 +285,55 @@ test('reports real activities without advancing milestones and retains timestamp
   initialization.reportActivity(AppInitializationActivity.EngineStart);
   expect(initialization.getState().phase).toBe(AppInitializationPhase.Ready);
   expect(initialization.getState().activity).toBe(AppInitializationActivity.Python);
+});
+
+test('publishes independent task progress without changing older snapshots or completing waiting work', async () => {
+  const initialization = new AppInitialization(temporaryRoot(), StartupRoute.Normal, vi.fn());
+  const original = initialization.getState();
+  initialization.setTaskStatus(AppInitializationTask.UserData, AppInitializationTaskStatus.Running);
+  initialization.setTaskStatus(AppInitializationTask.Configuration, AppInitializationTaskStatus.Running);
+  const parallel = initialization.getState();
+  initialization.setTaskStatus(AppInitializationTask.UserData, AppInitializationTaskStatus.Complete);
+  expect(parallel.tasks?.userData).toBe(AppInitializationTaskStatus.Running);
+  expect(original.tasks?.userData).toBe(AppInitializationTaskStatus.Waiting);
+  expect(initialization.getState().tasks).toEqual({ userData: 'complete', configuration: 'running', integrations: 'waiting' });
+  const copy = initialization.getState();
+  copy.tasks!.configuration = AppInitializationTaskStatus.Complete;
+  expect(initialization.getState().tasks?.configuration).toBe(AppInitializationTaskStatus.Running);
+  initialization.setTaskStatus(AppInitializationTask.Integrations, AppInitializationTaskStatus.Complete);
+  expect(initialization.getState().tasks?.integrations).toBe(AppInitializationTaskStatus.Waiting);
+  await initialization.complete();
+  expect(initialization.getState().tasks).toEqual({ userData: 'complete', configuration: 'running', integrations: 'waiting' });
+});
+
+test('Main failure marks only its active tasks failed and refuses late task completion', () => {
+  const initialization = new AppInitialization(temporaryRoot(), StartupRoute.Normal, vi.fn());
+  initialization.setTaskStatus(AppInitializationTask.UserData, AppInitializationTaskStatus.Running);
+  initialization.setTaskStatus(AppInitializationTask.UserData, AppInitializationTaskStatus.Complete);
+  initialization.setTaskStatus(AppInitializationTask.Integrations, AppInitializationTaskStatus.Running);
+  initialization.fail(new Error('service preparation failed'));
+  const failed = initialization.getState();
+  expect(failed.tasks).toEqual({ userData: 'complete', configuration: 'waiting', integrations: 'failed' });
+  initialization.setTaskStatus(AppInitializationTask.Integrations, AppInitializationTaskStatus.Complete);
+  expect(initialization.getState()).toEqual(failed);
+});
+
+test('allows active local services to settle after shell readiness without starting new work', async () => {
+  const initialization = new AppInitialization(temporaryRoot(), StartupRoute.Normal, vi.fn());
+  initialization.setTaskStatus(AppInitializationTask.Integrations, AppInitializationTaskStatus.Running);
+  await initialization.complete();
+  initialization.setTaskStatus(AppInitializationTask.UserData, AppInitializationTaskStatus.Running);
+  expect(initialization.getState().tasks?.userData).toBe(AppInitializationTaskStatus.Waiting);
+  initialization.setTaskStatus(AppInitializationTask.Integrations, AppInitializationTaskStatus.Complete);
+  expect(initialization.getState().tasks?.integrations).toBe(AppInitializationTaskStatus.Complete);
+  initialization.setTaskStatus(AppInitializationTask.Integrations, AppInitializationTaskStatus.Failed);
+  expect(initialization.getState().tasks?.integrations).toBe(AppInitializationTaskStatus.Complete);
+});
+
+test.each([StartupRoute.Fresh, StartupRoute.Migration, StartupRoute.Upgrade])('does not add ordinary parallel task state to %s startup', route => {
+  const initialization = new AppInitialization(temporaryRoot(), route, vi.fn());
+  initialization.setTaskStatus(AppInitializationTask.UserData, AppInitializationTaskStatus.Running);
+  expect(initialization.getState().tasks).toBeUndefined();
 });
 
 test('preserves the failed activity and ignores late activity reports', () => {

@@ -31,10 +31,12 @@
       <div class="startup-brand">
         <div class="startup-emblem" aria-hidden="true">
           <img
-            src="../../resources/icons/logo.png"
+            src="%STARTUP_LOGO%"
             alt=""
             width="58"
             height="58"
+            loading="eager"
+            decoding="sync"
             draggable="false"
           />
         </div>
@@ -93,15 +95,6 @@
           </li>
           <li class="startup-step" data-status="waiting">
             <span class="startup-step-marker" aria-hidden="true">·</span>
-            <span class="startup-step-name" data-startup-copy="startupStep_runtime"
-              >%STARTUP_COPY_startupStep_runtime%</span
-            >
-            <span class="startup-step-status" data-startup-copy="startupStepWaiting"
-              >%STARTUP_COPY_startupStepWaiting%</span
-            >
-          </li>
-          <li class="startup-step" data-status="waiting">
-            <span class="startup-step-marker" aria-hidden="true">·</span>
             <span class="startup-step-name" data-startup-copy="startupStep_configuration"
               >%STARTUP_COPY_startupStep_configuration%</span
             >
@@ -118,11 +111,19 @@
               >%STARTUP_COPY_startupStepWaiting%</span
             >
           </li>
+          <li class="startup-step" data-status="waiting">
+            <span class="startup-step-marker" aria-hidden="true">·</span>
+            <span class="startup-step-name" data-startup-copy="startupStep_integrations"
+              >%STARTUP_COPY_startupStep_integrations%</span
+            >
+            <span class="startup-step-status" data-startup-copy="startupStepWaiting"
+              >%STARTUP_COPY_startupStepWaiting%</span
+            >
+          </li>
           <li
             class="startup-step"
             data-startup-step="interface"
             data-status="running"
-            aria-current="step"
           >
             <span class="startup-step-marker" aria-hidden="true">·</span>
             <span class="startup-step-name" data-startup-copy="startupStep_interface"

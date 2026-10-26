@@ -7,7 +7,6 @@ import {
   confirmCurrentSessionModelSelection,
   confirmDefaultModelSelection,
   confirmManualModelSelection,
-  rollbackManualModelSelection,
 } from '@/features/cowork/coworkSlice';
 import type { Model } from '@/features/models/modelSlice';
 import { resolveOpenClawModelRef } from '@/features/models/openclawModelRef';
@@ -16,11 +15,7 @@ import { store } from '@/store';
 
 import { syncDefaultModelSelectionState } from './defaultModelSelectionState';
 import { LatestSerialTaskQueue } from './latestSerialTaskQueue';
-import {
-  applyModelSelectionUpdate,
-  DefaultModelApplyError,
-  resolvePersistedSessionModelRefAfterApplyError,
-} from './modelSelectionUpdate';
+import { applyModelSelectionUpdate } from './modelSelectionUpdate';
 
 interface ComposerModelSelectionContext {
   dispatch: Dispatch<UnknownAction>;
@@ -34,6 +29,27 @@ interface ComposerModelSelectionContext {
 
 // Keep native model changes ordered across composer unmounts and session navigation.
 const modelSelectionTaskQueue = new LatestSerialTaskQueue();
+const pendingSelections = new Map<
+  string,
+  {
+    taskId: number;
+    confirmed: Promise<{ success: true } | { success: false; error: unknown }>;
+  }
+>();
+
+/** Capture the current selection receipt before accepting a session send. */
+export async function waitForComposerModelSelection(contextKey: string): Promise<boolean> {
+  const pending = pendingSelections.get(contextKey);
+  if (pending) {
+    const result = await pending.confirmed;
+    if (result.success) return true;
+    throw result.error;
+  }
+  // A pending projection without its owning receipt cannot establish success.
+  if (store.getState().cowork.pendingModelSelectionTaskIds[contextKey] !== undefined)
+    throw new Error(i18nService.t('modelSelectorUnavailableSelection'));
+  return true;
+}
 
 export async function selectComposerModel(
   nextModel: Model | null,
@@ -54,111 +70,91 @@ export async function selectComposerModel(
   const { taskId, completion } = modelSelectionTaskQueue.enqueueLatest(
     selectionContextKey,
     async () => {
-      try {
-        const result = await applyModelSelectionUpdate(
-          {
-            sessionId,
-            agentId: effectiveAgentId,
-            model: nextModel,
-            shouldSaveDefault: () =>
-              modelSelectionTaskQueue.isLatestInScope(effectiveAgentId, taskId),
-            onDefaultModelUpdated: () => {
-              syncDefaultModelSelectionState(dispatch, effectiveAgentId, nextModel);
-              if (sessionId) {
-                dispatch(
-                  confirmDefaultModelSelection({
-                    contextKey: `__home__\0${effectiveAgentId}`,
-                    model: nextModel,
-                  }),
-                );
-                dispatch(
-                  completeManualModelSelection({
-                    contextKey: `__home__\0${effectiveAgentId}`,
-                    taskId,
-                  }),
-                );
-              }
-            },
-            onBackgroundDefaultStart: () => {
+      const result = await applyModelSelectionUpdate(
+        {
+          sessionId,
+          agentId: effectiveAgentId,
+          model: nextModel,
+          shouldSaveDefault: () =>
+            modelSelectionTaskQueue.isLatestInScope(effectiveAgentId, taskId),
+          onDefaultModelUpdated: () => {
+            if (!modelSelectionTaskQueue.isLatestInScope(effectiveAgentId, taskId)) return;
+            syncDefaultModelSelectionState(dispatch, effectiveAgentId, nextModel);
+            if (sessionId) {
               dispatch(
-                beginManualModelSelection({
+                confirmDefaultModelSelection({
                   contextKey: `__home__\0${effectiveAgentId}`,
-                  taskId,
                   model: nextModel,
-                  previousModel: agentSelectedModel,
                 }),
               );
-            },
-            onBackgroundDefaultError: error => {
-              // The native session is already pinned. A late
-              // default-save failure must never undo its model.
               dispatch(
-                rollbackManualModelSelection({
+                completeManualModelSelection({
                   contextKey: `__home__\0${effectiveAgentId}`,
                   taskId,
                 }),
               );
-              window.dispatchEvent(
-                new CustomEvent('app:showToast', {
-                  detail: i18nService
-                    .t('coworkDefaultModelApplyFailedSessionUpdated')
-                    .replace('{error}', error.message),
-                }),
-              );
-            },
+            }
           },
-          coworkService,
-        );
-        if (result.defaultSaveSkipped) return;
-        if (!sessionId || !result.sessionModelRef) {
-          dispatch(
-            confirmManualModelSelection({
-              contextKey: selectionContextKey,
-              taskId,
-              model: nextModel,
-            }),
-          );
-          return;
-        }
-        const confirmed =
-          resolveOpenClawModelRef(result.sessionModelRef, availableModels) ?? nextModel;
+          onBackgroundDefaultStart: () => {
+            if (!modelSelectionTaskQueue.isLatestInScope(effectiveAgentId, taskId)) return;
+            dispatch(
+              beginManualModelSelection({
+                contextKey: `__home__\0${effectiveAgentId}`,
+                taskId,
+                model: nextModel,
+                previousModel: agentSelectedModel,
+              }),
+            );
+          },
+          // Saving a future-chat preference cannot undo the desired model
+          // or reject a send whose native session was already confirmed.
+          onBackgroundDefaultError: () => undefined,
+        },
+        coworkService,
+      );
+      if (result.defaultSaveSkipped) return;
+      if (!sessionId || !result.sessionModelRef) {
         dispatch(
           confirmManualModelSelection({
             contextKey: selectionContextKey,
             taskId,
-            model: confirmed,
+            model: nextModel,
           }),
         );
-        dispatch(
-          confirmCurrentSessionModelSelection({
-            sessionId,
-            modelRef: result.sessionModelRef,
-          }),
-        );
-      } catch (error) {
-        const persistedModelRef = resolvePersistedSessionModelRefAfterApplyError(error, nextModel);
-        if (persistedModelRef && sessionId) {
-          const persistedModel =
-            resolveOpenClawModelRef(persistedModelRef, availableModels) ?? nextModel;
-          dispatch(
-            confirmManualModelSelection({
-              contextKey: selectionContextKey,
-              taskId,
-              model: persistedModel,
-            }),
-          );
-          dispatch(
-            confirmCurrentSessionModelSelection({
-              sessionId,
-              modelRef: persistedModelRef,
-            }),
-          );
-        }
-        throw error;
+        return;
       }
+      const confirmed =
+        resolveOpenClawModelRef(result.sessionModelRef, availableModels) ?? nextModel;
+      dispatch(
+        confirmManualModelSelection({
+          contextKey: selectionContextKey,
+          taskId,
+          model: confirmed,
+        }),
+      );
+      dispatch(
+        confirmCurrentSessionModelSelection({
+          sessionId,
+          modelRef: result.sessionModelRef,
+        }),
+      );
     },
     effectiveAgentId,
   );
+  const confirmed = completion.then(
+    () => {
+      dispatch(completeManualModelSelection({ contextKey: selectionContextKey, taskId }));
+      if (pendingSelections.get(selectionContextKey)?.taskId === taskId)
+        pendingSelections.delete(selectionContextKey);
+      return { success: true as const };
+    },
+    error => {
+      // Selection records intent immediately. Keep both that intent and its
+      // failed receipt until another choice replaces it; only Send reports it.
+      return { success: false as const, error };
+    },
+  );
+  pendingSelections.set(selectionContextKey, { taskId, confirmed });
   dispatch(
     beginManualModelSelection({
       contextKey: selectionContextKey,
@@ -167,36 +163,5 @@ export async function selectComposerModel(
       previousModel: effectiveSelectedModel,
     }),
   );
-  try {
-    await completion;
-    dispatch(
-      completeManualModelSelection({
-        contextKey: selectionContextKey,
-        taskId,
-      }),
-    );
-  } catch (error) {
-    const isLatestSelection =
-      store.getState().cowork.pendingModelSelectionTaskIds[selectionContextKey] === taskId;
-    dispatch(
-      rollbackManualModelSelection({
-        contextKey: selectionContextKey,
-        taskId,
-      }),
-    );
-    if (!isLatestSelection) return;
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    const userMessage = i18nService
-      .t(
-        error instanceof DefaultModelApplyError
-          ? 'coworkDefaultModelApplyFailedSessionUpdated'
-          : 'coworkModelApplyFailed',
-      )
-      .replace('{error}', errorMessage);
-    window.dispatchEvent(new CustomEvent('app:showToast', { detail: userMessage }));
-    console.warn('[CoworkPromptInput] Failed to update session model', {
-      sessionId,
-      error,
-    });
-  }
+  await confirmed;
 }

@@ -156,10 +156,11 @@ test('prepares the native OpenClaw session root and permission mode', async () =
   const adapter = new OpenClawRuntimeAdapter(store, {});
   const workspace = process.cwd();
   const request = vi.fn(async (method: string) => {
+    if (method === 'sessions.describe') return { session: null };
     if (method === 'automationPermission.info') {
       return { loaded: true, policyId: 'native-session-automation-permission' };
     }
-    return {
+    if (method === 'sessions.create') return {
       key: 'agent:main:justdo:session-1',
       sessionId: 'gateway-session-1',
       entry: {
@@ -168,6 +169,7 @@ test('prepares the native OpenClaw session root and permission mode', async () =
         sessionRoot: workspace,
       },
     };
+    throw new Error(`Unexpected method: ${method}`);
   });
   const internals = getSessionPreparationInternals(adapter);
   internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
@@ -184,8 +186,11 @@ test('prepares the native OpenClaw session root and permission mode', async () =
     gatewaySessionId: 'gateway-session-1',
   });
 
-  expect(request).toHaveBeenCalledOnce();
-  expect(request).toHaveBeenCalledWith('sessions.create', {
+  expect(request).toHaveBeenCalledTimes(2);
+  expect(request).toHaveBeenNthCalledWith(1, 'sessions.describe', {
+    key: 'agent:main:justdo:session-1', agentId: 'main',
+  }, expect.objectContaining({ signal: expect.any(AbortSignal), timeoutMs: expect.any(Number) }));
+  expect(request).toHaveBeenNthCalledWith(2, 'sessions.create', {
     key: 'agent:main:justdo:session-1',
     cwd: workspace,
     permissionMode: 'workspace',
@@ -193,7 +198,7 @@ test('prepares the native OpenClaw session root and permission mode', async () =
   expect(ensureProjectGitRepository).toHaveBeenCalledOnce();
   expect(ensureProjectGitRepository).toHaveBeenCalledWith(workspace);
   expect(ensureProjectGitRepository.mock.invocationCallOrder[0])
-    .toBeGreaterThan(request.mock.invocationCallOrder[0]);
+    .toBeGreaterThan(request.mock.invocationCallOrder[1]);
 });
 
 test('continues an adopted worktree session without creating a replacement', async () => {
@@ -260,10 +265,11 @@ test('rejects a session response that did not persist the permission mode', asyn
   const { store } = createEmptyStore();
   const adapter = new OpenClawRuntimeAdapter(store, {});
   const request = vi.fn(async (method: string) => {
+    if (method === 'sessions.describe') return { session: null };
     if (method === 'automationPermission.info') {
       return { loaded: true, policyId: 'native-session-automation-permission' };
     }
-    return {
+    if (method === 'sessions.create') return {
       sessionId: 'gateway-session-1',
       entry: {
         sessionId: 'gateway-session-1',
@@ -271,6 +277,7 @@ test('rejects a session response that did not persist the permission mode', asyn
         sessionRoot: process.cwd(),
       },
     };
+    throw new Error(`Unexpected method: ${method}`);
   });
   const internals = getSessionPreparationInternals(adapter);
   internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };

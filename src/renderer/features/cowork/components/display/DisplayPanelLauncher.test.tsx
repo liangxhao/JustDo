@@ -1,5 +1,8 @@
 // @vitest-environment jsdom
 
+import fs from 'node:fs';
+import path from 'node:path';
+
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -31,6 +34,87 @@ afterEach(() => {
 });
 
 describe('DisplayPanelLauncher', () => {
+  it('shows an active loading status without a launch button, then preserves retry and real entry actions', () => {
+    const select = vi.fn();
+    const retry = vi.fn();
+    const props = { onCreateBrowser: vi.fn(), onCreateTerminal: vi.fn() };
+    const label = 'Reading the verified App catalog';
+    const { container, rerender } = render(<DisplayPanelLauncher {...props} appItems={[
+      { id: 'pending-catalog', label, icon: <span />, loading: true, disabled: true, onSelect: select },
+    ]} />);
+    const region = screen.getByRole('region', { name: 'Apps' });
+    const status = within(region).getByRole('status');
+    expect(region.getAttribute('aria-busy')).toBe('true');
+    expect(status.textContent).toBe(label);
+    expect(within(region).queryByRole('button')).toBeNull();
+    expect(status.querySelector('.display-launcher__app-loading-spinner')).toBeTruthy();
+    expect(status.querySelector('[aria-hidden="true"].display-launcher__app-skeletons')).toBeTruthy();
+    fireEvent.click(status);
+    expect(select).not.toHaveBeenCalled();
+
+    rerender(<DisplayPanelLauncher {...props} appItems={[
+      { id: 'retry-catalog', label: 'Reload app list', description: 'The app list could not be read.', error: true, icon: <span />, onSelect: retry },
+    ]} />);
+    expect(within(region).queryByRole('status')).toBeNull();
+    expect(region.hasAttribute('aria-busy')).toBe(false);
+    expect(within(region).getByRole('alert').textContent).toBe('The app list could not be read.');
+    expect(container.querySelector('.display-launcher__app-error')).toBeTruthy();
+    expect(container.querySelector('.display-launcher__app-loading-spinner')).toBeNull();
+    fireEvent.click(within(region).getByRole('button', { name: 'Reload app list' }));
+    expect(retry).toHaveBeenCalledOnce();
+
+    rerender(<DisplayPanelLauncher {...props} appItems={[
+      { id: 'pending-catalog', label, icon: <span />, loading: true, disabled: true, onSelect: select },
+    ]} />);
+    expect(within(region).queryByRole('alert')).toBeNull();
+    expect(within(region).queryByRole('button')).toBeNull();
+    expect(within(region).getByRole('status').textContent).toBe(label);
+    expect(container.querySelector('.display-launcher__app-error')).toBeNull();
+
+    rerender(<DisplayPanelLauncher {...props} appItems={[
+      { id: 'plugin-entry', label: 'Editor', icon: <span data-testid="verified-plugin-icon" />, onSelect: select },
+    ]} />);
+    expect(container.querySelector('.display-launcher__app-loading')).toBeNull();
+    expect(within(region).getByTestId('verified-plugin-icon')).toBeTruthy();
+    fireEvent.click(within(region).getByRole('button', { name: 'Editor' }));
+    expect(select).toHaveBeenCalledOnce();
+  });
+
+  it.each(['apps', 'item'] as const)('keeps the app failure readable while %s authority disables retry', owner => {
+    const retry = vi.fn();
+    const item = {
+      id: 'failed-catalog', label: 'Reload app list', description: 'The app list could not be read.',
+      error: true, icon: <span />, disabled: owner === 'item', onSelect: retry,
+    };
+    const { rerender } = render(<DisplayPanelLauncher
+      onCreateBrowser={vi.fn()} onCreateTerminal={vi.fn()} appsDisabled={owner === 'apps'} appItems={[item]}
+    />);
+    const apps = within(screen.getByRole('region', { name: 'Apps' }));
+    expect(apps.getByRole('alert').textContent).toBe(item.description);
+    const button = apps.getByRole('button', { name: item.label }) as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    fireEvent.click(button);
+    expect(retry).not.toHaveBeenCalled();
+
+    rerender(<DisplayPanelLauncher onCreateBrowser={vi.fn()} onCreateTerminal={vi.fn()} appItems={[
+      { ...item, disabled: false },
+    ]} />);
+    expect(button.disabled).toBe(false);
+    fireEvent.click(button);
+    expect(retry).toHaveBeenCalledOnce();
+    expect(apps.queryByRole('status')).toBeNull();
+  });
+
+  it('keeps the dedicated spinner and skeleton animations active with reduced motion', () => {
+    const css = fs.readFileSync(path.resolve(__dirname, 'DisplayPanelLauncher.css'), 'utf8');
+    const reduced = css.match(/@media \(prefers-reduced-motion: reduce\) \{([\s\S]*?)\n\}/u)?.[1];
+    expect(reduced).toContain('.display-launcher__app-loading-spinner');
+    expect(reduced).toContain('animation: app-list-spinner 1s linear infinite');
+    expect(reduced).toContain('.display-launcher__app-skeleton::after');
+    expect(reduced).toContain('animation: app-list-shimmer 1.5s ease-in-out infinite');
+    expect(reduced).not.toMatch(/animation:\s*none/u);
+  });
+
   it('shows Apps between tools and recent visits, preserving actions, icons and availability', () => {
     const launch = vi.fn();
     const items = [

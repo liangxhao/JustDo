@@ -56,6 +56,45 @@ type PreparedManagedSessionModelOptions = {
   persistModelRef: (modelRef: string) => void;
 };
 
+export function confirmPreparedManagedSessionModelSelection(
+  receipt: { key?: unknown; entry?: Record<string, unknown>; resolved?: unknown },
+  sessionKey: string,
+  gatewaySessionId: string,
+  requestedModelRef: string,
+): string {
+  const resolvedRef = readModelRef(receipt.resolved);
+  const entryRef = modelRefFromIdentity(receipt.entry?.modelOverride, receipt.entry?.providerOverride);
+  if (receipt.key !== sessionKey || receipt.entry?.sessionId !== gatewaySessionId ||
+    !resolvedRef || !entryRef ||
+    !matchesModelSelectionIdentity(requestedModelRef, resolvedRef) ||
+    !matchesModelSelectionIdentity(requestedModelRef, entryRef)) {
+    throw new Error(t('sessionModelPreparationUnconfirmed'));
+  }
+  return resolvedRef;
+}
+
+/** The caller holds the native-session model queue throughout preparation. */
+export async function pinPreparedManagedSessionModel({
+  client,
+  isCurrentConnection,
+  sessionKey,
+  gatewaySessionId,
+  modelRef,
+  persistModelRef,
+}: Pick<PreparedManagedSessionModelOptions,
+  'client' | 'isCurrentConnection' | 'sessionKey' | 'gatewaySessionId' | 'persistModelRef'> & {
+    modelRef: string;
+  }): Promise<void> {
+  if (!isCurrentConnection()) throw new Error(t('sessionModelPreparationChanged'));
+  const patched = await client.request<{
+    key?: unknown; entry?: Record<string, unknown>; resolved?: unknown;
+  }>('sessions.patch', { key: sessionKey, expectedSessionId: gatewaySessionId, model: modelRef });
+  if (!isCurrentConnection()) throw new Error(t('sessionModelPreparationChanged'));
+  persistModelRef(confirmPreparedManagedSessionModelSelection(
+    patched, sessionKey, gatewaySessionId, modelRef,
+  ));
+}
+
 /** Repair only an existing override on the session about to run. */
 export async function reconcilePreparedManagedSessionModel({
   client,

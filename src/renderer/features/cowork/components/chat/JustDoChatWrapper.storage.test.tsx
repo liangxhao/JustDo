@@ -97,6 +97,44 @@ it('blocks export and sending while history is loading or failed, and retry only
   expect(send).toHaveBeenCalledTimes(1);
 });
 
+it('shows native preparation loading with cached text and an honest retry notice after the deadline', async () => {
+  const messages = [{ role: 'assistant', content: 'Saved visible text' }];
+  const connect = vi.spyOn(ChatController.prototype, 'connect').mockImplementation(async function (
+    this: ChatController,
+  ) {
+    this.state.connected = true;
+    this.state.chatMessages = messages;
+    this.state.chatLoading = true;
+    this.state.historyPreparationPending = true;
+    this.state.initialHistoryReady = false;
+  });
+  const reload = vi.spyOn(ChatController.prototype, 'loadHistory').mockResolvedValue(false);
+  const ref = createRef<JustDoChatWrapperRef>();
+  const onReady = vi.fn();
+  render(<JustDoChatWrapper ref={ref} onHistoryReadyChange={onReady} />);
+  await waitFor(() => expect(connect).toHaveBeenCalledOnce());
+  const controller = connect.mock.instances[0] as ChatController;
+  const publish = () => (controller as unknown as { notify(): void }).notify();
+  act(publish);
+  expect(screen.getByRole('status').textContent).toContain('storageHistoryLoading');
+  expect(controller.state.chatMessages).toEqual(messages);
+  expect(onReady).toHaveBeenLastCalledWith('agent:main:justdo:old', false);
+  expect(ref.current?.getExportSnapshot().isLoading).toBe(true);
+  await expect(ref.current?.sendMessage('must wait')).rejects.toThrow();
+  act(() => {
+    controller.state.historyPreparationPending = false;
+    controller.state.historyPreparationTimedOut = true;
+    controller.state.historyReadFailed = true;
+    controller.state.chatLoading = false;
+    publish();
+  });
+  expect(screen.getByRole('alert').textContent).toContain('storageHistoryPreparationPending');
+  expect(screen.queryByText('storageHistoryFailed')).toBeNull();
+  fireEvent.click(screen.getByText('storageHistoryRetry'));
+  expect(reload).toHaveBeenCalledExactlyOnceWith(true);
+  expect(controller.state.chatMessages).toEqual(messages);
+});
+
 it('blocks captured App entrypoints when branch creation becomes pending', async () => {
   vi.spyOn(ChatController.prototype, 'connect').mockImplementation(async function (
     this: ChatController,
@@ -300,48 +338,26 @@ it('checks the live pending fence even through an imperative handle captured bef
   expect(send).toHaveBeenCalledTimes(2);
 });
 
-it('delays real history loading notices and resets them when switching sessions', async () => {
-  vi.useFakeTimers();
+it('shows initial history loading immediately, including an empty running session', async () => {
   const connect = vi.spyOn(ChatController.prototype, 'connect').mockImplementation(async function (
     this: ChatController,
   ) {
     this.state.connected = true;
   });
-  vi.spyOn(ChatController.prototype, 'switchSession').mockResolvedValue();
-  const view = render(<JustDoChatWrapper />);
-  await act(async () => {});
+  render(<JustDoChatWrapper />);
+  expect(screen.getByText('storageHistoryLoading')).toBeTruthy();
+  const spinner = screen.getByRole('status').querySelector('svg');
+  expect(spinner?.classList.contains('animate-spin')).toBe(true);
+  expect(spinner?.classList.contains('motion-reduce:animate-spin')).toBe(true);
+  await waitFor(() => expect(connect).toHaveBeenCalled());
   const controller = connect.mock.instances[0] as ChatController;
   const publish = () => (controller as unknown as { notify(): void }).notify();
-  // Initial connection alone must not display a history notice.
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(5_000);
-  });
-  expect(screen.queryByRole('status')).toBeNull();
   act(() => {
     controller.state.chatLoading = true;
+    controller.state.chatSending = true;
     publish();
-  });
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(2_999);
-  });
-  expect(screen.queryByRole('status')).toBeNull();
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(1);
   });
   expect(screen.getByText('storageHistoryLoading')).toBeTruthy();
-  expect(screen.getByRole('status').querySelector('svg[aria-hidden="true"]')).toBeTruthy();
-
-  fixture.session = { id: 'other', agentId: 'main' };
-  view.rerender(<JustDoChatWrapper />);
-  expect(screen.queryByRole('status')).toBeNull();
-  act(() => {
-    controller.state.sessionKey = 'agent:main:justdo:other';
-    publish();
-  });
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(3_000);
-  });
-  expect(screen.getByRole('status')).toBeTruthy();
   act(() => {
     controller.state.chatLoading = false;
     controller.state.initialHistoryReady = true;
@@ -350,34 +366,67 @@ it('delays real history loading notices and resets them when switching sessions'
   expect(screen.queryByRole('status')).toBeNull();
 });
 
-it.each(['quick', 'new-turn'])('never flashes a notice for %s history reads', async mode => {
-  vi.useFakeTimers();
+it.each(['getPort', 'getToken'] as const)(
+  'keeps cold-connection loading bound to selection while %s is pending', async method => {
+    let finish!: (value: never) => void;
+    vi.mocked(window.electron.openclaw.engine[method]).mockImplementationOnce(
+      () => new Promise(resolve => { finish = resolve; }),
+    );
+    const connect = vi.spyOn(ChatController.prototype, 'connect').mockImplementation(async function (
+      this: ChatController,
+    ) { this.state.connected = true; });
+    fixture.session = null as never;
+    const view = render(<JustDoChatWrapper />);
+    await waitFor(() => expect(finish).toBeTypeOf('function'));
+    expect(screen.queryByRole('status')).toBeNull();
+    fixture.session = { id: 'first', agentId: 'main' };
+    view.rerender(<JustDoChatWrapper />);
+    expect(screen.getByText('storageHistoryLoading')).toBeTruthy();
+    fixture.session = { id: 'second', agentId: 'main' };
+    view.rerender(<JustDoChatWrapper />);
+    expect(screen.getByText('storageHistoryLoading')).toBeTruthy();
+    expect(connect).not.toHaveBeenCalled();
+    await act(async () => finish({ success: true, port: 1, token: 'fixture' } as never));
+    await waitFor(() => expect(connect).toHaveBeenCalled());
+    expect((connect.mock.instances[0] as ChatController).state.sessionKey).toBe('agent:main:justdo:second');
+  },
+);
+
+it.each([false, true])('resets ready history before painting a new session (disconnected=%s)', async disconnected => {
   const connect = vi.spyOn(ChatController.prototype, 'connect').mockImplementation(async function (
     this: ChatController,
   ) {
     this.state.connected = true;
+    this.state.initialHistoryReady = true;
+    this.state.chatMessages = [{ role: 'user', content: 'Previous history' }];
+    (this as unknown as { notify(): void }).notify();
   });
+  const view = render(<JustDoChatWrapper />);
+  await waitFor(() => expect(connect).toHaveBeenCalled());
+  const controller = connect.mock.instances[0] as ChatController;
+  expect(screen.queryByRole('status')).toBeNull();
+  if (disconnected) controller.state.connected = false;
+  fixture.session = { id: 'other', agentId: 'main' };
+  view.rerender(<JustDoChatWrapper />);
+  expect(controller.state.sessionKey).toBe('agent:main:justdo:other');
+  expect(controller.state.initialHistoryReady).toBe(false);
+  expect(controller.state.chatMessages).toEqual([]);
+  expect(screen.getByText('storageHistoryLoading')).toBeTruthy();
+});
+
+it.each(['cached', 'new-turn'])('keeps visible %s content ahead of the history notice', async mode => {
+  const connect = vi.spyOn(ChatController.prototype, 'connect').mockImplementation(async function (
+    this: ChatController,
+  ) { this.state.connected = true; });
   render(<JustDoChatWrapper />);
-  await act(async () => {});
+  await waitFor(() => expect(connect).toHaveBeenCalled());
   const controller = connect.mock.instances[0] as ChatController;
   const publish = () => (controller as unknown as { notify(): void }).notify();
   act(() => {
     controller.state.chatLoading = true;
     if (mode === 'new-turn') controller.setPendingUserMessage('new conversation');
+    else controller.state.chatMessages = [{ role: 'user', content: 'Visible history' }];
     publish();
-  });
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(1_000);
-  });
-  if (mode === 'quick') {
-    act(() => {
-      controller.state.chatLoading = false;
-      controller.state.initialHistoryReady = true;
-      publish();
-    });
-  }
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(5_000);
   });
   expect(screen.queryByRole('status')).toBeNull();
 });

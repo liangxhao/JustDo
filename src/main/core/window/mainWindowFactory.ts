@@ -71,6 +71,7 @@ import {
   shouldAllowSystemAudioCapture,
 } from './mediaPermission';
 import { loadPackagedRenderer } from './renderer/packagedRendererLoader';
+import { registerStartupEntryClock } from './startupEntryClock';
 import { createWidgetViewerGuests } from './widgetViewerGuest';
 import { registerWindowAppearance } from './windowAppearance';
 import { getWindowChromeOptions } from './windowChrome';
@@ -79,6 +80,7 @@ import { WorkspaceWindowManager } from './workspaceWindowManager';
 type MainWindowFactoryOptions = {
   appName: string;
   firstLaunch: boolean;
+  getEntryStartedAt?: () => number;
   startupPresentation?: { route?: import('../../../shared/app/startup/routing').StartupRoute; entryStartedAt?: number };
   browserGuestPreloadPath: string;
   widgetViewerPreloadPath: string;
@@ -160,6 +162,7 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
   });
 
   registerWindowAppearance(mainWindow.webContents, options.getRendererPreferenceStore);
+  if (options.getEntryStartedAt) registerStartupEntryClock(mainWindow.webContents, options.getEntryStartedAt);
   const reportWindowFailure = registerAppWindowDiagnostics(mainWindow.webContents, 'MainWindow');
   if (options.isMac && options.isDev) {
     const iconPath = path.join(__dirname, '../resources/icons/png/512x512.png');

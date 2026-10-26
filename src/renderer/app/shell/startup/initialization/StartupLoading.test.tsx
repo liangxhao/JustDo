@@ -16,6 +16,9 @@ test('names the real renderer operation without inventing measurable progress', 
   vi.useFakeTimers();
   const view = render(<StartupLoading activity={RendererStartupActivity.Conversations} />);
   expect(screen.getByText('startupRenderer_conversations')).toBeTruthy();
+  expect(screen.getAllByRole('listitem')).toHaveLength(5);
+  expect([...view.container.querySelectorAll('.startup-step')].map(step => step.getAttribute('data-status')))
+    .toEqual(['waiting', 'waiting', 'waiting', 'waiting', 'running']);
   const progress = screen.getByRole('progressbar');
   expect(progress.hasAttribute('aria-valuenow')).toBe(false);
   act(() => {

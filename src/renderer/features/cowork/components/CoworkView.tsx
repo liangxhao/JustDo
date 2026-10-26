@@ -40,6 +40,7 @@ import { getMessageTitleInput } from '@shared/cowork/messageInput';
 import { REVIEW_OPEN_EVENT, REVIEW_TAB_ID } from '@shared/cowork/sessionReview';
 import type { SessionRunTiming } from '@shared/cowork/sessionRun';
 import { isGoalEditCommand } from '@shared/cowork/slashCommands';
+import type { SwarmWorkflowOptions } from '@shared/cowork/swarm-workflow';
 import { ExternalSessionSource } from '@shared/integrations/externalSession';
 import { type ProgressCard, type ProgressCardViewState } from '@shared/openclaw/progressCard';
 import { OpenClawExtensionId, OpenClawToolName } from '@shared/plugins/nativeIds';
@@ -97,6 +98,11 @@ import CoworkPromptInput, {
 } from '@/features/cowork/components/composer/CoworkPromptInput';
 import { COMPOSER_FRAME_CLASS } from '@/features/cowork/components/composer/draft/composerStyles';
 import { resolveAgentModelSelection } from '@/features/cowork/components/composer/selection/agentModelSelection';
+import { captureHomeComposerModelRef } from '@/features/cowork/components/composer/selection/homeModelSelection';
+import {
+  type ComposerSubmissionMetadata,
+  resolveComposerSubmissionStartedAt,
+} from '@/features/cowork/components/composer/submission/composerSubmissionTiming';
 import { submitCoworkMessage } from '@/features/cowork/components/composer/submission/coworkMessageSubmit';
 import { QueuedInputCards } from '@/features/cowork/components/composer/submission/QueuedInputCards';
 import CoworkDisplayPanel, {
@@ -1221,7 +1227,10 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     attachments?: CoworkAttachmentPayload[],
     gatewayPrompt?: string,
     worktree?: boolean,
+    _swarmWorkflow?: SwarmWorkflowOptions,
+    submission?: ComposerSubmissionMetadata,
   ): Promise<boolean | void> => {
+    const modelRef = captureHomeComposerModelRef(store.getState(), currentAgentId);
     if (!ensureOpenClawReadyForSubmit()) return false;
     // Prevent duplicate submissions
     if (isStartingRef.current) return false;
@@ -1300,7 +1309,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       const titleInput = getMessageTitleInput(prompt, attachments, gatewayPrompt);
       const fallbackTitle =
         titleInput.split('\n')[0].slice(0, 50) || i18nService.t('coworkAttachmentSession');
-      const now = Date.now();
+      const now = resolveComposerSubmissionStartedAt(submission);
       const clientTurnId = `justdo-${now}-${crypto.randomUUID()}`;
       if (pendingStartRef.current?.requestId === requestId) {
         pendingStartRef.current.clientTurnId = clientTurnId;
@@ -1369,6 +1378,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
           cwd: config.workingDirectory || undefined,
           activeSkillIds: sessionSkillIds,
           agentId: currentAgentId,
+          modelRef,
           attachments,
           clientTurnId,
           startedAt: now,
@@ -2520,6 +2530,8 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       attachments?: CoworkAttachmentPayload[],
       gatewayPrompt?: string,
       submission?: boolean | { clientTurnId: string },
+      _swarmWorkflow?: SwarmWorkflowOptions,
+      composerSubmission?: ComposerSubmissionMetadata,
     ) => {
       if (currentSession.branchCreationPending || currentSession.external?.readOnly) return false;
       if (goalPresence.sessionId !== currentSession.id || !goalPresence.ready) return false;
@@ -2553,7 +2565,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
           throw new Error('The message submission context changed');
         }
       };
-      const startedAt = Date.now();
+      const startedAt = resolveComposerSubmissionStartedAt(composerSubmission);
       const clientTurnId =
         typeof submission === 'object'
           ? submission.clientTurnId

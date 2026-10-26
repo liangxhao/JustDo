@@ -215,10 +215,13 @@
   font-size: 11px;
 }
 .startup-step[aria-current='step'] .startup-step-name,
+.startup-step[data-status='running'] .startup-step-name,
+.startup-step[data-status='failed'] .startup-step-name,
 .startup-step[data-completed='true'] .startup-step-name {
   color: var(--justdo-text-primary, inherit);
 }
 .startup-step[aria-current='step'] .startup-step-status,
+.startup-step[data-status='running'] .startup-step-status,
 .startup-step[data-completed='true'] .startup-step-marker {
   color: var(--startup-accent);
 }

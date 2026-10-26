@@ -1,7 +1,11 @@
 import './InitializationGate.css';
 import '../initialization/StartupDiagnostics.css';
 
-import { AppInitializationPhase, type AppInitializationState } from '@shared/app/initialization';
+import {
+  AppInitializationPhase,
+  type AppInitializationState,
+  AppInitializationTaskStatus,
+} from '@shared/app/initialization';
 import { StartupRoute } from '@shared/app/startup/routing';
 import {
   captureStartupFailure,
@@ -148,7 +152,11 @@ export default function AppInitializationGate({ children }: { children: React.Re
     };
   }, [firstLaunch, route]);
   const mainReady = state?.phase === AppInitializationPhase.Ready;
-  const loading = !rendererReady || !mainReady || Boolean(rendererError) || Boolean(readError);
+  const mainTasksPending = (route ?? state?.route) === StartupRoute.Normal &&
+    Object.values(state?.tasks ?? {}).some(status =>
+      status === AppInitializationTaskStatus.Waiting || status === AppInitializationTaskStatus.Running);
+  const loading = !rendererReady || !mainReady || mainTasksPending || state?.enginePreparationPending === true ||
+    Boolean(rendererError) || Boolean(readError);
   const historyReady =
     !loading &&
     (route ?? state?.route) === StartupRoute.Migration &&

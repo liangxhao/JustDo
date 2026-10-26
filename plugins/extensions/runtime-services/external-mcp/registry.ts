@@ -65,6 +65,7 @@ interface Dependencies {
     server: ExternalMcpOpenRequest['servers'][number],
     cwd: string,
     signal: AbortSignal,
+    assertCurrent: () => void,
   ) => Promise<ExternalMcpConnection>;
 }
 
@@ -170,7 +171,8 @@ export class ExternalMcpRegistry {
           assertOwner();
           this.assertCurrent(lease);
           if (startupSignal.aborted) throw new Error('External MCP preparation was cancelled.');
-          const connection = await this.deps.connect(server, request.cwd, startupSignal);
+          const connection = await this.deps.connect(server, request.cwd, startupSignal,
+            () => this.assertCurrent(lease));
           lease.connections.set(server.name, connection);
           for (const tool of connection.tools) {
             if (lease.catalog.length >= MAX_TOOLS)

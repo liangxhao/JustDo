@@ -3,8 +3,12 @@ import {
   extractBase64FromDataUrl,
   isImageAttachment,
 } from './draft/composerMedia';
-import { selectComposerModel } from './selection/selectComposerModel';
+import {
+  selectComposerModel,
+  waitForComposerModelSelection,
+} from './selection/selectComposerModel';
 import { SlashCommandMenu } from './SlashCommandMenu';
+import type { ComposerSubmissionMetadata } from './submission/composerSubmissionTiming';
 export { appendMediaDirectiveLines } from './draft/composerMedia';
 import { ChevronDownIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import { FolderIcon } from '@heroicons/react/24/solid';
@@ -196,6 +200,7 @@ interface CoworkPromptInputProps {
     gatewayPrompt?: string,
     worktree?: boolean,
     swarmWorkflow?: SwarmWorkflowOptions,
+    submission?: ComposerSubmissionMetadata,
   ) => boolean | void | Promise<boolean | void>;
   onQueue?: (
     prompt: string,
@@ -375,6 +380,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         attachments?: CoworkAttachmentPayload[],
         gatewayPrompt?: string,
         queue = false,
+        submission?: ComposerSubmissionMetadata,
       ) => {
         const context = teamSendContext.current;
         const submit = queue ? queuePrompt : submitPrompt;
@@ -453,6 +459,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                       : quotedGatewayPrompt(prompt, gatewayPrompt, submittedQuotes, isSideChat),
                   canSelectWorktree && useWorktree,
                   swarmWorkflowOptions,
+                  submission,
                 ),
               ids => dispatch(removeDraftMessageQuotes({ draftKey, ids })),
             ),
@@ -569,10 +576,15 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         modelSelectionContextKey,
       ),
     );
-    const pendingModelSelectionTaskId = useSelector(
-      (state: RootState) => state.cowork.pendingModelSelectionTaskIds[modelSelectionContextKey],
-    );
-    const modelUpdatePending = pendingModelSelectionTaskId !== undefined;
+    const sendPreparationRef = useRef<{ contextKey: string; token: symbol } | null>(null);
+    const [sendPreparation, setSendPreparation] = useState<typeof sendPreparationRef.current>(null);
+    const renderedModelContextRef = useRef({ key: modelSelectionContextKey });
+    if (renderedModelContextRef.current.key !== modelSelectionContextKey) {
+      renderedModelContextRef.current = { key: modelSelectionContextKey };
+      sendPreparationRef.current = null;
+    }
+    const preparingSend = sendPreparation === sendPreparationRef.current &&
+      sendPreparation?.contextKey === modelSelectionContextKey;
     const [goalActionPending, setGoalActionPending] = useState(false);
     const goalActionPendingRef = useRef(false);
     const [completionFeedback, setCompletionFeedback] =
@@ -1067,8 +1079,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       }
     }, [value, draftPrompt, dispatch, draftKey, isSideChat]);
 
-    const handleSubmit = useCallback(
-      async (promptOverride?: string) => {
+    const submitPreparedPrompt = useCallback(
+      async (promptOverride?: string, submission?: ComposerSubmissionMetadata) => {
         const promptValue = promptOverride ?? value;
         const trimmedValue = promptValue.trim();
         if (teamMode && isRunActive) {
@@ -1113,7 +1125,6 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             isRunActive ||
             isStopPending() ||
             disabled ||
-            modelUpdatePending ||
             hasNoAvailableModels ||
             submittedDraftsRef.current.has(draftKey)
           ) {
@@ -1122,7 +1133,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           submittedDraftsRef.current.add(draftKey);
           dispatch(setDraftPrompt({ sessionId: draftKey, draft: promptValue }));
           try {
-            const result = await onSubmit(trimmedValue);
+            const result = await onSubmit(trimmedValue, undefined, undefined, false, submission);
             if (result === false) return;
             const currentDraft = selectDraftPrompts(store.getState())[draftKey] || '';
             if (currentDraft !== promptValue || latestValueRef.current !== promptValue) return;
@@ -1192,7 +1203,6 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           isStopPending() ||
           goalActionPendingRef.current ||
           disabled ||
-          modelUpdatePending ||
           hasNoAvailableModels
         )
           return;
@@ -1433,6 +1443,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                     ? attachmentPayloads.slice(0, userAttachmentPayloadCount)
                     : undefined,
                   goalPrompt,
+                  false,
+                  submission,
                 ),
             });
             if (outcome === 'context_changed') return;
@@ -1531,6 +1543,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                 ? browserGatewayPrompt
                 : undefined,
               isRunActive,
+              submission,
             );
           } catch (error) {
             if (goalClear) cancelGoalClear();
@@ -1596,7 +1609,6 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         dispatch,
         draftKey,
         modelSupportsImage,
-        modelUpdatePending,
         hasNoAvailableModels,
         sessionId,
         goalExecution?.goalId,
@@ -1610,6 +1622,53 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         isSideChat,
       ],
     );
+
+    const preparedSubmitRef = useRef(submitPreparedPrompt);
+    preparedSubmitRef.current = submitPreparedPrompt;
+    const handleSubmit = useCallback(async (promptOverride?: string) => {
+      if (sendPreparationRef.current?.contextKey === modelSelectionContextKey) return;
+      const submission = { startedAt: Date.now() };
+      const owner = { contextKey: modelSelectionContextKey, token: Symbol() };
+      const modelContext = renderedModelContextRef.current;
+      const sendContext = teamSendContext.current;
+      const prompt = promptOverride ?? latestValueRef.current;
+      sendPreparationRef.current = owner;
+      setSendPreparation(owner);
+      try {
+        // Home sends pin their captured model explicitly in Main. Existing
+        // sessions must join the actual selection receipt, never its error-swallowing queue tail.
+        if (sessionId) {
+          try {
+            if (!(await waitForComposerModelSelection(modelSelectionContextKey))) return;
+          } catch (error) {
+            if (sendPreparationRef.current === owner &&
+              renderedModelContextRef.current === modelContext &&
+              teamSendContext.current === sendContext && sendContext.active) {
+              window.dispatchEvent(new CustomEvent('app:showToast', {
+                detail: i18nService.t('coworkModelPreparationFailed')
+                  .replace('{error}', error instanceof Error ? error.message : String(error)),
+              }));
+            }
+            return;
+          }
+        } else {
+          // Allow the same-tick model selection to render its current capabilities.
+          await Promise.resolve();
+        }
+        if (
+          sendPreparationRef.current !== owner ||
+          renderedModelContextRef.current !== modelContext ||
+          teamSendContext.current !== sendContext ||
+          !sendContext.active
+        ) return;
+        await preparedSubmitRef.current(prompt, submission);
+      } finally {
+        if (sendPreparationRef.current === owner) {
+          sendPreparationRef.current = null;
+          if (teamSendContext.current.active) setSendPreparation(null);
+        }
+      }
+    }, [modelSelectionContextKey, sessionId]);
 
     const handleSlashCommandSelect = useCallback(
       (command: SlashCommandDef, executeInstant = true) => {
@@ -2179,7 +2238,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       !goalSubmissionBlocked &&
       (!isRunActive || canQueue) &&
       (isSideChat || !goalActionPending) &&
-      !modelUpdatePending &&
+      !preparingSend &&
       !hasNoAvailableModels &&
       (isSideChat
         ? !!value.trim()
@@ -2945,9 +3004,10 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                                 : undefined
                             }
                             models={selectableModels}
-                            disabled={disabled}
-                            onChange={nextModel =>
-                              selectComposerModel(nextModel, {
+                            disabled={disabled || preparingSend}
+                            onChange={nextModel => {
+                              if (sendPreparationRef.current?.contextKey === modelSelectionContextKey) return;
+                              return selectComposerModel(nextModel, {
                                 dispatch,
                                 modelSelectionContextKey,
                                 sessionId,
@@ -2955,8 +3015,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                                 agentSelectedModel,
                                 effectiveSelectedModel,
                                 availableModels,
-                              })
-                            }
+                              });
+                            }}
                           />
                         )}
                       </div>

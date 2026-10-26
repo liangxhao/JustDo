@@ -6,6 +6,7 @@ type AppShutdownOptions = {
   cleanup: () => Promise<void>;
   cleanupTimeoutMs?: number;
   onCleanupTimeout?: () => Promise<void>;
+  onBeginCleanup?: () => void;
 };
 
 export type AppShutdownController = {
@@ -17,6 +18,7 @@ export const registerAppShutdown = ({
   cleanup,
   cleanupTimeoutMs,
   onCleanupTimeout,
+  onBeginCleanup,
 }: AppShutdownOptions): AppShutdownController => {
   let cleanupFinished = false;
   let cleanupInProgress = false;
@@ -27,6 +29,8 @@ export const registerAppShutdown = ({
 
     cleanupInProgress = true;
     quitting = true;
+    try { onBeginCleanup?.(); }
+    catch (error) { console.error('[Main] Failed to retire shutdown presentation:', error); }
     console.log(`[Main] ${context}, running cleanup before exit...`);
     let timedOut = false;
     let cleanupFailed = false;

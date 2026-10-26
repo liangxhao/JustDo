@@ -7,6 +7,7 @@ import { registerAppWindowDiagnostics } from './appWindowFailure';
 import { isAllowedMainWindowNavigation } from './browserPanelSecurity';
 import { registerContentSecurityPolicy } from './contentSecurityPolicy';
 import { loadPackagedRenderer } from './renderer/packagedRendererLoader';
+import { registerStartupEntryClock } from './startupEntryClock';
 
 export type InitializationWindow = { window: BrowserWindow; loaded: Promise<void> };
 
@@ -21,6 +22,7 @@ export function createInitializationWindow(options: {
   devServerUrl: string;
   devServerPort: number;
   onReady: (window: BrowserWindow) => void;
+  getEntryStartedAt?: () => number;
 }): InitializationWindow {
   const window = new BrowserWindow({
     ...DEFAULT_MAIN_WINDOW_SIZE,
@@ -28,6 +30,7 @@ export function createInitializationWindow(options: {
     minHeight: 600,
     title: options.appName,
     frame: !options.isWindows,
+    titleBarStyle: options.isWindows ? 'hidden' : undefined,
     show: false,
     autoHideMenuBar: true,
     backgroundColor: '#F8F9FB',
@@ -43,6 +46,7 @@ export function createInitializationWindow(options: {
       spellcheck: false,
     },
   });
+  if (options.getEntryStartedAt) registerStartupEntryClock(window.webContents, options.getEntryStartedAt);
   registerContentSecurityPolicy(
     { isDev: options.isDev, devServerPort: options.devServerPort },
     window.webContents.session,

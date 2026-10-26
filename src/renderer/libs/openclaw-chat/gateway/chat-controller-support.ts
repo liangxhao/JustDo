@@ -56,6 +56,10 @@ export interface ChatState {
   initialHistoryReady: boolean;
   /** Last selected-session history read failed; do not treat failure as empty history. */
   historyReadFailed?: boolean;
+  /** Only an exact native agent preparation refusal establishes this transient state. */
+  historyPreparationPending?: boolean;
+  /** The bounded read wait ended while native preparation remained unconfirmed. */
+  historyPreparationTimedOut?: boolean;
   chatLoading: boolean;
   historyLoadingOlder: boolean;
   historyHasMore: boolean;
@@ -329,7 +333,7 @@ export const MAX_DEFERRED_HISTORY_CATCHUP_ATTEMPTS = 5;
 
 export const MAX_ACTIVE_TOOL_HISTORY_CATCHUP_ATTEMPTS = 4;
 
-export const DEFAULT_INITIAL_MESSAGE_SUBSCRIPTION_BARRIER_TIMEOUT_MS = 3000;
+export const DEFAULT_INITIAL_MESSAGE_SUBSCRIPTION_BARRIER_TIMEOUT_MS = 0;
 
 export const MANUAL_COMPACTION_STOP_RETRY_WINDOW_MS = 30_000;
 

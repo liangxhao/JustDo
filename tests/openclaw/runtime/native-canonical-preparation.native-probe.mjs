@@ -173,9 +173,12 @@ if (observe >= 0) {
     assert.deepEqual(freshObservation, { ready: true, pending: false, integrityReceipt: false, workers: 0 });
     const again = adapter(p); await again.inspect(); const noBackup = [];
     await again.prepareCanonical(activity => noBackup.push(activity));
-    assert.ok(!noBackup.includes('nativeBackup')); assert.deepEqual(history(p), before);
+    assert.deepEqual(noBackup, ['nativeInspect', 'nativeInspect', 'nativeInspect', 'nativeVerify'],
+      'persisted native proof is verified in its first exclusive lease without a worker handoff or a second fleet scan');
+    assert.deepEqual(history(p), before); assert.ok(fs.readFileSync(p.config).equals(configBytes));
+    assert.deepEqual(observeFresh(p), freshObservation);
     assert.deepEqual(saved.map(file => ({ file, sha256: digest(fs.readFileSync(file)) })), originalBytes);
-    report.checks.push('actual SOURCE and transport: full native backup precedes canonical writes; joined new process accepts persisted proof, rerun dispatches zero workers/backups and preserves rows/events/config');
+    report.checks.push('actual SOURCE and transport: full native backup precedes canonical writes; joined new process accepts persisted proof, rerun verifies within its first exclusive lease without worker handoff/backup and preserves rows/events/config');
     const copied = path.join(p.root, 'copied.sqlite'); fs.copyFileSync(p.agent, copied);
     assert.deepEqual(observeFresh(p, copied), { ready: false, pending: false, integrityReceipt: false, workers: 1 });
     const replacement = path.join(p.root, 'replacement.sqlite'); fs.copyFileSync(p.agent, replacement);

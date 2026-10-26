@@ -1145,10 +1145,14 @@ export class ChatController {
     );
   }
 
-  private syncMessageSessionSubscription(sessionKey: string): Promise<boolean> {
+  private syncMessageSessionSubscription(
+    sessionKey: string,
+    options?: { propagateFailure?: boolean; signal?: AbortSignal },
+  ): Promise<boolean> {
     return chatControllerSession.syncMessageSessionSubscription.call(
       this.chatControllerSessionContext,
       sessionKey,
+      options,
     );
   }
 
@@ -2016,6 +2020,7 @@ export class ChatController {
 
   private pendingHistoryReload = false;
   private historyLoadsInFlight = new Set<string>();
+  private historyReadAbortController: AbortController | null = null;
   private historyReloadRequested = new Set<string>();
   private immediateHistoryReloadRequested = new Set<string>();
 
@@ -2129,8 +2134,9 @@ export class ChatController {
   async sendSideQuestion(question: string, runId: string): Promise<string> {
     const client = this.state.client;
     if (!client || !this.state.connected) throw new Error('not connected');
-    if (this.state.historyReadFailed) {
-      throw new Error(i18nService.t('storageHistoryFailed'));
+    if (this.state.historyReadFailed || this.state.historyPreparationPending) {
+      throw new Error(i18nService.t(this.state.historyPreparationPending || this.state.historyPreparationTimedOut
+        ? 'storageHistoryPreparationPending' : 'storageHistoryFailed'));
     }
     const normalizedQuestion = question.trim().replace(/\s*[\r\n]+\s*/g, ' ');
     const proposedRunId = runId.trim();
@@ -2273,8 +2279,9 @@ export class ChatController {
   ): Promise<void> {
     const client = this.state.client;
     if (!client || !this.state.connected) throw new Error('not connected');
-    if (this.state.historyReadFailed) {
-      throw new Error(i18nService.t('storageHistoryFailed'));
+    if (this.state.historyReadFailed || this.state.historyPreparationPending) {
+      throw new Error(i18nService.t(this.state.historyPreparationPending || this.state.historyPreparationTimedOut
+        ? 'storageHistoryPreparationPending' : 'storageHistoryFailed'));
     }
     if (
       options.isCancelled?.() ||
@@ -2676,6 +2683,7 @@ export class ChatController {
       setCurrentSessionMessages: { get: () => this.setCurrentSessionMessages.bind(this) },
       loadHistory: { get: () => this.loadHistory.bind(this) },
       scheduleDeferredHistoryReload: { get: () => this.scheduleDeferredHistoryReload.bind(this) },
+      clearDeferredHistoryReload: { get: () => this.clearDeferredHistoryReload.bind(this) },
       transcriptImageCache: { get: () => this.transcriptImageCache },
       transcriptImageReadsActive: {
         get: () => this.transcriptImageReadsActive,
@@ -2697,6 +2705,11 @@ export class ChatController {
         get: () => this.ensureTranscriptSessionIdentity.bind(this),
       },
       historyLoadsInFlight: { get: () => this.historyLoadsInFlight },
+      syncMessageSessionSubscription: { get: () => this.syncMessageSessionSubscription.bind(this) },
+      historyReadAbortController: {
+        get: () => this.historyReadAbortController,
+        set: value => { this.historyReadAbortController = value; },
+      },
       historyReloadRequested: { get: () => this.historyReloadRequested },
       immediateHistoryReloadRequested: { get: () => this.immediateHistoryReloadRequested },
       _snap: { get: () => this._snap.bind(this) },
@@ -2985,6 +2998,10 @@ export class ChatController {
         set: value => {
           this.connectionInitializationSeq = value;
         },
+      },
+      historyReadAbortController: {
+        get: () => this.historyReadAbortController,
+        set: value => { this.historyReadAbortController = value; },
       },
       isConnectionInitializationCurrent: {
         get: () => this.isConnectionInitializationCurrent.bind(this),

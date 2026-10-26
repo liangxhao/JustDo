@@ -348,6 +348,67 @@ afterEach(() => {
   }
 });
 
+test.each(['full', 'minimal'])('%s config applies live Control UI preferences across settings and auth changes', mode => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'gateway-control-ui-'));
+  temporaryDirectories.push(directory);
+  const configPath = path.join(directory, 'openclaw.json');
+  const appConfig = mode === 'full' ? {
+    model: { defaultModel: 'model', defaultModelProvider: 'internal' },
+    providers: {
+      internal: {
+        enabled: true, apiKey: 'test-key', baseUrl: 'http://model.test/v1',
+        apiFormat: 'openai', models: [{ id: 'model' }],
+      },
+    },
+  } : {};
+  setStoreGetter(() => ({ get: () => appConfig }) as never);
+  const deps = {
+    engineManager: {
+      getConfigPath: () => configPath,
+      getStateDir: () => directory,
+      getDesiredVersion: () => '2026.10.6',
+    },
+    getCoworkConfig: () => ({ workingDirectory: '', executionMode: 'local', agentEngine: 'openclaw' }),
+    getAgents: () => [],
+    getBrowserMode: () => BrowserMode.User,
+  };
+  const defaultSync = new OpenClawConfigSync(deps as never);
+  const readConfig = () => JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  expect(defaultSync.sync('startup').ok).toBe(true);
+  expect(readConfig().gateway.controlUi.enabled).toBe(false);
+  const preferences = { developerMode: false, controlUiEnabled: false };
+  const sync = new OpenClawConfigSync({
+    ...deps,
+    getControlUiEnabled: () => preferences.developerMode === true && preferences.controlUiEnabled === true,
+  } as never);
+  for (const update of [
+    { reason: 'startup', developerMode: true, controlUiEnabled: true, enabled: true },
+    { reason: 'app-config-change', developerMode: true, controlUiEnabled: false, enabled: false },
+    { reason: BuiltinModelSyncReason.AuthLogin, developerMode: true, controlUiEnabled: true, enabled: true },
+    { reason: BuiltinModelSyncReason.AuthLogout, developerMode: false, controlUiEnabled: true, enabled: false },
+  ]) {
+    Object.assign(preferences, update);
+    const existing = readConfig();
+    existing.gateway.controlUi = {
+      ...existing.gateway.controlUi,
+      enabled: !update.enabled,
+      basePath: '/console',
+      allowedOrigins: ['http://custom.test'],
+    };
+    existing.gateway.customSetting = 'preserve-me';
+    fs.writeFileSync(configPath, JSON.stringify(existing));
+    const result = sync.sync(update.reason);
+    expect(result).toMatchObject({ ok: true, configChanged: true });
+    const next = readConfig();
+    expect(next.gateway.controlUi.enabled).toBe(update.enabled);
+    if (mode === 'minimal' || update.reason === BuiltinModelSyncReason.AuthLogin || update.reason === BuiltinModelSyncReason.AuthLogout) {
+      expect(next.gateway.controlUi.basePath).toBe('/console');
+      expect(next.gateway.controlUi.allowedOrigins).toEqual(['http://custom.test']);
+      expect(next.gateway.customSetting).toBe('preserve-me');
+    }
+  }
+}, 30_000);
+
 test.each(['full', 'minimal'])(
   '%s sync disables portals across startup and auth changes while preserving other denies',
   mode => {
@@ -2258,7 +2319,7 @@ describe('OpenClaw auth logout config sync', () => {
     );
     expect(config.agents.entries.main.model).toBeUndefined();
     expect(config.agents.entries.worker.model).toBeUndefined();
-    expect(config.gateway).toEqual({ mode: 'local', customSetting: 'keep-me' });
+    expect(config.gateway).toEqual({ mode: 'local', customSetting: 'keep-me', controlUi: { enabled: false } });
     expect(config.customFeature).toEqual({ enabled: true });
     expect(config.secrets.providers).toEqual({
       operator_secrets: {
@@ -2285,7 +2346,7 @@ describe('OpenClaw auth logout config sync', () => {
     expect(config.agents.defaults.model).toBeUndefined();
     expect(config.agents.entries.main.model).toBeUndefined();
     expect(config.agents.entries.worker.model).toBeUndefined();
-    expect(config.gateway).toEqual({ mode: 'local', customSetting: 'keep-me' });
+    expect(config.gateway).toEqual({ mode: 'local', customSetting: 'keep-me', controlUi: { enabled: false } });
     expect(config.customFeature).toEqual({ enabled: true });
   });
 
@@ -2622,7 +2683,7 @@ describe('OpenClaw auth logout config sync', () => {
     expect(config.agents.defaults).not.toHaveProperty('thinkingDefault');
     expect(config.agents.defaults.compaction.memoryFlush).toEqual({ enabled: false });
     expect(config.agents.defaults.compaction).not.toHaveProperty('keepRecentTokens');
-    expect(config.gateway).toEqual({ mode: 'local', customSetting: 'keep-me' });
+    expect(config.gateway).toEqual({ mode: 'local', customSetting: 'keep-me', controlUi: { enabled: false } });
     expect(config.customFeature).toEqual({ enabled: true });
 
     // Ordinary sync establishes the steady-state config. Adding another

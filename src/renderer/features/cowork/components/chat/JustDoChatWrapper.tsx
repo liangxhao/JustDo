@@ -65,7 +65,6 @@ import { i18nService } from '@/services/i18n';
 import type { MessageQuoteHandler } from '../composer/draft/messageQuote';
 import { type McpAppComposerMenu, McpAppsControls } from '../mcpApps/McpAppsControls';
 
-const HISTORY_LOADING_NOTICE_DELAY_MS = 3_000;
 
 const DEBUG_CHAT_WRAPPER =
   typeof import.meta !== 'undefined' && import.meta.env?.VITE_DEBUG_CHAT_WRAPPER === 'true';
@@ -509,8 +508,11 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
     }, [onWidgetDraft]);
     const historyReadyCallback = useRef(onHistoryReadyChange);
     historyReadyCallback.current = onHistoryReadyChange;
-    const [historyStatus, setHistoryStatus] = useState<'loading' | 'error' | 'ready'>('loading');
-    const [slowHistorySessionKey, setSlowHistorySessionKey] = useState<string | null>(null);
+    const [historyStatus, setHistoryStatus] = useState<
+      'loading' | 'error' | 'preparation-pending' | 'ready'
+    >('loading');
+    const [loadingHistorySessionKey, setLoadingHistorySessionKey] = useState(canonicalSessionKey);
+    const publishHistoryPresentationRef = useRef<(() => void) | null>(null);
     const [controller, setController] = useState<ChatController | null>(null);
     const connectedRef = useRef(false);
     const onActivityChangeRef = useRef(onActivityChange);
@@ -788,30 +790,16 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
         snapshot => summaryResourcesCallback.current?.(snapshot),
       );
       summaryObserverRef.current = summaryObserver;
-      let loadingSessionKey: string | null = null;
-      let loadingNoticeTimer: ReturnType<typeof setTimeout> | undefined;
-      const publishActivity = () => {
-        if (summaryResourcesCallback.current) summaryObserver.publish();
-        // Only time a real initial history read, not connection setup or a new turn.
+      const publishHistoryPresentation = () => {
         const nextLoadingSessionKey =
-          controller.state.connected &&
-          controller.state.chatLoading &&
-          (!controller.state.initialHistoryReady || controller.state.historyReadFailed) &&
-          !controller.state.chatSending &&
-          !controller.state.pendingUserMessage
+          (!controller.state.connected ||
+            !controller.state.initialHistoryReady ||
+            (controller.state.historyReadFailed && controller.state.chatLoading)) &&
+          !controller.state.pendingUserMessage &&
+          (controller.state.chatMessages.length === 0 || controller.state.historyPreparationPending)
             ? controller.state.sessionKey
             : null;
-        if (nextLoadingSessionKey !== loadingSessionKey) {
-          clearTimeout(loadingNoticeTimer);
-          loadingNoticeTimer = undefined;
-          loadingSessionKey = nextLoadingSessionKey;
-          setSlowHistorySessionKey(null);
-          if (nextLoadingSessionKey) {
-            loadingNoticeTimer = setTimeout(() => {
-              setSlowHistorySessionKey(nextLoadingSessionKey);
-            }, HISTORY_LOADING_NOTICE_DELAY_MS);
-          }
-        }
+        setLoadingHistorySessionKey(nextLoadingSessionKey);
         const ready =
           controller.state.connected &&
           controller.state.initialHistoryReady &&
@@ -825,11 +813,16 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
           controller.state.historyReadFailed
             ? controller.state.chatLoading
               ? 'loading'
-              : 'error'
-            : !controller.state.initialHistoryReady
+              : controller.state.historyPreparationTimedOut ? 'preparation-pending' : 'error'
+            : !controller.state.connected || !controller.state.initialHistoryReady
               ? 'loading'
               : 'ready',
         );
+      };
+      publishHistoryPresentationRef.current = publishHistoryPresentation;
+      const publishActivity = () => {
+        if (summaryResourcesCallback.current) summaryObserver.publish();
+        publishHistoryPresentation();
         if (controller.state.sessionKey !== lastReportedSessionKeyRef.current) {
           lastReportedSessionKeyRef.current = controller.state.sessionKey;
           onSessionKeyChangeRef.current?.(controller.state.sessionKey);
@@ -918,6 +911,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
           `agent:${agentId}:justdo:${initialSession.id}`;
         controller.state.sessionKey = sessionKey;
       }
+      publishHistoryPresentation();
 
       // Cancellation flag: React StrictMode double-fires mount effects.
       // If the cleanup runs before connectToGateway resolves, we must
@@ -951,7 +945,9 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
         summaryObserver.dispose();
         summaryObserverRef.current = null;
         summaryResourcesCallback.current?.(null);
-        clearTimeout(loadingNoticeTimer);
+        if (publishHistoryPresentationRef.current === publishHistoryPresentation) {
+          publishHistoryPresentationRef.current = null;
+        }
         unsubscribeState();
         unsubscribeStream();
         unsubscribeSideChat();
@@ -1001,6 +997,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
       if (!controller) return;
       if (!currentSessionId) {
         if (previousSessionId) controller.mcpApps.invalidate(true);
+        setLoadingHistorySessionKey(null);
         return;
       }
 
@@ -1017,14 +1014,11 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
         void controller.switchSession(sessionKey, { promoteFromSessionKey });
       } else if (!connectedRef.current && controller.state.sessionKey !== sessionKey) {
         const promoteFromSessionKey = promotionSourceByTargetRef.current.get(sessionKey);
-        if (promoteFromSessionKey) {
-          promotionSourceByTargetRef.current.delete(sessionKey);
-          void controller.switchSession(sessionKey, { promoteFromSessionKey });
-        } else {
-          // Not yet connected — set sessionKey so connect() picks it up.
-          controller.state.sessionKey = sessionKey;
-        }
+        promotionSourceByTargetRef.current.delete(sessionKey);
+        // Reset the selected history synchronously even while connection metadata is pending.
+        void controller.switchSession(sessionKey, { promoteFromSessionKey });
       }
+      publishHistoryPresentationRef.current?.();
     }, [canonicalSessionKey, currentSessionId]);
 
     if (connectionError) {
@@ -1063,17 +1057,17 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
         data-review-session-id={currentSessionId}
         className={`${className ?? ''} flex min-h-0 flex-col`}
       >
-        {(historyStatus === 'error' ||
+        {(historyStatus === 'error' || historyStatus === 'preparation-pending' ||
           (historyStatus === 'loading' &&
             canonicalSessionKey &&
-            slowHistorySessionKey === canonicalSessionKey)) && (
+            loadingHistorySessionKey === canonicalSessionKey)) && (
           <div
             className="flex items-center justify-center gap-2 px-4 py-3 text-sm text-secondary"
-            role={historyStatus === 'error' ? 'alert' : 'status'}
+            role={historyStatus === 'loading' ? 'status' : 'alert'}
           >
             {historyStatus === 'loading' && (
               <svg
-                className="h-4 w-4 shrink-0 motion-safe:animate-spin"
+                className="h-4 w-4 shrink-0 animate-spin motion-reduce:animate-spin"
                 viewBox="0 0 24 24"
                 fill="none"
                 aria-hidden="true"
@@ -1089,10 +1083,11 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
             )}
             <span>
               {i18nService.t(
-                historyStatus === 'error' ? 'storageHistoryFailed' : 'storageHistoryLoading',
+                historyStatus === 'preparation-pending' ? 'storageHistoryPreparationPending' :
+                  historyStatus === 'error' ? 'storageHistoryFailed' : 'storageHistoryLoading',
               )}
             </span>
-            {historyStatus === 'error' && (
+            {(historyStatus === 'error' || historyStatus === 'preparation-pending') && (
               <button
                 type="button"
                 className="ml-2 underline"

@@ -483,6 +483,7 @@ export const chatTranslations = {
     // Agent model state
     coworkModelApplying: '正在应用模型…',
     coworkModelApplyFailed: '模型切换失败：{error}',
+    coworkModelPreparationFailed: '消息未发送，无法确认所选模型：{error}',
     coworkDefaultModelApplyFailedSessionUpdated:
       '当前会话已切换模型，但新会话的默认模型更新失败：{error}',
     coworkNewSession: '新会话',
@@ -1252,6 +1253,7 @@ export const chatTranslations = {
     // Agent model state
     coworkModelApplying: 'Applying model…',
     coworkModelApplyFailed: 'Failed to switch model: {error}',
+    coworkModelPreparationFailed: 'Message not sent because the selected model could not be confirmed: {error}',
     coworkDefaultModelApplyFailedSessionUpdated:
       'This session switched models, but the default model for new sessions could not be updated: {error}',
     coworkNewSession: 'New Session',

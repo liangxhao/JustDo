@@ -16,6 +16,10 @@ export interface ComposerFeatureItem {
   icon: ReactNode;
   selected?: boolean;
   disabled?: boolean;
+  /** Presentation-only pending state; never grants availability or runs the action. */
+  loading?: boolean;
+  /** Presentation-only failure state; the existing action and disabled flags own retry. */
+  error?: boolean;
   onSelect: () => void;
   children?: readonly ComposerFeatureItem[];
   role?: 'menuitem' | 'menuitemradio';

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { EnginePhase } from '@shared/openclaw/engineStatus';
 import type { McpAppDiscovery } from '@shared/plugins/mcpApps';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { Provider } from 'react-redux';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
@@ -78,6 +78,10 @@ function deferred<T>() {
     reject = fail;
   });
   return { promise, resolve, reject };
+}
+
+function appRegion() {
+  return within(screen.getByRole('region', { name: i18nService.t('mcpAppsTitle') }));
 }
 
 const catalog: McpAppDiscovery = {
@@ -180,8 +184,11 @@ test('prefetches Apps and inserts delayed entries directly into the sidebar home
   expect(f.connectionListeners.size).toBe(1);
   expect(f.discover).not.toHaveBeenCalled();
 
-  const loading = screen.getByRole('button', { name: i18nService.t('mcpAppsDiscovering') });
-  expect((loading as HTMLButtonElement).disabled).toBe(true);
+  const loading = appRegion().getByRole('status');
+  expect(loading.textContent).toContain(i18nService.t('mcpAppsDiscovering'));
+  expect(loading.querySelector('.display-launcher__app-loading-spinner')).toBeTruthy();
+  expect(screen.getByRole('region', { name: i18nService.t('mcpAppsTitle') }).getAttribute('aria-busy')).toBe('true');
+  expect(screen.queryByRole('button', { name: i18nService.t('mcpAppsDiscovering') })).toBeNull();
   expect(f.prepare).toHaveBeenCalledOnce();
   expect(f.discover).not.toHaveBeenCalled();
   await act(async () => preparation.resolve({ isCurrent: f.hosts[0].isCurrent }));
@@ -193,6 +200,7 @@ test('prefetches Apps and inserts delayed entries directly into the sidebar home
   await act(async () => discovery.resolve(catalog));
 
   expect(screen.getByRole('button', { name: 'draw.io' })).toBeTruthy();
+  expect(appRegion().queryByRole('status')).toBeNull();
   expect(screen.queryByRole('button', { name: i18nService.t('mcpAppsDiscovering') })).toBeNull();
   expect(f.launch).not.toHaveBeenCalled();
   fixture.unmount();
@@ -293,18 +301,19 @@ test('a failed prefetch shows a retry on the sidebar homepage and can recover wi
   f.discover.mockReturnValueOnce(firstDiscovery.promise);
   render(<Fixture />);
   await waitFor(() => expect(f.discover).toHaveBeenCalledOnce());
-  expect(screen.getByRole('button', { name: i18nService.t('mcpAppsDiscovering') })).toBeTruthy();
+  expect(appRegion().getByRole('status').textContent).toContain(i18nService.t('mcpAppsDiscovering'));
 
   await act(async () => firstDiscovery.reject(new Error('Gateway catalog unavailable')));
 
   const retry = screen.getByRole('button', { name: i18nService.t('mcpAppsRetryDiscovery') });
   expect((retry as HTMLButtonElement).disabled).toBe(false);
   expect(screen.getByText(i18nService.t('mcpAppsDiscoveryFailed'))).toBeTruthy();
+  expect(appRegion().queryByRole('status')).toBeNull();
   const retryDiscovery = deferred<McpAppDiscovery>();
   f.discover.mockReturnValueOnce(retryDiscovery.promise);
   fireEvent.click(retry);
   await waitFor(() => expect(f.discover).toHaveBeenCalledTimes(2));
-  expect(screen.getByRole('button', { name: i18nService.t('mcpAppsDiscovering') })).toBeTruthy();
+  expect(appRegion().getByRole('status').textContent).toContain(i18nService.t('mcpAppsDiscovering'));
   expect(f.prepare).toHaveBeenCalledTimes(2);
   expect(f.discover).toHaveBeenCalledTimes(2);
 

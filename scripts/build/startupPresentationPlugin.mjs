@@ -9,6 +9,9 @@ import { buildStartupAppearance } from '../theme/startupAppearance.mjs';
 
 /** Embed the first paint so it works before any application modules can load. */
 export function startupPresentationPlugin(rendererRoot) {
+  const logo = 'data:image/png;base64,' + fs.readFileSync(
+    path.join(rendererRoot, '../../resources/icons/logo.png'),
+  ).toString('base64');
   const appearance = buildStartupAppearance(rendererRoot);
   const motion = buildSync({
     entryPoints: [path.join(rendererRoot, 'app/shell/startup/initialization/startupMotionBootstrap.ts')],
@@ -43,6 +46,14 @@ export function startupPresentationPlugin(rendererRoot) {
     transformIndexHtml: {
       order: 'pre',
       handler(html) {
+        if (html.includes('%STARTUP_BOOTSTRAP_LOGO%')) {
+          return html
+            .replaceAll('%STARTUP_BOOTSTRAP_LOGO%', logo)
+            .replaceAll('%STARTUP_TRANSLATIONS%', JSON.stringify(Object.fromEntries(
+              ['zh', 'en'].map(language => [language, { startupBootstrap: dictionaries[language].startupBootstrap }]),
+            )).replaceAll('<', '\\u003c'))
+            .replace(/%STARTUP_COPY_(\w+)%/gu, (_, key) => dictionaries.en[key] ?? key);
+        }
         if (!html.includes('%STARTUP_STYLES%')) return html;
         return html
           .replaceAll('%STARTUP_THEME_SCRIPT%', appearance.script)
@@ -52,6 +63,7 @@ export function startupPresentationPlugin(rendererRoot) {
           .replaceAll('%STARTUP_STYLES%', ['app/shell/startup/initialization/StartupScreen.css', 'app/shell/startup/initialization/FirstLaunchGuide.css', 'app/shell/startup/initialization/StartupDiagnostics.css'].map(file => fs.readFileSync(path.join(rendererRoot, file), 'utf8')).join('\n'))
           .replaceAll('%FIRST_LAUNCH_DOCUMENT%', fs.readFileSync(path.join(rendererRoot, 'app/shell/startup/initialization/firstLaunchDocument.html'), 'utf8'))
           .replaceAll('%STARTUP_DOCUMENT%', fs.readFileSync(path.join(rendererRoot, 'app/shell/startup/initialization/startupDocument.html'), 'utf8'))
+          .replaceAll('%STARTUP_LOGO%', logo)
           .replaceAll('%STARTUP_TRANSLATIONS%', JSON.stringify(dictionaries).replaceAll('<', '\\u003c'))
           .replace(/%STARTUP_COPY_(\w+)%/gu, (_, key) => dictionaries.en[key] ?? key);
       },

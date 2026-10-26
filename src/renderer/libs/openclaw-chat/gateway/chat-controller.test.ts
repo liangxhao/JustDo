@@ -2091,7 +2091,7 @@ test('coalesces idle session.message events before refreshing history', async ()
     sessionKey: 'agent:main:justdo:session-1',
     limit: 250,
     maxChars: 500_000,
-  });
+  }, expect.objectContaining({ signal: expect.any(AbortSignal) }));
 });
 
 test('ignores session.message events routed to another session', async () => {
@@ -2349,7 +2349,7 @@ test('reloads history for a sessions.changed message invalidation without a row 
     sessionKey,
     limit: 250,
     maxChars: 500_000,
-  });
+  }, expect.objectContaining({ signal: expect.any(AbortSignal) }));
 });
 
 test('rejects automatic session id rotation for a managed JustDo session', () => {

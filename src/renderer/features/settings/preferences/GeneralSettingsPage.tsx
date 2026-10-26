@@ -29,6 +29,8 @@ interface GeneralSettingsPageProps {
   developerModeAvailable: boolean;
   developerMode: boolean;
   setDeveloperMode: React.Dispatch<React.SetStateAction<boolean>>;
+  controlUiEnabled: boolean;
+  setControlUiEnabled: React.Dispatch<React.SetStateAction<boolean>>;
   proxyMode: ProxyMode;
   handleProxyModeChange: (mode: ProxyMode) => void;
   customProxy: CustomProxyConfig;
@@ -66,6 +68,8 @@ export function GeneralSettingsPage({
   developerModeAvailable,
   developerMode,
   setDeveloperMode,
+  controlUiEnabled,
+  setControlUiEnabled,
   proxyMode,
   handleProxyModeChange,
   customProxy,
@@ -247,6 +251,33 @@ export function GeneralSettingsPage({
 
       {developerModeAvailable && developerMode && (
         <>
+          <div className="flex items-center justify-between gap-6 rounded-xl border border-border px-4 py-4">
+            <div>
+              <h4 className="text-sm font-medium text-foreground">
+                {i18nService.t('controlUiTitle')}
+              </h4>
+              <p className="mt-1 text-xs leading-5 text-secondary">
+                {i18nService.t('controlUiDescription')}
+              </p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-label={i18nService.t('controlUiTitle')}
+              aria-checked={controlUiEnabled}
+              disabled={isSaving}
+              onClick={() => setControlUiEnabled(previous => !previous)}
+              className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                controlUiEnabled ? 'bg-primary' : 'bg-gray-300 dark:bg-gray-600'
+              }`}
+            >
+              <span
+                className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                  controlUiEnabled ? 'translate-x-6' : 'translate-x-1'
+                }`}
+              />
+            </button>
+          </div>
           <ProxySettingsSection
             id="application-proxy"
             titleKey="proxySettings"

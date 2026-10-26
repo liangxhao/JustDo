@@ -16,7 +16,15 @@ const mocks = vi.hoisted(() => ({ getConfig: vi.fn(), updateConfig: vi.fn() }));
 
 vi.mock('@/app/shell/window/WindowHeader', () => ({ default: () => null }));
 vi.mock('./preferences/GeneralSettingsPage', () => ({
-  GeneralSettingsPage: () => <p>General preferences</p>,
+  GeneralSettingsPage: ({ controlUiEnabled, setControlUiEnabled }: {
+    controlUiEnabled: boolean;
+    setControlUiEnabled: (enabled: boolean) => void;
+  }) => <>
+    <p>General preferences</p>
+    <button type="button" onClick={() => setControlUiEnabled(!controlUiEnabled)}>
+      {controlUiEnabled ? 'fixtureControlUiOn' : 'fixtureControlUiOff'}
+    </button>
+  </>,
 }));
 vi.mock('@/services/config', () => ({ configService: mocks }));
 vi.mock('@/services/theme', () => ({
@@ -212,4 +220,32 @@ test('cancel discards the unsaved browser proxy draft', async () => {
         .value,
     ).toBe(ProxyMode.SYSTEM),
   );
+});
+
+test('hydrates and saves the Control UI draft through the existing settings save', async () => {
+  currentConfig.controlUiEnabled = true;
+  renderSettings();
+  fireEvent.click(screen.getByRole('button', { name: 'general' }));
+  fireEvent.click(screen.getByRole('button', { name: 'fixtureControlUiOn' }));
+  expect(mocks.updateConfig).not.toHaveBeenCalled();
+  fireEvent.click(footerSave());
+  await screen.findByText('settingsSaved');
+  expect(mocks.updateConfig).toHaveBeenCalledWith({ controlUiEnabled: false });
+  expect(currentConfig.controlUiEnabled).toBe(false);
+});
+
+test('cancel discards an unsaved Control UI draft without changing its saved preference', async () => {
+  const onClose = vi.fn();
+  const view = renderSettings(onClose);
+  fireEvent.click(screen.getByRole('button', { name: 'general' }));
+  fireEvent.click(screen.getByRole('button', { name: 'fixtureControlUiOff' }));
+  expect(screen.getByRole('button', { name: 'fixtureControlUiOn' })).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'cancel' }));
+  expect(onClose).toHaveBeenCalledOnce();
+  expect(mocks.updateConfig).not.toHaveBeenCalled();
+  expect(currentConfig.controlUiEnabled).toBe(false);
+  view.unmount();
+  renderSettings();
+  fireEvent.click(screen.getByRole('button', { name: 'general' }));
+  expect(screen.getByRole('button', { name: 'fixtureControlUiOff' })).toBeTruthy();
 });

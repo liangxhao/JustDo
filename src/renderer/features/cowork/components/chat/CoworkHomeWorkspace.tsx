@@ -5,6 +5,7 @@ import CoworkPromptInput, {
   type CoworkPromptInputRef,
 } from '@/features/cowork/components/composer/CoworkPromptInput';
 import { COMPOSER_FRAME_CLASS } from '@/features/cowork/components/composer/draft/composerStyles';
+import type { ComposerSubmissionMetadata } from '@/features/cowork/components/composer/submission/composerSubmissionTiming';
 import CoworkDisplayPanel, {
   type CoworkDisplayTab,
 } from '@/features/cowork/components/display/CoworkDisplayPanel';
@@ -47,6 +48,7 @@ interface CoworkHomeWorkspaceProps {
     gatewayPrompt?: string,
     worktree?: boolean,
     swarmWorkflow?: import('@shared/cowork/swarm-workflow').SwarmWorkflowOptions,
+    submission?: ComposerSubmissionMetadata,
   ) => Promise<boolean | void>;
   handleStopSession: () => Promise<boolean>;
   isStreaming: boolean;

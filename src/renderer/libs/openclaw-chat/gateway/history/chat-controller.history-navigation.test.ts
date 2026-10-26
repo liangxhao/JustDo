@@ -135,7 +135,7 @@ test('rewinds a persisted user message and reloads the authoritative branch', as
     sessionKey: 'agent:main:justdo:session-1',
     limit: 250,
     maxChars: 500_000,
-  });
+  }, expect.objectContaining({ signal: expect.any(AbortSignal) }));
   expect(controller.state.chatMessages).toEqual([
     expect.objectContaining({ role: 'user', content: 'earlier prompt' }),
   ]);
@@ -207,7 +207,7 @@ test('keeps a rotated Gateway session identity while rebuilding the rewound bran
     sessionKey: 'agent:main:justdo:session-rotated',
     limit: 250,
     maxChars: 500_000,
-  });
+  }, expect.objectContaining({ signal: expect.any(AbortSignal) }));
 });
 
 test('rejects rewind when the requested entry is no longer the latest persisted user message', async () => {
@@ -471,7 +471,7 @@ test('loads the latest history page first and prepends older history on demand',
     sessionKey: 'agent:main:justdo:session-1',
     limit: 250,
     maxChars: 500_000,
-  });
+  }, expect.objectContaining({ signal: expect.any(AbortSignal) }));
   expect(controller.state.historyHasMore).toBe(true);
   expect(
     controller.state.chatMessages.map(message => (message as { content?: unknown }).content),
@@ -514,7 +514,7 @@ test.each([0, 3])(
       __openclaw: { id: `intermediate-${index}`, seq: index + 2 },
     }));
     const request = vi.fn().mockImplementation((method: string, params: { offset?: number }) => {
-      if (method === 'chat.startup') {
+      if (method === 'chat.history' && params.offset === undefined) {
         return Promise.resolve({ messages: [assistantTail], hasMore: true, nextOffset: 1 });
       }
       if (

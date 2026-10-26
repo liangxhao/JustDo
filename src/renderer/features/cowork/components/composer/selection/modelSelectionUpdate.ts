@@ -139,8 +139,8 @@ export const applyModelSelectionUpdate = async (
         : new DefaultModelApplyError(String(error), confirmedRef));
     });
   } else {
-    // New chats have no pinned session yet: their default must be applied
-    // before the selection completes and sending becomes available.
+    // The home selection retains its save receipt, while a first send pins
+    // the captured choice independently of this future-chat default.
     await saveDefault();
   }
   return sessionModelRef ? { sessionModelRef } : {};

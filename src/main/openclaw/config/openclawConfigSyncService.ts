@@ -1,4 +1,5 @@
 import type { BrowserMode } from '../../../shared/browser/browser';
+import { EnginePhase } from '../../../shared/openclaw/engineStatus';
 import { BuiltinModelSyncReason } from '../../../shared/providers/builtinModels';
 import { readModelRef } from '../../../shared/providers/modelRef';
 import type { WindowsSandboxStatus } from '../../../shared/security/windowsSandbox';
@@ -30,6 +31,7 @@ import {
   ManagedCredentialReloadOutcome,
   reloadManagedCredentials,
 } from './models/managedCredentialReload';
+import { isModelDefaultsSyncReason } from './models/modelDefaultConfigChange';
 import { maintainStartupAuthProfiles } from './models/startupAuthProfileMaintenance';
 import {
   OPENCLAW_FALLBACK_EXEC_MODE,
@@ -51,6 +53,7 @@ type OpenClawConfigSyncServiceDeps = {
   getGatewayClient: () => GatewayClientLike | null;
   getModelAuthSessionId?: () => string | null;
   getBrowserMode?: () => BrowserMode;
+  getControlUiEnabled?: () => boolean;
   getDecisionModelCategory?: () => unknown;
   getNativeVideoCategory?: () => unknown;
   getLocalSttConfig?: () => Record<string, unknown> | null;
@@ -73,6 +76,8 @@ type SyncOpenClawConfigResult = {
   success: boolean;
   changed: boolean;
   configSynced: boolean;
+  /** Default preference persistence is independent of runtime application evidence. */
+  modelDefaultsApplicationPending?: true;
   hostPolicyVerified?: boolean;
   status?: OpenClawEngineStatus;
   error?: string;
@@ -208,6 +213,7 @@ const removePersistentApprovalGrants = (
 };
 
 const DEFERRED_RESTART_POLL_MS = 3_000;
+export const MODEL_DEFAULTS_HOT_RELOAD_TIMEOUT_MS = 90_000;
 
 export type OpenClawConfigApplyMode = 'none' | 'native-reload' | 'hard-restart';
 
@@ -270,6 +276,12 @@ export class OpenClawConfigSyncService {
   syncConfig(
     options: SyncOpenClawConfigOptions = { reason: 'unknown' },
   ): Promise<SyncOpenClawConfigResult> {
+    if (isModelDefaultsSyncReason(options.reason)) {
+      // The watcher owns hot application. Keep publication ordered with other
+      // mutations, but do not hold execution admission behind its observation.
+      return this.enqueueSyncOperation(() => this.beginModelDefaultsSync(options, false))
+        .then(publication => publication.observation);
+    }
     return this.enqueueSyncOperation(() => this.syncConfigExclusive(options));
   }
 
@@ -462,6 +474,11 @@ export class OpenClawConfigSyncService {
   private async syncConfigExclusive(
     options: SyncOpenClawConfigOptions,
   ): Promise<SyncOpenClawConfigResult> {
+    if (isModelDefaultsSyncReason(options.reason)) {
+      // An explicit mutation context already owns the queue until it returns.
+      // Confirm here rather than recursively queuing behind that same owner.
+      return (await this.beginModelDefaultsSync(options, true)).observation;
+    }
     const result = await this.applyConfigExclusive(options);
     const pending = this.pendingCredentialReload;
     const manager = this.deps.getOpenClawEngineManager();
@@ -474,6 +491,93 @@ export class OpenClawConfigSyncService {
       this.pendingCredentialReload = null;
     }
     return result;
+  }
+
+  private async beginModelDefaultsSync(
+    options: SyncOpenClawConfigOptions,
+    ownsSyncQueue: boolean,
+  ): Promise<{ observation: Promise<SyncOpenClawConfigResult> }> {
+    const manager = this.deps.getOpenClawEngineManager();
+    let changed = false;
+    const unconfirmed = (): SyncOpenClawConfigResult => ({
+      success: false, changed, configSynced: false,
+      modelDefaultsApplicationPending: true, status: manager.getStatus(),
+    });
+    const completed = (result: SyncOpenClawConfigResult) => ({ observation: Promise.resolve(result) });
+    const status = manager.getStatus();
+    if (this.pendingCredentialReload || this.pendingRetiredProviderIds.size > 0 ||
+        options.retiredProviderIds?.length || options.retiredMcpServerNames?.length ||
+        status.phase === EnginePhase.Starting) return completed(unconfirmed());
+    const offline = (status.phase === EnginePhase.Ready || status.phase === EnginePhase.Error) &&
+      manager.getGatewayProcessId() === null;
+    const client = this.deps.getGatewayClient();
+    if (!offline && (status.phase !== EnginePhase.Running || !client)) return completed(unconfirmed());
+    const configSync = this.getConfigSync();
+    const launchEnvironmentMatches = (): boolean => {
+      try {
+        const previous = manager.getGatewayLaunchEnvVars();
+        const next = configSync.collectGatewayLaunchEnvVars();
+        return !manager.hasPendingGatewayLaunchEnvironmentChanges() &&
+          Object.keys(previous).length === Object.keys(next).length &&
+          Object.entries(next).every(([key, value]) => previous[key] === value);
+      } catch {
+        return false;
+      }
+    };
+    // A model selection cannot silently adopt pending credential/launch inputs.
+    // Those continue through the ordinary serialized configuration barrier.
+    if (!offline && !launchEnvironmentMatches()) return completed(unconfirmed());
+    const processGeneration = manager.getGatewayProcessGeneration();
+    const lifecycleGeneration = manager.getGatewayLifecycleGeneration();
+    const authSessionId = this.deps.getModelAuthSessionId?.() ?? null;
+    const reloadGeneration = manager.getGatewayConfigReloadGeneration();
+    const publication = configSync.syncModelDefaults();
+    const result = publication.result;
+    changed = result.changed;
+    if (!result.ok || result.modelDefaultsOnly !== true || result.secretsChanged || result.requiresGatewayRestart)
+      return completed({
+        success: false, changed, configSynced: false, status: manager.getStatus(),
+        error: result.error || t('modelDefaultConfigSyncFailed'),
+      });
+    if (offline) return completed(publication.isCurrent() ? {
+      success: true, changed, configSynced: true, status: manager.getStatus(),
+    } : unconfirmed());
+    const isCurrent = (): boolean => !this.pendingCredentialReload && publication.isCurrent() &&
+      this.deps.getGatewayClient() === client && manager.getStatus().phase === EnginePhase.Running &&
+      manager.getGatewayProcessGeneration() === processGeneration &&
+      manager.getGatewayLifecycleGeneration() === lifecycleGeneration &&
+      (this.deps.getModelAuthSessionId?.() ?? null) === authSessionId && launchEnvironmentMatches();
+    const confirm = async (): Promise<SyncOpenClawConfigResult> => {
+      if (!isCurrent()) return unconfirmed();
+      const request = <T>(method: string, params?: unknown): Promise<T> =>
+        this.requestOwnedGateway<T>(isCurrent, method, params);
+      const [runtime, approvals] = await Promise.all([
+        this.verifyRuntimePermissionConfig(request),
+        request<ExecApprovalsSnapshot>('exec.approvals.get'),
+      ]);
+      const revision = runtime.snapshot.configRevisionHash;
+      if (!isCurrent() || !runtime.verified || typeof revision !== 'string' || !revision ||
+          runtime.snapshot.appliedConfigHash !== revision ||
+          !publication.matchesRuntimeConfig(runtime.snapshot.config) ||
+          typeof approvals.hash !== 'string' || !approvals.hash || !this.isExecApprovalPolicyApplied(approvals.file))
+        return unconfirmed();
+      return { success: true, changed, configSynced: true, hostPolicyVerified: true, status: manager.getStatus() };
+    };
+    // Register while publication owns the queue; the returned box deliberately
+    // prevents Promise assimilation from retaining the queue for this wait.
+    const observation = (async (): Promise<SyncOpenClawConfigResult> => {
+      try {
+        if (!isCurrent()) return unconfirmed();
+        if (result.configChanged && !await manager.waitForGatewayConfigReload(
+          reloadGeneration, MODEL_DEFAULTS_HOT_RELOAD_TIMEOUT_MS,
+        )) return unconfirmed();
+        if (!isCurrent()) return unconfirmed();
+        return ownsSyncQueue ? await confirm() : await this.enqueueSyncOperation(confirm);
+      } catch {
+        return unconfirmed();
+      }
+    })();
+    return { observation };
   }
 
   private async applyConfigExclusive(
@@ -523,10 +627,16 @@ export class OpenClawConfigSyncService {
     // the process that just finished loading. Once ready, its watcher can
     // apply ordinary settings without a second cold startup.
     if (
-      options.reason !== BuiltinModelSyncReason.AuthLogout &&
-      engineManager.getStatus().phase === 'starting'
+      !isAuthLogout &&
+      engineManager.getStatus().phase === EnginePhase.Starting
     ) {
       await engineManager.startGateway();
+      const status = engineManager.getStatus();
+      // A bounded observation may leave the native restart owner pending.
+      // Preserve its startup snapshot and the unapplied configuration obligation.
+      if (status.phase === EnginePhase.Starting) return this.unconfirmedConfigApplication({
+        success: false, changed: false, configSynced: false, status,
+      });
     }
     const statusBeforeSync = engineManager.getStatus();
     const preflightProcessGeneration = engineManager.getGatewayProcessGeneration();
@@ -1676,6 +1786,7 @@ export class OpenClawConfigSyncService {
         getHooks: () => this.deps.getHookStore().listHooks(),
         getAgents: () => this.deps.getCoworkStore().listAgents(),
         getBrowserMode: this.deps.getBrowserMode,
+        getControlUiEnabled: this.deps.getControlUiEnabled,
         getDecisionModelCategory: this.deps.getDecisionModelCategory,
         getNativeVideoCategory: this.deps.getNativeVideoCategory,
         getLocalSttConfig: this.deps.getLocalSttConfig,

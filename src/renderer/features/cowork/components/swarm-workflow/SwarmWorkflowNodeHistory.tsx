@@ -23,15 +23,21 @@ export default function SwarmWorkflowNodeHistory({
 }) {
   const [controller, setController] = useState<ChatController | null>(null);
   const [status, setStatus] = useState('loading');
+  const [preparationTimedOut, setPreparationTimedOut] = useState(false);
   const [retry, setRetry] = useState(0);
   useEffect(() => {
     if (!active) return;
     const next = new ChatController();
     next.state.sessionKey = sessionKey;
     setController(next);
+    setStatus('loading');
+    setPreparationTimedOut(false);
     let deadline: ReturnType<typeof setTimeout>;
     const unsubscribe = next.subscribe(state => {
-      if (state.chatMessages.length || state.transcript.activeTurn) setStatus('ready');
+      setPreparationTimedOut(state.historyPreparationTimedOut === true);
+      if (state.historyPreparationPending) setStatus('preparing');
+      else if (state.historyReadFailed) setStatus(state.chatLoading ? 'loading' : 'error');
+      else if (state.chatMessages.length || state.transcript.activeTurn) setStatus('ready');
       else if (state.initialHistoryReady) setStatus(state.lastError ? 'error' : 'empty');
     });
     const disconnect = startSubagentGatewayConnection({
@@ -40,10 +46,11 @@ export default function SwarmWorkflowNodeHistory({
       subscribeProgress: window.electron?.openclaw?.engine?.onProgress,
       onFailure: () => setStatus('error'),
       onConnecting: () => {
-        setStatus(next.state.chatMessages.length ? 'ready' : 'loading');
+        setStatus(next.state.historyPreparationPending ? 'preparing' : next.state.chatMessages.length ? 'ready' : 'loading');
         clearTimeout(deadline);
         deadline = setTimeout(() => {
           if (
+            !next.state.historyPreparationPending &&
             !next.state.initialHistoryReady &&
             !next.state.chatMessages.length &&
             !next.state.transcript.activeTurn
@@ -62,13 +69,18 @@ export default function SwarmWorkflowNodeHistory({
     <div className="flex min-h-0 flex-1 flex-col">
       {status !== 'ready' && (
         <p role="status" className="p-3 text-sm text-secondary">
-          {i18nService.t('swarmWorkflowHistory_' + status)}
+          {i18nService.t(status === 'preparing' ? 'storageHistoryPreparing' : preparationTimedOut
+            ? 'storageHistoryPreparationPending' : 'swarmWorkflowHistory_' + status)}
         </p>
       )}
       {status === 'error' && (
         <button
           className="self-start p-3 text-sm text-primary"
-          onClick={() => setRetry(v => v + 1)}
+          onClick={() => {
+            if (preparationTimedOut) {
+              if (controller?.state.sessionKey === sessionKey) void controller.loadHistory(true);
+            } else setRetry(v => v + 1);
+          }}
         >
           {i18nService.t('sessionDetailsRetry')}
         </button>

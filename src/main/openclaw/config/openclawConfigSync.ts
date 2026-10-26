@@ -6,7 +6,12 @@ import {
   captureDecisionModelConfiguration,
   resolveDecisionModelSelection,
 } from './models/decisionModelConfig';
-import { hasOnlyModelDefaultChanges } from './models/modelDefaultConfigChange';
+import {
+  hasOnlyModelDefaultChanges,
+  isModelDefaultsSyncReason,
+  matchesProjectedModelDefaults,
+  projectModelDefaults,
+} from './models/modelDefaultConfigChange';
 import {
   applyNativeVideoConfiguration,
   captureNativeVideoConfiguration,
@@ -172,6 +177,12 @@ import { syncBuiltinCredentialFile } from './models/builtinCredentialFile';
 import { restrictCredentialFile, syncProviderSecretFile } from './models/providerSecretFile';
 import { mergeNativeMcpOverrides } from './plugins/nativeMcpOverrides';
 
+export type ModelDefaultsConfigPublication = {
+  result: OpenClawConfigSyncResult;
+  isCurrent: () => boolean;
+  matchesRuntimeConfig: (config: unknown) => boolean;
+};
+
 export class OpenClawConfigSync {
   private readonly getNativeVideoCategory: () => unknown;
   private nativeVideoSelection: ReturnType<typeof resolveNativeVideoSelection>;
@@ -189,13 +200,14 @@ export class OpenClawConfigSync {
   private readonly getHooks?: () => OpenClawHookRecord[];
   private readonly getAgents?: () => Agent[];
   private readonly getBrowserMode?: () => BrowserModeValue;
+  private readonly getControlUiEnabled: () => boolean;
   private readonly getLocalSttConfig: () => Record<string, unknown> | null;
   private readonly getLocalTtsConfig: () => Record<string, unknown> | null;
   private readonly getLocalSpeechExtensionTtsConfig?: () => Record<string, unknown> | null;
   private readonly getSpeechOutputState: () => { enabled: boolean; mode: 'local' | 'online' };
   private readonly getWindowsSandboxEnvironment: () => Record<string, string>;
 
-  constructor(deps: OpenClawConfigSyncDeps) {
+  constructor(deps: OpenClawConfigSyncDeps & { getControlUiEnabled?: () => boolean }) {
     this.getNativeVideoCategory = deps.getNativeVideoCategory ?? (() => undefined);
     this.getDecisionModelCategory = deps.getDecisionModelCategory ?? (() => undefined);
     this.engineManager = deps.engineManager;
@@ -208,6 +220,7 @@ export class OpenClawConfigSync {
     this.getHooks = deps.getHooks;
     this.getAgents = deps.getAgents;
     this.getBrowserMode = deps.getBrowserMode;
+    this.getControlUiEnabled = deps.getControlUiEnabled ?? (() => false);
     this.getLocalSttConfig = deps.getLocalSttConfig ?? (() => null);
     this.getLocalTtsConfig = deps.getLocalTtsConfig ?? (() => null);
     this.getLocalSpeechExtensionTtsConfig = deps.getLocalSpeechExtensionTtsConfig;
@@ -280,7 +293,75 @@ export class OpenClawConfigSync {
     }
   }
 
+  syncModelDefaults(): ModelDefaultsConfigPublication {
+    const configPath = this.engineManager.getConfigPath();
+    const failed = (error: string): ModelDefaultsConfigPublication => ({
+      result: { ok: false, changed: false, configChanged: false, requiresGatewayRestart: false,
+        configPath, error },
+      isCurrent: () => false, matchesRuntimeConfig: () => false,
+    });
+    let temporaryPath: string | undefined;
+    try {
+      const content = fs.readFileSync(configPath, 'utf8');
+      const current: unknown = JSON.parse(content);
+      if (!isRecord(current)) return failed('The existing native configuration is unavailable.');
+      const resolution = resolveRawApiConfig();
+      if (!resolution.config || !validateConfiguredOpenClawProviderNames().ok)
+        return failed('The selected model provider is unavailable.');
+      const { apiKey, baseURL, model, apiType } = resolution.config;
+      const primary = buildProviderSelection({ apiKey, baseURL, modelId: model, apiType,
+        providerName: resolution.providerMetadata?.providerName ?? '',
+        displayName: resolution.providerMetadata?.displayName }).primaryModel;
+      const agents = this.getAgents?.() ?? [];
+      const names = getProviderDisplayNameMap();
+      const targets: Record<string, string> = { main: primary };
+      for (const agent of agents) {
+        if (agent.id === 'main' || !agent.enabled || agent.deletedAt) continue;
+        const entry = buildAgentEntry(agent, primary, names);
+        if (!isRecord(entry.model) || typeof entry.model.primary !== 'string')
+          return failed('The selected agent model is unavailable.');
+        targets[normalizeOpenClawAgentId(agent.id)] = entry.model.primary;
+      }
+      const next = projectModelDefaults(current, primary, targets);
+      const changed = hasOpenClawConfigChanged(content, next);
+      let publishedContent = content;
+      if (changed) {
+        publishedContent = `${JSON.stringify(next, null, 2)}\n`;
+        temporaryPath = `${configPath}.tmp-${process.pid}-${Date.now()}`;
+        this.writeConfigTemporaryFile(temporaryPath, publishedContent);
+        if (fs.readFileSync(configPath, 'utf8') !== content)
+          return failed('The native configuration changed before model publication.');
+        fs.renameSync(temporaryPath, configPath);
+        temporaryPath = undefined;
+      }
+      const verification = verifyOpenClawConfigMatches(configPath, next);
+      if (!verification.ok) return failed(verification.error || 'Model default publication could not be verified.');
+      return {
+        result: { ok: true, changed, configChanged: changed, requiresGatewayRestart: false,
+          secretsChanged: false, modelDefaultsOnly: true, configPath },
+        isCurrent: () => {
+          try { return fs.readFileSync(configPath, 'utf8') === publishedContent; } catch { return false; }
+        },
+        matchesRuntimeConfig: config => matchesProjectedModelDefaults(next, config),
+      };
+    } catch {
+      return failed('The model defaults could not be published to the existing native configuration.');
+    } finally {
+      if (temporaryPath) {
+        try { fs.unlinkSync(temporaryPath); } catch { /* Only this uncommitted temporary file. */ }
+      }
+    }
+  }
+
   private applyManagedRuntimeConfiguration(config: Record<string, unknown>): void {
+    const gateway = isRecord(config.gateway) ? config.gateway : {};
+    config.gateway = {
+      ...gateway,
+      controlUi: {
+        ...(isRecord(gateway.controlUi) ? gateway.controlUi : {}),
+        enabled: this.getControlUiEnabled() === true,
+      },
+    };
     const nativeTts = normalizeNativeTtsConfig(config.tts);
     if (nativeTts) config.tts = nativeTts;
     const agents = isRecord(config.agents) ? config.agents : {};
@@ -772,7 +853,7 @@ export class OpenClawConfigSync {
       requiresGatewayRestart: false,
       configPath,
       modelDefaultsOnly:
-        (reason === 'default-model-change' || reason === 'default-model-change-rollback') &&
+        isModelDefaultsSyncReason(reason) &&
         hasOnlyModelDefaultChanges(existingConfig, configToPersist),
     };
   }

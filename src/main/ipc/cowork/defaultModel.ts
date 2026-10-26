@@ -38,7 +38,7 @@ interface DefaultModelHandlerOptions {
   getCoworkStore: () => CoworkStore;
   syncOpenClawConfig: (options: {
     reason: string;
-  }) => Promise<{ success: boolean; error?: string }>;
+  }) => Promise<{ success: boolean; modelDefaultsApplicationPending?: true; error?: string }>;
 }
 
 export const registerDefaultModelHandlers = ({
@@ -120,7 +120,9 @@ export const registerDefaultModelHandlers = ({
             const syncResult = await syncOpenClawConfig({
               reason: 'default-model-change',
             });
-            if (!syncResult.success) {
+            // This receipt confirms the saved preference. Session selection
+            // and send admission still require their own native confirmation.
+            if (!syncResult.success && syncResult.modelDefaultsApplicationPending !== true) {
               applyError = syncResult.error || 'Failed to apply default model';
             }
           } catch (error) {
@@ -153,7 +155,7 @@ export const registerDefaultModelHandlers = ({
               const rollbackResult = await syncOpenClawConfig({
                 reason: 'default-model-change-rollback',
               });
-              if (!rollbackResult.success) {
+              if (!rollbackResult.success && rollbackResult.modelDefaultsApplicationPending !== true) {
                 rollbackErrors.push(rollbackResult.error || 'OpenClaw config rollback failed');
               }
             } catch (error) {

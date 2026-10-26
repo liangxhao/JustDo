@@ -188,7 +188,7 @@ describe('Gateway context usage projections', () => {
     });
     expect(controller.state.currentSessionId).toBe('sid-current');
     expect(controller.state.chatMessages).toEqual([{ role: 'user', content: 'previous history' }]);
-    expect(request).toHaveBeenCalledWith('chat.history', expect.objectContaining({ sessionKey }));
+    expect(request).toHaveBeenCalledWith('chat.history', expect.objectContaining({ sessionKey }), expect.objectContaining({ signal: expect.any(AbortSignal) }));
     const messages = [{ role: 'user', content: 'successor history' }];
     resolveHistory({ messages, sessionId: 'sid-successor', sessionInfo: successor });
     await vi.runAllTimersAsync();

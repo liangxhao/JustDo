@@ -87,13 +87,44 @@ describe('default model IPC', () => {
     });
   });
 
-  test('restores app selection and legacy metadata if Gateway rejects the change', async () => {
+  test.each(['main', 'review'])('keeps the saved %s preference when runtime application is pending', async agentId => {
+    appConfig = {
+      providers,
+      model: { defaultModel: 'old-model', defaultModelProvider: 'custom_0' },
+    };
+    syncOpenClawConfig.mockResolvedValueOnce({
+      success: false, configSynced: false, modelDefaultsApplicationPending: true,
+    });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const result = await handlers.get('config:setDefaultModel')?.(
+        {},
+        { modelId: 'new-model', providerKey: 'openai', agentId },
+      );
+      expect(result).toEqual({ success: true });
+      expect(appConfig.model).toEqual(agentId === 'main'
+        ? { defaultModel: 'new-model', defaultModelProvider: 'openai' }
+        : { defaultModel: 'old-model', defaultModelProvider: 'custom_0' });
+      expect(updateAgent).toHaveBeenCalledExactlyOnceWith(agentId, {
+        model: agentId === 'main' ? '' : 'openai/new-model',
+      });
+      expect(syncOpenClawConfig).toHaveBeenCalledExactlyOnceWith({ reason: 'default-model-change' });
+      expect(error).not.toHaveBeenCalled();
+    } finally {
+      error.mockRestore();
+    }
+  });
+
+  test.each([false, true])('restores app selection and metadata on publication failure (rollback pending: %s)', async rollbackPending => {
     appConfig = {
       providers,
       model: { defaultModel: 'old-model', defaultModelProvider: 'custom_0' },
       theme: 'dark',
     };
     syncOpenClawConfig.mockResolvedValueOnce({ success: false, error: 'sync rejected' });
+    if (rollbackPending) syncOpenClawConfig.mockResolvedValueOnce({
+      success: false, modelDefaultsApplicationPending: true,
+    });
     const result = await handlers.get('config:setDefaultModel')?.(
       {},
       { modelId: 'new-model', providerKey: 'openai', agentId: 'main' },

@@ -7,7 +7,6 @@ import {
   EXTERNAL_MCP_TOOL_NAME,
 } from '../contracts/external-mcp';
 import { ExternalMcpRegistry } from './registry';
-import { connectExternalMcpServer } from './transport';
 
 const STATE_KEY = Symbol.for('runtime-services.external-mcp.registries');
 const state = globalThis as typeof globalThis & {
@@ -24,7 +23,13 @@ export function registerExternalMcp(api: OpenClawPluginApi): void {
   if (!registry) {
     registry = new ExternalMcpRegistry({
       getEntry: sessionKey => getSessionEntry({ sessionKey, readConsistency: 'latest' }),
-      connect: connectExternalMcpServer,
+      connect: async (server, cwd, signal, assertCurrent) => {
+        const { connectExternalMcpServer } = await import('./transport');
+        // Loading cannot preserve a stale lease, owner, or native incarnation.
+        signal.throwIfAborted();
+        assertCurrent();
+        return connectExternalMcpServer(server, cwd, signal);
+      },
     });
     registries.set(stateDir, registry);
   }

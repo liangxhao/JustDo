@@ -12,10 +12,17 @@ import type { CoworkSession, CoworkStore } from '../../data/coworkStore';
 import type { CoworkEngineRouter } from '../../engine';
 
 const handlers = new Map<string, (...args: unknown[]) => unknown>();
+const providerCatalog = vi.hoisted(() => vi.fn(() => [] as Array<{
+  providerName: string; displayName?: string; models: { id: string }[];
+}>));
+vi.mock('../../providers/providerApiConfig', () => ({
+  resolveAllEnabledProviderConfigs: providerCatalog,
+}));
 let temporaryDirectory: string;
 let workspaceRoot: string;
 
 beforeEach(() => {
+  providerCatalog.mockReset().mockReturnValue([]);
   temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'session-execution-'));
   workspaceRoot = path.join(temporaryDirectory, 'workspace');
 });
@@ -122,6 +129,103 @@ const session = (permissionMode: 'ask' | 'auto' | 'full'): CoworkSession => ({
   agentId: 'main',
   createdAt: 1,
   updatedAt: 2,
+});
+
+describe('explicit first-message model selection', () => {
+  const setup = (duringPreparation?: () => void) => {
+    const created = session('ask');
+    const createSession = vi.fn().mockReturnValue(created);
+    const nativeSend = vi.fn();
+    const startSession = vi.fn(async (_id: string, _prompt: string, options: {
+      onAccepted: () => void; beforeNativeSend?: () => Promise<void>;
+    }) => {
+      duringPreparation?.();
+      await options.beforeNativeSend?.();
+      nativeSend();
+      options.onAccepted();
+    });
+    const ensureEngineRunning = vi.fn().mockResolvedValue({ phase: 'running' });
+    registerCoworkSessionExecutionHandlers({
+      ensureEngineRunning,
+      getCoworkStore: () => ({
+        getConfig: () => ({ workingDirectory: workspaceRoot, permissionMode: 'ask' }),
+        getAgent: () => ({ enabled: true, model: 'outdated/model' }),
+        getSession: () => created,
+        createSession,
+        updateSession: vi.fn(),
+      }) as unknown as CoworkStore,
+      getCoworkEngineRouter: () => ({ startSession }) as unknown as CoworkEngineRouter,
+      waitForConfigUpdates: async () => {},
+      getEngineNotReadyResponse: vi.fn(),
+    });
+    const start = (modelRef: unknown) => handlers.get('cowork:session:start')!({}, {
+      prompt: 'hello', modelRef,
+    });
+    return { start, createSession, startSession, ensureEngineRunning, nativeSend };
+  };
+
+  test('captures a configured slash-containing model without inheriting the older default', async () => {
+    providerCatalog.mockReturnValue([{
+      providerName: 'custom_0', displayName: 'internal', models: [{ id: 'family/chosen' }],
+    }]);
+    const h = setup();
+    await expect(h.start(' internal/family/chosen ')).resolves.toMatchObject({ success: true });
+    expect(h.createSession.mock.calls[0][6]).toBe('internal/family/chosen');
+    expect(h.startSession).toHaveBeenCalledWith('session-1', 'hello', expect.objectContaining({
+      initialModelRef: 'internal/family/chosen',
+    }));
+  });
+
+  test('normalizes a built-in native alias to its configured route before native admission', async () => {
+    providerCatalog.mockReturnValue([{
+      providerName: 'builtin_models', models: [{ id: 'vendor/chosen' }],
+    }]);
+    const h = setup();
+    await expect(h.start('vendor/chosen')).resolves.toMatchObject({ success: true });
+    expect(h.startSession).toHaveBeenCalledWith('session-1', 'hello', expect.objectContaining({
+      initialModelRef: 'builtin_models/vendor/chosen',
+    }));
+  });
+
+  test('preserves an exact provider route when a built-in native alias has the same spelling', async () => {
+    providerCatalog.mockReturnValue([
+      { providerName: 'builtin_models', models: [{ id: 'vendor/chosen' }] },
+      { providerName: 'vendor', models: [{ id: 'chosen' }] },
+    ]);
+    const h = setup();
+    await expect(h.start('vendor/chosen')).resolves.toMatchObject({ success: true });
+    expect(h.startSession).toHaveBeenCalledWith('session-1', 'hello', expect.objectContaining({
+      initialModelRef: 'vendor/chosen',
+    }));
+  });
+
+  test.each([null, 12, '', ' ', 'unqualified'])('rejects an invalid model selection before preparation: %j', async model => {
+    const h = setup();
+    await expect(h.start(model)).resolves.toMatchObject({ success: false });
+    expect(h.ensureEngineRunning).not.toHaveBeenCalled();
+    expect(h.createSession).not.toHaveBeenCalled();
+    expect(h.startSession).not.toHaveBeenCalled();
+  });
+
+  test('rejects a removed or credential-unavailable model rather than using a fallback', async () => {
+    providerCatalog.mockReturnValue([{
+      providerName: 'internal', models: [{ id: 'available' }],
+    }]);
+    const h = setup();
+    await expect(h.start('internal/removed')).resolves.toMatchObject({ success: false });
+    expect(h.createSession).not.toHaveBeenCalled();
+    expect(h.startSession).not.toHaveBeenCalled();
+  });
+
+  test('rechecks the current catalog and credentials at the final native send boundary', async () => {
+    providerCatalog.mockReturnValue([{
+      providerName: 'internal', models: [{ id: 'chosen' }],
+    }]);
+    const h = setup(() => providerCatalog.mockReturnValue([]));
+    await expect(h.start('internal/chosen')).resolves.toMatchObject({ success: false });
+    expect(h.createSession).toHaveBeenCalledOnce();
+    expect(h.nativeSend).not.toHaveBeenCalled();
+  });
 });
 
 describe('worktree first-message admission', () => {

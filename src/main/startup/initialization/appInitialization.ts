@@ -6,6 +6,8 @@ import {
   AppInitializationPhase,
   type AppInitializationState,
   AppInitializationStep,
+  AppInitializationTask,
+  AppInitializationTaskStatus,
   type StartupDowngradeConfirmation,
 } from '../../../shared/app/initialization';
 import { HistoryRecoveryKind } from '../../../shared/app/startup/history';
@@ -111,11 +113,30 @@ export class AppInitialization {
       startedAt,
       activityStartedAt: startedAt,
       updatedAt: startedAt,
+      ...(route === StartupRoute.Normal ? { tasks: {
+        [AppInitializationTask.UserData]: AppInitializationTaskStatus.Waiting,
+        [AppInitializationTask.Configuration]: AppInitializationTaskStatus.Waiting,
+        [AppInitializationTask.Integrations]: AppInitializationTaskStatus.Waiting,
+      } } : {}),
     };
   }
 
   getState(): AppInitializationState {
-    return { ...this.state };
+    return { ...this.state, ...(this.state.tasks ? { tasks: { ...this.state.tasks } } : {}) };
+  }
+
+  setTaskStatus(task: AppInitializationTask, status: AppInitializationTaskStatus): void {
+    if (this.state.route !== StartupRoute.Normal || this.state.phase === AppInitializationPhase.Failed) return;
+    const previous = this.state.tasks?.[task] ?? AppInitializationTaskStatus.Waiting;
+    if (this.state.phase === AppInitializationPhase.Ready &&
+        (previous !== AppInitializationTaskStatus.Running || status === AppInitializationTaskStatus.Running ||
+          status === AppInitializationTaskStatus.Waiting)) return;
+    if (previous === status || previous === AppInitializationTaskStatus.Complete ||
+        previous === AppInitializationTaskStatus.Failed) return;
+    // Completion must follow the actual operation, not a later serial milestone.
+    if (previous === AppInitializationTaskStatus.Waiting && status !== AppInitializationTaskStatus.Running) return;
+    this.state = { ...this.state, tasks: { ...this.state.tasks, [task]: status }, updatedAt: Date.now() };
+    this.onChanged(this.getState());
   }
 
   setDowngradeConfirmation(downgradeConfirmation: StartupDowngradeConfirmation | undefined): void {
@@ -191,6 +212,14 @@ export class AppInitialization {
     }
   }
 
+  setEnginePreparationPending(pending: boolean): void {
+    if (this.state.route !== StartupRoute.Normal || this.state.phase === AppInitializationPhase.Failed ||
+        (pending && this.state.phase !== AppInitializationPhase.Preparing) ||
+        this.state.enginePreparationPending === pending) return;
+    this.state = { ...this.state, enginePreparationPending: pending, updatedAt: Date.now() };
+    this.onChanged(this.getState());
+  }
+
   async complete(): Promise<void> {
     if (this.state.route === StartupRoute.Fresh || this.state.route === StartupRoute.Migration) {
       // Retain the old presentation receipt for existing tooling. Route admission
@@ -227,6 +256,8 @@ export class AppInitialization {
     this.state = {
       ...this.state,
       phase: AppInitializationPhase.Failed,
+      ...(this.state.tasks ? { tasks: Object.fromEntries(Object.entries(this.state.tasks).map(([task, status]) =>
+        [task, status === AppInitializationTaskStatus.Running ? AppInitializationTaskStatus.Failed : status])) } : {}),
       error: failure.error.message,
       failure,
       ...(this.state.route === StartupRoute.Migration || recovery !== HistoryRecoveryKind.Other

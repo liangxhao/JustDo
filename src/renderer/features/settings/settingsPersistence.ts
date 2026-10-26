@@ -19,6 +19,7 @@ interface SettingsAppConfigDraft {
   proxy: AppConfig['proxy'];
   browserProxy: AppConfig['browserProxy'];
   developerMode: AppConfig['developerMode'];
+  controlUiEnabled: AppConfig['controlUiEnabled'];
   voice: AppConfig['voice'];
   shortcuts: NonNullable<AppConfig['shortcuts']>;
   onlineModelProviders: NonNullable<AppConfig['onlineModelProviders']>;
@@ -68,6 +69,9 @@ export const buildSettingsAppConfigUpdate = (
   }
   if (current.developerMode !== draft.developerMode) {
     update.developerMode = draft.developerMode;
+  }
+  if ((current.controlUiEnabled ?? false) !== draft.controlUiEnabled) {
+    update.controlUiEnabled = draft.controlUiEnabled;
   }
   if (hasConfigValueChanged(current.voice, draft.voice)) {
     update.voice = draft.voice;

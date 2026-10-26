@@ -10,6 +10,7 @@ import { SHUTDOWN_BUDGET_MS } from '../../../shared/app/shutdownPolicy';
 import cliRuntimeFiles from '../../../shared/openclaw/cliRuntimeFiles.json';
 import { PRODUCT_NAME_LOWERCASE } from '../../../shared/productMetadata';
 import { t } from '../../core/i18n';
+import { GATEWAY_RESTART_COMPLETION_TIMEOUT_MS } from './gatewayConfigReloadMonitor';
 import { OPENCLAW_GATEWAY_SHUTDOWN_MESSAGE } from './launch/openclawLauncher';
 import {
   applyOpenClawCliNetworkMode,
@@ -285,7 +286,9 @@ test('retains a Gateway that becomes ready during an overlapping health probe', 
 
   await expect(manager.doStartGateway()).resolves.toMatchObject({ phase: 'running' });
 
-  expect(waitForGatewayReadyAfter).toHaveBeenCalledWith(0, 60_000);
+  expect(waitForGatewayReadyAfter).toHaveBeenCalledWith(
+    0, GATEWAY_RESTART_COMPLETION_TIMEOUT_MS, expect.any(AbortSignal),
+  );
   expect(stopGatewayProcess).not.toHaveBeenCalled();
   expect(manager.gatewayProcess).toBe(existingProcess);
 

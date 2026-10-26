@@ -23,14 +23,16 @@ const dictionaries = {
   zh: { ...appTranslations.zh, ...startupTranslations.zh },
   en: { ...appTranslations.en, ...startupTranslations.en },
 };
-function openDocument(language: string, firstLaunch = false, route?: string) {
+function openDocument(language: string, firstLaunch = false, route?: string,
+  clocks: { entryStartedAt?: number; startedAt?: number } = {}) {
   vi.useFakeTimers();
   vi.spyOn(navigator, 'language', 'get').mockReturnValue(language);
   localStorage.clear();
   HTMLElement.prototype.animate = vi.fn(() => ({ currentTime: 0, cancel: vi.fn() })) as never;
   Object.defineProperty(window, 'electron', {
     configurable: true,
-    value: { initialization: { firstLaunch, route } },
+    value: { initialization: { firstLaunch, route, entryStartedAt: clocks.entryStartedAt,
+      getState: () => Promise.resolve({ startedAt: clocks.startedAt ?? Date.now() }) } },
   });
   document.body.innerHTML = template.match(/<body>([\s\S]*)<\/body>/u)![1];
   const scripts = [...template.matchAll(/<script>([\s\S]*?)<\/script>/gu)];
@@ -46,11 +48,18 @@ afterEach(() => {
   delete window.startupDiagnostics;
 });
 
-test('paints localized content with elapsed time before the module entry executes', () => {
+test('paints localized content with elapsed time before the module entry executes', async () => {
   openDocument('zh-CN');
+  await Promise.resolve();
   expect(document.querySelector('h1')?.textContent).toBe(dictionaries.zh.startupHeading);
   expect(document.querySelector('.startup-main')?.getAttribute('data-entry')).toBe('opening');
   expect(document.querySelector('[role="progressbar"]')?.hasAttribute('aria-valuenow')).toBe(false);
+  expect([...document.querySelectorAll('.startup-step-name')].map(step => step.textContent?.trim()))
+    .toEqual([
+      dictionaries.zh.startupStep_userData, dictionaries.zh.startupStep_configuration,
+      dictionaries.zh.startupStep_engine, dictionaries.zh.startupStep_integrations,
+      dictionaries.zh.startupStep_interface,
+    ]);
   vi.advanceTimersByTime(31_000);
   expect(document.querySelector('.startup-main')?.getAttribute('data-entry')).toBe('open');
   expect(document.getElementById('startup-clock')?.textContent).toBe('00:31');
@@ -60,6 +69,18 @@ test('paints localized content with elapsed time before the module entry execute
   document.getElementById('startup-document')!.remove();
   vi.advanceTimersByTime(1000);
   expect(vi.getTimerCount()).toBe(0);
+});
+
+test('keeps the static total elapsed clock independent of the fresh visual entry clock', async () => {
+  const now = Date.now();
+  openDocument('zh-CN', false, 'normal', { entryStartedAt: now, startedAt: now - 30_000 });
+  await Promise.resolve();
+  vi.advanceTimersByTime(1000);
+  expect(document.getElementById('startup-clock')?.textContent).toBe('00:31');
+  expect(document.querySelector('.startup-main')?.getAttribute('data-entry')).toBe('opening');
+  expect(document.documentElement.getAttribute(STARTUP_ENTRY_STARTED_ATTRIBUTE)).toBe(String(now));
+  vi.advanceTimersByTime(300);
+  expect(document.querySelector('.startup-main')?.getAttribute('data-entry')).toBe('open');
 });
 
 test('keeps a visible recovery action when interface modules fail to load', () => {
