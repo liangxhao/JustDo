@@ -2,19 +2,21 @@ import fs from 'node:fs';
 
 import { expect, test } from 'vitest';
 
-import { parseOfflineHtmlDocument } from '../../../plugins/extensions/widget-kit/libraries/schema';
+import { htmlPageContentKind } from '../../../plugins/extensions/widget-kit/document/content-kind';
+import { HTML_PAGE_KIND } from '../../../plugins/extensions/widget-kit/document/contracts';
 
-test('published offline-library source and tool examples pass the same admission parser', () => {
+test('published HTML page call uses raw markup accepted by the registered kind', () => {
   const reference = fs.readFileSync(
-    'plugins/extensions/widget-kit/skills/visualize/references/offline-libraries.md',
+    'plugins/extensions/widget-kit/skills/visualize/references/pinned-network.md',
     'utf8',
   );
   const examples = [...reference.matchAll(/```json\s*([\s\S]*?)```/g)];
-  expect(examples).toHaveLength(2);
+  expect(examples).toHaveLength(1);
   for (const [, example] of examples) {
     const document = JSON.parse(example);
-    const source = 'widget_code' in document ? document.widget_code : JSON.stringify(document);
-    if ('widget_code' in document) expect(document.kind).toBe('offline-html');
-    expect(parseOfflineHtmlDocument(source).libraries).toEqual(['echarts']);
+    expect(document.kind).toBe(HTML_PAGE_KIND);
+    expect(document.pin).toBe(true);
+    expect(document.widget_code).toContain('<img');
+    expect(() => htmlPageContentKind.validateSource(document.widget_code)).not.toThrow();
   }
 });

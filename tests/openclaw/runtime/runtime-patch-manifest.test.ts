@@ -243,31 +243,6 @@ function writeNativeDatabaseFixture(repoRoot: string, runtimeRoot: string, versi
   writeNativeOwnerArchive(runtimeRoot, contract.modules);
 }
 
-/** Inert closed payload for the real archive verifier; no downloaded library bytes are needed. */
-function writeWidgetLibraryArchiveFixture(runtimeRoot: string): void {
-  const { libraries } = JSON.parse(fs.readFileSync(path.resolve('plugins/extensions/widget-kit/libraries/upstreams.json'), 'utf8'));
-  const assets = path.join(runtimeRoot, 'dist/extensions/widget-kit/assets');
-  const files: Record<string, string> = {};
-  const resources: Record<string, { file: string; sha256: string; bytes: number }> = {};
-  const write = (name: string, content: string) => {
-    const file = path.join(assets, name);
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, content);
-    files[name] = crypto.createHash('sha256').update(content).digest('hex');
-  };
-  for (const library of libraries) {
-    const file = `libraries/${library.id}-${library.version}.js`;
-    const content = `globalThis.${library.global} = {};\n`;
-    write(file, content);
-    resources[library.resourcePath] = { file, sha256: files[file], bytes: Buffer.byteLength(content) };
-    write(`licenses/${library.id}-${library.version}/LICENSE`, 'Synthetic archive fixture license.\n');
-  }
-  write('THIRD_PARTY_NOTICES.json', '[]\n');
-  fs.writeFileSync(path.join(assets, 'integrity.json'), JSON.stringify({
-    schemaVersion: 1, sourceHash: '0'.repeat(64), upstreams: libraries, resources, files,
-  }));
-}
-
 function createFixture(version = 'v2026.6.11') {
   const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-patch-manifest-test-'));
   temporaryRoots.push(repoRoot);
@@ -1457,7 +1432,6 @@ module.exports = { applyPatch, verifyPatch };
       JSON.stringify({ name: '@microsoft/mxc-sdk', version: '0.9.0', dependencies: { 'node-pty': '^1.2.0-beta.12' } }));
     fs.writeFileSync(path.join(runtimeRoot, 'dist/extensions/mxc/node_modules/node-pty/package.json'),
       JSON.stringify({ name: 'node-pty', version: '1.2.0-beta.15' }));
-    writeWidgetLibraryArchiveFixture(runtimeRoot);
     writeBundledDependencyFixture(repositoryRoot, runtimeRoot);
     // Match the local Worker inventory used by the real packaging verifier.
     // These are inert archive fixtures; no installed runtime code is executed.
@@ -1579,4 +1553,26 @@ module.exports = { applyPatch, verifyPatch };
     expect(isDeclaredBundledDependencyArchiveEntry(`${owner}/nested/`, 'Directory', [owner])).toBe(true);
     expect(isDeclaredBundledDependencyArchiveEntry(`${owner}/nested/file.js`, 'File', [owner])).toBe(true);
   });
+
+  test.each(['win32', 'linux'])('rejects retired widget assets in the final %s payload', async electronPlatformName => {
+    const { repoRoot: repositoryRoot } = createFixture('v2026.10.7');
+    const appOutDir = fs.mkdtempSync(path.join(os.tmpdir(), 'widget-retired-packaging-'));
+    temporaryRoots.push(appOutDir);
+    const resourcesRoot = path.join(appOutDir, 'resources');
+    const archiveRoot = path.join(appOutDir, 'archive-source');
+    const payloadRoot = electronPlatformName === 'win32' ? archiveRoot : resourcesRoot;
+    const oldAsset = path.join(payloadRoot, 'cfmind/dist/extensions/widget-kit/assets/libraries/retired.js');
+    fs.mkdirSync(path.dirname(oldAsset), { recursive: true });
+    fs.mkdirSync(resourcesRoot, { recursive: true });
+    fs.writeFileSync(oldAsset, 'retired asset');
+    if (electronPlatformName === 'win32') {
+      const archive = path.join(resourcesRoot, 'win-resources.tar');
+      require('tar').create({ cwd: archiveRoot, file: archive, sync: true }, ['cfmind']);
+      await compressTarArchive(archive, archive + '.zst');
+      fs.writeFileSync(path.join(resourcesRoot, 'win-resources-metadata.json'), '{}');
+    }
+    await expect(verifyPackagedOpenClawRuntime({ appOutDir, electronPlatformName }, { repoRoot: repositoryRoot }))
+      .rejects.toThrow('retired Widget Kit library assets');
+    expect(fs.readFileSync(oldAsset, 'utf8')).toBe('retired asset');
+  }, 30_000);
 });

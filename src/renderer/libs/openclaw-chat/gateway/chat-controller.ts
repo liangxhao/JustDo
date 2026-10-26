@@ -162,6 +162,7 @@ import {
 } from '@/libs/openclaw-chat/pipeline/history-display-normalizer';
 import { i18nService } from '@/services/i18n';
 
+import { markNativeBoardRealtime } from '../pipeline/native-board';
 import { nativeQueuedInputRunId } from './input/chat-pending-inputs';
 import { hasUnconfirmedQueuedInput, sendQueuedInput } from './input/chat-queued-input';
 
@@ -1834,6 +1835,30 @@ export class ChatController {
       return;
     }
     if (reduceResult === 'applied') {
+      // Native routes live tool results through agent or session.tool by recipient.
+      if (
+        !options.replaySnapshot &&
+        (event.deliveryEvent === 'agent' || event.deliveryEvent === 'session.tool') &&
+        event.stream === 'tool' &&
+        event.data.phase === 'result' &&
+        this.state.connected &&
+        this.state.initialHistoryReady &&
+        event.sessionKey === this.state.sessionKey &&
+        event.sessionId === this.state.currentSessionId &&
+        this.state.client &&
+        this.state.currentSessionId
+      ) {
+        const tool = this.state.transcript.activeTurn?.toolById.get(
+          String(event.data.toolCallId ?? ''),
+        );
+        if (tool?.status === 'completed')
+          markNativeBoardRealtime(tool, {
+            client: this.state.client,
+            generation: this.state.client.generation,
+            sessionKey: this.state.sessionKey,
+            sessionId: this.state.currentSessionId,
+          });
+      }
       // A bounded history snapshot can arrive after newer live activity. Its
       // missing owner still repairs the transcript, but must not rewind the
       // current run activity (for example responding -> thinking).

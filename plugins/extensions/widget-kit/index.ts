@@ -1,6 +1,7 @@
 import type { OpenClawPluginApi } from 'openclaw/plugin-sdk/core';
 
-import { createOfflineHtmlContentKind } from './libraries/content-kind.js';
+import { htmlPageContentKind, prepareHtmlPageToolCall } from './document/content-kind.js';
+import { registerHtmlPageRoute } from './document/http-route.js';
 import { uiContentKind } from './ui/content-kind.js';
 
 export default {
@@ -8,9 +9,9 @@ export default {
   name: 'Widget Kit',
   description: 'Visualization guidance and reusable components through native show_widget.',
   register(api: OpenClawPluginApi) {
+    api.on('before_tool_call', prepareHtmlPageToolCall, { matcher: ['show_widget'] });
     api.registerBoardWidgetContentKind(uiContentKind);
-    api.registerBoardWidgetContentKind(
-      createOfflineHtmlContentKind(new URL('./assets/', import.meta.url)),
-    );
+    api.registerBoardWidgetContentKind(htmlPageContentKind);
+    registerHtmlPageRoute(api, htmlPageContentKind.resources.readPublicResource);
   },
 };

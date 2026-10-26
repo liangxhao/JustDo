@@ -111,18 +111,17 @@ test('binds every local OpenAI production source, contract and worker to the run
   );
 });
 
-test('binds offline widget library sources and locks while excluding generated assets', () => {
+test('binds widget HTML adaptation and parser locks while excluding retired assets and browser probes', () => {
   const files = listBuildRecipeFiles(path.resolve('.')).map((file: string) =>
     path.relative('.', file).replaceAll('\\', '/'),
   );
   for (const name of [
     'index.ts',
-    'scripts/prepare.cjs',
-    'libraries/upstreams.json',
-    'libraries/schema.ts',
-    'libraries/content-kind.ts',
-    'libraries/resources.ts',
-    'libraries/licenses/mermaid-10.9.8-LICENSE.txt',
+    'document/content-kind.ts',
+    'document/contracts.ts',
+    'document/html-source.ts',
+    'document/image-loading.ts',
+    'package-lock.json',
   ])
     expect(files).toContain(`plugins/extensions/widget-kit/${name}`);
   expect(
@@ -131,4 +130,9 @@ test('binds offline widget library sources and locks while excluding generated a
   expect(
     files.some((file: string) => file.startsWith('plugins/extensions/widget-kit/tests/')),
   ).toBe(false);
+  for (const name of ['three-fixture.cjs', 'verify-image-loading.cjs']) {
+    expect(fs.existsSync(path.resolve('plugins/extensions/widget-kit/tests', name))).toBe(true);
+    expect(fs.existsSync(path.resolve('plugins/extensions/widget-kit/scripts', name))).toBe(false);
+    expect(files).not.toContain(`plugins/extensions/widget-kit/tests/${name}`);
+  }
 });

@@ -27,6 +27,7 @@ export interface NativeWidgetClient {
   readonly generation: number;
   readonly gatewayUrl: string;
   request<T = unknown>(method: string, params?: unknown): Promise<T>;
+  subscribeEvents?: (listener: (event: { event: string; payload?: unknown }) => void) => () => void;
 }
 
 export interface NativeWidgetContext {
@@ -34,8 +35,13 @@ export interface NativeWidgetContext {
   generation: number;
   sessionKey: string;
   sessionId?: string;
+  agentId?: string;
+  methods?: readonly string[];
+  pluginSurfaceUrls?: Readonly<Record<string, string>>;
   presentationScope?: string;
   presentationOwner?: object;
+  /** Stable chat controller, independent of a replaced DOM presentation owner. */
+  boardExecutionOwner?: object;
   /** Also checks current controller connection and session after asynchronous work. */
   isCurrent: () => boolean;
   /** Live product admission; read-only views retain local interaction without draft actions. */

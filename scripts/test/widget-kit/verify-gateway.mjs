@@ -22,11 +22,10 @@ const verifyRetention = args.includes('--retention');
 const verifyToolDispatch = args.includes('--tool-dispatch');
 const verifyInteraction = args.includes('--interaction-contract');
 const verifyPresentation = args.includes('--presentation');
-const verifyOfflineLibraries = args.includes('--offline-libraries');
+const verifyHtmlPage = args.includes('--html-page');
 assert.ok(
-  !verifyOfflineLibraries ||
-    (!verifyInteraction && !verifyRetention && !verifyToolDispatch && !serve),
-  'Use --offline-libraries separately from other scenarios',
+  !verifyHtmlPage || (!verifyInteraction && !verifyRetention && !verifyToolDispatch && !serve),
+  'Use --html-page separately from other scenarios',
 );
 assert.ok(
   !verifyPresentation || verifyInteraction,
@@ -47,7 +46,7 @@ const supportedFlags = new Set([
   '--interaction-contract',
   '--presentation',
   '--viewer-origin',
-  '--offline-libraries',
+  '--html-page',
 ]);
 for (const arg of args) {
   if (arg.startsWith('--'))
@@ -59,9 +58,11 @@ const parsedViewerOrigin = new URL(viewerOrigin);
 assert.equal(parsedViewerOrigin.protocol, 'http:');
 assert.equal(parsedViewerOrigin.hostname, '127.0.0.1');
 assert.equal(parsedViewerOrigin.origin, viewerOrigin, 'Use one exact loopback viewer origin');
-const requestedRuntime = args[0] && !args[0].startsWith('--') ? args[0] : process.env.OPENCLAW_TEST_NATIVE_RUNTIME_DIR;
+const requestedRuntime =
+  args[0] && !args[0].startsWith('--') ? args[0] : process.env.OPENCLAW_TEST_NATIVE_RUNTIME_DIR;
 assert.ok(requestedRuntime, 'Select the final runtime explicitly.');
-const { runtimeRoot: runtime, identity: runtimeIdentity } = resolveNativeSmokeTarget(requestedRuntime);
+const { runtimeRoot: runtime, identity: runtimeIdentity } =
+  resolveNativeSmokeTarget(requestedRuntime);
 const runtimePackage = JSON.parse(await readFile(path.join(runtime, 'package.json'), 'utf8'));
 assert.equal(runtimePackage.version, '2026.10.7', 'Use the locked prepared runtime');
 const buildInfo = JSON.parse(await readFile(path.join(runtime, 'runtime-build-info.json'), 'utf8'));
@@ -153,18 +154,10 @@ const ui = {
     },
   ],
 };
-const offlineManifest = JSON.parse(
-  await readFile(path.join(root, 'plugins/extensions/widget-kit/libraries/upstreams.json'), 'utf8'),
-);
-const offlineSource = {
-  version: 1,
-  libraries: offlineManifest.libraries.map(library => library.id),
-  html: '<main id="offline-library-fixture">Synthetic offline libraries</main>',
-};
-const registeredWidgetKind = verifyOfflineLibraries ? 'offline-html' : 'interactive-answer';
-const rendererPath = verifyOfflineLibraries
-  ? offlineManifest.libraries[0].resourcePath
-  : '/__widget_kit__/ui.js';
+const htmlPageSource =
+  '<!doctype html><html lang="en"><body><main id="html-page-fixture">Synthetic complete HTML</main></body></html>';
+const registeredWidgetKind = verifyHtmlPage ? 'html-page' : 'interactive-answer';
+const rendererPath = verifyHtmlPage ? '/__widget_kit__/image-loading.js' : '/__widget_kit__/ui.js';
 const widgetArgs = verifyToolDispatch
   ? {
       title: 'Synthetic native HTML',
@@ -175,7 +168,7 @@ const widgetArgs = verifyToolDispatch
   : {
       title: 'Synthetic interactive components',
       kind: registeredWidgetKind,
-      widget_code: JSON.stringify(verifyOfflineLibraries ? offlineSource : ui),
+      widget_code: verifyHtmlPage ? htmlPageSource : JSON.stringify(ui),
     };
 const modelRequests = [];
 const nativeToolResults = new Map();
@@ -323,16 +316,18 @@ async function stopGateway() {
   const joins = [...sockets].map(socket => socket.stopAndWait());
   if (gateway && gateway.exitCode === null) {
     const child = gateway;
-    joins.push((async () => {
-      await new Promise(resolve => {
-        child.once('exit', resolve);
-        if (child.connected) child.send(launcherLifecycle.OPENCLAW_GATEWAY_SHUTDOWN_MESSAGE);
-        else child.kill();
-        const timer = setTimeout(() => child.kill(), 90_000);
-        child.once('exit', () => clearTimeout(timer));
-      });
-      assert.equal(child.exitCode, 0, 'Isolated Gateway closes its native resources cleanly');
-    })());
+    joins.push(
+      (async () => {
+        await new Promise(resolve => {
+          child.once('exit', resolve);
+          if (child.connected) child.send(launcherLifecycle.OPENCLAW_GATEWAY_SHUTDOWN_MESSAGE);
+          else child.kill();
+          const timer = setTimeout(() => child.kill(), 90_000);
+          child.once('exit', () => clearTimeout(timer));
+        });
+        assert.equal(child.exitCode, 0, 'Isolated Gateway closes its native resources cleanly');
+      })(),
+    );
   }
   // Auth persistence may need the Gateway's state-writer lease to retire first.
   const settled = await Promise.allSettled(joins);
@@ -344,7 +339,8 @@ async function startGateway(port, env) {
   gateway = spawn(
     process.execPath,
     [
-      '--require', launcherLifecycle.ensureGatewayShutdownPreload(fixture),
+      '--require',
+      launcherLifecycle.ensureGatewayShutdownPreload(fixture),
       path.join(runtime, 'gateway-launcher.cjs'),
       'gateway',
       'run',
@@ -384,23 +380,36 @@ async function startGateway(port, env) {
 }
 
 async function connectOnce(port, caps) {
-  const { GatewayClient } = await import(pathToFileURL(path.join(runtime, 'dist/plugin-sdk/gateway-runtime.js')).href);
+  const { GatewayClient } = await import(
+    pathToFileURL(path.join(runtime, 'dist/plugin-sdk/gateway-runtime.js')).href
+  );
   const events = [];
   let socket;
   try {
     await new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('Isolated Gateway handshake timed out')), 60_000);
+      const timer = setTimeout(
+        () => reject(new Error('Isolated Gateway handshake timed out')),
+        60_000,
+      );
       socket = new GatewayClient({
-        url: `ws://127.0.0.1:${port}`, token, clientName: 'gateway-client', mode: 'backend',
-        scopes: ['operator.admin', 'operator.read', 'operator.write'], caps,
-        requestTimeoutMs: 20_000, env: process.env,
+        url: `ws://127.0.0.1:${port}`,
+        token,
+        clientName: 'gateway-client',
+        mode: 'backend',
+        scopes: ['operator.admin', 'operator.read', 'operator.write'],
+        caps,
+        requestTimeoutMs: 20_000,
+        env: process.env,
         onEvent: event => events.push(event),
         onHelloOk: hello => {
           clearTimeout(timer);
           if (hello.protocol !== 4) reject(new Error('Unexpected native Gateway protocol'));
           else resolve();
         },
-        onConnectError: error => { clearTimeout(timer); reject(error); },
+        onConnectError: error => {
+          clearTimeout(timer);
+          reject(error);
+        },
       });
       sockets.add(socket);
       socket.start();
@@ -538,7 +547,10 @@ try {
   const lifecycleFile = path.join(fixture, 'host-lifecycle.cjs');
   require('esbuild').buildSync({
     entryPoints: [path.join(root, 'src/main/openclaw/runtime/launch/openclawLauncher.ts')],
-    outfile: lifecycleFile, bundle: true, platform: 'node', format: 'cjs',
+    outfile: lifecycleFile,
+    bundle: true,
+    platform: 'node',
+    format: 'cjs',
   });
   launcherLifecycle = require(lifecycleFile);
   await cp(path.join(root, 'plugins/extensions/widget-kit'), pluginRoot, { recursive: true });
@@ -608,9 +620,13 @@ try {
     },
   };
   await writeFile(configPath, JSON.stringify(config));
-  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) =>
-    !key.toUpperCase().startsWith('OPENCLAW_') &&
-    !['NODE_OPTIONS', 'ELECTRON_RUN_AS_NODE'].includes(key.toUpperCase())));
+  const env = Object.fromEntries(
+    Object.entries(process.env).filter(
+      ([key]) =>
+        !key.toUpperCase().startsWith('OPENCLAW_') &&
+        !['NODE_OPTIONS', 'ELECTRON_RUN_AS_NODE'].includes(key.toUpperCase()),
+    ),
+  );
   Object.assign(env, {
     OPENCLAW_HOME: fixture,
     OPENCLAW_STATE_DIR: state,
@@ -716,16 +732,11 @@ try {
     const rendererSource = await resource.text();
     assert.ok(rendererSource.length > 0, 'Public renderer has executable source');
     new Script(rendererSource);
-    if (!verifyOfflineLibraries) assert.ok(rendererSource.includes('scenario-draft-policy'));
-    if (verifyOfflineLibraries) {
-      assert.ok(view.html.includes('offline-library-fixture'));
-      for (const library of offlineManifest.libraries) {
-        assert.ok(view.html.includes(library.resourcePath));
-        const asset = await fetch(`http://127.0.0.1:${view.sandboxPort}${library.resourcePath}`);
-        assert.equal(asset.status, 200);
-        assert.match(asset.headers.get('content-type'), /^text\/javascript/);
-        assert.ok((await asset.text()).length > 100);
-      }
+    if (!verifyHtmlPage) assert.ok(rendererSource.includes('scenario-draft-policy'));
+    if (verifyHtmlPage) {
+      assert.ok(view.html.includes('html-page-fixture'));
+      assert.ok(view.html.includes(rendererPath));
+      assert.ok(rendererSource.includes('widget-kit.image-loading'));
     }
     assert.equal(
       (await fetch(`http://127.0.0.1:${view.sandboxPort}/__widget_kit__/scenario.js`)).status,
@@ -737,7 +748,7 @@ try {
       404,
       'Unregistered paths are not public resources',
     );
-    if (!verifyOfflineLibraries)
+    if (!verifyHtmlPage)
       for (const block of ui.blocks)
         assert.ok(view.html.includes(block.title), `Composed document includes ${block.type}`);
   }
@@ -1061,14 +1072,14 @@ try {
       ...(!verifyToolDispatch
         ? { disabledDocumentRetained: true, disabledResourceRejected: true }
         : {}),
-      ...(!verifyToolDispatch && !verifyOfflineLibraries
+      ...(!verifyToolDispatch && !verifyHtmlPage
         ? {
             controlledUi: true,
             componentKinds: ui.blocks.map(block => block.type),
             registeredSourceKind: registeredWidgetKind,
           }
         : {}),
-      ...(verifyOfflineLibraries ? { offlineLibraries: offlineSource.libraries } : {}),
+      ...(verifyHtmlPage ? { htmlPage: true } : {}),
       ...(retention ? { retention } : {}),
       localModelRequests: modelRequests.length,
       ...(interactionContract ? { interactionContract } : {}),
@@ -1132,7 +1143,9 @@ try {
     });
     assert.equal(owners.length, 1, `One native cleanup owner for ${name}`);
     const module = await import(pathToFileURL(path.join(runtime, 'dist', owners[0])).href);
-    const cleanup = Object.values(module).filter(value => typeof value === 'function' && value.name === name);
+    const cleanup = Object.values(module).filter(
+      value => typeof value === 'function' && value.name === name,
+    );
     assert.equal(cleanup.length, 1);
     await cleanup[0]();
   }

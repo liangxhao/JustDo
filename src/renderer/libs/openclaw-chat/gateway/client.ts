@@ -63,6 +63,7 @@ export interface GatewayHelloOk {
   };
   auth?: { role?: string; scopes?: string[] };
   policy?: { tickIntervalMs?: number };
+  pluginSurfaceUrls?: Record<string, string>;
 }
 
 export interface GatewayRequestError extends Error {

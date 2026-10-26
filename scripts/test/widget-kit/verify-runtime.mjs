@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { build } from 'esbuild';
-import { cp, mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -13,9 +13,6 @@ const runtimePackage = JSON.parse(await readFile(path.join(runtime, 'package.jso
 assert.equal(runtimePackage.version, '2026.10.7');
 const output = await mkdtemp(path.join(os.tmpdir(), 'widget-kit-contract-'));
 try {
-  await cp(path.join(root, 'plugins/extensions/widget-kit/assets'), path.join(output, 'assets'), {
-    recursive: true,
-  });
   await build({
     entryPoints: [path.join(root, 'plugins/extensions/widget-kit/index.ts')],
     outfile: path.join(output, 'plugin.mjs'),
@@ -36,12 +33,38 @@ try {
   const native = await import(pathToFileURL(path.join(runtime, 'dist', filename)).href);
   const registry = { boardWidgetContentKinds: new Map() };
   const register = native[alias](registry);
+  const routes = [];
   plugin.register({
+    on: (event, handler, options) => {
+      assert.equal(event, 'before_tool_call');
+      assert.deepEqual(options.matcher, ['show_widget']);
+      assert.deepEqual(
+        handler({
+          toolName: 'show_widget',
+          params: {
+            kind: 'html-page',
+            widget_code: '<img src="https://images.example/earth.jpg">',
+          },
+        }).params.capabilities.netOrigins,
+        ['https://images.example'],
+      );
+    },
     registerBoardWidgetContentKind: definition => register({ id: plugin.id }, definition),
+    registerHttpRoute: route => routes.push(route),
   });
+  const htmlResources = registry.boardWidgetContentKinds.get('html-page').definition.resources;
+  assert.deepEqual(
+    routes.map(route => route.path),
+    htmlResources.paths,
+  );
+  for (const route of routes) {
+    assert.equal(route.match, 'exact');
+    assert.equal(route.auth, 'plugin');
+    assert.deepEqual(route.nodeCapability, { surface: htmlResources.surface });
+  }
   assert.deepEqual([...registry.boardWidgetContentKinds.keys()].sort(), [
+    'html-page',
     'interactive-answer',
-    'offline-html',
   ]);
   const definition = registry.boardWidgetContentKinds.get('interactive-answer').definition;
   assert.equal(

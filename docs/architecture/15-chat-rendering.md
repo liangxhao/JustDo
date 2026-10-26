@@ -80,12 +80,49 @@ Renderer 在 resize 和原生窗口状态变化时更新临时布局系数，不
 对应测试与实现同目录。消息 descriptor 投影留在 pipeline，首条发送留在 gateway，
 React composer 仍负责消费用户确认的草稿；归组不改变这些层的所有权。
 
-Widget Kit 的 `offline-html` 是原生注册内容类型：JSON 源明确声明需要的本地库，
-组合器先放版本化 classic 脚本，再保留作者 HTML 片段。原生负责已注册资源的脚本
-来源准入，Renderer 不替换 CDN 地址、拦截网络或注入全量运行库。各脚本通过现有独立
-sandbox listener 的 public reader 读取，只含固定静态字节；连接、图片、草稿和身份
-权限不变。KaTeX 字体用 FontFace 二进制源而非 URL，以适配双层 CSP。具体库、
-源限制与使用方式见[交互式回答](../features/chat/interactive-answers.md#离线可视化库)。
+Widget Kit 的 `html-page` 是原生注册内容类型，直接接收完整 HTML 或片段。
+插件仅在对应 `show_widget` 调用中，从源中明确 HTTPS 地址补齐遗漏的 `pin` /
+`netOrigins`；已有声明与显式 `pin: false` 不改写，原生继续验证并决定授权。
+插件 parser 去掉文档外壳并恢复 html/body 属性，保留作者脚本、样式及 importmap
+原文与先后顺序。作者脚本前加载插件唯一的图片适配脚本，HTTPS 图片 src / TextureLoader
+通过原生 fetch 转为 data URL，仍依赖 native connect 授权、CORS 与 Main 代理。
+CSS 背景、poster、srcset 和命名空间属性写入沿用原生策略。Three.js 等可视化库不再
+内置，按作者声明从原生允许的 CDN 通过系统代理加载；Renderer 不重写 CDN 或注入全库。
+插件自身脚本经原生 reader 与单条 capability HTTP route 提供，无预生成资源目录。
+原生注册 / board.get 要求资源 surface，故保留 `widget-html` 的单个真实适配资源；
+旧 `offline-html` 文档不改写。具体使用方式见[交互式回答](../features/chat/interactive-answers.md#html-页面与图片适配)。
+
+需要公网素材的 `show_widget` 使用原生 `pin: true` 分支，但仍在原聊天位置展示。
+`pipeline/native-board.ts` 将真实成功的直接工具 / 精确核心 dispatcher 结果准入为独立
+board reference，不把名称或 board URL 当作 Canvas docId。当前认证 `agent` / `session.tool`
+实时工具结果共用一次性自动启动资格；原生按接收者路由，不能假定两条通道都会到达。
+历史 / 重连仅显示加载当前保存版本的入口。一个结果同时带 inline descriptor
+时只执行 board 路径，不同时启动两份作者脚本。侧栏仍投影同一个已准入运行实例。
+
+`components/native-board-widget/` 持有认证 board 状态、原生 CAS 审批、票据 HTTP loader
+及续验。每次读取使用 `sessions.describe` → `board.get` → `sessions.describe`，核对
+agent、当前 client / generation、sessionKey、物理 sessionId 与 lifecycleRevision；
+可执行身份另包含 name、revision、instanceId、viewGeneration 和当前 granted origins。
+pending / rejected 可展示状态而没有 frameUrl；点击允许后须重新读取原生 granted 证据。
+board HTML 从当前 Gateway 精确 ticket 路径无凭据读取，限制 HTML MIME、10 MiB 和
+30 秒；401 最多重新取一次匹配身份的票据，不重放工具。票据仅在可信 loader 内存中，
+不传 guest，不写 Redux / 数据库 / 日志。`html-page` 每次新运行先通过公开
+`plugin.surface.refresh` 取得单个图片适配脚本的 scoped resource URL，票据续签不重跑脚本。
+
+有限 viewer 复用既有 transport / 主题 / 尺寸 / 链接与人工确认草稿桥，不下发
+`openclaw:widget-host-init` 或 board ticket，不提供通用 Dashboard RPC / 自动发消息。
+联网 guest 由 Main 创建独立非持久 session，按原生已授权 HTTPS origins、请求 frame
+角色、GET/HEAD、无请求体及无源站凭据处理下载。fetch / XHR 需要原生已授权 origins；
+script / stylesheet / font / image / media 的来源与资源跳转由原生双层 CSP 判断，
+原生 CDN 资源不另加 netOrigins 声明。精确应用 / Gateway / sandbox transport 边界不变。
+代理复用 `browserProxy`，业务 URL 的代理解析为 DIRECT 或带 DIRECT 回退时拒绝。
+原生双层 CSP 不变，图片需先 fetch 后转换 data URL，`html-page` 由插件适配器完成。
+每轮 Main 核验 nonce 起点最长
+60 秒租约，controller 每 30 秒续验，15 秒内未取得有效证据不续租；已知失效立即销毁。
+整板变化未指明 widget 时先核对完整身份，保留未变化的运行文档；作者脚本运行错误保留
+现有界面与输入，仅关闭草稿 / 链接交互。加载失败或真实身份失效仍销毁，停止后仅显式重载。
+普通遮挡只禁用交互，侧栏移动不重建；不另设并发卡片 / 累计创建预算。
+具体网络残余及部署验证限制见[交互式回答](../features/chat/interactive-answers.md#公网素材与数据下载)。
 
 主聊天的 `show_widget` 消息以 `native-widget-anchor` 提供布局锚点，独立的 widget
 presentation manager 持有稳定 viewer。桌面在首次 iframe、webview 或桥连接创建前，

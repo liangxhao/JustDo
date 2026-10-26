@@ -207,6 +207,7 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
     options.isDev
       ? { isDev: true, devServerPort: Number(new URL(options.devServerUrl).port) }
       : undefined,
+    mainWindow.webContents,
   );
   const browserPanelSession = session.fromPartition(BROWSER_PANEL_PARTITION);
   const importedBrowserSession = session.fromPartition(BROWSER_IMPORTED_PROFILE_PARTITION);

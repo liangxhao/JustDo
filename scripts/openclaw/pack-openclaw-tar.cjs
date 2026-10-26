@@ -33,7 +33,11 @@ const WINDOWS_RUNTIME_ZSTD_LEVEL = 19;
 const WINDOWS_RUNTIME_ZSTD_WINDOW_LOG = 26;
 const MIB = 1024 * 1024;
 // Keep the pristine runtime complete; omit deployment-only copies at packaging.
-const PACKAGED_RUNTIME_EXCLUDES = Object.freeze(['gateway.asar', 'dist/worker-artifacts']);
+const PACKAGED_RUNTIME_EXCLUDES = Object.freeze([
+  'gateway.asar',
+  'dist/worker-artifacts',
+  'dist/extensions/widget-kit/assets',
+]);
 // A 64 MiB window finds repeated SDK payloads. Level 19 costs build time while
 // measured installer decoding stays comparable; existing decoder limits apply.
 
@@ -168,10 +172,12 @@ function verifyLegalMetadataEntries(entries, prefix, sourceRoot, excludedPaths =
 function shouldExclude(entryPath, isDirectory = false) {
   const basename = path.basename(entryPath);
   const normalized = entryPath.replace(/\\/g, '/');
+  // Retired generated libraries must not survive from an older build tree.
+  if (/(?:^|\/)dist\/extensions\/widget-kit\/assets(?:\/|$)/.test(normalized)) return true;
   // The official Node distribution is closed by its own source/file manifest.
   if (/^node-runtime(?:\/|$)/.test(normalized)) return false;
   // The prepared editor is a closed, hashed resource set, including legal files.
-  if (/(?:^|\/)dist\/extensions\/(?:drawio|widget-kit)\/assets(?:\/|$)/.test(normalized)) return false;
+  if (/(?:^|\/)dist\/extensions\/drawio\/assets(?:\/|$)/.test(normalized)) return false;
   // Native Control UI serves the unchanged identity asset when an optional
   // encoded representation is absent. Keep its manifest and all original bytes.
   if (/^dist\/control-ui\/assets\/.+\.(?:js|css)\.(?:br|gz)$/.test(normalized)) return true;

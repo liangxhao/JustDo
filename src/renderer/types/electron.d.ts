@@ -1054,6 +1054,7 @@ interface IElectronAPI {
     showSystemMenu: (position: { x: number; y: number }) => void;
     onStateChanged: (callback: (state: WindowState) => void) => () => void;
   };
+  widgetNetwork: import('../../shared/widgets/network').WidgetNetworkBridge;
   workspaceWindow: {
     prepareSurface: () => Promise<
       import('../../shared/cowork/workspaceWindow').WorkspaceSurfaceGrant | null

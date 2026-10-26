@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
 import { expect, test } from 'vitest';
@@ -7,6 +8,8 @@ const electronBuilderConfig = require('../../electron-builder.config.cjs') as {
   asarUnpack?: string[];
   files?: Array<string | { from: string; filter: string[] }>;
   npmRebuild?: boolean;
+  mac?: { extraResources?: Array<{ from: string; to: string; filter: string[] }> };
+  linux?: { extraResources?: Array<{ from: string; to: string; filter: string[] }> };
 };
 
 test('relies on the npm predist:win lifecycle without invoking it twice', () => {
@@ -15,10 +18,69 @@ test('relies on the npm predist:win lifecycle without invoking it twice', () => 
   ) as { scripts: Record<string, string> };
 
   expect(packageJson.scripts['predist:win']).toBe(
-    'npm run widget-kit:prepare && npm run drawio:prepare -- --ensure --download && npm run clean:release && node scripts/packaging/prepare-windows-build.cjs',
+    'npm run drawio:prepare -- --ensure --download && npm run clean:release && node scripts/packaging/prepare-windows-build.cjs',
   );
   expect(packageJson.scripts['dist:win']).not.toContain('npm run predist:win');
   expect(packageJson.scripts['dist:win']).not.toMatch(/setup:(?:mingit|python-runtime)/);
+});
+
+test('retires widget library preparation and excludes leftover assets on non-Windows targets', () => {
+  const { scripts } = JSON.parse(fs.readFileSync(path.resolve('package.json'), 'utf8')) as {
+    scripts: Record<string, string>;
+  };
+  for (const name of ['widget-kit:prepare', 'widget-kit:verify', 'widget-kit:verify:browser'])
+    expect(scripts).not.toHaveProperty(name);
+  for (const command of Object.values(scripts)) expect(command).not.toContain('widget-kit:prepare');
+  for (const platform of [electronBuilderConfig.mac, electronBuilderConfig.linux]) {
+    const runtime = platform?.extraResources?.find(entry => entry.to === 'cfmind');
+    expect(runtime?.filter).toContain('!dist/extensions/widget-kit/assets');
+    expect(runtime?.filter).toContain('!dist/extensions/widget-kit/assets/**');
+  }
+});
+
+test('excludes the retired widget asset directory itself using the actual non-Windows copy filter', async () => {
+  const { FileMatcher, copyFiles } = require('app-builder-lib/out/fileMatcher');
+  const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'widget-directory-filter-'));
+  const source = path.join(fixture, 'source');
+  const assetDirectory = 'dist/extensions/widget-kit/assets';
+  try {
+    fs.mkdirSync(path.join(source, assetDirectory), { recursive: true });
+    fs.writeFileSync(path.join(source, assetDirectory, 'legacy.js'), 'retired asset');
+    fs.writeFileSync(path.join(source, assetDirectory, 'README.md'), 'retired documentation');
+    fs.writeFileSync(path.join(source, 'dist/extensions/widget-kit/index.js'), 'retained entry');
+    for (const [name, platform] of [
+      ['mac', electronBuilderConfig.mac],
+      ['linux', electronBuilderConfig.linux],
+    ] as const) {
+      const runtime = platform?.extraResources?.find(entry => entry.to === 'cfmind');
+      const destination = path.join(fixture, name);
+      const matcher = new FileMatcher(
+        source,
+        destination,
+        (value: string) => value,
+        runtime?.filter,
+      );
+      const filter = matcher.createFilter();
+      const assetRoot = path.join(source, assetDirectory);
+      expect(filter(assetRoot, fs.statSync(assetRoot))).toBe(false);
+      for (const file of ['legacy.js', 'README.md']) {
+        const filename = path.join(assetRoot, file);
+        expect(filter(filename, fs.statSync(filename))).toBe(false);
+      }
+      await copyFiles([matcher], null, false);
+      expect(fs.existsSync(path.join(destination, assetDirectory))).toBe(false);
+      expect(
+        fs.readFileSync(path.join(destination, 'dist/extensions/widget-kit/index.js'), 'utf8'),
+      ).toBe('retained entry');
+    }
+    expect(fs.readFileSync(path.join(source, assetDirectory, 'legacy.js'), 'utf8')).toBe(
+      'retired asset',
+    );
+  } finally {
+    expect(path.dirname(fixture)).toBe(path.resolve(os.tmpdir()));
+    expect(path.basename(fixture)).toMatch(/^widget-directory-filter-/);
+    fs.rmSync(fixture, { recursive: true, force: true });
+  }
 });
 
 test('preinstalls the official MXC sandbox only for Windows runtimes', () => {

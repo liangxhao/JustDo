@@ -321,7 +321,11 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
         generation,
         sessionKey,
         sessionId,
+        agentId: currentSessionAgentId ?? /^agent:([^:]+):/.exec(sessionKey)?.[1],
+        methods: state.hello?.features?.methods,
+        pluginSurfaceUrls: state.hello?.pluginSurfaceUrls,
         presentationScope: currentSessionId,
+        boardExecutionOwner: controller,
         isCurrent,
         canDraft: () => isCurrent() && canDraftWidget(),
         addDraft: text => {
@@ -340,7 +344,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
           if (isCurrent()) openWidgetLink(sessionKey, url);
         },
       };
-    }, [currentSessionId, canDraftWidget, openWidgetLink]);
+    }, [currentSessionId, currentSessionAgentId, canDraftWidget, openWidgetLink]);
     const openMcpAppFile = useCallback(
       (file: { path: string; name: string }) =>
         openMcpAppFileCallback.current?.(file) ?? Promise.resolve(false),

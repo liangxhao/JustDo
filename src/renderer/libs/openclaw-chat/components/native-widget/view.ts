@@ -4,7 +4,18 @@ import { keyed } from 'lit/directives/keyed.js';
 
 import { i18nService } from '@/services/i18n';
 
-import { isNativeCanvasPreview, type NativeCanvasPreview } from '../../pipeline/native-canvas';
+import {
+  isNativeBoardWidgetReference,
+  isNativeWidgetReference,
+  type NativeWidgetReference,
+  widgetReferenceId,
+} from '../../pipeline/native-board';
+import { isNativeCanvasPreview } from '../../pipeline/native-canvas';
+import {
+  type BoardWidgetState,
+  NativeBoardWidgetController,
+  type PreparedBoardView,
+} from '../native-board-widget/controller';
 import { acceptWidgetDraft, acceptWidgetDraftText, widgetFrameInteractable } from './draft';
 import { NativeWidgetGuestHost, type WidgetWebview } from './guest';
 import {
@@ -21,11 +32,11 @@ import { postNativeWidgetMessage } from './messaging';
 import { WidgetFailure, type WidgetFailureKind, widgetRebuildDraft } from './rebuild';
 import { forwardWidgetScroll } from './scroll';
 
-type Binding = { context: NativeWidgetContext; docId: string; version: number };
+type Binding = { context: NativeWidgetContext; referenceId: string; version: number };
 const pendingViews = new WeakMap<object, Map<string, Promise<unknown>>>();
 
 function loadView(binding: Binding, isCurrent: () => boolean): Promise<unknown> {
-  const { context, docId } = binding;
+  const { context, referenceId: docId } = binding;
   let pending = pendingViews.get(context.client);
   if (!pending) {
     pending = new Map();
@@ -61,6 +72,7 @@ export class NativeWidgetView extends LitElement {
     slow: { state: true },
     expanded: { state: true },
     fillContainer: { type: Boolean, attribute: 'fill-container', reflect: true },
+    boardState: { state: true },
   };
   static styles = css`
     :host {
@@ -104,6 +116,7 @@ export class NativeWidgetView extends LitElement {
     }
     .view-actions {
       display: flex;
+      align-items: center;
       flex-shrink: 0;
       gap: 2px;
     }
@@ -126,6 +139,26 @@ export class NativeWidgetView extends LitElement {
     .view-actions button:hover {
       color: var(--justdo-text-primary, inherit);
       background: var(--justdo-surface, #fff);
+    }
+    .view-actions .board-action {
+      width: auto;
+      gap: 5px;
+      margin-right: 6px;
+      padding: 0 9px;
+      border: 1px solid var(--justdo-border-subtle, var(--justdo-border, #ddd));
+      background: var(--justdo-surface, #fff);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+    .view-actions .board-action[data-action='load'] {
+      color: var(--justdo-primary, #287d68);
+    }
+    .board-action svg {
+      width: 13px;
+      height: 13px;
+    }
+    header:last-child {
+      border-bottom: 0;
     }
     button:disabled {
       opacity: 0.45;
@@ -276,7 +309,7 @@ export class NativeWidgetView extends LitElement {
       cursor: pointer;
     }
   `;
-  declare preview?: NativeCanvasPreview;
+  declare preview?: NativeWidgetReference;
   declare context?: NativeWidgetContext;
   declare private view?: { html: string; url: string };
   declare private failure: boolean;
@@ -306,6 +339,9 @@ export class NativeWidgetView extends LitElement {
   private layoutRevision = 0;
   private pendingDraft?: object;
   private presentationActive?: boolean;
+  private board?: NativeBoardWidgetController;
+  declare private boardState?: BoardWidgetState;
+  private boardGuest?: PreparedBoardView['network'];
 
   constructor() {
     super();
@@ -372,11 +408,15 @@ export class NativeWidgetView extends LitElement {
       this.context.generation === binding.context.generation &&
       this.context.sessionKey === binding.context.sessionKey &&
       this.context.sessionId === binding.context.sessionId &&
+      this.context.agentId === binding.context.agentId &&
       this.context.presentationScope === binding.context.presentationScope &&
       this.context.presentationOwner === binding.context.presentationOwner &&
+      this.context.boardExecutionOwner === binding.context.boardExecutionOwner &&
       binding.context.client.generation === binding.context.generation &&
       binding.context.isCurrent() &&
-      this.preview?.docId === binding.docId &&
+      this.preview &&
+      isNativeWidgetReference(this.preview) &&
+      widgetReferenceId(this.preview) === binding.referenceId &&
       this.version === binding.version,
     );
   }
@@ -403,6 +443,16 @@ export class NativeWidgetView extends LitElement {
     this.collapse();
   }
 
+  stopBoardPresentation(): void {
+    this.board?.stop();
+  }
+
+  acceptBoardReference(reference: NativeWidgetReference): boolean {
+    return (
+      isNativeBoardWidgetReference(reference) && this.board?.receiveReference(reference) === true
+    );
+  }
+
   refreshPresentation(): void {
     const active = this.presentationVisible?.() !== false;
     if (this.presentationActive === active) return;
@@ -423,6 +473,10 @@ export class NativeWidgetView extends LitElement {
   }
 
   private clear(): void {
+    this.board?.dispose();
+    this.board = undefined;
+    this.boardState = undefined;
+    this.boardGuest = undefined;
     this.collapse(false);
     this.layoutObserver?.disconnect();
     this.layoutObserver = undefined;
@@ -458,7 +512,7 @@ export class NativeWidgetView extends LitElement {
       return;
     }
     const context = this.context;
-    if (!context?.isCurrent() || !isNativeCanvasPreview(this.preview)) {
+    if (!context?.isCurrent() || !isNativeWidgetReference(this.preview)) {
       if (this.binding || this.view) this.clear();
       return;
     }
@@ -471,9 +525,32 @@ export class NativeWidgetView extends LitElement {
     }
     this.clear();
     this.failure = false;
-    const binding: Binding = { context, docId: this.preview.docId, version: this.version };
+    const binding: Binding = {
+      context,
+      referenceId: widgetReferenceId(this.preview),
+      version: this.version,
+    };
     this.binding = binding;
     this.scrollNonce = crypto.randomUUID();
+    if (isNativeBoardWidgetReference(this.preview)) {
+      this.board = new NativeBoardWidgetController(
+        this.preview,
+        context,
+        this.ownerDocument.defaultView!.location.origin,
+        () => this.current(binding),
+        (state, view) => {
+          if (!this.current(binding)) return;
+          this.boardState = state;
+          this.failure = false;
+          if (view) {
+            this.boardGuest = view.network;
+            this.view = { html: view.html, url: view.url };
+          }
+        },
+        () => this.clearBoardDocument(),
+      );
+      return;
+    }
     // Includes the authenticated read as well as sandbox/resource initialization.
     this.slowTimer = setTimeout(() => {
       if (this.current(binding) && !this.ready && !this.failure) this.slow = true;
@@ -505,39 +582,45 @@ export class NativeWidgetView extends LitElement {
     const webview = this.renderRoot.querySelector<WidgetWebview>('webview');
     if (webview && this.view && this.current() && !this.guest && !this.failure) {
       const binding = this.binding!;
-      this.guest = new NativeWidgetGuestHost(webview, this.view.url, this.view.html, event => {
-        if (!this.current(binding)) return;
-        if (event.type === 'failure') {
-          this.fail(event.runtime ? WidgetFailure.RUNTIME : WidgetFailure.LOAD);
-          return;
-        }
-        if (this.failure) return;
-        if (event.type === 'ready') {
-          clearTimeout(this.slowTimer);
-          this.slowTimer = undefined;
-          this.slow = false;
-          this.ready = true;
-          this.postHostState();
-        }
-        if (event.type === 'height') this.updateHeight(event.height, event.revision);
-        if (event.type === 'link') this.openLink(event.url, binding);
-        if (event.type === 'scroll' && this.ready && Number.isFinite(event.deltaY)) {
-          const delta = Math.max(-8000, Math.min(8000, event.deltaY));
-          this.forwardUnconsumedScroll(delta);
-        }
-        if (
-          event.type === 'draft' &&
-          this.ready &&
-          this.draftAllowed(binding) &&
-          widgetFrameInteractable(webview)
-        ) {
-          const text = acceptWidgetDraftText(
-            event.text,
-            `${binding.context.sessionKey}\0${binding.docId}\0${binding.context.generation}`,
-          );
-          if (text) this.suggestion = text;
-        }
-      });
+      this.guest = new NativeWidgetGuestHost(
+        webview,
+        this.view.url,
+        this.view.html,
+        event => {
+          if (!this.current(binding)) return;
+          if (event.type === 'failure') {
+            this.fail(event.runtime ? WidgetFailure.RUNTIME : WidgetFailure.LOAD);
+            return;
+          }
+          if (this.failure) return;
+          if (event.type === 'ready') {
+            clearTimeout(this.slowTimer);
+            this.slowTimer = undefined;
+            this.slow = false;
+            this.ready = true;
+            this.postHostState();
+          }
+          if (event.type === 'height') this.updateHeight(event.height, event.revision);
+          if (event.type === 'link') this.openLink(event.url, binding);
+          if (event.type === 'scroll' && this.ready && Number.isFinite(event.deltaY)) {
+            const delta = Math.max(-8000, Math.min(8000, event.deltaY));
+            this.forwardUnconsumedScroll(delta);
+          }
+          if (
+            event.type === 'draft' &&
+            this.ready &&
+            this.draftAllowed(binding) &&
+            widgetFrameInteractable(webview)
+          ) {
+            const text = acceptWidgetDraftText(
+              event.text,
+              `${binding.context.sessionKey}\0${binding.referenceId}\0${binding.context.generation}`,
+            );
+            if (text) this.suggestion = text;
+          }
+        },
+        this.boardGuest,
+      );
       this.observeLayout(webview);
       this.observeTheme();
       this.postHostState();
@@ -568,6 +651,26 @@ export class NativeWidgetView extends LitElement {
     frame.src = this.view.url;
   }
 
+  private clearBoardDocument(): void {
+    this.collapse(false);
+    this.guest?.dispose();
+    this.guest = undefined;
+    this.host?.dispose();
+    this.host = undefined;
+    this.promptPort?.close();
+    this.promptPort = undefined;
+    this.layoutObserver?.disconnect();
+    this.layoutObserver = undefined;
+    this.themeObserver?.disconnect();
+    this.themeObserver = undefined;
+    this.layout = undefined;
+    this.boardGuest = undefined;
+    this.view = undefined;
+    this.ready = false;
+    this.suggestion = '';
+    this.pendingDraft = undefined;
+  }
+
   private observeTheme(): void {
     const ownerWindow = this.ownerDocument.defaultView!;
     this.themeObserver = new ownerWindow.MutationObserver(() => this.postHostState());
@@ -578,6 +681,12 @@ export class NativeWidgetView extends LitElement {
   }
 
   private fail(kind: WidgetFailureKind = WidgetFailure.LOAD): void {
+    if (this.board && kind === WidgetFailure.LOAD) {
+      this.board.stop();
+      this.failure = true;
+      this.failureKind = kind;
+      return;
+    }
     this.host?.disableLinks();
     this.layoutObserver?.disconnect();
     this.layoutObserver = undefined;
@@ -730,7 +839,7 @@ export class NativeWidgetView extends LitElement {
         const text = acceptWidgetDraft(
           host.frame,
           message.data.prompt,
-          `${binding.context.sessionKey}\0${binding.docId}\0${binding.context.generation}`,
+          `${binding.context.sessionKey}\0${binding.referenceId}\0${binding.context.generation}`,
         );
         if (text) this.suggestion = text;
       };
@@ -779,7 +888,13 @@ export class NativeWidgetView extends LitElement {
   }
 
   private readonly requestRebuild = (event: MouseEvent, binding = this.binding): void => {
-    if (!event.isTrusted || !this.failure || !this.draftAllowed(binding) || !this.preview) return;
+    if (
+      !event.isTrusted ||
+      !this.failure ||
+      !this.draftAllowed(binding) ||
+      !isNativeCanvasPreview(this.preview)
+    )
+      return;
     this.suggestion = widgetRebuildDraft(this.preview, this.failureKind, key => i18nService.t(key));
   };
 
@@ -869,6 +984,7 @@ export class NativeWidgetView extends LitElement {
       this.expanded ? 'coworkWidgetCollapse' : 'coworkWidgetExpand',
     );
     return html`<div class="view-actions">
+      ${this.renderBoardActions()}
       ${
         this.pinPresentation && !this.fillContainer && !this.expanded
           ? html`<button
@@ -922,6 +1038,37 @@ export class NativeWidgetView extends LitElement {
         </svg>
       </button>
     </div>`;
+  }
+
+  private renderBoardActions() {
+    const status = this.boardState?.status;
+    if (!status || status === 'pending' || status === 'rejected' || status === 'missing')
+      return nothing;
+    const stop = !this.failure && (status === 'loading' || status === 'running');
+    const label = i18nService.t(
+      stop
+        ? 'coworkWidgetNetworkStop'
+        : this.failure || status === 'failed'
+          ? 'coworkWidgetRetry'
+          : 'coworkWidgetLoadCurrent',
+    );
+    return html`<button
+      type="button"
+      class="board-action"
+      data-action=${stop ? 'stop' : 'load'}
+      ?disabled=${!this.current()}
+      @click=${() => {
+        if (stop || this.failure) this.board?.stop();
+        if (!stop) void this.board?.start();
+      }}
+    >
+      <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+        <path
+          d=${stop ? 'M4 4h8v8H4z' : 'M5 2.5a.5.5 0 0 1 .77-.42l8 5a.5.5 0 0 1 0 .84l-8 5A.5.5 0 0 1 5 12.5z'}
+        />
+      </svg>
+      ${label}
+    </button>`;
   }
 
   private renderSuggestion() {
@@ -1004,16 +1151,14 @@ export class NativeWidgetView extends LitElement {
       }}
     >
       <header><span class="title" title=${title}>${title}</span>${this.renderViewActions()}</header>
+      ${this.renderBoardStatus()}
       ${
         this.failure
           ? html`<div class="status" role="alert">
-              ${i18nService.t(this.failureKind === WidgetFailure.RUNTIME ? 'coworkWidgetRuntimeFailed' : 'coworkWidgetFailed')}<button
-                @click=${retry}
-              >
-                ${i18nService.t('coworkWidgetRetry')}
-              </button>
+              ${i18nService.t(this.failureKind === WidgetFailure.RUNTIME ? 'coworkWidgetRuntimeFailed' : 'coworkWidgetFailed')}
+              ${!this.board ? html`<button @click=${retry}>${i18nService.t('coworkWidgetRetry')}</button>` : nothing}
               ${
-                this.draftAllowed()
+                this.draftAllowed() && isNativeCanvasPreview(this.preview)
                   ? html`<button
                       @click=${(event: MouseEvent) => this.requestRebuild(event, binding)}
                     >
@@ -1044,13 +1189,43 @@ export class NativeWidgetView extends LitElement {
                 }
               </div>`,
             )
-          : !this.failure
+          : !this.failure && !this.boardState
             ? html`<div class="status" role="status">
                 ${i18nService.t(this.context?.isCurrent() ? (this.slow ? 'coworkWidgetLoadingSlow' : 'coworkWidgetLoading') : 'coworkWidgetDisconnected')}
               </div>`
             : nothing
       }${this.renderSuggestion()}
     </dialog>`;
+  }
+
+  private renderBoardStatus() {
+    const state = this.boardState;
+    if (!state) return nothing;
+    const t = (key: string) => i18nService.t(key);
+    const statusKeys: Partial<Record<BoardWidgetState['status'], string>> = {
+      pending: 'coworkWidgetNetworkPending',
+      rejected: 'coworkWidgetNetworkRejected',
+      missing: 'coworkWidgetDeleted',
+      failed: 'coworkWidgetNetworkFailed',
+    };
+    const statusKey = statusKeys[state.status];
+    if (!statusKey) return nothing;
+    return html`<section class="status" role="status">
+      <span>${t(statusKey)}</span>
+      ${
+        state.status === 'pending'
+          ? html`<ul>
+                ${state.origins.map(origin => html`<li>${origin}</li>`)}
+              </ul>
+              <button @click=${() => void this.board?.grant('granted')}>
+                ${t('coworkWidgetNetworkAllow')}
+              </button>
+              <button @click=${() => void this.board?.grant('rejected')}>
+                ${t('coworkWidgetNetworkDeny')}
+              </button>`
+          : nothing
+      }
+    </section>`;
   }
 }
 

@@ -8,10 +8,11 @@ import {
 } from '../../../../../../plugins/extensions/ask-user-question/contracts/result';
 import { decodeNativeAppReference } from '../../pipeline/native-app-reference';
 import {
-  decodeNativeCanvasResult,
-  type NativeCanvasPreview,
-  stripNativeWidgetFallbacks,
-} from '../../pipeline/native-canvas';
+  decodeNativeBoardResult,
+  nativeBoardReferenceOrder,
+  type NativeWidgetReference,
+} from '../../pipeline/native-board';
+import { decodeNativeCanvasResult, stripNativeWidgetFallbacks } from '../../pipeline/native-canvas';
 import { decodeNativeMcpAppResult } from '../../pipeline/native-mcp-app';
 import type {
   AssistantTurn,
@@ -94,7 +95,7 @@ export interface WaitingStatusTimelineItem {
 export interface NativeWidgetTimelineItem {
   kind: 'native-widget';
   key: string;
-  preview: NativeCanvasPreview;
+  preview: NativeWidgetReference;
 }
 
 export interface NativeMcpAppTimelineItem {
@@ -205,13 +206,15 @@ export function projectTurnItems(
   let archived: Array<ThinkingItem | ToolItem> = [];
   const failedTools: ToolItem[] = [];
   let summarySegment = 0;
-  const widgets = new Map<ToolItem, NativeCanvasPreview>();
+  const widgets = new Map<ToolItem, NativeWidgetReference>();
+  const boardNames = new Map<string, ToolItem>();
   const apps = new Map<ToolItem, McpAppPreview>();
   const references = new Map<ToolItem, McpAppContentReference>();
   const appViews = new Set<string>();
   const nativeDocIds = new Set<string>();
   for (const item of turn.items) {
     if (item.type !== 'tool' || item.status !== 'completed') continue;
+    const board = decodeNativeBoardResult(item.output, item.name, item.toolCallId, item);
     const preview = decodeNativeCanvasResult(item.output, item.name, item.toolCallId);
     const app = decodeNativeMcpAppResult(item.output, item.name, item.toolCallId);
     const reference = decodeNativeAppReference(item.output, item.name, item.toolCallId, item.runId);
@@ -220,7 +223,20 @@ export function projectTurnItems(
       apps.set(item, app);
       appViews.add(app.viewId);
     }
-    if (preview && !nativeDocIds.has(preview.docId)) {
+    if (board) {
+      if (board.suppressedInlineDocId) nativeDocIds.add(board.suppressedInlineDocId);
+      const previous = boardNames.get(board.name);
+      const previousReference = previous && widgets.get(previous);
+      if (
+        !previousReference ||
+        (previousReference.kind === 'native-board' &&
+          nativeBoardReferenceOrder(board) > nativeBoardReferenceOrder(previousReference))
+      ) {
+        if (previous) widgets.delete(previous);
+        widgets.set(item, board);
+        boardNames.set(board.name, item);
+      }
+    } else if (preview && !nativeDocIds.has(preview.docId)) {
       widgets.set(item, preview);
       nativeDocIds.add(preview.docId);
     }

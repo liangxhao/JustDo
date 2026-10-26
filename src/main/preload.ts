@@ -311,6 +311,14 @@ import {
 } from '../shared/speech/onlineAsr';
 import { type OnlineTtsConfigurationUpdate, OnlineTtsIpc } from '../shared/speech/onlineTts';
 import { SpeechSynthesisIpc } from '../shared/speech/speechSynthesis';
+import {
+  type WidgetNetworkCheckRequest,
+  type WidgetNetworkClose,
+  type WidgetNetworkCreate,
+  WidgetNetworkIpc,
+  type WidgetNetworkRenew,
+  type WidgetNetworkRevoked,
+} from '../shared/widgets/network';
 import { createExtensionChangedSubscription } from './preload/extensions';
 import { createMcpAppPreloadApi } from './preload/mcpApps';
 import { createPluginOperationSubscription } from './preload/pluginOperations';
@@ -649,6 +657,19 @@ contextBridge.exposeInMainWorld('electron', {
       ) => callback(state);
       ipcRenderer.on('window:state-changed', handler);
       return () => ipcRenderer.removeListener('window:state-changed', handler);
+    },
+  },
+  widgetNetwork: {
+    beginCheck: (value: WidgetNetworkCheckRequest) =>
+      ipcRenderer.invoke(WidgetNetworkIpc.BeginCheck, value),
+    create: (value: WidgetNetworkCreate) => ipcRenderer.invoke(WidgetNetworkIpc.Create, value),
+    renew: (value: WidgetNetworkRenew) => ipcRenderer.invoke(WidgetNetworkIpc.Renew, value),
+    close: (value: WidgetNetworkClose) => ipcRenderer.invoke(WidgetNetworkIpc.Close, value),
+    onRevoked: (callback: (value: WidgetNetworkRevoked) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, value: WidgetNetworkRevoked) =>
+        callback(value);
+      ipcRenderer.on(WidgetNetworkIpc.Revoked, listener);
+      return () => ipcRenderer.removeListener(WidgetNetworkIpc.Revoked, listener);
     },
   },
   workspaceWindow: {

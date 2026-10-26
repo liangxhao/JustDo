@@ -63,11 +63,12 @@ documentation from `resources/openclaw/docs/` and assembles them at the native
 runtime's `docs/` paths. These are runtime assets; repository design and feature
 documentation live in the root `docs/` directory.
 
-`widget-kit:prepare` and `widget-kit:verify` delegate offline browser-library
-preparation to `plugins/extensions/widget-kit/scripts/prepare.cjs`. Preparation
-uses only pinned cached archives; runtime-resource assembly and packaging verify
-the generated resources before copying or shipping them. Download details live
-in [offline downloads](../docs/offline-downloads.md).
+Widget Kit generates its HTML image adapter directly from plugin source; no
+visualization-library preparation or generated asset directory is required.
+Scripts and modules used by widgets load through the native CDN policy and browser
+system proxy. The optional browser contract probe and its local Three.js fixture
+reader live under `plugins/extensions/widget-kit/tests/`, excluded from product
+archives and the runtime build fingerprint; see [offline downloads](../docs/offline-downloads.md).
 
 `openclaw/prune-openclaw-runtime.cjs` reads `plugins/extensions/prune-policy.json`
 to select the upstream OpenClaw extensions retained in the runtime. The policy is

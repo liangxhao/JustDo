@@ -3,7 +3,7 @@ import { html, LitElement, nothing, type PropertyValues, svg } from 'lit';
 import { i18nService } from '@/services/i18n';
 import { TOKEN_CONTRACT } from '@/theme/tokens/contract';
 
-import { isNativeCanvasPreview, type NativeCanvasPreview } from '../../pipeline/native-canvas';
+import { isNativeWidgetReference, type NativeWidgetReference } from '../../pipeline/native-board';
 import { NATIVE_WIDGET_CONTEXT_REQUEST, type NativeWidgetContext } from './host';
 import { getNativeWidgetPresentations, type NativeWidgetPresentation } from './presentations';
 
@@ -14,7 +14,7 @@ export class NativeWidgetAnchor extends LitElement {
     context: { attribute: false },
   };
 
-  declare preview?: NativeCanvasPreview;
+  declare preview?: NativeWidgetReference;
   declare context?: NativeWidgetContext;
   private entry?: NativeWidgetPresentation;
   private stop?: () => void;
@@ -83,7 +83,7 @@ export class NativeWidgetAnchor extends LitElement {
     if (
       this.context?.presentationScope &&
       this.context.isCurrent() &&
-      isNativeCanvasPreview(this.preview)
+      isNativeWidgetReference(this.preview)
     ) {
       const next = manager.acquire(this, this.preview, this.context);
       if (next !== this.entry) {
@@ -118,7 +118,7 @@ export class NativeWidgetAnchor extends LitElement {
     if (
       !this.context?.presentationScope &&
       this.context?.isCurrent() &&
-      isNativeCanvasPreview(this.preview)
+      isNativeWidgetReference(this.preview)
     ) {
       if (this.style.height) this.style.height = '';
       return html`<justdo-native-widget

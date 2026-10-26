@@ -30,6 +30,7 @@ package-lock.json
 !plugins/extensions/openai/package-lock.json
 !plugins/extensions/stt-local-cli/package-lock.json
 !plugins/extensions/typesafe/package-lock.json
+!plugins/extensions/widget-kit/package-lock.json
 
 nul
 .work.env

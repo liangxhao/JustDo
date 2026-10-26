@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -6,7 +7,6 @@ import { Script } from 'node:vm';
 
 import { expect, test, vi } from 'vitest';
 
-import { OFFLINE_LIBRARY_RESOURCES } from '../../../plugins/extensions/widget-kit/libraries/resources';
 import { uiContentKind } from '../../../plugins/extensions/widget-kit/ui/content-kind';
 
 const { syncLocalExtensions } =
@@ -15,6 +15,12 @@ const { syncLocalExtensions } =
       repoRoot: string,
       runtimeRoot: string,
       label: string,
+      options: {
+        installProductionDependencies: (
+          extensionDir: string,
+          installTarget: { targetId: string },
+        ) => void;
+      },
     ) => { copied: string[] };
   };
 const { precompileOpenClawExtensions } =
@@ -25,31 +31,87 @@ const { precompileOpenClawExtensions } =
     ) => Promise<{ compiled: number; errors: number }>;
   };
 
-test.each([
-  { packageName: 'openclaw-interactive-ui', pluginId: 'interactive-ui', retired: true },
-  { packageName: 'third-party', pluginId: 'interactive-ui', retired: false },
-  { packageName: 'openclaw-interactive-ui', pluginId: 'other-plugin', retired: false },
-])(
-  'packages Widget Kit and retires only the former app-owned bundle ($packageName, $pluginId)',
-  async ({ packageName, pluginId, retired }) => {
+function resolveLocalPackage(name: string, from: string): string {
+  const localRequire = createRequire(from);
+  const rootRequire = createRequire(path.resolve('package.json'));
+  let entry: string;
+  try {
+    entry = localRequire.resolve(name);
+  } catch {
+    entry = rootRequire.resolve(name);
+  }
+  let directory = path.dirname(entry);
+  for (;;) {
+    const manifest = path.join(directory, 'package.json');
+    if (fs.existsSync(manifest) && JSON.parse(fs.readFileSync(manifest, 'utf8')).name === name)
+      return directory;
+    const parent = path.dirname(directory);
+    if (parent === directory) throw new Error(`Local package root not found: ${name}`);
+    directory = parent;
+  }
+}
+
+test(
+  'packages Widget Kit with its current resources and dependencies',
+  async () => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'widget-kit-packaging-'));
     const repoRoot = path.join(fixture, 'repo');
     const runtimeRoot = path.join(fixture, 'runtime');
     const source = path.join(repoRoot, 'plugins/extensions', 'widget-kit');
     const target = path.join(runtimeRoot, 'dist', 'extensions', 'widget-kit');
-    const previous = path.join(runtimeRoot, 'dist', 'extensions', 'interactive-ui');
     const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
     try {
-      fs.cpSync(path.resolve('plugins/extensions/widget-kit'), source, { recursive: true });
-      fs.mkdirSync(previous, { recursive: true });
-      fs.writeFileSync(path.join(previous, 'package.json'), JSON.stringify({ name: packageName }));
+      const pluginSource = path.resolve('plugins/extensions/widget-kit');
+      const parser = resolveLocalPackage('parse5', path.join(pluginSource, 'package.json'));
+      const entities = resolveLocalPackage('entities', path.join(parser, 'package.json'));
+      const installDependencies = vi.fn((extensionDir: string) => {
+        for (const [name, packageDirectory] of [
+          ['parse5', parser],
+          ['entities', entities],
+        ])
+          fs.cpSync(packageDirectory, path.join(extensionDir, 'node_modules', name), {
+            recursive: true,
+            dereference: true,
+          });
+      });
+      fs.cpSync(pluginSource, source, {
+        recursive: true,
+        filter: filename =>
+          path.basename(filename) !== 'node_modules' &&
+          path.relative(pluginSource, filename).split(path.sep)[0] !== 'assets',
+      });
+      const legacyAsset = path.join(source, 'assets/libraries/retired-library.js');
+      fs.mkdirSync(path.dirname(legacyAsset), { recursive: true });
+      fs.writeFileSync(legacyAsset, 'retired source asset');
+      fs.mkdirSync(runtimeRoot, { recursive: true });
       fs.writeFileSync(
-        path.join(previous, 'openclaw.plugin.json'),
-        JSON.stringify({ id: pluginId }),
+        path.join(runtimeRoot, 'runtime-build-info.json'),
+        JSON.stringify({ target: 'win-x64' }),
       );
 
-      expect(syncLocalExtensions(repoRoot, runtimeRoot, 'test').copied).toEqual(['widget-kit']);
-      expect(fs.existsSync(previous)).toBe(!retired);
+      expect(
+        syncLocalExtensions(repoRoot, runtimeRoot, 'test', {
+          installProductionDependencies: installDependencies,
+        }).copied,
+      ).toEqual(['widget-kit']);
+      expect(installDependencies).toHaveBeenCalledOnce();
+      expect(installDependencies).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({ targetId: 'win-x64' }),
+      );
+      for (const name of ['parse5', 'entities'])
+        expect(fs.statSync(path.join(target, 'node_modules', name, 'LICENSE')).isFile()).toBe(true);
+      expect(fs.existsSync(path.join(target, 'assets'))).toBe(false);
+      fs.mkdirSync(path.join(target, 'assets'), { recursive: true });
+      fs.writeFileSync(path.join(target, 'assets/stale.js'), 'retired runtime asset');
+      expect(
+        syncLocalExtensions(repoRoot, runtimeRoot, 'test', {
+          installProductionDependencies: installDependencies,
+        }).copied,
+      ).toEqual(['widget-kit']);
+      expect(installDependencies).toHaveBeenCalledOnce();
+      expect(fs.existsSync(path.join(target, 'assets'))).toBe(false);
+      expect(fs.readFileSync(legacyAsset, 'utf8')).toBe('retired source asset');
       expect(await precompileOpenClawExtensions(runtimeRoot, { required: true })).toMatchObject({
         compiled: 1,
         errors: 0,
@@ -75,31 +137,52 @@ test.each([
       expect(plugin.id).toBe(manifest.id);
       expect(plugin.name).toBe(manifest.name);
       const definitions: Array<typeof uiContentKind> = [];
+      const routes: Array<{
+        path: string;
+        match: string;
+        auth: string;
+        nodeCapability: { surface: string };
+      }> = [];
+      const on = vi.fn();
       plugin.register({
+        on,
         registerBoardWidgetContentKind: (definition: typeof uiContentKind) =>
           definitions.push(definition),
+        registerHttpRoute: (route: (typeof routes)[number]) => routes.push(route),
+      });
+      expect(on).toHaveBeenCalledWith('before_tool_call', expect.any(Function), {
+        matcher: ['show_widget'],
+      });
+      const adjusted = on.mock.calls[0][1]({
+        toolName: 'show_widget',
+        params: { kind: 'html-page', widget_code: '<img src="https://images.example/earth.jpg">' },
+      });
+      expect(adjusted.params).toMatchObject({
+        pin: true, capabilities: { netOrigins: ['https://images.example'] },
       });
       expect(definitions.map(definition => definition.kind).sort()).toEqual([
+        'html-page',
         'interactive-answer',
-        'offline-html',
       ]);
       const resources = definitions.flatMap(definition => definition.resources.paths);
-      expect(resources).toEqual([
-        '/__widget_kit__/ui.js',
-        ...OFFLINE_LIBRARY_RESOURCES.map(resource => resource.path),
-      ]);
+      expect(resources).toEqual(['/__widget_kit__/ui.js', '/__widget_kit__/image-loading.js']);
+      expect(routes.map(route => route.path)).toEqual(['/__widget_kit__/image-loading.js']);
       expect(
-        fs.statSync(path.join(target, 'skills/visualize/references/offline-libraries.md')).isFile(),
+        routes.every(
+          route =>
+            route.match === 'exact' &&
+            route.auth === 'plugin' &&
+            route.nodeCapability.surface === 'widget-html',
+        ),
       ).toBe(true);
-      const prepared = JSON.parse(
-        fs.readFileSync(path.join(source, 'assets/integrity.json'), 'utf8'),
+      expect(
+        fs.existsSync(path.join(target, 'skills/visualize/references/offline-libraries.md')),
+      ).toBe(false);
+      // HTML normalization now bundles the standards-based parser as well.
+      expect(fs.statSync(path.join(target, 'index.js')).size).toBeLessThan(500_000);
+      expect(fs.readFileSync(path.join(target, 'index.js'), 'utf8')).not.toMatch(
+        /from\s+['"]parse5['"]/,
       );
-      for (const file of ['integrity.json', ...Object.keys(prepared.files)]) {
-        expect(fs.readFileSync(path.join(target, 'assets', file))).toEqual(
-          fs.readFileSync(path.join(source, 'assets', file)),
-        );
-      }
-      expect(fs.statSync(path.join(target, 'index.js')).size).toBeLessThan(200_000);
       for (const definition of definitions) {
         for (const resourcePath of definition.resources.paths) {
           const resource = await definition.resources.readPublicResource(resourcePath);

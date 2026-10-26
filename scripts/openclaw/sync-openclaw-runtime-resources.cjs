@@ -334,6 +334,11 @@ function verifyAcpxTargetDependencies(extensionDir, installTarget) {
   }
 }
 
+function shouldCopyExtensionSource(sourceDir, entryPath) {
+  return path.basename(sourceDir) !== 'widget-kit' ||
+    path.relative(sourceDir, entryPath).split(path.sep)[0] !== 'assets';
+}
+
 function replaceExtensionSources(sourceDir, targetDir) {
   for (const entry of fs.readdirSync(targetDir)) {
     if (entry === 'node_modules' || entry === EXTENSION_ASSEMBLY_MANIFEST) continue;
@@ -345,6 +350,7 @@ function replaceExtensionSources(sourceDir, targetDir) {
       recursive: true,
       force: true,
       verbatimSymlinks: true,
+      filter: entryPath => shouldCopyExtensionSource(sourceDir, entryPath),
     });
   }
 }
@@ -398,11 +404,6 @@ function bundleProductExtension(sourceDir, targetDir) {
 }
 
 function syncLocalExtensions(repoRoot, runtimeRoot, label, options = {}) {
-  if (fs.existsSync(path.join(repoRoot, 'plugins/extensions/widget-kit'))) {
-    require('../../plugins/extensions/widget-kit/scripts/prepare.cjs').verifyWidgetLibraryAssets(
-      path.join(repoRoot, 'plugins/extensions/widget-kit/assets'),
-    );
-  }
   if (fs.existsSync(path.join(repoRoot, 'plugins/extensions/drawio'))) {
     require('../../plugins/extensions/drawio/scripts/prepare.cjs').verifyDrawioAssets(path.join(repoRoot, 'plugins/extensions/drawio/assets'));
   }
@@ -427,17 +428,6 @@ function syncLocalExtensions(repoRoot, runtimeRoot, label, options = {}) {
   ) {
     fs.rmSync(retiredCollaboration, { recursive: true, force: true });
   }
-  // Widget Kit replaces this exact app-owned bundle. Keeping both would claim
-  // the same native content kind; matching both identities protects other packages.
-  const retiredWidgetBundle = path.join(targetDir, 'interactive-ui');
-  if (
-    readJsonFile(path.join(sourceDir, 'widget-kit', 'openclaw.plugin.json'))?.id === 'widget-kit' &&
-    readJsonFile(path.join(retiredWidgetBundle, 'package.json'))?.name === 'openclaw-interactive-ui' &&
-    readJsonFile(path.join(retiredWidgetBundle, 'openclaw.plugin.json'))?.id === 'interactive-ui'
-  ) {
-    fs.rmSync(retiredWidgetBundle, { recursive: true, force: true });
-  }
-
   const entries = fs
     .readdirSync(sourceDir, { withFileTypes: true })
     .sort((left, right) => left.name.localeCompare(right.name));
@@ -517,6 +507,7 @@ function syncLocalExtensions(repoRoot, runtimeRoot, label, options = {}) {
         recursive: true,
         force: true,
         verbatimSymlinks: true,
+        filter: entryPath => shouldCopyExtensionSource(extensionSourceDir, entryPath),
       });
       bundleProductExtension(extensionSourceDir, stagingDir);
       if (usesProductionDependencies) {

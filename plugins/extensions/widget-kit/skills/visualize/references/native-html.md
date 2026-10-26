@@ -5,9 +5,9 @@ Use only the current turn's advertised `show_widget` HTML kind. Supply a short
 Start with useful content, not another heading or card frame. Use `--font-body`,
 `--text`, `--muted`, `--card`, `--border`, `--accent-fill` and `--accent-fg`.
 Use HTML, SVG, canvas and local JavaScript as the task requires. No charting or
-component library is preloaded in ordinary `html`. For the advertised
-`offline-html` kind, read [offline libraries](offline-libraries.md) to select
-bundled Three.js, ECharts, KaTeX, Mermaid, D3 or Matter.js. Static presentations
+component library is preloaded. The advertised `html-page` kind also accepts
+complete HTML and adapts HTTPS image loading; `widget_code` is raw markup.
+Load needed libraries with scripts or ES modules under native CDN policy. Static presentations
 need no controls or scripts.
 When controls help, keep them responsive, label inputs, and make local computations
 deterministic.
@@ -18,22 +18,27 @@ the bridge result.
 Use system fonts and inline assets so the result works without public network
 access. Gather data through authorized agent tools before rendering; an inline
 widget has no dashboard data/action grants or credentials.
+For requested Internet images or data, the separate native network-download
+path is described in [network downloads](pinned-network.md); its `pin` parameter
+is consumed in the chat card, without requiring a dashboard or sidebar.
 
 ## Native inline resource policy
 
 The following describes the current native sandbox, not additional permissions
-granted by this skill. This project's offline deployment is stricter: author
-self-contained content with inline assets, local drawing and system fonts even
-where the native policy permits a public resource.
+granted by this skill. Inline and network-enabled chat widgets follow the same
+native script/style/font resource policy. These resource loads use the browser
+proxy and need no separate `capabilities.netOrigins` entry; that capability
+controls fetch/XHR data access. Local drawing, embedded assets and system fonts
+remain available when the network is unavailable.
 
-| Resource or operation | Native inline policy |
-| --- | --- |
-| JavaScript and ES module imports | Inline script and the CDN origins below; no arbitrary hosts or `eval`/`new Function`. |
-| CSS and fonts | Inline CSS; external stylesheets and fonts from the CDN origins below; fonts may also use `data:`. |
+| Resource or operation                                                      | Native inline policy                                                                                                                                                                                |
+| -------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| JavaScript and ES module imports                                           | Inline script and the CDN origins below; no arbitrary hosts or `eval`/`new Function`.                                                                                                               |
+| CSS and fonts                                                              | Inline CSS; external stylesheets and fonts from the CDN origins below; fonts may also use `data:`.                                                                                                  |
 | Images, CSS background images, video posters and image-backed GPU textures | `data:` only. Remote and `blob:` image URLs are blocked, including images from an allowed script CDN. Inline SVG and locally generated canvas/pixel textures do not need an external image request. |
-| Audio/video element sources | `data:`, `blob:` and direct HTTPS media. HTTP media is blocked. Remote playback depends on network availability and does not authorize script-driven fetching of media segments. |
-| `fetch`, XMLHttpRequest, WebSocket and EventSource | No network/API connections in an inline document (`connect-src 'none'`), including requests to a CDN or an internal service. |
-| Nested external frames and parent application access | No external iframe embedding or direct parent/Gateway access. Use only the actual host's exposed bridge. |
+| Audio/video element sources                                                | `data:`, `blob:` and direct HTTPS media. HTTP media is blocked. Remote playback depends on network availability and does not authorize script-driven fetching of media segments.                    |
+| `fetch`, XMLHttpRequest, WebSocket and EventSource                         | No network/API connections in an inline document (`connect-src 'none'`), including requests to a CDN or an internal service.                                                                        |
+| Nested external frames and parent application access                       | No external iframe embedding or direct parent/Gateway access. Use only the actual host's exposed bridge.                                                                                            |
 
 The native script/style/font allowlist is:
 
@@ -47,14 +52,17 @@ The native script/style/font allowlist is:
 
 Imports, stylesheet dependencies, font files and redirects must also stay within
 the allowed origins. Ordinary `html` has no preloaded library. The separate
-`offline-html` kind loads only its declared, installation-owned scripts through
-the native registered-resource interface. An allowed resource URL does not
+`html-page` kind loads only its small installation-owned image adapter through
+the native registered-resource interface. Libraries use author-supplied CDN URLs.
+An allowed resource URL does not
 establish network reachability or successful loading, and a script grant does
 not change the image or connection policy. Local `file:` resource URLs are not
 an alternative; put workspace file links in ordinary chat instead.
 
-Pinned dashboards have separate declared and granted data/action permissions.
-An inline preview does not inherit them. Existing native documents keep their
+Native pinned documents have separate declared and granted network permissions.
+This application's limited network viewer uses them for GET/HEAD resource reads;
+the ordinary inline preview does not inherit them. Dashboard data/action tools
+are not available here. Existing native documents keep their
 saved policy; changing a source file or this skill does not repair an old card.
 Generate a new document through the real tool after correcting the source.
 
@@ -84,6 +92,18 @@ Do not load texture images, posters or CSS background images from a CDN, even
 when its JavaScript modules are allowed. Embed required images as data URLs, or
 create textures locally with canvas or typed pixel data. Inline `fetch` is also
 blocked, so fetching an image in the widget and converting it is not a workaround.
+Only the separately admitted network-download view may fetch a granted origin
+and convert the image to a data URL, as documented in the network reference.
+
+For existing pages or direct HTTPS image loaders, use Widget Kit's advertised
+`html-page` kind with the original markup as its source.
+Its image adapter runs before author code and converts HTTPS `image.src`,
+`setAttribute('src', ...)` and static authored `<img src>` to fetched data URLs.
+Three.js TextureLoader can keep its original URL and callbacks. This still needs
+the network view's declared and granted origins; it does not change native CSP.
+CSS backgrounds, posters, `srcset` and namespace attribute writes retain native
+behavior. Complete HTML source is accepted by this plugin kind; ordinary native
+`html` continues to use fragments.
 
 Track actual asset completion and errors with the loader's documented callbacks
 or promises. Keep a readable fallback or explicit failure state when a texture
@@ -138,68 +158,46 @@ Feature detection alone does not establish current draft availability: listen
 for the parent's `openclaw:scenario-draft-policy` message as below. This existing
 transport name applies to native HTML too; it does not select a business template.
 
-This example combines an immediate local calculation with an optional discussion
-button. Adapt or omit either interaction according to the task:
+Use a small, task-specific control when a follow-up is useful:
 
 ```html
-<style>
-  #value-explorer, #value-explorer * { box-sizing: border-box; }
-  #value-explorer { color: var(--text); background: transparent;
-    font-family: var(--font-body, system-ui, sans-serif); font-size: 14px; line-height: 1.5; }
-  #value-explorer { padding: clamp(16px, 3vw, 24px); min-width: 0; overflow-wrap: anywhere; }
-  #value-explorer label { display: grid; min-width: 0; gap: 8px; }
-  #value-explorer :is(input, button) { font: inherit; }
-  #value-explorer input {
-    width: 100%; min-width: 0; min-height: 40px; padding: 10px; color: inherit;
-    background: var(--card); border: 1px solid var(--border); border-radius: 8px; }
-  #value-explorer .actions { display: flex; justify-content: flex-end; margin-top: 20px; }
-  #value-explorer button { min-height: 40px; max-width: 100%; padding: 9px 16px; border: 0; border-radius: 8px;
-    background: var(--accent-fill); color: var(--accent-fg); cursor: pointer; white-space: normal; }
-  #value-explorer :is(input, button):focus-visible { outline: 2px solid var(--accent-fill); outline-offset: 3px; }
-  #value-explorer button:disabled { opacity: .45; cursor: default; }
-  #value-explorer .error { color: var(--danger, var(--text)); font-size: 13px; margin: 12px 0 0; }
-</style>
-<main id="value-explorer">
-  <label>Input value<input type="number" min="-1000000" max="1000000" step="any" required value="2"></label>
-  <p>Squared value: <output aria-live="polite">4</output></p>
-  <p class="error" role="alert" hidden></p>
-  <div class="actions"><button type="button" disabled>Discuss this value</button></div>
-</main>
+<div id="discussion-example">
+  <label>Value <input type="number" value="2" required /></label>
+  <button type="button" disabled>Discuss this value</button>
+  <p role="alert"></p>
+</div>
 <script>
-  const root = document.getElementById('value-explorer');
+  const root = document.getElementById('discussion-example');
   const input = root.querySelector('input');
-  const output = root.querySelector('output');
   const button = root.querySelector('button');
-  const error = root.querySelector('.error');
+  const error = root.querySelector('[role=alert]');
   let available = false;
   let pending = false;
-  const showError = text => { error.textContent = text; error.hidden = !text; };
-  const update = () => { button.disabled = !available || pending; };
-  input.addEventListener('input', () => {
-    output.value = input.validity.valid && Number.isFinite(input.valueAsNumber)
-      ? String(input.valueAsNumber ** 2) : '—';
-  });
+  const update = () => {
+    button.disabled = !available || pending;
+  };
   addEventListener('message', event => {
     if (event.source !== parent || event.data?.type !== 'openclaw:scenario-draft-policy') return;
-    available = event.data.available === true && typeof window.openclaw?.prompt?.send === 'function';
+    available =
+      event.data.available === true && typeof window.openclaw?.prompt?.send === 'function';
     update();
   });
   button.addEventListener('click', async event => {
-    if (!event.isTrusted || !available || pending) return;
-    if (!input.reportValidity()) return;
+    if (!event.isTrusted || !available || pending || !input.reportValidity()) return;
     const value = input.valueAsNumber;
-    // Capture and validate synchronously, while the native activation is current.
+    if (!Number.isFinite(value)) return;
     pending = true;
-    showError('');
+    error.textContent = '';
     update();
     try {
-      const prepared = await openclaw.prompt.send(
-        `Explain the relationship in this example using my selected value ${value} and its square ${value ** 2}.`
-      );
-      if (prepared === false) showError('Could not prepare the suggestion. Try again.');
+      const prepared = await openclaw.prompt.send(`Explain this selected value: ${value}.`);
+      if (prepared === false) error.textContent = 'Could not prepare the suggestion.';
     } catch {
-      showError('Could not prepare the suggestion. Try again.');
-    } finally { pending = false; update(); }
+      error.textContent = 'Could not prepare the suggestion.';
+    } finally {
+      pending = false;
+      update();
+    }
   });
 </script>
 ```

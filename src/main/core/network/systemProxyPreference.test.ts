@@ -42,7 +42,9 @@ import {
   getBrowserProxyPreferenceSignature,
   getProxyPreferenceSignature,
   isSystemProxyEnabled,
+  onBrowserProxyWillChange,
   registerBrowserProxySession,
+  unregisterBrowserProxySession,
 } from './systemProxyPreference';
 
 beforeEach(() => {
@@ -264,5 +266,22 @@ describe('independent browser proxy preferences', () => {
     expect(mocks.applySystemProxyEnv).not.toHaveBeenCalled();
     await applyBrowserProxyPreference({ browserProxy: { mode: ProxyMode.DIRECT } });
     expect(widget.setProxy).toHaveBeenLastCalledWith({ mode: ProxyMode.DIRECT });
+  });
+
+  test('removes a retired widget session before proxy updates and unsubscribes its observer', async () => {
+    const widget = {
+      setProxy: vi.fn().mockResolvedValue(undefined),
+      closeAllConnections: vi.fn().mockResolvedValue(undefined),
+    } as unknown as Electron.Session;
+    await registerBrowserProxySession(widget);
+    const changed = vi.fn(() => unregisterBrowserProxySession(widget));
+    const unsubscribe = onBrowserProxyWillChange(changed);
+    await applyBrowserProxyPreference({ browserProxy: { mode: ProxyMode.SYSTEM } });
+    expect(changed).toHaveBeenCalledOnce();
+    expect(widget.setProxy).toHaveBeenCalledOnce();
+    unsubscribe();
+    await applyBrowserProxyPreference({ browserProxy: { mode: ProxyMode.DIRECT } });
+    expect(changed).toHaveBeenCalledOnce();
+    expect(widget.setProxy).toHaveBeenCalledOnce();
   });
 });

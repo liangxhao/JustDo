@@ -8,8 +8,6 @@ import { OpenClawExtensionId } from '../../../shared/plugins/nativeIds';
 const LOCAL_EXTENSIONS_DIR = path.join('plugins', 'extensions');
 const LOCAL_EXTENSION_METADATA_FILES = ['prune-policy.json'];
 const AGENT_PLUGIN_MANIFEST_SCHEMA = 'https://agent-plugins.org/schemas/1.0.0/plugin.schema.json';
-const RETIRED_WIDGET_PLUGIN_ID = 'interactive-ui';
-const RETIRED_WIDGET_PACKAGE_NAME = 'openclaw-interactive-ui';
 
 // Runtime replacements are assembled with locked dependencies at build time.
 // Only their compiled runtime manifest establishes availability.
@@ -39,44 +37,6 @@ const isMissingPathError = (error: unknown): boolean =>
     'code' in error &&
     (error.code === 'ENOENT' || error.code === 'ENOTDIR'),
   );
-
-const retirePreviousWidgetBundle = async (
-  sourceDir: string,
-  realTargetExtensionsDir: string,
-): Promise<void> => {
-  const retiredDir = path.join(realTargetExtensionsDir, RETIRED_WIDGET_PLUGIN_ID);
-  try {
-    const entry = await fs.promises.lstat(retiredDir);
-    if (!entry.isDirectory() || entry.isSymbolicLink()) return;
-    if (!isPathInside(realTargetExtensionsDir, await fs.promises.realpath(retiredDir))) return;
-
-    const replacementId = OpenClawExtensionId.WIDGET_KIT;
-    const replacementDir = path.join(realTargetExtensionsDir, replacementId);
-    const replacementEntry = await fs.promises.lstat(replacementDir);
-    if (!replacementEntry.isDirectory() || replacementEntry.isSymbolicLink()) return;
-    if (!isPathInside(realTargetExtensionsDir, await fs.promises.realpath(replacementDir))) return;
-    const [sourceManifest, targetManifest, retiredManifest, retiredPackage] = await Promise.all(
-      [
-        path.join(sourceDir, replacementId, 'openclaw.plugin.json'),
-        path.join(replacementDir, 'openclaw.plugin.json'),
-        path.join(retiredDir, 'openclaw.plugin.json'),
-        path.join(retiredDir, 'package.json'),
-      ].map(async file => JSON5.parse(await fs.promises.readFile(file, 'utf8'))),
-    );
-    if (
-      sourceManifest?.id !== replacementId ||
-      targetManifest?.id !== replacementId ||
-      retiredManifest?.id !== RETIRED_WIDGET_PLUGIN_ID ||
-      retiredPackage?.name !== RETIRED_WIDGET_PACKAGE_NAME
-    )
-      return;
-
-    await fs.promises.rm(retiredDir, { recursive: true, force: true });
-  } catch (error) {
-    if (isMissingPathError(error) || error instanceof SyntaxError) return;
-    throw error;
-  }
-};
 
 export const inspectOpenClawExtensionCandidate = (
   extensionDir: string,
@@ -285,14 +245,17 @@ export const syncLocalOpenClawExtensionsIntoRuntime = async (
       if (!isMissingPathError(error)) throw error;
       // Target doesn't exist yet, proceed with copy.
     }
-    await fs.promises.cp(path.join(sourceDir, entry.name), destDir, {
+    const extensionSourceDir = path.join(sourceDir, entry.name);
+    await fs.promises.cp(extensionSourceDir, destDir, {
       recursive: true,
       force: true,
+      filter: sourcePath =>
+        entry.name !== OpenClawExtensionId.WIDGET_KIT ||
+        path.relative(extensionSourceDir, sourcePath).split(path.sep)[0] !== 'assets',
     });
     copied.push(entry.name);
   }
 
-  await retirePreviousWidgetBundle(sourceDir, realTargetExtensionsDir);
   return { sourceDir, copied };
 };
 

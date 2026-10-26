@@ -1,3 +1,4 @@
+import type { WidgetNetworkInstance } from '@shared/widgets/network';
 import {
   WIDGET_VIEWER_PAGE,
   WIDGET_VIEWER_PARTITION,
@@ -18,7 +19,7 @@ export class NativeWidgetGuestHost {
   private active = true;
   private failed = false;
   private initialized = false;
-  private mountId = crypto.randomUUID();
+  private mountId: string = crypto.randomUUID();
   private state: WidgetViewerState = { draftAllowed: false, theme: { mode: 'light', tokens: {} } };
   private timer: ReturnType<typeof setTimeout>;
   constructor(
@@ -26,13 +27,15 @@ export class NativeWidgetGuestHost {
     private url: string,
     private html: string,
     private receive: (event: WidgetViewerEvent) => void,
+    options?: Pick<WidgetNetworkInstance, 'mountId' | 'partition'>,
   ) {
+    if (options) this.mountId = options.mountId;
     this.timer = setTimeout(() => this.fail(), WIDGET_TIMEOUT_MS);
     frame.addEventListener('dom-ready', this.initialize);
     frame.addEventListener('ipc-message', this.onMessage);
     frame.addEventListener('render-process-gone', this.fail);
     frame.addEventListener('did-fail-load', this.loadFailure);
-    frame.setAttribute('partition', WIDGET_VIEWER_PARTITION);
+    frame.setAttribute('partition', options?.partition ?? WIDGET_VIEWER_PARTITION);
     const viewer = new URL(WIDGET_VIEWER_PAGE, frame.ownerDocument.location.href);
     viewer.searchParams.set('mount', this.mountId);
     frame.src = viewer.href;

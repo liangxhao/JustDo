@@ -453,9 +453,6 @@ function verifyRuntimeCompanionFilesFromBundle(runtimeRoot, gatewayBundlePath, b
 }
 
 function verifyBundledOpenClawRuntimeFiles(runtimeRoot, buildHint) {
-  require('../../plugins/extensions/widget-kit/scripts/prepare.cjs').verifyWidgetLibraryAssets(
-    path.join(runtimeRoot, 'dist/extensions/widget-kit/assets'),
-  );
   require('../../plugins/extensions/drawio/scripts/prepare.cjs').verifyDrawioAssets(
     path.join(runtimeRoot, 'dist/extensions/drawio/assets'),
   );
@@ -882,7 +879,6 @@ function installSkillDependencies() {
 
 async function beforePack(context) {
   await verifyApplicationLicenseAssets({ repoRoot: context.appDir || path.join(__dirname, '../..') });
-  require('../../plugins/extensions/widget-kit/scripts/prepare.cjs').verifyWidgetLibraryAssets();
   require('../../plugins/extensions/drawio/scripts/prepare.cjs').verifyDrawioAssets();
   verifyPackagedBuiltinModelAuthConfig(context.appDir || path.join(__dirname, '../..'));
   prepareBrowserExtension();
@@ -1033,15 +1029,7 @@ async function beforePack(context) {
       path.join(__dirname, '../..', 'vendor', 'openclaw-runtime', 'current', 'gateway-bundle.mjs'),
     ).map(entry => `cfmind/${entry}`);
     const { runtimeSkillPaths } = readBundledSkillConfig(path.join(__dirname, '../..'));
-    const widgetAssets =
-      require('../../plugins/extensions/widget-kit/scripts/prepare.cjs').verifyWidgetLibraryAssets(
-        path.join(sources[0].dir, 'dist/extensions/widget-kit/assets'),
-        false,
-      );
     const requiredTarEntries = [
-      ...['integrity.json', ...Object.keys(widgetAssets.files)].map(
-        file => `cfmind/dist/extensions/widget-kit/assets/${file}`,
-      ),
       'cfmind/package.json',
       'cfmind/runtime-build-info.json',
       `cfmind/${PATCH_MANIFEST_FILENAME}`,
@@ -1811,6 +1799,7 @@ async function verifyPackagedOpenClawRuntime(context, options = {}) {
         'cfmind/dist/extensions/mxc/node_modules/node-pty/package.json',
       ]);
       const archiveEntryPaths = new Set();
+      let hasRetiredWidgetAssets = false;
       const tarModule = require(path.join(__dirname, '../..', 'node_modules', 'tar'));
       await pipeline(
         createReadStream(tarPath),
@@ -1819,15 +1808,20 @@ async function verifyPackagedOpenClawRuntime(context, options = {}) {
           cwd: temporaryRoot,
           filter: entryPath => {
             const normalized = entryPath.replace(/^\.\//, '').replace(/\\/g, '/');
+            if (/^cfmind\/dist\/extensions\/widget-kit\/assets(?:\/|$)/.test(normalized)) {
+              hasRetiredWidgetAssets = true;
+              return false;
+            }
             archiveEntryPaths.add(normalized);
             return (
               requiredEntries.has(normalized) ||
-              normalized.startsWith('cfmind/node-runtime/') ||
-              normalized.startsWith('cfmind/dist/extensions/widget-kit/assets/')
+              normalized.startsWith('cfmind/node-runtime/')
             );
           },
         }),
       );
+      if (hasRetiredWidgetAssets)
+        throw new Error('Packaged runtime includes retired Widget Kit library assets');
       // Discover companions from the actual archived bundle, then extract those
       // exact files before the normal filesystem verifier checks their presence.
       // The subsequent manifest check still authenticates the bundle itself.
@@ -1884,15 +1878,13 @@ async function verifyPackagedOpenClawRuntime(context, options = {}) {
         'cfmind/',
         path.join(repoRoot, 'vendor', 'openclaw-runtime', 'current'),
       );
-      require('../../plugins/extensions/widget-kit/scripts/prepare.cjs').verifyWidgetLibraryAssets(
-        path.join(temporaryRoot, 'cfmind/dist/extensions/widget-kit/assets'),
-        false,
-      );
     } finally {
       rmSync(temporaryRoot, { recursive: true, force: true });
     }
   } else {
     const packagedRuntimeRoot = path.join(resourcesRoot, 'cfmind');
+    if (existsSync(path.join(packagedRuntimeRoot, 'dist/extensions/widget-kit/assets')))
+      throw new Error('Packaged runtime includes retired Widget Kit library assets');
     verifyOpenClawPatchManifest(packagedRuntimeRoot, {
       repoRoot,
       expectedTarget: resolveOpenClawRuntimeTargetId(context),
@@ -1904,10 +1896,6 @@ async function verifyPackagedOpenClawRuntime(context, options = {}) {
       'Packaged OpenClaw CLI runtime',
     );
     verifyBundledLocalExtensions(path.join(resourcesRoot, 'cfmind'), 'packaged application');
-    require('../../plugins/extensions/widget-kit/scripts/prepare.cjs').verifyWidgetLibraryAssets(
-      path.join(packagedRuntimeRoot, 'dist/extensions/widget-kit/assets'),
-      false,
-    );
   }
 
   console.log('[electron-builder-hooks] Verified patches in packaged OpenClaw runtime.');

@@ -5,6 +5,7 @@ import { WIDGET_VIEWER_PARTITION, WidgetViewerIpc } from '@shared/widgets/viewer
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ChatScrollController } from '../../controllers/chat-scroll-controller';
+import { decodeNativeBoardResult } from '../../pipeline/native-board';
 import { decodeNativeCanvasResult } from '../../pipeline/native-canvas';
 import type { NativeWidgetContext } from './host';
 import { NATIVE_WIDGET_OWNER_MESSENGER } from './messaging';
@@ -425,6 +426,156 @@ describe('native widget viewer lifecycle', () => {
     await settle(view);
     expect(view.shadowRoot!.querySelector('[role="alert"]')).not.toBeNull();
   });
+
+  it.each([true, false])(
+    'preserves a board guest only for a runtime failure: %s',
+    async runtime => {
+      const close = vi.fn().mockResolvedValue(undefined);
+      vi.stubGlobal('electron', {
+        widgetNetwork: {
+          beginCheck: vi.fn().mockResolvedValue({ nonce: 'check', validForMs: 15_000 }),
+          create: vi.fn(async ({ mountId }: { mountId: string }) => ({
+            mountId,
+            instanceId: 'network-instance',
+            partition: 'widget-network-test',
+          })),
+          renew: vi.fn().mockResolvedValue(undefined),
+          close,
+          onRevoked: () => () => undefined,
+        },
+      });
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(
+          async () =>
+            new Response('<input value="Local">', {
+              headers: { 'content-type': 'text/html' },
+            }),
+        ),
+      );
+      const sessionKey = 'agent:main:runtime-failure';
+      const request = vi.fn(async (method: string) =>
+        method === 'sessions.describe'
+          ? {
+              session: {
+                key: sessionKey,
+                agentId: 'main',
+                sessionId: 'native-session',
+                lifecycleRevision: 'life',
+              },
+            }
+          : {
+              sessionKey,
+              widgets: [
+                {
+                  name: 'form',
+                  revision: 1,
+                  instanceId: 'native-instance',
+                  contentKind: 'html',
+                  contentOwner: 'html',
+                  grantState: 'granted',
+                  declared: { netOrigins: ['https://assets.example.test'] },
+                  viewGeneration: 'a'.repeat(32),
+                  frameUrl: `/__openclaw__/board/${encodeURIComponent(sessionKey)}/form/index.html?bt=ticket`,
+                  sandboxPort: 18790,
+                  sandboxUrl: '/mcp-app-sandbox',
+                },
+              ],
+            },
+      );
+      const view = document.createElement('justdo-native-widget') as NativeWidgetView;
+      view.context = {
+        client: {
+          generation: 1,
+          gatewayUrl: 'ws://127.0.0.1:18789',
+          request,
+        } as NativeWidgetContext['client'],
+        generation: 1,
+        sessionKey,
+        sessionId: 'native-session',
+        agentId: 'main',
+        isCurrent: () => true,
+        canDraft: () => true,
+      };
+      view.preview = decodeNativeBoardResult(
+        JSON.stringify({ boardWidgetName: 'form' }),
+        'show_widget',
+        'call',
+      )!;
+      document.body.append(view);
+      await vi.waitFor(async () => {
+        await settle(view);
+        expect(view.shadowRoot!.querySelector('header [data-action="load"]')).not.toBeNull();
+      });
+      expect(view.shadowRoot!.querySelector('section.status')).toBeNull();
+      expect(fetch).not.toHaveBeenCalled();
+      view.shadowRoot!.querySelector<HTMLButtonElement>('header [data-action="load"]')!.click();
+      await vi.waitFor(async () => {
+        await settle(view);
+        expect(view.shadowRoot!.querySelector('webview')).not.toBeNull();
+      });
+      const guest = view.shadowRoot!.querySelector('webview')! as HTMLElement & {
+        send: ReturnType<typeof vi.fn>;
+      };
+      guest.send = vi.fn();
+      guest.dispatchEvent(new Event('dom-ready'));
+      const { mountId } = guest.send.mock.calls[0][1];
+      const emit = (data: unknown) =>
+        guest.dispatchEvent(
+          Object.assign(new Event('ipc-message'), { channel: WidgetViewerIpc.Event, args: [data] }),
+        );
+      emit({ mountId, type: 'ready' });
+      await settle(view);
+      expect(view.shadowRoot!.querySelector('section.status')).toBeNull();
+      expect(view.shadowRoot!.querySelector('header [data-action="stop"]')).not.toBeNull();
+      emit({ mountId, type: 'failure', runtime });
+      await settle(view);
+      if (runtime) {
+        expect(view.shadowRoot!.querySelector('webview')).toBe(guest);
+        expect(view.shadowRoot!.querySelector('[role="alert"]')).not.toBeNull();
+        expect(close).not.toHaveBeenCalled();
+        expect(guest.send.mock.lastCall![1].draftAllowed).toBe(false);
+        emit({ mountId, type: 'draft', text: 'Late suggestion after failure' });
+        await settle(view);
+        expect(view.shadowRoot!.textContent).not.toContain('Late suggestion after failure');
+        expect(view.shadowRoot!.querySelectorAll('[role="alert"] button')).toHaveLength(0);
+        view.shadowRoot!.querySelector<HTMLButtonElement>('header [data-action="load"]')!.click();
+        await vi.waitFor(async () => {
+          await settle(view);
+          const replacement = view.shadowRoot!.querySelector('webview');
+          expect(replacement).not.toBeNull();
+          expect(replacement).not.toBe(guest);
+        });
+        expect(fetch).toHaveBeenCalledTimes(2);
+        expect(close).toHaveBeenCalledOnce();
+      } else {
+        expect(view.shadowRoot!.querySelector('webview')).toBeNull();
+        expect(close).toHaveBeenCalledOnce();
+        expect(view.shadowRoot!.querySelector('section.status')).toBeNull();
+        expect(view.shadowRoot!.querySelector('[role="alert"]')).not.toBeNull();
+        let finish!: (response: Response) => void;
+        vi.mocked(fetch).mockImplementationOnce(
+          () =>
+            new Promise(resolve => {
+              finish = resolve;
+            }),
+        );
+        view.shadowRoot!.querySelector<HTMLButtonElement>('header [data-action="load"]')!.click();
+        await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+        await settle(view);
+        view.shadowRoot!.querySelector<HTMLButtonElement>('header [data-action="stop"]')!.click();
+        await settle(view);
+        expect(close).toHaveBeenCalledTimes(2);
+        expect(view.shadowRoot!.querySelector('header [data-action="load"]')).not.toBeNull();
+        expect(view.shadowRoot!.querySelector('[role="alert"]')).toBeNull();
+        finish(new Response('<p>Late HTML</p>', { headers: { 'content-type': 'text/html' } }));
+        await settle(view);
+        expect(view.shadowRoot!.querySelector('webview, iframe')).toBeNull();
+        expect(view.shadowRoot!.querySelector('section.status')).toBeNull();
+      }
+    },
+  );
+
   it('expands and collapses the same iframe without reading the document again', async () => {
     const chat = document.createElement('justdo-chat');
     document.body.append(chat);

@@ -27,6 +27,19 @@ export type SystemProxySettings = {
 
 const dynamicBrowserSessions = new Map<Electron.Session, Promise<void>>();
 let currentBrowserProxySettings = defaultBrowserProxySettings;
+const browserProxyChangeListeners = new Set<() => void>();
+
+export const getBrowserProxyMode = (): ProxyMode => currentBrowserProxySettings.mode;
+
+/** Network widgets must stop before an existing proxy route is replaced. */
+export const onBrowserProxyWillChange = (listener: () => void): (() => void) => {
+  browserProxyChangeListeners.add(listener);
+  return () => browserProxyChangeListeners.delete(listener);
+};
+
+export const unregisterBrowserProxySession = (targetSession: Electron.Session): void => {
+  dynamicBrowserSessions.delete(targetSession);
+};
 
 export const getBrowserProxyCredentials = (): {
   host: string;
@@ -197,6 +210,7 @@ export const applyBrowserProxyPreference = (config?: SystemProxySettings): Promi
   const settings = normalizeProxySettings(config?.browserProxy, ProxyMode.SYSTEM);
   const operation = browserProxyApplyQueue.then(async () => {
     if (generation !== browserProxyGeneration) return false;
+    for (const listener of [...browserProxyChangeListeners]) listener();
     currentBrowserProxySettings = settings;
     const targetSessions = [
       ...new Set([

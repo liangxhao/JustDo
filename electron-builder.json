@@ -112,7 +112,9 @@
           "!dist/control-ui/assets/**/*.js.gz",
           "!dist/control-ui/assets/**/*.css.br",
           "!dist/control-ui/assets/**/*.css.gz",
-          "node-runtime/**/*"
+          "node-runtime/**/*",
+          "!dist/extensions/widget-kit/assets",
+          "!dist/extensions/widget-kit/assets/**"
         ]
       },
       {
@@ -186,7 +188,9 @@
           "!dist/control-ui/assets/**/*.js.gz",
           "!dist/control-ui/assets/**/*.css.br",
           "!dist/control-ui/assets/**/*.css.gz",
-          "node-runtime/**/*"
+          "node-runtime/**/*",
+          "!dist/extensions/widget-kit/assets",
+          "!dist/extensions/widget-kit/assets/**"
         ]
       },
       {

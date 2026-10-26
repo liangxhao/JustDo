@@ -1514,7 +1514,11 @@ export class JustDoChatElement extends LitElement {
       sessionKey,
       generation,
       sessionId,
+      agentId: /^agent:([^:]+):/.exec(sessionKey)?.[1],
+      methods: controller.state.hello?.features?.methods,
+      pluginSurfaceUrls: controller.state.hello?.pluginSurfaceUrls,
       presentationOwner: this,
+      boardExecutionOwner: controller,
       canDraft: () => this.canDraftWidget?.() === true,
       isCurrent,
       addDraft: text => {

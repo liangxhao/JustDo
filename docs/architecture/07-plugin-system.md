@@ -44,34 +44,40 @@ Runtime Services 还通过公开 prompt/agent-end hooks 记录有限的轮次准
 日志沿现有原生 JSON 导出，能力和证据缺口见[会话诊断](../features/chat/session-diagnostics.md#已保存用户轮次的准入错误)。
 
 `plugins/extensions/widget-kit` 在 `ui/` 聚合通用固定组件的 schema、组合器、
-渲染逻辑、文案与样式；`document/` 提供 HTML/JSON 安全序列化和资源初始化。
+渲染逻辑、文案与样式；`document/` 提供 HTML/JSON 安全序列化、完整 HTML 外壳适配、
+HTTPS 图片加载及资源初始化。parser 及实体解码依赖由插件自己的 lock 固定，在构建时
+随入口预编译，不增加首次使用下载。
+插件通过精确 `show_widget` matcher 的 `before_tool_call`，仅为自有 `html-page`
+补齐遗漏的 `pin` 和源中明确 HTTPS 地址的 `netOrigins`；已有声明与显式 `pin: false`
+保持不变。无需 JavaScript 分析或改写 HTML，授权仍由原生准入决定。
 组件单元测试归插件 `tests/`，宿主边界及打包集成测试保留在主工程。
-插件 ID、目录及公共资源已改为 Widget Kit 命名；构建核对旧包名和 manifest ID 后
-移除旧 `interactive-ui` 随包产物。新 ID `widget-kit` 默认开启，保留该 ID 已有的明确开关选择，
-不迁移旧开关或改写原生历史；引用旧资源的文档需要重新生成。
-开发启动的源码同步同样在替代插件到位后核对旧身份并清理，不跟随目录链接删除，
-避免未重新组装运行时的开发环境同时保留新旧类型注册。
+插件 ID 为 `widget-kit`，默认开启；配置同步保留用户明确的启停选择。
 
 该扩展是随通用本地扩展流程捆绑的可选组件插件：用原生
-`registerBoardWidgetContentKind` 注册固定组件 `interactive-answer` 与按需库 `offline-html`，严格校验 JSON，输出组件 body
+`registerBoardWidgetContentKind` 注册固定组件 `interactive-answer` 与原 HTML 类型 `html-page`；固定组件校验 JSON，页面接收原始 HTML，输出组件 body
 及只读 JS resource，由 native `show_widget` 负责包装及文档所有权。默认开启，可在扩展页显式启用/禁用，配置同步保留用户选择；按需 skill 与插件一起提供，不改变 8 个内置技能或每轮注入指导。不新增 tool/MCP/RPC/数据库或 runtime patch。固定 renderer 的继续按钮只在当前原生私有 prompt port 可用时启用，建议由宿主确认后加入草稿；未获得 dashboard/tools/resources 执行权限。用户流程与限制见 [交互式回答](../features/chat/interactive-answers.md)。
 
 插件只发布通用 `visualize` 技能，指导原生 `show_widget` 的真实发现与调用，
 以 HTML/SVG 和本地脚本承载按任务设计的可视化及交互。静态可视化无需控件或草稿桥，
 本地交互与会话后续动作分别按需添加。固定组件 schema 按需读取，
 不作为通用能力上限；团队测算的技能、内容类型、专属资源和实现均已删除。
-技能要求生成内容自包含、无公网依赖，未改动原生 CSP、存储或草稿授权协议。
+技能指导 HTML 与按需 CDN 脚本 / 模块，不预载可视化库；需要公网素材时按原生 `pin` / `netOrigins`
+授权，经浏览器系统代理下载。该路径仍在聊天原位置展示，不要求内网素材服务器，
+不改写原生 CSP、存储或草稿确认协议。
 
 `interactive-answer` 提供 table/compare/chart/form/steps，不接受表达式、脚本或外部提交；
 表单多选以一组原生复选框呈现，支持空初值与组级必选，草稿按选项分别记录布尔值。
-固定组件发布 `/__widget_kit__/ui.js` 资源；`offline-html` 通过
-`/__widget_kit__/libraries/<id>-<version>.js` 发布六个独立的 classic 脚本，
-仅为当前文档的库声明组合同步加载标签。库来自锁定 SHA-512 的离线归档；插件自己的
-准备脚本输出脚本、字体、完整性清单与许可证，资源同步及打包分别校验原文件和组装副本。
-公共 reader 只读精确白名单路径并验证内容哈希，不提供任意磁盘读取或凭据。
-KaTeX 以 FontFace 字节源注册字体并注入固定 CSS，兼容外层 HTTP 与内层 meta CSP
-的交集；不修改 native policy 或向普通 HTML 注入运行库。模型用法只在按需 visualize
-参考中发布。搜索、排序、选择、
+固定组件发布 `/__widget_kit__/ui.js`；`html-page` 只发布插件自己的
+`/__widget_kit__/image-loading.js`，在作者代码之前适配 HTTPS 图片 src → fetch →
+data URL。作者完整 HTML 的脚本 / 样式 / importmap 原文与顺序保留；下载仍由原生
+connect 授权、CORS 与宿主代理决定，不改写 CSP 或普通原生 html。
+原生内容注册要求至少一条静态资源，并且 board.get 只有存在当前连接 surface 时才发
+frameUrl，因此保留真实适配脚本的 `widget-html` surface 与单条 exact / plugin-auth /
+nodeCapability HTTP route。该脚本由源码生成，无归档、资源目录或首次下载；不包含
+Three.js 等第三方库。viewer 每次新运行刷新此单资源 surface，票据续签不重跑作者脚本。
+首次 / 复用 / 备用同步及最终分发排除未使用的 assets 目录；parse5 与实体解码
+生产依赖由插件 lock 固定并在构建时预编译。模型指导不包含第三方 API 教程。
+搜索、排序、选择、
 表单值只在当前 iframe 内存中，切换保留输入、重载恢复默认值；有界草稿标明省略，
 完整选择可在本地复制。模型质量与发布检查见 [现行说明与验证边界](../features/chat/interactive-answers.md)。
 

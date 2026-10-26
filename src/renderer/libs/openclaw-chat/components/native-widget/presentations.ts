@@ -2,7 +2,11 @@ import { i18nService } from '@/services/i18n';
 import { NativePresentationSurface } from '@/shared/dom/nativePresentationSurface';
 import { readSurfaceOcclusion } from '@/shared/dom/surfaceOcclusion';
 
-import { isNativeCanvasPreview, type NativeCanvasPreview } from '../../pipeline/native-canvas';
+import {
+  isNativeWidgetReference,
+  type NativeWidgetReference,
+  widgetReferenceId,
+} from '../../pipeline/native-board';
 import {
   observePresentationSize,
   PresentationDocuments,
@@ -25,7 +29,7 @@ export interface NativeWidgetPresentation {
   readonly scope: string;
   owner: object;
   readonly context: NativeWidgetContext;
-  readonly preview: NativeCanvasPreview;
+  preview: NativeWidgetReference;
   readonly view: NativeWidgetView;
   readonly layer: HTMLDivElement;
   readonly anchors: Set<NativeWidgetPresentationAnchor>;
@@ -60,6 +64,7 @@ function sameIdentity(left: NativeWidgetContext, right: NativeWidgetContext): bo
     left.generation === right.generation &&
     left.sessionKey === right.sessionKey &&
     left.sessionId === right.sessionId &&
+    left.agentId === right.agentId &&
     scopeOf(left) === scopeOf(right)
   );
 }
@@ -122,11 +127,11 @@ export class NativeWidgetPresentations {
 
   acquire(
     anchor: NativeWidgetPresentationAnchor,
-    preview: NativeCanvasPreview,
+    preview: NativeWidgetReference,
     context: NativeWidgetContext,
   ): NativeWidgetPresentation | undefined {
     if (
-      !isNativeCanvasPreview(preview) ||
+      !isNativeWidgetReference(preview) ||
       !context.isCurrent() ||
       context.client.generation !== context.generation ||
       anchor.ownerDocument !== this.owner
@@ -136,7 +141,7 @@ export class NativeWidgetPresentations {
     let entry = this.entries.find(
       item =>
         item.owner === owner &&
-        item.preview.docId === preview.docId &&
+        widgetReferenceId(item.preview) === widgetReferenceId(preview) &&
         sameIdentity(item.context, context),
     );
     if (!entry && context.presentationScope && context.sessionId?.trim()) {
@@ -147,7 +152,9 @@ export class NativeWidgetPresentations {
         item =>
           (item.pinned || item.returnPending) &&
           !item.view.context?.isCurrent() &&
-          item.preview.docId === preview.docId &&
+          item.preview.kind === 'canvas' &&
+          preview.kind === 'canvas' &&
+          widgetReferenceId(item.preview) === widgetReferenceId(preview) &&
           sameIdentity(item.context, context),
       );
       if (entry) {
@@ -160,7 +167,7 @@ export class NativeWidgetPresentations {
       view.preview = preview;
       view.context = context;
       const layer = this.owner.createElement('div');
-      layer.dataset.nativeWidgetPresentation = preview.docId;
+      layer.dataset.nativeWidgetPresentation = widgetReferenceId(preview);
       layer.style.cssText = 'position:fixed;display:none;pointer-events:none;z-index:10';
       view.style.cssText = 'margin:0;max-width:none;pointer-events:auto';
       layer.append(view);
@@ -215,6 +222,10 @@ export class NativeWidgetPresentations {
       this.entries.push(current);
     }
     entry.view.context = context;
+    if (entry.view.acceptBoardReference(preview)) {
+      entry.preview = preview;
+      entry.view.preview = preview;
+    }
     const fresh = !entry.anchors.has(anchor);
     entry.anchors.add(anchor);
     if (!entry.primary?.isConnected) entry.primary = anchor;
@@ -228,7 +239,12 @@ export class NativeWidgetPresentations {
     if (entry.primary === anchor)
       entry.primary = [...entry.anchors].find(value => value.isConnected);
     this.ownerWindow.setTimeout(() => {
-      if (!entry.anchors.size && !entry.pinned && !entry.returnPending) {
+      if (
+        !entry.anchors.size &&
+        !entry.pinned &&
+        !entry.returnPending &&
+        (entry.preview.kind !== 'native-board' || !entry.view.context?.isCurrent())
+      ) {
         const index = this.entries.indexOf(entry);
         if (index >= 0) {
           this.entries.splice(index, 1);
@@ -264,6 +280,8 @@ export class NativeWidgetPresentations {
     entry.pinned = false;
     entry.sidebar = undefined;
     entry.returnPending = !entry.primary?.isConnected;
+    if (entry.preview.kind === 'native-board' && entry.returnPending)
+      entry.view.stopBoardPresentation();
     entry.view.fillContainer = false;
     entry.view.collapsePresentation();
     this.changed();
@@ -299,7 +317,7 @@ export class NativeWidgetPresentations {
   /** The owning chat refreshes retained widgets even after history anchors disappear. */
   refresh(owner: object, context?: NativeWidgetContext): void {
     let changed = false;
-    for (const entry of this.entries) {
+    for (const entry of [...this.entries]) {
       if (entry.owner !== owner) continue;
       const next =
         context?.isCurrent() &&
@@ -307,6 +325,13 @@ export class NativeWidgetPresentations {
         sameIdentity(entry.context, context)
           ? context
           : undefined;
+      if (!next && entry.preview.kind === 'native-board') {
+        entry.view.stopBoardPresentation();
+        this.entries.splice(this.entries.indexOf(entry), 1);
+        entry.dispose();
+        changed = true;
+        continue;
+      }
       if (entry.view.context !== next) {
         const previous = entry.view.context;
         const availabilityChanged =

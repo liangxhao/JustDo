@@ -57,34 +57,44 @@
 
 `npm run electron:dev:openclaw` 和 `npm run dist:win` 已自动准备，优先复用资源和本地归档，归档缺失才下载。断网电脑提前放好归档即可。
 
-## 6. Widget Kit 离线可视化库
+## 6. Widget Kit 构建依赖与可选测试输入
 
-六个 npm 归档是构建输入，不整体装入安装包。版本及 SHA-512 锁定在
-`plugins/extensions/widget-kit/libraries/upstreams.json`，准备程序逐包校验后提取浏览器
-脚本和许可证，仅 Three.js 需要本地 esbuild 合并 OrbitControls。归档路径如下：
+可视化库不再随产品内置，不需要浏览器库准备命令或 `widget-kit/assets` 产物。
+Three.js 等由具体 widget 按需通过系统代理从原生允许的 CDN 加载。
+
+完整 HTML 适配器使用插件生产依赖 `parse5@8.0.1` 与 `entities@8.1.0`，版本、
+下载位置及完整性由 `plugins/extensions/widget-kit/package-lock.json` 固定：
+
+| 下载地址 | 放置位置 |
+| --- | --- |
+| [parse5 8.0.1](https://registry.npmjs.org/parse5/-/parse5-8.0.1.tgz) | `cache/npm/` npm 内容缓存 |
+| [entities 8.1.0](https://registry.npmjs.org/entities/-/entities-8.1.0.tgz) | `cache/npm/` npm 内容缓存 |
+
+联网准备机运行 `npm ci --prefix plugins/extensions/widget-kit --ignore-scripts --cache cache/npm`，
+将 `cache/npm/` 复制到离线构建机后，使用相同命令附加 `--offline`。
+离线机器执行后续运行时组装前，在仓库根目录设置绝对缓存路径并让子进程继承离线模式：
+
+```powershell
+$env:npm_config_cache = (Resolve-Path cache/npm).Path
+$env:npm_config_offline = 'true'
+```
+
+通用扩展组装从插件 lock 安装生产依赖，随后预编译将 parser 内嵌到入口，保留依赖许可证。
+该步骤属于构建准备，安装后的应用不会运行 npm 或首次下载 parser。
+
+可选浏览器验证使用真实 Three.js 作为测试输入，版本与 SHA-512 固定在插件
+`tests/three-fixture.cjs`。它只从本地缓存读取三个 ESM 模块，并通过受控 HTTPS
+fixture 提供；归档不提取为产品资产、不进入安装包，不在测试中自动下载。
 
 | 下载地址 | 放置位置 |
 | --- | --- |
 | [Three.js 0.186.1](https://registry.npmjs.org/three/-/three-0.186.1.tgz) | `cache/widget-kit/three-0.186.1.tgz` |
-| [ECharts 6.1.0](https://registry.npmjs.org/echarts/-/echarts-6.1.0.tgz) | `cache/widget-kit/echarts-6.1.0.tgz` |
-| [KaTeX 0.17.0](https://registry.npmjs.org/katex/-/katex-0.17.0.tgz) | `cache/widget-kit/katex-0.17.0.tgz` |
-| [Mermaid 10.9.8](https://registry.npmjs.org/mermaid/-/mermaid-10.9.8.tgz) | `cache/widget-kit/mermaid-10.9.8.tgz` |
-| [D3 7.9.0](https://registry.npmjs.org/d3/-/d3-7.9.0.tgz) | `cache/widget-kit/d3-7.9.0.tgz` |
-| [Matter.js 0.20.0](https://registry.npmjs.org/matter-js/-/matter-js-0.20.0.tgz) | `cache/widget-kit/matter-js-0.20.0.tgz` |
 
-联网准备机可手动下载表中归档，然后将整个 `cache/widget-kit/` 复制到离线构建机。
-准备：`npm run widget-kit:prepare`；复用已验证产物：
-`npm run widget-kit:prepare -- --ensure`；校验：`npm run widget-kit:verify`。
-这些命令均不联网，缺失或哈希不匹配明确失败；不运行包生命周期脚本，也不安装插件 npm 依赖。
-
-中间解包目录位于 `build/widget-kit/`；生成资源位于忽略提交的
-`plugins/extensions/widget-kit/assets/`，包含六个独立脚本、KaTeX 字体字节、完整性清单及
-各库许可证/NOTICE。资源同步将其复制到 `dist/extensions/widget-kit/assets/`，
-安装包构建验证源产物和运行时副本，产品首次使用不访问缓存或下载地址。
-`openclaw:resources`、`electron:dev:openclaw` 和 Windows 分发准备已串联离线准备步骤。
-Mermaid 原 npm 归档缺少独立 LICENSE，补充的锁版本 MIT 许可证保存在插件
-`libraries/licenses/mermaid-10.9.8-LICENSE.txt` 下并纳入构建来源哈希，来源为
-[对应提交的官方 LICENSE](https://raw.githubusercontent.com/mermaid-js/mermaid/49c1a1c7d1faa995b07cc7224543bd0d9a7a9e70/LICENSE)，仓库已包含，无需另外下载。
+准备机可下载该归档并复制缓存；验证命令为
+`node plugins/extensions/widget-kit/tests/verify-image-loading.cjs --runtime <runtime>/dist`，
+也可通过 `--three-archive <absolute-path>` 指定同一锁定归档。
+本地 OpenSSL 可通过 `WIDGET_FIXTURE_OPENSSL` 指定。此输入只用于开发验证，缺失时测试
+明确失败；产品启动和 widget 运行均不需要它。
 
 ## 7. Agent CLI 协议依赖
 

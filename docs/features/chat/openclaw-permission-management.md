@@ -39,6 +39,14 @@ sessionRoot 来自产品任务 cwd，并规范化验证。变更项目路径、�
 
 原生 exec/plugin approval 有独立 pending、期限和 decision 集合。Main 验证响应属于有效请求；关弹窗、页面卸载、断线不表示允许。session grant 在原生终态/停止/删除语义中清理。
 
+联网 `show_widget` 的 `capabilities.netOrigins` 由原生 board 逐文档判断，代理可达和产品
+权限下拉框本身都不是 grant 证据。full 可直接 granted，auto 按原生审查决定，pending
+才显示卡片内审批；应用不额外重复审批。`board.widget.grant` 按 name / revision /
+instanceId 提交，仅处理 pending；成功后重新取当前认证 board，再核对 granted 与身份。
+普通 inline 文档不继承 board 权限。原生 origin grant 不限制 HTTP 方法或凭据，因此
+应用 Main 另行约束下载请求、临时 session 与有限期租约。停止本机联网不表示原生撤权；
+当前原生 API 没有 granted → rejected 的撤销操作，首版不以按名称删除伪装原子撤权。
+
 审批弹窗优先于问答弹窗显示；问答暂时隐藏并暂停焦点捕获，保留已有草稿，审批结束后恢复。命令审批分层展示命令与实际工作目录，插件详情按正文排版；长内容在正文区域滚动，操作按钮保持可见，不展示节点等产品未开放的执行概念。
 
 ## 5. 拒绝和延迟如何反馈

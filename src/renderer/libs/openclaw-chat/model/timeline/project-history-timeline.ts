@@ -14,6 +14,7 @@ import {
 import type { GatewayMessage } from '@/libs/openclaw-chat/types';
 
 import { decodeNativeAppReference } from '../../pipeline/native-app-reference';
+import { decodeNativeBoardResult } from '../../pipeline/native-board';
 import {
   decodeNativeMcpAppHistoryResult,
   decodeNativeMcpAppResult,
@@ -612,11 +613,27 @@ export function projectPersistedTimeline(
       }
       // Only native tool-role records grant document-view authority. An
       // assistant-authored nested result is still just ordinary transcript data.
+      const board =
+        tool.status === 'completed'
+          ? decodeNativeBoardResult(tool.output, tool.name, readToolCallId(source) ?? undefined)
+          : undefined;
       const widget =
         tool.status === 'completed'
           ? decodeNativeCanvasResult(tool.output, tool.name, readToolCallId(source) ?? undefined)
           : undefined;
-      if (widget && !presentedWidgets.has(tool) && !presentedWidgetDocIds.has(widget.docId)) {
+      if (board && !presentedWidgetDocIds.has(`board:${board.name}`)) {
+        presentedWidgetDocIds.add(`board:${board.name}`);
+        flushSummary();
+        projected.push({
+          kind: 'native-widget',
+          key: `history-board-widget:${tool.id}`,
+          preview: board,
+        });
+      } else if (
+        widget &&
+        !presentedWidgets.has(tool) &&
+        !presentedWidgetDocIds.has(widget.docId)
+      ) {
         presentedWidgets.add(tool);
         presentedWidgetDocIds.add(widget.docId);
         flushSummary();
@@ -920,7 +937,15 @@ export function projectPersistedTimeline(
   flushSummary();
 
   const nativeDocIds = new Set(
-    projected.flatMap(item => (item.kind === 'native-widget' ? [item.preview.docId] : [])),
+    projected.flatMap(item =>
+      item.kind !== 'native-widget'
+        ? []
+        : item.preview.kind === 'canvas'
+          ? [item.preview.docId]
+          : item.preview.suppressedInlineDocId
+            ? [item.preview.suppressedInlineDocId]
+            : [],
+    ),
   );
   const nativeApps = new Map(
     projected.flatMap(item =>

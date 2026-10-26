@@ -110,11 +110,11 @@ function failed(value: Record<string, unknown> | undefined): boolean {
 }
 
 /** Callers must be the canonical Tool timeline or a tool-role history record. */
-export function decodeNativeCanvasResult(
+export function decodeNativeWidgetPayload(
   output: string | undefined,
   toolName: string | undefined,
   toolCallId: string | undefined,
-): NativeCanvasPreview | undefined {
+): Record<string, unknown> | undefined {
   if (
     (toolName !== NativeWidgetToolIdentity.directName &&
       toolName !== NativeWidgetToolIdentity.dispatcherName) ||
@@ -130,6 +130,7 @@ export function decodeNativeCanvasResult(
   } catch {
     return;
   }
+  if (failed(payload)) return;
   if (toolName === NativeWidgetToolIdentity.dispatcherName) {
     // The native dispatcher publishes the resolved catalog identity and the
     // actual AgentToolResult. Only this exact core tool grants Canvas authority;
@@ -149,9 +150,20 @@ export function decodeNativeCanvasResult(
     payload = details;
   }
   if (failed(payload)) return;
+  return payload;
+}
+
+export function decodeNativeCanvasResult(
+  output: string | undefined,
+  toolName: string | undefined,
+  toolCallId: string | undefined,
+): NativeCanvasPreview | undefined {
+  const payload = decodeNativeWidgetPayload(output, toolName, toolCallId);
   const presentation = record(payload?.presentation);
   const view = record(payload?.view);
   if (
+    payload?.boardWidgetName !== undefined ||
+    view?.boardWidgetName !== undefined ||
     payload?.kind !== 'canvas' ||
     presentation?.target !== 'assistant_message' ||
     presentation.sandbox !== 'scripts' ||
@@ -166,7 +178,7 @@ export function decodeNativeCanvasResult(
     render: 'native',
     docId: view.id,
     viewId: view.id,
-    toolCallId,
+    toolCallId: toolCallId!,
     ...(typeof presentation.title === 'string' ? { title: presentation.title.slice(0, 200) } : {}),
   };
   nativePreviews.add(preview);

@@ -6,32 +6,27 @@ interactive tools. Controls and conversation follow-up are optional.
 The optional `interactive-answer` content kind provides reusable tables,
 comparisons, charts, forms and expandable steps when those controls fit.
 Custom layouts and calculations use the native HTML kind directly. The
-`offline-html` kind adds explicitly selected bundled libraries to an HTML fragment.
-No tools, RPC handlers, database or runtime patches are added.
+`html-page` kind accepts raw fragments or complete HTML pages and adapts HTTPS
+image loaders to native data URLs. Libraries load from author-supplied CDN URLs
+through the system proxy. No tools, RPC handlers, database or runtime patches
+are added; one exact capability HTTP route serves the plugin image adapter.
 
 ## Ownership and packaging
 
 - `ui/` owns the fixed component schema, document composition, renderer,
   translated labels and styles.
-- `document/` owns safe HTML/JSON serialization and resource initialization.
-- `libraries/` owns offline source validation, composition and public resource reads.
-- `scripts/prepare.cjs` prepares and verifies locked browser assets and legal notices.
+- `document/` owns safe HTML/JSON serialization, document-shell adaptation,
+  HTTPS image loading and resource initialization.
+- `document/content-kind.ts` owns raw HTML validation and composition; its
+  image adapter is generated from source and served by `document/http-route.ts`.
 - `skills/visualize/` owns the general skill and its on-demand references.
-- `tests/` owns component and resource-loading unit tests. Host integration and
+- `tests/` owns component/resource-loading tests, optional browser validation and
+  its local test-only Three fixture. Host integration and
   packaging tests remain in the application's test tree.
 
 The generic local-extension pipeline copies and precompiles this plugin and
 its single skill. The plugin is enabled by default; configuration preserves
 explicit enable and disable choices. It adds no per-turn prompt hook.
-The plugin ID is now `widget-kit`; the directory and package name follow it.
-Runtime assembly removes the former `interactive-ui` bundle only after matching
-its package and manifest identities. Development startup applies the same
-retirement after the replacement is present, without following directory links.
-The new ID defaults to enabled; the previous ID's toggle is not transferred.
-Native cards referencing the former resources need regeneration through `show_widget`.
-The team calculator, its registration and its resource are removed. Existing
-native history is not deleted or rewritten; retired calculator cards need to be
-regenerated using a supported widget.
 
 ## Application integration
 
@@ -55,31 +50,52 @@ inline CSS and JavaScript. A static diagram or chart can be the complete result;
 no input, button or message bridge is required. The
 [HTML reference](skills/visualize/references/native-html.md)
 covers resource restrictions, responsive layout, local state and the optional
-draft bridge. Generated widgets must work without public Internet access.
+draft bridge. Ordinary local widgets work without public Internet access.
+Additional scripts, ES modules, stylesheets and fonts follow native CDN CSP,
+without an extra `netOrigins` declaration. For fetch/XHR images or data, use the
+[network-download reference](skills/visualize/references/pinned-network.md).
+It uses native `pin: true` and exact `capabilities.netOrigins`, presented in the
+same chat position. The browser system-proxy path downloads anonymous resources;
+no visualization libraries or texture catalogs are bundled. No internal asset server
+or global asset-source settings are required.
 
-For `kind: "offline-html"`, `widget_code` is a JSON string with exactly
-`{ version: 1, libraries: [...], html: "..." }`. The nonempty unique list selects
-`three`, `echarts`, `katex`, `mermaid`, `d3` and/or `matter`, at most six; the
-whole source is limited to 262144 characters. The fragment follows native HTML
-layout and interaction guidance. The native tool's schema must advertise this
-kind; do not assume enabling a skill alone admits it. See
-[offline library usage](skills/visualize/references/offline-libraries.md).
+For `kind: "html-page"`, `widget_code` is the original nonempty HTML string,
+including fragments or full documents. No JSON envelope or library list is needed.
+The parser removes shell tags, restores html/body attributes and preserves script,
+style and import-map bytes in source order. Keep an existing page's own CDN imports
+without adding another library version or editing the original file.
 
-Each library is a separate fixed-version classic browser script served through
-the native public-resource reader; only selected scripts precede the fragment.
-Three.js includes OrbitControls. KaTeX includes auto-render, CSS and binary
-FontFace fonts, with `katexFontsReady` for precise layout. Ordinary HTML remains
-unchanged. Network requests, image policy and native prompt admission do not
-change; external models, textures, workers and third-party addons are separate.
+The plugin loads its small `/__widget_kit__/image-loading.js` before author code.
+HTTPS `image.src`, `setAttribute('src', ...)` and static authored `<img src>` use
+native fetch, then FileReader data URLs. Three.js TextureLoader keeps original URLs
+and callbacks, including detached images and source replacement races. Native
+grants, CORS and proxy policy apply; no extra domain, size or timeout policy is
+introduced. CSS backgrounds, posters, `srcset` and namespace writes retain native
+behavior. No library globals, model loaders or decoders are preloaded.
 
-Prepare with `npm run widget-kit:prepare`, verify with `npm run widget-kit:verify`.
-Preparation reads integrity-checked cached npm archives and never downloads.
-Archive URLs, cache locations and commands are maintained only in
-[offline downloads](../../../docs/offline-downloads.md). Generated assets are
-ignored by Git, copied with the plugin and verified before assembly/packaging.
-The installed application needs neither the archives nor a package installation.
-Versioned resource URLs preserve the authored reference; unavailable older
-resources require a newly generated document, never rewriting native history.
+Native content-kind registration requires at least one resource and board frame
+admission requires its connection-scoped surface. The real adapter therefore uses
+one `widget-html` capability route, exact match, plugin auth and native nodeCapability.
+Gateway validates the capability and rewrites it to the fixed path with `oc_cap`;
+the handler serves GET/HEAD only. This is plugin integration code generated from
+source, without an asset directory or browser-library preparation. The viewer
+refreshes this single resource surface before a new run; ticket renewal does not
+restart an existing document.
+
+A `before_tool_call` hook matches only `show_widget` and this plugin's `html-page`.
+For source containing explicit HTTPS URLs, it fills omitted `pin` and exact
+`netOrigins` so the call reaches native network admission. Explicit declarations
+and `pin: false` stay unchanged; dynamic hosts need declared origins. The source
+is preserved, and native policy still decides the grant.
+
+Source synchronization and final packaging exclude the unused `assets` directory;
+source caches are left intact. Native saved widgets cannot change registered
+content kind under the same name; generate a new widget when changing kinds.
+
+The HTML parser and entity decoder remain locked production dependencies, bundled
+into the precompiled plugin with their legal notices. The installed application
+runs no npm installation. Build preparation and optional test inputs are maintained
+in [offline downloads](../../../docs/offline-downloads.md).
 
 For the optional fixed `kind: "interactive-answer"`, `widget_code` is a JSON
 string with `version`, `language`, `summary` and `blocks`. The complete schema,
@@ -109,8 +125,9 @@ its guidance does not require the fixed renderer.
 
 ## Authoring references
 
-The general skill is adapted to this application's actual native contract and
-offline deployment. Reviewed examples and documentation include:
+The general skill is adapted to this application's actual native contract,
+CDN resources and explicit public-resource downloads. Reviewed examples
+and documentation include:
 
 - [OpenClaw show_widget](https://docs.openclaw.ai/tools/show-widget) and its bundled
   [visualize skill](https://github.com/openclaw/openclaw/blob/main/skills/visualize/SKILL.md):
@@ -136,11 +153,48 @@ skills, framework dependencies or runtime services are installed by this skill.
 
 ```powershell
 node node_modules/vitest/vitest.mjs run plugins/extensions/widget-kit/tests tests/scripts/widget-kit
-node scripts/test/widget-kit/verify-runtime.mjs
-node scripts/test/widget-kit/verify-gateway.mjs
-node scripts/test/widget-kit/verify-gateway.mjs --offline-libraries
-node plugins/extensions/widget-kit/scripts/verify-browser.cjs
+& '<runtime>/node-runtime/node.exe' scripts/test/widget-kit/verify-runtime.mjs '<runtime>'
+& '<runtime>/node-runtime/node.exe' scripts/test/widget-kit/verify-gateway.mjs '<runtime>'
+& '<runtime>/node-runtime/node.exe' scripts/test/widget-kit/verify-gateway.mjs '<runtime>' --html-page
+node plugins/extensions/widget-kit/tests/verify-image-loading.cjs --runtime '<runtime>/dist'
 ```
+
+The image-loading probe reads a locked local Three archive only as test input,
+never as a product library. Archive locations and optional preparation are in the
+offline-downloads document above. The probe uses the selected native SDK's real wrapper and both CSP
+layers, a fresh Electron session, local HTTPS origins and a CONNECT proxy. It
+covers four TextureLoader images, actual WebGL pixels, complete HTML and fragments with real CDN Three.js ESM imports, static images, errors, source
+replacement races and denied fetch without a grant. A local OpenSSL executable
+is required (`WIDGET_FIXTURE_OPENSSL` selects it). Certificate trust is limited to
+the test window, fixture origins and the per-run certificate fingerprint. This
+plugin/browser contract check does not launch Gateway or exercise the Main guest
+controller; it does not establish reachability of an arbitrary public CDN page.
+
+The pinned network boundary probe uses the selected artifact's bundled Node:
+
+```powershell
+& '<runtime>/node-runtime/node.exe' scripts/test/widget-kit/verify-pinned-network.mjs '<runtime>' --browser
+& '<runtime>/node-runtime/node.exe' scripts/test/widget-kit/verify-pinned-network.mjs '<runtime>' --development-viewer
+```
+
+`--browser` additionally needs a local OpenSSL executable (`WIDGET_FIXTURE_OPENSSL`
+can select it) to create a disposable certificate. The Electron child trusts only
+the fixture hostnames and certificate fingerprint. It uses the actual Main guest
+controller, minimum preload and fixed viewer with native double CSP, four HTTPS
+textures, a loopback CONNECT proxy, WebGL readback, native CDN script/module/style/font
+loading without extra netOrigins, and rejected upload/credential/unsupported-script/
+direct-image attempts. No user Gateway, state or public source is
+used. The fixture is removed after its owners close.
+
+`--development-viewer` includes the browser checks and serves the actual viewer
+through an isolated Vite-only server with the React plugin and a fixture-local
+cache. It verifies the seven viewer modules and fixed Vite client/refresh/env
+resources under the development transport policy, then runs the same texture
+and rejection checks. It does not load the application's Vite/Electron launch
+configuration or start the user's application.
+
+The probe requires the current frozen runtime and its full artifact/recipe check.
+Real system-proxy deployment and public-source CORS require target-environment acceptance.
 
 The registrar check uses the locked runtime's native SDK. The Gateway check uses
 an isolated state directory and synthetic loopback provider, covering actual
@@ -148,13 +202,14 @@ plugin loading, tool availability, public resources, authenticated views,
 history/restart and disable. It does not use the application's active Gateway,
 configuration, credentials or model endpoint.
 
-`--offline-libraries` verifies native tool admission, all six public assets,
+`--html-page` verifies raw HTML admission, the single public image adapter,
 authenticated history/restart and withdrawal after disable. Run it separately
 from other Gateway scenarios. The browser verifier accepts `--runtime` pointing
 to the locked runtime's `dist` directory and uses the actual native sandbox/CSP
 with a fresh hidden Electron session, blocked public networking and synthetic
-documents. It checks selective requests, actual rendering, fonts, resize and
-resource failures; reports and screenshots stay under `build/widget-kit/`.
+documents. It checks real Three.js CDN imports, image decoding/WebGL rendering,
+source replacement races and permission failures; reports and screenshots stay
+under `build/widget-kit/`.
 
 - `--tool-dispatch` tests native HTML through Tool Search with this plugin disabled.
   Run it separately from component, retention and interaction checks.

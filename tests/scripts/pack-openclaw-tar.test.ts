@@ -116,7 +116,7 @@ test('omits only optional Control UI encodings while preserving identity assets 
   }
 });
 
-test('retains the complete prepared widget library resource set and legal notices', () => {
+test('omits retired widget libraries and test probes without altering source or other plugin assets', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'widget-library-archive-'));
   const runtime = path.join(root, 'runtime');
   const prefix = 'dist/extensions/widget-kit/assets';
@@ -131,10 +131,25 @@ test('retains the complete prepared widget library resource set and legal notice
     'libraries/matter-0.20.0.js',
     'licenses/mermaid-10.9.8/LICENSE',
     'licenses/echarts-6.1.0/NOTICE.bundle.txt',
+    'README.md',
   ];
+  const retained = [
+    'dist/extensions/widget-kit/index.js',
+    'dist/extensions/widget-kit/node_modules/parse5/LICENSE',
+    'dist/extensions/fixture/assets/retained.js',
+    'dist/extensions/drawio/assets/retained.js',
+  ];
+  const probes = ['three-fixture.cjs', 'verify-image-loading.cjs'].map(
+    file => `dist/extensions/widget-kit/tests/${file}`,
+  );
   try {
     for (const file of files) {
       const target = path.join(runtime, prefix, file);
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.writeFileSync(target, file);
+    }
+    for (const file of [...retained, ...probes]) {
+      const target = path.join(runtime, file);
       fs.mkdirSync(path.dirname(target), { recursive: true });
       fs.writeFileSync(target, file);
     }
@@ -149,8 +164,17 @@ test('retains the complete prepared widget library resource set and legal notice
       sync: true,
       onReadEntry: entry => entries.add(entry.path.replaceAll('\\', '/')),
     });
-    for (const file of files) expect(entries.has(`cfmind/${prefix}/${file}`), file).toBe(true);
-    expect(verifyLegalMetadataEntries(entries, 'cfmind/', runtime)).toBeGreaterThanOrEqual(2);
+    for (const file of files) {
+      expect(entries.has(`cfmind/${prefix}/${file}`), file).toBe(false);
+      expect(fs.readFileSync(path.join(runtime, prefix, file), 'utf8')).toBe(file);
+    }
+    expect([...entries].some(entry => entry.startsWith(`cfmind/${prefix}/`))).toBe(false);
+    for (const file of probes) {
+      expect(entries.has(`cfmind/${file}`), file).toBe(false);
+      expect(fs.readFileSync(path.join(runtime, file), 'utf8')).toBe(file);
+    }
+    for (const file of retained) expect(entries.has(`cfmind/${file}`), file).toBe(true);
+    expect(verifyLegalMetadataEntries(entries, 'cfmind/', runtime)).toBe(1);
   } finally {
     expect(path.dirname(root)).toBe(path.resolve(os.tmpdir()));
     expect(path.basename(root)).toMatch(/^widget-library-archive-/);
