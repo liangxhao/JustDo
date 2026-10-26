@@ -1114,6 +1114,11 @@ export const chatStyles = [
       width: fit-content;
     }
 
+    /* Code cards use inline-size containment, so they cannot size a fit-content bubble. */
+    .chat-bubble--user:has(.code-block-wrapper:not(.mermaid-block)) {
+      width: 100%;
+    }
+
     :host(.dark) .chat-bubble--user,
     :host([data-theme='dark']) .chat-bubble--user {
       padding: 10px 16px;
