@@ -1,6 +1,7 @@
 import '../tools/tool-output';
 import '../native-widget/anchor';
 import '../mcp-app/view';
+import './terminal-error-message';
 
 import {
   COWORK_PLAN_PREVIEW_EVENT,
@@ -610,35 +611,13 @@ export function renderTerminalTimelineMessage(
   const diagnosticMessage = stripOpenClawLogHintText(message).trim();
   const displayMessage =
     status === 'error' ? diagnosticMessage.replace(/^⚠[\uFE0E\uFE0F]?\s*/u, '') : diagnosticMessage;
-  const firstLine = displayMessage.split(/\r?\n/)[0];
-  const isSummaryTruncated = firstLine.length > 160;
-  const summary = isSummaryTruncated ? `${firstLine.slice(0, 160)}…` : firstLine;
-  const detailMessage = isSummaryTruncated
-    ? displayMessage
-    : displayMessage.slice(firstLine.length).replace(/^\r?\n/, '');
-  const hasDetails = detailMessage.length > 0;
   return renderAssistantTimelineRow(
     html`
       <div class="process-terminal process-terminal--${status}" role="status">
         ${status === 'aborted' ? html`<span aria-hidden="true">!</span>` : nothing}
         ${
-          status === 'error' && hasDetails
-            ? html`
-                <details class="process-terminal__details">
-                  <summary>
-                    <span
-                      class=${isSummaryTruncated ? 'process-terminal__summary-preview' : nothing}
-                      >${summary}</span
-                    ><span class="process-terminal__details-label"
-                      >${i18nService.t('coworkErrorDetails')}
-                      <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                        <path d="m4.5 6.25 3.5 3.5 3.5-3.5" /></svg
-                    ></span>
-                  </summary>
-                  <pre tabindex="0" aria-label=${i18nService.t('coworkErrorDetails')}>
-${detailMessage}</pre>
-                </details>
-              `
+          status === 'error'
+            ? html`<chat-terminal-error .message=${displayMessage}></chat-terminal-error>`
             : html`<span class="process-terminal__text">${displayMessage}</span>`
         }
         ${status === 'error' ? renderCopyButton(diagnosticMessage, i18nService.t('coworkCopyError')) : nothing}

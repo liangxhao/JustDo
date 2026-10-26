@@ -3463,35 +3463,49 @@ export const chatStyles = [
       overflow-wrap: anywhere;
     }
     .process-terminal__text,
-    .process-terminal__details {
+    chat-terminal-error {
       min-width: 0;
       overflow-wrap: anywhere;
     }
-    .process-terminal__details summary {
+    chat-terminal-error {
       display: block;
-      list-style: none;
-      cursor: pointer;
+      flex: 1;
+    }
+    .process-terminal__error-text {
+      display: -webkit-box;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: var(--terminal-error-preview-lines);
+      overflow: hidden;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
       line-height: 1.6;
     }
-    .process-terminal__details summary::-webkit-details-marker {
+    .process-terminal__error-text.is-expanded {
+      display: block;
+      -webkit-line-clamp: unset;
+      overflow: visible;
+    }
+    .process-terminal__details-label {
+      display: flex;
+      align-items: center;
+      gap: 3px;
+      margin-top: 4px;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: inherit;
+      font: inherit;
+      font-size: 12px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .process-terminal__details-label[hidden] {
       display: none;
     }
-    .process-terminal__details summary:focus-visible {
+    .process-terminal__details-label:focus-visible {
       outline: 2px solid var(--justdo-chat-accent, #6366f1);
       outline-offset: 4px;
       border-radius: 3px;
-    }
-    .process-terminal__details[open] .process-terminal__summary-preview {
-      display: none;
-    }
-    .process-terminal__details-label {
-      display: inline-flex;
-      align-items: center;
-      gap: 3px;
-      margin-inline-start: 8px;
-      color: inherit;
-      font-size: 12px;
-      white-space: nowrap;
     }
     .process-terminal__details-label svg {
       width: 12px;
@@ -3501,20 +3515,8 @@ export const chatStyles = [
       stroke-linejoin: round;
       stroke-width: 1.5;
     }
-    .process-terminal__details[open] .process-terminal__details-label svg {
+    .process-terminal__details-label[aria-expanded='true'] svg {
       transform: rotate(180deg);
-    }
-    .process-terminal__details pre {
-      margin: 6px 0 0;
-      padding: 0;
-      border: 0;
-      max-height: 260px;
-      overflow: auto;
-      white-space: pre-wrap;
-      overflow-wrap: anywhere;
-      color: inherit;
-      font: inherit;
-      line-height: 1.7;
     }
     .process-terminal--aborted {
       width: fit-content;

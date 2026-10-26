@@ -2,8 +2,9 @@
 
 import './justdo-chat';
 
-import { afterEach, describe, expect, test } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 
+import { ChatScrollController } from '@/libs/openclaw-chat/controllers/chat-scroll-controller';
 import {
   beginAssistantTurn,
   createChatTranscriptState,
@@ -12,12 +13,51 @@ import { FAILED_RUN_MESSAGE_FLAG } from '@/libs/openclaw-chat/model/turn/failed-
 import { i18nService } from '@/services/i18n';
 
 import type { JustDoChatElement } from './justdo-chat';
+import type { TerminalErrorMessage } from './timeline/terminal-error-message';
 
 afterEach(() => {
   document.body.replaceChildren();
+  vi.restoreAllMocks();
 });
 
 describe('justdo-chat failed runs', () => {
+  test('expands a clipped error before navigating to a search match in its diagnostic tail', async () => {
+    const chat = document.createElement('justdo-chat') as JustDoChatElement;
+    chat.messages = [
+      {
+        role: 'assistant',
+        stopReason: 'error',
+        errorMessage:
+          'Provider request failed.\nFirst detail\nSecond detail\nThird detail\nSearchable tail cause',
+        content: [],
+        __openclaw: { id: 'failure-search', runId: 'run-1' },
+      },
+    ];
+    document.body.append(chat);
+    await chat.updateComplete;
+    const error = chat.shadowRoot!.querySelector<TerminalErrorMessage>('chat-terminal-error')!;
+    await error.updateComplete;
+    const text = error.querySelector<HTMLElement>('.process-terminal__error-text')!;
+    text.style.lineHeight = '20px';
+    vi.spyOn(text, 'getBoundingClientRect').mockReturnValue({ width: 320 } as DOMRect);
+    vi.spyOn(text, 'scrollHeight', 'get').mockReturnValue(100);
+    chat.searchQuery = 'Searchable tail cause';
+    await chat.updateComplete;
+    const navigate = vi
+      .spyOn(ChatScrollController.prototype, 'navigateToElement')
+      .mockImplementation(target => {
+        expect(text.classList.contains('is-expanded')).toBe(true);
+        expect(target.textContent).toBe('Searchable tail cause');
+      });
+
+    expect(chat.navigateSearch(1)).toEqual({ index: 0, total: 1 });
+    expect(navigate).toHaveBeenCalledOnce();
+    expect(text.classList.contains('is-expanded')).toBe(true);
+    expect(text.querySelector('.chat-search-mark')?.textContent).toBe('Searchable tail cause');
+    expect(error.querySelector('button')?.getAttribute('aria-expanded')).toBe('true');
+    expect(chat.messages[0].errorMessage).toContain('\nSearchable tail cause');
+  });
+
   test('renders the public native contention diagnostic in the error details', async () => {
     const chat = document.createElement('justdo-chat') as JustDoChatElement;
     const diagnostic =
@@ -35,8 +75,10 @@ describe('justdo-chat failed runs', () => {
     ];
     document.body.append(chat);
     await chat.updateComplete;
+    await chat.shadowRoot?.querySelector<TerminalErrorMessage>('chat-terminal-error')
+      ?.updateComplete;
 
-    expect(chat.shadowRoot?.querySelector('.process-terminal__details pre')?.textContent).toContain(
+    expect(chat.shadowRoot?.querySelector('.process-terminal__error-text')?.textContent).toContain(
       diagnostic,
     );
     expect(chat.shadowRoot?.textContent).not.toContain('Private report detail');

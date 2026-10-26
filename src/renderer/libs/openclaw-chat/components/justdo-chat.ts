@@ -136,6 +136,7 @@ import {
 } from './native-widget/host';
 import { getNativeWidgetPresentations } from './native-widget/presentations';
 import { NativeWidgetView } from './native-widget/view';
+import type { TerminalErrorMessage } from './timeline/terminal-error-message';
 import { EditDiffMonacoController } from './tools/edit-diff-monaco';
 import { TOOL_OUTPUT_REQUEST, type ToolOutput } from './tools/tool-output';
 
@@ -1724,6 +1725,7 @@ export class JustDoChatElement extends LitElement {
   }
 
   private expandSearchMatchContainers(mark: HTMLElement): void {
+    mark.closest<TerminalErrorMessage>('chat-terminal-error')?.revealText();
     let current: HTMLElement | null = mark;
     while (current) {
       const details: HTMLDetailsElement | null = current.closest('details');
