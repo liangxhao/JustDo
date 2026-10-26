@@ -6,7 +6,7 @@ import { afterEach, describe, expect, test, vi } from 'vitest';
 
 import { renderTimelineItem } from './active-turn-timeline';
 
-describe('PresentPlan timeline card', () => {
+describe('present_plan timeline card', () => {
   afterEach(() => {
     document.body.replaceChildren();
   });
@@ -31,7 +31,7 @@ describe('PresentPlan timeline card', () => {
           type: 'tool',
           status: 'completed',
           toolCallId: 'call-plan',
-          name: 'presentplan',
+          name: 'present_plan',
           input: { title: 'Ship it', plan: '# Steps\n\n1. Implement' },
         },
       }),

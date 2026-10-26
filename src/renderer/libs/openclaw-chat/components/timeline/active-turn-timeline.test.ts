@@ -542,7 +542,7 @@ describe('active turn timeline', () => {
     expect(rendered).not.toContain('role="status"');
   });
 
-  test('renders PresentPlan as a compact button without embedding the plan body', () => {
+  test('renders present_plan as a compact button without embedding the plan body', () => {
     const rendered = flatten(
       renderTimelineItem({
         kind: 'plan-presentation',
@@ -557,7 +557,7 @@ describe('active turn timeline', () => {
           type: 'tool',
           status: 'completed',
           toolCallId: 'call-plan',
-          name: 'PresentPlan',
+          name: 'present_plan',
           input: { title: 'Ship it', plan: '# Secret plan body' },
         },
       }),

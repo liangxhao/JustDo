@@ -1311,7 +1311,7 @@ test('preserves loaded Plan history across a same-session reset and shows the ph
   );
   controller.preparePlanImplementationReset({
     requestId: 'plan-1',
-    toolName: 'PresentPlan',
+    toolName: 'present_plan',
     toolInput: { title: 'Plan', plan: '# Plan' },
   });
 
@@ -1332,7 +1332,7 @@ test('preserves loaded Plan history across a same-session reset and shows the ph
       content: [
         expect.objectContaining({
           type: 'toolcall',
-          name: 'PresentPlan',
+          name: 'present_plan',
           input: { title: 'Plan', plan: '# Plan' },
         }),
       ],

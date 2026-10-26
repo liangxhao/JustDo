@@ -7,7 +7,7 @@
     "onCapabilities": ["tool"]
   },
   "contracts": {
-    "tools": ["PresentPlan"],
+    "tools": ["present_plan"],
     "trustedToolPolicies": ["plan-mode-read-only"]
   },
   "configSchema": {

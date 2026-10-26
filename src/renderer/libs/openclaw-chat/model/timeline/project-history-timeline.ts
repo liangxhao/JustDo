@@ -705,7 +705,7 @@ export function projectPersistedTimeline(
       } else {
         // Patch 022 exposes pre-reset rows so Plan history can remain visible.
         // Preserve native clear semantics for every reset that did not follow
-        // a persisted PresentPlan tool call.
+        // a persisted present_plan tool call.
         projected.length = 0;
         presentedWidgetDocIds.clear();
         archived = [];

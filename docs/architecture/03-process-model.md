@@ -288,7 +288,7 @@ sequenceDiagram
 
 后续直接发送仍需 Main 准备会话权限。run begin/bind/fail/unknown 等产品回执区别本地意图与原生接收，UI 不能从“invoke 已返回”推断模型完成。批量运行状态需合并原生主运行、子任务和 Goal 续跑阶段。
 
-interaction response/replay 使用固定请求身份。AskUserQuestion 与 PresentPlan 的 pending 权威在对应 Extension；审批请求由原生机制拥有。Main 转接并验证，Renderer 只展示、提交选择和恢复待处理交互。
+interaction response/replay 使用固定请求身份。AskUserQuestion 与 present_plan 的 pending 权威在对应 Extension；审批请求由原生机制拥有。Main 转接并验证，Renderer 只展示、提交选择和恢复待处理交互。
 
 ## 5. Browser guest 是单独的资源边界
 

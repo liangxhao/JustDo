@@ -286,7 +286,7 @@ describe('justdo-chat last user message actions', () => {
         {
           role: 'assistant',
           content: [
-            { type: 'toolcall', name: 'PresentPlan', input: { plan: 'Implementation plan' } },
+            { type: 'toolcall', name: 'present_plan', input: { plan: 'Implementation plan' } },
           ],
           __openclaw: { id: 'planning-assistant' },
         },

@@ -35,7 +35,7 @@ describe('projectPersistedTimeline', () => {
           { type: 'text', text: 'Before reading' },
           { type: 'toolCall', id: `${prefix}-read`, name: 'read', arguments: {} },
           { type: 'text', text: 'After reading' },
-          { type: 'toolCall', id: `${prefix}-plan`, name: 'PresentPlan', arguments: {} },
+          { type: 'toolCall', id: `${prefix}-plan`, name: 'present_plan', arguments: {} },
           { type: 'toolCall', id: `${prefix}-progress`, name: 'progress_card', arguments: {} },
         ],
       },
@@ -309,7 +309,7 @@ describe('projectPersistedTimeline', () => {
       {
         role: 'assistant',
         runId: 'planning-run',
-        content: [{ type: 'toolcall', toolCallId: 'shared-call', name: 'PresentPlan' }],
+        content: [{ type: 'toolcall', toolCallId: 'shared-call', name: 'present_plan' }],
       },
       {
         role: 'system',
@@ -331,7 +331,7 @@ describe('projectPersistedTimeline', () => {
       'process-summary',
     ]);
     expect(result[1]).toMatchObject({ kind: 'phase-boundary', label: '' });
-    expect(result[0]).toMatchObject({ item: { name: 'PresentPlan', status: 'running' } });
+    expect(result[0]).toMatchObject({ item: { name: 'present_plan', status: 'running' } });
     expect(result[2]).toMatchObject({ items: [{ name: 'write', status: 'completed' }] });
   });
 
@@ -1180,7 +1180,7 @@ describe('projectPersistedTimeline', () => {
     expect(result.filter(item => item.kind === 'progress-receipt')).toHaveLength(2);
   });
 
-  test('restores PresentPlan as a standalone plan card', () => {
+  test('restores present_plan as a standalone plan card', () => {
     const result = projectPersistedTimeline([
       {
         role: 'assistant',
@@ -1190,7 +1190,7 @@ describe('projectPersistedTimeline', () => {
           {
             type: 'tool_use',
             id: 'plan-1',
-            name: 'PresentPlan',
+            name: 'present_plan',
             input: { title: 'Ship it', plan: '# Plan\n\n1. Implement' },
           },
         ],
@@ -1198,14 +1198,14 @@ describe('projectPersistedTimeline', () => {
       {
         role: 'tool',
         tool_call_id: 'plan-1',
-        name: 'PresentPlan',
+        name: 'present_plan',
         content: 'Plan approved.',
       },
     ]);
 
     expect(result.map(item => item.kind)).toContain('plan-presentation');
     expect(result.find(item => item.kind === 'plan-presentation')).toMatchObject({
-      item: { name: 'PresentPlan', input: { title: 'Ship it' } },
+      item: { name: 'present_plan', input: { title: 'Ship it' } },
     });
   });
 

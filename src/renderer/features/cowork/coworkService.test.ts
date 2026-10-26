@@ -66,7 +66,7 @@ describe('cowork interaction responses', () => {
       enqueuePendingInteraction({
         sessionId: 'session-plan',
         requestId: 'plan-1',
-        toolName: 'PresentPlan',
+        toolName: 'present_plan',
         interactionKind: 'plan-approval',
         toolInput: { plan: 'Inspect and implement' },
       }),
@@ -102,7 +102,7 @@ describe('cowork interaction responses', () => {
       enqueuePendingInteraction({
         sessionId: 'session-plan',
         requestId: 'plan-refresh',
-        toolName: 'PresentPlan',
+        toolName: 'present_plan',
         interactionKind: 'plan-approval',
         toolInput: { plan: 'Inspect and implement' },
       }),
@@ -129,7 +129,7 @@ describe('cowork interaction responses', () => {
       enqueuePendingInteraction({
         sessionId: 'session-1',
         requestId: 'request-concurrent',
-        toolName: 'PresentPlan',
+        toolName: 'present_plan',
         interactionKind: 'plan-approval',
         toolInput: { plan: 'Implement once' },
       }),
@@ -160,7 +160,7 @@ describe('cowork interaction responses', () => {
       enqueuePendingInteraction({
         sessionId: 'session-plan',
         requestId: 'plan-switch-mode',
-        toolName: 'PresentPlan',
+        toolName: 'present_plan',
         interactionKind: 'plan-approval',
         toolInput: { plan: 'Review before switching modes' },
       }),

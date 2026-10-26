@@ -914,7 +914,7 @@ Goal 卡保留六种原生状态，Main 只提供自动续跑阶段。progress_c
 
 运行中的 `session.message` 若携带与当前压缩 itemId／operationId 和 run 身份匹配的原生标记，只补充该实时节点的 token 指标，并按其原生 entry ID 异步读取摘要；原生历史读取若先返回，也可补充相同展示项。不等待整轮结束，不替换运行中的 transcript 或放开通用历史刷新。详情返回前复核 client、逻辑及物理会话、历史世代和活动 turn；失效响应丢弃，读取失败保留节点及已确认信息，后续权威历史可再次补全。压缩提交与压缩操作终态保持区分，不据标记或详情提前结算执行。
 
-`progressCard.changed` 携带 revision，Renderer 在 Gateway 声明读取能力后调用 `progressCard.get`，并核对 session 与连接 generation。当前卡只保留有界内存投影；原生返回 null、读取失败或 revision 失效时不能沿用旧卡冒充最新状态。关闭摘要和折叠进度属于 UI 状态，不删除原生卡。progress_card 是执行进度，PresentPlan 是待审核 artifact，Goal 是目标与预算；三者的生命周期不可混用。
+`progressCard.changed` 携带 revision，Renderer 在 Gateway 声明读取能力后调用 `progressCard.get`，并核对 session 与连接 generation。当前卡只保留有界内存投影；原生返回 null、读取失败或 revision 失效时不能沿用旧卡冒充最新状态。关闭摘要和折叠进度属于 UI 状态，不删除原生卡。progress_card 是执行进度，present_plan 是待审核 artifact，Goal 是目标与预算；三者的生命周期不可混用。
 
 用户点击刷新时，聊天 client 绕过本地缓存，只调用只读 `progressCard.get` 重新读取已保存进度，不调用会启动或引导模型回合的 `progressCard.refresh`。请求期间保留上次确认的卡片；读取结束即解除按钮加载状态，同一 revision 也视为刷新成功。暂时读取失败时明确提示失败并保留上次确认内容供重试；原生返回 null、权限被撤销或 revision 已失效时不能保留旧卡冒充当前状态。手动读取与原生变更事件共用加载 generation，切换会话、连接变化或更新读取后的迟到结果不能覆盖当前显示；刷新不修改输入草稿或 transcript，也不继续执行任务。
 

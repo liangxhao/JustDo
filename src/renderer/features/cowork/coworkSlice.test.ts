@@ -116,7 +116,7 @@ describe('cowork Plan mode state', () => {
       enqueuePendingInteraction({
         sessionId: 'session-1',
         requestId: 'plan-1',
-        toolName: 'PresentPlan',
+        toolName: 'present_plan',
         interactionKind: 'plan-approval',
         toolInput: { plan: 'First plan' },
       }),
@@ -126,7 +126,7 @@ describe('cowork Plan mode state', () => {
       enqueuePendingInteraction({
         sessionId: 'session-2',
         requestId: 'plan-2',
-        toolName: 'PresentPlan',
+        toolName: 'present_plan',
         interactionKind: 'plan-approval',
         toolInput: { plan: 'Second plan' },
       }),

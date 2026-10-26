@@ -22,7 +22,7 @@ export const OpenClawExtensionId = {
 
 export const OpenClawToolName = {
   ASK_USER_QUESTION: 'AskUserQuestion',
-  PRESENT_PLAN: 'PresentPlan',
+  PRESENT_PLAN: 'present_plan',
   BROWSER: 'browser',
   COMPUTER: 'computer',
 } as const;

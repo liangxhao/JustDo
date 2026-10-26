@@ -8,7 +8,7 @@ import { Type } from 'typebox';
 const PLUGIN_ID = 'plan-mode';
 const STATE_NAMESPACE = 'state';
 const SESSION_SLOT_KEY = 'planMode';
-const PRESENT_PLAN_TOOL = 'PresentPlan';
+const PRESENT_PLAN_TOOL = 'present_plan';
 const POLICY_ID = 'plan-mode-read-only';
 const LIST_METHOD = 'planMode.list';
 const RESOLVE_METHOD = 'planMode.resolve';
@@ -58,9 +58,9 @@ Rules:
 - Do not modify files, run commands that mutate state, install dependencies, create commits, or perform external side effects.
 - Use read-only inspection and searches to remove uncertainty. Ask the user only when a decision cannot be inferred safely.
 - Produce a concrete, decision-complete implementation plan grounded in the code you inspected.
-- When ready, call the directly available tool named PresentPlan exactly once with the complete Markdown plan. PresentPlan is the tool name; plan-mode is only the plugin id and must never be passed to tool_search, tool_describe, or tool_call.
+- When ready, call the directly available tool named present_plan exactly once with the complete Markdown plan. present_plan is the tool name; plan-mode is only the plugin id and must never be passed to tool_search, tool_describe, or tool_call.
 - Do not implement in this planning run, even after approval.
-- If PresentPlan returns revision feedback, revise the plan and call PresentPlan again.
+- If present_plan returns revision feedback, revise the plan and call present_plan again.
 - If it returns implementation approval, end this planning run without making changes. The application keeps this run read-only, resets the context, and starts implementation of the approved plan in the same session.
 </plan_mode>`;
 
@@ -456,7 +456,7 @@ const plugin = {
                 content: [
                   {
                     type: 'text',
-                    text: `PresentPlan failed: ${error instanceof Error ? error.message : String(error)}`,
+                    text: `present_plan failed: ${error instanceof Error ? error.message : String(error)}`,
                   },
                 ],
                 isError: true,

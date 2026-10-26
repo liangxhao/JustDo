@@ -11,7 +11,7 @@ import {
 const plan = (sessionId: string, requestId: string): CoworkInteractionRequest => ({
   sessionId,
   requestId,
-  toolName: 'PresentPlan',
+  toolName: 'present_plan',
   interactionKind: 'plan-approval',
   toolInput: { plan: `# ${requestId}` },
 });

@@ -133,7 +133,7 @@ describe('Plan mode extension', () => {
       prependContext?: string;
     };
     expect(prepared.prependContext).toContain('Do not modify files');
-    expect(prepared.prependContext).toContain('PresentPlan is the tool name');
+    expect(prepared.prependContext).toContain('present_plan is the tool name');
     expect(prepared.prependContext).toContain('Do not implement in this planning run');
     expect(prepared.prependContext).toContain('resets the context');
     expect(prepared.prependContext).not.toContain('Plan mode has been disabled');
@@ -147,7 +147,7 @@ describe('Plan mode extension', () => {
     ).toBeUndefined();
     expect(
       registered.policy?.(
-        { toolName: 'presentplan', params: {}, derivedPaths: ['should-not-block'] },
+        { toolName: 'present_plan', params: {}, derivedPaths: ['should-not-block'] },
         policyContext,
       ),
     ).toBeUndefined();
@@ -268,7 +268,7 @@ describe('Plan mode extension', () => {
     });
   });
 
-  test('rechecks Plan mode when a previously created PresentPlan tool executes', async () => {
+  test('rechecks Plan mode when a previously created present_plan tool executes', async () => {
     const registered = registerPlugin();
     registered.service?.start({ gatewayEvents: { emit: vi.fn() } });
     const tool = registered.toolFactory?.({ sessionKey: 'agent:main:justdo:session-1' });

@@ -29,12 +29,12 @@ describe('Plan implementation transcript boundary', () => {
     ).toBe(true);
   });
 
-  test('infers the implementation boundary from a persisted PresentPlan followed by reset', () => {
+  test('infers the implementation boundary from a persisted present_plan followed by reset', () => {
     const inferredBoundaryMessages = [
       { role: 'user', __openclaw: { id: 'planning-user' } },
       {
         role: 'assistant',
-        content: [{ type: 'toolcall', name: 'PresentPlan', input: { plan: 'Ship it' } }],
+        content: [{ type: 'toolcall', name: 'present_plan', input: { plan: 'Ship it' } }],
         __openclaw: { id: 'planning-assistant' },
       },
       { role: 'system', __openclaw: { id: 'native-reset', kind: 'reset' } },

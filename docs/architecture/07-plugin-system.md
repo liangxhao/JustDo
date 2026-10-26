@@ -478,7 +478,8 @@ Plan mode 使用 `api.session.state.registerSessionExtension`、`sessions.plugin
 `pluginExtensions['plan-mode'].state`，不依赖可能缺失或过期的会话槽投影。插件自有状态槽、服务注册键、
 消息标记和临时路径前缀按能力或插件命名，不带产品名；应用会话身份保留现有 `justdo:` 命名空间。
 `agent_turn_prepare` 注入规划约束，
-`registerTrustedToolPolicy` 在执行前阻止已知变更工具。`PresentPlan` 保持 direct-only；
+`registerTrustedToolPolicy` 在执行前阻止已知变更工具。计划工具统一命名为 `present_plan`，
+保持 direct-only，不注册或识别旧工具名；
 Tool Search 分发器由原生对实际目标再次执行策略。动作型工具使用上游
 `isReplaySafeToolCall` 分类，包括 `theme` 的 list/get（允许）和 set/import（阻止）。
 此策略不是任意第三方工具的通用只读沙盒：未识别的工具仍需审核其实际副作用，不能仅凭名称保证安全。

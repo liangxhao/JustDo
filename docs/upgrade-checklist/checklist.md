@@ -209,7 +209,7 @@ MCP Apps 使用原生认证 WS 接口，不使用生命周期补丁。关闭视�
 
 - [ ] 摘要按当前会话展示 Goal objective、任务进度、子智能体、输出、来源、
       Swarm Workflow 与 Agent Team；无关会话和旧 generation 的数据不能出现。
-      Goal、PresentPlan 和 progress card 不混用生命周期或入口。
+      Goal、present_plan 和 progress card 不混用生命周期或入口。
 - [ ] 对照 `progressCard.changed/get/refresh` 的能力声明、revision 与异步回执。
       null、读取失败或旧 revision 不沿用旧卡冒充最新；刷新不制造用户消息或清空草稿。
 - [ ] 输出通过认证 `artifacts.list(sessionKey,messageRole:'assistant')` 与助手明确
@@ -255,7 +255,7 @@ MCP Apps 使用原生认证 WS 接口，不使用生命周期补丁。关闭视�
       用户选择、超时、停止、重连和重复回答；运行参数的等待期限仍实际生效。
 - [ ] Goal 创建、暂停、显式继续、等待用户、完成/失败与预算限制逐状态验收。
       goalId fence、停止 latch 和自动续跑门禁有效，普通继续不能暗中恢复 paused goal。
-- [ ] Plan 生成、PresentPlan 读取、审批/拒绝/修改、批准后 reset 与实施交接验证同一
+- [ ] Plan 生成、present_plan 读取、审批/拒绝/修改、批准后 reset 与实施交接验证同一
       canonical transcript。显示历史跨 reset 保留，模型上下文仍正确切断；计划审核
       不退化为任意文件编辑器，重启不重放已经批准的工具。
 - [ ] 编辑、撤回、fork 绑定合法持久 entry，在 Goal、Plan reset、sending、压缩、

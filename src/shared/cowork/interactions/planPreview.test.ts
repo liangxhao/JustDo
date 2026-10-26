@@ -3,10 +3,10 @@ import { describe, expect, test } from 'vitest';
 import { extractPresentPlanPreview, isCoworkPlanPreview } from './planPreview';
 
 describe('planPreview', () => {
-  test('extracts a trimmed PresentPlan payload', () => {
+  test('extracts a trimmed present_plan payload', () => {
     expect(
       extractPresentPlanPreview(
-        'PresentPlan',
+        'present_plan',
         { title: ' Release ', plan: ' # Steps\n ' },
         'tool-1',
       ),
@@ -15,7 +15,7 @@ describe('planPreview', () => {
 
   test('rejects other tools and empty plans', () => {
     expect(extractPresentPlanPreview('read', { plan: '# Steps' }, 'tool-1')).toBeNull();
-    expect(extractPresentPlanPreview('PresentPlan', { plan: '  ' }, 'tool-1')).toBeNull();
+    expect(extractPresentPlanPreview('present_plan', { plan: '  ' }, 'tool-1')).toBeNull();
     expect(isCoworkPlanPreview({ sourceId: 'tool-1', plan: '' })).toBe(false);
   });
 });

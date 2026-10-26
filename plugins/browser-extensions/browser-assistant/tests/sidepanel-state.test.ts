@@ -390,7 +390,7 @@ describe('browser extension shared display boundaries', () => {
   it('keeps plan and explicitly retained interaction Tool readers directly accessible', () => {
     const entries = messagesFromThread(
       displayThread([
-        endedTool({ toolName: 'PresentPlan', output: 'Plan' }),
+        endedTool({ toolName: 'present_plan', output: 'Plan' }),
         endedTool({
           toolUseId: 'tool-2',
           display: { keepVisible: true },
@@ -401,7 +401,7 @@ describe('browser extension shared display boundaries', () => {
     );
     expect(entries.map(entry => entry.role)).toEqual(['live-process', 'live-process', 'assistant']);
     expect(entries[0].item).toMatchObject({
-      name: 'PresentPlan',
+      name: 'present_plan',
       status: 'completed',
       output: 'Plan',
     });

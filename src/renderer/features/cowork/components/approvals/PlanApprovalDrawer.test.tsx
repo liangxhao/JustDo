@@ -17,7 +17,7 @@ vi.mock('@/services/i18n', () => ({
 const interaction: CoworkInteractionRequest = {
   sessionId: 'session-1',
   requestId: 'plan-1',
-  toolName: 'PresentPlan',
+  toolName: 'present_plan',
   interactionKind: 'plan-approval',
   toolInput: {
     title: 'Ship the feature',
