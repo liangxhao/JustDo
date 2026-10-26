@@ -10,8 +10,7 @@ import { isRecord } from '../configShape';
 import { mergeOpenClawPluginConfig, mergeOpenClawSkillConfig } from '../plugins/pluginProjection';
 import {
   mergeManagedOptionalToolPolicy,
-  mergeManagedPortalToolDeny,
-  removeRetiredManagedToolDenyEntries,
+  OPENCLAW_MANAGED_TOOL_DENY,
 } from '../policies/executionPolicyProjection';
 import {
   buildManagedOpenClawSecrets,
@@ -310,16 +309,15 @@ export const buildAuthScopedOpenClawConfig = (
       entries: agentEntries,
     },
     memory,
+    transcripts: { enabled: false },
     session: {
       ...existingSession,
       ...managedSession,
     },
     tools: {
-      ...removeRetiredManagedToolDenyEntries(existingTools ?? {}),
+      ...existingTools,
       ...mergeManagedOptionalToolPolicy(existingTools),
-      deny: mergeManagedPortalToolDeny(
-        removeRetiredManagedToolDenyEntries(existingTools ?? {}).deny,
-      ),
+      deny: [...OPENCLAW_MANAGED_TOOL_DENY],
       ...(isRecord(managedConfig.tools) && isRecord(managedConfig.tools.codeMode)
         ? {
             codeMode: {

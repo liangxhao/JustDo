@@ -25,10 +25,3 @@ describe('optional decision tool admission', () => {
       .toEqual({ allow: undefined, alsoAllow: ['operator-tool', 'decision_evaluate'] });
   });
 });
-
- test('preserves explicit current evaluation denies without renaming other tools', () => {
-  expect(mergeManagedOptionalToolPolicy({
-    allow: ['read', 'operator-tool'], deny: ['decision_evaluate', 'operator-tool'],
-  })).toEqual({ allow: ['read', 'operator-tool', 'decision_evaluate'], alsoAllow: undefined,
-    deny: ['decision_evaluate', 'operator-tool'] });
-});

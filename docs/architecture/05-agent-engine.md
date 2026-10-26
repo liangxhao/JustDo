@@ -295,10 +295,28 @@ Main Gateway 客户端仅共享参数与超时策略相同的在途 `sessions.li
 
 产品配置来自 app_config、cowork_config、agents、MCP/Hook Store、Extension 开关与受管文件。ConfigSync 构建原生投影，ConfigSyncService 在串行 mutation 中应用并验证。
 
-产品暂未接入 OpenClaw Portals 展示流程，配置同步始终在全局 `tools.deny` 中加入
-`portal`，覆盖完整配置、无模型配置及登录/退出同步，并保留其他显式工具限制。
-该策略禁止 Agent 使用门户工具；它不关闭原生门户服务或具有管理权限的
+文件、命令执行和沙盒工具的全局兜底统一由 `executionPolicyProjection` 组装；完整配置和
+新建最小配置使用连接默认值，保留最小配置使用已有工具选项，认证同步保留原有权限。
+普通配置发布共用受限临时文件写入与重命名流程，各调用点仍负责变更判断、异常处理和回读验证。
+仅切换默认模型的发布保留独立的写前竞态检查与清理流程。
+
+产品禁用 OpenClaw 的门户、会话仪表盘、GitHub 身份诊断、在线人员/设备查询、
+原生网页主题、会议记录、手机 UI 控制、事件提醒、聊天凭据管理和外部渠道会话等工具入口。
+全局 `tools.deny` 由一份固定名单统一管理：`ask_user`、
+`web_search`、`message`、`nodes`、`gateway`、`file_fetch`、`dir_list`、`dir_fetch`、
+`file_write`、`portal`、`dashboard`、`github_identity_status`、`presence`、`theme`、
+`transcripts`、`mobile_ui`、`intent`、`secrets`、`conversations_send`、`conversations_list`、
+`conversations_turn`。完整配置、无模型配置及登录/退出同步均直接使用该名单，不合并旧配置的
+全局禁用项。电脑控制继续根据插件开关额外加入或移除 `computer`；其他权限策略保持原有规则。
+
+同步同时将 `transcripts` 直接设为 `{ enabled: false }`，关闭原生会议记录、自动采集和
+会议纪要持久化，不合并旧会议配置。普通聊天历史继续由原生会话存储拥有。
+`tts`、`skill_workshop` 不在固定禁用名单中，也不保留针对它们的旧黑名单清理或迁移逻辑。
+
+工具禁用本身不关闭对应原生管理服务。例如，`portal` 禁用不关闭原生门户服务或具有管理权限的
 `portal.open` 接口，也不关闭整个 OpenClaw Control UI。已有门户在 Gateway 重启时结束。
+`intent` 禁用不取消已有常驻规则或关闭 memory-core 的匹配钩子；普通记忆工具保持原有策略。
+`secrets` 工具禁用不关闭底层凭据解析、刷新及模型认证所用的 exec/file SecretRef。
 
 配置同步只更新受管的 `meta.lastTouchedVersion` 并删除不再支持的 `lastTouchedAt`，保留 Gateway 写入的 `meta.migrations` 等原生元数据。完整配置、最小配置及认证切换都遵循这一规则，避免抹掉迁移回执后让 Gateway 再次写入并触发无意义重载。
 

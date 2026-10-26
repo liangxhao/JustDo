@@ -22,6 +22,7 @@ import {
   type OpenClawConfigSyncResult,
   verifyLoggedOutOpenClawConfig,
 } from './openclawConfigSync';
+import { OPENCLAW_MANAGED_TOOL_DENY } from './policies/executionPolicyProjection';
 
 vi.mock('electron', () => ({
   app: {
@@ -78,6 +79,181 @@ vi.mock('node:child_process', async importOriginal => {
 });
 
 const temporaryDirectories: string[] = [];
+
+const createConfigurationFixture = (
+  configured: boolean,
+  executionMode: 'local' | 'auto' | 'sandbox' = 'local',
+  existing?: Record<string, unknown>,
+) => {
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'native-config-contract-'));
+  temporaryDirectories.push(stateDir);
+  const configPath = path.join(stateDir, 'openclaw.json');
+  if (existing) fs.writeFileSync(configPath, JSON.stringify(existing));
+  setStoreGetter(() => ({ get: () => configured ? {
+    model: { defaultModel: 'internal-model', defaultModelProvider: 'internal' },
+    providers: { internal: {
+      enabled: true,
+      apiKey: 'fixture-key',
+      baseUrl: 'http://models.example.test/v1',
+      apiFormat: 'openai',
+      models: [{ id: 'internal-model' }],
+    } },
+  } : {} }) as never);
+  const sync = new OpenClawConfigSync({
+    engineManager: {
+      getConfigPath: () => configPath,
+      getStateDir: () => stateDir,
+      getDesiredVersion: () => '2026.10.6',
+    },
+    getCoworkConfig: () => ({
+      workingDirectory: path.join(stateDir, 'workspace'), executionMode, agentEngine: 'openclaw',
+    }),
+    getBrowserMode: () => BrowserMode.User,
+    getAgents: () => [],
+  } as never);
+  return { configPath, stateDir, sync, read: () => JSON.parse(fs.readFileSync(configPath, 'utf8')) };
+};
+
+describe('native configuration execution policy contracts', () => {
+  test.each(
+    [true, false].flatMap(configured =>
+      (['local', 'auto', 'sandbox'] as const).map(executionMode => ({ configured, executionMode })),
+    ),
+  )('keeps source ownership for configured=$configured and execution=$executionMode', ({ configured, executionMode }) => {
+    const fixture = createConfigurationFixture(configured, executionMode);
+    const expectedHost = executionMode === 'sandbox' ? 'sandbox' : 'gateway';
+    const expectedSandboxTools = {
+      tools: { alsoAllow: [
+        'task_assistants', 'assistants_create', 'team_discussion', 'decision_evaluate',
+        ...(executionMode === 'sandbox' ? [] : ['bundle-mcp']),
+      ] },
+    };
+    const assertFallback = (config: ReturnType<typeof fixture.read>) => {
+      expect(config.tools.fs.workspaceOnly).toBe(true);
+      expect(config.tools.exec).toMatchObject({ host: expectedHost, mode: 'ask' });
+      expect(config.tools.sandbox).toEqual(expectedSandboxTools);
+    };
+
+    expect(fixture.sync.sync('startup').ok).toBe(true);
+    assertFallback(fixture.read());
+    const existing = fixture.read();
+    existing.tools.fs = { workspaceOnly: false, fixtureOption: 'native-fs' };
+    existing.tools.exec = { host: 'node', mode: 'full', timeoutSec: 37 };
+    existing.tools.sandbox = { tools: { deny: ['exec'] } };
+    fs.writeFileSync(fixture.configPath, JSON.stringify(existing));
+
+    expect(fixture.sync.sync('agent-runtime-settings-change').ok).toBe(true);
+    const updated = fixture.read();
+    assertFallback(updated);
+    expect(updated.tools.fs.fixtureOption).toBe(configured ? undefined : 'native-fs');
+    expect(updated.tools.exec.timeoutSec).toBe(configured ? undefined : 37);
+
+    const malformed = fixture.read();
+    malformed.tools.fs = ['invalid'];
+    malformed.tools.exec = 'invalid';
+    fs.writeFileSync(fixture.configPath, JSON.stringify(malformed));
+    expect(fixture.sync.sync('agent-runtime-settings-change').ok).toBe(true);
+    const normalized = fixture.read();
+    assertFallback(normalized);
+    expect(normalized.tools.fs).toEqual({ workspaceOnly: true });
+    expect(normalized.tools.exec).toEqual({ host: expectedHost, mode: 'ask' });
+
+    const authExisting = fixture.read();
+    authExisting.tools.fs.workspaceOnly = false;
+    authExisting.tools.fs.fixtureOption = 'auth-fs';
+    authExisting.tools.exec.host = 'node';
+    authExisting.tools.exec.mode = 'full';
+    authExisting.tools.exec.timeoutSec = 41;
+    authExisting.tools.sandbox = { tools: { deny: ['write'] } };
+    fs.writeFileSync(fixture.configPath, JSON.stringify(authExisting));
+    expect(fixture.sync.sync(BuiltinModelSyncReason.AuthLogout).ok).toBe(true);
+    const authenticated = fixture.read();
+    expect(authenticated.tools.fs).toEqual(authExisting.tools.fs);
+    expect(authenticated.tools.exec).toEqual(authExisting.tools.exec);
+    expect(authenticated.tools.sandbox).toEqual(authExisting.tools.sandbox);
+  }, 20_000);
+});
+
+describe('native configuration publication contracts', () => {
+  const paths = [
+    { name: 'full', configured: true, existing: true, reason: 'settings' },
+    { name: 'fresh minimal', configured: false, existing: false, reason: 'startup' },
+    { name: 'auth minimal', configured: false, existing: true, reason: BuiltinModelSyncReason.AuthLogout },
+    { name: 'preserved minimal', configured: false, existing: true, reason: 'settings' },
+  ];
+
+  test.each(paths)('$name restricts before writing and skips an unchanged publication', contract => {
+    const fixture = createConfigurationFixture(contract.configured, 'local',
+      contract.existing ? { gateway: { mode: 'local' } } : undefined);
+    const events: string[] = [];
+    const write = fs.writeFileSync;
+    const rename = fs.renameSync;
+    const restrict = providerSecretFile.restrictCredentialFile;
+    vi.spyOn(fs, 'writeFileSync').mockImplementation((file, content, options) => {
+      if (String(file).startsWith(`${fixture.configPath}.tmp-`)) {
+        events.push(content === '' ? 'create' : 'write');
+      }
+      write(file, content, options);
+    });
+    vi.spyOn(providerSecretFile, 'restrictCredentialFile').mockImplementation(file => {
+      if (file.startsWith(`${fixture.configPath}.tmp-`)) {
+        expect(fs.readFileSync(file, 'utf8')).toBe('');
+        events.push('restrict');
+      }
+      restrict(file);
+    });
+    vi.spyOn(fs, 'renameSync').mockImplementation((source, target) => {
+      if (String(target) === fixture.configPath) events.push('rename');
+      rename(source, target);
+    });
+
+    expect(fixture.sync.sync(contract.reason)).toMatchObject({ ok: true, configChanged: true });
+    expect(events).toEqual(['create', 'restrict', 'write', 'rename']);
+    const published = fs.readFileSync(fixture.configPath, 'utf8');
+    expect(published.endsWith('\n')).toBe(true);
+    expect(fixture.read().transcripts).toEqual({ enabled: false });
+    events.length = 0;
+
+    expect(fixture.sync.sync(contract.reason)).toMatchObject({ ok: true, configChanged: false });
+    expect(events).toEqual([]);
+    expect(fs.readFileSync(fixture.configPath, 'utf8')).toBe(published);
+  }, 20_000);
+
+  test.each(paths.flatMap(contract =>
+    (['permission', 'rename', 'readback'] as const).map(failure => ({ ...contract, failure })),
+  ))('$name reports $failure failure without claiming a successful publication', contract => {
+    const fixture = createConfigurationFixture(contract.configured, 'local',
+      contract.existing ? { gateway: { mode: 'local' } } : undefined);
+    const original = contract.existing ? fs.readFileSync(fixture.configPath, 'utf8') : undefined;
+    const rename = fs.renameSync;
+    const restrict = providerSecretFile.restrictCredentialFile;
+    const failureMessage = `Synthetic configuration ${contract.failure} failure`;
+    vi.spyOn(providerSecretFile, 'restrictCredentialFile').mockImplementation(file => {
+      if (contract.failure === 'permission' && file.startsWith(`${fixture.configPath}.tmp-`)) {
+        throw new Error(failureMessage);
+      }
+      restrict(file);
+    });
+    vi.spyOn(fs, 'renameSync').mockImplementation((source, target) => {
+      if (String(target) === fixture.configPath && contract.failure === 'rename') {
+        throw new Error(failureMessage);
+      }
+      rename(source, target);
+      if (String(target) === fixture.configPath && contract.failure === 'readback') {
+        fs.writeFileSync(fixture.configPath, '{}');
+      }
+    });
+
+    expect(fixture.sync.sync(contract.reason)).toMatchObject({
+      ok: false, changed: false, configChanged: false, requiresGatewayRestart: false,
+      error: contract.failure === 'readback' ? expect.stringContaining('verification failed') : failureMessage,
+    });
+    if (contract.failure !== 'readback') {
+      expect(fs.existsSync(fixture.configPath)).toBe(contract.existing);
+      if (original !== undefined) expect(fs.readFileSync(fixture.configPath, 'utf8')).toBe(original);
+    }
+  }, 20_000);
+});
 
 test('marks only verified model-default projections for skipping historical session scans', () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'model-default-projection-'));
@@ -410,9 +586,9 @@ test.each(['full', 'minimal'])('%s config applies live Control UI preferences ac
 }, 30_000);
 
 test.each(['full', 'minimal'])(
-  '%s sync disables portals across startup and auth changes while preserving other denies',
+  '%s sync disables unmanaged native tools and meeting capture across startup and auth changes',
   mode => {
-    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-portal-policy-'));
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'native-tool-policy-'));
     temporaryDirectories.push(stateDir);
     const configPath = path.join(stateDir, 'openclaw.json');
     const appConfig =
@@ -445,8 +621,35 @@ test.each(['full', 'minimal'])(
       getAgents: () => [],
     } as never);
 
+    const deniedTools = [
+      'ask_user',
+      'web_search',
+      'message',
+      'nodes',
+      'gateway',
+      'file_fetch',
+      'dir_list',
+      'dir_fetch',
+      'file_write',
+      'portal',
+      'dashboard',
+      'github_identity_status',
+      'presence',
+      'theme',
+      'transcripts',
+      'mobile_ui',
+      'intent',
+      'secrets',
+      'conversations_send',
+      'conversations_list',
+      'conversations_turn',
+    ];
+    const expectedDeny = [...deniedTools, 'computer'];
     expect(sync.sync('startup').ok).toBe(true);
-    expect(JSON.parse(fs.readFileSync(configPath, 'utf8')).tools.deny).toContain('portal');
+    const initial = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    expect(initial.tools.deny).toEqual(expectedDeny);
+    expect(initial.transcripts).toEqual({ enabled: false });
+    const autoStart = [{ providerId: 'discord-voice', guildId: 'guild', channelId: 'voice' }];
 
     for (const reason of [
       'startup',
@@ -455,15 +658,17 @@ test.each(['full', 'minimal'])(
       BuiltinModelSyncReason.AuthLogout,
     ]) {
       const existing = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-      existing.tools.allow = ['read', 'portal'];
+      existing.tools.allow = ['read', ...deniedTools];
       delete existing.tools.alsoAllow;
-      existing.tools.deny = ['custom-denied-tool'];
+      existing.tools.deny = ['custom-denied-tool', 'tts', 'skill_workshop', 'decision_evaluate', 'theme'];
+      existing.transcripts = { enabled: true, autoStart };
       fs.writeFileSync(configPath, JSON.stringify(existing), 'utf8');
 
       expect(sync.sync(reason).ok).toBe(true);
       const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-      expect(config.tools.deny).toEqual(expect.arrayContaining(['custom-denied-tool', 'portal']));
-      expect(config.tools.deny.filter((name: string) => name === 'portal')).toHaveLength(1);
+      expect(config.tools.deny).toEqual(expectedDeny);
+      expect(config.tools.allow).toEqual(['read', ...deniedTools, 'decision_evaluate']);
+      expect(config.transcripts).toEqual({ enabled: false });
     }
   },
   // Five real filesystem projections include startup and four policy updates.
@@ -1159,10 +1364,7 @@ describe('OpenClaw auth logout config sync', () => {
               : ['operator-tool', 'decision_evaluate'],
           );
           expect(saved.tools[policy === 'allow' ? 'alsoAllow' : 'allow']).toBeUndefined();
-          expect(saved.tools.deny).toContain('operator-denied-tool');
-          expect(saved.tools.deny).toContain('decision_evaluate');
-          expect(saved.tools.deny).not.toContain('skill_workshop');
-          expect(saved.tools.deny).not.toContain('tts');
+          expect(saved.tools.deny).toEqual([...OPENCLAW_MANAGED_TOOL_DENY, 'computer']);
         }
       }
     },
@@ -2125,26 +2327,6 @@ describe('OpenClaw auth logout config sync', () => {
     },
   );
 
-  test('a second no-model sync removes retired managed tool deny entries', () => {
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-minimal-tool-deny-'));
-    temporaryDirectories.push(directory);
-    const configPath = path.join(directory, 'openclaw.json');
-
-    expect(writeMinimalConfig(configPath, 'startup')).toMatchObject({ ok: true });
-    const existing = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-    existing.tools.deny = ['skill_workshop', 'tts', 'custom-denied-tool'];
-    fs.writeFileSync(configPath, JSON.stringify(existing), 'utf8');
-
-    expect(writeMinimalConfig(configPath, BuiltinModelSyncReason.ManualRefresh)).toMatchObject({
-      ok: true,
-    });
-    expect(JSON.parse(fs.readFileSync(configPath, 'utf8')).tools.deny).toEqual([
-      'custom-denied-tool',
-      'portal',
-      'computer',
-    ]);
-  });
-
   test('minimal config explicitly trusts extensions installed in app-managed state', () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-minimal-plugin-trust-'));
     temporaryDirectories.push(directory);
@@ -2264,22 +2446,6 @@ describe('OpenClaw auth logout config sync', () => {
       maxEntries: 500,
     });
     expect(verifyLoggedOutOpenClawConfig(configPath)).toEqual({ ok: true });
-  });
-
-  test('auth-scoped sync removes retired managed tool deny entries', () => {
-    const configPath = writeExistingBuiltinConfig();
-    const existing = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-    existing.tools = { deny: ['skill_workshop', 'tts', 'custom-denied-tool'] };
-    fs.writeFileSync(configPath, JSON.stringify(existing), 'utf8');
-
-    expect(writeMinimalConfig(configPath, BuiltinModelSyncReason.AuthLogout)).toMatchObject({
-      ok: true,
-    });
-    expect(JSON.parse(fs.readFileSync(configPath, 'utf8')).tools.deny).toEqual([
-      'custom-denied-tool',
-      'portal',
-      'computer',
-    ]);
   });
 
   test('keeps the existing preservation behavior for non-logout minimal syncs', () => {

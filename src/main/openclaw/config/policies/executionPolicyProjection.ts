@@ -19,24 +19,29 @@ export const buildManagedOpenClawCronConfig = (existing: unknown): Record<string
   ...(isRecord(existing) ? existing : {}),
 });
 
-export const removeRetiredManagedToolDenyEntries = (
-  tools: Record<string, unknown>,
-): Record<string, unknown> => {
-  if (!Array.isArray(tools.deny)) return tools;
-  const deny = tools.deny.filter(value => value !== 'skill_workshop' && value !== 'tts');
-  return deny.length === tools.deny.length ? tools : { ...tools, deny };
-};
-
-export const OPENCLAW_PORTAL_TOOL_NAME = 'portal';
-
-export const mergeManagedPortalToolDeny = (existing: unknown): string[] => [
-  ...new Set([
-    ...(Array.isArray(existing)
-      ? existing.filter((value): value is string => typeof value === 'string')
-      : []),
-    OPENCLAW_PORTAL_TOOL_NAME,
-  ]),
-];
+export const OPENCLAW_MANAGED_TOOL_DENY = [
+  'ask_user',
+  'web_search',
+  'message',
+  'nodes',
+  'gateway',
+  'file_fetch',
+  'dir_list',
+  'dir_fetch',
+  'file_write',
+  'portal',
+  'dashboard',
+  'github_identity_status',
+  'presence',
+  'theme',
+  'transcripts',
+  'mobile_ui',
+  'intent',
+  'secrets',
+  'conversations_send',
+  'conversations_list',
+  'conversations_turn',
+] as const;
 
 export const mapExecutionModeToSandboxMode = (mode: CoworkExecutionMode): 'off' | 'all' => {
   switch (mode) {
@@ -95,8 +100,8 @@ export const OPENCLAW_DECISION_EVALUATION_TOOL = 'decision_evaluate';
 
 export const mergeManagedOptionalToolPolicy = (
   existing: unknown,
-): { allow?: string[]; alsoAllow?: string[]; deny?: string[] } => {
-  const policy = removeRetiredManagedToolDenyEntries(isRecord(existing) ? existing : {});
+): { allow?: string[]; alsoAllow?: string[] } => {
+  const policy = isRecord(existing) ? existing : {};
   const usesAllow =
     Array.isArray(policy.allow) &&
     policy.allow.some(value => typeof value === 'string' && value.trim().length > 0);
@@ -111,16 +116,9 @@ export const mergeManagedOptionalToolPolicy = (
   ];
   // Native OpenClaw rejects allow + alsoAllow in the same policy scope.
   // An empty native allowlist is unrestricted; do not turn it into Jev-only access.
-  const deny = Array.isArray(policy.deny)
-    ? {
-        deny: [
-          ...new Set(policy.deny.filter((value): value is string => typeof value === 'string')),
-        ],
-      }
-    : {};
   return usesAllow
-    ? { allow: allowed, alsoAllow: undefined, ...deny }
-    : { allow: undefined, alsoAllow: allowed, ...deny };
+    ? { allow: allowed, alsoAllow: undefined }
+    : { allow: undefined, alsoAllow: allowed };
 };
 
 export const OPENCLAW_COLLABORATION_TOOLS = [
@@ -138,6 +136,25 @@ export const buildManagedOpenClawSandboxToolConfig = (mode: CoworkExecutionMode)
     ],
   },
 });
+
+export const buildManagedOpenClawExecutionToolConfig = (
+  mode: CoworkExecutionMode,
+  sourceTools: unknown,
+) => {
+  const tools = isRecord(sourceTools) ? sourceTools : {};
+  return {
+    fs: {
+      ...(isRecord(tools.fs) ? tools.fs : {}),
+      workspaceOnly: OPENCLAW_FALLBACK_FS_WORKSPACE_ONLY,
+    },
+    exec: {
+      ...(isRecord(tools.exec) ? tools.exec : {}),
+      host: resolveOpenClawExecHost(mode),
+      mode: OPENCLAW_FALLBACK_EXEC_MODE,
+    },
+    sandbox: buildManagedOpenClawSandboxToolConfig(mode),
+  };
+};
 
 export const OPENCLAW_MAX_SKILLS_IN_PROMPT = 200;
 
@@ -176,6 +193,7 @@ export const buildManagedOpenClawConnectivityConfig = (
       enabled: false,
     },
   },
+  transcripts: { enabled: false },
   tools: {
     updatePlan: true,
     // Optional evaluation is admitted only when its default-off plugin is enabled.
@@ -188,18 +206,7 @@ export const buildManagedOpenClawConnectivityConfig = (
     sessions: {
       visibility: sessionVisibility,
     },
-    // Portal presentation is not integrated into the product UI.
-    deny: mergeManagedPortalToolDeny([
-      'ask_user',
-      'web_search',
-      'message',
-      'nodes',
-      'gateway',
-      'file_fetch',
-      'dir_list',
-      'dir_fetch',
-      'file_write',
-    ]),
+    deny: [...OPENCLAW_MANAGED_TOOL_DENY],
     web: {
       search: {
         enabled: false,

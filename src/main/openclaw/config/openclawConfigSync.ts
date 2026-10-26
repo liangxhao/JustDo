@@ -32,10 +32,10 @@ import {
   buildManagedOpenClawConnectivityConfig,
   buildManagedOpenClawCronConfig,
   buildManagedOpenClawEmbeddedAgentConfig,
+  buildManagedOpenClawExecutionToolConfig,
   buildManagedOpenClawHeartbeatConfig,
   buildManagedOpenClawModelCatalogConfig,
   buildManagedOpenClawSandboxConfig,
-  buildManagedOpenClawSandboxToolConfig,
   buildManagedOpenClawSecrets,
   buildManagedOpenClawSessionConfig,
   buildManagedOpenClawSubagentConfig,
@@ -63,20 +63,16 @@ import {
   mergeManagedOpenClawSubagentConfig,
   mergeManagedOpenClawSwarmConfig,
   mergeManagedOptionalToolPolicy,
-  mergeManagedPortalToolDeny,
   mergeOpenClawPluginConfig,
   mergeOpenClawSkillConfig,
-  OPENCLAW_FALLBACK_EXEC_MODE,
-  OPENCLAW_FALLBACK_FS_WORKSPACE_ONLY,
+  OPENCLAW_MANAGED_TOOL_DENY,
   OPENCLAW_MAX_SKILLS_IN_PROMPT,
   OPENCLAW_MAX_SKILLS_PROMPT_CHARS,
   OpenClawConfigSyncDeps,
   OpenClawConfigSyncResult,
   OpenClawProviderSelection,
   readPreinstalledPluginIds,
-  removeRetiredManagedToolDenyEntries,
   resolveManagedOpenClawTtsConfig,
-  resolveOpenClawExecHost,
   sanitizeOpenClawV2026_10_6Config,
   verifyOpenClawConfigMatches,
   withMemorySearch,
@@ -699,20 +695,11 @@ export class OpenClawConfigSync {
       mcp: buildManagedMcpConfig(existingConfig?.mcp, mcpServers, agentRuntimeSettings.mcp),
       ...hookConfig,
       update: connectivityConfig.update,
+      transcripts: connectivityConfig.transcripts,
       tools: {
         ...connectivityTools,
         ...mergeManagedOptionalToolPolicy(existingConfig?.tools),
-        deny: [
-          ...new Set([
-            ...(Array.isArray(connectivityTools.deny) ? connectivityTools.deny : []),
-            ...(isRecord(existingConfig?.tools) && Array.isArray(existingConfig.tools.deny)
-              ? existingConfig.tools.deny.filter(
-                  value =>
-                    typeof value === 'string' && value !== 'skill_workshop' && value !== 'tts',
-                )
-              : []),
-          ]),
-        ],
+        deny: [...OPENCLAW_MANAGED_TOOL_DENY],
         codeMode: mergeManagedOpenClawCodeModeConfig(
           isRecord(existingConfig?.tools) ? existingConfig.tools.codeMode : undefined,
           agentRuntimeSettings,
@@ -721,19 +708,13 @@ export class OpenClawConfigSync {
           isRecord(existingConfig?.tools) ? existingConfig.tools.swarm : undefined,
           agentRuntimeSettings,
         ),
-        fs: {
-          ...(isRecord(connectivityTools.fs) ? connectivityTools.fs : {}),
-          workspaceOnly: OPENCLAW_FALLBACK_FS_WORKSPACE_ONLY,
-        },
-        exec: {
-          ...(isRecord(connectivityTools.exec) ? connectivityTools.exec : {}),
-          host: resolveOpenClawExecHost(coworkConfig.executionMode || 'local'),
-          mode: OPENCLAW_FALLBACK_EXEC_MODE,
-        },
         // Collaboration tools enforce managed-session identity and host-side
         // admission before execution, so they remain available in a sandboxed
         // conversation. Host-side MCP tools stay local-execution-only.
-        sandbox: buildManagedOpenClawSandboxToolConfig(coworkConfig.executionMode || 'local'),
+        ...buildManagedOpenClawExecutionToolConfig(
+          coworkConfig.executionMode || 'local',
+          connectivityTools,
+        ),
         loopDetection: {
           enabled: true,
         },
@@ -817,10 +798,7 @@ export class OpenClawConfigSync {
     const configChanged = hasOpenClawConfigChanged(currentContent, configToPersist);
     if (configChanged) {
       try {
-        ensureDir(path.dirname(configPath));
-        const tmpPath = `${configPath}.tmp-${Date.now()}`;
-        this.writeConfigTemporaryFile(tmpPath, nextContent);
-        fs.renameSync(tmpPath, configPath);
+        this.publishConfigFile(configPath, nextContent);
       } catch (error) {
         return {
           ok: false,
@@ -976,6 +954,13 @@ export class OpenClawConfigSync {
     }
   }
 
+  private publishConfigFile(configPath: string, content: string): void {
+    ensureDir(path.dirname(configPath));
+    const tmpPath = `${configPath}.tmp-${Date.now()}`;
+    this.writeConfigTemporaryFile(tmpPath, content);
+    fs.renameSync(tmpPath, configPath);
+  }
+
   /** Atomic file write via tmp + rename, consistent with openclaw.json writes. */
   private atomicWriteFile(filePath: string, content: string): void {
     const tmpPath = `${filePath}.tmp-${Date.now()}`;
@@ -1097,16 +1082,10 @@ export class OpenClawConfigSync {
           ...connectivityTools,
           codeMode: mergeManagedOpenClawCodeModeConfig(undefined, agentRuntimeSettings),
           swarm: mergeManagedOpenClawSwarmConfig(undefined, agentRuntimeSettings),
-          fs: {
-            ...(isRecord(connectivityTools.fs) ? connectivityTools.fs : {}),
-            workspaceOnly: OPENCLAW_FALLBACK_FS_WORKSPACE_ONLY,
-          },
-          exec: {
-            ...(isRecord(connectivityTools.exec) ? connectivityTools.exec : {}),
-            host: resolveOpenClawExecHost(coworkConfig.executionMode || 'local'),
-            mode: OPENCLAW_FALLBACK_EXEC_MODE,
-          },
-          sandbox: buildManagedOpenClawSandboxToolConfig(coworkConfig.executionMode || 'local'),
+          ...buildManagedOpenClawExecutionToolConfig(
+            coworkConfig.executionMode || 'local',
+            connectivityTools,
+          ),
         },
         plugins: mergeOpenClawPluginConfig(
           applyDefaultOpenClawPluginEntries({}, defaultPluginEntries),
@@ -1177,10 +1156,7 @@ export class OpenClawConfigSync {
           this.applyManagedRuntimeConfiguration(sanitizedConfig);
           const sanitizedContent = `${JSON.stringify(sanitizedConfig, null, 2)}\n`;
           if (hasOpenClawConfigChanged(currentContent, sanitizedConfig)) {
-            ensureDir(path.dirname(configPath));
-            const tmpPath = `${configPath}.tmp-${Date.now()}`;
-            this.writeConfigTemporaryFile(tmpPath, sanitizedContent);
-            fs.renameSync(tmpPath, configPath);
+            this.publishConfigFile(configPath, sanitizedContent);
             return buildMinimalSyncResult(sanitizedConfig, true);
           }
           return buildMinimalSyncResult(sanitizedConfig, false);
@@ -1261,11 +1237,7 @@ export class OpenClawConfigSync {
             } else {
               delete mergedDefaults.thinkingDefault;
             }
-            const existingTools = removeRetiredManagedToolDenyEntries(
-              isRecord(canonicalExisting.tools) ? canonicalExisting.tools : {},
-            );
-            const existingFileTools = isRecord(existingTools.fs) ? existingTools.fs : {};
-            const existingExecTools = isRecord(existingTools.exec) ? existingTools.exec : {};
+            const existingTools = isRecord(canonicalExisting.tools) ? canonicalExisting.tools : {};
             const existingPlugins = isRecord(canonicalExisting.plugins)
               ? canonicalExisting.plugins
               : {};
@@ -1327,6 +1299,7 @@ export class OpenClawConfigSync {
                     agentRuntimeSettings.mcp,
                   ),
                   update: connectivityConfig.update,
+                  transcripts: connectivityConfig.transcripts,
                   browser: connectivityConfig.browser,
                   hooks: {
                     ...existingHooks,
@@ -1335,7 +1308,7 @@ export class OpenClawConfigSync {
                   tools: {
                     ...existingTools,
                     ...mergeManagedOptionalToolPolicy(existingTools),
-                    deny: mergeManagedPortalToolDeny(existingTools.deny),
+                    deny: [...OPENCLAW_MANAGED_TOOL_DENY],
                     sessions: connectivityTools.sessions,
                     codeMode: mergeManagedOpenClawCodeModeConfig(
                       existingTools.codeMode,
@@ -1345,17 +1318,9 @@ export class OpenClawConfigSync {
                       existingTools.swarm,
                       agentRuntimeSettings,
                     ),
-                    fs: {
-                      ...existingFileTools,
-                      workspaceOnly: OPENCLAW_FALLBACK_FS_WORKSPACE_ONLY,
-                    },
-                    exec: {
-                      ...existingExecTools,
-                      host: resolveOpenClawExecHost(coworkConfig.executionMode || 'local'),
-                      mode: OPENCLAW_FALLBACK_EXEC_MODE,
-                    },
-                    sandbox: buildManagedOpenClawSandboxToolConfig(
+                    ...buildManagedOpenClawExecutionToolConfig(
                       coworkConfig.executionMode || 'local',
+                      existingTools,
                     ),
                   },
                   plugins: mergeOpenClawPluginConfig(
@@ -1373,10 +1338,7 @@ export class OpenClawConfigSync {
             const configToWrite = withComputerControlPolicy(mergedConfig);
             const mergedContent = `${JSON.stringify(configToWrite, null, 2)}\n`;
             if (hasOpenClawConfigChanged(currentContent, configToWrite)) {
-              ensureDir(path.dirname(configPath));
-              const tmpPath = `${configPath}.tmp-${Date.now()}`;
-              this.writeConfigTemporaryFile(tmpPath, mergedContent);
-              fs.renameSync(tmpPath, configPath);
+              this.publishConfigFile(configPath, mergedContent);
               return buildMinimalSyncResult(configToWrite, true);
             }
             return buildMinimalSyncResult(configToWrite, false);
@@ -1399,10 +1361,7 @@ export class OpenClawConfigSync {
     }
 
     try {
-      ensureDir(path.dirname(configPath));
-      const tmpPath = `${configPath}.tmp-${Date.now()}`;
-      this.writeConfigTemporaryFile(tmpPath, nextContent);
-      fs.renameSync(tmpPath, configPath);
+      this.publishConfigFile(configPath, nextContent);
       return buildMinimalSyncResult(minimalConfig, true);
     } catch (error) {
       return {

@@ -6,6 +6,7 @@ import path from 'node:path';
 import { afterEach, expect, test, vi } from 'vitest';
 
 import { OpenClawConfigSync } from '../../../src/main/openclaw/config/openclawConfigSync';
+import { OPENCLAW_MANAGED_TOOL_DENY } from '../../../src/main/openclaw/config/policies/executionPolicyProjection';
 import { clearActiveBuiltinModelCredential, setActiveBuiltinModelCredential } from '../../../src/main/providers/builtinModelCredential';
 import { setStoreGetter } from '../../../src/main/providers/providerApiConfig';
 import { BrowserMode } from '../../../src/shared/browser/browser';
@@ -76,7 +77,10 @@ function assess(cases: { label: string; config: unknown }[]): Assessment[] {
 function retainedConfig(canonicalVoice: boolean) {
   return {
     agents: { ownership: 'explicit', entries: { main: {} } },
-    tools: { deny: ['web_search'], fs: { workspaceOnly: true }, exec: { mode: 'ask' } },
+    tools: { deny: ['web_search', 'tts', 'skill_workshop'], fs: { workspaceOnly: true }, exec: { mode: 'ask' } },
+    transcripts: { enabled: true, autoStart: [
+      { providerId: 'discord-voice', guildId: 'guild', channelId: 'voice' },
+    ] },
     skills: { entries: { 'private-skill': { enabled: false } },
       workshop: { approvalPolicy: 'manual', maxPending: 12, autonomous: { mode: 'auto' }, maxSkillBytes: 60_000 } },
     plugins: { entries: { 'agent-team': { enabled: false }, 'swarm-workflow': { enabled: false },
@@ -170,6 +174,8 @@ nativeTest('persisted login, logout and minimal startup projections prune obsole
       expect(config.plugins.entries['stt-local-cli'].enabled).toBe(false);
       expect(config.plugins.entries['tts-local-cli'].enabled).toBe(false);
       expect(config.tools.deny).toContain('web_search');
+      expect(config.tools.deny).toEqual([...OPENCLAW_MANAGED_TOOL_DENY, 'computer']);
+      expect(config.transcripts).toEqual({ enabled: false });
       expect(config.tools.fs.workspaceOnly).toBe(true);
       expect(config.tools.exec.mode).toBe('ask');
       expect(config.cron.skipMissedJobs).toBe(false);

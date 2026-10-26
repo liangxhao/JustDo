@@ -644,6 +644,7 @@ describe('OpenClaw managed connectivity config', () => {
           enabled: false,
         },
       },
+      transcripts: { enabled: false },
       tools: {
         updatePlan: true,
         alsoAllow: ['decision_evaluate'],
@@ -665,6 +666,17 @@ describe('OpenClaw managed connectivity config', () => {
           'dir_fetch',
           'file_write',
           'portal',
+          'dashboard',
+          'github_identity_status',
+          'presence',
+          'theme',
+          'transcripts',
+          'mobile_ui',
+          'intent',
+          'secrets',
+          'conversations_send',
+          'conversations_list',
+          'conversations_turn',
         ],
         web: {
           search: {
