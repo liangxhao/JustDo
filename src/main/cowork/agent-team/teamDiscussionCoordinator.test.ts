@@ -35,6 +35,17 @@ const send = {
   selectedAgentIds: [],
   rounds: 2,
 };
+function preparedMembers(params: Record<string, unknown>, permissionMode = 'guarded') {
+  return {
+    members: (params.agentIds as string[]).map(agentId => ({
+      agentId,
+      sessionId: `session-${agentId}`,
+      lifecycleRevision: 'revision',
+      sessionRoot: root,
+      permissionMode,
+    })),
+  };
+}
 beforeEach(() => {
   root = mkdtempSync(path.join(os.tmpdir(), 'team-coordinator-'));
   db = new DatabaseSync(':memory:');
@@ -59,16 +70,7 @@ beforeEach(() => {
   request
     .mockReset()
     .mockImplementation(async (method: string, params: Record<string, unknown>) => {
-      if (method === Gateway.Prepare)
-        return {
-          members: (params.agentIds as string[]).map(agentId => ({
-            agentId,
-            sessionId: `session-${agentId}`,
-            lifecycleRevision: 'revision',
-            sessionRoot: root,
-            permissionMode: 'read-only',
-          })),
-        };
+      if (method === Gateway.Prepare) return preparedMembers(params);
       if (method === Gateway.Validate) return { valid: true };
       if (method === Gateway.Start)
         return {
@@ -711,7 +713,12 @@ it('projects a bound uncertain receipt without releasing its slot and restores c
 });
 
 it('rejects native commands before acquiring the room slot', async () => {
-  request.mockResolvedValue({ valid: false, error: 'teamDiscussionCommandsUnavailable' });
+  const implementation = request.getMockImplementation()!;
+  request.mockImplementation(async (method, params) =>
+    method === Gateway.Validate
+      ? { valid: false, error: 'teamDiscussionCommandsUnavailable' }
+      : implementation(method, params),
+  );
   await expect(coordinator.send({ ...send, message: '/reset' })).rejects.toThrow(
     'teamDiscussionCommandsUnavailable',
   );
@@ -730,6 +737,7 @@ it('keeps one native submission when the renderer retries concurrently', async (
 it('retains a lost acknowledgement and reconciles without resending', async () => {
   bindSummarySource();
   request.mockImplementation(async (method: string, params: Record<string, unknown>) => {
+    if (method === Gateway.Prepare) return preparedMembers(params);
     if (method === Gateway.Validate) return { valid: true };
     if (method === Gateway.Start) throw new Error('Disconnected after admission');
     if (method === Gateway.Status)
@@ -751,7 +759,7 @@ it('retains a lost acknowledgement and reconciles without resending', async () =
   expect(request.mock.calls.filter(([method]) => method === Gateway.Start)).toHaveLength(1);
 });
 
-it('copies attachments into the room project and sends native read-only identities', async () => {
+it('copies attachments and replaces a legacy room read-only policy with its configured permission', async () => {
   const source = path.join(root, '资料.txt');
   writeFileSync(source, 'Synthetic attachment');
   await coordinator.send({ ...send, attachmentPaths: [source] });
@@ -761,7 +769,7 @@ it('copies attachments into the room project and sends native read-only identiti
   expect(readFileSync(staged, 'utf8')).toBe('Synthetic attachment');
   expect(
     params.members.every(
-      (member: { permissionMode: string }) => member.permissionMode === 'read-only',
+      (member: { permissionMode: string }) => member.permissionMode === 'guarded',
     ),
   ).toBe(true);
 });
@@ -892,7 +900,8 @@ it('keeps deletion pending when native history now belongs to a replacement sess
 it('hydrates quotes only from matching native room entries before admission', async () => {
   const previous = coordinator.metadata.reserve({ ...send, requestId: 'previous' });
   coordinator.metadata.transition('room', previous.discussionId, 0, 'completed');
-  request.mockImplementation(async (method: string) => {
+  request.mockImplementation(async (method: string, params: Record<string, unknown>) => {
+    if (method === Gateway.Prepare) return preparedMembers(params);
     if (method === Gateway.Validate) return { valid: true };
     if (method === Gateway.History) return { messages: [] };
     return {};
@@ -938,7 +947,7 @@ it('lets the organizing agent create a room in the source project and attributes
   expect(coordinator.metadata.get(result.roomId)).toMatchObject({
     sourceSessionId: 'source',
     cwd: root,
-    readOnly: true,
+    readOnly: false,
     permissionMode: 'ask',
   });
   const discussionId = coordinator.metadata.runIds(result.roomId)[0];
@@ -1609,7 +1618,8 @@ it('blocks creation, sends and organizer changes while the source deletion lease
 
 it('rejects a send when source deletion begins during native input validation', async () => {
   bindSummarySource();
-  request.mockImplementation(async method => {
+  request.mockImplementation(async (method, params) => {
+    if (method === Gateway.Prepare) return preparedMembers(params);
     if (method === Gateway.Validate) {
       isSourceDeleting.mockReturnValue(true);
       return { valid: true };
@@ -1622,6 +1632,120 @@ it('rejects a send when source deletion begins during native input validation', 
   expect(request.mock.calls.some(([method]) => method === Gateway.Start)).toBe(false);
   expect(coordinator.metadata.latestRun('room')).toBeUndefined();
   expect(coordinator.metadata.get('room')?.state).toBe('ready');
+});
+
+it('refreshes legacy linked members from the exact source before sending without replacing identities', async () => {
+  bindSummarySource();
+  const original = request.getMockImplementation()!;
+  request.mockImplementation(async (method, params) =>
+    method === Gateway.Prepare ? preparedMembers(params, 'full') : original(method, params),
+  );
+
+  await coordinator.send(send);
+
+  expect(request).toHaveBeenCalledWith(
+    Gateway.Prepare,
+    expect.objectContaining({
+      summarySource,
+      sourceSessionId: 'source',
+      members: ['alice', 'bob'].map(agentId => ({
+        agentId,
+        sessionId: `session-${agentId}`,
+        lifecycleRevision: 'revision',
+      })),
+    }),
+  );
+  const start = request.mock.calls.find(([method]) => method === Gateway.Start)![1];
+  expect(start.members.map((member: { permissionMode: string }) => member.permissionMode)).toEqual([
+    'full',
+    'full',
+  ]);
+  expect(coordinator.metadata.get('room')?.members.map(member => member.sessionId)).toEqual([
+    'session-alice',
+    'session-bob',
+  ]);
+  expect(request.mock.calls.findIndex(([method]) => method === Gateway.Prepare)).toBeLessThan(
+    request.mock.calls.findIndex(([method]) => method === Gateway.Validate),
+  );
+});
+
+it('rejects replacement member identities during policy refresh before reserving a discussion', async () => {
+  const original = request.getMockImplementation()!;
+  request.mockImplementation(async (method, params) => {
+    if (method !== Gateway.Prepare) return original(method, params);
+    const prepared = preparedMembers(params);
+    prepared.members[0].sessionId = 'replacement';
+    return prepared;
+  });
+
+  await expect(coordinator.send(send)).rejects.toThrow('teamDiscussionSessionChanged');
+
+  expect(coordinator.metadata.latestRun('room')).toBeUndefined();
+  expect(request.mock.calls.some(([method]) => method === Gateway.Start)).toBe(false);
+});
+
+it('derives UI-created linked group configuration from the source session', async () => {
+  const created = await coordinator.create({
+    id: 'linked-group',
+    title: 'Linked',
+    cwd: path.join(root, 'untrusted'),
+    permissionMode: 'full',
+    readOnly: true,
+    sourceSessionId: 'source',
+    agentIds: ['alice', 'bob'],
+    rounds: 2,
+  });
+
+  expect(created).toMatchObject({
+    cwd: root,
+    permissionMode: 'ask',
+    readOnly: false,
+    summarySource,
+  });
+  expect(request).toHaveBeenCalledWith(
+    Gateway.Prepare,
+    expect.objectContaining({ cwd: root, permissionMode: 'ask', summarySource }),
+  );
+});
+
+it('allows source participation in linked rooms without a read-only flag', async () => {
+  bindSummarySource();
+  db.prepare('UPDATE team_discussion_rooms SET read_only = 0 WHERE id = ?').run('room');
+
+  const updated = await coordinator.setParticipation({
+    roomId: 'room',
+    expectedRevision: 1,
+    enabled: true,
+  });
+
+  expect(updated.members).toContainEqual({ ...summarySource, name: 'main', ownership: 'source' });
+});
+
+it('retains an existing independent room policy when its legacy source link has no exact native binding', async () => {
+  db.prepare(
+    'UPDATE team_discussion_rooms SET permission_mode = ?, source_session_id = ? WHERE id = ?',
+  ).run('full', 'source', 'room');
+  const original = request.getMockImplementation()!;
+  request.mockImplementation(async (method, params) =>
+    method === Gateway.Prepare ? preparedMembers(params, 'full') : original(method, params),
+  );
+  const existing = coordinator.metadata.get('room')!;
+
+  const retried = await coordinator.create({
+    ...existing,
+    agentIds: existing.members.map(member => member.agentId),
+  });
+  await coordinator.send(send);
+
+  expect(retried.summarySource).toBeUndefined();
+  expect(retried.permissionMode).toBe('full');
+  expect(request.mock.calls.some(([method]) => method === Gateway.Summary)).toBe(false);
+  expect(request.mock.calls.find(([method]) => method === Gateway.Prepare)?.[1]).toMatchObject({
+    permissionMode: 'full',
+  });
+  expect(request.mock.calls.find(([method]) => method === Gateway.Prepare)?.[1]).not.toHaveProperty(
+    'summarySource',
+  );
 });
 
 it('does not publish a prepared room as ready after its source begins deletion', async () => {

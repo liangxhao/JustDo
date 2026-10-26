@@ -221,7 +221,7 @@ Main 为完整重启的停止/准备阶段及崩溃恢复退避阶段连续发�
 | 操作或触发条件                                               | 生效方式与重启边界                                                                                                                             |
 | ------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
 | Gateway 断线、心跳恢复、审批桥重连                           | running 时直接重新进行认证握手，不调用启动健康检查；starting 时加入已有启动，真实退出由 Manager 恢复                                           |
-| 输入框语言模型选择及默认值回滚                              | 原生会话选择与模型字段热更新；默认确认不占用发送准入队列，未确认不触发停止或重启                                                             |
+| 输入框语言模型选择及默认值回滚                               | 原生会话选择与模型字段热更新；默认确认不占用发送准入队列，未确认不触发停止或重启                                                               |
 | 普通设置、模型目录、MCP、Hook、技能变更                      | 原生配置热更新；仅凭据值变化使用 `secrets.reload`；热更新未完成才请求原生协调重启                                                              |
 | Agent Team / Swarm 等扩展启停                                | 原生插件运行时回执；Team 仍单独 `skills.update`，不再保留 9.8 技能发现的强制重启；仅原生要求或网络策略变化才重启                               |
 | 扩展安装、卸载及离线 CLI 回退                                | 优先使用原生运行时回执、`plugins.reload` / `plugins.refresh`；Windows 真实目录锁恢复仍保留暂停、停止、重试、恢复流程                           |
@@ -599,7 +599,7 @@ examples. See [CLI / ACP / app-server](../features/integrations/agent-cli.md).
 
 ### 来源参与与总结的原生路由
 
-含组织者的群由公开 `runGroupThread` 调度，来源回合经 `dispatchReplyWithBufferedBlockDispatcher` 使用 webchat/direct/inter_session，保持原 canonical delivery；普通成员仍走 Channel。最终 dispatch 边界重新校验原生身份并恢复 expectedExistingSessionId/pinExpectedExistingSession。群内来源只允许 read，总结 disableTools；不临时更改源权限。只读流程拒绝 ACP/未验证 runtime。
+含组织者的群由公开 `runGroupThread` 调度，来源回合经 `dispatchReplyWithBufferedBlockDispatcher` 使用 webchat/direct/inter_session，保持原 canonical delivery；普通成员仍走 Channel。最终 dispatch 边界重新校验原生身份并恢复 expectedExistingSessionId/pinExpectedExistingSession。关联群成员在新批次预留前按精确原生身份继承来源当前的会话执行策略，dispatch 配置继承来源工具、模型等助手设置；不复制角色或历史。群内来源和讨论结束后的自动汇总沿用原会话工具与执行设置，不添加群聊专属只读白名单或 disableTools。汇总交接允许继续原有授权范围内的未完成任务，工具运行仍归原生 whole-run 结算。未验证 ACP/runtime 与不能安全继承的 creation-owned sandbox 继续拒绝。
 
 公开来源发言镜像到 room-owned 原生历史，并保存 speaker 身份，保证源历史删除后群公开时间线仍可读。独立 summary receipt 固定 source incarnation、批次和输出 entryId，支持先于 admission 的取消墓碑及 exact AbortSignal；旧 owner 中断不盲重跑。见[验证边界](../features/assistants/agent-team.md)。
 

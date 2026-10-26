@@ -909,6 +909,31 @@ async function prepare() {
   );
 }
 
+it('creates independent groups with their selected permissions and no read-only switch', async () => {
+  await prepare();
+  expect(screen.queryByText('teamReadOnly')).toBeNull();
+  const permission = screen.getByRole('combobox', { name: 'teamPermission' });
+  expect(permission).toHaveProperty('disabled', false);
+  fireEvent.change(permission, { target: { value: 'full' } });
+
+  fireEvent.click(screen.getByRole('button', { name: 'teamSend' }));
+
+  await waitFor(() => expect(create).toHaveBeenCalledOnce());
+  expect(create.mock.calls[0][0]).toMatchObject({ permissionMode: 'full' });
+  expect(create.mock.calls[0][0]).not.toHaveProperty('readOnly');
+});
+
+it('shows source settings inheritance instead of a separate permission choice for linked groups', async () => {
+  render(
+    <TeamDiscussionView entry={{ sourceSessionId: 'source', cwd: '/project' }} onClose={vi.fn()} />,
+  );
+  fireEvent.click(screen.getByRole('button', { name: 'teamGroup' }));
+
+  expect(screen.getByText('teamInheritSourceSettings')).toBeTruthy();
+  expect(screen.queryByRole('combobox', { name: 'teamPermission' })).toBeNull();
+  expect(screen.queryByText('teamReadOnly')).toBeNull();
+});
+
 it('preserves a directed group draft across task and discussion mode views without starting work', async () => {
   await prepare();
   const mentionInput = screen.getByRole('textbox', { name: 'teamMessage' }) as HTMLTextAreaElement;

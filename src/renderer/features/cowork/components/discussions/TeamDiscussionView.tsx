@@ -196,7 +196,6 @@ export default function TeamDiscussionView({
     };
   }, [room?.id, entry.roomId]);
   const setRounds = (value: number) => updateDiscussionDraft(draftId.current, { rounds: value });
-  const [readOnly, setReadOnly] = useState(true);
   const [permission, setPermission] = useState<'ask' | 'auto' | 'full'>('ask');
 
   useEffect(() => {
@@ -420,7 +419,6 @@ export default function TeamDiscussionView({
             agentIds: members,
             rounds,
             permissionMode: permission,
-            readOnly,
             ...(entry.sourceSessionId ? { sourceSessionId: entry.sourceSessionId } : {}),
           });
           if (!created.success) throw new Error(created.error);
@@ -908,29 +906,24 @@ export default function TeamDiscussionView({
                   ))}
                 </div>
               </fieldset>
-              <label>
-                <input
-                  type="checkbox"
-                  checked={readOnly}
-                  onChange={event => setReadOnly(event.target.checked)}
-                />{' '}
-                {t('teamReadOnly')}
-              </label>
-              <label>
-                {t('teamPermission')}{' '}
-                <select
-                  className={field}
-                  disabled={readOnly}
-                  value={permission}
-                  onChange={event => setPermission(event.target.value as typeof permission)}
-                >
-                  {(['ask', 'auto', 'full'] as const).map(value => (
-                    <option key={value} value={value}>
-                      {t(`teamPermission_${value}`)}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              {entry.sourceSessionId ? (
+                <p className="text-sm text-secondary">{t('teamInheritSourceSettings')}</p>
+              ) : (
+                <label>
+                  {t('teamPermission')}{' '}
+                  <select
+                    className={field}
+                    value={permission}
+                    onChange={event => setPermission(event.target.value as typeof permission)}
+                  >
+                    {(['ask', 'auto', 'full'] as const).map(value => (
+                      <option key={value} value={value}>
+                        {t(`teamPermission_${value}`)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
             </>
           )}
         </div>
@@ -1066,7 +1059,6 @@ export default function TeamDiscussionView({
               onClose={() => setDrawer(false)}
               participation={
                 room.summarySource &&
-                room.readOnly !== false &&
                 !room.members.some(
                   member =>
                     member.agentId === room.summarySource?.agentId && member.ownership !== 'source',

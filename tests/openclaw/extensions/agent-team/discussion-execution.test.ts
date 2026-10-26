@@ -1,6 +1,7 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 
 import { executeGroupDiscussion } from '../../../../plugins/extensions/agent-team/discussion/discussion-execution';
+import { discussionExecutionPolicyFingerprint } from '../../../../plugins/extensions/agent-team/discussion/discussion-source-policy';
 
 const sdk = vi.hoisted(() => ({
   dispatch: vi.fn(),
@@ -31,6 +32,7 @@ vi.mock('openclaw/plugin-sdk/session-transcript-runtime', () => ({
 beforeEach(() => {
   vi.clearAllMocks();
   sdk.dispatch.mockResolvedValue(undefined);
+  sdk.reply.mockResolvedValue(undefined);
   sdk.group.mockImplementation(async ({ cfg, runTurn }) => {
     const group = Object.values(cfg.broadcast)[0] as { agents: string[] };
     await runTurn({ agentId: group.agents[0], round: 1 });
@@ -43,6 +45,217 @@ beforeEach(() => {
     permissionMode: 'read-only',
   }));
 });
+
+it('keeps normal tools on a borrowed source turn and waits for its whole-run outcome', async () => {
+  const members = ['alice', 'main'].map(agentId => ({
+    agentId,
+    name: agentId,
+    sessionId: agentId,
+    lifecycleRevision: 'rev',
+    sessionRoot: '/project',
+    permissionMode: 'full',
+    ...(agentId === 'main'
+      ? { ownership: 'source' as const, sessionKey: 'agent:main:justdo:source' }
+      : {}),
+  }));
+  sdk.getSessionEntry.mockImplementation(({ agentId }) => ({
+    sessionId: agentId,
+    lifecycleRevision: 'rev',
+    sessionRoot: '/project',
+    permissionMode: 'full',
+  }));
+  let lifecycle!: (event: never) => void;
+  const tool = vi.fn();
+  const onOutcome = vi.fn();
+  const dispatcher = vi.fn(async params => {
+    expect(params.replyOptions.toolsAllow).toBeUndefined();
+    expect(params.replyOptions.disableTools).toBeUndefined();
+    params.replyOptions.onAgentRunStart('source-run');
+    await tool();
+    expect(onOutcome).not.toHaveBeenCalled();
+    lifecycle({
+      runId: 'source-run',
+      sessionId: 'main',
+      sessionKey: 'agent:main:justdo:source',
+      stream: 'lifecycle',
+      data: { phase: 'end', executionSettled: true },
+    } as never);
+  });
+  sdk.group.mockImplementation(async ({ runTurn }) => {
+    await runTurn({ agentId: 'main', round: 1 });
+    return { failedTurns: 0 };
+  });
+  sdk.reply.mockImplementation(async turn => {
+    expect(turn.toolsAllow).toBeUndefined();
+    expect(turn.replyOptions.toolsAllow).toBeUndefined();
+    sdk.identity = { agentId: 'main', sessionKey: 'agent:main:justdo:source' };
+    return turn.dispatchReplyFromConfig({ ctx: turn.ctx, replyOptions: turn.replyOptions });
+  });
+  await executeGroupDiscussion({
+    cfg: {},
+    room: {
+      id: 'room',
+      title: 'Discussion',
+      members,
+      rounds: 1,
+      revision: 1,
+      generation: 0,
+      state: 'ready',
+      cwd: '/project',
+      permissionMode: 'full',
+      readOnly: false,
+      createdAt: 1,
+      updatedAt: 1,
+      sourceSessionId: 'source',
+      summarySource: {
+        agentId: 'main',
+        sessionKey: 'agent:main:justdo:source',
+        sessionId: 'main',
+        lifecycleRevision: 'rev',
+      },
+    },
+    send: {
+      roomId: 'room',
+      requestId: 'request',
+      expectedRevision: 1,
+      message: 'Check and continue',
+      selectedAgentIds: [],
+      rounds: 1,
+    },
+    discussionId: 'discussion',
+    members,
+    signal: new AbortController().signal,
+    onAgentEvent: callback => {
+      lifecycle = callback as never;
+      return vi.fn();
+    },
+    channelRuntime: {
+      commands: { isControlCommandMessage: () => false },
+      reply: { dispatchReplyFromConfig: dispatcher },
+    } as never,
+    onExecution: vi.fn(),
+    onReference: vi.fn(),
+    onOutcome,
+  });
+  expect(tool).toHaveBeenCalledOnce();
+  expect(dispatcher).toHaveBeenCalledOnce();
+  expect(onOutcome).toHaveBeenCalledExactlyOnceWith('main', 'completed');
+});
+
+it.each(['automatic-selection', 'tool-policy'] as const)(
+  'handles native %s updates during member execution without dropping authority checks',
+  async change => {
+    const members = ['alice', 'bob'].map(agentId => ({
+      agentId,
+      name: agentId,
+      sessionId: agentId,
+      lifecycleRevision: 'rev',
+      sessionRoot: '/project',
+      permissionMode: 'full',
+    }));
+    const entry = {
+      sessionId: 'alice',
+      lifecycleRevision: 'rev',
+      sessionRoot: '/project',
+      permissionMode: 'full',
+    };
+    const sourceSessionPolicy = discussionExecutionPolicyFingerprint(entry as never);
+    let current = { ...entry } as Record<string, unknown>;
+    sdk.getSessionEntry.mockImplementation(({ agentId }) =>
+      agentId === 'alice'
+        ? current
+        : {
+            ...entry,
+            sessionId: agentId,
+          },
+    );
+    let lifecycle!: (event: never) => void;
+    let nativeTurn: never;
+    sdk.append.mockImplementation(async input => {
+      input.beforeFreshMessageCommit();
+      return { messageId: 'public-result' };
+    });
+    sdk.dispatch.mockImplementation(async turn => {
+      nativeTurn = turn;
+      return turn.dispatchReplyFromConfig({
+        ctx: { AgentId: 'alice' },
+        replyOptions: turn.replyOptions,
+      });
+    });
+    const dispatcher = vi.fn(async params => {
+      sdk.identity = { agentId: 'alice', sessionKey: 'agent:alice:justdo-team:group:room' };
+      params.replyOptions.onAgentRunStart('native-run');
+      current =
+        change === 'automatic-selection'
+          ? {
+              ...current,
+              authProfileOverride: 'auto-profile',
+              authProfileOverrideSource: 'auto',
+              modelOverride: 'fallback',
+              modelOverrideSource: 'auto',
+              modelOverrideFallbackOriginModel: 'selected',
+            }
+          : { ...current, toolOverrides: { webSearch: false } };
+      lifecycle({
+        runId: 'native-run',
+        sessionId: 'alice',
+        sessionKey: sdk.identity.sessionKey,
+        stream: 'lifecycle',
+        data: { phase: 'end', executionSettled: true },
+      } as never);
+      await (
+        nativeTurn as unknown as {
+          delivery: { deliver: (payload: unknown, info: unknown) => Promise<unknown> };
+        }
+      ).delivery.deliver({ text: 'Verified result' }, { kind: 'final' });
+    });
+    const run = executeGroupDiscussion({
+      cfg: {},
+      room: {
+        id: 'room',
+        title: 'Discussion',
+        members,
+        rounds: 1,
+        revision: 1,
+        generation: 0,
+        state: 'ready',
+        cwd: '/project',
+        permissionMode: 'full',
+        createdAt: 1,
+        updatedAt: 1,
+      },
+      send: {
+        roomId: 'room',
+        requestId: 'request',
+        expectedRevision: 1,
+        message: 'Verify',
+        selectedAgentIds: [],
+        rounds: 1,
+      },
+      discussionId: 'discussion',
+      members,
+      sourceSessionPolicy,
+      signal: new AbortController().signal,
+      onAgentEvent: callback => {
+        lifecycle = callback as never;
+        return vi.fn();
+      },
+      channelRuntime: {
+        commands: { isControlCommandMessage: () => false },
+        reply: { dispatchReplyFromConfig: dispatcher },
+      } as never,
+      onExecution: vi.fn(),
+      onReference: vi.fn(),
+    });
+    if (change === 'automatic-selection') {
+      await expect(run).resolves.toBeUndefined();
+      expect(sdk.append).toHaveBeenCalledOnce();
+    } else {
+      await expect(run).rejects.toThrow('teamDiscussionSessionChanged');
+      expect(sdk.append).not.toHaveBeenCalled();
+    }
+  },
+);
 
 it('preserves accepted native ownership when the start callback rejects a changed member', async () => {
   const members = ['alice', 'bob'].map(agentId => ({

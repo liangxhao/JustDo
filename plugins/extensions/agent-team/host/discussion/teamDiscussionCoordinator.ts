@@ -4,7 +4,6 @@ import path from 'node:path';
 
 import type Database from 'better-sqlite3';
 
-import { toOpenClawSessionPermissionMode } from '../../../runtime-services/contracts/permissions';
 import { buildCoworkSessionKey as buildManagedSessionKey } from '../../../runtime-services/contracts/session-key';
 import {
   effectiveDiscussionDefaults,
@@ -320,7 +319,6 @@ export class TeamDiscussionCoordinator {
             this.settings.read().value.discussion.defaultRounds,
           cwd: source.cwd,
           permissionMode: source.permissionMode,
-          readOnly: true,
           sourceSessionId,
         },
         summarySource,
@@ -462,7 +460,6 @@ export class TeamDiscussionCoordinator {
     const source = room.summarySource;
     if (
       !source ||
-      room.readOnly === false ||
       !room.sourceSessionId ||
       (input.enabled && !this.deps.getStore().getSession(room.sourceSessionId))
     )
@@ -527,8 +524,33 @@ export class TeamDiscussionCoordinator {
     )
       throw new Error('teamDiscussionInvalidInput');
     const sourceSessionId = input.sourceSessionId as string | undefined;
+    const existing = this.metadata.get(input.id);
+    summarySource ??= existing?.summarySource;
     const assertCurrent = this.admissionGuard(input.id, sourceSessionId);
     assertCurrent();
+    if (sourceSessionId && (!existing || summarySource)) {
+      const source = this.deps.getStore().getSession(sourceSessionId)!;
+      if (source.external) throw new Error('teamDiscussionInvalidInput');
+      input.cwd = source.cwd;
+      input.permissionMode = source.permissionMode;
+      if (!summarySource) {
+        await this.deps.ensureReady();
+        const sessionKey = buildManagedSessionKey(source.id, source.agentId);
+        const description = await this.deps.requestGateway<{ source?: TeamDiscussionSource }>(
+          TeamDiscussionGateway.Summary,
+          { operation: 'source', sessionKey },
+        );
+        assertCurrent();
+        if (!description.source?.sessionId || !description.source.lifecycleRevision)
+          throw new Error('teamDiscussionSessionChanged');
+        summarySource = {
+          agentId: source.agentId,
+          sessionKey,
+          sessionId: description.source.sessionId,
+          lifecycleRevision: description.source.lifecycleRevision,
+        };
+      }
+    }
     input.cwd = await realpath(input.cwd as string);
     assertCurrent();
     const ids = parseTeamDiscussionAgentIds(
@@ -539,7 +561,6 @@ export class TeamDiscussionCoordinator {
       parseTeamDiscussionAgentIds([...ids, summarySource.agentId], 2);
     const rounds = parseTeamDiscussionRounds(input.rounds);
     const id = input.id;
-    const existing = this.metadata.get(id);
     if (!existing) {
       const limits = this.settings.read().value.discussion;
       if (ids.length + (summarySource && organizerParticipates ? 1 : 0) > limits.maxMembers)
@@ -550,8 +571,7 @@ export class TeamDiscussionCoordinator {
       throw new Error('teamDiscussionLegacyOrganizer');
     if (
       existing &&
-      (existing.readOnly !== (input.readOnly !== false) ||
-        existing.title !== input.title.trim() ||
+      (existing.title !== input.title.trim() ||
         existing.sourceSessionId !== input.sourceSessionId ||
         existing.cwd !== input.cwd ||
         existing.permissionMode !== input.permissionMode ||
@@ -613,7 +633,7 @@ export class TeamDiscussionCoordinator {
           revision: 1,
           generation: 0,
           state: TeamDiscussionState.PREPARING,
-          readOnly: input.readOnly !== false,
+          readOnly: false,
           ...(input.sourceSessionId ? { sourceSessionId: input.sourceSessionId as string } : {}),
           createdAt: Date.now(),
           updatedAt: Date.now(),
@@ -629,7 +649,21 @@ export class TeamDiscussionCoordinator {
             agentIds: ids,
             cwd: input.cwd,
             permissionMode: input.permissionMode,
-            readOnly: input.readOnly !== false,
+            ...(summarySource ? { summarySource } : {}),
+            ...(sourceSessionId ? { sourceSessionId } : {}),
+            ...(existing?.members
+              .filter(member => member.ownership !== 'source')
+              .every(member => member.sessionId && member.lifecycleRevision)
+              ? {
+                  members: existing.members
+                    .filter(member => member.ownership !== 'source')
+                    .map(({ agentId, sessionId, lifecycleRevision }) => ({
+                      agentId,
+                      sessionId,
+                      lifecycleRevision,
+                    })),
+                }
+              : {}),
           },
         );
         if (
@@ -705,6 +739,43 @@ export class TeamDiscussionCoordinator {
       this.metadata.markUncertain(room.id, room.activeDiscussionId, room.generation);
     else this.metadata.transition(room.id, room.activeDiscussionId, room.generation, status.state);
   }
+  private async prepareForSend(
+    room: TeamDiscussionRoom,
+    request: TeamDiscussionDependencies['requestGateway'],
+  ): Promise<NativeMember[]> {
+    const members = room.members.filter(member => member.ownership !== 'source');
+    const prepared = await request<{ members: NativeMember[] }>(TeamDiscussionGateway.Prepare, {
+      roomId: room.id,
+      agentIds: members.map(member => member.agentId),
+      cwd: room.cwd,
+      permissionMode: room.permissionMode,
+      ...(room.summarySource
+        ? { summarySource: room.summarySource, sourceSessionId: room.sourceSessionId }
+        : {}),
+      members: members.map(({ agentId, sessionId, lifecycleRevision }) => ({
+        agentId,
+        sessionId,
+        lifecycleRevision,
+      })),
+    });
+    if (
+      !Array.isArray(prepared.members) ||
+      prepared.members.length !== members.length ||
+      members.some(
+        member =>
+          prepared.members.filter(
+            native =>
+              native.agentId === member.agentId &&
+              native.sessionId === member.sessionId &&
+              native.lifecycleRevision === member.lifecycleRevision &&
+              native.sessionRoot === room.cwd &&
+              ['guarded', 'workspace', 'full'].includes(native.permissionMode),
+          ).length !== 1,
+      )
+    )
+      throw new Error('teamDiscussionSessionChanged');
+    return prepared.members;
+  }
   async send(
     value: unknown,
     assertActive: () => void = () => {},
@@ -728,6 +799,9 @@ export class TeamDiscussionCoordinator {
     const request = pendingInput ? this.deps.requestConnectedGateway : this.deps.requestGateway;
     if (!request) throw new Error('teamDiscussionUnavailable');
     if (!pendingInput) await this.deps.ensureReady();
+    assertCurrent();
+    this.metadata.assertSettled(room.id);
+    const prepared = await this.prepareForSend(room, request);
     assertCurrent();
     const validation = await request<{ valid: boolean; error?: string }>(
       TeamDiscussionGateway.Validate,
@@ -820,16 +894,17 @@ export class TeamDiscussionCoordinator {
         send: { ...send, message: nativeMessage, attachmentPaths: staged },
         discussionId: reservation.discussionId,
         resources,
-        members: room.members.map(member => ({
-          agentId: member.agentId,
-          sessionId: member.sessionId,
-          lifecycleRevision: member.lifecycleRevision,
-          sessionRoot: room.cwd,
-          permissionMode:
-            room.readOnly !== false
-              ? 'read-only'
-              : toOpenClawSessionPermissionMode(room.permissionMode),
-        })),
+        members: room.members.map(member =>
+          member.ownership === 'source'
+            ? {
+                agentId: member.agentId,
+                sessionId: member.sessionId,
+                lifecycleRevision: member.lifecycleRevision,
+                sessionRoot: room.cwd,
+                permissionMode: prepared[0].permissionMode,
+              }
+            : prepared.find(native => native.agentId === member.agentId)!,
+        ),
       });
       this.applyStatus(this.room(room.id), status);
     } catch (error) {

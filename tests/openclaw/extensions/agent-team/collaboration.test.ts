@@ -69,16 +69,16 @@ function fixture(teamEnabled = true, separateHooks = false, realSchemas = false)
         ? realSchemas
           ? { Type }
           : {
-            Type: new Proxy(
-              {},
-              {
-                get:
-                  () =>
-                  (...args: unknown[]) =>
-                    args,
-              },
-            ),
-          }
+              Type: new Proxy(
+                {},
+                {
+                  get:
+                    () =>
+                    (...args: unknown[]) =>
+                      args,
+                },
+              ),
+            }
         : name === 'openclaw/plugin-sdk/routing'
           ? {
               isSubagentSessionKey: (key: string) =>
@@ -919,20 +919,36 @@ describe('native peer tool authority', () => {
         { sessionKey, runId: 'source-run', toolCallId: 'slow-prepare' },
       );
       h.emit.mockImplementation((_event, payload) => {
-        setTimeout(() => h.methods.get('collaboration.resolve')!({
-          params: { requestId: payload.requestId, result: { sessionKey: 'agent:review:justdo:peer' } },
-          respond: vi.fn(),
-        }), 10000);
+        setTimeout(
+          () =>
+            h.methods.get('collaboration.resolve')!({
+              params: {
+                requestId: payload.requestId,
+                result: { sessionKey: 'agent:review:justdo:peer' },
+              },
+              respond: vi.fn(),
+            }),
+          10000,
+        );
       });
       const tool = h.factories.get('task_assistants')!({ sessionKey });
       let settled = false;
-      const pending = tool.execute('slow-prepare', { agentId: 'review' }).finally(() => { settled = true; });
+      const pending = tool.execute('slow-prepare', { agentId: 'review' }).finally(() => {
+        settled = true;
+      });
       await vi.advanceTimersByTimeAsync(8000);
       expect(settled).toBe(false);
       await vi.advanceTimersByTimeAsync(2000);
-      expect(await pending).toMatchObject({ isError: false, details: { sessionKey: 'agent:review:justdo:peer' } });
+      expect(await pending).toMatchObject({
+        isError: false,
+        details: { sessionKey: 'agent:review:justdo:peer' },
+      });
       expect(h.emit).toHaveBeenCalledOnce();
-      expect(request).toHaveBeenCalledWith('collaboration.dispatch', expect.objectContaining({ operation: 'ensure' }), expect.objectContaining({ timeoutMs: 75000 }));
+      expect(request).toHaveBeenCalledWith(
+        'collaboration.dispatch',
+        expect.objectContaining({ operation: 'ensure' }),
+        expect.objectContaining({ timeoutMs: 75000 }),
+      );
     } finally {
       h.stop();
       vi.useRealTimers();
@@ -949,12 +965,18 @@ describe('native peer tool authority', () => {
       );
       h.emit.mockImplementation(() => undefined);
       const tool = h.factories.get('task_assistants')!({ sessionKey });
-      const rejected = expect(tool.execute('expired-prepare', { agentId: 'review' })).rejects.toThrow('did not respond');
+      const rejected = expect(
+        tool.execute('expired-prepare', { agentId: 'review' }),
+      ).rejects.toThrow('did not respond');
       await vi.advanceTimersByTimeAsync(60000);
       await rejected;
       const respond = vi.fn();
       h.methods.get('collaboration.resolve')!({
-        params: { requestId: h.emit.mock.calls[0][1].requestId, result: { sessionKey: 'agent:review:justdo:peer' } }, respond,
+        params: {
+          requestId: h.emit.mock.calls[0][1].requestId,
+          result: { sessionKey: 'agent:review:justdo:peer' },
+        },
+        respond,
       });
       expect(respond).toHaveBeenCalledWith(true, { stale: true });
       expect(h.emit).toHaveBeenCalledOnce();
@@ -1273,6 +1295,38 @@ it('requires bound native calls for group tools and hides them from group and ch
   }
 });
 
+it.each([{ sandbox: 'required' }])(
+  'rejects new group execution when source isolation cannot be inherited: %j',
+  async policy => {
+    const h = fixture();
+    const sessionKey = 'agent:a:justdo:a';
+    const tool = h.factories.get('team_discussion')!({ sessionKey });
+    h.setNativePolicy(policy);
+    try {
+      for (const action of ['create', 'send']) {
+        await h.hooks.get('before_tool_call')!(
+          { toolName: 'team_discussion', params: { action } },
+          { sessionKey, runId: 'run', toolCallId: action },
+        );
+        await expect(tool.execute(action, { action, roomId: 'existing' })).rejects.toThrow(
+          'teamDiscussionSourcePolicyUnsupported',
+        );
+      }
+      expect(h.emit).not.toHaveBeenCalled();
+      for (const action of ['read', 'stop']) {
+        await h.hooks.get('before_tool_call')!(
+          { toolName: 'team_discussion', params: { action } },
+          { sessionKey, runId: 'run', toolCallId: action },
+        );
+        await tool.execute(action, { action, roomId: 'existing' });
+      }
+      expect(h.emit).toHaveBeenCalledTimes(2);
+    } finally {
+      h.stop();
+    }
+  },
+);
+
 it.each([
   { toolOverrides: { webSearch: false } },
   { toolOverrides: { mcpServers: { private: false } } },
@@ -1280,26 +1334,15 @@ it.each([
   { toolOverrides: { skills: { private: false } } },
   { inheritedToolAllow: ['read'] },
   { inheritedToolDeny: ['web_search'] },
-  { sandbox: 'required' },
   { execHost: 'sandbox' },
   { execHost: 'node' },
-])('rejects new group execution when source restrictions cannot be preserved: %j', async policy => {
+])('permits new group execution with inheritable source restrictions: %j', async policy => {
   const h = fixture();
   const sessionKey = 'agent:a:justdo:a';
   const tool = h.factories.get('team_discussion')!({ sessionKey });
   h.setNativePolicy(policy);
   try {
     for (const action of ['create', 'send']) {
-      await h.hooks.get('before_tool_call')!(
-        { toolName: 'team_discussion', params: { action } },
-        { sessionKey, runId: 'run', toolCallId: action },
-      );
-      await expect(tool.execute(action, { action, roomId: 'existing' })).rejects.toThrow(
-        'teamDiscussionSourcePolicyUnsupported',
-      );
-    }
-    expect(h.emit).not.toHaveBeenCalled();
-    for (const action of ['read', 'stop']) {
       await h.hooks.get('before_tool_call')!(
         { toolName: 'team_discussion', params: { action } },
         { sessionKey, runId: 'run', toolCallId: action },

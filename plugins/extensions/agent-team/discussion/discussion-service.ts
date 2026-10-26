@@ -4,7 +4,7 @@ import path from 'node:path';
 import { getGroupThreadDeliverySession } from 'openclaw/plugin-sdk/channel-inbound';
 import type { OpenClawConfig, OpenClawPluginApi } from 'openclaw/plugin-sdk/core';
 import type { ReplyPayload } from 'openclaw/plugin-sdk/reply-payload';
-import { getSessionEntry } from 'openclaw/plugin-sdk/session-store-runtime';
+import { getSessionEntry, patchSessionEntry } from 'openclaw/plugin-sdk/session-store-runtime';
 
 import { parseDiscussionResources } from '../contracts/agentTeamSettings';
 import {
@@ -24,8 +24,11 @@ import { DiscussionLedger } from '../../runtime-services/agent-team/discussion/d
 import { bindDiscussionTransport, discussionChannel } from './discussion-channel';
 import { executeGroupDiscussion, type PreparedDiscussionMember } from './discussion-execution';
 import {
-  assertDiscussionRuntime,
-  hasUnsupportedDiscussionSourcePolicy,
+  captureDiscussionSourcePolicy,
+  discussionSessionPolicy,
+  discussionSessionPolicyFingerprint,
+  discussionExecutionPolicyFingerprint,
+  inheritDiscussionConfig,
 } from './discussion-source-policy';
 import { registerDiscussionSummary } from './discussion-summary';
 
@@ -50,34 +53,34 @@ export function registerDiscussionService(api: OpenClawPluginApi): void {
   const runs = new Map<string, ActiveDiscussion>();
   const outbound = new Map<string, (payload: ReplyPayload) => Promise<{ messageId: string }>>();
   let stopped = true;
-  const assertSourcePolicy = (cfg: OpenClawConfig, room: TeamDiscussionRoom) => {
-    const source = room.summarySource;
-    if (!source) return;
-    if (
-      !room.sourceSessionId ||
-      source.sessionKey !== `agent:${source.agentId}:justdo:${room.sourceSessionId}` ||
-      !cfg.agents?.entries?.[source.agentId]
-    )
-      throw new Error('teamDiscussionSessionChanged');
-    // A non-participating organizer is outside the member roster. Its native
-    // policy can change without rotating lifecycleRevision, so roster checks
-    // cannot certify that a saved input still has the original authority.
-    const entry = getSessionEntry({
-      agentId: source.agentId,
-      sessionKey: source.sessionKey,
-      readConsistency: 'latest',
-    });
-    if (
-      !entry ||
-      entry.sessionId !== source.sessionId ||
-      entry.lifecycleRevision !== source.lifecycleRevision ||
-      entry.sessionRoot !== room.cwd ||
-      entry.archivedAt !== undefined
-    )
-      throw new Error('teamDiscussionSessionChanged');
-    assertDiscussionRuntime(cfg, source.agentId, entry);
-    if (hasUnsupportedDiscussionSourcePolicy(entry))
-      throw new Error('teamDiscussionSourcePolicyUnsupported');
+  const sourcePolicy = (cfg: OpenClawConfig, room: TeamDiscussionRoom) =>
+    captureDiscussionSourcePolicy(cfg, room, () => api.runtime.config.current() as OpenClawConfig);
+  const assertPreparedMembers = (
+    room: TeamDiscussionRoom,
+    source: ReturnType<typeof sourcePolicy>,
+  ) => {
+    for (const member of room.members) {
+      const entry = getSessionEntry({
+        agentId: member.agentId,
+        sessionKey: discussionMemberSessionKey(room, member.agentId),
+        readConsistency: 'latest',
+      });
+      if (
+        !entry ||
+        entry.sessionId !== member.sessionId ||
+        entry.lifecycleRevision !== member.lifecycleRevision ||
+        entry.sessionRoot !== room.cwd ||
+        entry.archivedAt !== undefined ||
+        (member.ownership !== 'source' &&
+          (entry.permissionMode !==
+            (source?.entry.permissionMode ??
+              toOpenClawSessionPermissionMode(room.permissionMode)) ||
+            (source &&
+              discussionSessionPolicyFingerprint(entry) !==
+                discussionSessionPolicyFingerprint(source.entry))))
+      )
+        throw new Error('teamDiscussionSessionChanged');
+    }
   };
   const deliver = async (to: string, payload: ReplyPayload) => {
     const roomId = to.replace(/^(?:justdo-team:)?(?:group:)?/, '');
@@ -94,43 +97,6 @@ export function registerDiscussionService(api: OpenClawPluginApi): void {
   };
   api.registerChannel({ plugin: discussionChannel });
   let unbindTransport: (() => void) | undefined;
-  const prohibited = new Set([
-    'task_assistants',
-    'assistants_create',
-    'team_discussion',
-    'sessions_send',
-    'sessions_spawn',
-    'sessions_yield',
-    'subagents',
-    'conversations_send',
-    'conversations_turn',
-    'openclaw',
-    'agents',
-    'automations',
-    'cron',
-  ]);
-  api.registerTrustedToolPolicy({
-    id: 'group-discussion-membership',
-    description: 'Keep group discussions inside their selected roster and native turn budget.',
-    evaluate: (event, context) => {
-      if (!/^agent:[^:]+:justdo-team:group:[a-zA-Z0-9_-]+$/.test(context.sessionKey ?? '')) return;
-      if (prohibited.has(event.toolName))
-        return {
-          allow: false,
-          reason:
-            'Group discussions cannot delegate or send peer tasks. Reply in the current discussion.',
-        };
-      if (
-        event.toolName === 'message' &&
-        (event.params?.action !== 'send' || event.params?.channel !== 'justdo-team')
-      ) {
-        return {
-          allow: false,
-          reason: 'Group discussion messages can only be sent to the current local room.',
-        };
-      }
-    },
-  });
   const persist = (run: ActiveDiscussion) => {
     if (!ledger) throw new Error('teamDiscussionUnavailable');
     ledger.write({
@@ -210,8 +176,25 @@ export function registerDiscussionService(api: OpenClawPluginApi): void {
         )
           throw new Error('teamDiscussionInvalidInput');
         const ids = parseTeamDiscussionAgentIds(params.agentIds, 1);
-        if (params.readOnly !== false)
-          for (const agentId of ids) assertDiscussionRuntime(api.runtime.config.current(), agentId);
+        const cfg = structuredClone(api.runtime.config.current()) as OpenClawConfig;
+        const room = {
+          cwd: params.cwd,
+          sourceSessionId: params.sourceSessionId,
+          summarySource: params.summarySource,
+        } as TeamDiscussionRoom;
+        const source = sourcePolicy(cfg, room);
+        const expected = params.members as PreparedDiscussionMember[] | undefined;
+        if (
+          expected !== undefined &&
+          (!Array.isArray(expected) ||
+            expected.length !== ids.length ||
+            new Set(expected.map(member => member.agentId)).size !== ids.length ||
+            expected.some(
+              member =>
+                !ids.includes(member.agentId) || !member.sessionId || !member.lifecycleRevision,
+            ))
+        )
+          throw new Error('teamDiscussionInvalidMembers');
         if (
           [...runs.values()].some(
             run =>
@@ -228,21 +211,92 @@ export function registerDiscussionService(api: OpenClawPluginApi): void {
           )
             throw new Error('teamDiscussionInvalidMembers');
           const key = teamDiscussionSessionKey(params.roomId, agentId);
+          source?.assertCurrent();
           const permissionMode =
-            params.readOnly !== false
-              ? 'read-only'
-              : toOpenClawSessionPermissionMode(params.permissionMode as 'ask' | 'auto' | 'full');
-          await api.runtime.gateway.request(
-            'sessions.create',
-            { key, cwd: params.cwd, permissionMode },
-            { scopes: ['operator.admin'] },
-          );
-          const entry = getSessionEntry({ agentId, sessionKey: key });
+            source?.entry.permissionMode ??
+            toOpenClawSessionPermissionMode(params.permissionMode as 'ask' | 'auto' | 'full');
+          const identity = expected?.find(member => member.agentId === agentId);
+          if (!expected)
+            await api.runtime.gateway.request(
+              'sessions.create',
+              {
+                key,
+                cwd: params.cwd,
+                permissionMode,
+              },
+              { scopes: ['operator.admin'] },
+            );
+          source?.assertCurrent();
+          let entry = getSessionEntry({ agentId, sessionKey: key, readConsistency: 'latest' });
+          if (
+            !entry?.sessionId ||
+            !entry.lifecycleRevision ||
+            entry.sessionRoot !== params.cwd ||
+            entry.archivedAt !== undefined ||
+            (identity &&
+              (entry.sessionId !== identity.sessionId ||
+                entry.lifecycleRevision !== identity.lifecycleRevision))
+          )
+            throw new Error('teamDiscussionSessionChanged');
+          const original = structuredClone(entry);
+          const policy = source ? discussionSessionPolicy(source.entry) : { permissionMode };
+          if (source && entry.sandbox === 'required')
+            throw new Error('teamDiscussionSourcePolicyUnsupported');
+          const assertCurrent = () => {
+            source?.assertCurrent();
+            const current = getSessionEntry({
+              agentId,
+              sessionKey: key,
+              readConsistency: 'latest',
+            });
+            if (
+              stopped ||
+              ledger?.isRoomClosed(roomId) ||
+              api.runtime.config.current().plugins?.entries?.['agent-team']?.enabled !== true ||
+              !current ||
+              current.sessionId !== original.sessionId ||
+              current.lifecycleRevision !== original.lifecycleRevision ||
+              current.sessionRoot !== params.cwd ||
+              current.archivedAt !== undefined
+            )
+              throw new Error('teamDiscussionSessionChanged');
+          };
+          if (
+            Object.entries(policy).some(
+              ([name, value]) =>
+                JSON.stringify(entry![name as keyof typeof entry]) !== JSON.stringify(value),
+            )
+          ) {
+            await patchSessionEntry({
+              agentId,
+              sessionKey: key,
+              preserveActivity: true,
+              requireWriteSuccess: true,
+              assertCommitAllowed: assertCurrent,
+              update: current => {
+                assertCurrent();
+                if (
+                  current.sessionId !== original.sessionId ||
+                  current.lifecycleRevision !== original.lifecycleRevision ||
+                  discussionSessionPolicyFingerprint(current) !==
+                    discussionSessionPolicyFingerprint(original)
+                )
+                  throw new Error('teamDiscussionSessionChanged');
+                return structuredClone(policy);
+              },
+            });
+          }
+          assertCurrent();
+          entry = getSessionEntry({ agentId, sessionKey: key, readConsistency: 'latest' });
           if (
             !entry?.sessionId ||
             !entry.lifecycleRevision ||
             entry.permissionMode !== permissionMode ||
-            entry.sessionRoot !== params.cwd
+            entry.sessionRoot !== params.cwd ||
+            Object.entries(policy).some(
+              ([name, value]) =>
+                JSON.stringify(entry![name as keyof typeof entry]) !== JSON.stringify(value),
+            )
           )
             throw new Error('teamDiscussionSessionChanged');
           members.push({
@@ -317,28 +371,10 @@ export function registerDiscussionService(api: OpenClawPluginApi): void {
         );
         if (ids.some(id => !cfg.agents?.entries?.[id]))
           throw new Error('teamDiscussionInvalidMembers');
-        assertSourcePolicy(cfg, room);
+        const source = sourcePolicy(cfg, room);
         if (api.runtime.channel.commands.isControlCommandMessage(send.message, cfg))
           throw new Error('teamDiscussionCommandsUnavailable');
-        for (const member of room.members) {
-          const entry = getSessionEntry({
-            agentId: member.agentId,
-            sessionKey: discussionMemberSessionKey(room, member.agentId),
-          });
-          if (
-            !entry ||
-            entry.sessionId !== member.sessionId ||
-            entry.lifecycleRevision !== member.lifecycleRevision ||
-            entry.sessionRoot !== room.cwd ||
-            (member.ownership !== 'source' &&
-              entry.permissionMode !==
-                (room.readOnly !== false
-                  ? 'read-only'
-                  : toOpenClawSessionPermissionMode(room.permissionMode))) ||
-            (member.ownership === 'source' && room.readOnly === false)
-          )
-            throw new Error('teamDiscussionSessionChanged');
-        }
+        assertPreparedMembers(room, source);
         respond(true, { valid: true });
       } catch (error) {
         respond(true, {
@@ -400,7 +436,8 @@ export function registerDiscussionService(api: OpenClawPluginApi): void {
           respond(true, snapshot(previous));
           return;
         }
-        assertSourcePolicy(cfg, room);
+        const source = sourcePolicy(cfg, room);
+        if (source) assertPreparedMembers(room, source);
         if (
           [...runs.values()].some(
             run => run.roomId === room.id && (run.state === 'running' || run.state === 'unknown'),
@@ -443,7 +480,7 @@ export function registerDiscussionService(api: OpenClawPluginApi): void {
         persist(run);
         runs.set(run.discussionId, run);
         run.promise = executeGroupDiscussion({
-          cfg,
+          cfg: inheritDiscussionConfig(cfg, room),
           room,
           send,
           resources:
@@ -454,6 +491,10 @@ export function registerDiscussionService(api: OpenClawPluginApi): void {
           channelRuntime: api.runtime.channel,
           onAgentEvent: api.runtime.events.onAgentEvent,
           signal: run.controller.signal,
+          assertSourceCurrent: source?.assertExecutionCurrent,
+          sourceSessionPolicy: source
+            ? discussionExecutionPolicyFingerprint(source.entry)
+            : undefined,
           onExecution: execution => {
             run.executions.push(execution);
             persist(run);
