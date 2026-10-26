@@ -27,8 +27,12 @@ For a test server that ignores authentication, enter a nonempty test key; produc
 authentication must be enforced by the server or reverse proxy.
 
 Once configured, this category owns TypeSafe settings and activation. Its extension
-panel cannot independently edit or toggle it. Deleting all decision providers
-disables TypeSafe and clears the native default. Users who have never configured
+panel cannot independently edit or toggle it. Click the selected model's **Default**
+badge to clear the selection, then save. This disables TypeSafe and clears the native
+TypeSafe default without removing saved providers, endpoints, credentials or models.
+Select **Set as default** to enable it again. Saving or reopening an unselected
+catalog does not automatically choose its first provider. Deleting all decision
+providers also disables TypeSafe and clears the native default. Users who have never configured
 this category retain their existing extension settings. Provider import/export
 includes decision models using the same credential encryption as other model types.
 

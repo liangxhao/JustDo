@@ -86,6 +86,76 @@ describe('decision model settings projection', () => {
     expect(config).toEqual(before);
   });
 
+  it.each([undefined, ''])('disables a retained provider catalog without a default: %s', selected => {
+    const value = { ...category(), defaultProviderId: selected };
+    const before = structuredClone(value);
+    expect(resolveDecisionModelSelection(value)).toBeNull();
+    expect(value).toEqual(before);
+    expect(resolveDecisionModelSelection(undefined)).toBeUndefined();
+    expect(resolveDecisionModelSelection({ providers: {} })).toBeNull();
+  });
+
+  it('clears only the managed default while preserving native overrides and tool policies', () => {
+    const config = {
+      agents: {
+        defaults: { decisionModel: 'typesafe/kev-latest', model: 'chat/model' },
+        entries: { specialist: { decisionModel: 'other/model' } },
+      },
+      plugins: {
+        entries: {
+          typesafe: {
+            enabled: true,
+            config: { serviceUrl: 'http://localhost:8009', apiKey: 'old-reference', timeoutMs: 1000 },
+          },
+          other: { enabled: true },
+        },
+      },
+      tools: { allow: ['read', 'decision_evaluate'], deny: ['decision_evaluate', 'operator-tool'] },
+    };
+    const before = structuredClone(config);
+    const disabled = { ...category(), defaultProviderId: undefined };
+    expect(
+      applyDecisionModelConfiguration(config, resolveDecisionModelSelection(disabled), ''),
+    ).toBe(false);
+    expect(config).toEqual({
+      ...before,
+      agents: { ...before.agents, defaults: { model: 'chat/model' } },
+      plugins: {
+        entries: {
+          ...before.plugins.entries,
+          typesafe: { enabled: false, config: { timeoutMs: 1000 } },
+        },
+      },
+    });
+    config.agents.defaults.decisionModel = 'other/default';
+    applyDecisionModelConfiguration(config, null, '');
+    expect(config.agents.defaults.decisionModel).toBe('other/default');
+  });
+
+  it.each([null, {}, { providers: null }, { providers: [] }, { providers: 'invalid' }])(
+    'rejects malformed category input: %j',
+    value => expect(() => resolveDecisionModelSelection(value)).toThrow(),
+  );
+
+  it.each([null, false, 1, {}, [], 'missing'])(
+    'rejects invalid defaults instead of disabling the category: %j',
+    defaultProviderId => {
+      expect(() => resolveDecisionModelSelection({ ...category(), defaultProviderId })).toThrow();
+      expect(() => resolveDecisionModelSelection({ providers: {}, defaultProviderId })).toThrow();
+    },
+  );
+
+  it.each(['url', 'key', 'model'] as const)(
+    'validates retained provider %s while the category is disabled',
+    invalidField => {
+      const value = { ...category(), defaultProviderId: undefined };
+      if (invalidField === 'url') value.providers.lan.baseUrl = 'file:///tmp/server';
+      if (invalidField === 'key') value.providers.lan.apiKey = '';
+      if (invalidField === 'model') value.providers.lan.defaultModel = 'missing';
+      expect(() => resolveDecisionModelSelection(value)).toThrow();
+    },
+  );
+
   it.each([
     '',
     'file:///tmp/server',

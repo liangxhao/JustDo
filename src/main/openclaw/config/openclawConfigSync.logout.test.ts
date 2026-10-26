@@ -2982,7 +2982,7 @@ test.each([true, false])(
 );
 
 test.each(['full', 'minimal'])(
-  '%s decision settings survive auth sync, rotate credentials and clear selection',
+  '%s decision settings survive auth sync, retain disabled providers and re-enable selection',
   mode => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-decision-sync-'));
     temporaryDirectories.push(stateDir);
@@ -3055,6 +3055,46 @@ test.each(['full', 'minimal'])(
     expect(rotated.ok).toBe(true);
     expect(rotated.secretsChanged).toBe(true);
     expect(sync.sync('app-config-change').secretsChanged).toBe(false);
+    const retainedProviders = structuredClone(
+      (category as { providers: Record<string, unknown> }).providers,
+    );
+    const disabledCategory = { providers: retainedProviders };
+    const expectedCategory = structuredClone(disabledCategory);
+    const toolsBeforeDisable = read().tools;
+    const secretPath = path.join(stateDir, 'extension-secrets.json');
+    const secretsBeforeDisable = fs.readFileSync(secretPath, 'utf8');
+    category = disabledCategory;
+    for (const reason of [
+      'startup',
+      'app-config-change',
+      BuiltinModelSyncReason.AuthLogin,
+      BuiltinModelSyncReason.AuthLogout,
+    ]) {
+      expect(sync.sync(reason).ok).toBe(true);
+      const saved = read();
+      expect(saved.plugins.entries.typesafe).toMatchObject({ enabled: false, config: {} });
+      expect(saved.agents.defaults.decisionModel).toBeUndefined();
+      expect(saved.tools).toEqual(toolsBeforeDisable);
+      expect(category).toEqual(expectedCategory);
+      expect(fs.readFileSync(secretPath, 'utf8')).toBe(secretsBeforeDisable);
+    }
+    category = { ...disabledCategory, defaultProviderId: 'lan' };
+    for (const reason of [
+      'startup',
+      'app-config-change',
+      BuiltinModelSyncReason.AuthLogin,
+      BuiltinModelSyncReason.AuthLogout,
+    ]) {
+      expect(sync.sync(reason).ok).toBe(true);
+      const saved = read();
+      expect(saved.agents.defaults.decisionModel).toBe('typesafe/kev-latest');
+      expect(saved.plugins.entries.typesafe).toMatchObject({
+        enabled: true,
+        config: { serviceUrl: 'http://10.1.2.3:8009/v1', apiKey: { source: 'file' } },
+      });
+      expect(saved.tools).toEqual(toolsBeforeDisable);
+      expect(fs.readFileSync(secretPath, 'utf8')).toBe(secretsBeforeDisable);
+    }
     category = undefined;
     expect(sync.sync('app-config-change').ok).toBe(true);
     expect(read().plugins.entries.typesafe).toEqual({ enabled: false });
@@ -3064,7 +3104,7 @@ test.each(['full', 'minimal'])(
     expect(read().plugins.entries.typesafe.enabled).toBe(false);
     expect(read().agents.defaults.decisionModel).toBeUndefined();
   },
-  // Ten real filesystem projections include credential rotation and clearing the selection.
+  // Lifecycle projections include rotation, retained disabled catalogs and re-enablement.
   30_000,
 );
 

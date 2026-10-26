@@ -539,8 +539,25 @@ const NonLanguageModelEditor: React.FC<NonLanguageModelEditorProps> = ({
 
   const setDefaultModel = (id: string): void => {
     if (!supportsCatalogDefault) return;
-    updateProvider({ defaultModel: id });
-    setCategory(current => ({ ...current, defaultProviderId: activeProviderId }));
+    setCategory(current => {
+      const provider = current.providers[activeProviderId];
+      if (!provider) return current;
+      if (
+        kind === 'decision' &&
+        current.defaultProviderId === activeProviderId &&
+        provider.defaultModel === id
+      ) {
+        return { ...current, defaultProviderId: undefined };
+      }
+      return {
+        ...current,
+        defaultProviderId: activeProviderId,
+        providers: {
+          ...current.providers,
+          [activeProviderId]: { ...provider, defaultModel: id },
+        },
+      };
+    });
   };
 
   const detectModels = async (): Promise<void> => {
@@ -997,7 +1014,18 @@ const NonLanguageModelEditor: React.FC<NonLanguageModelEditorProps> = ({
                           ) : null}
                         </div>
                         {supportsCatalogDefault ? (
-                          isDefault ? (
+                          isDefault && kind === 'decision' ? (
+                            <button
+                              type="button"
+                              onClick={() => setDefaultModel(model.id)}
+                              aria-label={i18nService.t('mediaModelClearDefault')}
+                              aria-pressed={true}
+                              title={i18nService.t('mediaModelClearDefault')}
+                              className="mr-1 rounded-md bg-primary-muted px-1.5 py-0.5 text-[10px] text-primary hover:bg-primary-muted/70"
+                            >
+                              {i18nService.t('mediaModelDefaultBadge')}
+                            </button>
+                          ) : isDefault ? (
                             <span className="mr-1 rounded-md bg-primary-muted px-1.5 py-0.5 text-[10px] text-primary">
                               {i18nService.t('mediaModelDefaultBadge')}
                             </span>

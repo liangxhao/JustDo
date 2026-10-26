@@ -39,7 +39,7 @@ export const normalizeNonLanguageModelCategory = (
     category.defaultProviderId &&
     category.providers[category.defaultProviderId]
       ? category.defaultProviderId
-      : supportsCatalogDefault
+      : kind === 'image'
         ? providerIds[0]
         : undefined;
   return {

@@ -2,23 +2,27 @@ import { saveExtensionSecrets } from '../../../plugins/extensions/extensionSecre
 
 type DecisionSelection = { baseUrl: string; apiKey: string; model: string } | null | undefined;
 
-const record = (value: unknown): Record<string, unknown> =>
-  value && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value && typeof value === 'object' && !Array.isArray(value));
+const record = (value: unknown): Record<string, unknown> => (isRecord(value) ? value : {});
 
 /** Validate persisted/IPC input too; renderer validation is only a usability aid. */
 export function resolveDecisionModelSelection(value: unknown): DecisionSelection {
   if (value === undefined) return undefined;
-  const category = record(value);
-  const providers = record(category.providers);
-  if (!('providers' in category)) throw new Error('Invalid decision model providers.');
-  if (Object.keys(providers).length === 0) return null;
+  if (!isRecord(value) || !isRecord(value.providers)) {
+    throw new Error('Invalid decision model providers.');
+  }
+  const category = value;
+  const providers = value.providers;
   const selected = category.defaultProviderId;
-  if (typeof selected !== 'string' || !Object.hasOwn(providers, selected)) {
+  if (
+    (selected !== undefined && typeof selected !== 'string') ||
+    (typeof selected === 'string' && selected.length > 0 && !Object.hasOwn(providers, selected))
+  ) {
     throw new Error('Select a default decision model provider.');
   }
-  let result: DecisionSelection;
+  // Saved provider details remain validated when their category is explicitly off.
+  let result: DecisionSelection = null;
   for (const [id, entry] of Object.entries(providers)) {
     const provider = record(entry);
     const { baseUrl, apiKey, defaultModel, models } = provider;
@@ -51,7 +55,7 @@ export function resolveDecisionModelSelection(value: unknown): DecisionSelection
     } catch {
       throw new Error('Invalid decision provider URL.');
     }
-    if (id === selected)
+    if (selected && id === selected)
       result = {
         baseUrl: url.toString().replace(/\/+$/, ''),
         apiKey: apiKey.trim(),

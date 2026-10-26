@@ -666,7 +666,10 @@ pipeline. Without decision-model settings it defaults off and remains user-toggl
 Settings → Models → Decision models requires URL/API Key and supports provider/model
 CRUD, discovery and import/export. It selects `agents.defaults.decisionModel` and
 the evaluation-tool default, and then owns TypeSafe activation/configuration.
-Deleting all providers disables it. The chat model decides when to call its tool.
+Clearing the default selection disables it and clears the native TypeSafe default
+while retaining the saved provider catalog and credentials. Saving an unselected
+catalog does not select a provider automatically; selecting a default enables it
+again. Deleting all providers also disables it. The chat model decides when to call its tool.
 A documented `serviceUrl` seam supports authenticated intranet System One endpoints
 without redirects, environment proxies or hosted fallback.
 

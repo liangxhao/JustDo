@@ -130,6 +130,33 @@ describe('non-language model configuration persistence', () => {
     expect(normalized.defaultProviderId).toBe('remaining');
   });
 
+  it.each([undefined, 'removed'])(
+    'does not select another decision provider without a retained default: %s',
+    defaultProviderId => {
+      const category = {
+        defaultProviderId,
+        providers: {
+          lan: {
+            displayName: 'LAN',
+            baseUrl: 'http://inference.test/v1/systemone',
+            apiKey: 'retained-test-key',
+            defaultModel: 'kev-latest',
+            models: [{ id: 'kev-latest', name: 'Kev' }],
+          },
+        },
+      };
+
+      const normalized = normalizeNonLanguageModelCategory('decision', category);
+
+      expect(normalized.defaultProviderId).toBeUndefined();
+      expect(normalized.providers.lan).toEqual({
+        ...category.providers.lan,
+        baseUrl: 'http://inference.test/v1',
+      });
+      expect(getNonLanguageModelCategoryValidationError('decision', normalized)).toBe('');
+    },
+  );
+
   it('normalizes and persists speech synthesis catalog data without selecting defaults', async () => {
     const draft: NonLanguageModelProviders = {
       'speech-synthesis': {

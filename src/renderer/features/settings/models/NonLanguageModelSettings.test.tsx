@@ -13,6 +13,7 @@ vi.mock('@/services/i18n', () => ({
 }));
 
 import {
+  commitNonLanguageModelConfigurations,
   createEmptyNonLanguageModelCategory,
   type NonLanguageModelCategory,
   type NonLanguageModelProviders,
@@ -79,6 +80,80 @@ describe('NonLanguageModelSettings', () => {
         }),
       ),
     );
+  });
+
+  it('keeps decision provider details when clearing, saving and restoring its default', async () => {
+    const selected = {
+      defaultProviderId: 'lan',
+      providers: {
+        lan: {
+          displayName: 'LAN',
+          baseUrl: 'http://inference.test/v1',
+          apiKey: 'retained-test-key',
+          defaultModel: 'kev-latest',
+          models: [{ id: 'kev-latest', name: 'Kev' }],
+        },
+      },
+    };
+    currentConfig.onlineModelProviders = { decision: selected };
+    const { getCategory, unmount } = renderSettings('decision');
+
+    fireEvent.click(screen.getByRole('button', { name: 'mediaModelClearDefault', pressed: true }));
+
+    expect(getCategory().defaultProviderId).toBeUndefined();
+    expect(getCategory().providers).toEqual(selected.providers);
+    const persist = vi.fn().mockResolvedValue(undefined);
+    const saved = await commitNonLanguageModelConfigurations(
+      { decision: selected },
+      { decision: getCategory() },
+      persist,
+    );
+    expect(persist).toHaveBeenCalledWith(saved);
+    expect(saved.decision?.defaultProviderId).toBeUndefined();
+    expect(saved.decision?.providers).toEqual(selected.providers);
+
+    unmount();
+    currentConfig.onlineModelProviders = JSON.parse(JSON.stringify(saved));
+    const reopened = renderSettings('decision');
+    expect(screen.queryByText('mediaModelDefaultBadge')).toBeNull();
+    expect(reopened.getCategory().defaultProviderId).toBeUndefined();
+
+    fireEvent.click(screen.getByRole('button', { name: 'mediaModelSetDefault' }));
+
+    expect(reopened.getCategory()).toEqual(selected);
+    expect(
+      screen.getByRole('button', { name: 'mediaModelClearDefault', pressed: true }),
+    ).toBeTruthy();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('keeps an unselected decision catalog disabled when discovering more models', async () => {
+    currentConfig.onlineModelProviders = {
+      decision: {
+        providers: {
+          lan: {
+            displayName: 'LAN',
+            baseUrl: 'http://inference.test/v1',
+            apiKey: 'retained-test-key',
+            defaultModel: 'kev-latest',
+            models: [{ id: 'kev-latest', name: 'Kev' }],
+          },
+        },
+      },
+    };
+    fetch.mockResolvedValue({ ok: true, data: { data: [{ id: 'kev-next' }] } });
+    const { getCategory } = renderSettings('decision');
+
+    fireEvent.click(screen.getByRole('button', { name: 'detectModels' }));
+
+    await waitFor(() => expect(screen.getByText('kev-next')).toBeTruthy());
+    expect(getCategory().defaultProviderId).toBeUndefined();
+    expect(getCategory().providers.lan).toMatchObject({
+      baseUrl: 'http://inference.test/v1',
+      apiKey: 'retained-test-key',
+      defaultModel: 'kev-latest',
+    });
+    expect(screen.queryByText('mediaModelDefaultBadge')).toBeNull();
   });
 
   beforeEach(() => {

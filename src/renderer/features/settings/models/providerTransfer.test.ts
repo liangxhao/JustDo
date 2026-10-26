@@ -354,10 +354,10 @@ describe('mergeImportedOnlineModelProviders', () => {
   });
 });
 
-test('round-trips the decision provider catalog and its default selection', () => {
+test.each([true, false])('round-trips a decision catalog with default selected=%s', selected => {
   const payload = createProvidersExportPayload([], {
     decision: {
-      defaultProviderId: 'lan',
+      ...(selected ? { defaultProviderId: 'lan' } : {}),
       providers: [
         {
           key: 'lan',
