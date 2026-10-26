@@ -34,6 +34,7 @@ import { materializeDisclosureContents } from '@/libs/openclaw-chat/components/t
 import { ChatScrollController } from '@/libs/openclaw-chat/controllers/chat-scroll-controller';
 import { HistoryDisclosureState } from '@/libs/openclaw-chat/controllers/history-disclosure-state';
 import { HistoryRenderScheduler } from '@/libs/openclaw-chat/controllers/history-render-scheduler';
+import { MessageDisclosureState } from '@/libs/openclaw-chat/controllers/message-disclosure-state';
 import { StreamRenderScheduler } from '@/libs/openclaw-chat/controllers/stream-render-scheduler';
 import type { ChatController } from '@/libs/openclaw-chat/gateway/chat-controller';
 import {
@@ -361,6 +362,7 @@ export class JustDoChatElement extends LitElement {
     this.streamRenderScheduler.schedule(),
   );
   private readonly historyDisclosureState = new HistoryDisclosureState();
+  private readonly messageDisclosureState = new MessageDisclosureState();
   private renderStartedAt = 0;
   private readonly processSummaryTakeoverTracker = new ProcessSummaryTakeoverTracker();
   private readonly collapsedProcessSummaryTakeoverTracker = new ProcessSummaryTakeoverSetTracker();
@@ -439,6 +441,7 @@ export class JustDoChatElement extends LitElement {
     this.unsubscribeController();
     this.historyRenderScheduler.clear();
     this.historyDisclosureState.reset(null);
+    this.messageDisclosureState.reset(null);
     this.thinkingContentPresentation.reset(null);
     this.pendingThinkingNavigation = null;
     this._controller = ctrl;
@@ -985,6 +988,7 @@ export class JustDoChatElement extends LitElement {
     this.persistedTimelineRenderCache.clear();
     this.historyRenderScheduler.clear();
     this.historyDisclosureState.reset(null);
+    this.messageDisclosureState.reset(null);
     this.thinkingContentPresentation.reset(null);
     this.pendingThinkingNavigation = null;
     this.processSummaryTakeoverTracker.clear();
@@ -1042,6 +1046,7 @@ export class JustDoChatElement extends LitElement {
   protected willUpdate(changedProperties: Map<string | number | symbol, unknown>): void {
     this.renderStartedAt = performance.now();
     this.historyDisclosureState.capture(this.renderRoot);
+    this.messageDisclosureState.capture(this.renderRoot as ShadowRoot);
     // Native details changes open synchronously; its toggle event is queued.
     // Capture before a stream/page commit can restore an older preference.
     this.renderRoot
@@ -1116,6 +1121,8 @@ export class JustDoChatElement extends LitElement {
       this.processSummarySessionIdentity ?? '',
     );
     this.richMessageControls.onQuote = this.onMessageQuote;
+    this.messageDisclosureState.reset(this.processSummarySessionIdentity ?? 'direct');
+    this.messageDisclosureState.restore(this.renderRoot as ShadowRoot);
     this.richMessageControls.sync();
     this.chatScrollController.afterRender(transcriptRevision);
     this.revealSelectedThinkingSection();
@@ -1258,9 +1265,11 @@ export class JustDoChatElement extends LitElement {
     if (handleMessageLinkClick(event, this.workingDirectory)) return;
     const element = event.composedPath().find(node => isDomHTMLElement(node)) as
       HTMLElement | undefined;
-    const completedProcessSummary = element?.closest<HTMLElement>('.completed-process > summary');
-    if (completedProcessSummary) {
-      this.chatScrollController.preserveAnchorForInteraction(completedProcessSummary);
+    const disclosureSummary = element?.closest<HTMLElement>(
+      '.completed-process > summary, [data-message-disclosure-owner] details.markdown-disclosure > summary',
+    );
+    if (disclosureSummary) {
+      this.chatScrollController.preserveAnchorForInteraction(disclosureSummary);
       return;
     }
     const summaryButton = element?.closest<HTMLElement>('[data-process-summary-key]');
@@ -2173,6 +2182,7 @@ export class JustDoChatElement extends LitElement {
             showFooter,
             userMessageActions,
             assistantMessageFork,
+            item.key,
           )}
           ${
             pendingInputState && pendingInputState !== 'queued'
@@ -2484,6 +2494,7 @@ export class JustDoChatElement extends LitElement {
       entryId: string;
       onFork: (entryId: string) => void;
     },
+    disclosureOwner?: string,
   ): Array<TemplateResult | typeof nothing> {
     const rendered: Array<TemplateResult | typeof nothing> = [];
 
@@ -2499,6 +2510,7 @@ export class JustDoChatElement extends LitElement {
       ) {
         rendered.push(
           renderMessageBlockWithTrailingStream(item, next.text, thinkingStream, {
+            disclosureOwner,
             searchQuery: this.searchQuery,
             showAvatar: shouldRenderGroupAvatarByPrevItem(item as MessageGroup, prev),
             workingDirectory: this.workingDirectory,
@@ -2523,6 +2535,7 @@ export class JustDoChatElement extends LitElement {
             : shouldRenderGroupAvatarByPrevItem(item as MessageGroup, prev);
         rendered.push(
           renderMessageBlock(item as MessageGroup, {
+            disclosureOwner,
             searchQuery: this.searchQuery,
             showFooter:
               allowFooter && shouldRenderGroupFooterByNextItem(item as MessageGroup, next),

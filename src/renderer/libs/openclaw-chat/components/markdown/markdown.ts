@@ -38,6 +38,8 @@ import markdownItTexMath from 'markdown-it-texmath';
 import { matchAutoLinkPathPrefix } from '@/libs/openclaw-chat/components/markdown/markdownPathLinks';
 import { i18nService } from '@/services/i18n';
 
+import { constrainDetailsStreamingBoundary, installMarkdownDetails } from './markdown-details';
+
 // ── Constants ───────────────────────────────────────────────────────────────
 
 const MARKDOWN_PARSE_LIMIT = 40_000;
@@ -123,6 +125,7 @@ const allowedAttrs = [
   'style',
   'aria-hidden',
   'aria-label',
+  'open',
 ];
 
 const sanitizeOptions = {
@@ -438,6 +441,8 @@ function installHooks(): void {
     }
     if (tagName === 'progress' && data.attrName !== 'value' && data.attrName !== 'max') {
       data.keepAttr = false;
+    } else if (data.attrName === 'open' && tagName !== 'details') {
+      data.keepAttr = false;
     } else if ((data.attrName === 'value' || data.attrName === 'max') && tagName !== 'progress') {
       data.keepAttr = false;
     }
@@ -498,7 +503,7 @@ function isFenceClose(line: string, fence: { marker: '`' | '~'; length: number }
   return trimmed.slice(match[0].length).trim() === '';
 }
 
-export function findStableStreamingMarkdownBoundary(markdownText: string): number {
+function findDefaultStreamingMarkdownBoundary(markdownText: string): number {
   let boundary = 0;
   let index = 0;
   let openFence: { marker: '`' | '~'; length: number } | null = null;
@@ -546,6 +551,28 @@ export function findStableStreamingMarkdownBoundary(markdownText: string): numbe
   return boundary;
 }
 
+function splitDetailsStreamingMarkdown(
+  input: string,
+  options: MarkdownRenderOptions,
+): { boundary: number; detailsTail: boolean } {
+  const boundary = findDefaultStreamingMarkdownBoundary(input);
+  if (
+    !options.allowDetails ||
+    options.allowProgressElement ||
+    input.length > Math.max(options.parseLimit ?? MARKDOWN_PARSE_LIMIT, 1) ||
+    !/<\/?(?:details|summary)(?=[\s>])/i.test(input)
+  )
+    return { boundary, detailsTail: false };
+  return constrainDetailsStreamingBoundary(input, md, boundary);
+}
+
+export function findStableStreamingMarkdownBoundary(
+  markdownText: string,
+  options: MarkdownRenderOptions = {},
+): number {
+  return splitDetailsStreamingMarkdown(markdownText, options).boundary;
+}
+
 // ── Markdown-it instance ────────────────────────────────────────────────────
 
 const markdownCache = new Map<string, string>();
@@ -571,6 +598,8 @@ export const md = new MarkdownIt({
   breaks: true,
   linkify: true,
 });
+
+installMarkdownDetails(md, { fallbackLabel: () => i18nService.t('messageDetailsFallback') });
 
 // Treat --- after multiline prose, or a single line directly enclosed by dash
 // dividers, as a divider. Preserve other Setext headings, tables and literal code
@@ -906,6 +935,23 @@ md.renderer.rules.fence = (tokens, idx, _options, env) => {
   const preClass = hasCompleteBoxDrawingFrame(text) ? ' class="markdown-box-drawing-code"' : '';
   const codeBlock = `<pre${preClass}><code${classAttr}>${highlighted}</code></pre>`;
 
+  if (env?.streamingDetails === true && typeof env.streamingSource === 'string' && token.map) {
+    const sourceLines = env.streamingSource.split('\n');
+    const sourceBlock = sourceLines.slice(token.map[0], token.map[1]);
+    const closed =
+      sourceBlock.length > 1 &&
+      isFenceClose(sourceBlock[sourceBlock.length - 1] ?? '', {
+        marker: token.markup[0] as '`' | '~',
+        length: token.markup.length,
+      });
+    if (!closed && token.map[0] === sourceLines.length - 1) {
+      return toEscapedPlainTextHtml(sourceBlock[0] ?? '');
+    }
+    // An unfinished diagram must retain its visible source while the containing
+    // disclosure is parsed as Markdown, until its actual fence arrives.
+    if (!closed && lang.toLowerCase() === 'mermaid') return codeBlock;
+  }
+
   const envChrome = (env as { codeBlockChrome?: string })?.codeBlockChrome;
   if (envChrome === 'none') return codeBlock;
 
@@ -996,9 +1042,19 @@ export interface MarkdownRenderOptions {
   allowProgressElement?: boolean;
   /** Render HTML comments as subdued source markers instead of ordinary raw HTML text. */
   styleHtmlComments?: boolean;
+  /** Admit only the dedicated details/summary grammar in chat message bodies. */
+  allowDetails?: boolean;
 }
 
 export function toSanitizedMarkdownHtml(text: string, options: MarkdownRenderOptions = {}): string {
+  return renderSanitizedMarkdownHtml(text, options, false);
+}
+
+function renderSanitizedMarkdownHtml(
+  text: string,
+  options: MarkdownRenderOptions,
+  streamingDetails: boolean,
+): string {
   if (!text) return '';
   installHooks();
 
@@ -1019,10 +1075,12 @@ export function toSanitizedMarkdownHtml(text: string, options: MarkdownRenderOpt
       : 'full-document';
   const sanitizeMode = options.allowProgressElement ? 'progress-card' : 'standard';
   const htmlCommentMode = options.styleHtmlComments ? 'comments-styled' : 'comments-plain';
+  const allowDetails = options.allowDetails === true && !options.allowProgressElement;
+  const detailsMode = allowDetails ? (streamingDetails ? 'details-streaming' : 'details') : 'plain';
   const activeSanitizeOptions = options.allowProgressElement
     ? progressCardSanitizeOptions
     : sanitizeOptions;
-  const cacheKey = `${parseLimit}:${frontmatterMode}:${sanitizeMode}:${htmlCommentMode}:${i18nService.getLanguage()}:${normalizedInput}`;
+  const cacheKey = `${parseLimit}:${frontmatterMode}:${sanitizeMode}:${htmlCommentMode}:${detailsMode}:${i18nService.getLanguage()}:${normalizedInput}`;
   if (input.length <= MARKDOWN_CACHE_MAX_CHARS) {
     const cached = getCachedMarkdown(cacheKey);
     if (cached !== null) return cached;
@@ -1045,6 +1103,9 @@ export function toSanitizedMarkdownHtml(text: string, options: MarkdownRenderOpt
     rendered = md.render(renderInput, {
       allowProgressElement: options.allowProgressElement === true,
       styleHtmlComments: options.styleHtmlComments === true,
+      allowDetails,
+      streamingDetails: allowDetails && streamingDetails,
+      streamingSource: allowDetails && streamingDetails ? renderInput : undefined,
     });
   } catch {
     rendered = `<pre class="code-block">${escapeHtml(renderInput)}</pre>`;
@@ -1059,16 +1120,26 @@ export function toSanitizedMarkdownHtml(text: string, options: MarkdownRenderOpt
   return sanitized;
 }
 
-export function toStreamingMarkdownHtml(text: string): string {
+export function toStreamingMarkdownHtml(text: string, options: MarkdownRenderOptions = {}): string {
   if (!text) return '';
   const input = text.replace(/\r\n?/g, '\n');
   if (!input.trim()) return '';
 
-  const boundary = findStableStreamingMarkdownBoundary(input);
+  if (
+    options.allowDetails &&
+    !options.allowProgressElement &&
+    input.length > Math.max(options.parseLimit ?? MARKDOWN_PARSE_LIMIT, 1)
+  )
+    return toSanitizedMarkdownHtml(input, options);
+
+  const { boundary, detailsTail } = splitDetailsStreamingMarkdown(input, options);
   const stableMarkdown = input.slice(0, boundary);
   const streamingTail = input.slice(boundary);
-  const stableHtml = toSanitizedMarkdownHtml(stableMarkdown);
+  const stableHtml = toSanitizedMarkdownHtml(stableMarkdown, options);
   if (!streamingTail.trim()) return stableHtml;
+  if (detailsTail) {
+    return `${stableHtml}${renderSanitizedMarkdownHtml(streamingTail, options, true)}`;
+  }
   // Markdown-it can render an open fence without inventing a closing marker.
   // Wait for the complete info line so a partially streamed language name
   // cannot reclassify the block on each token. Keep other incomplete syntax literal.
@@ -1081,7 +1152,7 @@ export function toStreamingMarkdownHtml(text: string): string {
   const isMermaid = info.split(/\s+/)[0]?.toLowerCase() === 'mermaid';
   const hasInvalidBacktickInfo = openingFence?.[1][0] === '`' && info.includes('`');
   if (openingFence && !isMermaid && !hasInvalidBacktickInfo) {
-    return `${stableHtml}${toSanitizedMarkdownHtml(streamingTail)}`;
+    return `${stableHtml}${toSanitizedMarkdownHtml(streamingTail, options)}`;
   }
   return `${stableHtml}${toEscapedPlainTextHtml(streamingTail)}`;
 }

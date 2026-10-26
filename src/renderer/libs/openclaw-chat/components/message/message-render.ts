@@ -46,6 +46,7 @@ import { renderThinkingContent } from './thinking-content';
 type AssistantCanvasItem = Extract<MessageContentItem, { type: 'canvas' }>;
 
 type MessageRenderOptions = {
+  disclosureOwner?: string;
   searchQuery?: string;
   showFooter?: boolean;
   showAvatar?: boolean;
@@ -742,6 +743,8 @@ function renderOrderedBubble(
   role: 'user' | 'assistant',
   workingDirectory?: string,
   trailingAction: TemplateResult | typeof nothing = nothing,
+  disclosureOwner?: string,
+  bubbleIndex = 0,
 ): TemplateResult | typeof nothing {
   if (items.length === 0) return nothing;
   const text = items
@@ -769,15 +772,21 @@ function renderOrderedBubble(
     <div class=${`chat-bubble chat-bubble--${role}`} dir=${dir}>
       ${text ? renderCopyButton(text) : nothing}
       <div class="chat-bubble__content">
-        ${groupedItems.map(item => {
+        ${groupedItems.map((item, index) => {
           if (Array.isArray(item)) {
             return renderMessageImages(item, role === 'assistant', workingDirectory);
           }
           if (item.type === 'text') {
             if (!item.text) return nothing;
             return html`
-              <div class="chat-bubble__text markdown-content" dir=${detectTextDirection(item.text)}>
-                ${unsafeHTML(toSanitizedMarkdownHtml(item.text))}
+              <div
+                class="chat-bubble__text markdown-content"
+                dir=${detectTextDirection(item.text)}
+                data-message-disclosure-owner=${
+                  disclosureOwner ? JSON.stringify([disclosureOwner, bubbleIndex, index]) : nothing
+                }
+              >
+                ${unsafeHTML(toSanitizedMarkdownHtml(item.text, { allowDetails: true }))}
               </div>
             `;
           }
@@ -863,6 +872,7 @@ export function renderMessageBlock(
                   role,
                   opts,
                   index === speechMessageIndex ? speechAction : nothing,
+                  message.key,
                 ),
               )}
               ${renderGroupFooter(group, opts)}`
@@ -896,15 +906,18 @@ export function renderMessageBlockWithTrailingStream(
         ${(opts?.showAvatar ?? true) ? renderChatAvatar(role) : nothing}
       </div>
       <div class="chat-group__content">
-        ${group.messages.map(m => renderSingleMessage(m.message, role, opts))}
+        ${group.messages.map(m => renderSingleMessage(m.message, role, opts, nothing, m.key))}
         ${thinkingText ? renderStreamingThinkingBlock(thinkingText) : nothing}
         ${
           hasStreamText
             ? html`
                 <div class="chat-bubble chat-bubble--assistant">
                   ${renderCopyButton(streamText)}
-                  <div class="chat-bubble__text markdown-content">
-                    ${unsafeHTML(toStreamingMarkdownHtml(streamText))}
+                  <div
+                    class="chat-bubble__text markdown-content"
+                    data-message-disclosure-owner=${JSON.stringify([`${group.key}:stream`, 0, 0])}
+                  >
+                    ${unsafeHTML(toStreamingMarkdownHtml(streamText, { allowDetails: true }))}
                   </div>
                 </div>
               `
@@ -920,24 +933,28 @@ function renderSingleMessage(
   role: string,
   opts?: MessageRenderOptions,
   trailingAction: TemplateResult | typeof nothing = nothing,
+  renderKey?: string,
 ): TemplateResult | typeof nothing {
   const normalized = normalizeMessage(message) as NormalizedMessage | null;
   if (!normalized) return html`<div class="chat-bubble chat-bubble--empty"></div>`;
 
   const isUser = role === 'user';
   const isTool = role === 'tool';
+  const identity = readTranscriptIdentity(message);
+  const disclosureOwner =
+    opts?.disclosureOwner ??
+    (identity ? JSON.stringify([identity.kind, identity.value, renderKey]) : renderKey);
 
   // The canonical timeline exclusively owns Tool presentation.
   if (isTool) return nothing;
   if (isUser) {
-    return renderUserMessage(normalized, message, opts?.workingDirectory);
+    return renderUserMessage(normalized, message, opts?.workingDirectory, disclosureOwner);
   }
-  const identity = readTranscriptIdentity(message);
   return html`<div
     data-quote-source
     data-assistant-entry=${identity?.kind === 'openclaw-id' ? identity.value : nothing}
   >
-    ${renderAssistantMessage(normalized, message, opts?.workingDirectory, trailingAction)}
+    ${renderAssistantMessage(normalized, message, opts?.workingDirectory, trailingAction, disclosureOwner)}
   </div>`;
 }
 
@@ -947,6 +964,7 @@ function renderUserMessage(
   msg: NormalizedMessage,
   rawMessage: unknown,
   workingDirectory?: string,
+  disclosureOwner?: string,
 ): TemplateResult {
   const hasImage = msg.content.some(
     item => item.type === 'attachment' && item.attachment.kind === 'image',
@@ -975,6 +993,8 @@ function renderUserMessage(
     [...content, ...transcriptAttachments],
     'user',
     workingDirectory,
+    nothing,
+    disclosureOwner,
   ) as TemplateResult;
 }
 
@@ -985,6 +1005,7 @@ function renderAssistantMessage(
   rawMessage: unknown,
   workingDirectory?: string,
   trailingAction: TemplateResult | typeof nothing = nothing,
+  disclosureOwner?: string,
 ): TemplateResult {
   const sections: Array<
     | { kind: 'bubble'; items: BubbleContentItem[] }
@@ -1034,6 +1055,8 @@ function renderAssistantMessage(
           'assistant',
           workingDirectory,
           index === lastBubbleIndex ? trailingAction : nothing,
+          disclosureOwner,
+          index,
         )
       : section.content,
   )}`;
@@ -1053,6 +1076,7 @@ export function renderAssistantTimelineContent(
       ${renderStreamingGroup(text, opts.timestamp, null, {
         showAvatar: opts.showAvatar,
         assistantAvatar: opts.assistantAvatar,
+        disclosureOwner: opts.key,
       })}
     </div>`;
   }
@@ -1082,6 +1106,7 @@ export function renderAssistantTimelineContent(
       speechState: opts.speechState,
       onSpeak: opts.onSpeak,
       workingDirectory: opts.workingDirectory,
+      disclosureOwner: opts.key,
     },
   ) as TemplateResult;
 }
@@ -1220,16 +1245,18 @@ export function renderStreamingThinkingGroup(
       <div class="chat-group__avatar">
         ${(opts?.showAvatar ?? true) ? (opts?.assistantAvatar ?? renderChatAvatar('assistant')) : nothing}
       </div>
-      <div class="chat-group__content">${renderStreamingThinkingBlock(text, opts?.thinkingContent)}</div>
+      <div class="chat-group__content">
+        ${renderStreamingThinkingBlock(text, opts?.thinkingContent)}
+      </div>
     </div>
   `;
 }
 
 export function renderStreamingGroup(
   text: string,
-  _startedAt: number,
+  startedAt: number,
   thinkingText: string | null = null,
-  opts?: { showAvatar?: boolean; assistantAvatar?: TemplateResult },
+  opts?: { showAvatar?: boolean; assistantAvatar?: TemplateResult; disclosureOwner?: string },
 ): TemplateResult {
   text = partitionTaggedReasoning(text).text;
   const hasText = text.trim().length > 0;
@@ -1250,8 +1277,15 @@ export function renderStreamingGroup(
             ? html`
                 <div class="chat-bubble chat-bubble--assistant">
                   ${renderCopyButton(text)}
-                  <div class="chat-bubble__text markdown-content">
-                    ${unsafeHTML(toStreamingMarkdownHtml(text))}
+                  <div
+                    class="chat-bubble__text markdown-content"
+                    data-message-disclosure-owner=${JSON.stringify([
+                      opts?.disclosureOwner ?? `stream:${startedAt}`,
+                      0,
+                      0,
+                    ])}
+                  >
+                    ${unsafeHTML(toStreamingMarkdownHtml(text, { allowDetails: true }))}
                   </div>
                 </div>
               `

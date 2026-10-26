@@ -1254,6 +1254,70 @@ export const chatStyles = [
 
     /* ── Markdown Content ───────────────────────────────────────────── */
 
+    .markdown-content details.markdown-disclosure {
+      padding-inline-start: 22px;
+      margin-block: 0.5em;
+      min-width: 0;
+    }
+
+    .markdown-content details.markdown-disclosure > summary {
+      position: relative;
+      margin-inline-start: -22px;
+      padding-block: 6px;
+      padding-inline: 22px 6px;
+      border-radius: 6px;
+      list-style: none;
+      cursor: pointer;
+    }
+
+    .markdown-content details.markdown-disclosure > summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .markdown-content details.markdown-disclosure > summary::before {
+      content: '';
+      position: absolute;
+      inset-inline-start: 5px;
+      top: calc(6px + 0.65em);
+      width: 6px;
+      height: 6px;
+      border-right: 1.5px solid currentColor;
+      border-bottom: 1.5px solid currentColor;
+      transform: rotate(-45deg);
+      transition: transform 160ms ease;
+    }
+
+    .markdown-content details.markdown-disclosure[open] > summary::before {
+      transform: rotate(45deg);
+    }
+
+    .markdown-content details.markdown-disclosure:dir(rtl) > summary::before {
+      transform: rotate(135deg);
+    }
+
+    .markdown-content details.markdown-disclosure[open]:dir(rtl) > summary::before {
+      transform: rotate(45deg);
+    }
+
+    .markdown-content details.markdown-disclosure[open] > summary {
+      margin-bottom: 0.5em;
+    }
+
+    .markdown-content details.markdown-disclosure > summary:hover {
+      background: color-mix(in srgb, var(--justdo-chat-accent, #6366f1) 7%, transparent);
+    }
+
+    .markdown-content details.markdown-disclosure > summary:focus-visible {
+      outline: 2px solid var(--justdo-chat-accent, #3b82f6);
+      outline-offset: 2px;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .markdown-content details.markdown-disclosure > summary::before {
+        transition: transform 160ms ease;
+      }
+    }
+
     .markdown-content p {
       margin: 0 0 0.9em;
     }
