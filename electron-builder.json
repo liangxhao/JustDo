@@ -134,7 +134,7 @@
       {
         "from": "build/browser-extension/native-host",
         "to": "browser-extension/native-host",
-        "filter": ["justdo-browser-extension-native-host-v2.exe"]
+        "filter": ["${productName}-browser-extension-native-host.exe"]
       },
       {
         "from": "build/tar/win-resources.tar.zst",

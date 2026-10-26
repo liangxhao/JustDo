@@ -26,7 +26,9 @@ sequenceDiagram
   Panel->>BG: ensure
   BG->>Host: hello / ensure
   Host->>Host: 读取已运行实例的 rendezvous
-  Host-->>Panel: localAppServerUrl
+  Host-->>BG: localAppServerUrl
+  BG->>Host: disconnect（关闭 stdin，helper 退出）
+  BG-->>Panel: localAppServerUrl
   Panel->>Main: WS initialize / initialized
   Panel->>Main: thread/read 或 turn/start
   Main->>G: 产品准备与原生执行
@@ -35,6 +37,12 @@ sequenceDiagram
 ```
 
 Native helper 只负责 framing 和实例发现，Electron GUI 不直接承担 Chrome stdin/stdout。app-server 每次启动随机 loopback 端口和 capability；退出清理发现信息，客户端重连重新取得地址，不能长期缓存旧 URL。
+
+每次发现独立创建 Native Messaging 连接，在同一条连接完成 `hello / ensure`。
+成功、协议或地址校验失败、断连和超时均释放该连接，helper 在 stdin 关闭后退出；
+并发侧栏和自动配对的发现互不影响。取得地址后，侧栏和自动配对直接连接 Main 的
+WebSocket，不保留 helper 作为后台常驻进程；再次发现由 Chrome 按需启动。
+helper 文件名为 `<productName>-browser-extension-native-host.exe`，保留产品名但不含协议版本号。
 
 开发版和安装版统一仅连接用户已经启动的实例；实例未运行或收到扩展重启请求时返回提示，
 不会启动应用、重启 app-server 或删除已有发现信息。连续连接失败只重新发现和连接，

@@ -1338,7 +1338,7 @@ function verifyPackagedBrowserExtension(context) {
         resourcesRoot,
         'browser-extension',
         'native-host',
-        'justdo-browser-extension-native-host-v2.exe',
+        `${context.packager.appInfo.productName}-browser-extension-native-host.exe`,
       ),
     )
   ) {

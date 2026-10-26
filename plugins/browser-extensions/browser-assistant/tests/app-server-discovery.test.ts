@@ -57,7 +57,14 @@ describe('browser extension discovers existing app instances', () => {
   let available: boolean;
   let discoveryResult: Record<string, unknown>;
   let requests: Array<{ id: string; method: string; params: Record<string, unknown> }>;
+  let ports: Array<{
+    disconnect: ReturnType<typeof vi.fn>;
+    postMessage: ReturnType<typeof vi.fn>;
+    respond: (message: unknown) => void;
+    close: () => void;
+  }>;
   let client: AppServerClient | undefined;
+  const connectNative = vi.fn();
   const sendMessage = vi.fn();
 
   beforeEach(() => {
@@ -69,35 +76,51 @@ describe('browser extension discovers existing app instances', () => {
     FixtureSocket.failSend = false;
     FixtureSocket.instances = [];
     requests = [];
-    let onNativeMessage: (message: unknown) => void;
-    const port = {
-      onMessage: {
-        addListener: (listener: typeof onNativeMessage) => {
-          onNativeMessage = listener;
+    ports = [];
+    connectNative.mockReset().mockImplementation(() => {
+      let onNativeMessage: (message: unknown) => void;
+      let onNativeDisconnect: () => void;
+      const port = {
+        onMessage: {
+          addListener: (listener: typeof onNativeMessage) => {
+            onNativeMessage = listener;
+          },
         },
-      },
-      onDisconnect: { addListener: vi.fn() },
-      postMessage: (request: (typeof requests)[number]) => {
-        requests.push(request);
-        const response =
-          request.method === 'codexRuntime/hello'
-            ? {
-                result: {
-                  manifestSchemaVersion: 2,
-                  nativeHostProtocolVersion: 2,
-                  supportedProtocolVersions: [2],
-                },
-              }
-            : available
-              ? { result: discoveryResult }
-              : { error: { message: unavailableMessage, data: { code: 'APP_NOT_RUNNING' } } };
-        onNativeMessage({ id: request.id, ...response });
-      },
-    };
+        onDisconnect: {
+          addListener: (listener: typeof onNativeDisconnect) => {
+            onNativeDisconnect = listener;
+          },
+        },
+        disconnect: vi.fn(() => onNativeDisconnect()),
+        postMessage: vi.fn((request: (typeof requests)[number]) => {
+          requests.push(request);
+          const response =
+            request.method === 'codexRuntime/hello'
+              ? {
+                  result: {
+                    manifestSchemaVersion: 2,
+                    nativeHostProtocolVersion: 2,
+                    supportedProtocolVersions: [2],
+                  },
+                }
+              : available
+                ? { result: discoveryResult }
+                : { error: { message: unavailableMessage, data: { code: 'APP_NOT_RUNNING' } } };
+          onNativeMessage({ id: request.id, ...response });
+        }),
+      };
+      ports.push({
+        disconnect: port.disconnect,
+        postMessage: port.postMessage,
+        respond: message => onNativeMessage(message),
+        close: () => onNativeDisconnect(),
+      });
+      return port;
+    });
     sendMessage.mockReset();
     vi.stubGlobal('chrome', {
       runtime: {
-        connectNative: () => port,
+        connectNative,
         sendMessage,
         getManifest: () => ({ version: '2.3.0' }),
       },
@@ -131,6 +154,9 @@ describe('browser extension discovers existing app instances', () => {
       'codexRuntime/ensure',
     ]);
     expect(requests[1].params).not.toHaveProperty('reason');
+    expect(connectNative).toHaveBeenCalledOnce();
+    expect(ports[0].disconnect).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it('reports a missing instance and discovers it after the user starts the app', async () => {
@@ -151,6 +177,128 @@ describe('browser extension discovers existing app instances', () => {
       'codexRuntime/hello',
       'codexRuntime/ensure',
     ]);
+    expect(connectNative).toHaveBeenCalledTimes(2);
+    for (const port of ports) expect(port.disconnect).toHaveBeenCalledOnce();
+  });
+
+  it('starts a fresh discovery after success and reads the current connection details', async () => {
+    const { ensureAppServer } =
+      await import('../conversation-overlay/modules/app-server-background.js');
+    await expect(ensureAppServer('panel')).resolves.toMatchObject({ localAppServerUrl });
+    const updatedUrl = localAppServerUrl
+      .replace('41234', '41235')
+      .replace(/a{64}/u, 'b'.repeat(64));
+    discoveryResult = { ...discoveryResult, localAppServerUrl: updatedUrl };
+
+    await expect(ensureAppServer('panel')).resolves.toMatchObject({
+      localAppServerUrl: updatedUrl,
+    });
+
+    expect(connectNative).toHaveBeenCalledTimes(2);
+    for (const port of ports) expect(port.disconnect).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('releases concurrent discoveries independently and keeps each handshake on its own pipe', async () => {
+    const { ensureAppServer } =
+      await import('../conversation-overlay/modules/app-server-background.js');
+    const panel = ensureAppServer('panel');
+    const pairing = ensureAppServer('browser-bootstrap');
+    for (const port of ports) port.postMessage.mockImplementation(() => {});
+    await Promise.resolve();
+
+    expect(connectNative).toHaveBeenCalledTimes(2);
+    for (const [index, clientId] of ['panel', 'browser-bootstrap'].entries()) {
+      expect(ports[index].postMessage.mock.calls.map(([request]) => request.method)).toEqual([
+        'codexRuntime/hello',
+        'codexRuntime/ensure',
+      ]);
+      expect(ports[index].postMessage.mock.calls[1][0].params.clientId).toBe(clientId);
+    }
+    const panelRequest = ports[0].postMessage.mock.calls[1][0];
+    ports[0].respond({ id: panelRequest.id, result: discoveryResult });
+    await expect(panel).resolves.toMatchObject({ localAppServerUrl });
+    expect(ports[0].disconnect).toHaveBeenCalledOnce();
+    expect(ports[1].disconnect).not.toHaveBeenCalled();
+
+    ports[0].respond({ id: panelRequest.id, error: { message: 'Late error' } });
+    ports[0].close();
+    const pairingRequest = ports[1].postMessage.mock.calls[1][0];
+    ports[1].respond({ id: pairingRequest.id, result: discoveryResult });
+    await expect(pairing).resolves.toMatchObject({ localAppServerUrl });
+    expect(ports[1].disconnect).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('rejects a host disconnect after hello without sending ensure on another pipe', async () => {
+    const { ensureAppServer } =
+      await import('../conversation-overlay/modules/app-server-background.js');
+    const result = ensureAppServer('panel');
+    ports[0].close();
+
+    await expect(result).rejects.toMatchObject({ code: 'NATIVE_HOST_UNAVAILABLE' });
+    expect(connectNative).toHaveBeenCalledOnce();
+    expect(requests.map(request => request.method)).toEqual(['codexRuntime/hello']);
+    expect(ports[0].disconnect).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('releases an incompatible host before requesting discovery', async () => {
+    let respond!: (message: unknown) => void;
+    const disconnect = vi.fn();
+    connectNative.mockImplementationOnce(() => ({
+      onMessage: {
+        addListener: (listener: (message: unknown) => void) => {
+          respond = listener;
+        },
+      },
+      onDisconnect: { addListener: vi.fn() },
+      disconnect,
+      postMessage: (request: { id: string }) => respond({ id: request.id, result: {} }),
+    }));
+    const { ensureAppServer } =
+      await import('../conversation-overlay/modules/app-server-background.js');
+
+    await expect(ensureAppServer('panel')).rejects.toMatchObject({ code: 'INCOMPATIBLE_VERSION' });
+
+    expect(disconnect).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('reports a native launch failure without retaining a request or timer', async () => {
+    connectNative.mockImplementationOnce(() => {
+      throw new Error('Native host is unavailable');
+    });
+    const { ensureAppServer } =
+      await import('../conversation-overlay/modules/app-server-background.js');
+
+    await expect(ensureAppServer('panel')).rejects.toMatchObject({
+      code: 'NATIVE_HOST_UNAVAILABLE',
+      message: 'Native host is unavailable',
+    });
+
+    expect(ports).toHaveLength(0);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('isolates a timed-out discovery from another in-flight discovery', async () => {
+    const { ensureAppServer } =
+      await import('../conversation-overlay/modules/app-server-background.js');
+    const stalled = ensureAppServer('panel').catch((error: Error) => error);
+    ports[0].postMessage.mockImplementation(() => {});
+    await vi.advanceTimersByTimeAsync(10_000);
+    const pairing = ensureAppServer('browser-bootstrap');
+    ports[1].postMessage.mockImplementation(() => {});
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    expect(await stalled).toMatchObject({ code: 'NATIVE_HOST_TIMEOUT' });
+    expect(ports[0].disconnect).toHaveBeenCalledOnce();
+    expect(ports[1].disconnect).not.toHaveBeenCalled();
+    const request = ports[1].postMessage.mock.calls[1][0];
+    ports[1].respond({ id: request.id, result: discoveryResult });
+    await expect(pairing).resolves.toMatchObject({ localAppServerUrl });
+    expect(ports[1].disconnect).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it('keeps reconnecting after repeated failures without requesting a restart', async () => {
@@ -363,6 +511,8 @@ describe('browser extension discovers existing app instances', () => {
 
     expect(response).toMatchObject({ ok: false, code: 'INVALID_APP_SERVER' });
     expect(response).not.toHaveProperty('localAppServerUrl');
+    expect(ports[0].disconnect).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it('rejects an unavailable native port immediately and clears its timeout', async () => {
@@ -434,6 +584,8 @@ describe('browser extension discovers existing app instances', () => {
     ports[0].close();
     await expect(ensureAppServer('panel')).resolves.toMatchObject({ localAppServerUrl });
 
-    expect(connectNative).toHaveBeenCalledTimes(2);
+    expect(connectNative).toHaveBeenCalledTimes(3);
+    for (const port of ports) expect(port.disconnect).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(0);
   });
 });

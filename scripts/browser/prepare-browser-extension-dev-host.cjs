@@ -8,25 +8,36 @@ const path = require('path');
 const BROWSER_EXTENSION_ID = 'jboajogplelmaahjbomgflnfngpolgcb';
 const NATIVE_HOST_NAME = 'com.justdo.browserextension';
 
-function buildDevNativeHostPlan(options = {}) {
-  const repoRoot = path.resolve(options.repoRoot || path.join(__dirname, '../..'));
+function readProductName(repoRoot) {
   const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));
   const productName = packageJson.productName;
   if (typeof productName !== 'string' || !/^[A-Za-z]{1,64}$/.test(productName)) {
     throw new Error('Browser extension productName must contain 1-64 ASCII letters.');
   }
+  return productName;
+}
+
+function buildDevNativeHostPlan(options = {}) {
+  const repoRoot = path.resolve(options.repoRoot || path.join(__dirname, '../..'));
+  const productName = readProductName(repoRoot);
   const appDataPath = options.appDataPath || process.env.APPDATA;
   if (!appDataPath) throw new Error('APPDATA is unavailable.');
-  const outputDirectory = path.join(repoRoot, 'build', 'browser-extension', 'native-host');
   const sourcePath = path.join(repoRoot, 'scripts', 'browser', 'browser-extension-native-host.cs');
   const sourceDigest = crypto
     .createHash('sha256')
     .update(fs.readFileSync(sourcePath))
     .digest('hex')
     .slice(0, 16);
+  const outputDirectory = path.join(
+    repoRoot,
+    'build',
+    'browser-extension',
+    'native-host',
+    sourceDigest,
+  );
   const executablePath = path.join(
     outputDirectory,
-    `justdo-browser-extension-dev-host-${sourceDigest}.exe`,
+    `${productName}-browser-extension-native-host.exe`,
   );
   const manifestPath = path.join(
     appDataPath,
@@ -92,10 +103,16 @@ function buildDevNativeHostConfig(plan) {
 function compileBrowserExtensionNativeHost(options = {}) {
   if ((options.platform || process.platform) !== 'win32') return null;
   const repoRoot = path.resolve(options.repoRoot || path.join(__dirname, '../..'));
-  const outputDirectory = path.join(repoRoot, 'build', 'browser-extension', 'native-host');
   const executablePath =
     options.executablePath ||
-    path.join(outputDirectory, 'justdo-browser-extension-native-host-v2.exe');
+    path.join(
+      repoRoot,
+      'build',
+      'browser-extension',
+      'native-host',
+      `${readProductName(repoRoot)}-browser-extension-native-host.exe`,
+    );
+  const outputDirectory = path.dirname(executablePath);
   const sourcePath = path.join(repoRoot, 'scripts', 'browser', 'browser-extension-native-host.cs');
   fs.mkdirSync(outputDirectory, { recursive: true });
   // Development outputs are content-addressed by the C# source digest. The

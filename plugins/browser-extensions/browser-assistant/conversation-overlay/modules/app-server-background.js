@@ -1,38 +1,37 @@
 const NATIVE_HOST = 'com.justdo.browserextension';
 const REQUEST_TIMEOUT_MS = 20_000;
 export const APP_NOT_RUNNING_CODE = 'APP_NOT_RUNNING';
-let nativePort = null;
-let nextRequestId = 0;
-const pending = new Map();
 
 function nativeError(message, code = 'NATIVE_HOST_UNAVAILABLE') {
   return Object.assign(new Error(message), { code });
 }
 
-function rejectPending(error, port) {
-  for (const [id, request] of pending) {
-    if (request.port !== port) continue;
-    clearTimeout(request.timeout);
-    request.reject(error);
-    pending.delete(id);
-  }
-}
-
-function retireNativePort(port, error) {
-  if (nativePort === port) nativePort = null;
-  rejectPending(error, port);
-  try {
-    port.disconnect();
-  } catch {
-    // A failed native pipe may already have disconnected.
-  }
-}
-
 function connectNativeHost() {
-  if (nativePort) return nativePort;
-  const port = chrome.runtime.connectNative(NATIVE_HOST);
-  nativePort = port;
+  let port;
+  try {
+    port = chrome.runtime.connectNative(NATIVE_HOST);
+  } catch (error) {
+    throw nativeError(error instanceof Error ? error.message : 'Native host could not be started.');
+  }
+  const pending = new Map();
+  let nextRequestId = 0;
+  let closedError = null;
+  const close = (error = nativeError('Native host connection closed.')) => {
+    if (closedError) return;
+    closedError = error;
+    for (const request of pending.values()) {
+      clearTimeout(request.timeout);
+      request.reject(error);
+    }
+    pending.clear();
+    try {
+      port.disconnect();
+    } catch {
+      // A failed native pipe may already have disconnected.
+    }
+  };
   port.onMessage.addListener(message => {
+    if (closedError) return;
     const request = pending.get(String(message?.id));
     if (!request) return;
     pending.delete(String(message.id));
@@ -44,41 +43,27 @@ function connectNativeHost() {
     } else request.resolve(message.result);
   });
   port.onDisconnect.addListener(() => {
-    if (nativePort === port) nativePort = null;
     const message = chrome.runtime.lastError?.message ?? 'Native host disconnected.';
-    rejectPending(nativeError(message), port);
+    close(nativeError(message));
   });
-  return port;
-}
-
-function requestNativeHost(method, params = {}) {
-  const id = `justdo-native:${++nextRequestId}`;
-  let port;
-  try {
-    port = connectNativeHost();
-  } catch (error) {
-    return Promise.reject(
-      nativeError(error instanceof Error ? error.message : 'Native host failed.'),
-    );
-  }
-  return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      pending.delete(id);
-      const error = nativeError(`Native host request ${method} timed out.`, 'NATIVE_HOST_TIMEOUT');
-      reject(error);
-      retireNativePort(port, error);
-    }, REQUEST_TIMEOUT_MS);
-    pending.set(id, { reject, resolve, timeout, port });
-    try {
-      port.postMessage({ jsonrpc: '2.0', id, method, params });
-    } catch {
-      pending.delete(id);
-      clearTimeout(timeout);
-      const error = nativeError('Unable to contact the native host.');
-      reject(error);
-      retireNativePort(port, error);
-    }
-  });
+  return {
+    close,
+    request(method, params = {}) {
+      if (closedError) return Promise.reject(closedError);
+      const id = `justdo-native:${++nextRequestId}`;
+      return new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          close(nativeError(`Native host request ${method} timed out.`, 'NATIVE_HOST_TIMEOUT'));
+        }, REQUEST_TIMEOUT_MS);
+        pending.set(id, { reject, resolve, timeout });
+        try {
+          port.postMessage({ jsonrpc: '2.0', id, method, params });
+        } catch {
+          close(nativeError('Unable to contact the native host.'));
+        }
+      });
+    },
+  };
 }
 
 function validateAppServer(value) {
@@ -106,32 +91,40 @@ function validateAppServer(value) {
 }
 
 export async function ensureAppServer(clientId) {
-  const constraints = {
-    manifestSchemaVersion: 2,
-    nativeHostName: NATIVE_HOST,
-    requiredAppServerProtocolVersion: 2,
-    requiredNativeHostProtocolVersion: 2,
-  };
-  const hello = await requestNativeHost('codexRuntime/hello', { constraints });
-  if (
-    hello?.manifestSchemaVersion !== 2 ||
-    hello?.nativeHostProtocolVersion !== 2 ||
-    !Array.isArray(hello?.supportedProtocolVersions) ||
-    !hello?.supportedProtocolVersions?.includes(2)
-  ) {
-    throw nativeError(
-      'The extension and desktop app versions are incompatible.',
-      'INCOMPATIBLE_VERSION',
-    );
+  const connection = connectNativeHost();
+  try {
+    const constraints = {
+      manifestSchemaVersion: 2,
+      nativeHostName: NATIVE_HOST,
+      requiredAppServerProtocolVersion: 2,
+      requiredNativeHostProtocolVersion: 2,
+    };
+    const hello = await connection.request('codexRuntime/hello', { constraints });
+    if (
+      hello?.manifestSchemaVersion !== 2 ||
+      hello?.nativeHostProtocolVersion !== 2 ||
+      !Array.isArray(hello?.supportedProtocolVersions) ||
+      !hello?.supportedProtocolVersions?.includes(2)
+    ) {
+      throw nativeError(
+        'The extension and desktop app versions are incompatible.',
+        'INCOMPATIBLE_VERSION',
+      );
+    }
+    const result = await connection.request('codexRuntime/ensure', {
+      constraints,
+      ...(typeof clientId === 'string' && clientId ? { clientId } : {}),
+    });
+    const validated = validateAppServer(result);
+    if (!validated)
+      throw nativeError(
+        'The desktop app returned an invalid app-server URL.',
+        'INVALID_APP_SERVER',
+      );
+    return validated;
+  } finally {
+    connection.close();
   }
-  const result = await requestNativeHost('codexRuntime/ensure', {
-    constraints,
-    ...(typeof clientId === 'string' && clientId ? { clientId } : {}),
-  });
-  const validated = validateAppServer(result);
-  if (!validated)
-    throw nativeError('The desktop app returned an invalid app-server URL.', 'INVALID_APP_SERVER');
-  return validated;
 }
 
 export function handleAppServerMessage(message, reply) {

@@ -4,7 +4,10 @@
 通用客户端使用[独立连接配置](../external-clients.md#连接)。
 
 Native Host 只负责发现已经运行的桌面 app-server，不启动或重启应用，也不承载对话内容。Chrome 扩展通过
-`chrome.runtime.connectNative('com.justdo.browserextension')` 建立长连接。
+`chrome.runtime.connectNative('com.justdo.browserextension')` 按需启动 helper 并建立一次发现连接。
+每次发现使用独立连接，在同一连接完成 `hello / ensure`，无论成功或失败都主动断开，
+helper 在 stdin EOF 后退出。并发发现的连接、请求和超时分别持有；重连重新启动 helper。
+发现后的对话和自动配对直接连接 app-server 的 WebSocket，不经 helper 转发。
 
 ## 注册
 
@@ -28,8 +31,9 @@ HKCU\Software\Google\Chrome\NativeMessagingHosts\com.justdo.browserextension
 
 `npm run electron:dev` 会在选择 Vite 端口后编译独立 Native Host helper、生成相同 manifest
 并写入注册表，因此开发态和安装版走同一协议实现。开发态 manifest 指向
-`build/browser-extension/native-host/justdo-browser-extension-dev-host-<source digest>.exe`；安装版指向
-`resources/browser-extension/native-host/` 下的随包 helper。后启动的一方会更新当前用户注册，
+`build/browser-extension/native-host/<source digest>/<productName>-browser-extension-native-host.exe`；安装版指向
+`resources/browser-extension/native-host/<productName>-browser-extension-native-host.exe`。
+文件名保留 `package.json.productName`，不含协议或应用版本号。后启动的一方会更新当前用户注册，
 所以从安装版切回开发版时应重新运行 `npm run electron:dev`。
 
 manifest 同目录还有 `native-host.config.json`。Chrome 不读取此文件，由 helper 用注册表中的
@@ -44,8 +48,8 @@ helper 中没有启动子进程或删除发现文件的路径，即使旧配置�
 不能依赖开发 Chrome 已经保存的广域网页权限，使新安装的扩展缺少本机访问声明。
 该权限不替代固定 Origin 和 capability 校验，也不开放任意 Gateway 方法。
 
-开发 helper 文件名包含其 C# 源码摘要。相同摘要的有效 PE 文件会直接复用，避免 Chrome 正在
-运行 helper 时 Windows 文件锁导致编译器无法覆盖；源码变化后会自然生成新的文件名。
+开发 helper 所在目录包含其 C# 源码摘要。相同摘要的有效 PE 文件会直接复用，避免 Chrome 正在
+运行 helper 时 Windows 文件锁导致编译器无法覆盖；源码变化后会自然生成新的目录，文件名保持稳定。
 
 ## 进程入口
 

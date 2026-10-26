@@ -2427,7 +2427,7 @@ if (agentBridgeArgv) {
               process.resourcesPath,
               'browser-extension',
               'native-host',
-              'justdo-browser-extension-native-host-v2.exe',
+              `${APP_NAME}-browser-extension-native-host.exe`,
             ),
           );
         }
