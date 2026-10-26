@@ -1,9 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-  AUTHOR_NAME,
-  PRODUCT_NAME,
-} from '../../../shared/productMetadata';
+import { PRODUCT_NAME } from '../../../shared/productMetadata';
 import {
   mergeRegisteredSystemPromptReplacementRules,
   normalizePersistedSystemPromptReplacementRules,
@@ -15,51 +12,77 @@ const applyRegisteredRules = (prompt: string): string =>
     (result, rule) =>
       rule.enabled === false
         ? result
-        : result.replace(
-            new RegExp(rule.pattern, rule.flags),
-            rule.replacement,
-          ),
+        : result.replace(new RegExp(rule.pattern, rule.flags), rule.replacement),
     prompt,
   );
 
+const retiredRuleIds = [
+  'remove-skill-version-lines',
+  'remove-skill-version-refresh-guidance',
+  'compact-runtime-section',
+  'remove-source-channel-routing-line',
+  'remove-openclaw-diagnostics-guidance',
+  'brand-spaced-openclaw-references',
+];
+
+const makeCustomRules = (count: number) =>
+  Array.from({ length: count }, (_, index) => ({
+    id: `custom-${index}`,
+    pattern: `old-${index}`,
+    flags: 'g',
+    replacement: `new-${index}`,
+    enabled: true,
+  }));
+
+const removedSections = [
+  {
+    title: 'OpenClaw Control',
+    body: [
+      'Do not invent commands.',
+      'For the Gateway hosting this session: In a connected chat, the owner can send `/update` with commands.restart enabled (the default), regardless of the agent\'s tool profile. For a chat update request, direct the user to `/update`. Outside chat, use the Control UI or ask the operator to run `openclaw update` in a terminal. Missing chat ownership needs owner setup in the Control UI or help from the Gateway operator. Never run openclaw update, npm install -g openclaw, swap installations, or stop/restart the gateway service via exec or detached jobs.',
+      'For a user-requested update on another host, verify it is not this Gateway, then use exec/SSH with `openclaw update --yes`; normal exec approvals still apply.',
+    ],
+    nextSection: ['## Skills', 'Use these skills for the requested task.'],
+  },
+  {
+    title: 'Authorized Senders',
+    body: ['Allowlisted senders: gateway-client. Allowlisted != owner.'],
+    nextSection: [
+      '## UI Presentation',
+      '`show_widget`: author widgets using this turn\'s schema. pin=true saves to the dashboard; status=pinned means the widget is on the session dashboard. Follow result.presentation when present. Inline availability is per turn, including after restart.',
+      'Inspect widgets in their chat/dashboard frame; do not open hosting URLs as browser pages. Verify the delivered interaction or say unverified.',
+      '## Control UI Embed',
+      'Keep embed guidance.',
+    ],
+  },
+  {
+    title: 'Control UI Side Chat',
+    body: [
+      '- Operator has a read-only Side chat for this session\'s status and explanations.',
+      '- On request, do not spawn sub-agents or burn main-thread turns merely to summarize status or re-explain recent work.',
+      '- Reserve `sessions_spawn` for delegated work with its own deliverable.',
+    ],
+    nextSection: ['## Messaging', 'Keep messaging guidance.'],
+  },
+  {
+    title: 'Care',
+    body: [
+      'Before config/scheduler edits (crontab/systemd/nginx/shell rc/timers): inspect; preserve/merge. Whole-file replacement only explicit.',
+      'Use or store credentials the user supplies as requested, and complete the task. In the final reply, briefly acknowledge how the supplied credential was used or stored, without repeating its value. Keep the acknowledgment factual and non-alarming.',
+      'For user-requested login or pairing in a group, deliver short-lived codes and verification URLs only to the requesting user in private, then acknowledge in the group without them.',
+      'Channel, provider, and credential setup: terminal `openclaw channels add <channel>` or `openclaw configure` masks secrets.',
+    ],
+    nextSection: ['## Runtime Context', 'Keep runtime context.'],
+  },
+];
+
 describe('registered system prompt replacements', () => {
-  it('keeps only the useful dynamic runtime fields', () => {
-    const prompt = [
-      '# Agent',
-      '',
-      '## Runtime',
-      'Runtime: agent=main | session=agent:main:justdo:a6298c3e | sessionId=c57fd921 | host=DESKTOP-43R3H1D | repo=C:\\\\Users\\\\lianghao\\\\justdo\\\\project | os=Windows_NT 10.0.26200 (x64) | node=v24.18.0 | model=custom0/deepseek-v4-flash | default_model=custom0/deepseek-v4-flash | shell=pwsh | channel=webchat | capabilities=none | thinking=medium',
-      'Current model identity: custom0/deepseek-v4-flash. If asked what model you are, answer with this value for the current run.',
-      'Reasoning: stream (hidden unless on/stream). Toggle /reasoning; /status shows Reasoning when enabled.',
-      '',
-      '## Next',
-      'Keep this section.',
-    ].join('\n');
-
-    expect(applyRegisteredRules(prompt)).toBe(
-      [
-        '# Agent',
-        '',
-        '## Runtime',
-        'host=DESKTOP-43R3H1D | repo=C:\\\\Users\\\\lianghao\\\\justdo\\\\project | os=Windows_NT 10.0.26200 (x64) | node=v24.18.0 | model=custom0/deepseek-v4-flash | shell=pwsh',
-        '',
-        '## Next',
-        'Keep this section.',
-      ].join('\n'),
-    );
-  });
-
   it('keeps registered rules first and authoritative by id', () => {
+    const customRule = makeCustomRules(1)[0];
     const merged = mergeRegisteredSystemPromptReplacementRules([
+      customRule,
       {
-        id: 'custom-rule',
-        pattern: 'old',
-        flags: 'g',
-        replacement: 'new',
-        enabled: true,
-      },
-      {
-        id: 'compact-runtime-section',
+        id: 'normalize-system-prompt-line-endings',
         pattern: 'override',
         flags: 'g',
         replacement: '',
@@ -69,78 +92,56 @@ describe('registered system prompt replacements', () => {
 
     expect(merged.map(rule => rule.id)).toEqual([
       'normalize-system-prompt-line-endings',
-      'remove-skill-version-lines',
-      'remove-skill-version-refresh-guidance',
-      'compact-runtime-section',
       'remove-openclaw-reference-links',
       'remove-openclaw-control-section',
-      'remove-source-channel-routing-line',
-      'remove-openclaw-diagnostics-guidance',
-      'brand-spaced-openclaw-references',
       'brand-openclaw-personal-assistant',
-      'custom-rule',
+      'remove-authorized-senders-section',
+      'remove-control-ui-side-chat-section',
+      'remove-care-section',
+      'brand-webchat-direct-conversation',
+      'remove-reasoning-stream-guidance',
+      'remove-approve-command-guidance',
+      'remove-approval-preview-guidance',
+      customRule.id,
     ]);
-    expect(merged[0]).toEqual(REGISTERED_SYSTEM_PROMPT_REPLACEMENT_RULES[0]);
+    expect(merged).toEqual([
+      ...REGISTERED_SYSTEM_PROMPT_REPLACEMENT_RULES,
+      customRule,
+    ]);
   });
 
-  it('enforces the rule limit for custom rules without counting registered rules', () => {
-    const customRules = Array.from({ length: 100 }, (_, index) => ({
-      id: `custom-${index}`,
-      pattern: `old-${index}`,
+  it('enforces the custom rule limit without counting registered rules', () => {
+    expect(mergeRegisteredSystemPromptReplacementRules(makeCustomRules(100)))
+      .toHaveLength(REGISTERED_SYSTEM_PROMPT_REPLACEMENT_RULES.length + 100);
+    expect(() => mergeRegisteredSystemPromptReplacementRules(makeCustomRules(101)))
+      .toThrow(/custom system prompt replacement rules cannot exceed 100/i);
+  });
+
+  it('drops retired built-ins from persisted rules while preserving 100 custom rules', () => {
+    const retiredRules = retiredRuleIds.map(id => ({
+      id,
+      pattern: 'legacy',
       flags: 'g',
-      replacement: `new-${index}`,
+      replacement: '',
       enabled: true,
     }));
-
-    expect(mergeRegisteredSystemPromptReplacementRules(customRules)).toHaveLength(
-      REGISTERED_SYSTEM_PROMPT_REPLACEMENT_RULES.length + 100,
-    );
-    expect(() =>
-      mergeRegisteredSystemPromptReplacementRules([
-        ...customRules,
-        {
-          id: 'custom-over-limit',
-          pattern: 'old-over-limit',
-          flags: 'g',
-          replacement: 'new-over-limit',
-          enabled: true,
-        },
-      ]),
-    ).toThrow(/custom system prompt replacement rules cannot exceed 100/i);
-  });
-
-  it('upgrades a previously full persisted rule file when new rules are registered', () => {
-    const newlyRegisteredIds = new Set([
-      'remove-skill-version-lines',
-      'remove-skill-version-refresh-guidance',
-    ]);
-    const previousRegisteredRules =
-      REGISTERED_SYSTEM_PROMPT_REPLACEMENT_RULES.filter(
-        rule => !newlyRegisteredIds.has(rule.id),
-      );
-    const customRules = Array.from(
-      { length: 100 - previousRegisteredRules.length },
-      (_, index) => ({
-        id: `legacy-custom-${index}`,
-        pattern: `old-${index}`,
-        flags: 'g',
-        replacement: `new-${index}`,
-        enabled: true,
-      }),
-    );
-    const previousPersistedRules = [
-      ...previousRegisteredRules,
+    const customRules = makeCustomRules(100);
+    const persistedRules = [
+      ...REGISTERED_SYSTEM_PROMPT_REPLACEMENT_RULES,
+      ...retiredRules,
       ...customRules,
     ];
 
-    expect(previousPersistedRules).toHaveLength(100);
-    const normalized = normalizePersistedSystemPromptReplacementRules(
-      previousPersistedRules,
+    const merged = mergeRegisteredSystemPromptReplacementRules(
+      normalizePersistedSystemPromptReplacementRules(persistedRules),
     );
-    const merged = mergeRegisteredSystemPromptReplacementRules(normalized);
-    expect(merged).toHaveLength(102);
-    expect(merged.map(rule => rule.id)).toEqual(
-      expect.arrayContaining([...newlyRegisteredIds]),
+
+    expect(merged).toEqual([
+      ...REGISTERED_SYSTEM_PROMPT_REPLACEMENT_RULES,
+      ...customRules,
+    ]);
+    expect(merged.map(rule => rule.id)).not.toEqual(
+      expect.arrayContaining(retiredRuleIds),
     );
   });
 
@@ -150,114 +151,126 @@ describe('registered system prompt replacements', () => {
     );
   });
 
-  it('removes skill version lines without changing the remaining skill metadata', () => {
+  it('preserves the content previously changed by retired rules', () => {
     const prompt = [
-      'The following skills provide specialized instructions for specific tasks.',
+      '<version>sha256:9ca91d19ad880c94</version>',
       "If a skill's <version> differs from a previous turn, re-read its SKILL.md before using it.",
       "If a skill's <version> differs from a previous turn, re-read that skill before using it.",
-      '<available_skills>',
-      '  <skill>',
-      '    <name>import-smoke-test</name>',
-      '    <description>Smoke-test an imported skill.</description>',
-      '    <location>~/skills/import-smoke-test/SKILL.md</location>',
-      '    <version>sha256:9ca91d19ad880c94</version>',
-      '  </skill>',
-      '  <skill>',
-      '    <name>keep-me</name>',
-      '    <location>~/skills/keep-me/SKILL.md</location>',
-      '  </skill>',
-      '</available_skills>',
-    ].join('\r\n');
+      '## Runtime',
+      'Runtime: agent=main | session=agent:main:chat:sample | host=DESKTOP | repo=C:\\project | os=Windows_NT | node=v24.18.0 | model=internal/model | shell=pwsh | channel=webchat',
+      'Current model identity: internal/model. If asked what model you are, answer with this value for the current run.',
+      'Reasoning: stream (hidden unless on/stream). Toggle /reasoning; /status shows Reasoning when enabled.',
+      '- Reply in current session → automatically routes to the source channel (Signal, Telegram, etc.)',
+      'If docs are silent/stale, say so and inspect GitHub source.',
+      'Diagnosing issues: run `openclaw status` when possible; ask user only if blocked.',
+      "Use OpenClaw's tools. Run OpenClaw now. Keep openclaw and OpenClaw.",
+    ].join('\n');
 
-    expect(applyRegisteredRules(prompt)).toBe(
-      [
-        'The following skills provide specialized instructions for specific tasks.',
-        '<available_skills>',
-        '  <skill>',
-        '    <name>import-smoke-test</name>',
-        '    <description>Smoke-test an imported skill.</description>',
-        '    <location>~/skills/import-smoke-test/SKILL.md</location>',
-        '  </skill>',
-        '  <skill>',
-        '    <name>keep-me</name>',
-        '    <location>~/skills/keep-me/SKILL.md</location>',
-        '  </skill>',
-        '</available_skills>',
-      ].join('\n'),
-    );
+    expect(applyRegisteredRules(prompt)).toBe(prompt);
   });
 
-  it('brands the personal assistant sentence from package productName', () => {
-    expect(
-      applyRegisteredRules(
-        'You are a personal assistant running inside OpenClaw.',
-      ),
-    ).toBe(
-      `You are a personal assistant developed by ${AUTHOR_NAME} and running inside ${PRODUCT_NAME}, **not OpenClaw**. Your runtime is **not OpenClaw**, and you have **no connection to or affiliation with OpenClaw whatsoever**.`,
-    );
+  it('attributes core capabilities to the product and only the runtime to OpenClaw', () => {
+    expect(applyRegisteredRules('You are a personal assistant running inside OpenClaw.'))
+      .toBe(`You are a personal assistant whose core capabilities are developed by ${PRODUCT_NAME}. OpenClaw only provides the runtime.`);
   });
 
-  it('brands only case-sensitive OpenClaw references with the requested spaces', () => {
-    expect(
-      applyRegisteredRules(
-        "Use OpenClaw's tools. Run OpenClaw now. Keep openclaw and OpenClaw.",
-      ),
-    ).toBe(
-      `Use ${PRODUCT_NAME}'s tools. Run ${PRODUCT_NAME} now. Keep openclaw and OpenClaw.`,
-    );
+  it('brands only the specified WebChat direct-conversation phrase', () => {
+    expect(applyRegisteredRules([
+      'You are in a WebChat direct conversation with the user.',
+      'Other WebChat references remain unchanged.',
+      'You are in a WebChat group conversation.',
+    ].join('\n'))).toBe([
+      `You are in a ${PRODUCT_NAME} direct conversation with the user.`,
+      'Other WebChat references remain unchanged.',
+      'You are in a WebChat group conversation.',
+    ].join('\n'));
   });
 
-  it('removes the OpenClaw mirror and source lines without leaving a blank line', () => {
-    expect(
-      applyRegisteredRules(
-        [
-          'Before',
-          'Mirror: https://docs.openclaw.ai',
-          'Source: https://github.com/openclaw/openclaw',
-          'After',
-        ].join('\r\n'),
-      ),
-    ).toBe('Before\nAfter');
+  it('removes the exact adjacent mirror and source lines', () => {
+    expect(applyRegisteredRules([
+      'Before',
+      'Mirror: https://docs.openclaw.ai',
+      'Source: https://github.com/openclaw/openclaw',
+      'After',
+    ].join('\r\n'))).toBe('Before\nAfter');
+
+    const otherReferences = [
+      'Mirror: https://docs.openclaw.ai/other',
+      'Source: https://github.com/openclaw/openclaw',
+      'Mirror: https://docs.openclaw.ai',
+      'Keep this separator.',
+      'Source: https://github.com/openclaw/openclaw',
+    ].join('\n');
+    expect(applyRegisteredRules(otherReferences)).toBe(otherReferences);
   });
 
-  it('removes the complete OpenClaw control section', () => {
-    expect(
-      applyRegisteredRules(
-        [
-          'Before',
-          '## OpenClaw Control',
-          'Do not invent commands.',
-          'Config/restart: prefer `gateway` tool (`config.schema.lookup|get|patch|apply`, `restart`).',
-          'CLI lifecycle only on explicit user request: `openclaw gateway status|restart|start|stop`.',
-          '`restart`, not stop+start.',
-          '## After',
-        ].join('\r\n'),
-      ),
-    ).toBe('Before\n## After');
+  it.each(removedSections)('removes $title while preserving the next section', ({
+    title,
+    body,
+    nextSection,
+  }) => {
+    expect(applyRegisteredRules([
+      'Before',
+      `## ${title}`,
+      ...body,
+      ...nextSection,
+    ].join('\r\n'))).toBe(['Before', ...nextSection].join('\n'));
   });
 
-  it('removes only the source-channel routing list item', () => {
-    expect(
-      applyRegisteredRules(
-        [
-          '- Keep this item',
-          '- Reply in current session → automatically routes to the source channel (Signal, Telegram, etc.)',
-          '- Keep this item too',
-        ].join('\n'),
-      ),
-    ).toBe(['- Keep this item', '- Keep this item too'].join('\n'));
+  it.each(removedSections)('handles $title section boundaries and nested headings', ({ title }) => {
+    expect(applyRegisteredRules([
+      `## ${title} \t`,
+      'Remove this body.',
+      '### Nested heading',
+      'Remove this child body.',
+      '# After',
+      'Keep this body.',
+    ].join('\n'))).toBe('# After\nKeep this body.');
+    expect(applyRegisteredRules(`Before\n## ${title}\nRemove through EOF.`))
+      .toBe('Before\n');
+    expect(applyRegisteredRules(`Before\n## ${title}`)).toBe('Before\n');
   });
 
-  it('removes the adjacent OpenClaw diagnostics guidance lines', () => {
-    expect(
-      applyRegisteredRules(
-        [
-          'Before',
-          'If docs are silent/stale, say so and inspect GitHub source.',
-          'Diagnosing issues: run `openclaw status` when possible; ask user only if blocked.',
-          'After',
-        ].join('\r\n'),
-      ),
-    ).toBe('Before\nAfter');
+  it.each(removedSections)('preserves headings that only resemble $title', ({ title }) => {
+    const prompt = [
+      `## ${title} Additional Notes`,
+      'Keep this body.',
+      `### ${title}`,
+      'Keep this child body.',
+      `Mention ## ${title} inside a line.`,
+    ].join('\n');
+
+    expect(applyRegisteredRules(prompt)).toBe(prompt);
+  });
+
+  it('removes only the specified stream reasoning line', () => {
+    expect(applyRegisteredRules([
+      'Before',
+      'Reasoning=stream; hidden unless on/stream. Toggle /reasoning; /status shows when enabled.',
+      'Reasoning=on; hidden unless on/stream. Toggle /reasoning; /status shows when enabled.',
+      'Reasoning=off; hidden unless on/stream. Toggle /reasoning; /status shows when enabled.',
+      'After',
+    ].join('\n'))).toBe([
+      'Before',
+      'Reasoning=on; hidden unless on/stream. Toggle /reasoning; /status shows when enabled.',
+      'Reasoning=off; hidden unless on/stream. Toggle /reasoning; /status shows when enabled.',
+      'After',
+    ].join('\n'));
+  });
+
+  it('removes the two approval guidance lines and preserves allow-once', () => {
+    expect(applyRegisteredRules([
+      'Before',
+      '/approve is user command; never execute via shell/tool.',
+      'allow-once covers only that exact command; later commands need their own exec policy decision.  ',
+      'Approval preview: exact full command/script, including chains/multiline. Keep preview separate from /approve; never use script as approval id/slug.',
+      'Approval preview: keep other guidance.',
+      'After',
+    ].join('\r\n'))).toBe([
+      'Before',
+      'allow-once covers only that exact command; later commands need their own exec policy decision.  ',
+      'Approval preview: keep other guidance.',
+      'After',
+    ].join('\n'));
   });
 });

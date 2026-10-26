@@ -48,6 +48,28 @@ Gateway、本机合成模型和与产品相同的 `stateDir/skills` 导入位置
 精确 `executionSettled` 终态核对，不读取用户 transcript；合成模型不证明真实模型会
 主动选择技能或正确编排 Code Mode，也不替代 MXC 实机验收。
 
+## 最终 system prompt 替换
+
+Main 在 `runtime/systemPromptReplacementRegistry.ts` 注册内置规则，先规范化换行，
+再依序处理最终 system prompt。规则与自定义条目一起写入
+`openclaw/state/system-prompt-replacements.json`，通过现有补丁 002 在模型相关提示词
+组装完成后、provider dispatch 前应用，不改变用户输入、历史消息或工具参数。
+内置 ID 优先于同名持久化条目；自定义规则随后执行，最多 100 条。
+
+当前内置规则删除精确相邻的 OpenClaw Mirror/Source 两行，以及整个
+`OpenClaw Control`、`Authorized Senders`、`Control UI Side Chat`、`Care` 章节。
+章节匹配独占一行的精确二级标题，包含其三级及更深子段落，到下一个一级或二级标题
+或正文末尾为止；后续 `Skills`、`UI Presentation`、`Control UI Embed`、`Messaging` 和 `Runtime Context`
+章节保留。身份声明说明核心能力由 `PRODUCT_NAME` 开发，OpenClaw 仅提供运行时；
+仅将 `You are in a WebChat direct conversation` 中的 WebChat 替换为产品名。
+另外只删除指定的 `Reasoning=stream` 指导整行、`/approve is user command` 整行和
+`Approval preview` 整行，保留 `allow-once` 提示和原生执行审批策略。
+
+技能版本、版本刷新指导、Runtime 压缩、来源渠道路由、诊断指导和泛化品牌替换六项
+旧内置规则已撤销。合并持久化规则时过滤这六个旧 ID，启动同步将其移出规则文件，
+避免旧内置条目作为自定义规则继续执行；其它自定义条目及 Runtime 原文保持原样。
+相邻的注册表测试验证这些文本边界和持久化合并，不替代真实模型轮次验收。
+
 ## 1. 三层控制各管什么
 
 | 层                           | 所有状态                                               | 主要入口                     |
