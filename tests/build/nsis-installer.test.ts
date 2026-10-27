@@ -5,6 +5,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   rmSync,
   symlinkSync,
   unlinkSync,
@@ -91,6 +92,22 @@ function writePythonRuntimeFixture(runtimeRoot: string): void {
     path.join(runtimeRoot, 'Lib', 'site-packages', 'sitecustomize.py'),
     'sitecustomize',
   );
+}
+
+function writeOpenClawRuntimeFixture(runtimeRoot: string, packageContents = '{}'): void {
+  const files = {
+    'package.json': packageContents,
+    'node-runtime/node.exe': 'bundled-node-fixture',
+    'node-runtime/node-runtime-manifest.json': '{"target":"win-x64"}',
+    'node-runtime/node_modules/npm/bin/npm-cli.js': 'npm-cli-fixture',
+    'node-runtime/node_modules/npm/bin/npx-cli.js': 'npx-cli-fixture',
+    'node-runtime/LICENSE': 'node-license-fixture',
+  };
+  for (const [relativePath, contents] of Object.entries(files)) {
+    const target = path.join(runtimeRoot, relativePath);
+    mkdirSync(path.dirname(target), { recursive: true });
+    writeFileSync(target, contents);
+  }
 }
 
 afterEach(() => {
@@ -539,7 +556,7 @@ describe('Windows installer process handling', () => {
     mkdirSync(path.dirname(legacyUserPackagePath), { recursive: true });
     mkdirSync(managedTempRoot, { recursive: true });
     writeFileSync(path.join(managedTempRoot, 'extractor-temporary-file'), 'temporary');
-    writeFileSync(path.join(archiveRoot, 'cfmind', 'package.json'), '{}');
+    writeOpenClawRuntimeFixture(path.join(archiveRoot, 'cfmind'));
     writeFileSync(path.join(archiveRoot, 'cfmind', 'skills', 'custom-skill', 'SKILL.md'), 'custom');
     writeFileSync(path.join(archiveRoot, 'mingit', 'cmd', 'git.exe'), 'mingit');
     writeFileSync(staleBashPath, 'portable-git');
@@ -619,7 +636,7 @@ describe('Windows installer process handling', () => {
     writePythonRuntimeFixture(path.join(archiveRoot, 'python-win'));
     mkdirSync(path.dirname(installedPackagePath), { recursive: true });
     writeFileSync(installedPackagePath, '{"version":"previous"}');
-    writeFileSync(path.join(archiveRoot, 'cfmind', 'package.json'), '{"version":"new"}');
+    writeOpenClawRuntimeFixture(path.join(archiveRoot, 'cfmind'), '{"version":"new"}');
     writeFileSync(path.join(archiveRoot, 'mingit', 'cmd', 'git.exe'), 'mingit');
     writeFileSync(
       path.join(archiveRoot, 'cfmind', 'growth-fixture.bin'),
@@ -678,7 +695,7 @@ fs.statfsSync = (...args) => {
       mkdirSync(path.join(archiveRoot, 'cfmind'), { recursive: true });
       mkdirSync(path.join(archiveRoot, 'mingit', 'cmd'), { recursive: true });
       writePythonRuntimeFixture(path.join(archiveRoot, 'python-win'));
-      writeFileSync(path.join(archiveRoot, 'cfmind', 'package.json'), '{}');
+      writeOpenClawRuntimeFixture(path.join(archiveRoot, 'cfmind'));
       writeFileSync(path.join(archiveRoot, 'mingit', 'cmd', 'git.exe'), 'mingit');
       await createZstdTarFixture(archiveRoot, archivePath, ['cfmind', 'mingit', 'python-win']);
       writeFileSync(
@@ -729,7 +746,7 @@ fs.statfsSync = (...args) => {
     mkdirSync(path.join(archiveRoot, 'cfmind'), { recursive: true });
     mkdirSync(path.join(archiveRoot, 'mingit', 'cmd'), { recursive: true });
     writePythonRuntimeFixture(path.join(archiveRoot, 'python-win'));
-    writeFileSync(path.join(archiveRoot, 'cfmind', 'package.json'), '{}');
+    writeOpenClawRuntimeFixture(path.join(archiveRoot, 'cfmind'));
     writeFileSync(path.join(archiveRoot, 'mingit', 'cmd', 'git.exe'), 'git');
     writeFileSync(userData, 'untouched profile');
     await createZstdTarFixture(archiveRoot, archive, ['cfmind', 'mingit', 'python-win']);
@@ -766,7 +783,7 @@ cp.spawn = (executable, args, options) => executable.toLowerCase().endsWith('tar
     mkdirSync(path.join(source, 'cfmind'), { recursive: true });
     mkdirSync(path.join(source, 'mingit', 'cmd'), { recursive: true });
     writePythonRuntimeFixture(path.join(source, 'python-win'));
-    writeFileSync(path.join(source, 'cfmind', 'package.json'), '{}');
+    writeOpenClawRuntimeFixture(path.join(source, 'cfmind'));
     writeFileSync(path.join(source, 'mingit', 'cmd', 'git.exe'), 'git');
     await createZstdTarFixture(source, archive, ['cfmind', 'mingit', 'python-win']);
     writeFileSync(preload, `const cp = require('child_process');
@@ -830,7 +847,7 @@ cp.spawn = (executable, args, options) => original(
       mkdirSync(path.join(archiveRoot, 'cfmind'), { recursive: true });
       mkdirSync(path.join(archiveRoot, 'mingit', 'cmd'), { recursive: true });
       writePythonRuntimeFixture(path.join(archiveRoot, 'python-win'));
-      writeFileSync(path.join(archiveRoot, 'cfmind', 'package.json'), '{}');
+      writeOpenClawRuntimeFixture(path.join(archiveRoot, 'cfmind'));
       writeFileSync(path.join(archiveRoot, 'mingit', 'cmd', 'git.exe'), 'git');
       await createTar({ cwd: archiveRoot, file: archive }, ['cfmind', 'mingit', 'python-win']);
     }
@@ -905,7 +922,7 @@ fs.appendFileSync = (...args) => {
     mkdirSync(path.join(source, 'cfmind'), { recursive: true });
     mkdirSync(path.join(source, 'mingit', 'cmd'), { recursive: true });
     writePythonRuntimeFixture(path.join(source, 'python-win'));
-    writeFileSync(path.join(source, 'cfmind', 'package.json'), '{}');
+    writeOpenClawRuntimeFixture(path.join(source, 'cfmind'));
     writeFileSync(path.join(source, 'mingit', 'cmd', 'git.exe'), 'git');
     createTar({ cwd: source, file: archive, sync: true }, ['cfmind', 'mingit', 'python-win']);
     mkdirSync(resources, { recursive: true });
@@ -1076,7 +1093,7 @@ fs.writeFileSync = (target, ...args) => {
 
     mkdirSync(path.join(archiveRoot, 'cfmind'), { recursive: true });
     mkdirSync(path.dirname(staleBashPath), { recursive: true });
-    writeFileSync(path.join(archiveRoot, 'cfmind', 'package.json'), '{}');
+    writeOpenClawRuntimeFixture(path.join(archiveRoot, 'cfmind'));
     writeFileSync(staleBashPath, 'portable-git');
     createTar({ cwd: archiveRoot, file: archivePath, sync: true }, ['cfmind']);
 
@@ -1101,7 +1118,7 @@ fs.writeFileSync = (target, ...args) => {
     mkdirSync(path.join(archiveRoot, 'mingit', 'cmd'), { recursive: true });
     writePythonRuntimeFixture(path.join(archiveRoot, 'python-win'));
     rmSync(path.join(archiveRoot, 'python-win', 'Lib', 'site-packages', 'sitecustomize.py'));
-    writeFileSync(path.join(archiveRoot, 'cfmind', 'package.json'), '{}');
+    writeOpenClawRuntimeFixture(path.join(archiveRoot, 'cfmind'));
     writeFileSync(path.join(archiveRoot, 'mingit', 'cmd', 'git.exe'), 'git');
     createTar({ cwd: archiveRoot, file: archivePath, sync: true }, [
       'cfmind',
@@ -1120,6 +1137,94 @@ fs.writeFileSync = (target, ...args) => {
     expect(result.stderr).toContain('missing required file');
     expect(readFileSync(previousPythonPath, 'utf8')).toBe('previous-python');
     expect(existsSync(path.join(installResources, '.python-win-upgrade-backup'))).toBe(false);
+  });
+
+  // Cover each validation failure once, plus the separate fresh-install cleanup.
+  it.each([
+    { relativePath: 'node-runtime/node.exe', kind: 'missing', installMode: 'upgrade' },
+    { relativePath: 'node-runtime/node-runtime-manifest.json', kind: 'empty', installMode: 'upgrade' },
+    { relativePath: 'node-runtime/node_modules/npm/bin/npx-cli.js', kind: 'directory', installMode: 'upgrade' },
+    { relativePath: 'node-runtime/node.exe', kind: 'missing', installMode: 'fresh' },
+  ])('rejects $kind OpenClaw $relativePath during $installMode installation', async ({
+    relativePath, kind, installMode,
+  }) => {
+    const root = mkdtempSync(path.join(os.tmpdir(), 'runtime-file-validation-'));
+    tempDirs.push(root);
+    const archiveRoot = path.join(root, 'archive');
+    const installResources = path.join(root, '安装 目录', 'resources');
+    const archivePath = path.join(root, 'win-resources.tar.zst');
+    const diagnosticLogPath = path.join(root, 'install-resource.log');
+    const progressPath = path.join(root, 'install-progress.txt');
+    const runtimeNames = ['cfmind', 'mingit', 'python-win', 'local-tts'];
+    const previousFiles = {
+      'cfmind/package.json': '{"version":"previous"}',
+      'mingit/cmd/git.exe': 'previous-git',
+      'python-win/python.exe': 'previous-python',
+      'local-tts/engine.exe': 'previous-speech',
+      ...Object.fromEntries(runtimeNames.map(name => [
+        `${name}/retained/original.txt`, `preserve-${name}`,
+      ])),
+    };
+
+    writeOpenClawRuntimeFixture(path.join(archiveRoot, 'cfmind'));
+    writePythonRuntimeFixture(path.join(archiveRoot, 'python-win'));
+    mkdirSync(path.join(archiveRoot, 'mingit', 'cmd'), { recursive: true });
+    writeFileSync(path.join(archiveRoot, 'mingit', 'cmd', 'git.exe'), 'replacement-git');
+    mkdirSync(path.join(archiveRoot, 'local-tts'), { recursive: true });
+    writeFileSync(path.join(archiveRoot, 'local-tts', 'replacement.txt'), 'replacement-speech');
+    const invalidFile = path.join(archiveRoot, 'cfmind', relativePath);
+    if (kind === 'empty') {
+      writeFileSync(invalidFile, '');
+    } else {
+      unlinkSync(invalidFile);
+      if (kind === 'directory') mkdirSync(invalidFile);
+    }
+    await createZstdTarFixture(archiveRoot, archivePath, runtimeNames);
+    if (installMode === 'upgrade') {
+      for (const [relative, contents] of Object.entries(previousFiles)) {
+        const target = path.join(installResources, relative);
+        mkdirSync(path.dirname(target), { recursive: true });
+        writeFileSync(target, contents);
+      }
+    }
+
+    const result = spawnSync(process.execPath, [
+      unpackScriptPath, archivePath, installResources, '', '', progressPath, diagnosticLogPath,
+    ], { encoding: 'utf8' });
+
+    expect(result.status, result.stderr).toBe(1);
+    expect(result.stderr).toContain('OpenClaw extraction');
+    expect(result.stderr).toContain(path.join(installResources, 'cfmind', relativePath));
+    expect(readFileSync(`${progressPath}.error`, 'utf16le')).toContain(relativePath.split('/').at(-1));
+    const diagnosticLog = readFileSync(diagnosticLogPath, 'utf8');
+    expect(diagnosticLog).toContain('event=runtime-validation-started');
+    expect(diagnosticLog).toContain('event=runtime-rollback-restored');
+    expect(diagnosticLog).toContain('event=resource-install-failed');
+    expect(diagnosticLog).not.toContain('event=runtime-validation-complete');
+    expect(diagnosticLog).not.toContain('event=resource-install-complete');
+    expect(existsSync(path.join(installResources, '.runtime-upgrade-in-progress.json'))).toBe(false);
+    expect(existsSync(path.join(installResources, '.runtime-upgrade-in-progress.json.tmp'))).toBe(false);
+    for (const name of runtimeNames) {
+      expect(existsSync(path.join(installResources, `.${name}-upgrade-backup`))).toBe(false);
+    }
+    if (installMode === 'upgrade') {
+      for (const [relative, contents] of Object.entries(previousFiles)) {
+        expect(readFileSync(path.join(installResources, relative), 'utf8'), relative).toBe(contents);
+      }
+      const previousTopLevelEntries = {
+        cfmind: ['package.json', 'retained'],
+        mingit: ['cmd', 'retained'],
+        'python-win': ['python.exe', 'retained'],
+        'local-tts': ['engine.exe', 'retained'],
+      };
+      for (const [name, entries] of Object.entries(previousTopLevelEntries)) {
+        expect(readdirSync(path.join(installResources, name)).sort(), name).toEqual(entries);
+      }
+    } else {
+      for (const name of runtimeNames) {
+        expect(existsSync(path.join(installResources, name)), name).toBe(false);
+      }
+    }
   });
 
   it('restores already-backed-up runtimes when a later backup rename fails', () => {
@@ -1177,7 +1282,7 @@ fs.renameSync = (source, destination) => {
     mkdirSync(path.join(archiveRoot, 'cfmind'), { recursive: true });
     mkdirSync(path.join(archiveRoot, 'mingit', 'cmd'), { recursive: true });
     writePythonRuntimeFixture(path.join(archiveRoot, 'python-win'));
-    writeFileSync(path.join(archiveRoot, 'cfmind', 'package.json'), 'new-cfmind');
+    writeOpenClawRuntimeFixture(path.join(archiveRoot, 'cfmind'), 'new-cfmind');
     writeFileSync(path.join(archiveRoot, 'mingit', 'cmd', 'git.exe'), 'new-git');
     createTar({ cwd: archiveRoot, file: archivePath, sync: true }, [
       'cfmind',
@@ -1239,7 +1344,7 @@ fs.rmSync = (target, options) => {
     mkdirSync(path.join(archiveRoot, 'mingit', 'cmd'), { recursive: true });
     mkdirSync(legacyPythonRoot, { recursive: true });
     writePythonRuntimeFixture(path.join(archiveRoot, 'python-win'));
-    writeFileSync(path.join(archiveRoot, 'cfmind', 'package.json'), 'new-cfmind');
+    writeOpenClawRuntimeFixture(path.join(archiveRoot, 'cfmind'), 'new-cfmind');
     writeFileSync(path.join(archiveRoot, 'mingit', 'cmd', 'git.exe'), 'new-git');
     writeFileSync(path.join(legacyPythonRoot, 'python.exe'), 'legacy-python');
     createTar({ cwd: archiveRoot, file: archivePath, sync: true }, [

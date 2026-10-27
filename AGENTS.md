@@ -26,6 +26,11 @@ npm test
   before implementation. After implementation, conduct an independent multi-agent
   code review and resolve findings before delivery.
 - Before non-trivial pushes, prefer `npm run lint && npm run build && npm test`.
+- During development and repackaging, run focused tests for the changed behavior.
+  Routine repackaging uses existing tests and required build-time checks; do not
+  add installation/cold-start rehearsals or repeated whole-artifact inventories
+  unless investigating a directly related failure or explicitly requested.
+  Prefer representative failure cases over Cartesian products of the same branch.
 - For docs-only changes, run `git diff --check`.
 - `npm test` uses Node better-sqlite3, then restores the Electron ABI;
   `npm run rebuild:electron-native` repairs native dependencies when needed.

@@ -13,6 +13,7 @@ import {
   MCP_APP_HISTORY_TOOL_METHOD,
   MCP_APP_HISTORY_VIEW_METHOD,
 } from '../../../../plugins/extensions/runtime-services/contracts/mcp-apps';
+import { SPEECH_SYNTHESIS_METHOD } from '../../../../plugins/extensions/runtime-services/contracts/speech';
 import runtimeServicesPlugin from '../../../../plugins/extensions/runtime-services/index';
 
 const sdk = vi.hoisted(() => ({
@@ -73,6 +74,13 @@ vi.mock('openclaw/plugin-sdk/session-transcript-runtime', () => ({
 vi.mock('openclaw/plugin-sdk/ssrf-runtime', () => ({
   fetchWithSsrFGuard: sdk.fetchWithSsrFGuard,
   ssrfPolicyFromHttpBaseUrlAllowedHostname: sdk.ssrfPolicyFromHttpBaseUrlAllowedHostname,
+}));
+vi.mock('openclaw/plugin-sdk/secret-input', () => ({
+  normalizeResolvedSecretInputString: vi.fn(),
+}));
+vi.mock('openclaw/plugin-sdk/tts-runtime', () => ({
+  resolveExplicitTtsOverrides: vi.fn(),
+  synthesizeSpeech: vi.fn(),
 }));
 
 type HookContext = {
@@ -193,6 +201,11 @@ describe('runtime services startup and progress', () => {
       'runtimeServices.historyMessage',
       expect.any(Function),
       { scope: 'operator.read' },
+    );
+    expect(registerGatewayMethod).toHaveBeenCalledWith(
+      SPEECH_SYNTHESIS_METHOD,
+      expect.any(Function),
+      { scope: 'operator.write' },
     );
     for (const method of [MCP_APP_HISTORY_VIEW_METHOD, MCP_APP_HISTORY_TOOL_METHOD])
       expect(registerGatewayMethod).toHaveBeenCalledWith(method, expect.any(Function), {

@@ -23,6 +23,7 @@ vi.mock('../replay-admission-observations', () => ({
   registerReplayAdmissionObservations: vi.fn(),
 }));
 vi.mock('../scheduled-task-history', () => ({ registerScheduledTaskHistory: vi.fn() }));
+vi.mock('../speech', () => ({ registerSpeechSynthesis: vi.fn() }));
 
 import plugin from '../index';
 

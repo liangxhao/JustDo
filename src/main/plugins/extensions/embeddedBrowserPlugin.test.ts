@@ -132,7 +132,7 @@ const requestedEnvelope = (emit: ReturnType<typeof vi.fn>) => {
   expect(emit).toHaveBeenCalledOnce();
   const [eventName, payload, options] = emit.mock.calls[0] as [
     string,
-    { requestId: string; sessionKey: string; command: unknown },
+    { requestId: string; sessionKey: string; command: unknown; run: unknown },
     unknown,
   ];
   expect(eventName).toBe('requested');
@@ -606,12 +606,14 @@ describe('Embedded browser extension', () => {
     service.stop();
   });
 
-  test('cancels a pending request when its AbortSignal fires', async () => {
+  test('revokes an aborted pending request without releasing the native run', async () => {
     const { emit, factory, service } = registrations();
     const tool = factory({ sessionKey: 'justdo:session-1' });
     const controller = new AbortController();
 
     const pending = tool!.execute('call-1', { action: 'status' }, controller.signal);
+    const request = requestedEnvelope(emit);
+    expect(request.requestId).toMatch(/^browser_/);
     controller.abort();
 
     await expect(pending).resolves.toMatchObject({
@@ -621,16 +623,18 @@ describe('Embedded browser extension', () => {
     expect(emit).toHaveBeenCalledWith(
       'cancelled',
       expect.objectContaining({
-        requestId: expect.stringMatching(/^browser_/),
+        requestId: request.requestId,
         sessionKey: 'justdo:session-1',
+        run: request.run,
       }),
       { scope: 'operator.read' },
     );
     expect(emit).toHaveBeenLastCalledWith(
-      'released',
-      expect.objectContaining({ reason: 'revoked' }),
+      'revoked',
+      { run: request.run },
       { scope: 'operator.read' },
     );
+    expect(emit.mock.calls.filter(([name]) => name === 'released')).toEqual([]);
     service.stop();
   });
 

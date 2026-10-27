@@ -9,7 +9,16 @@ import { afterEach, expect, it, vi } from 'vitest';
 vi.mock('openclaw/plugin-sdk/extension-shared', () => ({ formatPluginConfigIssue: String }));
 vi.mock('openclaw/plugin-sdk/state-paths', () => ({ resolveStateDir: () => '/native-state' }));
 vi.mock('openclaw/plugin-sdk/string-coerce-runtime', () => ({
-  normalizeLowercaseStringOrEmpty: (value: string) => value.trim().toLowerCase(),
+  normalizeLowercaseStringOrEmpty: (value: unknown) =>
+    typeof value === 'string' ? value.trim().toLowerCase() : '',
+  normalizeOptionalLowercaseString: (value: unknown) =>
+    typeof value === 'string' ? value.trim().toLowerCase() || undefined : undefined,
+  normalizeOptionalString: (value: unknown) =>
+    typeof value === 'string' ? value.trim() || undefined : undefined,
+  asOptionalObjectRecord: (value: unknown) =>
+    value && typeof value === 'object' ? value : undefined,
+  asFiniteNumber: (value: unknown) =>
+    typeof value === 'number' && Number.isFinite(value) ? value : undefined,
   isRecord: (value: unknown) => Boolean(value) && typeof value === 'object' && !Array.isArray(value),
 }));
 

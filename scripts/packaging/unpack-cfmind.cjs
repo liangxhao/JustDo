@@ -732,11 +732,22 @@ async function main() {
         gitExecutable: installedGit,
         pythonExecutable: path.join(pythonDir, 'python.exe'),
       });
-      const runtimePackagePath = path.join(cfmindDir, 'package.json');
-      if (!fs.existsSync(runtimePackagePath) || fs.statSync(runtimePackagePath).size === 0) {
-        throw new Error(
-          `OpenClaw extraction is missing a non-empty package.json: ${runtimePackagePath}`,
-        );
+      const requiredOpenClawFiles = [
+        'package.json',
+        path.join('node-runtime', 'node.exe'),
+        path.join('node-runtime', 'node-runtime-manifest.json'),
+        path.join('node-runtime', 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+        path.join('node-runtime', 'node_modules', 'npm', 'bin', 'npx-cli.js'),
+        path.join('node-runtime', 'LICENSE'),
+      ];
+      for (const relativePath of requiredOpenClawFiles) {
+        const candidate = path.join(cfmindDir, relativePath);
+        const file = fs.lstatSync(candidate, { throwIfNoEntry: false });
+        if (!file?.isFile() || file.size === 0) {
+          throw new Error(
+            `OpenClaw extraction is missing a non-empty regular file: ${candidate}`,
+          );
+        }
       }
 
       reportProgress(null, 'OpenClaw runtime verified');

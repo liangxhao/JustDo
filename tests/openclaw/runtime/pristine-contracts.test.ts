@@ -91,6 +91,7 @@ const EXPECTED_PATCH_FILES = [
   '031-goal-continuation-admission.cjs',
   '032-run-progress-observations.cjs',
   '033-windows-plugin-directory-publication.cjs',
+  '034-commentary-block-ownership.cjs',
 ] as const;
 
 const UPSTREAM_CONTRACTS = [

@@ -561,4 +561,18 @@ rebuilding; inherited environment variables cannot silently enable networking.
 
 ## Bundled Node for OpenClaw 2026.10.7
 
-The Gateway and native CLI use the complete pinned Node 24.22.1 distribution inside the OpenClaw runtime at `node-runtime/`. Electron remains the UI and product-database host. The runtime manifest binds the Node manifest; freeze and archive verification validate the full file tree, npm/npx, symlink topology and executable bytes. Missing or changed files fail preparation instead of selecting an external Node or downloading on first launch. Windows archive extraction preserves this exact subtree and its license files. Preparation inputs are listed only in [offline downloads](offline-downloads.md). macOS signing/notarization and other architecture installation checks require separate platform acceptance.
+The Gateway and native CLI use the complete pinned Node 24.22.1 distribution inside the OpenClaw runtime at `node-runtime/`. Electron remains the UI and product-database host. The runtime manifest binds the Node manifest; freeze and archive verification validate the full file tree, npm/npx, symlink topology and executable bytes. Missing or changed files fail preparation instead of selecting an external Node or downloading on first launch. Windows archive extraction preserves this exact subtree and its license files. The distribution contract is maintained in `src/shared/openclaw/nodeRuntime.json` and `scripts/runtime/setup-node-runtime.cjs`. macOS signing/notarization and other architecture installation checks require separate platform acceptance.
+
+Before committing the Windows extraction transaction, the installer checks that
+OpenClaw's package metadata and its bundled Node executable, manifest, npm/npx
+entry points and license are non-empty regular files. Missing, empty or directory
+entries fail through the existing rollback; a first install removes its incomplete
+runtime trees. These lightweight checks do not execute Node or repeat the full
+build-time hash inventory, and do not claim to detect arbitrary content corruption.
+
+Host dependencies must also retain the existing postinstall transforms before
+Electron compilation. Reusing `node_modules/` in an isolated checkout does not
+replace that preparation: apply `scripts/runtime/patch-http-mitm-proxy.cjs`, as
+normal `npm install` does, before rebuilding. Release verification must check the
+compiled Main in the final ASAR for the per-installation CA subject and the proxy
+semaphore fix; patching dependency files after compilation cannot repair an EXE.
