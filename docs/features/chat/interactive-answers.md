@@ -16,7 +16,6 @@ Intelligent UI 的呈现方式，使用本地 OpenClaw 合约，不接入 ChatGP
 | 插件 `smart-canvas`         | 注册组件类型、只读资源与按需技能                    |
 | 技能 `visualize`          | 将当前界面可视化请求交付为真实 Widget 或独立网页    |
 | 卡片 `interactive-answer` | 一个文档组合 table / compare / chart / form / steps |
-| 卡片 `html-page`       | 完整 HTML 接入及 HTTPS 图片自动适配     |
 
 插件 ID 与卡片类型是独立注册项，原生记录为 `pluginId:kind`，允许两者同名；
 重复的卡片类型或公共资源路径会被拒绝。组件公共资源为 `/__smart_canvas__/ui.js`。
@@ -30,121 +29,46 @@ Intelligent UI 的呈现方式，使用本地 OpenClaw 合约，不接入 ChatGP
 应用开发请求保留其目标，不能由聊天预览替代。技能中的调用与短码示例见
 [交付示例](../../../plugins/extensions/smart-canvas/skills/visualize/references/delivery-examples.md)。
 
-自包含图表、模拟和计算器使用原生 `show_widget`；一次取数后可以展示有来源和时点的
-快照；已有完整 HTML 可交给实际公告的 `html-page`，HTTPS 图片/数据下载继续遵循原生
-pin 与网络批准。需要保留已有 URL、正常网页 origin 与浏览器行为的页面，只有在宿主
-实际提供独立网页能力时才内嵌，否则
-交付真实网页链接或已授权 HTML 文件的普通预览，不宣称已创建内嵌页面。
-不能仅以完整 HTML、CDN 或持续更新区分交付，也不能切换路径绕过被拒绝的 Widget 授权。
-独立 HTML URL viewer 的现行契约见[消息中的独立网页](webpage-embeds.md)。
-已有网页直接输出消息短码，不调用辅助查询工具；新建托管 HTML 使用当前 Gateway
-profile 的 `canvas/documents`。网页独立承载，宿主校验开关并遵循浏览器代理，默认系统
-代理，不改变原生 Widget CSP。
-原生分支继续负责工具的真实发现、调用、HTML/SVG 编写、静态可视化和本地交互。
-形式由用户问题决定，可用于
-关系图、数据探索、自定义计算、模拟、时间线和界面原型。静态图解与图表本身即可完成
-请求，不要求表单、按钮或“继续分析”；本地交互和向会话准备建议分别按需添加。
-`interactive-answer` 仍是可选固定组件类型的标识，不再用作通用技能名称。
-简单问题仍用文字，数据不足时澄清或说明假设。
-插件不在每轮注入长提示，也不改变八个内置技能。
-HTML 按需参考说明宿主主题变量、容器尺寸、资源策略与受限草稿桥；视觉风格由任务和
-设计指导决定，不在展示技能中规定字体、间距或布局模板。固定组件 schema
-和五类示例移入独立参考，只在选择该类型时读取。要求按实际控件描述操作，成功后不重复界面内容；输入错误
-只在相关失败时显示并保留已填值。这些是模型生成指导，不是宿主向认证 HTML 注入
-全局样式或过滤助手文字，不能据此保证每次生成都满足视觉规范。
-原生 `kind: "html"` 的 `widget_code` 是 HTML/SVG 片段，可含内联样式和脚本；注册的
-固定组件类型使用经过校验的 JSON 字符串，`html-page` 直接接收原 HTML 字符串。
-Three.js 等可视化库不再内置；脚本 / 模块 / 样式 / 字体由作者通过原生 CDN 资源规则
-按需加载，复用浏览器系统代理。任务需要公网素材 / 数据时走下述原生联网路径。
-这不是对原生全部 HTML 的网络策略改写。完整 schema 和实际工具 payload 在
-[插件说明](../../../plugins/extensions/smart-canvas/README.md)及技能参考中维护。
 
-### HTML 页面与图片适配
+默认交付按内容形态选择：
 
-`html-page` 的 `widget_code` 是非空 HTML 字符串，可为片段或完整文档，无需 JSON
-封装、libraries 列表或预载全局变量。插件 parser 去掉文档外壳并恢复 html/body 属性，
-保留作者样式、脚本和 importmap 的原文与先后顺序，不修改用户文件。原生来源大小预算
-保持不变；只有实际工具 schema 公告该类型时才能使用。
+| 内容 | 方式 |
+| --- | --- |
+| 完整 HTML、交互式 3D 地球、游戏、复杂模拟或已有 HTML 预览 | 生成真实托管文件后输出 `[embed ref="…"]` |
+| 已有 HTTP(S) 网页 | `[embed url="…"]` |
+| 简单图表、SVG、小型本地计算或需要草稿桥的组件 | `show_widget` |
+| 文字、普通表格或 Mermaid 足够 | 普通消息 |
 
-插件仅保留自己的 `/__smart_canvas__/image-loading.js`，作为作者代码之前的阻塞 classic
-脚本加载。HTTPS `image.src`、`setAttribute('src', ...)` 及源中的静态 `<img src>`
-自动经 fetch → FileReader → data URL，兼容 Three.js TextureLoader 原有地址和回调，
-覆盖游离图片及替换 / 取消加载竞争；`decode()` 等待当前转换后委托原生解码，转换期间
-`complete` 为 false，替换或移除来源会拒绝旧解码。联网仍须下述原生授权；插件不另加域名、大小或
-超时政策。CSS 背景、poster、srcset 和命名空间属性写入继续遵循原生规则。
-普通 `html` 不注入该适配，不通过全局工具 hook 改写其它内容类型。
+已有源码直接复用；不先尝试 Widget 再处理网页兼容。托管页面写入当前 Gateway profile
+的 `canvas/documents/<fresh-id>/index.html`，相对资源随页提供；环境和同机身份须通过
+现有已授权工具确认。磁盘路径或 `file://` 不是 embed 地址，不新增查询或发布工具。
+外部网址由宿主检查浏览器设置开关；托管 ref 不需要外链开关。两者沿用浏览器代理、
+放大和侧栏投影，详见[消息中的独立网页](webpage-embeds.md)。
 
-源码同步及最终分发排除未使用的 assets 目录，用户缓存不清理。
+普通 `kind: "html"` 接收 HTML/SVG 片段及可选内联样式、脚本；固定
+`interactive-answer` 接收经过校验的 JSON。静态图解不要求按钮；本地交互与向会话
+准备建议分别按需添加。固定组件 schema 只在选用该类型时读取。视觉风格仍由任务和
+设计指导决定，skill 不规定字体、间距或布局模板。完整 schema 与调用在
+[插件说明](../../../plugins/extensions/smart-canvas/README.md)和按需参考中维护。
 
-### 公网素材与数据下载
+### 资源与保存的卡片
 
-任务需要互联网图片或数据时，模型可调用同一个原生 `show_widget`，设置 `pin: true`、
-`name` 和 `capabilities.netOrigins`。应用把原生 board 文档展示在聊天原位置；
-`pin` 是底层文档与权限入口，用户不用固定到仪表盘或先打开侧边栏。
-“在侧边栏打开”仍是同一运行实例的位置投影，不新增宿主、授权或脚本执行。
-模型使用用户地址或已有搜索 / 浏览工具核实的地址，不要求内网素材服务器或设置页登记来源。
-`html-page` 的调用若遗漏联网参数，插件从源码中明确的 HTTPS 地址补齐 `pin` 和精确
-`netOrigins`，并继续走原生授权；已有声明、显式 `pin: false` 与源代码保持不变。
-动态拼接的未知域名须显式声明，不进行 JavaScript 分析或域名猜测。
+普通 Widget 保留原生 CSP 与脚本、样式、字体、媒体资源规则，内联 fetch 不因代理
+配置而开放。宿主不再补联网参数、转换 HTTPS 图片或为 Widget 提供业务下载通道。
+完整页面在 embed 中使用正常图片、脚本和 API，同时遵循 CORS、源站策略及资源可达性；
+内网部署的依赖须随页面提供或来自已配置服务。embed 没有 Widget 草稿桥，托管 ref
+也不共享默认侧栏浏览器登录。
 
-普通 inline 卡片保留 `connect-src 'none'`，不会继承原生 board 授权。联网文档仅支持
-`html` 与 Smart Canvas 的 `html-page`。每张文档声明至多 32 个精确 HTTPS origin，
-不接受通配符、URL 凭据、路径、查询或片段；端口是 origin 的一部分。
-Gateway 仍是 declared capabilities、grantState、源码和历史的唯一权威。
-full 可直接 granted，auto 按原生审查决定，pending 才在卡片显示允许 / 拒绝，
-rejected 不运行；应用不在原生已经授权后再增加一轮人工审批。
+无业务联网的原生 pinned HTML 卡片保留当前版本加载。只有当前认证实时工具结果能
+自动启动一次；历史或重连由用户点击加载，读取当前保存版本，不重放工具或声称它是
+历史 revision。标题栏提供加载、取消加载或重新加载；侧栏往返保留运行实例与本地输入。
+声明了网络/工具能力或使用不支持注册类型的卡片，在批准、HTML 读取和运行前显示
+不支持，不清空其声明后执行，也不自动转成 embed。
 
-| 约束     | 当前行为                                                                                                                                     |
-| -------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| 代理     | 复用 `browserProxy` 和系统代理；注册成功后核对实际代理路由，拒绝 DIRECT 或包含 DIRECT 回退的路由；代理配置变化收回运行实例                   |
-| 下载     | fetch / XHR 只允许已授权公网来源的 GET / HEAD，要求请求体为空；拒绝上传方法、sendBeacon、网络表单、WebSocket 与任意转发                      |
-| 凭据     | 独立临时 session，不共享浏览器 profile；移除源站 Cookie / Authorization、丢弃 Set-Cookie，源站登录不可用；代理认证保留既有受控路径           |
-| 目标     | 本机应用 / Gateway / sandbox 仅有精确 transport 路径与 frame 角色可读取；业务请求不能借用这些规则，不访问直接表示的私有地址                  |
-| 原生资源 | script / stylesheet / font / image / media 的来源范围交原生双层 CSP 判断；CDN 脚本、模块、样式与字体无需额外 netOrigins；Worker 沿用原生规则 |
-| 重定向   | 每跳重新校验代理、请求方式和凭据；资源跳转沿用原生 CSP，fetch / XHR 跨 origin 跳转拒绝，作者 helper 默认 `redirect: 'error'`                 |
-| 图片     | 原生 `img-src data:` 不变；`html-page` 自动将 HTTPS 图片 src / TextureLoader 转为 fetch → data URL；普通 html 显式转换；Blob 图片 URL 沿用原生限制 |
-| CORS     | opaque 文档仍需来源允许匿名跨域读取和有效证书；普通浏览器能打开网页不证明 widget 能读取，不关闭 webSecurity 或增加 Node 任意 URL 中转        |
-
-“只下载”约束方法、请求体与凭据；URL / 查询参数仍会发到目标站，GET 也可能有业务副作用。
-资源加载与 fetch / XHR 分别遵循原生 resource / connect 策略；应用不另设 CDN 名单、
-资源版本或完整性审批。直接加载额外库不改变数据读取权限。
-直接地址检查不等于消除 DNS 重绑定；系统代理的实际出口和禁止上传能力需在部署环境验收。
-当前 Chromium 的 WebRTC 防护也不构成所有协议的完整出口隔离；有此要求的部署须另有
-可验证的系统网络控制，不能把 HTTP 请求测试通过解释为所有协议已被封锁。
-
-`html-page` 的图片适配无需修改原 TextureLoader 代码；作者可按实际内容管理
-并发、超时及内存，插件不强制额外模板预算。
-HDR / EXR、GLTF / Draco 等加载器和解码器不随此能力新增。缺少图片时保留几何结果及
-可理解的失败，不以定时器伪造加载成功。完整用法见
-[联网下载参考](../../../plugins/extensions/smart-canvas/skills/visualize/references/pinned-network.md)。
-
-只有当前认证实时工具结果能自动启动一次。历史或重连的名称引用在标题栏提供“加载”按钮，
-点击后读取当前保存对象；不假装名称包含历史 revision，不自动重放 `show_widget`。
-同一 owner 的消息虚拟化 / 锚点替换不重跑存活实例；已停止实例只提供手动重载。
-加载中及运行中的“取消加载”、失败后的“重新加载”也放在标题栏。普通待加载、运行及停止
-状态不占用内容区显示说明文字，仅按需展示授权请求与错误反馈。
-停止联网仅关闭本机运行，不表示 Gateway 中的 grant 被撤销或源被删除；
-关闭侧栏只是移回消息，仍存活的本地视图状态不重置。
-
-联网 guest 每次创建独立非持久 partition，不共享浏览器 profile，结束时关闭连接并清理
-存储、缓存与认证。应用不另设并发卡片数或累计创建次数限制，也不要求使用若干次后重启。
-Electron 没有 Session 销毁 API，注销跟踪和清理存储不作为 Session 已释放的证明。
-已知断线、会话 / owner / 文档 / 授权或代理失效立即结束实例；未收到通知时由 Main 最长
-60 秒租约约束。每 30 秒进行 `sessions.describe` → `board.get` → `sessions.describe`
-续验，匹配物理 sessionId、lifecycleRevision 和完整文档身份；15 秒内未得到有效结果则不续租。
-租期从本轮核验起点计算，不从迟到响应到达时延长。仅更新票据不会重新执行脚本，
-已经停止的联网文档须由用户明确重载。同会话普通遮挡只禁用草稿 / 链接，已批准网络可能继续。
-
-HTML 适配脚本的 pinned 路径通过原生 `smart-canvas-html` capability surface 读取单条精确资源；
-每次新运行先通过 `plugin.surface.refresh` 刷新，再取得 board 与 HTML。资源 surface
-约 10 分钟、board ticket 20 分钟，独立到期；续签不重建运行文档。
-board HTML 仅由可信 loader 读取，票据不传 guest，不进入产品持久存储 / 日志 / 草稿。
-有限 viewer 不提供 Dashboard state/data/action/cron、MCP Apps 或自动 `prompt.send`，
-仅复用现有私有 prompt port 的人工确认加入草稿能力。
-
-原生无 widget 名称的整板变化通知会先重新核对当前文档的完整身份；其它卡片的审批
-不会重建未变化的运行文档。作者脚本运行错误沿用普通 inline 的失败反馈，保留已渲染
-界面和本地输入并关闭后续草稿 / 链接交互；真实身份失效或加载失败才销毁运行实例。
+运行期间每 30 秒通过原生 session/board/session 读取核对完整身份；超时或身份变化
+停止实例。board ticket 只在可信 loader 内存中续取，不传给生成页面。加载失败才销毁
+页面；脚本运行错误保留已渲染界面和输入，并关闭草稿与链接交互。没有 Dashboard
+state/data/action/cron、MCP 或自动消息能力。
 
 ## 当前交互
 
@@ -282,7 +206,7 @@ flowchart LR
   Plugin[可选 Smart Canvas<br/>JSON 校验与固定 renderer] --> Tool
   Tool --> Native[Gateway 原生文档与历史]
   Native --> View[认证 canvas.document.view]
-  Native --> Board[认证 board.get / grant<br/>票据 HTTP 文档]
+  Native --> Board[认证 board.get<br/>票据 HTTP 文档]
   View --> Host[聊天 viewer]
   Board --> Host
   Host --> Guest[卡片专用 webview / browserProxy]
@@ -297,7 +221,7 @@ flowchart LR
 只有真实成功的 `show_widget` Tool 结果可产生已验证的预览；原生 Tool Search 的核心
 目录包装也按精确身份验证，按文档去重并保留执行记录。助手自己写出的 shortcode、
 JSON、相对 URL 或普通 HTML 文件不能授予原生文档读取。读取绑定当前 Gateway client、
-连接代际、sessionKey 和 docId，使用认证 RPC；联网 board 使用独立的文档 / incarnation
+连接代际、sessionKey 和 docId，使用认证 RPC；非联网 pinned board 使用独立的文档 / incarnation
 身份与票据读取链路，不把凭据放入 iframe URL。
 
 Main 保留产品配置与执行生命周期；当前用户发起的首条消息委托已绑定的 Renderer
@@ -321,7 +245,7 @@ Gateway 拥有原生 HTML、文档保留及 transcript；Renderer 直接消费�
 私有 port 的准入在 guest 自身文档核对激活、焦点和可见性，外部聊天再次核对当前
 client/session/generation/docId、可见 webview 与文本限制，保留“加入草稿 / 取消”。
 失败不回退到未配置代理的主 Renderer iframe。普通浏览器 WebChat 仍使用 iframe 和浏览器
-自身网络。原生 CSP 与资源规则不变；只有声明并获批的 board 文档才有对应 connect 权限，
+自身网络。原生 CSP 与资源规则不变；当前 viewer 仅接收无业务联网能力的 board 文档，
 代理不会让普通 inline fetch 或直接远程图片地址获得权限。
 该链路不授予 dashboard、MCP、tool
 或 resource 执行权限，不新增产品数据库、Redux slice 或运行时补丁。
@@ -331,33 +255,20 @@ client/session/generation/docId、可见 webview 与文本限制，保留“加�
 类型注册和启用管理见 [插件系统](../../architecture/07-plugin-system.md)。
 这三篇维护架构契约，本页维护用户行为与限制；旧原型和阶段审查不作为独立现行入口。
 
+
 ## 当前验证边界
 
-2026-10-27 的技能完善已通过 metadata 校验、示例真实短码解析及外链开关检查、HTML
-本地交互、扩展打包与内置技能同步检查。两次独立代理 fixture 演练覆盖界面可拖动地球、
-仅文件、真实应用开发、完整 HTML 卡片、已有网址、外链关闭与托管页面七类请求：
-核对技能选择、实际源码/暂存文件及预期 tool payload/短码。演练没有调用真实 Gateway
-或声称完成浏览器渲染，不能作为生产模型选技稳定性或完整端到端验收的证据。
-
-相关 controller、Main 请求与租约、复制及归档过滤有自动化回归，资产残留有负测。
-Gateway / Main 端到端探针要求匹配的当前冻结运行时，本轮未执行。
-
-`html-page` 已通过真实 Electron 与锁定 2026.10.7 裸 SDK 的双层 CSP 验证：
-完整 HTML、片段和无连接授权三场景，真实 CDN 路径的 Three.js ESM importmap、
-四张 HTTPS 纹理及 WebGL 像素、静态图片、解码 / 完成语义、错误和竞争，三个场景均通过。Three 归档仅为
-本地测试输入，不装入产品；探针只信任本轮 fixture 来源及证书指纹，无真实公网请求，
-不启动 Gateway 或经过 Main guest controller。最终安装包、实际系统代理 / PAC、真实
-公网来源 CORS 及 Mac / Linux 仍需目标环境验收。
-原始 `x.html` 的 Three 0.169 与四张真实公网纹理已在上述隔离环境通过系统代理加载，
-并核对地球表面 GPU 像素及完整截图；源文件未改。该验证仍不包含完整 Gateway / Main 集成。
-
-真实模型的自然请求仍出现生成较慢、自由 HTML 布局不佳或重复介绍，通用 visualize 指引改写后在真实原生会话中的效果尚未完成验证。历史生成耗时不代表首次可见延迟；局部沙箱探针不代表完整应用的窄屏、主题、侧聊、拆出或最终安装包已通过。组件重载仍恢复默认值，不支持跨重启保留未确认输入；加载占位不等于渐进生成组件。
+专项回归覆盖固定组件、本地交互、真实短码解析、静态托管、原生 board 身份、历史加载
+及不支持能力的提前拒绝。浏览器代理、页面隔离、放大和侧栏投影沿用现有宿主边界。
+2026-10-27 独立技能演练生成了离线 3D 地球及实际托管文件，并核对拖动、缩放等事件
+逻辑；该演练使用隔离状态目录和模拟 Canvas，没有验证真实 Gateway 加载或浏览器像素。
+技能还需以真实请求核对默认交付，不能把 metadata、文件生成或 iframe 初始化当作
+实际页面与交互成功。真实模型选技稳定性、企业代理/PAC、业务站点资源与最终安装包
+冷启动仍需目标环境验收。
 
 ## 实现核对入口
 
 [原生组件 viewer](../../../src/renderer/libs/openclaw-chat/components/native-widget/view.ts)；
-[联网 controller 与 loader](../../../src/renderer/libs/openclaw-chat/components/native-board-widget/controller.ts)；
-[Main 请求与租约](../../../src/main/core/window/widgetViewerGuestNetwork.ts)；
-[原生准入与 Electron 探针](../../../scripts/test/smart-canvas/verify-pinned-network.mjs)；
+[保存卡片的 controller 与 loader](../../../src/renderer/libs/openclaw-chat/components/native-board-widget/controller.ts)；
+[独立网页宿主](../../../src/main/chat/embed/webpageEmbedMounts.ts)；
 [侧栏引用与生命周期](../../../src/renderer/features/cowork/components/display/tabs/useWidgetReferenceTabs.tsx)。
-这些入口用于核对实现，实际验证范围以上文为准。

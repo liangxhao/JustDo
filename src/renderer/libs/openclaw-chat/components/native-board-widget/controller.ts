@@ -1,5 +1,3 @@
-import type { WidgetNetworkBridge, WidgetNetworkInstance } from '@shared/widgets/network';
-
 import {
   boardReferenceIsRealtime,
   isNativeBoardWidgetReference,
@@ -10,24 +8,25 @@ import type { NativeWidgetContext } from '../native-widget/host';
 import {
   type BoardRead,
   boardScope,
-  gatewayOrigin,
-  networkBinding,
   readBoardHtml,
   readCurrentBoard,
   record,
-  refreshHtmlResources,
   sameBoardIdentity,
+  UnsupportedBoardWidgetError,
 } from './loader';
 
 export type BoardWidgetStatus =
-  'idle' | 'loading' | 'pending' | 'rejected' | 'missing' | 'failed' | 'stopped' | 'running';
-export type PreparedBoardView = { html: string; url: string; network?: WidgetNetworkInstance };
+  'idle' | 'loading' | 'unsupported' | 'missing' | 'failed' | 'stopped' | 'running';
+export type PreparedBoardView = { html: string; url: string };
 export type BoardWidgetState = {
   status: BoardWidgetStatus;
-  origins: readonly string[];
 };
 const started = new WeakMap<object, Set<string>>();
 const executions = new WeakMap<object, Set<string>>();
+
+function failureStatus(error: unknown): BoardWidgetStatus {
+  return error instanceof UnsupportedBoardWidgetError ? 'unsupported' : 'failed';
+}
 
 function withinRound<T>(work: Promise<T>): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -72,18 +71,14 @@ function claimLive(reference: NativeBoardWidgetReference, context: NativeWidgetC
 
 /** This controller never exports the board frame URL or ticket to its generated document. */
 export class NativeBoardWidgetController {
-  state: BoardWidgetState = { status: 'idle', origins: [] };
+  state: BoardWidgetState = { status: 'idle' };
   private active = true;
   private operation = 0;
   private read?: BoardRead;
-  private network?: WidgetNetworkInstance;
   private abort?: AbortController;
   private renewal?: ReturnType<typeof setInterval>;
   private busyRenewal = false;
-  private grantRequest?: object;
   private unsubscribe?: () => void;
-  private unsubscribeRevoke?: () => void;
-  private readonly mountId = crypto.randomUUID();
   private latestOrder = 0;
   private incoming?: NativeBoardWidgetReference;
   private accepting = false;
@@ -95,7 +90,6 @@ export class NativeBoardWidgetController {
     private readonly isCurrent: () => boolean,
     private readonly publish: (state: BoardWidgetState, view?: PreparedBoardView) => void,
     private readonly destroyGuest: () => void,
-    private readonly bridge: WidgetNetworkBridge | undefined = window.electron?.widgetNetwork,
   ) {
     if (!isNativeBoardWidgetReference(reference)) throw new Error('Unadmitted native board');
     this.latestOrder = nativeBoardReferenceOrder(reference);
@@ -110,10 +104,6 @@ export class NativeBoardWidgetController {
       )
         return;
       void this.boardChanged(payload.widget === undefined);
-    });
-    this.unsubscribeRevoke = bridge?.onRevoked(event => {
-      if (event.mountId === this.mountId && event.instanceId === this.network?.instanceId)
-        this.stop();
     });
     void this.inspect(claimLive(reference, context));
   }
@@ -146,10 +136,7 @@ export class NativeBoardWidgetController {
   }
   private update(status: BoardWidgetStatus, view?: PreparedBoardView): void {
     if (!this.active) return;
-    this.state = {
-      status,
-      origins: this.read?.widget?.netOrigins ?? [],
-    };
+    this.state = { status };
     this.publish(this.state, view);
     if (status !== 'loading' && this.incoming) queueMicrotask(() => void this.acceptIncoming());
   }
@@ -187,15 +174,12 @@ export class NativeBoardWidgetController {
         return;
       this.stop();
       this.read = read;
-      const grant = read.widget?.grantState;
-      this.update(
-        !read.widget ? 'missing' : grant === 'pending' || grant === 'rejected' ? grant : 'idle',
-      );
-      if (read.widget && (grant === 'none' || grant === 'granted')) await this.start(false);
-    } catch {
+      this.update(read.widget ? 'idle' : 'missing');
+      if (read.widget) await this.start(false);
+    } catch (error) {
       if (this.current() && operation === this.operation) {
         this.stop();
-        this.update('failed');
+        this.update(failureStatus(error));
       }
     } finally {
       this.accepting = false;
@@ -213,10 +197,7 @@ export class NativeBoardWidgetController {
       ),
     );
   }
-  private async inspect(
-    auto: boolean,
-    expected?: { instanceId: string; revision: number },
-  ): Promise<void> {
+  private async inspect(auto: boolean): Promise<void> {
     const operation = ++this.operation;
     this.update('loading');
     const timer = setTimeout(() => {
@@ -229,73 +210,12 @@ export class NativeBoardWidgetController {
       const read = await this.check();
       if (!this.current() || operation !== this.operation) return;
       this.read = read;
-      const grant = read.widget?.grantState;
-      this.update(
-        !read.widget ? 'missing' : grant === 'pending' || grant === 'rejected' ? grant : 'idle',
-      );
-      if (
-        auto &&
-        read.widget &&
-        (!expected ||
-          (read.widget.instanceId === expected.instanceId &&
-            read.widget.revision === expected.revision)) &&
-        (grant === 'none' || grant === 'granted')
-      )
-        void this.start(false);
-    } catch {
-      if (this.current() && operation === this.operation) this.update('failed');
+      this.update(read.widget ? 'idle' : 'missing');
+      if (auto && read.widget) void this.start(false);
+    } catch (error) {
+      if (this.current() && operation === this.operation) this.update(failureStatus(error));
     } finally {
       clearTimeout(timer);
-    }
-  }
-
-  async grant(decision: 'granted' | 'rejected'): Promise<void> {
-    const read = this.read;
-    const widget = read?.widget;
-    if (
-      !this.current() ||
-      !widget ||
-      widget.grantState !== 'pending' ||
-      this.state.status !== 'pending'
-    )
-      return;
-    ++this.operation;
-    const request = {};
-    this.grantRequest = request;
-    this.update('loading');
-    try {
-      // Revalidate the pending incarnation before its native instance/revision CAS.
-      // The eventual reply still cannot replace the fresh executable readback.
-      await withinRound(
-        (async () => {
-          const fresh = await this.check();
-          if (
-            !this.current() ||
-            this.grantRequest !== request ||
-            fresh.widget?.grantState !== 'pending' ||
-            fresh.widget.instanceId !== widget.instanceId ||
-            fresh.widget.revision !== widget.revision
-          )
-            throw new Error('Native pending widget changed');
-          await this.context.client.request('board.widget.grant', {
-            sessionKey: this.context.sessionKey,
-            agentId: this.context.agentId,
-            name: widget.name,
-            revision: widget.revision,
-            instanceId: widget.instanceId,
-            decision,
-          });
-        })(),
-      );
-      if (!this.current() || this.grantRequest !== request) return;
-      this.grantRequest = undefined;
-      await this.inspect(decision === 'granted', widget);
-    } catch {
-      if (this.current() && this.grantRequest === request) {
-        this.grantRequest = undefined;
-        this.operation++;
-        this.update('failed');
-      }
     }
   }
 
@@ -304,8 +224,7 @@ export class NativeBoardWidgetController {
       !this.current() ||
       this.state.status === 'loading' ||
       this.state.status === 'running' ||
-      this.state.status === 'pending' ||
-      this.state.status === 'rejected' ||
+      this.state.status === 'unsupported' ||
       this.state.status === 'missing'
     )
       return;
@@ -316,7 +235,6 @@ export class NativeBoardWidgetController {
     this.update('loading');
     this.abort = new AbortController();
     const abort = this.abort;
-    let created: WidgetNetworkInstance | undefined;
     const timer = setTimeout(() => {
       abort.abort();
       if (operation === this.operation) {
@@ -327,28 +245,12 @@ export class NativeBoardWidgetController {
     }, 30_000);
     try {
       const roundStarted = performance.now();
-      const { check, resourceUrls, initialRead } = await withinRound(
-        (async () => {
-          const check = this.bridge
-            ? await this.bridge.beginCheck({ mountId: this.mountId })
-            : undefined;
-          let resourceUrls = this.read?.widget?.registered
-            ? await refreshHtmlResources(this.context)
-            : [];
-          let initialRead = await this.check();
-          if (initialRead.widget?.registered && !resourceUrls.length) {
-            resourceUrls = await refreshHtmlResources(this.context);
-            initialRead = await this.check();
-          }
-          return { check, resourceUrls, initialRead };
-        })(),
-      );
-      let read = initialRead;
+      let read = await this.check();
       if (!this.current() || operation !== this.operation) return;
       this.read = read;
       const widget = read.widget;
-      if (!widget || (widget.grantState !== 'none' && widget.grantState !== 'granted')) {
-        this.update(!widget ? 'missing' : widget.grantState === 'pending' ? 'pending' : 'rejected');
+      if (!widget) {
+        this.update('missing');
         return;
       }
       if (performance.now() - roundStarted > 15_000) throw new Error('Native check timed out');
@@ -369,29 +271,13 @@ export class NativeBoardWidgetController {
         widget.instanceId,
         widget.revision,
         widget.viewGeneration,
-        widget.netOrigins,
+        widget.grantState,
       ]);
       if (!manual && seen.has(execution)) {
         this.update('idle');
         return;
       }
       seen.add(execution);
-      const networked = widget.netOrigins.length > 0;
-      if (networked) {
-        if (!this.bridge || !check) throw new Error('Network viewer unavailable');
-        created = await this.bridge.create({
-          mountId: this.mountId,
-          nonce: check.nonce,
-          binding: networkBinding(this.context, read),
-          gatewayOrigin: gatewayOrigin(this.context),
-          sandboxUrl: widget.sandboxUrl!,
-          resourceUrls,
-        });
-        if (!this.current() || operation !== this.operation) return;
-        this.network = created;
-        created = undefined;
-      }
-      // The lease is installed before any generated HTML can reach a viewer.
       const fetchHtml = async () => readBoardHtml(read.widget!.frameUrl!, abort.signal);
       let html: string;
       try {
@@ -405,9 +291,8 @@ export class NativeBoardWidgetController {
       }
       if (!this.current() || operation !== this.operation || abort.signal.aborted) return;
       this.read = read;
-      this.update('running', { html, url: read.widget!.sandboxUrl!, network: this.network });
-      // HTML transport may consume most of the first lease. Keep the first
-      // renewal anchored to its verification round, rather than HTML completion.
+      this.update('running', { html, url: read.widget!.sandboxUrl! });
+      // Loading HTML must not postpone the next native identity check.
       this.renewal = setTimeout(
         () => {
           if (!this.current() || operation !== this.operation) return;
@@ -416,14 +301,13 @@ export class NativeBoardWidgetController {
         },
         Math.max(0, 30_000 - (performance.now() - roundStarted)),
       );
-    } catch {
+    } catch (error) {
       if (this.current() && operation === this.operation) {
         this.release();
-        this.update('failed');
+        this.update(failureStatus(error));
       }
     } finally {
       clearTimeout(timer);
-      if (created) void this.bridge?.close(created).catch(() => undefined);
     }
   }
 
@@ -435,39 +319,26 @@ export class NativeBoardWidgetController {
     if (!this.read || this.state.status !== 'running' || this.busyRenewal) return;
     this.busyRenewal = true;
     const operation = this.operation;
-    const network = this.network;
     const startedAt = performance.now();
     try {
-      const { check, read } = await withinRound(
-        (async () => ({
-          check: network && (await this.bridge!.beginCheck(network)),
-          read: await this.check(),
-        }))(),
-      );
+      const read = await this.check();
       if (!this.current() || operation !== this.operation) return;
       if (performance.now() - startedAt > 15_000 || !sameBoardIdentity(this.read, read)) {
         this.stop();
         return;
       }
-      if (network && check)
-        await this.bridge!.renew({
-          ...network,
-          nonce: check.nonce,
-          binding: networkBinding(this.context, read),
-        });
-    } catch {
-      // Fail closed immediately; Main independently enforces the original nonce deadline.
-      if (operation === this.operation) this.stop();
+    } catch (error) {
+      if (operation === this.operation) {
+        this.stop();
+        if (error instanceof UnsupportedBoardWidgetError) this.update('unsupported');
+      }
     } finally {
       this.busyRenewal = false;
     }
   }
 
-  stop(cancelGrant = true): void {
-    if (cancelGrant) {
-      this.grantRequest = undefined;
-      this.incoming = undefined;
-    }
+  stop(cancelIncoming = true): void {
+    if (cancelIncoming) this.incoming = undefined;
     ++this.operation;
     this.release();
     this.update('stopped');
@@ -478,18 +349,13 @@ export class NativeBoardWidgetController {
     clearInterval(this.renewal);
     this.renewal = undefined;
     this.destroyGuest();
-    const network = this.network;
-    this.network = undefined;
-    if (network) void this.bridge?.close(network).catch(() => undefined);
   }
   dispose(): void {
     if (!this.active) return;
     this.active = false;
     ++this.operation;
     this.incoming = undefined;
-    this.grantRequest = undefined;
     this.release();
     this.unsubscribe?.();
-    this.unsubscribeRevoke?.();
   }
 }

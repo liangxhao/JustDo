@@ -1,82 +1,65 @@
 ---
 name: visualize
-description: Display visual content in the current conversation through show_widget or embed UI. Use when asked to show a globe/3D scene, chart, diagram, simulation, interactive demo, HTML preview or existing webpage on screen, including content already produced with a design skill. Owns viewer selection and visible delivery; preserve explicit website/app implementation and file-only requests.
+description: Show visual content in the conversation, including interactive 3D globes, simulations, HTML pages, charts and existing websites. Complete visible delivery of content produced by design skills; preserve explicit file-only and app-development requests.
 ---
 
 # Visualize
 
-This skill handles where and how content appears in the conversation. Reuse
-existing designs, source and data; create missing content as the task requires.
-Complete the actual display: saving HTML or returning source alone does not
-show it. Design skills may guide appearance without changing this delivery step.
-Preserve explicit file-only and website/app implementation deliverables.
+Reuse existing designs, source and data. An on-screen request needs a working
+viewer; saving HTML or returning code alone does not complete it. Design skills
+guide appearance while this skill chooses delivery.
 
-## Choose the delivery path
+## Choose the viewer
 
-Choose by required behavior and currently offered capabilities. Networking or a
-complete HTML document alone does not require an independent webpage.
-
-| Required behavior | Delivery path |
+| Content | Delivery |
 | --- | --- |
-| A concise explanation, ordinary table or supported Mermaid is enough | Use normal chat. |
-| Draw a new globe/3D scene, diagram, simulation or calculator | Prefer `show_widget` with supplied data and local JavaScript. |
-| Preview existing standalone HTML/SVG | Reuse the markup in `show_widget`; complete HTML can use advertised `html-page`. |
-| A one-time lookup supplies the needed snapshot | Retrieve through authorized tools, then use a Widget; identify source and observation time. |
-| An authored visual needs live anonymous HTTPS GET/HEAD images or data within Widget policy | Use `html` or `html-page` with native `pin`/`capabilities.netOrigins` admission; read [network downloads](references/pinned-network.md). |
-| Show an existing URL, need ordinary webpage behavior beyond Widget policy, or explicitly embed a standalone hosted HTML page | Use embed UI when the independent viewer and target permit it; read [hosted HTML](references/hosted-html.md). |
+| Existing HTTP(S) website | Embed its URL. |
+| Authored complete HTML, interactive 3D globe/scene, game, simulation or page with external resources | Default to a hosted page and embed its ref. |
+| Compact self-contained charts, diagrams and calculators; cards needing the conversation draft bridge | Use `show_widget`. |
+| Text, an ordinary table or supported Mermaid already explains it | Use normal chat. |
 
-## Deliver through show_widget
+Choose the path before authoring. Keep complete pages and their normal resource
+loading in the webpage viewer; do not add Widget pinning or network capabilities
+to make a page fit the Widget sandbox.
 
-Discover the current `show_widget`, read its schema and call its exact tool ID.
-Supply a short `title` and the actual source string in `widget_code`, not a file
-path or Markdown fence. Use only advertised kinds and parameters:
+## Embed a webpage
 
-- `html`: native HTML/SVG fragments with optional styles and scripts.
-- `html-page`: fragments or complete HTML, with document-shell and HTTPS image
-  adaptation. Preserve existing scripts/import maps; no JSON envelope is needed.
-- `interactive-answer`: optional fixed components; read
-  [fixed components](references/fixed-components.md) only when they fit.
-
-The host displays the result inline. Expanding it or moving it to the sidebar
-uses host controls; keep the existing document rather than delivering a duplicate.
-No visualization libraries are preloaded. For dependencies, container sizing and the
-human-confirmed composer draft bridge, read [native HTML](references/native-html.md).
-For webpage links or a search box, use real links as shown there; Widget navigation
-does not support `window.open()` or external form submission.
-For external images/data, also read [network downloads](references/pinned-network.md).
-Use configured services and task-appropriate resources; retain user/organization
-constraints and do not introduce public fallbacks for internal services.
-
-## Deliver through embed UI
-
-For an existing HTTP(S) URL, emit a quoted shortcode in normal assistant text,
-outside code fences/backticks:
+For an existing URL, emit this syntax in normal assistant text, outside code
+fences/backticks:
 `[embed url="https://target.example/page" title="Page" height="640" /]`.
-No tool call is needed. The host checks the external-URL setting and target;
-if blocked, provide a normal link and explain the actual limit.
+No tool call is needed. External URLs require the Browser setting “Allow external
+webpages in messages”; if blocked, provide a normal link and explain the limit.
 
-For a new standalone page, read [hosted HTML](references/hosted-html.md), write
-the actual files under the current Gateway profile's `canvas/documents`, then
-emit `[embed ref="REAL_STAGED_ID" title="Report" height="480" /]`.
-Hosted refs need no external-URL switch. Neither path needs `show_widget` or a
-Widget manifest. See [worked examples](references/delivery-examples.md) when
-needed. External URLs share the default built-in browser's site login/storage;
-hosted refs remain isolated. Neither exposes a Widget draft bridge.
-The resulting webpage card also supports the host's expansion and sidebar controls.
+For an authored page, read [hosted HTML](references/hosted-html.md), write the
+files under the verified current Gateway profile's `canvas/documents`, then emit
+`[embed ref="REAL_STAGED_ID" title="Interactive page" height="640" /]`.
+Read [delivery examples](references/delivery-examples.md) for a complete page,
+relative assets, staging and a small Widget. Hosted refs need no external-URL
+switch. A local path, `file://` URL or guessed ref is not a published page.
 
-If `show_widget` is missing, an independently offered hosted viewer can deliver
-an authored visual. Pending/rejected grants or blocked Widget resources are not
-reasons to switch viewers or strip restrictions. If a path is unavailable, state
-the concrete limit and provide a real link/file alternative. Do not change the
-external-URL setting without authorization or copy a blocked site into a hosted
-ref to evade it.
+Both webpage paths follow the Browser proxy setting and support expansion and
+sidebar presentation. External URLs share the default sidebar browser's site
+login/storage; hosted refs are isolated. Webpages have no Widget draft bridge.
 
-## Verify and deliver
+## Show a compact Widget
 
-Read the Widget result and check the requested interaction in the actual viewer
-when accessible. A requested draggable/rotatable model needs working interaction,
-not a static illustration. Otherwise distinguish source checks from visual verification;
-file creation or an initialized iframe alone proves no loading success. Correct
-source errors before retrying; never replay uncertain execution or fabricate
-Widget IDs, hosted references or persistence APIs. After success, add only a
-useful conclusion or material verification limit.
+Discover the real `show_widget` and use its current schema. Pass a short `title`
+and the HTML/SVG fragment string as `widget_code`, with `kind: "html"`.
+Use supplied data, inline assets and local JavaScript. For native resource limits,
+links or the optional human-confirmed draft bridge, read
+[native HTML](references/native-html.md).
+
+When its fixed table/chart/form components fit and the kind is advertised, use
+`interactive-answer`; read [fixed components](references/fixed-components.md).
+No visualization library is preloaded. Keep explicit file/app deliverables and
+user-selected presentation paths intact.
+
+## Verify delivery
+
+Check loading and requested interactions in the actual viewer when accessible.
+A rotatable globe needs working rotation, not a static illustration. Distinguish
+source checks from visual verification when the viewer is unavailable. Correct
+source errors before retrying; do not replay an uncertain tool call or fabricate
+hosted references. If a path is unavailable, explain the concrete limit and
+provide a real link/file. Do not change settings or rewrite a denied saved Widget
+into a webpage to bypass its decision.

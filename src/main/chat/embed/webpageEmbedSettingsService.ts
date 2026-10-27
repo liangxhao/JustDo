@@ -1,7 +1,8 @@
-import type {
-  WebpageEmbedSettings,
-  WebpageEmbedSettingsErrorCode,
-  WebpageEmbedSettingsResult,
+import {
+  readExternalEmbedUrlsAllowed,
+  type WebpageEmbedSettings,
+  type WebpageEmbedSettingsErrorCode,
+  type WebpageEmbedSettingsResult,
 } from '../../../shared/browser/webpageEmbedSettings';
 import type { GatewayClientLike } from '../../engine/gateway/types';
 
@@ -60,17 +61,8 @@ export class WebpageEmbedSettingsService {
       typeof snapshot.hash !== 'string' || !snapshot.hash.trim()) {
       throw new Error('Invalid webpage embed configuration');
     }
-    const gateway = snapshot.config.gateway;
-    if (gateway !== undefined && !isRecord(gateway))
-      throw new Error('Invalid webpage embed configuration');
-    const controlUi = isRecord(gateway) ? gateway.controlUi : undefined;
-    if (controlUi !== undefined && !isRecord(controlUi))
-      throw new Error('Invalid webpage embed configuration');
-    const allowed = isRecord(controlUi) ? controlUi.allowExternalEmbedUrls : undefined;
-    if (allowed !== undefined && typeof allowed !== 'boolean')
-      throw new Error('Invalid webpage embed configuration');
     return {
-      allowExternalEmbedUrls: allowed === true,
+      allowExternalEmbedUrls: readExternalEmbedUrlsAllowed(snapshot.config),
       revision: snapshot.hash,
       applied: typeof snapshot.configRevisionHash === 'string' && !!snapshot.configRevisionHash &&
         snapshot.configRevisionHash === snapshot.appliedConfigHash,

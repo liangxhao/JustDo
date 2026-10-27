@@ -145,10 +145,16 @@ describe('webpage mount target policy', () => {
     { snapshot: allowedConfig, allowed: true },
     // A native snapshot is already resolved even when the root is JSON5/include.
     { snapshot: { ...allowedConfig, raw: '{ gateway: { controlUi: { $include: "./control-ui.json" } } }' }, allowed: true },
-    { snapshot: { valid: true, config: {} }, allowed: false },
+    { snapshot: { valid: true, config: {} }, allowed: true },
+    { snapshot: { valid: true, config: { gateway: {} } }, allowed: true },
+    { snapshot: { valid: true, config: { gateway: { controlUi: {} } } }, allowed: true },
     { snapshot: { valid: true, config: { gateway: { controlUi: { allowExternalEmbedUrls: false } } } }, allowed: false },
     { snapshot: { valid: false, config: allowedConfig.config }, allowed: false },
     { snapshot: { valid: true, config: { gateway: { controlUi: { allowExternalEmbedUrls: 'true' } } } }, allowed: false },
+    { snapshot: { valid: true }, allowed: false },
+    { snapshot: { valid: true, config: null }, allowed: false },
+    { snapshot: { valid: true, config: { gateway: null } }, allowed: false },
+    { snapshot: { valid: true, config: { gateway: { controlUi: [] } } }, allowed: false },
     { snapshot: null, allowed: false },
   ])('uses the resolved native configuration for external admission: $allowed / $snapshot', async ({ snapshot, allowed }) => {
     const registerMount = vi.fn().mockReturnValue({ partition: 'current' });

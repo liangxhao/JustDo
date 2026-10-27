@@ -6,6 +6,7 @@ import {
   type WebpageEmbedMount,
   type WebpageEmbedRequest,
 } from '../../../shared/browser/webpageEmbed';
+import { readExternalEmbedUrlsAllowed } from '../../../shared/browser/webpageEmbedSettings';
 import type { createWebpageEmbedGuests } from '../../core/window/webpageEmbedGuest';
 import type { GatewayClientLike } from '../../engine/gateway/types';
 import { createHostedCanvasForwarder } from './hostedCanvasForwarder';
@@ -134,11 +135,11 @@ export function createWebpageEmbedMounts(options: {
           // second policy authority. Read through this exact live connection.
           const snapshot = await connection.client.request<{
             valid?: boolean;
-            config?: { gateway?: { controlUi?: { allowExternalEmbedUrls?: boolean } } };
+            config?: unknown;
           }>('config.get', {});
           if (
             !isCurrent() || !isPending() || snapshot?.valid !== true ||
-            snapshot.config?.gateway?.controlUi?.allowExternalEmbedUrls !== true
+            !readExternalEmbedUrlsAllowed(snapshot.config)
           )
             throw new Error('External webpage embedding is disabled');
         }

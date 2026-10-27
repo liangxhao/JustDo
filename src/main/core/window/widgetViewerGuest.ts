@@ -7,7 +7,6 @@ import {
 } from '../../../shared/widgets/viewer';
 import { registerBrowserProxySession } from '../network/systemProxyPreference';
 import { registerContentSecurityPolicy } from './contentSecurityPolicy';
-import { WidgetNetworkGuests } from './widgetViewerGuestNetwork';
 
 type ProxyCredentials = { host: string; port: number; username: string; password: string };
 const guests = new Map<
@@ -21,11 +20,7 @@ export function createWidgetViewerGuests(
   preload: string,
   getCredentials: () => ProxyCredentials | null,
   developmentCsp?: { isDev: boolean; devServerPort: number },
-  networkOwner?: Electron.WebContents,
 ) {
-  const networkGuests = networkOwner
-    ? new WidgetNetworkGuests(networkOwner, preload, developmentCsp)
-    : undefined;
   const viewerSession = session.fromPartition(WIDGET_VIEWER_PARTITION, { cache: false });
   const prepareProxy = () => {
     const ready = registerBrowserProxySession(viewerSession);
@@ -75,7 +70,6 @@ export function createWidgetViewerGuests(
       params: Record<string, string>,
       host: Electron.WebContents,
     ): boolean {
-      if (networkGuests?.prepare(event, preferences, params, host)) return true;
       if (params.partition !== WIDGET_VIEWER_PARTITION) return false;
       if (!widgetViewerMount(params.src, host.getURL())) {
         event.preventDefault();
@@ -101,14 +95,8 @@ export function createWidgetViewerGuests(
       return true;
     },
     attach(guest: Electron.WebContents, host: Electron.WebContents): boolean {
-      const network = networkGuests?.attach(guest, host) === true;
-      if (!network && guest.session !== viewerSession) return false;
-      const networkReady = network ? networkGuests?.ready(guest) : undefined;
-      if (network && !networkReady) {
-        if (!guest.isDestroyed()) guest.close();
-        return true;
-      }
-      guests.set(guest.id, { guest, host, mount: '', ready: networkReady ?? prepareProxy() });
+      if (guest.session !== viewerSession) return false;
+      guests.set(guest.id, { guest, host, mount: '', ready: prepareProxy() });
       // getURL may still be empty at did-attach; admission was checked before attach.
       const revoke = () => {
         guests.delete(guest.id);

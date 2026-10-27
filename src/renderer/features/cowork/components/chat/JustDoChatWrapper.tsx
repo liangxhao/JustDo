@@ -322,8 +322,6 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
         sessionKey,
         sessionId,
         agentId: currentSessionAgentId ?? /^agent:([^:]+):/.exec(sessionKey)?.[1],
-        methods: state.hello?.features?.methods,
-        pluginSurfaceUrls: state.hello?.pluginSurfaceUrls,
         presentationScope: currentSessionId,
         boardExecutionOwner: controller,
         isCurrent,

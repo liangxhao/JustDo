@@ -2,10 +2,11 @@
 
 桌面聊天将助手消息中的 `[embed ...]` 转为独立网页卡片。它展示已有 HTTP(S) 页面或
 当前原生 profile 托管的静态 HTML，不要求 `show_widget`，也不把页面内容自动加入模型上下文。
-自包含图表/模拟、一次取数后的快照以及原生 schema 支持的完整 HTML 继续可用 Widget；
-`html-page` 的 HTTPS 图片/数据下载须经过独立的原生联网准入。直接展示已有 URL 或需要
-正常网页 origin 与浏览器行为的页面使用本功能，不能仅凭完整 HTML、CDN 或持续更新
-就选择独立网页，也不能用它绕过被拒绝的 Widget 授权。没有专门的视频网站转换或播放器适配。
+
+完整 HTML、交互式 3D、游戏和复杂模拟默认使用本功能；简单自包含卡片与需要草稿桥的
+控件使用 Widget。生成页面写入当前 profile 的静态托管目录后引用真实 ref；已有网站
+直接引用 URL。两条路径在任务开始时选择，不自动迁移或重放不支持的保存 Widget。
+没有专门的视频网站转换或播放器适配。
 
 ## 输入与选择
 
@@ -15,13 +16,14 @@
 [embed url="https://configured-service.example/report" title="业务页面" /]
 ```
 
-普通外部 URL 通过“设置 → 浏览器 → 内置浏览器设置 → 允许消息内嵌外部网页”开启，
-对应原生配置 `gateway.controlUi.allowExternalEmbedUrls: true`。缺省关闭，未开启时显示
+普通外部 URL 的“设置 → 浏览器 → 内置浏览器设置 → 允许消息内嵌外部网页”默认开启，
+对应原生配置 `gateway.controlUi.allowExternalEmbedUrls: true`。显式关闭时显示
 不可用卡片并保留普通网页打开入口。开关读取现有原生值，打开设置不写配置；切换立即
 通过 `config.get` revision / `config.patch` 条件写入，只修改这一项，不另存产品偏好。
 读回原生值及应用状态后更新开关；冲突、断线或未能确认写入时禁用再次修改，用户刷新
 读取后再决定，不自动重放写入。引擎未连接时显示不可用与刷新入口，不因查看设置启动
-引擎。普通设置保存不覆盖此项，配置同步保留已有值。开关作用于后续 mount 准入，
+引擎。普通设置保存不覆盖此项，配置同步仅为缺失项补齐开启值，保留显式关闭。
+开关作用于后续 mount 准入，
 不会重装或撤销已经打开的网页。外链准入通过同一当前连接读取 `config.get` 的有效快照，
 与设置页共同遵循原生 JSON5/`$include` 解析，不再直接读取根配置文件。允许正常企业内网地址，
 拒绝任意本机端口、应用 origin、Gateway 控制面、元数据服务、文件和危险协议。
@@ -97,8 +99,7 @@ sandbox/contextIsolation/webSecurity。CSP、CORS、mixed content 与 Cookie/Sam
 目标导航。源站认证不借用代理凭据。普通 URL 释放只销毁自身
 页面并撤销准入，不清理共享存储、不注销整个 profile 的代理、不关闭 profile 连接或结束
 共享 worker；托管 session 销毁时注销并清理自己的存储。
-原生联网 Widget 在同一代理变化通知中撤销自身网络租约并等待重新准入；独立网页沿上述
-代次守门保留原页面，两类展示不互相继承授权或替换恢复方式。
+独立网页按上述代次守门保留原页面，不借用 Widget 权限或替换其恢复方式。
 
 可归属 guest 的页面 URL、跳转、frame、子资源和 WebSocket 使用同一 Main 网络边界。直接路由使用该 session
 的 DNS 检查保护地址；只含代理且没有 DIRECT fallback 的路由允许由已配置代理解析本机
@@ -167,9 +168,8 @@ IPC owner、断线与不确定写入、运行时策略刷新、完整/最小配�
 以及固定/放大不重建页面。设置浅色/深色预览和实际 hao123 网页加载在隔离 Electron
 环境检查，网页使用系统代理；未修改用户配置或启动用户 Gateway。相关专项、构建、
 lint、Renderer/Main 类型检查和两轮独立交叉审查通过。
-同日合入含 `html-page` 与原生网络 Widget 的 dev 后，额外验证 Board/普通 Canvas/网页
-投影并存、两种 viewer capability、代理变更时 Widget 撤销与网页保留、插件注册及打包；
-交付指引按网页 origin 和所需行为选择，不按是否联网区分。
+同日额外验证了 Board/普通 Canvas/网页投影并存、viewer capability、插件注册及打包。
+早期联网 Widget 的验证记录不代表当前支持该能力；完整页面现统一选择独立网页。
 独立审查进一步补齐放大状态的主动布局通知、窄历史抽屉的 modal 展示及受保护跳转的
 显式失败通知，并将外链准入统一到原生配置快照。隐藏 Electron 使用实际组件、mount、
 guest 与原生展示载体验证放大/收起/Escape、输入和文档实例保留；Gateway 响应使用

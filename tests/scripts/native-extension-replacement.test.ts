@@ -111,17 +111,16 @@ test('binds every local OpenAI production source, contract and worker to the run
   );
 });
 
-test('binds widget HTML adaptation and parser locks while excluding retired assets and browser probes', () => {
+test('binds Smart Canvas UI sources while excluding unused assets and tests', () => {
   const files = listBuildRecipeFiles(path.resolve('.')).map((file: string) =>
     path.relative('.', file).replaceAll('\\', '/'),
   );
   for (const name of [
     'index.ts',
-    'document/content-kind.ts',
-    'document/contracts.ts',
-    'document/html-source.ts',
-    'document/image-loading.ts',
-    'package-lock.json',
+    'document/resource-bootstrap.ts',
+    'document/serialization.ts',
+    'ui/content-kind.ts',
+    'ui/runtime.ts',
   ])
     expect(files).toContain(`plugins/extensions/smart-canvas/${name}`);
   expect(
@@ -130,9 +129,4 @@ test('binds widget HTML adaptation and parser locks while excluding retired asse
   expect(
     files.some((file: string) => file.startsWith('plugins/extensions/smart-canvas/tests/')),
   ).toBe(false);
-  for (const name of ['three-fixture.cjs', 'verify-image-loading.cjs']) {
-    expect(fs.existsSync(path.resolve('plugins/extensions/smart-canvas/tests', name))).toBe(true);
-    expect(fs.existsSync(path.resolve('plugins/extensions/smart-canvas/scripts', name))).toBe(false);
-    expect(files).not.toContain(`plugins/extensions/smart-canvas/tests/${name}`);
-  }
 });

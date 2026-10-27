@@ -14,7 +14,6 @@ import { isNativeCanvasPreview } from '../../pipeline/native-canvas';
 import {
   type BoardWidgetState,
   NativeBoardWidgetController,
-  type PreparedBoardView,
 } from '../native-board-widget/controller';
 import { acceptWidgetDraft, acceptWidgetDraftText, widgetFrameInteractable } from './draft';
 import { NativeWidgetGuestHost, type WidgetWebview } from './guest';
@@ -341,7 +340,6 @@ export class NativeWidgetView extends LitElement {
   private presentationActive?: boolean;
   private board?: NativeBoardWidgetController;
   declare private boardState?: BoardWidgetState;
-  private boardGuest?: PreparedBoardView['network'];
 
   constructor() {
     super();
@@ -476,7 +474,6 @@ export class NativeWidgetView extends LitElement {
     this.board?.dispose();
     this.board = undefined;
     this.boardState = undefined;
-    this.boardGuest = undefined;
     this.collapse(false);
     this.layoutObserver?.disconnect();
     this.layoutObserver = undefined;
@@ -543,7 +540,6 @@ export class NativeWidgetView extends LitElement {
           this.boardState = state;
           this.failure = false;
           if (view) {
-            this.boardGuest = view.network;
             this.view = { html: view.html, url: view.url };
           }
         },
@@ -619,7 +615,6 @@ export class NativeWidgetView extends LitElement {
             if (text) this.suggestion = text;
           }
         },
-        this.boardGuest,
       );
       this.observeLayout(webview);
       this.observeTheme();
@@ -664,7 +659,6 @@ export class NativeWidgetView extends LitElement {
     this.themeObserver?.disconnect();
     this.themeObserver = undefined;
     this.layout = undefined;
-    this.boardGuest = undefined;
     this.view = undefined;
     this.ready = false;
     this.suggestion = '';
@@ -1042,12 +1036,12 @@ export class NativeWidgetView extends LitElement {
 
   private renderBoardActions() {
     const status = this.boardState?.status;
-    if (!status || status === 'pending' || status === 'rejected' || status === 'missing')
+    if (!status || status === 'unsupported' || status === 'missing')
       return nothing;
     const stop = !this.failure && (status === 'loading' || status === 'running');
     const label = i18nService.t(
       stop
-        ? 'coworkWidgetNetworkStop'
+        ? 'coworkWidgetStop'
         : this.failure || status === 'failed'
           ? 'coworkWidgetRetry'
           : 'coworkWidgetLoadCurrent',
@@ -1203,28 +1197,14 @@ export class NativeWidgetView extends LitElement {
     if (!state) return nothing;
     const t = (key: string) => i18nService.t(key);
     const statusKeys: Partial<Record<BoardWidgetState['status'], string>> = {
-      pending: 'coworkWidgetNetworkPending',
-      rejected: 'coworkWidgetNetworkRejected',
+      unsupported: 'coworkWidgetUnsupported',
       missing: 'coworkWidgetDeleted',
-      failed: 'coworkWidgetNetworkFailed',
+      failed: 'coworkWidgetLoadFailed',
     };
     const statusKey = statusKeys[state.status];
     if (!statusKey) return nothing;
     return html`<section class="status" role="status">
       <span>${t(statusKey)}</span>
-      ${
-        state.status === 'pending'
-          ? html`<ul>
-                ${state.origins.map(origin => html`<li>${origin}</li>`)}
-              </ul>
-              <button @click=${() => void this.board?.grant('granted')}>
-                ${t('coworkWidgetNetworkAllow')}
-              </button>
-              <button @click=${() => void this.board?.grant('rejected')}>
-                ${t('coworkWidgetNetworkDeny')}
-              </button>`
-          : nothing
-      }
     </section>`;
   }
 }

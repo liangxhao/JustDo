@@ -87,14 +87,10 @@ flowchart LR
 
 非浏览器代理变化先更新 Main、默认 session 与动态上游选择；当前 Gateway 子进程仍使用匹配的受控本地代理环境时无需重启，只有不可复用该启动环境时才走空闲完整重启。浏览器代理变化在独立队列中更新现有 guest sessions、关闭旧连接；新 profile 注册也使用该队列，避免快速切换时旧偏好覆盖新配置。它不改变默认 session、Main 代理状态或 Gateway 环境。自定义浏览器代理的认证只取 `browserProxy` 凭据，不能借用非浏览器代理凭据。详见[浏览器设置](../features/browser/browser-settings-design.md)。
 
-联网 Widget 每次运行使用新的临时 partition，复用上述代理注册；关闭时注销代理跟踪并清理
-连接 / 存储，不共享 inline 卡片或浏览器 profile。`electron.widgetNetwork` 仅向登记主
-Renderer 的主 frame 提供 beginCheck / create / renew / close 与可取消的撤回通知。
-Main 校验固定 viewer、mount、guest 和完整身份 metadata，不接收 HTML 或 board ticket，
-不另建原生授权权威。租约从 Main 签发本轮 nonce 的单调时钟起点算起最长 60 秒，旧 nonce、
-迟到结果或 guest 不能续租；主 Renderer 挂起也会到期关闭。代理变化、owner 导航 / 崩溃先
-撤回实例。业务读取逐请求检查代理与下载限制，原生 transport 使用独立精确规则。
-清理存储不等于 Electron Session 销毁。完整范围见[交互式回答](../features/chat/interactive-answers.md#公网素材与数据下载)。
+
+普通 Widget 的专用内存 session 继续通过浏览器代理队列装载原生 sandbox，不共享浏览器
+存储或提供业务下载 IPC。非联网 pinned HTML 的当前身份与 ticket 由 Renderer 的认证
+loader 核对，完整页面使用独立网页承载。具体边界见[交互式回答](../features/chat/interactive-answers.md)。
 
 ### 可分离的完整侧边栏
 

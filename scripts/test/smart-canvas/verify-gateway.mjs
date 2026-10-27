@@ -22,11 +22,6 @@ const verifyRetention = args.includes('--retention');
 const verifyToolDispatch = args.includes('--tool-dispatch');
 const verifyInteraction = args.includes('--interaction-contract');
 const verifyPresentation = args.includes('--presentation');
-const verifyHtmlPage = args.includes('--html-page');
-assert.ok(
-  !verifyHtmlPage || (!verifyInteraction && !verifyRetention && !verifyToolDispatch && !serve),
-  'Use --html-page separately from other scenarios',
-);
 assert.ok(
   !verifyPresentation || verifyInteraction,
   'Use --presentation with --interaction-contract',
@@ -46,7 +41,6 @@ const supportedFlags = new Set([
   '--interaction-contract',
   '--presentation',
   '--viewer-origin',
-  '--html-page',
 ]);
 for (const arg of args) {
   if (arg.startsWith('--'))
@@ -154,10 +148,8 @@ const ui = {
     },
   ],
 };
-const htmlPageSource =
-  '<!doctype html><html lang="en"><body><main id="html-page-fixture">Synthetic complete HTML</main></body></html>';
-const registeredWidgetKind = verifyHtmlPage ? 'html-page' : 'interactive-answer';
-const rendererPath = verifyHtmlPage ? '/__smart_canvas__/image-loading.js' : '/__smart_canvas__/ui.js';
+const registeredWidgetKind = 'interactive-answer';
+const rendererPath = '/__smart_canvas__/ui.js';
 const widgetArgs = verifyToolDispatch
   ? {
       title: 'Synthetic native HTML',
@@ -168,7 +160,7 @@ const widgetArgs = verifyToolDispatch
   : {
       title: 'Synthetic interactive components',
       kind: registeredWidgetKind,
-      widget_code: verifyHtmlPage ? htmlPageSource : JSON.stringify(ui),
+      widget_code: JSON.stringify(ui),
     };
 const modelRequests = [];
 const nativeToolResults = new Map();
@@ -732,12 +724,7 @@ try {
     const rendererSource = await resource.text();
     assert.ok(rendererSource.length > 0, 'Public renderer has executable source');
     new Script(rendererSource);
-    if (!verifyHtmlPage) assert.ok(rendererSource.includes('scenario-draft-policy'));
-    if (verifyHtmlPage) {
-      assert.ok(view.html.includes('html-page-fixture'));
-      assert.ok(view.html.includes(rendererPath));
-      assert.ok(rendererSource.includes('smart-canvas.image-loading'));
-    }
+    assert.ok(rendererSource.includes('scenario-draft-policy'));
     assert.equal(
       (await fetch(`http://127.0.0.1:${view.sandboxPort}/__smart_canvas__/scenario.js`)).status,
       404,
@@ -748,9 +735,8 @@ try {
       404,
       'Unregistered paths are not public resources',
     );
-    if (!verifyHtmlPage)
-      for (const block of ui.blocks)
-        assert.ok(view.html.includes(block.title), `Composed document includes ${block.type}`);
+    for (const block of ui.blocks)
+      assert.ok(view.html.includes(block.title), `Composed document includes ${block.type}`);
   }
   await assert.rejects(
     inline.rpc('canvas.document.view', { docId: 'cv_missing_fixture' }),
@@ -1072,14 +1058,13 @@ try {
       ...(!verifyToolDispatch
         ? { disabledDocumentRetained: true, disabledResourceRejected: true }
         : {}),
-      ...(!verifyToolDispatch && !verifyHtmlPage
+      ...(!verifyToolDispatch
         ? {
             controlledUi: true,
             componentKinds: ui.blocks.map(block => block.type),
             registeredSourceKind: registeredWidgetKind,
           }
         : {}),
-      ...(verifyHtmlPage ? { htmlPage: true } : {}),
       ...(retention ? { retention } : {}),
       localModelRequests: modelRequests.length,
       ...(interactionContract ? { interactionContract } : {}),

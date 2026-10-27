@@ -1,4 +1,3 @@
-import type { WidgetNetworkInstance } from '@shared/widgets/network';
 import {
   WIDGET_VIEWER_PAGE,
   WIDGET_VIEWER_PARTITION,
@@ -27,15 +26,13 @@ export class NativeWidgetGuestHost {
     private url: string,
     private html: string,
     private receive: (event: WidgetViewerEvent) => void,
-    options?: Pick<WidgetNetworkInstance, 'mountId' | 'partition'>,
   ) {
-    if (options) this.mountId = options.mountId;
     this.timer = setTimeout(() => this.fail(), WIDGET_TIMEOUT_MS);
     frame.addEventListener('dom-ready', this.initialize);
     frame.addEventListener('ipc-message', this.onMessage);
     frame.addEventListener('render-process-gone', this.fail);
     frame.addEventListener('did-fail-load', this.loadFailure);
-    frame.setAttribute('partition', options?.partition ?? WIDGET_VIEWER_PARTITION);
+    frame.setAttribute('partition', WIDGET_VIEWER_PARTITION);
     const viewer = new URL(WIDGET_VIEWER_PAGE, frame.ownerDocument.location.href);
     viewer.searchParams.set('mount', this.mountId);
     frame.src = viewer.href;

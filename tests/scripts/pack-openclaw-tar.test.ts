@@ -135,11 +135,11 @@ test('omits retired widget libraries and test probes without altering source or 
   ];
   const retained = [
     'dist/extensions/smart-canvas/index.js',
-    'dist/extensions/smart-canvas/node_modules/parse5/LICENSE',
+    'dist/extensions/fixture/node_modules/dependency/LICENSE',
     'dist/extensions/fixture/assets/retained.js',
     'dist/extensions/drawio/assets/retained.js',
   ];
-  const probes = ['three-fixture.cjs', 'verify-image-loading.cjs'].map(
+  const probes = ['ui-runtime.test.ts', 'ui-schema.test.ts'].map(
     file => `dist/extensions/smart-canvas/tests/${file}`,
   );
   try {

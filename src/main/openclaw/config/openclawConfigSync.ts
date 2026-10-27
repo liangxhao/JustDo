@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 
+import { DEFAULT_ALLOW_EXTERNAL_EMBED_URLS } from '../../../shared/browser/webpageEmbedSettings';
 import {
   applyDecisionModelConfiguration,
   captureDecisionModelConfiguration,
@@ -359,6 +360,7 @@ export class OpenClawConfigSync {
     config.gateway = {
       ...gateway,
       controlUi: {
+        allowExternalEmbedUrls: DEFAULT_ALLOW_EXTERNAL_EMBED_URLS,
         ...(isRecord(gateway.controlUi) ? gateway.controlUi : {}),
         enabled: this.getControlUiEnabled() === true,
       },

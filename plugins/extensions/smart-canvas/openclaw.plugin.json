@@ -1,7 +1,7 @@
 {
   "id": "smart-canvas",
   "name": "Smart Canvas",
-  "description": "Interactive visualizations, HTML pages and embedded webpages in conversations.",
+  "description": "Interactive webpages, visualizations and compact cards in conversations.",
   "enabledByDefault": true,
   "categories": ["productivity"],
   "skills": ["./skills"],

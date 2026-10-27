@@ -16,10 +16,10 @@ function fixture(config: unknown = {}) {
 }
 const edit = { allowExternalEmbedUrls: true, revision: 'viewed' };
 
-test('reads native false by default without exposing other config or credentials', async () => {
+test('defaults to enabled without writing or exposing other config or credentials', async () => {
   const { service, request, exclusive } = fixture({ models: { private: 'secret' } });
   expect(await service.getSettings()).toEqual({ success: true, value: {
-    allowExternalEmbedUrls: false, revision: 'viewed', applied: true,
+    allowExternalEmbedUrls: true, revision: 'viewed', applied: true,
   } });
   expect(request).toHaveBeenCalledExactlyOnceWith('config.get', {});
   expect(exclusive).toHaveBeenCalledTimes(1);
@@ -115,7 +115,7 @@ test('does not publish a stale read when connection identity changes', async () 
 });
 
 test('reports conflict when the native readback differs from the requested flag', async () => {
-  const { service, request } = fixture();
+  const { service, request } = fixture({ gateway: { controlUi: { allowExternalEmbedUrls: false } } });
   expect(await service.saveSettings(edit)).toEqual({ success: false, code: 'conflict' });
   expect(request).toHaveBeenCalledTimes(2);
 });

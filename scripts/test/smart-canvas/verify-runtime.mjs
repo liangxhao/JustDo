@@ -33,37 +33,10 @@ try {
   const native = await import(pathToFileURL(path.join(runtime, 'dist', filename)).href);
   const registry = { boardWidgetContentKinds: new Map() };
   const register = native[alias](registry);
-  const routes = [];
   plugin.register({
-    on: (event, handler, options) => {
-      assert.equal(event, 'before_tool_call');
-      assert.deepEqual(options.matcher, ['show_widget']);
-      assert.deepEqual(
-        handler({
-          toolName: 'show_widget',
-          params: {
-            kind: 'html-page',
-            widget_code: '<img src="https://images.example/earth.jpg">',
-          },
-        }).params.capabilities.netOrigins,
-        ['https://images.example'],
-      );
-    },
     registerBoardWidgetContentKind: definition => register({ id: plugin.id }, definition),
-    registerHttpRoute: route => routes.push(route),
   });
-  const htmlResources = registry.boardWidgetContentKinds.get('html-page').definition.resources;
-  assert.deepEqual(
-    routes.map(route => route.path),
-    htmlResources.paths,
-  );
-  for (const route of routes) {
-    assert.equal(route.match, 'exact');
-    assert.equal(route.auth, 'plugin');
-    assert.deepEqual(route.nodeCapability, { surface: htmlResources.surface });
-  }
   assert.deepEqual([...registry.boardWidgetContentKinds.keys()].sort(), [
-    'html-page',
     'interactive-answer',
   ]);
   const definition = registry.boardWidgetContentKinds.get('interactive-answer').definition;

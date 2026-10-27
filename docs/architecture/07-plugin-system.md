@@ -45,54 +45,34 @@ Runtime Services 还通过公开 prompt/agent-end hooks 记录有限的轮次准
 只观察本次 hook 的原生身份及 trace，不缓存或推断失败阶段，不改变 prompt 或原生准入。
 日志沿现有原生 JSON 导出，能力和证据缺口见[会话诊断](../features/chat/session-diagnostics.md#已保存用户轮次的准入错误)。
 
-`plugins/extensions/smart-canvas` 在 `ui/` 聚合通用固定组件的 schema、组合器、
-渲染逻辑、文案与样式；`document/` 提供 HTML/JSON 安全序列化、完整 HTML 外壳适配、
-HTTPS 图片加载及资源初始化。parser 及实体解码依赖由插件自己的 lock 固定，在构建时
-随入口预编译，不增加首次使用下载。
-插件通过精确 `show_widget` matcher 的 `before_tool_call`，仅为自有 `html-page`
-补齐遗漏的 `pin` 和源中明确 HTTPS 地址的 `netOrigins`；已有声明与显式 `pin: false`
-保持不变。无需 JavaScript 分析或改写 HTML，授权仍由原生准入决定。
-组件单元测试归插件 `tests/`，宿主边界及打包集成测试保留在主工程。
+
+`plugins/extensions/smart-canvas` 在 `ui/` 聚合固定组件的 schema、组合器、渲染逻辑、
+文案与样式；`document/` 仅保留这些组件复用的 HTML/JSON 安全序列化与资源初始化。
+插件通过原生 `registerBoardWidgetContentKind` 注册 `interactive-answer`，发布
+`/__smart_canvas__/ui.js`。类型校验 JSON，由原生 `show_widget` 拥有包装、文档和历史。
 插件 ID 为 `smart-canvas`，默认开启；配置同步保留用户明确的启停选择。
+没有工具调用补参 hook、额外 HTML 页面类型、图片转换或业务联网适配；不新增 agent
+tools、MCP/RPC、数据库或 runtime patch。组件单元测试归插件，宿主与打包集成测试归主工程。
 
-该扩展是随通用本地扩展流程捆绑的可选组件插件：用原生
-`registerBoardWidgetContentKind` 注册固定组件 `interactive-answer` 与原 HTML 类型 `html-page`；固定组件校验 JSON，页面接收原始 HTML，输出组件 body
-及只读 JS resource，由 native `show_widget` 负责包装及文档所有权。默认开启，可在扩展页显式启用/禁用，配置同步保留用户选择；按需 skill 与插件一起提供，不改变 8 个内置技能或每轮注入指导。不新增 agent tools、MCP/RPC、数据库或 runtime patch。固定 renderer 的继续按钮只在当前原生私有 prompt port 可用时启用，建议由宿主确认后加入草稿；未获得 dashboard/tools/resources 执行权限。用户流程与限制见 [交互式回答](../features/chat/interactive-answers.md)。
+按需 `visualize` 技能负责实际可见交付，并复用设计技能已生成的源码：完整 HTML、
+交互式 3D 地球、游戏和复杂模拟默认写为托管页面后输出 `[embed ref="…"]`；已有网址
+直接 `[embed url="…"]`。小型自包含 HTML/SVG 卡片、本地计算或需要人工确认草稿桥
+的控件才选择 `show_widget`。明确的文件交付与真实应用开发保留原目标。技能只随插件
+按需加载，不增加每轮提示或修改设计技能。
+托管文件通过现有已授权 Gateway 本机 exec 读取非空 `OPENCLAW_STATE_DIR`，写入
+`canvas/documents/<fresh-id>/index.html` 与相对资源。外链开关、代理及静态文档认证
+由宿主负责；独立网页不继承 Widget 能力或草稿桥。契约见[独立网页](../features/chat/webpage-embeds.md)。
 
-插件只发布通用 `visualize` 技能，负责当前会话的展示位置与交付方式，不修改前端设计
-技能或要求先调用设计技能。按实际能力选择交付路径：本地可视化、一次取数
-快照及原生下载策略允许的匿名 HTTPS 图片 / 数据可使用 `show_widget`；作者完整 HTML
-可使用 `html-page`。已有网页 URL，或需要源站登录 / Cookie、网络表单、WebSocket、
-企业内网等原生下载范围之外行为时，只有实际宿主开放后才用独立网页；不因内容持续
-联网就排除 Widget，也不把拒绝的 Widget 授权自动转成网页。缺少能力时使用真实链接
-或授权文件预览。已有网页直接输出消息短码；新建托管 HTML 通过已授权 Gateway 本机
-exec 读取 `OPENCLAW_STATE_DIR`，写入 `canvas/documents` 后引用真实 ID。宿主继续检查
-外链开关与文档租约，不由 Widget capability 推断网页权限。
-宿主契约见[独立网页](../features/chat/webpage-embeds.md)。原生分支继续负责工具的真实发现与调用，
-以 HTML/SVG 和本地脚本承载按任务设计的可视化及交互。静态可视化无需控件或草稿桥，
-本地交互与会话后续动作分别按需添加。固定组件 schema 按需读取，
-不作为通用能力上限；团队测算的技能、内容类型、专属资源和实现均已删除。
-技能指导 HTML 与按需 CDN 脚本 / 模块，不预载可视化库；需要公网素材时按原生 `pin` / `netOrigins`
-授权，经浏览器系统代理下载。该路径仍在聊天原位置展示，不要求内网素材服务器，
-不改写原生 CSP、存储或草稿确认协议。
-独立网页沿用浏览器代理设置且没有 Widget 私有草稿桥；Widget 的下载方法、凭据、
-来源及代理准入继续遵循其原生联网契约，两条路径不交换权限或票据。
+`interactive-answer` 提供 table/compare/chart/form/steps，不接受表达式、脚本或外部
+提交；多选表单使用原生复选框，保留组级必选与空初值。固定 renderer 的继续按钮只在
+当前原生私有 prompt port 可用时启用，由用户确认后加入草稿。搜索、排序、选择和
+表单值保留在当前 iframe 内存中，重载恢复默认值；未获得 Dashboard/tools/resources
+执行权限。普通原生 HTML 仍遵循原生 CSP 与资源规则，宿主不增加业务 fetch 下载通道。
+完整页面的依赖和静态资源由作者随页提供或使用已配置的可达服务，不在首次展示时安装库。
+组件流程与验证边界见[交互式回答](../features/chat/interactive-answers.md)。
 
-`interactive-answer` 提供 table/compare/chart/form/steps，不接受表达式、脚本或外部提交；
-表单多选以一组原生复选框呈现，支持空初值与组级必选，草稿按选项分别记录布尔值。
-固定组件发布 `/__smart_canvas__/ui.js`；`html-page` 只发布插件自己的
-`/__smart_canvas__/image-loading.js`，在作者代码之前适配 HTTPS 图片 src → fetch →
-data URL。作者完整 HTML 的脚本 / 样式 / importmap 原文与顺序保留；下载仍由原生
-connect 授权、CORS 与宿主代理决定，不改写 CSP 或普通原生 html。
-原生内容注册要求至少一条静态资源，并且 board.get 只有存在当前连接 surface 时才发
-frameUrl，因此保留真实适配脚本的 `smart-canvas-html` surface 与单条 exact / plugin-auth /
-nodeCapability HTTP route。该脚本由源码生成，无归档、资源目录或首次下载；不包含
-Three.js 等第三方库。viewer 每次新运行刷新此单资源 surface，票据续签不重跑作者脚本。
-首次 / 复用 / 备用同步及最终分发排除未使用的 assets 目录；parse5 与实体解码
-生产依赖由插件 lock 固定并在构建时预编译。模型指导不包含第三方 API 教程。
-搜索、排序、选择、
-表单值只在当前 iframe 内存中，切换保留输入、重载恢复默认值；有界草稿标明省略，
-完整选择可在本地复制。模型质量与发布检查见 [现行说明与验证边界](../features/chat/interactive-answers.md)。
+首次、复用和备用同步及最终分发仍排除未使用的 assets 目录。Smart Canvas 没有运行时
+第三方依赖；固定 renderer 从插件源码生成并随入口预编译。
 
 ACPX 随包保留 ACP 协议适配器及其运行库，组装时移除 Codex/Claude 的平台代理二进制，
 最终打包再次检查不得混入。代理由用户独立安装维护；受管包装器启动时读取本机 PATH

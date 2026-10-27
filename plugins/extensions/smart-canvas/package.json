@@ -3,15 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "dependencies": {
-    "parse5": "8.0.1"
-  },
   "openclaw": {
     "extensions": [
       "./index.ts"
     ]
-  },
-  "devDependencies": {
-    "three": "0.186.1"
   }
 }

@@ -227,7 +227,6 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
     options.isDev
       ? { isDev: true, devServerPort: Number(new URL(options.devServerUrl).port) }
       : undefined,
-    mainWindow.webContents,
   );
   const webpageViewers = createWebpageEmbedGuests({
     preloadPath: options.webpageEmbedPreloadPath,

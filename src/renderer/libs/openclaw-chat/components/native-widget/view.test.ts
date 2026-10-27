@@ -427,23 +427,52 @@ describe('native widget viewer lifecycle', () => {
     expect(view.shadowRoot!.querySelector('[role="alert"]')).not.toBeNull();
   });
 
+  it('shows unsupported saved cards without approval, reload controls or a browser guest', async () => {
+    vi.stubGlobal('electron', {});
+    vi.stubGlobal('fetch', vi.fn());
+    const sessionKey = 'agent:main:unsupported-card';
+    const request = vi.fn(async (method: string) => {
+      if (method === 'sessions.describe')
+        return {
+          session: {
+            key: sessionKey,
+            agentId: 'main',
+            sessionId: 'native-session',
+            lifecycleRevision: 'life',
+          },
+        };
+      if (method === 'board.get')
+        return {
+          sessionKey,
+          widgets: [{
+            name: 'saved-card',
+            contentKind: 'html',
+            contentOwner: 'html',
+            declared: { netOrigins: ['https://assets.example.test'] },
+            grantState: 'pending',
+          }],
+        };
+      throw new Error('Unexpected request');
+    });
+    const { view, context } = mount(request);
+    Object.assign(context, { sessionKey, sessionId: 'native-session', agentId: 'main' });
+    view.preview = decodeNativeBoardResult(
+      JSON.stringify({ boardWidgetName: 'saved-card' }), 'show_widget', 'saved-call',
+    )!;
+    await vi.waitFor(async () => {
+      await settle(view);
+      expect(view.shadowRoot!.querySelector('section.status')?.textContent).toMatch(/不受支持|unsupported/);
+    });
+    expect(view.shadowRoot!.querySelector('webview, iframe')).toBeNull();
+    expect(view.shadowRoot!.querySelector('.board-action, section.status button')).toBeNull();
+    expect(fetch).not.toHaveBeenCalled();
+    expect(request.mock.calls.some(call => call[0] === 'board.widget.grant')).toBe(false);
+  });
+
   it.each([true, false])(
     'preserves a board guest only for a runtime failure: %s',
     async runtime => {
-      const close = vi.fn().mockResolvedValue(undefined);
-      vi.stubGlobal('electron', {
-        widgetNetwork: {
-          beginCheck: vi.fn().mockResolvedValue({ nonce: 'check', validForMs: 15_000 }),
-          create: vi.fn(async ({ mountId }: { mountId: string }) => ({
-            mountId,
-            instanceId: 'network-instance',
-            partition: 'widget-network-test',
-          })),
-          renew: vi.fn().mockResolvedValue(undefined),
-          close,
-          onRevoked: () => () => undefined,
-        },
-      });
+      vi.stubGlobal('electron', {});
       vi.stubGlobal(
         'fetch',
         vi.fn(
@@ -474,7 +503,7 @@ describe('native widget viewer lifecycle', () => {
                   contentKind: 'html',
                   contentOwner: 'html',
                   grantState: 'granted',
-                  declared: { netOrigins: ['https://assets.example.test'] },
+                  declared: { netOrigins: [] },
                   viewGeneration: 'a'.repeat(32),
                   frameUrl: `/__openclaw__/board/${encodeURIComponent(sessionKey)}/form/index.html?bt=ticket`,
                   sandboxPort: 18790,
@@ -533,7 +562,6 @@ describe('native widget viewer lifecycle', () => {
       if (runtime) {
         expect(view.shadowRoot!.querySelector('webview')).toBe(guest);
         expect(view.shadowRoot!.querySelector('[role="alert"]')).not.toBeNull();
-        expect(close).not.toHaveBeenCalled();
         expect(guest.send.mock.lastCall![1].draftAllowed).toBe(false);
         emit({ mountId, type: 'draft', text: 'Late suggestion after failure' });
         await settle(view);
@@ -547,10 +575,8 @@ describe('native widget viewer lifecycle', () => {
           expect(replacement).not.toBe(guest);
         });
         expect(fetch).toHaveBeenCalledTimes(2);
-        expect(close).toHaveBeenCalledOnce();
       } else {
         expect(view.shadowRoot!.querySelector('webview')).toBeNull();
-        expect(close).toHaveBeenCalledOnce();
         expect(view.shadowRoot!.querySelector('section.status')).toBeNull();
         expect(view.shadowRoot!.querySelector('[role="alert"]')).not.toBeNull();
         let finish!: (response: Response) => void;
@@ -565,7 +591,6 @@ describe('native widget viewer lifecycle', () => {
         await settle(view);
         view.shadowRoot!.querySelector<HTMLButtonElement>('header [data-action="stop"]')!.click();
         await settle(view);
-        expect(close).toHaveBeenCalledTimes(2);
         expect(view.shadowRoot!.querySelector('header [data-action="load"]')).not.toBeNull();
         expect(view.shadowRoot!.querySelector('[role="alert"]')).toBeNull();
         finish(new Response('<p>Late HTML</p>', { headers: { 'content-type': 'text/html' } }));

@@ -552,6 +552,7 @@ test.each(['full', 'minimal'])('%s config applies live Control UI preferences ac
   const readConfig = () => JSON.parse(fs.readFileSync(configPath, 'utf8'));
   expect(defaultSync.sync('startup').ok).toBe(true);
   expect(readConfig().gateway.controlUi.enabled).toBe(false);
+  expect(readConfig().gateway.controlUi.allowExternalEmbedUrls).toBe(true);
   const preferences = { developerMode: false, controlUiEnabled: false };
   const sync = new OpenClawConfigSync({
     ...deps,
@@ -2501,7 +2502,7 @@ describe('OpenClaw auth logout config sync', () => {
     );
     expect(config.agents.entries.main.model).toBeUndefined();
     expect(config.agents.entries.worker.model).toBeUndefined();
-    expect(config.gateway).toEqual({ mode: 'local', customSetting: 'keep-me', controlUi: { enabled: false } });
+    expect(config.gateway).toEqual({ mode: 'local', customSetting: 'keep-me', controlUi: { enabled: false, allowExternalEmbedUrls: true } });
     expect(config.customFeature).toEqual({ enabled: true });
     expect(config.secrets.providers).toEqual({
       operator_secrets: {
@@ -2528,7 +2529,7 @@ describe('OpenClaw auth logout config sync', () => {
     expect(config.agents.defaults.model).toBeUndefined();
     expect(config.agents.entries.main.model).toBeUndefined();
     expect(config.agents.entries.worker.model).toBeUndefined();
-    expect(config.gateway).toEqual({ mode: 'local', customSetting: 'keep-me', controlUi: { enabled: false } });
+    expect(config.gateway).toEqual({ mode: 'local', customSetting: 'keep-me', controlUi: { enabled: false, allowExternalEmbedUrls: true } });
     expect(config.customFeature).toEqual({ enabled: true });
   });
 
@@ -2865,7 +2866,7 @@ describe('OpenClaw auth logout config sync', () => {
     expect(config.agents.defaults).not.toHaveProperty('thinkingDefault');
     expect(config.agents.defaults.compaction.memoryFlush).toEqual({ enabled: false });
     expect(config.agents.defaults.compaction).not.toHaveProperty('keepRecentTokens');
-    expect(config.gateway).toEqual({ mode: 'local', customSetting: 'keep-me', controlUi: { enabled: false } });
+    expect(config.gateway).toEqual({ mode: 'local', customSetting: 'keep-me', controlUi: { enabled: false, allowExternalEmbedUrls: true } });
     expect(config.customFeature).toEqual({ enabled: true });
 
     // Ordinary sync establishes the steady-state config. Adding another

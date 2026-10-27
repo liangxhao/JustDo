@@ -22,6 +22,7 @@ test('board history uses the original anchor and one retained presentation acros
       disconnect() {}
     },
   );
+  vi.stubGlobal('fetch', vi.fn());
   const key = 'agent:main:board-presentation';
   const request = vi.fn(async (method: string) =>
     method === 'sessions.describe'
@@ -37,8 +38,12 @@ test('board history uses the original anchor and one retained presentation acros
               instanceId: 'native-instance',
               contentKind: 'html',
               contentOwner: 'html',
-              grantState: 'pending',
-              declared: { netOrigins: ['https://assets.example.test'] },
+              grantState: 'none',
+              declared: { netOrigins: [] },
+              viewGeneration: 'a'.repeat(32),
+              frameUrl: `/__openclaw__/board/${encodeURIComponent(key)}/earth/index.html?bt=ticket`,
+              sandboxPort: 18790,
+              sandboxUrl: '/mcp-app-sandbox',
             },
           ],
         },
@@ -61,7 +66,7 @@ test('board history uses the original anchor and one retained presentation acros
     canDraft: () => false,
   };
   const preview = decodeNativeBoardResult(
-    JSON.stringify({ status: 'pending', boardWidgetName: 'earth' }),
+    JSON.stringify({ boardWidgetName: 'earth' }),
     'show_widget',
     'call',
   )!;
@@ -74,8 +79,10 @@ test('board history uses the original anchor and one retained presentation acros
   for (let index = 0; index < 20; index++) await Promise.resolve();
   const entry = manager.entries.find(value => value.owner === owner)!;
   await entry.view.updateComplete;
-  expect(entry.view.shadowRoot!.textContent).toContain('https://assets.example.test');
+  expect(entry.view.shadowRoot!.querySelector('header [data-action="load"]')).not.toBeNull();
+  expect(entry.view.shadowRoot!.querySelector('section.status')).toBeNull();
   expect(entry.view.shadowRoot!.querySelector('iframe,webview')).toBeNull();
+  expect(fetch).not.toHaveBeenCalled();
   expect(request).toHaveBeenCalledTimes(3);
   anchor.remove();
   await new Promise(resolve => setTimeout(resolve, 0));
@@ -96,6 +103,7 @@ test('board history uses the original anchor and one retained presentation acros
   expect(entry.pinned).toBe(false);
   expect(entry.primary).toBe(replacement);
   expect(request).toHaveBeenCalledTimes(3);
+  expect(fetch).not.toHaveBeenCalled();
   current = false;
   replacement.context = undefined;
   manager.refresh(owner);

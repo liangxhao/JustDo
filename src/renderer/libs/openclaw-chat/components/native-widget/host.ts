@@ -36,8 +36,6 @@ export interface NativeWidgetContext {
   sessionKey: string;
   sessionId?: string;
   agentId?: string;
-  methods?: readonly string[];
-  pluginSurfaceUrls?: Readonly<Record<string, string>>;
   presentationScope?: string;
   presentationOwner?: object;
   /** Stable chat controller, independent of a replaced DOM presentation owner. */

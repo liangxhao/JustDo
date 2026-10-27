@@ -1,11 +1,3 @@
-import type { WidgetNetworkBinding } from '@shared/widgets/network';
-
-import {
-  HTML_PAGE_KIND,
-  HTML_PAGE_PLUGIN_KIND,
-  HTML_PAGE_RESOURCE,
-  HTML_PAGE_SURFACE,
-} from '../../../../../../plugins/extensions/smart-canvas/document/contracts';
 import { BOARD_WIDGET_NAME } from '../../pipeline/native-board';
 import {
   MAX_WIDGET_BYTES,
@@ -46,27 +38,18 @@ export type BoardWidgetMetadata = {
   name: string;
   revision: number;
   instanceId: string;
-  grantState: 'none' | 'pending' | 'granted' | 'rejected';
-  netOrigins: string[];
-  registered: boolean;
+  grantState: 'none' | 'granted';
   viewGeneration?: string;
   frameUrl?: string;
   sandboxUrl?: string;
 };
 export type BoardRead = { widget?: BoardWidgetMetadata; lifecycleRevision: string };
 
-export function normalizeOrigins(value: unknown): string[] {
-  if (value === undefined) return [];
-  if (!Array.isArray(value) || value.length > 32) throw new Error('Invalid native origins');
-  const origins = value.map(raw => {
-    if (typeof raw !== 'string') throw new Error('Invalid native origin');
-    const url = new URL(raw);
-    if (url.protocol !== 'https:' || url.origin !== raw || url.username || url.password)
-      throw new Error('Invalid native origin');
-    return url.origin;
-  });
-  if (new Set(origins).size !== origins.length) throw new Error('Duplicate native origins');
-  return origins.sort();
+export class UnsupportedBoardWidgetError extends Error {
+  constructor() {
+    super('Unsupported native widget');
+    this.name = 'UnsupportedBoardWidgetError';
+  }
 }
 export function readBoardWidget(
   snapshot: unknown,
@@ -82,20 +65,17 @@ export function readBoardWidget(
   if (matches.length !== 1 || !BOARD_WIDGET_NAME.test(name))
     throw new Error('Invalid native board');
   const raw = record(matches[0])!;
-  const registered =
-    raw.contentOwner === 'registered' &&
-    raw.contentKind === 'plugin' &&
-    raw.registeredContentKind === HTML_PAGE_KIND &&
-    raw.pluginKind === HTML_PAGE_PLUGIN_KIND;
-  if (!(
-    registered ||
-    (raw.contentKind === 'html' && raw.contentOwner === 'html')
-  ))
-    throw new Error('Unsupported native widget');
+  if (raw.contentKind !== 'html' || raw.contentOwner !== 'html')
+    throw new UnsupportedBoardWidgetError();
   const declared = record(raw.declared);
   if (raw.declared !== undefined && !declared) throw new Error('Invalid widget capabilities');
   if (declared?.tools !== undefined && (!Array.isArray(declared.tools) || declared.tools.length))
-    throw new Error('Unsupported widget capabilities');
+    throw new UnsupportedBoardWidgetError();
+  if (
+    declared?.netOrigins !== undefined &&
+    (!Array.isArray(declared.netOrigins) || declared.netOrigins.length)
+  )
+    throw new UnsupportedBoardWidgetError();
   if (
     !Number.isSafeInteger(raw.revision) ||
     Number(raw.revision) < 1 ||
@@ -103,20 +83,15 @@ export function readBoardWidget(
     !['none', 'pending', 'granted', 'rejected'].includes(String(raw.grantState))
   )
     throw new Error('Invalid native widget identity');
-  const netOrigins = normalizeOrigins(declared?.netOrigins);
-  if (raw.grantState === 'none' && netOrigins.length) throw new Error('Unapproved native origins');
+  if (raw.grantState !== 'none' && raw.grantState !== 'granted')
+    throw new UnsupportedBoardWidgetError();
   const widget: BoardWidgetMetadata = {
     name,
     revision: raw.revision as number,
     instanceId: raw.instanceId,
-    grantState: raw.grantState as BoardWidgetMetadata['grantState'],
-    netOrigins,
-    registered,
+    grantState: raw.grantState,
   };
-  if (
-    (widget.grantState === 'none' || widget.grantState === 'granted') &&
-    raw.frameUrl !== undefined
-  ) {
+  if (raw.frameUrl !== undefined) {
     if (
       typeof raw.viewGeneration !== 'string' ||
       !/^[a-f0-9]{32}$/.test(raw.viewGeneration) ||
@@ -184,33 +159,6 @@ export async function readCurrentBoard(
     lifecycleRevision: before,
   };
 }
-export function networkBinding(
-  context: NativeWidgetContext,
-  read: BoardRead,
-): WidgetNetworkBinding {
-  const widget = read.widget;
-  if (
-    !widget ||
-    widget.grantState !== 'granted' ||
-    !widget.viewGeneration ||
-    !context.agentId ||
-    !context.sessionId
-  )
-    throw new Error('Native widget is not granted');
-  return {
-    connectionGeneration: context.generation,
-    agentId: context.agentId,
-    sessionKey: context.sessionKey,
-    sessionId: context.sessionId,
-    lifecycleRevision: read.lifecycleRevision,
-    name: widget.name,
-    revision: widget.revision,
-    instanceId: widget.instanceId,
-    viewGeneration: widget.viewGeneration,
-    grantState: 'granted',
-    netOrigins: widget.netOrigins,
-  };
-}
 export function sameBoardIdentity(left: BoardRead, right: BoardRead): boolean {
   const a = left.widget,
     b = right.widget;
@@ -222,57 +170,8 @@ export function sameBoardIdentity(left: BoardRead, right: BoardRead): boolean {
     a.revision === b.revision &&
     a.instanceId === b.instanceId &&
     a.viewGeneration === b.viewGeneration &&
-    a.grantState === b.grantState &&
-    JSON.stringify(a.netOrigins) === JSON.stringify(b.netOrigins),
+    a.grantState === b.grantState,
   );
-}
-const surfaceRefreshes = new WeakMap<object, { generation: number; pending?: Promise<string[]> }>();
-
-function validateSurface(raw: unknown, context: NativeWidgetContext): URL {
-  if (typeof raw !== 'string') throw new Error('Widget HTML resource unavailable');
-  const scoped = new URL(raw);
-  if (
-    scoped.origin !== gatewayOrigin(context) ||
-    scoped.username ||
-    scoped.password ||
-    scoped.search ||
-    scoped.hash ||
-    !/^\/__openclaw__\/cap\/[A-Za-z0-9_-]{24}$/.test(scoped.pathname)
-  )
-    throw new Error('Invalid widget surface');
-  return scoped;
-}
-
-export async function refreshHtmlResources(context: NativeWidgetContext): Promise<string[]> {
-  if (!context.methods?.includes('plugin.surface.refresh'))
-    throw new Error('Widget HTML resource unavailable');
-  // This anchor comes only from this connection's authenticated hello. Passing
-  // the same observation lets native reuse an already refreshed, valid surface
-  // instead of invalidating another document's in-flight adapter request.
-  const observed = validateSurface(context.pluginSurfaceUrls?.[HTML_PAGE_SURFACE], context);
-  let state = surfaceRefreshes.get(context.client);
-  if (!state || state.generation !== context.generation) {
-    state = { generation: context.generation };
-    surfaceRefreshes.set(context.client, state);
-  }
-  if (state.pending) return state.pending;
-  const request = (async () => {
-    const result = record(
-      await context.client.request('plugin.surface.refresh', {
-        surface: HTML_PAGE_SURFACE,
-        observedUrl: observed.href,
-      }),
-    );
-    if (result?.surface !== HTML_PAGE_SURFACE) throw new Error('Widget HTML resource unavailable');
-    const scoped = validateSurface(record(result?.pluginSurfaceUrls)?.[HTML_PAGE_SURFACE], context);
-    return [`${scoped.href}${HTML_PAGE_RESOURCE}`];
-  })();
-  state.pending = request;
-  try {
-    return await request;
-  } finally {
-    if (state.pending === request) state.pending = undefined;
-  }
 }
 
 /** Ticket stays inside this short-lived trusted read, never in viewer state. */
