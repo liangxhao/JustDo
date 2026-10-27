@@ -92,6 +92,8 @@ ScheduledTaskResultStore 提供分页、未读计数及 readAt 更新。读状�
 
 打开结果先解析对应原生 session 身份，再复用聊天详情。失去原生 artifact 应给出不可用状态，不能创建空 transcript 假装结果恢复。系统管理任务的操作能力与普通用户任务区分展示。
 
+历史运行继续按确切物理 sessionId 读取，保留归属复核与分块版本校验。公开 transcript SDK 返回的是脱敏消息，不是 `chat.history` 的显示投影；Runtime Services 只将完整、合法的 `openclaw.nested-tool.v1` 原生活动转换为成对的工具调用／结果显示块，保留 entry ID、run ID、父调用、输入、输出和错误状态。结果元数据仅保留受限浏览器路由及退出码／耗时等展示字段，不从任意诊断详情开放交互组件。未知、格式不完整或已投影的 custom 消息保持原样。Renderer 因而可将最终正文前已结束的浏览器嵌套工具与 Thinking 一起收进“处理过程”，不再被不可见的空 custom 记录切断；折叠仍不建立执行结论，也不改写原生历史。
+
 ## 7. 删除是可恢复的跨边界事务
 
 ```mermaid

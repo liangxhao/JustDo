@@ -5,6 +5,8 @@ import { resolveStorePath } from 'openclaw/plugin-sdk/session-store-paths';
 import { resolveTranscriptSessionKeyBySessionId } from 'openclaw/plugin-sdk/session-store-runtime';
 import { readVisibleSessionTranscriptMessageEntries } from 'openclaw/plugin-sdk/session-transcript-runtime';
 
+import { projectScheduledTaskHistoryMessage } from './scheduled-task-history-display';
+
 const CHUNK_CHARS = 256 * 1024;
 
 // cron run aliases can disappear while their physical transcript window survives.
@@ -48,10 +50,12 @@ export function registerScheduledTaskHistory(api: OpenClawPluginApi) {
         if (resolveTranscriptSessionKeyBySessionId(identity) !== sessionKey) {
           throw new Error('Scheduled task transcript changed during lookup.');
         }
-        const messages = entries.map(entry => ({
-          ...entry.message,
-          id: entry.entryId,
-        }));
+        const messages = entries.map(entry =>
+          projectScheduledTaskHistoryMessage({
+            ...entry.message,
+            id: entry.entryId,
+          }),
+        );
         if (messages.length === 0) {
           respond(true, { unavailableReason: 'empty' });
           return;
