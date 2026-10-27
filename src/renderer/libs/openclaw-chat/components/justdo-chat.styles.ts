@@ -2479,6 +2479,7 @@ export const chatStyles = [
     }
 
     .chat-thinking__content {
+      --thinking-toggle-bottom: -18px;
       padding: 6px 10px;
       border-radius: 8px;
       font-size: 13px;
@@ -2489,87 +2490,71 @@ export const chatStyles = [
     }
 
     .thinking-content.markdown-content {
+      position: relative;
       min-width: 0;
       max-width: 100%;
       font: inherit;
       overflow-wrap: anywhere;
     }
 
-    .thinking-content__tail,
-    .thinking-content__sections {
-      min-width: 0;
-      white-space: pre-wrap;
-      overflow-wrap: anywhere;
+    .thinking-content__viewport:not(.is-expanded) {
+      max-height: calc(var(--thinking-preview-lines, 10) * 1lh);
+      overflow: clip;
     }
 
-    .thinking-content__section {
-      display: inline;
+    .thinking-content__body {
+      display: flow-root;
     }
 
-    .thinking-content__toolbar {
+    .thinking-content__disclosure {
       display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      gap: 6px;
-      margin-bottom: 8px;
-      padding-bottom: 8px;
-      border-bottom: 1px solid var(--justdo-chat-border, rgba(0, 0, 0, 0.08));
-      font-size: 12px;
-      line-height: 1.5;
+      justify-content: center;
+      height: 10px;
     }
 
-    .thinking-content__toolbar--footer {
-      margin-top: 12px;
-      margin-bottom: 0;
-      padding-top: 8px;
-      padding-bottom: 0;
-      border-top: 1px solid var(--justdo-chat-border, rgba(0, 0, 0, 0.08));
-      border-bottom: 0;
-    }
-
-    .thinking-content__toolbar button {
-      min-height: 28px;
-      border: 1px solid var(--justdo-chat-border, rgba(0, 0, 0, 0.12));
-      border-radius: 6px;
-      padding: 3px 8px;
-      color: inherit;
-      background: transparent;
-      font: inherit;
+    .thinking-content__toggle {
+      position: absolute;
+      bottom: var(--thinking-toggle-bottom, -19px);
+      display: grid;
+      place-items: center;
+      width: 32px;
+      height: 22px;
+      padding: 0;
+      border: 1px solid var(--justdo-chat-border, rgba(0, 0, 0, 0.08));
+      border-radius: 12px;
+      background: var(--justdo-chat-bg, #fff);
+      color: var(--justdo-chat-text-secondary, #6b7280);
       cursor: pointer;
-      transition:
-        background 120ms ease,
-        color 120ms ease;
     }
 
-    .thinking-content__toolbar button:hover:not(:disabled) {
-      color: var(--justdo-chat-text, #111827);
-      background: color-mix(in srgb, var(--justdo-chat-accent, #6366f1) 8%, transparent);
+    .thinking-content__toggle:hover {
+      color: var(--justdo-chat-accent, #6366f1);
     }
 
-    .thinking-content__toolbar button:focus-visible {
+    .thinking-content__toggle:focus-visible {
       outline: 2px solid var(--justdo-chat-accent, #6366f1);
       outline-offset: 2px;
     }
 
-    .thinking-content__toolbar button:disabled {
-      cursor: default;
-      opacity: 0.45;
+    .thinking-content__toggle svg {
+      width: 16px;
+      height: 16px;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 1.6;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      transition: transform 120ms ease;
     }
 
-    .thinking-content__notice,
-    .thinking-content__new-content {
-      color: var(--justdo-chat-text-secondary, #6b7280);
-      font-size: 12px;
-      line-height: 1.5;
+    .thinking-content__toggle[aria-expanded='true'] svg {
+      transform: rotate(180deg);
     }
 
-    .thinking-content .thinking-content__notice {
-      margin: 0 0 8px;
-    }
-
-    .thinking-content__new-content {
-      display: inline-block;
-      margin-top: 8px;
+    .thinking-content__tail {
+      min-width: 0;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
     }
 
     .thinking-content.markdown-content .code-block-wrapper:not(.mermaid-block) > pre {

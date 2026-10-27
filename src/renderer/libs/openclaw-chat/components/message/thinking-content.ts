@@ -1,6 +1,6 @@
 import { html, nothing } from 'lit';
 import { AsyncDirective, directive } from 'lit/async-directive.js';
-import { repeat } from 'lit/directives/repeat.js';
+import { ref } from 'lit/directives/ref.js';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 
 import { i18nService } from '@/services/i18n';
@@ -11,56 +11,31 @@ import {
   toSanitizedMarkdownHtml,
 } from '../markdown/markdown';
 
-const NATURAL_TEXT_LIMIT = 40_000;
-const SECTION_CHARS = 16_000;
-const READING_STATE_LIMIT = 1000;
-const COPY_FEEDBACK_MS = 1300;
+export const THINKING_PREVIEW_LINES = 10;
+const PREVIEW_STATE_LIMIT = 1000;
 const OPEN_FENCE_LINE = /^[ \t]{0,3}(`{3,}|~{3,})([^\n]*)\n/;
-const READER_MODE = { LATEST: 'latest', MANUAL: 'manual' } as const;
+const REVEAL_THINKING_EVENT = 'thinking-content-reveal';
+let nextBodyId = 0;
 
-type SourceRange = { start: number; end: number };
-type ReaderState = {
-  mode: (typeof READER_MODE)[keyof typeof READER_MODE];
-  ranges: SourceRange[];
-  start: number;
-  end: number;
+type PreviewState = {
+  expanded: boolean;
   sourceLength: number;
   fingerprintFirst: number;
   fingerprintSecond: number;
-  seenLength: number;
-  natural: boolean;
-  frozen: boolean;
-  initialized: boolean;
-  streaming: boolean;
 };
 
 type ThinkingContentContext = {
   requestUpdate: () => void;
   preserve: (element: HTMLElement) => void;
-  following: () => boolean;
-  latest: (element: HTMLElement, streaming: boolean) => void;
 };
 
 export type ThinkingContentRenderer = (item: ThinkingItem) => unknown;
 
-function emptyReaderState(): ReaderState {
-  return {
-    mode: READER_MODE.LATEST,
-    ranges: [],
-    start: 0,
-    end: 0,
-    sourceLength: 0,
-    fingerprintFirst: 0x811c9dc5,
-    fingerprintSecond: 5381,
-    seenLength: 0,
-    natural: true,
-    frozen: false,
-    initialized: false,
-    streaming: false,
-  };
+function emptyPreviewState(): PreviewState {
+  return { expanded: false, sourceLength: -1, fingerprintFirst: 0x811c9dc5, fingerprintSecond: 5381 };
 }
 
-/** Non-authoritative reading metadata; never used to establish native ownership. */
+/** Non-authoritative display metadata; never used to establish native ownership. */
 function sourceFingerprint(
   source: string,
   start: number,
@@ -74,50 +49,6 @@ function sourceFingerprint(
     second = (Math.imul(second, 33) ^ code) >>> 0;
   }
   return { first, second };
-}
-
-function isSourceBoundary(source: string, offset: number): boolean {
-  if (offset <= 0 || offset >= source.length) return true;
-  const before = source.charCodeAt(offset - 1);
-  const after = source.charCodeAt(offset);
-  return !(
-    (before >= 0xd800 && before <= 0xdbff && after >= 0xdc00 && after <= 0xdfff) ||
-    (before === 13 && after === 10)
-  );
-}
-
-function alignVisibleRange(state: ReaderState, source: string): void {
-  state.start = Math.min(state.start, source.length);
-  state.end = Math.min(state.end, source.length);
-  // A later delta can complete a pair just beyond an earlier frozen range.
-  // Move inward so keeping that range also keeps the visible DOM budget.
-  if (!isSourceBoundary(source, state.start)) state.start++;
-  if (!isSourceBoundary(source, state.end)) state.end--;
-  state.end = Math.max(state.start, state.end);
-}
-
-/** Completed boundaries never move when a later native snapshot appends text. */
-function sectionRanges(source: string, previous: SourceRange[], append: boolean): SourceRange[] {
-  const ranges = append ? previous.slice(0, -1) : [];
-  let start = ranges[ranges.length - 1]?.end ?? 0;
-  while (source.length - start > SECTION_CHARS) {
-    let end = start + SECTION_CHARS;
-    const newline = source.lastIndexOf('\n', end - 1);
-    if (newline >= start + SECTION_CHARS / 2) end = newline + 1;
-    else if (/^[\uD800-\uDBFF]$/.test(source[end - 1])) end--;
-    if (source[end - 1] === '\r' && source[end] === '\n') end--;
-    ranges.push({ start, end });
-    start = end;
-  }
-  ranges.push({ start, end: source.length });
-  return ranges;
-}
-
-function showRecent(state: ReaderState, sourceLength: number): void {
-  state.natural = false;
-  state.start = state.ranges[Math.max(0, state.ranges.length - 2)].start;
-  state.end = sourceLength;
-  state.seenLength = sourceLength;
 }
 
 function renderNaturalSource(source: string, streaming: boolean): unknown {
@@ -153,10 +84,10 @@ function renderNaturalSource(source: string, streaming: boolean): unknown {
   }`;
 }
 
-/** Only local reading metadata survives a process moving between timeline locations. */
+/** Only local expansion metadata survives a process moving between timeline locations. */
 export class ThinkingContentPresentation {
   private scope: string | null = null;
-  private states = new Map<string, ReaderState>();
+  private states = new Map<string, PreviewState>();
 
   constructor(private readonly context: ThinkingContentContext) {}
 
@@ -169,9 +100,9 @@ export class ThinkingContentPresentation {
   readonly render: ThinkingContentRenderer = item => {
     let state = this.states.get(item.id);
     if (!state) {
-      state = emptyReaderState();
+      state = emptyPreviewState();
       this.states.set(item.id, state);
-      if (this.states.size > READING_STATE_LIMIT) this.states.delete(this.states.keys().next().value!);
+      if (this.states.size > PREVIEW_STATE_LIMIT) this.states.delete(this.states.keys().next().value!);
     }
     return thinkingContent(state, item.text, item.status === 'running', this.context);
   };
@@ -179,16 +110,17 @@ export class ThinkingContentPresentation {
 
 /** The directive commits inside the parent's render, before chat scroll restoration. */
 class ThinkingContentDirective extends AsyncDirective {
-  private state: ReaderState | undefined;
+  private state: PreviewState | undefined;
   private source: string | undefined;
+  private streaming = false;
   private context: ThinkingContentContext | undefined;
-  private feedback = '';
-  private copyGeneration = 0;
-  private feedbackTimer: number | null = null;
-  private feedbackWindow: Window | null = null;
+  private readonly bodyId = `thinking-body-${++nextBodyId}`;
+  private content: HTMLElement | undefined;
+  private observer: ResizeObserver | undefined;
+  private hasOverflow = false;
 
   render(
-    suppliedState: ReaderState | undefined,
+    suppliedState: PreviewState | undefined,
     source: string,
     streaming: boolean,
     context?: ThinkingContentContext,
@@ -196,213 +128,118 @@ class ThinkingContentDirective extends AsyncDirective {
     if (suppliedState && suppliedState !== this.state) {
       this.state = suppliedState;
       this.source = undefined;
-      this.clearFeedback();
     }
-    this.state ??= emptyReaderState();
+    this.state ??= emptyPreviewState();
     this.context = context;
+    this.streaming = streaming;
     const state = this.state;
-    const previousSource = this.source;
-    let append = previousSource !== undefined && source.startsWith(previousSource);
-    const changed = previousSource !== source;
-    if (changed && previousSource !== undefined) this.clearFeedback();
-    let remountedReplacement = false;
-    if (previousSource === undefined && state.initialized) {
-      const prefix = sourceFingerprint(source, 0, Math.min(source.length, state.sourceLength));
-      append =
-        source.length >= state.sourceLength &&
-        prefix.first === state.fingerprintFirst &&
-        prefix.second === state.fingerprintSecond;
-      remountedReplacement = !append;
-    }
-    const replaced =
-      (previousSource !== undefined && changed && !append) ||
-      remountedReplacement;
-    if (replaced) {
-      Object.assign(state, emptyReaderState());
-      this.feedback = '';
-      this.copyGeneration++;
-    }
-    if (changed || !state.ranges.length) {
-      state.ranges = sectionRanges(source, state.ranges, append && !replaced);
+    if (source !== this.source) {
+      const prefix = this.source === undefined && state.sourceLength >= 0
+        ? sourceFingerprint(source, 0, Math.min(source.length, state.sourceLength))
+        : undefined;
+      const append = this.source !== undefined
+        ? source.startsWith(this.source)
+        : source.length >= state.sourceLength &&
+          prefix?.first === state.fingerprintFirst && prefix?.second === state.fingerprintSecond;
+      if (!append) state.expanded = false;
       const fingerprint = sourceFingerprint(
-        source,
-        append && !replaced ? state.sourceLength : 0,
-        source.length,
-        append && !replaced ? state.fingerprintFirst : undefined,
-        append && !replaced ? state.fingerprintSecond : undefined,
+        source, append ? state.sourceLength : 0, source.length,
+        append ? state.fingerprintFirst : undefined, append ? state.fingerprintSecond : undefined,
       );
+      state.sourceLength = source.length;
       state.fingerprintFirst = fingerprint.first;
       state.fingerprintSecond = fingerprint.second;
+      this.source = source;
     }
-    const following = context?.following() ?? true;
-    const justCompleted = state.streaming && !streaming;
-    if (!state.initialized) {
-      state.mode = streaming ? READER_MODE.LATEST : READER_MODE.MANUAL;
-      state.natural = source.length <= NATURAL_TEXT_LIMIT;
-      state.start = 0;
-      state.end = state.natural ? source.length : state.ranges[0].end;
-      state.seenLength = source.length;
-      if (!state.natural && streaming) showRecent(state, source.length);
-      state.frozen = streaming && !following && !state.natural;
-      state.initialized = true;
-    } else if (state.mode === READER_MODE.LATEST && streaming && !following) {
-      // Natural text can grow below the reader budget without removing earlier lines.
-      if (state.natural && source.length <= NATURAL_TEXT_LIMIT && !state.frozen) {
-        state.end = source.length;
-        state.seenLength = source.length;
-      } else state.frozen = true;
-    } else if (
-      state.mode === READER_MODE.LATEST &&
-      following &&
-      (streaming || (justCompleted && !state.frozen))
-    ) {
-      state.frozen = false;
-      if (source.length <= NATURAL_TEXT_LIMIT) {
-        state.natural = true;
-        state.start = 0;
-        state.end = source.length;
-        state.seenLength = source.length;
-      } else showRecent(state, source.length);
-    } else if (state.natural && !state.frozen && source.length <= NATURAL_TEXT_LIMIT) {
-      state.end = source.length;
-      state.seenLength = source.length;
-    }
-    alignVisibleRange(state, source);
-    state.sourceLength = source.length;
-    state.streaming = streaming;
-    this.source = source;
 
-    const reader = source.length > NATURAL_TEXT_LIMIT || !state.natural;
-    const first = Math.max(0, state.ranges.findIndex(range => range.end > state.start));
-    const last = Math.max(first, state.ranges.findIndex(range => range.end >= state.end));
-    const previous = [...state.ranges].reverse().find(range => range.start < state.start);
-    const next = state.ranges.find(range => range.end > state.end);
-    const label = i18nService
-      .t('thinkingReaderRange')
-      .replace('{first}', String(first + 1))
-      .replace('{last}', String(last + 1))
-      .replace('{total}', String(state.ranges.length));
-    const sections = state.ranges
-      .filter(range => range.end > state.start && range.start < state.end)
-      .map(range => ({ start: Math.max(state.start, range.start), end: Math.min(state.end, range.end) }));
-
-    const toolbar = reader
-      ? html`<div class="thinking-content__toolbar" role="group" aria-label=${i18nService.t('thinkingReaderLabel')}>
-            <button type="button" data-thinking-action="first" ?disabled=${!state.natural && state.start === 0 && state.end === state.ranges[0].end} @click=${(event: Event) => this.select(state.ranges[0], event)}>${i18nService.t('thinkingReaderFirst')}</button>
-            <button type="button" data-thinking-action="previous" ?disabled=${!previous} @click=${(event: Event) => previous && this.select(previous, event)}>${i18nService.t('messagePrevious')}</button>
-            <span class="thinking-content__range">${label}</span>
-            <button type="button" data-thinking-action="next" ?disabled=${!next} @click=${(event: Event) => next && this.select(next, event)}>${i18nService.t('messageNext')}</button>
-            <button type="button" data-thinking-action="latest" @click=${(event: Event) => this.latest(event)}>${i18nService.t(streaming ? 'thinkingReaderLatest' : 'thinkingReaderEnd')}</button>
-            <button type="button" data-thinking-action="copy" @click=${(event: Event) => void this.copy(source, event)}>${this.feedback || i18nService.t('thinkingReaderCopyAll')}</button>
-            <button type="button" data-thinking-action="download" @click=${(event: Event) => this.download(source, event)}>${i18nService.t('messageDownload')}</button>
-          </div>`
-      : nothing;
-
-    return html`<div class="thinking-content markdown-content" data-thinking-content>
-      ${state.natural ? nothing : toolbar}
-      ${!state.natural ? html`<p class="thinking-content__notice">${i18nService.t('thinkingReaderPlainText')}</p>` : nothing}
-      <div class="thinking-content__body" data-thinking-body>${state.natural
-        ? renderNaturalSource(source.slice(state.start, state.end), streaming)
-        : html`<div class="thinking-content__sections">${repeat(
-            sections,
-            range => range.start,
-            range => html`<div class="thinking-content__section" data-thinking-section-start=${range.start}>${source.slice(range.start, range.end)}</div>`,
-          )}</div>`}</div>
-      ${state.natural
-        ? toolbar
-        : html`<div class="thinking-content__toolbar thinking-content__toolbar--footer" role="group" aria-label=${i18nService.t('thinkingReaderLabel')}>
-            <button type="button" data-thinking-action="previous" ?disabled=${!previous} @click=${(event: Event) => previous && this.select(previous, event)}>${i18nService.t('messagePrevious')}</button>
-            <span class="thinking-content__range">${label}</span>
-            <button type="button" data-thinking-action="next" ?disabled=${!next} @click=${(event: Event) => next && this.select(next, event)}>${i18nService.t('messageNext')}</button>
-            <button type="button" data-thinking-action="latest" @click=${(event: Event) => this.latest(event)}>${i18nService.t(streaming ? 'thinkingReaderLatest' : 'thinkingReaderEnd')}</button>
-          </div>`}
-      ${reader && source.length > state.seenLength
-        ? html`<span class="thinking-content__new-content" role="status">${i18nService.t('thinkingReaderNewContent')}</span>`
-        : nothing}
+    return html`<div class="thinking-content markdown-content" data-thinking-content
+      @thinking-content-reveal=${this.reveal}>
+      <div class=${`thinking-content__viewport${state.expanded ? ' is-expanded' : ''}`}
+        style=${`--thinking-preview-lines: ${THINKING_PREVIEW_LINES}`}
+        @focusin=${() => {
+          if (!state.expanded && this.hasOverflow) {
+            this.context?.preserve(this.content!.closest<HTMLElement>('[data-thinking-content]')!);
+            this.reveal();
+          }
+        }}>
+        <div id=${this.bodyId} class="thinking-content__body" data-thinking-body
+          ${ref(this.observeContent)}>${renderNaturalSource(source, streaming)}</div>
+      </div>
+      ${this.hasOverflow || state.expanded ? html`<div class="thinking-content__disclosure">
+        <button type="button" class="thinking-content__toggle"
+          data-thinking-action="toggle-preview"
+          aria-expanded=${state.expanded} aria-controls=${this.bodyId}
+          aria-label=${i18nService.t(state.expanded ? 'thinkingCollapse' : 'thinkingExpand')}
+          title=${i18nService.t(state.expanded ? 'thinkingCollapse' : 'thinkingExpand')}
+          @click=${(event: Event) => {
+            const button = event.currentTarget as HTMLElement;
+            this.context?.preserve(state.expanded ? button : button.closest<HTMLElement>('[data-thinking-content]')!);
+            state.expanded = !state.expanded;
+            this.refresh();
+          }}>
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4" /></svg>
+        </button>
+      </div>` : nothing}
     </div>`;
   }
 
-  private element(event: Event): HTMLElement {
-    return (event.currentTarget as HTMLElement).closest<HTMLElement>('[data-thinking-content]')!;
-  }
+  private readonly observeContent = (element: Element | undefined): void => {
+    this.observer?.disconnect();
+    this.observer = undefined;
+    this.content = element as HTMLElement | undefined;
+    const owner = this.content?.ownerDocument.defaultView;
+    if (!this.content || !owner) return;
+    if (owner.ResizeObserver) {
+      this.observer = new owner.ResizeObserver(this.measureOverflow);
+      this.observer.observe(this.content);
+    }
+    queueMicrotask(this.measureOverflow);
+  };
+
+  private readonly measureOverflow = (): void => {
+    const content = this.content;
+    const owner = content?.ownerDocument.defaultView;
+    if (!this.isConnected || !content || !owner || !content.getBoundingClientRect().width) return;
+    const lineHeight = Number.parseFloat(owner.getComputedStyle(content).lineHeight);
+    if (!Number.isFinite(lineHeight) || lineHeight <= 0) return;
+    const hasOverflow = content.scrollHeight > lineHeight * THINKING_PREVIEW_LINES + 1;
+    if (hasOverflow === this.hasOverflow) return;
+    this.hasOverflow = hasOverflow;
+    this.refresh();
+  };
+
+  /** Search needs the complete layout before it scrolls to its existing mark. */
+  private readonly reveal = (): void => {
+    this.state!.expanded = true;
+    this.content?.parentElement?.classList.add('is-expanded');
+    this.refresh();
+  };
 
   private refresh(): void {
     if (this.context) this.context.requestUpdate();
     else if (this.state && this.source !== undefined) {
-      this.setValue(this.render(this.state, this.source, this.state.streaming));
+      this.setValue(this.render(this.state, this.source, this.streaming));
     }
-  }
-
-  private select(range: SourceRange, event: Event): void {
-    const state = this.state!;
-    this.context?.preserve(this.element(event));
-    state.mode = READER_MODE.MANUAL;
-    state.natural = false;
-    state.frozen = true;
-    state.start = range.start;
-    state.end = range.end;
-    state.seenLength = this.source!.length;
-    this.refresh();
-  }
-
-  private latest(event: Event): void {
-    const state = this.state!;
-    state.mode = READER_MODE.LATEST;
-    state.frozen = false;
-    showRecent(state, this.source!.length);
-    this.context?.latest(this.element(event), state.streaming);
-    this.refresh();
-  }
-
-  private async copy(source: string, event: Event): Promise<void> {
-    const element = this.element(event);
-    this.clearFeedback();
-    const generation = this.copyGeneration;
-    try {
-      await (element.ownerDocument.defaultView ?? window).navigator.clipboard.writeText(source);
-      if (!this.isConnected || generation !== this.copyGeneration) return;
-      this.feedback = i18nService.t('copied');
-    } catch {
-      if (!this.isConnected || generation !== this.copyGeneration) return;
-      this.feedback = i18nService.t('messageCopyFailed');
-    }
-    this.feedbackWindow = element.ownerDocument.defaultView ?? window;
-    this.feedbackTimer = this.feedbackWindow.setTimeout(() => {
-      this.feedbackTimer = null;
-      this.feedback = '';
-      this.refresh();
-    }, COPY_FEEDBACK_MS);
-    this.refresh();
-  }
-
-  private clearFeedback(): void {
-    if (this.feedbackTimer !== null) this.feedbackWindow?.clearTimeout(this.feedbackTimer);
-    this.feedbackTimer = null;
-    this.feedbackWindow = null;
-    this.feedback = '';
-    this.copyGeneration++;
-  }
-
-  private download(source: string, event: Event): void {
-    const document = this.element(event).ownerDocument;
-    const ownerWindow = document.defaultView ?? window;
-    const url = ownerWindow.URL.createObjectURL(new Blob([source], { type: 'text/plain;charset=utf-8' }));
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = 'thinking.txt';
-    anchor.click();
-    ownerWindow.setTimeout(() => ownerWindow.URL.revokeObjectURL(url), 1000);
   }
 
   protected disconnected(): void {
+    this.observer?.disconnect();
+    this.observer = undefined;
     this.source = undefined;
-    this.clearFeedback();
+  }
+
+  protected reconnected(): void {
+    this.observeContent(this.content);
   }
 }
 
 const thinkingContent = directive(ThinkingContentDirective);
 
-/** Standalone render helpers retain their own mounted directive's reading choices. */
+/** Standalone render helpers retain their own mounted directive's expansion choice. */
 export function renderThinkingContent(text: string, streaming: boolean): unknown {
   return thinkingContent(undefined, text, streaming);
+}
+
+export function revealThinkingContent(element: HTMLElement): void {
+  element.closest('[data-thinking-content]')?.dispatchEvent(new Event(REVEAL_THINKING_EVENT));
 }
