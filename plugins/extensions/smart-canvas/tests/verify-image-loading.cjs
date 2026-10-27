@@ -14,7 +14,7 @@ const { pathToFileURL } = require('node:url');
 const { promisify } = require('node:util');
 const { deflateSync } = require('node:zlib');
 
-const { THREE_FIXTURE, readThreeModules } = require('./three-fixture.cjs');
+const { readThreeModules } = require('./three-fixture.cjs');
 
 const repoRoot = path.resolve(__dirname, '../../../..');
 const outputRoot = path.join(repoRoot, 'build/smart-canvas/image-loading-verification');
@@ -521,11 +521,7 @@ async function main() {
       import(pathToFileURL(path.join(runtimeRoot, 'wrap-D-D-PZV6.mjs')).href),
       import(pathToFileURL(path.join(runtimeRoot, 'widget-html-DuR2hZeB.mjs')).href),
     ]);
-  const archiveIndex = process.argv.indexOf('--three-archive');
-  const { modules, version } = readThreeModules(
-    repoRoot,
-    archiveIndex < 0 ? undefined : process.argv[archiveIndex + 1],
-  );
+  const { modules, version } = readThreeModules();
   const assets = await createAssets(fixture, modules);
   const fixtureWindows = new Set();
   const certificateError = (event, contents, url, _error, certificate, callback) => {
@@ -774,8 +770,7 @@ async function main() {
       electron: process.versions.electron,
       threeVersion: version,
       threeFixture: {
-        integrity: THREE_FIXTURE.integrity,
-        source: 'verified test-only archive served as CDN ESM',
+        source: 'locked npm development dependency served as CDN ESM',
         packaged: false,
       },
       policies: {

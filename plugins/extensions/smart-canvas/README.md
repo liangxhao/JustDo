@@ -125,8 +125,7 @@ content kind under the same name; generate a new widget when changing kinds.
 
 The HTML parser and entity decoder remain locked production dependencies, bundled
 into the precompiled plugin with their legal notices. The installed application
-runs no npm installation. Build preparation and optional test inputs are maintained
-in [offline downloads](../../../docs/offline-downloads.md).
+runs no npm installation. Browser checks are described below.
 
 For the optional fixed `kind: "interactive-answer"`, `widget_code` is a JSON
 string with `version`, `language`, `summary` and `blocks`. The complete schema,
@@ -183,6 +182,7 @@ skills, framework dependencies or runtime services are installed by this skill.
 ## Checks
 
 ```powershell
+npm ci --prefix plugins/extensions/smart-canvas --include=dev --ignore-scripts
 node node_modules/vitest/vitest.mjs run plugins/extensions/smart-canvas/tests tests/scripts/smart-canvas
 & '<runtime>/node-runtime/node.exe' scripts/test/smart-canvas/verify-runtime.mjs '<runtime>'
 & '<runtime>/node-runtime/node.exe' scripts/test/smart-canvas/verify-gateway.mjs '<runtime>'
@@ -190,9 +190,12 @@ node node_modules/vitest/vitest.mjs run plugins/extensions/smart-canvas/tests te
 node plugins/extensions/smart-canvas/tests/verify-image-loading.cjs --runtime '<runtime>/dist'
 ```
 
-The image-loading probe reads a locked local Three archive only as test input,
-never as a product library. Archive locations and optional preparation are in the
-offline-downloads document above. The probe uses the selected native SDK's real wrapper and both CSP
+The browser probes use the plugin's locked Three.js npm development dependency.
+Install dependencies through the configured npm mirror before running checks;
+the probes then run offline without cache archives or runtime downloads.
+Production assembly omits development dependencies and does not ship Three.js.
+The image-loading probe uses
+the selected native SDK's real wrapper and both CSP
 layers, a fresh Electron session, local HTTPS origins and a CONNECT proxy. It
 covers four TextureLoader images, actual WebGL pixels, complete HTML and fragments with real CDN Three.js ESM imports, static images, errors, source
 replacement races and denied fetch without a grant. A local OpenSSL executable

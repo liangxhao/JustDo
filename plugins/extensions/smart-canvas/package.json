@@ -10,5 +10,8 @@
     "extensions": [
       "./index.ts"
     ]
+  },
+  "devDependencies": {
+    "three": "0.186.1"
   }
 }

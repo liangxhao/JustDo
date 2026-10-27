@@ -100,6 +100,7 @@ test(
       );
       for (const name of ['parse5', 'entities'])
         expect(fs.statSync(path.join(target, 'node_modules', name, 'LICENSE')).isFile()).toBe(true);
+      expect(fs.existsSync(path.join(target, 'node_modules/three'))).toBe(false);
       expect(fs.existsSync(path.join(target, 'assets'))).toBe(false);
       fs.mkdirSync(path.join(target, 'assets'), { recursive: true });
       fs.writeFileSync(path.join(target, 'assets/stale.js'), 'retired runtime asset');

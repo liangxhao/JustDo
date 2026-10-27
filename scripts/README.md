@@ -66,9 +66,10 @@ documentation live in the root `docs/` directory.
 Smart Canvas generates its HTML image adapter directly from plugin source; no
 visualization-library preparation or generated asset directory is required.
 Scripts and modules used by widgets load through the native CDN policy and browser
-system proxy. The optional browser contract probe and its local Three.js fixture
-reader live under `plugins/extensions/smart-canvas/tests/`, excluded from product
-archives and the runtime build fingerprint; see [offline downloads](../docs/offline-downloads.md).
+system proxy. The optional browser contract probe and module reader live under
+`plugins/extensions/smart-canvas/tests/`, excluded from product archives and the
+runtime build fingerprint. Three.js is a locked npm development dependency;
+see the [plugin checks](../plugins/extensions/smart-canvas/README.md#checks).
 
 `openclaw/prune-openclaw-runtime.cjs` reads `plugins/extensions/prune-policy.json`
 to select the upstream OpenClaw extensions retained in the runtime. The policy is

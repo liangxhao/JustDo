@@ -1,26 +1,20 @@
 'use strict';
 
 const assert = require('node:assert/strict');
-const { createHash } = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 
-// Test input only. Neither this archive nor Three is an installed widget asset.
+// npm development dependency only; never installed as a widget asset.
 const THREE_FIXTURE = Object.freeze({
-  version: '0.186.1',
-  archive: 'three-0.186.1.tgz',
-  integrity:
-    'sha512-blFeqb49wRCSGUGj7gtpfnSGHy2lwDk94RhUmS1c/hTby70kvChbWpkJ4Pm1390LqzzvTmzgXKHPEafJwCb8jA==',
+  version: require('../package.json').devDependencies.three,
 });
 
-/** Read verified real ESM modules into memory without preparing runtime assets. */
-function readThreeModules(repoRoot = path.resolve(__dirname, '../../../..'), archivePath) {
-  const archive = fs.readFileSync(
-    path.resolve(archivePath ?? path.join(repoRoot, 'cache/smart-canvas', THREE_FIXTURE.archive)),
-  );
+/** Read installed ESM modules for controlled local HTTPS test fixtures. */
+function readThreeModules() {
+  const packageRoot = path.resolve(path.dirname(require.resolve('three')), '..');
   assert.equal(
-    `sha512-${createHash('sha512').update(archive).digest('base64')}`,
-    THREE_FIXTURE.integrity,
+    JSON.parse(fs.readFileSync(path.join(packageRoot, 'package.json'), 'utf8')).version,
+    THREE_FIXTURE.version,
   );
   const modules = new Map();
   const selected = [
@@ -28,22 +22,11 @@ function readThreeModules(repoRoot = path.resolve(__dirname, '../../../..'), arc
     'build/three.core.js',
     'examples/jsm/controls/OrbitControls.js',
   ];
-  require('tar')
-    .t({
-      sync: true,
-      onentry(entry) {
-        const name = entry.path.replace(/^package\//, '');
-        if (!selected.includes(name)) return;
-        assert.equal(entry.type, 'File');
-        const parts = [];
-        entry.on('data', chunk => parts.push(chunk));
-        entry.on('end', () =>
-          modules.set(`/npm/three@${THREE_FIXTURE.version}/${name}`, Buffer.concat(parts)),
-        );
-      },
-    })
-    .end(archive);
-  assert.equal(modules.size, selected.length);
+  for (const name of selected)
+    modules.set(
+      `/npm/three@${THREE_FIXTURE.version}/${name}`,
+      fs.readFileSync(path.join(packageRoot, name)),
+    );
   return { modules, version: THREE_FIXTURE.version };
 }
 
