@@ -124,6 +124,9 @@ const getConfigurationVariable = (
   field.configuredEnvironmentVariables?.[0] ??
   field.environmentVariables?.[0];
 
+const isNumericConfigurationField = (field: OpenClawExtensionConfigurationField): boolean =>
+  field.type === 'integer' || field.type === 'number';
+
 interface ExtensionsManagerProps extends PluginHubManagerProps {
   onOpenRuntime?: () => void;
   onManageSpeechModels?: (
@@ -837,18 +840,25 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
   };
 
   const handleSaveConfiguration = async () => {
-    if (!selectedExtension || extensionActionBusy) return;
+    if (
+      !selectedExtension ||
+      extensionActionBusy ||
+      selectedExtension.management?.configure.allowed === false
+    ) return;
     const values = Object.fromEntries(
-      selectedExtension.configurationFields
-        .map(field => {
-          const variable = getConfigurationVariable(field, configurationVariables);
-          return [
-            variable ? `env.vars.${variable}` : field.path,
-            configurationValues[field.path] ??
-              (field.type ? String(field.value ?? field.defaultValue ?? '') : ''),
-          ];
-        })
-        .filter(([, value]) => value.trim()),
+      selectedExtension.configurationFields.flatMap(field => {
+        const textField = !field.sensitive && field.type === 'string';
+        const draft = configurationValues[field.path];
+        if (textField && draft === undefined) return [];
+        const value =
+          draft ??
+          (!field.sensitive && isNumericConfigurationField(field)
+            ? String(field.value ?? field.defaultValue ?? '')
+            : '');
+        if (!textField && !value.trim()) return [];
+        const variable = getConfigurationVariable(field, configurationVariables);
+        return [[variable ? `env.vars.${variable}` : field.path, value]];
+      }),
     );
     if (Object.keys(values).length === 0) {
       setConfigurationError(i18nService.t('extensionConfigurationValueRequired'));
@@ -1303,6 +1313,8 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
                         const inherited = Boolean(
                           variable && field.inheritedEnvironmentVariables?.includes(variable),
                         );
+                        const numeric = isNumericConfigurationField(field);
+                        const required = Boolean(field.requirement || field.required);
                         return (
                           <div
                             key={field.path}
@@ -1350,7 +1362,7 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
                                   {label}
                                 </label>
                               )}
-                              {field.requirement && !configured && (
+                              {required && !configured && (
                                 <span aria-hidden="true" className="leading-5 text-red-500">
                                   *
                                 </span>
@@ -1377,15 +1389,15 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
                               <input
                                 id={`extension-config-${field.path}`}
                                 aria-label={variable || label}
-                                type={field.type ? 'number' : field.sensitive ? 'password' : 'text'}
-                                min={field.minimum}
-                                max={field.maximum}
+                                type={field.sensitive ? 'password' : numeric ? 'number' : 'text'}
+                                min={numeric ? field.minimum : undefined}
+                                max={numeric ? field.maximum : undefined}
                                 step={field.type === 'integer' ? 1 : undefined}
                                 value={
                                   configurationValues[field.path] ??
-                                  (field.type
-                                    ? String(field.value ?? field.defaultValue ?? '')
-                                    : '')
+                                  (field.sensitive
+                                    ? ''
+                                    : String(field.value ?? field.defaultValue ?? ''))
                                 }
                                 onChange={event => {
                                   setConfigurationSaved(false);
@@ -1395,8 +1407,8 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
                                   }));
                                 }}
                                 disabled={savingConfiguration || inherited}
-                                required={Boolean(field.requirement) && !configured}
-                                autoComplete="new-password"
+                                required={required && !configured}
+                                autoComplete={field.sensitive ? 'new-password' : 'off'}
                                 spellCheck={false}
                                 placeholder={i18nService.t(
                                   inherited

@@ -1052,7 +1052,31 @@ describe('ExtensionsManager extension toggle', () => {
       installPath: undefined,
       removable: false,
       configurationFields: [
-        { path: 'apiKey', label: 'TypeSafe API credential', sensitive: true, configured: false },
+        {
+          path: 'apiKey',
+          label: 'TypeSafe API credential',
+          type: 'string',
+          sensitive: true,
+          configured: false,
+          value: 'synthetic-projection-secret',
+          defaultValue: 'synthetic-default-secret',
+        },
+        {
+          path: 'baseUrl',
+          label: 'Local origin',
+          type: 'string',
+          sensitive: false,
+          configured: false,
+          defaultValue: 'http://127.0.0.1:8009',
+        },
+        {
+          path: 'serviceUrl',
+          label: 'Service URL',
+          type: 'string',
+          sensitive: false,
+          configured: true,
+          value: 'https://intranet.example/v1',
+        },
       ],
     };
     const updateConfiguration = vi.fn().mockResolvedValue({ success: true });
@@ -1072,6 +1096,10 @@ describe('ExtensionsManager extension toggle', () => {
     render(<ExtensionsManager requestedExtensionId="typesafe" />);
     const input = (await screen.findByLabelText('TypeSafe API credential')) as HTMLInputElement;
     expect(input.type).toBe('password');
+    expect(input.value).toBe('');
+    expect((screen.getByLabelText('Local origin') as HTMLInputElement).value).toBe(
+      'http://127.0.0.1:8009',
+    );
     fireEvent.change(input, { target: { value: 'synthetic-ui-key' } });
     fireEvent.click(screen.getByRole('button', { name: 'save' }));
     await waitFor(() =>
@@ -1087,6 +1115,127 @@ describe('ExtensionsManager extension toggle', () => {
     expect(setEnabled).not.toHaveBeenCalled();
   });
 
+  test('edits mixed configuration fields, reloads saved text and clears only an edited text override', async () => {
+    let serviceUrl: string | undefined = 'https://intranet.example/v1';
+    let concurrency = 2;
+    let credentialConfigured = false;
+    const configuredExtension = (): InstalledOpenClawExtension => ({
+      ...extension,
+      configurationFields: [
+        {
+          path: 'serviceUrl',
+          label: 'Service URL',
+          type: 'string',
+          sensitive: false,
+          configured: Boolean(serviceUrl),
+          value: serviceUrl,
+          minLength: 1,
+          maxLength: 2048,
+        },
+        {
+          path: 'apiKey',
+          label: 'API credential',
+          sensitive: true,
+          configured: credentialConfigured,
+        },
+        {
+          path: 'concurrency',
+          label: 'Concurrency',
+          type: 'integer',
+          sensitive: false,
+          configured: true,
+          value: concurrency,
+          defaultValue: 3,
+          minimum: 1,
+          maximum: 4,
+        },
+      ],
+    });
+    const updateConfiguration = vi.fn(async ({ values }: { values: Record<string, string> }) => {
+      if (Object.prototype.hasOwnProperty.call(values, 'serviceUrl')) serviceUrl = values.serviceUrl || undefined;
+      if (values.concurrency) concurrency = Number(values.concurrency);
+      if (values.apiKey) credentialConfigured = true;
+      return { success: true };
+    });
+    const setEnabled = vi.fn();
+    Object.defineProperty(window, 'electron', {
+      configurable: true,
+      value: {
+        extensions: {
+          list: vi.fn(async () => ({ success: true, extensions: [configuredExtension()] })),
+          updateConfiguration,
+          setEnabled,
+          onChanged: vi.fn(() => vi.fn()),
+          onImportProgress: vi.fn(() => vi.fn()),
+        },
+      },
+    });
+
+    render(<ExtensionsManager requestedExtensionId={extension.id} />);
+    let urlInput = (await screen.findByLabelText('Service URL')) as HTMLInputElement;
+    const credentialInput = screen.getByLabelText('API credential') as HTMLInputElement;
+    const numberInput = screen.getByLabelText('Concurrency') as HTMLInputElement;
+    expect(urlInput.type).toBe('text');
+    expect(urlInput.value).toBe(serviceUrl);
+    // HTML length limits count UTF-16 units; schema limits count Unicode code points in Main.
+    expect(urlInput.hasAttribute('minlength')).toBe(false);
+    expect(urlInput.hasAttribute('maxlength')).toBe(false);
+    expect(credentialInput.type).toBe('password');
+    expect(credentialInput.value).toBe('');
+    expect(numberInput.type).toBe('number');
+    expect(numberInput.value).toBe('2');
+    expect(numberInput.min).toBe('1');
+    expect(numberInput.max).toBe('4');
+    expect(numberInput.step).toBe('1');
+
+    fireEvent.change(urlInput, { target: { value: 'http://model.internal:8080/v1' } });
+    fireEvent.change(credentialInput, { target: { value: 'synthetic-ui-key' } });
+    fireEvent.change(numberInput, { target: { value: '4' } });
+    fireEvent.click(screen.getByRole('button', { name: 'save' }));
+
+    await waitFor(() => expect(updateConfiguration).toHaveBeenNthCalledWith(
+      1,
+      {
+        extensionId: extension.id,
+        values: {
+          serviceUrl: 'http://model.internal:8080/v1',
+          apiKey: 'synthetic-ui-key',
+          concurrency: '4',
+        },
+      },
+      { requestId: expect.any(String) },
+    ));
+    await waitFor(() => expect(credentialInput.value).toBe(''));
+    expect(urlInput.value).toBe('http://model.internal:8080/v1');
+    expect(numberInput.value).toBe('4');
+    expect(screen.getByRole('status').textContent).toBe('extensionConfigurationSaved');
+    expect(setEnabled).not.toHaveBeenCalled();
+
+    fireEvent.change(urlInput, { target: { value: 'https://unsaved.internal/v1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'cancel' }));
+    fireEvent.click(screen.getByRole('button', { name: 'subtaskShowInfo: Sample Extension' }));
+    urlInput = screen.getByLabelText('Service URL') as HTMLInputElement;
+    expect(urlInput.value).toBe('http://model.internal:8080/v1');
+    expect((screen.getByLabelText('API credential') as HTMLInputElement).value).toBe('');
+
+    fireEvent.change(urlInput, { target: { value: '' } });
+    fireEvent.click(screen.getByRole('button', { name: 'save' }));
+
+    await waitFor(() => expect(updateConfiguration).toHaveBeenNthCalledWith(
+      2,
+      { extensionId: extension.id, values: { serviceUrl: '', concurrency: '4' } },
+      { requestId: expect.any(String) },
+    ));
+    await screen.findByRole('status');
+    expect(urlInput.value).toBe('');
+    expect((screen.getByLabelText('API credential') as HTMLInputElement).placeholder).toBe(
+      'extensionConfigurationStored',
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'cancel' }));
+    fireEvent.click(screen.getByRole('button', { name: 'subtaskShowInfo: Sample Extension' }));
+    expect((screen.getByLabelText('Service URL') as HTMLInputElement).value).toBe('');
+  });
+
   test('does not offer configuration controls blocked by management policy', async () => {
     const managedExtension: InstalledOpenClawExtension = {
       ...extension,
@@ -1100,11 +1249,19 @@ describe('ExtensionsManager extension toggle', () => {
           sensitive: true,
           configured: false,
         },
+        {
+          path: 'serviceUrl',
+          label: 'Service URL',
+          type: 'string',
+          sensitive: false,
+          configured: true,
+          value: 'https://managed.internal/v1',
+        },
       ],
       ...getExtensionManagement({
         managed: true,
         installPath: extension.installPath,
-        configurationFieldCount: 1,
+        configurationFieldCount: 2,
       }),
     };
     const updateConfiguration = vi.fn();
@@ -1128,6 +1285,7 @@ describe('ExtensionsManager extension toggle', () => {
 
     expect(screen.getByText('extensionManagedApplication')).toBeTruthy();
     expect(screen.queryByLabelText('Token')).toBeNull();
+    expect(screen.queryByLabelText('Service URL')).toBeNull();
     expect(screen.queryByRole('button', { name: 'save' })).toBeNull();
     expect(updateConfiguration).not.toHaveBeenCalled();
   });

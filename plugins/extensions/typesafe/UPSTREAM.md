@@ -17,6 +17,8 @@ and never falls back to hosted Jev. It reuses native local normalization for Kev
 latency metadata and score criteria. The legacy loopback-only `baseUrl` remains
 unchanged; setting both endpoints is rejected. Changes touch config, client,
 transport, manifest and focused tests.
+The endpoint UI hints explicitly opt into the host's generic text editor with
+`configurable: true`; model settings retains ownership once configured.
 
 Credential reflection detection checks unexpected provider model names after
 native response validation. Request-owned answer IDs, labels, score legends and

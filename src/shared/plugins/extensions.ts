@@ -30,11 +30,17 @@ export type OpenClawExtensionConfigurationField = {
   help?: string;
   labelKey?: string;
   helpKey?: string;
-  type?: 'integer' | 'number';
+  type?: 'integer' | 'number' | 'string';
   minimum?: number;
   maximum?: number;
-  defaultValue?: number;
-  value?: number;
+  defaultValue?: number | string;
+  value?: number | string;
+  required?: boolean;
+  minLength?: number;
+  maxLength?: number;
+  pattern?: string;
+  enum?: string[];
+  format?: string;
   requirement?: string;
   /** Native provider credential alternatives; saved to env.vars, never plugin config. */
   environmentVariables?: string[];

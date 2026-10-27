@@ -34,6 +34,14 @@ import type { GatewayRequestOptions } from '../../engine/types';
 import { restrictCredentialFile } from '../../openclaw/config/models/providerSecretFile';
 import { requireOpenClawCliExecutable } from '../../openclaw/runtime/launch/cliNodeRuntime';
 import type { OpenClawEngineManager } from '../../openclaw/runtime/openclawEngineManager';
+import {
+  deleteNestedValue,
+  getNestedValue,
+  getTextConfigurationFields,
+  isSafeConfigPath,
+  isValidTextConfigurationValue,
+  setNestedValue,
+} from './extensionConfigurationFields';
 import { prepareExtensionForInstall } from './extensionConversion';
 import { prepareExtensionInstallSource } from './extensionInstallSource';
 import type { ExtensionNetworkPolicyInspection } from './extensionNetworkPolicyManifest';
@@ -504,40 +512,6 @@ const findInstalledExtensionPath = (
   return undefined;
 };
 
-const getNestedValue = (value: unknown, dottedPath: string): unknown =>
-  dottedPath.split('.').reduce<unknown>((current, segment) => {
-    return isRecord(current) ? current[segment] : undefined;
-  }, value);
-
-const FORBIDDEN_CONFIG_PATH_SEGMENTS = new Set(['__proto__', 'prototype', 'constructor']);
-const isSafeConfigPath = (dottedPath: string): boolean => {
-  if (!dottedPath || dottedPath.length > 256) return false;
-  const segments = dottedPath.split('.');
-  return segments.every(
-    segment =>
-      /^[A-Za-z_][A-Za-z0-9_-]*$/.test(segment) && !FORBIDDEN_CONFIG_PATH_SEGMENTS.has(segment),
-  );
-};
-
-const setNestedValue = (
-  target: Record<string, unknown>,
-  dottedPath: string,
-  value: unknown,
-): void => {
-  if (!isSafeConfigPath(dottedPath)) throw new Error('Unsupported extension configuration path.');
-  const segments = dottedPath.split('.');
-  let current = target;
-  segments.forEach((segment, index) => {
-    if (index === segments.length - 1) {
-      current[segment] = value;
-      return;
-    }
-    const next = isRecord(current[segment]) ? current[segment] : {};
-    current[segment] = next;
-    current = next;
-  });
-};
-
 const hasConfiguredValue = (value: unknown): boolean => {
   if (typeof value === 'string') return value.trim().length > 0;
   return isRecord(value) && Object.keys(value).length > 0;
@@ -615,13 +589,19 @@ const getExtensionConfigurationState = (
       isRecord(properties[key]) &&
       ['integer', 'number'].includes(String(properties[key].type)),
   );
-  if (!requiredEnvVars.length && !sensitiveHints.length && !numericHints.length)
-    return { fields: [], missingRequirements: [] };
   const config = readJsonRecord(manager.getConfigPath());
   const pluginsConfig = isRecord(config.plugins) ? config.plugins : {};
   const pluginEntries = isRecord(pluginsConfig.entries) ? pluginsConfig.entries : {};
   const pluginEntry = isRecord(pluginEntries[extensionId]) ? pluginEntries[extensionId] : {};
   const pluginConfig = pluginEntry.config;
+  const textFields = getTextConfigurationFields(manifest, pluginConfig);
+  if (
+    !requiredEnvVars.length &&
+    !sensitiveHints.length &&
+    !numericHints.length &&
+    !textFields.length
+  )
+    return { fields: [], missingRequirements: [] };
   const configuredEnv = isRecord(config.env) ? config.env : {};
   const configuredEnvVars = isRecord(configuredEnv.vars) ? configuredEnv.vars : {};
   const dotenvKeys = new Set<string>();
@@ -684,6 +664,7 @@ const getExtensionConfigurationState = (
       value: typeof value === 'number' && Number.isFinite(value) ? value : undefined,
     });
   }
+  fields.push(...textFields);
   const configContracts = isRecord(manifest.configContracts) ? manifest.configContracts : {};
   const compatibilityPaths = Array.isArray(configContracts.compatibilityRuntimePaths)
     ? configContracts.compatibilityRuntimePaths
@@ -1461,14 +1442,26 @@ export class OpenClawExtensionImportService {
     }
     const updates = Object.entries(values).filter(
       ([configPath, value]) =>
-        value.trim().length > 0 && isSafeConfigPath(configPath) && fieldsByPath.has(configPath),
+        typeof value === 'string' &&
+        isSafeConfigPath(configPath) &&
+        fieldsByPath.has(configPath) &&
+        ((fieldsByPath.get(configPath)?.type === 'string' &&
+          !fieldsByPath.get(configPath)?.sensitive) ||
+          value.trim().length > 0),
     );
     if (updates.length === 0) {
       return { success: false, error: 'Enter at least one supported configuration value.' };
     }
     for (const [fieldPath, value] of updates) {
       const field = fieldsByPath.get(fieldPath)!;
-      if (field.type) {
+      if (
+        field.type === 'string' &&
+        !field.sensitive &&
+        !isValidTextConfigurationValue(field, value)
+      ) {
+        return { success: false, error: t('extensionConfigurationTextInvalid') };
+      }
+      if (field.type === 'integer' || field.type === 'number') {
         const number = Number(value);
         if (
           !Number.isFinite(number) ||
@@ -1479,7 +1472,9 @@ export class OpenClawExtensionImportService {
           return { success: false, error: t('extensionConfigurationNumberInvalid') };
       }
     }
-    const numericOnly = updates.every(([fieldPath]) => Boolean(fieldsByPath.get(fieldPath)?.type));
+    const numericOnly = updates.every(([fieldPath]) =>
+      ['integer', 'number'].includes(fieldsByPath.get(fieldPath)?.type ?? ''),
+    );
     const statusMethod =
       isRecord(manifest.configContracts) &&
       typeof manifest.configContracts.configurationStatusMethod === 'string' &&
@@ -1566,13 +1561,18 @@ export class OpenClawExtensionImportService {
           env.vars = vars;
           config.env = env;
         } else {
-          setNestedValue(
-            pluginConfig,
-            fieldPath,
-            fieldsByPath.get(fieldPath)?.type
-              ? Number(value)
-              : (secretUpdate.references[fieldPath] ?? value),
-          );
+          const field = fieldsByPath.get(fieldPath)!;
+          if (field.type === 'string' && !field.sensitive && value === '') {
+            deleteNestedValue(pluginConfig, fieldPath);
+          } else {
+            setNestedValue(
+              pluginConfig,
+              fieldPath,
+              field.type === 'integer' || field.type === 'number'
+                ? Number(value)
+                : (secretUpdate.references[fieldPath] ?? value),
+            );
+          }
           entry.config = pluginConfig;
           entries[extensionId] = entry;
           plugins.entries = entries;

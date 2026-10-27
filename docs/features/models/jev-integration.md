@@ -36,6 +36,14 @@ providers also disables TypeSafe and clears the native default. Users who have n
 this category retain their existing extension settings. Provider import/export
 includes decision models using the same credential encryption as other model types.
 
+Before model settings takes ownership, the generic extension form also exposes the
+explicitly editable `baseUrl` and `serviceUrl` text fields alongside the credential.
+It displays saved addresses and saves only edited text; clearing an optional address
+removes that override. Clear the old address when switching modes, since the plugin
+rejects both endpoints together. This form does not select a decision model or enable
+the extension. Once managed by model settings, its existing configuration restrictions
+continue to apply.
+
 Evaluation sends task evidence to the selected service. Hosted Jev may incur API
 charges. Results use the existing OpenClaw stream, without a transcript cache.
 

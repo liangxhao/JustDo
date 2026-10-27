@@ -3286,6 +3286,8 @@ describe('OpenClawExtensionImportService', () => {
         removable: false,
         configurationFields: [
           expect.objectContaining({ path: 'apiKey', configured: false, sensitive: true }),
+          expect.objectContaining({ path: 'baseUrl', type: 'string', configured: false }),
+          expect.objectContaining({ path: 'serviceUrl', type: 'string', configured: false }),
         ],
       });
       await expect(
