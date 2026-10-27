@@ -44,7 +44,7 @@ Main 只接受当前主窗口主 frame，校验确实为目录缺失的历史会
 | 实体                          | 可访问资源                                  | 通信边界                                                    |
 | ----------------------------- | ------------------------------------------- | ----------------------------------------------------------- |
 | 主 Renderer                   | React/Lit UI、浏览器 API、显式 preload 能力 | 不能直接访问 Node/Electron/SQLite                           |
-| Browser guest                 | 外部网页及隔离 partition                    | 固定 guest preload；不获得 window.electron 或 Gateway token |
+| Browser guest                 | 外部网页及对应 profile partition            | 内置浏览器专用 preload；普通 URL embed 无 preload，均不获得 window.electron 或 Gateway token |
 | 图片预览窗口                  | 同 origin 的独立图片展示                    | 独立最小 preload、沙箱窗口与受限参数                        |
 | Preload                       | contextBridge 与 Electron IPC               | 固定方法和可取消订阅                                        |
 | Main                          | 文件、数据库、网络、子进程、窗口            | 校验来自所有客户端的输入                                    |
@@ -66,6 +66,13 @@ HTTP 响应携带生产 CSP、`no-store`、`nosniff` 与同源资源策略。脚
 图片窗口只加载当前主窗口 origin 的 `/image-preview.html`，使用独立最小图片 preload，不继承完整 `window.electron`。同 origin 使主窗口创建的 Blob 图片可读；主窗口 origin 不可用时预览失败关闭，origin 改变时重建预览窗口。静态宿主在主窗口关闭、加载失败或 `before-quit` 时撤销导航准入、关闭连接并移除监听器；启动途中发生关闭也不会留下服务。
 
 ### 浏览器与非浏览器的代理范围
+
+网页 embed 同样使用 `browserProxy` 的 session 配置队列及设置代次，默认系统代理。
+普通 URL 使用无 preload 的顶层 webview，共享默认侧栏浏览器的站点存储；托管 ref 保留
+独立内存 session、固定 shell/iframe 与认证静态转发。Main 单一 session policy owner
+按精确 guest 分派准入；释放普通 URL 只关闭自身页面，不清共享登录、worker 或连接。
+无法归属页面的 worker 遵循 profile 基线政策，不获得 mount、转发、工具或工作区权限。
+网页代理准备可独立重试而不重建文档，详见[独立网页契约](../features/chat/webpage-embeds.md)。
 
 产品配置为两类请求保留独立代理偏好。`proxy`（以及既有 `useSystemProxy` 标志）只用于 Main、默认 Electron session 与 Gateway 进程环境，默认直连；`browserProxy` 用于应用持有的浏览器 guest sessions 及原生 Widget 专用内存 session，默认系统代理。Widget 不共享浏览器 profile 存储。浏览器模式与用户 Chrome 自身的网络配置不由这个 guest 偏好改写。
 
@@ -94,7 +101,7 @@ Main 校验固定 viewer、mount、guest 和完整身份 metadata，不接收 HT
 侧边栏从首次展示起就使用固定的 `workspace.html` 文档承载。主 Renderer
 与工作区文档在开发和安装版均同 origin，安装版共享上述只读 HTTP 宿主。
 静态请求仅允许工作区入口携带单个 UUID 格式的 `generation` 或 `surface` 参数，以及 Widget viewer
-入口携带单个 UUID 格式的 `mount` 参数；其他入口或额外参数均拒绝。静态读取不授予
+和独立网页 viewer 入口携带单个 UUID 格式的 `mount` 参数；其他入口或额外参数均拒绝。静态读取不授予
 原生窗口能力，窗口创建仍须匹配 Main 的当前授予。
 主 Renderer
 通过 React portal 渲染完整工具区；该文档没有应用入口脚本、preload 或
@@ -301,7 +308,7 @@ interaction response/replay 使用固定请求身份。ask_user_question 与 pre
 
 ## 5. Browser guest 是单独的资源边界
 
-Main 在 will-attach-webview 中覆盖为固定 preload，强制 sandbox、context isolation、无 Node 和合法导航。tab 注册同时验证主窗口归属、webContents 类型、profile partition 与存储路径，不能只相信 Renderer 提交的数字 ID。
+Main 在 will-attach-webview 中为内置浏览器覆盖固定 preload；普通 URL embed 不安装 preload，托管 ref 仅在固定 shell 使用最小桥。各类 guest 强制 sandbox、context isolation、无 Node 和合法导航。tab 注册同时验证主窗口归属、webContents 类型、profile partition 与存储路径，不能只相信 Renderer 提交的数字 ID。
 
 普通人工点击由 Chromium 直接处理；Agent 操作通过 embedded-browser 的受控插件事件到 Main，再定位真实 guest。同一 guest 命令串行。截图、DOM、页面文本是外部不可信输入；文件上传和下载输出还要经过任务工作区校验。
 

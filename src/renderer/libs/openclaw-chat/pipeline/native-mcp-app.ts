@@ -5,6 +5,8 @@ import {
   readMcpAppDescriptor,
 } from '@shared/plugins/mcpApps';
 
+import { stripEmbedShortcodes } from './embed-shortcodes';
+
 const admitted = new WeakSet<object>();
 const admittedIdentities = new WeakMap<object, Readonly<McpAppDescriptor>>();
 const nativeToolRoles = new Set(['tool', 'toolresult', 'tool_result', 'function']);
@@ -33,6 +35,27 @@ export function readNativeMcpAppIdentity(value: unknown): Readonly<McpAppDescrip
   )
     return;
   return identity;
+}
+
+/** MCP references do not authorize or suppress a Canvas document URL. */
+export function stripNativeMcpAppFallbacks(
+  text: string,
+  appIds: ReadonlySet<string>,
+  widgetIds: ReadonlySet<string> = new Set(),
+): string {
+  if (!appIds.size || !text.toLowerCase().includes('[embed')) return text;
+  return stripEmbedShortcodes(text, attributes =>
+    isNativeMcpAppFallbackAttributes(attributes, appIds, widgetIds),
+  );
+}
+
+export function isNativeMcpAppFallbackAttributes(
+  attributes: Readonly<Record<string, string>>,
+  appIds: ReadonlySet<string>,
+  widgetIds: ReadonlySet<string>,
+): boolean {
+  const ref = attributes.ref ?? attributes.viewid;
+  return attributes.url === undefined && Boolean(ref && appIds.has(ref) && !widgetIds.has(ref));
 }
 
 /** Hide exact native placeholders for admitted Apps or confirmed failed calls. */

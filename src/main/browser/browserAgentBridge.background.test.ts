@@ -5,6 +5,7 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 const state = vi.hoisted(() => ({
   handlers: new Map<string, (event: unknown, value: unknown) => void>(),
   guests: new Map<number, unknown>(),
+  policyGuests: new WeakSet<object>(),
   partition: { storagePath: 'C:\\profiles\\embedded' },
   host: {
     create: vi.fn(),
@@ -32,6 +33,9 @@ vi.mock('./backgroundBrowserHost', () => ({
       return state.host;
     }
   },
+}));
+vi.mock('./browserSessionPolicy', () => ({
+  isBrowserSessionPolicyGuest: (guest: object) => state.policyGuests.has(guest),
 }));
 vi.mock('./data/browserDataImportService', () => ({
   listImportedBrowserProfiles: () => [],
@@ -101,6 +105,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   state.handlers.clear();
   state.guests.clear();
+  state.policyGuests = new WeakSet();
   nextId = 20;
   state.host.create.mockImplementation(async () => guest(true));
   state.host.owns.mockImplementation(
@@ -140,6 +145,54 @@ test('ordinary omission and false use the existing sidebar creation path', async
   expect(send.mock.calls.filter(([channel]) => channel === BrowserIpc.AgentEnsureTab)).toHaveLength(
     2,
   );
+  expect(state.host.create).not.toHaveBeenCalled();
+});
+
+test('rejects embed registration even with the sidebar host and profile storage while allowing a sidebar page', async () => {
+  const embed = guest(false);
+  const sidebar = guest(false);
+  state.policyGuests.add(embed);
+  for (const [contents, targetId] of [[embed, 'embed-page'], [sidebar, 'sidebar-page']] as const) {
+    state.handlers.get(BrowserIpc.AgentRegisterTab)?.(event(), {
+      sessionId: 'conversation',
+      targetId,
+      profile: 'embedded',
+      webContentsId: contents.id,
+    });
+  }
+
+  await expect(execute({ action: 'tabs' })).resolves.toMatchObject({
+    tabCount: 1,
+    tabs: [expect.objectContaining({ targetId: 'sidebar-page' })],
+  });
+  await expect(execute({ action: 'focus', targetId: 'embed-page' })).rejects.toThrow(
+    'Browser tab not found',
+  );
+  await expect(execute({ action: 'focus', targetId: 'sidebar-page' })).resolves.toMatchObject({
+    targetId: 'sidebar-page',
+  });
+  expect(embed.debugger.isAttached()).toBe(false);
+});
+
+test('refuses an existing browser reference once its page is identified as an embed', async () => {
+  const contents = guest(false);
+  state.handlers.get(BrowserIpc.AgentRegisterTab)?.(event(), {
+    sessionId: 'conversation',
+    targetId: 'existing-page',
+    profile: 'embedded',
+    webContentsId: contents.id,
+  });
+  await expect(execute({ action: 'focus', targetId: 'existing-page' })).resolves.toMatchObject({
+    targetId: 'existing-page',
+  });
+
+  state.policyGuests.add(contents);
+
+  await expect(execute({ action: 'focus', targetId: 'existing-page' })).rejects.toThrow(
+    'Browser tab not found',
+  );
+  await expect(execute({ action: 'tabs' })).resolves.toMatchObject({ tabCount: 0, tabs: [] });
+  expect(contents.loadURL).not.toHaveBeenCalled();
   expect(state.host.create).not.toHaveBeenCalled();
 });
 

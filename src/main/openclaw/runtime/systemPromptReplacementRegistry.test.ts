@@ -23,6 +23,7 @@ const retiredRuleIds = [
   'remove-source-channel-routing-line',
   'remove-openclaw-diagnostics-guidance',
   'brand-spaced-openclaw-references',
+  'describe-independent-webpage-embeds',
 ];
 
 const makeCustomRules = (count: number) =>
@@ -96,6 +97,7 @@ describe('registered system prompt replacements', () => {
       'remove-openclaw-control-section',
       'brand-openclaw-personal-assistant',
       'remove-authorized-senders-section',
+      'describe-supported-embed-urls',
       'remove-control-ui-side-chat-section',
       'remove-care-section',
       'brand-webchat-direct-conversation',
@@ -167,6 +169,23 @@ describe('registered system prompt replacements', () => {
     ].join('\n');
 
     expect(applyRegisteredRules(prompt)).toBe(prompt);
+  });
+
+  it('changes only the native embed URL restriction without adding tool instructions', () => {
+    const oldRestriction = '- Never local/file:// or arbitrary URL. Only hosted Canvas refs/URLs or YouTube video URLs.';
+    const prompt = [
+      '## Control UI Embed',
+      '`[embed ...]`: Control UI/webchat only; inline rich bubble. Else use regular links.',
+      '- Hosted doc: `[embed ref="cv_123" title="Status" height="320" /]`.',
+      oldRestriction,
+      '- Quote attributes. Stage hosted docs in the profile-scoped root; prefer `ref` or use the full hosted URL.',
+      '## Messaging',
+      'Keep messaging guidance.',
+    ].join('\n');
+
+    expect(applyRegisteredRules(prompt)).toBe(prompt.replace(oldRestriction,
+      '- Use hosted Canvas refs/URLs or viewer-permitted HTTP(S) webpage URLs; otherwise use regular links. Never use file://, local filesystem paths or arbitrary loopback URLs.',
+    ));
   });
 
   it('attributes core capabilities to the product and only the runtime to OpenClaw', () => {

@@ -41,6 +41,7 @@ import {
 } from '@/features/settings/browser/browserConnectionVerification';
 import BrowserDownloadsPage from '@/features/settings/browser/BrowserDownloadsPage';
 import BrowserHistoryPage from '@/features/settings/browser/BrowserHistoryPage';
+import WebpageEmbedSettingsRow from '@/features/settings/browser/WebpageEmbedSettingsRow';
 import { CustomProxyFields } from '@/features/settings/preferences/CustomProxyFields';
 import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';
@@ -1089,6 +1090,7 @@ const BrowserSettingsTab: React.FC<BrowserSettingsTabProps> = ({
           {i18nService.t('browserEmbeddedSettingsTitle')}
         </h3>
         <div className="divide-y divide-border/50 px-4">
+          <WebpageEmbedSettingsRow disabled={isSaving || savingMode} />
           <div className="flex min-h-12 items-center justify-between gap-3 py-2">
             <label
               htmlFor="browser-search-engine"

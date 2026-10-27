@@ -28,12 +28,16 @@ PDF 的既有许可证保持原样，Office 三项继续使用原有 MIT-0 来�
 - 保留上游有用正文、模板、参考文件和可执行脚本；移除市场安装、评价、同步命令、
   其他宿主专用命令及未打包的仓库维护检查。不将技能重写成只有概述的提示词。
   通用绘图自检不代表通过类型专属的语义／数据校验；相关规则仍需核对输入和实际渲染。
+- `frontend-design` 保持前端视觉设计指导，不承担宿主展示方式的选择。可选 Widget Kit
+  扩展的 `visualize` 单独负责当前会话中的显示交付：复用已有设计或源码，选择真实
+  Widget 或网页卡片并完成显示。相关指引只在 `visualize` 及其参考中维护，不修改
+  设计技能来分流请求，也不把可选技能变成内置技能的依赖。
 - Python 和 `openpyxl`、`pypdf`、PyYAML 等基础依赖随包提供，清单以
   `resources/python/requirements.txt` 为准。缺少的 Python 包只走已配置的内网源或离线
   wheel，不添加公网备用源，也不要求用户安装 LibreOffice、Pandoc、Poppler 或 Office。
 - `python-docx`、`python-pptx`、PDFium、Pillow、ReportLab、Playwright 等是按任务需要
   使用的可选 Python 包，技能不能把它们称为预装能力。OCR 仅使用本地已有模型资产。
-- HTML/SVG 使用内联资源和 Windows 本地字体；包含中文后备字体，不请求 Google Fonts
+- 内置文档、绘图及产品前端输出的 HTML/SVG 使用内联资源和 Windows 本地字体；包含中文后备字体，不请求 Google Fonts
   或公共 CDN。SVG 导出去掉复制的页面样式中的字体加载规则；源 SVG 内部仍含字体加载
   规则时在写出前报错，要求先修正任务副本。绘图自检默认执行离线检查，逐个检查
   `srcset`／`imagesrcset` 图片候选地址。

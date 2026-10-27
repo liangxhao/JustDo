@@ -1,5 +1,6 @@
 import './message-media';
 import '../native-widget/anchor';
+import '../webpage-embed/view';
 
 /**
  * Ordinary message rendering for persisted Content and streaming text.
@@ -348,43 +349,11 @@ function renderSpeechButton(
   `;
 }
 
-function safeCanvasUrl(value: string | undefined): string | null {
-  const url = value?.trim();
-  return url && /^https?:\/\//i.test(url) ? url : null;
-}
-
 function renderAssistantCanvas(item: AssistantCanvasItem): TemplateResult {
   if (item.preview.render === 'native') {
     return html`<native-widget-anchor .preview=${item.preview}></native-widget-anchor>`;
   }
-  const title = item.preview.title?.trim() || i18nService.t('coworkCanvasTitle');
-  const url = safeCanvasUrl(item.preview.url);
-  const preferredHeight = item.preview.preferredHeight;
-  const height =
-    typeof preferredHeight === 'number' && Number.isFinite(preferredHeight)
-      ? Math.min(800, Math.max(160, preferredHeight))
-      : 360;
-
-  return html`
-    <section class="assistant-canvas" aria-label=${title}>
-      <div class="assistant-canvas__title">${title}</div>
-      ${
-        url
-          ? html`<iframe
-              class="assistant-canvas__frame"
-              src=${url}
-              title=${title}
-              style=${`height: ${height}px`}
-              loading="lazy"
-              referrerpolicy="no-referrer"
-              sandbox="allow-downloads allow-forms allow-modals allow-popups allow-scripts"
-            ></iframe>`
-          : html`<div class="assistant-canvas__unavailable">
-              ${i18nService.t('coworkCanvasUnavailable')}
-            </div>`
-      }
-    </section>
-  `;
+  return html`<webpage-embed .preview=${item.preview}></webpage-embed>`;
 }
 
 function localPathFromAttachmentUrl(url: string): string {
@@ -745,6 +714,7 @@ function renderOrderedBubble(
   trailingAction: TemplateResult | typeof nothing = nothing,
   disclosureOwner?: string,
   bubbleIndex = 0,
+  streaming = false,
 ): TemplateResult | typeof nothing {
   if (items.length === 0) return nothing;
   const text = items
@@ -786,7 +756,7 @@ function renderOrderedBubble(
                   disclosureOwner ? JSON.stringify([disclosureOwner, bubbleIndex, index]) : nothing
                 }
               >
-                ${unsafeHTML(toSanitizedMarkdownHtml(item.text, { allowDetails: true }))}
+                ${unsafeHTML((streaming ? toStreamingMarkdownHtml : toSanitizedMarkdownHtml)(item.text, { allowDetails: true }))}
               </div>
             `;
           }
@@ -911,15 +881,11 @@ export function renderMessageBlockWithTrailingStream(
         ${
           hasStreamText
             ? html`
-                <div class="chat-bubble chat-bubble--assistant">
-                  ${renderCopyButton(streamText)}
-                  <div
-                    class="chat-bubble__text markdown-content"
-                    data-message-disclosure-owner=${JSON.stringify([`${group.key}:stream`, 0, 0])}
-                  >
-                    ${unsafeHTML(toStreamingMarkdownHtml(streamText, { allowDetails: true }))}
-                  </div>
-                </div>
+                ${renderStreamingAssistantMessage(
+                  streamText,
+                  opts?.workingDirectory,
+                  `${group.key}:stream`,
+                )}
               `
             : renderReadingIndicator()
         }
@@ -1006,6 +972,7 @@ function renderAssistantMessage(
   workingDirectory?: string,
   trailingAction: TemplateResult | typeof nothing = nothing,
   disclosureOwner?: string,
+  streaming = false,
 ): TemplateResult {
   const sections: Array<
     | { kind: 'bubble'; items: BubbleContentItem[] }
@@ -1057,6 +1024,7 @@ function renderAssistantMessage(
           index === lastBubbleIndex ? trailingAction : nothing,
           disclosureOwner,
           index,
+          streaming,
         )
       : section.content,
   )}`;
@@ -1275,25 +1243,33 @@ export function renderStreamingGroup(
         ${
           hasText
             ? html`
-                <div class="chat-bubble chat-bubble--assistant">
-                  ${renderCopyButton(text)}
-                  <div
-                    class="chat-bubble__text markdown-content"
-                    data-message-disclosure-owner=${JSON.stringify([
-                      opts?.disclosureOwner ?? `stream:${startedAt}`,
-                      0,
-                      0,
-                    ])}
-                  >
-                    ${unsafeHTML(toStreamingMarkdownHtml(text, { allowDetails: true }))}
-                  </div>
-                </div>
+                ${renderStreamingAssistantMessage(
+                  text,
+                  undefined,
+                  opts?.disclosureOwner ?? `stream:${startedAt}`,
+                )}
               `
             : renderReadingIndicator()
         }
       </div>
     </div>
   `;
+}
+
+function renderStreamingAssistantMessage(text: string, workingDirectory?: string, disclosureOwner?: string): TemplateResult {
+  const normalized = normalizeMessage({ role: 'assistant', content: text });
+  if (normalized.content.some(item => item.type !== 'text'))
+    return renderAssistantMessage(normalized, {}, workingDirectory, nothing, disclosureOwner, true);
+  // Streaming Markdown relies on terminal newlines to distinguish complete
+  // dividers/code from incomplete blocks. Final-message normalization trims
+  // those boundaries; keep the original bytes for the existing plain-text path.
+  return html`<div class="chat-bubble chat-bubble--assistant">
+    ${renderCopyButton(text)}
+    <div class="chat-bubble__text markdown-content"
+      data-message-disclosure-owner=${JSON.stringify([disclosureOwner, 0, 0])}>
+      ${unsafeHTML(toStreamingMarkdownHtml(text, { allowDetails: true }))}
+    </div>
+  </div>`;
 }
 
 function renderReadingIndicator(): TemplateResult {

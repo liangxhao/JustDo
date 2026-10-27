@@ -65,6 +65,7 @@ import {
   registerBrowserExtensionNativeHost,
 } from './browser/extension/browserExtensionNativeMessaging';
 import { readAutomaticBrowserExtensionPairing } from './browser/extension/browserExtensionPairing';
+import { captureWebpageEmbedConnection } from './chat/embed/webpageEmbedConnection';
 import { AppInitialization } from './core/app/appInitialization';
 import { registerAppShutdown } from './core/app/appShutdown';
 import { createLoginSdkAdapter } from './core/app/auth/loginSdkAdapter';
@@ -1183,6 +1184,9 @@ const BROWSER_GUEST_PRELOAD_PATH = app.isPackaged
 const WIDGET_VIEWER_PRELOAD_PATH = app.isPackaged
   ? path.join(__dirname, 'widgetViewerPreload.js')
   : path.join(__dirname, '../dist-electron/widgetViewerPreload.js');
+const WEBPAGE_EMBED_PRELOAD_PATH = app.isPackaged
+  ? path.join(__dirname, 'webpageEmbedPreload.js')
+  : path.join(__dirname, '../dist-electron/webpageEmbedPreload.js');
 
 // 获取应用图标路径（Windows 使用 .ico，其他平台使用 .png）
 const getAppIconPath = (): string | undefined => {
@@ -1932,6 +1936,9 @@ if (agentBridgeArgv) {
       getRendererPreferenceStore: getStore,
       browserGuestPreloadPath: BROWSER_GUEST_PRELOAD_PATH,
       widgetViewerPreloadPath: WIDGET_VIEWER_PRELOAD_PATH,
+      webpageEmbedPreloadPath: WEBPAGE_EMBED_PRELOAD_PATH,
+      getWebpageEmbedConnection: () => captureWebpageEmbedConnection(getOpenClawRuntimeAdapter, getOpenClawEngineManager()),
+      runConfigMutationExclusive: operation => getOpenClawConfigSyncService().runConfigMutationExclusive(operation),
       getBrowserDownloadSettings: () => {
         const config = getStore().get<AppConfigSettings>('app_config');
         return normalizeBrowserDownloadSettings({

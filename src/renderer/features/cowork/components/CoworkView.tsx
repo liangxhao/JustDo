@@ -259,6 +259,7 @@ import {
 } from './display/tabs/displayTabIds';
 import { useCoworkBrowserPanels } from './display/tabs/useCoworkBrowserPanels';
 import { useMcpAppReferenceTabs } from './display/tabs/useMcpAppReferenceTabs';
+import { useWebpageEmbedTabs } from './display/tabs/useWebpageEmbedTabs';
 import { useWidgetReferenceTabs } from './display/tabs/useWidgetReferenceTabs';
 import SessionReviewPanel from './review/SessionReviewPanel';
 import type { SessionTranscriptMutation } from './sessions/useCoworkSessionActions';
@@ -723,6 +724,15 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     () => setIsDisplayPanelOpen(true),
     isInitialized ? sessions.map(session => session.id) : undefined,
   );
+  const webpageReferences = useWebpageEmbedTabs(
+    displaySessionKey,
+    id => {
+      setIsWorkspaceFilesOpen(false);
+      setPreferredDisplayTabId(id);
+    },
+    () => setIsDisplayPanelOpen(true),
+    isInitialized ? sessions.map(session => session.id) : undefined,
+  );
   const appFileOpenerRef = useRef<OpenMcpAppFile>(async () => false);
   const homeFileOpenerRef = useRef<OpenMcpAppFile>(async () => false);
   appFileOpenerRef.current = async request => {
@@ -759,6 +769,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       ...mcpAppTabs.tabs.map(tab => tab.id),
       ...mcpAppReferences.tabs.map(tab => tab.id),
       ...widgetReferences.tabs.map(tab => tab.id),
+      ...webpageReferences.tabs.map(tab => tab.id),
     ],
     [
       agentTeamEnabled,
@@ -782,6 +793,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       mcpAppTabs.tabs,
       mcpAppReferences.tabs,
       widgetReferences.tabs,
+      webpageReferences.tabs,
     ],
   );
   const { orderedIds: availableDisplayTabIds, replaceTab } = useDisplayTabOrder(
@@ -2294,6 +2306,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     mcpAppTabs.hasRetainedPanels ||
     mcpAppReferences.hasRetainedPanels ||
     widgetReferences.hasRetainedPanels ||
+    webpageReferences.hasRetainedPanels ||
     Object.values(displayStates).some(
       displayState => displayState.hasBrowserPanelOpened || displayState.terminalTabs.length > 0,
     );
@@ -3088,6 +3101,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       ...mcpAppTabs.tabs,
       ...mcpAppReferences.tabs,
       ...widgetReferences.tabs,
+      ...webpageReferences.tabs,
       ...(isBrowserPanelOpen
         ? browserTabs.map(tab => ({
             id: browserDisplayTabId(tab.targetId),
@@ -3781,7 +3795,8 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
               activeTabId={activeDisplayTabId ?? ''}
               referenceContent={
                 mcpAppReferences.panel(activeDisplayTabId) ??
-                widgetReferences.panel(activeDisplayTabId)
+                widgetReferences.panel(activeDisplayTabId) ??
+                webpageReferences.panel(activeDisplayTabId)
               }
               isOpen={isDisplayPanelOpen}
               onClose={closeDisplayPanel}
@@ -4059,6 +4074,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     ...mcpAppTabs.tabs,
     ...mcpAppReferences.tabs,
     ...widgetReferences.tabs,
+    ...webpageReferences.tabs,
     ...(isBrowserPanelOpen
       ? browserTabs.map(tab => ({
           id: browserDisplayTabId(tab.targetId),
@@ -4121,7 +4137,8 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       chatWrapperRef.current &&
       (mcpAppTabs.hasRetainedPanels ||
         mcpAppReferences.hasRetainedPanels ||
-        widgetReferences.hasRetainedPanels) ? (
+        widgetReferences.hasRetainedPanels ||
+        webpageReferences.hasRetainedPanels) ? (
         <JustDoChatWrapper key="chat-controller" ref={chatWrapperRef} className="hidden" />
       ) : undefined,
     mcpAppMenu: homeApps.menu,

@@ -8,6 +8,118 @@ import {
 
 import { projectGatewayHistoryForDisplay } from './history-display-normalizer';
 
+describe('ordered assistant webpage embeds', () => {
+  test('keeps prose, webpage embeds and attachments in delivery order', () => {
+    const normalized = normalizeMessage({
+      role: 'assistant',
+      content:
+        'A[embed ref="report" /]B\nMEDIA: /tmp/image.png\nC[embed url="https://example.test/live?q=1#chart" /]D',
+    });
+    expect(normalized.content.map(item => item.type)).toEqual([
+      'text',
+      'canvas',
+      'text',
+      'attachment',
+      'text',
+      'canvas',
+      'text',
+    ]);
+    expect(normalized.content[1]).toMatchObject({
+      preview: { ref: 'report' },
+      rawText: '[embed ref="report" /]',
+    });
+    expect(normalized.content[5]).toMatchObject({
+      preview: { url: 'https://example.test/live?q=1#chart' },
+    });
+  });
+
+  test('shares code ownership across consecutive native text blocks only', () => {
+    const raw = {
+      role: 'assistant',
+      content: [
+        { type: 'text', text: '```html' },
+        { type: 'text', text: '[embed ref="literal" /]' },
+        { type: 'text', text: '```' },
+        { type: 'thinking', text: 'private' },
+        { type: 'text', text: '[embed ref="report" /]' },
+      ],
+    };
+    const normalized = normalizeMessage(raw);
+    expect(normalized.content.filter(item => item.type === 'canvas')).toHaveLength(1);
+    expect(normalized.content[0]).toMatchObject({
+      type: 'text',
+      text: '```html\n[embed ref="literal" /]\n```',
+    });
+  });
+
+  test('keeps unfinished cumulative text literal until its shortcode completes', () => {
+    const partial = 'A[embed ref="report"';
+    expect(normalizeMessage({ role: 'assistant', content: partial }).content).toEqual([
+      { type: 'text', text: partial },
+    ]);
+    expect(
+      normalizeMessage({ role: 'assistant', content: `${partial} /]B` }).content.map(
+        item => item.type,
+      ),
+    ).toEqual(['text', 'canvas', 'text']);
+  });
+
+  test('does not create webpages from user text or structured user Canvas', () => {
+    const shortcode = '[embed ref="report" /]';
+    expect(normalizeMessage({ role: 'user', content: shortcode }).content).toEqual([
+      { type: 'text', text: shortcode },
+    ]);
+    expect(
+      normalizeMessage({
+        role: 'user',
+        content: [
+          {
+            type: 'canvas',
+            preview: { kind: 'canvas', render: 'url', url: 'https://example.test/' },
+          },
+        ],
+      }).content,
+    ).toEqual([]);
+  });
+
+  test('retains structured MCP identity and ignores model styles', () => {
+    const mcpApp = { viewId: 'app', serverName: 'server' };
+    const normalized = normalizeMessage({
+      role: 'assistant',
+      content: [
+        {
+          type: 'canvas',
+          preview: {
+            kind: 'canvas',
+            render: 'url',
+            url: 'https://example.test/',
+            mcpApp,
+            className: 'cover',
+            style: 'position:fixed',
+          },
+        },
+      ],
+    });
+    expect(normalized.content[0]).toMatchObject({
+      preview: { mcpApp, url: 'https://example.test/' },
+    });
+    expect(normalized.content[0]).not.toHaveProperty('preview.style');
+  });
+
+  test('preserves reply and voice directives across embeds', () => {
+    const normalized = normalizeMessage({
+      role: 'assistant',
+      content:
+        '[[audio_as_voice]]\nMEDIA: /tmp/voice.mp3\n[embed ref="report" /]\n[[reply_to_current]]Done',
+    });
+    expect(normalized).toMatchObject({ audioAsVoice: true, replyTarget: { kind: 'current' } });
+    expect(normalized.content[0]).toMatchObject({
+      type: 'attachment',
+      attachment: { isVoiceNote: true },
+    });
+  });
+});
+
 describe('isTeamDiscussionReplyMirror', () => {
   const mirror = {
     role: 'assistant',

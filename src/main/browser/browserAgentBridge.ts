@@ -68,6 +68,7 @@ import * as browserAgentSnapshots from './agent/browserAgentSnapshots';
 import { type BrowserAgentSnapshotsContext } from './agent/browserAgentSnapshots';
 import { BrowserIntervention } from './agent/browserIntervention';
 import { BackgroundBrowserHost } from './backgroundBrowserHost';
+import { isBrowserSessionPolicyGuest } from './browserSessionPolicy';
 import {
   importChromeData,
   listChromeImportSources,
@@ -754,6 +755,7 @@ export class BrowserAgentBridge {
       !guest ||
       guest.isDestroyed() ||
       guest.getType() !== 'webview' ||
+      isBrowserSessionPolicyGuest(guest) ||
       !this.isAllowedBrowserHost(event.sender.id, guest.hostWebContents?.id ?? -1) ||
       !expectedStoragePath ||
       !actualStoragePath ||
@@ -1924,6 +1926,7 @@ export class BrowserAgentBridge {
 
   private isRegisteredGuestAvailable(tab: RegisteredTab): boolean {
     const guest = webContents.fromId(tab.webContentsId);
+    if (guest && isBrowserSessionPolicyGuest(guest)) return false;
     if (tab.headless) return Boolean(guest && this.backgroundHost.owns(tab, guest));
     // Ownership and webContents type are stable across Electron wrapper
     // recreation; Session object identity is not.

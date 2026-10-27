@@ -1,15 +1,22 @@
 # Widget Kit
 
 Optional bundled plugin for native OpenClaw `show_widget`. Its general
-`visualize` skill guides static visualizations, HTML/SVG explanations and
-interactive tools. Controls and conversation follow-up are optional.
+`visualize` skill delivers content into the current conversation, choosing
+between native Widgets and webpage cards. It reuses existing designs and source;
+visual design remains with design skills. Native Widgets
+support local content and admitted anonymous HTTPS resource/data downloads;
+existing webpage URLs and ordinary webpage behavior use a separate, actually
+available host delivery path. Controls and conversation follow-up are optional.
 The optional `interactive-answer` content kind provides reusable tables,
 comparisons, charts, forms and expandable steps when those controls fit.
 Custom layouts and calculations use the native HTML kind directly. The
 `html-page` kind accepts raw fragments or complete HTML pages and adapts HTTPS
 image loaders to native data URLs. Libraries load from author-supplied CDN URLs
-through the system proxy. No tools, RPC handlers, database or runtime patches
-are added; one exact capability HTTP route serves the plugin image adapter.
+through the browser proxy under native resource rules.
+Existing webpage URLs are embedded through assistant-message syntax without an
+extra tool. Authored hosted pages use the current Gateway profile's
+`canvas/documents` directory. No agent tools, RPC handlers, database or runtime
+patches are added; one exact capability HTTP route serves the plugin image adapter.
 
 ## Ownership and packaging
 
@@ -39,11 +46,35 @@ or task execution.
 
 ## Authoring contract
 
-Start with [the visualize skill](skills/visualize/SKILL.md). Discover the
+Start with [the visualize skill](skills/visualize/SKILL.md) to choose delivery.
+Its discovery description covers requests to draw or interact directly in the
+current chat/app UI, including globes/3D scenes; it does not require the user to
+name `show_widget`. A design skill may supply the visual/source, but an on-screen
+request still needs the actual viewer handoff. See [delivery examples](skills/visualize/references/delivery-examples.md)
+for Widget arguments, existing URL embeds and staged HTML refs. Explicit file
+deliverables and real application development keep their own completion criteria.
+The following tool rules apply to the native Widget branch. Discover the
 actual native tool and use only advertised kinds. Inline availability requires
 the originating viewer capability; enabling this plugin does not grant it to a
 headless client. Use the real tool result instead of inventing embed handles,
 Canvas IDs or native state files.
+
+The [hosted HTML reference](skills/visualize/references/hosted-html.md) distinguishes
+independent webpages from native local and network-enabled Widgets. Authored
+visualizations with supported anonymous HTTPS GET/HEAD data or images can use
+`html`/`html-page` with native `pin`/`netOrigins` admission. Networking or a full
+HTML document alone does not require independent embedding. Existing webpage
+URLs, source-site login/Cookies, network forms, WebSocket or services outside
+the Widget download policy require an actually supported webpage path.
+The desktop host implements independent webpage embedding and checks the current
+external-URL setting when admitting a page. The hosted HTML reference explains
+how to obtain the real profile directory through existing authorized host tools.
+Unsupported delivery falls back to actual links or authorized file previews.
+The viewer follows browserProxy, defaulting to system proxy. External URLs use a
+top-level webview without preload and share the default built-in browser's site
+login/storage; hosted refs retain an isolated temporary session and shell/iframe.
+Other profiles and Chrome are not automatically shared. The skill does not
+configure proxies or relax native Widget CSP.
 
 For native `kind: "html"`, `widget_code` is an HTML/SVG fragment with optional
 inline CSS and JavaScript. A static diagram or chart can be the complete result;
@@ -224,5 +255,4 @@ under `build/widget-kit/`.
 Component navigation preserves inputs. Secondary data/details start collapsed;
 follow-up validates inputs in place and uses the host's existing confirmation.
 Actual model quality and packaged/platform coverage remain in the
-[feature contract](../../../docs/features/chat/interactive-answers.md) and
-[pending acceptance checks](../../../docs/plans/interactive-answers-acceptance.md).
+[feature contract and current validation limits](../../../docs/features/chat/interactive-answers.md#当前验证边界).

@@ -140,6 +140,9 @@ import { NativeWidgetView } from './native-widget/view';
 import type { TerminalErrorMessage } from './timeline/terminal-error-message';
 import { EditDiffMonacoController } from './tools/edit-diff-monaco';
 import { TOOL_OUTPUT_REQUEST, type ToolOutput } from './tools/tool-output';
+import { WebpageEmbedAnchor } from './webpage-embed/anchor';
+import { WEBPAGE_EMBED_CONTEXT_REQUEST, type WebpageEmbedContext } from './webpage-embed/context';
+import { getWebpageEmbedPresentations } from './webpage-embed/presentations';
 
 const MERMAID_BUBBLE_MIN_WIDTH = 500;
 const MERMAID_BUBBLE_MAX_WIDTH = 820;
@@ -942,6 +945,7 @@ export class JustDoChatElement extends LitElement {
       this.subscribeController(this._controller);
     this.requestUpdate();
     this.addEventListener(NATIVE_WIDGET_CONTEXT_REQUEST, this.handleWidgetContext);
+    this.addEventListener(WEBPAGE_EMBED_CONTEXT_REQUEST, this.handleWebpageEmbedContext);
     this.addEventListener(McpAppEvent.ContextRequest, this.handleMcpAppContext);
     this.addEventListener(TOOL_OUTPUT_REQUEST, this.handleToolOutputRequest);
     this.messageThemeObserver = new MutationObserver(() => {
@@ -972,6 +976,8 @@ export class JustDoChatElement extends LitElement {
   disconnectedCallback(): void {
     super.disconnectedCallback();
     this.removeEventListener(NATIVE_WIDGET_CONTEXT_REQUEST, this.handleWidgetContext);
+    this.removeEventListener(WEBPAGE_EMBED_CONTEXT_REQUEST, this.handleWebpageEmbedContext);
+    getWebpageEmbedPresentations(this.ownerDocument).refresh(this);
     getNativeWidgetPresentations(this.ownerDocument).refresh(this);
     this.removeEventListener(McpAppEvent.ContextRequest, this.handleMcpAppContext);
     this.richMessageControls?.dispose();
@@ -1183,8 +1189,12 @@ export class JustDoChatElement extends LitElement {
     const reader = this.pendingThinkingNavigation;
     this.pendingThinkingNavigation = null;
     if (!reader?.isConnected || reader.getRootNode() !== this.renderRoot) return;
-    const top = this.scrollTop + reader.getBoundingClientRect().top -
-      this.getBoundingClientRect().top - this.clientTop - 8;
+    const top =
+      this.scrollTop +
+      reader.getBoundingClientRect().top -
+      this.getBoundingClientRect().top -
+      this.clientTop -
+      8;
     this.chatScrollController.navigateTo(Math.max(0, top), 'instant');
   }
 
@@ -1556,7 +1566,32 @@ export class JustDoChatElement extends LitElement {
     widget.context = this.widgetContext();
   };
 
+  private webpageEmbedContext(): WebpageEmbedContext | undefined {
+    const binding = this.widgetContext();
+    if (!binding) return;
+    return {
+      sessionKey: binding.sessionKey,
+      sessionId: binding.sessionId,
+      presentationScope: binding.presentationScope,
+      presentationOwner: this,
+      isCurrent: binding.isCurrent,
+      openLink: binding.openLink,
+    };
+  }
+
+  private readonly handleWebpageEmbedContext = (event: Event): void => {
+    const anchor = event.composedPath()[0];
+    if (!(anchor instanceof WebpageEmbedAnchor) || !this.renderRoot.contains(anchor)) return;
+    event.stopPropagation();
+    anchor.context = this.webpageEmbedContext();
+  };
+
   private syncWidgetContexts(): void {
+    const webpageContext = this.webpageEmbedContext();
+    getWebpageEmbedPresentations(this.ownerDocument).refresh(this, webpageContext);
+    this.renderRoot?.querySelectorAll<WebpageEmbedAnchor>('webpage-embed').forEach(anchor => {
+      anchor.context = webpageContext;
+    });
     const context = this.widgetContext();
     getNativeWidgetPresentations(this.ownerDocument).refresh(this, context);
     this.renderRoot

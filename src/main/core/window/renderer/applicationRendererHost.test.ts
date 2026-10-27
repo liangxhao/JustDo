@@ -61,6 +61,7 @@ describe('packaged application renderer host', () => {
     );
     await writeFile(path.join(dist, 'assets', 'main.js'), 'globalThis.ready = true;');
     await writeFile(path.join(dist, 'widget-viewer.html'), '<html>Widget viewer</html>');
+    await writeFile(path.join(dist, 'embed-viewer.html'), '<html>Webpage viewer</html>');
     await writeFile(path.join(dist, 'assets', 'theme.css'), ':root { color: black; }');
     await writeFile(path.join(dist, 'pdfjs', 'wasm', 'decoder.wasm'), 'fixture');
     await writeFile(path.join(directory, 'secret.js'), 'SECRET');
@@ -122,6 +123,16 @@ describe('packaged application renderer host', () => {
       `mount=${mount}&token=secret`,
     ])
       expect((await read(host, `/widget-viewer.html?${query}`)).status).toBe(404);
+  });
+
+  it('serves the independent viewer with the same immutable mount boundary', async () => {
+    host = await startApplicationRendererHost(dist);
+    const mount = '2e4ec192-521e-4b76-b132-e34598e41bb2';
+    expect((await read(host, `/embed-viewer.html?mount=${mount}`)).body).toContain('Webpage viewer');
+    for (const query of ['mount=bad', `surface=${mount}`, `mount=${mount}&url=https://example.test`, `mount=${mount}&mount=${mount}`])
+      expect((await read(host, `/embed-viewer.html?${query}`)).status).toBe(404);
+    await writeFile(path.join(dist, 'embed-viewer.html'), '<html>modified</html>');
+    expect((await read(host, `/embed-viewer.html?mount=${mount}`)).status).toBe(404);
   });
 
   it.each(['\r\n', '\r'])(

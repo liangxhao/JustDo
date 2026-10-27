@@ -1,5 +1,7 @@
 import { NativeWidgetToolIdentity } from '@shared/plugins/nativeIds';
 
+import { stripEmbedShortcodes } from './embed-shortcodes';
+
 /** Native descriptors are admitted only from an identified show_widget result. */
 export type NativeCanvasPreview = {
   kind: 'canvas';
@@ -44,49 +46,43 @@ export function isNativeWidgetFallbackPreview(
   docIds: ReadonlySet<string>,
 ): boolean {
   const preview = record(value);
-  const docId = preview?.viewId;
-  return Boolean(
-    preview?.kind === 'canvas' &&
-    preview.render === 'url' &&
-    typeof docId === 'string' &&
-    docIds.has(docId) &&
-    preview.url === `/__openclaw__/canvas/documents/${docId}/index.html`,
+  if (
+    preview?.kind !== 'canvas' ||
+    preview.render !== 'url' ||
+    Object.prototype.hasOwnProperty.call(preview, 'mcpApp') ||
+    typeof preview.url !== 'string'
+  )
+    return false;
+  const document = preview.url.match(
+    /^\/__openclaw__\/canvas\/documents\/([A-Za-z0-9._-]{1,256})\/index\.html$/,
+  );
+  return Boolean(document && DOCUMENT_ID.test(document[1]) && docIds.has(document[1]));
+}
+
+/** Suppress only exact Widget fallbacks; ambiguous bare references remain visible. */
+export function stripNativeWidgetFallbacks(
+  text: string,
+  docIds: ReadonlySet<string>,
+  appIds: ReadonlySet<string> = new Set(),
+): string {
+  if (!docIds.size || !text.toLowerCase().includes('[embed')) return text;
+  return stripEmbedShortcodes(text, attributes =>
+    isNativeWidgetFallbackAttributes(attributes, docIds, appIds),
   );
 }
 
-/** Suppress only fallbacks identified by native tool results. */
-export function stripNativeWidgetFallbacks(text: string, docIds: ReadonlySet<string>): string {
-  if (!docIds.size || !text.toLowerCase().includes('[embed')) return text;
-  const codeRanges = Array.from(
-    text.matchAll(/```[\s\S]*?(?:```|$)|~~~[\s\S]*?(?:~~~|$)|`[^`\n]*`/g),
-    match => [match.index, match.index + match[0].length],
+export function isNativeWidgetFallbackAttributes(
+  attributes: Readonly<Record<string, string>>,
+  docIds: ReadonlySet<string>,
+  appIds: ReadonlySet<string>,
+): boolean {
+  const ref = attributes.ref ?? attributes.viewid;
+  const url = attributes.url;
+  if (url === undefined) return Boolean(ref && docIds.has(ref) && !appIds.has(ref));
+  const document = url.match(
+    /^\/__openclaw__\/canvas\/documents\/([A-Za-z0-9._-]{1,256})\/index\.html$/,
   );
-  return text.replace(
-    /\[embed\s+([^\]]*?[^\]/]|)\][\s\S]*?\[\/embed\]|\[embed\s+([^\]]*?)\/\]/gi,
-    (
-      match: string,
-      blockAttrs: string | undefined,
-      selfAttrs: string | undefined,
-      offset: number,
-    ) => {
-      if (codeRanges.some(([start, end]) => offset >= start && offset < end)) return match;
-      const attrs = new Map(
-        Array.from(
-          (blockAttrs ?? selfAttrs ?? '').matchAll(/([\w-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g),
-          value => [value[1].toLowerCase(), value[2] ?? value[3]],
-        ),
-      );
-      const ref = attrs.get('ref') ?? attrs.get('viewid');
-      const url = attrs.get('url');
-      // Native embeds use an explicit URL before their ref. A matching ref
-      // alone cannot identify an external or different document as a duplicate.
-      if (url === undefined && ref && docIds.has(ref)) return '';
-      const document = url?.match(
-        /^\/__openclaw__\/canvas\/documents\/([A-Za-z0-9._-]+)\/index\.html$/,
-      );
-      return document && docIds.has(document[1]) ? '' : match;
-    },
-  );
+  return Boolean(document && DOCUMENT_ID.test(document[1]) && docIds.has(document[1]));
 }
 
 function record(value: unknown): Record<string, unknown> | undefined {

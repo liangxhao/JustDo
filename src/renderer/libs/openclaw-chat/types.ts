@@ -5,6 +5,7 @@
 import type { BrowserAnnotationDisplay } from '@shared/browser/browser';
 import type { BrowserRecordingDraft } from '@shared/browser/browserRecording';
 
+import type { WebpageEmbedPreview } from './pipeline/embed-presentation';
 import type { NativeCanvasPreview } from './pipeline/native-canvas';
 
 export type UserMessageHistoryAction = 'edit' | 'withdraw';
@@ -88,19 +89,7 @@ export type MessageContentItem =
   | { type: 'browser_recording'; recording: BrowserRecordingDraft }
   | {
       type: 'canvas';
-      preview:
-        | NativeCanvasPreview
-        | {
-            kind: 'canvas';
-            surface: 'assistant_message';
-            render: 'url';
-            title?: string;
-            preferredHeight?: number;
-            url?: string;
-            viewId?: string;
-            className?: string;
-            style?: string;
-          };
+      preview: NativeCanvasPreview | WebpageEmbedPreview;
       rawText?: string | null;
     };
 
@@ -128,19 +117,7 @@ export type ToolCard = {
   outputText?: string;
   isError?: boolean;
   messageId?: string;
-  preview?:
-    | NativeCanvasPreview
-    | {
-        kind: 'canvas';
-        surface: 'assistant_message';
-        render: 'url';
-        title?: string;
-        preferredHeight?: number;
-        url?: string;
-        viewId?: string;
-        className?: string;
-        style?: string;
-      };
+  preview?: NativeCanvasPreview | WebpageEmbedPreview;
 };
 
 // ─── Gateway Message (raw format from gateway) ─────────────────────────────

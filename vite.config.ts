@@ -140,6 +140,20 @@ export default defineConfig({
         onstart() {},
       },
       {
+        entry: 'src/main/webpageEmbedPreload.ts',
+        vite: {
+          root: projectRoot,
+          plugins: [createApplicationLicensePlugin({ repoRoot: projectRoot, scope: 'webpageEmbedPreload' })],
+          build: {
+            outDir: 'dist-electron',
+            sourcemap: !isProductionBuild,
+            minify: isProductionBuild ? 'esbuild' : false,
+            rollupOptions: { checks: { pluginTimings: false } },
+          },
+        },
+        onstart() {},
+      },
+      {
         entry: 'src/main/widgetViewerPreload.ts',
         vite: {
           root: projectRoot,
@@ -178,6 +192,7 @@ export default defineConfig({
         imagePreview: path.join(rendererRoot, 'image-preview.html'),
         workspace: path.join(rendererRoot, 'workspace.html'),
         widgetViewer: path.join(rendererRoot, 'widget-viewer.html'),
+        webpageEmbed: path.join(rendererRoot, 'embed-viewer.html'),
       },
       checks: {
         pluginTimings: false,

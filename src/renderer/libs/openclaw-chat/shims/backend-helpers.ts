@@ -1,3 +1,8 @@
+import {
+  previewFromEmbedShortcode,
+  type WebpageEmbedPreview,
+} from '@/libs/openclaw-chat/pipeline/embed-presentation';
+import { scanEmbedShortcodes } from '@/libs/openclaw-chat/pipeline/embed-shortcodes';
 import { partitionTaggedReasoning } from '@/libs/openclaw-chat/pipeline/tagged-reasoning';
 
 /**
@@ -17,47 +22,21 @@ export function stripInboundMetadata(text: string): string {
 // Original: src/chat/canvas-render.ts
 // Returns { text, previews } matching the OpenClaw signature used by message-normalizer.
 
-export type CanvasPreview = {
-  kind: 'canvas';
-  surface: 'assistant_message';
-  render: 'url';
-  title?: string;
-  url?: string;
-  preferredHeight?: number;
-  viewId?: string;
-  className?: string;
-  style?: string;
-};
+export type CanvasPreview = WebpageEmbedPreview;
 
 export function extractCanvasShortcodes(text: string | undefined): {
   text: string;
   previews: CanvasPreview[];
 } {
-  if (!text) return { text: '', previews: [] };
   const previews: CanvasPreview[] = [];
-  const cleanedText = text.replace(
-    /\[embed\s+([^\]]*?)\](?:[\s\S]*?\[\/embed\])|\[embed\s+([^\]]*?)\/\]/gi,
-    (_match, attrs1, attrs2) => {
-      const attrs = attrs1 || attrs2 || '';
-      const urlMatch = attrs.match(/url="([^"]*)"/i);
-      const titleMatch = attrs.match(/title="([^"]*)"/i);
-      const heightMatch = attrs.match(/height="(\d+)"/i);
-      const viewIdMatch = attrs.match(/viewId="([^"]*)"/i);
-      if (urlMatch) {
-        previews.push({
-          kind: 'canvas',
-          surface: 'assistant_message',
-          render: 'url',
-          url: urlMatch[1],
-          ...(titleMatch ? { title: titleMatch[1] } : {}),
-          ...(heightMatch ? { preferredHeight: parseInt(heightMatch[1], 10) } : {}),
-          ...(viewIdMatch ? { viewId: viewIdMatch[1] } : {}),
-        });
-      }
+  const cleanedText = scanEmbedShortcodes(text ?? '')
+    .map(segment => {
+      if (segment.type === 'text') return segment.text;
+      previews.push(previewFromEmbedShortcode(segment));
       return '';
-    },
-  );
-  return { text: cleanedText.trim(), previews };
+    })
+    .join('');
+  return { text: cleanedText, previews };
 }
 
 export function extractCanvasFromText(

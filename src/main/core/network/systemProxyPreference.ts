@@ -25,7 +25,24 @@ export type SystemProxySettings = {
   browserProxy?: Partial<ProxySettings>;
 };
 
-const dynamicBrowserSessions = new Map<Electron.Session, Promise<void>>();
+export const BrowserProxyStatus = {
+  PENDING: 'pending',
+  READY: 'ready',
+  FAILED: 'failed',
+} as const;
+
+export interface BrowserProxySessionState {
+  generation: number;
+  status: (typeof BrowserProxyStatus)[keyof typeof BrowserProxyStatus];
+}
+
+type BrowserSessionRegistration = { operation?: Promise<void> };
+const dynamicBrowserSessions = new Map<Electron.Session, BrowserSessionRegistration>();
+const browserSessionStates = new WeakMap<Electron.Session, BrowserProxySessionState>();
+const browserSessionObservers = new WeakMap<
+  Electron.Session,
+  Set<(state: BrowserProxySessionState) => void>
+>();
 let currentBrowserProxySettings = defaultBrowserProxySettings;
 const browserProxyChangeListeners = new Set<() => void>();
 
@@ -37,8 +54,54 @@ export const onBrowserProxyWillChange = (listener: () => void): (() => void) => 
   return () => browserProxyChangeListeners.delete(listener);
 };
 
+export const getBrowserProxySessionState = (
+  targetSession: Electron.Session,
+): BrowserProxySessionState => ({
+  ...(browserSessionStates.get(targetSession) ?? {
+    generation: browserProxyGeneration,
+    status: BrowserProxyStatus.PENDING,
+  }),
+});
+
+const updateBrowserSessionState = (
+  targetSession: Electron.Session,
+  state: BrowserProxySessionState,
+): void => {
+  browserSessionStates.set(targetSession, state);
+  for (const observer of browserSessionObservers.get(targetSession) ?? []) {
+    try {
+      observer({ ...state });
+    } catch {
+      console.error('[SystemProxy] Browser proxy state observer failed.');
+    }
+  }
+};
+
+export const observeBrowserProxySession = (
+  targetSession: Electron.Session,
+  listener: (state: BrowserProxySessionState) => void,
+): (() => void) => {
+  let observers = browserSessionObservers.get(targetSession);
+  if (!observers) {
+    observers = new Set();
+    browserSessionObservers.set(targetSession, observers);
+  }
+  observers.add(listener);
+  listener(getBrowserProxySessionState(targetSession));
+  return () => {
+    observers.delete(listener);
+    if (!observers.size) browserSessionObservers.delete(targetSession);
+  };
+};
+
 export const unregisterBrowserProxySession = (targetSession: Electron.Session): void => {
   dynamicBrowserSessions.delete(targetSession);
+  updateBrowserSessionState(targetSession, {
+    generation: browserProxyGeneration,
+    status: BrowserProxyStatus.PENDING,
+  });
+  browserSessionStates.delete(targetSession);
+  browserSessionObservers.delete(targetSession);
 };
 
 export const getBrowserProxyCredentials = (): {
@@ -87,11 +150,19 @@ const removeProxyCredentials = (proxyUrl: string): string | null => {
 const applyProxyToSessions = async (
   targetSessions: Electron.Session[],
   settings: ProxySettings,
+  strictCustom = false,
 ): Promise<void> => {
   const proxyMode = settings.mode;
   if (proxyMode === ProxyMode.SYSTEM) {
     await Promise.all(targetSessions.map(target => target.setProxy({ mode: ProxyMode.SYSTEM })));
   } else if (proxyMode === ProxyMode.CUSTOM) {
+    if (
+      strictCustom &&
+      (!/^\d+$/u.test(settings.custom.port) ||
+        /[\s/@\\?#]/u.test(settings.custom.host) ||
+        !settings.custom.host)
+    )
+      throw new Error('Invalid browser proxy configuration.');
     const customProxyUrl = buildCustomProxyUrl(settings.custom);
     const proxyRules = customProxyUrl ? removeProxyCredentials(customProxyUrl) : null;
     if (proxyRules) {
@@ -105,6 +176,7 @@ const applyProxyToSessions = async (
         ),
       );
     } else {
+      if (strictCustom) throw new Error('Invalid browser proxy configuration.');
       await Promise.all(targetSessions.map(target => target.setProxy({ mode: ProxyMode.DIRECT })));
     }
   } else {
@@ -113,26 +185,85 @@ const applyProxyToSessions = async (
   await Promise.all(targetSessions.map(target => target.closeAllConnections()));
 };
 
+const applyBrowserSession = async (
+  targetSession: Electron.Session,
+  generation: number,
+  settings: ProxySettings,
+  registration?: BrowserSessionRegistration,
+): Promise<boolean> => {
+  const current = () =>
+    generation === browserProxyGeneration &&
+    (!registration || dynamicBrowserSessions.get(targetSession) === registration);
+  try {
+    await applyProxyToSessions([targetSession], settings, true);
+    if (current())
+      updateBrowserSessionState(targetSession, { generation, status: BrowserProxyStatus.READY });
+    return current();
+  } catch {
+    if (current())
+      updateBrowserSessionState(targetSession, { generation, status: BrowserProxyStatus.FAILED });
+    console.error('[SystemProxy] Failed to prepare browser session proxy.');
+    return false;
+  }
+};
+
 export const registerBrowserProxySession = async (
   targetSession: Electron.Session,
 ): Promise<void> => {
-  // Memory-only widget sessions have no storagePath. Session identity also
-  // prevents duplicate registration without sharing browser profile storage.
-  const registered = dynamicBrowserSessions.get(targetSession);
-  if (registered) {
-    await registered;
-    await browserProxyApplyQueue;
-    return;
+  // Identity supports memory-only sessions without sharing browser profile storage.
+  let registration = dynamicBrowserSessions.get(targetSession);
+  if (!registration) {
+    registration = {};
+    dynamicBrowserSessions.set(targetSession, registration);
   }
-  const operation = browserProxyApplyQueue.then(() =>
-    applyProxyToSessions([targetSession], currentBrowserProxySettings),
-  );
-  dynamicBrowserSessions.set(targetSession, operation);
-  browserProxyApplyQueue = operation.catch(error => {
-    dynamicBrowserSessions.delete(targetSession);
-    console.error('[SystemProxy] Failed to apply proxy mode to browser profile:', error);
-  });
-  await operation;
+  const currentRegistration = registration;
+  const state = getBrowserProxySessionState(targetSession);
+  if (
+    !registration.operation &&
+    (state.status !== BrowserProxyStatus.READY || state.generation !== browserProxyGeneration)
+  ) {
+    updateBrowserSessionState(targetSession, {
+      generation: browserProxyGeneration,
+      status: BrowserProxyStatus.PENDING,
+    });
+    const operation = browserProxyApplyQueue.then(async () => {
+      if (dynamicBrowserSessions.get(targetSession) !== currentRegistration) return;
+      const current = getBrowserProxySessionState(targetSession);
+      if (
+        current.status === BrowserProxyStatus.READY &&
+        current.generation === browserProxyGeneration
+      )
+        return;
+      await applyBrowserSession(
+        targetSession,
+        browserProxyGeneration,
+        currentBrowserProxySettings,
+        currentRegistration,
+      );
+    });
+    registration.operation = operation;
+    browserProxyApplyQueue = operation.catch(() => {});
+    void operation
+      .finally(() => {
+        if (currentRegistration.operation === operation) currentRegistration.operation = undefined;
+      })
+      .catch(() => {});
+  }
+  // A newer settings change may be queued while an older attempt completes.
+  // Only the stable queue's current per-session result establishes readiness.
+  while (dynamicBrowserSessions.get(targetSession) === currentRegistration) {
+    const queued = browserProxyApplyQueue;
+    await queued;
+    if (queued !== browserProxyApplyQueue) continue;
+    const current = getBrowserProxySessionState(targetSession);
+    if (
+      current.status === BrowserProxyStatus.READY &&
+      current.generation === browserProxyGeneration
+    )
+      return;
+    throw new Error('Browser proxy configuration failed.');
+  }
+  throw new Error('Browser proxy session was released.');
 };
 
 export const getProxyPreferenceSignature = (config?: SystemProxySettings): string => {
@@ -208,23 +339,38 @@ export const getBrowserProxyPreferenceSignature = (config?: SystemProxySettings)
 export const applyBrowserProxyPreference = (config?: SystemProxySettings): Promise<boolean> => {
   const generation = ++browserProxyGeneration;
   const settings = normalizeProxySettings(config?.browserProxy, ProxyMode.SYSTEM);
+  currentBrowserProxySettings = settings;
+  const targetSessions = [
+    ...new Set([
+      session.fromPartition(BROWSER_PANEL_PARTITION),
+      session.fromPartition(BROWSER_IMPORTED_PROFILE_PARTITION),
+      ...dynamicBrowserSessions.keys(),
+    ]),
+  ];
+  const registrations = new Map(
+    targetSessions.map(target => [target, dynamicBrowserSessions.get(target)]),
+  );
+  for (const target of targetSessions) {
+    updateBrowserSessionState(target, { generation, status: BrowserProxyStatus.PENDING });
+    // Revoke existing sockets promptly, including WebSockets. The queued apply
+    // also verifies closing connections before publishing a successful result.
+    void Promise.resolve()
+      .then(() => target.closeAllConnections())
+      .catch(() => {});
+  }
   const operation = browserProxyApplyQueue.then(async () => {
     if (generation !== browserProxyGeneration) return false;
+    // Network Widget leases are retired before their route changes. Webpage
+    // embeds retain their guest and observe the per-session readiness instead.
     for (const listener of [...browserProxyChangeListeners]) listener();
-    currentBrowserProxySettings = settings;
-    const targetSessions = [
-      ...new Set([
-        session.fromPartition(BROWSER_PANEL_PARTITION),
-        session.fromPartition(BROWSER_IMPORTED_PROFILE_PARTITION),
-        ...dynamicBrowserSessions.keys(),
-      ]),
-    ];
-    try {
-      await applyProxyToSessions(targetSessions, settings);
-    } catch (error) {
-      console.error('[SystemProxy] Failed to apply browser proxy mode:', error);
-    }
-    return generation === browserProxyGeneration;
+    const results = await Promise.all(
+      targetSessions.map(target => {
+        const registration = registrations.get(target);
+        if (registration && dynamicBrowserSessions.get(target) !== registration) return true;
+        return applyBrowserSession(target, generation, settings, registration);
+      }),
+    );
+    return generation === browserProxyGeneration && results.every(Boolean);
   });
   browserProxyApplyQueue = operation.then(
     (): void => undefined,

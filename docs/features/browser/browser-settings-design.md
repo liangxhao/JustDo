@@ -6,9 +6,18 @@
 
 ## 独立浏览器代理
 
-“设置 → 浏览器 → 浏览器代理”保存 `app_config.browserProxy`，默认使用系统代理；可独立选择不使用代理或自定义 HTTP/HTTPS 代理。作用于应用持有的 Electron 浏览器 guest session（默认、导入和任务隔离 profile）以及聊天 `show_widget` 的专用 guest session。卡片只复用代理偏好，使用独立内存 partition，不共享浏览器 Cookie、登录或历史。用户 Chrome、扩展及 OpenClaw 管理的独立 Chrome 仍使用各自浏览器的代理配置。
+消息中的网页 embed 也沿用此偏好。普通 URL 使用无 preload 的顶层 webview，与默认侧栏
+浏览器共享 Cookie、同源 localStorage/IndexedDB 和站点 worker；sessionStorage/页面内存、
+导入和命名 profile、用户 Chrome 仍隔离。托管 ref 保留独立内存 session 与固定 shell/iframe，
+Widget Cookie 继续独立。它在代理切换 pending/failed 时暂停新的页面/资源/API/WebSocket 请求，
+当前代次 setProxy 与旧连接关闭均成功才开放；无效 CUSTOM 不回退直连。代理重试只重做
+网络准备，保留原页面和输入，不重放表单。普通 URL 关闭只撤销自身页面准入，不清共享
+登录、worker 或 profile 连接。只有纯代理路由可将本机无法解析的域名交
+配置代理处理，DIRECT/fallback 仍须本地 DNS 校验。安全与验证边界见[独立网页](../chat/webpage-embeds.md)。
 
-卡片专用会话先完成代理配置，再装载原生 sandbox。代理切换可关闭卡片中的现有网络连接，但不触及主 Renderer、其他嵌入内容或聊天 Gateway 连接。代理不扩大原生 CSP、资源 allowlist 或网络授权；被原生策略禁止的请求仍失败。普通浏览器中的 WebChat 没有 Electron session 控制，继续使用浏览器自身网络配置。
+“设置 → 浏览器 → 浏览器代理”保存 `app_config.browserProxy`，默认使用系统代理；可独立选择不使用代理或自定义 HTTP/HTTPS 代理。作用于应用持有的 Electron 浏览器 guest session（默认、导入和任务隔离 profile）以及聊天 `show_widget` 的专用 guest session。Widget 卡片只复用代理偏好，使用独立内存 partition，不共享浏览器 Cookie、登录或历史。用户 Chrome、扩展及 OpenClaw 管理的独立 Chrome 仍使用各自浏览器的代理配置。
+
+Widget 卡片专用会话先完成代理配置，再装载原生 sandbox。代理切换可关闭卡片中的现有网络连接，但不触及主 Renderer、其他嵌入内容或聊天 Gateway 连接。代理不扩大原生 CSP、资源 allowlist 或网络授权；被原生策略禁止的请求仍失败。普通浏览器中的 WebChat 没有 Electron session 控制，继续使用浏览器自身网络配置。
 
 浏览器代理草稿由设置页统一持有，切换标签页不丢失；代理区域和页底的“保存”使用同一个提交与校验流程，“取消”丢弃尚未保存的代理修改。自定义代理必须有有效的主机和端口；保存失败保留草稿供修改或重试。
 
@@ -46,6 +55,13 @@ Chrome 扩展安装入口作为独立区域始终显示，位于浏览器选择�
 前三种属于原生浏览器部署形态，第四种由产品 guest bridge 承载。内置模式固定 host，不暴露远程 node/container 拓扑，也不偷偷切外部 Chrome 补缺能力。
 
 ## 2. 内置浏览器的资源模型
+
+“内置浏览器设置”包含“允许消息内嵌外部网页”开关，读取并条件更新原生
+`gateway.controlUi.allowExternalEmbedUrls`，缺省关闭，切换后立即保存。已有手工配置值
+照常显示，不由打开设置或保存代理草稿覆盖。设置查询和保存仅使用当前已连接引擎；
+断线、冲突或无法确认保存时保留显示值并禁用编辑，刷新读取后才能再次修改。
+网页卡片继续使用本页的浏览器代理，助手生成的托管页面不受外链开关影响；具体加载
+和授权契约见[消息中的独立网页](../chat/webpage-embeds.md)。
 
 每个会话的内置浏览器标签页上限由 `app_config.browserTabLimit` 保存，默认 20，
 可在浏览器设置的“内置浏览器设置”中调整为 1–50 的整数，输入框失焦或按 Enter 后即时保存。

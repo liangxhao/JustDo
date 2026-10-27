@@ -108,7 +108,7 @@ export const SETTINGS_PAGES: readonly SettingsPage[] = [
     label: 'browserSettings',
     description: 'settingsDescription_browser',
     group: 'execution',
-    keywords: ['browserTabLimitTitle'],
+    keywords: ['browserTabLimitTitle', 'browserWebpageEmbedTitle'],
   },
   {
     id: 'computer',

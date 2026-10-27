@@ -322,9 +322,11 @@ import {
 import { createExtensionChangedSubscription } from './preload/extensions';
 import { createMcpAppPreloadApi } from './preload/mcpApps';
 import { createPluginOperationSubscription } from './preload/pluginOperations';
+import { createWebpageEmbedApi } from './preload/webpageEmbed';
 
 // 暴露安全的 API 到渲染进程
 contextBridge.exposeInMainWorld('electron', {
+  webpageEmbed: createWebpageEmbedApi(),
   mcpApps: createMcpAppPreloadApi(),
   platform: process.platform,
   arch: process.arch,

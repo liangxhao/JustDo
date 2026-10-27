@@ -364,6 +364,17 @@ describe('native show_widget descriptors', () => {
     ).toBe('');
   });
 
+  it('keeps a bare reference shared by different protocols and preserves malformed duplicates', () => {
+    const bare = '[embed ref="shared-id" /]';
+    expect(stripNativeWidgetFallbacks(bare, new Set(['shared-id']), new Set(['shared-id']))).toBe(
+      bare,
+    );
+    const duplicateIdentity = '[embed ref="widget-123" ref="other" /]';
+    expect(stripNativeWidgetFallbacks(duplicateIdentity, new Set(['widget-123']))).toBe(
+      duplicateIdentity,
+    );
+  });
+
   it('removes only same-document fallback shortcodes once a canonical widget exists', () => {
     const duplicate = '[embed url="/__openclaw__/canvas/documents/widget-123/index.html" /]';
     const unrelated = '[embed url="https://example.test" viewId="other-document" /]';

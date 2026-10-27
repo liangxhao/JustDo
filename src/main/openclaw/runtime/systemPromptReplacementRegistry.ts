@@ -12,6 +12,7 @@ const RETIRED_SYSTEM_PROMPT_REPLACEMENT_IDS = new Set([
   'remove-source-channel-routing-line',
   'remove-openclaw-diagnostics-guidance',
   'brand-spaced-openclaw-references',
+  'describe-independent-webpage-embeds',
 ]);
 
 /**
@@ -53,6 +54,14 @@ export const REGISTERED_SYSTEM_PROMPT_REPLACEMENT_RULES =
         '^## Authorized Senders[\\t ]*(?:\\n|$)[\\s\\S]*?(?=^#{1,2}[\\t ]|(?![\\s\\S]))',
       flags: 'gm',
       replacement: '',
+    },
+    {
+      id: 'describe-supported-embed-urls',
+      pattern:
+        '^- Never local/file:// or arbitrary URL\\. Only hosted Canvas refs/URLs or YouTube video URLs\\.$',
+      flags: 'gm',
+      replacement:
+        '- Use hosted Canvas refs/URLs or viewer-permitted HTTP(S) webpage URLs; otherwise use regular links. Never use file://, local filesystem paths or arbitrary loopback URLs.',
     },
     {
       id: 'remove-control-ui-side-chat-section',

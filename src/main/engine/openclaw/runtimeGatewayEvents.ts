@@ -21,6 +21,7 @@ import {
 } from '../../../shared/openclaw/messageDomain';
 import { WORKBOARD_CHANGED_EVENT } from '../../../shared/openclaw/workboard';
 import { ApprovalKind, OpenClawApprovalIpc } from '../../../shared/security/approvals';
+import { observeWebpageEmbedSessionEvent } from '../../chat/embed/webpageEmbedSessions';
 import { coworkLog } from '../../cowork/coworkLogger';
 import type { CoworkSessionStatus, CoworkStore } from '../../data/coworkStore';
 import { GoalContinuationCoordinator } from '../../openclaw/goals/goalContinuationCoordinator';
@@ -208,11 +209,13 @@ export function handleGatewayEvent(
   }
 
   if (event.event === 'session.operation') {
+    observeWebpageEmbedSessionEvent(this.gatewayClient, event.event, event.payload);
     this.handleSessionOperationEvent(event.payload);
     return;
   }
 
   if (event.event === 'sessions.changed') {
+    observeWebpageEmbedSessionEvent(this.gatewayClient, event.event, event.payload);
     this.handleSessionsChangedEvent(event.payload);
     return;
   }

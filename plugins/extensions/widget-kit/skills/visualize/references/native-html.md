@@ -1,8 +1,8 @@
 # Native HTML visualization and optional interaction
 
 Use only the current turn's advertised `show_widget` HTML kind. Supply a short
-`title` and the markup string in `widget_code`; let the host display the title.
-Start with useful content, not another heading or card frame. Use `--font-body`,
+`title` and the markup string in `widget_code`; the host supplies the card frame
+and title. Available theme variables are `--font-body`,
 `--text`, `--muted`, `--card`, `--border`, `--accent-fill` and `--accent-fg`.
 Use HTML, SVG, canvas and local JavaScript as the task requires. No charting or
 component library is preloaded. The advertised `html-page` kind also accepts
@@ -11,8 +11,7 @@ Load needed libraries with scripts or ES modules under native CDN policy. Static
 need no controls or scripts.
 When controls help, keep them responsive, label inputs, and make local computations
 deterministic.
-Give the content consistent padding and use the available width; do not leave a
-narrow form against the card edge. If adding a conversation follow-up action,
+If adding a conversation follow-up action,
 prefer a `type="button"` click handler, validate inputs synchronously, and await
 the bridge result.
 Use system fonts and inline assets so the result works without public network
@@ -83,6 +82,50 @@ enabled, and redraw theme-dependent graphics when the host
 theme changes. Do not invent an SDK for local calculations or save document
 state in browser storage.
 
+## Web links and search
+
+Real HTTP(S) `<a href>` activations open the current conversation's sidebar
+browser. For a search box, update the search link's `href` as the user types;
+let the user click it or focus the link and press Enter. `window.open()` and
+external form navigation are blocked. A scripted `.click()` is not a real user
+activation; do not use it to implement Enter in the input.
+
+Example for a user-requested Baidu search; use the requested service's endpoint
+and query parameter for other destinations:
+
+```html
+<div id="search-demo">
+  <label for="search-demo-query">搜索关键词</label>
+  <input id="search-demo-query" type="search" value="你好" />
+  <a id="search-demo-link" target="_blank" rel="noopener noreferrer">搜索</a>
+</div>
+<script>
+{
+  const root = document.getElementById('search-demo');
+  const input = root.querySelector('input');
+  const link = root.querySelector('a');
+  const update = () => {
+    const query = input.value.trim();
+    if (!query) {
+      link.removeAttribute('href');
+      link.setAttribute('aria-disabled', 'true');
+      return;
+    }
+    const url = new URL('https://www.baidu.com/s');
+    url.searchParams.set('wd', query);
+    link.href = url.href;
+    link.removeAttribute('aria-disabled');
+  };
+  input.addEventListener('input', update);
+  update();
+}
+</script>
+```
+
+Use the normal `html` kind; opening a link does not require Widget network grants.
+Correct the source and generate a new Widget when an existing card uses the
+wrong navigation method; saved cards do not inherit skill changes.
+
 ## Images and GPU textures
 
 The native inline document allows images only as `data:` URLs. A library being
@@ -95,7 +138,7 @@ blocked, so fetching an image in the widget and converting it is not a workaroun
 Only the separately admitted network-download view may fetch a granted origin
 and convert the image to a data URL, as documented in the network reference.
 
-For existing pages or direct HTTPS image loaders, use Widget Kit's advertised
+For existing complete HTML source or direct HTTPS image loaders, use Widget Kit's advertised
 `html-page` kind with the original markup as its source.
 Its image adapter runs before author code and converts HTTPS `image.src`,
 `setAttribute('src', ...)` and static authored `<img src>` to fetched data URLs.
@@ -112,36 +155,13 @@ A timer may report slow loading, but must not pretend loading succeeded. Verify
 the asset-dependent result in the intended widget surface when accessible;
 success in an ordinary browser page does not establish sandbox compatibility.
 
-## Visual foundations, not a business template
+## Fit the host surface
 
-Choose content and layout from the user's task; the example below is not a
-preferred use case. Reuse these foundations for calculators, diagrams, planners,
-custom controls or other layouts without forcing them into a fixed component.
-
-- Inherit the host font, colors and color scheme. Use a transparent page and one
-  content surface; the chat already supplies a frame and title. Avoid nested
-  cards around every field, large hero headings and decorative gradients.
-- Use border-box sizing, a 4/8px spacing rhythm, 16–24px outer padding, 12–16px
-  control gaps, and a clear 14–16px body hierarchy. Controls inherit the font.
-  Give inputs visible labels, a comfortable height and visible keyboard focus.
-- Use the available width. A deliberately narrow reading column is centered;
-  grids use minmax(0, 1fr), children use min-width: 0, and long text wraps.
-  Collapse columns on small screens; avoid fixed page widths or heights.
-  Wide tables may scroll inside a named region, never widen the whole page.
-- Start with the useful content. Add actions when the task needs them;
-  local calculation and selection update immediately. Do not add submit, review,
-  reset, export or copy actions without a task-specific reason. No sending
-  tutorial, success toast or "widget ready" footer.
-- Keep units beside values. Put secondary assumptions in a details disclosure.
-  Show errors only after a relevant failed operation, next to the affected
-  control, with a brief correction or retry. Preserve entered values; never
-  expose raw stack traces or show model execution success on bridge delivery.
-
-Before the tool call, review the actual markup and handlers: fit at roughly
-320px and 800px content widths, readable light/dark colors, no duplicate title,
-no unsupported action claims, valid inputs, and a real handler for each action.
-This is an authoring checklist, not text to display to the user. After a successful
-call, let the card be the answer; do not append a walkthrough or repeat its data.
+The host supplies the card frame and title. Keep content readable at the actual
+inline and enlarged sizes, with working controls and visible keyboard focus.
+Preserve existing design choices while adapting container sizing and host theme
+variables. Check loading and interaction in the intended Widget viewer; a
+successful tool result alone does not prove that every script or asset loaded.
 
 ## Optional conversation follow-up
 

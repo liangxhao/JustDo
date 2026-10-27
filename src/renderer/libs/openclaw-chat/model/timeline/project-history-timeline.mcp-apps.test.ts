@@ -171,6 +171,33 @@ describe('native MCP App history projection', () => {
     ).toEqual([{ type: 'text', text }]);
   });
 
+  it('does not suppress a hosted Canvas URL just because an App has the same string ID', () => {
+    const text = `[embed url="/__openclaw__/canvas/documents/${descriptor.viewId}/index.html" /]`;
+    const timeline = projectPersistedTimeline([
+      projectedResult,
+      { role: 'assistant', content: [{ type: 'text', text }] },
+    ]);
+    expect(
+      timeline
+        .filter(item => item.kind === 'history-message')
+        .flatMap(item => (item.message as { content: unknown[] }).content),
+    ).toEqual([{ type: 'text', text }]);
+  });
+
+  it('shares literal fence context across consecutive native history text parts', () => {
+    const content = [
+      { type: 'text', text: '```html' },
+      { type: 'text', text: `[embed ref="${descriptor.viewId}" /]` },
+      { type: 'text', text: '```' },
+    ];
+    const timeline = projectPersistedTimeline([projectedResult, { role: 'assistant', content }]);
+    expect(
+      timeline
+        .filter(item => item.kind === 'history-message')
+        .flatMap(item => (item.message as { content: unknown[] }).content),
+    ).toEqual(content);
+  });
+
   it('keeps the successful retry after a failed native ToolSearch App result', () => {
     const failedDescriptor = { ...descriptor, viewId: 'failed-view', toolCallId: nestedCallId };
     const failedActivity = {

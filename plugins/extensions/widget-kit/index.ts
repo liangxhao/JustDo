@@ -7,7 +7,7 @@ import { uiContentKind } from './ui/content-kind.js';
 export default {
   id: 'widget-kit',
   name: 'Widget Kit',
-  description: 'Visualization guidance and reusable components through native show_widget.',
+  description: 'Native visualization components and capability-aware webpage delivery guidance.',
   register(api: OpenClawPluginApi) {
     api.on('before_tool_call', prepareHtmlPageToolCall, { matcher: ['show_widget'] });
     api.registerBoardWidgetContentKind(uiContentKind);

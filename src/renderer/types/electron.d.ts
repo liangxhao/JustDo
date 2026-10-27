@@ -479,6 +479,7 @@ import type { Agent } from '@/features/agents/agentTypes';
 import type { McpServerFormData } from '@/features/plugins/mcp/mcp';
 
 interface IElectronAPI {
+  webpageEmbed: import('../../shared/browser/webpageEmbed').WebpageEmbedApi;
   appServer: {
     getStatus: () => Promise<
       import('../../shared/integrations/appServerIntegration').AppServerIntegrationStatus
@@ -1839,6 +1840,8 @@ declare global {
     electron: IElectronAPI;
     /** Present only in the fixed native widget viewer's minimal preload. */
     widgetViewer?: import('../../shared/widgets/viewer').WidgetViewerBridge;
+    /** Present only in the fixed independent webpage viewer. */
+    webpageEmbedViewer?: import('../../shared/browser/webpageEmbed').WebpageEmbedViewerBridge;
   }
 }
 

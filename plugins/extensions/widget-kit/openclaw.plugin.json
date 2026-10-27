@@ -1,7 +1,7 @@
 {
   "id": "widget-kit",
   "name": "Widget Kit",
-  "description": "Visualization guidance and reusable components through native show_widget.",
+  "description": "Native visualization components and capability-aware webpage delivery guidance.",
   "enabledByDefault": true,
   "categories": ["productivity"],
   "skills": ["./skills"],

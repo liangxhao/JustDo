@@ -15,6 +15,7 @@ import {
   type BrowserSessionUiPolicy,
   configureBrowserSessionUi,
   ensureBrowserSessionPolicy,
+  registerBrowserSessionGuestPolicy,
   releaseBrowserSessionUi,
 } from './browserSessionPolicy';
 
@@ -73,17 +74,17 @@ const fixture = () => {
   };
   const uiOwner = Symbol('test-ui');
   configureBrowserSessionUi(nativeSession, uiOwner, ui);
-  const inspect = (url: string, source?: Electron.WebContents, resourceType = 'xhr') => {
+  const inspectDetails = (details: Partial<Electron.OnBeforeRequestListenerDetails>) => {
     const reply = vi.fn();
-    before(
-      {
-        url,
-        resourceType,
-        ...(source ? { webContentsId: source.id, webContents: source } : {}),
-      } as Electron.OnBeforeRequestListenerDetails,
-      reply,
-    );
+    before(details as Electron.OnBeforeRequestListenerDetails, reply);
     return reply;
+  };
+  const inspect = (url: string, source?: Electron.WebContents, resourceType = 'xhr') => {
+    return inspectDetails({
+      url,
+      resourceType,
+      ...(source ? { webContentsId: source.id, webContents: source } : {}),
+    } as Electron.OnBeforeRequestListenerDetails);
   };
   return {
     session,
@@ -93,7 +94,9 @@ const fixture = () => {
     owner,
     ui,
     uiOwner,
+    guest,
     inspect,
+    inspectDetails,
     check: (...args: Parameters<typeof check>) => check(...args),
     request: (...args: Parameters<typeof request>) => request(...args),
     headers: (...args: Parameters<typeof headers>) => headers(...args),
@@ -304,4 +307,205 @@ describe('shared browser session policy ownership', () => {
     await vi.waitFor(() => expect(reply).toHaveBeenCalledExactlyOnceWith({ cancel: false }));
     f.owner.release();
   });
+});
+
+describe('shared browser page network policies', () => {
+  test('dispatches two pages independently while sidebar, background and worker requests keep their baseline', async () => {
+    const f = fixture();
+    const first = f.guest();
+    const second = f.guest();
+    const allow = vi.fn<Parameters<typeof registerBrowserSessionGuestPolicy>[1]['beforeRequest']>(
+      (_details, reply) => reply({ cancel: false }),
+    );
+    const deny = vi.fn<Parameters<typeof registerBrowserSessionGuestPolicy>[1]['beforeRequest']>(
+      (_details, reply) => reply({ cancel: true }),
+    );
+    const releaseFirst = registerBrowserSessionGuestPolicy(first, {
+      isCurrent: () => true,
+      beforeRequest: allow,
+    });
+    const releaseSecond = registerBrowserSessionGuestPolicy(second, {
+      isCurrent: () => true,
+      beforeRequest: deny,
+    });
+
+    expect(f.inspect('https://first.example', first, 'mainFrame')).toHaveBeenCalledExactlyOnceWith({
+      cancel: false,
+    });
+    expect(f.inspect('https://second.example', second)).toHaveBeenCalledExactlyOnceWith({
+      cancel: true,
+    });
+    expect(allow).toHaveBeenCalledOnce();
+    expect(deny).toHaveBeenCalledOnce();
+    const sidebar = f.inspect('https://sidebar.example', f.foreground);
+    const background = f.inspect('https://background.example', f.background);
+    const worker = f.inspectDetails({
+      url: 'https://worker.example',
+      resourceType: 'xhr',
+      webContentsId: -1,
+    });
+    await vi.waitFor(() => {
+      for (const reply of [sidebar, background, worker])
+        expect(reply).toHaveBeenCalledExactlyOnceWith({ cancel: false });
+    });
+    releaseFirst();
+    expect(f.inspect('https://first.example', first)).toHaveBeenCalledExactlyOnceWith({
+      cancel: true,
+    });
+    expect(f.inspect('https://second.example', second)).toHaveBeenCalledExactlyOnceWith({
+      cancel: true,
+    });
+    expect(deny).toHaveBeenCalledTimes(2);
+    expect(f.session.webRequest.onBeforeRequest).toHaveBeenCalledTimes(1);
+    expect(f.session.webRequest.onHeadersReceived).toHaveBeenCalledTimes(1);
+    expect(f.session.listenerCount('will-download')).toBe(1);
+    releaseSecond();
+    f.owner.release();
+  });
+
+  test('rejects mismatched guest identities and accepts equivalent Session wrappers only', () => {
+    const f = fixture();
+    const page = f.guest();
+    const beforeRequest = vi.fn<
+      Parameters<typeof registerBrowserSessionGuestPolicy>[1]['beforeRequest']
+    >((_details, reply) => reply({}));
+    Object.assign(page, { session: { storagePath: f.session.storagePath } });
+    const release = registerBrowserSessionGuestPolicy(page, {
+      isCurrent: () => true,
+      beforeRequest,
+    });
+    expect(f.inspect('https://site.example', page)).toHaveBeenCalledExactlyOnceWith({});
+    expect(
+      f.inspectDetails({
+        url: 'https://site.example',
+        webContentsId: page.id,
+        webContents: f.foreground,
+      }),
+    ).toHaveBeenCalledExactlyOnceWith({ cancel: true });
+    expect(
+      f.inspectDetails({
+        url: 'https://site.example',
+        webContentsId: f.foreground.id,
+        webContents: page,
+      }),
+    ).toHaveBeenCalledExactlyOnceWith({ cancel: true });
+    Object.assign(page, { session: { storagePath: '/browser/different-profile' } });
+    expect(f.inspect('https://site.example', page)).toHaveBeenCalledExactlyOnceWith({
+      cancel: true,
+    });
+    expect(beforeRequest).toHaveBeenCalledOnce();
+    expect(f.session.webRequest.onBeforeRequest).toHaveBeenCalledTimes(1);
+    release();
+    f.owner.release();
+  });
+
+  test.each(['release', 'retire', 'destroy', 'session'] as const)(
+    'rechecks exact ownership when a pending page DNS request finishes after %s',
+    async boundary => {
+      const f = fixture();
+      const page = f.guest();
+      let current = true;
+      let finish!: (value: { endpoints: Array<{ address: string }> }) => void;
+      f.session.resolveHost.mockImplementationOnce(
+        () =>
+          new Promise(resolve => {
+            finish = resolve;
+          }),
+      );
+      const release = registerBrowserSessionGuestPolicy(page, {
+        isCurrent: () => current,
+        beforeRequest: async (details, reply) => {
+          await f.session.resolveHost(new URL(details.url).hostname);
+          reply({ cancel: false });
+          reply({ cancel: false });
+        },
+      });
+      const reply = f.inspect('https://page.example', page);
+      expect(reply).not.toHaveBeenCalled();
+      if (boundary === 'release') release();
+      if (boundary === 'retire') current = false;
+      if (boundary === 'destroy') page.emit('destroyed');
+      if (boundary === 'session')
+        Object.assign(page, { session: { storagePath: '/browser/replacement-profile' } });
+      finish({ endpoints: [{ address: '192.0.2.1' }] });
+      await vi.waitFor(() => expect(reply).toHaveBeenCalledExactlyOnceWith({ cancel: true }));
+      release();
+      expect(
+        f.inspectDetails({
+          url: 'https://page.example',
+          webContentsId: page.id,
+        }),
+      ).toHaveBeenCalledExactlyOnceWith({ cancel: true });
+      f.owner.release();
+    },
+  );
+
+  test('retired page IDs cannot fall through the browser baseline or be registered again', () => {
+    const f = fixture();
+    const page = f.guest();
+    const handlers = { isCurrent: () => true, beforeRequest: vi.fn() };
+    const release = registerBrowserSessionGuestPolicy(page, handlers);
+    expect(() => registerBrowserSessionGuestPolicy(page, handlers)).toThrow('already registered');
+    release();
+    release();
+    expect(() => registerBrowserSessionGuestPolicy(page, handlers)).toThrow('retired');
+    expect(
+      f.inspectDetails({
+        url: 'https://site.example',
+        webContentsId: page.id,
+      }),
+    ).toHaveBeenCalledExactlyOnceWith({ cancel: true });
+    expect(handlers.beforeRequest).not.toHaveBeenCalled();
+    expect(f.session.resolveHost).not.toHaveBeenCalled();
+    expect(() => registerBrowserSessionGuestPolicy(f.background, handlers)).toThrow('unavailable');
+    f.owner.release();
+  });
+
+  test('a page network policy cannot acquire UI permissions, downloads or PDF notifications', () => {
+    const f = fixture();
+    const release = registerBrowserSessionGuestPolicy(f.foreground, {
+      isCurrent: () => true,
+      beforeRequest: (_details, reply) => reply({}),
+    });
+    expect(f.check(f.foreground, 'notifications', 'https://site.example', {})).toBe(false);
+    const permission = vi.fn();
+    f.request(f.foreground, 'notifications', permission, {} as Electron.PermissionRequest);
+    expect(permission).toHaveBeenCalledExactlyOnceWith(false);
+    const download = item();
+    f.session.emit('will-download', {}, download, f.foreground);
+    expect(download.cancel).toHaveBeenCalledOnce();
+    f.headers(
+      {
+        webContents: f.foreground,
+        webContentsId: f.foreground.id,
+      } as Electron.OnHeadersReceivedListenerDetails,
+      vi.fn(),
+    );
+    expect(f.ui.checkPermission).not.toHaveBeenCalled();
+    expect(f.ui.requestPermission).not.toHaveBeenCalled();
+    expect(f.ui.download).not.toHaveBeenCalled();
+    expect(f.ui.headersReceived).not.toHaveBeenCalled();
+    release();
+    expect(f.check(f.foreground, 'notifications', 'https://site.example', {})).toBe(false);
+    f.owner.release();
+  });
+
+  test.each(['throw', 'reject'] as const)(
+    'fails closed when the page policy handlers %s',
+    async cause => {
+      const f = fixture();
+      const page = f.guest();
+      const release = registerBrowserSessionGuestPolicy(page, {
+        isCurrent: () => true,
+        beforeRequest: () => {
+          if (cause === 'throw') throw new Error('Policy failed');
+          return Promise.reject(new Error('Policy failed'));
+        },
+      });
+      const reply = f.inspect('https://site.example', page);
+      await vi.waitFor(() => expect(reply).toHaveBeenCalledExactlyOnceWith({ cancel: true }));
+      release();
+      f.owner.release();
+    },
+  );
 });

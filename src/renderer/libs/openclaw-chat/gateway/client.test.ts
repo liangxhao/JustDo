@@ -159,7 +159,13 @@ describe('GatewayClient tick watchdog', () => {
 });
 
 describe('GatewayClient v2026.9.2 handshake', () => {
-  it('signs the server challenge with a persistent browser device identity', async () => {
+  it.each([
+    { protocol: 'http:', element: true, connected: true, expected: true },
+    { protocol: 'https:', element: true, connected: true, expected: true },
+    { protocol: 'file:', element: true, connected: true, expected: false },
+    { protocol: 'http:', element: false, connected: true, expected: false },
+    { protocol: 'http:', element: true, connected: false, expected: false },
+  ])('signs the challenge and advertises only a live Widget viewer: %j', async surface => {
     class FakeWebSocket {
       static readonly OPEN = 1;
       readonly sent: string[] = [];
@@ -184,6 +190,9 @@ describe('GatewayClient v2026.9.2 handshake', () => {
 
     vi.stubGlobal('WebSocket', FakeWebSocket);
     vi.stubGlobal('navigator', { platform: 'Win32' });
+    vi.stubGlobal('location', { protocol: surface.protocol });
+    vi.stubGlobal('customElements', { get: () => surface.element ? {} : undefined });
+    vi.stubGlobal('document', { querySelector: () => ({ isConnected: surface.connected }), addEventListener: vi.fn(), removeEventListener: vi.fn() });
     const client = new GatewayClient({ url: 'ws://gateway.test', token: 'token' });
     client.start();
     const socket = (client as unknown as { ws: FakeWebSocket }).ws;
@@ -200,6 +209,7 @@ describe('GatewayClient v2026.9.2 handshake', () => {
     const frame = JSON.parse(socket.sent[0]) as {
       method: string;
       params: {
+        caps: string[];
         client: { id: string; mode: string };
         device: {
           id: string;
@@ -212,6 +222,9 @@ describe('GatewayClient v2026.9.2 handshake', () => {
     };
 
     expect(frame.method).toBe('connect');
+    expect(frame.params.caps).toEqual(surface.expected
+      ? ['tool-events', 'inline-widgets']
+      : ['tool-events']);
     expect(frame.params.client).toMatchObject({ id: 'openclaw-control-ui', mode: 'webchat' });
     expect(frame.params.device).toMatchObject({ signedAt: 123, nonce: 'nonce' });
     expect(frame.params.device.id).toHaveLength(64);

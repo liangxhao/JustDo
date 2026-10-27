@@ -58,6 +58,27 @@ describe('native board reference admission', () => {
       expect(items.some(item => item.kind === 'history-message')).toBe(false);
     }
   });
+  it.each(['show_widget', 'tool_call'] as const)(
+    'suppresses every admitted inline fallback after same-name board updates through %s', name => {
+      const messages = ['cv_inline', 'cv_updated'].flatMap((id, index) => {
+        const details = { ...payload, view: { ...payload.view, id } };
+        const result = name === 'show_widget' ? JSON.stringify(details) : envelope(details);
+        return [
+          {
+            role: 'toolResult', toolName: name, toolCallId: `call-${index}`,
+            content: [{ type: 'text', text: result }],
+          },
+          { role: 'assistant', content: `[embed ref="${id}" /]` },
+        ];
+      });
+      const keep = '[embed url="https://example.test/live" ref="cv_updated" /]';
+      const rows = projectPersistedTimeline([...messages, { role: 'assistant', content: keep }]);
+      expect(rows.filter(row => row.kind === 'native-widget')).toHaveLength(1);
+      expect(rows.filter(row => row.kind === 'history-message')).toMatchObject([
+        { message: { content: keep } },
+      ]);
+    },
+  );
   it('rejects failures, unrelated/nested envelopes, invalid names and missing native call identity', () => {
     for (const value of [
       { ...payload, isError: true },

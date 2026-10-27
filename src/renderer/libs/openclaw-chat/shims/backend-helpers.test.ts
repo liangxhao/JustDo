@@ -1,6 +1,28 @@
 import { describe, expect, test } from 'vitest';
 
-import { splitMediaFromOutput } from '@/libs/openclaw-chat/shims/backend-helpers';
+import {
+  extractCanvasShortcodes,
+  splitMediaFromOutput,
+} from '@/libs/openclaw-chat/shims/backend-helpers';
+
+describe('extractCanvasShortcodes compatibility', () => {
+  test('supports hosted references and preserves code examples and invalid input', () => {
+    const result = extractCanvasShortcodes(
+      'A[embed ref=\'report\' /]B `[embed ref="example" /]` [embed url="" /]',
+    );
+    expect(result.text).toBe('AB `[embed ref="example" /]` [embed url="" /]');
+    expect(result.previews).toEqual([
+      {
+        kind: 'canvas',
+        surface: 'assistant_message',
+        render: 'url',
+        ref: 'report',
+        viewId: 'report',
+        url: '/__openclaw__/canvas/documents/report/index.html',
+      },
+    ]);
+  });
+});
 
 describe('splitMediaFromOutput', () => {
   test('extracts a delivered file whose path contains spaces', () => {
@@ -38,10 +60,7 @@ describe('splitMediaFromOutput', () => {
       '1. MEDIA:C:\\project\\first.py\n2. MEDIA:C:\\project\\second.py',
     );
 
-    expect(result.mediaUrls).toEqual([
-      'C:\\project\\first.py',
-      'C:\\project\\second.py',
-    ]);
+    expect(result.mediaUrls).toEqual(['C:\\project\\first.py', 'C:\\project\\second.py']);
     expect(result.segments).toEqual([
       { type: 'media', url: 'C:\\project\\first.py', listMarker: '1.' },
       { type: 'media', url: 'C:\\project\\second.py', listMarker: '2.' },

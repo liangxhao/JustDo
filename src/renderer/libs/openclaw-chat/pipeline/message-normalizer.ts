@@ -19,7 +19,6 @@ import { modelRefFromIdentity, normalizeModelRef } from '@shared/providers/model
 
 import { stripOpenClawLogHintText } from '@/libs/openclaw-chat/pipeline/system-message-display';
 import { stripInboundMetadata } from '@/libs/openclaw-chat/shims/backend-helpers';
-import { extractCanvasShortcodes } from '@/libs/openclaw-chat/shims/backend-helpers';
 import {
   isToolCallContentType,
   isToolResultContentType,
@@ -31,6 +30,8 @@ import { mediaKindFromMime } from '@/libs/openclaw-chat/shims/media-core';
 import type { MessageContentItem, NormalizedMessage } from '@/libs/openclaw-chat/types';
 import { i18nService } from '@/services/i18n';
 
+import { normalizeEmbedHeight, previewFromEmbedShortcode } from './embed-presentation';
+import { scanEmbedShortcodes } from './embed-shortcodes';
 import { isNativeCanvasPreview } from './native-canvas';
 import { partitionTaggedReasoning } from './tagged-reasoning';
 export {
@@ -211,14 +212,19 @@ function coerceCanvasPreview(
     kind: 'canvas',
     surface: 'assistant_message',
     render,
-    ...(typeof preview.title === 'string' ? { title: preview.title } : {}),
-    ...(typeof preview.preferredHeight === 'number'
-      ? { preferredHeight: preview.preferredHeight }
+    ...(typeof preview.title === 'string' ? { title: preview.title.slice(0, 200) } : {}),
+    ...(normalizeEmbedHeight(preview.preferredHeight) !== undefined
+      ? { preferredHeight: normalizeEmbedHeight(preview.preferredHeight) }
       : {}),
     ...(typeof preview.url === 'string' ? { url: preview.url } : {}),
+    ...(typeof preview.ref === 'string' ? { ref: preview.ref } : {}),
     ...(typeof preview.viewId === 'string' ? { viewId: preview.viewId } : {}),
-    ...(typeof preview.className === 'string' ? { className: preview.className } : {}),
-    ...(typeof preview.style === 'string' ? { style: preview.style } : {}),
+    ...(typeof preview.fallbackText === 'string'
+      ? { fallbackText: preview.fallbackText.slice(0, 32_768) }
+      : {}),
+    ...(Object.prototype.hasOwnProperty.call(preview, 'mcpApp')
+      ? { mcpApp: preview.mcpApp ?? null }
+      : {}),
   };
 }
 
@@ -542,61 +548,54 @@ function expandTextContent(text: string): {
   audioAsVoice: boolean;
   replyTarget: NormalizedMessage['replyTarget'];
 } {
-  const extracted = extractCanvasShortcodes(partitionTaggedReasoning(text).text);
-  const parsed = splitMediaFromOutput(extracted.text);
+  const visibleText = partitionTaggedReasoning(text).text;
   const parts: MessageContentItem[] = [];
-  let audioAsVoice = parsed.audioAsVoice === true;
+  let audioAsVoice = false;
   let replyTarget: NormalizedMessage['replyTarget'] = null;
-  const segments = parsed.segments ?? [{ type: 'text' as const, text: parsed.text }];
-
-  for (const segment of segments) {
-    if (segment.type === 'media') {
-      const attachment = mediaAttachment(segment.url);
-      parts.push(
-        segment.listMarker
-          ? {
-              ...attachment,
-              attachment: { ...attachment.attachment, listMarker: segment.listMarker },
-            }
-          : attachment,
-      );
+  for (const fragment of scanEmbedShortcodes(visibleText)) {
+    if (fragment.type === 'embed') {
+      parts.push({
+        type: 'canvas',
+        preview: previewFromEmbedShortcode(fragment),
+        rawText: fragment.rawText,
+      });
       continue;
     }
-
-    const directives = parseInlineDirectives(segment.text, {
-      stripAudioTag: true,
-      stripReplyTags: true,
-    });
-    audioAsVoice = audioAsVoice || directives.audioAsVoice;
-    if (directives.replyToExplicitId) {
-      replyTarget = { kind: 'id', id: directives.replyToExplicitId };
-    } else if (directives.replyToCurrent && replyTarget === null) {
-      replyTarget = { kind: 'current' };
-    }
-    if (directives.text) {
-      parts.push({ type: 'text', text: directives.text });
-    }
-  }
-  for (const preview of extracted.previews) {
-    parts.push({ type: 'canvas', preview, rawText: null });
-  }
-
-  const content = mergeAdjacentTextItems(
-    parts.map(item => {
-      if (item.type === 'attachment' && item.attachment.kind === 'audio' && audioAsVoice) {
-        return Object.assign({}, item, { attachment: { ...item.attachment, isVoiceNote: true } });
+    const parsed = splitMediaFromOutput(fragment.text);
+    audioAsVoice = audioAsVoice || parsed.audioAsVoice === true;
+    const segments = parsed.segments ?? [{ type: 'text' as const, text: parsed.text }];
+    for (const segment of segments) {
+      if (segment.type === 'media') {
+        const attachment = mediaAttachment(segment.url);
+        parts.push(
+          segment.listMarker
+            ? {
+                ...attachment,
+                attachment: { ...attachment.attachment, listMarker: segment.listMarker },
+              }
+            : attachment,
+        );
+        continue;
       }
-      return item;
-    }),
-  );
-
+      const directives = parseInlineDirectives(segment.text, {
+        stripAudioTag: true,
+        stripReplyTags: true,
+      });
+      audioAsVoice = audioAsVoice || directives.audioAsVoice;
+      if (directives.replyToExplicitId)
+        replyTarget = { kind: 'id', id: directives.replyToExplicitId };
+      else if (directives.replyToCurrent && replyTarget === null) replyTarget = { kind: 'current' };
+      if (directives.text) parts.push({ type: 'text', text: directives.text });
+    }
+  }
   return {
-    content:
-      content.length > 0
-        ? content
-        : replyTarget === null && !audioAsVoice && parsed.text.trim().length > 0
-          ? [{ type: 'text', text: parsed.text }]
-          : [],
+    content: mergeAdjacentTextItems(
+      parts.map(item =>
+        item.type === 'attachment' && item.attachment.kind === 'audio' && audioAsVoice
+          ? { ...item, attachment: { ...item.attachment, isVoiceNote: true } }
+          : item,
+      ),
+    ),
     audioAsVoice,
     replyTarget,
   };
@@ -747,12 +746,19 @@ export function normalizeMessage(
     const displayItems: Record<string, unknown>[] = [];
     for (const item of m.content as Record<string, unknown>[]) {
       const previous = displayItems[displayItems.length - 1];
-      if (isAssistantMessage && item.type === 'text' && typeof item.text === 'string' &&
-        previous?.type === 'text' && typeof previous.text === 'string' &&
-        /<\s*\/?\s*(?:think|thought|antthinking|antml:think|mm:think)/i.test(previous.text + item.text)) {
-        // Legacy text arrays represent the same cumulative body as extractRawText.
-        // Keep normal native blocks separate; only join adjacent tagged text.
-        displayItems[displayItems.length - 1] = { ...previous, text: `${previous.text}\n${item.text}` };
+      if (
+        isAssistantMessage &&
+        item.type === 'text' &&
+        typeof item.text === 'string' &&
+        previous?.type === 'text' &&
+        typeof previous.text === 'string'
+      ) {
+        // Consecutive native text parts share Markdown/code ownership. Rich,
+        // Thinking and Tool boundaries keep their own presentation context.
+        displayItems[displayItems.length - 1] = {
+          ...previous,
+          text: `${previous.text}\n${item.text}`,
+        };
       } else displayItems.push(item);
     }
     content = displayItems.flatMap((item: Record<string, unknown>) => {
@@ -838,6 +844,10 @@ export function normalizeMessage(
         typeof item.preview === 'object' &&
         !Array.isArray(item.preview)
       ) {
+        if (!isAssistantMessage)
+          return typeof item.rawText === 'string'
+            ? [{ type: 'text' as const, text: item.rawText }]
+            : [];
         const preview = coerceCanvasPreview(item.preview);
         if (!preview) {
           return [];
@@ -926,6 +936,12 @@ export function normalizeMessage(
   content = stripMessageDisplayMetadata(content);
   if (isAssistantMessage) {
     content = applyAssistantMediaUrls(content, assistantMediaUrls(m));
+    if (audioAsVoice)
+      content = content.map(item =>
+        item.type === 'attachment' && item.attachment.kind === 'audio'
+          ? { ...item, attachment: { ...item.attachment, isVoiceNote: true } }
+          : item,
+      );
     content = stripUnreliableGoalZeroUsage(content);
     content = stripOpenClawLogHint(content);
   }

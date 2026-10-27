@@ -403,6 +403,15 @@ export const chatTranslations = {
     coworkWidgetSuggestion: '继续分析',
     coworkWidgetAddDraft: '加入草稿',
     coworkWidgetDismiss: '忽略',
+    webpageEmbedTitle: '网页预览',
+    webpageEmbedOpen: '在浏览器打开',
+    webpageEmbedLoading: '正在准备网页…',
+    webpageEmbedSlow: '网页可能仍在加载。如果未显示内容，可在浏览器中打开。',
+    webpageEmbedUnavailable: '此网页暂时无法内嵌显示。',
+    webpageEmbedDisconnected: '连接当前会话后可加载此网页。',
+    webpageEmbedProxyPending: '正在应用浏览器代理设置，网页请求已暂停。',
+    webpageEmbedProxyFailed: '浏览器代理配置失败，网页请求已暂停。',
+    webpageEmbedHostedOpenUnavailable: '受限托管地址不能直接转交浏览器，可放大或固定到侧栏查看。',
     coworkCanvasTitle: '内容预览',
     coworkCanvasUnavailable: '此内容预览暂时不可用。',
     coworkSubmit: '提交',
@@ -1182,6 +1191,17 @@ export const chatTranslations = {
     coworkWidgetSuggestion: 'Continue analysis',
     coworkWidgetAddDraft: 'Add to draft',
     coworkWidgetDismiss: 'Dismiss',
+    webpageEmbedTitle: 'Webpage preview',
+    webpageEmbedOpen: 'Open in browser',
+    webpageEmbedLoading: 'Preparing webpage…',
+    webpageEmbedSlow:
+      'The page may still be loading. If content is missing, open it in the browser.',
+    webpageEmbedUnavailable: 'This webpage cannot be embedded right now.',
+    webpageEmbedDisconnected: 'Connect to this conversation to load the webpage.',
+    webpageEmbedProxyPending: 'Applying browser proxy settings. Webpage requests are paused.',
+    webpageEmbedProxyFailed: 'Browser proxy setup failed. Webpage requests are paused.',
+    webpageEmbedHostedOpenUnavailable:
+      'This restricted hosted URL cannot be passed to the browser. Expand or pin it to the sidebar.',
     coworkCanvasTitle: 'Content preview',
     coworkCanvasUnavailable: 'This content preview is unavailable.',
     coworkSubmit: 'Submit',
@@ -1274,7 +1294,8 @@ export const chatTranslations = {
     // Agent model state
     coworkModelApplying: 'Applying model…',
     coworkModelApplyFailed: 'Failed to switch model: {error}',
-    coworkModelPreparationFailed: 'Message not sent because the selected model could not be confirmed: {error}',
+    coworkModelPreparationFailed:
+      'Message not sent because the selected model could not be confirmed: {error}',
     coworkDefaultModelApplyFailedSessionUpdated:
       'This session switched models, but the default model for new sessions could not be updated: {error}',
     coworkNewSession: 'New Session',

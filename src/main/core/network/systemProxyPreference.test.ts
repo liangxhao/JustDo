@@ -39,9 +39,12 @@ import {
   applyBrowserProxyPreference,
   applySystemProxyPreference,
   getBrowserProxyCredentials,
+  getBrowserProxyMode,
   getBrowserProxyPreferenceSignature,
+  getBrowserProxySessionState,
   getProxyPreferenceSignature,
   isSystemProxyEnabled,
+  observeBrowserProxySession,
   onBrowserProxyWillChange,
   registerBrowserProxySession,
   unregisterBrowserProxySession,
@@ -232,7 +235,9 @@ describe('independent browser proxy preferences', () => {
           .mockResolvedValue(undefined),
         closeAllConnections: vi.fn().mockResolvedValue(undefined),
       } as unknown as Electron.Session;
-      await expect(registerBrowserProxySession(widget)).rejects.toThrow('Proxy failed');
+      await expect(registerBrowserProxySession(widget)).rejects.toThrow(
+        'Browser proxy configuration failed',
+      );
       await expect(registerBrowserProxySession(widget)).resolves.toBeUndefined();
       expect(widget.setProxy).toHaveBeenCalledTimes(2);
       expect(widget.closeAllConnections).toHaveBeenCalledOnce();
@@ -283,5 +288,183 @@ describe('independent browser proxy preferences', () => {
     await applyBrowserProxyPreference({ browserProxy: { mode: ProxyMode.DIRECT } });
     expect(changed).toHaveBeenCalledOnce();
     expect(widget.setProxy).toHaveBeenCalledOnce();
+  });
+});
+
+describe('observable browser session readiness', () => {
+  const memorySession = () =>
+    ({
+      setProxy: vi.fn().mockResolvedValue(undefined),
+      closeAllConnections: vi.fn().mockResolvedValue(undefined),
+    }) as unknown as Electron.Session;
+
+  test('revokes readiness synchronously and reports a failed change without reloading or replaying', async () => {
+    await applyBrowserProxyPreference();
+    const target = memorySession();
+    await registerBrowserProxySession(target);
+    const observed: string[] = [];
+    const stop = observeBrowserProxySession(target, state => observed.push(state.status));
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      vi.mocked(target.setProxy).mockRejectedValueOnce(new Error('network error'));
+      const pending = applyBrowserProxyPreference({ browserProxy: { mode: ProxyMode.DIRECT } });
+      expect(getBrowserProxySessionState(target).status).toBe('pending');
+      await expect(pending).resolves.toBe(false);
+      expect(getBrowserProxySessionState(target).status).toBe('failed');
+      expect(observed).toEqual(['ready', 'pending', 'failed']);
+      await expect(registerBrowserProxySession(target)).resolves.toBeUndefined();
+      expect(getBrowserProxySessionState(target).status).toBe('ready');
+      expect(target.setProxy).toHaveBeenLastCalledWith({ mode: ProxyMode.DIRECT });
+    } finally {
+      stop();
+      unregisterBrowserProxySession(target);
+      errors.mockRestore();
+    }
+  });
+
+  test('a stale successful apply cannot open a session waiting for a newer change', async () => {
+    await applyBrowserProxyPreference();
+    const target = memorySession();
+    await registerBrowserProxySession(target);
+    let releaseFirst!: () => void;
+    let releaseLatest!: () => void;
+    vi.mocked(target.setProxy)
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>(resolve => {
+            releaseFirst = resolve;
+          }),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>(resolve => {
+            releaseLatest = resolve;
+          }),
+      );
+    const observed: Array<{ generation: number; status: string }> = [];
+    const stop = observeBrowserProxySession(target, state => observed.push(state));
+    try {
+      const first = applyBrowserProxyPreference({ browserProxy: { mode: ProxyMode.DIRECT } });
+      await vi.waitFor(() => expect(releaseFirst).toBeTypeOf('function'));
+      const latest = applyBrowserProxyPreference({ browserProxy: { mode: ProxyMode.SYSTEM } });
+      const desiredGeneration = getBrowserProxySessionState(target).generation;
+      const ready = registerBrowserProxySession(target);
+      releaseFirst();
+      await vi.waitFor(() => expect(releaseLatest).toBeTypeOf('function'));
+      await expect(first).resolves.toBe(false);
+      expect(getBrowserProxySessionState(target)).toEqual({
+        generation: desiredGeneration,
+        status: 'pending',
+      });
+      expect(observed.filter(state => state.status === 'ready')).toHaveLength(1);
+      releaseLatest();
+      await expect(latest).resolves.toBe(true);
+      await ready;
+      expect(getBrowserProxySessionState(target)).toEqual({
+        generation: desiredGeneration,
+        status: 'ready',
+      });
+    } finally {
+      stop();
+      unregisterBrowserProxySession(target);
+    }
+  });
+
+  test('retires a network Widget lease while preserving a failed webpage session for proxy-only retry', async () => {
+    await applyBrowserProxyPreference();
+    const widget = memorySession();
+    const page = memorySession();
+    await registerBrowserProxySession(widget);
+    await registerBrowserProxySession(page);
+    vi.mocked(widget.setProxy).mockClear();
+    vi.mocked(page.setProxy).mockClear();
+    const observed: string[] = [];
+    const stop = observeBrowserProxySession(page, state => observed.push(state.status));
+    const retired = vi.fn(() => {
+      expect(page.setProxy).not.toHaveBeenCalled();
+      unregisterBrowserProxySession(widget);
+    });
+    const unsubscribe = onBrowserProxyWillChange(retired);
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      vi.mocked(page.setProxy).mockRejectedValueOnce(new Error('proxy switch failed'));
+      const changing = applyBrowserProxyPreference({ browserProxy: { mode: ProxyMode.DIRECT } });
+      expect(getBrowserProxyMode()).toBe(ProxyMode.DIRECT);
+      expect(getBrowserProxySessionState(page).status).toBe('pending');
+      await expect(changing).resolves.toBe(false);
+      expect(retired).toHaveBeenCalledOnce();
+      expect(widget.setProxy).not.toHaveBeenCalled();
+      expect(observed).toEqual(['ready', 'pending', 'failed']);
+      await registerBrowserProxySession(page);
+      expect(getBrowserProxySessionState(page).status).toBe('ready');
+      expect(page.setProxy).toHaveBeenCalledTimes(2);
+      expect(page.setProxy).toHaveBeenLastCalledWith({ mode: ProxyMode.DIRECT });
+      expect(retired).toHaveBeenCalledOnce();
+      expect(widget.setProxy).not.toHaveBeenCalled();
+    } finally {
+      stop();
+      unsubscribe();
+      unregisterBrowserProxySession(widget);
+      unregisterBrowserProxySession(page);
+      errors.mockRestore();
+    }
+  });
+
+  test.each([
+    ['', '8080'],
+    ['proxy.internal', ''],
+    ['proxy.internal', '65536'],
+    ['proxy.internal', '8e3'],
+    ['proxy.internal/path', '8080'],
+    ['user@proxy.internal', '8080'],
+  ])('fails closed for invalid custom proxy %s:%s', async (host, port) => {
+    await applyBrowserProxyPreference();
+    const target = memorySession();
+    await registerBrowserProxySession(target);
+    vi.mocked(target.setProxy).mockClear();
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await expect(
+        applyBrowserProxyPreference({
+          browserProxy: {
+            mode: ProxyMode.CUSTOM,
+            custom: { protocol: ProxyProtocol.HTTP, host, port },
+          },
+        }),
+      ).resolves.toBe(false);
+      expect(target.setProxy).not.toHaveBeenCalled();
+      expect(getBrowserProxySessionState(target).status).toBe('failed');
+      await expect(registerBrowserProxySession(target)).rejects.toThrow(
+        'Browser proxy configuration failed',
+      );
+      expect(target.setProxy).not.toHaveBeenCalled();
+    } finally {
+      unregisterBrowserProxySession(target);
+      await applyBrowserProxyPreference();
+      errors.mockRestore();
+    }
+  });
+
+  test('requires connection cleanup to succeed and releases failed registration state', async () => {
+    await applyBrowserProxyPreference();
+    const target = memorySession();
+    vi.mocked(target.closeAllConnections).mockRejectedValueOnce(new Error('close failed'));
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await expect(registerBrowserProxySession(target)).rejects.toThrow(
+        'Browser proxy configuration failed',
+      );
+      expect(getBrowserProxySessionState(target).status).toBe('failed');
+      await registerBrowserProxySession(target);
+      expect(getBrowserProxySessionState(target).status).toBe('ready');
+      unregisterBrowserProxySession(target);
+      const calls = vi.mocked(target.setProxy).mock.calls.length;
+      await applyBrowserProxyPreference();
+      expect(target.setProxy).toHaveBeenCalledTimes(calls);
+      expect(getBrowserProxySessionState(target).status).toBe('pending');
+    } finally {
+      unregisterBrowserProxySession(target);
+      errors.mockRestore();
+    }
   });
 });

@@ -12,6 +12,8 @@ import {
   formatGroupTimestamp,
   getGroupFooterLabel,
   renderMessageBlock,
+  renderMessageBlockWithTrailingStream,
+  renderStreamingGroup,
   shouldRenderGroupAvatarByPrevItem,
   shouldRenderGroupFooterByNextItem,
 } from '@/libs/openclaw-chat/components/message/message-render';
@@ -57,6 +59,35 @@ function collectTemplateFunctions(value: unknown): Array<(event: Event) => unkno
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+});
+
+describe('independent webpage presentation', () => {
+  const text = 'Before[embed ref="report" /]Between[embed url="https://example.test/live" /]After';
+
+  test('uses the same ordered webpage components for history and cumulative streaming', () => {
+    const group = createGroup('assistant');
+    group.messages = [{ key: 'message', message: { role: 'assistant', content: text } }];
+    for (const result of [
+      renderMessageBlock(group),
+      renderStreamingGroup(text, 1),
+      renderMessageBlockWithTrailingStream(createGroup('assistant'), text),
+    ]) {
+      const output = stringifyTemplate(result);
+      expect(output.match(/<webpage-embed/g)).toHaveLength(2);
+      expect(output.indexOf('Before')).toBeLessThan(output.indexOf('<webpage-embed'));
+      expect(output.lastIndexOf('<webpage-embed')).toBeLessThan(output.lastIndexOf('After'));
+      expect(output).not.toContain('<iframe');
+      expect(output).not.toContain('[embed ref=');
+    }
+  });
+
+  test('leaves unfinished shortcodes and code examples visible during streaming', () => {
+    for (const source of ['Before[embed ref="report"', '`[embed ref="report" /]`']) {
+      const output = stringifyTemplate(renderStreamingGroup(source, 1));
+      expect(output).not.toContain('<webpage-embed');
+      expect(output).toContain(source);
+    }
+  });
 });
 
 describe('shouldRenderGroupFooter', () => {
@@ -601,9 +632,10 @@ describe('renderMessageBlock', () => {
       }),
     );
 
-    expect(rendered).toContain('class="assistant-canvas__frame"');
+    expect(rendered).toContain('<webpage-embed');
     expect(rendered).toContain('https://example.com/view');
-    expect(rendered).toContain('height: 420px');
+    expect(rendered).toContain('420');
+    expect(rendered).not.toContain('<iframe');
     expect(rendered).not.toContain('[embed');
   });
 

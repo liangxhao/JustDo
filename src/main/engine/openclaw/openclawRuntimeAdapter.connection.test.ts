@@ -22,6 +22,7 @@ vi.mock('../../cowork/coworkLogger', () => ({
 }));
 
 import { createDefaultAgentRuntimeSettings } from '../../../shared/agents/agentRuntimeSettings';
+import { captureHostedCanvasBinding } from '../../chat/embed/hostedCanvasSurface';
 import type { GatewayClientCtor, GatewayClientLike, SessionTurn } from '../gateway/types';
 import { OpenClawRuntimeAdapter } from './openclawRuntimeAdapter';
 import { _ensureGatewayClientReadyImpl, captureGatewayResponseContext, type RuntimeGatewayConnectionContext } from './runtimeGatewayConnection';
@@ -297,6 +298,38 @@ test('an intentionally stopped gateway client cannot reclaim the active connecti
   expect(connectionAdapter.gatewayClient).toBeNull();
   expect(workboardChanged).toHaveBeenCalledOnce();
   expect(stop).toHaveBeenCalledTimes(2);
+});
+
+test('accepted Main hello owns the hosted document lease and disconnect retires that exact lease', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, { getStateDir: () => 'canvas-profile-root' });
+  let onHelloOk: ((hello: unknown) => void) | undefined;
+  class FakeClient {
+    constructor(options: { onHelloOk: typeof onHelloOk }) { onHelloOk = options.onHelloOk; }
+    start() {}
+    stop() {}
+    async request() { return {}; }
+  }
+  adapter.loadGatewayClientCtor = vi.fn().mockResolvedValue(FakeClient);
+  adapter.handleGatewayReady = vi.fn().mockResolvedValue(undefined);
+  adapter.reconcilePendingApprovals = vi.fn().mockResolvedValue(undefined);
+  adapter.reconcilePendingAskUserInteractions = vi.fn().mockResolvedValue(undefined);
+  adapter.startTickWatchdog = vi.fn();
+  const generation = adapter.getGatewayClientGeneration();
+  await adapter.createGatewayClient({
+    url: 'ws://127.0.0.1:31415', token: '', version: 'test', clientEntryPath: 'test.js',
+  });
+  expect(captureHostedCanvasBinding(adapter.getGatewayClient(), generation, 'canvas-profile-root')).toBeNull();
+  onHelloOk?.({ pluginSurfaceUrls: { canvas: 'http://127.0.0.1:31415/__openclaw__/cap/native_hello_0000000000' } });
+  const client = adapter.getGatewayClient();
+  const binding = captureHostedCanvasBinding(client, generation, 'canvas-profile-root');
+  expect(binding?.gatewayOrigin).toBe('http://127.0.0.1:31415');
+  const retired = vi.fn();
+  binding?.onRetired(retired);
+  adapter.disconnectGatewayClient();
+  expect(retired).toHaveBeenCalledOnce();
+  expect(binding?.isCurrent()).toBe(false);
+  expect(captureHostedCanvasBinding(client, generation, 'canvas-profile-root')).toBeNull();
 });
 
 test('only forwards Gateway events from the current authenticated client and generation', async () => {

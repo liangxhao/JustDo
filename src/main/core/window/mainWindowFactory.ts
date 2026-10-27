@@ -30,6 +30,7 @@ import {
   resolveBrowserGuestShortcut,
   resolveBrowserPanelShortcutAction,
 } from '../../../shared/browser/browser';
+import { WebpageEmbedIpc, type WebpageEmbedRequest } from '../../../shared/browser/webpageEmbed';
 import type { WorkspaceWindowBounds } from '../../../shared/cowork/workspaceWindow';
 import {
   configureBrowserSessionUi,
@@ -51,6 +52,9 @@ import {
 } from '../../browser/downloads/browserDownloadPath';
 import { trackBrowserFavicon } from '../../browser/history/browserFavicon';
 import { trackBrowserHistory } from '../../browser/history/browserHistoryTracking';
+import { createWebpageEmbedMounts, type WebpageEmbedConnection } from '../../chat/embed/webpageEmbedMounts';
+import { registerWebpageEmbedSettingsHandlers } from '../../chat/embed/webpageEmbedSettingsIpc';
+import { WebpageEmbedSettingsService } from '../../chat/embed/webpageEmbedSettingsService';
 import {
   importFileOriginRendererPreferences,
   type RendererPreferenceStore,
@@ -76,6 +80,7 @@ import {
 } from './mediaPermission';
 import { loadPackagedRenderer } from './renderer/packagedRendererLoader';
 import { registerStartupEntryClock } from './startupEntryClock';
+import { createWebpageEmbedGuests } from './webpageEmbedGuest';
 import { createWidgetViewerGuests } from './widgetViewerGuest';
 import { registerWindowAppearance } from './windowAppearance';
 import { getWindowChromeOptions } from './windowChrome';
@@ -91,6 +96,9 @@ type MainWindowFactoryOptions = {
   };
   browserGuestPreloadPath: string;
   widgetViewerPreloadPath: string;
+  webpageEmbedPreloadPath: string;
+  getWebpageEmbedConnection: () => WebpageEmbedConnection | null;
+  runConfigMutationExclusive: <T>(operation: () => Promise<T>) => Promise<T>;
   devServerUrl: string;
   getBackgroundColor: () => string;
   getIconPath: () => string | undefined;
@@ -221,6 +229,55 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
       : undefined,
     mainWindow.webContents,
   );
+  const webpageViewers = createWebpageEmbedGuests({
+    preloadPath: options.webpageEmbedPreloadPath,
+    developmentCsp: options.isDev
+      ? { isDev: true, devServerPort: Number(new URL(options.devServerUrl).port) }
+      : undefined,
+    getCredentials: options.getProxyCredentials,
+    ownsHost: (owner, host) => owner === mainWindow.webContents &&
+      (host === owner || workspaceManager?.ownsPresentationHost(host.id) === true),
+  });
+  const webpageMounts = createWebpageEmbedMounts({
+    owner: mainWindow.webContents,
+    guests: webpageViewers,
+    getConnection: options.getWebpageEmbedConnection,
+  });
+  const requireEmbedOwner = (event: Electron.IpcMainInvokeEvent) => {
+    if (event.sender !== mainWindow.webContents || event.senderFrame !== event.sender.mainFrame)
+      throw new Error('Untrusted webpage owner');
+  };
+  const disposeWebpageSettings = registerWebpageEmbedSettingsHandlers({
+    ipc: ipcMain,
+    requireOwner: requireEmbedOwner,
+    settings: new WebpageEmbedSettingsService({
+      getConnection: options.getWebpageEmbedConnection,
+      exclusive: options.runConfigMutationExclusive,
+    }),
+  });
+  ipcMain.removeHandler(WebpageEmbedIpc.Prepare);
+  ipcMain.removeHandler(WebpageEmbedIpc.Release);
+  ipcMain.removeHandler(WebpageEmbedIpc.Ready);
+  ipcMain.removeHandler(WebpageEmbedIpc.RetryProxy);
+  ipcMain.handle(WebpageEmbedIpc.Prepare, (event, input: WebpageEmbedRequest) => {
+    requireEmbedOwner(event);
+    return webpageMounts.prepare(input);
+  });
+  ipcMain.handle(WebpageEmbedIpc.Release, (event, mountId: string) => {
+    requireEmbedOwner(event);
+    webpageMounts.release(mountId);
+  });
+  ipcMain.handle(WebpageEmbedIpc.Ready, event => webpageViewers.read(event));
+  ipcMain.handle(WebpageEmbedIpc.RetryProxy, (event, mountId: string) => {
+    requireEmbedOwner(event);
+    return webpageViewers.retry(event.sender, mountId);
+  });
+  mainWindow.once('closed', () => {
+    disposeWebpageSettings();
+    for (const channel of [WebpageEmbedIpc.Prepare, WebpageEmbedIpc.Release, WebpageEmbedIpc.Ready, WebpageEmbedIpc.RetryProxy]) ipcMain.removeHandler(channel);
+    webpageMounts.dispose();
+    webpageViewers.dispose();
+  });
   const browserPanelSession = session.fromPartition(BROWSER_PANEL_PARTITION);
   const importedBrowserSession = session.fromPartition(BROWSER_IMPORTED_PROFILE_PARTITION);
   const browserPanelSessions = new Map<string, Electron.Session>([
@@ -504,6 +561,7 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
   const configureBrowserHost = (host: Electron.WebContents): void => {
     host.on('will-attach-webview', (event, webPreferences, params) => {
       if (widgetViewers.prepare(event, webPreferences, params, host)) return;
+      if (webpageViewers.prepare(event, webPreferences, params, host)) return;
       webPreferences.preload = options.browserGuestPreloadPath;
       webPreferences.nodeIntegration = false;
       webPreferences.nodeIntegrationInSubFrames = false;
@@ -541,6 +599,7 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
     });
     host.on('did-attach-webview', (_event, guestContents) => {
       if (widgetViewers.attach(guestContents, host)) return;
+      if (webpageViewers.attach(guestContents, host)) return;
       browserGuests.add(guestContents);
       guestContents.once('destroyed', () => browserGuests.delete(guestContents));
       let externalProtocolPromptPending = false;
@@ -951,10 +1010,11 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
       configureHost: configureBrowserHost,
       configureSurfaceHost: host => {
         host.on('will-attach-webview', (event, preferences, params) => {
-          if (!widgetViewers.prepare(event, preferences, params, host)) event.preventDefault();
+          if (!widgetViewers.prepare(event, preferences, params, host) &&
+            !webpageViewers.prepare(event, preferences, params, host)) event.preventDefault();
         });
         host.on('did-attach-webview', (_event, guest) => {
-          if (!widgetViewers.attach(guest, host) && !guest.isDestroyed()) guest.close();
+          if (!widgetViewers.attach(guest, host) && !webpageViewers.attach(guest, host) && !guest.isDestroyed()) guest.close();
         });
       },
       openExternal: openExternalLink,

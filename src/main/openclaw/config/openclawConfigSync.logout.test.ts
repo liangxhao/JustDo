@@ -570,6 +570,7 @@ test.each(['full', 'minimal'])('%s config applies live Control UI preferences ac
       enabled: !update.enabled,
       basePath: '/console',
       allowedOrigins: ['http://custom.test'],
+      allowExternalEmbedUrls: update.enabled,
     };
     existing.gateway.customSetting = 'preserve-me';
     fs.writeFileSync(configPath, JSON.stringify(existing));
@@ -577,13 +578,27 @@ test.each(['full', 'minimal'])('%s config applies live Control UI preferences ac
     expect(result).toMatchObject({ ok: true, configChanged: true });
     const next = readConfig();
     expect(next.gateway.controlUi.enabled).toBe(update.enabled);
+    expect(next.gateway.controlUi.allowExternalEmbedUrls).toBe(update.enabled);
+    expect(next.gateway.controlUi.basePath).toBe('/console');
+    expect(next.gateway.controlUi.allowedOrigins).toEqual(['http://custom.test']);
     if (mode === 'minimal' || update.reason === BuiltinModelSyncReason.AuthLogin || update.reason === BuiltinModelSyncReason.AuthLogout) {
-      expect(next.gateway.controlUi.basePath).toBe('/console');
-      expect(next.gateway.controlUi.allowedOrigins).toEqual(['http://custom.test']);
       expect(next.gateway.customSetting).toBe('preserve-me');
     }
   }
 }, 30_000);
+
+test.each([true, false])('minimal fallback preserves a native-only Control UI policy %s', allowed => {
+  const fixture = createConfigurationFixture(false, 'local', {
+    gateway: { controlUi: { allowExternalEmbedUrls: allowed, basePath: '/native-console',
+      allowedOrigins: ['http://internal.test'] } },
+  });
+  expect(fixture.sync.sync('startup').ok).toBe(true);
+  const config = JSON.parse(fs.readFileSync(fixture.configPath, 'utf8'));
+  expect(config.gateway.controlUi).toMatchObject({
+    allowExternalEmbedUrls: allowed, basePath: '/native-console',
+    allowedOrigins: ['http://internal.test'], enabled: false,
+  });
+});
 
 test.each(['full', 'minimal'])(
   '%s sync disables unmanaged native tools and meeting capture across startup and auth changes',

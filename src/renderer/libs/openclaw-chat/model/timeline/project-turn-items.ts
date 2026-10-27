@@ -13,7 +13,10 @@ import {
   type NativeWidgetReference,
 } from '../../pipeline/native-board';
 import { decodeNativeCanvasResult, stripNativeWidgetFallbacks } from '../../pipeline/native-canvas';
-import { decodeNativeMcpAppResult } from '../../pipeline/native-mcp-app';
+import {
+  decodeNativeMcpAppResult,
+  stripNativeMcpAppFallbacks,
+} from '../../pipeline/native-mcp-app';
 import type {
   AssistantTurn,
   CompactionItem,
@@ -133,9 +136,9 @@ export function isQuestionPresentationTool(tool: ToolItem): boolean {
   const input = tool.input;
   return Boolean(
     input &&
-      typeof input === 'object' &&
-      !Array.isArray(input) &&
-      parseQuestions((input as Record<string, unknown>).questions),
+    typeof input === 'object' &&
+    !Array.isArray(input) &&
+    parseQuestions((input as Record<string, unknown>).questions),
   );
 }
 
@@ -242,7 +245,6 @@ export function projectTurnItems(
     }
   }
 
-  const fallbackIds = new Set([...nativeDocIds, ...appViews]);
   const flushSummary = () => {
     if (archived.length === 0) return;
     const first = archived[0];
@@ -270,7 +272,14 @@ export function projectTurnItems(
       continue;
     const content =
       item.type === 'content'
-        ? { ...item, text: stripNativeWidgetFallbacks(item.text, fallbackIds) }
+        ? {
+            ...item,
+            text: stripNativeMcpAppFallbacks(
+              stripNativeWidgetFallbacks(item.text, nativeDocIds, appViews),
+              appViews,
+              nativeDocIds,
+            ),
+          }
         : null;
     if (content && !content.text.trim()) continue;
     if (item.type === 'thinking' || item.type === 'tool') {

@@ -8,6 +8,8 @@ import { projectDiagnosticGatewayInfo } from '../../../shared/cowork/diagnostics
 import type { DiagnosticGatewayInfo } from '../../../shared/cowork/diagnostics/sessionDiagnostics';
 import { PRODUCT_NAME } from '../../../shared/productMetadata';
 import { ApprovalGatewayCapability } from '../../../shared/security/approvals';
+import { rememberHostedCanvasSurface, retireHostedCanvasSurface } from '../../chat/embed/hostedCanvasSurface';
+import { retireWebpageEmbedSessions } from '../../chat/embed/webpageEmbedSessions';
 import { coworkLog } from '../../cowork/coworkLogger';
 import { GoalContinuationCoordinator } from '../../openclaw/goals/goalContinuationCoordinator';
 import {
@@ -275,6 +277,15 @@ export async function createGatewayClient(
         return;
       }
       this.gatewayClient = client;
+      rememberHostedCanvasSurface({
+        client,
+        generation,
+        profileId: this.engineManager.getStateDir?.() ?? '',
+        gatewayUrl: connection.url,
+        hello,
+        isCurrent: () => this.gatewayClient === client && this.gatewayClientGeneration === generation &&
+          !this.intentionallyStoppedGatewayClients.has(client),
+      });
       this.diagnosticGatewayInfo = projectDiagnosticGatewayInfo(hello);
       this.pendingGatewayClient = null;
       this.gatewayClientVersion = connection.version;
@@ -356,6 +367,8 @@ export function stopGatewayClient(this: RuntimeGatewayConnectionContext): void {
   this.cancelGatewayReconnect();
   this.stopTickWatchdog();
   const clientToStop = this.gatewayClient ?? this.pendingGatewayClient;
+  retireHostedCanvasSurface(clientToStop);
+  retireWebpageEmbedSessions(clientToStop);
   if (clientToStop) {
     this.intentionallyStoppedGatewayClients.add(clientToStop);
   }
@@ -409,6 +422,8 @@ export async function handleGatewayReady(
 }
 
 export function cleanupGatewayClientState(this: RuntimeGatewayConnectionContext): void {
+  retireHostedCanvasSurface(this.gatewayClient);
+  retireWebpageEmbedSessions(this.gatewayClient);
   this.goalContinuationCoordinator.clear();
   this.cancelGoalRecovery();
   this.dismissAllAskUserInteractions();

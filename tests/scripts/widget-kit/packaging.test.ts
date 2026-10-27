@@ -88,7 +88,6 @@ test(
         path.join(runtimeRoot, 'runtime-build-info.json'),
         JSON.stringify({ target: 'win-x64' }),
       );
-
       expect(
         syncLocalExtensions(repoRoot, runtimeRoot, 'test', {
           installProductionDependencies: installDependencies,
@@ -144,8 +143,10 @@ test(
         nodeCapability: { surface: string };
       }> = [];
       const on = vi.fn();
+      const registerTool = vi.fn();
       plugin.register({
         on,
+        registerTool,
         registerBoardWidgetContentKind: (definition: typeof uiContentKind) =>
           definitions.push(definition),
         registerHttpRoute: (route: (typeof routes)[number]) => routes.push(route),
@@ -160,6 +161,7 @@ test(
       expect(adjusted.params).toMatchObject({
         pin: true, capabilities: { netOrigins: ['https://images.example'] },
       });
+      expect(registerTool).not.toHaveBeenCalled();
       expect(definitions.map(definition => definition.kind).sort()).toEqual([
         'html-page',
         'interactive-answer',

@@ -633,6 +633,8 @@ export class OpenClawConfigSync {
         bind: 'loopback',
         controlUi: {
           allowedOrigins: ['*'],
+          ...(isRecord(existingConfig?.gateway) && isRecord(existingConfig.gateway.controlUi)
+            ? existingConfig.gateway.controlUi : {}),
         },
       },
       models: managedModels,
@@ -1112,6 +1114,15 @@ export class OpenClawConfigSync {
       // Only malformed JSON follows the minimal-config recovery path.
     }
     if (isRecord(previousConfig)) {
+      const previousGateway = isRecord(previousConfig.gateway) ? previousConfig.gateway : {};
+      const minimalGateway = isRecord(minimalConfig.gateway) ? minimalConfig.gateway : {};
+      minimalConfig.gateway = {
+        ...minimalGateway,
+        controlUi: {
+          ...(isRecord(minimalGateway.controlUi) ? minimalGateway.controlUi : {}),
+          ...(isRecord(previousGateway.controlUi) ? previousGateway.controlUi : {}),
+        },
+      };
       minimalConfig.mcp = buildManagedMcpConfig(
         previousConfig.mcp,
         mergeNativeMcpOverrides(previousConfig, mcpServers, extensionMcpNames, retiredMcpNames),

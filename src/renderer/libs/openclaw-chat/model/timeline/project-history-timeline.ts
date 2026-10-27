@@ -5,11 +5,12 @@ import type { McpAppDescriptor } from '@shared/plugins/mcpApps';
 import { isGatewayInjectedModelRef } from '@shared/providers/modelRef';
 
 import { getTranscriptMedia } from '@/libs/openclaw-chat/attachments';
+import { stripEmbedShortcodesFromTextParts } from '@/libs/openclaw-chat/pipeline/embed-shortcodes';
 import { collapseRepeatedFailures } from '@/libs/openclaw-chat/pipeline/history-display-normalizer';
 import {
   decodeNativeCanvasResult,
+  isNativeWidgetFallbackAttributes,
   isNativeWidgetFallbackPreview,
-  stripNativeWidgetFallbacks,
 } from '@/libs/openclaw-chat/pipeline/native-canvas';
 import type { GatewayMessage } from '@/libs/openclaw-chat/types';
 
@@ -19,6 +20,7 @@ import {
   decodeNativeMcpAppHistoryResult,
   decodeNativeMcpAppResult,
   decodeNativeNestedMcpAppHistoryResult,
+  isNativeMcpAppFallbackAttributes,
   isNativeMcpAppFallbackPreview,
   readFailedNativeMcpAppHistoryDescriptor,
   readFailedNativeNestedMcpAppHistoryDescriptor,
@@ -248,6 +250,7 @@ export function projectPersistedTimeline(
   const allTools: ToolItem[] = [];
   const presentedWidgets = new WeakSet<ToolItem>();
   const presentedWidgetDocIds = new Set<string>();
+  const nativeDocIds = new Set<string>();
   const presentedAppViewIds = new Set<string>();
   const failedApps = new Map<string, McpAppDescriptor>();
   const syntheticRunIds = new Set<string>();
@@ -621,6 +624,10 @@ export function projectPersistedTimeline(
         tool.status === 'completed'
           ? decodeNativeCanvasResult(tool.output, tool.name, readToolCallId(source) ?? undefined)
           : undefined;
+      // Every admitted receipt owns its inline fallback, even when a repeated
+      // board name shares one presentation row across several document versions.
+      if (board?.suppressedInlineDocId) nativeDocIds.add(board.suppressedInlineDocId);
+      if (widget) nativeDocIds.add(widget.docId);
       if (board && !presentedWidgetDocIds.has(`board:${board.name}`)) {
         presentedWidgetDocIds.add(`board:${board.name}`);
         flushSummary();
@@ -936,29 +943,18 @@ export function projectPersistedTimeline(
   });
   flushSummary();
 
-  const nativeDocIds = new Set(
-    projected.flatMap(item =>
-      item.kind !== 'native-widget'
-        ? []
-        : item.preview.kind === 'canvas'
-          ? [item.preview.docId]
-          : item.preview.suppressedInlineDocId
-            ? [item.preview.suppressedInlineDocId]
-            : [],
-    ),
-  );
   const nativeApps = new Map(
     projected.flatMap(item =>
       item.kind === 'mcp-app' ? [[item.preview.viewId, item.preview] as const] : [],
     ),
   );
-  const fallbackIds = new Set([...nativeDocIds, ...nativeApps.keys(), ...failedApps.keys()]);
+  const appIds = new Set([...nativeApps.keys(), ...failedApps.keys()]);
   // A history refresh can expose an in-flight Tool before its result, notably
   // when a subagent announce is persisted behind a long sessions_yield call.
   // Keep the same invariant as the live projection: only settled Thinking and
   // Tool items belong in a collapsible summary.
   return projected.flatMap(item => {
-    if (item.kind === 'history-message' && fallbackIds.size) {
+    if (item.kind === 'history-message' && (nativeDocIds.size || appIds.size)) {
       const source = unwrapToolMessage(item.message);
       if (!source || roleOf(source) !== 'assistant') return [item];
       const content = Array.isArray(source.content)
@@ -969,7 +965,30 @@ export function projectPersistedTimeline(
             ? [{ type: 'text', text: source.text }]
             : [];
       let changed = false;
-      const cleaned = content.flatMap(block => {
+      const textByIndex = new Map<number, string>();
+      for (let start = 0; start < content.length;) {
+        const first = asToolRecord(content[start]);
+        if (first?.type !== 'text' || typeof first.text !== 'string') {
+          start++;
+          continue;
+        }
+        const texts: string[] = [];
+        let end = start;
+        while (end < content.length) {
+          const block = asToolRecord(content[end]);
+          if (block?.type !== 'text' || typeof block.text !== 'string') break;
+          texts.push(block.text);
+          end++;
+        }
+        stripEmbedShortcodesFromTextParts(
+          texts,
+          attributes =>
+            isNativeWidgetFallbackAttributes(attributes, nativeDocIds, appIds) ||
+            isNativeMcpAppFallbackAttributes(attributes, appIds, nativeDocIds),
+        ).forEach((text, index) => textByIndex.set(start + index, text));
+        start = end;
+      }
+      const cleaned = content.flatMap((block, index) => {
         const record = asToolRecord(block);
         // Native history can also expand a fallback into a Canvas block.
         // Remove only the same admitted document/App or confirmed failed App;
@@ -983,7 +1002,7 @@ export function projectPersistedTimeline(
           return [];
         }
         if (record?.type !== 'text' || typeof record.text !== 'string') return [block];
-        const text = stripNativeWidgetFallbacks(record.text, fallbackIds);
+        const text = textByIndex.get(index) ?? record.text;
         if (text === record.text) return [block];
         changed = true;
         return text.trim() ? [{ ...record, text }] : [];
@@ -1032,7 +1051,11 @@ export function projectPersistedTimeline(
       }
       if (process.type === 'tool' && isQuestionPresentationTool(process)) {
         flushSettled();
-        normalized.push({ kind: 'question-presentation', key: `history-question:${process.id}`, item: process });
+        normalized.push({
+          kind: 'question-presentation',
+          key: `history-question:${process.id}`,
+          item: process,
+        });
       } else if (process.status === 'running') {
         flushSettled();
         normalized.push({

@@ -1,5 +1,11 @@
 # 聊天渲染：原生历史、实时流与交互投影
 
+助手 `[embed]` 与结构化 URL Canvas 共用有序纯扫描/分类，交给独立网页 anchor 与 Main
+固定 guest；不要求 `show_widget`，不复用 Widget/MCP App 权限或草稿桥。实时/历史保持
+文字顺序和代码区语义，固定/放大/侧栏拆出停靠复用通用稳定展示载体。普通 URL 使用无
+preload 的顶层 webview，共享默认侧栏浏览器站点存储；托管 ref 保留独立 session 与固定
+shell/iframe。认证、浏览器代理及现行验证限制见[消息中的独立网页](../features/chat/webpage-embeds.md)。
+
 MCP Apps 使用原生 MCP 结果准入、标准 AppBridge 和现有聊天连接的受限会话接口；HTML、工具、问题与模型上下文继续由 Gateway 所有。模型 App 默认内嵌，展开保持同一文档；手动/文件 App 从工作区文档创建，不跨文档搬动运行中的 iframe。问题通过 Main 的专用桥收集，业务工具与资源交互通过原生 `mcp.app.*`，不增加 MCP Apps 生命周期补丁。锁定版本的 030 仅修复手动 App 与模型执行的持久工作目录不一致，复用原生 ingress resolver 及准备 owner 检查。关闭只停止本地交互并尝试精确上下文清理；已发出的操作与视图回收沿用原生生命周期，不能把 DOM 消失当作取消成功。协议、权限、生命周期及现行限制见 [MCP Apps](../features/chat/mcp-apps.md)。
 
 聊天由 React 工作区和 Lit `<justdo-chat>` 组合。MCP Apps 控件将已认证目录的发现入口、插件图标和操作回调交给侧边栏首页的“应用”区；消息控制器继续持有聊天的认证连接和原生会话绑定。旧目录回调在绑定变化或卸载后失效，首页不为列出应用创建产品会话或调用模型。本文按当前 controller、reducer、history protocol、pipeline 和组件组织，重点解释消息顺序、终态、防重复、恢复及性能，避免把功能迭代记录混入架构正文。

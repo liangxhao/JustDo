@@ -74,7 +74,7 @@ const allowedPackagedAsset = (relative: string): boolean => {
   )
     return false;
   if (
-    ['index.html', 'startup-bootstrap.html', 'image-preview.html', 'workspace.html', 'widget-viewer.html'].includes(relative)
+    ['index.html', 'startup-bootstrap.html', 'image-preview.html', 'workspace.html', 'widget-viewer.html', 'embed-viewer.html'].includes(relative)
   )
     return true;
   const extension = path.extname(relative).toLowerCase();
@@ -98,7 +98,7 @@ const requestAssetPath = (rawUrl: string | undefined): string | null => {
     if (queryIndex !== -1) {
       const query = new URLSearchParams(rawUrl.slice(queryIndex + 1));
       if (
-        !['/workspace.html', '/widget-viewer.html'].includes(pathname) ||
+        !['/workspace.html', '/widget-viewer.html', '/embed-viewer.html'].includes(pathname) ||
         [...query].length !== 1 ||
         !/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/iu.test(
           (pathname === '/workspace.html'

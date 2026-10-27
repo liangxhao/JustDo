@@ -109,6 +109,10 @@ export class WorkspaceWindowManager {
     );
   }
 
+  ownsPresentationHost(hostId: number): boolean {
+    return !this.disposed && (this.ownsHost(hostId) || !!this.surfaces.presentationWindow(hostId));
+  }
+
   focusedWindow(): BrowserWindow | undefined {
     return this.shell?.isFocused() ? this.shell : undefined;
   }
