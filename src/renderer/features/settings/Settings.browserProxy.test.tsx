@@ -16,11 +16,13 @@ const mocks = vi.hoisted(() => ({ getConfig: vi.fn(), updateConfig: vi.fn() }));
 
 vi.mock('@/app/shell/window/WindowHeader', () => ({ default: () => null }));
 vi.mock('./preferences/GeneralSettingsPage', () => ({
-  GeneralSettingsPage: ({ controlUiEnabled, setControlUiEnabled }: {
+  GeneralSettingsPage: ({ developerModeAvailable, controlUiEnabled, setControlUiEnabled }: {
+    developerModeAvailable: boolean;
     controlUiEnabled: boolean;
     setControlUiEnabled: (enabled: boolean) => void;
   }) => <>
     <p>General preferences</p>
+    {developerModeAvailable && <section aria-label="developerMode">Developer controls</section>}
     <button type="button" onClick={() => setControlUiEnabled(!controlUiEnabled)}>
       {controlUiEnabled ? 'fixtureControlUiOn' : 'fixtureControlUiOff'}
     </button>
@@ -244,4 +246,36 @@ test('cancel discards an unsaved Control UI draft without changing its saved pre
   renderSettings();
   fireEvent.click(screen.getByRole('button', { name: 'general' }));
   expect(screen.getByRole('button', { name: 'fixtureControlUiOff' })).toBeTruthy();
+});
+
+test('reveals developer controls on the tenth title click and saves without another mode switch', async () => {
+  renderSettings();
+  fireEvent.click(screen.getByRole('button', { name: 'general' }));
+  const title = within(screen.getByRole('heading', { name: 'general', level: 3 }))
+    .getByRole('button', { name: 'general' });
+  for (let index = 0; index < 9; index += 1) fireEvent.click(title);
+  expect(screen.queryByRole('region', { name: 'developerMode' })).toBeNull();
+  fireEvent.click(title);
+  expect(screen.getByRole('region', { name: 'developerMode' })).toBeTruthy();
+  expect(currentConfig.developerMode).toBe(false);
+  expect(mocks.updateConfig).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole('button', { name: 'fixtureControlUiOff' }));
+  fireEvent.click(saveButton());
+  await screen.findByText('settingsSaved');
+  expect(mocks.updateConfig).toHaveBeenCalledWith({ developerMode: true, controlUiEnabled: true });
+});
+
+test('leaving General resets reveal visibility and cancel discards the developer draft', () => {
+  renderSettings();
+  fireEvent.click(screen.getByRole('button', { name: 'general' }));
+  const title = within(screen.getByRole('heading', { name: 'general', level: 3 }))
+    .getByRole('button', { name: 'general' });
+  for (let index = 0; index < 10; index += 1) fireEvent.click(title);
+  expect(screen.getByRole('region', { name: 'developerMode' })).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'browserSettings' }));
+  fireEvent.click(screen.getByRole('button', { name: 'general' }));
+  expect(screen.queryByRole('region', { name: 'developerMode' })).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'cancel' }));
+  expect(mocks.updateConfig).not.toHaveBeenCalled();
+  expect(currentConfig.developerMode).toBe(false);
 });

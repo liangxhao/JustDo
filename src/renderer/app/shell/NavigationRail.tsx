@@ -11,7 +11,6 @@ import { createPortal } from 'react-dom';
 import AuthEntry from '@/features/auth/AuthEntry';
 import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';
-import ArrowUpRightIcon from '@/shared/components/icons/ArrowUpRightIcon';
 import ClockIcon from '@/shared/components/icons/ClockIcon';
 import PuzzleIcon from '@/shared/components/icons/PuzzleIcon';
 
@@ -29,7 +28,6 @@ interface NavigationRailProps {
   onShowMemory: () => void;
   onShowWorkboard: () => void;
   onShowSettings: () => void;
-  onOpenChatWeb?: () => void;
 }
 
 const railButtonClass = (active: boolean) =>
@@ -67,7 +65,6 @@ const NavigationRail: React.FC<NavigationRailProps> = ({
   onShowMemory,
   onShowWorkboard,
   onShowSettings,
-  onOpenChatWeb,
 }) => {
   const [pinnedItems, setPinnedItems] = useState(() =>
     normalizeSidebarPins(configService.getConfig().sidebarPinnedItems),
@@ -80,7 +77,6 @@ const NavigationRail: React.FC<NavigationRailProps> = ({
   const savingPinsRef = useRef(false);
   const menuId = useId();
   const isMac = window.electron.platform === 'darwin';
-  const showChatWeb = Boolean(onOpenChatWeb);
 
   useEffect(() => {
     const syncPins = () => {
@@ -128,7 +124,7 @@ const NavigationRail: React.FC<NavigationRailProps> = ({
       document.removeEventListener('pointerdown', dismissOnOutsideClick);
       document.removeEventListener('keydown', dismissOnEscape);
     };
-  }, [isMoreOpen, showWorkboard, showChatWeb]);
+  }, [isMoreOpen, showWorkboard]);
 
   const features: {
     id: SidebarFeatureId;
@@ -330,18 +326,6 @@ const NavigationRail: React.FC<NavigationRailProps> = ({
                 </div>
               );
             })}
-            {onOpenChatWeb && (
-              <div className="mt-1 border-t border-border-subtle pt-1">
-                <button
-                  type="button"
-                  className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm text-foreground hover:bg-surface-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                  onClick={() => navigate(onOpenChatWeb)}
-                >
-                  <ArrowUpRightIcon className="h-4 w-4 shrink-0" />
-                  <span className="truncate">{i18nService.t('openChatWeb')}</span>
-                </button>
-              </div>
-            )}
           </div>,
           document.body,
         )}

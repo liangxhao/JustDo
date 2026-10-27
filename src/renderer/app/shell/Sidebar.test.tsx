@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -158,99 +158,11 @@ describe('Sidebar', () => {
     expect(props.onShowCowork).toHaveBeenCalledOnce();
   });
 
-  it('opens enabled WebChat from More in developer mode even when the home list is collapsed', async () => {
+  it.each([false, true])('keeps WebChat out of More when Control UI is %s', enabled => {
     config.developerMode = true;
-    config.controlUiEnabled = true;
-    const openExternal = vi.fn(async () => undefined);
-    const getPort = vi.fn(async () => ({ success: true, port: 18789 }));
-    const getToken = vi.fn(async () => ({ success: true, token: 'test-only-token' }));
-    Object.defineProperty(window, 'electron', {
-      configurable: true,
-      value: {
-        platform: 'win32',
-        openclaw: { engine: { getPort, getToken } },
-        shell: { openExternal },
-      },
-    });
-    const props = createProps();
-    render(<Sidebar {...props} isCollapsed />);
+    config.controlUiEnabled = enabled;
+    render(<Sidebar {...createProps()} />);
+    fireEvent.click(screen.getByRole('button', { name: translations.zh.sidebarMore }));
     expect(screen.queryByRole('button', { name: translations.zh.openChatWeb })).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: translations.zh.sidebarMore }));
-    fireEvent.click(
-      within(screen.getByRole('dialog', { name: translations.zh.sidebarMore })).getByRole(
-        'button',
-        { name: translations.zh.openChatWeb },
-      ),
-    );
-    expect(screen.queryByRole('dialog')).toBeNull();
-    await waitFor(() =>
-      expect(openExternal).toHaveBeenCalledWith('http://127.0.0.1:18789/#token=test-only-token'),
-    );
-    expect(props.onShowCowork).not.toHaveBeenCalled();
   });
-
-  it('updates the open More menu only when both developer mode and Control UI are enabled', () => {
-    render(<Sidebar {...createProps()} />);
-    fireEvent.click(screen.getByRole('button', { name: translations.zh.sidebarMore }));
-    const more = within(screen.getByRole('dialog', { name: translations.zh.sidebarMore }));
-    expect(more.queryByRole('button', { name: translations.zh.openChatWeb })).toBeNull();
-    config.developerMode = true;
-    fireEvent(window, new Event('config-updated'));
-    expect(more.queryByRole('button', { name: translations.zh.openChatWeb })).toBeNull();
-    config.controlUiEnabled = true;
-    fireEvent(window, new Event('config-updated'));
-    expect(more.getByRole('button', { name: translations.zh.openChatWeb })).toBeTruthy();
-    expect(
-      within(screen.getByRole('complementary')).queryByRole('button', {
-        name: translations.zh.openChatWeb,
-      }),
-    ).toBeNull();
-    config.developerMode = false;
-    fireEvent(window, new Event('config-updated'));
-    expect(more.queryByRole('button', { name: translations.zh.openChatWeb })).toBeNull();
-    config.developerMode = true;
-    fireEvent(window, new Event('config-updated'));
-    expect(more.getByRole('button', { name: translations.zh.openChatWeb })).toBeTruthy();
-    config.controlUiEnabled = false;
-    fireEvent(window, new Event('config-updated'));
-    expect(more.queryByRole('button', { name: translations.zh.openChatWeb })).toBeNull();
-  });
-
-  it('refuses a stale WebChat click after the saved preference is disabled', () => {
-    config.developerMode = true;
-    config.controlUiEnabled = true;
-    const getPort = vi.fn();
-    Object.defineProperty(window, 'electron', { configurable: true, value: {
-      platform: 'win32', openclaw: { engine: { getPort, getToken: vi.fn() } },
-    } });
-    render(<Sidebar {...createProps()} />);
-    fireEvent.click(screen.getByRole('button', { name: translations.zh.sidebarMore }));
-    const entry = screen.getByRole('button', { name: translations.zh.openChatWeb });
-    config.controlUiEnabled = false;
-    fireEvent.click(entry);
-    expect(getPort).not.toHaveBeenCalled();
-  });
-
-  it.each(['getPort', 'getToken'] as const)(
-    'does not open WebChat after Control UI is disabled while %s is pending', async pending => {
-      config.developerMode = true;
-      config.controlUiEnabled = true;
-      const metadata = { success: true, port: 18789, token: 'test-only-token' };
-      let finish!: (value: typeof metadata) => void;
-      const waiting = new Promise<typeof metadata>(resolve => { finish = resolve; });
-      const getPort = vi.fn(() => pending === 'getPort' ? waiting : Promise.resolve(metadata));
-      const getToken = vi.fn(() => pending === 'getToken' ? waiting : Promise.resolve(metadata));
-      const openExternal = vi.fn();
-      Object.defineProperty(window, 'electron', { configurable: true, value: {
-        platform: 'win32', openclaw: { engine: { getPort, getToken } }, shell: { openExternal },
-      } });
-      render(<Sidebar {...createProps()} />);
-      fireEvent.click(screen.getByRole('button', { name: translations.zh.sidebarMore }));
-      fireEvent.click(screen.getByRole('button', { name: translations.zh.openChatWeb }));
-      await waitFor(() => expect(pending === 'getPort' ? getPort : getToken).toHaveBeenCalled());
-      config.controlUiEnabled = false;
-      await act(async () => finish(metadata));
-      expect(openExternal).not.toHaveBeenCalled();
-    },
-  );
 });

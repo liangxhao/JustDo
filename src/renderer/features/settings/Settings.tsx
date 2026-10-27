@@ -1639,8 +1639,6 @@ const Settings: React.FC<SettingsProps> = ({
             setIsUpdatingPreventSleep={setIsUpdatingPreventSleep}
             setPreventSleepState={setPreventSleepState}
             developerModeAvailable={developerModeAvailable}
-            developerMode={developerMode}
-            setDeveloperMode={setDeveloperMode}
             controlUiEnabled={controlUiEnabled}
             setControlUiEnabled={setControlUiEnabled}
             proxyMode={proxyMode}
@@ -1913,11 +1911,19 @@ const Settings: React.FC<SettingsProps> = ({
                       <button
                         type="button"
                         className="select-none rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                        onClick={() =>
-                          setGeneralTitleClicks(count =>
-                            Math.min(count + 1, DEVELOPER_MODE_REVEAL_CLICKS),
-                          )
-                        }
+                        onClick={() => {
+                          const nextCount = Math.min(
+                            generalTitleClicks + 1,
+                            DEVELOPER_MODE_REVEAL_CLICKS,
+                          );
+                          setGeneralTitleClicks(nextCount);
+                          if (
+                            generalTitleClicks < DEVELOPER_MODE_REVEAL_CLICKS &&
+                            nextCount === DEVELOPER_MODE_REVEAL_CLICKS
+                          ) {
+                            setDeveloperMode(true);
+                          }
+                        }}
                       >
                         {activeTabLabel}
                       </button>

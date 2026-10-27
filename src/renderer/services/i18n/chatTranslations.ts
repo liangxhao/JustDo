@@ -490,7 +490,6 @@ export const chatTranslations = {
     coworkGreetingSupport: '把想做的事告诉我，我们一起慢慢完成。',
     coworkSelectProject: '选择项目',
     coworkDescription: '7×24 小时帮你干活的硬件场景个人助理 Agent',
-    openChatWeb: '打开 ChatWeb',
     chatWebTokenError: '无法获取访问令牌，请尝试重启 AI 引擎',
     chatWebPortError: '无法获取服务端口',
     // Agent model state
@@ -1276,7 +1275,6 @@ export const chatTranslations = {
     coworkGreetingSupport: 'Tell me what you’d like to do. We’ll take it one step at a time.',
     coworkSelectProject: 'Select project',
     coworkDescription: 'A 24/7 hardware-focused personal assistant agent',
-    openChatWeb: 'Open ChatWeb',
     chatWebTokenError: 'Unable to get access token, please try restarting the AI engine',
     chatWebPortError: 'Unable to get service port',
     // Agent model state

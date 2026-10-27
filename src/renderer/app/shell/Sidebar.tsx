@@ -19,7 +19,6 @@ import {
   selectCoworkSessions,
   selectCurrentSessionId,
   selectGroups,
-  selectIsOpenClawEngine,
   selectSessionDirectory,
 } from '@/features/cowork/coworkSelectors';
 import { coworkService } from '@/features/cowork/coworkService';
@@ -27,7 +26,6 @@ import {
   type CoworkSessionListAction,
   requestCoworkSessionListAction,
 } from '@/features/cowork/sessionListActions';
-import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';
 import ComposeIcon from '@/shared/components/icons/ComposeIcon';
 import SearchIcon from '@/shared/components/icons/SearchIcon';
@@ -85,7 +83,6 @@ const Sidebar: React.FC<SidebarProps> = ({
     (state: import('@/store').RootState) => state.cowork.sessionListStatus,
   );
   const currentSessionId = useSelector(selectCurrentSessionId);
-  const isOpenClawEngine = useSelector(selectIsOpenClawEngine);
   const unreadScheduledTaskResults = useSelector(
     (state: import('@/store').RootState) => state.scheduledTask.unreadResultCount,
   );
@@ -100,10 +97,6 @@ const Sidebar: React.FC<SidebarProps> = ({
     );
   }, []);
   const [showBatchDeleteConfirm, setShowBatchDeleteConfirm] = useState(false);
-  const [controlUiEnabled, setControlUiEnabled] = useState(() => {
-    const config = configService.getConfig();
-    return config.developerMode === true && config.controlUiEnabled === true;
-  });
   const isHomePanelVisible = activeView === SidebarView.Home && !isCollapsed;
   const sessionListResize = useSessionListResize(isHomePanelVisible);
 
@@ -127,18 +120,6 @@ const Sidebar: React.FC<SidebarProps> = ({
     setSelectedIds(new Set());
     setShowBatchDeleteConfirm(false);
   }, [isHomePanelVisible]);
-
-  useEffect(() => {
-    const syncControlUiEnabled = () => {
-      const config = configService.getConfig();
-      setControlUiEnabled(config.developerMode === true && config.controlUiEnabled === true);
-    };
-
-    window.addEventListener('config-updated', syncControlUiEnabled);
-    return () => {
-      window.removeEventListener('config-updated', syncControlUiEnabled);
-    };
-  }, []);
 
   const handleSelectSession = async (
     sessionId: string,
@@ -269,54 +250,6 @@ const Sidebar: React.FC<SidebarProps> = ({
     await deleteSessions();
   };
 
-  const handleOpenChatWeb = async () => {
-    const config = configService.getConfig();
-    if (config.developerMode !== true || config.controlUiEnabled !== true || !isOpenClawEngine) return;
-    try {
-      // Defensive check: ensure openclaw engine API is available
-      if (
-        !window.electron?.openclaw?.engine?.getPort ||
-        !window.electron?.openclaw?.engine?.getToken
-      ) {
-        console.warn('[Sidebar] OpenClaw engine API not available');
-        window.dispatchEvent(
-          new CustomEvent('app:showToast', { detail: i18nService.t('coworkErrorEngineNotReady') }),
-        );
-        return;
-      }
-
-      const portResult = await window.electron.openclaw.engine.getPort();
-      const tokenResult = await window.electron.openclaw.engine.getToken();
-      const currentConfig = configService.getConfig();
-      if (currentConfig.developerMode !== true || currentConfig.controlUiEnabled !== true) return;
-
-      const port = portResult.success ? portResult.port : null;
-      const token = tokenResult.success ? tokenResult.token : null;
-
-      if (!port) {
-        window.dispatchEvent(
-          new CustomEvent('app:showToast', { detail: i18nService.t('chatWebPortError') }),
-        );
-        return;
-      }
-
-      if (!token) {
-        window.dispatchEvent(
-          new CustomEvent('app:showToast', { detail: i18nService.t('chatWebTokenError') }),
-        );
-        return;
-      }
-
-      const url = `http://127.0.0.1:${port}/#token=${token}`;
-      await window.electron.shell.openExternal(url);
-    } catch (error) {
-      console.error('[Sidebar] Failed to open ChatWeb:', error);
-      window.dispatchEvent(
-        new CustomEvent('app:showToast', { detail: i18nService.t('coworkErrorEngineNotReady') }),
-      );
-    }
-  };
-
   const navigateFromRail = (navigate: () => void) => {
     sessionNavigationRequestRef.current += 1;
     setIsSearchOpen(false);
@@ -340,7 +273,6 @@ const Sidebar: React.FC<SidebarProps> = ({
         onShowMemory={() => navigateFromRail(onShowMemory)}
         onShowWorkboard={() => navigateFromRail(onShowWorkboard)}
         onShowSettings={() => navigateFromRail(onShowSettings)}
-        onOpenChatWeb={controlUiEnabled && isOpenClawEngine ? handleOpenChatWeb : undefined}
       />
       <aside
         ref={sessionListResize.panelRef}

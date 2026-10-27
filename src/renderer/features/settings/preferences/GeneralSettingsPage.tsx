@@ -1,6 +1,7 @@
 import {
   ArrowPathIcon,
   CheckCircleIcon,
+  CodeBracketIcon,
   PencilSquareIcon,
   XCircleIcon,
 } from '@heroicons/react/24/outline';
@@ -12,6 +13,7 @@ import AppUpdateFrequencySetting from '@/features/settings/updates/AppUpdateFreq
 import { i18nService, LanguageType } from '@/services/i18n';
 import ThemedSelect from '@/shared/components/ui/ThemedSelect';
 
+import { ControlUiSetting } from './ControlUiSetting';
 import { ProxySettingsSection } from './ProxySettingsSection';
 
 interface GeneralSettingsPageProps {
@@ -27,8 +29,6 @@ interface GeneralSettingsPageProps {
   setIsUpdatingPreventSleep: React.Dispatch<React.SetStateAction<boolean>>;
   setPreventSleepState: React.Dispatch<React.SetStateAction<boolean>>;
   developerModeAvailable: boolean;
-  developerMode: boolean;
-  setDeveloperMode: React.Dispatch<React.SetStateAction<boolean>>;
   controlUiEnabled: boolean;
   setControlUiEnabled: React.Dispatch<React.SetStateAction<boolean>>;
   proxyMode: ProxyMode;
@@ -66,8 +66,6 @@ export function GeneralSettingsPage({
   setIsUpdatingPreventSleep,
   setPreventSleepState,
   developerModeAvailable,
-  developerMode,
-  setDeveloperMode,
   controlUiEnabled,
   setControlUiEnabled,
   proxyMode,
@@ -220,202 +218,171 @@ export function GeneralSettingsPage({
 
       {/* Developer Mode Section */}
       {developerModeAvailable && (
-        <div>
-          <h4 className="text-sm font-medium text-foreground mb-3">
-            {i18nService.t('developerMode')}
-          </h4>
-          <label className="flex items-center justify-between cursor-pointer">
-            <span className="text-sm text-secondary">
-              {i18nService.t('developerModeDescription')}
-            </span>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={developerMode}
-              onClick={() => {
-                setDeveloperMode(prev => !prev);
-              }}
-              className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-colors ${
-                developerMode ? 'bg-primary' : 'bg-gray-300 dark:bg-gray-600'
-              }`}
-            >
-              <span
-                className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                  developerMode ? 'translate-x-6' : 'translate-x-1'
-                }`}
-              />
-            </button>
-          </label>
-        </div>
-      )}
-
-      {developerModeAvailable && developerMode && (
-        <>
-          <div className="flex items-center justify-between gap-6 rounded-xl border border-border px-4 py-4">
+        <section
+          aria-labelledby="general-developer-heading"
+          className="overflow-hidden rounded-2xl border border-border-subtle bg-surface shadow-sm"
+        >
+          <div className="flex items-center gap-3 border-b border-border-subtle bg-surface-raised px-5 py-4">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary-muted text-primary">
+              <CodeBracketIcon className="h-5 w-5" aria-hidden="true" />
+            </div>
             <div>
-              <h4 className="text-sm font-medium text-foreground">
-                {i18nService.t('controlUiTitle')}
+              <h4 id="general-developer-heading" className="text-sm font-semibold text-foreground">
+                {i18nService.t('developerMode')}
               </h4>
-              <p className="mt-1 text-xs leading-5 text-secondary">
-                {i18nService.t('controlUiDescription')}
+              <p className="mt-0.5 text-xs leading-5 text-secondary">
+                {i18nService.t('developerSettingsDescription')}
               </p>
             </div>
-            <button
-              type="button"
-              role="switch"
-              aria-label={i18nService.t('controlUiTitle')}
-              aria-checked={controlUiEnabled}
-              disabled={isSaving}
-              onClick={() => setControlUiEnabled(previous => !previous)}
-              className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
-                controlUiEnabled ? 'bg-primary' : 'bg-gray-300 dark:bg-gray-600'
-              }`}
-            >
-              <span
-                className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                  controlUiEnabled ? 'translate-x-6' : 'translate-x-1'
-                }`}
-              />
-            </button>
           </div>
-          <ProxySettingsSection
-            id="application-proxy"
-            titleKey="proxySettings"
-            descriptionKey="applicationProxyDescription"
-            proxyMode={proxyMode}
-            handleProxyModeChange={handleProxyModeChange}
-            customProxy={customProxy}
-            handleCustomProxyChange={handleCustomProxyChange}
-            isSaving={isSaving}
-          />
+          <div className="divide-y divide-border-subtle px-5">
+            <ControlUiSetting
+              enabled={controlUiEnabled}
+              onChange={setControlUiEnabled}
+              isSaving={isSaving}
+            />
+            <ProxySettingsSection
+              id="application-proxy"
+              titleKey="proxySettings"
+              descriptionKey="applicationProxyDescription"
+              proxyMode={proxyMode}
+              handleProxyModeChange={handleProxyModeChange}
+              customProxy={customProxy}
+              handleCustomProxyChange={handleCustomProxyChange}
+              isSaving={isSaving}
+              embedded
+            />
 
-          {/* Gateway Port Configuration */}
-          <div className="space-y-3 rounded-xl border px-4 py-4 border-border">
-            <div className="flex items-start justify-between gap-4">
-              <div className="flex flex-wrap items-center gap-3">
-                <div className="text-sm font-medium text-foreground">
+            {/* Gateway Port Configuration */}
+            <div className="space-y-3 py-5">
+              <div className="flex flex-wrap items-center justify-between gap-4">
+                <h4 className="text-sm font-medium text-foreground">
                   {i18nService.t('openclawGatewayPortTitle')}
-                </div>
-                <input
-                  ref={openClawGatewayPortInputRef}
-                  type="text"
-                  inputMode="numeric"
-                  pattern="[0-9]*"
-                  value={openClawGatewayPortInput}
-                  readOnly={!openClawGatewayPortEditing}
-                  onDoubleClick={() => {
-                    setOpenClawGatewayPortEditing(true);
-                    setOpenClawGatewayPortError(null);
-                  }}
-                  onChange={e => {
-                    setOpenClawGatewayPortInput(e.target.value);
-                    setOpenClawGatewayPortError(null);
-                  }}
-                  onKeyDown={event => {
-                    if (event.key === 'Enter' && openClawGatewayPortValidation.valid) {
-                      event.preventDefault();
-                      void handleSaveOpenClawGatewayPort();
-                    } else if (event.key === 'Escape') {
-                      event.preventDefault();
-                      cancelOpenClawGatewayPortEditing();
-                    }
-                  }}
-                  aria-invalid={
-                    openClawGatewayPortEditing && Boolean(openClawGatewayPortValidationError)
-                  }
-                  aria-describedby="openclaw-gateway-port-help"
-                  className={`w-32 rounded-lg border px-3 py-1.5 text-center text-sm font-mono bg-surface ${
-                    openClawGatewayPortEditing && openClawGatewayPortValidationError
-                      ? 'border-danger text-foreground'
-                      : 'border-border'
-                  } ${
-                    openClawGatewayPortEditing ? 'text-foreground' : 'cursor-default text-secondary'
-                  }`}
-                  disabled={openClawGatewayPortSaving}
-                />
-                {openClawGatewayPortEditing && (
-                  <div className="flex items-center gap-1">
-                    <button
-                      type="button"
-                      onClick={() => void handleSaveOpenClawGatewayPort()}
-                      disabled={openClawGatewayPortSaving || !openClawGatewayPortValidation.valid}
-                      className="flex h-8 w-8 items-center justify-center rounded-lg text-primary hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
-                      aria-label={i18nService.t('save')}
-                    >
-                      <CheckCircleIcon className="h-5 w-5" aria-hidden="true" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={cancelOpenClawGatewayPortEditing}
-                      className="flex h-8 w-8 items-center justify-center rounded-lg text-secondary hover:bg-surface-raised transition-colors"
-                      aria-label={i18nService.t('cancel')}
-                    >
-                      <XCircleIcon className="h-5 w-5" aria-hidden="true" />
-                    </button>
-                  </div>
-                )}
-                {!openClawGatewayPortEditing && (
-                  <button
-                    type="button"
-                    onClick={() => {
+                </h4>
+                <div className="flex flex-wrap items-center gap-2">
+                  <input
+                    ref={openClawGatewayPortInputRef}
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    value={openClawGatewayPortInput}
+                    readOnly={!openClawGatewayPortEditing}
+                    onDoubleClick={() => {
                       setOpenClawGatewayPortEditing(true);
                       setOpenClawGatewayPortError(null);
                     }}
-                    className="flex h-8 w-8 items-center justify-center rounded-lg text-secondary hover:bg-surface-raised transition-colors"
-                    aria-label={i18nService.t('openclawGatewayPortEdit')}
-                    title={i18nService.t('openclawGatewayPortEdit')}
+                    onChange={e => {
+                      setOpenClawGatewayPortInput(e.target.value);
+                      setOpenClawGatewayPortError(null);
+                    }}
+                    onKeyDown={event => {
+                      if (event.key === 'Enter' && openClawGatewayPortValidation.valid) {
+                        event.preventDefault();
+                        void handleSaveOpenClawGatewayPort();
+                      } else if (event.key === 'Escape') {
+                        event.preventDefault();
+                        cancelOpenClawGatewayPortEditing();
+                      }
+                    }}
+                    aria-invalid={
+                      openClawGatewayPortEditing && Boolean(openClawGatewayPortValidationError)
+                    }
+                    aria-describedby="openclaw-gateway-port-help"
+                    className={`h-9 w-28 rounded-lg border px-3 text-center text-sm font-mono bg-surface-inset transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${
+                      openClawGatewayPortEditing && openClawGatewayPortValidationError
+                        ? 'border-danger text-foreground'
+                        : 'border-border'
+                    } ${
+                      openClawGatewayPortEditing
+                        ? 'text-foreground'
+                        : 'cursor-default text-secondary'
+                    }`}
+                    disabled={openClawGatewayPortSaving}
+                  />
+                  {openClawGatewayPortEditing && (
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => void handleSaveOpenClawGatewayPort()}
+                        disabled={openClawGatewayPortSaving || !openClawGatewayPortValidation.valid}
+                        className="flex h-8 w-8 items-center justify-center rounded-lg text-primary hover:bg-primary-muted disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
+                        aria-label={i18nService.t('save')}
+                      >
+                        <CheckCircleIcon className="h-5 w-5" aria-hidden="true" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={cancelOpenClawGatewayPortEditing}
+                        className="flex h-8 w-8 items-center justify-center rounded-lg text-secondary hover:bg-surface-raised transition-colors"
+                        aria-label={i18nService.t('cancel')}
+                      >
+                        <XCircleIcon className="h-5 w-5" aria-hidden="true" />
+                      </button>
+                    </div>
+                  )}
+                  {!openClawGatewayPortEditing && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setOpenClawGatewayPortEditing(true);
+                        setOpenClawGatewayPortError(null);
+                      }}
+                      className="flex h-8 w-8 items-center justify-center rounded-lg text-secondary hover:bg-surface-raised transition-colors"
+                      aria-label={i18nService.t('openclawGatewayPortEdit')}
+                      title={i18nService.t('openclawGatewayPortEdit')}
+                    >
+                      <PencilSquareIcon className="h-4 w-4" aria-hidden="true" />
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => void handleRestartOpenClawGateway()}
+                    disabled={
+                      isRestartingOpenClawGateway ||
+                      openClawGatewayPortEditing ||
+                      openClawGatewayPortSaving
+                    }
+                    className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg border border-border bg-surface px-3 text-xs font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:cursor-not-allowed disabled:opacity-50"
+                    title={i18nService.t('openclawGatewayRestartHint')}
                   >
-                    <PencilSquareIcon className="h-4 w-4" aria-hidden="true" />
+                    <ArrowPathIcon
+                      className={`h-4 w-4 ${isRestartingOpenClawGateway ? 'animate-spin' : ''}`}
+                      aria-hidden="true"
+                    />
+                    {isRestartingOpenClawGateway
+                      ? i18nService.t('openclawGatewayRestarting')
+                      : i18nService.t('coworkOpenClawRestartGateway')}
                   </button>
-                )}
+                </div>
               </div>
-              <button
-                type="button"
-                onClick={() => void handleRestartOpenClawGateway()}
-                disabled={
-                  isRestartingOpenClawGateway ||
-                  openClawGatewayPortEditing ||
-                  openClawGatewayPortSaving
-                }
-                className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-medium border-border text-secondary hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
-                title={i18nService.t('openclawGatewayRestartHint')}
-              >
-                <ArrowPathIcon
-                  className={`h-4 w-4 ${isRestartingOpenClawGateway ? 'animate-spin' : ''}`}
-                  aria-hidden="true"
-                />
-                {isRestartingOpenClawGateway
-                  ? i18nService.t('openclawGatewayRestarting')
-                  : i18nService.t('coworkOpenClawRestartGateway')}
-              </button>
-            </div>
-            <div id="openclaw-gateway-port-help" className="space-y-1 text-xs">
-              <p className="text-secondary">{i18nService.t('openclawGatewayPortHint')}</p>
-              {openClawGatewayPortEditing && openClawGatewayPortValidationError && (
-                <p className="text-danger" role="alert">
-                  {openClawGatewayPortValidationError}
-                </p>
-              )}
-              {openClawGatewayPortEditing &&
-                openClawGatewayPortValidation.valid &&
-                openClawGatewayPortValidation.usesEphemeralRange && (
-                  <p className="text-warning">
-                    {i18nService.t('openclawGatewayPortEphemeralWarning')}
+              <div id="openclaw-gateway-port-help" className="space-y-1 text-xs">
+                <p className="text-secondary">{i18nService.t('openclawGatewayPortHint')}</p>
+                {openClawGatewayPortEditing && openClawGatewayPortValidationError && (
+                  <p className="text-danger" role="alert">
+                    {openClawGatewayPortValidationError}
                   </p>
                 )}
-              {openClawGatewayPortError && (
-                <p className="text-danger" role="alert">
-                  {openClawGatewayPortError}
-                </p>
-              )}
-              {openClawGatewayPortRestartRequired && (
-                <p className="text-warning" role="status">
-                  {i18nService.t('openclawGatewayPortRestartRequired')}
-                </p>
-              )}
+                {openClawGatewayPortEditing &&
+                  openClawGatewayPortValidation.valid &&
+                  openClawGatewayPortValidation.usesEphemeralRange && (
+                    <p className="text-warning">
+                      {i18nService.t('openclawGatewayPortEphemeralWarning')}
+                    </p>
+                  )}
+                {openClawGatewayPortError && (
+                  <p className="text-danger" role="alert">
+                    {openClawGatewayPortError}
+                  </p>
+                )}
+                {openClawGatewayPortRestartRequired && (
+                  <p className="text-warning" role="status">
+                    {i18nService.t('openclawGatewayPortRestartRequired')}
+                  </p>
+                )}
+              </div>
             </div>
           </div>
-        </>
+        </section>
       )}
     </div>
   );
