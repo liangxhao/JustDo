@@ -163,6 +163,7 @@ interface BrowserSettingsTabProps {
   browserProxy: ProxySettings;
   onBrowserProxyChange: (settings: ProxySettings) => void;
   isSaving: boolean;
+  saveSucceeded?: boolean;
 }
 
 const BrowserSettingsTab: React.FC<BrowserSettingsTabProps> = ({
@@ -170,6 +171,7 @@ const BrowserSettingsTab: React.FC<BrowserSettingsTabProps> = ({
   browserProxy,
   onBrowserProxyChange,
   isSaving,
+  saveSucceeded = false,
 }) => {
   const [page, setPage] = useState<'main' | 'history' | 'downloads'>(initialPage ?? 'main');
   const [browserMode, setBrowserMode] = useState<BrowserModeValue>(() =>
@@ -628,9 +630,15 @@ const BrowserSettingsTab: React.FC<BrowserSettingsTabProps> = ({
         </div>
       ) : null}
 
-      <section className="rounded-xl border border-border bg-surface px-4 py-3">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <h3 className="flex items-center gap-2 text-sm font-semibold text-foreground">
+      <section
+        aria-labelledby="browser-extension-title"
+        className="overflow-hidden rounded-xl border border-border bg-surface"
+      >
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border bg-surface-raised px-4 py-3">
+          <h3
+            id="browser-extension-title"
+            className="flex items-center gap-2 text-sm font-semibold text-foreground"
+          >
             <PuzzlePieceIcon className="h-4 w-4 text-secondary" aria-hidden="true" />
             {i18nService.t('browserExtensionSectionTitle')}
           </h3>
@@ -655,26 +663,31 @@ const BrowserSettingsTab: React.FC<BrowserSettingsTabProps> = ({
             </button>
           </div>
         </div>
-        <details className="group/install mt-2 text-xs text-secondary">
-          <summary className="flex w-fit cursor-pointer list-none items-center gap-1.5 rounded py-1 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/25 [&::-webkit-details-marker]:hidden">
-            <ChevronDownIcon
-              className="h-3.5 w-3.5 -rotate-90 transition-transform group-open/install:rotate-0"
-              aria-hidden="true"
-            />
-            {i18nService.t('browserExtensionStepInstallTitle')}
-          </summary>
-          <p className="mt-2 whitespace-pre-line pl-5 text-xs leading-5">
-            <ExtensionInstallDescription />
+        <div className="px-4 py-3">
+          <p className="text-xs leading-5 text-secondary">
+            {i18nService.t('browserExtensionSectionDescription')}
           </p>
-        </details>
-        {extensionPageUrlCopied ? (
-          <p className="mt-2 text-xs leading-5 text-secondary">
-            {i18nService.t('browserExtensionPageCopied')}{' '}
-            <code className="select-all rounded bg-surface-raised px-1.5 py-0.5">
-              chrome://extensions
-            </code>
-          </p>
-        ) : null}
+          <details className="group/install mt-2 text-xs text-secondary">
+            <summary className="flex w-fit cursor-pointer list-none items-center gap-1.5 rounded py-1 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/25 [&::-webkit-details-marker]:hidden">
+              <ChevronDownIcon
+                className="h-3.5 w-3.5 -rotate-90 transition-transform group-open/install:rotate-0"
+                aria-hidden="true"
+              />
+              {i18nService.t('browserExtensionStepInstallTitle')}
+            </summary>
+            <p className="mt-2 whitespace-pre-line pl-5 text-xs leading-5">
+              <ExtensionInstallDescription />
+            </p>
+          </details>
+          {extensionPageUrlCopied ? (
+            <p className="mt-2 text-xs leading-5 text-secondary">
+              {i18nService.t('browserExtensionPageCopied')}{' '}
+              <code className="select-all rounded bg-surface-raised px-1.5 py-0.5">
+                chrome://extensions
+              </code>
+            </p>
+          ) : null}
+        </div>
       </section>
 
       <section className="overflow-hidden rounded-xl border border-border bg-surface">
@@ -1228,20 +1241,14 @@ const BrowserSettingsTab: React.FC<BrowserSettingsTabProps> = ({
           <GlobeAltIcon className="h-4 w-4 text-secondary" aria-hidden="true" />
           {i18nService.t('browserProxySettings')}
         </h3>
-        <div className="divide-y divide-border/50 px-4">
+        <div className="px-4">
           <div className="flex min-h-12 items-center justify-between gap-3 py-3">
             <div className="min-w-0 flex-1">
               <label htmlFor="browser-proxy-mode" className="text-sm text-foreground">
                 {i18nService.t('proxyMode')}
               </label>
               <p id="browser-proxy-mode-description" className="mt-0.5 text-xs text-secondary">
-                {i18nService.t(
-                  browserProxy.mode === ProxyMode.SYSTEM
-                    ? 'useSystemProxyDescription'
-                    : browserProxy.mode === ProxyMode.CUSTOM
-                      ? 'customProxyDescription'
-                      : 'noProxyDescription',
-                )}
+                {i18nService.t('browserProxyDescription')}
               </p>
             </div>
             <BrowserSelect
@@ -1273,18 +1280,32 @@ const BrowserSettingsTab: React.FC<BrowserSettingsTabProps> = ({
               />
             </div>
           )}
-          <div className="flex flex-col gap-3 py-3 sm:flex-row sm:items-center sm:justify-between">
-            <p className="min-w-0 flex-1 text-xs leading-5 text-secondary">
-              {i18nService.t('browserProxyDescription')}
-            </p>
+          <div className="flex justify-end pb-3">
             <button
               type="submit"
               aria-busy={isSaving}
               disabled={isSaving}
-              className="inline-flex h-9 min-w-[88px] shrink-0 self-end items-center justify-center gap-1.5 rounded-xl bg-primary px-5 text-sm font-medium text-white shadow-sm transition-all hover:bg-primary-hover hover:shadow-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-2 focus-visible:ring-offset-surface active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
+              className={`inline-flex h-9 min-w-[88px] shrink-0 self-end items-center justify-center gap-1.5 rounded-xl px-5 text-sm font-medium text-white shadow-sm transition-all hover:shadow-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-2 focus-visible:ring-offset-surface active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 ${
+                saveSucceeded
+                  ? 'bg-green-600 hover:bg-green-600'
+                  : 'bg-primary hover:bg-primary-hover'
+              }`}
             >
-              {isSaving && <ArrowPathIcon className="h-4 w-4 animate-spin" aria-hidden="true" />}
-              {isSaving ? i18nService.t('saving') : i18nService.t('save')}
+              <span className="inline-flex items-center gap-1.5" aria-live="polite">
+                {isSaving ? (
+                  <>
+                    <ArrowPathIcon className="h-4 w-4 animate-spin" aria-hidden="true" />
+                    {i18nService.t('saving')}
+                  </>
+                ) : saveSucceeded ? (
+                  <>
+                    <CheckCircleIcon className="h-4 w-4 animate-scale-in" aria-hidden="true" />
+                    {i18nService.t('settingsSaved')}
+                  </>
+                ) : (
+                  i18nService.t('save')
+                )}
+              </span>
             </button>
           </div>
         </div>

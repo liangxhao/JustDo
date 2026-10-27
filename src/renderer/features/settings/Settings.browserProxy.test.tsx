@@ -102,15 +102,13 @@ function renderSettings(onClose = vi.fn()) {
 }
 
 const proxySection = () => screen.getByRole('region', { name: 'browserProxySettings' });
-const footerSave = () => {
-  const buttons = screen.getAllByRole('button', { name: 'save' });
-  return buttons[buttons.length - 1];
-};
+const saveButton = () => screen.getByRole('button', { name: 'save' });
 
-test.each(['footer', 'section', 'form'] as const)(
+test.each(['section', 'form'] as const)(
   '%s submit saves the browser proxy independently of the application debugging proxy',
   async submit => {
     const view = renderSettings();
+    expect(screen.getAllByRole('button', { name: 'save' })).toHaveLength(1);
     expect(
       (within(proxySection()).getByRole('combobox', { name: 'proxyMode' }) as HTMLSelectElement)
         .value,
@@ -120,8 +118,6 @@ test.each(['footer', 'section', 'form'] as const)(
     });
     if (submit === 'section') {
       fireEvent.click(within(proxySection()).getByRole('button', { name: 'save' }));
-    } else if (submit === 'footer') {
-      fireEvent.click(footerSave());
     } else {
       fireEvent.submit(view.container.querySelector('form')!);
     }
@@ -149,7 +145,7 @@ test('retains the browser proxy draft when changing tabs and saves it from the g
       .value,
   ).toBe(ProxyMode.DIRECT);
   fireEvent.click(screen.getByRole('button', { name: 'general' }));
-  fireEvent.click(footerSave());
+  fireEvent.click(saveButton());
 
   await screen.findByText('settingsSaved');
   expect(currentConfig.browserProxy.mode).toBe(ProxyMode.DIRECT);
@@ -160,7 +156,7 @@ test('rejects invalid custom proxy settings and saves normalized values after co
   fireEvent.change(within(proxySection()).getByRole('combobox', { name: 'proxyMode' }), {
     target: { value: ProxyMode.CUSTOM },
   });
-  fireEvent.click(footerSave());
+  fireEvent.click(saveButton());
   expect(screen.getByText('proxyInvalidConfiguration')).toBeTruthy();
   expect(screen.queryByText('settingsSaved')).toBeNull();
   expect(mocks.updateConfig).not.toHaveBeenCalled();
@@ -171,7 +167,7 @@ test('rejects invalid custom proxy settings and saves normalized values after co
   fireEvent.change(within(proxySection()).getByLabelText('proxyPort'), {
     target: { value: '8080' },
   });
-  fireEvent.click(footerSave());
+  fireEvent.click(saveButton());
 
   await screen.findByText('settingsSaved');
   expect(currentConfig.browserProxy).toEqual({
@@ -186,7 +182,7 @@ test('retains an editable proxy draft after persistence failure and allows retry
   fireEvent.change(within(proxySection()).getByRole('combobox', { name: 'proxyMode' }), {
     target: { value: ProxyMode.DIRECT },
   });
-  fireEvent.click(footerSave());
+  fireEvent.click(saveButton());
 
   await screen.findByText('storage unavailable');
   expect(screen.queryByText('settingsSaved')).toBeNull();
@@ -194,10 +190,10 @@ test('retains an editable proxy draft after persistence failure and allows retry
     (within(proxySection()).getByRole('combobox', { name: 'proxyMode' }) as HTMLSelectElement)
       .value,
   ).toBe(ProxyMode.DIRECT);
-  expect((footerSave() as HTMLButtonElement).disabled).toBe(false);
+  expect((saveButton() as HTMLButtonElement).disabled).toBe(false);
   expect(currentConfig.browserProxy.mode).toBe(ProxyMode.SYSTEM);
 
-  fireEvent.click(footerSave());
+  fireEvent.click(saveButton());
   await screen.findByText('settingsSaved');
   expect(currentConfig.browserProxy.mode).toBe(ProxyMode.DIRECT);
 });
@@ -228,7 +224,7 @@ test('hydrates and saves the Control UI draft through the existing settings save
   fireEvent.click(screen.getByRole('button', { name: 'general' }));
   fireEvent.click(screen.getByRole('button', { name: 'fixtureControlUiOn' }));
   expect(mocks.updateConfig).not.toHaveBeenCalled();
-  fireEvent.click(footerSave());
+  fireEvent.click(saveButton());
   await screen.findByText('settingsSaved');
   expect(mocks.updateConfig).toHaveBeenCalledWith({ controlUiEnabled: false });
   expect(currentConfig.controlUiEnabled).toBe(false);

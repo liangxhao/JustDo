@@ -403,6 +403,7 @@ describe('BrowserSettingsTab extension connection checks', () => {
     render(<BrowserSettingsTab />);
     await waitFor(() => expect(testExtensionConnection).toHaveBeenCalledTimes(1));
     expect(screen.getByText('browserExtensionSectionTitle')).toBeTruthy();
+    expect(screen.getByText('browserExtensionSectionDescription')).toBeTruthy();
     expect(screen.getByText('browserExtensionStepInstallTitle')).toBeTruthy();
     expect(screen.getByText('browserExtensionStepPairTitle')).toBeTruthy();
     expect(
@@ -430,6 +431,7 @@ describe('BrowserSettingsTab extension connection checks', () => {
 
     fireEvent.click(screen.getByRole('radio', { name: /browserModeIsolatedTitle/ }));
     await waitFor(() => expect(screen.getByText('browserModeIsolatedActive')).toBeTruthy());
+    expect(screen.getByText('browserExtensionSectionDescription')).toBeTruthy();
     expect(screen.getByText('browserExtensionStepInstallTitle')).toBeTruthy();
     expect(screen.queryByText('browserExtensionStepPairTitle')).toBeNull();
 

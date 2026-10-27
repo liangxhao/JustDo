@@ -1752,6 +1752,7 @@ const Settings: React.FC<SettingsProps> = ({
             browserProxy={browserProxy}
             onBrowserProxyChange={setBrowserProxy}
             isSaving={isSaving}
+            saveSucceeded={saveSucceeded}
           />
         );
       case 'computer':
@@ -1952,7 +1953,7 @@ const Settings: React.FC<SettingsProps> = ({
               >
                 {i18nService.t(activeTab === 'computer' ? 'close' : 'cancel')}
               </button>
-              {activeTab !== 'computer' && (
+              {activeTab !== 'computer' && activeTab !== 'browser' && (
                 <button
                   type="submit"
                   aria-busy={isSaving}

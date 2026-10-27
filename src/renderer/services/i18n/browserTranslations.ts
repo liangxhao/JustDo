@@ -92,7 +92,7 @@ export const browserTranslations = {
     browserConnectionFailed: 'Chrome 连接测试失败',
     browserExtensionSectionTitle: 'Chrome 扩展',
     browserExtensionSectionDescription:
-      'Chrome 扩展是浏览器中的 AI 助手，可直接在侧边栏中对话，并按需附带当前网页内容。',
+      '在 Chrome 侧边栏与 AI 对话，并按需附带当前网页内容；选择“Chrome 扩展”连接方式后，AI 可操作你授权共享的网页。',
     browserExtensionTitle: '通过扩展连接你的 Chrome',
     browserExtensionDescription:
       '保持桌面应用与 Chrome 运行，扩展会自动发现并配对本机应用；配对后可在 Tab Access 中调整共享范围。',
@@ -364,7 +364,7 @@ export const browserTranslations = {
     browserMessagePage: 'page',
     browserProxySettings: '浏览器代理',
     browserProxyDescription:
-      '用于侧边栏内置浏览器和聊天可视化卡片，默认使用系统代理。Chrome 和浏览器扩展沿用浏览器自身的代理设置。',
+      '适用于侧边栏内置浏览器和聊天可视化卡片；Chrome 和浏览器扩展沿用各自的代理设置。',
   },
   en: {
     browserSettings: 'Browser',
@@ -460,7 +460,7 @@ export const browserTranslations = {
     browserConnectionFailed: 'Chrome connection test failed',
     browserExtensionSectionTitle: 'Chrome extension',
     browserExtensionSectionDescription:
-      'The Chrome extension brings the AI assistant into your browser, where you can chat in the side panel and optionally include context from the current page.',
+      'Chat with AI in the Chrome side panel and optionally include context from the current page. Choose the Chrome extension connection to let AI interact with pages you authorize for sharing.',
     browserExtensionTitle: 'Connect your Chrome through the extension',
     browserExtensionDescription:
       'Keep the desktop app and Chrome running. The extension discovers and pairs with the local app automatically; adjust sharing under Tab Access after pairing.',
@@ -747,6 +747,6 @@ export const browserTranslations = {
     browserMessagePage: 'page',
     browserProxySettings: 'Browser Proxy',
     browserProxyDescription:
-      "Applies to the embedded sidebar browser and chat visualization cards, defaulting to the system proxy. Chrome and browser extensions use their browser's own proxy settings.",
+      'Applies to the embedded sidebar browser and chat visualization cards; Chrome and browser extensions use their own proxy settings.',
   },
 };
