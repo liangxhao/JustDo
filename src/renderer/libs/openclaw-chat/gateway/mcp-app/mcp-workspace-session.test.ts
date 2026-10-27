@@ -360,6 +360,7 @@ describe('homepage MCP workspace connection', () => {
     const calls = f.prepareWorkspace.mock.calls.length;
     const pending = f.session.prepare();
     const rejected = expect(pending).rejects.toThrow('timed out');
+    client.options.onClose?.({ code: 1013, reason: 'gateway starting' });
     await vi.advanceTimersByTimeAsync(15_000);
     await rejected;
     expect(stop).toHaveBeenCalledOnce();
@@ -374,6 +375,34 @@ describe('homepage MCP workspace connection', () => {
     expect(f.prepareWorkspace).toHaveBeenCalledTimes(calls + 1);
     f.session.dispose();
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('keeps the normal deadline for a replacement client after this workspace has authenticated', async () => {
+    const f = setup();
+    await f.session.prepare();
+    vi.useFakeTimers();
+    const client = fixture.clients[0];
+    client.connected = false;
+    client.options.onClose?.({ code: 1006, reason: 'connection lost' });
+    const reconnect = f.session.prepare();
+    const reconnectRejected = expect(reconnect).rejects.toThrow('timed out');
+    await vi.advanceTimersByTimeAsync(15_000);
+    await reconnectRejected;
+    fixture.autoHello = false;
+
+    const replacement = f.session.prepare();
+    const replacementRejected = expect(replacement).rejects.toThrow('timed out');
+    await vi.dynamicImportSettled();
+    expect(fixture.clients).toHaveLength(2);
+    fixture.clients[1].connected = false;
+    fixture.clients[1].options.onClose?.({ code: 1013, reason: 'gateway starting' });
+    await vi.advanceTimersByTimeAsync(15_000);
+
+    await replacementRejected;
+    expect(f.prepareWorkspace).toHaveBeenCalledOnce();
+    expect(fixture.request).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(0);
+    f.session.dispose();
   });
 
   it('disposal settles a blocked connection wait and clears its deadline before credentials arrive', async () => {

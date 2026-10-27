@@ -4,6 +4,10 @@ import type { McpAppViewContext } from '../../components/mcp-app/view';
 import type { GatewayClient } from '../client';
 import { McpAppSession, type McpAppSessionBinding } from './mcp-app-session';
 
+const CONNECTION_TIMEOUT_MS = 15_000;
+const STARTUP_CONNECTION_TIMEOUT_MS = 60_000;
+const GATEWAY_STARTING_CLOSE = { code: 1013, reason: 'gateway starting' } as const;
+
 interface ConnectionWait {
   resolve: (client: GatewayClient) => void;
   reject: (error: Error) => void;
@@ -23,6 +27,7 @@ export class McpWorkspaceSession {
   private connection?: Promise<GatewayClient>;
   private connectionWait?: ConnectionWait;
   private authenticatedGeneration?: number;
+  private hasAuthenticatedConnection = false;
   private readonly connectionListeners = new Set<() => void>();
   private bindingPreparation?: Promise<{ isCurrent: () => boolean }>;
   private preparing?: Promise<McpAppViewContext>;
@@ -91,15 +96,18 @@ export class McpWorkspaceSession {
     if (this.connected && this.client) return Promise.resolve(this.client);
     if (this.connection) return this.connection;
     let pending!: ConnectionWait;
+    const startedAt = Date.now();
+    let startupWaitExtended = false;
+    const expire = () => {
+      if (this.connectionWait !== pending) return;
+      this.settleConnection(new Error('Workspace Gateway connection timed out'));
+      this.retireClient();
+    };
     this.connection = new Promise<GatewayClient>((resolve, reject) => {
       pending = {
         resolve,
         reject,
-        timer: setTimeout(() => {
-          if (this.connectionWait !== pending) return;
-          this.settleConnection(new Error('Workspace Gateway connection timed out'));
-          this.retireClient();
-        }, 15_000),
+        timer: setTimeout(expire, CONNECTION_TIMEOUT_MS),
       };
       this.connectionWait = pending;
     });
@@ -126,11 +134,28 @@ export class McpWorkspaceSession {
             return;
           }
           this.authenticatedGeneration = client.generation;
+          this.hasAuthenticatedConnection = true;
           this.settleConnection();
           this.notifyConnection();
         },
-        onClose: () => {
+        onClose: ({ code, reason }) => {
           if (this.client !== client) return;
+          if (
+            !this.hasAuthenticatedConnection &&
+            !startupWaitExtended &&
+            this.connectionWait === pending &&
+            code === GATEWAY_STARTING_CLOSE.code &&
+            reason === GATEWAY_STARTING_CLOSE.reason
+          ) {
+            // Engine health can precede native sidecar readiness. Keep this
+            // same first handshake alive, with one absolute startup deadline.
+            startupWaitExtended = true;
+            clearTimeout(pending.timer);
+            pending.timer = setTimeout(
+              expire,
+              Math.max(0, STARTUP_CONNECTION_TIMEOUT_MS - (Date.now() - startedAt)),
+            );
+          }
           this.authenticatedGeneration = undefined;
           this.binding = undefined;
           this.apps.invalidate();

@@ -98,11 +98,14 @@ test('keeps visible loading across an initial socket close and a thirty-second n
   const client = await connect();
   expectLoading();
   await act(async () => {
+    // Main can report running while native sidecars are still starting.
+    await vi.advanceTimersByTimeAsync(13_000);
     client.connected = false;
     client.options.onClose?.({ code: 1013, reason: 'gateway starting' });
-    await vi.advanceTimersByTimeAsync(2_000);
+    await vi.advanceTimersByTimeAsync(7_000);
   });
   expectLoading();
+  expect(region().getByRole('status').querySelector('.display-launcher__app-loading-spinner')).toBeTruthy();
   expect(prepareWorkspace).not.toHaveBeenCalled();
   await act(async () => {
     client.generation++;
@@ -127,7 +130,7 @@ test('a real connection deadline shows failure and manual retry restores loading
   const client = await connect();
   await act(async () => {
     client.connected = false;
-    client.options.onClose?.({ code: 1013, reason: 'gateway starting' });
+    client.options.onClose?.({ code: 1006, reason: 'connection lost' });
     await vi.advanceTimersByTimeAsync(15_000);
   });
   expect(region().queryByRole('status')).toBeNull();
@@ -145,4 +148,59 @@ test('a real connection deadline shows failure and manual retry restores loading
   expect(prepareWorkspace).toHaveBeenCalledOnce();
   expect(region().getByRole('button', { name: 'Workspace editor' })).toBeTruthy();
   expect(f.request.mock.calls.map(([method]) => method)).toEqual(['sessions.describe', 'mcp.app.discover']);
+});
+
+test('bounds startup waiting from the original read even when Gateway repeatedly reports starting', async () => {
+  render(<Fixture />);
+  const client = await connect();
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(13_000);
+    client.connected = false;
+    client.options.onClose?.({ code: 1013, reason: 'gateway starting' });
+    await vi.advanceTimersByTimeAsync(46_000);
+    client.options.onClose?.({ code: 1013, reason: 'gateway starting' });
+    await vi.advanceTimersByTimeAsync(999);
+  });
+  expectLoading();
+  expect(f.clients).toHaveLength(1);
+  expect(prepareWorkspace).not.toHaveBeenCalled();
+  expect(f.request).not.toHaveBeenCalled();
+
+  await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+
+  expect(region().queryByRole('status')).toBeNull();
+  expect(region().getByRole('alert').textContent).toContain('Could not load app entrypoints.');
+  expect(region().getByRole('button', { name: 'Reload app list' })).toBeTruthy();
+  await act(async () => {
+    client.connected = true;
+    client.generation++;
+    client.options.onHello?.({ type: 'hello-ok', protocol: 4 });
+    await vi.advanceTimersByTimeAsync(60_000);
+  });
+  expect(f.clients).toHaveLength(1);
+  expect(prepareWorkspace).not.toHaveBeenCalled();
+  expect(f.request).not.toHaveBeenCalled();
+  expect(region().getByRole('alert')).toBeTruthy();
+});
+
+test('closing the homepage cancels extended startup waiting and ignores a late hello', async () => {
+  const view = render(<Fixture />);
+  const client = await connect();
+  await act(async () => {
+    client.connected = false;
+    client.options.onClose?.({ code: 1013, reason: 'gateway starting' });
+    await vi.advanceTimersByTimeAsync(20_000);
+  });
+  expectLoading();
+
+  view.unmount();
+  expect(vi.getTimerCount()).toBe(0);
+  await act(async () => {
+    client.connected = true;
+    client.generation++;
+    client.options.onHello?.({ type: 'hello-ok', protocol: 4 });
+    await vi.advanceTimersByTimeAsync(60_000);
+  });
+  expect(prepareWorkspace).not.toHaveBeenCalled();
+  expect(f.request).not.toHaveBeenCalled();
 });
