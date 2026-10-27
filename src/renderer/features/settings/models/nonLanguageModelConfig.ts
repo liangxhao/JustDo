@@ -33,15 +33,12 @@ export const normalizeNonLanguageModelCategory = (
 ): NonLanguageModelCategory => {
   if (kind === 'video') return category;
   const supportsCatalogDefault = kind === 'image' || kind === 'decision';
-  const providerIds = Object.keys(category.providers);
   const defaultProviderId =
     supportsCatalogDefault &&
     category.defaultProviderId &&
     category.providers[category.defaultProviderId]
       ? category.defaultProviderId
-      : kind === 'image'
-        ? providerIds[0]
-        : undefined;
+      : undefined;
   return {
     providers: Object.fromEntries(
       Object.entries(category.providers).map(([id, provider]) => [
@@ -67,6 +64,22 @@ export const normalizeNonLanguageModelCategory = (
     ),
     ...(defaultProviderId ? { defaultProviderId } : {}),
   };
+};
+
+export const hasNonLanguageModelDefaultChanges = (
+  current: NonLanguageModelProviders,
+  draft: NonLanguageModelProviders,
+): boolean => {
+  const selectionSignature = (category: NonLanguageModelCategory | undefined): string =>
+    category?.defaultProviderId
+      ? JSON.stringify([
+          category.defaultProviderId,
+          category.providers[category.defaultProviderId]?.defaultModel ?? '',
+        ])
+      : '';
+  return (['decision', 'image', 'video'] as const).some(
+    kind => selectionSignature(current[kind]) !== selectionSignature(draft[kind]),
+  );
 };
 
 export const getNonLanguageModelProviderNameError = (

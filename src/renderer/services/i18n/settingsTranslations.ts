@@ -389,6 +389,10 @@ export const settingsTranslations = {
     mediaModelDefaultBadge: '默认',
     mediaModelSetDefault: '设为默认',
     mediaModelClearDefault: '取消默认',
+    catalogDefaultAddModelsHint: '请先添加供应商和模型，再在模型列表中指定默认模型。',
+    catalogDefaultSelectHint: '尚未指定默认模型，请在下方模型列表中设为默认，保存后应用。',
+    catalogDefaultConfiguredHint: '可在模型列表中更换或取消默认模型，修改后需保存。',
+    catalogDefaultPendingSave: '默认模型选择已修改，待保存。',
     mediaModelBackupBadge: '备用 {index}',
     mediaModelMoveUp: '提高备用优先级',
     mediaModelMoveDown: '降低备用优先级',
@@ -1417,6 +1421,13 @@ export const settingsTranslations = {
     mediaModelDefaultBadge: 'Default',
     mediaModelSetDefault: 'Set as default',
     mediaModelClearDefault: 'Clear default',
+    catalogDefaultAddModelsHint:
+      'Add a provider and models, then select a default in the model list.',
+    catalogDefaultSelectHint:
+      'No default model selected. Set a default in the model list and save to apply.',
+    catalogDefaultConfiguredHint:
+      'Change or clear the default in the model list, then save your changes.',
+    catalogDefaultPendingSave: 'Default model selection has unsaved changes.',
     mediaModelBackupBadge: 'Backup {index}',
     mediaModelMoveUp: 'Raise backup priority',
     mediaModelMoveDown: 'Lower backup priority',

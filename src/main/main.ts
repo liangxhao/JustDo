@@ -234,6 +234,7 @@ import {
 } from './ipc/speech';
 import { NativeAssistantCreation } from './openclaw/config/agents/nativeAssistantCreation';
 import { revokeBuiltinCredentialFile } from './openclaw/config/models/builtinCredentialFile';
+import { isDecisionModelManaged } from './openclaw/config/models/decisionModelConfig';
 import { resolveNativeVideoSelection } from './openclaw/config/models/nativeVideoModelConfig';
 import {
   buildProviderSelection,
@@ -675,7 +676,7 @@ const getApplicationManagedPluginIds = (): string[] => {
   }
   return [
     ...managed,
-    ...(decision === undefined ? [] : [OpenClawExtensionId.TYPESAFE]),
+    ...(isDecisionModelManaged(decision) ? [OpenClawExtensionId.TYPESAFE] : []),
     ...(videoProviderId ? [videoProviderId] : []),
   ];
 };
@@ -1415,7 +1416,7 @@ if (agentBridgeArgv) {
 
   registerStoreHandlers({
     getStore,
-    onAppConfigChanged: async (nextConfig, previousConfig) => {
+    onAppConfigChanged: async (nextConfig, previousConfig, context) => {
       if (
         getOpenClawAppConfigSignature(nextConfig) === getOpenClawAppConfigSignature(previousConfig)
       ) {
@@ -1423,6 +1424,7 @@ if (agentBridgeArgv) {
       }
       const syncResult = await syncOpenClawConfig({
         reason: 'app-config-change',
+        ...(context?.rollback ? { restoreDecisionModelSnapshot: true } : {}),
         retiredProviderIds: listRetiredOpenClawProviderIds(
           (previousConfig as AppConfigSettings | undefined)?.providers,
           (nextConfig as AppConfigSettings | undefined)?.providers,

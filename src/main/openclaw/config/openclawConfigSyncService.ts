@@ -72,6 +72,7 @@ type SyncOpenClawConfigOptions = {
   discoverExternalMcpServers?: boolean;
   retiredMcpServerNames?: readonly string[];
   retiredProviderIds?: readonly string[];
+  restoreDecisionModelSnapshot?: boolean;
 };
 
 type SyncOpenClawConfigResult = {
@@ -706,11 +707,16 @@ export class OpenClawConfigSyncService {
     const reloadGeneration = engineManager.getGatewayConfigReloadGeneration();
     const processGenerationBeforeSync = engineManager.getGatewayProcessGeneration();
     const lifecycleGenerationBeforeSync = engineManager.getGatewayLifecycleGeneration();
-    const syncResult = this.getConfigSync().sync(
-      options.reason,
-      extensionMcpNames,
-      new Set(options.retiredMcpServerNames),
-    );
+    const configSync = this.getConfigSync();
+    const retiredMcpNames = new Set(options.retiredMcpServerNames);
+    const syncResult = options.restoreDecisionModelSnapshot === true
+      ? configSync.sync(
+          options.reason,
+          extensionMcpNames,
+          retiredMcpNames,
+          { restoreDecisionModelSnapshot: true },
+        )
+      : configSync.sync(options.reason, extensionMcpNames, retiredMcpNames);
     if (!syncResult.ok) {
       return this.failClosedConfigApplication({
         success: false,

@@ -94,6 +94,7 @@ import {
   commitNonLanguageModelConfigurations,
   createEmptyNonLanguageModelCategory,
   getNonLanguageModelCategoryValidationError,
+  hasNonLanguageModelDefaultChanges,
   NON_LANGUAGE_MODEL_KINDS,
   type NonLanguageModelCategory,
   type NonLanguageModelProviders,
@@ -261,6 +262,10 @@ const Settings: React.FC<SettingsProps> = ({
   const [isUpdatingPreventSleep, setIsUpdatingPreventSleep] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [saveSucceeded, setSaveSucceeded] = useState(false);
+  const hasUnsavedModelDefaults = hasNonLanguageModelDefaultChanges(
+    configService.getConfig().onlineModelProviders ?? {},
+    nonLanguageModelProviders,
+  );
   const [error, setError] = useState<string | null>(null);
   const buildNoticeMessage = useCallback((): string | null => {
     if (noticeI18nKey) {
@@ -327,6 +332,10 @@ const Settings: React.FC<SettingsProps> = ({
     },
     [cancelConnectionTest],
   );
+
+  useEffect(() => {
+    if (hasUnsavedModelDefaults) setSaveSucceeded(false);
+  }, [hasUnsavedModelDefaults]);
 
   useEffect(() => {
     if (!saveSucceeded) return;
@@ -1984,6 +1993,16 @@ const Settings: React.FC<SettingsProps> = ({
                   : 'flex shrink-0 justify-end gap-2 border-t border-border-subtle px-5 py-3'
               }
             >
+              {activeTab === 'model' &&
+              ['decision', 'image', 'video'].includes(activeModelKind) &&
+              hasUnsavedModelDefaults ? (
+                <span
+                  className="mr-auto inline-flex items-center text-xs text-amber-600"
+                  role="status"
+                >
+                  {i18nService.t('catalogDefaultPendingSave')}
+                </span>
+              ) : null}
               <button
                 type="button"
                 onClick={handleCloseSettings}

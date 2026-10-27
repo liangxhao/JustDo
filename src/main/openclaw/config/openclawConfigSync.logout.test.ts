@@ -2999,7 +2999,7 @@ test.each([true, false])(
 );
 
 test.each(['full', 'minimal'])(
-  '%s decision settings survive auth sync, retain disabled providers and re-enable selection',
+  '%s decision settings release manual control and preserve it across auth sync and restarts',
   mode => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-decision-sync-'));
     temporaryDirectories.push(stateDir);
@@ -3032,7 +3032,7 @@ test.each(['full', 'minimal'])(
         },
       },
     };
-    const sync = new OpenClawConfigSync({
+    const createSync = () => new OpenClawConfigSync({
       engineManager: {
         getConfigPath: () => configPath,
         getStateDir: () => stateDir,
@@ -3046,6 +3046,7 @@ test.each(['full', 'minimal'])(
       getAgents: () => [],
       getDecisionModelCategory: () => category,
     } as never);
+    const sync = createSync();
     const read = () => JSON.parse(fs.readFileSync(configPath, 'utf8'));
     const configuredCategory = category;
     category = undefined;
@@ -3089,7 +3090,10 @@ test.each(['full', 'minimal'])(
     ]) {
       expect(sync.sync(reason).ok).toBe(true);
       const saved = read();
-      expect(saved.plugins.entries.typesafe).toMatchObject({ enabled: false, config: {} });
+      expect(saved.plugins.entries.typesafe).toMatchObject({
+        enabled: true,
+        config: { serviceUrl: 'http://10.1.2.3:8009/v1', apiKey: { source: 'file' } },
+      });
       expect(saved.agents.defaults.decisionModel).toBeUndefined();
       expect(saved.tools).toEqual(toolsBeforeDisable);
       expect(category).toEqual(expectedCategory);
@@ -3114,14 +3118,102 @@ test.each(['full', 'minimal'])(
     }
     category = undefined;
     expect(sync.sync('app-config-change').ok).toBe(true);
-    expect(read().plugins.entries.typesafe).toEqual({ enabled: false });
+    expect(read().plugins.entries.typesafe).toMatchObject({ enabled: true,
+      config: { serviceUrl: 'http://10.1.2.3:8009/v1', apiKey: { source: 'file' } } });
     expect(read().agents.defaults.decisionModel).toBeUndefined();
     category = { providers: {} };
     expect(sync.sync('app-config-change').ok).toBe(true);
-    expect(read().plugins.entries.typesafe.enabled).toBe(false);
+    expect(read().plugins.entries.typesafe.enabled).toBe(true);
     expect(read().agents.defaults.decisionModel).toBeUndefined();
   },
   // Lifecycle projections include rotation, retained disabled catalogs and re-enablement.
+  30_000,
+);
+
+test.each([
+  { mode: 'full', enabled: true }, { mode: 'full', enabled: false },
+  { mode: 'minimal', enabled: true }, { mode: 'minimal', enabled: false },
+])('$mode decision sync preserves manual enabled=$enabled across auth changes and restarts', ({ mode, enabled }) => {
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'manual-decision-sync-'));
+  temporaryDirectories.push(stateDir);
+  const configPath = path.join(stateDir, 'openclaw.json');
+  setStoreGetter(() => ({ get: () => mode === 'full' ? {
+    model: { defaultModel: 'custom-model', defaultModelProvider: 'custom-provider' },
+    providers: { 'custom-provider': { enabled: true, apiKey: 'chat-test-key',
+      baseUrl: 'https://custom.example.test/v1', apiFormat: 'openai', models: [{ id: 'custom-model' }] } },
+  } : {} }) as never);
+  const manualEntry = { enabled, config: { serviceUrl: 'http://manual.corp:9000/v1',
+    apiKey: { source: 'env', provider: 'default', id: 'MANUAL_DECISION_KEY' }, timeoutMs: 3500 } };
+  fs.writeFileSync(configPath, JSON.stringify({
+    agents: { defaults: { decisionModel: 'typesafe/manual-model' } },
+    plugins: { entries: { typesafe: manualEntry } },
+  }));
+  const createSync = () => new OpenClawConfigSync({
+    engineManager: { getConfigPath: () => configPath, getStateDir: () => stateDir,
+      getDesiredVersion: () => '2026.10.7' },
+    getCoworkConfig: () => ({ workingDirectory: '', executionMode: 'local', agentEngine: 'openclaw' }),
+    getAgents: () => [], getDecisionModelCategory: () => ({ providers: {} }),
+  } as never);
+  for (const owner of [createSync(), createSync()]) {
+    for (const reason of ['startup', 'app-config-change', BuiltinModelSyncReason.AuthLogin,
+      BuiltinModelSyncReason.AuthLogout]) {
+      expect(owner.sync(reason).ok).toBe(true);
+      const saved = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+      expect(saved.plugins.entries.typesafe).toEqual(manualEntry);
+      expect(saved.agents.defaults.decisionModel).toBe('typesafe/manual-model');
+    }
+  }
+}, 30_000);
+
+test.each(['full', 'minimal'])(
+  '%s decision ownership rollback restores the latest manual configuration with or without a catalog',
+  mode => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'decision-ownership-'));
+    temporaryDirectories.push(stateDir);
+    const configPath = path.join(stateDir, 'openclaw.json');
+    setStoreGetter(() => ({ get: () => mode === 'full' ? {
+      model: { defaultModel: 'custom-model', defaultModelProvider: 'custom-provider' },
+      providers: { 'custom-provider': { enabled: true, apiKey: 'chat-test-key',
+        baseUrl: 'https://custom.example.test/v1', apiFormat: 'openai', models: [{ id: 'custom-model' }] } },
+    } : {} }) as never);
+    const selectedCategory = { defaultProviderId: 'lan', providers: { lan: {
+      baseUrl: 'http://selected.corp/v1', apiKey: 'synthetic-managed-key', defaultModel: 'kev-latest',
+      models: [{ id: 'kev-latest' }],
+    } } };
+    for (const unselected of [undefined, { providers: selectedCategory.providers }]) {
+      let category: unknown = unselected;
+      const sync = new OpenClawConfigSync({
+        engineManager: { getConfigPath: () => configPath, getStateDir: () => stateDir,
+          getDesiredVersion: () => '2026.10.7' },
+        getCoworkConfig: () => ({ workingDirectory: '', executionMode: 'local', agentEngine: 'openclaw' }),
+        getAgents: () => [], getDecisionModelCategory: () => category,
+      } as never);
+      for (const label of ['first', 'latest']) {
+        const manualEntry = { enabled: label === 'latest', config: {
+          serviceUrl: `http://${label}.corp/v1`, timeoutMs: 4000,
+          apiKey: { source: 'env', provider: 'default', id: 'MANUAL_DECISION_KEY' },
+        } };
+        fs.writeFileSync(configPath, JSON.stringify({
+          agents: { defaults: { decisionModel: `typesafe/manual-${label}` } },
+          plugins: { entries: { typesafe: manualEntry } },
+        }));
+        expect(sync.sync('startup').ok).toBe(true);
+        expect(JSON.parse(fs.readFileSync(configPath, 'utf8')).plugins.entries.typesafe).toEqual(manualEntry);
+        category = selectedCategory;
+        expect(sync.sync('app-config-change').ok).toBe(true);
+        expect(JSON.parse(fs.readFileSync(configPath, 'utf8')).agents.defaults.decisionModel).toBe('typesafe/kev-latest');
+        category = unselected;
+        expect(sync.sync('app-config-change', new Set(), new Set(), {
+          restoreDecisionModelSnapshot: true,
+        }).ok).toBe(true);
+        const restored = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        expect(restored.plugins.entries.typesafe).toEqual(manualEntry);
+        expect(restored.agents.defaults.decisionModel).toBe(`typesafe/manual-${label}`);
+        expect(sync.sync(BuiltinModelSyncReason.AuthLogout).ok).toBe(true);
+        expect(JSON.parse(fs.readFileSync(configPath, 'utf8')).plugins.entries.typesafe).toEqual(manualEntry);
+      }
+    }
+  },
   30_000,
 );
 

@@ -4,9 +4,12 @@ import path from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { saveExtensionSecrets } from '../../../plugins/extensions/extensionSecretFile';
 import {
   applyDecisionModelConfiguration,
   captureDecisionModelConfiguration,
+  isDecisionModelManaged,
+  releaseDecisionModelDefault,
   resolveDecisionModelSelection,
 } from './decisionModelConfig';
 
@@ -29,6 +32,38 @@ const category = (apiKey = 'test-credential') => ({
 });
 
 describe('decision model settings projection', () => {
+  it.each(['legacy', 'scoped'])('keeps a released %s manual credential valid when a later takeover rolls back', mode => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'decision-credential-rollback-'));
+    directories.push(dir);
+    const config: Record<string, unknown> = {};
+    if (mode === 'legacy') {
+      const secrets = saveExtensionSecrets(config, dir, 'typesafe', {
+        'decisionModel.apiKey': 'original-manual-key',
+      });
+      config.plugins = { entries: { typesafe: { enabled: true, config: {
+        serviceUrl: 'http://192.168.1.9:8009/v1', apiKey: secrets.references['decisionModel.apiKey'],
+      } } } };
+      config.agents = { defaults: { decisionModel: 'typesafe/kev-latest' } };
+    } else {
+      applyDecisionModelConfiguration(config, resolveDecisionModelSelection(category('original-manual-key')), dir);
+    }
+    releaseDecisionModelDefault(config, resolveDecisionModelSelection(category('original-manual-key')));
+    const restore = captureDecisionModelConfiguration(config);
+    const manualReference = structuredClone((config.plugins as {
+      entries: { typesafe: { config: { apiKey: { id: string } } } };
+    }).entries.typesafe.config.apiKey);
+
+    applyDecisionModelConfiguration(config, resolveDecisionModelSelection(category('failed-takeover-key')), dir);
+    restore(config);
+
+    const restoredReference = (config.plugins as {
+      entries: { typesafe: { config: { apiKey: { id: string } } } };
+    }).entries.typesafe.config.apiKey;
+    expect(restoredReference).toEqual(manualReference);
+    const secrets = JSON.parse(fs.readFileSync(path.join(dir, 'extension-secrets.json'), 'utf8'));
+    expect(secrets[restoredReference.id.slice(1)]).toBe('original-manual-key');
+  });
+
   it('projects the selected LAN model and rotates secrets without putting values in config', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'decision-model-'));
     directories.push(dir);
@@ -67,9 +102,11 @@ describe('decision model settings projection', () => {
       'rotated-credential',
     );
     expect(JSON.stringify(config)).not.toContain('rotated-credential');
+    const beforeRelease = structuredClone(config);
     applyDecisionModelConfiguration(config, null, dir);
+    releaseDecisionModelDefault(config, resolveDecisionModelSelection(category()));
     expect(config).toMatchObject({
-      plugins: { entries: { typesafe: { enabled: false, config: {} } } },
+      plugins: beforeRelease.plugins,
       agents: { defaults: {} },
     });
     expect(JSON.stringify(config)).not.toContain('typesafe/kev-latest');
@@ -86,7 +123,7 @@ describe('decision model settings projection', () => {
     expect(config).toEqual(before);
   });
 
-  it.each([undefined, ''])('disables a retained provider catalog without a default: %s', selected => {
+  it.each([undefined, ''])('leaves a retained provider catalog unmanaged without a default: %s', selected => {
     const value = { ...category(), defaultProviderId: selected };
     const before = structuredClone(value);
     expect(resolveDecisionModelSelection(value)).toBeNull();
@@ -95,7 +132,7 @@ describe('decision model settings projection', () => {
     expect(resolveDecisionModelSelection({ providers: {} })).toBeNull();
   });
 
-  it('clears only the managed default while preserving native overrides and tool policies', () => {
+  it('releases only the exact managed default while preserving extension state and tool policies', () => {
     const config = {
       agents: {
         defaults: { decisionModel: 'typesafe/kev-latest', model: 'chat/model' },
@@ -117,19 +154,25 @@ describe('decision model settings projection', () => {
     expect(
       applyDecisionModelConfiguration(config, resolveDecisionModelSelection(disabled), ''),
     ).toBe(false);
+    releaseDecisionModelDefault(config, resolveDecisionModelSelection(category()));
     expect(config).toEqual({
       ...before,
       agents: { ...before.agents, defaults: { model: 'chat/model' } },
-      plugins: {
-        entries: {
-          ...before.plugins.entries,
-          typesafe: { enabled: false, config: { timeoutMs: 1000 } },
-        },
-      },
     });
-    config.agents.defaults.decisionModel = 'other/default';
-    applyDecisionModelConfiguration(config, null, '');
-    expect(config.agents.defaults.decisionModel).toBe('other/default');
+    for (const nativeModel of ['other/default', 'typesafe/manual-model']) {
+      config.agents.defaults.decisionModel = nativeModel;
+      releaseDecisionModelDefault(config, resolveDecisionModelSelection(category()));
+      expect(config.agents.defaults.decisionModel).toBe(nativeModel);
+    }
+  });
+
+  it('locks only a valid default selection, independently of catalog existence', () => {
+    for (const value of [undefined, { providers: {} }, { ...category(), defaultProviderId: '' },
+      { ...category(), defaultProviderId: undefined }, { ...category(), defaultProviderId: 'missing' },
+      { providers: { lan: {} }, defaultProviderId: 'lan' }]) {
+      expect(isDecisionModelManaged(value)).toBe(false);
+    }
+    expect(isDecisionModelManaged(category())).toBe(true);
   });
 
   it.each([null, {}, { providers: null }, { providers: [] }, { providers: 'invalid' }])(
@@ -198,5 +241,6 @@ it.each([true, false])('leaves unmanaged plugin configuration unchanged when ena
   const config = { plugins: { entries: { typesafe: { enabled, config: { model: 'kev-latest', baseUrl: 'http://localhost:8009' } } } }, agents: { defaults: {} } };
   const original = structuredClone(config);
   expect(applyDecisionModelConfiguration(config, undefined, '')).toBe(false);
+  expect(applyDecisionModelConfiguration(config, null, '')).toBe(false);
   expect(config).toEqual(original);
 });

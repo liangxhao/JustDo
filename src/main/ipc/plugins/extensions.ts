@@ -7,6 +7,7 @@ import {
   ExtensionIpc,
   type ExtensionSetEnabledRequest,
   type ExtensionUpdateConfigurationRequest,
+  type InstalledOpenClawExtension,
 } from '../../../shared/plugins/extensions';
 import { getExtensionManagement } from '../../../shared/plugins/management';
 import { MarketplaceInstallOperation, PluginKind } from '../../../shared/plugins/marketplace';
@@ -17,6 +18,7 @@ import {
   PluginOperationStage,
   toPluginOperationStage,
 } from '../../../shared/plugins/pluginOperation';
+import { enqueueAppConfigUpdate } from '../../data/appConfigUpdateQueue';
 import type { OpenClawExtensionImportService } from '../../plugins/extensions';
 import { type PluginInstallationService, PluginInstallOrigin } from '../../plugins/installation';
 import {
@@ -144,25 +146,31 @@ export const registerExtensionHandlers = ({
     },
   });
 
-  ipcMain.handle(ExtensionIpc.List, async () => {
-    try {
-      const extensions = await extensionImportService.listCatalog();
-      return {
-        success: true,
-        extensions: extensions.map(extension => ({
-          ...extension,
-          ...getExtensionManagement({
+  ipcMain.handle(ExtensionIpc.List, () =>
+    enqueueAppConfigUpdate(async (): Promise<{
+      success: boolean;
+      extensions: InstalledOpenClawExtension[];
+      error?: string;
+    }> => {
+      try {
+        const extensions = await extensionImportService.listCatalog();
+        return {
+          success: true,
+          extensions: extensions.map(extension => ({
             ...extension,
-            configurationFieldCount: extension.configurationFields.length,
-          }),
-        })),
-      };
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : 'Failed to list extensions';
-      console.error('[Extensions] extensions:list error:', errorMsg);
-      return { success: false, extensions: [], error: errorMsg };
-    }
-  });
+            ...getExtensionManagement({
+              ...extension,
+              configurationFieldCount: extension.configurationFields.length,
+            }),
+          })),
+        };
+      } catch (error) {
+        const errorMsg = error instanceof Error ? error.message : 'Failed to list extensions';
+        console.error('[Extensions] extensions:list error:', errorMsg);
+        return { success: false, extensions: [], error: errorMsg };
+      }
+    }),
+  );
 
   ipcMain.handle(
     ExtensionIpc.Import,
@@ -334,8 +342,10 @@ export const registerExtensionHandlers = ({
             ...(refreshWarning ? { refreshWarning: true as const } : {}),
           });
         };
-        return await (extensionId === OpenClawExtensionId.AGENT_TEAM
-          ? withAgentTeamMutation(mutate)
+        if (extensionId === OpenClawExtensionId.AGENT_TEAM)
+          return await withAgentTeamMutation(mutate);
+        return await (extensionId === OpenClawExtensionId.TYPESAFE
+          ? enqueueAppConfigUpdate(mutate)
           : mutate());
       } catch (error) {
         const errorMsg =
@@ -386,12 +396,17 @@ export const registerExtensionHandlers = ({
             error: 'Invalid extension configuration request',
           });
         }
-        return progress.result(
-          await extensionImportService.updateConfiguration(
-            request.extensionId.trim(),
+        const extensionId = request.extensionId.trim();
+        const mutate = () =>
+          extensionImportService.updateConfiguration(
+            extensionId,
             request.values,
-            progress.report,
-          ),
+            progress?.report,
+          );
+        return progress.result(
+          await (extensionId === OpenClawExtensionId.TYPESAFE
+            ? enqueueAppConfigUpdate(mutate)
+            : mutate()),
         );
       } catch (error) {
         const errorMsg =

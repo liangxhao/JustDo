@@ -26,23 +26,37 @@ environment proxies or hosted fallback. Deploy self-hosted servers separately.
 For a test server that ignores authentication, enter a nonempty test key; production
 authentication must be enforced by the server or reverse proxy.
 
-Once configured, this category owns TypeSafe settings and activation. Its extension
-panel cannot independently edit or toggle it. Click the selected model's **Default**
-badge to clear the selection, then save. This disables TypeSafe and clears the native
-TypeSafe default without removing saved providers, endpoints, credentials or models.
-Select **Set as default** to enable it again. Saving or reopening an unselected
-catalog does not automatically choose its first provider. Deleting all decision
-providers also disables TypeSafe and clears the native default. Users who have never configured
-this category retain their existing extension settings. Provider import/export
+Only a valid default decision-model selection gives this category ownership of
+TypeSafe settings and activation. While selected, the extension panel cannot
+independently edit or toggle it. Use **Clear default** in the selected model's row
+and save to return configuration and activation to the extension panel. The provider
+and model lists both mark the selected default. This preserves
+the current enabled state, endpoint, credential reference and other plugin settings;
+the synchronizer clears only the exact native default it previously projected.
+An empty or unselected catalog never locks the extension. Subsequent startup,
+settings, login and logout synchronization preserves manual plugin changes, including
+after restarting the application. Native defaults without a known prior application
+projection are preserved rather than attributed to model settings by their name.
+Selecting **Set as default** enables the extension and takes ownership again.
+Saving or reopening an unselected catalog never chooses a provider automatically;
+deleting all providers also returns manual control. Provider import/export
 includes decision models using the same credential encryption as other model types.
 
-Before model settings takes ownership, the generic extension form also exposes the
+Whenever no default decision model is selected, the generic extension form exposes the
 explicitly editable `baseUrl` and `serviceUrl` text fields alongside the credential.
 It displays saved addresses and saves only edited text; clearing an optional address
 removes that override. Clear the old address when switching modes, since the plugin
 rejects both endpoints together. This form does not select a decision model or enable
 the extension. Once managed by model settings, its existing configuration restrictions
-continue to apply.
+continue to apply. TypeSafe configuration and enable/disable operations share the
+application-settings transaction queue, so they observe committed settings after
+application or rollback. A failed first takeover restores the latest manual native
+configuration through an explicit rollback context; ordinary release does not
+restore an old snapshot or clear manual fields.
+Model-settings credentials use slots scoped to the endpoint and credential. A new
+selection cannot overwrite the value behind a reference retained by a released
+manual extension; failed takeover restores a reference that still resolves to its
+original value. Existing fixed-slot references remain readable without migration.
 
 Evaluation sends task evidence to the selected service. Hosted Jev may incur API
 charges. Results use the existing OpenClaw stream, without a transcript cache.

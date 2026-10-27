@@ -402,9 +402,22 @@ export const mergeImportedOnlineModelProviders = (
       providers[id] = provider;
       providerIdByName.set(normalizedName, id);
     }
-    const defaultProviderId = importedCategory.defaultProvider
+    let defaultProviderId = importedCategory.defaultProvider
       ? providerIdByName.get(normalizeDisplayName(importedCategory.defaultProvider))
       : existingCategory.defaultProviderId;
+    if (
+      !importedCategory.defaultProvider &&
+      defaultProviderId &&
+      (kind === 'decision' || kind === 'image' || kind === 'video')
+    ) {
+      const previousModel = existingCategory.providers[defaultProviderId]?.defaultModel;
+      const provider = providers[defaultProviderId];
+      if (previousModel && provider?.models.some(model => model.id === previousModel)) {
+        providers[defaultProviderId] = { ...provider, defaultModel: previousModel };
+      } else {
+        defaultProviderId = undefined;
+      }
+    }
     merged[kind] = {
       providers,
       ...(defaultProviderId ? { defaultProviderId } : {}),

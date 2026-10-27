@@ -395,7 +395,7 @@ describe('store IPC', () => {
     expect(set).toHaveBeenNthCalledWith(1, 'app_config', {});
     expect(set).toHaveBeenNthCalledWith(2, 'app_config', previous);
     expect(onAppConfigChanged).toHaveBeenNthCalledWith(1, {}, previous);
-    expect(onAppConfigChanged).toHaveBeenNthCalledWith(2, previous, {});
+    expect(onAppConfigChanged).toHaveBeenNthCalledWith(2, previous, {}, { rollback: true });
   });
 
   it('removes a newly-created app config when its runtime application fails', async () => {
@@ -407,6 +407,7 @@ describe('store IPC', () => {
 
     await expect(result).rejects.toThrow('invalid config');
     expect(remove).toHaveBeenCalledWith('app_config');
+    expect(onAppConfigChanged).toHaveBeenNthCalledWith(2, undefined, {}, { rollback: true });
   });
 
   it.each(['store:set', AppConfigIpc.Patch])(

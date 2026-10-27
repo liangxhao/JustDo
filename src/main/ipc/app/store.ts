@@ -17,7 +17,11 @@ import type { SqliteStore } from '../../data/sqliteStore';
 
 interface StoreHandlerDependencies {
   getStore: () => SqliteStore;
-  onAppConfigChanged: (nextConfig: unknown, previousConfig: unknown) => Promise<void>;
+  onAppConfigChanged: (
+    nextConfig: unknown,
+    previousConfig: unknown,
+    context?: { rollback?: boolean },
+  ) => Promise<void>;
   refreshBuiltinModels: () => Promise<void>;
 }
 
@@ -72,7 +76,7 @@ export const registerStoreHandlers = ({
       try {
         if (previous === undefined) store.delete('app_config');
         else store.set('app_config', previous);
-        await onAppConfigChanged(previous, value);
+        await onAppConfigChanged(previous, value, { rollback: true });
       } catch (rollbackError) {
         console.error('[StoreIPC] Failed to re-apply the previous app config:', rollbackError);
       }

@@ -310,6 +310,50 @@ describe('mergeImportedProviders', () => {
 });
 
 describe('mergeImportedOnlineModelProviders', () => {
+  test.each(['decision', 'image', 'video'] as const)(
+    'preserves the complete %s default selection when an import does not specify one',
+    kind => {
+      const provider = {
+        displayName: 'Model API',
+        baseUrl: 'http://models.test/v1',
+        apiKey: 'test-key',
+        defaultModel: 'model/selected',
+        models: [
+          { id: 'model/selected', name: 'Selected' },
+          { id: 'model/other', name: 'Other' },
+        ],
+        ...(kind === 'video' ? { nativeVideoProvider: 'video-openai' as const } : {}),
+      };
+      const current = { [kind]: { defaultProviderId: 'provider', providers: { provider } } };
+      const merged = mergeImportedOnlineModelProviders(current, {
+        [kind]: { providers: [{ ...provider, defaultModel: 'model/other' }] },
+      });
+
+      expect(merged[kind]?.defaultProviderId).toBe('provider');
+      expect(merged[kind]?.providers.provider.defaultModel).toBe('model/selected');
+      expect(provider.defaultModel).toBe('model/selected');
+
+      const removed = mergeImportedOnlineModelProviders(current, {
+        [kind]: {
+          providers: [
+            { ...provider, defaultModel: 'model/other', models: provider.models.slice(1) },
+          ],
+        },
+      });
+      expect(removed[kind]?.defaultProviderId).toBeUndefined();
+      expect(removed[kind]?.providers.provider.models).toEqual(provider.models.slice(1));
+
+      const explicitlySelected = mergeImportedOnlineModelProviders(current, {
+        [kind]: {
+          defaultProvider: 'Model API',
+          providers: [{ ...provider, defaultModel: 'model/other' }],
+        },
+      });
+      expect(explicitlySelected[kind]?.defaultProviderId).toBe('provider');
+      expect(explicitlySelected[kind]?.providers.provider.defaultModel).toBe('model/other');
+    },
+  );
+
   test('updates matching providers, adds new providers, and restores the imported default', () => {
     const existing = {
       image: {

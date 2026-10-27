@@ -5,6 +5,7 @@ import { DEFAULT_ALLOW_EXTERNAL_EMBED_URLS } from '../../../shared/browser/webpa
 import {
   applyDecisionModelConfiguration,
   captureDecisionModelConfiguration,
+  releaseDecisionModelDefault,
   resolveDecisionModelSelection,
 } from './models/decisionModelConfig';
 import {
@@ -190,6 +191,8 @@ export class OpenClawConfigSync {
   private restoreUnmanagedVideo?: (config: Record<string, unknown>) => void;
   private readonly getDecisionModelCategory: () => unknown;
   private decisionSelection: ReturnType<typeof resolveDecisionModelSelection>;
+  private decisionSelectionToRelease: ReturnType<typeof resolveDecisionModelSelection>;
+  private restoreDecisionSnapshotRequested = false;
   private decisionSecretsChanged = false;
   private restoreUnmanagedDecision?: (config: Record<string, unknown>) => void;
   private readonly engineManager: OpenClawEngineManager;
@@ -234,6 +237,7 @@ export class OpenClawConfigSync {
     reason: string,
     extensionMcpNames: ReadonlySet<string> = new Set(),
     retiredMcpNames: ReadonlySet<string> = new Set(),
+    context?: { restoreDecisionModelSnapshot?: boolean },
   ): OpenClawConfigSyncResult {
     this.decisionSecretsChanged = false;
     this.videoSecretsChanged = false;
@@ -256,7 +260,7 @@ export class OpenClawConfigSync {
       this.nativeVideoSelection = videoSelection;
       videoConfigurationFailed = false;
       const selection = resolveDecisionModelSelection(this.getDecisionModelCategory());
-      if (selection !== undefined && this.decisionSelection === undefined) {
+      if (selection && !this.decisionSelection) {
         let existing: Record<string, unknown> = {};
         try {
           const parsed: unknown = JSON.parse(
@@ -268,10 +272,14 @@ export class OpenClawConfigSync {
         }
         this.restoreUnmanagedDecision = captureDecisionModelConfiguration(existing);
       }
+      if (selection) this.decisionSelectionToRelease = undefined;
+      else if (this.decisionSelection) this.decisionSelectionToRelease = this.decisionSelection;
+      this.restoreDecisionSnapshotRequested = context?.restoreDecisionModelSnapshot === true;
       this.decisionSelection = selection;
       const result = this.syncConfiguration(reason, extensionMcpNames, retiredMcpNames);
       if (!result.ok) return result;
-      if (selection === undefined) this.restoreUnmanagedDecision = undefined;
+      if (!selection) this.restoreUnmanagedDecision = undefined;
+      this.decisionSelectionToRelease = undefined;
       if (videoSelection === undefined) this.restoreUnmanagedVideo = undefined;
       return {
         ...result,
@@ -406,10 +414,15 @@ export class OpenClawConfigSync {
       availableExtensionIds,
     );
     this.videoSecretsChanged ||= videoSecretsChanged;
-    if (this.decisionSelection === undefined && this.restoreUnmanagedDecision) {
+    if (
+      !this.decisionSelection &&
+      this.restoreDecisionSnapshotRequested &&
+      this.restoreUnmanagedDecision
+    ) {
       this.restoreUnmanagedDecision(config);
       return;
     }
+    if (!this.decisionSelection) releaseDecisionModelDefault(config, this.decisionSelectionToRelease);
     const changed = applyDecisionModelConfiguration(
       config,
       this.decisionSelection,
@@ -805,6 +818,16 @@ export class OpenClawConfigSync {
     const configToPersist = sanitizeOpenClawV2026_10_6Config(
       withComputerControlPolicy(preparedSecrets.config),
     );
+    if (Object.hasOwn(existingAgentDefaults, 'decisionModel')) {
+      const agents = isRecord(configToPersist.agents) ? configToPersist.agents : {};
+      configToPersist.agents = {
+        ...agents,
+        defaults: {
+          ...(isRecord(agents.defaults) ? agents.defaults : {}),
+          decisionModel: existingAgentDefaults.decisionModel,
+        },
+      };
+    }
     this.applyManagedRuntimeConfiguration(configToPersist);
     const nextContent = `${JSON.stringify(configToPersist, null, 2)}\n`;
     const configChanged = hasOpenClawConfigChanged(currentContent, configToPersist);
@@ -1143,6 +1166,18 @@ export class OpenClawConfigSync {
       }
       if (isRecord(previousConfig.env)) minimalConfig.env = previousConfig.env;
       if (isRecord(previousConfig.surfaces)) minimalConfig.surfaces = previousConfig.surfaces;
+      const previousAgents = isRecord(previousConfig.agents) ? previousConfig.agents : {};
+      const previousDefaults = isRecord(previousAgents.defaults) ? previousAgents.defaults : {};
+      if (Object.hasOwn(previousDefaults, 'decisionModel')) {
+        const agents = isRecord(minimalConfig.agents) ? minimalConfig.agents : {};
+        minimalConfig.agents = {
+          ...agents,
+          defaults: {
+            ...(isRecord(agents.defaults) ? agents.defaults : {}),
+            decisionModel: previousDefaults.decisionModel,
+          },
+        };
+      }
       minimalConfig.tools = {
         ...(isRecord(minimalConfig.tools) ? minimalConfig.tools : {}),
         codeMode: mergeManagedOpenClawCodeModeConfig(

@@ -265,7 +265,10 @@ OpenAI Provider 和 QuickJS Code Mode 是应用托管适配器，通用插件入
 完整、最小及登录状态同步均保持已打包适配器启用、加入 allowlist，并移除这两个插件的 deny，
 保留其他配置和权限。模型、图像及语音功能仍由各自设置与凭据控制；Code Mode 是否使用由运行参数控制。
 Document Extraction 和 Web Readability Extraction 保持上游默认启用，允许用户关闭；
-协作、记忆和本地语音可选插件继续保留用户明确禁用状态。TypeSafe 沿用模型设置的有条件托管；
+协作、记忆和本地语音可选插件继续保留用户明确禁用状态。TypeSafe 仅在决策模型设置具有有效默认选择时托管；
+没有默认选择时，扩展页可手动配置和启停，后续同步保留这些原生设置。取消默认保留扩展当前配置和开关，
+只撤销此前确切投影的原生默认引用，不按模型名称推测来源。首次接管失败通过显式回滚上下文恢复最新手动快照。
+TypeSafe 配置、启停及扩展清单读取与应用设置事务同序，等待保存或补偿完成后再检查管理权限。
 视频由同一个 OpenAI 适配器提供；清空默认视频模型只停止视频使用，不关闭整个插件。
 
 OpenClaw v2026.10.7 的插件管理 RPC 会直接应用运行时变更。CLI 导入等待最终运行时回执：Gateway 已应用则无需额外操作，仅保存到磁盘时调用 `plugins.reload`。卸载 RPC 仍请求重启时，以及 CLI 卸载和启停回退后，优先调用 `plugins.refresh`；原生确认已热应用且无需重启时直接完成，仍需重启、热加载失败或出站代理策略变化时再申请 Gateway 重启。扩展普通配置先等待配置 reload ACK，无环境变量变更时再尝试定向 `plugins.reload`；SecretRef 更新先调用 `secrets.reload` 刷新准备快照，失败报告并保留待刷新，不能靠重启掩盖。配置应用与重启协调见[引擎](05-agent-engine.md)；保留原生对活动任务的重启延迟，不能与宿主冷重启竞争。原生不支持热应用的运行时代码及网络策略仍可能需要重启；Windows 文件操作的目录锁恢复保持独立。
@@ -689,10 +692,12 @@ pipeline. Without decision-model settings it defaults off and remains user-toggl
 Settings → Models → Decision models requires URL/API Key and supports provider/model
 CRUD, discovery and import/export. It selects `agents.defaults.decisionModel` and
 the evaluation-tool default, and then owns TypeSafe activation/configuration.
-Clearing the default selection disables it and clears the native TypeSafe default
-while retaining the saved provider catalog and credentials. Saving an unselected
-catalog does not select a provider automatically; selecting a default enables it
-again. Deleting all providers also disables it. The chat model decides when to call its tool.
+Only a valid default selection locks the extension. Clearing it or deleting all
+providers returns manual control while preserving the current plugin configuration
+and activation. Only the exact previously projected native default is cleared;
+unowned native defaults remain intact. Saving an unselected catalog never selects
+a provider automatically; selecting a default enables the plugin and takes ownership
+again. The chat model decides when to call its tool.
 A documented `serviceUrl` seam supports authenticated intranet System One endpoints
 without redirects, environment proxies or hosted fallback.
 

@@ -15,6 +15,7 @@ vi.mock('@/services/i18n', () => ({
 import {
   commitNonLanguageModelConfigurations,
   createEmptyNonLanguageModelCategory,
+  getNonLanguageModelCategoryValidationError,
   type NonLanguageModelCategory,
   type NonLanguageModelProviders,
 } from './nonLanguageModelConfig';
@@ -108,7 +109,7 @@ describe('NonLanguageModelSettings', () => {
     currentConfig.onlineModelProviders = { decision: selected };
     const { getCategory, unmount } = renderSettings('decision');
 
-    fireEvent.click(screen.getByRole('button', { name: 'mediaModelClearDefault', pressed: true }));
+    fireEvent.click(screen.getByRole('button', { name: 'mediaModelClearDefault' }));
 
     expect(getCategory().defaultProviderId).toBeUndefined();
     expect(getCategory().providers).toEqual(selected.providers);
@@ -131,9 +132,7 @@ describe('NonLanguageModelSettings', () => {
     fireEvent.click(screen.getByRole('button', { name: 'mediaModelSetDefault' }));
 
     expect(reopened.getCategory()).toEqual(selected);
-    expect(
-      screen.getByRole('button', { name: 'mediaModelClearDefault', pressed: true }),
-    ).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'mediaModelClearDefault' })).toBeTruthy();
     expect(fetch).not.toHaveBeenCalled();
   });
 
@@ -218,6 +217,198 @@ describe('NonLanguageModelSettings', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'confirm' }));
   };
 
+  const catalogKinds = ['decision', 'image', 'video'] as const;
+  const createCatalog = (kind: (typeof catalogKinds)[number]): NonLanguageModelCategory => ({
+    defaultProviderId: 'provider-7',
+    providers: Object.fromEntries(
+      Array.from({ length: 10 }, (_, providerIndex) => [
+        `provider-${providerIndex}`,
+        {
+          displayName: `Provider ${providerIndex}`,
+          baseUrl: `http://provider-${providerIndex}.test/v1`,
+          apiKey: 'test-key',
+          defaultModel: 'model/2',
+          models: Array.from({ length: 5 }, (_, modelIndex) => ({
+            id: `model/${modelIndex}`,
+            name: `Model ${providerIndex}-${modelIndex}`,
+          })),
+          ...(kind === 'video' ? { nativeVideoProvider: 'video-openai' as const } : {}),
+        },
+      ]),
+    ),
+  });
+
+  it('announces the default provider when its stored ID contains spaces', () => {
+    currentConfig.onlineModelProviders = {
+      image: {
+        defaultProviderId: 'model api',
+        providers: { 'model api': createCatalog('image').providers['provider-7'] },
+      },
+    };
+    renderSettings('image');
+
+    expect(
+      screen.getByRole('button', { name: 'Provider 7', description: 'mediaModelDefaultBadge' }),
+    ).toBeTruthy();
+  });
+
+  it.each(catalogKinds)(
+    'marks one default across a 10-provider, 50-model %s catalog without changing it while browsing',
+    async kind => {
+      const initial = createCatalog(kind);
+      currentConfig.onlineModelProviders = { [kind]: initial };
+      const { getCategory, onSubmit } = renderSettings(kind);
+      await waitFor(() =>
+        expect(screen.getByLabelText('customDisplayName')).toHaveProperty('value', 'Provider 7'),
+      );
+      const source = screen.getByRole('button', { name: 'Provider 7', pressed: true });
+      expect(within(source).getByText('mediaModelDefaultBadge')).toBeTruthy();
+      expect(screen.getAllByText('mediaModelDefaultBadge')).toHaveLength(2);
+      expect(screen.getByText('catalogDefaultConfiguredHint')).toBeTruthy();
+
+      fireEvent.click(screen.getByRole('button', { name: 'Provider 1' }));
+
+      expect(getCategory().defaultProviderId).toBe('provider-7');
+      expect(screen.getAllByText('mediaModelDefaultBadge')).toHaveLength(1);
+      const nextRow = screen.getByRole('button', { name: 'editModel: Model 1-4' }).parentElement!;
+      fireEvent.click(within(nextRow).getByRole('button', { name: 'mediaModelSetDefault' }));
+
+      expect(getCategory().defaultProviderId).toBe('provider-1');
+      expect(getCategory().providers['provider-1'].defaultModel).toBe('model/4');
+      expect(getCategory().providers['provider-7'].defaultModel).toBe('model/2');
+      expect(screen.getAllByText('mediaModelDefaultBadge')).toHaveLength(2);
+      expect(
+        within(screen.getByRole('button', { name: 'Provider 7' })).queryByText(
+          'mediaModelDefaultBadge',
+        ),
+      ).toBeNull();
+      expect(
+        within(screen.getByRole('button', { name: 'Provider 1' })).getByText(
+          'mediaModelDefaultBadge',
+        ),
+      ).toBeTruthy();
+
+      fireEvent.click(screen.getByRole('button', { name: 'deleteModel: Model 1-4' }));
+
+      expect(getCategory().defaultProviderId).toBeUndefined();
+      expect(getCategory().providers['provider-1'].models).toHaveLength(4);
+      expect(screen.queryByText('mediaModelDefaultBadge')).toBeNull();
+      expect(screen.getByText('catalogDefaultSelectHint')).toBeTruthy();
+      expect(onSubmit).not.toHaveBeenCalled();
+      expect(fetch).not.toHaveBeenCalled();
+      expect(window.electron.mediaGenerationModels.saveConfiguration).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(catalogKinds)('preserves a cleared %s default after saving and reopening', async kind => {
+    const selected = createCatalog(kind);
+    currentConfig.onlineModelProviders = { [kind]: selected };
+    const { getCategory, unmount, onSubmit } = renderSettings(kind);
+    fireEvent.click(await screen.findByRole('button', { name: 'mediaModelClearDefault' }));
+
+    expect(getCategory().defaultProviderId).toBeUndefined();
+    expect(getCategory().providers).toEqual(selected.providers);
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(window.electron.mediaGenerationModels.saveConfiguration).not.toHaveBeenCalled();
+    const persist = vi.fn().mockResolvedValue(undefined);
+    const saved = await commitNonLanguageModelConfigurations(
+      { [kind]: selected },
+      { [kind]: getCategory() },
+      persist,
+    );
+    expect(persist).toHaveBeenCalledWith(saved);
+    expect(saved[kind]?.providers).toEqual(selected.providers);
+    if (kind === 'image') {
+      expect(window.electron.mediaGenerationModels.saveConfiguration).toHaveBeenCalledWith(
+        'image',
+        {
+          primary: '',
+          fallbacks: [],
+        },
+      );
+    }
+    unmount();
+    currentConfig.onlineModelProviders = JSON.parse(JSON.stringify(saved));
+    const reopened = renderSettings(kind);
+
+    await screen.findByText('catalogDefaultSelectHint');
+    expect(reopened.getCategory().defaultProviderId).toBeUndefined();
+    expect(screen.queryByText('mediaModelDefaultBadge')).toBeNull();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it.each(catalogKinds)(
+    'keeps a new %s catalog unselected when adding and discovering models',
+    async kind => {
+      const { getCategory } = renderSettings(kind);
+      await screen.findByText('catalogDefaultAddModelsHint');
+      await addVideoProvider('Model API');
+      fireEvent.change(screen.getByLabelText(kind === 'image' ? 'baseUrl' : 'baseUrl *'), {
+        target: { value: 'http://models.test/v1' },
+      });
+      fireEvent.change(screen.getByLabelText(kind === 'decision' ? 'apiKey *' : 'apiKey'), {
+        target: { value: 'test-key' },
+      });
+      addVideoModel('first-model');
+
+      expect(getCategory().defaultProviderId).toBeUndefined();
+      expect(screen.queryByText('mediaModelDefaultBadge')).toBeNull();
+      expect(screen.getByText('catalogDefaultSelectHint')).toBeTruthy();
+      fetch.mockResolvedValue({ ok: true, data: { data: [{ id: 'discovered-model' }] } });
+      fireEvent.click(screen.getByRole('button', { name: 'detectModels' }));
+      await screen.findByText('discovered-model');
+
+      expect(getCategory().defaultProviderId).toBeUndefined();
+      expect(screen.queryByText('mediaModelDefaultBadge')).toBeNull();
+      expect(Object.values(getCategory().providers)[0].models).toHaveLength(2);
+    },
+  );
+
+  it.each(catalogKinds)(
+    'honors explicit %s provider navigation before the default source',
+    async kind => {
+      currentConfig.onlineModelProviders = { [kind]: createCatalog(kind) };
+      const { getCategory } = renderSettings(kind, undefined, 'provider-2');
+
+      await waitFor(() =>
+        expect(screen.getByLabelText('customDisplayName')).toHaveProperty('value', 'Provider 2'),
+      );
+      expect(getCategory().defaultProviderId).toBe('provider-7');
+      expect(screen.getAllByText('mediaModelDefaultBadge')).toHaveLength(1);
+    },
+  );
+
+  it.each(catalogKinds)(
+    'can save discovered %s models without selecting a global default',
+    async kind => {
+      const { getCategory } = renderSettings(kind);
+      await addVideoProvider('Model API');
+      fireEvent.change(screen.getByLabelText(kind === 'image' ? 'baseUrl' : 'baseUrl *'), {
+        target: { value: 'http://models.test/v1' },
+      });
+      fireEvent.change(screen.getByLabelText(kind === 'decision' ? 'apiKey *' : 'apiKey'), {
+        target: { value: 'test-key' },
+      });
+      fetch.mockResolvedValue({ ok: true, data: { data: [{ id: 'discovered-model' }] } });
+      fireEvent.click(screen.getByRole('button', { name: 'detectModels' }));
+      await screen.findByText('discovered-model');
+
+      expect(getNonLanguageModelCategoryValidationError(kind, getCategory())).toBe('');
+      const persist = vi.fn().mockResolvedValue(undefined);
+      const saved = await commitNonLanguageModelConfigurations(
+        {},
+        { [kind]: getCategory() },
+        persist,
+      );
+
+      expect(saved[kind]?.defaultProviderId).toBeUndefined();
+      expect(Object.values(saved[kind]!.providers)[0].models).toHaveLength(1);
+      expect(persist).toHaveBeenCalledWith(saved);
+      expect(screen.queryByText('mediaModelDefaultBadge')).toBeNull();
+      expect(window.electron.mediaGenerationModels.saveConfiguration).not.toHaveBeenCalled();
+    },
+  );
+
   it('uses only OpenAI even when unsupported vendor extensions are installed', async () => {
     vi.mocked(window.electron.extensions.list).mockResolvedValue({
       success: true,
@@ -299,7 +490,9 @@ describe('NonLanguageModelSettings', () => {
     expect(screen.getByLabelText('apiKey')).toHaveProperty('value', '');
     expect(screen.getByText('http://video.test:8091/v1/videos')).toBeTruthy();
     addVideoModel('Wan-AI/video', 'Wan Video');
-    expect(screen.getByText('mediaModelDefaultBadge')).toBeTruthy();
+    expect(getCategory().defaultProviderId).toBeUndefined();
+    fireEvent.click(screen.getByRole('button', { name: 'mediaModelSetDefault' }));
+    expect(screen.getAllByText('mediaModelDefaultBadge')).toHaveLength(2);
     expect(getCategory().providers[getCategory().defaultProviderId!]).toMatchObject({
       nativeVideoProvider: 'video-openai',
       defaultModel: 'Wan-AI/video',
@@ -314,10 +507,9 @@ describe('NonLanguageModelSettings', () => {
       'video-renamed',
     );
     fireEvent.click(screen.getByRole('button', { name: 'deleteModel: Next Video' }));
-    expect(getCategory().providers[getCategory().defaultProviderId!].defaultModel).toBe(
-      'Wan-AI/video',
-    );
-    fireEvent.click(screen.getByRole('button', { name: 'nativeVideoDisabled' }));
+    expect(getCategory().defaultProviderId).toBeUndefined();
+    fireEvent.click(screen.getByRole('button', { name: 'mediaModelSetDefault' }));
+    fireEvent.click(screen.getByRole('button', { name: 'mediaModelClearDefault' }));
     expect(getCategory().defaultProviderId).toBeUndefined();
     expect(screen.getByText('Wan Video')).toBeTruthy();
     expect(fetch).not.toHaveBeenCalled();
@@ -351,7 +543,7 @@ describe('NonLanguageModelSettings', () => {
       }),
     );
     fireEvent.click(screen.getByRole('button', { name: 'mediaModelSetDefault' }));
-    expect(screen.getByText('mediaModelDefaultBadge')).toBeTruthy();
+    expect(screen.getAllByText('mediaModelDefaultBadge')).toHaveLength(2);
   });
 
   it('falls back to multipart OpenAPI models when the model directory contains no valid video IDs', async () => {
@@ -997,7 +1189,7 @@ describe('NonLanguageModelSettings', () => {
 
     expect(screen.getByText('customModelDefaultRequired')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'mediaModelSetDefault' }));
-    expect(screen.getByText('mediaModelDefaultBadge')).toBeTruthy();
+    expect(screen.getAllByText('mediaModelDefaultBadge')).toHaveLength(2);
     expect(screen.queryByText('customModelDefaultRequired')).toBeNull();
   });
 });

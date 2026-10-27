@@ -263,6 +263,7 @@ const NonLanguageModelEditor: React.FC<NonLanguageModelEditorProps> = ({
   videoProviders = [],
   videoProvidersLoaded = false,
 }) => {
+  const supportsCatalogDefault = kind === 'image' || kind === 'video' || kind === 'decision';
   const builtinKind =
     kind === 'speech-recognition'
       ? LocalSpeechModelKind.Asr
@@ -275,7 +276,11 @@ const NonLanguageModelEditor: React.FC<NonLanguageModelEditorProps> = ({
   const [activeProviderId, setActiveProviderId] = useState(
     initialProviderId && category.providers[initialProviderId]
       ? initialProviderId
-      : (Object.keys(category.providers)[0] ?? ''),
+      : supportsCatalogDefault &&
+          category.defaultProviderId &&
+          category.providers[category.defaultProviderId]
+        ? category.defaultProviderId
+        : (Object.keys(category.providers)[0] ?? ''),
   );
   const [providerDialogOpen, setProviderDialogOpen] = useState(false);
   const [providerName, setProviderName] = useState('');
@@ -336,9 +341,11 @@ const NonLanguageModelEditor: React.FC<NonLanguageModelEditorProps> = ({
   );
   const visibleProviderIds = providerEntries.map(([id]) => id);
   const preferredProviderId =
-    kind === 'video' && visibleProviderIds.includes(category.defaultProviderId ?? '')
-      ? category.defaultProviderId
-      : visibleProviderIds[0];
+    initialProviderId && visibleProviderIds.includes(initialProviderId)
+      ? initialProviderId
+      : supportsCatalogDefault && visibleProviderIds.includes(category.defaultProviderId ?? '')
+        ? category.defaultProviderId
+        : visibleProviderIds[0];
   const activeProviderVisible = visibleProviderIds.includes(activeProviderId);
   useEffect(() => {
     if (!activeProviderVisible) {
@@ -386,13 +393,19 @@ const NonLanguageModelEditor: React.FC<NonLanguageModelEditorProps> = ({
     kind === 'video' ? findNativeVideoProvider(activeProvider?.nativeVideoProvider) : undefined;
   const canEditModels = kind !== 'video' || Boolean(nativeVideoProvider);
   const requiresApiKey = kind === 'decision';
-  const supportsCatalogDefault = kind === 'image' || kind === 'video' || kind === 'decision';
-  const defaultRef =
-    supportsCatalogDefault &&
-    category.defaultProviderId &&
-    category.providers[category.defaultProviderId]
-      ? `${category.defaultProviderId}/${category.providers[category.defaultProviderId].defaultModel ?? ''}`
-      : '';
+  const defaultProvider =
+    supportsCatalogDefault && category.defaultProviderId
+      ? category.providers[category.defaultProviderId]
+      : undefined;
+  const hasDefaultModel = Boolean(
+    defaultProvider?.models.some(model => model.id === defaultProvider.defaultModel),
+  );
+  const hasCatalogModels = providerEntries.some(([, provider]) => provider.models.length > 0);
+  const defaultHintKey = !hasCatalogModels
+    ? 'catalogDefaultAddModelsHint'
+    : hasDefaultModel
+      ? 'catalogDefaultConfiguredHint'
+      : 'catalogDefaultSelectHint';
   const endpointPreview =
     activeProvider && canEditModels
       ? buildNonLanguageModelEndpointPreview(kind, activeProvider.baseUrl)
@@ -526,9 +539,6 @@ const NonLanguageModelEditor: React.FC<NonLanguageModelEditorProps> = ({
         : activeProvider.defaultModel || (models.length === 1 ? id : undefined)
       : undefined;
     updateProvider({ models, ...(defaultModel ? { defaultModel } : {}) });
-    if (kind === 'video' && models.length === 1 && !category.defaultProviderId) {
-      setCategory(current => ({ ...current, defaultProviderId: activeProviderId }));
-    }
     closeModelDialog();
   };
 
@@ -545,9 +555,9 @@ const NonLanguageModelEditor: React.FC<NonLanguageModelEditorProps> = ({
         : {}),
     });
     if (
-      kind === 'video' &&
-      models.length === 0 &&
-      category.defaultProviderId === activeProviderId
+      supportsCatalogDefault &&
+      category.defaultProviderId === activeProviderId &&
+      activeProvider.defaultModel === id
     ) {
       setCategory(current => ({ ...current, defaultProviderId: undefined }));
     }
@@ -566,14 +576,7 @@ const NonLanguageModelEditor: React.FC<NonLanguageModelEditorProps> = ({
     if (!supportsCatalogDefault) return;
     setCategory(current => {
       const provider = current.providers[activeProviderId];
-      if (!provider) return current;
-      if (
-        kind === 'decision' &&
-        current.defaultProviderId === activeProviderId &&
-        provider.defaultModel === id
-      ) {
-        return { ...current, defaultProviderId: undefined };
-      }
+      if (!provider?.models.some(model => model.id === id)) return current;
       return {
         ...current,
         defaultProviderId: activeProviderId,
@@ -583,6 +586,10 @@ const NonLanguageModelEditor: React.FC<NonLanguageModelEditorProps> = ({
         },
       };
     });
+  };
+
+  const clearDefaultModel = (): void => {
+    setCategory(current => ({ ...current, defaultProviderId: undefined }));
   };
 
   const detectModels = async (): Promise<void> => {
@@ -674,6 +681,9 @@ const NonLanguageModelEditor: React.FC<NonLanguageModelEditorProps> = ({
             ...current.providers,
             [providerId]: {
               ...provider,
+              ...(supportsCatalogDefault && !provider.defaultModel
+                ? { defaultModel: provider.models[0]?.id ?? discovered[0]?.id }
+                : {}),
               models: [
                 ...provider.models.map(model => {
                   const found = discoveredById.get(model.id);
@@ -783,6 +793,12 @@ const NonLanguageModelEditor: React.FC<NonLanguageModelEditorProps> = ({
 
   return (
     <div className="space-y-4">
+      {supportsCatalogDefault &&
+      (kind !== 'video' || (videoProvidersLoaded && videoProviders.length > 0)) ? (
+        <p className="text-xs leading-5 text-secondary" aria-live="polite">
+          {i18nService.t(defaultHintKey)}
+        </p>
+      ) : null}
       <div className="flex w-full min-w-0 items-start gap-5">
         <aside className="w-60 shrink-0 space-y-1.5">
           <div className="mb-2 flex h-8 items-center px-1">
@@ -815,6 +831,15 @@ const NonLanguageModelEditor: React.FC<NonLanguageModelEditorProps> = ({
             >
               <button
                 type="button"
+                aria-label={
+                  provider.displayName ||
+                  findNativeVideoProvider(provider.nativeVideoProvider)?.name
+                }
+                aria-describedby={
+                  hasDefaultModel && category.defaultProviderId === id
+                    ? `catalog-default-${encodeURIComponent(id)}`
+                    : undefined
+                }
                 aria-pressed={!showBuiltinModels && activeProviderId === id}
                 onClick={() => {
                   invalidateModelDetection();
@@ -830,6 +855,14 @@ const NonLanguageModelEditor: React.FC<NonLanguageModelEditorProps> = ({
                   {provider.displayName ||
                     findNativeVideoProvider(provider.nativeVideoProvider)?.name}
                 </span>
+                {hasDefaultModel && category.defaultProviderId === id ? (
+                  <span
+                    id={`catalog-default-${encodeURIComponent(id)}`}
+                    className="ml-1 shrink-0 rounded-md bg-primary-muted px-1.5 py-0.5 text-[10px] text-primary"
+                  >
+                    {i18nService.t('mediaModelDefaultBadge')}
+                  </span>
+                ) : null}
               </button>
               <button
                 type="button"
@@ -1041,15 +1074,25 @@ const NonLanguageModelEditor: React.FC<NonLanguageModelEditorProps> = ({
                 ) : null}
                 <div className="min-h-[140px] space-y-2">
                   {activeProvider.models.map(model => {
-                    const isDefault = defaultRef === `${activeProviderId}/${model.id}`;
+                    const isDefault =
+                      supportsCatalogDefault &&
+                      category.defaultProviderId === activeProviderId &&
+                      activeProvider.defaultModel === model.id;
                     return (
                       <div
                         key={model.id}
                         className="flex items-center rounded-lg border border-border-subtle bg-background p-2.5"
                       >
                         <div className="min-w-0 flex-1">
-                          <div className="truncate text-[11px] font-medium text-foreground">
-                            {model.name}
+                          <div className="flex min-w-0 items-center gap-1.5">
+                            <span className="truncate text-[11px] font-medium text-foreground">
+                              {model.name}
+                            </span>
+                            {isDefault ? (
+                              <span className="shrink-0 rounded-md bg-primary-muted px-1.5 py-0.5 text-[10px] text-primary">
+                                {i18nService.t('mediaModelDefaultBadge')}
+                              </span>
+                            ) : null}
                           </div>
                           {kind === 'speech-synthesis' && model.voices?.length ? (
                             <div className="truncate text-[10px] text-muted">
@@ -1060,30 +1103,17 @@ const NonLanguageModelEditor: React.FC<NonLanguageModelEditorProps> = ({
                           ) : null}
                         </div>
                         {supportsCatalogDefault ? (
-                          isDefault && kind === 'decision' ? (
-                            <button
-                              type="button"
-                              onClick={() => setDefaultModel(model.id)}
-                              aria-label={i18nService.t('mediaModelClearDefault')}
-                              aria-pressed={true}
-                              title={i18nService.t('mediaModelClearDefault')}
-                              className="mr-1 rounded-md bg-primary-muted px-1.5 py-0.5 text-[10px] text-primary hover:bg-primary-muted/70"
-                            >
-                              {i18nService.t('mediaModelDefaultBadge')}
-                            </button>
-                          ) : isDefault ? (
-                            <span className="mr-1 rounded-md bg-primary-muted px-1.5 py-0.5 text-[10px] text-primary">
-                              {i18nService.t('mediaModelDefaultBadge')}
-                            </span>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={() => setDefaultModel(model.id)}
-                              className="mr-1 rounded px-1.5 py-1 text-[10px] text-secondary hover:text-primary"
-                            >
-                              {i18nService.t('mediaModelSetDefault')}
-                            </button>
-                          )
+                          <button
+                            type="button"
+                            onClick={() =>
+                              isDefault ? clearDefaultModel() : setDefaultModel(model.id)
+                            }
+                            className="mr-1 shrink-0 rounded px-1.5 py-1 text-[10px] text-secondary hover:text-primary"
+                          >
+                            {i18nService.t(
+                              isDefault ? 'mediaModelClearDefault' : 'mediaModelSetDefault',
+                            )}
+                          </button>
                         ) : null}
                         <button
                           type="button"
@@ -1110,19 +1140,6 @@ const NonLanguageModelEditor: React.FC<NonLanguageModelEditorProps> = ({
                     </div>
                   ) : null}
                 </div>
-                {kind === 'video' && category.defaultProviderId ? (
-                  <div className="mt-2 flex justify-end">
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setCategory(current => ({ ...current, defaultProviderId: undefined }))
-                      }
-                      className="rounded px-1.5 py-1 text-[10px] text-secondary hover:text-primary"
-                    >
-                      {i18nService.t('nativeVideoDisabled')}
-                    </button>
-                  </div>
-                ) : null}
                 {validationError ? (
                   <div className="mt-3 border-t border-border pt-3 text-xs text-amber-600">
                     {validationError}

@@ -1144,6 +1144,20 @@ describe('OpenClawConfigSyncService', () => {
     expect(harness.configSync.sync).toHaveBeenCalledWith('preserve-extension', names, new Set(['old-user-server']));
   });
 
+  it.each([true, false, undefined])('requests decision snapshot restoration only for explicit rollback: %s', async restoreDecisionModelSnapshot => {
+    const harness = createHarness({ phase: 'ready' });
+    await expect(harness.service.syncConfig({
+      reason: 'app-config-change',
+      restoreDecisionModelSnapshot,
+    })).resolves.toMatchObject({ success: true });
+    expect(harness.configSync.sync).toHaveBeenCalledWith(
+      'app-config-change',
+      new Set(),
+      new Set(),
+      ...(restoreDecisionModelSnapshot === true ? [{ restoreDecisionModelSnapshot: true }] : []),
+    );
+  });
+
   it.each(['preserve-extension', 'auth-logout'])(
     'preserves configuration and stops the runtime when ownership cannot be read during %s',
     async reason => {

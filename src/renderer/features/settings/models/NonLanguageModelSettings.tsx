@@ -18,7 +18,7 @@ type Props = Pick<
 
 const NonLanguageModelSettings: React.FC<Props> = props =>
   props.kind === 'video' ? (
-    <NativeVideoModelSettings category={props.category} setCategory={props.setCategory} />
+    <NativeVideoModelSettings {...props} />
   ) : (
     <NonLanguageModelEditor {...props} />
   );

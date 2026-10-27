@@ -1,10 +1,13 @@
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
+import { AppConfigIpc } from '../../../shared/app/appConfig';
 import { ExtensionIpc } from '../../../shared/plugins/extensions';
 import { PluginKind } from '../../../shared/plugins/marketplace';
 import { PluginOperationIpc } from '../../../shared/plugins/pluginOperation';
+import { enqueueAppConfigUpdate } from '../../data/appConfigUpdateQueue';
 import type { OpenClawExtensionImportService } from '../../plugins/extensions';
 import type { PluginInstallationService } from '../../plugins/installation';
+import { registerStoreHandlers } from '../app/store';
 
 const handlers = new Map<string, (...args: unknown[]) => unknown>();
 const windows = vi.hoisted(() => ({ getAllWindows: vi.fn() }));
@@ -39,6 +42,7 @@ function fixture(beforeAgentTeamDisable?: () => Promise<() => void>) {
     ]),
     listCatalog: vi.fn().mockResolvedValue([{ id: 'feature-plugin', enabled: false }]),
     setEnabled: vi.fn(),
+    updateConfiguration: vi.fn(),
     delete: vi.fn(),
     importPath: vi.fn(),
   };
@@ -506,6 +510,115 @@ test('does not invoke the Agent Team queue fence for another extension', async (
   });
   expect(f.service.setEnabled).toHaveBeenCalledOnce();
   expect(fence).not.toHaveBeenCalled();
+});
+
+test.each([
+  [ExtensionIpc.UpdateConfiguration, false],
+  [ExtensionIpc.UpdateConfiguration, true],
+  [ExtensionIpc.SetEnabled, false],
+  [ExtensionIpc.SetEnabled, true],
+] as const)('waits for settings application and rollback before TypeSafe %s (rollback: %s)', async (channel, rollback) => {
+  const f = fixture();
+  let config = { onlineModelProviders: { decision: { selected: true } } };
+  const previous = structuredClone(config);
+  let finishApplication!: () => void;
+  let finishRollback!: () => void;
+  const application = new Promise<void>(resolve => { finishApplication = resolve; });
+  const compensation = new Promise<void>(resolve => { finishRollback = resolve; });
+  const onAppConfigChanged = vi.fn(async (
+    _next: unknown,
+    _previous: unknown,
+    context?: { rollback?: boolean },
+  ) => {
+    if (context?.rollback) {
+      await compensation;
+      return;
+    }
+    await application;
+    if (rollback) throw new Error('settings application failed');
+  });
+  registerStoreHandlers({
+    getStore: () => ({
+      get: () => config,
+      set: (_key: string, value: typeof config) => { config = value; },
+      delete: vi.fn(),
+    }) as never,
+    onAppConfigChanged,
+    refreshBuiltinModels: vi.fn(),
+  });
+  f.service.listCatalog.mockImplementation(async () => [{
+    id: 'typesafe',
+    enabled: true,
+    managed: config.onlineModelProviders.decision.selected,
+    canToggle: !config.onlineModelProviders.decision.selected,
+    configurationFields: [{ path: 'serviceUrl', type: 'string', sensitive: false }],
+  }]);
+  const mutate = async () => config.onlineModelProviders.decision.selected
+    ? { success: false, error: 'Managed extension' }
+    : { success: true };
+  f.service.setEnabled.mockImplementation(mutate);
+  f.service.updateConfiguration.mockImplementation(mutate);
+  const saving = (handlers.get(AppConfigIpc.Patch)!({}, {
+    onlineModelProviders: { decision: { selected: false } },
+  }) as Promise<unknown>).then(() => undefined, error => error as Error);
+  await vi.waitFor(() => expect(onAppConfigChanged).toHaveBeenCalledOnce());
+  const mutation = handlers.get(channel)!(f.event, channel === ExtensionIpc.SetEnabled
+    ? { extensionId: 'typesafe', enabled: true }
+    : { extensionId: 'typesafe', values: { serviceUrl: 'http://inference.corp/v1' } });
+  const listing = handlers.get(ExtensionIpc.List)!();
+  await Promise.resolve();
+  expect(f.service.setEnabled).not.toHaveBeenCalled();
+  expect(f.service.updateConfiguration).not.toHaveBeenCalled();
+  expect(f.service.listCatalog).not.toHaveBeenCalled();
+
+  finishApplication();
+  if (rollback) {
+    await vi.waitFor(() => expect(onAppConfigChanged).toHaveBeenCalledTimes(2));
+    expect(config).toEqual(previous);
+    expect(f.service.setEnabled).not.toHaveBeenCalled();
+    expect(f.service.updateConfiguration).not.toHaveBeenCalled();
+    expect(f.service.listCatalog).not.toHaveBeenCalled();
+    finishRollback();
+  }
+  const saved = await saving;
+  if (rollback) expect(saved).toBeInstanceOf(Error);
+  else expect(saved).toBeUndefined();
+  await expect(mutation).resolves.toMatchObject(rollback
+    ? { success: false, error: 'Managed extension' }
+    : { success: true });
+  await expect(listing).resolves.toMatchObject({
+    success: true,
+    extensions: [{
+      id: 'typesafe',
+      managed: rollback,
+      management: { configure: { allowed: !rollback }, enable: { allowed: !rollback } },
+    }],
+  });
+});
+
+test('holds the settings lane through a TypeSafe mutation and keeps other extension edits independent', async () => {
+  const f = fixture();
+  let finishMutation!: () => void;
+  f.service.updateConfiguration.mockImplementation(async (extensionId: string) => {
+    if (extensionId === 'typesafe') await new Promise<void>(resolve => { finishMutation = resolve; });
+    return { success: true };
+  });
+  const editing = handlers.get(ExtensionIpc.UpdateConfiguration)!(f.event, {
+    extensionId: 'typesafe', values: { serviceUrl: 'http://inference.corp/v1' },
+  });
+  await vi.waitFor(() => expect(f.service.updateConfiguration).toHaveBeenCalledOnce());
+  const settings = vi.fn(async () => undefined);
+  const saving = enqueueAppConfigUpdate(settings);
+
+  await expect(handlers.get(ExtensionIpc.UpdateConfiguration)!(f.event, {
+    extensionId: 'feature-plugin', values: { endpoint: 'http://feature.corp' },
+  })).resolves.toMatchObject({ success: true });
+  expect(settings).not.toHaveBeenCalled();
+
+  finishMutation();
+  await editing;
+  await saving;
+  expect(settings).toHaveBeenCalledOnce();
 });
 
 test.each(['custom', 'marketplace'])(

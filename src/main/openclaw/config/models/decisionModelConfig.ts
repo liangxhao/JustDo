@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import { saveExtensionSecrets } from '../../../plugins/extensions/extensionSecretFile';
 
 type DecisionSelection = { baseUrl: string; apiKey: string; model: string } | null | undefined;
@@ -65,50 +67,68 @@ export function resolveDecisionModelSelection(value: unknown): DecisionSelection
   return result;
 }
 
+/** A saved catalog does not own the extension until it has a valid default selection. */
+export function isDecisionModelManaged(value: unknown): boolean {
+  try {
+    return Boolean(resolveDecisionModelSelection(value));
+  } catch {
+    return false;
+  }
+}
+
+/** Release only the exact default previously projected by this synchronizer. */
+export function releaseDecisionModelDefault(
+  config: Record<string, unknown>,
+  previousSelection: DecisionSelection,
+): void {
+  if (!previousSelection) return;
+  const defaults = record(record(config.agents).defaults);
+  if (defaults.decisionModel === `typesafe/${previousSelection.model}`) {
+    delete defaults.decisionModel;
+  }
+}
+
 /** Keep OpenClaw as the decision runtime; settings own endpoint and default selection. */
 export function applyDecisionModelConfiguration(
   config: Record<string, unknown>,
   selection: DecisionSelection,
   stateDir: string,
 ): boolean {
-  if (selection === undefined) return false;
+  if (!selection) return false;
   const plugins = record(config.plugins);
   const entries = record(plugins.entries);
   const entry = record(entries.typesafe);
   const agents = record(config.agents);
   const defaults = { ...record(agents.defaults) };
-  let secretsChanged = false;
   let pluginConfig = { ...record(entry.config) };
   delete pluginConfig.baseUrl;
   delete pluginConfig.serviceUrl;
   delete pluginConfig.apiKey;
   delete pluginConfig.model;
-  if (selection) {
-    const secrets = saveExtensionSecrets(config, stateDir, 'typesafe', {
-      'decisionModel.apiKey': selection.apiKey,
-    });
-    secretsChanged = secrets.changed;
-    pluginConfig = {
-      ...pluginConfig,
-      serviceUrl: selection.baseUrl,
-      apiKey: secrets.references['decisionModel.apiKey'],
-    };
-    defaults.decisionModel = `typesafe/${selection.model}`;
-  } else if (
-    typeof defaults.decisionModel === 'string' &&
-    defaults.decisionModel.startsWith('typesafe/')
-  ) {
-    delete defaults.decisionModel;
-  }
+  // A released extension may still reference a previous selection's credential.
+  // A later failed takeover must not overwrite what that manual reference resolves to.
+  const credentialScope = createHash('sha256')
+    .update(JSON.stringify([selection.baseUrl, selection.apiKey]))
+    .digest('hex');
+  const credentialSlot = `decisionModel.${credentialScope}.apiKey`;
+  const secrets = saveExtensionSecrets(config, stateDir, 'typesafe', {
+    [credentialSlot]: selection.apiKey,
+  });
+  pluginConfig = {
+    ...pluginConfig,
+    serviceUrl: selection.baseUrl,
+    apiKey: secrets.references[credentialSlot],
+  };
+  defaults.decisionModel = `typesafe/${selection.model}`;
   config.plugins = {
     ...plugins,
     entries: {
       ...entries,
-      typesafe: { ...entry, enabled: Boolean(selection), config: pluginConfig },
+      typesafe: { ...entry, enabled: true, config: pluginConfig },
     },
   };
   config.agents = { ...agents, defaults };
-  return secretsChanged;
+  return secrets.changed;
 }
 
 /** Preserve a pre-existing optional-extension setup if its first settings save rolls back. */

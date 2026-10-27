@@ -1290,6 +1290,76 @@ describe('ExtensionsManager extension toggle', () => {
     expect(updateConfiguration).not.toHaveBeenCalled();
   });
 
+  test('refreshes card and open detail permissions after returning from decision model settings', async () => {
+    let managed = true;
+    const list = vi.fn(async () => ({
+      success: true,
+      extensions: [{
+        ...extension,
+        id: 'typesafe',
+        name: 'TypeSafe AI',
+        enabled: true,
+        origin: 'bundled',
+        managed,
+        canToggle: !managed,
+        configurationFields: [{
+          path: 'serviceUrl',
+          label: 'Service URL',
+          type: 'string' as const,
+          sensitive: false,
+          configured: true,
+          value: 'http://inference.corp/v1',
+        }],
+        ...getExtensionManagement({ managed, canToggle: !managed, configurationFieldCount: 1 }),
+      }],
+    }));
+    Object.defineProperty(window, 'electron', {
+      configurable: true,
+      value: {
+        extensions: {
+          list,
+          onChanged: vi.fn(() => vi.fn()),
+          onImportProgress: vi.fn(() => vi.fn()),
+        },
+      },
+    });
+    const props = { requestedExtensionId: 'typesafe', searchQuery: 'TypeSafe' };
+    const view = render(<ExtensionsManager {...props} isActive />);
+    const lockName = 'pluginStatusEnabled · extensionManagedDecisionModels';
+    await screen.findByRole('img', { name: lockName });
+    expect(screen.getByText('extensionManagedDecisionModels')).toBeTruthy();
+    expect(screen.queryByRole('switch')).toBeNull();
+    expect(screen.queryByLabelText('Service URL')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'save' })).toBeNull();
+    expect(list).toHaveBeenCalledOnce();
+
+    view.rerender(<ExtensionsManager {...props} isActive={false} />);
+    expect(list).toHaveBeenCalledOnce();
+    managed = false;
+    view.rerender(<ExtensionsManager {...props} isActive />);
+
+    await screen.findByRole('switch', { name: 'extensionDisable' });
+    expect((screen.getByLabelText('Service URL') as HTMLInputElement).value).toBe(
+      'http://inference.corp/v1',
+    );
+    expect(screen.getByRole('button', { name: 'save' })).toBeTruthy();
+    expect(screen.queryByRole('img', { name: lockName })).toBeNull();
+    expect(list).toHaveBeenCalledTimes(2);
+
+    view.rerender(<ExtensionsManager {...props} isActive={false} />);
+    managed = true;
+    view.rerender(<ExtensionsManager {...props} isActive />);
+
+    await screen.findByRole('img', { name: lockName });
+    expect(screen.getByText('extensionManagedDecisionModels')).toBeTruthy();
+    expect(screen.queryByRole('switch')).toBeNull();
+    expect(screen.queryByLabelText('Service URL')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'save' })).toBeNull();
+    expect(list).toHaveBeenCalledTimes(3);
+    view.rerender(<ExtensionsManager {...props} isActive />);
+    expect(list).toHaveBeenCalledTimes(3);
+  });
+
   test('shows a warning tooltip and opens the credential editor from the warning', async () => {
     let configured = false;
     const updateConfiguration = vi.fn(async () => {

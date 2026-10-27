@@ -9,6 +9,7 @@ vi.mock('@/services/i18n', () => ({
 import {
   commitNonLanguageModelConfigurations,
   getNonLanguageModelCategoryValidationError,
+  hasNonLanguageModelDefaultChanges,
   type NonLanguageModelProviders,
   normalizeNonLanguageModelCategory,
 } from './nonLanguageModelConfig';
@@ -41,6 +42,38 @@ describe('non-language model configuration persistence', () => {
       },
     });
   });
+
+  it.each(['decision', 'image', 'video'] as const)(
+    'compares the saved and draft %s default identities without treating provider memory as a selection',
+    kind => {
+      const provider = {
+        displayName: 'Model API',
+        baseUrl: 'http://models.test/v1',
+        apiKey: 'test-key',
+        defaultModel: 'model/selected',
+        models: [
+          { id: 'model/selected', name: 'Selected' },
+          { id: 'model/other', name: 'Other' },
+        ],
+      };
+      const current: NonLanguageModelProviders = {
+        [kind]: { defaultProviderId: 'provider', providers: { provider, second: { ...provider } } },
+      };
+      const draft = structuredClone(current);
+      draft[kind]!.providers.second.defaultModel = 'model/other';
+      draft[kind]!.providers.provider.displayName = 'Renamed';
+      expect(hasNonLanguageModelDefaultChanges(current, draft)).toBe(false);
+      draft[kind]!.providers.provider.defaultModel = 'model/other';
+      expect(hasNonLanguageModelDefaultChanges(current, draft)).toBe(true);
+      draft[kind]!.providers.provider.defaultModel = 'model/selected';
+      draft[kind]!.defaultProviderId = 'second';
+      expect(hasNonLanguageModelDefaultChanges(current, draft)).toBe(true);
+      draft[kind]!.defaultProviderId = undefined;
+      expect(hasNonLanguageModelDefaultChanges(current, draft)).toBe(true);
+      expect(hasNonLanguageModelDefaultChanges({}, draft)).toBe(false);
+      expect(hasNonLanguageModelDefaultChanges(draft, structuredClone(draft))).toBe(false);
+    },
+  );
 
   it('reports unsupported video providers at the settings validation boundary', () => {
     const video = {
@@ -113,22 +146,25 @@ describe('non-language model configuration persistence', () => {
     ).toBe('customModelProviderInvalid');
   });
 
-  it('selects a remaining image provider when the previous default is removed', () => {
-    const normalized = normalizeNonLanguageModelCategory('image', {
-      defaultProviderId: 'removed',
-      providers: {
-        remaining: {
-          displayName: 'Remaining API',
-          baseUrl: 'https://image.test/v1',
-          apiKey: '',
-          defaultModel: 'image-pro',
-          models: [{ id: 'image-pro', name: 'Image Pro' }],
+  it.each([undefined, 'removed'])(
+    'does not automatically select an image provider: %s',
+    defaultProviderId => {
+      const normalized = normalizeNonLanguageModelCategory('image', {
+        defaultProviderId,
+        providers: {
+          remaining: {
+            displayName: 'Remaining API',
+            baseUrl: 'https://image.test/v1',
+            apiKey: '',
+            defaultModel: 'image-pro',
+            models: [{ id: 'image-pro', name: 'Image Pro' }],
+          },
         },
-      },
-    });
+      });
 
-    expect(normalized.defaultProviderId).toBe('remaining');
-  });
+      expect(normalized.defaultProviderId).toBeUndefined();
+    },
+  );
 
   it.each([undefined, 'removed'])(
     'does not select another decision provider without a retained default: %s',
@@ -362,6 +398,47 @@ describe('non-language model configuration persistence', () => {
       baseUrl: 'https://image.test/v1',
       apiKey: 'secret',
     });
+  });
+
+  it('restores a cleared image default after persistence fails while retaining the unselected draft', async () => {
+    const current: NonLanguageModelProviders = {
+      image: {
+        defaultProviderId: 'image',
+        providers: {
+          image: {
+            displayName: 'Image API',
+            baseUrl: 'http://image.test/v1',
+            apiKey: 'test-key',
+            defaultModel: 'image-pro',
+            models: [{ id: 'image-pro', name: 'Image Pro' }],
+          },
+        },
+      },
+    };
+    const draft = structuredClone(current);
+    draft.image!.defaultProviderId = undefined;
+
+    await expect(
+      commitNonLanguageModelConfigurations(
+        current,
+        draft,
+        vi.fn().mockRejectedValue(new Error('disk full')),
+      ),
+    ).rejects.toThrow('disk full');
+
+    expect(saveMediaConfiguration).toHaveBeenNthCalledWith(1, 'image', {
+      primary: '',
+      fallbacks: [],
+    });
+    expect(saveMediaConfiguration).toHaveBeenNthCalledWith(2, 'image', {
+      primary: 'openai/image-pro',
+      fallbacks: [],
+      baseUrl: 'http://image.test/v1',
+      apiKey: 'test-key',
+    });
+    expect(draft.image!.defaultProviderId).toBeUndefined();
+    expect(current.image!.defaultProviderId).toBe('image');
+    expect(hasNonLanguageModelDefaultChanges(current, draft)).toBe(true);
   });
 
   it('propagates local persistence failures without touching runtime selection', async () => {

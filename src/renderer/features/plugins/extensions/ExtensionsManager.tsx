@@ -370,6 +370,13 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
     };
   }, [loadExtensions]);
 
+  const previouslyActive = useRef(isActive);
+  useEffect(() => {
+    const reactivated = isActive && !previouslyActive.current;
+    previouslyActive.current = isActive;
+    if (reactivated) void loadExtensions();
+  }, [isActive, loadExtensions]);
+
   useEffect(() => {
     if (!requestedExtensionId) {
       handledRequestedExtension.current = undefined;
