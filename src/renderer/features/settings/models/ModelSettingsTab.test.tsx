@@ -15,8 +15,20 @@ vi.mock('./LanguageModelSettings', () => ({
 }));
 
 vi.mock('./NonLanguageModelSettings', () => ({
-  default: ({ kind }: { kind: string }) => (
-    <div data-testid="non-language-panel">{`non-language-${kind}`}</div>
+  default: ({
+    kind,
+    initialBuiltinModels,
+    initialProviderId,
+  }: {
+    kind: string;
+    initialBuiltinModels?: boolean;
+    initialProviderId?: string;
+  }) => (
+    <div
+      data-testid="non-language-panel"
+      data-builtin={Boolean(initialBuiltinModels)}
+      data-provider={initialProviderId}
+    >{`non-language-${kind}`}</div>
   ),
 }));
 
@@ -30,6 +42,23 @@ const nonLanguageSettings = {
 };
 
 describe('ModelSettingsTab', () => {
+  it('forwards a built-in speech catalog request to the selected category', () => {
+    render(
+      <ModelSettingsTab
+        activeKind="speech-synthesis"
+        initialBuiltinModels
+        onKindChange={vi.fn()}
+        languageSettings={languageSettings}
+        nonLanguageSettings={nonLanguageSettings}
+      />,
+    );
+
+    expect(screen.getByTestId('non-language-panel').getAttribute('data-builtin')).toBe('true');
+    expect(screen.getByTestId('non-language-panel').textContent).toBe(
+      'non-language-speech-synthesis',
+    );
+  });
+
   it('renders the language model settings as the default panel', () => {
     render(
       <ModelSettingsTab
@@ -44,6 +73,21 @@ describe('ModelSettingsTab', () => {
     expect(
       screen.getByRole('tab', { name: 'modelTypeLanguage' }).getAttribute('aria-selected'),
     ).toBe('true');
+  });
+
+  it('forwards an online speech provider request to its category', () => {
+    render(
+      <ModelSettingsTab
+        activeKind="speech-synthesis"
+        initialBuiltinModels={false}
+        initialProviderId="office"
+        onKindChange={vi.fn()}
+        languageSettings={languageSettings}
+        nonLanguageSettings={nonLanguageSettings}
+      />,
+    );
+    expect(screen.getByTestId('non-language-panel').getAttribute('data-provider')).toBe('office');
+    expect(screen.getByTestId('non-language-panel').getAttribute('data-builtin')).toBe('false');
   });
 
   it('requests a model category change from the tab bar', () => {

@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import { defaultLocalSpeechSettings } from '@shared/speech/localSpeechSettings';
+import { LOCAL_TTS_MODEL_ID, type LocalTtsModelId } from '@shared/speech/localTts';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -81,58 +82,12 @@ describe('VoiceSettingsTab', () => {
     expect(screen.getByRole('switch', { name: i18nService.t('voiceOutputEnabled') })).toBeTruthy();
   });
 
-  it('waits for an explicit download after voice input is enabled', async () => {
-    const install = vi.fn().mockResolvedValue({
-      success: true,
-      status: {
-        id: 'sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09',
-        kind: 'asr',
-        phase: 'ready',
-        installed: true,
-      },
-    });
-    Object.defineProperty(window, 'electron', {
-      configurable: true,
-      value: {
-        localSpeechModels: {
-          list: vi.fn().mockResolvedValue({
-            supported: true,
-            models: [
-              {
-                id: 'sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09',
-                kind: 'asr',
-                phase: 'not-installed',
-                installed: false,
-              },
-            ],
-          }),
-          install,
-          onChanged: vi.fn().mockReturnValue(() => undefined),
-        },
-      },
-    });
-
-    const { rerender } = render(
-      <VoiceSettingsTab value={defaultLocalSpeechSettings} onChange={vi.fn()} />,
-    );
-    await screen.findAllByText(i18nService.t('voiceModelNotInstalled'));
-    fireEvent.click(screen.getByRole('switch', { name: i18nService.t('voiceInputEnabled') }));
-
-    expect(install).not.toHaveBeenCalled();
-    rerender(
-      <VoiceSettingsTab
-        value={{ ...defaultLocalSpeechSettings, inputEnabled: true }}
-        onChange={vi.fn()}
-      />,
-    );
-    fireEvent.click(screen.getByRole('button', { name: i18nService.t('voiceModelDownload') }));
-    expect(install).toHaveBeenCalledWith(
-      'asr',
-      'sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09',
-    );
-  });
-
-  it('shows model download actions only for enabled speech features', async () => {
+  it('opens the matching built-in model catalogs without downloading or changing preferences', async () => {
+    const install = vi.fn();
+    const remove = vi.fn();
+    const onChange = vi.fn();
+    const onManageModels = vi.fn();
+    const saveConfiguration = vi.fn();
     Object.defineProperty(window, 'electron', {
       configurable: true,
       value: {
@@ -149,38 +104,89 @@ describe('VoiceSettingsTab', () => {
               {
                 id: 'kokoro-int8-multi-lang-v1_1',
                 kind: 'tts',
-                phase: 'not-installed',
-                installed: false,
+                phase: 'ready',
+                installed: true,
               },
             ],
           }),
-          install: vi.fn().mockResolvedValue({
-            success: false,
-            status: {
-              id: 'sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09',
-              kind: 'asr',
-              phase: 'not-installed',
-              installed: false,
-            },
-          }),
+          install,
+          remove,
           onChanged: vi.fn().mockReturnValue(() => undefined),
+        },
+        onlineAsr: {
+          getStatus: vi.fn().mockResolvedValue({ available: false }),
+          saveConfiguration,
+        },
+        onlineTts: {
+          getStatus: vi.fn().mockResolvedValue({ available: false }),
+          saveConfiguration,
         },
       },
     });
 
     const { rerender } = render(
-      <VoiceSettingsTab value={defaultLocalSpeechSettings} onChange={vi.fn()} />,
-    );
-    await screen.findAllByText(i18nService.t('voiceModelNotInstalled'));
-    expect(screen.queryByRole('button', { name: i18nService.t('voiceModelDownload') })).toBeNull();
-
-    rerender(
       <VoiceSettingsTab
-        value={{ ...defaultLocalSpeechSettings, inputEnabled: true }}
-        onChange={vi.fn()}
+        value={defaultLocalSpeechSettings}
+        onChange={onChange}
+        onManageModels={onManageModels}
       />,
     );
-    expect(screen.getByRole('button', { name: i18nService.t('voiceModelDownload') })).toBeTruthy();
+    await screen.findByText(i18nService.t('voiceModelNotInstalled'));
+    const links = screen.getAllByRole('button', { name: i18nService.t('speechManageModels') });
+    fireEvent.click(links[0]);
+    fireEvent.click(links[1]);
+    expect(onManageModels.mock.calls).toEqual([['asr'], ['tts']]);
+    expect(onChange).not.toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: i18nService.t('voiceModelDownload') })).toBeNull();
+    expect(screen.queryByRole('button', { name: i18nService.t('voiceModelRemove') })).toBeNull();
+    rerender(
+      <VoiceSettingsTab
+        value={{ ...defaultLocalSpeechSettings, inputEnabled: true, outputEnabled: true }}
+        onChange={onChange}
+        onManageModels={onManageModels}
+      />,
+    );
+    expect(screen.queryByRole('button', { name: i18nService.t('voiceModelDownload') })).toBeNull();
+    expect(screen.queryByRole('button', { name: i18nService.t('voiceModelRemove') })).toBeNull();
+    fireEvent.click(screen.getByRole('combobox', { name: i18nService.t('voiceRecognitionModel') }));
+    fireEvent.click(
+      screen.getByRole('option', { name: i18nService.t('voiceAsrModelWhisperBase') }),
+    );
+    expect(onChange).toHaveBeenCalledExactlyOnceWith({
+      ...defaultLocalSpeechSettings,
+      inputEnabled: true,
+      outputEnabled: true,
+      asrModelId: 'sherpa-onnx-whisper-base',
+    });
+    expect(install).not.toHaveBeenCalled();
+    expect(remove).not.toHaveBeenCalled();
+    rerender(
+      <VoiceSettingsTab
+        value={{
+          ...defaultLocalSpeechSettings,
+          recognitionMode: 'online',
+          synthesisMode: 'online',
+        }}
+        onChange={onChange}
+        onManageModels={onManageModels}
+      />,
+    );
+    await screen.findAllByText(i18nService.t('voiceOnlineUnavailable'));
+    const onlineLinks = screen.getAllByRole('button', {
+      name: i18nService.t('speechManageModels'),
+    });
+    fireEvent.click(onlineLinks[0]);
+    fireEvent.click(onlineLinks[1]);
+    expect(onManageModels.mock.calls).toEqual([
+      ['asr'],
+      ['tts'],
+      ['asr', { source: 'online', providerId: undefined }],
+      ['tts', { source: 'online', providerId: undefined }],
+    ]);
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(saveConfiguration).not.toHaveBeenCalled();
+    expect(install).not.toHaveBeenCalled();
+    expect(remove).not.toHaveBeenCalled();
   });
 
   it('selects an online recognition model from the user provider catalog', async () => {
@@ -250,6 +256,119 @@ describe('VoiceSettingsTab', () => {
       });
     });
     expect(screen.queryByRole('button', { name: i18nService.t('voiceModelDownload') })).toBeNull();
+  });
+
+  it.each([
+    [LOCAL_TTS_MODEL_ID, 103, 102, 'zm_100'],
+    ['vits-icefall-zh-aishell3', 174, 173, 'SSB1956'],
+    ['vits-piper-en_US-lessac-medium-int8', 1, 0, 'Lessac'],
+  ] as const)(
+    'offers every voice for %s using its native identity',
+    async (ttsModelId, count, voiceId, name) => {
+      const install = vi.fn();
+      Object.defineProperty(window, 'electron', {
+        configurable: true,
+        value: {
+          localSpeechModels: {
+            list: vi.fn().mockResolvedValue({ supported: true, models: [] }),
+            install,
+            onChanged: vi.fn().mockReturnValue(() => undefined),
+          },
+        },
+      });
+      const onChange = vi.fn();
+      const value = { ...defaultLocalSpeechSettings, outputEnabled: true, ttsModelId };
+      render(<VoiceSettingsTab value={value} onChange={onChange} />);
+      await screen.findAllByText(i18nService.t('voiceModelNotInstalled'));
+
+      fireEvent.click(screen.getByRole('combobox', { name: i18nService.t('voiceSpeaker') }));
+      expect(screen.getAllByRole('option')).toHaveLength(count);
+      fireEvent.click(screen.getByRole('option', { name: new RegExp(name) }));
+
+      expect(onChange).toHaveBeenCalledExactlyOnceWith({ ...value, voiceId });
+      expect(install).not.toHaveBeenCalled();
+    },
+  );
+
+  it('offers a Kokoro voice outside the former shortcuts without changing other voice preferences', async () => {
+    Object.defineProperty(window, 'electron', {
+      configurable: true,
+      value: {
+        localSpeechModels: {
+          list: vi.fn().mockResolvedValue({ supported: true, models: [] }),
+          onChanged: vi.fn().mockReturnValue(() => undefined),
+        },
+      },
+    });
+    const onChange = vi.fn();
+    const value = { ...defaultLocalSpeechSettings, outputEnabled: true };
+    render(<VoiceSettingsTab value={value} onChange={onChange} />);
+    await screen.findAllByText(i18nService.t('voiceModelNotInstalled'));
+
+    fireEvent.click(screen.getByRole('combobox', { name: i18nService.t('voiceSpeaker') }));
+    fireEvent.click(screen.getByRole('option', { name: /zf_004/ }));
+    expect(onChange).toHaveBeenCalledExactlyOnceWith({ ...value, voiceId: 6 });
+  });
+
+  it.each([
+    ['vits-piper-en_US-lessac-medium-int8', 'voiceTtsModelPiperEnglish', 0],
+    ['vits-icefall-zh-aishell3', 'voiceTtsModelAishell3', 0],
+    [LOCAL_TTS_MODEL_ID, 'voiceTtsModelKokoro', 3],
+  ] as const)(
+    'resets to the default voice when switching to %s',
+    async (ttsModelId, labelKey, voiceId) => {
+      Object.defineProperty(window, 'electron', {
+        configurable: true,
+        value: {
+          localSpeechModels: {
+            list: vi.fn().mockResolvedValue({ supported: true, models: [] }),
+            onChanged: vi.fn().mockReturnValue(() => undefined),
+          },
+        },
+      });
+      const onChange = vi.fn();
+      const value = {
+        ...defaultLocalSpeechSettings,
+        outputEnabled: true,
+        ttsModelId: (ttsModelId === 'vits-icefall-zh-aishell3'
+          ? LOCAL_TTS_MODEL_ID
+          : 'vits-icefall-zh-aishell3') as LocalTtsModelId,
+        voiceId: ttsModelId === 'vits-icefall-zh-aishell3' ? 102 : 173,
+      };
+      render(<VoiceSettingsTab value={value} onChange={onChange} />);
+      await screen.findAllByText(i18nService.t('voiceModelNotInstalled'));
+
+      fireEvent.click(screen.getByRole('combobox', { name: i18nService.t('voiceSynthesisModel') }));
+      fireEvent.click(screen.getByRole('option', { name: i18nService.t(labelKey) }));
+      expect(onChange).toHaveBeenCalledExactlyOnceWith({ ...value, ttsModelId, voiceId });
+    },
+  );
+
+  it('keeps the selected Kokoro voice when the current model is selected again', async () => {
+    Object.defineProperty(window, 'electron', {
+      configurable: true,
+      value: {
+        localSpeechModels: {
+          list: vi.fn().mockResolvedValue({ supported: true, models: [] }),
+          onChanged: vi.fn().mockReturnValue(() => undefined),
+        },
+      },
+    });
+    const onChange = vi.fn();
+    render(
+      <VoiceSettingsTab
+        value={{ ...defaultLocalSpeechSettings, outputEnabled: true, voiceId: 102 }}
+        onChange={onChange}
+      />,
+    );
+    await screen.findAllByText(i18nService.t('voiceModelNotInstalled'));
+
+    fireEvent.click(screen.getByRole('combobox', { name: i18nService.t('voiceSynthesisModel') }));
+    fireEvent.click(screen.getByRole('option', { name: i18nService.t('voiceTtsModelKokoro') }));
+    expect(
+      screen.getByRole('combobox', { name: i18nService.t('voiceSpeaker') }).textContent,
+    ).toContain('zm_100');
+    expect(onChange).not.toHaveBeenCalled();
   });
 
   it('selects an online synthesis model from the user provider catalog', async () => {
@@ -357,10 +476,7 @@ describe('VoiceSettingsTab', () => {
         onlineTtsVoice: 'echo',
       });
       expect(saveConfiguration).toHaveBeenCalledWith({
-        provider: 'openai',
-        baseUrl: 'http://speech.local/v1',
-        apiKey: 'secret',
-        model: 'voice-small',
+        modelRef: 'lan-tts/voice-small',
         voice: 'echo',
       });
     });

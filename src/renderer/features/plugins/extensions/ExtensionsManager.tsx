@@ -126,6 +126,11 @@ const getConfigurationVariable = (
 
 interface ExtensionsManagerProps extends PluginHubManagerProps {
   onOpenRuntime?: () => void;
+  onManageSpeechModels?: (
+    kind: LocalSpeechModelKind,
+    target?: import('@/features/speech/speechModelCatalogNavigation').SpeechModelCatalogTarget,
+  ) => void;
+  isActive?: boolean;
   requestedExtensionId?: string;
   onRequestedExtensionHandled?: () => void;
 }
@@ -141,8 +146,10 @@ const reportInterruptedImportFailures = (pending: {
     {
       kind: PluginKind.EXTENSION,
       action: PluginOperationAction.INSTALL,
-      label: pending.failures.length === 1 && pending.completedLabels.length === 0
-        ? pending.failures[0].label : i18nService.t('importExtension'),
+      label:
+        pending.failures.length === 1 && pending.completedLabels.length === 0
+          ? pending.failures[0].label
+          : i18nService.t('importExtension'),
     },
     {
       ...(pending.failures.length === 1 && pending.completedLabels.length === 0
@@ -180,6 +187,8 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
   requestedExtensionId,
   onRequestedExtensionHandled,
   onOpenRuntime,
+  onManageSpeechModels,
+  isActive = true,
 }) => {
   const ownerDocument = useOwnerDocument();
   const openTeamRecords = useCallback(() => {
@@ -454,8 +463,10 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
         {
           kind: PluginKind.EXTENSION,
           action: PluginOperationAction.INSTALL,
-          label: failures.length === 1 && completedLabels.length === 0
-            ? failures[0].label : i18nService.t('importExtension'),
+          label:
+            failures.length === 1 && completedLabels.length === 0
+              ? failures[0].label
+              : i18nService.t('importExtension'),
         },
         {
           ...(failures.length === 1 && completedLabels.length === 0 ? failures[0] : {}),
@@ -1182,6 +1193,8 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
         <LocalSpeechExtensionSettingsDialog
           kind={speechSettingsKind}
           onClose={() => setSpeechSettingsKind(null)}
+          onManageModels={onManageSpeechModels}
+          hidden={!isActive}
         />
       )}
       {importPickerOpen &&

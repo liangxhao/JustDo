@@ -13,9 +13,46 @@
     "trustedToolPolicies": ["agent-team-launch", "external-mcp"],
     "tools": ["external_mcp"]
   },
+  "configContracts": {
+    "secretInputs": {
+      "bundledDefaultEnabled": true,
+      "paths": [{ "path": "replySpeech.apiKey", "expected": "string", "ownerKind": "capability" }]
+    }
+  },
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
-    "properties": {}
+    "properties": {
+      "replySpeech": {
+        "anyOf": [
+          { "type": "null" },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["baseUrl", "model", "speakerVoice"],
+            "properties": {
+              "baseUrl": { "type": "string", "minLength": 1, "maxLength": 2048 },
+              "model": { "type": "string", "minLength": 1, "maxLength": 256 },
+              "speakerVoice": { "type": "string", "minLength": 1, "maxLength": 256 },
+              "apiKey": {
+                "anyOf": [
+                  { "type": "string", "maxLength": 16384 },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["source", "provider", "id"],
+                    "properties": {
+                      "source": { "type": "string", "enum": ["env", "file", "exec", "store"] },
+                      "provider": { "type": "string", "minLength": 1 },
+                      "id": { "type": "string", "minLength": 1 }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      }
+    }
   }
 }

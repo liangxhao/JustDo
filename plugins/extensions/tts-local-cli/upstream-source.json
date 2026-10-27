@@ -1,0 +1,13 @@
+{
+  "tag": "v2026.10.7",
+  "version": "2026.10.7",
+  "id": "tts-local-cli",
+  "files": {
+    "package.json": "a21aa8847d9d72181447bd1cf4706e0785e92b5e16d9ba2ba16aa11bdced8601",
+    "openclaw.plugin.json": "427fe5778e1424858e6e9e4e128fff6384bf6a5125fda71126aacc4fd6beeac6",
+    "index.ts": "22825768166a08aebdad7d68a7eaec7e8a82deec2ad1aea843f3adc14f1224c8",
+    "capability-catalog.ts": "74241d1b622d6533383ce3e08dd14f2eea5f76d02ffdaa4e944a56d9b8c3ad72",
+    "speech-provider.ts": "830783a64d52497ce0771b6c8b474403d3e372c3f377964fdce9fce8b245ad55"
+  },
+  "commit": "157d8c2bc3ea2fa183afdc11088e69690bf8e64e"
+}

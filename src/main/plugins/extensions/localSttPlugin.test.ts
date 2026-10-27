@@ -14,6 +14,7 @@ import {
 
 const roots: string[] = [];
 const config = {
+  mode: 'local' as const,
   command: path.resolve('sherpa-onnx-offline.exe'),
   args: ['--num-threads=2'],
   modelId: 'sensevoice',
@@ -99,7 +100,8 @@ describe('local STT tool', () => {
   it('registers only when configured and never exposes a host tool to sandboxed sessions', () => {
     const registerTool = vi.fn();
     plugin.register({ pluginConfig: {}, registerTool } as never);
-    expect(registerTool).not.toHaveBeenCalled();
+    expect(registerTool.mock.calls[0][0]({ sandboxed: false })).toBeNull();
+    registerTool.mockClear();
     plugin.register({ pluginConfig: config, registerTool, config: {} } as never);
     expect(registerTool.mock.calls[0][0]({ sandboxed: true })).toBeNull();
     expect(registerTool.mock.calls[0][0]({ sandboxed: false }).name).toBe('transcribe_audio');

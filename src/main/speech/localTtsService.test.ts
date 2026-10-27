@@ -8,7 +8,9 @@ import { defaultLocalSpeechSettings } from '../../shared/speech/localSpeechSetti
 import { buildManagedLocalTtsConfig } from '../openclaw/config/speech/localTtsConfig';
 import { synthesizeLocalSpeech } from './localTtsService';
 
-vi.mock('../openclaw/config/speech/localTtsConfig', () => ({ buildManagedLocalTtsConfig: vi.fn() }));
+vi.mock('../openclaw/config/speech/localTtsConfig', () => ({
+  buildManagedLocalTtsConfig: vi.fn(),
+}));
 const settings = { ...defaultLocalSpeechSettings, outputEnabled: true };
 let fixture: string | undefined;
 afterEach(async () => {
@@ -79,4 +81,24 @@ it('allows a new request while a discarded earlier synthesis is still completing
   const current = synthesizeLocalSpeech('new', settings);
   const results = await Promise.all([earlier, current]);
   expect(results.every(result => result.mimeType === 'audio/wav')).toBe(true);
+});
+
+it('aborts the preview process and waits for exit before removing temporary output', async () => {
+  await configure(`const fs = require('node:fs');
+    fs.writeFileSync(__dirname + '/ready.json', JSON.stringify({ pid: process.pid, output: process.argv[2] }));
+    setTimeout(() => {
+      const b = Buffer.alloc(44); b.write('RIFF'); b.write('WAVE', 8);
+      fs.writeFileSync(process.argv[2], b);
+    }, 10000);`);
+  const controller = new AbortController();
+  const running = synthesizeLocalSpeech('preview text', settings, { signal: controller.signal });
+  const rejected = expect(running).rejects.toThrow('Local speech synthesis failed.');
+  let child: { pid: number; output: string } | undefined;
+  await vi.waitFor(async () => {
+    child = JSON.parse(await fs.readFile(path.join(fixture!, 'ready.json'), 'utf8'));
+  });
+  controller.abort();
+  await rejected;
+  await expect(fs.stat(path.dirname(child!.output))).rejects.toThrow();
+  expect(() => process.kill(child!.pid, 0)).toThrow();
 });

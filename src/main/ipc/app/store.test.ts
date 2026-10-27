@@ -11,6 +11,7 @@ vi.mock('electron', () => ({
 }));
 
 import { AppConfigIpc } from '../../../shared/app/appConfig';
+import { defaultLocalSpeechExtensionSettings } from '../../../shared/speech/localSpeechExtensionSettings';
 import { registerDefaultModelHandlers } from '../cowork/defaultModel';
 import { registerStoreHandlers } from './store';
 
@@ -36,9 +37,13 @@ describe('store IPC', () => {
   });
 
   it('merges each extension model independently without replacing voice settings', async () => {
-    let config: Record<string, unknown> = { voice: { inputEnabled: false, ttsModelId: 'voice-model' } };
+    let config: Record<string, unknown> = {
+      voice: { inputEnabled: false, ttsModelId: 'voice-model' },
+    };
     get.mockImplementation(() => config);
-    set.mockImplementation((_key, value) => { config = value; });
+    set.mockImplementation((_key, value) => {
+      config = value;
+    });
     const save = handlers.get(AppConfigIpc.Patch)!;
 
     await Promise.all([
@@ -48,16 +53,257 @@ describe('store IPC', () => {
 
     expect(config).toEqual({
       voice: { inputEnabled: false, ttsModelId: 'voice-model' },
-      localSpeechExtensions: { sttModelId: 'sherpa-onnx-whisper-base', ttsModelId: 'vits-icefall-zh-aishell3' },
+      localSpeechExtensions: {
+        ...defaultLocalSpeechExtensionSettings,
+        sttModelId: 'sherpa-onnx-whisper-base',
+        ttsModelId: 'vits-icefall-zh-aishell3',
+        ttsVoiceId: 0,
+      },
+    });
+  });
+
+  it('merges a plugin voice independently from STT and reply-reading preferences', async () => {
+    let config: Record<string, unknown> = {
+      voice: { ttsModelId: 'kokoro-int8-multi-lang-v1_1', voiceId: 4, outputEnabled: false },
+      localSpeechExtensions: {
+        sttModelId: 'sherpa-onnx-whisper-base',
+        ttsModelId: 'vits-icefall-zh-aishell3',
+        ttsVoiceId: 0,
+      },
+    };
+    get.mockImplementation(() => config);
+    set.mockImplementation((_key, value) => {
+      config = value;
+    });
+    const save = handlers.get(AppConfigIpc.Patch)!;
+
+    await save({}, { localSpeechExtensions: { ttsVoiceId: 173 } });
+    await save(
+      {},
+      {
+        localSpeechExtensions: {
+          sttModelId: 'sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09',
+        },
+      },
+    );
+
+    expect(config.voice).toEqual({
+      ttsModelId: 'kokoro-int8-multi-lang-v1_1',
+      voiceId: 4,
+      outputEnabled: false,
+    });
+    expect(config.localSpeechExtensions).toMatchObject({
+      ttsModelId: 'vits-icefall-zh-aishell3',
+      ttsVoiceId: 173,
+    });
+  });
+
+  it('resets a model-only change and validates an explicit voice against the new model atomically', async () => {
+    let config: Record<string, unknown> = {
+      localSpeechExtensions: { ttsModelId: 'kokoro-int8-multi-lang-v1_1', ttsVoiceId: 102 },
+    };
+    get.mockImplementation(() => config);
+    set.mockImplementation((_key, value) => {
+      config = value;
+    });
+    const save = handlers.get(AppConfigIpc.Patch)!;
+
+    await save(
+      {},
+      { localSpeechExtensions: { ttsModelId: 'vits-piper-en_US-lessac-medium-int8' } },
+    );
+    expect(config.localSpeechExtensions).toMatchObject({
+      ttsModelId: 'vits-piper-en_US-lessac-medium-int8',
+      ttsVoiceId: 0,
+    });
+    set.mockClear();
+    onAppConfigChanged.mockClear();
+    await expect(save({}, { localSpeechExtensions: { ttsVoiceId: 1 } })).rejects.toThrow();
+    await expect(
+      save(
+        {},
+        { localSpeechExtensions: { ttsModelId: 'kokoro-int8-multi-lang-v1_1', ttsVoiceId: 103 } },
+      ),
+    ).rejects.toThrow();
+    expect(set).not.toHaveBeenCalled();
+    expect(onAppConfigChanged).not.toHaveBeenCalled();
+    expect(config.localSpeechExtensions).toMatchObject({
+      ttsModelId: 'vits-piper-en_US-lessac-medium-int8',
+      ttsVoiceId: 0,
     });
   });
 
   it('rejects untrusted extension model fields before writing or applying config', async () => {
-    await expect(handlers.get(AppConfigIpc.Patch)!({}, {
-      localSpeechExtensions: { ttsModelId: 'untrusted.exe', enabled: true },
-    })).rejects.toThrow();
+    await expect(
+      handlers.get(AppConfigIpc.Patch)!(
+        {},
+        {
+          localSpeechExtensions: { ttsModelId: 'untrusted.exe', enabled: true },
+        },
+      ),
+    ).rejects.toThrow();
     expect(set).not.toHaveBeenCalled();
     expect(onAppConfigChanged).not.toHaveBeenCalled();
+  });
+
+  const speechCatalog = {
+    providers: {
+      internal: {
+        displayName: 'Speech',
+        baseUrl: 'https://speech.internal/v1',
+        apiKey: '',
+        models: [{ id: 'speech', name: 'Speech', voices: [{ id: 'v1', name: 'Voice' }] }],
+      },
+    },
+  };
+
+  it('validates online plugin routes against the merged catalog without changing voice-page preferences', async () => {
+    let config: Record<string, unknown> = {
+      voice: { onlineTtsModelRef: 'other/reply', onlineTtsVoice: 'reply' },
+    };
+    get.mockImplementation(() => config);
+    set.mockImplementation((_key, value) => {
+      config = value;
+    });
+    await handlers.get(AppConfigIpc.Patch)!(
+      {},
+      {
+        onlineModelProviders: {
+          'speech-synthesis': speechCatalog,
+          'speech-recognition': speechCatalog,
+        },
+        localSpeechExtensions: {
+          ttsMode: 'online',
+          onlineTtsModelRef: 'internal/speech',
+          onlineTtsVoice: 'v1',
+          sttMode: 'online',
+          onlineSttModelRef: 'internal/speech',
+        },
+      },
+    );
+    expect(config.localSpeechExtensions).toMatchObject({
+      ttsMode: 'online',
+      onlineTtsModelRef: 'internal/speech',
+      onlineTtsVoice: 'v1',
+      sttMode: 'online',
+      onlineSttModelRef: 'internal/speech',
+    });
+    await handlers.get(AppConfigIpc.Patch)!({}, { localSpeechExtensions: { sttMode: 'local' } });
+    expect(config.localSpeechExtensions).toMatchObject({
+      ttsMode: 'online',
+      onlineTtsVoice: 'v1',
+      sttMode: 'local',
+    });
+    set.mockClear();
+    await expect(
+      handlers.get(AppConfigIpc.Patch)!(
+        {},
+        { localSpeechExtensions: { onlineTtsVoice: 'not-configured' } },
+      ),
+    ).rejects.toThrow();
+    expect(set).not.toHaveBeenCalled();
+  });
+
+  it('clears deleted speech model references while preserving online mode, including simultaneous unrelated plugin patches', async () => {
+    let config: Record<string, unknown> = {
+      onlineModelProviders: {
+        'speech-synthesis': speechCatalog,
+        'speech-recognition': speechCatalog,
+      },
+      localSpeechExtensions: {
+        ...defaultLocalSpeechExtensionSettings,
+        sttMode: 'online',
+        onlineSttModelRef: 'internal/speech',
+        ttsMode: 'online',
+        onlineTtsModelRef: 'internal/speech',
+        onlineTtsVoice: 'v1',
+      },
+      voice: {
+        synthesisMode: 'online',
+        recognitionMode: 'online',
+        onlineAsrModelRef: 'internal/speech',
+        onlineTtsModelRef: 'internal/speech',
+        onlineTtsVoice: 'v1',
+      },
+    };
+    get.mockImplementation(() => config);
+    set.mockImplementation((_key, value) => {
+      config = value;
+    });
+    await handlers.get(AppConfigIpc.Patch)!(
+      {},
+      {
+        onlineModelProviders: {
+          'speech-synthesis': { providers: {} },
+          'speech-recognition': { providers: {} },
+        },
+        localSpeechExtensions: { ttsVoiceId: 102 },
+      },
+    );
+    expect(config.localSpeechExtensions).toMatchObject({
+      sttMode: 'online',
+      onlineSttModelRef: '',
+      ttsMode: 'online',
+      onlineTtsModelRef: '',
+      onlineTtsVoice: '',
+      ttsVoiceId: 102,
+    });
+    expect(config.voice).toMatchObject({
+      synthesisMode: 'online',
+      recognitionMode: 'online',
+      onlineAsrModelRef: '',
+      onlineTtsModelRef: '',
+      onlineTtsVoice: '',
+    });
+  });
+
+  it('keeps stable references through display-name changes but rejects websocket-only file transcription selection', async () => {
+    get.mockReturnValue({
+      onlineModelProviders: { 'speech-recognition': speechCatalog },
+      localSpeechExtensions: {
+        ...defaultLocalSpeechExtensionSettings,
+        sttMode: 'online',
+        onlineSttModelRef: 'internal/speech',
+      },
+    });
+    await handlers.get(AppConfigIpc.Patch)!(
+      {},
+      {
+        onlineModelProviders: {
+          'speech-recognition': {
+            providers: {
+              internal: { ...speechCatalog.providers.internal, displayName: 'Renamed' },
+            },
+          },
+        },
+      },
+    );
+    expect(set).toHaveBeenCalledWith(
+      'app_config',
+      expect.objectContaining({
+        localSpeechExtensions: expect.objectContaining({ onlineSttModelRef: 'internal/speech' }),
+      }),
+    );
+    set.mockClear();
+    await expect(
+      handlers.get(AppConfigIpc.Patch)!(
+        {},
+        {
+          onlineModelProviders: {
+            'speech-recognition': {
+              providers: {
+                internal: {
+                  ...speechCatalog.providers.internal,
+                  baseUrl: 'wss://speech.internal/realtime',
+                },
+              },
+            },
+          },
+          localSpeechExtensions: { sttMode: 'online', onlineSttModelRef: 'internal/speech' },
+        },
+      ),
+    ).rejects.toThrow('HTTP');
+    expect(set).not.toHaveBeenCalled();
   });
 
   it('waits for the persisted app config to be applied', async () => {

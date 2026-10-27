@@ -5,6 +5,7 @@ import type { Agent, CoworkConfig } from '../../data/coworkStore';
 import type { OpenClawHookRecord } from '../../plugins/hooks';
 import type { McpServerRecord } from '../../plugins/mcp';
 import type { OpenClawEngineManager } from '../runtime/openclawEngineManager';
+import type { ManagedSpeechModelSettings } from './speech/speechModelConfig';
 
 // Public configuration entry point; projections live with their owning capability.
 
@@ -24,6 +25,7 @@ export type OpenClawConfigSyncDeps = {
   getBrowserMode?: () => BrowserModeValue;
   getDecisionModelCategory?: () => unknown;
   getNativeVideoCategory?: () => unknown;
+  getSpeechModelSettings?: () => ManagedSpeechModelSettings;
   getLocalSttConfig?: () => Record<string, unknown> | null;
   getLocalTtsConfig?: () => Record<string, unknown> | null;
   getLocalSpeechExtensionTtsConfig?: () => Record<string, unknown> | null;

@@ -473,6 +473,8 @@ const InitializedApp: React.FC = () => {
   const handleShowSettings = useCallback((options?: SettingsOpenOptions) => {
     setSettingsOptions({
       initialTab: options?.initialTab,
+      speechModels: options?.speechModels,
+      speechModelTarget: options?.speechModelTarget,
       browserPage: options?.browserPage,
       notice: options?.notice,
     });
@@ -943,6 +945,8 @@ const InitializedApp: React.FC = () => {
             <Settings
               onClose={handleCloseSettings}
               initialTab={settingsOptions.initialTab}
+              speechModels={settingsOptions.speechModels}
+              speechModelTarget={settingsOptions.speechModelTarget}
               notice={settingsOptions.notice}
             />
           </div>
@@ -995,6 +999,8 @@ const InitializedApp: React.FC = () => {
               <Settings
                 onClose={handleCloseSettings}
                 initialTab={settingsOptions.initialTab}
+                speechModels={settingsOptions.speechModels}
+                speechModelTarget={settingsOptions.speechModelTarget}
                 notice={settingsOptions.notice}
               />
             </div>
@@ -1046,6 +1052,10 @@ const InitializedApp: React.FC = () => {
             )}
             {mainView === 'plugins' && !teamEntry && (
               <PluginsView
+                isActive={!showSettings}
+                onManageSpeechModels={(kind, target) =>
+                  handleShowSettings({ initialTab: 'model', speechModels: kind, speechModelTarget: target })
+                }
                 onOpenRuntime={() => handleShowSettings({ initialTab: 'runtime' })}
                 isSidebarCollapsed={false}
                 onToggleSidebar={handleToggleSidebar}

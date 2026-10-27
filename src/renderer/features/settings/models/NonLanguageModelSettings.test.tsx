@@ -34,7 +34,11 @@ describe('NonLanguageModelSettings', () => {
   const saveConfiguration = vi.fn();
   const fetch = vi.fn();
 
-  const renderSettings = (kind: NonLanguageModelKind) => {
+  const renderSettings = (
+    kind: NonLanguageModelKind,
+    initialBuiltinModels?: boolean,
+    initialProviderId?: string,
+  ) => {
     const categories = currentConfig.onlineModelProviders as NonLanguageModelProviders;
     const initial = structuredClone(categories[kind] ?? createEmptyNonLanguageModelCategory());
     const onSubmit = vi.fn((event: FormEvent) => event.preventDefault());
@@ -44,7 +48,13 @@ describe('NonLanguageModelSettings', () => {
       observedCategory = category;
       return (
         <form onSubmit={onSubmit}>
-          <NonLanguageModelSettings kind={kind} category={category} setCategory={setCategory} />
+          <NonLanguageModelSettings
+            kind={kind}
+            category={category}
+            setCategory={setCategory}
+            initialBuiltinModels={initialBuiltinModels}
+            initialProviderId={initialProviderId}
+          />
         </form>
       );
     };
@@ -171,6 +181,12 @@ describe('NonLanguageModelSettings', () => {
           clearConfiguration: vi.fn().mockResolvedValue(undefined),
         },
         mediaGenerationModels: { saveConfiguration: vi.fn() },
+        localSpeechModels: {
+          list: vi.fn().mockResolvedValue({ supported: true, models: [] }),
+          onChanged: vi.fn(() => () => undefined),
+          install: vi.fn(),
+          remove: vi.fn(),
+        },
         extensions: {
           list: vi.fn().mockResolvedValue({
             success: true,
@@ -578,7 +594,9 @@ describe('NonLanguageModelSettings', () => {
   it('starts empty and keeps provider and model edits in the shared draft', () => {
     renderSettings('speech-recognition');
 
-    expect(screen.getByText('customModelNoProviders')).toBeTruthy();
+    expect(
+      screen.getByRole('button', { name: 'builtinModelsProvider', pressed: true }),
+    ).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: /addCustomProvider/ }));
     fireEvent.change(screen.getByLabelText('customDisplayName'), {
       target: { value: 'Office Speech' },
@@ -639,8 +657,75 @@ describe('NonLanguageModelSettings', () => {
     renderSettings('speech-recognition');
     fireEvent.click(screen.getByRole('button', { name: 'deleteCustomProvider: Office Speech' }));
 
-    expect(screen.getByText('customModelNoProviders')).toBeTruthy();
+    expect(
+      screen.getByRole('button', { name: 'builtinModelsProvider', pressed: true }),
+    ).toBeTruthy();
     expect(window.electron.onlineAsr.clearConfiguration).not.toHaveBeenCalled();
+  });
+
+  it('browses built-in speech models without changing the online catalog or runtime selection', async () => {
+    const category = {
+      providers: {
+        office: {
+          displayName: 'Office Speech',
+          baseUrl: 'http://speech.lan/v1',
+          apiKey: 'key',
+          models: [{ id: 'whisper', name: 'Whisper' }],
+        },
+      },
+    };
+    currentConfig.onlineModelProviders = { 'speech-recognition': category };
+    const { getCategory } = renderSettings('speech-recognition');
+    expect(screen.getByRole('button', { name: 'Office Speech', pressed: true })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'builtinModelsProvider' }));
+    expect(await screen.findByText('SenseVoice Small')).toBeTruthy();
+    expect(getCategory()).toEqual(category);
+    expect(window.electron.localSpeechModels.install).not.toHaveBeenCalled();
+    expect(window.electron.onlineAsr.saveConfiguration).not.toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: 'mediaModelSetDefault' })).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Office Speech' }));
+    expect(screen.getByLabelText('baseUrl')).toHaveProperty('value', 'http://speech.lan/v1');
+    expect(getCategory()).toEqual(category);
+  });
+
+  it('opens the requested built-in speech catalog when online providers exist', async () => {
+    currentConfig.onlineModelProviders = {
+      'speech-synthesis': {
+        providers: {
+          office: {
+            displayName: 'Office Speech',
+            baseUrl: 'http://speech.lan/v1',
+            apiKey: '',
+            models: [{ id: 'speech', name: 'Speech' }],
+          },
+        },
+      },
+    };
+    renderSettings('speech-synthesis', true);
+
+    expect(
+      screen.getByRole('button', { name: 'builtinModelsProvider', pressed: true }),
+    ).toBeTruthy();
+    expect(await screen.findByText('Kokoro v1.1')).toBeTruthy();
+    expect(screen.queryByLabelText('baseUrl')).toBeNull();
+  });
+
+  it('opens a requested online speech provider without changing the catalog', () => {
+    const providers = {
+      first: { displayName: 'First', baseUrl: 'http://first.lan/v1', apiKey: '', models: [] },
+      office: { displayName: 'Office', baseUrl: 'http://office.lan/v1', apiKey: '', models: [] },
+    };
+    currentConfig.onlineModelProviders = { 'speech-synthesis': { providers } };
+    const { getCategory } = renderSettings('speech-synthesis', false, 'office');
+
+    expect(screen.getByRole('button', { name: 'Office', pressed: true })).toBeTruthy();
+    expect(
+      screen.getByRole('button', { name: 'builtinModelsProvider', pressed: false }),
+    ).toBeTruthy();
+    expect(screen.getByLabelText('baseUrl')).toHaveProperty('value', 'http://office.lan/v1');
+    expect(getCategory()).toEqual({ providers });
   });
 
   it('validates provider names and rejects duplicates', () => {

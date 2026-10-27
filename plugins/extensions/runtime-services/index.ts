@@ -21,6 +21,7 @@ import { registerMcpAppHistory } from './mcp-app-history';
 import { buildBuiltinModelAuthProvider } from './model-auth';
 import { registerReplayAdmissionObservations } from './replay-admission-observations';
 import { registerScheduledTaskHistory } from './scheduled-task-history';
+import { registerSpeechSynthesis } from './speech';
 
 const PLUGIN_ID = 'runtime-services';
 const MAX_DETAIL_IDS = 250;
@@ -245,6 +246,7 @@ const plugin = {
     registerAgentTeamRuntimeServices(api);
     registerExternalMcp(api);
     registerScheduledTaskHistory(api);
+    registerSpeechSynthesis(api);
     registerMcpAppHistory(api);
     const historyMessageTransfers = new Map<string, HistoryMessageTransfer>();
     let historyMessageTransferSequence = 0;

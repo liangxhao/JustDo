@@ -40,6 +40,7 @@ import {
   resolveOpenClawExecHost,
   verifyLoggedOutOpenClawConfig,
 } from './openclawConfigSync';
+import type { ManagedSpeechModelSettings } from './speech/speechModelConfig';
 
 type OpenClawConfigSyncServiceDeps = {
   getCoworkStore: () => CoworkStore;
@@ -56,6 +57,7 @@ type OpenClawConfigSyncServiceDeps = {
   getControlUiEnabled?: () => boolean;
   getDecisionModelCategory?: () => unknown;
   getNativeVideoCategory?: () => unknown;
+  getSpeechModelSettings?: () => ManagedSpeechModelSettings;
   getLocalSttConfig?: () => Record<string, unknown> | null;
   getLocalTtsConfig?: () => Record<string, unknown> | null;
   getLocalSpeechExtensionTtsConfig?: () => Record<string, unknown> | null;
@@ -1790,6 +1792,7 @@ export class OpenClawConfigSyncService {
         getDecisionModelCategory: this.deps.getDecisionModelCategory,
         getNativeVideoCategory: this.deps.getNativeVideoCategory,
         getLocalSttConfig: this.deps.getLocalSttConfig,
+        getSpeechModelSettings: this.deps.getSpeechModelSettings,
         getLocalTtsConfig: this.deps.getLocalTtsConfig,
         getLocalSpeechExtensionTtsConfig: this.deps.getLocalSpeechExtensionTtsConfig,
         getSpeechOutputState: this.deps.getSpeechOutputState,

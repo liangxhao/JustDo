@@ -29,6 +29,13 @@ describe('extension speech model projection', () => {
     }));
   });
 
+  it('projects the extension voice rather than the reply-reading default', () => {
+    buildLocalSpeechExtensionTtsConfig({ ttsModelId: 'kokoro-int8-multi-lang-v1_1', ttsVoiceId: 102 });
+    expect(buildManagedLocalTtsConfig).toHaveBeenCalledWith(undefined, expect.objectContaining({
+      outputEnabled: true, synthesisMode: 'local', ttsModelId: 'kokoro-int8-multi-lang-v1_1', voiceId: 102,
+    }));
+  });
+
   const local = { providers: { 'tts-local-cli': { command: 'extension.exe' } } };
 
   it('makes the prepared local tool available even when reply reading is off', () => {

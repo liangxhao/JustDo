@@ -153,10 +153,12 @@ test('prunes public-cloud plugins while retaining the intranet OpenAI adapter an
       fs.writeFileSync(path.join(extensionRoot, 'index.js'), 'export default {};');
     }
     const computerRoot = path.join(extensionsRoot, 'cua-computer');
-    fs.writeFileSync(
-      path.join(extensionsRoot, 'openai', 'package.json'),
-      JSON.stringify({ version: targetVersion, openclaw: { runtimeBundled: true } }),
-    );
+    for (const id of ['openai', 'tts-local-cli']) {
+      fs.writeFileSync(
+        path.join(extensionsRoot, id, 'package.json'),
+        JSON.stringify({ version: targetVersion, openclaw: { runtimeBundled: true } }),
+      );
+    }
     const nativeRoot = path.join(
       computerRoot,
       'node_modules',

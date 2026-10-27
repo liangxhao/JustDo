@@ -27,9 +27,6 @@ export interface OnlineTtsConfiguration extends OnlineTtsStatus {
 }
 
 export interface OnlineTtsConfigurationUpdate {
-  provider: string;
-  baseUrl: string;
-  apiKey?: string;
-  model: string;
+  modelRef: string;
   voice: string;
 }

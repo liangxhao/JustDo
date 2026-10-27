@@ -310,7 +310,10 @@ import {
   type OnlineAsrStartOptions,
 } from '../shared/speech/onlineAsr';
 import { type OnlineTtsConfigurationUpdate, OnlineTtsIpc } from '../shared/speech/onlineTts';
-import { SpeechSynthesisIpc } from '../shared/speech/speechSynthesis';
+import {
+  type BuiltinSpeechPreviewRequest,
+  SpeechSynthesisIpc,
+} from '../shared/speech/speechSynthesis';
 import {
   type WidgetNetworkCheckRequest,
   type WidgetNetworkClose,
@@ -1236,6 +1239,10 @@ contextBridge.exposeInMainWorld('electron', {
   },
   speechSynthesis: {
     speak: (text: string) => ipcRenderer.invoke(SpeechSynthesisIpc.Speak, text),
+    previewBuiltin: (request: BuiltinSpeechPreviewRequest) =>
+      ipcRenderer.invoke(SpeechSynthesisIpc.PreviewBuiltin, request),
+    cancelBuiltinPreview: (requestId: string) =>
+      ipcRenderer.invoke(SpeechSynthesisIpc.CancelBuiltinPreview, requestId),
   },
   mediaGenerationModels: {
     getConfiguration: (kind: MediaGenerationModelKind) =>

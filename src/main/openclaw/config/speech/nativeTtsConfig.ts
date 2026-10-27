@@ -21,6 +21,9 @@ export function normalizeNativeTtsConfig(value: unknown): Record<string, unknown
   if (!isRecord(value)) return null;
   const result = normalizeProviders(value);
   delete result.enabled;
+  // The native persistent schema rejects this top-level field. Preferences are
+  // isolated through the supported Gateway environment and per-request API.
+  delete result.prefsPath;
   if (isRecord(result.personas)) {
     result.personas = Object.fromEntries(Object.entries(result.personas).map(([id, persona]) => [
       id, isRecord(persona) ? normalizeProviders(persona) : persona,

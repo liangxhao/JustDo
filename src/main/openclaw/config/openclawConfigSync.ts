@@ -82,6 +82,7 @@ import { withComputerControlPolicy } from './policies/computerControlConfig';
 import { mergeLocalSpeechExtensionTtsConfig } from './speech/localSpeechExtensionConfig';
 import { buildManagedLocalSpeechPluginEntries } from './speech/localSpeechPluginConfig';
 import { normalizeNativeTtsConfig } from './speech/nativeTtsConfig';
+import { applyManagedSpeechModelConfiguration, type ManagedSpeechModelSettings } from './speech/speechModelConfig';
 export {
   applyDefaultOpenClawPluginEntries,
   applyManagedOpenClawHeartbeatConfig,
@@ -183,6 +184,8 @@ export class OpenClawConfigSync {
   private readonly getNativeVideoCategory: () => unknown;
   private nativeVideoSelection: ReturnType<typeof resolveNativeVideoSelection>;
   private videoSecretsChanged = false;
+  private speechSecretsChanged = false;
+  private readonly getSpeechModelSettings?: () => ManagedSpeechModelSettings;
   private restoreUnmanagedVideo?: (config: Record<string, unknown>) => void;
   private readonly getDecisionModelCategory: () => unknown;
   private decisionSelection: ReturnType<typeof resolveDecisionModelSelection>;
@@ -205,6 +208,7 @@ export class OpenClawConfigSync {
 
   constructor(deps: OpenClawConfigSyncDeps & { getControlUiEnabled?: () => boolean }) {
     this.getNativeVideoCategory = deps.getNativeVideoCategory ?? (() => undefined);
+    this.getSpeechModelSettings = deps.getSpeechModelSettings;
     this.getDecisionModelCategory = deps.getDecisionModelCategory ?? (() => undefined);
     this.engineManager = deps.engineManager;
     this.getCoworkConfig = deps.getCoworkConfig;
@@ -232,6 +236,7 @@ export class OpenClawConfigSync {
   ): OpenClawConfigSyncResult {
     this.decisionSecretsChanged = false;
     this.videoSecretsChanged = false;
+    this.speechSecretsChanged = false;
     let videoConfigurationFailed = true;
     try {
       const videoSelection = resolveNativeVideoSelection(this.getNativeVideoCategory());
@@ -269,9 +274,9 @@ export class OpenClawConfigSync {
       if (videoSelection === undefined) this.restoreUnmanagedVideo = undefined;
       return {
         ...result,
-        changed: result.changed || this.decisionSecretsChanged || this.videoSecretsChanged,
+        changed: result.changed || this.decisionSecretsChanged || this.videoSecretsChanged || this.speechSecretsChanged,
         secretsChanged:
-          result.secretsChanged || this.decisionSecretsChanged || this.videoSecretsChanged,
+          result.secretsChanged || this.decisionSecretsChanged || this.videoSecretsChanged || this.speechSecretsChanged,
       };
     } catch {
       return {
@@ -369,7 +374,10 @@ export class OpenClawConfigSync {
         embeddedAgent: buildManagedOpenClawEmbeddedAgentConfig(defaults.embeddedAgent),
       },
     };
-    if (this.getLocalSpeechExtensionTtsConfig) {
+    if (this.getSpeechModelSettings) {
+      const speechSecretsChanged = applyManagedSpeechModelConfiguration(config, this.getSpeechModelSettings(), this.engineManager.getStateDir());
+      this.speechSecretsChanged ||= speechSecretsChanged;
+    } else if (this.getLocalSpeechExtensionTtsConfig) {
       const tts = mergeLocalSpeechExtensionTtsConfig(config.tts, this.getLocalSpeechExtensionTtsConfig());
       if (tts) config.tts = tts;
       else delete config.tts;
@@ -572,7 +580,7 @@ export class OpenClawConfigSync {
         coworkConfig.sandboxNetworkEnabled,
       ),
       ...buildManagedLocalSpeechPluginEntries(this.getLocalSttConfig(), isBundledPluginAvailable),
-      ...buildManagedOpenClawTtsPluginEntries(managedTtsConfig),
+      ...(!this.getSpeechModelSettings ? buildManagedOpenClawTtsPluginEntries(managedTtsConfig) : {}),
       ...buildManagedOnlineAsrPluginEntries(existingPlugins),
       ...buildManagedSwarmWorkflowPluginEntries(this.getAgents?.() ?? []),
     };
@@ -1023,7 +1031,7 @@ export class OpenClawConfigSync {
         coworkConfig.sandboxNetworkEnabled,
       ),
       ...buildManagedLocalSpeechPluginEntries(this.getLocalSttConfig(), isBundledPluginAvailable),
-      ...buildManagedOpenClawTtsPluginEntries(managedTtsConfig),
+      ...(!this.getSpeechModelSettings ? buildManagedOpenClawTtsPluginEntries(managedTtsConfig) : {}),
       ...buildManagedSwarmWorkflowPluginEntries(this.getAgents?.() ?? []),
     };
     const defaultPluginEntries = buildDefaultOpenClawPluginEntries();

@@ -1,6 +1,11 @@
 import { Cog6ToothIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import { normalizeLocalSpeechExtensionSettings } from '@shared/speech/localSpeechExtensionSettings';
 import { LocalSpeechModelKind } from '@shared/speech/localSpeechModels';
+import {
+  getOnlineSpeechModelOptions,
+  getOnlineSpeechVoiceOptions,
+  resolveOnlineSpeechModel,
+} from '@shared/speech/onlineSpeechModels';
 import { type MouseEvent, useEffect, useState } from 'react';
 
 import { useLocalSpeechModels } from '@/features/speech/useLocalSpeechModels';
@@ -23,20 +28,39 @@ export default function LocalSpeechExtensionSettingsButton({
   const [settings, setSettings] = useState(() =>
     normalizeLocalSpeechExtensionSettings(configService.getConfig().localSpeechExtensions),
   );
+  const [catalog, setCatalog] = useState(() => configService.getConfig().onlineModelProviders);
   useEffect(() => {
-    const update = () =>
+    const update = () => {
       setSettings(
         normalizeLocalSpeechExtensionSettings(configService.getConfig().localSpeechExtensions),
       );
+      setCatalog(configService.getConfig().onlineModelProviders);
+    };
     window.addEventListener('config-updated', update);
     return () => window.removeEventListener('config-updated', update);
   }, []);
 
-  const modelId = kind === LocalSpeechModelKind.Asr ? settings.sttModelId : settings.ttsModelId;
+  const asr = kind === LocalSpeechModelKind.Asr;
+  const modelId = asr ? settings.sttModelId : settings.ttsModelId;
+  const online = (asr ? settings.sttMode : settings.ttsMode) === 'online';
+  const reference = asr ? settings.onlineSttModelRef : settings.onlineTtsModelRef;
+  const category = catalog?.[asr ? 'speech-recognition' : 'speech-synthesis'];
+  const selection = resolveOnlineSpeechModel(category, reference);
+  const onlineValid =
+    getOnlineSpeechModelOptions(category, { requireVoice: !asr, fileTranscription: asr }).some(
+      option => option.value === reference,
+    ) &&
+    (asr ||
+      getOnlineSpeechVoiceOptions(selection?.model).some(
+        option => option.value === settings.onlineTtsVoice,
+      ));
   const status = models.statuses.find(model => model.kind === kind && model.id === modelId);
-  const needsModel =
-    models.supported && !models.loading && !models.error && status?.phase !== 'ready';
-  const warning = i18nService.t('speechExtensionModelNotReady');
+  const needsModel = online
+    ? !onlineValid
+    : models.supported && !models.loading && !models.error && status?.phase !== 'ready';
+  const warning = i18nService.t(
+    online ? 'speechOnlineSelectionUnavailable' : 'speechExtensionModelNotReady',
+  );
   const openSettings = (event: MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation();
     onOpen();

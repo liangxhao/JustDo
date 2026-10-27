@@ -2,11 +2,22 @@ import { Cog6ToothIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import { LOCAL_ASR_MODEL_IDS, type LocalAsrModelId } from '@shared/speech/localAsr';
 import { normalizeLocalSpeechExtensionSettings } from '@shared/speech/localSpeechExtensionSettings';
 import { LocalSpeechModelKind } from '@shared/speech/localSpeechModels';
-import { LOCAL_TTS_MODEL_IDS, type LocalTtsModelId } from '@shared/speech/localTts';
+import {
+  getLocalTtsDefaultVoiceId,
+  LOCAL_TTS_MODEL_IDS,
+  type LocalTtsModelId,
+} from '@shared/speech/localTts';
+import {
+  getOnlineSpeechModelOptions,
+  getOnlineSpeechVoiceOptions,
+  resolveOnlineSpeechModel,
+} from '@shared/speech/onlineSpeechModels';
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
+import { getLocalSpeechVoiceOptions } from '@/features/speech/localSpeechModelCatalog';
 import LocalSpeechModelStatusView from '@/features/speech/LocalSpeechModelStatusView';
+import type { SpeechModelCatalogTarget } from '@/features/speech/speechModelCatalogNavigation';
 import { useLocalSpeechModels } from '@/features/speech/useLocalSpeechModels';
 import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';
@@ -25,9 +36,13 @@ const modelKeys: Record<LocalAsrModelId | LocalTtsModelId, string> = {
 export default function LocalSpeechExtensionSettingsDialog({
   kind,
   onClose,
+  onManageModels,
+  hidden = false,
 }: {
   kind: LocalSpeechModelKind;
   onClose: () => void;
+  onManageModels?: (kind: LocalSpeechModelKind, target?: SpeechModelCatalogTarget) => void;
+  hidden?: boolean;
 }) {
   const ownerDocument = useOwnerDocument();
   const asr = kind === LocalSpeechModelKind.Asr;
@@ -37,6 +52,53 @@ export default function LocalSpeechExtensionSettingsDialog({
     () =>
       normalizeLocalSpeechExtensionSettings(configService.getConfig().localSpeechExtensions)[key],
   );
+  const [ttsVoiceId, setTtsVoiceId] = useState(
+    () =>
+      normalizeLocalSpeechExtensionSettings(configService.getConfig().localSpeechExtensions)
+        .ttsVoiceId,
+  );
+  const [mode, setMode] = useState(() => {
+    const settings = normalizeLocalSpeechExtensionSettings(
+      configService.getConfig().localSpeechExtensions,
+    );
+    return asr ? settings.sttMode : settings.ttsMode;
+  });
+  const [onlineModelRef, setOnlineModelRef] = useState(() => {
+    const settings = normalizeLocalSpeechExtensionSettings(
+      configService.getConfig().localSpeechExtensions,
+    );
+    return asr ? settings.onlineSttModelRef : settings.onlineTtsModelRef;
+  });
+  const [onlineVoice, setOnlineVoice] = useState(
+    () =>
+      normalizeLocalSpeechExtensionSettings(configService.getConfig().localSpeechExtensions)
+        .onlineTtsVoice,
+  );
+  const [catalog, setCatalog] = useState(() => configService.getConfig().onlineModelProviders);
+  useEffect(() => {
+    const refresh = () => setCatalog(configService.getConfig().onlineModelProviders);
+    refresh();
+    window.addEventListener('config-updated', refresh);
+    return () => window.removeEventListener('config-updated', refresh);
+  }, [hidden]);
+  const category = catalog?.[asr ? 'speech-recognition' : 'speech-synthesis'];
+  const onlineOptions = getOnlineSpeechModelOptions(category, {
+    requireVoice: !asr,
+    fileTranscription: asr,
+  });
+  const selectedOnlineModel = resolveOnlineSpeechModel(category, onlineModelRef);
+  const onlineVoiceOptions = getOnlineSpeechVoiceOptions(selectedOnlineModel?.model);
+  const modelAvailable = onlineOptions.some(option => option.value === onlineModelRef);
+  const voiceAvailable = onlineVoiceOptions.some(option => option.value === onlineVoice);
+  const onlineError = !onlineModelRef
+    ? i18nService.t(onlineOptions.length ? 'voiceSelectModel' : 'voiceNoOnlineModelsConfigured')
+    : !modelAvailable
+      ? i18nService.t('speechOnlineSelectionUnavailable')
+      : !asr && !voiceAvailable
+        ? i18nService.t(
+            onlineVoiceOptions.length ? 'voiceSelectSpeaker' : 'voiceNoSpeakersConfigured',
+          )
+        : '';
   const models = useLocalSpeechModels();
   const status = models.statuses.find(candidate => candidate.id === modelId) ?? null;
   const [saving, setSaving] = useState(false);
@@ -49,19 +111,33 @@ export default function LocalSpeechExtensionSettingsDialog({
   useEffect(() => {
     mounted.current = true;
     const previous = ownerDocument.activeElement as HTMLElement | null;
-    form.current?.focus();
     return () => {
       mounted.current = false;
       previous?.focus();
     };
   }, [ownerDocument]);
+  useEffect(() => {
+    if (!hidden) form.current?.focus();
+  }, [hidden]);
 
   const save = async () => {
     setSaving(true);
     setError('');
     try {
       await configService.updateConfig({
-        localSpeechExtensions: { [key]: modelId },
+        localSpeechExtensions: asr
+          ? {
+              sttMode: mode,
+              sttModelId: modelId as LocalAsrModelId,
+              onlineSttModelRef: onlineModelRef,
+            }
+          : {
+              ttsMode: mode,
+              ttsModelId: modelId as LocalTtsModelId,
+              ttsVoiceId,
+              onlineTtsModelRef: onlineModelRef,
+              onlineTtsVoice: onlineVoice,
+            },
       });
       if (mounted.current) onClose();
     } catch {
@@ -70,6 +146,8 @@ export default function LocalSpeechExtensionSettingsDialog({
       if (mounted.current) setSaving(false);
     }
   };
+
+  if (hidden) return null;
 
   return createPortal(
     <Modal
@@ -136,32 +214,170 @@ export default function LocalSpeechExtensionSettingsDialog({
             <XMarkIcon className="h-4 w-4" />
           </button>
         </header>
-        <div className="min-h-0 space-y-4 overflow-y-auto bg-background px-5 py-4">
+        <div className="min-h-0 space-y-4 overflow-y-auto bg-background px-5 py-4 [&_label]:w-24 [&_label]:shrink-0 [&_label]:whitespace-normal">
           <ThemedSelect
-            id="speech-extension-model"
-            value={modelId}
-            label={i18nService.t(asr ? 'voiceRecognitionModel' : 'voiceSynthesisModel')}
-            ariaLabel={i18nService.t(asr ? 'voiceRecognitionModel' : 'voiceSynthesisModel')}
-            options={(asr ? LOCAL_ASR_MODEL_IDS : LOCAL_TTS_MODEL_IDS).map(id => ({
-              value: id,
-              label: i18nService.t(modelKeys[id]),
-            }))}
+            id="speech-extension-mode"
+            value={mode}
+            label={i18nService.t(asr ? 'voiceRecognitionMode' : 'voiceSynthesisMode')}
+            ariaLabel={i18nService.t(asr ? 'voiceRecognitionMode' : 'voiceSynthesisMode')}
             disabled={saving}
-            onChange={setModelId}
+            onChange={next => setMode(next as 'local' | 'online')}
+            options={[
+              {
+                value: 'local',
+                label: i18nService.t(asr ? 'voiceRecognitionModeLocal' : 'voiceSynthesisModeLocal'),
+              },
+              {
+                value: 'online',
+                label: i18nService.t(
+                  asr ? 'voiceRecognitionModeOnline' : 'voiceSynthesisModeOnline',
+                ),
+              },
+            ]}
           />
-          <LocalSpeechModelStatusView
-            showModelId={false}
-            status={status}
-            loading={models.loading}
-            showInstallAction={models.supported && !models.loading && !models.error}
-            onRetry={() => models.install(kind, modelId)}
-          />
-          {!models.loading && !models.supported && (
+          {mode === 'local' ? (
+            <>
+              <ThemedSelect
+                id="speech-extension-model"
+                value={modelId}
+                label={i18nService.t(asr ? 'voiceRecognitionModel' : 'voiceSynthesisModel')}
+                ariaLabel={i18nService.t(asr ? 'voiceRecognitionModel' : 'voiceSynthesisModel')}
+                options={(asr ? LOCAL_ASR_MODEL_IDS : LOCAL_TTS_MODEL_IDS).map(id => ({
+                  value: id,
+                  label: i18nService.t(modelKeys[id]),
+                }))}
+                disabled={saving}
+                onChange={id => {
+                  if (id === modelId) return;
+                  setModelId(id);
+                  if (!asr) setTtsVoiceId(getLocalTtsDefaultVoiceId(id as LocalTtsModelId));
+                }}
+              />
+              {!asr && (
+                <ThemedSelect
+                  id="speech-extension-voice"
+                  value={String(ttsVoiceId)}
+                  label={i18nService.t('voiceSpeaker')}
+                  ariaLabel={i18nService.t('voiceSpeaker')}
+                  options={getLocalSpeechVoiceOptions(modelId, key => i18nService.t(key))}
+                  disabled={saving}
+                  onChange={id => setTtsVoiceId(Number(id))}
+                />
+              )}
+              <LocalSpeechModelStatusView
+                showModelId={false}
+                status={status}
+                loading={models.loading}
+                showInstallAction={false}
+                onRetry={models.retry}
+              />
+            </>
+          ) : (
+            <>
+              <ThemedSelect
+                id="speech-extension-online-model"
+                value={onlineModelRef}
+                label={i18nService.t(asr ? 'voiceRecognitionModel' : 'voiceSynthesisModel')}
+                ariaLabel={i18nService.t(asr ? 'voiceRecognitionModel' : 'voiceSynthesisModel')}
+                disabled={saving || onlineOptions.length === 0}
+                options={[
+                  {
+                    value: '',
+                    label: i18nService.t(
+                      onlineOptions.length ? 'voiceSelectModel' : 'voiceNoOnlineModelsConfigured',
+                    ),
+                  },
+                  ...(!modelAvailable && onlineModelRef
+                    ? [
+                        {
+                          value: onlineModelRef,
+                          label: i18nService.t('speechOnlineSelectionUnavailable'),
+                          disabled: true,
+                        },
+                      ]
+                    : []),
+                  ...onlineOptions,
+                ]}
+                onChange={reference => {
+                  if (reference === onlineModelRef) return;
+                  setOnlineModelRef(reference);
+                  if (!asr) setOnlineVoice('');
+                }}
+              />
+              {!asr && (
+                <ThemedSelect
+                  id="speech-extension-online-voice"
+                  value={onlineVoice}
+                  label={i18nService.t('voiceSpeaker')}
+                  ariaLabel={i18nService.t('voiceSpeaker')}
+                  disabled={saving || !modelAvailable || onlineVoiceOptions.length === 0}
+                  options={[
+                    {
+                      value: '',
+                      label: i18nService.t(
+                        onlineVoiceOptions.length
+                          ? 'voiceSelectSpeaker'
+                          : 'voiceNoSpeakersConfigured',
+                      ),
+                    },
+                    ...(!voiceAvailable && onlineVoice
+                      ? [
+                          {
+                            value: onlineVoice,
+                            label: i18nService.t('speechOnlineVoiceUnavailable'),
+                            disabled: true,
+                          },
+                        ]
+                      : []),
+                    ...onlineVoiceOptions,
+                  ]}
+                  onChange={setOnlineVoice}
+                />
+              )}
+              {asr && (
+                <p className="text-xs leading-5 text-secondary">
+                  {i18nService.t('speechFileTranscriptionDescription')}
+                </p>
+              )}
+              {onlineError && (
+                <p role="alert" className="text-xs text-secondary">
+                  {onlineError}
+                </p>
+              )}
+            </>
+          )}
+          {onManageModels && (
+            <div className="space-y-2">
+              <p className="text-xs leading-5 text-secondary">
+                {i18nService.t(
+                  mode === 'local'
+                    ? 'speechModelCatalogDescription'
+                    : 'speechOnlineCatalogDescription',
+                )}
+              </p>
+              <button
+                type="button"
+                disabled={saving}
+                onClick={() =>
+                  mode === 'local'
+                    ? onManageModels(kind)
+                    : onManageModels(kind, {
+                        source: 'online',
+                        providerId: selectedOnlineModel?.providerId,
+                      })
+                }
+                className="text-sm font-medium text-primary hover:underline disabled:opacity-50"
+              >
+                {i18nService.t('speechManageModels')}
+              </button>
+            </div>
+          )}
+          {mode === 'local' && !models.loading && !models.supported && (
             <p role="alert" className="text-sm text-secondary">
               {i18nService.t('voiceModelUnavailable')}
             </p>
           )}
-          {models.error && (
+          {mode === 'local' && models.error && (
             <div role="alert" className="text-sm text-red-500">
               {models.error}{' '}
               <button type="button" onClick={models.retry} className="text-primary hover:underline">
@@ -186,7 +402,15 @@ export default function LocalSpeechExtensionSettingsDialog({
           </button>
           <button
             type="button"
-            disabled={saving || status?.phase !== 'ready'}
+            disabled={
+              saving ||
+              (mode === 'local'
+                ? !models.supported ||
+                  models.loading ||
+                  Boolean(models.error) ||
+                  status?.phase !== 'ready'
+                : Boolean(onlineError))
+            }
             onClick={() => void save()}
             className="rounded-lg bg-primary px-4 py-2 text-sm text-white disabled:cursor-not-allowed disabled:opacity-50"
           >

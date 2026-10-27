@@ -31,6 +31,7 @@ const extensionName = 'Local speech';
 const warningName = `${extensionName} · speechExtensionModelNotReady`;
 const settingsName = `${extensionName} · speechExtensionModelSettings`;
 let settings: LocalSpeechExtensionSettings;
+let onlineModelProviders: ReturnType<typeof configService.getConfig>['onlineModelProviders'];
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -82,8 +83,12 @@ beforeEach(() => {
   vi.clearAllMocks();
   listeners.clear();
   settings = { ...defaultLocalSpeechExtensionSettings };
+  onlineModelProviders = {};
   vi.mocked(configService.getConfig).mockImplementation(
-    () => ({ localSpeechExtensions: settings }) as ReturnType<typeof configService.getConfig>,
+    () =>
+      ({ localSpeechExtensions: settings, onlineModelProviders }) as ReturnType<
+        typeof configService.getConfig
+      >,
   );
   list.mockResolvedValue({
     supported: true,
@@ -255,5 +260,60 @@ describe('local speech extension readiness warning', () => {
 
     expect(configService.getConfig).toHaveBeenCalledTimes(reads);
     expect(listeners.size).toBe(0);
+  });
+
+  test('uses online TTS model and voice readiness without warning about absent local models', async () => {
+    settings = {
+      ...settings,
+      ttsMode: 'online',
+      onlineTtsModelRef: 'office/speech',
+      onlineTtsVoice: 'echo',
+    };
+    onlineModelProviders = {
+      'speech-synthesis': {
+        providers: {
+          office: {
+            displayName: 'Office',
+            baseUrl: 'http://speech.lan/v1',
+            apiKey: '',
+            models: [{ id: 'speech', name: 'Speech', voices: [{ id: 'echo', name: 'Echo' }] }],
+          },
+        },
+      },
+    };
+    list.mockResolvedValue({ supported: false, models: [] });
+    render(button());
+    expect(screen.queryByRole('button', { name: warningName })).toBeNull();
+    expect(
+      screen.queryByRole('button', { name: `${extensionName} · speechOnlineSelectionUnavailable` }),
+    ).toBeNull();
+    onlineModelProviders = {};
+    act(() => window.dispatchEvent(new Event('config-updated')));
+    expect(
+      screen.getByRole('button', { name: `${extensionName} · speechOnlineSelectionUnavailable` }),
+    ).toBeTruthy();
+    expectNoMutation();
+  });
+
+  test('warns for realtime-only online attachment transcription without touching local state', () => {
+    settings = { ...settings, sttMode: 'online', onlineSttModelRef: 'realtime/asr' };
+    onlineModelProviders = {
+      'speech-recognition': {
+        providers: {
+          realtime: {
+            displayName: 'Realtime',
+            baseUrl: 'wss://speech.lan/v1',
+            apiKey: '',
+            models: [{ id: 'asr', name: 'ASR' }],
+          },
+        },
+      },
+    };
+    render(button(LocalSpeechModelKind.Asr));
+    expect(
+      screen.getByRole('button', { name: `${extensionName} · speechOnlineSelectionUnavailable` }),
+    ).toBeTruthy();
+    expect(screen.queryByRole('button', { name: warningName })).toBeNull();
+    expectNoMutation();
   });
 });

@@ -5,11 +5,18 @@
 ## 1. 存储边界
 
 本地语音扩展模型偏好保存在既有 Main KV 的 `app_config.localSpeechExtensions`：
-`sttModelId` 和 `ttsModelId` 分别选择附件转录与工具合成模型，与 `app_config.voice`
-的麦克风/朗读选择独立。缺失或无效旧值使用编译期默认模型，不新增表或迁移。
-Main 对稀疏模型补丁校验固定模型目录并在同一配置队列中合并，避免两种模型同时
+`sttMode` / `ttsMode` 决定本地或在线路径；`sttModelId` / `ttsModelId` 和 `ttsVoiceId`
+保存本地选择，`onlineSttModelRef` / `onlineTtsModelRef` / `onlineTtsVoice` 引用模型页目录。
+两种模式保留各自选择，与 `app_config.voice` 的麦克风/朗读模型、音色独立。
+不新增表、旧版兼容或迁移；在线失效不能归一化为本地执行。
+Main 对稀疏补丁校验固定模型目录及合并后模型的有效音色编号，并在同一配置队列中合并，避免两种模型同时
 保存时互相覆盖；原有配置应用失败回滚继续生效。下载文件共用现有模型目录，
-Gateway 只接收生成的命令参数，不建立第二份下载或模型索引。
+Gateway 只接收生成的命令参数或受管在线配置，不建立第二份下载或模型索引。
+目录变更在同一队列中清理失效模型和音色引用，保留在线模式。端点和密钥由 Main 从当前
+目录解析；工具 STT、工具 TTS 和在线回复朗读分别通过现有受限 SecretRef 文件发布，
+引用绑定端点和密钥版本。原生工具偏好与在线朗读偏好使用受支持的独立路径，由原生
+拥有文件；产品不直接读取、迁移或重写这些偏好。回复朗读原生配置为
+`plugins.entries.runtime-services.config.replySpeech`，独立于工具的 `tts` 配置。
 
 首页 MCP App 文件预览使用 Gateway 创建的原生会话；Main 预留普通产品会话 ID，
 通过既有 canonical key 规则建立原生身份。

@@ -2,10 +2,12 @@ import { ipcMain } from 'electron';
 
 import type { LocalSpeechSettings } from '../../../shared/speech/localSpeechSettings';
 import {
+  SPEECH_SYNTHESIS_METHOD,
   SpeechSynthesisIpc,
   type SpeechSynthesisResult,
 } from '../../../shared/speech/speechSynthesis';
 import { synthesizeLocalSpeech } from '../../speech/localTtsService';
+import { registerBuiltinSpeechPreviewHandlers } from './builtinSpeechPreview';
 
 const MAX_SPEECH_TEXT_LENGTH = 10_000;
 
@@ -17,6 +19,7 @@ export function registerSpeechSynthesisHandlers({
   requestGateway,
   getSettings,
 }: SpeechSynthesisHandlerDependencies): void {
+  registerBuiltinSpeechPreviewHandlers();
   ipcMain.handle(
     SpeechSynthesisIpc.Speak,
     async (_event, text: unknown): Promise<SpeechSynthesisResult> => {
@@ -29,7 +32,9 @@ export function registerSpeechSynthesisHandlers({
       if (settings.synthesisMode === 'local') {
         return synthesizeLocalSpeech(normalizedText, settings);
       }
-      return requestGateway<SpeechSynthesisResult>('tts.speak', { text: normalizedText });
+      return requestGateway<SpeechSynthesisResult>(SPEECH_SYNTHESIS_METHOD, {
+        text: normalizedText,
+      });
     },
   );
 }

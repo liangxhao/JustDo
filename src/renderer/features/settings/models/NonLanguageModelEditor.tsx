@@ -16,11 +16,13 @@ import {
   isNativeVideoModelSupported,
   type NATIVE_VIDEO_PROVIDERS,
 } from '@shared/providers/nativeVideoProviders';
+import { LocalSpeechModelKind } from '@shared/speech/localSpeechModels';
 import React, { useEffect, useRef, useState } from 'react';
 
 import type { AppConfig, OnlineModelVoiceConfig } from '@/app/config';
 import { i18nService } from '@/services/i18n';
 
+import BuiltinSpeechModelCatalog from './BuiltinSpeechModelCatalog';
 import {
   getNonLanguageModelCategoryValidationError,
   getNonLanguageModelProviderNameError,
@@ -246,6 +248,8 @@ export interface NonLanguageModelEditorProps {
   kind: NonLanguageModelKind;
   category: NonLanguageModelCategory;
   setCategory: React.Dispatch<React.SetStateAction<NonLanguageModelCategory>>;
+  initialBuiltinModels?: boolean;
+  initialProviderId?: string;
   videoProviders?: readonly (typeof NATIVE_VIDEO_PROVIDERS)[number][];
   videoProvidersLoaded?: boolean;
 }
@@ -254,11 +258,24 @@ const NonLanguageModelEditor: React.FC<NonLanguageModelEditorProps> = ({
   kind,
   category,
   setCategory,
+  initialBuiltinModels,
+  initialProviderId,
   videoProviders = [],
   videoProvidersLoaded = false,
 }) => {
+  const builtinKind =
+    kind === 'speech-recognition'
+      ? LocalSpeechModelKind.Asr
+      : kind === 'speech-synthesis'
+        ? LocalSpeechModelKind.Tts
+        : undefined;
+  const [showBuiltinModels, setShowBuiltinModels] = useState(
+    Boolean(builtinKind && (initialBuiltinModels ?? Object.keys(category.providers).length === 0)),
+  );
   const [activeProviderId, setActiveProviderId] = useState(
-    Object.keys(category.providers)[0] ?? '',
+    initialProviderId && category.providers[initialProviderId]
+      ? initialProviderId
+      : (Object.keys(category.providers)[0] ?? ''),
   );
   const [providerDialogOpen, setProviderDialogOpen] = useState(false);
   const [providerName, setProviderName] = useState('');
@@ -324,8 +341,15 @@ const NonLanguageModelEditor: React.FC<NonLanguageModelEditorProps> = ({
       : visibleProviderIds[0];
   const activeProviderVisible = visibleProviderIds.includes(activeProviderId);
   useEffect(() => {
-    if (!activeProviderVisible) setActiveProviderId(preferredProviderId ?? '');
-  }, [activeProviderVisible, preferredProviderId]);
+    if (!activeProviderVisible) {
+      setActiveProviderId(preferredProviderId ?? '');
+      if (builtinKind && !preferredProviderId && initialBuiltinModels !== false)
+        setShowBuiltinModels(true);
+    }
+  }, [activeProviderVisible, builtinKind, initialBuiltinModels, preferredProviderId]);
+  useEffect(() => {
+    if (builtinKind && initialBuiltinModels) setShowBuiltinModels(true);
+  }, [builtinKind, initialBuiltinModels]);
   useEffect(() => setShowApiKey(false), [activeProviderId]);
 
   const invalidateModelDetection = (): void => {
@@ -427,6 +451,7 @@ const NonLanguageModelEditor: React.FC<NonLanguageModelEditorProps> = ({
       },
     }));
     setActiveProviderId(id);
+    setShowBuiltinModels(false);
     closeProviderDialog();
     setProviderName('');
     setFormError('');
@@ -765,18 +790,37 @@ const NonLanguageModelEditor: React.FC<NonLanguageModelEditorProps> = ({
               {i18nService.t('modelProviders')}
             </h3>
           </div>
+          {builtinKind && (
+            <button
+              type="button"
+              aria-pressed={showBuiltinModels}
+              onClick={() => {
+                invalidateModelDetection();
+                invalidateVoiceDetection();
+                setShowBuiltinModels(true);
+                setDetectionMessage('');
+              }}
+              className={`flex min-h-12 w-full items-center rounded-xl border p-2 text-left transition-colors ${showBuiltinModels ? 'border-primary/35 bg-primary-muted text-primary' : 'border-transparent bg-surface hover:bg-surface-raised'}`}
+            >
+              <CubeIcon className="mr-2 h-5 w-5 shrink-0 text-foreground" />
+              <span className="min-w-0 flex-1 truncate text-sm font-medium">
+                {i18nService.t('builtinModelsProvider')}
+              </span>
+            </button>
+          )}
           {providerEntries.map(([id, provider]) => (
             <div
               key={id}
-              className={`group flex min-h-12 items-center rounded-xl border transition-colors ${activeProviderId === id ? 'border-primary/35 bg-primary-muted text-primary' : 'border-transparent bg-surface hover:bg-surface-raised'}`}
+              className={`group flex min-h-12 items-center rounded-xl border transition-colors ${!showBuiltinModels && activeProviderId === id ? 'border-primary/35 bg-primary-muted text-primary' : 'border-transparent bg-surface hover:bg-surface-raised'}`}
             >
               <button
                 type="button"
-                aria-pressed={activeProviderId === id}
+                aria-pressed={!showBuiltinModels && activeProviderId === id}
                 onClick={() => {
                   invalidateModelDetection();
                   invalidateVoiceDetection();
                   setActiveProviderId(id);
+                  setShowBuiltinModels(false);
                   setDetectionMessage('');
                 }}
                 className="flex min-w-0 flex-1 items-center self-stretch p-2 text-left"
@@ -815,7 +859,9 @@ const NonLanguageModelEditor: React.FC<NonLanguageModelEditorProps> = ({
         </aside>
 
         <section className="min-h-[360px] min-w-0 flex-1">
-          {!activeProvider ? (
+          {builtinKind && showBuiltinModels ? (
+            <BuiltinSpeechModelCatalog kind={builtinKind} />
+          ) : !activeProvider ? (
             <div className="flex min-h-[360px] flex-col items-center justify-center rounded-xl border border-dashed border-border bg-surface px-8 text-center">
               <CubeIcon className="mb-3 h-7 w-7 text-muted" />
               <p className="text-sm font-medium text-secondary">

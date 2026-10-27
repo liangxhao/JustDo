@@ -11,7 +11,10 @@ export {
   normalizeNonLanguageModelBaseUrl,
 } from './nonLanguageModelUrls';
 
-type Props = Pick<NonLanguageModelEditorProps, 'kind' | 'category' | 'setCategory'>;
+type Props = Pick<
+  NonLanguageModelEditorProps,
+  'kind' | 'category' | 'setCategory' | 'initialBuiltinModels' | 'initialProviderId'
+>;
 
 const NonLanguageModelSettings: React.FC<Props> = props =>
   props.kind === 'video' ? (

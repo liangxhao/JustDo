@@ -1470,6 +1470,10 @@ interface IElectronAPI {
     speak: (
       text: string,
     ) => Promise<import('../../shared/speech/speechSynthesis').SpeechSynthesisResult>;
+    previewBuiltin: (
+      request: import('../../shared/speech/speechSynthesis').BuiltinSpeechPreviewRequest,
+    ) => Promise<import('../../shared/speech/speechSynthesis').BuiltinSpeechPreviewResult>;
+    cancelBuiltinPreview: (requestId: string) => Promise<void>;
   };
   mediaGenerationModels: {
     getConfiguration: (

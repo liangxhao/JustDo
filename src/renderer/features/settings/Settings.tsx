@@ -46,6 +46,7 @@ import {
   parseProviderModelsResponse,
 } from '@shared/providers/modelDiscovery';
 import { mergeModelProviderHeaders } from '@shared/providers/modelProviderHeaders';
+import { LocalSpeechModelKind } from '@shared/speech/localSpeechModels';
 import {
   type LocalSpeechSettings,
   normalizeLocalSpeechSettings,
@@ -153,6 +154,8 @@ const getEnabledSettingsTab = (tab?: TabType): TabType => tab ?? 'general';
 
 export type SettingsOpenOptions = {
   initialTab?: TabType;
+  speechModels?: LocalSpeechModelKind;
+  speechModelTarget?: import('@/features/speech/speechModelCatalogNavigation').SpeechModelCatalogTarget;
   browserPage?: 'history' | 'downloads';
   notice?: string;
   noticeI18nKey?: string;
@@ -191,6 +194,8 @@ const withTimeout = <T,>(promise: Promise<T>, timeoutMs: number, message: string
 const Settings: React.FC<SettingsProps> = ({
   onClose,
   initialTab,
+  speechModels,
+  speechModelTarget,
   browserPage,
   notice,
   noticeI18nKey,
@@ -208,7 +213,19 @@ const Settings: React.FC<SettingsProps> = ({
     if (activeTab !== 'general') setGeneralTitleClicks(0);
   }, [activeTab]);
 
-  const [activeModelKind, setActiveModelKind] = useState<ModelKind>('language');
+  const [activeModelKind, setActiveModelKind] = useState<ModelKind>(
+    speechModels === LocalSpeechModelKind.Asr
+      ? 'speech-recognition'
+      : speechModels === LocalSpeechModelKind.Tts
+        ? 'speech-synthesis'
+        : 'language',
+  );
+  const [initialBuiltinModels, setInitialBuiltinModels] = useState<boolean | undefined>(
+    speechModels ? speechModelTarget?.source !== 'online' : undefined,
+  );
+  const [initialSpeechProviderId, setInitialSpeechProviderId] = useState(
+    speechModelTarget?.providerId,
+  );
   const [activeIntegrationView, setActiveIntegrationView] = useState<IntegrationSettingsViewId>(
     IntegrationSettingsView.AgentDelegation,
   );
@@ -1667,6 +1684,8 @@ const Settings: React.FC<SettingsProps> = ({
       case 'model':
         return (
           <ModelSettingsTab
+            initialBuiltinModels={initialBuiltinModels}
+            initialProviderId={initialSpeechProviderId}
             activeKind={activeModelKind}
             onKindChange={setActiveModelKind}
             languageSettings={{
@@ -1758,7 +1777,20 @@ const Settings: React.FC<SettingsProps> = ({
       case 'computer':
         return <ComputerControlSettingsPage />;
       case 'voice':
-        return <VoiceSettingsTab value={voice} onChange={setVoice} />;
+        return (
+          <VoiceSettingsTab
+            value={voice}
+            onChange={setVoice}
+            onManageModels={(kind, target) => {
+              setActiveModelKind(
+                kind === LocalSpeechModelKind.Asr ? 'speech-recognition' : 'speech-synthesis',
+              );
+              setInitialBuiltinModels(target?.source !== 'online');
+              setInitialSpeechProviderId(target?.providerId);
+              handleTabChange('model');
+            }}
+          />
+        );
 
       case 'shortcuts':
         return <ShortcutsSettings shortcuts={shortcuts} onShortcutChange={handleShortcutChange} />;

@@ -1,217 +1,206 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const handlers = new Map<string, (...args: never[]) => unknown>();
-
 vi.mock('electron', () => ({
   ipcMain: {
-    handle: vi.fn((channel: string, handler: (...args: never[]) => unknown) => {
-      handlers.set(channel, handler);
-    }),
+    handle: vi.fn((channel: string, handler: (...args: never[]) => unknown) =>
+      handlers.set(channel, handler),
+    ),
   },
+}));
+vi.mock('../../plugins/extensions/extensionSecretFile', () => ({
+  EXTENSION_SECRET_PROVIDER: 'test-extension-secrets',
+  saveExtensionSecrets: vi.fn((config, _stateDir, _extensionId, values) => {
+    config.secrets = {
+      providers: {
+        'test-extension-secrets': {
+          source: 'file',
+          path: 'private-state/extension-secrets.json',
+          mode: 'json',
+        },
+      },
+    };
+    return {
+      changed: true,
+      references: Object.fromEntries(
+        Object.keys(values).map(slot => [
+          slot,
+          { source: 'file', provider: 'test-extension-secrets', id: `/${slot}` },
+        ]),
+      ),
+    };
+  }),
 }));
 
 import { OnlineTtsIpc } from '../../../shared/speech/onlineTts';
+import { saveExtensionSecrets } from '../../plugins/extensions/extensionSecretFile';
 import { registerOnlineTtsHandlers } from './onlineTts';
 
-describe('OpenClaw online speech IPC', () => {
+describe('isolated online reply speech configuration', () => {
   const requestGateway = vi.fn();
+  const runExclusive = vi.fn(async (operation: () => Promise<void>) => operation());
+  let category: {
+    providers: Record<
+      string,
+      {
+        displayName: string;
+        baseUrl: string;
+        apiKey: string;
+        models: Array<{ id: string; name: string; voices: Array<{ id: string; name: string }> }>;
+      }
+    >;
+  };
+  let nativeConfig: Record<string, unknown>;
+  let providers: unknown[];
 
   beforeEach(() => {
     handlers.clear();
-    requestGateway.mockReset();
-    registerOnlineTtsHandlers({ getRuntime: () => ({}) as never, requestGateway });
+    vi.clearAllMocks();
+    providers = [
+      { id: 'openai', configured: false, models: ['vendor-default'], voices: ['vendor-voice'] },
+    ];
+    category = {
+      providers: {
+        internal: {
+          displayName: 'Internal',
+          baseUrl: 'http://speech.internal/v1',
+          apiKey: 'private-key',
+          models: [
+            { id: 'tts/model', name: 'Internal TTS', voices: [{ id: 'voice-1', name: 'Voice' }] },
+          ],
+        },
+      },
+    };
+    nativeConfig = {
+      tts: {
+        provider: 'tts-local-cli',
+        providers: { 'tts-local-cli': { mode: 'online', model: 'assistant-model' } },
+      },
+    };
+    requestGateway.mockImplementation(async method => {
+      if (method === 'tts.providers') return { active: 'tts-local-cli', providers };
+      if (method === 'config.get') return { hash: 'config-hash', config: nativeConfig };
+      return { ok: true };
+    });
+    registerOnlineTtsHandlers({
+      getRuntime: () => ({}) as never,
+      getModelCategory: () => category,
+      getStateDir: () => 'private-state',
+      requestGateway,
+      runConfigMutationExclusive: runExclusive,
+    });
   });
 
-  it('does not invent providers, models or voices when no online speech plugin is registered', async () => {
-    requestGateway
-      .mockResolvedValueOnce({ active: 'tts-local-cli', providers: [] })
-      .mockResolvedValueOnce({ config: {} });
+  const save = (value: unknown = { modelRef: 'internal/tts/model', voice: 'voice-1' }) =>
+    handlers.get(OnlineTtsIpc.SaveConfiguration)?.({} as never, value as never);
+  const patch = () =>
+    JSON.parse(requestGateway.mock.calls.find(call => call[0] === 'config.patch')![1].raw);
 
-    const configuration = await handlers.get(OnlineTtsIpc.GetConfiguration)?.();
-
-    expect(configuration).toEqual({ available: false, providers: [], credentialConfigured: false });
+  it('resolves model identity in Main and publishes only the isolated read-aloud profile', async () => {
+    await save();
+    const published = patch();
+    expect(published).not.toHaveProperty('tts');
+    expect(published.plugins.entries['runtime-services'].config.replySpeech).toMatchObject({
+      baseUrl: 'http://speech.internal/v1',
+      model: 'tts/model',
+      speakerVoice: 'voice-1',
+      apiKey: { source: 'file', provider: 'test-extension-secrets' },
+    });
+    expect(published.plugins.entries).not.toHaveProperty('tts-local-cli');
+    expect(published.plugins.entries.openai).toEqual({ enabled: true });
+    expect(JSON.stringify(published)).not.toContain('private-key');
+    expect(runExclusive).toHaveBeenCalledOnce();
+    expect(saveExtensionSecrets).toHaveBeenCalledWith(
+      expect.any(Object),
+      'private-state',
+      'runtime-services',
+      expect.objectContaining({
+        [Object.keys(vi.mocked(saveExtensionSecrets).mock.calls[0][3])[0]]: 'private-key',
+      }),
+    );
   });
 
-  it('reads an explicitly configured intranet OpenAI speech service', async () => {
-    requestGateway
-      .mockResolvedValueOnce({
-        active: 'openai',
-        providers: [{ id: 'openai', name: 'OpenAI', configured: true,
-          defaultModel: 'vendor-default-model', defaultVoice: 'vendor-default-voice',
-          models: ['vendor-default-model'], voices: ['vendor-default-voice'],
-        }],
-      })
-      .mockResolvedValueOnce({
-        config: {
-          tts: {
-            provider: 'openai',
-            providers: {
-              openai: {
-                baseUrl: 'http://speech.internal:8000/v1',
-                model: 'internal-tts',
-                speakerVoice: 'speaker-1',
-              },
+  it('accepts a configured service with no API key and removes the previous profile reference', async () => {
+    category.providers.internal.apiKey = '';
+    await save();
+    expect(patch().plugins.entries['runtime-services'].config.replySpeech.apiKey).toBe('');
+    expect(saveExtensionSecrets).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { modelRef: 'internal/missing', voice: 'voice-1' },
+    { modelRef: 'internal/tts/model', voice: 'removed-voice' },
+    { modelRef: 'internal/tts/model', voice: '' },
+    { modelRef: 'internal/tts/model', voice: 'voice-1', baseUrl: 'http://arbitrary.invalid' },
+    { provider: 'openai', baseUrl: 'http://old.invalid', model: 'old-contract', voice: 'voice-1' },
+  ])('rejects invalid or obsolete selection payloads without publishing a profile', async input => {
+    await expect(save(input)).rejects.toThrow();
+    expect(requestGateway).not.toHaveBeenCalledWith('config.patch', expect.anything());
+    expect(saveExtensionSecrets).not.toHaveBeenCalled();
+  });
+
+  it('rejects a non-HTTP service before querying Gateway', async () => {
+    category.providers.internal.baseUrl = 'wss://speech.internal/v1';
+    await expect(save()).rejects.toThrow();
+    expect(requestGateway).not.toHaveBeenCalled();
+  });
+
+  it('does not use unregistered adapter defaults', async () => {
+    providers = [];
+    await expect(save()).rejects.toThrow('Unknown online speech provider.');
+    expect(requestGateway).not.toHaveBeenCalledWith('config.patch', expect.anything());
+  });
+
+  it('reports read-aloud availability from its own profile rather than the assistant provider', async () => {
+    nativeConfig.plugins = {
+      entries: {
+        'runtime-services': {
+          config: {
+            replySpeech: {
+              baseUrl: 'http://reader.internal/v1',
+              model: 'reader',
+              speakerVoice: 'reader-voice',
+              apiKey: { source: 'file', id: '/private-ref' },
             },
           },
         },
-      });
-
-    await expect(handlers.get(OnlineTtsIpc.GetConfiguration)?.()).resolves.toEqual({
+      },
+    };
+    await expect(handlers.get(OnlineTtsIpc.GetStatus)?.()).resolves.toEqual({
       available: true,
       provider: 'openai',
-      selectedProvider: 'openai',
-      baseUrl: 'http://speech.internal:8000/v1',
-      model: 'internal-tts',
-      voice: 'speaker-1',
-      credentialConfigured: true,
-      providers: [{ id: 'openai', label: 'OpenAI', configured: true }],
     });
-  });
-
-  it('returns no fallback catalog when Gateway is unavailable', async () => {
-    requestGateway.mockRejectedValue(new Error('Unavailable'));
     const configuration = await handlers.get(OnlineTtsIpc.GetConfiguration)?.();
-    expect(configuration).toMatchObject({ available: false, providers: [], credentialConfigured: false });
-    expect(configuration).not.toHaveProperty('selectedProvider');
-  });
-
-  it.each([undefined, '   '])('reads a canonical speaker ID when its name is absent or blank (%j)', async speakerVoice => {
-    requestGateway.mockResolvedValueOnce({
-      active: 'openai', providers: [{ id: 'openai', configured: true }],
-    }).mockResolvedValueOnce({ config: { tts: {
-      provider: 'openai', providers: { openai: {
-        baseUrl: 'http://speech.internal/v1', model: 'internal-tts', speakerVoice, speakerVoiceId: 'speaker-id',
-      } },
-    } } });
-    await expect(handlers.get(OnlineTtsIpc.GetConfiguration)?.()).resolves.toMatchObject({
-      available: true, voice: 'speaker-id',
+    expect(configuration).toMatchObject({
+      model: 'reader',
+      voice: 'reader-voice',
+      available: true,
     });
+    expect(JSON.stringify(configuration)).not.toContain('private-ref');
   });
 
-  it('does not use registered plugin model or voice presets without explicit configuration', async () => {
-    requestGateway.mockResolvedValueOnce({ active: 'openai', providers: [{
-      id: 'openai', configured: true, defaultModel: 'vendor-model', defaultVoice: 'vendor-voice',
-      models: ['vendor-model'], voices: ['vendor-voice'],
-    }] }).mockResolvedValueOnce({ config: {} });
+  it('returns no invented model or voice when the read-aloud profile is absent', async () => {
     const configuration = await handlers.get(OnlineTtsIpc.GetConfiguration)?.();
     expect(configuration).toMatchObject({ available: false });
     expect(configuration).not.toHaveProperty('model');
     expect(configuration).not.toHaveProperty('voice');
-    expect((configuration as { providers: unknown[] }).providers).toEqual([
-      { id: 'openai', label: 'openai', configured: true },
-    ]);
   });
 
-  it('rejects saving an unregistered OpenAI adapter without patching config', async () => {
-    requestGateway.mockResolvedValueOnce({ providers: [] });
-    await expect(handlers.get(OnlineTtsIpc.SaveConfiguration)?.({}, {
-      provider: 'openai', baseUrl: 'http://speech.internal/v1', apiKey: 'test-key', model: 'internal-tts', voice: 'speaker-1',
-    })).rejects.toThrow('Unknown online speech provider.');
-    expect(requestGateway).toHaveBeenCalledTimes(1);
-    expect(requestGateway).not.toHaveBeenCalledWith('config.patch', expect.anything());
-  });
-
-  it.each([{ model: '', voice: 'speaker-1' }, { model: 'internal-tts', voice: '' }])(
-    'requires explicit model and voice instead of substituting presets: %j', async fields => {
-      await expect(handlers.get(OnlineTtsIpc.SaveConfiguration)?.({}, {
-        provider: 'openai', baseUrl: 'http://speech.internal/v1', apiKey: 'test-key', ...fields,
-      })).rejects.toThrow('Invalid online speech configuration.');
-      expect(requestGateway).not.toHaveBeenCalled();
-    },
-  );
-
-  it('saves OpenAI-compatible speech settings through Gateway config', async () => {
-    requestGateway
-      .mockResolvedValueOnce({
-        providers: [{ id: 'openai', name: 'OpenAI', configured: false }],
-      })
-      .mockResolvedValueOnce({ hash: 'config-hash' })
-      .mockResolvedValueOnce({ ok: true });
-
-    await handlers.get(OnlineTtsIpc.SaveConfiguration)?.(
-      {},
-      {
-        provider: 'openai',
-        baseUrl: 'http://speech.internal:8000/v1',
-        apiKey: 'secret',
-        model: 'internal-tts',
-        voice: 'speaker-1',
-      },
-    );
-
-    expect(requestGateway.mock.calls[2]?.[0]).toBe('config.patch');
-    expect(JSON.parse((requestGateway.mock.calls[2]?.[1] as { raw: string }).raw)).toMatchObject({
-      tts: {
-        auto: 'off',
-        provider: 'openai',
-        providers: {
-          openai: {
-            baseUrl: 'http://speech.internal:8000/v1',
-            apiKey: 'secret',
-            model: 'internal-tts',
-            speakerVoice: 'speaker-1',
-          },
-        },
-      },
-      plugins: { entries: { openai: { enabled: true } } },
+  it('clears only the reply profile and preserves the assistant tool configuration', async () => {
+    await handlers.get(OnlineTtsIpc.ClearConfiguration)?.();
+    expect(patch()).toEqual({
+      plugins: { entries: { 'runtime-services': { config: { replySpeech: null } } } },
     });
-    const patchedTts = JSON.parse((requestGateway.mock.calls[2]?.[1] as { raw: string }).raw).tts;
-    expect(patchedTts).not.toHaveProperty('enabled');
-    expect(patchedTts.providers.openai).not.toHaveProperty('voice');
   });
 
-  it('rejects removed ElevenLabs speech settings before querying or mutating Gateway config', async () => {
-    await expect(handlers.get(OnlineTtsIpc.SaveConfiguration)?.(
-      {},
-      {
-        provider: 'elevenlabs',
-        baseUrl: 'http://speech.internal:8001',
-        apiKey: 'secret',
-        model: 'eleven_multilingual_v2',
-        voice: 'voice-id',
-      },
-    )).rejects.toThrow('Invalid online speech configuration.');
-    expect(requestGateway).not.toHaveBeenCalled();
-  });
-
-  it('requires the API key again when the speech service URL changes', async () => {
-    requestGateway
-      .mockResolvedValueOnce({
-        providers: [{ id: 'openai', name: 'OpenAI', configured: true }],
-      })
-      .mockResolvedValueOnce({
-        hash: 'config-hash',
-        config: {
-          tts: {
-            provider: 'openai',
-            providers: {
-              openai: { baseUrl: 'http://old.internal:8000', model: 'model', voice: 'voice' },
-            },
-          },
-        },
-      });
-
-    await expect(
-      handlers.get(OnlineTtsIpc.SaveConfiguration)?.(
-        {},
-        {
-          provider: 'openai',
-          baseUrl: 'http://new.internal:8000',
-          model: 'model',
-          voice: 'voice',
-        },
-      ),
-    ).rejects.toThrow(/API key/i);
-    expect(requestGateway).not.toHaveBeenCalledWith('config.patch', expect.anything());
-  });
-
-  it('clears the Gateway speech configuration', async () => {
-    requestGateway.mockResolvedValueOnce({ hash: 'config-hash' }).mockResolvedValueOnce({ ok: true });
-
-    await handlers.get(OnlineTtsIpc.ClearConfiguration)?.({});
-
-    expect(JSON.parse((requestGateway.mock.calls[1]?.[1] as { raw: string }).raw)).toEqual({
-      tts: null,
-    });
+  it('uses a different immutable credential slot when endpoint or key changes', async () => {
+    await save();
+    const first = patch().plugins.entries['runtime-services'].config.replySpeech.apiKey.id;
+    requestGateway.mockClear();
+    category.providers.internal.baseUrl = 'http://second.internal/v1';
+    category.providers.internal.apiKey = 'new-key';
+    await save();
+    const second = patch().plugins.entries['runtime-services'].config.replySpeech.apiKey.id;
+    expect(first).not.toBe(second);
   });
 });

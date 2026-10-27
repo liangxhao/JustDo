@@ -1,5 +1,7 @@
 import { LOCAL_ASR_DEFAULT_MODEL_ID, LOCAL_ASR_MODEL_IDS, type LocalAsrModelId } from './localAsr';
 import {
+  getLocalTtsDefaultVoiceId,
+  getLocalTtsVoiceCount,
   LOCAL_TTS_DEFAULT_VOICE_ID,
   LOCAL_TTS_MODEL_ID,
   LOCAL_TTS_MODEL_IDS,
@@ -104,8 +106,7 @@ export const normalizeLocalSpeechSettings = (value: unknown): LocalSpeechSetting
   const ttsModelId = LOCAL_TTS_MODEL_IDS.includes(candidate.ttsModelId as LocalTtsModelId)
     ? (candidate.ttsModelId as LocalTtsModelId)
     : defaultLocalSpeechSettings.ttsModelId;
-  const maximumVoiceId =
-    ttsModelId === 'vits-icefall-zh-aishell3' ? 173 : ttsModelId === LOCAL_TTS_MODEL_ID ? 102 : 0;
+  const maximumVoiceId = getLocalTtsVoiceCount(ttsModelId) - 1;
 
   return {
     inputEnabled:
@@ -152,7 +153,7 @@ export const normalizeLocalSpeechSettings = (value: unknown): LocalSpeechSetting
     onlineTtsVoice: typeof candidate.onlineTtsVoice === 'string' ? candidate.onlineTtsVoice : '',
     voiceId: clampInteger(
       candidate.voiceId,
-      ttsModelId === LOCAL_TTS_MODEL_ID ? defaultLocalSpeechSettings.voiceId : 0,
+      getLocalTtsDefaultVoiceId(ttsModelId),
       0,
       maximumVoiceId,
     ),

@@ -35,6 +35,8 @@ interface ModelSettingsTabProps {
   };
   activeKind: ModelKind;
   onKindChange: (kind: ModelKind) => void;
+  initialBuiltinModels?: boolean;
+  initialProviderId?: string;
 }
 
 const ModelSettingsTab: React.FC<ModelSettingsTabProps> = ({
@@ -42,6 +44,8 @@ const ModelSettingsTab: React.FC<ModelSettingsTabProps> = ({
   nonLanguageSettings,
   activeKind,
   onKindChange,
+  initialBuiltinModels,
+  initialProviderId,
 }) => {
   const importInputRef = useRef<HTMLInputElement>(null);
   const [isImporting, setIsImporting] = useState(false);
@@ -263,6 +267,8 @@ const ModelSettingsTab: React.FC<ModelSettingsTabProps> = ({
           <NonLanguageModelSettings
             key={activeKind}
             kind={activeKind}
+            initialBuiltinModels={initialBuiltinModels}
+            initialProviderId={initialProviderId}
             category={
               nonLanguageSettings.categories[activeKind] ?? createEmptyNonLanguageModelCategory()
             }

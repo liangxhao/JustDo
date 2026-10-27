@@ -3,9 +3,15 @@ import { ipcMain } from 'electron';
 import { AppConfigIpc, type AppConfigPatch } from '../../../shared/app/appConfig';
 import { buildCustomProviderRenameAliases, ProviderName } from '../../../shared/providers';
 import {
-  normalizeLocalSpeechExtensionSettings,
-  parseLocalSpeechExtensionSettingsPatch,
+  mergeLocalSpeechExtensionSettingsPatch,
+  reconcileLocalSpeechExtensionCatalog,
 } from '../../../shared/speech/localSpeechExtensionSettings';
+import { normalizeLocalSpeechSettings } from '../../../shared/speech/localSpeechSettings';
+import {
+  getOnlineSpeechModelOptions,
+  getOnlineSpeechVoiceOptions,
+  resolveOnlineSpeechModel,
+} from '../../../shared/speech/onlineSpeechModels';
 import { enqueueAppConfigUpdate } from '../../data/appConfigUpdateQueue';
 import type { SqliteStore } from '../../data/sqliteStore';
 
@@ -81,11 +87,49 @@ export const registerStoreHandlers = ({
       }
       const previous = getStore().get<AppConfigPatch>('app_config');
       const next = { ...previous, ...patch };
-      if ('localSpeechExtensions' in patch) {
-        next.localSpeechExtensions = {
-          ...normalizeLocalSpeechExtensionSettings(previous?.localSpeechExtensions),
-          ...parseLocalSpeechExtensionSettingsPatch(patch.localSpeechExtensions),
+      const catalogs = asRecord(next.onlineModelProviders);
+      const categories = {
+        stt: catalogs?.['speech-recognition'],
+        tts: catalogs?.['speech-synthesis'],
+      };
+      if ('onlineModelProviders' in patch) {
+        next.localSpeechExtensions = reconcileLocalSpeechExtensionCatalog(
+          previous?.localSpeechExtensions,
+          categories,
+        );
+        const voice = normalizeLocalSpeechSettings(next.voice);
+        const ttsExists = getOnlineSpeechModelOptions(categories.tts, {
+          requireVoice: true,
+          fileTranscription: true,
+        }).some(option => option.value === voice.onlineTtsModelRef);
+        const selectedTts = ttsExists
+          ? resolveOnlineSpeechModel(categories.tts, voice.onlineTtsModelRef)
+          : null;
+        next.voice = {
+          ...voice,
+          onlineAsrModelRef: getOnlineSpeechModelOptions(categories.stt).some(
+            option => option.value === voice.onlineAsrModelRef,
+          )
+            ? voice.onlineAsrModelRef
+            : '',
+          onlineTtsModelRef: selectedTts ? voice.onlineTtsModelRef : '',
+          onlineTtsVoice:
+            selectedTts &&
+            getOnlineSpeechVoiceOptions(selectedTts.model).some(
+              option => option.value === voice.onlineTtsVoice,
+            )
+              ? voice.onlineTtsVoice
+              : '',
         };
+      }
+      if ('localSpeechExtensions' in patch) {
+        next.localSpeechExtensions = mergeLocalSpeechExtensionSettingsPatch(
+          'onlineModelProviders' in patch
+            ? next.localSpeechExtensions
+            : previous?.localSpeechExtensions,
+          patch.localSpeechExtensions,
+          categories,
+        );
       }
       if (patch.providers)
         next.providers = mergeProviderPatch(previous?.providers, patch.providers);

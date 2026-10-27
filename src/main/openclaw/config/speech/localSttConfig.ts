@@ -20,6 +20,7 @@ export function buildManagedLocalSttConfig(
   if (!paths || !getLocalAsrStatus(settings.asrModelId, paths).available) return null;
   const language = resolveLocalSpeechInputLanguage(settings.inputLanguage, appLanguage);
   return {
+    mode: 'local',
     command: paths.executablePath,
     args: [
       ...buildLocalAsrModelArgs(settings.asrModelId, language, paths.modelDir),

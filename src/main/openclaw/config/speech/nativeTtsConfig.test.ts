@@ -55,4 +55,22 @@ describe('native TTS configuration projection', () => {
     expect(normalizeNativeTtsConfig({})).toEqual({});
     expect(normalizeNativeTtsConfig(undefined)).toBeNull();
   });
+
+  it('removes the unsupported global preference field without changing provider choices', () => {
+    const original = {
+      auto: 'off',
+      prefsPath: '/invalid-global/preferences.json',
+      provider: 'tts-local-cli',
+      providers: { 'tts-local-cli': { command: 'tts.exe', args: ['--sid=92'] } },
+    };
+    const before = structuredClone(original);
+    const projected = normalizeNativeTtsConfig(original);
+    expect(projected).toEqual({
+      auto: 'off',
+      provider: 'tts-local-cli',
+      providers: original.providers,
+    });
+    expect(original).toEqual(before);
+    expect(normalizeNativeTtsConfig(projected)).toEqual(projected);
+  });
 });

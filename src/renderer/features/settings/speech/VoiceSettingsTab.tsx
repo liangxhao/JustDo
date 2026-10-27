@@ -6,9 +6,7 @@ import {
   LOCAL_ASR_MODEL_IDS,
   type LocalAsrModelId,
 } from '@shared/speech/localAsr';
-import {
-  LocalSpeechModelKind,
-} from '@shared/speech/localSpeechModels';
+import { LocalSpeechModelKind } from '@shared/speech/localSpeechModels';
 import {
   LOCAL_SPEECH_MAX_MEETING_SEGMENT_SECONDS,
   LOCAL_SPEECH_MAX_RATE,
@@ -21,15 +19,22 @@ import {
   type LocalSpeechSettings,
 } from '@shared/speech/localSpeechSettings';
 import {
-  LOCAL_TTS_MODEL_ID,
+  getLocalTtsDefaultVoiceId,
   LOCAL_TTS_MODEL_IDS,
   type LocalTtsModelId,
 } from '@shared/speech/localTts';
 import type { OnlineAsrStatus } from '@shared/speech/onlineAsr';
+import {
+  getOnlineSpeechModelOptions,
+  getOnlineSpeechVoiceOptions,
+  resolveOnlineSpeechModel,
+} from '@shared/speech/onlineSpeechModels';
 import type { OnlineTtsStatus } from '@shared/speech/onlineTts';
 import React, { useEffect, useRef, useState } from 'react';
 
+import { getLocalSpeechVoiceOptions } from '@/features/speech/localSpeechModelCatalog';
 import ModelStatus from '@/features/speech/LocalSpeechModelStatusView';
+import type { SpeechModelCatalogTarget } from '@/features/speech/speechModelCatalogNavigation';
 import { useLocalSpeechModels } from '@/features/speech/useLocalSpeechModels';
 import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';
@@ -42,19 +47,8 @@ import VoiceOutputDiagnostics from './VoiceOutputDiagnostics';
 interface VoiceSettingsTabProps {
   value: LocalSpeechSettings;
   onChange: (value: LocalSpeechSettings) => void;
+  onManageModels?: (kind: LocalSpeechModelKind, target?: SpeechModelCatalogTarget) => void;
 }
-
-const VOICE_OPTIONS = [
-  { value: '3', key: 'voiceSpeakerChineseFemale1' },
-  { value: '4', key: 'voiceSpeakerChineseFemale2' },
-  { value: '5', key: 'voiceSpeakerChineseFemale3' },
-  { value: '58', key: 'voiceSpeakerChineseMale1' },
-  { value: '59', key: 'voiceSpeakerChineseMale2' },
-  { value: '60', key: 'voiceSpeakerChineseMale3' },
-  { value: '0', key: 'voiceSpeakerAmericanFemale1' },
-  { value: '1', key: 'voiceSpeakerAmericanFemale2' },
-  { value: '2', key: 'voiceSpeakerBritishFemale' },
-] as const;
 
 const ASR_MODEL_KEYS: Record<LocalAsrModelId, string> = {
   'sherpa-onnx-whisper-base': 'voiceAsrModelWhisperBase',
@@ -131,8 +125,8 @@ const NumberSetting: React.FC<{
   </div>
 );
 
-const VoiceSettingsTab: React.FC<VoiceSettingsTabProps> = ({ value, onChange }) => {
-  const { statuses, loading, install, remove } = useLocalSpeechModels();
+const VoiceSettingsTab: React.FC<VoiceSettingsTabProps> = ({ value, onChange, onManageModels }) => {
+  const { statuses, loading, retry } = useLocalSpeechModels();
   const [microphones, setMicrophones] = useState<MediaDeviceInfo[]>([]);
   const [microphoneRefreshKey, setMicrophoneRefreshKey] = useState(0);
   const [onlineStatus, setOnlineStatus] = useState<OnlineAsrStatus | null>(null);
@@ -149,23 +143,20 @@ const VoiceSettingsTab: React.FC<VoiceSettingsTabProps> = ({ value, onChange }) 
   valueRef.current = value;
   const update = (patch: Partial<LocalSpeechSettings>) =>
     onChange({ ...valueRef.current, ...patch });
-  const onlineModelProviders = configService.getConfig().onlineModelProviders;
+  const [onlineModelProviders, setOnlineModelProviders] = useState(
+    () => configService.getConfig().onlineModelProviders,
+  );
+  useEffect(() => {
+    const refresh = () => setOnlineModelProviders(configService.getConfig().onlineModelProviders);
+    window.addEventListener('config-updated', refresh);
+    return () => window.removeEventListener('config-updated', refresh);
+  }, []);
   const recognitionCategory = onlineModelProviders?.['speech-recognition'];
   const synthesisCategory = onlineModelProviders?.['speech-synthesis'];
-  const buildOnlineModelOptions = (
-    category: typeof recognitionCategory,
-    requireVoice = false,
-  ): Array<{ value: string; label: string }> =>
-    Object.entries(category?.providers ?? {}).flatMap(([providerId, provider]) =>
-      provider.models
-        .filter(model => !requireVoice || Boolean(model.voices?.length))
-        .map(model => ({
-          value: `${providerId}/${model.id}`,
-          label: `${provider.displayName} / ${model.name}`,
-        })),
-    );
-  const recognitionModelOptions = buildOnlineModelOptions(recognitionCategory);
-  const synthesisModelOptions = buildOnlineModelOptions(synthesisCategory, true);
+  const recognitionModelOptions = getOnlineSpeechModelOptions(recognitionCategory);
+  const synthesisModelOptions = getOnlineSpeechModelOptions(synthesisCategory, {
+    requireVoice: true,
+  });
   const resolveSelectedModel = (
     options: Array<{ value: string; label: string }>,
     savedReference: string,
@@ -179,29 +170,11 @@ const VoiceSettingsTab: React.FC<VoiceSettingsTabProps> = ({ value, onChange }) 
     synthesisModelOptions,
     value.onlineTtsModelRef,
   );
-  const resolveOnlineProvider = (category: typeof recognitionCategory, reference: string) => {
-    const separator = reference.indexOf('/');
-    if (separator <= 0) return null;
-    const provider = category?.providers[reference.slice(0, separator)];
-    const model = reference.slice(separator + 1);
-    const modelConfig = provider?.models.find(item => item.id === model);
-    return provider && modelConfig ? { provider, model: modelConfig } : null;
-  };
-  const selectedSynthesisProvider = resolveOnlineProvider(
+  const selectedSynthesisProvider = resolveOnlineSpeechModel(
     synthesisCategory,
     selectedSynthesisModel,
   );
-  const selectedSynthesisModelVoices = selectedSynthesisProvider?.model.voices ?? [];
-  const synthesisVoiceOptions = Array.from(
-    new Map(
-      selectedSynthesisModelVoices
-        .filter(voice => Boolean(voice.id.trim()))
-        .map(voice => [
-          voice.id.trim(),
-          { value: voice.id.trim(), label: voice.name.trim() || voice.id.trim() },
-        ]),
-    ).values(),
-  );
+  const synthesisVoiceOptions = getOnlineSpeechVoiceOptions(selectedSynthesisProvider?.model);
   const selectedSynthesisVoice =
     [value.onlineTtsVoice].find(voice =>
       synthesisVoiceOptions.some(option => option.value === voice),
@@ -209,7 +182,7 @@ const VoiceSettingsTab: React.FC<VoiceSettingsTabProps> = ({ value, onChange }) 
   const onlineTtsConfigured = Boolean(selectedSynthesisModel && selectedSynthesisVoice);
   const applyOnlineRecognitionModel = async (reference: string): Promise<void> => {
     if (!reference) return;
-    const selection = resolveOnlineProvider(recognitionCategory, reference);
+    const selection = resolveOnlineSpeechModel(recognitionCategory, reference);
     if (!selection) return;
     const generation = ++asrStatusGenerationRef.current;
     setOnlineModelSaving(true);
@@ -241,7 +214,7 @@ const VoiceSettingsTab: React.FC<VoiceSettingsTabProps> = ({ value, onChange }) 
     reference: string,
     selectedVoice?: string,
   ): Promise<void> => {
-    const selection = resolveOnlineProvider(synthesisCategory, reference);
+    const selection = resolveOnlineSpeechModel(synthesisCategory, reference);
     if (!selection) return;
     const voice = selectedVoice?.trim() || selection.model.voices?.[0]?.id.trim();
     if (!voice) {
@@ -254,10 +227,7 @@ const VoiceSettingsTab: React.FC<VoiceSettingsTabProps> = ({ value, onChange }) 
     setOnlineTtsModelError('');
     try {
       await window.electron.onlineTts.saveConfiguration({
-        provider: 'openai',
-        baseUrl: normalizeNonLanguageModelBaseUrl('speech-synthesis', selection.provider.baseUrl),
-        apiKey: selection.provider.apiKey || 'local',
-        model: selection.model.id,
+        modelRef: reference,
         voice,
       });
       if (generation !== ttsStatusGenerationRef.current) return;
@@ -276,6 +246,7 @@ const VoiceSettingsTab: React.FC<VoiceSettingsTabProps> = ({ value, onChange }) 
     }
   };
   const applyOnlineSynthesisModel = (reference: string): void => {
+    if (reference === valueRef.current.onlineTtsModelRef) return;
     update({ onlineTtsModelRef: reference, onlineTtsVoice: '' });
     setOnlineTtsModelError('');
   };
@@ -392,6 +363,25 @@ const VoiceSettingsTab: React.FC<VoiceSettingsTabProps> = ({ value, onChange }) 
             <p className="mt-1 text-xs leading-5 text-secondary">
               {i18nService.t('voiceInputDescription')}
             </p>
+            {onManageModels && (
+              <button
+                type="button"
+                onClick={() =>
+                  value.recognitionMode === 'local'
+                    ? onManageModels(LocalSpeechModelKind.Asr)
+                    : onManageModels(LocalSpeechModelKind.Asr, {
+                        source: 'online',
+                        providerId: resolveOnlineSpeechModel(
+                          recognitionCategory,
+                          value.onlineAsrModelRef,
+                        )?.providerId,
+                      })
+                }
+                className="mt-2 text-xs font-medium text-primary hover:underline"
+              >
+                {i18nService.t('speechManageModels')}
+              </button>
+            )}
           </div>
           <SettingSwitch
             checked={value.inputEnabled}
@@ -405,9 +395,8 @@ const VoiceSettingsTab: React.FC<VoiceSettingsTabProps> = ({ value, onChange }) 
           <ModelStatus
             status={asrStatus}
             loading={loading}
-            showInstallAction={value.inputEnabled}
-            onRetry={() => install(LocalSpeechModelKind.Asr, value.asrModelId)}
-            onRemove={() => remove(LocalSpeechModelKind.Asr, value.asrModelId)}
+            showInstallAction={false}
+            onRetry={retry}
           />
         ) : (
           <div
@@ -477,7 +466,7 @@ const VoiceSettingsTab: React.FC<VoiceSettingsTabProps> = ({ value, onChange }) 
                   {i18nService.t('voiceRecognitionModel')}
                 </label>
                 <p className="mt-1 text-xs leading-5 text-secondary">
-                  {i18nService.t('voiceModelDownloadDescription')}
+                  {i18nService.t('speechModelCatalogDescription')}
                 </p>
               </div>
               <div className="voice-setting-control">
@@ -706,6 +695,22 @@ const VoiceSettingsTab: React.FC<VoiceSettingsTabProps> = ({ value, onChange }) 
             <p className="mt-1 text-xs leading-5 text-secondary">
               {i18nService.t('voiceOutputDescription')}
             </p>
+            {onManageModels && (
+              <button
+                type="button"
+                onClick={() =>
+                  value.synthesisMode === 'local'
+                    ? onManageModels(LocalSpeechModelKind.Tts)
+                    : onManageModels(LocalSpeechModelKind.Tts, {
+                        source: 'online',
+                        providerId: selectedSynthesisProvider?.providerId,
+                      })
+                }
+                className="mt-2 text-xs font-medium text-primary hover:underline"
+              >
+                {i18nService.t('speechManageModels')}
+              </button>
+            )}
           </div>
           <SettingSwitch
             checked={value.outputEnabled}
@@ -719,9 +724,8 @@ const VoiceSettingsTab: React.FC<VoiceSettingsTabProps> = ({ value, onChange }) 
           <ModelStatus
             status={ttsStatus}
             loading={loading}
-            showInstallAction={value.outputEnabled}
-            onRetry={() => install(LocalSpeechModelKind.Tts, value.ttsModelId)}
-            onRemove={() => remove(LocalSpeechModelKind.Tts, value.ttsModelId)}
+            showInstallAction={false}
+            onRetry={retry}
           />
         ) : (
           <div
@@ -784,7 +788,7 @@ const VoiceSettingsTab: React.FC<VoiceSettingsTabProps> = ({ value, onChange }) 
                     {i18nService.t('voiceSynthesisModel')}
                   </label>
                   <p className="mt-1 text-xs leading-5 text-secondary">
-                    {i18nService.t('voiceModelDownloadDescription')}
+                    {i18nService.t('speechModelCatalogDescription')}
                   </p>
                 </div>
                 <div className="voice-setting-control">
@@ -793,9 +797,10 @@ const VoiceSettingsTab: React.FC<VoiceSettingsTabProps> = ({ value, onChange }) 
                     value={value.ttsModelId}
                     disabled={!value.outputEnabled}
                     onChange={ttsModelId => {
+                      if (ttsModelId === value.ttsModelId) return;
                       update({
                         ttsModelId: ttsModelId as LocalTtsModelId,
-                        voiceId: ttsModelId === LOCAL_TTS_MODEL_ID ? 3 : 0,
+                        voiceId: getLocalTtsDefaultVoiceId(ttsModelId as LocalTtsModelId),
                       });
                     }}
                     options={LOCAL_TTS_MODEL_IDS.map(modelId => ({
@@ -820,19 +825,9 @@ const VoiceSettingsTab: React.FC<VoiceSettingsTabProps> = ({ value, onChange }) 
                     value={String(value.voiceId)}
                     disabled={!value.outputEnabled}
                     onChange={voiceId => update({ voiceId: Number(voiceId) })}
-                    options={
-                      value.ttsModelId === LOCAL_TTS_MODEL_ID
-                        ? VOICE_OPTIONS.map(option => ({
-                            value: option.value,
-                            label: i18nService.t(option.key),
-                          }))
-                        : value.ttsModelId === 'vits-icefall-zh-aishell3'
-                          ? Array.from({ length: 174 }, (_, voiceId) => ({
-                              value: String(voiceId),
-                              label: `${i18nService.t('voiceSpeaker')} ${voiceId}`,
-                            }))
-                          : [{ value: '0', label: i18nService.t('voiceSpeakerDefault') }]
-                    }
+                    options={getLocalSpeechVoiceOptions(value.ttsModelId, key =>
+                      i18nService.t(key),
+                    )}
                   />
                 </div>
               </div>

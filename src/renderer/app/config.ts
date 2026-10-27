@@ -28,21 +28,12 @@ import {
   defaultLocalSpeechSettings,
   type LocalSpeechSettings,
 } from '@shared/speech/localSpeechSettings';
+import type { OnlineModelConfig } from '@shared/speech/onlineSpeechModels';
+export type { OnlineModelConfig, OnlineModelVoiceConfig } from '@shared/speech/onlineSpeechModels';
 
 import { type AppearanceConfig, defaultAppearanceConfig } from '@/app/appearance';
 
 const BUILTIN_MODELS_PROVIDER_KEY = 'builtin_models';
-
-export interface OnlineModelVoiceConfig {
-  id: string;
-  name: string;
-}
-
-export interface OnlineModelConfig {
-  id: string;
-  name: string;
-  voices?: OnlineModelVoiceConfig[];
-}
 
 // 配置类型定义
 export interface AppConfig {

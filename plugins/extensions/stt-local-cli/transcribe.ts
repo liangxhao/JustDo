@@ -32,6 +32,7 @@ const AUDIO_EXTENSIONS = new Set([
 ]);
 
 export type TranscriptionConfig = {
+  mode: 'local';
   command: string;
   args: string[];
   modelId: string;
@@ -81,6 +82,7 @@ export function readConfig(value: unknown): TranscriptionConfig | null {
   if (!value || typeof value !== 'object') return null;
   const config = value as Partial<TranscriptionConfig>;
   if (
+    config.mode !== 'local' ||
     typeof config.command !== 'string' ||
     !path.isAbsolute(config.command) ||
     !Array.isArray(config.args) ||
@@ -92,21 +94,47 @@ export function readConfig(value: unknown): TranscriptionConfig | null {
   return config as TranscriptionConfig;
 }
 
-export async function transcribeFile(
+export type TranscriptionOptions = {
+  signal?: AbortSignal;
+  run?: RunCommand;
+  workspaceDir?: string;
+  workspaceOnly?: boolean;
+  assertCurrent?: () => void;
+  stageInput?: (
+    source: string,
+    target: string,
+    permittedRoot: string,
+    signal: AbortSignal,
+  ) => Promise<void>;
+};
+
+export function transcribeFile(
   audioPath: string,
   config: TranscriptionConfig,
-  options: {
-    signal?: AbortSignal;
-    run?: RunCommand;
-    workspaceDir?: string;
-    workspaceOnly?: boolean;
-  } = {},
+  options: TranscriptionOptions = {},
+) {
+  const run = options.run ?? runCommand;
+  return transcribeAudioSegments(
+    audioPath,
+    config,
+    (segment, signal) =>
+      run(config.command, [...config.args, segment], signal).then(parseTranscript),
+    options,
+  );
+}
+
+export async function transcribeAudioSegments(
+  audioPath: string,
+  config: Pick<TranscriptionConfig, 'modelId' | 'language'>,
+  transcribeSegment: (segment: string, signal: AbortSignal) => Promise<string>,
+  options: TranscriptionOptions = {},
 ) {
   const signal = AbortSignal.any([
     AbortSignal.timeout(TIMEOUT_MS),
     ...(options.signal ? [options.signal] : []),
   ]);
   signal.throwIfAborted();
+  options.assertCurrent?.();
   if (
     !path.isAbsolute(audioPath) ||
     audioPath.startsWith('\\\\') ||
@@ -123,9 +151,11 @@ export async function transcribeFile(
   const inputPath = await fs.realpath(audioPath);
   if (inputPath.startsWith('\\\\') || inputPath.startsWith('//'))
     throw new Error('Network audio paths are not supported.');
+  let permittedRoot = path.dirname(inputPath);
   if (options.workspaceOnly) {
     if (!options.workspaceDir) throw new Error('The audio workspace is unavailable.');
     const workspace = await fs.realpath(options.workspaceDir);
+    permittedRoot = workspace;
     const relative = path.relative(workspace, inputPath);
     if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
       throw new Error('The audio file is outside the permitted workspace.');
@@ -140,7 +170,8 @@ export async function transcribeFile(
   try {
     // Work from our own copy; reject playlist demuxers and all network protocols.
     const localInput = path.join(tempDir, `input${path.extname(inputPath).toLowerCase()}`);
-    await fs.copyFile(inputPath, localInput);
+    if (options.stageInput) await options.stageInput(inputPath, localInput, permittedRoot, signal);
+    else await fs.copyFile(inputPath, localInput);
     if ((await fs.stat(localInput)).size > MAX_AUDIO_BYTES)
       throw new Error('Audio exceeds 256 MiB.');
     signal.throwIfAborted();
@@ -195,12 +226,8 @@ export async function transcribeFile(
     let characters = 0;
     for (const [index, segment] of segments.entries()) {
       signal.throwIfAborted();
-      const stdout = await run(
-        config.command,
-        [...config.args, path.join(tempDir, segment)],
-        signal,
-      );
-      let text = parseTranscript(stdout);
+      options.assertCurrent?.();
+      let text = await transcribeSegment(path.join(tempDir, segment), signal);
       if (config.language === 'zh') text = toSimplified(text);
       characters += text.length;
       if (characters > MAX_TEXT_CHARS)
@@ -208,6 +235,7 @@ export async function transcribeFile(
       if (text) results.push({ startSeconds: index * SEGMENT_SECONDS, text });
     }
     signal.throwIfAborted();
+    options.assertCurrent?.();
     if (!results.length) throw new Error('No speech was recognized.');
     return {
       text: results.map(item => item.text).join('\n'),

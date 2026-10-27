@@ -1,6 +1,6 @@
 import { normalizeLocalSpeechExtensionSettings } from '../../../../shared/speech/localSpeechExtensionSettings';
 import { defaultLocalSpeechSettings } from '../../../../shared/speech/localSpeechSettings';
-import { LOCAL_TTS_MODEL_ID, LOCAL_TTS_PROVIDER_ID } from '../../../../shared/speech/localTts';
+import { LOCAL_TTS_PROVIDER_ID } from '../../../../shared/speech/localTts';
 import { buildManagedLocalSttConfig } from './localSttConfig';
 import { buildManagedLocalTtsConfig } from './localTtsConfig';
 import { normalizeNativeTtsConfig } from './nativeTtsConfig';
@@ -22,7 +22,7 @@ export function buildLocalSpeechExtensionTtsConfig(value: unknown) {
     outputEnabled: true,
     synthesisMode: 'local',
     ttsModelId: settings.ttsModelId,
-    voiceId: settings.ttsModelId === LOCAL_TTS_MODEL_ID ? 3 : 0,
+    voiceId: settings.ttsVoiceId,
   });
 }
 

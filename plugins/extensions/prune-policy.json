@@ -15,7 +15,6 @@
     "mxc",
     "oc-path",
     "policy",
-    "tts-local-cli",
     "web-readability",
     "workboard",
     "code-mode-quickjs"
@@ -23,27 +22,18 @@
   "remove": [
     {
       "category": "local-source-replacements",
-      "reason": "The upstream OpenAI directory is replaced completely by the version-locked local intranet plugin. Local extension protection retains the replacement, with one openai plugin ID.",
-      "extensions": [
-        "openai"
-      ]
+      "reason": "Upstream OpenAI and CLI speech directories are replaced completely by version-locked application sources. Local extension protection retains each replacement with its native plugin ID.",
+      "extensions": ["openai", "tts-local-cli"]
     },
     {
       "category": "unused-http-administration",
       "reason": "The desktop application uses Gateway WebSocket RPC and does not integrate the optional HTTP administration endpoint.",
-      "extensions": [
-        "admin-http-rpc"
-      ]
+      "extensions": ["admin-http-rpc"]
     },
     {
       "category": "public-cloud-integrations",
       "reason": "Public vendor APIs are unavailable in the intranet deployment. Keep OpenAI only as the protocol adapter for configured intranet model, speech and media endpoints.",
-      "extensions": [
-        "anthropic",
-        "elevenlabs",
-        "github",
-        "kie"
-      ]
+      "extensions": ["anthropic", "elevenlabs", "github", "kie"]
     },
     {
       "category": "unused-remote-and-device-integrations",
@@ -70,10 +60,7 @@
     {
       "category": "migration-tools",
       "reason": "One-time third-party import helpers are not required for normal JustDo startup or the native session SQLite migration.",
-      "extensions": [
-        "migrate-claude",
-        "migrate-hermes"
-      ]
+      "extensions": ["migrate-claude", "migrate-hermes"]
     },
     {
       "category": "optional-speech-and-media",
@@ -118,9 +105,7 @@
     {
       "category": "unused-cloud-storage-provider",
       "reason": "Cloudflare R2 storage locations are not integrated in the desktop application. Do not ship an unused public storage provider or introduce cloud credentials and defaults.",
-      "extensions": [
-        "cloudflare"
-      ]
+      "extensions": ["cloudflare"]
     }
   ]
 }

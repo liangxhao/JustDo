@@ -343,9 +343,14 @@ export class ConfigService {
           ? { appearance: normalizeAppearanceConfig(newConfig.appearance) }
           : {}),
         ...(newConfig.voice ? { voice: normalizeLocalSpeechSettings(newConfig.voice) } : {}),
-        ...(newConfig.localSpeechExtensions ? {
-          localSpeechExtensions: parseLocalSpeechExtensionSettingsPatch(newConfig.localSpeechExtensions),
-        } : {}),
+        ...(newConfig.localSpeechExtensions
+          ? {
+              localSpeechExtensions: parseLocalSpeechExtensionSettingsPatch(
+                newConfig.localSpeechExtensions,
+                this.config.localSpeechExtensions,
+              ),
+            }
+          : {}),
         ...(normalizedProviders ? { providers: normalizedProviders } : {}),
       };
       const saved = await window.electron.store.patchAppConfig(patch);

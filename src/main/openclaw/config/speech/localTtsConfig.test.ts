@@ -114,6 +114,20 @@ describe('local TTS OpenClaw configuration', () => {
     );
   });
 
+  it.each([6, 102])('emits the exact formerly hidden Kokoro speaker %s in native CLI arguments', voiceId => {
+    const paths = createAssetPaths();
+    prepareAssets(paths);
+    const config = buildManagedLocalTtsConfig(paths, {
+      ...defaultLocalSpeechSettings,
+      outputEnabled: true,
+      voiceId,
+    }) as { providers: Record<string, { args: string[] }> };
+
+    expect(config.providers[LOCAL_TTS_PROVIDER_ID].args.filter(arg => arg.startsWith('--sid='))).toEqual([
+      `--sid=${voiceId}`,
+    ]);
+  });
+
   it('removes the managed provider when reply reading is disabled', () => {
     const paths = createAssetPaths();
     prepareAssets(paths);

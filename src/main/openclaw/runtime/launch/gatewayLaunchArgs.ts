@@ -1,3 +1,5 @@
+import path from 'node:path';
+
 export type GatewayLaunchArgsOptions = {
   port: number;
   token: string;
@@ -8,7 +10,7 @@ export const APP_STARTED_AT_ENV = 'JUSTDO_APP_STARTED_AT_MS';
 
 export const buildGatewayLaunchEnvironment = (
   env: NodeJS.ProcessEnv,
-  options: { appStartedAtMs: number; platform?: NodeJS.Platform },
+  options: { appStartedAtMs: number; stateDir: string; platform?: NodeJS.Platform },
 ): NodeJS.ProcessEnv => {
   const inherited = { ...env };
   const useWindowsPolling = (options.platform ?? process.platform) === 'win32';
@@ -16,6 +18,7 @@ export const buildGatewayLaunchEnvironment = (
     const normalizedKey = key.toUpperCase();
     if (
       normalizedKey === 'JUSTDO_APIKEY_BUILTIN_MODELS' ||
+      normalizedKey === 'OPENCLAW_TTS_PREFS' ||
       (useWindowsPolling &&
         (normalizedKey === 'CHOKIDAR_USEPOLLING' || normalizedKey === 'CHOKIDAR_INTERVAL'))
     ) {
@@ -35,6 +38,9 @@ export const buildGatewayLaunchEnvironment = (
     OPENCLAW_EXEC_SHELL_SNAPSHOT: '0',
     OPENCLAW_NO_RESPAWN: '1',
     OPENCLAW_SKIP_CHANNELS: '1',
+    // The persistent top-level tts schema has no prefsPath field. This native
+    // override keeps tool preferences inside this Gateway's managed state.
+    OPENCLAW_TTS_PREFS: path.join(options.stateDir, 'speech-tools', 'preferences.json'),
     // This boundary remains stable for every Gateway process launched by the
     // current app process. OpenClaw can therefore distinguish prior-app work
     // from work interrupted by a Gateway-only restart without relying on a

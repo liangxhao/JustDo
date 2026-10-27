@@ -14,7 +14,9 @@ const MAX_AUDIO_BYTES = 32 * 1024 * 1024;
 export async function synthesizeLocalSpeech(
   text: string,
   settings: LocalSpeechSettings,
+  options: { signal?: AbortSignal } = {},
 ): Promise<LocalTtsSpeakResult> {
+  options.signal?.throwIfAborted();
   const config = buildManagedLocalTtsConfig(undefined, settings);
   if (!config) throw new Error('Local speech synthesis is unavailable.');
   const provider = (
@@ -35,16 +37,26 @@ export async function synthesizeLocalSpeech(
     const args = provider.args.map(arg =>
       arg === '{{Text}}' ? spokenText : arg.replace('{{OutputPath}}', outputPath),
     );
-    await runFile(provider.command, args, {
+    options.signal?.throwIfAborted();
+    const execution = runFile(provider.command, args, {
       windowsHide: true,
       timeout: 120_000,
       maxBuffer: 1024 * 1024,
+      signal: options.signal,
     });
+    // Abort can reject before the child closes; clean its files only after it has stopped.
+    const closed = new Promise<void>(resolve => execution.child.once('close', () => resolve()));
+    try {
+      await execution;
+    } finally {
+      await closed;
+    }
+    options.signal?.throwIfAborted();
     const stat = await fs.stat(outputPath);
     if (!stat.isFile() || stat.size < 44 || stat.size > MAX_AUDIO_BYTES) {
       throw new Error('Invalid speech output.');
     }
-    const audio = await fs.readFile(outputPath);
+    const audio = await fs.readFile(outputPath, { signal: options.signal });
     if (audio.toString('ascii', 0, 4) !== 'RIFF' || audio.toString('ascii', 8, 12) !== 'WAVE') {
       throw new Error('Invalid speech output.');
     }

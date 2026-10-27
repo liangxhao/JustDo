@@ -291,7 +291,7 @@ test('imports, updates and deletes skills while the Windows polling watcher stay
       `---\nname: demo\ndescription: Test skill\n---\n${version}\n`,
     );
   writeSource('First version');
-  const gatewayEnv = buildGatewayLaunchEnvironment({}, { appStartedAtMs: 1, platform: 'win32' });
+  const gatewayEnv = buildGatewayLaunchEnvironment({}, { appStartedAtMs: 1, stateDir, platform: 'win32' });
   vi.stubEnv('CHOKIDAR_USEPOLLING', gatewayEnv.CHOKIDAR_USEPOLLING);
   vi.stubEnv('CHOKIDAR_INTERVAL', gatewayEnv.CHOKIDAR_INTERVAL);
   const nativeWatch = vi.spyOn(fs, 'watch');

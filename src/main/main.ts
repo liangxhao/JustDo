@@ -828,6 +828,16 @@ const getOpenClawConfigSyncService = (): OpenClawConfigSyncService => {
         getStore().get<AppConfigSettings>('app_config')?.onlineModelProviders?.decision,
       getNativeVideoCategory: () =>
         getStore().get<AppConfigSettings>('app_config')?.onlineModelProviders?.video,
+      getSpeechModelSettings: () => {
+        const config = getStore().get<AppConfigSettings>('app_config');
+        return {
+          extensions: config?.localSpeechExtensions,
+          voice: config?.voice,
+          recognitionModels: config?.onlineModelProviders?.['speech-recognition'],
+          synthesisModels: config?.onlineModelProviders?.['speech-synthesis'],
+          language: config?.language === 'en' ? 'en' : 'zh',
+        };
+      },
       getLocalSttConfig: () => {
         const appConfig = getStore().get<AppConfigSettings>('app_config');
         return buildLocalSpeechExtensionSttConfig(
@@ -1256,7 +1266,7 @@ type AppConfigSettings = {
   proxy?: Partial<ProxySettings>;
   browserProxy?: Partial<ProxySettings>;
   providers?: unknown;
-  onlineModelProviders?: { decision?: unknown; video?: unknown };
+  onlineModelProviders?: { decision?: unknown; video?: unknown; 'speech-recognition'?: unknown; 'speech-synthesis'?: unknown };
   voice?: unknown;
   localSpeechExtensions?: unknown;
 };
@@ -1272,6 +1282,8 @@ const getOpenClawAppConfigSignature = (config: unknown): string => {
     providers: appConfig.providers,
     decisionModels: appConfig.onlineModelProviders?.decision,
     nativeVideoModels: appConfig.onlineModelProviders?.video,
+    recognitionModels: appConfig.onlineModelProviders?.['speech-recognition'],
+    synthesisModels: appConfig.onlineModelProviders?.['speech-synthesis'],
     localSpeechExtensions: normalizeLocalSpeechExtensionSettings(appConfig.localSpeechExtensions),
     language: appConfig.language,
     voice: {
@@ -1281,6 +1293,9 @@ const getOpenClawAppConfigSignature = (config: unknown): string => {
       voiceId: voice.voiceId,
       speechRate: voice.speechRate,
       synthesisThreads: voice.synthesisThreads,
+      onlineAsrModelRef: voice.onlineAsrModelRef,
+      onlineTtsModelRef: voice.onlineTtsModelRef,
+      onlineTtsVoice: voice.onlineTtsVoice,
     },
   });
 };
@@ -1518,6 +1533,8 @@ if (agentBridgeArgv) {
   });
   registerOnlineTtsHandlers({
     getRuntime: getOpenClawRuntimeAdapter,
+    getModelCategory: () => getStore().get<AppConfigSettings>('app_config')?.onlineModelProviders?.['speech-synthesis'],
+    getStateDir: () => getOpenClawEngineManager().getStateDir(),
     requestGateway: <T>(method: string, params?: unknown) =>
       getCoworkEngineService().requestGateway<T>(method, params),
     runConfigMutationExclusive: operation =>

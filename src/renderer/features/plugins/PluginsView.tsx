@@ -4,6 +4,7 @@ import {
   PuzzlePieceIcon,
   SparklesIcon,
 } from '@heroicons/react/24/outline';
+import type { LocalSpeechModelKind } from '@shared/speech/localSpeechModels';
 import React, { useEffect, useState } from 'react';
 
 import ExtensionsManager from '@/features/plugins/extensions/ExtensionsManager';
@@ -14,6 +15,7 @@ import { mcpService } from '@/features/plugins/mcp/mcpService';
 import PluginOperationFeedback from '@/features/plugins/shared/PluginOperationFeedback';
 import PluginOperationStatus from '@/features/plugins/shared/PluginOperationStatus';
 import SkillsManager from '@/features/plugins/skills/SkillsManager';
+import type { SpeechModelCatalogTarget } from '@/features/speech/speechModelCatalogNavigation';
 import { i18nService } from '@/services/i18n';
 import ComposeIcon from '@/shared/components/icons/ComposeIcon';
 import SearchIcon from '@/shared/components/icons/SearchIcon';
@@ -51,6 +53,8 @@ const TAB_PRESENTATION: Record<
 
 interface PluginsViewProps {
   onOpenRuntime?: () => void;
+  onManageSpeechModels?: (kind: LocalSpeechModelKind, target?: SpeechModelCatalogTarget) => void;
+  isActive?: boolean;
   isSidebarCollapsed: boolean;
   onToggleSidebar: () => void;
   onNewChat: () => void;
@@ -60,6 +64,8 @@ const PluginsView: React.FC<PluginsViewProps> = ({
   isSidebarCollapsed,
   onToggleSidebar,
   onOpenRuntime,
+  onManageSpeechModels,
+  isActive,
   onNewChat,
 }) => {
   const [activeTab, setActiveTab] = useState<PluginTab>('extensions');
@@ -182,6 +188,8 @@ const PluginsView: React.FC<PluginsViewProps> = ({
               {activeTab === 'extensions' && (
                 <ExtensionsManager
                   onOpenRuntime={onOpenRuntime}
+                  onManageSpeechModels={onManageSpeechModels}
+                  isActive={isActive}
                   searchQuery={searchQuery}
                   visibility="all"
                   requestedExtensionId={requestedExtensionId}

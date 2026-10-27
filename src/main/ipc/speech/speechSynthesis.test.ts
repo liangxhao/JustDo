@@ -32,10 +32,12 @@ describe('speech synthesis IPC', () => {
     const result = { audioBase64: 'YXVkaW8=', provider: 'tts-local-cli' };
     requestGateway.mockResolvedValue(result);
 
-    await expect(handlers.get(SpeechSynthesisIpc.Speak)?.({}, '  你好，欢迎使用。  ')).resolves.toBe(
-      result,
-    );
-    expect(requestGateway).toHaveBeenCalledWith('tts.speak', { text: '你好，欢迎使用。' });
+    await expect(
+      handlers.get(SpeechSynthesisIpc.Speak)?.({}, '  你好，欢迎使用。  '),
+    ).resolves.toBe(result);
+    expect(requestGateway).toHaveBeenCalledWith('runtimeServices.speech.synthesize', {
+      text: '你好，欢迎使用。',
+    });
   });
 
   it('uses the local module without calling Gateway', async () => {

@@ -1,6 +1,11 @@
+import path from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 
 import { buildGatewayLaunchArgs, buildGatewayLaunchEnvironment } from './gatewayLaunchArgs';
+
+const stateDir = path.resolve('语音配置 with spaces');
+const preferencesPath = path.join(stateDir, 'speech-tools', 'preferences.json');
 
 describe('buildGatewayLaunchEnvironment', () => {
   it('strips inherited built-in credentials regardless of Windows casing', () => {
@@ -10,7 +15,7 @@ describe('buildGatewayLaunchEnvironment', () => {
         justdo_apikey_builtin_models: 'old-secret',
         PATH: 'runtime-bin',
       },
-      { appStartedAtMs: 1 },
+      { appStartedAtMs: 1, stateDir },
     );
     expect(Object.keys(env).some(key => key.toUpperCase() === 'JUSTDO_APIKEY_BUILTIN_MODELS')).toBe(
       false,
@@ -24,7 +29,7 @@ describe('buildGatewayLaunchEnvironment', () => {
         {
           PATH: 'runtime-bin',
         },
-        { appStartedAtMs: 1_800_000_000_000, platform: 'linux' },
+        { appStartedAtMs: 1_800_000_000_000, stateDir, platform: 'linux' },
       ),
     ).toEqual({
       PATH: 'runtime-bin',
@@ -32,6 +37,7 @@ describe('buildGatewayLaunchEnvironment', () => {
       OPENCLAW_EXEC_SHELL_SNAPSHOT: '0',
       OPENCLAW_NO_RESPAWN: '1',
       OPENCLAW_SKIP_CHANNELS: '1',
+      OPENCLAW_TTS_PREFS: preferencesPath,
       JUSTDO_APP_STARTED_AT_MS: '1800000000000',
       NO_COLOR: '1',
       FORCE_COLOR: '0',
@@ -45,7 +51,7 @@ describe('buildGatewayLaunchEnvironment', () => {
           PATH: 'runtime-bin',
           JUSTDO_APP_STARTED_AT_MS: '1',
         },
-        { appStartedAtMs: 1_800_000_000_000, platform: 'linux' },
+        { appStartedAtMs: 1_800_000_000_000, stateDir, platform: 'linux' },
       ),
     ).toEqual({
       PATH: 'runtime-bin',
@@ -53,10 +59,24 @@ describe('buildGatewayLaunchEnvironment', () => {
       OPENCLAW_EXEC_SHELL_SNAPSHOT: '0',
       OPENCLAW_NO_RESPAWN: '1',
       OPENCLAW_SKIP_CHANNELS: '1',
+      OPENCLAW_TTS_PREFS: preferencesPath,
       JUSTDO_APP_STARTED_AT_MS: '1800000000000',
       NO_COLOR: '1',
       FORCE_COLOR: '0',
     });
+  });
+
+  it('uses the owned state directory for native tool preferences and removes inherited casing aliases', () => {
+    const inherited = {
+      OPENCLAW_TTS_PREFS: '/another-profile/preferences.json',
+      openclaw_tts_prefs: '/another-profile/lowercase.json',
+      PATH: 'runtime-bin',
+    };
+    const env = buildGatewayLaunchEnvironment(inherited, { appStartedAtMs: 1, stateDir });
+    expect(env.OPENCLAW_TTS_PREFS).toBe(preferencesPath);
+    expect(env).not.toHaveProperty('openclaw_tts_prefs');
+    expect(inherited.OPENCLAW_TTS_PREFS).toBe('/another-profile/preferences.json');
+    expect(env.PATH).toBe('runtime-bin');
   });
 });
 
@@ -66,6 +86,7 @@ describe('Windows Gateway file watching', () => {
 
     const env = buildGatewayLaunchEnvironment(inherited, {
       appStartedAtMs: 1,
+      stateDir,
       platform: 'win32',
     });
 
@@ -82,7 +103,7 @@ describe('Windows Gateway file watching', () => {
         CHOKIDAR_INTERVAL: '1',
         chokidar_interval: '2',
       },
-      { appStartedAtMs: 1, platform: 'win32' },
+      { appStartedAtMs: 1, stateDir, platform: 'win32' },
     );
 
     expect(env.CHOKIDAR_USEPOLLING).toBe('true');
@@ -94,7 +115,7 @@ describe('Windows Gateway file watching', () => {
   it.each(['linux', 'darwin'] as const)('preserves watcher settings on %s', platform => {
     const env = buildGatewayLaunchEnvironment(
       { CHOKIDAR_USEPOLLING: 'false', CHOKIDAR_INTERVAL: '250' },
-      { appStartedAtMs: 1, platform },
+      { appStartedAtMs: 1, stateDir, platform },
     );
 
     expect(env.CHOKIDAR_USEPOLLING).toBe('false');

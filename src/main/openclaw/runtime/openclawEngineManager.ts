@@ -1200,6 +1200,7 @@ export class OpenClawEngineManager extends EventEmitter {
     const env = this.buildNetworkEnvironment(cliEnvironment.env);
     const gatewayEnv = buildGatewayLaunchEnvironment(env, {
       appStartedAtMs: this.appStartedAtMs,
+      stateDir: this.stateDir,
     });
     console.log(`[OpenClaw] startGateway: pre-fork setup done (${elapsed()})`);
 

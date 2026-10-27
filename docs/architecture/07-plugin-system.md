@@ -23,6 +23,8 @@ Browser Assistant 位于 `plugins/browser-extensions/browser-assistant/`，由 C
 
 插件专属的工具、界面、资源、构建/校验脚本和单元测试归 `plugins/extensions/<plugin-id>/` 所有。主工程保留通用 MCP Apps 宿主、权限与保存桥、配置/打包接入，以及验证宿主边界的集成测试；插件不能反向导入应用 `src`。根 npm 命令和打包流程只委托插件自己的脚本，draw.io 的目录约定见[插件说明](../../plugins/extensions/drawio/README.md)。
 
+`tts-local-cli` 采用与锁定 OpenClaw 同版本的应用自有源码完整替换，保留原生 provider 身份、CLI 实现、许可证和来源哈希，新增按显式配置的在线合成分支。裁剪规则将上游目录列为源码替换项，必须有当前本地替换证明才能保留；不使用运行时补丁或私有上游模块导入。`stt-local-cli` 继续拥有唯一 `transcribe_audio` 工厂，按自己的本地／在线模式执行，工具准入和扩展开关不改变。两种扩展的执行配置由 Main 投影，不能反向读取应用配置库。Runtime Services 的在线回复朗读 RPC 只通过公开 TTS API 使用当前受支持适配器，配置仅作用于该请求，不依赖可选 CLI 扩展，也不改变工具的默认模型。契约与验证见[语音功能](../features/models/local-tts.md)。
+
 独立分发的 MCP Apps 由各自的插件仓库维护源码、依赖、构建和交付物，不进入主工程
 依赖或 Electron 安装包。插件清单静态声明 MCP，经现有扩展导入和能力审查安装，
 附带 MCP 沿原生配置、审批和父扩展启停流程运行；市场按现有 `extension` 类型分发。
