@@ -1,5 +1,5 @@
 import { useDraggable, useDroppable } from '@dnd-kit/core';
-import { ExclamationTriangleIcon, FolderIcon } from '@heroicons/react/24/outline';
+import { ChevronRightIcon, ExclamationTriangleIcon, FolderIcon } from '@heroicons/react/24/outline';
 import React, { useEffect, useRef, useState } from 'react';
 
 import type { SessionGroup } from '@/features/cowork/coworkTypes';
@@ -18,23 +18,6 @@ interface SessionGroupHeaderProps {
   onMoveUp?: () => void;
   onMoveDown?: () => void;
 }
-
-const ChevronIcon: React.FC<React.SVGProps<SVGSVGElement> & { direction: 'up' | 'down' }> = ({
-  direction,
-  ...props
-}) => (
-  <svg
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth={2}
-    strokeLinecap="round"
-    strokeLinejoin="round"
-    {...props}
-  >
-    <path d={direction === 'down' ? 'M6 9l6 6 6-6' : 'M18 15l-6-6-6 6'} />
-  </svg>
-);
 
 const SessionGroupHeader: React.FC<SessionGroupHeaderProps> = ({
   group,
@@ -190,12 +173,7 @@ const SessionGroupHeader: React.FC<SessionGroupHeaderProps> = ({
           <span className="group-name">{group.name}</span>
         )}
         <span className="group-count">{sessionCount}</span>
-        <ChevronIcon
-          direction={isExpanded ? 'up' : 'down'}
-          className="chevron-icon"
-          width={14}
-          height={14}
-        />
+        <ChevronRightIcon className={`chevron-icon ${isExpanded ? 'rotate-90' : ''}`} />
       </div>
 
       {menuPosition && (

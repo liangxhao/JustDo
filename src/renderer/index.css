@@ -498,7 +498,7 @@ select::-ms-expand {
 }
 
 .session-group-header .group-name {
-  @apply min-w-0 flex-1 truncate text-xs font-semibold text-foreground;
+  @apply min-w-0 flex-1 truncate text-center text-xs font-semibold text-foreground;
   opacity: 0.8;
 }
 
