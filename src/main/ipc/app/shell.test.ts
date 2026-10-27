@@ -6,6 +6,10 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
 import { FilePreviewIpc, MAX_PREVIEW_FILE_BYTES } from '../../../shared/preview/filePreview';
 import {
+  MessageFileLinkPreparationError,
+  MessageFileLinkSourceKind,
+} from '../../../shared/preview/messageFileLink';
+import {
   WorkspaceFileMutationKind,
   WorkspaceFilesIpc,
   WorkspaceFileTransferMode,
@@ -72,6 +76,43 @@ test('keeps an absolute attachment path unchanged', () => {
   const absolutePath = path.resolve('existing', 'report.pdf');
 
   expect(resolveShellOpenPath(absolutePath, path.resolve('workspace'))).toBe(absolutePath);
+});
+
+test('prepares message files only for a live window main frame with a validated target', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'message-file-link-ipc-'));
+  temporaryDirectories.push(root);
+  const filePath = path.join(root, 'report.pdf');
+  fs.writeFileSync(filePath, 'file');
+  const resolveWorkspaceRoot = vi.fn(() => root);
+  registerShellHandlers({ resolveWorkspaceRoot });
+  const handler = ipcHandle.mock.calls.find(([name]) => name === FilePreviewIpc.PrepareMessageLink)![1];
+  const frame = {};
+  const sender = { getType: () => 'window', mainFrame: frame, isDestroyed: () => false };
+  const request = {
+    sourceKind: MessageFileLinkSourceKind.MarkdownUri,
+    target: './report.pdf',
+    workspaceSessionId: 'source',
+    expectedProjectRoot: root,
+  };
+  for (const event of [
+    { sender: { ...sender, getType: () => 'webview' }, senderFrame: frame },
+    { sender, senderFrame: {} },
+    { sender: { ...sender, isDestroyed: () => true }, senderFrame: frame },
+  ]) {
+    await expect(handler(event, request)).resolves.toEqual({
+      success: false,
+      error: MessageFileLinkPreparationError.Unavailable,
+    });
+  }
+  await expect(handler({ sender, senderFrame: frame }, { ...request, target: 1 })).resolves.toEqual({
+    success: false,
+    error: MessageFileLinkPreparationError.InvalidTarget,
+  });
+  expect(resolveWorkspaceRoot).not.toHaveBeenCalled();
+  await expect(handler({ sender, senderFrame: frame }, request)).resolves.toEqual({
+    success: true,
+    filePath: fs.realpathSync(filePath),
+  });
 });
 
 test('binds file clipboard writes to a validated window main frame and a Main-resolved workspace', async () => {

@@ -91,6 +91,7 @@ export const FilePreviewIpc = {
   AuthorizeEdit: 'shell:authorizePreviewFileEdit',
   ListDirectory: 'shell:listWorkspaceDirectory',
   OpenWith: 'shell:openPathWith',
+  PrepareMessageLink: 'shell:prepareMessageFileLink',
   Read: 'shell:readPreviewFile',
   RevokeEdit: 'shell:revokePreviewFileEdit',
   Write: 'shell:writePreviewFile',

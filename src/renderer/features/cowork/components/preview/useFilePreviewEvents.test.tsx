@@ -30,7 +30,7 @@ function usePreviewHarness(openAppFile?: OpenMcpAppFile) {
   const unsupportedFilePreviewsRef = useRef(unsupportedFilePreviews);
   filePreviewsRef.current = filePreviews;
   unsupportedFilePreviewsRef.current = unsupportedFilePreviews;
-  useFilePreviewEvents({
+  const actions = useFilePreviewEvents({
     openAppFile,
     currentSessionIdRef,
     filePreviewRequestIdRef,
@@ -44,6 +44,7 @@ function usePreviewHarness(openAppFile?: OpenMcpAppFile) {
     setIsWorkspaceFilesOpen,
   });
   return {
+    ...actions,
     ...state,
     captureNavigationScope: () => {
       const scope = navigationScope.current;
@@ -65,6 +66,31 @@ afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+});
+
+test('a direct message file action updates only its owning workspace', async () => {
+  const filePath = 'E:/output/Quarterly report.md';
+  const readPreviewFile = vi.fn().mockResolvedValue({
+    success: true,
+    filePath,
+    content: 'report',
+    editToken: 'grant',
+    version: '1',
+  });
+  vi.stubGlobal('electron', { shell: { readPreviewFile } });
+  const owner = renderHook(usePreviewHarness);
+  const other = renderHook(usePreviewHarness);
+  act(() => owner.result.current.openFiles());
+  await act(async () =>
+    owner.result.current.openFilePreview({
+      filePath,
+      isCurrent: owner.result.current.captureNavigationScope(),
+    }),
+  );
+  expect(readPreviewFile).toHaveBeenCalledExactlyOnceWith(filePath, undefined);
+  expect(owner.result.current.filePreviews).toHaveLength(1);
+  expect(owner.result.current.isWorkspaceFilesOpen).toBe(true);
+  expect(other.result.current.filePreviews).toEqual([]);
 });
 
 test('a discovered file app handles a spreadsheet before the text preview reads it', async () => {

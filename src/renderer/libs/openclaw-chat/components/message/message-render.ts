@@ -13,6 +13,7 @@ import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 
 import { openMessageHtmlLink, openMessageWebLink } from '@/features/browser/messageBrowserLinks';
 import { renderMessageQuoteText } from '@/features/cowork/components/composer/draft/messageQuote';
+import type { OpenMessageFileLink } from '@/features/cowork/components/preview/messageFileLinks';
 import {
   getTranscriptMedia,
   isTranscriptImage,
@@ -57,6 +58,7 @@ type MessageRenderOptions = {
   peerNames?: Readonly<Record<string, string>>;
   peerPerspective?: boolean;
   workingDirectory?: string;
+  onOpenFile?: OpenMessageFileLink;
   speechState?: 'idle' | 'loading' | 'playing';
   onSpeak?: (groupKey: string, text: string) => void;
   userMessageActions?: {
@@ -80,7 +82,7 @@ type MessageRenderOptions = {
 
 type AssistantTimelineContentOptions = Pick<
   MessageRenderOptions,
-  'onSpeak' | 'showAvatar' | 'speechState' | 'workingDirectory' | 'assistantAvatar'
+  'onSpeak' | 'showAvatar' | 'speechState' | 'workingDirectory' | 'assistantAvatar' | 'onOpenFile'
 > & {
   key: string;
   timestamp: number;
@@ -715,6 +717,7 @@ function renderOrderedBubble(
   disclosureOwner?: string,
   bubbleIndex = 0,
   streaming = false,
+  fileLinks = false,
 ): TemplateResult | typeof nothing {
   if (items.length === 0) return nothing;
   const text = items
@@ -756,7 +759,7 @@ function renderOrderedBubble(
                   disclosureOwner ? JSON.stringify([disclosureOwner, bubbleIndex, index]) : nothing
                 }
               >
-                ${unsafeHTML((streaming ? toStreamingMarkdownHtml : toSanitizedMarkdownHtml)(item.text, { allowDetails: true }))}
+                ${unsafeHTML((streaming ? toStreamingMarkdownHtml : toSanitizedMarkdownHtml)(item.text, { allowDetails: true, fileLinks }))}
               </div>
             `;
           }
@@ -885,6 +888,7 @@ export function renderMessageBlockWithTrailingStream(
                   streamText,
                   opts?.workingDirectory,
                   `${group.key}:stream`,
+                  Boolean(opts?.onOpenFile),
                 )}
               `
             : renderReadingIndicator()
@@ -914,13 +918,19 @@ function renderSingleMessage(
   // The canonical timeline exclusively owns Tool presentation.
   if (isTool) return nothing;
   if (isUser) {
-    return renderUserMessage(normalized, message, opts?.workingDirectory, disclosureOwner);
+    return renderUserMessage(
+      normalized,
+      message,
+      opts?.workingDirectory,
+      disclosureOwner,
+      Boolean(opts?.onOpenFile),
+    );
   }
   return html`<div
     data-quote-source
     data-assistant-entry=${identity?.kind === 'openclaw-id' ? identity.value : nothing}
   >
-    ${renderAssistantMessage(normalized, message, opts?.workingDirectory, trailingAction, disclosureOwner)}
+    ${renderAssistantMessage(normalized, message, opts?.workingDirectory, trailingAction, disclosureOwner, false, Boolean(opts?.onOpenFile))}
   </div>`;
 }
 
@@ -931,6 +941,7 @@ function renderUserMessage(
   rawMessage: unknown,
   workingDirectory?: string,
   disclosureOwner?: string,
+  fileLinks = false,
 ): TemplateResult {
   const hasImage = msg.content.some(
     item => item.type === 'attachment' && item.attachment.kind === 'image',
@@ -961,6 +972,9 @@ function renderUserMessage(
     workingDirectory,
     nothing,
     disclosureOwner,
+    0,
+    false,
+    fileLinks,
   ) as TemplateResult;
 }
 
@@ -973,6 +987,7 @@ function renderAssistantMessage(
   trailingAction: TemplateResult | typeof nothing = nothing,
   disclosureOwner?: string,
   streaming = false,
+  fileLinks = false,
 ): TemplateResult {
   const sections: Array<
     | { kind: 'bubble'; items: BubbleContentItem[] }
@@ -1025,6 +1040,7 @@ function renderAssistantMessage(
           disclosureOwner,
           index,
           streaming,
+          fileLinks,
         )
       : section.content,
   )}`;
@@ -1045,6 +1061,8 @@ export function renderAssistantTimelineContent(
         showAvatar: opts.showAvatar,
         assistantAvatar: opts.assistantAvatar,
         disclosureOwner: opts.key,
+        onOpenFile: opts.onOpenFile,
+        workingDirectory: opts.workingDirectory,
       })}
     </div>`;
   }
@@ -1074,6 +1092,7 @@ export function renderAssistantTimelineContent(
       speechState: opts.speechState,
       onSpeak: opts.onSpeak,
       workingDirectory: opts.workingDirectory,
+      onOpenFile: opts.onOpenFile,
       disclosureOwner: opts.key,
     },
   ) as TemplateResult;
@@ -1224,7 +1243,13 @@ export function renderStreamingGroup(
   text: string,
   startedAt: number,
   thinkingText: string | null = null,
-  opts?: { showAvatar?: boolean; assistantAvatar?: TemplateResult; disclosureOwner?: string },
+  opts?: {
+    showAvatar?: boolean;
+    assistantAvatar?: TemplateResult;
+    disclosureOwner?: string;
+    onOpenFile?: OpenMessageFileLink;
+    workingDirectory?: string;
+  },
 ): TemplateResult {
   text = partitionTaggedReasoning(text).text;
   const hasText = text.trim().length > 0;
@@ -1245,8 +1270,9 @@ export function renderStreamingGroup(
             ? html`
                 ${renderStreamingAssistantMessage(
                   text,
-                  undefined,
+                  opts?.workingDirectory,
                   opts?.disclosureOwner ?? `stream:${startedAt}`,
+                  Boolean(opts?.onOpenFile),
                 )}
               `
             : renderReadingIndicator()
@@ -1256,18 +1282,33 @@ export function renderStreamingGroup(
   `;
 }
 
-function renderStreamingAssistantMessage(text: string, workingDirectory?: string, disclosureOwner?: string): TemplateResult {
+function renderStreamingAssistantMessage(
+  text: string,
+  workingDirectory?: string,
+  disclosureOwner?: string,
+  fileLinks = false,
+): TemplateResult {
   const normalized = normalizeMessage({ role: 'assistant', content: text });
   if (normalized.content.some(item => item.type !== 'text'))
-    return renderAssistantMessage(normalized, {}, workingDirectory, nothing, disclosureOwner, true);
+    return renderAssistantMessage(
+      normalized,
+      {},
+      workingDirectory,
+      nothing,
+      disclosureOwner,
+      true,
+      fileLinks,
+    );
   // Streaming Markdown relies on terminal newlines to distinguish complete
   // dividers/code from incomplete blocks. Final-message normalization trims
   // those boundaries; keep the original bytes for the existing plain-text path.
   return html`<div class="chat-bubble chat-bubble--assistant">
     ${renderCopyButton(text)}
-    <div class="chat-bubble__text markdown-content"
-      data-message-disclosure-owner=${JSON.stringify([disclosureOwner, 0, 0])}>
-      ${unsafeHTML(toStreamingMarkdownHtml(text, { allowDetails: true }))}
+    <div
+      class="chat-bubble__text markdown-content"
+      data-message-disclosure-owner=${JSON.stringify([disclosureOwner, 0, 0])}
+    >
+      ${unsafeHTML(toStreamingMarkdownHtml(text, { allowDetails: true, fileLinks }))}
     </div>
   </div>`;
 }

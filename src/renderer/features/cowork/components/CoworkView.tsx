@@ -44,6 +44,7 @@ import type { SwarmWorkflowOptions } from '@shared/cowork/swarm-workflow';
 import { ExternalSessionSource } from '@shared/integrations/externalSession';
 import { type ProgressCard, type ProgressCardViewState } from '@shared/openclaw/progressCard';
 import { OpenClawExtensionId, OpenClawToolName } from '@shared/plugins/nativeIds';
+import { HOME_WORKSPACE_SESSION_ID } from '@shared/preview/filePreview';
 import {
   forwardRef,
   useCallback,
@@ -137,9 +138,11 @@ import {
   isFilePreviewWithinPath,
 } from '@/features/cowork/components/preview/filePreviewNavigation';
 import { IMAGE_PREVIEW_EVENT } from '@/features/cowork/components/preview/imageFilePreview';
+import { MessageFileLinkContext } from '@/features/cowork/components/preview/messageFileLinks';
 import { openSummaryResource } from '@/features/cowork/components/preview/openSummaryResource';
 import UnsupportedFilePreview from '@/features/cowork/components/preview/UnsupportedFilePreview';
 import { useFilePreviewEvents } from '@/features/cowork/components/preview/useFilePreviewEvents';
+import { useMessageFileLinkNavigation } from '@/features/cowork/components/preview/useMessageFileLinkNavigation';
 import WorkspaceFilesPanel from '@/features/cowork/components/preview/WorkspaceFilesPanel';
 import ExportSessionModal from '@/features/cowork/components/sessions/ExportSessionModal';
 import { getCompactFolderName, getLastPathSegment } from '@/features/cowork/components/shared/path';
@@ -1714,6 +1717,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   }, [setIsDisplayPanelOpen, isWorkspaceDetached]);
 
   const closeDisplayPanel = useCallback(() => {
+    filePreviewRequestIdRef.current += 1;
     setIsDisplayPanelOpen(false);
     setIsWorkspaceFilesOpen(false);
     requestAnimationFrame(() => displayPanelToggleRef.current?.focus());
@@ -1826,7 +1830,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     [],
   );
 
-  useFilePreviewEvents({
+  const { openFilePreview } = useFilePreviewEvents({
     currentSessionIdRef,
     fileDisplayTabId,
     filePreviewRequestIdRef,
@@ -1932,7 +1936,8 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     : homeWorkspaceFolderPath;
   const terminalWorkingDirectory = currentSessionFolderPath || homeWorkspaceFolderPath;
 
-  const { handleCreateBrowserTab } = useCoworkBrowserPanels({
+  const { handleCreateBrowserTab, openLocalHtml } = useCoworkBrowserPanels({
+    filePreviewRequestIdRef,
     pendingBrowserTabsRef,
     displaySessionKey,
     currentSessionId,
@@ -1955,6 +1960,20 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     handleBrowserTargetChange,
     openBrowserTab,
   });
+
+  const openMessageFileLink = useMessageFileLinkNavigation({
+    workspaceSessionId:
+      currentSessionId ?? (workspaceFilesRootPath ? HOME_WORKSPACE_SESSION_ID : undefined),
+    projectRoot: workspaceFilesRootPath,
+    filePreviewRequestIdRef,
+    openFilePreview,
+    openLocalHtml,
+  });
+  const withMessageFileLinks = (content: React.ReactNode) => (
+    <MessageFileLinkContext.Provider value={openMessageFileLink}>
+      {content}
+    </MessageFileLinkContext.Provider>
+  );
 
   const handleOpenSummaryResourceList = (kind: SummaryResourceListKind) => {
     if (!currentSessionId) return;
@@ -3268,7 +3287,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       })),
     ];
 
-    return (
+    return withMessageFileLinks(
       <div className="relative flex-1 flex flex-col h-full">
         <div className="cowork-display-host relative flex min-h-0 flex-1">
           <div ref={bindChatContentWidth} className="relative flex min-w-0 flex-1 flex-col">
@@ -4065,7 +4084,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
             </Modal>
           )}
         </div>
-      </div>
+      </div>,
     );
   }
 
@@ -4132,55 +4151,57 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   ];
 
   // Home view - no current session
-  return renderCoworkHomeWorkspace({
-    chatController:
-      chatWrapperRef.current &&
-      (mcpAppTabs.hasRetainedPanels ||
-        mcpAppReferences.hasRetainedPanels ||
-        widgetReferences.hasRetainedPanels ||
-        webpageReferences.hasRetainedPanels) ? (
-        <JustDoChatWrapper key="chat-controller" ref={chatWrapperRef} className="hidden" />
-      ) : undefined,
-    mcpAppMenu: homeApps.menu,
-    maximumBrowserTabs,
-    homeConversationHeader,
-    greetingKey,
-    promptInputRef,
-    handleStartSession,
-    handleStopSession,
-    isStreaming,
-    isEngineReady,
-    config,
-    isDisplayPanelOpen,
-    isWorkspaceDetached,
-    hasBrowserPanelOpened,
-    terminalTabs,
-    filePreviews,
-    unsupportedFilePreviews,
-    recordingReviewTabs,
-    mcpAppTabs,
-    hasRetainedRuntimePanels,
-    activeDisplayTabId,
-    closeDisplayPanel,
-    browserPanelWidth,
-    setSessionField,
-    displaySessionKey,
-    homeDisplayTabs: sortDisplayTabs(homeDisplayTabs),
-    isWorkspaceFilesOpen,
-    browserTabs,
-    handleCreateBrowserTab,
-    handleCreateTerminalTab,
-    homeWorkspaceFolderPath,
-    handleOpenWorkspaceFiles,
-    terminalWorkingDirectory,
-    activeFilePreview,
-    activeUnsupportedFilePath,
-    retainedRuntimePanels,
-    filePreviewDrawerRefs,
-    closeFilePreview,
-    closeUnsupportedFilePreview,
-    prepareWorkspaceFileMutation,
-  });
+  return withMessageFileLinks(
+    renderCoworkHomeWorkspace({
+      chatController:
+        chatWrapperRef.current &&
+        (mcpAppTabs.hasRetainedPanels ||
+          mcpAppReferences.hasRetainedPanels ||
+          widgetReferences.hasRetainedPanels ||
+          webpageReferences.hasRetainedPanels) ? (
+          <JustDoChatWrapper key="chat-controller" ref={chatWrapperRef} className="hidden" />
+        ) : undefined,
+      mcpAppMenu: homeApps.menu,
+      maximumBrowserTabs,
+      homeConversationHeader,
+      greetingKey,
+      promptInputRef,
+      handleStartSession,
+      handleStopSession,
+      isStreaming,
+      isEngineReady,
+      config,
+      isDisplayPanelOpen,
+      isWorkspaceDetached,
+      hasBrowserPanelOpened,
+      terminalTabs,
+      filePreviews,
+      unsupportedFilePreviews,
+      recordingReviewTabs,
+      mcpAppTabs,
+      hasRetainedRuntimePanels,
+      activeDisplayTabId,
+      closeDisplayPanel,
+      browserPanelWidth,
+      setSessionField,
+      displaySessionKey,
+      homeDisplayTabs: sortDisplayTabs(homeDisplayTabs),
+      isWorkspaceFilesOpen,
+      browserTabs,
+      handleCreateBrowserTab,
+      handleCreateTerminalTab,
+      homeWorkspaceFolderPath,
+      handleOpenWorkspaceFiles,
+      terminalWorkingDirectory,
+      activeFilePreview,
+      activeUnsupportedFilePath,
+      retainedRuntimePanels,
+      filePreviewDrawerRefs,
+      closeFilePreview,
+      closeUnsupportedFilePreview,
+      prepareWorkspaceFileMutation,
+    }),
+  );
 });
 
 CoworkView.displayName = 'CoworkView';

@@ -1606,6 +1606,9 @@ interface IElectronAPI {
         import('../../shared/preview/workspaceFiles').WorkspaceFileMutationOutcome
       >
     >;
+    prepareMessageFileLink: (
+      request: import('../../shared/preview/messageFileLink').PrepareMessageFileLinkRequest,
+    ) => Promise<import('../../shared/preview/messageFileLink').PrepareMessageFileLinkResult>;
     readPreviewFile: (
       filePath: string,
       workingDirectory?: string,

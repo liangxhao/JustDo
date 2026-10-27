@@ -9,6 +9,7 @@ import type { AssistantTurn } from '@/libs/openclaw-chat/model/chat-transcript-s
 import type { GatewayMessage, UserMessageHistoryAction } from '@/libs/openclaw-chat/types';
 
 import type { MessageQuoteHandler } from '../composer/draft/messageQuote';
+import { type OpenMessageFileLink, useMessageFileLinkOpener } from '../preview/messageFileLinks';
 
 interface ChatMessageDisplayProps {
   className?: string;
@@ -23,6 +24,7 @@ interface ChatMessageDisplayProps {
   peerNames?: Readonly<Record<string, string>>;
   peerPerspective?: boolean;
   workingDirectory?: string;
+  onOpenFile?: OpenMessageFileLink;
   searchQuery?: string;
   searchCaseSensitive?: boolean;
   searchNavigationToken?: number;
@@ -60,6 +62,7 @@ const ChatMessageDisplay: React.FC<ChatMessageDisplayProps> = ({
   peerNames = EMPTY_PEER_NAMES,
   peerPerspective = false,
   workingDirectory = '',
+  onOpenFile,
   searchQuery = '',
   searchCaseSensitive = false,
   searchNavigationToken = 0,
@@ -73,6 +76,8 @@ const ChatMessageDisplay: React.FC<ChatMessageDisplayProps> = ({
   onChatElementChange,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
+  const workspaceOpenFile = useMessageFileLinkOpener();
+  const openFile = onOpenFile ?? workspaceOpenFile;
   const chatRef = useRef<JustDoChatElement | null>(null);
   useEffect(() => {
     const container = containerRef.current;
@@ -129,6 +134,7 @@ const ChatMessageDisplay: React.FC<ChatMessageDisplayProps> = ({
     chat.peerNames = peerNames;
     chat.peerPerspective = peerPerspective;
     chat.workingDirectory = workingDirectory;
+    chat.onOpenFile = openFile;
     chat.processSummariesExpanded = processSummariesExpanded;
     chat.runTimings = runTimings;
     chat.onLastUserMessageAction = onLastUserMessageAction;
@@ -146,6 +152,7 @@ const ChatMessageDisplay: React.FC<ChatMessageDisplayProps> = ({
     activeTurn,
     processSummariesExpanded,
     workingDirectory,
+    openFile,
     runTimings,
     onLastUserMessageAction,
     onMessageQuote,

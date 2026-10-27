@@ -1,12 +1,14 @@
 // @vitest-environment jsdom
 import { BrowserLinkTarget } from '@shared/browser/browserLinkOpening';
 import { DEFAULT_BROWSER_TAB_LIMIT } from '@shared/browser/browserTabLimit';
+import { MessageFileLinkSourceKind } from '@shared/preview/messageFileLink';
 import { act, cleanup, renderHook } from '@testing-library/react';
 import { createElement, StrictMode } from 'react';
 import { afterEach, expect, test, vi } from 'vitest';
 
 import { defaultConfig } from '@/app/config';
 import { MessageBrowserEvent } from '@/features/browser/messageBrowserLinks';
+import { useMessageFileLinkNavigation } from '@/features/cowork/components/preview/useMessageFileLinkNavigation';
 import { configService } from '@/services/config';
 
 import { useCoworkBrowserPanels } from './useCoworkBrowserPanels';
@@ -323,6 +325,185 @@ test('drops a summary HTML preview superseded by another resource in the same ch
   expect(options.openBrowserTab).not.toHaveBeenCalled();
 });
 
+test.each(['legacy-event', 'direct'])(
+  'a newer %s HTML action invalidates an earlier file navigation',
+  async entry => {
+    vi.spyOn(configService, 'getConfig').mockReturnValue(defaultConfig);
+    const { options, createLocalHtmlPreview, openTab } = createMessageLinkOptions(true, true);
+    options.filePreviewRequestIdRef = { current: 0 };
+    let finishOld!: (preview: typeof localHtmlPreview) => void;
+    const nextPreview = { ...localHtmlPreview, url: 'http://127.0.0.1:43210/preview/next.html' };
+    createLocalHtmlPreview
+      .mockImplementationOnce(
+        () =>
+          new Promise(resolve => {
+            finishOld = resolve;
+          }),
+      )
+      .mockResolvedValueOnce(nextPreview);
+    const { result } = renderHook(() => useCoworkBrowserPanels(options));
+    let oldOpening!: Promise<void>;
+    act(() => {
+      oldOpening = result.current.openLocalHtml({ filePath: 'old.html' });
+    });
+    expect(options.filePreviewRequestIdRef.current).toBe(1);
+    await act(async () => {
+      if (entry === 'legacy-event') {
+        window.dispatchEvent(
+          new CustomEvent(MessageBrowserEvent.OpenLocalHtml, {
+            detail: { filePath: 'next.html' },
+          }),
+        );
+      } else {
+        await result.current.openLocalHtml({ filePath: 'next.html' });
+      }
+    });
+    expect(options.filePreviewRequestIdRef.current).toBe(2);
+    await act(async () => {
+      finishOld(localHtmlPreview);
+      await oldOpening;
+    });
+    expect(openTab).toHaveBeenCalledExactlyOnceWith(nextPreview.url, expect.any(Object));
+  },
+);
+
+test('an embedded web navigation invalidates an earlier file navigation', async () => {
+  const { options, createLocalHtmlPreview, openTab } = createMessageLinkOptions(true, true);
+  options.filePreviewRequestIdRef = { current: 0 };
+  let finish!: (preview: typeof localHtmlPreview) => void;
+  createLocalHtmlPreview.mockImplementationOnce(
+    () =>
+      new Promise(resolve => {
+        finish = resolve;
+      }),
+  );
+  const { result } = renderHook(() => useCoworkBrowserPanels(options));
+  let opening!: Promise<void>;
+  act(() => {
+    opening = result.current.openLocalHtml({ filePath: 'old.html' });
+  });
+  act(() =>
+    window.dispatchEvent(
+      new CustomEvent(MessageBrowserEvent.OpenWebUrl, {
+        detail: { url: 'https://example.com/current' },
+      }),
+    ),
+  );
+  await act(async () => {
+    finish(localHtmlPreview);
+    await opening;
+  });
+  expect(options.filePreviewRequestIdRef.current).toBe(2);
+  expect(openTab).toHaveBeenCalledExactlyOnceWith(
+    'https://example.com/current',
+    expect.any(Object),
+  );
+});
+
+test.each([undefined, 'https://example.com/current'])(
+  'creating a browser tab with URL %s supersedes pending message file preparation',
+  async url => {
+    const { options, openTab } = createMessageLinkOptions(true, true);
+    const filePreviewRequestIdRef = { current: 0 };
+    options.filePreviewRequestIdRef = filePreviewRequestIdRef;
+    let finish!: (result: { success: true; filePath: string }) => void;
+    const prepareMessageFileLink = vi.fn().mockImplementationOnce(
+      () =>
+        new Promise(resolve => {
+          finish = resolve;
+        }),
+    );
+    Object.assign(window.electron, { shell: { prepareMessageFileLink } });
+    const openFilePreview = vi.fn().mockResolvedValue(undefined);
+    const { result } = renderHook(() => {
+      const panels = useCoworkBrowserPanels(options);
+      const openFile = useMessageFileLinkNavigation({
+        workspaceSessionId: 'session',
+        projectRoot: 'C:/project',
+        filePreviewRequestIdRef,
+        openFilePreview,
+        openLocalHtml: panels.openLocalHtml,
+      });
+      return { ...panels, openFile };
+    });
+    act(() => {
+      result.current.openFile({
+        sourceKind: MessageFileLinkSourceKind.NativePath,
+        target: 'C:/project/report.pdf',
+      });
+      result.current.handleCreateBrowserTab(url);
+    });
+    await act(async () => finish({ success: true, filePath: 'C:/project/report.pdf' }));
+    expect(options.pendingBrowserTabsRef.current.get('session')).toEqual([url ? { url } : {}]);
+    expect(openFilePreview).not.toHaveBeenCalled();
+    expect(openTab).not.toHaveBeenCalled();
+    expect(options.openBrowserTab).not.toHaveBeenCalled();
+  },
+);
+
+test.each(['user', 'automatic'])(
+  '%s browser tab creation treats a pending HTML preview according to navigation ownership',
+  async entry => {
+    const { options, createLocalHtmlPreview, openTab } = createMessageLinkOptions(true, true);
+    options.filePreviewRequestIdRef = { current: 0 };
+    let finish!: (preview: typeof localHtmlPreview) => void;
+    createLocalHtmlPreview.mockImplementationOnce(
+      () =>
+        new Promise(resolve => {
+          finish = resolve;
+        }),
+    );
+    const { result, rerender } = renderHook(useCoworkBrowserPanels, { initialProps: options });
+    let opening!: Promise<void>;
+    act(() => {
+      opening = result.current.openLocalHtml({ filePath: 'old.html' });
+    });
+    if (entry === 'user') {
+      act(() => result.current.handleCreateBrowserTab());
+    } else {
+      rerender({ ...options, isDisplayPanelOpen: true });
+    }
+    openTab.mockClear();
+    await act(async () => {
+      finish(localHtmlPreview);
+      await opening;
+    });
+    if (entry === 'user') {
+      expect(openTab).not.toHaveBeenCalled();
+      expect(options.openBrowserTab).not.toHaveBeenCalled();
+    } else {
+      expect(openTab).toHaveBeenCalledExactlyOnceWith(localHtmlPreview.url, expect.any(Object));
+    }
+  },
+);
+
+test('closing the final display tab prevents a late HTML result from reopening it', async () => {
+  const { options, createLocalHtmlPreview, openTab } = createMessageLinkOptions(true, true);
+  options.filePreviewRequestIdRef = { current: 0 };
+  options.hasDisplayTabs = true;
+  let finish!: (preview: typeof localHtmlPreview) => void;
+  createLocalHtmlPreview.mockImplementationOnce(
+    () =>
+      new Promise(resolve => {
+        finish = resolve;
+      }),
+  );
+  const { result, rerender } = renderHook(useCoworkBrowserPanels, { initialProps: options });
+  let opening!: Promise<void>;
+  act(() => {
+    opening = result.current.openLocalHtml({ filePath: 'old.html' });
+  });
+  rerender({ ...options, hasDisplayTabs: false });
+  await act(async () => {
+    finish(localHtmlPreview);
+    await opening;
+  });
+  expect(options.filePreviewRequestIdRef.current).toBe(2);
+  expect(options.setIsDisplayPanelOpen).toHaveBeenCalledWith(false);
+  expect(openTab).not.toHaveBeenCalled();
+  expect(options.openBrowserTab).not.toHaveBeenCalled();
+});
+
 test('keeps a pending summary HTML preview when another session updates the tab callback', async () => {
   const { options, createLocalHtmlPreview, openTab } = createMessageLinkOptions(true, true);
   let resolve!: (value: typeof localHtmlPreview) => void;
@@ -556,8 +737,53 @@ test.each(['https://example.com', '//example.com', '?value=bad\n', '#bad\u0000',
   },
 );
 
+test('a direct HTML message action opens only in its receiving workspace', async () => {
+  vi.spyOn(configService, 'getConfig').mockReturnValue(defaultConfig);
+  const owner = createOptions();
+  const other = createOptions({ displaySessionKey: 'another-workspace' });
+  const createLocalHtmlPreview = vi.fn().mockResolvedValue({
+    success: true,
+    url: 'file:///C:/project/Quarterly%20%23100%25.html',
+    filePath: 'C:/project/Quarterly #100%.html',
+    rootPath: 'C:/project',
+    previewRootUrl: 'file:///C:/project/',
+  });
+  Object.defineProperty(window, 'electron', {
+    configurable: true,
+    value: {
+      browser: {
+        createLocalHtmlPreview,
+        onAgentEnsureTab: () => vi.fn(),
+        onAgentInteractionState: () => vi.fn(),
+        onAgentFocusTab: () => vi.fn(),
+        onAgentCloseTab: () => vi.fn(),
+      },
+    },
+  });
+  const { result } = renderHook(() => useCoworkBrowserPanels(owner));
+  renderHook(() => useCoworkBrowserPanels(other));
+  await act(async () =>
+    result.current.openLocalHtml({
+      filePath: 'C:/project/Quarterly #100%.html',
+      navigationSuffix: '#chart',
+      isCurrent: () => true,
+    }),
+  );
+  expect(createLocalHtmlPreview).toHaveBeenCalledExactlyOnceWith(
+    'C:/project/Quarterly #100%.html',
+    undefined,
+  );
+  expect(owner.openBrowserTab).toHaveBeenCalledWith(
+    owner.displaySessionKey,
+    expect.objectContaining({ url: 'file:///C:/project/Quarterly%20%23100%25.html#chart' }),
+    DEFAULT_BROWSER_TAB_LIMIT,
+  );
+  expect(other.openBrowserTab).not.toHaveBeenCalled();
+});
+
 test('reopens the sidebar at tab capacity without creating another tab', () => {
   const options = createOptions({
+    filePreviewRequestIdRef: { current: 7 },
     browserTabs: Array.from({ length: DEFAULT_BROWSER_TAB_LIMIT }, (_, index) => ({
       id: String(index),
       targetId: String(index),
@@ -572,6 +798,7 @@ test('reopens the sidebar at tab capacity without creating another tab', () => {
   expect(options.setIsDisplayPanelOpen).toHaveBeenCalledWith(true);
   expect(options.pendingBrowserTabsRef.current.size).toBe(0);
   expect(options.setBrowserTabCreationSequence).not.toHaveBeenCalled();
+  expect(options.filePreviewRequestIdRef?.current).toBe(7);
 });
 
 test('closes the sidebar when its last tab disappears without creating a replacement', () => {

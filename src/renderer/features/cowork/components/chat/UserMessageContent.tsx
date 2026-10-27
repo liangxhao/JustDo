@@ -13,16 +13,22 @@ import {
 import { renderMessageBlock } from '@/libs/openclaw-chat/components/message/message-render';
 import type { GatewayMessage } from '@/libs/openclaw-chat/types';
 
+import { type OpenMessageFileLink, useMessageFileLinkOpener } from '../preview/messageFileLinks';
+
 /** Reuse canonical chat rendering, including native rich cards and their interactions. */
 export function UserMessageContent({
   message,
   workingDirectory,
+  onOpenFile,
   compact = false,
 }: {
   message: GatewayMessage;
   workingDirectory?: string;
+  onOpenFile?: OpenMessageFileLink;
   compact?: boolean;
 }) {
+  const workspaceOpenFile = useMessageFileLinkOpener();
+  const openFile = onOpenFile ?? workspaceOpenFile;
   const hostRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
   const controlsRef = useRef<RichMessageControls | null>(null);
@@ -56,7 +62,11 @@ export function UserMessageContent({
     const controls = new RichMessageControls(root, () => {});
     controlsRef.current = controls;
     const onClick = (event: Event) => {
-      if (handleMessageImageClick(event) || handleMessageLinkClick(event, workingDirectory)) return;
+      if (
+        handleMessageImageClick(event) ||
+        handleMessageLinkClick(event, workingDirectory, openFile)
+      )
+        return;
       handleMessageDiagramToggle(event);
     };
     const onKeyDown = (event: Event) => {
@@ -92,7 +102,7 @@ export function UserMessageContent({
       root.replaceChildren();
       contentRef.current = null;
     };
-  }, [workingDirectory]);
+  }, [workingDirectory, openFile]);
   useLayoutEffect(() => {
     if (!contentRef.current) return;
     render(
@@ -105,7 +115,7 @@ export function UserMessageContent({
           isStreaming: false,
           messages: [{ key: 'user-content', message }],
         },
-        { showAvatar: false, showFooter: false, workingDirectory },
+        { showAvatar: false, showFooter: false, workingDirectory, onOpenFile: openFile },
       ),
       contentRef.current,
     );
@@ -113,6 +123,6 @@ export function UserMessageContent({
     contentRef.current.querySelectorAll<HTMLElement>('.mermaid-block').forEach(block => {
       void renderMessageDiagram(block);
     });
-  }, [message, workingDirectory]);
+  }, [message, workingDirectory, openFile]);
   return <div ref={hostRef} className={compact ? 'compact' : undefined} data-user-message />;
 }

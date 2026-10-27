@@ -3,7 +3,13 @@ import {
   getPreviewableFileExtension,
   isBrowserFilePreview,
 } from '@shared/preview/filePreview';
-import { type Dispatch, type MutableRefObject, type SetStateAction, useEffect } from 'react';
+import {
+  type Dispatch,
+  type MutableRefObject,
+  type SetStateAction,
+  useCallback,
+  useEffect,
+} from 'react';
 
 import { i18nService } from '@/services/i18n';
 
@@ -11,6 +17,14 @@ import type { OpenMcpAppFile } from '../mcpApps/fileApps';
 import type { FilePreview } from './FilePreviewDrawer';
 import { isCurrentFilePreviewRequest } from './filePreviewNavigation';
 import { createImageFilePreview, IMAGE_PREVIEW_EVENT, isImageFilePath } from './imageFilePreview';
+
+export interface OpenFilePreviewOptions {
+  filePath: string;
+  keepWorkspaceFilesOpen?: boolean;
+  workingDirectory?: string;
+  openUnsupportedInSystem?: boolean;
+  isCurrent?: () => boolean;
+}
 
 interface FilePreviewEventsOptions {
   currentSessionIdRef: MutableRefObject<string | null>;
@@ -38,14 +52,9 @@ export function useFilePreviewEvents({
   setPreferredDisplayTabId,
   setUnsupportedFilePreviews,
   openAppFile,
-}: FilePreviewEventsOptions): void {
-  useEffect(() => {
-    const openImage = (
-      src: string,
-      label = '',
-      workingDirectory?: string,
-      keepWorkspaceFilesOpen = true,
-    ) => {
+}: FilePreviewEventsOptions) {
+  const openImage = useCallback(
+    (src: string, label = '', workingDirectory?: string, keepWorkspaceFilesOpen = true) => {
       const preview = createImageFilePreview(src, label, workingDirectory);
       if (!preview) return;
       filePreviewRequestIdRef.current += 1;
@@ -60,21 +69,19 @@ export function useFilePreviewEvents({
       if (!keepWorkspaceFilesOpen) setIsWorkspaceFilesOpen(false);
       setPreferredDisplayTabId(fileDisplayTabId(existing?.filePath ?? preview.filePath));
       setIsDisplayPanelOpen(true);
-    };
-    const handlePreviewImage = (event: Event) => {
-      const detail = (event as CustomEvent<{ src: string; alt?: string }>).detail;
-      if (typeof detail?.src === 'string') openImage(detail.src, detail.alt);
-    };
-    const handlePreviewFile = async (event: Event) => {
-      const detail = (
-        event as CustomEvent<{
-          filePath?: string;
-          keepWorkspaceFilesOpen?: boolean;
-          workingDirectory?: string;
-          openUnsupportedInSystem?: boolean;
-          isCurrent?: () => boolean;
-        }>
-      ).detail;
+    },
+    [
+      fileDisplayTabId,
+      filePreviewRequestIdRef,
+      filePreviewsRef,
+      setFilePreviews,
+      setIsDisplayPanelOpen,
+      setIsWorkspaceFilesOpen,
+      setPreferredDisplayTabId,
+    ],
+  );
+  const openFilePreview = useCallback(
+    async (detail: OpenFilePreviewOptions) => {
       if (!detail?.filePath || detail.isCurrent?.() === false) return;
       if (isImageFilePath(detail.filePath)) {
         openImage(detail.filePath, '', detail.workingDirectory, detail.keepWorkspaceFilesOpen);
@@ -241,6 +248,30 @@ export function useFilePreviewEvents({
               : result.error || i18nService.t('coworkFilePreviewFailed'),
         }),
       );
+    },
+    [
+      currentSessionIdRef,
+      fileDisplayTabId,
+      filePreviewRequestIdRef,
+      filePreviewsRef,
+      unsupportedFilePreviewsRef,
+      setFilePreviews,
+      setIsDisplayPanelOpen,
+      setIsWorkspaceFilesOpen,
+      setPreferredDisplayTabId,
+      setUnsupportedFilePreviews,
+      openAppFile,
+      openImage,
+    ],
+  );
+  useEffect(() => {
+    const handlePreviewImage = (event: Event) => {
+      const detail = (event as CustomEvent<{ src: string; alt?: string }>).detail;
+      if (typeof detail?.src === 'string') openImage(detail.src, detail.alt);
+    };
+    const handlePreviewFile = (event: Event) => {
+      const detail = (event as CustomEvent<OpenFilePreviewOptions>).detail;
+      if (detail) void openFilePreview(detail);
     };
     window.addEventListener('cowork:preview-file', handlePreviewFile);
     window.addEventListener(IMAGE_PREVIEW_EVENT, handlePreviewImage);
@@ -248,17 +279,6 @@ export function useFilePreviewEvents({
       window.removeEventListener('cowork:preview-file', handlePreviewFile);
       window.removeEventListener(IMAGE_PREVIEW_EVENT, handlePreviewImage);
     };
-  }, [
-    currentSessionIdRef,
-    fileDisplayTabId,
-    filePreviewRequestIdRef,
-    filePreviewsRef,
-    unsupportedFilePreviewsRef,
-    setFilePreviews,
-    setIsDisplayPanelOpen,
-    setIsWorkspaceFilesOpen,
-    setPreferredDisplayTabId,
-    setUnsupportedFilePreviews,
-    openAppFile,
-  ]);
+  }, [openFilePreview, openImage]);
+  return { openFilePreview };
 }

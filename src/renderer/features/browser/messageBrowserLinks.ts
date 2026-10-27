@@ -37,10 +37,17 @@ export function openMessageHtmlLink(
   filePath: string,
   workingDirectory?: string,
   navigationSuffix?: string,
+  options?: { isCurrent?: () => boolean; currentSessionOnly?: boolean },
 ): void {
+  if (options?.isCurrent?.() === false) return;
   window.dispatchEvent(
     new CustomEvent(MessageBrowserEvent.OpenLocalHtml, {
-      detail: { filePath, workingDirectory, ...(navigationSuffix ? { navigationSuffix } : {}) },
+      detail: {
+        filePath,
+        workingDirectory,
+        ...(navigationSuffix ? { navigationSuffix } : {}),
+        ...options,
+      },
     }),
   );
 }

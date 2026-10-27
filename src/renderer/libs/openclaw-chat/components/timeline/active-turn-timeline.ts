@@ -11,6 +11,7 @@ import { REVIEW_OPEN_EVENT } from '@shared/cowork/sessionReview';
 import { html, nothing, type TemplateResult } from 'lit';
 import { repeat } from 'lit/directives/repeat.js';
 
+import type { OpenMessageFileLink } from '@/features/cowork/components/preview/messageFileLinks';
 import { i18nService } from '@/services/i18n';
 
 import {
@@ -753,6 +754,7 @@ export function renderTimelineItem(
   speech?: TimelineSpeechOptions,
   assistantAvatar?: TemplateResult,
   renderThinking?: ThinkingContentRenderer,
+  contentOptions?: { workingDirectory?: string; onOpenFile?: OpenMessageFileLink },
 ): TemplateResult {
   if (item.kind === 'mcp-app') {
     return renderAssistantTimelineRow(
@@ -935,6 +937,7 @@ export function renderTimelineItem(
         assistantAvatar,
         speechState: speech?.state,
         onSpeak: speech?.onSpeak,
+        ...contentOptions,
       },
     );
   }

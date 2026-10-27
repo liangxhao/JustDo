@@ -1,27 +1,55 @@
 import { isLocalHtmlFilePath, isWebBrowserLink } from '@shared/browser/browserLinkOpening';
+import { MessageFileLinkSourceKind } from '@shared/preview/messageFileLink';
 
 import { openMessageHtmlLink, openMessageWebLink } from '@/features/browser/messageBrowserLinks';
 import { IMAGE_PREVIEW_EVENT } from '@/features/cowork/components/preview/imageFilePreview';
+import type { OpenMessageFileLink } from '@/features/cowork/components/preview/messageFileLinks';
 import { i18nService } from '@/services/i18n';
 import { isDomHTMLElement } from '@/shared/dom/ownerDocument';
 
 import { showImageContextMenu } from './message-render';
 
-export function handleMessageLinkClick(event: Event, workingDirectory?: string): boolean {
+export function handleMessageLinkClick(
+  event: Event,
+  workingDirectory?: string,
+  onOpenFile?: OpenMessageFileLink,
+): boolean {
   const anchor = event
     .composedPath()
     .find(node => isDomHTMLElement(node) && node.tagName === 'A') as HTMLAnchorElement | undefined;
   if (!anchor) return false;
+  const target = anchor.getAttribute('data-message-file-target');
+  const sourceKind = anchor.getAttribute('data-message-file-kind');
+  if (target && Object.values(MessageFileLinkSourceKind).some(kind => kind === sourceKind)) {
+    event.preventDefault();
+    event.stopPropagation();
+    onOpenFile?.({
+      sourceKind: sourceKind as MessageFileLinkSourceKind,
+      target,
+      navigationSuffix: anchor.getAttribute('data-message-file-suffix') ?? undefined,
+    });
+    return true;
+  }
   const filePath = anchor.getAttribute('data-local-html-path');
   const href = anchor.getAttribute('href');
   if (filePath && isLocalHtmlFilePath(filePath)) {
     event.preventDefault();
     event.stopPropagation();
-    openMessageHtmlLink(
-      filePath,
-      workingDirectory,
-      anchor.getAttribute('data-local-html-suffix') ?? undefined,
-    );
+    const navigationSuffix = anchor.getAttribute('data-local-html-suffix') ?? undefined;
+    if (onOpenFile) {
+      onOpenFile(
+        {
+          sourceKind: filePath.startsWith('file:///')
+            ? MessageFileLinkSourceKind.FileUrl
+            : MessageFileLinkSourceKind.NativePath,
+          target: filePath,
+          navigationSuffix,
+        },
+        { legacyHtml: true },
+      );
+    } else {
+      openMessageHtmlLink(filePath, workingDirectory, navigationSuffix);
+    }
     return true;
   }
   if (!isWebBrowserLink(href)) return false;

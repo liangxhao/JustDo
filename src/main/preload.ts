@@ -253,6 +253,10 @@ import {
   type ImagePreviewOpenRequest,
   type ImagePreviewOpenResult,
 } from '../shared/preview/imagePreview';
+import type {
+  PrepareMessageFileLinkRequest,
+  PrepareMessageFileLinkResult,
+} from '../shared/preview/messageFileLink';
 import {
   type WorkspaceFileClipboardWriteRequest,
   type WorkspaceFileMutationRequest,
@@ -1303,6 +1307,10 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke(WorkspaceFilesIpc.PrepareMutation, request),
     mutateWorkspaceFile: (request: WorkspaceFileMutationRequest) =>
       ipcRenderer.invoke(WorkspaceFilesIpc.Mutate, request),
+    prepareMessageFileLink: (
+      request: PrepareMessageFileLinkRequest,
+    ): Promise<PrepareMessageFileLinkResult> =>
+      ipcRenderer.invoke(FilePreviewIpc.PrepareMessageLink, request),
     readPreviewFile: (filePath: string, workingDirectory?: string) =>
       ipcRenderer.invoke(FilePreviewIpc.Read, filePath, workingDirectory),
     authorizePreviewFileEdit: (

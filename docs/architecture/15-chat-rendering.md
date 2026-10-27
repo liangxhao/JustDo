@@ -1297,6 +1297,21 @@ JSON 树保存原文范围，保留重复键、数字拼写和转义，节点分
 Mermaid 保持 strict 模式，限制源码、行数和边数，禁止外部图片/点击指令/初始化覆盖，
 主题变化后重绘。所有增强只改变阅读 UI，不改变原 Markdown 复制内容。
 
+聊天正文的文件链接由 `markdownPathLinks.ts` 识别、`markdown-file-links.ts` 接入 token。
+只启用显式文件目标与高置信 Windows 裸路径；含空格裸路径和不完整流式尾行不猜测。
+`fileLinks` 以 true/false/undefined 区分有打开能力的聊天、无能力的聊天及非聊天消费者，
+缓存同时区分模式和流式状态。受信 anchor 通过本次渲染的一次性 nonce 进入清洗后的 metadata；
+原始 HTML 不能伪造文件能力，DOMPurify 仍阻止直接 `file:` 导航。
+
+`CoworkView` 通过 React Context 向消息阅读面传递工作区打开回调，Lit 点击入口保持同步
+boolean，内部启动异步准备。Main 的 `FilePreviewIpc.PrepareMessageLink` 通过最小 preload
+只校验普通文件和真实路径，不读取正文、授予编辑或启动 App。相对路径按点击时所属工作区
+的当前工程根解析，Main 对比产品会话绑定与期望根，Worktree 使用当前检出目录。
+Renderer 的 owner、请求代次与共享预览计数贯穿准备、HTML、图片、App 和预览读取；
+关闭侧栏、换会话/工程或后续导航使旧结果失效。新文件打开不通过无 owner 的窗口事件广播。
+URI 单次转换、旧 HTML 适配、支持/排除案例和验证限制见
+[消息文件链接](../features/chat/message-file-links.md)。
+
 共享聊天消息正文显式启用 Markdown 折叠结构：专用解析规则识别块级 `<details>`、
 `<details open>` 与 `<summary>`，内部继续解析普通 Markdown；其它原始 HTML 仍转义。
 代码、转义与原始 HTML 字面区域内的标签不成为折叠结构。缺少标题时由 Renderer 提供

@@ -16,6 +16,7 @@ import { guard } from 'lit/directives/guard.js';
 import { repeat } from 'lit/directives/repeat.js';
 
 import type { MessageQuoteHandler } from '@/features/cowork/components/composer/draft/messageQuote';
+import type { OpenMessageFileLink } from '@/features/cowork/components/preview/messageFileLinks';
 import {
   renderMessageBlock,
   renderMessageBlockWithTrailingStream,
@@ -239,6 +240,9 @@ export class JustDoChatElement extends LitElement {
 
   @property({ type: String, attribute: false })
   declare workingDirectory: string;
+
+  @property({ attribute: false })
+  declare onOpenFile: OpenMessageFileLink | undefined;
 
   @property({ type: String, attribute: false })
   declare searchQuery: string;
@@ -1247,7 +1251,7 @@ export class JustDoChatElement extends LitElement {
 
   private readonly handleMarkdownClick = (event: Event): void => {
     if (handleMessageImageClick(event)) return;
-    if (handleMessageLinkClick(event, this.workingDirectory)) return;
+    if (handleMessageLinkClick(event, this.workingDirectory, this.onOpenFile)) return;
     const element = event.composedPath().find(node => isDomHTMLElement(node)) as
       HTMLElement | undefined;
     const disclosureSummary = element?.closest<HTMLElement>(
@@ -2225,6 +2229,7 @@ export class JustDoChatElement extends LitElement {
         : undefined,
       this.assistantAvatar,
       process => this.thinkingContentPresentation.render(process),
+      { workingDirectory: this.workingDirectory, onOpenFile: this.onOpenFile },
     );
   }
 
@@ -2465,6 +2470,7 @@ export class JustDoChatElement extends LitElement {
           peerNames: this.peerNames,
           peerPerspective: this.peerPerspective,
           workingDirectory: this.workingDirectory,
+          onOpenFile: this.onOpenFile,
           speechState: this.getSpeechState(item.key),
           onSpeak: this.localTtsAvailable ? this.handleSpeak : undefined,
         });
@@ -2481,6 +2487,8 @@ export class JustDoChatElement extends LitElement {
           streamItem.thinkingText ?? (streamItem.isStreaming ? thinkingStream : null);
         return renderStreamingGroup(streamItem.text, streamItem.startedAt, thinkingText, {
           showAvatar,
+          onOpenFile: this.onOpenFile,
+          workingDirectory: this.workingDirectory,
         });
       }
       if (item.kind === 'divider') {
@@ -2527,6 +2535,7 @@ export class JustDoChatElement extends LitElement {
             searchQuery: this.searchQuery,
             showAvatar: shouldRenderGroupAvatarByPrevItem(item as MessageGroup, prev),
             workingDirectory: this.workingDirectory,
+            onOpenFile: this.onOpenFile,
             assistantName: this.assistantName,
             assistantAvatar: this.assistantAvatar,
             peerColors: this.peerColors,
@@ -2559,6 +2568,7 @@ export class JustDoChatElement extends LitElement {
             peerNames: this.peerNames,
             peerPerspective: this.peerPerspective,
             workingDirectory: this.workingDirectory,
+            onOpenFile: this.onOpenFile,
             speechState: this.getSpeechState(item.key),
             onSpeak: this.localTtsAvailable ? this.handleSpeak : undefined,
             userMessageActions,

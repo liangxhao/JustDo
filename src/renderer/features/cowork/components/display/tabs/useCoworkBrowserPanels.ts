@@ -27,6 +27,15 @@ import { i18nService } from '@/services/i18n';
 import { browserDisplayTabId } from './displayTabIds';
 import type { SessionDisplayState, SessionDisplayStateMap } from './useSessionDisplayState';
 
+export interface OpenLocalHtmlOptions {
+  filePath: string;
+  workingDirectory?: string;
+  navigationSuffix?: string;
+  displayTarget?: unknown;
+  currentSessionOnly?: boolean;
+  isCurrent?: () => boolean;
+}
+
 interface CoworkBrowserPanelsOptions {
   pendingBrowserTabsRef: React.MutableRefObject<
     Map<
@@ -42,6 +51,7 @@ interface CoworkBrowserPanelsOptions {
   >;
   displaySessionKey: string;
   currentSessionId: string | null;
+  filePreviewRequestIdRef?: React.MutableRefObject<number>;
   browserTabs: BrowserPanelTab[];
   isDisplayPanelOpen: boolean;
   hasDisplayTabs: boolean;
@@ -74,6 +84,7 @@ export function useCoworkBrowserPanels({
   pendingBrowserTabsRef,
   displaySessionKey,
   currentSessionId,
+  filePreviewRequestIdRef,
   browserTabs,
   isDisplayPanelOpen,
   hasDisplayTabs,
@@ -105,8 +116,8 @@ export function useCoworkBrowserPanels({
       if (messageNavigationScopeRef.current === scope) messageNavigationScopeRef.current = null;
     };
   }, [displaySessionKey]);
-  const handleCreateBrowserTab = useCallback(
-    (url?: string) => {
+  const createBrowserTab = useCallback(
+    (url?: string, invalidatePendingNavigation = false) => {
       setIsDisplayPanelOpen(true);
       const pendingTabs = pendingBrowserTabsRef.current.get(displaySessionKey) ?? [];
       if (
@@ -114,6 +125,9 @@ export function useCoworkBrowserPanels({
         browserTabs.length + pendingTabs.length >= getBrowserTabLimit()
       )
         return;
+      if (invalidatePendingNavigation && filePreviewRequestIdRef) {
+        filePreviewRequestIdRef.current += 1;
+      }
       pendingTabs.push(url ? { url } : {});
       pendingBrowserTabsRef.current.set(displaySessionKey, pendingTabs);
       setIsWorkspaceFilesOpen(false);
@@ -125,6 +139,7 @@ export function useCoworkBrowserPanels({
       browserTabs.length,
       currentSessionId,
       displaySessionKey,
+      filePreviewRequestIdRef,
       pendingBrowserTabsRef,
       setBrowserTabCreationSequence,
       setHasBrowserPanelOpened,
@@ -132,6 +147,10 @@ export function useCoworkBrowserPanels({
       setIsDisplayPanelOpen,
       setIsWorkspaceFilesOpen,
     ],
+  );
+  const handleCreateBrowserTab = useCallback(
+    (url?: string) => createBrowserTab(url, true),
+    [createBrowserTab],
   );
 
   useEffect(() => {
@@ -143,6 +162,7 @@ export function useCoworkBrowserPanels({
       !hasDisplayTabs
     ) {
       initializingTabSessionRef.current = null;
+      if (filePreviewRequestIdRef) filePreviewRequestIdRef.current += 1;
       setIsDisplayPanelOpen(false);
       return;
     }
@@ -161,7 +181,8 @@ export function useCoworkBrowserPanels({
       handleBrowserTargetChange(browserTabs[0].targetId);
       return;
     }
-    handleCreateBrowserTab();
+    // Seeding an empty panel is not a new user navigation.
+    createBrowserTab();
     // Keep the creation in flight after the queue drains, until its tab is published.
     // StrictMode may replay this effect before the parent observes the browser tab.
     if ((pendingBrowserTabsRef.current.get(displaySessionKey)?.length ?? 0) > 0) {
@@ -169,9 +190,10 @@ export function useCoworkBrowserPanels({
     }
   }, [
     browserTabs,
+    createBrowserTab,
     displaySessionKey,
+    filePreviewRequestIdRef,
     handleBrowserTargetChange,
-    handleCreateBrowserTab,
     hasDisplayTabs,
     isDisplayPanelOpen,
     pendingBrowserTabsRef,
@@ -355,9 +377,8 @@ export function useCoworkBrowserPanels({
     setSessionField,
   ]);
 
-  useEffect(() => {
-    const navigationScope = messageNavigationScopeRef.current;
-    const openMessageBrowserTab = (tab: BrowserPanelTab) => {
+  const openMessageBrowserTab = useCallback(
+    (tab: BrowserPanelTab) => {
       // A mounted panel owns its live tabs; changing initialTabs only seeds an
       // empty panel. Use the same identity in both the guest and parent state.
       const created = browserPanelRefs.current.get(displaySessionKey)?.openTab(tab.url, {
@@ -369,23 +390,12 @@ export function useCoworkBrowserPanels({
       });
       if (created === false) return;
       openBrowserTabRef.current(displaySessionKey, tab, getBrowserTabLimit());
-    };
-    const handleOpenWebUrl = (event: Event) => {
-      const detail = (event as CustomEvent<{ url?: unknown }>).detail;
-      if (!isWebBrowserLink(detail?.url)) return;
-      openMessageBrowserTab(createBrowserPanelTab(detail.url));
-    };
-    const handleOpenLocalHtml = async (event: Event) => {
-      const detail = (
-        event as CustomEvent<{
-          filePath?: string;
-          workingDirectory?: string;
-          navigationSuffix?: unknown;
-          displayTarget?: unknown;
-          currentSessionOnly?: boolean;
-          isCurrent?: () => boolean;
-        }>
-      ).detail;
+    },
+    [browserPanelRefs, displaySessionKey],
+  );
+  const openLocalHtml = useCallback(
+    async (detail: OpenLocalHtmlOptions) => {
+      const navigationScope = messageNavigationScopeRef.current;
       if (!detail?.filePath || detail.isCurrent?.() === false) return;
       const navigationSuffix = detail.navigationSuffix;
       if (
@@ -396,6 +406,11 @@ export function useCoworkBrowserPanels({
       ) {
         return;
       }
+      const requestId = filePreviewRequestIdRef ? ++filePreviewRequestIdRef.current : undefined;
+      const requestIsCurrent = () =>
+        (!detail.currentSessionOnly || messageNavigationScopeRef.current === navigationScope) &&
+        detail.isCurrent?.() !== false &&
+        (requestId === undefined || filePreviewRequestIdRef?.current === requestId);
       const target = normalizeBrowserLinkTarget(
         detail.displayTarget ?? configService.getConfig().browserHtmlLinkTarget,
         BrowserLinkTarget.Embedded,
@@ -405,11 +420,7 @@ export function useCoworkBrowserPanels({
           detail.filePath,
           detail.workingDirectory,
         );
-        if (
-          (detail.currentSessionOnly && messageNavigationScopeRef.current !== navigationScope) ||
-          detail.isCurrent?.() === false
-        )
-          return;
+        if (!requestIsCurrent()) return;
         if (!result.success) {
           window.dispatchEvent(
             new CustomEvent('app:showToast', {
@@ -438,7 +449,7 @@ export function useCoworkBrowserPanels({
         }
         if (target === BrowserLinkTarget.Chrome) {
           const opened = await window.electron.browser.openInChrome(url);
-          if (!opened.success) {
+          if (!opened.success && requestIsCurrent()) {
             window.dispatchEvent(
               new CustomEvent('app:showToast', { detail: i18nService.t('browserLinkOpenFailed') }),
             );
@@ -453,15 +464,24 @@ export function useCoworkBrowserPanels({
         });
         openMessageBrowserTab(tab);
       } catch {
-        if (
-          (detail.currentSessionOnly && messageNavigationScopeRef.current !== navigationScope) ||
-          detail.isCurrent?.() === false
-        )
-          return;
+        if (!requestIsCurrent()) return;
         window.dispatchEvent(
           new CustomEvent('app:showToast', { detail: i18nService.t('coworkFilePreviewFailed') }),
         );
       }
+    },
+    [filePreviewRequestIdRef, openMessageBrowserTab],
+  );
+  useEffect(() => {
+    const handleOpenWebUrl = (event: Event) => {
+      const detail = (event as CustomEvent<{ url?: unknown }>).detail;
+      if (!isWebBrowserLink(detail?.url)) return;
+      if (filePreviewRequestIdRef) filePreviewRequestIdRef.current += 1;
+      openMessageBrowserTab(createBrowserPanelTab(detail.url));
+    };
+    const handleOpenLocalHtml = (event: Event) => {
+      const detail = (event as CustomEvent<OpenLocalHtmlOptions>).detail;
+      if (detail) void openLocalHtml(detail);
     };
     window.addEventListener(MessageBrowserEvent.OpenWebUrl, handleOpenWebUrl);
     window.addEventListener(MessageBrowserEvent.OpenLocalHtml, handleOpenLocalHtml);
@@ -469,6 +489,6 @@ export function useCoworkBrowserPanels({
       window.removeEventListener(MessageBrowserEvent.OpenWebUrl, handleOpenWebUrl);
       window.removeEventListener(MessageBrowserEvent.OpenLocalHtml, handleOpenLocalHtml);
     };
-  }, [browserPanelRefs, displaySessionKey]);
-  return { handleCreateBrowserTab };
+  }, [filePreviewRequestIdRef, openLocalHtml, openMessageBrowserTab]);
+  return { handleCreateBrowserTab, openLocalHtml };
 }

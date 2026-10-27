@@ -8,6 +8,7 @@
 
 [MCP Apps](chat/mcp-apps.md) 维护标准应用界面、手动入口、原生提问、文件和上下文交互的桌面宿主契约。
 [消息中的独立网页](chat/webpage-embeds.md) 维护 embed 短码、普通联网 HTML、精确托管认证与浏览器代理契约。
+[消息文件链接](chat/message-file-links.md) 维护保守路径识别、Markdown 文件输出约定、点击时当前工程解析及侧栏预览。
 [MCP App 引用接入](plugins/mcp-app-references.md) 维护通用侧栏引用、可选内容关联及历史回执的插件边界。
 [draw.io 离线绘图](chat/drawio-offline.md) 维护默认内置的编辑器、资源打包和本地导出流程。
 [draw.io 当前画布](chat/drawio-current-canvas.md) 维护稳定图表身份、侧栏复用、连续修改、撤销和确认结果恢复。

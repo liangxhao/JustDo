@@ -32,6 +32,7 @@ import {
 } from '../../browser/preview/localHtmlPreviewServer';
 import { t } from '../../core/i18n';
 import { getWorkspaceDialogOwner } from '../../core/window/workspaceWindowManager';
+import { prepareMessageFileLink } from './messageFileLink';
 import { WorkspaceFileOperations } from './workspaceFiles';
 
 const AttachmentMenuAction = {
@@ -637,6 +638,16 @@ interface RegisterShellHandlersOptions {
 
 export const registerShellHandlers = (options: RegisterShellHandlersOptions = {}): void => {
   const workspaceFiles = new WorkspaceFileOperations(options.resolveWorkspaceRoot ?? (() => null));
+  ipcMain.handle(FilePreviewIpc.PrepareMessageLink, (event, request: unknown) => {
+    const frame = event.senderFrame;
+    return prepareMessageFileLink(request, {
+      resolveWorkspaceRoot: options.resolveWorkspaceRoot,
+      isCurrent: () =>
+        !event.sender.isDestroyed() &&
+        event.sender.getType() === 'window' &&
+        frame === event.sender.mainFrame,
+    });
+  });
   const fileClipboardCaller = (event: IpcMainInvokeEvent) => {
     const frame = event.senderFrame;
     return () =>

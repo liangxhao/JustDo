@@ -1,6 +1,9 @@
 export const filePreviewTranslations = {
   zh: {
     coworkFilePreviewFailed: '无法预览此文件',
+    messageFileLinkNoProject: '请先选择工程，再打开相对文件链接',
+    messageFileLinkProjectChanged: '工程目录已变化，请重新点击文件链接',
+    messageFileLinkInvalidTarget: '此文件地址格式无效或不受支持',
     coworkFilePreviewAudio: '音频预览',
     coworkFilePreviewVideo: '视频预览',
     coworkFilePreviewMediaFailed:
@@ -77,6 +80,9 @@ export const filePreviewTranslations = {
   },
   en: {
     coworkFilePreviewFailed: 'Unable to preview this file',
+    messageFileLinkNoProject: 'Select a project before opening a relative file link',
+    messageFileLinkProjectChanged: 'The project folder changed. Click the file link again',
+    messageFileLinkInvalidTarget: 'This file address is invalid or unsupported',
     coworkFilePreviewAudio: 'Audio preview',
     coworkFilePreviewVideo: 'Video preview',
     coworkFilePreviewMediaFailed:

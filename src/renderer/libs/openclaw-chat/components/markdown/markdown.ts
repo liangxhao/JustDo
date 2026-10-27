@@ -39,6 +39,11 @@ import { matchAutoLinkPathPrefix } from '@/libs/openclaw-chat/components/markdow
 import { i18nService } from '@/services/i18n';
 
 import { constrainDetailsStreamingBoundary, installMarkdownDetails } from './markdown-details';
+import {
+  installMessageFileLinks,
+  type MessageFileLinkRegistry,
+  sanitizeMessageFileLinkNode,
+} from './markdown-file-links';
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
@@ -120,6 +125,7 @@ const allowedAttrs = [
   'data-code',
   'data-local-html-path',
   'data-local-html-suffix',
+  'data-message-file-token',
   'hidden',
   'type',
   'style',
@@ -417,6 +423,7 @@ function findQuotedStrongClosingMarker(
 // ── DOMPurify hooks ─────────────────────────────────────────────────────────
 
 let hooksInstalled = false;
+let activeMessageFileLinkRegistry: MessageFileLinkRegistry | undefined;
 
 function installHooks(): void {
   if (hooksInstalled) return;
@@ -449,6 +456,7 @@ function installHooks(): void {
   });
 
   DOMPurify.addHook('afterSanitizeAttributes', node => {
+    sanitizeMessageFileLinkNode(node, activeMessageFileLinkRegistry);
     if (node.nodeName.toLowerCase() === 'progress') {
       node.setAttribute('aria-label', i18nService.t('coworkProgressCardProgress'));
       return;
@@ -740,6 +748,8 @@ md.core.ruler.after('text_join', 'local_html_link', state => {
     block.children = children;
   }
 });
+
+installMessageFileLinks(md);
 
 // CommonMark does not treat the trailing ** as a closing delimiter when the
 // emphasized text ends in punctuation and is immediately followed by CJK text.
@@ -1044,6 +1054,10 @@ export interface MarkdownRenderOptions {
   styleHtmlComments?: boolean;
   /** Admit only the dedicated details/summary grammar in chat message bodies. */
   allowDetails?: boolean;
+  /** Enable controlled file references only for a chat surface with an open callback. */
+  fileLinks?: boolean;
+  /** The current end of the display stream is not a complete bare-path boundary. */
+  streaming?: boolean;
 }
 
 export function toSanitizedMarkdownHtml(text: string, options: MarkdownRenderOptions = {}): string {
@@ -1080,7 +1094,10 @@ function renderSanitizedMarkdownHtml(
   const activeSanitizeOptions = options.allowProgressElement
     ? progressCardSanitizeOptions
     : sanitizeOptions;
-  const cacheKey = `${parseLimit}:${frontmatterMode}:${sanitizeMode}:${htmlCommentMode}:${detailsMode}:${i18nService.getLanguage()}:${normalizedInput}`;
+  const fileLinkMode = options.fileLinks
+    ? options.streaming ? 'files-streaming' : 'files'
+    : options.fileLinks === false ? 'files-disabled' : 'no-files';
+  const cacheKey = `${parseLimit}:${frontmatterMode}:${sanitizeMode}:${htmlCommentMode}:${detailsMode}:${fileLinkMode}:${i18nService.getLanguage()}:${normalizedInput}`;
   if (input.length <= MARKDOWN_CACHE_MAX_CHARS) {
     const cached = getCachedMarkdown(cacheKey);
     if (cached !== null) return cached;
@@ -1099,6 +1116,9 @@ function renderSanitizedMarkdownHtml(
     ? input.replace(PROGRESS_CARD_RAW_CONTENT_BLOCK_RE, '')
     : input;
   let rendered: string;
+  const messageFileLinkRegistry: MessageFileLinkRegistry | undefined = options.fileLinks
+    ? new Map()
+    : undefined;
   try {
     rendered = md.render(renderInput, {
       allowProgressElement: options.allowProgressElement === true,
@@ -1106,6 +1126,10 @@ function renderSanitizedMarkdownHtml(
       allowDetails,
       streamingDetails: allowDetails && streamingDetails,
       streamingSource: allowDetails && streamingDetails ? renderInput : undefined,
+      fileLinks: options.fileLinks === true,
+      messageFileLinksMode: options.fileLinks !== undefined,
+      fileLinksStreaming: options.streaming === true,
+      messageFileLinkRegistry,
     });
   } catch {
     rendered = `<pre class="code-block">${escapeHtml(renderInput)}</pre>`;
@@ -1115,7 +1139,14 @@ function renderSanitizedMarkdownHtml(
     rendered = `<pre class="markdown-frontmatter">${escapeHtml(frontmatterResult.frontmatter)}</pre>${rendered}`;
   }
 
-  const sanitized = DOMPurify.sanitize(rendered, activeSanitizeOptions) as unknown as string;
+  const previousRegistry = activeMessageFileLinkRegistry;
+  let sanitized: string;
+  activeMessageFileLinkRegistry = messageFileLinkRegistry;
+  try {
+    sanitized = DOMPurify.sanitize(rendered, activeSanitizeOptions) as unknown as string;
+  } finally {
+    activeMessageFileLinkRegistry = previousRegistry;
+  }
   if (input.length <= MARKDOWN_CACHE_MAX_CHARS) setCachedMarkdown(cacheKey, sanitized);
   return sanitized;
 }
@@ -1124,21 +1155,22 @@ export function toStreamingMarkdownHtml(text: string, options: MarkdownRenderOpt
   if (!text) return '';
   const input = text.replace(/\r\n?/g, '\n');
   if (!input.trim()) return '';
+  const streamingOptions = { ...options, streaming: true };
 
   if (
     options.allowDetails &&
     !options.allowProgressElement &&
     input.length > Math.max(options.parseLimit ?? MARKDOWN_PARSE_LIMIT, 1)
   )
-    return toSanitizedMarkdownHtml(input, options);
+    return toSanitizedMarkdownHtml(input, streamingOptions);
 
   const { boundary, detailsTail } = splitDetailsStreamingMarkdown(input, options);
   const stableMarkdown = input.slice(0, boundary);
   const streamingTail = input.slice(boundary);
-  const stableHtml = toSanitizedMarkdownHtml(stableMarkdown, options);
+  const stableHtml = toSanitizedMarkdownHtml(stableMarkdown, streamingOptions);
   if (!streamingTail.trim()) return stableHtml;
   if (detailsTail) {
-    return `${stableHtml}${renderSanitizedMarkdownHtml(streamingTail, options, true)}`;
+    return `${stableHtml}${renderSanitizedMarkdownHtml(streamingTail, streamingOptions, true)}`;
   }
   // Markdown-it can render an open fence without inventing a closing marker.
   // Wait for the complete info line so a partially streamed language name
@@ -1152,7 +1184,7 @@ export function toStreamingMarkdownHtml(text: string, options: MarkdownRenderOpt
   const isMermaid = info.split(/\s+/)[0]?.toLowerCase() === 'mermaid';
   const hasInvalidBacktickInfo = openingFence?.[1][0] === '`' && info.includes('`');
   if (openingFence && !isMermaid && !hasInvalidBacktickInfo) {
-    return `${stableHtml}${toSanitizedMarkdownHtml(streamingTail, options)}`;
+    return `${stableHtml}${toSanitizedMarkdownHtml(streamingTail, streamingOptions)}`;
   }
   return `${stableHtml}${toEscapedPlainTextHtml(streamingTail)}`;
 }
