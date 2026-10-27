@@ -714,7 +714,7 @@ manifest 同为 `01103cc0…6ace4`。Main、Store 和新增目录测试不属于
 为 `d132af835`；原提交保留本地 backup ref。独立 range-diff 确认六个提交完整保留，
 14 个重叠文件同时保留两边改动，没有使用一侧文件整体覆盖。
 
-两处内容冲突分别合并为：归档校验提取同时保留完整 `node-runtime/` 与 Widget Kit
+两处内容冲突分别合并为：归档校验提取同时保留完整 `node-runtime/` 与 Smart Canvas
 资源；Widget 原生探针同时输出严格运行时身份与实际注册的两种内容类型。另补齐两项
 验证代码：Windows 准备顺序的测试期望纳入 dev 新增的 widget 步骤，浏览器验证器的两处
 原生模块名更新到 10.6；不增加旧版 fallback、生产功能分支或原生补丁。

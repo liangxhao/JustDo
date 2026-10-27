@@ -2,7 +2,7 @@ import { realpathSync } from 'node:fs';
 import { isIP } from 'node:net';
 import path from 'node:path';
 
-import { HTML_PAGE_RESOURCE } from '../../../../plugins/extensions/widget-kit/document/contracts';
+import { HTML_PAGE_RESOURCE } from '../../../../plugins/extensions/smart-canvas/document/contracts';
 import type { WidgetNetworkBinding, WidgetNetworkCreate } from '../../../shared/widgets/network';
 import { widgetViewerMount } from '../../../shared/widgets/viewer';
 

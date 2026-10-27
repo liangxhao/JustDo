@@ -33,7 +33,7 @@ export type WidgetNetworkCreate = {
   binding: WidgetNetworkBinding;
   gatewayOrigin: string;
   sandboxUrl: string;
-  /** Exact plugin script URL below the current native widget-html surface. */
+  /** Exact plugin script URL below the current native smart-canvas-html surface. */
   resourceUrls: string[];
 };
 export type WidgetNetworkInstance = { instanceId: string; partition: string; mountId: string };

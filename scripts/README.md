@@ -63,11 +63,11 @@ documentation from `resources/openclaw/docs/` and assembles them at the native
 runtime's `docs/` paths. These are runtime assets; repository design and feature
 documentation live in the root `docs/` directory.
 
-Widget Kit generates its HTML image adapter directly from plugin source; no
+Smart Canvas generates its HTML image adapter directly from plugin source; no
 visualization-library preparation or generated asset directory is required.
 Scripts and modules used by widgets load through the native CDN policy and browser
 system proxy. The optional browser contract probe and its local Three.js fixture
-reader live under `plugins/extensions/widget-kit/tests/`, excluded from product
+reader live under `plugins/extensions/smart-canvas/tests/`, excluded from product
 archives and the runtime build fingerprint; see [offline downloads](../docs/offline-downloads.md).
 
 `openclaw/prune-openclaw-runtime.cjs` reads `plugins/extensions/prune-policy.json`
@@ -153,7 +153,7 @@ files or restoring them; a standalone copy of a live database without its matchi
 WAL can omit committed data. These files are local diagnostic artifacts and must
 not be committed.
 
-`test/widget-kit/verify-gateway.mjs <runtime-dir>` verifies the locked native
+`test/smart-canvas/verify-gateway.mjs <runtime-dir>` verifies the locked native
 Gateway with an isolated local synthetic provider. It checks real widget tools,
 authenticated document views, history/restart, prompt bridges and explicit plugin
 disable, then cleans up temporary services and credentials. No user state is used.
@@ -161,7 +161,7 @@ disable, then cleans up temporary services and credentials. No user state is use
 The default path exercises the single `interactive-answer` registration with all
 five component kinds and multiselect form fields. It checks the public renderer,
 authenticated views, history/restart and disable without rewriting documents.
-`test/widget-kit/verify-runtime.mjs <runtime-dir>` checks the native registrar,
+`test/smart-canvas/verify-runtime.mjs <runtime-dir>` checks the native registrar,
 including duplicate-kind and duplicate-resource rejection.
 
 Add `--interaction-contract` to verify rejected hidden-send fields, same-name

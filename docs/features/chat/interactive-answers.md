@@ -1,25 +1,25 @@
 # 交互式回答
 
 聊天可通过 OpenClaw 原生 `show_widget` 展示交互卡片。模型可使用原生 HTML；需要统一
-表格、比较、图表、表单和分步解释时，可使用默认开启的 Widget Kit 扩展。该功能借鉴
+表格、比较、图表、表单和分步解释时，可使用默认开启的 Smart Canvas 扩展。该功能借鉴
 Intelligent UI 的呈现方式，使用本地 OpenClaw 合约，不接入 ChatGPT 私有界面服务。
 真实模型效果与安装包的平台验收仍见 [现行说明与验证边界](#当前验证边界)。
 
 ## 入口与使用
 
-**Widget Kit** 默认开启，可在扩展设置中启用或禁用。配置同步保留用户明确的
+**Smart Canvas** 默认开启，可在扩展设置中启用或禁用。配置同步保留用户明确的
 开关；关闭不删除原生历史文档，也不自动重建其中的组件。模型只在实际工具 schema
 公布对应类型时使用它，不靠提示词猜测工具是否可用。
 
 | 标识                      | 用途                                                |
 | ------------------------- | --------------------------------------------------- |
-| 插件 `widget-kit`         | 注册组件类型、只读资源与按需技能                    |
+| 插件 `smart-canvas`         | 注册组件类型、只读资源与按需技能                    |
 | 技能 `visualize`          | 将当前界面可视化请求交付为真实 Widget 或独立网页    |
 | 卡片 `interactive-answer` | 一个文档组合 table / compare / chart / form / steps |
 | 卡片 `html-page`       | 完整 HTML 接入及 HTTPS 图片自动适配     |
 
 插件 ID 与卡片类型是独立注册项，原生记录为 `pluginId:kind`，允许两者同名；
-重复的卡片类型或公共资源路径会被拒绝。组件公共资源为 `/__widget_kit__/ui.js`。
+重复的卡片类型或公共资源路径会被拒绝。组件公共资源为 `/__smart_canvas__/ui.js`。
 原生历史文档不可变，类型和资源命名调整后应重新生成卡片，不自动改写旧历史。
 
 插件只提供一个按需技能 `visualize`，负责在当前会话展示内容、选择宿主承载方式并完成
@@ -28,7 +28,7 @@ Intelligent UI 的呈现方式，使用本地 OpenClaw 合约，不接入 ChatGP
 `frontend-design` 不增加展示分流规则。已有可用 viewer 时，不将本地 HTML、源码或
 文件链接视为“已在界面显示”。明确的文件交付与真实
 应用开发请求保留其目标，不能由聊天预览替代。技能中的调用与短码示例见
-[交付示例](../../../plugins/extensions/widget-kit/skills/visualize/references/delivery-examples.md)。
+[交付示例](../../../plugins/extensions/smart-canvas/skills/visualize/references/delivery-examples.md)。
 
 自包含图表、模拟和计算器使用原生 `show_widget`；一次取数后可以展示有来源和时点的
 快照；已有完整 HTML 可交给实际公告的 `html-page`，HTTPS 图片/数据下载继续遵循原生
@@ -57,7 +57,7 @@ HTML 按需参考说明宿主主题变量、容器尺寸、资源策略与受限
 Three.js 等可视化库不再内置；脚本 / 模块 / 样式 / 字体由作者通过原生 CDN 资源规则
 按需加载，复用浏览器系统代理。任务需要公网素材 / 数据时走下述原生联网路径。
 这不是对原生全部 HTML 的网络策略改写。完整 schema 和实际工具 payload 在
-[插件说明](../../../plugins/extensions/widget-kit/README.md)及技能参考中维护。
+[插件说明](../../../plugins/extensions/smart-canvas/README.md)及技能参考中维护。
 
 ### HTML 页面与图片适配
 
@@ -66,7 +66,7 @@ Three.js 等可视化库不再内置；脚本 / 模块 / 样式 / 字体由作�
 保留作者样式、脚本和 importmap 的原文与先后顺序，不修改用户文件。原生来源大小预算
 保持不变；只有实际工具 schema 公告该类型时才能使用。
 
-插件仅保留自己的 `/__widget_kit__/image-loading.js`，作为作者代码之前的阻塞 classic
+插件仅保留自己的 `/__smart_canvas__/image-loading.js`，作为作者代码之前的阻塞 classic
 脚本加载。HTTPS `image.src`、`setAttribute('src', ...)` 及源中的静态 `<img src>`
 自动经 fetch → FileReader → data URL，兼容 Three.js TextureLoader 原有地址和回调，
 覆盖游离图片及替换 / 取消加载竞争；`decode()` 等待当前转换后委托原生解码，转换期间
@@ -88,7 +88,7 @@ Three.js 等可视化库不再内置；脚本 / 模块 / 样式 / 字体由作�
 动态拼接的未知域名须显式声明，不进行 JavaScript 分析或域名猜测。
 
 普通 inline 卡片保留 `connect-src 'none'`，不会继承原生 board 授权。联网文档仅支持
-`html` 与 Widget Kit 的 `html-page`。每张文档声明至多 32 个精确 HTTPS origin，
+`html` 与 Smart Canvas 的 `html-page`。每张文档声明至多 32 个精确 HTTPS origin，
 不接受通配符、URL 凭据、路径、查询或片段；端口是 origin 的一部分。
 Gateway 仍是 declared capabilities、grantState、源码和历史的唯一权威。
 full 可直接 granted，auto 按原生审查决定，pending 才在卡片显示允许 / 拒绝，
@@ -116,7 +116,7 @@ rejected 不运行；应用不在原生已经授权后再增加一轮人工审�
 并发、超时及内存，插件不强制额外模板预算。
 HDR / EXR、GLTF / Draco 等加载器和解码器不随此能力新增。缺少图片时保留几何结果及
 可理解的失败，不以定时器伪造加载成功。完整用法见
-[联网下载参考](../../../plugins/extensions/widget-kit/skills/visualize/references/pinned-network.md)。
+[联网下载参考](../../../plugins/extensions/smart-canvas/skills/visualize/references/pinned-network.md)。
 
 只有当前认证实时工具结果能自动启动一次。历史或重连的名称引用在标题栏提供“加载”按钮，
 点击后读取当前保存对象；不假装名称包含历史 revision，不自动重放 `show_widget`。
@@ -135,7 +135,7 @@ Electron 没有 Session 销毁 API，注销跟踪和清理存储不作为 Sessio
 租期从本轮核验起点计算，不从迟到响应到达时延长。仅更新票据不会重新执行脚本，
 已经停止的联网文档须由用户明确重载。同会话普通遮挡只禁用草稿 / 链接，已批准网络可能继续。
 
-HTML 适配脚本的 pinned 路径通过原生 `widget-html` capability surface 读取单条精确资源；
+HTML 适配脚本的 pinned 路径通过原生 `smart-canvas-html` capability surface 读取单条精确资源；
 每次新运行先通过 `plugin.surface.refresh` 刷新，再取得 board 与 HTML。资源 surface
 约 10 分钟、board ticket 20 分钟，独立到期；续签不重建运行文档。
 board HTML 仅由可信 loader 读取，票据不传 guest，不进入产品持久存储 / 日志 / 草稿。
@@ -279,7 +279,7 @@ board HTML 仅由可信 loader 读取，票据不传 guest，不进入产品持�
 ```mermaid
 flowchart LR
   Model[当前会话模型] --> Tool[原生 show_widget]
-  Plugin[可选 Widget Kit<br/>JSON 校验与固定 renderer] --> Tool
+  Plugin[可选 Smart Canvas<br/>JSON 校验与固定 renderer] --> Tool
   Tool --> Native[Gateway 原生文档与历史]
   Native --> View[认证 canvas.document.view]
   Native --> Board[认证 board.get / grant<br/>票据 HTTP 文档]
@@ -358,6 +358,6 @@ Gateway / Main 端到端探针要求匹配的当前冻结运行时，本轮未�
 [原生组件 viewer](../../../src/renderer/libs/openclaw-chat/components/native-widget/view.ts)；
 [联网 controller 与 loader](../../../src/renderer/libs/openclaw-chat/components/native-board-widget/controller.ts)；
 [Main 请求与租约](../../../src/main/core/window/widgetViewerGuestNetwork.ts)；
-[原生准入与 Electron 探针](../../../scripts/test/widget-kit/verify-pinned-network.mjs)；
+[原生准入与 Electron 探针](../../../scripts/test/smart-canvas/verify-pinned-network.mjs)；
 [侧栏引用与生命周期](../../../src/renderer/features/cowork/components/display/tabs/useWidgetReferenceTabs.tsx)。
 这些入口用于核对实现，实际验证范围以上文为准。

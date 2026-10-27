@@ -411,7 +411,7 @@ MCP Apps 使用原生认证 WS 接口，不使用生命周期补丁。关闭视�
 | agent-team                                | 协作 Graph、seal/whole-run 结算、独立验收、群公开镜像与内部历史、来源汇总、定向 @/引用、holding FIFO、unknown 队头、发起守卫、设置冲突及禁用后 custody；不删除借用来源会话 |
 | swarm-workflow                            | 原生 owned-run 准入、DAG/revision、任务信封、人工介入、暂停/停止、批次分页、产物 hash、独立验收、精确结果投递；预算区分排队/执行，旧执行和工具清理未确认时不重试           |
 | embedded-browser                          | 唯一 browser 工具、真实 guest/目标/权限桥、文件边界与取消；模式切换不产生两个提供方                                                                                        |
-| widget-kit / 原生 Widget              | kind/resource 注册、真实 `show_widget` 准入、认证 `canvas.document.view`、CSP/origin/source/generation、嵌套核心工具身份及去重；建议先确认加入草稿，再由用户发送           |
+| smart-canvas / 原生 Widget              | kind/resource 注册、真实 `show_widget` 准入、认证 `canvas.document.view`、CSP/origin/source/generation、嵌套核心工具身份及去重；建议先确认加入草稿，再由用户发送           |
 | stt-local-cli                             | 显式开关、模型路径/依赖、录音与附件转录、取消/释放、离线可用性；关闭麦克风入口不误关闭独立附件转录                                                                         |
 | tts-local-cli                             | 原生 `tts` 工具与本地 speech provider 注册、独立模型选择、缺失模型撤下 provider、试听/朗读及取消释放；语音页选择不覆盖扩展设置，下载文件共享 |
 | typesafe / 决策模型                       | 原生 `decision_evaluate` provider、schema、模型/凭据配置、条件托管及失败行为；不绕过会话权限                                                                               |

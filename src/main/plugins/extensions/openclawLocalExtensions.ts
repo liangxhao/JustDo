@@ -250,7 +250,7 @@ export const syncLocalOpenClawExtensionsIntoRuntime = async (
       recursive: true,
       force: true,
       filter: sourcePath =>
-        entry.name !== OpenClawExtensionId.WIDGET_KIT ||
+        entry.name !== OpenClawExtensionId.SMART_CANVAS ||
         path.relative(extensionSourceDir, sourcePath).split(path.sep)[0] !== 'assets',
     });
     copied.push(entry.name);

@@ -10,7 +10,7 @@ export const OpenClawExtensionId = {
   OPENAI: 'openai',
   PLAN_MODE: 'plan-mode',
   AGENT_TEAM: 'agent-team',
-  WIDGET_KIT: 'widget-kit',
+  SMART_CANVAS: 'smart-canvas',
   DRAWIO: 'drawio',
   SWARM_WORKFLOW: 'swarm-workflow',
   TYPESAFE: 'typesafe',

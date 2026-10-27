@@ -1,0 +1,10 @@
+{
+  "id": "smart-canvas",
+  "name": "Smart Canvas",
+  "description": "Interactive visualizations, HTML pages and embedded webpages in conversations.",
+  "enabledByDefault": true,
+  "categories": ["productivity"],
+  "skills": ["./skills"],
+  "activation": { "onStartup": true },
+  "configSchema": { "type": "object", "additionalProperties": false, "properties": {} }
+}

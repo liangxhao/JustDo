@@ -36,7 +36,7 @@ const MIB = 1024 * 1024;
 const PACKAGED_RUNTIME_EXCLUDES = Object.freeze([
   'gateway.asar',
   'dist/worker-artifacts',
-  'dist/extensions/widget-kit/assets',
+  'dist/extensions/smart-canvas/assets',
 ]);
 // A 64 MiB window finds repeated SDK payloads. Level 19 costs build time while
 // measured installer decoding stays comparable; existing decoder limits apply.
@@ -173,7 +173,7 @@ function shouldExclude(entryPath, isDirectory = false) {
   const basename = path.basename(entryPath);
   const normalized = entryPath.replace(/\\/g, '/');
   // Retired generated libraries must not survive from an older build tree.
-  if (/(?:^|\/)dist\/extensions\/widget-kit\/assets(?:\/|$)/.test(normalized)) return true;
+  if (/(?:^|\/)dist\/extensions\/smart-canvas\/assets(?:\/|$)/.test(normalized)) return true;
   // The official Node distribution is closed by its own source/file manifest.
   if (/^node-runtime(?:\/|$)/.test(normalized)) return false;
   // The prepared editor is a closed, hashed resource set, including legal files.

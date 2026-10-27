@@ -123,16 +123,16 @@ test('binds widget HTML adaptation and parser locks while excluding retired asse
     'document/image-loading.ts',
     'package-lock.json',
   ])
-    expect(files).toContain(`plugins/extensions/widget-kit/${name}`);
+    expect(files).toContain(`plugins/extensions/smart-canvas/${name}`);
   expect(
-    files.some((file: string) => file.startsWith('plugins/extensions/widget-kit/assets/')),
+    files.some((file: string) => file.startsWith('plugins/extensions/smart-canvas/assets/')),
   ).toBe(false);
   expect(
-    files.some((file: string) => file.startsWith('plugins/extensions/widget-kit/tests/')),
+    files.some((file: string) => file.startsWith('plugins/extensions/smart-canvas/tests/')),
   ).toBe(false);
   for (const name of ['three-fixture.cjs', 'verify-image-loading.cjs']) {
-    expect(fs.existsSync(path.resolve('plugins/extensions/widget-kit/tests', name))).toBe(true);
-    expect(fs.existsSync(path.resolve('plugins/extensions/widget-kit/scripts', name))).toBe(false);
-    expect(files).not.toContain(`plugins/extensions/widget-kit/tests/${name}`);
+    expect(fs.existsSync(path.resolve('plugins/extensions/smart-canvas/tests', name))).toBe(true);
+    expect(fs.existsSync(path.resolve('plugins/extensions/smart-canvas/scripts', name))).toBe(false);
+    expect(files).not.toContain(`plugins/extensions/smart-canvas/tests/${name}`);
   }
 });

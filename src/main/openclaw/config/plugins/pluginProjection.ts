@@ -279,7 +279,7 @@ export const buildDefaultOpenClawPluginEntries = (
       [
         [OpenClawExtensionId.WORKBOARD, false],
         [OpenClawExtensionId.AGENT_TEAM, false],
-        [OpenClawExtensionId.WIDGET_KIT, true],
+        [OpenClawExtensionId.SMART_CANVAS, true],
         [OpenClawExtensionId.DRAWIO, true],
         // Native desktop control requires explicit opt-in, preserved across syncs.
         [OpenClawExtensionId.CUA_COMPUTER, false],

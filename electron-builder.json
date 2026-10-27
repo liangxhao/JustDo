@@ -113,8 +113,8 @@
           "!dist/control-ui/assets/**/*.css.br",
           "!dist/control-ui/assets/**/*.css.gz",
           "node-runtime/**/*",
-          "!dist/extensions/widget-kit/assets",
-          "!dist/extensions/widget-kit/assets/**"
+          "!dist/extensions/smart-canvas/assets",
+          "!dist/extensions/smart-canvas/assets/**"
         ]
       },
       {
@@ -189,8 +189,8 @@
           "!dist/control-ui/assets/**/*.css.br",
           "!dist/control-ui/assets/**/*.css.gz",
           "node-runtime/**/*",
-          "!dist/extensions/widget-kit/assets",
-          "!dist/extensions/widget-kit/assets/**"
+          "!dist/extensions/smart-canvas/assets",
+          "!dist/extensions/smart-canvas/assets/**"
         ]
       },
       {

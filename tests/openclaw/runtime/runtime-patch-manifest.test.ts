@@ -1561,7 +1561,7 @@ module.exports = { applyPatch, verifyPatch };
     const resourcesRoot = path.join(appOutDir, 'resources');
     const archiveRoot = path.join(appOutDir, 'archive-source');
     const payloadRoot = electronPlatformName === 'win32' ? archiveRoot : resourcesRoot;
-    const oldAsset = path.join(payloadRoot, 'cfmind/dist/extensions/widget-kit/assets/libraries/retired.js');
+    const oldAsset = path.join(payloadRoot, 'cfmind/dist/extensions/smart-canvas/assets/libraries/retired.js');
     fs.mkdirSync(path.dirname(oldAsset), { recursive: true });
     fs.mkdirSync(resourcesRoot, { recursive: true });
     fs.writeFileSync(oldAsset, 'retired asset');
@@ -1572,7 +1572,7 @@ module.exports = { applyPatch, verifyPatch };
       fs.writeFileSync(path.join(resourcesRoot, 'win-resources-metadata.json'), '{}');
     }
     await expect(verifyPackagedOpenClawRuntime({ appOutDir, electronPlatformName }, { repoRoot: repositoryRoot }))
-      .rejects.toThrow('retired Widget Kit library assets');
+      .rejects.toThrow('retired Smart Canvas library assets');
     expect(fs.readFileSync(oldAsset, 'utf8')).toBe('retired asset');
   }, 30_000);
 });

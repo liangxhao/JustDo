@@ -57,20 +57,20 @@
 
 `npm run electron:dev:openclaw` 和 `npm run dist:win` 已自动准备，优先复用资源和本地归档，归档缺失才下载。断网电脑提前放好归档即可。
 
-## 6. Widget Kit 构建依赖与可选测试输入
+## 6. Smart Canvas 构建依赖与可选测试输入
 
-可视化库不再随产品内置，不需要浏览器库准备命令或 `widget-kit/assets` 产物。
+可视化库不再随产品内置，不需要浏览器库准备命令或 `smart-canvas/assets` 产物。
 Three.js 等由具体 widget 按需通过系统代理从原生允许的 CDN 加载。
 
 完整 HTML 适配器使用插件生产依赖 `parse5@8.0.1` 与 `entities@8.1.0`，版本、
-下载位置及完整性由 `plugins/extensions/widget-kit/package-lock.json` 固定：
+下载位置及完整性由 `plugins/extensions/smart-canvas/package-lock.json` 固定：
 
 | 下载地址 | 放置位置 |
 | --- | --- |
 | [parse5 8.0.1](https://registry.npmjs.org/parse5/-/parse5-8.0.1.tgz) | `cache/npm/` npm 内容缓存 |
 | [entities 8.1.0](https://registry.npmjs.org/entities/-/entities-8.1.0.tgz) | `cache/npm/` npm 内容缓存 |
 
-联网准备机运行 `npm ci --prefix plugins/extensions/widget-kit --ignore-scripts --cache cache/npm`，
+联网准备机运行 `npm ci --prefix plugins/extensions/smart-canvas --ignore-scripts --cache cache/npm`，
 将 `cache/npm/` 复制到离线构建机后，使用相同命令附加 `--offline`。
 离线机器执行后续运行时组装前，在仓库根目录设置绝对缓存路径并让子进程继承离线模式：
 
@@ -88,10 +88,10 @@ fixture 提供；归档不提取为产品资产、不进入安装包，不在测
 
 | 下载地址 | 放置位置 |
 | --- | --- |
-| [Three.js 0.186.1](https://registry.npmjs.org/three/-/three-0.186.1.tgz) | `cache/widget-kit/three-0.186.1.tgz` |
+| [Three.js 0.186.1](https://registry.npmjs.org/three/-/three-0.186.1.tgz) | `cache/smart-canvas/three-0.186.1.tgz` |
 
 准备机可下载该归档并复制缓存；验证命令为
-`node plugins/extensions/widget-kit/tests/verify-image-loading.cjs --runtime <runtime>/dist`，
+`node plugins/extensions/smart-canvas/tests/verify-image-loading.cjs --runtime <runtime>/dist`，
 也可通过 `--three-archive <absolute-path>` 指定同一锁定归档。
 本地 OpenSSL 可通过 `WIDGET_FIXTURE_OPENSSL` 指定。此输入只用于开发验证，缺失时测试
 明确失败；产品启动和 widget 运行均不需要它。

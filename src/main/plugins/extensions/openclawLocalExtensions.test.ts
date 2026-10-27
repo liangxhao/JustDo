@@ -190,21 +190,21 @@ describe('openclawLocalExtensions', () => {
   it('does not copy retired widget assets during development fallback synchronization', async () => {
     electronApp.isPackaged = false;
     electronApp.getAppPath.mockReturnValue(resourcesDir);
-    const sourceDir = path.join(resourcesDir, 'plugins/extensions/widget-kit');
+    const sourceDir = path.join(resourcesDir, 'plugins/extensions/smart-canvas');
     const runtimeRoot = path.join(resourcesDir, 'runtime');
-    const target = path.join(runtimeRoot, 'dist/extensions/widget-kit');
+    const target = path.join(runtimeRoot, 'dist/extensions/smart-canvas');
     const oldAsset = path.join(sourceDir, 'assets/libraries/retired.js');
     fs.mkdirSync(path.dirname(oldAsset), { recursive: true });
     fs.mkdirSync(path.dirname(target), { recursive: true });
     fs.writeFileSync(oldAsset, 'keep original asset');
     fs.writeFileSync(
       path.join(sourceDir, 'openclaw.plugin.json'),
-      JSON.stringify({ id: 'widget-kit' }),
+      JSON.stringify({ id: 'smart-canvas' }),
     );
     fs.writeFileSync(path.join(sourceDir, 'index.ts'), 'export default {};');
 
     expect((await syncLocalOpenClawExtensionsIntoRuntime(runtimeRoot)).copied).toEqual([
-      'widget-kit',
+      'smart-canvas',
     ]);
     expect(fs.existsSync(path.join(target, 'index.ts'))).toBe(true);
     expect(fs.existsSync(path.join(target, 'assets'))).toBe(false);

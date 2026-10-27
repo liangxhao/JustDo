@@ -1808,7 +1808,7 @@ async function verifyPackagedOpenClawRuntime(context, options = {}) {
           cwd: temporaryRoot,
           filter: entryPath => {
             const normalized = entryPath.replace(/^\.\//, '').replace(/\\/g, '/');
-            if (/^cfmind\/dist\/extensions\/widget-kit\/assets(?:\/|$)/.test(normalized)) {
+            if (/^cfmind\/dist\/extensions\/smart-canvas\/assets(?:\/|$)/.test(normalized)) {
               hasRetiredWidgetAssets = true;
               return false;
             }
@@ -1821,7 +1821,7 @@ async function verifyPackagedOpenClawRuntime(context, options = {}) {
         }),
       );
       if (hasRetiredWidgetAssets)
-        throw new Error('Packaged runtime includes retired Widget Kit library assets');
+        throw new Error('Packaged runtime includes retired Smart Canvas library assets');
       // Discover companions from the actual archived bundle, then extract those
       // exact files before the normal filesystem verifier checks their presence.
       // The subsequent manifest check still authenticates the bundle itself.
@@ -1883,8 +1883,8 @@ async function verifyPackagedOpenClawRuntime(context, options = {}) {
     }
   } else {
     const packagedRuntimeRoot = path.join(resourcesRoot, 'cfmind');
-    if (existsSync(path.join(packagedRuntimeRoot, 'dist/extensions/widget-kit/assets')))
-      throw new Error('Packaged runtime includes retired Widget Kit library assets');
+    if (existsSync(path.join(packagedRuntimeRoot, 'dist/extensions/smart-canvas/assets')))
+      throw new Error('Packaged runtime includes retired Smart Canvas library assets');
     verifyOpenClawPatchManifest(packagedRuntimeRoot, {
       repoRoot,
       expectedTarget: resolveOpenClawRuntimeTargetId(context),

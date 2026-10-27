@@ -335,7 +335,7 @@ function verifyAcpxTargetDependencies(extensionDir, installTarget) {
 }
 
 function shouldCopyExtensionSource(sourceDir, entryPath) {
-  return path.basename(sourceDir) !== 'widget-kit' ||
+  return path.basename(sourceDir) !== 'smart-canvas' ||
     path.relative(sourceDir, entryPath).split(path.sep)[0] !== 'assets';
 }
 

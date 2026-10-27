@@ -119,7 +119,7 @@ test('omits only optional Control UI encodings while preserving identity assets 
 test('omits retired widget libraries and test probes without altering source or other plugin assets', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'widget-library-archive-'));
   const runtime = path.join(root, 'runtime');
-  const prefix = 'dist/extensions/widget-kit/assets';
+  const prefix = 'dist/extensions/smart-canvas/assets';
   const files = [
     'integrity.json',
     'THIRD_PARTY_NOTICES.json',
@@ -134,13 +134,13 @@ test('omits retired widget libraries and test probes without altering source or 
     'README.md',
   ];
   const retained = [
-    'dist/extensions/widget-kit/index.js',
-    'dist/extensions/widget-kit/node_modules/parse5/LICENSE',
+    'dist/extensions/smart-canvas/index.js',
+    'dist/extensions/smart-canvas/node_modules/parse5/LICENSE',
     'dist/extensions/fixture/assets/retained.js',
     'dist/extensions/drawio/assets/retained.js',
   ];
   const probes = ['three-fixture.cjs', 'verify-image-loading.cjs'].map(
-    file => `dist/extensions/widget-kit/tests/${file}`,
+    file => `dist/extensions/smart-canvas/tests/${file}`,
   );
   try {
     for (const file of files) {

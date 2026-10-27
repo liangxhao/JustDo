@@ -430,11 +430,11 @@ function buildOpenClawPatchSetFingerprint(repoRoot, version) {
 }
 
 function listBuildRecipeFiles(repoRoot) {
-  const widgetRoot = path.join(repoRoot, 'plugins/extensions/widget-kit');
-  const widgetFiles = fs.existsSync(widgetRoot)
-    ? fs.readdirSync(widgetRoot, { recursive: true, withFileTypes: true })
+  const smartCanvasRoot = path.join(repoRoot, 'plugins/extensions/smart-canvas');
+  const smartCanvasFiles = fs.existsSync(smartCanvasRoot)
+    ? fs.readdirSync(smartCanvasRoot, { recursive: true, withFileTypes: true })
         .filter(entry => entry.isFile() &&
-          !path.relative(widgetRoot, entry.parentPath).split(path.sep)
+          !path.relative(smartCanvasRoot, entry.parentPath).split(path.sep)
             .some(part => ['assets', 'node_modules', 'tests'].includes(part)) &&
           !entry.name.endsWith('.md'))
         .map(entry => path.join(entry.parentPath, entry.name)).sort()
@@ -459,7 +459,7 @@ function listBuildRecipeFiles(repoRoot) {
   return [
     ...BUILD_RECIPE_FILES.map(relativePath => path.join(repoRoot, relativePath)),
     ...replacementFiles,
-    ...widgetFiles,
+    ...smartCanvasFiles,
   ];
 }
 

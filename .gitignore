@@ -20,7 +20,7 @@ resources/icons/_tmp/
 resources/icons/mac/icon.iconset/
 resources/icons/mac/icon.icns.backup
 plugins/extensions/drawio/assets/
-plugins/extensions/widget-kit/assets/
+plugins/extensions/smart-canvas/assets/
 resources/package-manager-config/.npmrc
 resources/package-manager-config/pip.ini
 !resources/package-manager-config/README.md
@@ -30,7 +30,7 @@ package-lock.json
 !plugins/extensions/openai/package-lock.json
 !plugins/extensions/stt-local-cli/package-lock.json
 !plugins/extensions/typesafe/package-lock.json
-!plugins/extensions/widget-kit/package-lock.json
+!plugins/extensions/smart-canvas/package-lock.json
 
 nul
 .work.env

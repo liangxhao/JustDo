@@ -199,22 +199,22 @@ describe('native board loader and controller', () => {
       contentKind: 'plugin',
       contentOwner: 'registered',
       registeredContentKind: 'html-page',
-      pluginKind: 'widget-kit:html-page',
+      pluginKind: 'smart-canvas:html-page',
     });
     delete (value.widget as Partial<typeof value.widget>).frameUrl;
     delete (value.widget as Partial<typeof value.widget>).viewGeneration;
     const observedUrl = `http://127.0.0.1:18789/__openclaw__/cap/${'a'.repeat(24)}`;
     const scopedUrl = `http://127.0.0.1:18789/__openclaw__/cap/${'b'.repeat(24)}`;
     value.context.methods = ['plugin.surface.refresh'];
-    value.context.pluginSurfaceUrls = { 'widget-html': observedUrl };
+    value.context.pluginSurfaceUrls = { 'smart-canvas-html': observedUrl };
     const original = value.request.getMockImplementation()!;
     value.request.mockImplementation(async (method, params) => {
       if (method !== 'plugin.surface.refresh') return original(method, params);
       value.widget.frameUrl = frameUrl;
       value.widget.viewGeneration = generation;
       return {
-        surface: 'widget-html',
-        pluginSurfaceUrls: { 'widget-html': scopedUrl },
+        surface: 'smart-canvas-html',
+        pluginSurfaceUrls: { 'smart-canvas-html': scopedUrl },
       } as never;
     });
     await flush();
@@ -222,7 +222,7 @@ describe('native board loader and controller', () => {
     await value.controller.start();
     expect(value.controller.state.status).toBe('running');
     expect(value.request).toHaveBeenCalledWith('plugin.surface.refresh', {
-      surface: 'widget-html',
+      surface: 'smart-canvas-html',
       observedUrl,
     });
     expect(vi.mocked(value.bridge.create).mock.calls[0][0].resourceUrls).toHaveLength(1);
@@ -233,14 +233,14 @@ describe('native board loader and controller', () => {
     const observedUrl = `http://127.0.0.1:18789/__openclaw__/cap/${'a'.repeat(24)}`;
     const scopedUrl = `http://127.0.0.1:18789/__openclaw__/cap/${'b'.repeat(24)}`;
     const request = vi.fn(async (_method: string, params?: unknown) => {
-      expect(params).toEqual({ surface: 'widget-html', observedUrl });
-      return { surface: 'widget-html', pluginSurfaceUrls: { 'widget-html': scopedUrl } };
+      expect(params).toEqual({ surface: 'smart-canvas-html', observedUrl });
+      return { surface: 'smart-canvas-html', pluginSurfaceUrls: { 'smart-canvas-html': scopedUrl } };
     });
     const context = {
       ...value.context,
       client: { ...value.client, request } as NativeWidgetContext['client'],
       methods: ['plugin.surface.refresh'],
-      pluginSurfaceUrls: { 'widget-html': observedUrl },
+      pluginSurfaceUrls: { 'smart-canvas-html': observedUrl },
     };
     const urls = await Promise.all([refreshHtmlResources(context), refreshHtmlResources(context)]);
     expect(request).toHaveBeenCalledTimes(1);

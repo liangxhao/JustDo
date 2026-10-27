@@ -223,7 +223,7 @@ Team 工具继承/讨论后续跑、lint/build/Main 编译与完整测试；不�
 保留缺口、应用源码补丁并生成新 ASAR/bundle；没有从丢失的 C/D 恢复或补签 core。
 bundle 用时 863,312 ms，随后同步 13 个本地扩展，10 个编译、18 个按策略跳过、
 0 错误，裁剪 16,528 个文件，完整命令退出 0。draw.io 从锁定离线缓存准备并验证
-3,110 个文件，widget-kit 验证并准备 6 个离线库。
+3,110 个文件，smart-canvas 验证并准备 6 个离线库。
 
 `artifact-e-identity.json` 与 `artifact-e-verification.log` 已通过完整冻结校验，
 构建输入与前述 b39/3db 指纹一致。core 字节与 C 相同是本次全新构建的实际结果；

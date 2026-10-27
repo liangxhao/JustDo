@@ -5,7 +5,7 @@ import {
   HTML_PAGE_PLUGIN_KIND,
   HTML_PAGE_RESOURCE,
   HTML_PAGE_SURFACE,
-} from '../../../../../../plugins/extensions/widget-kit/document/contracts';
+} from '../../../../../../plugins/extensions/smart-canvas/document/contracts';
 import { BOARD_WIDGET_NAME } from '../../pipeline/native-board';
 import {
   MAX_WIDGET_BYTES,

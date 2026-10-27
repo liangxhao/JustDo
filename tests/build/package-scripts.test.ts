@@ -28,13 +28,13 @@ test('retires widget library preparation and excludes leftover assets on non-Win
   const { scripts } = JSON.parse(fs.readFileSync(path.resolve('package.json'), 'utf8')) as {
     scripts: Record<string, string>;
   };
-  for (const name of ['widget-kit:prepare', 'widget-kit:verify', 'widget-kit:verify:browser'])
+  for (const name of ['smart-canvas:prepare', 'smart-canvas:verify', 'smart-canvas:verify:browser'])
     expect(scripts).not.toHaveProperty(name);
-  for (const command of Object.values(scripts)) expect(command).not.toContain('widget-kit:prepare');
+  for (const command of Object.values(scripts)) expect(command).not.toContain('smart-canvas:prepare');
   for (const platform of [electronBuilderConfig.mac, electronBuilderConfig.linux]) {
     const runtime = platform?.extraResources?.find(entry => entry.to === 'cfmind');
-    expect(runtime?.filter).toContain('!dist/extensions/widget-kit/assets');
-    expect(runtime?.filter).toContain('!dist/extensions/widget-kit/assets/**');
+    expect(runtime?.filter).toContain('!dist/extensions/smart-canvas/assets');
+    expect(runtime?.filter).toContain('!dist/extensions/smart-canvas/assets/**');
   }
 });
 
@@ -42,12 +42,12 @@ test('excludes the retired widget asset directory itself using the actual non-Wi
   const { FileMatcher, copyFiles } = require('app-builder-lib/out/fileMatcher');
   const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'widget-directory-filter-'));
   const source = path.join(fixture, 'source');
-  const assetDirectory = 'dist/extensions/widget-kit/assets';
+  const assetDirectory = 'dist/extensions/smart-canvas/assets';
   try {
     fs.mkdirSync(path.join(source, assetDirectory), { recursive: true });
     fs.writeFileSync(path.join(source, assetDirectory, 'legacy.js'), 'retired asset');
     fs.writeFileSync(path.join(source, assetDirectory, 'README.md'), 'retired documentation');
-    fs.writeFileSync(path.join(source, 'dist/extensions/widget-kit/index.js'), 'retained entry');
+    fs.writeFileSync(path.join(source, 'dist/extensions/smart-canvas/index.js'), 'retained entry');
     for (const [name, platform] of [
       ['mac', electronBuilderConfig.mac],
       ['linux', electronBuilderConfig.linux],
@@ -70,7 +70,7 @@ test('excludes the retired widget asset directory itself using the actual non-Wi
       await copyFiles([matcher], null, false);
       expect(fs.existsSync(path.join(destination, assetDirectory))).toBe(false);
       expect(
-        fs.readFileSync(path.join(destination, 'dist/extensions/widget-kit/index.js'), 'utf8'),
+        fs.readFileSync(path.join(destination, 'dist/extensions/smart-canvas/index.js'), 'utf8'),
       ).toBe('retained entry');
     }
     expect(fs.readFileSync(path.join(source, assetDirectory, 'legacy.js'), 'utf8')).toBe(

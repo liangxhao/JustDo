@@ -15,7 +15,7 @@ test('the frozen local extensions register with the actual native loader without
   const ids = [
     'acpx', 'agent-team', 'ask-user-question', 'automation-permission', 'drawio',
     'embedded-browser', 'openai', 'plan-mode', 'runtime-services', 'stt-local-cli',
-    'swarm-workflow', 'typesafe', 'widget-kit',
+    'swarm-workflow', 'typesafe', 'smart-canvas',
   ];
   let inspection;
   try {

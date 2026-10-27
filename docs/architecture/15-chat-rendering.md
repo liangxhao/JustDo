@@ -86,7 +86,7 @@ Renderer 在 resize 和原生窗口状态变化时更新临时布局系数，不
 对应测试与实现同目录。消息 descriptor 投影留在 pipeline，首条发送留在 gateway，
 React composer 仍负责消费用户确认的草稿；归组不改变这些层的所有权。
 
-Widget Kit 的 `html-page` 是原生注册内容类型，直接接收完整 HTML 或片段。
+Smart Canvas 的 `html-page` 是原生注册内容类型，直接接收完整 HTML 或片段。
 插件仅在对应 `show_widget` 调用中，从源中明确 HTTPS 地址补齐遗漏的 `pin` /
 `netOrigins`；已有声明与显式 `pin: false` 不改写，原生继续验证并决定授权。
 插件 parser 去掉文档外壳并恢复 html/body 属性，保留作者脚本、样式及 importmap
@@ -95,7 +95,7 @@ Widget Kit 的 `html-page` 是原生注册内容类型，直接接收完整 HTML
 CSS 背景、poster、srcset 和命名空间属性写入沿用原生策略。Three.js 等可视化库不再
 内置，按作者声明从原生允许的 CDN 通过系统代理加载；Renderer 不重写 CDN 或注入全库。
 插件自身脚本经原生 reader 与单条 capability HTTP route 提供，无预生成资源目录。
-原生注册 / board.get 要求资源 surface，故保留 `widget-html` 的单个真实适配资源；
+原生注册 / board.get 要求资源 surface，故保留 `smart-canvas-html` 的单个真实适配资源；
 旧 `offline-html` 文档不改写。具体使用方式见[交互式回答](../features/chat/interactive-answers.md#html-页面与图片适配)。
 
 需要公网素材的 `show_widget` 使用原生 `pin: true` 分支，但仍在原聊天位置展示。

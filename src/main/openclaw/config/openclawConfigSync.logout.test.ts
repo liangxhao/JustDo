@@ -2028,7 +2028,7 @@ describe('OpenClaw auth logout config sync', () => {
       'ask-user-question',
       'workboard',
       'agent-team',
-      'widget-kit',
+      'smart-canvas',
       'drawio',
       'swarm-workflow',
       'typesafe',
@@ -2127,7 +2127,7 @@ describe('OpenClaw auth logout config sync', () => {
       'agent-workspace-plugin',
       'workboard',
       'agent-team',
-      'widget-kit',
+      'smart-canvas',
       'drawio',
       'swarm-workflow',
       'typesafe',
@@ -2362,7 +2362,7 @@ describe('OpenClaw auth logout config sync', () => {
       'justdo-skill-only-example',
       'workboard',
       'agent-team',
-      'widget-kit',
+      'smart-canvas',
       'drawio',
       'swarm-workflow',
       'typesafe',
@@ -2974,15 +2974,15 @@ test.each([true, false])(
 );
 
 test.each([true, false])(
-  'keeps Widget Kit enabled=%s across startup and auth sync',
+  'keeps Smart Canvas enabled=%s across startup and auth sync',
   enabled => {
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'widget-kit-config-'));
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'smart-canvas-config-'));
     temporaryDirectories.push(directory);
     const configPath = path.join(directory, 'openclaw.json');
     expect(writeMinimalConfig(configPath, 'startup').ok).toBe(true);
     const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-    expect(config.plugins.entries['widget-kit']).toEqual({ enabled: true });
-    config.plugins.entries['widget-kit'] = { enabled };
+    expect(config.plugins.entries['smart-canvas']).toEqual({ enabled: true });
+    config.plugins.entries['smart-canvas'] = { enabled };
     fs.writeFileSync(configPath, JSON.stringify(config), 'utf8');
     for (const reason of [
       'cowork-config-change',
@@ -2991,7 +2991,7 @@ test.each([true, false])(
     ]) {
       expect(writeMinimalConfig(configPath, reason).ok).toBe(true);
       expect(
-        JSON.parse(fs.readFileSync(configPath, 'utf8')).plugins.entries['widget-kit'],
+        JSON.parse(fs.readFileSync(configPath, 'utf8')).plugins.entries['smart-canvas'],
       ).toEqual({ enabled });
     }
   },

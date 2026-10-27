@@ -153,7 +153,7 @@ export const isUserToggleableBundledPlugin = (pluginId: string): boolean =>
   pluginId === OpenClawExtensionId.MEMORY_CORE ||
   pluginId === OpenClawExtensionId.WORKBOARD ||
   pluginId === OpenClawExtensionId.AGENT_TEAM ||
-  pluginId === OpenClawExtensionId.WIDGET_KIT ||
+  pluginId === OpenClawExtensionId.SMART_CANVAS ||
   pluginId === OpenClawExtensionId.DRAWIO ||
   pluginId === OpenClawExtensionId.SWARM_WORKFLOW ||
   pluginId === OpenClawExtensionId.TYPESAFE ||

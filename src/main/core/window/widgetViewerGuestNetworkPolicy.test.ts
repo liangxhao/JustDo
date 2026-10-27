@@ -12,7 +12,7 @@ import {
 
 const mountId = '2e4ec192-521e-4b76-b132-e34598e41bb2';
 const sandboxUrl = `http://127.0.0.1:18790/mcp-app-sandbox?csp=YWJj&v=${'a'.repeat(64)}`;
-const resourceUrl = `http://127.0.0.1:18789/__openclaw__/cap/${'a'.repeat(24)}/__widget_kit__/image-loading.js`;
+const resourceUrl = `http://127.0.0.1:18789/__openclaw__/cap/${'a'.repeat(24)}/__smart_canvas__/image-loading.js`;
 const input: WidgetNetworkCreate = {
   mountId,
   nonce: 'fixture',

@@ -43,7 +43,7 @@ Runtime Services 还通过公开 prompt/agent-end hooks 记录有限的轮次准
 只观察本次 hook 的原生身份及 trace，不缓存或推断失败阶段，不改变 prompt 或原生准入。
 日志沿现有原生 JSON 导出，能力和证据缺口见[会话诊断](../features/chat/session-diagnostics.md#已保存用户轮次的准入错误)。
 
-`plugins/extensions/widget-kit` 在 `ui/` 聚合通用固定组件的 schema、组合器、
+`plugins/extensions/smart-canvas` 在 `ui/` 聚合通用固定组件的 schema、组合器、
 渲染逻辑、文案与样式；`document/` 提供 HTML/JSON 安全序列化、完整 HTML 外壳适配、
 HTTPS 图片加载及资源初始化。parser 及实体解码依赖由插件自己的 lock 固定，在构建时
 随入口预编译，不增加首次使用下载。
@@ -51,7 +51,7 @@ HTTPS 图片加载及资源初始化。parser 及实体解码依赖由插件自�
 补齐遗漏的 `pin` 和源中明确 HTTPS 地址的 `netOrigins`；已有声明与显式 `pin: false`
 保持不变。无需 JavaScript 分析或改写 HTML，授权仍由原生准入决定。
 组件单元测试归插件 `tests/`，宿主边界及打包集成测试保留在主工程。
-插件 ID 为 `widget-kit`，默认开启；配置同步保留用户明确的启停选择。
+插件 ID 为 `smart-canvas`，默认开启；配置同步保留用户明确的启停选择。
 
 该扩展是随通用本地扩展流程捆绑的可选组件插件：用原生
 `registerBoardWidgetContentKind` 注册固定组件 `interactive-answer` 与原 HTML 类型 `html-page`；固定组件校验 JSON，页面接收原始 HTML，输出组件 body
@@ -78,12 +78,12 @@ exec 读取 `OPENCLAW_STATE_DIR`，写入 `canvas/documents` 后引用真实 ID�
 
 `interactive-answer` 提供 table/compare/chart/form/steps，不接受表达式、脚本或外部提交；
 表单多选以一组原生复选框呈现，支持空初值与组级必选，草稿按选项分别记录布尔值。
-固定组件发布 `/__widget_kit__/ui.js`；`html-page` 只发布插件自己的
-`/__widget_kit__/image-loading.js`，在作者代码之前适配 HTTPS 图片 src → fetch →
+固定组件发布 `/__smart_canvas__/ui.js`；`html-page` 只发布插件自己的
+`/__smart_canvas__/image-loading.js`，在作者代码之前适配 HTTPS 图片 src → fetch →
 data URL。作者完整 HTML 的脚本 / 样式 / importmap 原文与顺序保留；下载仍由原生
 connect 授权、CORS 与宿主代理决定，不改写 CSP 或普通原生 html。
 原生内容注册要求至少一条静态资源，并且 board.get 只有存在当前连接 surface 时才发
-frameUrl，因此保留真实适配脚本的 `widget-html` surface 与单条 exact / plugin-auth /
+frameUrl，因此保留真实适配脚本的 `smart-canvas-html` surface 与单条 exact / plugin-auth /
 nodeCapability HTTP route。该脚本由源码生成，无归档、资源目录或首次下载；不包含
 Three.js 等第三方库。viewer 每次新运行刷新此单资源 surface，票据续签不重跑作者脚本。
 首次 / 复用 / 备用同步及最终分发排除未使用的 assets 目录；parse5 与实体解码

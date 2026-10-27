@@ -658,7 +658,7 @@ runtime side effects；逐行保留业务执行边界，不用注册成功替代
 | ask-user-question | signal-aware工具Promise、pending/resolve RPC、gatewayEvents | 源码无需适配；问题超时/关闭/迟到回复待验 |
 | automation-permission | async evaluate、native entry读取、read-scope info RPC | 源码无需适配；原生权限未扩大，真实审批待验 |
 | drawio | contextVersion2、prepared identity、dispatchGatewayMethod、native preview Promise | 源码无需适配；真实冷启动编辑/导出/视图释放待验 |
-| widget-kit | board kind、真实show_widget、authenticated canvas.document.view及HTML | 源码无需适配；HTTP viewer/离线库/真实发送待验 |
+| smart-canvas | board kind、真实show_widget、authenticated canvas.document.view及HTML | 源码无需适配；HTTP viewer/离线库/真实发送待验 |
 | embedded-browser | contextVersion2、signal/identity、service与media Promise | 源码无需适配；实际guest/权限/取消待验 |
 | stt-local-cli | 工具factory/execute(signal)、Sherpa子进程/真实workspace权限 | 源码无需适配；模型及麦克风实机待验 |
 | openai | Provider/Embedding/Image/Video/Speech/RealtimeTranscription/MediaUnderstanding及两个worker | 85项provenance、配置/替换/预编译15测试、source/artifact与SDK组合27测试通过；实际loader注册及原生transcription隔离transport/重置通过。CLI derived inventory只确认入口和descriptor；企业媒体服务未验 |

@@ -307,7 +307,7 @@ custody 和事件反复失效，不记录响应正文或提示词。
 | [x] | ask-user-question | execute(signal) Promise、pending/resolve RPC、service gatewayEvents | 工具等待/取消不替代执行结算；extension question/late/reset tests |
 | [x] | automation-permission | async TrustedToolPolicy.evaluate、同步最新 entry、operator.read info RPC | 新 Async sibling 不改变旧同步方法；native permissionMode 仍权威，policy/cron 权限回归 |
 | [x] | drawio | contextVersion2 factory、prepared exact identity、dispatchGatewayMethod Promise envelope、native MCP preview Promise | 所有 await 后重查 current；native App/插件与恢复 tests，断网导出/真实 UI 待验 |
-| [x] | widget-kit | registerBoardWidgetContentKind、真实 show_widget/canvas document、authenticated descriptor/HTML | 注册及 viewer/admission tests；前轮隔离 Gateway HTML/禁用/重启证据只覆盖其场景；真实 Electron 待验 |
+| [x] | smart-canvas | registerBoardWidgetContentKind、真实 show_widget/canvas document、authenticated descriptor/HTML | 注册及 viewer/admission tests；前轮隔离 Gateway HTML/禁用/重启证据只覆盖其场景；真实 Electron 待验 |
 | [x] | embedded-browser | contextVersion2、prepared identity/signal、registerService、saveMediaBuffer Promise | native SDK 形态无破坏；桥接/权限/释放 tests；真实 guest/CDP 待验 |
 | [x] | stt-local-cli | tool factory/execute(signal)、native workspace/root 权限、Sherpa 子进程 | 无 realtime Talk 依赖；插件回归，不增加公网 fallback；麦克风/模型权重待验 |
 | [x] | openai | Provider/Embedding/Image/Video/Speech/RealtimeTranscription/MediaUnderstanding 注册与两个 worker entries | 已完整刷新且只注册公司支持能力；本轮真实 WS 补强，见模型/媒体各行 |
