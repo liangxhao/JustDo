@@ -50,13 +50,38 @@ describe('OpenClawExtensionImportService', () => {
 
     const first = service.listCatalog();
     const concurrent = service.listCatalog();
-    expect(concurrent).toBe(first);
     expect(requestGateway).toHaveBeenCalledOnce();
     publish(inventory);
     await Promise.all([first, concurrent]);
     await service.listCatalog();
 
     expect(requestGateway).toHaveBeenCalledTimes(2);
+  });
+
+  it('shares native discovery while projecting current configuration separately for each caller', async () => {
+    let publish!: (value: unknown) => void;
+    let managed = true;
+    const requestGateway = vi.fn().mockImplementation(() => new Promise(resolve => { publish = resolve; }));
+    const service = new OpenClawExtensionImportService({
+      getOpenClawEngineManager: () => ({}) as OpenClawEngineManager,
+      getManagedPluginIds: () => managed ? ['typesafe'] : [],
+      requestGateway,
+    });
+    vi.spyOn(service, 'listInstalled').mockReturnValue([]);
+
+    const notification = service.listCatalog();
+    const discovery = service.prepareCatalog();
+    expect(requestGateway).toHaveBeenCalledOnce();
+    publish({
+      plugins: [{ id: 'typesafe', installed: true, enabled: true, state: 'enabled' }],
+      diagnostics: [], mutationAllowed: true,
+    });
+    await expect(notification).resolves.toMatchObject([{ managed: true, canToggle: false }]);
+    const project = await discovery;
+    managed = false;
+
+    expect(project()).toMatchObject([{ managed: false, canToggle: true }]);
+    expect(requestGateway).toHaveBeenCalledOnce();
   });
 
   it('invalidates in-flight catalog reads at both mutation boundaries', async () => {

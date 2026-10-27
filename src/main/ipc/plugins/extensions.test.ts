@@ -41,6 +41,9 @@ function fixture(beforeAgentTeamDisable?: () => Promise<() => void>) {
       { id: 'feature-plugin', installPath: 'C:/installed/feature-plugin' },
     ]),
     listCatalog: vi.fn().mockResolvedValue([{ id: 'feature-plugin', enabled: false }]),
+    prepareCatalog: vi.fn(async () => () => [
+      { id: 'feature-plugin', enabled: false, configurationFields: [] },
+    ]),
     setEnabled: vi.fn(),
     updateConfiguration: vi.fn(),
     delete: vi.fn(),
@@ -546,7 +549,7 @@ test.each([
     onAppConfigChanged,
     refreshBuiltinModels: vi.fn(),
   });
-  f.service.listCatalog.mockImplementation(async () => [{
+  f.service.prepareCatalog.mockImplementation(async () => () => [{
     id: 'typesafe',
     enabled: true,
     managed: config.onlineModelProviders.decision.selected,
@@ -570,6 +573,7 @@ test.each([
   expect(f.service.setEnabled).not.toHaveBeenCalled();
   expect(f.service.updateConfiguration).not.toHaveBeenCalled();
   expect(f.service.listCatalog).not.toHaveBeenCalled();
+  expect(f.service.prepareCatalog).not.toHaveBeenCalled();
 
   finishApplication();
   if (rollback) {
@@ -578,6 +582,7 @@ test.each([
     expect(f.service.setEnabled).not.toHaveBeenCalled();
     expect(f.service.updateConfiguration).not.toHaveBeenCalled();
     expect(f.service.listCatalog).not.toHaveBeenCalled();
+    expect(f.service.prepareCatalog).not.toHaveBeenCalled();
     finishRollback();
   }
   const saved = await saving;
@@ -619,6 +624,103 @@ test('holds the settings lane through a TypeSafe mutation and keeps other extens
   await editing;
   await saving;
   expect(settings).toHaveBeenCalledOnce();
+});
+
+test('keeps configuration reads and saves available while catalog discovery waits for the Gateway', async () => {
+  const f = fixture();
+  let finishDiscovery!: () => void;
+  f.service.prepareCatalog.mockImplementation(() => new Promise(resolve => {
+    finishDiscovery = () => resolve(() => []);
+  }));
+  let config = { theme: 'light' };
+  registerStoreHandlers({
+    getStore: () => ({
+      get: () => config,
+      set: (_key: string, value: typeof config) => { config = value; },
+      delete: vi.fn(),
+    }) as never,
+    onAppConfigChanged: vi.fn().mockResolvedValue(undefined),
+    refreshBuiltinModels: vi.fn(),
+  });
+
+  const listing = handlers.get(ExtensionIpc.List)!() as Promise<unknown>;
+  await vi.waitFor(() => expect(f.service.prepareCatalog).toHaveBeenCalledOnce());
+  const reading = handlers.get('store:get')!({}, 'app_config') as Promise<unknown>;
+  const saving = handlers.get(AppConfigIpc.Patch)!({}, { theme: 'dark' }) as Promise<unknown>;
+  const readCompleted = vi.fn();
+  const saveCompleted = vi.fn();
+  void reading.then(readCompleted);
+  void saving.then(saveCompleted);
+  try {
+    await vi.waitFor(() => {
+      expect(readCompleted).toHaveBeenCalledWith({ theme: 'light' });
+      expect(saveCompleted).toHaveBeenCalledWith({ theme: 'dark' });
+    });
+  } finally {
+    finishDiscovery();
+    await Promise.all([listing, reading, saving]);
+  }
+  await expect(listing).resolves.toEqual({ success: true, extensions: [] });
+});
+
+test('projects catalog settings after an overlapping save has finished rolling back', async () => {
+  const f = fixture();
+  let config = { onlineModelProviders: { decision: { selected: false } } };
+  let finishDiscovery!: () => void;
+  const project = vi.fn(() => [{
+    id: 'typesafe',
+    enabled: true,
+    managed: config.onlineModelProviders.decision.selected,
+    canToggle: !config.onlineModelProviders.decision.selected,
+    configurationFields: [],
+  }]);
+  f.service.prepareCatalog.mockImplementation(() => new Promise(resolve => {
+    finishDiscovery = () => resolve(project);
+  }));
+  let rejectApplication!: (error: Error) => void;
+  let finishRollback!: () => void;
+  const application = new Promise<void>((_resolve, reject) => { rejectApplication = reject; });
+  const rollback = new Promise<void>(resolve => { finishRollback = resolve; });
+  const onAppConfigChanged = vi.fn()
+    .mockImplementationOnce(() => application)
+    .mockImplementationOnce(() => rollback);
+  registerStoreHandlers({
+    getStore: () => ({
+      get: () => config,
+      set: (_key: string, value: typeof config) => { config = value; },
+      delete: vi.fn(),
+    }) as never,
+    onAppConfigChanged,
+    refreshBuiltinModels: vi.fn(),
+  });
+  const listing = handlers.get(ExtensionIpc.List)!() as Promise<unknown>;
+  await vi.waitFor(() => expect(f.service.prepareCatalog).toHaveBeenCalledOnce());
+  const saving = (handlers.get(AppConfigIpc.Patch)!({}, {
+    onlineModelProviders: { decision: { selected: true } },
+  }) as Promise<unknown>).catch(error => error as Error);
+  try {
+    await vi.waitFor(() => expect(onAppConfigChanged).toHaveBeenCalledOnce());
+    finishDiscovery();
+    // Drain the discovery continuation before checking the final projection.
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(project).not.toHaveBeenCalled();
+    rejectApplication(new Error('settings application failed'));
+    await vi.waitFor(() => expect(onAppConfigChanged).toHaveBeenCalledTimes(2));
+    expect(project).not.toHaveBeenCalled();
+  } finally {
+    finishDiscovery();
+    rejectApplication(new Error('settings application failed'));
+    finishRollback();
+    await saving;
+    await listing;
+  }
+  await expect(listing).resolves.toMatchObject({
+    success: true,
+    extensions: [{
+      id: 'typesafe', managed: false,
+      management: { configure: { allowed: false }, enable: { allowed: true } },
+    }],
+  });
 });
 
 test.each(['custom', 'marketplace'])(

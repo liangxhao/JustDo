@@ -121,6 +121,7 @@ type CommandOptions = {
 };
 
 type OperationProgress = (stage: PluginOperationStage) => void;
+type ExtensionCatalogProjection = () => InstalledOpenClawExtension[];
 
 type OpenClawExtensionImportServiceDeps = {
   getOpenClawEngineManager: () => OpenClawEngineManager;
@@ -914,7 +915,7 @@ export class OpenClawExtensionImportService {
   private readonly runCommand: NonNullable<OpenClawExtensionImportServiceDeps['runCommand']>;
   private readonly directoryOperations: ManagedDirectoryOperationCoordinator;
   private mutationTail: Promise<void> = Promise.resolve();
-  private catalogRead: Promise<InstalledOpenClawExtension[]> | undefined;
+  private catalogRead: Promise<ExtensionCatalogProjection> | undefined;
   // A failed config write or restart must not make a credential retry a no-op.
   // This state is process-local: a fresh Gateway startup reads the saved secret file.
   private readonly pendingCredentialRefresh = new Set<string>();
@@ -1265,6 +1266,11 @@ export class OpenClawExtensionImportService {
   }
 
   listCatalog(): Promise<InstalledOpenClawExtension[]> {
+    return this.prepareCatalog().then(project => project());
+  }
+
+  /** Discover native inventory without holding the application's settings queue. */
+  prepareCatalog(): Promise<ExtensionCatalogProjection> {
     if (this.catalogRead) return this.catalogRead;
     const read = this.readCatalog();
     this.catalogRead = read;
@@ -1279,8 +1285,8 @@ export class OpenClawExtensionImportService {
     return read;
   }
 
-  private async readCatalog(): Promise<InstalledOpenClawExtension[]> {
-    if (!this.deps.requestGateway) return this.listInstalled();
+  private async readCatalog(): Promise<ExtensionCatalogProjection> {
+    if (!this.deps.requestGateway) return () => this.listInstalled();
     const manager = this.deps.getOpenClawEngineManager();
 
     type PluginCatalogEntry = {
@@ -1310,7 +1316,7 @@ export class OpenClawExtensionImportService {
       result = await this.deps.requestGateway('plugins.list', {});
     } catch (error) {
       if (!isGatewayUnavailableError(error)) throw error;
-      return this.listInstalled().map(extension => ({
+      return () => this.listInstalled().map(extension => ({
         ...extension,
         origin: extension.origin ?? 'local-recovery',
         removable: !this.deps.getManagedPluginIds?.().includes(extension.id),
@@ -1319,13 +1325,6 @@ export class OpenClawExtensionImportService {
     }
     const localExtensions = this.listInstalled();
     const packages = await this.readPackageOwnership(localExtensions);
-    const localById = new Map(localExtensions.map(extension => [extension.id, extension]));
-    for (const owner of packages) {
-      const local = localById.get(owner.ownerId);
-      if (!local) continue;
-      for (const pluginId of owner.pluginIds)
-        localById.set(pluginId, this.projectPackageEntry(local, pluginId));
-    }
     if (
       localExtensions.some(extension => {
         const owner = packages.find(owner => owner.ownerId === extension.id);
@@ -1351,60 +1350,74 @@ export class OpenClawExtensionImportService {
         );
       }
     }
-    const managedIds = new Set(this.deps.getManagedPluginIds?.() ?? []);
+    // Each caller projects current local configuration separately. IPC callers
+    // can run this synchronous read after settings application or rollback;
+    // mutation notifications already holding that queue project directly.
+    return () => {
+      const localById = new Map(localExtensions.map(extension => [
+        extension.id, this.projectPackageEntry(extension, extension.id),
+      ]));
+      for (const owner of packages) {
+        const local = localById.get(owner.ownerId);
+        if (!local) continue;
+        for (const pluginId of owner.pluginIds)
+          localById.set(pluginId, this.projectPackageEntry(local, pluginId));
+      }
+      const managedIds = new Set(this.deps.getManagedPluginIds?.() ?? []);
 
-    return result.plugins
-      .filter(plugin => plugin.installed)
-      .map(plugin => {
-        const local = localById.get(plugin.id);
-        const managed = managedIds.has(plugin.id);
-        const bundledDirectory =
-          plugin.origin === 'bundled'
-            ? findBundledExtensionDirectory(manager, plugin.id)
+      return result.plugins
+        .filter(plugin => plugin.installed)
+        .map(plugin => {
+          const local = localById.get(plugin.id);
+          const managed = managedIds.has(plugin.id);
+          const bundledDirectory =
+            plugin.origin === 'bundled'
+              ? findBundledExtensionDirectory(manager, plugin.id)
+              : undefined;
+          const bundledConfiguration = bundledDirectory
+            ? getExtensionConfigurationState(
+                manager,
+                plugin.id,
+                readJsonRecord(path.join(bundledDirectory, OPENCLAW_PLUGIN_MANIFEST)),
+              )
             : undefined;
-        const bundledConfiguration = bundledDirectory
-          ? getExtensionConfigurationState(
-              manager,
-              plugin.id,
-              readJsonRecord(path.join(bundledDirectory, OPENCLAW_PLUGIN_MANIFEST)),
-            )
-          : undefined;
-        const description =
-          normalizeMetadataText(plugin.description) ??
-          normalizeMetadataText(local?.description) ??
-          (bundledDirectory ? readExtensionDescriptionFromDirectory(bundledDirectory) : '');
-        // Desired enablement is independent of registration/service health in
-        // the observed Gateway generation. An unloaded entry alone is not a failure.
-        const runtimeError =
-          plugin.runtime?.error ||
-          (plugin.runtime?.state === PLUGIN_RUNTIME_SERVICE_FAILED
-            ? t('extensionRuntimeServiceFailed')
-            : undefined);
-        return {
-          id: plugin.id,
-          name: plugin.name || plugin.id,
-          description,
-          version: plugin.version ?? local?.version,
-          installPath: local?.installPath ?? bundledDirectory,
-          enabled: plugin.enabled,
-          state: runtimeError
-            ? ExtensionState.ERROR
-            : plugin.state === 'not-installed'
-              ? ExtensionState.DISABLED
-              : plugin.state,
-          origin: plugin.origin,
-          category: plugin.category,
-          kinds: plugin.kind ? [...plugin.kind] : undefined,
-          error: plugin.error || runtimeError,
-          removable: result.mutationAllowed && plugin.removable === true && !managed,
-          canToggle: result.mutationAllowed && !managed,
-          managed,
-          missingRequirements:
-            local?.missingRequirements ?? bundledConfiguration?.missingRequirements ?? [],
-          configurationFields: local?.configurationFields ?? bundledConfiguration?.fields ?? [],
-        } satisfies InstalledOpenClawExtension;
-      })
-      .sort((a, b) => a.name.localeCompare(b.name));
+          const description =
+            normalizeMetadataText(plugin.description) ??
+            normalizeMetadataText(local?.description) ??
+            (bundledDirectory ? readExtensionDescriptionFromDirectory(bundledDirectory) : '');
+          // Desired enablement is independent of registration/service health in
+          // the observed Gateway generation. An unloaded entry alone is not a failure.
+          const runtimeError =
+            plugin.runtime?.error ||
+            (plugin.runtime?.state === PLUGIN_RUNTIME_SERVICE_FAILED
+              ? t('extensionRuntimeServiceFailed')
+              : undefined);
+          return {
+            id: plugin.id,
+            name: plugin.name || plugin.id,
+            description,
+            version: plugin.version ?? local?.version,
+            installPath: local?.installPath ?? bundledDirectory,
+            enabled: plugin.enabled,
+            state: runtimeError
+              ? ExtensionState.ERROR
+              : plugin.state === 'not-installed'
+                ? ExtensionState.DISABLED
+                : plugin.state,
+            origin: plugin.origin,
+            category: plugin.category,
+            kinds: plugin.kind ? [...plugin.kind] : undefined,
+            error: plugin.error || runtimeError,
+            removable: result.mutationAllowed && plugin.removable === true && !managed,
+            canToggle: result.mutationAllowed && !managed,
+            managed,
+            missingRequirements:
+              local?.missingRequirements ?? bundledConfiguration?.missingRequirements ?? [],
+            configurationFields: local?.configurationFields ?? bundledConfiguration?.fields ?? [],
+          } satisfies InstalledOpenClawExtension;
+        })
+        .sort((a, b) => a.name.localeCompare(b.name));
+    };
   }
 
   async updateConfiguration(

@@ -146,31 +146,33 @@ export const registerExtensionHandlers = ({
     },
   });
 
-  ipcMain.handle(ExtensionIpc.List, () =>
-    enqueueAppConfigUpdate(async (): Promise<{
-      success: boolean;
-      extensions: InstalledOpenClawExtension[];
-      error?: string;
-    }> => {
-      try {
-        const extensions = await extensionImportService.listCatalog();
-        return {
-          success: true,
-          extensions: extensions.map(extension => ({
+  ipcMain.handle(ExtensionIpc.List, async (): Promise<{
+    success: boolean;
+    extensions: InstalledOpenClawExtension[];
+    error?: string;
+  }> => {
+    try {
+      // Discovery may wait for Gateway startup; only configuration projection
+      // holds the settings lane, after any overlapping application/rollback.
+      await enqueueAppConfigUpdate(async (): Promise<void> => undefined);
+      const projectCatalog = await extensionImportService.prepareCatalog();
+      const extensions = await enqueueAppConfigUpdate(async () => projectCatalog());
+      return {
+        success: true,
+        extensions: extensions.map(extension => ({
+          ...extension,
+          ...getExtensionManagement({
             ...extension,
-            ...getExtensionManagement({
-              ...extension,
-              configurationFieldCount: extension.configurationFields.length,
-            }),
-          })),
-        };
-      } catch (error) {
-        const errorMsg = error instanceof Error ? error.message : 'Failed to list extensions';
-        console.error('[Extensions] extensions:list error:', errorMsg);
-        return { success: false, extensions: [], error: errorMsg };
-      }
-    }),
-  );
+            configurationFieldCount: extension.configurationFields.length,
+          }),
+        })),
+      };
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : 'Failed to list extensions';
+      console.error('[Extensions] extensions:list error:', errorMsg);
+      return { success: false, extensions: [], error: errorMsg };
+    }
+  });
 
   ipcMain.handle(
     ExtensionIpc.Import,
