@@ -184,6 +184,8 @@ import {
 import { type ApiFetchOptions, NetworkIpc } from '../shared/network/network';
 import {
   OpenClawAssistantMediaIpc,
+  type OpenClawAssistantMediaPlaybackRequest,
+  type OpenClawAssistantMediaReleaseRequest,
   type OpenClawAssistantMediaRequest,
 } from '../shared/openclaw/assistantMedia';
 import {
@@ -753,6 +755,10 @@ contextBridge.exposeInMainWorld('electron', {
       getToken: () => ipcRenderer.invoke('openclaw:engine:getToken'),
       readAssistantMediaDataUrl: (request: OpenClawAssistantMediaRequest) =>
         ipcRenderer.invoke(OpenClawAssistantMediaIpc.ReadDataUrl, request),
+      prepareAssistantMediaPlayback: (request: OpenClawAssistantMediaPlaybackRequest) =>
+        ipcRenderer.invoke(OpenClawAssistantMediaIpc.PreparePlayback, request),
+      releaseAssistantMediaPlayback: (request: OpenClawAssistantMediaReleaseRequest) =>
+        ipcRenderer.invoke(OpenClawAssistantMediaIpc.ReleasePlayback, request),
       setPort: (port: number) => ipcRenderer.invoke('openclaw:engine:setPort', port),
       getSystemPromptReplacementRules: () =>
         ipcRenderer.invoke(SystemPromptReplacementIpc.GetRules),

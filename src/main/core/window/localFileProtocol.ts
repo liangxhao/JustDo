@@ -3,7 +3,7 @@ import { stat } from 'node:fs/promises';
 import { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 
-import { net, protocol } from 'electron';
+import { net, protocol, session } from 'electron';
 
 export const registerLocalFileScheme = (): void => {
   protocol.registerSchemesAsPrivileged([
@@ -11,7 +11,18 @@ export const registerLocalFileScheme = (): void => {
   ]);
 };
 
-export const registerLocalFileProtocol = (): void => {
+export const registerLocalFileProtocol = (gatewayMedia?: {
+  authorize: (details: Electron.OnBeforeRequestListenerDetails) => boolean;
+  respond: (request: Request) => Promise<Response>;
+}): void => {
+  if (gatewayMedia) {
+    // The default app session has no browser-profile WebRequest owner. Install
+    // once with this narrow filter; browser partitions keep their own policies.
+    session.defaultSession.webRequest.onBeforeRequest(
+      { urls: ['localmedia://gateway/*'] },
+      (details, callback) => callback({ cancel: !gatewayMedia.authorize(details) }),
+    );
+  }
   // Three slashes needed: localfile:///C:/Users/... gives pathname /C:/Users/...
   protocol.handle('localfile', request => {
     const url = new URL(request.url);
@@ -20,6 +31,8 @@ export const registerLocalFileProtocol = (): void => {
   });
   protocol.handle('localmedia', async request => {
     const url = new URL(request.url);
+    if (url.host === 'gateway')
+      return gatewayMedia?.respond(request) ?? new Response(null, { status: 404 });
     // Decode only the drive separator; preserve escaped filename characters.
     const pathname = url.pathname.replace(/^\/([A-Za-z])%3A(?=\/)/i, '/$1:');
     if (url.host !== 'local') return new Response(null, { status: 400 });

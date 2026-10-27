@@ -65,6 +65,16 @@ HTTP 响应携带生产 CSP、`no-store`、`nosniff` 与同源资源策略。脚
 
 图片窗口只加载当前主窗口 origin 的 `/image-preview.html`，使用独立最小图片 preload，不继承完整 `window.electron`。同 origin 使主窗口创建的 Blob 图片可读；主窗口 origin 不可用时预览失败关闭，origin 改变时重建预览窗口。静态宿主在主窗口关闭、加载失败或 `before-quit` 时撤销导航准入、关闭连接并移除监听器；启动途中发生关闭也不会留下服务。
 
+聊天托管音视频使用独立的 prepare/release IPC：仅当前主窗口及受管工作区窗口的主
+frame 可申请随机 `localmedia://gateway/` 地址。工作区通过独立的 `mediaPlaybackPreload`
+只取得 prepare/release 两个方法，不安装完整 `window.electron`；实际媒体请求与申请
+来自同一目标窗口和 frame。Main 的媒体 owner 持有原生会话、
+固定 outgoing route、窗口/frame 和 Gateway process/lifecycle generation；defaultSession
+唯一的窄媒体 WebRequest listener 验证每次请求的精确 owner/frame，原生浏览器 partition
+继续由各自策略管理。流式响应通过 Main 内部 Gateway 认证读取原始字节，Renderer 仅
+持有可撤销地址，不取得 token 或整个文件正文。生命周期、Range 与摘要复用规则见
+[聊天渲染](15-chat-rendering.md)。
+
 ### 浏览器与非浏览器的代理范围
 
 网页 embed 同样使用 `browserProxy` 的 session 配置队列及设置代次，默认系统代理。
@@ -100,8 +110,9 @@ loader 核对，完整页面使用独立网页承载。具体边界见[交互式
 和独立网页 viewer 入口携带单个 UUID 格式的 `mount` 参数；其他入口或额外参数均拒绝。静态读取不授予
 原生窗口能力，窗口创建仍须匹配 Main 的当前授予。
 主 Renderer
-通过 React portal 渲染完整工具区；该文档没有应用入口脚本、preload 或
-`window.electron`，也不创建第二个 Redux store。源组件闭包仍调用主 Renderer
+通过 React portal 渲染完整工具区；该文档没有应用入口脚本、完整应用 preload 或
+`window.electron`，只通过媒体最小 preload 提供当前文档的 prepare/release，
+也不创建第二个 Redux store。其它源组件闭包仍调用主 Renderer
 的显式 bridge。Main 用通用原生 `View` 组拥有整个侧边栏：工作区的 WebContentsView
 与已固定的消息卡片载体是组内的并列子视图。停靠时整组放入主窗口 contentView，
 分离时将同一组移入普通 BrowserWindow；所有侧栏内容统一跟随该组，不按内容类型

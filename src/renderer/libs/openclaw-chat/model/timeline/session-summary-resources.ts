@@ -1,4 +1,5 @@
 import type { ArtifactSummary } from '@shared/openclaw/artifacts';
+import { parseManagedOutgoingMediaSource } from '@shared/openclaw/assistantMedia';
 import { OPENCLAW_NESTED_TOOL_CUSTOM_TYPE } from '@shared/openclaw/constants';
 import MarkdownIt from 'markdown-it';
 
@@ -229,7 +230,13 @@ export function resolveSummaryArtifactResource(
       originals[0].mimeType?.startsWith('image/')
     )
       return originals[0];
-    if (attachment.url.startsWith('data:') && value && typeof value === 'object') {
+    if (
+      (attachment.url.startsWith('data:') ||
+        (['audio', 'video'].includes(attachment.kind) &&
+          parseManagedOutgoingMediaSource(attachment.url))) &&
+      value &&
+      typeof value === 'object'
+    ) {
       return {
         id: `attachment:${messageReference(value).messageKey}:${index}`,
         title: attachment.label,
@@ -626,7 +633,11 @@ export function projectSessionSummaryResources(
               mimeType: attachment.mimeType,
               target: artifactTarget,
             })
-          : attachment.url.startsWith('data:') && value && typeof value === 'object'
+          : (attachment.url.startsWith('data:') ||
+                (['audio', 'video'].includes(attachment.kind) &&
+                  parseManagedOutgoingMediaSource(attachment.url))) &&
+              value &&
+              typeof value === 'object'
             ? {
                 id: `attachment:${messageReference(value).messageKey}:${index}`,
                 title: attachment.label,

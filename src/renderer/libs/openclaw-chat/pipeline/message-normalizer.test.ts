@@ -331,6 +331,27 @@ describe('normalizeMessage image content', () => {
 });
 
 describe('normalizeMessage assistant media', () => {
+  test.each(['audio', 'video'] as const)('normalizes native flat managed %s deliveries', kind => {
+    const block = {
+      type: kind,
+      artifactId: 'artifact_managed_media_delivery',
+      url: '/api/chat/media/outgoing/session/delivery/full',
+      fileName: `result.${kind === 'audio' ? 'wav' : 'mp4'}`,
+      mimeType: kind === 'audio' ? 'audio/wav' : 'video/mp4',
+    };
+    expect(normalizeMessage({ role: 'assistant', content: [block] }).content).toEqual([
+      {
+        type: 'attachment',
+        attachment: {
+          url: block.url,
+          artifactId: block.artifactId,
+          label: block.fileName,
+          kind,
+          mimeType: block.mimeType,
+        },
+      },
+    ]);
+  });
   test('preserves the artifact identity of a managed document attachment', () => {
     const message = normalizeMessage({
       role: 'assistant',

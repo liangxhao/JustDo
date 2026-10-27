@@ -10,8 +10,35 @@ function fixture() {
     openFile: vi.fn(),
     openImage: vi.fn(),
     openUrl: vi.fn(),
+    openMedia: vi.fn(),
+    sessionKey: 'agent:main:session',
   };
 }
+
+it('opens a native audio delivery in the shared media reader only for the current session', async () => {
+  const navigation = fixture();
+  const url =
+    '/api/chat/media/outgoing/agent%3Amain%3Asession/11111111-1111-4111-8111-111111111111/full';
+  navigation.readAttachment.mockReturnValue({
+    url,
+    label: 'voice.wav',
+    kind: 'audio',
+    mimeType: 'audio/wav',
+  });
+  const resource = {
+    id: 'voice',
+    title: 'voice.wav',
+    target: { kind: 'attachment' as const, messageKey: 'entry', version: 1, index: 0 },
+  };
+  expect(await openSummaryResource(resource, navigation)).toBe(true);
+  expect(navigation.openMedia).toHaveBeenCalledWith(url, 'voice.wav', 'audio');
+  expect(navigation.openUrl).not.toHaveBeenCalled();
+  expect(navigation.openFile).not.toHaveBeenCalled();
+  navigation.openMedia.mockClear();
+  navigation.sessionKey = 'agent:main:other';
+  expect(await openSummaryResource(resource, navigation)).toBe(false);
+  expect(navigation.openMedia).not.toHaveBeenCalled();
+});
 
 it('opens an existing file through the normal preview entry without resolving or copying it', async () => {
   const navigation = fixture();

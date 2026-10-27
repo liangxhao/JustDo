@@ -26,6 +26,44 @@ const artifact: ArtifactSummary = {
   download: { mode: 'bytes' },
 };
 
+it('resolves the native TTS artifact to the exact loaded audio attachment without a local path', () => {
+  const url =
+    '/api/chat/media/outgoing/agent%3Amain%3Asession/11111111-1111-4111-8111-111111111111/full';
+  const message = {
+    role: 'assistant',
+    model: 'gateway-injected',
+    __openclaw: { seq: 7 },
+    content: [
+      { type: 'audio', artifactId: 'audio-id', url, fileName: 'voice.wav', mimeType: 'audio/wav' },
+    ],
+  };
+  const metadata = {
+    ...artifact,
+    id: 'audio-id',
+    title: 'voice.wav',
+    type: 'audio' as const,
+    mimeType: 'audio/wav',
+    messageSeq: 7,
+  };
+  const { outputs } = projectSessionSummaryResources([message], [metadata]);
+  expect(outputs).toHaveLength(1);
+  expect(outputs[0].target).toMatchObject({ kind: 'attachment', index: 0 });
+  if (outputs[0].target.kind !== 'attachment')
+    throw new Error('Expected exact attachment reference');
+  expect(resolveSummaryAttachment([message], outputs[0].target)).toMatchObject({
+    url,
+    kind: 'audio',
+  });
+  expect(resolveSummaryAttachment([{ ...message }], outputs[0].target)).toBeNull();
+  expect(
+    resolveSummaryArtifactResource(
+      [message],
+      { kind: 'artifact', artifactId: 'different-id', assistantOnly: true, messageSeq: 7 },
+      'voice.wav',
+    ),
+  ).toBeNull();
+});
+
 it('keeps the hydrated inbound image as a source when its native media reference is opaque', () => {
   const message = {
     role: 'user',

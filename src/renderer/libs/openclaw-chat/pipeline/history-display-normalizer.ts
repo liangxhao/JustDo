@@ -14,6 +14,7 @@ import {
   readNativeFailureDetails,
 } from '@/libs/openclaw-chat/model/turn/failed-run-message';
 import { isAssistantHeartbeatAckForDisplay } from '@/libs/openclaw-chat/pipeline/heartbeat-display';
+import { normalizeMessage } from '@/libs/openclaw-chat/pipeline/message-normalizer';
 import {
   splitMediaFromOutput,
   stripInboundMetadata,
@@ -325,16 +326,16 @@ function messageDisplayContent(message: unknown): unknown {
     : record?.content;
 }
 
-function managedAttachmentLabels(message: unknown): string[] {
+function managedAttachments(message: unknown) {
   const content = messageDisplayContent(message);
   if (!Array.isArray(content)) return [];
-  return content.flatMap(block => {
-    const item = asRecord(block);
-    const attachment = asRecord(item?.attachment);
-    const url = typeof attachment?.url === 'string' ? attachment.url.trim() : '';
-    const label = typeof attachment?.label === 'string' ? attachment.label.trim() : '';
-    return url.startsWith('/api/chat/media/outgoing/') && label ? [label.toLowerCase()] : [];
-  });
+  return normalizeMessage({ role: 'assistant', content }).content.flatMap(item =>
+    item.type === 'attachment' &&
+    item.attachment.url.startsWith('/api/chat/media/outgoing/') &&
+    item.attachment.label.trim()
+      ? [item.attachment]
+      : [],
+  );
 }
 
 function displayTextWithoutMediaDirectives(message: unknown): string {
@@ -367,7 +368,8 @@ function collapseAssistantMediaDeliveryCompanions<T>(messages: T[]): T[] {
 
     const previousRecord = messageRecord(previous);
     const mediaUrls = assistantDeliveryMediaUrls(previous);
-    const labels = managedAttachmentLabels(message);
+    const attachments = managedAttachments(message);
+    const labels = attachments.map(attachment => attachment.label.toLowerCase());
     const isMatchingCompanion =
       String(previousRecord?.role ?? '').toLowerCase() === 'assistant' &&
       mediaUrls.length > 0 &&
@@ -382,18 +384,6 @@ function collapseAssistantMediaDeliveryCompanions<T>(messages: T[]): T[] {
     const seq =
       asRecord(asRecord(message)?.__openclaw)?.seq ??
       asRecord(messageRecord(message)?.__openclaw)?.seq;
-    const content = messageDisplayContent(message);
-    const attachments = Array.isArray(content)
-      ? content.flatMap(block => {
-          const attachment = asRecord(asRecord(block)?.attachment);
-          return typeof attachment?.url === 'string' &&
-            attachment.url.trim().startsWith('/api/chat/media/outgoing/') &&
-            typeof attachment.label === 'string' &&
-            attachment.label.trim()
-            ? [attachment]
-            : [];
-        })
-      : [];
     const links = attachments.flatMap((attachment, index) => {
       const artifactId =
         typeof attachment.artifactId === 'string' && attachment.artifactId.trim()

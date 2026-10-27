@@ -1,5 +1,6 @@
 import { getTranscriptMedia } from '../../attachments';
 import { extractTextCached } from '../../pipeline/message-extract';
+import { normalizeMessage } from '../../pipeline/message-normalizer';
 import { asToolRecord, unwrapToolMessage } from '../tools/tool-message-adapter';
 import { isFailedRunMessage } from '../turn/failed-run-message';
 import type {
@@ -32,7 +33,10 @@ function canFold(item: VisibleTimelineItem): item is SourceTimelineItem {
     return (
       item.item.status === 'completed' &&
       Boolean(item.item.text.trim()) &&
-      getTranscriptMedia({ role: 'assistant', content: item.item.text }).length === 0
+      getTranscriptMedia({ role: 'assistant', content: item.item.text }).length === 0 &&
+      normalizeMessage({ role: 'assistant', content: item.item.text }).content.every(
+        block => block.type === 'text',
+      )
     );
   }
   if (item.kind === 'process-summary') {
@@ -62,6 +66,7 @@ function canFold(item: VisibleTimelineItem): item is SourceTimelineItem {
     })
   )
     return false;
+  if (normalizeMessage(message).content.some(block => block.type !== 'text')) return false;
   return Boolean(extractTextCached(message)?.trim());
 }
 
@@ -82,7 +87,14 @@ export function foldCompletedProcessRows(
   const flushTurn = (protectedTurn = false) => {
     let finalIndex = -1;
     for (let index = turn.length - 1; index >= 0; index -= 1) {
-      if (assistantMessage(turn[index].item) || turn[index].item.kind === 'content') {
+      const item = turn[index].item;
+      const message = item.kind === 'content'
+        ? { role: 'assistant', content: item.item.text }
+        : assistantMessage(item);
+      // Media and delivery directives do not count as the last visible reply.
+      if (message && normalizeMessage(message).content.some(block =>
+        block.type === 'text' && Boolean(block.text?.trim()),
+      )) {
         finalIndex = index;
         break;
       }

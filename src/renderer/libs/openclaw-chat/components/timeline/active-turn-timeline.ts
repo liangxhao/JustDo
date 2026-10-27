@@ -396,6 +396,7 @@ function renderToolDetail(
   tool: ToolItem,
   editDiffMode: EditDiffMode,
   onEditDiffModeChange?: EditDiffModeChangeHandler,
+  sessionKey?: string,
 ): TemplateResult {
   const editDiff = parseEditToolDiff(tool.name, tool.input);
   const inputCode = fileToolCode(tool, false);
@@ -423,7 +424,7 @@ function renderToolDetail(
         media.filter(item => item.kind === 'image'),
         true,
       )}
-      ${renderAssistantAttachments(media.filter(item => item.kind !== 'image'))}
+      ${renderAssistantAttachments(media.filter(item => item.kind !== 'image'), undefined, sessionKey)}
       ${
         patch.length
           ? html`<div class="process-summary__detail-label">
@@ -677,6 +678,7 @@ function renderProcessItem(
   editDiffModes: ReadonlyMap<string, EditDiffMode>,
   onEditDiffModeChange?: EditDiffModeChangeHandler,
   renderThinking?: ThinkingContentRenderer,
+  sessionKey?: string,
 ): TemplateResult {
   return html`
     <li
@@ -736,6 +738,7 @@ function renderProcessItem(
                   process,
                   editDiffModes.get(process.id) ?? 'unified',
                   onEditDiffModeChange,
+                  sessionKey,
                 )}
               </details>
             `
@@ -754,7 +757,7 @@ export function renderTimelineItem(
   speech?: TimelineSpeechOptions,
   assistantAvatar?: TemplateResult,
   renderThinking?: ThinkingContentRenderer,
-  contentOptions?: { workingDirectory?: string; onOpenFile?: OpenMessageFileLink },
+  contentOptions?: { workingDirectory?: string; onOpenFile?: OpenMessageFileLink; sessionKey?: string },
 ): TemplateResult {
   if (item.kind === 'mcp-app') {
     return renderAssistantTimelineRow(
@@ -877,7 +880,7 @@ export function renderTimelineItem(
                 >${toolSummary(tool)}</span
               >
             </summary>
-            ${renderToolDetail(tool, editDiffModes.get(tool.id) ?? 'unified', onEditDiffModeChange)}
+            ${renderToolDetail(tool, editDiffModes.get(tool.id) ?? 'unified', onEditDiffModeChange, contentOptions?.sessionKey)}
           </details>
         </section>
       `,
@@ -897,7 +900,7 @@ export function renderTimelineItem(
           item.items,
           process => process.id,
           process =>
-            renderProcessItem(process, depths, editDiffModes, onEditDiffModeChange, renderThinking),
+            renderProcessItem(process, depths, editDiffModes, onEditDiffModeChange, renderThinking, contentOptions?.sessionKey),
         )}
       </ol>`;
     return renderAssistantTimelineRow(

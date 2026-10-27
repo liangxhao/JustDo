@@ -140,6 +140,20 @@ export default defineConfig({
         onstart() {},
       },
       {
+        entry: 'src/main/mediaPlaybackPreload.ts',
+        vite: {
+          root: projectRoot,
+          plugins: [createApplicationLicensePlugin({ repoRoot: projectRoot, scope: 'mediaPlaybackPreload' })],
+          build: {
+            outDir: 'dist-electron',
+            sourcemap: !isProductionBuild,
+            minify: isProductionBuild ? 'esbuild' : false,
+            rollupOptions: { checks: { pluginTimings: false } },
+          },
+        },
+        onstart() {},
+      },
+      {
         entry: 'src/main/webpageEmbedPreload.ts',
         vite: {
           root: projectRoot,

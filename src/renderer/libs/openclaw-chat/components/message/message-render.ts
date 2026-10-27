@@ -58,6 +58,7 @@ type MessageRenderOptions = {
   peerNames?: Readonly<Record<string, string>>;
   peerPerspective?: boolean;
   workingDirectory?: string;
+  sessionKey?: string;
   onOpenFile?: OpenMessageFileLink;
   speechState?: 'idle' | 'loading' | 'playing';
   onSpeak?: (groupKey: string, text: string) => void;
@@ -82,7 +83,7 @@ type MessageRenderOptions = {
 
 type AssistantTimelineContentOptions = Pick<
   MessageRenderOptions,
-  'onSpeak' | 'showAvatar' | 'speechState' | 'workingDirectory' | 'assistantAvatar' | 'onOpenFile'
+  'onSpeak' | 'showAvatar' | 'speechState' | 'workingDirectory' | 'sessionKey' | 'assistantAvatar' | 'onOpenFile'
 > & {
   key: string;
   timestamp: number;
@@ -512,12 +513,21 @@ async function showAttachmentContextMenu(
 export function renderAssistantAttachments(
   attachments: RenderableAttachment[],
   workingDirectory?: string,
+  sessionKey?: string,
 ): TemplateResult | typeof nothing {
   if (attachments.length === 0) return nothing;
   return html`
     <div class="message-attachments">
       ${attachments.map(attachment => {
         if (attachment.kind === 'audio' || attachment.kind === 'video') {
+          if (attachment.url.startsWith('/api/chat/media/outgoing/')) {
+            return html`<justdo-message-media
+              .src=${attachment.url}
+              .kind=${attachment.kind}
+              .label=${attachment.label}
+              .sessionKey=${sessionKey ?? ''}
+            ></justdo-message-media>`;
+          }
           const src = resolveImageSourceUrl(attachment.url, workingDirectory).replace(
             /^localfile:\/\/\//i,
             'localmedia://local/',
@@ -718,6 +728,7 @@ function renderOrderedBubble(
   bubbleIndex = 0,
   streaming = false,
   fileLinks = false,
+  sessionKey?: string,
 ): TemplateResult | typeof nothing {
   if (items.length === 0) return nothing;
   const text = items
@@ -774,7 +785,7 @@ function renderOrderedBubble(
           }
           return renderListedAttachment(
             item.attachment,
-            renderAssistantAttachments([item.attachment], workingDirectory),
+            renderAssistantAttachments([item.attachment], workingDirectory, sessionKey),
           );
         })}
       </div>
@@ -889,6 +900,7 @@ export function renderMessageBlockWithTrailingStream(
                   opts?.workingDirectory,
                   `${group.key}:stream`,
                   Boolean(opts?.onOpenFile),
+                  opts?.sessionKey,
                 )}
               `
             : renderReadingIndicator()
@@ -924,13 +936,14 @@ function renderSingleMessage(
       opts?.workingDirectory,
       disclosureOwner,
       Boolean(opts?.onOpenFile),
+      opts?.sessionKey,
     );
   }
   return html`<div
     data-quote-source
     data-assistant-entry=${identity?.kind === 'openclaw-id' ? identity.value : nothing}
   >
-    ${renderAssistantMessage(normalized, message, opts?.workingDirectory, trailingAction, disclosureOwner, false, Boolean(opts?.onOpenFile))}
+    ${renderAssistantMessage(normalized, message, opts?.workingDirectory, trailingAction, disclosureOwner, false, Boolean(opts?.onOpenFile), opts?.sessionKey)}
   </div>`;
 }
 
@@ -942,6 +955,7 @@ function renderUserMessage(
   workingDirectory?: string,
   disclosureOwner?: string,
   fileLinks = false,
+  sessionKey?: string,
 ): TemplateResult {
   const hasImage = msg.content.some(
     item => item.type === 'attachment' && item.attachment.kind === 'image',
@@ -975,6 +989,7 @@ function renderUserMessage(
     0,
     false,
     fileLinks,
+    sessionKey,
   ) as TemplateResult;
 }
 
@@ -988,6 +1003,7 @@ function renderAssistantMessage(
   disclosureOwner?: string,
   streaming = false,
   fileLinks = false,
+  sessionKey?: string,
 ): TemplateResult {
   const sections: Array<
     | { kind: 'bubble'; items: BubbleContentItem[] }
@@ -1041,6 +1057,7 @@ function renderAssistantMessage(
           index,
           streaming,
           fileLinks,
+          sessionKey,
         )
       : section.content,
   )}`;
@@ -1063,6 +1080,7 @@ export function renderAssistantTimelineContent(
         disclosureOwner: opts.key,
         onOpenFile: opts.onOpenFile,
         workingDirectory: opts.workingDirectory,
+        sessionKey: opts.sessionKey,
       })}
     </div>`;
   }
@@ -1092,6 +1110,7 @@ export function renderAssistantTimelineContent(
       speechState: opts.speechState,
       onSpeak: opts.onSpeak,
       workingDirectory: opts.workingDirectory,
+      sessionKey: opts.sessionKey,
       onOpenFile: opts.onOpenFile,
       disclosureOwner: opts.key,
     },
@@ -1249,6 +1268,7 @@ export function renderStreamingGroup(
     disclosureOwner?: string;
     onOpenFile?: OpenMessageFileLink;
     workingDirectory?: string;
+    sessionKey?: string;
   },
 ): TemplateResult {
   text = partitionTaggedReasoning(text).text;
@@ -1273,6 +1293,7 @@ export function renderStreamingGroup(
                   opts?.workingDirectory,
                   opts?.disclosureOwner ?? `stream:${startedAt}`,
                   Boolean(opts?.onOpenFile),
+                  opts?.sessionKey,
                 )}
               `
             : renderReadingIndicator()
@@ -1287,6 +1308,7 @@ function renderStreamingAssistantMessage(
   workingDirectory?: string,
   disclosureOwner?: string,
   fileLinks = false,
+  sessionKey?: string,
 ): TemplateResult {
   const normalized = normalizeMessage({ role: 'assistant', content: text });
   if (normalized.content.some(item => item.type !== 'text'))
@@ -1298,6 +1320,7 @@ function renderStreamingAssistantMessage(
       disclosureOwner,
       true,
       fileLinks,
+      sessionKey,
     );
   // Streaming Markdown relies on terminal newlines to distinguish complete
   // dividers/code from incomplete blocks. Final-message normalization trims

@@ -207,6 +207,11 @@ import {
 import { readOpenClawAssistantMedia } from './ipc/openclaw/engine';
 import { registerEngineDiagnosticsHandlers } from './ipc/openclaw/engineDiagnostics';
 import {
+  authorizeManagedMediaPlaybackRequest,
+  handleManagedMediaPlaybackRequest,
+  registerManagedMediaPlaybackHandlers,
+} from './ipc/openclaw/managedMediaPlayback';
+import {
   registerExtensionHandlers,
   registerHookHandlers,
   registerMarketplaceHandlers,
@@ -1189,6 +1194,9 @@ const PRELOAD_PATH = app.isPackaged
 const IMAGE_PREVIEW_PRELOAD_PATH = app.isPackaged
   ? path.join(__dirname, 'imagePreviewPreload.js')
   : path.join(__dirname, '../dist-electron/imagePreviewPreload.js');
+const MEDIA_PLAYBACK_PRELOAD_PATH = app.isPackaged
+  ? path.join(__dirname, 'mediaPlaybackPreload.js')
+  : path.join(__dirname, '../dist-electron/mediaPlaybackPreload.js');
 const BROWSER_GUEST_PRELOAD_PATH = app.isPackaged
   ? path.join(__dirname, 'browserGuestPreload.js')
   : path.join(__dirname, '../dist-electron/browserGuestPreload.js');
@@ -1600,6 +1608,10 @@ if (agentBridgeArgv) {
       getGatewayClient: () => getOpenClawRuntimeAdapter()?.getGatewayClient() ?? null,
     }),
   });
+  registerManagedMediaPlaybackHandlers({
+    getMainWindow: () => mainWindow,
+    getManager: getOpenClawEngineManager,
+  });
   registerOpenClawEngineHandlers({
     ensureEngineRunning: ensureOpenClawRunningForCowork,
     runConfigMutationExclusive: operation =>
@@ -1954,6 +1966,7 @@ if (agentBridgeArgv) {
       getIconPath: getAppIconPath,
       getRendererPreferenceStore: getStore,
       browserGuestPreloadPath: BROWSER_GUEST_PRELOAD_PATH,
+      mediaPlaybackPreloadPath: MEDIA_PLAYBACK_PRELOAD_PATH,
       widgetViewerPreloadPath: WIDGET_VIEWER_PRELOAD_PATH,
       webpageEmbedPreloadPath: WEBPAGE_EMBED_PRELOAD_PATH,
       getWebpageEmbedConnection: () => captureWebpageEmbedConnection(getOpenClawRuntimeAdapter, getOpenClawEngineManager()),
@@ -2419,7 +2432,10 @@ if (agentBridgeArgv) {
     if (appShutdown.isQuitting()) return;
 
     // 注册 localfile:// 自定义协议，用于安全加载本地文件（图片等）
-    registerLocalFileProtocol();
+    registerLocalFileProtocol({
+      authorize: authorizeManagedMediaPlaybackRequest,
+      respond: handleManagedMediaPlaybackRequest,
+    });
 
     // Checkpoint previous desktop receipts; unresolved CLI executions keep
     // their open receipt and reservation until exact native settlement is known.

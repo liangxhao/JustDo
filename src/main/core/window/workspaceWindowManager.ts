@@ -22,6 +22,7 @@ import {
 
 type WorkspaceWindowOptions = {
   url: string;
+  mediaPlaybackPreloadPath: string;
   icon?: string;
   getBackgroundColor: () => string;
   getTitleBarOverlay: () => Electron.TitleBarOverlay;
@@ -168,12 +169,12 @@ export class WorkspaceWindowManager {
     )
       return null;
     // These overrides apply BEFORE Chromium creates options.webContents. The
-    // child must never inherit the application's privileged preload.
+    // child gets only playback capabilities, never the application's full preload.
     return {
       action: 'allow',
       overrideBrowserWindowOptions: {
         webPreferences: {
-          preload: undefined,
+          preload: this.options.mediaPlaybackPreloadPath,
           nodeIntegration: false,
           contextIsolation: true,
           sandbox: true,

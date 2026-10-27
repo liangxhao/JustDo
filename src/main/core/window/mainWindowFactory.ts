@@ -95,6 +95,7 @@ type MainWindowFactoryOptions = {
     entryStartedAt?: number;
   };
   browserGuestPreloadPath: string;
+  mediaPlaybackPreloadPath: string;
   widgetViewerPreloadPath: string;
   webpageEmbedPreloadPath: string;
   getWebpageEmbedConnection: () => WebpageEmbedConnection | null;
@@ -999,6 +1000,7 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
   const prepareWorkspaceWindow = (applicationUrl: string): void => {
     workspaceManager ??= new WorkspaceWindowManager(mainWindow, {
       url: new URL('workspace.html', applicationUrl).toString(),
+      mediaPlaybackPreloadPath: options.mediaPlaybackPreloadPath,
       icon: options.getIconPath(),
       getBackgroundColor: options.getBackgroundColor,
       getTitleBarOverlay: options.getTitleBarOverlay,

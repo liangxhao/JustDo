@@ -979,6 +979,12 @@ interface IElectronAPI {
       readAssistantMediaDataUrl: (
         request: import('../../shared/openclaw/assistantMedia').OpenClawAssistantMediaRequest,
       ) => Promise<import('../../shared/openclaw/assistantMedia').OpenClawAssistantMediaResult>;
+      prepareAssistantMediaPlayback: (
+        request: import('../../shared/openclaw/assistantMedia').OpenClawAssistantMediaPlaybackRequest,
+      ) => Promise<import('../../shared/openclaw/assistantMedia').OpenClawAssistantMediaPlaybackResult>;
+      releaseAssistantMediaPlayback: (
+        request: import('../../shared/openclaw/assistantMedia').OpenClawAssistantMediaReleaseRequest,
+      ) => Promise<import('../../shared/openclaw/assistantMedia').OpenClawAssistantMediaReleaseResult>;
       setPort: (port: number) => Promise<{
         success: boolean;
         error?: string;
@@ -1844,6 +1850,8 @@ interface IElectronAPI {
 declare global {
   interface Window {
     electron: IElectronAPI;
+    /** Playback-only bridge in the fixed workspace document, without the app preload. */
+    mediaPlayback?: import('../../shared/openclaw/assistantMedia').MediaPlaybackBridge;
     /** Present only in the fixed native widget viewer's minimal preload. */
     widgetViewer?: import('../../shared/widgets/viewer').WidgetViewerBridge;
     /** Present only in the fixed independent webpage viewer. */

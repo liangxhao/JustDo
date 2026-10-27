@@ -2,7 +2,7 @@ import { describe, expect, test } from 'vitest';
 
 import { foldCompletedProcessRows } from './completed-process';
 import type { PersistedTimelineItem } from './project-history-timeline';
-import type { ProcessSummaryTimelineItem, ProgressReceiptTimelineItem, QuestionPresentationTimelineItem } from './project-turn-items';
+import type { ContentTimelineItem, ProcessSummaryTimelineItem, ProgressReceiptTimelineItem, QuestionPresentationTimelineItem } from './project-turn-items';
 import { prepareVisibleTimelineRows } from './timeline-avatar-state';
 
 function message(key: string, role = 'assistant', completed = false): PersistedTimelineItem {
@@ -324,6 +324,148 @@ describe('foldCompletedProcessRows', () => {
     expect(result[1].showAvatar).toBe(true);
     expect(result[2].showFooter).toBe(true);
   });
+
+  test('keeps the final reply visible before media-only and blank assistant deliveries', () => {
+    const final = message('final', 'assistant', true);
+    const audio = message('audio');
+    const blank = message('blank');
+    if (audio.kind !== 'history-message' || blank.kind !== 'history-message') {
+      throw new Error('Invalid fixture');
+    }
+    audio.message = {
+      role: 'assistant',
+      model: 'gateway-injected',
+      content: [{ type: 'audio', url: '/api/chat/media/outgoing/session/voice/full' }],
+    };
+    blank.message.content = [{ type: 'text', text: ' \n ' }];
+    const process = summary('process');
+
+    const result = foldCompletedProcessRows(
+      prepareVisibleTimelineRows([process, final, audio, blank]),
+    );
+
+    expect(result[0].item).toMatchObject({ kind: 'completed-process', items: [process] });
+    expect(result.slice(1).map(row => row.item)).toEqual([final, audio, blank]);
+  });
+
+  test.each([
+    'MEDIA:E:/output/voice.wav',
+    'MEDIA:E:/output/clip.mp4',
+    '[[audio_as_voice]]\n[[reply_to_current]]',
+  ])('keeps the final reply visible before delivery-only text: %s', text => {
+    const final = message('final', 'assistant', true);
+    const delivery = message('delivery');
+    if (delivery.kind !== 'history-message') throw new Error('Invalid fixture');
+    delivery.message.content = [{ type: 'text', text }];
+    const process = summary('process');
+
+    const result = foldCompletedProcessRows(prepareVisibleTimelineRows([process, final, delivery]));
+
+    expect(result[0].item).toMatchObject({ kind: 'completed-process', items: [process] });
+    expect(result.slice(1).map(row => row.item)).toEqual([final, delivery]);
+    const onlyDelivery = prepareVisibleTimelineRows([process, delivery]);
+    expect(foldCompletedProcessRows(onlyDelivery)).toEqual(onlyDelivery);
+  });
+
+  test('does not fold process records when the only assistant delivery is media', () => {
+    const media = message('media');
+    if (media.kind !== 'history-message') throw new Error('Invalid fixture');
+    media.message.content = [{ type: 'video', url: '/api/chat/media/outgoing/session/video/full' }];
+    const rows = prepareVisibleTimelineRows([summary('process'), media]);
+
+    expect(foldCompletedProcessRows(rows)).toEqual(rows);
+  });
+
+  test.each([
+    'MEDIA:E:/output/voice.wav',
+    '[embed ref="report" /]',
+  ])('keeps a historical rich delivery visible before the final reply: %s', text => {
+    const delivery = message('delivery');
+    if (delivery.kind !== 'history-message') throw new Error('Invalid fixture');
+    delivery.message.content = [{ type: 'text', text }];
+    const process = summary('process');
+    const final = message('final', 'assistant', true);
+
+    const result = foldCompletedProcessRows(prepareVisibleTimelineRows([process, delivery, final]));
+
+    expect(result[0].item).toMatchObject({ kind: 'completed-process', items: [process] });
+    expect(result.slice(1).map(row => row.item)).toEqual([delivery, final]);
+  });
+
+  test('keeps a completed live video delivery visible before the final reply', () => {
+    const video: ContentTimelineItem = {
+      kind: 'content',
+      key: 'live-video',
+      item: {
+        id: 'live-video',
+        runId: 'run-1',
+        type: 'content',
+        status: 'completed',
+        sourceMode: 'delta',
+        text: 'MEDIA:E:/output/clip.mp4',
+        firstSeq: 1,
+        lastSeq: 1,
+        startedAt: 1,
+        updatedAt: 1,
+      },
+    };
+    const process = summary('process');
+    const final = message('final', 'assistant', true);
+
+    const result = foldCompletedProcessRows(prepareVisibleTimelineRows([process, video, final]));
+
+    expect(result[0].item).toMatchObject({ kind: 'completed-process', items: [process] });
+    expect(result.slice(1).map(row => row.item)).toEqual([video, final]);
+  });
+
+  test('uses mixed text and media as the final reply while keeping the complete delivery visible', () => {
+    const media = message('media');
+    if (media.kind !== 'history-message') throw new Error('Invalid fixture');
+    media.message.content = [
+      { type: 'text', text: 'Listen to the recording.' },
+      { type: 'audio', url: '/api/chat/media/outgoing/session/voice/full' },
+    ];
+    const commentary = message('commentary');
+    const process = summary('process');
+
+    const result = foldCompletedProcessRows(prepareVisibleTimelineRows([process, commentary, media]));
+
+    expect(result[0].item).toMatchObject({ kind: 'completed-process', items: [process, commentary] });
+    expect(result[1].item).toBe(media);
+  });
+
+  test.each([' \n ', '[[audio_as_voice]]\nMEDIA:E:/output/voice.wav'])(
+    'ignores live content without visible body text without bypassing streaming protection: %s',
+    text => {
+      const live: ContentTimelineItem = {
+        kind: 'content',
+        key: 'live-content',
+        item: {
+          id: 'live-content',
+          runId: 'run-1',
+          type: 'content',
+          status: 'streaming',
+          sourceMode: 'delta',
+          text,
+          firstSeq: 1,
+          lastSeq: 1,
+          startedAt: 1,
+          updatedAt: 1,
+        },
+      };
+      const final = message('final', 'assistant', true);
+      const process = summary('process');
+      const blankRows = prepareVisibleTimelineRows([process, final, live]);
+
+      const result = foldCompletedProcessRows(blankRows);
+
+      expect(result[0].item).toMatchObject({ kind: 'completed-process', items: [process] });
+      expect(result.slice(1).map(row => row.item)).toEqual([final, live]);
+      const streaming = { ...live, item: { ...live.item, text: 'More details are arriving.' } };
+      const streamingRows = prepareVisibleTimelineRows([process, final, streaming]);
+      expect(foldCompletedProcessRows(streamingRows)).toEqual(streamingRows);
+    },
+  );
 
   test('leaves explicitly running outcomes unfolded', () => {
     const final = message('final', 'assistant', true);

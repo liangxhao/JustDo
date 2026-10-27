@@ -352,6 +352,24 @@ function coercePlayableContentBlock(
   if (item.type !== 'audio' && item.type !== 'video') {
     return null;
   }
+  const directUrl = pickTrimmedString(item.url);
+  if (directUrl) {
+    const mimeType = pickTrimmedString(item.mimeType);
+    const artifactId = pickTrimmedString(item.artifactId);
+    return {
+      type: 'attachment',
+      attachment: {
+        url: directUrl,
+        kind: item.type,
+        label:
+          pickTrimmedString(item.fileName, item.label) ??
+          (item.type === 'audio' ? 'Audio' : 'Video'),
+        ...(mimeType?.toLowerCase().startsWith(`${item.type}/`) ? { mimeType } : {}),
+        ...(artifactId ? { artifactId } : {}),
+        ...(item.isVoiceNote === true ? { isVoiceNote: true } : {}),
+      },
+    };
+  }
   const source = item.source;
   if (!source || typeof source !== 'object' || Array.isArray(source)) {
     return null;

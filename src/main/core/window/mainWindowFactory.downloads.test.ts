@@ -106,6 +106,7 @@ beforeEach(() => {
     appName: 'SampleProduct',
     firstLaunch: false,
     browserGuestPreloadPath: '/browser-preload.js',
+    mediaPlaybackPreloadPath: '/media-playback-preload.js',
     widgetViewerPreloadPath: '/widget-preload.js',
     webpageEmbedPreloadPath: '/webpage-preload.js',
     getWebpageEmbedConnection: () => null,

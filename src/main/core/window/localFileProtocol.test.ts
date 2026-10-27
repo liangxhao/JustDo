@@ -5,8 +5,11 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { beforeEach, expect, test, vi } from 'vitest';
 
-const mocks = vi.hoisted(() => ({ handle: vi.fn(), fetch: vi.fn() }));
-vi.mock('electron', () => ({ protocol: { handle: mocks.handle }, net: { fetch: mocks.fetch } }));
+const mocks = vi.hoisted(() => ({ handle: vi.fn(), fetch: vi.fn(), beforeRequest: vi.fn() }));
+vi.mock('electron', () => ({
+  protocol: { handle: mocks.handle }, net: { fetch: mocks.fetch },
+  session: { defaultSession: { webRequest: { onBeforeRequest: mocks.beforeRequest } } },
+}));
 
 import { registerLocalFileProtocol } from './localFileProtocol';
 
@@ -60,4 +63,26 @@ test('preserves UNC media hosts when streaming a file preview', async () => {
   const handler = mocks.handle.mock.calls.find(call => call[0] === 'localmedia')![1];
   await handler(new Request('localmedia://local//server/share/sound%20%231.wav'));
   expect(mocks.fetch).toHaveBeenCalledWith('file://server/share/sound%20%231.wav');
+});
+
+test('routes only the gateway media host through one frame-bound network guard', async () => {
+  const authorize = vi.fn(() => false);
+  const respond = vi.fn(async () => new Response('managed media'));
+  registerLocalFileProtocol({ authorize, respond });
+  expect(mocks.beforeRequest).toHaveBeenCalledOnce();
+  expect(mocks.beforeRequest.mock.calls[0][0]).toEqual({ urls: ['localmedia://gateway/*'] });
+  const guard = mocks.beforeRequest.mock.calls[0][1];
+  const callback = vi.fn();
+  guard({ url: 'localmedia://gateway/opaque', webContentsId: 7 }, callback);
+  expect(callback).toHaveBeenLastCalledWith({ cancel: true });
+  authorize.mockReturnValue(true);
+  guard({ url: 'localmedia://gateway/opaque', webContentsId: 7 }, callback);
+  expect(callback).toHaveBeenLastCalledWith({ cancel: false });
+  const handler = mocks.handle.mock.calls.find(call => call[0] === 'localmedia')![1];
+  const request = new Request('localmedia://gateway/opaque');
+  expect(await (await handler(request)).text()).toBe('managed media');
+  expect(respond).toHaveBeenCalledWith(request);
+  mocks.fetch.mockResolvedValue(new Response('local media'));
+  expect(await (await handler(new Request('localmedia://local/E:/sound.wav'))).text()).toBe('local media');
+  expect(respond).toHaveBeenCalledOnce();
 });

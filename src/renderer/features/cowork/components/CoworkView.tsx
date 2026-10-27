@@ -140,6 +140,10 @@ import {
 import { IMAGE_PREVIEW_EVENT } from '@/features/cowork/components/preview/imageFilePreview';
 import { MessageFileLinkContext } from '@/features/cowork/components/preview/messageFileLinks';
 import { openSummaryResource } from '@/features/cowork/components/preview/openSummaryResource';
+import {
+  SummaryMediaPreview,
+  type SummaryMediaPreviewSource,
+} from '@/features/cowork/components/preview/SummaryMediaPreview';
 import UnsupportedFilePreview from '@/features/cowork/components/preview/UnsupportedFilePreview';
 import { useFilePreviewEvents } from '@/features/cowork/components/preview/useFilePreviewEvents';
 import { useMessageFileLinkNavigation } from '@/features/cowork/components/preview/useMessageFileLinkNavigation';
@@ -1097,6 +1101,10 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     };
   }
   const summaryResourceRequest = useRef(0);
+  const [summaryMediaPreview, setSummaryMediaPreview] = useState<{
+    source: SummaryMediaPreviewSource;
+    scope: typeof summaryNavigationScope.current;
+  } | null>(null);
   const currentSummaryResources =
     summaryResources?.sessionKey === currentGatewaySessionKey ? summaryResources : null;
   const summaryObjective =
@@ -2019,6 +2027,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       if (isWorkspaceDetached) window.electron.workspaceWindow?.focus();
     };
     void openSummaryResource(resource, {
+      sessionKey,
       isCurrent,
       resolveArtifact: (target, title) =>
         chatWrapperRef.current?.resolveSummaryArtifact(target, title, sessionKey) ?? null,
@@ -2034,6 +2043,9 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
           throw new Error(i18nService.t('coworkSummaryBrowserLimit'));
         handleCreateBrowserTab(url);
         if (isWorkspaceDetached) window.electron.workspaceWindow?.focus();
+      },
+      openMedia: (url, label, kind) => {
+        setSummaryMediaPreview({ source: { url, label, kind, sessionKey }, scope });
       },
     })
       .then(opened => {
@@ -4040,6 +4052,12 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
             onClose={() => setIsSessionExportOpen(false)}
             onExport={handleExportSession}
           />
+          {summaryMediaPreview?.scope === summaryNavigationScope.current && (
+            <SummaryMediaPreview
+              source={summaryMediaPreview.source}
+              onClose={() => setSummaryMediaPreview(null)}
+            />
+          )}
           {pendingMessageHistoryAction && (
             <Modal
               onClose={() => setPendingMessageHistoryAction(null)}

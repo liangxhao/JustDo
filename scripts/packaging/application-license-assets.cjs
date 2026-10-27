@@ -7,7 +7,7 @@ const { fileURLToPath } = require('node:url');
 const { isLegalMetadataFile } = require('../openclaw/prune-openclaw-runtime.cjs');
 
 const REQUIRED_APPLICATION_LICENSE_SCOPES = Object.freeze([
-  'renderer', 'main', 'preload', 'imagePreviewPreload', 'browserGuestPreload', 'widgetViewerPreload', 'webpageEmbedPreload',
+  'renderer', 'main', 'preload', 'imagePreviewPreload', 'browserGuestPreload', 'widgetViewerPreload', 'webpageEmbedPreload', 'mediaPlaybackPreload',
 ]);
 const SOURCE_PROOF = 'source-proof.json';
 const sha256 = value => createHash('sha256').update(value).digest('hex');

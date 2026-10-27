@@ -161,6 +161,32 @@ describe('projectGatewayHistoryForDisplay', () => {
     expect(projectGatewayHistoryForDisplay([source, distinct])).toEqual([source, distinct]);
   });
 
+  test('collapses a flat native audio companion only when its producer owns that same delivery', () => {
+    const source = {
+      role: 'assistant',
+      content: 'Done.',
+      openclawDelivery: { mediaUrls: ['E:/output/voice.wav'] },
+    };
+    const companion = {
+      role: 'assistant',
+      model: 'gateway-injected',
+      __openclaw: { seq: 7 },
+      content: [
+        { type: 'text', text: 'Done.' },
+        {
+          type: 'audio',
+          artifactId: 'audio-id',
+          url: '/api/chat/media/outgoing/session/audio/full',
+          fileName: 'voice.wav',
+          mimeType: 'audio/wav',
+        },
+      ],
+    };
+    expect(projectGatewayHistoryForDisplay([source, companion])).toHaveLength(1);
+    const textOnly = { role: 'assistant', content: 'Done.' };
+    expect(projectGatewayHistoryForDisplay([textOnly, companion])).toEqual([textOnly, companion]);
+  });
+
   test('projects a persisted goal feedback command as the original user feedback', () => {
     const projected = projectGatewayHistoryForDisplay([
       {

@@ -1976,6 +1976,10 @@ export class JustDoChatElement extends LitElement {
     `;
   }
 
+  private get mediaSessionKey(): string {
+    return this._controller?.state.sessionKey ?? this.activeTurn?.sessionKey ?? '';
+  }
+
   private renderPersistedRows(rows: readonly VisibleTimelineRow[]) {
     const renderedRows = this.historyRenderScheduler.select(
       rows,
@@ -1986,6 +1990,7 @@ export class JustDoChatElement extends LitElement {
       [
         renderedRows,
         this.persistedRenderRevision,
+        this.mediaSessionKey,
         this.userMessageHistoryActionsAvailable,
         this.actionableUserEntryId,
         this.forkEligibilityMessages,
@@ -2010,6 +2015,7 @@ export class JustDoChatElement extends LitElement {
                     row.showAvatar,
                     row.showFooter,
                     this.persistedRenderRevision,
+                    this.mediaSessionKey,
                     this.historyMessageActionsKey(item, row.showFooter),
                   ],
                   () => this.renderVisibleTimelineItem(item, row.showAvatar, row.showFooter),
@@ -2229,7 +2235,11 @@ export class JustDoChatElement extends LitElement {
         : undefined,
       this.assistantAvatar,
       process => this.thinkingContentPresentation.render(process),
-      { workingDirectory: this.workingDirectory, onOpenFile: this.onOpenFile },
+      {
+        workingDirectory: this.workingDirectory,
+        onOpenFile: this.onOpenFile,
+        sessionKey: this.mediaSessionKey,
+      },
     );
   }
 
@@ -2470,6 +2480,7 @@ export class JustDoChatElement extends LitElement {
           peerNames: this.peerNames,
           peerPerspective: this.peerPerspective,
           workingDirectory: this.workingDirectory,
+          sessionKey: this.mediaSessionKey,
           onOpenFile: this.onOpenFile,
           speechState: this.getSpeechState(item.key),
           onSpeak: this.localTtsAvailable ? this.handleSpeak : undefined,
@@ -2489,6 +2500,7 @@ export class JustDoChatElement extends LitElement {
           showAvatar,
           onOpenFile: this.onOpenFile,
           workingDirectory: this.workingDirectory,
+          sessionKey: this.mediaSessionKey,
         });
       }
       if (item.kind === 'divider') {
@@ -2535,6 +2547,7 @@ export class JustDoChatElement extends LitElement {
             searchQuery: this.searchQuery,
             showAvatar: shouldRenderGroupAvatarByPrevItem(item as MessageGroup, prev),
             workingDirectory: this.workingDirectory,
+            sessionKey: this.mediaSessionKey,
             onOpenFile: this.onOpenFile,
             assistantName: this.assistantName,
             assistantAvatar: this.assistantAvatar,
@@ -2568,6 +2581,7 @@ export class JustDoChatElement extends LitElement {
             peerNames: this.peerNames,
             peerPerspective: this.peerPerspective,
             workingDirectory: this.workingDirectory,
+            sessionKey: this.mediaSessionKey,
             onOpenFile: this.onOpenFile,
             speechState: this.getSpeechState(item.key),
             onSpeak: this.localTtsAvailable ? this.handleSpeak : undefined,
