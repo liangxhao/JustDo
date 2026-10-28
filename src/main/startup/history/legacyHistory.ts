@@ -178,7 +178,7 @@ export function planLegacyHistory(backup: string): HistoryPlan {
   const agents: NativeHistory[] = [];
   if (fs.existsSync(root))
     for (const agent of fs.readdirSync(root, { withFileTypes: true })) {
-      if (!agent.isDirectory() || !/^[a-zA-Z0-9_-]+$/.test(agent.name)) continue;
+      if (agent.name !== 'main' || !agent.isDirectory()) continue;
       const index = path.join(root, agent.name, 'sessions', 'sessions.json');
       if (!fs.existsSync(index)) continue;
       const source = JSON.parse(fs.readFileSync(index, 'utf8')) as Record<string, NativeEntry>;
@@ -186,6 +186,8 @@ export function planLegacyHistory(backup: string): HistoryPlan {
       const transcriptFiles: Record<string, string> = {};
       for (const [sourceKey, entry] of Object.entries(source)) {
         const key = canonicalHistoryKey(sourceKey);
+        const owner = /^agent:([^:]+):/i.exec(key.trim())?.[1].toLowerCase();
+        if (owner && owner !== 'main') continue;
         if (
           !entry ||
           typeof entry.sessionId !== 'string' ||
@@ -206,24 +208,10 @@ export function planLegacyHistory(backup: string): HistoryPlan {
       }
       agents.push({ agentId: agent.name, entries, transcriptFiles });
     }
-  const byKey = new Map<string, { agent: NativeHistory; entry: NativeEntry }[]>();
+  const byKey = new Map<string, { agent: NativeHistory; entry: NativeEntry }>();
   for (const agent of agents)
     for (const [key, entry] of Object.entries(agent.entries))
-      byKey.set(key, [...(byKey.get(key) ?? []), { agent, entry }]);
-  for (const [key, candidates] of byKey) {
-    if (candidates.length < 2) continue;
-    const owner = /^agent:([^:]+):/.exec(key)?.[1];
-    const owned = candidates.filter(candidate => candidate.agent.agentId === owner);
-    if (owned.length !== 1)
-      throw new Error('Ambiguous historical native binding. The backup has been preserved.');
-    // Exact canonical owner wins; neither timestamps nor transcript resemblance establish identity.
-    for (const candidate of candidates)
-      if (candidate !== owned[0]) {
-        delete candidate.agent.entries[key];
-        delete candidate.agent.transcriptFiles[key];
-      }
-    byKey.set(key, owned);
-  }
+      byKey.set(key, { agent, entry });
   const conversations: HistoryConversation[] = [];
   const product = path.join(backup, DB_FILENAME);
   if (!fs.existsSync(product) && agents.some(agent => Object.keys(agent.entries).length))
@@ -253,24 +241,21 @@ export function planLegacyHistory(backup: string): HistoryPlan {
           }[])
         : [];
       for (const row of rows) {
-        const mapping = external.find(entry => entry.cowork_session_id === row.id);
         const originalAgentId = row.agent_id || 'main';
-        if (!/^[a-zA-Z0-9_-]+$/.test(originalAgentId))
-          throw new Error('Invalid product history owner.');
-        let agentId = originalAgentId;
+        if (originalAgentId !== 'main') continue;
+        const mapping = external.find(entry => entry.cowork_session_id === row.id);
+        const agentId = originalAgentId;
         const originalKey =
           mapping?.openclaw_session_key || buildManagedSessionKey(row.id, agentId);
         let sessionKey = canonicalHistoryKey(originalKey);
-        let match = byKey.get(sessionKey)?.[0];
+        const keyOwner = /^agent:([^:]+):/i.exec(sessionKey.trim())?.[1].toLowerCase();
+        if (keyOwner && keyOwner !== 'main') continue;
+        let match = byKey.get(sessionKey);
         if (!match && mapping?.openclaw_session_id) {
-          const candidates = [...byKey].flatMap(([key, entries]) =>
-            entries
-              .filter(
-                entry =>
-                  entry.agent.agentId === agentId &&
-                  entry.entry.sessionId === mapping.openclaw_session_id,
-              )
-              .map(entry => ({ key, ...entry })),
+          const candidates = [...byKey].flatMap(([key, entry]) =>
+            entry.agent.agentId === agentId && entry.entry.sessionId === mapping.openclaw_session_id
+              ? [{ key, ...entry }]
+              : [],
           );
           if (candidates.length > 1) throw new Error('Ambiguous external history identity.');
           if (candidates.length === 1) {
@@ -297,13 +282,6 @@ export function planLegacyHistory(backup: string): HistoryPlan {
               match.agent.transcriptFiles[sessionKey],
             ),
           );
-        if (!match && !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(agentId)) {
-          // No native history exists for this unrepresentable old owner. Keep its
-          // exact source association as a receipt, then create a fresh default-owner
-          // continuation. Never normalize or relabel an existing native owner.
-          agentId = 'main';
-          sessionKey = buildManagedSessionKey(row.id, agentId);
-        }
         conversations.push({
           id: row.id,
           title: row.title,
@@ -478,12 +456,8 @@ function restoreHistoryMetadataRows(
       (session_id,session_key,native_session_id,availability,source,external_key,transaction_id,
         source_agent_id,source_session_key,source_native_session_id,defaults_applied)
       VALUES (?,?,?,?,?,?,?,?,?,?,0) ON CONFLICT(session_id) DO NOTHING`);
-    const agent = db.prepare(`INSERT INTO agents
-      (id,name,description,system_prompt,identity,model,icon,skill_ids,enabled,is_default,created_at,updated_at)
-      VALUES (?,?,'','','','','','[]',1,0,?,?) ON CONFLICT(id) DO NOTHING`);
     for (const row of plan.conversations) {
-      // Historical owner placeholders use current defaults; no old profile/config is restored.
-      if (row.agentId !== 'main') agent.run(row.agentId, row.agentId, row.createdAt, row.updatedAt);
+      if (row.agentId !== 'main') throw new Error('Only main legacy history can be restored.');
       insert.run(
         row.id,
         row.title,

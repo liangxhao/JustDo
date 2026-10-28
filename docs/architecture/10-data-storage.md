@@ -112,6 +112,9 @@ Cookie 更新合并当前文件而保留长期 mtoken；账号替换先删除旧
 
 消息唯一持久权威是 OpenClaw 的原生 SQLite transcript。已发布 JSONL 用户先备份并建立全新产品库；旧缓存中的独有历史转换后交由原生导入，目标不建立 cowork_messages。Renderer 按原生历史恢复，不从 Main 或 Redux 寻找持久正文。见[启动与历史升级](../features/app/startup-and-history-upgrade.md)。
 
+旧历史导入只恢复 main；其他执行身份及关联记录仅保留在原备份，不映射到 main，
+也不创建长期助手占位。历史 Doctor 显式选择 main，不使用全部 agent 的导入/检查范围。
+
 ### 未发布 9.6 数据兼容已撤回
 
 9.6 版本未发布。按用户要求，本次 9.8 升级新增的 9.6→9.8 原生 SQLite 兼容迁移已移除，包括应用维护桥接、启动门禁、专项测试和构建资产。当前应用不承诺自动升级该未发布版本的 shared18／agent23 数据。

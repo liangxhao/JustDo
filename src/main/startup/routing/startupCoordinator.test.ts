@@ -120,6 +120,75 @@ function legacy(dir: string, wal = false) {
   return db;
 }
 
+test('legacy migration imports only main while retaining other execution identities in the backup', async () => {
+  const source = root();
+  legacy(source);
+  const db = new Database(path.join(source, DB_FILENAME));
+  const insert = db.prepare('INSERT INTO cowork_sessions VALUES(?,?,?,?,?,?)');
+  for (const [id, owner] of [['scheduled', 'justdo-scheduler'], ['temporary', 'model-0123456789abcdef0123'],
+    ['invalid-owner', 'obsolete:owner'], ['foreign-binding', 'main'], ['implicit-main', null], ['empty-main', '']])
+    insert.run(id, id, owner, process.cwd(), 1000, 2000);
+  db.prepare('INSERT INTO cowork_messages VALUES(?,?,?,?,?,?)').run('internal-cache', 'scheduled', 'assistant', 'internal execution', 1000, 1);
+  db.exec(`CREATE TABLE cowork_external_sessions (cowork_session_id TEXT,source TEXT,external_session_key TEXT,
+    openclaw_session_key TEXT,openclaw_session_id TEXT);
+    INSERT INTO cowork_external_sessions VALUES('foreign-binding','legacy','external',' Agent:Other:Matrix:group:!AbC:Host ',NULL);`);
+  db.close();
+  const other = path.join(source, 'openclaw/state/agents/justdo-scheduler/sessions');
+  fs.mkdirSync(other, { recursive: true });
+  fs.writeFileSync(path.join(other, 'sessions.json'), 'not a valid legacy index');
+  const index = path.join(source, 'openclaw/state/agents/main/sessions/sessions.json');
+  const entries = JSON.parse(fs.readFileSync(index, 'utf8'));
+  entries['agent:other:legacy:foreign'] = { sessionId: 'invalid:unused' };
+  entries[' Agent:Other:Matrix:group:!AbC:Host '] = { sessionId: 'invalid:unused' };
+  fs.writeFileSync(index, JSON.stringify(entries));
+  expect(classifyInstallation(source).route).toBe(StartupRoute.Migration);
+  const coordinator = new StartupCoordinator(source);
+  await coordinator.prepareBeforeStore(progress());
+  const backup = coordinator.getHistoryBackupDirectory()!;
+  const plan = planLegacyHistory(backup);
+  expect(plan.agents.map(agent => agent.agentId)).toEqual(['main']);
+  expect(Object.keys(plan.agents[0].entries)).toEqual(['agent:main:justdo:native', 'agent:main:subagent:child']);
+  expect(plan.conversations.map(row => row.id)).toEqual(['cache', 'empty-main', 'implicit-main', 'missing', 'native']);
+  expect(plan.conversations.every(row => row.agentId === 'main')).toBe(true);
+  expect(plan.summary.conversations).toBe(5);
+  expect(plan.summary.nativeSessions).toBe(2);
+  expect(fs.readFileSync(path.join(backup, 'openclaw/state/agents/justdo-scheduler/sessions/sessions.json'), 'utf8')).toBe('not a valid legacy index');
+  const state = path.join(source, 'openclaw/state');
+  stageLegacyHistory(backup, state, plan);
+  expect(fs.readdirSync(path.join(state, 'agents'))).toEqual(['main']);
+  const store = SqliteStore.create(source);
+  try {
+    restoreHistoryMetadata(store.getDatabase(), plan, readStartupJournal(source)!.transactionId);
+    const cowork = new CoworkStore(store.getDatabase());
+    expect(cowork.listAgents().map(agent => agent.id)).toEqual(['main']);
+    expect(cowork.listSessions().every(session => session.agentId === 'main')).toBe(true);
+    expect(cowork.listSessions()).toHaveLength(5);
+  } finally { store.close(); }
+});
+
+test('non-main legacy sessions produce an empty plan without remapping or creating profiles', () => {
+  const source = root();
+  legacy(source);
+  const db = new Database(path.join(source, DB_FILENAME));
+  db.exec("UPDATE cowork_sessions SET agent_id='justdo-scheduler'");
+  db.close();
+  fs.renameSync(path.join(source, 'openclaw/state/agents/main'), path.join(source, 'openclaw/state/agents/justdo-scheduler'));
+  const plan = planLegacyHistory(source);
+  expect(plan.agents).toEqual([]);
+  expect(plan.conversations).toEqual([]);
+  expect(plan.summary.conversations).toBe(0);
+  expect(plan.summary.nativeSessions).toBe(0);
+  const target = root();
+  const store = SqliteStore.create(target);
+  try {
+    const cowork = new CoworkStore(store.getDatabase());
+    cowork.saveAgentProfile({ id: 'research', name: 'New assistant', description: '', model: '', icon: '', enabled: true, isDefault: false });
+    restoreHistoryMetadata(store.getDatabase(), plan, 'main-only-migration');
+    expect(cowork.listAgents().map(agent => agent.id)).toEqual(['main', 'research']);
+    expect(cowork.listSessions()).toEqual([]);
+  } finally { store.close(); }
+});
+
 test('a runtime downgrade cannot resume a pending JSONL migration or modify its real product database and history', async () => {
   const directory = root();
   legacy(directory);
@@ -1398,9 +1467,14 @@ test('uses native canonical rules for the old product namespace while preserving
   const index = path.join(dir, 'openclaw/state/agents/main/sessions/sessions.json');
   const entries = JSON.parse(fs.readFileSync(index, 'utf8'));
   entries['agent:main:multica:abc'] = entries['agent:main:justdo:native'];
+  entries['agent:main:matrix:group:!AbC:Host'] = { sessionId: 'opaque-peer' };
   delete entries['agent:main:justdo:native'];
   fs.writeFileSync(index, JSON.stringify(entries));
-  const row = planLegacyHistory(dir).conversations.find(row => row.id === 'native');
+  const plan = planLegacyHistory(dir);
+  expect(plan.agents[0].entries['agent:main:matrix:group:!AbC:Host']).toEqual({
+    sessionId: 'opaque-peer',
+  });
+  const row = plan.conversations.find(row => row.id === 'native');
   expect(row).toMatchObject({
     availability: 'native',
     nativeSessionId: 'original-native',

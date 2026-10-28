@@ -44,6 +44,9 @@ export function classifyInstallation(userData: string, includeRecovery = true): 
     return { route: journal.route, journal };
   }
   const product = inspectProductDatabase(path.join(userData, DB_FILENAME));
+  // The published product schema selects main-only history migration. Other
+  // legacy execution identities are archived, never admitted as user profiles.
+  if (product === 'legacy') return { route: StartupRoute.Migration, journal: null };
   const state = path.join(userData, 'openclaw', 'state');
   let jsonl = false;
   let sqlite = false;
@@ -67,10 +70,7 @@ export function classifyInstallation(userData: string, includeRecovery = true): 
       sqlite ||= startupPathExists(path.join(folder, 'agent', 'openclaw-agent.sqlite'));
     }
   }
-  // Published JSONL-era applications could also leave native SQLite files.
-  // Their legacy product schema selects migration; backup retains those native
-  // originals without admitting their schema or restoring them into the target.
-  if (sqlite && jsonl && product !== 'legacy')
+  if (sqlite && jsonl)
     throw new Error(
       'Mixed native history formats require recovery. Existing data has been preserved.',
     );
@@ -78,7 +78,7 @@ export function classifyInstallation(userData: string, includeRecovery = true): 
     throw new Error(
       'The legacy conversation index is missing. Existing history has been preserved.',
     );
-  if (product === 'legacy' || jsonl) return { route: StartupRoute.Migration, journal: null };
+  if (jsonl) return { route: StartupRoute.Migration, journal: null };
   if (product === 'current') return { route: StartupRoute.Normal, journal };
   if (sqlite)
     throw new Error(

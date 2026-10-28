@@ -56,7 +56,8 @@ export class NativeHistoryRuntime {
             'doctor',
             '--session-sqlite',
             mode,
-            '--session-sqlite-all-agents',
+            '--session-sqlite-agent',
+            'main',
             '--json',
           ];
     return await new Promise<string>((resolve, reject) => {

@@ -20,6 +20,23 @@ test('a live Gateway cannot start an offline history operation', async () => {
   expect(spawnMock).not.toHaveBeenCalled();
 });
 
+test.each(['import', 'inspect'] as const)('offline history %s selects only main, including on interrupted migration retry', async mode => {
+  const stream = () => Object.assign(new EventEmitter(), { setEncoding() { return this; } });
+  const child = Object.assign(new EventEmitter(), { stdout: stream(), stderr: stream(), kill: vi.fn() });
+  spawnMock.mockReturnValue(child);
+  const runtime = new NativeHistoryRuntime({ getEnvironment: async () => environment,
+    gatewayStopped: () => true, stateDir: () => '/state' });
+  const operation = runtime.run(mode);
+  await Promise.resolve();
+  expect(spawnMock.mock.calls[0][1]).toEqual([
+    environment.openclawEntry, 'doctor', '--session-sqlite', mode,
+    '--session-sqlite-agent', 'main', '--json',
+  ]);
+  child.stdout.emit('data', '{"targets":[]}');
+  child.emit('close', 0);
+  await expect(operation).resolves.toBe('{"targets":[]}');
+});
+
 test('Quit waits for native retirement and leaves an interrupted import unconfirmed', async () => {
   const stream = () =>
     Object.assign(new EventEmitter(), {
