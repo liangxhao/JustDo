@@ -182,7 +182,9 @@ test('step, native operation, language, failure and retry change only presentati
 test('completed migration result and support actions do not open directories or a workspace', async () => {
   mount({ route: StartupRoute.Migration, language: 'en', theme: 'light' });
   fireEvent.change(screen.getByLabelText('Simulated state'), { target: { value: 'ready' } });
-  expect(screen.getByRole('region')).toBeTruthy();
+  expect(screen.getByRole('region', { name: i18nService.t('initializationResultTitle') })).toBeTruthy();
+  expect(screen.getByRole('region', { name: i18nService.t('initializationProjectRulesTitle') })).toBeTruthy();
+  fireEvent.click(screen.getByText(i18nService.t('initializationResultDetails')));
   fireEvent.click(screen.getByRole('button', { name: i18nService.t('initializationOpenBackup') }));
   expect(
     await screen.findByText('Rehearsal action recorded; no system operation was performed.'),

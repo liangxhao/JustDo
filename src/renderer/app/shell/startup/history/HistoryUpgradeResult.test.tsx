@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { HistoryRecoveryKind, StartupSupportAction } from '@shared/app/startup/history';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, expect, test, vi } from 'vitest';
 
 import HistoryRecoveryAdvice from './HistoryRecoveryAdvice';
@@ -22,7 +22,7 @@ function bridge() {
 test('shows all recovery outcomes and opens only the fixed backup action before explicit continuation', async () => {
   const openSupport = bridge();
   const onContinue = vi.fn();
-  render(
+  const view = render(
     <HistoryUpgradeResult
       summary={{
         conversations: 291,
@@ -39,6 +39,29 @@ test('shows all recovery outcomes and opens only the fixed backup action before 
   expect(screen.getByText('291')).toBeTruthy();
   expect(screen.getByText('3')).toBeTruthy();
   expect(screen.getByText('12')).toBeTruthy();
+  const files = screen.getByRole('list', { name: 'initializationProjectRulesFiles' });
+  expect(
+    within(files)
+      .getAllByRole('listitem')
+      .map(item => item.textContent),
+  ).toEqual([
+    'AGENTS.md',
+    'BOOT.md',
+    'BOOTSTRAP.md',
+    'HEARTBEAT.md',
+    'IDENTITY.md',
+    'SOUL.md',
+    'TOOLS.md',
+    'USER.md',
+  ]);
+  expect(screen.getByText('initializationProjectRulesAddDescription')).toBeTruthy();
+  expect(screen.getByText('initializationProjectRulesReuseDescription')).toBeTruthy();
+  expect(screen.getByText('initializationProjectRulesContext')).toBeTruthy();
+  expect(screen.getByText('initializationProjectRulesLegacyWarning')).toBeTruthy();
+  const details = view.container.querySelector('details')!;
+  expect(details.open).toBe(false);
+  fireEvent.click(screen.getByText('initializationResultDetails'));
+  expect(details.open).toBe(true);
   expect(screen.getByText('initializationResultIncomplete')).toBeTruthy();
   expect(onContinue).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole('button', { name: 'initializationOpenBackup' }));

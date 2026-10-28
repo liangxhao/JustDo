@@ -619,6 +619,9 @@ test('a migration waits for workspace readiness and explicit result confirmation
     workspace.resolve();
   });
   await screen.findByRole('region', { name: 'initializationResultTitle' });
+  expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('initializationResultHeading');
+  expect(view.container.querySelector('.migration-completion-screen')).toBeTruthy();
+  expect(screen.getByRole('region', { name: 'initializationProjectRulesTitle' })).toBeTruthy();
   expect(view.container.querySelector('[data-application-surface]')?.hasAttribute('inert')).toBe(
     true,
   );

@@ -24,6 +24,32 @@ const javascript = ts.transpileModule(statements.slice(first, last + 1).map(node
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
 }).outputText;
 
+test('history isolation finishes before the persistent main window can open its profile stores', async () => {
+  const isolation = statements.findIndex(node => node.getText(source).startsWith('await startupCoordinator.prepareBeforeStore('));
+  expect(isolation).toBeGreaterThan(0);
+  const calls: string[] = [];
+  const context = {
+    AppInitializationTask, AppInitializationTaskStatus,
+    app: { whenReady: async () => {} },
+    appShutdown: { isQuitting: () => false },
+    registerLocalFileScheme: vi.fn(),
+    APP_NAME: 'TestApp', isDev: false, isWindows: true, devServerUrl: '',
+    createStartupBootstrapWindow: () => { calls.push('memory-bootstrap'); return { window: {} }; },
+    startupWindowHandoff: { setBootstrap: vi.fn(), showBootstrap: vi.fn() },
+    prepareStartup: async () => {},
+    initialization: { getState: () => ({ firstLaunch: true }), setTaskStatus: vi.fn() },
+    createStartupWindow: () => { calls.push('memory-initialization'); return { loaded: Promise.resolve() }; },
+    startupPreparationError: undefined,
+    startupCoordinator: { prepareBeforeStore: async () => { calls.push('isolate'); } },
+    createWindow: () => { throw new Error('persistent window opened before isolation'); },
+  };
+  const prefix = ts.transpileModule(statements.slice(0, isolation + 1).map(node => node.getText(source)).join('\n'), {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+  }).outputText;
+  await new Function(...Object.keys(context), `return (async () => { ${prefix} })();`)(...Object.values(context));
+  expect(calls).toEqual(['memory-bootstrap', 'memory-initialization', 'isolate']);
+});
+
 function fixture(route: StartupRoute, configReady = true, delayServices = false) {
   const calls: string[] = [];
   let finish!: (status: { phase: string }) => void;

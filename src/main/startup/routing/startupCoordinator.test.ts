@@ -323,7 +323,7 @@ test('published legacy profiles migrate JSONL/cache while retaining old native S
       return JSON.stringify({ targets: [{ agentId: 'main', sqliteEntries: 4, dbStats: { integrityCheck: 'ok' } }] });
     });
     coordinator.complete();
-    expect(fs.existsSync(path.join(backup, '../retired'))).toBe(false);
+    expect(fs.existsSync(path.join(backup, '../retired'))).toBe(true);
     for (const [relative, content] of Object.entries(originals)) {
       expect(fs.readFileSync(path.join(backup, relative), 'utf8')).toBe(content);
       expect(fs.existsSync(path.join(source, relative))).toBe(false);
@@ -378,6 +378,112 @@ test('a sidecar created during the final original hash check blocks isolation', 
   expect(() => verifyNativeHistoryOriginals(source, backup)).toThrow(/changed after backup/);
   expect(fs.existsSync(path.join(source, 'openclaw/state/agents/main/sessions/sessions.json'))).toBe(true);
 });
+
+test('migration leaves active Chromium stores in place and retains all other profile files after completion', async () => {
+  const source = root();
+  legacy(source);
+  const active = process.platform === 'win32'
+    ? ['local storage', 'NETWORK', 'Shared Dictionary']
+    : ['Local Storage', 'Network', 'Shared Dictionary'];
+  for (const name of active) {
+    fs.mkdirSync(path.join(source, name));
+    fs.writeFileSync(path.join(source, name, 'current'), `active ${name}`);
+  }
+  fs.writeFileSync(path.join(source, 'notes.txt'), 'unrelated user document');
+  const rename = fs.promises.rename.bind(fs.promises);
+  const move = vi.spyOn(fs.promises, 'rename').mockImplementation(async (from, to) => {
+    if (active.includes(path.basename(String(from))))
+      throw Object.assign(new Error('active Chromium store'), { code: 'EPERM' });
+    await rename(from, to);
+  });
+  const coordinator = new StartupCoordinator(source);
+  await coordinator.prepareBeforeStore(progress());
+  const journal = readStartupJournal(source)!;
+  expect(journal.isolatedEntries).not.toEqual(expect.arrayContaining(active));
+  expect(move.mock.calls.some(([from]) => active.includes(path.basename(String(from))))).toBe(false);
+  const retired = path.join(source, 'backups', journal.transactionId, 'retired');
+  const store = SqliteStore.create(source);
+  try {
+    await coordinator.restoreHistory(store.getDatabase(), path.join(source, 'openclaw/state'), progress(), async mode => {
+      if (mode === 'import') return '{"targets":[]}';
+      if (mode === 'verify') return JSON.stringify({ verified: true, entries: 4, conversations: 3 });
+      return JSON.stringify({ targets: [{ agentId: 'main', sqliteEntries: 4, dbStats: { integrityCheck: 'ok' } }] });
+    });
+    coordinator.complete();
+    expect(fs.readFileSync(path.join(retired, 'notes.txt'), 'utf8')).toBe('unrelated user document');
+    expect(fs.readFileSync(path.join(retired, 'credentials.json'), 'utf8')).toBe('discarded settings');
+    for (const name of active)
+      expect(fs.readFileSync(path.join(source, name, 'current'), 'utf8')).toBe(`active ${name}`);
+  } finally {
+    store.close();
+  }
+});
+
+test('a partially archived old plan skips current Chromium stores and preserves recreated entries across another interruption', async () => {
+  const source = root();
+  legacy(source);
+  const active = ['Local Storage', 'Network', 'Shared Dictionary'];
+  for (const name of active) {
+    fs.mkdirSync(path.join(source, name));
+    fs.writeFileSync(path.join(source, name, 'current'), `active ${name}`);
+  }
+  fs.writeFileSync(path.join(source, 'Local State'), 'recreated browser state');
+  const journal = { ...newStartupJournal(StartupRoute.Migration), stage: StartupStage.Isolate,
+    isolatedEntries: fs.readdirSync(source) };
+  const transaction = path.join(source, 'backups', journal.transactionId);
+  await createHistoryBackup(source, path.join(transaction, 'history'));
+  const retired = path.join(transaction, 'retired');
+  fs.mkdirSync(retired);
+  fs.renameSync(path.join(source, DB_FILENAME), path.join(retired, DB_FILENAME));
+  fs.writeFileSync(path.join(retired, 'Local State'), 'original browser state');
+  fs.mkdirSync(path.join(retired, 'Local Storage'));
+  fs.writeFileSync(path.join(retired, 'Local Storage', 'old'), 'original local storage');
+  writeStartupJson(path.join(source, STARTUP_STATE_FILE), journal);
+  const rename = fs.promises.rename.bind(fs.promises);
+  let interrupt = true;
+  vi.spyOn(fs.promises, 'rename').mockImplementation(async (from, to) => {
+    if (active.includes(path.basename(String(from))))
+      throw Object.assign(new Error('active Chromium store'), { code: 'EPERM' });
+    await rename(from, to);
+    if (interrupt && path.basename(String(from)) === 'Local State') {
+      interrupt = false;
+      throw new Error('interrupted after archiving the recreated entry');
+    }
+  });
+  await expect(new StartupCoordinator(source).prepareBeforeStore(progress())).rejects.toThrow(/interrupted/);
+  expect(readStartupJournal(source)?.stage).toBe(StartupStage.Isolate);
+  const resume = new StartupCoordinator(source);
+  await resume.prepareBeforeStore(progress());
+  expect(resume.stage).toBe(StartupStage.Initialize);
+  const additions = path.join(transaction, 'retired-additions');
+  const [addition] = fs.readdirSync(additions);
+  expect(fs.readdirSync(additions)).toHaveLength(1);
+  expect(fs.readFileSync(path.join(additions, addition, 'Local State'), 'utf8')).toBe('recreated browser state');
+  expect(fs.readFileSync(path.join(retired, 'Local State'), 'utf8')).toBe('original browser state');
+  expect(fs.readFileSync(path.join(retired, 'Local Storage', 'old'), 'utf8')).toBe('original local storage');
+  for (const name of active)
+    expect(fs.readFileSync(path.join(source, name, 'current'), 'utf8')).toBe(`active ${name}`);
+});
+
+test.each([DB_FILENAME, 'openclaw', ...(process.platform === 'win32' ? [DB_FILENAME.toUpperCase(), 'OpenClaw'] : [])])(
+  'resumed isolation still refuses conflicting history authority at %s',
+  async name => {
+    const source = root();
+    legacy(source);
+    const journal = { ...newStartupJournal(StartupRoute.Migration), stage: StartupStage.Isolate,
+      isolatedEntries: [name] };
+    const transaction = path.join(source, 'backups', journal.transactionId);
+    await createHistoryBackup(source, path.join(transaction, 'history'));
+    const retired = path.join(transaction, 'retired');
+    fs.mkdirSync(retired);
+    fs.writeFileSync(path.join(retired, name), 'retained conflicting authority');
+    writeStartupJson(path.join(source, STARTUP_STATE_FILE), journal);
+    await expect(new StartupCoordinator(source).prepareBeforeStore(progress())).rejects.toThrow(/conflicting destination/);
+    expect(fs.readFileSync(path.join(retired, name), 'utf8')).toBe('retained conflicting authority');
+    expect(fs.existsSync(path.join(source, name))).toBe(true);
+    expect(readStartupJournal(source)?.stage).toBe(StartupStage.Isolate);
+  },
+);
 
 test('missing workspaces remain recoverable metadata, contribute to the result, and use current defaults only once', async () => {
   const source = root();
@@ -755,7 +861,7 @@ test('recovers an interrupted native import without another backup, environment 
     expect(new StartupCoordinator(target).route).toBe(StartupRoute.Normal);
     expect(fs.readdirSync(path.join(target, 'backups'))).toEqual([journal.transactionId]);
     expect(fs.existsSync(path.join(target, 'backups', journal.transactionId, 'retired'))).toBe(
-      false,
+      true,
     );
   } finally {
     store.close();

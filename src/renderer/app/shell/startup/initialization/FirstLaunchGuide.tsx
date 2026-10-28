@@ -95,6 +95,7 @@ export default function FirstLaunchGuide({
   const compatibilityCode = error ? undefined : state.failure?.error.code;
   const migration =
     (state.route ?? window.electron?.initialization?.route) === StartupRoute.Migration;
+  const showHistoryResult = historyReady && Boolean(state.historySummary) && Boolean(onContinue);
   const steps = migration
     ? [
         AppInitializationStep.Backup,
@@ -158,7 +159,7 @@ export default function FirstLaunchGuide({
     <div
       data-startup-view={migration ? 'migration' : upgrade ? 'upgrade' : 'first-launch'}
       data-failed={failed}
-      className="flex h-screen flex-col bg-background text-foreground"
+      className={`flex h-screen flex-col bg-background text-foreground${showHistoryResult ? ' migration-completion-screen' : ''}`}
     >
       <WindowHeader />
       <main
@@ -169,8 +170,8 @@ export default function FirstLaunchGuide({
           aria-hidden="true"
           className="pointer-events-none absolute inset-x-0 top-0 h-72 bg-gradient-to-b from-primary-muted/50 to-transparent"
         />
-        <div className="relative m-auto w-full max-w-4xl py-2">
-          <header className="mb-5 flex items-center gap-4 lg:mb-7">
+        <div data-startup-content="true" className="relative m-auto w-full max-w-4xl py-2">
+          <header data-startup-header="true" className="mb-5 flex items-center gap-4 lg:mb-7">
             <div
               data-startup-emblem="true"
               className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border border-border-subtle bg-surface shadow-glow-accent lg:h-16 lg:w-16"
@@ -202,8 +203,8 @@ export default function FirstLaunchGuide({
                     ? 'startupDowngradeWelcome'
                     : failed
                       ? 'initializationFailed'
-                      : historyReady
-                        ? 'initializationResultTitle'
+                      : showHistoryResult
+                        ? 'initializationResultHeading'
                         : rendererActivity
                           ? upgrade
                             ? 'initializationNormalUpgradeFinishing'
@@ -221,8 +222,9 @@ export default function FirstLaunchGuide({
             data-startup-panel="true"
             className="overflow-hidden rounded-3xl border border-border bg-surface shadow-glow-accent"
           >
-            <div className="grid md:grid-cols-[220px_minmax(0,1fr)] lg:grid-cols-[260px_minmax(0,1fr)]">
+            <div data-startup-columns="true" className="grid md:grid-cols-[220px_minmax(0,1fr)] lg:grid-cols-[260px_minmax(0,1fr)]">
               <nav
+                data-startup-navigation="true"
                 aria-label={i18nService.t('initializationSteps')}
                 className="border-b border-border-subtle bg-surface-raised/40 p-5 md:border-b-0 md:border-r lg:p-7"
               >
@@ -279,7 +281,7 @@ export default function FirstLaunchGuide({
                   })}
                 </ol>
               </nav>
-              <section className="min-w-0 p-5 lg:p-8">
+              <section data-startup-body="true" className="min-w-0 p-5 lg:p-8">
                 {historyReady && state.historySummary && onContinue ? (
                   <HistoryUpgradeResult
                     summary={state.historySummary}
@@ -434,6 +436,7 @@ export default function FirstLaunchGuide({
               </section>
             </div>
             <details
+              data-startup-diagnostics="true"
               open={failed}
               className="border-t border-border-subtle px-6 py-4 text-xs text-secondary md:px-7"
             >

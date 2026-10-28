@@ -1,10 +1,29 @@
-import { CheckCircleIcon } from '@heroicons/react/24/outline';
+import './HistoryUpgradeResult.css';
+
+import {
+  ArrowRightIcon,
+  CheckCircleIcon,
+  ChevronDownIcon,
+  FolderIcon,
+  InformationCircleIcon,
+} from '@heroicons/react/24/outline';
 import { StartupSupportAction } from '@shared/app/startup/history';
 import type { StartupHistorySummary } from '@shared/app/startup/routing';
 
 import { i18nService } from '@/services/i18n';
 
 import StartupSupportButton from './StartupSupportButton';
+
+const LEGACY_PROJECT_RULE_FILES = [
+  'AGENTS.md',
+  'BOOT.md',
+  'BOOTSTRAP.md',
+  'HEARTBEAT.md',
+  'IDENTITY.md',
+  'SOUL.md',
+  'TOOLS.md',
+  'USER.md',
+] as const;
 
 export default function HistoryUpgradeResult({
   summary,
@@ -29,53 +48,105 @@ export default function HistoryUpgradeResult({
     },
   ];
   return (
-    <div
-      data-history-result="true"
-      role="region"
-      aria-label={i18nService.t('initializationResultTitle')}
-    >
-      <CheckCircleIcon aria-hidden="true" className="mb-4 h-10 w-10 text-primary" />
-      <h2 className="text-xl font-semibold">{i18nService.t('initializationResultTitle')}</h2>
-      <p className="mt-3 text-sm leading-6 text-secondary">
-        {i18nService.t('initializationResultDescription')}
-      </p>
-      <dl className="my-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
-        {items.map(item => (
-          <div
-            key={item.label}
-            className={`rounded-xl border p-4 ${item.warning && item.count ? 'border-amber-200 bg-amber-50 dark:border-amber-900 dark:bg-amber-950/30' : 'border-border-subtle bg-surface-raised/50'}`}
-          >
-            <dt className="text-xs leading-5 text-secondary">{i18nService.t(item.label)}</dt>
-            <dd className="mt-2 text-2xl font-semibold tabular-nums">{item.count}</dd>
-          </div>
-        ))}
-      </dl>
-      {(summary.unavailableConversations > 0 || (summary.unavailableWorkspaces ?? 0) > 0) && (
-        <p className="mb-5 text-xs leading-6 text-secondary">
-          {i18nService.t('initializationResultIncomplete')}
-        </p>
-      )}
-      {backupPath && (
-        <div className="mb-6 rounded-xl border border-border-subtle p-4">
-          <p className="text-xs font-medium text-secondary">
-            {i18nService.t('initializationResultBackup')}
-          </p>
-          <p className="my-3 select-text break-all text-xs leading-5 text-secondary">
-            {backupPath}
-          </p>
-          <StartupSupportButton
-            action={StartupSupportAction.OpenBackup}
-            label="initializationOpenBackup"
-          />
-        </div>
-      )}
-      <button
-        type="button"
-        onClick={onContinue}
-        className="rounded-lg bg-primary px-5 py-2.5 text-sm font-medium text-white hover:bg-primary-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+    <div data-history-result="true" className="history-upgrade-result">
+      <section
+        className="history-result-summary"
+        aria-label={i18nService.t('initializationResultTitle')}
       >
-        {i18nService.t('initializationResultContinue')}
-      </button>
+        <h2 className="history-result-heading">
+          <CheckCircleIcon aria-hidden="true" />
+          {i18nService.t('initializationResultTitle')}
+        </h2>
+        <dl className="history-result-counts">
+          {items.map(item => (
+            <div key={item.label} data-warning={item.warning && item.count > 0}>
+              <dt>{i18nService.t(item.label)}</dt>
+              <dd>{item.count}</dd>
+            </div>
+          ))}
+        </dl>
+        <details className="history-result-details">
+          <summary>
+            {i18nService.t('initializationResultDetails')}
+            <ChevronDownIcon aria-hidden="true" />
+          </summary>
+          <div className="history-result-detail-content">
+            <p>{i18nService.t('initializationResultDescription')}</p>
+            {(summary.unavailableConversations > 0 || (summary.unavailableWorkspaces ?? 0) > 0) && (
+              <p>{i18nService.t('initializationResultIncomplete')}</p>
+            )}
+            {backupPath && (
+              <div className="history-result-backup">
+                <p>{i18nService.t('initializationResultBackup')}</p>
+                <p className="history-result-backup-path">{backupPath}</p>
+                <StartupSupportButton
+                  action={StartupSupportAction.OpenBackup}
+                  label="initializationOpenBackup"
+                />
+              </div>
+            )}
+          </div>
+        </details>
+      </section>
+      <section
+        className="history-project-reminder"
+        aria-label={i18nService.t('initializationProjectRulesTitle')}
+      >
+        <header className="history-project-heading">
+          <FolderIcon aria-hidden="true" />
+          <h2>{i18nService.t('initializationProjectRulesTitle')}</h2>
+          <span>{i18nService.t('initializationProjectRulesWhen')}</span>
+        </header>
+        <p className="history-project-intro">
+          {i18nService.t('initializationProjectRulesDescription')}
+        </p>
+        <ol className="history-project-steps">
+          <li>
+            <h3>{i18nService.t('initializationProjectRulesRemoveTitle')}</h3>
+            <p>{i18nService.t('initializationProjectRulesRemoveDescription')}</p>
+            <ul
+              className="history-project-files"
+              aria-label={i18nService.t('initializationProjectRulesFiles')}
+            >
+              {LEGACY_PROJECT_RULE_FILES.map(file => (
+                <li key={file}>
+                  <code>{file}</code>
+                </li>
+              ))}
+            </ul>
+          </li>
+          <li>
+            <h3>
+              {i18nService.t('initializationProjectRulesAddTitle')}
+              <span className="history-project-optional">
+                {i18nService.t('initializationProjectRulesOptional')}
+              </span>
+            </h3>
+            <ul className="history-project-guidance">
+              <li>{i18nService.t('initializationProjectRulesAddDescription')}</li>
+              <li>{i18nService.t('initializationProjectRulesReuseDescription')}</li>
+              <li className="history-project-context">
+                {i18nService.t('initializationProjectRulesContext')}
+              </li>
+              <li>{i18nService.t('initializationProjectRulesLegacyWarning')}</li>
+            </ul>
+          </li>
+        </ol>
+      </section>
+      <footer className="history-result-footer">
+        <p>
+          <InformationCircleIcon aria-hidden="true" />
+          {i18nService.t('initializationProjectRulesManual')}
+        </p>
+        <button
+          type="button"
+          onClick={onContinue}
+          className="history-result-continue rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-white hover:bg-primary-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+        >
+          {i18nService.t('initializationResultContinue')}
+          <ArrowRightIcon aria-hidden="true" />
+        </button>
+      </footer>
     </div>
   );
 }

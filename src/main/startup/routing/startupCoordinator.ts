@@ -44,6 +44,38 @@ import {
   writeStartupJson,
 } from './startupState';
 
+// The startup's in-memory windows still initialize Chromium's shared network
+// service. Windows keeps these default-profile stores open until process exit.
+const ACTIVE_STARTUP_PROFILE_ENTRIES = new Set([
+  'Local Storage',
+  'Network',
+  'Shared Dictionary',
+]);
+const STARTUP_ISOLATION_EXCLUSIONS = new Set([
+  'backups',
+  'logs',
+  STARTUP_STATE_FILE,
+  'lockfile',
+  'SingletonLock',
+  'SingletonCookie',
+  'SingletonSocket',
+  ...ACTIVE_STARTUP_PROFILE_ENTRIES,
+].map(profileEntryKey));
+
+function profileEntryKey(name: string): string {
+  return process.platform === 'win32' ? name.toLowerCase() : name;
+}
+
+function shouldIsolateProfileEntry(name: string): boolean {
+  const key = profileEntryKey(name);
+  return !STARTUP_ISOLATION_EXCLUSIONS.has(key) && !key.startsWith(`${STARTUP_STATE_FILE}.`);
+}
+
+function ownsHistoryAuthority(name: string): boolean {
+  const key = profileEntryKey(name);
+  return key === 'openclaw' || ['', '-wal', '-shm', '-journal'].some(suffix => key === `${DB_FILENAME}${suffix}`);
+}
+
 export type NativeStartupDatabaseRuntime = {
   /** Small delivery metadata only; does not admit native storage or runtime payloads. */
   deliveryIdentity(): Promise<{ runtimeVersion: string; runtimeBuildId: string }>;
@@ -370,16 +402,7 @@ export class StartupCoordinator {
         path.join(this.history, 'import-plan.json'),
         planLegacyHistory(this.history),
       );
-      const entries = fs
-        .readdirSync(this.userData)
-        .filter(
-          name =>
-            name !== 'backups' &&
-            name !== 'logs' &&
-            name !== STARTUP_STATE_FILE &&
-            !['lockfile', 'SingletonLock', 'SingletonCookie', 'SingletonSocket'].includes(name) &&
-            !name.startsWith(`${STARTUP_STATE_FILE}.`),
-        );
+      const entries = fs.readdirSync(this.userData).filter(shouldIsolateProfileEntry);
       verifyNativeHistoryOriginals(this.userData, this.history);
       this.commit(StartupStage.Isolate, { isolatedEntries: entries });
     }
@@ -394,12 +417,28 @@ export class StartupCoordinator {
       );
       fs.mkdirSync(retired, { recursive: true });
       for (const name of this.journal.isolatedEntries ?? []) {
+        // An interrupted transaction may have selected these before the current
+        // process opened Chromium. Exclude them again when resuming that plan.
+        if (!shouldIsolateProfileEntry(name)) continue;
         const source = ownedPath(this.userData, name, true);
         const destination = ownedPath(retired, name, true);
-        if (startupPathExists(source) && startupPathExists(destination))
-          throw new Error(
-            'Startup isolation found a conflicting destination. No data was overwritten.',
+        if (startupPathExists(source) && startupPathExists(destination)) {
+          if (ownsHistoryAuthority(name))
+            throw new Error(
+              'Startup isolation found a conflicting destination. No data was overwritten.',
+            );
+          // Chromium and other startup owners can recreate an entry already
+          // archived by the previous process. Retain both versions separately.
+          const additional = ownedPath(
+            this.userData,
+            path.join('backups', this.journal.transactionId, 'retired-additions', randomUUID(), name),
+            true,
           );
+          await fs.promises.mkdir(path.dirname(additional), { recursive: true });
+          await fs.promises.rename(source, additional);
+          console.info('[StartupCoordinator] Retained an additional profile entry:', additional);
+          continue;
+        }
         if (startupPathExists(source)) await fs.promises.rename(source, destination);
         else if (!startupPathExists(destination))
           throw new Error('An isolated source entry is missing.');
@@ -545,17 +584,7 @@ export class StartupCoordinator {
     }
     this.commit(StartupStage.Complete, this.targetIdentity && this.nativeVerified && this.canonicalPrepared
       ? { completedIdentity: this.targetIdentity, lastOpenedIdentity: this.targetIdentity, targetIdentity: undefined } : {});
-    if (this.route === StartupRoute.Migration) {
-      // Temporary isolation is a same-volume rename, not a retained full-profile backup.
-      const retired = ownedPath(
-        this.userData,
-        path.join('backups', this.journal.transactionId, 'retired'),
-      );
-      try {
-        fs.rmSync(retired, { recursive: true, force: true });
-      } catch (error) {
-        console.warn('[StartupCoordinator] Could not remove retired settings:', error);
-      }
-    }
+    // Migration archives, including unrelated files and any recreated entries,
+    // remain available after success. Cleanup requires a separate user action.
   }
 }
