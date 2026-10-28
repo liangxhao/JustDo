@@ -27,6 +27,7 @@ const {
 const yaml = require('js-yaml');
 const ts = require('typescript');
 const { prepareWindowsResources } = require('./prepare-windows-build.cjs');
+const { prepareCachedRuntimeArchive } = require('./windows-runtime-archive-cache.cjs');
 const { verifyApplicationLicenseAssets } = require('./application-license-assets.cjs');
 const { verifyNodeRuntime, targetContract } = require('../runtime/setup-node-runtime.cjs');
 const {
@@ -43,7 +44,6 @@ const { precompileOpenClawExtensions } = require('../openclaw/precompile-opencla
 const { readBundledSkillConfig, syncBundledSkills } = require('../runtime/sync-bundled-skills.cjs');
 const {
   PACKAGED_RUNTIME_EXCLUDES,
-  compressTarArchive,
   packMultipleSources,
   verifyRuntimeKnowledgeEntries,
   verifyRuntimeWorkerEntries,
@@ -914,9 +914,6 @@ async function beforePack(context) {
     const buildTarDir = path.join(__dirname, '../..', 'build', 'tar');
     mkdirSync(buildTarDir, { recursive: true });
 
-    const outputTar = path.join(buildTarDir, 'win-resources.tar');
-    const outputArchive = path.join(buildTarDir, 'win-resources.tar.zst');
-    const outputMetadata = path.join(buildTarDir, 'win-resources-metadata.json');
     const sources = [
       {
         label: 'OpenClaw runtime',
@@ -956,188 +953,164 @@ async function beforePack(context) {
       },
     ];
 
-    console.log(`[electron-builder-hooks] Packing combined Windows tar: ${outputTar}`);
-
-    // Remove old outputs if they exist.
-    if (existsSync(outputTar)) rmSync(outputTar);
-    if (existsSync(outputArchive)) rmSync(outputArchive);
-    if (existsSync(outputMetadata)) rmSync(outputMetadata);
-
-    const t0 = Date.now();
-    const { totalFiles, skipped } = packMultipleSources(sources, outputTar);
-    const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
-    const sizeMB = (statSync(outputTar).size / (1024 * 1024)).toFixed(1);
-    console.log(
-      `[electron-builder-hooks] Combined tar packed in ${elapsed}s: ` +
-        `${totalFiles} files, ${skipped} skipped, ${sizeMB} MB`,
-    );
-
-    // ── Validate the combined tar ──
-    // Verify that each expected prefix actually has content in the archive.
-    // This catches build misconfigurations early instead of at install time.
-    const requiredPrefixes = ['cfmind/', 'python-win/', 'mingit/', 'local-tts/'];
-    const tarEntries = [];
-    const tarModule = require(path.join(__dirname, '../..', 'node_modules', 'tar'));
-    const normalizedTarPath = outputTar.replace(/\\/g, '/');
-
-    tarModule.list({
-      file: normalizedTarPath,
-      sync: true,
-      onReadEntry: entry => {
-        tarEntries.push(entry);
-      },
-    });
-
-    const tarPrefixes = [...new Set(tarEntries.map(e => e.path.split('/')[0] + '/'))];
-
-    const missingRequired = requiredPrefixes.filter(p => !tarPrefixes.includes(p));
-    if (missingRequired.length > 0) {
-      throw new Error(
-        '[electron-builder-hooks] Combined tar validation FAILED. ' +
-          `Missing required prefixes: ${missingRequired.join(', ')}. ` +
-          `Found: ${tarPrefixes.join(', ') || '(none)'}`,
+    await prepareCachedRuntimeArchive(sources, buildTarDir, async ({ outputTar, outputMetadata, prepared, readEntries }) => {
+      console.log(`[electron-builder-hooks] Packing combined Windows tar: ${outputTar}`);
+      const t0 = Date.now();
+      const { totalFiles, skipped } = packMultipleSources(sources, outputTar, prepared);
+      const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+      const sizeMB = (statSync(outputTar).size / (1024 * 1024)).toFixed(1);
+      console.log(
+        `[electron-builder-hooks] Combined tar packed in ${elapsed}s: ` +
+          `${totalFiles} files, ${skipped} skipped, ${sizeMB} MB`,
       );
-    }
 
-    const tarEntryPaths = new Set(tarEntries.map(e => e.path.replace(/\\/g, '/')));
-    const knowledgeCount = verifyRuntimeKnowledgeEntries(
-      tarEntryPaths,
-      'cfmind/',
-      path.join(__dirname, '../..', 'vendor', 'openclaw-runtime', 'current'),
-    );
-    console.log(
-      `[electron-builder-hooks] Verified all ${knowledgeCount} runtime knowledge files in the archive.`,
-    );
-    const workerCount = verifyRuntimeWorkerEntries(
-      tarEntryPaths,
-      'cfmind/',
-      path.join(__dirname, '../..', 'vendor', 'openclaw-runtime', 'current'),
-    );
-    console.log(
-      `[electron-builder-hooks] Verified ${workerCount} local Workers; deployment archives omitted.`,
-    );
-    const legalCount = sources.reduce(
-      (count, source) =>
-        count +
-        verifyLegalMetadataEntries(tarEntryPaths, `${source.prefix}/`, source.dir, source.exclude),
-      0,
-    );
-    console.log(
-      `[electron-builder-hooks] Verified all ${legalCount} legal metadata files in the archive.`,
-    );
-    const runtimeCompanionTarEntries = getRuntimeCompanionPathsReferencedByBundle(
-      path.join(__dirname, '../..', 'vendor', 'openclaw-runtime', 'current', 'gateway-bundle.mjs'),
-    ).map(entry => `cfmind/${entry}`);
-    const { runtimeSkillPaths } = readBundledSkillConfig(path.join(__dirname, '../..'));
-    const requiredTarEntries = [
-      'cfmind/package.json',
-      'cfmind/runtime-build-info.json',
-      `cfmind/${PATCH_MANIFEST_FILENAME}`,
-      'cfmind/gateway-bundle.mjs',
-      'cfmind/gateway-launcher.cjs',
-      'cfmind/windows-runtime-preload.cjs',
-      ...OPENCLAW_CLI_ROOT_FILES.map(name => `cfmind/${name}`),
-      'cfmind/docs/channels/index.md',
-      'cfmind/docs/gateway/config-channels.md',
-      'cfmind/docs/reference/templates/AGENTS.md',
-      ...runtimeSkillPaths.map(skillPath => `cfmind/${skillPath}/SKILL.md`),
-      'python-win/python.exe',
-      'python-win/python3.exe',
-      'python-win/python312._pth',
-      'python-win/Lib/site-packages/sitecustomize.py',
-      'python-win/Lib/site-packages/pip/__main__.py',
-      'local-tts/win-x64/runtime/bin/sherpa-onnx-offline-tts.exe',
-      'local-tts/win-x64/SHERPA-ONNX-LICENSE.txt',
-      'local-tts/win-x64/.justdo-local-speech-runtime-version',
-      'local-tts/win-x64/runtime/bin/sherpa-onnx-offline.exe',
-      ...['requests', 'yaml', 'openpyxl', 'pypdf', 'bs4'].map(
-        importName => `python-win/Lib/bundled-site-packages/${importName}/__init__.py`,
-      ),
-      ...runtimeCompanionTarEntries,
-    ];
-    const missingTarEntries = requiredTarEntries.filter(entry => !tarEntryPaths.has(entry));
-    const hasBareOpenClawEntry =
-      tarEntryPaths.has('cfmind/dist/entry.js') || tarEntryPaths.has('cfmind/dist/entry.mjs');
-    verifyAcpxArtifactEntryPaths(
-      tarEntryPaths,
-      'cfmind/',
-      resolveRuntimeInstallTarget(
-        path.join(__dirname, '../..', 'vendor', 'openclaw-runtime', 'current'),
-      ),
-      'Windows runtime tar',
-    );
-    verifyMxcArtifactEntryPaths(
-      tarEntryPaths,
-      'cfmind/',
-      resolveRuntimeInstallTarget(
-        path.join(__dirname, '../..', 'vendor', 'openclaw-runtime', 'current'),
-      ),
-      'Windows runtime tar',
-      path.join(__dirname, '../..', 'vendor', 'openclaw-runtime', 'current'),
-    );
-    const hasMinGit =
-      tarEntryPaths.has('mingit/bin/git.exe') || tarEntryPaths.has('mingit/cmd/git.exe');
-    const hasPythonPipCommand = [
-      'python-win/Scripts/pip.exe',
-      'python-win/Scripts/pip3.exe',
-      'python-win/Scripts/pip.cmd',
-      'python-win/Scripts/pip3.cmd',
-      'python-win/Scripts/pip',
-      'python-win/Scripts/pip3',
-    ].some(entry => tarEntryPaths.has(entry));
+      // ── Validate the combined tar ──
+      // Verify that each expected prefix actually has content in the archive.
+      // This catches build misconfigurations early instead of at install time.
+      const requiredPrefixes = ['cfmind/', 'python-win/', 'mingit/', 'local-tts/'];
+      const tarEntries = readEntries();
 
-    if (
-      missingTarEntries.length > 0 ||
-      !hasBareOpenClawEntry ||
-      !hasMinGit ||
-      !hasPythonPipCommand
-    ) {
-      throw new Error(
-        '[electron-builder-hooks] Combined tar validation FAILED. Missing critical entries: ' +
-          [
-            ...missingTarEntries,
-            ...(!hasBareOpenClawEntry ? ['cfmind/dist/entry.js or cfmind/dist/entry.mjs'] : []),
-            ...(!hasMinGit ? ['mingit/bin/git.exe or mingit/cmd/git.exe'] : []),
-            ...(!hasPythonPipCommand ? ['python-win/Scripts/pip command'] : []),
-          ].join(', '),
+      const tarPrefixes = [...new Set(tarEntries.map(e => e.path.split('/')[0] + '/'))];
+
+      const missingRequired = requiredPrefixes.filter(p => !tarPrefixes.includes(p));
+      if (missingRequired.length > 0) {
+        throw new Error(
+          '[electron-builder-hooks] Combined tar validation FAILED. ' +
+            `Missing required prefixes: ${missingRequired.join(', ')}. ` +
+            `Found: ${tarPrefixes.join(', ') || '(none)'}`,
+        );
+      }
+
+      const tarEntryPaths = new Set(tarEntries.map(e => e.path.replace(/\\/g, '/')));
+      const knowledgeCount = verifyRuntimeKnowledgeEntries(
+        tarEntryPaths,
+        'cfmind/',
+        path.join(__dirname, '../..', 'vendor', 'openclaw-runtime', 'current'),
       );
-    }
+      console.log(
+        `[electron-builder-hooks] Verified all ${knowledgeCount} runtime knowledge files in the archive.`,
+      );
+      const workerCount = verifyRuntimeWorkerEntries(
+        tarEntryPaths,
+        'cfmind/',
+        path.join(__dirname, '../..', 'vendor', 'openclaw-runtime', 'current'),
+      );
+      console.log(
+        `[electron-builder-hooks] Verified ${workerCount} local Workers; deployment archives omitted.`,
+      );
+      const legalCount = sources.reduce(
+        (count, source) =>
+          count +
+          verifyLegalMetadataEntries(tarEntryPaths, `${source.prefix}/`, source.dir, source.exclude),
+        0,
+      );
+      console.log(
+        `[electron-builder-hooks] Verified all ${legalCount} legal metadata files in the archive.`,
+      );
+      const runtimeCompanionTarEntries = getRuntimeCompanionPathsReferencedByBundle(
+        path.join(__dirname, '../..', 'vendor', 'openclaw-runtime', 'current', 'gateway-bundle.mjs'),
+      ).map(entry => `cfmind/${entry}`);
+      const { runtimeSkillPaths } = readBundledSkillConfig(path.join(__dirname, '../..'));
+      const requiredTarEntries = [
+        'cfmind/package.json',
+        'cfmind/runtime-build-info.json',
+        `cfmind/${PATCH_MANIFEST_FILENAME}`,
+        'cfmind/gateway-bundle.mjs',
+        'cfmind/gateway-launcher.cjs',
+        'cfmind/windows-runtime-preload.cjs',
+        ...OPENCLAW_CLI_ROOT_FILES.map(name => `cfmind/${name}`),
+        'cfmind/docs/channels/index.md',
+        'cfmind/docs/gateway/config-channels.md',
+        'cfmind/docs/reference/templates/AGENTS.md',
+        ...runtimeSkillPaths.map(skillPath => `cfmind/${skillPath}/SKILL.md`),
+        'python-win/python.exe',
+        'python-win/python3.exe',
+        'python-win/python312._pth',
+        'python-win/Lib/site-packages/sitecustomize.py',
+        'python-win/Lib/site-packages/pip/__main__.py',
+        'local-tts/win-x64/runtime/bin/sherpa-onnx-offline-tts.exe',
+        'local-tts/win-x64/SHERPA-ONNX-LICENSE.txt',
+        'local-tts/win-x64/.justdo-local-speech-runtime-version',
+        'local-tts/win-x64/runtime/bin/sherpa-onnx-offline.exe',
+        ...['requests', 'yaml', 'openpyxl', 'pypdf', 'bs4'].map(
+          importName => `python-win/Lib/bundled-site-packages/${importName}/__init__.py`,
+        ),
+        ...runtimeCompanionTarEntries,
+      ];
+      const missingTarEntries = requiredTarEntries.filter(entry => !tarEntryPaths.has(entry));
+      const hasBareOpenClawEntry =
+        tarEntryPaths.has('cfmind/dist/entry.js') || tarEntryPaths.has('cfmind/dist/entry.mjs');
+      verifyAcpxArtifactEntryPaths(
+        tarEntryPaths,
+        'cfmind/',
+        resolveRuntimeInstallTarget(
+          path.join(__dirname, '../..', 'vendor', 'openclaw-runtime', 'current'),
+        ),
+        'Windows runtime tar',
+      );
+      verifyMxcArtifactEntryPaths(
+        tarEntryPaths,
+        'cfmind/',
+        resolveRuntimeInstallTarget(
+          path.join(__dirname, '../..', 'vendor', 'openclaw-runtime', 'current'),
+        ),
+        'Windows runtime tar',
+        path.join(__dirname, '../..', 'vendor', 'openclaw-runtime', 'current'),
+      );
+      const hasMinGit =
+        tarEntryPaths.has('mingit/bin/git.exe') || tarEntryPaths.has('mingit/cmd/git.exe');
+      const hasPythonPipCommand = [
+        'python-win/Scripts/pip.exe',
+        'python-win/Scripts/pip3.exe',
+        'python-win/Scripts/pip.cmd',
+        'python-win/Scripts/pip3.cmd',
+        'python-win/Scripts/pip',
+        'python-win/Scripts/pip3',
+      ].some(entry => tarEntryPaths.has(entry));
 
-    console.log(
-      `[electron-builder-hooks] Tar validation passed. Prefixes: ${tarPrefixes.join(', ')}`,
-    );
+      if (
+        missingTarEntries.length > 0 ||
+        !hasBareOpenClawEntry ||
+        !hasMinGit ||
+        !hasPythonPipCommand
+      ) {
+        throw new Error(
+          '[electron-builder-hooks] Combined tar validation FAILED. Missing critical entries: ' +
+            [
+              ...missingTarEntries,
+              ...(!hasBareOpenClawEntry ? ['cfmind/dist/entry.js or cfmind/dist/entry.mjs'] : []),
+              ...(!hasMinGit ? ['mingit/bin/git.exe or mingit/cmd/git.exe'] : []),
+              ...(!hasPythonPipCommand ? ['python-win/Scripts/pip command'] : []),
+            ].join(', '),
+        );
+      }
 
-    writeFileSync(
-      outputMetadata,
-      `${JSON.stringify(
-        {
-          schemaVersion: 1,
-          totalEntries: tarEntries.length,
-          totalFiles,
-          uncompressedBytes: statSync(outputTar).size,
-        },
-        null,
-        2,
-      )}\n`,
-      'utf8',
-    );
+      console.log(
+        `[electron-builder-hooks] Tar validation passed. Prefixes: ${tarPrefixes.join(', ')}`,
+      );
 
-    const compressionStartedAt = Date.now();
-    await compressTarArchive(outputTar, outputArchive);
-    rmSync(outputTar);
-    const compressedSizeMB = (statSync(outputArchive).size / (1024 * 1024)).toFixed(1);
-    console.log(
-      `[electron-builder-hooks] Compressed Windows runtime archive in ${(
-        (Date.now() - compressionStartedAt) /
-        1000
-      ).toFixed(1)}s: ${compressedSizeMB} MB`,
-    );
+      writeFileSync(
+        outputMetadata,
+        `${JSON.stringify(
+          {
+            schemaVersion: 1,
+            totalEntries: tarEntries.length,
+            totalFiles,
+            uncompressedBytes: statSync(outputTar).size,
+          },
+          null,
+          2,
+        )}\n`,
+        'utf8',
+      );
+
+    }, { recipeFiles: [__filename] });
   }
 }
 
 async function afterPack(context) {
   verifyPackagedNodeRuntime(context);
-  await verifyPackagedOpenClawRuntime(context);
+  await verifyPackagedOpenClawRuntime(context, { includeDrawioAssets: isWindowsTarget(context) });
   const diagramResourcesRoot = isMacTarget(context)
     ? path.join(
         context.appOutDir,
@@ -1151,10 +1124,12 @@ async function afterPack(context) {
     repoRoot: path.join(__dirname, '../..'),
     packagedRoot: path.join(diagramResourcesRoot, 'licenses/application-dependencies'),
   });
-  await require('../../plugins/extensions/drawio/scripts/verify-packaged.cjs').verifyPackagedDrawioAssets(
-    diagramResourcesRoot,
-    isWindowsTarget(context),
-  );
+  if (!isWindowsTarget(context)) {
+    await require('../../plugins/extensions/drawio/scripts/verify-packaged.cjs').verifyPackagedDrawioAssets(
+      diagramResourcesRoot,
+      false,
+    );
+  }
   verifyPackagedBrowserExtension(context);
 
   if (isWindowsTarget(context)) {
@@ -1799,6 +1774,7 @@ async function verifyPackagedOpenClawRuntime(context, options = {}) {
         'cfmind/dist/extensions/mxc/node_modules/node-pty/package.json',
       ]);
       const archiveEntryPaths = new Set();
+      const diagramPrefix = 'cfmind/dist/extensions/drawio/assets';
       let hasRetiredWidgetAssets = false;
       const tarModule = require(path.join(__dirname, '../..', 'node_modules', 'tar'));
       await pipeline(
@@ -1815,13 +1791,22 @@ async function verifyPackagedOpenClawRuntime(context, options = {}) {
             archiveEntryPaths.add(normalized);
             return (
               requiredEntries.has(normalized) ||
-              normalized.startsWith('cfmind/node-runtime/')
+              normalized.startsWith('cfmind/node-runtime/') ||
+              (options.includeDrawioAssets === true &&
+                (normalized === diagramPrefix || normalized.startsWith(diagramPrefix + '/')))
             );
           },
         }),
       );
       if (hasRetiredWidgetAssets)
         throw new Error('Packaged runtime includes retired Smart Canvas library assets');
+      if (options.includeDrawioAssets === true) {
+        // Use the plugin's unchanged closed-set verifier against the assets
+        // already selected in this pass, avoiding a third archive decompression.
+        await require('../../plugins/extensions/drawio/scripts/verify-packaged.cjs').verifyPackagedDrawioAssets(
+          temporaryRoot, false,
+        );
+      }
       // Discover companions from the actual archived bundle, then extract those
       // exact files before the normal filesystem verifier checks their presence.
       // The subsequent manifest check still authenticates the bundle itself.

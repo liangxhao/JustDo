@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { afterEach, describe, expect, test } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 
 import cliRuntimeFiles from '../../../src/shared/openclaw/cliRuntimeFiles.json';
 
@@ -49,7 +49,7 @@ const { verifyPackagedOpenClawRuntime, isDeclaredBundledDependencyArchiveEntry }
     verifyPackagedOpenClawRuntime: (context: {
       appOutDir: string;
       electronPlatformName: string;
-    }, options?: { repoRoot: string }) => Promise<void>;
+    }, options?: { repoRoot: string; includeDrawioAssets?: boolean }) => Promise<void>;
     isDeclaredBundledDependencyArchiveEntry: (entryPath: string, entryType: string, directories: string[]) => boolean;
   };
 const { compressTarArchive } = require('../../../scripts/openclaw/pack-openclaw-tar.cjs') as {
@@ -1122,7 +1122,98 @@ module.exports = { applyPatch, verifyPatch };
     );
   });
 
+  test('keeps host builds and installer/archive policies outside the native runtime recipe', () => {
+    const { repoRoot, runtimeRoot } = createFixture();
+    writeOpenClawPatchManifest(runtimeRoot, { repoRoot });
+
+    for (const source of [
+      'electron-builder.json',
+      'electron-builder.config.cjs',
+      'scripts/packaging/electron-builder-hooks.cjs',
+      'scripts/packaging/notarize.js',
+      'scripts/packaging/prepare-windows-build.cjs',
+      'scripts/packaging/application-license-assets.cjs',
+      'vite.config.mts',
+      'scripts/openclaw/pack-openclaw-tar.cjs',
+      'plugins/extensions/drawio/scripts/verify-packaged.cjs',
+    ]) {
+      const file = path.join(repoRoot, source);
+      expect(listBuildRecipeFiles(repoRoot)).not.toContain(file);
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, '// changed host packaging policy\n');
+    }
+
+    expect(() => verifyOpenClawPatchManifest(runtimeRoot, { repoRoot })).not.toThrow();
+  });
+
+  test('reuses the native proof after host package metadata or application commands change', () => {
+    const { repoRoot, runtimeRoot } = createFixture();
+    writeOpenClawPatchManifest(runtimeRoot, { repoRoot });
+    const packagePath = path.join(repoRoot, 'package.json');
+    const pkg = JSON.parse(fs.readFileSync(packagePath, 'utf8'));
+    fs.writeFileSync(packagePath, JSON.stringify({
+      ...pkg, name: 'host-app', version: '2.0.0', description: 'Updated host description',
+      author: { name: 'Publisher' }, scripts: { build: 'host build', 'dist:win': 'host installer' },
+    }));
+
+    expect(() => verifyOpenClawPatchManifest(runtimeRoot, { repoRoot })).not.toThrow();
+  });
+
+  test('canonicalizes only root runtime package fields while preserving ordered plugin declarations', () => {
+    const { repoRoot } = createFixture();
+    const packagePath = path.join(repoRoot, 'package.json');
+    const writePackage = (plugins: Array<Record<string, unknown>>, reverse = false) => {
+      const openclaw = reverse
+        ? { plugins, version: 'v2026.6.11' }
+        : { version: 'v2026.6.11', plugins };
+      fs.writeFileSync(packagePath, JSON.stringify({
+        openclaw, engines: reverse ? { npm: '>=11', node: '24' } : { node: '24', npm: '>=11' },
+      }));
+    };
+    writePackage([{ id: 'first', version: '1' }, { id: 'second', version: '2' }]);
+    const before = buildOpenClawBuildRecipeFingerprint(repoRoot, 'v2026.6.11');
+
+    writePackage([{ version: '1', id: 'first' }, { version: '2', id: 'second' }], true);
+    expect(buildOpenClawBuildRecipeFingerprint(repoRoot, 'v2026.6.11')).toBe(before);
+    writePackage([{ id: 'second', version: '2' }, { id: 'first', version: '1' }]);
+    expect(buildOpenClawBuildRecipeFingerprint(repoRoot, 'v2026.6.11')).not.toBe(before);
+  });
+
   test.each([
+    { productName: 'Example' },
+    { openclaw: { version: 'v2026.6.11', plugins: [{ id: 'sandbox', version: '2' }] } },
+    { engines: { node: '>=24.22.1 <25' } },
+    { scripts: { 'openclaw:runtime:win-x64': 'node changed-runtime.cjs' } },
+    { scripts: { 'preopenclaw:bundle': 'node native-preparation.cjs' } },
+    { scripts: { 'postopenclaw:resources': 'node native-finalization.cjs' } },
+  ])('rejects changed root package inputs used by native preparation: %j', fields => {
+    const { repoRoot, runtimeRoot } = createFixture();
+    writeOpenClawPatchManifest(runtimeRoot, { repoRoot });
+    const packagePath = path.join(repoRoot, 'package.json');
+    const pkg = JSON.parse(fs.readFileSync(packagePath, 'utf8'));
+    fs.writeFileSync(packagePath, JSON.stringify({ ...pkg, ...fields }));
+
+    expect(() => verifyOpenClawPatchManifest(runtimeRoot, { repoRoot })).toThrow(/source proof/);
+  });
+
+  test('retains full root dependency lock verification until build tools have a narrower proof', () => {
+    const { repoRoot, runtimeRoot } = createFixture();
+    writeOpenClawPatchManifest(runtimeRoot, { repoRoot });
+    fs.appendFileSync(path.join(repoRoot, 'package-lock.json'), '\n');
+
+    expect(() => verifyOpenClawPatchManifest(runtimeRoot, { repoRoot })).toThrow(/source proof/);
+  });
+
+  test('fails clearly when a required native preparation source is missing', () => {
+    const { repoRoot } = createFixture();
+    fs.rmSync(path.join(repoRoot, 'scripts/openclaw/bundle-openclaw-gateway.cjs'));
+
+    expect(() => buildOpenClawBuildRecipeFingerprint(repoRoot, 'v2026.6.11'))
+      .toThrow('OpenClaw build recipe is incomplete: scripts/openclaw/bundle-openclaw-gateway.cjs');
+  });
+
+  test.each([
+    'scripts/packaging/electron-builder-product-metadata.cjs',
     'scripts/openclaw/bundle-openclaw-gateway.cjs',
     'src/main/openclaw/config/models/providerProjection.ts',
     'src/main/openclaw/config/speech/nativeTtsConfig.ts',
@@ -1381,6 +1472,9 @@ module.exports = { applyPatch, verifyPatch };
     const resourcesRoot = path.join(appOutDir, 'resources');
     fs.mkdirSync(runtimeRoot, { recursive: true });
     fs.mkdirSync(resourcesRoot, { recursive: true });
+    const diagramFile = 'cfmind/dist/extensions/drawio/assets/probe.js';
+    fs.mkdirSync(path.dirname(path.join(archiveRoot, diagramFile)), { recursive: true });
+    fs.writeFileSync(path.join(archiveRoot, diagramFile), 'diagram fixture');
     fs.writeFileSync(
       path.join(runtimeRoot, 'gateway-bundle.mjs'),
       'const identity = "build-info.json"; runtimeProcessEntrypoint("agents/archive-proof.worker");\n',
@@ -1540,7 +1634,26 @@ module.exports = { applyPatch, verifyPatch };
     else if (!includeCompanion) await expect(verification).rejects.toThrow('dist/agents/archive-proof.worker.js');
     else if (providerChange.endsWith('missing')) await expect(verification).rejects.toThrow(/ENOENT/);
     else if (providerChange.endsWith('changed')) await expect(verification).rejects.toThrow(/dependencies/);
-    else await expect(verification).resolves.toBeUndefined();
+    else {
+      await expect(verification).resolves.toBeUndefined();
+      const diagramVerifier = require('../../../plugins/extensions/drawio/scripts/verify-packaged.cjs');
+      const verifyDiagram = vi.spyOn(diagramVerifier, 'verifyPackagedDrawioAssets')
+        .mockImplementation(async (...args: unknown[]) => {
+          const [root, windows] = args as [string, boolean];
+          expect(windows).toBe(false);
+          expect(fs.readFileSync(path.join(root, diagramFile), 'utf8')).toBe('diagram fixture');
+        });
+      try {
+        const context = { appOutDir, electronPlatformName: 'win32' };
+        const options = { repoRoot: repositoryRoot, includeDrawioAssets: true };
+        await expect(verifyPackagedOpenClawRuntime(context, options)).resolves.toBeUndefined();
+        expect(verifyDiagram).toHaveBeenCalledTimes(1);
+        verifyDiagram.mockRejectedValueOnce(new Error('diagram integrity failure'));
+        await expect(verifyPackagedOpenClawRuntime(context, options)).rejects.toThrow('diagram integrity failure');
+      } finally {
+        verifyDiagram.mockRestore();
+      }
+    }
   }, 30_000);
 
   test.each([

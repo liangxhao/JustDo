@@ -125,6 +125,11 @@ function compileBrowserExtensionNativeHost(options = {}) {
   if (!compilerPath) {
     throw new Error('The Windows .NET Framework C# compiler was not found.');
   }
+  if (!options.executablePath) {
+    // Recreating the fixed output also refreshes its actual NTFS name casing;
+    // overwriting an old lowercase name would fail Builder's exact-case filter.
+    fs.rmSync(executablePath, { force: true });
+  }
   execFileSync(
     compilerPath,
     [

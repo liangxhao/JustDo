@@ -297,7 +297,7 @@ function packSingleSource(sourceDir, outputTar, prefix) {
  * Pack multiple source directories into a single tar file.
  * Each source gets its own prefix (root directory name) in the tar.
  */
-function packMultipleSources(sources, outputTar) {
+function collectArchiveSources(sources) {
   let totalSkipped = 0;
   const directories = [];
   const files = [];
@@ -334,18 +334,27 @@ function packMultipleSources(sources, outputTar) {
         }
         if (archivePaths.has(archivePath)) throw new Error(`Duplicate runtime archive path: ${archivePath}`);
         archivePaths.add(archivePath);
-        const entry = { absolute: path.resolve(fullPath), archivePath, relativePath, size: stat.size };
+        const entry = {
+          absolute: path.resolve(fullPath), archivePath, relativePath, size: stat.size,
+          mode: stat.mode & 0o7777,
+          link: fs.lstatSync(fullPath).isSymbolicLink() ? fs.readlinkSync(fullPath) : null,
+        };
         if (stat.isDirectory()) {
           directories.push(entry);
           collect(fullPath, relativePath);
         } else if (stat.isFile()) {
           files.push(entry);
-        }
+        } else throw new Error(`Unsupported runtime archive source: ${fullPath}`);
       }
       ancestors.delete(realDirectory);
     }
     collect(dir);
   }
+  return { directories, files, totalSkipped };
+}
+
+function packMultipleSources(sources, outputTar, prepared = collectArchiveSources(sources)) {
+  const { directories, files, totalSkipped } = prepared;
 
   // Similar dependency paths and duplicate files must stay within the decoder's
   // existing 64 MiB window. Keep every file independent at installation time.
@@ -373,7 +382,7 @@ function packMultipleSources(sources, outputTar) {
   for (const group of sizes.values()) {
     if (group.length < 2 || group[0].size === 0) continue;
     for (const entry of group) {
-      entry.sha256 = createHash('sha256').update(fs.readFileSync(entry.absolute)).digest('hex');
+      entry.sha256 ??= createHash('sha256').update(fs.readFileSync(entry.absolute)).digest('hex');
       const matches = copies.get(entry.sha256) || [];
       matches.push(entry);
       copies.set(entry.sha256, matches);
@@ -383,7 +392,7 @@ function packMultipleSources(sources, outputTar) {
   const added = new Set();
   for (const entry of files) {
     if (added.has(entry)) continue;
-    for (const copy of entry.sha256 ? copies.get(entry.sha256) : [entry]) {
+    for (const copy of copies.get(entry.sha256) || [entry]) {
       if (!added.has(copy)) { added.add(copy); ordered.push(copy); }
     }
   }
@@ -561,4 +570,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { PACKAGED_RUNTIME_EXCLUDES, resolveCompressionWorkers, compressTarArchive, packSingleSource, packMultipleSources, listRuntimeKnowledgeFiles, verifyRuntimeKnowledgeEntries, verifyRuntimeWorkerEntries, verifyLegalMetadataEntries };
+module.exports = { PACKAGED_RUNTIME_EXCLUDES, collectArchiveSources, resolveCompressionWorkers, compressTarArchive, packSingleSource, packMultipleSources, listRuntimeKnowledgeFiles, verifyRuntimeKnowledgeEntries, verifyRuntimeWorkerEntries, verifyLegalMetadataEntries };

@@ -411,6 +411,49 @@ verification; no hashes are refreshed in place. `OPENCLAW_FORCE_INSTALL=1` alway
 forces that rebuild, including on repeated builds. Local resources and final
 packaged artifacts still pass their normal checks on every build.
 
+The native build recipe covers native preparation, patch, plugin and contract
+inputs. Host Vite/license compilation, installer configuration, final archive
+assembly and packaged-only verification belong to packaging, so changing those
+alone does not invalidate the prepared native runtime. The root package metadata
+is projected to `productName`, `openclaw`, `engines` and the OpenClaw npm pipeline
+scripts, including pre/post hooks; branding remains an input to the native terminal
+banner. The complete root lockfile is still checked conservatively: dependency
+or lockfile changes can require rebuilding even when a host dependency changed.
+Changing this recipe once requires a pristine rebuild of older prepared runtimes;
+their existing proofs are never refreshed to bypass that requirement.
+
+Windows resource archives have a separate content cache under `build/tar/`.
+Its build-only proof binds the exact selected member paths, file bytes, modes,
+empty directories and followed alias topology, source exclusions, packaging code,
+compression request and tool versions. Timestamp-only resource synchronization
+does not invalidate it. A hit also checks the compressed archive and metadata
+bytes. A miss assembles and verifies the actual tar members against that source
+inventory, runs the ordinary knowledge/Worker/legal/capability checks, and
+compresses into a private staging directory. Publication backs up all previous
+outputs and publishes the new proof last; a failure rolls back the old generation,
+or preserves its backups if restoration itself fails. Missing or altered cache
+outputs require a rebuild. The proof is not installed, and final packaged runtime,
+source/patch, plugin and installer CRC checks remain enabled on cache hits.
+
+Final Windows runtime verification selects draw.io assets during its first
+archive extraction and runs the plugin's existing closed-set verifier there.
+It retains the second pass that discovers companion files and bundled dependency
+trees from authenticated archive contents. This avoids a third full decompression
+without depending on a mutable local runtime for the archived dependency set.
+
+Windows x64 validation on 2026-10-28 retained Zstandard level 19, long-distance
+matching, the 64 MiB window and all existing archive exclusions. A required first
+native rebuild took 1336.63 seconds; its next verified reuse took 2.05 seconds.
+Tar assembly/compression took 13.1/68.1 seconds, and the next content-cache lookup
+reused that exact compressed archive in 7.4 seconds. The complete installer build
+with resource reuse took 175.86 seconds, excluding application compilation. It
+passed the packaged runtime/plugin/native checks and final installer CRC test.
+The prior installer was 303,302,216 bytes; the new installer was 304,129,843 bytes
+(+0.27%). Runtime resource expansion was 1,026,642,432 versus 1,039,448,576 bytes
+(+1.25%). These are measurements of these source revisions, not a time or size
+guarantee for later dependency changes. No installation/first-launch rehearsal
+was added to this build-performance validation.
+
 The locked OpenClaw archive also owns its declared bundled dependencies. After
 npm installs production dependencies, preparation restores each complete bundled
 tree from that authenticated pristine archive before generating the shrinkwrap.
@@ -427,6 +470,19 @@ Python, MinGit and local speech preparation run in three separate processes with
 disjoint resource roots. All must finish successfully before archiving; a failure
 waits for the remaining processes before reporting the error. Windows' npm build
 entry no longer prepares Python/Git a second time before this packaging step.
+
+Python's locked bundled packages are reused after verifying their preparation
+inputs and complete installed file inventory, including bytecode and the copied
+`sitecustomize.py`. The input fingerprint binds the requirements, path setup,
+preparation scripts and embedded Python executable/DLL/standard-library/path files.
+Import checks still run, with bytecode writes disabled. Missing evidence, changed
+inputs, changed/extra/missing package files or failed imports trigger a clean
+package reinstall. Reinstallation clears only the old `sitecustomize` bytecode
+and restores its source before launching pip. Failed installation or imports
+cannot publish reusable evidence.
+The build-only proof lives beside `python-win/` as
+`build/runtimes/python-win-packages-proof.json`, outside the installed payload.
+Previously prepared trees without that proof install once before later reuse.
 
 Runtime compression uses an isolated Node process with up to four native Zstd
 workers when CPU and available memory permit. It retains level 19, long-distance

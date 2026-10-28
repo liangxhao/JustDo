@@ -360,7 +360,7 @@ test('clusters duplicate dependency bytes while preserving independent files, pa
       expect(fileEntries.find(entry => entry.path === `cfmind/${relative}`)?.mode).toBe(fs.statSync(path.join(runtime, relative)).mode & 0o7777);
     }
     expect(fs.readFileSync(path.join(output, 'python-win/python.exe'), 'utf8')).toBe('Python binary');
-    expect(fs.statSync(path.join(output, 'cfmind/native/left.dll')).ino).not.toBe(fs.statSync(path.join(output, 'cfmind/native/right.dll')).ino);
+    expect(fs.statSync(path.join(output, 'cfmind/native/left.dll'), { bigint: true }).ino).not.toBe(fs.statSync(path.join(output, 'cfmind/native/right.dll'), { bigint: true }).ino);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

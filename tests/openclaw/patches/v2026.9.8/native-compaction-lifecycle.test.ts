@@ -285,7 +285,7 @@ describe('compaction pristine build contract', () => {
       );
       for (const file of proof.listBuildRecipeFiles(isolated)) {
         fs.mkdirSync(path.dirname(file), { recursive: true });
-        fs.writeFileSync(file, 'fixture recipe input');
+        fs.writeFileSync(file, file === path.join(isolated, 'package.json') ? '{}' : 'fixture recipe input');
       }
       const before = proof.buildOpenClawBuildRecipeFingerprint(isolated, 'v2026.9.8');
       fs.writeFileSync(path.join(isolated, support), 'fixture helper revision 2');

@@ -130,6 +130,10 @@ describe('browser extension development native host', () => {
         path.join(projectRoot, 'scripts', 'browser', 'browser-extension-native-host.cs'),
         path.join(repoRoot, 'scripts', 'browser', 'browser-extension-native-host.cs'),
       );
+      const outputDirectory = path.join(repoRoot, 'build', 'browser-extension', 'native-host');
+      const staleName = 'acme-browser-extension-native-host.exe';
+      fs.mkdirSync(outputDirectory, { recursive: true });
+      fs.writeFileSync(path.join(outputDirectory, staleName), 'MZ old lowercase executable');
 
       try {
         const result = compileBrowserExtensionNativeHost({ platform: 'win32', repoRoot });
@@ -144,9 +148,34 @@ describe('browser extension development native host', () => {
           reused: false,
         });
         expect(fs.readFileSync(result.executablePath).subarray(0, 2).toString()).toBe('MZ');
+        const outputNames = fs.readdirSync(outputDirectory);
+        expect(outputNames).toContain('Acme-browser-extension-native-host.exe');
+        expect(outputNames).not.toContain(staleName);
+        const { FileMatcher } = require('app-builder-lib/out/fileMatcher');
+        const { expandMacro } = require('app-builder-lib/out/util/macroExpander');
+        const builderConfig = JSON.parse(
+          fs.readFileSync(path.join(projectRoot, 'electron-builder.json'), 'utf8'),
+        );
+        const resource = builderConfig.win.extraResources.find(
+          (candidate: { to: string }) => candidate.to === 'browser-extension/native-host',
+        );
+        const matcher = new FileMatcher(
+          outputDirectory,
+          path.join(repoRoot, 'packaged-host'),
+          (value: string) => expandMacro(value, null, { productName: 'Acme', sanitizedProductName: 'Acme' }),
+          resource.filter,
+        );
+        const actualExecutablePath = path.join(outputDirectory, outputNames.find(name => name.endsWith('.exe'))!);
+        expect(matcher.createFilter()(actualExecutablePath, fs.statSync(actualExecutablePath))).toBe(true);
         expect(compileBrowserExtensionNativeHost({ platform: 'win32', repoRoot }).reused).toBe(
           false,
         );
+        fs.appendFileSync(
+          path.join(repoRoot, 'scripts', 'browser', 'browser-extension-native-host.cs'),
+          '\ninvalid C# source\n',
+        );
+        expect(() => compileBrowserExtensionNativeHost({ platform: 'win32', repoRoot })).toThrow();
+        expect(fs.existsSync(result.executablePath)).toBe(false);
       } finally {
         fs.rmSync(repoRoot, { force: true, recursive: true });
       }

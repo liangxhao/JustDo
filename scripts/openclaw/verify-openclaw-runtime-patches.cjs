@@ -25,13 +25,9 @@ const BUILD_RECIPE_FILES = [
   '.nvmrc',
   'package.json',
   'package-lock.json',
-  'electron-builder.json',
-  'electron-builder.config.cjs',
-  'scripts/packaging/electron-builder-hooks.cjs',
-  'scripts/packaging/notarize.js',
-  'scripts/packaging/prepare-windows-build.cjs',
-  'scripts/packaging/application-license-assets.cjs',
-  'vite.config.mts',
+  // The native terminal-banner patch consumes this helper and productName.
+  // Host compilation, installer policy and final archive assembly do not
+  // produce the prepared native runtime and have their own packaging checks.
   'scripts/packaging/electron-builder-product-metadata.cjs',
   'scripts/openclaw/install-openclaw-runtime.cjs',
   'scripts/openclaw/openclaw-bundled-dependencies.cjs',
@@ -59,7 +55,6 @@ const BUILD_RECIPE_FILES = [
   'src/shared/providers/mediaGenerationModels.ts',
   'scripts/openclaw/precompile-openclaw-extensions.cjs',
   'scripts/openclaw/prune-openclaw-runtime.cjs',
-  'scripts/openclaw/pack-openclaw-tar.cjs',
   'src/main/openclaw/runtime/openclawGatewayBundleLauncher.cjs',
   'src/main/openclaw/runtime/windowsRecursiveRemove.cjs',
   'src/main/openclaw/runtime/launch/electronNodeRuntime.ts',
@@ -112,7 +107,6 @@ const BUILD_RECIPE_FILES = [
   'plugins/skills/builtin-skills.json',
   'scripts/runtime/sync-bundled-skills.cjs',
   'plugins/extensions/drawio/scripts/prepare.cjs',
-  'plugins/extensions/drawio/scripts/verify-packaged.cjs',
   'plugins/extensions/drawio/package.json',
   'plugins/extensions/drawio/openclaw.plugin.json',
   'plugins/extensions/drawio/index.ts',
@@ -409,13 +403,26 @@ function isCanonicalSha512Integrity(value) {
   return digest.length === 64 && digest.toString('base64') === encoded;
 }
 
-function hashFileSet(repoRoot, filePaths) {
+function hashFileSet(repoRoot, filePaths, projectRuntimePackage = false) {
   const hash = crypto.createHash('sha256');
   for (const filePath of filePaths) {
     const relativePath = path.relative(repoRoot, filePath).replace(/\\/g, '/');
     hash.update(relativePath);
     hash.update('\0');
-    hash.update(fs.readFileSync(filePath));
+    const content = fs.readFileSync(filePath);
+    if (projectRuntimePackage && relativePath === 'package.json') {
+      const pkg = JSON.parse(content.toString('utf8'));
+      const projection = Object.fromEntries(
+        ['productName', 'openclaw', 'engines']
+          .filter(field => Object.hasOwn(pkg, field)).map(field => [field, pkg[field]]),
+      );
+      // npm also invokes pre/post hooks for the runtime preparation commands.
+      projection.scripts = Object.fromEntries(Object.entries(pkg.scripts || {})
+        .filter(([name]) => /^(?:pre|post)?openclaw:/.test(name)));
+      hash.update(canonicalJson(projection));
+    } else {
+      hash.update(content);
+    }
     hash.update('\0');
   }
   return hash.digest('hex');
@@ -473,7 +480,9 @@ function buildOpenClawBuildRecipeFingerprint(repoRoot, version) {
         .join(', ')}`,
     );
   }
-  return hashFileSet(repoRoot, [...recipeFiles, ...listPatchInputFiles(repoRoot, version)]);
+  // Keep the complete lockfile until the native build-tool dependency closure
+  // has its own audited proof; unrelated lockfile changes remain conservative misses.
+  return hashFileSet(repoRoot, [...recipeFiles, ...listPatchInputFiles(repoRoot, version)], true);
 }
 
 function readOpenClawSourceLock(repoRoot, version) {

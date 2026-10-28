@@ -493,7 +493,7 @@ describe('Windows installer process handling', () => {
     expect(builderConfig.electronLanguages).toEqual(['en-US', 'zh-CN']);
     expect(builderConfig.nsis?.differentialPackage).toBe(false);
     expect(builderConfig.nsis?.preCompressedFileExtensions).toEqual(['.zst']);
-    expect(builderHook).toContain('compressTarArchive(outputTar, outputArchive)');
+    expect(builderHook).toContain('prepareCachedRuntimeArchive(sources, buildTarDir');
     expect(builderHook).toContain('totalEntries: tarEntries.length');
     expect(builderHook).toContain("process.env.ELECTRON_BUILDER_7Z_FILTER = 'BCJ'");
     expect(executableBuilderConfig).toContain("process.env.ELECTRON_BUILDER_7Z_FILTER = 'BCJ'");

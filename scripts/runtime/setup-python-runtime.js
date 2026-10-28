@@ -16,6 +16,9 @@ const path = require('path');
 const { Readable } = require('stream');
 const { pipeline } = require('stream/promises');
 const { spawnSync } = require('child_process');
+const {
+  buildPackageRecipe, verifyPackageProof, writePackageProof, clearSiteCustomizeBytecode,
+} = require('./python-package-cache.cjs');
 const { path7za } = (() => {
   try {
     return require('7zip-bin');
@@ -570,25 +573,52 @@ function verifyManagedPackageImports(rootDir) {
     `imports = ${JSON.stringify(MANAGED_PACKAGE_IMPORTS)}`,
     'for name in imports: importlib.import_module(name)',
   ].join('\n');
-  runCommand(pythonPath, ['-c', script], { timeout: 60_000 });
+  // Verification must not rewrite bytecode covered by the prepared-package proof.
+  runCommand(pythonPath, ['-B', '-c', script], { timeout: 60_000 });
 }
 
-function ensureBundledPythonPackages(rootDir) {
-  if (!isNonEmptyFile(DEFAULT_REQUIREMENTS_PATH)) {
-    throw new Error(`Python requirements file is missing or empty: ${DEFAULT_REQUIREMENTS_PATH}`);
+function ensureBundledPythonPackages(rootDir, options = {}) {
+  const requirementsPath = options.requirementsPath || DEFAULT_REQUIREMENTS_PATH;
+  const sourceCustomizePath = options.siteCustomizePath || DEFAULT_SITE_CUSTOMIZE_PATH;
+  const install = options.install || installManagedPackagesWithPip;
+  const verify = options.verify || verifyManagedPackageImports;
+  const log = options.log || console.log;
+  if (!isNonEmptyFile(requirementsPath)) {
+    throw new Error(`Python requirements file is missing or empty: ${requirementsPath}`);
   }
   const managedDir = path.join(rootDir, MANAGED_SITE_PACKAGES_REL_PATH);
+  const siteCustomizePath = path.join(rootDir, SITE_CUSTOMIZE_REL_PATH);
+  // Build-only evidence stays outside the runtime tree copied into the installer.
+  const proofPath = path.join(path.dirname(rootDir), `${path.basename(rootDir)}-packages-proof.json`);
+  const recipeSha256 = buildPackageRecipe(rootDir, {
+    requirementsPath, siteCustomizePath: sourceCustomizePath,
+    setupScriptPath: __filename, pythonVersion: DEFAULT_WINDOWS_EMBED_PYTHON_VERSION,
+  });
+  if (verifyPackageProof(proofPath, recipeSha256, managedDir, siteCustomizePath)) {
+    try {
+      verify(rootDir);
+      log('[setup-python-runtime] Reused verified locked bundled Python packages.');
+      return { reused: true };
+    } catch {
+      log('[setup-python-runtime] Cached Python package import check failed; reinstalling.');
+    }
+  }
+  // Never leave valid evidence for an interrupted installation or failed import.
+  fs.rmSync(proofPath, { force: true });
   if (fs.existsSync(managedDir)) {
     fs.rmSync(managedDir, { recursive: true, force: true });
   }
   fs.mkdirSync(managedDir, { recursive: true });
-  console.log('[setup-python-runtime] Installing locked bundled Python packages...');
-  installManagedPackagesWithPip(rootDir, managedDir, DEFAULT_REQUIREMENTS_PATH);
-  const siteCustomizePath = path.join(rootDir, SITE_CUSTOMIZE_REL_PATH);
   fs.mkdirSync(path.dirname(siteCustomizePath), { recursive: true });
-  fs.copyFileSync(DEFAULT_SITE_CUSTOMIZE_PATH, siteCustomizePath);
-  verifyManagedPackageImports(rootDir);
-  console.log('[setup-python-runtime] Locked bundled Python packages ready');
+  // Restore source before launching pip; -B alone still accepts existing pyc.
+  clearSiteCustomizeBytecode(siteCustomizePath);
+  fs.copyFileSync(sourceCustomizePath, siteCustomizePath);
+  log('[setup-python-runtime] Installing locked bundled Python packages...');
+  install(rootDir, managedDir, requirementsPath);
+  verify(rootDir);
+  writePackageProof(proofPath, recipeSha256, managedDir, siteCustomizePath);
+  log('[setup-python-runtime] Locked bundled Python packages ready');
+  return { reused: false };
 }
 
 function enableSitePackages(rootDir) {

@@ -84,12 +84,27 @@ artifacts. This keeps OpenClaw's bundled Chrome MCP fixes through preparation.
 Windows packaging uses `packaging/prepare-windows-build.cjs` to verify and reuse
 the prepared locked runtime, or rebuild it from pristine inputs when stale.
 `OPENCLAW_FORCE_INSTALL=1` deliberately disables reuse; remove that environment
-variable for normal repeated builds. The packaging hook prepares Python, Git and
+variable for normal repeated builds. Native fingerprints exclude host compilation
+and installer/archive policy; actual native inputs, branding and the full root
+dependency lock remain bound. The packaging hook prepares Python, Git and
 speech in independent child processes. Runtime compression selects up to four
 native workers within CPU/memory limits; `RUNTIME_COMPRESSION_WORKERS=0` keeps the
 streaming path, while 2–8 requests a bounded parallel worker count. All packaging,
 source-proof and final-archive checks still run. See
 [Windows installer](../docs/windows-installer.md) for memory and validation scope.
+
+Python preparation verifies a build-only package proof before reusing the locked
+dependencies. It reinstalls only when that proof, the preparation inputs or the
+installed files no longer match; import checks remain enabled. The proof is kept
+beside the runtime at `build/runtimes/python-win-packages-proof.json` and is not
+included in the installer. Existing prepared trees install once to create it.
+
+Windows archives reuse `build/tar/win-resources.tar.zst` only when the selected
+source content, packaging recipe and output hashes match
+`build/tar/win-resources-proof.json`. Changed timestamps alone do not force
+recompression. Cold builds verify the actual tar bytes against their input
+inventory and publish archive/metadata/proof with rollback. Final artifact checks
+remain enabled; Windows draw.io verification shares the first runtime extraction.
 
 `test/verify-native-skill-state-runtime.mjs [runtime-directory]` runs opt-in checks
 of installed-skill discovery and interactive Code Mode session storage through a
