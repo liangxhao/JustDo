@@ -305,6 +305,27 @@ const resolveBrowserExtensionPath = (): string => {
   return extensionPath;
 };
 
+export const readBundledBrowserExtensionVersion = (extensionPath?: string): string | null => {
+  try {
+    const manifest = JSON.parse(
+      fs.readFileSync(
+        path.join(
+          extensionPath ?? resolveBrowserExtensionPath(),
+          'chrome-extension',
+          'manifest.json',
+        ),
+        'utf8',
+      ),
+    );
+    if (typeof manifest.version === 'string' && manifest.version.trim()) {
+      return manifest.version.trim();
+    }
+  } catch {
+    // Missing or unreadable extension metadata must not block browser settings.
+  }
+  return null;
+};
+
 export {
   buildBrowserExtensionPairingCommandArgs,
   buildBrowserPairingCommandEnvironment,
@@ -558,10 +579,15 @@ export const registerBrowserHandlers = ({
     }
   });
   ipcMain.handle(BrowserIpc.GetStatus, async () => {
+    const bundledExtensionVersion = readBundledBrowserExtensionVersion();
     try {
-      return { success: true, status: await getBrowserConnectionStatus() };
+      return { success: true, status: await getBrowserConnectionStatus(), bundledExtensionVersion };
     } catch (error) {
-      return { success: false, error: error instanceof Error ? error.message : String(error) };
+      return {
+        success: false,
+        bundledExtensionVersion,
+        error: error instanceof Error ? error.message : String(error),
+      };
     }
   });
 

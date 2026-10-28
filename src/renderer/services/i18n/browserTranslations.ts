@@ -91,14 +91,20 @@ export const browserTranslations = {
     browserGatewayUnavailable: 'AI 引擎尚未连接，请稍后重试。',
     browserConnectionFailed: 'Chrome 连接测试失败',
     browserExtensionSectionTitle: 'Chrome 扩展',
+    browserExtensionBundledVersion: '扩展版本',
+    browserExtensionVersionHint:
+      '当前扩展包的版本。已安装版本可在 Chrome 扩展管理页 → 详情 → 版本中查看。',
+    browserExtensionVersionUnavailable: '暂不可用',
+    browserExtensionUpdateHint:
+      '本软件升级后，如果连不上，请重装该扩展。Chrome 扩展管理页可核对已安装扩展的版本号。',
     browserExtensionSectionDescription:
-      '在 Chrome 侧边栏与 AI 对话，并按需附带当前网页内容；选择“Chrome 扩展”连接方式后，AI 可操作你授权共享的网页。',
+      '支持侧栏对话、授权本软件操作 Chrome。',
     browserExtensionTitle: '通过扩展连接你的 Chrome',
     browserExtensionDescription:
       '保持桌面应用与 Chrome 运行，扩展会自动发现并配对本机应用；配对后可在 Tab Access 中调整共享范围。',
-    browserExtensionStepInstallTitle: '安装 Chrome 扩展',
+    browserExtensionStepInstallTitle: '安装或更新 Chrome 扩展',
     browserExtensionStepInstallDescription:
-      '（1）打开 Chrome 扩展管理页，开启“开发者模式”。\n（2）将应用目录中的“chrome-extension”文件夹直接拖入 Chrome 扩展管理页。\n（3）点击 Chrome 右上角的 {extensionsButton} 找到此扩展；可点击图钉将它固定到工具栏。',
+      '首次安装：\n（1）点击“打开扩展管理页”，将复制的地址粘贴到 Chrome 地址栏并打开，再开启“开发者模式”。\n（2）点击“打开扩展文件夹”，将其中的“chrome-extension”文件夹拖入 Chrome 扩展管理页。\n（3）点击 Chrome 右上角的 {extensionsButton} 找到此扩展；可点击图钉将它固定到工具栏。\n\n核对版本与更新：\n在扩展管理页找到此扩展，点击“详情”查看“版本”，与本页的扩展版本核对。升级后若无法连接，先重新加载扩展；仍无法连接时，移除旧扩展，再按上述步骤从当前扩展文件夹安装。',
     browserExtensionOpenPage: '打开扩展管理页',
     browserExtensionRevealFolder: '打开扩展文件夹',
     browserExtensionPageCopied: '管理页地址已复制，请粘贴到 Chrome 地址栏并回车：',
@@ -459,14 +465,20 @@ export const browserTranslations = {
     browserGatewayUnavailable: 'The AI engine is not connected. Try again shortly.',
     browserConnectionFailed: 'Chrome connection test failed',
     browserExtensionSectionTitle: 'Chrome extension',
+    browserExtensionBundledVersion: 'Extension version',
+    browserExtensionVersionHint:
+      'Version of the provided extension package. Check the installed version in Chrome’s extensions page → Details → Version.',
+    browserExtensionVersionUnavailable: 'Unavailable',
+    browserExtensionUpdateHint:
+      'If it cannot connect after an app upgrade, reinstall the extension. Check the installed extension’s version on Chrome’s extensions page.',
     browserExtensionSectionDescription:
-      'Chat with AI in the Chrome side panel and optionally include context from the current page. Choose the Chrome extension connection to let AI interact with pages you authorize for sharing.',
+      'Chat in the side panel and authorize this app to control Chrome.',
     browserExtensionTitle: 'Connect your Chrome through the extension',
     browserExtensionDescription:
       'Keep the desktop app and Chrome running. The extension discovers and pairs with the local app automatically; adjust sharing under Tab Access after pairing.',
-    browserExtensionStepInstallTitle: 'Install the Chrome extension',
+    browserExtensionStepInstallTitle: 'Install or update the Chrome extension',
     browserExtensionStepInstallDescription:
-      '(1) Open Chrome’s extension management page and enable Developer mode.\n(2) Drag the chrome-extension folder from the app directory directly onto Chrome’s extension management page.\n(3) Select {extensionsButton} at the top right of Chrome to find this extension; use the pin icon to keep it in the toolbar.',
+      'First-time installation:\n(1) Select Open extensions page, paste the copied address into Chrome’s address bar and open it, then enable Developer mode.\n(2) Select Open extension folder, then drag the chrome-extension folder onto Chrome’s extension management page.\n(3) Select {extensionsButton} at the top right of Chrome to find this extension; use the pin icon to keep it in the toolbar.\n\nChecking the version and updating:\nFind this extension on the extensions page and select Details → Version to compare it with the extension version shown here. If it cannot connect after an app upgrade, reload it first. If it still cannot connect, remove it, then follow the installation steps above using the current extension folder.',
     browserExtensionOpenPage: 'Open extensions page',
     browserExtensionRevealFolder: 'Open extension folder',
     browserExtensionPageCopied:

@@ -1,4 +1,4 @@
-import { clipboard, ipcMain } from 'electron';
+import { app, clipboard, ipcMain } from 'electron';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -18,6 +18,7 @@ import {
   parseLsofPortOwner,
   parseWindowsNetstatListeningPid,
   parseWindowsTasklistProcessName,
+  readBundledBrowserExtensionVersion,
   registerBrowserHandlers,
   testBrowserConnection,
 } from './browser';
@@ -451,6 +452,79 @@ describe('browser extension resources', () => {
       ),
     ).rejects.toThrow('invalid browser extension pairing result');
     expect(writeText).not.toHaveBeenCalled();
+  });
+});
+
+describe('bundled browser extension version', () => {
+  test.each([
+    [{ version: '2.3.0', version_name: 'v2026.10.20' }, '2.3.0'],
+    [{ version: '2.3.0' }, '2.3.0'],
+    [{ version_name: 'v2026.10.20' }, null],
+  ])('reads the extension version independently of display labels (%j)', (manifest, expected) => {
+    const extensionPath = fs.mkdtempSync(path.join(os.tmpdir(), 'browser-extension-metadata-'));
+    try {
+      fs.mkdirSync(path.join(extensionPath, 'chrome-extension'));
+      fs.writeFileSync(
+        path.join(extensionPath, 'chrome-extension', 'manifest.json'),
+        JSON.stringify(manifest),
+      );
+      expect(readBundledBrowserExtensionVersion(extensionPath)).toBe(expected);
+    } finally {
+      fs.rmSync(extensionPath, { recursive: true, force: true });
+    }
+  });
+
+  test('returns unknown for missing or damaged metadata', () => {
+    const extensionPath = fs.mkdtempSync(path.join(os.tmpdir(), 'browser-extension-metadata-'));
+    try {
+      expect(readBundledBrowserExtensionVersion(extensionPath)).toBeNull();
+      fs.mkdirSync(path.join(extensionPath, 'chrome-extension'));
+      const manifestPath = path.join(extensionPath, 'chrome-extension', 'manifest.json');
+      fs.writeFileSync(manifestPath, '{');
+      expect(readBundledBrowserExtensionVersion(extensionPath)).toBeNull();
+      fs.writeFileSync(manifestPath, JSON.stringify({ version: 123 }));
+      expect(readBundledBrowserExtensionVersion(extensionPath)).toBeNull();
+    } finally {
+      fs.rmSync(extensionPath, { recursive: true, force: true });
+    }
+  });
+
+  test('retains bundled metadata when Chrome status detection fails', async () => {
+    const appPath = fs.mkdtempSync(path.join(os.tmpdir(), 'browser-extension-status-'));
+    const extensionPath = path.join(appPath, 'build', 'browser-extension', 'chrome-extension');
+    const getAppPath = vi.mocked(app.getAppPath);
+    const exists = vi.spyOn(fs, 'existsSync');
+    try {
+      fs.mkdirSync(extensionPath, { recursive: true });
+      fs.writeFileSync(
+        path.join(extensionPath, 'manifest.json'),
+        JSON.stringify({ version: '2.3.0', version_name: 'v2026.10.20' }),
+      );
+      getAppPath.mockReturnValue(appPath);
+      exists.mockImplementation(candidate => {
+        if (candidate === path.join(extensionPath, 'manifest.json')) return true;
+        throw new Error('Chrome lookup unavailable');
+      });
+      vi.mocked(ipcMain.handle).mockClear();
+      registerBrowserHandlers({
+        getGatewayClient: () => null,
+        buildCliEnvironment: vi.fn(),
+        hasActiveSessions: () => false,
+        setBrowserMode: vi.fn(),
+      });
+      const handler = vi
+        .mocked(ipcMain.handle)
+        .mock.calls.find(([channel]) => channel === BrowserIpc.GetStatus)?.[1];
+      expect(await handler!({} as Electron.IpcMainInvokeEvent)).toEqual({
+        success: false,
+        error: 'Chrome lookup unavailable',
+        bundledExtensionVersion: '2.3.0',
+      });
+    } finally {
+      exists.mockRestore();
+      getAppPath.mockReset();
+      fs.rmSync(appPath, { recursive: true, force: true });
+    }
   });
 });
 

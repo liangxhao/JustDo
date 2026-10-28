@@ -516,6 +516,7 @@ export type BrowserConnectionStatus = {
 export type BrowserStatusResult = {
   success: boolean;
   status?: BrowserConnectionStatus;
+  bundledExtensionVersion?: string | null;
   error?: string;
 };
 

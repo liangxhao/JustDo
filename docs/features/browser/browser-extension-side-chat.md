@@ -190,6 +190,8 @@ Native manifest 只允许固定公钥派生的扩展 ID。app-server 校验 capa
 
 源码包位于 `plugins/browser-extensions/browser-assistant/`，其中 `openclaw/` 保留锁定的上游 relay 基线，`conversation-overlay/` 保存产品侧栏及浏览器模块，`scripts/` 与 `tests/` 保存自身组装脚本、Markdown 源码和独立单元测试。它由 Chrome 加载，与 Gateway 的 OpenClaw Extension 安装、发现和启停流程独立。桌面聊天渲染及流的构建适配、Native Messaging helper 和注册继续归 `scripts/browser/`；跨宿主边界的测试保留在根 `tests/`。`browser-extension:prepare` 从该包生成 `build/browser-extension/chrome-extension/`，安装包继续交付到 `resources/browser-extension/chrome-extension/`，显示名称从产品元数据注入，扩展 ID 与配对身份保持既有值。详见[源码包说明](../../../plugins/browser-extensions/browser-assistant/README.md)。
 
+产品组装保留锁定上游的 `manifest.version`，不将应用发布版本注入扩展 `version_name`。桌面“扩展版本”仅读取实际组装产物的 `manifest.version`，用户可在 Chrome 扩展管理页 → 详情 → 版本查看已安装版本并核对。应用版本与扩展版本分别维护；版本号不参与协议兼容判定，版本相同也不能代替连接验证，桌面不据此推断已安装扩展版本。
+
 日常 UI 修改在 conversation-overlay，relay 基线由锁定 OpenClaw 版本更新，构建接缝单独审查。回归包括 Native host 未安装、实例未运行、禁止启动与重启、旧 rendezvous、非法 Origin/token、初始化前调用、流与历史重合、停止、超限附件和页面上下文分离。
 
 安装连接验收分开验证实际编译的 Native host framing/发现链和隔离 Chrome 的 loopback

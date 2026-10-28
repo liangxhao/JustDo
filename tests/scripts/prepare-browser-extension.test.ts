@@ -24,9 +24,9 @@ const { prepareBrowserExtension, verifyBrowserExtension } =
   };
 
 const projectRoot = path.resolve(__dirname, '../..');
-const projectProductName = JSON.parse(
+const { productName: projectProductName } = JSON.parse(
   fs.readFileSync(path.join(projectRoot, 'package.json'), 'utf8'),
-).productName as string;
+) as { productName: string };
 
 const createFixture = () => {
   const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-browser-extension-'));
@@ -319,6 +319,27 @@ describe('browser extension preparation', () => {
       expect(popupHtml).toContain('Acme Browser');
       expect(popupJs).toContain('Waiting for local Acme');
       expect(() => verifyBrowserExtension(outputDir, { repoRoot })).not.toThrow();
+    } finally {
+      fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  test('keeps the extension version independent of the application release version', () => {
+    const repoRoot = createFixture();
+    try {
+      const prepared = prepareBrowserExtension({ repoRoot });
+      const packagePath = path.join(repoRoot, 'package.json');
+      const metadata = JSON.parse(fs.readFileSync(packagePath, 'utf8'));
+      const nextVersion = `${metadata.version}.1`;
+      fs.writeFileSync(packagePath, JSON.stringify({ ...metadata, version: nextVersion }));
+
+      expect(() => verifyBrowserExtension(prepared.outputDir, { repoRoot })).not.toThrow();
+      const rebuilt = prepareBrowserExtension({ repoRoot });
+      const manifest = JSON.parse(
+        fs.readFileSync(path.join(rebuilt.outputDir, 'manifest.json'), 'utf8'),
+      );
+      expect(manifest).toMatchObject({ version: '2.3.0' });
+      expect(manifest).not.toHaveProperty('version_name');
     } finally {
       fs.rmSync(repoRoot, { recursive: true, force: true });
     }

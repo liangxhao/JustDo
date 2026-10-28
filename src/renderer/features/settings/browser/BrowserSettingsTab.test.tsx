@@ -125,6 +125,43 @@ describe('BrowserSettingsTab extension connection checks', () => {
     vi.clearAllMocks();
   });
 
+  test('shows the extension version and its lookup hint even when Chrome status is unavailable', async () => {
+    mocks.getConfig.mockReturnValue({ browserMode: BrowserMode.Embedded });
+    installElectronBrowserMock({
+      getStatus: vi.fn().mockResolvedValue({
+        success: false,
+        bundledExtensionVersion: '2.3.0',
+      }),
+    });
+    render(<BrowserSettingsTab />);
+
+    expect(await screen.findByText('browserExtensionBundledVersion 2.3.0')).toBeTruthy();
+    expect(screen.getByTitle('browserExtensionVersionHint').textContent).toContain('2.3.0');
+    expect(screen.getByText('browserStatusFailed')).toBeTruthy();
+    expect(screen.getByText('browserExtensionUpdateHint').closest('details')).toBeNull();
+    expect(
+      (
+        screen
+          .getByText('browserExtensionStepInstallTitle')
+          .closest('details') as HTMLDetailsElement
+      ).open,
+    ).toBe(false);
+  });
+
+  test('keeps version availability separate from browser connectivity', async () => {
+    mocks.getConfig.mockReturnValue({ browserMode: BrowserMode.Embedded });
+    const browser = installElectronBrowserMock();
+    render(<BrowserSettingsTab />);
+
+    await waitFor(() => expect(browser.getStatus).toHaveBeenCalled());
+    expect(screen.getByText(/browserExtensionVersionUnavailable/)).toBeTruthy();
+    expect(screen.getByText('browserExtensionUpdateHint')).toBeTruthy();
+    expect(
+      (screen.getByRole('button', { name: 'browserExtensionRevealFolder' }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(false);
+  });
+
   test.each([
     ['35', 35],
     ['200', 50],

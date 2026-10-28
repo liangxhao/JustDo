@@ -205,6 +205,7 @@ const BrowserSettingsTab: React.FC<BrowserSettingsTabProps> = ({
     () => configService.getConfig().browserAskDownloadLocation ?? true,
   );
   const [status, setStatus] = useState<BrowserConnectionStatus | null>(null);
+  const [bundledExtensionVersion, setBundledExtensionVersion] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [busyAction, setBusyAction] = useState<
     'open' | 'test' | 'extension-page' | 'extension-folder' | 'pair' | null
@@ -260,10 +261,11 @@ const BrowserSettingsTab: React.FC<BrowserSettingsTabProps> = ({
     setError(null);
     try {
       const result = await window.electron.browser.getStatus();
+      if (requestId !== refreshRequestIdRef.current) return;
+      setBundledExtensionVersion(result.bundledExtensionVersion ?? null);
       if (!result.success || !result.status) {
         throw new Error(i18nService.t('browserStatusFailed'));
       }
-      if (requestId !== refreshRequestIdRef.current) return;
       const previousStatus = statusRef.current;
       statusRef.current = result.status;
       setStatus(result.status);
@@ -635,13 +637,22 @@ const BrowserSettingsTab: React.FC<BrowserSettingsTabProps> = ({
         className="overflow-hidden rounded-xl border border-border bg-surface"
       >
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border bg-surface-raised px-4 py-3">
-          <h3
-            id="browser-extension-title"
-            className="flex items-center gap-2 text-sm font-semibold text-foreground"
-          >
-            <PuzzlePieceIcon className="h-4 w-4 text-secondary" aria-hidden="true" />
-            {i18nService.t('browserExtensionSectionTitle')}
-          </h3>
+          <div className="flex flex-wrap items-center gap-2">
+            <h3
+              id="browser-extension-title"
+              className="flex items-center gap-2 text-sm font-semibold text-foreground"
+            >
+              <PuzzlePieceIcon className="h-4 w-4 text-secondary" aria-hidden="true" />
+              {i18nService.t('browserExtensionSectionTitle')}
+            </h3>
+            <span
+              title={i18nService.t('browserExtensionVersionHint')}
+              className="rounded-md border border-border bg-surface px-2 py-0.5 text-[11px] font-medium text-secondary"
+            >
+              {i18nService.t('browserExtensionBundledVersion')}{' '}
+              {bundledExtensionVersion ?? i18nService.t('browserExtensionVersionUnavailable')}
+            </span>
+          </div>
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
@@ -666,6 +677,9 @@ const BrowserSettingsTab: React.FC<BrowserSettingsTabProps> = ({
         <div className="px-4 py-3">
           <p className="text-xs leading-5 text-secondary">
             {i18nService.t('browserExtensionSectionDescription')}
+          </p>
+          <p className="mt-2 text-xs leading-5 text-secondary">
+            {i18nService.t('browserExtensionUpdateHint')}
           </p>
           <details className="group/install mt-2 text-xs text-secondary">
             <summary className="flex w-fit cursor-pointer list-none items-center gap-1.5 rounded py-1 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/25 [&::-webkit-details-marker]:hidden">

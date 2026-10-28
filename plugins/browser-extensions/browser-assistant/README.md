@@ -17,6 +17,10 @@ loadable extension at `build/browser-extension/chrome-extension/`. Packaging cop
 it to `resources/browser-extension/chrome-extension/` in the installed application.
 The source package name does not determine the browser display name or extension
 ID: the existing `productName` injection and fixed public key retain those roles.
+The desktop settings page reads the composed manifest's `version`, independently
+of the application release version. Users can check the installed version under
+Details → Version on Chrome's extensions page. Application release versions are
+not injected into the extension's `version_name`.
 
 The host's `scripts/browser/` adapters build shared chat rendering and stream
 modules into `conversation-overlay/`, and own the desktop Native Messaging helper.
