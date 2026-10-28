@@ -22,7 +22,7 @@ HKCU\Software\Google\Chrome\NativeMessagingHosts\com.justdo.browserextension
 ```json
 {
   "allowed_origins": ["chrome-extension://jboajogplelmaahjbomgflnfngpolgcb/"],
-  "description": "JustDo browser native messaging host",
+  "description": "Browser native messaging host",
   "name": "com.justdo.browserextension",
   "path": "<absolute native host helper path>",
   "type": "stdio"

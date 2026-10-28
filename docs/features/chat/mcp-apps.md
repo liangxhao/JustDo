@@ -39,7 +39,7 @@ draw.io 的[连续编辑](drawio-current-canvas.md)在插件内实现：标准 A
   失败时可安全恢复原画布。新的首页按原生预览来源区分文件页签，再次打开同一文件不会替换旧对话的编辑器。
   当前画布不能随首条消息改绑到另一工作树；启用工作树选项时提示先关闭该选项再发送。
 - 首页预览沿用全局工具审批，但尚未接入原生 elicitation 问答表单。
-  需要这类提问的第三方文件 App 应在已有会话中使用；当前两个外部插件不依赖它。
+  需要这类提问的第三方文件 App 应在已有会话中使用。
   首页问答须先补齐窗口所有权、精确预览身份和回答/预览/上传的独立准入，
   见[现行说明与验证边界](#当前验证边界)，不能用伪造产品会话 ID 代替。
 - 手动 App 和文件编辑器从工作区创建，使用现有标签、隐藏、全屏和独立窗口机制。工作区标签栏承担标题、关闭和放大操作，活动 App 隐藏重复的宿主标题栏，直接展示应用自己的工具栏和内容；App 主动关闭后仍提供重新打开入口。隐藏保留本地界面；关闭停止本地交互，并尝试清理已知上下文。原生视图按自身租约回收。
@@ -229,7 +229,7 @@ Gateway 保持 MCP transport、catalog、会话、工具许可、原生历史、
 
 原生分支创建结果待确认时，保留历史只读查看，MCP Apps 的准备、启动、工具交互、安装引导及问题操作沿用现有会话门禁；Main 和 Renderer 均校验当前状态，旧回调不能绕过后来生效的限制。
 
-共享契约在 `src/shared/plugins/mcpApps.ts`。数据面在 `libs/openclaw-chat/gateway/mcp-app/mcp-app-session.ts`，标准 SDK 桥和视图在 `components/mcp-app/`，产品入口在 Cowork 的 `mcpApps/` 与 `display/useMcpAppTabs.tsx`。Main 提问处理在 `ipc/plugins/mcpApps.ts`，preload 仅公开对应方法。
+共享契约在 `src/shared/plugins/mcpApps.ts`。数据面在 `libs/openclaw-chat/gateway/mcp-app/mcp-app-session.ts`，标准 SDK 桥和视图在 `components/mcp-app/`，产品入口在 Cowork 的 `mcpApps/` 与 `display/tabs/useMcpAppTabs.tsx`。Main 提问处理在 `ipc/plugins/mcpApps.ts`，preload 仅公开对应方法。
 
 模型 App 只从完成的原生 MCP 工具事件、原生工具角色历史或 ToolSearch 的实际 MCP 结果准入；不递归搜索文本、代码围栏、HTML 属性或 assistant JSON。手动启动和问题预览分别来自认证 RPC 与专用 Main 桥。模型与手动入口在准入时核对服务、工具、资源与工具调用身份。问题预览只接收 Main 从原生 `formResource` 得到的 view 引用及原生选项标题，不伪造工具 descriptor。Renderer 随后以捕获的会话和 viewId 重读 `mcp.app.view`，由 Gateway 核验当前会话、请求者及运行时归属；HTML 只来自该认证响应，不依赖本地补丁扩展字段。
 
@@ -291,7 +291,7 @@ Chromium 将已运行 iframe 跨 Document 移动会重载。消息 App 因此在
 
 断线和未知结果不自动重试启动、工具调用、设置写入或文件写入。重新读取界面优先读取 `mcp.app.view`；仅下述已核验的插件恢复适配可在明确过期后读取原始结果。原生历史重建的只读视图不恢复工具授权。对于提交工单等写入操作，须核对实际结果，不能因界面关闭而重复提交。
 
-OpenClaw 2026.10.4 的视图重建只识别顶层工具角色记录，无法从 ToolSearch 的
+当前锁定运行时的原生 `mcp-app-transcript` 重建仍只识别顶层工具角色记录，无法从 ToolSearch 的
 `openclaw.nested-tool.v1` 记录恢复。内置 draw.io 为此提供插件拥有的只读恢复 RPC：
 仅在原生明确报告 `MCP_APP_VIEW_EXPIRED` 后尝试，从原生 SDK 的当前可见历史读取
 原 viewId 对应的实际子调用结果，核对物理 sessionId、agent、来源会话、服务、工具、
@@ -336,7 +336,7 @@ App 内容及其后代 iframe 继承原生 opaque origin。外部插件内部的
 
 ### 原生接口与插件替代审计
 
-这里的原 030 专指已移除的 MCP Apps 生命周期补丁，与 dev 后续已有的 `030-tool-call-format-recovery.cjs` 无关；后者不由本功能新增或移除。
+这里的原 030 专指已移除的 MCP Apps 生命周期补丁。当前版本的 [030](../../../scripts/patches/v2026.10.7/030-mcp-app-session-workspace.cjs) 修复会话工作目录，工具格式纠正则为 [029](../../../scripts/patches/v2026.10.7/029-tool-call-format-recovery.cjs)；不能按相同历史编号混淆能力。
 
 2026-10-18 复核锁定的 OpenClaw 2026.10.4 源码（`383c124cc32ffee3f8e56f549b88da94d269a4af`）：标准 MCP Apps 的显示、工具、资源和扩展能力继续使用原生接口；已移除的 030 曾补充宿主的请求取消和展示回收保证；这些不是 MCP Apps 协议或内置 draw.io 的必需条件。采用原生生命周期保留正常工具、资源、审批、提问、文件、上下文及交互能力。
 

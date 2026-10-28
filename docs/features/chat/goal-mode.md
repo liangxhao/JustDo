@@ -102,7 +102,7 @@ Goal 在主聊天 UI 结束后仍需接收迟到的工具和生命周期事件�
 原生 agent sequence；WS frame 序号或本地补出的序号不能授权
 Goal 变更。Main 拥有精确后继运行时才可替换记录；chat final 后只接受已准入运行的后续
 事件。旧会话、旧代次、其他运行、重复事件和身份缺失事件不得改变 Goal 或触发续跑。
-OpenClaw 10.4 的内部 lifecycleGeneration 不序列化到公共事件，不能将其作为必填字段；
+当前锁定 OpenClaw 的内部 lifecycleGeneration 不序列化到公共事件，不能将其作为必填字段；
 提供该字段时仍检查一致性。连接回调核对当前 client、Main 连接代次和停止标记，拒绝
 旧连接迟到事件；清除/删除会话及连接清理同时淘汰运行身份记录。
 

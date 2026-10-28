@@ -45,7 +45,6 @@ Runtime Services 还通过公开 prompt/agent-end hooks 记录有限的轮次准
 只观察本次 hook 的原生身份及 trace，不缓存或推断失败阶段，不改变 prompt 或原生准入。
 日志沿现有原生 JSON 导出，能力和证据缺口见[会话诊断](../features/chat/session-diagnostics.md#已保存用户轮次的准入错误)。
 
-
 `plugins/extensions/smart-canvas` 在 `ui/` 聚合固定组件的 schema、组合器、渲染逻辑、
 文案与样式；`document/` 仅保留这些组件复用的 HTML/JSON 安全序列化与资源初始化。
 插件通过原生 `registerBoardWidgetContentKind` 注册 `interactive-answer`，发布
@@ -176,7 +175,7 @@ Windows 原生扩展安装的最后一次目录发布支持五秒有界恢复：
 提交前仍执行原生父目录、权限和临时目录守卫；不重复下载、复制、能力审查或安装
 RPC。正常发布不增加卷探测或全树比较。网络目录、未知结果、文件变化、守卫与
 提交后错误不重试；持续占用耗尽预算后沿原生失败与旧版恢复流程处理。补丁的
-精确原生边界、产物证明及删除条件见[当前补丁总账](../../scripts/patches/v2026.10.7/README.md#windows-plugin-directory-publication)。
+精确原生边界、产物证明及删除条件见[当前补丁总账的目录发布能力](../../scripts/patches/v2026.10.7/README.md#capability-gaps-and-removal-conditions)。
 
 变更 IPC 可在最后传入有界 `PluginOperationContext.requestId`，Main 以
 `plugins:operation:progress` 仅向原请求窗口发布闭合的 kind、action、stage 和
@@ -497,7 +496,7 @@ runtime id。临时资源按来源与原生阶段清理：未提交或已确认�
 | 扩展/能力             | 持有的状态                           | 产品桥接                     |
 | --------------------- | ------------------------------------ | ---------------------------- |
 | Runtime Services      | 原生历史、进度、回执的受限读取       | Main/Renderer 查询投影       |
-| ask_user_question       | pending、期限、默认及取消            | 问答 event/RPC、UI replay    |
+| ask_user_question     | pending、期限、默认及取消            | 问答 event/RPC、UI replay    |
 | Plan mode             | 原生 session mode、待审核交互        | Main 计划文件与 handoff      |
 | Automation permission | 按原生 session mode 进行任务变更审批 | 使用原生 plugin approval     |
 | Embedded browser      | 原生 browser 工具桥                  | Main guest 所有权与动作执行  |
@@ -618,7 +617,7 @@ Windows 10 2004 及更新系统的本机电脑操作自动显示透明提示层�
 窗口／元素／浏览器定向操作只显示状态，不将后台动作伪装为物理鼠标移动。
 远程节点、托管虚拟桌面、macOS 和 Linux 不启用该提示层。
 
-运行时补丁 040 在 Gateway 电脑服务完成权限、代际、独占和幂等校验后，
+[电脑活动补丁](../../scripts/patches/v2026.10.7/023-computer-overlay-activity.cjs)在 Gateway 电脑服务完成权限、代际、独占和幂等校验后，
 为实际提交的本机原生调用发布 `computer.activity`；仅 `operator.admin` 可接收。
 v2 事件仅有版本、临时请求 ID、独立显示执行 ID、开始／结束／释放、指针和点击布尔值，不含会话身份、
 输入、坐标、截图或工具结果。执行期间每 5 秒续期，Main 的显示租约为 15 秒；
@@ -627,7 +626,7 @@ v2 事件仅有版本、临时请求 ID、独立显示执行 ID、开始／结�
 原生 execution 的 owner 取消或 releaseOwner 清理发送显示释放事件；迟到事件不能复活已释放显示。
 显示空闲时间不改变原生资源租约。键盘输入和观察不在物理鼠标处伪造目标位置。
 Gateway 断开、锁屏／休眠、应用退出和绘制失败会清理显示。广播失败不改变原生结果。
-该功能需要从锁定 pristine 包重建包含补丁 040 的运行时，不能就地修改旧冻结运行时。
+该功能需要从锁定 pristine 包重建包含此活动发布能力的运行时，不能就地修改旧冻结运行时。
 
 Windows x64/ARM64 和 glibc Linux x64/ARM64 使用上游固定版本的本地
 `@trycua/cua-driver` SDK 及对应平台原生包，依赖由锁定 OpenClaw 包的生产安装提供。
@@ -745,7 +744,7 @@ artifact when it changes; never edit their source or proof manifests in place.
 
 执行会话保留插件 ownership；主会话绑定、权限和模型在准入时核验，不绕过原生 parent-link 限制。
 所有阶段继承主会话的原生 permissionMode 和项目目录；任务 access 只定义读写意图及调度互斥，不自动把只读任务降为禁止全部命令的原生 read-only。只读任务约束随派发携带，真正的权限上限仍由原生会话策略执行。
-无法表达的受限执行策略拒绝启动。配置同步默认启用此插件且保留显式禁用，不注册 Workboard 面板。
+无法表达的受限执行策略拒绝启动。此插件默认关闭；配置同步保留用户明确的启停选择，并只投影所需的助手名单，不注册 Workboard 面板。
 配置同步同时投影 `availableAgentIds`，只包含 main 及产品中启用、未删除的助手；创建流程和每次节点准入均读取当前配置，与原生名单取交集。删除助手先同步禁用名单，再保存软删除标记，失败则回滚可用性。该名单只限制 Swarm 新节点，不撤销其他原生入口权限，也不删除历史会话。
 构建过程按既有自定义扩展发现机制打包，运行时无需修改上游 ownership 逻辑。发布 `beforePack` 同步本地扩展并预编译；开发应使用 `npm run electron:dev:openclaw` 准备当前插件。普通 build/electron:dev 不替换 vendor 中已编译插件，不能仅重启旧运行时验证新工具。
 新工作/验收节点使用原生身份绑定的提交工具，将有界总结、证据及验收结论保存为工作流元数据；版本 2 工具工厂在写入前核验当前调用权限。提交和原生执行结束分别确认，两者均成功才放行依赖，不从最终聊天文字推断完成。显式重试只重跑已经失败且无活动执行的节点，使用新会话/run 并保留旧执行身份，最多三次执行；结果不确定及不确定最终交付不能重试。
@@ -758,7 +757,7 @@ Gateway 启动的流程服务在同一进程内由各助手的独立工具/钩�
 
 批量能力可用时，规划 schema 要求每个任务显式提供顶层 `batch`（普通任务为 `null`，批量任务为输入源对象），避免将展开指令藏在普通节点说明中。格式/依赖错误在派发工作前反馈给同一原生规划会话，最多纠正三轮；轮数与有界错误摘要持久化，纠正运行仍按原生终态/清理证据释放预约，暂停、停止和权限准入照常生效。助手不可用、父权限缺失等问题直接阻塞。批量叶子仅处理分配的一个输入，清单可由固定路径的上游准备节点创建。
 
-原生 034 为通用插件 SDK 增加每次运行的 timeoutSeconds、可选 managedToolsLifetime='run'、精确 describeRun 和 owned cancelRun，复用原生 registry、whole-run lifecycle 与 process supervisor。未知旧 epoch 或缺少清理证据保留占用，不自动启动替代执行。普通插件仍沿用原有工具生命周期，不能把此模式等同于沙盒或 OS 文件隔离。
+[插件执行归属补丁](../../scripts/patches/v2026.10.7/019-plugin-owned-execution.cjs)为通用插件 SDK 增加每次运行的 timeoutSeconds、可选 managedToolsLifetime='run'、精确 describeRun 和 owned cancelRun，复用原生 registry、whole-run lifecycle 与 process supervisor。未知旧 epoch 或缺少清理证据保留占用，不自动启动替代执行。普通插件仍沿用原有工具生命周期，不能把此模式等同于沙盒或 OS 文件隔离。
 
 035 补丁已移除。Workflow 普通插件源码通过原生 model_call_started 事件观察有效 contextTokenBudget，以最多 512 条 session/run/trace/尝试 span/额度元数据维护保守上限。模型事件的 trace.parentSpanId 必须匹配本次 before_tool_call 的 trace.spanId；缺失或不匹配时回退 2000 成本单位，不把迟到旧尝试的额度用于当前尝试。同一尝试保留最保守额度；agent_end 和服务停止仅清理观测，不建立执行结算。trace 也不授予执行权限，原有一次性工具身份检查保持独立。结果页取观测预算一半并限于 12,000；按最终 metadata、游标以及 details/content 重复包装计算大小，长结果通过游标完整读取。不依赖 before_prompt_build 的补丁字段，不改变原生模型解析、截断、压缩或上下文守卫。
 

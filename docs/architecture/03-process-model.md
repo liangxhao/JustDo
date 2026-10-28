@@ -45,16 +45,16 @@ Main 只接受当前主窗口主 frame，校验确实为目录缺失的历史会
 
 ## 1. 运行实体和信任范围
 
-| 实体                          | 可访问资源                                  | 通信边界                                                    |
-| ----------------------------- | ------------------------------------------- | ----------------------------------------------------------- |
-| 主 Renderer                   | React/Lit UI、浏览器 API、显式 preload 能力 | 不能直接访问 Node/Electron/SQLite                           |
+| 实体                          | 可访问资源                                  | 通信边界                                                                                     |
+| ----------------------------- | ------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| 主 Renderer                   | React/Lit UI、浏览器 API、显式 preload 能力 | 不能直接访问 Node/Electron/SQLite                                                            |
 | Browser guest                 | 外部网页及对应 profile partition            | 内置浏览器专用 preload；普通 URL embed 无 preload，均不获得 window.electron 或 Gateway token |
-| 图片预览窗口                  | 同 origin 的独立图片展示                    | 独立最小 preload、沙箱窗口与受限参数                        |
-| Preload                       | contextBridge 与 Electron IPC               | 固定方法和可取消订阅                                        |
-| Main                          | 文件、数据库、网络、子进程、窗口            | 校验来自所有客户端的输入                                    |
-| Gateway（独立随包 Node）      | 原生执行与 transcript                       | 本地认证 RPC/event 和受控插件桥                             |
-| Chrome 扩展                   | Side Panel、用户浏览器上下文                | Native Messaging 发现产品 app-server                        |
-| CLI / ACP / app-server client | 当前用户与产品 profile                      | 默认可用的受认证本机桥；共用会话及精确 run 执行权威         |
+| 图片预览窗口                  | 同 origin 的独立图片展示                    | 独立最小 preload、沙箱窗口与受限参数                                                         |
+| Preload                       | contextBridge 与 Electron IPC               | 固定方法和可取消订阅                                                                         |
+| Main                          | 文件、数据库、网络、子进程、窗口            | 校验来自所有客户端的输入                                                                     |
+| Gateway（独立随包 Node）      | 原生执行与 transcript                       | 本地认证 RPC/event 和受控插件桥                                                              |
+| Chrome 扩展                   | Side Panel、用户浏览器上下文                | Native Messaging 发现产品 app-server                                                         |
+| CLI / ACP / app-server client | 当前用户与产品 profile                      | 默认可用的受认证本机桥；共用会话及精确 run 执行权威                                          |
 
 主 Renderer、图片预览与工作区 HTML 分别由 `src/renderer/index.html`、`image-preview.html` 和 `workspace.html` 构建。开发由 Vite 提供，安装版由 Main 的本机只读静态宿主提供打包 `dist` 资源。外部 guest 始终是另一权限域，即使视觉上位于同一侧栏。
 
@@ -100,7 +100,6 @@ flowchart LR
 ```
 
 非浏览器代理变化先更新 Main、默认 session 与动态上游选择；当前 Gateway 子进程仍使用匹配的受控本地代理环境时无需重启，只有不可复用该启动环境时才走空闲完整重启。浏览器代理变化在独立队列中更新现有 guest sessions、关闭旧连接；新 profile 注册也使用该队列，避免快速切换时旧偏好覆盖新配置。它不改变默认 session、Main 代理状态或 Gateway 环境。自定义浏览器代理的认证只取 `browserProxy` 凭据，不能借用非浏览器代理凭据。详见[浏览器设置](../features/browser/browser-settings-design.md)。
-
 
 普通 Widget 的专用内存 session 继续通过浏览器代理队列装载原生 sandbox，不共享浏览器
 存储或提供业务下载 IPC。非联网 pinned HTML 的当前身份与 ticket 由 Renderer 的认证
@@ -421,11 +420,11 @@ Gateway 进程丢失时显示本地化提示，不创建替代进程，不自动
 PTY。附着失败会提示终端不可用，需要用户新开标签，不会自动创建替代终端。
 
 当前原生接口缺少指定工程目录/PowerShell 参数和明确结束已共享 PTY的能力，
-由当前版本补丁 036 补齐 operator.admin 的 launch 和 terminate 参数。沙箱全隔离
+由当前版本的[共享终端补丁](../../scripts/patches/v2026.10.7/020-shared-terminal-launch.cjs)补齐 operator.admin 的 launch 和 terminate 参数。沙箱全隔离
 会话仍由原生终端策略拒绝，不通过主进程另建宿主终端绕过它。构建契约见
 [运行时补丁总账](../../scripts/patches/v2026.10.7/README.md)。
 
-新操作终端的欢迎句由补丁 037 在构建时读取 `package.json.productName`，显示
+新操作终端的欢迎句由[终端品牌补丁](../../scripts/patches/v2026.10.7/021-terminal-product-banner.cjs)在构建时读取 `package.json.productName`，显示
 `Welcome to the <productName>.` 并去掉原生龙虾 ASCII 图。软件图标缩成紧凑字符图后
 辨识度不足，因此仅保留欢迎句及原有主题色、换行；原生缓冲区播种与偏移不变。
 

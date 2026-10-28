@@ -28,7 +28,7 @@
 | 产品目录       | [externalAgentCatalog.ts](../../src/shared/integrations/externalAgentCatalog.ts)                                                                                                                                                     | 增加一项；类型、设置默认值和页面列表随目录派生                       |
 | 中英文说明     | [settingsTranslations.ts](../../src/renderer/services/i18n/settingsTranslations.ts)                                                                                                                                                  | 两种语言补齐同一个 `descriptionKey`                                  |
 | 图标与样式     | [ExternalAgentBrandIcon.tsx](../../src/renderer/features/settings/integrations/ExternalAgentBrandIcon.tsx)、[ExternalAgentsSettingsSection.tsx](../../src/renderer/features/settings/integrations/ExternalAgentsSettingsSection.tsx) | 增加图标分支和 `AGENT_ICON_STYLES` 项                                |
-| adapter 与依赖 | [ACPX 扩展](../../plugins/extensions/acpx/README.md)                                                                                                                                                                                | 原生 CLI 可依赖部署方安装；内置 adapter 进入扩展源码或锁定的生产依赖 |
+| adapter 与依赖 | [ACPX 扩展](../../plugins/extensions/acpx/README.md)                                                                                                                                                                                 | 原生 CLI 可依赖部署方安装；内置 adapter 进入扩展源码或锁定的生产依赖 |
 | 构建与归档检查 | [runtime 资源同步](../../scripts/openclaw/sync-openclaw-runtime-resources.cjs)、[打包校验](../../scripts/packaging/electron-builder-hooks.cjs)                                                                                       | 内置方案增加入口和目标平台必需文件校验；预安装方案记录环境前提       |
 
 仅增加目录项通常不需要新增 IPC、Redux slice、数据库表或手工追加 Agent 白名单。
@@ -449,9 +449,9 @@ Skill，需要单独设计显式的、安全的适配流程，不能把“已打
 
 已登记但未启用的内置适配器也先准备离线受管包装器；缺少随包文件时返回构建诊断，
 不使用上游 registry 的默认下载命令。准备诊断命令不会把该 Agent 加入任务准入集合。
-ACPX 封装基线为 OpenClaw v2026.10.4，独立运行库版本及离线依赖见
-[离线下载文档](../offline-downloads.md)，本地定制与上游来源见
-[ACPX 扩展](../../plugins/extensions/acpx/README.md)。
+ACPX 封装与当前锁定的 OpenClaw 源码基线对齐，上游版本及本地定制见
+[ACPX 来源记录](../../plugins/extensions/acpx/UPSTREAM.md)。独立运行库及适配器依赖以扩展的
+`package.json` 和 `package-lock.json` 为准，安装步骤见[ACPX 扩展](../../plugins/extensions/acpx/README.md)。
 
 测试具备以下特性：
 

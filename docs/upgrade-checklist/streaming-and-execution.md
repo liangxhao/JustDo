@@ -5,13 +5,18 @@
 
 ## 消息身份、Thinking 与 commentary 交接
 
-- [ ] 对照 026/028：finalize hook 的 admission 在本 attempt 首字节前固定；
+- [ ] 对照 026/028/034：finalize hook 的 admission 在本 attempt 首字节前固定；
       普通正文不会因无关 hook 全程缓冲，真实 finalize revision 仍能撤回被拒草稿。
       经过真实订阅入口及其参数复制、事件包装和 agent/message reset 验证动态准入；
       不能只将 getter 参数直接交给底层 delivery 来代替完整订阅链路。
 - [ ] 同一 Completions 源消息的 UUID/scope 在 plain、inline-only、strict 和
       structured reasoning 路径都保留。身份本身不放开私有内容或持久化门禁。
       Renderer 仅按同 scope 交接 preview/commentary，不能按相同文本或 run 顺序去重。
+- [ ] 仅有明确 `assistantTextScope.commentarySnapshot: 'message'` 的累计 commentary
+      在同一原生消息 scope 内按最新已接纳文本序号展示，终态 retained IDs 优先。
+      非 Responses 的累计快照保留原生整条消息的过滤与 Markdown 容器，验证跨 block 的
+      内部上下文标记和 fenced XML 不泄露；普通未标记前言、不同消息、Responses 和 final
+      仍按各自原生身份展示，不以文本前缀或内容相等猜测归并。
 - [ ] 仅真实且完整的 `message_end` 发布 retained commentary IDs；缺失事实与明确空集合
       分开处理。`text_end` 或 generic final flush 不冒充完成；最终全文 replace 不能追加到
       已由历史补入的前缀。工具回滚、Stop、异常及历史接管后，已撤回内容不复活。

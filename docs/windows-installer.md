@@ -24,10 +24,14 @@ that case remains an attribution and vendor-escalation issue.
 ### Data compatibility after installation
 
 Setup replaces application payloads; it does not open or migrate a user's databases.
-Main checks each actual profile before opening its product Store, rewriting runtime
-configuration or admitting Gateway. It distinguishes migration upgrade, normal
-upgrade, first installation and normal startup. Normal upgrades preserve existing
-data and use the target runtime's declared schema range and native maintenance.
+Main selects the profile's startup route from its recorded delivery identity and
+transaction state before opening the product Store or Gateway. A completed profile
+with the same runtime version uses normal startup without a host database scan,
+full runtime hashing or offline session preparation. Gateway retains its actual
+schema and session admission. First installation, history migration, runtime
+upgrade and recovery paths retain their strict preparation; normal upgrades
+preserve existing data and use the target runtime's declared schema range and
+native maintenance.
 
 A decrease in either application or runtime version pauses startup with a
 localized warning and a “Start anyway” button. Human confirmation resumes the
@@ -171,8 +175,10 @@ The upstream copy of the setup EXE into the Local AppData updater cache is also
 removed. Subsequent updater downloads remain owned by the running application.
 Windows shortcuts and uninstall registry entries retain their normal OS locations.
 
+For first installation, history migration, runtime upgrade or interrupted preparation,
 Main classifies the active data generation before opening the product Store or Gateway.
-A fresh profile uses the four-step setup. A published JSONL profile first receives a
+A completed same-runtime profile instead takes the journal-based normal startup path
+described above. A fresh profile uses the four-step setup. A published JSONL profile first receives a
 verified selective history backup, then a fresh environment, native history import,
 metadata restoration and startup checks. Current SQLite users retain their settings
 and take ordinary startup, including overwrite/reinstall without the old presentation
@@ -181,8 +187,8 @@ Unfinished transactions resume at their confirmed stage. An uncommitted backup
 candidate is retained and refreshed; a prepared target environment is not replaced.
 See [startup and history upgrade](features/app/startup-and-history-upgrade.md).
 
-The owning startup module is `app/shell/startup/`, with `routing`, `history` and
-`initialization` submodules, mirrored by Main's startup domain. First setup and history
+The Renderer presentation lives in `app/shell/startup/`; Main's `startup/` domain owns
+`routing`, `history`, `upgrade` and `initialization`. First setup and history
 upgrade share one guide; ordinary startup shows the current operation without setup
 steps. Main freezes route, first-launch mode and one animation clock for every window.
 The in-memory transient guide hands off after the new product Store opens; no old
@@ -326,10 +332,12 @@ actually installed.
 ### Agent console CLI
 
 Packaging installs `<productName lowercase>-cli.exe` beside the desktop executable.
-It handles help and version locally and relays commands or ACP stdio through Main's
-authenticated local pipe. Enable CLI access and copy its full path from settings;
-installation does not mutate Windows PATH or start a second Gateway. The existing
-Multica command remains available through its independent setting.
+It handles help and version locally and relays CLI commands, ACP and the supported
+app-server stdio protocol through Main's authenticated local pipe. This entry is
+available by default while the application is running or in the tray; there is no
+CLI enable switch. Copy its full path and protocol configuration from Settings →
+External connections → App access. Installation does not mutate Windows PATH or
+start a second Gateway. Multica uses the same entry's app-server configuration.
 
 ACP and MCP dependencies are bundled at build time. Runtime Services' resource-sync
 and TypeScript precompile paths both include the MCP SDK and its schema validator,

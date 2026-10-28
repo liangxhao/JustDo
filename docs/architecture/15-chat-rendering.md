@@ -86,7 +86,6 @@ Renderer 在 resize 和原生窗口状态变化时更新临时布局系数，不
 对应测试与实现同目录。消息 descriptor 投影留在 pipeline，首条发送留在 gateway，
 React composer 仍负责消费用户确认的草稿；归组不改变这些层的所有权。
 
-
 Smart Canvas 的 `visualize` 技能将完整 HTML、交互式 3D、游戏和复杂模拟默认交给独立
 网页 embed；已有网址直接引用，小型自包含卡片或需要草稿桥的控件才使用 `show_widget`。
 插件只注册固定组件 `interactive-answer`，不拆装完整 HTML、不拦截图片或补齐联网参数。
@@ -565,7 +564,7 @@ Thinking 或 Tool 交错，也更新原 Content；不同原生消息不能因为
 Completions 的正文预览可能在工具参数开始流入时被原生归类为 commentary，包括独立
 reasoning、仅在 content 中包含 `<think>` 的旧格式和普通无 reasoning 正文。
 Renderer 在同一条 preamble update 的归约中隐藏同源 assistant 预览，不能等到整段
-模型响应结束才处理，否则两种 owner 会在参数生成期间重复显示。029 只补充
+模型响应结束才处理，否则两种 owner 会在参数生成期间重复显示。当前 reasoning 流式补丁 028 只补充
 `assistantTextScope.id`：来自 transport 的单条原生消息身份，随 normalized partial
 保留，并从具体 source message 捕获，不读取回调之后的当前消息状态。该身份在每条
 Completions 消息创建时分配，与 `structuredTextStreaming` 能力标记分开；身份本身
@@ -579,7 +578,7 @@ itemId 与 commentary signature 本来属于两套身份，不能从 runId、相
 消息身份不会把它提升为结构化预览，也不套用结构化预览的失败撤回规则。
 
 模型也可能在最终 `stop` 时回滚临时工具调用，并移除临时 commentary signature。
-029 在实际 message_end 的 delivery 中附上 `assistantTextScope.commentaryItemIds`，
+028 在实际 message_end 的 delivery 中附上 `assistantTextScope.commentaryItemIds`，
 表示该消息最终仍保留的原生 commentary IDs。只有真实消息完成且 content 数组完整
 才附带集合；缺失表示未知，空数组表示确实没有保留项。text_end 或通用
 `finalMessage` flush 不构成该依据。即使正文未变化，也发布这份完成事实。
@@ -635,7 +634,7 @@ Renderer 保留各原生 item 及正文，仅在同 scope 的明确整消息快�
 
 运行恢复使用原生 `chat.history`：持久消息来自 `messages`；进行中的有身份正文、
 工具、preamble 和 usage 来自 `inFlightRun.events`。
-029 在现有有界／冻结快照中保留各 assistant owner 的最新正文和 scope 事实，
+028 在现有有界／冻结快照中保留各 assistant owner 的最新正文和 scope 事实，
 包括随后切换到普通模型的正文；preamble 也保留 scope。Renderer 回放这些 owner，
 不再追加 run 累计的 `inFlightRun.text`，以免把已交给旁白的预览再次显示。
 同一 scope 超出事件／字节预算时一起淘汰；单条正文超限时只保留身份和完成事实，
@@ -643,8 +642,8 @@ Renderer 保留各原生 item 及正文，仅在同 scope 的明确整消息快�
 且没有已知 scope 的旧路径，仍使用原生 text 兜底：只有序号的 assistant 事件不代表
 已有正文。已移除 017 分段恢复补丁，不承诺重现未持久化 thinking 的所有交错顺序。
 
-029 的逐项分类、原版回滚事件缺口、保留与删除依据见
-[会话诊断中的专项审查](../features/chat/session-diagnostics.md#029-逐项审查原生缺陷能力扩展与应用适配)。
+028 的逐项分类、原版回滚事件缺口、保留与删除依据见
+[会话诊断中的专项审查](../features/chat/session-diagnostics.md#028-逐项审查原生缺陷能力扩展与应用适配)。
 
 工具的 `item(kind=tool, phase=update).progressText` 是独立的临时进度，并不保证同时有 `tool.partialResult`；直接更新运行中工具卡。临时进度序号阻止迟到 partial 令显示倒退，同时允许工具终态和缺失 input 补回。最终 Tool result 接管后清除进度，不为每个进度帧轮询历史。
 
@@ -790,12 +789,12 @@ Thinking 的正文由专用展示入口拥有，不交给全局 Markdown 增强�
 执行首次读取、加载旧页、稳态输出、运行中分页与过程动画检查。测量时避免并行构建
 和测试争抢 CPU；计时包含浏览器 DOM 提交与下一绘制帧，不包含真实 Gateway I/O。
 
-| 指标 | 缓存优化前 | 缓存优化后样本 |
-| --- | --- | --- |
-| 稳态输出帧间隔中位数 / P95 | 83.4 / 154.4 ms | 16.6 / 19.6 ms |
-| 120 帧中旧历史重建次数 | 130 | 1（进入运行时） |
-| 关闭的过程中的隐藏节点 | 6,183 | 0（尚未展开） |
-| 初次 250 条加载至显示 | 185 ms | 约 100 ms |
+| 指标                       | 缓存优化前      | 缓存优化后样本  |
+| -------------------------- | --------------- | --------------- |
+| 稳态输出帧间隔中位数 / P95 | 83.4 / 154.4 ms | 16.6 / 19.6 ms  |
+| 120 帧中旧历史重建次数     | 130             | 1（进入运行时） |
+| 关闭的过程中的隐藏节点     | 6,183           | 0（尚未展开）   |
+| 初次 250 条加载至显示      | 185 ms          | 约 100 ms       |
 
 此前 750 条窗口、一次移动 250 条的运行中分页样本，输出 P95 为 167.5ms、最大
 255.6ms，120 帧中有 8 帧超过 50ms。当前夹具还逐次记录同一阅读行是否保留及其
@@ -805,14 +804,14 @@ Thinking 的正文由专用展示入口拥有，不交给全局 Markdown 增强�
 2026-10-22 的完整链路样本包含 500 条运行回执、原生 block 数组正文与消息操作按钮，
 持续输出直至遍历全部 2,000 条历史：
 
-| 指标 | 当前样本 |
-| --- | --- |
-| 原生读取 / 小步窗口移动 | 8 次 / 28 次 |
-| 输出帧间隔中位数 / P95 / 最大 | 16.9 / 22.5 / 47.5 ms |
-| 超过 50ms 的输出帧 | 0 / 670 |
-| 分页中最长单次 DOM 提交 | 15.0 ms |
-| 保留的阅读行 / 最大位置偏差 | 28 / 28，0.38 px |
-| DOM 节点数 | 6,037（原 750 条样本为 17,682） |
+| 指标                          | 当前样本                        |
+| ----------------------------- | ------------------------------- |
+| 原生读取 / 小步窗口移动       | 8 次 / 28 次                    |
+| 输出帧间隔中位数 / P95 / 最大 | 16.9 / 22.5 / 47.5 ms           |
+| 超过 50ms 的输出帧            | 0 / 670                         |
+| 分页中最长单次 DOM 提交       | 15.0 ms                         |
+| 保留的阅读行 / 最大位置偏差   | 28 / 28，0.38 px                |
+| DOM 节点数                    | 6,037（原 750 条样本为 17,682） |
 
 每步全部补齐约 219–475ms，期间逐批展示并持续接收/显示流式正文；这个时长包含
 等待后续绘制帧，不是一次主线程阻塞。Thinking、Tool 和外层处理过程离开窗口后
@@ -1141,14 +1140,14 @@ HTML（`.html`、`.htm`、`.xhtml`）与 Markdown 默认进入渲染预览，并
 `chat-transcript-state.ts` 状态契约及 `chat-timeline-trace.ts` 诊断入口；各分组继续由
 现有 ChatController 持有生命周期，不新增状态所有者或消息缓存。
 
-| 分组 | 职责与主要入口 |
-| ---- | -------------- |
-| `turn/` | 原生事件归约、正文作用域、压缩与运行状态：agent-event-reducer、assistant-text-scope、compaction-item、run-activity、failed-run-message |
-| `history/` | 历史身份、分块与窗口、乐观尾部和消息同步：transcript-identity、chunked-message-history、history-window、history-reconciler、optimistic-history-tail、session-message-apply |
-| `timeline/` | 实时与历史时间线投影、过程折叠、展示缓存、页脚、minimap 及摘要资源 |
-| `tools/` | 工具消息适配、生命周期与展示、文件差异及子任务跳转 |
-| `input/` | 草稿恢复、待发送用户消息匹配及提示标记的显示投影 |
-| `browser-extension/` | 浏览器扩展流的归约与显示适配，构建入口直接指向该分组 |
+| 分组                 | 职责与主要入口                                                                                                                                                             |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `turn/`              | 原生事件归约、正文作用域、压缩与运行状态：agent-event-reducer、assistant-text-scope、compaction-item、run-activity、failed-run-message                                     |
+| `history/`           | 历史身份、分块与窗口、乐观尾部和消息同步：transcript-identity、chunked-message-history、history-window、history-reconciler、optimistic-history-tail、session-message-apply |
+| `timeline/`          | 实时与历史时间线投影、过程折叠、展示缓存、页脚、minimap 及摘要资源                                                                                                         |
+| `tools/`             | 工具消息适配、生命周期与展示、文件差异及子任务跳转                                                                                                                         |
+| `input/`             | 草稿恢复、待发送用户消息匹配及提示标记的显示投影                                                                                                                           |
+| `browser-extension/` | 浏览器扩展流的归约与显示适配，构建入口直接指向该分组                                                                                                                       |
 
 扩展的 `browser-extension-timeline` 将经过认证的历史和实时显示项适配为同类时间线行，
 复用 `foldCompletedProcessRows`，再保留原始侧栏条目及顺序返回插件。其可选
@@ -1163,34 +1162,34 @@ HTML（`.html`、`.htm`、`.xhtml`）与 Markdown 默认进入渲染预览，并
 `chat-controller-support.ts` 继续提供控制器共享类型和辅助。领域模块按下表组织，
 仍通过显式实时上下文访问同一个 ChatController，不复制连接、会话或执行状态。
 
-| 分组 | 职责与主要入口 |
-| ---- | -------------- |
-| `connection/` | 会话连接、切换、订阅与设备身份：chat-controller-session、device-identity |
-| `history/` | 原生历史协议、加载、翻页、图片补取和摘要资源观察 |
-| `execution/` | 实时事件、运行恢复、终态与 progress card：chat-controller-recovery、chat-controller-progress |
-| `compaction/` | 手动与自动压缩、操作回执和断线后核验 |
-| `input/` | 首轮委托发送、原生待发输入与队列发送 |
-| `mcp-app/` | MCP App 会话准备、原生视图与工作区目录连接 |
+| 分组          | 职责与主要入口                                                                               |
+| ------------- | -------------------------------------------------------------------------------------------- |
+| `connection/` | 会话连接、切换、订阅与设备身份：chat-controller-session、device-identity                     |
+| `history/`    | 原生历史协议、加载、翻页、图片补取和摘要资源观察                                             |
+| `execution/`  | 实时事件、运行恢复、终态与 progress card：chat-controller-recovery、chat-controller-progress |
+| `compaction/` | 手动与自动压缩、操作回执和断线后核验                                                         |
+| `input/`      | 首轮委托发送、原生待发输入与队列发送                                                         |
+| `mcp-app/`    | MCP App 会话准备、原生视图与工作区目录连接                                                   |
 
 `libs/openclaw-chat/components/` 根层保留聊天主组件 `justdo-chat.ts`、配套样式和入口测试，
 其余展示模块与测试按职责相邻存放；已有 `native-widget/`、`mcp-app/` 和 `fixtures/` 保留。
 
-| 分组 | 职责与主要入口 |
-| ---- | -------------- |
-| `message/` | 消息正文、媒体、头像、浏览器标注与录制、复制和内容交互 |
-| `timeline/` | 活动轮次、已完成过程与压缩分隔的界面组合 |
+| 分组        | 职责与主要入口                                                 |
+| ----------- | -------------------------------------------------------------- |
+| `message/`  | 消息正文、媒体、头像、浏览器标注与录制、复制和内容交互         |
+| `timeline/` | 活动轮次、已完成过程与压缩分隔的界面组合                       |
 | `markdown/` | Markdown 解析、路径识别、Mermaid、代码样式及代码／表格阅读控件 |
-| `tools/` | 工具展示、输出分页、终端文本与 Monaco 差异展示 |
+| `tools/`    | 工具展示、输出分页、终端文本与 Monaco 差异展示                 |
 
 Cowork 的工作区组合由 `components/display/` 负责，文件展示由 `preview/` 负责，终端与差异审核分别由同层 `terminal/` 和 `review/` 负责；计划审核界面位于 `approvals/`。共享文档样式和工具栏上下文只承担展示协作，不改变 Gateway 消息、终端或审核状态的所有权。
 
-| 范围              | 代码 / 测试入口                                                         |
-| ----------------- | ----------------------------------------------------------------------- |
-| 连接和生命周期    | gateway/client、chat-controller 及 session-lifecycle/terminal tests     |
-| 分页及大消息      | gateway/history、model/history/chunked-message-history                 |
-| 去重和段顺序      | model/turn/agent-event-reducer、model/history、gateway/execution         |
-| timeline 与工具卡 | components/timeline、components/tools、pipeline/build-chat-items        |
-| 安全与视觉更新    | components/markdown、components/justdo-chat、controllers                |
+| 范围              | 代码 / 测试入口                                                     |
+| ----------------- | ------------------------------------------------------------------- |
+| 连接和生命周期    | gateway/client、chat-controller 及 session-lifecycle/terminal tests |
+| 分页及大消息      | gateway/history、model/history/chunked-message-history              |
+| 去重和段顺序      | model/turn/agent-event-reducer、model/history、gateway/execution    |
+| timeline 与工具卡 | components/timeline、components/tools、pipeline/build-chat-items    |
+| 安全与视觉更新    | components/markdown、components/justdo-chat、controllers            |
 
 至少验证：同文重复提交、重连时 live/history 交错、工具前后多段正文、终态后迟到 delta、取消早于 admission、超大工具结果、Plan reset 后 rewind 门禁、Goal 操作 fence、后台会话停止、历史窗口移位与滚动锚点。领域测试与真实模型交互检查分别记录，不以一次截图替代协议验证。
 
@@ -1355,11 +1354,12 @@ provider textSignature 或单独 runId 推断对应关系。首版不保留被�
 用户气泡对旧版本生成的中英文引用包装做显示投影：历史主聊引用及侧聊 JSON 引用呈现为
 引用块，隐藏 sessionKey/entryId。发送内容与原生历史保持不变，普通 JSON 不做转换。
 
-引用发送对齐锁定的 OpenClaw 2026.9.8 Control UI 实现：
+引用发送沿用原生 Control UI 的交互约定，当前产品实现位于
+[`messageQuote.ts`](../../src/renderer/features/cowork/components/composer/draft/messageQuote.ts)：
 
-- `control-ui-boot-shared-DKAI-I6P.js` 的 `uC/dC`：侧聊预填 `Regarding "…": `，
+- 侧聊预填 `Regarding "…": `，
   折叠空白并将选中文字限制到 300 UTF-16 单元，不发送 sessionKey/entryId JSON。
-- `control-ui-boot-shared-DJHdUjIH.js` 的 `PN`：主聊创建 `selection-comment.txt`，
+- 主聊创建 `selection-comment.txt`，
   含 Selected text、Source session/entry、文本长度及已知 DOM range，通过现有附件桥传递。
   本应用仍使用自己的引用草稿 UI；不引入原生 Control UI 的附件状态缓存。
   引用正文同时以纯 Markdown 引用块加入实际 Gateway prompt，使乐观气泡和原生历史一致；

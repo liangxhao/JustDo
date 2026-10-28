@@ -111,22 +111,22 @@ Completions 消息均携带原生消息身份及实际完成事实，Renderer �
 
 ### 保留项及删除后果
 
-| 改动 | 分类 | 当前保留理由与反例 |
-| --- | --- | --- |
-| `beginReasoning` 不自动进入 strict；同包公开内容走 `pushVisible` | 流式能力扩展 | 原生 `push` 自带 strict，subscriber 又依据 `textPhaseRequiresTerminal` 拒绝提前正文；只改 Renderer 不能释放尚未发布的内容。独立和同包 reasoning/content 用例证明需同时打通。 |
-| `structuredRecoveryMode`、孤立关闭标签处理、未闭合标签 EOF 保护 | 扩展的安全配套 | 取消整段缓冲后必须继续隐藏私有标签，不能在 EOF 恢复未闭合 reasoning，也不能追溯隐藏已发布正文。Markdown 代码中的字面标签及显式 strict 保持原规则。 |
-| 非终态 flush 暂存 pending syntax，实际终态才完整 flush | 扩展的安全配套 | reasoning／tool 事件会触发中间 flush；把拆成两包的 `<think>` 当 EOF 处理会破坏标签归属。真实 native 拆包及同包 stop/tool 用例覆盖。 |
-| subscriber 只准入带标记的预览，同时维持 durable partial/block 门禁 | 流式能力扩展 | 可以先显示，但尚未确定 commentary/final 的正文不能提前变成持久回复；删除任一半会失去流式或提前交付不确定正文。 |
-| commentary-only `message_end` 的空 assistant replacement | 原生预览的应用侧缓冲适配 | 结构化扩展或普通流式的预览都可能进入原生 Chat buffer；只在 Renderer 隐藏仍会让 Chat 终态兜底包含旧预览。只清对应 assistant，不清独立 Thinking/Tool/preamble。 |
-| transport 消息 UUID；具体 source message 透传；assistant/preamble 同源 scope | 应用展示协议扩展 | 两类原生 owner 使用不同身份，回滚还会删除 signature，不能靠同文、run 顺序或回调后的当前消息猜归属。共用 commentary 分支不能仅按局部 Responses 变量假定其他路径不可达。 |
-| 真正 `message_end` 的 retained commentary IDs，正文未变也投递 | 原生回滚缺口的应用侧适配 | Renderer 按同一 scope 隐藏失效旁白；缺失集合为未知，`[]` 才证明没有保留项。`text_end` 和内部 `finalMessage` flush 都不等于消息完成，合法 mixed commentary/final 必须保留。 |
-| 真正完成投递使用完整 `replace:true` 正文 | 我们的历史／live 适配 | 历史可能已补入 prefix 或 suffix；再追加终态 delta 会丢后缀或重复后缀。Gateway 的 delta 压缩本身没有失效，只是当前应用无法从被历史改写的基线安全追加。 |
-| 原生现有有界快照保留 keyed assistant 和 preamble scope | 重连能力扩展 | run 累计 `text` 无法分离已转旁白的预览；只恢复 scope 消息又会丢掉后续普通模型的正文。用原生 itemId 恢复各 owner，未知／无正文来源保持原有规则。 |
-| 同 owner 修订继承 scope；超限仅保留身份／完成事实；整 scope 淘汰 | 新快照协议的安全配套 | 避免空修订丢归属、预算截断后旧旁白复活，或只淘汰关联记录的一半。维持原有条数、字节、冻结和顺序限制，不另建 transcript 权威。 |
-| Renderer scope 归约、完成事实 Map、隐藏标记与真实正文恢复 | 我们的展示适配 | 即时交接和回滚在软件侧完成；隐藏时保留正文前缀以承接 delta，metadata-only 完成不能把旧预览提升成最终答案。Map 只存活动 turn 的身份／序号，不存第二份正文。 |
-| 展示层、浏览器 project/finish、side-chat 内容收集与截断补全都过滤隐藏项；clone 复制 Map | 我们的展示适配 | 这些读者不全部经过桌面 `projectTurnItems`；漏一处就会重新暴露旧预览。侧聊快照也不能与活动 turn 共用可变归属集合。 |
-| controller 回放 owned 快照后跳过累计 `text` | 我们的恢复适配 | 否则已恢复的旁白／正文会再被累计 buffer 追加一次。只有序号的旧 assistant marker 仍使用原有 text 兜底，不把无正文当成已恢复。 |
-| 精确 AST 形态、当前形态幂等、拒绝历史／部分形态及源码／bundle 原子校验 | 构建保护 | 属于仓库补丁契约，不是业务 bug 修复；防止锁定版本或构建绑定变化后静默误改。公共工具不是 028 专有实现。 |
+| 改动                                                                                    | 分类                     | 当前保留理由与反例                                                                                                                                                           |
+| --------------------------------------------------------------------------------------- | ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `beginReasoning` 不自动进入 strict；同包公开内容走 `pushVisible`                        | 流式能力扩展             | 原生 `push` 自带 strict，subscriber 又依据 `textPhaseRequiresTerminal` 拒绝提前正文；只改 Renderer 不能释放尚未发布的内容。独立和同包 reasoning/content 用例证明需同时打通。 |
+| `structuredRecoveryMode`、孤立关闭标签处理、未闭合标签 EOF 保护                         | 扩展的安全配套           | 取消整段缓冲后必须继续隐藏私有标签，不能在 EOF 恢复未闭合 reasoning，也不能追溯隐藏已发布正文。Markdown 代码中的字面标签及显式 strict 保持原规则。                           |
+| 非终态 flush 暂存 pending syntax，实际终态才完整 flush                                  | 扩展的安全配套           | reasoning／tool 事件会触发中间 flush；把拆成两包的 `<think>` 当 EOF 处理会破坏标签归属。真实 native 拆包及同包 stop/tool 用例覆盖。                                          |
+| subscriber 只准入带标记的预览，同时维持 durable partial/block 门禁                      | 流式能力扩展             | 可以先显示，但尚未确定 commentary/final 的正文不能提前变成持久回复；删除任一半会失去流式或提前交付不确定正文。                                                               |
+| commentary-only `message_end` 的空 assistant replacement                                | 原生预览的应用侧缓冲适配 | 结构化扩展或普通流式的预览都可能进入原生 Chat buffer；只在 Renderer 隐藏仍会让 Chat 终态兜底包含旧预览。只清对应 assistant，不清独立 Thinking/Tool/preamble。                |
+| transport 消息 UUID；具体 source message 透传；assistant/preamble 同源 scope            | 应用展示协议扩展         | 两类原生 owner 使用不同身份，回滚还会删除 signature，不能靠同文、run 顺序或回调后的当前消息猜归属。共用 commentary 分支不能仅按局部 Responses 变量假定其他路径不可达。       |
+| 真正 `message_end` 的 retained commentary IDs，正文未变也投递                           | 原生回滚缺口的应用侧适配 | Renderer 按同一 scope 隐藏失效旁白；缺失集合为未知，`[]` 才证明没有保留项。`text_end` 和内部 `finalMessage` flush 都不等于消息完成，合法 mixed commentary/final 必须保留。   |
+| 真正完成投递使用完整 `replace:true` 正文                                                | 我们的历史／live 适配    | 历史可能已补入 prefix 或 suffix；再追加终态 delta 会丢后缀或重复后缀。Gateway 的 delta 压缩本身没有失效，只是当前应用无法从被历史改写的基线安全追加。                        |
+| 原生现有有界快照保留 keyed assistant 和 preamble scope                                  | 重连能力扩展             | run 累计 `text` 无法分离已转旁白的预览；只恢复 scope 消息又会丢掉后续普通模型的正文。用原生 itemId 恢复各 owner，未知／无正文来源保持原有规则。                              |
+| 同 owner 修订继承 scope；超限仅保留身份／完成事实；整 scope 淘汰                        | 新快照协议的安全配套     | 避免空修订丢归属、预算截断后旧旁白复活，或只淘汰关联记录的一半。维持原有条数、字节、冻结和顺序限制，不另建 transcript 权威。                                                 |
+| Renderer scope 归约、完成事实 Map、隐藏标记与真实正文恢复                               | 我们的展示适配           | 即时交接和回滚在软件侧完成；隐藏时保留正文前缀以承接 delta，metadata-only 完成不能把旧预览提升成最终答案。Map 只存活动 turn 的身份／序号，不存第二份正文。                   |
+| 展示层、浏览器 project/finish、side-chat 内容收集与截断补全都过滤隐藏项；clone 复制 Map | 我们的展示适配           | 这些读者不全部经过桌面 `projectTurnItems`；漏一处就会重新暴露旧预览。侧聊快照也不能与活动 turn 共用可变归属集合。                                                            |
+| controller 回放 owned 快照后跳过累计 `text`                                             | 我们的恢复适配           | 否则已恢复的旁白／正文会再被累计 buffer 追加一次。只有序号的旧 assistant marker 仍使用原有 text 兜底，不把无正文当成已恢复。                                                 |
+| 精确 AST 形态、当前形态幂等、拒绝历史／部分形态及源码／bundle 原子校验                  | 构建保护                 | 属于仓库补丁契约，不是业务 bug 修复；防止锁定版本或构建绑定变化后静默误改。公共工具不是 028 专有实现。                                                                       |
 
 安全边界、普通流式、合法同文、mixed phase、回滚、历史补载、metadata-only 超限、
 独立 owner 恢复及取消／失败的用例共同构成保留依据。补丁的当前形态与移除条件
@@ -134,7 +134,7 @@ Completions 消息均携带原生消息身份及实际完成事实，Renderer �
 
 ## 正文在结束时集中出现
 
-v2026.10.6 还需核对 026 的真实订阅入口：原生为了给事件附上 transcript-start 信息，
+当前 026 的回归还需核对锁定运行时的真实订阅入口：原生为了给事件附上 transcript-start 信息，
 在准入冻结前展开复制参数，会把动态 `deferTerminalDelivery` 提前固化为 `true`。
 因此即使 028 已释放模型正文、普通聊天的 finalize hook 已明确排除，订阅层仍可能把
 全部正文扣到结束。026 在这一次原生复制中保留指向原始输入的访问器，让后续
@@ -143,10 +143,11 @@ v2026.10.6 还需核对 026 的真实订阅入口：原生为了给事件附上 
 受保护运行和 transcript-start 回调。仅验证 transport 或复制前的参数不能覆盖此问题。
 旧运行时须从锁定 pristine 包完整重建，不能就地补写旧 manifest 或只改前端。
 
-日常可运行 `npm test -- tests/openclaw/patches/v2026.10.6/scoped-finalize-native-subscription.test.ts`。
+日常可运行 `npm test -- tests/openclaw/patches/v2026.10.7/scoped-finalize-native-subscription.test.ts`。
 该回归优先使用显式指定的 pristine／frozen 产物，否则自动使用已准备的
 `vendor/openclaw-runtime/current`；修复路径和仅在内存移除访问器的故障对照都会执行。
-未准备原生运行时才条件跳过，因此发布验收仍须明确指定本次成品并检查用例实际执行。
+只接受精确的 2026.10.7 产物；未指定且未准备匹配运行时时条件跳过，显式指定错版产物则失败。
+发布验收仍须明确指定本次成品并检查用例实际执行；历史 10.6 用例不作为当前版本入口。
 
 先对照完整原生 JSON 日志中的 Agent `thinking`、`assistant` 和 `usage` 事件，
 再判断问题属于模型服务、运行时适配还是 Renderer。控制台捕获会合并流事件，
@@ -290,12 +291,12 @@ target、带 idempotencyKey 的 prepared user 和 recorder，便会探测同一�
 
 本轮对照确认，当前锁定 2026.10.7 的源码仍保留四个同文案抛错点：
 
-| 位置 | 精确拒绝条件 |
-| --- | --- |
-| `session-accessor.sqlite-current-turn.ts` 的 current-turn reader | 当前 generation、rawSeq 或 updatedAt 与准备快照不一致。rawSeq 来自 transcript 事件最大序号，updatedAt 是 transcript 更新时间。 |
-| `pre-persisted-user-turn.ts` 的 validate 回调 | 已有 prepared selection，但原生 reader 未确认同一 transcript context version。普通 session/lifecycle/writer 失配通常先抛另一句 writer claim 错误。 |
-| 同文件的 validate 收尾 | 异步 anchor 读取完成后没有在 reader 的 writer FIFO/native mutation witness 下调用 consume。 |
-| 同文件的第二次准入 accept | 无法重新找到 prepared witness，或 entryId / generation 不再匹配初始 anchor。 |
+| 位置                                                             | 精确拒绝条件                                                                                                                                       |
+| ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `session-accessor.sqlite-current-turn.ts` 的 current-turn reader | 当前 generation、rawSeq 或 updatedAt 与准备快照不一致。rawSeq 来自 transcript 事件最大序号，updatedAt 是 transcript 更新时间。                     |
+| `pre-persisted-user-turn.ts` 的 validate 回调                    | 已有 prepared selection，但原生 reader 未确认同一 transcript context version。普通 session/lifecycle/writer 失配通常先抛另一句 writer claim 错误。 |
+| 同文件的 validate 收尾                                           | 异步 anchor 读取完成后没有在 reader 的 writer FIFO/native mutation witness 下调用 consume。                                                        |
+| 同文件的第二次准入 accept                                        | 无法重新找到 prepared witness，或 entryId / generation 不再匹配初始 anchor。                                                                       |
 
 有源码和原生测试支撑的候选包括：异步快照与 entry 读取之间发生 transcript 追加；
 准备后有新输入实际占据当前轮次（包括不进模型上下文的隐藏 user）；已出现 final、

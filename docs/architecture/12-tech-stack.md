@@ -1,22 +1,23 @@
 # 工程构建、运行时资源与发布
 
-本文解释构建输入如何变成可运行安装包，以及为什么 Renderer 构建通过不代表 Gateway、原生模块和平台资源都已可用。日常启动命令见[开发与排障](../development.md)。
+本文解释构建输入如何变成可运行安装包，以及为什么 Renderer 构建通过不代表 Gateway、原生模块和平台资源都已可用。日常启动、打包与测试命令见[开发指南](../development.md)。
 
-## 1. 版本有三个层次
+## 1. 版本与锁定来源
 
-| 项目     | 声明/锁定                            | 解释                            |
-| -------- | ------------------------------------ | ------------------------------- |
-| 应用     | v2026.10.20                           | package.json 与 lockfile 根版本 |
-| Node     | .nvmrc 24.22.1；engine >=24.22.1 <25 | 开发工具与原生构建环境          |
-| Electron | 声明 ^42.6.2；lockfile 42.7.0        | 桌面运行时与 Electron ABI       |
-| OpenClaw | v2026.10.7                            | 独立锁定 pristine runtime       |
-| 包管理   | npm、package-lock.json               | 应用依赖解析                    |
+| 项目         | 维护入口                                                                                                | 解释                                                      |
+| ------------ | ------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
+| 应用         | [`package.json.version`](../../package.json) 与 [`package-lock.json`](../../package-lock.json) 根版本   | 应用发布身份                                              |
+| 开发 Node    | [`.nvmrc`](../../.nvmrc) 与 `package.json.engines.node`                                                 | 开发工具与原生构建环境                                    |
+| Gateway Node | [`nodeRuntime.json`](../../src/shared/openclaw/nodeRuntime.json)                                        | 随运行时交付的完整 Node/npm/npx，按目标平台锁定归档与哈希 |
+| Electron     | `package.json.devDependencies.electron` 与锁文件                                                        | 桌面运行时与 Electron ABI                                 |
+| OpenClaw     | `package.json.openclaw.version` 与[当前 source lock](../../scripts/patches/v2026.10.7/source-lock.json) | 独立锁定的 pristine runtime                               |
+| 包管理       | npm 与根 `package-lock.json`                                                                            | 应用依赖解析；插件独立依赖以其所属锁文件为准              |
 
 package.json 范围、lockfile 实际版本与最终 bundle manifest 不能混为一谈。运行时还有自己的依赖树；主应用 dependencies 列表不是全部随包工具清单。
 
 ## 2. 编译边界
 
-Renderer 使用 React 18、Redux Toolkit、Lit、Tailwind、自有主题、Markdown-it/KaTeX/Mermaid/DOMPurify 及 Monaco。Main 使用 Electron、better-sqlite3、ws、网络代理、归档和系统工具库。
+Renderer 使用 React、Redux Toolkit、Lit、Tailwind、自有主题、Markdown-it/KaTeX/Mermaid/DOMPurify 及 Monaco。Main 使用 Electron、better-sqlite3、ws、网络代理、归档和系统工具库。
 
 | 配置                   | 输入与目标                                                      | 关键限制                                    |
 | ---------------------- | --------------------------------------------------------------- | ------------------------------------------- |
@@ -58,7 +59,7 @@ Builder 显式 npmRebuild=false，是因为项目自己准备 SQLite，node-pty 
 
 运行时从 source-lock 固定的 npm 包及完整性开始，验证 pristine contracts，再应用当前补丁。构建 recipe 变化会使冻结快照失效；同版本修改也需重建。历史/部分补丁形态明确拒绝，不做就地修补。
 
-平台脚本执行安装、current 同步、Gateway bundle、官方插件、产品资源、扩展预编译和裁剪。必须对最终 bundle 验证能力，不能只验证邻近源码仓库。当前补丁职责、依赖和上游删除条件只维护在[版本目录](../../scripts/patches/v2026.10.7/README.md)。
+平台脚本执行安装、current 同步、Gateway bundle、官方插件、产品资源、扩展预编译和裁剪。安装阶段同时准备并复制目标平台的完整 Node 分发包到 runtime 的 `node-runtime/`，不借用目标机器的系统 Node，也不在首次启动下载。必须对最终 bundle 验证能力，不能只验证邻近源码仓库。当前补丁职责、依赖和上游删除条件只维护在[版本目录](../../scripts/patches/v2026.10.7/README.md)。
 
 ## 6. 平台资源和安装器
 
@@ -90,11 +91,11 @@ Windows 更新使用 generic feed，发布元数据和 artifact hash 由专用�
 
 通用 pack/dist 不自动等价于所有平台的资源预备。macOS 架构目标、签名配置与 Windows native 资源需按对应 script/hook 检查。一次 build 成功不能写成全平台发布通过。
 
-## 9. CI 当前限制
+## 9. CI 与发布验证
 
-ci.yml 按路径过滤 renderer/main/skills/scripts/docs，并使用 .nvmrc。现有 workflow 使用 npm install，npm cache key 只 hash package.json；skill job 调用尚未在 package.json 定义的 build:skills。lockfile 根版本已同步，不再属于缺口。
+[CI 配置](../../.github/workflows/ci.yml)按路径过滤 renderer/main/skills/scripts/docs，并使用 `.nvmrc`。技能任务直接运行 `tests/scripts/sync-bundled-skills.test.ts`，验证内置技能源文件与同步，不再调用 `build:skills`。现有 workflow 仍使用 `npm install`，npm cache key 只 hash `package.json`。
 
-文档不修改这些工作流，也不据局部通过掩盖失败项。依赖升级需核对原生 ABI、目标架构、runtime freeze、插件预编译、license、安装器和更新产物，而不是只更新一个版本字符串。
+CI 中的应用构建和单元测试不能替代目标平台的打包与真实安装验收。依赖升级需核对原生 ABI、目标架构、runtime freeze、插件预编译、license、安装器和更新产物，而不是只更新一个版本字符串。
 
 ## 10. 发布排障
 

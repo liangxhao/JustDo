@@ -5,7 +5,7 @@
 ## 从哪里开始
 
 1. [产品与系统总览](architecture/01-overview.md)：产品能力、任务生命周期与数据权威。
-2. [开发与排障](development.md)：环境、启动、运行时重建、验证与日志。
+2. [开发、打包与排障](development.md)：开发启动、平台打包命令、运行时重建、检查与日志。
 3. [功能文档索引](features/README.md)：按领域查找现行入口、实现与限制。
 4. [系统架构](architecture/02-architecture.md)与[进程模型](architecture/03-process-model.md)：模块、IPC 与资源生命周期。
 
@@ -17,7 +17,7 @@
 | [features/](features/README.md)                           | 按领域组织的现行功能说明                         | 查用户路径、实现契约和已知限制   |
 | [developer-integration/](developer-integration/README.md) | 登录、外部 Agent、请求头等开发接入接口及分发示例 | 增加集成模块时阅读               |
 | [app-server-api/](app-server-api/README.md)               | 通用 stdio、WebSocket 与 Chrome 扩展协议规范     | 外部客户端对接时阅读             |
-| [plans/](plans/README.md)                                 | 具体未实施需求                         | 先核对现行能力，再推进真实差异   |
+| [plans/](plans/README.md)                                 | 具体未实施需求                                   | 先核对现行能力，再推进真实差异   |
 | [openclaw-upgrades/](openclaw-upgrades/README.md)         | 按目标版本组织的升级记录                         | 从版本索引查差异、复核与验收演进 |
 | [releases/](releases/README.md)                           | 已发布应用版本说明                               | 保留发布时事实，不按当前源码改写 |
 | `assets/`                                                 | 文档引用的资源                                   | 不存放方案或独立功能说明         |
@@ -44,7 +44,7 @@
 | [Windows 原生沙盒](architecture/17-windows-native-sandbox.md)          | 工具进程隔离与平台限制                       |
 | [Gateway 能力矩阵](architecture/openclaw-gateway-capability-matrix.md) | 原生能力、产品消费与升级核对                 |
 
-编号 06 和 09 没有对应主题，不创建占位文档补齐编号。逐补丁能力、上游处置和移除条件只维护在[当前版本补丁总账](../scripts/patches/v2026.9.8/README.md)。
+编号 06 和 09 没有对应主题，不创建占位文档补齐编号。逐补丁能力、上游处置和移除条件只维护在[当前版本补丁总账](../scripts/patches/v2026.10.7/README.md)，版本选择以 `package.json.openclaw.version` 为准。
 
 ## 维护规则
 
