@@ -1,4 +1,5 @@
 import { ExclamationTriangleIcon } from '@heroicons/react/24/outline';
+import { AppInitializationTaskStatus } from '@shared/app/initialization';
 import { EnginePhase } from '@shared/openclaw/engineStatus';
 import React, { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -6,31 +7,34 @@ import { useSelector } from 'react-redux';
 
 import { selectIsOpenClawEngine } from '@/features/cowork/coworkSelectors';
 import { coworkService } from '@/features/cowork/coworkService';
-import type { OpenClawEngineStatus } from '@/features/cowork/coworkTypes';
 import { i18nService } from '@/services/i18n';
 
 import EngineDiagnosticsModal from './EngineDiagnosticsModal';
+import { refreshEngineReadiness, useEngineReadiness } from './startup/routing/useEngineReadiness';
 
 const EngineStartupStatusBar: React.FC = () => {
   const isOpenClawEngine = useSelector(selectIsOpenClawEngine);
-  const [status, setStatus] = useState<OpenClawEngineStatus | null>(null);
+  const readiness = useEngineReadiness();
+  const status = readiness.status;
   const [isStarting, setIsStarting] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
   const [showReason, setShowReason] = useState(false);
 
   useEffect(() => {
-    if (!isOpenClawEngine) return;
-    const unsubscribe = coworkService.onOpenClawEngineStatus(next => {
-      setStatus(next);
-      setStartError(null);
-      if (next.phase === EnginePhase.Running) setShowReason(false);
-    });
-    void coworkService.getOpenClawEngineStatus();
-    return unsubscribe;
-  }, [isOpenClawEngine]);
+    setStartError(null);
+    if (readiness.ready) setShowReason(false);
+  }, [status, readiness.ready]);
 
-  if (!isOpenClawEngine || !status || (status.phase === EnginePhase.Running && !startError)) {
-    return null;
+  if (!isOpenClawEngine) return null;
+  if (readiness.ready && !startError) {
+    const servicesFailed = readiness.integrationsStatus === AppInitializationTaskStatus.Failed;
+    const servicesPending = readiness.integrationsStatus === AppInitializationTaskStatus.Running ||
+      readiness.integrationsStatus === AppInitializationTaskStatus.Waiting;
+    return servicesFailed || servicesPending ? (
+      <div role="status" aria-live="polite" className="non-draggable truncate text-xs text-secondary">
+        {i18nService.t(servicesFailed ? 'localServicesFailed' : 'localServicesStarting')}
+      </div>
+    ) : null;
   }
 
   const handleStart = async () => {
@@ -39,6 +43,7 @@ const EngineStartupStatusBar: React.FC = () => {
     setStartError(null);
     try {
       await coworkService.startOpenClawGateway();
+      await refreshEngineReadiness();
     } catch (error) {
       setStartError(error instanceof Error ? error.message : String(error));
     } finally {
@@ -46,11 +51,11 @@ const EngineStartupStatusBar: React.FC = () => {
     }
   };
 
-  const isError = !isStarting && (status.phase === EnginePhase.Error || startError !== null);
-  const isBusy = !isError && (isStarting || status.phase === EnginePhase.Starting);
+  const isError = !isStarting && (readiness.failed || startError !== null);
+  const isBusy = !isError && (isStarting || readiness.pending);
   const statusText = isError
     ? i18nService.t('engineStartFailed')
-    : i18nService.t(status.restarting ? 'engineRestarting' : 'engineStarting');
+    : i18nService.t(status?.restarting ? 'engineRestarting' : 'engineStarting');
 
   return (
     <div className="non-draggable min-w-0 max-w-full text-xs">
@@ -90,9 +95,11 @@ const EngineStartupStatusBar: React.FC = () => {
         isError &&
         createPortal(
           <EngineDiagnosticsModal
-            key={status.diagnosticId ?? 'engine-command'}
-            status={status}
-            commandError={startError}
+            key={status?.diagnosticId ?? readiness.failure?.occurredAt ?? 'engine-command'}
+            status={status ? { ...status,
+              canRetry: status.canRetry || Boolean(readiness.failure || startError),
+            } : { phase: EnginePhase.Error, version: null, canRetry: true }}
+            commandError={startError ?? readiness.failure?.error.message ?? null}
             onClose={() => setShowReason(false)}
             onStart={() => {
               setShowReason(false);

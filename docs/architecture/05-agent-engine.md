@@ -165,6 +165,15 @@ history/startup 的响应发布前检查同一 frame；pending 时交回原生�
 
 ## 3. 启动与重启状态
 
+普通启动的界面就绪和执行就绪分别管理。Main `StartupEnginePreparation` 只拥有当前
+process/lifecycle 的准备操作与已确认身份，将 pending/failure 投影到初始化快照；
+认证连接、执行权限检查及代次核对全部完成后才能开放 AI 功能。`Running` 或一个返回
+Running 但 `success=false` 的权限检查不能完成准入，后者保留准备失败，不伪造成功。
+普通启动的主页不等待该准备；引擎失败保留主页、诊断和重试，本地设置与登录可用。
+重试及独立重启沿用同一准备 owner，旧操作结果不能覆盖新操作；退出等待在途准备退休。
+新聊天和已有聊天发送 IPC 在任何配置等待前拒绝未就绪输入，等待后再次复核，防止将
+启动期间的点击延迟执行。Renderer 保留草稿，真正就绪后仅自动恢复只读加载，不自动发送。
+
 原生 Control UI 默认关闭；在“设置 → 通用”标题点击 10 次后直接展开开发者区域，
 同时将内部 `developerMode` 草稿设为开启，不再提供额外总开关。只有保存后的内部标志与
 Control UI 偏好均为开启，配置同步才设置 `gateway.controlUi.enabled: true`，开发运行与

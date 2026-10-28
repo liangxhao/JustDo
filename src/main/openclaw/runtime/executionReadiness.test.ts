@@ -63,4 +63,14 @@ describe('ensureExecutionReady', () => {
     await expect(ensureExecutionReady(dependencies)).resolves.toEqual(failed);
     expect(dependencies.manager.setExternalError).not.toHaveBeenCalled();
   });
+
+  it('rejects failed admission even when the process remains running', async () => {
+    const dependencies = harness();
+    dependencies.verifyPermissionPolicy = vi.fn(async () => ({
+      success: false, status: running, error: 'Permission observation was superseded',
+    }));
+    await expect(ensureExecutionReady(dependencies)).rejects.toThrow('Permission observation was superseded');
+    expect(dependencies.manager.getStatus()).toEqual(running);
+    expect(dependencies.manager.setExternalError).not.toHaveBeenCalled();
+  });
 });

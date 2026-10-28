@@ -7,6 +7,11 @@ import { useExtensionEnablement } from '@/features/plugins/extensions/useExtensi
 
 import { useComposerFeatureDraft } from './useComposerFeatureDraft';
 
+vi.mock('@/app/shell/startup/routing/useEngineReadiness', () => ({
+  getEngineReadinessSnapshot: () => ({ ready: true }),
+  subscribeEngineReadiness: () => vi.fn(),
+}));
+
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();

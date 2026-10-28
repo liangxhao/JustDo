@@ -1,16 +1,25 @@
 // @vitest-environment jsdom
 
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { afterEach, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, expect, test, vi } from 'vitest';
+
+import { mcpService } from '@/features/plugins/mcp/mcpService';
 
 import PluginsView from './PluginsView';
 
+const engine = vi.hoisted(() => ({ ready: true, pending: false, failed: false }));
+vi.mock('@/app/shell/startup/routing/useEngineReadiness', () => ({
+  useEngineReadiness: () => engine,
+}));
 vi.mock('@/features/plugins/mcp/mcpService', () => ({
   mcpService: { loadExtensionServers: vi.fn(async () => []) },
 }));
 vi.mock('@/features/plugins/extensions/ExtensionsManager', () => ({
   default: (props: { searchQuery: string; visibility: string }) => (
-    <div data-testid="extensions-manager">{JSON.stringify(props)}</div>
+    <div data-testid="extensions-manager">
+      {JSON.stringify(props)}
+      <input aria-label="extension-draft" defaultValue="" />
+    </div>
   ),
 }));
 vi.mock('@/features/plugins/hooks/HookManager', () => ({
@@ -31,6 +40,52 @@ vi.mock('@/services/i18n', () => ({
 }));
 
 afterEach(cleanup);
+beforeEach(() => {
+  Object.assign(engine, { ready: true, pending: false, failed: false });
+  vi.clearAllMocks();
+  Object.defineProperty(window, 'electron', {
+    configurable: true,
+    value: { platform: 'win32' },
+  });
+});
+
+test('keeps categories accessible while engine preparation defers native inventories', () => {
+  Object.assign(engine, { ready: false, pending: true });
+  const props = { isSidebarCollapsed: false, onToggleSidebar: vi.fn(), onNewChat: vi.fn() };
+  const { rerender } = render(<PluginsView {...props} />);
+  expect(screen.getByRole('status').textContent).toBe('enginePreparingContent');
+  expect(screen.queryByTestId('extensions-manager')).toBeNull();
+  expect(mcpService.loadExtensionServers).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole('button', { name: /skills/ }));
+  expect(screen.queryByText('skills-manager')).toBeNull();
+
+  Object.assign(engine, { ready: true, pending: false });
+  rerender(<PluginsView {...props} />);
+  expect(screen.getByText('skills-manager')).toBeTruthy();
+  expect(mcpService.loadExtensionServers).toHaveBeenCalledOnce();
+});
+
+test('shows engine recovery guidance and retains an admitted manager draft through a restart', () => {
+  const props = { isSidebarCollapsed: false, onToggleSidebar: vi.fn(), onNewChat: vi.fn() };
+  const { rerender } = render(<PluginsView {...props} />);
+  const input = screen.getByRole('textbox', { name: 'extension-draft' }) as HTMLInputElement;
+  fireEvent.change(input, { target: { value: 'unsaved configuration' } });
+
+  Object.assign(engine, { ready: false, pending: false, failed: true });
+  rerender(<PluginsView {...props} />);
+  expect(screen.getByRole('status').textContent).toBe('engineUnavailableContent');
+  expect(input.closest('[inert]')).toBeTruthy();
+  const skillsTab = screen.getByRole('button', { name: /skills/ }) as HTMLButtonElement;
+  expect(skillsTab.disabled).toBe(true);
+  fireEvent.click(skillsTab);
+  expect(screen.queryByText('skills-manager')).toBeNull();
+
+  Object.assign(engine, { ready: true, failed: false });
+  rerender(<PluginsView {...props} />);
+  expect(screen.getByRole('textbox', { name: 'extension-draft' })).toBe(input);
+  expect(input.value).toBe('unsaved configuration');
+  expect(input.closest('[inert]')).toBeNull();
+});
 
 test('uses one capability switcher instead of separate installed and marketplace pages', () => {
   Object.defineProperty(window, 'electron', {

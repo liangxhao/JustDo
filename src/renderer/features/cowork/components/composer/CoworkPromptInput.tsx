@@ -213,6 +213,9 @@ interface CoworkPromptInputProps {
   isStreaming?: boolean;
   placeholder?: string;
   disabled?: boolean;
+  /** Keep text editing available while execution and native controls are disabled. */
+  allowDraftWhileDisabled?: boolean;
+  disabledMessage?: string;
   size?: 'normal' | 'large';
   workingDirectory?: string;
   onWorkingDirectoryChange?: (dir: string) => void;
@@ -279,6 +282,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       isStreaming = false,
       placeholder = 'Enter your task...',
       disabled = false,
+      allowDraftWhileDisabled = false,
+      disabledMessage,
       size = 'normal',
       workingDirectory = '',
       onWorkingDirectoryChange,
@@ -1768,19 +1773,22 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         const nextValue = event.target.value;
         latestValueRef.current = nextValue;
         setValue(nextValue);
-        if (supportsSlashCommands) {
+        if (supportsSlashCommands && !disabled) {
           updateSlashMenu(nextValue);
           refreshSlashCommands(nextValue);
         } else {
           resetSlashMenuState();
         }
       },
-      [setValue, refreshSlashCommands, resetSlashMenuState, supportsSlashCommands, updateSlashMenu],
+      [disabled, setValue, refreshSlashCommands, resetSlashMenuState, supportsSlashCommands, updateSlashMenu],
     );
 
     const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
       const isComposing = event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229;
       if (isComposing) return;
+      // Editable startup drafts keep normal text editing, including newlines,
+      // without executing slash commands or the send shortcut.
+      if (disabled) return;
 
       if (slashMenuOpen && slashMenuMode === 'args' && slashMenuArgItems.length > 0) {
         const len = slashMenuArgItems.length;
@@ -2928,7 +2936,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                   onPaste={handlePaste}
                   onContextMenu={handleContextMenu}
                   placeholder={effectivePlaceholder}
-                  disabled={disabled}
+                  disabled={disabled && !allowDraftWhileDisabled}
                   rows={isLarge ? 2 : 1}
                   className={textareaClass}
                   style={{ minHeight, maxHeight }}
@@ -3064,7 +3072,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                   onPaste={handlePaste}
                   onContextMenu={handleContextMenu}
                   placeholder={effectivePlaceholder}
-                  disabled={disabled}
+                  disabled={disabled && !allowDraftWhileDisabled}
                   rows={1}
                   className={textareaClass}
                 />
@@ -3128,6 +3136,9 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             )}
           </div>
         </div>
+        {disabled && disabledMessage && (
+          <p role="status" className="px-3 pb-2 text-xs text-secondary">{disabledMessage}</p>
+        )}
         {/* Context menu for textarea */}
         {contextMenuPos && (
           <div

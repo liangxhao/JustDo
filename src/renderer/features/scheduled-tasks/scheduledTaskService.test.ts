@@ -152,6 +152,25 @@ describe('ScheduledTaskService', () => {
     expect(resolveVisibleResultTaskId([task], null)).toBeNull();
   });
 
+  test('retains the last task inventory and reports an unsuccessful native read', async () => {
+    const task = createTask();
+    store.dispatch(setTasks([task]));
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      value: {
+        electron: {
+          scheduledTasks: {
+            list: vi.fn().mockResolvedValue({ success: false, error: 'Gateway unavailable' }),
+          },
+        },
+      },
+    });
+    await new ScheduledTaskService().loadTasks();
+    expect(store.getState().scheduledTask.tasks).toEqual([task]);
+    expect(store.getState().scheduledTask.error).toBe('Gateway unavailable');
+    expect(store.getState().scheduledTask.loading).toBe(false);
+  });
+
   test('marks all results read globally so the action matches the global unread count', async () => {
     const markAllResultsRead = vi.fn().mockResolvedValue({ success: true, unreadCount: 0 });
     Object.defineProperty(globalThis, 'window', {

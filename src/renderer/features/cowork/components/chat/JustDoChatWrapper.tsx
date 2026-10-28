@@ -22,6 +22,7 @@ import {
 } from 'react';
 import { useSelector } from 'react-redux';
 
+import { useEngineReadiness } from '@/app/shell/startup/routing/useEngineReadiness';
 import ChatMessageDisplay from '@/features/cowork/components/chat/ChatMessageDisplay';
 import {
   buildGoalRunProgress,
@@ -230,6 +231,9 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
     },
     ref,
   ) => {
+    const engineReadiness = useEngineReadiness();
+    const engineReadyRef = useRef(engineReadiness.ready);
+    engineReadyRef.current = engineReadiness.ready;
     const currentSession = useSelector(selectCurrentSession) as CoworkSession | null;
     const currentSessionId = currentSession?.id;
     const activeProductSessionId = useRef(currentSessionId);
@@ -248,6 +252,11 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
     const branchCreationPendingRef = useRef(currentSession?.branchCreationPending === true);
     branchCreationPendingRef.current = currentSession?.branchCreationPending === true;
     const assertSessionMutationAllowed = useCallback(() => {
+      if (!engineReadyRef.current) {
+        throw Object.assign(new Error(i18nService.t('coworkErrorEngineNotReady')), {
+          requestSent: false,
+        });
+      }
       if (branchCreationPendingRef.current) {
         throw Object.assign(new Error(i18nService.t('coworkBranchCreationPending')), {
           requestSent: false,
@@ -518,6 +527,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
     const publishHistoryPresentationRef = useRef<(() => void) | null>(null);
     const [controller, setController] = useState<ChatController | null>(null);
     const connectedRef = useRef(false);
+    const connectingControllerRef = useRef<ChatController | null>(null);
     const onActivityChangeRef = useRef(onActivityChange);
     const queuedInputsCallback = useRef(onQueuedInputsChange);
     queuedInputsCallback.current = onQueuedInputsChange;
@@ -916,35 +926,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
       }
       publishHistoryPresentation();
 
-      // Cancellation flag: React StrictMode double-fires mount effects.
-      // If the cleanup runs before connectToGateway resolves, we must
-      // disconnect the zombie controller that would otherwise survive.
-      let cancelled = false;
-
-      // Connect to gateway with proper error state tracking
-      connectToGateway(controller)
-        .then(success => {
-          if (cancelled) {
-            debugLog(
-              '[JustDoChatWrapper] connectToGateway resolved after cleanup — disconnecting zombie',
-            );
-            controller.disconnect();
-            return;
-          }
-          if (success) {
-            connectedRef.current = true;
-            setConnectionError(null);
-          } else {
-            setConnectionError('Failed to connect to OpenClaw gateway');
-          }
-        })
-        .catch((err: unknown) => {
-          if (cancelled) return;
-          setConnectionError(err instanceof Error ? err.message : 'Unknown connection error');
-        });
-
       return () => {
-        cancelled = true;
         summaryObserver.dispose();
         summaryObserverRef.current = null;
         summaryResourcesCallback.current?.(null);
@@ -974,6 +956,36 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
         connectedRef.current = false;
       };
     }, []);
+
+    const connectController = useCallback((target: ChatController) => {
+      if (controllerRef.current !== target || connectedRef.current ||
+        connectingControllerRef.current === target) return;
+      connectingControllerRef.current = target;
+      setConnectionError(null);
+      void connectToGateway(target)
+        .then(success => {
+          if (controllerRef.current !== target) {
+            // A StrictMode remount or unmount retires this exact controller.
+            target.disconnect();
+            return;
+          }
+          if (success) connectedRef.current = true;
+          else setConnectionError('Failed to connect to OpenClaw gateway');
+        })
+        .catch((error: unknown) => {
+          if (controllerRef.current === target)
+            setConnectionError(error instanceof Error ? error.message : 'Unknown connection error');
+        })
+        .finally(() => {
+          if (connectingControllerRef.current === target) connectingControllerRef.current = null;
+        });
+    }, []);
+
+    useEffect(() => {
+      // Only the first connection waits for startup admission. Once connected,
+      // the existing client owns reconnects and preserves this controller.
+      if (engineReadiness.ready && controller) connectController(controller);
+    }, [connectController, controller, engineReadiness.ready]);
 
     useEffect(() => {
       const controller = controllerRef.current;
@@ -1024,6 +1036,18 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
       publishHistoryPresentationRef.current?.();
     }, [canonicalSessionKey, currentSessionId]);
 
+    if (!connectedRef.current && !engineReadiness.ready) {
+      return (
+        <div
+          className={`${className ?? ''} flex min-h-0 flex-1 items-center justify-center gap-2 px-4 text-sm text-secondary`}
+          role={engineReadiness.failed ? 'alert' : 'status'}
+        >
+          <span>{i18nService.t(engineReadiness.failed ? 'engineUnavailableContent' : 'enginePreparingContent')}</span>
+          {engineReadiness.pending && <LoadingDots />}
+        </div>
+      );
+    }
+
     if (connectionError) {
       return (
         <div
@@ -1035,16 +1059,8 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
             <button
               type="button"
               onClick={() => {
-                setConnectionError(null);
                 const controller = controllerRef.current;
-                if (controller) {
-                  connectToGateway(controller)
-                    .then(success => {
-                      if (success) connectedRef.current = true;
-                      else setConnectionError('Retry failed');
-                    })
-                    .catch(() => setConnectionError('Retry failed'));
-                }
+                if (controller && engineReadyRef.current) connectController(controller);
               }}
               className="px-3 py-1.5 text-xs rounded bg-surface-raised hover:bg-surface-raised/80 transition-colors"
             >

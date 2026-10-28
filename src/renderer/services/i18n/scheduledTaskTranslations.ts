@@ -2,6 +2,7 @@ export const scheduledTaskTranslations = {
   zh: {
     // 定时任务
     scheduledTasks: '定时任务',
+    scheduledTasksLoadFailed: '无法读取定时任务，请刷新后重试。',
     scheduledTasksFormScheduleModeAt: '指定时间',
     scheduledTasksFormWeekSun: '周日',
     scheduledTasksFormWeekMon: '周一',
@@ -311,6 +312,7 @@ export const scheduledTaskTranslations = {
   en: {
     // Scheduled Tasks
     scheduledTasks: 'Scheduled Tasks',
+    scheduledTasksLoadFailed: 'Could not load scheduled tasks. Refresh to try again.',
     scheduledTasksFormScheduleModeAt: 'At',
     scheduledTasksFormWeekSun: 'Sunday',
     scheduledTasksFormWeekMon: 'Monday',

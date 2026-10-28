@@ -7,6 +7,8 @@ import {
 import type { LocalSpeechModelKind } from '@shared/speech/localSpeechModels';
 import React, { useEffect, useState } from 'react';
 
+import EngineInteractionBoundary from '@/app/shell/startup/routing/EngineInteractionBoundary';
+import { useEngineReadiness } from '@/app/shell/startup/routing/useEngineReadiness';
 import ExtensionsManager from '@/features/plugins/extensions/ExtensionsManager';
 import HookManager from '@/features/plugins/hooks/HookManager';
 import { MarketplaceToolbarSlot } from '@/features/plugins/marketplace/MarketplaceToolbarSlot';
@@ -68,13 +70,17 @@ const PluginsView: React.FC<PluginsViewProps> = ({
   isActive,
   onNewChat,
 }) => {
+  const engine = useEngineReadiness();
+  const [hasAdmittedEngine, setHasAdmittedEngine] = useState(false);
   const [activeTab, setActiveTab] = useState<PluginTab>('extensions');
   const [searchQuery, setSearchQuery] = useState('');
   const [toolbarSlot, setToolbarSlot] = useState<HTMLDivElement | null>(null);
   const [requestedExtensionId, setRequestedExtensionId] = useState<string>();
   useEffect(() => {
+    if (!engine.ready) return;
+    setHasAdmittedEngine(true);
     void mcpService.loadExtensionServers().catch(() => undefined);
-  }, []);
+  }, [engine.ready]);
   const openExtensionDetail = (extensionId: string) => {
     setRequestedExtensionId(extensionId);
     setActiveTab('extensions');
@@ -162,6 +168,7 @@ const PluginsView: React.FC<PluginsViewProps> = ({
                       key={tab}
                       type="button"
                       onClick={() => setActiveTab(tab)}
+                      disabled={!engine.ready && hasAdmittedEngine}
                       aria-pressed={active}
                       title={tabDescriptions[tab]}
                       className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors ${
@@ -178,42 +185,58 @@ const PluginsView: React.FC<PluginsViewProps> = ({
                   );
                 })}
               </nav>
-              <div ref={setToolbarSlot} className="ml-auto" />
+              <div
+                ref={setToolbarSlot}
+                className="ml-auto"
+                {...(!engine.ready ? { inert: '' } : {})}
+              />
             </div>
           </div>
 
           <PluginOperationStatus />
+          {!engine.ready && (
+            <p
+              role="status"
+              className="mt-5 rounded-xl bg-surface px-4 py-5 text-sm text-secondary"
+            >
+              {i18nService.t(engine.failed ? 'engineUnavailableContent' : 'enginePreparingContent')}
+            </p>
+          )}
           <div className="mt-5">
-            <MarketplaceToolbarSlot.Provider value={toolbarSlot}>
-              {activeTab === 'extensions' && (
-                <ExtensionsManager
-                  onOpenRuntime={onOpenRuntime}
-                  onManageSpeechModels={onManageSpeechModels}
-                  isActive={isActive}
-                  searchQuery={searchQuery}
-                  visibility="all"
-                  requestedExtensionId={requestedExtensionId}
-                  onRequestedExtensionHandled={() => setRequestedExtensionId(undefined)}
-                />
-              )}
-              {activeTab === 'skills' && (
-                <SkillsManager searchQuery={searchQuery} visibility="all" />
-              )}
-              {activeTab === 'mcp' && (
-                <McpManager
-                  searchQuery={searchQuery}
-                  visibility="all"
-                  onOpenExtension={openExtensionDetail}
-                />
-              )}
-              {activeTab === 'hooks' && (
-                <HookManager
-                  searchQuery={searchQuery}
-                  visibility="all"
-                  onOpenExtension={openExtensionDetail}
-                />
-              )}
-            </MarketplaceToolbarSlot.Provider>
+            {(engine.ready || hasAdmittedEngine) && (
+              <EngineInteractionBoundary disabled={!engine.ready}>
+                <MarketplaceToolbarSlot.Provider value={toolbarSlot}>
+                  {activeTab === 'extensions' && (
+                    <ExtensionsManager
+                      onOpenRuntime={onOpenRuntime}
+                      onManageSpeechModels={onManageSpeechModels}
+                      isActive={isActive}
+                      searchQuery={searchQuery}
+                      visibility="all"
+                      requestedExtensionId={requestedExtensionId}
+                      onRequestedExtensionHandled={() => setRequestedExtensionId(undefined)}
+                    />
+                  )}
+                  {activeTab === 'skills' && (
+                    <SkillsManager searchQuery={searchQuery} visibility="all" />
+                  )}
+                  {activeTab === 'mcp' && (
+                    <McpManager
+                      searchQuery={searchQuery}
+                      visibility="all"
+                      onOpenExtension={openExtensionDetail}
+                    />
+                  )}
+                  {activeTab === 'hooks' && (
+                    <HookManager
+                      searchQuery={searchQuery}
+                      visibility="all"
+                      onOpenExtension={openExtensionDetail}
+                    />
+                  )}
+                </MarketplaceToolbarSlot.Provider>
+              </EngineInteractionBoundary>
+            )}
           </div>
         </div>
       </main>

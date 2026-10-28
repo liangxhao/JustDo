@@ -134,4 +134,6 @@ export type AppInitializationState = {
   tasks?: Partial<Record<AppInitializationTask, AppInitializationTaskStatus>>;
   /** Shell readiness may precede this Normal-startup authenticated engine preparation. */
   enginePreparationPending?: boolean;
+  /** A recoverable engine failure does not invalidate the usable application shell. */
+  enginePreparationFailure?: StartupFailure;
 };

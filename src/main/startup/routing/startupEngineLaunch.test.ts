@@ -61,6 +61,7 @@ function fixture(route: StartupRoute, configReady = true, delayServices = false)
     AppInitializationActivity, AppInitializationPhase, AppInitializationStep, AppInitializationTask, AppInitializationTaskStatus, StartupRoute,
     initialization: {
       advance: vi.fn(), reportActivity: vi.fn(), setEnginePreparationPending: pending, setTaskStatus: vi.fn(),
+      failEnginePreparation: vi.fn(),
       getState: () => ({ phase: AppInitializationPhase.Preparing }),
       fail: vi.fn(),
       runOptionalTask: async (_label: string, run: () => Promise<void>) => { await run(); },
@@ -76,6 +77,7 @@ function fixture(route: StartupRoute, configReady = true, delayServices = false)
     getAppServerIntegrationService: () => ({ start: async () => { calls.push('server'); } }),
     waitForAppServerShutdown: async () => {},
     appServerIntegrationService: undefined, agentBridgeServer: undefined,
+    t: (key: string) => key,
   };
   const execute = new Function(...Object.keys(context), `return (async () => {
     let startupHistoryAdmissionReady = false;
@@ -93,7 +95,6 @@ test('ordinary startup launches Gateway before local integrations without waitin
   const f = fixture(StartupRoute.Normal, true, true);
   const owner = await f.run();
   expect(f.calls).toEqual(['gateway', 'browser']);
-  expect(f.pending).toHaveBeenCalledWith(true);
   expect(owner.generation()).toBeUndefined();
   f.finish({ phase: 'running' });
   await owner.engine;
@@ -125,6 +126,20 @@ test('ordinary startup does not launch an engine using failed configuration', as
   expect(f.calls).toEqual(['browser', 'cli', 'bridge', 'server']);
   expect(owner.engine).toBeUndefined();
   expect(f.pending).not.toHaveBeenCalled();
+  expect(f.context.initialization.failEnginePreparation).toHaveBeenCalledWith(expect.any(Error));
+});
+
+test('an unexpected ordinary integration failure does not invalidate the usable shell', async () => {
+  const f = fixture(StartupRoute.Normal);
+  f.context.startBrowserExtensionIngress = async () => { throw new Error('integration initialization failed'); };
+  const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+  try {
+    const owner = await f.run();
+    await expect(owner.integrations).rejects.toThrow('integration initialization failed');
+    expect(f.context.initialization.fail).not.toHaveBeenCalled();
+    f.finish({ phase: 'running' });
+    await owner.engine;
+  } finally { error.mockRestore(); }
 });
 
 test('failed local integration setup remains separate from the running engine', async () => {

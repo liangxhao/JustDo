@@ -19,6 +19,11 @@ import { getPluginOperationOwner } from '@/features/plugins/shared/pluginOperati
 
 import ExtensionsManager from './ExtensionsManager';
 
+vi.mock('@/app/shell/startup/routing/useEngineReadiness', () => ({
+  getEngineReadinessSnapshot: () => ({ ready: true }),
+  subscribeEngineReadiness: () => vi.fn(),
+}));
+
 vi.mock('@/features/plugins/marketplace/MarketplaceView', () => ({
   MarketplaceResults: ({
     controller,

@@ -1,16 +1,23 @@
 // @vitest-environment jsdom
 import type { ScheduledTask } from '@shared/scheduledTask/types';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { afterEach, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, expect, test, vi } from 'vitest';
+
+import { scheduledTaskService } from '@/features/scheduled-tasks/scheduledTaskService';
 
 import { CronView } from './CronView';
 
+const engine = vi.hoisted(() => ({ ready: true, pending: false, failed: false }));
+vi.mock('@/app/shell/startup/routing/useEngineReadiness', () => ({
+  useEngineReadiness: () => engine,
+}));
+vi.mock('./ResultInbox', () => ({ default: () => <div>result-inbox</div> }));
 const state = {
   model: { availableModels: [] },
   scheduledTask: {
     tasks: [] as ScheduledTask[],
     loading: false,
-    error: null,
+    error: null as string | null,
     unreadResultCount: 0,
     runs: {},
   },
@@ -52,7 +59,75 @@ vi.mock('./SchedulerSettingsDialog', () => ({
 afterEach(() => {
   cleanup();
   state.scheduledTask.tasks = [];
+  state.scheduledTask.error = null;
   state.agent.agents = [];
+});
+beforeEach(() => {
+  Object.assign(engine, { ready: true, pending: false, failed: false });
+  vi.clearAllMocks();
+});
+
+test('allows task navigation while preparation defers native reads and content', () => {
+  Object.assign(engine, { ready: false, pending: true });
+  const getSchedulerSettings = vi.fn();
+  Object.defineProperty(window, 'electron', {
+    configurable: true,
+    value: { platform: 'win32', scheduledTasks: { getSchedulerSettings } },
+  });
+  const { rerender } = render(<CronView />);
+  expect(screen.getByRole('status').textContent).toBe('enginePreparingContent');
+  expect(screen.queryByText('cronEmptyTitle')).toBeNull();
+  expect(screen.queryByText('cronNewTask')).toBeNull();
+  expect(
+    (screen.getByRole('button', { name: 'schedulerSettingsTitle' }) as HTMLButtonElement).disabled,
+  ).toBe(true);
+  fireEvent.click(screen.getByRole('button', { name: 'scheduledTasksTabResults' }));
+  expect(screen.queryByText('result-inbox')).toBeNull();
+  expect(scheduledTaskService.loadTasks).not.toHaveBeenCalled();
+  expect(getSchedulerSettings).not.toHaveBeenCalled();
+
+  Object.assign(engine, { pending: false, failed: true });
+  rerender(<CronView />);
+  expect(screen.getByRole('status').textContent).toBe('engineUnavailableContent');
+  Object.assign(engine, { ready: true, failed: false });
+  getSchedulerSettings.mockResolvedValue({ success: false });
+  rerender(<CronView />);
+  expect(screen.getByText('result-inbox')).toBeTruthy();
+  expect(scheduledTaskService.loadTasks).toHaveBeenCalledOnce();
+});
+
+test('preserves a task draft while restart preparation blocks its native actions', () => {
+  Object.defineProperty(window, 'electron', {
+    configurable: true,
+    value: { platform: 'win32', scheduledTasks: {} },
+  });
+  const { rerender } = render(<CronView />);
+  fireEvent.click(screen.getByRole('button', { name: 'cronNewTask' }));
+  const input = screen.getByPlaceholderText('cronDialogTaskNamePlaceholder') as HTMLInputElement;
+  fireEvent.change(input, { target: { value: 'Unsaved report' } });
+  Object.assign(engine, { ready: false, pending: true });
+  rerender(<CronView />);
+  expect(input.closest('[inert]')).toBeTruthy();
+  const resultTab = screen.getByRole('button', { name: 'scheduledTasksTabResults' }) as HTMLButtonElement;
+  expect(resultTab.disabled).toBe(true);
+  fireEvent.click(resultTab);
+  expect(screen.queryByText('result-inbox')).toBeNull();
+  Object.assign(engine, { ready: true, pending: false });
+  rerender(<CronView />);
+  expect(screen.getByPlaceholderText('cronDialogTaskNamePlaceholder')).toBe(input);
+  expect(input.value).toBe('Unsaved report');
+  expect(input.closest('[inert]')).toBeNull();
+});
+
+test('does not report an empty inventory after a failed initial task read', () => {
+  state.scheduledTask.error = 'Gateway unavailable';
+  Object.defineProperty(window, 'electron', {
+    configurable: true,
+    value: { platform: 'win32', scheduledTasks: {} },
+  });
+  render(<CronView />);
+  expect(screen.getByText('Gateway unavailable')).toBeTruthy();
+  expect(screen.queryByText('cronEmptyTitle')).toBeNull();
 });
 
 test('removes a deleted assistant from skill review members when the roster refreshes', async () => {

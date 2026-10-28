@@ -302,6 +302,7 @@ import { WindowsSandboxService } from './security/windowsSandboxService';
 import { LocalSpeechModelService } from './speech/localSpeechModelService';
 import { registerHistoryRecoveryHandlers } from './startup/history/historyRecovery';
 import { NativeHistoryRuntime } from './startup/history/nativeHistoryRuntime';
+import { StartupEnginePreparation } from './startup/initialization/startupEnginePreparation';
 import { registerStartupSupportHandlers } from './startup/initialization/startupSupport';
 import { StartupCoordinator } from './startup/routing/startupCoordinator';
 import { NativeDatabaseUpgradeRuntime } from './startup/upgrade/nativeDatabaseUpgradeRuntime';
@@ -582,6 +583,7 @@ let browserExtensionChatServer: BrowserExtensionChatServer | null = null;
 let storeInitPromise: Promise<SqliteStore> | null = null;
 let openClawEngineManager: OpenClawEngineManager | null = null;
 let startupHistoryAdmissionReady = false;
+let startupEnginePreparationController: StartupEnginePreparation | undefined;
 let openClawDirectoryOperations: ManagedDirectoryOperationCoordinator | null = null;
 let outboundHeaderPolicyService: OutboundHeaderPolicyService | null = null;
 let openClawExtensionImportService: OpenClawExtensionImportService | null = null;
@@ -728,6 +730,7 @@ const bindOpenClawStatusForwarder = (): void => {
   if (openClawStatusForwarderBound) return;
   const manager = getOpenClawEngineManager();
   manager.on('status', status => {
+    startupEnginePreparationController?.observe(status);
     forwardOpenClawStatus(status);
   });
   openClawStatusForwarderBound = true;
@@ -766,7 +769,7 @@ const getEngineNotReadyResponse = (status: OpenClawEngineStatus) => {
   };
 };
 
-const ensureOpenClawRunningForCowork = async (
+const prepareOpenClawExecution = async (
   options: { prepareComputerForSend?: boolean } = {},
 ) => {
   bindOpenClawGatewayPortProxyBypass();
@@ -778,6 +781,18 @@ const ensureOpenClawRunningForCowork = async (
       getOpenClawConfigSyncService().verifyExecutionPermissionPolicy(options),
   });
 };
+
+const ensureOpenClawRunningForCowork = (
+  options: { prepareComputerForSend?: boolean } = {},
+): Promise<OpenClawEngineStatus> => startupEnginePreparationController
+  ? startupEnginePreparationController.run(() => prepareOpenClawExecution(options))
+  : prepareOpenClawExecution(options);
+
+const getStartupEngineNotReadyResponse = () =>
+  startupEnginePreparationController && !startupEnginePreparationController.isReady()
+    ? getEngineNotReadyResponse({ ...getOpenClawEngineManager().getStatus(),
+      message: t('enginePreparationPending') })
+    : undefined;
 
 const getCoworkStore = () => {
   if (!coworkStore) {
@@ -1742,6 +1757,7 @@ if (agentBridgeArgv) {
     },
   });
   registerCoworkSessionExecutionHandlers({
+    getStartupEngineNotReadyResponse,
     workspaceAppSessions,
     getMainWindow: () => mainWindow,
     getAgentTeamLaunch,
@@ -1755,6 +1771,7 @@ if (agentBridgeArgv) {
   });
 
   registerCoworkSessionHandlers({
+    getStartupEngineNotReadyResponse,
     onSessionsChanged: notifyCoworkSessionsChanged,
     workspaceAppSessions,
     getAgentTeamLaunch,
@@ -2088,6 +2105,7 @@ if (agentBridgeArgv) {
       ]),
       retireGateway: () => openClawEngineManager?.stopGateway(),
       retireRemainingServices: () => settleCleanupTasks([
+        () => startupEnginePreparationController?.settle(),
         () => embeddedBrowserGatewayBridge?.revoke(),
         () => browserAgentBridge.stop(), () => outboundHeaderProxy?.stop(),
       ]),
@@ -2329,6 +2347,16 @@ if (agentBridgeArgv) {
     initialization.reportActivity(AppInitializationActivity.Database);
     store = await initStore();
     if (appShutdown.isQuitting()) return;
+    // Engine construction requires the admitted Store. Keep startup state IPC
+    // available before this point so preparation failures remain readable.
+    if (startupCoordinator.route === StartupRoute.Normal) {
+      startupEnginePreparationController = new StartupEnginePreparation({
+        initialization,
+        manager: getOpenClawEngineManager(),
+        isQuitting: () => appShutdown.isQuitting(),
+        prepare: prepareOpenClawExecution,
+      });
+    }
     initialization.setTaskStatus(AppInitializationTask.UserData, AppInitializationTaskStatus.Complete);
     mainWindow = null;
     registerContentSecurityPolicy({
@@ -2564,9 +2592,13 @@ if (agentBridgeArgv) {
     if (appShutdown.isQuitting()) return;
     const normalStartup = startupCoordinator.route === StartupRoute.Normal;
     const startStartupEngine = async (): Promise<void> => {
-      if (!startupSync?.success || !startupHistoryAdmissionReady || appShutdown.isQuitting()) return;
+      if (appShutdown.isQuitting()) return;
+      if (!startupSync?.success || !startupHistoryAdmissionReady) {
+        if (normalStartup) initialization.failEnginePreparation(
+          new Error(startupSync?.error || t('enginePreparationFailed')));
+        return;
+      }
       initialization.reportActivity(AppInitializationActivity.EngineStart);
-      if (normalStartup) initialization.setEnginePreparationPending(true);
       const startEngine = initialization.runOptionalTask('start assistant engine', async () => {
         const status = await ensureOpenClawRunningForCowork();
         if (status.phase !== 'running') {
@@ -2626,7 +2658,7 @@ if (agentBridgeArgv) {
       console.error('[AppInitialization] Local integration preparation failed:', error);
       if (!appShutdown.isQuitting()) {
         initialization.setTaskStatus(AppInitializationTask.Integrations, AppInitializationTaskStatus.Failed);
-        initialization.fail(error);
+        if (!normalStartup) initialization.fail(error);
       }
     });
     if (!normalStartup) await startupIntegrationPreparation;
@@ -2766,10 +2798,9 @@ if (agentBridgeArgv) {
           completeEnginePreparation();
         startupCoordinator.complete();
         await initialization.complete();
-        // Keep the original App mounting time while its existing overlay waits for execution admission.
-        if (!startupEnginePreparation || initialization.getState().firstLaunch) return;
-        await startupEnginePreparation;
-        completeEnginePreparation();
+        // The same preparation remains owned by cleanup; its domain failure does not close the shell.
+        if (startupEnginePreparation && !initialization.getState().firstLaunch)
+          await startupEnginePreparation;
       }
     })
     .catch(error => {

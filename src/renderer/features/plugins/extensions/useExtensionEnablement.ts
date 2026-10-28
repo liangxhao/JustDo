@@ -1,5 +1,10 @@
 import { useSyncExternalStore } from 'react';
 
+import {
+  getEngineReadinessSnapshot,
+  subscribeEngineReadiness,
+} from '@/app/shell/startup/routing/useEngineReadiness';
+
 export interface ExtensionEnablement {
   loaded: boolean;
   enabled: ReadonlyMap<string, boolean>;
@@ -50,6 +55,7 @@ function startObserving(): void {
   let changeRevision = 0;
   const changes = new Map<string, { revision: number; enabled: boolean }>();
   const refresh = async () => {
+    if (!getEngineReadinessSnapshot().ready) return;
     const request = ++requestRevision;
     const observedChange = changeRevision;
     try {
@@ -84,10 +90,18 @@ function startObserving(): void {
           ),
     });
   });
+  let wasReady = getEngineReadinessSnapshot().ready;
+  const stopEngine = subscribeEngineReadiness(() => {
+    const ready = getEngineReadinessSnapshot().ready;
+    if (!ready) requestRevision += 1;
+    if (ready && !wasReady) void refresh();
+    wasReady = ready;
+  });
   window.addEventListener('focus', refresh);
   stopObserving = () => {
     active = false;
     stop();
+    stopEngine();
     window.removeEventListener('focus', refresh);
   };
   void refresh();

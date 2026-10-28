@@ -30,6 +30,7 @@ import { cancelAgentTeamLaunchWithoutWaiting } from './agentTeamLaunchCancellati
 import { captureInitialDispatchLease, NativeSessionDispatcher } from './nativeSessionDispatch';
 
 interface SessionExecutionHandlerDependencies {
+  getStartupEngineNotReadyResponse?: () => { success: boolean; code: string; error: string } | undefined;
   workspaceAppSessions?: WorkspaceAppSessions;
   getMainWindow?: () => BrowserWindow | null;
   getAgentTeamLaunch?: () => AgentTeamLaunchCoordinator;
@@ -86,6 +87,7 @@ const resolveConfiguredInitialModelRef = (requested: string): string | undefined
 };
 
 export const registerCoworkSessionExecutionHandlers = ({
+  getStartupEngineNotReadyResponse,
   ensureEngineRunning,
   getCoworkStore,
   getCoworkEngineRouter,
@@ -178,6 +180,8 @@ export const registerCoworkSessionExecutionHandlers = ({
       if (!options || typeof options.prompt !== 'string' || !hasMessageInput(options)) {
         return { success: false, error: 'Prompt is required.' };
       }
+      const startupUnavailable = getStartupEngineNotReadyResponse?.();
+      if (startupUnavailable) return startupUnavailable;
       if (options.modelRef !== undefined && (
         typeof options.modelRef !== 'string' || !options.modelRef.trim() ||
         !options.modelRef.trim().includes('/')
@@ -246,6 +250,8 @@ export const registerCoworkSessionExecutionHandlers = ({
       }
       await Promise.race([waitForConfigUpdates(), ...(operation ? [operation.cancellation] : [])]);
       if (operation?.cancelled) return { success: false, cancelled: true };
+      const startupAfterConfig = getStartupEngineNotReadyResponse?.();
+      if (startupAfterConfig) return startupAfterConfig;
       const store = getCoworkStore();
       const agentId = options.agentId || MAIN_USER_AGENT_ID;
       if (agentId !== MAIN_USER_AGENT_ID && store.getConfig().allowMainAgentSwitch !== true) {
@@ -265,6 +271,8 @@ export const registerCoworkSessionExecutionHandlers = ({
         ...(operation ? [operation.cancellation.then((): null => null)] : []),
       ]);
       if (!engineStatus || operation?.cancelled) return { success: false, cancelled: true };
+      const startupAfterEngine = getStartupEngineNotReadyResponse?.();
+      if (startupAfterEngine) return startupAfterEngine;
       if (engineStatus.phase !== 'running') {
         return getEngineNotReadyResponse(engineStatus);
       }

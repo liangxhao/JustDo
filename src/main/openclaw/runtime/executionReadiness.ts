@@ -1,3 +1,4 @@
+import { t } from '../../core/i18n';
 import type { OpenClawEngineManager, OpenClawEngineStatus } from './openclawEngineManager';
 
 type ExecutionReadinessDependencies = {
@@ -23,6 +24,8 @@ export async function ensureExecutionReady({
 
   const verification = await verifyPermissionPolicy();
   if (verification.success) return manager.getStatus();
+  if ((verification.status ?? manager.getStatus()).phase === 'running')
+    throw new Error(verification.error || t('enginePreparationFailed'));
   return verification.status ?? manager.setExternalError(
     verification.error || 'The active Gateway permission policy is unavailable.',
   );

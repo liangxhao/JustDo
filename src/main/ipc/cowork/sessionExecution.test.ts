@@ -42,6 +42,36 @@ vi.mock('electron', () => ({
 
 import { registerCoworkSessionExecutionHandlers } from './sessionExecution';
 
+test('rejects startup input before waiting for config or starting the engine', async () => {
+  const waitForConfigUpdates = vi.fn(() => new Promise<void>(() => {}));
+  const ensureEngineRunning = vi.fn();
+  const getCoworkStore = vi.fn();
+  registerCoworkSessionExecutionHandlers({
+    getStartupEngineNotReadyResponse: () => ({ success: false, code: 'ENGINE_NOT_READY', error: 'starting' }),
+    ensureEngineRunning, getCoworkStore, getCoworkEngineRouter: vi.fn(),
+    waitForConfigUpdates, getEngineNotReadyResponse: vi.fn(),
+  });
+  await expect(handlers.get('cowork:session:start')!({}, { prompt: 'Draft to keep' }))
+    .resolves.toMatchObject({ success: false, code: 'ENGINE_NOT_READY' });
+  expect(waitForConfigUpdates).not.toHaveBeenCalled();
+  expect(ensureEngineRunning).not.toHaveBeenCalled();
+  expect(getCoworkStore).not.toHaveBeenCalled();
+});
+
+test('rechecks engine preparation after config waiting without silently queuing a send', async () => {
+  let pending = false;
+  const ensureEngineRunning = vi.fn();
+  registerCoworkSessionExecutionHandlers({
+    getStartupEngineNotReadyResponse: () => pending
+      ? { success: false, code: 'ENGINE_NOT_READY', error: 'starting' } : undefined,
+    ensureEngineRunning, getCoworkStore: vi.fn(), getCoworkEngineRouter: vi.fn(),
+    waitForConfigUpdates: async () => { pending = true; }, getEngineNotReadyResponse: vi.fn(),
+  });
+  await expect(handlers.get('cowork:session:start')!({}, { prompt: 'Draft to keep' }))
+    .resolves.toMatchObject({ success: false, code: 'ENGINE_NOT_READY' });
+  expect(ensureEngineRunning).not.toHaveBeenCalled();
+});
+
 test('keeps Team launch hooks when the first message is delegated to its current viewer', async () => {
   const created = session('ask');
   const frame = { url: 'http://127.0.0.1:43127/' };

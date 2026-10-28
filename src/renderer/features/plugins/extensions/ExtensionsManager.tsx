@@ -25,6 +25,7 @@ import { LOCAL_TTS_PROVIDER_ID } from '@shared/speech/localTts';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
+import { getEngineReadinessSnapshot } from '@/app/shell/startup/routing/useEngineReadiness';
 import { OPEN_TEAM_RECORDS } from '@/features/cowork/components/display/summary/agentTeamHistory';
 import {
   canToggleExtension,
@@ -42,6 +43,7 @@ import {
   MarketplaceFilter,
   usePluginMarketplace,
 } from '@/features/plugins/marketplace/usePluginMarketplace';
+import { observeDeferredInventoryRefresh } from '@/features/plugins/shared/deferredInventoryRefresh';
 import OperationResultModal, {
   type OperationResult,
 } from '@/features/plugins/shared/OperationResultModal';
@@ -324,7 +326,7 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
         } catch (error) {
           if (!isCurrent()) return inventoryMounted.current ? latestInventoryRead.current : null;
           setInventoryReady(false);
-          if (options.reportFailure !== false)
+          if (options.reportFailure !== false && getEngineReadinessSnapshot().ready)
             setActionOutcome({
               type: 'error',
               title: i18nService.t('extensionListFailed'),
@@ -347,6 +349,9 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
   useEffect(() => {
     inventoryMounted.current = true;
     void loadExtensions();
+    const refresh = observeDeferredInventoryRefresh(() => {
+      void loadExtensions({ reportFailure: false });
+    });
     const stop = window.electron.extensions.onChanged(event => {
       if (!inventoryMounted.current) return;
       if (event.extensionId === OpenClawExtensionId.AGENT_TEAM && !event.enabled)
@@ -356,7 +361,7 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
           extension.id === event.extensionId ? { ...extension, enabled: event.enabled } : extension,
         ),
       );
-      void loadExtensions({ reportFailure: false });
+      refresh.request();
     });
     return () => {
       const pending = pendingReviewRef.current;
@@ -367,6 +372,7 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
       inventoryGeneration.current += 1;
       latestInventoryRead.current = null;
       stop();
+      refresh.dispose();
     };
   }, [loadExtensions]);
 
@@ -374,7 +380,7 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
   useEffect(() => {
     const reactivated = isActive && !previouslyActive.current;
     previouslyActive.current = isActive;
-    if (reactivated) void loadExtensions();
+    if (reactivated && getEngineReadinessSnapshot().ready) void loadExtensions();
   }, [isActive, loadExtensions]);
 
   useEffect(() => {

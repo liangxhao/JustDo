@@ -54,7 +54,20 @@ test('keeps Normal engine preparation pending across shell readiness and publish
     phase: AppInitializationPhase.Ready, enginePreparationPending: false,
   });
   initialization.setEnginePreparationPending(true);
-  expect(initialization.getState().enginePreparationPending).toBe(false);
+  expect(initialization.getState().enginePreparationPending).toBe(true);
+});
+
+test('an engine failure preserves the usable shell and clears when a retry begins', async () => {
+  const initialization = new AppInitialization(temporaryRoot(), StartupRoute.Normal, vi.fn());
+  expect(initialization.getState().enginePreparationPending).toBe(true);
+  await initialization.complete();
+  initialization.failEnginePreparation(new Error('Permission preparation failed'));
+  expect(initialization.getState()).toMatchObject({ phase: AppInitializationPhase.Ready,
+    enginePreparationPending: false,
+    enginePreparationFailure: { error: { message: 'Permission preparation failed' } } });
+  initialization.setEnginePreparationPending(true);
+  expect(initialization.getState()).toMatchObject({ phase: AppInitializationPhase.Ready,
+    enginePreparationPending: true, enginePreparationFailure: undefined });
 });
 
 test.each([StartupRoute.Fresh, StartupRoute.Migration, StartupRoute.Upgrade])(

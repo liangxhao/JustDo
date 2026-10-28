@@ -13,6 +13,7 @@ import { createPortal } from 'react-dom';
 
 import { HookEntry, HookListResult } from '@/features/plugins/hooks/hook';
 import { hookService } from '@/features/plugins/hooks/hookService';
+import { observeDeferredInventoryRefresh } from '@/features/plugins/shared/deferredInventoryRefresh';
 import ExtensionBadge from '@/features/plugins/shared/ExtensionBadge';
 import { getPluginArtworkTone } from '@/features/plugins/shared/pluginArtwork';
 import PluginCard from '@/features/plugins/shared/PluginCard';
@@ -109,14 +110,18 @@ const HookManager: React.FC<HookManagerProps> = ({
       setIsLoading(false);
     };
     loadHooks();
-    const stop = window.electron.extensions.onChanged(() => {
+    const refresh = observeDeferredInventoryRefresh(() => {
       void loadHooks(true);
+    });
+    const stop = window.electron.extensions.onChanged(() => {
+      refresh.request();
     });
     return () => {
       isActive = false;
       mounted.current = false;
       inventoryReadGeneration.current += 1;
       stop();
+      refresh.dispose();
     };
   }, []);
 

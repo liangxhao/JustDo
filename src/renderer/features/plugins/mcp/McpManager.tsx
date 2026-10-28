@@ -34,6 +34,7 @@ import McpServerFormModal from '@/features/plugins/mcp/McpServerFormModal';
 import { mcpService } from '@/features/plugins/mcp/mcpService';
 import { setMcpServers } from '@/features/plugins/mcp/mcpSlice';
 import { MCP_TRANSPORT_BADGE_COLORS } from '@/features/plugins/mcp/mcpTransport';
+import { observeDeferredInventoryRefresh } from '@/features/plugins/shared/deferredInventoryRefresh';
 import { getPluginArtworkTone } from '@/features/plugins/shared/pluginArtwork';
 import PluginGroupSection from '@/features/plugins/shared/PluginGroupSection';
 import type { PluginHubManagerProps } from '@/features/plugins/shared/pluginHubTypes';
@@ -271,7 +272,7 @@ const McpManager: React.FC<McpManagerProps> = ({
       if (isCurrent() || isProviderCurrent()) setIsLoadingServers(false);
     };
     void loadServers();
-    const stop = window.electron.extensions.onChanged(() => {
+    const refresh = observeDeferredInventoryRefresh(() => {
       if (isActive) {
         invalidateConnectionResults();
         setExtensionServers([]);
@@ -279,6 +280,7 @@ const McpManager: React.FC<McpManagerProps> = ({
         void loadServers();
       }
     });
+    const stop = window.electron.extensions.onChanged(refresh.request);
     return () => {
       isActive = false;
       mounted.current = false;
@@ -288,6 +290,7 @@ const McpManager: React.FC<McpManagerProps> = ({
       formGeneration.current += 1;
       inventoryGeneration.current += 1;
       stop();
+      refresh.dispose();
     };
   }, [dispatch, invalidateConnectionResults]);
 

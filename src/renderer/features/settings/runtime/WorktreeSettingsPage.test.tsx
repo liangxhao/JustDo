@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, test, vi } from 'vitest';
 
 import WorktreeSettingsPage from './WorktreeSettingsPage';
@@ -7,9 +7,11 @@ import WorktreeSettingsPage from './WorktreeSettingsPage';
 vi.mock('./WorktreePolicySettings', () => ({ default: () => null }));
 
 const mocks = vi.hoisted(() => ({
+  engine: { ready: true, pending: false, failed: false },
   state: { cowork: { config: { showWorktreeCheckbox: false } } },
   updateConfig: vi.fn(),
 }));
+vi.mock('@/app/shell/startup/routing/useEngineReadiness', () => ({ useEngineReadiness: () => mocks.engine }));
 vi.mock('react-redux', () => ({
   useSelector: (selector: (state: typeof mocks.state) => unknown) => selector(mocks.state),
 }));
@@ -24,6 +26,66 @@ afterEach(() => {
   vi.unstubAllGlobals();
   mocks.updateConfig.mockReset();
   mocks.state.cowork.config.showWorktreeCheckbox = false;
+  mocks.engine = { ready: true, pending: false, failed: false };
+});
+
+test('opens without native list errors during startup and loads after execution admission', async () => {
+  const list = vi.fn().mockResolvedValue({ success: true, value: [] });
+  vi.stubGlobal('electron', { openclaw: { worktrees: { list } } });
+  mocks.engine = { ready: false, pending: true, failed: false };
+  const view = render(<WorktreeSettingsPage />);
+  expect(screen.getByRole('status').textContent).toBe('enginePreparingContent');
+  expect(screen.queryByText('worktreeEmpty')).toBeNull();
+  expect(list).not.toHaveBeenCalled();
+  mocks.engine = { ready: true, pending: false, failed: false };
+  view.rerender(<WorktreeSettingsPage />);
+  await screen.findByText('worktreeEmpty');
+  expect(list).toHaveBeenCalledOnce();
+  const checkbox = screen.getByRole('checkbox');
+  mocks.engine = { ready: false, pending: true, failed: false };
+  view.rerender(<WorktreeSettingsPage />);
+  expect(checkbox.closest('[inert]')).not.toBeNull();
+  mocks.engine = { ready: true, pending: false, failed: false };
+  view.rerender(<WorktreeSettingsPage />);
+  expect(screen.getByRole('checkbox')).toBe(checkbox);
+  await waitFor(() => expect(list).toHaveBeenCalledTimes(2));
+});
+
+test('rejects a retired list result and reloads once the engine recovers', async () => {
+  let finishRetiredRead!: (value: unknown) => void;
+  const list = vi.fn()
+    .mockReturnValueOnce(new Promise(resolve => { finishRetiredRead = resolve; }))
+    .mockResolvedValue({ success: true, value: [] });
+  vi.stubGlobal('electron', { openclaw: { worktrees: { list } } });
+  const view = render(<WorktreeSettingsPage />);
+  mocks.engine = { ready: false, pending: true, failed: false };
+  view.rerender(<WorktreeSettingsPage />);
+  await act(async () => finishRetiredRead({ success: false, error: 'retired connection' }));
+  expect(screen.queryByRole('alert')).toBeNull();
+  mocks.engine = { ready: true, pending: false, failed: false };
+  view.rerender(<WorktreeSettingsPage />);
+  await screen.findByText('worktreeEmpty');
+  expect(list).toHaveBeenCalledTimes(2);
+  expect(screen.queryByRole('alert')).toBeNull();
+});
+
+test('defers recovery reads until a submitted cleanup has settled without replaying it', async () => {
+  let finishCleanup!: (value: unknown) => void;
+  const list = vi.fn().mockResolvedValue({ success: true, value: [] });
+  const clean = vi.fn(() => new Promise(resolve => { finishCleanup = resolve; }));
+  vi.stubGlobal('electron', { openclaw: { worktrees: { list, clean } } });
+  const view = render(<WorktreeSettingsPage />);
+  await screen.findByText('worktreeEmpty');
+  fireEvent.click(screen.getByRole('button', { name: 'worktreeClean' }));
+  mocks.engine = { ready: false, pending: true, failed: false };
+  view.rerender(<WorktreeSettingsPage />);
+  mocks.engine = { ready: true, pending: false, failed: false };
+  view.rerender(<WorktreeSettingsPage />);
+  expect(list).toHaveBeenCalledOnce();
+  await act(async () => finishCleanup({ success: false, error: 'cleanup outcome unknown' }));
+  await waitFor(() => expect(list).toHaveBeenCalledTimes(2));
+  expect(clean).toHaveBeenCalledOnce();
+  expect(screen.getByRole('alert').textContent).toBe('cleanup outcome unknown');
 });
 
 test('defaults to hiding the checkbox and persists the visibility preference', async () => {

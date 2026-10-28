@@ -8,6 +8,11 @@ const { currentConfig } = vi.hoisted(() => ({
   currentConfig: { onlineModelProviders: {}, voice: {} } as Record<string, unknown>,
 }));
 
+vi.mock('@/app/shell/startup/routing/useEngineReadiness', () => ({
+  getEngineReadinessSnapshot: () => ({ ready: true }),
+  subscribeEngineReadiness: () => vi.fn(),
+}));
+
 vi.mock('@/services/i18n', () => ({
   i18nService: { t: (key: string) => key },
 }));

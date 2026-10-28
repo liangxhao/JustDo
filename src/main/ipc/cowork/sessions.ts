@@ -58,6 +58,7 @@ import {
 import { deleteBoundNativeSession } from './sessionDeletion';
 
 interface SessionHandlerDependencies {
+  getStartupEngineNotReadyResponse?: () => { success: boolean; code: string; error: string } | undefined;
   workspaceAppSessions?: WorkspaceAppSessions;
   getAgentTeamLaunch?: () => AgentTeamLaunchCoordinator;
   getCollaboration?: () => CollaborationCoordinator;
@@ -133,6 +134,7 @@ const isRestartCheckpoint = (timing: SessionRunTiming | undefined): boolean =>
   timing.startedAt === timing.endedAt;
 
 export const registerCoworkSessionHandlers = ({
+  getStartupEngineNotReadyResponse,
   getCoworkStore,
   getCoworkEngineRouter,
   setSessionPermissionMode,
@@ -557,6 +559,8 @@ export const registerCoworkSessionHandlers = ({
       (input.agentTeamPrompt !== undefined && typeof input.agentTeamPrompt !== 'string')
     )
       return { success: false, error: 'Invalid session run input.' };
+    const startupUnavailable = getStartupEngineNotReadyResponse?.();
+    if (startupUnavailable) return startupUnavailable;
     if (
       getCollaboration?.().isSourceDeleting(input.sessionId) ||
       getCollaboration?.().read(input.sessionId).room?.deleting
@@ -640,6 +644,13 @@ export const registerCoworkSessionHandlers = ({
         getCollaboration?.().isSourceDeleting(input.sessionId)
       )
         throw new Error('collaborationDeletePending');
+      const startupBeforeAdmission = getStartupEngineNotReadyResponse?.();
+      if (startupBeforeAdmission) {
+        if (input.agentTeamPrompt)
+          await getAgentTeamLaunch?.().cancel(input.sessionId, input.clientTurnId)
+            .catch((): void => undefined);
+        return startupBeforeAdmission;
+      }
       idleConfirmations.delete(input.sessionId);
       terminalOutcomes.delete(input.sessionId);
       finalizedOutcomes.delete(input.sessionId);

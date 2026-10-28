@@ -8,6 +8,9 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
 import Settings from './Settings';
 
+vi.mock('@/app/shell/startup/routing/useEngineReadiness', () => ({
+  useEngineReadiness: () => ({ ready: true, pending: false, failed: false }),
+}));
 vi.mock('@/app/shell/window/WindowHeader', () => ({ default: () => null }));
 vi.mock('./preferences/GeneralSettingsPage', () => ({
   GeneralSettingsPage: () => <p>General preferences</p>,

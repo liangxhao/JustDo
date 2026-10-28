@@ -4,7 +4,6 @@ import '../initialization/StartupDiagnostics.css';
 import {
   AppInitializationPhase,
   type AppInitializationState,
-  AppInitializationTaskStatus,
 } from '@shared/app/initialization';
 import { StartupRoute } from '@shared/app/startup/routing';
 import {
@@ -152,10 +151,11 @@ export default function AppInitializationGate({ children }: { children: React.Re
     };
   }, [firstLaunch, route]);
   const mainReady = state?.phase === AppInitializationPhase.Ready;
-  const mainTasksPending = (route ?? state?.route) === StartupRoute.Normal &&
-    Object.values(state?.tasks ?? {}).some(status =>
-      status === AppInitializationTaskStatus.Waiting || status === AppInitializationTaskStatus.Running);
-  const loading = !rendererReady || !mainReady || mainTasksPending || state?.enginePreparationPending === true ||
+  // Ordinary launches expose the usable shell while Main continues preparing AI
+  // capabilities. Installation and upgrade admission retain their original wait.
+  const engineBlocksPresentation = (route ?? state?.route) !== StartupRoute.Normal &&
+    state?.enginePreparationPending === true;
+  const loading = !rendererReady || !mainReady || engineBlocksPresentation ||
     Boolean(rendererError) || Boolean(readError);
   const historyReady =
     !loading &&

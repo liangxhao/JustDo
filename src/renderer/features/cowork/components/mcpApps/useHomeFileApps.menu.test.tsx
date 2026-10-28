@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import { AppInitializationPhase } from '@shared/app/initialization';
+import { StartupRoute } from '@shared/app/startup/routing';
 import { EnginePhase } from '@shared/openclaw/engineStatus';
 import type { McpAppDiscovery } from '@shared/plugins/mcpApps';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
@@ -145,6 +147,11 @@ beforeEach(() => {
   f.onConfigSyncDone.mockReturnValue(() => {});
   f.onExtensionsChanged.mockReturnValue(() => {});
   vi.stubGlobal('electron', {
+    initialization: {
+      getState: async () => ({ phase: AppInitializationPhase.Ready,
+        route: StartupRoute.Normal, enginePreparationPending: false }),
+      onChanged: () => () => {},
+    },
     openclaw: {
       engine: {
         getStatus: vi.fn().mockResolvedValue({

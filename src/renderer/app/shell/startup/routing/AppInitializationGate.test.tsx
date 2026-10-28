@@ -232,7 +232,7 @@ test.each([true, false])(
   },
 );
 
-test('loads the Normal workspace at shell Ready while engine preparation still covers the home page', async () => {
+test('reveals the Normal workspace while authenticated engine preparation is still pending', async () => {
   const read = deferred<AppInitializationState>();
   const state = { ...snapshot(false), route: StartupRoute.Normal,
     phase: AppInitializationPhase.Ready, enginePreparationPending: true };
@@ -248,18 +248,16 @@ test('loads the Normal workspace at shell Ready while engine preparation still c
   await act(async () => workspace.resolve());
   expect(screen.getByText('workspace ready')).toBeTruthy();
   emit({ ...status, phase: 'running' });
-  // A stale snapshot and an early HTTP Running event cannot clear Main's pending evidence.
+  // An old snapshot cannot replace the live pending state, but neither blocks the shell.
   await act(async () => read.resolve({ ...state, enginePreparationPending: false }));
-  expect(surface()?.style.visibility).toBe('hidden');
-  expect(surface()?.hasAttribute('inert')).toBe(true);
-  expect(surface()?.getAttribute('aria-hidden')).toBe('true');
-  expect(view.container.querySelector('.initialization-overlay')).toBeTruthy();
-  api.emit({ ...state, enginePreparationPending: false });
   await waitFor(() => expect(view.container.querySelector('.initialization-overlay')).toBeNull());
+  expect(surface()?.hasAttribute('inert')).toBe(false);
+  expect(surface()?.getAttribute('aria-hidden')).toBe('false');
+  api.emit(state);
   expect(surface()?.hasAttribute('inert')).toBe(false);
 });
 
-test('keeps an unconfirmed Normal engine preparation in the existing startup failure view', async () => {
+test('keeps the Normal workspace mounted when background engine admission fails', async () => {
   const state = { ...snapshot(false), route: StartupRoute.Normal,
     phase: AppInitializationPhase.Ready, enginePreparationPending: true };
   const api = bridge(false, Promise.resolve(state));
@@ -267,14 +265,16 @@ test('keeps an unconfirmed Normal engine preparation in the existing startup fai
     <AppInitializationGate><WorkspaceProbe completion={Promise.resolve()} /></AppInitializationGate>,
   );
   await screen.findByText('workspace ready');
-  api.emit({ ...state, phase: AppInitializationPhase.Failed, error: 'Execution admission unconfirmed' });
-  expect(view.container.querySelector('[data-application-surface]')).toBeNull();
-  expect(view.container.querySelector('.initialization-overlay')).toBeTruthy();
-  expect(screen.getByRole('alert').textContent).toContain('Execution admission unconfirmed');
+  await waitFor(() => expect(view.container.querySelector('.initialization-overlay')).toBeNull());
+  api.emit({ ...state, enginePreparationPending: false, enginePreparationFailure:
+    captureStartupFailure(StartupFailureSource.Main, new Error('Execution admission unconfirmed')) });
+  expect(view.container.querySelector('[data-application-surface]')).toBeTruthy();
+  expect(view.container.querySelector('.initialization-overlay')).toBeNull();
+  expect(screen.getByText('workspace ready')).toBeTruthy();
 });
 
 test.each([AppInitializationTaskStatus.Complete, AppInitializationTaskStatus.Failed])(
-  'mounts the Normal workspace while integrations run and waits for their %s status independently of engine preparation',
+  'keeps Normal navigation usable while background integrations settle as %s',
   async terminal => {
     const state = { ...snapshot(false), route: StartupRoute.Normal,
       phase: AppInitializationPhase.Ready, enginePreparationPending: true,
@@ -293,23 +293,14 @@ test.each([AppInitializationTaskStatus.Complete, AppInitializationTaskStatus.Fai
     await act(async () => workspace.resolve());
     await screen.findByText('workspace ready');
     emit({ ...status, phase: 'running' });
-    const statuses = () => [...view.container.querySelectorAll('.startup-step')]
-      .map(step => step.getAttribute('data-status'));
-    expect(statuses()).toEqual(['complete', 'complete', 'complete', 'running', 'complete']);
-    expect(screen.getByRole('heading', { level: 2 }).textContent).toBe('startupActivity_engineStart');
-    expect(screen.queryByText('startupRenderer_conversations')).toBeNull();
-
-    api.emit({ ...state, enginePreparationPending: false });
-    expect(screen.getByRole('heading', { level: 2 }).textContent).toBe('startupActivity_integrations');
-    await act(async () => { await new Promise(resolve => setTimeout(resolve, 700)); });
-    expect(view.container.querySelector('.initialization-overlay')).toBeTruthy();
-    expect(view.container.querySelector('[data-application-surface]')?.hasAttribute('inert')).toBe(true);
+    await waitFor(() => expect(view.container.querySelector('.initialization-overlay')).toBeNull());
+    expect(view.container.querySelector('[data-application-surface]')?.hasAttribute('inert')).toBe(false);
 
     const integrationsSettled = { ...state, tasks: {
       ...state.tasks, [AppInitializationTask.Integrations]: terminal,
     } };
     api.emit(integrationsSettled);
-    expect(view.container.querySelector('.initialization-overlay')).toBeTruthy();
+    expect(view.container.querySelector('.initialization-overlay')).toBeNull();
     api.emit({ ...integrationsSettled, enginePreparationPending: false });
     await waitFor(() => expect(view.container.querySelector('.initialization-overlay')).toBeNull());
     expect(view.container.querySelector('[data-application-surface]')?.hasAttribute('inert')).toBe(false);

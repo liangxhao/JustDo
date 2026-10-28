@@ -3,13 +3,22 @@ import { OpenClawExtensionId } from '@shared/plugins/nativeIds';
 import type { ComputerControlResult } from '@shared/security/computerControl';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { useEngineReadiness } from '@/app/shell/startup/routing/useEngineReadiness';
 import { i18nService } from '@/services/i18n';
 
+import EngineSettingsGate from '../EngineSettingsGate';
 import { ComputerOverlayPreviewSetting } from './ComputerOverlayPreviewSetting';
 
 const t = (key: string) => i18nService.t(key);
 
 export default function ComputerControlSettingsPage() {
+  return <EngineSettingsGate><ComputerControlSettings /></EngineSettingsGate>;
+}
+
+function ComputerControlSettings() {
+  const engine = useEngineReadiness();
+  const engineReady = useRef(engine.ready);
+  engineReady.current = engine.ready;
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -18,17 +27,22 @@ export default function ComputerControlSettingsPage() {
   const refreshPending = useRef(false);
   const readInFlight = useRef<Promise<ComputerControlResult> | null>(null);
   const revision = useRef(0);
+  const readEpoch = useRef(0);
+  const readFailed = useRef(false);
   const active = useRef(true);
   const invalidate = useCallback(() => {
     ++revision.current;
   }, []);
 
   const load = useCallback(async (clearError = true) => {
-    if (savingRef.current) {
+    if (!engineReady.current || savingRef.current) {
       refreshPending.current = true;
       return;
     }
     const request = ++revision.current;
+    const epoch = readEpoch.current;
+    const isCurrent = () => active.current && engineReady.current &&
+      request === revision.current && epoch === readEpoch.current;
     setLoading(true);
     if (clearError) setError(null);
     let pending: Promise<ComputerControlResult> | null = null;
@@ -37,20 +51,25 @@ export default function ComputerControlSettingsPage() {
       pending = readInFlight.current ?? window.electron.openclaw.computerControl.get();
       readInFlight.current = pending;
       const result = await pending;
-      if (!active.current || request !== revision.current) return;
-      if (result.success) setEnabled(result.enabled);
-      else {
+      if (!isCurrent()) return;
+      if (result.success) {
+        setEnabled(result.enabled);
+        if (readFailed.current) setError(null);
+        readFailed.current = false;
+      } else {
+        readFailed.current = true;
         setEnabled(null);
         setError(t('computerControlLoadFailed'));
       }
     } catch {
-      if (active.current && request === revision.current) {
+      if (isCurrent()) {
+        readFailed.current = true;
         setEnabled(null);
         setError(t('computerControlLoadFailed'));
       }
     } finally {
       if (readInFlight.current === pending) readInFlight.current = null;
-      if (active.current && request === revision.current) setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
   }, []);
 
@@ -67,7 +86,6 @@ export default function ComputerControlSettingsPage() {
       }
     });
     window.addEventListener('focus', refresh);
-    void load();
     return () => {
       active.current = false;
       invalidate();
@@ -76,12 +94,23 @@ export default function ComputerControlSettingsPage() {
     };
   }, [invalidate, load]);
 
+  useEffect(() => {
+    if (!engine.ready) {
+      readEpoch.current += 1;
+      readInFlight.current = null;
+      refreshPending.current = true;
+      return;
+    }
+    void load(false);
+  }, [engine.ready, load]);
+
   const toggle = async () => {
-    if (enabled === null || saving || savingRef.current) return;
+    if (!engineReady.current || enabled === null || saving || savingRef.current) return;
     const desired = !enabled;
     const request = ++revision.current;
     readInFlight.current = null;
     savingRef.current = true;
+    readFailed.current = false;
     refreshPending.current = false;
     setSaving(true);
     setError(null);

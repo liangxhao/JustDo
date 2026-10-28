@@ -1,11 +1,21 @@
 import type { WorktreeSettings } from '@shared/openclaw/worktrees';
-import { useCallback, useEffect, useId, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 
+import { useEngineReadiness } from '@/app/shell/startup/routing/useEngineReadiness';
 import { i18nService } from '@/services/i18n';
 
 const t = (key: string) => i18nService.t(key);
 
 export default function WorktreePolicySettings() {
+  const engine = useEngineReadiness();
+  const engineReady = useRef(engine.ready);
+  engineReady.current = engine.ready;
+  const active = useRef(true);
+  const readGeneration = useRef(0);
+  const mutationPending = useRef(false);
+  const refreshPending = useRef(false);
+  const readFailed = useRef(false);
+  const dirty = useRef(false);
   const rootId = useId();
   const [settings, setSettings] = useState<WorktreeSettings | null>(null);
   const [root, setRoot] = useState('');
@@ -16,6 +26,8 @@ export default function WorktreePolicySettings() {
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const busy = loading || saving || choosing;
+  dirty.current = Boolean(settings &&
+    ((root.trim() || null) !== settings.root || acceleration !== settings.acceleration));
 
   const accept = useCallback((value: WorktreeSettings) => {
     setSettings(value);
@@ -23,42 +35,82 @@ export default function WorktreePolicySettings() {
     setAcceleration(value.acceleration);
   }, []);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    setSaved(false);
+  const load = useCallback(async (preserveDraft = false) => {
+    if (!active.current) return;
+    if (!engineReady.current || mutationPending.current) {
+      refreshPending.current = true;
+      return;
+    }
+    refreshPending.current = false;
+    const generation = ++readGeneration.current;
+    if (!preserveDraft) {
+      setLoading(true);
+      setError(null);
+      setSaved(false);
+    }
+    const isCurrent = () => active.current && engineReady.current &&
+      generation === readGeneration.current;
     try {
       const result = await window.electron.openclaw.worktrees.getSettings();
-      if (result.success) accept(result.value);
-      else setError(t(`worktreeSettingsError_${result.code}`));
+      if (!isCurrent()) return;
+      if (result.success) {
+        // Retain the original CAS baseline with dirty drafts; recovery cannot rebase a write.
+        if (!preserveDraft || !dirty.current) accept(result.value);
+        if (readFailed.current) setError(null);
+        readFailed.current = false;
+      } else {
+        readFailed.current = true;
+        setError(t(`worktreeSettingsError_${result.code}`));
+      }
     } catch {
+      if (!isCurrent()) return;
+      readFailed.current = true;
       setError(t('worktreeSettingsError_unavailable'));
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
   }, [accept]);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    active.current = true;
+    if (engine.ready) void load(true);
+    else {
+      readGeneration.current += 1;
+      refreshPending.current = true;
+    }
+    return () => {
+      active.current = false;
+      readGeneration.current += 1;
+    };
+  }, [engine.ready, load]);
 
   const chooseDirectory = async () => {
+    if (!engineReady.current || mutationPending.current) return;
+    mutationPending.current = true;
+    readGeneration.current += 1;
     setChoosing(true);
     try {
       const result = await window.electron.dialog.selectDirectory();
       if (result.success && result.path) {
+        dirty.current = true;
         setRoot(result.path);
         setSaved(false);
       }
     } catch {
+      readFailed.current = false;
       setError(t('worktreeDirectoryChooseFailed'));
     } finally {
+      mutationPending.current = false;
       setChoosing(false);
+      if (refreshPending.current) void load(true);
     }
   };
 
   const save = async () => {
-    if (!settings) return;
+    if (!engineReady.current || mutationPending.current || !settings) return;
+    mutationPending.current = true;
+    readGeneration.current += 1;
+    readFailed.current = false;
     setSaving(true);
     setError(null);
     setSaved(false);
@@ -77,7 +129,9 @@ export default function WorktreePolicySettings() {
     } catch {
       setError(t('worktreeSettingsError_unavailable'));
     } finally {
+      mutationPending.current = false;
       setSaving(false);
+      if (refreshPending.current) void load(true);
     }
   };
 

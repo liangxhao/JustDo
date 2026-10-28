@@ -63,6 +63,7 @@ import ApplicationLoading, {
   useInitialWorkspaceReadiness,
 } from '@/app/shell/startup/routing/ApplicationLoading';
 import { RendererStartupActivity } from '@/app/shell/startup/routing/startupPresentation';
+import { getEngineReadinessSnapshot, useEngineReadiness } from '@/app/shell/startup/routing/useEngineReadiness';
 import {
   BROWSER_ANNOTATION_MAX_COUNT,
   BROWSER_ANNOTATION_MAX_IMAGE_BYTES,
@@ -196,7 +197,6 @@ import type {
   CoworkInteractionRequest,
   CoworkInteractionResult,
   CoworkSession,
-  OpenClawEngineStatus,
 } from '@/features/cowork/coworkTypes';
 import {
   buildSessionExportFileName,
@@ -455,7 +455,6 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     );
     return () => clearInterval(timer);
   }, []);
-  const openClawStatusRef = useRef<OpenClawEngineStatus | null>(null);
   const [subtaskSnapshot, setSubtaskSnapshot] = useState<{
     sessionId: string | null;
     tasks: Subtask[];
@@ -1021,6 +1020,11 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     }
   }, [sessionRunTimings]);
   const isOpenClawEngine = useSelector(selectIsOpenClawEngine);
+  const engineReadiness = useEngineReadiness();
+  const isEngineReady = !isOpenClawEngine || engineReadiness.ready;
+  const engineUnavailableMessage = isEngineReady ? undefined : i18nService.t(
+    engineReadiness.pending ? 'enginePreparingSend' : 'engineUnavailableSend',
+  );
   const agentState = useSelector((state: RootState) => state.agent);
   const availableModels = useSelector((state: RootState) => state.model.availableModels);
   const globalSelectedModel = useSelector((state: RootState) => state.model.selectedModel);
@@ -1199,17 +1203,8 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     return { noticeI18nKey: key, noticeExtra: error };
   };
 
-  const isOpenClawReadyForSession = (status: OpenClawEngineStatus | null): boolean => {
-    if (!status) return false;
-    return status.phase === 'running' || status.phase === 'ready';
-  };
-
   const ensureOpenClawReadyForSubmit = (): boolean => {
-    if (
-      !isOpenClawEngine ||
-      !openClawStatusRef.current ||
-      isOpenClawReadyForSession(openClawStatusRef.current)
-    ) {
+    if (!isOpenClawEngine || getEngineReadinessSnapshot().ready) {
       return true;
     }
     window.dispatchEvent(
@@ -1225,9 +1220,8 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
         await coworkService.init();
         if (!active) return;
         setStartupActivity(RendererStartupActivity.EngineStatus);
-        const initialEngineStatus = await coworkService.getOpenClawEngineStatus();
+        await coworkService.getOpenClawEngineStatus();
         if (!active) return;
-        if (initialEngineStatus) openClawStatusRef.current = initialEngineStatus;
         setIsInitialized(true);
       } catch (error) {
         console.error('[CoworkView] Workspace initialization failed:', error);
@@ -1236,13 +1230,8 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     };
     init();
 
-    const unsubscribeOpenClawStatus = coworkService.onOpenClawEngineStatus(status => {
-      openClawStatusRef.current = status;
-    });
-
     return () => {
       active = false;
-      unsubscribeOpenClawStatus();
     };
   }, [dispatch]);
 
@@ -2063,6 +2052,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   };
 
   const handleCreateTerminalTab = useCallback(() => {
+    if (isOpenClawEngine && !getEngineReadinessSnapshot().ready) return;
     if (terminalTabs.length >= MAX_TERMINAL_TABS) return;
     if (!terminalWorkingDirectory) {
       window.dispatchEvent(
@@ -2096,6 +2086,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     terminalTabs.length,
     terminalWorkingDirectory,
     currentSession?.id,
+    isOpenClawEngine,
   ]);
 
   const {
@@ -2313,10 +2304,6 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     );
   }
 
-  // Gateway lifecycle changes intentionally stay out of React state so a restart
-  // cannot force the chat transcript and prompt tree to re-render.
-  const isEngineReady = true;
-
   const homeConversationHeader = (
     <div className="cowork-workspace-header relative flex shrink-0 items-center justify-between border-b border-border px-2">
       <div className="h-7" />
@@ -2402,8 +2389,8 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
               })
             : undefined
         }
-        sideChatDisabled={Boolean(currentSessionId?.startsWith('temp-')) || !isOpenClawEngine}
-        terminalDisabled={!terminalWorkingDirectory || terminalTabs.length >= MAX_TERMINAL_TABS}
+        sideChatDisabled={!isEngineReady || Boolean(currentSessionId?.startsWith('temp-')) || !isOpenClawEngine}
+        terminalDisabled={!isEngineReady || !terminalWorkingDirectory || terminalTabs.length >= MAX_TERMINAL_TABS}
       />
     );
   };
@@ -3770,6 +3757,8 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                           pendingStartRef.current,
                         )}
                         isStreaming={currentSessionMainRunning}
+                        allowDraftWhileDisabled={!isEngineReady}
+                        disabledMessage={engineUnavailableMessage}
                         disabled={
                           !isEngineReady ||
                           isQuestionInputBlocked ||
@@ -4188,6 +4177,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       handleStopSession,
       isStreaming,
       isEngineReady,
+      engineUnavailableMessage,
       config,
       isDisplayPanelOpen,
       isWorkspaceDetached,

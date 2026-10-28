@@ -15,6 +15,7 @@ interface TestConnection {
   listeners: Set<() => void>;
 }
 const f = vi.hoisted(() => ({
+  engine: { ready: false, pending: false, failed: false },
   prepare: vi.fn<(host: TestHost) => Promise<TestHost>>(),
   discover: vi.fn<() => Promise<McpAppDiscovery>>(),
   launch: vi.fn(),
@@ -26,6 +27,9 @@ const f = vi.hoisted(() => ({
   initiallyConnected: true,
   configListeners: new Set<() => void>(),
   open: vi.fn(),
+}));
+vi.mock('@/app/shell/startup/routing/useEngineReadiness', () => ({
+  useEngineReadiness: () => f.engine,
 }));
 vi.mock('@/libs/openclaw-chat/gateway/mcp-app/mcp-workspace-session', () => ({
   McpWorkspaceSession: class {
@@ -72,7 +76,8 @@ afterEach(() => {
   f.configListeners.clear();
 });
 
-function setup(running = false) {
+function setup(running = false, prepare?: (host: TestHost) => Promise<TestHost>) {
+  f.engine = { ready: running, pending: false, failed: false };
   vi.stubGlobal('electron', {
     mcp: {
       onConfigSyncDone: (listener: () => void) => {
@@ -106,10 +111,10 @@ function setup(running = false) {
       },
     ],
   });
-  f.prepare.mockImplementation(async host => ({
+  f.prepare.mockImplementation(prepare ?? (async host => ({
     isCurrent: host.isCurrent,
     resume: () => ({ isCurrent: host.isCurrent }),
-  }));
+  })));
   f.launch.mockResolvedValue({ viewId: 'view' });
   const options = {
     currentSessionId: null as string | null,
@@ -124,6 +129,22 @@ function setup(running = false) {
   const request = { filePath: 'E:/workspace/预算.xlsx', isCurrent: () => true };
   return { ...hook, options, request };
 }
+
+test('waits through Running without execution admission and discovers once after preparation', async () => {
+  const h = setup();
+  f.engine = { ready: false, pending: true, failed: false };
+  h.rerender(h.options);
+  await act(async () => h.result.current.discover());
+  expect(await h.result.current.openFile(h.request)).toBe(false);
+  expect(f.prepare).not.toHaveBeenCalled();
+  expect(f.open).not.toHaveBeenCalled();
+  f.engine = { ready: true, pending: false, failed: false };
+  h.rerender(h.options);
+  await act(async () => {});
+  expect(f.prepare).toHaveBeenCalledOnce();
+  expect(f.discover).toHaveBeenCalledOnce();
+  expect(f.launch).not.toHaveBeenCalled();
+});
 
 test('keeps a stopped runtime lazy and opens files explicitly without mounting a chat', async () => {
   const { result, request } = setup();
@@ -430,9 +451,8 @@ test('an authenticated reconnect refreshes the home catalog without launching an
 
 test('a close before the first hello keeps the same preparation loading through authentication', async () => {
   f.initiallyConnected = false;
-  const { result } = setup(true);
   let finish!: (host: TestHost) => void;
-  f.prepare.mockImplementationOnce(
+  const { result } = setup(true,
     () =>
       new Promise(resolve => {
         finish = resolve;
@@ -463,9 +483,8 @@ test('a close before the first hello keeps the same preparation loading through 
 
 test('a terminal first connection failure ends the animation and exposes only an explicit retry', async () => {
   f.initiallyConnected = false;
-  const { result } = setup(true);
   let reject!: (error: Error) => void;
-  f.prepare.mockImplementationOnce(() => new Promise((_resolve, fail) => { reject = fail; }));
+  const { result } = setup(true, () => new Promise((_resolve, fail) => { reject = fail; }));
   await act(async () => {});
   act(() => {
     for (const listener of f.connections[0].listeners) listener();
@@ -480,9 +499,10 @@ test('a terminal first connection failure ends the animation and exposes only an
 
 test('remembers the first authenticated connection across a subscription change before a disconnect', async () => {
   f.initiallyConnected = false;
-  const h = setup(true);
   let finish!: (host: TestHost) => void;
-  f.prepare.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  const preparation = vi.fn<(host: TestHost) => Promise<TestHost>>(async host => host)
+    .mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  const h = setup(true, preparation);
   await act(async () => {});
   const connection = f.connections[0];
   act(() => {

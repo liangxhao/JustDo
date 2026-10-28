@@ -20,6 +20,11 @@ import TeamDiscussionView from './TeamDiscussionView';
 const pending = vi.hoisted(() => ({ requests: [] as Record<string, unknown>[] }));
 const speech = vi.hoisted(() => ({ callbacks: [] as Array<(text: string) => void> }));
 
+vi.mock('@/app/shell/startup/routing/useEngineReadiness', () => ({
+  getEngineReadinessSnapshot: () => ({ ready: true }),
+  subscribeEngineReadiness: () => vi.fn(),
+}));
+
 vi.mock('../collaboration/CollaborationMemberHistory', () => ({
   default: ({
     name,

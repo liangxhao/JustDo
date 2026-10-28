@@ -1,6 +1,7 @@
 import { beforeEach, expect, test, vi } from 'vitest';
 
 import { SessionRunBeginErrorCode } from '../../../shared/cowork/sessionRun';
+import type { AgentTeamLaunchCoordinator } from '../../cowork/agent-team/agentTeamLaunchCoordinator';
 import type { CoworkStore } from '../../data/coworkStore';
 import type { CoworkEngineRouter } from '../../engine';
 import {
@@ -17,7 +18,10 @@ import { registerCoworkSessionHandlers } from './sessions';
 
 beforeEach(() => handlers.clear());
 
-function fixture() {
+function fixture(
+  getStartupEngineNotReadyResponse?: () => { success: boolean; code: string; error: string } | undefined,
+  getAgentTeamLaunch?: () => AgentTeamLaunchCoordinator,
+) {
   const sessionId = '43795fc3-437a-4f60-b731-1d115d2b8787';
   const key = `agent:main:justdo:${sessionId}`;
   const source = { id: sessionId, agentId: 'main', cwd: '/workspace', permissionMode: 'ask',
@@ -53,12 +57,16 @@ function fixture() {
     rootRunIdBySession: new Map(), subagentStatusCache: new Map(),
   } as unknown as RuntimeSessionStatusContext;
   registerCoworkSessionHandlers({ getCoworkStore: () => store,
+    getStartupEngineNotReadyResponse,
+    getAgentTeamLaunch,
     getCoworkEngineRouter: () => ({ getSessionRuntimeStatus: (id: string, options: Parameters<typeof getSessionRuntimeStatus>[1]) =>
       getSessionRuntimeStatus.call(context, id, options) }) as CoworkEngineRouter,
     setSessionPermissionMode: vi.fn() });
   return { context, request, native, source, state, beginSessionRun, key, unknownRuns,
     checkpoint, getLatestSessionRun, finishSessionRun, reopenSessionRun,
-    send: () => handlers.get('cowork:session:run:begin')!({}, next) };
+    send: (agentTeamPrompt?: string) => handlers.get('cowork:session:run:begin')!({}, {
+      ...next, ...(agentTeamPrompt ? { agentTeamPrompt } : {}),
+    }) };
 }
 
 test('admits an existing main input from its current native row despite unrelated roster changes', async () => {
@@ -74,6 +82,38 @@ test('admits an existing main input from its current native row despite unrelate
   expect(f.request).toHaveBeenCalledExactlyOnceWith('sessions.describe', { key: f.key, agentId: 'main' });
   expect(f.context.getRuntimeSessionSnapshot).not.toHaveBeenCalled();
   expect(f.beginSessionRun).toHaveBeenCalledOnce();
+});
+
+test('rejects input immediately during engine preparation without waiting for native runtime reads', async () => {
+  let pending = true;
+  const f = fixture(() => pending ? { success: false, code: 'ENGINE_NOT_READY', error: 'starting' } : undefined);
+  await expect(f.send()).resolves.toMatchObject({ success: false, code: 'ENGINE_NOT_READY' });
+  expect(f.request).not.toHaveBeenCalled();
+  expect(f.beginSessionRun).not.toHaveBeenCalled();
+  pending = false;
+  await expect(f.send()).resolves.toMatchObject({ success: true });
+});
+
+test('rechecks startup admission after a native status read before creating a run receipt', async () => {
+  let pending = false;
+  const f = fixture(() => pending ? { success: false, code: 'ENGINE_NOT_READY', error: 'starting' } : undefined);
+  f.request.mockImplementation(async () => { pending = true; return { session: f.native }; });
+  await expect(f.send()).resolves.toMatchObject({ success: false, code: 'ENGINE_NOT_READY' });
+  expect(f.beginSessionRun).not.toHaveBeenCalled();
+});
+
+test('retires the exact Team reservation if startup admission changes while registration is in flight', async () => {
+  let pending = false;
+  const launch = {
+    releaseIfSettled: vi.fn().mockResolvedValue(true),
+    register: vi.fn(async () => { pending = true; }),
+    cancel: vi.fn().mockResolvedValue(undefined),
+  };
+  const f = fixture(() => pending ? { success: false, code: 'ENGINE_NOT_READY', error: 'starting' } : undefined,
+    () => launch as unknown as AgentTeamLaunchCoordinator);
+  await expect(f.send('Compare approaches')).resolves.toMatchObject({ success: false, code: 'ENGINE_NOT_READY' });
+  expect(launch.cancel).toHaveBeenCalledExactlyOnceWith(f.source.id, 'new-input');
+  expect(f.beginSessionRun).not.toHaveBeenCalled();
 });
 
 test.each(['accepted-run', 'replacement-checkpoint', 'removed'])(

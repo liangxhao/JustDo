@@ -1158,6 +1158,8 @@ export class OpenClawConfigSyncService {
         configSynced: true,
         status,
       }, { executionAdmission: true, initializeExecPolicy: needsStartupPolicy, ...options });
+      if (!verified.success && (verified.status ?? engineManager.getStatus()).phase === 'running')
+        throw new Error(verified.error || t('enginePreparationFailed'));
       if (verified.success && needsStartupPolicy) {
         void maintainStartupAuthProfiles({
           getGatewayClient: this.deps.getGatewayClient,

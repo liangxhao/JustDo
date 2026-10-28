@@ -24,6 +24,7 @@ import {
   MarketplaceFilter,
   usePluginMarketplace,
 } from '@/features/plugins/marketplace/usePluginMarketplace';
+import { observeDeferredInventoryRefresh } from '@/features/plugins/shared/deferredInventoryRefresh';
 import ExtensionBadge from '@/features/plugins/shared/ExtensionBadge';
 import OperationResultModal, {
   type OperationResult,
@@ -127,8 +128,11 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
       setInventoryReady(!skillService.hasInventoryReadFailed());
     });
     loadSkills();
-    const stopExtensionChanges = window.electron.extensions.onChanged(() => {
+    const refresh = observeDeferredInventoryRefresh(() => {
       void skillService.refreshInventoryAfterMutation();
+    });
+    const stopExtensionChanges = window.electron.extensions.onChanged(() => {
+      refresh.request();
     });
 
     return () => {
@@ -137,6 +141,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
       inventoryReadGeneration.current += 1;
       stopInventoryUpdates();
       stopExtensionChanges();
+      refresh.dispose();
     };
   }, [dispatch]);
 

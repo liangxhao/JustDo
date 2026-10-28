@@ -2,7 +2,7 @@
 import { type ExtensionChangedEvent } from '@shared/plugins/extensions';
 import { OpenClawExtensionId } from '@shared/plugins/nativeIds';
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
-import { afterEach, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
 import {
   getExtensionEnabled,
@@ -11,6 +11,21 @@ import {
   useExtensionEnablement,
 } from './useExtensionEnablement';
 
+const readiness = vi.hoisted(() => ({
+  ready: true,
+  listeners: new Set<() => void>(),
+}));
+vi.mock('@/app/shell/startup/routing/useEngineReadiness', () => ({
+  getEngineReadinessSnapshot: () => ({ ready: readiness.ready }),
+  subscribeEngineReadiness: (listener: () => void) => {
+    readiness.listeners.add(listener);
+    return () => readiness.listeners.delete(listener);
+  },
+}));
+
+beforeEach(() => {
+  readiness.ready = true;
+});
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
@@ -45,6 +60,63 @@ function fixture() {
 const catalog = (enabled: boolean) => ({
   success: true,
   extensions: [{ id: OpenClawExtensionId.SWARM_WORKFLOW, enabled }],
+});
+
+test('waits for execution admission and refreshes once for all entrances when the engine recovers', async () => {
+  readiness.ready = false;
+  const f = fixture();
+  f.list.mockResolvedValue(catalog(true));
+  const first = renderHook(useExtensionEnablement);
+  renderHook(useExtensionEnablement);
+  expect(first.result.current.loaded).toBe(false);
+  expect(f.list).not.toHaveBeenCalled();
+  expect(readiness.listeners.size).toBe(1);
+
+  await act(async () => {
+    readiness.ready = true;
+    readiness.listeners.forEach(listener => listener());
+  });
+  expect(first.result.current.loaded).toBe(true);
+  expect(f.list).toHaveBeenCalledOnce();
+
+  await act(async () => {
+    readiness.ready = false;
+    readiness.listeners.forEach(listener => listener());
+    window.dispatchEvent(new Event('focus'));
+  });
+  expect(f.list).toHaveBeenCalledOnce();
+  expect(getExtensionEnabled(first.result.current, OpenClawExtensionId.SWARM_WORKFLOW)).toBe(true);
+
+  await act(async () => {
+    readiness.ready = true;
+    readiness.listeners.forEach(listener => listener());
+  });
+  expect(f.list).toHaveBeenCalledTimes(2);
+});
+
+test('ignores a catalog read retired by a new preparation phase', async () => {
+  const f = fixture();
+  let resolve!: (value: ReturnType<typeof catalog>) => void;
+  f.list.mockImplementationOnce(
+    () =>
+      new Promise(done => {
+        resolve = done;
+      }),
+  );
+  const { result } = renderHook(useExtensionEnablement);
+  act(() => {
+    readiness.ready = false;
+    readiness.listeners.forEach(listener => listener());
+  });
+  await act(async () => resolve(catalog(true)));
+  expect(result.current.loaded).toBe(false);
+  f.list.mockResolvedValue(catalog(false));
+  await act(async () => {
+    readiness.ready = true;
+    readiness.listeners.forEach(listener => listener());
+  });
+  expect(result.current.loaded).toBe(true);
+  expect(getExtensionEnabled(result.current, OpenClawExtensionId.SWARM_WORKFLOW)).toBe(false);
 });
 
 test('retains disable revisions across a batched disable and enable for open UI retirement', async () => {

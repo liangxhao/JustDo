@@ -113,7 +113,7 @@ export class AppInitialization {
       startedAt,
       activityStartedAt: startedAt,
       updatedAt: startedAt,
-      ...(route === StartupRoute.Normal ? { tasks: {
+      ...(route === StartupRoute.Normal ? { enginePreparationPending: true, tasks: {
         [AppInitializationTask.UserData]: AppInitializationTaskStatus.Waiting,
         [AppInitializationTask.Configuration]: AppInitializationTaskStatus.Waiting,
         [AppInitializationTask.Integrations]: AppInitializationTaskStatus.Waiting,
@@ -214,9 +214,19 @@ export class AppInitialization {
 
   setEnginePreparationPending(pending: boolean): void {
     if (this.state.route !== StartupRoute.Normal || this.state.phase === AppInitializationPhase.Failed ||
-        (pending && this.state.phase !== AppInitializationPhase.Preparing) ||
-        this.state.enginePreparationPending === pending) return;
-    this.state = { ...this.state, enginePreparationPending: pending, updatedAt: Date.now() };
+        (this.state.enginePreparationPending === pending && (!pending || !this.state.enginePreparationFailure))) return;
+    this.state = { ...this.state, enginePreparationPending: pending,
+      ...(pending ? { enginePreparationFailure: undefined } : {}), updatedAt: Date.now() };
+    this.onChanged(this.getState());
+  }
+
+  failEnginePreparation(error: unknown): void {
+    if (this.state.route !== StartupRoute.Normal || this.state.phase === AppInitializationPhase.Failed) return;
+    const failure = captureStartupFailure(StartupFailureSource.Main, error, {
+      ...this.getFailureContext(), activity: AppInitializationActivity.EngineStart,
+    });
+    this.state = { ...this.state, enginePreparationPending: false,
+      enginePreparationFailure: failure, updatedAt: failure.occurredAt };
     this.onChanged(this.getState());
   }
 

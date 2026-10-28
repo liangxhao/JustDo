@@ -25,6 +25,9 @@ const fixture = vi.hoisted(() => ({
 vi.mock('react-redux', () => ({
   useSelector: () => fixture.session,
 }));
+vi.mock('@/app/shell/startup/routing/useEngineReadiness', () => ({
+  useEngineReadiness: () => ({ ready: true, pending: false, failed: false }),
+}));
 vi.mock('@/services/i18n', () => ({ i18nService: { t: (key: string) => key } }));
 vi.mock('./ChatMessageDisplay', async () => {
   const { useEffect, useRef } = await import('react');

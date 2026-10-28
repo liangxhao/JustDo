@@ -11,6 +11,11 @@ import { store } from '@/store';
 
 import CoworkPromptInput from './CoworkPromptInput';
 
+vi.mock('@/app/shell/startup/routing/useEngineReadiness', () => ({
+  getEngineReadinessSnapshot: () => ({ ready: true, pending: false, failed: false }),
+  subscribeEngineReadiness: () => () => {},
+}));
+
 const originalModels = store.getState().model.availableModels;
 const originalSelectedModel = store.getState().model.selectedModel;
 
@@ -39,6 +44,39 @@ test('the home composer keeps Apps out of the + menu', async () => {
   fireEvent.click(screen.getByRole('button', { name: i18nService.t('composerFeatures') }));
   expect(screen.queryByText(i18nService.t('mcpAppsTitle'))).toBeNull();
   expect(screen.queryByRole('menuitem', { name: 'draw.io' })).toBeNull();
+});
+
+test('keeps a startup draft editable without submitting or discovering slash commands until explicitly sent', async () => {
+  const models = [{ id: 'draft-model', name: 'Draft model', providerKey: 'draft-provider' }];
+  store.dispatch(setAvailableModels(models));
+  store.dispatch(setSelectedModel(models[0]));
+  const onSubmit = vi.fn(() => false);
+  const listSlashCommands = vi.fn().mockResolvedValue({ success: true, commands: [] });
+  vi.stubGlobal('electron', {
+    extensions: { list: vi.fn().mockResolvedValue({ success: true, extensions: [] }), onChanged: () => () => {} },
+    localAsr: { getStatus: vi.fn().mockResolvedValue({ available: false }) },
+    localSpeechModels: { onChanged: () => () => {} },
+    slashCommands: { list: listSlashCommands },
+  });
+  const composer = (disabled: boolean) => <Provider store={store}>
+    <CoworkPromptInput onSubmit={onSubmit} disabled={disabled} allowDraftWhileDisabled
+      disabledMessage="Engine preparing" />
+  </Provider>;
+  const view = render(composer(true));
+  const input = screen.getByRole('textbox') as HTMLTextAreaElement;
+  expect(input.disabled).toBe(false);
+  fireEvent.change(input, { target: { value: '/help my draft' } });
+  fireEvent.keyDown(input, { key: 'Enter' });
+  expect(onSubmit).not.toHaveBeenCalled();
+  expect(listSlashCommands).not.toHaveBeenCalled();
+  expect((screen.getByRole('button', { name: i18nService.t('coworkSendMessage') }) as HTMLButtonElement).disabled).toBe(true);
+  view.rerender(composer(false));
+  await act(async () => {});
+  expect(input.value).toBe('/help my draft');
+  expect(onSubmit).not.toHaveBeenCalled();
+  fireEvent.change(input, { target: { value: 'my draft' } });
+  fireEvent.click(screen.getByRole('button', { name: i18nService.t('coworkSendMessage') }));
+  await waitFor(() => expect(onSubmit).toHaveBeenCalledOnce());
 });
 
 test('keeps model clicks immediate and skips intermediate choices while native confirmation is pending', async () => {

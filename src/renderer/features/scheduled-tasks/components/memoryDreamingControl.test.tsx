@@ -26,6 +26,28 @@ const enabled = { memoryDreamingEnabled: true, memoryAvailable: true, skillMode:
 const emptyTasks: ScheduledTask[] = [];
 afterEach(cleanup);
 
+test('defers native system task reads and writes until execution admission', async () => {
+  const getSystemSettings = vi.fn().mockResolvedValue({ success: true, settings: enabled });
+  const updateSystemSettings = vi.fn().mockResolvedValue({ success: true });
+  Object.defineProperty(window, 'electron', {
+    configurable: true,
+    value: { scheduledTasks: { getSystemSettings, updateSystemSettings } },
+  });
+  const { result, rerender } = renderHook(
+    ({ ready }) => useMemoryDreamingControl(emptyTasks, ready),
+    { initialProps: { ready: false } },
+  );
+  expect(getSystemSettings).not.toHaveBeenCalled();
+  expect(await result.current.toggleSkills(false)).toBe(false);
+  expect(updateSystemSettings).not.toHaveBeenCalled();
+  rerender({ ready: true });
+  await waitFor(() => expect(result.current.settings).toEqual(enabled));
+  expect(getSystemSettings).toHaveBeenCalledOnce();
+  rerender({ ready: false });
+  expect(await result.current.toggle(false)).toBe(false);
+  expect(updateSystemSettings).not.toHaveBeenCalled();
+});
+
 test('retains a disabled feature card after the native job is removed without mutating task data', () => {
   const tasks = withMemoryDreamingCard(emptyTasks, { ...enabled, memoryDreamingEnabled: false });
   expect(tasks).toHaveLength(1);

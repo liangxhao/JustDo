@@ -18,6 +18,11 @@ import McpManager from './McpManager';
 import { mcpService } from './mcpService';
 import mcpReducer from './mcpSlice';
 
+vi.mock('@/app/shell/startup/routing/useEngineReadiness', () => ({
+  getEngineReadinessSnapshot: () => ({ ready: true }),
+  subscribeEngineReadiness: () => vi.fn(),
+}));
+
 vi.mock('@/features/plugins/marketplace/MarketplaceView', () => ({
   MarketplaceResults: () => null,
   default: () => null,

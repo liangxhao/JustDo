@@ -14,6 +14,9 @@ const fixture = vi.hoisted(() => ({
   session: { id: 'native-product-session', agentId: 'main', nativeSessionKey: '' },
 }));
 vi.mock('react-redux', () => ({ useSelector: () => fixture.session }));
+vi.mock('@/app/shell/startup/routing/useEngineReadiness', () => ({
+  useEngineReadiness: () => ({ ready: true, pending: false, failed: false }),
+}));
 vi.mock('@/services/i18n', () => ({ i18nService: { t: (key: string) => key } }));
 vi.mock('./ChatMessageDisplay', () => ({ default: () => <div /> }));
 

@@ -1,10 +1,12 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
 import WorktreePolicySettings from './WorktreePolicySettings';
 
 vi.mock('@/services/i18n', () => ({ i18nService: { t: (key: string) => key } }));
+const engine = vi.hoisted(() => ({ ready: true }));
+vi.mock('@/app/shell/startup/routing/useEngineReadiness', () => ({ useEngineReadiness: () => engine }));
 
 const value = {
   root: null,
@@ -17,6 +19,7 @@ const getSettings = vi.fn();
 const saveSettings = vi.fn();
 const selectDirectory = vi.fn();
 beforeEach(() => {
+  engine.ready = true;
   getSettings.mockReset().mockResolvedValue({ success: true, value });
   saveSettings.mockReset();
   selectDirectory.mockReset();
@@ -28,6 +31,69 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+});
+
+test('reconciles recovery reads while retaining a dirty draft and its original CAS revision', async () => {
+  saveSettings.mockResolvedValue({ success: false, code: 'conflict' });
+  const view = render(<WorktreePolicySettings />);
+  const input = await screen.findByRole('textbox');
+  fireEvent.change(input, { target: { value: 'E:\\draft' } });
+  engine.ready = false;
+  view.rerender(<WorktreePolicySettings />);
+  getSettings.mockResolvedValue({
+    success: true,
+    value: { ...value, root: 'E:\\external', effectiveRoot: 'E:\\external', revision: 'external' },
+  });
+  engine.ready = true;
+  view.rerender(<WorktreePolicySettings />);
+  await waitFor(() => expect(getSettings).toHaveBeenCalledTimes(2));
+  expect(screen.getByRole('textbox')).toBe(input);
+  expect((input as HTMLInputElement).value).toBe('E:\\draft');
+  fireEvent.click(screen.getByRole('button', { name: 'worktreeSaveSettings' }));
+  await screen.findByRole('alert');
+  expect(saveSettings).toHaveBeenCalledExactlyOnceWith({
+    root: 'E:\\draft', acceleration: true, revision: 'viewed',
+  });
+});
+
+test('retires an unavailable pre-restart read and accepts the recovered native settings', async () => {
+  let finishRetiredRead!: (value: unknown) => void;
+  getSettings.mockReturnValueOnce(new Promise(resolve => { finishRetiredRead = resolve; }));
+  const view = render(<WorktreePolicySettings />);
+  engine.ready = false;
+  view.rerender(<WorktreePolicySettings />);
+  await act(async () => finishRetiredRead({ success: false, code: 'unavailable' }));
+  expect(screen.queryByRole('alert')).toBeNull();
+  engine.ready = true;
+  view.rerender(<WorktreePolicySettings />);
+  await screen.findByRole('textbox');
+  expect(getSettings).toHaveBeenCalledTimes(2);
+  expect(saveSettings).not.toHaveBeenCalled();
+});
+
+test('keeps a submitted save owned through restart and only then performs the deferred read', async () => {
+  let finishSave!: (result: unknown) => void;
+  saveSettings.mockReturnValueOnce(new Promise(resolve => { finishSave = resolve; }));
+  const view = render(<WorktreePolicySettings />);
+  fireEvent.change(await screen.findByRole('textbox'), { target: { value: 'E:\\draft' } });
+  fireEvent.click(screen.getByRole('button', { name: 'worktreeSaveSettings' }));
+  engine.ready = false;
+  view.rerender(<WorktreePolicySettings />);
+  engine.ready = true;
+  view.rerender(<WorktreePolicySettings />);
+  expect(getSettings).toHaveBeenCalledOnce();
+  getSettings.mockResolvedValue({
+    success: true,
+    value: { ...value, root: 'E:\\draft', effectiveRoot: 'E:\\draft', revision: 'saved' },
+  });
+  await act(async () => finishSave({
+    success: true,
+    value: { ...value, root: 'E:\\draft', effectiveRoot: 'E:\\draft', revision: 'saved' },
+  }));
+  await screen.findByText('worktreeSettingsSaved');
+  expect(getSettings).toHaveBeenCalledTimes(2);
+  expect(saveSettings).toHaveBeenCalledOnce();
+  expect((screen.getByRole('textbox') as HTMLInputElement).value).toBe('E:\\draft');
 });
 
 test('shows default settings and actual directory without writing', async () => {

@@ -52,7 +52,7 @@ export function withMemoryDreamingCard(
   ];
 }
 
-export function useMemoryDreamingControl(tasks: ScheduledTask[]) {
+export function useMemoryDreamingControl(tasks: ScheduledTask[], enabled = true) {
   const [settings, setSettings] = useState<SystemTaskSettings | null>(null);
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
@@ -60,6 +60,7 @@ export function useMemoryDreamingControl(tasks: ScheduledTask[]) {
   const mutationPending = useRef(false);
   useEffect(() => {
     const current = ++generation.current;
+    if (!enabled) return;
     let disposed = false;
     void window.electron.scheduledTasks
       .getSystemSettings()
@@ -78,10 +79,10 @@ export function useMemoryDreamingControl(tasks: ScheduledTask[]) {
     return () => {
       disposed = true;
     };
-  }, [tasks]);
+  }, [tasks, enabled]);
   const update = useCallback(
     async (patch: SystemTaskSettingsPatch) => {
-      if (mutationPending.current || !settings) return false;
+      if (!enabled || mutationPending.current || !settings) return false;
       mutationPending.current = true;
       ++generation.current;
       setBusy(true);
@@ -97,7 +98,7 @@ export function useMemoryDreamingControl(tasks: ScheduledTask[]) {
         setBusy(false);
       }
     },
-    [settings],
+    [settings, enabled],
   );
   const toggle = useCallback(
     async (enabled: boolean) => {

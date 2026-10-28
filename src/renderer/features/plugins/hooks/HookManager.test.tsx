@@ -10,6 +10,11 @@ import type { HookEntry } from './hook';
 import HookManager from './HookManager';
 import { hookService } from './hookService';
 
+vi.mock('@/app/shell/startup/routing/useEngineReadiness', () => ({
+  getEngineReadinessSnapshot: () => ({ ready: true }),
+  subscribeEngineReadiness: () => vi.fn(),
+}));
+
 vi.mock('@/features/plugins/hooks/hookService', () => ({
   hookService: {
     loadHooks: vi.fn(async () => ({ success: true, hooks: [] })),

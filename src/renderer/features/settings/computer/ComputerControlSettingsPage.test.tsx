@@ -9,6 +9,9 @@ import { translations } from '@/services/i18n/translations';
 
 import ComputerControlSettingsPage from './ComputerControlSettingsPage';
 
+const engine = vi.hoisted(() => ({ ready: true, pending: false, failed: false }));
+vi.mock('@/app/shell/startup/routing/useEngineReadiness', () => ({ useEngineReadiness: () => engine }));
+
 vi.mock('@/services/config', () => ({
   configService: {
     getConfig: () => ({ computerOverlayRemotePreview: false }),
@@ -23,6 +26,9 @@ vi.mock('@/services/i18n', () => ({
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  engine.ready = true;
+  engine.pending = false;
+  engine.failed = false;
 });
 
 function setup(initial = false) {
@@ -53,6 +59,91 @@ function setup(initial = false) {
     },
   };
 }
+
+test('waits for engine admission before reading computer permissions and preserves the loaded form', async () => {
+  const api = setup(true);
+  engine.ready = false;
+  engine.pending = true;
+  const view = render(<ComputerControlSettingsPage />);
+  expect(screen.getByRole('status').textContent).toBe(translations.zh.enginePreparingContent);
+  expect(api.get).not.toHaveBeenCalled();
+  fireEvent(window, new Event('focus'));
+  expect(api.get).not.toHaveBeenCalled();
+  engine.pending = false;
+  engine.failed = true;
+  view.rerender(<ComputerControlSettingsPage />);
+  expect(screen.getByRole('status').textContent).toBe(translations.zh.engineUnavailableContent);
+  expect(screen.queryByRole('alert')).toBeNull();
+  engine.ready = true;
+  engine.failed = false;
+  view.rerender(<ComputerControlSettingsPage />);
+  const toggle = await screen.findByRole('switch', { name: translations.zh.computerControlEnable });
+  expect(toggle.getAttribute('aria-checked')).toBe('true');
+  engine.ready = false;
+  engine.pending = true;
+  view.rerender(<ComputerControlSettingsPage />);
+  expect(toggle.closest('[inert]')).not.toBeNull();
+  engine.ready = true;
+  engine.pending = false;
+  view.rerender(<ComputerControlSettingsPage />);
+  expect(screen.getByRole('switch', { name: translations.zh.computerControlEnable })).toBe(toggle);
+  await waitFor(() => expect(api.get).toHaveBeenCalledTimes(2));
+  expect(api.setEnabled).not.toHaveBeenCalled();
+});
+
+test('defers focus and extension reads during restart and rejects the retired read on recovery', async () => {
+  const api = setup(true);
+  const view = render(<ComputerControlSettingsPage />);
+  const toggle = await screen.findByRole('switch', { name: translations.zh.computerControlEnable });
+  let finishRetiredRead!: (result: ComputerControlResult) => void;
+  api.get.mockReturnValueOnce(new Promise(resolve => { finishRetiredRead = resolve; }));
+  fireEvent(window, new Event('focus'));
+  expect(api.get).toHaveBeenCalledTimes(2);
+
+  engine.ready = false;
+  engine.pending = true;
+  view.rerender(<ComputerControlSettingsPage />);
+  fireEvent(window, new Event('focus'));
+  act(() => api.change(true));
+  fireEvent(window, new Event('focus'));
+  expect(api.get).toHaveBeenCalledTimes(2);
+  await act(async () => finishRetiredRead({ success: false, code: 'unavailable' }));
+  expect(screen.queryByRole('alert')).toBeNull();
+
+  engine.ready = true;
+  engine.pending = false;
+  view.rerender(<ComputerControlSettingsPage />);
+  await waitFor(() => expect(api.get).toHaveBeenCalledTimes(3));
+  expect(screen.getByRole('switch', { name: translations.zh.computerControlEnable })).toBe(toggle);
+  expect(toggle.getAttribute('aria-checked')).toBe('true');
+  expect(screen.queryByRole('alert')).toBeNull();
+  expect(api.setEnabled).not.toHaveBeenCalled();
+});
+
+test('waits for an in-flight save before reconciling a recovered engine', async () => {
+  const api = setup();
+  let finishSave!: (result: ComputerControlResult) => void;
+  api.setEnabled.mockReturnValueOnce(new Promise(resolve => { finishSave = resolve; }));
+  const view = render(<ComputerControlSettingsPage />);
+  const toggle = await screen.findByRole('switch');
+  fireEvent.click(toggle);
+  engine.ready = false;
+  engine.pending = true;
+  view.rerender(<ComputerControlSettingsPage />);
+  fireEvent(window, new Event('focus'));
+  engine.ready = true;
+  engine.pending = false;
+  view.rerender(<ComputerControlSettingsPage />);
+  expect(api.get).toHaveBeenCalledOnce();
+  expect(toggle.getAttribute('aria-busy')).toBe('true');
+
+  api.get.mockResolvedValue({ success: true, enabled: true });
+  await act(async () => finishSave({ success: true, enabled: true }));
+  await waitFor(() => expect(toggle.getAttribute('aria-busy')).toBe('false'));
+  expect(toggle.getAttribute('aria-checked')).toBe('true');
+  expect(api.get).toHaveBeenCalledTimes(2);
+  expect(api.setEnabled).toHaveBeenCalledOnce();
+});
 
 test.each([false, true])('loads enabled=%s without showing a default-off switch', async enabled => {
   const api = setup(enabled);

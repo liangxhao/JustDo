@@ -720,6 +720,20 @@ describe('OpenClawConfigSyncService', () => {
     expect(harness.requestGateway).toHaveBeenCalledWith('exec.approvals.set', expect.anything());
   });
 
+  it('does not report successful startup when admission fails while the process is running', async () => {
+    const harness = createHarness({ phase: 'ready' });
+    const verification = harness.service as unknown as {
+      verifySuccessfulConfigApplication: () => Promise<{ success: boolean; status: { phase: string }; error: string }>;
+    };
+    vi.spyOn(verification, 'verifySuccessfulConfigApplication').mockResolvedValue({
+      success: false, status: { phase: 'running' }, error: 'Permission observation was superseded',
+    });
+    await expect(harness.service.startGatewayWithExecutionPolicy())
+      .rejects.toThrow('Permission observation was superseded');
+    expect(harness.getStatus().phase).toBe('running');
+    expect(harness.stopGateway).not.toHaveBeenCalled();
+  });
+
   it('does not repair unsafe approvals if another caller already started the Gateway', async () => {
     const harness = createHarness();
     await expect(harness.service.startGatewayWithExecutionPolicy())

@@ -1,8 +1,8 @@
 import { ArrowPathIcon } from '@heroicons/react/24/outline';
-import { EnginePhase } from '@shared/openclaw/engineStatus';
 import type { McpAppDiscovery, McpAppLaunchInput } from '@shared/plugins/mcpApps';
 import { createElement, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
+import { useEngineReadiness } from '@/app/shell/startup/routing/useEngineReadiness';
 import { resolveMcpAppIcons } from '@/libs/openclaw-chat/components/mcp-app/icons';
 import type { McpAppViewContext } from '@/libs/openclaw-chat/components/mcp-app/view';
 import { McpWorkspaceSession } from '@/libs/openclaw-chat/gateway/mcp-app/mcp-workspace-session';
@@ -35,9 +35,11 @@ export function useHomeFileApps(options: Options): {
   promote: (from: string, to: string) => void;
   rollback: (temporarySessionId: string) => void;
 } {
+  const engine = useEngineReadiness();
+  const runtimeReady = engine.ready;
   const key = JSON.stringify([options.cwd, options.agentId, options.permissionMode]);
-  const latest = useRef({ ...options, key });
-  latest.current = { ...options, key };
+  const latest = useRef({ ...options, key, nativeAvailable: !engine.pending && !engine.failed });
+  latest.current = { ...options, key, nativeAvailable: !engine.pending && !engine.failed };
   const active = useRef(true);
   type Owner = {
     key: string;
@@ -63,7 +65,6 @@ export function useHomeFileApps(options: Options): {
   }>();
   const catalogRef = useRef(catalog);
   catalogRef.current = catalog;
-  const [runtimeReady, setRuntimeReady] = useState(false);
   const [requestState, setRequestState] = useState<{ key: string; failed: boolean }>();
   const pending = useRef<{ revision: number; task: Promise<void>; abort: AbortController }>();
   const discovery = useRef({ revision: 0 }).current;
@@ -123,27 +124,6 @@ export function useHomeFileApps(options: Options): {
       retained.current.delete(scope);
     }
   }, [sessionIdsKey]);
-  useEffect(() => {
-    let active = true;
-    let revision = 0;
-    const engine = window.electron.openclaw.engine;
-    const stop = engine.onProgress(status => {
-      revision++;
-      if (active) setRuntimeReady(status.phase === EnginePhase.Running);
-    });
-    const own = revision;
-    void engine
-      .getStatus()
-      .then(result => {
-        if (active && revision === own)
-          setRuntimeReady(result.success && result.status?.phase === EnginePhase.Running);
-      })
-      .catch(() => undefined);
-    return () => {
-      active = false;
-      stop();
-    };
-  }, []);
   const owner = useCallback(() => {
     if (!active.current) throw new Error('App workspace changed');
     let owner = owned.current;
@@ -189,7 +169,8 @@ export function useHomeFileApps(options: Options): {
     return owner;
   }, []);
   const discover = useCallback((): Promise<void> => {
-    if (!active.current || !latest.current.cwd || !latest.current.agentId) return Promise.resolve();
+    if (!active.current || !latest.current.nativeAvailable ||
+      !latest.current.cwd || !latest.current.agentId) return Promise.resolve();
     const cached = catalogRef.current;
     if (
       cached &&
@@ -299,7 +280,7 @@ export function useHomeFileApps(options: Options): {
     discovery,
   ]);
   const launch = (input: McpAppLaunchInput, label: string) => {
-    if (!latest.current.enabled || !active.current || hasPendingStart()) return;
+    if (!latest.current.nativeAvailable || !latest.current.enabled || !active.current || hasPendingStart()) return;
     const scope = owner();
     const epoch = navigation.current;
     openWorkspaceAppLaunch({
@@ -327,7 +308,7 @@ export function useHomeFileApps(options: Options): {
   };
   const openFile = useCallback<OpenMcpAppFile>(
     async request => {
-      if (!latest.current.enabled || !request.isCurrent() || hasPendingStart()) return false;
+      if (!latest.current.nativeAvailable || !latest.current.enabled || !request.isCurrent() || hasPendingStart()) return false;
       const scope = owner();
       const epoch = navigation.current;
       const { session } = scope;

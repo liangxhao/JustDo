@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import { AppInitializationPhase } from '@shared/app/initialization';
+import { StartupRoute } from '@shared/app/startup/routing';
 import type { McpAppDiscovery } from '@shared/plugins/mcpApps';
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
@@ -73,6 +75,11 @@ beforeEach(() => {
   f.request.mockImplementation(async method => method === 'sessions.describe'
     ? { session: { sessionId: native.gatewaySessionId } } : catalog);
   vi.stubGlobal('electron', {
+    initialization: {
+      getState: async () => ({ phase: AppInitializationPhase.Ready,
+        route: StartupRoute.Normal, enginePreparationPending: false }),
+      onChanged: () => () => {},
+    },
     openclaw: { engine: {
       getStatus: async () => ({ success: true, status: { phase: 'running' } }),
       onProgress: () => () => {},

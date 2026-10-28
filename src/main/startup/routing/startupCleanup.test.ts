@@ -28,6 +28,7 @@ test.each([false, true, 'admission', 'integrations'] as const)('Main attempts ev
   const retired = new Error('Native child retirement remains unconfirmed');
   const context = {
     startupHistoryAdmissionReady: true,
+    startupEnginePreparationController: undefined,
     startupIntegrationPreparation: rejects === 'integrations' ? Promise.reject(retired) : undefined,
     runApplicationCleanup, settleCleanupTasks,
     startupCoordinator: { stop: () => { calls.push('startup-confirmation'); } },

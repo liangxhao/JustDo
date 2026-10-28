@@ -38,6 +38,8 @@ import type {
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSelector } from 'react-redux';
 
+import EngineInteractionBoundary from '@/app/shell/startup/routing/EngineInteractionBoundary';
+import { useEngineReadiness } from '@/app/shell/startup/routing/useEngineReadiness';
 import type { Model } from '@/features/models/modelSlice';
 import { toOpenClawModelRef } from '@/features/models/openclawModelRef';
 import ResultInbox from '@/features/scheduled-tasks/components/ResultInbox';
@@ -1843,6 +1845,11 @@ export const CronView: React.FC<CronViewProps> = ({
   onNewChat,
 }) => {
   const t = i18nService.t.bind(i18nService);
+  const engine = useEngineReadiness();
+  const [hasAdmittedEngine, setHasAdmittedEngine] = useState(false);
+  useEffect(() => {
+    if (engine.ready) setHasAdmittedEngine(true);
+  }, [engine.ready]);
 
   const allNativeTasks = useSelector((s: RootState) => s.scheduledTask.tasks);
   const models = useSelector((s: RootState) => s.model.availableModels);
@@ -1851,7 +1858,7 @@ export const CronView: React.FC<CronViewProps> = ({
     () => excludeDeletedSkillReviewTasks(allNativeTasks, agents),
     [allNativeTasks, agents],
   );
-  const memoryControl = useMemoryDreamingControl(nativeTasks);
+  const memoryControl = useMemoryDreamingControl(nativeTasks, engine.ready);
   const toggleMemoryDreaming = memoryControl.toggle;
   const toggleSkills = memoryControl.toggleSkills;
   const skillMembers = useMemo(
@@ -1875,6 +1882,7 @@ export const CronView: React.FC<CronViewProps> = ({
   const [schedulerEnabled, setSchedulerEnabled] = useState<boolean>();
   const schedulerSettingsSavedRef = useRef(false);
   useEffect(() => {
+    if (!engine.ready) return;
     let active = true;
     const read = window.electron.scheduledTasks.getSchedulerSettings;
     if (!read) return;
@@ -1888,7 +1896,7 @@ export const CronView: React.FC<CronViewProps> = ({
     return () => {
       active = false;
     };
-  }, []);
+  }, [engine.ready]);
   const [editingJob, setEditingJob] = useState<ScheduledTask | undefined>();
   const [jobToDelete, setJobToDelete] = useState<ScheduledTask | null>(null);
   const [deletingTask, setDeletingTask] = useState(false);
@@ -1921,11 +1929,11 @@ export const CronView: React.FC<CronViewProps> = ({
   );
 
   useEffect(() => {
-    scheduledTaskService.loadTasks();
-  }, []);
+    if (engine.ready) void scheduledTaskService.loadTasks();
+  }, [engine.ready]);
 
   useEffect(() => {
-    if (!historyTaskId) {
+    if (!historyTaskId || !engine.ready) {
       setHistoryLoading(false);
       return;
     }
@@ -1944,7 +1952,7 @@ export const CronView: React.FC<CronViewProps> = ({
     return () => {
       active = false;
     };
-  }, [historyRequestRevision, historyTaskId]);
+  }, [historyRequestRevision, historyTaskId, engine.ready]);
 
   useEffect(() => {
     if (editingJob && !tasks.some(task => task.id === editingJob.id)) {
@@ -1988,6 +1996,7 @@ export const CronView: React.FC<CronViewProps> = ({
 
   const handleSave = useCallback(
     async (input: ScheduledTaskInput) => {
+      if (!engine.ready) return;
       if (editingJob) {
         await scheduledTaskService.updateTaskById(editingJob.id, input);
         window.dispatchEvent(new CustomEvent('app:showToast', { detail: t('cronToastUpdated') }));
@@ -1997,11 +2006,12 @@ export const CronView: React.FC<CronViewProps> = ({
       }
       setEditingJob(undefined);
     },
-    [editingJob, t],
+    [editingJob, t, engine.ready],
   );
 
   const handleToggle = useCallback(
     async (id: string, enabled: boolean) => {
+      if (!engine.ready) return;
       try {
         if (id === SKILL_REVIEW_CARD_ID) {
           if (!(await toggleSkills(enabled))) return;
@@ -2024,11 +2034,11 @@ export const CronView: React.FC<CronViewProps> = ({
         );
       }
     },
-    [t, nativeTasks, toggleMemoryDreaming, toggleSkills],
+    [t, nativeTasks, toggleMemoryDreaming, toggleSkills, engine.ready],
   );
 
   const handleDelete = useCallback(async () => {
-    if (!jobToDelete || deletingTask) return;
+    if (!engine.ready || !jobToDelete || deletingTask) return;
     setDeletingTask(true);
     try {
       await scheduledTaskService.deleteTask(jobToDelete.id);
@@ -2041,19 +2051,23 @@ export const CronView: React.FC<CronViewProps> = ({
     } finally {
       setDeletingTask(false);
     }
-  }, [deletingTask, jobToDelete, t]);
+  }, [deletingTask, jobToDelete, t, engine.ready]);
 
-  const handleRunRequest = useCallback(async (job: ScheduledTask): Promise<boolean> => {
-    if (requiresScheduledTaskRunConfirmation(job)) {
-      setJobToRunId(job.id);
-      return false;
-    }
-    await scheduledTaskService.runManually(job.id);
-    return true;
-  }, []);
+  const handleRunRequest = useCallback(
+    async (job: ScheduledTask): Promise<boolean> => {
+      if (!engine.ready) return false;
+      if (requiresScheduledTaskRunConfirmation(job)) {
+        setJobToRunId(job.id);
+        return false;
+      }
+      await scheduledTaskService.runManually(job.id);
+      return true;
+    },
+    [engine.ready],
+  );
 
   const handleConfirmedRun = useCallback(async () => {
-    if (!jobToRun || runSubmitting) return;
+    if (!engine.ready || !jobToRun || runSubmitting) return;
     setRunSubmitting(true);
     try {
       await scheduledTaskService.runManually(jobToRun.id, jobToRun.configRevision ?? undefined);
@@ -2066,7 +2080,7 @@ export const CronView: React.FC<CronViewProps> = ({
     } finally {
       setRunSubmitting(false);
     }
-  }, [jobToRun, runSubmitting, t]);
+  }, [jobToRun, runSubmitting, t, engine.ready]);
 
   const activeJobs = tasks.filter(j => j.enabled);
   const pausedJobs = tasks.filter(j => !j.enabled);
@@ -2096,17 +2110,6 @@ export const CronView: React.FC<CronViewProps> = ({
     () => groupScheduledTasks(visibleTasks),
     [visibleTasks],
   );
-
-  if (loading && tasks.length === 0) {
-    return (
-      <div className="flex flex-col h-full">
-        <div className="flex flex-1 flex-col items-center justify-center">
-          <ArrowPathIcon className="h-8 w-8 animate-spin text-secondary" />
-          <p className="mt-3 text-sm text-secondary">{t('loading')}</p>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="sidebar-panel flex flex-col h-full min-h-0">
@@ -2143,6 +2146,7 @@ export const CronView: React.FC<CronViewProps> = ({
                   key={tab}
                   type="button"
                   onClick={() => setActiveTab(tab)}
+                  disabled={!engine.ready && hasAdmittedEngine}
                   className={`relative inline-flex items-center gap-2 border-b-2 px-1 pb-3 text-sm font-medium transition-colors ${
                     activeTab === tab
                       ? 'border-primary text-foreground'
@@ -2166,6 +2170,7 @@ export const CronView: React.FC<CronViewProps> = ({
             <button
               type="button"
               onClick={() => setShowSchedulerSettings(true)}
+              disabled={!engine.ready}
               aria-label={t('schedulerSettingsTitle')}
               title={t('schedulerSettingsTitle')}
               className="mb-2 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-border text-secondary transition-colors hover:bg-surface-raised hover:text-foreground"
@@ -2173,6 +2178,17 @@ export const CronView: React.FC<CronViewProps> = ({
               <Cog6ToothIcon className="h-4 w-4" />
             </button>
           </div>
+          {!engine.ready && (
+            <div className="mb-5">
+              {!hasAdmittedEngine && <h1 className="mb-3 text-xl font-semibold text-foreground">{t('scheduledTasks')}</h1>}
+              <p role="status" className="rounded-xl bg-surface px-4 py-5 text-sm text-secondary">
+                {t(engine.failed ? 'engineUnavailableContent' : 'enginePreparingContent')}
+              </p>
+            </div>
+          )}
+          <EngineInteractionBoundary disabled={!engine.ready}>
+            {(engine.ready || hasAdmittedEngine) && (
+              <>
           {schedulerEnabled === false && (
             <p
               role="status"
@@ -2181,7 +2197,12 @@ export const CronView: React.FC<CronViewProps> = ({
               {t('schedulerSettingsPaused')}
             </p>
           )}
-          {activeTab === 'results' ? (
+                {loading && tasks.length === 0 ? (
+                  <div role="status" className="flex flex-col items-center py-16 text-secondary">
+                    <ArrowPathIcon className="h-8 w-8 animate-spin" />
+                    <p className="mt-3 text-sm">{t('loading')}</p>
+                  </div>
+                ) : activeTab === 'results' ? (
             <ResultInbox />
           ) : (
             <>
@@ -2297,7 +2318,7 @@ export const CronView: React.FC<CronViewProps> = ({
               )}
 
               {/* Jobs Grid / Empty State */}
-              {tasks.length === 0 ? (
+              {error && tasks.length === 0 ? null : tasks.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-20 text-secondary bg-black/5 dark:bg-white/5 rounded-3xl border border-dashed border-border">
                   <ClockIcon className="h-12 w-12 mb-4 opacity-40" />
                   <h3 className="text-lg font-medium mb-2 text-foreground">
@@ -2417,10 +2438,14 @@ export const CronView: React.FC<CronViewProps> = ({
               )}
             </>
           )}
+              </>
+            )}
+          </EngineInteractionBoundary>
         </div>
       </div>
 
       {/* Create/Edit Dialog */}
+      <EngineInteractionBoundary disabled={!engine.ready}>
       {showSchedulerSettings && (
         <SchedulerSettingsDialog
           onClose={() => setShowSchedulerSettings(false)}
@@ -2620,6 +2645,7 @@ export const CronView: React.FC<CronViewProps> = ({
           </div>
         </div>
       )}
+      </EngineInteractionBoundary>
     </div>
   );
 };

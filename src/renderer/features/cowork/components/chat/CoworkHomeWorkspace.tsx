@@ -52,7 +52,8 @@ interface CoworkHomeWorkspaceProps {
   ) => Promise<boolean | void>;
   handleStopSession: () => Promise<boolean>;
   isStreaming: boolean;
-  isEngineReady: true;
+  isEngineReady: boolean;
+  engineUnavailableMessage?: string;
   config: CoworkConfig;
   isDisplayPanelOpen: boolean;
   isWorkspaceDetached?: boolean;
@@ -106,6 +107,7 @@ export function renderCoworkHomeWorkspace({
   handleStopSession,
   isStreaming,
   isEngineReady,
+  engineUnavailableMessage,
   config,
   isDisplayPanelOpen,
   isWorkspaceDetached = false,
@@ -171,6 +173,8 @@ export function renderCoworkHomeWorkspace({
                       onStop={handleStopSession}
                       isStreaming={isStreaming}
                       disabled={!isEngineReady}
+                      allowDraftWhileDisabled
+                      disabledMessage={engineUnavailableMessage}
                       placeholder={i18nService.t('coworkPlaceholder')}
                       size="large"
                       workingDirectory={config.workingDirectory}

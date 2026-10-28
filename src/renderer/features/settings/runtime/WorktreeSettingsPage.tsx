@@ -1,17 +1,30 @@
 import { ArrowPathIcon } from '@heroicons/react/24/outline';
 import type { ManagedWorktree } from '@shared/openclaw/worktrees';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSelector } from 'react-redux';
 
+import { useEngineReadiness } from '@/app/shell/startup/routing/useEngineReadiness';
 import { coworkService } from '@/features/cowork/coworkService';
 import { i18nService } from '@/services/i18n';
 import type { RootState } from '@/store';
 
+import EngineSettingsGate from '../EngineSettingsGate';
 import WorktreePolicySettings from './WorktreePolicySettings';
 
 const t = (key: string) => i18nService.t(key);
 
 export default function WorktreeSettingsPage() {
+  return <EngineSettingsGate><WorktreeSettings /></EngineSettingsGate>;
+}
+
+function WorktreeSettings() {
+  const engine = useEngineReadiness();
+  const engineReady = useRef(engine.ready);
+  engineReady.current = engine.ready;
+  const active = useRef(true);
+  const readGeneration = useRef(0);
+  const mutationPending = useRef(false);
+  const refreshPending = useRef(false);
   const showCheckbox = useSelector(
     (state: RootState) => state.cowork.config.showWorktreeCheckbox === true,
   );
@@ -20,52 +33,99 @@ export default function WorktreeSettingsPage() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    setLoading(true);
-    const result = await window.electron.openclaw.worktrees.list();
-    if (result.success) {
-      setRecords(result.value);
-      setError(null);
-    } else {
-      setError(result.error);
+    if (!engineReady.current || mutationPending.current) {
+      refreshPending.current = true;
+      return;
     }
-    setLoading(false);
+    refreshPending.current = false;
+    const generation = ++readGeneration.current;
+    setLoading(true);
+    try {
+      const result = await window.electron.openclaw.worktrees.list();
+      if (!active.current || !engineReady.current || generation !== readGeneration.current) return;
+      if (result.success) {
+        setRecords(result.value);
+        setLoadError(null);
+      } else {
+        setLoadError(result.error);
+      }
+    } finally {
+      if (active.current && engineReady.current && generation === readGeneration.current) {
+        setLoading(false);
+      }
+    }
   }, []);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    active.current = true;
+    if (engine.ready) void load();
+    else {
+      readGeneration.current += 1;
+      refreshPending.current = true;
+    }
+    return () => {
+      active.current = false;
+      readGeneration.current += 1;
+    };
+  }, [engine.ready, load]);
+
+  const finishMutation = () => {
+    mutationPending.current = false;
+    if (!active.current) return;
+    setBusy(null);
+    if (refreshPending.current) void load();
+  };
 
   const restore = async (record: ManagedWorktree) => {
+    if (!engineReady.current || mutationPending.current) return;
+    mutationPending.current = true;
+    readGeneration.current += 1;
     setBusy(record.id);
-    const result = await window.electron.openclaw.worktrees.restore(record.id);
-    if (result.success) await load();
-    else setError(result.error);
-    setBusy(null);
+    setError(null);
+    try {
+      const result = await window.electron.openclaw.worktrees.restore(record.id);
+      if (result.success) refreshPending.current = true;
+      else setError(result.error);
+    } finally {
+      finishMutation();
+    }
   };
 
   const remove = async (record: ManagedWorktree) => {
+    if (!engineReady.current || mutationPending.current) return;
     if (!window.confirm(t('worktreeRemoveConfirm'))) return;
+    mutationPending.current = true;
+    readGeneration.current += 1;
     setBusy(record.id);
-    const result = await window.electron.openclaw.worktrees.remove(record.id);
-    if (!result.success) setError(result.error);
-    else if (!result.value.removed)
-      setError(result.value.snapshotError || t('worktreeRemoveFailed'));
-    else await load();
-    setBusy(null);
+    setError(null);
+    try {
+      const result = await window.electron.openclaw.worktrees.remove(record.id);
+      if (!result.success) setError(result.error);
+      else if (!result.value.removed)
+        setError(result.value.snapshotError || t('worktreeRemoveFailed'));
+      else refreshPending.current = true;
+    } finally {
+      finishMutation();
+    }
   };
 
   const clean = async () => {
+    if (!engineReady.current || mutationPending.current) return;
+    mutationPending.current = true;
+    readGeneration.current += 1;
     setBusy('gc');
+    setError(null);
     try {
       const result = await window.electron.openclaw.worktrees.clean();
-      if (result.success) await load();
+      if (result.success) refreshPending.current = true;
       else setError(result.error);
     } catch {
       setError(t('worktreeCleanupUnconfirmed'));
     } finally {
-      setBusy(null);
+      finishMutation();
     }
   };
 
@@ -115,9 +175,9 @@ export default function WorktreeSettingsPage() {
           {t('worktreeRefresh')}
         </button>
       </div>
-      {error && (
+      {(error || loadError) && (
         <p role="alert" className="rounded-lg bg-red-500/10 p-3 text-sm text-red-600">
-          {error}
+          {error || loadError}
         </p>
       )}
       {loading ? (

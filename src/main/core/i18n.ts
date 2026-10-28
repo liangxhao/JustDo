@@ -19,6 +19,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
   zh: {
     ...startupWindowTranslations.zh,
     runtimeNodeUnavailable: '运行时尚未准备就绪，请重新准备或修复应用。',
+    enginePreparationPending: 'AI 引擎正在启动，暂时无法发送。请在就绪后重新发送，草稿已保留。',
+    enginePreparationFailed: 'AI 引擎未能完成启动准备，请查看原因或重试。',
     gatewayShutdownUnconfirmed: '引擎未能正常关闭，请退出并重新启动应用。',
     externalAgentModel: '模型',
     externalAgentAllowOnce: '允许一次',
@@ -184,6 +186,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
     browserContextSaveImage: '图片另存为…',
   },
   en: {
+    enginePreparationPending: 'The AI engine is starting. Please send again when it is ready; your draft is preserved.',
+    enginePreparationFailed: 'The AI engine could not finish preparing. View the reason or retry.',
     ...startupWindowTranslations.en,
     runtimeNodeUnavailable:
       'The execution runtime is unavailable. Prepare the runtime or repair the application.',

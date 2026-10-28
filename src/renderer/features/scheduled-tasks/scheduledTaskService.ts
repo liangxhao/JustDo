@@ -175,6 +175,8 @@ export class ScheduledTaskService {
         checkTasksForAnomalies(visibleTasks);
         store.dispatch(setTasks(visibleTasks));
         store.dispatch(setError(null));
+      } else {
+        store.dispatch(setError(result.error || i18nService.t('scheduledTasksLoadFailed')));
       }
     } catch (err: unknown) {
       if (requestId !== this.tasksRequestId) return;

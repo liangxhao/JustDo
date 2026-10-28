@@ -15,6 +15,11 @@ import { skillService } from './skillService';
 import skillReducer from './skillSlice';
 import SkillsManager from './SkillsManager';
 
+vi.mock('@/app/shell/startup/routing/useEngineReadiness', () => ({
+  getEngineReadinessSnapshot: () => ({ ready: true }),
+  subscribeEngineReadiness: () => vi.fn(),
+}));
+
 vi.mock('@/features/plugins/marketplace/MarketplaceView', () => ({
   MarketplaceResults: ({
     controller,

@@ -10,6 +10,7 @@ import JustDoChatWrapper, { type JustDoChatWrapperRef } from './JustDoChatWrappe
 
 vi.mock('./ChatMessageDisplay', () => ({ default: () => <div /> }));
 const fixture = vi.hoisted(() => ({
+  readiness: { ready: true, pending: false, failed: false },
   session: { id: 'old', agentId: 'main' } as {
     id: string;
     agentId: string;
@@ -20,6 +21,9 @@ const fixture = vi.hoisted(() => ({
     canDraft: () => boolean;
     onOnboard: (pluginId: string, signal: AbortSignal) => Promise<void>;
   },
+}));
+vi.mock('@/app/shell/startup/routing/useEngineReadiness', () => ({
+  useEngineReadiness: () => fixture.readiness,
 }));
 vi.mock('../mcpApps/McpAppsControls', () => ({
   McpAppsControls: (props: NonNullable<typeof fixture.mcpControls>) => {
@@ -37,6 +41,7 @@ afterEach(() => {
 });
 
 beforeEach(() => {
+  fixture.readiness = { ready: true, pending: false, failed: false };
   fixture.session = { id: 'old', agentId: 'main' };
   fixture.mcpControls = null;
   Object.defineProperty(window, 'electron', {
@@ -55,6 +60,60 @@ beforeEach(() => {
       },
     },
   });
+});
+
+it('waits for execution admission before connecting history and uses the latest selected session', async () => {
+  fixture.readiness = { ready: false, pending: true, failed: false };
+  const connect = vi.spyOn(ChatController.prototype, 'connect').mockImplementation(async function (
+    this: ChatController,
+  ) {
+    this.state.connected = true;
+    this.state.initialHistoryReady = true;
+  });
+  const send = vi.spyOn(ChatController.prototype, 'sendMessage').mockResolvedValue();
+  const ref = createRef<JustDoChatWrapperRef>();
+  const onReady = vi.fn();
+  const view = render(<JustDoChatWrapper ref={ref} onHistoryReadyChange={onReady} />);
+
+  expect(screen.getByRole('status').textContent).toContain('enginePreparingContent');
+  expect(window.electron.openclaw.engine.getPort).not.toHaveBeenCalled();
+  expect(window.electron.openclaw.engine.getToken).not.toHaveBeenCalled();
+  expect(ref.current?.getExportSnapshot().isLoading).toBe(true);
+  await expect(ref.current?.sendMessage('retain draft')).rejects.toMatchObject({ requestSent: false });
+  expect(onReady).toHaveBeenLastCalledWith('agent:main:justdo:old', false);
+
+  fixture.session = { id: 'selected-while-starting', agentId: 'main' };
+  view.rerender(<JustDoChatWrapper ref={ref} onHistoryReadyChange={onReady} />);
+  fixture.readiness = { ready: true, pending: false, failed: false };
+  view.rerender(<JustDoChatWrapper ref={ref} onHistoryReadyChange={onReady} />);
+  await waitFor(() => expect(connect).toHaveBeenCalledOnce());
+  expect(connect).toHaveBeenCalledWith('ws://127.0.0.1:1', 'fixture', 'agent:main:justdo:selected-while-starting');
+  expect(send).not.toHaveBeenCalled();
+
+  const controller = connect.mock.instances[0] as ChatController;
+  controller.state.chatMessages = [{ role: 'assistant', content: 'Retained history' }];
+  fixture.readiness = { ready: false, pending: true, failed: false };
+  view.rerender(<JustDoChatWrapper ref={ref} onHistoryReadyChange={onReady} />);
+  fixture.readiness = { ready: true, pending: false, failed: false };
+  view.rerender(<JustDoChatWrapper ref={ref} onHistoryReadyChange={onReady} />);
+  expect(connect).toHaveBeenCalledOnce();
+  expect(controller.state.chatMessages).toEqual([{ role: 'assistant', content: 'Retained history' }]);
+});
+
+it('keeps unopened history unavailable after startup failure and connects after a successful retry', async () => {
+  fixture.readiness = { ready: false, pending: true, failed: false };
+  const connect = vi.spyOn(ChatController.prototype, 'connect').mockResolvedValue();
+  const view = render(<JustDoChatWrapper />);
+  fixture.readiness = { ready: false, pending: false, failed: true };
+  view.rerender(<JustDoChatWrapper />);
+  expect(screen.getByRole('alert').textContent).toContain('engineUnavailableContent');
+  expect(screen.queryByText('storageHistoryFailed')).toBeNull();
+  expect(connect).not.toHaveBeenCalled();
+  fixture.readiness = { ready: false, pending: true, failed: false };
+  view.rerender(<JustDoChatWrapper />);
+  fixture.readiness = { ready: true, pending: false, failed: false };
+  view.rerender(<JustDoChatWrapper />);
+  await waitFor(() => expect(connect).toHaveBeenCalledOnce());
 });
 
 it('blocks export and sending while history is loading or failed, and retry only reloads history', async () => {

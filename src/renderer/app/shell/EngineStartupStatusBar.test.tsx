@@ -1,5 +1,8 @@
 // @vitest-environment jsdom
 
+import { AppInitializationActivity, AppInitializationPhase, type AppInitializationState, AppInitializationStep } from '@shared/app/initialization';
+import { StartupRoute } from '@shared/app/startup/routing';
+import { captureStartupFailure, StartupFailureSource } from '@shared/app/startupFailure';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -45,9 +48,32 @@ const startingStatus: OpenClawEngineStatus = {
 
 describe('EngineStartupStatusBar', () => {
   let statusListener: ((status: OpenClawEngineStatus) => void) | undefined;
+  let initializationListener: ((state: AppInitializationState) => void) | undefined;
+  let initializationState: AppInitializationState;
 
   beforeEach(() => {
     statusListener = undefined;
+    initializationListener = undefined;
+    initializationState = {
+      phase: AppInitializationPhase.Ready, step: AppInitializationStep.Complete,
+      route: StartupRoute.Normal, firstLaunch: false, enginePreparationPending: false,
+      completedSteps: 4, totalSteps: 4, userDataPath: 'C:/data',
+      activity: AppInitializationActivity.Finalize,
+      startedAt: 1, activityStartedAt: 1, updatedAt: 1,
+    };
+    Object.defineProperty(window, 'electron', { configurable: true, value: {
+      initialization: {
+        getState: async () => initializationState,
+        onChanged: (callback: typeof initializationListener) => {
+          initializationListener = callback;
+          return () => {};
+        },
+      },
+      openclaw: { engine: {
+        getStatus: async () => ({ success: true, status: await serviceMocks.getStatus() }),
+        onProgress: (callback: typeof statusListener) => serviceMocks.onStatus(callback),
+      } },
+    } });
     serviceMocks.getStatus.mockReset().mockImplementation(async () => {
       statusListener?.(startingStatus);
       return startingStatus;
@@ -93,8 +119,19 @@ describe('EngineStartupStatusBar', () => {
     expect(screen.queryByRole('status')).toBeNull();
   });
 
+  it('keeps the notice until Main confirms execution admission after Running', async () => {
+    initializationState = { ...initializationState, enginePreparationPending: true };
+    render(<EngineStartupStatusBar />);
+    expect(await screen.findByText('engineStarting')).toBeTruthy();
+    act(() => statusListener?.({ ...startingStatus, phase: 'running' }));
+    expect(screen.getByText('engineStarting')).toBeTruthy();
+    act(() => initializationListener?.({ ...initializationState, enginePreparationPending: false }));
+    expect(screen.queryByRole('status')).toBeNull();
+  });
+
   it('shows only a start action while stopped and starts without a restart', async () => {
     render(<EngineStartupStatusBar />);
+    await act(async () => {});
     act(() => statusListener?.({ ...startingStatus, phase: 'ready' }));
 
     expect(screen.getByRole('status').textContent).toBe('engineStart');
@@ -136,11 +173,33 @@ describe('EngineStartupStatusBar', () => {
   it('keeps a failed start command visible even if Main has not published an error', async () => {
     serviceMocks.startGateway.mockRejectedValue(new Error('Policy verification failed'));
     render(<EngineStartupStatusBar />);
+    await act(async () => {});
     act(() => statusListener?.({ ...startingStatus, phase: 'ready' }));
     fireEvent.click(screen.getByRole('button', { name: 'engineStart' }));
 
     fireEvent.click(await screen.findByRole('button', { name: 'engineViewReason' }));
     expect(screen.getByRole('dialog').textContent).toContain('Policy verification failed');
+  });
+
+  it('recovers a failed initial status read after a retry without requiring a new process event', async () => {
+    serviceMocks.getStatus.mockRejectedValueOnce(new Error('Status read failed'))
+      .mockResolvedValue({ ...startingStatus, phase: 'running' });
+    render(<EngineStartupStatusBar />);
+    fireEvent.click(await screen.findByRole('button', { name: 'engineViewReason' }));
+    fireEvent.click(screen.getByRole('button', { name: 'engineStart' }));
+    await waitFor(() => expect(serviceMocks.startGateway).toHaveBeenCalledOnce());
+    await waitFor(() => expect(screen.queryByRole('status')).toBeNull());
+  });
+
+  it('allows preparation to be retried while the underlying process is still running', async () => {
+    initializationState = { ...initializationState,
+      enginePreparationFailure: captureStartupFailure(StartupFailureSource.Main, new Error('Permission preparation failed')),
+    };
+    serviceMocks.getStatus.mockResolvedValue({ ...startingStatus, phase: 'running', canRetry: false });
+    render(<EngineStartupStatusBar />);
+    fireEvent.click(await screen.findByRole('button', { name: 'engineViewReason' }));
+    fireEvent.click(screen.getByRole('button', { name: 'engineStart' }));
+    await waitFor(() => expect(serviceMocks.startGateway).toHaveBeenCalledOnce());
   });
 
   it('places status immediately before minimize in the shared title bar', async () => {
