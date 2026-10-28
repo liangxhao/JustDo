@@ -62,6 +62,7 @@ Main 在 `runtime/systemPromptReplacementRegistry.ts` 注册内置规则，先�
 或正文末尾为止；后续 `Skills`、`UI Presentation`、`Control UI Embed`、`Messaging` 和 `Runtime Context`
 章节保留。身份声明说明核心能力由 `PRODUCT_NAME` 开发，OpenClaw 仅提供运行时；
 仅将 `You are in a WebChat direct conversation` 中的 WebChat 替换为产品名。
+提示词中的 `.openclaw/tmp/` 替换为 `.${PRODUCT_NAME}/tmp/`，保留后续文件名。
 另外只删除指定的 `Reasoning=stream` 指导整行、`/approve is user command` 整行和
 `Approval preview` 整行，保留 `allow-once` 提示和原生执行审批策略。
 

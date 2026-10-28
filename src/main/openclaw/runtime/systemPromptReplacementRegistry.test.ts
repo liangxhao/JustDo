@@ -101,6 +101,7 @@ describe('registered system prompt replacements', () => {
       'remove-control-ui-side-chat-section',
       'remove-care-section',
       'brand-webchat-direct-conversation',
+      'brand-runtime-temp-path',
       'remove-reasoning-stream-guidance',
       'remove-approve-command-guidance',
       'remove-approval-preview-guidance',
@@ -202,6 +203,16 @@ describe('registered system prompt replacements', () => {
       `You are in a ${PRODUCT_NAME} direct conversation with the user.`,
       'Other WebChat references remain unchanged.',
       'You are in a WebChat group conversation.',
+    ].join('\n'));
+  });
+
+  it('brands every literal runtime temp path while preserving other paths', () => {
+    expect(applyRegisteredRules([
+      'Save to ~/.openclaw/tmp/report.txt or .openclaw/tmp/chart.png.',
+      'Keep xopenclaw/tmp/, .openclaw/tmp2/, and .openclaw/tmp unchanged.',
+    ].join('\n'))).toBe([
+      `Save to ~/.${PRODUCT_NAME}/tmp/report.txt or .${PRODUCT_NAME}/tmp/chart.png.`,
+      'Keep xopenclaw/tmp/, .openclaw/tmp2/, and .openclaw/tmp unchanged.',
     ].join('\n'));
   });
 

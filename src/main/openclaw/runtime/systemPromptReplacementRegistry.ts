@@ -84,6 +84,12 @@ export const REGISTERED_SYSTEM_PROMPT_REPLACEMENT_RULES =
       replacement: `You are in a ${PRODUCT_NAME} direct conversation`,
     },
     {
+      id: 'brand-runtime-temp-path',
+      pattern: '\\.openclaw/tmp/',
+      flags: 'g',
+      replacement: `.${PRODUCT_NAME}/tmp/`,
+    },
+    {
       id: 'remove-reasoning-stream-guidance',
       pattern:
         '^Reasoning=stream; hidden unless on/stream\\. Toggle /reasoning; /status shows when enabled\\.[\\t ]*(?:\\n|$)',
