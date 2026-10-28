@@ -2,7 +2,8 @@
 
 Each application version must have a matching Markdown file in this directory.
 The filename must exactly match `package.json.version`, including its leading
-`v`, for example `v2026.7.23.md`.
+`v` and the `.md` extension. Keep the title and body version-neutral; the filename
+identifies the release.
 
 Release notes are public, user-facing content. Do not include internal engine,
 component, repository, or project code names; describe their user-visible

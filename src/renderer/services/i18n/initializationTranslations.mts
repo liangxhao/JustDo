@@ -88,7 +88,7 @@ export const initializationTranslations = {
       '请完全退出旧版应用及其后台组件，然后重新启动并重试。',
     initializationRecovery_other: '历史升级已暂停，恢复进度已保留',
     initializationRecovery_otherDescription:
-      '请先退出旧版应用，检查数据磁盘剩余空间及目录读写权限，再查看下方详细信息中的失败原因。处理后重新启动并重试，无需手动清空数据目录。',
+      '请先退出旧版应用，检查数据磁盘剩余空间及目录读写权限，再查看下方详细信息中的失败原因，处理后重新启动并重试。',
     initializationRecoveryTaskManagerHint:
       '可在任务管理器中手动结束确认属于旧版应用的占用进程。请核对进程名称和位置，避免结束其他程序。',
     initializationUpgradeWelcome: '迁移升级安装',

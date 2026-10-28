@@ -235,6 +235,10 @@ for other areas. Current validation limits belong in the owning feature or archi
   Keep current contracts and validation limits in their owning feature/architecture docs,
   concrete unimplemented requirements in `docs/plans/`;
   remove completed/superseded plans after integrating their contracts.
+- Keep documentation version-neutral where possible. Refer to authoritative package
+  metadata instead of repeating concrete versions; retain concrete versions where
+  needed, such as for release identity, compatibility constraints, historical
+  validation evidence or reproducible resource preparation.
 - Keep all offline-download URLs, filenames, destinations and preparation
   commands in `docs/offline-downloads.md`.
 - Use English Conventional Commits: `type(scope): imperative summary`.
