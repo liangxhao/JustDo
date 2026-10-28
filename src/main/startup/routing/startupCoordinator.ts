@@ -18,7 +18,12 @@ import {
   StartupCompatibilityErrorCode,
 } from '../../../shared/app/startup/versionPolicy';
 import { DB_FILENAME } from '../../core/appConstants';
-import { createHistoryBackup, ownedPath, verifyHistoryBackup } from '../history/historyBackup';
+import {
+  createHistoryBackup,
+  ownedPath,
+  verifyHistoryBackup,
+  verifyNativeHistoryOriginals,
+} from '../history/historyBackup';
 import { nativeHistoryError } from '../history/historyFailure';
 import {
   planLegacyHistory,
@@ -375,10 +380,14 @@ export class StartupCoordinator {
             !['lockfile', 'SingletonLock', 'SingletonCookie', 'SingletonSocket'].includes(name) &&
             !name.startsWith(`${STARTUP_STATE_FILE}.`),
         );
+      verifyNativeHistoryOriginals(this.userData, this.history);
       this.commit(StartupStage.Isolate, { isolatedEntries: entries });
     }
     if (this.journal.stage === StartupStage.Isolate) {
       verifyHistoryBackup(this.history);
+      // A resumed isolation may already have moved openclaw into retired/.
+      if (startupPathExists(path.join(this.userData, 'openclaw')))
+        verifyNativeHistoryOriginals(this.userData, this.history);
       const retired = ownedPath(
         this.userData,
         path.join('backups', this.journal.transactionId, 'retired'),

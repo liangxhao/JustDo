@@ -12,7 +12,11 @@ import { CoworkStore } from '../../data/coworkStore';
 import { SqliteStore } from '../../data/sqliteStore';
 import { SessionRpc } from '../../engine/gateway/sessionRpc';
 import { SessionPermissionModeCoordinator } from '../../openclaw/permissions/sessionPermissionModeCoordinator';
-import { createHistoryBackup, verifyHistoryBackup } from '../history/historyBackup';
+import {
+  createHistoryBackup,
+  verifyHistoryBackup,
+  verifyNativeHistoryOriginals,
+} from '../history/historyBackup';
 import {
   canonicalHistoryKey,
   convertCachedHistory,
@@ -253,19 +257,126 @@ test.each([
   },
 );
 
-test('unknown/corrupt and mixed active generations preserve their source and block database admission', async () => {
+test('unknown/corrupt and mixed current generations preserve their source and block database admission', async () => {
   const invalid = root();
   fs.writeFileSync(path.join(invalid, DB_FILENAME), 'unrecognized bytes');
   const coordinator = new StartupCoordinator(invalid);
   await expect(coordinator.prepareBeforeStore(progress())).rejects.toThrow();
   expect(fs.readFileSync(path.join(invalid, DB_FILENAME), 'utf8')).toBe('unrecognized bytes');
   const mixed = root();
-  legacy(mixed);
+  SqliteStore.create(mixed).close();
+  const sessions = path.join(mixed, 'openclaw/state/agents/main/sessions');
+  fs.mkdirSync(sessions, { recursive: true });
+  fs.writeFileSync(path.join(sessions, 'sessions.json'), '{"legacy":{}}');
   const native = path.join(mixed, 'openclaw/state/agents/main/agent');
   fs.mkdirSync(native);
   fs.writeFileSync(path.join(native, 'openclaw-agent.sqlite'), 'untouched');
   expect(() => classifyInstallation(mixed)).toThrow(/Mixed/);
-  expect(() => SqliteStore.create(mixed)).toThrow(/backed up/);
+  expect(fs.readFileSync(path.join(native, 'openclaw-agent.sqlite'), 'utf8')).toBe('untouched');
+});
+
+test('published legacy profiles migrate JSONL/cache while retaining old native SQLite and archives only in backup', async () => {
+  const source = root();
+  legacy(source);
+  const originals = {
+    'openclaw/state/agents/main/agent/openclaw-agent.sqlite': 'unsupported old database',
+    'openclaw/state/agents/main/agent/openclaw-agent.sqlite-wal': 'uncheckpointed pages',
+    'openclaw/state/agents/main/agent/openclaw-agent.sqlite-shm': 'old shared memory',
+    'openclaw/state/agents/main/agent/openclaw-agent.sqlite-journal': 'old rollback journal',
+    'openclaw/state/agents/main/sessions/cold/archive.jsonl.zst': 'cold history',
+    'openclaw/state/agents/main/sessions/old.jsonl.deleted.timestamp.zst': 'archived history',
+    'openclaw/state/agents/main/sessions/sessions.json.bak.1': 'archived index',
+    'openclaw/state/agents/main/session-sqlite-import-archive/run/history.jsonl.imported-timestamp': 'retained import source',
+    'openclaw/state/session-sqlite-migration-runs/run/manifest.json': 'old import receipt',
+    'openclaw/state/state/openclaw.sqlite': 'old shared database',
+    'openclaw/state/state/openclaw.sqlite-wal': 'shared uncheckpointed pages',
+    'openclaw/state/state/openclaw-quarantine.sqlite': 'quarantined history',
+    'openclaw/state/agents/orphan/agent/openclaw-agent.sqlite-wal': 'orphaned history',
+  };
+  for (const [relative, content] of Object.entries(originals)) {
+    fs.mkdirSync(path.dirname(path.join(source, relative)), { recursive: true });
+    fs.writeFileSync(path.join(source, relative), content);
+  }
+  fs.writeFileSync(path.join(source, 'openclaw/state/agents/main/agent/auth-profiles.json'), 'excluded auth');
+  fs.writeFileSync(path.join(source, 'openclaw/state/agents/main/agent/models.json'), 'excluded config');
+  expect(classifyInstallation(source).route).toBe(StartupRoute.Migration);
+  const runtimeIdentity = { runtimeVersion: 'v2026.10.7', runtimeBuildId: 'a'.repeat(64) };
+  const native = {
+    deliveryIdentity: vi.fn(async () => runtimeIdentity),
+    identity: vi.fn(async () => runtimeIdentity),
+    inspect: vi.fn(async () => ({ needsUpgrade: false })),
+    upgrade: vi.fn(async () => {}),
+    prepareCanonical: vi.fn(async () => {}),
+  };
+  const coordinator = await StartupCoordinator.prepare(source, { appVersion: 'v2026.10.20', native });
+  expect(coordinator.route).toBe(StartupRoute.Migration);
+  expect(native.inspect).not.toHaveBeenCalled();
+  await coordinator.prepareBeforeStore(progress());
+  const backup = coordinator.getHistoryBackupDirectory()!;
+  const manifest = verifyHistoryBackup(backup);
+  expect(manifest.files.some(file => /auth-profiles|models\.json/u.test(file.path))).toBe(false);
+  const store = SqliteStore.create(source);
+  try {
+    await coordinator.restoreHistory(store.getDatabase(), path.join(source, 'openclaw/state'), progress(), async mode => {
+      if (mode === 'import') return '{"targets":[]}';
+      if (mode === 'verify') return JSON.stringify({ verified: true, entries: 4, conversations: 3 });
+      return JSON.stringify({ targets: [{ agentId: 'main', sqliteEntries: 4, dbStats: { integrityCheck: 'ok' } }] });
+    });
+    coordinator.complete();
+    expect(fs.existsSync(path.join(backup, '../retired'))).toBe(false);
+    for (const [relative, content] of Object.entries(originals)) {
+      expect(fs.readFileSync(path.join(backup, relative), 'utf8')).toBe(content);
+      expect(fs.existsSync(path.join(source, relative))).toBe(false);
+    }
+    expect(new CoworkStore(store.getDatabase()).listSessions()).toHaveLength(3);
+  } finally {
+    store.close();
+  }
+});
+
+test.each(['add', 'remove', 'modify'])(
+  'native original %s during backup preserves the active legacy environment and blocks isolation',
+  async change => {
+    const source = root();
+    legacy(source);
+    const native = path.join(source, 'openclaw/state/agents/main/agent/openclaw-agent.sqlite');
+    fs.mkdirSync(path.dirname(native));
+    fs.writeFileSync(native, 'old native database');
+    if (change === 'remove') fs.writeFileSync(`${native}-wal`, 'old pages');
+    const copy = fs.promises.copyFile.bind(fs.promises);
+    vi.spyOn(fs.promises, 'copyFile').mockImplementation(async (from, to, mode) => {
+      await copy(from, to, mode);
+      if (String(from) === native) {
+        if (change === 'add') fs.writeFileSync(`${native}-wal`, 'new pages');
+        if (change === 'remove') fs.unlinkSync(`${native}-wal`);
+        if (change === 'modify') fs.appendFileSync(native, 'changed');
+      }
+    });
+    const coordinator = new StartupCoordinator(source);
+    await expect(coordinator.prepareBeforeStore(progress())).rejects.toThrow();
+    expect(readStartupJournal(source)?.stage).toBe(StartupStage.Backup);
+    expect(fs.existsSync(path.join(source, 'openclaw/state/agents/main/sessions/sessions.json'))).toBe(true);
+    expect(fs.existsSync(native)).toBe(true);
+    expect(() => SqliteStore.create(source)).toThrow(/backed up/);
+  },
+);
+
+test('a sidecar created during the final original hash check blocks isolation', async () => {
+  const source = root();
+  legacy(source);
+  const native = path.join(source, 'openclaw/state/agents/main/agent/openclaw-agent.sqlite');
+  fs.mkdirSync(path.dirname(native));
+  fs.writeFileSync(native, 'old native database');
+  const backup = path.join(root(), 'history');
+  await createHistoryBackup(source, backup);
+  const open = fs.openSync.bind(fs);
+  vi.spyOn(fs, 'openSync').mockImplementation((file, flags, mode) => {
+    if (String(file) === native && flags === 'r')
+      fs.writeFileSync(`${native}-wal`, 'late pages');
+    return open(file, flags, mode);
+  });
+  expect(() => verifyNativeHistoryOriginals(source, backup)).toThrow(/changed after backup/);
+  expect(fs.existsSync(path.join(source, 'openclaw/state/agents/main/sessions/sessions.json'))).toBe(true);
 });
 
 test('missing workspaces remain recoverable metadata, contribute to the result, and use current defaults only once', async () => {

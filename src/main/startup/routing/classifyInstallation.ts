@@ -67,7 +67,10 @@ export function classifyInstallation(userData: string, includeRecovery = true): 
       sqlite ||= startupPathExists(path.join(folder, 'agent', 'openclaw-agent.sqlite'));
     }
   }
-  if (sqlite && (jsonl || product === 'legacy'))
+  // Published JSONL-era applications could also leave native SQLite files.
+  // Their legacy product schema selects migration; backup retains those native
+  // originals without admitting their schema or restoring them into the target.
+  if (sqlite && jsonl && product !== 'legacy')
     throw new Error(
       'Mixed native history formats require recovery. Existing data has been preserved.',
     );

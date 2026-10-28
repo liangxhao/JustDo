@@ -4,7 +4,7 @@ import fs from 'fs';
 import path from 'path';
 
 import { DB_FILENAME } from '../../core/appConstants';
-import { writeStartupJson } from '../routing/startupState';
+import { startupPathExists, writeStartupJson } from '../routing/startupState';
 import { historySourceChanged } from './historyFailure';
 
 type BackupFile = { path: string; size: number; sha256: string };
@@ -50,6 +50,69 @@ function assertRegular(file: string): fs.Stats {
   return stat;
 }
 
+/** Recovery originals only: never open old native databases or stage them for import. */
+function nativeHistoryOriginals(source: string): string[] {
+  const files: string[] = [];
+  const visit = (relative: string, accept: (entry: fs.Dirent) => boolean, recursive = false) => {
+    const folder = ownedPath(source, relative);
+    if (!startupPathExists(folder)) return;
+    if (!fs.lstatSync(folder).isDirectory()) throw new Error('Invalid native history directory.');
+    for (const entry of fs.readdirSync(folder, { withFileTypes: true })) {
+      if (!recursive && !accept(entry)) continue;
+      const child = path.join(relative, entry.name);
+      const file = ownedPath(source, child);
+      if (recursive && entry.isDirectory()) visit(child, accept, true);
+      else {
+        assertRegular(file);
+        files.push(child);
+      }
+    }
+  };
+  // Include journal-mode sidecars, orphan sidecars and native recovery copies.
+  // Other agent files can contain credentials/configuration and are not history.
+  const sqlite = (entry: fs.Dirent) => /\.sqlite(?:$|[-.])/u.test(entry.name);
+  visit(path.join('openclaw', 'state', 'state'), sqlite);
+  visit(path.join('openclaw', 'state', 'session-sqlite-migration-runs'), () => true, true);
+  const agentsRelative = path.join('openclaw', 'state', 'agents');
+  const agents = ownedPath(source, agentsRelative);
+  if (startupPathExists(agents)) {
+    for (const agent of fs.readdirSync(agents, { withFileTypes: true })) {
+      if (agent.isSymbolicLink()) throw new Error('Linked agent directories cannot be backed up.');
+      if (!agent.isDirectory()) continue;
+      const relative = path.join(agentsRelative, agent.name);
+      visit(path.join(relative, 'agent'), sqlite);
+      visit(path.join(relative, 'session-sqlite-import-archive'), () => true, true);
+      const sessions = path.join(relative, 'sessions');
+      visit(
+        sessions,
+        entry =>
+          (/\.jsonl\./u.test(entry.name) &&
+            !entry.name.endsWith('.jsonl') &&
+            !entry.name.includes('.trajectory.')) ||
+          entry.name.startsWith('sessions.json.bak'),
+      );
+      visit(path.join(sessions, 'cold'), () => true, true);
+    }
+  }
+  return files.sort();
+}
+
+/** Fence the opaque originals again after planning, immediately before isolation. */
+export function verifyNativeHistoryOriginals(source: string, backup: string): void {
+  const originals = nativeHistoryOriginals(source);
+  if (
+    JSON.stringify(originals) !== JSON.stringify(nativeHistoryOriginals(backup)) ||
+    originals.some(
+      relative =>
+        digestFile(ownedPath(source, relative)) !== digestFile(ownedPath(backup, relative)),
+    ) ||
+    JSON.stringify(originals) !== JSON.stringify(nativeHistoryOriginals(source))
+  )
+    throw historySourceChanged(
+      'Native history files changed after backup. Close the previous application and retry.',
+    );
+}
+
 /** Published JSONL installations only. The snapshot includes committed product WAL. */
 export async function createHistoryBackup(source: string, destination: string): Promise<void> {
   if (fs.existsSync(path.join(destination, 'manifest.json'))) {
@@ -59,6 +122,7 @@ export async function createHistoryBackup(source: string, destination: string): 
   fs.mkdirSync(destination, { recursive: true });
   const files: BackupFile[] = [];
   const sourceFiles: { file: string; digest: string; size: number; mtime: number }[] = [];
+  const nativeOriginals = nativeHistoryOriginals(source);
   const product = path.join(source, DB_FILENAME);
   const db = fs.existsSync(product)
     ? new Database(product, { readonly: true, fileMustExist: true })
@@ -101,6 +165,7 @@ export async function createHistoryBackup(source: string, destination: string): 
       }
       files.push({ path: DB_FILENAME, size: fs.statSync(target).size, sha256: digestFile(target) });
     }
+    for (const relative of nativeOriginals) await copy(ownedPath(source, relative));
     const agents = path.join(source, 'openclaw', 'state', 'agents');
     if (fs.existsSync(agents)) {
       for (const agent of fs.readdirSync(agents, { withFileTypes: true })) {
@@ -146,6 +211,10 @@ export async function createHistoryBackup(source: string, destination: string): 
     }
     if (db && db.pragma('data_version', { simple: true }) !== dataVersion)
       throw historySourceChanged('The previous application changed metadata during backup.');
+    if (JSON.stringify(nativeHistoryOriginals(source)) !== JSON.stringify(nativeOriginals))
+      throw historySourceChanged(
+        'Native history files changed during backup. Close the previous application and retry.',
+      );
     writeStartupJson(path.join(destination, 'manifest.json'), { version: 1, files });
     verifyHistoryBackup(destination);
   } finally {
