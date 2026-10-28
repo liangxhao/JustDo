@@ -3,7 +3,7 @@ import { browserRecordingTranslations } from '@/features/browser/recording/brows
 import type { LanguageType } from '@/services/i18n';
 
 import { askUserQuestionTranslations } from '../../../../plugins/extensions/ask-user-question/browser/translations';
-import { appTranslations } from './appTranslations';
+import { appTranslations } from './appTranslations.mts';
 import { assistantTranslations } from './assistantTranslations';
 import { authTranslations } from './authTranslations';
 import { browserTranslations } from './browserTranslations';
@@ -11,7 +11,7 @@ import { chatTranslations } from './chatTranslations';
 import { collaborationTranslations } from './collaborationTranslations';
 import { filePreviewTranslations } from './filePreviewTranslations';
 import { getHomeGreetingTranslations } from './homeGreetings';
-import { initializationTranslations } from './initializationTranslations';
+import { initializationTranslations } from './initializationTranslations.mts';
 import { mcpAppsTranslations } from './mcpAppsTranslations';
 import { memoryTranslations } from './memoryTranslations';
 import { pluginsTranslations } from './pluginsTranslations';
@@ -21,7 +21,7 @@ import { sessionReviewTranslations } from './sessionReviewTranslations';
 import { sessionStorageTranslations } from './sessionStorageTranslations';
 import { settingsTranslations } from './settingsTranslations';
 import { skillWorkshopTranslations } from './skillWorkshopTranslations';
-import { startupTranslations } from './startupTranslations';
+import { startupTranslations } from './startupTranslations.mts';
 import { swarmTranslations } from './swarmTranslations';
 import { swarmWorkflowTranslations } from './swarmWorkflowTranslations';
 import { teamDiscussionTranslations } from './teamDiscussionTranslations';

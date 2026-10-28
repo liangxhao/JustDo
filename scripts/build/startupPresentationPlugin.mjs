@@ -2,9 +2,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { buildSync } from 'esbuild';
 
-import { appTranslations } from '../../src/renderer/services/i18n/appTranslations.ts';
-import { startupTranslations } from '../../src/renderer/services/i18n/startupTranslations.ts';
-import { initializationTranslations } from '../../src/renderer/services/i18n/initializationTranslations.ts';
+import { appTranslations } from '../../src/renderer/services/i18n/appTranslations.mts';
+import { startupTranslations } from '../../src/renderer/services/i18n/startupTranslations.mts';
+import { initializationTranslations } from '../../src/renderer/services/i18n/initializationTranslations.mts';
 import { buildStartupAppearance } from '../theme/startupAppearance.mjs';
 
 /** Embed the first paint so it works before any application modules can load. */

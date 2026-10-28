@@ -118,7 +118,7 @@ test('prepares the local speech runtime before starting Electron in development'
 });
 
 test('uses Vite native Monaco workers without emitting the legacy duplicate bundle', () => {
-  const viteConfig = fs.readFileSync(path.resolve(__dirname, '../../vite.config.ts'), 'utf8');
+  const viteConfig = fs.readFileSync(path.resolve(__dirname, '../../vite.config.mts'), 'utf8');
   const packageJson = JSON.parse(
     fs.readFileSync(path.resolve(__dirname, '../../package.json'), 'utf8'),
   ) as { devDependencies: Record<string, string> };

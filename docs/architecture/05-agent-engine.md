@@ -203,7 +203,7 @@ Manager 对外 phase 为 ready、starting、running、error；canRetry 与 messa
 | ready（资源就绪，进程未运行） | 启动 AI 引擎    | 整段为启动按钮 |
 | running                       | 隐藏            | 无             |
 
-“查看原因”在主文档的独立弹窗展示 Main 的失败消息或启动命令错误，避免标题栏裁切；可重试时提供启动按钮。UI 不查询或提供已退役的旧版运行时迁移入口。状态文案的中英翻译归 `appTranslations.ts`。
+“查看原因”在主文档的独立弹窗展示 Main 的失败消息或启动命令错误，避免标题栏裁切；可重试时提供启动按钮。UI 不查询或提供已退役的旧版运行时迁移入口。状态文案的中英翻译归 `appTranslations.mts`。
 
 #### 按需采集引擎失败诊断
 

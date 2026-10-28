@@ -12,7 +12,7 @@ import { EnginePhase } from '@shared/openclaw/engineStatus';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, expect, test, vi } from 'vitest';
 
-import { startupTranslations } from '@/services/i18n/startupTranslations';
+import { startupTranslations } from '@/services/i18n/startupTranslations.mts';
 
 import { RendererStartupActivity } from '../routing/startupPresentation';
 import StartupScreen from './StartupScreen';

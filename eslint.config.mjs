@@ -45,7 +45,7 @@ export default [
 
   // TypeScript files
   {
-    files: ['**/*.{ts,tsx}'],
+    files: ['**/*.{ts,tsx,mts}'],
     languageOptions: {
       parser: tsparser,
       parserOptions: {

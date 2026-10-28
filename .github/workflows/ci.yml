@@ -32,7 +32,7 @@ jobs:
               - 'src/renderer/**'
               - 'plugins/extensions/**'
               - 'plugins/browser-extensions/**'
-              - 'vite.config.ts'
+              - 'vite.config.mts'
               - 'tsconfig.json'
               - 'tailwind.config.js'
               - 'postcss.config.js'

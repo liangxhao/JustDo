@@ -1,4 +1,4 @@
-import { initializationTranslations } from './initializationTranslations';
+import { initializationTranslations } from './initializationTranslations.mts';
 
 export const startupTranslations = {
   zh: {

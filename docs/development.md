@@ -24,6 +24,11 @@ npm run electron:dev:openclaw
 
 默认 Vite 端口是 43127。隔离预览的目录及启动参数由 `scripts/electron/run-isolated-dev.cjs` 管理；不要把真实用户数据库、凭据或原生日志复制进仓库。
 
+Vite 配置入口为 `vite.config.mts`，启动页构建直接引用的三个翻译字典也使用 `.mts`
+和完整扩展名导入，使默认 bundle loader 与 `--configLoader native` 均可加载。
+配置读取 JSON 时声明 `type: 'json'`，目录使用 `import.meta.dirname`。根 package.json
+保持现有模块类型，Electron Main 与现有 CommonJS 脚本不受影响。
+
 开发版 Electron 与安装版采用同一四路判定：`fresh` 首次安装、`migration` 迁移升级、
 `upgrade` 正常升级、`normal` 正常启动。OpenClaw 版本变化、当前环境尚无完成回执或有
 未完成升级事务时，开发版同样显示正常升级引导。仅应用升版或构建指纹变化、且 OpenClaw

@@ -199,7 +199,7 @@ cancels entry/reveal immediately; late completion cannot open the destination. M
 never advances data milestones. Locale preference persistence no longer blocks UI
 readiness; critical unread configuration stays an error, retaining the original exception.
 Its copy is maintained separately in
-`startupTranslations.ts`; guide copy remains in `initializationTranslations.ts`.
+`startupTranslations.mts`; guide copy remains in `initializationTranslations.mts`.
 Opening an existing database and synchronizing AI runtime settings are not labeled
 as creating user data or preparing default files on subsequent launches.
 Both modules show the current operation and its explanation.

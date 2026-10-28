@@ -31,7 +31,7 @@ const BUILD_RECIPE_FILES = [
   'scripts/packaging/notarize.js',
   'scripts/packaging/prepare-windows-build.cjs',
   'scripts/packaging/application-license-assets.cjs',
-  'vite.config.ts',
+  'vite.config.mts',
   'scripts/packaging/electron-builder-product-metadata.cjs',
   'scripts/openclaw/install-openclaw-runtime.cjs',
   'scripts/openclaw/openclaw-bundled-dependencies.cjs',

@@ -6,8 +6,8 @@ import { expect, test } from 'vitest';
 import { startupPresentationPlugin } from '../../scripts/build/startupPresentationPlugin.mjs';
 import { AppInitializationActivity } from '../../src/shared/app/initialization';
 import { RendererStartupActivity } from '../../src/renderer/app/shell/startup/routing/startupPresentation';
-import { initializationTranslations } from '../../src/renderer/services/i18n/initializationTranslations';
-import { startupTranslations } from '../../src/renderer/services/i18n/startupTranslations';
+import { initializationTranslations } from '../../src/renderer/services/i18n/initializationTranslations.mts';
+import { startupTranslations } from '../../src/renderer/services/i18n/startupTranslations.mts';
 
 test('embeds local startup assets and both languages without touching other HTML entries', () => {
   const transform = startupPresentationPlugin(path.resolve('src/renderer')).transformIndexHtml.handler;

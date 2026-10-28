@@ -4,9 +4,9 @@ import path from 'node:path';
 
 import { afterEach, expect, test, vi } from 'vitest';
 
-import { appTranslations } from '@/services/i18n/appTranslations';
-import { initializationTranslations } from '@/services/i18n/initializationTranslations';
-import { startupTranslations } from '@/services/i18n/startupTranslations';
+import { appTranslations } from '@/services/i18n/appTranslations.mts';
+import { initializationTranslations } from '@/services/i18n/initializationTranslations.mts';
+import { startupTranslations } from '@/services/i18n/startupTranslations.mts';
 
 import { startupPresentationPlugin } from '../../../../../../scripts/build/startupPresentationPlugin.mjs';
 import { STARTUP_ENTRY_STARTED_ATTRIBUTE } from './startupMotion';

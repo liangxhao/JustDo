@@ -5,7 +5,7 @@ import { defineConfig } from 'vite';
 import electron from 'vite-plugin-electron';
 import renderer from 'vite-plugin-electron-renderer';
 
-import packageJson from './package.json';
+import packageJson from './package.json' with { type: 'json' };
 import { reactHooksRefreshPlugin } from './scripts/build/vite-react-hooks-refresh.mjs';
 import { startupPresentationPlugin } from './scripts/build/startupPresentationPlugin.mjs';
 import applicationLicenses from './scripts/packaging/application-license-assets.cjs';
@@ -13,7 +13,7 @@ import applicationLicenses from './scripts/packaging/application-license-assets.
 // https://vitejs.dev/config/
 const devPort = Number(process.env.JUSTDO_DEV_SERVER_PORT || packageJson.devServer.port);
 const isProductionBuild = process.env.NODE_ENV !== 'development';
-const projectRoot = path.resolve(__dirname);
+const projectRoot = import.meta.dirname;
 const rendererRoot = path.join(projectRoot, 'src/renderer');
 const dependencyRoot = fs.realpathSync(path.join(projectRoot, 'node_modules'));
 const { createApplicationLicensePlugin } = applicationLicenses;
@@ -187,8 +187,8 @@ export default defineConfig({
   base: process.env.NODE_ENV === 'development' ? '/' : './',
   resolve: {
     alias: {
-      '@shared': path.resolve(__dirname, './src/shared'),
-      '@': path.resolve(__dirname, './src/renderer'),
+      '@shared': path.resolve(projectRoot, './src/shared'),
+      '@': path.resolve(projectRoot, './src/renderer'),
       // Use mermaid core build (no dynamic imports, all diagrams statically bundled)
       mermaid: 'mermaid/dist/mermaid.core.mjs',
     },
