@@ -367,6 +367,9 @@ export class OpenClawConfigSync {
     const gateway = isRecord(config.gateway) ? config.gateway : {};
     config.gateway = {
       ...gateway,
+      // Match the launch arguments in every projection so adding the first
+      // model does not change listener configuration and restart the Gateway.
+      bind: 'loopback',
       controlUi: {
         allowExternalEmbedUrls: DEFAULT_ALLOW_EXTERNAL_EMBED_URLS,
         ...(isRecord(gateway.controlUi) ? gateway.controlUi : {}),
@@ -653,7 +656,6 @@ export class OpenClawConfigSync {
       ...(isRecord(existingConfig?.surfaces) ? { surfaces: existingConfig.surfaces } : {}),
       gateway: {
         mode: 'local',
-        bind: 'loopback',
         controlUi: {
           allowedOrigins: ['*'],
           ...(isRecord(existingConfig?.gateway) && isRecord(existingConfig.gateway.controlUi)

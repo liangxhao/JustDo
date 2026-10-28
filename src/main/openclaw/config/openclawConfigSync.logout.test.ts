@@ -212,6 +212,7 @@ describe('native configuration publication contracts', () => {
     const published = fs.readFileSync(fixture.configPath, 'utf8');
     expect(published.endsWith('\n')).toBe(true);
     expect(fixture.read().transcripts).toEqual({ enabled: false });
+    expect(fixture.read().gateway.bind).toBe('loopback');
     events.length = 0;
 
     expect(fixture.sync.sync(contract.reason)).toMatchObject({ ok: true, configChanged: false });
@@ -253,6 +254,58 @@ describe('native configuration publication contracts', () => {
       if (original !== undefined) expect(fs.readFileSync(fixture.configPath, 'utf8')).toBe(original);
     }
   }, 20_000);
+});
+
+test('keeps Gateway listener configuration stable when the first custom model is added and restored', () => {
+  const fixture = createConfigurationFixture(false, 'local', {
+    gateway: {
+      mode: 'local',
+      controlUi: { basePath: '/console', allowedOrigins: ['http://console.test'] },
+    },
+  });
+  const modelConfig = {
+    model: { defaultModel: 'internal-model', defaultModelProvider: 'internal' },
+    providers: {
+      internal: {
+        enabled: true,
+        apiKey: 'fixture-key',
+        baseUrl: 'http://models.example.test/v1',
+        apiFormat: 'openai',
+        models: [{ id: 'internal-model' }],
+      },
+    },
+  };
+  let configured = false;
+  setStoreGetter(() => ({ get: () => configured ? modelConfig : {} }) as never);
+
+  expect(fixture.sync.sync('startup').ok).toBe(true);
+  const initialGateway = fixture.read().gateway;
+  expect(initialGateway).toMatchObject({
+    mode: 'local',
+    bind: 'loopback',
+    controlUi: { basePath: '/console', allowedOrigins: ['http://console.test'] },
+  });
+  const launchEnvironment = fixture.sync.collectGatewayLaunchEnvVars();
+
+  configured = true;
+  expect(fixture.sync.sync('app-config-change')).toMatchObject({
+    ok: true, configChanged: true, secretsChanged: true, requiresGatewayRestart: false,
+  });
+  expect(fixture.read().models.providers.internal.models).toEqual([
+    expect.objectContaining({ id: 'internal-model' }),
+  ]);
+  expect(fixture.read().gateway).toEqual(initialGateway);
+  expect(fixture.sync.collectGatewayLaunchEnvVars()).toEqual(launchEnvironment);
+
+  configured = false;
+  expect(fixture.sync.sync(BuiltinModelSyncReason.AuthLogout).ok).toBe(true);
+  expect(fixture.read().models.providers).toBeUndefined();
+  expect(fixture.read().gateway).toEqual(initialGateway);
+
+  configured = true;
+  expect(fixture.sync.sync('app-config-change').ok).toBe(true);
+  expect(fixture.read().gateway).toEqual(initialGateway);
+  expect(fixture.sync.sync('app-config-change')).toMatchObject({ ok: true, configChanged: false });
 });
 
 test('marks only verified model-default projections for skipping historical session scans', () => {
@@ -2502,7 +2555,7 @@ describe('OpenClaw auth logout config sync', () => {
     );
     expect(config.agents.entries.main.model).toBeUndefined();
     expect(config.agents.entries.worker.model).toBeUndefined();
-    expect(config.gateway).toEqual({ mode: 'local', customSetting: 'keep-me', controlUi: { enabled: false, allowExternalEmbedUrls: true } });
+    expect(config.gateway).toEqual({ mode: 'local', bind: 'loopback', customSetting: 'keep-me', controlUi: { enabled: false, allowExternalEmbedUrls: true } });
     expect(config.customFeature).toEqual({ enabled: true });
     expect(config.secrets.providers).toEqual({
       operator_secrets: {
@@ -2529,7 +2582,7 @@ describe('OpenClaw auth logout config sync', () => {
     expect(config.agents.defaults.model).toBeUndefined();
     expect(config.agents.entries.main.model).toBeUndefined();
     expect(config.agents.entries.worker.model).toBeUndefined();
-    expect(config.gateway).toEqual({ mode: 'local', customSetting: 'keep-me', controlUi: { enabled: false, allowExternalEmbedUrls: true } });
+    expect(config.gateway).toEqual({ mode: 'local', bind: 'loopback', customSetting: 'keep-me', controlUi: { enabled: false, allowExternalEmbedUrls: true } });
     expect(config.customFeature).toEqual({ enabled: true });
   });
 
@@ -2866,7 +2919,7 @@ describe('OpenClaw auth logout config sync', () => {
     expect(config.agents.defaults).not.toHaveProperty('thinkingDefault');
     expect(config.agents.defaults.compaction.memoryFlush).toEqual({ enabled: false });
     expect(config.agents.defaults.compaction).not.toHaveProperty('keepRecentTokens');
-    expect(config.gateway).toEqual({ mode: 'local', customSetting: 'keep-me', controlUi: { enabled: false, allowExternalEmbedUrls: true } });
+    expect(config.gateway).toEqual({ mode: 'local', bind: 'loopback', customSetting: 'keep-me', controlUi: { enabled: false, allowExternalEmbedUrls: true } });
     expect(config.customFeature).toEqual({ enabled: true });
 
     // Ordinary sync establishes the steady-state config. Adding another

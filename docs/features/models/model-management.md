@@ -83,6 +83,8 @@ Kie、Z.AI、Novita 不在受支持的视频提供方中，即使安装对应插
 
 保存本地目录、应用原生配置和连接测试是不同阶段。失败应保留可编辑数据并说明阶段，不能显示“成功”后实际仍用旧 endpoint。当前 catalog UI 不提供任意 fallback 策略编辑。
 
+语言模型目录为空和非空时使用相同的 Gateway 固定监听配置。首次添加自定义模型以及清空后重新添加模型沿用原生配置热更新，凭据通过 `secrets.reload` 确认；不会因补写监听模式触发引擎重启。保存仍需取得当前进程、生命周期及认证身份下的实际应用确认，未知结果不作为成功。
+
 ## 7. 回归检查
 
 验证同名/改名、手工模型保留、过时发现响应、完整 URL 规范化、多能力凭据隔离、voice 缺失、main 默认与助手 override，以及真实原生请求。入口在 settings/models、providers、mediaGenerationModels 和 onlineAsr/onlineTts IPC 及其测试。

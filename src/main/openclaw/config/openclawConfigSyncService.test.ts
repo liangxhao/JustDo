@@ -1228,6 +1228,24 @@ describe('OpenClawConfigSyncService', () => {
     expect(harness.startGateway).not.toHaveBeenCalled();
   });
 
+  it('confirms model catalog and file credentials together without restarting after an app config save', async () => {
+    const harness = createHarness({ configChanged: true, secretsChanged: true });
+    await expect(harness.service.syncConfig({ reason: 'app-config-change' })).resolves.toMatchObject({
+      success: true, changed: true, configSynced: true,
+    });
+    expect(harness.engineManager.waitForGatewayConfigReload).toHaveBeenCalledOnce();
+    expect(harness.requestGateway).toHaveBeenCalledWith('secrets.reload', undefined, {
+      timeoutMs: resolveManagedCredentialReloadTimeoutMs(),
+    });
+    const methods = harness.requestGateway.mock.calls.map(([method]) => method);
+    expect(methods).toContain('config.get');
+    expect(methods.indexOf('config.get')).toBeLessThan(methods.indexOf('secrets.reload'));
+    expect(harness.stopGateway).not.toHaveBeenCalled();
+    expect(harness.startGateway).not.toHaveBeenCalled();
+    expect(harness.engineManager.restartGateway).not.toHaveBeenCalled();
+    expect(methods).not.toContain('gateway.restart.request');
+  });
+
   it('refreshes rotated file credentials without restarting or waiting for a config file event', async () => {
     const harness = createHarness({ configChanged: false, secretsChanged: true });
     await expect(harness.service.syncConfig({ reason: 'provider-key-change' })).resolves.toMatchObject({ success: true, changed: true });
