@@ -47,6 +47,8 @@ STT、TTS 扩展齿轮与语音页共用在线模型目录；TTS 同时引用该
 
 原生 image 使用能力限定的配置视图，保留 manifest 的 canonical provider ID，不改写语言模型的 models.providers.openai。多个能力同用一种协议也不能互相覆盖 endpoint/key。
 
+应用管理的语言模型供应商（包括内置和自定义）统一投影 `models.providers.<id>.request.allowPrivateNetwork: true`，允许其模型 HTTP 请求使用应用或用户配置的内网服务或代理 Fake-IP 地址。现有及以后新增的已启用供应商在启动、保存和认证同步时自动获得该策略，无需逐域名维护；手工修改原生配置不是持久设置入口。该授权覆盖对应供应商的模型传输及原生重定向，不是仅限初始域名的豁免；登录换证、模型发现、记忆检索、网页、网络工具及语音／图像／视频独立请求沿用各自策略。内置模型的 JWT、SecretRef、轮换和退出清理不变；供应商改名的唯一端点匹配忽略这一统一的允许值，仍保留其他请求选项和显式拒绝的差异。
+
 ## 4. 发现与端点规范化
 
 发现先尝试 OpenAI-compatible /models，缺失或为空时检查服务根 /openapi.json 中对应请求 schema 的默认值/enum。新 ID 合并而不删除手工模型。完整能力 URL 粘贴后去除已知 suffix，避免原生再次追加造成重复路径。

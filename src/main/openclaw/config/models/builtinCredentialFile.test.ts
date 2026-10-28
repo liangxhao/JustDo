@@ -25,7 +25,10 @@ afterEach(() => {
   for (const item of directories.splice(0)) fs.rmSync(item, { recursive: true, force: true });
 });
 const source = () => ({
-  models: { providers: { builtin_models: { apiKey: { source: 'exec', provider: BUILTIN_SECRET_SOURCE, id: BUILTIN_SECRET_ID } } } },
+  models: { providers: { builtin_models: {
+    apiKey: { source: 'exec', provider: BUILTIN_SECRET_SOURCE, id: BUILTIN_SECRET_ID },
+    request: { allowPrivateNetwork: true },
+  } } },
   memory: { search: { remote: { apiKey: { source: 'exec', provider: BUILTIN_SECRET_SOURCE, id: BUILTIN_SECRET_ID } } } },
 });
 const secret = 'synthetic-short-lived-jwt';
@@ -64,6 +67,7 @@ describe('encrypted binary builtin credentials', () => {
       providers: {
         builtin_models: {
           apiKey: { source: 'exec', provider: BUILTIN_SECRET_SOURCE, id: BUILTIN_SECRET_ID },
+          request: { allowPrivateNetwork: true },
         },
       },
     });

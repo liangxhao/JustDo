@@ -120,6 +120,8 @@ builtin provider 在 SQLite/Renderer 中 apiKey 为空，只保存 base URL、�
 
 自定义 provider 保持自己的 file SecretRef 路径和配置，不因 builtin logout 被清理。产品 appConfigCredentials 也不能被描述成统一加密所有自定义 key，见[存储](../../architecture/10-data-storage.md)。
 
+内置语言模型与自定义语言模型统一投影 `models.providers.<id>.request.allowPrivateNetwork: true`，用于模型 HTTP 传输访问企业内网或代理 Fake-IP；授权也覆盖原生重定向。该字段随登录生成、凭据解析和轮换保留，退出时随内置 Provider 一起删除，不改变 JWT、开发 API Key、账号绑定或 SecretRef 验证。换证、目录发现及记忆检索沿用各自网络策略，不从这个模型请求字段继承授权。
+
 ## 6. 退出、失效与发现失败
 
 凭据缺失/失效时清内存、中止旧发现，移除 builtin provider、相关 memory search 引用与受管 SecretRef，同步 Gateway 并通知 Renderer；不继续请求模型服务。

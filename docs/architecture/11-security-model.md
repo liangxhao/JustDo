@@ -95,6 +95,8 @@ Extension sidecar 只声明 HTTPS 目标、Header 名称和受管 user-info 引�
 
 远程 URL、redirect、loopback 及内网访问按具体服务校验，不因 CSP 通配而免除 SSRF 防线。原生网络工具与浏览器网页内容仍作为不可信模型输入。
 
+应用管理的内置及自定义语言服务被作为受信模型传输：Main 为对应原生 Provider 统一写入 `request.allowPrivateNetwork: true`，以适配企业内网和代理 Fake-IP。原生因此允许该 Provider 的模型 HTTP 请求及其重定向访问私有／特殊地址；这不是精确域名授权，也不保留该传输中的元数据／特殊地址拦截。内置模型仍要求原有 JWT／开发凭据、SecretRef、账号及生命周期校验，网络授权不替代认证；退出时连同内置 Provider 一起删除。登录换证、模型发现、记忆检索、浏览器、`web_fetch` 和其他能力不继承此字段，仍执行其所属策略。不设置全局 SSRF 关闭开关。
+
 ## 9. 日志、更新与剩余风险
 
 日志记录状态、计数、脱敏来源和必要身份，不记录 token、原始认证头、完整配置及用户内容。Gateway 摘要会省略事件；排障原生 JSON 时先检查上下文隐私，不能直接提交到仓库。

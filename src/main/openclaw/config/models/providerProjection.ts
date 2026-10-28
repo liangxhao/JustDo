@@ -48,6 +48,16 @@ export const getModelProviderId = (model: unknown): string => {
 export const providerRouteIdentity = (provider: unknown): string => {
   if (!isRecord(provider)) return '';
   const { apiKey: _apiKey, ...route } = provider;
+  if (isRecord(route.request) && route.request.allowPrivateNetwork === true) {
+    // The managed network opt-in must not break unique route matching when a
+    // saved provider is renamed. Other transport and explicit denial fields matter.
+    const { request: _request, ...identity } = route;
+    const { allowPrivateNetwork: _allowPrivateNetwork, ...request } = route.request;
+    return JSON.stringify({
+      ...identity,
+      ...(Object.keys(request).length > 0 ? { request } : {}),
+    });
+  }
   return JSON.stringify(route);
 };
 
@@ -85,6 +95,7 @@ export type OpenClawProviderSelection = {
     apiKey: unknown;
     auth: 'api-key';
     timeoutSeconds: number;
+    request: { allowPrivateNetwork: true };
     headers?: Record<string, unknown>;
     models: Array<{
       id: string;
@@ -222,6 +233,9 @@ export const buildProviderSelection = (options: {
         ? { headers: buildBuiltinModelOpenClawHeaders() }
         : {}),
       timeoutSeconds: OPENCLAW_MODEL_PROVIDER_TIMEOUT_SECONDS,
+      // Managed language model services may use enterprise/private
+      // endpoints or a proxy's fake DNS. This is a provider transport opt-in only.
+      request: { allowPrivateNetwork: true },
       ...(customHeaderNames.length > 0
         ? {
             headers: Object.fromEntries(

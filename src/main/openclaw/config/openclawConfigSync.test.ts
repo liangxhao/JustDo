@@ -20,6 +20,7 @@ import {
   setActiveBuiltinModelDevelopmentApiKey,
 } from '../../providers/builtinModelCredential';
 import type { ProviderRawConfig } from '../../providers/providerApiConfig';
+import { providerRouteIdentity } from './models/providerProjection';
 import {
   buildAuthScopedOpenClawConfig,
   buildManagedCapabilityPluginEntries,
@@ -272,6 +273,7 @@ describe('OpenClaw provider config', () => {
       id: '/acmeproxy',
     });
     expect(selection.providerConfig.models).toHaveLength(1);
+    expect(selection.providerConfig.request).toEqual({ allowPrivateNetwork: true });
     expect(selection.providerConfig.headers).toEqual({
       'X-Tenant': {
         source: 'file',
@@ -305,6 +307,23 @@ describe('OpenClaw provider config', () => {
       provider: 'justdo_login',
       id: 'X-ACCESS-JWT',
     });
+    expect(selection.providerConfig.request).toEqual({ allowPrivateNetwork: true });
+  });
+
+  test('keeps renamed provider matching stable across the managed model network opt-in', () => {
+    const provider = { baseUrl: 'https://models.example.test/v1', models: [{ id: 'chat' }] };
+    const request = Object.freeze({ allowPrivateNetwork: true });
+    expect(providerRouteIdentity({ ...provider, request })).toBe(providerRouteIdentity(provider));
+    expect(request).toEqual({ allowPrivateNetwork: true });
+    for (const differentRequest of [
+      { allowPrivateNetwork: false },
+      { allowPrivateNetwork: true, proxy: { mode: 'env-proxy' } },
+      { allowPrivateNetwork: true, auth: { mode: 'provider-default' } },
+      { allowPrivateNetwork: true, headers: { 'X-Tenant': 'other-tenant' } },
+    ]) {
+      expect(providerRouteIdentity({ ...provider, request: differentRequest }))
+        .not.toBe(providerRouteIdentity(provider));
+    }
   });
 
   test('omits JWT identity headers for a development API key', () => {
@@ -318,6 +337,7 @@ describe('OpenClaw provider config', () => {
         providerName: ProviderName.BuiltinModels,
       });
       expect(selection.providerConfig.headers).toBeUndefined();
+      expect(selection.providerConfig.request).toEqual({ allowPrivateNetwork: true });
       expect(selection.providerConfig.apiKey).toEqual({
         source: 'exec',
         provider: 'justdo_login',

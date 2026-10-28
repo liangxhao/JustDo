@@ -294,6 +294,7 @@ test('keeps Gateway listener configuration stable when the first custom model is
   expect(fixture.read().models.providers.internal.models).toEqual([
     expect.objectContaining({ id: 'internal-model' }),
   ]);
+  expect(fixture.read().models.providers.internal.request).toEqual({ allowPrivateNetwork: true });
   expect(fixture.read().gateway).toEqual(initialGateway);
   expect(fixture.sync.collectGatewayLaunchEnvVars()).toEqual(launchEnvironment);
 
@@ -2914,6 +2915,8 @@ describe('OpenClaw auth logout config sync', () => {
       id: '/custom-provider',
     });
     expect(config.models.providers.custom_1).toBeUndefined();
+    expect(config.models.providers['custom-provider'].request).toEqual({ allowPrivateNetwork: true });
+    expect(config.models.providers.builtin_models.request).toEqual({ allowPrivateNetwork: true });
     expect(config.models).not.toHaveProperty('pricing');
     expect(config.agents.defaults.model.primary).toBe('custom-provider/custom-model');
     expect(config.agents.defaults).not.toHaveProperty('thinkingDefault');
@@ -2948,6 +2951,11 @@ describe('OpenClaw auth logout config sync', () => {
     });
     expect(sync.collectGatewayLaunchEnvVars()).toEqual(launchEnvironment);
 
+    const multipleProviders = JSON.parse(fs.readFileSync(configPath, 'utf8')).models.providers;
+    expect(multipleProviders['custom-provider'].request).toEqual({ allowPrivateNetwork: true });
+    expect(multipleProviders['second-provider'].request).toEqual({ allowPrivateNetwork: true });
+    expect(multipleProviders.builtin_models.request).toEqual({ allowPrivateNetwork: true });
+
     providersWithSecond['second-provider'].apiKey = 'rotated-provider-fixture-key';
     expect(sync.sync('provider-key-change')).toMatchObject({
       ok: true,
@@ -2958,6 +2966,8 @@ describe('OpenClaw auth logout config sync', () => {
     expect(sync.collectGatewayLaunchEnvVars()).toEqual(launchEnvironment);
 
     const beforeRename = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    // A previously saved provider may not have the new managed network opt-in.
+    delete beforeRename.models.providers['custom-provider'].request;
     beforeRename.agents.entries.worker = {
       id: 'worker',
       model: { primary: 'custom-provider/custom-model' },

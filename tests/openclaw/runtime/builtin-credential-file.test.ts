@@ -35,6 +35,7 @@ test.skipIf(!fs.existsSync(dist))('native JWT references protect tokens without 
     const provider = buildProviderSelection({
       apiKey: '', baseURL: 'http://127.0.0.1:9/v1', modelId: 'fixture', apiType: 'openai', providerName: 'builtin_models',
     }).providerConfig;
+    expect(provider.request).toEqual({ allowPrivateNetwork: true });
     const { config } = syncBuiltinCredentialFile({
       gateway: { mode: 'local' }, plugins: { enabled: false },
       agents: { entries: { main: {} }, defaults: { systemAgent: { agentId: 'main' },
@@ -64,6 +65,8 @@ test.skipIf(!fs.existsSync(dist))('native JWT references protect tokens without 
         config: source, env: process.env, includeAuthStoreRefs: false,
         agentDirs: [${JSON.stringify(path.join(directory, 'agent'))}],
       });
+      if (runtime.models.providers.builtin_models.request?.allowPrivateNetwork !== true)
+        throw new Error('Managed model network policy was lost during credential resolution');
       if ('X-User-Account' in runtime.models.providers.builtin_models.headers) throw new Error('Account header still projected');
       if (runtime.models.providers.builtin_models.headers['X-ACCESS-JWT'] !== key) throw new Error('JWT header mismatch');
       const userText = '用户名是user-fixture';

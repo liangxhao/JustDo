@@ -201,11 +201,13 @@ nativeTest('persisted login, logout and minimal startup projections prune obsole
       expect(config.tts.personas.narrator.providers.openai.speakerVoice).toBe(canonicalVoice ? 'current-narrator' : undefined);
       if (mode === 'full-login') {
         expect(config.models.providers.builtin_models.apiKey).toEqual({ source: 'exec', provider: 'justdo_login', id: 'X-ACCESS-JWT' });
+        expect(config.models.providers.builtin_models.request).toEqual({ allowPrivateNetwork: true });
         expect(config.agents.defaults.model.primary).toBe('builtin_models/chat-fixture');
       } else {
         expect(config.models.providers?.builtin_models).toBeUndefined();
         if (mode === 'full-logout') {
           expect(config.models.providers['custom-provider']).toBeDefined();
+          expect(config.models.providers['custom-provider'].request).toEqual({ allowPrivateNetwork: true });
           expect(config.agents.defaults.model.primary).toBe('custom-provider/chat-fixture');
         }
       }
