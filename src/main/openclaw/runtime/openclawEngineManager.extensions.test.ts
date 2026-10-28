@@ -17,7 +17,6 @@ function createManager() {
     gatewayPort: number;
     setStatus: (status: OpenClawEngineStatus) => void;
     resolveRuntimeMetadata: () => { root: string; version: string };
-    sessionStoreMigration: { plan: () => Promise<{ required: boolean }> };
     prepareNetworkGeneration: ReturnType<typeof vi.fn>;
     beginNetworkGeneration: ReturnType<typeof vi.fn>;
     refreshSpeechPluginRegistryIfNeeded: ReturnType<typeof vi.fn>;
@@ -34,7 +33,6 @@ function createManager() {
     harness.status = status;
   };
   harness.resolveRuntimeMetadata = () => ({ root: 'fixture-runtime', version: 'test' });
-  harness.sessionStoreMigration = { plan: async () => ({ required: false }) };
   harness.prepareNetworkGeneration = vi.fn(async () => {});
   harness.beginNetworkGeneration = vi.fn();
   harness.refreshSpeechPluginRegistryIfNeeded = vi.fn(async () => {});

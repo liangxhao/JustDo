@@ -4,7 +4,6 @@ import { expect, test } from 'vitest';
 
 import {
   defaultConfig,
-  getCustomProviderDefaultName,
   getProviderDisplayName,
   isCustomProvider,
   validateDisplayName,
@@ -30,16 +29,16 @@ test('defaultConfig: matches the Codex panel shortcuts', () => {
   });
 });
 
-test('isCustomProvider: custom_0 is custom', () => {
-  expect(isCustomProvider('custom_0')).toBe(true);
+test('isCustomProvider: a named intranet route is custom', () => {
+  expect(isCustomProvider('intranet')).toBe(true);
 });
 
-test('isCustomProvider: custom_1 is custom', () => {
-  expect(isCustomProvider('custom_1')).toBe(true);
+test('isCustomProvider: a named company proxy is custom', () => {
+  expect(isCustomProvider('company-proxy')).toBe(true);
 });
 
-test('isCustomProvider: custom_99 is custom', () => {
-  expect(isCustomProvider('custom_99')).toBe(true);
+test('isCustomProvider: a named tenant route is custom', () => {
+  expect(isCustomProvider('tenant')).toBe(true);
 });
 
 test('isCustomProvider: a named OpenAI route is custom', () => {
@@ -58,18 +57,6 @@ test('isCustomProvider: named custom provider is custom', () => {
   expect(isCustomProvider('custom')).toBe(true);
 });
 
-test('getCustomProviderDefaultName: custom_0 -> Custom0', () => {
-  expect(getCustomProviderDefaultName('custom_0')).toBe('Custom0');
-});
-
-test('getCustomProviderDefaultName: custom_1 -> Custom1', () => {
-  expect(getCustomProviderDefaultName('custom_1')).toBe('Custom1');
-});
-
-test('getCustomProviderDefaultName: custom_42 -> Custom42', () => {
-  expect(getCustomProviderDefaultName('custom_42')).toBe('Custom42');
-});
-
 test('getProviderDisplayName: named provider uses its key as fallback', () => {
   expect(getProviderDisplayName('openai')).toBe('openai');
 });
@@ -79,19 +66,19 @@ test('getProviderDisplayName: another named provider uses its key as fallback', 
 });
 
 test('getProviderDisplayName: custom provider without config uses default name', () => {
-  expect(getProviderDisplayName('custom_0')).toBe('Custom0');
+  expect(getProviderDisplayName('acme')).toBe('acme');
 });
 
 test('getProviderDisplayName: custom provider with empty displayName uses default', () => {
-  expect(getProviderDisplayName('custom_0', { displayName: '' })).toBe('Custom0');
+  expect(getProviderDisplayName('acme', { displayName: '' })).toBe('acme');
 });
 
 test('getProviderDisplayName: custom provider with displayName uses it', () => {
-  expect(getProviderDisplayName('custom_0', { displayName: 'My GPT' })).toBe('My GPT');
+  expect(getProviderDisplayName('acme', { displayName: 'My GPT' })).toBe('My GPT');
 });
 
 test('getProviderDisplayName: custom provider with undefined displayName uses default', () => {
-  expect(getProviderDisplayName('custom_2', { displayName: undefined })).toBe('Custom2');
+  expect(getProviderDisplayName('spare', { displayName: undefined })).toBe('spare');
 });
 
 // validateDisplayName tests

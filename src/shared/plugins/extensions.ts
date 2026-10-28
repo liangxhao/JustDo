@@ -12,7 +12,6 @@ export type ExtensionState = (typeof ExtensionState)[keyof typeof ExtensionState
 export const ExtensionIpc = {
   List: 'extensions:list',
   Import: 'extensions:import',
-  ImportProgress: 'extensions:import-progress',
   Delete: 'extensions:delete',
   SetEnabled: 'extensions:set-enabled',
   UpdateConfiguration: 'extensions:update-configuration',
@@ -181,7 +180,7 @@ export type ExtensionImportRequest = {
   reviewToken?: string;
 };
 
-export type ExtensionImportProgress = ExtensionImportRequest & {
+export type ExtensionInstallProgress = {
   stage: ExtensionImportStage;
   percent: number;
 };

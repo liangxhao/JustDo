@@ -27,7 +27,6 @@ import {
   buildDefaultOpenClawPluginEntries,
   buildManagedBundledExtensionEntries,
   buildManagedExternalAgentEntries,
-  buildManagedOnlineAsrPluginEntries,
   buildManagedOpenClawAcpConfig,
   buildManagedOpenClawAgentThinkingConfig,
   buildManagedOpenClawCompactionConfig,
@@ -73,9 +72,9 @@ import {
   OpenClawConfigSyncDeps,
   OpenClawConfigSyncResult,
   OpenClawProviderSelection,
+  projectManagedOpenClawBrowserConfig,
   readPreinstalledPluginIds,
   resolveManagedOpenClawTtsConfig,
-  sanitizeOpenClawV2026_10_6Config,
   verifyOpenClawConfigMatches,
   withMemorySearch,
 } from './openclawConfigBuilders';
@@ -93,7 +92,6 @@ export {
   buildManagedAcpxMcpServers,
   buildManagedAcpxPluginEntry,
   buildManagedExternalAgentEntries,
-  buildManagedOnlineAsrPluginEntries,
   buildManagedOpenClawAcpConfig,
   buildManagedOpenClawAgentThinkingConfig,
   buildManagedOpenClawCompactionConfig,
@@ -132,10 +130,10 @@ export {
   OPENCLAW_SUBAGENT_MAX_CONCURRENT,
   OPENCLAW_SUBAGENT_RUN_TIMEOUT_SECONDS,
   type OpenClawConfigSyncResult,
+  projectManagedOpenClawBrowserConfig,
   removeUnavailableOpenClawPluginRegistrations,
   resolveManagedOpenClawTtsConfig,
   resolveOpenClawExecHost,
-  sanitizeOpenClawV2026_10_6Config,
   verifyLoggedOutOpenClawConfig,
 } from './openclawConfigBuilders';
 
@@ -162,7 +160,6 @@ import type { OpenClawHookRecord } from '../../plugins/hooks';
 import type { McpServerRecord } from '../../plugins/mcp';
 import { getActiveBuiltinModelCredential } from '../../providers/builtinModelCredential';
 import {
-  getProviderDisplayNameMap,
   resolveAllEnabledProviderConfigs,
   resolveAllProviderSecrets,
   resolveRawApiConfig,
@@ -323,11 +320,10 @@ export class OpenClawConfigSync {
         providerName: resolution.providerMetadata?.providerName ?? '',
         displayName: resolution.providerMetadata?.displayName }).primaryModel;
       const agents = this.getAgents?.() ?? [];
-      const names = getProviderDisplayNameMap();
       const targets: Record<string, string> = { main: primary };
       for (const agent of agents) {
         if (agent.id === 'main' || !agent.enabled || agent.deletedAt) continue;
-        const entry = buildAgentEntry(agent, primary, names);
+        const entry = buildAgentEntry(agent, primary);
         if (!isRecord(entry.model) || typeof entry.model.primary !== 'string')
           return failed('The selected agent model is unavailable.');
         targets[normalizeOpenClawAgentId(agent.id)] = entry.model.primary;
@@ -599,7 +595,6 @@ export class OpenClawConfigSync {
       ),
       ...buildManagedLocalSpeechPluginEntries(this.getLocalSttConfig(), isBundledPluginAvailable),
       ...(!this.getSpeechModelSettings ? buildManagedOpenClawTtsPluginEntries(managedTtsConfig) : {}),
-      ...buildManagedOnlineAsrPluginEntries(existingPlugins),
       ...buildManagedSwarmWorkflowPluginEntries(this.getAgents?.() ?? []),
     };
     const defaultPluginEntries = buildDefaultOpenClawPluginEntries();
@@ -817,7 +812,7 @@ export class OpenClawConfigSync {
         error: 'Failed to prepare managed model provider credentials.',
       };
     }
-    const configToPersist = sanitizeOpenClawV2026_10_6Config(
+    const configToPersist = projectManagedOpenClawBrowserConfig(
       withComputerControlPolicy(preparedSecrets.config),
     );
     if (Object.hasOwn(existingAgentDefaults, 'decisionModel')) {
@@ -908,11 +903,10 @@ export class OpenClawConfigSync {
   ): { ownership: 'explicit'; entries: Record<string, Record<string, unknown>> } {
     const agents = this.getAgents?.() ?? [];
     const mainAgent = agents.find(agent => agent.id === 'main');
-    const displayNameMap = getProviderDisplayNameMap();
 
     const list = [
       mainAgent
-        ? buildAgentEntry(mainAgent, defaultPrimaryModel, displayNameMap)
+        ? buildAgentEntry(mainAgent, defaultPrimaryModel)
         : {
             id: 'main',
             default: true,
@@ -925,7 +919,6 @@ export class OpenClawConfigSync {
       ...buildManagedAgentEntries({
         agents,
         fallbackPrimaryModel: defaultPrimaryModel,
-        displayNameMap,
       }),
       ...Object.entries(
         buildManagedExternalAgentEntries(mainWorkspaceDir, externalAgentSettings),
@@ -1194,7 +1187,7 @@ export class OpenClawConfigSync {
       );
     }
     this.applyManagedRuntimeConfiguration(minimalConfig);
-    minimalConfig = sanitizeOpenClawV2026_10_6Config(withComputerControlPolicy(minimalConfig));
+    minimalConfig = projectManagedOpenClawBrowserConfig(withComputerControlPolicy(minimalConfig));
     const nextContent = `${JSON.stringify(minimalConfig, null, 2)}\n`;
     const buildMinimalSyncResult = (
       expectedConfig: Record<string, unknown>,
@@ -1243,7 +1236,7 @@ export class OpenClawConfigSync {
       try {
         const existing = previousConfig;
         if (isRecord(existing)) {
-          const canonicalExisting = sanitizeOpenClawV2026_10_6Config(existing);
+          const canonicalExisting = projectManagedOpenClawBrowserConfig(existing);
           const hasHookConfig = Object.keys(hookConfig).length > 0;
           const hasSubstantiveConfig =
             Boolean(isRecord(canonicalExisting.models) && canonicalExisting.models.providers) ||
@@ -1315,7 +1308,7 @@ export class OpenClawConfigSync {
                 existingConfig: canonicalExisting,
               }),
             );
-            const mergedConfig = sanitizeOpenClawV2026_10_6Config(
+            const mergedConfig = projectManagedOpenClawBrowserConfig(
               withMemorySearch(
                 {
                   ...canonicalExisting,

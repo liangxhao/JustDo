@@ -7,9 +7,9 @@ import * as tar from 'tar';
 
 import {
   type ExtensionDeleteResult,
-  type ExtensionImportProgress,
   type ExtensionImportResult,
   type ExtensionImportStage,
+  type ExtensionInstallProgress,
   type ExtensionSetEnabledResult,
   ExtensionState,
   type InstalledOpenClawExtension,
@@ -94,7 +94,7 @@ const createInstallSuccessPattern = (
   );
 };
 
-export type { ExtensionImportProgress, ExtensionImportResult, ExtensionImportStage };
+export type { ExtensionImportResult, ExtensionImportStage, ExtensionInstallProgress };
 
 /** Additional Main-only installation identity and source location evidence. */
 type CommittedExtensionImportResult = ExtensionImportResult & {
@@ -554,10 +554,6 @@ const collectProviderEnvGroups = (manifest: Record<string, unknown>): string[][]
   providers.forEach(provider => {
     if (isRecord(provider)) addEnvVars(provider.envVars);
   });
-  const legacyProviderEnvVars = isRecord(manifest.providerAuthEnvVars)
-    ? manifest.providerAuthEnvVars
-    : {};
-  Object.values(legacyProviderEnvVars).forEach(addEnvVars);
   return groups;
 };
 
@@ -2168,7 +2164,7 @@ export class OpenClawExtensionImportService {
 
   async importPath(
     sourcePath: string,
-    onProgress?: (progress: Omit<ExtensionImportProgress, 'requestId' | 'sourcePath'>) => void,
+    onProgress?: (progress: ExtensionInstallProgress) => void,
     reviewToken?: string,
     options?: {
       trustMarketplaceSource?: boolean;
@@ -2184,7 +2180,7 @@ export class OpenClawExtensionImportService {
 
   private async importPathExclusive(
     sourcePath: string,
-    onProgress?: (progress: Omit<ExtensionImportProgress, 'requestId' | 'sourcePath'>) => void,
+    onProgress?: (progress: ExtensionInstallProgress) => void,
     reviewToken?: string,
     options?: {
       trustMarketplaceSource?: boolean;

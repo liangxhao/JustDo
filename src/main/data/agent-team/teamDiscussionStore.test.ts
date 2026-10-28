@@ -142,9 +142,8 @@ describe('group discussion admission and recovery', () => {
   });
 });
 
-it('adds initiator metadata without changing existing user request idempotency', () => {
+it('reinitializes the current schema without changing user request idempotency', () => {
   const original = store.reserve(input);
-  native.exec('ALTER TABLE team_discussion_runs DROP COLUMN initiator_agent_id');
   const adapter = {
     exec: (sql: string) => native.exec(sql),
     prepare: (sql: string) => native.prepare(sql),

@@ -68,7 +68,6 @@ export interface NormalizedChatEvent {
 export interface AgentEventNormalizationResult {
   event: NormalizedAgentEvent | null;
   reason?: 'invalid-payload' | 'missing-run' | 'missing-sequence' | 'missing-stream';
-  usedAseqFallback: boolean;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -114,24 +113,21 @@ export function normalizeAgentEvent(params: {
   payload: unknown;
   frameSeq?: unknown;
   now?: number;
-  allowAseqFallback?: boolean;
 }): AgentEventNormalizationResult {
   const payload = asRecord(params.payload);
-  if (!payload) return { event: null, reason: 'invalid-payload', usedAseqFallback: false };
+  if (!payload) return { event: null, reason: 'invalid-payload' };
 
   const data = asRecord(payload.data) ?? {};
   const runId = nonEmptyString(payload.runId);
-  if (!runId) return { event: null, reason: 'missing-run', usedAseqFallback: false };
+  if (!runId) return { event: null, reason: 'missing-run' };
 
-  const canonicalSeq = safeInteger(payload.seq);
-  const fallbackSeq = params.allowAseqFallback === false ? null : safeInteger(payload.aseq);
-  const agentSeq = canonicalSeq ?? fallbackSeq;
+  const agentSeq = safeInteger(payload.seq);
   if (agentSeq === null) {
-    return { event: null, reason: 'missing-sequence', usedAseqFallback: false };
+    return { event: null, reason: 'missing-sequence' };
   }
 
   const stream = nonEmptyString(payload.stream);
-  if (!stream) return { event: null, reason: 'missing-stream', usedAseqFallback: false };
+  if (!stream) return { event: null, reason: 'missing-stream' };
 
   const now = finiteTimestamp(params.now, Date.now());
   return {
@@ -161,7 +157,6 @@ export function normalizeAgentEvent(params: {
       timestamp: finiteTimestamp(payload.ts ?? payload.timestamp ?? data.ts, now),
       data,
     },
-    usedAseqFallback: canonicalSeq === null && fallbackSeq !== null,
   };
 }
 

@@ -904,9 +904,6 @@ const writeExistingBuiltinConfig = (): string => {
         },
       },
       models: {
-        pricing: {
-          enabled: true,
-        },
         providers: {
           builtin_models: {
             apiKey: '${JUSTDO_APIKEY_BUILTIN_MODELS}',
@@ -929,14 +926,13 @@ const writeExistingBuiltinConfig = (): string => {
             keepRecentTokens: 20_000,
           },
         },
-        list: [
-          {
-            id: 'main',
-            default: true,
+        ownership: 'explicit',
+        entries: {
+          main: {
             model: { primary: 'builtin_models/chat-model' },
             reasoningDefault: 'stream',
           },
-        ],
+        },
       },
       plugins: {
         entries: {
@@ -982,7 +978,6 @@ const writeExistingMixedProviderConfig = (): string => {
       },
       models: {
         mode: 'replace',
-        pricing: { enabled: true },
         providers: {
           builtin_models: {
             apiKey: '${JUSTDO_APIKEY_BUILTIN_MODELS}',
@@ -999,17 +994,15 @@ const writeExistingMixedProviderConfig = (): string => {
           model: { primary: 'custom-provider/custom-model' },
           timeoutSeconds: 120,
         },
-        list: [
-          {
-            id: 'main',
-            default: true,
+        ownership: 'explicit',
+        entries: {
+          main: {
             model: { primary: 'custom-provider/custom-model' },
           },
-          {
-            id: 'worker',
+          worker: {
             model: { primary: 'builtin_models/builtin-model' },
           },
-        ],
+        },
       },
     }),
     'utf8',
@@ -1612,7 +1605,7 @@ describe('OpenClaw auth logout config sync', () => {
           providers: { 'tts-local-cli': { command: 'extension-tts.exe' } },
         }),
         getLocalTtsConfig: () => ({
-          enabled: true,
+          auto: 'off',
           provider: 'tts-local-cli',
           providers: { 'tts-local-cli': { command: 'sherpa-tts.exe' } },
         }),
@@ -1623,7 +1616,7 @@ describe('OpenClaw auth logout config sync', () => {
       fs.writeFileSync(configPath, JSON.stringify({
         plugins: { allow: ['openai'] },
         tts: {
-          enabled: true, auto: 'off', provider: 'openai',
+          auto: 'off', provider: 'openai',
           providers: { openai: { baseUrl: 'https://speech.example.test/v1', model: 'online', speakerVoice: 'test-voice' } },
         },
       }));
@@ -1700,7 +1693,7 @@ describe('OpenClaw auth logout config sync', () => {
     const configPath = writeExistingBuiltinConfig();
     const existing = JSON.parse(fs.readFileSync(configPath, 'utf8'));
     existing.agents.defaults.heartbeat = { every: '2h' };
-    existing.agents.list[0].heartbeat = { every: '2h' };
+    existing.agents.entries.main.heartbeat = { every: '2h' };
     fs.writeFileSync(configPath, JSON.stringify(existing), 'utf8');
 
     expect(writeMinimalConfig(configPath, reason)).toMatchObject({ ok: true });
@@ -1801,7 +1794,6 @@ describe('OpenClaw auth logout config sync', () => {
     temporaryDirectories.push(directory);
     const configPath = path.join(directory, 'openclaw.json');
     const tts = {
-      enabled: true,
       auto: 'off',
       provider: 'tts-local-cli',
       providers: { 'tts-local-cli': { command: 'sherpa-onnx-offline-tts' } },
@@ -2476,7 +2468,6 @@ describe('OpenClaw auth logout config sync', () => {
     expect(content).not.toContain('JUSTDO_APIKEY_BUILTIN_MODELS');
     const config = JSON.parse(content);
     expect(config.models.providers).toBeUndefined();
-    expect(config.models).not.toHaveProperty('pricing');
     expect(config.agents.defaults.model).toBeUndefined();
     expect(config.agents.defaults).not.toHaveProperty('memorySearch');
     expect(config.memory.search).toEqual({ enabled: false });
@@ -2541,7 +2532,7 @@ describe('OpenClaw auth logout config sync', () => {
     });
   });
 
-  test('minimal logout removes obsolete legacy custom provider config', () => {
+  test('minimal logout withdraws managed providers and their model references', () => {
     const configPath = writeExistingMixedProviderConfig();
 
     const result = writeMinimalConfig(configPath, BuiltinModelSyncReason.AuthLogout);
@@ -2549,7 +2540,6 @@ describe('OpenClaw auth logout config sync', () => {
     expect(result.ok).toBe(true);
     const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
     expect(config.models.providers).toBeUndefined();
-    expect(config.models).not.toHaveProperty('pricing');
     expect(config.agents.defaults.model).toBeUndefined();
     expect(config.agents.defaults.timeoutSeconds).toBe(
       createDefaultAgentRuntimeSettings().agent.runTimeoutSeconds,
@@ -2579,7 +2569,6 @@ describe('OpenClaw auth logout config sync', () => {
     expect(result.ok).toBe(true);
     const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
     expect(config.models.providers).toBeUndefined();
-    expect(config.models).not.toHaveProperty('pricing');
     expect(config.agents.defaults.model).toBeUndefined();
     expect(config.agents.entries.main.model).toBeUndefined();
     expect(config.agents.entries.worker.model).toBeUndefined();
@@ -2599,7 +2588,7 @@ describe('OpenClaw auth logout config sync', () => {
   test('rejects stale built-in agent model references after provider removal', () => {
     const configPath = writeExistingBuiltinConfig();
     const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-    config.models = { pricing: { enabled: false } };
+    config.models = {};
     delete config.secrets;
     fs.writeFileSync(configPath, JSON.stringify(config), 'utf8');
 
@@ -2675,7 +2664,6 @@ describe('OpenClaw auth logout config sync', () => {
         },
         models: {
           mode: 'replace',
-          pricing: { enabled: true },
           providers: {
             builtin_models: {
               apiKey: '${JUSTDO_APIKEY_BUILTIN_MODELS}',
@@ -2691,13 +2679,12 @@ describe('OpenClaw auth logout config sync', () => {
           defaults: {
             model: { primary: 'builtin_models/chat-model' },
           },
-          list: [
-            {
-              id: 'main',
-              default: true,
+          ownership: 'explicit',
+          entries: {
+            main: {
               model: { primary: 'builtin_models/chat-model' },
             },
-          ],
+          },
         },
       }),
       'utf8',
@@ -2761,7 +2748,7 @@ describe('OpenClaw auth logout config sync', () => {
       'custom provider name "JustDo" conflicts with an application-managed provider id',
     );
     const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-    expect(config.models).toHaveProperty('pricing');
+    expect(config.models.mode).toBe('replace');
     expect(config.models.providers.builtin_models).toBeDefined();
     expect(config.models.providers.opencode).toBeDefined();
     expect(config.agents.defaults.model.primary).toBe('builtin_models/chat-model');
@@ -2819,7 +2806,6 @@ describe('OpenClaw auth logout config sync', () => {
         customFeature: { enabled: true },
         models: {
           mode: 'replace',
-          pricing: { enabled: true },
           providers: {
             builtin_models: {
               apiKey: { source: 'exec', provider: 'justdo_login', id: 'X-ACCESS-JWT' },
@@ -2917,7 +2903,6 @@ describe('OpenClaw auth logout config sync', () => {
     expect(config.models.providers.custom_1).toBeUndefined();
     expect(config.models.providers['custom-provider'].request).toEqual({ allowPrivateNetwork: true });
     expect(config.models.providers.builtin_models.request).toEqual({ allowPrivateNetwork: true });
-    expect(config.models).not.toHaveProperty('pricing');
     expect(config.agents.defaults.model.primary).toBe('custom-provider/custom-model');
     expect(config.agents.defaults).not.toHaveProperty('thinkingDefault');
     expect(config.agents.defaults.compaction.memoryFlush).toEqual({ enabled: false });

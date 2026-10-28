@@ -86,7 +86,6 @@ export type OpenClawProviderApi = 'openai-completions';
 
 export type OpenClawProviderSelection = {
   providerId: string;
-  legacyModelId: string;
   sessionModelId: string;
   primaryModel: string;
   providerConfig: {
@@ -221,7 +220,6 @@ export const buildProviderSelection = (options: {
 
   return {
     providerId: effectiveProviderId,
-    legacyModelId: options.modelId,
     sessionModelId,
     primaryModel: `${effectiveProviderId}/${sessionModelId}`,
     providerConfig: {

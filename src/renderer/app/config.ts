@@ -240,7 +240,6 @@ export const CONFIG_KEYS = {
   APP_CONFIG: 'app_config',
   AUTH: 'auth_state',
   CONVERSATIONS: 'conversations',
-  PROVIDERS_EXPORT_KEY: 'providers_export_key',
   SKILLS: 'skills',
 };
 
@@ -259,7 +258,7 @@ export const isBuiltinModelsProvider = (key: string): boolean =>
 export const isCustomProvider = (key: string): boolean => !!key && !isBuiltinModelsProvider(key);
 
 /**
- * Compatibility fallback for configurations written before named keys.
+ * Use the normalized provider key when a display name is omitted.
  */
 export const getCustomProviderDefaultName = getDefaultCustomProviderDisplayName;
 

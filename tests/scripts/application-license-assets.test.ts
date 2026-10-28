@@ -2,12 +2,17 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { afterEach, expect, test } from 'vitest';
+import { afterEach, expect, test, vi } from 'vitest';
 
 const { REQUIRED_APPLICATION_LICENSE_SCOPES, createApplicationLicensePlugin, verifyApplicationLicenseAssets } =
   require('../../scripts/packaging/application-license-assets.cjs');
 const roots: string[] = [];
-afterEach(() => { for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true }); });
+const platformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform')!;
+afterEach(() => {
+  vi.restoreAllMocks();
+  Object.defineProperty(process, 'platform', platformDescriptor);
+  for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
+});
 
 function write(root: string, relative: string, bytes: string | Buffer) {
   const file = path.join(root, relative);
@@ -106,6 +111,69 @@ test('rebuilding one scope replaces its old package graph while preserving sibli
   expect(fs.readdirSync(path.join(assets, 'renderer')).sort()).toEqual(['manifest.json', 'source-proof.json']);
   expect(fs.readFileSync(path.join(assets, 'main/manifest.json'))).toEqual(oldMain);
   expect(verifyApplicationLicenseAssets({ repoRoot }).packages).toBe(14);
+});
+
+test.each(['EPERM', 'EBUSY', 'EACCES'])('retries a transient Windows %s while publishing the complete license scope', code => {
+  const { repoRoot, assets } = fixture();
+  Object.defineProperty(process, 'platform', { value: 'win32' });
+  const denial = Object.assign(new Error('transient rename denial'), { code });
+  const rename = fs.renameSync;
+  let attempts = 0;
+  const publish = vi.spyOn(fs, 'renameSync').mockImplementation((source, destination) => {
+    if (destination === path.join(assets, 'renderer') && attempts++ === 0) throw denial;
+    return rename(source, destination);
+  });
+  const wait = vi.spyOn(Atomics, 'wait');
+
+  emit(repoRoot, 'renderer', []);
+
+  expect(attempts).toBe(2);
+  expect(wait.mock.calls.map(call => call[3])).toEqual([50]);
+  expect(fs.readdirSync(assets).sort()).toEqual([...REQUIRED_APPLICATION_LICENSE_SCOPES].sort());
+  expect(verifyApplicationLicenseAssets({ repoRoot }).packages).toBe(14);
+  expect(publish).toHaveBeenCalledTimes(2);
+});
+
+test.each([
+  { platform: 'win32', code: 'EPERM', attempts: 6, delays: [50, 100, 150, 200, 250] },
+  { platform: 'win32', code: 'ENOSPC', attempts: 1, delays: [] },
+  { platform: 'linux', code: 'EPERM', attempts: 1, delays: [] },
+])('blocks and cleans up a $platform publication failure with $code after $attempts attempts', ({ platform, code, attempts, delays }) => {
+  const { repoRoot, assets } = fixture();
+  const sibling = fs.readFileSync(path.join(assets, 'main/manifest.json'));
+  Object.defineProperty(process, 'platform', { value: platform });
+  const denial = Object.assign(new Error('publication failed'), { code });
+  const publish = vi.spyOn(fs, 'renameSync').mockImplementation(() => { throw denial; });
+  const wait = vi.spyOn(Atomics, 'wait').mockReturnValue('timed-out');
+
+  let publicationError;
+  try { emit(repoRoot, 'renderer', []); } catch (error) { publicationError = error; }
+
+  expect(publicationError).toBe(denial);
+  expect(publish).toHaveBeenCalledTimes(attempts);
+  expect(wait.mock.calls.map(call => call[3])).toEqual(delays);
+  expect(fs.readdirSync(assets).sort()).toEqual(REQUIRED_APPLICATION_LICENSE_SCOPES.filter((scope: string) => scope !== 'renderer').sort());
+  expect(fs.readFileSync(path.join(assets, 'main/manifest.json'))).toEqual(sibling);
+  expect(() => verifyApplicationLicenseAssets({ repoRoot })).toThrow(/scopes/);
+});
+
+test('revalidates owned build paths before a Windows publication retry', () => {
+  const { repoRoot, assets } = fixture();
+  const external = path.join(repoRoot, 'external-preserved');
+  fs.mkdirSync(external);
+  fs.writeFileSync(path.join(external, 'sentinel'), 'preserved');
+  Object.defineProperty(process, 'platform', { value: 'win32' });
+  const publish = vi.spyOn(fs, 'renameSync').mockImplementation(() => {
+    fs.symlinkSync(external, path.join(assets, 'renderer'), platformDescriptor.value === 'win32' ? 'junction' : 'dir');
+    throw Object.assign(new Error('transient rename denial'), { code: 'EPERM' });
+  });
+  vi.spyOn(Atomics, 'wait').mockReturnValue('timed-out');
+
+  expect(() => emit(repoRoot, 'renderer', [])).toThrow(/must not be a link/);
+
+  expect(publish).toHaveBeenCalledTimes(1);
+  expect(fs.readFileSync(path.join(external, 'sentinel'), 'utf8')).toBe('preserved');
+  expect(fs.readdirSync(assets).some(file => file.endsWith('.tmp'))).toBe(false);
 });
 
 test('records packages that publish only license metadata explicitly instead of inventing notice text', () => {

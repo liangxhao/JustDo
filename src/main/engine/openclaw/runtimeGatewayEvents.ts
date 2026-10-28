@@ -80,7 +80,6 @@ export interface RuntimeGatewayEventsContext {
   readonly terminalLifecycleSessionIds: Set<string>;
   readonly terminalLifecycleErrorSessionIds: Set<string>;
   readonly resolveTurn: (sessionId: string) => void;
-  legacyAgentSequence: number;
   readonly goalContinuationCoordinator: GoalContinuationCoordinator;
   readonly classifyMainAgentEvent: (
     turn: SessionTurn,
@@ -321,18 +320,8 @@ export function handleAgentEvent(
   payload: unknown,
   frameSeq?: number,
 ): void {
-  let normalized = normalizeAgentEvent({ deliveryEvent, payload, frameSeq });
+  const normalized = normalizeAgentEvent({ deliveryEvent, payload, frameSeq });
   const nativeAgentSeq = normalized.event?.agentSeq;
-  if (normalized.reason === 'missing-sequence' && isRecord(payload)) {
-    normalized = normalizeAgentEvent({
-      deliveryEvent,
-      payload: {
-        ...payload,
-        seq: frameSeq ?? ++this.legacyAgentSequence,
-      },
-      frameSeq,
-    });
-  }
   const event = normalized.event;
   if (!event) return;
 

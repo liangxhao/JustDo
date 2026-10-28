@@ -83,7 +83,7 @@ const normalizeRecentWorkspacePath = (cwd: string): string => {
 
 // Types mirroring src/types/cowork.ts for main process use
 export type CoworkSessionStatus = 'idle' | 'running' | 'completed' | 'error';
-export type CoworkExecutionMode = 'auto' | 'local' | 'sandbox';
+export type CoworkExecutionMode = 'local' | 'sandbox';
 
 const normalizeCoworkExecutionModeValue = (value: unknown): CoworkExecutionMode =>
   value === 'sandbox' ? 'sandbox' : 'local';
@@ -1619,17 +1619,6 @@ export class CoworkStore {
     const row = this.getOne<AgentRow>(`SELECT * FROM agents WHERE id = ?`, [id]);
     if (!row) return null;
     return this.mapAgentRow(row);
-  }
-
-  backfillEmptyAgentModels(modelId: string): number {
-    const normalizedModelId = modelId.trim();
-    if (!normalizedModelId) return 0;
-
-    const result = this.db
-      .prepare("UPDATE agents SET model = ?, updated_at = ? WHERE TRIM(COALESCE(model, '')) = ''")
-      .run(normalizedModelId, Date.now());
-
-    return result.changes;
   }
 
   updateAgent(id: string, updates: UpdateAgentRequest): Agent | null {

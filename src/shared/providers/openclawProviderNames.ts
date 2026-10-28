@@ -7,7 +7,7 @@
 export const JUSTDO_RESERVED_OPENCLAW_PROVIDER_IDS = ['builtin_models', 'justdo'] as const;
 
 const RESERVED_PROVIDER_IDS = new Set<string>(JUSTDO_RESERVED_OPENCLAW_PROVIDER_IDS);
-const LEGACY_CUSTOM_PROVIDER_ID_PATTERN = /^custom_\d+$/i;
+const RESERVED_NUMBERED_PROVIDER_NAME_PATTERN = /^custom_\d+$/i;
 const VALID_CUSTOM_PROVIDER_DISPLAY_NAME_PATTERN = /^[A-Za-z][A-Za-z0-9_. -]{0,31}$/;
 
 export type CustomProviderDisplayNameValidation =
@@ -17,21 +17,13 @@ export const normalizeOpenClawProviderId = (name: string): string => name.trim()
 
 export const isReservedOpenClawProviderId = (name: string): boolean => {
   const normalized = normalizeOpenClawProviderId(name);
-  return (
-    RESERVED_PROVIDER_IDS.has(normalized) || LEGACY_CUSTOM_PROVIDER_ID_PATTERN.test(normalized)
-  );
+  return RESERVED_PROVIDER_IDS.has(normalized) || RESERVED_NUMBERED_PROVIDER_NAME_PATTERN.test(normalized);
 };
 
 export const isJustDoCustomProviderKey = (providerKey: string): boolean =>
   !!providerKey && providerKey !== 'builtin_models';
 
-export const isLegacyCustomProviderKey = (providerKey: string): boolean =>
-  LEGACY_CUSTOM_PROVIDER_ID_PATTERN.test(providerKey);
-
-export const getDefaultCustomProviderDisplayName = (providerKey: string): string =>
-  isLegacyCustomProviderKey(providerKey)
-    ? `Custom${providerKey.replace(/^custom_?/, '')}`
-    : providerKey;
+export const getDefaultCustomProviderDisplayName = (providerKey: string): string => providerKey;
 
 export const getEffectiveCustomProviderDisplayName = (
   providerKey: string,

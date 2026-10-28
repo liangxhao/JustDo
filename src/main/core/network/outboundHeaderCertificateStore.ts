@@ -2,7 +2,6 @@ import { createPrivateKey, createPublicKey, type KeyObject, X509Certificate } fr
 import fs from 'fs';
 import path from 'path';
 
-const LEGACY_CA_COMMON_NAME = 'NodeMITMProxyCA';
 const CA_CERTIFICATE_NAME = 'ca.pem';
 const CA_PRIVATE_KEY_NAME = 'ca.private.key';
 const CA_PUBLIC_KEY_NAME = 'ca.public.key';
@@ -13,7 +12,6 @@ export const OutboundHeaderCertificateResetReason = {
   Incomplete: 'incomplete',
   Invalid: 'invalid',
   Expired: 'expired',
-  LegacyIdentity: 'legacy-identity',
   KeyMismatch: 'key-mismatch',
   StaleLeaf: 'stale-leaf',
 } as const;
@@ -21,11 +19,6 @@ export const OutboundHeaderCertificateResetReason = {
 export type OutboundHeaderCertificateResetReason =
   (typeof OutboundHeaderCertificateResetReason)[keyof typeof OutboundHeaderCertificateResetReason];
 
-const getSubjectCommonName = (certificate: X509Certificate): string | null => {
-  const subject = certificate.toLegacyObject().subject;
-  const commonName = subject?.CN;
-  return typeof commonName === 'string' ? commonName : null;
-};
 
 const exportPublicKey = (key: KeyObject): Buffer =>
   key.export({ type: 'spki', format: 'der' }) as Buffer;
@@ -66,9 +59,6 @@ const inspectCertificateStore = (
 
   try {
     const caCertificate = new X509Certificate(fs.readFileSync(caCertificatePath));
-    if (getSubjectCommonName(caCertificate) === LEGACY_CA_COMMON_NAME) {
-      return OutboundHeaderCertificateResetReason.LegacyIdentity;
-    }
     if (!isCertificateCurrent(caCertificate)) {
       return OutboundHeaderCertificateResetReason.Expired;
     }

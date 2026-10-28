@@ -4,8 +4,6 @@ import {
   buildAgentEntry,
   buildManagedAgentEntries,
   parsePrimaryModelRef,
-  resolveManagedSessionModelTarget,
-  resolveQualifiedAgentModelRef,
 } from './openclawAgentModels';
 
 describe('buildAgentEntry', () => {
@@ -57,32 +55,6 @@ describe('buildAgentEntry', () => {
     expect(result).toMatchObject({
       id: 'main',
       model: { primary: 'anthropic/claude-sonnet-4' },
-    });
-  });
-
-  test('rewrites a legacy custom provider key to its validated display name', () => {
-    const result = buildAgentEntry(
-      {
-        id: 'review',
-        name: 'main',
-        description: '',
-        systemPrompt: '',
-        identity: '',
-        model: 'custom_0/mimo-v2.5',
-        icon: '',
-        skillIds: [],
-        enabled: true,
-        isDefault: true,
-        createdAt: 0,
-        updatedAt: 0,
-      },
-      'anthropic/claude-sonnet-4',
-      { custom_0: 'AcmeProxy' },
-    );
-
-    expect(result).toMatchObject({
-      id: 'review',
-      model: { primary: 'acmeproxy/mimo-v2.5' },
     });
   });
 });
@@ -157,102 +129,5 @@ describe('parsePrimaryModelRef', () => {
 
   test('returns null for bare model ids', () => {
     expect(parsePrimaryModelRef('deepseek-v3.2')).toBeNull();
-  });
-});
-
-describe('resolveManagedSessionModelTarget', () => {
-  const availableProviders = {
-    'justdo-server': { models: [{ id: 'qwen3.5-plus' }, { id: 'deepseek-v3.2' }] },
-    minimax: { models: [{ id: 'MiniMax-M2.7' }] },
-  };
-
-  test('uses fallback target when agent model is empty', () => {
-    expect(
-      resolveManagedSessionModelTarget({
-        agentModel: '',
-        fallbackPrimaryModel: 'justdo-server/qwen3.5-plus',
-        availableProviders,
-      }),
-    ).toEqual({
-      providerId: 'justdo-server',
-      modelId: 'qwen3.5-plus',
-      primaryModel: 'justdo-server/qwen3.5-plus',
-    });
-  });
-
-  test('keeps explicit provider-qualified models', () => {
-    expect(
-      resolveManagedSessionModelTarget({
-        agentModel: 'minimax/MiniMax-M2.7',
-        fallbackPrimaryModel: 'justdo-server/qwen3.5-plus',
-        availableProviders,
-      }),
-    ).toEqual({
-      providerId: 'minimax',
-      modelId: 'MiniMax-M2.7',
-      primaryModel: 'minimax/MiniMax-M2.7',
-    });
-  });
-
-  test('resolves bare model ids against available providers', () => {
-    expect(
-      resolveManagedSessionModelTarget({
-        agentModel: 'deepseek-v3.2',
-        fallbackPrimaryModel: 'justdo-server/qwen3.5-plus',
-        availableProviders,
-      }),
-    ).toEqual({
-      providerId: 'justdo-server',
-      modelId: 'deepseek-v3.2',
-      primaryModel: 'justdo-server/deepseek-v3.2',
-    });
-  });
-
-  test('falls back to current provider when bare model cannot be resolved uniquely', () => {
-    expect(
-      resolveManagedSessionModelTarget({
-        agentModel: 'unknown-model',
-        fallbackPrimaryModel: 'justdo-server/qwen3.5-plus',
-        availableProviders,
-        currentProviderId: 'justdo-server',
-      }),
-    ).toEqual({
-      providerId: 'justdo-server',
-      modelId: 'unknown-model',
-      primaryModel: 'justdo-server/unknown-model',
-    });
-  });
-});
-
-describe('resolveQualifiedAgentModelRef', () => {
-  test('qualifies bare model ids when exactly one provider matches', () => {
-    expect(
-      resolveQualifiedAgentModelRef({
-        agentModel: 'deepseek-v3.2',
-        availableProviders: {
-          'justdo-server': { models: [{ id: 'deepseek-v3.2' }] },
-          minimax: { models: [{ id: 'MiniMax-M2.7' }] },
-        },
-      }),
-    ).toEqual({
-      status: 'qualified',
-      primaryModel: 'justdo-server/deepseek-v3.2',
-    });
-  });
-
-  test('does not auto-qualify bare model ids when multiple providers match', () => {
-    expect(
-      resolveQualifiedAgentModelRef({
-        agentModel: 'deepseek-v3.2',
-        availableProviders: {
-          anthropic: { models: [{ id: 'deepseek-v3.2' }] },
-          'justdo-server': { models: [{ id: 'deepseek-v3.2' }] },
-        },
-      }),
-    ).toEqual({
-      status: 'ambiguous',
-      modelId: 'deepseek-v3.2',
-      providerIds: ['anthropic', 'justdo-server'],
-    });
   });
 });

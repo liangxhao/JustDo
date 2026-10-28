@@ -80,7 +80,7 @@ describe('external agent settings', () => {
     }
   });
 
-  test('fills new safe defaults when loading an earlier version 1 payload', () => {
+  test('rejects an existing payload without current execution and bridge preferences', () => {
     const defaults = createDefaultExternalAgentSettings();
     const {
       readOnlyViolationBehavior: _behavior,
@@ -88,10 +88,10 @@ describe('external agent settings', () => {
       pluginToolsMcpBridge: _pluginTools,
       openClawToolsMcpBridge: _openClawTools,
       shareConfiguredMcpServers: _configuredMcp,
-      ...legacy
+      ...incomplete
     } = defaults;
 
-    expect(parseExternalAgentSettings(legacy)).toEqual(defaults);
+    expect(validateExternalAgentSettings(incomplete).ok).toBe(false);
   });
 
   test('rejects malformed MCP bridge flags', () => {

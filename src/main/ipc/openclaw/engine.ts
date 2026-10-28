@@ -1,5 +1,5 @@
 import { spawn } from 'child_process';
-import { BrowserWindow, ipcMain } from 'electron';
+import { ipcMain } from 'electron';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -10,10 +10,6 @@ import {
   type OpenClawAssistantMediaResult,
 } from '../../../shared/openclaw/assistantMedia';
 import { type EngineCommandResult, EngineIpc } from '../../../shared/openclaw/engineStatus';
-import {
-  type OpenClawSessionMigrationConfirmRequest,
-  OpenClawSessionMigrationIpc,
-} from '../../../shared/openclaw/sessionMigration';
 import {
   type ManagedWorktree,
   WorktreeIpc,
@@ -641,62 +637,6 @@ export const registerOpenClawEngineHandlers = ({
       };
     }
   });
-
-  let migrationProgressBound = false;
-  const migrationManager = () => {
-    const manager = getManager();
-    if (!migrationProgressBound) {
-      migrationProgressBound = true;
-      manager.onSessionMigrationProgress(progress => {
-        for (const window of BrowserWindow.getAllWindows()) {
-          if (!window.isDestroyed() && !window.webContents.isDestroyed())
-            window.webContents.send(OpenClawSessionMigrationIpc.Progress, progress);
-        }
-      });
-    }
-    return manager;
-  };
-
-  ipcMain.handle(OpenClawSessionMigrationIpc.Plan, async () => {
-    try {
-      return { success: true, plan: await migrationManager().getSessionMigrationPlan() };
-    } catch (error) {
-      console.warn(
-        '[OpenClawEngine] Failed to prepare session migration plan:',
-        error instanceof Error ? error.name : 'UnknownError',
-      );
-      return {
-        success: false,
-        error: 'Failed to prepare session migration.',
-      };
-    }
-  });
-
-  ipcMain.handle(
-    OpenClawSessionMigrationIpc.Confirm,
-    async (_event, request: OpenClawSessionMigrationConfirmRequest) => {
-      if (!request || typeof request.planId !== 'string' || typeof request.approved !== 'boolean') {
-        return { success: false, error: 'Invalid session migration confirmation.' };
-      }
-      try {
-        const result = await migrationManager().confirmSessionMigration(
-          request.planId,
-          request.approved,
-        );
-        if (result.success) {
-          const status = await getManager().startGateway();
-          return { ...result, status };
-        }
-        return result;
-      } catch (error) {
-        console.warn(
-          '[OpenClawEngine] Session migration confirmation failed:',
-          error instanceof Error ? error.name : 'UnknownError',
-        );
-        return { success: false, error: 'Session migration failed.' };
-      }
-    },
-  );
 
   ipcMain.handle('openclaw:engine:getStatus', async () => {
     try {

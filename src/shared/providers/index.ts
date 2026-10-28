@@ -13,7 +13,6 @@ export {
   getDefaultCustomProviderDisplayName,
   getEffectiveCustomProviderDisplayName,
   isJustDoCustomProviderKey,
-  isLegacyCustomProviderKey,
   isReservedOpenClawProviderId,
   JUSTDO_RESERVED_OPENCLAW_PROVIDER_IDS,
   listConfiguredOpenClawProviderIds,

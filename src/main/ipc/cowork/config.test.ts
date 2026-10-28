@@ -210,11 +210,12 @@ describe('cowork config IPC', () => {
     expect(syncOpenClawConfig).not.toHaveBeenCalled();
   });
 
-  it('migrates the retired automatic mode to local execution', async () => {
+  it('rejects the retired automatic execution mode', async () => {
     const result = await handlers.get('cowork:config:set')?.({}, { executionMode: 'auto' });
 
-    expect(result).toEqual({ success: true });
-    expect(setConfig).toHaveBeenCalledWith(expect.objectContaining({ executionMode: 'local' }));
+    expect(result).toEqual({ success: false, error: 'Invalid execution mode.' });
+    expect(setConfig).not.toHaveBeenCalled();
+    expect(syncOpenClawConfig).not.toHaveBeenCalled();
   });
 
   it('persists explicit sandbox network access and synchronizes OpenClaw', async () => {

@@ -10,6 +10,9 @@ const REQUIRED_APPLICATION_LICENSE_SCOPES = Object.freeze([
   'renderer', 'main', 'preload', 'imagePreviewPreload', 'browserGuestPreload', 'widgetViewerPreload', 'webpageEmbedPreload', 'mediaPlaybackPreload',
 ]);
 const SOURCE_PROOF = 'source-proof.json';
+const SCOPE_RENAME_MAX_RETRIES = 5;
+const SCOPE_RENAME_RETRY_DELAY_MS = 50;
+const RETRYABLE_RENAME_ERROR_CODES = new Set(['EACCES', 'EBUSY', 'EPERM']);
 const sha256 = value => createHash('sha256').update(value).digest('hex');
 const posix = value => value.replaceAll('\\', '/');
 const readJson = file => JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -46,6 +49,21 @@ function assertOwnedBuildPath(repoRoot, target) {
     if (!fs.existsSync(current)) break;
     assertOrdinaryDirectory(current);
     if (!isWithin(physicalBuildRoot, fs.realpathSync(current))) throw new Error('Application license ancestor escapes repository build: ' + current);
+  }
+}
+
+function renameScopeIntoPlace(repoRoot, staging, scopeRoot) {
+  for (let attempt = 0; ; attempt += 1) {
+    assertOwnedBuildPath(repoRoot, staging);
+    assertOwnedBuildPath(repoRoot, scopeRoot);
+    try {
+      fs.renameSync(staging, scopeRoot);
+      return;
+    } catch (error) {
+      if (process.platform !== 'win32' || !RETRYABLE_RENAME_ERROR_CODES.has(error?.code) || attempt >= SCOPE_RENAME_MAX_RETRIES) throw error;
+      // Windows may briefly deny renaming a fully written, closed directory.
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, SCOPE_RENAME_RETRY_DELAY_MS * (attempt + 1));
+    }
   }
 }
 
@@ -178,7 +196,7 @@ function writeScope(options, outputOptions, bundle) {
       assertOwnedBuildPath(repoRoot, scopeRoot);
       fs.rmSync(scopeRoot, { recursive: true, force: true });
     }
-    fs.renameSync(staging, scopeRoot);
+    renameScopeIntoPlace(repoRoot, staging, scopeRoot);
   } finally {
     if (fs.existsSync(staging)) {
       assertOwnedBuildPath(repoRoot, staging);

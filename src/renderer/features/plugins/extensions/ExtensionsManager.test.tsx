@@ -293,7 +293,6 @@ describe('ExtensionsManager extension toggle', () => {
           extensions: {
             list,
             onChanged: vi.fn(() => vi.fn()),
-            onImportProgress: vi.fn(() => vi.fn()),
           },
         },
       });
@@ -327,7 +326,7 @@ describe('ExtensionsManager extension toggle', () => {
     });
     Object.defineProperty(window, 'electron', {
       configurable: true,
-      value: { extensions: { list, onChanged, onImportProgress: vi.fn(() => vi.fn()) } },
+      value: { extensions: { list, onChanged } },
     });
     const view = render(<ExtensionsManager />);
     await screen.findByRole('switch', { name: 'extensionEnable' });
@@ -375,7 +374,6 @@ describe('ExtensionsManager extension toggle', () => {
             changed = listener;
             return vi.fn();
           }),
-          onImportProgress: vi.fn(() => vi.fn()),
         },
       },
     });
@@ -411,7 +409,6 @@ describe('ExtensionsManager extension toggle', () => {
             })),
             setEnabled,
             onChanged: vi.fn(() => vi.fn()),
-            onImportProgress: vi.fn(() => vi.fn()),
           },
           localSpeechModels: {
             list: vi.fn(async () => ({ supported: true, models: [] })),
@@ -454,7 +451,6 @@ describe('ExtensionsManager extension toggle', () => {
               changed = listener;
               return vi.fn();
             }),
-            onImportProgress: vi.fn(() => vi.fn()),
           },
         },
       });
@@ -504,7 +500,6 @@ describe('ExtensionsManager extension toggle', () => {
               changed = listener;
               return vi.fn();
             }),
-            onImportProgress: vi.fn(() => vi.fn()),
           },
         },
       });
@@ -554,7 +549,6 @@ describe('ExtensionsManager extension toggle', () => {
           list: vi.fn(async () => ({ success: true, extensions: installed ? [extension] : [] })),
           delete: deleteExtension,
           onChanged: vi.fn(() => () => undefined),
-          onImportProgress: vi.fn(() => () => undefined),
         },
       },
     });
@@ -589,7 +583,6 @@ describe('ExtensionsManager extension toggle', () => {
             list: vi.fn(async () => ({ success: true, extensions: installed ? [extension] : [] })),
             delete: deleteExtension,
             onChanged: vi.fn(() => vi.fn()),
-            onImportProgress: vi.fn(() => vi.fn()),
           },
         },
       });
@@ -653,7 +646,6 @@ describe('ExtensionsManager extension toggle', () => {
             })),
             setEnabled,
             onChanged: vi.fn(() => vi.fn()),
-            onImportProgress: vi.fn(() => vi.fn()),
           },
         },
       });
@@ -691,7 +683,6 @@ describe('ExtensionsManager extension toggle', () => {
             extensions: [{ ...extension, id: 'agent-team', name: 'Agent Team', enabled: true }],
           })),
           onChanged: vi.fn(() => vi.fn()),
-          onImportProgress: vi.fn(() => vi.fn()),
         },
       },
     });
@@ -719,7 +710,6 @@ describe('ExtensionsManager extension toggle', () => {
             extensions: [{ ...extension, id: 'agent-team', name: 'Agent Team', enabled: false }],
           })),
           onChanged: vi.fn(() => vi.fn()),
-          onImportProgress: vi.fn(() => vi.fn()),
         },
       },
     });
@@ -747,7 +737,6 @@ describe('ExtensionsManager extension toggle', () => {
             changed = listener;
             return vi.fn();
           },
-          onImportProgress: vi.fn(() => vi.fn()),
         },
         agentTeamSettings: {
           read: vi.fn(async () => ({
@@ -805,7 +794,6 @@ describe('ExtensionsManager extension toggle', () => {
           list,
           setEnabled,
           onChanged: vi.fn(() => vi.fn()),
-          onImportProgress: vi.fn(() => vi.fn()),
         },
       },
     });
@@ -873,7 +861,6 @@ describe('ExtensionsManager extension toggle', () => {
           })),
           setEnabled: vi.fn(async () => ({ success: true })),
           onChanged: vi.fn(() => vi.fn()),
-          onImportProgress: vi.fn(() => vi.fn()),
         },
         shell: { openPath },
       },
@@ -928,7 +915,6 @@ describe('ExtensionsManager extension toggle', () => {
             list: vi.fn(async () => ({ success: true, extensions: [computerExtension] })),
             setEnabled,
             onChanged: vi.fn(() => vi.fn()),
-            onImportProgress: vi.fn(() => vi.fn()),
           },
         },
       });
@@ -953,7 +939,6 @@ describe('ExtensionsManager extension toggle', () => {
           list: vi.fn(async () => ({ success: true, extensions: [extension] })),
           setEnabled: vi.fn(async () => ({ success: true })),
           onChanged: vi.fn(() => vi.fn()),
-          onImportProgress: vi.fn(() => vi.fn()),
         },
         shell: { openPath: vi.fn(async () => ({ success: true })) },
       },
@@ -993,7 +978,6 @@ describe('ExtensionsManager extension toggle', () => {
           list: vi.fn(async () => ({ success: true, extensions: [managedExtension] })),
           setEnabled,
           onChanged: vi.fn(() => vi.fn()),
-          onImportProgress: vi.fn(() => vi.fn()),
         },
         shell: { openPath },
       },
@@ -1031,7 +1015,6 @@ describe('ExtensionsManager extension toggle', () => {
             ],
           })),
           onChanged: vi.fn(() => vi.fn()),
-          onImportProgress: vi.fn(() => vi.fn()),
         },
       },
     });
@@ -1094,7 +1077,6 @@ describe('ExtensionsManager extension toggle', () => {
           updateConfiguration,
           setEnabled,
           onChanged: vi.fn(() => vi.fn()),
-          onImportProgress: vi.fn(() => vi.fn()),
         },
       },
     });
@@ -1171,7 +1153,6 @@ describe('ExtensionsManager extension toggle', () => {
           updateConfiguration,
           setEnabled,
           onChanged: vi.fn(() => vi.fn()),
-          onImportProgress: vi.fn(() => vi.fn()),
         },
       },
     });
@@ -1277,7 +1258,6 @@ describe('ExtensionsManager extension toggle', () => {
           list: vi.fn(async () => ({ success: true, extensions: [managedExtension] })),
           updateConfiguration,
           onChanged: vi.fn(() => vi.fn()),
-          onImportProgress: vi.fn(() => vi.fn()),
         },
       },
     });
@@ -1324,7 +1304,6 @@ describe('ExtensionsManager extension toggle', () => {
         extensions: {
           list,
           onChanged: vi.fn(() => vi.fn()),
-          onImportProgress: vi.fn(() => vi.fn()),
         },
       },
     });
@@ -1397,7 +1376,6 @@ describe('ExtensionsManager extension toggle', () => {
           })),
           updateConfiguration,
           onChanged: vi.fn(() => vi.fn()),
-          onImportProgress: vi.fn(() => vi.fn()),
         },
       },
     });
@@ -1476,7 +1454,6 @@ describe('ExtensionsManager extension toggle', () => {
           })),
           updateConfiguration,
           onChanged: vi.fn(() => vi.fn()),
-          onImportProgress: vi.fn(() => vi.fn()),
         },
       },
     });
@@ -1512,7 +1489,6 @@ describe('ExtensionsManager extension toggle', () => {
             extensions: [{ ...extension, state: 'needs-setup' }],
           })),
           onChanged: vi.fn(() => vi.fn()),
-          onImportProgress: vi.fn(() => vi.fn()),
         },
       },
     });
@@ -1532,7 +1508,6 @@ describe('ExtensionsManager extension toggle', () => {
             extensions: [{ ...extension, error: 'Plugin failed to load' }],
           })),
           onChanged: vi.fn(() => vi.fn()),
-          onImportProgress: vi.fn(() => vi.fn()),
         },
       },
     });
@@ -1566,7 +1541,6 @@ describe('ExtensionsManager extension toggle', () => {
           list: vi.fn(async () => ({ success: true, extensions: [] })),
           importPath,
           onChanged: vi.fn(() => vi.fn()),
-          onImportProgress: vi.fn(() => vi.fn()),
         },
         dialog: {
           selectFolders: vi.fn(async () => ({

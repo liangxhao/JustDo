@@ -8,16 +8,10 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { isRecord as isConfigRecord } from 'openclaw/plugin-sdk/string-coerce-runtime';
-import {
-  parse as parseToml,
-  stringify as stringifyToml,
-  type TomlTableWithoutBigInt,
-} from 'smol-toml';
 
 import {
   CODEX_ACP_BIN,
   CODEX_ACP_PACKAGE,
-  LEGACY_CODEX_ACP_PACKAGE,
   OPENCLAW_CODEX_CONFIG_ARG,
 } from './codex-adapter.js';
 import { copySourceCodexAuth } from './codex-auth-file.js';
@@ -38,10 +32,6 @@ type PackageManifest = {
   name?: unknown;
   bin?: unknown;
 };
-
-function basename(value: string): string {
-  return value.split(/[\\/]/).pop() ?? value;
-}
 
 function resolvePackageBinPath(
   packageJsonPath: string,
@@ -888,185 +878,10 @@ function buildWrapperCommand(wrapperPath: string, args: string[] = []): string[]
   return [process.execPath, wrapperPath, ...args];
 }
 
-function isAcpPackageSpec(value: string, packageName: string): boolean {
-  const escapedPackageName = packageName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(`^${escapedPackageName}(?:@.+)?$`, 'i').test(value.trim());
-}
-
-function isAcpBinName(value: string, binName: string): boolean {
-  const commandName = basename(value);
-  const escapedBinName = binName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(`^${escapedBinName}(?:\\.exe|\\.[cm]?js)?$`, 'i').test(commandName);
-}
-
-function isPackageRunnerCommand(value: string): boolean {
-  return /^(?:npx|npm|pnpm|bunx)(?:\.cmd|\.exe)?$/i.test(basename(value));
-}
-
-function extractConfiguredAdapterArgs(params: {
-  configuredCommand?: string[];
-  packageName: string;
-  binName: string;
-}): string[] | undefined {
-  const configuredCommand = params.configuredCommand;
-  if (!configuredCommand?.length) {
-    return [];
-  }
-  const parts = configuredCommand;
-  if (!parts.length) {
-    return [];
-  }
-
-  const packageIndex = parts.findIndex(part => isAcpPackageSpec(part, params.packageName));
-  if (packageIndex >= 0) {
-    if (!isPackageRunnerCommand(parts[0] ?? '')) {
-      return undefined;
-    }
-    const afterPackage = parts.slice(packageIndex + 1);
-    if (afterPackage[0] === '--' && isAcpBinName(afterPackage[1] ?? '', params.binName)) {
-      return afterPackage.slice(2);
-    }
-    if (isAcpBinName(afterPackage[0] ?? '', params.binName)) {
-      return afterPackage.slice(1);
-    }
-    return afterPackage[0] === '--' ? afterPackage.slice(1) : afterPackage;
-  }
-
-  if (isAcpBinName(parts[0] ?? '', params.binName)) {
-    return parts.slice(1);
-  }
-  if (basename(parts[0] ?? '') === 'node' && isAcpBinName(parts[1] ?? '', params.binName)) {
-    return parts.slice(2);
-  }
-
-  return undefined;
-}
-
-function mergeConfigRecords(
-  base: Record<string, unknown>,
-  override: Record<string, unknown>,
-): Record<string, unknown> {
-  const merged: Record<string, unknown> = { ...base };
-  for (const [key, value] of Object.entries(override)) {
-    const existing = merged[key];
-    const nextValue =
-      isConfigRecord(existing) && isConfigRecord(value)
-        ? mergeConfigRecords(existing, value)
-        : value;
-    Object.defineProperty(merged, key, {
-      value: nextValue,
-      configurable: true,
-      enumerable: true,
-      writable: true,
-    });
-  }
-  return merged;
-}
-
-function parseLegacyCodexConfigAssignment(assignment: string): Record<string, unknown> {
-  const separator = assignment.indexOf('=');
-  if (separator <= 0) {
-    throw new Error(`Invalid legacy Codex ACP config override: ${assignment}`);
-  }
-  const rawKey = assignment.slice(0, separator).trim();
-  const key = rawKey === 'use_legacy_landlock' ? 'features.use_legacy_landlock' : rawKey;
-  const rawValue = assignment.slice(separator + 1).trim();
-  try {
-    return parseToml(`${key} = ${rawValue}`) as Record<string, unknown>;
-  } catch {
-    const literal = rawValue.replace(/^["']+|["']+$/g, '');
-    return parseToml(`${key} = ${JSON.stringify(literal)}`) as Record<string, unknown>;
-  }
-}
-
-type LegacyCodexArgsMigration = {
-  config: Record<string, unknown>;
-  forwardedArgs: string[];
-  hadOverrides: boolean;
-};
-
-function migrateLegacyCodexArgs(args: string[]): LegacyCodexArgsMigration {
-  let config: Record<string, unknown> = {};
-  const forwardedArgs: string[] = [];
-  let hadOverrides = false;
-  for (let index = 0; index < args.length; index += 1) {
-    const arg = args[index] ?? '';
-    let assignment: string | undefined;
-    if (arg === '-c' || arg === '--config') {
-      assignment = args[(index += 1)];
-    } else if (arg.startsWith('--config=')) {
-      assignment = arg.slice('--config='.length);
-    } else if (arg.startsWith('-c=')) {
-      assignment = arg.slice('-c='.length);
-    } else if (arg.startsWith('-c') && arg.length > 2) {
-      assignment = arg.slice(2);
-    } else {
-      forwardedArgs.push(arg);
-      continue;
-    }
-    if (!assignment) {
-      throw new Error(`Missing value for legacy Codex ACP option ${arg}`);
-    }
-    hadOverrides = true;
-    config = mergeConfigRecords(config, parseLegacyCodexConfigAssignment(assignment));
-  }
-  return { config, forwardedArgs, hadOverrides };
-}
-
-type CodexAdapterLaunch = {
-  args: string[];
-  migratedConfig?: Record<string, unknown>;
-};
-
-function resolveCodexAdapterLaunch(configuredCommand?: string[]): CodexAdapterLaunch | undefined {
-  const legacyAdapterArgs = extractConfiguredAdapterArgs({
-    configuredCommand,
-    packageName: LEGACY_CODEX_ACP_PACKAGE,
-    binName: CODEX_ACP_BIN,
-  });
-  if (legacyAdapterArgs) {
-    const migration = migrateLegacyCodexArgs(legacyAdapterArgs);
-    return {
-      args: [
-        ...(migration.hadOverrides
-          ? [OPENCLAW_CODEX_CONFIG_ARG, JSON.stringify(migration.config)]
-          : []),
-        ...migration.forwardedArgs,
-      ],
-      ...(migration.hadOverrides ? { migratedConfig: migration.config } : {}),
-    };
-  }
-  const maintainedAdapterArgs = extractConfiguredAdapterArgs({
-    configuredCommand,
-    packageName: CODEX_ACP_PACKAGE,
-    binName: CODEX_ACP_BIN,
-  });
-  if (!maintainedAdapterArgs) {
-    return undefined;
-  }
-  // The maintained adapter owns its CLI subcommands and forwarded Codex flags.
-  // Only the Zed package and bare legacy forms reach the migration branch above.
-  return { args: maintainedAdapterArgs };
-}
-
 function buildCodexAcpWrapperCommand(wrapperPath: string, configuredCommand?: string[]): string[] {
   return configuredCommand?.length
     ? buildWrapperCommand(wrapperPath, [RUN_CONFIGURED_COMMAND_SENTINEL, ...configuredCommand])
     : buildWrapperCommand(wrapperPath);
-}
-
-async function persistMigratedCodexMcpConfig(params: {
-  codexHome: string;
-  migratedConfig: Record<string, unknown> | undefined;
-}): Promise<void> {
-  const mcpServers = params.migratedConfig?.mcp_servers;
-  if (!isConfigRecord(mcpServers)) {
-    return;
-  }
-  const configPath = path.join(params.codexHome, 'config.toml');
-  const current = parseToml(await fs.readFile(configPath, 'utf8')) as Record<string, unknown>;
-  const merged = mergeConfigRecords(current, { mcp_servers: mcpServers });
-  await fs.writeFile(configPath, stringifyToml(merged as TomlTableWithoutBigInt), 'utf8');
 }
 
 function buildClaudeAcpWrapperCommand(wrapperPath: string, configuredCommand?: string[]): string[] {
@@ -1093,14 +908,9 @@ export async function prepareAcpxCodexAuthConfig(params: {
   const configuredClaudeCommand = params.pluginConfig.agents.claude;
   const preparedAgents = { ...params.pluginConfig.agents };
   if (codexEnabled) {
-    const codexLaunch = resolveCodexAdapterLaunch(configuredCodexCommand);
-    const codexHome = await prepareIsolatedCodexHome({
+    await prepareIsolatedCodexHome({
       baseDir: wrapperBaseDir,
       workspaceDir: params.pluginConfig.cwd,
-    });
-    await persistMigratedCodexMcpConfig({
-      codexHome,
-      migratedConfig: codexLaunch?.migratedConfig,
     });
     const installedCodexBinPath = await (
       params.resolveInstalledCodexAcpBinPath ?? resolveInstalledCodexAcpBinPath

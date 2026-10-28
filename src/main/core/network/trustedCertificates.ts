@@ -3,7 +3,6 @@ import path from 'path';
 import tls from 'tls';
 
 const TRUST_DIRECTORY_RELATIVE_PATH = path.join('outbound-header-proxy', 'certs');
-const LEGACY_TRUST_DIRECTORY_NAME = 'network-trust';
 const TRUSTED_CA_BUNDLE_NAME = 'trusted-ca-bundle.pem';
 const OUTBOUND_HEADER_TRUSTED_CA_BUNDLE_NAME = 'gateway-trusted-ca-bundle.pem';
 const USE_SYSTEM_CA_OPTION = '--use-system-ca';
@@ -74,24 +73,6 @@ export const buildTrustedCertificatePreload = (): string => String.raw`
 })();
 `;
 
-const cleanupLegacyTrustedCaBundle = (userDataPath: string, currentBundlePath: string): void => {
-  const legacyBundlePath = path.join(
-    userDataPath,
-    LEGACY_TRUST_DIRECTORY_NAME,
-    TRUSTED_CA_BUNDLE_NAME,
-  );
-  if (legacyBundlePath === currentBundlePath || !fs.existsSync(legacyBundlePath)) {
-    return;
-  }
-
-  try {
-    fs.rmSync(legacyBundlePath, { force: true });
-    fs.rmdirSync(path.dirname(legacyBundlePath));
-  } catch {
-    // Best-effort cleanup only. Leave any user-added files in the legacy directory alone.
-  }
-};
-
 export const enableSystemCaForCurrentProcess = (): void => {
   if (
     typeof tls.getCACertificates !== 'function' ||
@@ -148,7 +129,6 @@ const buildTrustedCaBundleFile = (
     if (!fs.existsSync(bundlePath) || fs.readFileSync(bundlePath, 'utf8') !== content) {
       fs.writeFileSync(bundlePath, content, 'utf8');
     }
-    cleanupLegacyTrustedCaBundle(userDataPath, bundlePath);
     return bundlePath;
   } catch (error) {
     console.warn('[NetworkTrust] Failed to build trusted CA bundle:', error);

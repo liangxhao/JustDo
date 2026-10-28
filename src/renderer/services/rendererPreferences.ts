@@ -15,8 +15,7 @@ interface PreferenceStore {
   set(key: string, value: unknown): Promise<void>;
 }
 
-type BrowserPreferenceStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> &
-  Partial<Pick<Storage, 'key' | 'length'>>;
+type BrowserPreferenceStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
 
 const allowedKey = isRendererPreferenceKey;
 
@@ -58,30 +57,6 @@ export function createRendererPreferences(
       }
     }
     return decoded;
-  };
-  const currentOrigin = () => {
-    const imported = new Map<string, string>();
-    try {
-      const storage = getBrowserStorage();
-      if (!storage) return imported;
-      const read = (key: string) => {
-        const value = storage.getItem(key);
-        if (typeof value === 'string') put(imported, key, value);
-      };
-      for (const key of FIXED_KEYS) read(key);
-      // Scan only UI keys. Never copy arbitrary origin storage to the product DB.
-      for (
-        let index = 0;
-        index < Math.min(storage.length ?? 0, RENDERER_PREFERENCE_LIMITS.browserKeys);
-        index++
-      ) {
-        const key = storage.key?.(index);
-        if (key && allowedKey(key) && !FIXED_KEYS.has(key)) read(key);
-      }
-    } catch {
-      /* Restricted browser storage does not block startup. */
-    }
-    return imported;
   };
   const persist = () => {
     const changes = new Map(dirty);
@@ -127,13 +102,6 @@ export function createRendererPreferences(
           committed = decode(snapshot);
           baselineKnown = true;
           for (const [key, value] of committed) put(values, key, value);
-          if (snapshot === undefined || snapshot === null) {
-            for (const [key, value] of currentOrigin()) {
-              put(values, key, value);
-              markDirty(key, value);
-            }
-            if (dirty.size) persist();
-          }
         } catch {
           // Current-window preferences still work when persistent storage is unavailable.
         }

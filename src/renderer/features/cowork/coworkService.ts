@@ -113,7 +113,6 @@ export class CoworkService {
   private latestLoadSessionRequestId = 0;
   private readonly sessionModelRevisions = new Map<string, number>();
   private readonly sessionModelReadVersions = new Map<string, number>();
-  private readonly runtimeIdleConfirmations = new Map<string, number>();
   private readonly runtimeStatusRequestVersions = new Map<string, number>();
   private readonly runtimeActivityVersions = new Map<string, number>();
   private readonly terminalIdleConfirmationTimers = new Map<string, number>();
@@ -246,20 +245,17 @@ export class CoworkService {
 
     // Complete listener
     const completeCleanup = cowork.onStreamComplete(({ sessionId, finalStatus }) => {
+      if (finalStatus === undefined) return;
       void this.refreshSessionModel(sessionId);
-      // Use finalStatus from backend if provided.
-      // If not provided, default to 'completed' (backward compatibility)
-      const status: 'idle' | 'running' | 'completed' | 'error' = finalStatus ?? 'completed';
+      const status = finalStatus;
       store.dispatch(setSessionMainRuntimeActivity({ sessionId, running: status === 'running' }));
       if (status === 'running') {
         this.markSessionInProgress(sessionId);
       } else if (status === 'error') {
         this.confirmTerminalSessionIdle(sessionId);
       } else {
-        // Main completion can precede subagent/announce completion. Confirm the
-        // aggregate state twice from fresh Gateway snapshots before clearing the
-        // shared UI indicator. The second check is intentionally quicker than
-        // the regular running-session poll.
+        // Main completion can precede subagent/announce completion. Wait for
+        // Main's authoritative aggregate snapshot before clearing the indicator.
         this.confirmTerminalSessionIdle(sessionId);
       }
       store.dispatch(updateSessionStatus({ sessionId, status }));
@@ -468,7 +464,12 @@ export class CoworkService {
       };
     }
     const result = await cowork.getSessionRuntimeStatus(sessionId, options);
-    if (!result.success) {
+    if (
+      !result.success ||
+      typeof result.revision !== 'number' ||
+      !Number.isSafeInteger(result.revision) ||
+      result.revision <= 0
+    ) {
       return {
         revision: 0,
         known: false,
@@ -482,7 +483,7 @@ export class CoworkService {
       mainRunning: result.mainRunning,
       subagentRunning: result.subagentRunning,
       running: result.running,
-      revision: result.revision ?? 0,
+      revision: result.revision,
       ...(result.timing ? { timing: result.timing } : {}),
     };
   }
@@ -559,7 +560,6 @@ export class CoworkService {
   markSessionInProgress(sessionId: string): void {
     this.cancelTerminalIdleConfirmation(sessionId);
     this.invalidateRuntimeActivity(sessionId);
-    this.runtimeIdleConfirmations.delete(sessionId);
     store.dispatch(setSessionMainRuntimeActivity({ sessionId, running: true }));
     store.dispatch(setSessionRuntimeActivity({ sessionId, running: true }));
   }
@@ -567,7 +567,6 @@ export class CoworkService {
   clearSessionInProgress(sessionId: string): void {
     this.cancelTerminalIdleConfirmation(sessionId);
     this.invalidateRuntimeActivity(sessionId);
-    this.runtimeIdleConfirmations.delete(sessionId);
     store.dispatch(setSessionMainRuntimeActivity({ sessionId, running: false }));
     store.dispatch(setSessionRuntimeActivity({ sessionId, running: false }));
   }
@@ -583,28 +582,10 @@ export class CoworkService {
     ) {
       return false;
     }
-    if (!status.known) {
-      this.runtimeIdleConfirmations.delete(sessionId);
+    if (!status.known || !Number.isSafeInteger(status.revision) || status.revision <= 0) {
       return true;
     }
     this.advanceRuntimeActivityVersion(sessionId);
-    // Older preload mocks and downgrade-compatible bridges do not carry a
-    // main-process revision. Keep their previous two-snapshot guard locally.
-    if (status.revision === 0) {
-      store.dispatch(setSessionMainRuntimeActivity({ sessionId, running: status.mainRunning }));
-      if (status.running) {
-        this.runtimeIdleConfirmations.delete(sessionId);
-        store.dispatch(setSessionRuntimeActivity({ sessionId, running: true }));
-        return true;
-      }
-      const confirmations = (this.runtimeIdleConfirmations.get(sessionId) ?? 0) + 1;
-      this.runtimeIdleConfirmations.set(sessionId, confirmations);
-      if (confirmations >= 2) {
-        this.runtimeIdleConfirmations.delete(sessionId);
-        store.dispatch(setSessionRuntimeActivity({ sessionId, running: false }));
-      }
-      return true;
-    }
     store.dispatch(setSessionRuntimeSnapshot({ sessionId, snapshot: status }));
     return true;
   }
@@ -612,7 +593,6 @@ export class CoworkService {
   private confirmTerminalSessionIdle(sessionId: string): void {
     this.cancelTerminalIdleConfirmation(sessionId);
     this.invalidateRuntimeActivity(sessionId);
-    this.runtimeIdleConfirmations.delete(sessionId);
     const token = Symbol(sessionId);
     this.terminalIdleConfirmationTokens.set(sessionId, token);
     this.runTerminalIdleConfirmation(sessionId, token, 1);

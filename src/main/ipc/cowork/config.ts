@@ -305,7 +305,7 @@ export const registerCoworkConfigHandlers = ({
         workingDirectory?: string;
         showWorktreeCheckbox?: boolean;
         allowMainAgentSwitch?: boolean;
-        executionMode?: 'auto' | 'local' | 'sandbox';
+        executionMode?: 'local' | 'sandbox';
         sandboxNetworkEnabled?: boolean;
         agentEngine?: CoworkAgentEngine;
         permissionMode?: PermissionMode;
@@ -338,11 +338,7 @@ export const registerCoworkConfigHandlers = ({
           ) {
             return { success: false, error: 'Invalid permission mode.' };
           }
-          const executionMode =
-            config.executionMode &&
-            (String(config.executionMode) === 'container' || config.executionMode === 'auto')
-              ? 'local'
-              : config.executionMode;
+          const executionMode = config.executionMode;
           if (
             executionMode !== undefined &&
             executionMode !== 'local' &&

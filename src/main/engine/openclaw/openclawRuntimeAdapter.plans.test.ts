@@ -434,6 +434,7 @@ test('admits an approved plan when chat.send acknowledgement is lost but activit
   adapter.handleGatewayEvent({
     event: 'agent',
     payload: {
+      seq: 1,
       runId: implementationRunId,
       sessionKey: planRequest.sessionKey,
       stream: 'lifecycle',

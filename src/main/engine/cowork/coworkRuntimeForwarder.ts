@@ -34,7 +34,7 @@ export const bindCoworkRuntimeForwarder = (
 
   runtime.on(
     'complete',
-    (sessionId: string, finalStatus?: string) => {
+    (sessionId: string, finalStatus: string) => {
       broadcast('cowork:stream:complete', { sessionId, finalStatus });
       try {
         if (resolveCurrentApiConfig().providerMetadata?.providerName === 'justdo-server') {

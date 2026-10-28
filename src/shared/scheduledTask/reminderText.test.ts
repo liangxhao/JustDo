@@ -1,9 +1,7 @@
 import { expect, test } from 'vitest';
 
 import {
-  getScheduledReminderDisplayText,
   isSimpleScheduledReminderText,
-  parseLegacyScheduledReminderSystemMessage,
   parseScheduledReminderPrompt,
   parseSimpleScheduledReminderText,
 } from './reminderText';
@@ -71,53 +69,6 @@ test('parseScheduledReminderPrompt: handles multi-word reminder text', () => {
 });
 
 // ---------------------------------------------------------------------------
-// parseLegacyScheduledReminderSystemMessage
-// ---------------------------------------------------------------------------
-
-test('parseLegacyScheduledReminderSystemMessage: returns null for plain text', () => {
-  expect(parseLegacyScheduledReminderSystemMessage('Hello world')).toBe(null);
-});
-
-test('parseLegacyScheduledReminderSystemMessage: returns null for empty string', () => {
-  expect(parseLegacyScheduledReminderSystemMessage('')).toBe(null);
-});
-
-test('parseLegacyScheduledReminderSystemMessage: parses System line with brackets and emoji', () => {
-  const result = parseLegacyScheduledReminderSystemMessage(
-    'System: [2026-03-27 14:00] ⏰ Daily standup',
-  );
-  expect(result).not.toBe(null);
-  expect(result!.reminderText).toBe('⏰ Daily standup');
-  expect(result!.currentTime).toBe('2026-03-27 14:00');
-});
-
-test('parseLegacyScheduledReminderSystemMessage: parses System line without brackets', () => {
-  const result = parseLegacyScheduledReminderSystemMessage('System: ⏰ Weekly team sync');
-  expect(result).not.toBe(null);
-  expect(result!.reminderText).toBe('⏰ Weekly team sync');
-  expect(result!.currentTime).toBe(undefined);
-});
-
-test('parseLegacyScheduledReminderSystemMessage: returns null if emoji is missing', () => {
-  expect(
-    parseLegacyScheduledReminderSystemMessage('System: [2026-03-27] Reminder without emoji'),
-  ).toBe(null);
-});
-
-test('parseLegacyScheduledReminderSystemMessage: falls back to wrapped prompt in remainder', () => {
-  const wrapped = `${PREFIX} Check deployments ${INTERNAL}`;
-  const result = parseLegacyScheduledReminderSystemMessage(
-    `System: [2026-03-27] ⏰ Override\n${wrapped}`,
-  );
-  expect(result).not.toBe(null);
-  expect(result!.reminderText).toBe('Check deployments');
-});
-
-test('parseLegacyScheduledReminderSystemMessage: returns null for text without System: prefix', () => {
-  expect(parseLegacyScheduledReminderSystemMessage('⏰ Just a clock')).toBe(null);
-});
-
-// ---------------------------------------------------------------------------
 // isSimpleScheduledReminderText
 // ---------------------------------------------------------------------------
 
@@ -170,37 +121,4 @@ test('parseSimpleScheduledReminderText: bare emoji returns prompt with just the 
   const result = parseSimpleScheduledReminderText('⏰');
   expect(result).not.toBe(null);
   expect(result!.reminderText).toBe('⏰');
-});
-
-// ---------------------------------------------------------------------------
-// getScheduledReminderDisplayText
-// ---------------------------------------------------------------------------
-
-test('getScheduledReminderDisplayText: returns text for standard format', () => {
-  expect(getScheduledReminderDisplayText(`${PREFIX} Attend weekly planning`)).toBe(
-    'Attend weekly planning',
-  );
-});
-
-test('getScheduledReminderDisplayText: returns text for legacy format', () => {
-  expect(getScheduledReminderDisplayText('System: [09:00] ⏰ Morning standup')).toBe(
-    '⏰ Morning standup',
-  );
-});
-
-test('getScheduledReminderDisplayText: returns text for simple emoji format', () => {
-  expect(getScheduledReminderDisplayText('⏰ Walk the dog')).toBe('⏰ Walk the dog');
-});
-
-test('getScheduledReminderDisplayText: returns null for unrecognized text', () => {
-  expect(getScheduledReminderDisplayText('Just a normal message')).toBe(null);
-});
-
-test('getScheduledReminderDisplayText: returns null for empty string', () => {
-  expect(getScheduledReminderDisplayText('')).toBe(null);
-});
-
-test('getScheduledReminderDisplayText: standard format strips internal instruction suffix', () => {
-  const result = getScheduledReminderDisplayText(`${PREFIX} Deploy to production ${INTERNAL}`);
-  expect(result).toBe('Deploy to production');
 });

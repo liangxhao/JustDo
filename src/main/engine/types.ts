@@ -118,7 +118,7 @@ export interface CoworkRuntimeEvents {
     runs: Array<{ sessionId: string; nativeRunId: string }>;
   }) => void;
   activity: (sessionId: string, kind: 'user' | 'other', timestamp: number) => void;
-  complete: (sessionId: string, finalStatus?: 'idle' | 'running' | 'completed' | 'error') => void;
+  complete: (sessionId: string, finalStatus: 'idle' | 'running' | 'completed' | 'error') => void;
   error: (sessionId: string, error: string) => void;
   sessionStopped: (sessionId: string) => void;
   sessionDeleted: (sessionId: string) => void;

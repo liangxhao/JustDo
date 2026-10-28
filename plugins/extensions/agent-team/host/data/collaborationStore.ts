@@ -24,7 +24,8 @@ export function initializeCollaborationTables(db: Database.Database): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS collaboration_rooms (
       id TEXT PRIMARY KEY,
-      anchor_session_id TEXT NOT NULL UNIQUE REFERENCES cowork_sessions(id) ON DELETE CASCADE
+      anchor_session_id TEXT NOT NULL UNIQUE REFERENCES cowork_sessions(id) ON DELETE CASCADE,
+      settings_json TEXT
     );
     CREATE TABLE IF NOT EXISTS collaboration_members (
       room_id TEXT NOT NULL REFERENCES collaboration_rooms(id) ON DELETE CASCADE,
@@ -47,6 +48,8 @@ export function initializeCollaborationTables(db: Database.Database): void {
       room_id TEXT NOT NULL REFERENCES collaboration_rooms(id) ON DELETE CASCADE,
       created_at INTEGER NOT NULL,
       stopped_at INTEGER,
+      closing_run_id TEXT,
+      message_budget INTEGER NOT NULL DEFAULT 16,
       UNIQUE(id, room_id)
     );
     CREATE TABLE IF NOT EXISTS collaboration_deliveries (
@@ -76,23 +79,6 @@ export function initializeCollaborationTables(db: Database.Database): void {
       PRIMARY KEY(room_id, session_key, run_id)
     );
   `);
-  const columns = db.pragma('table_info(collaboration_rounds)') as Array<{ name: string }>;
-  if (!columns.some(column => column.name === 'stopped_at')) {
-    db.exec('ALTER TABLE collaboration_rounds ADD COLUMN stopped_at INTEGER');
-  }
-  if (!columns.some(column => column.name === 'closing_run_id')) {
-    db.exec('ALTER TABLE collaboration_rounds ADD COLUMN closing_run_id TEXT');
-  }
-  if (!columns.some(column => column.name === 'message_budget'))
-    db.exec(
-      'ALTER TABLE collaboration_rounds ADD COLUMN message_budget INTEGER NOT NULL DEFAULT 16',
-    );
-  if (
-    !(db.pragma('table_info(collaboration_rooms)') as { name: string }[]).some(
-      column => column.name === 'settings_json',
-    )
-  )
-    db.exec('ALTER TABLE collaboration_rooms ADD COLUMN settings_json TEXT');
   initializeCollaborationReviewTables(db);
 }
 

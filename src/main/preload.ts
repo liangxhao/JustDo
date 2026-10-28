@@ -197,11 +197,6 @@ import { OpenClawHistoryIpc } from '../shared/openclaw/historyIpc';
 import { MemoryIpc } from '../shared/openclaw/memory';
 import { OpenClawModelsIpc } from '../shared/openclaw/models';
 import {
-  type OpenClawSessionMigrationConfirmRequest,
-  OpenClawSessionMigrationIpc,
-  type OpenClawSessionMigrationProgress,
-} from '../shared/openclaw/sessionMigration';
-import {
   SessionStorageIpc,
   type SessionStoragePolicyInput,
 } from '../shared/openclaw/sessionStorage';
@@ -216,7 +211,6 @@ import {
 import { WorktreeIpc } from '../shared/openclaw/worktrees';
 import {
   type ExtensionDeleteRequest,
-  type ExtensionImportProgress,
   type ExtensionImportRequest,
   ExtensionIpc,
   type ExtensionSetEnabledRequest,
@@ -397,12 +391,6 @@ contextBridge.exposeInMainWorld('electron', {
     // Import a native OpenClaw extension from a local folder or archive.
     importPath: (request: ExtensionImportRequest, context?: PluginOperationContext) =>
       ipcRenderer.invoke(ExtensionIpc.Import, request, context),
-    onImportProgress: (callback: (progress: ExtensionImportProgress) => void) => {
-      const handler = (_event: Electron.IpcRendererEvent, progress: ExtensionImportProgress) =>
-        callback(progress);
-      ipcRenderer.on(ExtensionIpc.ImportProgress, handler);
-      return () => ipcRenderer.removeListener(ExtensionIpc.ImportProgress, handler);
-    },
     onChanged: createExtensionChangedSubscription(),
   },
   hooks: {
@@ -770,19 +758,6 @@ contextBridge.exposeInMainWorld('electron', {
         ipcRenderer.on('openclaw:engine:onProgress', handler);
         return () => ipcRenderer.removeListener('openclaw:engine:onProgress', handler);
       },
-      migration: {
-        plan: () => ipcRenderer.invoke(OpenClawSessionMigrationIpc.Plan),
-        confirm: (request: OpenClawSessionMigrationConfirmRequest) =>
-          ipcRenderer.invoke(OpenClawSessionMigrationIpc.Confirm, request),
-        onProgress: (callback: (progress: OpenClawSessionMigrationProgress) => void) => {
-          const handler = (
-            _event: Electron.IpcRendererEvent,
-            progress: OpenClawSessionMigrationProgress,
-          ) => callback(progress);
-          ipcRenderer.on(OpenClawSessionMigrationIpc.Progress, handler);
-          return () => ipcRenderer.removeListener(OpenClawSessionMigrationIpc.Progress, handler);
-        },
-      },
     },
     worktrees: {
       getSettings: () => ipcRenderer.invoke(WorktreeIpc.Settings),
@@ -1024,7 +999,7 @@ contextBridge.exposeInMainWorld('electron', {
     getConfig: () => ipcRenderer.invoke('cowork:config:get'),
     setConfig: (config: {
       workingDirectory?: string;
-      executionMode?: 'auto' | 'local' | 'sandbox';
+      executionMode?: 'local' | 'sandbox';
       sandboxNetworkEnabled?: boolean;
       agentEngine?: 'openclaw';
       permissionMode?: 'ask' | 'auto' | 'full';
@@ -1082,14 +1057,14 @@ contextBridge.exposeInMainWorld('electron', {
     onStreamComplete: (
       callback: (data: {
         sessionId: string;
-        finalStatus?: 'idle' | 'running' | 'completed' | 'error';
+        finalStatus: 'idle' | 'running' | 'completed' | 'error';
       }) => void,
     ) => {
       const handler = (
         _event: Electron.IpcRendererEvent,
         data: {
           sessionId: string;
-          finalStatus?: 'idle' | 'running' | 'completed' | 'error';
+          finalStatus: 'idle' | 'running' | 'completed' | 'error';
         },
       ) => callback(data);
       ipcRenderer.on('cowork:stream:complete', handler);

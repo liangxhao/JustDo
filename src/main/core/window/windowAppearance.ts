@@ -17,7 +17,7 @@ export function readStoredWindowAppearance(store: { get(key: string): unknown })
     return normalizeWindowAppearance(undefined);
   }
 }
-/** Read at each document's preload, after any preference import and on every reload. */
+/** Read at each document's preload and on every reload. */
 export function registerWindowAppearance(
   contents: WebContents,
   getStore: () => { get(key: string): unknown },

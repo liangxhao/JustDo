@@ -2001,7 +2001,6 @@ export class ChatController {
           ...replayEvent,
           sessionKey: replayEvent.sessionKey ?? sessionKey,
         },
-        allowAseqFallback: false,
       });
       if (normalized.event) {
         this.applyNormalizedAgentEvent(normalized.event, { replaySnapshot: true });

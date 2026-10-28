@@ -1,31 +1,8 @@
-import { t } from '../core/i18n';
-
-type CredentialCipher = {
-  isEncryptionAvailable(): boolean;
-  getSelectedStorageBackend?(): string;
-  decryptString(value: Buffer): string;
-};
-
-const CREDENTIAL_FORMAT = 'justdo-os-credential-v1';
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
 
-function requireCipher(cipher: CredentialCipher, platform: string): void {
-  if (
-    !cipher.isEncryptionAvailable() ||
-    (platform === 'linux' && ['basic_text', 'unknown'].includes(cipher.getSelectedStorageBackend?.() ?? 'unknown'))
-  ) {
-    throw new Error(t('credentialStorageUnavailable'));
-  }
-}
-
-/** Normalize builtin references without changing storage of unrelated user credentials. */
-export function transformAppConfigCredentials(
-  value: unknown,
-  mode: 'encrypt' | 'decrypt',
-  cipher: CredentialCipher,
-  platform = process.platform,
-): unknown {
+/** Keep builtin credentials out of product settings without changing user-owned credentials. */
+export function transformAppConfigCredentials(value: unknown): unknown {
   if (!isRecord(value)) return value;
   const config = structuredClone(value);
   const builtin = isRecord(config.providers) ? config.providers.builtin_models : undefined;
@@ -36,25 +13,12 @@ export function transformAppConfigCredentials(
     }
     builtin.apiKey = '';
   }
-  const transform = (owner: unknown, key: string): void => {
-    if (!isRecord(owner)) return;
-    const credential = owner[key];
-    // Read earlier OS-encrypted legacy records, but do not introduce a key-store
-    // dependency for existing plaintext custom credentials or new builtin refs.
-    if (mode === 'decrypt' && isRecord(credential) && credential.format === CREDENTIAL_FORMAT) {
-      requireCipher(cipher, platform);
-      try {
-        if (typeof credential.ciphertext !== 'string' || !credential.ciphertext) throw new Error();
-        owner[key] = cipher.decryptString(Buffer.from(credential.ciphertext, 'base64'));
-      } catch {
-        throw new Error(t('credentialDecryptionFailed'));
-      }
-    }
-    if (owner[key] === 'justdo-builtin-credential' ||
-      (isRecord(config.model) && config.model.defaultModelProvider === 'builtin_models')) {
-      owner[key] = '';
-    }
-  };
-  transform(config.api, 'key');
+  if (
+    isRecord(config.api) &&
+    isRecord(config.model) &&
+    config.model.defaultModelProvider === 'builtin_models'
+  ) {
+    config.api.key = '';
+  }
   return config;
 }

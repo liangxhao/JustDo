@@ -88,25 +88,4 @@ describe('packaged renderer lifetime', () => {
     expect(second.host.close).toHaveBeenCalledOnce();
     expect(second.onUrl).toHaveBeenLastCalledWith(undefined);
   });
-
-  it('waits for preference preparation and does not start a host after closure during preparation', async () => {
-    const state = setup();
-    let finish!: () => void;
-    const preparing = vi.fn(() => new Promise<void>(resolve => (finish = resolve)));
-    const loading = loadPackagedRenderer(
-      state.window,
-      state.application,
-      '/packaged/dist',
-      state.onUrl,
-      preparing,
-    );
-    expect(preparing).toHaveBeenCalledOnce();
-    expect(startApplicationRendererHost).not.toHaveBeenCalled();
-    state.window.emit('closed');
-    finish();
-    await loading;
-    expect(startApplicationRendererHost).not.toHaveBeenCalled();
-    expect(state.window.loadURL).not.toHaveBeenCalled();
-    expect(state.application.listenerCount('before-quit')).toBe(0);
-  });
 });

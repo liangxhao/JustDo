@@ -3,74 +3,32 @@ import { describe, expect, it } from 'vitest';
 import { normalizeNativeTtsConfig } from './nativeTtsConfig';
 
 describe('native TTS configuration projection', () => {
-  it.each([
-    [{ enabled: true }, {}],
-    [{ enabled: false }, {}],
-    [{ enabled: true, auto: 'off' }, { auto: 'off' }],
-    [{ enabled: false, auto: 'inbound' }, { auto: 'inbound' }],
-    [{ enabled: true, auto: 'tagged' }, { auto: 'tagged' }],
-  ])('drops the removed enabled field without promoting it to an automatic mode: %j', (input, expected) => {
-    expect(normalizeNativeTtsConfig(input)).toEqual(expected);
-  });
-
-  it.each([
-    [{ voice: 'name' }, {}],
-    [{ voiceName: 'name' }, {}],
-    [{ voiceId: 'id' }, {}],
-    [{ voice: 'first', voiceName: 'second', voiceId: 'id' }, {}],
-    [{ speakerVoice: 'current', voice: 'old' }, { speakerVoice: 'current' }],
-    [{ speakerVoiceId: 'current', voiceId: 'old' }, { speakerVoiceId: 'current' }],
-  ])('keeps canonical speaker fields and discards unreleased aliases: %j', (input, expected) => {
-    expect(normalizeNativeTtsConfig({
-      providers: { openai: input }, personas: { narrator: { providers: { custom: input } } },
-    })).toEqual({
-      providers: { openai: expected }, personas: { narrator: { providers: { custom: expected } } },
-    });
-  });
-
-  it('preserves custom provider parameters, credentials, and source objects across repeated projections', () => {
+  it('clones current provider parameters, credentials and persona configuration without changing the source', () => {
     const original = {
-      auto: 'off', enabled: true, provider: 'openai', timeoutMs: 120_000,
+      auto: 'off', provider: 'openai', timeoutMs: 120_000,
       providers: {
-        openai: { speakerVoice: 'speaker', voice: 'discarded', apiKey: { source: 'exec', provider: 'internal', id: 'speech' }, custom: 7 },
-        local: { command: 'tts.exe', args: ['--sid=3'], voiceId: 3 },
+        openai: { speakerVoice: 'speaker', apiKey: { source: 'exec', provider: 'internal', id: 'speech' }, custom: 7 },
+        'tts-local-cli': { command: 'tts.exe', args: ['--sid=3'] },
       },
-      personas: { narrator: { provider: 'openai', providers: { openai: { voiceName: 'narrator' } } } },
+      personas: { narrator: { provider: 'openai', providers: { openai: { speakerVoice: 'narrator' } } } },
     };
     const before = structuredClone(original);
     const projected = normalizeNativeTtsConfig(original)!;
-    expect(projected.providers).toEqual({
-      openai: { speakerVoice: 'speaker', apiKey: original.providers.openai.apiKey, custom: 7 },
-      local: { command: 'tts.exe', args: ['--sid=3'] },
-    });
-    expect(projected).toMatchObject({ auto: 'off', timeoutMs: 120_000, provider: 'openai' });
+    expect(projected).toEqual(original);
+    expect(projected).not.toBe(original);
+    expect(projected.providers).not.toBe(original.providers);
+    expect(projected.personas).not.toBe(original.personas);
     expect(normalizeNativeTtsConfig(projected)).toEqual(projected);
     expect(original).toEqual(before);
   });
 
-  it('does not repair invalid unrelated values or introduce a provider or endpoint', () => {
-    expect(normalizeNativeTtsConfig({ auto: 'invalid', providers: { invalid: false } })).toEqual({
-      auto: 'invalid', providers: { invalid: false },
-    });
+  it('leaves invalid values visible to native validation and introduces no provider or endpoint', () => {
+    const input = { auto: 'invalid', providers: { invalid: false } };
+    expect(normalizeNativeTtsConfig(input)).toEqual(input);
     expect(normalizeNativeTtsConfig({})).toEqual({});
-    expect(normalizeNativeTtsConfig(undefined)).toBeNull();
   });
 
-  it('removes the unsupported global preference field without changing provider choices', () => {
-    const original = {
-      auto: 'off',
-      prefsPath: '/invalid-global/preferences.json',
-      provider: 'tts-local-cli',
-      providers: { 'tts-local-cli': { command: 'tts.exe', args: ['--sid=92'] } },
-    };
-    const before = structuredClone(original);
-    const projected = normalizeNativeTtsConfig(original);
-    expect(projected).toEqual({
-      auto: 'off',
-      provider: 'tts-local-cli',
-      providers: original.providers,
-    });
-    expect(original).toEqual(before);
-    expect(normalizeNativeTtsConfig(projected)).toEqual(projected);
+  it.each([undefined, null, false, [], 'invalid'])('does not project non-object TTS configuration: %j', input => {
+    expect(normalizeNativeTtsConfig(input)).toBeNull();
   });
 });

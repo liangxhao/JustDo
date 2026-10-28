@@ -139,21 +139,8 @@ const writeExpiredLeaf = (directory: string, certificateAuthority: CA, hostname:
 
 afterEach(() => {
   for (const directory of temporaryDirectories.splice(0)) {
-    fs.rmSync(directory, { recursive: true, force: true });
+    fs.rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   }
-});
-
-test('rotates the legacy fixed-subject certificate authority while preserving sibling files', () => {
-  const directory = createTempDir();
-  writeLegacyCertificateAuthority(directory);
-  fs.writeFileSync(path.join(directory, 'keep.txt'), 'keep');
-
-  expect(prepareOutboundHeaderCertificateStore(directory)).toBe(
-    OutboundHeaderCertificateResetReason.LegacyIdentity,
-  );
-  expect(fs.existsSync(path.join(directory, 'certs'))).toBe(false);
-  expect(fs.existsSync(path.join(directory, 'keys'))).toBe(false);
-  expect(fs.readFileSync(path.join(directory, 'keep.txt'), 'utf8')).toBe('keep');
 });
 
 test('keeps a valid installation-unique certificate authority', async () => {

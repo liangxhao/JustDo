@@ -97,7 +97,7 @@ test('shows a neutral bootstrap without preload or profile access and denies nav
   expect(preferences.preload).toBeUndefined();
   expect(preferences.additionalArguments).toBeUndefined();
   expect(loadPackagedRenderer).toHaveBeenCalledWith(window, electronMocks.app,
-    expect.stringMatching(/[/\\]dist$/u), expect.any(Function), undefined, { bootstrapOnly: true });
+    expect.stringMatching(/[/\\]dist$/u), expect.any(Function), { bootstrapOnly: true });
   for (const event of ['will-navigate', 'will-frame-navigate', 'will-redirect']) {
     const preventDefault = vi.fn();
     window.webContents.emit(event, { preventDefault });

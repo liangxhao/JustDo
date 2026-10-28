@@ -36,6 +36,8 @@ export function initializeTeamDiscussionTables(db: Database.Database): void {
       state TEXT NOT NULL CHECK(state IN ('preparing','prepare_failed','ready','submitting','running','stopping','interrupted','deleting')),
       active_discussion_id TEXT,
       source_session_id TEXT,
+      settings_json TEXT,
+      summary_source_json TEXT,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     );
@@ -45,6 +47,9 @@ export function initializeTeamDiscussionTables(db: Database.Database): void {
       request_id TEXT NOT NULL,
       fingerprint TEXT NOT NULL,
       initiator_agent_id TEXT,
+      summary_suppressed INTEGER NOT NULL DEFAULT 0,
+      requested_rounds INTEGER,
+      resources_json TEXT,
       revision INTEGER NOT NULL,
       generation INTEGER NOT NULL,
       state TEXT NOT NULL CHECK(state IN ('submitting','running','stopping','interrupted','completed','failed','cancelled')),
@@ -74,24 +79,6 @@ export function initializeTeamDiscussionTables(db: Database.Database): void {
       PRIMARY KEY(discussion_id, run_id)
     );
   `);
-  const columns = db.prepare('PRAGMA table_info(team_discussion_runs)').all() as { name: string }[];
-  if (!columns.some(column => column.name === 'initiator_agent_id'))
-    db.exec('ALTER TABLE team_discussion_runs ADD COLUMN initiator_agent_id TEXT');
-  if (!columns.some(column => column.name === 'summary_suppressed'))
-    db.exec(
-      'ALTER TABLE team_discussion_runs ADD COLUMN summary_suppressed INTEGER NOT NULL DEFAULT 0',
-    );
-  const roomColumns = db.prepare('PRAGMA table_info(team_discussion_rooms)').all() as {
-    name: string;
-  }[];
-  if (!columns.some(column => column.name === 'requested_rounds'))
-    db.exec('ALTER TABLE team_discussion_runs ADD COLUMN requested_rounds INTEGER');
-  if (!columns.some(column => column.name === 'resources_json'))
-    db.exec('ALTER TABLE team_discussion_runs ADD COLUMN resources_json TEXT');
-  if (!roomColumns.some(column => column.name === 'settings_json'))
-    db.exec('ALTER TABLE team_discussion_rooms ADD COLUMN settings_json TEXT');
-  if (!roomColumns.some(column => column.name === 'summary_source_json'))
-    db.exec('ALTER TABLE team_discussion_rooms ADD COLUMN summary_source_json TEXT');
   db.exec(`CREATE TABLE IF NOT EXISTS team_discussion_summaries (
     discussion_id TEXT PRIMARY KEY REFERENCES team_discussion_runs(id),
     room_id TEXT NOT NULL REFERENCES team_discussion_rooms(id),

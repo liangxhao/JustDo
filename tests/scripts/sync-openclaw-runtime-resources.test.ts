@@ -409,20 +409,3 @@ test('replaces the OpenClaw gateway channel config document', () => {
     fs.rmSync(tempRoot, { recursive: true, force: true });
   }
 });
-
-
-test.each(['openclaw-collaboration', 'third-party'])('retires only the former app-owned collaboration package (%s)', packageName => {
-  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-retired-extension-'));
-  try {
-    const repoRoot = path.join(tempRoot, 'repo');
-    const runtimeRoot = path.join(tempRoot, 'runtime');
-    fs.mkdirSync(path.join(repoRoot, 'plugins/extensions'), { recursive: true });
-    const retired = path.join(runtimeRoot, 'dist', 'extensions', 'collaboration');
-    fs.mkdirSync(retired, { recursive: true });
-    fs.writeFileSync(path.join(retired, 'package.json'), JSON.stringify({ name: packageName }));
-    syncLocalExtensions(repoRoot, runtimeRoot, 'test');
-    expect(fs.existsSync(retired)).toBe(packageName !== 'openclaw-collaboration');
-  } finally {
-    fs.rmSync(tempRoot, { recursive: true, force: true });
-  }
-});

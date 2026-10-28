@@ -19,7 +19,6 @@ export const loadPackagedRenderer = async (
   application: ApplicationQuitSource,
   directory: string,
   onApplicationUrl: (url: string | undefined) => void,
-  beforeLoad?: () => Promise<void>,
   hostOptions?: { bootstrapOnly?: boolean },
 ): Promise<void> => {
   let stopped = false;
@@ -39,7 +38,6 @@ export const loadPackagedRenderer = async (
   window.once('closed', stop);
   application.once('before-quit', stop);
   try {
-    if (beforeLoad) await beforeLoad();
     if (stopped || window.isDestroyed()) {
       stop();
       return;

@@ -231,12 +231,4 @@ describe('managed speech configuration', () => {
       command: 'local-stt',
     });
   });
-
-  it('removes the invalid top-level preference field on the next synchronization', () => {
-    const config = nativeConfig();
-    (config.tts as Record<string, unknown>).prefsPath = '/previous-invalid/preferences.json';
-    applyManagedSpeechModelConfiguration(config, settings(), stateDir);
-    expect(config.tts).not.toHaveProperty('prefsPath');
-    expect(config.tts).toMatchObject({ provider: 'tts-local-cli', persona: 'assistant-speech' });
-  });
 });

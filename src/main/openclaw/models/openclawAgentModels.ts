@@ -3,21 +3,14 @@ import type { Agent } from '../../data/coworkStore';
 type BuildManagedAgentEntriesInput = {
   agents: Agent[];
   fallbackPrimaryModel: string;
-  displayNameMap?: Record<string, string>;
 };
 
-type ProviderModelCatalog = Record<string, { models: Array<{ id: string }> }>;
 
 export type ManagedSessionModelTarget = {
   providerId: string;
   modelId: string;
   primaryModel: string;
 };
-
-export type QualifiedAgentModelRefResolution =
-  | { status: 'qualified'; primaryModel: string }
-  | { status: 'ambiguous'; modelId: string; providerIds: string[] }
-  | { status: 'unresolved'; modelId: string };
 
 export function parsePrimaryModelRef(primaryModel: string): ManagedSessionModelTarget | null {
   const normalized = primaryModel.trim();
@@ -39,119 +32,9 @@ export function parsePrimaryModelRef(primaryModel: string): ManagedSessionModelT
   };
 }
 
-export function resolveManagedSessionModelTarget(options: {
-  agentModel: string;
-  fallbackPrimaryModel: string;
-  availableProviders: ProviderModelCatalog;
-  currentProviderId?: string;
-}): ManagedSessionModelTarget {
-  const fallbackTarget = parsePrimaryModelRef(options.fallbackPrimaryModel);
-  const explicitModel = options.agentModel.trim();
-  const currentProviderId = options.currentProviderId?.trim() || '';
-
-  if (!explicitModel) {
-    if (fallbackTarget) return fallbackTarget;
-    return {
-      providerId: currentProviderId,
-      modelId: '',
-      primaryModel: currentProviderId ? `${currentProviderId}/` : '',
-    };
-  }
-
-  const explicitTarget = parsePrimaryModelRef(explicitModel);
-  if (explicitTarget) {
-    return explicitTarget;
-  }
-
-  const matchingProviders = Object.entries(options.availableProviders)
-    .filter(([, config]) => config.models.some(model => model.id === explicitModel))
-    .map(([providerId]) => providerId);
-
-  if (fallbackTarget && matchingProviders.includes(fallbackTarget.providerId)) {
-    return {
-      providerId: fallbackTarget.providerId,
-      modelId: explicitModel,
-      primaryModel: `${fallbackTarget.providerId}/${explicitModel}`,
-    };
-  }
-
-  if (matchingProviders.length === 1) {
-    return {
-      providerId: matchingProviders[0],
-      modelId: explicitModel,
-      primaryModel: `${matchingProviders[0]}/${explicitModel}`,
-    };
-  }
-
-  if (currentProviderId) {
-    return {
-      providerId: currentProviderId,
-      modelId: explicitModel,
-      primaryModel: `${currentProviderId}/${explicitModel}`,
-    };
-  }
-
-  if (fallbackTarget) {
-    return {
-      providerId: fallbackTarget.providerId,
-      modelId: explicitModel,
-      primaryModel: `${fallbackTarget.providerId}/${explicitModel}`,
-    };
-  }
-
-  return {
-    providerId: '',
-    modelId: explicitModel,
-    primaryModel: explicitModel,
-  };
-}
-
-export function resolveQualifiedAgentModelRef(options: {
-  agentModel: string;
-  availableProviders: ProviderModelCatalog;
-}): QualifiedAgentModelRefResolution {
-  const explicitModel = options.agentModel.trim();
-  if (!explicitModel) {
-    return { status: 'unresolved', modelId: '' };
-  }
-
-  const explicitTarget = parsePrimaryModelRef(explicitModel);
-  if (explicitTarget) {
-    return {
-      status: 'qualified',
-      primaryModel: explicitTarget.primaryModel,
-    };
-  }
-
-  const matchingProviders = Object.entries(options.availableProviders)
-    .filter(([, config]) => config.models.some(model => model.id === explicitModel))
-    .map(([providerId]) => providerId);
-
-  if (matchingProviders.length === 1) {
-    return {
-      status: 'qualified',
-      primaryModel: `${matchingProviders[0]}/${explicitModel}`,
-    };
-  }
-
-  if (matchingProviders.length > 1) {
-    return {
-      status: 'ambiguous',
-      modelId: explicitModel,
-      providerIds: matchingProviders,
-    };
-  }
-
-  return {
-    status: 'unresolved',
-    modelId: explicitModel,
-  };
-}
-
 export function buildAgentEntry(
   agent: Agent,
   fallbackPrimaryModel: string,
-  displayNameMap?: Record<string, string>,
 ): Record<string, unknown> {
   let primaryModel =
     (agent.id === 'main' ? undefined : parsePrimaryModelRef(agent.model.trim())?.primaryModel) ||
@@ -163,10 +46,7 @@ export function buildAgentEntry(
     const providerName = primaryModel.slice(0, slashIndex);
     const modelId = primaryModel.slice(slashIndex + 1);
 
-    const displayName = providerName.startsWith('custom_')
-      ? displayNameMap?.[providerName]
-      : undefined;
-    primaryModel = `${(displayName || providerName).toLowerCase()}/${modelId}`;
+    primaryModel = `${providerName.toLowerCase()}/${modelId}`;
   }
 
   return {
@@ -192,9 +72,8 @@ export function buildAgentEntry(
 export function buildManagedAgentEntries({
   agents,
   fallbackPrimaryModel,
-  displayNameMap,
 }: BuildManagedAgentEntriesInput): Array<Record<string, unknown>> {
   return agents
     .filter(agent => agent.id !== 'main')
-    .map(agent => buildAgentEntry(agent, fallbackPrimaryModel, displayNameMap));
+    .map(agent => buildAgentEntry(agent, fallbackPrimaryModel));
 }

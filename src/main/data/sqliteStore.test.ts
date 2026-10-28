@@ -11,12 +11,6 @@ import { DB_FILENAME } from '../core/appConstants';
 
 vi.mock('electron', () => ({
   app: { getPath: () => os.tmpdir() },
-  safeStorage: {
-    isEncryptionAvailable: () => true,
-    getSelectedStorageBackend: () => 'gnome_libsecret',
-    encryptString: (value: string) => Buffer.from(`test-cipher:${value}`),
-    decryptString: (value: Buffer) => value.toString().replace(/^test-cipher:/, ''),
-  },
 }));
 
 import { CoworkStore } from './coworkStore';
@@ -98,30 +92,20 @@ test('retains extension creation source across updates and database reopen witho
   }
 });
 
-test('persists builtin references without changing unrelated legacy credentials', () => {
-  const store = SqliteStore.create(createTempDir());
+test('keeps builtin credentials out of persisted settings and preserves user credentials across reopen', () => {
+  const directory = createTempDir();
+  const store = SqliteStore.create(directory);
+  const config = { providers: { builtin_models: { apiKey: 'builtin-fixture-key' } }, api: { key: 'user-api-key' } };
   try {
-    const config = { providers: { builtin_models: { apiKey: 'builtin-fixture-key' } }, api: { key: 'legacy-fixture-key' } };
     store.set('app_config', config);
     const row = store.getDatabase().prepare('SELECT value FROM kv WHERE key = ?').get('app_config') as { value: string };
     expect(row.value).not.toContain('builtin-fixture-key');
-    expect(row.value).toContain('legacy-fixture-key');
+    expect(row.value).toContain('user-api-key');
     expect(store.get('app_config')).toEqual({ ...config, providers: { builtin_models: { apiKey: '' } } });
   } finally { store.close(); }
-});
-
-test('converts existing plaintext credentials when opening a database', () => {
-  const directory = createTempDir();
-  const initial = SqliteStore.create(directory);
-  const config = { providers: { builtin_models: { apiKey: 'legacy-builtin-fixture' } } };
-  initial.getDatabase().prepare('INSERT INTO kv (key, value, updated_at) VALUES (?, ?, ?)')
-    .run('app_config', JSON.stringify(config), Date.now());
-  initial.close();
   const reopened = SqliteStore.create(directory);
   try {
-    const row = reopened.getDatabase().prepare('SELECT value FROM kv WHERE key = ?').get('app_config') as { value: string };
-    expect(row.value).not.toContain('legacy-builtin-fixture');
-    expect(reopened.get('app_config')).toEqual({ providers: { builtin_models: { apiKey: '' } } });
+    expect(reopened.get('app_config')).toEqual({ ...config, providers: { builtin_models: { apiKey: '' } } });
   } finally { reopened.close(); }
 });
 
@@ -146,109 +130,64 @@ test('refuses to open an unbacked legacy cache and preserves its schema and cont
   preserved.close();
 });
 
-test('adds current metadata and retains existing product sessions and receipts', () => {
+test('creates complete current metadata and retains product sessions and receipts across reopen', () => {
   const dir = createTempDir();
-  const dbPath = path.join(dir, DB_FILENAME);
-  const db = new BetterSqlite3(dbPath);
-  const now = Date.now();
-
-  db.exec(`
-    CREATE TABLE cowork_sessions (
-      id TEXT PRIMARY KEY,
-      title TEXT NOT NULL,
-      status TEXT NOT NULL,
-      pinned INTEGER NOT NULL DEFAULT 0,
-      cwd TEXT NOT NULL,
-      execution_mode TEXT,
-      active_skill_ids TEXT,
-      agent_id TEXT NOT NULL,
-      group_id TEXT,
-      created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL
-    );
-    CREATE TABLE scheduled_task_run_receipts (
-      run_id TEXT PRIMARY KEY,
-      task_id TEXT NOT NULL,
-      task_name TEXT NOT NULL,
-      session_id TEXT,
-      session_key TEXT,
-      status TEXT NOT NULL,
-      summary TEXT,
-      error TEXT,
-      delivery_status TEXT,
-      delivery_error TEXT,
-      started_at INTEGER NOT NULL,
-      finished_at INTEGER,
-      duration_ms INTEGER,
-      observed_at INTEGER NOT NULL,
-      read_at INTEGER,
-      updated_at INTEGER NOT NULL
-    );
-  `);
-  db.prepare(
-    `INSERT INTO cowork_sessions
-      (id, title, status, cwd, agent_id, created_at, updated_at)
-     VALUES ('kept-session', 'kept', 'idle', '/tmp', 'main', ?, ?)`,
-  ).run(now, now);
+  const store = SqliteStore.create(dir);
+  const db = store.getDatabase();
+  const session = new CoworkStore(db).createSession(
+    'kept', '/tmp', 'local', [], 'main', 'ask', 'current/selected',
+  );
   db.prepare(
     `INSERT INTO scheduled_task_run_receipts
-      (run_id, task_id, task_name, status, started_at, observed_at, updated_at)
-     VALUES ('kept-result', 'task-1', 'Task', 'success', 1000, 1001, 1001)`,
+      (run_id, task_id, task_name, system_managed, status, started_at, observed_at, updated_at)
+     VALUES ('kept-result', 'task-1', 'Task', 1, 'success', 1000, 1001, 1001)`,
   ).run();
-  db.close();
-
-  const store = SqliteStore.create(dir);
-  const migratedDb = store.getDatabase();
-  const columns = migratedDb.pragma('table_info(cowork_sessions)') as Array<{ name: string }>;
-  const keptRow = migratedDb
-    .prepare("SELECT id FROM cowork_sessions WHERE id = 'kept-session'")
-    .get();
-  const messageCacheTable = migratedDb
+  const columns = db.pragma('table_info(cowork_sessions)') as Array<{ name: string }>;
+  const messageCacheTable = db
     .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'cowork_messages'")
-    .get();
-  const resultColumns = migratedDb.pragma('table_info(scheduled_task_run_receipts)') as Array<{
-    name: string;
-  }>;
-  const keptResult = migratedDb
-    .prepare(
-      "SELECT run_id, system_managed FROM scheduled_task_run_receipts WHERE run_id = 'kept-result'",
-    )
     .get();
 
   expect(columns.map(column => column.name)).toEqual(
     expect.arrayContaining([
+      'permission_mode',
       'model_ref',
       'source',
+      'native_session_key',
+      'native_parent_session_id',
+      'handoff_from_session_id',
+      'handoff_from_session_title',
+      'handoff_request_id',
       'forked_from_session_id',
       'forked_from_session_title',
       'forked_from_entry_id',
     ]),
   );
   const forkForeignKey = (
-    migratedDb.pragma('foreign_key_list(cowork_sessions)') as Array<{
+    db.pragma('foreign_key_list(cowork_sessions)') as Array<{
       from: string;
       table: string;
       on_delete: string;
     }>
   ).find(key => key.from === 'forked_from_session_id');
   expect(forkForeignKey).toMatchObject({ table: 'cowork_sessions', on_delete: 'SET NULL' });
-  expect(keptRow).toEqual({ id: 'kept-session' });
-  expect(new CoworkStore(migratedDb).getSession('kept-session')?.source).toBeUndefined();
+  const externalColumns = db.pragma('table_info(cowork_external_sessions)') as Array<{ name: string }>;
+  expect(externalColumns.map(column => column.name)).toEqual(expect.arrayContaining([
+    'agent_id', 'openclaw_session_key', 'execution_run_id', 'native_session_id', 'lifecycle_revision', 'execution_state',
+  ]));
   expect(messageCacheTable).toBeUndefined();
-  expect(resultColumns.map(column => column.name)).toContain('system_managed');
-  expect(keptResult).toEqual({ run_id: 'kept-result', system_managed: 0 });
+  const schema = db.prepare('SELECT type, name, sql FROM sqlite_master ORDER BY name').all();
   store.close();
 
   const reopened = SqliteStore.create(dir);
-  expect(
-    reopened
-      .getDatabase()
-      .prepare(
-        "SELECT run_id, system_managed FROM scheduled_task_run_receipts WHERE run_id = 'kept-result'",
-      )
-      .get(),
-  ).toEqual({ run_id: 'kept-result', system_managed: 0 });
-  reopened.close();
+  try {
+    expect(new CoworkStore(reopened.getDatabase()).getSession(session.id)).toMatchObject({
+      title: 'kept', permissionMode: 'ask', modelRef: 'current/selected',
+    });
+    expect(reopened.getDatabase().prepare(
+      "SELECT run_id, system_managed FROM scheduled_task_run_receipts WHERE run_id = 'kept-result'",
+    ).get()).toEqual({ run_id: 'kept-result', system_managed: 1 });
+    expect(reopened.getDatabase().prepare('SELECT type, name, sql FROM sqlite_master ORDER BY name').all()).toEqual(schema);
+  } finally { reopened.close(); }
 });
 
 test('persists one idempotent user run and cascades it with the session', () => {
@@ -390,66 +329,10 @@ test('allows consecutive plans to use the same canonical implementation session'
   sqlite.close();
 });
 
-test('rebuilds the obsolete unique implementation-session Plan table', () => {
-  const dir = createTempDir();
-  const initial = SqliteStore.create(dir);
-  initial.close();
-  const dbPath = path.join(dir, DB_FILENAME);
-  const legacy = new BetterSqlite3(dbPath);
-  legacy.exec(`
-    DROP TABLE cowork_plan_handoffs;
-    CREATE TABLE cowork_plan_handoffs (
-      plan_id TEXT PRIMARY KEY,
-      session_id TEXT NOT NULL,
-      planning_session_key TEXT NOT NULL,
-      artifact_workspace_root TEXT NOT NULL,
-      artifact_relative_path TEXT NOT NULL UNIQUE,
-      artifact_sha256 TEXT NOT NULL,
-      artifact_byte_length INTEGER NOT NULL,
-      state TEXT NOT NULL,
-      implementation_session_key TEXT UNIQUE,
-      implementation_gateway_session_id TEXT,
-      implementation_run_id TEXT,
-      error TEXT,
-      presented_at INTEGER NOT NULL,
-      dispatch_started_at INTEGER,
-      admitted_at INTEGER,
-      resolved_at INTEGER,
-      failed_at INTEGER,
-      created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL,
-      FOREIGN KEY (session_id) REFERENCES cowork_sessions(id) ON DELETE CASCADE
-    );
-  `);
-  legacy.close();
-
-  const reopened = SqliteStore.create(dir);
-  const implementationIndexes = (
-    reopened.getDatabase().pragma('index_list(cowork_plan_handoffs)') as Array<{
-      name: string;
-      unique: number;
-    }>
-  ).filter(index => {
-    if (index.unique !== 1) return false;
-    const columns = reopened
-      .getDatabase()
-      .prepare('SELECT name FROM pragma_index_info(?)')
-      .all(index.name) as Array<{ name: string }>;
-    return columns.some(column => column.name === 'implementation_session_key');
-  });
-
-  expect(implementationIndexes).toEqual([]);
-  reopened.close();
-});
-
-test('keeps legacy handoff provenance readable after upgrading existing sessions', () => {
+test('keeps handoff provenance readable after reopening current sessions', () => {
   const dir = createTempDir();
   const original = SqliteStore.create(dir);
   const initialDb = original.getDatabase();
-  initialDb.exec('DROP INDEX idx_cowork_handoff_request');
-  initialDb.exec('ALTER TABLE cowork_sessions DROP COLUMN handoff_request_id');
-  initialDb.exec('ALTER TABLE cowork_sessions DROP COLUMN handoff_from_session_id');
-  initialDb.exec('ALTER TABLE cowork_sessions DROP COLUMN handoff_from_session_title');
   const before = new CoworkStore(initialDb).createSession('Existing', '/project');
   original.close();
   const reopened = SqliteStore.create(dir);
@@ -462,7 +345,7 @@ test('keeps legacy handoff provenance readable after upgrading existing sessions
       .prepare(
         'UPDATE cowork_sessions SET handoff_from_session_id = ?, handoff_from_session_title = ?, handoff_request_id = ? WHERE id = ?',
       )
-      .run(before.id, before.title, 'legacy-retry', session.id);
+      .run(before.id, before.title, 'handoff-request', session.id);
     expect(store.getSession(session.id)?.handoffSource).toEqual({
       sessionId: before.id,
       title: 'Existing',
@@ -473,7 +356,7 @@ test('keeps legacy handoff provenance readable after upgrading existing sessions
 });
 
 
-test('adding historical defaults adoption preserves choices in already restored sessions', () => {
+test('reopening current history bindings preserves already adopted session choices', () => {
   const directory = createTempDir();
   const initial = SqliteStore.create(directory);
   const store = new CoworkStore(initial.getDatabase());
@@ -493,8 +376,7 @@ test('adding historical defaults adoption preserves choices in already restored 
     (session_id,session_key,native_session_id,availability,source_agent_id,source_session_key,transaction_id)
     VALUES (?,?,?,'native','main',?,'previous')`,
     )
-    .run(session.id, 'agent:main:legacy', 'native', 'agent:main:legacy');
-  initial.getDatabase().exec('ALTER TABLE history_session_bindings DROP COLUMN defaults_applied');
+    .run(session.id, 'agent:main:restored', 'native', 'agent:main:restored');
   initial.close();
   const reopened = SqliteStore.create(directory);
   try {
@@ -510,18 +392,17 @@ test('adding historical defaults adoption preserves choices in already restored 
   }
 });
 
-test('upgrades assistant deletion metadata and keeps tombstones across restart', () => {
+test('keeps current assistant deletion metadata and tombstones across restart', () => {
   const directory = createTempDir();
   const initial = SqliteStore.create(directory);
   const profile = { id: 'review', name: 'Reviewer', description: '', icon: '', model: '', enabled: true, isDefault: false };
   new CoworkStore(initial.getDatabase()).saveAgentProfile(profile);
-  initial.getDatabase().exec('ALTER TABLE agents DROP COLUMN deleted_at');
   initial.close();
-  const migrated = SqliteStore.create(directory);
-  const store = new CoworkStore(migrated.getDatabase());
+  const current = SqliteStore.create(directory);
+  const store = new CoworkStore(current.getDatabase());
   expect(store.getAgent('review')?.enabled).toBe(true);
   store.deleteAgent('review');
-  migrated.close();
+  current.close();
   const reopened = SqliteStore.create(directory);
   try {
     expect(new CoworkStore(reopened.getDatabase()).getAgent('review')).toMatchObject({ name: 'Reviewer', enabled: false, deletedAt: expect.any(Number) });

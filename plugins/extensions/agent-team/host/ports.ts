@@ -6,7 +6,7 @@ export interface TeamHostSession {
   agentId: string;
   title: string;
   cwd: string;
-  executionMode: 'auto' | 'local' | 'sandbox';
+  executionMode: 'local' | 'sandbox';
   permissionMode: PermissionMode;
   external?: unknown;
   nativeSessionKey?: string;

@@ -42,7 +42,7 @@ export function createStartupBootstrapWindow(options: {
   window.webContents.on('will-redirect', event => event.preventDefault());
   const loading = options.isDev
     ? window.loadURL(new URL('/startup-bootstrap.html', options.devServerUrl).href)
-    : loadPackagedRenderer(window, app, path.join(__dirname, '../dist'), () => {}, undefined,
+    : loadPackagedRenderer(window, app, path.join(__dirname, '../dist'), () => {},
         { bootstrapOnly: true });
   return {
     window,

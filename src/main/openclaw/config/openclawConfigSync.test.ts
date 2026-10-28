@@ -36,7 +36,6 @@ import {
   buildDefaultOpenClawPluginEntries,
   buildManagedAcpxPluginEntry,
   buildManagedExternalAgentEntries,
-  buildManagedOnlineAsrPluginEntries,
   buildManagedOpenClawAcpConfig,
   buildManagedOpenClawAgentThinkingConfig,
   buildManagedOpenClawCompactionConfig,
@@ -65,10 +64,10 @@ import {
   OPENCLAW_SUBAGENT_MAX_CHILDREN_PER_AGENT,
   OPENCLAW_SUBAGENT_MAX_CONCURRENT,
   OpenClawConfigSync,
+  projectManagedOpenClawBrowserConfig,
   removeUnavailableOpenClawPluginRegistrations,
   resolveManagedOpenClawTtsConfig,
   resolveOpenClawExecHost,
-  sanitizeOpenClawV2026_10_6Config,
 } from './openclawConfigSync';
 
 test('keeps extension Hook dispatch available when every independent Hook is disabled', () => {
@@ -381,7 +380,6 @@ describe('OpenClaw managed config metadata', () => {
   test('preserves native migration receipts while updating the managed version', () => {
     const existingMeta = {
       lastTouchedVersion: '2026.9.2',
-      lastTouchedAt: '2026-09-01T00:00:00.000Z',
       migrations: { modelPolicyAllowlist: true, utilityModelSeparation: true },
     };
 
@@ -389,33 +387,15 @@ describe('OpenClaw managed config metadata', () => {
       lastTouchedVersion: '2026.9.6',
       migrations: existingMeta.migrations,
     });
-    expect(existingMeta.lastTouchedAt).toBe('2026-09-01T00:00:00.000Z');
+    expect(existingMeta.lastTouchedVersion).toBe('2026.9.2');
   });
 
-  test('writes only metadata accepted by OpenClaw v2026.9.8', () => {
+  test('writes the managed version when no native metadata exists', () => {
     const meta = buildOpenClawConfigMeta('2026.9.2');
 
     expect(meta).toEqual({
       lastTouchedVersion: '2026.9.2',
     });
-  });
-
-  test('treats a retired metadata timestamp as a change so sync removes it', () => {
-    const currentContent = JSON.stringify({
-      gateway: { mode: 'local' },
-      meta: {
-        lastTouchedVersion: '2026.9.2',
-        lastTouchedAt: '2026-07-13T03:27:00.677Z',
-      },
-    });
-    const nextConfig = {
-      meta: {
-        lastTouchedVersion: '2026.9.2',
-      },
-      gateway: { mode: 'local' },
-    };
-
-    expect(hasOpenClawConfigChanged(currentContent, nextConfig)).toBe(true);
   });
 
   test('detects substantive config and version changes', () => {
@@ -453,10 +433,10 @@ describe('OpenClaw managed model catalog config', () => {
   });
 });
 
-describe('OpenClaw v2026.9.8 config sanitization', () => {
+describe('managed browser configuration', () => {
   test('projects a missing Windows browser root without overriding native defaults or invalid input', () => {
     const input = { gateway: { mode: 'local' } };
-    const projected = sanitizeOpenClawV2026_10_6Config(input);
+    const projected = projectManagedOpenClawBrowserConfig(input);
     expect(input).not.toHaveProperty('browser');
     if (process.platform === 'win32') {
       expect(projected.browser).toEqual({
@@ -467,13 +447,13 @@ describe('OpenClaw v2026.9.8 config sanitization', () => {
     } else {
       expect(projected).not.toHaveProperty('browser');
     }
-    expect(sanitizeOpenClawV2026_10_6Config({ browser: null }).browser).toBeNull();
+    expect(projectManagedOpenClawBrowserConfig({ browser: null }).browser).toBeNull();
   });
   test.each([BrowserMode.Isolated, BrowserMode.Extension, BrowserMode.Embedded])(
     'projects the implicit user launcher in %s mode without changing its default',
     mode => {
       const input = buildManagedOpenClawConnectivityConfig(mode);
-      const projected = sanitizeOpenClawV2026_10_6Config(input);
+      const projected = projectManagedOpenClawBrowserConfig(input);
       expect(projected.browser.defaultProfile).toBe(input.browser.defaultProfile);
       if (process.platform === 'win32') {
         expect(projected.browser.profiles.user).toMatchObject({
@@ -486,7 +466,7 @@ describe('OpenClaw v2026.9.8 config sanitization', () => {
     },
   );
   test('selects the application Chrome launcher while preserving custom MCP commands', () => {
-    const config = sanitizeOpenClawV2026_10_6Config({
+    const config = projectManagedOpenClawBrowserConfig({
       browser: {
         profiles: {
           user: { driver: 'existing-session' },
@@ -509,106 +489,14 @@ describe('OpenClaw v2026.9.8 config sanitization', () => {
       mcpCommand: 'company-browser.cmd',
       mcpArgs: ['--owned'],
     };
-    const projected = sanitizeOpenClawV2026_10_6Config({
+    const projected = projectManagedOpenClawBrowserConfig({
       browser: { defaultProfile: 'openclaw', profiles: { user, chrome: { driver: 'extension' } } },
     });
     expect(projected.browser.defaultProfile).toBe('openclaw');
     expect(projected.browser.profiles.user).toEqual(user);
     expect(projected.browser.profiles.chrome).toEqual({ driver: 'extension' });
   });
-  test('removes retired fields and converts legacy managed surfaces', () => {
-    const config = sanitizeOpenClawV2026_10_6Config({
-      meta: {
-        lastTouchedVersion: '2026.9.2',
-        lastTouchedAt: '2026-09-01T00:00:00.000Z',
-      },
-      diagnostics: {
-        stuckSessionWarnMs: 600_000,
-        stuckSessionAbortMs: 2_400_000,
-        otel: { enabled: false },
-      },
-      models: {
-        pricing: { enabled: false },
-        mode: 'replace',
-      },
-      browser: {
-        color: '#00AA00',
-        enabled: true,
-        profiles: {
-          chrome: {
-            driver: 'extension',
-            color: '#FF4500',
-          },
-          remote: {
-            cdpUrl: 'http://127.0.0.1:9222',
-          },
-        },
-      },
-      mcp: {
-        servers: {
-          docs: { url: 'https://example.com/mcp', timeout: 60 },
-        },
-      },
-      tools: {
-        experimental: { planTool: true },
-      },
-      agents: {
-        defaults: {
-          memorySearch: { enabled: false },
-          heartbeat: {
-            every: '0m',
-            includeSystemPromptSection: false,
-          },
-        },
-        list: [
-          {
-            id: 'Main',
-            default: true,
-            heartbeat: {
-              every: '2h',
-              includeSystemPromptSection: false,
-            },
-          },
-        ],
-      },
-    });
 
-    expect(config).toMatchObject({
-      meta: { lastTouchedVersion: '2026.9.2' },
-      diagnostics: { otel: { enabled: false } },
-      models: { mode: 'replace' },
-      browser: {
-        enabled: true,
-        profiles: {
-          chrome: { driver: 'extension' },
-          remote: { cdpUrl: 'http://127.0.0.1:9222' },
-        },
-      },
-      mcp: {
-        servers: {
-          docs: { url: 'https://example.com/mcp', requestTimeoutMs: 60_000 },
-        },
-      },
-      tools: { updatePlan: true },
-      memory: { search: { enabled: false } },
-      agents: {
-        ownership: 'explicit',
-        defaults: { heartbeat: { every: '0m' } },
-        entries: {
-          main: { heartbeat: { every: '2h' } },
-        },
-      },
-    });
-    expect(config.meta).not.toHaveProperty('lastTouchedAt');
-    expect(config.diagnostics).not.toHaveProperty('stuckSessionWarnMs');
-    expect(config.models).not.toHaveProperty('pricing');
-    expect(config.browser).not.toHaveProperty('color');
-    expect(config.browser.profiles.chrome).not.toHaveProperty('color');
-    expect(config.mcp.servers.docs).not.toHaveProperty('timeout');
-    expect(config.tools).not.toHaveProperty('experimental');
-    expect(config.agents).not.toHaveProperty('list');
-    expect(sanitizeOpenClawV2026_10_6Config(config)).toEqual(config);
-  });
 });
 
 describe('OpenClaw managed compaction config', () => {
@@ -1442,7 +1330,7 @@ describe('OpenClaw managed speech config', () => {
 
   test('disables retained Gateway TTS when response reading is turned off', () => {
     expect(
-      resolveManagedOpenClawTtsConfig({ tts: { enabled: true, provider: 'openai' } }, null, {
+      resolveManagedOpenClawTtsConfig({ tts: { auto: 'always', provider: 'openai' } }, null, {
         enabled: false,
         mode: 'online',
       }),
@@ -1464,7 +1352,7 @@ describe('OpenClaw managed speech config', () => {
     expect(buildManagedOpenClawTtsPluginEntries({ provider: 'unknown' })).toEqual({});
   });
 
-  test('retains the legacy transcription bridge while it contains an online provider', () => {
+  test('preserves an explicitly configured external voice-call plugin through generic merging', () => {
     const voiceCall = {
       config: {
         streaming: {
@@ -1473,7 +1361,8 @@ describe('OpenClaw managed speech config', () => {
         },
       },
     };
-    expect(buildManagedOnlineAsrPluginEntries({ entries: { 'voice-call': voiceCall } })).toEqual({
+    const merged = mergeOpenClawPluginConfig({ entries: { 'voice-call': voiceCall } }, {});
+    expect(merged.entries).toMatchObject({
       'voice-call': voiceCall,
     });
   });
@@ -1764,4 +1653,28 @@ test('inventories independent main and specialist role homes before a previous c
       path.join('/state', 'agent-workspaces', 'research'),
     ]),
   );
+});
+
+test('includes workspaces declared by current keyed native agent entries', () => {
+  const configuredWorkspace = path.resolve('/configured-project');
+  const explicitWorkspace = path.resolve('/explicit-review');
+  const directories = listKnownOpenClawWorkspaceDirs({
+    stateDir: '/state',
+    mainWorkspaceDir: '/project',
+    agents: [],
+    existingConfig: {
+      agents: {
+        defaults: { workspace: configuredWorkspace },
+        entries: { reviewer: { workspace: explicitWorkspace }, planner: {} },
+      },
+    },
+  });
+
+  expect(directories).toEqual(expect.arrayContaining([
+    configuredWorkspace,
+    explicitWorkspace,
+    path.join('/state', 'agent-workspaces', 'planner'),
+    path.join('/project', 'planner'),
+    path.join(configuredWorkspace, 'planner'),
+  ]));
 });

@@ -291,7 +291,7 @@ const setRuntimeStatusResponse = (response: {
   vi.stubGlobal('window', {
     electron: {
       cowork: {
-        getSessionRuntimeStatus: vi.fn().mockResolvedValue(response),
+        getSessionRuntimeStatus: vi.fn().mockResolvedValue({ revision: 1, ...response }),
       },
     },
   });
@@ -1119,7 +1119,7 @@ describe('cowork runtime activity reconciliation', () => {
     expect(store.getState().cowork.sessionRunTimings[sessionId]).toEqual([timing]);
   });
 
-  test('requires two known idle snapshots before clearing a running session', async () => {
+  test('applies an authoritative idle snapshot with a native revision', async () => {
     const sessionId = 'runtime-idle-session';
     store.dispatch(setSessionRuntimeActivity({ sessionId, running: true }));
     setRuntimeStatusResponse({
@@ -1131,47 +1131,26 @@ describe('cowork runtime activity reconciliation', () => {
     });
 
     await coworkService.refreshSessionRuntimeActivity(sessionId, { includeSubagents: true });
-    expect(store.getState().cowork.sessionRuntimeActivity[sessionId]).toBe(true);
 
-    await coworkService.refreshSessionRuntimeActivity(sessionId, { includeSubagents: true });
     expect(store.getState().cowork.sessionRuntimeActivity[sessionId]).toBeUndefined();
   });
 
-  test('requires idle confirmation to restart after an unknown snapshot', async () => {
-    const sessionId = 'runtime-interrupted-idle-session';
+  test.each([undefined, 0])('keeps activity unknown when a successful read has revision %s', async revision => {
+    const sessionId = `runtime-unrevisioned-${revision}`;
     store.dispatch(setSessionRuntimeActivity({ sessionId, running: true }));
-    const getSessionRuntimeStatus = vi
-      .fn()
-      .mockResolvedValueOnce({
-        success: true,
-        known: true,
-        mainRunning: false,
-        subagentRunning: false,
-        running: false,
-      })
-      .mockResolvedValueOnce({
-        success: true,
-        known: false,
-        mainRunning: false,
-        subagentRunning: false,
-        running: false,
-      })
-      .mockResolvedValue({
-        success: true,
-        known: true,
-        mainRunning: false,
-        subagentRunning: false,
-        running: false,
-      });
-    vi.stubGlobal('window', { electron: { cowork: { getSessionRuntimeStatus } } });
+    const response = {
+      success: true, revision, known: true,
+      mainRunning: false, subagentRunning: false, running: false,
+    };
+    vi.stubGlobal('window', { electron: { cowork: {
+      getSessionRuntimeStatus: vi.fn().mockResolvedValue(response),
+    } } });
 
-    await coworkService.refreshSessionRuntimeActivity(sessionId, { includeSubagents: true });
-    await coworkService.refreshSessionRuntimeActivity(sessionId, { includeSubagents: true });
-    await coworkService.refreshSessionRuntimeActivity(sessionId, { includeSubagents: true });
+    await expect(coworkService.getSessionRuntimeStatus(sessionId)).resolves.toMatchObject({ known: false });
+    await coworkService.refreshSessionRuntimeActivity(sessionId);
+    await coworkService.refreshSessionRuntimeActivity(sessionId);
+
     expect(store.getState().cowork.sessionRuntimeActivity[sessionId]).toBe(true);
-
-    await coworkService.refreshSessionRuntimeActivity(sessionId, { includeSubagents: true });
-    expect(store.getState().cowork.sessionRuntimeActivity[sessionId]).toBeUndefined();
   });
 
   test('clears running state only after a confirmed session stop', async () => {
@@ -1232,12 +1211,13 @@ describe('cowork runtime activity reconciliation', () => {
     expect(store.getState().cowork.sessionRuntimeActivity[sessionId]).toBe(true);
   });
 
-  test('quickly clears a completed session after two fresh idle snapshots', async () => {
+  test('clears completed activity from an authoritative aggregate idle snapshot', async () => {
     vi.useFakeTimers();
     const sessionId = 'terminal-idle-session';
     store.dispatch(setSessionRuntimeActivity({ sessionId, running: true }));
     const getSessionRuntimeStatus = vi.fn().mockResolvedValue({
       success: true,
+      revision: 1,
       known: true,
       mainRunning: false,
       subagentRunning: false,
@@ -1256,7 +1236,6 @@ describe('cowork runtime activity reconciliation', () => {
     ).confirmTerminalSessionIdle(sessionId);
     await Promise.resolve();
 
-    expect(store.getState().cowork.sessionRuntimeActivity[sessionId]).toBe(true);
     expect(getSessionRuntimeStatus).toHaveBeenLastCalledWith(sessionId, {
       includeSubagents: true,
       forceRefresh: true,
@@ -1265,7 +1244,7 @@ describe('cowork runtime activity reconciliation', () => {
 
     await vi.advanceTimersByTimeAsync(750);
 
-    expect(getSessionRuntimeStatus).toHaveBeenCalledTimes(2);
+    expect(getSessionRuntimeStatus).toHaveBeenCalledTimes(1);
     expect(store.getState().cowork.sessionRuntimeActivity[sessionId]).toBeUndefined();
   });
 
@@ -1275,6 +1254,7 @@ describe('cowork runtime activity reconciliation', () => {
     store.dispatch(setSessionRuntimeActivity({ sessionId, running: true }));
     const getSessionRuntimeStatus = vi.fn().mockResolvedValue({
       success: true,
+      revision: 1,
       known: true,
       mainRunning: false,
       subagentRunning: true,
@@ -1298,7 +1278,7 @@ describe('cowork runtime activity reconciliation', () => {
     expect(store.getState().cowork.sessionRuntimeActivity[sessionId]).toBe(true);
   });
 
-  test('recovers from a transient running snapshot and clears after two fresh idle snapshots', async () => {
+  test('recovers from a transient running snapshot with a newer aggregate idle snapshot', async () => {
     vi.useFakeTimers();
     const sessionId = 'terminal-transient-running-session';
     store.dispatch(setSessionRuntimeActivity({ sessionId, running: true }));
@@ -1306,6 +1286,7 @@ describe('cowork runtime activity reconciliation', () => {
       .fn()
       .mockResolvedValueOnce({
         success: true,
+        revision: 1,
         known: true,
         mainRunning: true,
         subagentRunning: false,
@@ -1313,6 +1294,7 @@ describe('cowork runtime activity reconciliation', () => {
       })
       .mockResolvedValue({
         success: true,
+        revision: 2,
         known: true,
         mainRunning: false,
         subagentRunning: false,
@@ -1332,7 +1314,7 @@ describe('cowork runtime activity reconciliation', () => {
     await Promise.resolve();
     await vi.advanceTimersByTimeAsync(1_500);
 
-    expect(getSessionRuntimeStatus).toHaveBeenCalledTimes(3);
+    expect(getSessionRuntimeStatus).toHaveBeenCalledTimes(2);
     expect(store.getState().cowork.sessionRuntimeActivity[sessionId]).toBeUndefined();
   });
 
@@ -1342,6 +1324,7 @@ describe('cowork runtime activity reconciliation', () => {
     store.dispatch(setSessionRuntimeActivity({ sessionId, running: true }));
     const getSessionRuntimeStatus = vi.fn().mockResolvedValue({
       success: true,
+      revision: 1,
       known: true,
       mainRunning: false,
       subagentRunning: false,

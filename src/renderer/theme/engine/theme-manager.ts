@@ -124,10 +124,7 @@ export class ThemeManager {
 
       // Electron title-bar sync
       try {
-        const legacyElectronAPI = (window as Window & { electronAPI?: ThemeElectronBridge })
-          .electronAPI;
-        const electronAPI =
-          legacyElectronAPI ?? (window.electron as typeof window.electron & ThemeElectronBridge);
+        const electronAPI = window.electron as typeof window.electron & ThemeElectronBridge;
         electronAPI?.theme?.updateTitleBar?.({
           bg: theme.tokens['surface'],
           symbol: theme.tokens['text-secondary'],

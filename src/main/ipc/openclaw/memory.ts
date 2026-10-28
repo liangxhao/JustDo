@@ -52,7 +52,6 @@ type OpenClawConfig = {
   agents?: {
     defaults?: { workspace?: unknown };
     entries?: Record<string, { workspace?: unknown }>;
-    list?: Array<{ id?: unknown; workspace?: unknown }>;
   };
 };
 
@@ -73,8 +72,7 @@ export const resolveMemoryWorkspace = async (
   agentId = MEMORY_AGENT_ID,
 ): Promise<string> => {
   const config = readJsonFile<OpenClawConfig>(manager.getConfigPath());
-  const agent =
-    config?.agents?.entries?.[agentId] ?? config?.agents?.list?.find(item => item.id === agentId);
+  const agent = config?.agents?.entries?.[agentId];
   const configured = typeof agent?.workspace === 'string' ? agent.workspace.trim() : '';
   if (path.isAbsolute(configured)) return path.resolve(configured);
   // Native home/environment and ownership rules resolve all other workspace paths.

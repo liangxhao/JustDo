@@ -105,45 +105,14 @@ export const validateExternalAgentSettings = (
   if (version !== 1 || !isPermissionMode(permissionMode) || !isRecord(storedAgents)) {
     return { ok: false, error: 'Invalid external agent settings.' };
   }
-  let validatedReadOnlyViolationBehavior: ExternalAgentReadOnlyViolationBehavior =
-    ExternalAgentReadOnlyViolationBehavior.Continue;
-  if (readOnlyViolationBehavior !== undefined) {
-    if (!isReadOnlyViolationBehavior(readOnlyViolationBehavior)) {
-      return { ok: false, error: 'Invalid external agent settings.' };
-    }
-    validatedReadOnlyViolationBehavior = readOnlyViolationBehavior;
-  }
-
-  let validatedOperationTimeoutSeconds: ExternalAgentOperationTimeoutSeconds = 120;
-  if (operationTimeoutSeconds !== undefined) {
-    if (!isOperationTimeout(operationTimeoutSeconds)) {
-      return { ok: false, error: 'Invalid external agent settings.' };
-    }
-    validatedOperationTimeoutSeconds = operationTimeoutSeconds;
-  }
-
-  let validatedPluginToolsMcpBridge = false;
-  if (pluginToolsMcpBridge !== undefined) {
-    if (typeof pluginToolsMcpBridge !== 'boolean') {
-      return { ok: false, error: 'Invalid external agent settings.' };
-    }
-    validatedPluginToolsMcpBridge = pluginToolsMcpBridge;
-  }
-
-  let validatedOpenClawToolsMcpBridge = false;
-  if (openClawToolsMcpBridge !== undefined) {
-    if (typeof openClawToolsMcpBridge !== 'boolean') {
-      return { ok: false, error: 'Invalid external agent settings.' };
-    }
-    validatedOpenClawToolsMcpBridge = openClawToolsMcpBridge;
-  }
-
-  let validatedShareConfiguredMcpServers = false;
-  if (shareConfiguredMcpServers !== undefined) {
-    if (typeof shareConfiguredMcpServers !== 'boolean') {
-      return { ok: false, error: 'Invalid external agent settings.' };
-    }
-    validatedShareConfiguredMcpServers = shareConfiguredMcpServers;
+  if (
+    !isReadOnlyViolationBehavior(readOnlyViolationBehavior) ||
+    !isOperationTimeout(operationTimeoutSeconds) ||
+    typeof pluginToolsMcpBridge !== 'boolean' ||
+    typeof openClawToolsMcpBridge !== 'boolean' ||
+    typeof shareConfiguredMcpServers !== 'boolean'
+  ) {
+    return { ok: false, error: 'Invalid external agent settings.' };
   }
 
   const agents = createAgentSettings();
@@ -161,11 +130,11 @@ export const validateExternalAgentSettings = (
     settings: {
       version: 1,
       permissionMode,
-      readOnlyViolationBehavior: validatedReadOnlyViolationBehavior,
-      operationTimeoutSeconds: validatedOperationTimeoutSeconds,
-      pluginToolsMcpBridge: validatedPluginToolsMcpBridge,
-      openClawToolsMcpBridge: validatedOpenClawToolsMcpBridge,
-      shareConfiguredMcpServers: validatedShareConfiguredMcpServers,
+      readOnlyViolationBehavior,
+      operationTimeoutSeconds,
+      pluginToolsMcpBridge,
+      openClawToolsMcpBridge,
+      shareConfiguredMcpServers,
       agents,
     },
   };

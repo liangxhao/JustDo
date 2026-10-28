@@ -81,20 +81,17 @@ describe('Agent runtime settings', () => {
     expect(validateAgentRuntimeSettings(input).ok).toBe(false);
   });
 
-  test('migrates version 1 settings saved before main Agent thinking preferences', () => {
+  test('rejects an existing profile without current main Agent settings', () => {
     const input = createDefaultAgentRuntimeSettings();
     input.subagents.maxConcurrent = 7;
-    const { agent: _removed, ...legacyInput } = input;
+    const { agent: _removed, ...incomplete } = input;
 
-    expect(parseAgentRuntimeSettings(legacyInput)).toEqual({
-      ...input,
-      agent: { thinking: null, runTimeoutSeconds: 0, maxConcurrent: null },
-    });
+    expect(validateAgentRuntimeSettings(incomplete).ok).toBe(false);
   });
 
-  test('migrates version 1 settings saved before the latest runtime controls', () => {
+  test('rejects missing current runtime controls in an existing profile', () => {
     const input = createDefaultAgentRuntimeSettings();
-    const legacyInput = {
+    const incomplete = {
       ...input,
       agent: { thinking: input.agent.thinking },
       subagents: {
@@ -104,44 +101,38 @@ describe('Agent runtime settings', () => {
       },
     };
 
-    expect(parseAgentRuntimeSettings(legacyInput)).toEqual(input);
+    expect(validateAgentRuntimeSettings(incomplete).ok).toBe(false);
   });
 
-  test('migrates version 1 settings saved before MCP preferences', () => {
+  test('rejects an existing profile without current MCP preferences', () => {
     const input = createDefaultAgentRuntimeSettings();
     input.subagents.maxConcurrent = 7;
-    const { mcp: _removed, ...legacyInput } = input;
+    const { mcp: _removed, ...incomplete } = input;
 
-    expect(parseAgentRuntimeSettings(legacyInput)).toEqual({
-      ...input,
-      mcp: { requestTimeoutSeconds: 60, appsEnabled: true },
-    });
+    expect(validateAgentRuntimeSettings(incomplete).ok).toBe(false);
   });
 
-  test.each([null, undefined, true, false])('normalizes the MCP Apps preference (%s)', appsEnabled => {
+  test.each([true, false])('preserves the current MCP Apps preference (%s)', appsEnabled => {
     const input = createDefaultAgentRuntimeSettings();
     expect(parseAgentRuntimeSettings({ ...input, mcp: { ...input.mcp, appsEnabled } })).toEqual({
       ...input,
-      mcp: { ...input.mcp, appsEnabled: appsEnabled ?? true },
+      mcp: { ...input.mcp, appsEnabled },
     });
   });
 
-  test('rejects an invalid MCP Apps preference without dropping other settings', () => {
+  test.each([null, undefined, 'true'])('rejects an invalid MCP Apps preference (%s)', appsEnabled => {
     const input = createDefaultAgentRuntimeSettings();
     expect(validateAgentRuntimeSettings({
-      ...input, mcp: { ...input.mcp, appsEnabled: 'true' },
+      ...input, mcp: { ...input.mcp, appsEnabled },
     }).ok).toBe(false);
   });
 
-  test('migrates version 1 settings saved before session visibility preferences', () => {
+  test('rejects an existing profile without current session visibility preferences', () => {
     const input = createDefaultAgentRuntimeSettings();
     input.subagents.maxConcurrent = 7;
-    const { sessions: _removed, ...legacyInput } = input;
+    const { sessions: _removed, ...incomplete } = input;
 
-    expect(parseAgentRuntimeSettings(legacyInput)).toEqual({
-      ...input,
-      sessions: { visibility: AgentRuntimeSessionVisibility.Tree },
-    });
+    expect(validateAgentRuntimeSettings(incomplete).ok).toBe(false);
   });
 
   test('preserves AskUserQuestion timeout preferences', () => {
@@ -151,36 +142,20 @@ describe('Agent runtime settings', () => {
     expect(parseAgentRuntimeSettings(input)).toEqual(input);
   });
 
-  test('restores the AskUserQuestion default for profiles saved while the field was absent', () => {
+  test('rejects an existing profile without AskUserQuestion preferences', () => {
     const input = createDefaultAgentRuntimeSettings();
     input.subagents.maxConcurrent = 7;
-    const { askUserQuestion: _removed, ...legacyInput } = input;
+    const { askUserQuestion: _removed, ...incomplete } = input;
 
-    expect(parseAgentRuntimeSettings(legacyInput)).toEqual({
-      ...input,
-      askUserQuestion: { timeoutMinutes: 10 },
-    });
+    expect(validateAgentRuntimeSettings(incomplete).ok).toBe(false);
   });
 
-  test('drops the removed approval timeout from persisted version 1 profiles', () => {
-    const input = createDefaultAgentRuntimeSettings();
-    const legacyInput = {
-      ...input,
-      approvals: { timeoutMinutes: 0 },
-    };
-
-    expect(parseAgentRuntimeSettings(legacyInput)).toEqual(input);
-  });
-
-  test('adds the scheduled task approval timeout to older version 1 profiles', () => {
+  test('rejects an existing profile without scheduled task approval preferences', () => {
     const input = createDefaultAgentRuntimeSettings();
     input.subagents.maxConcurrent = 7;
-    const { automation: _removed, ...legacyInput } = input;
+    const { automation: _removed, ...incomplete } = input;
 
-    expect(parseAgentRuntimeSettings(legacyInput)).toEqual({
-      ...input,
-      automation: { approvalTimeoutMinutes: 2 },
-    });
+    expect(validateAgentRuntimeSettings(incomplete).ok).toBe(false);
   });
 
   test.each([2, 5, 10])(
@@ -264,10 +239,10 @@ describe('Agent runtime settings', () => {
   });
 });
 
-test('fills missing Swarm settings for existing profiles and rejects invalid capacities', () => {
+test('requires current Swarm settings and rejects invalid capacities', () => {
   const settings = createDefaultAgentRuntimeSettings();
-  const { swarm, ...legacy } = settings;
-  expect(parseAgentRuntimeSettings(legacy).swarm).toEqual(swarm);
+  const { swarm, ...incomplete } = settings;
+  expect(validateAgentRuntimeSettings(incomplete).ok).toBe(false);
   for (const value of [0, -1, 1.5, 65]) {
     expect(
       validateAgentRuntimeSettings({ ...settings, swarm: { ...swarm, maxConcurrent: value } }).ok,

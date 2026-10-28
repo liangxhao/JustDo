@@ -37,7 +37,6 @@ function setupDb(): void {
       status TEXT NOT NULL DEFAULT 'idle',
       pinned INTEGER NOT NULL DEFAULT 0,
       cwd TEXT NOT NULL,
-      system_prompt TEXT NOT NULL DEFAULT '',
       execution_mode TEXT NOT NULL DEFAULT 'local',
       permission_mode TEXT,
       model_ref TEXT,
@@ -95,6 +94,7 @@ function setupDb(): void {
       skill_ids TEXT NOT NULL DEFAULT '[]',
       enabled INTEGER NOT NULL DEFAULT 1,
       is_default INTEGER NOT NULL DEFAULT 0,
+      deleted_at INTEGER,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     );
@@ -108,8 +108,8 @@ function setupDb(): void {
 function insertSession(id: string, updatedAt: number = Date.now()): void {
   const createdAt = updatedAt;
   db.prepare(
-    `INSERT INTO cowork_sessions (id, title, status, pinned, cwd, system_prompt, execution_mode, active_skill_ids, agent_id, created_at, updated_at)
-     VALUES (?, 'test', 'idle', 0, '/tmp', '', 'local', '[]', 'main', ?, ?)`,
+    `INSERT INTO cowork_sessions (id, title, status, pinned, cwd, execution_mode, active_skill_ids, agent_id, created_at, updated_at)
+     VALUES (?, 'test', 'idle', 0, '/tmp', 'local', '[]', 'main', ?, ?)`,
   ).run(id, createdAt, updatedAt);
 }
 
@@ -499,31 +499,6 @@ test('resetting stale running sessions does not change recent activity time', ()
   expect(store.getSession(sid)).toMatchObject({ status: 'idle', updatedAt: activityTime });
 });
 
-test('backfillEmptyAgentModels assigns the current default model to empty agents only', () => {
-  const now = Date.now();
-  db.prepare(
-    `INSERT INTO agents (id, name, model, icon, skill_ids, enabled, is_default, description, system_prompt, identity, created_at, updated_at)
-     VALUES
-     ('main', 'main', '', '', '[]', 1, 1, '', '', '', ?, ?),
-     ('writer', 'Writer', '', '', '[]', 1, 0, '', '', '', ?, ?),
-     ('stockexpert', 'Stock Expert', 'qwen3.5-plus', '', '[]', 1, 0, '', '', '', ?, ?)`,
-  ).run(now, now, now, now, now, now);
-
-  expect(store.backfillEmptyAgentModels('deepseek-v3.2')).toBe(2);
-
-  const rows = (
-    db.prepare(`SELECT id, model FROM agents ORDER BY id`).all() as Array<{
-      id: string;
-      model: string;
-    }>
-  ).map(r => [r.id, r.model]);
-  expect(rows).toEqual([
-    ['main', 'deepseek-v3.2'],
-    ['stockexpert', 'qwen3.5-plus'],
-    ['writer', 'deepseek-v3.2'],
-  ]);
-});
-
 test('persists versioned Agent runtime settings and recovers from corrupt data', () => {
   const defaults = createDefaultAgentRuntimeSettings();
   expect(store.getAgentRuntimeSettings()).toEqual(defaults);
@@ -624,7 +599,6 @@ test('agent profiles keep exactly one default and preserve inherited models and 
 });
 
 test('deleting an assistant retains identity and sessions but prevents reactivation', () => {
-  db.exec('ALTER TABLE agents ADD COLUMN deleted_at INTEGER');
   const profile = {
     id: 'review',
     name: 'Reviewer',
@@ -650,7 +624,6 @@ test('deleting an assistant retains identity and sessions but prevents reactivat
 });
 
 test('assistant deletion refuses a running local session and main', () => {
-  db.exec('ALTER TABLE agents ADD COLUMN deleted_at INTEGER');
   const profile = {
     id: 'review',
     name: 'Reviewer',

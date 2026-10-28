@@ -22,7 +22,6 @@ module.exports = plugin(function () {
           foreground:  'var(--justdo-primary-foreground)',
           hover:       'var(--justdo-primary-hover)',
           muted:       'var(--justdo-primary-muted)',
-          dark:        'var(--justdo-primary-hover)',  // backward compat alias
         },
         accent: {
           DEFAULT:     'var(--justdo-accent)',

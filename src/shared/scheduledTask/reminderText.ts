@@ -10,7 +10,6 @@ const SCHEDULED_REMINDER_INTERNAL_INSTRUCTION =
 const SCHEDULED_REMINDER_RELAY_INSTRUCTION =
   'Please relay this reminder to the user in a helpful and friendly way.';
 const CURRENT_TIME_PREFIX = 'Current time:';
-const LEGACY_SYSTEM_LINE_RE = /^System:\s*(?:\[(.+?)\]\s*)?(⏰.+)$/u;
 const SIMPLE_REMINDER_RE = /^⏰(?:\s|$)/u;
 
 export function parseScheduledReminderPrompt(text: string): ScheduledReminderPrompt | null {
@@ -44,27 +43,6 @@ export function parseScheduledReminderPrompt(text: string): ScheduledReminderPro
   };
 }
 
-export function parseLegacyScheduledReminderSystemMessage(
-  text: string,
-): ScheduledReminderPrompt | null {
-  const trimmed = text.trim();
-  const firstLine = trimmed.split(/\r?\n/u, 1)[0]?.trim() ?? '';
-  const match = firstLine.match(LEGACY_SYSTEM_LINE_RE);
-  if (!match) {
-    return null;
-  }
-
-  const rest = trimmed.slice(firstLine.length).trim();
-  const wrappedPrompt = rest ? parseScheduledReminderPrompt(rest) : null;
-
-  return (
-    wrappedPrompt ?? {
-      reminderText: match[2].trim(),
-      ...(match[1]?.trim() ? { currentTime: match[1].trim() } : {}),
-    }
-  );
-}
-
 export function isSimpleScheduledReminderText(text: string): boolean {
   return SIMPLE_REMINDER_RE.test(text.trim());
 }
@@ -78,23 +56,4 @@ export function parseSimpleScheduledReminderText(text: string): ScheduledReminde
   return {
     reminderText: trimmed,
   };
-}
-
-export function getScheduledReminderDisplayText(text: string): string | null {
-  const prompt = parseScheduledReminderPrompt(text);
-  if (prompt) {
-    return prompt.reminderText;
-  }
-
-  const legacy = parseLegacyScheduledReminderSystemMessage(text);
-  if (legacy) {
-    return legacy.reminderText;
-  }
-
-  const simple = parseSimpleScheduledReminderText(text);
-  if (simple) {
-    return simple.reminderText;
-  }
-
-  return null;
 }

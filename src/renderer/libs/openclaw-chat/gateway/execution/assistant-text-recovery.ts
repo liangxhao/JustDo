@@ -158,7 +158,6 @@ export function recoverAssistantText(context: AssistantTextRecoveryContext): Pro
           const normalized = normalizeAgentEvent({
             deliveryEvent: 'agent',
             payload: event,
-            allowAseqFallback: false,
           }).event;
           if (
             !normalized ||

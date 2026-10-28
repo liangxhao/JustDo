@@ -224,7 +224,7 @@ describe('renderer preferences across HTTP host restarts', () => {
     });
   });
 
-  it('imports only approved current-origin UI settings when Main has no preference record', async () => {
+  it('starts with empty Main preferences without importing origin storage', async () => {
     const { records, store } = fixture();
     const legacy = new Map([
       ['justdo-theme-id', 'midnight'],
@@ -235,7 +235,7 @@ describe('renderer preferences across HTTP host restarts', () => {
     const browser = {
       length: legacy.size,
       key: (index: number) => [...legacy.keys()][index] ?? null,
-      getItem: (key: string) => legacy.get(key) ?? null,
+      getItem: vi.fn((key: string) => legacy.get(key) ?? null),
       setItem: vi.fn(),
       removeItem: vi.fn(),
     };
@@ -245,11 +245,9 @@ describe('renderer preferences across HTTP host restarts', () => {
     );
     await preferences.initialize();
     await preferences.flush();
-    expect(preferences.getItem('justdo-theme-id')).toBe('midnight');
-    expect(records.get('app.renderer-preferences.v1')).toEqual({
-      'justdo-theme-id': 'midnight',
-      'justdo:goal-completion-feedback:session-1': '{}',
-    });
+    expect(preferences.getItem('justdo-theme-id')).toBeNull();
+    expect(browser.getItem).not.toHaveBeenCalled();
+    expect(records.has('app.renderer-preferences.v1')).toBe(false);
   });
 
   it('keeps standalone browser preference behavior without a privileged bridge', async () => {

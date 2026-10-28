@@ -17,7 +17,6 @@ vi.mock('electron', () => ({
 
 import {
   appendPythonRuntimeToEnv,
-  ensurePythonRuntimeReady,
   getBundledPythonRoot,
   JUSTDO_MANAGED_PYTHON_USER_BASE_ENV,
 } from './pythonRuntime';
@@ -144,24 +143,5 @@ describe('packaged Python runtime', () => {
     expect(env.PYTHONUSERBASE).toBe('/host/python-user');
     expect(env.JUSTDO_MANAGED_PYTHON_USER_BASE).toBeUndefined();
     expect(env.justdo_managed_python_user_base).toBeUndefined();
-  });
-
-  test('removes the legacy userData runtime during startup', async () => {
-    const legacyRoot = path.join(electronMocks.userData, 'runtimes', 'python-win');
-    fs.mkdirSync(path.join(legacyRoot, 'Lib', 'site-packages'), { recursive: true });
-    fs.writeFileSync(path.join(legacyRoot, 'python.exe'), 'legacy', 'utf8');
-    fs.writeFileSync(
-      path.join(legacyRoot, 'Lib', 'site-packages', 'user-package.py'),
-      'user-package',
-      'utf8',
-    );
-
-    await expect(ensurePythonRuntimeReady()).resolves.toEqual({ success: true });
-
-    expect(fs.existsSync(legacyRoot)).toBe(false);
-    expect(fs.existsSync(path.join(resourcesRoot, 'python-win', 'python.exe'))).toBe(true);
-    expect(
-      fs.existsSync(path.join(electronMocks.userData, 'runtimes', 'python-user', 'Python312')),
-    ).toBe(false);
   });
 });

@@ -33,9 +33,9 @@ contains the assembled browser package and Native Messaging helper. Both
 
 Source layout and installed layout have explicit mappings. `icons/tray/` is
 packaged into the installation resource directory as `tray/`; the native
-`mingit/`, `python-win/` and `local-tts/` runtime names remain unchanged. The inert
-preference-import page is included at `resources/pages/renderer-preferences.html`
-inside the application package. The development error page is used only when
+`mingit/`, `python-win/` and `local-tts/` runtime names remain unchanged. Renderer
+preferences are hydrated from Main KV without a file-origin import page.
+The development error page is used only when
 connecting to the local development server fails.
 
 The macOS generator builds its temporary iconset from `icons/mac/png/<size>x<size>.png`.

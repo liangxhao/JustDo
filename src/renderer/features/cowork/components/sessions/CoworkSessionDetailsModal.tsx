@@ -45,7 +45,6 @@ const statusLabels: Record<CoworkSessionStatus, string> = {
 };
 
 const executionModeLabels: Record<CoworkExecutionMode, string> = {
-  auto: 'sessionDetailsExecutionAuto',
   local: 'sessionDetailsExecutionLocal',
   sandbox: 'sessionDetailsExecutionSandbox',
 };

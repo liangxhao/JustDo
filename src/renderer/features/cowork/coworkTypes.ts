@@ -50,7 +50,7 @@ export const GROUP_COLORS = [
 ];
 
 // Cowork execution mode
-export type CoworkExecutionMode = 'auto' | 'local' | 'sandbox';
+export type CoworkExecutionMode = 'local' | 'sandbox';
 export type CoworkAgentEngine = 'openclaw';
 
 // Cowork session

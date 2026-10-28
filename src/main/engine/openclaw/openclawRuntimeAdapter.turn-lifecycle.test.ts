@@ -140,7 +140,7 @@ test('records only a matching whole-run terminal after chat final retires its bi
     activeTurns: Map<string, SessionTurn>;
     sessionIdBySessionKey: Map<string, string>;
     gatewayClientGeneration: number;
-    handleGatewayEvent: (event: { event: string; payload: unknown }) => void;
+    handleGatewayEvent: (event: { event: string; payload: unknown; seq?: number }) => void;
   };
   internals.gatewayClientGeneration = 7;
   const turn = createSessionTurn({ gatewaySessionId: 'native-1', lifecycleGeneration: 'epoch-1',
@@ -161,9 +161,10 @@ test('records only a matching whole-run terminal after chat final retires its bi
   for (const changed of [
     { sessionId: 'replacement' }, { lifecycleGeneration: 'replacement' }, { runId: 'other' },
     { sessionKey: `${turn.sessionKey}:child` }, { seq: 1 },
+    { seq: undefined, aseq: 3 },
     { seq: 2, data: { phase: 'end', executionSettled: false } },
   ]) {
-    internals.handleGatewayEvent({ event: 'agent', payload: { ...terminal, ...changed } });
+    internals.handleGatewayEvent({ event: 'agent', seq: 90, payload: { ...terminal, ...changed } });
     expect(adapter.getRunTerminalReceipt(turn.runId)).toBeNull();
   }
   internals.handleGatewayEvent({ event: 'agent', payload: terminal });
@@ -1059,10 +1060,11 @@ test.each(['end', 'error'])('unsettled lifecycle %s cannot finish an active exec
     const sessionKey = 'agent:main:justdo:session-1';
     adapter.rememberSessionKey('session-1', sessionKey);
     adapter.ensureActiveTurn('session-1', sessionKey, 'run-1');
-    for (const executionSettled of [undefined, false]) {
+    for (const [index, executionSettled] of [undefined, false].entries()) {
       adapter.handleGatewayEvent({
         event: 'agent',
         payload: {
+          seq: index + 1,
           runId: 'run-1',
           sessionKey,
           stream: 'lifecycle',
@@ -1076,6 +1078,7 @@ test.each(['end', 'error'])('unsettled lifecycle %s cannot finish an active exec
     adapter.handleGatewayEvent({
       event: 'agent',
       payload: {
+        seq: 3,
         runId: 'run-1',
         sessionKey,
         stream: 'lifecycle',
@@ -1108,6 +1111,7 @@ test('lifecycle end clears the active turn when chat final is missing', () => {
     adapter.handleGatewayEvent({
       event: 'agent',
       payload: {
+        seq: 3,
         runId: 'run-1',
         sessionKey: 'agent:main:justdo:session-1',
         stream: 'lifecycle',
@@ -1142,6 +1146,7 @@ test('chat final cancels the lifecycle end fallback', () => {
     adapter.handleGatewayEvent({
       event: 'agent',
       payload: {
+        seq: 4,
         runId: 'run-1',
         sessionKey: 'agent:main:justdo:session-1',
         stream: 'lifecycle',
@@ -1210,6 +1215,7 @@ test('does not reopen a terminal run when Gateway replays late events', () => {
   adapter.handleGatewayEvent({
     event: 'agent',
     payload: {
+      seq: 5,
       runId: 'run-1',
       sessionKey,
       stream: 'lifecycle',
@@ -1219,6 +1225,7 @@ test('does not reopen a terminal run when Gateway replays late events', () => {
   adapter.handleGatewayEvent({
     event: 'agent',
     payload: {
+      seq: 6,
       runId: 'run-1',
       sessionKey,
       stream: 'lifecycle',
@@ -1235,6 +1242,7 @@ test('does not reopen a terminal run when Gateway replays late events', () => {
   adapter.handleGatewayEvent({
     event: 'agent',
     payload: {
+      seq: 7,
       runId: 'run-1',
       sessionKey,
       stream: 'lifecycle',
@@ -1273,6 +1281,7 @@ test('does not reopen a terminal turn through its superseded provisional run id'
   adapter.handleGatewayEvent({
     event: 'agent',
     payload: {
+      seq: 8,
       runId: 'client-turn',
       sessionKey,
       stream: 'lifecycle',
@@ -1300,6 +1309,7 @@ test('compaction pauses and then resumes the lifecycle end fallback', () => {
     adapter.handleGatewayEvent({
       event: 'agent',
       payload: {
+        seq: 9,
         runId: 'run-1',
         sessionKey: 'agent:main:justdo:session-1',
         stream: 'lifecycle',
@@ -1309,6 +1319,7 @@ test('compaction pauses and then resumes the lifecycle end fallback', () => {
     adapter.handleGatewayEvent({
       event: 'agent',
       payload: {
+        seq: 10,
         runId: 'run-1',
         sessionKey: 'agent:main:justdo:session-1',
         stream: 'compaction',
@@ -1321,6 +1332,7 @@ test('compaction pauses and then resumes the lifecycle end fallback', () => {
     adapter.handleGatewayEvent({
       event: 'agent',
       payload: {
+        seq: 11,
         runId: 'run-1',
         sessionKey: 'agent:main:justdo:session-1',
         stream: 'compaction',
@@ -1353,6 +1365,7 @@ test('lifecycle error converges the session to error after compaction fails', ()
     adapter.handleGatewayEvent({
       event: 'agent',
       payload: {
+        seq: 12,
         runId: 'run-1',
         sessionKey: 'agent:main:justdo:session-1',
         stream: 'compaction',
@@ -1362,6 +1375,7 @@ test('lifecycle error converges the session to error after compaction fails', ()
     adapter.handleGatewayEvent({
       event: 'agent',
       payload: {
+        seq: 13,
         runId: 'run-1',
         sessionKey: 'agent:main:justdo:session-1',
         stream: 'lifecycle',
@@ -1374,6 +1388,7 @@ test('lifecycle error converges the session to error after compaction fails', ()
     adapter.handleGatewayEvent({
       event: 'agent',
       payload: {
+        seq: 14,
         runId: 'run-1',
         sessionKey: 'agent:main:justdo:session-1',
         stream: 'compaction',
@@ -1406,6 +1421,7 @@ test('long compaction pauses lifecycle completion until its native end arrives',
     adapter.handleGatewayEvent({
       event: 'agent',
       payload: {
+        seq: 15,
         runId: 'run-1',
         sessionKey: 'agent:main:justdo:session-1',
         stream: 'lifecycle',
@@ -1415,6 +1431,7 @@ test('long compaction pauses lifecycle completion until its native end arrives',
     adapter.handleGatewayEvent({
       event: 'agent',
       payload: {
+        seq: 16,
         runId: 'run-1',
         sessionKey: 'agent:main:justdo:session-1',
         stream: 'compaction',
@@ -1428,6 +1445,7 @@ test('long compaction pauses lifecycle completion until its native end arrives',
     adapter.handleGatewayEvent({
       event: 'agent',
       payload: {
+        seq: 17,
         runId: 'run-1',
         sessionKey: 'agent:main:justdo:session-1',
         stream: 'compaction',

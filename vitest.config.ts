@@ -2,6 +2,10 @@ import path from 'node:path';
 
 import { defineConfig } from 'vitest/config';
 
+if (process.versions.electron) {
+  throw new Error('Vitest requires standalone Node.js 24. Electron drivers are disabled; run `npm test` with Node.js.');
+}
+
 export default defineConfig({
   resolve: {
     alias: {

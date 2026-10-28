@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest';
 import { PRODUCT_NAME } from '../../../shared/productMetadata';
 import {
   mergeRegisteredSystemPromptReplacementRules,
-  normalizePersistedSystemPromptReplacementRules,
   REGISTERED_SYSTEM_PROMPT_REPLACEMENT_RULES,
 } from './systemPromptReplacementRegistry';
 
@@ -15,16 +14,6 @@ const applyRegisteredRules = (prompt: string): string =>
         : result.replace(new RegExp(rule.pattern, rule.flags), rule.replacement),
     prompt,
   );
-
-const retiredRuleIds = [
-  'remove-skill-version-lines',
-  'remove-skill-version-refresh-guidance',
-  'compact-runtime-section',
-  'remove-source-channel-routing-line',
-  'remove-openclaw-diagnostics-guidance',
-  'brand-spaced-openclaw-references',
-  'describe-independent-webpage-embeds',
-];
 
 const makeCustomRules = (count: number) =>
   Array.from({ length: count }, (_, index) => ({
@@ -118,34 +107,6 @@ describe('registered system prompt replacements', () => {
       .toHaveLength(REGISTERED_SYSTEM_PROMPT_REPLACEMENT_RULES.length + 100);
     expect(() => mergeRegisteredSystemPromptReplacementRules(makeCustomRules(101)))
       .toThrow(/custom system prompt replacement rules cannot exceed 100/i);
-  });
-
-  it('drops retired built-ins from persisted rules while preserving 100 custom rules', () => {
-    const retiredRules = retiredRuleIds.map(id => ({
-      id,
-      pattern: 'legacy',
-      flags: 'g',
-      replacement: '',
-      enabled: true,
-    }));
-    const customRules = makeCustomRules(100);
-    const persistedRules = [
-      ...REGISTERED_SYSTEM_PROMPT_REPLACEMENT_RULES,
-      ...retiredRules,
-      ...customRules,
-    ];
-
-    const merged = mergeRegisteredSystemPromptReplacementRules(
-      normalizePersistedSystemPromptReplacementRules(persistedRules),
-    );
-
-    expect(merged).toEqual([
-      ...REGISTERED_SYSTEM_PROMPT_REPLACEMENT_RULES,
-      ...customRules,
-    ]);
-    expect(merged.map(rule => rule.id)).not.toEqual(
-      expect.arrayContaining(retiredRuleIds),
-    );
   });
 
   it('normalizes final prompt line endings before applying other rules', () => {

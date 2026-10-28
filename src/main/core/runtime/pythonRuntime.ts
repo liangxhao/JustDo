@@ -146,10 +146,6 @@ export function getBundledPythonRoot(): string | null {
   return null;
 }
 
-function getLegacyUserPythonRoot(): string {
-  return path.join(app.getPath('userData'), 'runtimes', PYTHON_RUNTIME_DIR_NAME);
-}
-
 function getPythonUserPaths(): {
   base: string;
   sitePackages: string;
@@ -166,26 +162,6 @@ function getPythonUserPaths(): {
     sitePackages: path.join(versionRoot, 'site-packages'),
     scripts: path.join(versionRoot, 'Scripts'),
   };
-}
-
-function removeLegacyUserPythonRuntime(): void {
-  const legacyRoot = getLegacyUserPythonRoot();
-  if (!fs.existsSync(legacyRoot)) return;
-
-  try {
-    fs.rmSync(legacyRoot, { recursive: true, force: true });
-    console.log(`[python-runtime] Removed legacy userData runtime: ${legacyRoot}`);
-  } catch (error) {
-    console.warn('[python-runtime] Unable to remove the unused legacy runtime:', error);
-    return;
-  }
-
-  const runtimesRoot = path.dirname(legacyRoot);
-  try {
-    fs.rmdirSync(runtimesRoot);
-  } catch {
-    // Keep the shared runtimes directory when another runtime or file still uses it.
-  }
 }
 
 export function appendPythonRuntimeToEnv(
@@ -239,7 +215,6 @@ export async function ensurePythonRuntimeReady(): Promise<{ success: boolean; er
       return { success: false, error: message };
     }
 
-    removeLegacyUserPythonRuntime();
     if (!hasPipSupport(bundledRoot)) {
       console.warn(
         '[python-runtime] Bundled runtime does not include full pip support; pip commands may fail.',

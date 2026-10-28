@@ -17,6 +17,12 @@ Runtime Services 在注册时立即建立外部 MCP 的策略、工具工厂与�
 
 插件页组合多种能力，但它们不是同一种安装单元。本文以 Main 插件服务、原生 API、配置同步和 Extension 注册为依据，说明读取、启停、安装和恢复各由谁负责。
 
+扩展安装进度统一使用当前 PluginOperation 通道，不再发送无人消费的
+`extensions:import-progress` 或暴露对应 preload 订阅。导入服务内部仍提供 typed stage/percent
+回调供统一进度投影使用。凭据声明读取当前 `setup.providers[].envVars`，不再解析旧
+`providerAuthEnvVars` manifest 字段。ACPX 的旧配置键、旧 owner record 和旧 Codex 参数不再
+迁移；未知 owner 继续拒绝恢复，当前 lease、generation 与进程回收约束保持有效。
+
 内置插件源码统一位于仓库根目录的 `plugins/`，按 `extensions/`、`skills/`、`mcp-servers/`、`hooks/`、`browser-extensions/` 分类。OpenClaw 扩展位于 `plugins/extensions/<plugin-id>/`，独立技能及筛选清单位于 `plugins/skills/`；扩展自带的技能保留在所属扩展内部。`mcp-servers/`、`hooks/` 当前仅预留目录，尚无内置加载逻辑。构建仍将 OpenClaw 扩展和选中技能组装到原生的 `dist/extensions/`、`skills/`、`custodian-skills/`，开发源码发现读取对应扩展目录。图标、文档模板和运行时准备缓存继续由 `resources/` 管理。目录约定见[内置插件说明](../../plugins/README.md)。
 
 Browser Assistant 位于 `plugins/browser-extensions/browser-assistant/`，由 Chrome 安装和加载，不进入 Plugin Hub 的 OpenClaw 扩展管理。它保留上游基线及产品侧栏补充，自有组装脚本、Markdown 源码和单元测试随包维护；复用应用聊天代码的构建适配与 Native Messaging helper 留在宿主，Main 继续拥有连接、权限和会话。构建生成 `build/browser-extension/chrome-extension/`，安装路径沿用 `resources/browser-extension/chrome-extension/`，显示名称和固定扩展身份独立于源码包目录。详见[侧栏对话](../features/browser/browser-extension-side-chat.md)。

@@ -420,14 +420,6 @@ function syncLocalExtensions(repoRoot, runtimeRoot, label, options = {}) {
 
   fs.mkdirSync(targetDir, { recursive: true });
   cleanInterruptedExtensionStaging(targetDir);
-  // agent-team replaces the former always-on collaboration extension.
-  // Remove only this exact app-owned artifact; leave third-party extensions intact.
-  const retiredCollaboration = path.join(targetDir, 'collaboration');
-  if (
-    readJsonFile(path.join(retiredCollaboration, 'package.json'))?.name === 'openclaw-collaboration'
-  ) {
-    fs.rmSync(retiredCollaboration, { recursive: true, force: true });
-  }
   const entries = fs
     .readdirSync(sourceDir, { withFileTypes: true })
     .sort((left, right) => left.name.localeCompare(right.name));

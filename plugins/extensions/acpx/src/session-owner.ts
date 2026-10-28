@@ -4,11 +4,11 @@ import { AcpRuntimeError, type AcpRuntimeHandle } from '../runtime-api.js';
 import { resolveAcpxSessionResource } from './session-resource.js';
 export { resolveAcpxSessionResource } from './session-resource.js';
 
-function requireAcpxOwnerMigration(sessionKey: string): never {
+function rejectUnverifiableAcpxOwner(sessionKey: string): never {
   throw new AcpRuntimeError(
     'ACP_SESSION_INIT_FAILED',
-    `ACP session "${sessionKey}" has an unqualified or unverifiable backend locator. Stop the Gateway and run "openclaw doctor --fix" to migrate ownership without losing history, then restart.`,
-    { detailCode: 'SESSION_OWNER_MIGRATION_REQUIRED' },
+    `ACP session "${sessionKey}" has an unqualified or unverifiable backend locator and cannot be resumed. Existing history is retained.`,
+    { detailCode: 'SESSION_OWNER_UNVERIFIABLE' },
   );
 }
 
@@ -30,7 +30,7 @@ export function assertAcpxSessionOwnerLocator(
     (legacyBareSessionKeys?.has(target.sessionKey.trim().toLowerCase()) ||
       (legacyBareSessionKeys?.has(resource) && !persisted))
   ) {
-    requireAcpxOwnerMigration(target.sessionKey);
+    rejectUnverifiableAcpxOwner(target.sessionKey);
   }
   if (persisted) {
     const decoded = decodeAcpxRuntimeHandleState(persisted.runtimeSessionName);
@@ -40,7 +40,7 @@ export function assertAcpxSessionOwnerLocator(
         (decoded.name !== resource ||
           (persisted.acpxRecordId && decoded.acpxRecordId !== persisted.acpxRecordId)))
     ) {
-      requireAcpxOwnerMigration(target.sessionKey);
+      rejectUnverifiableAcpxOwner(target.sessionKey);
     }
   }
   return resource;

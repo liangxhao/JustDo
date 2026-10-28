@@ -189,17 +189,23 @@ certifier，避免校验的提交授权与同步插件加载争用 Gateway 事�
 窗口首屏的只读外观快照由 Main 从既有 `app_config.theme` 和这里的 `justdo-theme-id` 提取，
 通过受限同步 preload 读取提供，每次新文档及 reload 都取最新值；不另存主题副本、不依赖随机
 HTTP origin、不在首次临时窗口提前打开数据库。
-首次采用 HTTP 宿主且 Main 尚无该记录时，在相同 Chromium session 的隔离空白 file 页面
-只读取上述有界 UI 键，再切换 HTTP 主页面；不加载旧 App 或旧 preload，不覆盖已有记录。
-开发 origin 首次采用时也只导入同一白名单。初始 Main 读取失败时，后续保存先恢复已知
-基线，再合并明确变化及删除，禁止用空快照覆盖未读数据。
-这不是 localStorage 的通用复制器，不保存 transcript、失败节选或凭据；不新增表或数据库/原生 schema 迁移。
+正式主界面只水合 Main KV 中的当前偏好，不再从旧 file 页面、当前 HTTP 或开发 origin 的
+localStorage 搬迁数据；Main 尚无记录时使用当前默认值。初始 Main 读取失败时，后续保存
+先恢复已知基线，再合并明确变化及删除，禁止用空快照覆盖未读数据。
+偏好白名单不保存 transcript、失败节选或凭据；不新增表或数据库/原生 schema 迁移。
 独立浏览器 demo 没有 privileged store 时继续使用本 origin 的浏览器偏好。
 
-Code Mode 偏好复用 `cowork_config` 中的 `agentRuntimeSettings:v1` JSON 记录，新增
-`codeMode: { mode: "off" | "auto" | "on" }`。读取旧记录时只为缺失字段补上 `off`，
-已有显式 `auto` 值保留；界面暂不允许新选自动模式。
-非法显式值由运行设置校验器拒绝。保存、配置同步和失败回滚沿用现有运行设置 IPC；
+Agent 运行设置复用 `cowork_config` 中的 `agentRuntimeSettings:v1` JSON 记录，
+外部 Agent 设置复用 `externalAgentSettings:v1`。已有对象必须通过完整当前字段及数值范围校验，
+不再为早期 v1 记录逐字段补默认值，也不把退役的 MCP Apps `null` 偏好转换为布尔值。
+完全无记录时创建当前默认对象；损坏 JSON 或整对象校验失败时整体恢复默认，不混合保留
+旧字段与新默认。写入及 IPC 仍校验完整对象，界面局部编辑先合并完整草稿再提交。
+外部 Agent 目录变化继续按当前 build catalog 补充新增 Agent 的安全默认并丢弃已移除的 ID，
+不因此放宽顶层执行及 bridge 偏好的必填校验。
+
+Code Mode 为运行设置中的 `codeMode: { mode: "off" | "auto" | "on" }`；
+当前完整记录中的显式 `auto` 值保留，界面暂不允许新选自动模式。
+保存、配置同步和失败回滚沿用现有运行设置 IPC；
 产品不新增数据表，也不持久化 JavaScript VM、工具中间结果或等待快照。
 Code Mode 的显式 `store/load` JSON 值由原生会话 transcript 的
 `openclaw.code-mode-store` custom entries 保存和恢复；完成的 cell 才提交，失败或
@@ -207,7 +213,12 @@ Code Mode 的显式 `store/load` JSON 值由原生会话 transcript 的
 旧值仍可能存在原生历史和导出中；与产品偏好、普通 VM 变量及当轮 `results.save`
 引用的生命周期分别管理。原生行为与隔离验证入口见[引擎](05-agent-engine.md)。
 
-SqliteStore.create 打开当前目标库、设置 PRAGMA、初始化表及增量列/索引、调用领域 schema 初始化器，最后处理 app_config 中遗留凭据引用。发现仍有旧消息缓存时拒绝打开，不在此删除唯一历史；启动升级模块先处理旧代际。
+SqliteStore.create 打开当前目标库、设置 PRAGMA，使用完整当前 `CREATE TABLE IF NOT EXISTS`
+和索引定义初始化产品表，并调用领域 schema 初始化器。原生会话绑定、执行身份、助手删除
+元数据和各类回执所需的列均在首次建表时声明。初始化只确保默认 main 助手存在，不从旧
+`cowork_config.systemPrompt` 继承角色内容，不转换退役的 `container` / `auto` 执行模式，
+也不扫描或改写 `app_config` 中的旧凭据。发现仍有旧消息缓存时拒绝打开，不在此删除唯一
+历史；启动升级模块先处理旧代际。
 
 | PRAGMA             | 值     | 影响                    |
 | ------------------ | ------ | ----------------------- |
@@ -217,15 +228,21 @@ SqliteStore.create 打开当前目标库、设置 PRAGMA、初始化表及增量
 | cache_size         | -8000  | 以 KiB 表示页面缓存目标 |
 | wal_autocheckpoint | 1000   | 自动 checkpoint 阈值    |
 
-不再根据缺列自动删除数据库及 WAL/SHM。未知结构由启动判定拒绝并保留；正常当前结构仍使用 ensureColumn 等增量逻辑。历史升级直接建立新表并插入选定元数据，不修改旧产品库。
+当前完整产品库可正常重开，既有数据、外键、索引和触发器保持原有行为。
+不再通过 `ensureColumn`、缺列探测或 `ALTER TABLE` 支持旧中间 schema 的原地升级，
+也不因缺列删除数据库、WAL/SHM 或已有表。未知结构由启动判定拒绝并保留；
+历史升级直接建立当前新表并插入选定元数据，不修改旧产品库。
 历史标题/映射的导入事务临时使用 `synchronous=FULL`，提交并确认完整 checkpoint 后才允许阶段记录落盘，
 零会话也必须确认前序 schema 和默认值已落盘，
 然后恢复原 PRAGMA。检查阶段恢复只读取不可变绑定，不重写已确认的用户元数据。
 `history_session_bindings.defaults_applied` 记录历史会话是否已采用当前新会话默认配置。
-新导入行显式置 0，首次打开/运行准备时在同一产品事务内采用当前默认权限、清空旧模型覆盖并置 1；
-此后保留用户主动选择。为已有绑定补列默认置 1，避免重置既有用户选择。工作目录为空或不存在不阻断迁移，结果页统计并在会话内提供选择目录入口。
+该列在当前表中默认置 1；新导入行显式置 0，首次打开/运行准备时在同一产品事务内采用
+当前默认权限、清空旧模型覆盖并置 1，此后保留用户主动选择。工作目录为空或不存在
+不阻断迁移，结果页统计并在会话内提供选择目录入口。
 
-旧双会话 Plan 的 segments 与不符合当前约束的 handoff schema 有专门清理分支；该处理不适用于普通用户数据。产品数据库迁移与 OpenClaw 运行时补丁升级是两回事，后者必须从 pristine 包重建。
+当前 Plan handoff 表在首次创建时直接声明同会话 reset 所需约束；初始化不再删除旧双会话
+Plan 的 segments 表，也不探测并销毁旧 handoff 表。旧环境由启动迁移归档保全。
+产品数据库迁移与 OpenClaw 运行时补丁升级是两回事，后者必须从 pristine 包重建。
 
 ## 3. 核心产品表全表清单
 
@@ -311,10 +328,10 @@ Main 也按事件时间更新活动。该投影先通过 `sessions.describe` 核
 
 可空 `source` 列记录创建入口，当前显式值为 `browser-extension`。Chrome 扩展新建会话时随会话插入，
 完整会话和摘要读回此值，Renderer 据此生成专用来源分组；不在 `session_groups` 创建记录。
-此列通过 `ensureColumn` 增量添加，已有会话为 NULL，保留原列表归属，不读取原生正文来推断来源。
+此列由当前完整表定义声明；未显式记录来源的会话保持 NULL 和原列表归属，不读取原生正文来推断来源。
 继续会话、重命名、置顶和用户分组变更均不修改创建入口。
 
-原生可见 worktree 子会话被发现后，产品在 `cowork_sessions` 中增加一条导航记录。`native_session_key` 唯一绑定原生会话，`native_parent_session_id` 保留产品父会话关系；`cwd` 是原生实际执行目录。两列通过增量 schema 初始化添加。发现和绑定在一个 SQLite 事务中完成，重启后按原生 key 去重。产品不复制 transcript 或 worktree 快照；OpenClaw 仍是会话内容与检出目录的权威。父会话存在产品侧原生子会话时，不允许先删除父会话。
+原生可见 worktree 子会话被发现后，产品在 `cowork_sessions` 中增加一条导航记录。`native_session_key` 唯一绑定原生会话，`native_parent_session_id` 保留产品父会话关系；`cwd` 是原生实际执行目录。两列和原生 key 唯一索引由当前完整 schema 声明。发现和绑定在一个 SQLite 事务中完成，重启后按原生 key 去重。产品不复制 transcript 或 worktree 快照；OpenClaw 仍是会话内容与检出目录的权威。父会话存在产品侧原生子会话时，不允许先删除父会话。
 
 用户勾选 Worktree 创建的主会话复用上述原生绑定，`native_parent_session_id` 为 NULL，`cwd` 在 Gateway 确认检出目录后更新。显示偏好 `showWorktreeCheckbox` 存在 `cowork_config` 中，缺省为 false；它控制入口可见性，不自动开启新任务的 worktree。
 
@@ -354,7 +371,11 @@ Goal 内容、预算、六种状态和已接纳的自动续跑累计次数由原
 
 ## 6. 配置与凭据不等于全库加密
 
-kv.app_config 是应用配置来源。当前 appConfigCredentials 转换清空 builtin apiKey 和旧内置引用，并能读取早期 `justdo-os-credential-v1` 记录；它不会把所有新的自定义凭据统一加密。读取旧加密记录要求可用 OS cipher，Linux basic_text/unknown 不作为安全 backend。
+kv.app_config 是应用配置来源。当前 appConfigCredentials 是纯配置规范化：读写时清空
+builtin provider 的 apiKey，以及选中 builtin 时或与 builtin key 相同的 API 快照 key，
+防止内置凭据进入产品设置；其他用户自有凭据保持原值。它不识别旧内置占位符，
+不解密早期 OS 密文，也不依赖 safeStorage。开库不再扫描、转换或截断 WAL 来清理旧凭据；
+旧环境按启动迁移的归档和恢复范围处理。
 
 因此不能宣称数据库已全库加密，也不能宣称所有自定义 key 都使用 safeStorage。内置模型的新访问凭据不保存在 SQLite，而是短期 JWT 的受限派生快照，原生使用 exec SecretRef；X-User-Account 不再投影到内置 provider 配置或 SecretRef 解析输出，Gateway 请求继续通过既有出站代理取得该身份头。私有快照仍保留已验证账号和到期时间。自定义 provider secret file 由产品配置派生，采用文件权限保护。详情见[认证](../features/integrations/authentication-builtin-model-lifecycle.md)和[安全模型](11-security-model.md)。
 
@@ -427,7 +448,11 @@ skills.proposals.* 恢复。审核写入绑定 proposalId 与 expectedRevisionHa
 
 正常备份先退出应用再复制产品数据；在线备份使用 SQLite backup/checkpoint 机制，不能只复制主文件忽略 WAL。原生 transcript、角色文件、模型派生凭据和项目文件要按需求另行纳入，不能把整套数据默认作为 issue 附件。
 
-修改 schema 时验证新库、旧库、重复启动、坏 JSON、部分操作中断和重试。同步事务内不等待网络；写入前确定唯一键与查询索引，状态迁移使用 expected-state 约束。重点测试位于 sqliteStore、coworkStore、collaborationStore 与 scheduledTaskResultStore 旁。
+修改产品 schema 时验证新库一次完整建成、当前完整库重开后数据与约束保留、旧消息缓存
+拒开库时原件不变，以及坏 JSON、部分操作中断和重试。旧中间 schema 的原地补列不再是
+验收目标；已发布历史的备份与导入继续按独立启动迁移契约验证。同步事务内不等待网络；
+写入前确定唯一键与查询索引，状态迁移使用 expected-state 约束。重点测试位于 sqliteStore、
+coworkStore、collaborationStore 与 scheduledTaskResultStore 旁。
 
 ## 群组讨论元数据
 
@@ -435,7 +460,7 @@ skills.proposals.* 恢复。审核写入绑定 proposalId 与 expectedRevisionHa
 
 详见 [Agent Team 现行契约](../features/assistants/agent-team.md)。
 
-team_discussion_runs 增加可空 initiator_agent_id，标识主助手通过工具发起的消息；正文仍从原生 transcript 读取。旧表通过缺列检测补充，用户请求指纹保持兼容。 详见[主会话组织团队](../features/assistants/agent-team.md)。
+team_discussion_runs 的可空 initiator_agent_id 标识主助手通过工具发起的消息；正文仍从原生 transcript 读取。该列由当前完整建表定义声明，不再通过缺列检测补充旧表；用户请求指纹继续按当前幂等规则核对。详见[主会话组织团队](../features/assistants/agent-team.md)。
 
 `cowork_config.allowMainAgentSwitch` stores the opt-in conversation assistant selector as `true`/`false`; a missing key is false. Disabling resets new conversation selection to main and does not change existing `cowork_sessions.agent_id` or native transcripts. No schema migration is needed for this key.
 
@@ -470,11 +495,11 @@ sessionKey/runId/toolCallId 与规范化动作派生，不保存主聊天消息�
 
 房间停止操作在同一事务内依据批次派生状态，只为 open/closing 批次写入 `stopped_at`。已经 settled/failed 的历史批次保持原终态与验收状态；重复停止及后续迟到回执不把旧历史改成停止，也不重新开放已 seal 的批次。
 
-Gateway stateDir 中 summary-receipts 保存指纹、执行与可见输出 entryId；discussion-receipts 增加公开输出引用。群公开正文和最终总结始终在原生 transcript，Main 不存消息副本。列增补兼容旧房间，原有独立 main 会话不迁移。停止和 unknown 恢复边界见[实施记录](../features/assistants/agent-team.md)。
+Gateway stateDir 中 summary-receipts 保存指纹、执行与可见输出 entryId；discussion-receipts 增加公开输出引用。群公开正文和最终总结始终在原生 transcript，Main 不存消息副本。上述产品字段由当前完整 schema 声明，不再为旧中间房间补列；原有独立 main 会话不迁移。停止和 unknown 恢复边界见[实施记录](../features/assistants/agent-team.md)。
 
 ### 精确执行的独立验收（2026-10-04）
 
-产品数据库初始化新增 `collaboration_reviews` 和 `collaboration_review_deliveries`，兼容没有验收表的已有产品数据库，重复初始化不改写历史；这与已撤回的历史运行时迁移无关。报告以房间、验收助手及原生 runId 唯一，保存批次、验收投递回执、`passed / changes_requested / unverified` 和时间；关联表以 `(review_id, delivery_id)` 唯一绑定 1–16 个工作回执。报告/回执/房间删除级联，`(room_id, round_id, created_at)` 索引服务当前批次显示。
+当前产品 schema 包含 `collaboration_reviews` 和 `collaboration_review_deliveries`，重复初始化不改写已有记录；这与已撤回的历史运行时迁移无关。报告以房间、验收助手及原生 runId 唯一，保存批次、验收投递回执、`passed / changes_requested / unverified` 和时间；关联表以 `(review_id, delivery_id)` 唯一绑定 1–16 个工作回执。报告/回执/房间删除级联，`(room_id, round_id, created_at)` 索引服务当前批次显示。
 
 写入在同步事务中验证：验收 run 是组织者向独立成员已登记的真实入站；待验工作在同房间同批次、已原生接受且具有成功 whole-run 回执；不能验自己或组织者。重复相同报告返回原记录，更改结论或范围必须使用新验收执行。报告状态通过验收 admission、确切 whole-run 终态和 stopped_at 派生；工具报告成功先是 pending，原生接受且整次验收成功才 confirmed，失败、取消和 unknown 不显示通过。
 
@@ -486,9 +511,12 @@ Agent Team 的表初始化、房间/投递/验收/待发输入及资源偏好事
 
 全局默认存储于 `kv` 键 `agentTeam.settings`，含 version、revision 和严格限定的数值/布尔值。`collaboration_rooms.settings_json` 与 `team_discussion_rooms.settings_json` 保存独立 revision 的团队覆盖；不改变 roster 的 revision。删除团队时随房间行清理。
 
-`collaboration_rounds.message_budget` 在开始用户轮次时固定，旧行默认 16；所有已登记投递（包括 failed/unknown、回复与验收）计数，幂等重放先查同一摘要，不重复扣额度。`team_discussion_runs.resources_json` 保存 settingsRevision/maxRounds/maxTurns/maxConcurrent，`requested_rounds` 保存数值以处理模型省略参数的重放；原输入摘要继续区分请求。旧批次无快照使用原有默认，不按新的全局设置重算已接受请求。
+`collaboration_rounds.message_budget` 在开始用户轮次时固定，当前列默认 16；所有已登记投递（包括 failed/unknown、回复与验收）计数，幂等重放先查同一摘要，不重复扣额度。`team_discussion_runs.resources_json` 保存 settingsRevision/maxRounds/maxTurns/maxConcurrent，`requested_rounds` 保存数值以处理模型省略参数的重放；原输入摘要继续区分请求。没有资源快照的批次仍使用已保留的默认语义，不按新的全局设置重算已接受请求。
 
-这些列是产品表初始化，不是已移除的 OpenClaw 9.6→9.8 存储迁移。没有 prompt、消息正文、工具结果或新的 transcript 缓存。
+这些列与房间 `settings_json`、`summary_source_json`、批次 `summary_suppressed`、
+协作轮次 `stopped_at` / `closing_run_id` 一起由 Agent Team 的完整 `CREATE TABLE`
+定义声明，不再使用缺列探测和 `ALTER TABLE`。它们是当前产品 schema，不是已移除的
+OpenClaw 9.6→9.8 存储迁移。没有 prompt、消息正文、工具结果或新的 transcript 缓存。
 
 精确原生 unknown 回执使用既有 interrupted 产品状态投影，保留 active_discussion_id 和 generation，占用不释放也不创建 summary。确认 running 可恢复显示，不能覆盖 stopping；已有记录 requested_rounds 为空时，同模型请求仍沿用旧 room.rounds 默认语义。
 

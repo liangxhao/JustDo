@@ -15,7 +15,7 @@ describe('hasConfirmedModelCapabilities', () => {
     expect(hasConfirmedModelCapabilities({ capabilitiesConfirmed: true })).toBe(true);
   });
 
-  test('treats missing and generated default values in legacy configs as unconfirmed', () => {
+  test('requires the confirmation marker regardless of capability values', () => {
     expect(hasConfirmedModelCapabilities({})).toBe(false);
     expect(
       hasConfirmedModelCapabilities({
@@ -24,10 +24,7 @@ describe('hasConfirmedModelCapabilities', () => {
         maxTokens: 32_000,
       }),
     ).toBe(false);
-  });
-
-  test('preserves clearly customized legacy capabilities as confirmed', () => {
-    expect(hasConfirmedModelCapabilities({ contextLength: 128_000 })).toBe(true);
-    expect(hasConfirmedModelCapabilities({ supportsImage: true })).toBe(true);
+    expect(hasConfirmedModelCapabilities({ contextLength: 128_000 })).toBe(false);
+    expect(hasConfirmedModelCapabilities({ supportsImage: true })).toBe(false);
   });
 });

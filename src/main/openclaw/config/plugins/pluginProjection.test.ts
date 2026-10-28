@@ -1,12 +1,12 @@
 import { describe, expect, test } from 'vitest';
 
-import { sanitizeOpenClawV2026_10_6Config } from '../configCompatibility';
+import { projectManagedOpenClawBrowserConfig } from '../configCompatibility';
 import { mergeOpenClawSkillConfig } from './pluginProjection';
 
 describe('current Workshop config projection', () => {
-  test.each(['auto', 'off'])('prunes retired proposal fields while preserving %s', mode => {
+  test.each(['auto', 'off'])('preserves explicit %s mode and current skill preferences', mode => {
     const workshop = Object.freeze({
-      approvalPolicy: 'pending', maxPending: 25, maxSkillBytes: 60_000,
+      maxSkillBytes: 60_000,
       autonomous: Object.freeze({ mode }),
     });
     const skills = Object.freeze({
@@ -14,59 +14,42 @@ describe('current Workshop config projection', () => {
       entries: Object.freeze({ 'private-skill': Object.freeze({ enabled: false }) }),
       load: Object.freeze({ extraDirs: ['C:/private-skills'], watch: false }),
     });
-    const expected = {
-      ...skills, workshop: { maxSkillBytes: 60_000, autonomous: { mode } },
-    };
 
-    expect(mergeOpenClawSkillConfig(skills, {})).toEqual(expected);
-    expect(sanitizeOpenClawV2026_10_6Config({ skills }).skills).toEqual(expected);
-    expect(workshop).toHaveProperty('approvalPolicy', 'pending');
-    expect(workshop).toHaveProperty('maxPending', 25);
+    expect(mergeOpenClawSkillConfig(skills, {})).toEqual(skills);
+    expect(projectManagedOpenClawBrowserConfig({ skills }).skills).toBe(skills);
   });
 
-  test('also removes retired fields supplied by a managed skill projection', () => {
-    expect(mergeOpenClawSkillConfig({}, {
-      workshop: { approvalPolicy: 'auto', maxPending: 10, maxSkillBytes: 45_000 },
-    })).toEqual({ workshop: { autonomous: { mode: 'off' }, maxSkillBytes: 45_000 } });
-  });
-
-  test('defaults an absent mode off without promoting a retired approval value', () => {
-    expect(mergeOpenClawSkillConfig({ workshop: { approvalPolicy: 'auto' } }, {})).toEqual({
-      workshop: { autonomous: { mode: 'off' } },
+  test('defaults an absent automation mode off without losing current preferences', () => {
+    expect(mergeOpenClawSkillConfig({ workshop: { maxSkillBytes: 45_000 } }, {})).toEqual({
+      workshop: { autonomous: { mode: 'off' }, maxSkillBytes: 45_000 },
     });
-    expect(sanitizeOpenClawV2026_10_6Config({
-      skills: { workshop: { approvalPolicy: 'auto' } },
-    }).skills).toEqual({ workshop: {} });
   });
 
-  test('does not translate invalid modes or strip unknown operator fields to pass native validation', () => {
-    const workshop = { approvalPolicy: 'pending', autonomous: { mode: 'propose' }, operatorOption: true };
-    const expected = { autonomous: { mode: 'propose' }, operatorOption: true };
-    expect(mergeOpenClawSkillConfig({ workshop }, {})).toEqual({ workshop: expected });
-    expect(sanitizeOpenClawV2026_10_6Config({ skills: { workshop } }).skills)
-      .toEqual({ workshop: expected });
+  test('leaves invalid modes and unknown operator fields visible to native validation', () => {
+    const workshop = { autonomous: { mode: 'invalid' }, operatorOption: true };
+    expect(mergeOpenClawSkillConfig({ workshop }, {})).toEqual({ workshop });
+    expect(projectManagedOpenClawBrowserConfig({ skills: { workshop } }).skills)
+      .toEqual({ workshop });
   });
 
-  test.each([null, 'invalid', []])('leaves malformed workshop input visible to the native validator: %j', workshop => {
-    expect(sanitizeOpenClawV2026_10_6Config({ skills: { workshop } }).skills)
+  test.each([null, 'invalid', []])('does not change unrelated malformed config: %j', workshop => {
+    expect(projectManagedOpenClawBrowserConfig({ skills: { workshop } }).skills)
       .toEqual({ workshop });
   });
 
   test('preserves unrelated preferences, plugin switches and permissions and is idempotent', () => {
     const config = {
-      skills: { workshop: { approvalPolicy: 'pending', autonomous: { mode: 'off' } },
+      skills: { workshop: { autonomous: { mode: 'off' } },
         entries: { 'private-skill': { enabled: false } } },
       plugins: { entries: { 'agent-team': { enabled: false }, 'swarm-workflow': { enabled: false } } },
       tools: { deny: ['web_search'], fs: { workspaceOnly: true } },
       cron: { skipMissedJobs: false },
     };
-    const cleaned = sanitizeOpenClawV2026_10_6Config(config);
-    expect(cleaned.skills).toEqual({
-      workshop: { autonomous: { mode: 'off' } }, entries: config.skills.entries,
-    });
-    expect(cleaned.plugins).toBe(config.plugins);
-    expect(cleaned.tools).toEqual(config.tools);
-    expect(cleaned.cron).toBe(config.cron);
-    expect(sanitizeOpenClawV2026_10_6Config(cleaned)).toEqual(cleaned);
+    const projected = projectManagedOpenClawBrowserConfig(config);
+    expect(projected.skills).toBe(config.skills);
+    expect(projected.plugins).toBe(config.plugins);
+    expect(projected.tools).toBe(config.tools);
+    expect(projected.cron).toBe(config.cron);
+    expect(projectManagedOpenClawBrowserConfig(projected)).toEqual(projected);
   });
 });

@@ -41,9 +41,10 @@ export const listKnownOpenClawWorkspaceDirs = ({
     workspaceDirs.add(path.join(mainWorkspaceDir, normalizedAgentId));
     if (configuredDefaultWorkspace) {
       workspaceDirs.add(path.join(configuredDefaultWorkspace, normalizedAgentId));
+    } else {
+      // Current native keyed agents without a workspace use this directory.
+      workspaceDirs.add(path.join(stateDir, `workspace-${normalizedAgentId}`));
     }
-    // Also inventory the pre-defaults.workspace fallback used by older/minimal configs.
-    workspaceDirs.add(path.join(stateDir, `workspace-${normalizedAgentId}`));
   };
   agents.forEach(agent => addDefaultAgentWorkspace(agent.id));
 
@@ -60,26 +61,7 @@ export const listKnownOpenClawWorkspaceDirs = ({
     addDefaultAgentWorkspace(agentId);
   }
 
-  // Inventory a legacy roster only for locating user-installed extensions
-  // before the next config sync rewrites it to v2026.9.8's keyed entries.
-  const legacyAgentList = Array.isArray(existingAgents.list) ? existingAgents.list : [];
-  for (const entry of legacyAgentList) {
-    if (!isRecord(entry)) continue;
-    const configuredWorkspace = typeof entry.workspace === 'string' ? entry.workspace.trim() : '';
-    if (configuredWorkspace) {
-      workspaceDirs.add(resolveConfiguredPluginPath(configuredWorkspace));
-    } else if (typeof entry.id === 'string') {
-      addDefaultAgentWorkspace(entry.id.trim());
-    }
-  }
   return [...workspaceDirs];
-};
-
-export const withoutRetiredHeartbeatFields = (value: unknown): unknown => {
-  if (!isRecord(value)) return value;
-  const heartbeat = { ...value };
-  delete heartbeat.includeSystemPromptSection;
-  return heartbeat;
 };
 
 export const canonicalizeAgentEntry = (value: Record<string, unknown>): Record<string, unknown> => {
@@ -87,42 +69,7 @@ export const canonicalizeAgentEntry = (value: Record<string, unknown>): Record<s
   delete entry.id;
   delete entry.default;
 
-  if (Object.prototype.hasOwnProperty.call(entry, 'heartbeat')) {
-    entry.heartbeat = withoutRetiredHeartbeatFields(entry.heartbeat);
-  }
-
-  const legacyMemorySearch = isRecord(entry.memorySearch) ? entry.memorySearch : undefined;
-  delete entry.memorySearch;
-  if (legacyMemorySearch) {
-    const memory = isRecord(entry.memory) ? entry.memory : {};
-    entry.memory = {
-      ...memory,
-      ...(isRecord(memory.search) ? {} : { search: legacyMemorySearch }),
-    };
-  }
   return entry;
-};
-
-export const collectCanonicalAgentEntries = (
-  agents: Record<string, unknown>,
-): Record<string, Record<string, unknown>> => {
-  const entries: Record<string, Record<string, unknown>> = Object.create(null) as Record<
-    string,
-    Record<string, unknown>
-  >;
-  if (Array.isArray(agents.list)) {
-    for (const value of agents.list) {
-      if (!isRecord(value) || typeof value.id !== 'string' || !value.id.trim()) continue;
-      entries[normalizeOpenClawAgentId(value.id)] = canonicalizeAgentEntry(value);
-    }
-  }
-  if (isRecord(agents.entries)) {
-    for (const [agentId, value] of Object.entries(agents.entries)) {
-      if (!isRecord(value)) continue;
-      entries[normalizeOpenClawAgentId(agentId)] = canonicalizeAgentEntry(value);
-    }
-  }
-  return entries;
 };
 
 export const constrainAgentEntryToAvailableModels = (

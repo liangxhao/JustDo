@@ -6,7 +6,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { Agent } from '../../data/coworkStore';
 import {
-  getProviderDisplayNameMap,
   resolveRawApiConfig,
   validateConfiguredOpenClawProviderNames,
 } from '../../providers/providerApiConfig';
@@ -15,7 +14,6 @@ import { OpenClawConfigSync } from './openclawConfigSync';
 vi.mock('../../providers/providerApiConfig', async importOriginal => ({
   ...await importOriginal<typeof import('../../providers/providerApiConfig')>(),
   resolveRawApiConfig: vi.fn(),
-  getProviderDisplayNameMap: vi.fn(),
   validateConfiguredOpenClawProviderNames: vi.fn(),
 }));
 vi.mock('./models/providerSecretFile', async importOriginal => ({
@@ -46,9 +44,8 @@ const config = {
 beforeEach(() => {
   vi.mocked(resolveRawApiConfig).mockReturnValue({
     config: { apiKey: 'fixture-key', baseURL: 'http://models.internal/v1', model: 'second', apiType: 'openai' },
-    providerMetadata: { providerName: 'custom_0', displayName: 'OfficeModels' },
+    providerMetadata: { providerName: 'officemodels', displayName: 'OfficeModels' },
   });
-  vi.mocked(getProviderDisplayNameMap).mockReturnValue({ custom_0: 'OfficeModels' });
   vi.mocked(validateConfiguredOpenClawProviderNames).mockReturnValue({ ok: true });
 });
 
@@ -99,7 +96,7 @@ describe('model-default-only native publication', () => {
   });
 
   it('keeps specialist selections and native external owners rather than adding or rebuilding agent rows', () => {
-    const fixture = createFixture([{ id: 'review', enabled: true, model: 'custom_0/first' } as Agent]);
+    const fixture = createFixture([{ id: 'review', enabled: true, model: 'officemodels/first' } as Agent]);
     expect(fixture.sync.syncModelDefaults().result.ok).toBe(true);
     const published = JSON.parse(fs.readFileSync(fixture.configPath, 'utf8'));
     expect(published.agents.entries.review).toEqual(config.agents.entries.review);
@@ -111,7 +108,7 @@ describe('model-default-only native publication', () => {
     const fixture = createFixture(kind === 'roster' ? [{ id: 'missing', enabled: true, model: '' } as Agent] : []);
     if (kind === 'catalog') vi.mocked(resolveRawApiConfig).mockReturnValue({
       config: { apiKey: 'fixture-key', baseURL: 'http://models.internal/v1', model: 'missing', apiType: 'openai' },
-      providerMetadata: { providerName: 'custom_0', displayName: 'OfficeModels' },
+      providerMetadata: { providerName: 'officemodels', displayName: 'OfficeModels' },
     });
     const publication = fixture.sync.syncModelDefaults();
     expect(publication.result.ok).toBe(false);

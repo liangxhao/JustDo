@@ -55,10 +55,6 @@ import { trackBrowserHistory } from '../../browser/history/browserHistoryTrackin
 import { createWebpageEmbedMounts, type WebpageEmbedConnection } from '../../chat/embed/webpageEmbedMounts';
 import { registerWebpageEmbedSettingsHandlers } from '../../chat/embed/webpageEmbedSettingsIpc';
 import { WebpageEmbedSettingsService } from '../../chat/embed/webpageEmbedSettingsService';
-import {
-  importFileOriginRendererPreferences,
-  type RendererPreferenceStore,
-} from '../app/rendererPreferencesImporter';
 import { t } from '../i18n';
 import { registerBrowserProxySession } from '../network/systemProxyPreference';
 import { registerAppWindowDiagnostics } from './appWindowFailure';
@@ -103,7 +99,7 @@ type MainWindowFactoryOptions = {
   devServerUrl: string;
   getBackgroundColor: () => string;
   getIconPath: () => string | undefined;
-  getRendererPreferenceStore: () => RendererPreferenceStore;
+  getRendererPreferenceStore: () => { get(key: string): unknown };
   getBrowserDownloadSettings: () => BrowserDownloadSettings;
   getProxyCredentials: () => {
     host: string;
@@ -1090,13 +1086,6 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
         mainNavigationOptions.applicationUrl = url;
         if (url) prepareWorkspaceWindow(url);
       },
-      () =>
-        importFileOriginRendererPreferences({
-          resourcePath: path.join(__dirname, '../resources/pages/renderer-preferences.html'),
-          session: mainWindow.webContents.session,
-          store: options.getRendererPreferenceStore(),
-          isCurrent: () => !mainWindow.isDestroyed() && !options.isQuitting(),
-        }),
     ).catch(error => {
       console.error('[MainWindow] Failed to load packaged renderer:', error);
       reportWindowFailure(error);

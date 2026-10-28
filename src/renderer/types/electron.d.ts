@@ -62,7 +62,6 @@ type TerminalStatusEvent = import('../../shared/app/terminal').TerminalStatusEve
 type TerminalExitEvent = import('../../shared/app/terminal').TerminalExitEvent;
 type TerminalResizeRequest = import('../../shared/app/terminal').TerminalResizeRequest;
 type TerminalWriteRequest = import('../../shared/app/terminal').TerminalWriteRequest;
-type ExtensionImportProgress = import('../../shared/plugins/extensions').ExtensionImportProgress;
 type ExtensionChangedEvent = import('../../shared/plugins/extensions').ExtensionChangedEvent;
 type ExtensionImportRequest = import('../../shared/plugins/extensions').ExtensionImportRequest;
 type ExtensionImportResult = import('../../shared/plugins/extensions').ExtensionImportResult;
@@ -100,14 +99,6 @@ type ExternalAgentSettings =
 type ExternalAgentId = import('../../shared/integrations/externalAgents').ExternalAgentId;
 type ExternalAgentTestResult =
   import('../../shared/integrations/externalAgents').ExternalAgentTestResult;
-type OpenClawSessionMigrationPlan =
-  import('../../shared/openclaw/sessionMigration').OpenClawSessionMigrationPlan;
-type OpenClawSessionMigrationProgress =
-  import('../../shared/openclaw/sessionMigration').OpenClawSessionMigrationProgress;
-type OpenClawSessionMigrationConfirmRequest =
-  import('../../shared/openclaw/sessionMigration').OpenClawSessionMigrationConfirmRequest;
-type OpenClawSessionMigrationResult =
-  import('../../shared/openclaw/sessionMigration').OpenClawSessionMigrationResult;
 type AppUpdateActionResult = import('../../shared/app/appUpdate').AppUpdateActionResult;
 type AppUpdateState = import('../../shared/app/appUpdate').AppUpdateState;
 type BrowserActionResult = import('../../shared/browser/browser').BrowserActionResult;
@@ -192,7 +183,7 @@ interface CoworkSession {
   nativeSessionKey?: string;
   historyBinding?: import('../../shared/app/startup/history').HistorySessionBinding;
   cwd: string;
-  executionMode: 'auto' | 'local' | 'sandbox';
+  executionMode: 'local' | 'sandbox';
   permissionMode: PermissionMode;
   activeSkillIds: string[];
   agentId: string;
@@ -238,7 +229,7 @@ interface CoworkConfig {
   showWorktreeCheckbox?: boolean;
   allowMainAgentSwitch?: boolean;
   workingDirectory: string;
-  executionMode: 'auto' | 'local' | 'sandbox';
+  executionMode: 'local' | 'sandbox';
   sandboxNetworkEnabled: boolean;
   agentEngine: 'openclaw';
   permissionMode: PermissionMode;
@@ -654,7 +645,6 @@ interface IElectronAPI {
       request: ExtensionImportRequest,
       context?: PluginOperationContext,
     ) => Promise<ExtensionImportResult>;
-    onImportProgress: (callback: (progress: ExtensionImportProgress) => void) => () => void;
     onChanged: (callback: (event: ExtensionChangedEvent) => void) => () => void;
   };
   hooks: {
@@ -1007,17 +997,6 @@ interface IElectronAPI {
         status?: OpenClawEngineStatus;
       }>;
       onProgress: (callback: (status: OpenClawEngineStatus) => void) => () => void;
-      migration: {
-        plan: () => Promise<{
-          success: boolean;
-          plan?: OpenClawSessionMigrationPlan;
-          error?: string;
-        }>;
-        confirm: (
-          request: OpenClawSessionMigrationConfirmRequest,
-        ) => Promise<OpenClawSessionMigrationResult & { status?: OpenClawEngineStatus }>;
-        onProgress: (callback: (progress: OpenClawSessionMigrationProgress) => void) => () => void;
-      };
     };
     history: {
       getToolInputs: (params: { sessionKey: string; toolCallIds: string[] }) => Promise<{
@@ -1385,7 +1364,7 @@ interface IElectronAPI {
     onStreamComplete: (
       callback: (data: {
         sessionId: string;
-        finalStatus?: 'idle' | 'running' | 'completed' | 'error';
+        finalStatus: 'idle' | 'running' | 'completed' | 'error';
       }) => void,
     ) => () => void;
     onStreamError: (callback: (data: { sessionId: string; error: string }) => void) => () => void;

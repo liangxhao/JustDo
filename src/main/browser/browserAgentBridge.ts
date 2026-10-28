@@ -2086,20 +2086,15 @@ export class BrowserAgentBridge {
     const guest = webContents.fromId(tab.webContentsId);
     if (!guest || guest.isDestroyed()) return;
 
-    const handleConsole = (...args: unknown[]) => {
-      const details = args.find(
-        value => value && typeof value === 'object' && 'message' in (value as object),
-      ) as { level?: string; message?: string; sourceId?: string } | undefined;
-      const legacyLevel = typeof args[1] === 'number' ? args[1] : undefined;
-      const legacyMessage = typeof args[2] === 'string' ? args[2] : undefined;
-      const level = details?.level ?? (legacyLevel === 3 ? 'error' : 'log');
-      const text = (details?.message ?? legacyMessage ?? '').slice(0, 4_000);
+    const handleConsole = (details: { level: string; message: string; sourceId?: string }) => {
+      const level = details.level;
+      const text = details.message.slice(0, 4_000);
       if (!text) return;
       const entry = {
         timestamp: Date.now(),
         level,
         text,
-        ...(details?.sourceId ? { url: sanitizeUrlForModel(details.sourceId) } : {}),
+        ...(details.sourceId ? { url: sanitizeUrlForModel(details.sourceId) } : {}),
       };
       this.appendLog(this.consoleLogs, tab.webContentsId, entry);
       if (level === 'error') this.appendLog(this.errorLogs, tab.webContentsId, entry);

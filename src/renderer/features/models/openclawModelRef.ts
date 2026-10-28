@@ -49,11 +49,7 @@ export function matchesOpenClawModelRef(
   return normalizedRef === model.id.toLowerCase();
 }
 
-/**
- * Build all possible model refs for a given model to handle different storage formats.
- * This handles the case where agent model was stored with a different displayName
- * but the current displayName might be "Custom0".
- */
+/** Resolve current application and native discovery model references. */
 function buildAllPossibleModelRefs(
   model: Pick<Model, 'id' | 'providerKey' | 'provider' | 'isServerModel'>,
 ): string[] {
@@ -66,37 +62,12 @@ function buildAllPossibleModelRefs(
 
   const providerKey = model.providerKey ?? '';
   const modelId = model.id;
-  const providerDisplayName = model.provider?.trim() || '';
-
-  // New writes use the validated display name. Stable-key refs written by an
-  // earlier JustDo build remain readable so they can be rewritten on save.
   refs.push(toOpenClawModelRef(model));
   // Built-in discovery ids can themselves contain a Gateway provider prefix
   // (for example `hdp/Glm-5.1`). Keep the raw id as a compatibility alias for
   // sessions.describe responses that omit the local `builtin_models` prefix.
   if (providerKey === 'builtin_models' && modelId.includes('/')) {
     refs.push(modelId);
-  }
-
-  if (isCustomProvider(providerKey)) {
-    // For custom providers, try multiple possible displayNames:
-    // 1. Current displayName from model.provider (most reliable)
-    // 2. Default displayName (e.g., "Custom0")
-    // 3. The raw providerKey as provider (e.g., "custom_0")
-
-    if (providerDisplayName) {
-      refs.push(`${normalizeProviderForGateway(providerDisplayName)}/${modelId}`);
-    }
-
-    // Default displayName (e.g., "Custom0")
-    const defaultDisplayName = getCustomProviderDefaultName(providerKey);
-    refs.push(`${normalizeProviderForGateway(defaultDisplayName)}/${modelId}`);
-
-    // Raw providerKey (for example "custom_0")
-    refs.push(`${normalizeProviderForGateway(providerKey)}/${modelId}`);
-  } else {
-    // For built-in providers, also try the providerKey directly
-    refs.push(`${normalizeProviderForGateway(providerKey)}/${modelId}`);
   }
 
   // Deduplicate
@@ -111,7 +82,6 @@ export function resolveOpenClawModelRef<
 
   if (normalizedRef.includes('/')) {
     // Try to match using all possible refs for each model
-    // This handles cases where displayName changed
     for (const model of availableModels) {
       const allPossibleRefs = buildAllPossibleModelRefs(model);
       if (allPossibleRefs.some(ref => ref.toLowerCase() === normalizedRef)) {

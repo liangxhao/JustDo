@@ -251,7 +251,6 @@ import {
   buildLocalSpeechExtensionTtsConfig,
 } from './openclaw/config/speech/localSpeechExtensionConfig';
 import { buildManagedLocalTtsConfig } from './openclaw/config/speech/localTtsConfig';
-import { resolveQualifiedAgentModelRef } from './openclaw/models/openclawAgentModels';
 import { SessionPermissionModeCoordinator } from './openclaw/permissions/sessionPermissionModeCoordinator';
 import { createEngineDiagnosticsCollector } from './openclaw/runtime/engineDiagnostics';
 import { ensureExecutionReady } from './openclaw/runtime/executionReadiness';
@@ -293,7 +292,6 @@ import { BuiltinModelLifecycle } from './providers/builtinModelLifecycle';
 import { BuiltinModelAccess, syncBuiltinModelProvider } from './providers/builtinModelProvider';
 import { BuiltinModelTokenExchange } from './providers/builtinModelTokenExchange';
 import {
-  resolveAllEnabledProviderConfigs,
   resolveRawApiConfig,
   setStoreGetter,
   validateConfiguredOpenClawProviderNames,
@@ -342,77 +340,6 @@ const resolveDefaultAgentModelRef = (): string => {
     modelName: apiResolution.providerMetadata?.modelName,
     displayName: apiResolution.providerMetadata?.displayName,
   }).primaryModel;
-};
-
-const buildAvailableOpenClawProviders = (): Record<string, { models: Array<{ id: string }> }> => {
-  const providerMap: Record<string, { models: Array<{ id: string }> }> = {};
-  if (!validateConfiguredOpenClawProviderNames().ok) {
-    return providerMap;
-  }
-
-  for (const provider of resolveAllEnabledProviderConfigs()) {
-    for (const model of provider.models) {
-      const selection = buildProviderSelection({
-        apiKey: provider.apiKey,
-        baseURL: provider.baseURL,
-        modelId: model.id,
-        apiType: provider.apiType,
-        providerName: provider.providerName,
-        supportsImage: model.supportsImage,
-        modelName: model.name,
-        displayName: provider.displayName,
-      });
-
-      if (!providerMap[selection.providerId]) {
-        providerMap[selection.providerId] = { models: [] };
-      }
-      if (
-        !providerMap[selection.providerId].models.some(
-          entry => entry.id === selection.sessionModelId,
-        )
-      ) {
-        providerMap[selection.providerId].models.push({ id: selection.sessionModelId });
-      }
-    }
-  }
-
-  return providerMap;
-};
-
-const migrateAgentModelRefs = (): number => {
-  const defaultModelRef = resolveDefaultAgentModelRef();
-  if (!defaultModelRef) return 0;
-
-  const availableProviders = buildAvailableOpenClawProviders();
-  const agents = getCoworkStore().listAgents();
-  let changed = 0;
-
-  for (const agent of agents) {
-    if (agent.deletedAt) continue;
-    const normalizedModel = agent.model.trim();
-    if (!normalizedModel) continue;
-
-    const qualification = resolveQualifiedAgentModelRef({
-      agentModel: normalizedModel,
-      availableProviders,
-    });
-
-    if (qualification.status === 'ambiguous') {
-      console.warn(
-        `[Main] Skipped ambiguous agent model migration for "${agent.id}" because "${qualification.modelId}" matches multiple providers: ${qualification.providerIds.join(', ')}`,
-      );
-      continue;
-    }
-
-    if (qualification.status !== 'qualified' || qualification.primaryModel === normalizedModel) {
-      continue;
-    }
-
-    getCoworkStore().updateAgent(agent.id, { model: qualification.primaryModel });
-    changed += 1;
-  }
-
-  return changed;
 };
 
 const configureUserDataPath = (bridgeProfile?: string): void => {
@@ -2549,12 +2476,6 @@ if (agentBridgeArgv) {
       });
     });
     bindOpenClawStatusForwarder();
-
-    // Empty agent models intentionally inherit the application default.
-    const qualifiedAgentModels = migrateAgentModelRefs();
-    if (qualifiedAgentModels > 0) {
-      console.log(`[Main] migrated agent model bindings: qualified=${qualifiedAgentModels}`);
-    }
 
     let startupSync: Awaited<ReturnType<typeof syncOpenClawConfig>> | undefined;
     initialization.reportActivity(AppInitializationActivity.DefaultFiles);

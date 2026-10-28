@@ -16,14 +16,19 @@ use `build/runtimes/`, Windows runtime archives use `build/tar/`, local speech m
 The build and cache directories are ignored by Git.
 
 Vite's `scripts/packaging/application-license-assets.cjs` plugin records actual
-third-party modules for Renderer, Main and the four preload builds. It copies
+third-party modules for Renderer, Main and all preload builds. It copies
 their original package metadata and legal materials, including transitive
 dependencies, to `build/application-licenses/<scope>/`. Each scope has a private
 `source-proof.json` binding the compiled output and source legal files. Builder
-hooks verify all six scopes before packaging and verify the copied public files
+hooks verify every required scope before packaging and verify the copied public files
 under `resources/licenses/application-dependencies/` afterward; private scope
 proofs are excluded from the installer. Rebuild the application after changing
-compiled inputs or legal materials instead of updating a proof in place.
+compiled inputs or legal materials instead of updating a proof in place. Each scope
+publishes its complete staged tree by rename. On Windows, transient `EPERM`,
+`EBUSY` or `EACCES` rename failures receive at most five retries with increasing
+50 ms delays (750 ms total); owned build paths are revalidated before every
+attempt. A persistent failure still blocks the build and removes the unpublished
+staging tree.
 
 | Directory    | Responsibility                                                           |
 | ------------ | ------------------------------------------------------------------------ |
@@ -46,6 +51,13 @@ helpers explicitly. Resolve repository paths relative to the script location;
 do not rely on the caller's working directory when locating repository assets.
 Versioned patches remain under `patches/`; runtime orchestration belongs in
 `openclaw/`.
+
+`npm test` runs Vitest with standalone Node.js 24 and restores the Electron native
+bindings afterward. The Vitest configuration rejects Electron drivers before any
+suite loads: Electron's filesystem behavior does not provide the standalone Node
+contract required by these tests, including safe Windows junction cleanup. The
+runner safety regression uses a disposable, harmless suite and real Electron in
+Node mode to verify this refusal without starting Gateway or reading user state.
 
 `npm run startup:preview -- --route upgrade --language zh --theme light` starts a
 loopback browser rehearsal using the actual startup components. Routes are

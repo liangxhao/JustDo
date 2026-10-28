@@ -10,7 +10,6 @@ export const RENDERER_PREFERENCE_LIMITS = {
   entries: 128,
   valueBytes: 64 * 1024,
   totalBytes: 512 * 1024,
-  browserKeys: 4096,
 } as const;
 
 export const isRendererPreferenceKey = (key: string): boolean =>

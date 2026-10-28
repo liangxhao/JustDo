@@ -13,7 +13,7 @@ const session: CoworkSession = {
   status: 'completed',
   pinned: false,
   cwd: 'C:\\workspace',
-  executionMode: 'auto',
+  executionMode: 'local',
   permissionMode: 'full',
   activeSkillIds: [],
   agentId: 'main',

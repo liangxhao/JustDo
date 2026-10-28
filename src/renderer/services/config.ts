@@ -6,7 +6,7 @@ import {
 import { BrowserLinkTarget, normalizeBrowserLinkTarget } from '@shared/browser/browserLinkOpening';
 import { normalizeBrowserTabLimit } from '@shared/browser/browserTabLimit';
 import { normalizeProxySettings, ProxyMode } from '@shared/network/proxy';
-import { isLegacyCustomProviderKey } from '@shared/providers';
+import { isReservedOpenClawProviderId } from '@shared/providers';
 import {
   type LocalSpeechExtensionSettings,
   normalizeLocalSpeechExtensionSettings,
@@ -31,7 +31,7 @@ const isSupportedProvider = (providerKey: string, providerConfig?: ProviderConfi
   SUPPORTED_BUILTIN_PROVIDERS.has(providerKey) ||
   isBuiltinModelsProvider(providerKey) ||
   (isCustomProvider(providerKey) &&
-    !isLegacyCustomProviderKey(providerKey) &&
+    !isReservedOpenClawProviderId(providerKey) &&
     typeof providerConfig?.identity === 'string');
 
 const normalizeModelSelection = (

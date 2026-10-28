@@ -17,7 +17,6 @@ function verifyPublicCliArchiveEntries(entries) {
 }
 
 const RUNTIME_COMPANION_CHECKS = [
-  { marker: 'resolveStartupMigrationBuildIdentity', path: 'build-info.json' },
   { marker: 'build-info.json', path: 'build-info.json' },
   {
     marker: 'legacy-config-binding-repair.runtime',
@@ -90,13 +89,6 @@ const RUNTIME_COMPANION_CHECKS = [
 ];
 
 const RUNTIME_BUNDLED_ASSET_COPIES = [
-  {
-    // Native migration checkpoints resolve this beside their executing module.
-    // The bundled module lives at the runtime root, outside the original dist/.
-    marker: 'resolveStartupMigrationBuildIdentity',
-    source: 'dist/build-info.json',
-    target: 'build-info.json',
-  },
   {
     // 10.4 removed the startup identity helper; native commit readers still
     // resolve build-info beside their executing module.

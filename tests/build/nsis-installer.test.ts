@@ -1,6 +1,5 @@
-import { spawn, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import {
-  copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -168,7 +167,7 @@ describe('Windows uninstaller process handling', () => {
 
   it('excludes the uninstaller process from installed-process detection', () => {
     expect(nsisScript).toContain('Kernel32::GetCurrentProcessId()');
-    expect(processHelper).toContain('$_.Id -ne $callerPid');
+    expect(processHelper).toContain('$process.Id -ne $callerPid');
   });
 
   it('prompts interactive users to close the running app and retry', () => {
@@ -224,7 +223,6 @@ describe('Windows installer process handling', () => {
   });
 
   it('leaves legacy user-data processes alone during installation', () => {
-    expect(nsisScript).not.toContain('Call JustDoStopLegacyPythonProcesses');
     expect(nsisScript).not.toContain('JUSTDO_USER_DATA_ROOT');
   });
 
@@ -252,188 +250,6 @@ describe('Windows installer process handling', () => {
     expect(nsisScript).not.toContain("JustDoRestoreManagedRuntimes");
     expect(processHelper).toContain('$attempt -lt $MaxAttempts');
   });
-
-  it.runIf(process.platform === 'win32')(
-    'force-stops only an executable running from the legacy Python directory',
-    async () => {
-      const root = mkdtempSync(path.join(os.tmpdir(), 'justdo-legacy-python-process-'));
-      tempDirs.push(root);
-      const installRoot = path.join(root, 'installed-app');
-      const userDataRoot = path.join(root, 'user-data');
-      const legacyPythonRoot = path.join(userDataRoot, 'runtimes', 'python-win');
-      const legacyPythonExecutable = path.join(legacyPythonRoot, 'python.exe');
-      const unrelatedPythonExecutable = path.join(root, 'unrelated-python', 'python.exe');
-      const powershellPath = path.join(
-        process.env.SystemRoot || 'C:\\Windows',
-        'System32',
-        'WindowsPowerShell',
-        'v1.0',
-        'powershell.exe',
-      );
-      mkdirSync(installRoot, { recursive: true });
-      mkdirSync(legacyPythonRoot, { recursive: true });
-      mkdirSync(path.dirname(unrelatedPythonExecutable), { recursive: true });
-      copyFileSync(process.execPath, legacyPythonExecutable);
-      copyFileSync(process.execPath, unrelatedPythonExecutable);
-
-      const legacyPython = spawn(legacyPythonExecutable, ['-e', 'setInterval(() => {}, 1_000)'], {
-        stdio: 'ignore',
-        windowsHide: true,
-      });
-      const unrelatedPython = spawn(
-        unrelatedPythonExecutable,
-        ['-e', 'setInterval(() => {}, 1_000)'],
-        {
-          stdio: 'ignore',
-          windowsHide: true,
-        },
-      );
-      const exited = new Promise<boolean>(resolve => {
-        legacyPython.once('exit', () => resolve(true));
-      });
-      const unrelatedExited = new Promise<boolean>(resolve => {
-        unrelatedPython.once('exit', () => resolve(true));
-      });
-
-      try {
-        await Promise.all(
-          [legacyPython, unrelatedPython].map(
-            child =>
-              new Promise<void>((resolve, reject) => {
-                child.once('spawn', resolve);
-                child.once('error', reject);
-              }),
-          ),
-        );
-        await new Promise(resolve => setTimeout(resolve, 250));
-        expect(legacyPython.exitCode).toBeNull();
-        expect(unrelatedPython.exitCode).toBeNull();
-
-        const result = spawnSync(
-          powershellPath,
-          [
-            '-NoProfile',
-            '-NonInteractive',
-            '-File',
-            processHelperPath,
-            '-Action',
-            'StopLegacyPython',
-          ],
-          {
-            encoding: 'utf8',
-            env: {
-              ...process.env,
-              JUSTDO_INSTALL_ROOT: installRoot,
-              JUSTDO_USER_DATA_ROOT: userDataRoot,
-              JUSTDO_CALLER_PID: String(process.pid),
-            },
-          },
-        );
-
-        expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
-        expect(result.stdout).toContain('matched=1 remaining=0');
-        await expect(
-          Promise.race([
-            exited,
-            new Promise<boolean>(resolve => setTimeout(() => resolve(false), 2_000)),
-          ]),
-        ).resolves.toBe(true);
-        expect(unrelatedPython.exitCode).toBeNull();
-      } finally {
-        legacyPython.kill();
-        unrelatedPython.kill();
-        await Promise.all(
-          [exited, unrelatedExited].map(exitPromise =>
-            Promise.race([
-              exitPromise,
-              new Promise<boolean>(resolve => setTimeout(() => resolve(false), 2_000)),
-            ]),
-          ),
-        );
-      }
-    },
-    30_000,
-  );
-
-  it.runIf(process.platform === 'win32')(
-    'does not stop an outside executable launched through a legacy-directory junction',
-    async () => {
-      const root = mkdtempSync(path.join(os.tmpdir(), 'justdo-legacy-python-junction-'));
-      tempDirs.push(root);
-      const installRoot = path.join(root, 'installed-app');
-      const userDataRoot = path.join(root, 'user-data');
-      const legacyPythonRoot = path.join(userDataRoot, 'runtimes', 'python-win');
-      const outsideRuntimeRoot = path.join(root, 'outside-runtime');
-      const outsideExecutable = path.join(outsideRuntimeRoot, 'python.exe');
-      const powershellPath = path.join(
-        process.env.SystemRoot || 'C:\\Windows',
-        'System32',
-        'WindowsPowerShell',
-        'v1.0',
-        'powershell.exe',
-      );
-      mkdirSync(installRoot, { recursive: true });
-      mkdirSync(path.dirname(legacyPythonRoot), { recursive: true });
-      mkdirSync(outsideRuntimeRoot, { recursive: true });
-      copyFileSync(process.execPath, outsideExecutable);
-      symlinkSync(outsideRuntimeRoot, legacyPythonRoot, 'junction');
-
-      const outsidePython = spawn(
-        path.join(legacyPythonRoot, 'python.exe'),
-        ['-e', 'setInterval(() => {}, 1_000)'],
-        {
-          stdio: 'ignore',
-          windowsHide: true,
-        },
-      );
-      const outsideExited = new Promise<boolean>(resolve => {
-        outsidePython.once('exit', () => resolve(true));
-      });
-
-      try {
-        await new Promise<void>((resolve, reject) => {
-          outsidePython.once('spawn', resolve);
-          outsidePython.once('error', reject);
-        });
-        await new Promise(resolve => setTimeout(resolve, 250));
-        expect(outsidePython.exitCode).toBeNull();
-
-        const result = spawnSync(
-          powershellPath,
-          [
-            '-NoProfile',
-            '-NonInteractive',
-            '-File',
-            processHelperPath,
-            '-Action',
-            'StopLegacyPython',
-          ],
-          {
-            encoding: 'utf8',
-            env: {
-              ...process.env,
-              JUSTDO_INSTALL_ROOT: installRoot,
-              JUSTDO_USER_DATA_ROOT: userDataRoot,
-              JUSTDO_CALLER_PID: String(process.pid),
-            },
-          },
-        );
-
-        expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
-        expect(result.stdout).toContain('matched=0 remaining=0');
-        await new Promise(resolve => setTimeout(resolve, 250));
-        expect(outsidePython.exitCode).toBeNull();
-      } finally {
-        outsidePython.kill();
-        await Promise.race([
-          outsideExited,
-          new Promise<boolean>(resolve => setTimeout(() => resolve(false), 2_000)),
-        ]);
-        if (existsSync(legacyPythonRoot)) unlinkSync(legacyPythonRoot);
-      }
-    },
-    30_000,
-  );
 
   it('removes the previous Git runtime before extracting MinGit during upgrades', () => {
     const backupIndex = unpackScript.indexOf('fs.renameSync(runtime.dir, runtime.backupDir)');

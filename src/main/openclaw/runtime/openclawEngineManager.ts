@@ -14,11 +14,6 @@ import {
   GatewayPortSetErrorCode,
   validateGatewayPortNumber,
 } from '../../../shared/openclaw/gatewayPort';
-import type {
-  OpenClawSessionMigrationPlan,
-  OpenClawSessionMigrationProgress,
-  OpenClawSessionMigrationResult,
-} from '../../../shared/openclaw/sessionMigration';
 import { PRODUCT_NAME_LOWERCASE } from '../../../shared/productMetadata';
 import type { SystemPromptReplacementRule } from '../../../shared/prompts/systemPromptReplacements';
 import { t } from '../../core/i18n';
@@ -58,7 +53,6 @@ import {
   GATEWAY_READY_MESSAGE,
   prepareWindowsRuntimeCleanup,
 } from './openclawGatewayBundleLauncher.cjs';
-import { SessionStoreMigrationCoordinator } from './sessionStoreMigration';
 import {
   mergeRegisteredSystemPromptReplacementRules,
   normalizePersistedSystemPromptReplacementRules,
@@ -295,7 +289,6 @@ export class OpenClawEngineManager extends EventEmitter {
   private readonly gatewayLogPath: string;
   private readonly configPath: string;
   private readonly systemPromptReplacementRulesPath: string;
-  private readonly sessionStoreMigration: SessionStoreMigrationCoordinator;
 
   private desiredVersion: string | null;
   private status: OpenClawEngineStatus;
@@ -352,13 +345,6 @@ export class OpenClawEngineManager extends EventEmitter {
       this.stateDir,
       'system-prompt-replacements.json',
     );
-
-    this.sessionStoreMigration = new SessionStoreMigrationCoordinator({
-      stateDir: this.stateDir,
-      baseDir: this.baseDir,
-      runtimeVersion: () => this.desiredVersion,
-      runCli: args => this.runMigrationCli(args),
-    });
 
     ensureDir(this.baseDir);
     ensureDir(this.logsDir);
@@ -583,24 +569,6 @@ export class OpenClawEngineManager extends EventEmitter {
 
   getConfigPath(): string {
     return this.configPath;
-  }
-
-  getSessionMigrationPlan(): Promise<OpenClawSessionMigrationPlan> {
-    return this.sessionStoreMigration.plan();
-  }
-
-  confirmSessionMigration(
-    planId: string,
-    approved: boolean,
-  ): Promise<OpenClawSessionMigrationResult> {
-    return this.sessionStoreMigration.confirm(planId, approved);
-  }
-
-  onSessionMigrationProgress(
-    listener: (progress: OpenClawSessionMigrationProgress) => void,
-  ): () => void {
-    this.sessionStoreMigration.on('progress', listener);
-    return () => this.sessionStoreMigration.off('progress', listener);
   }
 
   getGatewayConnectionInfo(): OpenClawGatewayConnectionInfo {
@@ -844,11 +812,6 @@ export class OpenClawEngineManager extends EventEmitter {
       port,
       token,
     };
-  }
-
-  private async runMigrationCli(args: string[]): Promise<{ stdout: string; stderr: string }> {
-    const cli = await this.buildCliEnvironment();
-    return this.runCliWithEnvironment(cli, args, 'migration');
   }
 
   private async runCliWithEnvironment(
@@ -1126,20 +1089,6 @@ export class OpenClawEngineManager extends EventEmitter {
       message: 'Preparing OpenClaw gateway...',
       canRetry: false,
     });
-
-    const migrationPlan = await this.sessionStoreMigration.plan();
-    if (migrationPlan.required) {
-      const message = migrationPlan.error
-        ? `Legacy OpenClaw session migration could not be prepared: ${migrationPlan.error}`
-        : 'Legacy OpenClaw sessions require review and confirmation before Gateway startup.';
-      this.setStatus({
-        phase: 'error',
-        version: runtime.version,
-        message,
-        canRetry: false,
-      });
-      return this.getStatus();
-    }
 
     // Source extensions are prepared once per cold launch, under startGatewayPromise.
     // Readiness/CLI queries must never rewrite plugins in a running Gateway.

@@ -5,15 +5,6 @@ import {
   type SystemPromptReplacementRule,
 } from '../../../shared/prompts/systemPromptReplacements';
 
-const RETIRED_SYSTEM_PROMPT_REPLACEMENT_IDS = new Set([
-  'remove-skill-version-lines',
-  'remove-skill-version-refresh-guidance',
-  'compact-runtime-section',
-  'remove-source-channel-routing-line',
-  'remove-openclaw-diagnostics-guidance',
-  'brand-spaced-openclaw-references',
-  'describe-independent-webpage-embeds',
-]);
 
 /**
  * Built-in final system-prompt replacements belong here. They run before
@@ -118,8 +109,7 @@ export const normalizePersistedSystemPromptReplacementRules = (
   normalizeSystemPromptReplacementRules(
     value,
     SYSTEM_PROMPT_REPLACEMENT_MAX_RULES +
-      REGISTERED_SYSTEM_PROMPT_REPLACEMENT_RULES.length +
-      RETIRED_SYSTEM_PROMPT_REPLACEMENT_IDS.size,
+      REGISTERED_SYSTEM_PROMPT_REPLACEMENT_RULES.length,
   );
 
 export const mergeRegisteredSystemPromptReplacementRules = (
@@ -129,9 +119,7 @@ export const mergeRegisteredSystemPromptReplacementRules = (
     REGISTERED_SYSTEM_PROMPT_REPLACEMENT_RULES.map((rule) => rule.id),
   );
   const customRules = persistedRules.filter(
-    (rule) =>
-      !registeredIds.has(rule.id) &&
-      !RETIRED_SYSTEM_PROMPT_REPLACEMENT_IDS.has(rule.id),
+    (rule) => !registeredIds.has(rule.id),
   );
   if (customRules.length > SYSTEM_PROMPT_REPLACEMENT_MAX_RULES) {
     throw new RangeError(

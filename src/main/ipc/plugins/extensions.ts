@@ -34,17 +34,6 @@ type ExtensionHandlerDependencies = {
   beforeAgentTeamDisable?: () => Promise<() => void>;
 };
 
-const legacyImportStages = new Set<string>([
-  PluginOperationStage.PREPARING,
-  PluginOperationStage.EXTRACTING,
-  PluginOperationStage.VALIDATING,
-  PluginOperationStage.PREPARING_RUNTIME,
-  PluginOperationStage.INSTALLING,
-  PluginOperationStage.INSTALLING_DEPENDENCIES,
-  PluginOperationStage.RESTARTING_GATEWAY,
-  'completed',
-]);
-
 export const registerExtensionHandlers = ({
   extensionImportService,
   installationService,
@@ -213,17 +202,6 @@ export const registerExtensionHandlers = ({
           onProgress: progress => {
             const stage = toPluginOperationStage(progress.stage);
             if (stage) operationProgress?.report(stage);
-            if (legacyImportStages.has(progress.stage) && !event.sender.isDestroyed()) {
-              try {
-                event.sender.send(ExtensionIpc.ImportProgress, {
-                  requestId: request.requestId,
-                  sourcePath: request.sourcePath,
-                  ...progress,
-                });
-              } catch {
-                // A closing observer cannot turn a committed installation into a failure.
-              }
-            }
           },
         });
         return withPluginOperationFailure(progress, {

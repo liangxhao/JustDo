@@ -33,7 +33,6 @@ function fixture() {
     ensureReady: () => Promise<OpenClawEngineStatus>;
     isGatewayHealthy: () => Promise<boolean>;
     resolveRuntimeMetadata: () => { root: string; version: string };
-    sessionStoreMigration: { plan: () => never };
     stopGatewayProcess: (child: FakeChild) => Promise<void>;
     performGatewayRestart: () => Promise<OpenClawEngineStatus>;
     observeGatewayProcessLine: (child: FakeChild, line: string) => void;
@@ -59,8 +58,10 @@ function fixture() {
     shutdownRequested: false, applicationShuttingDown: false,
     startGatewayPromise: null, restartGatewayPromise: null,
     ensureReady, isGatewayHealthy: health, stopGatewayProcess: stop,
-    resolveRuntimeMetadata: () => ({ root: 'fixture-runtime', version: 'fixture' }),
-    sessionStoreMigration: { plan: coldStart },
+    resolveRuntimeMetadata: () => {
+      if (!internal.shutdownRequested && !internal.gatewayProcess) coldStart();
+      return { root: 'fixture-runtime', version: 'fixture' };
+    },
   });
   const statuses: OpenClawEngineStatus[] = [];
   manager.on('status', status => statuses.push(status));

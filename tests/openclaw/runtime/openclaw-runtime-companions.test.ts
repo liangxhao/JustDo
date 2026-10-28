@@ -57,7 +57,7 @@ describe('OpenClaw runtime companions', () => {
       .toContain('dist/tooling/managed-windows-job-launcher.js');
     expect(rewriteRuntimeWorkerImportMetaUrls(rewritten, 'another')).toBe(rewritten);
   });
-  it('makes the original build identity available beside the bundled migration reader', () => {
+  it('makes the original build identity available beside the bundled commit reader', () => {
     const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-build-identity-'));
     try {
       fs.mkdirSync(path.join(runtimeRoot, 'dist'));
@@ -67,7 +67,7 @@ describe('OpenClaw runtime companions', () => {
       const bundledRequire = createRequire(path.join(runtimeRoot, 'gateway-bundle.mjs'));
       expect(() => bundledRequire('./build-info.json')).toThrow();
 
-      const copied = syncRuntimeBundledAssets(runtimeRoot, 'resolveStartupMigrationBuildIdentity');
+      const copied = syncRuntimeBundledAssets(runtimeRoot, 'build-info.json');
 
       expect(copied).toEqual(['build-info.json']);
       expect(bundledRequire('./build-info.json')).toEqual(metadata);
@@ -75,18 +75,18 @@ describe('OpenClaw runtime companions', () => {
         fs.readFileSync(sourcePath),
       );
       expect(
-        getRuntimeCompanionPathsReferencedByBundle('resolveStartupMigrationBuildIdentity'),
+        getRuntimeCompanionPathsReferencedByBundle('build-info.json'),
       ).toEqual(['build-info.json']);
     } finally {
       fs.rmSync(runtimeRoot, { recursive: true, force: true });
     }
   });
 
-  it('rejects a migration-capable bundle whose upstream build metadata is missing', () => {
+  it('rejects missing build metadata referenced by the bundle', () => {
     const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-build-identity-'));
     try {
       expect(() =>
-        syncRuntimeBundledAssets(runtimeRoot, 'resolveStartupMigrationBuildIdentity'),
+        syncRuntimeBundledAssets(runtimeRoot, 'build-info.json'),
       ).toThrow('dist/build-info.json');
       expect(fs.existsSync(path.join(runtimeRoot, 'build-info.json'))).toBe(false);
     } finally {

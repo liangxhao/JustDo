@@ -2,11 +2,17 @@
 
 当前 Cowork 执行引擎是 OpenClaw。Router 提供稳定产品接口，Adapter 隔离原生 wire 与生命周期，Manager 托管运行时进程。本文按当前 v2026.10.7 集成组织，运行时补丁清单只维护在[版本目录](../../scripts/patches/v2026.10.7/README.md)。目标产物及尚未验收的范围见[本版验证](../openclaw-upgrades/v2026.10.7/validation.md)；文中较早版本的复现记录不自动扩展为本版通过证据。
 
+Agent 实时事件使用原生 payload 的 `seq`。Main、Renderer 与浏览器侧聊共用该契约，
+不再接受旧 `aseq`，也不使用 WebSocket frame 序号或本地计数补造 agent 序号。
+缺少原生序号的事件不提交执行结果；现有会话、run、代次和 whole-run 终态校验继续生效。
+Main complete 通知携带明确状态，运行快照携带正 revision；字段缺失时 Renderer 保持未知，
+不会按旧 preload 的缺省值推断完成或空闲。
+
 ## Code Mode 工具编排
 
 运行设置中的 Code Mode 是原生 OpenClaw 工具编排能力，保存于现有
 `agentRuntimeSettings:v1` 配置记录的 `codeMode.mode`，取值为 `off / auto / on`。
-新配置默认 `off`，旧记录缺少该字段时补为 `off`，不重置其他运行偏好。界面保留
+新配置默认 `off`，已保存的 v1 设置须符合完整当前结构，不再逐字段升级旧对象。界面保留
 “自动（待模型支持）”但禁止选择；已有显式 `auto` 值保留并如实显示，可改选开启或关闭。
 配置同步在完整配置、无模型配置、
 登录与退出路径中映射到 `tools.codeMode.enabled = false / "auto" / true`，并选择

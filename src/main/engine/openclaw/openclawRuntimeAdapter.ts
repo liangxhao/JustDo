@@ -223,7 +223,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   // Tick watchdog
   private lastTickTimestamp = 0;
   private lastAgentActivityTimestamp = 0;
-  private legacyAgentSequence = 0;
   private tickWatchdogTimer: ReturnType<typeof setInterval> | null = null;
 
   // Channel session sync
@@ -3480,12 +3479,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       terminalLifecycleSessionIds: { get: () => this.terminalLifecycleSessionIds },
       terminalLifecycleErrorSessionIds: { get: () => this.terminalLifecycleErrorSessionIds },
       resolveTurn: { get: () => this.resolveTurn.bind(this) },
-      legacyAgentSequence: {
-        get: () => this.legacyAgentSequence,
-        set: value => {
-          this.legacyAgentSequence = value;
-        },
-      },
       goalContinuationCoordinator: { get: () => this.goalContinuationCoordinator },
       classifyMainAgentEvent: { get: () => this.classifyMainAgentEvent.bind(this) },
       rootRunIdBySession: { get: () => this.rootRunIdBySession },

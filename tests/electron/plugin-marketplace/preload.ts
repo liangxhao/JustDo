@@ -4,7 +4,6 @@ import { createExtensionChangedSubscription } from '../../../src/main/preload/ex
 import { createPluginOperationSubscription } from '../../../src/main/preload/pluginOperations';
 import {
   type ExtensionDeleteRequest,
-  type ExtensionImportProgress,
   type ExtensionImportRequest,
   ExtensionIpc,
   type ExtensionSetEnabledRequest,
@@ -57,11 +56,6 @@ contextBridge.exposeInMainWorld('electron', {
     importPath: (request: ExtensionImportRequest, context?: PluginOperationContext) =>
       ipcRenderer.invoke(ExtensionIpc.Import, request, context),
     onChanged: createExtensionChangedSubscription(),
-    onImportProgress: (callback: (progress: ExtensionImportProgress) => void) => {
-      const handler = (_event: Electron.IpcRendererEvent, progress: ExtensionImportProgress) => callback(progress);
-      ipcRenderer.on(ExtensionIpc.ImportProgress, handler);
-      return () => ipcRenderer.removeListener(ExtensionIpc.ImportProgress, handler);
-    },
     updateConfiguration: (request: ExtensionUpdateConfigurationRequest, context?: PluginOperationContext) =>
       ipcRenderer.invoke(ExtensionIpc.UpdateConfiguration, request, context),
     setEnabled: (request: ExtensionSetEnabledRequest, context?: PluginOperationContext) =>

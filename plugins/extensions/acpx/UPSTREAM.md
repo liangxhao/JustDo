@@ -49,7 +49,7 @@ and final archive verification both enforce this boundary.
 | Service lifecycle | Stable lazy facades, inspection/promotion separation, live allowed-agent access, bounded Tokio pools and asynchronous shutdown are adopted. Partial activation joins cleanup; failure retains an observable failed stop barrier.                                                                 |
 | Task deadlines    | `index.ts` forwards reply dispatch directly. The connection timeout no longer aborts a long native ACP task; OpenClaw owns its execution deadline.                                                                                                                                               |
 | Session catalog   | Pi paging, timestamp, file-range and node/terminal contracts use the target public SDK. The unused timestamp facade and obsolete MCP proxy scripts are removed.                                                                                                                                  |
-| Offline Doctor    | The obsolete JSON gateway-instance/process-lease migration and constants are removed. Owner repair validates the real record ID in a private store before atomic publication, and uses the managed native state directory.                                                                       |
+| Owner admission   | Unqualified or unverifiable owner locators are rejected and their history is retained. No plugin Doctor migration repairs retired config keys or old owner records.                                                                                                                                |
 
 ## Product customizations retained
 
@@ -61,7 +61,7 @@ and final archive verification both enforce this boundary.
 | Disabled-agent diagnostics, redaction and default no-probe policy                        | `index.ts`, `runtime-proxy.ts`, `runtime-probe.ts`, `service.ts`                                                 | plugin contract, probe and service lifecycle suites                                  |
 | Product permission/MCP defaults and exact session context                                | `config-schema.ts`, `config.ts`, `runtime.ts`                                                                    | runtime dynamic-MCP test, runtime/reset/probe suites and real ACPX stdio fixture     |
 | Narrow process ownership checks, including earlier JSON-quoted Windows argv              | `command-line.ts`, `process-reaper.ts`                                                                           | process-reaper and lease suites; wrapper process cleanup tests                       |
-| Managed state location and unknown-owner rejection                                       | `config.ts`, `session-owner.ts`, `session-resource.ts`, `session-owner-migration.ts`                             | state-directory, generation/reset and persisted 0.19.1-to-0.19.5 compatibility tests |
+| Managed state location and unknown-owner rejection                                       | `config.ts`, `session-owner.ts`, `session-resource.ts`                                                           | state-directory, session-owner admission and generation/reset tests                 |
 
 The bundled `skills/acp-router/SKILL.md` is adapted to this product's configured
 and enabled external-agent catalog. It retains native ACP start, continuation,
@@ -75,8 +75,13 @@ patch or additional permission is introduced by this skill adaptation.
 
 The product does not register upstream native-agent harnesses, a second model
 picker, `acpx.agents.list`, or runtime package installation. It does not adopt
-`<workspace>/state` into the managed state directory. Only the existing explicit
-offline owner repair remains; ambiguous histories stay intact. The public
+`<workspace>/state` into the managed state directory. Retired config-key repair
+and old owner-record migration are not registered. Unqualified or unverifiable
+locators remain rejected; their existing histories are not moved, deleted or
+automatically recovered. Current owner-qualified sessions retain their exact
+record, lease and generation checks. Explicit Codex/Claude commands pass through
+without translating old adapter flags or merging their overrides into the
+isolated home. The public
 `json-store.readJsonFileWithFallback` SDK helper is no longer exported in 10.6.
 The customized bridge reads the installed package manifest with Node's existing
 filesystem API and validates its object/name before resolving its executable;
@@ -105,9 +110,10 @@ The existing direct MCP SDK and TOML parser dependencies are also pinned to
 [GHSA-6qxp-vccf-f47h](https://github.com/advisories/GHSA-6qxp-vccf-f47h) and
 [GHSA-r4xh-jqrq-34v2](https://github.com/advisories/GHSA-r4xh-jqrq-34v2).
 The MCP issue affects HTTP OAuth rather than this product's stdio-only ACP MCP
-projection; the TOML parser is used by the isolated Codex config bridge. A
-production dependency audit after these npm-generated lock updates reports zero
-vulnerabilities. The real wrapper/config-overlay regression uses the new parser.
+projection. The TOML parser validates generated isolated-home configuration in
+the auth/config tests; the bridge no longer parses old adapter overrides. The
+recorded production dependency audit after these npm-generated lock updates
+reported zero vulnerabilities.
 
 ## Validation boundary
 
@@ -123,11 +129,13 @@ followed by another turn, cancellation, stream closing, process cleanup, and
 reuse of a store and handle created by real ACPX 0.19.1 without losing history or
 creating a new physical session. It calls no model, reads no user transcripts
 and uses only its temporary state. Node and Electron runs are recorded by the
-integration owner alongside fresh runtime and packaging checks.
+integration owner alongside fresh runtime and packaging checks. This dependency
+reuse does not admit unqualified application owner records or restore the removed
+ownership migration.
 
 Complete strict static checking of this extension is limited by missing type
-declarations for several upstream public SDK facades, including
-`acp-runtime-backend` and `runtime-doctor-migrations`, in the published artifact.
+declarations for upstream public SDK facades, including `acp-runtime-backend`, in
+the published artifact.
 The SDK export/load and behavior tests provide direct runtime evidence; no
 ambient declarations or broad casts are added to claim full static coverage.
 

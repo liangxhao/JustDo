@@ -48,7 +48,6 @@ export const mapExecutionModeToSandboxMode = (mode: CoworkExecutionMode): 'off' 
   switch (mode) {
     case 'sandbox':
       return 'all';
-    case 'auto':
     case 'local':
     default:
       return 'off';

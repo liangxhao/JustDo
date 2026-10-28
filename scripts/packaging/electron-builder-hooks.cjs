@@ -575,64 +575,35 @@ async function ensureBundledOpenClawRuntime(context) {
   }
 
   const gatewayAsarPath = path.join(runtimeRoot, 'gateway.asar');
-  if (existsSync(gatewayAsarPath)) {
-    let entries;
-    try {
-      // Normalize paths: on Windows, asar.listPackage may return backslash paths
-      entries = new Set(asar.listPackage(gatewayAsarPath).map(e => e.replace(/\\/g, '/')));
-    } catch (error) {
-      throw new Error(
-        '[electron-builder-hooks] Failed to read OpenClaw gateway.asar: ' +
-          `${gatewayAsarPath}. ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-
-    const hasOpenClawEntry = entries.has('/openclaw.mjs');
-    verifyPublicCliArchiveEntries(entries);
-    const hasNodeVersion = entries.has('/node-version.mjs');
-    const hasPackageMetadata = entries.has('/package.json');
-    const hasControlUiIndex = entries.has('/dist/control-ui/index.html');
-    const hasGatewayEntry = entries.has('/dist/entry.js') || entries.has('/dist/entry.mjs');
-
-    if (
-      !hasOpenClawEntry ||
-      !hasNodeVersion ||
-      !hasPackageMetadata ||
-      !hasControlUiIndex ||
-      !hasGatewayEntry
-    ) {
-      throw new Error(
-        '[electron-builder-hooks] OpenClaw gateway.asar is incomplete. ' +
-          `openclaw.mjs=${hasOpenClawEntry}, node-version.mjs=${hasNodeVersion}, ` +
-          `package.json=${hasPackageMetadata}, control-ui=${hasControlUiIndex}, entry=${hasGatewayEntry}.`,
-      );
-    }
-
-    return;
-  }
-
-  const legacyRequiredPaths = [
-    path.join(runtimeRoot, 'openclaw.mjs'),
-    path.join(runtimeRoot, 'dist', 'control-ui', 'index.html'),
-  ];
-
-  const hasLegacyEntry =
-    existsSync(path.join(runtimeRoot, 'dist', 'entry.js')) ||
-    existsSync(path.join(runtimeRoot, 'dist', 'entry.mjs'));
-  if (!hasLegacyEntry) {
+  let entries;
+  try {
+    // Normalize paths: on Windows, asar.listPackage may return backslash paths
+    entries = new Set(asar.listPackage(gatewayAsarPath).map(e => e.replace(/\\/g, '/')));
+  } catch (error) {
     throw new Error(
-      '[electron-builder-hooks] Missing OpenClaw runtime entry. ' +
-        `Expected ${path.join(runtimeRoot, 'dist', 'entry.js')} or ${path.join(runtimeRoot, 'dist', 'entry.mjs')}, ` +
-        `or ${path.join(runtimeRoot, 'gateway.asar')}.`,
+      '[electron-builder-hooks] Failed to read OpenClaw gateway.asar: ' +
+        `${gatewayAsarPath}. ${error instanceof Error ? error.message : String(error)}`,
     );
   }
 
-  const missingLegacy = legacyRequiredPaths.filter(candidate => !existsSync(candidate));
-  if (missingLegacy.length > 0) {
+  const hasOpenClawEntry = entries.has('/openclaw.mjs');
+  verifyPublicCliArchiveEntries(entries);
+  const hasNodeVersion = entries.has('/node-version.mjs');
+  const hasPackageMetadata = entries.has('/package.json');
+  const hasControlUiIndex = entries.has('/dist/control-ui/index.html');
+  const hasGatewayEntry = entries.has('/dist/entry.js') || entries.has('/dist/entry.mjs');
+
+  if (
+    !hasOpenClawEntry ||
+    !hasNodeVersion ||
+    !hasPackageMetadata ||
+    !hasControlUiIndex ||
+    !hasGatewayEntry
+  ) {
     throw new Error(
-      '[electron-builder-hooks] Bundled OpenClaw legacy runtime is incomplete. Missing: ' +
-        missingLegacy.join(', ') +
-        `. Run \`${buildHint}\` before packaging.`,
+      '[electron-builder-hooks] OpenClaw gateway.asar is incomplete. ' +
+        `openclaw.mjs=${hasOpenClawEntry}, node-version.mjs=${hasNodeVersion}, ` +
+        `package.json=${hasPackageMetadata}, control-ui=${hasControlUiIndex}, entry=${hasGatewayEntry}.`,
     );
   }
 }

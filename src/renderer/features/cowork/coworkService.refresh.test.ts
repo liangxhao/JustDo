@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
 import { store } from '../../store';
 import { CoworkService } from './coworkService';
-import { clearCurrentSession, setCurrentSession, setSessionListStatus, setSessions } from './coworkSlice';
+import { clearCurrentSession, setCurrentSession, setSessionListStatus, setSessionRuntimeActivity, setSessions } from './coworkSlice';
 import type { CoworkSession } from './coworkTypes';
 
 const session: CoworkSession = {
@@ -65,6 +65,18 @@ describe('session change refreshes', () => {
     await vi.advanceTimersByTimeAsync(30);
     expect(listSessions).toHaveBeenCalledOnce();
     expect(modelRefresh).toHaveBeenCalledOnce();
+  });
+
+  test('does not infer completion when the backend omits the final status', () => {
+    service.markSessionInProgress(session.id);
+    const callback = vi.mocked(window.electron.cowork.onStreamComplete).mock.calls[0][0];
+
+    callback({ sessionId: session.id } as Parameters<typeof callback>[0]);
+
+    expect(store.getState().cowork.currentSession?.status).toBe('running');
+    expect(store.getState().cowork.sessionRuntimeActivity[session.id]).toBe(true);
+    expect(modelRefresh).not.toHaveBeenCalled();
+    store.dispatch(setSessionRuntimeActivity({ sessionId: session.id, running: false }));
   });
 
   test('loads the initial sidebar when development mounts initialize concurrently', async () => {

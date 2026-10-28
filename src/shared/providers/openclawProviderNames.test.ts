@@ -69,7 +69,7 @@ describe('OpenClaw provider names', () => {
     expect(JUSTDO_RESERVED_OPENCLAW_PROVIDER_IDS).toEqual(['builtin_models', 'justdo']);
   });
 
-  test.each([' BUILTIN_MODELS ', 'JustDo', 'custom_7'])(
+  test.each([' BUILTIN_MODELS ', 'JustDo'])(
     'detects reserved provider id %s case-insensitively',
     name => {
       expect(isReservedOpenClawProviderId(name)).toBe(true);
@@ -90,7 +90,7 @@ describe('OpenClaw provider names', () => {
 
   test('normalizes a safe display name for the Gateway route', () => {
     expect(normalizeOpenClawProviderId(' OpenCode Proxy ')).toBe('opencode proxy');
-    expect(getEffectiveCustomProviderDisplayName('custom_0', '')).toBe('Custom0');
+    expect(getEffectiveCustomProviderDisplayName('local_proxy', '')).toBe('local_proxy');
   });
 });
 

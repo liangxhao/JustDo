@@ -260,9 +260,6 @@ export const mergeOpenClawSkillConfig = (
     }
   }
   const workshop = isRecord(mergedSkills.workshop) ? { ...mergedSkills.workshop } : {};
-  // The current Workshop stores skills directly; proposal approval settings no longer exist.
-  delete workshop.approvalPolicy;
-  delete workshop.maxPending;
   const autonomous = isRecord(workshop.autonomous) ? workshop.autonomous : {};
   mergedSkills.workshop = {
     ...workshop,

@@ -108,7 +108,7 @@ describe('built-in provider credential resolution', () => {
                 baseUrl: 'http://127.0.0.1:9108/v1',
                 models: [{ id: 'team-model' }],
               },
-              custom_0: {
+              acme: {
                 enabled: true,
                 apiKey: 'custom-secret',
                 baseUrl: 'https://custom.example.test/v1',
@@ -124,7 +124,7 @@ describe('built-in provider credential resolution', () => {
         apiKey: 'custom-secret',
         model: 'custom-model',
       },
-      providerMetadata: { providerName: 'custom_0' },
+      providerMetadata: { providerName: 'acme' },
     });
   });
 });
@@ -136,7 +136,7 @@ describe('OpenClaw custom provider names', () => {
         ({
           get: () => ({
             providers: {
-              custom_0: {
+              acme: {
                 enabled: true,
                 apiKey: 'secret-key',
                 baseUrl: 'https://example.test/v1',
@@ -156,7 +156,7 @@ describe('OpenClaw custom provider names', () => {
         ({
           get: () => ({
             providers: {
-              custom_0: { enabled: true, displayName: 'builtin_models' },
+              acme: { enabled: true, displayName: 'builtin_models' },
             },
           }),
         }) as unknown as SqliteStore,
@@ -164,7 +164,7 @@ describe('OpenClaw custom provider names', () => {
 
     expect(validateConfiguredOpenClawProviderNames()).toEqual({
       ok: false,
-      providerKey: 'custom_0',
+      providerKey: 'acme',
       displayName: 'builtin_models',
       reason: 'reserved',
     });
@@ -176,8 +176,8 @@ describe('OpenClaw custom provider names', () => {
         ({
           get: () => ({
             providers: {
-              custom_0: { enabled: true, displayName: 'AcmeProxy' },
-              custom_1: { enabled: true, displayName: 'ACMEPROXY' },
+              acme: { enabled: true, displayName: 'AcmeProxy' },
+              spare: { enabled: true, displayName: 'ACMEPROXY' },
             },
           }),
         }) as unknown as SqliteStore,
@@ -185,7 +185,7 @@ describe('OpenClaw custom provider names', () => {
 
     expect(validateConfiguredOpenClawProviderNames()).toMatchObject({
       ok: false,
-      providerKey: 'custom_1',
+      providerKey: 'spare',
       reason: 'duplicate',
     });
   });
@@ -196,7 +196,7 @@ describe('OpenClaw custom provider names', () => {
         ({
           get: () => ({
             providers: {
-              custom_0: { enabled: true, displayName: 42 },
+              acme: { enabled: true, displayName: 42 },
             },
           }),
         }) as unknown as SqliteStore,
@@ -204,8 +204,8 @@ describe('OpenClaw custom provider names', () => {
 
     expect(validateConfiguredOpenClawProviderNames()).toEqual({
       ok: false,
-      providerKey: 'custom_0',
-      displayName: 'Custom0',
+      providerKey: 'acme',
+      displayName: 'acme',
       reason: 'format',
     });
   });
@@ -216,8 +216,8 @@ describe('OpenClaw custom provider names', () => {
         ({
           get: () => ({
             providers: {
-              custom_0: { enabled: true, displayName: 'AcmeProxy' },
-              custom_1: { enabled: true, displayName: '' },
+              acme: { enabled: true, displayName: 'AcmeProxy' },
+              spare: { enabled: true, displayName: '' },
             },
           }),
         }) as unknown as SqliteStore,
@@ -225,8 +225,8 @@ describe('OpenClaw custom provider names', () => {
 
     expect(validateConfiguredOpenClawProviderNames()).toEqual({ ok: true });
     expect(getProviderDisplayNameMap()).toEqual({
-      custom_0: 'AcmeProxy',
-      custom_1: 'Custom1',
+      acme: 'AcmeProxy',
+      spare: 'spare',
     });
   });
 
@@ -335,9 +335,9 @@ describe('resolveRawApiConfig logging', () => {
 
   it('keeps custom headers on non-built-in providers only', () => {
     const appConfig = {
-      model: { defaultModel: 'custom-model', defaultModelProvider: 'custom_0' },
+      model: { defaultModel: 'custom-model', defaultModelProvider: 'acme' },
       providers: {
-        custom_0: {
+        acme: {
           enabled: true,
           apiKey: 'secret-key',
           baseUrl: 'https://example.test/v1',
@@ -359,7 +359,7 @@ describe('resolveRawApiConfig logging', () => {
     const enabledProviders = resolveAllEnabledProviderConfigs();
     expect(enabledProviders).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ providerName: 'custom_0', headers: { 'X-Tenant': 'tenant-a' } }),
+        expect.objectContaining({ providerName: 'acme', headers: { 'X-Tenant': 'tenant-a' } }),
       ]),
     );
     expect(

@@ -43,17 +43,16 @@ describe('normalizeAgentEvent', () => {
       frameSeq: 90,
       timestamp: 900,
     });
-    expect(result.usedAseqFallback).toBe(false);
   });
 
-  test('uses the bundled runtime aseq compatibility fallback', () => {
+  test('rejects events without a native sequence even when diagnostic or frame sequences exist', () => {
     const result = normalizeAgentEvent({
       deliveryEvent: 'session.tool',
+      frameSeq: 90,
       payload: { runId: 'run-1', aseq: 8, stream: 'tool', data: {} },
     });
 
-    expect(result.event?.agentSeq).toBe(8);
-    expect(result.usedAseqFallback).toBe(true);
+    expect(result).toEqual({ event: null, reason: 'missing-sequence' });
   });
 
   test('rejects malformed ordering fields', () => {

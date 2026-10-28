@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3';
-import { app, safeStorage } from 'electron';
+import { app } from 'electron';
 import { EventEmitter } from 'events';
 import path from 'path';
 
@@ -48,7 +48,6 @@ export class SqliteStore {
     const store = new SqliteStore(db, dbPath);
     try {
       store.initializeTables();
-      store.protectLegacyAppConfigCredentials();
     } catch (error) {
       db.close();
       throw error;
@@ -56,26 +55,9 @@ export class SqliteStore {
     return store;
   }
 
-  private protectLegacyAppConfigCredentials(): void {
-    const row = this.db.prepare('SELECT value FROM kv WHERE key = ?').get('app_config') as
-      { value: string } | undefined;
-    if (!row) return;
-    let config: unknown;
-    try {
-      config = JSON.parse(row.value);
-    } catch {
-      return;
-    }
-    const protectedConfig = transformAppConfigCredentials(config, 'encrypt', safeStorage);
-    if (JSON.stringify(config) === JSON.stringify(protectedConfig)) return;
-    this.db.pragma('secure_delete = ON');
-    this.db
-      .prepare('UPDATE kv SET value = ?, updated_at = ? WHERE key = ?')
-      .run(JSON.stringify(protectedConfig), Date.now(), 'app_config');
-    this.db.pragma('wal_checkpoint(TRUNCATE)');
-  }
-
   private initializeTables() {
+    // Startup migration creates a fresh product database. Current databases
+    // reopen as-is; intermediate development schemas are not altered in place.
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS kv (
         key TEXT PRIMARY KEY,
@@ -98,6 +80,11 @@ export class SqliteStore {
         agent_id TEXT NOT NULL DEFAULT 'main',
         model_ref TEXT,
         source TEXT,
+        native_session_key TEXT,
+        native_parent_session_id TEXT,
+        handoff_from_session_id TEXT REFERENCES cowork_sessions(id) ON DELETE SET NULL,
+        handoff_from_session_title TEXT,
+        handoff_request_id TEXT,
         forked_from_session_id TEXT REFERENCES cowork_sessions(id) ON DELETE SET NULL,
         forked_from_session_title TEXT,
         forked_from_entry_id TEXT,
@@ -106,32 +93,12 @@ export class SqliteStore {
         updated_at INTEGER NOT NULL
       );
     `);
-    this.ensureColumn('cowork_sessions', 'permission_mode', 'TEXT');
-    this.ensureColumn('cowork_sessions', 'model_ref', 'TEXT');
-    this.ensureColumn('cowork_sessions', 'source', 'TEXT');
-    this.ensureColumn('cowork_sessions', 'native_session_key', 'TEXT');
-    this.ensureColumn('cowork_sessions', 'native_parent_session_id', 'TEXT');
     this.db.exec(
       'CREATE UNIQUE INDEX IF NOT EXISTS idx_cowork_native_session_key ON cowork_sessions(native_session_key) WHERE native_session_key IS NOT NULL',
     );
-    this.ensureColumn(
-      'cowork_sessions',
-      'handoff_from_session_id',
-      'TEXT REFERENCES cowork_sessions(id) ON DELETE SET NULL',
-    );
-    this.ensureColumn('cowork_sessions', 'handoff_from_session_title', 'TEXT');
-    this.ensureColumn('cowork_sessions', 'handoff_request_id', 'TEXT');
     this.db.exec(
       'CREATE UNIQUE INDEX IF NOT EXISTS idx_cowork_handoff_request ON cowork_sessions(handoff_request_id) WHERE handoff_request_id IS NOT NULL',
     );
-
-    this.ensureColumn(
-      'cowork_sessions',
-      'forked_from_session_id',
-      'TEXT REFERENCES cowork_sessions(id) ON DELETE SET NULL',
-    );
-    this.ensureColumn('cowork_sessions', 'forked_from_session_title', 'TEXT');
-    this.ensureColumn('cowork_sessions', 'forked_from_entry_id', 'TEXT');
 
     // Published JSONL profiles are backed up and isolated before this connection
     // opens. Never delete the only surviving cache or upgrade it in place here.
@@ -150,9 +117,6 @@ export class SqliteStore {
         defaults_applied INTEGER NOT NULL DEFAULT 1
       );
     `);
-
-    // Existing restored sessions keep any choices made before this field existed.
-    this.ensureColumn('history_session_bindings', 'defaults_applied', 'INTEGER NOT NULL DEFAULT 1');
 
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS cowork_session_runs (
@@ -176,7 +140,6 @@ export class SqliteStore {
         ON cowork_session_runs(session_id)
         WHERE ended_at IS NULL;
     `);
-    this.ensureColumn('cowork_session_runs', 'accepted_at', 'INTEGER');
     initializeSessionDiagnosticsTables(this.db);
 
     this.db.exec(`
@@ -186,6 +149,10 @@ export class SqliteStore {
         cowork_session_id TEXT NOT NULL,
         agent_id TEXT NOT NULL,
         openclaw_session_key TEXT,
+        execution_run_id TEXT,
+        native_session_id TEXT,
+        lifecycle_revision TEXT,
+        execution_state TEXT,
         cwd TEXT NOT NULL,
         status TEXT NOT NULL CHECK (status IN ('running', 'completed', 'error', 'cancelled')),
         created_at INTEGER NOT NULL,
@@ -216,43 +183,6 @@ export class SqliteStore {
         WHERE cowork_session_id = OLD.id;
       END;
     `);
-    this.ensureColumn('cowork_external_sessions', 'agent_id', "TEXT NOT NULL DEFAULT 'main'");
-    this.ensureColumn('cowork_external_sessions', 'openclaw_session_key', 'TEXT');
-    this.ensureColumn('cowork_external_sessions', 'execution_run_id', 'TEXT');
-    this.ensureColumn('cowork_external_sessions', 'native_session_id', 'TEXT');
-    this.ensureColumn('cowork_external_sessions', 'lifecycle_revision', 'TEXT');
-    this.ensureColumn('cowork_external_sessions', 'execution_state', 'TEXT');
-
-    // The former dual-session Plan design stored one globally unique
-    // implementation key per handoff and a separate transcript lineage table.
-    // Same-session reset deliberately does not preserve that Plan-only data.
-    this.db.exec('DROP TABLE IF EXISTS cowork_session_segments;');
-    const existingPlanHandoffColumns = this.db.pragma('table_info(cowork_plan_handoffs)') as Array<{
-      name: string;
-      notnull: number;
-    }>;
-    const existingPlanHandoffIndexes = this.db.pragma('index_list(cowork_plan_handoffs)') as Array<{
-      name: string;
-      unique: number;
-    }>;
-    const hasUniqueImplementationSessionKey = existingPlanHandoffIndexes.some(
-      index =>
-        index.unique === 1 &&
-        (
-          this.db.prepare('SELECT name FROM pragma_index_info(?)').all(index.name) as Array<{
-            name: string;
-          }>
-        ).some(column => column.name === 'implementation_session_key'),
-    );
-    if (
-      existingPlanHandoffColumns.length > 0 &&
-      (existingPlanHandoffColumns.find(column => column.name === 'artifact_workspace_root')
-        ?.notnull !== 1 ||
-        hasUniqueImplementationSessionKey)
-    ) {
-      this.db.exec('DROP TABLE cowork_plan_handoffs;');
-    }
-
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS cowork_plan_handoffs (
         plan_id TEXT PRIMARY KEY,
@@ -307,14 +237,11 @@ export class SqliteStore {
         skill_ids TEXT NOT NULL DEFAULT '[]',
         enabled INTEGER NOT NULL DEFAULT 1,
         is_default INTEGER NOT NULL DEFAULT 0,
+        deleted_at INTEGER,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
       );
     `);
-
-    const agentColumns = this.db.pragma('table_info(agents)') as Array<{ name: string }>;
-    if (!agentColumns.some(column => column.name === 'deleted_at'))
-      this.db.exec('ALTER TABLE agents ADD COLUMN deleted_at INTEGER');
 
     initializeCollaborationTables(this.db);
     initializeTeamDiscussionTables(this.db);
@@ -332,8 +259,6 @@ export class SqliteStore {
         updated_at INTEGER NOT NULL
       );
     `);
-    this.ensureColumn('mcp_servers', 'description', "TEXT NOT NULL DEFAULT ''");
-
     // Create OpenClaw hooks table
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS openclaw_hooks (
@@ -396,12 +321,6 @@ export class SqliteStore {
         deleted_at INTEGER NOT NULL
       );
     `);
-    this.ensureColumn(
-      'scheduled_task_run_receipts',
-      'system_managed',
-      'INTEGER NOT NULL DEFAULT 0',
-    );
-
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_cowork_sessions_agent_order
       ON cowork_sessions(agent_id, pinned DESC, updated_at DESC);
@@ -412,47 +331,22 @@ export class SqliteStore {
       ON cowork_sessions(pinned DESC, updated_at DESC);
     `);
 
-    // Migration: Ensure default 'main' agent exists
+    // Ensure the default main agent exists in a new product database.
     try {
       const mainAgent = this.db.prepare("SELECT id FROM agents WHERE id = 'main'").get();
       if (!mainAgent) {
         const now = Date.now();
-        // Read existing systemPrompt from cowork_config to inherit into main agent
-        let existingSystemPrompt = '';
-        try {
-          const spRow = this.db
-            .prepare("SELECT value FROM cowork_config WHERE key = 'systemPrompt'")
-            .get() as { value: string } | undefined;
-          if (spRow?.value) {
-            existingSystemPrompt = spRow.value;
-          }
-        } catch {
-          // No existing systemPrompt
-        }
         this.db
           .prepare(
             `
           INSERT INTO agents (id, name, description, system_prompt, identity, model, icon, skill_ids, enabled, is_default, created_at, updated_at)
-          VALUES ('main', 'main', '', ?, '', '', '', '[]', 1, 1, ?, ?)
+          VALUES ('main', 'main', '', '', '', '', '', '[]', 1, 1, ?, ?)
         `,
           )
-          .run(existingSystemPrompt, now, now);
+          .run(now, now);
       }
     } catch (error) {
       console.warn('Failed to ensure main agent:', error);
-    }
-
-    try {
-      this.db.exec(
-        `UPDATE cowork_sessions SET execution_mode = 'local' WHERE execution_mode IN ('container', 'auto');`,
-      );
-      this.db.exec(`
-        UPDATE cowork_config
-        SET value = 'local'
-        WHERE key = 'executionMode' AND value IN ('container', 'auto');
-      `);
-    } catch (error) {
-      console.warn('Failed to migrate cowork execution mode:', error);
     }
 
     this.db.pragma('optimize');
@@ -482,14 +376,14 @@ export class SqliteStore {
       return undefined;
     }
     return (
-      key === 'app_config' ? transformAppConfigCredentials(value, 'decrypt', safeStorage) : value
+      key === 'app_config' ? transformAppConfigCredentials(value) : value
     ) as T;
   }
 
   set<T = unknown>(key: string, value: T): void {
     const oldValue = this.get<T>(key);
     const persistedValue =
-      key === 'app_config' ? transformAppConfigCredentials(value, 'encrypt', safeStorage) : value;
+      key === 'app_config' ? transformAppConfigCredentials(value) : value;
     const now = Date.now();
     this.db
       .prepare(
@@ -513,12 +407,6 @@ export class SqliteStore {
 
   getDatabase(): Database.Database {
     return this.db;
-  }
-
-  private ensureColumn(tableName: string, columnName: string, columnDefinition: string): void {
-    const columns = this.db.pragma(`table_info(${tableName})`) as Array<{ name: string }>;
-    if (columns.some(column => column.name === columnName)) return;
-    this.db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${columnDefinition}`);
   }
 
   close(): void {

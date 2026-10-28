@@ -185,8 +185,7 @@ export const validateAgentRuntimeSettings = (
     return { ok: false, error: 'Invalid Subagent settings.' };
   }
 
-  const codeMode =
-    value.codeMode === undefined ? DEFAULT_AGENT_RUNTIME_SETTINGS.codeMode : value.codeMode;
+  const codeMode = value.codeMode;
   if (
     !isRecord(codeMode) ||
     !Object.values(AgentRuntimeCodeMode).includes(codeMode.mode as AgentRuntimeCodeModeValue)
@@ -194,9 +193,10 @@ export const validateAgentRuntimeSettings = (
     return { ok: false, error: 'Invalid Code Mode settings.' };
   }
 
-  // Version 1 predates main Agent thinking preferences. Preserve stored
-  // settings while filling the new preference with its managed default.
-  const agent = isRecord(value.agent) ? value.agent : DEFAULT_AGENT_RUNTIME_SETTINGS.agent;
+  const agent = value.agent;
+  if (!isRecord(agent)) {
+    return { ok: false, error: 'Invalid Agent settings.' };
+  }
   const agentThinking = agent.thinking;
   let validatedAgentThinking: AgentRuntimeThinkingLevelValue | null = null;
   if (agentThinking !== null) {
@@ -205,8 +205,7 @@ export const validateAgentRuntimeSettings = (
     }
     validatedAgentThinking = agentThinking;
   }
-  const agentRunTimeoutSeconds =
-    agent.runTimeoutSeconds ?? DEFAULT_AGENT_RUNTIME_SETTINGS.agent.runTimeoutSeconds;
+  const agentRunTimeoutSeconds = agent.runTimeoutSeconds;
   if (
     agentRunTimeoutSeconds !== 0 &&
     !isIntegerInRange(
@@ -217,8 +216,7 @@ export const validateAgentRuntimeSettings = (
   ) {
     return { ok: false, error: 'Agent run timeout is outside the supported range.' };
   }
-  const agentMaxConcurrent =
-    agent.maxConcurrent ?? DEFAULT_AGENT_RUNTIME_SETTINGS.agent.maxConcurrent;
+  const agentMaxConcurrent = agent.maxConcurrent;
   let validatedAgentMaxConcurrent: number | null = null;
   if (agentMaxConcurrent !== null) {
     if (
@@ -233,9 +231,10 @@ export const validateAgentRuntimeSettings = (
     validatedAgentMaxConcurrent = agentMaxConcurrent;
   }
 
-  const askUserQuestion = isRecord(value.askUserQuestion)
-    ? value.askUserQuestion
-    : DEFAULT_AGENT_RUNTIME_SETTINGS.askUserQuestion;
+  const askUserQuestion = value.askUserQuestion;
+  if (!isRecord(askUserQuestion)) {
+    return { ok: false, error: 'Invalid ask_user_question settings.' };
+  }
   const askUserQuestionTimeoutMinutes = askUserQuestion.timeoutMinutes;
   if (
     !isIntegerInRange(
@@ -247,9 +246,10 @@ export const validateAgentRuntimeSettings = (
     return { ok: false, error: 'ask_user_question timeout is outside the supported range.' };
   }
 
-  const automation = isRecord(value.automation)
-    ? value.automation
-    : DEFAULT_AGENT_RUNTIME_SETTINGS.automation;
+  const automation = value.automation;
+  if (!isRecord(automation)) {
+    return { ok: false, error: 'Invalid scheduled task settings.' };
+  }
   const automationApprovalTimeoutMinutes = automation.approvalTimeoutMinutes;
   if (
     !AUTOMATION_APPROVAL_TIMEOUT_MINUTES.includes(
@@ -259,12 +259,12 @@ export const validateAgentRuntimeSettings = (
     return { ok: false, error: 'Scheduled task approval timeout is unsupported.' };
   }
 
-  // Version 1 predates MCP runtime preferences. Keep older persisted settings
-  // valid while making OpenClaw's 60-second request default explicit.
-  const mcp = isRecord(value.mcp) ? value.mcp : DEFAULT_AGENT_RUNTIME_SETTINGS.mcp;
+  const mcp = value.mcp;
+  if (!isRecord(mcp)) {
+    return { ok: false, error: 'Invalid MCP settings.' };
+  }
   const mcpRequestTimeoutSeconds = mcp.requestTimeoutSeconds;
-  // The removed inherit preference (null) now uses the enabled product default.
-  const appsEnabled = mcp.appsEnabled ?? DEFAULT_AGENT_RUNTIME_SETTINGS.mcp.appsEnabled;
+  const appsEnabled = mcp.appsEnabled;
   if (typeof appsEnabled !== 'boolean') {
     return { ok: false, error: 'Invalid MCP Apps preference.' };
   }
@@ -278,17 +278,16 @@ export const validateAgentRuntimeSettings = (
     return { ok: false, error: 'MCP request timeout is outside the supported range.' };
   }
 
-  // Version 1 predates session-tool visibility preferences. Preserve the
-  // pre-v2026.8.2 parent/child boundary for existing profiles.
-  const sessions = isRecord(value.sessions)
-    ? value.sessions
-    : DEFAULT_AGENT_RUNTIME_SETTINGS.sessions;
+  const sessions = value.sessions;
+  if (!isRecord(sessions)) {
+    return { ok: false, error: 'Invalid session settings.' };
+  }
   const sessionVisibility = sessions.visibility;
   if (!isSessionVisibility(sessionVisibility)) {
     return { ok: false, error: 'Invalid session visibility.' };
   }
 
-  const swarm = value.swarm === undefined ? DEFAULT_AGENT_RUNTIME_SETTINGS.swarm : value.swarm;
+  const swarm = value.swarm;
   if (!isRecord(swarm) || typeof swarm.enabled !== 'boolean') {
     return { ok: false, error: 'Invalid Swarm settings.' };
   }
@@ -314,8 +313,7 @@ export const validateAgentRuntimeSettings = (
   }
 
   const subagents = value.subagents;
-  const delegationMode =
-    subagents.delegationMode ?? DEFAULT_AGENT_RUNTIME_SETTINGS.subagents.delegationMode;
+  const delegationMode = subagents.delegationMode;
   let validatedDelegationMode: AgentRuntimeDelegationModeValue | null = null;
   if (delegationMode !== null) {
     if (
@@ -391,8 +389,7 @@ export const validateAgentRuntimeSettings = (
     return { ok: false, error: 'Subagent run timeout is outside the supported range.' };
   }
 
-  const archiveAfterMinutes =
-    subagents.archiveAfterMinutes ?? DEFAULT_AGENT_RUNTIME_SETTINGS.subagents.archiveAfterMinutes;
+  const archiveAfterMinutes = subagents.archiveAfterMinutes;
   if (
     !isIntegerInRange(
       archiveAfterMinutes,
