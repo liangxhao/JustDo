@@ -693,8 +693,8 @@ export const settingsTranslations = {
     appUpdateFrequencyDaily: '每天',
     appUpdateFrequencyWeekly: '每周',
     appUpdateFrequencyNeverHint: '仅在你手动点击“检查更新”时检查',
-    appUpdateFrequencyDailyHint: '每天本地时间 10:00 检查；错过后将在下次启动时补查',
-    appUpdateFrequencyWeeklyHint: '每周一、本地时间 10:00 检查；错过后将在下次启动时补查',
+    appUpdateFrequencyDailyHint: '应用运行时，每天本地时间 10:00 检查；启动时不补查',
+    appUpdateFrequencyWeeklyHint: '应用运行时，每周一本地时间 10:00 检查；启动时不补查',
     appUpdateFrequencySaveError: '无法保存检查频率，请重试',
     appearance: '外观',
     appearanceMode: '外观模式',
@@ -1752,9 +1752,9 @@ export const settingsTranslations = {
     appUpdateFrequencyWeekly: 'Weekly',
     appUpdateFrequencyNeverHint: 'Checks only when you select “Check for Updates” manually',
     appUpdateFrequencyDailyHint:
-      'Checks daily at 10:00 local time; a missed check runs after the next launch',
+      'Checks daily at 10:00 local time while the app is running; no catch-up check at startup',
     appUpdateFrequencyWeeklyHint:
-      'Checks Mondays at 10:00 local time; a missed check runs after the next launch',
+      'Checks Mondays at 10:00 local time while the app is running; no catch-up check at startup',
     appUpdateFrequencySaveError: 'Unable to save the update check frequency. Please try again',
     appearance: 'Appearance',
     appearanceMode: 'Appearance Mode',

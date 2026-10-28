@@ -18,7 +18,7 @@ import {
 } from '../../../shared/app/appUpdate';
 import { log } from '../logger';
 
-const STARTUP_CHECK_DELAY_MS = 10_000;
+const MISSED_CHECK_DELAY_MS = 10_000;
 const SCHEDULED_CHECK_HOUR = 10;
 
 type AutoUpdateServiceOptions = {
@@ -138,10 +138,12 @@ export const resolveNextAutomaticUpdateCheckAt = ({
   frequency,
   lastCheckAt,
   now,
+  skipMissedCheck = false,
 }: {
   frequency: AppUpdateCheckFrequency;
   lastCheckAt: unknown;
   now: number;
+  skipMissedCheck?: boolean;
 }): number | undefined => {
   if (frequency === CheckFrequency.Never) return undefined;
 
@@ -160,10 +162,11 @@ export const resolveNextAutomaticUpdateCheckAt = ({
   const normalizedLastCheckAt =
     typeof lastCheckAt === 'number' && Number.isFinite(lastCheckAt) ? lastCheckAt : undefined;
   if (
-    normalizedLastCheckAt === undefined ||
-    normalizedLastCheckAt < mostRecentCheckTime.getTime()
+    !skipMissedCheck &&
+    (normalizedLastCheckAt === undefined ||
+      normalizedLastCheckAt < mostRecentCheckTime.getTime())
   ) {
-    return now + STARTUP_CHECK_DELAY_MS;
+    return now + MISSED_CHECK_DELAY_MS;
   }
 
   const nextCheckTime = new Date(mostRecentCheckTime);
@@ -266,7 +269,7 @@ export class AutoUpdateService {
     return this.releaseHistoryPromise;
   }
 
-  scheduleAutomaticChecks(): void {
+  scheduleAutomaticChecks({ skipMissedCheck = false }: { skipMissedCheck?: boolean } = {}): void {
     if (this.automaticCheckTimer) {
       clearTimeout(this.automaticCheckTimer);
       this.automaticCheckTimer = null;
@@ -280,6 +283,7 @@ export class AutoUpdateService {
       frequency,
       lastCheckAt: this.readLastAutomaticCheckAt(),
       now,
+      skipMissedCheck,
     });
     if (nextCheckAt === undefined) return;
 

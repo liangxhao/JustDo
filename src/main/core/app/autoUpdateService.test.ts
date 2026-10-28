@@ -196,7 +196,7 @@ describe('AutoUpdateService', () => {
     try {
       const updater = new FakeUpdater();
       const { service, setLastAutomaticCheckAt } = makeService(updater, false);
-      service.scheduleAutomaticChecks();
+      service.scheduleAutomaticChecks({ skipMissedCheck: true });
       await vi.advanceTimersByTimeAsync(60_000);
       expect(updater.checkForUpdates).not.toHaveBeenCalled();
       expect(setLastAutomaticCheckAt).not.toHaveBeenCalled();
@@ -258,8 +258,9 @@ describe('AutoUpdateService', () => {
     });
   });
 
-  test('persists frequency changes and disables the automatic schedule for never', () => {
+  test('persists never while keeping manual update checks available', async () => {
     const updater = new FakeUpdater();
+    updater.checkForUpdates.mockResolvedValue(null);
     const { service, setCheckFrequency } = makeService(updater);
 
     expect(service.getPreferences().checkFrequency).toBe(AppUpdateCheckFrequency.Daily);
@@ -269,9 +270,41 @@ describe('AutoUpdateService', () => {
     });
     expect(preferences).not.toHaveProperty('nextCheckAt');
     expect(setCheckFrequency).toHaveBeenCalledWith(AppUpdateCheckFrequency.Never);
+
+    await service.checkForUpdates();
+    expect(updater.checkForUpdates).toHaveBeenCalledOnce();
   });
 
-  test('runs an overdue automatic check shortly after startup and records the attempt', async () => {
+  test('skips startup catch-up but checks at the next regular time and records the attempt', async () => {
+    vi.useFakeTimers();
+    try {
+      const now = new Date(2026, 7, 29, 15, 0, 0).getTime();
+      const nextCheckAt = new Date(2026, 7, 30, 10, 0, 0).getTime();
+      vi.setSystemTime(now);
+      const updater = new FakeUpdater();
+      updater.checkForUpdates.mockResolvedValue(null);
+      const { service, setLastAutomaticCheckAt } = makeService(updater, true, {
+        frequency: AppUpdateCheckFrequency.Daily,
+        lastAutomaticCheckAt: new Date(2026, 7, 28, 10, 0, 0).getTime(),
+      });
+
+      service.scheduleAutomaticChecks({ skipMissedCheck: true });
+      expect(service.getPreferences().nextCheckAt).toBe(nextCheckAt);
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(updater.checkForUpdates).not.toHaveBeenCalled();
+      expect(setLastAutomaticCheckAt).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(nextCheckAt - now - 10_000);
+      expect(updater.checkForUpdates).toHaveBeenCalledOnce();
+      expect(setLastAutomaticCheckAt).toHaveBeenCalledWith(nextCheckAt);
+      expect(service.getPreferences().nextCheckAt).toBe(new Date(2026, 7, 31, 10, 0, 0).getTime());
+      expect(updater.downloadUpdate).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('still catches up after an explicit frequency change and records the attempt', async () => {
     vi.useFakeTimers();
     try {
       const now = new Date(2026, 7, 29, 15, 0, 0).getTime();
@@ -283,7 +316,7 @@ describe('AutoUpdateService', () => {
         lastAutomaticCheckAt: new Date(2026, 7, 28, 10, 0, 0).getTime(),
       });
 
-      service.scheduleAutomaticChecks();
+      service.setCheckFrequency(AppUpdateCheckFrequency.Daily);
       expect(service.getPreferences().nextCheckAt).toBe(now + 10_000);
       await vi.advanceTimersByTimeAsync(10_000);
 
@@ -467,7 +500,41 @@ describe('parseReleaseHistory', () => {
 });
 
 describe('resolveNextAutomaticUpdateCheckAt', () => {
-  test('checks shortly after startup when the latest daily slot was missed', () => {
+  test.each([
+    {
+      frequency: AppUpdateCheckFrequency.Daily,
+      now: new Date(2026, 7, 26, 9, 0, 0).getTime(),
+      nextCheckAt: new Date(2026, 7, 26, 10, 0, 0).getTime(),
+    },
+    {
+      frequency: AppUpdateCheckFrequency.Daily,
+      now: new Date(2026, 7, 26, 15, 0, 0).getTime(),
+      nextCheckAt: new Date(2026, 7, 27, 10, 0, 0).getTime(),
+    },
+    {
+      frequency: AppUpdateCheckFrequency.Weekly,
+      now: new Date(2026, 7, 26, 15, 0, 0).getTime(),
+      nextCheckAt: new Date(2026, 7, 31, 10, 0, 0).getTime(),
+    },
+    {
+      frequency: AppUpdateCheckFrequency.Weekly,
+      now: new Date(2026, 7, 31, 9, 0, 0).getTime(),
+      nextCheckAt: new Date(2026, 7, 31, 10, 0, 0).getTime(),
+    },
+  ])('schedules a regular $frequency slot at startup without a previous check: $now', ({
+    frequency,
+    now,
+    nextCheckAt,
+  }) => {
+    expect(resolveNextAutomaticUpdateCheckAt({
+      frequency,
+      lastCheckAt: undefined,
+      now,
+      skipMissedCheck: true,
+    })).toBe(nextCheckAt);
+  });
+
+  test('allows catch-up when the latest daily slot was missed', () => {
     const now = new Date(2026, 7, 29, 15, 0, 0).getTime();
 
     expect(

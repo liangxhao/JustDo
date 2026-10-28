@@ -2659,7 +2659,7 @@ if (agentBridgeArgv) {
     }
 
     createTray(() => mainWindow);
-    autoUpdateService.scheduleAutomaticChecks();
+    autoUpdateService.scheduleAutomaticChecks({ skipMissedCheck: true });
 
     // Reconnect OpenClaw gateway WS after system wake from sleep/suspend
     powerMonitor.on('resume', () => {

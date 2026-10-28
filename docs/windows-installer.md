@@ -596,6 +596,10 @@ not produce `app-update.yml`, an update-configuration marker, `latest.yml` or
 release history. Packaging also removes stale copies of those files. Installed
 startup enables automatic checks only when the NSIS installation marker, a
 non-empty explicit generic feed and the matching configuration marker agree.
+Startup only schedules the next regular daily or weekly check; it never performs
+an immediate check or catches up a missed slot. The General settings frequency
+control and manual checks in About & Help remain available. Frequency changes
+and subsequent timer scheduling retain their existing catch-up behavior.
 Configured URLs are used without hostname filtering; their availability is
 the deployment's responsibility.
 Deployments configure their internal feed in `src/config/appUpdate.ts` before
