@@ -44,13 +44,6 @@ import {
   writeStartupJson,
 } from './startupState';
 
-// The startup's in-memory windows still initialize Chromium's shared network
-// service. Windows keeps these default-profile stores open until process exit.
-const ACTIVE_STARTUP_PROFILE_ENTRIES = new Set([
-  'Local Storage',
-  'Network',
-  'Shared Dictionary',
-]);
 const STARTUP_ISOLATION_EXCLUSIONS = new Set([
   'backups',
   'logs',
@@ -59,8 +52,8 @@ const STARTUP_ISOLATION_EXCLUSIONS = new Set([
   'SingletonLock',
   'SingletonCookie',
   'SingletonSocket',
-  ...ACTIVE_STARTUP_PROFILE_ENTRIES,
 ].map(profileEntryKey));
+const OPTIONAL_PROFILE_ACCESS_ERRORS = new Set(['EPERM', 'EACCES', 'EBUSY', 'ETXTBSY']);
 
 function profileEntryKey(name: string): string {
   return process.platform === 'win32' ? name.toLowerCase() : name;
@@ -71,9 +64,45 @@ function shouldIsolateProfileEntry(name: string): boolean {
   return !STARTUP_ISOLATION_EXCLUSIONS.has(key) && !key.startsWith(`${STARTUP_STATE_FILE}.`);
 }
 
-function ownsHistoryAuthority(name: string): boolean {
+function requiresProfileIsolation(name: string): boolean {
   const key = profileEntryKey(name);
-  return key === 'openclaw' || ['', '-wal', '-shm', '-journal'].some(suffix => key === `${DB_FILENAME}${suffix}`);
+  return key === 'openclaw' || key === 'outbound-header-proxy' || key === 'developer' ||
+    key.startsWith(profileEntryKey(DB_FILENAME));
+}
+
+function retainUnavailableOptionalProfileEntry(name: string, error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException | null)?.code;
+  if (requiresProfileIsolation(name) || !code || !OPTIONAL_PROFILE_ACCESS_ERRORS.has(code))
+    return false;
+  console.warn('[StartupCoordinator] Left an unavailable optional profile entry in place:', name, code);
+  return true;
+}
+
+/** Versions choose recovery; the current native owner still admits the actual data. */
+function canResumePendingStartup(
+  previous: StartupJournal,
+  decision: StartupDecision,
+  target: StartupIdentity,
+): boolean {
+  const pending = decision.journal;
+  return !!pending &&
+    (decision.route === previous.route || (previous.stage === StartupStage.Complete &&
+      (decision.route === StartupRoute.Normal || decision.route === StartupRoute.Upgrade))) &&
+    previous.transactionId === pending.transactionId && previous.stage === pending.stage &&
+    !!previous.targetIdentity && !!pending.targetIdentity &&
+    sameStartupIdentity(previous.targetIdentity, pending.targetIdentity) &&
+    assessStartupDelivery({ source: previous.targetIdentity, target }).allowed;
+}
+
+function startupRecoveryKey(journal: StartupJournal): string {
+  const identity = (value?: StartupIdentity) => value
+    ? [value.appVersion, value.runtimeVersion, value.runtimeBuildId] : null;
+  return JSON.stringify([
+    journal.version, journal.generation, journal.route, journal.stage, journal.transactionId,
+    identity(journal.targetIdentity), identity(journal.completedIdentity), identity(journal.lastOpenedIdentity),
+    journal.schemaPreparationPending === true,
+    (journal.isolatedEntries ?? []).map(profileEntryKey).sort(),
+  ]);
 }
 
 export type NativeStartupDatabaseRuntime = {
@@ -81,6 +110,7 @@ export type NativeStartupDatabaseRuntime = {
   deliveryIdentity(): Promise<{ runtimeVersion: string; runtimeBuildId: string }>;
   identity(): Promise<{ runtimeVersion: string; runtimeBuildId: string }>;
   inspect(): Promise<{ needsUpgrade: boolean }>;
+  /** Returns only after native backup, maintenance, verification and child retirement succeed. */
   upgrade(onActivity: (activity: 'nativeInspect' | 'nativeBackup' | 'nativeUpgrade' | 'nativeVerify') => void): Promise<void>;
   /** Rechecks live schemas and the routed physical inventory before preparing session proof. */
   prepareCanonical(onActivity?: (activity: 'nativeInspect' | 'nativeBackup' | 'nativeUpgrade' | 'nativeVerify') => void): Promise<void>;
@@ -108,6 +138,7 @@ type NativeReport = {
     issues?: { code?: string }[];
   }[];
 };
+type NativeHistoryRunner = (mode: NativeHistoryOperation, planFile?: string) => Promise<string>;
 
 /** Owns the single startup transaction. Initialization never opens a legacy product DB. */
 export class StartupCoordinator {
@@ -138,7 +169,7 @@ export class StartupCoordinator {
       this.journal = decision.journal ?? newStartupJournal(decision.route);
     } catch (error) {
       this.route = prepared?.decision.route ?? StartupRoute.Normal;
-      this.journal = newStartupJournal(this.route);
+      this.journal = prepared?.decision.journal ?? newStartupJournal(this.route);
       this.preparationError = error;
     }
   }
@@ -160,7 +191,7 @@ export class StartupCoordinator {
       // A completed installation of the same runtime opens directly. Do not open
       // SQLite, scan agent folders, hash runtime payloads, or launch a preflight.
       if (previous?.stage === StartupStage.Complete && previous.completedIdentity &&
-          !previous.targetIdentity && delivery.allowed &&
+          !previous.targetIdentity && !previous.schemaPreparationPending && delivery.allowed &&
           previous.completedIdentity.runtimeVersion.replace(/^v/, '') === identity.runtimeVersion.replace(/^v/, '')) {
         if (!startupPathExists(path.join(userData, DB_FILENAME)))
           throw new Error('The initialized product database is missing. Existing backups have been preserved.');
@@ -178,16 +209,22 @@ export class StartupCoordinator {
           { code: StartupCompatibilityErrorCode.VersionUnconfirmed });
       // Classification may deliberately discard an old journal when selecting the
       // JSONL path. Its completed delivery still cannot authorize a downgrade.
-      if (previous && previous.stage !== StartupStage.Complete && previous.targetIdentity &&
-          !sameStartupIdentity(previous.targetIdentity, identity))
-        throw Object.assign(new Error('An unfinished startup transaction belongs to a different application runtime. Existing data has been preserved.'),
-          { code: StartupCompatibilityErrorCode.VersionUnconfirmed });
-      let inspected: { needsUpgrade: boolean } | undefined;
+      if (previous && previous.targetIdentity &&
+          !sameStartupIdentity(previous.targetIdentity, identity)) {
+        const canRetarget = canResumePendingStartup(previous, decision, identity);
+        console.warn('[StartupCoordinator] Pending startup delivery differs:', {
+          route: previous.route, stage: previous.stage, previousTarget: previous.targetIdentity,
+          currentTarget: identity, canRetarget,
+        });
+        if (!canRetarget)
+          throw Object.assign(new Error('An unfinished startup transaction belongs to a different application runtime. Existing data has been preserved.'),
+            { code: StartupCompatibilityErrorCode.VersionUnconfirmed });
+      }
       let downgradeConfirmation: StartupDowngradeConfirmation | undefined;
       if (delivery.allowed === false && delivery.requiresNativeInspection) {
         // Only an exact reviewed exception may reach this read-only step. It
         // still cannot grant maintenance or publish a completed identity.
-        inspected = await options.native.inspect();
+        await options.native.inspect();
         delivery = assessStartupDelivery({ ...deliveryInput, nativeCompatibilityConfirmed: true });
       }
       if (delivery.allowed === false && delivery.blockReason === StartupCompatibilityErrorCode.DowngradeBlocked && sourceIdentity) {
@@ -197,12 +234,14 @@ export class StartupCoordinator {
         throw Object.assign(new Error('This application delivery cannot safely open the existing data.'),
           { code: delivery.blockReason });
       if (decision.route === StartupRoute.Normal || decision.route === StartupRoute.Upgrade) {
-        const pending = decision.journal?.route === StartupRoute.Upgrade &&
-          decision.journal.stage !== StartupStage.Complete;
+        const pending = !!decision.journal && (
+          (decision.journal.route === StartupRoute.Upgrade && decision.journal.stage !== StartupStage.Complete) ||
+          (decision.journal.stage === StartupStage.Complete && !!decision.journal.targetIdentity));
+        if (pending) decision = { route: StartupRoute.Upgrade, journal: decision.journal };
         const previousRuntimeVersion = decision.journal?.completedIdentity?.runtimeVersion;
         // App-only releases also change the manifest fingerprint through the
         // build recipe. Neither change alone requires the upgrade presentation.
-        // Exact identities still fence recovery, admission and completion.
+        // Exact identities bind this process's admission and completion receipts.
         const requiresPreparation = !previousRuntimeVersion ||
           previousRuntimeVersion.replace(/^v/, '') !== identity.runtimeVersion.replace(/^v/, '') ||
           !!downgradeConfirmation || !!decision.journal?.targetIdentity;
@@ -214,10 +253,9 @@ export class StartupCoordinator {
             targetIdentity: identity,
           } };
         }
-        // Only upgrade/recovery paths run host-native inspection. Ordinary
-        // launches leave current schema/session admission to Gateway startup.
-        if (!downgradeConfirmation && (pending || requiresPreparation)) inspected ??= await options.native.inspect();
-        if (pending || inspected?.needsUpgrade || requiresPreparation) {
+        // Version and recovery metadata select the route. Inspect real native
+        // data once when executing preparation, not again just to choose a page.
+        if (pending || requiresPreparation) {
           decision = { route: StartupRoute.Upgrade, journal: decision.route === StartupRoute.Upgrade ? decision.journal : {
             ...newStartupJournal(StartupRoute.Upgrade),
             completedIdentity: decision.journal?.completedIdentity,
@@ -344,15 +382,49 @@ export class StartupCoordinator {
     this.journal = next;
   }
 
+  private assertRecoveryJournalCurrent(): void {
+    const current = readStartupJournal(this.userData);
+    if (!current || startupRecoveryKey(current) !== startupRecoveryKey(this.journal))
+      throw Object.assign(new Error('The pending startup transaction changed before history preparation. Existing data has been preserved.'),
+        { code: StartupCompatibilityErrorCode.VersionUnconfirmed });
+    this.journal = current;
+  }
+
   async prepareBeforeStore(progress: Progress): Promise<void> {
     if (this.preparationError) throw this.preparationError;
     await this.waitForDowngradeConfirmation();
-    // Human consent only removes the version warning. The target's actual
-    // native admission remains mandatory and can still refuse the data.
-    if (this.downgradeConfirmation && this.route === StartupRoute.Upgrade)
-      await this.native!.inspect();
-    // Record ownership before the first fresh/import/upgrade operation. An older
-    // delivery must never resume stages committed by a different native runtime.
+    const targetChanged = !!this.targetIdentity && !!this.journal.targetIdentity &&
+      !sameStartupIdentity(this.journal.targetIdentity, this.targetIdentity);
+    if (targetChanged) {
+      this.assertRecoveryJournalCurrent();
+      if (!canResumePendingStartup(this.journal, { route: this.route, journal: this.journal }, this.targetIdentity!))
+        throw Object.assign(new Error('The pending startup transaction changed before history preparation. Existing data has been preserved.'),
+          { code: StartupCompatibilityErrorCode.VersionUnconfirmed });
+    }
+    const legacyInputOnly = this.route === StartupRoute.Migration &&
+      (this.journal.stage === StartupStage.Backup || this.journal.stage === StartupStage.Isolate);
+    if (this.route !== StartupRoute.Upgrade &&
+        (this.journal.schemaPreparationPending || (targetChanged && !legacyInputOnly))) {
+      if (!this.native || !this.targetIdentity)
+        throw new Error('The native database recovery owner is unavailable.');
+      if (this.route === StartupRoute.Migration) verifyHistoryBackup(this.history);
+      progress.reportActivity(AppInitializationActivity.NativeInspect);
+      const inspected = await this.native.inspect();
+      this.assertRecoveryJournalCurrent();
+      if (inspected.needsUpgrade) {
+        // Record the writer before native mutation so unknown outcomes remain
+        // recoverable even when the next target is the same delivery.
+        this.commit(this.journal.stage, { targetIdentity: this.targetIdentity, schemaPreparationPending: true });
+        await this.native.upgrade(activity => progress.reportActivity(activity));
+        this.assertRecoveryJournalCurrent();
+      }
+      this.commit(this.journal.stage, { targetIdentity: this.targetIdentity, schemaPreparationPending: undefined });
+      progress.reportActivity(AppInitializationActivity.NativeVerify);
+      // Initialization/import can create more databases. This early check is
+      // never a substitute for final schema and canonical readiness.
+    }
+    // Record ownership before target initialization. A pre-initialization legacy
+    // retry adopts its new target only after verified backup/isolation succeeds.
     if (this.targetIdentity && this.route !== StartupRoute.Normal && !this.journal.targetIdentity)
       this.commit(this.journal.stage, { targetIdentity: this.targetIdentity });
     if (this.route === StartupRoute.Upgrade) {
@@ -360,16 +432,18 @@ export class StartupCoordinator {
         throw new Error('The native database upgrade owner is unavailable.');
       if (classifyInstallation(this.userData, false).route !== StartupRoute.Normal)
         throw new Error('The product data generation changed before database upgrade. Existing data has been preserved.');
-      this.commit(StartupStage.UpgradePrepare, { targetIdentity: this.targetIdentity });
       progress.reportActivity(AppInitializationActivity.NativeInspect);
+      const inspected = await this.native.inspect();
+      if (targetChanged) this.assertRecoveryJournalCurrent();
+      this.commit(StartupStage.UpgradePrepare, {
+        route: StartupRoute.Upgrade, targetIdentity: this.targetIdentity, schemaPreparationPending: undefined,
+      });
       // Reconcile unknown/interrupted outcomes from live native facts, never an old exit code.
-      if ((await this.native.inspect()).needsUpgrade) {
+      if (inspected.needsUpgrade) {
         await this.native.upgrade(activity => progress.reportActivity(activity));
       }
       this.commit(StartupStage.UpgradeVerify);
       progress.reportActivity(AppInitializationActivity.NativeVerify);
-      if ((await this.native.inspect()).needsUpgrade)
-        throw new Error('Native database verification still reports an unfinished schema upgrade.');
       if (classifyInstallation(this.userData, false).route !== StartupRoute.Normal)
         throw new Error('The product data generation changed during database upgrade. Existing data has been preserved.');
       this.nativeVerified = true;
@@ -404,48 +478,94 @@ export class StartupCoordinator {
       );
       const entries = fs.readdirSync(this.userData).filter(shouldIsolateProfileEntry);
       verifyNativeHistoryOriginals(this.userData, this.history);
-      this.commit(StartupStage.Isolate, { isolatedEntries: entries });
+      this.commit(StartupStage.Isolate, { isolatedEntries: entries,
+        ...(this.targetIdentity ? { targetIdentity: this.targetIdentity } : {}) });
     }
     if (this.journal.stage === StartupStage.Isolate) {
       verifyHistoryBackup(this.history);
       // A resumed isolation may already have moved openclaw into retired/.
       if (startupPathExists(path.join(this.userData, 'openclaw')))
         verifyNativeHistoryOriginals(this.userData, this.history);
+      const entries = [...this.journal.isolatedEntries ?? []];
+      const planned = new Set(entries.map(profileEntryKey));
+      for (const name of fs.readdirSync(this.userData)) {
+        if (requiresProfileIsolation(name) && !planned.has(profileEntryKey(name))) {
+          entries.push(name);
+          planned.add(profileEntryKey(name));
+        }
+      }
+      // Persist newly found required entries before moving any of them, including
+      // database sidecars absent from an interrupted transaction's original plan.
+      if (entries.length !== (this.journal.isolatedEntries?.length ?? 0))
+        this.commit(StartupStage.Isolate, { isolatedEntries: entries });
       const retired = ownedPath(
         this.userData,
         path.join('backups', this.journal.transactionId, 'retired'),
       );
       fs.mkdirSync(retired, { recursive: true });
-      for (const name of this.journal.isolatedEntries ?? []) {
-        // An interrupted transaction may have selected these before the current
-        // process opened Chromium. Exclude them again when resuming that plan.
+      for (const name of entries) {
         if (!shouldIsolateProfileEntry(name)) continue;
         const source = ownedPath(this.userData, name, true);
         const destination = ownedPath(retired, name, true);
-        if (startupPathExists(source) && startupPathExists(destination)) {
-          if (ownsHistoryAuthority(name))
+        let sourceExists: boolean;
+        try {
+          sourceExists = startupPathExists(source);
+        } catch (error) {
+          if (retainUnavailableOptionalProfileEntry(name, error)) continue;
+          throw error;
+        }
+        if (!sourceExists) {
+          if (requiresProfileIsolation(name) && !startupPathExists(destination))
+            throw new Error('An isolated source entry is missing.');
+          continue;
+        }
+        let target = destination;
+        if (startupPathExists(destination)) {
+          if (requiresProfileIsolation(name))
             throw new Error(
               'Startup isolation found a conflicting destination. No data was overwritten.',
             );
           // Chromium and other startup owners can recreate an entry already
           // archived by the previous process. Retain both versions separately.
-          const additional = ownedPath(
+          target = ownedPath(
             this.userData,
             path.join('backups', this.journal.transactionId, 'retired-additions', randomUUID(), name),
             true,
           );
-          await fs.promises.mkdir(path.dirname(additional), { recursive: true });
-          await fs.promises.rename(source, additional);
-          console.info('[StartupCoordinator] Retained an additional profile entry:', additional);
-          continue;
+          await fs.promises.mkdir(path.dirname(target), { recursive: true });
         }
-        if (startupPathExists(source)) await fs.promises.rename(source, destination);
-        else if (!startupPathExists(destination))
-          throw new Error('An isolated source entry is missing.');
+        try {
+          await fs.promises.rename(source, target);
+        } catch (error) {
+          if (retainUnavailableOptionalProfileEntry(name, error)) continue;
+          throw error;
+        }
+        if (target !== destination)
+          console.info('[StartupCoordinator] Retained an additional profile entry:', target);
       }
-      this.commit(StartupStage.Initialize);
+      if (fs.readdirSync(this.userData).some(requiresProfileIsolation))
+        throw new Error('Required legacy profile entries reappeared during isolation. Existing data has been preserved.');
+      this.commit(StartupStage.Initialize, this.targetIdentity ? { targetIdentity: this.targetIdentity } : {});
     }
     progress.advance(AppInitializationStep.UserData, 0);
+  }
+
+  private async verifyNativeHistoryIdentity(
+    plan: ReturnType<typeof planLegacyHistory>,
+    planFile: string,
+    runNative: NativeHistoryRunner,
+  ): Promise<{ verified?: boolean; conversations?: number; entries?: number }> {
+    const verified = JSON.parse(await runNative('verify', planFile)) as {
+      verified?: boolean; conversations?: number; entries?: number;
+    };
+    if (
+      verified.verified !== true ||
+      verified.conversations !== plan.conversations.length ||
+      verified.entries !== plan.summary.nativeSessions + plan.conversations.filter(
+        row => !plan.agents.some(agent => agent.agentId === row.agentId && agent.entries[row.sessionKey]),
+      ).length
+    ) throw new Error('The native history identity verification did not complete.');
+    return verified;
   }
 
   /** After current bundled resources/defaults are ready, with all Gateway admission still closed. */
@@ -453,14 +573,18 @@ export class StartupCoordinator {
     db: Database.Database,
     stateDir: string,
     progress: Progress,
-    runNative: (mode: NativeHistoryOperation, planFile?: string) => Promise<string>,
+    runNative: NativeHistoryRunner,
   ): Promise<void> {
     if (this.route !== StartupRoute.Migration) return;
+    const planFile = path.join(this.history, 'import-plan.json');
+    verifyHistoryBackup(this.history);
+    const plan = planLegacyHistory(this.history);
+    writeStartupJson(planFile, plan);
     if (this.journal.stage === StartupStage.Check) {
-      verifyHistoryBackup(this.history);
+      await this.verifyNativeHistoryIdentity(plan, planFile, runNative);
       verifyRestoredHistoryBindings(
         db,
-        planLegacyHistory(this.history),
+        plan,
         this.journal.transactionId,
       );
       if (this.journal.historySummary)
@@ -471,10 +595,6 @@ export class StartupCoordinator {
       return;
     }
     progress.advance(AppInitializationStep.History, 4);
-    const planFile = path.join(this.history, 'import-plan.json');
-    verifyHistoryBackup(this.history);
-    const plan = planLegacyHistory(this.history);
-    writeStartupJson(planFile, plan);
     if (this.journal.stage === StartupStage.Initialize) this.commit(StartupStage.StageHistory);
     if (this.journal.stage === StartupStage.StageHistory) {
       stageLegacyHistory(this.history, stateDir, plan);
@@ -524,24 +644,7 @@ export class StartupCoordinator {
       this.commit(StartupStage.RestoreMetadata);
     }
     if (this.journal.stage === StartupStage.RestoreMetadata) {
-      const verified = JSON.parse(await runNative('verify', planFile)) as {
-        verified?: boolean;
-        conversations?: number;
-        entries?: number;
-      };
-      if (
-        verified.verified !== true ||
-        verified.conversations !== plan.conversations.length ||
-        verified.entries !==
-          plan.summary.nativeSessions +
-            plan.conversations.filter(
-              row =>
-                !plan.agents.some(
-                  agent => agent.agentId === row.agentId && agent.entries[row.sessionKey],
-                ),
-            ).length
-      )
-        throw new Error('The native history identity verification did not complete.');
+      const verified = await this.verifyNativeHistoryIdentity(plan, planFile, runNative);
       writeStartupJson(path.join(this.history, 'native-verification.json'), verified);
       progress.reportActivity(AppInitializationActivity.HistoryMetadata);
       restoreHistoryMetadata(db, plan, this.journal.transactionId);
@@ -554,6 +657,8 @@ export class StartupCoordinator {
   complete(): void {
     if (this.preparationError) throw this.preparationError;
     if (this.stopped) throw new Error('Application startup was interrupted.');
+    if (this.journal.schemaPreparationPending)
+      throw new Error('Native database recovery has not completed.');
     if (this.route === StartupRoute.Upgrade &&
         (!this.nativeVerified || !this.canonicalPrepared))
       throw new Error('The application runtime has not completed its startup checks.');

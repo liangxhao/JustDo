@@ -49,6 +49,8 @@ export type StartupJournal = {
   /** Last application opening; not a native database maintenance receipt. */
   lastOpenedIdentity?: StartupIdentity;
   targetIdentity?: StartupIdentity;
+  /** The current target owns schema recovery whose outcome still needs verification. */
+  schemaPreparationPending?: boolean;
 };
 
 /** Atomic, durable phase boundary; no credentials, configuration or transcript body. */
@@ -79,6 +81,8 @@ export function readStartupJournal(userData: string): StartupJournal | null {
     (value.completedIdentity !== undefined && !isStartupIdentity(value.completedIdentity)) ||
     (value.lastOpenedIdentity !== undefined && !isStartupIdentity(value.lastOpenedIdentity)) ||
     (value.targetIdentity !== undefined && !isStartupIdentity(value.targetIdentity)) ||
+    (value.schemaPreparationPending !== undefined && typeof value.schemaPreparationPending !== 'boolean') ||
+    (value.schemaPreparationPending === true && !isStartupIdentity(value.targetIdentity)) ||
     (value.route === StartupRoute.Upgrade && value.stage !== StartupStage.Complete &&
       !isStartupIdentity(value.targetIdentity)) ||
     (value.historySummary !== undefined &&

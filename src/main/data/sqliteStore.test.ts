@@ -30,6 +30,33 @@ function createTempDir(): string {
   return dir;
 }
 
+test('a root config file is ignored when creating and reopening the product store', () => {
+  const directory = createTempDir();
+  const legacyFile = path.join(directory, 'config.json');
+  fs.writeFileSync(legacyFile, JSON.stringify({ app_config: { language: 'old' }, oldSetting: true }));
+  const read = fs.readFileSync.bind(fs);
+  const legacyRead = vi.spyOn(fs, 'readFileSync').mockImplementation((file, options) => {
+    if (String(file) === legacyFile) throw new Error('legacy settings must not be read');
+    return read(file, options);
+  });
+  const initial = SqliteStore.create(directory);
+  try {
+    expect(initial.get('app_config')).toBeUndefined();
+    expect(initial.get('oldSetting')).toBeUndefined();
+    expect(initial.getDatabase().prepare('SELECT key FROM kv').all()).toEqual([]);
+  } finally { initial.close(); }
+  const reopened = SqliteStore.create(directory);
+  try {
+    expect(reopened.get('oldSetting')).toBeUndefined();
+    reopened.set('app_config', { language: 'new' });
+  } finally { reopened.close(); }
+  const current = SqliteStore.create(directory);
+  try {
+    expect(current.get('app_config')).toEqual({ language: 'new' });
+    expect(legacyRead.mock.calls.some(([file]) => String(file) === legacyFile)).toBe(false);
+  } finally { current.close(); }
+});
+
 test('retains extension creation source across updates and database reopen without creating user groups', () => {
   const directory = createTempDir();
   const initial = SqliteStore.create(directory);
@@ -99,6 +126,7 @@ test('converts existing plaintext credentials when opening a database', () => {
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const dir of tempDirs.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true });
   }

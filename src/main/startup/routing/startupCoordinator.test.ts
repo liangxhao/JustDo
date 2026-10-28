@@ -32,6 +32,7 @@ import {
   newStartupJournal,
   readStartupJournal,
   STARTUP_STATE_FILE,
+  type StartupIdentity,
   writeStartupJson,
 } from './startupState';
 
@@ -119,7 +120,7 @@ function legacy(dir: string, wal = false) {
   return db;
 }
 
-test('a different delivery cannot resume a pending JSONL migration or modify its real product database and history', async () => {
+test('a runtime downgrade cannot resume a pending JSONL migration or modify its real product database and history', async () => {
   const directory = root();
   legacy(directory);
   const target = { appVersion: 'v2026.10.20', runtimeVersion: 'v2026.10.7', runtimeBuildId: 'a'.repeat(64) };
@@ -147,6 +148,233 @@ test('a different delivery cannot resume a pending JSONL migration or modify its
   expect(native.upgrade).not.toHaveBeenCalled();
   retained.forEach((file, index) => expect(fs.readFileSync(path.join(directory, file))).toEqual(before[index]));
   expect(fs.existsSync(path.join(directory, 'backups'))).toBe(false);
+});
+
+function runtimeForDelivery(identity: StartupIdentity) {
+  const runtime = { runtimeVersion: identity.runtimeVersion, runtimeBuildId: identity.runtimeBuildId };
+  return {
+    deliveryIdentity: vi.fn(async () => runtime), identity: vi.fn(async () => runtime),
+    inspect: vi.fn(async () => ({ needsUpgrade: false })), upgrade: vi.fn(async () => {}),
+    prepareCanonical: vi.fn(async () => {}),
+  };
+}
+
+test('a repair delivery recaptures an interrupted backup while preserving its transaction and old snapshot', async () => {
+  const source = root();
+  legacy(source);
+  const previous = { appVersion: 'v2026.10.20', runtimeVersion: 'v2026.10.7', runtimeBuildId: 'a'.repeat(64) };
+  const target = { ...previous, appVersion: 'v2026.10.21', runtimeBuildId: 'b'.repeat(64) };
+  const journal = { ...newStartupJournal(StartupRoute.Migration), targetIdentity: previous };
+  writeStartupJson(path.join(source, STARTUP_STATE_FILE), journal);
+  const transaction = path.join(source, 'backups', journal.transactionId);
+  const history = path.join(transaction, 'history');
+  await createHistoryBackup(source, history);
+  const oldManifest = fs.readFileSync(path.join(history, 'manifest.json'));
+  const before = fs.readFileSync(path.join(source, STARTUP_STATE_FILE));
+  const native = runtimeForDelivery(target);
+  const coordinator = await StartupCoordinator.prepare(source, { appVersion: target.appVersion, native });
+  expect(fs.readFileSync(path.join(source, STARTUP_STATE_FILE))).toEqual(before);
+  await coordinator.prepareBeforeStore(progress());
+  expect(readStartupJournal(source)).toMatchObject({
+    stage: StartupStage.Initialize, transactionId: journal.transactionId, targetIdentity: target,
+  });
+  const retained = fs.readdirSync(transaction).find(name => name.startsWith('history-uncommitted-'))!;
+  expect(fs.readFileSync(path.join(transaction, retained, 'manifest.json'))).toEqual(oldManifest);
+  expect(() => verifyHistoryBackup(history)).not.toThrow();
+  expect(fs.existsSync(path.join(transaction, 'retired', DB_FILENAME))).toBe(true);
+  expect(native.inspect).not.toHaveBeenCalled();
+  expect(native.upgrade).not.toHaveBeenCalled();
+});
+
+test('a repair delivery resumes partial isolation without replacing the verified backup', async () => {
+  const source = root();
+  legacy(source);
+  const previous = { appVersion: 'v2026.10.20', runtimeVersion: 'v2026.10.7', runtimeBuildId: 'a'.repeat(64) };
+  const target = { ...previous, runtimeBuildId: 'b'.repeat(64) };
+  const journal = { ...newStartupJournal(StartupRoute.Migration), stage: StartupStage.Isolate,
+    targetIdentity: previous, isolatedEntries: fs.readdirSync(source) };
+  const transaction = path.join(source, 'backups', journal.transactionId);
+  const history = path.join(transaction, 'history');
+  await createHistoryBackup(source, history);
+  fs.mkdirSync(path.join(transaction, 'retired'));
+  fs.renameSync(path.join(source, DB_FILENAME), path.join(transaction, 'retired', DB_FILENAME));
+  writeStartupJson(path.join(source, STARTUP_STATE_FILE), journal);
+  const manifest = fs.readFileSync(path.join(history, 'manifest.json'));
+  const native = runtimeForDelivery(target);
+  const coordinator = await StartupCoordinator.prepare(source, { appVersion: target.appVersion, native });
+  await coordinator.prepareBeforeStore(progress());
+  expect(readStartupJournal(source)).toMatchObject({ stage: StartupStage.Initialize,
+    transactionId: journal.transactionId, targetIdentity: target });
+  expect(fs.readFileSync(path.join(history, 'manifest.json'))).toEqual(manifest);
+  expect(fs.readdirSync(transaction).sort()).toEqual(['history', 'retired']);
+  expect(fs.existsSync(path.join(transaction, 'retired', 'openclaw'))).toBe(true);
+  expect(native.inspect).not.toHaveBeenCalled();
+});
+
+test('a failed repair target publication leaves the original journal and active legacy data intact', async () => {
+  const source = root();
+  legacy(source);
+  const previous = { appVersion: 'v2026.10.20', runtimeVersion: 'v2026.10.7', runtimeBuildId: 'a'.repeat(64) };
+  const target = { ...previous, runtimeBuildId: 'b'.repeat(64) };
+  writeStartupJson(path.join(source, STARTUP_STATE_FILE), {
+    ...newStartupJournal(StartupRoute.Migration), targetIdentity: previous,
+  });
+  const before = fs.readFileSync(path.join(source, STARTUP_STATE_FILE));
+  const coordinator = await StartupCoordinator.prepare(source, { appVersion: target.appVersion, native: runtimeForDelivery(target) });
+  const rename = fs.renameSync.bind(fs);
+  let blockedPublication = false;
+  vi.spyOn(fs, 'renameSync').mockImplementation((from, to) => {
+    if (String(to) === path.join(source, STARTUP_STATE_FILE) &&
+        JSON.parse(fs.readFileSync(from, 'utf8')).targetIdentity?.runtimeBuildId === target.runtimeBuildId) {
+      blockedPublication = true;
+      throw new Error('target publication failed');
+    }
+    rename(from, to);
+  });
+  await expect(coordinator.prepareBeforeStore(progress())).rejects.toThrow(/publication failed/);
+  expect(blockedPublication).toBe(true);
+  expect(fs.readFileSync(path.join(source, STARTUP_STATE_FILE))).toEqual(before);
+  const journal = readStartupJournal(source)!;
+  expect(() => verifyHistoryBackup(path.join(source, 'backups', journal.transactionId, 'history'))).not.toThrow();
+  expect(classifyInstallation(source, false).route).toBe(StartupRoute.Migration);
+  expect(fs.existsSync(path.join(source, DB_FILENAME))).toBe(true);
+});
+
+test.each([
+  { stage: StartupStage.ImportHistory, appVersion: 'v2026.10.19', runtimeVersion: 'v2026.10.7' },
+  { stage: StartupStage.Backup, appVersion: 'v2026.10.21', runtimeVersion: 'v2026.10.6' },
+])('a pending migration cannot switch an unsafe target: %j', async ({ stage, appVersion, runtimeVersion }) => {
+  const source = root();
+  legacy(source);
+  const previous = { appVersion: 'v2026.10.20', runtimeVersion: 'v2026.10.7', runtimeBuildId: 'a'.repeat(64) };
+  const target = { appVersion, runtimeVersion, runtimeBuildId: 'b'.repeat(64) };
+  const journal = { ...newStartupJournal(StartupRoute.Migration), stage, targetIdentity: previous };
+  writeStartupJson(path.join(source, STARTUP_STATE_FILE), journal);
+  const before = fs.readFileSync(path.join(source, STARTUP_STATE_FILE));
+  const native = runtimeForDelivery(target);
+  const coordinator = await StartupCoordinator.prepare(source, { appVersion, native });
+  expect(coordinator.stage).toBe(stage);
+  await expect(coordinator.prepareBeforeStore(progress())).rejects.toMatchObject({
+    code: StartupCompatibilityErrorCode.VersionUnconfirmed,
+  });
+  expect(fs.readFileSync(path.join(source, STARTUP_STATE_FILE))).toEqual(before);
+  expect(fs.existsSync(path.join(source, DB_FILENAME))).toBe(true);
+  expect(fs.existsSync(path.join(source, 'backups'))).toBe(false);
+  expect(native.inspect).not.toHaveBeenCalled();
+});
+
+async function initializedMigration(stage: StartupStage, previous: StartupIdentity) {
+  const source = root();
+  legacy(source);
+  await new StartupCoordinator(source).prepareBeforeStore(progress());
+  SqliteStore.create(source).close();
+  const journal = { ...readStartupJournal(source)!, stage, targetIdentity: previous };
+  const history = path.join(source, 'backups', journal.transactionId, 'history');
+  const state = path.join(source, 'openclaw', 'state');
+  if (stage !== StartupStage.Initialize) stageLegacyHistory(history, state, planLegacyHistory(history));
+  writeStartupJson(path.join(source, STARTUP_STATE_FILE), journal);
+  return { source, journal, history, state };
+}
+
+test.each([
+  { stage: StartupStage.Initialize, runtimeVersion: 'v2026.10.7' },
+  { stage: StartupStage.ImportHistory, runtimeVersion: 'v2026.10.8' },
+])('a changed target preserves initialized migration stage and input: %j', async ({ stage, runtimeVersion }) => {
+  const previous = { appVersion: 'v2026.10.20', runtimeVersion: 'v2026.10.7', runtimeBuildId: 'a'.repeat(64) };
+  const target = { ...previous, appVersion: 'v2026.10.21', runtimeVersion, runtimeBuildId: 'b'.repeat(64) };
+  const { source, journal, history, state } = await initializedMigration(stage, previous);
+  const staged = path.join(state, 'agents', 'main', 'sessions', 'original-native.jsonl');
+  const archived = `${staged}.imported-probe`;
+  if (stage === StartupStage.ImportHistory) fs.renameSync(staged, archived);
+  const manifest = fs.readFileSync(path.join(history, 'manifest.json'));
+  const native = runtimeForDelivery(target);
+  native.inspect.mockResolvedValueOnce({ needsUpgrade: runtimeVersion !== previous.runtimeVersion });
+  native.upgrade.mockImplementation(async () => {
+    expect(readStartupJournal(source)).toMatchObject({ stage, targetIdentity: target, schemaPreparationPending: true });
+  });
+  const coordinator = await StartupCoordinator.prepare(source, { appVersion: target.appVersion, native });
+  await coordinator.prepareBeforeStore(progress());
+  expect(readStartupJournal(source)).toMatchObject({ stage, transactionId: journal.transactionId, targetIdentity: target });
+  expect(readStartupJournal(source)?.schemaPreparationPending).toBeUndefined();
+  expect(native.inspect).toHaveBeenCalledOnce();
+  expect(native.prepareCanonical).not.toHaveBeenCalled();
+  expect(fs.readFileSync(path.join(history, 'manifest.json'))).toEqual(manifest);
+  if (stage === StartupStage.ImportHistory) {
+    expect(native.upgrade).toHaveBeenCalledOnce();
+    expect(fs.existsSync(staged)).toBe(false);
+    expect(fs.existsSync(archived)).toBe(true);
+  } else expect(native.upgrade).not.toHaveBeenCalled();
+});
+
+test('an unknown migration schema upgrade is re-inspected with the same target on restart', async () => {
+  const previous = { appVersion: 'v2026.10.20', runtimeVersion: 'v2026.10.7', runtimeBuildId: 'a'.repeat(64) };
+  const target = { ...previous, runtimeVersion: 'v2026.10.8', runtimeBuildId: 'b'.repeat(64) };
+  const { source, journal } = await initializedMigration(StartupStage.ImportHistory, previous);
+  const native = runtimeForDelivery(target);
+  native.inspect.mockResolvedValueOnce({ needsUpgrade: true });
+  native.upgrade.mockRejectedValueOnce(new Error('native outcome unknown'));
+  const first = await StartupCoordinator.prepare(source, { appVersion: target.appVersion, native });
+  await expect(first.prepareBeforeStore(progress())).rejects.toThrow(/outcome unknown/);
+  expect(readStartupJournal(source)).toMatchObject({ stage: StartupStage.ImportHistory,
+    transactionId: journal.transactionId, targetIdentity: target, schemaPreparationPending: true });
+  expect(() => first.complete()).toThrow(/recovery has not completed/);
+  const resumedOwner = runtimeForDelivery(target);
+  const resumed = await StartupCoordinator.prepare(source, { appVersion: target.appVersion, native: resumedOwner });
+  await resumed.prepareBeforeStore(progress());
+  expect(resumedOwner.inspect).toHaveBeenCalledOnce();
+  expect(resumedOwner.upgrade).not.toHaveBeenCalled();
+  expect(resumedOwner.prepareCanonical).not.toHaveBeenCalled();
+  expect(readStartupJournal(source)?.schemaPreparationPending).toBeUndefined();
+  await resumed.verifyNativeReady();
+  expect(resumedOwner.inspect).toHaveBeenCalledTimes(2);
+  expect(resumedOwner.prepareCanonical).toHaveBeenCalledOnce();
+});
+
+test('an OpenClaw version upgrade can adopt a backup stage without inspecting old native originals', async () => {
+  const source = root();
+  legacy(source);
+  const previous = { appVersion: 'v2026.10.20', runtimeVersion: 'v2026.10.7', runtimeBuildId: 'a'.repeat(64) };
+  const target = { ...previous, runtimeVersion: 'v2026.10.8', runtimeBuildId: 'b'.repeat(64) };
+  writeStartupJson(path.join(source, STARTUP_STATE_FILE), { ...newStartupJournal(StartupRoute.Migration), targetIdentity: previous });
+  const native = runtimeForDelivery(target);
+  const coordinator = await StartupCoordinator.prepare(source, { appVersion: target.appVersion, native });
+  await coordinator.prepareBeforeStore(progress());
+  expect(readStartupJournal(source)).toMatchObject({ stage: StartupStage.Initialize, targetIdentity: target });
+  expect(native.inspect).not.toHaveBeenCalled();
+  expect(native.upgrade).not.toHaveBeenCalled();
+});
+
+test('a repair delivery cannot replace a transaction changed after read-only routing', async () => {
+  const source = root();
+  legacy(source);
+  const previous = { appVersion: 'v2026.10.20', runtimeVersion: 'v2026.10.7', runtimeBuildId: 'a'.repeat(64) };
+  const target = { ...previous, runtimeBuildId: 'b'.repeat(64) };
+  const journal = { ...newStartupJournal(StartupRoute.Migration), targetIdentity: previous };
+  writeStartupJson(path.join(source, STARTUP_STATE_FILE), journal);
+  const coordinator = await StartupCoordinator.prepare(source, { appVersion: target.appVersion, native: runtimeForDelivery(target) });
+  writeStartupJson(path.join(source, STARTUP_STATE_FILE), { ...journal, stage: StartupStage.ImportHistory });
+  const changed = fs.readFileSync(path.join(source, STARTUP_STATE_FILE));
+  await expect(coordinator.prepareBeforeStore(progress())).rejects.toMatchObject({
+    code: StartupCompatibilityErrorCode.VersionUnconfirmed,
+  });
+  expect(fs.readFileSync(path.join(source, STARTUP_STATE_FILE))).toEqual(changed);
+  expect(fs.existsSync(path.join(source, 'backups'))).toBe(false);
+});
+
+test('unrelated recovery metadata changes do not block an upgrade or get overwritten', async () => {
+  const source = root();
+  legacy(source);
+  const previous = { appVersion: 'v2026.10.20', runtimeVersion: 'v2026.10.7', runtimeBuildId: 'a'.repeat(64) };
+  const target = { ...previous, runtimeBuildId: 'b'.repeat(64) };
+  const journal = { ...newStartupJournal(StartupRoute.Migration), targetIdentity: previous };
+  writeStartupJson(path.join(source, STARTUP_STATE_FILE), journal);
+  const coordinator = await StartupCoordinator.prepare(source, { appVersion: target.appVersion, native: runtimeForDelivery(target) });
+  writeStartupJson(path.join(source, STARTUP_STATE_FILE), { ...journal,
+    startedAt: journal.startedAt + 1, diagnosticNote: 'unrelated local metadata' });
+  await coordinator.prepareBeforeStore(progress());
+  const current = JSON.parse(fs.readFileSync(path.join(source, STARTUP_STATE_FILE), 'utf8'));
+  expect(current).toMatchObject({ stage: StartupStage.Initialize,
+    startedAt: journal.startedAt + 1, diagnosticNote: 'unrelated local metadata', targetIdentity: target });
 });
 
 test('classifies fresh, published JSONL upgrade and current reinstall from actual data, independent of display marker', () => {
@@ -379,12 +607,12 @@ test('a sidecar created during the final original hash check blocks isolation', 
   expect(fs.existsSync(path.join(source, 'openclaw/state/agents/main/sessions/sessions.json'))).toBe(true);
 });
 
-test('migration leaves active Chromium stores in place and retains all other profile files after completion', async () => {
+test('migration retains locked optional stores in place and archives other profile files after completion', async () => {
   const source = root();
   legacy(source);
   const active = process.platform === 'win32'
-    ? ['local storage', 'NETWORK', 'Shared Dictionary']
-    : ['Local Storage', 'Network', 'Shared Dictionary'];
+    ? ['local storage', 'NETWORK', 'Shared Dictionary', 'DICTIONARIES', 'SERVICE WORKER']
+    : ['Local Storage', 'Network', 'Shared Dictionary', 'Dictionaries', 'Service Worker'];
   for (const name of active) {
     fs.mkdirSync(path.join(source, name));
     fs.writeFileSync(path.join(source, name, 'current'), `active ${name}`);
@@ -399,8 +627,9 @@ test('migration leaves active Chromium stores in place and retains all other pro
   const coordinator = new StartupCoordinator(source);
   await coordinator.prepareBeforeStore(progress());
   const journal = readStartupJournal(source)!;
-  expect(journal.isolatedEntries).not.toEqual(expect.arrayContaining(active));
-  expect(move.mock.calls.some(([from]) => active.includes(path.basename(String(from))))).toBe(false);
+  expect(journal.isolatedEntries).toEqual(expect.arrayContaining(active));
+  for (const name of active)
+    expect(move.mock.calls.some(([from]) => path.basename(String(from)) === name)).toBe(true);
   const retired = path.join(source, 'backups', journal.transactionId, 'retired');
   const store = SqliteStore.create(source);
   try {
@@ -422,7 +651,7 @@ test('migration leaves active Chromium stores in place and retains all other pro
 test('a partially archived old plan skips current Chromium stores and preserves recreated entries across another interruption', async () => {
   const source = root();
   legacy(source);
-  const active = ['Local Storage', 'Network', 'Shared Dictionary'];
+  const active = ['Local Storage', 'Network', 'Shared Dictionary', 'Dictionaries', 'Service Worker'];
   for (const name of active) {
     fs.mkdirSync(path.join(source, name));
     fs.writeFileSync(path.join(source, name, 'current'), `active ${name}`);
@@ -438,6 +667,10 @@ test('a partially archived old plan skips current Chromium stores and preserves 
   fs.writeFileSync(path.join(retired, 'Local State'), 'original browser state');
   fs.mkdirSync(path.join(retired, 'Local Storage'));
   fs.writeFileSync(path.join(retired, 'Local Storage', 'old'), 'original local storage');
+  fs.mkdirSync(path.join(retired, 'Dictionaries'));
+  fs.writeFileSync(path.join(retired, 'Dictionaries', 'old'), 'original dictionary');
+  fs.mkdirSync(path.join(retired, 'Service Worker'));
+  fs.writeFileSync(path.join(retired, 'Service Worker', 'old'), 'original service worker');
   writeStartupJson(path.join(source, STARTUP_STATE_FILE), journal);
   const rename = fs.promises.rename.bind(fs.promises);
   let interrupt = true;
@@ -456,20 +689,175 @@ test('a partially archived old plan skips current Chromium stores and preserves 
   await resume.prepareBeforeStore(progress());
   expect(resume.stage).toBe(StartupStage.Initialize);
   const additions = path.join(transaction, 'retired-additions');
-  const [addition] = fs.readdirSync(additions);
-  expect(fs.readdirSync(additions)).toHaveLength(1);
+  const completed = fs.readdirSync(additions).filter(folder =>
+    fs.existsSync(path.join(additions, folder, 'Local State')));
+  expect(completed).toHaveLength(1);
+  const [addition] = completed;
   expect(fs.readFileSync(path.join(additions, addition, 'Local State'), 'utf8')).toBe('recreated browser state');
   expect(fs.readFileSync(path.join(retired, 'Local State'), 'utf8')).toBe('original browser state');
   expect(fs.readFileSync(path.join(retired, 'Local Storage', 'old'), 'utf8')).toBe('original local storage');
+  expect(fs.readFileSync(path.join(retired, 'Dictionaries', 'old'), 'utf8')).toBe('original dictionary');
+  expect(fs.readFileSync(path.join(retired, 'Service Worker', 'old'), 'utf8')).toBe('original service worker');
   for (const name of active)
     expect(fs.readFileSync(path.join(source, name, 'current'), 'utf8')).toBe(`active ${name}`);
 });
 
-test.each([DB_FILENAME, 'openclaw', ...(process.platform === 'win32' ? [DB_FILENAME.toUpperCase(), 'OpenClaw'] : [])])(
-  'resumed isolation still refuses conflicting history authority at %s',
+test.each(['EPERM', 'EACCES', 'EBUSY', 'ETXTBSY'])('an optional entry with %s is retained without blocking isolation', async code => {
+  const source = root();
+  legacy(source);
+  const document = path.join(source, 'notes.txt');
+  fs.writeFileSync(document, 'unrelated user document');
+  const rename = fs.promises.rename.bind(fs.promises);
+  const denied = Object.assign(new Error('document is locked'), { code });
+  vi.spyOn(fs.promises, 'rename').mockImplementation(async (from, to) => {
+    if (String(from) === document) throw denied;
+    await rename(from, to);
+  });
+
+  await new StartupCoordinator(source).prepareBeforeStore(progress());
+
+  const journal = readStartupJournal(source)!;
+  expect(journal.stage).toBe(StartupStage.Initialize);
+  expect(fs.readFileSync(document, 'utf8')).toBe('unrelated user document');
+  expect(() => verifyHistoryBackup(path.join(source, 'backups', journal.transactionId, 'history'))).not.toThrow();
+});
+
+test('an unreadable optional entry is left in place without blocking required isolation', async () => {
+  const source = root();
+  legacy(source);
+  const document = path.join(source, 'notes.txt');
+  fs.writeFileSync(document, 'unrelated user document');
+  const stat = fs.lstatSync.bind(fs);
+  vi.spyOn(fs, 'lstatSync').mockImplementation((file, options) => {
+    if (String(file) === document)
+      throw Object.assign(new Error('access denied'), { code: 'EACCES' });
+    return stat(file, options);
+  });
+  await new StartupCoordinator(source).prepareBeforeStore(progress());
+  expect(readStartupJournal(source)?.stage).toBe(StartupStage.Initialize);
+  expect(fs.readFileSync(document, 'utf8')).toBe('unrelated user document');
+  expect(fs.existsSync(path.join(source, DB_FILENAME))).toBe(false);
+});
+
+test.each([DB_FILENAME, 'openclaw', 'outbound-header-proxy', 'developer', `${DB_FILENAME}.legacy`])(
+  'a locked required entry at %s blocks isolation and retains its original', async name => {
+    const source = root();
+    legacy(source);
+    if (name === 'outbound-header-proxy' || name === 'developer') fs.mkdirSync(path.join(source, name));
+    if (name.endsWith('.legacy')) fs.writeFileSync(path.join(source, name), 'required original');
+    const original = path.join(source, name);
+    const rename = fs.promises.rename.bind(fs.promises);
+    const denied = Object.assign(new Error('required entry is locked'), { code: 'EPERM' });
+    vi.spyOn(fs.promises, 'rename').mockImplementation(async (from, to) => {
+      if (String(from) === original) throw denied;
+      await rename(from, to);
+    });
+    await expect(new StartupCoordinator(source).prepareBeforeStore(progress())).rejects.toBe(denied);
+    expect(readStartupJournal(source)?.stage).toBe(StartupStage.Isolate);
+    expect(fs.existsSync(original)).toBe(true);
+  },
+);
+
+test.each(['ENOSPC', 'EIO'])('a non-access %s failure still blocks optional isolation', async code => {
+  const source = root();
+  legacy(source);
+  const document = path.join(source, 'notes.txt');
+  fs.writeFileSync(document, 'unrelated user document');
+  const rename = fs.promises.rename.bind(fs.promises);
+  const failure = Object.assign(new Error('storage failed'), { code });
+  vi.spyOn(fs.promises, 'rename').mockImplementation(async (from, to) => {
+    if (String(from) === document) throw failure;
+    await rename(from, to);
+  });
+  await expect(new StartupCoordinator(source).prepareBeforeStore(progress())).rejects.toBe(failure);
+  expect(readStartupJournal(source)?.stage).toBe(StartupStage.Isolate);
+  expect(fs.readFileSync(document, 'utf8')).toBe('unrelated user document');
+});
+
+test('an old isolation plan tolerates missing optional entries and journals newly found required entries', async () => {
+  const source = root();
+  legacy(source);
+  const journal = { ...newStartupJournal(StartupRoute.Migration), stage: StartupStage.Isolate,
+    isolatedEntries: ['expired-cache', DB_FILENAME, 'openclaw'] };
+  const transaction = path.join(source, 'backups', journal.transactionId);
+  await createHistoryBackup(source, path.join(transaction, 'history'));
+  writeStartupJson(path.join(source, STARTUP_STATE_FILE), journal);
+  const proxy = path.join(source, 'outbound-header-proxy');
+  fs.mkdirSync(proxy);
+  fs.writeFileSync(path.join(proxy, 'config.json'), 'old proxy settings');
+  const developer = path.join(source, 'developer');
+  fs.mkdirSync(developer);
+  fs.writeFileSync(path.join(developer, 'settings.json'), 'old developer settings');
+  const extra = `${DB_FILENAME}.legacy`;
+  fs.writeFileSync(path.join(source, extra), 'database original');
+  const rename = fs.promises.rename.bind(fs.promises);
+  vi.spyOn(fs.promises, 'rename').mockImplementation(async (from, to) => {
+    if (String(from) === proxy || String(from) === developer || String(from) === path.join(source, extra))
+      expect(readStartupJournal(source)?.isolatedEntries).toEqual(expect.arrayContaining(['outbound-header-proxy', 'developer', extra]));
+    await rename(from, to);
+  });
+  await new StartupCoordinator(source).prepareBeforeStore(progress());
+  expect(readStartupJournal(source)?.stage).toBe(StartupStage.Initialize);
+  expect(fs.readFileSync(path.join(transaction, 'retired', 'outbound-header-proxy', 'config.json'), 'utf8')).toBe('old proxy settings');
+  expect(fs.readFileSync(path.join(transaction, 'retired', 'developer', 'settings.json'), 'utf8')).toBe('old developer settings');
+  expect(fs.readFileSync(path.join(transaction, 'retired', extra), 'utf8')).toBe('database original');
+});
+
+test('an old isolation plan still blocks when a required entry has no source or archive', async () => {
+  const source = root();
+  legacy(source);
+  const journal = { ...newStartupJournal(StartupRoute.Migration), stage: StartupStage.Isolate,
+    isolatedEntries: [`${DB_FILENAME}.missing`] };
+  const transaction = path.join(source, 'backups', journal.transactionId);
+  await createHistoryBackup(source, path.join(transaction, 'history'));
+  writeStartupJson(path.join(source, STARTUP_STATE_FILE), journal);
+  await expect(new StartupCoordinator(source).prepareBeforeStore(progress())).rejects.toThrow(/missing/);
+  expect(readStartupJournal(source)?.stage).toBe(StartupStage.Isolate);
+  expect(() => verifyHistoryBackup(path.join(transaction, 'history'))).not.toThrow();
+});
+
+test.each(['rename', 'mkdir'])('an optional archive collision handles %s access failures at the correct boundary', async operation => {
+  const source = root();
+  legacy(source);
+  fs.writeFileSync(path.join(source, 'notes.txt'), 'current notes');
+  const journal = { ...newStartupJournal(StartupRoute.Migration), stage: StartupStage.Isolate,
+    isolatedEntries: fs.readdirSync(source) };
+  const transaction = path.join(source, 'backups', journal.transactionId);
+  await createHistoryBackup(source, path.join(transaction, 'history'));
+  fs.mkdirSync(path.join(transaction, 'retired'));
+  fs.writeFileSync(path.join(transaction, 'retired', 'notes.txt'), 'original notes');
+  writeStartupJson(path.join(source, STARTUP_STATE_FILE), journal);
+  const failure = Object.assign(new Error('access denied'), { code: 'EACCES' });
+  if (operation === 'rename') {
+    const rename = fs.promises.rename.bind(fs.promises);
+    vi.spyOn(fs.promises, 'rename').mockImplementation(async (from, to) => {
+      if (String(from) === path.join(source, 'notes.txt')) throw failure;
+      await rename(from, to);
+    });
+  } else {
+    const mkdir = fs.promises.mkdir.bind(fs.promises);
+    vi.spyOn(fs.promises, 'mkdir').mockImplementation(async (folder, options) => {
+      if (String(folder).includes('retired-additions')) throw failure;
+      return mkdir(folder, options);
+    });
+  }
+  const preparation = new StartupCoordinator(source).prepareBeforeStore(progress());
+  if (operation === 'rename') await preparation;
+  else await expect(preparation).rejects.toBe(failure);
+  expect(readStartupJournal(source)?.stage).toBe(operation === 'rename' ? StartupStage.Initialize : StartupStage.Isolate);
+  expect(fs.readFileSync(path.join(source, 'notes.txt'), 'utf8')).toBe('current notes');
+  expect(fs.readFileSync(path.join(transaction, 'retired', 'notes.txt'), 'utf8')).toBe('original notes');
+});
+
+test.each([DB_FILENAME, 'openclaw', 'outbound-header-proxy', 'developer', `${DB_FILENAME}.legacy`,
+  ...(process.platform === 'win32' ? [DB_FILENAME.toUpperCase(), 'OpenClaw', 'OUTBOUND-HEADER-PROXY', 'DEVELOPER'] : [])])(
+  'resumed isolation still refuses a conflicting required entry at %s',
   async name => {
     const source = root();
     legacy(source);
+    if (name !== DB_FILENAME && name !== 'openclaw' &&
+        name.toLowerCase() !== DB_FILENAME && name.toLowerCase() !== 'openclaw')
+      fs.writeFileSync(path.join(source, name), 'required legacy entry');
     const journal = { ...newStartupJournal(StartupRoute.Migration), stage: StartupStage.Isolate,
       isolatedEntries: [name] };
     const transaction = path.join(source, 'backups', journal.transactionId);
@@ -854,9 +1242,14 @@ test('recovers an interrupted native import without another backup, environment 
         .get(),
     ).toBeUndefined();
     const checked = new StartupCoordinator(target);
-    const runNative = vi.fn();
+    cowork.updateSession('native', { title: 'current title' });
+    const runNative = vi.fn(async () => JSON.stringify({ verified: true, entries: 4, conversations: 3 }));
     await checked.restoreHistory(store.getDatabase(), state, progress(), runNative);
-    expect(runNative).not.toHaveBeenCalled();
+    expect(runNative).toHaveBeenCalledExactlyOnceWith('verify', expect.any(String));
+    expect(cowork.getSession('native')?.title).toBe('current title');
+    await expect(checked.restoreHistory(store.getDatabase(), state, progress(), async () =>
+      JSON.stringify({ verified: false }))).rejects.toThrow(/identity verification/);
+    expect(cowork.getSession('native')?.title).toBe('current title');
     resume.complete();
     expect(new StartupCoordinator(target).route).toBe(StartupRoute.Normal);
     expect(fs.readdirSync(path.join(target, 'backups'))).toEqual([journal.transactionId]);
