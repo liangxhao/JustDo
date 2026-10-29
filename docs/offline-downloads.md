@@ -59,3 +59,5 @@ npm 包通过镜像安装，不再单独列出。
 准备：`npm run drawio:prepare`；校验：`npm run drawio:verify`。
 
 `npm run electron:dev:openclaw` 和 `npm run dist:win` 已自动准备，优先复用资源和本地归档，归档缺失才下载。断网电脑提前放好归档即可。
+
+归档校验后由项目自带的 Node `tar` 解包，每次使用独立暂存目录并在结束后清理。无需安装或更换系统 tar；修复脚本后可直接重新执行准备命令，旧的失败暂存目录不会参与本次构建。

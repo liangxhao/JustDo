@@ -3,7 +3,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
-const { spawnSync } = require('node:child_process');
+const tar = require('tar');
 const { build } = require('esbuild');
 const extension = path.resolve(__dirname, '..');
 const root = path.resolve(extension, '../../..');
@@ -24,7 +24,14 @@ const sourceHash = () =>
       ].map(file => fs.readFileSync(path.join(extension, file))),
       fs.readFileSync(__filename),
       Buffer.from(
-        ['esbuild', '@modelcontextprotocol/sdk', '@modelcontextprotocol/ext-apps', 'saxes', 'zod']
+        [
+          'esbuild',
+          '@modelcontextprotocol/sdk',
+          '@modelcontextprotocol/ext-apps',
+          'saxes',
+          'zod',
+          'tar',
+        ]
           .map(name => fs.readFileSync(path.join(root, 'node_modules', name, 'package.json')))
           .join('\n'),
       ),
@@ -66,26 +73,50 @@ function verifyDrawioAssets(directory = path.join(extension, 'assets'), checkSou
   return manifest;
 }
 
+function extractDrawioSource(archive, staging) {
+  const sourceName = `drawio-${upstream.commit}`;
+  const webapp = `${sourceName}/src/main/webapp`;
+  try {
+    // Use the installed Node extractor: Windows tar can reject an ordinary SVG
+    // as its input archive when extracting over an existing staging directory.
+    tar.x({
+      file: path.resolve(archive),
+      cwd: staging,
+      sync: true,
+      strict: true,
+      filter: (file, entry) => {
+        const name = file.replaceAll('\\', '/').replace(/\/$/, '');
+        if (name !== `${sourceName}/LICENSE` && name !== webapp && !name.startsWith(webapp + '/'))
+          return false;
+        if (entry.type !== 'File' && entry.type !== 'Directory')
+          throw new Error(`Unsupported draw.io archive entry: ${name} (${entry.type})`);
+        return true;
+      },
+    });
+  } catch (error) {
+    throw new Error(`Could not extract draw.io source archive: ${error.message}`, { cause: error });
+  }
+}
+
 async function prepare(archive) {
   const bytes = fs.readFileSync(archive);
   if (hash(bytes) !== upstream.archiveSha256)
     throw new Error('Draw.io source archive SHA-256 mismatch');
-  const staging = path.join(root, 'build', `drawio-${upstream.commit}`);
-  fs.mkdirSync(staging, { recursive: true });
+  const buildRoot = path.join(root, 'build');
+  fs.mkdirSync(buildRoot, { recursive: true });
+  const staging = fs.mkdtempSync(path.join(buildRoot, 'diagram-source-'));
+  try {
+    extractDrawioSource(archive, staging);
+    await bundleAssets(staging);
+  } finally {
+    // Only remove the fresh directory owned by this preparation.
+    if (path.dirname(staging) !== buildRoot) throw new Error('Invalid draw.io staging path');
+    fs.rmSync(staging, { recursive: true, force: true });
+  }
+}
+
+async function bundleAssets(staging) {
   const sourceName = `drawio-${upstream.commit}`;
-  const result = spawnSync(
-    'tar',
-    [
-      '-xzf',
-      path.resolve(archive),
-      '-C',
-      staging,
-      `${sourceName}/src/main/webapp`,
-      `${sourceName}/LICENSE`,
-    ],
-    { windowsHide: true, stdio: 'inherit' },
-  );
-  if (result.status !== 0) throw new Error('Could not extract draw.io source archive');
   const output = path.join(extension, 'assets');
   // Fixed absolute target under this extension; never remove caller-provided paths.
   if (path.dirname(output) !== extension) throw new Error('Invalid draw.io output path');
@@ -261,4 +292,4 @@ if (require.main === module) {
     process.exitCode = 1;
   });
 }
-module.exports = { includeEditorAsset, verifyDrawioAssets };
+module.exports = { extractDrawioSource, includeEditorAsset, verifyDrawioAssets };
