@@ -2270,6 +2270,12 @@ export class ChatController {
     }
     // Record the exact Main send key only at transport invocation. An unknown
     // response can then recover this owner without inventing a native run ID.
+    if (this.state.pendingUserMessage && !this.state.pendingUserMessage.__openclaw?.idempotencyKey) {
+      this.state.pendingUserMessage = {
+        ...this.state.pendingUserMessage,
+        __openclaw: { idempotencyKey: `${runId}:user` },
+      };
+    }
     this.state.chatRunId = runId;
     if (this.state.runActivity) this.state.runActivity = { ...this.state.runActivity, runId };
   }
@@ -2470,7 +2476,7 @@ export class ChatController {
           ? [{ type: 'text', text: optimisticDisplayMessage }, ...attachmentBlocks]
           : optimisticDisplayMessage,
       timestamp: Date.now(),
-      __openclaw: { idempotencyKey: runId, runId },
+      __openclaw: { idempotencyKey: `${runId}:user`, runId },
     };
     const userMessage = projectGatewayHistoryForDisplay([rawUserMessage])[0] ?? rawUserMessage;
     // A post-send history refresh can race Gateway transcript persistence,

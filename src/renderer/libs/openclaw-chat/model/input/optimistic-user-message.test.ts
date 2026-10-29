@@ -74,7 +74,7 @@ describe('mergePendingUserMessageForDisplay', () => {
     ]);
   });
 
-  test('matches text blocks when the pending prompt also contains attachments', () => {
+  test('keeps attachments pending without a shared input identity', () => {
     const pendingWithAttachment = {
       role: 'user',
       content: [
@@ -90,8 +90,39 @@ describe('mergePendingUserMessageForDisplay', () => {
     } as GatewayMessage;
 
     expect(mergePendingUserMessageForDisplay([persisted], pendingWithAttachment)).toEqual([
+      pendingWithAttachment,
       persisted,
     ]);
+    expect(mergePendingUserMessageForDisplay([
+      { ...persisted, __openclaw: { idempotencyKey: 'image-input:user' } },
+    ], {
+      ...pendingWithAttachment,
+      __openclaw: { idempotencyKey: 'image-input:user' },
+    })).toEqual([{ ...persisted, __openclaw: { idempotencyKey: 'image-input:user' } }]);
+  });
+
+  test.each([
+    { MediaPaths: ['C:\\media\\image.png'] },
+    { __openclaw: { media: [{ path: 'media://inbound/image.png' }] } },
+    { content: [{ type: 'text', text: 'hello' }, { type: 'image_url', image_url: { url: 'image.png' } }] },
+  ])('does not mistake media-bearing history for an unbound plain prompt: %j', media => {
+    const history = { ...pending, timestamp: 90, ...media } as GatewayMessage;
+    expect(mergePendingUserMessageForDisplay([history], pending)).toEqual([history, pending]);
+  });
+
+  test('compares exact input keys across wrapped and top-level native metadata', () => {
+    const wrapped = {
+      message: { role: 'user', content: 'native file context', idempotencyKey: 'input:user:user' },
+    } as unknown as GatewayMessage;
+    const local = {
+      ...pending,
+      __openclaw: { idempotencyKey: 'input:user:user' },
+    };
+
+    expect(mergePendingUserMessageForDisplay([wrapped], local)).toEqual([wrapped]);
+    expect(mergePendingUserMessageForDisplay([wrapped], {
+      ...local, __openclaw: { idempotencyKey: 'input:user' },
+    })).toEqual([wrapped, { ...local, __openclaw: { idempotencyKey: 'input:user' } }]);
   });
 
   test('keeps a repeated prompt from a different turn', () => {
@@ -104,6 +135,22 @@ describe('mergePendingUserMessageForDisplay', () => {
     expect(mergePendingUserMessageForDisplay([olderPrompt], pending)).toEqual([
       olderPrompt,
       pending,
+    ]);
+  });
+
+  test('does not infer a match for annotation cards without a stable identity', () => {
+    const pendingAnnotation = {
+      ...pending,
+      content: [
+        { type: 'text', text: 'hello' },
+        { type: 'browser_annotation', annotation: { title: 'Example' } },
+      ],
+    } as GatewayMessage;
+    const history = [{ ...pendingAnnotation, timestamp: 90 }];
+
+    expect(mergePendingUserMessageForDisplay(history, pendingAnnotation)).toEqual([
+      ...history,
+      pendingAnnotation,
     ]);
   });
 

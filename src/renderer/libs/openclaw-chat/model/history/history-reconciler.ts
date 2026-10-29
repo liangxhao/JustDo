@@ -1,4 +1,6 @@
+import type { GatewayMessage } from '../../types';
 import type { ChatTranscriptState, HistorySource } from '../chat-transcript-state';
+import { isPendingUserMessageMatch } from '../input/optimistic-user-message';
 import {
   isLocallyOptimisticHistoryTail,
   projectInitialHistoryForActiveTurn,
@@ -110,6 +112,9 @@ function messagesDisplayEquivalent(left: unknown, right: unknown): boolean {
     return leftIdentity.kind === rightIdentity.kind && leftIdentity.value === rightIdentity.value;
   }
   if (messageRole(left) !== messageRole(right)) return false;
+  if (messageRole(left) === 'user') {
+    return isPendingUserMessageMatch(left as GatewayMessage, right as GatewayMessage);
+  }
   return hasSimilarDisplayText(messageText(left), messageText(right));
 }
 

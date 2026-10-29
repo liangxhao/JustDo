@@ -189,6 +189,7 @@ test('dedupes optimistic attachment bytes after managed image MIME normalization
         timestamp: Date.now(),
         MediaPaths: ['C:\\media\\prompt.png'],
         MediaTypes: ['image/png'],
+        __openclaw: { idempotencyKey: 'image-input:user' },
       },
     ],
   });
@@ -203,6 +204,7 @@ test('dedupes optimistic attachment bytes after managed image MIME normalization
       base64Data: 'YWJj',
     },
   ]);
+  controller.beginInitialDispatch(controller.state.sessionKey, 'image-input');
   controller.state.chatSending = false;
 
   await controller.loadHistory();
@@ -307,6 +309,9 @@ test('hydrates the canonical image when the first session message replaces the o
   controller.setPendingUserMessage('first image', [
     { name: 'first.png', mimeType: 'image/png', base64Data: 'YWJj' },
   ]);
+  controller.state.client = { request: vi.fn() } as never;
+  controller.state.connected = true;
+  controller.beginInitialDispatch(controller.state.sessionKey, 'run-1');
   controller.state.chatRunId = 'run-1';
 
   (

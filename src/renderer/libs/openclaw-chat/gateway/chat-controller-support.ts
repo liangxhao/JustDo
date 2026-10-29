@@ -91,6 +91,8 @@ export interface ChatState {
     content: string | unknown[];
     text: string;
     timestamp: number;
+    /** Exact expected native user-input key, captured by its owning dispatch. */
+    __openclaw?: { idempotencyKey: string };
   } | null;
   /** Canonical, sequence-ordered live display state. */
   transcript: ChatTranscriptState;
