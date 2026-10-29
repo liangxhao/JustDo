@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto';
 import fs from 'fs';
 import path from 'path';
 
+import { LOGIN_STORAGE_CONFIG } from '../../../config/loginStorage';
 import {
   AppInitializationActivity,
   AppInitializationStep,
@@ -49,6 +50,7 @@ const STARTUP_ISOLATION_EXCLUSIONS = new Set([
   'logs',
   'install-timing.log',
   'install-resource.log',
+  LOGIN_STORAGE_CONFIG.directoryName,
   STARTUP_STATE_FILE,
   'lockfile',
   'SingletonLock',

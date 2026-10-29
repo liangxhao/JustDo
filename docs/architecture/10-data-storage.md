@@ -108,6 +108,7 @@ MCP 配置变更跨越 `mcp_servers` 与原生配置应用，不能用数据库�
 可选显示资料和 Cookie 过期时间；默认与 userData 同目录，隔离开发 userData 下则不移动该文件。
 目录名与用户信息文件名由 `src/config/loginStorage.ts` 的 `LOGIN_STORAGE_CONFIG` 分别
 配置，实际名称以构建配置为准；更改后不自动迁移或回退读取旧文件。
+历史迁移及中断恢复均排除 `directoryName` 配置的整个登录目录，保留原位及其中的所有文件。
 Cookie 更新合并当前文件而保留长期 mtoken；账号替换先删除旧文件并完成退出刷新，
 退出只删除用户信息文件，保留目录及其他文件。SDK 派生 JWT 不回写，继续由原有私有凭据快照与 SecretRef 管理。
 账号显示与服务同步状态只在 Main 内存中，重启从文件/SDK 恢复，不持久化原始 SDK 错误或凭据到产品库。

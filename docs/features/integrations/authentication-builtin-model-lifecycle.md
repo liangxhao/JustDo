@@ -27,6 +27,7 @@
 `<app.getPath('appData')>/<productName>/<directoryName>/<userInfoFileName>`，目录名与文件名由
 `src/config/loginStorage.ts` 的 `LOGIN_STORAGE_CONFIG` 分别配置，实际名称以构建配置为准。
 Windows 路径为 `%APPDATA%/<productName>/<directoryName>/<userInfoFileName>`。
+历史迁移及中断恢复不归档 `directoryName` 配置的登录目录，登录信息和同目录其他业务文件均保留原位。
 更改名称不自动迁移或回退读取旧文件；配置修改方式见[部署配置](../../../src/config/README.md#登录信息目录)。
 隔离开发 profile 仍读取这个固定产品路径，
 不能用该 profile 的 `userData` 推导登录文件。JWT 不回写登录文件，mtoken 不进入 Gateway 或产品数据库。

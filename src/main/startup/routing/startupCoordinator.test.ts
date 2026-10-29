@@ -4,6 +4,7 @@ import os from 'os';
 import path from 'path';
 import { afterEach, expect, test, vi } from 'vitest';
 
+import { LOGIN_STORAGE_CONFIG } from '../../../config/loginStorage';
 import { HistoryRecoveryKind } from '../../../shared/app/startup/history';
 import { StartupRoute, StartupStage } from '../../../shared/app/startup/routing';
 import { StartupCompatibilityErrorCode } from '../../../shared/app/startup/versionPolicy';
@@ -704,6 +705,42 @@ test.each([false, true])('migration leaves installer logs in place when resuming
     expect(fs.existsSync(path.join(transaction, 'history', name))).toBe(false);
     if (!resume) expect(journal.isolatedEntries).not.toContain(name);
   }
+  expect(fs.existsSync(path.join(transaction, 'retired', DB_FILENAME))).toBe(true);
+  expect(fs.existsSync(path.join(transaction, 'retired', 'openclaw'))).toBe(true);
+});
+
+test.each([false, true])('migration preserves the configured login directory when resuming isolation is %s', async resume => {
+  const source = root();
+  legacy(source);
+  const directory = process.platform === 'win32'
+    ? LOGIN_STORAGE_CONFIG.directoryName.toUpperCase()
+    : LOGIN_STORAGE_CONFIG.directoryName;
+  const loginDirectory = path.join(source, directory);
+  fs.mkdirSync(loginDirectory);
+  const files = new Map([
+    [LOGIN_STORAGE_CONFIG.userInfoFileName, 'saved login information'],
+    ['business.txt', 'other account data'],
+  ]);
+  for (const [name, content] of files) fs.writeFileSync(path.join(loginDirectory, name), content);
+  if (resume) {
+    const journal = { ...newStartupJournal(StartupRoute.Migration), stage: StartupStage.Isolate,
+      isolatedEntries: fs.readdirSync(source) };
+    await createHistoryBackup(source, path.join(source, 'backups', journal.transactionId, 'history'));
+    writeStartupJson(path.join(source, STARTUP_STATE_FILE), journal);
+  }
+  const move = vi.spyOn(fs.promises, 'rename');
+
+  await new StartupCoordinator(source).prepareBeforeStore(progress());
+
+  const journal = readStartupJournal(source)!;
+  expect(journal.stage).toBe(StartupStage.Initialize);
+  expect(move.mock.calls.some(([from]) => String(from) === loginDirectory)).toBe(false);
+  for (const [name, content] of files)
+    expect(fs.readFileSync(path.join(loginDirectory, name), 'utf8')).toBe(content);
+  const transaction = path.join(source, 'backups', journal.transactionId);
+  expect(fs.existsSync(path.join(transaction, 'retired', directory))).toBe(false);
+  expect(fs.existsSync(path.join(transaction, 'history', directory))).toBe(false);
+  if (!resume) expect(journal.isolatedEntries).not.toContain(directory);
   expect(fs.existsSync(path.join(transaction, 'retired', DB_FILENAME))).toBe(true);
   expect(fs.existsSync(path.join(transaction, 'retired', 'openclaw'))).toBe(true);
 });
