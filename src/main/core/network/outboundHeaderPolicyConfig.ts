@@ -3,6 +3,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
+import { LOGIN_STORAGE_CONFIG } from '../../../config/loginStorage';
 import {
   DEFAULT_OUTBOUND_HEADER_POLICY_CONFIG,
   type OutboundHeaderPolicyConfig,
@@ -15,7 +16,11 @@ export type {
   OutboundHeaderPolicyGroup,
 } from '../../../config/outboundHeaders';
 
-const USER_INFO_RELATIVE_PATH = path.join(USER_DATA_DIRECTORY_NAME, 'huawei', 'user_info.json');
+const USER_INFO_RELATIVE_PATH = path.join(
+  USER_DATA_DIRECTORY_NAME,
+  LOGIN_STORAGE_CONFIG.directoryName,
+  LOGIN_STORAGE_CONFIG.userInfoFileName,
+);
 const POLICY_CONFIG_RELATIVE_PATH = path.join(
   USER_DATA_DIRECTORY_NAME,
   'outbound-header-proxy',
@@ -40,7 +45,7 @@ This file controls outbound header injection.
   \`X-\`, such as \`X-User-Account\` and \`X-Cookie\`, but this prefix is not
   required.
 - A name in a group's \`headerNames\` must exactly match the corresponding property in
-  \`user_info.json\`.
+  \`${LOGIN_STORAGE_CONFIG.userInfoFileName}\`.
 - If a request matches multiple groups, the groups' header lists are merged.
   Header names are deduplicated case-insensitively; the first spelling wins.
 
@@ -203,7 +208,7 @@ export const getOutboundHeaderPolicyConfig = (): OutboundHeaderPolicyConfig =>
  *
  * Call without arguments to read both default files:
  * - `%APPDATA%/<productName>/outbound-header-proxy/config.json`
- * - `%APPDATA%/<productName>/huawei/user_info.json`
+ * - Login user info file selected by `LOGIN_STORAGE_CONFIG` under `%APPDATA%/<productName>`.
  *
  * The optional parameters are intended for tests or callers that need to
  * override the default paths or header names.
@@ -243,7 +248,7 @@ export const updateOutboundHeaderUserInfoCache = (
     const errorCode = (error as NodeJS.ErrnoException).code;
     if (errorCode !== 'ENOENT') {
       console.warn(
-        '[OutboundHeaderPolicy] Failed to read user_info.json:',
+        '[OutboundHeaderPolicy] Failed to read login user info:',
         error instanceof SyntaxError ? 'Invalid JSON' : 'File read failed',
       );
     }

@@ -105,8 +105,12 @@ Cookie 真正过期后停止使用过期值；Cookie 过期不等同于 mtoken �
 解析的文件、换取 JWT、发现模型、同步 Gateway 并启动模型凭据监控。账号模板在其后仅恢复显示，
 不重复启动换证或轮询，也不以 SDK 可用性限制模型启动。
 
-文件路径是 `<app.getPath('appData')>/<productName>/huawei/user_info.json`；Windows 默认
-`%APPDATA%/<productName>/huawei/user_info.json`。隔离开发模式也使用这个固定产品路径，
+文件路径是 `<app.getPath('appData')>/<productName>/<directoryName>/<userInfoFileName>`，
+目录名与用户信息文件名分别来自 `src/config/loginStorage.ts` 的 `LOGIN_STORAGE_CONFIG`，
+实际名称以构建配置为准；Windows 路径为
+`%APPDATA%/<productName>/<directoryName>/<userInfoFileName>`。更改名称需重启开发进程或重新打包，
+旧文件不会自动迁移或回退读取，见[登录信息目录配置](../../../src/config/README.md#登录信息目录)。
+隔离开发模式也使用这个固定产品路径，
 产品数据库仍属于各自 userData；模型换证的 deviceId 每次由 Main 公共模块读取当前 MAC，
 不读写 `model-device.json`。
 

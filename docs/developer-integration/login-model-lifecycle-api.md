@@ -54,8 +54,10 @@ await dependencies.onLogoutCommitted();
 ## 2. 登录模块必须准备的数据与配置
 
 登录文件使用 `resolveOutboundHeaderUserInfoPath()`（来自
-`src/main/core/network/outboundHeaderPolicyConfig.ts`）解析路径，通常为
-`<app.getPath('appData')>/<productName>/huawei/user_info.json`。不要硬编码产品名或 Windows 用户目录。
+`src/main/core/network/outboundHeaderPolicyConfig.ts`）解析路径，格式为
+`<app.getPath('appData')>/<productName>/<directoryName>/<userInfoFileName>`。
+目录名与文件名由 `src/config/loginStorage.ts` 分别配置，实际名称以构建配置为准；
+不要硬编码子目录、文件名、产品名或 Windows 用户目录。
 隔离开发 userData 不改变此登录文件路径。
 
 模型认证必需字段如下，示例均为占位值：

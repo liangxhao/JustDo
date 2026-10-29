@@ -20,7 +20,8 @@ updateOutboundHeaderUserInfoCache();
 签名为 `updateOutboundHeaderUserInfoCache(userInfoPath?, headerNames?)`，同步返回
 `Readonly<Record<string, string>>`。生产代码使用无参调用；可选参数供测试或明确指定
 文件路径、请求头名称的调用方使用。默认文件是
-`%APPDATA%/<productName>/huawei/user_info.json`，`productName` 由产品元数据决定。
+`%APPDATA%/<productName>/<directoryName>/<userInfoFileName>`，`productName` 由产品元数据决定，
+目录名与文件名由 `src/config/loginStorage.ts` 分别配置，实际名称以构建配置为准。
 
 ## 调用时机
 

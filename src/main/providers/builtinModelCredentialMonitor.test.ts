@@ -35,7 +35,7 @@ describe('BuiltinModelCredentialMonitor', () => {
     };
     const refresh = vi.fn(async () => refreshed);
     const monitor = new BuiltinModelCredentialMonitor({
-      userInfoPath: 'C:\\AppData\\JustDo\\huawei\\user_info.json',
+      userInfoPath: 'C:\\AppData\\JustDo\\login-data\\user_info.json',
       refresh,
       watchFile,
       unwatchFile,
@@ -62,7 +62,7 @@ describe('BuiltinModelCredentialMonitor', () => {
     vi.useFakeTimers();
     const refresh = vi.fn(async () => null);
     const monitor = new BuiltinModelCredentialMonitor({
-      userInfoPath: 'C:\\AppData\\JustDo\\huawei\\user_info.json',
+      userInfoPath: 'C:\\AppData\\JustDo\\login-data\\user_info.json',
       refresh,
       watchFile: vi.fn(),
       unwatchFile: vi.fn(),

@@ -4,6 +4,7 @@ import path from 'node:path';
 
 import { afterEach, expect, test, vi } from 'vitest';
 
+import { LOGIN_STORAGE_CONFIG } from '../../../../config/loginStorage';
 import type { AuthState } from '../../../../shared/app/auth';
 import { AuthErrorCode, AuthStatus, AuthSyncStatus } from '../../../../shared/app/auth';
 import type { AuthenticatedLogin, LoginSdkAdapter, LoginSdkResult } from './loginSdkAdapter';
@@ -27,7 +28,11 @@ afterEach(() => {
 function setup(adapterOverrides: Partial<LoginSdkAdapter> = {}) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-login-'));
   directories.push(directory);
-  const file = path.join(directory, 'huawei', 'user_info.json');
+  const file = path.join(
+    directory,
+    LOGIN_STORAGE_CONFIG.directoryName,
+    LOGIN_STORAGE_CONFIG.userInfoFileName,
+  );
   const store = new LoginUserInfoStore(file);
   const adapter: LoginSdkAdapter = {
     available: true,

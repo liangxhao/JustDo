@@ -24,8 +24,11 @@
 | Team 权限      | 服务端数据库            | 模型目录、预算、blocked、限流                |
 
 登录文件由 `resolveOutboundHeaderUserInfoPath()` 定位到
-`<app.getPath('appData')>/<productName>/huawei/user_info.json`，Windows 默认是
-`%APPDATA%/<productName>/huawei/user_info.json`。隔离开发 profile 仍读取这个固定产品路径，
+`<app.getPath('appData')>/<productName>/<directoryName>/<userInfoFileName>`，目录名与文件名由
+`src/config/loginStorage.ts` 的 `LOGIN_STORAGE_CONFIG` 分别配置，实际名称以构建配置为准。
+Windows 路径为 `%APPDATA%/<productName>/<directoryName>/<userInfoFileName>`。
+更改名称不自动迁移或回退读取旧文件；配置修改方式见[部署配置](../../../src/config/README.md#登录信息目录)。
+隔离开发 profile 仍读取这个固定产品路径，
 不能用该 profile 的 `userData` 推导登录文件。JWT 不回写登录文件，mtoken 不进入 Gateway 或产品数据库。
 
 deviceId 通过 Main 公共模块 `src/main/core/network/macAddress.ts` 的 `getMacAddress(): string` 获取。按系统网卡枚举顺序选择第一个非 internal、非全零且格式有效的 MAC，去掉冒号并转为 12 位大写十六进制；不额外按网卡名称猜测物理、虚拟或连接状态。登录模块应复用同一函数。没有可用 MAC 或网卡查询失败时抛错，不生成替代标识；换证在发送请求前失败。

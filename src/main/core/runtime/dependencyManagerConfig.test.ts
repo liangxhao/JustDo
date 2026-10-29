@@ -27,15 +27,15 @@ test('resolves npm and pip config directly from the resource directory', () => {
   const resourceDir = createTempDir();
   fs.writeFileSync(
     path.join(resourceDir, '.npmrc'),
-    'strict-ssl=false\nregistry=http://mirrors.tools.huawei.com/npm\n',
+    'strict-ssl=false\nregistry=http://packages.internal.example/npm\n',
     'utf8',
   );
   fs.writeFileSync(
     path.join(resourceDir, 'pip.ini'),
     [
       '[global]',
-      'index-url = https://mirrors.tools.huawei.com/pypi/simple',
-      'trusted-host = mirrors.tools.huawei.com',
+      'index-url = https://packages.internal.example/pypi/simple',
+      'trusted-host = packages.internal.example',
       '',
     ].join('\n'),
     'utf8',
@@ -45,13 +45,13 @@ test('resolves npm and pip config directly from the resource directory', () => {
   expect(paths.npmUserConfigPath).toBe(path.join(resourceDir, '.npmrc'));
   expect(paths.pipConfigPath).toBe(path.join(resourceDir, 'pip.ini'));
   expect(fs.readFileSync(paths.npmUserConfigPath, 'utf8')).toBe(
-    'strict-ssl=false\nregistry=http://mirrors.tools.huawei.com/npm\n',
+    'strict-ssl=false\nregistry=http://packages.internal.example/npm\n',
   );
   expect(fs.readFileSync(paths.pipConfigPath, 'utf8')).toBe(
     [
       '[global]',
-      'index-url = https://mirrors.tools.huawei.com/pypi/simple',
-      'trusted-host = mirrors.tools.huawei.com',
+      'index-url = https://packages.internal.example/pypi/simple',
+      'trusted-host = packages.internal.example',
       '',
     ].join('\n'),
   );

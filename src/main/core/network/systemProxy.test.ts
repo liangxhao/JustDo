@@ -178,20 +178,20 @@ describe('process proxy bypass', () => {
 
   test('uses the original bypass entries as an upstream routing policy', () => {
     const entries = getNoProxyEntries({
-      NO_PROXY: '*.huawei.com,api.example.com:8443',
+      NO_PROXY: '*.corp.example,api.example.com:8443',
       no_proxy: '.internal.example',
     });
 
-    expect(shouldBypassProxyForUrl(entries, 'https://api.huawei.com/v1/models')).toBe(true);
+    expect(shouldBypassProxyForUrl(entries, 'https://api.corp.example/v1/models')).toBe(true);
     expect(shouldBypassProxyForUrl(entries, 'https://api.example.com:8443/v1')).toBe(true);
     expect(shouldBypassProxyForUrl(entries, 'https://api.example.com/v1')).toBe(false);
     expect(shouldBypassProxyForUrl(entries, 'https://external.example/v1')).toBe(false);
     expect(
       getNoProxyConflictingEntries(entries, [
-        'https://api.huawei.com/v1/',
+        'https://api.corp.example/v1/',
         'https://external.example/v1/',
       ]),
-    ).toEqual(['*.huawei.com']);
+    ).toEqual(['*.corp.example']);
   });
 });
 

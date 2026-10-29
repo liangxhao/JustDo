@@ -24,21 +24,22 @@
 
 ### 2.1 文件位置
 
-当前标准产品名为 `JustDo`。Windows 上的默认路径是：
+Windows 上的路径格式是：
 
 ```text
-%APPDATA%\JustDo\outbound-header-proxy\config.json
-%APPDATA%\JustDo\huawei\user_info.json
+%APPDATA%\<productName>\outbound-header-proxy\config.json
+%APPDATA%\<productName>\<directoryName>\<userInfoFileName>
 ```
 
 其他平台的对应位置是：
 
 | 平台  | `config.json`                                                                                                                  | `user_info.json`                                                                                       |
 | ----- | ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------ |
-| macOS | `~/Library/Application Support/JustDo/outbound-header-proxy/config.json`                                                       | `~/Library/Application Support/JustDo/huawei/user_info.json`                                           |
-| Linux | `$XDG_CONFIG_HOME/JustDo/outbound-header-proxy/config.json`；未设置时使用 `~/.config/JustDo/outbound-header-proxy/config.json` | `$XDG_CONFIG_HOME/JustDo/huawei/user_info.json`；未设置时使用 `~/.config/JustDo/huawei/user_info.json` |
+| macOS | `~/Library/Application Support/<productName>/outbound-header-proxy/config.json`                                                       | `~/Library/Application Support/<productName>/<directoryName>/<userInfoFileName>`                                           |
+| Linux | `$XDG_CONFIG_HOME/<productName>/outbound-header-proxy/config.json`；未设置时使用 `~/.config/<productName>/outbound-header-proxy/config.json` | `$XDG_CONFIG_HOME/<productName>/<directoryName>/<userInfoFileName>`；未设置时使用 `~/.config/<productName>/<directoryName>/<userInfoFileName>` |
 
-如果使用的是更换过产品名的构建，请把路径中的 `JustDo` 替换为实际产品名。
+`productName` 来自 `package.json.productName`；`directoryName` 和 `userInfoFileName` 分别来自
+`src/config/loginStorage.ts` 的 `LOGIN_STORAGE_CONFIG`。请将占位符替换为实际构建配置中的值。
 
 ### 2.2 配置步骤
 

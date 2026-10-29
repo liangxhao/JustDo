@@ -760,7 +760,7 @@ test('does not log file contents when user info JSON is malformed', () => {
   try {
     expect(updateOutboundHeaderUserInfoCache(userInfoPath, ['X-Cookie'])).toEqual({ 'X-Cookie': '' });
     expect(warningSpy).toHaveBeenCalledWith(
-      '[OutboundHeaderPolicy] Failed to read user_info.json:', 'Invalid JSON',
+      '[OutboundHeaderPolicy] Failed to read login user info:', 'Invalid JSON',
     );
     expect(warningSpy.mock.calls.flat().join(' ')).not.toContain('SYNTHETIC');
   } finally {
@@ -1064,7 +1064,7 @@ test('accepts a dynamic upstream proxy resolver and user info path', () => {
 
   expect(
     () =>
-      new OutboundHeaderProxy(undefined, resolver, 'C:\\AppData\\JustDo\\huawei\\user_info.json'),
+      new OutboundHeaderProxy(undefined, resolver, 'C:\\AppData\\JustDo\\login-data\\user_info.json'),
   ).not.toThrow();
 });
 

@@ -40,8 +40,9 @@ Main 使用应用已保存的直连、系统或自定义代理配置，不能只
 不代表登录文件被删除或用户主动退出。修正网络问题后后台监控会重试。
 
 产品改名应修改 `package.json.productName` 并重启开发进程或重新打包；`package.json.name`
-保持 `justdo`。改名后的登录文件在 `%APPDATA%/<productName>/huawei/user_info.json`，
-旧品牌目录不会自动迁移。修改项目文件夹名称不改变产品数据目录。
+保持 `justdo`。改名后的登录文件在 `%APPDATA%/<productName>/<directoryName>/<userInfoFileName>`，
+目录名与文件名由 `src/config/loginStorage.ts` 分别配置，实际名称以构建配置为准。
+更改产品名、目录名或文件名不会自动迁移旧登录文件。修改项目文件夹名称不改变产品数据目录。
 
 ## 换证成功后的本地 JWT 校验
 

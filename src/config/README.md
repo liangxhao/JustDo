@@ -2,7 +2,7 @@
 
 编辑本目录的 TypeScript 常量后，重启 Electron 开发进程或重新打包。
 配置文件只保存预设值和类型，校验、文件读取、请求等逻辑由使用方负责。
-内置模型地址、JWT 换证地址、出站请求头白名单及开发 Key、文件路径均留空，部署时填写所需地址。空换证地址禁用换证，空模型地址不启用内置模型。
+内置模型地址、JWT 换证地址、出站请求头白名单、开发 Key 及其文件路径均留空，部署时填写所需地址。空换证地址禁用换证，空模型地址不启用内置模型。
 除本地临时开发 Key 外，禁止填写 Key、JWT、mtoken、Cookie 等凭据。
 
 开发联调可通过 `builtinModelAuth.ts` 的 `developmentApiKeyFile` 指定本地 Key 文件；仅未打包且选择 `api-key` 模式时由 Main 读取，文件内容不参与打包。非空 `developmentApiKey` 优先于文件。
@@ -13,7 +13,27 @@
 | [builtinModels.ts](builtinModels.ts)         | 内置模型开关 `enabled`、LiteLLM API 地址 `baseUrl`           |
 | [activityReporting.ts](activityReporting.ts) | 活动信息上报开关 `enabled`，默认开启                         |
 | [builtinModelAuth.ts](builtinModelAuth.ts)   | Jalor 换证地址、JWT 生命周期上限、开发认证模式与临时 API Key |
+| [loginStorage.ts](loginStorage.ts)           | 登录存储目录 `directoryName`、用户信息文件 `userInfoFileName` |
 | [outboundHeaders.ts](outboundHeaders.ts)     | 请求头注入开关、URL 白名单与请求头名称的分组预设             |
+
+## 登录信息目录
+
+`loginStorage.ts` 的 `LOGIN_STORAGE_CONFIG` 分别配置目录和用户信息文件：
+
+- `directoryName`：产品数据目录下的存储子目录，还可存放其他业务文件。
+- `userInfoFileName`：上述目录中的用户信息文件名，独立于目录名配置。
+
+部署时直接修改配置文件中的值；实际目录名与文件名以该配置为准。
+
+Windows 路径为 `%APPDATA%/<productName>/<directoryName>/<userInfoFileName>`；
+产品根目录继续由 `package.json.productName` 决定。两项均只填写单个非空名称，
+不填写绝对路径、路径分隔符、`.` 或 `..`。
+
+登录读写、内置模型换证和出站请求头缓存共用同一路径解析器；隔离开发 profile 的 `userData`
+不改变此路径。更改目录或文件名不会自动迁移或回退读取旧文件；
+需要完全退出应用后自行移动或重命名原文件，或启动应用后重新登录。
+退出登录只删除配置指定的用户信息文件，不删除整个目录或其中的其他文件。
+修改配置需重启 Electron 开发进程或重新打包；此配置文件只保存名称，不保存凭据。
 
 ## 活动上报
 
