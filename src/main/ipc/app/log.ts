@@ -4,7 +4,7 @@ import path from 'path';
 import { LogIpc } from '../../../shared/app/logIpc';
 import { PRODUCT_NAME } from '../../../shared/productMetadata';
 import { getLogFilePath, getRecentMainLogEntries } from '../../core/logger';
-import { getCoworkLogPath } from '../../cowork/coworkLogger';
+import { getRetainedLogPaths, LogKind } from '../../core/logMaintenance';
 import { exportLogsZip } from './logExport';
 
 const padTwoDigits = (value: number): string => value.toString().padStart(2, '0');
@@ -50,7 +50,13 @@ export const registerLogHandlers = (): void => {
         outputPath,
         entries: [
           ...getRecentMainLogEntries(),
-          { archiveName: 'cowork.log', filePath: getCoworkLogPath() },
+          ...[
+            ...getRetainedLogPaths(path.join(app.getPath('userData'), 'logs'), LogKind.Cowork),
+            ...getRetainedLogPaths(
+              path.join(app.getPath('userData'), 'openclaw', 'logs'),
+              LogKind.Gateway,
+            ),
+          ].map(filePath => ({ archiveName: path.basename(filePath), filePath })),
         ],
       });
       return {

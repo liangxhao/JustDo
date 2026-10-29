@@ -17,6 +17,7 @@ import {
 import { PRODUCT_NAME_LOWERCASE } from '../../../shared/productMetadata';
 import type { SystemPromptReplacementRule } from '../../../shared/prompts/systemPromptReplacements';
 import { t } from '../../core/i18n';
+import { LogKind, managedLogs } from '../../core/logMaintenance';
 import { redactLogText } from '../../core/logRedaction';
 import {
   applyTrustedCertificateEnv,
@@ -2111,9 +2112,11 @@ export class OpenClawEngineManager extends EventEmitter {
     const appendLog = (chunk: Buffer | string, stream: 'stdout' | 'stderr') => {
       const text = typeof chunk === 'string' ? chunk : chunk.toString();
       const line = `[${new Date().toISOString()}] [${stream}] ${text}`;
-      fs.appendFile(this.gatewayLogPath, line, () => {
-        // best-effort log append
-      });
+      try {
+        managedLogs.append(LogKind.Gateway, this.gatewayLogPath, redactLogText(line));
+      } catch {
+        // Console forwarding below retains the record in Main's bounded fallback path.
+      }
     };
     const emitLines = (text: string, stream: 'stdout' | 'stderr') => {
       for (const line of text.split(/\r?\n/)) {

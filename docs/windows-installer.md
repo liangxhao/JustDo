@@ -519,9 +519,19 @@ not collected by this observer. The shared credential masker is applied before p
 
 Log writes use real append operations, rather than an extra writability probe or
 electron-log's cached NullFile. If the primary log directory fails, Main tries
-`<install>/logs`; rotation, pruning and export errors do not block startup. The
+`<install>/logs`. The same fallback preserves the original failure when rotation
+or capacity reclamation cannot admit the next bounded record; an over-limit file
+does not keep growing after failed rotation. Maintenance retries on its next
+interval, and rotation, pruning and export errors do not block startup. The
+shared budget requires a readable inventory: if a managed directory cannot be
+enumerated, further disk logging pauses until a later inventory succeeds, while
+console output remains available. Existing locked oversized logs cannot be
+forcibly reclaimed and are not allowed to grow further. The
 failure screen shows the active log path, and log export includes both primary
-and fallback files. If both allowed locations are unwritable, the console remains
+and fallback files with retained rotation backups. Main, Cowork and Gateway
+summary logs share the per-file, seven-day and 500 MiB maintenance policy in
+[development](development.md#日志与排障); native JSON log retention remains owned by
+OpenClaw. If both allowed locations are unwritable, the console remains
 available and later actual writes can recover. A process killed before JavaScript
 starts, or a completely unwritable disk, cannot be guaranteed a persisted log.
 

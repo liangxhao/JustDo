@@ -51,7 +51,9 @@ beforeEach(() => {
   }
 });
 
-afterEach(() => {
+afterEach(async () => {
+  const { managedLogs } = await import('./logMaintenance');
+  managedLogs.stop();
   vi.restoreAllMocks();
   Object.assign(console, consoleMethods);
   process.execPath = actualExecPath;
@@ -148,6 +150,7 @@ test('keeps console output when both log directories fail and recovers once a re
 });
 
 test('a retention directory read failure is logged and never interrupts initialization', async () => {
+  const warnings = vi.mocked(console.warn);
   const actualReadDirectory = fs.readdirSync.bind(fs);
   vi.spyOn(fs, 'readdirSync').mockImplementation((...args: Parameters<typeof fs.readdirSync>) => {
     if (String(args[0]) === path.join(appState.userData, 'logs')) {
@@ -158,9 +161,9 @@ test('a retention directory read failure is logged and never interrupts initiali
   const logger = await import('./logger');
   expect(() => logger.initLogger()).not.toThrow();
 
-  expect(fs.readFileSync(logger.getLogFilePath(), 'utf8')).toContain(
-    'Permission denied enumerating logs',
-  );
+  expect(warnings.mock.calls.some(call =>
+    call.some(value => value instanceof Error && value.message === 'Permission denied enumerating logs'),
+  )).toBe(true);
   expect(() => logger.getRecentMainLogEntries()).not.toThrow();
 });
 
@@ -200,15 +203,12 @@ test('masks credentials in persisted failures while retaining their diagnostic s
   expect(content).toContain('startupLogger.test.ts');
 });
 
-test('records a log rotation failure and continues appending without repeated rename attempts', async () => {
-  const actualStat = fs.statSync.bind(fs);
-  vi.spyOn(fs, 'statSync').mockImplementation((...args: Parameters<typeof fs.statSync>) => {
-    const stat = actualStat(...args);
-    if (String(args[0]).endsWith('.log')) {
-      return Object.assign(stat, { size: 81 * 1024 * 1024 });
-    }
-    return stat;
-  });
+test('preserves the original failure in fallback logs when rotation is locked, without growing the full file', async () => {
+  const directory = path.join(appState.userData, 'logs');
+  fs.mkdirSync(directory, { recursive: true });
+  const primary = path.join(directory, `main-${new Date().toISOString().slice(0, 10)}.log`);
+  fs.writeFileSync(primary, '');
+  fs.truncateSync(primary, 81 * 1024 * 1024);
   const rename = vi.spyOn(fs, 'renameSync').mockImplementation(() => {
     throw Object.assign(new Error('Log is open in another application'), { code: 'EBUSY' });
   });
@@ -218,8 +218,10 @@ test('records a log rotation failure and continues appending without repeated re
   console.error('[AppInitialization] Startup failed:', error);
 
   const content = fs.readFileSync(logger.getLogFilePath(), 'utf8');
+  expect(path.dirname(logger.getLogFilePath())).toBe(path.join(appState.installation, 'logs'));
   expect(content).toContain('Log is open in another application');
   expect(content).toContain('EBUSY');
   expect(content).toContain(error.stack);
+  expect(fs.statSync(primary).size).toBe(81 * 1024 * 1024);
   expect(rename).toHaveBeenCalledTimes(1);
 });

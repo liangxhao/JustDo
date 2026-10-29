@@ -88,7 +88,8 @@ import {
 } from './core/development/devSessionLifecycle';
 import { ManagedDirectoryOperationCoordinator } from './core/filesystem/managedDirectoryOperations';
 import { setLanguage, t } from './core/i18n';
-import { getLogFilePath, getRecentMainLogEntries, initLogger } from './core/logger';
+import { getLogFilePath, getRecentMainLogEntries, initLogger, stopLogMaintenance } from './core/logger';
+import { getRetainedLogPaths, LogKind } from './core/logMaintenance';
 import { mainProcessFetch, mainProcessTitleFetch } from './core/network/mainProcessFetch';
 import {
   resolveOutboundHeaderUserInfoPath,
@@ -984,10 +985,12 @@ const getSessionDiagnosticsService = (): SessionDiagnosticsService => {
     logSources: {
       main: report => orderDiagnosticMainLogs(getRecentMainLogEntries(true), report),
       cowork: () =>
-        ['cowork.log', 'cowork.log.old'].map(name =>
-          path.join(app.getPath('userData'), 'logs', name),
+        getRetainedLogPaths(path.join(app.getPath('userData'), 'logs'), LogKind.Cowork),
+      gateway: () =>
+        getRetainedLogPaths(
+          path.join(app.getPath('userData'), 'openclaw', 'logs'),
+          LogKind.Gateway,
         ),
-      gateway: () => [path.join(app.getPath('userData'), 'openclaw', 'logs', 'gateway.log')],
     },
   });
   return sessionDiagnosticsService;
@@ -2046,6 +2049,7 @@ if (agentBridgeArgv) {
     cleanup: runAppCleanup,
     cleanupTimeoutMs: SHUTDOWN_BUDGET_MS.applicationExit,
     onBeginCleanup: () => {
+      stopLogMaintenance();
       startupWindowHandoff.stop();
       // Retire the visible shell immediately while native owners close safely.
       for (const window of BrowserWindow.getAllWindows()) {

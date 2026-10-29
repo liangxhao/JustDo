@@ -1,3 +1,5 @@
+import path from 'node:path';
+
 import type {
   EngineDiagnosticEvidence,
   EngineDiagnosticReport,
@@ -8,6 +10,7 @@ import type {
   EngineLogSource,
 } from '../../../shared/openclaw/engineDiagnostics';
 import { getLogFilePath, getRecentMainLogEntries } from '../../core/logger';
+import { getRetainedLogPaths, LogKind } from '../../core/logMaintenance';
 import { redactLogText } from '../../core/logRedaction';
 import {
   discoverNativeDiagnosticLogs,
@@ -295,10 +298,24 @@ export async function collectEngineDiagnostics(
       return scan('native', [], issueFor(error));
     }
   };
+  const gateway = async () => {
+    // Keep the explicit source so a missing or unsafe current file remains a gap.
+    const file = deps.getGatewayLogFile();
+    let files: string[];
+    try {
+      files = [...new Set([
+        file,
+        ...getRetainedLogPaths(path.dirname(file), LogKind.Gateway),
+      ])];
+    } catch (error) {
+      return scan('gateway', [file], issueFor(error));
+    }
+    return scan('gateway', files);
+  };
   // Local files remain available even when the runtime cannot start or answer RPCs.
   const scans = await Promise.allSettled([
     async () => scan('main', deps.getMainLogFiles()),
-    async () => scan('gateway', [deps.getGatewayLogFile()]),
+    gateway,
     native,
   ].map(source => source()));
   if (signal.aborted) throw new Error('canceled');

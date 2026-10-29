@@ -91,10 +91,33 @@ npm test
 | 日志                    | Windows 默认位置                                    |
 | ----------------------- | --------------------------------------------------- |
 | Main                    | `%APPDATA%/<productName>/logs/main-YYYY-MM-DD.log`  |
+| Cowork                  | `%APPDATA%/<productName>/logs/cowork.log`          |
 | Gateway 摘要            | `%APPDATA%/<productName>/openclaw/logs/gateway.log` |
 | OpenClaw 完整 JSON 日志 | 以 `[gateway] log file:` 输出的路径为准             |
 
 `productName` 来自 `package.json`；隔离开发会话使用独立数据目录。Gateway 摘要会省略部分事件，缺少记录不能证明事件未发生；终端重定向文件只是控制台捕获。
+
+Main 统一维护应用写入的 Main、Cowork 和 Gateway 摘要日志。单文件上限分别为
+80 MiB、5 MiB 和 20 MiB；写入前检查本条记录是否会超限，必要时先轮转，每个
+文件只保留一个备份，名称分别为 `main-YYYY-MM-DD.old.log`、`cowork.log.old`
+和 `gateway.log.old`。单条记录本身超过所属文件上限时，保留有界 UTF-8 内容和
+明确的截断标记。Main 仍按 UTC 日期分文件。
+
+首次真实日志写入后执行维护，运行期间每 5 分钟再次执行，不要求重启。超过
+7 天未修改的日志会被清理，包括空闲的 Cowork、Gateway 当前文件；受管日志在
+用户日志目录、安装目录回退日志及 `openclaw/logs` 中共享 500 MiB 的总容量预算。
+写入即将超过预算时也会触发清理，按修改
+时间优先删除最旧的非活动文件。macOS 的 Main 日志目录同样计入预算。已有
+超大文件也纳入轮转与容量维护。维护只匹配明确的日志文件名，不递归扫描或
+跟随符号链接、目录联接，不清理数据库、会话记录或其他文件。
+
+轮转或容量回收失败时，不继续向已超限文件追加；Main 尝试安装目录的 `logs`
+保留原始错误，后续维护周期再重试。两个位置都不可用时保留控制台输出。
+若任一受管目录无法枚举、总容量无法确认，暂停后续磁盘日志写入，保留控制台
+输出，待后续盘点恢复；无法删除的既有超额文件不能强制回收，也不继续扩大占用。
+清理、轮转及导出失败不阻断应用启动。日志导出与诊断包含仍保留的轮转备份；
+达到保留期或容量预算后删除的历史不能恢复。上述 500 MiB 预算仅覆盖应用受管
+日志，OpenClaw 完整 JSON 日志的写入与保留仍由 OpenClaw 负责。
 
 启动失败先查 Main 初始化、原生模块和 runtime；聊天执行异常再对照 Gateway 日志与[会话诊断](features/chat/session-diagnostics.md)。分享日志前脱敏，不提交原始日志、数据库或完整配置。
 

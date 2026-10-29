@@ -122,6 +122,31 @@ describe('engine failure diagnostics', () => {
     expect(report.coverage.find(c => c.source === 'native')?.scannedFiles).toBe(1);
   });
 
+  it('finds startup errors in the retained Gateway backup without scanning unrelated files', async () => {
+    await fs.writeFile(
+      deps.getGatewayLogFile(),
+      line(now - 1200, '[gateway] starting runtime', 'stdout'),
+    );
+    await fs.writeFile(
+      `${deps.getGatewayLogFile()}.old`,
+      line(now - 1800, '[gateway] listen EADDRINUSE during startup'),
+    );
+    await fs.writeFile(
+      path.join(directory, 'gateway.log.unrelated'),
+      line(now - 1700, '[gateway] ENOSPC unrelated file'),
+    );
+
+    const report = await collect();
+
+    expect(report.evidence).toContainEqual(expect.objectContaining({
+      source: 'gateway', category: 'port', timestamp: now - 1800,
+    }));
+    expect(report.evidence.some(item => item.category === 'storage')).toBe(false);
+    expect(report.coverage.find(item => item.source === 'gateway')).toMatchObject({
+      files: 2, scannedFiles: 2, issues: [],
+    });
+  });
+
   it.each(['main', 'gateway'] as const)(
     'retains the outer timestamp for %s JSON messages without native metadata',
     async source => {

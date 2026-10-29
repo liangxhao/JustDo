@@ -10,8 +10,8 @@
  *
  * Rotation policy:
  *   - Daily log files (one file per calendar day)
- *   - Max 80 MB per file; on overflow rotate to .old.log, best-effort
- *   - Files older than 7 days are pruned on startup
+ *   - Bounded files, startup/runtime retention and a shared app-owned log budget
+ *   - See logMaintenance.ts for policy; failed rotation uses the fallback directory
  */
 
 import { app } from 'electron';
@@ -21,11 +21,14 @@ import path from 'path';
 import { formatWithOptions } from 'util';
 
 import { PRODUCT_NAME } from '../../shared/productMetadata';
+import {
+  getCurrentLogFileName,
+  isManagedLogFile,
+  LOG_MAINTENANCE_POLICY,
+  LogKind,
+  managedLogs,
+} from './logMaintenance';
 import { redactLogText } from './logRedaction';
-
-const LOG_RETENTION_DAYS = 7;
-const LOG_MAX_SIZE = 80 * 1024 * 1024; // 80 MB
-const MAIN_LOG_FILE_PATTERN = /^main-\d{4}-\d{2}-\d{2}(?:\.old)?\.log(?:\.old)?$/;
 
 const originalConsole = {
   log: console.log.bind(console),
@@ -39,8 +42,6 @@ const originalConsole = {
 let _logDir: string | undefined;
 let preferredLogDirectory: string | undefined;
 let fallbackLogDirectory: string | undefined;
-let trackedLogPath: string | undefined;
-let trackedLogBytes = 0;
 let initialized = false;
 let lastWriteFailure = '';
 
@@ -64,40 +65,7 @@ function describe(error: unknown): string {
 }
 
 function appendLogRecord(directory: string, line: string): void {
-  const filePath = path.join(directory, `main-${todayStr()}.log`);
-  // Rotation is best-effort: a failed rename must not prevent a real append.
-  if (trackedLogPath === filePath && trackedLogBytes > LOG_MAX_SIZE) {
-    try {
-      fs.renameSync(filePath, filePath.replace(/\.log$/, '.old.log'));
-      trackedLogBytes = 0;
-    } catch (error) {
-      originalConsole.warn('[Logger] Unable to rotate the log:', error);
-      line = `[${formatTimestamp(new Date())}] [warn] [Logger] Unable to rotate ${filePath}: ${describe(error)}\n${line}`;
-      // Avoid retrying the same failed rename for every later log record.
-      trackedLogBytes = 0;
-    }
-  }
-  try {
-    fs.appendFileSync(filePath, line, 'utf8');
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-    // Create only the directory needed by the real log, never a probe file.
-    fs.mkdirSync(directory, { recursive: true });
-    fs.appendFileSync(filePath, line, 'utf8');
-  }
-  if (trackedLogPath === filePath) {
-    trackedLogBytes += Buffer.byteLength(line);
-  } else {
-    trackedLogPath = filePath;
-    try {
-      trackedLogBytes = fs.statSync(filePath).size;
-    } catch (error) {
-      const warning = `[${formatTimestamp(new Date())}] [warn] [Logger] Unable to read log size: ${describe(error)}\n`;
-      originalConsole.warn('[Logger] Unable to read log size:', error);
-      fs.appendFileSync(filePath, warning, 'utf8');
-      trackedLogBytes = Buffer.byteLength(line + warning);
-    }
-  }
+  managedLogs.append(LogKind.Main, path.join(directory, getCurrentLogFileName(LogKind.Main)), line);
 }
 
 function persistLogRecord(line: string): void {
@@ -160,6 +128,16 @@ export function initLogger(): void {
     originalConsole.warn('[Logger] Unable to resolve the installation log directory:', error);
   }
 
+  if (preferredLogDirectory) managedLogs.registerDirectory(preferredLogDirectory, LogKind.Main);
+  if (fallbackLogDirectory) managedLogs.registerDirectory(fallbackLogDirectory, LogKind.Main);
+  try {
+    const userData = app.getPath('userData');
+    managedLogs.registerDirectory(path.join(userData, 'logs'), LogKind.Cowork);
+    managedLogs.registerDirectory(path.join(userData, 'openclaw', 'logs'), LogKind.Gateway);
+  } catch (error) {
+    originalConsole.warn('[Logger] Unable to resolve auxiliary log directories:', error);
+  }
+
   // electron-log caches a NullFile after an initial filesystem error and can
   // swallow later write errors. Use actual appends so startup failures survive
   // an invalid userData path and a directory becoming unwritable after startup.
@@ -209,32 +187,10 @@ export function initLogger(): void {
   log.info(`${PRODUCT_NAME} started (${process.platform} ${process.arch})`);
   log.info('='.repeat(60));
   // Start writing before cleanup; even directory enumeration can fail.
-  try {
-    pruneOldLogs();
-  } catch (error) {
-    console.warn('[Logger] Unable to prune old logs; continuing startup:', error);
-  }
+  managedLogs.start();
 }
 
-/** Delete daily main-*.log files whose mtime exceeds the retention window. */
-function pruneOldLogs(): void {
-  const dir = logDir();
-  if (!fs.existsSync(dir)) return;
-
-  const cutoffMs = Date.now() - LOG_RETENTION_DAYS * 24 * 60 * 60 * 1000;
-
-  for (const file of fs.readdirSync(dir)) {
-    if (!MAIN_LOG_FILE_PATTERN.test(file)) continue;
-    const filePath = path.join(dir, file);
-    try {
-      if (fs.statSync(filePath).mtimeMs < cutoffMs) {
-        fs.unlinkSync(filePath);
-      }
-    } catch (error) {
-      console.warn('[Logger] Unable to prune an old log:', filePath, error);
-    }
-  }
-}
+export const stopLogMaintenance = (): void => managedLogs.stop();
 
 /**
  * Get today's log file path (for display / open-in-folder).
@@ -250,7 +206,7 @@ export function getLogFilePath(): string {
 export function getRecentMainLogEntries(
   includeAllRetained = false,
 ): Array<{ archiveName: string; filePath: string }> {
-  const cutoffMs = Date.now() - LOG_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+  const cutoffMs = Date.now() - LOG_MAINTENANCE_POLICY.retentionMs;
   const directories = [...new Set([preferredLogDirectory, fallbackLogDirectory, _logDir])].filter(
     (directory): directory is string => Boolean(directory),
   );
@@ -258,7 +214,7 @@ export function getRecentMainLogEntries(
   for (const directory of directories) {
     try {
       for (const file of fs.readdirSync(directory)) {
-        if (!MAIN_LOG_FILE_PATTERN.test(file)) continue;
+        if (!isManagedLogFile(LogKind.Main, file)) continue;
         const filePath = path.join(directory, file);
         try {
           if (!includeAllRetained && fs.statSync(filePath).mtimeMs < cutoffMs) continue;
