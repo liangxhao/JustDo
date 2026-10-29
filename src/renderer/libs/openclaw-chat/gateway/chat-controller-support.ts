@@ -231,6 +231,8 @@ export type PostFinalHistoryRecovery = {
   runId: string | null;
   baselineMessageSeq: number | null;
   baselineCompleteMessageCount: number;
+  /** A single final append does not establish complete process-history coverage. */
+  requireSnapshot?: boolean;
   attempt: number;
 };
 

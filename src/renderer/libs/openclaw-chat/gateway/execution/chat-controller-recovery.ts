@@ -95,6 +95,7 @@ import {
   withThinkingContent,
 } from '../chat-controller-support';
 import { hasSelectedAssistantTextSource, recoverAssistantText } from './assistant-text-recovery';
+import { findPersistedChatFinal } from './chat-final-source';
 export interface ChatControllerRecoveryContext {
   postFinalHistoryReloadTimer: NodeJS.Timeout | null;
   postFinalHistoryRecovery: PostFinalHistoryRecovery | null;
@@ -260,6 +261,7 @@ export interface ChatControllerRecoveryContext {
       runId: string | null;
       baselineMessageSeq: number | null;
       baselineCompleteMessageCount: number;
+      requireSnapshot?: boolean;
     },
   ) => void;
   readonly flushPendingHistoryReload: () => void;
@@ -550,6 +552,8 @@ export function postFinalHistoryHasCaughtUp(
   this: ChatControllerRecoveryContext,
   recovery: PostFinalHistoryRecovery,
 ): boolean {
+  // A final append or its media hydration does not establish full coverage.
+  if (recovery.requireSnapshot) return false;
   const messages = this.state.chatMessages.filter(
     message => !isLocallyOptimisticHistoryTail(message) && !isTruncatedHistoryMessage(message),
   );
@@ -631,7 +635,9 @@ export function scheduleNextPostFinalHistoryReload(
       attempt: recovery.attempt + 1,
       ...this._snap(),
     });
-    void this.loadHistory(true).finally(() => {
+    void this.loadHistory(true).then(loaded => {
+      if (loaded && this.postFinalHistoryRecovery === recovery) recovery.requireSnapshot = false;
+    }).finally(() => {
       if (this.postFinalHistoryRecovery !== recovery) return;
       if (this.postFinalHistoryHasCaughtUp(recovery)) {
         this.postFinalHistoryRecovery = null;
@@ -650,6 +656,7 @@ export function schedulePostFinalHistoryReload(
     runId: string | null;
     baselineMessageSeq: number | null;
     baselineCompleteMessageCount: number;
+    requireSnapshot?: boolean;
   },
 ): void {
   this.clearPostFinalHistoryReload();
@@ -660,6 +667,7 @@ export function schedulePostFinalHistoryReload(
     runId: options.runId,
     baselineMessageSeq: options.baselineMessageSeq,
     baselineCompleteMessageCount: options.baselineCompleteMessageCount,
+    requireSnapshot: options.requireSnapshot,
     attempt: 0,
   };
   this.postFinalHistoryRecovery = recovery;
@@ -1060,6 +1068,10 @@ export function handleTimelineEvent(
           this.transcriptDependencies,
         );
       }
+      const persistedFinal = findPersistedChatFinal(
+        payload, this.state.chatMessages, this.state.transcript.activeTurn,
+      );
+      if (persistedFinal) payload = { ...payload, message: persistedFinal };
       // Both chat.final delivery paths use OpenClaw's display projection and
       // can therefore carry only an 8K preview. Do not let that preview
       // rewind the complete assistant snapshot already accumulated live.
@@ -1647,6 +1659,9 @@ export function handleFinal(
   payload: NormalizedChatEvent,
 ): void {
   this.clearLifecycleEndFallback();
+  const persistedFinal = findPersistedChatFinal(
+    payload, this.state.chatMessages, this.state.transcript.activeTurn,
+  );
   for (const message of this.state.chatMessages) {
     if (!isLocallyOptimisticHistoryTail(message)) {
       this.rememberRunModel(message, readExplicitMessageRunId(message), true);
@@ -1659,7 +1674,7 @@ export function handleFinal(
     candidate =>
       !isLocallyOptimisticHistoryTail(candidate) && !isTruncatedHistoryMessage(candidate),
   ).length;
-  const projectedMessage = stripAssistantSilentReplySuffix(payload.message);
+  const projectedMessage = stripAssistantSilentReplySuffix(persistedFinal ?? payload.message);
   const terminalNeedsHydration = isTruncatedHistoryMessage(projectedMessage);
   const message = terminalNeedsHydration
     ? completeTruncatedTerminalFromActiveTurn(projectedMessage, this.state.transcript.activeTurn)
@@ -1677,7 +1692,7 @@ export function handleFinal(
     liveThinkingLen: liveThinkingText?.length ?? 0,
     ...this._snap(),
   });
-  if (willAppend) {
+  if (willAppend && !persistedFinal) {
     // chat.final may omit model metadata. Keep the Gateway model on the
     // optimistic message itself before the next run replaces live timing.
     const turn = this.state.transcript.activeTurn;
@@ -1715,10 +1730,11 @@ export function handleFinal(
   this.suspendedRunId = null;
   this.terminalLifecycleSeen = false;
   this.resetAssistantSnapshotSource();
-  // A visible final is already complete and its subscribed session.message
-  // row will replace the optimistic tail. Only message-less finals need the
-  // bounded persistence catch-up used by the current OpenClaw UI.
+  // A durable answer can arrive before the rest of the process timeline is
+  // reconciled. Complete that handoff through bounded history catch-up, while
+  // ordinary visible finals wait for their subscribed native replacement.
   const needsPersistenceRecovery =
+    persistedFinal !== null ||
     !willAppend ||
     terminalNeedsHydration ||
     this.pendingHistoryReload ||
@@ -1731,6 +1747,7 @@ export function handleFinal(
       runId: payload.runId?.trim() || null,
       baselineMessageSeq,
       baselineCompleteMessageCount,
+      requireSnapshot: persistedFinal !== null,
     });
   }
   debugLog('[ChatCtrl] ▶ chat.final (done)', this._snap());

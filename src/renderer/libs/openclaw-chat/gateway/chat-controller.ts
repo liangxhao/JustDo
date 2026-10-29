@@ -53,6 +53,7 @@ import * as chatControllerProgress from './execution/chat-controller-progress';
 import { type ChatControllerProgressContext } from './execution/chat-controller-progress';
 import * as chatControllerRecovery from './execution/chat-controller-recovery';
 import { type ChatControllerRecoveryContext } from './execution/chat-controller-recovery';
+import { findPersistedChatFinal } from './execution/chat-final-source';
 import * as chatControllerHistory from './history/chat-controller-history';
 import { type ChatControllerHistoryContext } from './history/chat-controller-history';
 import { McpAppSession } from './mcp-app/mcp-app-session';
@@ -974,7 +975,7 @@ export class ChatController {
 
   private setCurrentSessionMessages(
     messages: unknown[],
-    options: { resetLoadedHistory?: boolean } = {},
+    options: { resetLoadedHistory?: boolean; preserveActiveTurn?: boolean } = {},
   ): void {
     return chatControllerHistory.setCurrentSessionMessages.call(
       this.chatControllerHistoryContext,
@@ -1411,6 +1412,7 @@ export class ChatController {
       runId: string | null;
       baselineMessageSeq: number | null;
       baselineCompleteMessageCount: number;
+      requireSnapshot?: boolean;
     },
   ): void {
     return chatControllerRecovery.schedulePostFinalHistoryReload.call(
@@ -1525,6 +1527,12 @@ export class ChatController {
     const liveThinkingText = collectActiveThinkingText(cached.transcript.activeTurn);
     const liveContentText = collectActiveContentText(cached.transcript.activeTurn);
     const startedAt = cached.transcript.activeTurn?.startedAt ?? null;
+    const persistedFinal = findPersistedChatFinal(
+      payload,
+      this.chatMessagesBySession.get(sessionKey)?.recentMessages ?? [],
+      cached.transcript.activeTurn,
+    );
+    if (persistedFinal) payload = { ...payload, message: persistedFinal };
     const reduceResult = reduceChatEvent(cached.transcript, payload, this.transcriptDependencies);
     if (reduceResult !== 'applied') return;
     if (payload.state === 'delta') return;
@@ -1547,7 +1555,7 @@ export class ChatController {
         payload.runId,
       );
     }
-    if (terminalMessage && !shouldHideMessage(terminalMessage)) {
+    if (terminalMessage && !shouldHideMessage(terminalMessage) && !persistedFinal) {
       const runScopedMessage =
         payload.runId && typeof terminalMessage === 'object' && !Array.isArray(terminalMessage)
           ? { ...(terminalMessage as Record<string, unknown>), runId: payload.runId }

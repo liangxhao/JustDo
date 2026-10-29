@@ -108,7 +108,7 @@ export interface ChatControllerHistoryContext {
   readonly clearRunActivity: () => void;
   readonly setCurrentSessionMessages: (
     messages: unknown[],
-    options?: { resetLoadedHistory?: boolean },
+    options?: { resetLoadedHistory?: boolean; preserveActiveTurn?: boolean },
   ) => void;
   readonly loadHistory: (
     queueIfBusy?: boolean,
@@ -177,7 +177,7 @@ export interface ChatControllerHistoryContext {
 export function setCurrentSessionMessages(
   this: ChatControllerHistoryContext,
   messages: unknown[],
-  options: { resetLoadedHistory?: boolean } = {},
+  options: { resetLoadedHistory?: boolean; preserveActiveTurn?: boolean } = {},
 ): void {
   if (options.resetLoadedHistory) {
     this.currentMessageHistory.reset(messages);
@@ -191,7 +191,7 @@ export function setCurrentSessionMessages(
       nextWindow.end,
     );
     this.state.transcript.persistedMessages = messages;
-    retireSettledActiveTurn(this.state.transcript, messages, true);
+    if (!options.preserveActiveTurn) retireSettledActiveTurn(this.state.transcript, messages, true);
     this.cacheSessionMessages(this.state.sessionKey);
     return;
   }
@@ -218,7 +218,7 @@ export function setCurrentSessionMessages(
     nextWindow.end,
   );
   this.state.transcript.persistedMessages = messages;
-  retireSettledActiveTurn(this.state.transcript, messages, true);
+  if (!options.preserveActiveTurn) retireSettledActiveTurn(this.state.transcript, messages, true);
   this.cacheSessionMessages(this.state.sessionKey);
 }
 
@@ -714,7 +714,7 @@ export function hydrateCurrentSessionImages(
 ): void {
   void this.resolveManagedHistoryImages(messages, sessionKey).then(resolvedMessages => {
     if (this.state.sessionKey !== sessionKey || this.state.chatMessages !== messages) return;
-    this.setCurrentSessionMessages(resolvedMessages);
+    this.setCurrentSessionMessages(resolvedMessages, { preserveActiveTurn: true });
     this.notify();
   });
 }
