@@ -147,6 +147,7 @@ JSONL/SQLite 混合仍拒绝自动替换。
 迁移中已完成的归档保留在 `backups/<transactionId>/retired/`，完成后暂不删除。
 `openclaw/`、`outbound-header-proxy/`、`developer/` 及 `justdo.sqlite*` 必须归档成功；其余非控制项
 尝试移动，遇到指定占用或权限错误时保留原位继续，新建与恢复事务使用同一规则。
+`logs/` 及根目录的 `install-timing.log`、`install-resource.log` 明确排除，始终留在原位。
 非必需项被重新生成而与旧归档重名时，另存 `retired-additions/` 或在占用时保留两处；
 必需项的重名冲突仍拒绝覆盖。完整错误边界由[启动与历史升级](../features/app/startup-and-history-upgrade.md)定义。
 

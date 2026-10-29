@@ -676,6 +676,37 @@ test('a sidecar created during the final original hash check blocks isolation', 
   expect(fs.existsSync(path.join(source, 'openclaw/state/agents/main/sessions/sessions.json'))).toBe(true);
 });
 
+test.each([false, true])('migration leaves installer logs in place when resuming isolation is %s', async resume => {
+  const source = root();
+  legacy(source);
+  const logs = process.platform === 'win32'
+    ? ['INSTALL-TIMING.LOG', 'Install-Resource.log']
+    : ['install-timing.log', 'install-resource.log'];
+  for (const name of logs) fs.writeFileSync(path.join(source, name), `installation history: ${name}`);
+  if (resume) {
+    const journal = { ...newStartupJournal(StartupRoute.Migration), stage: StartupStage.Isolate,
+      isolatedEntries: fs.readdirSync(source) };
+    await createHistoryBackup(source, path.join(source, 'backups', journal.transactionId, 'history'));
+    writeStartupJson(path.join(source, STARTUP_STATE_FILE), journal);
+  }
+  const move = vi.spyOn(fs.promises, 'rename');
+
+  await new StartupCoordinator(source).prepareBeforeStore(progress());
+
+  const journal = readStartupJournal(source)!;
+  expect(journal.stage).toBe(StartupStage.Initialize);
+  const transaction = path.join(source, 'backups', journal.transactionId);
+  for (const name of logs) {
+    expect(fs.readFileSync(path.join(source, name), 'utf8')).toBe(`installation history: ${name}`);
+    expect(move.mock.calls.some(([from]) => String(from) === path.join(source, name))).toBe(false);
+    expect(fs.existsSync(path.join(transaction, 'retired', name))).toBe(false);
+    expect(fs.existsSync(path.join(transaction, 'history', name))).toBe(false);
+    if (!resume) expect(journal.isolatedEntries).not.toContain(name);
+  }
+  expect(fs.existsSync(path.join(transaction, 'retired', DB_FILENAME))).toBe(true);
+  expect(fs.existsSync(path.join(transaction, 'retired', 'openclaw'))).toBe(true);
+});
+
 test('migration retains locked optional stores in place and archives other profile files after completion', async () => {
   const source = root();
   legacy(source);

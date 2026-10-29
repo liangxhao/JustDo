@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
@@ -12,7 +12,7 @@ const powershell = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32/
 // windows can be throttled by Windows even while ACM_ISPLAYING returns true.
 describe.runIf(process.platform === 'win32' && existsSync(compiler)
   && process.env.INSTALLER_PRESENTATION_NATIVE_UI === '1')('native installer presentation', () => {
-  it('plays during work, opens native details, stops at terminal states and stays absent in silent mode', () => {
+  it('keeps time during blocked work, opens lower details, fits short work areas and stops at terminal states', () => {
     const buildRoot = path.join(repoRoot, 'build');
     mkdirSync(buildRoot, { recursive: true });
     const root = mkdtempSync(path.join(buildRoot, 'installer-presentation-test-'));
@@ -20,7 +20,15 @@ describe.runIf(process.platform === 'win32' && existsSync(compiler)
       const executable = path.join(root, 'presentation.exe');
       const definitions = require('../../scripts/packaging/installer-animation-script.cjs')
         .prepareInstallerAnimationScript(repoRoot);
+      const clock = require('../../scripts/packaging/installer-clock-assets.cjs')
+        .prepareInstallerClockAssets(repoRoot);
       const productName = require('../../package.json').productName;
+      const installer = readFileSync(path.join(repoRoot, 'scripts/packaging/nsis-installer.nsh'), 'utf8');
+      const productionFunction = (name: string): string => {
+        const source = installer.match(new RegExp(`Function ${name}\\b[^]*?FunctionEnd`))?.[0];
+        if (!source) throw new Error(`Missing installer callback: ${name}`);
+        return source;
+      };
       const source = [
         'Unicode true',
         'RequestExecutionLevel user',
@@ -41,7 +49,19 @@ describe.runIf(process.platform === 'win32' && existsSync(compiler)
         '!define JUSTDO_PBM_SETPOS 0x0402',
         '!define JUSTDO_PBM_SETBARCOLOR 0x0409',
         '!define JUSTDO_PBM_SETBKCOLOR 0x2001',
+        '!define VERSION "fixture"',
+        '!define isUpdated \'$FixtureUpdated == "1"\'',
+        '!define MUI_CUSTOMFUNCTION_ABORT JustDoInstallerUserAbort',
         ...['JustDoInstFilesPage', 'JustDoInstallLog', 'JustDoShowLogButton', 'JustDoProgressBar', 'JustDoNativeProgressBar', 'JustDoStatusText', 'JustDoExtractorActive'].map(name => `Var ${name}`),
+        'Var launchLink', 'Var FixtureUpdated', 'Var JustDoInstallMode', 'Var JustDoInstallTerminalState',
+        '!define StdUtils.ExecShellAsUser \'!insertmacro FixtureOpenApplication\'',
+        '!macro FixtureOpenApplication RESULT FILE VERB ARGS',
+        `  FileOpen \${RESULT} "${root}\\open-request.txt" a`,
+        '  FileSeek ${RESULT} 0 END',
+        '  FileWrite ${RESULT} "${FILE}|${VERB}|${ARGS}$\\r$\\n"',
+        '  FileClose ${RESULT}',
+        '  StrCpy ${RESULT} "ok"',
+        '!macroend',
         '!macro JustDoSetInstallStatus ZH EN',
         '  !insertmacro InstallerText $JustDoStatusText "${ZH}" "${EN}"',
         '!macroend',
@@ -49,6 +69,17 @@ describe.runIf(process.platform === 'win32' && existsSync(compiler)
         '  DetailPrint "${EN}"',
         '!macroend',
         '!macro JustDoLogInstallEvent TEXT',
+        '  ClearErrors',
+        '!macroend',
+        '!macro InstallerPresentationWorkArea',
+        '  ${GetParameters} $0',
+        '  ${GetOptions} $0 "/short" $1',
+        '  ${IfNot} ${Errors}',
+        '    StrCpy $InstallerDpi 288',
+        '    ${If} $InstallerWorkHeight > 640',
+        '      StrCpy $InstallerWorkHeight 640',
+        '    ${EndIf}',
+        '  ${EndIf}',
         '  ClearErrors',
         '!macroend',
         '!macro InstallerMotionTraceFrame',
@@ -81,7 +112,12 @@ describe.runIf(process.platform === 'win32' && existsSync(compiler)
         ...Array.from({ length: 10 }, (_, index) => `  Pop $${9 - index}`),
         '!macroend',
         definitions,
+        `!define INSTALLER_CLOCK_LIBRARY "${clock.path.replaceAll('$', () => '$$')}"`,
         `!include "${path.join(repoRoot, 'scripts/packaging/nsis-install-presentation.nsh')}"`,
+        'Function JustDoWriteInstallSessionEnd', 'FunctionEnd',
+        productionFunction('InstallerRecordSuccess'),
+        productionFunction('InstallerLaunchApplication'),
+        productionFunction('JustDoInstallerUserAbort'),
         '!define MUI_PAGE_CUSTOMFUNCTION_SHOW FixtureShow',
         '!define MUI_PAGE_CUSTOMFUNCTION_LEAVE InstallerPresentationLeave',
         '!insertmacro MUI_PAGE_INSTFILES',
@@ -89,20 +125,36 @@ describe.runIf(process.platform === 'win32' && existsSync(compiler)
         '!insertmacro MUI_LANGUAGE "SimpChinese"',
         'Function .onInit',
         '  StrCpy $LANGUAGE 1033',
+        '  StrCpy $JustDoInstallMode "CurrentUser"',
+        '  StrCpy $launchLink "fixture://installed-application"',
+        '  StrCpy $FixtureUpdated "0"',
         '  ${GetParameters} $0',
         '  ${GetOptions} $0 "/zh" $1',
         '  ${IfNot} ${Errors}',
         '    StrCpy $LANGUAGE 2052',
         '  ${EndIf}',
         '  ClearErrors',
+        '  ${GetOptions} $0 "/short" $1',
+        '  ${IfNot} ${Errors}',
+        '    StrCpy $FixtureUpdated "1"',
+        '  ${EndIf}',
+        '  ClearErrors',
         'FunctionEnd',
         'Function FixtureShow',
         '  Call InstallerPresentationShow',
+        '  Push $0', '  Push $1', '  Push $2', '  Push $3',
+        "  System::Call 'comctl32::ImageList_GetIconSize(p $InstallerLogSpacingImages, *i .r0, *i .r1)i.r2'",
+        `  FileOpen $3 "${root}\\log-spacing.txt" w`,
+        '  FileWrite $3 "$0|$1|$2|$InstallerDpi"',
+        '  FileClose $3',
+        '  Pop $3', '  Pop $2', '  Pop $1', '  Pop $0',
+        '  ClearErrors',
         '  ShowWindow $HWNDPARENT 4', // SW_SHOWNOACTIVATE; visible, no focus request.
         'FunctionEnd',
         'Function .onInstFailed',
         '  Push "failed"',
         '  Call InstallerPresentationSetStage',
+        '  StrCpy $JustDoInstallTerminalState "failed"',
         '  StrCpy $0 "8731"',
         '  StrCpy $R9 "9317"',
         '  SetErrors',
@@ -117,6 +169,8 @@ describe.runIf(process.platform === 'win32' && existsSync(compiler)
         '  FileClose $3',
         'FunctionEnd',
         'Function .onInstSuccess',
+        '  Call InstallerRecordSuccess',
+        '  Call InstallerLaunchApplication',
         '  StrCpy $0 "8731"',
         '  StrCpy $R9 "9317"',
         '  SetErrors',
@@ -132,8 +186,14 @@ describe.runIf(process.platform === 'win32' && existsSync(compiler)
         'FunctionEnd',
         'Function .onGUIEnd',
         '  Call InstallerPresentationDestroy',
+        // Close/X use the production abort callback and skip onInstSuccess.
+        '  ${If} $InstallerMotionClosed == "1"',
+        `    FileOpen $0 "${root}\\terminal.txt" w`,
+        '    FileWrite $0 "$JustDoInstallTerminalState|$InstallerOpenOnFinish"',
+        '    FileClose $0',
+        '  ${EndIf}',
         `  FileOpen $0 "${root}\\closed.txt" w`,
-        '  FileWrite $0 "$InstallerScene|$InstallerBitmap|$InstallerTitleFont|$InstallerBaseFontOwned|$InstallerNextButtonImage|$InstallerCancelButtonImage|$InstallerDetailsButtonImage"',
+        '  FileWrite $0 "$InstallerScene|$InstallerBitmap|$InstallerTitleFont|$InstallerBaseFontOwned|$InstallerNextButtonImage|$InstallerCancelButtonImage|$InstallerDetailsButtonImage|$InstallerLogSpacingImages|$InstallerLogFont"',
         '  FileClose $0',
         'FunctionEnd',
         'Section',
@@ -146,10 +206,30 @@ describe.runIf(process.platform === 'win32' && existsSync(compiler)
         '  StrCpy $JustDoExtractorActive "1"',
         '  StrCpy $8 0',
         '  FixtureDetails:',
-        '  DetailPrint "Presentation sample record $8"',
+        '  IntOp $7 $8 % 5',
+        '  ${If} $7 == 0',
+        '    DetailPrint "Extracting: C:\\Installation Example\\resources\\bundled-runtime\\extensions\\runtime-services\\modules\\component-$8.js"',
+        '  ${Else}',
+        '    DetailPrint "Presentation sample record $8"',
+        '  ${EndIf}',
         '  IntOp $8 $8 + 1',
         '  IntCmp $8 40 FixtureDetailsDone FixtureDetails FixtureDetailsDone',
         '  FixtureDetailsDone:',
+        `  FileOpen $0 "${root}\\blocked-worker.txt" w`,
+        '  FileWrite $0 "started"',
+        '  FileClose $0',
+        '  StrCpy $8 "clock-worker-canary"',
+        '  SetErrors',
+        // Reproduce a synchronous native copy/uninstall with no presentation poll.
+        '  Sleep 6000',
+        '  StrCpy $1 "0"',
+        '  ${If} ${Errors}',
+        '    StrCpy $1 "1"',
+        '  ${EndIf}',
+        `  FileOpen $0 "${root}\\blocked-worker-result.txt" w`,
+        '  FileWrite $0 "$8|$1"',
+        '  FileClose $0',
+        '  ClearErrors',
         '  StrCpy $9 0',
         '  FixtureWait:',
         '  Sleep 150',
@@ -201,12 +281,12 @@ describe.runIf(process.platform === 'win32' && existsSync(compiler)
         path.join(repoRoot, 'scripts/fixtures/nsis-presentation-probe.ps1'),
         '-Executable', executable, '-FixtureRoot', root,
         '-PreviewPath', path.join(buildRoot, 'installer-presentation-preview.png'),
-      ], { encoding: 'utf8', timeout: 35_000, windowsHide: true });
+      ], { encoding: 'utf8', timeout: 60_000, windowsHide: true });
       expect(checked.status, `${checked.stdout}\n${checked.stderr}`).toBe(0);
       expect(checked.stdout).toContain('presentation checks passed');
     } finally {
       expect(path.dirname(path.resolve(root))).toBe(buildRoot);
       rmSync(root, { recursive: true, force: true });
     }
-  }, 60_000);
+  }, 90_000);
 });

@@ -26,10 +26,27 @@ that case remains an attribution and vendor-escalation issue.
 The assisted installer's file-writing page uses a fixed light background and the
 repository's two-cat icon. The mark separates on entry, then remains intact while
 gently turning and floating against a faint blue/violet glow. Completion holds a still frame; failure stops
-playback. The mode and directory selection pages remain native NSIS pages. The
-installation page is also the result page: **Close** exits setup and does not
-launch the application. Silent updater installs retain the upstream explicit
+playback. Installation scope and directory selection use the same light canvas,
+typography, icon and rounded navigation buttons. Their native NSIS controls,
+radio callbacks, browse command, keyboard behavior and page-leave validation stay
+authoritative. The installation page is also the result page. Success changes the steps to
+**checked → files written → complete**, with **Open app** and **Close** actions.
+Only Open app launches the installed application through the current desktop
+user's shell; Close and the window's X finish successfully without launching.
+Silent updater installs retain the upstream explicit
 `--force-run` behavior.
+
+`nsis-setup-presentation.nsh` decorates the existing scope and directory pages;
+it does not replace their installation policy. Scope selection retains the
+native Next button so its live elevation shield follows the selected account
+scope. Upgrades show the recorded directory with the input and browse action
+disabled. Returning with Back rebuilds the decoration from the current native
+page state. Setup releases its button images, logo and owned fonts before the
+file-writing page takes over. Each completed setup layout is shown and repainted
+on the UI thread so newly created headings and the mark appear with the native
+fields without relying on a later incidental repaint. The setup layout uses the current monitor's work
+area and DPI; short work areas reduce headings and secondary explanation before
+the essential fields and navigation controls.
 
 `nsis-install-presentation.nsh` owns the presentation. A native `SysAnimate32`
 control plays a packaged RLE8 AVI independently of the NSIS install worker, so
@@ -37,8 +54,27 @@ synchronous file operations do not freeze the mark. Playback is explicitly
 started and is not conditional on Windows' animation preference. No browser,
 Electron process, network request, external font or user-data initialization is
 needed. If the native player cannot open the clip, setup displays its packaged
-bitmap and continues normally. Details use the native install log: opening them
-covers the illustration while keeping the phase status visible.
+bitmap and continues normally. Details use the native install log and open below
+the phase explanation, above the three steps. The layout reserves a readable
+log area without covering the illustration, title, progress or elapsed time.
+Its single native column fills the available width without gridlines or a
+horizontal scrollbar. A muted slate text color, soft background and an owned
+empty image list provide a small left inset and comfortable row spacing. Log
+text uses a separate 12-pixel logical font, scaled with DPI; other body text
+retains its 14-pixel logical font. Existing
+native images, when present, are retained instead; log contents, selection,
+vertical scrolling and native long-label tips keep their original behavior.
+
+Elapsed time uses a small native Win32 clock on the UI thread, independently of
+installation-worker polling. It continues during synchronous archive staging
+and old-version removal, and freezes at completion or failure. Its timer never
+calls the shared NSIS script interpreter. The DLL remains mapped until setup
+exits so queued timer callbacks stay valid; its per-window state is released
+before the elapsed label is destroyed. A native one-shot callback also restores
+both result-button captions and enables Close after NSIS applies its own final
+button state. It copies the localized captions and does not enter the script VM.
+Worker polling remains a fallback if
+Windows cannot start the native clock. Time is measured, not estimated progress.
 
 The caption blends into the light canvas, retaining native caption dragging,
 the system menu and a single Close affordance. Supported Windows versions add
@@ -75,10 +111,17 @@ exit; it does not re-enter the GUI script from the install worker for an effect.
 `resources/icons/png/128x128.png`, at 100%, 150% and 200% scales. Inputs and output
 hashes bind the cache under `build/installer/<fingerprint>/`; generated files are
 not committed. The script uses Node's built-ins and adds no runtime download.
+The native clock is built from `installer-clock.c` with the installed MSVC x86
+toolchain and Windows SDK, using only Windows system libraries and no runtime
+download. `installer-clock-assets.cjs` verifies its source/toolchain-bound cache
+under `build/installer-clock/` before embedding the DLL in setup.
 The installer chooses the fitting scale, clamps its window to the current
 monitor's work area and frees its owned fonts, bitmap and player on close. Short
 work areas reduce the illustration space; exceptionally short areas hide the
 hero and retain the status, details and closing controls.
+At extreme scaling, secondary explanation and step labels are also hidden when
+they would overlap. The measured phase, elapsed time, progress and details stay
+inside the available window.
 
 The three displayed steps are **check location → write files → complete**.
 Animation and elapsed time communicate activity; neither establishes progress
@@ -104,13 +147,15 @@ database and workspace preparation remain first-launch responsibilities.
 Focused checks cover native two-pass NSIS compilation with warnings as errors,
 actual 7-Zip failures and path handling, progress parsing, and generated asset
 integrity. The opt-in presentation-only native fixture checks changing animation
-pixels, native details, completion, failure and silent UI absence without
+pixels, elapsed time during a synchronous worker pause without presentation
+polling, details below the explanation, completion, failure and silent UI absence without
 installing the application. A visible desktop is required: Windows can throttle
 fully occluded/offscreen animation even when its player reports playing. Run
 `INSTALLER_PRESENTATION_NATIVE_UI=1` with the `tests/build/nsis-presentation.test.ts`
 Vitest case for this check; its visible fixture windows close automatically.
-These checks do not replace a full release installer or multi-monitor/DPI
-acceptance run. Windows' animation
+The fixture also exercises a constrained work area with simulated 300% layout
+scaling; it does not change Windows display settings. These checks do not replace
+a full release installer or multi-monitor/DPI acceptance run. Windows' animation
 preference was enabled during the native smoke check; disabled-preference
 behavior follows the explicit player calls and has not been verified by changing
 the machine's global setting.
@@ -118,6 +163,11 @@ The fixture also reads back native opacity, position, dimensions and styles for
 intermediate entrance/exit frames, checks restoration and one-time exit, and
 rejects a close while file writing is marked active. It does not infer a visible
 transition merely from the elapsed time or the requested animation values.
+The separate `tests/build/nsis-setup-presentation.test.ts` opt-in native fixture
+exercises scope selection, directory editing, upgrade locking and Back
+navigation, checks decoration cleanup before writing and silent UI absence, and
+checks rendered heading/mark pixels and saves setup-page screenshots. It substitutes isolated account/elevation
+ports and never installs the application or requests administrator credentials.
 
 ### Data compatibility after installation
 
@@ -194,6 +244,18 @@ The assisted installer continues to offer both **current user** and **all
 users**. **Current user remains the default**; setup does not force either
 mode.
 
+For an interactive upgrade or repair, the selected account scope's registered
+`InstallLocation` is reused. The native directory input and Browse button are
+disabled. The page confirms the upgrade location and explains that setup will
+reuse it, without inviting the user to browse for another folder. First-install
+pages retain their normal selection instructions. Setup restores that exact
+directory again before writing, bypassing
+first-install folder-name normalization; a custom historical path does not gain
+another product-name subfolder. Returning to switch account scope resolves the
+directory again. A first install without a registration in the selected scope
+keeps both controls enabled. This does not change silent `/D=` handling or the
+updater's existing skipped-page behavior.
+
 For an interactive installer that starts elevated outside electron-builder's
 own UAC inner instance, setup re-launches itself once through the current
 desktop shell before it reads `APPDATA` or `LOCALAPPDATA`. This handles “Run as
@@ -263,9 +325,11 @@ This preserves completion and exit-code semantics for deployment automation.
 
 Setup does not read, initialize, copy resources into, or clean up userData. Only
 `install-timing.log` and `install-resource.log` may be appended below the
-initiating user's `%APPDATA%/<productName>`. If that location cannot accept logs,
-setup continues. After the final installation directory is established and the
-old version is removed, lifecycle logs can use `<install>/logs`; the extractor
+initiating user's `%APPDATA%/<productName>`. Main excludes both root log files
+from migration isolation, including resumed transactions, so they remain in place.
+If that location cannot accept logs, setup continues. After the final installation
+directory is established and the old version is removed, lifecycle logs can use
+`<install>/logs`; the extractor
 also retains a fallback `resources/install-resource.log` when its requested log
 cannot be written. No alternate user profile, system TEMP or setup-EXE directory
 is selected as a log destination.

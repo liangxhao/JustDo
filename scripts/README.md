@@ -21,6 +21,15 @@ Windows NSIS script composition prepares and verifies this cache automatically;
 the generator uses Node built-ins, with no new downloaded build or runtime tool.
 `packaging/nsis-install-presentation.nsh` owns the native light install page,
 while `packaging/nsis-shell-extraction.nsh` reads actual 7-Zip phase progress.
+`packaging/nsis-setup-presentation.nsh` gives the native scope and directory
+pages the same light presentation while retaining native radio/browse commands,
+upgrade locking, elevation and page validation. Its images and fonts are
+released before the install-progress page takes ownership.
+`packaging/installer-clock-assets.cjs` compiles the small native elapsed-time
+clock with the installed MSVC x86 tools and Windows SDK, then verifies/reuses
+its cache under `build/installer-clock/`. The clock uses only Windows system
+libraries and keeps updating while the installation worker performs synchronous
+work; it never calls back into NSIS script code.
 The presentation does not start Electron or initialize a user profile. See
 [Windows installer](../docs/windows-installer.md#installation-presentation-and-measured-progress)
 for progress boundaries, fallback behavior and validation limits.
@@ -40,6 +49,13 @@ through `packaging/nsis-presentation-controls.nsh`, with no new downloaded tool.
 `packaging/nsis-presentation-motion.nsh` handles the bounded entrance/exit using
 temporary native opacity and position changes; its fixture trace reads the
 actual Windows properties and checks style/position restoration.
+The same fixture verifies elapsed time with worker polling deliberately paused,
+freezes the clock at terminal states, and checks the lower details-list bounds.
+Upgrade directory fixtures use isolated registry keys and native controls;
+they never install the application or modify its registration.
+The separate opt-in `tests/build/nsis-setup-presentation.test.ts` checks native
+setup-page navigation with isolated elevation ports and saves
+`build/installer-setup-mode.png` and `build/installer-setup-directory.png`.
 
 Vite's `scripts/packaging/application-license-assets.cjs` plugin records actual
 third-party modules for Renderer, Main and all preload builds. It copies

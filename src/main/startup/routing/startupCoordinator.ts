@@ -47,6 +47,8 @@ import {
 const STARTUP_ISOLATION_EXCLUSIONS = new Set([
   'backups',
   'logs',
+  'install-timing.log',
+  'install-resource.log',
   STARTUP_STATE_FILE,
   'lockfile',
   'SingletonLock',

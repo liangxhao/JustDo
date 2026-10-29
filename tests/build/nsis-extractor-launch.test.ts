@@ -160,6 +160,9 @@ describe.runIf(process.platform === 'win32' && existsSync(compiler))('native hid
         'Var JustDoResourceProgressFile', 'Var JustDoExtractorTempDirectory',
         '!macro JustDoLogInstallEvent TEXT', 'DetailPrint "${TEXT}"', '!macroend',
         'Function JustDoCleanupExtractorEnvironment', 'FunctionEnd',
+        // This silent cleanup fixture exercises the progress-file guard only.
+        // Presentation teardown is covered by the native presentation fixture.
+        'Function InstallerPresentationDestroy', 'FunctionEnd',
         'Function JustDoWriteInstallSessionEnd', 'FunctionEnd', onGuiEnd,
         'Section', `SetOutPath "${root}"`,
         'StrCpy $JustDoResourceProgressFile ""', 'StrCpy $JustDoExtractorActive "0"',

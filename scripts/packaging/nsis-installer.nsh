@@ -29,6 +29,7 @@
 !macroend
 
 !ifndef BUILD_UNINSTALLER
+!include "${PROJECT_DIR}\scripts\packaging\nsis-presentation-state.nsh"
 !define MUI_CUSTOMFUNCTION_ABORT JustDoInstallerUserAbort
 !define JUSTDO_PROGRESS_STYLE 0x50000009
 !define JUSTDO_PBM_SETPOS 0x0402
@@ -74,6 +75,7 @@ Var JustDoExtractorActive
 Var JustDoExtractorEnvironmentConfigured
 Var JustDoPreviousTemp
 Var JustDoPreviousTmp
+Var InstallerUpgradeDirectory
 
 !include "${PROJECT_DIR}\scripts\packaging\nsis-extractor-launch.nsh"
 
@@ -259,6 +261,13 @@ FunctionEnd
 !macroend
 
 Function JustDoInstallerUserAbort
+  ${If} $InstallerPresentationStage == "${INSTALLER_STAGE_COMPLETE}"
+    StrCpy $InstallerOpenOnFinish "0"
+    Call InstallerRecordSuccess
+    Call InstallerPresentationCloseMotion
+    SetErrorLevel 0
+    Quit
+  ${EndIf}
   ${If} $JustDoExtractorActive == "1"
     MessageBox MB_OK|MB_ICONINFORMATION "安装文件仍在写入和校验中，请等待此步骤完成后再关闭安装程序。 Installation files are still being written and verified; wait for this step to finish before closing setup." /SD IDOK
     Abort
@@ -268,11 +277,16 @@ Function JustDoInstallerUserAbort
   Call InstallerPresentationCloseMotion
 FunctionEnd
 
-Function .onInstSuccess
+Function InstallerRecordSuccess
   StrCpy $JustDoInstallTerminalState "success"
   !insertmacro JustDoLogInstallEvent "phase=installer-success status=completed version=${VERSION} install-mode=$JustDoInstallMode install-dir=$INSTDIR core-validation=passed"
   Call JustDoWriteInstallSessionEnd
+FunctionEnd
+
+Function .onInstSuccess
+  Call InstallerRecordSuccess
   Call InstallerPresentationCloseMotion
+  Call InstallerLaunchApplication
 FunctionEnd
 
 Function .onInstFailed
@@ -292,6 +306,7 @@ Function .onInstFailed
 FunctionEnd
 
 Function .onGUIEnd
+  Call InstallerSetupDestroy
   Call InstallerPresentationDestroy
   ${If} $JustDoInstallTerminalState == ""
     StrCpy $JustDoInstallTerminalState "ended-before-pre-init"
@@ -414,27 +429,95 @@ FunctionEnd
 !include "${PROJECT_DIR}\scripts\packaging\nsis-shell-extraction.nsh"
 
 Function JustDoInstFilesShow
+  Call InstallerSetupResetForProgress
   Call InstallerPresentationShow
 FunctionEnd
 
-; Keep the native install page as the final result page. It closes normally
-; after successful installation instead of launching the application.
+; Keep the native install page as the final result page. Its primary action
+; opens the installed application; Close and the window's X only dismiss setup.
 !macro customFinishPage
+  Function InstallerLaunchApplication
+    ${If} ${Silent}
+    ${OrIf} $InstallerPresentationStage != "${INSTALLER_STAGE_COMPLETE}"
+    ${OrIf} $InstallerOpenOnFinish != "1"
+      Return
+    ${EndIf}
+    StrCpy $InstallerOpenOnFinish "0"
+    Push $0
+    Push $1
+    ${If} ${isUpdated}
+      StrCpy $1 "--updated"
+    ${Else}
+      StrCpy $1 ""
+    ${EndIf}
+    ${StdUtils.ExecShellAsUser} $0 "$launchLink" "open" "$1"
+    !insertmacro JustDoLogInstallEvent "phase=application-open-request result=$0"
+    ${If} $0 != "ok"
+      MessageBox MB_OK|MB_ICONINFORMATION "安装已完成，但无法自动打开应用。请从桌面或开始菜单打开。$\r$\n$\r$\nInstallation is complete, but setup could not open the application. Open it from the desktop or Start menu." /SD IDOK
+    ${EndIf}
+    Pop $1
+    Pop $0
+  FunctionEnd
 !macroend
 
 !macro customPageAfterChangeDir
   ; electron-builder defers the final all-users mode and custom directory until
   ; after customInit. Its elevated inner instance also skips the normal section
   ; process check, so run that check from the install-page PRE callback, after
-  ; instFilesPre has normalized the user-selected directory.
+  ; restoring an upgrade's directory or normalizing a first-install selection.
   !undef MUI_PAGE_CUSTOMFUNCTION_PRE
   !define MUI_PAGE_CUSTOMFUNCTION_PRE JustDoInstFilesPre
   !define MUI_PAGE_CUSTOMFUNCTION_SHOW JustDoInstFilesShow
   !define MUI_PAGE_CUSTOMFUNCTION_LEAVE InstallerPresentationLeave
   ; Define the callback when electron-builder expands this macro, after its
-  ; multi-user template has declared $installMode.
+  ; multi-user template and native directory page have declared their variables.
+  !include "${PROJECT_DIR}\scripts\packaging\nsis-setup-presentation.nsh"
+
+  Function InstallerRestoreUpgradeDirectory
+    StrCpy $InstallerUpgradeDirectory ""
+    ; The command-line mode flags can mark a fresh install as already present.
+    ; Only the selected mode's registered location establishes an upgrade.
+    ${If} $installMode == "all"
+      ReadRegStr $InstallerUpgradeDirectory HKLM "${INSTALL_REGISTRY_KEY}" InstallLocation
+    ${ElseIf} $installMode == "CurrentUser"
+      ReadRegStr $InstallerUpgradeDirectory HKCU "${INSTALL_REGISTRY_KEY}" InstallLocation
+    ${EndIf}
+    ${If} $InstallerUpgradeDirectory != ""
+      StrCpy $INSTDIR "$InstallerUpgradeDirectory"
+    ${EndIf}
+  FunctionEnd
+
+  Function InstallerDirectoryPre
+    ; Keep electron-builder's updater page-skipping behavior.
+    ${If} ${isUpdated}
+      Abort
+    ${EndIf}
+    Call InstallerRestoreUpgradeDirectory
+  FunctionEnd
+
+  Function InstallerDirectoryShow
+    ${If} $InstallerUpgradeDirectory != ""
+      !insertmacro InstallerText $mui.Header.Text "确认升级位置" "Confirm upgrade location"
+      !insertmacro InstallerText $mui.Header.SubText "将 ${PRODUCT_NAME} 升级到现有安装目录。" "Upgrade ${PRODUCT_NAME} in its existing installation folder."
+      !insertmacro InstallerText $mui.DirectoryPage.Text \
+        "本次升级将沿用现有安装目录，无法更改安装位置。$\r$\n单击“安装”继续升级。" \
+        "This upgrade will use the existing installation folder shown below. The location cannot be changed.$\r$\nClick Install to continue."
+      EnableWindow $mui.DirectoryPage.Directory 0
+      EnableWindow $mui.DirectoryPage.BrowseButton 0
+    ${Else}
+      EnableWindow $mui.DirectoryPage.Directory 1
+      EnableWindow $mui.DirectoryPage.BrowseButton 1
+    ${EndIf}
+    Call InstallerSetupDirectoryShow
+  FunctionEnd
+
   Function JustDoInstFilesPre
-    Call instFilesPre
+    ; Native directory-page leave handling updates INSTDIR after its callback.
+    ; Restore once more and avoid appending a product folder to historical paths.
+    Call InstallerRestoreUpgradeDirectory
+    ${If} $InstallerUpgradeDirectory == ""
+      Call instFilesPre
+    ${EndIf}
     StrCpy $JustDoInstallMode "$installMode"
     ${If} ${UAC_IsInnerInstance}
       !insertmacro JustDoLogInstallEvent "phase=inner-instance-process-check-start"

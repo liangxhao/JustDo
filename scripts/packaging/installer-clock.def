@@ -1,0 +1,6 @@
+LIBRARY installer-clock
+EXPORTS
+  Start=_Start@12
+  Stop=_Stop@4
+  Destroy=_Destroy@4
+  CompleteActions=_CompleteActions@16

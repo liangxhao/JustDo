@@ -78,7 +78,43 @@ function createWindowsInstallerScript(templatesDir) {
     .replace(cacheCopy, '; Installer caching is deferred to the running updater.')
     .replace('!include "extractAppPackage.nsh"', extraction);
   const section = read('installSection.nsh').replace('!include installer.nsh', files);
-  return read('installer.nsi').replace('!include "installSection.nsh"', section);
+  const assisted = read('assistedInstaller.nsh');
+  // The same mode macro also appears in the uninstaller. Bind only its install
+  // site before the directory page and require both original sites to remain.
+  const installModePage = /    !insertmacro PAGE_INSTALL_MODE(?=\r?\n  !endif\r?\n\r?\n  !ifdef allowToChangeInstallationDirectory)/g;
+  if (Array.from(assisted.matchAll(installModePage)).length !== 1
+      || (assisted.match(/^    !insertmacro PAGE_INSTALL_MODE\r?$/gm) || []).length !== 2) {
+    throw new Error('The upstream NSIS install-mode page seam changed; review the template.');
+  }
+  const assistedWithModePresentation = assisted.replace(installModePage, [
+    '    !define MUI_PAGE_CUSTOMFUNCTION_SHOW InstallerSetupModeShow',
+    '    !define MUI_PAGE_CUSTOMFUNCTION_LEAVE InstallerSetupLeave',
+    '    !insertmacro PAGE_INSTALL_MODE',
+    '    !ifdef MUI_PAGE_CUSTOMFUNCTION_SHOW',
+    '      !error "The upstream NSIS install-mode page did not consume its SHOW callback."',
+    '    !endif',
+    '    !ifdef MUI_PAGE_CUSTOMFUNCTION_LEAVE',
+    '      !error "The upstream NSIS install-mode page did not consume its LEAVE callback."',
+    '    !endif',
+  ].join('\n'));
+  const directoryPage = /    !insertmacro skipPageIfUpdated\r?\n    !insertmacro MUI_PAGE_DIRECTORY/g;
+  if (Array.from(assisted.matchAll(directoryPage)).length !== 1) {
+    throw new Error('The upstream NSIS directory-page seam changed; review the template.');
+  }
+  const assistedWithDirectoryLock = assistedWithModePresentation.replace(directoryPage, [
+    '    !define MUI_PAGE_CUSTOMFUNCTION_PRE InstallerDirectoryPre',
+    '    !define MUI_PAGE_CUSTOMFUNCTION_SHOW InstallerDirectoryShow',
+    '    !define MUI_PAGE_CUSTOMFUNCTION_LEAVE InstallerSetupLeave',
+    '    !insertmacro MUI_PAGE_DIRECTORY',
+  ].join('\n'));
+  const installer = read('installer.nsi');
+  const assistedInclude = '!include "assistedInstaller.nsh"';
+  if (installer.split(assistedInclude).length !== 2) {
+    throw new Error('The upstream NSIS assisted-installer seam changed; review the template.');
+  }
+  return installer
+    .replace(assistedInclude, () => assistedWithDirectoryLock)
+    .replace('!include "installSection.nsh"', section);
 }
 
 function configureWindowsInstallerScript(projectDir) {
@@ -116,7 +152,9 @@ function configureWindowsInstallerScript(projectDir) {
     // electron-builder prepends this header to both compiler passes. Custom
     // includes already consume animation constants here, before the final body.
     const { prepareInstallerAnimationScript } = require('./installer-animation-script.cjs');
-    const definitions = this.isPortable ? '' : prepareInstallerAnimationScript(projectDir);
+    const { prepareInstallerClockAssets } = require('./installer-clock-assets.cjs');
+    const definitions = this.isPortable ? '' : prepareInstallerAnimationScript(projectDir)
+      + `!define INSTALLER_CLOCK_LIBRARY "${prepareInstallerClockAssets(projectDir).path.replaceAll('$', () => '$$')}"\n`;
     return orderNsisPluginDirectories(definitions + header);
   };
 }

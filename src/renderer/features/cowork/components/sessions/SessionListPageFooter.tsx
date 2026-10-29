@@ -35,7 +35,7 @@ const SessionListPageFooter: React.FC<SessionListPageFooterProps> = ({
       <button
         type="button"
         onClick={onShowMore}
-        className="w-full px-3 py-2 text-left text-xs text-primary hover:underline"
+        className="w-full pl-7 pr-3 py-2 text-left text-xs text-primary hover:underline"
       >
         {i18nService.t('sessionListShowMore')}
       </button>

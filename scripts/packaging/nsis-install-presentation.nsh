@@ -1,12 +1,7 @@
 !ifndef INSTALLER_PRESENTATION_INCLUDED
 !define INSTALLER_PRESENTATION_INCLUDED
 
-!define INSTALLER_STAGE_CHECKING "checking"
-!define INSTALLER_STAGE_SHELL "shell"
-!define INSTALLER_STAGE_RESOURCES "resources"
-!define INSTALLER_STAGE_FINALIZING "finalizing"
-!define INSTALLER_STAGE_COMPLETE "complete"
-!define INSTALLER_STAGE_FAILED "failed"
+!include "${PROJECT_DIR}\scripts\packaging\nsis-presentation-state.nsh"
 !define INSTALLER_ACM_OPENW 0x0467
 !define INSTALLER_ACM_PLAY 0x0465
 !define INSTALLER_ACM_STOP 0x0466
@@ -29,15 +24,18 @@ Var InstallerTitleFont
 Var InstallerBaseFont
 Var InstallerOriginalFont
 Var InstallerBaseFontOwned
+Var InstallerLogFont
 Var InstallerNextButtonImage
 Var InstallerCancelButtonImage
 Var InstallerDetailsButtonImage
+Var InstallerLogSpacingImages
 Var InstallerDpi
 Var InstallerWidth
 Var InstallerHeight
 Var InstallerSceneHeight
 Var InstallerStatusTop
 Var InstallerCompactLayout
+Var InstallerMinimalLayout
 Var InstallerWorkLeft
 Var InstallerWorkTop
 Var InstallerWorkWidth
@@ -46,8 +44,8 @@ Var InstallerAnimationStarted
 Var InstallerLoopStarted
 Var InstallerPresentationStarted
 Var InstallerElapsedSecond
-Var InstallerPresentationStage
 Var InstallerPresentationReady
+Var InstallerClockActive
 
 !include "${PROJECT_DIR}\scripts\packaging\nsis-presentation-motion.nsh"
 
@@ -76,6 +74,7 @@ Var InstallerPresentationReady
 
 ; These macros are also consumed by the independent shell-extraction helper.
 ; They run only on the install section's worker; no script timer re-enters NSIS.
+; The separate native clock also advances during synchronous worker operations.
 !macro InstallerPresentationPoll
   Call InstallerPresentationTick
 !macroend
@@ -84,6 +83,46 @@ Var InstallerPresentationReady
   Push "${INSTALLER_STAGE_SHELL}"
   Call InstallerPresentationSetStage
 !macroend
+
+Function InstallerPositionResultButtons
+  Push $0
+  Push $1
+  Push $2
+  Push $3
+  Push $4
+  Push $5
+  !insertmacro InstallerScale $1 28
+  !insertmacro InstallerScale $2 112
+  !insertmacro InstallerScale $3 12
+  IntOp $4 $2 * 2
+  IntOp $4 $4 + $3
+  IntOp $5 $1 * 2
+  IntOp $4 $4 + $5
+  ${If} $InstallerWidth < $4
+    IntOp $2 $InstallerWidth - $5
+    IntOp $2 $2 - $3
+    IntOp $2 $2 / 2
+  ${EndIf}
+  IntOp $4 $InstallerWidth - $1
+  IntOp $4 $4 - $2
+  !insertmacro InstallerScale $1 52
+  IntOp $1 $InstallerHeight - $1
+  !insertmacro InstallerScale $5 36
+  GetDlgItem $0 $HWNDPARENT 1
+  System::Call 'user32::SetWindowPos(p r0, p 0, i r4, i r1, i r2, i r5, i 0x0004)i.r0'
+  ${If} $InstallerPresentationStage == "${INSTALLER_STAGE_COMPLETE}"
+    IntOp $4 $4 - $3
+    IntOp $4 $4 - $2
+  ${EndIf}
+  GetDlgItem $0 $HWNDPARENT 2
+  System::Call 'user32::SetWindowPos(p r0, p 0, i r4, i r1, i r2, i r5, i 0x0004)i.r0'
+  Pop $5
+  Pop $4
+  Pop $3
+  Pop $2
+  Pop $1
+  Pop $0
+FunctionEnd
 
 Function InstallerPresentationTick
   Push $0
@@ -118,7 +157,8 @@ Function InstallerPresentationTick
   ${EndIf}
   IntOp $1 $0 - $InstallerPresentationStarted
   IntOp $1 $1 / 1000
-  ${If} $1 != $InstallerElapsedSecond
+  ${If} $InstallerClockActive != "1"
+  ${AndIf} $1 != $InstallerElapsedSecond
     StrCpy $InstallerElapsedSecond $1
     IntOp $2 $1 / 60
     IntOp $3 $1 % 60
@@ -152,6 +192,12 @@ Function InstallerPresentationSetStage
   ${If} $InstallerPresentationReady != "1"
     Goto InstallerStageDone
   ${EndIf}
+  ${If} $0 == "${INSTALLER_STAGE_COMPLETE}"
+  ${OrIf} $0 == "${INSTALLER_STAGE_FAILED}"
+    ${If} $InstallerClockActive == "1"
+      System::Call '$PLUGINSDIR\installer-clock.dll::Stop(p $InstallerElapsed)i.r1'
+    ${EndIf}
+  ${EndIf}
   SetCtlColors $InstallerStepCheck "74747E" "${INSTALLER_BACKGROUND}"
   SetCtlColors $InstallerStepWrite "74747E" "${INSTALLER_BACKGROUND}"
   SetCtlColors $InstallerStepDone "74747E" "${INSTALLER_BACKGROUND}"
@@ -178,18 +224,24 @@ Function InstallerPresentationSetStage
     !insertmacro JustDoSetInstallStatus "安装完成。" "Installation complete."
     SendMessage $JustDoNativeProgressBar ${JUSTDO_PBM_SETPOS} 100 0
     !insertmacro InstallerText $InstallerSubtitle "应用文件已安装到所选目录。" "The application files are installed in your selected location."
-    !insertmacro InstallerText $InstallerExplanation "可以关闭安装器，从桌面或开始菜单打开应用。" "Close setup and open the application from the desktop or Start menu."
-    !insertmacro InstallerText $InstallerStepWrite "✓ 写入文件" "✓ Write files"
+    !insertmacro InstallerText $InstallerExplanation "点击“打开应用”立即使用，或关闭安装器稍后打开。" "Open the application now, or close setup and open it later."
+    !insertmacro InstallerText $InstallerStepCheck "✓ 检查完成" "✓ Checked"
+    !insertmacro InstallerText $InstallerStepWrite "✓ 写入完成" "✓ Files written"
     !insertmacro InstallerText $InstallerStepDone "✓ 安装完成" "✓ Complete"
+    SetCtlColors $InstallerStepCheck "278263" "${INSTALLER_BACKGROUND}"
     SetCtlColors $InstallerStepWrite "278263" "${INSTALLER_BACKGROUND}"
     SetCtlColors $InstallerStepDone "278263" "${INSTALLER_BACKGROUND}"
+    Call InstallerPositionResultButtons
     GetDlgItem $1 $HWNDPARENT 2
-    ShowWindow $1 0
-    GetDlgItem $1 $HWNDPARENT 1
     !insertmacro InstallerText $1 "关闭" "Close"
+    !insertmacro InstallerPaintButton $1 $InstallerBaseFont $InstallerDpi "${INSTALLER_BUTTON_SECONDARY}" $InstallerCancelButtonImage
+    ShowWindow $1 5
+    GetDlgItem $1 $HWNDPARENT 1
+    !insertmacro InstallerText $1 "打开应用" "Open app"
     !insertmacro InstallerPaintButton $1 $InstallerBaseFont $InstallerDpi "${INSTALLER_BUTTON_PRIMARY}" $InstallerNextButtonImage
     ShowWindow $1 5
   ${ElseIf} $0 == "${INSTALLER_STAGE_FAILED}"
+    StrCpy $InstallerOpenOnFinish "0"
     ${If} $InstallerScene != "0"
       SendMessage $InstallerScene ${INSTALLER_ACM_STOP} 0 0
     ${EndIf}
@@ -198,6 +250,7 @@ Function InstallerPresentationSetStage
     !insertmacro InstallerText $InstallerSubtitle "文件写入遇到问题，请查看安装详情。" "Setup encountered a file error. See the installation details."
     !insertmacro InstallerText $InstallerStepWrite "! 写入文件" "! Write files"
     SetCtlColors $InstallerStepWrite "B75663" "${INSTALLER_BACKGROUND}"
+    Call InstallerPositionResultButtons
     GetDlgItem $1 $HWNDPARENT 2
     ; NSIS restores its localized Cancel caption after an aborted worker.
     ; Render that same caption so image and native accessible name agree.
@@ -224,6 +277,39 @@ Function InstallerPresentationLeave
   IfAbort InstallerPresentationAborted
   Push "${INSTALLER_STAGE_COMPLETE}"
   Call InstallerPresentationSetStage
+  StrCpy $InstallerOpenOnFinish "0"
+  ; NSIS relabels both result buttons and disables Cancel after LEAVE. Restore
+  ; their actions after its UI handler returns, without re-entering the VM.
+  Push $0
+  Push $1
+  Push $2
+  Push $3
+  GetDlgItem $0 $HWNDPARENT 1
+  GetDlgItem $1 $HWNDPARENT 2
+  ${If} $LANGUAGE == ${JUSTDO_LANG_SIMPCHINESE}
+  ${OrIf} $LANGUAGE == ${JUSTDO_LANG_TRADCHINESE}
+    StrCpy $2 "打开应用"
+    StrCpy $3 "关闭"
+  ${Else}
+    StrCpy $2 "Open app"
+    StrCpy $3 "Close"
+  ${EndIf}
+  System::Call '$PLUGINSDIR\installer-clock.dll::CompleteActions(p r0, w r2, p r1, w r3)i.r0'
+  ${If} $0 == "1"
+    StrCpy $InstallerOpenOnFinish "1"
+  ${Else}
+    ; If Windows could not prepare both actions, retain the native Close-only
+    ; result rather than letting its Close command open the application.
+    GetDlgItem $0 $HWNDPARENT 1
+    !insertmacro InstallerText $0 "关闭" "Close"
+    !insertmacro InstallerPaintButton $0 $InstallerBaseFont $InstallerDpi "${INSTALLER_BUTTON_PRIMARY}" $InstallerNextButtonImage
+    GetDlgItem $0 $HWNDPARENT 2
+    ShowWindow $0 0
+  ${EndIf}
+  Pop $3
+  Pop $2
+  Pop $1
+  Pop $0
   Return
   InstallerPresentationAborted:
   Push "${INSTALLER_STAGE_FAILED}"
@@ -233,11 +319,23 @@ FunctionEnd
 Function InstallerPresentationDestroy
   Push $0
   ${If} $InstallerPresentationReady == "1"
+    ${If} $InstallerClockActive == "1"
+      System::Call '$PLUGINSDIR\installer-clock.dll::Destroy(p $InstallerElapsed)i.r0'
+      StrCpy $InstallerClockActive "0"
+    ${EndIf}
     GetDlgItem $0 $HWNDPARENT 1
     !insertmacro InstallerReleaseButton $0 $InstallerNextButtonImage
     GetDlgItem $0 $HWNDPARENT 2
     !insertmacro InstallerReleaseButton $0 $InstallerCancelButtonImage
     !insertmacro InstallerReleaseButton $JustDoShowLogButton $InstallerDetailsButtonImage
+    ${If} $InstallerLogSpacingImages != "0"
+      SendMessage $JustDoInstallLog 0x1002 1 0 $0
+      ${If} $0 == $InstallerLogSpacingImages
+        SendMessage $JustDoInstallLog 0x1003 1 0
+      ${EndIf}
+      System::Call 'comctl32::ImageList_Destroy(p $InstallerLogSpacingImages)i.r0'
+      StrCpy $InstallerLogSpacingImages "0"
+    ${EndIf}
     !macro InstallerDestroyText _HANDLE
       ${If} ${_HANDLE} != "0"
         System::Call 'user32::DestroyWindow(p ${_HANDLE})i.r0'
@@ -274,7 +372,12 @@ Function InstallerPresentationDestroy
   ${AndIf} $InstallerBitmap != "0"
     System::Call 'gdi32::DeleteObject(p $InstallerBitmap)i.r0'
   ${EndIf}
-  ; The title is the only owner of the derived font. Remove it before freeing.
+  ${If} $InstallerLogFont != ""
+  ${AndIf} $InstallerLogFont != "0"
+    System::Call 'gdi32::DeleteObject(p $InstallerLogFont)i.r0'
+    StrCpy $InstallerLogFont "0"
+  ${EndIf}
+  ; The title is the only owner of its derived font. Remove it before freeing.
   ${If} $InstallerTitle != ""
   ${AndIf} $InstallerTitle != "0"
     System::Call 'user32::DestroyWindow(p $InstallerTitle)i.r0'
@@ -352,6 +455,7 @@ Function InstallerPresentationShow
   ${EndIf}
   StrCpy $InstallerOriginalFont $InstallerBaseFont
   StrCpy $InstallerBaseFontOwned "0"
+  StrCpy $InstallerLogFont "0"
   ShowWindow $0 0
   GetDlgItem $0 $JustDoInstFilesPage 1004
   ShowWindow $0 0
@@ -363,7 +467,10 @@ Function InstallerPresentationShow
   StrCpy $InstallerCancelButtonImage "0"
   StrCpy $InstallerDetailsButtonImage "0"
   StrCpy $InstallerLoopStarted "0"
+  StrCpy $InstallerLogSpacingImages "0"
   StrCpy $InstallerElapsedSecond "-1"
+  StrCpy $InstallerClockActive "0"
+  StrCpy $InstallerOpenOnFinish "0"
   System::Call 'user32::GetDpiForWindow(p $HWNDPARENT)i.r0'
   ${If} $0 < 96
     StrCpy $0 96
@@ -380,6 +487,9 @@ Function InstallerPresentationShow
   StrCpy $InstallerWorkTop $3
   IntOp $InstallerWorkWidth $4 - $2
   IntOp $InstallerWorkHeight $5 - $3
+  !ifmacrodef InstallerPresentationWorkArea
+    !insertmacro InstallerPresentationWorkArea
+  !endif
   System::Alloc 16
   Pop $R5
   System::Call 'user32::GetWindowRect(p $HWNDPARENT, p $R5)i.r0'
@@ -449,6 +559,10 @@ Function InstallerPresentationShow
     StrCpy $InstallerBaseFont $1
     StrCpy $InstallerBaseFontOwned "1"
   ${EndIf}
+  !insertmacro InstallerScale $0 12
+  IntOp $0 0 - $0
+  System::Call 'gdi32::CreateFontW(i r0, i 0, i 0, i 0, i 400, i 0, i 0, i 0, i 1, i 0, i 0, i 5, i 0, w r3)p.s'
+  Pop $InstallerLogFont
   !insertmacro InstallerScale $0 26
   IntOp $0 0 - $0
   System::Call 'gdi32::CreateFontW(i r0, i 0, i 0, i 0, i 500, i 0, i 0, i 0, i 1, i 0, i 0, i 5, i 0, w r3)p.s'
@@ -459,11 +573,11 @@ Function InstallerPresentationShow
   IntOp $R1 $InstallerWidth - $R1
   !insertmacro InstallerScale $0 54
   IntOp $R2 $InstallerHeight - $0
-  ; Reserve the status, explanation and a real gap above the anchored steps.
+  ; Reserve a lower details area as well as the status and anchored steps.
   ; A clamped work area must compress the hero rather than overlap text rows.
   IntOp $InstallerStatusTop $R2 * 63
   IntOp $InstallerStatusTop $InstallerStatusTop / 100
-  !insertmacro InstallerScale $0 155
+  !insertmacro InstallerScale $0 283
   IntOp $1 $R2 - $0
   ${If} $InstallerStatusTop > $1
     StrCpy $InstallerStatusTop $1
@@ -478,11 +592,18 @@ Function InstallerPresentationShow
     StrCpy $InstallerSceneHeight 128
   ${EndIf}
   StrCpy $InstallerCompactLayout "0"
+  StrCpy $InstallerMinimalLayout "0"
   !insertmacro InstallerScale $0 88
   IntOp $0 $0 + $InstallerSceneHeight
   ${If} $InstallerStatusTop < $0
     StrCpy $InstallerCompactLayout "1"
     !insertmacro InstallerScale $InstallerStatusTop 14
+  ${EndIf}
+  ; At extreme scaling on a short display, keep the phase, clock, bar and
+  ; details usable by removing secondary copy and step labels altogether.
+  !insertmacro InstallerScale $0 217
+  ${If} $R2 < $0
+    StrCpy $InstallerMinimalLayout "1"
   ${EndIf}
   !insertmacro InstallerScale $R3 14
   System::Call '*(i 8, i 128)p.r0'
@@ -581,17 +702,26 @@ Function InstallerPresentationShow
     ShowWindow $InstallerTitle 0
     ShowWindow $InstallerSubtitle 0
   ${EndIf}
+  ${If} $InstallerMinimalLayout == "1"
+    ShowWindow $InstallerExplanation 0
+    ShowWindow $InstallerStepCheck 0
+    ShowWindow $InstallerStepWrite 0
+    ShowWindow $InstallerStepDone 0
+  ${EndIf}
 
-  ; Reuse the native one-way details button/list, including its keyboard and
-  ; log behavior. Details cover the illustration; progress stays visible below.
-  !insertmacro InstallerScale $1 14
-  StrCpy $3 $InstallerSceneHeight
-  ${If} $InstallerCompactLayout == "1"
-    !insertmacro InstallerScale $1 82
-    IntOp $1 $InstallerStatusTop + $1
-    !insertmacro InstallerScale $3 73
-    IntOp $3 $R2 - $3
-    IntOp $3 $3 - $1
+  ; Keep native one-way details, scrolling and keyboard behavior. Opening the
+  ; list reveals the reserved area below the phase explanation, never the hero.
+  !insertmacro InstallerScale $1 82
+  !insertmacro InstallerScale $3 73
+  ${If} $InstallerMinimalLayout == "1"
+    !insertmacro InstallerScale $1 42
+    !insertmacro InstallerScale $3 35
+  ${EndIf}
+  IntOp $1 $InstallerStatusTop + $1
+  IntOp $3 $R2 - $3
+  IntOp $3 $3 - $1
+  ${If} $3 < 0
+    StrCpy $3 0
   ${EndIf}
   System::Call 'user32::SetWindowPos(p $JustDoInstallLog, p 0, i $R0, i r1, i $R1, i r3, i 0)i.r0'
   ; Keep the native log and its scroll/keyboard behavior, with a flat surface.
@@ -602,10 +732,62 @@ Function InstallerPresentationShow
   IntOp $0 $0 & 0xFFFFFDFF
   System::Call 'user32::SetWindowLongW(p $JustDoInstallLog, i -20, i r0)i.r0'
   System::Call 'uxtheme::SetWindowTheme(p $JustDoInstallLog, w "Explorer", p 0)i.r0'
-  SetCtlColors $JustDoInstallLog "74747E" "F3F4F8"
-  SendMessage $JustDoInstallLog 0x1001 0 0xF8F4F3
-  SendMessage $JustDoInstallLog 0x1026 0 0xF8F4F3
+  ; Single-column, quiet log surface. SetCtlColors alone does not style native
+  ; list-view items. Preserve unrelated extended styles and selection behavior.
+  SetCtlColors $JustDoInstallLog "475569" "F4F6FA"
+  SendMessage $JustDoInstallLog 0x1001 0 0xFAF6F4
+  SendMessage $JustDoInstallLog 0x1026 0 0xFAF6F4
+  SendMessage $JustDoInstallLog 0x1024 0 0x695547
+  SendMessage $JustDoInstallLog 0x1036 0x14001 0x14000
   System::Call 'user32::SetWindowPos(p $JustDoInstallLog, p 0, i 0, i 0, i 0, i 0, i 0x0037)i.r0'
+  ; A blank small-image slot supplies real item inset and comfortable row
+  ; height. Borrowed native images are left alone; only our empty list is owned.
+  SendMessage $JustDoInstallLog 0x1002 1 0 $0
+  ${If} $0 == 0
+    !insertmacro InstallerScale $4 8
+    !insertmacro InstallerScale $5 24
+    System::Call 'comctl32::ImageList_Create(i r4, i r5, i 0x20, i 0, i 1)p.s'
+    Pop $InstallerLogSpacingImages
+    ${If} $InstallerLogSpacingImages != "0"
+      System::Call 'user32::GetWindowLongW(p $JustDoInstallLog, i -16)i.r0'
+      ; LVS_SHAREIMAGELISTS leaves teardown to this module, even if NSIS has
+      ; already destroyed the log window before .onGUIEnd.
+      IntOp $0 $0 | 0x0040
+      System::Call 'user32::SetWindowLongW(p $JustDoInstallLog, i -16, i r0)i.r0'
+      System::Call 'user32::GetWindowLongW(p $JustDoInstallLog, i -16)i.r0'
+      IntOp $0 $0 & 0x0040
+      ${If} $0 != 0
+        SendMessage $JustDoInstallLog 0x1003 1 $InstallerLogSpacingImages
+        SendMessage $JustDoInstallLog 0x1002 1 0 $0
+      ${EndIf}
+      ${If} $0 != $InstallerLogSpacingImages
+        System::Call 'comctl32::ImageList_Destroy(p $InstallerLogSpacingImages)i.r0'
+        StrCpy $InstallerLogSpacingImages "0"
+      ${EndIf}
+    ${EndIf}
+  ${EndIf}
+  ; NSIS sized its sole column before we widened the page. Reserve the native
+  ; vertical scrollbar now, so later log entries cannot introduce a horizontal
+  ; scrollbar or bring back the old narrow-column divider.
+  System::Call 'user32::GetSystemMetricsForDpi(i 2, i $InstallerDpi)i.r0'
+  IntOp $0 $R1 - $0
+  System::Alloc 16
+  Pop $4
+  ${If} $4 != 0
+    System::Call 'user32::GetClientRect(p $JustDoInstallLog, p r4)i.r5'
+    ${If} $5 != 0
+      System::Call '*$4(i, i, i .r0, i)'
+      System::Call 'user32::GetWindowLongW(p $JustDoInstallLog, i -16)i.r5'
+      IntOp $5 $5 & 0x00200000
+      ${If} $5 == 0
+        System::Call 'user32::GetSystemMetricsForDpi(i 2, i $InstallerDpi)i.r5'
+        IntOp $0 $0 - $5
+      ${EndIf}
+    ${EndIf}
+    System::Free $4
+  ${EndIf}
+  IntOp $0 $0 - 1
+  SendMessage $JustDoInstallLog 0x101E 0 $0
   !insertmacro InstallerScale $4 16
   IntOp $5 $R1 + 1
   IntOp $6 $3 + 1
@@ -616,7 +798,11 @@ Function InstallerPresentationShow
       System::Call 'gdi32::DeleteObject(p r0)i.r1'
     ${EndIf}
   ${EndIf}
-  SendMessage $JustDoInstallLog ${INSTALLER_WM_SETFONT} $InstallerBaseFont 0
+  ${If} $InstallerLogFont != "0"
+    SendMessage $JustDoInstallLog ${INSTALLER_WM_SETFONT} $InstallerLogFont 0
+  ${Else}
+    SendMessage $JustDoInstallLog ${INSTALLER_WM_SETFONT} $InstallerBaseFont 0
+  ${EndIf}
   ShowWindow $JustDoInstallLog 0
   !insertmacro InstallerScale $1 27
   IntOp $1 $R2 - $1
@@ -651,6 +837,17 @@ Function InstallerPresentationShow
   !insertmacro JustDoSetInstallStatus "正在检查安装目录占用…" "Checking the installation location…"
   !insertmacro JustDoAddInstallActivity "已确认安装位置" "Installation location confirmed"
   !insertmacro JustDoLogInstallEvent "phase=install-page-shown status=checking-installation-location"
+  ; This tiny native module uses a UI-owner Win32 timer. Its callback only
+  ; formats elapsed time; it never re-enters the shared NSIS interpreter.
+  File /oname=$PLUGINSDIR\installer-clock.dll "${INSTALLER_CLOCK_LIBRARY}"
+  ${If} $LANGUAGE == ${JUSTDO_LANG_SIMPCHINESE}
+  ${OrIf} $LANGUAGE == ${JUSTDO_LANG_TRADCHINESE}
+    StrCpy $0 "已用时 "
+  ${Else}
+    StrCpy $0 "Elapsed "
+  ${EndIf}
+  System::Call '$PLUGINSDIR\installer-clock.dll::Start(p $InstallerElapsed, i $InstallerPresentationStarted, w r0)i.s'
+  Pop $InstallerClockActive
   Call InstallerPresentationOpenMotion
   SendMessage $HWNDPARENT ${JUSTDO_WM_SETREDRAW} 1 0
   System::Call 'user32::RedrawWindow(p $HWNDPARENT, p 0, p 0, i ${JUSTDO_RDW_ATOMIC_REFRESH})i.r0'
