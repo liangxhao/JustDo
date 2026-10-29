@@ -9,6 +9,7 @@ import { StartupRoute, StartupStage } from '../../../shared/app/startup/routing'
 import { StartupCompatibilityErrorCode } from '../../../shared/app/startup/versionPolicy';
 import { DB_FILENAME } from '../../core/appConstants';
 import { CoworkStore } from '../../data/coworkStore';
+import { GroupStore } from '../../data/groupStore';
 import { SqliteStore } from '../../data/sqliteStore';
 import { SessionRpc } from '../../engine/gateway/sessionRpc';
 import { SessionPermissionModeCoordinator } from '../../openclaw/permissions/sessionPermissionModeCoordinator';
@@ -1283,6 +1284,13 @@ test('empty history checkpoints preceding schema and default writes before the g
 test('recovers an interrupted native import without another backup, environment replacement or transcript restaging', async () => {
   const target = root();
   legacy(target);
+  const old = new Database(path.join(target, DB_FILENAME));
+  old.exec(`ALTER TABLE cowork_sessions ADD COLUMN pinned INTEGER;
+    ALTER TABLE cowork_sessions ADD COLUMN group_id TEXT;
+    CREATE TABLE session_groups(id TEXT PRIMARY KEY,name TEXT);
+    INSERT INTO session_groups VALUES('work','工作');
+    UPDATE cowork_sessions SET pinned=1,group_id='work' WHERE id='native';`);
+  old.close();
   const first = new StartupCoordinator(target);
   await first.prepareBeforeStore(progress());
   const journal = readStartupJournal(target)!;
@@ -1327,7 +1335,8 @@ test('recovers an interrupted native import without another backup, environment 
     expect(cowork.getSession('native')).toMatchObject({
       title: '原生标题',
       status: 'idle',
-      pinned: false,
+      pinned: true,
+      groupId: 'work',
       activeSkillIds: [],
       historyBinding: {
         nativeSessionId: 'original-native',
@@ -1343,10 +1352,20 @@ test('recovers an interrupted native import without another backup, environment 
     ).toBeUndefined();
     const checked = new StartupCoordinator(target);
     cowork.updateSession('native', { title: 'current title' });
+    cowork.setSessionPinned('native', false);
+    const groups = new GroupStore(store.getDatabase());
+    groups.updateGroup('work', { name: '当前分组' });
+    groups.moveSessionToGroup('native', null);
     const runNative = vi.fn(async () => JSON.stringify({ verified: true, entries: 4, conversations: 3 }));
     await checked.restoreHistory(store.getDatabase(), state, progress(), runNative);
     expect(runNative).toHaveBeenCalledExactlyOnceWith('verify', expect.any(String));
-    expect(cowork.getSession('native')?.title).toBe('current title');
+    expect(cowork.getSession('native')).toMatchObject({
+      title: 'current title', pinned: false, groupId: null,
+    });
+    expect(groups.getGroup('work')?.name).toBe('当前分组');
+    groups.deleteGroup('work');
+    await checked.restoreHistory(store.getDatabase(), state, progress(), runNative);
+    expect(groups.listGroups()).toEqual([]);
     await expect(checked.restoreHistory(store.getDatabase(), state, progress(), async () =>
       JSON.stringify({ verified: false }))).rejects.toThrow(/identity verification/);
     expect(cowork.getSession('native')?.title).toBe('current title');

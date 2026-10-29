@@ -19,6 +19,8 @@ type NativeHistory = {
 export type HistoryConversation = {
   id: string;
   title: string;
+  pinned: boolean;
+  groupId: string | null;
   agentId: string;
   cwd: string;
   createdAt: number;
@@ -32,6 +34,7 @@ export type HistoryConversation = {
 export type HistoryPlan = {
   version: 1;
   agents: NativeHistory[];
+  groups: { id: string; name: string }[];
   conversations: HistoryConversation[];
   summary: StartupHistorySummary;
 };
@@ -213,6 +216,7 @@ export function planLegacyHistory(backup: string): HistoryPlan {
     for (const [key, entry] of Object.entries(agent.entries))
       byKey.set(key, { agent, entry });
   const conversations: HistoryConversation[] = [];
+  let groups: HistoryPlan['groups'] = [];
   const product = path.join(backup, DB_FILENAME);
   if (!fs.existsSync(product) && agents.some(agent => Object.keys(agent.entries).length))
     throw new Error(
@@ -223,9 +227,15 @@ export function planLegacyHistory(backup: string): HistoryPlan {
     try {
       const has = (table: string) =>
         !!db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table);
+      groups = has('session_groups')
+        ? db.prepare('SELECT id,name FROM session_groups ORDER BY id').all() as HistoryPlan['groups']
+        : [];
+      const groupIds = new Set(groups.map(group => group.id));
       const rows = db.prepare('SELECT * FROM cowork_sessions ORDER BY created_at, id').all() as {
         id: string;
         title: string;
+        pinned?: number;
+        group_id?: string;
         agent_id?: string;
         cwd: string;
         created_at: number;
@@ -285,6 +295,8 @@ export function planLegacyHistory(backup: string): HistoryPlan {
         conversations.push({
           id: row.id,
           title: row.title,
+          pinned: row.pinned === 1,
+          groupId: typeof row.group_id === 'string' && groupIds.has(row.group_id) ? row.group_id : null,
           agentId,
           cwd: typeof row.cwd === 'string' ? row.cwd : '',
           createdAt: row.created_at,
@@ -321,6 +333,7 @@ export function planLegacyHistory(backup: string): HistoryPlan {
   return {
     version: 1,
     agents,
+    groups,
     conversations,
     summary: {
       conversations: conversations.length,
@@ -449,9 +462,19 @@ function restoreHistoryMetadataRows(
   transactionId: string,
 ): void {
   db.transaction(() => {
+    const insertGroup = db.prepare(`INSERT INTO session_groups (id,name,created_at)
+      VALUES (?,?,?) ON CONFLICT(id) DO NOTHING`);
+    const findGroup = db.prepare('SELECT name FROM session_groups WHERE id=?');
+    const restoredAt = Date.now();
+    for (const group of plan.groups) {
+      insertGroup.run(group.id, group.name, restoredAt);
+      const restored = findGroup.get(group.id) as { name: string } | undefined;
+      if (restored?.name !== group.name)
+        throw new Error('Restored history group conflicts with the import plan.');
+    }
     const insert = db.prepare(`INSERT INTO cowork_sessions
-      (id,title,status,pinned,cwd,execution_mode,permission_mode,active_skill_ids,agent_id,created_at,updated_at)
-      VALUES (?,?,'idle',0,?,'local',?,'[]',?,?,?) ON CONFLICT(id) DO NOTHING`);
+      (id,title,status,pinned,group_id,cwd,execution_mode,permission_mode,active_skill_ids,agent_id,created_at,updated_at)
+      VALUES (?,?,'idle',?,?,?,'local',?,'[]',?,?,?) ON CONFLICT(id) DO NOTHING`);
     const binding = db.prepare(`INSERT INTO history_session_bindings
       (session_id,session_key,native_session_id,availability,source,external_key,transaction_id,
         source_agent_id,source_session_key,source_native_session_id,defaults_applied)
@@ -461,6 +484,8 @@ function restoreHistoryMetadataRows(
       insert.run(
         row.id,
         row.title,
+        row.pinned ? 1 : 0,
+        row.groupId,
         row.cwd,
         DEFAULT_PERMISSION_MODE,
         row.agentId,
@@ -481,12 +506,14 @@ function restoreHistoryMetadataRows(
       );
       const restored = db
         .prepare(
-          `SELECT s.title,s.agent_id,s.cwd,s.created_at,s.updated_at,
+          `SELECT s.title,s.pinned,s.group_id,s.agent_id,s.cwd,s.created_at,s.updated_at,
         h.session_key,h.native_session_id,h.transaction_id FROM cowork_sessions s
         JOIN history_session_bindings h ON h.session_id=s.id WHERE s.id=?`,
         )
         .get(row.id) as {
         title: string;
+        pinned: number;
+        group_id: string | null;
         agent_id: string;
         cwd: string;
         created_at: number;
@@ -498,6 +525,8 @@ function restoreHistoryMetadataRows(
       if (
         !restored ||
         restored.title !== row.title ||
+        restored.pinned !== (row.pinned ? 1 : 0) ||
+        restored.group_id !== row.groupId ||
         restored.agent_id !== row.agentId ||
         restored.cwd !== row.cwd ||
         restored.created_at !== row.createdAt ||
