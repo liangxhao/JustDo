@@ -32,6 +32,12 @@ and Electron `capturePage` with `stayHidden`/`stayAwake`, must produce real
 nonblank images. All native windows must remain hidden and unfocused throughout.
 The direct input check installs CDP chooser interception itself; the later Main
 path independently exercises the production upload authorization and arming.
+The foreground pending-upload fixture also registers a real webview through the
+production IPC boundary, clicks a dynamic upload control before providing files,
+then reads a snapshot, waits and fills the retained chooser exactly once. It
+checks the page's click/change counts, retained interaction lease, batch stop and
+source cancellation. This verifies intercepted selection requests; it does not
+claim to automate an already-visible Windows system dialog.
 
 The shared-profile checks create a real foreground `<webview>` inside a hidden,
 sandboxed carrier. Its isolated `embedded` partition is exactly the partition

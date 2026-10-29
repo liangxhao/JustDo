@@ -58,6 +58,7 @@ async function main() {
       `export { isSameBrowserSession } from ${JSON.stringify(path.join(root, 'src/main/browser/browserSessionIdentity.ts'))};`,
       `export { recordImportedBrowserProfile } from ${JSON.stringify(path.join(root, 'src/main/browser/data/browserDataImportService.ts'))};`,
       `export { BrowserAgentBridge } from ${JSON.stringify(path.join(root, 'src/main/browser/browserAgentBridge.ts'))};`,
+      `export { BrowserIpc } from ${JSON.stringify(path.join(root, 'src/shared/browser/browser.ts'))};`,
       `export { EmbeddedBrowserGatewayBridge } from ${JSON.stringify(path.join(root, 'src/main/browser/embeddedBrowserGatewayBridge.ts'))};`,
       `export { BrowserAgentCdpInput } from ${JSON.stringify(path.join(root, 'src/main/browser/agent/browserAgentInput.ts'))};`,
       `export { executeAct } from ${JSON.stringify(path.join(root, 'src/main/browser/agent/browserAgentActions.ts'))};`,

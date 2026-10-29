@@ -157,6 +157,21 @@ describe('authenticated embedded browser Gateway boundary', () => {
     expect(options.execute).toHaveBeenCalledTimes(1);
   });
 
+  it('rejects an imported binding to a different native incarnation', async () => {
+    const { options, bridge } = setup();
+    options.getDesktopSession.mockReturnValue({
+      id: 'conversation',
+      cwd: workspaceDir,
+      historyBinding: { nativeSessionId: 'different-native-session' },
+    } as ReturnType<typeof options.getDesktopSession>);
+    bridge.handleEvent(request());
+    await vi.waitFor(() => expect(options.resolve).toHaveBeenCalledWith(
+      'request-1',
+      { ok: false, error: 'The browser session binding is unavailable.' },
+    ));
+    expect(options.execute).not.toHaveBeenCalled();
+  });
+
   it('matches cancellation to the complete run and tool call', async () => {
     const { options, bridge } = setup();
     options.execute.mockImplementation(

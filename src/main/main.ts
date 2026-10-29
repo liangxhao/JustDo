@@ -55,6 +55,7 @@ import { normalizeLocalSpeechSettings } from '../shared/speech/localSpeechSettin
 import { AppServerIntegrationService } from './appServer/appServerIntegrationService';
 import { waitForAppServerShutdown } from './appServer/appServerShutdown';
 import { BrowserAgentBridge } from './browser/browserAgentBridge';
+import { resolveBrowserDesktopSession } from './browser/browserDesktopSession';
 import { EmbeddedBrowserGatewayBridge } from './browser/embeddedBrowserGatewayBridge';
 import { BrowserExtensionChatController } from './browser/extension/browserExtensionChatController';
 import { BrowserExtensionChatServer } from './browser/extension/browserExtensionChatServer';
@@ -1185,7 +1186,7 @@ const bindEmbeddedBrowserGateway = (): void => {
   }
   const bridge = new EmbeddedBrowserGatewayBridge({
     isEnabled: () => normalizeBrowserMode(getStore().get<AppConfigSettings>('app_config')?.browserMode) === BrowserMode.Embedded,
-    getDesktopSession: sessionKey => getCoworkStore().getSessionByNativeKey(sessionKey),
+    getDesktopSession: sessionKey => resolveBrowserDesktopSession(getCoworkStore(), sessionKey),
     getScheduledTask: jobId => getCronJobService().getJob(jobId),
     execute: (sessionKey, command, signal, scope) => browserAgentBridge.executeCommand(sessionKey, command, signal, scope),
     releaseScope: (sessionId, closePages) => browserAgentBridge.releaseExecutionScope(sessionId, closePages),

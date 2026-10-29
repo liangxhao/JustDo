@@ -114,6 +114,8 @@ flowchart LR
 
 公开 V2 factory、最终工具权限 hook 和 exact toolCall 共同准入，绑定原生 sessionId/lifecycleRevision、runId、jobId 与工作区；模型参数、key 形状或提示词不能授予权限。原生禁止 host-control、仅允许 sandbox 或提供不同文件根时拒绝执行。workspace-only 下上传/输出继续受 canonical 工作区约束，工具拒绝本地 file 文档及执行中的 file 跳转；用户手动侧栏浏览不因此改变。
 
+Main 将普通会话的 canonical key 映射到产品会话时，先查询显式原生／历史绑定，再按共享会话键合约查询普通会话 ID；普通会话不要求另存一份 native key。映射必须同时符合当前助手归属和完整有效 key，已重绑会话不能通过旧 key 回退。该映射只确定产品页面归属，后续仍核验工作区和历史绑定的原生 sessionId，不替代上述原生运行准入。
+
 普通后台页在正常轮末保留，后续调用需新许可；失败或取消的确切终态销毁该会话自有后台页。原生工具信号在正常工具代次清理时也会 abort，不能把信号失效推断成整轮取消。任一原始信号失效先发布独立 revoked 事件，立即阻断本轮 browser 准入、取消 pending，并撤销已经返回 armed 的上传、对话框和 Agent 下载；保留确切运行身份，直到 whole-run end/error 且 executionSettled:true 才发布最终 released。普通页此时按真实终态决定保留或销毁，定时临时页在权限退役或最终释放时均回收。后续调用等待新一轮许可，不能借用已失效的工具代次。清理不代替原生运行结果证据，也不能撤回已经发出的站点请求。服务停用/替换、断连、原生 incarnation 改变、会话删除和应用退出撤销相应资源，不重试未知写入。
 
 首期通过截图、工具结果和文件观察后台过程，不支持同一后台原页面挂回侧栏、直接人工接管或原地切换前后台。运行 `node scripts/test/verify-background-browser.cjs` 可使用独立数据目录和 localhost 合成页面复验；验证包括实际 webview 与后台并发共享 Cookie/localStorage/IndexedDB、登录状态变更、profile 隔离及任务释放不影响侧栏 worker/连接。保留输入、截图、工作区上传/PDF/下载和实际 Main 执行链检查；该入口的身份、会话/job 查询、前台 UI 回调及 resolve 传输使用合成边界。共享 profile 不再采用此前独立 partition 的“清所有 worker、无迟到 POST”验收标准，页面销毁不能证明共享站点活动已排空。
@@ -163,6 +165,12 @@ HTTP auth challenge 绑定随机 request 与 guest，只有主窗口主 frame �
 ## 6. 文件、下载与 PDF
 
 人工下载遵循询问/目录设置。Agent 上传必须是真实任务工作区文件；download/pdf 只写工作区并拒绝覆盖，以真实父目录形成 canonical reservation 防并发冲突。未指定输出路径的 PDF、等待下载及普通操作触发的下载默认保存至工作区 `.agent-tasks/browser-artifacts/`，与 Swarm 使用同一通用任务根目录。下载事件还需匹配具体 guest 与等待请求；失败或取消终止下载并清理部分文件。
+
+上传按当前页面机制选择入口：网页菜单、来源选择和上传面板先通过普通网页动作展开；已有文件输入可用 `inputRef`、`ref` 或 `element` 直接指定（包括隐藏输入及受支持子 frame），三种定位不能混用。最终直接打开文件选择器的控件可用新快照的 `ref` 同次准备拦截、点击并等待真实选文件完成，也支持点击后动态创建输入。该最终控件没有可用 ref 时，只有 paths 的调用可先准备下一次文件选择，返回 `armed:true, completed:false` 与等待期限，再在同一 target 通过坐标点击等受支持动作触发；不能据 `ok:true` 宣称文件已附加。实际填入后返回 `armed:false, completed:true`，也只证明已设置文件输入，不证明网站接收或提交，后续仍须核验网页。普通点击已打开的系统选择窗口不能由之后的 upload 补填，`dialog` 只处理 JavaScript 对话框。仅拖放、剪贴板或其他自定义机制不能默认套用文件选择器流程，须按实际机制和工具能力处理。
+
+Agent 的 `act` 在真实 guest 操作 lease 内先开启原生选择器拦截，允许先点击、后提供文件。未预设文件的选择请求不显示系统模态窗口，而是保存精确 guest、产品会话／profile／target、原生 run、文档代次、输入 backendNodeId 和来源取消许可，最多等待现有 30 秒交互期限。动作结果与后续快照附带 `blockedByFileChooser`、`fileChooser.pending/mode/timeoutMs`；同 target 的无定位 `upload(paths)` 重新校验工作区并一次性完成原请求，不再次点击。等待期间保留页面交互 lease，允许快照和有界 wait，其他变更暂停，batch 在选择请求后停止。单选只接受一个文件，多选沿原生 mode；不从页面猜测输入。
+
+前台输入返回后保留短暂事件处理窗口，待 CDP 屏障和即时事件交付后再恢复拦截。取消、期限结束、主／子 frame 导航、debugger 断开、目标注销、原生 run 变化、停止或断连退休旧请求，释放前恢复手动浏览；清理不向原输入写入空文件列表。人工浏览和录制不主动启用此拦截，仍使用原生选择窗口。此能力续接 Agent 已触发的选择请求；已经真实显示的人工系统窗口仍无 Electron/CDP 公开接管接口，不能据逻辑 pending 测试宣称能控制该窗口。跨进程 frame 无可归属 backendNodeId、目录或非 HTML 文件选择器仍按现有能力报告限制。
 
 消息 `MEDIA` 下载链接复用内置浏览器的同一下载入口。询问保存位置时，Main 在
 `will-download` 同步回调内设置原生保存框的默认路径，由 Electron 展示一次保存框并处理

@@ -17,6 +17,7 @@ import { installBrowserRecordingGuest } from './browserRecordingGuest';
 describe('guest action observation', () => {
   afterEach(() => {
     ipc.callbacks.get(BrowserRecordingChannel.Control)?.(null, { recordingId: 'r', active: false });
+    vi.unstubAllGlobals();
     vi.useRealTimers();
   });
   const listeners = new Map<string, EventListener>();
@@ -38,6 +39,18 @@ describe('guest action observation', () => {
       composedPath: () => [element],
       detail: 1,
     } as unknown as Event);
+  it('initializes and records a fresh document identity when randomUUID is unavailable', () => {
+    ipc.callbacks.get(BrowserRecordingChannel.Control)!(null, { recordingId: 'r', active: false });
+    const original = ipc.sendToHost.mock.calls.find(call => call[0] === BrowserRecordingChannel.Ready)![1].documentId;
+    vi.stubGlobal('crypto', { getRandomValues: crypto.getRandomValues.bind(crypto) });
+    expect(() => installBrowserRecordingGuest()).not.toThrow();
+    ipc.callbacks.get(BrowserRecordingChannel.Control)!(null, { recordingId: 'r', active: true });
+    document.body.innerHTML = '<button>Upload</button>';
+    send('click', document.querySelector('button')!);
+    const event = ipc.sendToHost.mock.calls.filter(call => call[0] === BrowserRecordingChannel.Event).at(-1)![1];
+    expect(event.documentId).toMatch(/^[a-f0-9]{32}$/u);
+    expect(event.documentId).not.toBe(original);
+  });
   it('records focused targets and keyboard modifiers without password values', () => {
     document.body.innerHTML = '<input name="query"><input type="password">';
     listeners.get('keydown')!({

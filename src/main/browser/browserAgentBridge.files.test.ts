@@ -155,6 +155,59 @@ test('rejects mutually exclusive direct upload selectors', async () => {
   ).rejects.toThrow('inputRef and element are mutually exclusive');
 });
 
+test('returns a JavaScript dialog without waiting for a blocked renderer evaluation', async () => {
+  const listeners = new Map<string, (...args: unknown[]) => void>();
+  let attached = false;
+  const sendCommand = vi.fn(async () => undefined);
+  bridge = new BrowserAgentBridge(vi.fn(), () => true, () => os.tmpdir());
+  bridge.registerIpc();
+  electron.guests.set(7, {
+    id: 7, getType: () => 'webview', isDestroyed: () => false,
+    session: electron.partition, hostWebContents: { id: 10 },
+    getURL: () => 'https://example.com/',
+    debugger: {
+      isAttached: () => attached, attach: () => { attached = true; }, detach: vi.fn(),
+      on: (name: string, callback: (...args: unknown[]) => void) => listeners.set(name, callback),
+      off: vi.fn(), sendCommand,
+    },
+  });
+  registerGuest(7);
+  const execute = vi.spyOn(bridge as unknown as { executeOnGuest(): Promise<unknown> }, 'executeOnGuest');
+  execute.mockImplementation(async () => {
+    listeners.get('message')!({}, 'Page.javascriptDialogOpening', { type: 'confirm', message: 'Continue?' });
+    return { details: { blockedByDialog: true }, content: [] };
+  });
+  const result = await bridge.executeCommand('justdo:session-1', { action: 'act', request: { kind: 'click', selector: '#confirm' } });
+  expect(result).toMatchObject({ details: { blockedByDialog: true } });
+  expect(sendCommand).not.toHaveBeenCalledWith('Runtime.evaluate', expect.anything());
+});
+
+test('does not assign a child debugger session input through the root debugger', async () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'browser-chooser-session-'));
+  temporaryRoots.push(workspace);
+  fs.writeFileSync(path.join(workspace, 'file.txt'), 'fixture');
+  const listeners = new Map<string, (...args: unknown[]) => void>();
+  let attached = false;
+  const sendCommand = vi.fn(async () => undefined);
+  bridge = new BrowserAgentBridge(vi.fn(), () => true, () => workspace);
+  bridge.registerIpc();
+  electron.guests.set(7, {
+    id: 7, getType: () => 'webview', isDestroyed: () => false,
+    session: electron.partition, hostWebContents: { id: 10 }, getURL: () => 'https://example.com/',
+    debugger: {
+      isAttached: () => attached, attach: () => { attached = true; }, detach: vi.fn(),
+      on: (name: string, callback: (...args: unknown[]) => void) => listeners.set(name, callback),
+      off: vi.fn(), sendCommand,
+    },
+  });
+  registerGuest(7);
+  await bridge.executeCommand('justdo:session-1', { action: 'upload', paths: ['file.txt'] });
+  listeners.get('message')!({}, 'Page.fileChooserOpened', { backendNodeId: 42, mode: 'selectSingle' }, 'child-session');
+  await new Promise(resolve => setImmediate(resolve));
+  expect(sendCommand).not.toHaveBeenCalledWith('DOM.setFileInputFiles', expect.anything());
+  await expect(bridge.executeCommand('justdo:session-1', { action: 'errors' })).resolves.toMatchObject({ details: { errorCount: 1 } });
+});
+
 test('uploads to a file input selected inside an open shadow root', async () => {
   const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-browser-shadow-upload-'));
   temporaryRoots.push(temporaryRoot);
@@ -213,7 +266,7 @@ test('uploads to a file input selected inside an open shadow root', async () => 
       element: 'input.picker',
       paths: ['upload.txt'],
     }),
-  ).resolves.toMatchObject({ ok: true, paths: ['upload.txt'] });
+  ).resolves.toMatchObject({ ok: true, armed: false, completed: true, paths: ['upload.txt'] });
   expect(sendCommand).toHaveBeenCalledWith('DOM.enable');
   expect(sendCommand).toHaveBeenCalledWith('DOM.getDocument', { depth: 0, pierce: true });
   expect(sendCommand.mock.calls.findIndex(([method]) => method === 'DOM.enable')).toBeLessThan(
@@ -368,6 +421,7 @@ test('disarms a paths-only upload after its bounded wait expires', async () => {
     );
     bridge.registerIpc();
     electron.guests.set(7, {
+      id: 7,
       getType: () => 'webview',
       isDestroyed: () => false,
       session: electron.partition,
@@ -377,10 +431,13 @@ test('disarms a paths-only upload after its bounded wait expires', async () => {
     });
     registerGuest(7);
 
-    await bridge.executeCommand('justdo:session-1', {
+    const prepared = await bridge.executeCommand('justdo:session-1', {
       action: 'upload',
       paths: ['upload.txt'],
     });
+    expect(prepared).toMatchObject({ ok: true, armed: true, completed: false, timeoutMs: 30_000 });
+    expect(prepared).toHaveProperty('message', expect.stringContaining('no file has been selected yet'));
+    expect(sendCommand).not.toHaveBeenCalledWith('DOM.setFileInputFiles', expect.anything());
     expect(sendCommand).toHaveBeenCalledWith('Page.setInterceptFileChooserDialog', {
       enabled: true,
     });

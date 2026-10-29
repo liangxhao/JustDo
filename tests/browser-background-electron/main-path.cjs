@@ -6,6 +6,7 @@ const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { BrowserWindow, nativeImage } = require('electron');
 const sharedProfile = require('./shared-profile.cjs');
+const pendingUpload = require('./pending-upload.cjs');
 
 const REQUESTED = 'plugin.embedded-browser.requested';
 const CANCELLED = 'plugin.embedded-browser.cancelled';
@@ -69,6 +70,7 @@ exports.run = async function run({
   checked(
     'real foreground webview logs in with server HttpOnly cookie, localStorage and IndexedDB; synthetic UI delegates serve permissions and downloads',
   );
+  await pendingUpload.run({ implementation, foreground, workspace, checked, until });
   const mainHost = new implementation.BackgroundBrowserHost();
   const browser = new implementation.BrowserAgentBridge(
     channel => {
@@ -342,12 +344,14 @@ exports.run = async function run({
 
     const uploadName = '合成 Main 上传.txt';
     fs.writeFileSync(path.join(workspace, uploadName), 'synthetic main-path upload');
-    await request(desktopRun, {
+    const directUpload = await request(desktopRun, {
       action: 'upload',
       targetId: desktopTarget,
       paths: [uploadName],
       element: '#file',
     });
+    assert.equal(directUpload.completed, true);
+    assert.equal(directUpload.armed, false);
     assert.equal(
       await read(desktopGuest, 'document.querySelector("#file").files[0].name'),
       uploadName,
@@ -375,6 +379,45 @@ exports.run = async function run({
     checked(
       'Main upload resolves actual workspace files under workspace-only policy and rejects a synthetic external path',
     );
+
+    // The file input exists only after this button is clicked. Upload must arm
+    // interception before clicking and await the real CDP file-selection event.
+    await evaluate(desktopRun, desktopTarget, `(() => {
+      const trigger = document.createElement('button');
+      trigger.id = 'dynamic-upload-trigger'; trigger.textContent = 'Attach local fixture';
+      trigger.dataset.changeCount = '0';
+      trigger.onclick = () => {
+        const input = document.createElement('input');
+        input.type = 'file'; input.hidden = true; input.id = 'dynamic-upload-input';
+        input.onchange = () => {
+          trigger.dataset.changeCount = String(Number(trigger.dataset.changeCount) + 1);
+          trigger.dataset.fileName = input.files[0]?.name;
+        };
+        document.body.append(input); input.click();
+      };
+      document.body.append(trigger); return true;
+    })()`);
+    const uploadSnapshot = await request(desktopRun, { action: 'snapshot', targetId: desktopTarget });
+    const uploadSnapshotText = uploadSnapshot.content.filter(value => value.type === 'text').map(value => value.text).join('\n');
+    const trigger = /Attach local fixture[^\n]*\[ref=([^\]]+)\]/u.exec(uploadSnapshotText);
+    assert.ok(trigger, 'The current snapshot did not expose the upload trigger');
+    const triggeredUpload = await request(desktopRun, {
+      action: 'upload', targetId: desktopTarget, ref: trigger[1], paths: [uploadName],
+    });
+    assert.equal(triggeredUpload.completed, true);
+    assert.equal(triggeredUpload.armed, false);
+    assert.equal(await read(desktopGuest, 'document.querySelector("#dynamic-upload-trigger").dataset.changeCount'), '1');
+    assert.equal(await read(desktopGuest, 'document.querySelector("#dynamic-upload-trigger").dataset.fileName'), uploadName);
+    assert.equal(await read(desktopGuest, 'document.querySelector("#dynamic-upload-input").files[0].name'), uploadName);
+    const preparedUpload = await request(desktopRun, { action: 'upload', targetId: desktopTarget, paths: [uploadName] });
+    assert.equal(preparedUpload.armed, true);
+    assert.equal(preparedUpload.completed, false);
+    assert.equal(await read(desktopGuest, 'document.querySelector("#dynamic-upload-trigger").dataset.changeCount'), '1');
+    await request(desktopRun, {
+      action: 'act', request: { kind: 'click', targetId: desktopTarget, selector: '#dynamic-upload-trigger' },
+    });
+    await until(async () => (await read(desktopGuest, 'document.querySelector("#dynamic-upload-trigger").dataset.changeCount')) === '2', 'armed upload selects only after a later click');
+    checked('Main upload waits for dynamic hidden input selection; a paths-only result stays armed until a later click');
 
     const localDocument = path.join(workspace, 'synthetic-local.html');
     fs.writeFileSync(localDocument, '<!doctype html><title>Synthetic local document</title>');

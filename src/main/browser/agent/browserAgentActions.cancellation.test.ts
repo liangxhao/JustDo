@@ -67,7 +67,7 @@ const createActions = () => {
       aria: false,
     })),
     resolveUploadPaths: vi.fn((_sessionId: string, files: unknown) => files as string[]),
-    setFileInputFiles: vi.fn(async () => {}),
+    setFileInputFiles: vi.fn(async () => ({ armed: false, completed: true })),
     executeAct: vi.fn(async () => ({})),
     dialogs,
     armedDialogs,
@@ -200,7 +200,7 @@ describe('upload cancellation admission', () => {
 
   test('does not report a direct upload success when it was cancelled at completion', async () => {
     const fixture = createActions();
-    const uploaded = deferred<void>();
+    const uploaded = deferred<{ armed: boolean; completed: boolean }>();
     fixture.context.setFileInputFiles.mockReturnValue(uploaded.promise);
     const pending = fixture.execute({
       sessionKey: 'native-fixture',
@@ -208,7 +208,7 @@ describe('upload cancellation admission', () => {
       paths: ['fixture.txt'],
     });
     fixture.cancel();
-    uploaded.resolve(undefined);
+    uploaded.resolve({ armed: false, completed: true });
 
     await expect(pending).rejects.toThrow('cancelled');
   });

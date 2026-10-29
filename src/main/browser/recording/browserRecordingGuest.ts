@@ -13,7 +13,10 @@ import { createRecordingElementDescriber } from './browserRecordingElement';
 
 /** Passive observation only. Never exposes privileged APIs to the page. */
 export function installBrowserRecordingGuest(): void {
-  const documentId = crypto.randomUUID();
+  // randomUUID is unavailable on insecure origins; getRandomValues also works there.
+  const documentId = Array.from(crypto.getRandomValues(new Uint8Array(16)), byte =>
+    byte.toString(16).padStart(2, '0'),
+  ).join('');
   let recordingId = '';
   let active = false;
   let sequence = 0;

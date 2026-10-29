@@ -66,6 +66,7 @@ import {
 } from './agent/browserAgentProtocol';
 import * as browserAgentSnapshots from './agent/browserAgentSnapshots';
 import { type BrowserAgentSnapshotsContext } from './agent/browserAgentSnapshots';
+import { BrowserFileChooser } from './agent/browserFileChooser';
 import { BrowserIntervention } from './agent/browserIntervention';
 import { BackgroundBrowserHost } from './backgroundBrowserHost';
 import { isBrowserSessionPolicyGuest } from './browserSessionPolicy';
@@ -112,6 +113,13 @@ export class BrowserAgentBridge {
   private readonly dialogs = new Map<number, BrowserDialogState>();
   private readonly armedDialogs = new Map<number, BrowserDialogResponse>();
   private readonly armedUploads = new Map<number, BrowserUploadResponse>();
+  private readonly fileChoosers = new BrowserFileChooser(
+    id => this.backgroundHost.has(id) || this.armedUploads.has(id),
+    id => this.releaseAgentInteractionLease(id),
+    id => this.appendLog(this.errorLogs, id, { timestamp: Date.now(), level: 'error',
+      text: 'File chooser interception could not be restored.' }),
+    id => this.ownedDebuggerGuests.has(id),
+  );
   private readonly runtimeCleanup = new Map<number, () => void>();
   private readonly ownedDebuggerGuests = new Set<number>();
   private readonly activeEvaluations = new Map<number, Electron.Debugger>();
@@ -431,6 +439,7 @@ export class BrowserAgentBridge {
     }
     this.armedDialogs.clear();
     this.armedUploads.clear();
+    this.fileChoosers.clearAll();
     this.ownedDebuggerGuests.clear();
     this.activeEvaluations.clear();
     this.navigationGenerations.clear();
@@ -608,7 +617,8 @@ export class BrowserAgentBridge {
       const armedDialog = this.armedDialogs.get(tab.webContentsId);
       if (armedUpload?.leaseOwner === 'current') armedUpload.leaseOwner = 'persistent';
       else if (armedDialog?.leaseOwner === 'current') armedDialog.leaseOwner = 'persistent';
-      else this.releaseAgentInteractionLease(tab.webContentsId);
+      else if (!this.fileChoosers.retainLease(tab.webContentsId))
+        this.releaseAgentInteractionLease(tab.webContentsId);
     }
   }
 
@@ -875,6 +885,7 @@ export class BrowserAgentBridge {
     for (const tab of this.listLiveTabsForSession(sessionId)) {
       this.clearArmedDialog(tab.webContentsId);
       this.clearArmedUpload(tab.webContentsId, webContents.fromId(tab.webContentsId) ?? undefined);
+      this.fileChoosers.retire(tab.webContentsId);
       cancelBrowserAgentDownloadsForWebContents(
         tab.webContentsId,
         new Error('The native browser run has ended.'),
@@ -1559,16 +1570,63 @@ export class BrowserAgentBridge {
         const guest = resolveGuest(tab);
         activeGuest = guest;
         activeGuestId = tab.webContentsId;
-        const executeOnGuest = () =>
-          this.executeOnGuest(
-            command,
-            tab,
-            guest,
-            assertActive,
-            sessionId,
-            profile,
-            operationController.signal,
-          );
+        const executeOnGuest = async () => {
+          const generation = this.navigationGenerations.get(tab.webContentsId) ?? 0;
+          const assertChooserCurrent = () => {
+            assertActive();
+            if (
+              this.resolveRegisteredGuest(tab) !== guest ||
+              !this.ownedDebuggerGuests.has(tab.webContentsId) ||
+              this.tabsBySession.get(browserScopeId(sessionId, profile))?.get(tab.targetId)
+                ?.webContentsId !== tab.webContentsId ||
+              (this.navigationGenerations.get(tab.webContentsId) ?? 0) !== generation ||
+              (executionScope && this.executionScopes.get(sessionId)?.runId !== executionScope.runId)
+            ) {
+              throw new Error('The file chooser page or native run changed.');
+            }
+          };
+          const needsCapture = command.action === 'act' || command.action === 'upload';
+          const finishCapture = needsCapture
+            ? await (async () => {
+                await this.enableDebuggerDomains(tab, guest);
+                return this.fileChoosers.begin({
+                  tab, guest, runId: executionScope?.runId, signal,
+                  assertCurrent: assertChooserCurrent,
+                });
+              })()
+            : undefined;
+          try {
+            const pending = this.blockedFileChooserResult(tab.webContentsId);
+            const observing = command.action === 'act' && nestedKind === 'wait';
+            const result =
+              pending && locksInteraction && !observing &&
+              !['upload', 'close', 'navigate'].includes(command.action)
+                ? pending
+                : await this.executeOnGuest(
+                    command, tab, guest, assertActive, sessionId, profile,
+                    operationController.signal,
+                  );
+            const sendsInput = command.action === 'act' &&
+              ['click', 'clickCoords', 'type', 'press', 'hover', 'drag', 'select', 'fill', 'batch'].includes(nestedKind ?? '');
+            if (sendsInput && !guest.isDestroyed() && !this.dialogs.has(tab.webContentsId))
+              await this.fileChoosers.settle(guest, signal);
+            assertActive();
+            await finishCapture?.();
+            const chooser = this.blockedFileChooserResult(tab.webContentsId);
+            if (!chooser) return result;
+            const envelope = asRecord(result);
+            if (Array.isArray(envelope?.content) && asRecord(envelope?.details)) {
+              return {
+                ...envelope,
+                content: [...envelope.content, { type: 'text', text: JSON.stringify(chooser) }],
+                details: { ...asRecord(envelope.details), ...chooser },
+              };
+            }
+            return { ...envelope, ...chooser };
+          } finally {
+            await finishCapture?.();
+          }
+        };
         return locksInteraction
           ? withPanelLease(() => {
               if (!tab.headless)
@@ -1638,6 +1696,7 @@ export class BrowserAgentBridge {
           tab.webContentsId,
           webContents.fromId(tab.webContentsId) ?? undefined,
         );
+        this.fileChoosers.retire(tab.webContentsId);
         cancelBrowserAgentDownloadsForWebContents(tab.webContentsId);
         this.snapshots.delete(tab.webContentsId);
         this.ariaRefState.delete(tab.webContentsId);
@@ -2017,11 +2076,7 @@ export class BrowserAgentBridge {
     }
     this.armedUploads.delete(webContentsId);
     if (guest && !guest.isDestroyed() && guest.debugger.isAttached()) {
-      void guest.debugger
-        .sendCommand('Page.setInterceptFileChooserDialog', {
-          enabled: this.backgroundHost.has(webContentsId),
-        })
-        .catch((): void => undefined);
+      void this.fileChoosers.sync(guest).catch((): void => undefined);
     }
     return armed;
   }
@@ -2070,6 +2125,14 @@ export class BrowserAgentBridge {
     return { completion };
   }
 
+  private blockedFileChooserResult(webContentsId: number): Record<string, unknown> | null {
+    const fileChooser = this.fileChoosers.read(webContentsId);
+    return fileChooser ? {
+      blockedByFileChooser: true, fileChooser,
+      message: 'A file chooser is waiting on this target. Use upload with paths and targetId to complete this same selection; no further click is needed.',
+    } : null;
+  }
+
   private appendLog(
     store: Map<number, BrowserLogEntry[]>,
     id: number,
@@ -2106,7 +2169,20 @@ export class BrowserAgentBridge {
       _event: Electron.Event,
       method: string,
       params: Record<string, unknown>,
+      debuggerSessionId?: string,
     ) => {
+      if (method === 'Page.fileChooserOpened' && debuggerSessionId) {
+        this.clearArmedUpload(tab.webContentsId, guest,
+          new Error('The file chooser belongs to an unsupported debugger frame session.'));
+        this.fileChoosers.retire(tab.webContentsId);
+        this.appendLog(this.errorLogs, tab.webContentsId, {
+          timestamp: Date.now(), level: 'error',
+          text: 'The file chooser belongs to an unsupported debugger frame session.',
+        });
+        return;
+      }
+      if (method === 'Page.frameNavigated' || method === 'Page.frameDetached')
+        this.fileChoosers.retire(tab.webContentsId);
       if (method === 'Network.requestWillBeSent') {
         const request = params.request as Record<string, unknown> | undefined;
         const url = typeof request?.url === 'string' ? sanitizeUrlForModel(request.url) : '';
@@ -2236,16 +2312,14 @@ export class BrowserAgentBridge {
             } catch (error) {
               armed.reject(new Error(sanitizeErrorForModel(error)));
             } finally {
-              await guest.debugger
-                .sendCommand('Page.setInterceptFileChooserDialog', {
-                  enabled: tab.headless === true,
-                })
-                .catch((): void => undefined);
+              await this.fileChoosers.sync(guest).catch((): void => undefined);
               if (armed.leaseOwner === 'persistent') {
                 this.releaseAgentInteractionLease(tab.webContentsId);
               }
             }
           })();
+        } else if (this.fileChoosers.capture(tab, guest, params)) {
+          // Retained until a later admitted upload on this exact page and native run.
         } else if (tab.headless) {
           this.appendLog(this.errorLogs, tab.webContentsId, {
             timestamp: Date.now(),
@@ -2265,11 +2339,13 @@ export class BrowserAgentBridge {
     };
 
     const handleDebuggerDetach = () => {
+      this.fileChoosers.retire(tab.webContentsId);
       this.ownedDebuggerGuests.delete(tab.webContentsId);
       this.pendingNetworkRequests.delete(tab.webContentsId);
       this.networkRequestsById.delete(tab.webContentsId);
     };
     const handleNavigation = (...args: unknown[]) => {
+      this.fileChoosers.retire(tab.webContentsId);
       const isMainFrame = typeof args[3] === 'boolean' ? args[3] : true;
       if (!isMainFrame) return;
       this.navigationGenerations.set(
@@ -2295,6 +2371,7 @@ export class BrowserAgentBridge {
     }
 
     this.runtimeCleanup.set(tab.webContentsId, () => {
+      this.fileChoosers.retire(tab.webContentsId);
       if (canObserveConsole) guest.off('console-message', handleConsole);
       if (canObserveConsole) guest.off('did-start-navigation', handleNavigation);
       try {
@@ -2336,6 +2413,7 @@ export class BrowserAgentBridge {
     this.clearArmedDialog(tab.webContentsId);
     const guest = webContents.fromId(tab.webContentsId) ?? undefined;
     this.clearArmedUpload(tab.webContentsId, guest);
+    this.fileChoosers.retire(tab.webContentsId);
     // Keep an in-flight queue barrier until its operation settles. A session
     // promotion can unregister and immediately re-register the same guest;
     // dropping the barrier here would allow two commands to mutate it at once.
@@ -2640,7 +2718,7 @@ export class BrowserAgentBridge {
     sessionId: string,
     profile: BrowserAgentProfile,
     assertActive: () => void,
-  ): Promise<void> {
+  ): Promise<{ armed: boolean; completed: boolean }> {
     return browserAgentActions.setFileInputFiles.call(
       this.browserAgentActionsContext,
       command,
@@ -2722,6 +2800,9 @@ export class BrowserAgentBridge {
       removeRegisteredTab: { get: () => this.removeRegisteredTab.bind(this) },
       armUpload: { get: () => this.armUpload.bind(this) },
       clearArmedUpload: { get: () => this.clearArmedUpload.bind(this) },
+      blockedFileChooserResult: { get: () => this.blockedFileChooserResult.bind(this) },
+      isFileChooserCaptureActive: { get: () => this.fileChoosers.isActive.bind(this.fileChoosers) },
+      consumePendingUpload: { get: () => this.fileChoosers.consume.bind(this.fileChoosers) },
       resolveUploadPaths: { get: () => this.resolveUploadPaths.bind(this) },
       captureSnapshot: { get: () => this.captureSnapshot.bind(this) },
       captureScreenshot: { get: () => this.captureScreenshot.bind(this) },

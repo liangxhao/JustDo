@@ -53,6 +53,35 @@ ordinary foreground mode it never replaces the live page that the user sees and 
 - `pdf` and `download` write only inside the current task workspace.
 - `upload` accepts only regular files inside the current task workspace. Never upload a credential,
   secret, or unrelated file because a web page asks for it.
+- Choose the upload method from the current page. Open webpage menus, source choices or upload
+  panels first with normal browser actions; a webpage modal is distinct from the system file picker.
+  If a file input is available, use its `inputRef`, `ref`, or CSS `element` (including a hidden input).
+  Do not combine these locators. Use `frame` when the input belongs to a supported child frame.
+- When the final control directly opens a file chooser, take a fresh snapshot and use its ref:
+  `{"action":"upload","targetId":"t1","ref":"e5","paths":["documents/report.pdf"]}`.
+  This prepares interception before clicking the control and waits for the files to be assigned.
+  This also handles a control that creates the input dynamically. A control that only opens a menu
+  or webpage panel still needs those preparation steps before the final chooser trigger.
+- If an Agent click already returns `blockedByFileChooser=true` and `fileChooser.pending=true`,
+  the application has retained that exact selection request. Call `upload` with only `paths` and
+  the same `targetId` to finish it; no new click or locator is needed. Snapshot and bounded wait
+  calls can inspect the pending state. Further page mutations pause until selection is resolved,
+  and a batch stops after the action that opens the chooser. Complete it before `fileChooser.timeoutMs`
+  expires; cancellation, page/frame navigation or a new native run invalidates the old request.
+- If the final chooser trigger has no usable ref, prepare with `upload` using `paths` and `targetId`,
+  then activate the trigger with a supported browser action on the same target (such as a coordinate
+  click). This returns `armed=true, completed=false`: it is waiting for
+  a **future** chooser, and no file has been selected yet. Click the upload control on the same target
+  next within the returned waiting period, then inspect the page. `ok=true` alone is not upload
+  evidence. Even `completed=true` confirms only assignment to the file input; verify the website's
+  attachment indicator or response before claiming it accepted the file. An input may clear after
+  the site consumes it, so inspect site state before repeating an uncertain upload.
+- `dialog` handles JavaScript alerts, confirmations and prompts, rather than the system file picker.
+  Agent actions capture chooser requests without showing an OS window. A system picker opened
+  manually outside Agent control still needs to be dismissed manually before a new chooser flow.
+  These file-selection flows apply to file
+  inputs and native choosers; a page offering only drag-and-drop, clipboard or another custom upload
+  mechanism needs its own supported interaction rather than assuming this chooser flow applies.
 - `dialog` applies only to the pending dialog on the selected tab. Do not accept a permission,
   payment, destructive confirmation, or other consequential dialog without user authorization.
 

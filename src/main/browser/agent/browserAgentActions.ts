@@ -120,6 +120,11 @@ export interface BrowserAgentActionsContext {
     guest?: Electron.WebContents,
     error?: Error,
   ) => BrowserUploadResponse | undefined;
+  readonly blockedFileChooserResult?: (webContentsId: number) => Record<string, unknown> | null;
+  readonly isFileChooserCaptureActive?: (webContentsId: number) => boolean;
+  readonly consumePendingUpload?: (
+    tab: RegisteredTab, guest: Electron.WebContents, files: string[], assertCurrent: () => void,
+  ) => Promise<boolean>;
   readonly resolveUploadPaths: (sessionId: string, requestedPaths: unknown) => string[];
   readonly captureSnapshot: (
     command: AgentBrowserCommand,
@@ -153,7 +158,7 @@ export interface BrowserAgentActionsContext {
     sessionId: string,
     profile: BrowserAgentProfile,
     assertActive: () => void,
-  ) => Promise<void>;
+  ) => Promise<{ armed: boolean; completed: boolean }>;
   readonly dialogs: Map<number, BrowserDialogState>;
   readonly clearArmedDialog: (webContentsId: number) => BrowserDialogResponse | undefined;
   readonly armedDialogs: Map<number, BrowserDialogResponse>;
@@ -172,6 +177,8 @@ export async function executeAct(
 ): Promise<Record<string, unknown>> {
   assertActive();
   const kind = typeof request.kind === 'string' ? request.kind : '';
+  const waitingForFile = this.blockedFileChooserResult?.(tab.webContentsId);
+  if (waitingForFile && kind !== 'wait') return waitingForFile;
   const beforeUrl = guest.getURL();
   const scopeId = browserScopeId(sessionId, profile);
   if (request.targetId && request.targetId !== tab.targetId) {
@@ -195,6 +202,10 @@ export async function executeAct(
     let mutated = false;
     for (let index = 0; index < actions.length; index += 1) {
       assertActive();
+      if (this.isFileChooserCaptureActive?.(tab.webContentsId) === false) {
+        return { results, captureRetired: true, skipped: actions.length - index,
+          message: 'The browser page or chooser capture changed. Inspect the current page before continuing.' };
+      }
       const nested = asRecord(actions[index]);
       if (!nested || nested.kind === 'batch') throw new Error('Nested batch actions are invalid.');
       try {
@@ -238,6 +249,8 @@ export async function executeAct(
         if (navigation === 'dialog') {
           return this.blockedDialogResult(tab.webContentsId)!;
         }
+        const fileChooser = this.blockedFileChooserResult?.(tab.webContentsId);
+        if (fileChooser) return { ...fileChooser, results, skipped: actions.length - index - 1 };
         if (navigation === 'closed') {
           results.push({ ok: true });
           return {
@@ -842,7 +855,7 @@ export async function setFileInputFiles(
   sessionId: string,
   profile: BrowserAgentProfile,
   assertActive: () => void,
-): Promise<void> {
+): Promise<{ armed: boolean; completed: boolean }> {
   assertActive();
   const inputRef = typeof command.inputRef === 'string' ? command.inputRef.trim() : '';
   const ref = typeof command.ref === 'string' ? command.ref.trim() : '';
@@ -857,10 +870,16 @@ export async function setFileInputFiles(
   assertActive();
   const reference = inputRef || ref;
   if (!reference && !elementSelector) {
+    if (await this.consumePendingUpload?.(tab, guest, this.resolveUploadPaths(sessionId, files), assertActive)) {
+      assertActive();
+      return { armed: false, completed: true };
+    }
     await this.armUpload(tab, guest, files, assertActive);
     assertActive();
-    return;
+    return { armed: true, completed: false };
   }
+  if (this.blockedFileChooserResult?.(tab.webContentsId))
+    throw new Error('A file chooser is already waiting. Use upload with paths and targetId without another locator.');
   this.clearArmedUpload(
     tab.webContentsId,
     guest,
@@ -1024,6 +1043,7 @@ export async function setFileInputFiles(
     }
   }
   assertActive();
+  return { armed: false, completed: true };
 }
 
 export async function executeOnGuest(
@@ -1269,7 +1289,7 @@ export async function executeOnGuest(
   }
   if (command.action === 'upload') {
     const uploadPaths = this.resolveUploadPaths(sessionId, command.paths);
-    await this.setFileInputFiles(
+    const upload = await this.setFileInputFiles(
       command,
       tab,
       guest,
@@ -1282,7 +1302,12 @@ export async function executeOnGuest(
     return {
       ok: true,
       targetId: tab.targetId,
+      ...upload,
       paths: uploadPaths.map(filePath => path.basename(filePath)),
+      ...(upload.armed ? { timeoutMs: ARMED_INTERACTION_TIMEOUT_MS } : {}),
+      message: upload.armed
+        ? 'Prepared for the next file chooser; no file has been selected yet. Activate the final chooser trigger on this target within timeoutMs, then inspect the page. This cannot fill an already-open system dialog. When available, use a file-input ref or the final chooser-trigger ref with upload.'
+        : 'Files assigned to the file input. Inspect the page to verify the site accepted the attachment; site upload or submission is not confirmed.',
     };
   }
   if (command.action === 'dialog') {

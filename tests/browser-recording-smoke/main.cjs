@@ -202,8 +202,17 @@ app
       new Set(events.filter(e => e.channel === 'browser:recording:event').map(e => e.tab)).size,
       2,
     );
+    await guests[0].loadURL('data:text/html,<label>File demo<input id="order"></label><button>Upload</button>');
+    assert.equal(await guests[0].executeJavaScript('typeof crypto.randomUUID'), 'undefined');
+    const readyCount = events.filter(e => e.channel === 'browser:recording:ready').length;
+    guests[0].send('browser:recording:control', { recordingId: 'smoke', active: true });
+    await waitFor(() => events.filter(e => e.channel === 'browser:recording:ready').length > readyCount);
+    await guests[0].executeJavaScript('document.querySelector("#order").focus()');
+    await guests[0].insertText('insecure-origin-input');
+    guests[0].send('browser:recording:control', { recordingId: 'smoke', active: false });
+    await waitFor(() => events.some(e => e.channel === 'browser:recording:event' && e.value.value === 'insecure-origin-input'));
     console.log(
-      'PASS: sandboxed trusted input/clicks, two tabs, same-origin iframe input, navigation, media capture and password-only filtering',
+      'PASS: sandboxed trusted input/clicks, two tabs, same-origin iframe input, navigation, media capture, password-only filtering and an origin without randomUUID',
     );
     clearTimeout(deadline);
     window.destroy();
