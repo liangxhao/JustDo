@@ -183,12 +183,22 @@ export function foldCompletedProcessRows(
       if (prefix.length === 0) return;
       const sourceItems = prefix.map(row => row.item) as SourceTimelineItem[];
       const items = options.foldUnresolvedTools
-        ? coalesceAdjacentProcessSummaries(sourceItems)
+        ? coalesceAdjacentProcessSummaries(sourceItems).map(item => {
+            if (item.kind !== 'process-summary') return item;
+            const tail = item.items[item.items.length - 1];
+            // Missing-result tools become summaries after history identity reconciliation.
+            // Retain their native tail through prepends and later result arrival.
+            return tail?.id
+              ? { ...item, key: `history-folded-process:${tail.type}:${tail.id}` }
+              : item;
+          })
         : sourceItems;
       result.push({
         item: {
           kind: 'completed-process',
-          key: `completed-process:${items[0].key}`,
+          // Older pages can reveal an earlier prefix of this same process.
+          // Its retained tail, rather than the page's first item, owns the shell.
+          key: `completed-process:${items[items.length - 1].key}`,
           items,
         },
         showAvatar: prefix.some(row => row.showAvatar && !compactionMarker(row.item)),
@@ -267,7 +277,7 @@ export function foldCompletedProcessRows(
     folded.push({
       item: {
         kind: 'completed-process',
-        key: `completed-process:${questions[0].item.key}`,
+        key: `completed-process:${questions[questions.length - 1].item.key}`,
         items: questions.map(row => row.item as SourceTimelineItem),
       },
       showAvatar: questions.some(row => row.showAvatar),

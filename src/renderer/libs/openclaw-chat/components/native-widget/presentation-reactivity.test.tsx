@@ -67,7 +67,11 @@ it('settles React and Lit renders while refreshing widget callbacks and publishi
       },
     ],
   });
-  controller.state.visibleChatMessages = controller.state.chatMessages;
+  (
+    controller as unknown as {
+      setCurrentSessionMessages(messages: unknown[], options: { resetLoadedHistory: boolean }): void;
+    }
+  ).setCurrentSessionMessages(controller.state.chatMessages, { resetLoadedHistory: true });
   let chat: JustDoChatElement | null = null;
   let draftAllowed = true;
   let renders = 0;

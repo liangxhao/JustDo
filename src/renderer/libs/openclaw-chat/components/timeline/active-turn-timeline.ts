@@ -143,7 +143,7 @@ function editDiffChangeLabel(line: EditDiffLine): string | null {
       : null;
 }
 
-function renderUnifiedDiffLine(line: EditDiffLine): TemplateResult {
+function renderUnifiedDiffLine(line: EditDiffLine, index: number): TemplateResult {
   if (line.kind === 'omitted') {
     return html`
       <div class="edit-diff__line edit-diff__line--omitted">
@@ -155,7 +155,7 @@ function renderUnifiedDiffLine(line: EditDiffLine): TemplateResult {
   const marker = line.kind === 'added' ? '+' : line.kind === 'removed' ? '-' : ' ';
   const changeLabel = editDiffChangeLabel(line);
   return html`
-    <div class=${`edit-diff__line edit-diff__line--${line.kind}`}>
+    <div class=${`edit-diff__line edit-diff__line--${line.kind}`} data-edit-diff-line-index=${index}>
       <span class="edit-diff__marker" aria-hidden="true">${marker}</span>
       ${changeLabel ? html`<span class="sr-only">${changeLabel}</span>` : nothing}
       <code>${line.text || ' '}</code>
@@ -163,7 +163,7 @@ function renderUnifiedDiffLine(line: EditDiffLine): TemplateResult {
   `;
 }
 
-function renderSplitDiffCell(line: EditDiffLine | null, side: 'before' | 'after'): TemplateResult {
+function renderSplitDiffCell(line: EditDiffLine | null, side: 'before' | 'after', index: number): TemplateResult {
   if (!line) {
     return html`<div
       class=${`edit-diff__split-cell edit-diff__split-cell--${side} is-empty`}
@@ -182,6 +182,7 @@ function renderSplitDiffCell(line: EditDiffLine | null, side: 'before' | 'after'
   return html`
     <div
       class=${`edit-diff__split-cell edit-diff__split-cell--${side} edit-diff__line--${line.kind}`}
+      data-edit-diff-line-index=${index}
     >
       <span class="edit-diff__marker" aria-hidden="true">${marker}</span>
       ${changeLabel ? html`<span class="sr-only">${changeLabel}</span>` : nothing}
@@ -190,13 +191,15 @@ function renderSplitDiffCell(line: EditDiffLine | null, side: 'before' | 'after'
   `;
 }
 
-function renderSplitDiffRows(rows: EditSplitDiffRow[]): TemplateResult {
+function renderSplitDiffRows(rows: EditSplitDiffRow[], lines: readonly EditDiffLine[]): TemplateResult {
+  const indices = new Map(lines.map((line, index) => [line, index]));
   return html`
     <div class="edit-diff__split-rows">
       ${rows.map(
         row => html`
           <div class="edit-diff__split-row">
-            ${renderSplitDiffCell(row.before, 'before')} ${renderSplitDiffCell(row.after, 'after')}
+            ${renderSplitDiffCell(row.before, 'before', row.before ? indices.get(row.before)! : -1)}
+            ${renderSplitDiffCell(row.after, 'after', row.after ? indices.get(row.after)! : -1)}
           </div>
         `,
       )}
@@ -229,6 +232,7 @@ function buildEditDiffMonacoData(
       mode,
       modified: modifiedLines.join('\n'),
       original: originalLines.join('\n'),
+      lines: hunk.lines,
     },
     height: Math.min(Math.max(visibleLineCount * 20 + 16, 76), 360),
   };
@@ -341,7 +345,7 @@ function renderEditDiff(
               <div class="edit-diff__monaco-fallback">
                 ${
                   mode === 'split'
-                    ? renderSplitDiffRows(splitRows)
+                    ? renderSplitDiffRows(splitRows, hunk.lines)
                     : html`<div class="edit-diff__lines">
                         ${hunk.lines.map(renderUnifiedDiffLine)}
                       </div>`
@@ -681,7 +685,7 @@ function renderProcessItem(
   sessionKey?: string,
 ): TemplateResult {
   return html`
-    <li
+    <div role="listitem"
       class=${`process-summary__item process-summary__item--${process.type}${
         process.type === 'tool' && parseEditToolDiff(process.name, process.input) !== null
           ? ' process-summary__item--edit'
@@ -743,7 +747,7 @@ function renderProcessItem(
               </details>
             `
       }
-    </li>
+    </div>
   `;
 }
 
@@ -758,6 +762,7 @@ export function renderTimelineItem(
   assistantAvatar?: TemplateResult,
   renderThinking?: ThinkingContentRenderer,
   contentOptions?: { workingDirectory?: string; onOpenFile?: OpenMessageFileLink; sessionKey?: string },
+  renderProcessItems?: (render: (item: ThinkingItem | ToolItem) => unknown) => unknown,
 ): TemplateResult {
   if (item.kind === 'mcp-app') {
     return renderAssistantTimelineRow(
@@ -895,14 +900,16 @@ export function renderTimelineItem(
       item.items.filter((entry): entry is ToolItem => entry.type === 'tool'),
     );
     const renderContents = () =>
-      html` <ol class="process-summary__items">
-        ${repeat(
+      html` <div class="process-summary__items" role="list">
+        ${renderProcessItems?.(process =>
+          renderProcessItem(process, depths, editDiffModes, onEditDiffModeChange, renderThinking, contentOptions?.sessionKey),
+        ) ?? repeat(
           item.items,
           process => process.id,
           process =>
             renderProcessItem(process, depths, editDiffModes, onEditDiffModeChange, renderThinking, contentOptions?.sessionKey),
         )}
-      </ol>`;
+      </div>`;
     return renderAssistantTimelineRow(
       html`
         <details class="process-summary-group" ?open=${expanded}>

@@ -54,7 +54,7 @@ describe('browser extension desktop process folding adapter', () => {
     expect(result[0]).toBe(entries[0]);
     expect(result[2]).toBe(entries[4]);
     expect(result[1]).toMatchObject({
-      key: 'completed-process:first',
+      key: 'completed-process:second',
       items: entries.slice(1, -1),
     });
     if (result[1].role !== 'completed-process') throw new Error('Missing outer process');

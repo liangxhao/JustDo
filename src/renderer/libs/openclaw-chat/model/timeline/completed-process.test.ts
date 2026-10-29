@@ -146,6 +146,46 @@ describe('foldCompletedProcessRows', () => {
     expect(foldCompletedProcessRows(result, { foldUnresolvedTools: true })).toEqual(result);
   });
 
+  test('retains the tail identity when settled history is prepended before an unresolved tool', () => {
+    const tail = [
+      { role: 'assistant', __openclaw: { id: 'yield-entry' }, content: [
+        { type: 'toolCall', id: 'waiting', name: 'sessions_yield' },
+      ] },
+      { role: 'assistant', content: 'The model continued.' },
+    ];
+    const initial = foldCompletedProcessRows(prepareVisibleTimelineRows(projectPersistedTimeline(tail)), {
+      foldUnresolvedTools: true,
+    });
+    const timeline = projectPersistedTimeline([
+      { role: 'assistant', __openclaw: { id: 'read-entry' }, content: [
+        { type: 'toolCall', id: 'earlier-read', name: 'read' },
+      ] },
+      { role: 'toolResult', toolCallId: 'earlier-read', toolName: 'read', content: 'Read succeeded.' },
+      ...tail,
+    ]);
+    const before = structuredClone(timeline);
+
+    const folded = foldCompletedProcessRows(prepareVisibleTimelineRows(timeline), {
+      foldUnresolvedTools: true,
+    });
+
+    const initialGroup = initial[0].item;
+    const group = folded[0].item;
+    if (initialGroup.kind !== 'completed-process' || group.kind !== 'completed-process')
+      throw new Error('Missing process history');
+    const process = group.items[0];
+    if (process.kind !== 'process-summary') throw new Error('Missing process summary');
+    expect(group.key).toBe(initialGroup.key);
+    expect(group.items).toHaveLength(1);
+    expect(process.key).toBe(initialGroup.items[0].key);
+    expect(process.items).toMatchObject([
+      { type: 'tool', status: 'completed' },
+      { type: 'tool', status: 'running', presentation: { outcome: 'unknown' } },
+    ]);
+    expect(timeline).toEqual(before);
+    expect(foldCompletedProcessRows(folded, { foldUnresolvedTools: true })).toEqual(folded);
+  });
+
   test.each(['read', 'exec'])('folds a missing %s result only for opted-in inactive history', name => {
     const historical: PersistedTimelineItem = {
       kind: 'live-process', key: 'missing-tool', origin: 'persisted',

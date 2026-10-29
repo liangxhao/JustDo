@@ -4,6 +4,7 @@ import './justdo-chat';
 
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
+import { ChatScrollController } from '@/libs/openclaw-chat/controllers/chat-scroll-controller';
 import { ChatController } from '@/libs/openclaw-chat/gateway/chat-controller';
 
 import type { JustDoChatElement } from './justdo-chat';
@@ -516,10 +517,6 @@ describe('justdo-chat last user message actions', () => {
         ): void;
       }
     ).setCurrentSessionMessages(messages, { resetLoadedHistory: true });
-    controller.state.historyWindowStart = 0;
-    controller.state.historyWindowEnd = 750;
-    controller.state.visibleChatMessages = messages.slice(0, 750);
-
     const chat = document.createElement('justdo-chat') as JustDoChatElement;
     chat.controller = controller;
     chat.runTimings = [
@@ -537,6 +534,15 @@ describe('justdo-chat last user message actions', () => {
     document.body.append(chat);
     await chat.updateComplete;
 
+    const navigate = vi.spyOn(ChatScrollController.prototype, 'navigateToElement')
+      .mockImplementation(() => undefined);
+    try {
+      expect(chat.revealMessage('planning-assistant')).toBe(true);
+    } finally {
+      navigate.mockRestore();
+    }
+    expect(chat.shadowRoot?.querySelector('[data-entry-id="planning-assistant"]')).not.toBeNull();
+    expect(chat.shadowRoot?.querySelector('[data-entry-id="implementation-user"]')).toBeNull();
     expect(chat.shadowRoot?.textContent).toContain('old planning reply');
     expect(chat.shadowRoot?.querySelector('.assistant-message-action--fork')).toBeNull();
   });

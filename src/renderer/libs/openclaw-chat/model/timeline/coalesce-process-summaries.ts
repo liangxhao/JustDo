@@ -20,21 +20,40 @@ export function coalesceAdjacentProcessSummaries<T extends KeyedTimelineItem>(
 ): T[] {
   const result: T[] = [];
 
-  for (const item of items) {
-    const previous = result[result.length - 1];
-    if (!previous || !isProcessSummary(previous) || !isProcessSummary(item)) {
-      result.push(item);
+  for (let index = 0; index < items.length;) {
+    const first = items[index++];
+    if (!isProcessSummary(first)) {
+      result.push(first);
       continue;
     }
-
-    result[result.length - 1] = {
-      ...previous,
-      items: [...previous.items, ...item.items],
-      thinkingCount: previous.thinkingCount + item.thinkingCount,
-      toolCount: previous.toolCount + item.toolCount,
-      errorCount: previous.errorCount + item.errorCount,
-      interruptedCount: previous.interruptedCount + item.interruptedCount,
-    } as T;
+    let end = index;
+    while (end < items.length && isProcessSummary(items[end])) end += 1;
+    if (end === index) {
+      result.push(first);
+      continue;
+    }
+    const processes: ProcessSummaryTimelineItem['items'] = [];
+    let thinkingCount = first.thinkingCount;
+    let toolCount = first.toolCount;
+    let errorCount = first.errorCount;
+    let interruptedCount = first.interruptedCount;
+    for (const process of first.items) processes.push(process);
+    for (; index < end; index += 1) {
+      const summary = items[index] as T & ProcessSummaryTimelineItem;
+      for (const process of summary.items) processes.push(process);
+      thinkingCount += summary.thinkingCount;
+      toolCount += summary.toolCount;
+      errorCount += summary.errorCount;
+      interruptedCount += summary.interruptedCount;
+    }
+    result.push({
+      ...first,
+      items: processes,
+      thinkingCount,
+      toolCount,
+      errorCount,
+      interruptedCount,
+    } as T);
   }
 
   return result;

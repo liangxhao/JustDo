@@ -12,11 +12,20 @@ import type { JustDoChatElement } from './justdo-chat';
 const controllers: ChatController[] = [];
 const sessionKey = 'agent:main:history-performance';
 const sessionId = 'history-performance-session';
+const scrollIntoViewDescriptor = Object.getOwnPropertyDescriptor(
+  HTMLElement.prototype,
+  'scrollIntoView',
+);
 
 afterEach(() => {
   document.body.replaceChildren();
   for (const controller of controllers.splice(0)) controller.disconnect();
   vi.unstubAllGlobals();
+  if (scrollIntoViewDescriptor) {
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', scrollIntoViewDescriptor);
+  } else {
+    Reflect.deleteProperty(HTMLElement.prototype, 'scrollIntoView');
+  }
 });
 
 function setup() {
@@ -25,6 +34,11 @@ function setup() {
     vi.fn(() => 1),
   );
   vi.stubGlobal('cancelAnimationFrame', vi.fn());
+  Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+    configurable: true,
+    writable: true,
+    value: vi.fn(),
+  });
   const messages = Array.from({ length: 500 }, (_, index) => [
     {
       role: 'user',
@@ -137,12 +151,11 @@ test('does not reproject or rerender old messages on repeated live text updates'
   for (let page = 0; controller.state.historyHasMore && page < 10; page += 1) {
     expect(await controller.loadOlderHistory()).toBe(true);
   }
-  (
-    controller as unknown as { applyHistoryWindow(window: { start: number; end: number }): void }
-  ).applyHistoryWindow({ start: 0, end: 100 });
   document.body.append(chat);
   emit('Live output');
   chat.requestUpdate();
+  await chat.updateComplete;
+  expect(chat.revealMessage('user-0')).toBe(true);
   await chat.updateComplete;
   const internal = chat as unknown as {
     persistedTimelineCache: PersistedTimelineCache;
@@ -151,6 +164,7 @@ test('does not reproject or rerender old messages on repeated live text updates'
   const revision = internal.persistedTimelineCache.revision;
   const render = vi.spyOn(internal, 'renderVisibleTimelineItem');
   const historicalNode = chat.shadowRoot!.querySelector('[data-entry-id="user-0"]');
+  expect(historicalNode).not.toBeNull();
   for (let index = 0; index < 12; index += 1) {
     emit(`Live output ${index}`);
     chat.requestUpdate();
@@ -191,11 +205,19 @@ test('keeps retained DOM and live output available while an older page is progre
   await controller.loadHistory();
   document.body.append(chat);
   await chat.updateComplete;
-  const retained = chat.shadowRoot!.querySelector('[data-entry-id="user-450"]');
-  const boundary = chat.shadowRoot!.querySelector<HTMLDetailsElement>('.completed-process')!;
-  boundary.querySelector<HTMLElement>('summary')!.click();
-  const process = chat.shadowRoot!.querySelectorAll<HTMLDetailsElement>('.completed-process')[10];
-  process.open = true;
+  expect(chat.revealMessage('answer-437')).toBe(true);
+  await chat.updateComplete;
+  const retained = chat.shadowRoot!.querySelector('[data-entry-id="final-437"]');
+  expect(retained).not.toBeNull();
+  const boundary = chat.shadowRoot!
+    .querySelector<HTMLElement>('[data-entry-id="answer-437"]')!
+    .closest<HTMLDetailsElement>('.completed-process')!;
+  expect(boundary.open).toBe(true);
+  const process = [...chat.shadowRoot!.querySelectorAll<HTMLDetailsElement>('.completed-process')]
+    .find(candidate => candidate !== boundary)!;
+  expect(process).toBeDefined();
+  process.querySelector<HTMLElement>('summary')!.click();
+  await chat.updateComplete;
   const key = process.dataset.completedProcessKey!;
   emit('Before loading history');
   chat.requestUpdate();
@@ -207,7 +229,7 @@ test('keeps retained DOM and live output available while an older page is progre
     flushHistoryRender(): void;
   };
   expect(internal.historyRenderScheduler.isPending).toBe(true);
-  expect(chat.shadowRoot!.querySelector('[data-entry-id="user-450"]')).toBe(retained);
+  expect(chat.shadowRoot!.querySelector('[data-entry-id="final-437"]')).toBe(retained);
   expect(chat.shadowRoot!.querySelector(`[data-completed-process-key="${key}"]`)).toBe(process);
   expect(process.open).toBe(true);
   const restoredBoundary = chat
@@ -223,7 +245,7 @@ test('keeps retained DOM and live output available while an older page is progre
   );
   internal.flushHistoryRender();
   await chat.historyRenderComplete;
-  expect(chat.shadowRoot!.querySelector('[data-entry-id="user-450"]')).toBe(retained);
+  expect(chat.shadowRoot!.querySelector('[data-entry-id="final-437"]')).toBe(retained);
   expect(controller.state.loadedMessageCount).toBe(500);
 });
 
@@ -232,12 +254,9 @@ test('restores outer and inner process disclosures after leaving and returning t
   await controller.loadHistory();
   for (let page = 0; controller.state.historyHasMore && page < 10; page += 1)
     await controller.loadOlderHistory();
-  const applyWindow = (start: number) =>
-    (
-      controller as unknown as { applyHistoryWindow(window: { start: number; end: number }): void }
-    ).applyHistoryWindow({ start, end: start + 40 });
-  applyWindow(0);
   document.body.append(chat);
+  await chat.updateComplete;
+  expect(chat.revealMessage('user-0')).toBe(true);
   await chat.updateComplete;
   const process = chat.shadowRoot!.querySelector<HTMLDetailsElement>('.completed-process')!;
   process.querySelector<HTMLElement>('summary')!.click();
@@ -248,10 +267,10 @@ test('restores outer and inner process disclosures after leaving and returning t
   expect(inner.closest<HTMLDetailsElement>('details')!.open).toBe(true);
   const key = process.dataset.completedProcessKey!;
   const summaryKey = inner.dataset.processSummaryKey!;
-  applyWindow(400);
+  expect(chat.revealMessage('user-100')).toBe(true);
   await chat.updateComplete;
   expect(process.isConnected).toBe(false);
-  applyWindow(0);
+  expect(chat.revealMessage('user-0')).toBe(true);
   await chat.updateComplete;
   const restored = chat.shadowRoot!.querySelector<HTMLDetailsElement>(
     `[data-completed-process-key="${key}"]`,

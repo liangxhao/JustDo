@@ -32,9 +32,11 @@ import {
 import { renderCompactionDivider } from '@/libs/openclaw-chat/components/timeline/compaction-divider';
 import { renderCompletedProcess } from '@/libs/openclaw-chat/components/timeline/completed-process';
 import { materializeDisclosureContents } from '@/libs/openclaw-chat/components/timeline/disclosure-content';
+import { historyViewport, type HistoryViewportHandle } from '@/libs/openclaw-chat/components/timeline/history-viewport';
 import { ChatScrollController } from '@/libs/openclaw-chat/controllers/chat-scroll-controller';
 import { HistoryDisclosureState } from '@/libs/openclaw-chat/controllers/history-disclosure-state';
 import { HistoryRenderScheduler } from '@/libs/openclaw-chat/controllers/history-render-scheduler';
+import { HistorySearchIndex, type HistorySearchMatch } from '@/libs/openclaw-chat/controllers/history-search-index';
 import { MessageDisclosureState } from '@/libs/openclaw-chat/controllers/message-disclosure-state';
 import { StreamRenderScheduler } from '@/libs/openclaw-chat/controllers/stream-render-scheduler';
 import type { ChatController } from '@/libs/openclaw-chat/gateway/chat-controller';
@@ -67,7 +69,9 @@ import {
   type ChatMinimapEntry,
   projectChatMinimapEntries,
 } from '@/libs/openclaw-chat/model/timeline/chat-minimap';
+import { coalesceAdjacentProcessSummaries } from '@/libs/openclaw-chat/model/timeline/coalesce-process-summaries';
 import { unfoldProcessItems } from '@/libs/openclaw-chat/model/timeline/completed-process';
+import { HistoryProcessIdentity } from '@/libs/openclaw-chat/model/timeline/history-process-identity';
 import { PersistedTimelineCache } from '@/libs/openclaw-chat/model/timeline/persisted-timeline-cache';
 import {
   createProcessSummarySessionIdentity,
@@ -80,6 +84,7 @@ import {
 } from '@/libs/openclaw-chat/model/timeline/project-history-timeline';
 import {
   type ActiveTurnTimelineItem,
+  type ProcessSummaryTimelineItem,
   projectTurnItems,
 } from '@/libs/openclaw-chat/model/timeline/project-turn-items';
 import type {
@@ -149,7 +154,16 @@ const MERMAID_BUBBLE_MIN_WIDTH = 500;
 const MERMAID_BUBBLE_MAX_WIDTH = 820;
 const MERMAID_BUBBLE_HORIZONTAL_PADDING = 64;
 const MINIMAP_VISIBLE_ENTRY_THRESHOLD = 2;
+const MINIMAP_RENDER_LIMIT = 250;
 const MAX_SPEECH_AUDIO_BASE64_LENGTH = 64 * 1024 * 1024;
+
+interface SearchDomMatch {
+  node: Text;
+  start: number;
+  endNode: Text;
+  end: number;
+  editDiff?: { host: HTMLElement; lineIndex: number };
+}
 
 function openClawEntryId(message: GatewayMessage | undefined): string | null {
   const marker = message?.__openclaw;
@@ -321,18 +335,21 @@ export class JustDoChatElement extends LitElement {
   private readonly chatScrollController = new ChatScrollController(
     () => this.syncScrollIndicator(),
     async () => {
-      const shifted = await (this._controller?.showOlderHistory() ?? false);
+      const shifted = await (this._controller?.loadOlderHistory() ?? false);
       await this.historyRenderComplete;
       return shifted;
     },
-    () => {
-      const shifted = this._controller?.showNewerHistory() ?? false;
-      return shifted ? this.historyRenderComplete.then(() => true) : false;
-    },
+    undefined,
     () => {
       if (this.scrollbarRenderDeferred) this.requestUpdate();
+      for (const viewport of this.historyViewports.values()) viewport.refresh();
     },
   );
+  private readonly historyViewports = new Map<string, HistoryViewportHandle>();
+  private historyPresentationRows: readonly VisibleTimelineRow[] = [];
+  private readonly historyProcessIdentity = new HistoryProcessIdentity();
+  private readonly historySearchIndex = new HistorySearchIndex();
+  private historyOwnerRevision = 0;
   private readonly thinkingContentPresentation = new ThinkingContentPresentation({
     requestUpdate: () => {
       this.thinkingViewRevision += 1;
@@ -365,6 +382,15 @@ export class JustDoChatElement extends LitElement {
   private renderStartedAt = 0;
   private readonly processSummaryTakeoverTracker = new ProcessSummaryTakeoverTracker();
   private readonly collapsedProcessSummaryTakeoverTracker = new ProcessSummaryTakeoverSetTracker();
+  private readonly persistedProcessSummaries = new WeakMap<readonly VisibleTimelineRow[], readonly ProcessSummaryTimelineItem[]>();
+  private processResolution: {
+    persisted: readonly ProcessSummaryTimelineItem[];
+    active: string;
+    scope: string;
+    open: string | null;
+    collapsed: ReadonlySet<string>;
+    expanded: boolean;
+  } | null = null;
   private readonly editDiffMonacoController = new EditDiffMonacoController();
   private renderedOpenProcessSummaryKey: string | null = null;
   private renderedCollapsedProcessSummaryKeys: ReadonlySet<string> = new Set();
@@ -436,9 +462,14 @@ export class JustDoChatElement extends LitElement {
 
   set controller(ctrl: ChatController | null) {
     if (this._controller === ctrl) return;
+    this.historyOwnerRevision += 1;
+    this.processResolution = null;
+    this.processSummarySessionIdentity = null;
     this.stopSpeech();
     this.unsubscribeController();
     this.historyRenderScheduler.clear();
+    this.historyProcessIdentity.clear();
+    this.historySearchIndex.clear();
     this.historyDisclosureState.reset(null);
     this.messageDisclosureState.reset(null);
     this.thinkingContentPresentation.reset(null);
@@ -629,11 +660,12 @@ export class JustDoChatElement extends LitElement {
   }
 
   render(): TemplateResult {
+    this.historyPresentationRows = [];
     // Use controller state if available, otherwise use direct properties
     const ctrl = this._controller;
     const sourceActiveTurn = this.activeTurnForDisplay(ctrl);
     const activePersistedMessages = this.messagesForPerspective(
-      ctrl ? (ctrl.state.visibleChatMessages as GatewayMessage[]) : this.messages,
+      ctrl ? (ctrl.getLoadedMessages() as GatewayMessage[]) : this.messages,
     );
     const activeTurn = withFailureDetailsForDisplay(sourceActiveTurn, activePersistedMessages);
     let pendingMessage = (ctrl?.state.pendingUserMessage as GatewayMessage | null) ?? null;
@@ -728,7 +760,11 @@ export class JustDoChatElement extends LitElement {
           projectionVariant: activeProjectionVariant,
           runTimingSignature,
         },
-        () => projectPersistedTimeline(messages, persistedRunTimings),
+        () => this.historyProcessIdentity.reconcile(
+          coalesceAdjacentProcessSummaries(projectPersistedTimeline(messages, persistedRunTimings)),
+          JSON.stringify([ctrl?.state.sessionKey ?? '', ctrl?.state.currentSessionId ?? null,
+            ctrl?.state.transcript.historyGeneration ?? 0, ctrl?.state.client?.generation ?? 0]),
+        ),
       );
 
     if (ctrl || activeTurn) {
@@ -784,8 +820,8 @@ export class JustDoChatElement extends LitElement {
           } satisfies ActiveTurnTimelineItem)
         : null;
       this.resolveOpenProcessSummaryKey(
+        timelineView.persistedRows,
         [
-          ...timelineView.persistedRows.map(row => row.item),
           ...(timelineView.seamRow ? [timelineView.seamRow.item] : []),
           ...timelineView.activeRows.map(row => row.item),
         ],
@@ -895,7 +931,8 @@ export class JustDoChatElement extends LitElement {
       ).rows;
       const minimapEntries = projectChatMinimapEntries(historyTimeline);
       this.resolveOpenProcessSummaryKey(
-        visibleRows.map(row => row.item),
+        visibleRows,
+        [],
         'direct',
       );
       return html`
@@ -1126,6 +1163,7 @@ export class JustDoChatElement extends LitElement {
     this.messageDisclosureState.reset(this.processSummarySessionIdentity ?? 'direct');
     this.messageDisclosureState.restore(this.renderRoot as ShadowRoot);
     this.richMessageControls.sync();
+    this.syncReturningProcessSummaries();
     this.chatScrollController.afterRender(transcriptRevision);
     this.syncScrollIndicator();
     this.scheduleEditDiffMonacoSync();
@@ -1202,9 +1240,25 @@ export class JustDoChatElement extends LitElement {
   }
 
   private resolveOpenProcessSummaryKey(
-    items: readonly VisibleTimelineItem[],
+    rows: readonly VisibleTimelineRow[],
+    activeItems: readonly VisibleTimelineItem[],
     sessionIdentity: string,
   ): void {
+    let persisted = this.persistedProcessSummaries.get(rows);
+    if (!persisted) {
+      persisted = unfoldProcessItems(rows.map(row => row.item))
+        .filter((item): item is ProcessSummaryTimelineItem => item.kind === 'process-summary');
+      this.persistedProcessSummaries.set(rows, persisted);
+    }
+    const active = unfoldProcessItems(activeItems)
+      .filter((item): item is ProcessSummaryTimelineItem => item.kind === 'process-summary');
+    const signature = JSON.stringify(active.map(item => [item.key, item.runId,
+      item.items.map(process => [process.id, process.lastSeq])]));
+    const previous = this.processResolution;
+    if (previous?.persisted === persisted && previous.active === signature &&
+      previous.scope === sessionIdentity && previous.open === this.openProcessSummaryKey &&
+      previous.collapsed === this.collapsedProcessSummaryKeys &&
+      previous.expanded === this.processSummariesExpanded) return;
     if (this.processSummarySessionIdentity !== sessionIdentity) {
       this.historyDisclosureState.reset(sessionIdentity);
       this.thinkingContentPresentation.reset(sessionIdentity);
@@ -1214,24 +1268,17 @@ export class JustDoChatElement extends LitElement {
       this.renderedOpenProcessSummaryKey = null;
       this.renderedCollapsedProcessSummaryKeys = new Set();
     } else {
-      const sourceItems = unfoldProcessItems(items);
-      const returning = this.historyDisclosureState.returningSummaries(
-        sourceItems.filter(item => item.kind === 'process-summary').map(item => item.key),
-      );
+      const sourceItems = [...persisted, ...active];
       this.renderedOpenProcessSummaryKey = this.processSummaryTakeoverTracker.resolve(
         this.openProcessSummaryKey,
         sourceItems,
       );
-      this.renderedOpenProcessSummaryKey ??= returning.open;
       let collapsed: ReadonlySet<string> = this.processSummariesExpanded
         ? this.collapsedProcessSummaryTakeoverTracker.resolve(
             this.collapsedProcessSummaryKeys,
             sourceItems,
           )
         : new Set();
-      if (this.processSummariesExpanded && returning.collapsed.length > 0) {
-        collapsed = new Set([...collapsed, ...returning.collapsed]);
-      }
       if (
         collapsed.size !== this.renderedCollapsedProcessSummaryKeys.size ||
         [...collapsed].some(key => !this.renderedCollapsedProcessSummaryKeys.has(key))
@@ -1248,6 +1295,25 @@ export class JustDoChatElement extends LitElement {
       )
     ) {
       this.collapsedProcessSummaryKeys = this.renderedCollapsedProcessSummaryKeys;
+    }
+    this.processResolution = { persisted, active: signature, scope: sessionIdentity,
+      open: this.openProcessSummaryKey, collapsed: this.collapsedProcessSummaryKeys,
+      expanded: this.processSummariesExpanded };
+  }
+
+  private syncReturningProcessSummaries(): void {
+    const returning = this.historyDisclosureState.returningSummaries(
+      [...this.renderRoot.querySelectorAll<HTMLElement>('[data-process-summary-key]')]
+        .map(element => element.dataset.processSummaryKey!),
+    );
+    if (!this.processSummariesExpanded && returning.open) {
+      this.renderedOpenProcessSummaryKey = returning.open;
+      this.openProcessSummaryKey = returning.open;
+    }
+    if (this.processSummariesExpanded && returning.collapsed.length > 0) {
+      const collapsed = new Set([...this.renderedCollapsedProcessSummaryKeys, ...returning.collapsed]);
+      this.renderedCollapsedProcessSummaryKeys = collapsed;
+      this.collapsedProcessSummaryKeys = collapsed;
     }
   }
 
@@ -1282,6 +1348,8 @@ export class JustDoChatElement extends LitElement {
       return;
     }
     if (element?.closest('[data-jump-to-latest]')) {
+      const latest = this.historyPresentationRows[this.historyPresentationRows.length - 1];
+      if (latest) this.historyViewports.get('history')?.reveal(latest.item.key);
       this.chatScrollController.jumpToLatest();
       return;
     }
@@ -1645,13 +1713,15 @@ export class JustDoChatElement extends LitElement {
   }
 
   public getSearchMatchCount(): number {
-    return this.collectSearchMatches().length;
+    return this.historySearchMatches().length + this.collectSearchMatches(undefined, true).length;
   }
 
   public navigateSearch(direction: 1 | -1): { index: number; total: number } {
     this.clearSearchMarks();
-    const matches = this.collectSearchMatches();
-    const total = matches.length;
+    this.flushHistoryRender();
+    const history = this.historySearchMatches();
+    const live = this.collectSearchMatches(undefined, true);
+    const total = history.length + live.length;
     if (total === 0) {
       this.activeSearchIndex = -1;
       this.clearSearchMarks();
@@ -1665,7 +1735,17 @@ export class JustDoChatElement extends LitElement {
           : total - 1
         : (this.activeSearchIndex + direction + total) % total;
 
-    this.highlightSearchMatch(matches[this.activeSearchIndex]);
+    const match = history[this.activeSearchIndex];
+    if (match) {
+      const target = this.revealHistorySearchMatch(match);
+      const matches = target
+        ? match.editDiff ? this.collectEditDiffSearchMatches(target.element) : this.collectSearchMatches(target.element)
+        : [];
+      this.highlightSearchMatch(target ? matches[target.occurrence] : undefined);
+      if (target && !matches[target.occurrence]) this.chatScrollController.navigateToElement(target.element, 'smooth');
+    } else {
+      this.highlightSearchMatch(live[this.activeSearchIndex - history.length]);
+    }
     return { index: this.activeSearchIndex, total };
   }
 
@@ -1673,6 +1753,9 @@ export class JustDoChatElement extends LitElement {
     const normalizedEntryId = entryId.trim();
     if (!normalizedEntryId) return false;
     this.flushHistoryRender();
+    this.revealHistoryPresentation(item =>
+      item.kind === 'history-message' && openClawEntryId(item.message) === normalizedEntryId,
+    );
     materializeDisclosureContents(this.renderRoot);
     const rows = this.renderRoot.querySelectorAll<HTMLElement>('.chat-history-row[data-entry-id]');
     const target = [...rows].find(row => row.dataset.entryId === normalizedEntryId);
@@ -1700,9 +1783,66 @@ export class JustDoChatElement extends LitElement {
     );
   }
 
-  private collectSearchMatches(): Array<{ node: Text; start: number; end: number }> {
+  private historySearchMatches(): readonly HistorySearchMatch[] {
+    return this.historySearchIndex.find(this.historyPresentationRows, this.searchQuery, this.searchCaseSensitive);
+  }
+
+  private revealHistorySearchMatch(match: HistorySearchMatch): {
+    element: HTMLElement;
+    occurrence: number;
+  } | null {
+    let target: HTMLElement | null = null;
+    for (let index = 0; index < match.path.length; index += 1) {
+      const key = match.path[index];
+      const viewport = index === 0 ? 'history' : `completed:${match.path[index - 1]}`;
+      this.historyViewports.get(viewport)?.reveal(key);
+      target = [...this.renderRoot.querySelectorAll<HTMLElement>('.history-viewport-row')]
+        .find(row => row.dataset.historyKey === key) ?? null;
+      if (!target) return null;
+      materializeDisclosureContents(target);
+    }
+    if (match.processId) {
+      this.historyViewports.get(`process:${match.path[match.path.length - 1]}`)?.reveal(match.processId);
+      target = [...(target?.querySelectorAll<HTMLElement>('[data-inline-process-id]') ?? [])]
+        .find(row => row.dataset.inlineProcessId === match.processId) ?? target;
+    }
+    if (match.editDiff && target) {
+      return { element: target.querySelector<HTMLElement>('.edit-diff') ?? target, occurrence: match.occurrence };
+    }
+    if (match.processId && target) {
+      let occurrence = match.occurrence;
+      for (const reader of target.querySelectorAll<ToolOutput>('justdo-tool-output')) {
+        const result = reader.prepareSearch(this.searchQuery, this.searchCaseSensitive, occurrence);
+        if (result.occurrence !== null) return { element: reader, occurrence: result.occurrence };
+        occurrence -= result.count;
+      }
+    }
+    return target ? { element: target, occurrence: match.occurrence } : null;
+  }
+
+  private collectEditDiffSearchMatches(target: HTMLElement): SearchDomMatch[] {
+    const matches: SearchDomMatch[] = [];
+    for (const host of target.querySelectorAll<HTMLElement>('[data-edit-diff-monaco]')) {
+      const rows = new Map<number, HTMLElement>();
+      for (const row of host.querySelectorAll<HTMLElement>('[data-edit-diff-line-index]')) {
+        const index = Number(row.dataset.editDiffLineIndex);
+        const code = row.querySelector<HTMLElement>('code');
+        if (code && !rows.has(index)) rows.set(index, code);
+      }
+      for (const [lineIndex, code] of [...rows].sort(([left], [right]) => left - right)) {
+        matches.push(...this.collectSearchMatches(code)
+          .map(match => ({ ...match, editDiff: { host, lineIndex } })));
+      }
+    }
+    return matches;
+  }
+
+  private collectSearchMatches(
+    container?: Element,
+    excludeHistory = false,
+  ): SearchDomMatch[] {
     const query = this.searchQuery.trim();
-    const root = this.shadowRoot?.querySelector('.chat-container');
+    const root = container ?? this.shadowRoot?.querySelector('.chat-container');
     if (!query || !root) return [];
     materializeDisclosureContents(root);
 
@@ -1711,42 +1851,79 @@ export class JustDoChatElement extends LitElement {
       acceptNode(node) {
         const parent = node.parentElement;
         if (!parent || !node.nodeValue) return NodeFilter.FILTER_REJECT;
-        if (parent.closest('.chat-group__footer, button, input, textarea, select')) {
+        if (parent.closest(
+          '.chat-group__footer, button, input, textarea, select, script, style, template, ' +
+          '.process-summary, .process-summary__item-heading, .process-summary__tool-title, ' +
+          '.process-summary__detail-label, .code-block-header, .message-reader-actions',
+        )) {
           return NodeFilter.FILTER_REJECT;
         }
-        matcher.lastIndex = 0;
-        return matcher.test(node.nodeValue) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+        if (excludeHistory && parent.closest('.chat-container > .history-viewport-row')) {
+          return NodeFilter.FILTER_REJECT;
+        }
+        return NodeFilter.FILTER_ACCEPT;
       },
     });
 
-    const matches: Array<{ node: Text; start: number; end: number }> = [];
-    while (walker.nextNode()) {
-      const node = walker.currentNode as Text;
-      const text = node.nodeValue ?? '';
+    const matches: SearchDomMatch[] = [];
+    let block: Element | null = null;
+    let nodes: Text[] = [];
+    const flush = () => {
+      const text = nodes.map(node => node.nodeValue ?? '').join('');
       matcher.lastIndex = 0;
       let match: RegExpExecArray | null;
       while ((match = matcher.exec(text))) {
-        matches.push({ node, start: match.index, end: match.index + match[0].length });
-        if (match[0].length === 0) matcher.lastIndex += 1;
+        const start = match.index;
+        const end = start + match[0].length;
+        let offset = 0;
+        let first: { node: Text; offset: number } | null = null;
+        for (const node of nodes) {
+          const next = offset + (node.nodeValue?.length ?? 0);
+          if (!first && start < next) first = { node, offset: start - offset };
+          if (first && end <= next) {
+            matches.push({ node: first.node, start: first.offset, endNode: node, end: end - offset });
+            break;
+          }
+          offset = next;
+        }
       }
+      nodes = [];
+    };
+    while (walker.nextNode()) {
+      const node = walker.currentNode as Text;
+      const parentBlock = node.parentElement?.closest('p, pre, li, td, th, h1, h2, h3, h4, h5, h6, summary, .chat-bubble__text, .markdown-content') ?? node.parentElement;
+      if (block !== parentBlock) flush();
+      block = parentBlock;
+      nodes.push(node);
     }
+    flush();
     return matches;
   }
 
   private highlightSearchMatch(
-    match: { node: Text; start: number; end: number } | undefined,
+    match: SearchDomMatch | undefined,
   ): void {
-    this.clearSearchMarks();
+    this.clearSearchMarks(false);
     if (!match) return;
+
+    const editor = match.editDiff && this.editDiffMonacoController.revealSearch(
+      match.editDiff.host, match.editDiff.lineIndex, match.start, match.end - match.start,
+    );
+    if (editor?.native) {
+      this.expandSearchMatchContainers(editor.container);
+      this.chatScrollController.navigateToElement(editor.container, 'smooth');
+      return;
+    }
 
     const range = this.ownerDocument.createRange();
     range.setStart(match.node, match.start);
-    range.setEnd(match.node, match.end);
+    range.setEnd(match.endNode, match.end);
 
     const mark = this.ownerDocument.createElement('span');
     mark.className = 'chat-search-mark';
     mark.dataset.justdoSearchMark = 'true';
-    range.surroundContents(mark);
+    mark.append(range.extractContents());
+    range.insertNode(mark);
     this.expandSearchMatchContainers(mark);
     this.chatScrollController.navigateToElement(mark, 'smooth');
   }
@@ -1763,15 +1940,18 @@ export class JustDoChatElement extends LitElement {
     }
   }
 
-  private clearSearchMarks(): void {
+  private clearSearchMarks(resetReaders = true): void {
+    this.editDiffMonacoController.clearSearch();
     const root = this.shadowRoot;
     if (!root) return;
     root.querySelectorAll<HTMLElement>('[data-justdo-search-mark="true"]').forEach(mark => {
       const parent = mark.parentNode;
       if (!parent) return;
-      parent.replaceChild(this.ownerDocument.createTextNode(mark.textContent ?? ''), mark);
+      mark.replaceWith(...mark.childNodes);
       parent.normalize();
     });
+    if (resetReaders) root.querySelectorAll<ToolOutput>('justdo-tool-output')
+      .forEach(reader => reader.clearSearch());
   }
 
   private escapeRegExp(value: string): string {
@@ -1983,6 +2163,7 @@ export class JustDoChatElement extends LitElement {
   }
 
   private renderPersistedRows(rows: readonly VisibleTimelineRow[]) {
+    this.historyPresentationRows = rows;
     const renderedRows = this.historyRenderScheduler.select(
       rows,
       this.processSummarySessionIdentity ?? 'direct',
@@ -2001,7 +2182,8 @@ export class JustDoChatElement extends LitElement {
         this.processSummariesExpanded,
       ],
       () =>
-        repeat(
+        this.renderHistoryViewport(
+          'history',
           renderedRows,
           row => row.item.key,
           row => {
@@ -2026,6 +2208,44 @@ export class JustDoChatElement extends LitElement {
           },
         ),
     );
+  }
+
+  private renderHistoryViewport<T>(
+    name: string,
+    items: readonly T[],
+    key: (item: T) => string,
+    render: (item: T, index: number) => unknown,
+  ) {
+    return historyViewport({
+      items,
+      key,
+      render,
+      host: this,
+      scope: JSON.stringify([this.processSummarySessionIdentity ?? 'direct',
+        this._controller?.state.client?.generation ?? 0, this.historyOwnerRevision, name]),
+      follow: () => name === 'history' && this.chatScrollController.state.mode === 'follow',
+      defer: () => this.chatScrollController.isDraggingScrollbar,
+      beforeCommit: () => {
+        this.historyDisclosureState.capture(this.renderRoot);
+        this.messageDisclosureState.capture(this.renderRoot as ShadowRoot);
+        this.chatScrollController.beforeRender();
+      },
+      afterCommit: () => {
+        if (!this.isConnected) return;
+        this.messageDisclosureState.restore(this.renderRoot as ShadowRoot);
+        this.richMessageControls?.sync();
+        this.syncReturningProcessSummaries();
+        this.chatScrollController.afterRender(this._controller?.state.transcript.revision ?? 0);
+        this.syncWidgetContexts();
+        this.scheduleEditDiffMonacoSync();
+        this.scheduleMinimapSync();
+        this.animationWindow.requestAnimationFrame(() => void this.renderMermaidDiagrams());
+      },
+      ref: viewport => {
+        if (viewport) this.historyViewports.set(name, viewport);
+        else this.historyViewports.delete(name);
+      },
+    });
   }
 
   private historyMessageActionsKey(
@@ -2075,6 +2295,12 @@ export class JustDoChatElement extends LitElement {
         assistantAvatar: this.assistantAvatar,
         renderItem: (child, childShowsAvatar) =>
           this.renderVisibleTimelineItem(child, childShowsAvatar, false),
+        renderItems: render => this.renderHistoryViewport(
+          `completed:${item.key}`,
+          item.items,
+          child => child.key,
+          render,
+        ),
       });
     }
     if (item.kind === 'phase-boundary') {
@@ -2219,13 +2445,18 @@ export class JustDoChatElement extends LitElement {
         </div>
       `;
     }
+    let expanded = item.kind === 'process-summary' &&
+      ((this.processSummariesExpanded && !this.renderedCollapsedProcessSummaryKeys.has(item.key)) ||
+        this.renderedOpenProcessSummaryKey === item.key);
+    if (item.kind === 'process-summary' &&
+      ![...this.renderRoot.querySelectorAll<HTMLElement>('[data-process-summary-key]')]
+        .some(element => element.dataset.processSummaryKey === item.key)) {
+      expanded = this.historyDisclosureState.expanded(item.key, expanded);
+    }
     return renderTimelineItem(
       item,
       Date.now(),
-      item.kind === 'process-summary' &&
-        ((this.processSummariesExpanded &&
-          !this.renderedCollapsedProcessSummaryKeys.has(item.key)) ||
-          this.renderedOpenProcessSummaryKey === item.key),
+      expanded,
       showAvatar,
       this.editDiffModes,
       this.handleEditDiffModeChange,
@@ -2242,6 +2473,14 @@ export class JustDoChatElement extends LitElement {
         onOpenFile: this.onOpenFile,
         sessionKey: this.mediaSessionKey,
       },
+      item.kind === 'process-summary'
+        ? render => this.renderHistoryViewport(
+            `process:${item.key}`,
+            item.items,
+            process => process.id,
+            render,
+          )
+        : undefined,
     );
   }
 
@@ -2260,6 +2499,14 @@ export class JustDoChatElement extends LitElement {
       (tail?.key === this.hoveredMinimapKey ? tail : null) ??
       entries.find(entry => entry.key === this.hoveredMinimapKey) ??
       null;
+    const count = entries.length + (tail ? 1 : 0);
+    const activeIndex = this.currentMinimapKey === tail?.key
+      ? entries.length
+      : entries.findIndex(entry => entry.key === this.currentMinimapKey);
+    const center = activeIndex >= 0 ? activeIndex : count - 1;
+    const start = Math.max(0, Math.min(count - MINIMAP_RENDER_LIMIT,
+      center - Math.floor(MINIMAP_RENDER_LIMIT / 2)));
+    const end = start + MINIMAP_RENDER_LIMIT;
     return html`
       <nav
         class="chat-minimap"
@@ -2270,11 +2517,11 @@ export class JustDoChatElement extends LitElement {
       >
         <div class="chat-minimap__track">
           ${repeat(
-            entries,
+            entries.slice(start, end),
             entry => entry.key,
             entry => this.renderMinimapEntry(entry),
           )}
-          ${tail ? this.renderMinimapEntry(tail) : nothing}
+          ${tail && entries.length < end ? this.renderMinimapEntry(tail) : nothing}
         </div>
         ${
           hoveredEntry
@@ -2345,6 +2592,7 @@ export class JustDoChatElement extends LitElement {
 
   private scrollToMinimapEntry(entry: ChatMinimapEntry): void {
     this.flushHistoryRender();
+    this.revealHistoryPresentation(item => item.key === entry.anchorKey);
     let entryIndex = this.latestMinimapPrefix.findIndex(candidate => candidate.key === entry.key);
     if (entryIndex < 0 && this.latestMinimapTail?.key === entry.key) {
       entryIndex = this.latestMinimapPrefix.length;
@@ -2364,6 +2612,20 @@ export class JustDoChatElement extends LitElement {
     this.historyRenderScheduler.flush();
     this.requestUpdate();
     this.performUpdate();
+  }
+
+  private revealHistoryPresentation(matches: (item: VisibleTimelineItem) => boolean): boolean {
+    for (const row of this.historyPresentationRows) {
+      const item = row.item;
+      if (matches(item)) return this.historyViewports.get('history')?.reveal(item.key) ?? false;
+      if (item.kind !== 'completed-process') continue;
+      const child = item.items.find(matches);
+      if (!child) continue;
+      this.historyViewports.get('history')?.reveal(item.key);
+      materializeDisclosureContents(this.renderRoot);
+      return this.historyViewports.get(`completed:${item.key}`)?.reveal(child.key) ?? false;
+    }
+    return false;
   }
 
   private readonly handleMinimapScroll = (): void => {
@@ -2398,7 +2660,8 @@ export class JustDoChatElement extends LitElement {
     for (let index = 0; index < entryCount; index += 1) {
       const entry = this.minimapEntryAt(index);
       if (!entry) continue;
-      const anchor = keyedAnchors.get(entry.anchorKey) ?? fallbackAnchors[index];
+      const anchor = keyedAnchors.get(entry.anchorKey) ??
+        (!this._controller && keyedAnchors.size === 0 ? fallbackAnchors[index] : undefined);
       if (anchor) resolvedEntries.push({ entry, anchor });
     }
     if (resolvedEntries.length === 0) return;

@@ -428,6 +428,29 @@ export const chatStyles = [
       padding: 16px 0;
     }
 
+    .history-viewport-row {
+      display: flow-root;
+      min-width: 0;
+      list-style: none;
+    }
+
+    .history-viewport-spacer {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      pointer-events: none;
+    }
+
+    .history-viewport-row:has(> .chat-history-row)
+      + .history-viewport-row:has(> .chat-history-row) {
+      padding-top: max(var(--justdo-message-gap, 8px), var(--justdo-assistant-row-gap, 0px));
+    }
+
+    .history-viewport-row:has(> :is(.chat-group--timeline, .completed-process))
+      + .history-viewport-row:has(> :is(.chat-group--timeline, .completed-process)) {
+      padding-top: max(var(--justdo-timeline-gap, 4px), var(--justdo-assistant-row-gap, 0px));
+    }
+
     .phase-boundary {
       display: flex;
       align-items: center;
@@ -3039,6 +3062,12 @@ export const chatStyles = [
       border-left: 1px solid var(--justdo-chat-border, rgba(148, 163, 184, 0.32));
       list-style: none;
     }
+    .process-summary__items:has(> .history-viewport-row) {
+      display: block;
+    }
+    .process-summary__items > .history-viewport-row:not([data-history-row-index='0']) {
+      padding-top: 12px;
+    }
     .process-summary__item {
       min-width: 0;
       padding: 4px 2px;
@@ -3383,6 +3412,14 @@ export const chatStyles = [
     }
     .edit-diff__monaco-host.is-ready .edit-diff__monaco-fallback {
       visibility: hidden;
+    }
+    .edit-diff__monaco-host.is-search-fallback .edit-diff__monaco-fallback {
+      visibility: visible;
+      overflow: auto;
+    }
+    .edit-diff__monaco-host.is-search-fallback .edit-diff__monaco-editor {
+      visibility: hidden;
+      pointer-events: none;
     }
     .edit-diff__monaco-editor {
       position: absolute;

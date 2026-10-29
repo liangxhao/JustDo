@@ -11,6 +11,14 @@ import { materializeDisclosureContents } from './timeline/disclosure-content';
 
 afterEach(() => document.body.replaceChildren());
 
+function setHistory(controller: ChatController, messages: unknown[]): void {
+  (
+    controller as unknown as {
+      setCurrentSessionMessages(messages: unknown[], options: { resetLoadedHistory: boolean }): void;
+    }
+  ).setCurrentSessionMessages(messages, { resetLoadedHistory: true });
+}
+
 test.each([
   [false, false],
   [true, false],
@@ -23,7 +31,7 @@ test.each([
     chat.peerPerspective = peerPerspective;
     chat.assistantName = '研究助手';
     const controller = new ChatController();
-    controller.state.visibleChatMessages = [
+    setHistory(controller, [
       { id: 'real-user', role: 'user', timestamp: 1, content: 'A real user question.' },
       {
         id: 'group-input',
@@ -47,7 +55,7 @@ test.each([
             }),
       },
       { id: 'reply', role: 'assistant', timestamp: 3, content: 'The actual assistant reply.' },
-    ];
+    ]);
     chat.controller = controller;
     document.body.append(chat);
     await chat.updateComplete;
@@ -89,7 +97,7 @@ test.each([false, true])(
       },
     });
     const controller = new ChatController();
-    controller.state.visibleChatMessages = [
+    setHistory(controller, [
       incoming('in-1'),
       ...(processFirst
         ? [
@@ -104,7 +112,7 @@ test.each([false, true])(
       { id: 'out-2', role: 'assistant', content: 'Second reply' },
       incoming('in-2'),
       { id: 'out-3', role: 'assistant', content: 'Next reply' },
-    ];
+    ]);
     chat.controller = controller;
     document.body.append(chat);
     await chat.updateComplete;

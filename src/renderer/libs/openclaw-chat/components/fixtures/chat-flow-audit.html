@@ -43,7 +43,7 @@
       <button id="animation">Check process animation</button>
       <button id="snapshot">Snapshot renderer</button>
       <button id="read-page">Page while reading</button>
-      <button id="newer-page">Newer paging during stream</button>
+      <button id="newer-page">Read newer history during stream</button>
       <button id="restore-state">Check expanded state</button>
       <pre id="metrics">Ready. Uses a local mock Gateway; no real sessions or models.</pre>
     </header>
@@ -162,10 +162,32 @@
         await chat.historyRenderComplete;
         await frame();
       };
+      const visibleHistoryRows = () => {
+        const viewport = chat.getBoundingClientRect();
+        return [
+          ...chat.shadowRoot.querySelectorAll('.chat-container > .history-viewport-row'),
+        ].filter(row => {
+          const rect = row.getBoundingClientRect();
+          return rect.bottom > viewport.top && rect.top < viewport.bottom;
+        });
+      };
+      async function revealEntry(entryId) {
+        if (!chat.revealMessage(entryId))
+          throw new Error(`Cannot reveal fixture entry: ${entryId}`);
+        const target = [...chat.shadowRoot.querySelectorAll('[data-entry-id]')].find(
+          row => row.dataset.entryId === entryId,
+        );
+        target.scrollIntoView({ block: 'center', behavior: 'instant' });
+        await settle();
+        await frame();
+      }
       const publish = () => {
         Object.assign(metrics, {
           loadedMessages: controller?.state.loadedMessageCount ?? 0,
-          windowMessages: controller?.state.visibleChatMessages.length ?? 0,
+          presentationRows: chat.historyPresentationRows.length,
+          mountedHistoryRows:
+            chat.shadowRoot?.querySelectorAll('.chat-container > .history-viewport-row').length ??
+            0,
           requests,
           domNodes: chat.shadowRoot?.querySelectorAll('*').length ?? 0,
           processGroups: chat.shadowRoot?.querySelectorAll('.completed-process').length ?? 0,
@@ -268,10 +290,8 @@
         const samples = [];
         const phaseSamples = [];
         commitTimes = [];
-        while (controller.state.historyHasMore || controller.state.historyWindowStart > 0) {
-          const anchor = checkAnchors
-            ? chat.shadowRoot.querySelectorAll('.chat-container > .chat-history-row')[5]
-            : null;
+        while (controller.state.historyHasMore) {
+          const anchor = checkAnchors ? visibleHistoryRows()[0] : null;
           let anchorTop = 0;
           if (anchor) {
             chat.chatScrollController.navigateTo(
@@ -286,7 +306,7 @@
           }
           const started = performance.now();
           const before = { ...work };
-          await controller.showOlderHistory();
+          await controller.loadOlderHistory();
           await settle();
           if (anchor) {
             metrics.anchorChecks ??= [];
@@ -319,27 +339,26 @@
         publish();
       }
       async function newer() {
+        if (!controller) await open();
         metrics.newerAnchorChecks = [];
         commitTimes = [];
-        while (controller.state.historyWindowEnd < controller.state.loadedMessageCount) {
-          const anchor = [
-            ...chat.shadowRoot.querySelectorAll('.chat-container > .chat-history-row'),
-          ].at(-5);
-          chat.chatScrollController.navigateTo(
-            chat.scrollTop +
-              anchor.getBoundingClientRect().top -
-              chat.getBoundingClientRect().top -
-              40,
-            'instant',
-          );
-          chat.chatScrollController.preserveAnchorForInteraction(anchor);
-          const top = anchor.getBoundingClientRect().top;
-          controller.showNewerHistory();
+        const firstUser = controller.getLoadedMessages().find(message => message.role === 'user');
+        await revealEntry(firstUser.__openclaw.id);
+        const initialRequests = requests;
+        let steps = 0;
+        while (chat.scrollHeight - chat.scrollTop - chat.clientHeight > 1) {
+          if (++steps > 5_000) throw new Error('Fixture traversal did not reach the loaded tail');
+          const anchor = visibleHistoryRows().at(-1);
+          const top = anchor?.getBoundingClientRect().top ?? 0;
+          const previousScrollTop = chat.scrollTop;
+          chat.scrollBy({ top: chat.clientHeight / 2, behavior: 'instant' });
           await settle();
+          await frame();
+          const expectedTop = top - (chat.scrollTop - previousScrollTop);
           metrics.newerAnchorChecks.push({
-            retained: anchor.isConnected,
-            driftPx: anchor.isConnected
-              ? +(anchor.getBoundingClientRect().top - top).toFixed(2)
+            retained: anchor?.isConnected === true,
+            driftPx: anchor?.isConnected
+              ? +(anchor.getBoundingClientRect().top - expectedTop).toFixed(2)
               : null,
           });
           metrics.maxNewerAnchorDriftPx = Math.max(
@@ -348,6 +367,9 @@
           );
           publish();
         }
+        metrics.newerTraversalRequests = requests - initialRequests;
+        metrics.newerTraversalSteps = steps;
+        publish();
       }
       function emit(stream, data) {
         streamRun ??= 'fixture-running';
@@ -436,7 +458,13 @@
       });
       document.querySelector('#restore-state').onclick = action(async () => {
         await open();
-        const original = chat.shadowRoot.querySelectorAll('.completed-process')[8];
+        const sourceEntryId = 'entry-1803';
+        const distantEntryId = 'entry-1992';
+        await revealEntry(sourceEntryId);
+        const source = chat.shadowRoot.querySelector(`[data-entry-id="${sourceEntryId}"]`);
+        const original = source
+          .closest('.history-viewport-row')
+          .previousElementSibling.querySelector('.completed-process');
         const key = original.dataset.completedProcessKey;
         original.querySelector('summary').click();
         await settle();
@@ -444,10 +472,9 @@
         const summaryKey = summary.dataset.processSummaryKey;
         summary.click();
         await settle();
-        await older(true);
+        await revealEntry(distantEntryId);
         const leftWindow = !original.isConnected;
-        controller.showLatestHistory();
-        await settle();
+        await revealEntry(sourceEntryId);
         const restored = [...chat.shadowRoot.querySelectorAll('[data-completed-process-key]')].find(
           element => element.dataset.completedProcessKey === key,
         );
@@ -460,15 +487,17 @@
         };
         const toolSummary = [...restored.querySelectorAll('[data-process-summary-key]')].at(-1);
         const toolSummaryKey = toolSummary.dataset.processSummaryKey;
-        toolSummary.click();
-        await settle();
+        if (toolSummary.getAttribute('aria-expanded') !== 'true') {
+          toolSummary.click();
+          await settle();
+        }
         const tool = restored.querySelector('details[data-tool-identity]');
         const toolKey = tool.dataset.toolIdentity;
         tool.querySelector('summary').click();
         await settle();
-        while (restored.isConnected && (await controller.showOlderHistory())) await settle();
-        controller.showLatestHistory();
-        await settle();
+        await revealEntry(distantEntryId);
+        metrics.restoredState.toolLeftWindow = !restored.isConnected;
+        await revealEntry(sourceEntryId);
         const returnedTool = [
           ...chat.shadowRoot.querySelectorAll('details[data-tool-identity]'),
         ].find(element => element.dataset.toolIdentity === toolKey);

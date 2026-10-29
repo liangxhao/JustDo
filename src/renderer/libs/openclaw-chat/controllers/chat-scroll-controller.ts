@@ -686,11 +686,23 @@ export class ChatScrollController {
     const root = host.shadowRoot;
     if (!root) return [];
     const viewportTop = host.getBoundingClientRect().top;
-    const candidates = [
-      ...root.querySelectorAll<HTMLElement>(
-        '.chat-container > [data-history-key], .chat-container > [data-process-id], .chat-container > .timeline-content, .chat-container > .chat-group',
-      ),
-    ];
+    const rows = [...root.querySelectorAll<HTMLElement>(
+      '.chat-container .history-viewport-row, .chat-container > [data-history-key], .chat-container > [data-process-id], .chat-container > .timeline-content, .chat-container > .chat-group',
+    )];
+    const virtualRows = rows.filter(element =>
+      element.matches?.('.history-viewport-row') && !element.closest('details:not([open])'),
+    );
+    // An expanded process can span many viewports. Anchor its actual visible
+    // child rather than the outer disclosure's distant top edge.
+    const parentRows = new Set<Element>();
+    for (const element of virtualRows) {
+      const parent = element.parentElement?.closest('.history-viewport-row');
+      if (parent) parentRows.add(parent);
+    }
+    const visibleRows = new Set(virtualRows);
+    const candidates = rows.filter(element => element.matches?.('.history-viewport-row')
+      ? visibleRows.has(element) && !parentRows.has(element)
+      : !element.closest?.('.history-viewport-row'));
     let low = 0;
     let high = candidates.length;
     while (low < high) {

@@ -55,6 +55,8 @@ describe('PersistedTimelineRenderCache', () => {
         }],
       }],
     });
+    const initialGroup = initial.rows[0].item;
+    if (initialGroup.kind !== 'completed-process') throw new Error('Missing process history');
     const updated = cache.get(projectPersistedTimeline([
       call,
       {
@@ -67,6 +69,8 @@ describe('PersistedTimelineRenderCache', () => {
     if (group.kind !== 'completed-process') throw new Error('Missing process history');
     const process = group.items[0];
     if (process.kind !== 'process-summary') throw new Error('Missing process summary');
+    expect(group.key).toBe(initialGroup.key);
+    expect(process.key).toBe(initialGroup.items[0].key);
     expect(process.items[0]).toMatchObject({
       status: failed ? 'failed' : 'completed',
       output: failed ? 'Native read failed.' : 'Native read succeeded.',

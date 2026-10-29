@@ -55,6 +55,7 @@ export class ToolOutput extends LitElement {
   declare private feedback: string;
   declare private busy: boolean;
   private generation = 0;
+  private searchBounds: { page: number; start: number; end: number } | null = null;
   constructor() {
     super();
     this.text = '';
@@ -72,6 +73,60 @@ export class ToolOutput extends LitElement {
     this.generation++;
     this.busy = false;
   }
+  clearSearch(): void {
+    if (!this.searchBounds) return;
+    this.unwrapSearchMarks();
+    this.searchBounds = null;
+    this.requestUpdate();
+    this.performUpdate();
+  }
+  private unwrapSearchMarks(): void {
+    this.querySelectorAll<HTMLElement>('[data-justdo-search-mark="true"]').forEach(mark => {
+      const parent = mark.parentNode;
+      mark.replaceWith(...mark.childNodes);
+      parent?.normalize();
+    });
+  }
+  /** Select only the source page containing an explicitly requested search hit. */
+  prepareSearch(query: string, caseSensitive: boolean, occurrence: number): {
+    count: number;
+    occurrence: number | null;
+  } {
+    // A newly materialized reader must first consume its current identity.
+    this.performUpdate();
+    const needle = query.trim();
+    if (!needle) return { count: 0, occurrence: null };
+    const text = this.terminal
+      ? terminalSegments(this.text).map(segment => segment.text).join('')
+      : this.text;
+    const matcher = new RegExp(needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), caseSensitive ? 'g' : 'gi');
+    let count = 0;
+    let selected: { start: number; end: number } | null = null;
+    let match: RegExpExecArray | null;
+    while ((match = matcher.exec(text))) {
+      if (count === occurrence) selected = { start: match.index, end: match.index + match[0].length };
+      count += 1;
+    }
+    if (!selected) return { count, occurrence: null };
+    const ranges = outputPageRanges(text);
+    const page = ranges.findIndex(([start, end]) => start <= selected!.start && selected!.start < end);
+    const pageStart = ranges[page][0];
+    let start = pageStart;
+    let localOccurrence = 0;
+    matcher.lastIndex = 0;
+    while ((match = matcher.exec(text)) && match.index < selected.start) {
+      if (match.index >= pageStart) localOccurrence += 1;
+      else if (match.index + match[0].length > pageStart) start = match.index + match[0].length;
+    }
+    // Skip a prior global match's suffix so page-local matching cannot invent
+    // overlapping hits that the full-source search already consumed.
+    // A match straddling a page boundary needs just its remaining characters.
+    this.searchBounds = { page, start, end: selected.end };
+    this.page = page;
+    this.requestUpdate();
+    this.performUpdate();
+    return { count, occurrence: localOccurrence };
+  }
   disconnectedCallback() {
     super.disconnectedCallback();
     this.generation += 1;
@@ -87,14 +142,19 @@ export class ToolOutput extends LitElement {
   }
   protected willUpdate(changed: PropertyValues) {
     const previous = changed.get('identity') as typeof this.identity;
-    if (
+    const replaced = Boolean(
       changed.has('identity') &&
       previous &&
-      JSON.stringify(previous) !== JSON.stringify(this.identity)
-    ) {
+      JSON.stringify(previous) !== JSON.stringify(this.identity),
+    );
+    if (replaced || ['text', 'terminal', 'language', 'page'].some(key => changed.has(key)))
+      this.unwrapSearchMarks();
+    if (changed.has('text') || changed.has('terminal')) this.searchBounds = null;
+    if (replaced) {
       this.generation++;
       this.busy = false;
       this.page = 0;
+      this.searchBounds = null;
       this.feedback = '';
     }
   }
@@ -137,6 +197,9 @@ export class ToolOutput extends LitElement {
     const ranges = outputPageRanges(displayText);
     const pages = ranges.length;
     const page = Math.min(this.page, pages - 1);
+    const [pageStart, pageEnd] = ranges[page];
+    const start = this.searchBounds?.page === page ? this.searchBounds.start : pageStart;
+    const end = this.searchBounds?.page === page ? Math.max(pageEnd, this.searchBounds.end) : pageEnd;
     return html`<div
         class=${this.terminal ? 'tool-output-bubble tool-output-bubble--terminal' : this.language ? 'tool-output-bubble tool-output-bubble--code' : 'tool-output-bubble'}
       >
@@ -163,7 +226,7 @@ export class ToolOutput extends LitElement {
         </button>
         <span class="tool-output-feedback" role="status">${this.feedback}</span>
         <pre class=${this.terminal ? 'tool-output-terminal' : ''}>
-${segments ? renderTerminalPage(segments, ...ranges[page]) : this.language ? unsafeHTML(highlightCode(displayText.slice(...ranges[page]), this.language)) : displayText.slice(...ranges[page])}</pre>
+${segments ? renderTerminalPage(segments, start, end) : this.language ? unsafeHTML(highlightCode(displayText.slice(start, end), this.language)) : displayText.slice(start, end)}</pre>
       </div>
       ${
         pages > 1 || this.partial
@@ -190,7 +253,7 @@ ${segments ? renderTerminalPage(segments, ...ranges[page]) : this.language ? uns
                   ? html`<button
                         type="button"
                         ?disabled=${page === 0}
-                        @click=${() => (this.page = page - 1)}
+                        @click=${() => { this.searchBounds = null; this.page = page - 1; }}
                       >
                         ${i18nService.t('messagePrevious')}
                       </button>
@@ -198,7 +261,7 @@ ${segments ? renderTerminalPage(segments, ...ranges[page]) : this.language ? uns
                       ><button
                         type="button"
                         ?disabled=${page + 1 === pages}
-                        @click=${() => (this.page = page + 1)}
+                        @click=${() => { this.searchBounds = null; this.page = page + 1; }}
                       >
                         ${i18nService.t('messageNext')}
                       </button>`

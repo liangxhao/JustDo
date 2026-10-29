@@ -19,6 +19,7 @@ export function renderCompletedProcess(
     expanded?: boolean;
     assistantAvatar?: TemplateResult;
     renderItem: (item: SourceTimelineItem, showAvatar: boolean) => TemplateResult | typeof nothing;
+    renderItems?: (render: (item: SourceTimelineItem, index: number) => unknown) => unknown;
   },
 ): TemplateResult {
   return html`
@@ -56,7 +57,7 @@ export function renderCompletedProcess(
           </summary>
           <div class="completed-process__items">
             ${disclosureContent(() =>
-              repeat(
+              options.renderItems?.((child, index) => options.renderItem(child, index === 0 && options.showAvatar)) ?? repeat(
                 item.items,
                 child => child.key,
                 (child, index) => options.renderItem(child, index === 0 && options.showAvatar),

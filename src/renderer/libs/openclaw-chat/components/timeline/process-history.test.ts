@@ -154,7 +154,14 @@ describe('completed chat process history', () => {
       chat.assistantName = 'Review assistant';
       if (withController) {
         const controller = new ChatController();
-        controller.state.visibleChatMessages = messages;
+        (
+          controller as unknown as {
+            setCurrentSessionMessages(
+              messages: unknown[],
+              options: { resetLoadedHistory: boolean },
+            ): void;
+          }
+        ).setCurrentSessionMessages(messages, { resetLoadedHistory: true });
         chat.controller = controller;
       } else chat.messages = messages;
       document.body.append(chat);
@@ -177,7 +184,7 @@ describe('completed chat process history', () => {
       await inspectProcessHistory(chat);
       expect(process.textContent).toContain('Checking the previous answer.');
       expect(root.textContent!.split(reply)).toHaveLength(2);
-      expect(withController ? chat.controller!.state.visibleChatMessages : chat.messages).toBe(
+      expect(withController ? chat.controller!.getLoadedMessages() : chat.messages).toBe(
         messages,
       );
       expect(messages).toHaveLength(4);
@@ -553,7 +560,7 @@ describe('completed chat process history', () => {
     expect(details.querySelector('.completed-process__items')!.closest('.chat-group')).toBeNull();
     expect(
       details.querySelectorAll(
-        '.completed-process__items > .chat-group, .completed-process__items > .chat-history-row',
+        '.completed-process__items > .history-viewport-row > .chat-group, .completed-process__items > .history-viewport-row > .chat-history-row',
       ),
     ).toHaveLength(3);
     expect(details.textContent).not.toContain('Final answer');
