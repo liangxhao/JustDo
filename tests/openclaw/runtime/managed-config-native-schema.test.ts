@@ -61,8 +61,10 @@ afterEach(() => {
 type Assessment = {
   label: string; schemaSuccess: boolean; schemaIssues: { path: string; keys?: string[] }[];
   legacyIssues: { path: string; message: string }[];
+  reloadPlan?: { changedPaths: string[]; restartGateway: boolean; restartReasons: string[];
+    hotReasons: string[]; restartServices: string[] };
 };
-function assess(cases: { label: string; config: unknown }[]): Assessment[] {
+function assess(cases: { label: string; config: unknown; previousConfig?: unknown }[]): Assessment[] {
   const directory = temporary();
   const input = path.join(directory, 'cases.json');
   fs.writeFileSync(input, JSON.stringify(cases));
@@ -104,6 +106,69 @@ function retainedConfig(canonicalVoice: boolean) {
   };
 }
 const nativeTest = test.skipIf(!nativeAvailable);
+nativeTest.each([false, true])('built-in login and logout stay hot-reloadable with custom provider=%s', custom => {
+  const directory = temporary();
+  const configPath = path.join(directory, 'openclaw.json');
+  let signedIn = false;
+  const customProviders = custom ? { internal: {
+    enabled: true, apiKey: 'synthetic-custom-key', baseUrl: 'http://custom.example.test/v1',
+    models: [{ id: 'custom-chat' }],
+  } } : {};
+  setStoreGetter(() => ({ get: () => ({
+    model: signedIn ? { defaultModel: 'builtin-chat', defaultModelProvider: 'builtin_models' }
+      : custom ? { defaultModel: 'custom-chat', defaultModelProvider: 'internal' } : {},
+    providers: { ...customProviders, ...(signedIn ? { builtin_models: {
+      enabled: true, apiKey: '', baseUrl: 'http://builtin.example.test/v1',
+      models: [{ id: 'builtin-chat' }], embeddingModels: [{ id: 'builtin-embedding' }],
+    } } : {}) },
+  }) }) as never);
+  const sync = new OpenClawConfigSync({
+    engineManager: { getConfigPath: () => configPath, getStateDir: () => directory,
+      getDesiredVersion: () => targetVersion.slice(1) },
+    getCoworkConfig: () => ({ workingDirectory: path.join(directory, 'project'),
+      executionMode: 'local', agentEngine: 'openclaw' }),
+    getAgents: () => [], getBrowserMode: () => BrowserMode.User,
+  } as never);
+  expect(sync.sync('startup').ok).toBe(true);
+  const read = () => JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  let previousConfig = read();
+  const initialGateway = previousConfig.gateway;
+  const initialEnvironment = sync.collectGatewayLaunchEnvVars();
+  const cases = [];
+  for (const reason of [BuiltinModelSyncReason.AuthLogin, BuiltinModelSyncReason.AuthLogout,
+    BuiltinModelSyncReason.AuthLogin]) {
+    signedIn = reason === BuiltinModelSyncReason.AuthLogin;
+    if (signedIn) {
+      const now = Math.floor(Date.now() / 1000);
+      const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString('base64url');
+      setActiveBuiltinModelCredential({ accessToken: [encode({ alg: 'RS256' }), encode({
+        iss: 'https://login.example.test', aud: 'justdo-litellm', sub: 'reload@example.test',
+        iat: now, exp: now + 300, jti: 'reload-fixture',
+      }), 'fixture-signature'].join('.'), userAccount: 'reload@example.test', expiresAt: now + 300 });
+    } else clearActiveBuiltinModelCredential();
+    expect(sync.sync(reason)).toMatchObject({ ok: true, configChanged: true, requiresGatewayRestart: false });
+    const config = read();
+    expect(config.gateway).toEqual(initialGateway);
+    expect(sync.collectGatewayLaunchEnvVars()).toEqual(initialEnvironment);
+    expect(config.memory.search.enabled).toBe(signedIn);
+    expect(Boolean(config.models.providers?.builtin_models)).toBe(signedIn);
+    expect(Boolean(config.models.providers?.internal)).toBe(custom);
+    // Authentication preserves an already selected custom default.
+    expect(config.agents.defaults.model?.primary).toBe(custom ? 'internal/custom-chat'
+      : signedIn ? 'builtin_models/builtin-chat' : undefined);
+    expect(sync.sync(reason)).toMatchObject({ ok: true, configChanged: false });
+    cases.push({ label: `${reason} with custom=${custom}`, config, previousConfig });
+    previousConfig = config;
+  }
+  for (const result of assess(cases)) {
+    expect(result.schemaSuccess, result.label + ': ' + JSON.stringify(result.schemaIssues)).toBe(true);
+    expect(result.legacyIssues, result.label).toEqual([]);
+    expect(result.reloadPlan, result.label).toMatchObject({ restartGateway: false, restartReasons: [] });
+    expect(result.reloadPlan!.changedPaths.some(value => value.startsWith('models.'))).toBe(true);
+    expect(result.reloadPlan!.restartServices).toContain('memory-core-index');
+  }
+}, 120_000);
+
 nativeTest('real schema alone accepts TTS legacy keys, while the actual load-time detector refuses every retired input', () => {
   const base = { agents: { ownership: 'explicit', entries: { main: {} } } };
   const cases = [
