@@ -15,6 +15,32 @@ use `build/runtimes/`, Windows runtime archives use `build/tar/`, local speech m
 `build/speech-models/v1/`, and the browser package uses `build/browser-extension/`.
 The build and cache directories are ignored by Git.
 
+`packaging/installer-animation-assets.cjs` renders the existing application icon
+into native installer AVI/bitmap assets under `build/installer/<fingerprint>/`.
+Windows NSIS script composition prepares and verifies this cache automatically;
+the generator uses Node built-ins, with no new downloaded build or runtime tool.
+`packaging/nsis-install-presentation.nsh` owns the native light install page,
+while `packaging/nsis-shell-extraction.nsh` reads actual 7-Zip phase progress.
+The presentation does not start Electron or initialize a user profile. See
+[Windows installer](../docs/windows-installer.md#installation-presentation-and-measured-progress)
+for progress boundaries, fallback behavior and validation limits.
+
+The opt-in `tests/build/nsis-presentation.test.ts` opens presentation-only native
+fixture windows, verifies changing pixels and terminal states, and closes them
+automatically. Run it on a visible Windows desktop with
+`$env:INSTALLER_PRESENTATION_NATIVE_UI='1'` and
+`node node_modules/vitest/vitest.mjs run tests/build/nsis-presentation.test.ts`.
+It installs no application and saves a sample screenshot at
+`build/installer-presentation-preview.png`. Default automated checks skip this
+visible-window test; full NSIS compilation and extraction checks remain enabled
+when the cached compiler is available.
+The screenshot contains a simulated phase percentage; the fixture does not
+extract the application payload. Button rendering uses Windows' existing GDI+
+through `packaging/nsis-presentation-controls.nsh`, with no new downloaded tool.
+`packaging/nsis-presentation-motion.nsh` handles the bounded entrance/exit using
+temporary native opacity and position changes; its fixture trace reads the
+actual Windows properties and checks style/position restoration.
+
 Vite's `scripts/packaging/application-license-assets.cjs` plugin records actual
 third-party modules for Renderer, Main and all preload builds. It copies
 their original package metadata and legal materials, including transitive

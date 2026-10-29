@@ -15,6 +15,10 @@ describe('Windows NSIS template compilation', () => {
     'compiles both real templates with all languages and warnings as errors',
     async () => {
       const root = mkdtempSync(path.join(os.tmpdir(), 'justdo-nsis-compile-'));
+      require('app-builder-lib');
+      const { NsisTarget } = require('app-builder-lib/out/targets/nsis/NsisTarget');
+      const originalHeader = NsisTarget.prototype.computeCommonInstallerScriptHeader;
+      const originalScript = NsisTarget.prototype.computeFinalScript;
       try {
         const {
           NsisScriptGenerator,
@@ -43,6 +47,17 @@ describe('Windows NSIS template compilation', () => {
         createAddLangsMacro(generator, languages);
         await addCustomMessageFileInclude('messages.yml', packager, generator, languages);
         await addCustomMessageFileInclude('assistedMessages.yml', packager, generator, languages);
+        NsisTarget.prototype.computeCommonInstallerScriptHeader = async () => [
+          generator.build(),
+          `!include "${path.join(repoRoot, 'scripts/packaging/nsis-installer.nsh')}"`,
+          '',
+        ].join('\n');
+        NsisTarget.prototype.computeFinalScript = async (source: string) => source;
+        require('../../scripts/packaging/windows-installer-script.cjs').configureWindowsInstallerScript(repoRoot);
+        const target = { packager: { projectDir: repoRoot }, isPortable: false };
+        // Both real builder passes prepend sharedHeader before finalScript.
+        // Animation definitions must precede the custom include in the header.
+        const sharedHeader = await NsisTarget.prototype.computeCommonInstallerScriptHeader.call(target);
         const definitions: Record<string, string> = {
           APP_ID: 'com.justdo.compile.test',
           APP_DESCRIPTION: 'Compile smoke fixture',
@@ -72,9 +87,7 @@ describe('Windows NSIS template compilation', () => {
             '!define INSTALL_MODE_PER_ALL_USERS_REQUIRED',
             '!define MULTIUSER_INSTALLMODE_ALLOW_ELEVATION',
             '!define allowToChangeInstallationDirectory',
-            generator.build(),
-            `!include "${path.join(repoRoot, 'scripts/packaging/nsis-installer.nsh')}"`,
-            require('../../scripts/packaging/windows-installer-script.cjs').createWindowsInstallerScript(templates),
+            sharedHeader + await NsisTarget.prototype.computeFinalScript.call(target, 'upstream', !buildUninstaller, new Map()),
           ].join('\n');
           const result = spawnSync(makensis, ['/WX', '/INPUTCHARSET', 'UTF8', '-'], {
             input: source,
@@ -87,6 +100,8 @@ describe('Windows NSIS template compilation', () => {
           expect(existsSync(path.join(root, 'compile.exe'))).toBe(true);
         }
       } finally {
+        NsisTarget.prototype.computeCommonInstallerScriptHeader = originalHeader;
+        NsisTarget.prototype.computeFinalScript = originalScript;
         rmSync(root, { recursive: true, force: true });
       }
     },

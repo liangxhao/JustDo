@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 
 const cache = process.env.ELECTRON_BUILDER_CACHE || path.join(process.env.LOCALAPPDATA || '', 'electron-builder/Cache');
 const compiler = path.join(cache, 'nsis/nsis-3.0.4.1/makensis.exe');
+const repoRoot = path.resolve(__dirname, '../..');
 const templates = path.join(path.dirname(require.resolve('app-builder-lib/package.json')), 'templates/nsis');
 const { createWindowsInstallerScript } = require('../../scripts/packaging/windows-installer-script.cjs');
 const extraction = createWindowsInstallerScript(templates).match(/!macro extractUsing7za FILE[^]*?!macroend/)?.[0];
@@ -39,11 +40,20 @@ function prepareFixture(root: string, corrupted = false, resourceLog = path.join
     `InstallDir "${destination}"`,
     'Var JustDoInstallerSessionId',
     'Var JustDoResourceLogPath',
+    'Var JustDoExtractorActive',
+    'Var JustDoNativeProgressBar',
+    '!define JUSTDO_PBM_SETRANGE32 0x0406',
+    '!define JUSTDO_PBM_SETPOS 0x0402',
     '!macro JustDoLogInstallEvent TEXT',
     '  FileOpen $0 "$INSTDIR\\events.log" a',
     '  FileWrite $0 "${TEXT}$\\r$\\n"',
     '  FileClose $0',
     '!macroend',
+    '!macro JustDoSetInstallStatus ZH EN',
+    '  DetailPrint "${EN}"',
+    '!macroend',
+    `!include "${path.join(repoRoot, 'scripts/packaging/nsis-extractor-launch.nsh')}"`,
+    `!include "${path.join(repoRoot, 'scripts/packaging/nsis-shell-extraction.nsh')}"`,
     extraction,
     'Function .onInstSuccess',
     '  FileOpen $0 "$INSTDIR\\success.txt" w',
@@ -53,6 +63,8 @@ function prepareFixture(root: string, corrupted = false, resourceLog = path.join
     'Section',
     '  SetOutPath $INSTDIR',
     '  StrCpy $JustDoInstallerSessionId "test-session"',
+    '  StrCpy $JustDoExtractorActive "0"',
+    '  StrCpy $JustDoNativeProgressBar ""',
     `  StrCpy $JustDoResourceLogPath "${resourceLog}"`,
     `  File /oname=archive.7z "${archive}"`,
     '  !insertmacro extractUsing7za "$INSTDIR\\archive.7z"',

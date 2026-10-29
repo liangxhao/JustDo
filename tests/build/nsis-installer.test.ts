@@ -20,6 +20,10 @@ const nsisScript = readFileSync(
   path.resolve(__dirname, '../../scripts/packaging/nsis-installer.nsh'),
   'utf8',
 ).replaceAll('\r\n', '\n');
+const presentationScript = readFileSync(
+  path.resolve(__dirname, '../../scripts/packaging/nsis-install-presentation.nsh'),
+  'utf8',
+).replaceAll('\r\n', '\n');
 const builderHook = readFileSync(
   path.resolve(__dirname, '../../scripts/packaging/electron-builder-hooks.cjs'),
   'utf8',
@@ -40,6 +44,7 @@ const builderConfig = JSON.parse(
     differentialPackage?: boolean;
     packElevateHelper?: boolean;
     perMachine?: boolean;
+    runAfterFinish?: boolean;
     preCompressedFileExtensions?: string[];
   };
   win?: { extraResources?: Array<{ from?: string; to?: string }> };
@@ -1422,32 +1427,39 @@ describe('Windows installer presentation', () => {
     expect(nsisScript).toContain('!insertmacro JustDoTryInstallLogDirectory "$JustDoCurrentUserAppData" "${PRODUCT_NAME}"');
   });
 
-  it('uses a branded, DPI-aware install page', () => {
+  it('uses an offline animated, light install page with DPI-aware native controls', () => {
     expect(nsisScript).toContain('Function JustDoInstFilesShow');
-    expect(nsisScript).toContain('user32::GetWindowRect');
-    expect(nsisScript).toContain('user32::MapWindowPoints');
-    expect(nsisScript).toContain('JUSTDO_PBM_SETBARCOLOR');
-    expect(nsisScript).not.toContain('Var JustDoHeaderBackground');
-    expect(nsisScript).not.toContain('CreateFont');
-    expect(nsisScript).not.toContain('JUSTDO_WM_SETFONT');
-    expect(nsisScript).toContain('正在安装 ${PRODUCT_NAME}，请稍候');
-    expect(nsisScript).toContain('Installing ${PRODUCT_NAME}, please wait');
-    expect(nsisScript).toContain('GetDlgItem $R6 $HWNDPARENT 1038\n  ShowWindow $R6 0');
-    expect(nsisScript).toContain('user32::SetWindowPos(p $R5');
-    expect(nsisScript).toContain('IntOp $2 $2 / 2');
-    expect(nsisScript).not.toContain('正在为你准备');
-    expect(nsisScript).not.toContain('安全安装');
-    expect(nsisScript).toContain('ShowWindow $JustDoInstallLog 5');
-    expect(nsisScript).toContain('SetCtlColors $JustDoInstallLog "4C526B" "FFFFFF"');
+    expect(nsisScript).toContain('Call InstallerPresentationShow');
+    expect(presentationScript).toContain('!define INSTALLER_BACKGROUND "FBFBFD"');
+    expect(presentationScript).toContain('user32::GetDpiForWindow');
+    expect(presentationScript).toContain('user32::GetMonitorInfoW');
+    expect(presentationScript).toContain('SysAnimate32');
+    expect(presentationScript).toContain('${INSTALLER_ACM_PLAY} -1');
+    expect(presentationScript).toContain('${INSTALLER_ANIMATION_LOOP_FIRST}');
+    expect(presentationScript).toContain('brand-100.avi');
+    expect(presentationScript).toContain('brand-150.avi');
+    expect(presentationScript).toContain('brand-200.avi');
+    expect(presentationScript).toContain('LoadImageW');
+    expect(presentationScript).toContain('Microsoft YaHei UI');
+    expect(presentationScript).toContain('Segoe UI');
+    expect(presentationScript).toContain('Installing ${PRODUCT_NAME}');
+    expect(presentationScript).toContain('ShowWindow $JustDoInstallLog 0');
+    expect(presentationScript).toContain('ShowWindow $JustDoShowLogButton 5');
+    expect(presentationScript).not.toContain('SPI_GETCLIENTAREAANIMATION');
+    expect(presentationScript).not.toMatch(/https?:|WebView|nsTimer/);
+    expect(builderConfig.nsis?.runAfterFinish).toBe(false);
+    expect(nsisScript).toContain('!macro customFinishPage\n!macroend');
+    expect(nsisScript).toContain('ShowInstDetails hide');
+    expect(nsisScript).toContain('Call InstallerPresentationDestroy');
   });
 
   it('shows measured progress and freezes at the last real value when unavailable', () => {
-    const pageShow = nsisScript.slice(
-      nsisScript.indexOf('Function JustDoInstFilesShow'),
-      nsisScript.indexOf('FunctionEnd', nsisScript.indexOf('Function JustDoInstFilesShow')),
+    const pageShow = presentationScript.slice(
+      presentationScript.indexOf('Function InstallerPresentationShow'),
+      presentationScript.indexOf('FunctionEnd', presentationScript.indexOf('Function InstallerPresentationShow')),
     );
-    expect(pageShow).toContain('ShowWindow $JustDoProgressBar 0');
-    expect(pageShow).toContain('ShowWindow $JustDoNativeProgressBar 5');
+    expect(pageShow).toContain('GetDlgItem $0 $JustDoInstFilesPage 1004\n  ShowWindow $0 0');
+    expect(pageShow).toContain('msctls_progress32');
     expect(pageShow).toContain('SendMessage $HWNDPARENT ${JUSTDO_WM_SETREDRAW} 0 0');
     expect(pageShow).toContain('SendMessage $HWNDPARENT ${JUSTDO_WM_SETREDRAW} 1 0');
     expect(pageShow).toContain('user32::RedrawWindow');
@@ -1462,7 +1474,7 @@ describe('Windows installer presentation', () => {
     expect(nsisScript).not.toContain('JustDoSetInstallProgress');
     expect(nsisScript).toContain('Reading core resources: $2%');
     expect(nsisScript).not.toContain('actual compressed bytes');
-    expect(nsisScript).toContain('no exact percentage is available. Setup is still working');
+    expect(presentationScript).toContain('Keep setup open.');
     expect(nsisScript).toContain('${JUSTDO_PBM_SETPOS} $2 0');
     expect(nsisScript).toContain('${JUSTDO_PBM_SETPOS} 100 0');
     expect(unpackScript).not.toContain('reportProgress(50');
@@ -1671,9 +1683,10 @@ describe('Windows installer presentation', () => {
     expect(customInstall).toContain('文件被安全软件拦截');
   });
 
-  it('reassures users while native archive extraction is busy', () => {
-    expect(nsisScript).toContain('正在准备应用组件；进度条显示当前解压/写入进度');
-    expect(nsisScript).toContain('正在将应用文件解压到安全临时目录并写入安装位置');
+  it('describes the selected installation location without inventing overall progress', () => {
+    expect(presentationScript).toContain('仅检查所选安装目录中的占用情况。');
+    expect(presentationScript).toContain('将应用与随包组件解压到所选安装目录。');
+    expect(presentationScript).toContain('文件较多时可能需要一点时间，请保持安装器打开。');
     expect(nsisScript).not.toContain('真实压缩字节进度');
     expect(nsisScript).not.toContain('进度到 100% 后仍');
     expect(nsisScript).not.toContain('security scanning can leave the bar at 100%');

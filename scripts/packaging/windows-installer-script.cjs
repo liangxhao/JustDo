@@ -43,30 +43,22 @@ function createWindowsInstallerScript(templatesDir) {
     SetErrorLevel 2
     Abort "Unable to write the application extractor to the installation directory."
   \${EndIf}
-  System::Call 'Kernel32::SetEnvironmentVariable(t "JUSTDO_SHELL_7ZA", t "$R4")i.r0'
-  System::Call 'Kernel32::SetEnvironmentVariable(t "JUSTDO_SHELL_ARCHIVE", t "\${FILE}")i.r0'
-  System::Call 'Kernel32::SetEnvironmentVariable(t "JUSTDO_SHELL_OUT", t "$INSTDIR")i.r0'
-  System::Call 'Kernel32::SetEnvironmentVariable(t "JUSTDO_SHELL_LOG", t "$R3")i.r0'
-  ; Delayed expansion inserts paths after cmd parses metacharacters. It keeps
-  ; spaces, Chinese, %, &, and ! in user-selected directories literal.
+  StrCpy $InstallerShellExecutable "$R4"
+  StrCpy $InstallerShellArchive "\${FILE}"
+  StrCpy $InstallerShellLog "$R3"
+  ; The shared native launcher captures both streams and returns immediately.
+  ; Poll measured 7-Zip progress while the installation UI remains responsive.
   !insertmacro JustDoLogInstallEvent "phase=shell-extraction-start archive=\${FILE} destination=$INSTDIR detail-log=$R3"
-  nsExec::ExecToStack '\"$SYSDIR\\cmd.exe\" /D /V:ON /S /C \"$\\\"!JUSTDO_SHELL_7ZA!$\\\" x -y -aoa -bsp0 -sccUTF-8 $\\\"-o!JUSTDO_SHELL_OUT!$\\\" $\\\"!JUSTDO_SHELL_ARCHIVE!$\\\" 1>$\\\"!JUSTDO_SHELL_LOG!$\\\" 2>&1\"'
-  Pop $R0
-  Pop $R1
-  StrCpy $R2 $R0
+  Call InstallerExtractShell
+  StrCpy $R1 "$JustDoExtractorStdioError"
+  StrCpy $R2 "$InstallerShellExitCode"
   !insertmacro JustDoLogInstallEvent "phase=shell-extraction-complete exit=$R2 detail=$R1 detail-log=$R3"
   StrCpy $R5 "unavailable"
-  \${If} $JustDoResourceLogPath != ""
-    System::Call 'Kernel32::SetEnvironmentVariable(t "JUSTDO_SHELL_RESOURCE_LOG", t "$JustDoResourceLogPath")i.r0'
-    nsExec::ExecToStack '\"$SYSDIR\\cmd.exe\" /D /V:ON /S /C \"type $\\\"!JUSTDO_SHELL_LOG!$\\\" >>$\\\"!JUSTDO_SHELL_RESOURCE_LOG!$\\\" 2>nul\"'
-    Pop $R5
-    Pop $R1
+  \${If} $JustDoExtractorStdioCopied == "1"
+    StrCpy $R5 "0"
+  \${Else}
+    StrCpy $R5 "$JustDoExtractorStdioCopyError"
   \${EndIf}
-  System::Call 'Kernel32::SetEnvironmentVariable(t "JUSTDO_SHELL_7ZA", t "")i.r0'
-  System::Call 'Kernel32::SetEnvironmentVariable(t "JUSTDO_SHELL_ARCHIVE", t "")i.r0'
-  System::Call 'Kernel32::SetEnvironmentVariable(t "JUSTDO_SHELL_OUT", t "")i.r0'
-  System::Call 'Kernel32::SetEnvironmentVariable(t "JUSTDO_SHELL_LOG", t "")i.r0'
-  System::Call 'Kernel32::SetEnvironmentVariable(t "JUSTDO_SHELL_RESOURCE_LOG", t "")i.r0'
   Delete "$R4"
   \${If} $R2 != "0"
     !insertmacro JustDoLogInstallEvent "phase=installer-abort reason=shell-extraction-failed exit=$R2 detail-log=$R3"
@@ -121,7 +113,11 @@ function configureWindowsInstallerScript(projectDir) {
     // Upstream assembles the header concurrently. Plugin downloads can finish
     // after the custom include, whose uninstaller functions already use UAC.
     // Make plugin registration precede every include regardless of cache timing.
-    return orderNsisPluginDirectories(header);
+    // electron-builder prepends this header to both compiler passes. Custom
+    // includes already consume animation constants here, before the final body.
+    const { prepareInstallerAnimationScript } = require('./installer-animation-script.cjs');
+    const definitions = this.isPortable ? '' : prepareInstallerAnimationScript(projectDir);
+    return orderNsisPluginDirectories(definitions + header);
   };
 }
 

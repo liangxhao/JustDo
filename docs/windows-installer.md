@@ -21,6 +21,104 @@ that case remains an attribution and vendor-escalation issue.
 
 ## Required behavior
 
+### Installation presentation and measured progress
+
+The assisted installer's file-writing page uses a fixed light background and the
+repository's two-cat icon. The mark separates on entry, then remains intact while
+gently turning and floating against a faint blue/violet glow. Completion holds a still frame; failure stops
+playback. The mode and directory selection pages remain native NSIS pages. The
+installation page is also the result page: **Close** exits setup and does not
+launch the application. Silent updater installs retain the upstream explicit
+`--force-run` behavior.
+
+`nsis-install-presentation.nsh` owns the presentation. A native `SysAnimate32`
+control plays a packaged RLE8 AVI independently of the NSIS install worker, so
+synchronous file operations do not freeze the mark. Playback is explicitly
+started and is not conditional on Windows' animation preference. No browser,
+Electron process, network request, external font or user-data initialization is
+needed. If the native player cannot open the clip, setup displays its packaged
+bitmap and continues normally. Details use the native install log: opening them
+covers the illustration while keeping the phase status visible.
+
+The caption blends into the light canvas, retaining native caption dragging,
+the system menu and a single Close affordance. Supported Windows versions add
+rounded corners and suppress the border. `nsis-presentation-controls.nsh` paints
+rounded button images with Windows' built-in GDI+, retaining the real BUTTON
+handles, captions, enabled state, keyboard focus and commands. A drawing failure
+restores the current native text button rather than retaining a stale image.
+The disabled cancellation action is hidden during writing; success and failure
+offer their respective native closing action. The native instfiles LEAVE
+callback reads `IfAbort` to stop playback at worker completion; the failure
+callback on window close alone would be too late.
+
+`nsis-presentation-motion.nsh` adds a 320 ms entrance (cubic ease-out, 8 logical
+pixels upward, 14% to full opacity) and a 200 ms exit (cubic ease-in, 4 logical
+pixels downward, full opacity to transparent). The window and native controls
+keep their real dimensions. These bounded UI-owner-thread calls temporarily add
+`WS_EX_LAYERED`; they use no script timer or message pump and do not consult
+Windows' animation preference. The entrance explicitly shows the prepared child
+page before fading, since NSIS normally shows it after the SHOW callback.
+
+Exit runs once from successful completion, failed-result dismissal or the
+existing confirmed user-abort callback, before the native dialog is destroyed.
+The normal cancel/write guards still run first, and the motion helper also
+rejects an active extractor. `.onGUIEnd` only releases resources: NSIS has already
+closed the dialog by that point. Silent, unprepared, minimized, foreign-thread
+and already-layered windows skip this decoration. Original position and the
+temporary style bit are restored, and exit hides the window before restoring
+opacity to prevent a final flash. API failures cannot change the installation
+result. No entrance or exit waits for the longer brand clip to finish.
+An earlier lock-check dialog that directly calls `Quit` retains that immediate
+exit; it does not re-enter the GUI script from the install worker for an effect.
+
+`installer-animation-assets.cjs` generates the AVI and bitmap at build time from
+`resources/icons/png/128x128.png`, at 100%, 150% and 200% scales. Inputs and output
+hashes bind the cache under `build/installer/<fingerprint>/`; generated files are
+not committed. The script uses Node's built-ins and adds no runtime download.
+The installer chooses the fitting scale, clamps its window to the current
+monitor's work area and frees its owned fonts, bitmap and player on close. Short
+work areas reduce the illustration space; exceptionally short areas hide the
+hero and retain the status, details and closing controls.
+
+The three displayed steps are **check location → write files → complete**.
+Animation and elapsed time communicate activity; neither establishes progress
+or success. Percentages belong to the named current phase:
+
+- Application files: the bundled 7-Zip process reports its own extraction
+  percentage through its captured output. The native launcher invokes it
+  directly and polls without a command shell. Partial output records and UTF-8
+  paths do not become percentages. A successful child exit completes this phase;
+  an unavailable progress record cannot change its exit result.
+- Bundled resources: the existing extractor reports measured input-reading or
+  entry progress. Expansion, validation and filesystem flushes can have no exact
+  percentage; the bar holds its last measured value and the phase text explains
+  the work. Reading 100% does not mean setup has completed.
+- Setup reaches completion only after the existing extraction and installed-file
+  checks succeed. There is no estimated overall percentage or artificial delay
+  to keep the animation on screen. Phase changes may reset the bar.
+
+The process and exclusive-file checks still apply only to the selected install
+root. Setup writes application files and bundled runtimes there. Profile,
+database and workspace preparation remain first-launch responsibilities.
+
+Focused checks cover native two-pass NSIS compilation with warnings as errors,
+actual 7-Zip failures and path handling, progress parsing, and generated asset
+integrity. The opt-in presentation-only native fixture checks changing animation
+pixels, native details, completion, failure and silent UI absence without
+installing the application. A visible desktop is required: Windows can throttle
+fully occluded/offscreen animation even when its player reports playing. Run
+`INSTALLER_PRESENTATION_NATIVE_UI=1` with the `tests/build/nsis-presentation.test.ts`
+Vitest case for this check; its visible fixture windows close automatically.
+These checks do not replace a full release installer or multi-monitor/DPI
+acceptance run. Windows' animation
+preference was enabled during the native smoke check; disabled-preference
+behavior follows the explicit player calls and has not been verified by changing
+the machine's global setting.
+The fixture also reads back native opacity, position, dimensions and styles for
+intermediate entrance/exit frames, checks restoration and one-time exit, and
+rejects a close while file writing is marked active. It does not infer a visible
+transition merely from the elapsed time or the requested animation values.
+
 ### Data compatibility after installation
 
 Setup replaces application payloads; it does not open or migrate a user's databases.

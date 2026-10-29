@@ -260,23 +260,27 @@ FunctionEnd
 
 Function JustDoInstallerUserAbort
   ${If} $JustDoExtractorActive == "1"
-    MessageBox MB_OK|MB_ICONINFORMATION "核心资源仍在安全写入和校验中，请等待此步骤完成后再关闭安装程序。 Core resources are still being written and verified; wait for this step to finish before closing setup." /SD IDOK
+    MessageBox MB_OK|MB_ICONINFORMATION "安装文件仍在写入和校验中，请等待此步骤完成后再关闭安装程序。 Installation files are still being written and verified; wait for this step to finish before closing setup." /SD IDOK
     Abort
   ${EndIf}
   StrCpy $JustDoInstallTerminalState "user-cancelled"
   !insertmacro JustDoLogInstallEvent "phase=installer-cancel reason=wizard-user-abort"
+  Call InstallerPresentationCloseMotion
 FunctionEnd
 
 Function .onInstSuccess
   StrCpy $JustDoInstallTerminalState "success"
   !insertmacro JustDoLogInstallEvent "phase=installer-success status=completed version=${VERSION} install-mode=$JustDoInstallMode install-dir=$INSTDIR core-validation=passed"
   Call JustDoWriteInstallSessionEnd
+  Call InstallerPresentationCloseMotion
 FunctionEnd
 
 Function .onInstFailed
-  StrCpy $JustDoInstallTerminalState "failed"
   GetErrorLevel $1
   System::Call 'kernel32::GetLastError()i.r0'
+  Push "failed"
+  Call InstallerPresentationSetStage
+  StrCpy $JustDoInstallTerminalState "failed"
   !insertmacro JustDoLogInstallEvent "phase=installer-failed status=terminated-before-success error-level=$1 win32-last-error=$0"
   Call JustDoCleanupExtractorEnvironment
   ${If} $JustDoExtractorTempDirectory != ""
@@ -284,9 +288,11 @@ Function .onInstFailed
   ${EndIf}
   !insertmacro JustDoLogInstallEvent "phase=installer-failed-cleanup-complete"
   Call JustDoWriteInstallSessionEnd
+  Call InstallerPresentationCloseMotion
 FunctionEnd
 
 Function .onGUIEnd
+  Call InstallerPresentationDestroy
   ${If} $JustDoInstallTerminalState == ""
     StrCpy $JustDoInstallTerminalState "ended-before-pre-init"
   ${ElseIf} $JustDoInstallTerminalState == "running"
@@ -312,6 +318,7 @@ Function JustDoPollResourceProgress
   Push $1
   Push $2
   Push $3
+  Call InstallerPresentationTick
 
   ${If} $JustDoResourceProgressFile != ""
   ${AndIf} ${FileExists} "$JustDoResourceProgressFile"
@@ -359,9 +366,9 @@ Function JustDoPollResourceProgress
         ${If} $JustDoStatusText != ""
           ${If} $LANGUAGE == ${JUSTDO_LANG_SIMPCHINESE}
           ${OrIf} $LANGUAGE == ${JUSTDO_LANG_TRADCHINESE}
-            StrCpy $1 "正在展开或验证核心资源；无法精确计算百分比，安装程序仍在运行…"
+            StrCpy $1 "正在展开或校验核心资源…"
           ${Else}
-            StrCpy $1 "Expanding or validating core resources; no exact percentage is available. Setup is still working…"
+            StrCpy $1 "Expanding or validating core resources…"
           ${EndIf}
           SendMessage $JustDoStatusText ${JUSTDO_WM_SETTEXT} 0 "STR:$1"
         ${EndIf}
@@ -403,126 +410,17 @@ FunctionEnd
   ${EndIf}
 !macroend
 
-; Keep NSIS control 1004 visible for the application archive: the Nsis7z plug-in
-; drives that native control with real extraction progress. customInstall owns a
-; separate marquee only for runtime work that has no trustworthy percentage.
+!include "${PROJECT_DIR}\scripts\packaging\nsis-install-presentation.nsh"
+!include "${PROJECT_DIR}\scripts\packaging\nsis-shell-extraction.nsh"
+
 Function JustDoInstFilesShow
-  ; MUI invokes this callback while switching away from the directory page.
-  ; Configure the header and install controls as one visual update so Windows
-  ; never paints a transitional frame containing both pages' text/buttons.
-  SendMessage $HWNDPARENT ${JUSTDO_WM_SETREDRAW} 0 0
-  FindWindow $JustDoInstFilesPage "#32770" "" $HWNDPARENT
-  GetDlgItem $JustDoStatusText $JustDoInstFilesPage 1006
-  GetDlgItem $JustDoNativeProgressBar $JustDoInstFilesPage 1004
-  GetDlgItem $JustDoShowLogButton $JustDoInstFilesPage 1027
-  GetDlgItem $JustDoInstallLog $JustDoInstFilesPage 1016
-  SetCtlColors $JustDoInstFilesPage "" "F7F8FC"
-  SetCtlColors $JustDoStatusText "29304A" "F7F8FC"
-
-  ; Keep the native MUI header surface. Its dimensions differ across NSIS and
-  ; Windows themes, so drawing another full-window STATIC behind it can cover
-  ; the install page. Retain the system-selected dialog font so text always
-  ; fits the native fixed-height controls at every DPI and language setting.
-  GetDlgItem $R5 $HWNDPARENT 1037
-  SetCtlColors $R5 "25213F" "FFFFFF"
-  GetDlgItem $R6 $HWNDPARENT 1038
-  ShowWindow $R6 0
-
-  ; Center the remaining title within the vertical space originally shared by
-  ; the title and subtitle. Derive every coordinate from the native controls
-  ; so the alignment follows Windows DPI scaling instead of fixed pixels.
-  System::Alloc 16
-  Pop $0
-  System::Call 'user32::GetWindowRect(p $R5, p r0)i.r1'
-  System::Call 'user32::MapWindowPoints(p 0, p $HWNDPARENT, p r0, i 2)i.r1'
-  System::Call '*$0(i .r1, i .r2, i .r3, i .r4)'
-  IntOp $3 $3 - $1
-  IntOp $4 $4 - $2
-  StrCpy $R7 $1
-  StrCpy $R8 $2
-  StrCpy $R9 $3
-  StrCpy $R0 $4
-  System::Call 'user32::GetWindowRect(p $R6, p r0)i.r1'
-  System::Call 'user32::MapWindowPoints(p 0, p $HWNDPARENT, p r0, i 2)i.r1'
-  System::Call '*$0(i .r1, i .r2, i .r3, i .r4)'
-  System::Free $0
-  IntOp $2 $4 - $R8
-  IntOp $2 $2 - $R0
-  IntOp $2 $2 / 2
-  IntOp $2 $2 + $R8
-  System::Call 'user32::SetWindowPos(p $R5, p 0, i $R7, i r2, i $R9, i $R0, i 0x0004)'
-
-  ${If} $LANGUAGE == ${JUSTDO_LANG_SIMPCHINESE}
-  ${OrIf} $LANGUAGE == ${JUSTDO_LANG_TRADCHINESE}
-    SendMessage $R5 ${JUSTDO_WM_SETTEXT} 0 "STR:正在安装 ${PRODUCT_NAME}，请稍候"
-  ${Else}
-    SendMessage $R5 ${JUSTDO_WM_SETTEXT} 0 "STR:Installing ${PRODUCT_NAME}, please wait"
-  ${EndIf}
-
-  ; Keep the product mark in the title bar and use the header area for a clean,
-  ; uncluttered installation status.
-  GetDlgItem $0 $HWNDPARENT 1039
-  ShowWindow $0 0
-
-  ; Reuse the native progress control's DPI-scaled rectangle for our overlay.
-  System::Alloc 16
-  Pop $0
-  System::Call 'user32::GetWindowRect(p $JustDoNativeProgressBar, p r0)i.r1'
-  System::Call 'user32::MapWindowPoints(p 0, p $JustDoInstFilesPage, p r0, i 2)i.r1'
-  System::Call '*$0(i .r1, i .r2, i .r3, i .r4)'
-  IntOp $3 $3 - $1
-  IntOp $4 $4 - $2
-  StrCpy $R1 $1
-  StrCpy $R2 $2
-  StrCpy $R3 $3
-  StrCpy $R4 $4
-  System::Call 'user32::CreateWindowExW(i 0, w "msctls_progress32", w "", i ${JUSTDO_PROGRESS_STYLE}, i r1, i r2, i r3, i r4, p $JustDoInstFilesPage, p 0, p 0, p 0)p.s'
-  Pop $JustDoProgressBar
-  System::Free $0
-
-  ${If} $JustDoProgressBar != ""
-    System::Call 'uxtheme::SetWindowTheme(p $JustDoProgressBar, w " ", w " ")'
-    SendMessage $JustDoProgressBar ${JUSTDO_PBM_SETRANGE32} 0 100
-    ; COLORREF values are BGR: indigo foreground on a cool-gray track.
-    SendMessage $JustDoProgressBar ${JUSTDO_PBM_SETBARCOLOR} 0 0xE54F46
-    SendMessage $JustDoProgressBar ${JUSTDO_PBM_SETBKCOLOR} 0 0xF0EAE7
-    ShowWindow $JustDoProgressBar 0
-  ${EndIf}
-  ShowWindow $JustDoNativeProgressBar 5
-  System::Call 'uxtheme::SetWindowTheme(p $JustDoNativeProgressBar, w " ", w " ")'
-  SendMessage $JustDoNativeProgressBar ${JUSTDO_PBM_SETBARCOLOR} 0 0xE54F46
-  SendMessage $JustDoNativeProgressBar ${JUSTDO_PBM_SETBKCOLOR} 0 0xF0EAE7
-
-  ; Turn the unused details area into a light activity card. Keep the native
-  ; dialog font instead of forcing a face or size; Windows selects a suitable
-  ; CJK-capable font and scales it consistently with the surrounding controls.
-  ShowWindow $JustDoShowLogButton 0
-  System::Alloc 16
-  Pop $0
-  System::Call 'user32::GetClientRect(p $JustDoInstFilesPage, p r0)i.r1'
-  System::Call '*$0(i .r1, i .r2, i .r3, i .r4)'
-  System::Free $0
-  IntOp $2 $R2 + $R4
-  IntOp $2 $2 + 20
-  IntOp $4 $4 - $2
-  IntOp $4 $4 - 14
-  System::Call 'user32::SetWindowPos(p $JustDoInstallLog, p 0, i $R1, i r2, i $R3, i r4, i 0x0004)'
-  ShowWindow $JustDoInstallLog 5
-  SetCtlColors $JustDoInstallLog "4C526B" "FFFFFF"
-
-  !insertmacro JustDoSetInstallStatus \
-    "正在准备应用组件；进度条显示当前解压/写入进度…" \
-    "Preparing application components; the bar shows current extraction/write progress…"
-  !insertmacro JustDoAddInstallActivity \
-    "已确认安装位置" \
-    "Installation location confirmed"
-  !insertmacro JustDoAddInstallActivity \
-    "正在准备应用组件" \
-    "Preparing application components"
-  !insertmacro JustDoLogInstallEvent "phase=install-page-shown status=preparing-core-application-files"
-  SendMessage $HWNDPARENT ${JUSTDO_WM_SETREDRAW} 1 0
-  System::Call 'user32::RedrawWindow(p $HWNDPARENT, p 0, p 0, i ${JUSTDO_RDW_ATOMIC_REFRESH})i.r0'
+  Call InstallerPresentationShow
 FunctionEnd
+
+; Keep the native install page as the final result page. It closes normally
+; after successful installation instead of launching the application.
+!macro customFinishPage
+!macroend
 
 !macro customPageAfterChangeDir
   ; electron-builder defers the final all-users mode and custom directory until
@@ -532,6 +430,7 @@ FunctionEnd
   !undef MUI_PAGE_CUSTOMFUNCTION_PRE
   !define MUI_PAGE_CUSTOMFUNCTION_PRE JustDoInstFilesPre
   !define MUI_PAGE_CUSTOMFUNCTION_SHOW JustDoInstFilesShow
+  !define MUI_PAGE_CUSTOMFUNCTION_LEAVE InstallerPresentationLeave
   ; Define the callback when electron-builder expands this macro, after its
   ; multi-user template has declared $installMode.
   Function JustDoInstFilesPre
@@ -603,9 +502,8 @@ FunctionEnd
 !macroend
 
 !macro customHeader
-  ; Hide the (empty) details list — electron-builder uses 7z solid extraction
-  ; which produces no per-file output, so the box would just be blank.
-  ShowInstDetails nevershow
+  ; Begin collapsed, while retaining the native details action and logging.
+  ShowInstDetails hide
 !macroend
 
 !ifndef BUILD_UNINSTALLER
@@ -713,6 +611,8 @@ Function JustDoCheckAppRunning
       ${EndIf}
   ${EndIf}
   JustDoInstallProcessReady:
+  Push "shell"
+  Call InstallerPresentationSetStage
   !insertmacro JustDoLogInstallEvent "phase=process-check-complete result=ready"
   System::Call 'kernel32::GetTickCount()i.r0'
   StrCpy $JustDoCoreInstallStartedTick $0
@@ -931,6 +831,8 @@ FunctionEnd
 !macroend
 
 !macro customInstall
+  Push "resources"
+  Call InstallerPresentationSetStage
   ; ─── Install Timing Log ───
   ; Write timestamps to help diagnose slow installation phases.
   ; Log directory was selected and verified by preInit.
@@ -1277,6 +1179,8 @@ FunctionEnd
     SetErrorLevel 2
     Abort "Resource extraction failed."
   TarExtractOK:
+  Push "finalizing"
+  Call InstallerPresentationSetStage
   ${If} $JustDoExtractorStdioCopied == "1"
     Delete "$JustDoExtractorStdioLog"
   ${EndIf}
@@ -1374,12 +1278,15 @@ FunctionEnd
   ShowWindow $JustDoNativeProgressBar 5
   SendMessage $JustDoNativeProgressBar ${JUSTDO_PBM_SETPOS} 100 0
   !insertmacro JustDoSetInstallStatus \
-    "安装完成，即将进入下一步。" \
-    "Installation complete. Continuing…"
+    "安装完成。" \
+    "Installation complete."
   !insertmacro JustDoAddInstallActivity \
     "安装完成" \
     "Installation complete"
   FileClose $2
+
+  Push "complete"
+  Call InstallerPresentationSetStage
 
   SetDetailsPrint both
 !macroend

@@ -209,7 +209,7 @@
   "nsis": {
     "oneClick": false,
     "allowToChangeInstallationDirectory": true,
-    "runAfterFinish": true,
+    "runAfterFinish": false,
     "deleteAppDataOnUninstall": false,
     "include": "scripts/packaging/nsis-installer.nsh",
     "differentialPackage": false,
