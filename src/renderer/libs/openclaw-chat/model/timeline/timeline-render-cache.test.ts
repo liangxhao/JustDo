@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest';
 
 import type { ContentItem } from '../chat-transcript-state';
-import type { PersistedTimelineItem } from './project-history-timeline';
+import { type PersistedTimelineItem, projectPersistedTimeline } from './project-history-timeline';
 import type { ActiveTurnTimelineItem, ProcessSummaryTimelineItem, QuestionPresentationTimelineItem } from './project-turn-items';
 import {
   PersistedTimelineRenderCache,
@@ -38,6 +38,93 @@ function summary(key: string): ProcessSummaryTimelineItem {
 }
 
 describe('PersistedTimelineRenderCache', () => {
+  test.each([false, true])('replaces an unknown historical result with its real native receipt (failure: %s)', failed => {
+    const cache = new PersistedTimelineRenderCache();
+    const call = {
+      role: 'assistant',
+      content: [{ type: 'toolCall', id: 'missing-read', name: 'read' }],
+    };
+    const final = { role: 'assistant', content: 'The model continued.' };
+    const initial = cache.get(projectPersistedTimeline([call, final]), {
+      foldUnresolvedTools: true,
+    });
+    expect(initial.rows[0].item).toMatchObject({
+      kind: 'completed-process', items: [{
+        kind: 'process-summary', items: [{
+          status: 'running', presentation: { outcome: 'unknown' },
+        }],
+      }],
+    });
+    const updated = cache.get(projectPersistedTimeline([
+      call,
+      {
+        role: 'toolResult', toolCallId: 'missing-read', toolName: 'read', isError: failed,
+        content: [{ type: 'text', text: failed ? 'Native read failed.' : 'Native read succeeded.' }],
+      },
+      final,
+    ]), { foldUnresolvedTools: true });
+    const group = updated.rows[0].item;
+    if (group.kind !== 'completed-process') throw new Error('Missing process history');
+    const process = group.items[0];
+    if (process.kind !== 'process-summary') throw new Error('Missing process summary');
+    expect(process.items[0]).toMatchObject({
+      status: failed ? 'failed' : 'completed',
+      output: failed ? 'Native read failed.' : 'Native read succeeded.',
+    });
+    expect(process.items[0]).not.toHaveProperty('presentation.outcome');
+  });
+
+  test('invalidates history folding when missing-result disclosure changes without a history revision', () => {
+    const cache = new PersistedTimelineRenderCache();
+    const timeline: PersistedTimelineItem[] = [
+      {
+        kind: 'live-process', key: 'yield', origin: 'persisted',
+        item: {
+          type: 'tool', id: 'yield', toolCallId: 'yield', name: 'sessions_yield',
+          runId: 'old-run', firstSeq: 1, lastSeq: 1, startedAt: 1, updatedAt: 1,
+          status: 'running',
+        },
+      },
+      { kind: 'history-message', key: 'final', message: { role: 'assistant', content: 'answer' } },
+    ];
+    const original = cache.get(timeline);
+    expect(original.rows[0].item.kind).toBe('live-process');
+    const archived = cache.get(timeline, { foldUnresolvedTools: true });
+    expect(archived).not.toBe(original);
+    expect(archived.rows[0].item.kind).toBe('completed-process');
+    expect(cache.get(timeline, { foldUnresolvedTools: true })).toBe(archived);
+    const restored = cache.get(timeline);
+    expect(restored.rows[0].item).toBe(timeline[0]);
+  });
+
+  test('folds missing historical results across a settled live seam while retaining actual live tools', () => {
+    const historical: PersistedTimelineItem = {
+      kind: 'live-process', key: 'historical-yield', origin: 'persisted',
+      item: {
+        type: 'tool', id: 'historical-yield', toolCallId: 'historical-yield', name: 'sessions_yield',
+        runId: 'run-live', firstSeq: 1, lastSeq: 1, startedAt: 1, updatedAt: 1,
+        status: 'running',
+      },
+    };
+    const actualLive = { ...historical, key: 'actual-live', origin: undefined };
+    const final = activeContent('final answer', 4);
+    if (final.kind !== 'content') throw new Error('Missing final content');
+    final.item.status = 'completed';
+    const view = projectIncrementalTimelineView({
+      persisted: new PersistedTimelineRenderCache().get([historical], {
+        protectTrailingTurn: true, foldUnresolvedTools: true,
+      }),
+      activeTimeline: [actualLive, final],
+      suppressTrailingAssistantFooter: true,
+      foldSettledTurn: true,
+      foldUnresolvedTools: true,
+    });
+    const rows = [...view.persistedRows, ...view.activeRows];
+    expect(rows.map(row => row.item.kind)).toEqual(['completed-process', 'live-process', 'content']);
+    expect(rows[1].item).toBe(actualLive);
+    expect(historical.item).not.toHaveProperty('presentation.outcome');
+  });
+
   test('keeps live questions in process disclosure and merges them on settled history takeover', () => {
     const question: QuestionPresentationTimelineItem = {
       kind: 'question-presentation',

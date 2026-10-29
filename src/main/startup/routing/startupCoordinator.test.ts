@@ -1358,11 +1358,13 @@ test('recovers an interrupted native import without another backup, environment 
     expect(store.getDatabase().prepare('SELECT id FROM cowork_sessions').all()).toHaveLength(0);
     const resume = new StartupCoordinator(target);
     await resume.prepareBeforeStore(progress());
-    await resume.restoreHistory(store.getDatabase(), state, progress(), async mode => {
+    await resume.restoreHistory(store.getDatabase(), state, progress(), async (mode, planFile) => {
       expect(fs.existsSync(index)).toBe(false);
       if (mode === 'import') return '{"targets":[]}';
-      if (mode === 'verify')
+      if (mode === 'verify') {
+        expect(JSON.parse(fs.readFileSync(planFile!, 'utf8')).verifyTerminalSnapshots).toBe(true);
         return JSON.stringify({ verified: true, entries: 4, conversations: 3 });
+      }
       return JSON.stringify({
         targets: [{ agentId: 'main', sqliteEntries: 4, dbStats: { integrityCheck: 'ok' } }],
       });
@@ -1393,7 +1395,10 @@ test('recovers an interrupted native import without another backup, environment 
     const groups = new GroupStore(store.getDatabase());
     groups.updateGroup('work', { name: '当前分组' });
     groups.moveSessionToGroup('native', null);
-    const runNative = vi.fn(async () => JSON.stringify({ verified: true, entries: 4, conversations: 3 }));
+    const runNative = vi.fn(async (_mode, planFile) => {
+      expect(JSON.parse(fs.readFileSync(planFile, 'utf8'))).not.toHaveProperty('verifyTerminalSnapshots');
+      return JSON.stringify({ verified: true, entries: 4, conversations: 3 });
+    });
     await checked.restoreHistory(store.getDatabase(), state, progress(), runNative);
     expect(runNative).toHaveBeenCalledExactlyOnceWith('verify', expect.any(String));
     expect(cowork.getSession('native')).toMatchObject({

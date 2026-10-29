@@ -9,6 +9,7 @@ import { DB_FILENAME } from '../../core/appConstants';
 import { buildManagedSessionKey } from '../../openclaw/sessions/openclawSessionKeys';
 import { writeStartupJson } from '../routing/startupState';
 import { ownedPath } from './historyBackup';
+import { normalizeLegacyToolHistory } from './legacyToolCompletion';
 
 type NativeEntry = Record<string, unknown> & { sessionId: string };
 type NativeHistory = {
@@ -63,8 +64,39 @@ const HISTORY_FIELDS = [
   'previousSessionId',
   'usageFamilySessionIds',
 ] as const;
+const HISTORICAL_SUBAGENT_TERMINAL_STATUSES = new Set([
+  'done', 'failed', 'interrupted', 'killed', 'timeout',
+]);
 const stableId = (value: string) => createHash('sha256').update(value).digest('hex').slice(0, 32);
 const iso = (time: number) => new Date(time).toISOString();
+
+/** Native terminal projections retain their exact producing run, never a transcript heuristic. */
+function historicalSubagentTerminal(entry: NativeEntry): Record<string, unknown> {
+  const parent = typeof entry.spawnedBy === 'string' ? entry.spawnedBy : '';
+  if (
+    !/^agent:main:/i.test(parent) ||
+    typeof entry.status !== 'string' ||
+    !HISTORICAL_SUBAGENT_TERMINAL_STATUSES.has(entry.status) ||
+    typeof entry.lastRunId !== 'string' || !entry.lastRunId.trim() ||
+    entry.lastRunId !== entry.lastRunId.trim() ||
+    entry.lifecycleRunId !== undefined ||
+    (entry.activeWriterRunId !== undefined && entry.activeWriterRunId !== entry.lastRunId) ||
+    typeof entry.endedAt !== 'number' || !Number.isFinite(entry.endedAt) || entry.endedAt <= 0 ||
+    (entry.startedAt !== undefined &&
+      (typeof entry.startedAt !== 'number' || !Number.isFinite(entry.startedAt) ||
+        entry.startedAt <= 0 || entry.startedAt > entry.endedAt))
+  ) return {};
+  return {
+    status: entry.status,
+    lastRunId: entry.lastRunId,
+    endedAt: entry.endedAt,
+    ...(entry.startedAt !== undefined ? { startedAt: entry.startedAt } : {}),
+    ...(typeof entry.runtimeMs === 'number' && Number.isFinite(entry.runtimeMs) && entry.runtimeMs >= 0
+      ? { runtimeMs: entry.runtimeMs } : {}),
+    ...(typeof entry.lastRunError === 'string' && entry.lastRunError.trim()
+      ? { lastRunError: entry.lastRunError } : {}),
+  };
+}
 
 function isTranscriptFilename(filename: string): boolean {
   return (
@@ -187,6 +219,9 @@ export function planLegacyHistory(backup: string): HistoryPlan {
       const source = JSON.parse(fs.readFileSync(index, 'utf8')) as Record<string, NativeEntry>;
       const entries: Record<string, NativeEntry> = {};
       const transcriptFiles: Record<string, string> = {};
+      const successfulTerminalKeys = new Set<string>();
+      const parentKeys = new Map<string, Set<string>>();
+      const terminalCandidates = new Map<string, Record<string, unknown>[]>();
       for (const [sourceKey, entry] of Object.entries(source)) {
         const key = canonicalHistoryKey(sourceKey);
         const owner = /^agent:([^:]+):/i.exec(key.trim())?.[1].toLowerCase();
@@ -199,6 +234,18 @@ export function planLegacyHistory(backup: string): HistoryPlan {
           throw new Error('Invalid historical native session identity.');
         if (entries[key] && entries[key].sessionId !== entry.sessionId)
           throw new Error('Ambiguous canonical historical session identity.');
+        const terminal = historicalSubagentTerminal(entry);
+        if (terminal.status !== undefined) {
+          if (!terminalCandidates.has(key)) terminalCandidates.set(key, []);
+          terminalCandidates.get(key)!.push({
+            ...terminal,
+            status: terminal.status === 'done' ? 'done' : 'failed',
+          });
+        }
+        if (entry.status === 'done') successfulTerminalKeys.add(key);
+        if (!parentKeys.has(key)) parentKeys.set(key, new Set());
+        parentKeys.get(key)!.add(typeof entry.spawnedBy === 'string'
+          ? canonicalHistoryKey(entry.spawnedBy) : '');
         entries[key] = Object.fromEntries(
           HISTORY_FIELDS.filter(field => entry[field] !== undefined).map(field => [
             field,
@@ -208,6 +255,20 @@ export function planLegacyHistory(backup: string): HistoryPlan {
         transcriptFiles[key] = transcriptFilename(path.dirname(index), entry);
         if (typeof entries[key].spawnedBy === 'string')
           entries[key].spawnedBy = canonicalHistoryKey(entries[key].spawnedBy as string);
+      }
+      for (const [key, entry] of Object.entries(entries)) {
+        if (parentKeys.get(key)?.size !== 1)
+          throw new Error('Ambiguous canonical historical parent association.');
+        if (typeof entry.spawnedBy !== 'string' || !/^agent:main:/i.test(entry.spawnedBy)) continue;
+        const status = successfulTerminalKeys.has(key) ? 'done' : 'failed';
+        const candidates = new Map((terminalCandidates.get(key) ?? [])
+          .filter(candidate => candidate.status === status)
+          .map(candidate => [JSON.stringify(candidate), candidate]));
+        // Every migrated child gets the user-selected binary display result,
+        // including records with no prior outcome. This is deliberately not a new
+        // execution receipt. Preserve the unique matching snapshot when available;
+        // otherwise normalize only status without inventing run IDs or timing.
+        Object.assign(entry, candidates.size === 1 ? candidates.values().next().value : { status });
       }
       agents.push({ agentId: agent.name, entries, transcriptFiles });
     }
@@ -362,12 +423,17 @@ export function stageLegacyHistory(backup: string, targetState: string, plan: Hi
   for (const [agentId, entries] of agents) {
     const folder = ownedPath(targetState, path.join('agents', agentId, 'sessions'));
     fs.mkdirSync(folder, { recursive: true });
+    const historyFiles = new Set<string>();
+    const copyHistoryFile = (sourceFile: string, targetFile: string): void => {
+      fs.copyFileSync(sourceFile, targetFile);
+      historyFiles.add(targetFile);
+    };
     for (const [key, entry] of Object.entries(entries)) {
       const filename =
         plan.agents.find(agent => agent.agentId === agentId)?.transcriptFiles[key] ??
         `${entry.sessionId}.jsonl`;
       entry.sessionFile = ownedPath(folder, filename);
-      // The old absolute pointer is never followed; immutable transcript bytes stay intact.
+      // Backup originals stay immutable; only the staged copies close historical Tools.
       const sourceFolder = path.join(backup, 'openclaw', 'state', 'agents', agentId, 'sessions');
       if (fs.existsSync(sourceFolder)) {
         for (const file of fs.readdirSync(sourceFolder)) {
@@ -376,10 +442,10 @@ export function stageLegacyHistory(backup: string, targetState: string, plan: Hi
             file.endsWith('.jsonl') &&
             !file.endsWith('.trajectory.jsonl')
           )
-            fs.copyFileSync(path.join(sourceFolder, file), path.join(folder, file));
+            copyHistoryFile(path.join(sourceFolder, file), path.join(folder, file));
         }
         if (filename && fs.existsSync(ownedPath(sourceFolder, filename)))
-          fs.copyFileSync(ownedPath(sourceFolder, filename), entry.sessionFile as string);
+          copyHistoryFile(ownedPath(sourceFolder, filename), entry.sessionFile as string);
       }
       if (entry.compactionCheckpoints !== undefined) {
         if (!Array.isArray(entry.compactionCheckpoints))
@@ -397,7 +463,7 @@ export function stageLegacyHistory(backup: string, targetState: string, plan: Hi
               throw new Error('Invalid compaction transcript filename.');
             const source = path.join(sourceFolder, filename);
             reference.sessionFile = path.join(folder, filename);
-            if (fs.existsSync(source)) fs.copyFileSync(source, reference.sessionFile as string);
+            if (fs.existsSync(source)) copyHistoryFile(source, reference.sessionFile as string);
           }
         }
       }
@@ -419,11 +485,13 @@ export function stageLegacyHistory(backup: string, targetState: string, plan: Hi
             encoding: 'utf8',
             mode: 0o600,
           });
+          historyFiles.add(entry.sessionFile as string);
         } finally {
           db.close();
         }
       }
     }
+    for (const file of historyFiles) normalizeLegacyToolHistory(file);
     writeStartupJson(path.join(folder, 'sessions.json'), entries);
   }
   const media = path.join(backup, 'openclaw', 'state', 'media');

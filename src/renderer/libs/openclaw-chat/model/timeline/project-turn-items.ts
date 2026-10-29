@@ -54,6 +54,8 @@ export interface LiveProcessTimelineItem {
   kind: 'live-process';
   key: string;
   item: ThinkingItem | ToolItem;
+  /** Display provenance, independent of the Tool's native execution status. */
+  origin?: 'persisted';
 }
 
 export interface ProgressReceiptTimelineItem {

@@ -1062,6 +1062,7 @@ export function projectPersistedTimeline(
           kind: 'live-process',
           key: `history-live:${process.id}`,
           item: process,
+          origin: 'persisted',
         });
       } else {
         settled.push(process);

@@ -706,6 +706,7 @@ export class JustDoChatElement extends LitElement {
       : 'idle';
     const currentRunTiming = this.runTimings[this.runTimings.length - 1] ?? null;
     const processFoldOptions = {
+      foldUnresolvedTools: true,
       protectTrailingTurn: Boolean(
         activeTurn || isStreaming || currentRunTiming?.state === 'running',
       ),
@@ -755,6 +756,7 @@ export class JustDoChatElement extends LitElement {
         suppressTrailingAssistantFooter: activeTurnFooter !== null || isStreaming,
         foldSettledTurn:
           activeTurn?.status === 'final' && !isStreaming && currentRunTiming?.state !== 'running',
+        foldUnresolvedTools: true,
       });
       const hasVisibleInterruptedTerminal = [
         ...timelineView.persistedRows,

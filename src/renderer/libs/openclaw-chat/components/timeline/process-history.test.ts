@@ -24,6 +24,34 @@ async function inspectProcessHistory(chat: JustDoChatElement): Promise<void> {
   materializeDisclosureContents(chat.shadowRoot!);
 }
 
+test('archives historical Yield gaps in a single process disclosure with unknown, non-running indicators', async () => {
+  const chat = document.createElement('justdo-chat') as JustDoChatElement;
+  chat.messages = [
+    { role: 'user', content: 'Run the checks' },
+    { role: 'assistant', content: [
+      { type: 'thinking', thinking: 'Waiting for one check.' },
+      { type: 'toolCall', id: 'yield-one', name: 'sessions_yield' },
+    ] },
+    { role: 'toolResult', toolCallId: 'yield-one', toolName: 'sessions_yield', content: [] },
+    { role: 'assistant', content: [
+      { type: 'thinking', thinking: 'Waiting for another check.' },
+      { type: 'toolCall', id: 'yield-two', name: 'sessions_yield' },
+    ] },
+    { role: 'toolResult', toolCallId: 'yield-two', toolName: 'sessions_yield', content: [] },
+    { role: 'assistant', content: 'Both checks are available.' },
+  ];
+  document.body.append(chat);
+  await chat.updateComplete;
+  const root = chat.shadowRoot!;
+  expect(root.querySelectorAll('.completed-process')).toHaveLength(1);
+  expect(root.textContent).toContain('Both checks are available.');
+  chat.processSummariesExpanded = true;
+  await inspectProcessHistory(chat);
+  expect(root.querySelectorAll('.process-summary__tool-status--unknown')).toHaveLength(2);
+  expect(root.querySelector('.process-summary__tool-status--running')).toBeNull();
+  expect(root.textContent).toContain('Thinking × 2, Tool × 2');
+});
+
 function createChat(state: 'running' | 'completed' | 'failed' | 'aborted' = 'completed') {
   const chat = document.createElement('justdo-chat') as JustDoChatElement;
   chat.messages = [

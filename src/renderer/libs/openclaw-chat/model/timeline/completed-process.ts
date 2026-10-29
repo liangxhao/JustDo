@@ -1,8 +1,13 @@
+import { isGatewayInjectedModelRef } from '@shared/providers/modelRef';
+
 import { getTranscriptMedia } from '../../attachments';
 import { extractTextCached } from '../../pipeline/message-extract';
 import { normalizeMessage } from '../../pipeline/message-normalizer';
 import { asToolRecord, unwrapToolMessage } from '../tools/tool-message-adapter';
+import { toolOutcome } from '../tools/tool-presentation';
 import { isFailedRunMessage } from '../turn/failed-run-message';
+import { coalesceAdjacentProcessSummaries } from './coalesce-process-summaries';
+import type { ProcessSummaryTimelineItem } from './project-turn-items';
 import type {
   SourceTimelineItem,
   VisibleTimelineItem,
@@ -27,7 +32,56 @@ function assistantMessage(item: VisibleTimelineItem) {
   return message?.role === 'assistant' ? message : null;
 }
 
-function canFold(item: VisibleTimelineItem): item is SourceTimelineItem {
+function ordinaryAssistantText(item: VisibleTimelineItem): boolean {
+  if (item.kind === 'content')
+    return item.item.status === 'completed' && Boolean(item.item.text.trim());
+  const message = assistantMessage(item);
+  if (!message || item.kind !== 'history-message' || item.runState === 'running') return false;
+  const records = [asToolRecord(item.message), message].flatMap(source =>
+    source ? [source, asToolRecord(source.metadata), asToolRecord(source.__openclaw)] : [],
+  );
+  if (records.some(source => source && (
+    [source.runId, source.run_id].some(value =>
+      typeof value === 'string' && value.startsWith('announce:v1:'),
+    ) ||
+    [source.model, source.modelName].some(value =>
+      isGatewayInjectedModelRef(value) ||
+      (typeof value === 'string' && /(?:^|\/)delivery-mirror$/i.test(value.trim())),
+    ) ||
+    source.openclawDeliveryMirror !== undefined
+  ))) return false;
+  return normalizeMessage(message).content.some(block =>
+    block.type === 'text' && Boolean(block.text?.trim()),
+  );
+}
+
+function hasUnresolvedTool(item: SourceTimelineItem): boolean {
+  return item.kind === 'process-summary' && item.items.some(process =>
+    process.type === 'tool' && process.status === 'running' && toolOutcome(process) !== 'running',
+  );
+}
+
+function unresolvedToolSummary(item: VisibleTimelineItem): ProcessSummaryTimelineItem | null {
+  if (item.kind !== 'live-process' || item.origin !== 'persisted' || item.item.type !== 'tool')
+    return null;
+  const tool = item.item;
+  if (tool.status !== 'running') return null;
+  const outcome = toolOutcome(tool);
+  return {
+    kind: 'process-summary',
+    key: item.key,
+    runId: tool.runId,
+    items: [outcome === 'running'
+      ? { ...tool, presentation: { ...tool.presentation, outcome: 'unknown' } }
+      : tool],
+    thinkingCount: 0,
+    toolCount: 1,
+    errorCount: outcome === 'failed' ? 1 : 0,
+    interruptedCount: outcome === 'cancelled' || outcome === 'interrupted' ? 1 : 0,
+  };
+}
+
+function canFold(item: VisibleTimelineItem, foldUnresolvedTools = false): item is SourceTimelineItem {
   if (item.kind === 'question-presentation') return true;
   if (item.kind === 'content') {
     return (
@@ -40,7 +94,9 @@ function canFold(item: VisibleTimelineItem): item is SourceTimelineItem {
     );
   }
   if (item.kind === 'process-summary') {
-    return item.items.every(process => process.status !== 'running');
+    return item.items.every(process => process.status !== 'running' ||
+      (foldUnresolvedTools && process.type === 'tool' && toolOutcome(process) !== 'running'),
+    );
   }
   if (item.kind === 'progress-receipt') return item.item.status !== 'running';
   const compaction = compactionMarker(item);
@@ -75,6 +131,8 @@ export interface ProcessFoldOptions {
   protectTrailingTurn?: boolean;
   /** A host may retain unsupported rich content as a visible presentation boundary. */
   keepVisibleKeys?: ReadonlySet<string>;
+  /** A host may fold unresolved persisted tools without settling a Tool or run. */
+  foldUnresolvedTools?: boolean;
 }
 
 /** Presentation only: user/phase boundaries group rows without claiming a run outcome. */
@@ -112,9 +170,21 @@ export function foldCompletedProcessRows(
       return;
     }
     let prefix: VisibleTimelineRow[] = [];
+    let lastOrdinaryTextIndex = -1;
+    if (options.foldUnresolvedTools) {
+      for (let index = turn.length - 1; index >= 0; index -= 1) {
+        if (ordinaryAssistantText(turn[index].item)) {
+          lastOrdinaryTextIndex = index;
+          break;
+        }
+      }
+    }
     const flushPrefix = () => {
       if (prefix.length === 0) return;
-      const items = prefix.map(row => row.item) as SourceTimelineItem[];
+      const sourceItems = prefix.map(row => row.item) as SourceTimelineItem[];
+      const items = options.foldUnresolvedTools
+        ? coalesceAdjacentProcessSummaries(sourceItems)
+        : sourceItems;
       result.push({
         item: {
           kind: 'completed-process',
@@ -127,7 +197,17 @@ export function foldCompletedProcessRows(
       prefix = [];
     };
     turn.forEach((row, index) => {
-      if (index < finalIndex && !options.keepVisibleKeys?.has(row.item.key) && canFold(row.item)) {
+      if (
+        options.foldUnresolvedTools &&
+        index < lastOrdinaryTextIndex &&
+        !protectedProcessKeys.has(row.item.key) &&
+        !options.keepVisibleKeys?.has(row.item.key)
+      ) {
+        const summary = unresolvedToolSummary(row.item);
+        if (summary) row = { ...row, item: summary };
+      }
+      if (index < finalIndex && !options.keepVisibleKeys?.has(row.item.key) &&
+        canFold(row.item, options.foldUnresolvedTools)) {
         prefix.push(row);
       } else {
         flushPrefix();
@@ -142,7 +222,8 @@ export function foldCompletedProcessRows(
   // answer arrives, without opening other completed process groups.
   const sourceRows = rows.flatMap(row =>
     row.item.kind === 'completed-process' &&
-    row.item.items.every(item => item.kind === 'question-presentation')
+    (row.item.items.every(item => item.kind === 'question-presentation') ||
+      (options.foldUnresolvedTools && row.item.items.some(hasUnresolvedTool)))
       ? row.item.items.map((item, index) => ({
           item,
           showAvatar: index === 0 && row.showAvatar,
@@ -150,6 +231,18 @@ export function foldCompletedProcessRows(
         }))
       : [row],
   );
+  const protectedProcessKeys = new Set<string>();
+  if (options.foldUnresolvedTools && options.protectTrailingTurn) {
+    let start = 0;
+    sourceRows.forEach((row, index) => {
+      if (row.item.kind === 'phase-boundary' ||
+        (row.item.kind === 'history-message' &&
+          unwrapToolMessage(row.item.message)?.role === 'user')) start = index;
+    });
+    // System/error delivery can flush a rendering segment without ending the
+    // active human turn. Only user/phase boundaries release that protection.
+    for (const row of sourceRows.slice(start)) protectedProcessKeys.add(row.item.key);
+  }
   for (const row of sourceRows) {
     if (
       row.item.kind === 'phase-boundary' ||

@@ -79,6 +79,7 @@ function mergeProcessSummaries(
 export class PersistedTimelineRenderCache {
   private source: readonly PersistedTimelineItem[] | null = null;
   private protectTrailingTurn = false;
+  private foldUnresolvedTools = false;
   private cached: PersistedTimelineView | null = null;
   private buildRevision = 0;
 
@@ -91,7 +92,9 @@ export class PersistedTimelineRenderCache {
     options: ProcessFoldOptions = {},
   ): PersistedTimelineView {
     const protectTrailingTurn = options.protectTrailingTurn ?? false;
-    if (this.source === timeline && this.protectTrailingTurn === protectTrailingTurn && this.cached)
+    const foldUnresolvedTools = options.foldUnresolvedTools ?? false;
+    if (this.source === timeline && this.protectTrailingTurn === protectTrailingTurn &&
+      this.foldUnresolvedTools === foldUnresolvedTools && this.cached)
       return this.cached;
 
     const coalesced = coalesceAdjacentProcessSummaries(timeline);
@@ -106,6 +109,7 @@ export class PersistedTimelineRenderCache {
     const minimapTail = minimapEntries[minimapEntries.length - 1] ?? null;
     this.source = timeline;
     this.protectTrailingTurn = protectTrailingTurn;
+    this.foldUnresolvedTools = foldUnresolvedTools;
     this.cached = {
       timeline: coalesced,
       rows,
@@ -125,6 +129,7 @@ export class PersistedTimelineRenderCache {
   clear(): void {
     this.source = null;
     this.protectTrailingTurn = false;
+    this.foldUnresolvedTools = false;
     this.cached = null;
     this.buildRevision += 1;
   }
@@ -135,6 +140,7 @@ export function projectIncrementalTimelineView(params: {
   activeTimeline: readonly ActiveTurnTimelineItem[];
   suppressTrailingAssistantFooter: boolean;
   foldSettledTurn?: boolean;
+  foldUnresolvedTools?: boolean;
 }): IncrementalTimelineView {
   const { persisted, suppressTrailingAssistantFooter } = params;
   const activeTimeline = coalesceAdjacentProcessSummaries(params.activeTimeline);
@@ -168,7 +174,7 @@ export function projectIncrementalTimelineView(params: {
       ...prefix,
       ...(seamRow ? [seamRow] : []),
       ...activeRows,
-    ]);
+    ], { foldUnresolvedTools: params.foldUnresolvedTools });
     // Unfolded live rows must stay in their existing keyed render lane (for
     // example, an expanded compaction divider awaiting native history).
     const prefixRows = new Set(prefix);

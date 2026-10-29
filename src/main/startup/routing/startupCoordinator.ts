@@ -648,6 +648,9 @@ export class StartupCoordinator {
       this.commit(StartupStage.RestoreMetadata);
     }
     if (this.journal.stage === StartupStage.RestoreMetadata) {
+      // Terminal state is mutable after import; only the initial restoration
+      // verifies it. Check-stage recovery continues to verify identity alone.
+      writeStartupJson(planFile, { ...plan, verifyTerminalSnapshots: true });
       const verified = await this.verifyNativeHistoryIdentity(plan, planFile, runNative);
       writeStartupJson(path.join(this.history, 'native-verification.json'), verified);
       progress.reportActivity(AppInitializationActivity.HistoryMetadata);

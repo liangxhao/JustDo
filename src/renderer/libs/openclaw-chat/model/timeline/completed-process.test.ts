@@ -1,7 +1,8 @@
 import { describe, expect, test } from 'vitest';
 
+import { toolOutcome } from '../tools/tool-presentation';
 import { foldCompletedProcessRows } from './completed-process';
-import type { PersistedTimelineItem } from './project-history-timeline';
+import { type PersistedTimelineItem, projectPersistedTimeline } from './project-history-timeline';
 import type { ContentTimelineItem, ProcessSummaryTimelineItem, ProgressReceiptTimelineItem, QuestionPresentationTimelineItem } from './project-turn-items';
 import { prepareVisibleTimelineRows } from './timeline-avatar-state';
 
@@ -59,6 +60,171 @@ function question(key: string): QuestionPresentationTimelineItem {
 }
 
 describe('foldCompletedProcessRows', () => {
+  test.each(['blocked', 'skipped'])('preserves a native %s outcome on an outputless persisted Yield result', outcome => {
+    const timeline = projectPersistedTimeline([
+      { role: 'assistant', content: [{ type: 'toolCall', id: 'yield-negative', name: 'sessions_yield' }] },
+      {
+        role: 'toolResult', kind: 'tool', status: outcome, toolCallId: 'yield-negative',
+        toolName: 'sessions_yield', content: [],
+      },
+      { role: 'assistant', content: 'The model continued.' },
+    ]);
+    const original = timeline[0];
+    expect(original).toMatchObject({ kind: 'live-process', item: { status: 'running' } });
+    const before = structuredClone(timeline);
+    const folded = foldCompletedProcessRows(prepareVisibleTimelineRows(timeline), {
+      foldUnresolvedTools: true,
+    });
+    expect(folded.map(row => row.item.kind)).toEqual(['completed-process', 'history-message']);
+    const group = folded[0].item;
+    if (group.kind !== 'completed-process') throw new Error('Missing process disclosure');
+    const summary = group.items[0];
+    if (summary.kind !== 'process-summary') throw new Error('Missing process summary');
+    const tool = summary.items[0];
+    if (tool.type !== 'tool') throw new Error('Missing Yield tool');
+    expect(toolOutcome(tool)).toBe(outcome);
+    expect(tool.presentation?.outcome).toBe(outcome);
+    expect(tool.status).toBe('running');
+    expect(timeline).toEqual(before);
+    expect(foldCompletedProcessRows(folded, { foldUnresolvedTools: true })).toEqual(folded);
+  });
+
+  test.each(['failed', 'cancelled'])('keeps an existing %s presentation while folding an unresolved tool', outcome => {
+    const persisted: PersistedTimelineItem = {
+      kind: 'live-process', key: 'negative-result', origin: 'persisted',
+      item: {
+        ...progressReceipt('negative-result', 'running').item,
+        name: 'read', presentation: { outcome },
+      },
+    };
+    const folded = foldCompletedProcessRows(prepareVisibleTimelineRows([persisted, message('final')]), {
+      foldUnresolvedTools: true,
+    });
+    const group = folded[0].item;
+    if (group.kind !== 'completed-process') throw new Error('Missing process disclosure');
+    const summary = group.items[0];
+    if (summary.kind !== 'process-summary') throw new Error('Missing process summary');
+    expect(summary.items[0]).toBe(persisted.item);
+    expect(toolOutcome(persisted.item as Parameters<typeof toolOutcome>[0])).toBe(outcome);
+    expect(summary.errorCount).toBe(outcome === 'failed' ? 1 : 0);
+    expect(summary.interruptedCount).toBe(outcome === 'cancelled' ? 1 : 0);
+  });
+
+  test('folds missing historical Yield results into one process summary without changing their status', () => {
+    const timeline = projectPersistedTimeline([
+      { role: 'user', content: 'Run both checks' },
+      { role: 'assistant', content: [
+        { type: 'thinking', thinking: 'Checking the first worker.' },
+        { type: 'toolCall', id: 'yield-first', name: 'sessions_yield' },
+      ] },
+      { role: 'toolResult', toolCallId: 'yield-first', toolName: 'sessions_yield', content: [] },
+      { role: 'assistant', content: [
+        { type: 'thinking', thinking: 'Checking the second worker.' },
+        { type: 'toolCall', id: 'yield-second', name: 'sessions_yield' },
+      ] },
+      { role: 'toolResult', toolCallId: 'yield-second', toolName: 'sessions_yield', content: [] },
+      { role: 'assistant', content: 'Here are both checks.' },
+    ]);
+    const before = structuredClone(timeline);
+    const result = foldCompletedProcessRows(prepareVisibleTimelineRows(timeline), {
+      foldUnresolvedTools: true,
+    });
+    expect(result.map(row => row.item.kind)).toEqual([
+      'history-message', 'completed-process', 'history-message',
+    ]);
+    const group = result[1].item;
+    if (group.kind !== 'completed-process') throw new Error('Missing historical disclosure');
+    expect(group.items).toHaveLength(1);
+    const process = group.items[0];
+    expect(process).toMatchObject({ kind: 'process-summary', thinkingCount: 2, toolCount: 2 });
+    if (process.kind !== 'process-summary') throw new Error('Missing process summary');
+    expect(process.items.filter(item => item.type === 'tool')).toMatchObject([
+      { status: 'running', presentation: { outcome: 'unknown' } },
+      { status: 'running', presentation: { outcome: 'unknown' } },
+    ]);
+    expect(timeline).toEqual(before);
+    expect(foldCompletedProcessRows(result, { foldUnresolvedTools: true })).toEqual(result);
+  });
+
+  test.each(['read', 'exec'])('folds a missing %s result only for opted-in inactive history', name => {
+    const historical: PersistedTimelineItem = {
+      kind: 'live-process', key: 'missing-tool', origin: 'persisted',
+      item: { ...progressReceipt('missing-tool', 'running').item, name },
+    };
+    const rows = prepareVisibleTimelineRows([historical, message('final')]);
+    expect(foldCompletedProcessRows(rows)).toEqual(rows);
+    expect(foldCompletedProcessRows(rows, {
+      foldUnresolvedTools: true, protectTrailingTurn: true,
+    })).toEqual(rows);
+    expect(foldCompletedProcessRows(rows, {
+      foldUnresolvedTools: true, keepVisibleKeys: new Set([historical.key]),
+    })).toEqual(rows);
+    const active = { ...historical, origin: undefined };
+    const activeRows = prepareVisibleTimelineRows([active, message('final')]);
+    expect(foldCompletedProcessRows(activeRows, { foldUnresolvedTools: true })).toEqual(activeRows);
+    const folded = foldCompletedProcessRows(rows, { foldUnresolvedTools: true });
+    expect(folded.map(row => row.item.kind)).toEqual(['completed-process', 'history-message']);
+    expect(historical.item).not.toHaveProperty('presentation.outcome');
+  });
+
+  test('keeps approvals, interactive deliveries and running progress visible beside an archived historical gap', () => {
+    const historical: PersistedTimelineItem = {
+      kind: 'live-process', key: 'old-yield', origin: 'persisted',
+      item: { ...progressReceipt('old-yield', 'running').item, name: 'sessions_yield' },
+    };
+    const approval: PersistedTimelineItem = {
+      kind: 'plan-presentation', key: 'approval',
+      item: { ...progressReceipt('approval', 'running').item, name: 'present_plan' },
+    };
+    const interactive = message('interactive');
+    if (interactive.kind !== 'history-message') throw new Error('Missing interactive fixture');
+    interactive.message = { role: 'assistant', content: [{ type: 'canvas', title: 'Interactive answer' }] };
+    const progress = progressReceipt('pending-progress', 'running');
+    const rows = prepareVisibleTimelineRows([historical, approval, interactive, progress, message('final')]);
+    const folded = foldCompletedProcessRows(rows, { foldUnresolvedTools: true });
+    expect(folded.map(row => row.item.kind)).toEqual([
+      'completed-process', 'plan-presentation', 'history-message', 'progress-receipt', 'history-message',
+    ]);
+    expect(folded[1].item).toBe(approval);
+    expect(folded[2].item).toBe(interactive);
+    expect(folded[3].item).toBe(progress);
+  });
+
+  test('does not archive an active historical tool when a system error flushes its rendering segment', () => {
+    const historical: PersistedTimelineItem = {
+      kind: 'live-process', key: 'current-yield', origin: 'persisted',
+      item: { ...progressReceipt('current-yield', 'running').item, name: 'sessions_yield' },
+    };
+    const rows = prepareVisibleTimelineRows([
+      message('current request', 'user'), historical, message('Parent commentary'),
+      message('Native error detail', 'system'),
+    ]);
+    const folded = foldCompletedProcessRows(rows, {
+      protectTrailingTurn: true, foldUnresolvedTools: true,
+    });
+    expect(folded.find(row => row.item.key === historical.key)?.item).toBe(historical);
+    expect(historical.item).not.toHaveProperty('presentation.outcome');
+    expect(folded.some(row => row.item.kind === 'completed-process' &&
+      row.item.items.some(item => item.kind === 'process-summary' && item.items.some(process =>
+        process.type === 'tool' && (process.status === 'running' && process.presentation?.outcome === 'unknown'),
+      )),
+    )).toBe(false);
+  });
+
+  test.each([
+    { runId: 'announce:v1:agent:main:subagent:child' },
+    { metadata: { modelName: 'openclaw/gateway-injected' } },
+    { model: 'delivery-mirror', openclawDeliveryMirror: { kind: 'channel-final' } },
+  ])('keeps a historical wait visible when only an injected delivery follows: %o', metadata => {
+    const timeline = projectPersistedTimeline([
+      { role: 'assistant', content: [{ type: 'toolCall', id: 'waiting', name: 'sessions_yield' }] },
+      { role: 'assistant', content: 'Worker progress arrived.', ...metadata },
+    ]);
+    const rows = prepareVisibleTimelineRows(timeline);
+    expect(foldCompletedProcessRows(rows, { foldUnresolvedTools: true })).toEqual(rows);
+    expect(rows[0].item).toMatchObject({ kind: 'live-process', item: { status: 'running' } });
+  });
+
   test.each(['cancelled', 'interrupted', 'failed'] as const)(
     'keeps a %s unanswered question folded without hiding another running tool or requiring final text',
     status => {

@@ -26,6 +26,18 @@ const tool = (id: string, overrides: Partial<ToolItem> = {}): ToolItem => ({
   ...overrides,
 });
 describe('native tool presentation', () => {
+  test('shows the existing unknown outcome without settling the underlying tool', () => {
+    const unresolved = tool('missing', {
+      status: 'running', output: undefined,
+      presentation: { outcome: 'unknown' },
+    });
+    expect(toolOutcome(unresolved)).toBe('unknown');
+    expect(unresolved.status).toBe('running');
+    expect(toolOutcome({ ...unresolved, status: 'completed', output: 'done', presentation: {} })).toBe('completed');
+    expect(toolOutcome({ ...unresolved, presentation: { outcome: 'unknown', exitCode: 1 } })).toBe('failed');
+    expect(readToolPresentation({ kind: 'tool', status: 'unknown' })).toMatchObject({ outcome: 'unknown' });
+  });
+
   test('recovers the same question result from live details and native history text without details', () => {
     const questionResult = {
       version: 1,
