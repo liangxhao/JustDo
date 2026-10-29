@@ -10,6 +10,7 @@ import {
   type CollaborationDependencies,
 } from '../../../cowork/agent-team/collaborationCoordinator';
 import { CollaborationStore } from '../../../data/agent-team/collaborationStore';
+import type { GatewayEventFrame } from '../../../engine/gateway/types';
 
 export function registerCollaborationHandlers(
   deps: CollaborationDependencies,
@@ -74,12 +75,12 @@ export function registerCollaborationHandlers(
   return Object.assign(
     () => {
       const coordinator = get();
-      deps.getRuntime()?.on('gatewayEvent', event => {
+      deps.getRuntime()?.on('gatewayEvent', (event: GatewayEventFrame) => {
         if (event.event === 'agent') coordinator.observeExecution(event.payload);
         if (event.event === CollaborationGateway.Requested)
           void coordinator.handle(event.payload).catch((): void => undefined);
       });
-      deps.getRouter().on('sessionStopped', sessionId => {
+      deps.getRouter().on('sessionStopped', (sessionId: string) => {
         void coordinator.stop(sessionId).catch((): void => undefined);
       });
     },
