@@ -25,6 +25,8 @@ describe.runIf(process.platform === 'win32' && existsSync(compiler)
     try {
       const definitions = require('../../scripts/packaging/installer-animation-script.cjs')
         .prepareInstallerAnimationScript(repoRoot);
+      const hero = require('../../scripts/packaging/installer-animation-assets.cjs')
+        .ANIMATION_CONTRACT.scales.find((scale: { percent: number }) => scale.percent === 100);
       const clock = require('../../scripts/packaging/installer-clock-assets.cjs')
         .prepareInstallerClockAssets(repoRoot);
       const productName = require('../../package.json').productName;
@@ -161,7 +163,7 @@ describe.runIf(process.platform === 'win32' && existsSync(compiler)
         '  Pop $5', '  Pop $4', '  Pop $3', '  Pop $2', '  Pop $1', '  Pop $0', 'FunctionEnd',
         'Function FixtureProgressShow', '  Call InstallerPresentationShow',
         '  Push $0', `  FileOpen $0 "${literal('state.txt')}" w`,
-        '  FileWrite $0 "progress|1|$JustDoInstFilesPage|$InstallerScene|$InstallerTitle|$InstallerSubtitle|$InstallerSceneHeight|$InstallerCompactLayout"',
+        '  FileWrite $0 "progress|1|$JustDoInstFilesPage|$InstallerScene|$InstallerTitle|$InstallerSubtitle|$InstallerSceneHeight|$InstallerCompactLayout|$JustDoInstallLog"',
         '  FileClose $0', '  Pop $0', 'FunctionEnd',
         'Function .onInstSuccess', '  Call InstallerPresentationCloseMotion', 'FunctionEnd',
         'Function .onGUIEnd', '  Call InstallerPresentationDestroy', '  Call InstallerSetupDestroy', '  Push $0',
@@ -186,6 +188,7 @@ describe.runIf(process.platform === 'win32' && existsSync(compiler)
         '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
         path.join(repoRoot, 'scripts/fixtures/nsis-setup-presentation-probe.ps1'),
         '-Executable', path.join(root, 'wizard.exe'), '-FixtureRoot', root, '-PreviewRoot', buildRoot,
+        '-HeroWidth', String(hero.width), '-HeroHeight', String(hero.height),
       ], { encoding: 'utf8', windowsHide: true, timeout: 65_000 });
       expect(checked.status, `${checked.stdout}\n${checked.stderr}`).toBe(0);
       expect(checked.stdout).toContain('setup presentation checks passed');

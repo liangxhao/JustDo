@@ -75,9 +75,9 @@ Var InstallerSetupBrowseControl
   SetCtlColors ${_CONTROL} "475569" "${INSTALLER_BACKGROUND}"
 !macroend
 
-; Choice cards are passive decoration behind the real auto-radio controls.
+; Cards are passive decoration behind native fields and auto-radio controls.
 ; No group/tab style, command handler or selection state belongs to the card.
-!macro InstallerSetupChoiceCard _CONTROL _ID _TOP _HEIGHT
+!macro InstallerSetupCard _CONTROL _ID _TOP _HEIGHT _COLOR
   Push $0
   Push $1
   Push $2
@@ -88,7 +88,7 @@ Var InstallerSetupBrowseControl
   Push $7
   Push $8
   Push $9
-  !insertmacro InstallerSetupScale $0 28
+  !insertmacro InstallerSetupScale $0 24
   !insertmacro InstallerSetupScale $1 ${_TOP}
   IntOp $2 $0 * 2
   IntOp $2 $InstallerSetupWidth - $2
@@ -98,7 +98,7 @@ Var InstallerSetupBrowseControl
     System::Call 'user32::CreateWindowExW(i 0, w "STATIC", w "", i 0x54000000, i r0, i r1, i r2, i r3, p $InstallerSetupPage, p ${_ID}, p 0, p 0)p.r4'
   ${EndIf}
   ${If} $4 != 0
-    SetCtlColors $4 "F3F4F8" "F3F4F8"
+    SetCtlColors $4 "${_COLOR}" "${_COLOR}"
     !insertmacro InstallerSetupScale $5 14
     IntOp $6 $2 + 1
     IntOp $7 $3 + 1
@@ -109,10 +109,10 @@ Var InstallerSetupBrowseControl
         System::Call 'gdi32::DeleteObject(p r8)i.r9'
       ${EndIf}
     ${EndIf}
-    ; Keep the radio's native HWND and its existing group order above this
+    ; Keep the field's native HWND and its existing group order above this
     ; non-interactive surface. Windows owns a successfully assigned region.
     System::Call 'user32::SetWindowPos(p r4, p 1, i r0, i r1, i r2, i r3, i 0x0010)i.r9'
-    SetCtlColors ${_CONTROL} "475569" "F3F4F8"
+    SetCtlColors ${_CONTROL} "475569" "${_COLOR}"
   ${EndIf}
   Pop $9
   Pop $8
@@ -249,7 +249,7 @@ Function InstallerSetupPrepare
   SetCtlColors $InstallerSetupPage "23232A" "${INSTALLER_BACKGROUND}"
   StrCpy $InstallerSetupCompact "0"
   StrCpy $InstallerSetupMinimal "0"
-  !insertmacro InstallerSetupScale $0 440
+  !insertmacro InstallerSetupScale $0 380
   ${If} $InstallerSetupPageHeight < $0
     StrCpy $InstallerSetupCompact "1"
   ${EndIf}
@@ -273,8 +273,8 @@ Function InstallerSetupPrepare
     ${EndIf}
     Goto InstallerSetupHideChrome
   ${EndIf}
-  !insertmacro InstallerSetupScale $0 28
-  !insertmacro InstallerSetupScale $1 28
+  !insertmacro InstallerSetupScale $0 24
+  !insertmacro InstallerSetupScale $1 20
   !insertmacro InstallerSetupScale $2 64
   ${If} $InstallerSetupCompact == "1"
     !insertmacro InstallerSetupScale $1 20
@@ -296,13 +296,15 @@ Function InstallerSetupPrepare
     System::Call 'user32::LoadImageW(p 0, w "$PLUGINSDIR\setup-brand.bmp", i 0, i r2, i r2, i 0x2010)p.s'
     Pop $InstallerSetupBitmap
     SendMessage $InstallerSetupLogo 0x0172 0 $InstallerSetupBitmap
-    !insertmacro InstallerSetupScale $3 20
+    !insertmacro InstallerSetupScale $3 16
     IntOp $0 $0 + $2
     IntOp $0 $0 + $3
+    !insertmacro InstallerSetupScale $3 2
+    IntOp $1 $1 + $3
   ${Else}
     !insertmacro InstallerSetupScale $1 14
   ${EndIf}
-  !insertmacro InstallerSetupScale $2 28
+  !insertmacro InstallerSetupScale $2 24
   IntOp $2 $InstallerSetupWidth - $2
   IntOp $2 $2 - $0
   !insertmacro InstallerSetupScale $3 36
@@ -330,7 +332,7 @@ Function InstallerSetupPrepare
   IntOp $1 $InstallerSetupHeight - $0
   !insertmacro InstallerSetupScale $2 112
   !insertmacro InstallerSetupScale $3 36
-  !insertmacro InstallerSetupScale $4 28
+  !insertmacro InstallerSetupScale $4 24
   !insertmacro InstallerSetupScale $5 12
   IntOp $6 $4 + $5
   IntOp $6 $6 * 2
@@ -365,14 +367,14 @@ Function InstallerSetupModeShow
   !insertmacro InstallerSetupSave
   StrCpy $InstallerSetupPage $MultiUser.InstallModePage
   Call InstallerSetupPrepare
-  !insertmacro InstallerSetupScale $0 28
+  !insertmacro InstallerSetupScale $0 24
   IntOp $2 $0 * 2
   IntOp $2 $InstallerSetupWidth - $2
-  !insertmacro InstallerSetupScale $1 148
-  !insertmacro InstallerSetupScale $3 40
-  !insertmacro InstallerSetupScale $4 208
-  !insertmacro InstallerSetupScale $5 272
-  !insertmacro InstallerSetupScale $6 352
+  !insertmacro InstallerSetupScale $1 104
+  !insertmacro InstallerSetupScale $3 28
+  !insertmacro InstallerSetupScale $4 152
+  !insertmacro InstallerSetupScale $5 216
+  !insertmacro InstallerSetupScale $6 296
   ${If} $InstallerSetupCompact == "1"
     !insertmacro InstallerSetupScale $1 112
     !insertmacro InstallerSetupScale $4 168
@@ -406,6 +408,9 @@ Function InstallerSetupModeShow
     !insertmacro InstallerSetupMove $MultiUser.InstallModePage.Text $0 $1 $2 $3
     !insertmacro InstallerSetupFont $MultiUser.InstallModePage.Text
   ${EndIf}
+  ${If} $InstallerSetupMinimal != "1"
+    !insertmacro InstallerSetupScale $3 36
+  ${EndIf}
   StrCpy $7 $0
   StrCpy $8 $2
   ${If} $InstallerSetupMinimal != "1"
@@ -422,13 +427,24 @@ Function InstallerSetupModeShow
   IntOp $1 $InstallerSetupPageHeight - $1
   IntOp $1 $1 - $6
   !insertmacro InstallerSetupScale $3 90
+  ${If} $InstallerSetupCompact != "1"
+    !insertmacro InstallerSetupScale $3 60
+  ${EndIf}
   ${If} $1 > $3
     StrCpy $1 $3
   ${EndIf}
   ${If} $1 < 0
     StrCpy $1 0
   ${EndIf}
-  !insertmacro InstallerSetupMove $RadioButtonLabel1 $0 $6 $2 $1
+  StrCpy $7 $0
+  StrCpy $8 $2
+  ${If} $InstallerSetupCompact != "1"
+    !insertmacro InstallerSetupScale $9 12
+    IntOp $7 $7 + $9
+    IntOp $8 $8 - $9
+    IntOp $8 $8 - $9
+  ${EndIf}
+  !insertmacro InstallerSetupMove $RadioButtonLabel1 $7 $6 $8 $1
   !insertmacro InstallerSetupFont $RadioButtonLabel1
   !insertmacro InstallerSetupScale $3 32
   ${If} $1 < $3
@@ -436,11 +452,12 @@ Function InstallerSetupModeShow
   ${EndIf}
   ${If} $InstallerSetupMinimal != "1"
     ${If} $InstallerSetupCompact == "1"
-      !insertmacro InstallerSetupChoiceCard $MultiUser.InstallModePage.CurrentUser 12352 164 44
-      !insertmacro InstallerSetupChoiceCard $MultiUser.InstallModePage.AllUsers 12353 212 44
+      !insertmacro InstallerSetupCard $MultiUser.InstallModePage.CurrentUser 12352 164 44 "F3F4F8"
+      !insertmacro InstallerSetupCard $MultiUser.InstallModePage.AllUsers 12353 212 44 "F3F4F8"
     ${Else}
-      !insertmacro InstallerSetupChoiceCard $MultiUser.InstallModePage.CurrentUser 12352 200 56
-      !insertmacro InstallerSetupChoiceCard $MultiUser.InstallModePage.AllUsers 12353 264 56
+      !insertmacro InstallerSetupCard $MultiUser.InstallModePage.CurrentUser 12352 144 52 "F3F4F8"
+      !insertmacro InstallerSetupCard $MultiUser.InstallModePage.AllUsers 12353 208 52 "F3F4F8"
+      !insertmacro InstallerSetupCard $RadioButtonLabel1 12354 284 84 "EEF1F8"
     ${EndIf}
   ${EndIf}
   ; Restore the native mode-change presentation after returning from a skinned
@@ -463,11 +480,11 @@ Function InstallerSetupDirectoryShow
   !insertmacro InstallerSetupSave
   StrCpy $InstallerSetupPage $mui.DirectoryPage
   Call InstallerSetupPrepare
-  !insertmacro InstallerSetupScale $0 28
+  !insertmacro InstallerSetupScale $0 24
   IntOp $2 $0 * 2
   IntOp $2 $InstallerSetupWidth - $2
-  !insertmacro InstallerSetupScale $1 148
-  !insertmacro InstallerSetupScale $3 56
+  !insertmacro InstallerSetupScale $1 104
+  !insertmacro InstallerSetupScale $3 48
   ${If} $InstallerSetupCompact == "1"
     !insertmacro InstallerSetupScale $1 112
     !insertmacro InstallerSetupScale $3 48
@@ -479,7 +496,7 @@ Function InstallerSetupDirectoryShow
   ${EndIf}
   ShowWindow $mui.DirectoryPage.DirectoryBox 0
   System::Call 'user32::GetWindowTextW(p $mui.DirectoryPage.DirectoryBox, w .r4, i ${NSIS_MAX_STRLEN})i.r9'
-  !insertmacro InstallerSetupScale $1 224
+  !insertmacro InstallerSetupScale $1 168
   ${If} $InstallerSetupCompact == "1"
     !insertmacro InstallerSetupScale $1 184
   ${EndIf}
@@ -497,7 +514,7 @@ Function InstallerSetupDirectoryShow
   Pop $InstallerSetupFieldLabel
   !insertmacro InstallerSetupFont $InstallerSetupFieldLabel
   !insertmacro InstallerSetupScale $3 36
-  !insertmacro InstallerSetupScale $4 36
+  !insertmacro InstallerSetupScale $4 32
   IntOp $1 $1 + $4
   !insertmacro InstallerSetupScale $4 92
   ${If} $InstallerSetupPageHeight < $4
@@ -535,7 +552,7 @@ Function InstallerSetupDirectoryShow
   !insertmacro InstallerSetupFont $mui.DirectoryPage.BrowseButton
   StrCpy $InstallerSetupBrowseControl $mui.DirectoryPage.BrowseButton
   !insertmacro InstallerPaintButton $mui.DirectoryPage.BrowseButton $InstallerSetupBodyFont $InstallerSetupDpi "${INSTALLER_BUTTON_SECONDARY}" $InstallerSetupBrowseImage
-  !insertmacro InstallerSetupScale $4 24
+  !insertmacro InstallerSetupScale $4 20
   IntOp $1 $1 + $3
   IntOp $1 $1 + $4
   !insertmacro InstallerSetupScale $3 22

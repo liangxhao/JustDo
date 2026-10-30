@@ -14,9 +14,9 @@ const ANIMATION_CONTRACT = Object.freeze({
   lastFrame: 227,
   background: Object.freeze([251, 251, 253]),
   scales: Object.freeze([
-    Object.freeze({ percent: 100, width: 224, height: 180, logoSize: 64 }),
-    Object.freeze({ percent: 150, width: 336, height: 270, logoSize: 96 }),
-    Object.freeze({ percent: 200, width: 448, height: 360, logoSize: 128 }),
+    Object.freeze({ percent: 100, width: 180, height: 144, logoSize: 64 }),
+    Object.freeze({ percent: 150, width: 270, height: 216, logoSize: 96 }),
+    Object.freeze({ percent: 200, width: 360, height: 288, logoSize: 128 }),
   ]),
 });
 

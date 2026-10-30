@@ -114,9 +114,9 @@ Function InstallerWindowPrepare
   System::Call '*$R5(i, i, i .r2, i .r3)'
   IntOp $R0 $R0 - $2
   IntOp $R1 $R1 - $3
-  IntOp $InstallerWidth 680 * $InstallerDpi
+  IntOp $InstallerWidth 600 * $InstallerDpi
   IntOp $InstallerWidth $InstallerWidth / 96
-  IntOp $InstallerHeight 540 * $InstallerDpi
+  IntOp $InstallerHeight 460 * $InstallerDpi
   IntOp $InstallerHeight $InstallerHeight / 96
   IntOp $6 32 * $InstallerDpi
   IntOp $6 $6 / 96

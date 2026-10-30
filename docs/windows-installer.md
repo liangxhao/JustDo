@@ -53,14 +53,16 @@ fields without relying on a later incidental repaint. The setup layout uses the 
 area and DPI; short work areas reduce headings and secondary explanation before
 the essential fields and navigation controls.
 
-`nsis-presentation-window.nsh` owns a shared 680 × 540 logical-pixel client canvas
+`nsis-presentation-window.nsh` owns a shared 600 × 460 logical-pixel client canvas
 for all assisted pages, clamped to the monitor work area. Setup centers only the
 first page; later pages read the real window rectangle and preserve the user's
 dragged position. A move to a smaller work area may clamp its edges without
 re-centering. An elevated inner instance reads the outer HWND through the existing
 UAC helper and uses that window's monitor, DPI and position when available. Each
 page owns a one-physical-pixel separator below the native caption. It remains
-visible when nsDialogs raises a new child page.
+visible when nsDialogs raises a new child page. Compact scope choices and a
+separate muted information card group the setup fields without a large empty
+lower panel. The directory page uses the same margins and compact header.
 
 `nsis-install-presentation.nsh` owns the presentation. A native `SysAnimate32`
 control plays a packaged RLE8 AVI independently of the NSIS install worker, so
@@ -69,8 +71,17 @@ started and is not conditional on Windows' animation preference. No browser,
 Electron process, network request, external font or user-data initialization is
 needed. If the native player cannot open the clip, setup displays its packaged
 bitmap and continues normally. Details use the native install log and open below
-the phase explanation, above the three steps. The layout reserves a readable
-log area without covering the illustration, title, progress or elapsed time.
+the phase explanation, above a separate footer. The three steps are centered
+rounded capsules anchored near the bottom edge: muted when pending, indigo while
+active, green when complete and rose for a failed write. They are passive native
+text controls, outside the log and action row. During installation, the expanded
+log uses the idle action-row space and ends just above the footer, displaying at
+least five complete rows at normal scale. Only completion or failure shortens it
+to three rows before showing the result buttons. The same native list and its
+expanded/hidden state are retained; resizing rebuilds its round region so old
+bounds cannot clip new rows. The illustration, title, progress and elapsed time
+remain visible. The details link keeps its original native parent and command;
+short work areas reduce its width beside result buttons rather than overlap.
 Its single native column fills the available width without gridlines or a
 horizontal scrollbar. A muted slate text color, soft background and an owned
 empty image list provide a small left inset and comfortable row spacing. Log
@@ -90,7 +101,8 @@ button state. It copies the localized captions and does not enter the script VM.
 Worker polling remains a fallback if
 Windows cannot start the native clock. Time is measured, not estimated progress.
 
-The caption blends into the light canvas, retaining native caption dragging,
+The caption uses a visibly distinct cool gray-blue (`#E6E9F2`) on supported DWM
+versions, above the near-white (`#FBFBFD`) content, retaining native caption dragging,
 the system menu and a single Close affordance. Supported Windows versions add
 rounded corners and suppress the border. `nsis-presentation-controls.nsh` paints
 rounded button images with Windows' built-in GDI+, retaining the real BUTTON
@@ -124,7 +136,9 @@ An earlier lock-check dialog that directly calls `Quit` retains that immediate
 exit; it does not re-enter the GUI script from the install worker for an effect.
 
 `installer-animation-assets.cjs` generates the AVI and bitmap at build time from
-`resources/icons/png/128x128.png`, at 100%, 150% and 200% scales. Inputs and output
+`resources/icons/png/128x128.png`, at 100%, 150% and 200% scales. The compact movies
+are 180 × 144, 270 × 216 and 360 × 288 pixels; the complete mark and orbit are
+rendered at each size rather than cropping the larger illustration. Inputs and output
 hashes bind the cache under `build/installer/<fingerprint>/`; generated files are
 not committed. The script uses Node's built-ins and adds no runtime download.
 The native clock is shipped as a checked-in x86 DLL and manifest under
@@ -145,7 +159,9 @@ The generated set also includes square 64/96/128-pixel setup logos. Cache eviden
 verifies all nine AVI/bitmap/logo outputs. The installer chooses an animation whose
 full pixel dimensions fit the scene; it does not crop a larger DPI variant just
 to fill the illustration. The normal layout reserves the full orbit canvas and a
-scrollable details area below the status. It clamps its window to the current
+scrollable details area below the status, with five native log rows while working
+and three when terminal controls need the action row, at normal
+scale. It clamps its window to the current
 monitor's work area and frees its owned fonts, bitmap and player on close. Short
 work areas reduce the illustration space; exceptionally short areas hide the
 hero and retain the status, details and closing controls.

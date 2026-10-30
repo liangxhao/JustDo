@@ -1,6 +1,8 @@
 ﻿param([Parameter(Mandatory=$true)][string]$Executable,
       [Parameter(Mandatory=$true)][string]$FixtureRoot,
-      [Parameter(Mandatory=$true)][string]$PreviewRoot)
+      [Parameter(Mandatory=$true)][string]$PreviewRoot,
+      [Parameter(Mandatory=$true)][int]$HeroWidth,
+      [Parameter(Mandatory=$true)][int]$HeroHeight)
 
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Drawing
@@ -12,6 +14,7 @@ using System.Runtime.InteropServices;
 using System.Threading;
 public class InstallerSetupProbe {
   public static string DebugImagePath, LastRegion;
+  public static int HeroWidth, HeroHeight;
   public delegate bool EnumProc(IntPtr window, IntPtr parameter);
   [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc callback, IntPtr parameter);
   [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr window, out uint pid);
@@ -19,6 +22,7 @@ public class InstallerSetupProbe {
   [DllImport("user32.dll", EntryPoint="SendMessageW", CharSet=CharSet.Unicode)] public static extern IntPtr ReadText(IntPtr window, uint message, IntPtr w, StringBuilder text);
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr window, out Rect rect);
   [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr window, out Rect rect);
+  [DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr window, ref Point point);
   [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr window, IntPtr after, int x, int y, int width, int height, uint flags);
   [DllImport("user32.dll")] public static extern IntPtr MonitorFromWindow(IntPtr window, uint flags);
   [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern bool GetMonitorInfo(IntPtr monitor, ref MonitorInfo info);
@@ -30,6 +34,7 @@ public class InstallerSetupProbe {
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr window);
   [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
   [DllImport("dwmapi.dll")] public static extern int DwmFlush();
+  [DllImport("dwmapi.dll")] public static extern int DwmGetWindowAttribute(IntPtr window, int attribute, out uint value, int size);
   [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr window, int index);
   [DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr window);
   [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr window, uint message, IntPtr w, IntPtr l);
@@ -74,7 +79,32 @@ public class InstallerSetupProbe {
   }
   public static bool HasModernWidth(IntPtr window) {
     Rect client;if(!GetClientRect(window,out client))return false;
-    return client.Right>=Math.Min(620,620*(int)GetDpiForWindow(window)/96);
+    return client.Right>=Math.Min(560,560*(int)GetDpiForWindow(window)/96);
+  }
+  public static bool HasCompactCanvas(IntPtr window) {
+    Rect client;if(!GetClientRect(window,out client))return false;
+    int dpi=(int)GetDpiForWindow(window);
+    return client.Right<=600*dpi/96+1 && client.Bottom<=460*dpi/96+1;
+  }
+  public static bool TintedCaption(IntPtr window) {
+    uint color;
+    if(DwmGetWindowAttribute(window,35,out color,4)!=0)return true;
+    if(color!=0xF2E9E6){LastRegion="caption attribute="+color.ToString("X");return false;}
+    Rect outer;var origin=new Point(0,0);
+    if(!GetWindowRect(window,out outer) || !ClientToScreen(window,ref origin))return false;
+    int captionHeight=origin.Y-outer.Top;
+    if(captionHeight<4)return false;
+    using(var bitmap=new Bitmap(outer.Right-outer.Left,outer.Bottom-outer.Top))
+    using(var graphics=Graphics.FromImage(bitmap)) {
+      var dc=graphics.GetHdc();try{if(!PrintWindow(window,dc,2))return false;}finally{graphics.ReleaseHdc(dc);}
+      int y=captionHeight/2;
+      foreach(int fraction in new int[]{1,2,3}) {
+        var pixel=bitmap.GetPixel(bitmap.Width*fraction/4,y);
+        LastRegion="caption pixel="+pixel.R+","+pixel.G+","+pixel.B;
+        if(Math.Abs(pixel.R-230)>8 || Math.Abs(pixel.G-233)>8 || Math.Abs(pixel.B-242)>8)return false;
+      }
+      return true;
+    }
   }
   public static bool HasVisibleArea(IntPtr window) {
     Rect rect;return IsWindowVisible(window) && GetWindowRect(window,out rect) && rect.Right>rect.Left && rect.Bottom>rect.Top;
@@ -153,14 +183,21 @@ public class InstallerSetupProbe {
     if(!Inside(page,scene) || !Inside(page,title) || !Inside(page,subtitle)
       || !GetWindowRect(scene,out hero) || !GetWindowRect(title,out heading) || !GetWindowRect(subtitle,out subheading))return false;
     int width=hero.Right-hero.Left,height=hero.Bottom-hero.Top;
-    return width>=224 && height>=180 && heading.Top>=hero.Bottom+4 && subheading.Top>=heading.Bottom;
+    return width>=HeroWidth && height>=HeroHeight && heading.Top>=hero.Bottom+4 && subheading.Top>=heading.Bottom;
+  }
+  public static bool LogShowsTwoRows(IntPtr page,IntPtr log) {
+    Rect client;if(!Inside(page,log) || !GetClientRect(log,out client))return false;
+    int minimum=48*(int)GetDpiForWindow(log)/96;
+    int rows=SendMessage(log,0x1028,IntPtr.Zero,IntPtr.Zero).ToInt32();
+    LastRegion="log client="+client.Right+"x"+client.Bottom+" rows="+rows+" minimum height="+minimum;
+    return client.Bottom>=minimum && rows>=2;
   }
   public static bool PaintedLowerOrbit(IntPtr window,IntPtr scene) {
     Rect outer,hero;if(!GetWindowRect(window,out outer) || !GetWindowRect(scene,out hero))return false;
     int width=hero.Right-hero.Left,height=hero.Bottom-hero.Top;
     int dpi=(int)GetDpiForWindow(window);
-    int percent=dpi>=168 && width>=448 && height>=360?200:(dpi>=120 && width>=336 && height>=270?150:100);
-    int clipWidth=224*percent/100,clipHeight=180*percent/100;
+    int percent=dpi>=168 && width>=HeroWidth*2 && height>=HeroHeight*2?200:(dpi>=120 && width>=HeroWidth*3/2 && height>=HeroHeight*3/2?150:100);
+    int clipWidth=HeroWidth*percent/100,clipHeight=HeroHeight*percent/100;
     int left=hero.Left-outer.Left+(width-clipWidth)/2,top=hero.Top-outer.Top+(height-clipHeight)/2;
     using(var bitmap=new Bitmap(outer.Right-outer.Left,outer.Bottom-outer.Top))
     using(var graphics=Graphics.FromImage(bitmap)) {
@@ -220,6 +257,8 @@ public class InstallerSetupProbe {
 }
 '@
 [InstallerSetupProbe]::DebugImagePath=Join-Path $PreviewRoot 'installer-setup-empty-region.png'
+[InstallerSetupProbe]::HeroWidth=$HeroWidth
+[InstallerSetupProbe]::HeroHeight=$HeroHeight
 
 function Assert-Condition([bool]$condition,[string]$message) {
   if (!$condition) { throw $message }
@@ -284,6 +323,9 @@ function Assert-Footer([IntPtr]$window) {
   $cancel=[InstallerSetupProbe]::GetDlgItem($window,2)
   $back=[InstallerSetupProbe]::GetDlgItem($window,3)
   Assert-Condition ([InstallerSetupProbe]::FitsWorkArea($window)) 'Setup extends outside the actual monitor work area.'
+  if ($case -ne 'short') {
+    Assert-Condition ([InstallerSetupProbe]::HasCompactCanvas($window)) 'Setup grew beyond its compact 600 by 460 logical-pixel canvas.'
+  }
   Assert-Condition ([InstallerSetupProbe]::Inside($window,$next) -and [InstallerSetupProbe]::Inside($window,$cancel)) 'Next or Cancel is clipped.'
   Assert-Condition ([InstallerSetupProbe]::ColumnsSeparate($next,$cancel)) 'Next and Cancel overlap.'
   if ([InstallerSetupProbe]::IsWindowVisible($back)) {
@@ -291,6 +333,7 @@ function Assert-Footer([IntPtr]$window) {
   }
 }
 function Assert-Heading([IntPtr]$page,[int]$offset) {
+  Assert-Condition ([InstallerSetupProbe]::TintedCaption($window)) ('The native caption did not receive its distinct blue-gray background: ' + [InstallerSetupProbe]::LastRegion)
   Assert-Condition ([InstallerSetupProbe]::CaptionDivider($window,$page)) 'The light caption is not separated from the page by a painted full-width hairline.'
   if ($case -ne 'short') {
     foreach ($index in @($offset,($offset+1),($offset+2))) {
@@ -418,6 +461,10 @@ foreach ($case in @('fresh','upgrade','short','silent')) {
     $reset=([IO.File]::ReadAllText((Join-Path $FixtureRoot 'reset.txt'))) -split '\|'
     Assert-Condition ($reset.Count -eq 17 -and @($reset[0..14] | Where-Object { $_ -ne '0' }).Count -eq 0 -and $reset[15] -eq $reset[16]) 'Setup kept owned resources, navigation images or its font when entering progress.'
     Wait-For { (Test-Path -LiteralPath (Join-Path $FixtureRoot 'finished.txt')) -and [InstallerSetupProbe]::IsWindowEnabled([InstallerSetupProbe]::GetDlgItem($window,1)) } 'The harmless fixture install section did not finish.'
+    Assert-Condition ([InstallerSetupProbe]::TintedCaption($window)) ('The installation page lost the tinted native caption: ' + [InstallerSetupProbe]::LastRegion)
+    if ($case -ne 'short') {
+      Assert-Condition ([InstallerSetupProbe]::HasCompactCanvas($window)) 'The installation page grew beyond the compact wizard canvas.'
+    }
     $nativeBack=[InstallerSetupProbe]::GetDlgItem($window,3)
     Assert-Condition ($nativeBack -ne [IntPtr]::Zero -and ![InstallerSetupProbe]::HasVisibleArea($nativeBack) -and ![InstallerSetupProbe]::IsWindowEnabled($nativeBack)) 'The completed installation page exposed a legacy Back button or changed its native disabled state.'
     if ($case -eq 'fresh') {
@@ -429,6 +476,11 @@ foreach ($case in @('fresh','upgrade','short','silent')) {
       [void][InstallerSetupProbe]::SendMessage($scene,0x465,[IntPtr]1,[IntPtr]0x00540054)
       Wait-For { [InstallerSetupProbe]::PaintedLowerOrbit($window,$scene) } ('The lower blue orbit was not painted in the native player: ' + [InstallerSetupProbe]::LastRegion)
       [InstallerSetupProbe]::SaveWindow($window,(Join-Path $PreviewRoot 'installer-setup-orbit-frame.png'))
+      $log=[IntPtr][long]$pageState[8]
+      $details=[InstallerSetupProbe]::GetDlgItem($progressPage,1027)
+      [void][InstallerSetupProbe]::PostMessage($details,0xF5,[IntPtr]::Zero,[IntPtr]::Zero)
+      Wait-For { [InstallerSetupProbe]::IsWindowVisible($log) } 'Native details did not open in the compact installer.'
+      Assert-Condition ([InstallerSetupProbe]::LogShowsTwoRows($progressPage,$log)) ('The compact installer no longer shows two complete native log rows: ' + [InstallerSetupProbe]::LastRegion)
     }
     $installed=[IO.File]::ReadAllText((Join-Path $FixtureRoot 'finished.txt'),[Text.Encoding]::Unicode)
     $expected=if($case -eq 'upgrade'){Join-Path $FixtureRoot '已安装 软件'}else{Join-Path $FixtureRoot 'selected location'}

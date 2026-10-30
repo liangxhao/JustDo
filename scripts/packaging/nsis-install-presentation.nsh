@@ -7,6 +7,10 @@
 !define INSTALLER_ACM_STOP 0x0466
 !define INSTALLER_WM_SETFONT 0x0030
 !define INSTALLER_BACKGROUND "FBFBFD"
+!define INSTALLER_STEP_PENDING_BG "F0F2F7"
+!define INSTALLER_STEP_ACTIVE_BG "EBEDFF"
+!define INSTALLER_STEP_DONE_BG "EAF5EE"
+!define INSTALLER_STEP_FAILED_BG "FFF0F1"
 
 !include "${PROJECT_DIR}\scripts\packaging\nsis-presentation-controls.nsh"
 
@@ -29,6 +33,8 @@ Var InstallerNextButtonImage
 Var InstallerCancelButtonImage
 Var InstallerDetailsButtonImage
 Var InstallerLogSpacingImages
+Var InstallerLogLayoutTop
+Var InstallerLogLayoutHeight
 Var InstallerDpi
 Var InstallerWidth
 Var InstallerHeight
@@ -73,6 +79,34 @@ Var InstallerClockActive
   SetCtlColors ${_HANDLE} "74747E" "${INSTALLER_BACKGROUND}"
 !macroend
 
+; Passive footer capsules retain their accessible native text. The window owns
+; an assigned round region; no bitmap, interaction state or extra font is owned.
+!macro InstallerCreateFooterStep _HANDLE _X _Y _WIDTH _HEIGHT
+  Push $R6
+  Push $R7
+  Push $R8
+  Push $R9
+  System::Call 'user32::CreateWindowExW(i 0, w "STATIC", w "", i 0x54004281, i ${_X}, i ${_Y}, i ${_WIDTH}, i ${_HEIGHT}, p $HWNDPARENT, p 0, p 0, p 0)p.s'
+  Pop ${_HANDLE}
+  SendMessage ${_HANDLE} ${INSTALLER_WM_SETFONT} $InstallerBaseFont 0
+  IntOp $R7 ${_WIDTH} + 1
+  IntOp $R8 ${_HEIGHT} + 1
+  System::Call 'gdi32::CreateRoundRectRgn(i 0, i 0, i $R7, i $R8, i ${_HEIGHT}, i ${_HEIGHT})p.s'
+  Pop $R6
+  ${If} $R6 != 0
+    System::Call 'user32::SetWindowRgn(p ${_HANDLE}, p $R6, i 0)i.s'
+    Pop $R9
+    ${If} $R9 == 0
+      System::Call 'gdi32::DeleteObject(p $R6)i.s'
+      Pop $R9
+    ${EndIf}
+  ${EndIf}
+  Pop $R9
+  Pop $R8
+  Pop $R7
+  Pop $R6
+!macroend
+
 ; These macros are also consumed by the independent shell-extraction helper.
 ; They run only on the install section's worker; no script timer re-enters NSIS.
 ; The separate native clock also advances during synchronous worker operations.
@@ -84,6 +118,76 @@ Var InstallerClockActive
   Push "${INSTALLER_STAGE_SHELL}"
   Call InstallerPresentationSetStage
 !macroend
+
+; Let an expanded native log use the idle action row while setup is working.
+; Only actual terminal states reserve space for their visible result buttons.
+Function InstallerLayoutDetails
+  Push $0
+  Push $1
+  Push $2
+  Push $3
+  Push $4
+  Push $5
+  Push $R9
+  StrCpy $R9 "0"
+  ${If} ${Errors}
+    StrCpy $R9 "1"
+  ${EndIf}
+  ${If} $InstallerPresentationReady != "1"
+  ${OrIf} $InstallerLogLayoutTop == ""
+  ${OrIf} $JustDoInstallLog == ""
+  ${OrIf} $JustDoInstallLog == "0"
+    Goto InstallerDetailsLayoutDone
+  ${EndIf}
+  !insertmacro InstallerScale $0 40
+  ${If} $InstallerPresentationStage == "${INSTALLER_STAGE_COMPLETE}"
+  ${OrIf} $InstallerPresentationStage == "${INSTALLER_STAGE_FAILED}"
+    !insertmacro InstallerScale $0 90
+  ${EndIf}
+  IntOp $0 $InstallerHeight - $0
+  IntOp $0 $0 - $InstallerLogLayoutTop
+  ${If} $0 < 0
+    StrCpy $0 0
+  ${EndIf}
+  ${If} $InstallerLogLayoutHeight == $0
+    Goto InstallerDetailsLayoutDone
+  ${EndIf}
+  !insertmacro InstallerScale $1 28
+  IntOp $2 $1 * 2
+  IntOp $2 $InstallerWidth - $2
+  ; A prior smaller round region would clip the newly available lower rows.
+  ; Removing it also leaves a full rectangular fallback if rounding fails.
+  System::Call 'user32::SetWindowRgn(p $JustDoInstallLog, p 0, i 0)i.r3'
+  System::Call 'user32::SetWindowPos(p $JustDoInstallLog, p 0, i r1, i $InstallerLogLayoutTop, i r2, i r0, i 0x0014)i.r3'
+  ${If} $3 == 0
+    Goto InstallerDetailsLayoutDone
+  ${EndIf}
+  StrCpy $InstallerLogLayoutHeight $0
+  !insertmacro InstallerScale $3 16
+  IntOp $4 $2 + 1
+  IntOp $5 $0 + 1
+  System::Call 'gdi32::CreateRoundRectRgn(i 0, i 0, i r4, i r5, i r3, i r3)p.r4'
+  ${If} $4 != 0
+    System::Call 'user32::SetWindowRgn(p $JustDoInstallLog, p r4, i 1)i.r1'
+    ${If} $1 == 0
+      System::Call 'gdi32::DeleteObject(p r4)i.r1'
+    ${EndIf}
+  ${EndIf}
+  System::Call 'user32::InvalidateRect(p $JustDoInstallLog, p 0, i 1)i.r1'
+  InstallerDetailsLayoutDone:
+  ${If} $R9 == "1"
+    SetErrors
+  ${Else}
+    ClearErrors
+  ${EndIf}
+  Pop $R9
+  Pop $5
+  Pop $4
+  Pop $3
+  Pop $2
+  Pop $1
+  Pop $0
+FunctionEnd
 
 Function InstallerPositionResultButtons
   Push $0
@@ -106,17 +210,35 @@ Function InstallerPositionResultButtons
   ${EndIf}
   IntOp $4 $InstallerWidth - $1
   IntOp $4 $4 - $2
-  !insertmacro InstallerScale $1 52
+  !insertmacro InstallerScale $1 80
   IntOp $1 $InstallerHeight - $1
   !insertmacro InstallerScale $5 36
   GetDlgItem $0 $HWNDPARENT 1
-  System::Call 'user32::SetWindowPos(p r0, p 0, i r4, i r1, i r2, i r5, i 0x0004)i.r0'
+  System::Call 'user32::SetWindowPos(p r0, p 0, i r4, i r1, i r2, i r5, i 0x0010)i.r0'
   ${If} $InstallerPresentationStage == "${INSTALLER_STAGE_COMPLETE}"
     IntOp $4 $4 - $3
     IntOp $4 $4 - $2
   ${EndIf}
   GetDlgItem $0 $HWNDPARENT 2
-  System::Call 'user32::SetWindowPos(p r0, p 0, i r4, i r1, i r2, i r5, i 0x0004)i.r0'
+  System::Call 'user32::SetWindowPos(p r0, p 0, i r4, i r1, i r2, i r5, i 0x0010)i.r0'
+  ; Keep the native details command clear of both terminal actions on narrow
+  ; high-DPI work areas. Do not re-show a link hidden by NSIS after expansion.
+  !insertmacro InstallerScale $2 28
+  IntOp $4 $4 - $3
+  IntOp $4 $4 - $2
+  !insertmacro InstallerScale $5 160
+  ${If} $5 > $4
+    StrCpy $5 $4
+    !insertmacro InstallerText $JustDoShowLogButton "详情" "Details"
+  ${Else}
+    !insertmacro InstallerText $JustDoShowLogButton "查看安装详情" "Installation details"
+  ${EndIf}
+  ${If} $5 < 0
+    StrCpy $5 0
+  ${EndIf}
+  !insertmacro InstallerScale $3 25
+  System::Call 'user32::SetWindowPos(p $JustDoShowLogButton, p 0, i r2, i r1, i r5, i r3, i 0x0004)i.r0'
+  !insertmacro InstallerPaintButton $JustDoShowLogButton $InstallerBaseFont $InstallerDpi "${INSTALLER_BUTTON_LINK}" $InstallerDetailsButtonImage
   Pop $5
   Pop $4
   Pop $3
@@ -193,23 +315,25 @@ Function InstallerPresentationSetStage
   ${If} $InstallerPresentationReady != "1"
     Goto InstallerStageDone
   ${EndIf}
+  Call InstallerLayoutDetails
   ${If} $0 == "${INSTALLER_STAGE_COMPLETE}"
   ${OrIf} $0 == "${INSTALLER_STAGE_FAILED}"
     ${If} $InstallerClockActive == "1"
       System::Call '$PLUGINSDIR\installer-clock.dll::Stop(p $InstallerElapsed)i.r1'
     ${EndIf}
   ${EndIf}
-  SetCtlColors $InstallerStepCheck "74747E" "${INSTALLER_BACKGROUND}"
-  SetCtlColors $InstallerStepWrite "74747E" "${INSTALLER_BACKGROUND}"
-  SetCtlColors $InstallerStepDone "74747E" "${INSTALLER_BACKGROUND}"
+  SetCtlColors $InstallerStepCheck "64748B" "${INSTALLER_STEP_PENDING_BG}"
+  SetCtlColors $InstallerStepWrite "64748B" "${INSTALLER_STEP_PENDING_BG}"
+  SetCtlColors $InstallerStepDone "64748B" "${INSTALLER_STEP_PENDING_BG}"
   ${If} $0 == "${INSTALLER_STAGE_CHECKING}"
     !insertmacro InstallerText $InstallerStepCheck "● 检查占用" "● Check location"
-    SetCtlColors $InstallerStepCheck "5F64E8" "${INSTALLER_BACKGROUND}"
+    SetCtlColors $InstallerStepCheck "4F58C9" "${INSTALLER_STEP_ACTIVE_BG}"
     !insertmacro InstallerText $InstallerExplanation "仅检查所选安装目录中的占用情况。" "Checking processes and file locks in the selected installation location."
   ${Else}
     !insertmacro InstallerText $InstallerStepCheck "✓ 检查占用" "✓ Check location"
     !insertmacro InstallerText $InstallerStepWrite "● 写入文件" "● Write files"
-    SetCtlColors $InstallerStepWrite "5F64E8" "${INSTALLER_BACKGROUND}"
+    SetCtlColors $InstallerStepCheck "287A61" "${INSTALLER_STEP_DONE_BG}"
+    SetCtlColors $InstallerStepWrite "4F58C9" "${INSTALLER_STEP_ACTIVE_BG}"
     !insertmacro InstallerText $InstallerExplanation "将应用与随包组件解压到所选安装目录。" "Writing the application and bundled components to the selected location."
   ${EndIf}
   ${If} $0 == "${INSTALLER_STAGE_RESOURCES}"
@@ -229,9 +353,9 @@ Function InstallerPresentationSetStage
     !insertmacro InstallerText $InstallerStepCheck "✓ 检查完成" "✓ Checked"
     !insertmacro InstallerText $InstallerStepWrite "✓ 写入完成" "✓ Files written"
     !insertmacro InstallerText $InstallerStepDone "✓ 安装完成" "✓ Complete"
-    SetCtlColors $InstallerStepCheck "278263" "${INSTALLER_BACKGROUND}"
-    SetCtlColors $InstallerStepWrite "278263" "${INSTALLER_BACKGROUND}"
-    SetCtlColors $InstallerStepDone "278263" "${INSTALLER_BACKGROUND}"
+    SetCtlColors $InstallerStepCheck "287A61" "${INSTALLER_STEP_DONE_BG}"
+    SetCtlColors $InstallerStepWrite "287A61" "${INSTALLER_STEP_DONE_BG}"
+    SetCtlColors $InstallerStepDone "287A61" "${INSTALLER_STEP_DONE_BG}"
     Call InstallerPositionResultButtons
     GetDlgItem $1 $HWNDPARENT 2
     !insertmacro InstallerText $1 "关闭" "Close"
@@ -250,7 +374,7 @@ Function InstallerPresentationSetStage
     !insertmacro JustDoSetInstallStatus "安装未完成，请查看安装详情。" "Installation did not complete. See the details."
     !insertmacro InstallerText $InstallerSubtitle "文件写入遇到问题，请查看安装详情。" "Setup encountered a file error. See the installation details."
     !insertmacro InstallerText $InstallerStepWrite "! 写入文件" "! Write files"
-    SetCtlColors $InstallerStepWrite "B75663" "${INSTALLER_BACKGROUND}"
+    SetCtlColors $InstallerStepWrite "B75663" "${INSTALLER_STEP_FAILED_BG}"
     Call InstallerPositionResultButtons
     GetDlgItem $1 $HWNDPARENT 2
     ; NSIS restores its localized Cancel caption after an aborted worker.
@@ -260,6 +384,17 @@ Function InstallerPresentationSetStage
     ShowWindow $1 5
   ${EndIf}
   InstallerStageDone:
+  ; SetCtlColors updates metadata without invalidating the native surface.
+  ; Refresh after the final palette, rather than depending on a text repaint.
+  !macro InstallerRefreshFooterStep _HANDLE
+    ${If} ${_HANDLE} != ""
+    ${AndIf} ${_HANDLE} != "0"
+      System::Call 'user32::InvalidateRect(p ${_HANDLE}, p 0, i 1)i.r1'
+    ${EndIf}
+  !macroend
+  !insertmacro InstallerRefreshFooterStep $InstallerStepCheck
+  !insertmacro InstallerRefreshFooterStep $InstallerStepWrite
+  !insertmacro InstallerRefreshFooterStep $InstallerStepDone
   Call InstallerPresentationTick
   ${If} $R9 == "1"
     SetErrors
@@ -399,6 +534,8 @@ Function InstallerPresentationDestroy
   StrCpy $InstallerBitmap "0"
   StrCpy $InstallerTitle "0"
   StrCpy $InstallerTitleFont "0"
+  StrCpy $InstallerLogLayoutTop "0"
+  StrCpy $InstallerLogLayoutHeight "0"
   StrCpy $InstallerPresentationReady "0"
   ClearErrors
   Pop $0
@@ -413,8 +550,9 @@ Function InstallerPresentationChrome
   IntOp $0 $0 & 0xFFFCFFFF
   System::Call 'user32::SetWindowLongW(p $HWNDPARENT, i -16, i r0)i.r1'
   System::Call 'user32::SetWindowPos(p $HWNDPARENT, p 0, i 0, i 0, i 0, i 0, i 0x0037)i.r1'
-  ; Retain the real non-client drag/system-menu behavior while blending the
-  ; caption into the light canvas. Unsupported DWM attributes are non-fatal.
+  ; Retain real non-client dragging and the system menu. The cool-gray caption
+  ; separates the window controls from the near-white content canvas.
+  ; Unsupported DWM attributes are non-fatal.
   ; WTA_NONCLIENT, WTNCA_NODRAWCAPTION | WTNCA_NODRAWICON.
   System::Call '*(i 3, i 3)p.r0'
   System::Call 'uxtheme::SetWindowThemeAttribute(p $HWNDPARENT, i 1, p r0, i 8)i.r1'
@@ -422,7 +560,7 @@ Function InstallerPresentationChrome
   System::Call 'dwmapi::DwmSetWindowAttribute(p $HWNDPARENT, i 20, *i 0, i 4)i.r0'
   System::Call 'dwmapi::DwmSetWindowAttribute(p $HWNDPARENT, i 33, *i 2, i 4)i.r0'
   System::Call 'dwmapi::DwmSetWindowAttribute(p $HWNDPARENT, i 34, *i -2, i 4)i.r0'
-  System::Call 'dwmapi::DwmSetWindowAttribute(p $HWNDPARENT, i 35, *i 0xFDFBFB, i 4)i.r0'
+  System::Call 'dwmapi::DwmSetWindowAttribute(p $HWNDPARENT, i 35, *i 0xF2E9E6, i 4)i.r0'
   Pop $1
   Pop $0
 FunctionEnd
@@ -469,14 +607,23 @@ Function InstallerPresentationShow
   StrCpy $InstallerDetailsButtonImage "0"
   StrCpy $InstallerLoopStarted "0"
   StrCpy $InstallerLogSpacingImages "0"
+  StrCpy $InstallerLogLayoutTop ""
+  StrCpy $InstallerLogLayoutHeight "-1"
   StrCpy $InstallerElapsedSecond "-1"
   StrCpy $InstallerClockActive "0"
   StrCpy $InstallerOpenOnFinish "0"
   Call InstallerWindowPrepare
   StrCpy $InstallerWindowPage $JustDoInstFilesPage
-  !insertmacro InstallerScale $4 54
+  ; The working log can extend through the otherwise idle action row, stopping
+  ; just above the root footer capsules. Terminal states shorten only the log.
+  !insertmacro InstallerScale $4 36
   IntOp $4 $InstallerHeight - $4
   System::Call 'user32::SetWindowPos(p $JustDoInstFilesPage, p 0, i 0, i 0, i $InstallerWidth, i r4, i 0x0004)i.r4'
+  ; The child also hosts the native details link in the action row. Clip its
+  ; background against real result buttons raised above it on completion.
+  System::Call 'user32::GetWindowLongW(p $JustDoInstFilesPage, i -16)i.r0'
+  IntOp $0 $0 | 0x04000000
+  System::Call 'user32::SetWindowLongW(p $JustDoInstFilesPage, i -16, i r0)i.r1'
   SetCtlColors $HWNDPARENT "23232A" "${INSTALLER_BACKGROUND}"
   SetCtlColors $JustDoInstFilesPage "23232A" "${INSTALLER_BACKGROUND}"
   !insertmacro InstallerWindowDivider $JustDoInstFilesPage
@@ -520,7 +667,7 @@ Function InstallerPresentationShow
   IntOp $0 0 - $0
   System::Call 'gdi32::CreateFontW(i r0, i 0, i 0, i 0, i 400, i 0, i 0, i 0, i 1, i 0, i 0, i 5, i 0, w r3)p.s'
   Pop $InstallerLogFont
-  !insertmacro InstallerScale $0 26
+  !insertmacro InstallerScale $0 24
   IntOp $0 0 - $0
   System::Call 'gdi32::CreateFontW(i r0, i 0, i 0, i 0, i 500, i 0, i 0, i 0, i 1, i 0, i 0, i 5, i 0, w r3)p.s'
   Pop $InstallerTitleFont
@@ -528,31 +675,33 @@ Function InstallerPresentationShow
   !insertmacro InstallerScale $R0 28
   IntOp $R1 $R0 * 2
   IntOp $R1 $InstallerWidth - $R1
-  !insertmacro InstallerScale $0 54
+  ; R2 is the safe content height above actions; the native child extends
+  ; farther down solely to retain its own details button and command routing.
+  !insertmacro InstallerScale $0 84
   IntOp $R2 $InstallerHeight - $0
   ; Reserve a lower details area as well as the status and anchored steps.
   ; A clamped work area must compress the hero rather than overlap text rows.
   IntOp $InstallerStatusTop $R2 * 63
   IntOp $InstallerStatusTop $InstallerStatusTop / 100
-  !insertmacro InstallerScale $0 223
+  !insertmacro InstallerScale $0 164
   IntOp $1 $R2 - $0
   ${If} $InstallerStatusTop > $1
     StrCpy $InstallerStatusTop $1
   ${EndIf}
   ; Keep the full orbit canvas when space permits. Short screens may hide the
   ; hero, but normal layouts must not crop its rotating upper/lower light arcs.
-  !insertmacro InstallerScale $InstallerSceneHeight 180
-  !insertmacro InstallerScale $0 82
+  !insertmacro InstallerScale $InstallerSceneHeight 144
+  !insertmacro InstallerScale $0 68
   IntOp $1 $InstallerStatusTop - $0
   ${If} $InstallerSceneHeight > $1
     StrCpy $InstallerSceneHeight $1
   ${EndIf}
-  ${If} $InstallerSceneHeight < 128
-    StrCpy $InstallerSceneHeight 128
+  ${If} $InstallerSceneHeight < 144
+    StrCpy $InstallerSceneHeight 144
   ${EndIf}
   StrCpy $InstallerCompactLayout "0"
   StrCpy $InstallerMinimalLayout "0"
-  !insertmacro InstallerScale $0 82
+  !insertmacro InstallerScale $0 68
   IntOp $0 $0 + $InstallerSceneHeight
   ${If} $InstallerStatusTop < $0
     StrCpy $InstallerCompactLayout "1"
@@ -564,7 +713,7 @@ Function InstallerPresentationShow
   ${If} $R2 < $0
     StrCpy $InstallerMinimalLayout "1"
   ${EndIf}
-  !insertmacro InstallerScale $R3 14
+  !insertmacro InstallerScale $R3 8
   System::Call '*(i 8, i 128)p.r0'
   System::Call 'comctl32::InitCommonControlsEx(p r0)i.r1'
   System::Free $0
@@ -573,13 +722,13 @@ Function InstallerPresentationShow
   SetCtlColors $InstallerScene "" "${INSTALLER_BACKGROUND}"
   InitPluginsDir
   ${If} $InstallerDpi >= 168
-  ${AndIf} $InstallerSceneHeight >= 360
-  ${AndIf} $R1 >= 448
+  ${AndIf} $InstallerSceneHeight >= 288
+  ${AndIf} $R1 >= 360
     File /oname=$PLUGINSDIR\installer-brand.avi "${INSTALLER_ANIMATION_DIR}\brand-200.avi"
     File /oname=$PLUGINSDIR\installer-brand.bmp "${INSTALLER_ANIMATION_DIR}\brand-200.bmp"
   ${ElseIf} $InstallerDpi >= 120
-  ${AndIf} $InstallerSceneHeight >= 270
-  ${AndIf} $R1 >= 336
+  ${AndIf} $InstallerSceneHeight >= 216
+  ${AndIf} $R1 >= 270
     File /oname=$PLUGINSDIR\installer-brand.avi "${INSTALLER_ANIMATION_DIR}\brand-150.avi"
     File /oname=$PLUGINSDIR\installer-brand.bmp "${INSTALLER_ANIMATION_DIR}\brand-150.bmp"
   ${Else}
@@ -611,7 +760,7 @@ Function InstallerPresentationShow
   IntOp $R3 $R3 + $InstallerSceneHeight
   !insertmacro InstallerScale $0 4
   IntOp $R3 $R3 + $0
-  !insertmacro InstallerScale $R4 35
+  !insertmacro InstallerScale $R4 28
   !insertmacro InstallerCreateText $InstallerTitle $R0 $R3 $R1 $R4 0x50004001
   ${If} $InstallerTitleFont != "0"
     SendMessage $InstallerTitle ${INSTALLER_WM_SETFONT} $InstallerTitleFont 0
@@ -619,12 +768,12 @@ Function InstallerPresentationShow
   SetCtlColors $InstallerTitle "23232A" "${INSTALLER_BACKGROUND}"
   !insertmacro InstallerText $InstallerTitle "正在安装 ${PRODUCT_NAME}" "Installing ${PRODUCT_NAME}"
   IntOp $R3 $R3 + $R4
-  !insertmacro InstallerScale $R4 23
+  !insertmacro InstallerScale $R4 20
   !insertmacro InstallerCreateText $InstallerSubtitle $R0 $R3 $R1 $R4 0x50000001
   !insertmacro InstallerText $InstallerSubtitle "将应用文件安装到你选择的目录。" "Installing the application files in your selected location."
 
   StrCpy $R3 $InstallerStatusTop
-  !insertmacro InstallerScale $R4 27
+  !insertmacro InstallerScale $R4 23
   IntOp $1 $R1 * 3
   IntOp $1 $1 / 4
   !insertmacro InstallerCreateText $JustDoStatusText $R0 $R3 $1 $R4 0x50000000
@@ -645,15 +794,20 @@ Function InstallerPresentationShow
   !insertmacro InstallerScale $R4 32
   !insertmacro InstallerCreateText $InstallerExplanation $R0 $R3 $R1 $R4 0x50000000
 
-  !insertmacro InstallerScale $0 65
-  IntOp $R3 $R2 - $0
-  !insertmacro InstallerScale $R4 25
-  IntOp $1 $R1 / 3
-  !insertmacro InstallerCreateText $InstallerStepCheck $R0 $R3 $1 $R4 0x50000000
+  !insertmacro InstallerScale $0 34
+  IntOp $R3 $InstallerHeight - $0
+  !insertmacro InstallerScale $R4 26
+  !insertmacro InstallerScale $2 12
+  IntOp $1 $2 * 2
+  IntOp $1 $R1 - $1
+  IntOp $1 $1 / 3
+  !insertmacro InstallerCreateFooterStep $InstallerStepCheck $R0 $R3 $1 $R4
   IntOp $0 $R0 + $1
-  !insertmacro InstallerCreateText $InstallerStepWrite $0 $R3 $1 $R4 0x50000001
+  IntOp $0 $0 + $2
+  !insertmacro InstallerCreateFooterStep $InstallerStepWrite $0 $R3 $1 $R4
   IntOp $0 $0 + $1
-  !insertmacro InstallerCreateText $InstallerStepDone $0 $R3 $1 $R4 0x50000002
+  IntOp $0 $0 + $2
+  !insertmacro InstallerCreateFooterStep $InstallerStepDone $0 $R3 $1 $R4
   !insertmacro InstallerText $InstallerStepWrite "○ 写入文件" "○ Write files"
   !insertmacro InstallerText $InstallerStepDone "○ 安装完成" "○ Complete"
 
@@ -672,13 +826,13 @@ Function InstallerPresentationShow
 
   ; Keep native one-way details, scrolling and keyboard behavior. Opening the
   ; list reveals the reserved area below the phase explanation, never the hero.
-  !insertmacro InstallerScale $1 82
-  !insertmacro InstallerScale $3 73
+  !insertmacro InstallerScale $1 76
+  !insertmacro InstallerScale $3 6
   ${If} $InstallerMinimalLayout == "1"
     !insertmacro InstallerScale $1 42
-    !insertmacro InstallerScale $3 35
   ${EndIf}
   IntOp $1 $InstallerStatusTop + $1
+  StrCpy $InstallerLogLayoutTop $1
   IntOp $3 $R2 - $3
   IntOp $3 $3 - $1
   ${If} $3 < 0
@@ -749,24 +903,14 @@ Function InstallerPresentationShow
   ${EndIf}
   IntOp $0 $0 - 1
   SendMessage $JustDoInstallLog 0x101E 0 $0
-  !insertmacro InstallerScale $4 16
-  IntOp $5 $R1 + 1
-  IntOp $6 $3 + 1
-  System::Call 'gdi32::CreateRoundRectRgn(i 0, i 0, i r5, i r6, i r4, i r4)p.r0'
-  ${If} $0 != 0
-    System::Call 'user32::SetWindowRgn(p $JustDoInstallLog, p r0, i 1)i.r1'
-    ${If} $1 == 0
-      System::Call 'gdi32::DeleteObject(p r0)i.r1'
-    ${EndIf}
-  ${EndIf}
   ${If} $InstallerLogFont != "0"
     SendMessage $JustDoInstallLog ${INSTALLER_WM_SETFONT} $InstallerLogFont 0
   ${Else}
     SendMessage $JustDoInstallLog ${INSTALLER_WM_SETFONT} $InstallerBaseFont 0
   ${EndIf}
   ShowWindow $JustDoInstallLog 0
-  !insertmacro InstallerScale $1 27
-  IntOp $1 $R2 - $1
+  !insertmacro InstallerScale $1 80
+  IntOp $1 $InstallerHeight - $1
   !insertmacro InstallerScale $2 160
   !insertmacro InstallerScale $3 25
   System::Call 'user32::SetWindowPos(p $JustDoShowLogButton, p 0, i $R0, i r1, i r2, i r3, i 0)i.r0'
@@ -776,7 +920,7 @@ Function InstallerPresentationShow
   ShowWindow $JustDoShowLogButton 5
   GetDlgItem $0 $HWNDPARENT 1
   SendMessage $0 ${INSTALLER_WM_SETFONT} $InstallerBaseFont 0
-  !insertmacro InstallerScale $1 52
+  !insertmacro InstallerScale $1 80
   IntOp $1 $InstallerHeight - $1
   !insertmacro InstallerScale $2 140
   IntOp $2 $InstallerWidth - $2

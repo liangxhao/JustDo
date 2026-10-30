@@ -147,6 +147,9 @@ describe.runIf(process.platform === 'win32' && existsSync(compiler)
         `  FileOpen $3 "${root}\\log-spacing.txt" w`,
         '  FileWrite $3 "$0|$1|$2|$InstallerDpi"',
         '  FileClose $3',
+        `  FileOpen $3 "${root}\\footer.txt" w`,
+        '  FileWrite $3 "$InstallerStepCheck|$InstallerStepWrite|$InstallerStepDone|$JustDoShowLogButton|$JustDoInstFilesPage|$JustDoInstallLog"',
+        '  FileClose $3',
         '  Pop $3', '  Pop $2', '  Pop $1', '  Pop $0',
         '  ClearErrors',
         '  ShowWindow $HWNDPARENT 4', // SW_SHOWNOACTIVATE; visible, no focus request.

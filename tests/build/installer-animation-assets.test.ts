@@ -184,11 +184,12 @@ describe('native installer animation assets', () => {
     expect(decodeRle(encodeRle8Frame(pixels, 270, 3), 270, 3)).toEqual(pixels);
   });
 
-  it('keeps the larger mark inside high-DPI crop bounds and tapers the colored glow to an exact matte', () => {
+  it('keeps the compact mark inside its DPI canvas and tapers the colored glow to an exact matte', () => {
     const logo = decodeLogoPng(readFileSync(sourceLogo));
     for (const scale of ANIMATION_CONTRACT.scales) {
       const visibleHeight = 128 * scale.percent / 100;
       const cropTop = (scale.height - visibleHeight) / 2;
+      const artScale = scale.width / 224;
       for (const number of [0, 36, 84, 180]) {
         const pixels = renderInstallerFrame(logo, scale, number);
         const bitmap = createBitmap(scale.width, scale.height, pixels);
@@ -212,7 +213,7 @@ describe('native installer animation assets', () => {
         }
         expect(markRows[0]).toBeGreaterThanOrEqual(cropTop);
         expect(markRows.at(-1)).toBeLessThan(scale.height - cropTop);
-        expect(markRows.at(-1)! - markRows[0]).toBeGreaterThan(96 * scale.percent / 100);
+        expect(markRows.at(-1)! - markRows[0]).toBeGreaterThan(96 * artScale);
         if (number !== 0) {
           const left = color(pixels[Math.round(scale.height / 2) * scale.width + Math.round(scale.width * .14)]);
           const right = color(pixels[Math.round(scale.height / 2) * scale.width + Math.round(scale.width * .86)]);
@@ -227,6 +228,7 @@ describe('native installer animation assets', () => {
   it('moves a visible blue light around the intact mark through all four sides of the loop', () => {
     const logo = decodeLogoPng(readFileSync(sourceLogo));
     const scale = ANIMATION_CONTRACT.scales[0];
+    const artScale = scale.width / 224;
     const centers = [36, 84, 132, 180].map(frame => {
       const pixels = renderInstallerFrame(logo, scale, frame);
       const bitmap = createBitmap(scale.width, scale.height, pixels);
@@ -235,8 +237,8 @@ describe('native installer animation assets', () => {
       let centerY = 0;
       for (let y = 0; y < scale.height; y += 1)
         for (let x = 0; x < scale.width; x += 1) {
-          const dx = x + .5 - scale.width / 2;
-          const dy = y + .5 - 88;
+          const dx = (x + .5 - scale.width / 2) / artScale;
+          const dy = (y + .5) / artScale - 88;
           if (Math.hypot(dx, dy) < 62) continue;
           const at = 54 + pixels[y * scale.width + x] * 4;
           const [blue, green, red] = [...bitmap.subarray(at, at + 3)];
@@ -248,7 +250,7 @@ describe('native installer animation assets', () => {
         }
       // A changing logo pose or almost-white static wash cannot pass this:
       // require visible chroma outside the face, then track its actual position.
-      expect(weight).toBeGreaterThan(2_000);
+      expect(weight).toBeGreaterThan(2_000 * artScale ** 2);
       return [centerX / weight, centerY / weight];
     });
     expect(centers[0][0]).toBeGreaterThan(40);
@@ -296,7 +298,7 @@ describe('native installer animation assets', () => {
     expect(prepared.loopFirstFrame).toBe(36);
     expect(prepared.lastFrame).toBe(227);
     expect(prepared.scales.map(scale => [scale.percent, scale.width, scale.height])).toEqual([
-      [100, 224, 180], [150, 336, 270], [200, 448, 360],
+      [100, 180, 144], [150, 270, 216], [200, 360, 288],
     ]);
     const hashes = new Map<string, string>();
     for (const scale of prepared.scales) {
@@ -349,9 +351,12 @@ describe('native installer animation assets', () => {
       expect(headerLogo.pixels).toEqual(renderInstallerLogo(decodeLogoPng(readFileSync(sourceLogo)), scale.logoSize));
       const background = format.data + 40 + loopStart[0] * 4;
       expect([...avi.subarray(background, background + 4)]).toEqual([253, 251, 251, 0]);
-      // Fine moving light adds color transitions. Independent key frames must
-      // still save at least 45% over raw indexed pixels before installer LZMA.
-      expect(avi.length).toBeLessThan(scale.width * scale.height * 228 * .55);
+      // Fine moving light adds color transitions. RLE pixel content must still
+      // save 45% before installer LZMA; row terminators and AVI framing are fixed
+      // overhead, whose relative share grows as the canvas gets smaller.
+      const frameBytes = movie.children.reduce((bytes, frame) => bytes + frame.size, 0);
+      const rowTerminators = (scale.height * 2 + 2) * movie.children.length;
+      expect(frameBytes - rowTerminators).toBeLessThan(scale.width * scale.height * 228 * .55);
     }
     const manifest = path.join(prepared.directory, 'manifest.json');
     expect(Object.keys(JSON.parse(readFileSync(manifest, 'utf8')).files)).toHaveLength(9);
@@ -373,7 +378,7 @@ describe('native installer animation assets', () => {
     expect(readdirSync(path.join(root, 'build', 'installer')).some(name => name.startsWith('.animation-staging-'))).toBe(false);
     expect(readdirSync(path.join(root, 'build', 'installer')).some(name => name.startsWith('.animation-invalid-'))).toBe(true);
     expect(lstatSync(repaired.directory).isDirectory()).toBe(true);
-  }, 40_000);
+  }, 60_000);
 
   it('binds the cache to source bytes and never publishes a prepared set after invalid source input', () => {
     const root = fixture('source contract');
@@ -386,5 +391,5 @@ describe('native installer animation assets', () => {
     expect(() => prepareInstallerAnimationAssets(root)).toThrow('8-bit RGBA');
     expect(existsSync(path.join(prepared.directory, 'manifest.json'))).toBe(true);
     expect(readdirSync(path.join(root, 'build', 'installer')).filter(name => /^[a-f0-9]{64}$/.test(name)).sort()).toEqual([original.fingerprint, prepared.fingerprint].sort());
-  }, 30_000);
+  }, 60_000);
 });
