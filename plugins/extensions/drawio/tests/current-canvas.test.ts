@@ -56,7 +56,8 @@ function fixture() {
       return () => {};
     },
   };
-  cleanups.push(connectCurrentDiagram(host));
+  const dispose = connectCurrentDiagram(host);
+  cleanups.push(dispose);
   return {
     prepare: () => prepare(),
     suspend: () => suspend(),
@@ -64,6 +65,7 @@ function fixture() {
     request,
     release,
     callTool,
+    dispose,
   };
 }
 afterEach(() => {
@@ -72,6 +74,13 @@ afterEach(() => {
 });
 
 describe('diagram navigation lifecycle', () => {
+  it('keeps source admission while suspended and releases it only when the editor is disposed', () => {
+    const f = fixture();
+    f.suspend();
+    expect(f.release).toHaveBeenLastCalledWith('');
+    f.dispose();
+    expect(f.release).toHaveBeenLastCalledWith('', true);
+  });
   it('drops a late take across A→B→A, stops old polling, and retires the token on the next explicit send', async () => {
     const { prepare, suspend, notify, request, release, callTool } = fixture();
     await prepare();

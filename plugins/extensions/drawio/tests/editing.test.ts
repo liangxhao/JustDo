@@ -24,35 +24,55 @@ let factory: { create: (context: Record<string, unknown>) => any };
 let service: { start: (ctx: unknown) => void; stop: () => void };
 let live: boolean;
 let emitted: ReturnType<typeof vi.fn>;
+let connections: Map<string, AbortController>;
 async function request(
   method: string,
   params: Record<string, unknown>,
   connectionId = 'connection',
 ) {
   const respond = vi.fn();
+  if (!connections.has(connectionId)) connections.set(connectionId, new AbortController());
   await handlers.get(method)!({
     params,
     respond,
-    client: { connId: connectionId },
+    client: { connId: connectionId, connectionSignal: connections.get(connectionId)!.signal },
     hasCurrentClientAuthority: () => live,
   });
   const call = respond.mock.calls[0];
   if (call[0] !== true) throw new Error(call[2]?.message ?? 'RPC failed');
   return call[1];
 }
-const prepare = (override: Record<string, unknown> = {}) =>
+const admit = (override: Record<string, unknown> = {}) =>
   request(DRAWIO_CANVAS_METHOD, {
     ...scope,
     viewId: 'mcp-app-original',
-    action: 'prepare',
+    action: 'admit',
     source: admitted,
-    snapshot,
+    diagramId: snapshot.diagramId,
     ...override,
   });
+const prepareOnly = (override: Record<string, unknown> = {}, connectionId?: string) =>
+  request(
+    DRAWIO_CANVAS_METHOD,
+    {
+      ...scope,
+      viewId: 'mcp-app-original',
+      action: 'prepare',
+      source: admitted,
+      snapshot,
+      ...override,
+    },
+    connectionId,
+  );
+const prepare = async (override: Record<string, unknown> = {}) => {
+  await admit({ ...override, action: 'admit' });
+  return prepareOnly(override);
+};
 beforeEach(() => {
   live = true;
   handlers = new Map();
   emitted = vi.fn();
+  connections = new Map();
   sdk.entry.mockReturnValue({ sessionId: scope.sessionId, lifecycleRevision: 'generation' });
   sdk.dispatch.mockImplementation(async (method, params) => {
     if (method === 'chat.history') return { ok: true, payload: { ...scope } };
@@ -173,14 +193,24 @@ describe('authenticated draw.io editing adapter', () => {
     },
   );
 
-  it('rechecks native view, same-runtime mint, incarnation and fixed desktop admission', async () => {
+  it('checks native view, same-runtime mint, incarnation and fixed desktop admission', async () => {
     expect((await prepare()).token).toBeTypeOf('string');
     expect(sdk.dispatch).toHaveBeenCalledWith(
       'mcp.app.readResource',
       expect.objectContaining({ viewId: 'mcp-app-original', uri: 'diagram://origin/diagram-one' }),
     );
     await expect(prepare({ source: { ...admitted, serverName: 'other' } })).rejects.toThrow();
+    await expect(
+      prepareOnly({ source: { ...admitted, toolName: 'create_diagram' } }),
+    ).rejects.toThrow();
     await expect(prepare({ sessionId: 'rotated' })).rejects.toThrow();
+    await request(DRAWIO_CANVAS_METHOD, {
+      ...scope,
+      viewId: 'mcp-app-original',
+      action: 'detach',
+      token: '',
+      forgetSource: true,
+    });
     sdk.dispatch.mockImplementation(async method =>
       method === 'chat.history'
         ? { ok: true, payload: { ...scope } }
@@ -191,6 +221,112 @@ describe('authenticated draw.io editing adapter', () => {
     );
     await expect(prepare()).rejects.toThrow();
   });
+
+  it('requires separate provenance admission before preparing a writable canvas', async () => {
+    await expect(prepareOnly()).rejects.toThrow();
+    expect(await admit()).toEqual({ admitted: true });
+    expect(getDiagramEditingState().canvases).toBeDefined();
+    expect((await prepareOnly()).token).toBeTypeOf('string');
+  });
+
+  it('admits an authenticated recovery without reinstating its original MCP tools', async () => {
+    getDiagramEditingState().recovered.set('mcp-app-original', {
+      diagramId: snapshot.diagramId,
+      source: {
+        ...scope,
+        kind: 'native-history-recovery',
+        diagramId: snapshot.diagramId,
+        serverName: 'drawio',
+        toolName: 'create_diagram',
+        uiResourceUri: 'ui://drawio/editor',
+        originViewId: 'mcp-app-historical',
+      },
+    });
+    const source = { ...admitted, toolName: 'create_diagram' };
+    await expect(prepare({ source })).resolves.toHaveProperty('token');
+    expect(sdk.dispatch.mock.calls.some(([method]) => method === 'mcp.app.readResource')).toBe(
+      false,
+    );
+  });
+
+  it('keeps admitted provenance after a model change and exports fresh content without old native grants', async () => {
+    await admit();
+    const normal = sdk.dispatch.getMockImplementation()!;
+    sdk.dispatch.mockClear();
+    sdk.dispatch.mockImplementation((name, params) =>
+      name.startsWith('mcp.app.')
+        ? Promise.resolve({
+            ok: false,
+            error: { code: 'UNAVAILABLE', message: 'runtime selection changed' },
+          })
+        : normal(name, params),
+    );
+    const edited = {
+      ...snapshot,
+      xml: xml.replace('id="1"', 'value="Manual edit" id="1"'),
+      contentStamp: 'fresh',
+    };
+    const { token } = await prepareOnly({ snapshot: edited });
+    expect(sdk.dispatch.mock.calls.some(([name]) => name.startsWith('mcp.app.'))).toBe(false);
+    await request(DRAWIO_SEND_METHOD, {
+      ...scope,
+      send: { ...scope, idempotencyKey: 'changed-model', message: 'Edit the same diagram' },
+      canvases: [{ token, viewId: 'mcp-app-original', selected: true }],
+    });
+    const tool = factory.create({ ...scope, assertInvocationCurrent: vi.fn() });
+    tool.prepareBeforeToolCallParams(
+      {},
+      {
+        toolCallId: 'read-new-model',
+        hookContext: { ...scope, runId: 'changed-model' },
+      },
+    );
+    expect(
+      JSON.parse((await tool.execute('read-new-model', { action: 'read' })).content[0].text),
+    ).toEqual(edited);
+  });
+
+  it('retains provenance across ordinary suspension but forgets it on explicit editor disposal', async () => {
+    const first = await prepare();
+    await request(DRAWIO_CANVAS_METHOD, {
+      ...scope,
+      viewId: 'mcp-app-original',
+      action: 'detach',
+      token: '',
+    });
+    const next = await prepareOnly({ retire: true });
+    expect(next.token).not.toBe(first.token);
+    await request(DRAWIO_CANVAS_METHOD, {
+      ...scope,
+      viewId: 'mcp-app-original',
+      action: 'detach',
+      token: '',
+      forgetSource: true,
+    });
+    await expect(prepareOnly()).rejects.toThrow();
+  });
+
+  it.each(['connection', 'lifecycle', 'service', 'diagram', 'view'])(
+    'refuses stale or mismatched %s provenance',
+    async kind => {
+      await admit();
+      if (kind === 'connection') connections.get('connection')!.abort();
+      if (kind === 'lifecycle')
+        sdk.entry.mockReturnValue({ sessionId: scope.sessionId, lifecycleRevision: 'replaced' });
+      if (kind === 'service') {
+        service.stop();
+        service.start({ gatewayEvents: { emit: emitted } });
+      }
+      await expect(
+        prepareOnly({
+          ...(kind === 'diagram' ? { snapshot: { ...snapshot, diagramId: 'diagram-other' } } : {}),
+          ...(kind === 'view' ? { viewId: 'mcp-app-other' } : {}),
+        }),
+      ).rejects.toThrow();
+      if (kind === 'connection')
+        await expect(prepareOnly({}, 'foreign-connection')).rejects.toThrow();
+    },
+  );
 
   it('freezes one exact native send and admits read/update only through trusted tool preparation', async () => {
     const { token } = await prepare();

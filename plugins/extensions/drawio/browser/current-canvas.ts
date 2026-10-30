@@ -22,7 +22,7 @@ interface CanvasHost {
   current: () => boolean;
   priority: () => number;
   request: <T>(input: Record<string, unknown>) => Promise<T>;
-  release: (token: string) => Promise<unknown>;
+  release: (token: string, forgetSource?: boolean) => Promise<unknown>;
   subscribe: (listener: (event: { event: string }) => void) => () => void;
   onSuspend: (listener: () => void) => () => void;
   register: (prepare: () => Promise<PreparedDiagramCanvas & { priority: number }>) => () => void;
@@ -52,13 +52,13 @@ export function connectCurrentDiagram(host: CanvasHost) {
   let disposed = false;
   let polling = false;
   const current = () => !disposed && host.current();
-  const retire = () => {
+  const retire = (forgetSource = false) => {
     epoch++;
     retireOnPrepare = true;
     if (token) retiredToken = token;
     token = '';
     // Exact-owner cleanup also cancels preparations whose response was lost.
-    void host.release('').catch(() => undefined);
+    void (forgetSource ? host.release('', true) : host.release('')).catch(() => undefined);
   };
   const stopSuspension = host.onSuspend(retire);
   const unregister = host.register(async () => {
@@ -129,7 +129,7 @@ export function connectCurrentDiagram(host: CanvasHost) {
   const timer = setInterval(() => void poll(), 3000);
   return () => {
     disposed = true;
-    retire();
+    retire(true);
     clearInterval(timer);
     unsubscribe();
     unregister();

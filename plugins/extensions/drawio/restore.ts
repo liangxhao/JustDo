@@ -1,5 +1,5 @@
-import { createRequire } from 'node:module';
 import { createHash } from 'node:crypto';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 
 import type { SessionMcpRuntime } from 'openclaw/plugin-sdk/agent-harness-runtime';
@@ -9,14 +9,14 @@ import { getSessionEntry } from 'openclaw/plugin-sdk/session-store-runtime';
 import { readVisibleSessionTranscriptMessageEntries } from 'openclaw/plugin-sdk/session-transcript-runtime';
 
 import {
+  type DiagramSource,
   DRAWIO_CURRENT_METHOD,
   DRAWIO_RESOURCE,
   DRAWIO_RESTORE_METHOD,
   DRAWIO_SERVER,
   DRAWIO_TOOL,
-  type DiagramSource,
 } from './contracts';
-import { getDiagramEditingState } from './editing';
+import { getDiagramEditingState, readAdmittedDiagramSource } from './editing';
 import { selectDiagramResult } from './restore-result';
 import { selectConfirmedDiagramUpdate } from './update-result';
 
@@ -25,25 +25,80 @@ type ResourceModule = {
   createEditorResource: (directory: string) => Promise<Resource>;
   validateDiagram: (value: unknown) => { xml: string; title: string };
 };
+const record = (value: unknown): Record<string, unknown> =>
+  value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
 
 export function registerDiagramRecovery(api: OpenClawPluginApi) {
   let resource: Promise<Resource> | undefined;
+  let serviceEpoch = 0;
+  let active = false;
   const directory = path.join(path.dirname(api.source), 'assets');
   const load = () =>
     createRequire(api.source)(path.join(directory, 'editor-resource.cjs')) as ResourceModule;
+  const editorResource = () => {
+    if (!resource) {
+      const pending = load().createEditorResource(directory).catch(error => {
+        if (resource === pending) resource = undefined;
+        throw error;
+      });
+      resource = pending;
+    }
+    return resource;
+  };
+  const resourceRuntime = (
+    sessionId: string,
+    sessionKey: string,
+    assertCurrent: () => void,
+    editor: Resource,
+  ): SessionMcpRuntime => {
+    const catalog = { version: 1, generatedAt: Date.now(), servers: {}, tools: [] };
+    return {
+      sessionId,
+      sessionKey,
+      workspaceDir: '',
+      configFingerprint: 'drawio-recovery',
+      mcpAppsEnabled: true,
+      mcpAppModelContextRevoked: true,
+      createdAt: Date.now(),
+      lastUsedAt: Date.now(),
+      assertOwnerCurrent: assertCurrent,
+      getCatalog: async () => catalog,
+      peekCatalog: () => catalog,
+      markUsed: assertCurrent,
+      dispose: async () => {},
+      callTool: async () => {
+        throw new Error('Diagram editor resources cannot call tools');
+      },
+      readResource: async (server, uri) => {
+        assertCurrent();
+        if (server !== DRAWIO_SERVER || uri !== DRAWIO_RESOURCE)
+          throw new Error('Unknown resource');
+        return editor.read();
+      },
+    };
+  };
   api.registerService({
     id: 'drawio-recovery-assets',
-    start() {},
+    start() {
+      active = true;
+      serviceEpoch++;
+    },
     async stop() {
-      (await resource?.catch(() => undefined))?.close();
+      active = false;
+      serviceEpoch++;
+      const previous = resource;
       resource = undefined;
+      (await previous?.catch(() => undefined))?.close();
     },
   });
   for (const method of [DRAWIO_RESTORE_METHOD, DRAWIO_CURRENT_METHOD])
     api.registerGatewayMethod(
       method,
-      async ({ params, respond, client }) => {
+      async ({ params, respond, client, hasCurrentClientAuthority }) => {
         try {
+          const epoch = serviceEpoch;
           const { sessionKey, sessionId, viewId, agentId } = params;
           if (
             typeof sessionKey !== 'string' ||
@@ -62,15 +117,20 @@ export function registerDiagramRecovery(api: OpenClawPluginApi) {
             identity.sessionKey !== sessionKey
           )
             throw new Error('Diagram session unavailable');
+          const initial = getSessionEntry({ sessionKey, agentId, readConsistency: 'latest' });
+          if (initial?.sessionId !== sessionId) throw new Error('Diagram session changed');
+          const lifecycleRevision = initial.lifecycleRevision;
           const assertCurrent = () => {
             const cfg = api.runtime.config.current();
+            const entry = getSessionEntry({ sessionKey, agentId, readConsistency: 'latest' });
             if (
+              !active || serviceEpoch !== epoch ||
               client?.connectionSignal?.aborted ||
+              hasCurrentClientAuthority?.() === false ||
               cfg.mcp?.apps?.enabled !== true ||
               cfg.plugins?.enabled === false ||
               cfg.plugins?.entries?.drawio?.enabled === false ||
-              getSessionEntry({ sessionKey, agentId, readConsistency: 'latest' })?.sessionId !==
-                sessionId
+              entry?.sessionId !== sessionId || entry.lifecycleRevision !== lifecycleRevision
             )
               throw new Error('Diagram session changed');
           };
@@ -93,11 +153,61 @@ export function registerDiagramRecovery(api: OpenClawPluginApi) {
             ...(typeof params.diagramId === 'string' ? { diagramId: params.diagramId } : {}),
           });
           if (method === DRAWIO_CURRENT_METHOD) {
+            let editorPayload: Record<string, unknown> | undefined;
+            if (params.editorResource === true) {
+              if (typeof params.diagramId !== 'string' || !client?.connId)
+                throw new Error('Diagram source is required');
+              const owner = { connectionId: client.connId, sessionKey, sessionId, agentId, viewId };
+              const assertSourceCurrent = () => {
+                assertCurrent();
+                readAdmittedDiagramSource(owner, params.diagramId as string);
+              };
+              assertSourceCurrent();
+              const editor = await editorResource();
+              assertSourceCurrent();
+              const { prepareHarnessNativeMcpAppPreview } =
+                await import('openclaw/plugin-sdk/agent-harness-runtime');
+              assertSourceCurrent();
+              const preview = await prepareHarnessNativeMcpAppPreview({
+                runtime: resourceRuntime(sessionId, sessionKey, assertSourceCurrent, editor),
+                agentId,
+                serverName: DRAWIO_SERVER,
+                toolName: DRAWIO_TOOL,
+                uiResourceUri: DRAWIO_RESOURCE,
+                toolCallId: `${viewId}-editor-resource`,
+                toolInput: {},
+                toolResult: { content: [] },
+                allowedAppToolNames: new Set(),
+              });
+              assertSourceCurrent();
+              const resourceViewId = record(record(preview?.mcpAppPreview).mcpApp).viewId;
+              if (typeof resourceViewId !== 'string') throw new Error('Diagram UI unavailable');
+              const result = await dispatchGatewayMethod('mcp.app.view', {
+                sessionKey, agentId, viewId: resourceViewId,
+              });
+              assertSourceCurrent();
+              if (!result.ok) throw new Error('Diagram UI unavailable');
+              const payload = record(result.payload);
+              if (typeof payload.html !== 'string' || typeof payload.sandboxUrl !== 'string' ||
+                !Number.isInteger(payload.sandboxPort))
+                throw new Error('Diagram UI unavailable');
+              // Only the native-generated immutable editor shell and its matching
+              // sandbox/CSP are substituted. The admitted diagram and all host
+              // capabilities remain those of the original view.
+              editorPayload = {
+                html: payload.html,
+                csp: payload.csp,
+                sandboxUrl: payload.sandboxUrl,
+                sandboxPort: payload.sandboxPort,
+                ...(payload.sandboxOrigin ? { sandboxOrigin: payload.sandboxOrigin } : {}),
+              };
+            }
             respond(true, {
               diagram: confirmed
                 ? { xml: confirmed.xml, title: confirmed.title, diagramId: confirmed.diagramId }
                 : null,
               readOnly: Boolean(recoveredSource),
+              ...(editorPayload ? { editorResource: editorPayload } : {}),
             });
             return;
           }
@@ -136,39 +246,11 @@ export function registerDiagramRecovery(api: OpenClawPluginApi) {
             sessionId,
             agentId,
           };
-          resource ??= module.createEditorResource(directory).catch(error => {
-            resource = undefined;
-            throw error;
-          });
-          const editor = await resource;
+          const editor = await editorResource();
           assertCurrent();
-          const catalog = { version: 1, generatedAt: Date.now(), servers: {}, tools: [] };
           // This plugin-owned adapter serves its own immutable UI only. It never
           // reconnects MCP, executes create_diagram, or reinstates old tool grants.
-          const runtime: SessionMcpRuntime = {
-            sessionId,
-            sessionKey,
-            workspaceDir: '',
-            configFingerprint: 'drawio-recovery',
-            mcpAppsEnabled: true,
-            mcpAppModelContextRevoked: true,
-            createdAt: Date.now(),
-            lastUsedAt: Date.now(),
-            assertOwnerCurrent: assertCurrent,
-            getCatalog: async () => catalog,
-            peekCatalog: () => catalog,
-            markUsed: assertCurrent,
-            dispose: async () => {},
-            callTool: async () => {
-              throw new Error('Recovered diagrams cannot call tools');
-            },
-            readResource: async (server, uri) => {
-              assertCurrent();
-              if (server !== DRAWIO_SERVER || uri !== DRAWIO_RESOURCE)
-                throw new Error('Unknown resource');
-              return editor.read();
-            },
-          };
+          const runtime = resourceRuntime(sessionId, sessionKey, assertCurrent, editor);
           const { prepareHarnessNativeMcpAppPreview } =
             await import('openclaw/plugin-sdk/agent-harness-runtime');
           assertCurrent();

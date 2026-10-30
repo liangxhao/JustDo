@@ -2,7 +2,7 @@ import type { OpenClawPluginApi } from 'openclaw/plugin-sdk/core';
 import { dispatchGatewayMethod } from 'openclaw/plugin-sdk/gateway-method-runtime';
 import { getSessionEntry } from 'openclaw/plugin-sdk/session-store-runtime';
 
-import { DiagramCanvasState, type CanvasOwner } from './canvas-state';
+import { type CanvasOwner, DiagramCanvasState } from './canvas-state';
 import {
   type DiagramSnapshot,
   type DiagramSource,
@@ -59,12 +59,42 @@ async function readPreparedView(
 export type DiagramEditingState = {
   canvases: DiagramCanvasState;
   recovered: Map<string, { source: DiagramSource; diagramId: string }>;
+  admissions: Map<
+    string,
+    { owner: CanvasOwner; source: Readonly<DiagramSource>; dispose: () => void }
+  >;
   owner?: symbol;
 };
 const STATE = Symbol.for('drawio.canvas-state');
 export function getDiagramEditingState(): DiagramEditingState {
   const global = globalThis as typeof globalThis & { [STATE]?: DiagramEditingState };
-  return (global[STATE] ??= { canvases: new DiagramCanvasState(), recovered: new Map() });
+  return (global[STATE] ??= {
+    canvases: new DiagramCanvasState(),
+    recovered: new Map(),
+    admissions: new Map(),
+  });
+}
+
+type AdmissionOwner = Pick<
+  CanvasOwner,
+  'connectionId' | 'sessionKey' | 'sessionId' | 'agentId' | 'viewId'
+>;
+const admissionKey = (owner: AdmissionOwner, diagramId: string) =>
+  JSON.stringify([
+    owner.connectionId,
+    owner.sessionKey,
+    owner.sessionId,
+    owner.agentId,
+    owner.viewId,
+    diagramId,
+  ]);
+
+/** Provenance of one live local editor; grants no native MCP tool or context access. */
+export function readAdmittedDiagramSource(owner: AdmissionOwner, diagramId: string) {
+  const admission = getDiagramEditingState().admissions.get(admissionKey(owner, diagramId));
+  if (!admission) throw new Error('Diagram source is not admitted');
+  admission.owner.assertCurrent();
+  return admission.source;
 }
 
 export function registerDiagramEditing(api: OpenClawPluginApi) {
@@ -83,6 +113,8 @@ export function registerDiagramEditing(api: OpenClawPluginApi) {
     stop() {
       if (state.owner !== serviceOwner) return;
       preparations.clear();
+      for (const admission of state.admissions.values()) admission.dispose();
+      state.admissions.clear();
       state.canvases.close();
       state.recovered.clear();
       state.owner = undefined;
@@ -112,7 +144,7 @@ export function registerDiagramEditing(api: OpenClawPluginApi) {
       const cfg = api.runtime.config.current();
       const entry = getSessionEntry({ sessionKey, agentId, readConsistency: 'latest' });
       if (
-        !state.owner ||
+        state.owner !== serviceOwner ||
         client.connectionSignal?.aborted ||
         hasCurrentClientAuthority?.() === false ||
         cfg.mcp?.apps?.enabled !== true ||
@@ -127,6 +159,67 @@ export function registerDiagramEditing(api: OpenClawPluginApi) {
     return { sessionKey, sessionId, agentId, connectionId: client.connId, viewId, assertCurrent };
   }
 
+  async function verifySource(
+    owner: CanvasOwner,
+    diagramId: string,
+    admitted: Record<string, unknown>,
+    assertCurrent: () => void,
+  ): Promise<DiagramSource> {
+    const result = await readPreparedView(
+      'mcp.app.view',
+      {
+        sessionKey: owner.sessionKey,
+        agentId: owner.agentId,
+        viewId: owner.viewId,
+      },
+      assertCurrent,
+    );
+    assertCurrent();
+    const initial = object(object(object(result.payload).toolResult).structuredContent);
+    if (!result.ok || initial.diagramId !== diagramId) throw new Error('Diagram view mismatch');
+    const recovered = state.recovered.get(owner.viewId);
+    if (recovered) {
+      if (
+        recovered.diagramId !== diagramId ||
+        recovered.source.sessionId !== owner.sessionId ||
+        recovered.source.agentId !== owner.agentId ||
+        recovered.source.sessionKey !== owner.sessionKey
+      )
+        throw new Error('Recovered diagram mismatch');
+      return recovered.source;
+    }
+    // Resolve the original mint on the admitted view's exact native connection.
+    const uri = `diagram://origin/${diagramId}`;
+    const origin = await readPreparedView(
+      'mcp.app.readResource',
+      {
+        sessionKey: owner.sessionKey,
+        agentId: owner.agentId,
+        viewId: owner.viewId,
+        uri,
+      },
+      assertCurrent,
+    );
+    assertCurrent();
+    if (!origin.ok) throw new Error('Diagram mint unavailable');
+    const contents = object(origin.payload).contents;
+    const resource = Array.isArray(contents) && contents.length === 1 ? object(contents[0]) : {};
+    const mint = object(JSON.parse(text(resource.text, 2048)));
+    if (resource.uri !== uri || mint.diagramId !== diagramId || mint.toolName !== admitted.toolName)
+      throw new Error('Diagram mint unavailable');
+    return {
+      kind: 'desktop-native-admission',
+      diagramId,
+      serverName: DRAWIO_SERVER,
+      toolName: admitted.toolName as DiagramSource['toolName'],
+      uiResourceUri: DRAWIO_RESOURCE,
+      originViewId: owner.viewId,
+      sessionKey: owner.sessionKey,
+      sessionId: owner.sessionId,
+      agentId: owner.agentId,
+    };
+  }
+
   api.registerGatewayMethod(
     DRAWIO_CANVAS_METHOD,
     async invocation => {
@@ -139,7 +232,9 @@ export function registerDiagramEditing(api: OpenClawPluginApi) {
         params.viewId,
       ]);
       const gatesPreparation =
-        params.action === 'prepare' || (params.action === 'detach' && !params.token);
+        params.action === 'admit' ||
+        params.action === 'prepare' ||
+        (params.action === 'detach' && (!params.token || params.forgetSource === true));
       const gate = {};
       try {
         const viewId = text(params.viewId);
@@ -157,8 +252,12 @@ export function registerDiagramEditing(api: OpenClawPluginApi) {
         };
         assertPreparation();
         const token = text(params.token, 128);
-        if (params.action === 'prepare') {
-          const current = snapshot(params.snapshot);
+        if (params.action === 'admit' || params.action === 'prepare') {
+          const diagramId =
+            params.action === 'admit'
+              ? id(params.diagramId)
+              : id(object(params.snapshot).diagramId);
+          if (!diagramId) throw new Error('Invalid diagram identity');
           const admitted = object(params.source);
           if (
             admitted.serverName !== DRAWIO_SERVER ||
@@ -167,70 +266,51 @@ export function registerDiagramEditing(api: OpenClawPluginApi) {
             admitted.originSessionKey !== owner.sessionKey
           )
             throw new Error('Not an admitted draw.io view');
-          const result = await readPreparedView(
-            'mcp.app.view',
-            {
-              sessionKey: owner.sessionKey,
-              agentId: owner.agentId,
-              viewId,
-            },
-            assertPreparation,
-          );
-          assertPreparation();
-          const initial = object(object(object(result.payload).toolResult).structuredContent);
-          if (!result.ok || initial.diagramId !== current.diagramId)
-            throw new Error('Diagram view mismatch');
-          let source: DiagramSource;
-          const recovered = state.recovered.get(viewId);
-          if (recovered) {
-            if (
-              recovered.diagramId !== current.diagramId ||
-              recovered.source.sessionId !== owner.sessionId ||
-              recovered.source.agentId !== owner.agentId ||
-              recovered.source.sessionKey !== owner.sessionKey
-            )
-              throw new Error('Recovered diagram mismatch');
-            source = recovered.source;
-          } else {
-            // The authenticated desktop declares its native-admitted source. The
-            // view read verifies existence/ownership, not the serverName by itself.
-            // Read the mint on this exact view's runtime, never a static MCP manager.
-            const uri = `diagram://origin/${current.diagramId}`;
-            const origin = await readPreparedView(
-              'mcp.app.readResource',
-              {
-                sessionKey: owner.sessionKey,
-                agentId: owner.agentId,
-                viewId,
-                uri,
-              },
-              assertPreparation,
-            );
+          const key = admissionKey(owner, diagramId);
+          if (params.action === 'admit' && !state.admissions.has(key)) {
+            // Admission records only immutable provenance. Model selection can
+            // retire native App interaction grants without changing this editor.
+            const source = Object.freeze({
+              ...(await verifySource(owner, diagramId, admitted, assertPreparation)),
+            });
             assertPreparation();
-            if (!origin.ok) throw new Error('Diagram mint unavailable');
-            const contents = object(origin.payload).contents;
-            const resource =
-              Array.isArray(contents) && contents.length === 1 ? object(contents[0]) : {};
-            const mint = object(JSON.parse(text(resource.text, 2048)));
-            if (
-              resource.uri !== uri ||
-              mint.diagramId !== current.diagramId ||
-              mint.toolName !== admitted.toolName
-            )
-              throw new Error('Diagram mint unavailable');
-            source = {
-              kind: 'desktop-native-admission',
-              diagramId: current.diagramId,
-              serverName: DRAWIO_SERVER,
-              toolName: admitted.toolName as DiagramSource['toolName'],
-              uiResourceUri: DRAWIO_RESOURCE,
-              originViewId: viewId,
-              sessionKey: owner.sessionKey,
-              sessionId: owner.sessionId,
-              agentId: owner.agentId,
+            for (const [previousKey, previous] of state.admissions) {
+              try {
+                previous.owner.assertCurrent();
+              } catch {
+                previous.dispose();
+                state.admissions.delete(previousKey);
+              }
+            }
+            if (state.admissions.size >= 64) throw new Error('Too many admitted diagram editors');
+            const signal = invocation.client?.connectionSignal;
+            const revoked = () => {
+              if (state.admissions.get(key) === admission) state.admissions.delete(key);
+              admission.dispose();
             };
+            const admission = {
+              owner,
+              source,
+              dispose: () => signal?.removeEventListener('abort', revoked),
+            };
+            state.admissions.set(key, admission);
+            signal?.addEventListener('abort', revoked, { once: true });
+            assertPreparation();
           }
+          const source = readAdmittedDiagramSource(owner, diagramId);
+          if (
+            source.toolName !== admitted.toolName ||
+            source.serverName !== admitted.serverName ||
+            source.uiResourceUri !== admitted.uiResourceUri ||
+            source.sessionKey !== admitted.originSessionKey
+          )
+            throw new Error('Diagram source changed');
           assertPreparation();
+          if (params.action === 'admit') {
+            respond(true, { admitted: true });
+            return;
+          }
+          const current = snapshot(params.snapshot);
           respond(true, {
             token: state.canvases.prepare(
               owner,
@@ -257,6 +337,20 @@ export function registerDiagramEditing(api: OpenClawPluginApi) {
         } else if (params.action === 'detach') {
           if (token) state.canvases.detach(owner, token);
           else state.canvases.detachOwner(owner);
+          if (params.forgetSource === true) {
+            for (const [key, admission] of state.admissions) {
+              if (
+                admission.owner.connectionId === owner.connectionId &&
+                admission.owner.sessionKey === owner.sessionKey &&
+                admission.owner.sessionId === owner.sessionId &&
+                admission.owner.agentId === owner.agentId &&
+                admission.owner.viewId === owner.viewId
+              ) {
+                admission.dispose();
+                state.admissions.delete(key);
+              }
+            }
+          }
           respond(true, {});
         } else throw new Error('Unknown diagram action');
       } catch {

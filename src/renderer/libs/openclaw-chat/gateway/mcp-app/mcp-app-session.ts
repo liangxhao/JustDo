@@ -361,6 +361,7 @@ export class McpAppSessionView {
   private fileServer?: string;
   private fileUri?: string;
   private fileWritable = false;
+  private diagramAdmissionAttempted = false;
   preservePresentation = false;
   suspended = false;
   private revision = 0;
@@ -368,7 +369,7 @@ export class McpAppSessionView {
   diagramRequest<T = unknown>(input: Record<string, unknown>) {
     return this.dispatch<T>(DRAWIO_CANVAS_METHOD, input, undefined, true);
   }
-  releaseDiagram(token: string): Promise<unknown> {
+  releaseDiagram(token: string, forgetSource = false): Promise<unknown> {
     const binding = this.binding;
     if (binding.client.generation !== binding.generation || !binding.sessionId)
       return Promise.resolve();
@@ -377,6 +378,7 @@ export class McpAppSessionView {
       {
         action: 'detach',
         token,
+        ...(forgetSource ? { forgetSource: true } : {}),
         sessionKey: binding.sessionKey,
         sessionId: binding.sessionId,
         agentId: binding.agentId,
@@ -707,10 +709,48 @@ export class McpAppSessionView {
       typeof (result.toolResult?.structuredContent as Record<string, unknown> | undefined)
         ?.diagramId === 'string'
     ) {
+      const diagramId = (result.toolResult!.structuredContent as Record<string, unknown>).diagramId;
+      if (result.messageSupported === true) {
+        // Cleanup also owns an admission whose response is lost before the
+        // editor bridge exists. Suspension keeps this provenance; close does not.
+        this.diagramAdmissionAttempted = true;
+        const admitted = await this.dispatch<{ admitted: boolean }>(DRAWIO_CANVAS_METHOD, {
+          action: 'admit',
+          diagramId,
+          source: {
+            serverName: descriptor.serverName,
+            toolName: descriptor.toolName,
+            uiResourceUri: descriptor.uiResourceUri,
+            originSessionKey: descriptor.originSessionKey,
+          },
+        }, signal, true);
+        if (admitted?.admitted !== true) throw new Error('Diagram source admission failed');
+      }
       const current = await this.dispatch<{
         diagram: Record<string, unknown> | null;
         readOnly?: boolean;
-      }>(DRAWIO_CURRENT_METHOD, {}, signal, true);
+        editorResource?: Pick<McpAppViewPayload,
+          'html' | 'csp' | 'sandboxUrl' | 'sandboxPort' | 'sandboxOrigin'>;
+      }>(DRAWIO_CURRENT_METHOD, result.messageSupported === true
+        ? { editorResource: true, diagramId } : {}, signal, true);
+      if (result.messageSupported === true) {
+        if (typeof current.editorResource?.html !== 'string' ||
+          typeof current.editorResource.sandboxUrl !== 'string' ||
+          typeof current.editorResource.sandboxPort !== 'number')
+          throw new Error('Diagram editor resource unavailable');
+        result = {
+          ...result,
+          html: current.editorResource.html,
+          csp: current.editorResource.csp,
+          sandboxUrl: current.editorResource.sandboxUrl,
+          sandboxPort: current.editorResource.sandboxPort,
+          sandboxOrigin: current.editorResource.sandboxOrigin,
+          // Current canvas snapshots use the independently authenticated draw.io
+          // send preparation. Model changes must not revive old native App grants.
+          updateModelContextSupported: false,
+          richModelContextSupported: false,
+        };
+      }
       if (current?.diagram)
         result = { ...result, toolResult: { content: [], structuredContent: current.diagram } };
       if (current?.readOnly)
@@ -788,12 +828,17 @@ export class McpAppSessionView {
     this.forget(this);
     // Native WS has no per-request cancellation or view release. Aborting only
     // ends local waits; already dispatched operations may still complete.
-    this.closing = this.clearContext(this);
+    this.closing = Promise.all([
+      this.clearContext(this),
+      ...(this.diagramAdmissionAttempted ? [this.releaseDiagram('', true)] : []),
+    ]).then(() => undefined);
     return this.closing;
   }
 
   /** Rebinding/transport loss drops local authority without replaying work. */
   detach(): void {
+    if (this.diagramAdmissionAttempted)
+      void this.releaseDiagram('', true).catch(() => undefined);
     for (const operation of this.operations) operation.abort();
     this.disposed = true;
     this.suspended = false;

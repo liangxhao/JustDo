@@ -1,13 +1,13 @@
-import { McpAppView } from '../../src/renderer/libs/openclaw-chat/components/mcp-app/view';
-import { McpAppAnchor } from '../../src/renderer/libs/openclaw-chat/components/mcp-app/anchor';
-import { getMcpAppPresentations } from '../../src/renderer/libs/openclaw-chat/components/mcp-app/presentations';
-import { McpAppSession } from '../../src/renderer/libs/openclaw-chat/gateway/mcp-app/mcp-app-session';
-import { decodeMcpAppLaunch } from '../../src/renderer/libs/openclaw-chat/pipeline/native-mcp-app';
-import { McpAppMethod } from '../../src/shared/plugins/mcpApps';
 import {
   DRAWIO_CANVAS_METHOD,
   DRAWIO_CURRENT_METHOD,
 } from '../../plugins/extensions/drawio/contracts';
+import { McpAppAnchor } from '../../src/renderer/libs/openclaw-chat/components/mcp-app/anchor';
+import { getMcpAppPresentations } from '../../src/renderer/libs/openclaw-chat/components/mcp-app/presentations';
+import { McpAppView } from '../../src/renderer/libs/openclaw-chat/components/mcp-app/view';
+import { McpAppSession } from '../../src/renderer/libs/openclaw-chat/gateway/mcp-app/mcp-app-session';
+import { decodeMcpAppLaunch } from '../../src/renderer/libs/openclaw-chat/pipeline/native-mcp-app';
+import { McpAppMethod } from '../../src/shared/plugins/mcpApps';
 import { mountMcpList } from './list-host';
 const fixture = window as unknown as {
   fixturePayload: Record<string, unknown>;
@@ -63,8 +63,12 @@ const client = {
           { serverName: 'drawio', label: 'draw.io', icons: fixture.fixtureIcons, entrypoints: [] },
         ],
       };
-    if (method === DRAWIO_CURRENT_METHOD) return { diagram: null };
+    if (method === DRAWIO_CURRENT_METHOD) return {
+      diagram: null,
+      editorResource: fixture.fixturePayload,
+    };
     if (method === DRAWIO_CANVAS_METHOD) {
+      if (params.action === 'admit') return { admitted: true };
       if (params.action === 'prepare') {
         fixture.fixtureSnapshot = params.snapshot as Record<string, unknown>;
         return { token: 'fixture-canvas-token' };

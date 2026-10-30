@@ -81,11 +81,15 @@ complete standalone toolbar. This presentation extension grants no permissions
 and requires no knowledge of host tabs, menus or display locations.
 
 The App exposes a read-only standard App tool with
-`_meta['workspace/prepare-context'] = true`. Before first send the generic host
-discovers this opt-in tool, commits active cell editing, exports current XML and
-waits for `updateModelContext` to finish. It does not save a file or call business
-MCP tools. Homepage adoption preserves the same native session, iframe and local
-undo stack; it neither relaunches the editor nor copies XML into product storage.
+`_meta['workspace/prepare-context'] = true` for hosts that advertise native context
+updates. The desktop current-canvas host instead admits the exact native view and
+its server-issued origin before mounting the iframe, then disables that legacy
+context capability. Each send reads a fresh snapshot through the independently
+authenticated canvas route. Model switching leaves the editor and undo stack
+intact without reinstating old native App grants. The plugin service owns the
+immutable editor resources and matching native sandbox/CSP independently of the
+model's MCP runtime. Homepage adoption neither relaunches the editor nor copies
+XML into product storage.
 
 Current-canvas editing uses two browser tools over standard AppBridge: snapshot
 commits active text and exports all pages; apply checks the content stamp and

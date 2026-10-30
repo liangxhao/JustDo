@@ -1,7 +1,11 @@
 import { type McpAppDiscovery, McpAppMethod } from '@shared/plugins/mcpApps';
 import { describe, expect, it, vi } from 'vitest';
 
-import { DRAWIO_RESTORE_METHOD } from '../../../../../../plugins/extensions/drawio/contracts';
+import {
+  DRAWIO_CANVAS_METHOD,
+  DRAWIO_CURRENT_METHOD,
+  DRAWIO_RESTORE_METHOD,
+} from '../../../../../../plugins/extensions/drawio/contracts';
 import {
   MCP_APP_HISTORY_TOOL_METHOD,
   MCP_APP_HISTORY_VIEW_METHOD,
@@ -344,6 +348,64 @@ describe('MCP App native session authority', () => {
   };
   const expired = () =>
     Object.assign(new Error('expired'), { details: { code: 'MCP_APP_VIEW_EXPIRED' } });
+
+  it('admits diagram provenance before exposing an editor with model-independent assets and context preparation', async () => {
+    const { apps, request } = fixture();
+    const initial = { diagramId: 'diagram-one', xml: '<mxGraphModel/>', title: 'Current' };
+    const editorResource = {
+      html: 'stable editor', csp: { resourceDomains: ['http://127.0.0.1:4567'] },
+      sandboxUrl: '/sandbox/new', sandboxPort: 4568,
+    };
+    request.mockResolvedValueOnce({
+      html: 'original editor', sandboxUrl: '/sandbox/old', sandboxPort: 1234,
+      messageSupported: true, updateModelContextSupported: true, richModelContextSupported: true,
+      toolResult: { structuredContent: initial },
+    }).mockResolvedValueOnce({ admitted: true }).mockResolvedValueOnce({
+      diagram: null, editorResource: { ...editorResource, messageSupported: false },
+    });
+    const result = await apps.bind(original.viewId).view(undefined, original);
+    expect(request.mock.calls.map(([method]) => method)).toEqual([
+      McpAppMethod.View, DRAWIO_CANVAS_METHOD, DRAWIO_CURRENT_METHOD,
+    ]);
+    expect(request.mock.calls[1][1]).toMatchObject({
+      action: 'admit', diagramId: initial.diagramId,
+      source: { serverName: 'drawio', toolName: original.toolName,
+        uiResourceUri: original.uiResourceUri, originSessionKey: original.originSessionKey },
+      sessionId: 'native-incarnation', viewId: original.viewId,
+    });
+    expect(result).toMatchObject({
+      ...editorResource, messageSupported: true,
+      updateModelContextSupported: false, richModelContextSupported: false,
+      toolResult: { structuredContent: initial },
+    });
+  });
+
+  it('does not expose a diagram editor when source admission is unconfirmed', async () => {
+    const { apps, request } = fixture();
+    request.mockResolvedValueOnce({
+      html: 'editor', messageSupported: true,
+      toolResult: { structuredContent: { diagramId: 'diagram-one' } },
+    }).mockResolvedValueOnce({ admitted: false });
+    await expect(apps.bind(original.viewId).view(undefined, original)).rejects.toThrow('admission');
+    expect(request.mock.calls.map(([method]) => method)).toEqual([
+      McpAppMethod.View, DRAWIO_CANVAS_METHOD,
+    ]);
+  });
+
+  it('releases attempted source admission when closing an editor that failed before its bridge initialized', async () => {
+    const { apps, request } = fixture();
+    request.mockResolvedValueOnce({
+      html: 'editor', messageSupported: true,
+      toolResult: { structuredContent: { diagramId: 'diagram-one' } },
+    }).mockResolvedValueOnce({ admitted: true }).mockRejectedValueOnce(new Error('asset service failed'));
+    const view = apps.bind(original.viewId);
+    await expect(view.view(undefined, original)).rejects.toThrow('asset service failed');
+    await view.close();
+    expect(request).toHaveBeenLastCalledWith(DRAWIO_CANVAS_METHOD, expect.objectContaining({
+      action: 'detach', token: '', forgetSource: true, viewId: original.viewId,
+      sessionKey: original.originSessionKey, sessionId: 'native-incarnation',
+    }), expect.anything());
+  });
 
   it('restores only an expired diagram reference and routes subsequent operations through its fresh native view', async () => {
     const { apps, request } = fixture();

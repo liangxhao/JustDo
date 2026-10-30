@@ -186,6 +186,7 @@ if (!process.versions.electron) {
     target: 'chrome140',
     minify: true,
     jsx: 'automatic',
+    loader: { '.md': 'text' },
     alias: { '@shared': path.join(root, 'src/shared'), '@': path.join(root, 'src/renderer') },
   });
   if (process.argv.includes('--serve')) {
@@ -907,9 +908,11 @@ if (!process.versions.electron) {
         input.textContent = '切换前未保存的修改';
         input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText' }));
       })()`);
-      await win.webContents.executeJavaScript('window.fixtureView.prepareContext()');
+      await win.webContents.executeJavaScript(
+        '(async()=>{await window.fixtureView.prepareContext();return window.fixturePrepareDiagram();})()',
+      );
       const firstSendContext = await win.webContents.executeJavaScript(
-        'window.fixtureModelContext',
+        'window.fixtureSnapshot',
       );
       assert.match(
         JSON.stringify(firstSendContext),
@@ -929,6 +932,8 @@ if (!process.versions.electron) {
         'Context preparation keeps the same editor document',
       );
       evidence.firstSendContextCapturesUnsavedCell = true;
+      assert.equal(await win.webContents.executeJavaScript('window.fixtureModelContext'), null,
+        'Current canvas sends must not depend on the old native model context grant');
       await win.webContents.executeJavaScript('window.fixtureSwitchSession(false);true');
       await win.webContents.executeJavaScript('window.fixtureSwitchSession(true);true');
       await until(

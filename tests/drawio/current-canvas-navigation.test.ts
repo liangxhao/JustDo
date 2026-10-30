@@ -100,7 +100,8 @@ async function fixture(holdFirstPrepareResponse = false) {
                 held = true;
                 return;
               }
-              ok ? resolve(payload) : reject(new Error('RPC unavailable'));
+              if (ok) resolve(payload);
+              else reject(new Error('RPC unavailable'));
             },
           }),
         );
@@ -122,6 +123,7 @@ async function fixture(holdFirstPrepareResponse = false) {
   const attach = async (viewId: string) => {
     const view = apps.bind(viewId);
     await view.view();
+    await view.diagramRequest({ action: 'admit', source, diagramId: snapshot.diagramId });
     view.preservePresentation = true;
     let prepare!: () => Promise<unknown>;
     const stop = connectCurrentDiagram({
@@ -132,7 +134,7 @@ async function fixture(holdFirstPrepareResponse = false) {
       current: () => view.isCurrent(),
       priority: () => 2,
       request: input => view.diagramRequest(input),
-      release: token => view.releaseDiagram(token),
+      release: (token, forgetSource) => view.releaseDiagram(token, forgetSource),
       onSuspend: listener => view.onSuspend(listener),
       subscribe: listener => view.subscribe(listener),
       register: callback => {
@@ -179,7 +181,7 @@ describe('actual session cancellation with background draw.io preparation', () =
       let blocked = false;
       const dispatch = sdk.dispatch.getMockImplementation()!;
       sdk.dispatch.mockImplementation(async (method, params) => {
-        if (method === 'mcp.app.view' && !blocked) {
+        if (method === 'chat.history' && !blocked) {
           blocked = true;
           await new Promise<void>(resolve => {
             finish = resolve;
