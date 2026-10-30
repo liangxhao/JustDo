@@ -3,13 +3,12 @@ import { act, cleanup, fireEvent, render, screen, within } from '@testing-librar
 import { useState } from 'react';
 import { afterEach, expect, it, vi } from 'vitest';
 
-import { OwnerDocumentContext } from '@/shared/dom/ownerDocument';
-
+import { OwnerDocumentContext } from '../../../tests/fixtures/ownerDocument';
 import DiscussionMentionInput from './DiscussionMentionInput';
 
-vi.mock('@/services/i18n', () => ({ i18nService: { t: (key: string) => key } }));
+vi.mock('../../../tests/fixtures/i18n', () => ({ i18nService: { t: (key: string) => key } }));
 const config = vi.hoisted(() => ({ shortcut: 'Enter' }));
-vi.mock('@/services/config', () => ({
+vi.mock('../../../tests/fixtures/config', () => ({
   configService: { getConfig: () => ({ shortcuts: { sendMessage: config.shortcut } }) },
 }));
 afterEach(() => {

@@ -24,7 +24,7 @@ beforeEach(() => {
       sessionKey: key(agentId),
     })),
   });
-  store.beginRound('room', 'batch');
+  store.beginRound('room', 'batch', 'main');
 });
 afterEach(() => db.close());
 const admit = (agent: string, runId: string, batch = 'batch') => {
@@ -118,7 +118,7 @@ it('rejects self-review, unadmitted identities and unfinished or cross-batch wor
   expect(() => report('reviewer', 'review-run', reviewer)).toThrow('collaborationInvalidReview');
   const unfinished = admit('worker', 'unfinished-run');
   expect(() => report('reviewer', 'review-run', unfinished)).toThrow('collaborationInvalidReview');
-  store.beginRound('room', 'other');
+  store.beginRound('room', 'other', 'main');
   const other = admit('worker', 'other-run', 'other');
   store.recordExecution(key('worker'), 'other-run', 'completed');
   expect(() => report('reviewer', 'review-run', other)).toThrow('collaborationInvalidReview');

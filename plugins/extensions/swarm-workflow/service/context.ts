@@ -1,10 +1,11 @@
 import type { OpenClawPluginApi } from 'openclaw/plugin-sdk/core';
 
-import { managedSubagent } from '../../runtime-services/execution/managed-subagent';
+import { managedSubagent } from '@runtime-services/sdk/execution';
+import { createRuntimeServicesClient } from '@runtime-services/sdk/native-client';
 import {
   assertFilesystemAdmission,
   permissionFingerprint,
-} from '../../runtime-services/filesystem/admission';
+} from '@runtime-services/sdk/filesystem';
 import { prepareItemWorkspace } from '../batch/snapshot';
 import { DEFAULT_FLOW_AGENT, type Flow, type FlowAgent, type FlowNode } from '../contracts/flow';
 import { assertCrossAgentPolicy, parentPolicy } from '../execution/policy';
@@ -13,6 +14,15 @@ import { createResultBudgetTracker } from './result-budget';
 import { state } from './state';
 
 export function createWorkflowContext(api: OpenClawPluginApi) {
+  const runtimeServices = createRuntimeServicesClient(api);
+  let capabilityPreparation: Promise<boolean> | undefined;
+  const prepareRuntimeServices = () => {
+    if (runtimeServices.captureCapabilities()) return Promise.resolve(true);
+    return capabilityPreparation ??= runtimeServices.bind().finally(() => {
+      capabilityPreparation = undefined;
+    });
+  };
+  const nativeSubagent = () => managedSubagent(api, runtimeServices.captureCapabilities());
   const resultBudgets = (state.resultBudgets ??= createResultBudgetTracker());
   const submissionCalls = state.submissionCalls;
   const managementCalls = state.managementCalls;
@@ -78,7 +88,7 @@ export function createWorkflowContext(api: OpenClawPluginApi) {
       }));
   };
   const prepare = async (flow: Flow, node: FlowNode) => {
-    managedSubagent(api);
+    nativeSubagent();
     assertParent(flow);
     assertCrossAgentPolicy(api.runtime.config.current(), flow.agentId, node.agentId);
     if (!(await availableAgents()).some(agent => agent.id === node.agentId))
@@ -136,6 +146,9 @@ export function createWorkflowContext(api: OpenClawPluginApi) {
 
   return {
     api,
+    runtimeServices,
+    prepareRuntimeServices,
+    nativeSubagent,
     state,
     resultBudgets,
     submissionCalls,

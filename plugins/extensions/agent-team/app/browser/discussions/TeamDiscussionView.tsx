@@ -22,7 +22,7 @@ import {
   type TeamDiscussionSummary,
 } from '../../../contracts/teamDiscussion';
 import { discussionMemberSessionKey } from '../../../contracts/teamDiscussion';
-import { buildCoworkSessionKey } from '../../../../runtime-services/contracts/session-key';
+import { buildCoworkSessionKey } from '@runtime-services/sdk/session-key';
 import { OpenClawExtensionId } from '../state';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSelector } from '../state';

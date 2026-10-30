@@ -400,7 +400,7 @@ test.each(['full', 'minimal'])(
     setStoreGetter(() => ({ get: () => appConfig }) as never);
     const sync = new OpenClawConfigSync({
       getAppPluginDefaults: () => appNativePolicies,
-      getAppPluginPolicy: () => ({ skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'justdo-team': { silentReply: { group: 'allow' } } } }),
+      getAppPluginPolicy: () => ({ skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'agent-team': { silentReply: { group: 'allow' } } } }),
       engineManager: {
         getConfigPath: () => configPath,
         getStateDir: () => stateDir,
@@ -468,7 +468,7 @@ test.each([
     JSON.stringify({
       surfaces: {
         webchat: { silentReply: { group: 'disallow' } },
-        'justdo-team': { silentReply: { group: 'disallow' } },
+        'agent-team': { silentReply: { group: 'disallow' } },
       },
       plugins: {
         allow: ['browser'],
@@ -505,7 +505,7 @@ test.each([
   settings.codeMode.mode = codeMode;
   const sync = new OpenClawConfigSync({
       getAppPluginDefaults: () => appNativePolicies,
-      getAppPluginPolicy: () => ({ skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'justdo-team': { silentReply: { group: 'allow' } } } }),
+      getAppPluginPolicy: () => ({ skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'agent-team': { silentReply: { group: 'allow' } } } }),
     engineManager: {
       getConfigPath: () => configPath,
       getStateDir: () => stateDir,
@@ -529,7 +529,7 @@ test.each([
     const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
     expect(config.surfaces).toMatchObject({
       webchat: { silentReply: { group: 'disallow' } },
-      'justdo-team': { silentReply: { group: 'allow' } },
+      'agent-team': { silentReply: { group: 'allow' } },
     });
     expect(config.plugins.entries.openai).toEqual({
       enabled: true,
@@ -694,7 +694,7 @@ test.each(['full', 'minimal'])(
     setStoreGetter(() => ({ get: () => appConfig }) as never);
     const sync = new OpenClawConfigSync({
       getAppPluginDefaults: () => appNativePolicies,
-      getAppPluginPolicy: () => ({ skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'justdo-team': { silentReply: { group: 'allow' } } } }),
+      getAppPluginPolicy: () => ({ skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'agent-team': { silentReply: { group: 'allow' } } } }),
       engineManager: {
         getConfigPath: () => configPath,
         getStateDir: () => stateDir,
@@ -861,7 +861,7 @@ test.each([
     setStoreGetter(() => ({ get: () => appConfig }) as never);
     const sync = new OpenClawConfigSync({
       getAppPluginDefaults: () => appNativePolicies,
-      getAppPluginPolicy: () => ({ skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'justdo-team': { silentReply: { group: 'allow' } } } }),
+      getAppPluginPolicy: () => ({ skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'agent-team': { silentReply: { group: 'allow' } } } }),
       engineManager: {
         getConfigPath: () => configPath,
         getStateDir: () => stateDir,
@@ -1041,7 +1041,7 @@ const writeMinimalConfig = (
 ): OpenClawConfigSyncResult => {
   const sync = new OpenClawConfigSync({
       getAppPluginDefaults: () => appNativePolicies,
-      getAppPluginPolicy: () => ({ skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'justdo-team': { silentReply: { group: 'allow' } } } }),
+      getAppPluginPolicy: () => ({ skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'agent-team': { silentReply: { group: 'allow' } } } }),
     engineManager: {
       getDesiredVersion: () => '2026.6.11',
       getStateDir: () => path.dirname(configPath),
@@ -1194,7 +1194,7 @@ describe('OpenClaw auth logout config sync', () => {
       });
       const sync = new OpenClawConfigSync({
       getAppPluginDefaults: () => appNativePolicies,
-      getAppPluginPolicy: () => ({ skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'justdo-team': { silentReply: { group: 'allow' } } } }),
+      getAppPluginPolicy: () => ({ skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'agent-team': { silentReply: { group: 'allow' } } } }),
         engineManager: {
           getConfigPath: () => configPath,
           getStateDir: () => path.dirname(configPath),
@@ -1252,7 +1252,7 @@ describe('OpenClaw auth logout config sync', () => {
       fs.writeFileSync(configPath, JSON.stringify({ env }));
       const sync = new OpenClawConfigSync({
       getAppPluginDefaults: () => appNativePolicies,
-      getAppPluginPolicy: () => ({ skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'justdo-team': { silentReply: { group: 'allow' } } } }),
+      getAppPluginPolicy: () => ({ skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'agent-team': { silentReply: { group: 'allow' } } } }),
         engineManager: {
           getConfigPath: () => configPath,
           getStateDir: () => stateDir,
@@ -1314,7 +1314,7 @@ describe('OpenClaw auth logout config sync', () => {
       setStoreGetter(() => ({ get: () => appConfig }) as never);
       const sync = new OpenClawConfigSync({
       getAppPluginDefaults: () => appNativePolicies,
-      getAppPluginPolicy: () => ({ skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'justdo-team': { silentReply: { group: 'allow' } } } }),
+      getAppPluginPolicy: () => ({ skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'agent-team': { silentReply: { group: 'allow' } } } }),
         engineManager: {
           getConfigPath: () => configPath,
           getStateDir: () => stateDir,
@@ -1397,7 +1397,7 @@ describe('OpenClaw auth logout config sync', () => {
       setStoreGetter(() => ({ get: () => appConfig }) as never);
       const sync = new OpenClawConfigSync({
       getAppPluginDefaults: () => appNativePolicies,
-      getAppPluginPolicy: () => ({ skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'justdo-team': { silentReply: { group: 'allow' } } } }),
+      getAppPluginPolicy: () => ({ skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'agent-team': { silentReply: { group: 'allow' } } } }),
         engineManager: {
           getConfigPath: () => configPath,
           getStateDir: () => stateDir,
@@ -1490,7 +1490,7 @@ describe('OpenClaw auth logout config sync', () => {
       const settings = createDefaultAgentRuntimeSettings();
       const sync = new OpenClawConfigSync({
       getAppPluginDefaults: () => appNativePolicies,
-      getAppPluginPolicy: () => ({ skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'justdo-team': { silentReply: { group: 'allow' } } } }),
+      getAppPluginPolicy: () => ({ skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'agent-team': { silentReply: { group: 'allow' } } } }),
         engineManager: {
           getConfigPath: () => configPath,
           getStateDir: () => stateDir,
@@ -1557,7 +1557,7 @@ describe('OpenClaw auth logout config sync', () => {
       setStoreGetter(() => ({ get: () => appConfig }) as never);
       const sync = new OpenClawConfigSync({
       getAppPluginDefaults: () => appNativePolicies,
-      getAppPluginPolicy: () => ({ skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'justdo-team': { silentReply: { group: 'allow' } } } }),
+      getAppPluginPolicy: () => ({ skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'agent-team': { silentReply: { group: 'allow' } } } }),
         engineManager: {
           getConfigPath: () => configPath,
           getStateDir: () => stateDir,
@@ -1623,7 +1623,7 @@ describe('OpenClaw auth logout config sync', () => {
       };
       const sync = new OpenClawConfigSync({
       getAppPluginDefaults: () => appNativePolicies,
-      getAppPluginPolicy: () => ({ skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'justdo-team': { silentReply: { group: 'allow' } } } }),
+      getAppPluginPolicy: () => ({ skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'agent-team': { silentReply: { group: 'allow' } } } }),
         engineManager: {
           getConfigPath: () => configPath,
           getStateDir: () => stateDir,
@@ -1900,7 +1900,7 @@ describe('OpenClaw auth logout config sync', () => {
     runtimeSettings.mcp.requestTimeoutSeconds = 300;
     const sync = new OpenClawConfigSync({
       getAppPluginDefaults: () => appNativePolicies,
-      getAppPluginPolicy: () => ({ skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'justdo-team': { silentReply: { group: 'allow' } } } }),
+      getAppPluginPolicy: () => ({ skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'agent-team': { silentReply: { group: 'allow' } } } }),
       engineManager: {
         getDesiredVersion: () => '2026.6.11',
         getStateDir: () => directory,
@@ -2345,7 +2345,7 @@ describe('OpenClaw auth logout config sync', () => {
     let browserMode: BrowserModeValue = nativeMode;
     const sync = new OpenClawConfigSync({
       getAppPluginDefaults: () => appNativePolicies,
-      getAppPluginPolicy: () => ({ skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'justdo-team': { silentReply: { group: 'allow' } } } }),
+      getAppPluginPolicy: () => ({ skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'agent-team': { silentReply: { group: 'allow' } } } }),
       engineManager: {
         getConfigPath: () => configPath,
         getStateDir: () => directory,
@@ -2640,7 +2640,7 @@ describe('OpenClaw auth logout config sync', () => {
   test('builds canonical Agent entries with a custom fallback', () => {
     const sync = new OpenClawConfigSync({
       getAppPluginDefaults: () => appNativePolicies,
-      getAppPluginPolicy: () => ({ skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'justdo-team': { silentReply: { group: 'allow' } } } }),
+      getAppPluginPolicy: () => ({ skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'agent-team': { silentReply: { group: 'allow' } } } }),
       engineManager: {
         getStateDir: () => '/state',
         getDesiredVersion: () => '2026.6.11',
@@ -2754,7 +2754,7 @@ describe('OpenClaw auth logout config sync', () => {
     );
     const sync = new OpenClawConfigSync({
       getAppPluginDefaults: () => appNativePolicies,
-      getAppPluginPolicy: () => ({ skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'justdo-team': { silentReply: { group: 'allow' } } } }),
+      getAppPluginPolicy: () => ({ skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'agent-team': { silentReply: { group: 'allow' } } } }),
       engineManager: {
         getConfigPath: () => configPath,
         getStateDir: () => stateDir,
@@ -2826,7 +2826,7 @@ describe('OpenClaw auth logout config sync', () => {
     );
     const sync = new OpenClawConfigSync({
       getAppPluginDefaults: () => appNativePolicies,
-      getAppPluginPolicy: () => ({ skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'justdo-team': { silentReply: { group: 'allow' } } } }),
+      getAppPluginPolicy: () => ({ skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'agent-team': { silentReply: { group: 'allow' } } } }),
       engineManager: {},
       getCoworkConfig: () => ({}),
       getAgentRuntimeSettings: createDefaultAgentRuntimeSettings,
@@ -2910,7 +2910,7 @@ describe('OpenClaw auth logout config sync', () => {
     );
     const sync = new OpenClawConfigSync({
       getAppPluginDefaults: () => appNativePolicies,
-      getAppPluginPolicy: () => ({ skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'justdo-team': { silentReply: { group: 'allow' } } } }),
+      getAppPluginPolicy: () => ({ skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'agent-team': { silentReply: { group: 'allow' } } } }),
       engineManager: {
         getConfigPath: () => configPath,
         getStateDir: () => stateDir,
@@ -3129,7 +3129,7 @@ test.each(['full', 'minimal'])(
     };
     const createSync = () => new OpenClawConfigSync({
       getAppPluginDefaults: () => appNativePolicies,
-      getAppPluginPolicy: () => ({ skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'justdo-team': { silentReply: { group: 'allow' } } } }),
+      getAppPluginPolicy: () => ({ skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'agent-team': { silentReply: { group: 'allow' } } } }),
       engineManager: {
         getConfigPath: () => configPath,
         getStateDir: () => stateDir,
@@ -3351,7 +3351,7 @@ test.each(['full', 'minimal'])(
     };
     const sync = new OpenClawConfigSync({
       getAppPluginDefaults: () => appNativePolicies,
-      getAppPluginPolicy: () => ({ skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'justdo-team': { silentReply: { group: 'allow' } } } }),
+      getAppPluginPolicy: () => ({ skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'agent-team': { silentReply: { group: 'allow' } } } }),
       engineManager: {
         getConfigPath: () => configPath,
         getStateDir: () => stateDir,
@@ -3457,7 +3457,7 @@ test.each(['full', 'minimal'])(
     setStoreGetter(() => ({ get: () => appConfig }) as never);
     const sync = new OpenClawConfigSync({
       getAppPluginDefaults: () => appNativePolicies,
-      getAppPluginPolicy: () => ({ skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'justdo-team': { silentReply: { group: 'allow' } } } }),
+      getAppPluginPolicy: () => ({ skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'agent-team': { silentReply: { group: 'allow' } } } }),
       engineManager: {
         getConfigPath: () => configPath,
         getStateDir: () => stateDir,
@@ -3536,7 +3536,7 @@ test.each(['full', 'minimal'])(
     };
     const sync = new OpenClawConfigSync({
       getAppPluginDefaults: () => appNativePolicies,
-      getAppPluginPolicy: () => ({ skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'justdo-team': { silentReply: { group: 'allow' } } } }),
+      getAppPluginPolicy: () => ({ skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'agent-team': { silentReply: { group: 'allow' } } } }),
       engineManager: {
         getConfigPath: () => configPath,
         getStateDir: () => stateDir,

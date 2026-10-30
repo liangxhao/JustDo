@@ -1,7 +1,6 @@
 import path from 'node:path';
 
-import { managedSubagent } from '../../runtime-services/execution/managed-subagent';
-import { permissionFingerprint } from '../../runtime-services/filesystem/admission';
+import { permissionFingerprint } from '@runtime-services/sdk/filesystem';
 import {
   DEFAULT_FLOW_AGENT,
   FLOW_LIMITS,
@@ -18,7 +17,7 @@ import { entry, inPlanMode, managed } from './native-context';
 import type { StartAdmission } from './state';
 
 export function registerWorkflowGateway(context: WorkflowContext): void {
-  const { api, state, ensure, assertParent, assertParentIdentity, availableAgents } = context;
+  const { api, state, ensure, assertParent, assertParentIdentity, availableAgents, nativeSubagent } = context;
   api.registerGatewayMethod(
     FLOW_RPC.activity,
     ({ params, respond }) => {
@@ -63,7 +62,7 @@ export function registerWorkflowGateway(context: WorkflowContext): void {
     FLOW_RPC.start,
     async ({ params, respond }) => {
       try {
-        managedSubagent(api);
+        nativeSubagent();
         if (
           !managed(params.parentKey) ||
           typeof params.goal !== 'string' ||

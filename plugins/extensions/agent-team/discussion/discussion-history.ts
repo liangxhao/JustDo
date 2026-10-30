@@ -87,7 +87,7 @@ export function registerDiscussionHistory(api: OpenClawPluginApi): void {
                 ? mirror.sourceMessageId
                 : undefined;
             if (typeof source !== 'string') continue;
-            const prefix = `justdo-team:${roomId}:`;
+            const prefix = `${TEAM_DISCUSSION_CHANNEL}:${roomId}:`;
             if (!source.startsWith(prefix)) continue;
             const parts = source.slice(prefix.length).split(':');
             const discussionId = parts[0];

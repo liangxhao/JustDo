@@ -1,6 +1,6 @@
 import { afterEach, expect, it, vi } from 'vitest';
 
-import type { AppMainHost, AppMainRegistration } from '../../../../packages/app-plugin-sdk/main';
+import type { AppMainHost, AppMainRegistration } from '../../../../plugins/sdk/app-plugin-sdk/main';
 import type { VerifiedAppArtifact } from './artifact';
 import { type AppHostResources, AppPluginRegistry } from './registry';
 

@@ -3,7 +3,7 @@ import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
 import type { AppMainHost, AppResourceParticipant } from '@app-plugin/sdk/main';
-import { parseCoworkSessionKey } from '../../runtime-services/contracts/session-key';
+import { parseCoworkSessionKey } from '@runtime-services/sdk/session-key';
 
 interface FlowResource {
   sessionId: string;

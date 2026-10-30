@@ -4,8 +4,8 @@ import { useEffect, useRef, useSyncExternalStore } from 'react';
 import type { ComposerFeatureItem } from '@/features/cowork/components/composer/ComposerFeatureMenu';
 import { i18nService } from '@/services/i18n';
 
-import { isAppWireValue } from '../../../../../packages/app-plugin-sdk/contracts';
 import { appendAppInput } from '../../../../../plugins/extensions/runtime-services/contracts/app-input';
+import { isAppWireValue } from '../../../../../plugins/sdk/app-plugin-sdk/contracts';
 import type { AppMode } from './browserRegistry';
 import { appBrowserRegistry } from './runtime';
 

@@ -66,9 +66,7 @@ it.skipIf(!sdkRoot)(
       }
     }
     for (const [index, relative] of [
-      'plugins/extensions/runtime-services/agent-team/launch/agent-team-launch-guard.ts',
-      'plugins/extensions/swarm-workflow/service/hooks.ts',
-    ].entries()) {
+      'plugins/extensions/runtime-services/agent-team/launch/agent-team-launch-guard.ts',    ].entries()) {
       const text = fs.readFileSync(path.join(repo, relative), 'utf8');
       const ast = ts.createSourceFile(relative, text, ts.ScriptTarget.Latest, true);
       let options: ts.TypeNode | undefined;

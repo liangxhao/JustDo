@@ -5,7 +5,7 @@ import type { CoworkStore } from '../../data/coworkStore';
 import { createPersistedGatewaySessionReader } from '../../engine/openclaw/subagentGateway';
 import {
   buildManagedSessionKey,
-  isTeamDiscussionHoldingSessionKey,
+  isCustodySessionKey,
 } from '../../openclaw/sessions/openclawSessionKeys';
 
 interface Dependencies {
@@ -46,7 +46,7 @@ export const createNativeWorktreeDiscovery = ({
         );
         for (const native of nativeSessions) {
           if (typeof native.key !== 'string') continue;
-          if (isTeamDiscussionHoldingSessionKey(native.key)) continue;
+          if (isCustodySessionKey(native.key)) continue;
           if (!native.worktree || typeof native.worktree !== 'object') continue;
           const parentKey =
             typeof native.parentSessionKey === 'string'

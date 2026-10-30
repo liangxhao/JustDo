@@ -12,10 +12,12 @@ import { build } from 'esbuild';
 
 import { prepareDevelopmentAppPlugins } from '../../plugins/prepare-development-app-plugins.mjs';
 import { appPluginAssetsPlugin } from '../../plugins/vite-app-plugin-assets.mjs';
+import { discoverAppPluginSources } from './source-discovery.mjs';
 import { DEVELOPMENT_APPLICATION_BODY_COMPLETE, prepareDevelopmentProjectBaseline, projectDevelopmentRuntime,
   waitForDevelopmentApplication } from './project-development-runtime.mjs';
 
 const repo = path.resolve(import.meta.dirname, '../../..');
+const pluginManifests = (await discoverAppPluginSources()).map(source => source.manifest);
 assert.equal(
   process.platform,
   'win32',
@@ -68,7 +70,7 @@ await writeFile(
     discovery: { mdns: { mode: 'off' } },
     models: { catalogRefresh: { enabled: false } },
     gateway: { mode: 'local', bind: 'loopback', port: gatewayPort },
-    plugins: { entries: { 'agent-team': { enabled: true }, 'swarm-workflow': { enabled: true } } },
+    plugins: { entries: Object.fromEntries(pluginManifests.map(({ id }) => [id, { enabled: true }])) },
   }),
 );
 // This is the existing Main setting used by the normal Gateway port controls.
@@ -77,6 +79,7 @@ await writeFile(path.join(profile, 'openclaw/state/gateway-port.json'),
 const origin = `http://localhost:${port}`;
 const context = path.join(root, 'context.json');
 await writeFile(context, JSON.stringify({ repo, root, appRoot, profile, origin, gatewayPort, resultFile, profileStore,
+  pluginManifests,
   projectBaseline,
   bodyCompleteSignal: DEVELOPMENT_APPLICATION_BODY_COMPLETE,
   ...(runtimeProjection ? { runtimeProjection } : {}) }));

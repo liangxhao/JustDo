@@ -35,6 +35,7 @@ test.each([
       { id: 'real-user', role: 'user', timestamp: 1, content: 'A real user question.' },
       {
         id: 'group-input',
+        __fixtureInput: true,
         role: 'user',
         timestamp: 2,
         content: 'Group thread round 2. These are sibling replies.',
@@ -42,14 +43,14 @@ test.each([
         ...(transportOnly
           ? {
               __openclaw: {
-                transport: { channel: 'justdo-team', messageId: 'group-thread:round2' },
+                transport: { channel: 'agent-team', messageId: 'group-thread:round2' },
               },
             }
           : {
               provenance: {
                 kind: 'inter_session',
                 sourceSessionKey: 'agent:main:team-discussion:room',
-                sourceChannel: 'justdo-team',
+                sourceChannel: 'agent-team',
                 sourceTool: 'team_discussion',
               },
             }),

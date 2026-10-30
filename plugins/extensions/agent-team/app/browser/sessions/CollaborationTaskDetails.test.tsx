@@ -4,9 +4,8 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { Provider } from 'react-redux';
 import { afterEach, expect, it, vi } from 'vitest';
 
-import { coworkService } from '@/features/cowork/coworkService';
-import { i18nService } from '@/services/i18n';
-
+import { coworkService } from '../../../tests/fixtures/coworkService';
+import { i18nService } from '../../../tests/fixtures/i18n';
 import CollaborationTaskDetails from './CollaborationTaskDetails';
 
 afterEach(() => {

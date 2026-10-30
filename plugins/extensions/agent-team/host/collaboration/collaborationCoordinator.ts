@@ -1,10 +1,16 @@
 import { randomUUID } from 'node:crypto';
 
+import {
+  describePlanningConstraint,
+  hasUnrestrictedPlanningSnapshot,
+  PlanningConstraint,
+  readPlanningSnapshot,
+} from '@app-plugin/sdk/planning';
+import { parseCoworkSessionKey } from '@runtime-services/sdk/session-key';
+import { buildCoworkSessionKey as buildManagedSessionKey } from '@runtime-services/sdk/session-key';
+import { readSessionNamespace } from '@runtime-services/sdk/session-namespace';
 import type Database from 'better-sqlite3';
 
-import { OpenClawExtensionId } from '../../../runtime-services/contracts/native-ids';
-import { parseCoworkSessionKey } from '../../../runtime-services/contracts/session-key';
-import { buildCoworkSessionKey as buildManagedSessionKey } from '../../../runtime-services/contracts/session-key';
 import {
   type CollaborationContinuePreparationReceipt,
   CollaborationDeliveryState,
@@ -97,6 +103,15 @@ export class CollaborationCoordinator {
       // UI notification failure must not roll back an already committed room/member.
       console.warn('[CollaborationCoordinator] Could not notify session list changes.');
     }
+  }
+  private organizer(room: CollaborationRoom) {
+    const member = room.members.find(item => item.sessionId === room.anchorSessionId);
+    if (!member) throw new Error('collaborationInvalidMembers');
+    return {
+      agentId: member.agentId,
+      name: this.deps.getStore().getAgent(member.agentId)?.name || member.agentId,
+      sessionKey: member.sessionKey,
+    };
   }
   private admissionWaiterKey(roomId: string, targetAgentId: string): string {
     return `${roomId}\u0000${targetAgentId}`;
@@ -283,22 +298,24 @@ export class CollaborationCoordinator {
       const native = await readIdentity(sessionId, sessionKey);
       if (native.goal != null)
         throw new Error('collaborationContinuationUnavailable');
-      if (native.pluginExtensions !== undefined && !Array.isArray(native.pluginExtensions))
-        throw new Error('teamFeatureStatusUnknown');
-      const extensions = native.pluginExtensions as {
-        pluginId?: string; namespace?: string; value?: { enabled?: boolean; awaitingReview?: unknown };
-      }[] | undefined;
-      const planState = extensions?.find(
-        extension =>
-          extension.pluginId === OpenClawExtensionId.PLAN_MODE && extension.namespace === 'state',
-      )?.value;
+      if (describePlanningConstraint(native.pluginExtensions) !== PlanningConstraint.Unrestricted)
+        throw new Error('collaborationContinuationUnavailable');
+      const constraintIdentity = {
+        sessionKey,
+        nativeSessionId: native.sessionId as string,
+        lifecycleRevision: native.lifecycleRevision as string | null,
+      };
+      const constraints = await readPlanningSnapshot(
+        input => readSessionNamespace((method, params) => this.deps.requestGateway(method, params), input),
+        constraintIdentity,
+      );
+      assertReadCurrent();
       const plan = await runtime.getPlanMode(sessionId);
       assertReadCurrent();
       const goalExecution = runtime.getGoalExecution(sessionId);
       if (
         plan.enabled ||
-        planState?.enabled === true ||
-        planState?.awaitingReview != null ||
+        !hasUnrestrictedPlanningSnapshot(constraints, constraintIdentity) ||
         hasBlockingGoalExecution(goalExecution)
       )
         throw new Error('collaborationContinuationUnavailable');
@@ -808,13 +825,15 @@ export class CollaborationCoordinator {
               .find(item => item.rootRunId === runId || item.clientTurnId === runId);
       }
       const roundId = previous?.roundId ?? run?.clientTurnId;
-      if (room && roundId) this.metadata.beginRound(room.id, roundId);
       if (
         !roundId ||
-        (run && (run.state === 'aborted' || run.state === 'failed')) ||
+        (run && run.state !== 'running') ||
         this.stoppedDuringSetup.has(runId) ||
-        (room && this.metadata.isRoundStopped(roundId))
+        (room && previous && this.metadata.isRoundStopped(roundId))
       )
+        throw new Error('collaborationInvalidRound');
+      if (room && !previous) this.metadata.beginRound(room.id, roundId, source.id);
+      if (room && this.metadata.isRoundStopped(roundId))
         throw new Error('collaborationInvalidRound');
       activeRoundId = roundId;
       // A nested main-agent turn admitted from an existing delivery remains part of
@@ -879,7 +898,7 @@ export class CollaborationCoordinator {
         roomPolicy = JSON.stringify(expected);
         recipient = intended;
         recipientPolicy = memberScope(session);
-        this.metadata.beginRound(expected.id, roundId);
+        this.metadata.beginRound(expected.id, roundId, source.id);
         return intended;
       })();
       this.notifySessionsChanged();
@@ -943,7 +962,10 @@ export class CollaborationCoordinator {
           request.expiresAt,
         );
         room = this.metadata.getRoomForSession(parsed.sessionId);
-        result = { member: room?.members.find(member => member.agentId === matches[0].id) };
+        result = {
+          member: room?.members.find(member => member.agentId === matches[0].id),
+          ...(room ? { organizer: this.organizer(room) } : {}),
+        };
         await this.deps.requestGateway(CollaborationGateway.Resolve, {
           requestId: request.requestId,
           result,
@@ -1211,6 +1233,7 @@ export class CollaborationCoordinator {
         result = {
           ...(room
             ? {
+                organizer: this.organizer(room),
                 deliveries: this.metadata.listDeliveries(room.id).slice(-32),
                 reviews: this.metadata.reviews.list(room.id).slice(-32),
               }
@@ -1242,6 +1265,7 @@ export class CollaborationCoordinator {
             : { error: 'collaborationInvalidMembers' };
       } else if (request.operation === 'members') {
         result = {
+          organizer: this.organizer(room),
           limits: this.limits(room),
           members: room.members.map(member => ({
             agentId: member.agentId,
@@ -1264,7 +1288,11 @@ export class CollaborationCoordinator {
             delivery.runId === request.sourceRunId &&
             ['dispatching', 'accepted'].includes(delivery.state),
         );
-        let userRun = previous
+        // Only the original source conversation may originate a graph. A peer's
+        // standalone user run is not a collaboration grant, even if it names an
+        // old batch or claims to be the organizer in its message.
+        const canStartRound = source.sessionId === room.anchorSessionId;
+        let userRun = previous || !canStartRound
           ? undefined
           : this.deps
               .getStore()
@@ -1294,7 +1322,7 @@ export class CollaborationCoordinator {
               delivery.runId === request.sourceRunId &&
               ['dispatching', 'accepted'].includes(delivery.state),
           );
-          userRun = previous
+          userRun = previous || !canStartRound
             ? undefined
             : this.deps
                 .getStore()
@@ -1305,13 +1333,15 @@ export class CollaborationCoordinator {
                     run.clientTurnId === request.sourceRunId,
                 );
         }
+        if (!previous && !canStartRound)
+          throw new Error('collaborationOrganizerRequired');
         if (
-          (!previous && (!userRun || ['aborted', 'failed'].includes(userRun.state))) ||
+          (!previous && userRun?.state !== 'running') ||
           this.stoppedDuringSetup.has(request.sourceRunId)
         )
           throw new Error('collaborationInvalidRound');
         const roundId = previous?.roundId ?? userRun!.clientTurnId;
-        if (!previous) this.metadata.beginRound(room.id, roundId);
+        if (!previous) this.metadata.beginRound(room.id, roundId, source.sessionId);
         if (this.metadata.isRoundStopped(roundId)) throw new Error('collaborationInvalidRound');
         // A trusted tool event from the exact recipient run proves native admission,
         // even when the agent RPC acknowledgement has not reached this process yet.
@@ -1333,6 +1363,11 @@ export class CollaborationCoordinator {
         result = {
           deliveryId: delivery.id,
           sessionKey: room.members.find(member => member.agentId === input.to)!.sessionKey,
+          routing: {
+            organizerSessionKey: this.organizer(room).sessionKey,
+            senderSessionKey: request.sessionKey,
+            recipientSessionKey: room.members.find(member => member.agentId === input.to)!.sessionKey,
+          },
         };
         this.notifySessionsChanged();
         await this.deps.requestGateway(CollaborationGateway.Resolve, {
@@ -1453,7 +1488,8 @@ export class CollaborationCoordinator {
     if (existing) return existing;
     for (const member of room.members)
       for (const run of this.deps.getStore().getSessionRuns(member.sessionId)) {
-        this.metadata.beginRound(room.id, run.clientTurnId);
+        this.stoppedDuringSetup.add(run.clientTurnId);
+        if (run.rootRunId) this.stoppedDuringSetup.add(run.rootRunId);
       }
     // Freeze admission synchronously so already-admitted peer calls cannot slip
     // into an old round while native cancellation is waiting to start.

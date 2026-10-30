@@ -27,6 +27,8 @@ Runtime Services 在注册时立即建立外部 MCP 的策略、工具工厂与�
 
 内置插件源码统一位于仓库根目录的 `plugins/`，按 `extensions/`、`skills/`、`mcp-servers/`、`hooks/`、`browser-extensions/` 分类。OpenClaw 扩展位于 `plugins/extensions/<plugin-id>/`，独立技能及筛选清单位于 `plugins/skills/`；扩展自带的技能保留在所属扩展内部。`mcp-servers/`、`hooks/` 当前仅预留目录，尚无内置加载逻辑。构建仍将 OpenClaw 扩展和选中技能组装到原生的 `dist/extensions/`、`skills/`、`custodian-skills/`，开发源码发现读取对应扩展目录。图标、文档模板和运行时准备缓存继续由 `resources/` 管理。目录约定见[内置插件说明](../../plugins/README.md)。
 
+`plugins/sdk/` 保存公开 App SDK 和构建工具开发包，使用 npm workspace 或打包制品接入；扩展发现仍只扫描 `plugins/extensions/`。源码位置、发布和消费契约见[应用插件宿主](17-app-plugin-host.md)。
+
 Browser Assistant 位于 `plugins/browser-extensions/browser-assistant/`，由 Chrome 安装和加载，不进入 Plugin Hub 的 OpenClaw 扩展管理。它保留上游基线及产品侧栏补充，自有组装脚本、Markdown 源码和单元测试随包维护；复用应用聊天代码的构建适配与 Native Messaging helper 留在宿主，Main 继续拥有连接、权限和会话。构建生成 `build/browser-extension/chrome-extension/`，安装路径沿用 `resources/browser-extension/chrome-extension/`，显示名称和固定扩展身份独立于源码包目录。详见[侧栏对话](../features/browser/browser-extension-side-chat.md)。
 
 插件专属的工具、界面、资源、构建/校验脚本和单元测试归 `plugins/extensions/<plugin-id>/` 所有。主工程保留通用 MCP Apps 宿主、权限与保存桥、配置/打包接入，以及验证宿主边界的集成测试；插件不能反向导入应用 `src`。根 npm 命令和打包流程只委托插件自己的脚本，draw.io 的目录约定见[插件说明](../../plugins/extensions/drawio/README.md)。
@@ -690,9 +692,9 @@ Workboard 仍使用 OpenClaw 插件的 `workboard.cards.*` / `workboard.boards.*
 
 ## Agent Team 群组讨论扩展
 
-配置同步固定 `surfaces.justdo-team.silentReply.group: allow`，允许群成员按原生规则静默，避免 `NO_REPLY` 被空回答恢复强迫重试。该策略写入实际运行时配置，覆盖正常、最小及登录／登出同步；保留其他 surfaces 与显式插件状态，不改变主会话或来源汇总的回复要求，也不增加运行时补丁。
+配置同步固定 `surfaces.agent-team.silentReply.group: allow`，允许群成员按原生规则静默，避免 `NO_REPLY` 被空回答恢复强迫重试。该策略写入实际运行时配置，覆盖正常、最小及登录／登出同步；保留其他 surfaces 与显式插件状态，不改变主会话或来源汇总的回复要求，也不增加运行时补丁。
 
-agent-team 同时承载旧任务协作和 justdo-team 群组 Channel，保持默认关闭及用户开关。它提供 bundled-channel-entry 合约；Agent Team 注册只读 teamDiscussion.history，禁用后不可用，重新启用读取保留的原生历史；Runtime Services 保留 teamDiscussion.offlineControl，完成状态核对和关闭准入。群聊调用 ask_user_question 时沿用同一扩展和取消信号，Renderer 根据完整原生 room key 显示提问者。agent-team 与 runtime-services 的 package.json 声明 justdo.bundle，资源同步从产品源码预先 bundle 共享纯合约，SDK 保持 external；不增加 OpenClaw patch。
+agent-team 同时承载任务协作和 `agent-team` 群组 Channel，保持默认关闭及用户开关。插件自身注册 `teamDiscussion.history` 等业务入口，禁用后不可用；Runtime Services 只提供通用身份、回执核对及取消/清理能力。群聊调用 ask_user_question 时沿用同一扩展和取消信号，Renderer 根据完整原生 room key 显示提问者。Agent Team 使用 `package.json.app` 独立构建 Native/Main/Browser 产物，保留原生 bundled-channel-entry 合约；不增加 OpenClaw patch。通道改名不迁移旧身份或重放任务，详见现行群聊契约。
 
 详见 [Agent Team 现行契约](../features/assistants/agent-team.md)。
 
@@ -811,9 +813,9 @@ Runtime Services 同一无正文发起状态也向 Agent Team 工厂提供目录
 
 Runtime Services 的发起账本位于 `stateDir/runtime-services/agent-team-launch/`，只保存来源身份、generation、owner、状态、指纹及 whole-run 元数据，不保存输入或回复。原生 `pluginExtensions.runtime-services.agent-team-launch` 仅作镜像：正常 SIGTERM 无后继 registry 时会按 disable 清除普通会话的插件状态。账本先持久提交再更新镜像；同进程各注册实例共用来源串行约束，写入前检查客户端授权和退役状态。旧进程未 released、读取失败、损坏或写入未知均冻结，精确 released 才可接纳下一代。锁定自有 holding harness 的原生状态有单独的退休保留规则，不将普通来源的 namespace 清理结论扩展到锁定 holding。
 
-群聊待发存储由常驻 Runtime Services 注册和持有：自有锁定 `justdo-team-holding` inert harness 保存 custom-role、`display:false`、`excludeFromContext:true` 的原生条目，native owner 标记在 `pluginExtensions.runtime-services.holding`。Prepare/Save/Read/Status 受可选 Agent Team 开关限制，Cancel/Close/owning unlock 在关闭后仍可合法清理，不临时启用插件。保存不调用模型；公开 raw delta 仅按 exact identity/request/entry/idempotency/指纹核对目标条目。Main 三名额事务与同群 FIFO 是产品接纳层，不追加活动成员 transcript、不构成全局调度器。产品普通会话导入、搜索、列表和状态过滤 holding 保留 key。
+群聊待发正文通过 Runtime Services 的通用 `inert-custody` harness 保存为 custom-role、`display:false`、`excludeFromContext:true` 的原生条目，native owner 标记在 `pluginExtensions.runtime-services.custody`。Team 自己解释房间和待发协议，Required 服务只核对 opaque resource、epoch、owner 和精确原生身份，不注册 Team 业务入口。关闭后仍可核对通用回执、取消和清理，不临时启用插件。保存不调用模型；公开 raw delta 仅按 exact identity/operation/entry/idempotency/指纹核对目标条目。Main 三名额事务与同群 FIFO 是产品接纳层，不追加活动成员 transcript、不构成全局调度器。产品普通会话导入、搜索、列表和状态过滤通用 custody 保留 key。
 
-插件私有进程状态槽使用 `agent-team` / `runtime-services` 能力名称。待发正文的 customType 为 `agent-team-holding-input`，幂等键前缀为 `agent-team-holding:`，原生消息标记为 `__openclaw.agentTeamHolding`；保留已建立的 holding harness 会话身份及对应导入过滤、归档和清理规则。历史正文标记不自动迁移或重新解释，无法精确核验的待发正文保持未确认；仍可按真实 holder 身份取消和清理。
+插件私有进程状态槽使用 `agent-team` / `runtime-services` 能力名称。通用托管条目的 customType 为 `inert-custody-input`，原生消息标记为 `__openclaw.custody`；Team 通过公开 SDK 使用 opaque resource 与 epoch，不定义另一套 holding harness。历史正文标记不自动迁移或重新解释，无法精确核验的待发正文保持未确认；清理仍须符合当前 SDK 的真实 owner 与身份契约。
 
 正常 shutdown 保留 saved，产品明确关闭先持久取消代次并冻结新准入，再改插件配置。公开 service.stop 可能仍持有旧配置且没有关闭原因，因此扩展 stop 的配置检查不能独立保证热关闭取消。Main 的 disable lease 与串行开关 lane 覆盖这一边界。关闭房间先收齐持久 native 身份，正常 operator 客户端归档，owning SDK 仅对 exact archived session 解锁，再由 operator 精确 archivedOnly 删除；harness 归属不能伪造成 pluginOwnerId。已解锁后正常 SIGTERM 会清除 native holding marker；仅 durable closed slot 与仍 archived/unlocked 的精确 key/SID/revision/harness/root 吻合且没有冲突 marker 时可继续清理，正常正文准入未放宽。真实当前 SDK 已验证此清理闭环（含解锁后重启）、保存/重启/禁用和启用 memory-core 的 session FTS 隔离，dreaming 和所有管理恢复入口尚无实际全覆盖。
 

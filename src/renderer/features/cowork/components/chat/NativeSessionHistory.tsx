@@ -6,7 +6,7 @@ import type { GatewayMessage } from '@/libs/openclaw-chat/types';
 import { i18nService } from '@/services/i18n';
 import { store } from '@/store';
 
-import type { AppNativeHistoryState } from '../../../../../../packages/app-plugin-sdk/browser';
+import type { AppNativeHistoryState } from '../../../../../../plugins/sdk/app-plugin-sdk/browser';
 import { resolveAgentModelSelection } from '../composer/selection/agentModelSelection';
 import { startSubagentGatewayConnection } from '../shared/subagentGatewayConnection';
 import SessionSubtaskButton from '../subagents/SessionSubtaskButton';

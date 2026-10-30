@@ -10,7 +10,12 @@ import {
   ssrfPolicyFromHttpBaseUrlAllowedHostname,
 } from 'openclaw/plugin-sdk/ssrf-runtime';
 
-import { registerAgentTeamRuntimeServices } from './agent-team';
+import { registerExecutionAdmission } from './admission';
+import { registerCustody } from './custody/service';
+import { registerOwnerProvider } from './sdk/owner-provider';
+import { registerRuntimeServicesProvider } from './sdk/provider';
+import { readPreparedManagedExecutionDescriptor } from './execution/prepared-profile';
+import { registerSessionNamespaces } from './session-namespaces';
 import { registerExternalMcp } from './external-mcp';
 import {
   HISTORY_FAILURE_PARTIAL_BATCH_MAX_CHARS,
@@ -243,7 +248,14 @@ const plugin = {
   register(api: OpenClawPluginApi) {
     api.registerProvider(buildBuiltinModelAuthProvider());
     registerReplayAdmissionObservations(api);
-    registerAgentTeamRuntimeServices(api);
+    const ownerProvider = registerOwnerProvider(api);
+    const admission = registerExecutionAdmission(api, ownerProvider);
+    registerCustody(api, ownerProvider);
+    registerRuntimeServicesProvider(api, {
+      readExecutionAdmission: admission.read,
+      managedExecution: readPreparedManagedExecutionDescriptor(api),
+    });
+    registerSessionNamespaces(api);
     registerExternalMcp(api);
     registerScheduledTaskHistory(api);
     registerSpeechSynthesis(api);

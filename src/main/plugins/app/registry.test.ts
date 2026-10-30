@@ -6,8 +6,8 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   AppPluginError,
   type AppPluginManifest,
-} from '../../../../packages/app-plugin-sdk/contracts';
-import type { AppMainHost, AppMainRegistration } from '../../../../packages/app-plugin-sdk/main';
+} from '../../../../plugins/sdk/app-plugin-sdk/contracts';
+import type { AppMainHost, AppMainRegistration } from '../../../../plugins/sdk/app-plugin-sdk/main';
 import type { VerifiedAppArtifact } from './artifact';
 import { type AppHostResources, AppPluginRegistry } from './registry';
 
@@ -380,6 +380,52 @@ it('publishes metadata only from current business calls with host-owned identity
 });
 
 describe('app plugin lifecycle admission', () => {
+  it('isolates a known unavailable owner while preserving exact resource protection', async () => {
+    const h = cleanupFixture();
+    try {
+      h.registry.initializeDatabase(h.database);
+      h.registry.blockResourceAdmission('missing-owner');
+      expect(h.registry.hasUnresolvedInventory()).toBe(true);
+      expect(() => h.registry.assertResourceOwners(['ordinary'])).not.toThrow();
+      const mutate = vi.fn(async () => undefined);
+      await h.registry.mutate('healthy-owner', false, mutate);
+      expect(mutate).toHaveBeenCalledOnce();
+      await expect(h.registry.preparePackageMutation()).resolves.toBeUndefined();
+
+      h.sqlite.prepare('INSERT INTO app_plugin_resources VALUES (?, ?, ?)')
+        .run('missing-owner', 'b'.repeat(64), 'protected-source');
+      expect(() => h.registry.assertResourceOwners(['protected-source'])).toThrow(AppPluginError.Unavailable);
+      expect(() => h.registry.assertResourceOwners(['ordinary'])).not.toThrow();
+      await expect(h.registry.preparePackageMutation()).rejects.toThrow('appPluginCleanupUnresolved');
+      await expect(h.registry.mutate('missing-owner', false, mutate))
+        .rejects.toThrow('appPluginCleanupUnresolved');
+      expect(mutate).toHaveBeenCalledOnce();
+    } finally {
+      h.close();
+    }
+  });
+
+  it('inherits scoped failures without converting them into an unknown global inventory', async () => {
+    const h = cleanupFixture();
+    const source = new AppPluginRegistry(() => ({ enabled: false, confirmed: true }));
+    try {
+      source.blockResourceAdmission('missing-owner');
+      h.registry.inheritResourceAdmissionFailures(source);
+      h.registry.initializeDatabase(h.database);
+      expect(() => h.registry.assertResourceOwners(['ordinary'])).not.toThrow();
+      h.registry.restoreResourceAdmission('missing-owner');
+      expect(h.registry.hasUnresolvedInventory()).toBe(false);
+
+      source.blockResourceAdmission();
+      h.registry.inheritResourceAdmissionFailures(source);
+      expect(() => h.registry.assertResourceOwners(['ordinary'])).toThrow(AppPluginError.Unavailable);
+      await expect(h.registry.preparePackageMutation()).rejects.toThrow('appPluginCleanupUnresolved');
+    } finally {
+      source.dispose();
+      h.close();
+    }
+  });
+
   it('retires old receipt subscriptions after adoption without dropping the active disable lease', async () => {
     const h = cleanupFixture();
     try {

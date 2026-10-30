@@ -21,10 +21,11 @@
     "paths": {
       "@shared/*": ["src/shared/*"],
       "@/*": ["src/renderer/*"],
-      "@app-plugin/sdk/*": ["./packages/app-plugin-sdk/*"]
+      "@app-plugin/sdk/*": ["./plugins/sdk/app-plugin-sdk/*"]
     }
   },
   "include": ["src/renderer", "src/shared"],
+  "exclude": ["src/**/*.test.*", "src/**/*.spec.*"],
   "references": [
     {
       "path": "./tsconfig.node.json"

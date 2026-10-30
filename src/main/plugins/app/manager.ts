@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { existsSync, readFileSync, realpathSync } from 'node:fs';
+import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { isBuiltin } from 'node:module';
 import path from 'node:path';
@@ -10,18 +10,18 @@ import type Database from 'better-sqlite3';
 import type {
   AppPluginReview,
   AppPluginSnapshot,
-} from '../../../../packages/app-plugin-sdk/contracts';
-import { AppPluginError, AppPluginIpc } from '../../../../packages/app-plugin-sdk/contracts';
-import type { AppMainModule } from '../../../../packages/app-plugin-sdk/main';
+} from '../../../../plugins/sdk/app-plugin-sdk/contracts';
+import { AppPluginError, AppPluginIpc } from '../../../../plugins/sdk/app-plugin-sdk/contracts';
+import type { AppMainModule } from '../../../../plugins/sdk/app-plugin-sdk/main';
 import {
   appNativeHandshakeMethod,
   isAppNativeHandshake,
   parseAppNativeHandshakeReceipt,
-} from '../../../../packages/app-plugin-sdk/native-contract';
+} from '../../../../plugins/sdk/app-plugin-sdk/native-contract';
 import {
   APP_NATIVE_PROFILE,
   verifyAppNativeModule,
-} from '../../../../packages/app-plugin-sdk/native-profile';
+} from '../../../../plugins/sdk/app-plugin-sdk/native-profile';
 import { runWithoutPluginRequestBinding } from '../../engine/gateway/pluginRequestBinding';
 import { inspectAppArtifact, retainAppArtifact, type VerifiedAppArtifact } from './artifact';
 import { appAssetPath, appPresentationAssetPath, publishAppAssets } from './assets';
@@ -35,6 +35,10 @@ export interface AppCandidate {
   trusted: boolean;
   bundled?: boolean;
   cleanupOnly?: boolean;
+  /** Native inventory presence also survives an unapproved or broken app companion. */
+  nativePluginId?: string;
+  /** Catalog or prior trust receipt identity, retained even when package files are absent. */
+  identity?: { id: string; hash: string };
   retainedReceipt?: { id: string; hash: string };
 }
 interface Selected {
@@ -85,6 +89,11 @@ export class AppPluginManager {
   }));
   private readonly retained = new Map<string, { id: string; registry?: AppPluginRegistry }>();
   private readonly retainedCandidates: AppCandidate[] = [];
+  private discoveryComplete = false;
+  private readonly currentOwnerIds = new Set<string>();
+  private readonly absentNativeOwners = new Set<string>();
+  private readonly presentNativeOwners = new Set<string>();
+  private readonly removedOwnerIds = new Set<string>();
   private readonly selected = new Map<string, Selected>();
   private readonly assets = new Map<string, { epoch: string; release(): void }>();
   private readonly presentationAssets = new Map<string, { hash: string; release(): void }>();
@@ -114,19 +123,23 @@ export class AppPluginManager {
   async prepare(): Promise<void> {
     this.assertAvailable();
     if (this.ready) return;
-    const candidates = await this.dependencies.candidates().catch((): AppCandidate[] => {
+    let candidates: AppCandidate[];
+    try {
+      candidates = await this.dependencies.candidates();
+      this.captureCurrentOwners(candidates);
+    } catch {
       this.registry.blockResourceAdmission();
-      return [];
-    });
+      candidates = [];
+    }
     this.assertAvailable();
     for (const candidate of candidates.filter(item => item.trusted && item.bundled)) {
       try {
-        const { artifact } = await inspectAppArtifact(candidate.root);
+        const { artifact } = await inspectCandidateArtifact(candidate);
         this.assertAvailable();
         if (artifact.manifest.native)
           this.bundledPolicies.set(artifact.manifest.nativePluginId, artifact.manifest.native);
       } catch {
-        this.registry.blockResourceAdmission();
+        this.registry.blockResourceAdmission(candidate.identity?.id);
       }
     }
     // Bootstrap old trusted inventories independently of an installed rewrite's schemas.
@@ -135,7 +148,7 @@ export class AppPluginManager {
     )) {
       try {
         const artifact = await retainAppArtifact(
-          await inspectAppArtifact(candidate.root),
+          await inspectCandidateArtifact(candidate),
           this.dependencies.retentionRoot,
         );
         this.assertAvailable();
@@ -143,7 +156,7 @@ export class AppPluginManager {
           cleanupOnly: true,
         });
       } catch {
-        this.registry.blockResourceAdmission();
+        this.registry.blockResourceAdmission(candidate.identity?.id);
         console.warn('[AppPlugins] Retained resource inventory could not be prepared');
       }
     }
@@ -153,32 +166,26 @@ export class AppPluginManager {
     );
     for (const candidate of candidates) {
       if (candidate.retainedReceipt) continue;
+      let ownerId = candidate.identity?.id;
       try {
         // A native capability consent is not app trust. External artifacts require separate approval.
         if (!candidate.trusted) continue;
-        const inspected = await inspectAppArtifact(candidate.root);
+        const inspected = await inspectCandidateArtifact(candidate);
+        ownerId = inspected.artifact.manifest.id;
+        this.captureCurrentOwner(candidate, ownerId);
         const artifact = await retainAppArtifact(inspected, this.dependencies.retentionRoot);
-        const binding = await readNativeBinding(
-          artifact,
-          candidate.nativeRoot,
-          candidate.cleanupOnly !== true,
-        );
+        const selected = await selectCandidateArtifact(candidate, artifact);
         const id = artifact.artifact.manifest.nativePluginId;
         if (this.selected.has(id)) continue;
         this.assertAvailable();
         await this.registry.prepare(artifact, this.dependencies.resources, this.dependencies.loadModule, {
-          cleanupOnly: candidate.cleanupOnly,
+          cleanupOnly: selected.cleanupOnly,
         });
         this.assertAvailable();
-        this.selected.set(id, {
-          artifact,
-          nativeRoot: path.resolve(candidate.nativeRoot),
-          nativeHash: binding.sha256,
-          nativeEntry: binding.entry,
-          cleanupOnly: candidate.cleanupOnly === true,
-        });
+        this.selected.set(id, selected);
+        this.registry.restoreResourceAdmission(ownerId);
       } catch {
-        if (candidate.trusted) this.registry.blockResourceAdmission();
+        if (candidate.trusted) this.registry.blockResourceAdmission(ownerId);
         // Never load a fallback version under an installed replacement's native identity.
         console.warn('[AppPlugins] Candidate could not be admitted');
       }
@@ -190,10 +197,11 @@ export class AppPluginManager {
   initializeDatabase(database: Database.Database): void {
     this.assertAvailable();
     this.bootstrap.initializeDatabase(database);
-    if (this.bootstrap.hasUnresolvedInventory()) this.registry.blockResourceAdmission();
+    this.registry.inheritResourceAdmissionFailures(this.bootstrap);
     this.registry.retainCleanupOwners(this.bootstrap);
     this.registry.initializeDatabase(database);
     this.databaseInitialized = true;
+    this.removeAbsentOwners();
   }
   async activate(): Promise<void> {
     this.assertAvailable();
@@ -208,9 +216,29 @@ export class AppPluginManager {
     this.activated = true;
     this.bootstrap.activate();
     this.registry.retainCleanupOwners(this.bootstrap);
-    for (const candidate of this.retainedCandidates.splice(0)) {
+    this.removeAbsentOwners();
+    const retained = new Map(
+      this.retainedCandidates.splice(0).map(candidate => [candidate.retainedReceipt!.hash, candidate]),
+    );
+    // Bundled artifacts have journal trust receipts even when no external approval was needed.
+    for (const owner of this.registry.resourceOwners()) {
+      if (!isOwnerReceipt(owner.ownerId, owner.artifactHash)) {
+        this.registry.blockResourceAdmission();
+        continue;
+      }
+      if (!retained.has(owner.artifactHash))
+        retained.set(owner.artifactHash, {
+          root: path.join(this.dependencies.retentionRoot, owner.ownerId, owner.artifactHash),
+          nativeRoot: '',
+          trusted: true,
+          cleanupOnly: true,
+          retainedReceipt: { id: owner.ownerId, hash: owner.artifactHash },
+        });
+    }
+    for (const candidate of retained.values()) {
       const receipt = candidate.retainedReceipt!;
       if (
+        this.removedOwnerIds.has(receipt.id) ||
         !this.registry.hasReferencedOwner(receipt.id, receipt.hash) ||
         this.registry.snapshot().some(item => item.hash === receipt.hash)
       )
@@ -233,9 +261,10 @@ export class AppPluginManager {
         registry.activate();
         this.retained.set(receipt.hash, { id: receipt.id, registry });
         this.registry.retainCleanupOwners(registry);
+        this.registry.restoreResourceAdmission(receipt.id);
       } catch {
         registry.dispose();
-        if (!this.disposed) this.registry.blockResourceAdmission();
+        if (!this.disposed) this.registry.blockResourceAdmission(receipt.id);
       } finally {
         this.pendingRetained.delete(registry);
       }
@@ -293,7 +322,8 @@ export class AppPluginManager {
         const processGeneration = this.dependencies.getGatewayProcessGeneration?.();
         const handshakes = await Promise.all(
           [...this.selected.keys()].map(async id => {
-            if (this.dependencies.readDesiredEnabled(id) !== true) return [id, null] as const;
+            if (this.selected.get(id)?.cleanupOnly || this.dependencies.readDesiredEnabled(id) !== true)
+              return [id, null] as const;
             const receipt = await runWithoutPluginRequestBinding(() =>
               this.dependencies.resources.requestConnectedGateway<unknown>(
                 appNativeHandshakeMethod(id), {},
@@ -315,6 +345,11 @@ export class AppPluginManager {
         const receipts = new Map(handshakes);
         let awaitingNative = false;
         for (const [id, selected] of this.selected) {
+          if (selected.cleanupOnly) {
+            this.states.set(id, { enabled: false, confirmed: true,
+              configurationEnabled: this.dependencies.readDesiredEnabled(id) });
+            continue;
+          }
           const receipt = receipts.get(id);
           let sourceMatches = false;
           try {
@@ -556,17 +591,24 @@ export class AppPluginManager {
   private async reconcileStoppedPackages(): Promise<void> {
     const candidates = await this.dependencies.candidates();
     this.assertAvailable();
+    this.captureCurrentOwners(candidates);
     const next = new Map<string, Selected>();
     for (const candidate of candidates) {
       if (!candidate.trusted || candidate.retainedReceipt) continue;
-      const artifact = await retainAppArtifact(
-        await inspectAppArtifact(candidate.root), this.dependencies.retentionRoot,
-      );
-      const id = artifact.artifact.manifest.nativePluginId;
-      if (next.has(id)) continue;
-      const binding = await readNativeBinding(artifact, candidate.nativeRoot, !candidate.cleanupOnly);
-      next.set(id, { artifact, nativeRoot: path.resolve(candidate.nativeRoot),
-        nativeHash: binding.sha256, nativeEntry: binding.entry, cleanupOnly: candidate.cleanupOnly === true });
+      let ownerId = candidate.identity?.id;
+      try {
+        const inspected = await inspectCandidateArtifact(candidate);
+        ownerId = inspected.artifact.manifest.id;
+        this.captureCurrentOwner(candidate, ownerId);
+        const artifact = await retainAppArtifact(inspected, this.dependencies.retentionRoot);
+        const id = artifact.artifact.manifest.nativePluginId;
+        if (next.has(id)) continue;
+        next.set(id, await selectCandidateArtifact(candidate, artifact));
+        this.registry.restoreResourceAdmission(ownerId);
+      } catch (error) {
+        if (!ownerId) throw error;
+        this.registry.blockResourceAdmission(ownerId);
+      }
     }
     for (const [id, current] of this.selected) {
       const replacement = next.get(id);
@@ -596,6 +638,71 @@ export class AppPluginManager {
       this.pendingDatabaseIds.clear();
     }
     if (this.activated) this.registry.activate();
+    if (this.databaseInitialized) this.removeAbsentOwners();
+  }
+  private captureCurrentOwner(candidate: AppCandidate, id: string): void {
+    if (!/^[a-z][a-z0-9-]{0,95}$/u.test(id) || candidate.retainedReceipt) return;
+    this.currentOwnerIds.add(id);
+    // A shadowed bundled copy is not the installed Native owner.
+    if (candidate.cleanupOnly || !candidate.nativeRoot) return;
+    try {
+      lstatSync(candidate.nativeRoot);
+      this.presentNativeOwners.add(id);
+    } catch (error) {
+      if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
+        try {
+          // Missing or unreadable inventory is unknown; only a readable parent's absent child is removed.
+          const entries = readdirSync(path.dirname(candidate.nativeRoot));
+          if (!entries.includes(path.basename(candidate.nativeRoot))) this.absentNativeOwners.add(id);
+        } catch {
+          // Preserve metadata when the entire runtime/extensions root is unavailable.
+        }
+      }
+    }
+  }
+  private captureCurrentOwners(candidates: readonly AppCandidate[]): void {
+    this.discoveryComplete = true;
+    this.currentOwnerIds.clear();
+    this.absentNativeOwners.clear();
+    this.presentNativeOwners.clear();
+    this.removedOwnerIds.clear();
+    for (const candidate of candidates) {
+      const id = candidate.identity?.id ?? candidate.nativePluginId;
+      if (id) this.captureCurrentOwner(candidate, id);
+    }
+  }
+  private removeAbsentOwners(): void {
+    if (!this.discoveryComplete || !this.databaseInitialized) return;
+    const previousOwners = this.registry.resourceOwners();
+    for (const owner of previousOwners) {
+      if (!isOwnerReceipt(owner.ownerId, owner.artifactHash)) {
+        this.registry.blockResourceAdmission();
+        continue;
+      }
+      if (!this.currentOwnerIds.has(owner.ownerId)) this.removedOwnerIds.add(owner.ownerId);
+    }
+    for (const id of this.absentNativeOwners)
+      if (!this.presentNativeOwners.has(id)) this.removedOwnerIds.add(id);
+    for (const id of this.removedOwnerIds) {
+      this.registry.removeOwner(id);
+      this.bootstrap.removeOwner(id);
+      this.registry.restoreResourceAdmission(id);
+      for (const [nativeId, selected] of this.selected) {
+        if (selected.artifact.artifact.manifest.id !== id) continue;
+        this.selected.delete(nativeId);
+        this.states.delete(nativeId);
+        this.nativeIdentities.delete(nativeId);
+        this.pendingDatabaseIds.delete(id);
+      }
+      for (let index = this.retainedCandidates.length - 1; index >= 0; index--)
+        if (this.retainedCandidates[index].retainedReceipt?.id === id)
+          this.retainedCandidates.splice(index, 1);
+      for (const [hash, owner] of this.retained) {
+        if (owner.id !== id) continue;
+        owner.registry?.dispose();
+        this.retained.delete(hash);
+      }
+    }
   }
   private async serialMutation<T>(operation: () => Promise<T>): Promise<T> {
     const result = this.mutationLane
@@ -738,41 +845,75 @@ export const discoverAppCandidates = async (
             nativeRoot: '',
             trusted: true,
             cleanupOnly: true,
+            identity: { id, hash },
             retainedReceipt: { id, hash },
           });
     }
   for (const item of installed) {
     if (!item.installPath) continue;
     const root = path.join(item.installPath, 'app');
-    if (!existsSync(path.join(root, 'app.artifact.json'))) continue;
     const artifact = await inspectAppArtifact(root).catch((): null => null);
-    if (artifact)
-      result.push({
-        root,
-        nativeRoot: item.installPath,
-        trusted: approved[item.id] === artifact.artifact.hash,
-      });
+    result.push({
+      root,
+      nativeRoot: item.installPath,
+      nativePluginId: item.id,
+      trusted: !!artifact && approved[item.id] === artifact.artifact.hash,
+      ...(artifact ? { identity: { id: item.id, hash: artifact.artifact.hash } } : {}),
+    });
   }
-  const catalog = JSON.parse(await readFile(path.join(bundled, 'catalog.json'), 'utf8')) as {
-    id: string;
-    hash: string;
-  }[];
+  const catalog: unknown = JSON.parse(await readFile(path.join(bundled, 'catalog.json'), 'utf8'));
+  if (!Array.isArray(catalog) || catalog.some(entry =>
+    !entry || typeof entry !== 'object' || typeof entry.id !== 'string' ||
+    typeof entry.hash !== 'string' || !isOwnerReceipt(entry.id, entry.hash)) ||
+    new Set(catalog.map(entry => entry.id)).size !== catalog.length)
+    throw new Error('Invalid app plugin catalog');
   // The managed `current` runtime may be a directory junction. Pin its target
   // once, while retaining strict link checks inside each native plugin package.
-  const nativeRuntimeRoot =
-    runtimeRoot && existsSync(runtimeRoot) ? realpathSync(runtimeRoot) : runtimeRoot;
+  const nativeRuntimeRoot = runtimeRoot && existsSync(runtimeRoot) ? realpathSync(runtimeRoot) : null;
   for (const entry of catalog) {
-    if (!/^[a-z][a-z0-9-]{0,95}$/u.test(entry.id) || !/^[a-f0-9]{64}$/u.test(entry.hash)) continue;
     result.push({
       root: path.join(bundled, entry.id, entry.hash),
-      nativeRoot: path.join(nativeRuntimeRoot ?? '', 'dist/extensions', entry.id),
+      nativeRoot: nativeRuntimeRoot ? path.join(nativeRuntimeRoot, 'dist/extensions', entry.id) : '',
       trusted: true,
       bundled: true,
       cleanupOnly: owned.has(entry.id),
+      identity: { id: entry.id, hash: entry.hash },
     });
   }
   return result;
 };
+
+const isOwnerReceipt = (id: string, hash: string): boolean =>
+  /^[a-z][a-z0-9-]{0,95}$/u.test(id) && /^[a-f0-9]{64}$/u.test(hash);
+
+async function inspectCandidateArtifact(candidate: AppCandidate): Promise<VerifiedAppArtifact> {
+  const artifact = await inspectAppArtifact(candidate.root);
+  if (candidate.identity &&
+      (!isOwnerReceipt(candidate.identity.id, candidate.identity.hash) ||
+        artifact.artifact.manifest.id !== candidate.identity.id ||
+        artifact.artifact.manifest.nativePluginId !== candidate.identity.id ||
+        artifact.artifact.hash !== candidate.identity.hash))
+    throw new Error('App candidate trust receipt mismatch');
+  return artifact;
+}
+
+async function selectCandidateArtifact(
+  candidate: AppCandidate,
+  artifact: VerifiedAppArtifact,
+): Promise<Selected> {
+  const binding = await readNativeBinding(artifact, candidate.nativeRoot, false);
+  let cleanupOnly = candidate.cleanupOnly === true || !candidate.nativeRoot;
+  if (!cleanupOnly) {
+    try {
+      await readNativeBinding(artifact, candidate.nativeRoot, true);
+    } catch {
+      // Trusted Main bytes can still inventory and clean old metadata without Native business.
+      cleanupOnly = true;
+    }
+  }
+  return { artifact, nativeRoot: path.resolve(candidate.nativeRoot), nativeHash: binding.sha256,
+    nativeEntry: binding.entry, cleanupOnly };
+}
 
 async function readNativeBinding(
   artifact: VerifiedAppArtifact,

@@ -815,7 +815,7 @@ test('omits pending-input harness rows while advancing native runtime list pagin
       : {
           sessions: [
             {
-              key: 'agent:main:harness:justdo-team-holding:room:1',
+              key: 'agent:main:harness:inert-custody:room:1',
               spawnedBy: 'agent:main:justdo:session-1',
               hasActiveRun: true,
             },

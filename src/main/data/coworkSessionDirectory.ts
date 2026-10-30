@@ -8,7 +8,7 @@ import {
   ExternalSessionSource,
   type ExternalSessionStatus,
 } from '../../shared/integrations/externalSession';
-import { isTeamDiscussionHoldingSessionKey } from '../openclaw/sessions/openclawSessionKeys';
+import { isCustodySessionKey } from '../openclaw/sessions/openclawSessionKeys';
 import type { CoworkSessionSummary } from './coworkStore';
 
 interface SessionProjectionRow {
@@ -101,7 +101,7 @@ const readProjection = (
 
 const isVisible = (row: SessionProjectionRow): boolean =>
   ![row.native_session_key, row.history_session_key, row.external_session_key].some(
-    isTeamDiscussionHoldingSessionKey,
+    isCustodySessionKey,
   );
 
 const mapDirectoryEntry = (row: SessionProjectionRow): SessionDirectoryEntry => {

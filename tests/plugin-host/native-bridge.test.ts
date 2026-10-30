@@ -12,7 +12,7 @@ import {
   type AppNativeRequest,
   registerAppNative,
   withAppNative,
-} from '../../packages/app-plugin-sdk/native';
+} from '../../plugins/sdk/app-plugin-sdk/native';
 import {
   appNativeDispatchMethod,
   appNativeHandshakeMethod,
@@ -20,7 +20,7 @@ import {
   createAppNativeUnknownOutcome,
   isAppNativeHandshake,
   parseAppNativeHandshakeReceipt,
-} from '../../packages/app-plugin-sdk/native-contract';
+} from '../../plugins/sdk/app-plugin-sdk/native-contract';
 import {
   bindPluginGatewayClient,
   runWithoutPluginRequestBinding,

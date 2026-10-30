@@ -21,7 +21,19 @@ export function register(host: AppBrowserHost): () => void {
       host.application.metadata.getSnapshot,
     );
     const sessionId = metadata.cowork.currentSession?.id;
-    const discovery = useSwarmWorkflowDiscovery(sessionId, undefined, undefined, true);
+    const discovery = useSwarmWorkflowDiscovery(
+      sessionId,
+      () => {
+        if (
+          sessionId &&
+          !host.signal.aborted &&
+          host.application.metadata.getSnapshot().cowork.currentSession?.id === sessionId
+        )
+          host.openWorkspace('workflow', sessionId);
+      },
+      undefined,
+      true,
+    );
     useSwarmWorkflowActivity(
       [
         ...(metadata.cowork.sessions ?? []).map(session => session.id),

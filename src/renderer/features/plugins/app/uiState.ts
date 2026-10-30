@@ -1,4 +1,4 @@
-import type { AppUiState } from '../../../../../packages/app-plugin-sdk/browser';
+import type { AppUiState } from '../../../../../plugins/sdk/app-plugin-sdk/browser';
 
 const MAX_BYTES = 32 * 1024 * 1024;
 /** Local memory only. Larger than IPC wire limits; contains no live objects or executable values. */

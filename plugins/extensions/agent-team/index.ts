@@ -7,6 +7,9 @@ import { registerCollaborationService } from './collaboration/service';
 import { discussionChannel } from './discussion/discussion-channel';
 import { registerDiscussionHistory } from './discussion/discussion-history';
 import { registerDiscussionService } from './discussion/discussion-service';
+import { registerDiscussionHolding } from './runtime/discussion/holding';
+import { registerAgentTeamLaunchGuard } from './runtime/launch/agent-team-launch-guard';
+import { registerManagedPeerSendGuard } from './runtime/collaboration/managed-peer-send-guard';
 
 const plugin = {
   kind: 'bundled-channel-entry' as const,
@@ -16,6 +19,9 @@ const plugin = {
   id: 'agent-team',
   name: 'Agent Team',
   register(api: OpenClawPluginApi) {
+    registerAgentTeamLaunchGuard(api);
+    registerManagedPeerSendGuard(api);
+    registerDiscussionHolding(api);
     registerDiscussionService(api);
     registerCollaborationService(api);
     registerCollaborationHistory(api);

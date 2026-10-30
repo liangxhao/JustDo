@@ -1,16 +1,15 @@
 // @vitest-environment jsdom
-import type { TeamDiscussionRoom } from '../../../contracts/teamDiscussion';
 import type { CoworkSessionSummary, SessionDirectoryEntry } from '@app-plugin/sdk/application';
-import { coworkService } from '@/features/cowork/coworkService';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
-import { OwnerDocumentContext } from '@/shared/dom/ownerDocument';
-
+import type { TeamDiscussionRoom } from '../../../contracts/teamDiscussion';
+import { coworkService } from '../../../tests/fixtures/coworkService';
+import { OwnerDocumentContext } from '../../../tests/fixtures/ownerDocument';
 import type { AgentTeamHistoryEntry } from './agentTeamHistory';
 import AgentTeamHistoryDialog from './AgentTeamHistoryDialog';
 
-vi.mock('@/services/i18n', () => ({
+vi.mock('../../../tests/fixtures/i18n', () => ({
   i18nService: { t: (key: string) => key, getLanguage: () => 'en' },
 }));
 const state = vi.hoisted(() => ({
@@ -23,7 +22,7 @@ const state = vi.hoisted(() => ({
 vi.mock('react-redux', () => ({
   useSelector: (select: (state: unknown) => unknown) => select(state),
 }));
-vi.mock('@/features/cowork/coworkService', () => ({
+vi.mock('../../../tests/fixtures/coworkService', () => ({
   coworkService: { ensureSessionSummaries: vi.fn() },
 }));
 const rooms = [

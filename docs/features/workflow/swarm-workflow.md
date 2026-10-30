@@ -6,11 +6,11 @@ Renderer 的 Workflow 面板、节点历史和介入呈现位于 `plugins/extens
 
 ## 模块归属与依赖
 
-流程协议、提示、配置与视图由插件维护。Main 协调和完整 React UI 分别在 `host/`、`app/browser/`，通过独立清单和通用 Desktop SDK 注册；应用移除 Workflow 专属 IPC/preload、shared 门面及编译期业务引用。参见 [应用插件宿主](../../architecture/17-app-plugin-host.md)与 [SDK 构建说明](../../../packages/app-plugin-sdk/README.md)。
+流程协议、提示、配置与视图由插件维护。Main 协调和完整 React UI 分别在 `host/`、`app/browser/`，通过独立清单和通用 Desktop SDK 注册；应用移除 Workflow 专属 IPC/preload、shared 门面及编译期业务引用。参见 [应用插件宿主](../../architecture/17-app-plugin-host.md)与 [SDK 构建说明](../../../plugins/sdk/app-plugin-sdk/README.md)。
 
 `execution/` 拥有 DAG 推进、规划、策略、介入和结果提交；`batch/` 拥有输入冻结、单项目录、结果分页及批次存储操作；`data/` 管理插件流程库；`management/` 提供主会话工具与通知。`service/` 绑定这些能力与原生 Gateway：context 提供身份、权限、当前引擎和原生会话准备，state 保留进程共享状态，lifecycle 管理启动实例的代次、循环与停止，hooks、gateway、tools 各自注册原生入口。`index.ts` 仅组合注册，域模块通过同一个 context 访问实时状态，不复制引擎或服务代次。各助手注册实例仍共享同一服务，同时保持独立调用授权。
 
-原生 managed-subagent 的通用运行终态/清理契约属于 Runtime Services `execution/`；Workflow 专属的未调用启动本地证明归 `execution/launch-admission.ts`，引擎和生命周期复用同一 class 身份，不以错误名称推断未发送；通用权限指纹、真实目录身份和可信文件系统准入属于其 `filesystem/`，纯准入类型属于 `contracts/`。Workflow 单向复用这些能力，Runtime Services 不依赖可选 Workflow，也不持有流程库。两个插件都不导入应用 `src`。资源同步从仓库源代码打包 Workflow 的这些相邻依赖，发布后的插件入口不需要解析相邻插件的 TypeScript。
+原生 managed-subagent 的通用运行终态/清理契约、文件准入和执行准入通过公开 `@runtime-services/sdk` 分发，不再导入相邻 Runtime Services 实现。Workflow 专属的未调用启动本地证明归 `execution/launch-admission.ts`，引擎和生命周期复用同一 class 身份，不以错误名称推断未发送。Runtime Services 不识别 Team 或 Workflow，也不持有流程库；同步投影只表示精确来源执行通道的通用占用，Workflow 自己决定是否可以启动。规划状态由 App SDK 的纯 planning 契约解释。执行 facade 仍调用 Workflow 原有作用域的原生 executor，保持 owner、whole-run 与 tool cleanup 语义。没有经过验证的运行能力时明确拒绝，不以仅能编译或方法存在宣称兼容。两个插件都不导入应用 `src`，构建工具从安装的公共包解析依赖和主题。
 
 产品会话仍由 Main 持有，插件通过 SDK 实时端口读取真实会话、runtime 和产品助手名单。`host/config.ts` 保持启用/软删除过滤，不能用原生名单替代。原生、Main 和 Browser 入口独立，插件不导入应用实现。包变更必须确认实际 Gateway 停止后再后台重新启动，软件保持打开；普通启停撤回并重建 epoch。
 
@@ -21,6 +21,8 @@ Renderer 的 Workflow 面板、节点历史和介入呈现位于 `plugins/extens
 宿主从真实产品会话解析原生身份后，按插件与 Gateway 共用的父键契约去重、筛选；通道、外部和工作节点会话键不作为 Workflow 父身份发送，不改写或猜测托管键。已解析身份但没有受支持父键的会话，列表直接返回空流程及非活动状态，避免侧栏观察产生无效 RPC 和失败重试；详情、控制、介入和批次操作仍拒绝。产品会话缺失、原生身份未知或 Gateway 不可用继续返回失败，不能伪造空结果。Gateway 的父身份与流程归属校验保持不变。
 
 关闭 Workflow 后，应用立即隐藏摘要入口并退休已打开 Tab，browser discovery 清空当前投影、取消订阅和待处理刷新并拒绝旧响应。每次 disable revision 也使快速关开时的旧快照失效；重新启用后重新读取保留的流程。同一业务 epoch 的读取暂时失败保留最近成功数量；失去 Native 运行证明则撤回整个业务 epoch 和 Tab，仅保留通用宿主最后确认的活动正证据，不能从断线推断流程已停止。插件停止并不证明原生运行已取消，现有 DAG 和未知运行证据继续保留，恢复时仍不自动重放不确定派发。原生 collector 快照和子任务控制继续走独立 subtasks 入口。
+
+完整清单确认 Workflow 已卸载或源码/包已移除后，通用宿主撤回其 Main/Browser 和资源参与者，仅解除该 owner 的宿主保护关联，不影响普通聊天、普通会话删除、Agent Team 或其他插件。流程库、批次与节点记录、原生助手和会话均保留，重新安装后通过原有身份读取找回，不重放未知启动或控制请求。整体运行时不可用及损坏包不作为明确卸载证据。此契约与 Agent Team 共用通用宿主和构建退休流程，不依赖另一个可选插件。
 
 源聊天的普通 Stop 和 Workflow 图中的停止是两个操作：停止源聊天或准备下一条消息，不自动停止其既有 Workflow。Workflow 没有 Team 式 Main 发起收据，不能借通用提交参与者去取消源会话下的所有流程。用户明确在 Workflow 中停止时，仍通过精确父身份、流程及 revision 走原生控制；删除源会话和改包继续检查全部流程与未清理节点，未结算时保持保护。同包启停不重启 Gateway，关闭后的旧聊天文本由独立纯展示入口保持格式，不恢复业务入口。
 
@@ -167,10 +169,10 @@ prompt build 后冻结：精确来源发起记录、节点提交 owner，以及�
 - 使用真实依赖线、状态图标和短任务标题；窄面板双列，宽面板三列。
 - 保留直角依赖线；参考 Agent-Team 使用 2px 普通线、3.5px 悬停/键盘聚焦线及 5/4 虚线，箭头继承线色，未满足依赖使用虚线。节点显示执行助手，详情保留完整名称。
 - 首次进入、切换流程或会话时，按画布实际宽高自动缩放并居中显示整图；隐藏的 Tab 在激活并获得有效尺寸后适配。自适应状态随画布尺寸及图形布局变化更新，手动拖动或缩放后保留用户视图，点击「适应画布」恢复自适应。支持鼠标左键拖动平移、以鼠标位置为中心的滚轮缩放及工具栏缩放。节点及连线上短点击打开详情，拖动超过阈值后抑制详情点击；从详情返回保留视图位置。键盘仍可选择节点和连线。
-- 当前聊天的插件常驻观察者在窗口可见时通过 `swarmWorkflow.summary` 读取全部历史的流程数量与活动标记，关闭的摘要也能发现入口并沿用每会话一次的自动展开规则；不读取节点、结果或批次项。数量不受完整列表最近 20 条的展示上限影响。点击摘要条目打开 Workflow Tab，完整流程只在可见面板中加载；历史流程保留入口，暂时查询失败保留最后成功数量，切换到无流程会话时隐藏。选择输入框标签本身不查询工作流。
+- 当前聊天的插件常驻观察者在窗口可见时通过 `swarmWorkflow.summary` 读取全部历史的流程数量与活动标记，关闭的摘要也能发现入口并沿用每会话一次的自动展开规则；不读取节点、结果或批次项。发现新流程时自动打开当前聊天的 Workflow Tab；相同流程的修订刷新不会重新打开已关闭的 Tab，历史静态流程也不会抢占当前视图。切换聊天或插件退休后，旧发现响应不能触发导航。数量不受完整列表最近 20 条的展示上限影响。点击摘要条目打开 Workflow Tab，完整流程只在可见面板中加载；历史流程保留入口，暂时查询失败保留最后成功数量，切换到无流程会话时隐藏。选择输入框标签本身不查询工作流。
 - 新流程出现时切换到新图；普通状态刷新保留手动选择的历史流程。跨层依赖使用两侧直角绕行通道，避免线条穿过中间节点。
 - Workflow Tab 可见时才通过 `swarmWorkflow.list` 读取最近 20 条完整流程；切换到其他 Tab、隐藏窗口或关闭面板即撤销完整列表观察。再次打开先核验原生状态；切换聊天后丢弃旧响应，断连保留旧图并禁止基于旧状态控制。关闭界面不停止后台调度、重启核验或原生工具清理。
-- 会话列表通过一份 `swarmWorkflow.activity` 轻量快照观察后台活动，不遍历普通历史会话或读取完整流程。覆盖运行中／停止中，以及暂停或阻塞后仍有准备中、运行中或结果未确认节点的流程；批次按实际执行项状态统计。Main 只向仍存在且精确拥有原生父 key 的产品会话投影活动标记。该投影不参与主输入框执行状态或发送准入。
+- 会话列表通过一份 `swarmWorkflow.activity` 轻量快照观察后台活动，不遍历普通历史会话或读取完整流程。覆盖运行中／停止中，以及暂停或阻塞后仍有准备中、运行中或结果未确认节点的流程；批次按实际执行项状态统计。Main 只向仍存在且精确拥有原生父 key 的产品会话投影活动标记。变更通知同时支持持久绑定与普通聊天的派生 key，后者仅提取候选会话 ID，再核对当前 runtime 的完整原生 key；不能仅靠 key 内的 ID 认定归属。该投影不参与主输入框执行状态或发送准入。
 - 活动快照仅返回活跃父 key，每页最多 128 条、最多读取 128 页；所有页必须属于相同服务代次与已提交变更版本，分页中发生更新、游标重复或超过上限均保留未知，不用部分结果清空活动。没有活动工作流时只读一页，与普通历史会话数量无关。活动与数量查询在原插件 SQLite 中投影，不 hydrate 完整流程或批次结果，不新增持久缓存或 schema。
 - 三种投影分别共享同类观察，先订阅变更再读取快照，按事件合并刷新而非定时轮询；重连或服务重置后重新核验。最多 4 个同类并发读取，退出观察撤销排队请求；失败以 1／2／4 秒最多重试三轮。读取途中到达新变更则丢弃旧响应并重读；手动刷新仍请求原生状态。节点详情和批次页只在可见时刷新，结束后的静态结果停止轮询，但流程修订变化或连接恢复仍触发核验，避免兄弟节点或主聊天操作使控制版本过期；在途更新串行合并，不反复取消慢请求。重试后的详情以实际响应状态决定是否续查，不让选中项的旧终态阻断新尝试；隐藏节点历史时释放原生连接。
 - 停用插件只撤销观察，不能证明已经接纳的原生执行结束。列表保留最后已知活动，直到重新启用后的成功读取确认结束；右侧功能入口仍按原有禁用契约隐藏。旧运行时未提供全历史汇总时，截断列表只能提供正在活动的正证据，不能用其未包含活动流程推断空闲。
@@ -180,11 +182,11 @@ prompt build 后冻结：精确来源发起记录、节点提交 owner，以及�
 
 ## 验证范围
 
-测试覆盖 DAG、阶段门禁、精确消息身份、权限策略、重启不重复派发、未知提交、暂停/停止、过期控制和图形界面。另提供手动隔离测试 tests/openclaw/extensions/swarm-workflow.native-smoke.cjs：设置 SWARM_WORKFLOW_TEST_RUNTIME 指向准备好的 OpenClaw 运行时后执行。测试仅在独立状态目录加载本插件，使用本地固定响应模型，不使用真实账号。
+测试覆盖 DAG、阶段门禁、精确消息身份、权限策略、重启不重复派发、未知提交、暂停/停止、过期控制和图形界面。另提供手动隔离测试 plugins/extensions/swarm-workflow/scripts/native/swarm-workflow.native-smoke.cjs：设置 SWARM_WORKFLOW_TEST_RUNTIME 指向准备好的 OpenClaw 运行时后执行。测试仅在独立状态目录加载本插件，使用本地固定响应模型，不使用真实账号。
 
 隔离测试的固定响应模型根据启动工具名和精确请求身份识别发起阶段，不依赖启动提示的自然语言措辞。来源聊天查询返回结束状态而尚无流程时，测试重新读取流程清单后报告未接纳错误，不继续等待笼统超时。启动纠正保留原生工具名单；纠正耗尽后也重新查询，确认没有创建流程。暂停/重启场景等待工作运行确认接纳后才暂停，并在暂停确认后释放固定模型回复；派发中的未知结果仍按生产契约保留，不能借测试假定未运行或可安全重放。测试产物统一写入 `.agent-tasks/swarm-workflow/`。
 
-真实 Gateway 的消息发起、普通四阶段交付、Code Mode 原生 wait、超过一小时执行及精确取消/工具清理已通过隔离验证。批次契约和验收边界见[批量执行契约](swarm-workflow-batches.md#原生能力与验证边界)；批次隔离探针为 `tests/openclaw/extensions/swarm-workflow-batch.native-smoke.cjs`。固定响应模型验证执行协议，不证明真实业务模型任务质量；隐藏窗口使用 mock bridge，不替代用户当前应用/Gateway 的完整联调。旧 Gateway 清理缺证明时保留 unknown，不自动重试。
+真实 Gateway 的消息发起、普通四阶段交付、Code Mode 原生 wait、超过一小时执行及精确取消/工具清理已通过隔离验证。批次契约和验收边界见[批量执行契约](swarm-workflow-batches.md#原生能力与验证边界)；批次隔离探针为 `plugins/extensions/swarm-workflow/scripts/native/swarm-workflow-batch.native-smoke.cjs`。固定响应模型验证执行协议，不证明真实业务模型任务质量；隐藏窗口使用 mock bridge，不替代用户当前应用/Gateway 的完整联调。旧 Gateway 清理缺证明时保留 unknown，不自动重试。
 
 开发环境需同步并预编译当前插件后使用：`npm run electron:dev:openclaw` 会先准备运行时，发布 `beforePack` 也自动同步并编译。普通 `npm run build` 和 `npm run electron:dev` 不会替换 vendor 中已有的编译插件；直接重启旧开发运行时可能仍没有新增管理工具。
 
@@ -270,8 +272,8 @@ flowchart LR
 回复未知时保留原操作 ID 并对账，不能换 ID 自动再次派发。已完成、已停止及交付
 节点保持只读，运行中“发送补充”不承诺实时传话。
 
-永久验证入口为 `tests/openclaw/runtime/swarm-workflow-send.native-probe.mjs`，由
-`scripts/test/run-collaboration-send-contracts.cjs` 与其他发送入口严格串行运行。
+永久验证入口为 `plugins/extensions/swarm-workflow/scripts/native/swarm-workflow-send.native-probe.mjs`，
+由 Workflow 单独执行；跨入口联调必须严格串行运行。
 它接收显式冻结 runtime，用该 runtime 的 Node，校验核心 manifest 与当前扩展装配
 来源，仅将当前真实 host 编译到隔离测试目录，原生插件直接使用已验证的随包入口。
 动态节点先挂起合成模型响应，取得确切会话订阅 ACK 后再放行；原生 whole-run 事件

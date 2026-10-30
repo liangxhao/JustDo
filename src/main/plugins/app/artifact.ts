@@ -7,7 +7,7 @@ import {
   type AppPluginArtifact,
   isAppArtifactPath,
   parseAppPluginManifest,
-} from '../../../../packages/app-plugin-sdk/contracts';
+} from '../../../../plugins/sdk/app-plugin-sdk/contracts';
 import { type AppModuleGraphs,verifyAppModuleGraph } from './moduleGraph';
 
 const digest = (bytes: Uint8Array | string): string =>

@@ -6,7 +6,6 @@ import { fileURLToPath } from 'node:url';
 import { buildSync } from 'esbuild';
 
 const repository = fileURLToPath(new URL('../../../', import.meta.url));
-const extensionIds = ['agent-team', 'swarm-workflow'];
 const receiptName = 'extension-assembly-receipt.json';
 const sha = bytes => createHash('sha256').update(bytes).digest('hex');
 const hashFile = file => sha(fs.readFileSync(file));
@@ -22,13 +21,14 @@ function inside(root, relative) {
   return resolved;
 }
 
-function verifyFiles(root, records) {
+function verifyFiles(root, records, sourceRoot = root) {
   assert.ok(Array.isArray(records) && records.length > 0);
   const seen = new Set();
   for (const record of records) {
     assert.ok(!seen.has(record.path), `Duplicate assembly input: ${record.path}`);
     seen.add(record.path);
-    const file = inside(root, record.path);
+    assert.ok(record.root === undefined || record.root === 'source');
+    const file = inside(record.root === 'source' ? sourceRoot : root, record.path);
     if (record.link !== undefined) {
       assert.equal(typeof record.link, 'string');
       assert.ok(fs.lstatSync(file).isSymbolicLink());
@@ -59,18 +59,54 @@ function extensionPaths(runtime) {
 }
 
 /**
- * Read-only reproduction of the two official native extension bundles.
+ * Read-only reproduction of explicitly selected or currently declared app extension bundles.
  * Callers must first admit the current frozen core; this never prepares a runtime.
  */
-export function verifyCollaborationExtensionAssembly(requestedRuntime) {
+export function verifyCollaborationExtensionAssembly(requestedRuntime, options = {}) {
+  const sourceRoot = path.resolve(options.sourceRoot ??
+    process.env.APP_PLUGIN_PROBE_SOURCE_ROOT ?? path.join(repository, 'plugins/extensions'));
+  let directories;
+  try {
+    directories = fs.readdirSync(sourceRoot, { withFileTypes: true });
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error;
+    directories = [];
+  }
+  const available = [];
+  for (const entry of directories) {
+    if (!entry.isDirectory()) continue;
+    const file = path.join(sourceRoot, entry.name, 'app.plugin.json');
+    let manifest;
+    try {
+      manifest = JSON.parse(fs.readFileSync(file, 'utf8'));
+    } catch (error) {
+      if (error?.code === 'ENOENT') continue;
+      throw error;
+    }
+    assert.ok(/^[a-z][a-z0-9-]{0,95}$/u.test(entry.name));
+    assert.equal(manifest.id, entry.name);
+    available.push(entry.name);
+  }
+  const extensionIds = options.extensionIds ?? available.sort();
+  assert.ok(Array.isArray(extensionIds) && extensionIds.every(id => available.includes(id)),
+    'An explicitly selected extension source is missing');
   const runtime = fs.realpathSync(requestedRuntime);
   const manifestFile = path.join(runtime, 'runtime-patch-manifest.json');
   const manifestSha256 = hashFile(manifestFile);
   const manifest = JSON.parse(fs.readFileSync(manifestFile, 'utf8'));
-  const sourcePaths = new Set();
+  const sourcePaths = new Map();
+  const addSource = file => {
+    const relative = slash(path.relative(repository, file));
+    const external = relative === '..' || relative.startsWith('../') || path.isAbsolute(relative);
+    const record = external
+      ? { root: 'source', path: slash(path.relative(sourceRoot, file)) }
+      : { path: relative };
+    inside(external ? sourceRoot : repository, record.path);
+    sourcePaths.set(`${record.root ?? 'host'}:${record.path}`, record);
+  };
   const entries = [];
   for (const id of extensionIds) {
-    const directory = path.join(repository, 'plugins/extensions', id);
+    const directory = path.join(sourceRoot, id);
     const pkg = JSON.parse(fs.readFileSync(path.join(directory, 'package.json'), 'utf8'));
     assert.equal(pkg.justdo.bundle, true);
     assert.equal(pkg.openclaw.extensions.length, 1);
@@ -84,16 +120,16 @@ export function verifyCollaborationExtensionAssembly(requestedRuntime) {
       `Current native ${id} bundle does not match the production source closure.`);
     for (const input of Object.keys(compiled.metafile.inputs)) {
       assert.ok(!input.startsWith('<'), `Unbound virtual assembly input: ${input}`);
-      const relative = slash(path.relative(repository, path.resolve(repository, input)));
-      inside(repository, relative);
-      sourcePaths.add(relative);
+      addSource(path.resolve(repository, input));
     }
     for (const name of ['package.json', 'openclaw.plugin.json'])
-      sourcePaths.add(`plugins/extensions/${id}/${name}`);
+      addSource(path.join(directory, name));
     entries.push({ id, path: slash(path.relative(runtime, output)), sha256: hashFile(output) });
   }
-  const sources = [...sourcePaths].sort().map(relative => ({ path: relative,
-    sha256: hashFile(inside(repository, relative)) }));
+  const sources = [...sourcePaths.values()].sort((left, right) =>
+    (`${left.root ?? 'host'}:${left.path}` < `${right.root ?? 'host'}:${right.path}` ? -1 : 1))
+    .map(record => ({ ...record,
+      sha256: hashFile(inside(record.root === 'source' ? sourceRoot : repository, record.path)) }));
   let receiptSha256;
   const receiptFile = path.join(runtime, receiptName);
   if (fs.existsSync(receiptFile)) {
@@ -104,8 +140,12 @@ export function verifyCollaborationExtensionAssembly(requestedRuntime) {
     assert.equal(receipt.core.patchSetSha256, manifest.patchSetSha256);
     assert.equal(receipt.core.gatewayBundleSha256, hashFile(path.join(runtime, 'gateway-bundle.mjs')));
     assert.equal(receipt.core.gatewayAsarSha256, hashFile(path.join(runtime, 'gateway.asar')));
-    verifyFiles(repository, receipt.sources);
-    assert.deepEqual(receipt.sources.map(({ path: relative, sha256 }) => ({ path: relative, sha256 })), sources,
+    const requiredSources = options.extensionIds
+      ? receipt.sources.filter(record => sourcePaths.has(`${record.root ?? 'host'}:${record.path}`))
+      : receipt.sources;
+    verifyFiles(repository, requiredSources, sourceRoot);
+    assert.deepEqual(requiredSources.map(({ path: relative, sha256, root }) =>
+      ({ ...(root ? { root } : {}), path: relative, sha256 })), sources,
       'The assembly receipt must contain the complete current production source closure.');
     assert.ok(receipt.outputs.every(record => slash(record.path).startsWith('dist/extensions/')));
     verifyFiles(runtime, receipt.outputs);

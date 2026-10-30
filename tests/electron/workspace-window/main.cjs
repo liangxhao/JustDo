@@ -517,7 +517,7 @@ app
           );
           await waitFor(() =>
             owner.webContents.executeJavaScript(
-              `probe.editor.getLayoutInfo().width===260 && probe.diffLayoutWidth()===${oldDiffWidth - 120} && probe.document.querySelector("#probe-flow-host svg[role=group]").getAttribute("viewBox").split(" ")[2]==="410"`,
+              `probe.editor.getLayoutInfo().width===260 && probe.diffLayoutWidth()===${oldDiffWidth - 120} && probe.document.querySelector("#probe-flow-host svg[role=group]").getAttribute("viewBox").split(" ")[2]==="480"`,
             ),
           );
           await waitFor(() =>
@@ -530,7 +530,7 @@ app
           );
           await waitFor(() =>
             owner.webContents.executeJavaScript(
-              `probe.editor.getLayoutInfo().width===380 && probe.diffLayoutWidth()===${oldDiffWidth} && probe.document.querySelector("#probe-flow-host svg[role=group]").getAttribute("viewBox").split(" ")[2]==="600" && !!probe.document.querySelector("#probe-drag-handle")`,
+              `probe.editor.getLayoutInfo().width===380 && probe.diffLayoutWidth()===${oldDiffWidth} && probe.document.querySelector("#probe-flow-host svg[role=group]").getAttribute("viewBox").split(" ")[2]==="620" && !!probe.document.querySelector("#probe-drag-handle")`,
             ),
           );
           await owner.webContents.executeJavaScript(
@@ -549,7 +549,7 @@ app
           );
           await owner.webContents.executeJavaScript('probe.hideDragProbe()');
           console.log(
-            `${mode}: minimized child DOM resize, terminal columns, Monaco layout, Swarm graph and modal bounds passed`,
+            `${mode}: minimized child DOM resize, terminal columns, Monaco layout, plugin surface and modal bounds passed`,
           );
           owner.close();
           await waitFor(() => !shell.isVisible());

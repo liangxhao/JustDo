@@ -48,6 +48,7 @@ const BUILD_RECIPE_FILES = [
   'scripts/openclaw/ensure-openclaw-plugins.cjs',
   'scripts/openclaw/patch-mxc-sandbox-plugin.cjs',
   'scripts/openclaw/sync-openclaw-runtime-resources.cjs',
+  'scripts/openclaw/managed-execution-profile.cjs',
   'plugins/extensions/acpx/package.json',
   'plugins/extensions/acpx/package-lock.json',
   'plugins/extensions/acpx/scripts/runtime-dependencies.cjs',

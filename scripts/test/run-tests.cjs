@@ -1,5 +1,6 @@
 const { spawnSync } = require('node:child_process');
 const path = require('node:path');
+const { discoverAppPluginTestSuites } = require('./app-plugin-test-suites.cjs');
 
 const projectRoot = path.resolve(__dirname, '../..');
 const npmCli = process.env.npm_execpath;
@@ -11,9 +12,9 @@ const nativeVerificationScript = [
   'database.close();',
 ].join('');
 
-function runNodeScript(script, args = []) {
+function runNodeScript(script, args = [], cwd = projectRoot) {
   return spawnSync(process.execPath, [script, ...args], {
-    cwd: projectRoot,
+    cwd,
     env: { ...process.env },
     stdio: 'inherit',
   });
@@ -53,6 +54,13 @@ try {
   if (exitCode === 0) {
     const testResult = runNodeScript(vitestCli, ['run', ...process.argv.slice(2)]);
     exitCode = resultExitCode(testResult, 'Vitest');
+    if (exitCode === 0 && process.argv.length === 2) {
+      for (const suite of discoverAppPluginTestSuites(projectRoot)) {
+        const pluginResult = runNodeScript(vitestCli, ['run', '--config', suite.config], suite.root);
+        exitCode = resultExitCode(pluginResult, `App plugin tests (${path.basename(suite.root)})`);
+        if (exitCode !== 0) break;
+      }
+    }
   }
 } finally {
   console.log('Restoring better-sqlite3 for the Electron runtime...');

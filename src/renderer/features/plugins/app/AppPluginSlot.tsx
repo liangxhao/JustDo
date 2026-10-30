@@ -1,6 +1,6 @@
 import { Component, type ReactNode, useSyncExternalStore } from 'react';
 
-import type { AppViewContext } from '../../../../../packages/app-plugin-sdk/browser';
+import type { AppViewContext } from '../../../../../plugins/sdk/app-plugin-sdk/browser';
 import { appBrowserRegistry } from './runtime';
 
 class PluginViewBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {

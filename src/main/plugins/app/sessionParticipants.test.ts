@@ -4,7 +4,7 @@ import type {
   AppMainRegistration,
   AppResourceParticipant,
   AppSubmissionParticipant,
-} from '../../../../packages/app-plugin-sdk/main';
+} from '../../../../plugins/sdk/app-plugin-sdk/main';
 import { AppSessionParticipants, cancelSessionPluginsWithoutWaiting } from './sessionParticipants';
 
 const participant = (overrides: Partial<AppResourceParticipant> = {}): AppResourceParticipant => ({

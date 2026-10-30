@@ -6,12 +6,12 @@ import { describe, expect, it, vi } from 'vitest';
 import type {
   AppBrowserHost,
   AppViewContext,
-} from '../../../../../packages/app-plugin-sdk/browser';
+} from '../../../../../plugins/sdk/app-plugin-sdk/browser';
 import type {
   AppPluginBridge,
   AppPluginEvent,
   AppPluginSnapshot,
-} from '../../../../../packages/app-plugin-sdk/contracts';
+} from '../../../../../plugins/sdk/app-plugin-sdk/contracts';
 import { AppBrowserRegistry } from './browserRegistry';
 import { pluginReplyMirror } from './messagePresentation';
 

@@ -1,10 +1,12 @@
 import type { ChannelPlugin } from 'openclaw/plugin-sdk/core';
 import type { ReplyPayload } from 'openclaw/plugin-sdk/reply-payload';
 
+import { TEAM_DISCUSSION_CHANNEL } from '../contracts/teamDiscussion';
+
 type Delivery = (
   to: string,
   payload: ReplyPayload,
-) => Promise<{ channel: 'justdo-team'; messageId: string }>;
+) => Promise<{ channel: typeof TEAM_DISCUSSION_CHANNEL; messageId: string }>;
 // Channel-only and full registrations may be loaded as separate module graphs.
 // Only the active Gateway service binds this process-local transport endpoint.
 const key = Symbol.for('agent-team.discussion-transport.v1');
@@ -21,9 +23,9 @@ const send = (to: string, payload: ReplyPayload) => {
   return transport.deliver(to, payload);
 };
 export const discussionChannel: ChannelPlugin = {
-  id: 'justdo-team',
+  id: TEAM_DISCUSSION_CHANNEL,
   meta: {
-    id: 'justdo-team',
+    id: TEAM_DISCUSSION_CHANNEL,
     label: 'Agent Team',
     selectionLabel: 'Agent Team',
     docsPath: '/plugins/agent-team',
@@ -35,9 +37,9 @@ export const discussionChannel: ChannelPlugin = {
     resolveAccount: () => ({ accountId: 'default', enabled: true }),
   },
   messaging: {
-    normalizeTarget: target => target.replace(/^(?:justdo-team:)?(?:group:)?/, ''),
+    normalizeTarget: target => target.replace(/^(?:agent-team:)?(?:group:)?/, ''),
     targetResolver: {
-      looksLikeId: input => /^(?:justdo-team:)?(?:group:)?[a-zA-Z0-9_-]{1,128}$/.test(input),
+      looksLikeId: input => /^(?:agent-team:)?(?:group:)?[a-zA-Z0-9_-]{1,128}$/.test(input),
       hint: '<room id>',
     },
   },

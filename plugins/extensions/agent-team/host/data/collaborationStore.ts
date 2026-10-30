@@ -349,8 +349,11 @@ export class CollaborationStore {
     return !row || row.stopped_at !== null;
   }
 
-  beginRound(roomId: string, userTurnId: string): void {
-    if (!userTurnId || userTurnId.length > 128 || !this.getRoom(roomId))
+  /** The actual originating session, never a substituted anchor, owns new batches. */
+  beginRound(roomId: string, userTurnId: string, sourceSessionId: string): void {
+    const room = this.getRoom(roomId);
+    if (!userTurnId || userTurnId.length > 128 || !room ||
+      room.anchorSessionId !== sourceSessionId)
       throw new Error('collaborationInvalidRound');
     const existing = this.db
       .prepare('SELECT room_id FROM collaboration_rounds WHERE id = ?')

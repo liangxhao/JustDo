@@ -1,6 +1,6 @@
 import { expect, it, vi } from 'vitest';
 
-vi.mock('@/features/cowork/coworkService', () => ({ coworkService: {} }));
+vi.mock('../../../tests/fixtures/coworkService', () => ({ coworkService: {} }));
 
 import { submitCollaborationContinuation } from './collaborationContinueSubmission';
 

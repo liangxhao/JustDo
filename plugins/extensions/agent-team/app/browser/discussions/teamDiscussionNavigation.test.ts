@@ -2,8 +2,7 @@
 import { act, cleanup, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
-import { coworkService } from '@/features/cowork/coworkService';
-
+import { coworkService } from '../../../tests/fixtures/coworkService';
 import type { TeamDiscussionRoom } from '../../contracts/teamDiscussion';
 import { openAgentTeam } from '../navigation';
 import {
@@ -14,8 +13,8 @@ import {
 } from './teamDiscussionNavigation';
 
 const state = vi.hoisted(() => ({ currentSession: { id: 'source' } }));
-vi.mock('@/store', () => ({ store: { getState: () => ({ cowork: state }) } }));
-vi.mock('@/features/cowork/coworkService', () => ({
+vi.mock('../../../tests/fixtures/store', () => ({ store: { getState: () => ({ cowork: state }) } }));
+vi.mock('../../../tests/fixtures/coworkService', () => ({
   coworkService: { loadSession: vi.fn() },
 }));
 vi.mock('../navigation', () => ({ openAgentTeam: vi.fn() }));

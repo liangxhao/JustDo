@@ -5,7 +5,7 @@ import { i18nService } from '@/services/i18n';
 import Modal from '@/shared/components/ui/Modal';
 import { useOwnerDocument } from '@/shared/dom/ownerDocument';
 
-import type { AppPluginReview } from '../../../../../packages/app-plugin-sdk/contracts';
+import type { AppPluginReview } from '../../../../../plugins/sdk/app-plugin-sdk/contracts';
 
 /** Native installation permission never silently approves privileged app code. */
 export default function AppCodeReviewAction({ extensionId }: { extensionId: string }) {

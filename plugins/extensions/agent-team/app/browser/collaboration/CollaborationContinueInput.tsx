@@ -75,6 +75,7 @@ export default function CollaborationContinueInput({
   };
   return (
     <section className="space-y-2 pt-2" aria-label={i18nService.t('teamRequestContinue')}>
+      <p className="text-xs text-secondary">{i18nService.t('teamContinueScope')}</p>
       {draft.status && (
         <p role="status" className="text-xs text-secondary">
           {i18nService.t(`teamContinue_${draft.status}`)}

@@ -1,15 +1,14 @@
 // @vitest-environment jsdom
 import { beforeEach, expect, it, vi } from 'vitest';
 
-import { coworkService } from '@/features/cowork/coworkService';
-
+import { coworkService } from '../../../tests/fixtures/coworkService';
 import { OPEN_TEAM_PANEL, openTeamPanel } from '../discussions/teamDiscussionNavigation';
 import { AgentTeamKind } from './agentTeamEntries';
 import { type AgentTeamHistoryEntry, openTeamHistoryEntry } from './agentTeamHistory';
 
 const state = vi.hoisted(() => ({ cowork: { currentSession: { id: 'source' } } }));
-vi.mock('@/store', () => ({ store: { getState: () => state } }));
-vi.mock('@/features/cowork/coworkService', () => ({ coworkService: { loadSession: vi.fn() } }));
+vi.mock('../../../tests/fixtures/store', () => ({ store: { getState: () => state } }));
+vi.mock('../../../tests/fixtures/coworkService', () => ({ coworkService: { loadSession: vi.fn() } }));
 vi.mock('../discussions/teamDiscussionNavigation', () => ({
   OPEN_TEAM_PANEL: 'cowork:open-team-panel',
   openTeamPanel: vi.fn(),

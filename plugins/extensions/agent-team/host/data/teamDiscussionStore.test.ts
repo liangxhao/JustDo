@@ -117,7 +117,7 @@ describe('group discussion admission and recovery', () => {
     const execution = {
       discussionId: run.discussionId,
       agentId: 'alice',
-      sessionKey: 'agent:alice:justdo-team:group:room',
+      sessionKey: 'agent:alice:agent-team:group:room',
       sessionId: 'session-a',
       lifecycleRevision: 'revision-a',
       runId: 'run-1',

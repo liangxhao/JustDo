@@ -1,4 +1,4 @@
-import type { AppMessagePresentation } from '../../../../../packages/app-plugin-sdk/browser';
+import type { AppMessagePresentation } from '../../../../../plugins/sdk/app-plugin-sdk/browser';
 
 const contributors = new Map<string, AppMessagePresentation>();
 const listeners = new Set<() => void>();

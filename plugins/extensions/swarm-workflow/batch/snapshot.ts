@@ -12,7 +12,7 @@ import {
 } from '../contracts/batch.js';
 import type { Flow, FlowNode, FlowSubmission } from '../contracts/flow.js';
 import type { ItemResultManifest } from '../contracts/batch.js';
-import { inside, assertFilesystemAdmission } from '../../runtime-services/filesystem/admission.js';
+import { inside, assertFilesystemAdmission } from '@runtime-services/sdk/filesystem';
 import { swarmWorkflowSettings } from '../settings.js';
 
 type Root = Awaited<ReturnType<typeof import('openclaw/plugin-sdk/file-access-runtime').root>>;
@@ -139,7 +139,7 @@ export async function freezeBatch(
       maxEntries: 100000,
       limitBehavior: 'throw',
       symlinkPolicy: 'include',
-      entryFilter: entry =>
+      entryFilter: (entry: { relativePath: string }) =>
         path.relative(stageRoot, entry.relativePath).split(path.sep)[0].startsWith('snapshot-')
           ? 'include'
           : 'skip-subtree',
@@ -172,7 +172,7 @@ export async function freezeBatch(
   if ((await freeBytes()) < remaining * (settings.maxAttempts + 1))
     throw new Error('Insufficient free disk space for the snapshot and permitted attempts.');
   const relativeRoot = path.join(stageRoot, 'snapshot-' + randomUUID());
-  await scope.mkdir(relativeRoot, { recursive: true });
+  await scope.mkdir(relativeRoot);
   try {
     guard();
     const source = stage.batch.source;
@@ -201,7 +201,7 @@ export async function freezeBatch(
       await scope.copyIn(
         target,
         { root: scope, relativePath: relative },
-        { mkdir: true, maxBytes: remaining, symlinks: 'reject', hardlinks: 'reject' },
+        { mkdir: true, maxBytes: remaining, sourceSymlinks: 'reject', sourceHardlinks: 'reject' },
       );
       guard();
       const frozen = await hashFile(scope, target, remaining, guard);
@@ -251,7 +251,7 @@ export async function freezeBatch(
           maxDepth: 32,
           maxEntries: 10000,
           limitBehavior: 'throw',
-          entryFilter: entry => (ownedPath(entry.relativePath) ? 'skip-subtree' : 'include'),
+          entryFilter: (entry: { relativePath: string }) => (ownedPath(entry.relativePath) ? 'skip-subtree' : 'include'),
         })) {
           guard();
           if (file.kind === 'symlink')
@@ -358,7 +358,7 @@ export async function freezeBatch(
       (originalBudget - remaining) * settings.maxAttempts + Buffer.byteLength(text)
     )
       throw new Error('Insufficient free disk space for the remaining attempt inputs.');
-    await scope.create(manifestPath, text, { mkdir: true, maxBytes: remaining });
+    await scope.create(manifestPath, text, { mkdir: true });
     guard();
     return { manifest, manifestPath: path.join(scope.rootReal, manifestPath) };
   } catch (error) {
@@ -475,7 +475,7 @@ export async function prepareItemWorkspace(
   if (path.relative(flow.filesystemAdmission.root, scope.rootReal) !== '')
     throw new Error('Project root changed.');
   const directory = path.relative(scope.rootReal, node.batchItem.workspace);
-  await scope.mkdir(path.join(directory, 'output'), { recursive: true });
+  await scope.mkdir(path.join(directory, 'output'));
   guard();
   const files: Array<{ path: string; sourceName: string; bytes: number; sha256: string }> = [];
   for (const [index, file] of input.files.entries()) {
@@ -511,7 +511,7 @@ export async function prepareItemWorkspace(
   if (await scope.exists(inputPath)) {
     if ((await scope.readText(inputPath, { maxBytes: BATCH_LIMITS.envelopeBytes })) !== text)
       throw new Error('Attempt input envelope changed.');
-  } else await scope.create(inputPath, text, { maxBytes: BATCH_LIMITS.envelopeBytes });
+  } else await scope.create(inputPath, text);
   guard();
 }
 

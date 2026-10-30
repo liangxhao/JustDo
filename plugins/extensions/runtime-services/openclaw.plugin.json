@@ -2,21 +2,41 @@
   "id": "runtime-services",
   "name": "Runtime Services",
   "description": "Provides runtime progress, history detail, and embedding capabilities.",
-  "providers": ["builtin_models"],
+  "providers": [
+    "builtin_models"
+  ],
   "activation": {
     "onStartup": true,
-    "onCapabilities": ["hook", "tool"]
+    "onCapabilities": [
+      "hook",
+      "tool"
+    ]
   },
   "contracts": {
-    "gatewayMethodDispatch": ["authenticated-request"],
-    "embeddingProviders": ["runtime-services"],
-    "trustedToolPolicies": ["agent-team-launch", "external-mcp"],
-    "tools": ["external_mcp"]
+    "gatewayMethodDispatch": [
+      "authenticated-request"
+    ],
+    "embeddingProviders": [
+      "runtime-services"
+    ],
+    "trustedToolPolicies": [
+      "external-mcp",
+      "execution-admission"
+    ],
+    "tools": [
+      "external_mcp"
+    ]
   },
   "configContracts": {
     "secretInputs": {
       "bundledDefaultEnabled": true,
-      "paths": [{ "path": "replySpeech.apiKey", "expected": "string", "ownerKind": "capability" }]
+      "paths": [
+        {
+          "path": "replySpeech.apiKey",
+          "expected": "string",
+          "ownerKind": "capability"
+        }
+      ]
     }
   },
   "configSchema": {
@@ -25,26 +45,65 @@
     "properties": {
       "replySpeech": {
         "anyOf": [
-          { "type": "null" },
+          {
+            "type": "null"
+          },
           {
             "type": "object",
             "additionalProperties": false,
-            "required": ["baseUrl", "model", "speakerVoice"],
+            "required": [
+              "baseUrl",
+              "model",
+              "speakerVoice"
+            ],
             "properties": {
-              "baseUrl": { "type": "string", "minLength": 1, "maxLength": 2048 },
-              "model": { "type": "string", "minLength": 1, "maxLength": 256 },
-              "speakerVoice": { "type": "string", "minLength": 1, "maxLength": 256 },
+              "baseUrl": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2048
+              },
+              "model": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "speakerVoice": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
               "apiKey": {
                 "anyOf": [
-                  { "type": "string", "maxLength": 16384 },
+                  {
+                    "type": "string",
+                    "maxLength": 16384
+                  },
                   {
                     "type": "object",
                     "additionalProperties": false,
-                    "required": ["source", "provider", "id"],
+                    "required": [
+                      "source",
+                      "provider",
+                      "id"
+                    ],
                     "properties": {
-                      "source": { "type": "string", "enum": ["env", "file", "exec", "store"] },
-                      "provider": { "type": "string", "minLength": 1 },
-                      "id": { "type": "string", "minLength": 1 }
+                      "source": {
+                        "type": "string",
+                        "enum": [
+                          "env",
+                          "file",
+                          "exec",
+                          "store"
+                        ]
+                      },
+                      "provider": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "id": {
+                        "type": "string",
+                        "minLength": 1
+                      }
                     }
                   }
                 ]

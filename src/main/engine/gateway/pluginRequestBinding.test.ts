@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { appNativeGatewayMethodAlias, createAppNativeUnknownOutcome } from '../../../../packages/app-plugin-sdk/native-contract';
+import { appNativeGatewayMethodAlias, createAppNativeUnknownOutcome } from '../../../../plugins/sdk/app-plugin-sdk/native-contract';
 import { isGatewayRequestOutcomeUnknown } from '../../../shared/openclaw/gatewayRequestOutcome';
 import {
   bindPluginGatewayClient,

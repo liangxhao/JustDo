@@ -1,6 +1,6 @@
-import type { AppSettingsNavigationRequest } from '../../../../../packages/app-plugin-sdk/application';
+import type { AppSettingsNavigationRequest } from '../../../../../plugins/sdk/app-plugin-sdk/application';
 
-export type { AppSettingsNavigationRequest } from '../../../../../packages/app-plugin-sdk/application';
+export type { AppSettingsNavigationRequest } from '../../../../../plugins/sdk/app-plugin-sdk/application';
 
 export const APP_PLUGIN_SHOW_SETTINGS_EVENT = 'app-plugin:show-settings';
 

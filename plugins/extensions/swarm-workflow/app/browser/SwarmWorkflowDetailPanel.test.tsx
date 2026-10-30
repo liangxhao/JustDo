@@ -1,17 +1,13 @@
+import { setWorkflowTestPorts } from '../../tests/browserRuntime';
 // @vitest-environment jsdom
 import type { SwarmWorkflowChangedEvent, SwarmWorkflowNode } from '../contracts/index';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, expect, test, vi } from 'vitest';
 
-import { i18nService } from '@/services/i18n';
+import { i18nService } from '../../tests/browserRuntime';
 
 import SwarmWorkflowDetailPanel, { handoffContent } from './SwarmWorkflowDetailPanel';
 
-vi.mock('../../../../../src/renderer/features/cowork/components/chat/ChatMessageDisplay', () => ({
-  default: ({ gatewayMessages }: { gatewayMessages: unknown }) => (
-    <div>{JSON.stringify(gatewayMessages)}</div>
-  ),
-}));
 vi.mock('./SwarmWorkflowNodeHistory', () => ({
   default: ({ sessionKey }: { sessionKey: string }) => <div>history:{sessionKey}</div>,
 }));
@@ -42,18 +38,13 @@ function fixture(submission = 'submitted', dispatch?: { message: string; created
       dispatch,
     },
   });
-  Object.defineProperty(window, 'electron', {
-    configurable: true,
-    value: {
-      cowork: {
-        getSwarmWorkflowDetail: read,
-        onSwarmWorkflowsChanged: (listener: typeof notifyReset) => {
-          notifyReset = listener;
-          return () => {
-            notifyReset = () => {};
-          };
-        },
-      },
+  setWorkflowTestPorts({
+    getSwarmWorkflowDetail: read,
+    onSwarmWorkflowsChanged: (listener: typeof notifyReset) => {
+      notifyReset = listener;
+      return () => {
+        notifyReset = () => {};
+      };
     },
   });
   return read;

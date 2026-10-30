@@ -759,7 +759,7 @@ interface IElectronAPI {
       callback: (data: { tools: number; error?: string; requestId?: string }) => void,
     ) => () => void;
   };
-  appPlugins: import('../../../packages/app-plugin-sdk/contracts').AppPluginBridge;
+  appPlugins: import('../../../plugins/sdk/app-plugin-sdk/contracts').AppPluginBridge;
   agents: {
     delete: (agentId: string) => Promise<AgentResult<void>>;
     save: (input: AgentProfileInput) => Promise<AgentResult<Agent>>;

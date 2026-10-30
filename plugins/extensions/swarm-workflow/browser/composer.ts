@@ -1,4 +1,4 @@
-import { OpenClawExtensionId } from '../../runtime-services/contracts/native-ids';
+import { SWARM_WORKFLOW_PLUGIN_ID } from '../contracts/workflow';
 import { SwarmWorkflowMode, type SwarmWorkflowOptions } from '../contracts/options';
 import type { SwarmWorkflowApi } from '../contracts/api';
 
@@ -60,8 +60,8 @@ export function buildWorkflowComposerFeature({
   selectSwarmWorkflow: (options: SwarmWorkflowOptions) => void;
 }) {
   return {
-    id: OpenClawExtensionId.SWARM_WORKFLOW,
-    extensionId: OpenClawExtensionId.SWARM_WORKFLOW,
+    id: SWARM_WORKFLOW_PLUGIN_ID,
+    extensionId: SWARM_WORKFLOW_PLUGIN_ID,
     labelKey: 'swarmWorkflowTitle',
     selected: Boolean(swarmWorkflow),
     onSelect: () => selectSwarmWorkflow({ mode: SwarmWorkflowMode.Auto, verify: true }),

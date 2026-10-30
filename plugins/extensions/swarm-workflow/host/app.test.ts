@@ -47,10 +47,13 @@ test('validates native changes, projects owned parents and releases the subscrip
   const release = vi.fn();
   let listener!: (event: { event: string; payload: unknown }) => void;
   const parentKey = 'agent:main:justdo:session-1';
+  const runtime = { getSessionKeysForSession: () => [parentKey] };
   const registration = register({
     publishEvent,
+    getRuntime: () => runtime,
     getSessions: () => ({
       getSessionByNativeKey: (key: string) => (key === parentKey ? { id: 'session-1' } : null),
+      getSession: () => null,
     }),
     onNativeEvent: (callback: typeof listener) => {
       listener = callback;
@@ -84,4 +87,88 @@ test('validates native changes, projects owned parents and releases the subscrip
   expect(publishEvent).toHaveBeenLastCalledWith(WorkflowEventName.Changed, {});
   dispose?.();
   expect(release).toHaveBeenCalledOnce();
+});
+
+test('projects derived product parents only while their exact live ownership remains current', () => {
+  const parentKey = 'agent:main:justdo:source';
+  const publishEvent = vi.fn();
+  let listener!: (event: { event: string; payload: unknown }) => void;
+  let exists = true;
+  const ownedKeys = vi.fn(() => [parentKey]);
+  const originalRuntime = { getSessionKeysForSession: ownedKeys };
+  let runtime: typeof originalRuntime | null = originalRuntime;
+  const registration = register({
+    publishEvent,
+    getRuntime: () => runtime,
+    getSessions: () => ({
+      getSessionByNativeKey: () => null,
+      getSession: (id: string) => (id === 'source' && exists ? { id } : null),
+    }),
+    onNativeEvent: (callback: typeof listener) => {
+      listener = callback;
+      return () => undefined;
+    },
+  } as unknown as AppMainHost);
+  registration.onEnable?.();
+  const change = (key = parentKey) =>
+    listener({
+      event: SwarmWorkflowGatewayEvent.Changed,
+      payload: { parentKey: key, flowId: 'flow', revision: 2 },
+    });
+
+  change();
+  expect(publishEvent).toHaveBeenCalledExactlyOnceWith(WorkflowEventName.Changed, {
+    sessionId: 'source', flowId: 'flow', revision: 2,
+  });
+  publishEvent.mockClear();
+  change('agent:review:justdo:source');
+  change('agent:main:justdo:missing');
+  exists = false;
+  change();
+  exists = true;
+  ownedKeys.mockReturnValue([]);
+  change();
+  ownedKeys.mockImplementation(() => {
+    runtime = { getSessionKeysForSession: () => [parentKey] };
+    return [parentKey];
+  });
+  change();
+  runtime = null;
+  change();
+  expect(publishEvent).not.toHaveBeenCalled();
+});
+
+test('preserves imported native bindings while requiring their current exact key', () => {
+  const parentKey = 'agent:main:justdo:original-source';
+  const publishEvent = vi.fn();
+  let listener!: (event: { event: string; payload: unknown }) => void;
+  const ownedKeys = vi.fn(() => [parentKey]);
+  const runtime = { getSessionKeysForSession: ownedKeys };
+  const getSession = vi.fn();
+  const registration = register({
+    publishEvent,
+    getRuntime: () => runtime,
+    getSessions: () => ({
+      getSessionByNativeKey: () => ({ id: 'imported-source' }),
+      getSession,
+    }),
+    onNativeEvent: (callback: typeof listener) => {
+      listener = callback;
+      return () => undefined;
+    },
+  } as unknown as AppMainHost);
+  registration.onEnable?.();
+  const event = {
+    event: SwarmWorkflowGatewayEvent.Changed,
+    payload: { parentKey, flowId: 'flow', revision: 2 },
+  };
+  listener(event);
+  expect(ownedKeys).toHaveBeenCalledWith('imported-source');
+  expect(getSession).not.toHaveBeenCalled();
+  expect(publishEvent).toHaveBeenCalledExactlyOnceWith(WorkflowEventName.Changed, {
+    sessionId: 'imported-source', flowId: 'flow', revision: 2,
+  });
+  ownedKeys.mockReturnValue(['agent:review:justdo:original-source']);
+  listener(event);
+  expect(publishEvent).toHaveBeenCalledOnce();
 });

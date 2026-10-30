@@ -5,7 +5,7 @@ import {
   type AppPluginInvocation,
   AppPluginIpc,
   type AppPluginSnapshot,
-} from '../../packages/app-plugin-sdk/contracts';
+} from '../../plugins/sdk/app-plugin-sdk/contracts';
 import {
   type AgentRuntimeSettings,
   AgentRuntimeSettingsIpc,

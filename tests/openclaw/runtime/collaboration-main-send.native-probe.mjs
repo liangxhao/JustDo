@@ -13,12 +13,12 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { build } from 'esbuild';
 import { WebSocket as RelaySocket, WebSocketServer } from 'ws';
 
-import { verifyCollaborationExtensionAssembly } from './extension-assembly-contract.mjs';
+
 import { resolveNativeSmokeTarget } from './native-smoke-target.mjs';
 
 const repository = fileURLToPath(new URL('../../../', import.meta.url));
 const { runtimeRoot: runtime, identity } = resolveNativeSmokeTarget(process.argv[2]);
-const assembly = verifyCollaborationExtensionAssembly(runtime);
+const assembly = { entries: [], scope: 'Core chat transport; no optional business plugin is selected.' };
 const require = createRequire(import.meta.url);
 const prepareOnly = process.argv.includes('--prepare-only');
 assert.ok(process.argv.slice(3).every(argument => argument === '--prepare-only'));

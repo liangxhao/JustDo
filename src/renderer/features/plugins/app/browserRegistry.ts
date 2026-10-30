@@ -2,7 +2,7 @@ import { type ComponentType, createElement, type ReactNode } from 'react';
 
 import { UiStyleScopeBoundary } from '@/shared/dom/styleScope';
 
-import type { AppServices } from '../../../../../packages/app-plugin-sdk/application';
+import type { AppServices } from '../../../../../plugins/sdk/app-plugin-sdk/application';
 import type {
   AppBrowserContribution,
   AppBrowserHost,
@@ -10,13 +10,13 @@ import type {
   AppComposerMode,
   AppSessionPresentation,
   AppViewContext,
-} from '../../../../../packages/app-plugin-sdk/browser';
+} from '../../../../../plugins/sdk/app-plugin-sdk/browser';
 import type {
   AppPluginBridge,
   AppPluginSnapshot,
-} from '../../../../../packages/app-plugin-sdk/contracts';
-import { isAppIdentifier, isAppWireValue } from '../../../../../packages/app-plugin-sdk/contracts';
-import type { AppHistoryPresentationModule } from '../../../../../packages/app-plugin-sdk/history-presentation';
+} from '../../../../../plugins/sdk/app-plugin-sdk/contracts';
+import { isAppIdentifier, isAppWireValue } from '../../../../../plugins/sdk/app-plugin-sdk/contracts';
+import type { AppHistoryPresentationModule } from '../../../../../plugins/sdk/app-plugin-sdk/history-presentation';
 import { registerMessagePresentation } from './messagePresentation';
 import { AppUiStateStore } from './uiState';
 

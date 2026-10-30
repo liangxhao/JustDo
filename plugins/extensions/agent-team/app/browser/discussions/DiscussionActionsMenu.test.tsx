@@ -2,11 +2,10 @@
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 
-import { OwnerDocumentContext } from '@/shared/dom/ownerDocument';
-
+import { OwnerDocumentContext } from '../../../tests/fixtures/ownerDocument';
 import DiscussionActionsMenu from './DiscussionActionsMenu';
 
-vi.mock('@/services/i18n', () => ({ i18nService: { t: (key: string) => key } }));
+vi.mock('../../../tests/fixtures/i18n', () => ({ i18nService: { t: (key: string) => key } }));
 afterEach(() => {
   cleanup();
   document.querySelectorAll('iframe').forEach(frame => frame.remove());

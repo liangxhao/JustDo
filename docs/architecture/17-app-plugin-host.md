@@ -18,7 +18,7 @@ flowchart LR
   Required[Runtime Services: 常驻保护/收据/清理] --> History
 ```
 
-`packages/app-plugin-sdk/` 是无应用源码依赖的公开契约。`src/main/plugins/app/` 只负责可信代码发现、产物校验和保留、生命周期、数据库端口、配置贡献、提交/删除参与者、代码审核和资源发布。`src/renderer/features/plugins/app/` 只负责 React 宿主、声明式插槽、模式选择、只读投影与资源生命周期。Core 保留产品会话、窗口、权限、执行连接、普通聊天和草稿；业务不再由 Core 识别 Team 或 Workflow。
+`plugins/sdk/app-plugin-sdk/` 是无应用源码依赖的公开契约。`src/main/plugins/app/` 只负责可信代码发现、产物校验和保留、生命周期、数据库端口、配置贡献、提交/删除参与者、代码审核和资源发布。`src/renderer/features/plugins/app/` 只负责 React 宿主、声明式插槽、模式选择、只读投影与资源生命周期。Core 保留产品会话、窗口、权限、执行连接、普通聊天和草稿；业务不再由 Core 识别 Team 或 Workflow。
 
 Browser 视图和输入模式可提供自己的 React 图标，宿主保留通用缺省图标，不按插件 ID 选择业务图标。Main 的运行时 Goal 投影只读返回 `goalId`、`phase`、`identityPending` 等原生执行状态；插件据此区分普通会话的中性快照与实际 Goal，不能用投影建立终态或扩大权限。
 
@@ -28,7 +28,7 @@ Main SDK 的 execution facade 按真实路由实例复用，不能每次创建�
 
 Agent Team 的 `host/` 持有协调器、队列、附件和产品数据库事务；`host/app.ts` 注册 Main，`app/` 持有应用契约及完整 React UI；既有 `browser/` 保留与原生入口无关的纯浏览器辅助。Workflow 的 `host/` 和 `app/browser/` 分别持有 Main 注册与完整 UI，`browser/` 保留纯辅助。两者自己的配置投影、沙箱工具声明和技能声明通过注册返回。Core 对贡献 ID 统一合并用户配置、保留显式开关，按技能声明处理同步和发现重启，没有 Team/Workflow 特例。它们均不导入应用 `src`。原生 `index.ts` 不导入应用入口。
 
-Runtime Services 只保留缺少可选插件时仍必须存在的发送保护、holding custody、执行收据、取消/清理，以及通用执行、文件系统和 FIFO。插件握手与请求转发归每个插件的公开 SDK 接入，不再经过 Runtime Services。它不加载可选插件 Main/UI，不提供关闭后的 Team 历史入口或参数入口。
+Runtime Services 只保留通用执行准入、inert session 托管、执行收据、取消/清理、文件系统和 FIFO。它不识别可选插件 ID、工具、模式、房间或轮次。Team 的启动规则、纠正提示、讨论协议及业务账本归 Team；Workflow 的流程规则及流程库归 Workflow。插件握手与请求转发归每个插件的公开 SDK 接入。Required 服务不加载可选插件 Main/UI，也不提供它们关闭后的业务入口。
 
 ## 清单、构建与授权
 
@@ -36,13 +36,41 @@ Runtime Services 只保留缺少可选插件时仍必须存在的发送保护、
 
 可选 `entries.presentation` 对应独立的纯历史展示入口，源码由 `package.json.app.presentation` 指定，仅导出 `presentation`。它可提供文本清洗、原生输入身份展示、精确镜像识别和双语词典，不取得 Browser host、React、命令、导航、数据或发送端口。构建与模块图校验拒绝其引用 Main、Browser 入口或 Browser runtime；普通 Browser 图也拒绝引用 Main 入口。独立浏览器模块与 `new URL('./worker.mjs', import.meta.url)` 的本地资源边继续验证和发布，Main 私有图不作为 HTTP 资源根。
 
-`npm run plugins:app:build` 独立构建 SDK 和插件。产物为 `build/app-plugins/<id>/<hash>`；可安装完整包位于其 `packages/<id>/<hash>`，包含单文件原生 ESM、技能及 `app/`。Main 的 npm 依赖进入自己的 ESM 包；Browser 的 React/ReactDOM 指向宿主真实单例，插件自行编译 CSS/Tailwind。产物逐文件 SHA-256 和清单共同生成身份，限制路径、链接、文件数、大小及可解析模块图。保留目录复制后再校验，防止从可变安装目录执行 Main 代码。作者操作见 [SDK 说明](../../packages/app-plugin-sdk/README.md)。
+`npm run plugins:app:build` 独立构建 SDK 和插件。产物为 `build/app-plugins/<id>/<hash>`；可安装完整包位于其 `packages/<id>/<hash>`，包含单文件原生 ESM、技能及 `app/`。Main 的 npm 依赖进入自己的 ESM 包；Browser 的 React/ReactDOM 指向宿主真实单例，插件自行编译 CSS/Tailwind。产物逐文件 SHA-256 和清单共同生成身份，限制路径、链接、文件数、大小及可解析模块图。保留目录复制后再校验，防止从可变安装目录执行 Main 代码。作者操作见 [SDK 说明](../../plugins/sdk/app-plugin-sdk/README.md)。
 
 安装、删除与原生能力审核继续使用原生扩展流程。外部 Main/UI 代码另有绑定精确产物 hash 的审核，不复用原生 review token。审批文件位于产品数据的 `app-plugins/approvals.json`，只保存当前 hash 和有界历史批准；保留的不可变产物位于 `app-plugins/artifacts/<id>/<hash>`。损坏或不匹配的记录不能授权执行。安装目录同 ID 的自定义插件覆盖捆绑候选，不会退回执行另一个同名版本。
 
 首版运行可信 Main 进程内代码和同页面浏览器模块。contextIsolation 保护 preload 边界，不能隔离同页面插件。模块图和 SDK 门禁防止过期调用和格式错误，**不是恶意 JavaScript 沙箱**。新窗口种类、执行原语或不受 SDK 支持的宿主行为仍需要 SDK/宿主变更。
 
 ## 公开原生接口、注册收据与代码准入
+
+### 源码独立构建与 Required 能力
+
+公共 App SDK 和构建工具源码集中在 `plugins/sdk/`，分别保留 `app-plugin-sdk/` 与 `app-plugin-build/` 子包；根 npm workspace 使用 `plugins/sdk/*`。插件发现继续读取 `plugins/extensions/`。目录调整保持 npm 包名、公开 exports、构建命令和产物布局不变。
+
+App SDK、`@runtime-services/sdk` 与 `@app-plugin/build` 分别分发契约、Required Service 的客户端/通用库和构建工具。宿主使用 npm workspaces 开发这些公开包，发布输出包含 ESM、声明和许可证；外部项目只安装打包后的依赖，不解析宿主源码或借宿主 `node_modules`。构建工具使用自己的公共 Tailwind preset 和 React 单例 adapter，忽略祖先 tsconfig 的源码 aliases，验证实际 npm 输入与许可证。外部 desktop companion 保留完整 Native/Main/Browser 包结构，与 MCP App 流水线分别处理。
+
+应用插件的 `package.json.app` 是通用源码构建声明，不再需要旧宿主专属 bundle 标记。运行时装配只消费已构建的完整包，不读取该源码目录的依赖锁、不执行 npm 安装，也不携带源码开发依赖或旧依赖缓存。其它 Native 扩展仍使用原有锁文件和生产依赖流程；应用声明及目录存在都不授予 Native trust。
+
+Team/Workflow 从公开 SDK 导入通用准入、FIFO、文件准入和执行能力。讨论协议和 `DiscussionLedger` 属于 Team，不再从 Runtime SDK 发布。Team 自己解释模式、房间、轮次及业务回执；Required 服务只维护精确原生身份、代次、owner 寿命、接纳、取消及终态/清理事实。未登记资源的普通会话不产生插件业务锁。
+
+Native 客户端先通过公开 `api.lifecycle.runInBackgroundContext` 在原注册绑定的 Gateway 上完成只读能力握手，再以随机实例 token 绑定同步投影。能力协议使用通用 `executionAdmission`，只返回执行通道的 `clear/held/unknown` 和无正文身份，不发布 Team 模式。实例、路径或插件 ID 不能代替该握手。同步 reader 也回到 Required 注册的公开上下文，不借外部 ambient Gateway；缺失、失败和退休均拒绝准入。新绑定使旧 handle 失效，旧工具闭包不附会新 provider。正常原生工具采用已启动 Gateway service 的注册；未采用准备好注册的 discovery factory 首次只触发合并的只读绑定并隐藏工具，后续合法 factory 才取得投影，不启动或重放业务。trusted tool policy、精确原生身份和副作用前校验继续独立生效。
+
+写操作使用独立 owner 租约。客户端登记随机 proof RPC，Required 服务通过公开 Gateway method descriptor 核对实际插件归属，在同一绑定 Gateway 上完成单次 nonce 挑战；密钥只交给该注册的回调。只读 provider token、请求体中的插件 ID 和 Main 代码审核都不能授权写入。租约绑定原注册、provider scope 和真实 lifecycle，退休后旧回调不能写入。Required 服务继续保留已登记资源的收据与取消/清理围栏；owner 退休不构成执行已结算。
+
+热替换先启动候选 service，成功后才发布候选的 Gateway 方法表。因此 owner 客户端和 proof RPC 仍在注册期创建，但 service.start 只初始化本地资源，不能要求候选 proof 已能从当前 Gateway 调用。已发布的实际业务请求在副作用前等待 `ensureBound()`，并在握手前后重新核对调用权限、service 代次、停止状态及原生生命周期；失败直接拒绝该请求，不重放业务。停止后或跨越停止/重启的迟到握手不能恢复旧请求。只读回执快照不持久恢复状态，也不借查询取得写租约。
+
+Native 客户端和 provider 在注册期捕获普通调用上下文，再通过原公开 background runner 核对当前准入。Native 开始 quiesce 后，信号尚未 abort 或已准入 cleanup 仍可运行都不延长业务权限；迟到握手被拒绝，已失效句柄和租约不会复活，恢复需要新的真实注册。不读取 Native 私有实例字段，也不新增运行时补丁。
+
+Managed execution descriptor 明确声明 whole-run、run-owned cleanup 与精确 describe/cancel 协议。facade 始终调用原插件的 bound executor，并将 capability fence 与调用者 `assertCurrent` 合并；Runtime Services 不代执行。当前宿主的私有适配从公开 SDK 所属运行包、实际进程入口及交付 profile 核验预备 bundle 的版本/完整字节 hash 和既有执行能力基线。profile 由冻结运行时验证后的资源装配生成，绑定目标平台实际 bundle，并随 Required 包交付；外部 SDK 不包含 patch 路径或宿主目录。无 profile、不兼容或 pristine 环境不声明该能力，不退化为 Stop ACK 或 `waitForRun` 推断结算。本机制不增加或调整原生 patch。
+
+公开 `api.runtime.gateway.request` 继续受 OpenClaw 的 bundled / trusted official 安装准入约束。Main companion 的 hash 批准不能授予 Native trust；独立构建不代表任意手工安装包自动具备后台 RPC 权限。交付仍须通过既有可信安装或宿主显式捆绑流程，不新增权限绕过。能力握手测试证明路由与生命周期，不证明任意第三方分发策略已开放。
+
+Plan Mode 不成为业务插件的源码/启用依赖。App SDK 的纯 planning 契约解释规划、待审核和异常状态；Runtime Services 不导入该解析器。Main 不能以 `sessions.describe` 省略投影证明无计划：Required 的只读 `runtimeServices.sessionNamespace` 在认证 backend、精确 SID/revision 下读取调用方指定的有界 namespace 快照，由消费者解释。该读取不写状态、不批准审核或扩大权限。
+
+本次契约直接替换旧内部实现，不提供旧协议分支、旧目录扫描或迁移桥。已有业务数据文件保留，由所属插件读取；缺少插件不会自动恢复、重放或清理旧任务。
+
+业务测试随插件独立配置运行；真实 Core 聊天控制器/历史边界的原有断言保留在显式宿主集成 profile。SDK 及宿主边界测试继续由 Core 测试运行器发现，不把缺少可选源码视为失败或转而搜索外部仓库。
 
 `@app-plugin/sdk/native` 通过 OpenClaw 的公开 `registerGatewayMethod`、`api.lifecycle` 和 `openclaw/plugin-sdk/gateway-method-runtime` 接入。通用构建器自动包装 Native 入口，并在产物清单加入 `contracts.gatewayMethodDispatch: ["authenticated-request"]`；插件作者不需要修改宿主源码。Agent Team 和 Workflow 的源码入口也显式登记同一幂等 helper，以支持原有原生资源构建路径。原生入口不导入 Main/Browser。
 
@@ -102,13 +130,21 @@ Store 打开后和插件异步准备后都重新核对退出状态，退出期�
 
 开发启动先构建伴随包，再在没有相关活 Gateway 的前提下准备同批 Native/Main/UI 产物，防止新清单与旧 Native 包不匹配时默默丢失入口；已有匹配产物不写运行时。Vite 会给变量动态导入附加 `?import`，代理仅剥离这个固定标记后向私有 Main 资源服务转发已验证路径，拒绝其它查询串；Main、binding、清单及私有 token 的保护不变。真实开发验证入口为 `node scripts/test/plugin-host/verify-development-application.mjs`。
 
+Core 的生产与测试入口不静态导入可选插件源码。插件业务测试和专项探针保存在其自身 `tests/`、`scripts/`，随源码目录一起移动；Core 测试使用合成 SDK 贡献验证宿主行为。Vitest 按实际插件目录发现测试及可选 `tests/hostSetup.ts`，不维护业务插件列表。需要真实宿主的插件集成通过显式 `APP_PLUGIN_HOST_ROOT` 定位，并在未提供宿主时明确跳过；设置了错误宿主或现存插件文件损坏时直接失败。通用产物探针按实际清单验证生命周期，零个可选插件也是有效库存，不把缺席伪装成已验证某项业务。
+
+源码分离验证在未包含 Team 和 Workflow 两个目录的隔离副本执行：完整应用构建、50 个文件的 756 项 Core 定向测试通过，真实 Electron Main 与 Chromium Browser 均接纳空应用插件清单并撤回全部业务贡献。该验证没有启动 Gateway、调用模型或修改用户数据，不代替安装包和实际执行中的卸载验收。插件在外部仓库的独立构建还需要显式提供其 npm 和必需公共模块依赖，Core 不通过兄弟仓库路径回退加载源码。
+
 临时目录清单读取/加载失败形成独立的包准入围栏。修复文件后，下一次显式包操作先在确认停止的 Gateway 下重读、验证和恢复当前清单，再恢复连接并执行正常资源预检；不重放前次未知操作。该恢复不能清除数据库资源账本、schema 错误或历史 owner 不明的永久保护。未完成的多包准入保留新 schemas 的待初始化集合，避免部分失败后跳过初始化。
 
 原 hash 的资源被显式采用或最后一项删除后，宿主释放不再有引用的本地清理实例及收据/停止订阅。重复切换同一 hash 也不能覆盖并遗失旧 disposer。释放必须等该精确实例的变更 lease 和删除 lease 都归还；从其他 registry 借入的 owner 仍由原 registry 在自己的清理上下文释放。
 
 Gateway 关闭只有真实正常 close/exit 才证明退休。异常、超时、信号或非零退出保留本进程的关闭失败围栏，后来的退出观测不能重新准入或启动替代 Gateway；包变更 lease 及其他资源保护也继续独立生效。普通插件热启停不进入这条关闭流程。
 
-旧批准产物只在产品资源账本引用其精确 hash 时恢复清理。顺序是发现候选、当前 schemas/账本初始化、实际 runtime 建立，再激活旧清理 owner；不扫描目录以推断信任，不重跑旧 schema/adoption，不发布旧 UI 或业务命令。旧文件缺失、初始化失败或身份无法核实保留删除/包变更围栏。
+旧批准产物只在当前仍安装的插件资源账本引用其精确 hash 时恢复清理，捆绑产物也可使用账本中的精确 owner/hash 收据。顺序是发现候选、当前 schemas/账本初始化、实际 runtime 建立，再激活旧清理 owner；不扫描目录以推断信任，不重跑旧 schema/adoption，不发布旧 UI 或业务命令。已知插件的坏包或缺失旧文件只保护其关联资源；完整清单读取失败、账本不可读或包变更结果未知仍保留全局保护。可信 Main 完整但 Native 身份不可核实时，仅允许其清理库存参与，不发布业务。
+
+完整可信清单确认插件缺席后，宿主撤回其业务、界面、维护和提交/删除参与者，并仅解除该 owner 在 `app_plugin_resources` 中的关联。同一来源的其他插件保护保持不变，普通聊天、普通会话删除及其他插件操作不等待已移除插件的历史清理。卸载不删除产品团队元数据、助手、普通或成员会话、原生历史和执行安全回执；重新安装后由当前插件初始化并读取原有数据，重建资源关联，不重放未知发送。借用清理实例由其原 registry 退休，旧异步调用不能继续写入或调用 Native。
+
+整个运行时或扩展目录不可用、清单损坏、权限错误和单个入口字节不匹配不构成卸载证据。只有完整清单不再包含该 owner，或可读取的实际扩展目录确认特定包目录不存在，才解除其参与。开发准备、资源同步和裁剪会核对已退出当前源码及构建清单的旧应用插件；仅在与保留构建包逐文件一致、路径无链接且确认没有相关 Gateway 进程时清除旧 Native 副本，同 ID 的第三方改包不按目录名删除。产品用户数据与保留构建收据不随该步骤删除。
 
 ## 提交、数据和界面契约
 
@@ -180,6 +216,18 @@ node scripts/test/plugin-host/verify-native-gateway-bridge.mjs <prepared-runtime
 ```
 
 隔离探针以最小插件和产品元数据 fixture 调用真实 Main manager、助手创建适配器、请求绑定、公开 SDK 及原生配置/角色文件接口。三个并发请求经配置串行队列各完成一次 create、update 和角色写入/读回；业务 epoch、Native 注册 ID 及 Gateway PID 保持不变，未发生公网访问。该结果不代替完整 Team 工具、真实模型或安装版 UI 验收。
+
+### 独立源码分发与移除验证（2026-10-30）
+
+在不位于应用目录的临时工作区安装真实打包后的 App SDK、Runtime SDK 与构建器，公开包均为实际文件而非 workspace 链接。使用声明依赖离线安装、显式匹配的公开 OpenClaw SDK，以及匹配 Node ABI 的开发测试驱动；未借宿主源码、主题或依赖目录。Team 与 Workflow 分别完成四入口检查、完整包构建及独立默认测试：65 文件/991 项、36 文件/481 项通过。真实 npm 图标包的内部 module 元数据及所有实际打包依赖的许可证也经分发回归覆盖。SDK 重建清除已撤销接口的输出，且拒绝输出覆盖源码、源码父目录或指向源码的链接。
+
+当前完整应用构建、lint、Main 类型检查及新鲜 CommonJS 输出加载通过。48 文件/598 项代表 Core 回归通过；另在物理移除两可选源码目录的副本中，完整构建、Main 检查和同一组 598 项通过，生成空应用插件清单。实际 Electron Main 与隐藏 Chromium 探针分别验证两插件在场和空集；在场有 10 个视图/3 个模式，关闭和卸载撤回正确，空集有 0 个视图/模式，均无浏览器错误。普通 Core 不通过相邻仓库补缺失插件。
+
+源码 Native conformance 使用真实 registry、公开 API/lifecycle runner、请求授权和 dispatcher，在相同插件 ID、stateDir 和源码路径的两个独立 Gateway 请求上下文中完成 ABI2 读取和 owner 写绑定验证；销毁一个实例不影响另一个。另覆盖 signal 尚未 abort 的 quiesce、已准入 cleanup 上下文及迟到握手均不能恢复旧权限。测试只替代未使用的缺失第三方分支并使其抛错，不替代上述 Native 实现；它未启动监听 Gateway，也不代表真实模型验收。Required 契约、准入、托管、收据、文件和执行 facade 的 283 项定向测试通过，覆盖退休后普通新 run、ACK 丢失不重写、实际取消、代次和借用来源隔离、损坏元数据拒绝及 SDK 无业务依赖。新通用运行模块的严格类型检查通过。
+
+外部插件仓库的通用 desktop companion 分支已经接入发现、检查、构建和完整产物打包，不固定业务 ID；无该类插件时不加载新工具。既有 MCP Apps 的检查、构建、116 项测试及打包通过，新增依赖布局与装配定向验证通过。实际两个插件目录仍留在应用仓库，由用户后续移动；外仓已有用户文档改动未被覆盖。
+
+以上验证未读取用户聊天或启动用户 Gateway，未清理助手、会话、业务数据或安全回执，也未重建共享 Electron ABI。没有执行全量应用 `npm test`、正式安装包/真实模型或跨平台验收；这些限制继续保留如下。
 
 ### 尚未完成的生产验证
 

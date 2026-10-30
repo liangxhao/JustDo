@@ -1,3 +1,4 @@
+import { setWorkflowTestPorts } from '../../tests/browserRuntime';
 // @vitest-environment jsdom
 import type { SwarmWorkflowChangedEvent } from '../contracts/index';
 import { act, cleanup, renderHook } from '@testing-library/react';
@@ -15,17 +16,12 @@ function fixture() {
   const listeners = new Set<(event: SwarmWorkflowChangedEvent) => void>();
   const read = vi.fn().mockResolvedValue({ success: true, count: 21, running: false });
   const list = vi.fn();
-  Object.defineProperty(window, 'electron', {
-    configurable: true,
-    value: {
-      cowork: {
-        getSwarmWorkflowSummary: read,
-        getSwarmWorkflows: list,
-        onSwarmWorkflowsChanged: (listener: (event: SwarmWorkflowChangedEvent) => void) => {
-          listeners.add(listener);
-          return () => listeners.delete(listener);
-        },
-      },
+  setWorkflowTestPorts({
+    getSwarmWorkflowSummary: read,
+    getSwarmWorkflows: list,
+    onSwarmWorkflowsChanged: (listener: (event: SwarmWorkflowChangedEvent) => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
     },
   });
   const flush = () =>

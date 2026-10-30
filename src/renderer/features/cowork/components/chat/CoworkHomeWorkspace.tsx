@@ -47,7 +47,7 @@ interface CoworkHomeWorkspaceProps {
     attachments?: CoworkAttachmentPayload[],
     gatewayPrompt?: string,
     worktree?: boolean,
-    pluginSubmission?: import('../../../../../../packages/app-plugin-sdk/contracts').AppSubmission,
+    pluginSubmission?: import('../../../../../../plugins/sdk/app-plugin-sdk/contracts').AppSubmission,
     submission?: ComposerSubmissionMetadata,
   ) => Promise<boolean | void>;
   handleStopSession: () => Promise<boolean>;

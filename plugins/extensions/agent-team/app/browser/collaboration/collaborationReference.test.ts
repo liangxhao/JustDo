@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
-import type { CollaborationDelivery, CollaborationRoom } from '../../contracts/collaboration';
 import { beforeEach, expect, it, vi } from 'vitest';
 
+import type { CollaborationDelivery, CollaborationRoom } from '../../contracts/collaboration';
 import { prepareCollaborationReference } from './collaborationReference';
 
 const mock = vi.hoisted(() => ({
@@ -16,7 +16,7 @@ const mock = vi.hoisted(() => ({
     },
   },
 }));
-vi.mock('@/store', () => ({
+vi.mock('../../../tests/fixtures/store', () => ({
   store: { getState: () => mock.state, dispatch: mock.dispatch },
 }));
 const room: CollaborationRoom = {

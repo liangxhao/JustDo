@@ -5,7 +5,7 @@ import path from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { type AppPluginManifest } from '../../../../packages/app-plugin-sdk/contracts';
+import { type AppPluginManifest } from '../../../../plugins/sdk/app-plugin-sdk/contracts';
 import { artifactDigest, inspectAppArtifact, retainAppArtifact } from './artifact';
 
 const directories: string[] = [];

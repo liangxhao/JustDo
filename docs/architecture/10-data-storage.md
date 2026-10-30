@@ -413,6 +413,8 @@ agents 的 model 为空表示继承；main 不以遗留档案 model 作为用户
 
 协作 delivery 唯一键为 room、发送人、sourceRunId、toolCallId，input_digest 检查重试参数冲突；表中没有正文。round 的 stopped_at 持久冻结旧轮次，预算包括失败尝试。重启恢复将 queued 转 failed、dispatching 转 unknown，不从元数据重造载荷。
 
+`beginRound` 必须携带可信调用的实际来源会话，写入前按 `collaboration_rooms.anchor_session_id` 核验组织者身份。Main 只把组织者当前精确 running 用户运行用于新批次，成员发送只能继承匹配自身精确原生 run 的既有 delivery 轮次。成员独立对话不能新建或借用轮次，不根据最近消息、引用或未封闭批次补造授权。停止操作仅冻结已有轮次并围栏运行 ID，不因扫描来源或成员运行记录插入新轮次。此规则不更改历史批次、预算快照或原生回执。
+
 ## 8. 删除补偿与结果收件箱
 
 协作整任务删除先写 freeze，停止全部成员，确认原生状态，再逐个删除原生 session 并保存进度，最后事务删除产品会话。外键级联不能代替前面的原生清理。
@@ -552,7 +554,7 @@ OpenClaw 9.6→9.8 存储迁移。没有 prompt、消息正文、工具结果或
 
 `team_discussion_queue_control` 按 room_id 保存独立 queue generation；它与房间执行 generation 分离，正常重启不取消已经保存的输入。`team_discussion_pending_inputs` 以 room_id/request_id 为主键，保存 generation、原请求及原生规范化指纹、附件内容摘要、房间/权限快照摘要、轮次/通知对象/资源快照、状态、native identity 和 entry_id。没有正文、文件名、附件路径或 transcript 内容。接收容量与 request 指纹检查在 SQLite 事务中完成；同群最多 3 条活动待发输入，unknown 和 blocked 不释放名额，也不允许后续输入绕过队头。
 
-正文只进入常驻 Runtime Services 拥有的锁定 inert harness 原生 holding session，使用 custom-role/customType、`display:false` 与 `excludeFromContext:true`；native owner 标记在 `pluginExtensions.runtime-services.holding`。stateDir 的 holding-receipts 保存无正文 epoch、owner、接收和取消元数据；原生稳定 idempotencyKey 与精确 raw delta 读回用于确认 saved。正文保存/读取受 Agent Team 开关限制，关闭后的取消/清理由常驻真实 owner 完成。Main 挂起或接收 ACK 丢失变为 receiving_unknown，重启仅重新核对原生条目，不再 append；无法核对则保留未知。Renderer 按需读取当前面板投影，不建立 Redux 或 Main 正文缓存。
+正文只进入常驻 Runtime Services 拥有的通用 `inert-custody` 原生会话，使用 custom-role/customType、`display:false` 与 `excludeFromContext:true`；native owner 标记在 `pluginExtensions.runtime-services.custody`。`stateDir/runtime-custody/` 只保存 opaque resourceId、epoch、owner、摘要、接收和取消元数据，不识别 Team 房间或轮次；Team 自己序列化业务内容并保存映射。原生稳定 idempotencyKey 与精确 raw delta 读回用于确认 saved。保存/读取需要当前写租约，关闭后的维护只能处理既有资源。ACK 丢失变为 unknown，重启仅核对原生条目，不再 append；无法核对则保留未知。Renderer 按需读取当前面板投影，不建立 Redux 或 Main 正文缓存。
 
 逐项取消写持久 tombstone，全量 Stop/明确禁用推进 queue generation。已经开始原生派发而未取得结算证据的输入保持 unknown，不能因取消请求推断未执行。Main disable lease 在改扩展开关前同步关闭接收/建群/派发并持久取消，离线原生清理失败也不使产品输入恢复；快速重新启用在同一配置 lane 排队。正常 runtime shutdown 保留 saved，不能等同于明确禁用。
 
@@ -560,11 +562,13 @@ OpenClaw 9.6→9.8 存储迁移。没有 prompt、消息正文、工具结果或
 
 ### Agent Team 发起守卫元数据
 
-Main KV 记录产品候选与提交边界；Runtime Services 的 `stateDir/runtime-services/agent-team-launch/` 以来源 key 的 SHA-256 文件保存 generation、来源 incarnation、clientTurnId、prompt SHA-256、owner、状态及精确 whole-run 元数据。两层均不保存正文。写入使用同步 fsync 和原子替换，在原生 namespace 镜像之前完成；读取失败、损坏和写入未知不能转为空状态。正常 SIGTERM 清理普通来源插件状态，故 `pluginExtensions.runtime-services.agent-team-launch` 不是跨重启权威。未 released 的旧 owner 冻结，released 保留代次 tombstone，下一次发起必须 CAS 精确前代；账本没有原生 transcript 直读或副本。
+Main KV 记录产品候选与提交边界；Team 自己的发起账本保留既有 `stateDir/runtime-services/agent-team-launch/` 路径，保存 generation、来源 incarnation、clientTurnId、prompt SHA-256、owner、业务状态及精确 whole-run 元数据。Required 服务的通用 `stateDir/runtime-services/execution-admissions/` 只保存精确 run、owner 租约、generation、接纳、终态和 cleanup attestation，不读取 Team schema。两者均不保存正文。持久写入使用 fsync 和原子替换；读取失败、损坏和写入未知不能转为空状态。原生 namespace 不作为跨重启唯一权威，退休 owner 不自动重放。已有文件保留，不增加旧协议回退、旧目录扫描或迁移桥。
 
 released tombstone 的历史身份在合法 reset/revision 后仍可核对，原 SID 或当前精确 SID 可读取前代 generation；身份变化后旧 whole-run proof 不转移到当前 incarnation。新候选必须绑定当前 SID/revision 且 CAS 下一代，不能复用旧 clientTurnId。未 released 的身份变化不作历史完成推断。
 
 应用资源保护账本 `app_plugin_resources` 位于同一产品库，以 owner ID 和 resource ID 唯一标识资源，并绑定 artifact hash，保存元数据身份和删除围栏，不保存消息。插件 schema 初始化使用相同数据库连接；失败不能放行受保护删除。跨 hash 采用必须显式确认旧完整集合，空投影不能擦除保护。外部应用代码批准及历史批准 hash 保存于 `app-plugins/approvals.json`，不可变已批准代码保留于 `app-plugins/artifacts/`，只恢复账本引用的旧版本清理。
+
+完整可信清单确认可选插件已移除时，仅按 `owner_id` 解除该插件的宿主资源关联，不按共享的 `resource_id` 清除其他插件保护。插件业务表、助手、产品会话、原生历史和未确认执行的安全回执均保留；装回插件后重新读取既有元数据并登记关联。坏包、整体库存未知和数据库读取失败不等同于明确卸载，不通过空投影推断资源或执行已完成。此行为不新增数据库表或 transcript 缓存。
 
 ## 当前验证边界
 

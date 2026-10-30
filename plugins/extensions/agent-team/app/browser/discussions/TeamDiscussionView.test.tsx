@@ -1,13 +1,13 @@
 // @vitest-environment jsdom
+import { CoworkInteractionKind } from '@app-plugin/sdk/interactions';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
-import { coworkService } from '@/features/cowork/coworkService';
-import { OwnerDocumentContext } from '@/shared/dom/ownerDocument';
-import { store } from '@/store';
-
-import { CoworkInteractionKind } from '@app-plugin/sdk/interactions';
+import { coworkService } from '../../../tests/fixtures/coworkService';
+import { setTestExtensionAvailability } from '../../../tests/fixtures/extensions';
+import { OwnerDocumentContext } from '../../../tests/fixtures/ownerDocument';
+import { store } from '../../../tests/fixtures/store';
 import { teamDiscussionSessionKey } from '../../contracts/teamDiscussion';
 import {
   deleteDiscussionDraft,
@@ -15,16 +15,11 @@ import {
   settleDiscussionDraft,
   updateDiscussionDraft,
 } from './teamDiscussionDraft';
-import TeamDiscussionView from './TeamDiscussionView';
 import { currentFocusedRoom } from './teamDiscussionFocus';
+import TeamDiscussionView from './TeamDiscussionView';
 
 const pending = vi.hoisted(() => ({ requests: [] as Record<string, unknown>[] }));
 const speech = vi.hoisted(() => ({ callbacks: [] as Array<(text: string) => void> }));
-
-vi.mock('@/app/shell/startup/routing/useEngineReadiness', () => ({
-  getEngineReadinessSnapshot: () => ({ ready: true }),
-  subscribeEngineReadiness: () => vi.fn(),
-}));
 
 vi.mock('../collaboration/CollaborationMemberHistory', () => ({
   default: ({
@@ -50,12 +45,12 @@ vi.mock('../collaboration/CollaborationMemberHistory', () => ({
     </div>
   ),
 }));
-vi.mock('@/services/i18n', () => ({ i18nService: { t: (key: string) => key } }));
-vi.mock('@/services/config', () => ({
+vi.mock('../../../tests/fixtures/i18n', () => ({ i18nService: { t: (key: string) => key } }));
+vi.mock('../../../tests/fixtures/config', () => ({
   configService: { getConfig: () => ({ shortcuts: { sendMessage: 'Enter' } }) },
 }));
 vi.mock(
-  '../../../../../../src/renderer/features/cowork/components/composer/speech/LocalSpeechInputButton',
+  '../../../tests/fixtures/speech',
   () => ({
     LocalSpeechInputButton: ({
       disabled,
@@ -77,8 +72,8 @@ vi.mock(
     },
   }),
 );
-vi.mock('@/store', () => ({ store: { dispatch: vi.fn() } }));
-vi.mock('@/features/cowork/coworkService', () => ({ coworkService: { loadSession: vi.fn() } }));
+vi.mock('../../../tests/fixtures/store', () => ({ store: { dispatch: vi.fn() } }));
+vi.mock('../../../tests/fixtures/coworkService', () => ({ coworkService: { loadSession: vi.fn() } }));
 vi.mock('react-redux', () => ({
   useSelector: (select: (state: unknown) => unknown) =>
     select({
@@ -95,12 +90,12 @@ vi.mock('react-redux', () => ({
     }),
 }));
 vi.mock(
-  '../../../../../../src/renderer/features/cowork/components/preview/PreviewMarkdown',
+  '../../../tests/fixtures/PreviewMarkdown',
   () => ({
     default: ({ html }: { html: string }) => <div>{html}</div>,
   }),
 );
-vi.mock('@/libs/openclaw-chat/components/markdown/markdown', () => ({
+vi.mock('../../../tests/fixtures/markdown', () => ({
   toSanitizedMarkdownHtml: (text: string) => text,
 }));
 const room = {
@@ -127,6 +122,7 @@ async function openSummaryAction() {
   return screen.findByRole('menuitem', { name: 'teamSummarizeInSource' });
 }
 beforeEach(() => {
+  setTestExtensionAvailability(true);
   pending.requests = [];
   speech.callbacks = [];
   deleteDiscussionDraft('room');
@@ -176,7 +172,7 @@ it('shows a loading notice until the first messages arrive and keeps it hidden d
   read.mockReturnValue(new Promise(() => {}));
   render(<TeamDiscussionView entry={{ roomId: 'room' }} onClose={vi.fn()} />);
   const notice = screen.getByText('teamDiscussionMessagesLoading').closest('[role="status"]')!;
-  expect(notice.querySelectorAll('[aria-hidden="true"] > span')).toHaveLength(3);
+  expect(notice.querySelector('[data-testid="loading-dots"]')).toBeTruthy();
   await waitFor(() => expect(read).toHaveBeenCalledOnce());
 
   await act(async () => {
@@ -1127,39 +1123,19 @@ it('serializes double clicks and preserves explicitly selected recipients', asyn
 
 it('does not show a disabled warning while initial extension enablement is still unknown', async () => {
   updateDiscussionDraft('room', { text: 'Next topic' });
-  let resolve!: (value: Awaited<ReturnType<typeof window.electron.extensions.list>>) => void;
-  vi.mocked(window.electron.extensions.list).mockImplementationOnce(
-    () =>
-      new Promise(done => {
-        resolve = done;
-      }),
-  );
+  setTestExtensionAvailability(null);
   render(<TeamDiscussionView entry={{ roomId: 'room' }} embedded onClose={vi.fn()} />);
   expect(screen.queryByText('teamDiscussionDisabled')).toBeNull();
   await screen.findByRole('heading', { name: room.title });
   expect(screen.queryByText('teamDiscussionDisabled')).toBeNull();
   expect(screen.getByRole('button', { name: 'teamSend' })).toHaveProperty('disabled', true);
-  await act(async () =>
-    resolve({
-      success: true,
-      extensions: [
-        {
-          id: 'agent-team',
-          name: 'Agent Team',
-          description: '',
-          enabled: true,
-          missingRequirements: [],
-          configurationFields: [],
-        },
-      ],
-    }),
-  );
+  act(() => setTestExtensionAvailability(true));
   expect(screen.queryByText('teamDiscussionDisabled')).toBeNull();
   expect(screen.getByRole('button', { name: 'teamSend' })).toHaveProperty('disabled', false);
 });
 
 it('does not claim the extension is disabled when the initial catalog read fails', async () => {
-  vi.mocked(window.electron.extensions.list).mockRejectedValueOnce(new Error('unavailable'));
+  setTestExtensionAvailability(null);
   render(<TeamDiscussionView entry={{ roomId: 'room' }} embedded onClose={vi.fn()} />);
   await screen.findByRole('heading', { name: room.title });
   expect(screen.queryByText('teamDiscussionDisabled')).toBeNull();
@@ -1167,7 +1143,7 @@ it('does not claim the extension is disabled when the initial catalog read fails
 });
 
 it('renders native public history while the extension is disabled', async () => {
-  vi.mocked(window.electron.extensions.list).mockResolvedValue({ success: true, extensions: [] });
+  setTestExtensionAvailability(false);
   read.mockResolvedValue({
     success: true,
     value: {

@@ -134,7 +134,7 @@ test('hides the native group summary trigger while retaining the actual summary 
   const provenance = {
     kind: 'inter_session',
     sourceSessionKey: 'agent:review:justdo:group-member',
-    sourceChannel: 'justdo-team',
+    sourceChannel: 'agent-team',
     sourceTool: 'team_discussion',
   };
   const input = 'A group discussion has ended. Summarize its available public results.';
@@ -144,7 +144,7 @@ test('hides the native group summary trigger while retaining the actual summary 
       historyRenderLimit: 2,
       messages: [
         { role: 'user', timestamp: 1, content: 'Please discuss the design.' },
-        { role: 'user', timestamp: 2, content: input, provenance },
+        { role: 'user', timestamp: 2, content: input, provenance, __fixtureInput: true },
         // An assistant output remains visible even if native provenance is carried forward.
         {
           role: 'assistant',
@@ -167,10 +167,11 @@ test('retains group dispatch input under a separate identity in member history',
     role: 'user',
     timestamp: 1,
     content: 'Group thread round 2. Add something new only; otherwise reply NO_REPLY.',
+    __fixtureInput: true,
     provenance: {
       kind: 'inter_session',
       sourceSessionKey: 'agent:main:team-discussion:room',
-      sourceChannel: 'justdo-team',
+      sourceChannel: 'agent-team',
       sourceTool: 'team_discussion',
     },
   };
@@ -184,9 +185,9 @@ test('retains group dispatch input under a separate identity in member history',
 
 test.each([
   undefined,
-  { kind: 'external_user', sourceChannel: 'justdo-team', sourceTool: 'team_discussion' },
+  { kind: 'external_user', sourceChannel: 'agent-team', sourceTool: 'team_discussion' },
   { kind: 'inter_session', sourceChannel: 'webchat', sourceTool: 'team_discussion' },
-  { kind: 'inter_session', sourceChannel: 'justdo-team', sourceTool: 'another-tool' },
+  { kind: 'inter_session', sourceChannel: 'agent-team', sourceTool: 'another-tool' },
 ])('does not hide a user-authored summary prompt or another origin (%j)', provenance => {
   const content = 'A group discussion has ended. Summarize its available public results.';
   const result = groups(build({ messages: [{ role: 'user', content, provenance }] }));

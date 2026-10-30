@@ -45,16 +45,17 @@ describe('group discussion request boundary', () => {
     expect(() => parseTeamDiscussionSend({ ...send, message: ' ' })).toThrow();
   });
   it('keeps each member in a distinct group namespace', () => {
-    expect(teamDiscussionSessionKey('room', 'alice')).toBe('agent:alice:justdo-team:group:room');
+    expect(teamDiscussionSessionKey('room', 'alice')).toBe('agent:alice:agent-team:group:room');
     expect(() => teamDiscussionSessionKey('room:other', 'alice')).toThrow();
   });
 });
 
 it('attributes native group questions without accepting another session namespace', () => {
-  expect(parseTeamDiscussionSessionKey('agent:alice:justdo-team:group:room')).toEqual({
+  expect(parseTeamDiscussionSessionKey('agent:alice:agent-team:group:room')).toEqual({
     agentId: 'alice',
     roomId: 'room',
   });
   expect(parseTeamDiscussionSessionKey('agent:alice:justdo:room')).toBeNull();
-  expect(parseTeamDiscussionSessionKey('agent:alice:justdo-team:group:room:other')).toBeNull();
+  expect(parseTeamDiscussionSessionKey('agent:alice:justdo-team:group:room')).toBeNull();
+  expect(parseTeamDiscussionSessionKey('agent:alice:agent-team:group:room:other')).toBeNull();
 });

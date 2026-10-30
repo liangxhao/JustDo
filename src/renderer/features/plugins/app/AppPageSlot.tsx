@@ -1,6 +1,6 @@
 import { useCallback, useLayoutEffect, useState } from 'react';
 
-import type { AppViewContext } from '../../../../../packages/app-plugin-sdk/browser';
+import type { AppViewContext } from '../../../../../plugins/sdk/app-plugin-sdk/browser';
 import { AppPluginSlot, useAppViews } from './AppPluginSlot';
 import type { AppView } from './browserRegistry';
 import { appBrowserRegistry } from './runtime';

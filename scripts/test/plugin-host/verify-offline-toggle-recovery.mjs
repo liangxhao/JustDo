@@ -8,7 +8,7 @@ import Module from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { buildSync } from 'esbuild';
-import { parseAppPluginManifest } from '../../../packages/app-plugin-sdk/contracts.ts';
+import { parseAppPluginManifest } from '../../../plugins/sdk/app-plugin-sdk/contracts.ts';
 
 const temporary = await mkdtemp(path.join(tmpdir(), 'app-offline-toggle-'));
 const sha = bytes => createHash('sha256').update(bytes).digest('hex');

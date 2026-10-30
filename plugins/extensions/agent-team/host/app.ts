@@ -10,6 +10,7 @@ import { AgentTeamSettingsService } from './data/agentTeamSettingsService';
 import { TeamDiscussionCoordinator } from './discussion/teamDiscussionCoordinator';
 import { AgentTeamLaunchCoordinator } from './launch/agentTeamLaunchCoordinator';
 import { TEAM_DISCUSSION_CHANNEL } from '../contracts/teamDiscussion';
+import { allowTeamCleanupGatewayRequest, TEAM_CLEANUP_GATEWAY_METHODS } from './cleanupGateway';
 
 /** App entry only. Never import this module from the native registration. */
 export function register(host: AppMainHost): AppMainRegistration {
@@ -174,24 +175,8 @@ export function register(host: AppMainHost): AppMainRegistration {
       surfaces: { [TEAM_DISCUSSION_CHANNEL]: { silentReply: { group: 'allow' } } },
     },
     commands,
-    cleanupGatewayMethods: [
-      'sessions.describe',
-      'sessions.delete',
-      'sessions.patch',
-      'chat.history',
-      'agentTeam.launch.inspect',
-      'agentTeam.launch.cancel',
-      'agentTeam.launch.abandon',
-      'agentTeam.launch.release',
-      'agentTeam.launch.confirm',
-      'teamDiscussion.offlineControl',
-      'teamDiscussion.holdingCancel',
-      'teamDiscussion.holdingClose',
-      'teamDiscussion.holdingStatus',
-      'teamDiscussion.status',
-      'teamDiscussion.stop',
-      'teamDiscussion.close',
-    ],
+    cleanupGatewayMethods: [...TEAM_CLEANUP_GATEWAY_METHODS],
+    allowCleanupGatewayRequest: allowTeamCleanupGatewayRequest,
     schemas: [
       {
         id: 'team.metadata',

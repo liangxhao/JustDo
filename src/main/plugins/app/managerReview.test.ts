@@ -5,7 +5,7 @@ import path from 'node:path';
 
 import { expect, test } from 'vitest';
 
-import type { AppPluginManifest } from '../../../../packages/app-plugin-sdk/contracts';
+import type { AppPluginManifest } from '../../../../plugins/sdk/app-plugin-sdk/contracts';
 import { AppApprovalStore } from './approvalStore';
 import { artifactDigest, inspectAppArtifact, retainAppArtifact } from './artifact';
 import { AppPluginManager, discoverAppCandidates } from './manager';

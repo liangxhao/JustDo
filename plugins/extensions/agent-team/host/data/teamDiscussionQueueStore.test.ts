@@ -39,7 +39,7 @@ const identity = {
   roomId: 'room',
   generation: 1,
   agentId: 'a',
-  sessionKey: 'agent:a:harness:justdo-team-holding:room:1',
+  sessionKey: 'agent:a:harness:retired-holding:room:1',
   sessionId: 'native',
   lifecycleRevision: 'revision',
 };

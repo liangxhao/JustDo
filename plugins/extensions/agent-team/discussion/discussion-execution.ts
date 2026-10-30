@@ -132,7 +132,7 @@ export async function executeGroupDiscussion(options: DiscussionExecutionOptions
       },
     },
   };
-  const sourceId = `justdo-team:${room.id}:${options.discussionId}`;
+  const sourceId = `${TEAM_DISCUSSION_CHANNEL}:${room.id}:${options.discussionId}`;
   const root = room.members.find(member => member.ownership !== 'source')!;
   const sessionKey = teamDiscussionSessionKey(room.id, root.agentId);
   const groupFacts = resolveGroupThreadMentionFacts({

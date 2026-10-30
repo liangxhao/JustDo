@@ -51,12 +51,6 @@ function createFixture() {
   fs.cpSync(path.join(process.cwd(), 'plugins/extensions/runtime-services'), sourceDir, {
     recursive: true,
   });
-  fs.cpSync(
-    path.join(process.cwd(), 'plugins/extensions/agent-team'),
-    path.join(repoRoot, 'plugins/extensions/agent-team'),
-    { recursive: true },
-  );
-  fs.cpSync(path.join(process.cwd(), 'build/app-plugins'), path.join(repoRoot, 'build/app-plugins'), { recursive: true });
   fs.cpSync(path.join(process.cwd(), 'src/shared'), path.join(repoRoot, 'src/shared'), {
     recursive: true,
   });

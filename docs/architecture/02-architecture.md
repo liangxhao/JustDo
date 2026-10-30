@@ -79,6 +79,8 @@ flowchart TB
 
 内置插件集中在仓库根目录 `plugins/`，按 `extensions/`、`skills/`、`mcp-servers/`、`hooks/`、`browser-extensions/` 分类。OpenClaw 扩展和独立技能分别由前两类承载，`mcp-servers/` 与 `hooks/` 预留；Chrome 加载的 Browser Assistant 位于 `plugins/browser-extensions/browser-assistant/`，独立于 Gateway 插件加载流程。扩展自带技能保留在扩展内部，宿主管理代码仍在 `src/main/plugins/`、`src/renderer/features/plugins/` 和 `src/shared/plugins/`，OpenClaw 构建产物沿用原生目录。具体约定见[插件系统](07-plugin-system.md)。
 
+公开 App SDK 与配套构建工具源码位于 `plugins/sdk/`，由根 npm workspace 和独立制品发布流程管理；运行时扩展发现继续读取 `plugins/extensions/`。SDK 契约与编写方式见[应用插件宿主](17-app-plugin-host.md)。
+
 Main 的 `core/` 分为 app、window、network、runtime、filesystem、development。浏览器、语音、外部集成和 Windows 沙盒有自己的领域，不塞入通用工具文件。`providers/` 管理产品模型配置与认证；`openclaw/config/` 管理它们向原生配置的投影。
 
 应用启动在 Main 的 `startup/` 下分为 `routing`、`history`、`upgrade`、`initialization`：分别拥有四路判定、历史迁移、正常升级的原生数据库维护和应用初始化。Renderer 的 `app/shell/startup/` 保留路由、历史结果和初始化展示，窗口与 preload 保留安全创建和窄桥接职责。流程见[启动与历史升级](../features/app/startup-and-history-upgrade.md)。

@@ -6,8 +6,6 @@ import { afterEach, expect, test } from 'vitest';
 import { registerMessagePresentation } from '@/features/plugins/app/messagePresentation';
 import { projectGatewayHistoryForDisplay } from '@/libs/openclaw-chat/pipeline/history-display-normalizer';
 
-import { presentation } from '../../../../../plugins/extensions/agent-team/app/presentation';
-import { appendAgentTeamInstruction } from '../../../../../plugins/extensions/agent-team/prompt/agentTeamPrompt';
 import type { JustDoChatElement } from './justdo-chat';
 
 const releases: (() => void)[] = [];
@@ -17,8 +15,8 @@ afterEach(() => {
 });
 
 test('late display lease reformats the same mounted native history and revocation restores source text', async () => {
-  const source = appendAgentTeamInstruction('Visible question', 'task');
-  const instruction = 'The user explicitly selected Agent Team for this message.';
+  const instruction = 'Fixture plugin instruction';
+  const source = instruction + '\nVisible question';
   const messages = projectGatewayHistoryForDisplay([
     { id: 'legacy', role: 'user', content: source },
   ]);
@@ -27,7 +25,7 @@ test('late display lease reformats the same mounted native history and revocatio
   document.body.append(chat);
   await chat.historyRenderComplete;
   expect(chat.shadowRoot?.textContent).toContain(instruction);
-  const release = registerMessagePresentation('late-pure-fixture', { text: presentation.text });
+  const release = registerMessagePresentation('late-pure-fixture', { text: text => text.replace(instruction + '\n', '') });
   releases.push(release);
   await chat.historyRenderComplete;
   expect(chat.messages).toBe(messages);

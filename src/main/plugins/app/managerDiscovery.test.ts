@@ -6,7 +6,7 @@ import path from 'node:path';
 
 import { expect, test, vi } from 'vitest';
 
-import type { AppPluginManifest } from '../../../../packages/app-plugin-sdk/contracts';
+import type { AppPluginManifest } from '../../../../plugins/sdk/app-plugin-sdk/contracts';
 import { artifactDigest } from './artifact';
 import { AppPluginManager, discoverAppCandidates } from './manager';
 import type { AppHostResources } from './registry';
@@ -15,7 +15,7 @@ const id = 'discovery-fixture';
 const native = 'export default {};';
 const sha = (value: string) => createHash('sha256').update(value).digest('hex');
 
-test.each(['directory', 'runtime-link', 'plugin-link', 'different-bytes', 'shadowed'] as const)(
+test.each(['directory', 'runtime-link', 'plugin-link', 'different-bytes', 'missing-native', 'missing-app', 'unavailable-runtime', 'shadowed'] as const)(
   'admits the runtime alias while preserving native package checks: %s',
   async layout => {
     const root = await mkdtemp(path.join(tmpdir(), 'app-discovery-layout-'));
@@ -77,9 +77,11 @@ test.each(['directory', 'runtime-link', 'plugin-link', 'different-bytes', 'shado
         nativeEntry: realpathSync(path.join(nativeRoot, 'index.js')),
         sourceSha256: sha(native),
       };
+      if (layout === 'missing-native') await rm(path.join(nativeRoot, 'index.js'));
+      if (layout === 'missing-app') await rm(artifactRoot, { recursive: true });
       const candidates = await discoverAppCandidates(
         bundled,
-        layout === 'directory' ? runtime : selectedRuntime,
+        layout === 'unavailable-runtime' ? null : layout === 'directory' ? runtime : selectedRuntime,
         layout === 'shadowed' ? [{ id, installPath: path.join(root, 'installed') }] : [],
         {},
       );
@@ -97,10 +99,18 @@ test.each(['directory', 'runtime-link', 'plugin-link', 'different-bytes', 'shado
       await manager.prepare();
       await manager.activate();
       await manager.refresh();
-      if (layout === 'plugin-link' || layout === 'different-bytes') {
+      if (layout === 'missing-app') {
         expect(manager.snapshot()).toEqual([]);
         expect(loadModule).not.toHaveBeenCalled();
         expect(manager.registry.hasUnresolvedInventory()).toBe(true);
+        expect(() => manager!.registry.assertResourceOwners(['unrelated'])).not.toThrow();
+        await expect(manager.registry.preparePackageMutation()).resolves.toBeUndefined();
+        expect(manager.isAppCompanion(id)).toBe(false);
+      } else if (['plugin-link', 'different-bytes', 'missing-native', 'unavailable-runtime'].includes(layout)) {
+        expect(manager.snapshot()).toEqual([expect.objectContaining({ id, state: 'cleanup' })]);
+        expect(loadModule).toHaveBeenCalledOnce();
+        expect(manager.registry.hasUnresolvedInventory()).toBe(false);
+        expect(manager.snapshot()[0].browserEntry).toBeUndefined();
         expect(manager.isAppCompanion(id)).toBe(false);
       } else if (layout === 'shadowed') {
         expect(manager.snapshot()).toEqual([expect.objectContaining({ id, state: 'cleanup' })]);
@@ -131,3 +141,19 @@ test.each(['directory', 'runtime-link', 'plugin-link', 'different-bytes', 'shado
     }
   },
 );
+
+test.each([
+  {},
+  [{ id: 'owner-fixture', hash: 'not-a-hash' }],
+  [{ id: 'owner-fixture', hash: 'a'.repeat(64) }, { id: 'owner-fixture', hash: 'b'.repeat(64) }],
+])('rejects an incomplete catalog instead of interpreting its skipped entries as removals: %j', async catalog => {
+  const root = await mkdtemp(path.join(tmpdir(), 'app-discovery-catalog-'));
+  try {
+    await writeFile(path.join(root, 'catalog.json'), JSON.stringify(catalog));
+    await expect(discoverAppCandidates(root, null, [], {})).rejects.toThrow('Invalid app plugin catalog');
+  } finally {
+    expect(path.dirname(root)).toBe(path.resolve(tmpdir()));
+    expect(path.basename(root)).toMatch(/^app-discovery-catalog-/u);
+    await rm(root, { recursive: true, force: true });
+  }
+});

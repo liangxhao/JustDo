@@ -67,6 +67,8 @@ npm test
   and browser modules never import Main.
 - Built-in plugins live under `plugins/`: `extensions/`, `skills/`, `mcp-servers/`,
   `hooks/` and `browser-extensions/`. Keep sources and assets in their owning category.
+- Public app plugin SDK and build-tool sources live under `plugins/sdk/`;
+  runnable extension discovery remains under `plugins/extensions/`.
 - Keep OpenClaw extension-owned tools, UI, assets, scripts and unit tests
   under `plugins/extensions/<plugin-id>/`. The host retains generic capabilities,
   integration adapters and tests that exercise host/plugin boundaries.
@@ -206,7 +208,7 @@ for other areas. Current validation limits belong in the owning feature or archi
 
 App plugin Main/UI loading, SDK contributions, independent packaging and lifecycle
 follow [App plugin host](docs/architecture/17-app-plugin-host.md) and
-[SDK authoring](packages/app-plugin-sdk/README.md). Team and Workflow application
+[SDK authoring](plugins/sdk/app-plugin-sdk/README.md). Team and Workflow application
 business stays inside its plugin; Core composes only generic capabilities.
 
 | Task                                                       | Required documents                                                                                                                                                              |

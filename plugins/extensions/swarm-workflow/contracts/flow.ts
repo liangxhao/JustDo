@@ -1,4 +1,4 @@
-import type { FilesystemAdmission } from '../../runtime-services/contracts/filesystem';
+import type { FilesystemAdmission } from '@runtime-services/sdk/filesystem-contract';
 import type { SwarmWorkflowSettings } from '../settings.js';
 import type { BatchCounts, BatchItemIdentity, BatchPlan, ItemResultManifest } from './batch.js';
 

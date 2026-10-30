@@ -178,7 +178,7 @@ test('projects external origins and historical identities and hides holding sess
   );
   const history = db.prepare('INSERT INTO history_session_bindings VALUES (?, ?, ?, ?)');
   history.run('historical', 'agent:main:historical', 'native-history', 'native');
-  history.run('holding', 'agent:main:harness:justdo-team-holding:one', 'native-holding', 'native');
+  history.run('holding', 'agent:main:harness:inert-custody:one', 'native-holding', 'native');
 
   const directory = store.listSessionDirectory('main');
   const summaries = store.readSessionSummaries(['historical', 'holding']);
@@ -683,11 +683,11 @@ test('hides the worktree checkbox by default and persists only its visibility pr
 
 test('rejects pending-input native adoption and omits reserved rows from user conversations', () => {
   const parent = store.createSession('Parent', '/source', 'local');
-  const key = 'agent:main:harness:justdo-team-holding:room:1';
+  const key = 'agent:main:harness:inert-custody:room:1';
   expect(() => store.adoptNativeSession(key, parent, 'Pending', '/source')).toThrow(
-    'teamDiscussionInvalidInput',
+    'coworkReservedSession',
   );
-  expect(() => store.bindNativeSession(parent.id, key, null)).toThrow('teamDiscussionInvalidInput');
+  expect(() => store.bindNativeSession(parent.id, key, null)).toThrow('coworkReservedSession');
   expect(store.listSessions()).toHaveLength(1);
   db.prepare('UPDATE cowork_sessions SET native_session_key = ? WHERE id = ?').run(key, parent.id);
   expect(store.listSessions()).toEqual([]);

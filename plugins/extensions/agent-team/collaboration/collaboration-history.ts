@@ -75,7 +75,11 @@ export function registerCollaborationHistory(api: OpenClawPluginApi): void {
               sessionId: nativeEntry.sessionId,
               sessionKey: first.sessionKey,
             },
-            async locked =>
+            async (locked: {
+              readMessageFacts(input: { idempotencyKeys: string[] }): Promise<{
+                anchorsByIdempotencyKey: Map<string, { entryId: string }>;
+              }>;
+            }) =>
               (await locked.readMessageFacts({ idempotencyKeys: keys })).anchorsByIdempotencyKey,
           );
           const resolved = await Promise.all(

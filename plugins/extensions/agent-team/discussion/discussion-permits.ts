@@ -1,4 +1,4 @@
-import { FifoPermits } from '../../runtime-services/concurrency/fifo-permits';
+import { FifoPermits } from '@runtime-services/sdk/fifo-permits';
 
 /** Release only after dispatch cleanup AND exact native whole-run terminal evidence. */
 export class DiscussionPermits extends FifoPermits {

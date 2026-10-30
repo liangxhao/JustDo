@@ -107,7 +107,7 @@ export const appBrowserRegistry = new AppBrowserRegistry(
   },
 );
 let projectedState: ReturnType<typeof store.getState> | undefined;
-let projectedSnapshot: import('../../../../../packages/app-plugin-sdk/application').AppStateSnapshot;
+let projectedSnapshot: import('../../../../../plugins/sdk/app-plugin-sdk/application').AppStateSnapshot;
 function applicationSnapshot() {
   const state = store.getState();
   if (state !== projectedState) {

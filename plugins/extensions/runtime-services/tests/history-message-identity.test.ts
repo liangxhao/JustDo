@@ -15,7 +15,12 @@ vi.mock('openclaw/plugin-sdk/ssrf-runtime', () => ({
   fetchWithSsrFGuard: vi.fn(),
   ssrfPolicyFromHttpBaseUrlAllowedHostname: vi.fn(),
 }));
-vi.mock('../agent-team', () => ({ registerAgentTeamRuntimeServices: vi.fn() }));
+vi.mock('../admission', () => ({ registerExecutionAdmission: () => ({ read: vi.fn() }) }));
+vi.mock('../custody/service', () => ({ registerCustody: vi.fn() }));
+vi.mock('../sdk/owner-provider', () => ({ registerOwnerProvider: vi.fn() }));
+vi.mock('../sdk/provider', () => ({ registerRuntimeServicesProvider: vi.fn() }));
+vi.mock('../execution/prepared-profile', () => ({ readPreparedManagedExecutionDescriptor: vi.fn() }));
+vi.mock('../session-namespaces', () => ({ registerSessionNamespaces: vi.fn() }));
 vi.mock('../external-mcp', () => ({ registerExternalMcp: vi.fn() }));
 vi.mock('../mcp-app-history', () => ({ registerMcpAppHistory: vi.fn() }));
 vi.mock('../model-auth', () => ({ buildBuiltinModelAuthProvider: vi.fn() }));

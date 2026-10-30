@@ -1,7 +1,6 @@
 import path from 'path';
 import { describe, expect, test } from 'vitest';
 
-import { buildManagedSwarmWorkflowPluginEntries } from '../../../../plugins/extensions/swarm-workflow/host/config';
 import { appNativePolicies } from '../../../../tests/plugin-host/nativePolicies';
 import {
   AgentRuntimeDelegationMode,
@@ -82,20 +81,12 @@ test('keeps extension Hook dispatch available when every independent Hook is dis
   expect(buildOpenClawHookConfig([])).toEqual({});
 });
 
-test.each([undefined, false, true])('projects Swarm agents while preserving enablement (%s)', enabled => {
-  const entries = buildManagedSwarmWorkflowPluginEntries(
-    [
-      { id: 'reviewer', enabled: true },
-      { id: 'disabled', enabled: false },
-      { id: 'deleted', enabled: true, deletedAt: 123 },
-    ],
-    () => true,
-  );
-  expect(entries).toEqual({
+test.each([undefined, false, true])('preserves projected optional-plugin settings and explicit enablement (%s)', enabled => {
+  const entries = {
     'swarm-workflow': {
       config: { availableAgentIds: ['main', 'reviewer'] },
     },
-  });
+  };
   const merged = mergeOpenClawPluginConfig(
     applyDefaultOpenClawPluginEntries({
       entries: {
@@ -116,7 +107,6 @@ test.each([undefined, false, true])('projects Swarm agents while preserving enab
       config: { availableAgentIds: ['main', 'reviewer'] },
     },
   });
-  expect(buildManagedSwarmWorkflowPluginEntries([], () => false)).toEqual({});
 });
 
 describe('Windows native sandbox config', () => {
@@ -138,12 +128,12 @@ describe('Windows native sandbox config', () => {
   });
 
   test('keeps trusted collaboration tools available inside the sandbox', () => {
-    expect(buildManagedOpenClawSandboxToolConfig('sandbox', { skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'justdo-team': { silentReply: { group: 'allow' } } } }.sandboxTools)).toEqual({
+    expect(buildManagedOpenClawSandboxToolConfig('sandbox', { skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'agent-team': { silentReply: { group: 'allow' } } } }.sandboxTools)).toEqual({
       tools: {
         alsoAllow: ['task_assistants', 'assistants_create', 'team_discussion', 'decision_evaluate'],
       },
     });
-    expect(buildManagedOpenClawSandboxToolConfig('local', { skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'justdo-team': { silentReply: { group: 'allow' } } } }.sandboxTools)).toEqual({
+    expect(buildManagedOpenClawSandboxToolConfig('local', { skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'agent-team': { silentReply: { group: 'allow' } } } }.sandboxTools)).toEqual({
       tools: {
         alsoAllow: [
           'task_assistants',
@@ -800,7 +790,7 @@ describe('OpenClaw managed ACP config', () => {
     settings.agents.codex.enabled = true;
     const sync = new OpenClawConfigSync({
       getAppPluginDefaults: () => appNativePolicies,
-      getAppPluginPolicy: () => ({ skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'justdo-team': { silentReply: { group: 'allow' } } } }),
+      getAppPluginPolicy: () => ({ skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'agent-team': { silentReply: { group: 'allow' } } } }),
       getAgents: () => [],
       engineManager: { getStateDir: () => '/state' },
     } as never);
@@ -1091,7 +1081,7 @@ describe('OpenClaw plugin config merging', () => {
     },
   );
   test('defaults independent flows and Workboard to disabled and preserves explicit choices', () => {
-    const ids = [OpenClawExtensionId.SWARM_WORKFLOW, OpenClawExtensionId.WORKBOARD];
+    const ids = ['swarm-workflow', OpenClawExtensionId.WORKBOARD];
     const defaults = buildDefaultOpenClawPluginEntries(id =>
       ids.includes(id as (typeof ids)[number]),
     );
@@ -1516,15 +1506,15 @@ describe('optional agent-team configuration', () => {
     const existing = {
       webchat: { silentReply: { group: 'disallow' } },
       slack: { silentReply: { group: 'allow' } },
-      'justdo-team': { silentReply: { group: 'disallow' } },
+      'agent-team': { silentReply: { group: 'disallow' } },
     };
     const original = structuredClone(existing);
-    expect(buildManagedOpenClawSurfaces(existing, { skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'justdo-team': { silentReply: { group: 'allow' } } } }.surfaces)).toEqual({
+    expect(buildManagedOpenClawSurfaces(existing, { skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'agent-team': { silentReply: { group: 'allow' } } } }.surfaces)).toEqual({
       ...existing,
-      'justdo-team': { silentReply: { group: 'allow' } },
+      'agent-team': { silentReply: { group: 'allow' } },
     });
-    expect(buildManagedOpenClawSurfaces(undefined, { skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'justdo-team': { silentReply: { group: 'allow' } } } }.surfaces)).toEqual({
-      'justdo-team': { silentReply: { group: 'allow' } },
+    expect(buildManagedOpenClawSurfaces(undefined, { skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'agent-team': { silentReply: { group: 'allow' } } } }.surfaces)).toEqual({
+      'agent-team': { silentReply: { group: 'allow' } },
     });
     expect(existing).toEqual(original);
   });

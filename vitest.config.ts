@@ -1,7 +1,22 @@
+import { existsSync, readdirSync, realpathSync } from 'node:fs';
 import path from 'node:path';
-import { realpathSync } from 'node:fs';
 
 import { defineConfig } from 'vitest/config';
+
+const extensionRoot = path.resolve(__dirname, 'plugins/extensions');
+const independentPlugins = readdirSync(extensionRoot, { withFileTypes: true })
+  .filter(entry => entry.isDirectory() && existsSync(path.join(extensionRoot, entry.name, 'vitest.config.ts')))
+  .map(entry => entry.name);
+const pluginTests = readdirSync(extensionRoot, { withFileTypes: true })
+  .filter(entry => entry.isDirectory())
+  .map(entry => independentPlugins.includes(entry.name)
+    ? `plugins/extensions/${entry.name}/tests/host/**/*.test.{ts,tsx}`
+    : `plugins/extensions/${entry.name}/{tests,host,app}/**/*.test.{ts,tsx}`);
+const pluginSetups = readdirSync(extensionRoot, { withFileTypes: true }).flatMap(entry => {
+  if (!entry.isDirectory() || independentPlugins.includes(entry.name)) return [];
+  const setup = path.join(extensionRoot, entry.name, 'tests/hostSetup.ts');
+  return existsSync(setup) ? [setup] : [];
+});
 
 if (process.versions.electron) {
   throw new Error('Vitest requires standalone Node.js 24. Electron drivers are disabled; run `npm test` with Node.js.');
@@ -16,23 +31,13 @@ export default defineConfig({
         if (!importer) return;
         if (
           source === '@app-plugin/sdk/browser-runtime' ||
-          /\/packages\/app-plugin-sdk\/browser-runtime(?:\.ts)?$/.test(
+          /\/plugins\/sdk\/app-plugin-sdk\/browser-runtime(?:\.ts)?$/.test(
             source.replace(/\\/g, '/'),
           ) ||
           (source === './browser-runtime' &&
-            importer.replace(/\\/g, '/').includes('/packages/app-plugin-sdk/'))
+            importer.replace(/\\/g, '/').includes('/plugins/sdk/app-plugin-sdk/'))
         ) {
           return path.resolve(__dirname, 'tests/plugin-host/browserRuntime.ts');
-        }
-        if (
-          source.startsWith('.') &&
-          importer.replace(/\\/g, '/').includes('/plugins/extensions/agent-team/app/browser/')
-        ) {
-          const resolved = path.resolve(path.dirname(importer), source);
-          if (
-            resolved === path.resolve(__dirname, 'plugins/extensions/agent-team/app/browser/state')
-          )
-            return path.resolve(__dirname, 'tests/plugin-host/teamState.ts');
         }
       },
     },
@@ -44,7 +49,7 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      '@app-plugin/sdk': path.resolve(__dirname, './packages/app-plugin-sdk'),
+      '@app-plugin/sdk': path.resolve(__dirname, './plugins/sdk/app-plugin-sdk'),
       '@shared': path.resolve(__dirname, './src/shared'),
       '@': path.resolve(__dirname, './src/renderer'),
     },
@@ -57,15 +62,16 @@ export default defineConfig({
       'src/**/*.test.tsx',
       'tests/**/*.test.ts',
       'tests/**/*.test.tsx',
-      'plugins/extensions/*/tests/**/*.test.ts',
+      ...pluginTests,
+      'plugins/extensions/*/sdk/**/*.test.ts',
+      'plugins/sdk/*/tests/**/*.test.{ts,tsx}',
       'plugins/browser-extensions/*/tests/**/*.test.ts',
-      'plugins/extensions/agent-team/{host,app}/**/*.test.{ts,tsx}',
-      'plugins/extensions/swarm-workflow/{host,app}/**/*.test.{ts,tsx}',
     ],
     setupFiles: [
-      'tests/plugin-host/legacyBehaviorPorts.ts',
       'tests/plugin-host/messagePresentationFixtures.ts',
+      ...pluginSetups,
     ],
+    env: { APP_PLUGIN_HOST_ROOT: path.resolve(__dirname) },
     environment: 'node',
   },
 });

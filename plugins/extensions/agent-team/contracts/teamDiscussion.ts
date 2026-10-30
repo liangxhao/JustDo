@@ -5,9 +5,9 @@ import {
   type TeamDiscussionExecution,
   TeamDiscussionGateway as RequiredTeamDiscussionGateway,
   type TeamDiscussionSend,
-} from '../../runtime-services/agent-team/contracts/discussion';
+} from './discussionInput';
 
-export * from '../../runtime-services/agent-team/contracts/discussion';
+export * from './discussionInput';
 
 export const TeamDiscussionGateway = {
   ...RequiredTeamDiscussionGateway,
@@ -23,7 +23,7 @@ export const TeamDiscussionGateway = {
 } as const;
 
 /** Group discussions have independent identities; they never reuse peer rooms. */
-export const TEAM_DISCUSSION_CHANNEL = 'justdo-team';
+export const TEAM_DISCUSSION_CHANNEL = 'agent-team';
 
 export interface TeamDiscussionMessage {
   id: string;
@@ -68,7 +68,7 @@ export function parseTeamDiscussionSessionKey(
   value: unknown,
 ): { roomId: string; agentId: string } | null {
   if (typeof value !== 'string') return null;
-  const match = /^agent:([a-z0-9][a-z0-9_-]{0,63}):justdo-team:group:([a-zA-Z0-9_-]{1,128})$/.exec(
+  const match = /^agent:([a-z0-9][a-z0-9_-]{0,63}):agent-team:group:([a-zA-Z0-9_-]{1,128})$/.exec(
     value,
   );
   return match ? { agentId: match[1], roomId: match[2] } : null;

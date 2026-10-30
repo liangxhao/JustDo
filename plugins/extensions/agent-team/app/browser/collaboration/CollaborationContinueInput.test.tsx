@@ -2,18 +2,17 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 
-import { OwnerDocumentContext } from '@/shared/dom/ownerDocument';
-
+import { OwnerDocumentContext } from '../../../tests/fixtures/ownerDocument';
 import { getContinueDraft, updateContinueDraft } from './collaborationContinueDraft';
 import CollaborationContinueInput from './CollaborationContinueInput';
 
-vi.mock('@/services/i18n', () => ({ i18nService: { t: (key: string) => key } }));
-vi.mock('@/services/config', () => ({
+vi.mock('../../../tests/fixtures/i18n', () => ({ i18nService: { t: (key: string) => key } }));
+vi.mock('../../../tests/fixtures/config', () => ({
   configService: { getConfig: () => ({ shortcuts: { sendMessage: 'Enter' } }) },
 }));
 const speech = vi.hoisted(() => ({ callbacks: [] as Array<(text: string) => void> }));
 vi.mock(
-  '../../../../../../src/renderer/features/cowork/components/composer/speech/LocalSpeechInputButton',
+  '../../../tests/fixtures/speech',
   () => ({
     LocalSpeechInputButton: ({
       disabled,

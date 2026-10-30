@@ -1,4 +1,4 @@
-import type { FilesystemAdmission } from '../../runtime-services/contracts/filesystem';
+import type { FilesystemAdmission } from '@runtime-services/sdk/filesystem-contract';
 import type { FlowStore } from '../data/store';
 import type { FlowEngine } from '../execution/engine';
 import type { FlowNotifier } from '../management/notifications';

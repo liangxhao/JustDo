@@ -1,5 +1,5 @@
 import { SwarmWorkflowMode, type SwarmWorkflowOptions } from '../contracts/options';
-import { unwrapAppInput } from '../../runtime-services/contracts/app-input';
+import { unwrapAppInput } from '@runtime-services/sdk/app-input';
 
 export function buildSwarmWorkflowInstruction(options: SwarmWorkflowOptions): string {
   return `<swarm-workflow mode="${options.mode}"/>`;

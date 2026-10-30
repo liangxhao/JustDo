@@ -17,6 +17,7 @@ import { registerHooks } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { discoverAppPluginSources } from './source-discovery.mjs';
 
 const workspace = process.cwd();
 const temporary = await mkdtemp(path.join(tmpdir(), 'app-plugin-only-rewrite-'));
@@ -24,9 +25,11 @@ const isolated = path.join(temporary, 'isolated');
 const sourceRoot = path.join(isolated, 'plugins/extensions');
 const dependencies = path.join(isolated, 'node_modules');
 const runtimeRoot = path.join(workspace, 'plugins/extensions/runtime-services');
-const extensionRoot = path.join(workspace, 'plugins/extensions');
+const extensionRoot = process.env.APP_PLUGIN_PROBE_SOURCE_ROOT ?? path.join(workspace, 'plugins/extensions');
+const subjects = await discoverAppPluginSources(extensionRoot);
+const subjectRoots = new Map(subjects.map(source => [source.id, source.directory]));
 const srcRoot = path.join(workspace, 'src');
-const ids = ['agent-team', 'swarm-workflow'];
+const ids = subjects.map(source => source.id);
 const captured = [];
 const inside = (root, file) => {
   const relative = path.relative(root, file);
@@ -66,7 +69,7 @@ try {
     baseline.set(
       id,
       await buildAppPlugin(
-        path.join(workspace, 'plugins/extensions', id),
+        subjectRoots.get(id),
         path.join(temporary, 'baseline'),
       ),
     );
@@ -90,7 +93,7 @@ try {
   }
   await mkdir(sourceRoot, { recursive: true });
   for (const id of ids)
-    await cp(path.join(workspace, 'plugins/extensions', id), path.join(sourceRoot, id), {
+    await cp(subjectRoots.get(id), path.join(sourceRoot, id), {
       recursive: true,
       filter: file =>
         !/\.test\.[cm]?[jt]sx?$/u.test(file) && path.basename(file) !== 'node_modules',
@@ -110,37 +113,18 @@ try {
     const declaration = JSON.parse(await readFile(declarationFile, 'utf8'));
     declaration.commands.push('rewrite.check');
     await writeFile(declarationFile, JSON.stringify(declaration, null, 2) + '\n');
-    const mainFile = path.join(source, 'host/app.ts');
-    const main = await readFile(mainFile, 'utf8');
-    const marker =
-      "{ id: 'rewrite.check', invoke: () => ({ success: true, owner: host.manifest.id, marker: 'plugin-only-rewrite' }) },";
-    const changedMain =
-      id === 'agent-team'
-        ? main.replace(
-            "const commands: AppMainRegistration['commands'] = [",
-            `const commands: AppMainRegistration['commands'] = [\n    ${marker}`,
-          )
-        : main.replace('    commands: [', `    commands: [\n      ${marker}`);
-    assert.notEqual(changedMain, main, `Main mutation did not apply for ${id}`);
-    await writeFile(mainFile, changedMain);
-    const browserFile = path.join(source, 'app/browser/index.tsx');
-    const browser = await readFile(browserFile, 'utf8');
-    const signature = 'export function register(host: AppBrowserHost): () => void {';
-    const changedBrowser = browser.replace(
-      signature,
-      `${signature}\n  host.registerTranslations({ en: { rewriteTitle: 'Rewritten ${id}' }, zh: { rewriteTitle: '改写 ${id}' } });\n  host.registerView({ id: 'rewrite-check', slot: 'workspace.tab', labelKey: 'rewriteTitle', component: () => <div>plugin-only-ui-${id}</div> });`,
-    );
-    assert.notEqual(changedBrowser, browser, `Browser mutation did not apply for ${id}`);
-    await writeFile(browserFile, changedBrowser);
-    if (id === 'agent-team') {
-      const settingsFile = path.join(source, 'contracts/agentTeamSettings.ts');
-      const settings = await readFile(settingsFile, 'utf8');
-      assert.ok(settings.includes('maxMembers: 12, messageBudget: 16'));
-      await writeFile(
-        settingsFile,
-        settings.replace('maxMembers: 12, messageBudget: 16', 'maxMembers: 12, messageBudget: 13'),
-      );
-    }
+    const packageFile = path.join(source, 'package.json');
+    const pkg = JSON.parse(await readFile(packageFile, 'utf8'));
+    const originalMain = './' + pkg.app.main.replace(/^\.\//u, '');
+    const originalBrowser = './' + pkg.app.browser.replace(/^\.\//u, '');
+    await writeFile(path.join(source, 'probe-main.ts'),
+      'import { register as original } from ' + JSON.stringify(originalMain) + ';\n' +
+      'export function register(host) { const registration = original(host); return { ...registration, commands: [...registration.commands, { id: "rewrite.check", invoke: () => ({ success: true, owner: host.manifest.id, marker: "plugin-only-rewrite" }) }] }; }\n');
+    await writeFile(path.join(source, 'probe-browser.tsx'),
+      'import React from "react"; import { register as original } from ' + JSON.stringify(originalBrowser) + ';\n' +
+      'export function register(host) { const release = original(host); host.registerTranslations({ en: { rewriteTitle: "Rewritten" }, zh: { rewriteTitle: "Rewritten" } }); host.registerView({ id: "rewrite-check", slot: "workspace.tab", labelKey: "rewriteTitle", component: () => <div>plugin-only-ui-' + id + '</div> }); return release; }\n');
+    pkg.app.main = 'probe-main.ts'; pkg.app.browser = 'probe-browser.tsx';
+    await writeFile(packageFile, JSON.stringify(pkg, null, 2) + '\n');
     captured.length = 0;
     const rewritten = await buildAppPlugin(source, path.join(temporary, 'rewritten'));
     assert.equal(captured.length, 3);
@@ -210,6 +194,7 @@ try {
     JSON.stringify({
       pluginSourcesCopiedToIndependentRoot: true,
       sharedHostSdkAndNpmDependencies: true,
+      editedPlugins: ids,
       requiredRuntimeServicesSourceFiles: [...runtimeDependencies].sort(),
       otherRequiredSiblingSources: [...siblingDependencies]
         .filter(file => !file.startsWith('runtime-services' + path.sep))

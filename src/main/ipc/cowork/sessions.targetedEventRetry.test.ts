@@ -6,9 +6,7 @@ import { DatabaseSync } from 'node:sqlite';
 import type Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { AgentTeamLaunchCoordinator } from '../../../../plugins/extensions/agent-team/host/launch/agentTeamLaunchCoordinator';
-import { appendAgentTeamInstruction } from '../../../../plugins/extensions/agent-team/prompt/agentTeamPrompt';
-import { behaviorSessionParticipants } from '../../../../tests/plugin-host/mainBehaviorParticipants';
+import { appendBehaviorPluginPrompt, behaviorSessionParticipants } from '../../../../tests/plugin-host/mainBehaviorParticipants';
 import { CoworkStore } from '../../data/coworkStore';
 import { CoworkEngineRouter } from '../../engine/cowork/coworkEngineRouter';
 import type { GatewayClientLike, GatewayEventFrame } from '../../engine/gateway/types';
@@ -50,7 +48,7 @@ type NativeRow = {
 type PointRead = (index: number, current: NativeRow) => Promise<NativeRow | null> | NativeRow | null;
 
 /** Actual product SQL materialization, adapter property context, router and IPC.
- * Only Electron/UI, Git setup and the network transport are controlled ports.
+ * Electron/UI, Git setup, plugin preparation and network transport are controlled ports.
  * No Gateway, native database, model, user profile or better-sqlite3 ABI is opened.
  */
 function fixture(options: { bound?: boolean; customAgent?: boolean; checkpoint?: boolean } = {}) {
@@ -129,21 +127,26 @@ function fixture(options: { bound?: boolean; customAgent?: boolean; checkpoint?:
       return { session: await pointRead(++pointReads, row) } as T;
     }
     if (method === 'sessions.create') return { key, sessionId: physicalId, entry: { ...row } } as T;
-    if (method === 'agentTeam.launch.inspect') return { state: 'absent', generation: 0 } as T;
-    if (method === 'agentTeam.launch.register') return { state: 'pending', nativeSessionId: physicalId,
-      lifecycleRevision: row.lifecycleRevision, generation: 1 } as T;
     throw new Error(`Unexpected transport method: ${method}`);
   });
   seam.gatewayClient = { request, start: () => {}, stop: () => {} };
   const router = new CoworkEngineRouter({ openclawRuntime: adapter });
-  const launch = new AgentTeamLaunchCoordinator({ getStore: () => store, getDatabase: () => database,
-    getRouter: () => router, requestGateway: request });
+  const launch = { register: vi.fn(async ({ sessionId }: { sessionId: string }) => {
+    // Exercise the real host's SDK status port before the synthetic plugin prepares.
+    // Native identity, event retirement, descendants and unknown custody are decided by the adapter.
+    const status = await router.getSessionRuntimeStatus(sessionId, {
+      includeSubagents: true, forceRefresh: true, targeted: true,
+    });
+    if (!status.known || status.running || status.mainRunning || status.subagentRunning)
+      throw new Error('fixture-plugin-source-unavailable');
+    await router.prepareSession(sessionId);
+  }) };
   registerCoworkSessionHandlers({ getCoworkStore: () => store, getCoworkEngineRouter: () => router,
     setSessionPermissionMode: vi.fn(), getSessionPlugins: () => behaviorSessionParticipants(undefined, launch) });
   const changed = (payload: Record<string, unknown> = { reason: 'create', agentId, catalogChanged: true, ts: Date.now() }) =>
     seam.handleGatewayEvent({ event: 'sessions.changed', payload });
   const send = () => ipc.get('cowork:session:run:begin')!({}, { sessionId: product.id, clientTurnId: 'next-input', startedAt: 10,
-    pluginPrompt: appendAgentTeamInstruction('Synthetic selection', 'group') });
+    pluginPrompt: appendBehaviorPluginPrompt('Synthetic selection', 'group') });
   const setRead = (next: PointRead) => { pointRead = next; };
   const assertNoExecution = () => {
     expect(methods).not.toContain('sessions.list'); expect(methods).not.toContain('chat.send'); expect(methods).not.toContain('agent');
@@ -171,9 +174,7 @@ describe('late native publication through actual Main admission layers', () => {
     expect(publication).toHaveBeenCalledOnce();
     expect(f.methods.slice(preparedMethods)).toEqual([
       'sessions.describe', 'sessions.describe', // BeforePreparation: discard the retired read, then reobserve.
-      'sessions.describe', 'sessions.create', // The explicit Team preparation waits, then creates once.
-      'sessions.describe', 'agentTeam.launch.inspect',
-      'sessions.describe', 'agentTeam.launch.register',
+      'sessions.describe', 'sessions.create', // The synthetic plugin prepares once after Core admission.
     ]);
     expect(prepare).toHaveBeenCalledExactlyOnceWith(f.product.id);
     const preparationOrder = prepare.mock.invocationCallOrder[0];

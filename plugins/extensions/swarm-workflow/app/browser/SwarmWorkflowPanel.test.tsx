@@ -1,9 +1,10 @@
+import { setWorkflowTestPorts } from '../../tests/browserRuntime';
 // @vitest-environment jsdom
 import type { SwarmWorkflowView } from '../contracts/index';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, test, vi } from 'vitest';
 
-import { i18nService } from '@/services/i18n';
+import { i18nService } from '../../tests/browserRuntime';
 
 vi.mock('./SwarmWorkflowDetailPanel', () => ({
   default: ({
@@ -61,15 +62,10 @@ function fixture() {
   i18nService.setLanguage('en', { persist: false });
   const read = vi.fn().mockResolvedValue({ success: true, flows: [flow] });
   const control = vi.fn().mockResolvedValue({ success: true });
-  Object.defineProperty(window, 'electron', {
-    configurable: true,
-    value: {
-      cowork: {
-        getSwarmWorkflows: read,
-        controlSwarmWorkflow: control,
-        onSwarmWorkflowsChanged: vi.fn(() => () => {}),
-      },
-    },
+  setWorkflowTestPorts({
+    getSwarmWorkflows: read,
+    controlSwarmWorkflow: control,
+    onSwarmWorkflowsChanged: vi.fn(() => () => {}),
   });
   return { read, control };
 }
@@ -440,8 +436,8 @@ test('keeps workflow subtabs available in batch item details and returns to the 
     batchCounts: counts,
   };
   const batchFlow = { ...flow, nodes: [batch] };
-  Object.defineProperty(window.electron.cowork, 'getSwarmWorkflowBatch', {
-    value: vi.fn().mockResolvedValue({
+  setWorkflowTestPorts({
+    getSwarmWorkflowBatch: vi.fn().mockResolvedValue({
       success: true,
       page: {
         flowId: flow.id,

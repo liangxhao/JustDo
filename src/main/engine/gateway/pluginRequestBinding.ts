@@ -1,12 +1,12 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 
-import { AppPluginError } from '../../../../packages/app-plugin-sdk/contracts';
+import { AppPluginError } from '../../../../plugins/sdk/app-plugin-sdk/contracts';
 import {
   type AppNativeBinding,
   appNativeDispatchMethod,
   isAppNativeBinding,
   isAppNativeUnknownOutcome,
-} from '../../../../packages/app-plugin-sdk/native-contract';
+} from '../../../../plugins/sdk/app-plugin-sdk/native-contract';
 import type { GatewayClientLike } from './types';
 
 export type PluginRequestBinding = AppNativeBinding;

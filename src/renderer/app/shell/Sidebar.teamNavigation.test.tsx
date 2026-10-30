@@ -35,9 +35,6 @@ vi.mock('@/features/cowork/coworkSelectors', () => ({
   selectGroups: () => [],
   selectIsOpenClawEngine: () => true,
 }));
-vi.mock('../../../../plugins/extensions/agent-team/app/browser/collaboration/CollaborationPanel', () => ({
-  useCollaborationRooms: () => [],
-}));
 vi.mock('@/features/cowork/components/sessions/CoworkSearchModal', () => ({ default: () => null }));
 vi.mock('@/features/cowork/components/sessions/CoworkSessionList', () => ({
   default: ({ onSelectSession }: { onSelectSession: (id: string) => void }) => (

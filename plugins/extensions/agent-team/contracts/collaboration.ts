@@ -20,6 +20,13 @@ export interface CollaborationMember {
   sessionKey: string;
 }
 
+/** Addressing context for one admitted handoff; never an execution grant. */
+export interface CollaborationHandoffRouting {
+  organizerSessionKey: string;
+  senderSessionKey: string;
+  recipientSessionKey: string;
+}
+
 export interface CollaborationRoom {
   deleting?: boolean;
   id: string;

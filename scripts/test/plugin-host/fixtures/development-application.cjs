@@ -6,6 +6,9 @@ const { app, BrowserWindow } = require('electron');
 
 const context = JSON.parse(fs.readFileSync(process.env.APP_PLUGIN_TEST_CONTEXT, 'utf8'));
 const { repo, root, profile, origin, gatewayPort, resultFile, profileStore } = context;
+const pluginManifests = context.pluginManifests;
+assert.ok(Array.isArray(pluginManifests), 'A complete plugin manifest inventory is required');
+const expectedIds = pluginManifests.map(manifest => manifest.id);
 const checks = [];
 const completeBody = () => {
   try { process.send?.(context.bodyCompleteSignal); } catch { /* Close remains authoritative. */ }
@@ -102,7 +105,7 @@ const assertGatewayOwner = async pid => {
               ||!document.querySelector('button[aria-label]'))return {ready:false,initialization};
             const snapshots=await bridge.appPlugins.snapshot();
             return {initialization,snapshots,ready:
-              ['agent-team','swarm-workflow'].every(id=>snapshots.some(item=>item.id===id))};
+              ${JSON.stringify(expectedIds)}.every(id=>snapshots.some(item=>item.id===id))};
           })()`);
         } catch {
           /* Navigation still in progress. */
@@ -120,10 +123,10 @@ const assertGatewayOwner = async pid => {
     const discovered = await evaluate('window.electron.appPlugins.snapshot()');
     assert.deepEqual(
       discovered.map(({ id }) => id).sort(),
-      ['agent-team', 'swarm-workflow'],
-      'Main discovers both companions after the product store is available',
+      [...expectedIds].sort(),
+      'Main discovers exactly the shipped companions after the product store is available',
     );
-    check('startup-discovers-both-companions');
+    check('startup-discovers-current-companions');
     const read = () =>
       evaluate(`(async()=>{
       const snapshots=await window.electron.appPlugins.snapshot();
@@ -132,10 +135,7 @@ const assertGatewayOwner = async pid => {
         modes:r.getModes().map(({pluginId,id})=>({pluginId,id})),
         status:(await window.electron.openclaw.engine.getStatus()).status};
     })()`);
-    const expected = new Map([
-      ['agent-team', true],
-      ['swarm-workflow', true],
-    ]);
+    const expected = new Map(expectedIds.map(id => [id, true]));
     const requiredViews = new Map([
       ['agent-team', [
         ['session-observer', 'application.page'], ['session-details', 'session.details'],
@@ -156,12 +156,11 @@ const assertGatewayOwner = async pid => {
         assert.ok(snapshot, `Current Main snapshot exists: ${pluginId}`);
         // Main only publishes active after its Native receipt matches the owned PID.
         assert.equal(snapshot.state, enabled ? 'active' : 'cleanup');
-        for (const [id, slot] of requiredViews.get(pluginId)) {
+        for (const [id, slot] of requiredViews.get(pluginId) ?? state.views.filter(view => view.pluginId === pluginId).map(view => [view.id, view.slot])) {
           assert.ok(snapshot.slots.includes(slot), `Required view slot is declared: ${pluginId}/${id}/${slot}`);
           if (enabled) views.push(`${pluginId}/${id}/${slot}`);
         }
-        assert.ok(snapshot.slots.includes('composer.mode'));
-        if (enabled) modes.push(...requiredModes.get(pluginId).map(id => `${pluginId}/${id}`));
+        if (enabled) modes.push(...(requiredModes.get(pluginId) ?? state.modes.filter(mode => mode.pluginId === pluginId).map(mode => mode.id)).map(id => `${pluginId}/${id}`));
       }
       assert.deepEqual(state.views.map(({ pluginId, id, slot }) => `${pluginId}/${id}/${slot}`).sort(),
         views.sort(), 'Every current plugin view is registered in its owning declared slot');
@@ -176,7 +175,7 @@ const assertGatewayOwner = async pid => {
         if (
           state.status?.phase === 'running' &&
           [...expected].every(
-            ([id, enabled]) => state.modes.some(mode => mode.pluginId === id) === enabled,
+            ([id, enabled]) => state.modes.some(mode => mode.pluginId === id) === (enabled && pluginManifests.find(manifest => manifest.id === id).slots.includes('composer.mode')),
           )
         )
           return state;
@@ -240,7 +239,7 @@ const assertGatewayOwner = async pid => {
     const showPlugins = async () => {
       await clickLabel(labels.plugins);
       await waitFor(
-        `!![...document.querySelectorAll('article h3')].find(h=>h.innerText==='Agent Team')`,
+        `!!document.querySelector('article h3')`,
         'Plugin cards did not render',
       );
       const collapsed = await evaluate(`
@@ -249,11 +248,11 @@ const assertGatewayOwner = async pid => {
           .map(button=>button.getAttribute('aria-label')).filter(Boolean)
       `);
       for (const label of collapsed) await clickLabel(label);
-      await waitFor(
+      if (expected.has('agent-team')) await waitFor(
         `!![...document.querySelectorAll('article h3')].find(h=>h.innerText==='Agent Team'&&h.getBoundingClientRect().width>0)`,
         'Agent Team card did not become visible',
       );
-      for (const kind of ['settings', 'history'])
+      if (expected.has('agent-team')) for (const kind of ['settings', 'history'])
         await waitFor(
           `(${visibleButton(actionLabel(kind))})===${expected.get('agent-team')}`,
           `Plugin ${kind} action did not settle`,
@@ -272,10 +271,10 @@ const assertGatewayOwner = async pid => {
           .filter(button=>button.getBoundingClientRect().width>0&&button.getBoundingClientRect().height>0)
           .map(button=>button.getAttribute('aria-label'))
       `);
-      assert.equal(entries.includes(labels.team), expected.get('agent-team'), 'Agent Team + entry');
+      assert.equal(entries.includes(labels.team), expected.get('agent-team') ?? false, 'Agent Team + entry');
       assert.equal(
         entries.includes(labels.workflow),
-        expected.get('swarm-workflow'),
+        expected.get('swarm-workflow') ?? false,
         'Workflow + entry',
       );
       if (expected.get('agent-team')) {
@@ -291,7 +290,7 @@ const assertGatewayOwner = async pid => {
     };
     await verifyComposerMenu();
     await showPlugins();
-    for (const kind of ['settings', 'history']) {
+    if (expected.has('agent-team')) for (const kind of ['settings', 'history']) {
       await openDialog(kind);
       await closeDialog();
     }
@@ -302,7 +301,7 @@ const assertGatewayOwner = async pid => {
       ['swarm-workflow', true],
       ['agent-team', false, 'settings'],
       ['agent-team', true],
-    ]) {
+    ].filter(([id]) => expected.has(id))) {
       if (heldDialog) await openDialog(heldDialog);
       const result = await evaluate(
         `window.electron.extensions.setEnabled(${JSON.stringify({ extensionId: id, enabled })})`,

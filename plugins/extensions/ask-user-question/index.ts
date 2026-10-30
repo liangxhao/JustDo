@@ -386,7 +386,7 @@ const plugin = {
         const sessionKey = ctx.sessionKey?.trim() ?? '';
         if (
           !sessionKey.startsWith('justdo:') &&
-          !/^agent:[^:]+:(?:justdo:|justdo-team:group:)/.test(sessionKey)
+          !/^agent:[^:]+:(?:justdo:|agent-team:group:)/.test(sessionKey)
         ) {
           return null;
         }

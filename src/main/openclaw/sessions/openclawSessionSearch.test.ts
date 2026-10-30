@@ -18,7 +18,7 @@ const summary = (id: string, agentId: string) => ({
 
 describe('searchCoworkSessionMessages', () => {
   test('never sends a pending-input native or external row into user message search', async () => {
-    const key = 'agent:main:harness:justdo-team-holding:room:1';
+    const key = 'agent:main:harness:inert-custody:room:1';
     const store = {
       listSessions: () => [
         { ...summary('pending-native', 'main'), nativeSessionKey: key },

@@ -1,9 +1,24 @@
 # 离线资源下载清单
 
-本文只记录需要额外准备的非 npm 离线资源；Node.js/npm 等前提环境不在本清单范围。
-npm 包通过镜像安装，不再单独列出。
+本文记录额外运行资源及独立插件构建制品；Node.js/npm 等前提环境不在本清单范围。
+常规 npm 依赖通过锁定镜像安装，不逐项列出。
 
 路径相对仓库根目录。下载后保留原包，无需解压。
+
+## 独立插件公共 npm 制品
+
+外部插件构建使用版本匹配的公开 SDK 和构建器，不能从宿主源码目录补依赖。准备机先安装根锁文件中的依赖，再生成本地 npm 制品：
+
+```sh
+npm run plugins:app:sdk
+npm run plugins:runtime:sdk
+node -e "require('node:fs').mkdirSync('cache/app-plugin-packages', { recursive: true })"
+npm pack ./build/app-plugin-sdk --pack-destination cache/app-plugin-packages
+npm pack ./build/runtime-services-sdk --pack-destination cache/app-plugin-packages
+npm pack ./plugins/sdk/app-plugin-build --pack-destination cache/app-plugin-packages
+```
+
+SDK 的编译输出分别位于 `build/app-plugin-sdk/`、`build/runtime-services-sdk/`；归档保留于 `cache/app-plugin-packages/`，实际文件名随包元数据。将制品送入配置的内网 npm 源，或在目标工作区以显式本地 tarball 安装并更新其根锁文件。其余依赖按锁文件与镜像准备，离线环境使用缓存安装，不自动查询公网或下载运行依赖。外部类型检查可显式设置 `OPENCLAW_SDK_ROOT` 为匹配版本的公开 SDK；这不提供未声明的运行能力，也不授予 Native trust。
 
 ## 1. Windows MinGit
 

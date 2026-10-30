@@ -8,7 +8,7 @@ const sdk = vi.hoisted(() => ({
   group: vi.fn(),
   append: vi.fn(),
   getSessionEntry: vi.fn(),
-  identity: { agentId: 'alice', sessionKey: 'agent:alice:justdo-team:group:room' },
+  identity: { agentId: 'alice', sessionKey: 'agent:alice:agent-team:group:room' },
 }));
 vi.mock('openclaw/plugin-sdk/channel-inbound', () => ({
   dispatchChannelInboundTurn: sdk.dispatch,
@@ -84,7 +84,7 @@ async function discuss(candidates: Candidate[], borrowedSource = false) {
         agentId: candidate.agentId,
         sessionKey:
           members.find(member => member.agentId === candidate.agentId)?.sessionKey ??
-          `agent:${candidate.agentId}:justdo-team:group:room`,
+          `agent:${candidate.agentId}:agent-team:group:room`,
       };
       inGroup = true;
       try {

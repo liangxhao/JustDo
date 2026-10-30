@@ -66,7 +66,7 @@ Team 与 Workflow 的目标和上下文明确时优先发起所选工具；存�
 定向测试覆盖菜单顺序、子项、父级选择、标签和删除文案、两种输入框焦点、退格、
 跨聊天快照及 epoch 失效；同时覆盖工作区入口归属、插件关闭和旧异步操作。
 
-`node scripts/test/plugin-host/verify-ui-parity.mjs` 使用隔离 Chromium、真实 Core 菜单和
+`node plugins/extensions/agent-team/scripts/test/verify-paired-ui-parity.mjs` 使用隔离 Chromium、真实 Core 菜单和
 侧栏以及独立构建的两插件 Browser/CSS，对照固定的改造前菜单工厂，检查实际样式、
 子菜单、标签、右侧 Team Tab、Portal 设置弹窗及关闭撤回。探针不启动 Gateway、
 不读取用户数据，也不代表完整产品 UI 或真实模型业务验收。

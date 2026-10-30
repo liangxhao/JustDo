@@ -28,6 +28,7 @@ import {
   verdict,
 } from './plan.js';
 import { swarmWorkflowSettings } from '../settings.js';
+import { DELIVERY_INSTRUCTIONS } from '../prompt/delivery.js';
 import { NativeLaunchNotInvokedError } from './launch-admission.js';
 import type { FlowStore } from '../data/store.js';
 import {
@@ -463,8 +464,12 @@ export class FlowEngine {
               summaryPreview: n.completion?.summary.slice(0, 512),
               resultReference: {
                 nodeId: id,
-                instruction:
-                  'Read the full accepted result using swarm_workflow_results(nodeId, cursor). Follow every page before relying on it.',
+                ...(node.kind === 'deliver'
+                  ? {}
+                  : {
+                      instruction:
+                        'Read the full accepted result using swarm_workflow_results(nodeId, cursor). Follow every page before relying on it.',
+                    }),
               },
             }
           : { result: n.result }),
@@ -489,7 +494,7 @@ export class FlowEngine {
         : node.kind === 'verify'
           ? 'Independently inspect every work result against the goal, using read-only evidence. Submit the verdict using swarm_workflow_verify(passed, summary, evidence), then end this turn. Do not use final-reply JSON as a substitute for the tool. Set passed=true only if the original goal and acceptance criteria are satisfied with concrete evidence. A missing target project, missing implementation or unmet prerequisite must set passed=false even if workers honestly reported that limitation. Missing or unverifiable evidence must fail. Never perform implementation. Use swarm_workflow_block(summary, evidence) if external input is required. Once a terminal submission is accepted, do no more work; a short natural-language final reply is optional.'
           : node.kind === 'deliver'
-            ? 'Produce the final user-facing answer in the language of the goal, using verified results. Include deliverables and limitations. Do not perform additional work.'
+            ? DELIVERY_INSTRUCTIONS
             : 'Execute only this assigned task within the user goal. Call swarm_workflow_complete(summary, evidence) with deliverable references and remaining limitations before ending the turn. If you cannot satisfy the task because of a missing prerequisite or external input, call swarm_workflow_block(summary, evidence) instead; never claim success for an unmet goal. Once a submission is accepted, do no more work. A short natural-language final reply is optional. Do not delegate extra workers, send a final reply to the user, or broaden scope.';
     const message = JSON.stringify({
       goal: flow.goal,

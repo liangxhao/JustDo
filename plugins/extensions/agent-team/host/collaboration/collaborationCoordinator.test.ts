@@ -1,12 +1,14 @@
+import { createHash } from 'node:crypto';
+
+import { SESSION_NAMESPACE_METHOD } from '@runtime-services/sdk/session-namespace';
 import Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('electron', () => ({ ipcMain: { handle: vi.fn() } }));
 import { CollaborationStore, initializeCollaborationTables } from '../data/collaborationStore';
 import type {
-  TeamHostStore as CoworkStore,
   TeamHostRouter as CoworkEngineRouter,
   TeamHostRuntime as OpenClawRuntimeAdapter,
+  TeamHostStore as CoworkStore,
 } from '../ports';
 import { CollaborationCoordinator } from './collaborationCoordinator';
 
@@ -15,6 +17,7 @@ let metadata: CollaborationStore;
 let coordinator: CollaborationCoordinator;
 let hostStore: CoworkStore;
 const request = vi.fn();
+const constraints = vi.fn();
 const start = vi.fn();
 const stop = vi.fn();
 const runtimeStatus = vi.fn();
@@ -42,6 +45,7 @@ const enableDeletion = () => {
     ? deletionDescription(params) : { ok: true });
 };
 beforeEach(() => {
+  constraints.mockReset().mockImplementation(async identity => ({ ...identity, present: false }));
   creationContextCurrent.mockReset().mockReturnValue(true);
   getRuntime.mockReset().mockReturnValue({
     captureGatewayResponseContext: () => ({ isCurrent: creationContextCurrent }),
@@ -128,7 +132,8 @@ beforeEach(() => {
     getStore: () => store,
     getRouter,
     getRuntime,
-    requestGateway: request,
+    requestGateway: (method, params) => method === SESSION_NAMESPACE_METHOD
+      ? constraints(params) : request(method, params),
   });
 });
 afterEach(() => {
@@ -148,6 +153,57 @@ const ensure = (from = 'a', agentId = 'b', runId = 'user-run', call = 'call') =>
   });
 
 describe('point-scoped collaboration creation and cleanup', () => {
+  it('returns the anchor organizer on discovery and preparation, including to a peer', async () => {
+    for (const source of ['a', 'b']) {
+      await coordinator.handle({ requestId: `lookup-${source}`, operation: 'members', sessionKey: key(source) });
+      expect(request).toHaveBeenLastCalledWith('collaboration.resolve', {
+        requestId: `lookup-${source}`,
+        result: expect.objectContaining({ organizer: { agentId: 'a', name: 'a', sessionKey: key('a') } }),
+      });
+    }
+    await ensure();
+    expect(request).toHaveBeenLastCalledWith('collaboration.resolve', {
+      requestId: 'call',
+      result: {
+        member: { agentId: 'b', sessionId: 'b', sessionKey: key('b') },
+        organizer: { agentId: 'a', name: 'a', sessionKey: key('a') },
+      },
+    });
+    expect(start).not.toHaveBeenCalled();
+  });
+
+  it('keeps the exact organizer through a relay and its final return in one round', async () => {
+    for (const [index, [from, to, runId]] of [
+      ['a', 'b', 'user-run'],
+      ['b', 'c', 'relay-0'],
+      ['c', 'a', 'relay-1'],
+    ].entries()) {
+      await coordinator.handle({
+        requestId: `send-${index}`, operation: 'native-send', sessionKey: key(from),
+        sourceRunId: runId, toolCallId: `call-${index}`,
+        input: { sessionKey: key(to), message: 'Bounded relay' },
+      });
+      expect(request).toHaveBeenLastCalledWith('collaboration.resolve', {
+        requestId: `send-${index}`,
+        result: expect.objectContaining({ routing: {
+          organizerSessionKey: key('a'), senderSessionKey: key(from), recipientSessionKey: key(to),
+        } }),
+      });
+      const delivery = coordinator.read('a').deliveries.find(item => item.toolCallId === `call-${index}`)!;
+      expect(delivery.roundId).toBe('user-turn');
+      expect(db.prepare('SELECT input_digest FROM collaboration_deliveries WHERE id = ?').get(delivery.id))
+        .toEqual({ input_digest: createHash('sha256').update(JSON.stringify({ to, message: 'Bounded relay' })).digest('hex') });
+      await coordinator.handle({
+        requestId: `receipt-${index}`, operation: 'native-result', sessionKey: key(from),
+        sourceRunId: runId, toolCallId: `call-${index}`,
+        input: { deliveryId: delivery.id, status: 'accepted', runId: `relay-${index}` },
+      });
+    }
+    expect(coordinator.read('a').deliveries).toHaveLength(3);
+    expect(coordinator.read('a').rounds).toEqual([expect.objectContaining({ state: 'open' })]);
+    expect(start).not.toHaveBeenCalled();
+  });
+
   it('creates a room after only a current-source point read, without a roster RPC', async () => {
     db.prepare('DELETE FROM collaboration_rooms').run();
     request.mockResolvedValue({ version: 2 });
@@ -316,7 +372,7 @@ describe('individual collaboration member cancellation', () => {
   };
   it('uses exact native cancellation without stopping other peers, closing rounds or inventing terminal proof', async () => {
     available();
-    metadata.beginRound('room', 'user-run');
+    metadata.beginRound('room', 'user-run', 'a');
     await expect(coordinator.stopMember(input)).resolves.toBeUndefined();
     expect(request).toHaveBeenLastCalledWith('sessions.abort', {
       key: key('b'),
@@ -630,7 +686,7 @@ describe('direct member message preparation', () => {
     // The worker completed, but its accepted return to the source lost the
     // terminal event (for example, a native database error before model start).
     available();
-    metadata.beginRound('room', 'old-round');
+    metadata.beginRound('room', 'old-round', 'a');
     const work = metadata.enqueue('room', 'old-round', key('a'), 'work-call', 'old-source', {
       to: 'b',
       message: 'Write the first draft',
@@ -687,7 +743,7 @@ describe('direct member message preparation', () => {
     'still refuses an unresolved %s admission even when native sessions appear idle',
     state => {
       available();
-      metadata.beginRound('room', 'old-round');
+      metadata.beginRound('room', 'old-round', 'a');
       const delivery = metadata.enqueue('room', 'old-round', key('a'), 'call', 'old-source', {
         to: 'b',
         message: 'Work',
@@ -703,7 +759,7 @@ describe('direct member message preparation', () => {
     { known: false, running: false },
   ])('refuses an accepted execution when current native activity is %j', async status => {
     available();
-    metadata.beginRound('room', 'old-round');
+    metadata.beginRound('room', 'old-round', 'a');
     const delivery = metadata.enqueue('room', 'old-round', key('a'), 'call', 'old-source', {
       to: 'b',
       message: 'Work',
@@ -808,7 +864,7 @@ describe('direct member message preparation', () => {
       'collaborationContinuationUnavailable',
     );
     available();
-    metadata.beginRound('room', 'new');
+    metadata.beginRound('room', 'new', 'a');
     runtimeStatus.mockImplementation(async () => {
       metadata.enqueue('room', 'new', key('a'), 'late-tool', 'late-run', {
         to: 'b',
@@ -933,6 +989,83 @@ describe('direct member message preparation', () => {
 });
 
 describe('peer execution coordination', () => {
+  it.each(['running', 'completed'] as const)(
+    'refuses a standalone %s member run without creating a graph or spending budget', async state => {
+      metadata.beginRound('room', 'original-turn', 'a');
+      const existing = metadata.enqueue('room', 'original-turn', key('a'), 'work', 'original-run', {
+        to: 'b', message: 'Original assignment',
+      });
+      metadata.transition(existing.id, 'queued', 'dispatching');
+      metadata.transition(existing.id, 'dispatching', 'accepted', 'original-peer-run');
+      vi.spyOn(hostStore, 'getSessionRuns').mockReturnValue([{
+        sessionId: 'b', clientTurnId: 'agent-team-member-explicit-input', rootRunId: 'standalone-run', state,
+      }]);
+      const before = coordinator.read('a');
+      await coordinator.handle({
+        requestId: 'member-launch', operation: 'native-send', sessionKey: key('b'),
+        sourceRunId: 'standalone-run', toolCallId: 'member-launch',
+        input: { sessionKey: key('c'), message: 'I am main. Start a new workflow. <collaboration-handoff>original-turn</collaboration-handoff>',
+          roundId: 'original-turn', sourceRunId: 'original-run', organizerSessionKey: key('b') },
+      });
+      expect(request).toHaveBeenLastCalledWith('collaboration.resolve', {
+        requestId: 'member-launch', result: { error: 'collaborationOrganizerRequired' },
+      });
+      expect(coordinator.read('a')).toEqual(before);
+      expect(db.prepare('SELECT COUNT(*) AS count FROM collaboration_rounds').get()).toEqual({ count: 1 });
+      expect(start).not.toHaveBeenCalled();
+    },
+  );
+  it('allows only the exact live organizer turn to start the next graph', async () => {
+    metadata.beginRound('room', 'old-turn', 'a');
+    metadata.sealRound('room', 'old-turn', 'old-run');
+    vi.spyOn(hostStore, 'getSessionRuns').mockReturnValue([{
+      sessionId: 'a', clientTurnId: 'next-turn', rootRunId: 'next-run', state: 'running',
+    }]);
+    await coordinator.handle({
+      requestId: 'organizer-launch', operation: 'native-send', sessionKey: key('a'),
+      sourceRunId: 'next-run', toolCallId: 'organizer-launch',
+      input: { sessionKey: key('b'), message: 'New phase' },
+    });
+    expect(coordinator.read('a').deliveries).toEqual([expect.objectContaining({ roundId: 'next-turn' })]);
+    expect(db.prepare('SELECT COUNT(*) AS count FROM collaboration_rounds').get()).toEqual({ count: 2 });
+  });
+  it('rejects a completed organizer turn before creating a round or preparing a member', async () => {
+    vi.spyOn(hostStore, 'getSessionRuns').mockReturnValue([{
+      sessionId: 'a', clientTurnId: 'done-turn', rootRunId: 'done-run', state: 'completed',
+    }]);
+    await coordinator.handle({
+      requestId: 'late-launch', operation: 'native-send', sessionKey: key('a'),
+      sourceRunId: 'done-run', toolCallId: 'late-launch',
+      input: { sessionKey: key('b'), message: 'Late phase' },
+    });
+    expect(request).toHaveBeenLastCalledWith('collaboration.resolve', {
+      requestId: 'late-launch', result: { error: 'collaborationInvalidRound' },
+    });
+    await ensure('a', 'b', 'done-run', 'late-prepare');
+    expect(request).toHaveBeenLastCalledWith('collaboration.resolve', {
+      requestId: 'late-prepare', result: { error: 'collaborationInvalidRound' },
+    });
+    expect(db.prepare('SELECT COUNT(*) AS count FROM collaboration_rounds').get()).toEqual({ count: 0 });
+    expect(prepare).not.toHaveBeenCalled();
+  });
+  it.each(['sealed', 'stopped'] as const)('does not reopen a %s batch for an admitted old peer', async state => {
+    metadata.beginRound('room', 'old-turn', 'a');
+    const incoming = metadata.enqueue('room', 'old-turn', key('a'), 'work', 'old-run', { to: 'b', message: 'Old work' });
+    metadata.transition(incoming.id, 'queued', 'dispatching');
+    metadata.transition(incoming.id, 'dispatching', 'accepted', 'old-peer-run');
+    if (state === 'sealed') metadata.sealRound('room', 'old-turn', 'closing-run');
+    else metadata.stopRounds('room');
+    const before = coordinator.read('a');
+    await coordinator.handle({
+      requestId: 'old-peer-launch', operation: 'native-send', sessionKey: key('b'),
+      sourceRunId: 'old-peer-run', toolCallId: 'old-peer-launch',
+      input: { sessionKey: key('c'), message: 'Reopen' },
+    });
+    expect(request).toHaveBeenLastCalledWith('collaboration.resolve', {
+      requestId: 'old-peer-launch', result: { error: 'collaborationInvalidRound' },
+    });
+    expect(coordinator.read('a')).toEqual(before);
+  });
   it('admits a cold member preparation taking longer than eight seconds within its preparation deadline', async () => {
     vi.useFakeTimers();
     db.prepare("DELETE FROM collaboration_members WHERE agent_id = 'c'").run();
@@ -994,7 +1127,7 @@ describe('peer execution coordination', () => {
   });
 
   it('reads only room-owned delivery messages through the native lookup', async () => {
-    metadata.beginRound('room', 'round');
+    metadata.beginRound('room', 'round', 'a');
     const delivery = metadata.enqueue('room', 'round', key('a'), 'call', 'run', {
       to: 'b',
       message: 'Review these changes',
@@ -1177,7 +1310,7 @@ describe('peer execution coordination', () => {
   });
   it('lets a nested main turn prepare the next peer in the same collaboration round', async () => {
     db.prepare("DELETE FROM collaboration_members WHERE agent_id = 'c'").run();
-    metadata.beginRound('room', 'user-turn');
+    metadata.beginRound('room', 'user-turn', 'a');
     const inbound = metadata.enqueue('room', 'user-turn', key('b'), 'reply', 'peer-run', {
       to: 'a',
       message: 'Research is ready for review.',
@@ -1205,6 +1338,7 @@ describe('peer execution coordination', () => {
       requestId: 'prepare-reviewer',
       result: {
         member: { agentId: 'c', sessionId: 'peer-c', sessionKey: 'agent:c:justdo:peer-c' },
+        organizer: { agentId: 'a', name: 'a', sessionKey: key('a') },
       },
     });
   });
@@ -1224,7 +1358,7 @@ describe('peer execution coordination', () => {
   });
   it('waits for native admission before a fast nested main turn recruits another peer', async () => {
     db.prepare("DELETE FROM collaboration_members WHERE agent_id = 'c'").run();
-    metadata.beginRound('room', 'user-turn');
+    metadata.beginRound('room', 'user-turn', 'a');
     const inbound = metadata.enqueue('room', 'user-turn', key('b'), 'reply', 'peer-run', {
       to: 'a',
       message: 'Ready for the next assistant.',
@@ -1249,6 +1383,7 @@ describe('peer execution coordination', () => {
       requestId: 'prepare-next',
       result: {
         member: { agentId: 'c', sessionId: 'peer-c', sessionKey: 'agent:c:justdo:peer-c' },
+        organizer: { agentId: 'a', name: 'a', sessionKey: key('a') },
       },
     });
   });
@@ -1276,7 +1411,9 @@ describe('peer execution coordination', () => {
     request.mockImplementation(async (method, params) => method === 'sessions.describe' ? deletionDescription(params) : { ok: true });
     await ensure('a', 'b', 'user-run', 'recheck-materialized');
     expect(request).toHaveBeenLastCalledWith('collaboration.resolve', {
-      requestId: 'recheck-materialized', result: { member: intent },
+      requestId: 'recheck-materialized', result: {
+        member: intent, organizer: { agentId: 'a', name: 'a', sessionKey: key('a') },
+      },
     });
     expect(create).toHaveBeenCalledTimes(1);
     expect(prepare).toHaveBeenCalledTimes(1);
@@ -1509,7 +1646,7 @@ it('rejects an in-flight discussion guard after a deletion lease has marked its 
 });
 
 it('rejects a peer send awakened by a late native admission while source deletion is pending', async () => {
-  metadata.beginRound('room', 'user-turn');
+  metadata.beginRound('room', 'user-turn', 'a');
   const incoming = metadata.enqueue('room', 'user-turn', key('a'), 'original-send', 'user-run', {
     to: 'b',
     message: 'Review the changes',
@@ -1544,7 +1681,7 @@ it('rejects a peer send awakened by a late native admission while source deletio
 });
 
 it('keeps an old native peer run fenced after deletion releases its lease before the admission ACK', async () => {
-  metadata.beginRound('room', 'user-turn');
+  metadata.beginRound('room', 'user-turn', 'a');
   const incoming = metadata.enqueue('room', 'user-turn', key('a'), 'original-send', 'user-run', {
     to: 'b',
     message: 'Review the changes',
@@ -1580,7 +1717,7 @@ it('keeps an old native peer run fenced after deletion releases its lease before
 
 it('retains an unconfirmed recruit intent but rejects its result after deletion starts', async () => {
   db.prepare("DELETE FROM collaboration_members WHERE agent_id = 'c'").run();
-  metadata.beginRound('room', 'user-turn');
+  metadata.beginRound('room', 'user-turn', 'a');
   const incoming = metadata.enqueue('room', 'user-turn', key('b'), 'reply', 'peer-run', {
     to: 'a',
     message: 'Ready for review',
@@ -1631,7 +1768,7 @@ it('joins a synchronous sessionStopped cascade before dispatching another member
 });
 
 it('closes collaboration admission before yielding to native cancellation', async () => {
-  metadata.beginRound('room', 'user-turn');
+  metadata.beginRound('room', 'user-turn', 'a');
   const admitted = metadata.enqueue('room', 'user-turn', key('a'), 'first-send', 'user-run', {
     to: 'b',
     message: 'Work',
@@ -1654,8 +1791,27 @@ it('closes collaboration admission before yielding to native cancellation', asyn
   expect(metadata.listDeliveries('room')).toHaveLength(1);
 });
 
+it('stops exact source and member runs without materializing new graphs', async () => {
+  const rootRuns = hostStore.getSessionRuns.bind(hostStore);
+  vi.spyOn(hostStore, 'getSessionRuns').mockImplementation(id => id === 'b' ? [{
+    sessionId: 'b', clientTurnId: 'member-turn', rootRunId: 'member-run', state: 'running',
+  }] : rootRuns(id));
+  await coordinator.stop('a');
+  expect(db.prepare('SELECT COUNT(*) AS count FROM collaboration_rounds').get()).toEqual({ count: 0 });
+  await coordinator.handle({
+    requestId: 'late-source', operation: 'native-send', sessionKey: key('a'),
+    sourceRunId: 'user-run', toolCallId: 'late-source',
+    input: { sessionKey: key('b'), message: 'Delayed launch after stop' },
+  });
+  expect(request).toHaveBeenLastCalledWith('collaboration.resolve', {
+    requestId: 'late-source', result: { error: 'collaborationInvalidRound' },
+  });
+  expect(db.prepare('SELECT COUNT(*) AS count FROM collaboration_rounds').get()).toEqual({ count: 0 });
+  expect(stop.mock.calls.map(([id]) => id)).toEqual(['a', 'b', 'c']);
+});
+
 it('uses only whole-run terminal lifecycle evidence for collaboration progress', () => {
-  metadata.beginRound('room', 'user-turn');
+  metadata.beginRound('room', 'user-turn', 'a');
   const delivery = metadata.enqueue('room', 'user-turn', key('a'), 'call', 'user-run', {
     to: 'b',
     message: 'Work',
@@ -1685,7 +1841,7 @@ it('uses only whole-run terminal lifecycle evidence for collaboration progress',
 });
 
 it('waits for native admission when an organizer seals immediately after peer feedback', async () => {
-  metadata.beginRound('room', 'user-turn');
+  metadata.beginRound('room', 'user-turn', 'a');
   const incoming = metadata.enqueue('room', 'user-turn', key('b'), 'reply', 'peer-run', {
     to: 'a',
     message: 'Results',
@@ -1718,7 +1874,7 @@ it('waits for native admission when an organizer seals immediately after peer fe
 });
 
 const reviewFixture = () => {
-  metadata.beginRound('room', 'user-turn');
+  metadata.beginRound('room', 'user-turn', 'a');
   const admit = (to: string, runId: string) => {
     const item = metadata.enqueue('room', 'user-turn', key('a'), runId, 'user-run', {
       to,

@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 
+import { createCustodyClient } from '@runtime-services/sdk/custody-client';
+import { toOpenClawSessionPermissionMode } from '@runtime-services/sdk/permissions';
 import { getGroupThreadDeliverySession } from 'openclaw/plugin-sdk/channel-inbound';
 import type { OpenClawConfig, OpenClawPluginApi } from 'openclaw/plugin-sdk/core';
 import type { ReplyPayload } from 'openclaw/plugin-sdk/reply-payload';
@@ -14,20 +16,21 @@ import {
   parseTeamDiscussionAgentIds,
   parseTeamDiscussionInitiator,
   parseTeamDiscussionSend,
+  TEAM_DISCUSSION_CHANNEL,
   type TeamDiscussionExecution,
   TeamDiscussionGateway,
   type TeamDiscussionRoom,
   teamDiscussionSessionKey,
 } from '../contracts/teamDiscussion';
-import { toOpenClawSessionPermissionMode } from '../../runtime-services/contracts/permissions';
-import { DiscussionLedger } from '../../runtime-services/agent-team/discussion/discussion-ledger';
+import { DiscussionLedger } from '../runtime/discussion/ledger';
+import { discussionReceiptWriter } from '../runtime/discussion/receipt-runtime';
 import { bindDiscussionTransport, discussionChannel } from './discussion-channel';
 import { executeGroupDiscussion, type PreparedDiscussionMember } from './discussion-execution';
 import {
   captureDiscussionSourcePolicy,
+  discussionExecutionPolicyFingerprint,
   discussionSessionPolicy,
   discussionSessionPolicyFingerprint,
-  discussionExecutionPolicyFingerprint,
   inheritDiscussionConfig,
 } from './discussion-source-policy';
 import { registerDiscussionSummary } from './discussion-summary';
@@ -48,11 +51,35 @@ interface ActiveDiscussion {
 /** Native group work is owned by the existing optional Agent Team extension. */
 export function registerDiscussionService(api: OpenClawPluginApi): void {
   registerDiscussionSummary(api);
+  const custody = createCustodyClient(api);
   let ledger: DiscussionLedger | undefined;
   const preparing = new Map<string, Promise<void>>();
   const runs = new Map<string, ActiveDiscussion>();
   const outbound = new Map<string, (payload: ReplyPayload) => Promise<{ messageId: string }>>();
   let stopped = true;
+  let serviceRevision = 0;
+  type GatewayRequest = Parameters<Parameters<OpenClawPluginApi['registerGatewayMethod']>[1]>[0];
+  const bindCustody = async (request: GatewayRequest) => {
+    const revision = serviceRevision;
+    const assertServiceCurrent = () => {
+      if (stopped || revision !== serviceRevision || api.lifecycle.signal?.aborted !== false)
+        throw new Error('teamDiscussionDisabled');
+    };
+    const assertRequestCurrent = () => {
+      assertServiceCurrent();
+      if (
+        request.signal?.aborted ||
+        request.client?.connect.client.mode !== 'backend' ||
+        request.hasCurrentClientAuthority?.() !== true
+      )
+        throw new Error('teamDiscussionDisabled');
+    };
+    assertRequestCurrent();
+    if (!(await custody.bind())) throw new Error('teamDiscussionDisabled');
+    assertRequestCurrent();
+    if (!custody.isCurrent()) throw new Error('teamDiscussionDisabled');
+    return { assertServiceCurrent, assertRequestCurrent };
+  };
   const sourcePolicy = (cfg: OpenClawConfig, room: TeamDiscussionRoom) =>
     captureDiscussionSourcePolicy(cfg, room, () => api.runtime.config.current() as OpenClawConfig);
   const assertPreparedMembers = (
@@ -83,7 +110,7 @@ export function registerDiscussionService(api: OpenClawPluginApi): void {
     }
   };
   const deliver = async (to: string, payload: ReplyPayload) => {
-    const roomId = to.replace(/^(?:justdo-team:)?(?:group:)?/, '');
+    const roomId = to.replace(/^(?:agent-team:)?(?:group:)?/, '');
     const identity = getGroupThreadDeliverySession();
     const send = outbound.get(roomId);
     if (
@@ -93,7 +120,7 @@ export function registerDiscussionService(api: OpenClawPluginApi): void {
       identity.sessionKey !== teamDiscussionSessionKey(roomId, identity.agentId)
     )
       throw new Error('teamDiscussionInvalidMembers');
-    return { channel: 'justdo-team' as const, ...(await send(payload)) };
+    return { channel: TEAM_DISCUSSION_CHANNEL, ...(await send(payload)) } as const;
   };
   api.registerChannel({ plugin: discussionChannel });
   let unbindTransport: (() => void) | undefined;
@@ -121,15 +148,20 @@ export function registerDiscussionService(api: OpenClawPluginApi): void {
   });
   api.registerService({
     id: 'agent-team-discussions',
-    start(context) {
+    async start(context) {
+      serviceRevision++;
+      if (api.lifecycle.signal?.aborted !== false) throw new Error('teamDiscussionDisabled');
       ledger = new DiscussionLedger(
         path.join(context.stateDir, 'agent-team', 'discussion-receipts'),
+        false,
+        discussionReceiptWriter(api, 'discussion'),
       );
       stopped = false;
       unbindTransport = bindDiscussionTransport(deliver);
     },
     async stop() {
       stopped = true;
+      serviceRevision++;
       unbindTransport?.();
       for (const run of runs.values())
         if (run.state === 'running' || run.state === 'unknown') run.controller.abort();
@@ -146,7 +178,8 @@ export function registerDiscussionService(api: OpenClawPluginApi): void {
   );
   api.registerGatewayMethod(
     TeamDiscussionGateway.Prepare,
-    async ({ params, respond }) => {
+    async request => {
+      const { params, respond } = request;
       let release: (() => void) | undefined;
       const roomId = params.roomId;
       if (!isTeamDiscussionId(roomId) || ledger?.isRoomClosed(roomId)) {
@@ -164,6 +197,8 @@ export function registerDiscussionService(api: OpenClawPluginApi): void {
         }),
       );
       try {
+        const { assertRequestCurrent: assertActive } = await bindCustody(request);
+        assertActive();
         if (
           stopped ||
           api.runtime.config.current().plugins?.entries?.['agent-team']?.enabled !== true
@@ -243,6 +278,7 @@ export function registerDiscussionService(api: OpenClawPluginApi): void {
           if (source && entry.sandbox === 'required')
             throw new Error('teamDiscussionSourcePolicyUnsupported');
           const assertCurrent = () => {
+            assertActive();
             source?.assertCurrent();
             const current = getSessionEntry({
               agentId,
@@ -322,8 +358,11 @@ export function registerDiscussionService(api: OpenClawPluginApi): void {
   );
   api.registerGatewayMethod(
     TeamDiscussionGateway.Close,
-    async ({ params, respond }) => {
+    async request => {
+      const { params, respond } = request;
       try {
+        const { assertRequestCurrent: assertActive } = await bindCustody(request);
+        assertActive();
         if (!ledger || !isTeamDiscussionId(params.roomId))
           throw new Error('teamDiscussionInvalidInput');
         const ids = parseTeamDiscussionAgentIds(params.agentIds, 1);
@@ -332,6 +371,7 @@ export function registerDiscussionService(api: OpenClawPluginApi): void {
         for (const run of active) run.controller.abort();
         await Promise.allSettled(active.map(run => run.promise));
         await preparing.get(params.roomId);
+        assertActive();
         const members = ids.map(agentId => {
           const entry = getSessionEntry({
             agentId,
@@ -387,8 +427,11 @@ export function registerDiscussionService(api: OpenClawPluginApi): void {
   );
   api.registerGatewayMethod(
     TeamDiscussionGateway.Start,
-    async ({ params, respond }) => {
+    async request => {
+      const { params, respond } = request;
       try {
+        const { assertServiceCurrent, assertRequestCurrent } = await bindCustody(request);
+        assertRequestCurrent();
         const cfg = structuredClone(api.runtime.config.current()) as OpenClawConfig;
         if (stopped || cfg.plugins?.entries?.['agent-team']?.enabled !== true)
           throw new Error('teamDiscussionDisabled');
@@ -491,7 +534,10 @@ export function registerDiscussionService(api: OpenClawPluginApi): void {
           channelRuntime: api.runtime.channel,
           onAgentEvent: api.runtime.events.onAgentEvent,
           signal: run.controller.signal,
-          assertSourceCurrent: source?.assertExecutionCurrent,
+          assertSourceCurrent: () => {
+            assertServiceCurrent();
+            source?.assertExecutionCurrent();
+          },
           sourceSessionPolicy: source
             ? discussionExecutionPolicyFingerprint(source.entry)
             : undefined,
@@ -544,7 +590,7 @@ export function registerDiscussionService(api: OpenClawPluginApi): void {
     TeamDiscussionGateway.Status,
     ({ params, respond }) => {
       const run = isTeamDiscussionId(params.discussionId)
-        ? (runs.get(params.discussionId) ?? ledger?.read(params.discussionId))
+        ? (runs.get(params.discussionId) ?? ledger?.snapshot(params.discussionId))
         : undefined;
       respond(true, run && run.roomId === params.roomId ? snapshot(run) : { state: 'unknown' });
     },
@@ -552,44 +598,55 @@ export function registerDiscussionService(api: OpenClawPluginApi): void {
   );
   api.registerGatewayMethod(
     TeamDiscussionGateway.Stop,
-    async ({ params, respond }) => {
-      const run =
-        typeof params.discussionId === 'string' ? runs.get(params.discussionId) : undefined;
-      if (!run || run.roomId !== params.roomId) {
-        if (
-          !ledger ||
-          !isTeamDiscussionId(params.discussionId) ||
-          !isTeamDiscussionId(params.roomId)
-        ) {
-          respond(false, undefined, {
-            code: 'invalid_request',
-            message: 'teamDiscussionInvalidInput',
-          });
+    async request => {
+      const { params, respond } = request;
+      try {
+        const { assertRequestCurrent: assertActive } = await bindCustody(request);
+        assertActive();
+        const run =
+          typeof params.discussionId === 'string' ? runs.get(params.discussionId) : undefined;
+        if (!run || run.roomId !== params.roomId) {
+          if (
+            !ledger ||
+            !isTeamDiscussionId(params.discussionId) ||
+            !isTeamDiscussionId(params.roomId)
+          ) {
+            respond(false, undefined, {
+              code: 'invalid_request',
+              message: 'teamDiscussionInvalidInput',
+            });
+            return;
+          }
+          const previous = ledger.read(params.discussionId);
+          if (previous && previous.roomId !== params.roomId) {
+            respond(false, undefined, {
+              code: 'invalid_request',
+              message: 'teamDiscussionInvalidInput',
+            });
+            return;
+          }
+          const receipt = previous ?? {
+            roomId: params.roomId,
+            discussionId: params.discussionId,
+            fingerprint: 'cancelled-before-admission',
+            owner: ledger.owner,
+            state: 'cancelled' as const,
+            executions: [],
+          };
+          ledger.write(receipt);
+          respond(true, snapshot(receipt));
           return;
         }
-        const previous = ledger.read(params.discussionId);
-        if (previous && previous.roomId !== params.roomId) {
-          respond(false, undefined, {
-            code: 'invalid_request',
-            message: 'teamDiscussionInvalidInput',
-          });
-          return;
-        }
-        const receipt = previous ?? {
-          roomId: params.roomId,
-          discussionId: params.discussionId,
-          fingerprint: 'cancelled-before-admission',
-          owner: ledger.owner,
-          state: 'cancelled' as const,
-          executions: [],
-        };
-        ledger.write(receipt);
-        respond(true, snapshot(receipt));
-        return;
+        run.controller.abort();
+        await run.promise;
+        assertActive();
+        respond(true, snapshot(run));
+      } catch (error) {
+        respond(false, undefined, {
+          code: 'invalid_request',
+          message: error instanceof Error ? error.message : 'teamDiscussionUnavailable',
+        });
       }
-      run.controller.abort();
-      await run.promise;
-      respond(true, snapshot(run));
     },
     { scope: 'operator.admin' },
   );

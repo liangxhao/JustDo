@@ -1,11 +1,10 @@
 // @vitest-environment jsdom
-import type { CollaborationRoomEntry } from '../../contracts/collaboration';
-import type { TeamDiscussionRoom } from '../../contracts/teamDiscussion';
+import type { CoworkSession } from '@app-plugin/sdk/application';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
-import type { CoworkSession } from '@app-plugin/sdk/application';
-
+import type { CollaborationRoomEntry } from '../../contracts/collaboration';
+import type { TeamDiscussionRoom } from '../../contracts/teamDiscussion';
 import AgentTeamPanel from './AgentTeamPanel';
 
 const fixtures = vi.hoisted(() => ({
@@ -15,7 +14,7 @@ const fixtures = vi.hoisted(() => ({
   >[],
   collaborations: [] as CollaborationRoomEntry[],
 }));
-vi.mock('@/services/i18n', () => ({ i18nService: { t: (key: string) => key } }));
+vi.mock('../../../tests/fixtures/i18n', () => ({ i18nService: { t: (key: string) => key } }));
 vi.mock('../discussions/teamDiscussionNavigation', () => ({
   useTeamDiscussionRooms: () => fixtures.groups,
 }));

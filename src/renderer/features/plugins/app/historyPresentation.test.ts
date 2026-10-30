@@ -4,17 +4,23 @@ import { afterEach, expect, test, vi } from 'vitest';
 import type {
   AppPluginBridge,
   AppPluginSnapshot,
-} from '../../../../../packages/app-plugin-sdk/contracts';
-import type { AppHistoryPresentationModule } from '../../../../../packages/app-plugin-sdk/history-presentation';
-import { presentation as team } from '../../../../../plugins/extensions/agent-team/app/presentation';
-import { appendAgentTeamInstruction } from '../../../../../plugins/extensions/agent-team/prompt/agentTeamPrompt';
-import { presentation as workflow } from '../../../../../plugins/extensions/swarm-workflow/app/presentation';
+} from '../../../../../plugins/sdk/app-plugin-sdk/contracts';
+import type { AppHistoryPresentationModule } from '../../../../../plugins/sdk/app-plugin-sdk/history-presentation';
 import { AppBrowserRegistry } from './browserRegistry';
 import {
   pluginMessagePresentation,
   pluginMessageText,
   subscribeMessagePresentation,
 } from './messagePresentation';
+
+const prefix = 'Fixture instruction\n';
+const appendAgentTeamInstruction = (text: string, _mode: string) => prefix + text;
+const team: AppHistoryPresentationModule['presentation'] = {
+  text: source => source.startsWith(prefix) ? source.slice(prefix.length) : source,
+  nativeInput: value => (value as { role?: string })?.role === 'user'
+    ? { senderLabelKey: 'fixtureDispatcher', senderId: 'fixture:dispatcher' } : undefined,
+  translations: { en: { fixtureDispatcher: 'Dispatcher' }, zh: { fixtureDispatcher: '调度者' } },
+};
 
 const disposers: (() => void)[] = [];
 afterEach(() =>
@@ -81,11 +87,11 @@ test('keeps legacy pure history display and dictionaries while disabled, with no
   expect(
     pluginMessagePresentation({
       role: 'user',
-      __openclaw: { transport: { channel: 'justdo-team' } },
+      __openclaw: { transport: { channel: 'agent-team' } },
     }),
   ).toEqual({
-    senderLabel: team.translations!.en.teamDiscussionDispatcher,
-    senderId: 'team-discussion:dispatcher',
+    senderLabel: team.translations!.en.fixtureDispatcher,
+    senderId: 'fixture:dispatcher',
   });
   await f.registry.update([{ ...row(), epoch: 'second', state: 'cleanup' }]);
   expect(pluginMessageText(legacy)).toBe('Visible user question');
@@ -111,11 +117,6 @@ test('late old presentation load cannot restore an uninstalled or replaced hash'
   expect(pluginMessageText('raw')).toBe('new owner');
   await f.registry.update([]);
   expect(pluginMessageText('raw')).toBe('raw');
-});
-
-test('pure workflow entry exposes only presentation and static dictionaries', () => {
-  expect(Object.keys(workflow).sort()).toEqual(['text', 'translations']);
-  expect(workflow.translations?.en.swarmWorkflowTitle).toBeTruthy();
 });
 
 test('unknown inventory withdraws a late display load until repair confirms the same hash', async () => {

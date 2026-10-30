@@ -57,7 +57,7 @@ export type MessageQuote =
   | NativeMessageQuote
   | DiscussionQuote
   | CollaborationQuote
-  | import('../../../../../../../packages/app-plugin-sdk/metadata').ExtensionMessageQuote;
+  | import('../../../../../../../plugins/sdk/app-plugin-sdk/metadata').ExtensionMessageQuote;
 export const EMPTY_MESSAGE_QUOTES: readonly MessageQuote[] = [];
 export type MessageQuoteHandler = (
   quote: NativeMessageQuote,

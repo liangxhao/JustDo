@@ -5,10 +5,7 @@ import os from 'os';
 import path from 'path';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
-import type { CollaborationCoordinator } from '../../../../plugins/extensions/agent-team/host/collaboration/collaborationCoordinator';
-import type { AgentTeamLaunchCoordinator } from '../../../../plugins/extensions/agent-team/host/launch/agentTeamLaunchCoordinator';
-import { appendAgentTeamInstruction } from '../../../../plugins/extensions/agent-team/prompt/agentTeamPrompt';
-import { behaviorSessionParticipants } from '../../../../tests/plugin-host/mainBehaviorParticipants';
+import { appendBehaviorPluginPrompt, behaviorSessionParticipants, type BehaviorSubmissionParticipant } from '../../../../tests/plugin-host/mainBehaviorParticipants';
 import { SessionStartIpc } from '../../../shared/cowork/sessionStart';
 import type { CoworkSession, CoworkStore } from '../../data/coworkStore';
 import type { CoworkEngineRouter } from '../../engine';
@@ -107,7 +104,7 @@ test('keeps Team launch hooks when the first message is delegated to its current
   );
   registerCoworkSessionExecutionHandlers({
     getMainWindow: () => window as never,
-    getAgentTeamLaunch: () => launch as unknown as AgentTeamLaunchCoordinator,
+    getAgentTeamLaunch: () => launch as unknown as BehaviorSubmissionParticipant,
     ensureEngineRunning: vi.fn().mockResolvedValue({ phase: 'running' }),
     getCoworkStore: () =>
       ({
@@ -122,7 +119,7 @@ test('keeps Team launch hooks when the first message is delegated to its current
     waitForConfigUpdates: async () => {},
     getEngineNotReadyResponse: vi.fn(),
   });
-  const prompt = appendAgentTeamInstruction('Compare two designs', 'group');
+  const prompt = appendBehaviorPluginPrompt('Compare two designs', 'group');
   await expect(
     handlers.get('cowork:session:start')!(
       { sender: owner, senderFrame: frame },
@@ -380,7 +377,7 @@ describe('initial admission cancellation', () => {
         : Promise.resolve({ phase: 'running' as const, message: '' }),
     );
     registerCoworkSessionExecutionHandlers({
-      getAgentTeamLaunch: () => ({ cancel: cancelLaunch }) as unknown as AgentTeamLaunchCoordinator,
+      getAgentTeamLaunch: () => ({ cancel: cancelLaunch }) as unknown as BehaviorSubmissionParticipant,
       ensureEngineRunning: ensureEngineRunning as never,
       waitForConfigUpdates: () =>
         preparation === 'config' ? new Promise<void>(() => undefined) : Promise.resolve(),
@@ -891,7 +888,7 @@ describe('homepage App adoption at first-message admission', () => {
     clientTurnId: 'fixture-first-send',
     appWorkspaceRequestId: '12345678-1234-1234-1234-123456789abc',
   };
-  const setup = async (fails = false, launch?: Partial<AgentTeamLaunchCoordinator>) => {
+  const setup = async (fails = false, launch?: Partial<BehaviorSubmissionParticipant>) => {
     const cwd = path.join(temporaryDirectory, 'first-send-fixture');
     const frame = { url: 'http://127.0.0.1:43127/' };
     const owner = Object.assign(new EventEmitter(), {
@@ -955,7 +952,7 @@ describe('homepage App adoption at first-message admission', () => {
     registerCoworkSessionExecutionHandlers({
       workspaceAppSessions: workspaces,
       getMainWindow: () => ({ webContents: owner, isDestroyed: () => false }) as never,
-      ...(launch ? { getAgentTeamLaunch: () => launch as AgentTeamLaunchCoordinator } : {}),
+      ...(launch ? { getAgentTeamLaunch: () => launch as BehaviorSubmissionParticipant } : {}),
       ensureEngineRunning: async () => ({ phase: 'running' }) as never,
       getCoworkStore: () => store as unknown as CoworkStore,
       getCoworkEngineRouter: () =>
@@ -1016,7 +1013,7 @@ describe('homepage App adoption at first-message admission', () => {
       cancel: vi.fn().mockResolvedValue(undefined),
     };
     const f = await setup(false, launch as never);
-    const starting = f.start({ prompt: appendAgentTeamInstruction(input.prompt, 'group') });
+    const starting = f.start({ prompt: appendBehaviorPluginPrompt(input.prompt, 'group') });
     await vi.waitFor(() => expect(launch.register).toHaveBeenCalledOnce());
     await expect(
       handlers.get(SessionStartIpc.Cancel)!({}, { clientTurnId: input.clientTurnId }),
@@ -1034,8 +1031,8 @@ describe('homepage App adoption at first-message admission', () => {
 });
 function registerCoworkSessionExecutionHandlers(
   input: Parameters<typeof registerGenericHandlers>[0] & {
-    getCollaboration?: () => CollaborationCoordinator;
-    getAgentTeamLaunch?: () => AgentTeamLaunchCoordinator;
+    getCollaboration?: () => BehaviorResourceParticipant;
+    getAgentTeamLaunch?: () => BehaviorSubmissionParticipant;
   },
 ) {
   const collaboration = input.getCollaboration?.();

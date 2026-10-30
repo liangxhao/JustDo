@@ -1,8 +1,6 @@
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
-import type { AgentTeamLaunchCoordinator } from '../../../../plugins/extensions/agent-team/host/launch/agentTeamLaunchCoordinator';
-import { appendAgentTeamInstruction } from '../../../../plugins/extensions/agent-team/prompt/agentTeamPrompt';
-import { behaviorSessionParticipants } from '../../../../tests/plugin-host/mainBehaviorParticipants';
+import { appendBehaviorPluginPrompt, type BehaviorResourceParticipant, behaviorSessionParticipants, type BehaviorSubmissionParticipant } from '../../../../tests/plugin-host/mainBehaviorParticipants';
 import { CoworkSessionCopyIpc } from '../../../shared/cowork/sessionCopy';
 import {
   SESSION_SUMMARY_BATCH_LIMIT,
@@ -25,7 +23,6 @@ vi.mock('electron', () => ({
   },
 }));
 
-import type { CollaborationCoordinator } from '../../../../plugins/extensions/agent-team/host/collaboration/collaborationCoordinator';
 import { registerCoworkSessionHandlers as registerGenericHandlers } from './sessions';
 
 type IpcHandler = (...args: unknown[]) => Promise<unknown>;
@@ -361,7 +358,7 @@ test('does not import pending-input harness rows even when native metadata claim
   const requestGateway = vi.fn().mockResolvedValue({
     sessions: [
       {
-        key: 'agent:main:harness:justdo-team-holding:room:1',
+        key: 'agent:main:harness:inert-custody:room:1',
         parentSessionKey: 'agent:main:justdo:parent',
         worktree: { id: 'tree' },
       },
@@ -677,7 +674,7 @@ test('reports successful task deletions even when another task needs a retry', a
         }),
         deleteTask,
         acquireSourceDeletion: () => () => {},
-      }) as unknown as CollaborationCoordinator,
+      }) as unknown as BehaviorResourceParticipant,
   });
   const handler = mocks.handle.mock.calls.find(
     ([channel]) => channel === 'cowork:session:deleteBatch',
@@ -710,7 +707,7 @@ test('keeps a group-only source in a batch delete while its execution is unresol
         read: () => ({}),
         deleteTask,
         acquireSourceDeletion: () => () => {},
-      }) as unknown as CollaborationCoordinator,
+      }) as unknown as BehaviorResourceParticipant,
   });
   const handler = mocks.handle.mock.calls.find(
     ([name]) => name === 'cowork:session:deleteBatch',
@@ -779,7 +776,7 @@ test.each(['cowork:session:delete', 'cowork:session:deleteBatch'])(
           isSourceDeleting: () => frozen,
           acquireSourceDeletion,
           deleteTask,
-        }) as unknown as CollaborationCoordinator,
+        }) as unknown as BehaviorResourceParticipant,
     });
     const handler = (name: string) =>
       mocks.handle.mock.calls.find(([registered]) => registered === name)![1] as IpcHandler;
@@ -818,7 +815,7 @@ test('releases the batch deletion lease when preflight rejects a native child', 
     getCoworkEngineRouter: () => ({ stopSession }) as unknown as CoworkEngineRouter,
     setSessionPermissionMode: vi.fn(),
     getCollaboration: () =>
-      ({ acquireSourceDeletion: () => release, deleteTask }) as unknown as CollaborationCoordinator,
+      ({ acquireSourceDeletion: () => release, deleteTask }) as unknown as BehaviorResourceParticipant,
   });
   const handler = mocks.handle.mock.calls.find(
     ([channel]) => channel === 'cowork:session:deleteBatch',
@@ -847,7 +844,7 @@ test.each(['cowork:session:delete', 'cowork:session:deleteBatch'])(
           acquireSourceDeletion: () => {
             throw new Error('metadata unavailable');
           },
-        }) as unknown as CollaborationCoordinator,
+        }) as unknown as BehaviorResourceParticipant,
     });
     const handler = mocks.handle.mock.calls.find(
       ([registered]) => registered === channel,
@@ -894,7 +891,7 @@ test('rejects a resumed run when source deletion starts while restart status is 
       ({
         read: () => ({}),
         isSourceDeleting: () => deleting,
-      }) as unknown as CollaborationCoordinator,
+      }) as unknown as BehaviorResourceParticipant,
   });
   const handler = mocks.handle.mock.calls.find(
     ([channel]) => channel === 'cowork:session:run:begin',
@@ -963,7 +960,7 @@ test('registers the exact explicit input before the source run and fences native
     return { ...input, id: 'receipt', state: 'running' };
   });
   registerCoworkSessionHandlers({
-    getAgentTeamLaunch: () => launch as unknown as AgentTeamLaunchCoordinator,
+    getAgentTeamLaunch: () => launch as unknown as BehaviorSubmissionParticipant,
     getCoworkStore: () =>
       ({
         getSession: () => ({ agentId: 'main' }),
@@ -976,7 +973,7 @@ test('registers the exact explicit input before the source run and fences native
   });
   const handler = (channel: string) =>
     mocks.handle.mock.calls.find(([name]) => name === channel)![1] as IpcHandler;
-  const prompt = appendAgentTeamInstruction('Discuss', 'group');
+  const prompt = appendBehaviorPluginPrompt('Discuss', 'group');
   await expect(
     handler('cowork:session:run:begin')(null, {
       sessionId: 'source',
@@ -1013,7 +1010,7 @@ function registerTeamFollowupFixture() {
   };
   const beginSessionRun = vi.fn(input => ({ ...input, id: 'followup', state: 'running' }));
   registerCoworkSessionHandlers({
-    getAgentTeamLaunch: () => launch as unknown as AgentTeamLaunchCoordinator,
+    getAgentTeamLaunch: () => launch as unknown as BehaviorSubmissionParticipant,
     getCoworkStore: () =>
       ({
         getSession: () => ({ agentId: 'main' }),
@@ -1055,7 +1052,7 @@ test.each(['task', 'group'] as const)(
   async mode => {
     const { launch, beginSessionRun, handler, input } = registerTeamFollowupFixture();
     await expect(
-      handler(null, { ...input, pluginPrompt: appendAgentTeamInstruction('New team', mode) }),
+      handler(null, { ...input, pluginPrompt: appendBehaviorPluginPrompt('New team', mode) }),
     ).resolves.toMatchObject({ success: false });
     expect(launch.releaseIfSettled).toHaveBeenCalledWith('source');
     expect(launch.register).not.toHaveBeenCalled();
@@ -1082,7 +1079,7 @@ test('does not let a failed guard cancellation prevent stopping the actual sourc
     getAgentTeamLaunch: () =>
       ({
         cancel: vi.fn().mockRejectedValue(new Error('disconnected')),
-      }) as unknown as AgentTeamLaunchCoordinator,
+      }) as unknown as BehaviorSubmissionParticipant,
     getCoworkStore: () => ({}) as CoworkStore,
     getCoworkEngineRouter: () => ({ stopSession }) as unknown as CoworkEngineRouter,
     setSessionPermissionMode: vi.fn(),
@@ -1106,7 +1103,7 @@ test('stops the source immediately while guard cancellation is still awaiting Ga
   );
   const stopSession = vi.fn().mockResolvedValue(undefined);
   registerCoworkSessionHandlers({
-    getAgentTeamLaunch: () => ({ cancel }) as unknown as AgentTeamLaunchCoordinator,
+    getAgentTeamLaunch: () => ({ cancel }) as unknown as BehaviorSubmissionParticipant,
     getCoworkStore: () => ({}) as CoworkStore,
     getCoworkEngineRouter: () => ({ stopSession }) as unknown as CoworkEngineRouter,
     setSessionPermissionMode: vi.fn(),
@@ -1127,7 +1124,7 @@ test('stops the source immediately while guard cancellation is still awaiting Ga
 test('releases a closed pre-send sender only through the exact guard client contract', async () => {
   const abortBeforeSend = vi.fn().mockResolvedValue(true);
   registerCoworkSessionHandlers({
-    getAgentTeamLaunch: () => ({ abortBeforeSend }) as unknown as AgentTeamLaunchCoordinator,
+    getAgentTeamLaunch: () => ({ abortBeforeSend }) as unknown as BehaviorSubmissionParticipant,
     getCoworkStore: () => ({}) as CoworkStore,
     getCoworkEngineRouter: () => ({}) as CoworkEngineRouter,
     setSessionPermissionMode: vi.fn(),
@@ -3179,8 +3176,8 @@ test('a local specialist conversation is not remotely managed', async () => {
 
 function registerCoworkSessionHandlers(
   input: Parameters<typeof registerGenericHandlers>[0] & {
-    getCollaboration?: () => CollaborationCoordinator;
-    getAgentTeamLaunch?: () => AgentTeamLaunchCoordinator;
+    getCollaboration?: () => BehaviorResourceParticipant;
+    getAgentTeamLaunch?: () => BehaviorSubmissionParticipant;
   },
 ) {
   const collaboration = input.getCollaboration?.();

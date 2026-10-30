@@ -1,7 +1,7 @@
 import { GoalExecutionPhase } from '../../../shared/cowork/sessionGoal';
 import type { CoworkStore } from '../../data/coworkStore';
 import { GoalContinuationCoordinator } from '../../openclaw/goals/goalContinuationCoordinator';
-import { buildManagedSessionKey, isTeamDiscussionHoldingSessionKey } from '../../openclaw/sessions/openclawSessionKeys';
+import { buildManagedSessionKey, isCustodySessionKey } from '../../openclaw/sessions/openclawSessionKeys';
 import { invalidateSessionListRequests } from '../gateway/sessionListClient';
 import type { GatewayClientLike, GatewayResponseContext } from '../gateway/types';
 import type { CoworkRuntimeStatusOptions } from '../types';
@@ -603,7 +603,7 @@ export async function getRuntimeSessionSnapshot(
           sessions.push(
             ...page.filter(
               row =>
-                !isTeamDiscussionHoldingSessionKey(typeof row.key === 'string' ? row.key : undefined),
+                !isCustodySessionKey(typeof row.key === 'string' ? row.key : undefined),
             ),
           );
           const hasMore =

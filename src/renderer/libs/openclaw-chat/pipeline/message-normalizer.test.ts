@@ -120,62 +120,9 @@ describe('ordered assistant webpage embeds', () => {
   });
 });
 
-describe('isPluginReplyMirror', () => {
-  const mirror = {
-    role: 'assistant',
-    provider: 'openclaw',
-    model: 'delivery-mirror',
-    content: [{ type: 'text', text: 'A public group reply.' }],
-    openclawDeliveryMirror: {
-      kind: 'channel-final',
-      sourceMessageId: 'justdo-team:room:discussion:1',
-    },
-    openclawDelivery: { speakerAgentId: 'review', mediaUrls: [] },
-  };
-
-  test('recognizes public mirrors independently of text, speaker or envelope', () => {
-    expect(isPluginReplyMirror(mirror)).toBe(true);
-    expect(isPluginReplyMirror({ message: mirror })).toBe(true);
-    expect(
-      isPluginReplyMirror({
-        ...mirror,
-        content: [],
-        openclawDelivery: { speakerAgentId: 'main', mediaUrls: ['report.pdf'] },
-      }),
-    ).toBe(true);
-  });
-
-  test.each([
-    { role: 'user' },
-    { provider: 'model-provider' },
-    { model: 'real-model' },
-    { openclawDeliveryMirror: { ...mirror.openclawDeliveryMirror, kind: 'channel-input' } },
-    { openclawDelivery: undefined },
-    { openclawDelivery: { speakerAgentId: '' } },
-    { openclawDelivery: { speakerAgentId: 'invalid:agent' } },
-  ])('keeps ordinary or incomplete records with the same text: %o', fields => {
-    expect(isPluginReplyMirror({ ...mirror, ...fields })).toBe(false);
-  });
-
-  test.each([
-    undefined,
-    'slack:room:discussion:1',
-    'justdo-team:room:discussion',
-    'justdo-team:room:discussion:0',
-    'justdo-team:room:discussion:01',
-    'justdo-team:room:discussion:1.5',
-    'justdo-team:room:discussion:9007199254740992',
-    'justdo-team:room:discussion:1:extra',
-    'justdo-team::discussion:1',
-    'justdo-team:room:invalid/discussion:1',
-  ])('keeps mirrors without an exact group output locator: %s', sourceMessageId => {
-    expect(
-      isPluginReplyMirror({
-        ...mirror,
-        openclawDeliveryMirror: { ...mirror.openclawDeliveryMirror, sourceMessageId },
-      }),
-    ).toBe(false);
-  });
+test('delegates optional mirror classification to the current display contributor', () => {
+  expect(isPluginReplyMirror({ __fixturePublicMirror: true })).toBe(true);
+  expect(isPluginReplyMirror({ __fixturePublicMirror: false })).toBe(false);
 });
 
 test.each([true, false])(
@@ -184,14 +131,15 @@ test.each([true, false])(
     const message = {
       role: 'user',
       content: 'Group thread round 2. These are sibling replies.',
-      __openclaw: { transport: { channel: 'justdo-team', messageId: 'group-thread:round2' } },
+      __fixtureInput: true,
+      __openclaw: { transport: { channel: 'agent-team', messageId: 'group-thread:round2' } },
     };
     const projected = projectGatewayHistoryForDisplay([message]);
     const result = normalizeMessage(projected[0], { peerPerspective });
     expect(result.senderId).toBe(peerPerspective ? 'team-discussion:dispatcher' : null);
     expect(result.content).toEqual([{ type: 'text', text: message.content }]);
     const ordinary = normalizeMessage(
-      { ...message, __openclaw: { transport: { channel: 'webchat' } } },
+      { ...message, __fixtureInput: false, __openclaw: { transport: { channel: 'webchat' } } },
       { peerPerspective },
     );
     expect(ordinary.senderId).toBeNull();

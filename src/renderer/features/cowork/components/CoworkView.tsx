@@ -219,8 +219,8 @@ import Modal from '@/shared/components/ui/Modal';
 import { OwnerDocumentContext } from '@/shared/dom/ownerDocument';
 import { type RootState, store } from '@/store';
 
-import type { AppSubmission } from '../../../../../packages/app-plugin-sdk/contracts';
 import { readAppInput } from '../../../../../plugins/extensions/runtime-services/contracts/app-input';
+import type { AppSubmission } from '../../../../../plugins/sdk/app-plugin-sdk/contracts';
 import { renderCoworkHomeWorkspace } from './chat/CoworkHomeWorkspace';
 import { useCoworkSideChats } from './chat/useCoworkSideChats';
 import type { MessageQuoteHandler } from './composer/draft/messageQuote';

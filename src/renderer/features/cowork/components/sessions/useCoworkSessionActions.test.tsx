@@ -2,7 +2,7 @@
 import { act, cleanup, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
-import type { AppSessionPresentation } from '../../../../../../packages/app-plugin-sdk/browser';
+import type { AppSessionPresentation } from '../../../../../../plugins/sdk/app-plugin-sdk/browser';
 
 const fixture = vi.hoisted(() => ({
   presentation: {} as AppSessionPresentation,

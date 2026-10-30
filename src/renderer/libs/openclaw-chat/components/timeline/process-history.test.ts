@@ -114,17 +114,19 @@ describe('completed chat process history', () => {
           model: 'delivery-mirror',
           openclawDeliveryMirror: {
             kind: 'channel-final',
-            sourceMessageId: 'justdo-team:room:discussion:1',
+            sourceMessageId: 'agent-team:room:discussion:1',
           },
           openclawDelivery: { speakerAgentId: 'main', mediaUrls: [] },
           __openclaw: { id: 'source-public-mirror' },
+          __fixturePublicMirror: true,
         },
         {
           role: 'user',
           content: 'Group thread round 2.',
+          __fixtureInput: true,
           __openclaw: {
             id: 'group-input',
-            transport: { channel: 'justdo-team', messageId: 'group-thread:round2' },
+            transport: { channel: 'agent-team', messageId: 'group-thread:round2' },
           },
         },
         {
@@ -142,10 +144,11 @@ describe('completed chat process history', () => {
           model: 'delivery-mirror',
           openclawDeliveryMirror: {
             kind: 'channel-final',
-            sourceMessageId: 'justdo-team:room:discussion:2',
+            sourceMessageId: 'agent-team:room:discussion:2',
           },
           openclawDelivery: { speakerAgentId: 'review', mediaUrls: [] },
           __openclaw: { id: 'public-mirror' },
+          __fixturePublicMirror: true,
         },
       ];
       const chat = document.createElement('justdo-chat') as JustDoChatElement;

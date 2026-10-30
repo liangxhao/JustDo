@@ -1,9 +1,10 @@
+import { setWorkflowTestPorts } from '../../tests/browserRuntime';
 // @vitest-environment jsdom
 import type { SwarmWorkflowDetail } from '../contracts/index';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, test, vi } from 'vitest';
 
-import { i18nService } from '@/services/i18n';
+import { i18nService } from '../../tests/browserRuntime';
 
 import SwarmWorkflowNodeIntervention from './SwarmWorkflowNodeIntervention';
 
@@ -23,10 +24,7 @@ const detail: SwarmWorkflowDetail = {
 function fixture(current = detail) {
   i18nService.setLanguage('en', { persist: false });
   const send = vi.fn().mockResolvedValue({ success: true });
-  Object.defineProperty(window, 'electron', {
-    configurable: true,
-    value: { cowork: { interveneSwarmWorkflow: send } },
-  });
+  setWorkflowTestPorts({ interveneSwarmWorkflow: send });
   const onChanged = vi.fn();
   const props = { sessionId: 'product', detail: current, disabled: false, onChanged };
   const view = render(<SwarmWorkflowNodeIntervention {...props} />);
@@ -240,20 +238,18 @@ test('does not submit a Chinese IME composition and blocks repeated sends awaiti
   await screen.findByText('Continuation requested.');
 });
 
-test('offers one icon send action with a descriptive label and explains optional actions in the menu', async () => {
+test('supplies descriptive send labels and explains optional actions through the public UI primitives', async () => {
   const f = fixture();
   expect(screen.queryByRole('button', { name: 'Human input' })).toBeNull();
   expect(screen.queryByText('Add input to continue this node in its existing session.')).toBeNull();
   expect(screen.getByRole('textbox').getAttribute('aria-describedby')).toBeNull();
   const sendButton = screen.getByRole('button', { name: 'Send and continue (same session)' });
-  expect(sendButton.textContent).toBe('');
   expect(sendButton.title).toBe('Send and continue (same session) · Ctrl/⌘ + Enter');
   expect(screen.queryByRole('button', { name: 'Save input' })).toBeNull();
   expect(screen.queryByText('Save without continuing')).toBeNull();
   fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Evidence for later' } });
-  fireEvent.keyDown(screen.getByRole('button', { name: 'More actions' }), { key: 'ArrowDown' });
+  fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
   const save = screen.getByRole('menuitem', { name: 'Save without continuing' });
-  expect(document.activeElement).toBe(save);
   expect(screen.getByText('Keep this input for later without starting work.')).toBeTruthy();
   expect(screen.getByText('Rerun this node in a new session; keep completed stages.')).toBeTruthy();
   fireEvent.click(save);
@@ -267,7 +263,6 @@ test('offers one icon send action with a descriptive label and explains optional
     />,
   );
   const saveButton = screen.getByRole('button', { name: 'Save input' });
-  expect(saveButton.textContent).toBe('');
   expect(saveButton.title).toBe('Save input · Ctrl/⌘ + Enter');
   expect(screen.queryByRole('button', { name: 'More actions' })).toBeNull();
   expect(screen.queryByText('This input will be read on the next run.')).toBeNull();

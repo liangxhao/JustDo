@@ -5,7 +5,7 @@ import { pathToFileURL } from 'node:url';
 
 import type Database from 'better-sqlite3';
 
-import type { AppSubmission } from '../../../../packages/app-plugin-sdk/contracts';
+import type { AppSubmission } from '../../../../plugins/sdk/app-plugin-sdk/contracts';
 import {
   AppPluginError,
   type AppPluginEvent,
@@ -13,7 +13,7 @@ import {
   type AppPluginSnapshot,
   isAppIdentifier,
   isAppWireValue,
-} from '../../../../packages/app-plugin-sdk/contracts';
+} from '../../../../plugins/sdk/app-plugin-sdk/contracts';
 import type {
   AppAgent,
   AppMainHost,
@@ -22,8 +22,8 @@ import type {
   AppNativeRuntime,
   AppSessionExecution,
   AppSubmissionParticipant,
-} from '../../../../packages/app-plugin-sdk/main';
-import { isAppNativeBinding } from '../../../../packages/app-plugin-sdk/native-contract';
+} from '../../../../plugins/sdk/app-plugin-sdk/main';
+import { isAppNativeBinding } from '../../../../plugins/sdk/app-plugin-sdk/native-contract';
 import {
   type PluginRequestBinding,
   runWithoutPluginRequestBinding,
@@ -50,6 +50,7 @@ export interface AppNativeState {
   binding?: PluginRequestBinding;
 }
 interface Instance {
+  origin: AppPluginRegistry;
   artifact: VerifiedAppArtifact;
   epoch: string;
   controller: AbortController;
@@ -58,6 +59,7 @@ interface Instance {
   fenced: boolean;
   activated: boolean;
   blocked: boolean;
+  removing?: boolean;
   businessAllowed: boolean;
   databasePort?: Database.Database;
   assertDatabaseEffect?: (write?: boolean) => void;
@@ -101,6 +103,7 @@ export class AppPluginRegistry {
   private disposed = false;
   private protection?: AppProtectionJournal;
   private inventoryUnresolved = false;
+  private readonly unavailableOwners = new Set<string>();
   private packageAdmissionBlocked = false;
   private readonly cleanupOwners = new Map<string, CleanupOwner>();
 
@@ -142,6 +145,7 @@ export class AppPluginRegistry {
     this.candidates.add(controller);
     const epoch = randomUUID();
     const instance: Instance = {
+      origin: this,
       artifact,
       epoch,
       controller,
@@ -175,6 +179,7 @@ export class AppPluginRegistry {
       if (
         this.disposed ||
         controller.signal.aborted ||
+        instance.removing ||
         this.invocation.getStore()?.cleanupLease?.active === false
       )
         throw new Error(AppPluginError.Retired);
@@ -652,8 +657,50 @@ export class AppPluginRegistry {
     this.protection?.confirmDeleted(ids);
     this.pruneCleanupOwners();
   }
-  blockResourceAdmission(): void {
-    this.inventoryUnresolved = true;
+  blockResourceAdmission(ownerId?: string): void {
+    if (ownerId && isAppIdentifier(ownerId)) this.unavailableOwners.add(ownerId);
+    else this.inventoryUnresolved = true;
+  }
+  restoreResourceAdmission(ownerId: string): void {
+    this.unavailableOwners.delete(ownerId);
+  }
+  /** Confirmed package absence detaches participation; product and native history stay intact. */
+  removeOwner(ownerId: string): void {
+    const instances = new Set<Instance>();
+    const current = this.instances.get(ownerId);
+    if (current) instances.add(current);
+    for (const owner of this.cleanupOwners.values())
+      if (owner.id === ownerId) instances.add(owner.instance);
+    // Borrowed cleanup scopes and outstanding leases belong to their original registry.
+    for (const instance of instances)
+      if (instance.origin !== this) instance.origin.removeOwner(ownerId);
+    for (const instance of instances) {
+      if (instance.origin !== this) continue;
+      instance.businessAllowed = false;
+      instance.fenced = true;
+      instance.removing = true;
+      if (instance.maintenanceTimer) clearInterval(instance.maintenanceTimer);
+      instance.maintenanceTimer = undefined;
+      isolateObserver(() => instance.releaseBusiness?.());
+      instance.releaseBusiness = undefined;
+      instance.businessEpoch = undefined;
+    }
+    // Do not use confirmResourceDeletion: sources may still belong to other plugins.
+    this.protection?.removeOwner(ownerId);
+    this.instances.delete(ownerId);
+    this.unavailableOwners.delete(ownerId);
+    for (const [hash, owner] of this.cleanupOwners)
+      if (owner.id === ownerId) this.cleanupOwners.delete(hash);
+    for (const instance of instances)
+      if (instance.origin === this) this.retireCleanupInstance(instance);
+    this.changed();
+  }
+  inheritResourceAdmissionFailures(source: AppPluginRegistry): void {
+    if (source.inventoryUnresolved) this.inventoryUnresolved = true;
+    for (const ownerId of source.unavailableOwners) this.unavailableOwners.add(ownerId);
+  }
+  resourceOwners(): { ownerId: string; artifactHash: string }[] {
+    return this.protection?.allOwners() ?? [];
   }
   setPackageAdmissionBlocked(blocked: boolean): void {
     this.packageAdmissionBlocked = blocked;
@@ -663,6 +710,7 @@ export class AppPluginRegistry {
     return (
       this.inventoryUnresolved ||
       this.packageAdmissionBlocked ||
+      this.unavailableOwners.size > 0 ||
       [...this.instances.values()].some(instance => instance.blocked)
     );
   }
@@ -784,7 +832,11 @@ export class AppPluginRegistry {
     const next = previous
       .catch((): void => undefined)
       .then(async () => {
-        if (this.inventoryUnresolved || this.packageAdmissionBlocked)
+        if (
+          this.inventoryUnresolved ||
+          this.packageAdmissionBlocked ||
+          (!options.packageMutation && this.unavailableOwners.has(id))
+        )
           throw new Error('appPluginCleanupUnresolved');
         const instance = this.instances.get(id);
         const previousBinding = instance

@@ -1,0 +1,28 @@
+{
+  "name": "@runtime-services/sdk",
+  "version": "1.0.0",
+  "type": "module",
+  "license": "MIT",
+  "engines": { "node": ">=24.16.0 <25" },
+  "exports": {
+    "./app-input": "./app-input.ts",
+    "./fifo-permits": "./fifo-permits.ts",
+    "./filesystem-contract": "./filesystem-contract.ts",
+    "./filesystem": "./filesystem.ts",
+    "./permissions": "./permissions.ts",
+    "./session-key": "./session-key.ts",
+    "./session-namespace": "./session-namespace.ts",
+    "./admission": "./admission.ts",
+    "./admission-client": "./admission-client.ts",
+    "./owner-contract": "./owner-contract.ts",
+    "./owner-client": "./owner-client.ts",
+    "./owner-provider": "./owner-provider.ts",
+    "./custody": "./custody.ts",
+    "./custody-client": "./custody-client.ts",
+    "./execution": "./execution.ts",
+    "./native-client": "./native-client.ts",
+    "./native-lifecycle": "./native-lifecycle.ts",
+    "./provider": "./provider.ts"
+  },
+  "files": ["*.js", "*.d.ts", "README.md", "LICENSE"]
+}

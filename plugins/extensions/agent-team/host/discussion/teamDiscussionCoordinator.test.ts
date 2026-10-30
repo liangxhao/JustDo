@@ -3,17 +3,19 @@ import os from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
+import { CUSTODY_RPC } from '@runtime-services/sdk/custody';
+import { custodyResourceId } from '@runtime-services/sdk/custody-client';
 import type Database from 'better-sqlite3';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 import {
   TeamDiscussionGateway as Gateway,
   type TeamDiscussionRoom,
+  teamDiscussionSessionKey,
 } from '../../app/contracts/teamDiscussion';
+import { discussionOperationId } from '../../runtime/discussion/receipt';
 import { initializeTeamDiscussionTables } from '../data/teamDiscussionStore';
 import type { TeamHostStore as CoworkStore } from '../ports';
-
-vi.mock('electron', () => ({ ipcMain: { handle: vi.fn() } }));
 import { TeamDiscussionCoordinator } from './teamDiscussionCoordinator';
 
 let db: DatabaseSync;
@@ -147,11 +149,13 @@ function mockHolding() {
     if (method === Gateway.HoldingPrepare)
       return {
         ...params,
-        sessionKey: `agent:${params.agentId}:harness:justdo-team-holding:${params.roomId}:${params.generation}`,
+        resourceId: custodyResourceId('agent-team', params.roomId as string),
+        epoch: params.generation,
+        sessionKey: `agent:${params.agentId}:harness:retired-holding:${params.roomId}:${params.generation}`,
         sessionId: 'holding-native',
         lifecycleRevision: 'holding-revision',
       };
-    if (method === Gateway.HoldingCancel) return { cancelled: true };
+    if (method === CUSTODY_RPC.cancel) return { cancelled: true };
     if (method === Gateway.HoldingSave) {
       const input = params.send as typeof send;
       const entry = {
@@ -168,6 +172,11 @@ function mockHolding() {
       return entry
         ? { state: 'saved', requestId: params.requestId, ...entry }
         : { state: 'unknown' };
+    }
+    if (method === CUSTODY_RPC.inspect) {
+      const entry = entries.get(params.operationId as string);
+      return { ...params, state: entry ? 'saved' : 'unknown',
+        ...(entry ? { entryId: entry.entryId } : {}) };
     }
     return original(method, params);
   });
@@ -240,7 +249,7 @@ it('keeps admission fenced until every overlapping Stop has completed', async ()
   });
   let cancellationCount = 0;
   connectedRequest.mockImplementation(async method => {
-    if (method === Gateway.HoldingCancel && ++cancellationCount === 2) await secondCancel;
+    if (method === CUSTODY_RPC.cancel && ++cancellationCount === 2) await secondCancel;
     return { cancelled: true };
   });
 
@@ -460,10 +469,8 @@ it('cleans holding sessions with public archive, owner unlock and exact archived
   const implementation = request.getMockImplementation()!;
   request.mockImplementation(async (method, params) => {
     if (method === Gateway.Close) return { members: [] };
-    if (method === Gateway.HoldingClose)
-      return params.phase === 'unlock'
-        ? { identity }
-        : { closed: true, identities: deleted ? [] : [identity] };
+    if (method === CUSTODY_RPC.close) return { closed: true, identities: deleted ? [] : [identity] };
+    if (method === CUSTODY_RPC.unlock) return { identity };
     if (method === 'sessions.delete' && params.key === identity.sessionKey) deleted = true;
     return implementation(method, params);
   });
@@ -473,7 +480,7 @@ it('cleans holding sessions with public archive, owner unlock and exact archived
     ([method, params]) => method === 'sessions.patch' && params.key === identity.sessionKey,
   );
   const unlock = calls.findIndex(
-    ([method, params]) => method === Gateway.HoldingClose && params.phase === 'unlock',
+    ([method]) => method === CUSTODY_RPC.unlock,
   );
   const remove = calls.findIndex(
     ([method, params]) => method === 'sessions.delete' && params.key === identity.sessionKey,
@@ -486,6 +493,98 @@ it('cleans holding sessions with public archive, owner unlock and exact archived
     expectedLifecycleRevision: identity.lifecycleRevision,
   });
   expect(coordinator.metadata.get('room')).toBeUndefined();
+});
+
+it('uses generic settled receipts for cleanup without calling disabled business RPCs or enqueueing summaries', async () => {
+  bindSummarySource();
+  const run = coordinator.metadata.reserve(send);
+  const subject = { agentId: 'alice', sessionKey: teamDiscussionSessionKey('room', 'alice'),
+    sessionId: 'session-alice', lifecycleRevision: 'revision', runId: 'actual-run', outcome: 'completed' };
+  connectedRequest.mockResolvedValue({ receipt: {
+    ownerId: 'agent-team', operationId: discussionOperationId('discussion', run.discussionId),
+    writerRegistrationId: 'registration', inputSha256: '0'.repeat(64), state: 'settled',
+    subjects: [subject], settledRunIds: [subject.runId], cleanupComplete: true, cancelRequested: false,
+  } });
+  await coordinator.reconcile({ cleanupOnly: true });
+  expect(connectedRequest).toHaveBeenCalledExactlyOnceWith(CUSTODY_RPC.receiptInspect, {
+    ownerId: 'agent-team', operationId: discussionOperationId('discussion', run.discussionId),
+  });
+  expect(coordinator.metadata.get('room')).toMatchObject({ state: 'ready' });
+  expect(coordinator.metadata.latestRun('room')?.state).toBe('completed');
+  expect(coordinator.metadata.summary(run.discussionId)).toBeUndefined();
+  expect(request).not.toHaveBeenCalled();
+});
+
+it('keeps an execution unknown until every native terminal, outcome and cleanup fact is confirmed', async () => {
+  const run = coordinator.metadata.reserve(send);
+  const subject = { agentId: 'alice', sessionKey: teamDiscussionSessionKey('room', 'alice'),
+    sessionId: 'session-alice', lifecycleRevision: 'revision', runId: 'actual-run', outcome: 'completed' };
+  const receipt = { ownerId: 'agent-team', operationId: discussionOperationId('discussion', run.discussionId),
+    writerRegistrationId: 'registration', inputSha256: '0'.repeat(64), state: 'settled',
+    subjects: [subject], settledRunIds: [subject.runId], cleanupComplete: true, cancelRequested: false };
+  for (const incomplete of [null, { ...receipt, state: 'unknown' }, { ...receipt, cleanupComplete: false },
+    { ...receipt, settledRunIds: [] }, { ...receipt, subjects: [{ ...subject, outcome: undefined }] },
+    { ...receipt, ownerId: 'another-owner' }]) {
+    connectedRequest.mockResolvedValue({ receipt: incomplete });
+    await coordinator.reconcile({ cleanupOnly: true });
+    expect(coordinator.metadata.get('room')?.activeDiscussionId).toBe(run.discussionId);
+  }
+  expect(request).not.toHaveBeenCalled();
+});
+
+it('permits ordinary source deletion preparation after settled cleanup when Native Team is absent', async () => {
+  bindSummarySource();
+  const run = coordinator.metadata.reserve(send);
+  const subject = { agentId: 'alice', sessionKey: teamDiscussionSessionKey('room', 'alice'),
+    sessionId: 'session-alice', lifecycleRevision: 'revision', runId: 'actual-run', outcome: 'completed' };
+  isExtensionEnabled.mockReturnValue(false);
+  request.mockImplementation(async (method: string) => {
+    if (method === CUSTODY_RPC.receiptCancel) return { receipt: {
+      ownerId: 'agent-team', operationId: discussionOperationId('discussion', run.discussionId),
+      writerRegistrationId: 'retired-registration', inputSha256: '0'.repeat(64), state: 'settled',
+      subjects: [subject], settledRunIds: [subject.runId], cleanupComplete: true, cancelRequested: true,
+    } };
+    throw new Error('Native Team is absent');
+  });
+
+  await expect(coordinator.stopForSource('source', true)).resolves.toBeUndefined();
+
+  expect(coordinator.metadata.latestRun('room')?.state).toBe('completed');
+  expect(request.mock.calls.some(([method]) => method === Gateway.Close || method === 'sessions.delete')).toBe(false);
+  expect(coordinator.metadata.get('room')?.sourceSessionId).toBe('source');
+});
+
+it('does not treat a completed summary execution as proof that its output was delivered', async () => {
+  bindSummarySource();
+  const run = coordinator.metadata.reserve(send);
+  coordinator.metadata.transition('room', run.discussionId, run.generation, 'completed');
+  connectedRequest.mockResolvedValue({ receipt: {
+    ownerId: 'agent-team', operationId: discussionOperationId('summary', run.discussionId),
+    writerRegistrationId: 'registration', inputSha256: '0'.repeat(64), state: 'settled',
+    subjects: [{ ...summarySource, runId: 'summary-run', outcome: 'completed' }],
+    settledRunIds: ['summary-run'], cleanupComplete: true, cancelRequested: true,
+  } });
+  await coordinator.reconcile({ cleanupOnly: true });
+  expect(coordinator.metadata.summary(run.discussionId)?.state).toBe('unknown');
+  expect(connectedRequest).toHaveBeenCalledWith(CUSTODY_RPC.receiptCancel, {
+    ownerId: 'agent-team', operationId: discussionOperationId('summary', run.discussionId),
+  });
+  expect(request).not.toHaveBeenCalled();
+});
+
+it('preserves an unenrolled historical holding identity without old RPC fallback or dispatch', async () => {
+  mockHolding();
+  await coordinator.enqueue(send);
+  const input = coordinator.metadata.queue.get('room', send.requestId)!;
+  const { resourceId: _resourceId, epoch: _epoch, ...historical } = input.identity!;
+  db.prepare('UPDATE team_discussion_pending_inputs SET identity_json = ? WHERE room_id = ?')
+    .run(JSON.stringify(historical), 'room');
+  request.mockClear();
+  connectedRequest.mockClear();
+  await coordinator.reconcile();
+  expect(coordinator.metadata.queue.get('room', send.requestId)?.state).toBe('queued');
+  expect(request).not.toHaveBeenCalled();
+  expect(connectedRequest).not.toHaveBeenCalled();
 });
 
 it('keeps admission closed throughout an explicit disable configuration lease', async () => {
@@ -1069,7 +1168,7 @@ it('persists summary cancellation before a holding cleanup acknowledgement arriv
   mockHolding();
   const previous = coordinator.metadata.reserve(send);
   coordinator.metadata.transition('room', previous.discussionId, previous.generation, 'completed');
-  const cleanup = deferGatewayRequest(Gateway.HoldingCancel);
+  const cleanup = deferGatewayRequest(CUSTODY_RPC.cancel);
   const stopping = coordinator.stop('room');
   await cleanup.reached;
 
@@ -1128,7 +1227,7 @@ it('rechecks a later summary after Stop cancels it while an earlier summary requ
       await firstWaiting;
       return { state: 'delivered' };
     }
-    if (method === Gateway.HoldingCancel && params.roomId === 'second') {
+    if (method === CUSTODY_RPC.cancel && params.resourceId === custodyResourceId('agent-team', 'second')) {
       cleanupEntered();
       await cleanupWaiting;
       return { cancelled: true };
@@ -1408,8 +1507,8 @@ it('deletes room-owned native sessions while preserving the borrowed source sess
     .filter(([method]) => method === 'sessions.delete')
     .map(([, params]) => params.key);
   expect(deletedKeys).toEqual([
-    'agent:alice:justdo-team:group:room',
-    'agent:bob:justdo-team:group:room',
+    'agent:alice:agent-team:group:room',
+    'agent:bob:agent-team:group:room',
   ]);
   expect(deletedKeys).not.toContain(summarySource.sessionKey);
   expect(coordinator.metadata.get('room')).toBeUndefined();

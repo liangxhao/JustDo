@@ -4,6 +4,7 @@ const fs = require('fs');
 const crypto = require('crypto');
 const path = require('path');
 const { spawnSync } = require('child_process');
+const { retireAppPlugins } = require('../plugins/retired-app-plugins.cjs');
 const {
   pruneExtensionDependencies,
   pruneRuntimeExtensions,
@@ -339,9 +340,9 @@ function shouldCopyExtensionSource(sourceDir, entryPath) {
     path.relative(sourceDir, entryPath).split(path.sep)[0] !== 'assets';
 }
 
-function replaceExtensionSources(sourceDir, targetDir) {
+function replaceExtensionSources(sourceDir, targetDir, preserveDependencies = true) {
   for (const entry of fs.readdirSync(targetDir)) {
-    if (entry === 'node_modules' || entry === EXTENSION_ASSEMBLY_MANIFEST) continue;
+    if (preserveDependencies && (entry === 'node_modules' || entry === EXTENSION_ASSEMBLY_MANIFEST)) continue;
     fs.rmSync(path.join(targetDir, entry), { recursive: true, force: true });
   }
   for (const entry of fs.readdirSync(sourceDir)) {
@@ -366,16 +367,16 @@ function cleanInterruptedExtensionStaging(targetDir) {
 
 // App extensions may import pure product contracts. Bundle from the repository
 // before staging so packaged plugins never resolve ../../src against OpenClaw.
-function bundleProductExtension(sourceDir, targetDir) {
+function bundleProductExtension(sourceDir, targetDir, runtimeRoot) {
   const pkg = readJsonFile(path.join(sourceDir, 'package.json'));
-  if (pkg?.justdo?.bundle !== true) return;
+  if (!pkg?.app && pkg?.justdo?.bundle !== true) return;
   if (pkg.app) {
     const repo = path.resolve(sourceDir, '../../..');
     const catalog = readJsonFile(path.join(repo, 'build/app-plugins/catalog.json'));
     const entry = catalog?.find(item => item.id === path.basename(sourceDir));
     if (!entry || !/^[a-f0-9]{64}$/.test(entry.hash)) throw new Error('Build app plugins before syncing native runtime resources');
     const built = path.join(repo, 'build/app-plugins/packages', entry.id, entry.hash);
-    replaceExtensionSources(built, targetDir);
+    replaceExtensionSources(built, targetDir, false);
     return;
   }
   const isRuntimeServices =
@@ -402,6 +403,8 @@ function bundleProductExtension(sourceDir, targetDir) {
         }
       : { packages: 'external' }),
   });
+  if (isRuntimeServices && runtimeRoot)
+    require('./managed-execution-profile.cjs').emitManagedExecutionProfile(runtimeRoot, targetDir);
   fs.writeFileSync(
     path.join(targetDir, 'package.json'),
     `${JSON.stringify({ ...pkg, openclaw: { ...pkg.openclaw, extensions: ['./index.js'] } }, null, 2)}\n`,
@@ -416,6 +419,7 @@ function syncLocalExtensions(repoRoot, runtimeRoot, label, options = {}) {
   if (fs.existsSync(path.join(repoRoot, 'plugins/extensions/drawio'))) {
     require('../../plugins/extensions/drawio/scripts/prepare.cjs').verifyDrawioAssets(path.join(repoRoot, 'plugins/extensions/drawio/assets'));
   }
+  const retired = retireAppPlugins(repoRoot, runtimeRoot, options);
   const sourceDir = path.join(repoRoot, 'plugins/extensions');
   const targetDir = path.join(runtimeRoot, 'dist', 'extensions');
   const copied = [];
@@ -424,7 +428,7 @@ function syncLocalExtensions(repoRoot, runtimeRoot, label, options = {}) {
   let installTarget = options.installTarget;
 
   if (!fs.existsSync(sourceDir)) {
-    return { sourceDir, targetDir, copied };
+    return { sourceDir, targetDir, copied, ...(retired.length ? { removed: retired.map(item => item.id) } : {}) };
   }
 
   fs.mkdirSync(targetDir, { recursive: true });
@@ -457,7 +461,9 @@ function syncLocalExtensions(repoRoot, runtimeRoot, label, options = {}) {
         );
       }
     }
-    const usesProductionDependencies = hasProductionDependencies(extensionSourceDir);
+    // App companions consume their complete built package. Source dependencies
+    // are build inputs, never a second native npm installation or local lock.
+    const usesProductionDependencies = !sourcePackage?.app && hasProductionDependencies(extensionSourceDir);
     if (usesProductionDependencies && !installTarget) {
       installTarget = resolveRuntimeInstallTarget(runtimeRoot);
     }
@@ -492,7 +498,7 @@ function syncLocalExtensions(repoRoot, runtimeRoot, label, options = {}) {
 
     if (canReuseDependencies) {
       replaceExtensionSources(extensionSourceDir, extensionTargetDir);
-      bundleProductExtension(extensionSourceDir, extensionTargetDir);
+      bundleProductExtension(extensionSourceDir, extensionTargetDir, runtimeRoot);
       pruneExtensionDependencies(extensionTargetDir, {
         preserveLegalFiles: ['acpx', 'openai', 'stt-local-cli', 'typesafe'].includes(entry.name),
       });
@@ -508,9 +514,10 @@ function syncLocalExtensions(repoRoot, runtimeRoot, label, options = {}) {
         recursive: true,
         force: true,
         verbatimSymlinks: true,
-        filter: entryPath => shouldCopyExtensionSource(extensionSourceDir, entryPath),
+        filter: entryPath => shouldCopyExtensionSource(extensionSourceDir, entryPath) &&
+          (!sourcePackage?.app || path.relative(extensionSourceDir, entryPath).split(path.sep)[0] !== 'node_modules'),
       });
-      bundleProductExtension(extensionSourceDir, stagingDir);
+      bundleProductExtension(extensionSourceDir, stagingDir, runtimeRoot);
       if (usesProductionDependencies) {
         console.log(`[${label}] Installing production dependencies: ${entry.name}`);
         installDependencies(stagingDir, installTarget);
@@ -541,7 +548,7 @@ function syncLocalExtensions(repoRoot, runtimeRoot, label, options = {}) {
     `[${label}] Synced local extensions: ${copied.length > 0 ? copied.join(', ') : 'none'}`,
   );
 
-  return { sourceDir, targetDir, copied };
+  return { sourceDir, targetDir, copied, ...(retired.length ? { removed: retired.map(item => item.id) } : {}) };
 }
 
 function syncOpenClawRuntimeResources(runtimeRoot, options = {}) {

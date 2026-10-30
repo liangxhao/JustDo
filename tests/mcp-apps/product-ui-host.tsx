@@ -2,9 +2,7 @@
 import { type ComponentProps, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 
-import { buildAgentTeamFeature } from '../../src/renderer/features/cowork/components/composer/AgentTeamSelector';
 import ComposerFeatureMenu from '../../src/renderer/features/cowork/components/composer/ComposerFeatureMenu';
-import { buildSwarmWorkflowComposerFeature } from '../../src/renderer/features/cowork/components/composer/swarmWorkflowComposerFeature';
 import DisplayPanelLauncher from '../../src/renderer/features/cowork/components/display/DisplayPanelLauncher';
 import { useMcpAppTabs } from '../../src/renderer/features/cowork/components/display/tabs/useMcpAppTabs';
 import {
@@ -178,8 +176,9 @@ const controlProps: ComponentProps<typeof McpAppsControls> = {
   }),
 };
 const pluginFeatures = [
-  buildSwarmWorkflowComposerFeature({ selectSwarmWorkflow: () => undefined }),
-  buildAgentTeamFeature(undefined, () => undefined),
+  { id: 'fixture-workflow', label: 'Workflow fixture', icon: <span />, onSelect: () => {} },
+  { id: 'fixture-team', label: 'Team fixture', icon: <span />, onSelect: () => {},
+    children: [{ id: 'fixture-task', label: 'Task fixture', icon: <span />, onSelect: () => {} }] },
 ].map(item => ({ ...item, section: i18nService.t('composerPlugins') }));
 function ProductFixture() {
   const [menu, setMenu] = useState<McpAppComposerMenu | null>(null);

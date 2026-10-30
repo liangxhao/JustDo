@@ -17,7 +17,7 @@ vi.mock('@/features/plugins/app/AppPluginSlot', () => ({
     context,
   }: {
     contributionId?: string;
-    context: import('../../../../../../packages/app-plugin-sdk/browser').AppViewContext;
+    context: import('../../../../../../plugins/sdk/app-plugin-sdk/browser').AppViewContext;
   }) => {
     const view = team.views.find(item => item.id === contributionId);
     return view ? <view.component {...context} /> : null;

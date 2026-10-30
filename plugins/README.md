@@ -1,6 +1,6 @@
-# Built-in plugins
+# Plugins and SDK sources
 
-All application-owned built-in plugins live in this directory, grouped by type:
+Application-owned plugins and their public development tools live in this directory:
 
 ```text
 plugins/
@@ -8,12 +8,18 @@ plugins/
 ├── skills/              # Standalone skills and builtin-skills.json
 ├── mcp-servers/         # Reserved for standalone built-in MCP servers
 ├── hooks/               # Reserved for standalone built-in hooks
-└── browser-extensions/  # Browser-loaded extensions, including browser-assistant
+├── browser-extensions/  # Browser-loaded extensions, including browser-assistant
+└── sdk/                 # Public app SDK and build-tool source packages
 ```
 
 Keep extension-owned tools, UI, assets, scripts and unit tests with their
 extension. Skills supplied by an extension stay inside that extension;
 `skills/` contains the standalone built-in skill library.
+
+[`sdk/`](sdk/README.md) owns `@app-plugin/sdk` and `@app-plugin/build` source.
+The root npm workspace installs these packages for development; standalone plugin
+projects consume their packed releases. Runtime extension discovery continues to
+scan `extensions/`.
 
 `skills/builtin-skills.json` selects the standalone skills and upstream OpenClaw
 skills included in the runtime. Build and packaging scripts copy selected skills

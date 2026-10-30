@@ -19,8 +19,8 @@ const mock = vi.hoisted(() => ({
     },
   },
 }));
-vi.mock('@/store', () => ({ store: { getState: () => mock.state, dispatch: mock.dispatch } }));
-vi.mock('@/services/i18n', () => ({ i18nService: { t: (key: string) => key } }));
+vi.mock('../../../tests/fixtures/store', () => ({ store: { getState: () => mock.state, dispatch: mock.dispatch } }));
+vi.mock('../../../tests/fixtures/i18n', () => ({ i18nService: { t: (key: string) => key } }));
 beforeEach(() => {
   mock.dispatch.mockClear();
   mock.state.cowork.currentSession.id = 'source';

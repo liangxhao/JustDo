@@ -1,10 +1,10 @@
 import { expect, test } from 'vitest';
 
-import type { AppBrowserHost } from '../../../../../packages/app-plugin-sdk/browser';
+import type { AppBrowserHost } from '../../../../../plugins/sdk/app-plugin-sdk/browser';
 import type {
   AppPluginBridge,
   AppPluginSnapshot,
-} from '../../../../../packages/app-plugin-sdk/contracts';
+} from '../../../../../plugins/sdk/app-plugin-sdk/contracts';
 import { AppBrowserRegistry } from './browserRegistry';
 import { AppUiStateStore } from './uiState';
 

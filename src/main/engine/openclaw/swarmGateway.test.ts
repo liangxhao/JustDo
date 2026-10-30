@@ -1,6 +1,5 @@
 import { expect, test, vi } from 'vitest';
 
-import { buildSwarmWorkflowInstruction } from '../../../../plugins/extensions/swarm-workflow/app/contracts/index';
 import { parseSwarmSnapshot, readSwarmSnapshot } from './swarmGateway';
 
 const snapshot = {
@@ -39,9 +38,4 @@ test('reads only host-resolved native parents and deduplicates aliases', async (
 test('does not turn a missing native session into successful empty history', async () => {
   const request = vi.fn().mockResolvedValue({});
   await expect(readSwarmSnapshot({ request }, ['owned'])).rejects.toThrow();
-});
-test('encodes the independent flow mode without delegating native collector control', () => {
-  const instruction = buildSwarmWorkflowInstruction({ mode: 'review', verify: true });
-  expect(instruction).toBe('<swarm-workflow mode="review"/>');
-  expect(buildSwarmWorkflowInstruction({ mode: 'research', verify: false })).toBe('<swarm-workflow mode="research"/>');
 });

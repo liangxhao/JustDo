@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { useState } from 'react';
 import { afterEach, expect, test, vi } from 'vitest';
 
-import type { AppViewContext } from '../../../../../packages/app-plugin-sdk/browser';
+import type { AppViewContext } from '../../../../../plugins/sdk/app-plugin-sdk/browser';
 import type { AppView } from './browserRegistry';
 
 const fixture = vi.hoisted(() => ({

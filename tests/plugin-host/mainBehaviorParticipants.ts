@@ -1,10 +1,23 @@
-import { recognizeAgentTeamMode } from '../../plugins/extensions/agent-team/prompt/agentTeamPrompt';
+import type { AppSubmissionParticipant } from '../../plugins/sdk/app-plugin-sdk/main';
+import { appendAppInput, readAppInput } from '../../plugins/extensions/runtime-services/contracts/app-input';
 import type { AppSessionParticipants } from '../../src/main/plugins/app/sessionParticipants';
+
+/** Synthetic host-boundary data; optional plugins own their actual prompt formats. */
+export const appendBehaviorPluginPrompt = (prompt: string, mode: string): string =>
+  appendAppInput(prompt, { v: 1, pluginId: 'fixture-plugin', epoch: 'fixture-epoch', mode, prompt });
+
+export type BehaviorSubmissionParticipant = Partial<AppSubmissionParticipant>;
+export interface BehaviorResourceParticipant {
+  read?(id: string): { room?: { members?: { sessionId: string }[] } };
+  isSourceDeleting?(id: string): boolean;
+  acquireSourceDeletion?(ids: string[]): () => void;
+  deleteTask?(id: string): Promise<boolean> | boolean;
+}
 
 /** Legacy coordinator fixtures feed the new generic host boundary, never production IPC. */
 export function behaviorSessionParticipants(
-  collaboration?: any,
-  launch?: any,
+  collaboration?: BehaviorResourceParticipant,
+  launch?: BehaviorSubmissionParticipant,
 ): AppSessionParticipants {
   const room = (id: string) => collaboration?.read?.(id.replace(/(?:-peer)+$/u, ''))?.room;
   return {
@@ -12,15 +25,15 @@ export function behaviorSessionParticipants(
     isManaged: (id: string) => !!room(id),
     expandResources: (ids: string[]) => [
       ...new Set(
-        ids.flatMap(id => room(id)?.members?.map((member: any) => member.sessionId) ?? [id]),
+        ids.flatMap(id => room(id)?.members?.map(member => member.sessionId) ?? [id]),
       ),
     ],
     acquireDeletion: (ids: string[]) => collaboration?.acquireSourceDeletion?.(ids) ?? (() => {}),
     prepareDelete: async () => {},
     confirmDeleted: () => {},
     deleteManaged: (id: string) => collaboration?.deleteTask?.(id) ?? false,
-    matches: (prompt: string) => !!launch && recognizeAgentTeamMode(prompt) !== undefined,
-    register: (input: unknown) => launch?.register?.(input),
+    matches: (prompt: string) => !!launch && readAppInput(prompt)?.input.pluginId === 'fixture-plugin',
+    register: (input: Parameters<AppSubmissionParticipant['register']>[0]) => launch?.register?.(input),
     markSubmissionStarted: (id: string, turn: string) => launch?.markSubmissionStarted?.(id, turn),
     abortBeforeSend: (id: string, turn: string) => launch?.abortBeforeSend?.(id, turn) ?? true,
     cancel: async (id: string, turn: string) => launch?.cancel?.(id, turn),

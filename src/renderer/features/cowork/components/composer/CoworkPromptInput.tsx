@@ -118,7 +118,7 @@ import Modal from '@/shared/components/ui/Modal';
 import { useOwnerDocument, useOwnerWindow } from '@/shared/dom/ownerDocument';
 import { type RootState, store } from '@/store';
 
-import type { AppSubmission } from '../../../../../../packages/app-plugin-sdk/contracts';
+import type { AppSubmission } from '../../../../../../plugins/sdk/app-plugin-sdk/contracts';
 import { isImagePath } from './attachments/composerAttachmentFiles';
 import { useComposerAttachments } from './attachments/useComposerAttachments';
 import ComposerFeatureMenu from './ComposerFeatureMenu';

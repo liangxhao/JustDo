@@ -1,4 +1,5 @@
 import type { BatchCounts } from './batch';
+export const SWARM_WORKFLOW_PLUGIN_ID = 'swarm-workflow';
 import {
   FLOW_LIMITS,
   FLOW_RPC,

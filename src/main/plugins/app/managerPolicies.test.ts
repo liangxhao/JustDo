@@ -5,7 +5,7 @@ import path from 'node:path';
 
 import { expect, test, vi } from 'vitest';
 
-import type { AppPluginManifest } from '../../../../packages/app-plugin-sdk/contracts';
+import type { AppPluginManifest } from '../../../../plugins/sdk/app-plugin-sdk/contracts';
 import { artifactDigest } from './artifact';
 import { AppPluginManager } from './manager';
 import type { AppHostResources } from './registry';

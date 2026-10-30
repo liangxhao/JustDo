@@ -2,6 +2,10 @@
   "name": "justdo",
   "productName": "JustDo",
   "private": true,
+  "workspaces": [
+    "plugins/sdk/*",
+    "plugins/extensions/runtime-services/sdk"
+  ],
   "description": "AI-powered assistant application",
   "author": {
     "name": "JustDo",
@@ -101,6 +105,7 @@
     "setup:node-runtime": "node scripts/runtime/setup-node-runtime.cjs",
     "plugins:app:build": "npm run plugins:app:typecheck && node scripts/plugins/build-app-plugins.mjs",
     "plugins:app:sdk": "node scripts/plugins/build-app-sdk.mjs",
+    "plugins:runtime:sdk": "node scripts/plugins/build-runtime-sdk.mjs",
     "plugins:app:verify": "node scripts/test/plugin-host/verify-portable-app-sdk.mjs && node scripts/test/plugin-host/verify-built-app-artifacts.mjs && node scripts/test/plugin-host/verify-built-browser-artifacts.mjs && node scripts/test/plugin-host/verify-development-assets.mjs",
     "pretest": "npm run plugins:app:build",
     "plugins:app:typecheck": "node scripts/plugins/typecheck-app-plugins.mjs"
@@ -217,7 +222,10 @@
     "vitest": "^4.1.11",
     "wait-on": "^7.2.0",
     "yauzl": "^3.4.0",
-    "yazl": "^3.3.1"
+    "yazl": "^3.3.1",
+    "@app-plugin/sdk": "1.0.0",
+    "@app-plugin/build": "1.0.0",
+    "@runtime-services/sdk": "1.0.0"
   },
   "allowScripts": {
     "better-sqlite3@12.11.1": true,

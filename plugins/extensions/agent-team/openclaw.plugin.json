@@ -1,9 +1,9 @@
 {
   "id": "agent-team",
   "name": "Agent Team",
-  "channels": ["justdo-team"],
+  "channels": ["agent-team"],
   "channelConfigs": {
-    "justdo-team": { "label": "Agent Team", "description": "Local group discussions." }
+    "agent-team": { "label": "Agent Team", "description": "Local group discussions." }
   },
   "activation": {
     "onStartup": true,
@@ -11,6 +11,7 @@
   },
   "contracts": {
     "gatewayMethodDispatch": ["authenticated-request"],
+    "trustedToolPolicies": ["agent-team-launch"],
     "tools": ["task_assistants", "assistants_create", "team_discussion"]
   },
   "configSchema": {

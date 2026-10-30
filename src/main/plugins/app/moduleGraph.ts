@@ -3,7 +3,7 @@ import path from 'node:path';
 
 import { parse } from 'acorn';
 
-import type { AppPluginManifest } from '../../../../packages/app-plugin-sdk/contracts';
+import type { AppPluginManifest } from '../../../../plugins/sdk/app-plugin-sdk/contracts';
 
 type SyntaxNode = Record<string, unknown> & { type: string };
 export interface AppModuleGraphs {

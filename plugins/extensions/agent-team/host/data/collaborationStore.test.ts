@@ -29,7 +29,7 @@ beforeEach(() => {
   initializeCollaborationTables(db);
   store = new CollaborationStore(db);
   store.createRoom(room);
-  store.beginRound(room.id, 'turn');
+  store.beginRound(room.id, 'turn', room.anchorSessionId);
 });
 afterEach(() => db.close());
 const send = (call = 'call', message = 'Review the change') =>
@@ -39,6 +39,22 @@ const send = (call = 'call', message = 'Review the change') =>
   });
 
 describe('peer collaboration metadata', () => {
+  it('rejects member batch creation and reopening without changing existing receipts or budgets', () => {
+    send();
+    const rounds = db.prepare('SELECT * FROM collaboration_rounds').all();
+    const deliveries = db.prepare('SELECT * FROM collaboration_deliveries').all();
+
+    expect(() => store.beginRound(room.id, 'member-turn', 'session-b'))
+      .toThrow('collaborationInvalidRound');
+    expect(() => store.beginRound(room.id, 'turn', 'session-b'))
+      .toThrow('collaborationInvalidRound');
+
+    expect(db.prepare('SELECT * FROM collaboration_rounds').all()).toEqual(rounds);
+    expect(db.prepare('SELECT * FROM collaboration_deliveries').all()).toEqual(deliveries);
+    store.beginRound(room.id, 'organizer-turn', 'session-a');
+    expect(store.rounds(room.id).map(round => round.id)).toEqual(['turn', 'organizer-turn']);
+  });
+
   it('enforces a reduced roster cap for fresh deliveries without changing accepted receipts', () => {
     const first = send();
     store.transition(first.id, 'queued', 'dispatching');
@@ -54,7 +70,7 @@ describe('peer collaboration metadata', () => {
 
     expect(send()).toMatchObject({ id: first.id, state: 'accepted', runId: 'native-run' });
     expect(() => send('fresh')).toThrow('agentTeamSettingsMembersExceeded');
-    store.beginRound(room.id, 'next-turn');
+    store.beginRound(room.id, 'next-turn', room.anchorSessionId);
     expect(() =>
       store.enqueue(room.id, 'next-turn', room.members[0].sessionKey, 'next-call', 'next-run', {
         to: 'b',
@@ -107,12 +123,12 @@ describe('peer collaboration metadata', () => {
       store.recordExecution(room.members[0].sessionKey, 'first-closing', 'completed');
       const historical = store.rounds(room.id)[0];
       expect(historical.state).toBe(outcome === 'completed' ? 'settled' : 'failed');
-      store.beginRound(room.id, 'next-open');
+      store.beginRound(room.id, 'next-open', room.anchorSessionId);
       store.enqueue(room.id, 'next-open', room.members[0].sessionKey, 'next-call', 'next-run', {
         to: 'b',
         message: 'Next task',
       });
-      store.beginRound(room.id, 'next-closing');
+      store.beginRound(room.id, 'next-closing', room.anchorSessionId);
       store.sealRound(room.id, 'next-closing', 'next-closing-run');
 
       store.stopRounds(room.id);
@@ -136,12 +152,12 @@ describe('peer collaboration metadata', () => {
     store.transition(first.id, 'dispatching', 'accepted', 'first-run');
     store.recordExecution(room.members[1].sessionKey, 'first-run', 'completed');
     store.stopRounds(room.id);
-    store.beginRound(room.id, 'next-turn');
+    store.beginRound(room.id, 'next-turn', room.anchorSessionId);
     store.enqueue(room.id, 'next-turn', room.members[0].sessionKey, 'next-call', 'next-run', {
       to: 'c',
       message: 'Review the next change',
     });
-    store.beginRound(room.id, 'discovery-only');
+    store.beginRound(room.id, 'discovery-only', room.anchorSessionId);
     const reopened = new CollaborationStore(db);
     const entries = reopened.listRoomEntries();
     expect(entries).toHaveLength(1);
@@ -240,7 +256,7 @@ describe('peer collaboration metadata', () => {
       store.transition(delivery.id, 'queued', 'failed');
     }
     store = new CollaborationStore(db);
-    store.beginRound('room', 'turn');
+    store.beginRound('room', 'turn', room.anchorSessionId);
     expect(() => send('excess')).toThrow('collaborationBudgetExceeded');
     expect(send('call-0').state).toBe('failed');
   });

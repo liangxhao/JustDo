@@ -1,7 +1,11 @@
 import { createHash } from 'node:crypto';
 
+import { CUSTODY_RPC, type CustodyCancel, type CustodyReceipt } from '@runtime-services/sdk/custody';
+import { custodyResourceId } from '@runtime-services/sdk/custody-client';
+
 import type { DiscussionResources } from '../../contracts/agentTeamSettings';
 import {
+  discussionMemberSessionKey,
   parseTeamDiscussionSend,
   TeamDiscussionGateway,
   type TeamDiscussionHoldingIdentity,
@@ -14,6 +18,8 @@ import {
   type TeamDiscussionQueueStore,
 } from '../data/teamDiscussionQueueStore';
 import type { TeamDiscussionStore } from '../data/teamDiscussionStore';
+import { executionReceiptOutcome, holdingCustodyIdentity, holdingCustodyRead,
+  readExecutionReceipt, TEAM_CUSTODY_OWNER } from './nativeCustody';
 import {
   discussionAttachmentFingerprint,
   stageDiscussionAttachments,
@@ -170,6 +176,8 @@ export class TeamDiscussionQueueCoordinator {
       );
       this.assertCurrent(input, 'receiving');
       const fingerprint = pendingInputFingerprint(nativeSend);
+      if (!holdingCustodyIdentity(identity, room.id, input.generation))
+        throw new Error('teamDiscussionOutcomeUnknown');
       if (!queue.setIdentity(input, identity, fingerprint, attachmentFingerprint))
         throw new Error('teamDiscussionBusy');
       this.assertCurrent(input, 'receiving');
@@ -212,10 +220,10 @@ export class TeamDiscussionQueueCoordinator {
     this.context.onChanged();
     // A product tombstone is definitive for an inert input even if native cleanup is offline.
     await this.context
-      .requestConnectedGateway?.(TeamDiscussionGateway.HoldingCancel, {
-        roomId: room.id,
-        generation: this.context.queue.generation(room.id),
-        requestIds: [cancelled.requestId],
+      .requestConnectedGateway?.(CUSTODY_RPC.cancel, {
+        resourceId: custodyResourceId(TEAM_CUSTODY_OWNER, room.id),
+        epoch: this.context.queue.generation(room.id),
+        operationIds: [cancelled.requestId],
       })
       .catch(() => {});
     return this.context.room(room.id);
@@ -224,14 +232,16 @@ export class TeamDiscussionQueueCoordinator {
     const generation = this.context.queue.cancelAll(roomId);
     this.context.onChanged();
     await this.context
-      .requestConnectedGateway?.(TeamDiscussionGateway.HoldingCancel, { roomId, generation })
+      .requestConnectedGateway?.(CUSTODY_RPC.cancel, {
+        resourceId: custodyResourceId(TEAM_CUSTODY_OWNER, roomId), epoch: generation,
+      })
       .catch(() => {});
   }
   async project(room: TeamDiscussionRoom): Promise<TeamDiscussionRoom> {
     const pendingInputs = this.context.queue.projection(room.id);
     for (const projection of pendingInputs) {
       const input = this.context.queue.get(room.id, projection.requestId);
-      if (!input?.identity || !input.nativeFingerprint || !this.context.queue.isActive(input))
+      if (!input || !holdingCustodyRead(input) || !this.context.queue.isActive(input))
         continue;
       try {
         const native = await this.context.requestGateway<{
@@ -261,7 +271,7 @@ export class TeamDiscussionQueueCoordinator {
     if (!request) return;
     const pending: Array<{
       keys: string[];
-      params: { roomId: string; generation: number; requestIds?: string[] };
+      params: CustodyCancel;
     }> = [];
     for (const room of metadata.list()) {
       const inputs = queue.list(room.id);
@@ -273,7 +283,9 @@ export class TeamDiscussionQueueCoordinator {
         inputs.some(input => input.generation < generation) &&
         !this.confirmedCancellations.has(generationKey)
       )
-        pending.push({ keys: [generationKey], params: { roomId: room.id, generation } });
+        pending.push({ keys: [generationKey], params: {
+          resourceId: custodyResourceId(TEAM_CUSTODY_OWNER, room.id), epoch: generation,
+        } });
       const cancelled = inputs.filter(
         input =>
           input.generation === generation &&
@@ -284,7 +296,8 @@ export class TeamDiscussionQueueCoordinator {
         const batch = cancelled.slice(offset, offset + 3);
         pending.push({
           keys: batch.map(input => JSON.stringify([room.id, generation, input.requestId])),
-          params: { roomId: room.id, generation, requestIds: batch.map(input => input.requestId) },
+          params: { resourceId: custodyResourceId(TEAM_CUSTODY_OWNER, room.id), epoch: generation,
+            operationIds: batch.map(input => input.requestId) },
         });
       }
     }
@@ -294,7 +307,7 @@ export class TeamDiscussionQueueCoordinator {
     for (const cancellation of batch) {
       try {
         const receipt = await request<{ cancelled?: boolean }>(
-          TeamDiscussionGateway.HoldingCancel,
+          CUSTODY_RPC.cancel,
           cancellation.params,
         );
         if (receipt.cancelled === true)
@@ -316,20 +329,23 @@ export class TeamDiscussionQueueCoordinator {
           const run = metadata.runs(room.id).find(item => item.requestId === input.requestId);
           if (run) {
             try {
-              const status = await request<{ roomId: string; discussionId: string; state: string }>(
-                TeamDiscussionGateway.Status,
-                { roomId: room.id, discussionId: run.discussionId },
-              ).catch(() =>
-                request<{ roomId: string; discussionId: string; state: string }>(
-                  TeamDiscussionGateway.OfflineControl,
-                  { operation: 'status', roomId: room.id, discussionId: run.discussionId },
-                ),
-              );
-              if (
-                status.roomId === room.id &&
-                status.discussionId === run.discussionId &&
-                ['running', 'completed', 'failed', 'cancelled'].includes(status.state)
-              ) {
+              const generic = async () => {
+                const receipt = await readExecutionReceipt(request, 'discussion', run.discussionId);
+                if (receipt?.subjects.some(subject => {
+                  const member = room.members.find(item => item.agentId === subject.agentId);
+                  return !member || subject.sessionKey !== discussionMemberSessionKey(room, subject.agentId) ||
+                    subject.sessionId !== member.sessionId || subject.lifecycleRevision !== member.lifecycleRevision;
+                })) throw new Error('teamDiscussionSessionChanged');
+                return executionReceiptOutcome(receipt) !== 'unknown' ||
+                  (receipt?.state === 'open' && receipt.subjects.length > 0);
+              };
+              const admitted = options.cleanupOnly ? await generic() : await request<{
+                roomId: string; discussionId: string; state: string;
+              }>(TeamDiscussionGateway.Status, { roomId: room.id, discussionId: run.discussionId })
+                .then(status => status.roomId === room.id && status.discussionId === run.discussionId &&
+                  ['running', 'completed', 'failed', 'cancelled'].includes(status.state))
+                .catch(generic);
+              if (admitted) {
                 queue.transition(input, ['dispatching', 'unknown'], 'dispatched');
                 this.context.onChanged();
               }
@@ -343,24 +359,24 @@ export class TeamDiscussionQueueCoordinator {
           continue;
         }
         if (
-          !input.identity ||
-          !input.nativeFingerprint ||
           !['receiving_unknown', 'queued'].includes(input.state)
         )
           continue;
         try {
-          const receipt = await request<SavedInput>(TeamDiscussionGateway.HoldingStatus, {
-            identity: input.identity,
-            requestId: input.requestId,
-            fingerprint: input.nativeFingerprint,
-          });
+          const locator = holdingCustodyRead(input);
+          if (!locator) continue;
+          const receipt = await request<CustodyReceipt>(CUSTODY_RPC.inspect, locator);
+          if (receipt.resourceId !== locator.resourceId || receipt.epoch !== locator.epoch ||
+              receipt.operationId !== locator.operationId || receipt.sha256 !== locator.sha256 ||
+              (locator.entryId !== undefined && receipt.entryId !== locator.entryId))
+            throw new Error('teamDiscussionOutcomeUnknown');
           if (receipt.state === 'cancelled')
             queue.transition(input, ['receiving_unknown', 'queued'], 'cancelled');
           else if (
             receipt.state === 'saved' &&
             receipt.entryId &&
-            receipt.requestId === input.requestId &&
-            receipt.fingerprint === input.nativeFingerprint
+            receipt.operationId === input.requestId &&
+            receipt.sha256 === input.nativeFingerprint
           )
             queue.confirm(input, receipt.entryId);
         } catch {
@@ -377,7 +393,7 @@ export class TeamDiscussionQueueCoordinator {
     if (
       !input ||
       input.state !== 'queued' ||
-      !input.identity ||
+      !holdingCustodyRead(input) ||
       !input.entryId ||
       !input.nativeFingerprint
     )

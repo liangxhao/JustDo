@@ -5,9 +5,9 @@ import path from 'node:path';
 
 import { afterEach, expect, test, vi } from 'vitest';
 
-import type { AppPluginManifest } from '../../../../packages/app-plugin-sdk/contracts';
-import type { AppMainModule, AppResourceParticipant } from '../../../../packages/app-plugin-sdk/main';
-import { appNativeGatewayMethodAlias, type AppNativeHandshake } from '../../../../packages/app-plugin-sdk/native-contract';
+import type { AppPluginManifest } from '../../../../plugins/sdk/app-plugin-sdk/contracts';
+import type { AppMainModule, AppResourceParticipant } from '../../../../plugins/sdk/app-plugin-sdk/main';
+import { appNativeGatewayMethodAlias, type AppNativeHandshake } from '../../../../plugins/sdk/app-plugin-sdk/native-contract';
 import { bindPluginGatewayClient } from '../../engine/gateway/pluginRequestBinding';
 import { artifactDigest } from './artifact';
 import { readAppAsset } from './assets';

@@ -62,7 +62,7 @@ vi.mock('./display/agentTeamHistory', () => ({
   openTeamHistoryEntry: fixture.openHistory,
 }));
 vi.mock('./display/AgentTeamHistoryDialog', () => ({
-  default: (props: typeof fixture.history) => {
+  default: function HistoryDialog(props: typeof fixture.history) {
     fixture.history = props;
     return createPortal(<div role="dialog">History</div>, useOwnerDocument().body);
   },

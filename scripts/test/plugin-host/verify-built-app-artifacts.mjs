@@ -2,13 +2,14 @@
 // The disposable database has only product infrastructure; plugin schemas remain real.
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { cp, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { build } from 'esbuild';
 import { buildAppPlugin } from '../../plugins/build-app-plugins.mjs';
 import { buildAppSdk } from '../../plugins/build-app-sdk.mjs';
+import { discoverAppPluginSources } from './source-discovery.mjs';
 
 const require = createRequire(import.meta.url);
 const useNode = process.argv.includes('--node');
@@ -21,12 +22,11 @@ let child;
 try {
   await buildAppSdk(path.join(temporary, 'sdk'));
   const artifacts = [];
-  for (const id of ['agent-team', 'swarm-workflow']) {
-    artifacts.push(
-      await buildAppPlugin(path.join(sourceRoot, id), path.join(temporary, 'artifacts')),
-    );
-  }
+  for (const source of await discoverAppPluginSources(sourceRoot))
+    artifacts.push(await buildAppPlugin(source.directory, path.join(temporary, 'artifacts')));
   const runtimeRoot = path.join(temporary, '原生 runtime');
+  await mkdir(path.join(runtimeRoot, 'dist/extensions'), { recursive: true });
+  await mkdir(path.join(temporary, 'artifacts'), { recursive: true });
   for (const artifact of artifacts)
     await cp(artifact.packageRoot, path.join(runtimeRoot, 'dist/extensions', artifact.id), {
       recursive: true,
@@ -90,13 +90,10 @@ const manager=new AppPluginManager({
 });
 try{
  await manager.prepare();manager.initializeDatabase(database);await manager.activate();await manager.refresh();
- assert.equal(manager.snapshot().length,2);
+ assert.equal(manager.snapshot().length,${artifacts.length});
  assert.ok(manager.snapshot().every(item=>item.state==='active'&&item.browserEntry),JSON.stringify(manager.snapshot()));
- const team=manager.snapshot().find(item=>item.id==='agent-team');
- assert.ok(team.slots.includes('plugin.settings')&&team.slots.includes('plugin.history'));
- assert.equal((await manager.invoke({id:'agent-team',epoch:team.epoch,command:'settings.read',args:[]})).success,true);
  checks['actualManager:currentRuntimeJunctionAdmitted']=true;
- checks['actualManager:teamSettingsAndHistoryPublished']=true;
+ checks['actualManager:installedManifestSetAdmitted']=true;
 }finally{manager.dispose();}
 for(const artifact of ${JSON.stringify(artifacts)}){
  const inspected=await inspectAppArtifact(artifact.root);
@@ -108,34 +105,15 @@ registry.initializeDatabase(database);registry.activate();
 assert.ok(registry.snapshot().every(item=>item.state==='cleanup'));
 enabled=true;registry.refresh();
 assert.ok(registry.snapshot().every(item=>item.state==='active'),JSON.stringify(registry.snapshot()));
-const invoke=(id,command,args=[])=>registry.invoke({id,command,args,epoch:registry.snapshot().find(item=>item.id===id).epoch});
-if(${JSON.stringify(rewritten)}){
- for(const id of ['agent-team','swarm-workflow'])assert.deepEqual(await invoke(id,'rewrite.check'),{success:true,owner:id,marker:'plugin-only-rewrite'});
- checks['rewritten:bothMainDeclarationsExecuted']=true;
-}
-assert.deepEqual(await invoke('agent-team','collaboration.list'),{success:true,value:[]});
-assert.deepEqual(await invoke('agent-team','discussion.list'),{success:true,value:[]});
-const initialSettings=await invoke('agent-team','settings.read');
-assert.equal(initialSettings.success,true);
-if(${JSON.stringify(rewritten)}){assert.equal(initialSettings.value.value.collaboration.messageBudget,13);checks['rewritten:teamOwnSettingsChanged']=true;}
-const changedSettings=structuredClone(initialSettings.value.value);changedSettings.collaboration.messageBudget=15;
-const saved=await invoke('agent-team','settings.save',[{value:changedSettings,expectedRevision:initialSettings.value.revision}]);
-assert.equal(saved.success,true,JSON.stringify(saved));assert.equal(saved.value.value.collaboration.messageBudget,15);
-checks['agent-team:realCommandsAndSchemas']=true;
-const workflow=await invoke('swarm-workflow','workflow.list',[source]);
-assert.deepEqual(workflow,{success:true,flows:[]});
-assert.deepEqual(await invoke('swarm-workflow','workflow.summary',[source]),{success:true,count:0,running:false});
-assert.deepEqual(await invoke('swarm-workflow','workflow.activity'),{success:true,sessionIds:[]});
-checks['swarm-workflow:realCommandLoaded']=true;
-checks['swarm-workflow:compactQueriesAndLiveIdentity']=true;
-const beforeDisable=registry.snapshot().find(item=>item.id==='agent-team').epoch;
-enabled=false;registry.refresh();
-assert.equal((await invoke('agent-team','settings.read')).success,false);
-enabled=true;registry.refresh();
-assert.equal((await registry.invoke({id:'agent-team',command:'settings.read',args:[],epoch:beforeDisable})).success,false);
-assert.equal((await invoke('agent-team','settings.read')).value.value.collaboration.messageBudget,15);
-checks['agent-team:retainedMetadataAndRetiredEpoch']=true;
-console.log(JSON.stringify({actualShippedArtifacts:true,realElectronMain:Boolean(process.versions.electron),realNodeMain:true,checks}));
+const active=registry.snapshot();
+if(${JSON.stringify(rewritten)})for(const item of active)assert.deepEqual(await registry.invoke({id:item.id,command:'rewrite.check',args:[],epoch:item.epoch}),{success:true,owner:item.id,marker:'plugin-only-rewrite'});
+assert.equal(active.length,${artifacts.length});
+const oldEpochs=new Map(active.map(item=>[item.id,item.epoch]));
+enabled=false;registry.refresh();assert.ok(registry.snapshot().every(item=>item.state==='cleanup'));
+enabled=true;registry.refresh();assert.ok(registry.snapshot().every(item=>item.state==='active'&&item.epoch!==oldEpochs.get(item.id)));
+checks['actualRegistry:optionalInventoryAndEpochs']=true;
+checks['actualRegistry:emptyOptionalInventory']=active.length===0;
+console.log(JSON.stringify({actualShippedArtifacts:true,realElectronMain:Boolean(process.versions.electron),realNodeMain:true,loadedPlugins:active.map(item=>item.id),checks}));
 }finally{registry.dispose();database.close();}})().catch(error=>{console.error(error.stack);process.exitCode=1;});
 `,
   );

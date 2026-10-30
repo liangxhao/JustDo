@@ -6,9 +6,13 @@ import { getSessionEntry } from 'openclaw/plugin-sdk/session-store-runtime';
 import { createSessionVisibilityChecker } from 'openclaw/plugin-sdk/session-visibility';
 import { Type } from 'typebox';
 
-import { readTeamLaunchCatalogMode } from '../../runtime-services/agent-team/launch/agent-team-launch-state';
+import { readTeamLaunchCatalogMode } from '../runtime/launch/agent-team-launch-state';
+import { createRuntimeServicesClient } from '@runtime-services/sdk/native-client';
+import { nativePlanningConstraint, PlanningConstraint } from '@app-plugin/sdk/planning';
 import { hasUnsupportedDiscussionSourcePolicy } from '../discussion/discussion-source-policy';
 import { CollaborationCallError, collaborationCallFailure } from './call-failure';
+import type { CollaborationHandoffRouting } from '../contracts/collaboration';
+import { appendCollaborationHandoff, isCollaborationHandoffRouting } from '../prompt/collaborationHandoffPrompt';
 
 const managed = (key?: string) => Boolean(key && /^agent:[^:]+:justdo:[^:]+$/.test(key));
 const DISCUSSION = 'team_discussion';
@@ -26,6 +30,14 @@ const PREPARATION_OPERATIONS = new Set(['create', 'discussion', 'ensure']);
 const NATIVE_RECEIPT_TTL_MS = 10 * 60 * 1000;
 
 export function registerCollaborationService(api: OpenClawPluginApi): void {
+  const runtimeServices = createRuntimeServicesClient(api);
+  let capabilityPreparation: Promise<boolean> | undefined;
+  const prepareRuntimeServices = () => {
+    if (runtimeServices.captureExecutionAdmission()) return Promise.resolve(true);
+    return capabilityPreparation ??= runtimeServices.bind().finally(() => {
+      capabilityPreparation = undefined;
+    });
+  };
   const nativeCalls = new Map<
     string,
     {
@@ -51,7 +63,9 @@ export function registerCollaborationService(api: OpenClawPluginApi): void {
   let serviceGeneration = 0;
   let removeAccess: (() => void) | undefined;
   const registerAccess = () =>
-    createSessionVisibilityChecker.registerScopedAccessProvider(request => {
+    createSessionVisibilityChecker.registerScopedAccessProvider((request: {
+      action: string; requesterSessionKey: string; targetSessionKey: string;
+    }) => {
       if (request.action !== 'send') return;
       const active = [...nativeCalls.entries()].find(
         ([key, call]) =>
@@ -110,7 +124,11 @@ export function registerCollaborationService(api: OpenClawPluginApi): void {
   };
   api.registerService({
     id: 'agent-team',
-    start(ctx) {
+    async start(ctx) {
+      const generation = serviceGeneration;
+      await prepareRuntimeServices();
+      if (generation !== serviceGeneration || !api.lifecycle.signal || api.lifecycle.signal.aborted)
+        throw new Error('Agent Team registration is no longer current.');
       removeAccess ??= registerAccess();
       emit = ctx.gatewayEvents?.emit;
     },
@@ -233,10 +251,9 @@ export function registerCollaborationService(api: OpenClawPluginApi): void {
         const entry = getSessionEntry({
           sessionKey: params.sessionKey,
           readConsistency: 'latest',
-        }) as
-          { pluginExtensions?: { 'plan-mode'?: { state?: { enabled?: boolean } } } } | undefined;
+        });
         if (
-          entry?.pluginExtensions?.['plan-mode']?.state?.enabled === true &&
+          nativePlanningConstraint(entry) !== PlanningConstraint.Unrestricted &&
           params.operation !== 'native-result'
         )
           throw new Error('Collaboration sending is unavailable in Plan mode.');
@@ -282,11 +299,13 @@ export function registerCollaborationService(api: OpenClawPluginApi): void {
           sourceRunId: identity.runId,
           toolCallId: params.toolCallId,
           input,
-        })) as { error?: string; deliveryId?: string; sessionKey?: string };
+        })) as { error?: string; deliveryId?: string; sessionKey?: string; routing?: unknown };
         if (generation !== serviceGeneration || !emit) throw new Error('Collaboration stopped.');
         if (params.operation === 'native-send' && !result.error) {
           if (!target || !result.deliveryId || result.sessionKey !== target || !expectedSessionId)
             throw new Error('Invalid collaboration admission.');
+          if (!isCollaborationHandoffRouting(result.routing, params.sessionKey, target))
+            throw new Error('Invalid collaboration routing context.');
           for (const [key, call] of nativeCalls)
             if (call.expiresAt <= Date.now()) nativeCalls.delete(key);
           for (const [key, call] of admittedCalls)
@@ -381,6 +400,7 @@ export function registerCollaborationService(api: OpenClawPluginApi): void {
           deliveryId: string;
           sessionKey: string;
           expectedSessionId: string;
+          routing: CollaborationHandoffRouting;
         };
         if (admission.error) return { block: true, blockReason: admission.error };
         if (ctx.abortSignal?.aborted) {
@@ -422,7 +442,7 @@ export function registerCollaborationService(api: OpenClawPluginApi): void {
         return {
           params: {
             sessionKey: admission.sessionKey,
-            message: event.params.message,
+            message: appendCollaborationHandoff(event.params.message as string, admission.routing),
             timeoutSeconds: 0,
             watch: false,
           },
@@ -487,11 +507,12 @@ export function registerCollaborationService(api: OpenClawPluginApi): void {
   api.registerTool(
     ctx => {
       if (!managed(ctx.sessionKey)) return null;
+      const projection = runtimeServices.captureExecutionAdmission();
+      if (!projection) { void prepareRuntimeServices(); return null; }
       const catalogMode = readTeamLaunchCatalogMode(api.runtime.state.resolveStateDir(), {
-        sessionKey: ctx.sessionKey!,
-        sessionId: ctx.sessionId,
-      });
-      if (catalogMode === 'blocked') return null;
+        sessionKey: ctx.sessionKey!, sessionId: ctx.sessionId,
+      }, projection.readExecutionAdmission({ sessionKey: ctx.sessionKey!, sessionId: ctx.sessionId }));
+      if (!projection || catalogMode === 'blocked') return null;
       const readOnly = catalogMode === 'collaboration';
       const actions = readOnly
         ? DISCUSSION_READ_ACTIONS
@@ -541,6 +562,13 @@ export function registerCollaborationService(api: OpenClawPluginApi): void {
         ),
         async execute(toolCallId: string, input: unknown, signal?: AbortSignal) {
           if (signal?.aborted) throw new Error('The tool call was cancelled.');
+          if (!projection.isCurrent()) throw new Error('Runtime Services projection is retired.');
+          const currentMode = readTeamLaunchCatalogMode(api.runtime.state.resolveStateDir(), { sessionKey: ctx.sessionKey!, sessionId: ctx.sessionId }, projection.readExecutionAdmission({ sessionKey: ctx.sessionKey!, sessionId: ctx.sessionId }));
+          const allowedActions = currentMode === 'collaboration' ? DISCUSSION_READ_ACTIONS
+            : currentMode === 'discussion' ? DISCUSSION_LAUNCH_ACTIONS : DISCUSSION_ACTIONS;
+          const action = input && typeof input === 'object' ? Reflect.get(input, 'action') : undefined;
+          if (currentMode === 'blocked' || !allowedActions.includes(String(action)))
+            throw new Error('Agent Team launch restrictions changed.');
           const result = await rpc('collaboration.dispatch', {
             operation: 'discussion',
             sessionKey: ctx.sessionKey,
@@ -561,11 +589,10 @@ export function registerCollaborationService(api: OpenClawPluginApi): void {
     api.registerTool(
       ctx => {
         if (!managed(ctx.sessionKey)) return null;
-        const catalogMode = readTeamLaunchCatalogMode(api.runtime.state.resolveStateDir(), {
-          sessionKey: ctx.sessionKey!,
-          sessionId: ctx.sessionId,
-        });
-        if (catalogMode === 'blocked') return null;
+        const projection = runtimeServices.captureExecutionAdmission();
+        if (!projection) { void prepareRuntimeServices(); return null; }
+        const catalogMode = readTeamLaunchCatalogMode(api.runtime.state.resolveStateDir(), { sessionKey: ctx.sessionKey!, sessionId: ctx.sessionId }, projection.readExecutionAdmission({ sessionKey: ctx.sessionKey!, sessionId: ctx.sessionId }));
+        if (!projection || catalogMode === 'blocked') return null;
         const discoveryOnly = operation === 'members' && catalogMode === 'discussion';
         return {
           name: operation === 'create' ? CREATE : ASSISTANTS,
@@ -575,7 +602,7 @@ export function registerCollaborationService(api: OpenClawPluginApi): void {
               ? 'Create a persistent assistant when the user requests one. Native OpenClaw manages its workspace. Supply a name, description and AGENTS.md instructions; optionally choose an available provider/model. Omit model to use the configured default. This does not start a task or add the assistant to collaboration. Reusing a name returns the existing assistant without changing it. On incomplete creation, retry the same fields to resume; never claim success from an error.'
               : discoveryOnly
                 ? 'Discover available assistants, exact assistant IDs and current Agent Team settings for the selected group discussion. Call with no arguments, then use the returned identities and limits with team_discussion.'
-                : 'List task peers, recent exact delivery/execution receipts, review reports and available assistants. With agentId, prepare a peer without starting it, then use native sessions_send. An independent reviewer invited by the organizer may report its final review with review:{deliveryIds:[exact worker receipt IDs],verdict:"passed"|"changes_requested"|"unverified"}; keep findings and evidence in native replies. Only completed worker runs in the same batch can be reviewed; never review your own work or the organizer. Report once per reviewer run, then send findings to the organizer and finish. A report is pending until the whole reviewer run settles. The organizer seals the batch with seal:true only after required results and reviews arrive; sealing is not proof of quality and does not stop accepted work. Do not combine agentId, seal and review.',
+                : 'List task peers, the exact organizer identity, recent exact delivery/execution receipts, review reports and available assistants. With agentId, prepare a peer without starting it, then use native sessions_send. Handoffs must include bounded stages, next recipients and the final return to organizer.sessionKey; the immediate sender is not necessarily the organizer. Only the original source organizer can start a new graph or phase. Members need the exact incoming delivery grant to send peers; direct member-panel user turns cannot create or borrow a batch. The host enforces this regardless of prompt text. Sends are asynchronous: end the turn after dispatch, without polling. Honor explicit next or return recipients, including intermediate members. Only when the full team relay ends or no route can be resolved, send results or blockers to the organizer; a member final alone does not reach the user. Do not invent another stage or retry an unknown send. An independent reviewer invited by the organizer may report its final review with review:{deliveryIds:[exact worker receipt IDs],verdict:"passed"|"changes_requested"|"unverified"}; keep findings and evidence in native replies. Only completed worker runs in the same batch can be reviewed; never review your own work or the organizer. Report once per reviewer run, then send findings to the organizer and finish. A report is pending until the whole reviewer run settles. The organizer seals the batch with seal:true only after required results and reviews arrive; sealing is not proof of quality and does not stop accepted work. Do not combine agentId, seal and review.',
           parameters:
             operation === 'create'
               ? Type.Object(
@@ -615,6 +642,12 @@ export function registerCollaborationService(api: OpenClawPluginApi): void {
                   ),
           async execute(toolCallId: string, input: unknown, signal?: AbortSignal) {
             if (signal?.aborted) throw new Error('The tool call was cancelled.');
+            if (!projection.isCurrent()) throw new Error('Runtime Services projection is retired.');
+            const currentMode = readTeamLaunchCatalogMode(api.runtime.state.resolveStateDir(), { sessionKey: ctx.sessionKey!, sessionId: ctx.sessionId }, projection.readExecutionAdmission({ sessionKey: ctx.sessionKey!, sessionId: ctx.sessionId }));
+            const options = input && typeof input === 'object' ? input as Record<string, unknown> : {};
+            if (currentMode === 'blocked' || (currentMode === 'discussion' &&
+                operation === 'members' && (options.agentId || options.seal || options.review)))
+              throw new Error('Agent Team launch restrictions changed.');
             const result = await rpc('collaboration.dispatch', {
               operation:
                 operation === 'members' && (input as { review?: unknown })?.review

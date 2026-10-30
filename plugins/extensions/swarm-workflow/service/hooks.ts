@@ -361,9 +361,10 @@ export function registerWorkflowPromptHooks(context: WorkflowContext): void {
     let requestId = event.currentUserMessageId;
     const startGeneration = state.generation;
     let sourceSessionId: unknown;
+    const sourceSessionKey = ctx.sessionKey;
     let sourceCaptured = false;
     const captureSource = () => {
-      sourceSessionId = entry(ctx.sessionKey)?.sessionId;
+      sourceSessionId = entry(sourceSessionKey)?.sessionId;
       if (
         typeof sourceSessionId !== 'string' ||
         !sourceSessionId ||

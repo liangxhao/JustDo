@@ -2,7 +2,7 @@
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, test, vi } from 'vitest';
 
-import type { AppPluginSnapshot } from '../../../../../packages/app-plugin-sdk/contracts';
+import type { AppPluginSnapshot } from '../../../../../plugins/sdk/app-plugin-sdk/contracts';
 
 vi.mock('@/services/i18n', () => ({ i18nService: { t: (key: string) => key } }));
 

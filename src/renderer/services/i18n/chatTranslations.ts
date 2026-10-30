@@ -2,6 +2,7 @@ import { PRODUCT_NAME } from '@shared/productMetadata';
 
 export const chatTranslations = {
   zh: {
+    coworkReservedSession: '此会话仅用于内部存储，无法作为聊天打开。',
     exportSession: '导出对话',
     coworkSummaryTitle: '摘要',
     coworkSummaryResize: '拖动调整摘要大小，也可使用方向键',
@@ -756,6 +757,7 @@ export const chatTranslations = {
     composerFeatures: '功能',
   },
   en: {
+    coworkReservedSession: 'This session is reserved for internal storage and cannot be opened as a chat.',
     exportSession: 'Export conversation',
     coworkSummaryTitle: 'Summary',
     coworkSummaryResize: 'Drag to resize summary, or use arrow keys',

@@ -1,3 +1,4 @@
+import { setWorkflowTestPorts } from '../../tests/browserRuntime';
 // @vitest-environment jsdom
 import { act, cleanup, renderHook } from '@testing-library/react';
 import { StrictMode } from 'react';
@@ -19,18 +20,13 @@ function fixture() {
   const activity = vi.fn().mockResolvedValue({ success: true, sessionIds: ['A'] });
   const summary = vi.fn().mockResolvedValue({ success: true, count: 2, running: true });
   const list = vi.fn();
-  Object.defineProperty(window, 'electron', {
-    configurable: true,
-    value: {
-      cowork: {
-        getSwarmWorkflowActivity: activity,
-        getSwarmWorkflowSummary: summary,
-        getSwarmWorkflows: list,
-        onSwarmWorkflowsChanged: (listener: (event: SwarmWorkflowChangedEvent) => void) => {
-          listeners.add(listener);
-          return () => listeners.delete(listener);
-        },
-      },
+  setWorkflowTestPorts({
+    getSwarmWorkflowActivity: activity,
+    getSwarmWorkflowSummary: summary,
+    getSwarmWorkflows: list,
+    onSwarmWorkflowsChanged: (listener: (event: SwarmWorkflowChangedEvent) => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
     },
   });
   const flush = () =>
@@ -66,9 +62,12 @@ test('publishes only complete successful native snapshots and preserves uncertai
   const { activity, flush, change } = fixture();
   const publish = vi.fn();
   activity.mockResolvedValue({ success: false });
-  const hook = renderHook(({ availability }) => useSwarmWorkflowActivity(['A'], availability, publish), {
-    initialProps: { availability: available },
-  });
+  const hook = renderHook(
+    ({ availability }) => useSwarmWorkflowActivity(['A'], availability, publish),
+    {
+      initialProps: { availability: available },
+    },
+  );
   expect(publish).not.toHaveBeenCalled();
   await flush();
   expect(publish).not.toHaveBeenCalled();

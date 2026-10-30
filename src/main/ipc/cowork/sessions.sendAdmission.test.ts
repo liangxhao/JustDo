@@ -1,7 +1,6 @@
 import { beforeEach, expect, test, vi } from 'vitest';
 
-import type { AgentTeamLaunchCoordinator } from '../../../../plugins/extensions/agent-team/host/launch/agentTeamLaunchCoordinator';
-import { behaviorSessionParticipants } from '../../../../tests/plugin-host/mainBehaviorParticipants';
+import { behaviorSessionParticipants, type BehaviorSubmissionParticipant } from '../../../../tests/plugin-host/mainBehaviorParticipants';
 import { SessionRunBeginErrorCode } from '../../../shared/cowork/sessionRun';
 import type { CoworkStore } from '../../data/coworkStore';
 import type { CoworkEngineRouter } from '../../engine';
@@ -21,7 +20,7 @@ beforeEach(() => handlers.clear());
 
 function fixture(
   getStartupEngineNotReadyResponse?: () => { success: boolean; code: string; error: string } | undefined,
-  getAgentTeamLaunch?: () => AgentTeamLaunchCoordinator,
+  getAgentTeamLaunch?: () => BehaviorSubmissionParticipant,
 ) {
   const sessionId = '43795fc3-437a-4f60-b731-1d115d2b8787';
   const key = `agent:main:justdo:${sessionId}`;
@@ -113,7 +112,7 @@ test('retires the exact Team reservation if startup admission changes while regi
     cancel: vi.fn().mockResolvedValue(undefined),
   };
   const f = fixture(() => pending ? { success: false, code: 'ENGINE_NOT_READY', error: 'starting' } : undefined,
-    () => launch as unknown as AgentTeamLaunchCoordinator);
+    () => launch as unknown as BehaviorSubmissionParticipant);
   await expect(f.send('Compare approaches')).resolves.toMatchObject({ success: false, code: 'ENGINE_NOT_READY' });
   expect(launch.cancel).toHaveBeenCalledExactlyOnceWith(f.source.id, 'new-input');
   expect(f.beginSessionRun).not.toHaveBeenCalled();

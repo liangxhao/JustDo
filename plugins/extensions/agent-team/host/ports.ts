@@ -1,4 +1,4 @@
-import type { PermissionMode } from '../../runtime-services/contracts/permissions';
+import type { PermissionMode } from '@runtime-services/sdk/permissions';
 
 /** Live host capabilities. The plugin never imports or owns the application's controllers. */
 export interface TeamHostSession {

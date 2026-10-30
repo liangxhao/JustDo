@@ -50,8 +50,8 @@
 
 代表性的真实边界测试：
 
-- `tests/plugin-host/agent-team-lifecycle.test.ts` 使用真实 Registry、Core SQLite、Team Main 入口和 schema。仅 Native RPC 与执行边缘为受控端口，不能代替真实模型或整个 Gateway。
-- `tests/plugin-host/swarm-workflow-boundary.test.ts` 加载实际构建的 Main，贯穿绑定别名、真实 FlowStore/FlowEngine；Native 请求端口受控。构建属于准备阶段，Vitest 的模块装载适配不修改生产 loader。
+- `plugins/extensions/agent-team/tests/host/agent-team-lifecycle.test.ts` 使用真实 Registry、Core SQLite、Team Main 入口和 schema。仅 Native RPC 与执行边缘为受控端口，不能代替真实模型或整个 Gateway。
+- `plugins/extensions/swarm-workflow/tests/host/swarm-workflow-boundary.test.ts` 加载实际构建的 Main，贯穿绑定别名、真实 FlowStore/FlowEngine；Native 请求端口受控。构建属于准备阶段，Vitest 的模块装载适配不修改生产 loader。
 - `src/main/plugins/app/historyPresentationAssets.test.ts` 实际读取本地资源服务，验证 Worker、共享模块和禁止公开的 Main/私有模块；失败 HTTP 断言也检查响应正文已消费。
 - `src/main/plugins/app/sessionParticipants.test.ts` 覆盖长期累积、未知守卫、确认删除、旧异步回调与后来同 key 映射。
 
@@ -62,9 +62,9 @@ node scripts/test/plugin-host/verify-portable-app-sdk.mjs
 node scripts/test/plugin-host/verify-built-app-artifacts.mjs
 node scripts/test/plugin-host/verify-built-browser-artifacts.mjs
 node scripts/test/plugin-host/verify-development-assets.mjs
-node scripts/test/plugin-host/verify-ui-parity.mjs
+node plugins/extensions/agent-team/scripts/test/verify-paired-ui-parity.mjs
 node scripts/test/plugin-host/verify-development-application.mjs --runtime <prepared-runtime>
-node scripts/openclaw/agent-team/probe-agent-team-gateway.mjs <prepared-runtime> --cold-start-only
+node plugins/extensions/agent-team/scripts/openclaw/probe-agent-team-gateway.mjs <prepared-runtime> --cold-start-only
 ```
 
 `--runtime` 开发探针使用私有应用目录、产品库、HOME、配置和运行时物理副本，投影当前插件产物，保留真实 Main、preload、Vite 和普通页面。不会修改来源运行时或 worktree 的 `current`。资源代理仍走生产校验；同包开关分别核对进程数、PID 和原生 ready 次数。
@@ -75,7 +75,7 @@ node scripts/openclaw/agent-team/probe-agent-team-gateway.mjs <prepared-runtime>
 
 本轮冷工具完整通过：两个真实成员执行完成并交付历史，耗时约八秒，原三十秒预算不变；全程公网拦截没有记录连接尝试。
 
-Workflow 的 `tests/openclaw/extensions/swarm-workflow-orders.native-smoke.cjs` 需要 `SWARM_WORKFLOW_TEST_RUNTIME` 指向已准备运行时。它通过本地模型协议 fixture 生成十二条输入，真实调用执行工具，验证批次结果、规划纠正、实际汇总、独立验收、主会话交付及 execution lease 回收。运行时设置与产品一致关闭公共模型目录及更新检查；公网连接拦截在测试进程中启用，不改变系统网络设置。
+Workflow 的 `plugins/extensions/swarm-workflow/scripts/native/swarm-workflow-orders.native-smoke.cjs` 需要 `SWARM_WORKFLOW_TEST_RUNTIME` 指向已准备运行时。它通过本地模型协议 fixture 生成十二条输入，真实调用执行工具，验证批次结果、规划纠正、实际汇总、独立验收、主会话交付及 execution lease 回收。运行时设置与产品一致关闭公共模型目录及更新检查；公网连接拦截在测试进程中启用，不改变系统网络设置。
 
 批测首轮曾通过，后续在原总预算内未完成；受控阶段记录显示模型响应仅一至七毫秒，而新会话在 Native start 前约三十三秒，同会话再次执行约一秒。源码与实际已准备产物确认：普通新会话会抓取 Git diff 基线，在探测到的仓库根执行 `git ls-files --others --exclude-standard -z`，预算三十秒；测试项目位于开发仓库内，实际扫描了不断增大的宿主运行产物。现仅给测试项目建立独立 Git 仓库及真实小基线，不跳过 Native 基线捕获，不改宿主 ignore、生产执行或任何超时。原十二项复跑全部通过，首次规划派发到 start 从 `33.210s` 降到 `2.032s`，实际汇总、独立验收、主会话交付和零 execution lease 均通过；完整观测约一百二十五秒，公网拦截无连接尝试。原失败与无正文的阶段元数据分别保留。
 

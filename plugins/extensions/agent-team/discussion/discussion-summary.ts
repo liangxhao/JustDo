@@ -1,29 +1,53 @@
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 
+import { createCustodyClient } from '@runtime-services/sdk/custody-client';
 import type { OpenClawConfig, OpenClawPluginApi } from 'openclaw/plugin-sdk/core';
 import { dispatchInboundMessageWithBufferedDispatcher } from 'openclaw/plugin-sdk/reply-runtime';
 import { getSessionEntry } from 'openclaw/plugin-sdk/session-store-runtime';
 import { readVisibleSessionTranscriptMessageEntries } from 'openclaw/plugin-sdk/session-transcript-runtime';
 
 import {
-  DiscussionLedger,
-  type DiscussionReceipt,
-} from '../../runtime-services/agent-team/discussion/discussion-ledger';
-import {
   isTeamDiscussionId,
+  TEAM_DISCUSSION_CHANNEL,
   TeamDiscussionGateway,
   type TeamDiscussionMessage,
   type TeamDiscussionRoom,
   type TeamDiscussionSource,
 } from '../contracts/teamDiscussion';
+import { DiscussionLedger, type DiscussionReceipt } from '../runtime/discussion/ledger';
+import { discussionReceiptWriter } from '../runtime/discussion/receipt-runtime';
 import { assertDiscussionRuntime } from './discussion-source-policy';
 
 /** One consumed native admission per batch. Receipts never contain result text. */
 export function registerDiscussionSummary(api: OpenClawPluginApi): void {
+  const custody = createCustodyClient(api);
   let ledger: DiscussionLedger | undefined;
   let groups: DiscussionLedger | undefined;
   let stopped = true;
+  let serviceRevision = 0;
+  type GatewayRequest = Parameters<Parameters<OpenClawPluginApi['registerGatewayMethod']>[1]>[0];
+  const bindCustody = async (request: GatewayRequest) => {
+    const revision = serviceRevision;
+    const assertServiceCurrent = () => {
+      if (stopped || revision !== serviceRevision || api.lifecycle.signal?.aborted !== false)
+        throw new Error('teamDiscussionDisabled');
+    };
+    const assertRequestCurrent = () => {
+      assertServiceCurrent();
+      if (
+        request.signal?.aborted ||
+        request.client?.connect.client.mode !== 'backend' ||
+        request.hasCurrentClientAuthority?.() !== true
+      )
+        throw new Error('teamDiscussionDisabled');
+    };
+    assertRequestCurrent();
+    if (!(await custody.bind())) throw new Error('teamDiscussionDisabled');
+    assertRequestCurrent();
+    if (!custody.isCurrent()) throw new Error('teamDiscussionDisabled');
+    return { assertServiceCurrent, assertRequestCurrent };
+  };
   const active = new Map<
     string,
     { controller: AbortController; promise: Promise<void>; receipt: DiscussionReceipt }
@@ -39,10 +63,13 @@ export function registerDiscussionSummary(api: OpenClawPluginApi): void {
   });
   api.registerService({
     id: 'agent-team-summaries',
-    start(context) {
+    async start(context) {
+      serviceRevision++;
+      if (api.lifecycle.signal?.aborted !== false) throw new Error('teamDiscussionDisabled');
       ledger = new DiscussionLedger(
         path.join(context.stateDir, 'agent-team', 'summary-receipts'),
         true,
+        discussionReceiptWriter(api, 'summary'),
       );
       groups = new DiscussionLedger(
         path.join(context.stateDir, 'agent-team', 'discussion-receipts'),
@@ -51,13 +78,15 @@ export function registerDiscussionSummary(api: OpenClawPluginApi): void {
     },
     async stop() {
       stopped = true;
+      serviceRevision++;
       for (const run of active.values()) run.controller.abort();
       await Promise.allSettled([...active.values()].map(run => run.promise));
     },
   });
   api.registerGatewayMethod(
     TeamDiscussionGateway.Summary,
-    async ({ params, respond }) => {
+    async request => {
+      const { params, respond } = request;
       try {
         if (params.operation === 'source') {
           if (
@@ -85,12 +114,17 @@ export function registerDiscussionSummary(api: OpenClawPluginApi): void {
         const id = params.discussionId;
         if (!ledger || !isTeamDiscussionId(roomId) || !isTeamDiscussionId(id))
           throw new Error('teamDiscussionInvalidInput');
-        const previous = active.get(id)?.receipt ?? ledger.read(id);
+        const admission = params.operation === 'status' ? undefined : await bindCustody(request);
+        admission?.assertRequestCurrent();
+        const previous =
+          active.get(id)?.receipt ??
+          (params.operation === 'status' ? ledger.snapshot(id) : ledger.read(id));
         if (previous && previous.roomId !== roomId) throw new Error('teamDiscussionInvalidInput');
         if (params.operation === 'stop') {
           const run = active.get(id);
           run?.controller.abort();
           await run?.promise;
+          admission?.assertRequestCurrent();
           if (!previous)
             ledger.write({
               roomId,
@@ -131,6 +165,7 @@ export function registerDiscussionSummary(api: OpenClawPluginApi): void {
           return;
         }
         const assertSource = () => {
+          admission?.assertServiceCurrent();
           if (
             stopped ||
             api.runtime.config.current().plugins?.entries?.['agent-team']?.enabled !== true ||
@@ -274,7 +309,7 @@ export function registerDiscussionSummary(api: OpenClawPluginApi): void {
                 InputProvenance: {
                   kind: 'inter_session',
                   sourceSessionKey: group.executions[0]?.sessionKey ?? source.sessionKey,
-                  sourceChannel: 'justdo-team',
+                  sourceChannel: TEAM_DISCUSSION_CHANNEL,
                   sourceTool: 'team_discussion',
                 },
               },
@@ -322,7 +357,8 @@ export function registerDiscussionSummary(api: OpenClawPluginApi): void {
             if (deferred) throw new Error('teamDiscussionExecutionUnknown');
             controller.signal.throwIfAborted();
             assertSource();
-            const entries = await readVisibleSessionTranscriptMessageEntries(source);
+            const entries: { entryId: string; message: unknown }[] =
+              await readVisibleSessionTranscriptMessageEntries(source);
             const runIds = new Set(receipt.executions.map(execution => execution.runId));
             receipt.outputEntryIds = entries
               .filter(entry => {

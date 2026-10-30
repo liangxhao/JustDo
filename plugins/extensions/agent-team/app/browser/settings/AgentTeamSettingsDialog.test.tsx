@@ -1,13 +1,12 @@
 // @vitest-environment jsdom
-import { defaultAgentTeamSettings } from '../../contracts/agentTeamSettings';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
-import { OwnerDocumentContext } from '@/shared/dom/ownerDocument';
-
+import { OwnerDocumentContext } from '../../../tests/fixtures/ownerDocument';
+import { defaultAgentTeamSettings } from '../../contracts/agentTeamSettings';
 import AgentTeamSettingsDialog from './AgentTeamSettingsDialog';
 
-vi.mock('@/services/i18n', () => ({ i18nService: { t: (key: string) => key } }));
+vi.mock('../../../tests/fixtures/i18n', () => ({ i18nService: { t: (key: string) => key } }));
 const api = { read: vi.fn(), save: vi.fn(), readTeam: vi.fn(), saveTeam: vi.fn() };
 beforeEach(() => {
   vi.resetAllMocks();

@@ -4,8 +4,8 @@ import {
   buildManagedSessionKey,
   DEFAULT_MANAGED_AGENT_ID,
   isCronSessionKey,
+  isCustodySessionKey,
   isManagedSessionKey,
-  isTeamDiscussionHoldingSessionKey,
   parseManagedSessionKey,
 } from './openclawSessionKeys';
 
@@ -45,13 +45,13 @@ test('isManagedSessionKey only accepts JustDo-owned session keys', () => {
 });
 
 test('reserves the entire native pending-input harness namespace', () => {
-  expect(isTeamDiscussionHoldingSessionKey('agent:main:harness:justdo-team-holding:room:1')).toBe(
+  expect(isCustodySessionKey('agent:main:harness:inert-custody:room:1')).toBe(
     true,
   );
   expect(
-    isTeamDiscussionHoldingSessionKey('agent:worker:harness:justdo-team-holding:malformed'),
+    isCustodySessionKey('agent:worker:harness:inert-custody:malformed'),
   ).toBe(true);
-  expect(isTeamDiscussionHoldingSessionKey('agent:main:harness:other:room:1')).toBe(false);
-  expect(isTeamDiscussionHoldingSessionKey('agent:main:justdo:room')).toBe(false);
-  expect(isTeamDiscussionHoldingSessionKey(null)).toBe(false);
+  expect(isCustodySessionKey('agent:main:harness:other:room:1')).toBe(false);
+  expect(isCustodySessionKey('agent:main:justdo:room')).toBe(false);
+  expect(isCustodySessionKey(null)).toBe(false);
 });

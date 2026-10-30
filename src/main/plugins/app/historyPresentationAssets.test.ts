@@ -5,7 +5,7 @@ import path from 'node:path';
 
 import { afterEach, expect, test } from 'vitest';
 
-import type { AppPluginManifest } from '../../../../packages/app-plugin-sdk/contracts';
+import type { AppPluginManifest } from '../../../../plugins/sdk/app-plugin-sdk/contracts';
 import { artifactDigest, inspectAppArtifact } from './artifact';
 import { appAssetPath, publishAppAssets, readAppAsset } from './assets';
 import { startAppDevelopmentAssets } from './developmentAssets';

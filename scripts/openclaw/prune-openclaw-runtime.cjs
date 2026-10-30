@@ -11,6 +11,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { retireAppPlugins } = require('../plugins/retired-app-plugins.cjs');
 
 const REMOVE_OPTIONS = {
   recursive: true,
@@ -348,9 +349,15 @@ function pruneRuntimeExtensions(runtimeRoot, stats, options = {}) {
   }
 
   const policy = loadExtensionPrunePolicy(repoRoot);
+  const retired = retireAppPlugins(repoRoot, runtimeRoot, options);
+  for (const entry of retired) {
+    stats.extensionDirsRemoved++;
+    stats.bytesFreed += entry.bytes;
+  }
+
   if (policy.keep.length === 0) {
     console.log(`[${label}] No extension keep policy found, skipping extension directory pruning.`);
-    return { kept: [], protected: [], removed: [] };
+    return { kept: [], protected: [], removed: retired.map(item => item.id) };
   }
 
   const keep = new Set([...policy.keep, ...policy.protected]);
@@ -369,7 +376,7 @@ function pruneRuntimeExtensions(runtimeRoot, stats, options = {}) {
       throw new Error(`[${label}] Missing local source replacement: ${id}`);
   }
   const reviewed = new Set([...policy.keep, ...policy.remove, ...policy.protected]);
-  const removed = [];
+  const removed = retired.map(item => item.id);
   const protectedKept = [];
   const entries = fs.readdirSync(extensionsDir, { withFileTypes: true });
   const unknown = entries

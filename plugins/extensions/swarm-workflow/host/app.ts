@@ -1,4 +1,5 @@
 import type { AppMainHost, AppMainRegistration } from '@app-plugin/sdk/main';
+import { parseCoworkSessionKey } from '@runtime-services/sdk/session-key';
 
 import { createSwarmWorkflowCoordinator } from './coordinator';
 import { workflowResources } from './resources';
@@ -30,8 +31,20 @@ export function register(host: AppMainHost): AppMainRegistration {
           isWorkflowNativeChange(event.payload)
         ) {
           const { parentKey, flowId, revision } = event.payload;
-          const session = host.getSessions().getSessionByNativeKey(parentKey);
-          if (session)
+          const runtime = host.getRuntime();
+          if (!runtime) return;
+          const sessions = host.getSessions();
+          const candidate = parseCoworkSessionKey(parentKey)?.sessionId;
+          const session =
+            sessions.getSessionByNativeKey(parentKey) ??
+            (candidate ? sessions.getSession(candidate) : null);
+          // Ordinary product chats derive their native key without persisting a
+          // binding. The parsed ID is only a candidate; live ownership admits it.
+          if (
+            session &&
+            runtime.getSessionKeysForSession(session.id).includes(parentKey) &&
+            host.getRuntime() === runtime
+          )
             host.publishEvent(WorkflowEventName.Changed, {
               sessionId: session.id,
               flowId,

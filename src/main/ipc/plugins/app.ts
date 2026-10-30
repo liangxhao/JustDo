@@ -1,6 +1,6 @@
 import { ipcMain } from 'electron';
 
-import { AppPluginIpc } from '../../../../packages/app-plugin-sdk/contracts';
+import { AppPluginIpc } from '../../../../plugins/sdk/app-plugin-sdk/contracts';
 import type { AppPluginManager } from '../../plugins/app/manager';
 
 export const registerAppPluginHandlers = (

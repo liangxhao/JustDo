@@ -4,7 +4,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import type { ReactNode } from 'react';
 import { afterEach, expect, test, vi } from 'vitest';
 
-import type { AppPluginReview } from '../../../../../packages/app-plugin-sdk/contracts';
+import type { AppPluginReview } from '../../../../../plugins/sdk/app-plugin-sdk/contracts';
 
 vi.mock('@/services/i18n', () => ({ i18nService: { t: (key: string) => key } }));
 vi.mock('@/shared/dom/ownerDocument', () => ({ useOwnerDocument: () => document }));

@@ -1,5 +1,4 @@
 import { createHash } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
@@ -7,47 +6,10 @@ import { fileURLToPath } from 'node:url';
 
 const require = createRequire(import.meta.url);
 const { bundleProductExtension } = require('../openclaw/sync-openclaw-runtime-resources.cjs');
+const { assertNoRunningGateways } = require('./app-plugin-runtime-processes.cjs');
+const { findRetiredAppPlugins, retireAppPlugins } = require('./retired-app-plugins.cjs');
 const repo = path.resolve(import.meta.dirname, '../..');
 const sha = file => createHash('sha256').update(readFileSync(file)).digest('hex');
-
-function runningGateways(roots) {
-  if (process.platform !== 'win32')
-    throw new Error(
-      'Prepare changed plugin packages with openclaw:resources while the application is closed. Automatic development process ownership checks currently support Windows.',
-    );
-  const output = execFileSync(
-    'powershell.exe',
-    [
-      '-NoProfile',
-      '-NonInteractive',
-      '-Command',
-      "Get-CimInstance Win32_Process | Where-Object { $_.Name -in @('electron.exe','node.exe') } | Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress",
-    ],
-    { encoding: 'utf8', windowsHide: true },
-  );
-  const processes = []
-    .concat(JSON.parse(output.trim() || '[]'))
-    .map(item => ({ pid: item.ProcessId, command: item.CommandLine ?? '' }));
-  const normalize = value => value.replaceAll('\\', '/').toLowerCase();
-  return processes
-    .filter(
-      ({ command }) =>
-        /(?:gateway-launcher\.cjs|gateway-bundle\.mjs|openclaw\.mjs)/u.test(command) &&
-        (roots.some(root => normalize(command).includes(normalize(root) + '/')) ||
-          [...command.matchAll(/"([^"]+)"|(\S+)/gu)].some(match => {
-            const entry = match[1] ?? match[2];
-            if (
-              !/(?:gateway-launcher\.cjs|gateway-bundle\.mjs|openclaw\.mjs)$/u.test(entry) ||
-              !existsSync(entry)
-            )
-              return false;
-            return roots.some(root =>
-              normalize(realpathSync(entry)).startsWith(normalize(realpathSync(root)) + '/'),
-            );
-          })),
-    )
-    .map(item => item.pid);
-}
 
 /** Development prepares Native/Main/UI together, before any Gateway loads the package. */
 export function prepareDevelopmentAppPlugins(options = {}) {
@@ -83,19 +45,20 @@ export function prepareDevelopmentAppPlugins(options = {}) {
       continue;
     changes.push({ id: entry.id, target, nativeSha: binding.sha256 });
   }
-  if (changes.length) {
-    const active = (options.findRunningGateways ?? runningGateways)([alias, runtime]);
-    if (active.length)
-      throw new Error(
-        `Close the development application before preparing changed plugin packages (Gateway PID: ${active.join(', ')}). Plugin enablement does not require a restart.`,
-      );
+  const retired = findRetiredAppPlugins(workspace, alias);
+  if (changes.length || retired.length) {
+    assertNoRunningGateways([alias, runtime], options.findRunningGateways);
+    retireAppPlugins(workspace, alias, options);
     for (const { id, target, nativeSha } of changes) {
       bundleProductExtension(path.join(workspace, 'plugins/extensions', id), target);
       if (sha(path.join(target, 'index.js')) !== nativeSha)
         throw new Error(`Native plugin preparation did not converge: ${id}`);
     }
   }
-  return { prepared: changes.map(item => item.id) };
+  return {
+    prepared: changes.map(item => item.id),
+    ...(retired.length ? { removed: retired.map(item => item.id) } : {}),
+  };
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

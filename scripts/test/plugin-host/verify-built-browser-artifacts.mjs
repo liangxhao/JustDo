@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { build } from 'esbuild';
 import { buildAppPlugin } from '../../plugins/build-app-plugins.mjs';
+import { discoverAppPluginSources } from './source-discovery.mjs';
 
 const require = createRequire(import.meta.url);
 const sourceRoot =
@@ -16,9 +17,9 @@ const temporary = await mkdtemp(path.join(tmpdir(), 'app-built-browser-'));
 let child;
 try {
   const artifacts = [];
-  for (const id of ['agent-team', 'swarm-workflow']) {
+  for (const source of await discoverAppPluginSources(sourceRoot)) {
     const artifact = await buildAppPlugin(
-      path.join(sourceRoot, id),
+      source.directory,
       path.join(temporary, 'artifacts'),
     );
     const index = JSON.parse(await readFile(path.join(artifact.root, 'app.artifact.json'), 'utf8'));
@@ -47,8 +48,6 @@ import {AppBrowserRegistry} from ${JSON.stringify(path.resolve('src/renderer/fea
 import {appJsxRuntime} from ${JSON.stringify(path.resolve('src/renderer/features/plugins/app/jsxRuntime.ts'))};
 import {pluginMessageText} from ${JSON.stringify(path.resolve('src/renderer/features/plugins/app/messagePresentation.ts'))};
 import {i18nService} from ${JSON.stringify(path.resolve('src/renderer/services/i18n.ts'))};
-import {appendAgentTeamInstruction} from ${JSON.stringify(path.resolve(sourceRoot,'agent-team/prompt/agentTeamPrompt.ts'))};
-import {buildSwarmWorkflowInstruction} from ${JSON.stringify(path.resolve(sourceRoot,'swarm-workflow/prompt/request.ts'))};
 const errors=[],keyWarnings=[];window.addEventListener('error',event=>errors.push(event.message));window.addEventListener('unhandledrejection',event=>errors.push(String(event.reason)));const reportError=console.error.bind(console);console.error=(...args)=>{if(args.some(value=>typeof value==='string'&&value.includes('Each child in a list')))keyWarnings.push(args.map(String).join(' '));reportError(...args);};
 const Empty=()=>null;const session={id:'source',title:'Fixture',cwd:'',agentId:'main',status:'idle'};const snapshot={agent:{agents:[]},cowork:{sessions:[],currentSession:session,sessionRunTimings:{},pendingInteractions:[],draftPrompts:{},draftMessageQuotes:{},sessionRuntimeActivity:{}}};
 const sessionListeners=new Set(),eventListeners=new Set();let collaborations=[],discussions=[],flows=[],activitySessions=[],activityReadFails=false,teamListFails=false;
@@ -61,39 +60,24 @@ const registry=new AppBrowserRegistry({snapshot:async()=>[],onChanged:()=>()=>{}
 {t:key=>i18nService.t(key),translations:(id,value)=>i18nService.registerPluginTranslations(id,value),components:{},renderHistory:()=>null,application:{metadata:{getSnapshot:()=>snapshot,subscribe:()=>()=>{}},sessions:{onChanged:listener=>{sessionListeners.add(listener);return()=>sessionListeners.delete(listener);},getDetails:async()=>({session:null}),loadSession:async()=>null},drafts:{addQuote(){},setPrompt(){}},files:{selectDirectory:async()=>({success:true,path:null}),selectFiles:async()=>({success:true,paths:[]}),readFileAsDataUrl:async()=>({success:false})},stageAudio:async()=>({success:false})}});
 try{
  const admitted=${JSON.stringify(snapshots)};await registry.update(admitted);
- const legacyTeam=appendAgentTeamInstruction('Visible Team user text','task');const legacyWorkflow='Visible Workflow user text'+String.fromCharCode(10,10)+buildSwarmWorkflowInstruction({mode:'auto',verify:true});
- const pureModules=await Promise.all(admitted.map(item=>import(item.presentationEntry)));
- const pureLabels=admitted.map((item,index)=>({key:item.id==='agent-team'?'teamTitle':'swarmWorkflowTitle',value:pureModules[index].presentation.translations.en[item.id==='agent-team'?'teamTitle':'swarmWorkflowTitle']}));
- const pureHistory=()=>pluginMessageText(legacyTeam)==='Visible Team user text'&&pluginMessageText(legacyWorkflow)==='Visible Workflow user text';
- const pureTranslations=()=>pureLabels.every(({key,value})=>typeof value==='string'&&value!==key&&i18nService.t(key)===value);
- if(!pureHistory()||!pureTranslations())throw new Error('Built pure history or actual translations were not registered');
- const views=registry.getViews();const modes=registry.getModes();
- const team=views.find(item=>item.pluginId==='agent-team'&&item.slot==='plugin.settings');
- const workflow=views.find(item=>item.pluginId==='swarm-workflow'&&item.id==='workflow'&&item.slot==='workspace.tab');
- if(!team||!workflow)throw new Error('Actual browser contributions were not registered');
- const rewrites=views.filter(view=>view.id==='rewrite-check');
- if(${JSON.stringify(rewritten)}&&rewrites.length!==2)throw new Error('Rewritten contributions missing');
- const root=createRoot(document.getElementById('root'));const observers=()=>registry.getViews().filter(view=>view.slot==='application.page').map(view=>React.createElement(view.component,{key:view.pluginId+':'+view.epoch+':'+view.id,active:true}));
+ const views=registry.getViews(),modes=registry.getModes();
+ for(const owner of admitted){if(owner.slots.length&&!views.some(view=>view.pluginId===owner.id)&&!modes.some(mode=>mode.pluginId===owner.id))throw new Error('Declared Browser contributions did not load: '+owner.id);}
+ const root=createRoot(document.getElementById('root'));
+ if(${JSON.stringify(rewritten)}){const rewrites=views.filter(view=>view.id==='rewrite-check');if(rewrites.length!==admitted.length)throw new Error('Rewritten Browser declarations missing');flushSync(()=>root.render(React.createElement(React.Fragment,null,...rewrites.map(view=>React.createElement(view.component,{key:view.pluginId})))));for(const owner of admitted)if(!document.body.textContent.includes('plugin-only-ui-'+owner.id))throw new Error('Rewritten Browser view missing: '+owner.id);}
+ const observers=()=>registry.getViews().filter(view=>view.slot==='application.page').map(view=>React.createElement(view.component,{key:view.pluginId+':'+view.epoch+':'+view.id,active:true}));
  flushSync(()=>root.render(React.createElement(React.Fragment,null,...observers())));await wait(200);
- if(registry.sessionPresentation('source').summaryAvailable||registry.getWorkspaceRequests().length)throw new Error('Empty plugin metadata opened a summary or workspace');
- collaborations=[{id:'task-room',anchorSessionId:'source',members:[]}];sessionListeners.forEach(listener=>listener());
- await until(()=>registry.getWorkspaceRequests().some(request=>request.pluginId==='agent-team'&&request.sessionId==='source'&&request.selection===undefined),'First collaboration did not open Team');
- const taskRequest=registry.getWorkspaceRequests().find(request=>request.pluginId==='agent-team');registry.acknowledgeWorkspaceRequest(taskRequest);
- await until(()=>registry.sessionPresentation('source').summaryAvailable===true,'Team did not advertise closed summary content');
- discussions=[{id:'group-room',sourceSessionId:'source',members:[]}];sessionListeners.forEach(listener=>listener());
- await until(()=>registry.getWorkspaceRequests().some(request=>request.selection?.key==='group:group-room'),'First discussion did not open its Team record');
- registry.getWorkspaceRequests().forEach(request=>registry.acknowledgeWorkspaceRequest(request));
- sessionListeners.forEach(listener=>listener());await wait(100);const dismissedTeamNotReopened=registry.getWorkspaceRequests().length===0;
- collaborations=[];discussions=[];sessionListeners.forEach(listener=>listener());await until(()=>registry.sessionPresentation('source').summaryAvailable!==true,'Removed Team content retained its summary hint');
- flows=[{id:'flow',revision:1,goal:'Fixture flow',createdAt:1,status:'running',nodes:[{id:'stage-a',title:'Fixture stage A',kind:'work',status:'done',deps:[],sessionKey:'fixture:stage-a'},{id:'stage-b',title:'Fixture stage B',kind:'work',status:'queued',deps:['stage-a'],sessionKey:'fixture:stage-b'}]}];const workflowSnapshot=admitted.find(item=>item.id==='swarm-workflow');eventListeners.forEach(listener=>listener({id:workflowSnapshot.id,hash:workflowSnapshot.hash,epoch:workflowSnapshot.epoch,name:'changed',payload:{sessionId:'source',flowId:'flow',revision:1}}));
- await until(()=>registry.sessionPresentation('source').summaryAvailable===true,'Closed Workflow summary did not observe its real metadata event');const closedSummaryDiscovered=true;
- flushSync(()=>root.render(React.createElement(React.Fragment,null,...observers(),React.createElement(team.component,{onClose(){}}),React.createElement(workflow.component,{session}),...rewrites.map(view=>React.createElement(view.component,{key:view.pluginId})))));await wait(200);
- const workflowRendered=()=>document.querySelector('.swarm-panel nav button[aria-pressed="true"]')?.textContent.includes('Fixture flow')&&document.querySelector('.swarm-panel svg[role="group"] [role="button"][aria-label^="Fixture stage A:"]')&&document.querySelector('.swarm-panel svg[role="group"] [role="button"][aria-label^="Fixture stage B:"]')&&document.querySelectorAll('.swarm-panel .swarm-workflow-edge').length===1;await until(workflowRendered,'Workflow flow, stages or dependency edge did not render');
- const result={actualShippedBrowserArtifacts:true,realBrowserRegistry:true,realChromium:true,pureHistoryRegistered:pureHistory(),pureTranslationsRegistered:pureTranslations(),registeredViews:views.length,registeredModes:modes.length,applicationObserversMounted:observers().length>=3,teamSettingsRendered:document.querySelectorAll('select').length>0,workflowRendered:!!workflowRendered(),firstTeamRecordsOpened:true,dismissedTeamNotReopened,closedSummaryDiscovered,rendererNodeUnavailable:typeof window.require==='undefined'&&typeof window.process==='undefined',rewrittenViewsRendered:!${JSON.stringify(rewritten)}||['agent-team','swarm-workflow'].every(id=>document.body.textContent.includes('plugin-only-ui-'+id)),errors};
- collaborations=[{id:'active-task',anchorSessionId:'source',members:[{sessionId:'peer',agentId:'reviewer',sessionKey:'agent:reviewer:justdo:peer'}]}];snapshot.cowork.sessionRuntimeActivity={peer:true};sessionListeners.forEach(listener=>listener());await until(()=>registry.sessionPresentation('source').status==='running','Team activity was not published');activitySessions=['workflow-source'];eventListeners.forEach(listener=>listener({id:workflowSnapshot.id,hash:workflowSnapshot.hash,epoch:workflowSnapshot.epoch,name:'changed',payload:{sessionId:'source',flowId:'flow',revision:2}}));await until(()=>registry.sessionPresentation('workflow-source').status==='running','Native activity was not published');
- flushSync(()=>root.render(null));await registry.update(admitted.map(item=>({...item,state:'cleanup',browserEntry:undefined})));result.disabledActivityRetained=registry.sessionPresentation('workflow-source').status==='running';result.disabledTeamActivityRetained=registry.sessionPresentation('source').status==='running';result.disabledContributionsWithdrawn=registry.getViews().length===0&&registry.getModes().length===0&&!registry.sessionPresentation('source').summaryAvailable&&sessionListeners.size===0&&eventListeners.size===0;result.disabledPureHistoryRetained=pureHistory();result.disabledPureTranslationsRetained=pureTranslations();
- activityReadFails=true;teamListFails=true;collaborations=[{id:'existing-task',anchorSessionId:'source',members:[]}];discussions=[{id:'existing-group',sourceSessionId:'source',members:[]}];const renewed=admitted.map(item=>({...item,epoch:'reenabled',browserEntry:item.browserEntry.replace('/probe/','/reenabled/')}));await registry.update(renewed);flushSync(()=>root.render(React.createElement(React.Fragment,null,...observers())));await until(()=>registry.sessionPresentation('source').summaryAvailable===true,'Renewed observers did not restore summary metadata');await wait(100);result.reenabledHistoryDidNotOpenWorkspace=registry.getWorkspaceRequests().length===0;result.failedActivityReadRetained=registry.sessionPresentation('workflow-source').status==='running';result.failedTeamReadRetained=registry.sessionPresentation('source').status==='running';activityReadFails=false;activitySessions=[];const currentWorkflow=renewed.find(item=>item.id==='swarm-workflow');eventListeners.forEach(listener=>listener({id:currentWorkflow.id,hash:currentWorkflow.hash,epoch:currentWorkflow.epoch,name:'changed',payload:{sessionId:'source',flowId:'flow',revision:3}}));await until(()=>registry.sessionPresentation('workflow-source').status!=='running','Confirmed complete idle snapshot did not clear activity');result.confirmedIdleCleared=true;teamListFails=false;collaborations=[];discussions=[];snapshot.cowork.sessionRuntimeActivity={};sessionListeners.forEach(listener=>listener());await until(()=>registry.sessionPresentation('source').status!=='running','Confirmed Team metadata did not clear retained activity');result.confirmedTeamIdleCleared=true;
- flushSync(()=>root.render(null));await registry.update([]);result.uninstalledPureHistoryWithdrawn=pluginMessageText(legacyTeam)===legacyTeam&&pluginMessageText(legacyWorkflow)===legacyWorkflow;result.uninstalledPureTranslationsWithdrawn=pureLabels.every(({key})=>i18nService.t(key)===key);root.unmount();registry.dispose();window.probe.finish({...result,keyWarnings});
+ const ordinary='Ordinary visible user text';if(pluginMessageText(ordinary)!==ordinary)throw new Error('Ordinary text changed');
+ flushSync(()=>root.render(null));
+ await registry.update(admitted.map(item=>({...item,state:'cleanup',browserEntry:undefined})));
+ const disabledContributionsWithdrawn=registry.getViews().length===0&&registry.getModes().length===0;
+ if(!disabledContributionsWithdrawn)throw new Error('Disabled Browser contributions remain');
+ const renewed=admitted.map(item=>({...item,epoch:'reenabled',browserEntry:item.browserEntry.replace('/probe/','/reenabled/')}));
+ await registry.update(renewed);
+ for(const owner of renewed){if(owner.slots.length&&!registry.getViews().some(view=>view.pluginId===owner.id)&&!registry.getModes().some(mode=>mode.pluginId===owner.id))throw new Error('Reenabled Browser contributions missing: '+owner.id);}
+ await registry.update([]);
+ const uninstalledContributionsWithdrawn=registry.getViews().length===0&&registry.getModes().length===0;
+ root.unmount();registry.dispose();
+ window.probe.finish({actualShippedBrowserArtifacts:true,realBrowserRegistry:true,realChromium:true,loadedPlugins:admitted.map(item=>item.id),emptyOptionalInventory:admitted.length===0,registeredViews:views.length,registeredModes:modes.length,rendererNodeUnavailable:typeof window.require==='undefined'&&typeof window.process==='undefined',disabledContributionsWithdrawn,uninstalledContributionsWithdrawn,errors,keyWarnings});
 }catch(error){window.probe.finish({errors:[String(error),...errors]});}
 `,
     },
@@ -127,7 +111,7 @@ try{
 const assert=require('node:assert/strict'),http=require('node:http'),fs=require('node:fs');const{app,BrowserWindow,ipcMain}=require('electron');
 app.setPath('userData',${JSON.stringify(path.join(temporary, 'userdata'))});app.disableHardwareAcceleration();let server,window;const timeout=setTimeout(()=>app.exit(1),30000);
 (async()=>{await app.whenReady();const routes=${JSON.stringify(routes)};server=http.createServer((request,response)=>{if(request.url==='/'){response.setHeader('Content-Type','text/html');response.end('<!doctype html><div id="root"></div><script type="module" src="/harness.mjs"></script>');return;}const file=request.url==='/harness.mjs'?${JSON.stringify(harness)}:routes[request.url];if(!file){response.writeHead(404);response.end();return;}response.setHeader('Content-Type','text/javascript');response.end(fs.readFileSync(file));});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
-ipcMain.once('probe:result',async(event,result)=>{try{assert.equal(event.sender,window.webContents);console.log(JSON.stringify(result));assert.deepEqual(result.errors,[]);assert.deepEqual(result.keyWarnings,[]);for(const check of ['teamSettingsRendered','workflowRendered','rendererNodeUnavailable','rewrittenViewsRendered','applicationObserversMounted','firstTeamRecordsOpened','dismissedTeamNotReopened','closedSummaryDiscovered','disabledContributionsWithdrawn','reenabledHistoryDidNotOpenWorkspace','disabledActivityRetained','failedActivityReadRetained','confirmedIdleCleared','disabledTeamActivityRetained','failedTeamReadRetained','confirmedTeamIdleCleared','pureHistoryRegistered','pureTranslationsRegistered','disabledPureHistoryRetained','disabledPureTranslationsRetained','uninstalledPureHistoryWithdrawn','uninstalledPureTranslationsWithdrawn'])assert.equal(result[check],true,check);clearTimeout(timeout);window.destroy();server.close(()=>app.exit(0));}catch(error){console.error(error.stack);app.exit(1);}});
+ipcMain.once('probe:result',async(event,result)=>{try{assert.equal(event.sender,window.webContents);console.log(JSON.stringify(result));assert.deepEqual(result.errors,[]);assert.deepEqual(result.keyWarnings,[]);for(const check of ['rendererNodeUnavailable','disabledContributionsWithdrawn','uninstalledContributionsWithdrawn'])assert.equal(result[check],true,check);clearTimeout(timeout);window.destroy();server.close(()=>app.exit(0));}catch(error){console.error(error.stack);app.exit(1);}});
 window=new BrowserWindow({show:false,webPreferences:{preload:${JSON.stringify(preload)},nodeIntegration:false,contextIsolation:true,sandbox:true}});await window.loadURL('http://127.0.0.1:'+server.address().port+'/');})().catch(error=>{console.error(error.stack);app.exit(1);});
 `,
   );

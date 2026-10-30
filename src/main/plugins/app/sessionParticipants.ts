@@ -1,10 +1,10 @@
-import type { AppSubmission } from '../../../../packages/app-plugin-sdk/contracts';
-import { isAppWireValue } from '../../../../packages/app-plugin-sdk/contracts';
+import { readAppInput } from '../../../../plugins/extensions/runtime-services/contracts/app-input';
+import type { AppSubmission } from '../../../../plugins/sdk/app-plugin-sdk/contracts';
+import { isAppWireValue } from '../../../../plugins/sdk/app-plugin-sdk/contracts';
 import type {
   AppMainRegistration,
   AppSubmissionParticipant,
-} from '../../../../packages/app-plugin-sdk/main';
-import { readAppInput } from '../../../../plugins/extensions/runtime-services/contracts/app-input';
+} from '../../../../plugins/sdk/app-plugin-sdk/main';
 
 export interface SessionParticipantSource {
   registrations(): readonly AppMainRegistration[];

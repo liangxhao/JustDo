@@ -58,6 +58,11 @@ export class AppProtectionJournal {
       for (const id of ids) remove.run(id);
     })();
   }
+  removeOwner(owner: string): void {
+    // Removing one optional implementation must not release another owner's
+    // protection of the same ordinary source session.
+    this.database.prepare('DELETE FROM app_plugin_resources WHERE owner_id = ?').run(owner);
+  }
   replace(owner: string, hash: string, ids: readonly string[]): void {
     if (ids.length > 100000 || ids.some(id => typeof id !== 'string' || !id || id.length > 256))
       throw new Error('appPluginInvalidRequest');

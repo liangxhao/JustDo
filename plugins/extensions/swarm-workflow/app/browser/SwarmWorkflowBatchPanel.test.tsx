@@ -1,3 +1,4 @@
+import { setWorkflowTestPorts } from '../../tests/browserRuntime';
 // @vitest-environment jsdom
 import type {
   SwarmWorkflowBatchPage,
@@ -8,7 +9,7 @@ import type {
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, test, vi } from 'vitest';
 
-import { i18nService } from '@/services/i18n';
+import { i18nService } from '../../tests/browserRuntime';
 vi.mock('./SwarmWorkflowDetailPanel', () => ({
   default: ({
     node,
@@ -73,19 +74,14 @@ function fixture() {
   };
   const read = vi.fn().mockResolvedValue({ success: true, page });
   const retry = vi.fn().mockResolvedValue({ success: true, retried: 1, skipped: 0 });
-  Object.defineProperty(window, 'electron', {
-    configurable: true,
-    value: {
-      cowork: {
-        getSwarmWorkflowBatch: read,
-        retrySwarmWorkflowBatch: retry,
-        onSwarmWorkflowsChanged: (listener: typeof notifyReset) => {
-          notifyReset = listener;
-          return () => {
-            notifyReset = () => {};
-          };
-        },
-      },
+  setWorkflowTestPorts({
+    getSwarmWorkflowBatch: read,
+    retrySwarmWorkflowBatch: retry,
+    onSwarmWorkflowsChanged: (listener: typeof notifyReset) => {
+      notifyReset = listener;
+      return () => {
+        notifyReset = () => {};
+      };
     },
   });
   const props = {

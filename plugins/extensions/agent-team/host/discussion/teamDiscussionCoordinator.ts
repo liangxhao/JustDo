@@ -2,9 +2,12 @@ import { createHash } from 'node:crypto';
 import { realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 
+import { CUSTODY_RPC, type CustodyCloseResult, type CustodyIdentity,
+  type CustodyUnlockResult } from '@runtime-services/sdk/custody';
+import { custodyResourceId } from '@runtime-services/sdk/custody-client';
+import { buildCoworkSessionKey as buildManagedSessionKey } from '@runtime-services/sdk/session-key';
 import type Database from 'better-sqlite3';
 
-import { buildCoworkSessionKey as buildManagedSessionKey } from '../../../runtime-services/contracts/session-key';
 import {
   effectiveDiscussionDefaults,
   resolveDiscussionResources,
@@ -16,9 +19,9 @@ import {
   parseTeamDiscussionIds,
   parseTeamDiscussionRounds,
   parseTeamDiscussionSend,
+  TEAM_DISCUSSION_CHANNEL,
   type TeamDiscussionExecution,
   TeamDiscussionGateway,
-  type TeamDiscussionHoldingIdentity,
   type TeamDiscussionMessage,
   type TeamDiscussionReadResult,
   type TeamDiscussionRoom,
@@ -31,6 +34,8 @@ import { AgentTeamSettingsService } from '../data/agentTeamSettingsService';
 import type { PendingInputRecord } from '../data/teamDiscussionQueueStore';
 import { TeamDiscussionStore } from '../data/teamDiscussionStore';
 import type { TeamHostStore as CoworkStore } from '../ports';
+import { type CustodyRequest, executionReceiptOutcome, holdingCustodyIdentity,
+  readExecutionReceipt, TEAM_CUSTODY_OWNER } from './nativeCustody';
 import {
   discussionAttachmentFingerprint,
   stageDiscussionAttachments,
@@ -60,6 +65,8 @@ interface NativeStatus {
   discussionId?: string;
   state: 'unknown' | 'running' | 'completed' | 'failed' | 'cancelled';
   executions?: TeamDiscussionExecution[];
+  /** Required custody reconciliation cannot enqueue fresh business summaries. */
+  suppressSummary?: boolean;
 }
 function inputRecord(input: unknown): Record<string, unknown> {
   if (!input || typeof input !== 'object' || Array.isArray(input))
@@ -163,9 +170,10 @@ export class TeamDiscussionCoordinator {
       this.reconcileOffset = offset + batch.length;
       for (const room of batch) {
         try {
-          let status: NativeStatus;
-          try {
-            status = await this.deps.requestConnectedGateway<NativeStatus>(
+          const cleanup = () => this.custodyDiscussionStatus(this.deps.requestConnectedGateway!, room,
+            room.state === TeamDiscussionState.STOPPING);
+          const status = options.cleanupOnly ? await cleanup() :
+            await this.deps.requestConnectedGateway<NativeStatus>(
               room.state === TeamDiscussionState.STOPPING
                 ? TeamDiscussionGateway.Stop
                 : TeamDiscussionGateway.Status,
@@ -173,17 +181,7 @@ export class TeamDiscussionCoordinator {
                 roomId: room.id,
                 discussionId: room.activeDiscussionId,
               },
-            );
-          } catch {
-            status = await this.deps.requestConnectedGateway<NativeStatus>(
-              TeamDiscussionGateway.OfflineControl,
-              {
-                operation: room.state === TeamDiscussionState.STOPPING ? 'stop' : 'status',
-                roomId: room.id,
-                discussionId: room.activeDiscussionId,
-              },
-            );
-          }
+            ).catch(cleanup);
           const current = this.metadata.get(room.id);
           if (
             !current ||
@@ -217,18 +215,9 @@ export class TeamDiscussionCoordinator {
           source.agentId !== room.summarySource.agentId;
         try {
           const request = this.deps.requestConnectedGateway;
-          const offline = () =>
-            request<{ state: TeamDiscussionSummary['state']; runId?: string }>(
-              TeamDiscussionGateway.OfflineControl,
-              {
-                operation: cancel ? 'summary-stop' : 'summary-status',
-                roomId: room.id,
-                discussionId: summary.discussionId,
-              },
-            );
-          // Cleanup has no summary-start capability. Required Native custody also
-          // checks the real config, so a temporary lost Main proof cannot stop an
-          // enabled plugin's summary or turn a failed read into rejection evidence.
+          const offline = () => this.custodySummaryStatus(request, room, summary.discussionId, cancel);
+          // Cleanup can inspect or cancel an existing receipt, never start a
+          // summary or infer rejection from a missing business service.
           const state = options.cleanupOnly
             ? await offline()
             : await request<{ state: TeamDiscussionSummary['state']; runId?: string }>(
@@ -745,7 +734,33 @@ export class TeamDiscussionCoordinator {
     }
     if (status.state === 'unknown')
       this.metadata.markUncertain(room.id, room.activeDiscussionId, room.generation);
-    else this.metadata.transition(room.id, room.activeDiscussionId, room.generation, status.state);
+    else this.metadata.transition(room.id, room.activeDiscussionId, room.generation, status.state,
+      { suppressSummary: status.suppressSummary });
+  }
+
+  private async custodyDiscussionStatus(
+    request: CustodyRequest, room: TeamDiscussionRoom, cancel = false,
+  ): Promise<NativeStatus> {
+    if (!room.activeDiscussionId) throw new Error('teamDiscussionOutcomeUnknown');
+    const receipt = await readExecutionReceipt(request, 'discussion', room.activeDiscussionId, cancel);
+    return { roomId: room.id, discussionId: room.activeDiscussionId,
+      state: executionReceiptOutcome(receipt), suppressSummary: true,
+      executions: receipt?.subjects.map(subject => ({ ...subject, discussionId: room.activeDiscussionId! })) };
+  }
+
+  private async custodySummaryStatus(
+    request: CustodyRequest, room: TeamDiscussionRoom, discussionId: string, cancel = false,
+  ): Promise<{ state: TeamDiscussionSummary['state']; runId?: string }> {
+    const receipt = await readExecutionReceipt(request, 'summary', discussionId, cancel);
+    const source = room.summarySource;
+    if (!source || receipt?.subjects.some(subject => subject.agentId !== source.agentId ||
+        subject.sessionKey !== source.sessionKey || subject.sessionId !== source.sessionId ||
+        subject.lifecycleRevision !== source.lifecycleRevision))
+      throw new Error('teamDiscussionSessionChanged');
+    const outcome = executionReceiptOutcome(receipt);
+    // Completion of a native run does not prove that its output was delivered.
+    return { state: outcome === 'cancelled' || outcome === 'failed' ? outcome : 'unknown',
+      ...(receipt?.subjects.length === 1 ? { runId: receipt.subjects[0].runId } : {}) };
   }
   private async prepareForSend(
     room: TeamDiscussionRoom,
@@ -991,11 +1006,7 @@ export class TeamDiscussionCoordinator {
         try {
           this.applyStatus(
             room,
-            await this.deps.requestGateway<NativeStatus>(TeamDiscussionGateway.OfflineControl, {
-              operation: 'status',
-              roomId: room.id,
-              discussionId: room.activeDiscussionId,
-            }),
+            await this.custodyDiscussionStatus(this.deps.requestGateway, room),
           );
           room = this.room(id);
         } catch {
@@ -1033,7 +1044,7 @@ export class TeamDiscussionCoordinator {
                   ...discussionIds.flatMap(batch =>
                     this.metadata
                       .executions(batch)
-                      .filter(execution => execution.sessionKey.includes(':justdo-team:'))
+                      .filter(execution => execution.sessionKey.includes(`:${TEAM_DISCUSSION_CHANNEL}:`))
                       .map(execution => ({
                         agentId: execution.agentId,
                         sessionId: execution.sessionId,
@@ -1131,10 +1142,7 @@ export class TeamDiscussionCoordinator {
             { operation: 'stop', roomId: room.id, discussionId },
           )
           .catch(() =>
-            this.deps.requestGateway<{ state: TeamDiscussionSummary['state']; runId?: string }>(
-              TeamDiscussionGateway.OfflineControl,
-              { operation: 'summary-stop', roomId: room.id, discussionId },
-            ),
+            this.custodySummaryStatus(this.deps.requestGateway, room, discussionId, true),
           );
         this.metadata.updateSummary(discussionId, result.state, result.runId);
       } catch (error) {
@@ -1152,11 +1160,7 @@ export class TeamDiscussionCoordinator {
         discussionId: room.activeDiscussionId,
       })
       .catch(() =>
-        this.deps.requestGateway<NativeStatus>(TeamDiscussionGateway.OfflineControl, {
-          operation: 'stop',
-          roomId: room.id,
-          discussionId: room.activeDiscussionId,
-        }),
+        this.custodyDiscussionStatus(this.deps.requestGateway, room, true),
       );
     this.applyStatus(room, result);
     this.deps.onChanged();
@@ -1208,10 +1212,9 @@ export class TeamDiscussionCoordinator {
       } catch {
         if (room.members.some(member => !member.sessionId))
           throw new Error('teamDiscussionUnavailable');
-        await this.deps.requestGateway(TeamDiscussionGateway.OfflineControl, {
-          operation: 'close',
-          roomId: room.id,
-        });
+        // Without the Team owner, a generic custody fence cannot prove that a
+        // business room has closed or authorize deletion of its member sessions.
+        throw new Error('teamDiscussionUnavailable');
       }
       this.metadata.beginDelete(room.id);
       try {
@@ -1263,15 +1266,23 @@ export class TeamDiscussionCoordinator {
 
   /** Harness-owned sessions use public admin lifecycle RPCs, then the owning SDK unlock. */
   private async deleteHolding(roomId: string): Promise<void> {
-    const close = () =>
-      this.deps.requestGateway<{ closed: boolean; identities: TeamDiscussionHoldingIdentity[] }>(
-        TeamDiscussionGateway.HoldingClose,
-        { roomId },
-      );
+    const inputs = this.metadata.queue.list(roomId);
+    if (inputs.some(input => input.identity && !holdingCustodyIdentity(input.identity, roomId)))
+      throw new Error('teamDiscussionOutcomeUnknown');
+    const resourceId = custodyResourceId(TEAM_CUSTODY_OWNER, roomId);
+    const close = async () => {
+      const result = await this.deps.requestGateway<CustodyCloseResult>(CUSTODY_RPC.close, { resourceId });
+      if (result?.closed !== true || !Array.isArray(result.identities) ||
+          result.identities.some(identity => !this.matchesCustodyIdentity(identity, resourceId)))
+        throw new Error('teamDiscussionOutcomeUnknown');
+      return result;
+    };
     const closed = await close();
     if (closed.closed !== true || !Array.isArray(closed.identities))
       throw new Error('teamDiscussionOutcomeUnknown');
     for (const identity of closed.identities) {
+      if (!this.matchesCustodyIdentity(identity, resourceId))
+        throw new Error('teamDiscussionSessionChanged');
       let archiveError: unknown;
       try {
         await this.deps.requestGateway('sessions.patch', {
@@ -1288,18 +1299,20 @@ export class TeamDiscussionCoordinator {
         item => item.sessionKey === identity.sessionKey,
       );
       if (!latest) continue;
-      if (latest.sessionId !== identity.sessionId) throw new Error('teamDiscussionSessionChanged');
-      let unlocked: { identity: TeamDiscussionHoldingIdentity };
+      if (latest.sessionId !== identity.sessionId || latest.agentId !== identity.agentId)
+        throw new Error('teamDiscussionSessionChanged');
+      let unlocked: CustodyUnlockResult;
       try {
-        unlocked = await this.deps.requestGateway(TeamDiscussionGateway.HoldingClose, {
-          roomId,
-          phase: 'unlock',
-          identity: latest,
-        });
+        if (!this.matchesCustodyIdentity(latest, resourceId) || latest.epoch !== identity.epoch)
+          throw new Error('teamDiscussionSessionChanged');
+        unlocked = await this.deps.requestGateway(CUSTODY_RPC.unlock, { identity: latest });
       } catch (error) {
         throw archiveError ?? error;
       }
       if (
+        !this.matchesCustodyIdentity(unlocked.identity, resourceId) ||
+        unlocked.identity.epoch !== identity.epoch ||
+        unlocked.identity.agentId !== identity.agentId ||
         unlocked.identity.sessionId !== identity.sessionId ||
         unlocked.identity.sessionKey !== identity.sessionKey
       )
@@ -1320,5 +1333,11 @@ export class TeamDiscussionCoordinator {
       }
     }
     if ((await close()).identities.length) throw new Error('teamDiscussionOutcomeUnknown');
+  }
+
+  private matchesCustodyIdentity(identity: CustodyIdentity, resourceId: string): boolean {
+    return !!identity && identity.resourceId === resourceId && Number.isSafeInteger(identity.epoch) &&
+      identity.epoch > 0 && [identity.agentId, identity.sessionKey, identity.sessionId,
+        identity.lifecycleRevision].every(value => typeof value === 'string' && value.length > 0);
   }
 }

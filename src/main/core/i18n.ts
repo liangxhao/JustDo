@@ -17,6 +17,7 @@ export type LanguageType = 'zh' | 'en';
 
 const translations: Record<LanguageType, Record<string, string>> = {
   zh: {
+    coworkReservedSession: '此会话仅用于内部存储，无法作为聊天打开。',
     ...startupWindowTranslations.zh,
     runtimeNodeUnavailable: '运行时尚未准备就绪，请重新准备或修复应用。',
     enginePreparationPending: 'AI 引擎正在启动，暂时无法发送。请在就绪后重新发送，草稿已保留。',
@@ -191,6 +192,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     browserContextSaveImage: '图片另存为…',
   },
   en: {
+    coworkReservedSession: 'This session is reserved for internal storage and cannot be opened as a chat.',
     enginePreparationPending: 'The AI engine is starting. Please send again when it is ready; your draft is preserved.',
     enginePreparationFailed: 'The AI engine could not finish preparing. View the reason or retry.',
     ...startupWindowTranslations.en,

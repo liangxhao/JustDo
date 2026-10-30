@@ -1,0 +1,50 @@
+{
+  "name": "@app-plugin/build",
+  "version": "1.0.0",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=24.16.0 <25"
+  },
+  "bin": {
+    "app-plugin-build": "./cli.mjs"
+  },
+  "exports": {
+    ".": {
+      "types": "./build.d.ts",
+      "default": "./build.mjs"
+    },
+    "./typecheck": {
+      "types": "./typecheck.d.ts",
+      "default": "./typecheck.mjs"
+    },
+    "./sdk": {
+      "types": "./sdk.d.ts",
+      "default": "./sdk.mjs"
+    },
+    "./theme-preset": "./theme-preset.cjs",
+    "./theme-plugin": "./semantic-theme.cjs",
+    "./testing": {
+      "types": "./testing.d.ts",
+      "default": "./testing.mjs"
+    }
+  },
+  "files": [
+    "*.mjs",
+    "*.cjs",
+    "*.d.ts",
+    "README.md",
+    "LICENSE"
+  ],
+  "peerDependencies": {
+    "@app-plugin/sdk": "^1.0.0"
+  },
+  "dependencies": {
+    "@tailwindcss/typography": "0.5.20",
+    "acorn": "8.17.0",
+    "esbuild": "0.28.1",
+    "postcss": "8.5.28",
+    "tailwindcss": "3.4.19",
+    "typescript": "5.9.3"
+  }
+}

@@ -10,11 +10,10 @@ import { WorkflowEventName, type WorkflowNativeChange } from '../contracts/event
 import { freezeBatch, verifyItemResult, readBatchManifest } from '../batch/snapshot';
 import { assertCrossAgentPolicy } from '../execution/policy';
 import { lastSubmissionError, submissionCorrectionInstructions } from '../execution/submission';
-import {
-  managedSubagent,
-  type ManagedSubagent,
-} from '../../runtime-services/execution/managed-subagent';
+import type { OpenClawPluginApi } from 'openclaw/plugin-sdk/core';
+import type { ManagedSubagent } from '@runtime-services/sdk/execution';
 import { swarmWorkflowCapacity, swarmWorkflowSettings } from '../settings';
+import { DELIVERY_INSTRUCTIONS } from '../prompt/delivery';
 import type { WorkflowContext } from './context';
 
 export function registerWorkflowLifecycle(context: WorkflowContext): void {
@@ -29,13 +28,21 @@ export function registerWorkflowLifecycle(context: WorkflowContext): void {
     ensure,
     rpc,
     prepare,
+    nativeSubagent,
+    prepareRuntimeServices,
   } = context;
   let ownedGeneration: number | undefined;
+  let startRevision = 0;
   let stopSourceEvents: (() => void) | undefined;
   api.registerService({
     id: 'swarm-workflow',
-    start(ctx) {
+    async start(ctx) {
+      const revision = ++startRevision;
       if (state.engine) throw new Error('Swarm Workflow service is already running.');
+      if (!await prepareRuntimeServices()) throw new Error('Runtime Services capability is unavailable.');
+      nativeSubagent();
+      if (revision !== startRevision || state.engine || !api.lifecycle.signal || api.lifecycle.signal.aborted)
+        throw new Error('Swarm Workflow service start is no longer current.');
       const events = ctx.gatewayEvents;
       if (!events) throw new Error('Swarm Workflow requires plugin Gateway events.');
       const epoch = ++state.generation;
@@ -75,8 +82,8 @@ export function registerWorkflowLifecycle(context: WorkflowContext): void {
           }),
         prepare,
         launch: async (flow, node, message, assertCurrent) => {
-          let runtime: ManagedSubagent;
-          let params: Parameters<ManagedSubagent['run']>[0];
+          let runtime: ManagedSubagent<OpenClawPluginApi['runtime']['subagent']>;
+          let params: Parameters<typeof runtime.run>[0];
           try {
             assertParent(flow);
             const validate = () => {
@@ -84,7 +91,7 @@ export function registerWorkflowLifecycle(context: WorkflowContext): void {
               assertParent(flow);
               assertCrossAgentPolicy(api.runtime.config.current(), flow.agentId, node.agentId);
             };
-            runtime = managedSubagent(api);
+            runtime = nativeSubagent();
             let projectRules: string | undefined;
             if (node.batchItem)
               projectRules = (
@@ -96,6 +103,7 @@ export function registerWorkflowLifecycle(context: WorkflowContext): void {
               ).projectRules;
             validate();
             const extraSystemPrompt = [
+              node.kind === 'deliver' ? DELIVERY_INSTRUCTIONS : undefined,
               continuationInstructions(node),
               projectRules
                 ? 'Project rules from ' +
@@ -128,7 +136,7 @@ export function registerWorkflowLifecycle(context: WorkflowContext): void {
           return runtime.run(params);
         },
         wait: async runId => {
-          const runtime = managedSubagent(api);
+          const runtime = nativeSubagent();
           const reply = await runtime.waitForRun({ runId, timeoutMs: 1 });
           const state = await runtime.describeRun({ runId });
           if (state.runId !== runId) throw new Error('Native execution identity changed.');
@@ -166,7 +174,7 @@ export function registerWorkflowLifecycle(context: WorkflowContext): void {
         },
         cancel: async node => {
           if (node.runId || node.intendedRunId)
-            await managedSubagent(api).cancelRun({ runId: node.runId ?? node.intendedRunId! });
+            await nativeSubagent().cancelRun({ runId: node.runId ?? node.intendedRunId! });
         },
         deliver: async (flow, message) => {
           assertParent(flow);
@@ -217,6 +225,7 @@ export function registerWorkflowLifecycle(context: WorkflowContext): void {
       publishChange();
     },
     async stop() {
+      startRevision++;
       if (ownedGeneration !== state.generation) return;
       ownedGeneration = undefined;
       stopSourceEvents?.();

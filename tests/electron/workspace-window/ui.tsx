@@ -14,7 +14,6 @@ import CoworkDisplayPanel from '@/features/cowork/components/display/CoworkDispl
 import DisplayTabContextMenu from '@/features/cowork/components/display/tabs/DisplayTabContextMenu';
 import { useDraggableModal } from '@/features/cowork/components/shared/useDraggableModal';
 import { CoworkPet } from '@/features/cowork/components/status/CoworkPet';
-import SwarmWorkflowPanel from '../../../plugins/extensions/swarm-workflow/app/browser/SwarmWorkflowPanel';
 import TerminalPanel from '@/features/cowork/components/terminal/TerminalPanel';
 import { ChatScrollController } from '@/libs/openclaw-chat/controllers/chat-scroll-controller';
 import { observeEditorLayout } from '@/shared/dom/observeEditorLayout';
@@ -180,31 +179,7 @@ function Tools({ reference }: { reference: boolean }) {
         <TerminalPanel cwd="" terminalId="probe-terminal" isObscured={false} />
       </div>
       <div id="probe-flow-host" style={{ height: 180, width: 620 }}>
-        <SwarmWorkflowPanel
-          sessionId="probe-flow"
-          tasks={[]}
-          onOpenTask={() => {}}
-          snapshot={{
-            success: true,
-            flows: [
-              {
-                id: 'flow',
-                revision: 1,
-                goal: 'Responsive workflow',
-                createdAt: 1,
-                status: 'completed',
-                nodes: ['a', 'b', 'c'].map(id => ({
-                  id,
-                  title: id,
-                  kind: 'work',
-                  status: 'done',
-                  deps: [],
-                  sessionKey: id,
-                })),
-              },
-            ],
-          }}
-        />
+        <ResponsivePluginSurface />
       </div>
       {dragProbe && <DragProbe />}
       {React.createElement('webview', {
@@ -229,6 +204,22 @@ function Tools({ reference }: { reference: boolean }) {
       )}
     </>
   );
+}
+
+function ResponsivePluginSurface() {
+  const ownerDocument = useOwnerDocument();
+  const surface = useRef<HTMLDivElement>(null);
+  const [width, setWidth] = useState(1);
+  useEffect(() => {
+    if (!surface.current) return;
+    const element = surface.current;
+    return observeEditorLayout({
+      getContainerDomNode: () => element,
+      layout: () => setWidth(element.clientWidth),
+      onDidDispose: () => ({ dispose() {} }),
+    });
+  }, [ownerDocument]);
+  return <div ref={surface} style={{ width: '100%' }}><svg role="group" viewBox={`0 0 ${width} 100`}><text x="10" y="30">Plugin surface</text></svg></div>;
 }
 
 function DragProbe() {

@@ -80,7 +80,8 @@ describe('AskUserQuestion extension', () => {
     const factory = registerTool.mock.calls[0][0];
     expect(factory({ sessionKey: 'agent:main:subagent:child' })).toBeNull();
     expect(factory({ sessionKey: 'agent:main:unrelated:session' })).toBeNull();
-    expect(factory({ sessionKey: 'agent:alice:justdo-team:group:room' })).toMatchObject({
+    expect(factory({ sessionKey: 'agent:alice:justdo-team:group:room' })).toBeNull();
+    expect(factory({ sessionKey: 'agent:alice:agent-team:group:room' })).toMatchObject({
       name: 'ask_user_question',
     });
     expect(factory({ sessionKey: 'agent:main:justdo:session-1' })).toMatchObject({

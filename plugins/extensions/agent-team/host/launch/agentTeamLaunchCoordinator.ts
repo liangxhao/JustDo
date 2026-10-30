@@ -1,10 +1,16 @@
 import { createHash } from 'node:crypto';
 
+import {
+  describePlanningConstraint,
+  hasUnrestrictedPlanningSnapshot,
+  PlanningConstraint,
+  readPlanningSnapshot,
+} from '@app-plugin/sdk/planning';
+import { buildCoworkSessionKey } from '@runtime-services/sdk/session-key';
+import { readSessionNamespace } from '@runtime-services/sdk/session-namespace';
 import type Database from 'better-sqlite3';
+import { EXECUTION_ADMISSION_MAINTENANCE_METHOD, type ExecutionAdmissionReceipt } from '@runtime-services/sdk/admission';
 
-import { parsePlanModeState } from '../../../plan-mode/contracts/state';
-import { OpenClawExtensionId } from '../../../runtime-services/contracts/native-ids';
-import { buildCoworkSessionKey } from '../../../runtime-services/contracts/session-key';
 import { hasBlockingGoalExecution } from '../../contracts/goalExecutionAdmission';
 import { normalizeAgentTeamLaunchText } from '../../prompt/agentTeamLaunchText';
 import { AGENT_TEAM_MODE, recognizeAgentTeamMode } from '../../prompt/agentTeamPrompt';
@@ -59,6 +65,7 @@ interface LaunchReceipt {
   abandonRequested: boolean;
   releaseRequested: boolean;
   confirmReceiptId?: string;
+  executionAdmission?: { id: string; generation: number };
 }
 interface Dependencies {
   getStore: () => Pick<
@@ -102,6 +109,7 @@ const fields = [
   'abandonRequested',
   'releaseRequested',
   'confirmReceiptId',
+  'executionAdmission',
 ];
 function parseReceipt(value: unknown, sessionId: string): LaunchReceipt {
   if (
@@ -132,7 +140,9 @@ function parseReceipt(value: unknown, sessionId: string): LaunchReceipt {
       value.lifecycleRevision === null ||
       id(value.lifecycleRevision)
     ) ||
-    !(value.confirmReceiptId === undefined || id(value.confirmReceiptId))
+    !(value.confirmReceiptId === undefined || id(value.confirmReceiptId)) ||
+    (value.executionAdmission !== undefined && (!record(value.executionAdmission) || !id(value.executionAdmission.id) ||
+      !Number.isSafeInteger(value.executionAdmission.generation) || Number(value.executionAdmission.generation) < 1))
   )
     throw new Error('teamLaunchUnconfirmed');
   return value as unknown as LaunchReceipt;
@@ -274,10 +284,45 @@ export class AgentTeamLaunchCoordinator {
     );
   }
   private async inspect(receipt: LaunchReceipt): Promise<NativeInspection> {
-    return this.deps.requestGateway(RPC.INSPECT, {
-      sessionKey: receipt.sessionKey,
-      nativeSessionId: receipt.nativeSessionId,
+    const enrolled = await this.readExecutionAdmission(receipt);
+    this.update(receipt, { executionAdmission: { id: enrolled.id, generation: enrolled.generation } });
+    const state = enrolled.state === 'released' ? 'released' : enrolled.state === 'revoked' ? 'cancelled'
+      : enrolled.acceptedReceiptId ? 'launched' : enrolled.effectIssued ? 'attempted' : enrolled.verified ? 'verified' : 'pending';
+    return {
+      state, generation: receipt.expectedGeneration + 1,
+      wholeSettled: enrolled.sourceTerminal?.executionSettled === true &&
+        enrolled.sourceTerminal.runId === receipt.clientTurnId && enrolled.sourceTerminal.sessionId === receipt.nativeSessionId,
+      launch: {
+        generation: receipt.expectedGeneration + 1, sessionKey: receipt.sessionKey,
+        nativeSessionId: receipt.nativeSessionId, lifecycleRevision: enrolled.lifecycleRevision,
+        clientTurnId: receipt.clientTurnId, promptSha256: receipt.promptSha256, mode: receipt.mode, state,
+      },
+    };
+  }
+  private async readExecutionAdmission(receipt: LaunchReceipt): Promise<ExecutionAdmissionReceipt> {
+    const result = await this.deps.requestGateway<{ receipt?: ExecutionAdmissionReceipt }>(EXECUTION_ADMISSION_MAINTENANCE_METHOD, {
+      operation: 'inspect', sessionKey: receipt.sessionKey, sessionId: receipt.nativeSessionId, runId: receipt.clientTurnId,
+      ...(receipt.lifecycleRevision === undefined ? {} : { lifecycleRevision: receipt.lifecycleRevision }),
     });
+    const value = result.receipt;
+    if (!value || value.version !== 2 || value.sessionKey !== receipt.sessionKey || value.sessionId !== receipt.nativeSessionId ||
+        value.runId !== receipt.clientTurnId || !id(value.id) || !Number.isSafeInteger(value.generation) || value.generation < 1 ||
+        value.owner?.pluginId !== 'agent-team' || !['held', 'revoked', 'released'].includes(value.state) ||
+        (receipt.executionAdmission && (value.id !== receipt.executionAdmission.id || value.generation !== receipt.executionAdmission.generation)) ||
+        (receipt.lifecycleRevision !== undefined && value.lifecycleRevision !== receipt.lifecycleRevision))
+      throw new Error('teamLaunchUnconfirmed');
+    return value;
+  }
+  private async maintain(receipt: LaunchReceipt, operation: 'revoke' | 'cleanup' | 'release' | 'abandon',
+    evidence: { receiptId?: string; neverSubmitted?: true } = {}): Promise<{ state: string }> {
+    const enrolled = await this.readExecutionAdmission(receipt);
+    const result = await this.deps.requestGateway<{ receipt?: ExecutionAdmissionReceipt }>(EXECUTION_ADMISSION_MAINTENANCE_METHOD, {
+      operation, sessionKey: enrolled.sessionKey, sessionId: enrolled.sessionId, lifecycleRevision: enrolled.lifecycleRevision,
+      runId: enrolled.runId, id: enrolled.id, generation: enrolled.generation, ...evidence,
+    });
+    if (!result.receipt || result.receipt.id !== enrolled.id || result.receipt.generation !== enrolled.generation)
+      throw new Error('teamLaunchUnconfirmed');
+    return { state: result.receipt.state === 'revoked' ? 'cancelled' : result.receipt.state };
   }
   private async cleanupIdle(receipt: LaunchReceipt, neverSubmitted: boolean): Promise<boolean> {
     const source = this.source(receipt.sessionId);
@@ -411,19 +456,19 @@ export class AgentTeamLaunchCoordinator {
         throw new Error('teamLaunchContractUnavailable');
       if (!(native.lifecycleRevision === null || id(native.lifecycleRevision)))
         throw new Error('teamFeatureStatusUnknown');
-      const plan = Array.isArray(native.pluginExtensions)
-        ? native.pluginExtensions.find(
-            value =>
-              record(value) &&
-              value.pluginId === OpenClawExtensionId.PLAN_MODE &&
-              value.namespace === 'state',
-          )
-        : undefined;
-      if (
-        record(plan) &&
-        (parsePlanModeState(plan.value).enabled ||
-          (record(plan.value) && plan.value.awaitingReview))
-      )
+      if (describePlanningConstraint(native.pluginExtensions) !== PlanningConstraint.Unrestricted)
+        throw new Error('teamLaunchContractUnavailable');
+      const constraintIdentity = {
+        sessionKey: prepared.sessionKey,
+        nativeSessionId: prepared.gatewaySessionId,
+        lifecycleRevision: native.lifecycleRevision as string | null,
+      };
+      const constraints = await readPlanningSnapshot(
+        input => readSessionNamespace((method, params) => this.deps.requestGateway(method, params), input),
+        constraintIdentity,
+      );
+      assertCurrent();
+      if (!hasUnrestrictedPlanningSnapshot(constraints, constraintIdentity))
         throw new Error('teamLaunchContractUnavailable');
       const inspection = await this.deps.requestGateway<NativeInspection>(RPC.INSPECT, {
         sessionKey: prepared.sessionKey,
@@ -471,13 +516,16 @@ export class AgentTeamLaunchCoordinator {
         registered.state !== 'pending' ||
         registered.nativeSessionId !== pending.nativeSessionId ||
         !(registered.lifecycleRevision === null || id(registered.lifecycleRevision)) ||
-        registered.generation !== pending.expectedGeneration + 1
+        registered.generation !== pending.expectedGeneration + 1 ||
+        !record(registered.executionAdmission) || !id(registered.executionAdmission.id) ||
+        !Number.isSafeInteger(registered.executionAdmission.generation) || Number(registered.executionAdmission.generation) < 1
       )
         throw new Error('teamLaunchUnconfirmed');
       return this.update(pending, {
         registerAcknowledged: true,
         generation: Number(registered.generation),
         lifecycleRevision: registered.lifecycleRevision as string | null,
+        executionAdmission: { id: registered.executionAdmission.id, generation: Number(registered.executionAdmission.generation) },
       });
     } catch (error) {
       if (pending) {
@@ -627,10 +675,7 @@ export class AgentTeamLaunchCoordinator {
     if (!this.write(cancelled, loaded)) throw new Error('teamLaunchUnconfirmed');
     if (!receipt.cancelRequested) {
       try {
-        const result = await this.deps.requestGateway<{ state?: unknown }>(
-          RPC.CANCEL,
-          this.params(cancelled),
-        );
+        const result = await this.maintain(cancelled, 'revoke');
         if (result.state !== 'cancelled' && result.state !== 'released')
           throw new Error('teamLaunchUnconfirmed');
         this.update(cancelled, { state: result.state });
@@ -679,16 +724,7 @@ export class AgentTeamLaunchCoordinator {
         )
           return false;
         receipt = this.update(receipt, { abandonRequested: true });
-        const result = await this.deps.requestGateway<{ state?: unknown }>(RPC.ABANDON, {
-          ...this.params(receipt),
-          neverSubmitted: true,
-          expectedGeneration: receipt.expectedGeneration,
-          promptSha256: receipt.promptSha256,
-          mode: receipt.mode,
-          ...(receipt.lifecycleRevision !== undefined
-            ? { lifecycleRevision: receipt.lifecycleRevision }
-            : {}),
-        });
+        const result = await this.maintain(receipt, 'abandon', { neverSubmitted: true });
         if (result.state !== 'released') throw new Error('teamLaunchUnconfirmed');
         this.update(receipt, { state: 'released' });
         return true;
@@ -701,11 +737,9 @@ export class AgentTeamLaunchCoordinator {
       )
         return false;
       receipt = this.update(receipt, { releaseRequested: true });
-      const result = await this.deps.requestGateway<{ state?: unknown }>(RPC.RELEASE, {
-        ...this.params(receipt),
-        executionSettled: true,
-        dispatchCleanupComplete: true,
-      });
+      const cleanupReceiptId = `${receipt.clientTurnId}:${receipt.generation}:dispatcher-cleanup`;
+      await this.maintain(receipt, 'cleanup', { receiptId: cleanupReceiptId });
+      const result = await this.maintain(receipt, 'release', { receiptId: cleanupReceiptId });
       if (result.state !== 'released') throw new Error('teamLaunchUnconfirmed');
       this.update(receipt, { state: 'released' });
       return true;

@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 
+import { SESSION_NAMESPACE_METHOD } from '@runtime-services/sdk/session-namespace';
+import { EXECUTION_ADMISSION_MAINTENANCE_METHOD } from '@runtime-services/sdk/admission';
 import type Database from 'better-sqlite3';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -56,6 +58,7 @@ function fixture() {
     running: false,
     subagents: false,
     inputExists: false,
+    teamRegistered: true,
     sourceAccepted: false,
     guard: undefined as Record<string, unknown> | undefined,
     plan: undefined as unknown,
@@ -96,6 +99,7 @@ function fixture() {
   const request = vi.fn(async (method: string, raw?: unknown): Promise<unknown> => {
     const params = (raw ?? {}) as Record<string, unknown>;
     await state.before?.(method, params);
+    if (!state.teamRegistered && method.startsWith('agentTeam.')) throw new Error('Team native registration is absent');
     let result: unknown;
     if (method === 'sessions.describe')
       result = {
@@ -112,7 +116,38 @@ function fixture() {
               : [{ pluginId: 'plan-mode', namespace: 'state', value: state.plan }],
         },
       };
+    else if (method === SESSION_NAMESPACE_METHOD)
+      result = { ...params, present: state.plan !== undefined,
+        ...(state.plan !== undefined ? { value: state.plan } : {}) };
     else if (method === 'chat.history') result = structuredClone(state.history);
+    else if (method === EXECUTION_ADMISSION_MAINTENANCE_METHOD) {
+      const guard = state.guard;
+      if (!guard) throw new Error('No enrolled admission');
+      const receipt = () => ({ version: 2, id: `admission-${guard.generation}`, generation: guard.generation,
+        sessionKey: guard.sessionKey, sessionId: guard.nativeSessionId, runId: guard.clientTurnId,
+        lifecycleRevision: guard.lifecycleRevision, owner: { pluginId: 'agent-team', registrationId: 'fixture-owner', providerScope: 'fixture-provider' },
+        state: guard.state === 'released' ? 'released' : guard.state === 'cancelled' ? 'revoked' : 'held',
+        verified: ['verified', 'attempted', 'launched'].includes(String(guard.state)),
+        effectIssued: ['attempted', 'launched'].includes(String(guard.state)),
+        ...(guard.wholeSettled ? { sourceTerminal: { runId: guard.clientTurnId, sessionId: guard.nativeSessionId, phase: 'end', seq: 1, executionSettled: true } } : {}),
+      });
+      if (params.sessionKey !== guard.sessionKey || params.sessionId !== guard.nativeSessionId || params.runId !== guard.clientTurnId)
+        throw new Error('Admission identity changed');
+      if (params.operation !== 'inspect') {
+        if (params.id !== `admission-${guard.generation}` || params.generation !== guard.generation || params.lifecycleRevision !== guard.lifecycleRevision)
+          throw new Error('Admission generation changed');
+        if (params.operation === 'revoke') guard.state = 'cancelled';
+        else if (params.operation === 'cleanup') guard.cleanupReceipt = params.receiptId;
+        else if (params.operation === 'release') {
+          if (!guard.wholeSettled || guard.cleanupReceipt !== params.receiptId) throw new Error('Missing cleanup proof');
+          guard.state = 'released';
+        } else if (params.operation === 'abandon') {
+          if (state.inputExists || params.neverSubmitted !== true || guard.wholeSettled) throw new Error('Input exists');
+          guard.state = 'released';
+        } else throw new Error('Unsupported maintenance operation');
+      }
+      result = { receipt: receipt() };
+    }
     else if (method === 'agentTeam.launch.inspect')
       result = state.guard
         ? {
@@ -131,6 +166,7 @@ function fixture() {
         lifecycleRevision: 'native-revision',
         state: 'pending',
         generation: generation + 1,
+        executionAdmission: { id: `admission-${generation + 1}`, generation: generation + 1 },
         wholeSettled: false,
       };
       result = {
@@ -138,6 +174,7 @@ function fixture() {
         nativeSessionId,
         lifecycleRevision: 'native-revision',
         generation: generation + 1,
+        executionAdmission: { id: `admission-${generation + 1}`, generation: generation + 1 },
       };
     } else if (method === 'agentTeam.launch.abandon' && !state.guard) {
       if (params.expectedGeneration !== 0 || params.neverSubmitted !== true || state.inputExists)
@@ -177,7 +214,7 @@ function fixture() {
       } else throw new Error(`Unsupported fixture method ${method}`);
       result = { state: state.guard.state };
     }
-    if (state.lose.has(method)) throw new Error('lost reply');
+    if (state.lose.has(method) || state.lose.has(`${method}.${params.operation}`)) throw new Error('lost reply');
     return result;
   });
   const deps = {
@@ -188,6 +225,8 @@ function fixture() {
   };
   const coordinator = new AgentTeamLaunchCoordinator(deps);
   const count = (method: string) => request.mock.calls.filter(([name]) => name === method).length;
+  const countMaintenance = (operation: string) => request.mock.calls.filter(([name, params]) =>
+    name === EXECUTION_ADMISSION_MAINTENANCE_METHOD && (params as Record<string, unknown>).operation === operation).length;
   const start = async () => {
     await coordinator.register(input);
     coordinator.markSubmissionStarted(sessionId, clientTurnId);
@@ -202,6 +241,7 @@ function fixture() {
     coordinator,
     metadata,
     count,
+    countMaintenance,
     start,
     restart: () => new AgentTeamLaunchCoordinator(deps),
   };
@@ -427,7 +467,7 @@ describe('explicit Team launch operation ownership', () => {
     );
     expect(f.count('agentTeam.launch.register')).toBe(1);
     expect(await f.restart().releaseIfSettled(sessionId)).toBe(true);
-    expect(f.count('agentTeam.launch.abandon')).toBe(1);
+    expect(f.countMaintenance('abandon')).toBe(1);
   });
   it('allows no uncertain native registration to proceed after Stop while preparation yields', async () => {
     const f = fixture();
@@ -485,7 +525,7 @@ describe('explicit Team launch operation ownership', () => {
     const f = fixture();
     await f.start();
     await f.coordinator.cancel(sessionId, 'old-input');
-    expect(f.count('agentTeam.launch.cancel')).toBe(0);
+    expect(f.countMaintenance('revoke')).toBe(0);
     expect(f.metadata()?.cancelRequested).toBe(false);
   });
   it('does not invalidate a new preparation from a failure callback for the released previous intent', async () => {
@@ -508,11 +548,25 @@ describe('explicit Team launch operation ownership', () => {
       clientTurnId: 'new-input',
       registerAcknowledged: true,
     });
-    expect(f.count('agentTeam.launch.cancel')).toBe(0);
+    expect(f.countMaintenance('revoke')).toBe(0);
   });
 });
 
 describe('whole-run and native cleanup reconciliation', () => {
+  it('reconciles the enrolled source through generic maintenance after Team native registration is removed', async () => {
+    const f = fixture();
+    await f.start();
+    f.state.teamRegistered = false;
+    await f.coordinator.cancel(sessionId);
+    expect(f.countMaintenance('revoke')).toBe(1);
+    f.state.guard!.wholeSettled = true;
+    expect(await f.restart().releaseIfSettled(sessionId)).toBe(true);
+    expect(f.countMaintenance('cleanup')).toBe(1);
+    expect(f.countMaintenance('release')).toBe(1);
+    expect(f.request.mock.calls.filter(([method]) => method.startsWith('agentTeam.')).map(([method]) => method))
+      .toEqual(['agentTeam.launch.inspect', 'agentTeam.launch.register']);
+    expect(f.metadata()?.state).toBe('released');
+  });
   it.each(['final', 'attempt', 'missing-sid', 'other-sid', 'old-run'] as const)(
     'does not use %s as a whole-run terminal',
     async observation => {
@@ -531,7 +585,7 @@ describe('whole-run and native cleanup reconciliation', () => {
       f.coordinator.observeExecution(payload);
       expect(f.metadata()?.wholeSettled).toBe(false);
       expect(await f.coordinator.releaseIfSettled(sessionId)).toBe(false);
-      expect(f.count('agentTeam.launch.release')).toBe(0);
+      expect(f.countMaintenance('release')).toBe(0);
     },
   );
   it('requires the native exact terminal even when Main observed a whole terminal', async () => {
@@ -540,7 +594,7 @@ describe('whole-run and native cleanup reconciliation', () => {
     f.coordinator.observeExecution(event);
     expect(f.metadata()?.wholeSettled).toBe(true);
     expect(await f.coordinator.releaseIfSettled(sessionId)).toBe(false);
-    expect(f.count('agentTeam.launch.release')).toBe(0);
+    expect(f.countMaintenance('release')).toBe(0);
   });
   it('recovers native whole proof after restart and releases with consumed receipts only after cleanup', async () => {
     const f = fixture();
@@ -552,13 +606,9 @@ describe('whole-run and native cleanup reconciliation', () => {
     f.state.history.inputConsumptions = [{ runId: clientTurnId, consumedByEventId: 'input-event' }];
     expect(await f.restart().releaseIfSettled(sessionId)).toBe(true);
     expect(f.metadata()).toMatchObject({ state: 'released', wholeSettled: true });
-    expect(f.request).toHaveBeenCalledWith('agentTeam.launch.release', {
-      sessionKey,
-      nativeSessionId,
-      clientTurnId,
-      executionSettled: true,
-      dispatchCleanupComplete: true,
-    });
+    expect(f.request).toHaveBeenCalledWith(EXECUTION_ADMISSION_MAINTENANCE_METHOD,
+      expect.objectContaining({ operation: 'release', sessionKey, sessionId: nativeSessionId, runId: clientTurnId,
+        id: 'admission-1', generation: 1, lifecycleRevision: 'native-revision', receiptId: `${clientTurnId}:1:dispatcher-cleanup` }));
     await expect(
       f.coordinator.register({ ...input, clientTurnId: 'new-input' }),
     ).resolves.toMatchObject({ generation: 2 });
@@ -581,45 +631,46 @@ describe('whole-run and native cleanup reconciliation', () => {
       if (condition === 'receipt')
         f.state.history.inputReceipts = [{ runId: clientTurnId, state: 'pending' }];
       expect(await f.coordinator.releaseIfSettled(sessionId)).toBe(false);
-      expect(f.count('agentTeam.launch.release')).toBe(0);
+      expect(f.countMaintenance('release')).toBe(0);
     },
   );
   it('does not repeat an uncertain release write; an exact inspection resolves its acknowledgement', async () => {
     const f = fixture();
     await f.start();
     f.state.guard!.wholeSettled = true;
-    f.state.lose.add('agentTeam.launch.release');
+    f.state.lose.add(EXECUTION_ADMISSION_MAINTENANCE_METHOD + '.release');
     expect(await f.coordinator.releaseIfSettled(sessionId)).toBe(false);
     expect(f.metadata()?.state).toBe('unknown');
     expect(await f.coordinator.releaseIfSettled(sessionId)).toBe(true);
-    expect(f.count('agentTeam.launch.release')).toBe(1);
+    expect(f.countMaintenance('release')).toBe(1);
   });
   it('abandon-releases only an exact never-sent intent, never a lost chat.send acknowledgement', async () => {
     const f = fixture();
     await f.coordinator.register(input);
     expect(await f.coordinator.releaseIfSettled(sessionId)).toBe(true);
     expect(f.request).toHaveBeenCalledWith(
-      'agentTeam.launch.abandon',
+      EXECUTION_ADMISSION_MAINTENANCE_METHOD,
       expect.objectContaining({
-        expectedGeneration: 0,
+        operation: 'abandon', id: 'admission-1', generation: 1,
         neverSubmitted: true,
-        promptSha256: createHash('sha256').update(prompt).digest('hex'),
       }),
     );
     const started = fixture();
     await started.start();
     expect(await started.coordinator.releaseIfSettled(sessionId)).toBe(false);
-    expect(started.count('agentTeam.launch.abandon')).toBe(0);
+    expect(started.countMaintenance('abandon')).toBe(0);
   });
-  it('uses an absent generation tombstone after a pre-commit register loss rather than re-registering', async () => {
+  it('keeps a lost registration unknown when no enrolled admission can be proven', async () => {
     const f = fixture();
     f.state.before = async method => {
       if (method === 'agentTeam.launch.register') throw new Error('transport closed before commit');
     };
     await expect(f.coordinator.register(input)).rejects.toThrow('transport closed');
     f.state.before = undefined;
-    expect(await f.coordinator.releaseIfSettled(sessionId)).toBe(true);
-    expect(f.state.guard).toMatchObject({ generation: 1, state: 'released', clientTurnId });
+    expect(await f.coordinator.releaseIfSettled(sessionId)).toBe(false);
+    expect(f.state.guard).toBeUndefined();
+    expect(f.metadata()?.state).toBe('unknown');
+    expect(f.countMaintenance('abandon')).toBe(0);
     expect(f.count('agentTeam.launch.register')).toBe(1);
   });
   it('point-checks cleanup with the current explicit native revision and never lists sessions', async () => {
@@ -640,8 +691,8 @@ describe('whole-run and native cleanup reconciliation', () => {
       await f.coordinator.register(input);
       f.state.lifecycleRevision = revision;
       expect(await f.coordinator.releaseIfSettled(sessionId)).toBe(false);
-      expect(f.count('agentTeam.launch.abandon')).toBe(0);
-      expect(f.count('agentTeam.launch.release')).toBe(0);
+      expect(f.countMaintenance('abandon')).toBe(0);
+      expect(f.countMaintenance('release')).toBe(0);
       expect(f.count('sessions.list')).toBe(0);
     },
   );
@@ -650,7 +701,7 @@ describe('whole-run and native cleanup reconciliation', () => {
     await f.coordinator.register(input);
     f.coordinator.markSubmissionStarted(sessionId, clientTurnId);
     expect(await f.coordinator.releaseIfSettled(sessionId)).toBe(false);
-    expect(f.count('agentTeam.launch.abandon')).toBe(0);
+    expect(f.countMaintenance('abandon')).toBe(0);
     expect(await f.coordinator.abortBeforeSend(sessionId, clientTurnId)).toBe(true);
     expect(f.metadata()).toMatchObject({
       state: 'released',
@@ -663,7 +714,7 @@ describe('whole-run and native cleanup reconciliation', () => {
     await f.start();
     expect(await f.coordinator.abortBeforeSend(sessionId, clientTurnId)).toBe(false);
     expect(await f.coordinator.abortBeforeSend(sessionId, 'old-input')).toBe(false);
-    expect(f.count('agentTeam.launch.cancel')).toBe(0);
+    expect(f.countMaintenance('revoke')).toBe(0);
     expect(f.metadata()?.submissionStarted).toBe(true);
   });
   it('keeps the guard unknown if a purported pre-send abort finds exact native input facts', async () => {
@@ -674,7 +725,7 @@ describe('whole-run and native cleanup reconciliation', () => {
     expect(await f.coordinator.abortBeforeSend(sessionId, clientTurnId)).toBe(false);
     expect(f.metadata()?.state).toBe('unknown');
     expect(await f.coordinator.releaseIfSettled(sessionId)).toBe(false);
-    expect(f.count('agentTeam.launch.abandon')).toBe(1);
+    expect(f.countMaintenance('abandon')).toBe(1);
   });
   it('does not upgrade a stale product intent to a mismatched native generation', async () => {
     const f = fixture();
@@ -683,19 +734,19 @@ describe('whole-run and native cleanup reconciliation', () => {
     f.state.guard!.generation = 9;
     expect(await f.coordinator.releaseIfSettled(sessionId)).toBe(false);
     expect(f.metadata()?.generation).toBe(1);
-    expect(f.count('agentTeam.launch.release')).toBe(0);
+    expect(f.countMaintenance('release')).toBe(0);
   });
   it('narrows cancellation synchronously, preserves unknown after a lost cancel ACK, and never retries it', async () => {
     const f = fixture();
     await f.start();
-    f.state.lose.add('agentTeam.launch.cancel');
+    f.state.lose.add(EXECUTION_ADMISSION_MAINTENANCE_METHOD + '.revoke');
     const cancelled = f.coordinator.cancel(sessionId);
     expect(f.metadata()).toMatchObject({ state: 'cancelled', cancelRequested: true });
     expect(() => f.coordinator.markSubmissionStarted(sessionId, clientTurnId)).toThrow();
     await cancelled;
     expect(f.metadata()?.state).toBe('unknown');
     await f.coordinator.cancel(sessionId);
-    expect(f.count('agentTeam.launch.cancel')).toBe(1);
+    expect(f.countMaintenance('revoke')).toBe(1);
     expect(await f.coordinator.releaseIfSettled(sessionId)).toBe(false);
   });
 });

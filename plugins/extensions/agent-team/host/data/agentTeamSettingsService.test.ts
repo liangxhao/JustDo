@@ -78,7 +78,7 @@ it('freezes the user-round budget, charges failures and unknowns, and checks ded
   const value = defaultAgentTeamSettings();
   value.collaboration.messageBudget = 4;
   service.save(value, 0);
-  collaboration.beginRound('peer', 'first');
+  collaboration.beginRound('peer', 'first', 'a');
   const send = (call: string) =>
     collaboration.enqueue('peer', 'first', 'agent:alice:justdo:a', call, 'origin', {
       to: 'bob',
@@ -94,9 +94,9 @@ it('freezes the user-round budget, charges failures and unknowns, and checks ded
   expect(send('one').id).toBe(first.id);
   value.collaboration.messageBudget = 16;
   service.save(value, 1);
-  collaboration.beginRound('peer', 'first');
+  collaboration.beginRound('peer', 'first', 'a');
   expect(() => send('five')).toThrow('collaborationBudgetExceeded');
-  collaboration.beginRound('peer', 'next');
+  collaboration.beginRound('peer', 'next', 'a');
   for (let i = 0; i < 5; i++)
     collaboration.enqueue('peer', 'next', 'agent:alice:justdo:a', `next-${i}`, 'origin', {
       to: 'bob',

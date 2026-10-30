@@ -1,5 +1,5 @@
 import { stripCollaborationContinuation } from './collaborationContinuationPrompt';
-import { unwrapAppInput } from '../../runtime-services/contracts/app-input';
+import { unwrapAppInput } from '@runtime-services/sdk/app-input';
 
 export const AGENT_TEAM_MODE = { GROUP: 'group', TASK: 'task' } as const;
 export type AgentTeamMode = (typeof AGENT_TEAM_MODE)[keyof typeof AGENT_TEAM_MODE];
@@ -17,7 +17,7 @@ function modeInstruction(mode: AgentTeamMode): string {
     'The user explicitly selected Agent Team for this message. Read and follow the agent-team skill. If the objective and essential context are sufficiently clear, promptly use the selected Agent Team tools to organize and start the team; do not add unnecessary preliminary analysis or planning. Only when material uncertainty or missing context prevents a reliable handoff, use normally available tools as needed to inspect materials, research, analyze requirements or prepare a preliminary plan under existing permissions and approvals. Resolve only the necessary gaps, then promptly return to the selected Team tools; do not stop after analysis or a plan. This selection grants no additional access. Do not complete the delegated work yourself or substitute another mode. Discover enabled assistants with task_assistants; use exact returned identities. Organize the team from the user objective and any relevant preparation findings. If unavailable or insufficient assistants, explain the blocker instead of claiming a team was created.';
   return mode === AGENT_TEAM_MODE.GROUP
     ? `${common}\nSelected mode: group discussion. Use team_discussion action=create to start a linked discussion from this main conversation. Let participants exchange perspectives; do not execute proposed changes merely because discussion was requested. ${GROUP_PARTICIPATION_INSTRUCTION}`
-    : `${common}\nSelected mode: task collaboration. Use task_assistants to prepare persistent task peers and sessions_send to delegate bounded work using their exact session keys. Follow dependencies and acceptance checks. Do not replace task collaboration with team_discussion or temporary sessions_spawn workers.`;
+    : `${common}\nSelected mode: task collaboration. Use task_assistants to prepare persistent task peers and sessions_send to delegate bounded work using their exact session keys. Include the returned organizer identity, the complete relay stages, each next recipient and the stopping condition in every handoff. The last member must explicitly return results to the organizer; a member final answer alone does not reach this conversation. Collect required results and checks, then call task_assistants({seal:true}) before the final user-facing answer. Follow dependencies and acceptance checks. Do not replace task collaboration with team_discussion or temporary sessions_spawn workers.`;
 }
 
 const TEAM_HANDOFF_INSTRUCTION =

@@ -1,10 +1,9 @@
 import { randomUUID } from 'node:crypto';
 
-import { blocksWorkflowStartDuringTeamLaunch } from '../../runtime-services/agent-team/launch/agent-team-launch-state';
 import {
   captureFilesystemAdmission,
   type FilesystemAdmission,
-} from '../../runtime-services/filesystem/admission';
+} from '@runtime-services/sdk/filesystem';
 import { registerBatchApi, RESULT_TOOL } from '../batch/api';
 import { candidateItemResult } from '../batch/snapshot';
 import { FLOW_LIMITS, FLOW_MANAGEMENT_TOOLS, FLOW_RPC, FLOW_TOOLS } from '../contracts/flow';
@@ -212,18 +211,25 @@ export function registerWorkflowResultTools(context: WorkflowContext): void {
 }
 
 export function registerWorkflowStartTool(context: WorkflowContext): void {
-  const { api, state, rpc } = context;
+  const { api, state, rpc, runtimeServices, prepareRuntimeServices } = context;
   api.registerTool(
     {
       contextVersion: 2,
       create: ctx => {
         if (!managed(ctx.sessionKey)) return null;
-        const competingTeamLaunch = () =>
-          blocksWorkflowStartDuringTeamLaunch(api.runtime.state.resolveStateDir(), {
+        const projection = runtimeServices.captureExecutionAdmission();
+        if (!projection) {
+          // Only prepare a read binding. A later native factory can capture it;
+          // this invocation neither publishes a tool nor launches work.
+          void prepareRuntimeServices();
+          return null;
+        }
+        const hasExecutionAdmissionConflict = () =>
+          projection.readExecutionAdmission({
             sessionKey: ctx.sessionKey!,
             sessionId: ctx.sessionId,
-          });
-        if (competingTeamLaunch()) return null;
+          }).state !== 'clear';
+        if (hasExecutionAdmissionConflict()) return null;
         return {
           name: 'swarm_workflow_start',
           label: 'Start Swarm Workflow task flow',
@@ -268,8 +274,9 @@ export function registerWorkflowStartTool(context: WorkflowContext): void {
             const assertCurrent = () => {
               signal?.throwIfAborted();
               ctx.assertInvocationCurrent();
-              if (competingTeamLaunch())
-                throw new Error('Agent Team is the selected execution mode for this request.');
+              if (!projection.isCurrent()) throw new Error('Runtime Services capability is retired.');
+              if (hasExecutionAdmissionConflict())
+                throw new Error('Another execution admission is holding this source.');
               const current = entry(ctx.sessionKey!);
               if (
                 generation !== state.generation ||

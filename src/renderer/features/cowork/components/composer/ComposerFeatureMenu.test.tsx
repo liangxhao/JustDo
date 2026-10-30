@@ -1,5 +1,4 @@
 // @vitest-environment jsdom
-import { OpenClawExtensionId } from '@shared/plugins/nativeIds';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, expect, test, vi } from 'vitest';
 
@@ -120,7 +119,7 @@ test('Swarm registers its own label, selection and action without changing menu 
     ],
     {
       loaded: true,
-      enabled: new Map([[OpenClawExtensionId.SWARM_WORKFLOW, true]]),
+      enabled: new Map([['swarm-workflow', true]]),
       disabledRevisions: new Map(),
     },
   );
@@ -143,7 +142,7 @@ test('does not register Swarm while its plugin is disabled even with a selected 
       ],
       {
         loaded: true,
-        enabled: new Map([[OpenClawExtensionId.SWARM_WORKFLOW, false]]),
+        enabled: new Map([['swarm-workflow', false]]),
         disabledRevisions: new Map(),
       },
     ),
@@ -154,7 +153,7 @@ test('does not register Swarm while its plugin is disabled even with a selected 
 test('plugin entries are independently gated and built-in entries do not require a plugin', () => {
   const select = vi.fn();
   const registrations = [
-    { ...item('Swarm'), extensionId: OpenClawExtensionId.SWARM_WORKFLOW },
+    { ...item('Swarm'), extensionId: 'swarm-workflow' },
     { ...item('Other'), extensionId: 'another-plugin', onSelect: select },
     { ...item('Other action'), extensionId: 'another-plugin' },
     item('Built-in'),
@@ -236,8 +235,8 @@ test('registers Swarm and both Team modes in one menu with independent actions',
     {
       loaded: true,
       enabled: new Map([
-        [OpenClawExtensionId.SWARM_WORKFLOW, true],
-        [OpenClawExtensionId.AGENT_TEAM, true],
+        ['swarm-workflow', true],
+        ['agent-team', true],
       ]),
       disabledRevisions: new Map(),
     },
@@ -263,7 +262,7 @@ test('removing Team while its submenu is open preserves the attachment action', 
   const team = buildAgentTeamFeature('group', selectTeam);
   const settings = (enabled: boolean): ExtensionEnablement => ({
     loaded: true,
-    enabled: new Map([[OpenClawExtensionId.AGENT_TEAM, enabled]]),
+    enabled: new Map([['agent-team', enabled]]),
     disabledRevisions: new Map(),
   });
   const view = render(

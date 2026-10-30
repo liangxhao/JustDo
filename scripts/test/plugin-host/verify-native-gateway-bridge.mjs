@@ -12,7 +12,7 @@ import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 import { build } from 'esbuild';
-import { APP_NATIVE_UNKNOWN_OUTCOME } from '../../../packages/app-plugin-sdk/native-contract.ts';
+import { APP_NATIVE_UNKNOWN_OUTCOME } from '../../../plugins/sdk/app-plugin-sdk/native-contract.ts';
 import { buildAppPlugin } from '../../plugins/build-app-plugins.mjs';
 
 const repo = path.resolve(import.meta.dirname, '../../..');

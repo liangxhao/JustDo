@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import type { CoworkSession, SessionRunTiming } from '@app-plugin/sdk/application';
 import { configureStore } from '@reduxjs/toolkit';
 import {
   act,
@@ -14,14 +15,12 @@ import { type ReactNode, useEffect } from 'react';
 import { Provider } from 'react-redux';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { CoworkSession, SessionRunTiming } from '@app-plugin/sdk/application';
-import { i18nService } from '@/services/i18n';
-
+import { i18nService } from '../../../tests/fixtures/i18n';
 import type { CollaborationReview, CollaborationSnapshot } from '../../contracts/collaboration';
 
 const memberController = vi.hoisted(() => ({ ready: true }));
 const availability = vi.hoisted(() => ({ enabled: true }));
-vi.mock('@/features/plugins/extensions/useExtensionEnablement', () => ({
+vi.mock('../../../tests/fixtures/extensions', () => ({
   useExtensionEnabled: () => availability.enabled,
   useExtensionAvailability: () => ({ enabled: availability.enabled, disabledRevision: 0 }),
 }));
@@ -29,7 +28,7 @@ beforeEach(() => {
   availability.enabled = true;
 });
 
-vi.mock('@/features/cowork/coworkService', () => ({
+vi.mock('../../../tests/fixtures/coworkService', () => ({
   coworkService: { loadSessions: vi.fn().mockResolvedValue(undefined) },
 }));
 vi.mock('./CollaborationMemberHistory', () => ({
@@ -63,7 +62,7 @@ vi.mock('./CollaborationMemberHistory', () => ({
   },
 }));
 vi.mock(
-  '../../../../../../src/renderer/features/cowork/components/composer/speech/LocalSpeechInputButton',
+  '../../../tests/fixtures/speech',
   () => ({ LocalSpeechInputButton: () => null }),
 );
 import type { CollaborationContinueRequest } from './collaborationContinueDraft';

@@ -55,7 +55,7 @@ import {
   type PermissionMode,
   resolvePermissionMode,
 } from '../../shared/security/approvals';
-import { isTeamDiscussionHoldingSessionKey } from '../openclaw/sessions/openclawSessionKeys';
+import { isCustodySessionKey } from '../openclaw/sessions/openclawSessionKeys';
 import { readSessionDirectory, readSessionSummaryProjection } from './coworkSessionDirectory';
 
 // Default working directory for new users
@@ -838,8 +838,8 @@ export class CoworkStore {
   }
 
   bindNativeSession(sessionId: string, sessionKey: string, parentSessionId: string | null): void {
-    if (isTeamDiscussionHoldingSessionKey(sessionKey))
-      throw new Error('teamDiscussionInvalidInput');
+    if (isCustodySessionKey(sessionKey))
+      throw new Error('coworkReservedSession');
     this.db
       .prepare(
         'UPDATE cowork_sessions SET native_session_key = ?, native_parent_session_id = ? WHERE id = ?',
@@ -854,8 +854,8 @@ export class CoworkStore {
     cwd: string,
     permissionMode: PermissionMode = parent.permissionMode,
   ): CoworkSession {
-    if (isTeamDiscussionHoldingSessionKey(sessionKey))
-      throw new Error('teamDiscussionInvalidInput');
+    if (isCustodySessionKey(sessionKey))
+      throw new Error('coworkReservedSession');
     return this.db.transaction(() => {
       const existing = this.getSessionByNativeKey(sessionKey);
       if (existing) return existing;

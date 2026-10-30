@@ -264,7 +264,7 @@ plugin disabled. The synthetic model invokes the exact core `show_widget`
 through `tool_call` with generic HTML, checking the dispatcher envelope,
 authenticated view and history/restart without duplicate execution.
 
-`node scripts/openclaw/agent-team/probe-agent-team-routing.mjs <runtime-directory>` compares
+`node plugins/extensions/agent-team/scripts/openclaw/probe-agent-team-routing.mjs <runtime-directory>` compares
 ordinary group broadcast routing with a public `runGroupThread` callback that
 preserves an organizer's source session. It uses isolated temporary state and a
 deterministic dispatcher; no Gateway or provider is started. Assertions cover
@@ -354,7 +354,7 @@ uninstaller generation/signing, extracts the shell under the selected installati
 root and removes the installer EXE copy into the AppData updater cache. Do not use
 `nsis.script` for this composition: that skips native uninstaller generation.
 
-`node scripts/openclaw/agent-team/probe-agent-team-source.mjs <runtime-directory>` runs an
+`node plugins/extensions/agent-team/scripts/openclaw/probe-agent-team-source.mjs <runtime-directory>` runs an
 isolated Gateway and local fixture model to verify source-session tool limits,
 queueing, cancellation and delivery identity. The original channel path is a
 negative control: its top-level routePreserved=false is expected; the internal
@@ -379,7 +379,7 @@ An owner-only update with the same session ID/revision must invalidate the live 
 stale initial reads and lifecycle replacement must also fail. It retains synthetic evidence
 under `.agent-tasks/runtime/plugin-session-current/` and never starts a Gateway.
 
-`node scripts/openclaw/agent-team/probe-agent-team-peer-return.mjs <runtime-directory>`
+`node plugins/extensions/agent-team/scripts/openclaw/probe-agent-team-peer-return.mjs <runtime-directory>`
 runs a local fixture model and isolated Gateway with a scoped exact-session send
 grant. It verifies repeated writer results start actual organizer executions and
 receive whole-run terminals under concurrent history/list reads. Run it with the
@@ -393,7 +393,7 @@ The contention probe imports the current 025 transformer. See the
 cases and the remaining validation scope. Historical 10.4 Node/Electron results
 remain in their own upgrade record and do not establish target-version acceptance.
 
-`node scripts/openclaw/agent-team/probe-agent-team-gateway.mjs <runtime-directory>` additionally
+`node plugins/extensions/agent-team/scripts/openclaw/probe-agent-team-gateway.mjs <runtime-directory>` additionally
 exercises the production team extension with Main coordinators: model-created
 rooms, automatic summaries, source participation/mentions, public native history
 surviving source deletion, history rejection after disable and restoration after re-enable,
@@ -402,17 +402,17 @@ Use `--history-toggle-only` to isolate history RPC registration, disabled receip
 reconciliation and restored native history after re-enabling.
 Concurrency metrics use public native lifecycle events; queued cancellation and
 source participation share the production permit pool. `node
-scripts/test/agent-team/probe-agent-team-ui.cjs` delegates to the independent built Browser artifact probe: real shared React,
+plugins/extensions/agent-team/scripts/test/probe-agent-team-ui.cjs` delegates to the independent built Browser artifact probe: real shared React,
 registered Team/Workflow views and modes, fixture application/Gateway ports.
 It no longer imports removed application feature components.
 
-`node scripts/openclaw/agent-team/probe-agent-team-settings.mjs <runtime-directory>` verifies
+`node plugins/extensions/agent-team/scripts/openclaw/probe-agent-team-settings.mjs <runtime-directory>` verifies
 the public group SDK's per-request strategy, turn budget, mention and cancellation
 behavior with a bounded delayed fixture dispatcher. It measures dispatcher
 concurrency, not real model execution or whole-run outcomes; see
 `docs/features/assistants/agent-team.md` for production acceptance gates.
 
-`node scripts/test/agent-team/verify-group-discussion-runtime.mjs [runtime-directory]`
+`node plugins/extensions/agent-team/scripts/test/verify-group-discussion-runtime.mjs [runtime-directory]`
 uses disposable state and a loopback model with the bundled group and summary RPCs.
 It verifies broadcast, native `NO_REPLY` without empty-answer retries, early completion
 of a silent round, exact mentions, borrowed-source identity, source summary, whole-group
@@ -429,6 +429,30 @@ SDK and actual built Main/Chromium smoke probes. Additional isolated negative co
 stop, native execution receipts, resource veto and structured input. See
 `docs/architecture/17-app-plugin-host.md` for supported scope and remaining acceptance.
 
+The implementation lives in `plugins/sdk/app-plugin-build/`, distributed as
+`@app-plugin/build`; the public App SDK source is `plugins/sdk/app-plugin-sdk/`. It resolves
+installed SDK exports and the public theme preset, without ancestor tsconfig source
+aliases. `plugins:runtime:sdk` emits the separate Runtime Services library into
+`build/runtime-services-sdk`; preparation and pack commands are in
+`docs/offline-downloads.md`. Each app plugin declares its dependencies and has its own
+Vitest configuration. Default `npm test` discovers those suites and runs them after
+Core tests; explicit `tests/host/` boundaries remain in the Core integration profile.
+
+Required Runtime Services now publishes a pinned, read-only capability binding.
+After changing its source, prepare runtime resources before launching the application
+(`npm run openclaw:resources` or the full prepared-runtime development command).
+Resource assembly verifies the frozen native runtime before emitting the private
+managed-execution profile for its actual bundle. App companion preparation alone
+does not upgrade a previously prepared Required Service or authorize unknown native
+capabilities. No runtime patch is added by this SDK extraction.
+
+The optional source conformance profile uses an explicit `OPENCLAW_SOURCE_ROOT` and
+`plugins/extensions/runtime-services/tests/sdk/native-routing.vitest.config.mts`.
+It exercises real native registry, authorization, dispatcher and public background
+context implementations, with synthetic clients and state; it does not start a
+listening Gateway or a model. The optional unused-dependency shim flag only makes
+unreached third-party branches throw in an incomplete development dependency tree.
+
 Runtime resource preparation and Electron startup build current app companions through
 their npm lifecycle hooks. Native resource sync copies the complete built package so
 the executed native entry matches its companion's binding. When invoking
@@ -439,3 +463,29 @@ missing artifacts fail explicitly rather than rebuilding a different native entr
 manager, registry and journal SQL with private in-memory SQLite and a fixture native
 identity. A failed resource inventory must retain its business/deletion fence after
 a package preflight veto; this probe does not start a Gateway or use user state.
+
+## Optional app plugin probes
+
+Business probes travel with their owning plugin under `plugins/extensions/<id>/scripts/`.
+Before explicitly running a plugin integration probe, set `APP_PLUGIN_HOST_ROOT` to the
+host checkout. The probe resolves its own plugin sources relative to its script;
+it does not search a sibling plugin repository or import application source by a fixed
+relative path. Native probes still require an explicitly prepared runtime and retain
+their original isolated-state and exact identity checks.
+
+`npm run plugins:app:verify` discovers the app manifests actually present under
+`plugins/extensions`. `APP_PLUGIN_PROBE_SOURCE_ROOT` selects a different source root
+explicitly, and `APP_PLUGIN_PROBE_IDS` selects a comma-separated subset; a requested
+missing or broken package fails. With no optional app plugins, the Main and Browser
+probes verify the real empty registries and report an empty tested-plugin list.
+
+Historical paired Team/Workflow behavior and UI-baseline checks live under
+`plugins/extensions/agent-team/scripts/test/verify-paired-*.mjs`. Those explicit
+integration scenarios require `APP_PLUGIN_PROBE_SOURCE_ROOT` containing both subjects;
+they are independent of the default Core verification command.
+
+Team native send validation is
+`plugins/extensions/agent-team/scripts/test/run-send-contracts.cjs`.
+Workflow native send and smoke probes, and its resource verifier, are under
+`plugins/extensions/swarm-workflow/scripts/`. Neither plugin's source or probe
+is required to build, start or test the Core application.
