@@ -289,6 +289,7 @@ export class SqliteStore {
         error TEXT,
         delivery_status TEXT,
         delivery_error TEXT,
+        metadata_json TEXT NOT NULL DEFAULT '{}',
         started_at INTEGER NOT NULL,
         finished_at INTEGER,
         duration_ms INTEGER,
@@ -316,6 +317,16 @@ export class SqliteStore {
         deleted_at INTEGER NOT NULL
       );
     `);
+    // Additive product receipt metadata preserves existing users' results/read state.
+    // Native session databases and historical product schemas are not migrated here.
+    const receiptColumns = this.db
+      .prepare('PRAGMA table_info(scheduled_task_run_receipts)')
+      .all() as Array<{ name: string }>;
+    if (!receiptColumns.some(column => column.name === 'metadata_json')) {
+      this.db.exec(
+        "ALTER TABLE scheduled_task_run_receipts ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}'",
+      );
+    }
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_cowork_sessions_agent_order
       ON cowork_sessions(agent_id, pinned DESC, updated_at DESC);
@@ -370,15 +381,12 @@ export class SqliteStore {
       console.warn(`[SqliteStore] Failed to parse stored JSON for ${key}`);
       return undefined;
     }
-    return (
-      key === 'app_config' ? transformAppConfigCredentials(value) : value
-    ) as T;
+    return (key === 'app_config' ? transformAppConfigCredentials(value) : value) as T;
   }
 
   set<T = unknown>(key: string, value: T): void {
     const oldValue = this.get<T>(key);
-    const persistedValue =
-      key === 'app_config' ? transformAppConfigCredentials(value) : value;
+    const persistedValue = key === 'app_config' ? transformAppConfigCredentials(value) : value;
     const now = Date.now();
     this.db
       .prepare(

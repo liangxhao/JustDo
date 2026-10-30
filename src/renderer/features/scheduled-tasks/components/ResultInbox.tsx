@@ -9,9 +9,7 @@ import {
   TrashIcon,
   UserIcon,
 } from '@heroicons/react/24/outline';
-import { isMissingExternalChannelError } from '@shared/scheduledTask/deliveryError';
 import {
-  getHeartbeatSkippedReason,
   isRoutineScheduledTaskResult,
   isSilentScheduledTaskResult,
 } from '@shared/scheduledTask/resultPresentation';
@@ -27,6 +25,7 @@ import {
 import { i18nService } from '@/services/i18n';
 import type { RootState } from '@/store';
 
+import RunDiagnostics from './RunDiagnostics';
 import { getTaskAgentLabel, getTaskDisplayName } from './utils';
 
 function formatDuration(durationMs: number | null): string {
@@ -98,10 +97,6 @@ function formatResultTime(value: string): string {
     second: '2-digit',
     hour12: false,
   }).format(new Date(value));
-}
-
-function isDisabledResultError(result: ScheduledTaskResult): boolean {
-  return result.status === 'skipped' && result.error?.trim().toLowerCase() === 'disabled';
 }
 
 export function isResultTaskDeleted(
@@ -212,15 +207,6 @@ const ResultInbox: React.FC = () => {
   const openResult = (result: ScheduledTaskResult) => {
     void scheduledTaskService.markResultRead(result.id);
     if (result.status !== 'skipped' && result.sessionKey) setViewingResult(result);
-  };
-
-  const shouldShowDeliveryError = (result: ScheduledTaskResult): boolean => {
-    if (!result.deliveryError) return false;
-    // OpenClaw can retain this routing error on otherwise successful runs,
-    // including runs created before in-app delivery became the default. It is
-    // not actionable in the result inbox and must not depend on task-list
-    // refresh timing or the task's current delivery configuration.
-    return !isMissingExternalChannelError(result.deliveryError);
   };
 
   const confirmDeleteResult = async () => {
@@ -640,11 +626,6 @@ const ResultInbox: React.FC = () => {
                                     {t('scheduledTasksResultsRoutine')}
                                   </span>
                                 )}
-                                {isDisabledResultError(result) && (
-                                  <span className="text-xs font-medium text-red-600 dark:text-red-400">
-                                    {result.error}
-                                  </span>
-                                )}
                                 <span className="text-xs text-secondary">
                                   {formatResultTime(result.startedAt)} ·{' '}
                                   {formatDuration(result.durationMs)}
@@ -711,41 +692,17 @@ const ResultInbox: React.FC = () => {
                               </div>
                             </div>
                             {result.status === 'success' &&
-                            isSilentScheduledTaskResult(result.summary) ? (
+                            isSilentScheduledTaskResult(result.summary) &&
+                            isRoutineScheduledTaskResult(result) ? (
                               <p className="mt-2 line-clamp-3 whitespace-pre-wrap text-sm text-secondary">
                                 {t('scheduledTasksResultsSilent')}
                               </p>
-                            ) : result.summary ? (
+                            ) : result.summary && !isSilentScheduledTaskResult(result.summary) ? (
                               <p className="mt-2 line-clamp-3 whitespace-pre-wrap text-sm text-secondary">
                                 {result.summary}
                               </p>
                             ) : null}
-                            {result.systemManaged === true &&
-                            getHeartbeatSkippedReason(result.error) ? (
-                              <p className="mt-2 line-clamp-2 text-sm text-secondary">
-                                {t(
-                                  getHeartbeatSkippedReason(result.error) === 'no-route'
-                                    ? 'scheduledTasksResultsHeartbeatNoRoute'
-                                    : 'scheduledTasksResultsHeartbeatSkipped',
-                                )}
-                              </p>
-                            ) : (
-                              result.error &&
-                              !isDisabledResultError(result) && (
-                                <p className="mt-2 line-clamp-2 text-sm text-red-600 dark:text-red-400">
-                                  {result.error}
-                                </p>
-                              )
-                            )}
-                            {shouldShowDeliveryError(result) && (
-                              <div className="mt-2 flex items-start gap-2 text-sm text-yellow-700 dark:text-yellow-400">
-                                <ExclamationTriangleIcon className="mt-0.5 h-4 w-4 shrink-0" />
-                                <span>
-                                  {t('scheduledTasksResultsDeliveryWarning')}:{' '}
-                                  {result.deliveryError}
-                                </span>
-                              </div>
-                            )}
+                            <RunDiagnostics run={result} compact className="mt-2" />
                           </div>
                         </div>
                       </article>

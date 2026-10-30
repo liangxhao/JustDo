@@ -3,6 +3,7 @@ import type {
   ScheduledTaskResult,
   ScheduledTaskResultUpsertedEvent,
   ScheduledTaskRunEvent,
+  ScheduledTaskStatusEvent,
 } from '@shared/scheduledTask/types';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
@@ -354,6 +355,28 @@ describe('ScheduledTaskService', () => {
     store.dispatch(setRuns({ taskId: 'live-task', runs: [], hasMore: false, nextOffset: null }));
     onRun?.({ run: liveRun });
     expect(store.getState().scheduledTask.runs['live-task']).toEqual([liveRun]);
+  });
+
+  test('applies a complete native task snapshot when execution automatically disables a task', () => {
+    let onStatus: ((event: ScheduledTaskStatusEvent) => void) | undefined;
+    const subscribe = () => () => undefined;
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      value: { electron: { scheduledTasks: {
+        onStatusUpdate: (callback: typeof onStatus) => { onStatus = callback; return () => undefined; },
+        onRunUpdate: subscribe, onResultUpserted: subscribe, onUnreadCountChanged: subscribe, onRefresh: subscribe,
+      } } },
+    });
+    const service = new ScheduledTaskService();
+    (service as unknown as { setupListeners: () => void }).setupListeners();
+    const task = createTask();
+    store.dispatch(setTasks([task]));
+    const changed = createTask({
+      enabled: false, configRevision: 'latest',
+      state: { ...task.state, autoDisabled: { reason: 'consecutive-failures', atMs: 100, consecutiveErrors: 5 } },
+    });
+    onStatus?.({ taskId: task.id, state: changed.state, task: changed });
+    expect(store.getState().scheduledTask.tasks[0]).toEqual(changed);
   });
 
   test('rejects a failed toggle and reloads the authoritative task list', async () => {

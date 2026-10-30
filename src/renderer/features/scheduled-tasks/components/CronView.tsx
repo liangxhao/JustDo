@@ -17,7 +17,6 @@ import {
   PencilSquareIcon,
   PlayIcon,
   PlusIcon,
-  SparklesIcon,
   TrashIcon,
   UserIcon,
   XCircleIcon,
@@ -28,12 +27,11 @@ import {
   ScheduledTaskPermission,
 } from '@shared/scheduledTask/permissions';
 import type {
-  EditableSchedule,
-  Schedule,
   ScheduledTask,
   ScheduledTaskChannelOption,
   ScheduledTaskInput,
   ScheduledTaskRun,
+  ScheduledTaskUpdateInput,
 } from '@shared/scheduledTask/types';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSelector } from 'react-redux';
@@ -55,7 +53,6 @@ import {
   getTaskExecutionPreview,
   getTaskPromptText,
   isMemoryDreamingTask,
-  isSkillCollectionReviewTask,
 } from '@/features/scheduled-tasks/components/utils';
 import { scheduledTaskService } from '@/features/scheduled-tasks/scheduledTaskService';
 import { i18nService } from '@/services/i18n';
@@ -68,18 +65,31 @@ import {
   useMemoryDreamingControl,
   withMemoryDreamingCard,
 } from './memoryDreamingControl';
-import SchedulerSettingsDialog from './SchedulerSettingsDialog';
+import type { IntervalUnit, RecurrenceKind, ScheduleFormState, ScheduleMode } from './scheduleForm';
 import {
-  excludeDeletedSkillReviewTasks,
-  SKILL_REVIEW_CARD_ID,
-  withSkillReviewCard,
-} from './skillReviewCard';
+  buildScheduleForSubmission,
+  buildScheduleFromForm,
+  computeNextRunPreview,
+  intervalMilliseconds,
+  isScheduleFormUnchanged,
+  isValidFutureOnceSchedule,
+  isValidTimezone,
+  pad2,
+  parseScheduleToForm,
+} from './scheduleForm';
+import SchedulerSettingsDialog from './SchedulerSettingsDialog';
+import { buildAdvancedPayloadPatch, parseAdvancedTaskForm } from './taskEditor';
+import TaskStateNotice from './TaskStateNotice';
+
+export type { ScheduleFormState } from './scheduleForm';
+export {
+  buildScheduleFromForm,
+  computeNextRunPreview,
+  isValidFutureOnceSchedule,
+  parseScheduleToForm,
+} from './scheduleForm';
 
 // ── Schedule Builder Types ─────────────────────────────────────────
-
-type ScheduleMode = 'recurring' | 'once';
-type RecurrenceKind = 'interval' | 'hourly' | 'daily' | 'weekdays' | 'weekly' | 'custom';
-type IntervalUnit = 'seconds' | 'minutes' | 'hours' | 'days';
 
 const RECURRENCE_KINDS: RecurrenceKind[] = [
   'interval',
@@ -118,20 +128,6 @@ export function groupScheduledTasks(tasks: ScheduledTask[]): {
   );
 }
 
-export interface ScheduleFormState {
-  mode: ScheduleMode;
-  recurrence: RecurrenceKind;
-  intervalValue: number;
-  intervalUnit: IntervalUnit;
-  intervalAnchorMs?: number;
-  timeOfDay: string;
-  weekday: number;
-  hourlyMinute: number;
-  customCron: string;
-  onceDate: string;
-  onceTime: string;
-}
-
 export function buildScheduledTaskExecutionInput(
   job: Pick<ScheduledTask, 'sessionTarget' | 'payload'> | undefined,
   message: string,
@@ -160,225 +156,11 @@ function editablePayloadText(job?: ScheduledTask): string {
   return '';
 }
 
-function pad2(value: number): string {
-  return String(value).padStart(2, '0');
-}
-
-function toDateInputValue(date: Date): string {
-  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
-}
-
-function toTimeInputValue(date: Date): string {
-  return `${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
-}
-
-function defaultScheduleForm(): ScheduleFormState {
-  const now = new Date();
-  return {
-    mode: 'recurring',
-    recurrence: 'daily',
-    intervalValue: 1,
-    intervalUnit: 'minutes',
-    timeOfDay: '09:00',
-    weekday: 1,
-    hourlyMinute: 0,
-    customCron: '',
-    onceDate: toDateInputValue(now),
-    onceTime: '09:00',
-  };
-}
-
-function parseEveryInterval(
-  everyMs: number,
-): Pick<ScheduleFormState, 'intervalValue' | 'intervalUnit'> {
-  if (everyMs % 86_400_000 === 0) {
-    return { intervalValue: everyMs / 86_400_000, intervalUnit: 'days' };
-  }
-  if (everyMs % 3_600_000 === 0) {
-    return { intervalValue: everyMs / 3_600_000, intervalUnit: 'hours' };
-  }
-  if (everyMs % 60_000 === 0) {
-    return { intervalValue: everyMs / 60_000, intervalUnit: 'minutes' };
-  }
-  return { intervalValue: everyMs / 1000, intervalUnit: 'seconds' };
-}
-
-export function parseScheduleToForm(schedule?: Schedule): ScheduleFormState {
-  const base = defaultScheduleForm();
-  if (!schedule) return base;
-  if (schedule.kind === 'at') {
-    const date = new Date(schedule.at);
-    if (!Number.isNaN(date.getTime())) {
-      return {
-        ...base,
-        mode: 'once',
-        onceDate: toDateInputValue(date),
-        onceTime: toTimeInputValue(date),
-      };
-    }
-    return { ...base, mode: 'once' };
-  }
-  if (schedule.kind === 'every') {
-    return {
-      ...base,
-      mode: 'recurring',
-      recurrence: 'interval',
-      ...parseEveryInterval(schedule.everyMs),
-      intervalAnchorMs: schedule.anchorMs,
-    };
-  }
-  if (schedule.kind !== 'cron') return base;
-  const expr = schedule.expr.trim();
-  const parts = expr.split(/\s+/);
-  if (parts.length !== 5) {
-    return { ...base, mode: 'recurring', recurrence: 'custom', customCron: expr };
-  }
-  const [minute, hour, dom, , dow] = parts;
-  const isNum = (v: string) => /^\d+$/.test(v);
-  if (isNum(minute) && hour === '*' && dom === '*') {
-    return { ...base, mode: 'recurring', recurrence: 'hourly', hourlyMinute: Number(minute) };
-  }
-  if (isNum(minute) && isNum(hour) && dom === '*') {
-    const tod = `${pad2(Number(hour))}:${pad2(Number(minute))}`;
-    if (dow === '*') return { ...base, mode: 'recurring', recurrence: 'daily', timeOfDay: tod };
-    if (dow === '1-5')
-      return { ...base, mode: 'recurring', recurrence: 'weekdays', timeOfDay: tod };
-    if (isNum(dow) && Number(dow) >= 0 && Number(dow) <= 6) {
-      return {
-        ...base,
-        mode: 'recurring',
-        recurrence: 'weekly',
-        weekday: Number(dow),
-        timeOfDay: tod,
-      };
-    }
-  }
-  return { ...base, mode: 'recurring', recurrence: 'custom', customCron: expr };
-}
-
-const INTERVAL_UNIT_MS: Record<IntervalUnit, number> = {
-  seconds: 1000,
-  minutes: 60_000,
-  hours: 3_600_000,
-  days: 86_400_000,
-};
-
-function intervalMilliseconds(form: ScheduleFormState): number {
-  return Math.round(form.intervalValue * INTERVAL_UNIT_MS[form.intervalUnit]);
-}
-
-export function buildScheduleFromForm(form: ScheduleFormState): EditableSchedule {
-  if (form.mode === 'once') {
-    const dateTime = new Date(`${form.onceDate}T${form.onceTime || '00:00'}`);
-    return { kind: 'at', at: dateTime.toISOString() };
-  }
-  if (form.recurrence === 'interval') {
-    const everyMs = intervalMilliseconds(form);
-    if (!Number.isSafeInteger(everyMs) || everyMs < 1) {
-      throw new RangeError('Invalid scheduled task interval');
-    }
-    return {
-      kind: 'every',
-      everyMs,
-      ...(form.intervalAnchorMs !== undefined ? { anchorMs: form.intervalAnchorMs } : {}),
-    };
-  }
-  const [hourRaw, minuteRaw] = (form.timeOfDay || '09:00').split(':');
-  const hour = Number(hourRaw);
-  const minute = Number(minuteRaw);
-  let expr = '';
-  switch (form.recurrence) {
-    case 'hourly':
-      expr = `${form.hourlyMinute} * * * *`;
-      break;
-    case 'daily':
-      expr = `${minute} ${hour} * * *`;
-      break;
-    case 'weekdays':
-      expr = `${minute} ${hour} * * 1-5`;
-      break;
-    case 'weekly':
-      expr = `${minute} ${hour} * * ${form.weekday}`;
-      break;
-    default:
-      expr = form.customCron.trim();
-      break;
-  }
-  return { kind: 'cron', expr };
-}
-
-export function isValidFutureOnceSchedule(
-  form: Pick<ScheduleFormState, 'onceDate' | 'onceTime'>,
-  now = Date.now(),
-): boolean {
-  if (!form.onceDate.trim()) return false;
-  const timestamp = new Date(`${form.onceDate}T${form.onceTime || '00:00'}`).getTime();
-  return Number.isFinite(timestamp) && timestamp > now;
-}
-
-export function computeNextRunPreview(form: ScheduleFormState, now = new Date()): string | null {
-  if (form.mode === 'once') {
-    const dateTime = new Date(`${form.onceDate}T${form.onceTime || '00:00'}`);
-    return Number.isNaN(dateTime.getTime()) ? null : dateTime.toLocaleString();
-  }
-  const [hourRaw, minuteRaw] = (form.timeOfDay || '09:00').split(':');
-  const hour = Number(hourRaw);
-  const minute = Number(minuteRaw);
-  const next = new Date(now.getTime());
-  next.setSeconds(0, 0);
-  switch (form.recurrence) {
-    case 'interval': {
-      const everyMs = intervalMilliseconds(form);
-      if (!Number.isSafeInteger(everyMs) || everyMs < 1) return null;
-      const anchorMs = form.intervalAnchorMs;
-      if (anchorMs === undefined || !Number.isFinite(anchorMs)) {
-        return new Date(now.getTime() + everyMs).toLocaleString();
-      }
-      const nextRunAtMs =
-        anchorMs > now.getTime()
-          ? anchorMs
-          : anchorMs + (Math.floor((now.getTime() - anchorMs) / everyMs) + 1) * everyMs;
-      return new Date(nextRunAtMs).toLocaleString();
-    }
-    case 'hourly': {
-      next.setMinutes(form.hourlyMinute);
-      if (next <= now) next.setHours(next.getHours() + 1);
-      return next.toLocaleString();
-    }
-    case 'daily': {
-      next.setHours(hour, minute, 0, 0);
-      if (next <= now) next.setDate(next.getDate() + 1);
-      return next.toLocaleString();
-    }
-    case 'weekdays': {
-      next.setHours(hour, minute, 0, 0);
-      while (next <= now || next.getDay() === 0 || next.getDay() === 6) {
-        next.setDate(next.getDate() + 1);
-        next.setHours(hour, minute, 0, 0);
-      }
-      return next.toLocaleString();
-    }
-    case 'weekly': {
-      next.setHours(hour, minute, 0, 0);
-      const dayDelta = (form.weekday - next.getDay() + 7) % 7;
-      next.setDate(next.getDate() + dayDelta);
-      if (next <= now) next.setDate(next.getDate() + 7);
-      return next.toLocaleString();
-    }
-    default:
-      return null;
-  }
-}
-
 // ── Cron Job Card ──────────────────────────────────────────────────
 
 interface CronJobCardProps {
   memoryToggleDisabled?: boolean;
   memoryFeatureEnabled?: boolean;
-  skillToggleDisabled?: boolean;
-  skillMembers?: ScheduledTask[];
-  onMemberHistory?: (id: string) => void;
-  onMemberDetails?: (id: string) => void;
   job: ScheduledTask;
   onToggle: (enabled: boolean) => void;
   onEdit: () => void;
@@ -399,12 +181,6 @@ function getTaskVisual(job: ScheduledTask): {
         Icon: HeartIcon,
         cardClass: 'bg-gradient-to-br from-rose-500/[0.07] via-surface to-surface',
         iconClass: 'bg-rose-500/10 text-rose-600 dark:text-rose-400',
-      };
-    case 'skillCollectionReview':
-      return {
-        Icon: SparklesIcon,
-        cardClass: 'bg-gradient-to-br from-amber-500/[0.08] via-surface to-surface',
-        iconClass: 'bg-amber-500/10 text-amber-700 dark:text-amber-400',
       };
     case 'command':
       return {
@@ -436,10 +212,6 @@ function getTaskVisual(job: ScheduledTask): {
 export function CronJobCard({
   memoryToggleDisabled = true,
   memoryFeatureEnabled,
-  skillToggleDisabled = true,
-  skillMembers = [],
-  onMemberHistory,
-  onMemberDetails,
   job,
   onToggle,
   onEdit,
@@ -476,12 +248,9 @@ export function CronJobCard({
   const promptText = getTaskPromptText(job);
   const agents = useSelector((s: RootState) => s.agent.agents);
   const displayName = getTaskDisplayName(job);
-  const isSkillAggregate = job.id === SKILL_REVIEW_CARD_ID;
-  const agentLabel = isSkillAggregate
-    ? t('cronSkillReviewScope')
-    : isMemoryDreamingTask(job)
-      ? t('cronMemoryScope')
-      : getTaskAgentLabel(job, agents);
+  const agentLabel = isMemoryDreamingTask(job)
+    ? t('cronMemoryScope')
+    : getTaskAgentLabel(job, agents);
   const isEnabled = job.enabled;
   const isManaged = job.management === 'managed';
   const isMemory = isMemoryDreamingTask(job);
@@ -489,22 +258,16 @@ export function CronJobCard({
   const switchLabel = isMemory
     ? t(switchEnabled ? 'cronMemoryFeatureOn' : 'cronMemoryFeatureOff')
     : t(switchEnabled ? 'cronStatsActive' : 'cronStatsPaused');
-  const isPlaceholder = job.id === MEMORY_DREAMING_CARD_ID || isSkillAggregate;
-  const toggleDisabled = isSkillAggregate
-    ? skillToggleDisabled
-    : isMemory
-      ? memoryToggleDisabled
-      : isManaged;
+  const isPlaceholder = job.id === MEMORY_DREAMING_CARD_ID;
+  const toggleDisabled = isMemory ? memoryToggleDisabled : isManaged;
   const isEditable = job.management === 'editable';
   const hasLastRun = Boolean(job.state.lastRunAtMs);
   const lastStatus = job.state.lastStatus;
   const lastError = job.state.lastError;
   const nextRunMs = job.state.nextRunAtMs;
-  const scheduleLabel = isSkillAggregate
-    ? t('cronSkillReviewScheduleManaged')
-    : isPlaceholder
-      ? t('cronMemoryScheduleManaged')
-      : formatScheduleLabel(job.schedule);
+  const scheduleLabel = isPlaceholder
+    ? t('cronMemoryScheduleManaged')
+    : formatScheduleLabel(job.schedule);
   const nextRunLabel =
     nextRunMs && isEnabled ? `${t('cronCardNext')}: ${formatDateTime(new Date(nextRunMs))}` : null;
   const visual = getTaskVisual(job);
@@ -544,10 +307,10 @@ export function CronJobCard({
           </span>
         )}
 
-        {isManaged && !isMemory && !isSkillAggregate ? (
+        {isManaged && !isMemory ? (
           <span
             className="shrink-0 text-xs text-secondary"
-            title={t('cronSkillReviewReadOnlyHint')}
+            title={t('cronCardManagedHint')}
           >
             {t(isEnabled ? 'cronStatsActive' : 'cronStatsPaused')}
           </span>
@@ -641,12 +404,7 @@ export function CronJobCard({
               className={'min-w-0 truncate leading-4 ' + (lastError ? 'cursor-help' : '')}
               title={lastError ?? undefined}
             >
-              {t(
-                isSkillAggregate && lastStatus === 'error'
-                  ? 'cronSkillReviewLatestFailure'
-                  : 'cronCardLast',
-              )}
-              : {formatDateTime(new Date(job.state.lastRunAtMs!))}
+              {t('cronCardLast')}: {formatDateTime(new Date(job.state.lastRunAtMs!))}
               {lastStatus && (
                 <span className={getStatusTone(lastStatus)}>
                   {' · '}
@@ -658,59 +416,7 @@ export function CronJobCard({
         )}
       </div>
 
-      {isSkillAggregate && skillMembers.length > 0 && (
-        <div className="mt-auto border-t border-border-subtle px-3 py-2 text-xs text-secondary">
-          <details>
-            <summary className="cursor-pointer">
-              {t('cronSkillReviewMembers')} ({skillMembers.length})
-            </summary>
-            <ul className="mt-2 space-y-3">
-              {skillMembers.map(member => (
-                <li key={member.id}>
-                  <p className="flex items-center gap-1">
-                    <UserIcon className="h-3.5 w-3.5" />
-                    {getTaskAgentLabel(member, agents)}
-                  </p>
-                  <p>
-                    {t(member.enabled ? 'cronStatsActive' : 'cronStatsPaused')} ·{' '}
-                    {formatScheduleLabel(member.schedule)}
-                  </p>
-                  {isEnabled && member.enabled && member.state.nextRunAtMs && (
-                    <p>
-                      {t('cronCardNext')}: {formatDateTime(new Date(member.state.nextRunAtMs))}
-                    </p>
-                  )}
-                  {member.state.lastStatus && (
-                    <p className={getStatusTone(member.state.lastStatus)}>
-                      {t('cronCardLast')}:{' '}
-                      {member.state.lastRunAtMs
-                        ? formatDateTime(new Date(member.state.lastRunAtMs))
-                        : ''}{' '}
-                      · {t(getStatusLabelKey(member.state.lastStatus))}
-                    </p>
-                  )}
-                  <div className="flex gap-3 pt-1">
-                    <button
-                      type="button"
-                      className="text-primary"
-                      onClick={() => onMemberHistory?.(member.id)}
-                    >
-                      {t('cronCardHistory')}
-                    </button>
-                    <button
-                      type="button"
-                      className="text-primary"
-                      onClick={() => onMemberDetails?.(member.id)}
-                    >
-                      {t('cronDetailsTitle')}
-                    </button>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          </details>
-        </div>
-      )}
+      <TaskStateNotice state={job.state} enabled={job.enabled} className="px-3 pb-2" />
       {!isPlaceholder && (
         <div
           className="mt-auto flex items-center gap-0.5 border-t border-border-subtle px-2.5 py-1.5"
@@ -814,9 +520,7 @@ function TaskDetailsDialog({ job, onClose }: TaskDetailsDialogProps) {
           ? t('scheduledTasksPayloadCommand')
           : job.payload.kind === 'script'
             ? t('scheduledTasksPayloadScript')
-            : job.payload.kind === 'heartbeat'
-              ? t('scheduledTasksPayloadHeartbeat')
-              : t('scheduledTasksPayloadSkillReview');
+            : t('scheduledTasksPayloadHeartbeat');
   const sessionTarget =
     job.sessionTarget === 'main'
       ? t('cronDetailsSessionMain')
@@ -1088,7 +792,7 @@ interface DialogProps {
   open: boolean;
   job?: ScheduledTask;
   onClose: () => void;
-  onSave: (input: ScheduledTaskInput) => Promise<void>;
+  onSave: (input: ScheduledTaskInput | ScheduledTaskUpdateInput) => Promise<void>;
 }
 
 export function CreateEditDialog({
@@ -1124,6 +828,7 @@ export function CreateEditDialog({
   const [scheduleForm, setScheduleForm] = useState<ScheduleFormState>(() =>
     parseScheduleToForm(job?.schedule),
   );
+  const [advancedForm, setAdvancedForm] = useState(() => parseAdvancedTaskForm(job));
   const [enabled, setEnabled] = useState(job ? job.enabled : true);
   const [permissionMode, setPermissionMode] = useState<ScheduledTaskPermission>(
     job?.payload.kind === 'agentTurn'
@@ -1157,6 +862,7 @@ export function CreateEditDialog({
       setName(job?.name ?? '');
       setMessage(editablePayloadText(job));
       setScheduleForm(parseScheduleToForm(job?.schedule));
+      setAdvancedForm(parseAdvancedTaskForm(job));
       setEnabled(job ? job.enabled : true);
       setPermissionMode(
         job?.payload.kind === 'agentTurn'
@@ -1178,10 +884,18 @@ export function CreateEditDialog({
     }
   }
 
+  const scheduleUnchanged = Boolean(job && isScheduleFormUnchanged(scheduleForm, job.schedule));
+  const nativeNextRun = scheduleUnchanged ? job?.state.nextRunAtMs : null;
   const nextRunPreview = useMemo(() => {
-    if (scheduleForm.mode === 'recurring' && scheduleForm.recurrence === 'custom') return null;
+    if (nativeNextRun && Number.isFinite(nativeNextRun)) {
+      const tz = scheduleForm.timezone.trim();
+      const date = new Date(nativeNextRun);
+      return tz && isValidTimezone(tz)
+        ? `${date.toLocaleString(undefined, { timeZone: tz })} (${tz})`
+        : date.toLocaleString();
+    }
     return computeNextRunPreview(scheduleForm);
-  }, [scheduleForm]);
+  }, [scheduleForm, nativeNextRun]);
 
   useEffect(() => {
     if (open && !isEdit && nameInputRef.current) {
@@ -1224,13 +938,28 @@ export function CreateEditDialog({
       next.delivery = t('cronToastDeliveryChannelRequired');
       setNotificationExpanded(true);
     }
-    if (scheduleForm.mode === 'once') {
+    if (scheduleForm.mode === 'once' && !scheduleUnchanged) {
       const dt = new Date(scheduleForm.onceDate + 'T' + (scheduleForm.onceTime || '00:00'));
       if (!scheduleForm.onceDate.trim() || !Number.isFinite(dt.getTime())) {
         next.schedule = t('cronToastScheduleRequired');
       } else if (!isValidFutureOnceSchedule(scheduleForm)) {
         next.schedule = t('cronToastSchedulePast');
       }
+    }
+    if (!scheduleUnchanged) {
+      try {
+        buildScheduleFromForm(scheduleForm);
+      } catch {
+        next.schedule = t('cronToastInvalidCron');
+      }
+    }
+    try {
+      buildAdvancedPayloadPatch(
+        advancedForm,
+        job?.payload.kind === 'agentTurn' ? job.payload : undefined,
+      );
+    } catch {
+      next.advanced = t('cronToastInvalidAdvanced');
     }
     setErrors(next);
     return Object.keys(next).length === 0;
@@ -1241,24 +970,45 @@ export function CreateEditDialog({
     setSubmitError(null);
     setSaving(true);
     try {
-      const builtSchedule = buildScheduleFromForm(scheduleForm);
-      const schedule =
-        builtSchedule.kind === 'cron' && job?.schedule.kind === 'cron'
-          ? {
-              ...builtSchedule,
-              ...(job.schedule.tz ? { tz: job.schedule.tz } : {}),
-              ...(typeof job.schedule.staggerMs === 'number'
-                ? { staggerMs: job.schedule.staggerMs }
-                : {}),
-            }
-          : builtSchedule;
+      const originalSchedule =
+        job?.schedule.kind === 'at' ||
+        job?.schedule.kind === 'every' ||
+        job?.schedule.kind === 'cron'
+          ? job.schedule
+          : undefined;
+      const schedule = buildScheduleForSubmission(scheduleForm, originalSchedule);
       const execution = buildScheduledTaskExecutionInput(job, message.trim());
-      if (execution.payload.kind === 'agentTurn' && (modelRef || modelRef !== initialModel)) {
-        execution.payload = { ...execution.payload, model: modelRef };
-      }
-      const input: ScheduledTaskInput = {
+      const payload =
+        execution.payload.kind === 'agentTurn'
+          ? {
+              kind: 'agentTurn' as const,
+              message: message.trim(),
+              ...((!job && modelRef) || (job && modelRef !== initialModel)
+                ? { model: modelRef }
+                : {}),
+              ...buildAdvancedPayloadPatch(
+                advancedForm,
+                job?.payload.kind === 'agentTurn' ? job.payload : undefined,
+              ),
+            }
+          : { kind: 'systemEvent' as const, text: message.trim() };
+      const initialAdvanced = parseAdvancedTaskForm(job);
+      const deleteAfterRun =
+        schedule.kind === 'at'
+          ? !job
+            ? advancedForm.keepOnce
+              ? false
+              : undefined
+            : job.schedule.kind !== 'at' || advancedForm.keepOnce !== initialAdvanced.keepOnce
+              ? !advancedForm.keepOnce
+              : undefined
+          : job?.schedule.kind === 'at'
+            ? false
+            : undefined;
+      const input: ScheduledTaskInput | ScheduledTaskUpdateInput = {
         ...(!job ||
-        (job.payload.kind === 'agentTurn' && permissionMode !== ScheduledTaskPermission.Custom)
+        (job.payload.kind === 'agentTurn' &&
+          permissionMode !== getScheduledTaskPermission(job.payload))
           ? { permissionMode }
           : {}),
         ...(execution.payload.kind === 'agentTurn' && (!job || agentId !== initialAgentId)
@@ -1267,10 +1017,11 @@ export function CreateEditDialog({
         name: name.trim(),
         description: job?.description ?? '',
         enabled,
-        schedule,
+        ...(!job || !scheduleUnchanged ? { schedule } : {}),
+        ...(deleteAfterRun !== undefined ? { deleteAfterRun } : {}),
         sessionTarget: execution.sessionTarget,
         wakeMode: job?.wakeMode ?? 'now',
-        payload: execution.payload,
+        payload,
         delivery:
           deliveryMode === 'none'
             ? job?.delivery.mode === 'none'
@@ -1403,6 +1154,7 @@ export function CreateEditDialog({
                   </label>
                   <input
                     type="time"
+                    step="0.001"
                     value={scheduleForm.onceTime}
                     onChange={e => setScheduleForm(s => ({ ...s, onceTime: e.target.value }))}
                     className={inputClass}
@@ -1559,8 +1311,19 @@ export function CreateEditDialog({
                 {/* Next run preview */}
                 {nextRunPreview && (
                   <div className="mt-3 px-3 py-2 rounded-lg bg-primary/5 border border-primary/10 text-xs text-secondary">
-                    <span className="font-medium text-foreground/80">{t('cronCardNext')}:</span>{' '}
+                    <span className="font-medium text-foreground/80">
+                      {t(nativeNextRun ? 'cronCardNext' : 'cronSchedulePreview')}:
+                    </span>{' '}
                     {nextRunPreview}
+                    {!nativeNextRun && <p className="mt-1">{t('cronSchedulePreviewHint')}</p>}
+                    {!nativeNextRun && Number(scheduleForm.staggerSeconds) > 0 && (
+                      <p className="mt-1">
+                        {t('cronSchedulePreviewStagger').replace(
+                          '{seconds}',
+                          scheduleForm.staggerSeconds,
+                        )}
+                      </p>
+                    )}
                   </div>
                 )}
               </>
@@ -1666,6 +1429,134 @@ export function CreateEditDialog({
               )}
             </section>
           </div>
+
+          <details className="group border-b border-border-subtle pb-4">
+            <summary className="flex cursor-pointer list-none items-center justify-between text-sm font-medium text-foreground [&::-webkit-details-marker]:hidden">
+              {t('cronAdvancedSettingsTitle')}
+              <ChevronDownIcon className="h-4 w-4 text-secondary transition-transform group-open:rotate-180" />
+            </summary>
+            <div className="mt-3 space-y-4">
+              <p className="text-xs text-secondary">{t('cronAdvancedSettingsHint')}</p>
+              {(!job || job.payload.kind === 'agentTurn') && (
+                <>
+                  <div>
+                    <label htmlFor="scheduled-task-timeout" className={labelClass}>
+                      {t('cronAdvancedTimeout')}
+                    </label>
+                    <input
+                      id="scheduled-task-timeout"
+                      type="number"
+                      min="1"
+                      step="1"
+                      value={advancedForm.timeoutSeconds}
+                      className={inputClass}
+                      onChange={event =>
+                        setAdvancedForm(form => ({ ...form, timeoutSeconds: event.target.value }))
+                      }
+                    />
+                    <p className="mt-1 text-xs text-secondary">{t('cronAdvancedTimeoutHint')}</p>
+                  </div>
+                  <div>
+                    <label htmlFor="scheduled-task-fallback-mode" className={labelClass}>
+                      {t('cronAdvancedFallbacks')}
+                    </label>
+                    <select
+                      id="scheduled-task-fallback-mode"
+                      value={advancedForm.fallbackMode}
+                      className={inputClass}
+                      onChange={event =>
+                        setAdvancedForm(form => ({
+                          ...form,
+                          fallbackMode: event.target.value as typeof form.fallbackMode,
+                        }))
+                      }
+                    >
+                      <option value="inherit">{t('cronAdvancedFallbacksInherit')}</option>
+                      <option value="none">{t('cronAdvancedFallbacksNone')}</option>
+                      <option value="custom">{t('cronAdvancedFallbacksCustom')}</option>
+                    </select>
+                    {advancedForm.fallbackMode === 'custom' && (
+                      <input
+                        aria-label={t('cronAdvancedFallbacksCustom')}
+                        value={advancedForm.fallbackText}
+                        className={inputClass + ' mt-2'}
+                        list="scheduled-task-model-references"
+                        onChange={event =>
+                          setAdvancedForm(form => ({ ...form, fallbackText: event.target.value }))
+                        }
+                      />
+                    )}
+                    <datalist id="scheduled-task-model-references">
+                      {modelOptions
+                        .filter(option => !option.disabled)
+                        .map(option => (
+                          <option key={option.ref} value={option.ref} />
+                        ))}
+                    </datalist>
+                    <p className="mt-1 text-xs text-secondary">{t('cronAdvancedFallbacksHint')}</p>
+                  </div>
+                  <label className="flex items-start gap-2 text-sm text-foreground">
+                    <input
+                      type="checkbox"
+                      className="mt-1"
+                      checked={advancedForm.lightContext}
+                      onChange={event =>
+                        setAdvancedForm(form => ({ ...form, lightContext: event.target.checked }))
+                      }
+                    />
+                    <span>
+                      {t('cronAdvancedLightContext')}
+                      <span className="mt-1 block text-xs text-secondary">
+                        {t('cronAdvancedLightContextHint')}
+                      </span>
+                    </span>
+                  </label>
+                </>
+              )}
+              {scheduleForm.mode === 'recurring' && scheduleForm.recurrence !== 'interval' && (
+                <div>
+                  <label htmlFor="scheduled-task-stagger" className={labelClass}>
+                    {t('cronAdvancedStagger')}
+                  </label>
+                  <input
+                    id="scheduled-task-stagger"
+                    type="number"
+                    min="0"
+                    step="0.001"
+                    value={scheduleForm.staggerSeconds}
+                    className={inputClass}
+                    onChange={event =>
+                      setScheduleForm(form => ({ ...form, staggerSeconds: event.target.value }))
+                    }
+                  />
+                  <p className="mt-1 text-xs text-secondary">{t('cronAdvancedStaggerHint')}</p>
+                </div>
+              )}
+              {scheduleForm.mode === 'once' && (
+                <label className="flex items-start gap-2 text-sm text-foreground">
+                  <input
+                    type="checkbox"
+                    className="mt-1"
+                    checked={advancedForm.keepOnce}
+                    onChange={event =>
+                      setAdvancedForm(form => ({ ...form, keepOnce: event.target.checked }))
+                    }
+                  />
+                  <span>
+                    {t('cronAdvancedKeepOnce')}
+                    <span className="mt-1 block text-xs text-secondary">
+                      {t('cronAdvancedKeepOnceHint')}
+                    </span>
+                  </span>
+                </label>
+              )}
+              {errors.advanced && (
+                <p role="alert" className="text-xs text-red-500">
+                  {errors.advanced}
+                </p>
+              )}
+            </div>
+          </details>
 
           {/* Delivery */}
           <div className="flex items-center gap-2 text-xs text-secondary">
@@ -1854,23 +1745,12 @@ export const CronView: React.FC<CronViewProps> = ({
   const allNativeTasks = useSelector((s: RootState) => s.scheduledTask.tasks);
   const models = useSelector((s: RootState) => s.model.availableModels);
   const agents = useSelector((s: RootState) => s.agent.agents);
-  const nativeTasks = useMemo(
-    () => excludeDeletedSkillReviewTasks(allNativeTasks, agents),
-    [allNativeTasks, agents],
-  );
+  const nativeTasks = allNativeTasks;
   const memoryControl = useMemoryDreamingControl(nativeTasks, engine.ready);
   const toggleMemoryDreaming = memoryControl.toggle;
-  const toggleSkills = memoryControl.toggleSkills;
-  const skillMembers = useMemo(
-    () => nativeTasks.filter(isSkillCollectionReviewTask),
-    [nativeTasks],
-  );
+
   const tasks = useMemo(
-    () =>
-      withSkillReviewCard(
-        withMemoryDreamingCard(nativeTasks, memoryControl.settings),
-        memoryControl.settings,
-      ),
+    () => withMemoryDreamingCard(nativeTasks, memoryControl.settings),
     [nativeTasks, memoryControl.settings],
   );
   const loading = useSelector((s: RootState) => s.scheduledTask.loading);
@@ -1995,13 +1875,14 @@ export const CronView: React.FC<CronViewProps> = ({
   ]);
 
   const handleSave = useCallback(
-    async (input: ScheduledTaskInput) => {
+    async (input: ScheduledTaskInput | ScheduledTaskUpdateInput) => {
       if (!engine.ready) return;
       if (editingJob) {
         await scheduledTaskService.updateTaskById(editingJob.id, input);
         window.dispatchEvent(new CustomEvent('app:showToast', { detail: t('cronToastUpdated') }));
       } else {
-        await scheduledTaskService.createTask(input);
+        // The create form supplies all required fields and no reset sentinels.
+        await scheduledTaskService.createTask(input as ScheduledTaskInput);
         window.dispatchEvent(new CustomEvent('app:showToast', { detail: t('cronToastCreated') }));
       }
       setEditingJob(undefined);
@@ -2013,9 +1894,7 @@ export const CronView: React.FC<CronViewProps> = ({
     async (id: string, enabled: boolean) => {
       if (!engine.ready) return;
       try {
-        if (id === SKILL_REVIEW_CARD_ID) {
-          if (!(await toggleSkills(enabled))) return;
-        } else if (
+        if (
           id === MEMORY_DREAMING_CARD_ID ||
           nativeTasks.some(task => task.id === id && isMemoryDreamingTask(task))
         ) {
@@ -2034,7 +1913,7 @@ export const CronView: React.FC<CronViewProps> = ({
         );
       }
     },
-    [t, nativeTasks, toggleMemoryDreaming, toggleSkills, engine.ready],
+    [t, nativeTasks, toggleMemoryDreaming, engine.ready],
   );
 
   const handleDelete = useCallback(async () => {
@@ -2090,10 +1969,6 @@ export const CronView: React.FC<CronViewProps> = ({
     return tasks.filter(task => {
       const matchesQuery =
         normalizedQuery.length === 0 ||
-        (task.id === SKILL_REVIEW_CARD_ID &&
-          skillMembers.some(member =>
-            (getTaskAgentLabel(member, agents) ?? '').toLocaleLowerCase().includes(normalizedQuery),
-          )) ||
         getTaskDisplayName(task).toLocaleLowerCase().includes(normalizedQuery) ||
         (getTaskAgentLabel(task, agents) ?? '').toLocaleLowerCase().includes(normalizedQuery) ||
         task.name.toLocaleLowerCase().includes(normalizedQuery) ||
@@ -2105,7 +1980,7 @@ export const CronView: React.FC<CronViewProps> = ({
         (taskStatusFilter === 'failed' && task.state.lastStatus === 'error');
       return matchesQuery && matchesStatus;
     });
-  }, [taskQuery, taskStatusFilter, tasks, agents, skillMembers]);
+  }, [taskQuery, taskStatusFilter, tasks, agents]);
   const { userTasks, systemTasks } = useMemo(
     () => groupScheduledTasks(visibleTasks),
     [visibleTasks],
@@ -2180,7 +2055,11 @@ export const CronView: React.FC<CronViewProps> = ({
           </div>
           {!engine.ready && (
             <div className="mb-5">
-              {!hasAdmittedEngine && <h1 className="mb-3 text-xl font-semibold text-foreground">{t('scheduledTasks')}</h1>}
+              {!hasAdmittedEngine && (
+                <h1 className="mb-3 text-xl font-semibold text-foreground">
+                  {t('scheduledTasks')}
+                </h1>
+              )}
               <p role="status" className="rounded-xl bg-surface px-4 py-5 text-sm text-secondary">
                 {t(engine.failed ? 'engineUnavailableContent' : 'enginePreparingContent')}
               </p>
@@ -2189,255 +2068,245 @@ export const CronView: React.FC<CronViewProps> = ({
           <EngineInteractionBoundary disabled={!engine.ready}>
             {(engine.ready || hasAdmittedEngine) && (
               <>
-          {schedulerEnabled === false && (
-            <p
-              role="status"
-              className="mb-4 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-foreground"
-            >
-              {t('schedulerSettingsPaused')}
-            </p>
-          )}
+                {schedulerEnabled === false && (
+                  <p
+                    role="status"
+                    className="mb-4 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-foreground"
+                  >
+                    {t('schedulerSettingsPaused')}
+                  </p>
+                )}
                 {loading && tasks.length === 0 ? (
                   <div role="status" className="flex flex-col items-center py-16 text-secondary">
                     <ArrowPathIcon className="h-8 w-8 animate-spin" />
                     <p className="mt-3 text-sm">{t('loading')}</p>
                   </div>
                 ) : activeTab === 'results' ? (
-            <ResultInbox />
-          ) : (
-            <>
-              <div className="mb-5 flex flex-col gap-4 shrink-0 sm:flex-row sm:items-start sm:justify-between">
-                <div>
-                  <h1 className="text-xl font-semibold text-foreground">
-                    {t('scheduledTasksTabTasks')}
-                  </h1>
-                  <p className="mt-1 text-sm text-secondary">{t('cronSubtitle')}</p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => scheduledTaskService.loadTasks()}
-                    className="inline-flex h-9 items-center gap-2 rounded-xl border border-border bg-surface px-3.5 text-sm font-medium text-secondary shadow-sm transition-colors hover:bg-surface-raised hover:text-foreground"
-                  >
-                    <ArrowPathIcon className="h-3.5 w-3.5" />
-                    {t('cronRefresh')}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setEditingJob(undefined);
-                      setShowDialog(true);
-                    }}
-                    className="inline-flex h-9 items-center gap-2 rounded-xl bg-primary px-3.5 text-sm font-medium text-white shadow-sm transition-colors hover:bg-primary-hover active:scale-[0.98]"
-                  >
-                    <PlusIcon className="h-3.5 w-3.5" />
-                    {t('cronNewTask')}
-                  </button>
-                </div>
-              </div>
+                  <ResultInbox />
+                ) : (
+                  <>
+                    <div className="mb-5 flex flex-col gap-4 shrink-0 sm:flex-row sm:items-start sm:justify-between">
+                      <div>
+                        <h1 className="text-xl font-semibold text-foreground">
+                          {t('scheduledTasksTabTasks')}
+                        </h1>
+                        <p className="mt-1 text-sm text-secondary">{t('cronSubtitle')}</p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => scheduledTaskService.loadTasks()}
+                          className="inline-flex h-9 items-center gap-2 rounded-xl border border-border bg-surface px-3.5 text-sm font-medium text-secondary shadow-sm transition-colors hover:bg-surface-raised hover:text-foreground"
+                        >
+                          <ArrowPathIcon className="h-3.5 w-3.5" />
+                          {t('cronRefresh')}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditingJob(undefined);
+                            setShowDialog(true);
+                          }}
+                          className="inline-flex h-9 items-center gap-2 rounded-xl bg-primary px-3.5 text-sm font-medium text-white shadow-sm transition-colors hover:bg-primary-hover active:scale-[0.98]"
+                        >
+                          <PlusIcon className="h-3.5 w-3.5" />
+                          {t('cronNewTask')}
+                        </button>
+                      </div>
+                    </div>
 
-              {memoryControl.failed && (
-                <p role="alert" className="mb-3 text-sm text-red-500">
-                  {t('cronMemoryLoadFailed')}
-                </p>
-              )}
-              {/* Error */}
-              {error && (
-                <div className="mb-8 p-4 rounded-xl border border-red-500/50 bg-red-500/10 flex items-center gap-3">
-                  <ExclamationTriangleIcon className="h-5 w-5 text-red-500" />
-                  <span className="text-red-600 dark:text-red-400 text-sm font-medium">
-                    {error}
-                  </span>
-                </div>
-              )}
+                    {memoryControl.failed && (
+                      <p role="alert" className="mb-3 text-sm text-red-500">
+                        {t('cronMemoryLoadFailed')}
+                      </p>
+                    )}
+                    {/* Error */}
+                    {error && (
+                      <div className="mb-8 p-4 rounded-xl border border-red-500/50 bg-red-500/10 flex items-center gap-3">
+                        <ExclamationTriangleIcon className="h-5 w-5 text-red-500" />
+                        <span className="text-red-600 dark:text-red-400 text-sm font-medium">
+                          {error}
+                        </span>
+                      </div>
+                    )}
 
-              <div className="mb-6 flex flex-col gap-3 rounded-2xl border border-border-subtle bg-surface/70 p-3 sm:flex-row sm:items-center">
-                <div className="relative min-w-0 flex-1 sm:max-w-sm">
-                  <MagnifyingGlassIcon className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-secondary" />
-                  <input
-                    type="search"
-                    value={taskQuery}
-                    onChange={event => setTaskQuery(event.target.value)}
-                    placeholder={t('cronSearchPlaceholder')}
-                    className="h-9 w-full rounded-xl border border-border bg-background pl-9 pr-3 text-sm text-foreground outline-none transition-colors placeholder:text-secondary/70 focus:border-primary/50 focus:ring-2 focus:ring-primary/15"
-                  />
-                </div>
-                <div className="flex min-w-0 items-center gap-1 overflow-x-auto">
-                  {(
-                    [
-                      ['all', 'cronFilterAll', tasks.length, 'bg-primary/10 text-primary'],
-                      [
-                        'active',
-                        'cronStatsActive',
-                        activeJobs.length,
-                        'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400',
-                      ],
-                      [
-                        'paused',
-                        'cronStatsPaused',
-                        pausedJobs.length,
-                        'bg-amber-500/10 text-amber-700 dark:text-amber-400',
-                      ],
-                      [
-                        'failed',
-                        'cronStatsFailed',
-                        failedJobs.length,
-                        'bg-rose-500/10 text-rose-700 dark:text-rose-400',
-                      ],
-                    ] as const
-                  ).map(([value, label, count, selectedClass]) => (
-                    <button
-                      key={value}
-                      type="button"
-                      onClick={() => setTaskStatusFilter(value)}
-                      className={`inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg px-2.5 text-xs font-medium transition-colors ${
-                        taskStatusFilter === value
-                          ? selectedClass
-                          : 'text-secondary hover:bg-surface-raised hover:text-foreground'
-                      }`}
-                    >
-                      {t(label)}
-                      <span className="tabular-nums opacity-70">{count}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {failedJobs.length > 0 && taskStatusFilter !== 'failed' && (
-                <button
-                  type="button"
-                  onClick={() => setTaskStatusFilter('failed')}
-                  className="mb-6 flex w-full items-center gap-3 rounded-xl border border-red-500/20 bg-red-500/5 px-4 py-3 text-left text-sm text-red-700 transition-colors hover:bg-red-500/10 dark:text-red-300"
-                >
-                  <ExclamationTriangleIcon className="h-5 w-5 shrink-0" />
-                  <span className="flex-1">
-                    {t('cronFailedAttention').replace('{count}', String(failedJobs.length))}
-                  </span>
-                  <span className="font-medium">{t('cronViewFailed')}</span>
-                </button>
-              )}
-
-              {/* Jobs Grid / Empty State */}
-              {error && tasks.length === 0 ? null : tasks.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-20 text-secondary bg-black/5 dark:bg-white/5 rounded-3xl border border-dashed border-border">
-                  <ClockIcon className="h-12 w-12 mb-4 opacity-40" />
-                  <h3 className="text-lg font-medium mb-2 text-foreground">
-                    {t('cronEmptyTitle')}
-                  </h3>
-                  <p className="text-sm text-center mb-6 max-w-md">{t('cronEmptyDescription')}</p>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setEditingJob(undefined);
-                      setShowDialog(true);
-                    }}
-                    className="px-6 py-2.5 text-sm font-medium rounded-full bg-primary text-white hover:bg-primary-hover transition-colors inline-flex items-center gap-2"
-                  >
-                    <PlusIcon className="h-4 w-4" />
-                    {t('cronEmptyCreate')}
-                  </button>
-                </div>
-              ) : visibleTasks.length === 0 ? (
-                <div className="rounded-2xl border border-dashed border-border py-16 text-center">
-                  <MagnifyingGlassIcon className="mx-auto mb-3 h-8 w-8 text-secondary/50" />
-                  <p className="text-sm font-medium text-foreground">{t('cronNoMatches')}</p>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setTaskQuery('');
-                      setTaskStatusFilter('all');
-                    }}
-                    className="mt-3 text-sm font-medium text-primary hover:text-primary-hover"
-                  >
-                    {t('cronClearFilters')}
-                  </button>
-                </div>
-              ) : (
-                <div className="flex flex-col gap-8">
-                  {[
-                    {
-                      id: 'user-scheduled-tasks',
-                      tasks: userTasks,
-                      title: t('cronGroupUser'),
-                      description: t('cronGroupUserDescription'),
-                      Icon: UserIcon,
-                      tone: 'bg-gradient-to-br from-blue-500/20 to-cyan-500/10 text-blue-600 dark:text-blue-400',
-                    },
-                    {
-                      id: 'system-scheduled-tasks',
-                      tasks: systemTasks,
-                      title: t('cronGroupSystem'),
-                      description: t('cronGroupSystemDescription'),
-                      Icon: Cog6ToothIcon,
-                      tone: 'bg-gradient-to-br from-violet-500/20 to-fuchsia-500/10 text-violet-600 dark:text-violet-400',
-                    },
-                  ].map(group =>
-                    group.tasks.length > 0 ? (
-                      <section key={group.id} aria-labelledby={`${group.id}-title`}>
-                        <div className="mb-3 flex items-center gap-3">
-                          <div
-                            className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${group.tone}`}
+                    <div className="mb-6 flex flex-col gap-3 rounded-2xl border border-border-subtle bg-surface/70 p-3 sm:flex-row sm:items-center">
+                      <div className="relative min-w-0 flex-1 sm:max-w-sm">
+                        <MagnifyingGlassIcon className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-secondary" />
+                        <input
+                          type="search"
+                          value={taskQuery}
+                          onChange={event => setTaskQuery(event.target.value)}
+                          placeholder={t('cronSearchPlaceholder')}
+                          className="h-9 w-full rounded-xl border border-border bg-background pl-9 pr-3 text-sm text-foreground outline-none transition-colors placeholder:text-secondary/70 focus:border-primary/50 focus:ring-2 focus:ring-primary/15"
+                        />
+                      </div>
+                      <div className="flex min-w-0 items-center gap-1 overflow-x-auto">
+                        {(
+                          [
+                            ['all', 'cronFilterAll', tasks.length, 'bg-primary/10 text-primary'],
+                            [
+                              'active',
+                              'cronStatsActive',
+                              activeJobs.length,
+                              'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400',
+                            ],
+                            [
+                              'paused',
+                              'cronStatsPaused',
+                              pausedJobs.length,
+                              'bg-amber-500/10 text-amber-700 dark:text-amber-400',
+                            ],
+                            [
+                              'failed',
+                              'cronStatsFailed',
+                              failedJobs.length,
+                              'bg-rose-500/10 text-rose-700 dark:text-rose-400',
+                            ],
+                          ] as const
+                        ).map(([value, label, count, selectedClass]) => (
+                          <button
+                            key={value}
+                            type="button"
+                            onClick={() => setTaskStatusFilter(value)}
+                            className={`inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg px-2.5 text-xs font-medium transition-colors ${
+                              taskStatusFilter === value
+                                ? selectedClass
+                                : 'text-secondary hover:bg-surface-raised hover:text-foreground'
+                            }`}
                           >
-                            <group.Icon className="h-[18px] w-[18px]" />
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-center gap-2">
-                              <h2
-                                id={`${group.id}-title`}
-                                className="text-sm font-semibold text-foreground"
-                              >
-                                {group.title}
-                              </h2>
-                              <span className="rounded-full bg-surface-raised px-2 py-0.5 text-[11px] font-medium tabular-nums text-secondary">
-                                {group.tasks.length}
-                              </span>
-                            </div>
-                            <p className="mt-0.5 text-xs leading-4 text-secondary">
-                              {group.description}
-                            </p>
-                          </div>
-                        </div>
-                        <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,20rem),1fr))] gap-3">
-                          {group.tasks.map(job => (
-                            <CronJobCard
-                              key={job.id}
-                              job={job}
-                              skillMembers={skillMembers}
-                              onMemberHistory={setHistoryTaskId}
-                              onMemberDetails={setDetailsJobId}
-                              skillToggleDisabled={
-                                !memoryControl.settings ||
-                                memoryControl.busy ||
-                                memoryControl.failed
-                              }
-                              memoryFeatureEnabled={Boolean(
-                                memoryControl.settings?.memoryAvailable &&
-                                memoryControl.settings.memoryDreamingEnabled,
-                              )}
-                              memoryToggleDisabled={
-                                !memoryControl.settings?.memoryAvailable ||
-                                memoryControl.busy ||
-                                memoryControl.failed
-                              }
-                              onToggle={enabled => handleToggle(job.id, enabled)}
-                              onEdit={() => {
-                                setEditingJob(job);
-                                setShowDialog(true);
-                              }}
-                              onDelete={() => setJobToDelete(job)}
-                              onTrigger={() => handleRunRequest(job)}
-                              onHistory={() => setHistoryTaskId(job.id)}
-                              onDetails={() => setDetailsJobId(job.id)}
-                            />
-                          ))}
-                        </div>
-                      </section>
-                    ) : null,
-                  )}
-                </div>
-              )}
-            </>
-          )}
+                            {t(label)}
+                            <span className="tabular-nums opacity-70">{count}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {failedJobs.length > 0 && taskStatusFilter !== 'failed' && (
+                      <button
+                        type="button"
+                        onClick={() => setTaskStatusFilter('failed')}
+                        className="mb-6 flex w-full items-center gap-3 rounded-xl border border-red-500/20 bg-red-500/5 px-4 py-3 text-left text-sm text-red-700 transition-colors hover:bg-red-500/10 dark:text-red-300"
+                      >
+                        <ExclamationTriangleIcon className="h-5 w-5 shrink-0" />
+                        <span className="flex-1">
+                          {t('cronFailedAttention').replace('{count}', String(failedJobs.length))}
+                        </span>
+                        <span className="font-medium">{t('cronViewFailed')}</span>
+                      </button>
+                    )}
+
+                    {/* Jobs Grid / Empty State */}
+                    {error && tasks.length === 0 ? null : tasks.length === 0 ? (
+                      <div className="flex flex-col items-center justify-center py-20 text-secondary bg-black/5 dark:bg-white/5 rounded-3xl border border-dashed border-border">
+                        <ClockIcon className="h-12 w-12 mb-4 opacity-40" />
+                        <h3 className="text-lg font-medium mb-2 text-foreground">
+                          {t('cronEmptyTitle')}
+                        </h3>
+                        <p className="text-sm text-center mb-6 max-w-md">
+                          {t('cronEmptyDescription')}
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditingJob(undefined);
+                            setShowDialog(true);
+                          }}
+                          className="px-6 py-2.5 text-sm font-medium rounded-full bg-primary text-white hover:bg-primary-hover transition-colors inline-flex items-center gap-2"
+                        >
+                          <PlusIcon className="h-4 w-4" />
+                          {t('cronEmptyCreate')}
+                        </button>
+                      </div>
+                    ) : visibleTasks.length === 0 ? (
+                      <div className="rounded-2xl border border-dashed border-border py-16 text-center">
+                        <MagnifyingGlassIcon className="mx-auto mb-3 h-8 w-8 text-secondary/50" />
+                        <p className="text-sm font-medium text-foreground">{t('cronNoMatches')}</p>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setTaskQuery('');
+                            setTaskStatusFilter('all');
+                          }}
+                          className="mt-3 text-sm font-medium text-primary hover:text-primary-hover"
+                        >
+                          {t('cronClearFilters')}
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="flex flex-col gap-8">
+                        {[
+                          {
+                            id: 'user-scheduled-tasks',
+                            tasks: userTasks,
+                            title: t('cronGroupUser'),
+                            description: t('cronGroupUserDescription'),
+                            Icon: UserIcon,
+                            tone: 'bg-gradient-to-br from-blue-500/20 to-cyan-500/10 text-blue-600 dark:text-blue-400',
+                          },
+                          {
+                            id: 'system-scheduled-tasks',
+                            tasks: systemTasks,
+                            title: t('cronGroupSystem'),
+                            description: t('cronGroupSystemDescription'),
+                            Icon: Cog6ToothIcon,
+                            tone: 'bg-gradient-to-br from-violet-500/20 to-fuchsia-500/10 text-violet-600 dark:text-violet-400',
+                          },
+                        ].map(group =>
+                          group.tasks.length > 0 ? (
+                            <section key={group.id} aria-labelledby={`${group.id}-title`}>
+                              <div className="mb-3 flex items-center gap-3">
+                                <div
+                                  className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${group.tone}`}
+                                >
+                                  <group.Icon className="h-[18px] w-[18px]" />
+                                </div>
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex items-center gap-2">
+                                    <h2
+                                      id={`${group.id}-title`}
+                                      className="text-sm font-semibold text-foreground"
+                                    >
+                                      {group.title}
+                                    </h2>
+                                    <span className="rounded-full bg-surface-raised px-2 py-0.5 text-[11px] font-medium tabular-nums text-secondary">
+                                      {group.tasks.length}
+                                    </span>
+                                  </div>
+                                  <p className="mt-0.5 text-xs leading-4 text-secondary">
+                                    {group.description}
+                                  </p>
+                                </div>
+                              </div>
+                              <div className="grid grid-cols-[repeat(auto-fill,minmax(min(20rem,calc((100%-0.75rem)/2)),1fr))] gap-3">
+                                {group.tasks.map(job => (
+                                  <CronJobCard
+                                    key={job.id}
+                                    job={job}
+                                    memoryToggleDisabled={
+                                      !memoryControl.settings?.memoryAvailable ||
+                                      memoryControl.busy ||
+                                      memoryControl.failed
+                                    }
+                                    onToggle={enabled => handleToggle(job.id, enabled)}
+                                    onEdit={() => {
+                                      setEditingJob(job);
+                                      setShowDialog(true);
+                                    }}
+                                    onDelete={() => setJobToDelete(job)}
+                                    onTrigger={() => handleRunRequest(job)}
+                                    onHistory={() => setHistoryTaskId(job.id)}
+                                    onDetails={() => setDetailsJobId(job.id)}
+                                  />
+                                ))}
+                              </div>
+                            </section>
+                          ) : null,
+                        )}
+                      </div>
+                    )}
+                  </>
+                )}
               </>
             )}
           </EngineInteractionBoundary>
@@ -2446,205 +2315,205 @@ export const CronView: React.FC<CronViewProps> = ({
 
       {/* Create/Edit Dialog */}
       <EngineInteractionBoundary disabled={!engine.ready}>
-      {showSchedulerSettings && (
-        <SchedulerSettingsDialog
-          onClose={() => setShowSchedulerSettings(false)}
-          onSaved={settings => {
-            schedulerSettingsSavedRef.current = true;
-            setSchedulerEnabled(settings.enabled);
+        {showSchedulerSettings && (
+          <SchedulerSettingsDialog
+            onClose={() => setShowSchedulerSettings(false)}
+            onSaved={settings => {
+              schedulerSettingsSavedRef.current = true;
+              setSchedulerEnabled(settings.enabled);
+            }}
+          />
+        )}
+        <CreateEditDialog
+          open={showDialog}
+          job={editingJob}
+          agents={agents}
+          models={models}
+          onClose={() => {
+            setShowDialog(false);
+            setEditingJob(undefined);
           }}
+          onSave={handleSave}
         />
-      )}
-      <CreateEditDialog
-        open={showDialog}
-        job={editingJob}
-        agents={agents}
-        models={models}
-        onClose={() => {
-          setShowDialog(false);
-          setEditingJob(undefined);
-        }}
-        onSave={handleSave}
-      />
 
-      {detailsJob && <TaskDetailsDialog job={detailsJob} onClose={() => setDetailsJobId(null)} />}
+        {detailsJob && <TaskDetailsDialog job={detailsJob} onClose={() => setDetailsJobId(null)} />}
 
-      {jobToRun && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center"
-          onClick={() => {
-            if (!runSubmitting) setJobToRunId(null);
-          }}
-        >
-          <div className="absolute inset-0 bg-black/40 dark:bg-black/60" />
+        {jobToRun && (
           <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="scheduled-task-run-confirm-title"
-            className="relative mx-4 w-full max-w-lg rounded-2xl border border-border bg-background p-6 shadow-2xl"
-            onClick={e => e.stopPropagation()}
+            className="fixed inset-0 z-50 flex items-center justify-center"
+            onClick={() => {
+              if (!runSubmitting) setJobToRunId(null);
+            }}
           >
-            <h3
-              id="scheduled-task-run-confirm-title"
-              className="mb-2 text-lg font-semibold text-foreground"
+            <div className="absolute inset-0 bg-black/40 dark:bg-black/60" />
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="scheduled-task-run-confirm-title"
+              className="relative mx-4 w-full max-w-lg rounded-2xl border border-border bg-background p-6 shadow-2xl"
+              onClick={e => e.stopPropagation()}
             >
-              {t('cronRunConfirmTitle')}
-            </h3>
-            <p className="mb-4 text-sm leading-6 text-secondary">
-              {t('cronRunConfirmDescription').replace('{name}', jobToRun.name)}
-            </p>
-            <pre className="mb-6 max-h-52 overflow-auto whitespace-pre-wrap break-words rounded-xl border border-yellow-500/20 bg-yellow-500/10 px-4 py-3 font-sans text-sm leading-6 text-foreground">
-              {getTaskExecutionPreview(jobToRun)}
-            </pre>
-            {jobToRun.payload.kind === 'command' && jobToRun.payload.cwd && (
-              <p className="-mt-3 mb-4 text-xs text-secondary">
-                {t('cronDetailsWorkingDirectory')}: {jobToRun.payload.cwd}
+              <h3
+                id="scheduled-task-run-confirm-title"
+                className="mb-2 text-lg font-semibold text-foreground"
+              >
+                {t('cronRunConfirmTitle')}
+              </h3>
+              <p className="mb-4 text-sm leading-6 text-secondary">
+                {t('cronRunConfirmDescription').replace('{name}', jobToRun.name)}
               </p>
-            )}
-            {jobToRun.advancedFeatures?.some(
-              feature => feature === 'command-environment' || feature === 'command-input',
-            ) && (
-              <p className="mb-4 text-sm text-yellow-700 dark:text-yellow-300" role="alert">
-                {t('cronRunConfirmHiddenContext')}
-              </p>
-            )}
-            <div className="flex justify-end gap-3">
-              <button
-                type="button"
-                autoFocus
-                disabled={runSubmitting}
-                onClick={() => setJobToRunId(null)}
-                className="rounded-xl px-4 py-2 text-sm font-medium text-secondary transition-colors hover:bg-surface-raised disabled:opacity-50"
-              >
-                {t('cancel')}
-              </button>
-              <button
-                type="button"
-                disabled={runSubmitting}
-                onClick={() => void handleConfirmedRun()}
-                className="inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-hover disabled:opacity-50"
-              >
-                {runSubmitting && <ArrowPathIcon className="h-4 w-4 animate-spin" />}
-                {t('cronCardRunNow')}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Delete Confirmation Dialog */}
-      {jobToDelete && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center"
-          onClick={() => {
-            if (!deletingTask) setJobToDelete(null);
-          }}
-        >
-          <div className="absolute inset-0 bg-black/40 dark:bg-black/60" />
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="scheduled-task-delete-title"
-            className="relative w-full max-w-sm mx-4 rounded-2xl shadow-2xl bg-background border border-border p-6"
-            onClick={e => e.stopPropagation()}
-          >
-            <h3
-              id="scheduled-task-delete-title"
-              className="text-lg font-semibold text-foreground mb-2"
-            >
-              {t('delete')}
-            </h3>
-            <p className="text-sm text-secondary mb-6">
-              {t('scheduledTasksDeleteConfirm').replace('{name}', jobToDelete.name)}
-            </p>
-            {jobToDelete.management === 'advanced' && (
-              <p className="mb-6 rounded-xl bg-yellow-500/10 px-3 py-2 text-xs leading-5 text-yellow-700 dark:text-yellow-300">
-                {t('cronDetailsAdvancedDeleteWarning')}
-              </p>
-            )}
-            <div className="flex justify-end gap-3">
-              <button
-                type="button"
-                autoFocus
-                disabled={deletingTask}
-                onClick={() => setJobToDelete(null)}
-                className="px-4 py-2 text-sm font-medium rounded-xl text-secondary hover:bg-surface-raised transition-colors disabled:opacity-50"
-              >
-                {t('cancel')}
-              </button>
-              <button
-                type="button"
-                disabled={deletingTask}
-                onClick={() => void handleDelete()}
-                className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-xl bg-red-500 text-white hover:bg-red-600 transition-colors disabled:opacity-50"
-              >
-                {deletingTask && <ArrowPathIcon className="h-4 w-4 animate-spin" />}
-                {t('delete')}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Run History Modal */}
-      {historyTaskId && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center"
-          onClick={() => setHistoryTaskId(null)}
-        >
-          <div className="absolute inset-0 bg-black/40 dark:bg-black/60" />
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="scheduled-task-history-title"
-            className="relative w-full max-w-lg mx-4 max-h-[80vh] flex flex-col rounded-2xl shadow-2xl bg-background border border-border overflow-hidden"
-            onClick={e => e.stopPropagation()}
-          >
-            {/* Header */}
-            <div className="flex items-center justify-between px-5 py-4 border-b border-border-subtle shrink-0">
-              <div className="min-w-0">
-                <h2
-                  id="scheduled-task-history-title"
-                  className="text-lg font-semibold text-foreground"
+              <pre className="mb-6 max-h-52 overflow-auto whitespace-pre-wrap break-words rounded-xl border border-yellow-500/20 bg-yellow-500/10 px-4 py-3 font-sans text-sm leading-6 text-foreground">
+                {getTaskExecutionPreview(jobToRun)}
+              </pre>
+              {jobToRun.payload.kind === 'command' && jobToRun.payload.cwd && (
+                <p className="-mt-3 mb-4 text-xs text-secondary">
+                  {t('cronDetailsWorkingDirectory')}: {jobToRun.payload.cwd}
+                </p>
+              )}
+              {jobToRun.advancedFeatures?.some(
+                feature => feature === 'command-environment' || feature === 'command-input',
+              ) && (
+                <p className="mb-4 text-sm text-yellow-700 dark:text-yellow-300" role="alert">
+                  {t('cronRunConfirmHiddenContext')}
+                </p>
+              )}
+              <div className="flex justify-end gap-3">
+                <button
+                  type="button"
+                  autoFocus
+                  disabled={runSubmitting}
+                  onClick={() => setJobToRunId(null)}
+                  className="rounded-xl px-4 py-2 text-sm font-medium text-secondary transition-colors hover:bg-surface-raised disabled:opacity-50"
                 >
-                  {historyJob ? getTaskDisplayName(historyJob) : ''} - {t('cronCardHistory')}
-                </h2>
-                {historyJob &&
-                  (isMemoryDreamingTask(historyJob) || getTaskAgentLabel(historyJob, agents)) && (
-                    <p className="mt-1 flex items-center gap-2 text-xs text-secondary">
-                      <UserIcon className="h-3.5 w-3.5 shrink-0" />
-                      <span className="truncate">
-                        {isMemoryDreamingTask(historyJob)
-                          ? t('cronMemoryScope')
-                          : getTaskAgentLabel(historyJob, agents)}
-                      </span>
-                    </p>
-                  )}
+                  {t('cancel')}
+                </button>
+                <button
+                  type="button"
+                  disabled={runSubmitting}
+                  onClick={() => void handleConfirmedRun()}
+                  className="inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-hover disabled:opacity-50"
+                >
+                  {runSubmitting && <ArrowPathIcon className="h-4 w-4 animate-spin" />}
+                  {t('cronCardRunNow')}
+                </button>
               </div>
-              <button
-                type="button"
-                onClick={() => setHistoryTaskId(null)}
-                aria-label={t('close')}
-                className="p-1.5 rounded-lg text-secondary hover:bg-surface-raised transition-colors"
-              >
-                <XMarkIcon className="w-5 h-5" />
-              </button>
-            </div>
-
-            {/* Body */}
-            <div className="flex-1 overflow-y-auto px-5 py-4">
-              <TaskRunHistory
-                taskId={historyTaskId}
-                taskName={historyJob ? getTaskDisplayName(historyJob) : undefined}
-                runs={historyRuns}
-                loading={historyLoading}
-                loadError={historyLoadError}
-                onRetry={() => setHistoryRequestRevision(revision => revision + 1)}
-              />
             </div>
           </div>
-        </div>
-      )}
+        )}
+
+        {/* Delete Confirmation Dialog */}
+        {jobToDelete && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center"
+            onClick={() => {
+              if (!deletingTask) setJobToDelete(null);
+            }}
+          >
+            <div className="absolute inset-0 bg-black/40 dark:bg-black/60" />
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="scheduled-task-delete-title"
+              className="relative w-full max-w-sm mx-4 rounded-2xl shadow-2xl bg-background border border-border p-6"
+              onClick={e => e.stopPropagation()}
+            >
+              <h3
+                id="scheduled-task-delete-title"
+                className="text-lg font-semibold text-foreground mb-2"
+              >
+                {t('delete')}
+              </h3>
+              <p className="text-sm text-secondary mb-6">
+                {t('scheduledTasksDeleteConfirm').replace('{name}', jobToDelete.name)}
+              </p>
+              {jobToDelete.management === 'advanced' && (
+                <p className="mb-6 rounded-xl bg-yellow-500/10 px-3 py-2 text-xs leading-5 text-yellow-700 dark:text-yellow-300">
+                  {t('cronDetailsAdvancedDeleteWarning')}
+                </p>
+              )}
+              <div className="flex justify-end gap-3">
+                <button
+                  type="button"
+                  autoFocus
+                  disabled={deletingTask}
+                  onClick={() => setJobToDelete(null)}
+                  className="px-4 py-2 text-sm font-medium rounded-xl text-secondary hover:bg-surface-raised transition-colors disabled:opacity-50"
+                >
+                  {t('cancel')}
+                </button>
+                <button
+                  type="button"
+                  disabled={deletingTask}
+                  onClick={() => void handleDelete()}
+                  className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-xl bg-red-500 text-white hover:bg-red-600 transition-colors disabled:opacity-50"
+                >
+                  {deletingTask && <ArrowPathIcon className="h-4 w-4 animate-spin" />}
+                  {t('delete')}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Run History Modal */}
+        {historyTaskId && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center"
+            onClick={() => setHistoryTaskId(null)}
+          >
+            <div className="absolute inset-0 bg-black/40 dark:bg-black/60" />
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="scheduled-task-history-title"
+              className="relative w-full max-w-lg mx-4 max-h-[80vh] flex flex-col rounded-2xl shadow-2xl bg-background border border-border overflow-hidden"
+              onClick={e => e.stopPropagation()}
+            >
+              {/* Header */}
+              <div className="flex items-center justify-between px-5 py-4 border-b border-border-subtle shrink-0">
+                <div className="min-w-0">
+                  <h2
+                    id="scheduled-task-history-title"
+                    className="text-lg font-semibold text-foreground"
+                  >
+                    {historyJob ? getTaskDisplayName(historyJob) : ''} - {t('cronCardHistory')}
+                  </h2>
+                  {historyJob &&
+                    (isMemoryDreamingTask(historyJob) || getTaskAgentLabel(historyJob, agents)) && (
+                      <p className="mt-1 flex items-center gap-2 text-xs text-secondary">
+                        <UserIcon className="h-3.5 w-3.5 shrink-0" />
+                        <span className="truncate">
+                          {isMemoryDreamingTask(historyJob)
+                            ? t('cronMemoryScope')
+                            : getTaskAgentLabel(historyJob, agents)}
+                        </span>
+                      </p>
+                    )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setHistoryTaskId(null)}
+                  aria-label={t('close')}
+                  className="p-1.5 rounded-lg text-secondary hover:bg-surface-raised transition-colors"
+                >
+                  <XMarkIcon className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Body */}
+              <div className="flex-1 overflow-y-auto px-5 py-4">
+                <TaskRunHistory
+                  taskId={historyTaskId}
+                  taskName={historyJob ? getTaskDisplayName(historyJob) : undefined}
+                  runs={historyRuns}
+                  loading={historyLoading}
+                  loadError={historyLoadError}
+                  onRetry={() => setHistoryRequestRevision(revision => revision + 1)}
+                />
+              </div>
+            </div>
+          </div>
+        )}
       </EngineInteractionBoundary>
     </div>
   );

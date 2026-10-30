@@ -12,6 +12,8 @@ import { scheduledTaskService } from '@/features/scheduled-tasks/scheduledTaskSe
 import { i18nService } from '@/services/i18n';
 import { RootState } from '@/store';
 
+import RunDiagnostics from './RunDiagnostics';
+
 interface TaskRunHistoryProps {
   taskId: string;
   taskName?: string;
@@ -101,40 +103,38 @@ const TaskRunHistory: React.FC<TaskRunHistoryProps> = ({
         {runs.map(run => {
           const statusInfo = statusIcons[run.status] || { icon: '?', color: '' };
           return (
-            <div key={run.id} className="flex items-center justify-between py-2.5 px-1">
-              <div className="flex items-center gap-3 min-w-0">
-                <span
-                  className={`text-sm font-bold ${statusInfo.color}`}
-                  role="img"
-                  aria-label={i18nService.t(getStatusLabelKey(run.status))}
-                >
-                  {statusInfo.icon}
-                </span>
-                <div className="min-w-0">
-                  <span className="text-sm text-foreground">
-                    {formatDateTime(new Date(run.startedAt))}
+            <div key={run.id} className="py-2.5 px-1">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3 min-w-0">
+                  <span
+                    className={`text-sm font-bold ${statusInfo.color}`}
+                    role="img"
+                    aria-label={i18nService.t(getStatusLabelKey(run.status))}
+                  >
+                    {statusInfo.icon}
                   </span>
+                  <div className="min-w-0">
+                    <span className="text-sm text-foreground">
+                      {formatDateTime(new Date(run.startedAt))}
+                    </span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3 shrink-0 ml-2">
+                  {run.durationMs !== null && (
+                    <span className="text-xs text-secondary">{formatDuration(run.durationMs)}</span>
+                  )}
+                  {run.status !== 'skipped' && run.sessionKey && (
+                    <button
+                      type="button"
+                      onClick={() => setViewingRun(run)}
+                      className="text-xs text-primary hover:text-primary-hover transition-colors"
+                    >
+                      {i18nService.t('scheduledTasksViewSession')}
+                    </button>
+                  )}
                 </div>
               </div>
-              <div className="flex items-center gap-3 shrink-0 ml-2">
-                {run.durationMs !== null && (
-                  <span className="text-xs text-secondary">{formatDuration(run.durationMs)}</span>
-                )}
-                {run.status === 'error' && run.error && (
-                  <span className="text-xs text-red-500 max-w-[150px] truncate" title={run.error}>
-                    {run.error}
-                  </span>
-                )}
-                {run.status !== 'skipped' && run.sessionKey && (
-                  <button
-                    type="button"
-                    onClick={() => setViewingRun(run)}
-                    className="text-xs text-primary hover:text-primary-hover transition-colors"
-                  >
-                    {i18nService.t('scheduledTasksViewSession')}
-                  </button>
-                )}
-              </div>
+              <RunDiagnostics run={run} compact className="ml-7 mt-2" />
             </div>
           );
         })}

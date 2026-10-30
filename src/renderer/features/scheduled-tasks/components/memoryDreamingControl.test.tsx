@@ -22,7 +22,7 @@ import {
   withMemoryDreamingCard,
 } from './memoryDreamingControl';
 
-const enabled = { memoryDreamingEnabled: true, memoryAvailable: true, skillMode: 'auto' as const };
+const enabled = { memoryDreamingEnabled: true, memoryAvailable: true };
 const emptyTasks: ScheduledTask[] = [];
 afterEach(cleanup);
 
@@ -38,7 +38,7 @@ test('defers native system task reads and writes until execution admission', asy
     { initialProps: { ready: false } },
   );
   expect(getSystemSettings).not.toHaveBeenCalled();
-  expect(await result.current.toggleSkills(false)).toBe(false);
+  expect(await result.current.toggle(false)).toBe(false);
   expect(updateSystemSettings).not.toHaveBeenCalled();
   rerender({ ready: true });
   await waitFor(() => expect(result.current.settings).toEqual(enabled));
@@ -86,7 +86,7 @@ test('toggles native feature configuration off and on and keeps its previous sta
   expect(result.current.busy).toBe(false);
 });
 
-test('memory cards expose a feature switch while skill cleanup cards show status without a switch', () => {
+test('memory cards expose a feature switch while native managed tasks remain read-only', () => {
   const store = configureStore({ reducer: { agent: () => ({ agents: [] }) } });
   const job = withMemoryDreamingCard([], enabled)[0];
   const onToggle = vi.fn();
@@ -109,7 +109,12 @@ test('memory cards expose a feature switch while skill cleanup cards show status
   rerender(
     <Provider store={store}>
       <CronJobCard
-        job={{ ...job, id: 'skill-review', payload: { kind: 'skillCollectionReview' } }}
+        job={{
+          ...job,
+          id: 'maintenance-main',
+          declarationKey: 'maintenance:main',
+          payload: { kind: 'agentTurn', message: 'Check project status' },
+        }}
         {...props}
       />
     </Provider>,
@@ -137,13 +142,13 @@ test('reports a suppressed simultaneous toggle without sending a second mutation
   const { result } = renderHook(() => useMemoryDreamingControl(emptyTasks));
   await waitFor(() => expect(result.current.settings).toEqual(enabled));
   await act(async () => {
-    const first = result.current.toggleSkills(false);
+    const first = result.current.toggle(false);
     expect(await result.current.toggle(false)).toBe(false);
     expect(updateSystemSettings).toHaveBeenCalledOnce();
     finishUpdate({ success: true });
     expect(await first).toBe(true);
   });
-  expect(result.current.settings).toMatchObject({ skillMode: 'off', memoryDreamingEnabled: true });
+  expect(result.current.settings).toMatchObject({ memoryDreamingEnabled: false });
 });
 
 test('an older config read cannot overwrite a successfully saved feature setting', async () => {
@@ -173,10 +178,10 @@ test('an older config read cannot overwrite a successfully saved feature setting
   rerender({ tasks: [...emptyTasks] });
   await waitFor(() => expect(getSystemSettings).toHaveBeenCalledTimes(2));
   await act(async () => {
-    expect(await result.current.toggleSkills(false)).toBe(true);
+    expect(await result.current.toggle(false)).toBe(true);
     finishRead({ success: true, settings: enabled });
   });
-  expect(result.current.settings?.skillMode).toBe('off');
+  expect(result.current.settings?.memoryDreamingEnabled).toBe(false);
 });
 
 test('keeps a paused native job paused while the feature switch remains enabled', () => {

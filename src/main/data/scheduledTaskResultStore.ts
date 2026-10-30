@@ -6,6 +6,7 @@ import {
   OPENCLAW_HEARTBEAT_SKIPPED_PREFIX,
   OPENCLAW_SILENT_REPLY_MARKER,
 } from '../../shared/scheduledTask/resultPresentation';
+import { normalizeScheduledTaskRunMetadata } from '../../shared/scheduledTask/runMetadata';
 import type {
   ScheduledTaskResult,
   ScheduledTaskResultPage,
@@ -18,9 +19,18 @@ const BASELINE_TASK_KEY_PREFIX = 'scheduled_task_results_baseline_task_v1:';
 const CATCH_UP_KEY_PREFIX = 'scheduled_task_results_catch_up_v1:';
 const DEFAULT_PAGE_SIZE = 30;
 const MAX_PAGE_SIZE = 100;
+const VALID_METADATA_SQL = "CASE WHEN json_valid(metadata_json) THEN metadata_json ELSE '{}' END";
 const ROUTINE_RESULT_EXCLUSION_SQL = `NOT (
-  (system_managed = 1 AND status = ? AND LOWER(TRIM(COALESCE(error, ''))) LIKE ?)
-  OR (status = ? AND UPPER(TRIM(COALESCE(summary, ''))) = ? AND TRIM(COALESCE(error, '')) = '')
+  (
+    (system_managed = 1 AND status = ? AND LOWER(TRIM(COALESCE(error, ''))) LIKE ?)
+    OR (status = ? AND UPPER(TRIM(COALESCE(summary, ''))) = ? AND TRIM(COALESCE(error, '')) = '')
+  )
+  AND COALESCE(json_extract(${VALID_METADATA_SQL}, '$.completionStatus'), '') NOT IN ('failed', 'unknown')
+  AND TRIM(COALESCE(delivery_error, '')) = ''
+  AND NOT EXISTS (
+    SELECT 1 FROM json_each(${VALID_METADATA_SQL}, '$.diagnostics.entries') AS diagnostic
+    WHERE CASE WHEN diagnostic.type = 'object' THEN json_extract(diagnostic.value, '$.severity') END IN ('warn', 'error')
+  )
 )`;
 
 interface ResultRow {
@@ -35,6 +45,7 @@ interface ResultRow {
   error: string | null;
   delivery_status: string | null;
   delivery_error: string | null;
+  metadata_json: string;
   started_at: number;
   finished_at: number | null;
   duration_ms: number | null;
@@ -73,7 +84,14 @@ function toMillis(value: string | null): number | null {
 }
 
 function rowToResult(row: ResultRow): ScheduledTaskResult {
+  let metadata = {};
+  try {
+    metadata = normalizeScheduledTaskRunMetadata(JSON.parse(row.metadata_json));
+  } catch {
+    /* Old or invalid metadata never replaces the original receipt facts. */
+  }
   return {
+    ...metadata,
     id: row.run_id,
     taskId: row.task_id,
     taskName: row.task_name,
@@ -260,7 +278,11 @@ export class ScheduledTaskResultStore {
     const terminal = run.status !== TaskStatus.Running;
     const existingTerminal = existing ? existing.status !== TaskStatus.Running : false;
     const systemManaged = options.systemManaged ?? existing?.system_managed === 1;
-    const routine = isRoutineScheduledTaskResult({ ...run, systemManaged });
+    const metadata = normalizeScheduledTaskRunMetadata({
+      ...(existing ? normalizeScheduledTaskRunMetadata(rowToResult(existing)) : {}),
+      ...normalizeScheduledTaskRunMetadata(run),
+    });
+    const routine = isRoutineScheduledTaskResult({ ...run, ...metadata, systemManaged });
     const isNewUnread =
       terminal &&
       !routine &&
@@ -284,6 +306,7 @@ export class ScheduledTaskResultStore {
       run.error,
       run.deliveryStatus,
       run.deliveryError,
+      JSON.stringify(metadata),
       startedAt,
       toMillis(run.finishedAt),
       run.durationMs,
@@ -296,9 +319,9 @@ export class ScheduledTaskResultStore {
       .prepare(
         `INSERT INTO scheduled_task_run_receipts (
           run_id, task_id, task_name, system_managed, session_id, session_key, status, summary, error,
-          delivery_status, delivery_error, started_at, finished_at, duration_ms,
+          delivery_status, delivery_error, metadata_json, started_at, finished_at, duration_ms,
           observed_at, read_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(run_id) DO UPDATE SET
           task_id = excluded.task_id,
           task_name = CASE
@@ -315,6 +338,7 @@ export class ScheduledTaskResultStore {
           error = excluded.error,
           delivery_status = excluded.delivery_status,
           delivery_error = excluded.delivery_error,
+          metadata_json = excluded.metadata_json,
           started_at = excluded.started_at,
           finished_at = excluded.finished_at,
           duration_ms = excluded.duration_ms,

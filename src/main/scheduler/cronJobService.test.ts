@@ -127,15 +127,15 @@ describe('mapGatewayRun', () => {
 });
 
 describe('mapGatewayJob', () => {
-  test('preserves native skill monitor ownership independently of its agentTurn payload', () => {
-    const payload = { kind: 'agentTurn' as const, message: 'Audit Workshop', toolsAllow: ['read'] };
+  test('preserves native declaration ownership independently of its agentTurn payload', () => {
+    const payload = { kind: 'agentTurn' as const, message: 'Audit workspace', toolsAllow: ['read'] };
     const job = mapGatewayJob({
-      id: 'review-research',
+      id: 'declared-research-check',
       name: 'Renamed monitor',
-      declarationKey: 'skill-collection-review:research',
+      declarationKey: 'maintenance:research',
       agentId: 'research',
       enabled: false,
-      schedule: { kind: 'every', everyMs: 604800000 },
+      schedule: { kind: 'every', everyMs: 3600000 },
       sessionTarget: 'isolated',
       wakeMode: 'next-heartbeat',
       payload,
@@ -144,9 +144,9 @@ describe('mapGatewayJob', () => {
       updatedAtMs: 2,
     });
     expect(job).toMatchObject({
-      id: 'review-research',
+      id: 'declared-research-check',
       agentId: 'research',
-      declarationKey: 'skill-collection-review:research',
+      declarationKey: 'maintenance:research',
       management: 'managed',
       payload,
       enabled: false,
@@ -440,7 +440,7 @@ describe('scheduled task agent assignment', () => {
       expect.objectContaining({
         patch: {
           payload: {
-            ...gatewayJob.payload,
+            kind: 'agentTurn',
             permissionMode: 'read-only',
             toolsAllow: [...SCHEDULED_TASK_READ_ONLY_TOOLS],
           },
@@ -452,7 +452,7 @@ describe('scheduled task agent assignment', () => {
     expect(request).toHaveBeenCalledWith(
       'cron.update',
       expect.objectContaining({
-        patch: { payload: { ...gatewayJob.payload, permissionMode: 'full', toolsAllow: ['*'] } },
+        patch: { payload: { kind: 'agentTurn', permissionMode: 'full', toolsAllow: ['*'] } },
       }),
     );
   });
@@ -1034,11 +1034,11 @@ describe('system task native configuration', () => {
       getGatewayClient: () => ({ request }) as never,
       ensureGatewayReady: vi.fn(),
     });
-    await service.updateSystemSettings({ skillMode: 'off' });
+    await service.updateSystemSettings({ memoryDreamingEnabled: false });
     expect(request).toHaveBeenNthCalledWith(1, 'config.get');
     expect(request).toHaveBeenNthCalledWith(2, 'config.patch', {
       baseHash: 'revision-1',
-      raw: JSON.stringify({ skills: { workshop: { autonomous: { mode: 'off' } } } }),
+      raw: JSON.stringify({ plugins: { entries: { 'memory-core': { config: { dreaming: { enabled: false } } } } } }),
     });
   });
   test('rejects a write when the config revision cannot be obtained', async () => {
@@ -1047,7 +1047,7 @@ describe('system task native configuration', () => {
       getGatewayClient: () => ({ request }) as never,
       ensureGatewayReady: vi.fn(),
     });
-    await expect(service.updateSystemSettings({ skillMode: 'off' })).rejects.toThrow(/revision/);
+    await expect(service.updateSystemSettings({ memoryDreamingEnabled: false })).rejects.toThrow(/revision/);
     expect(request).toHaveBeenCalledTimes(1);
   });
 });
@@ -1061,4 +1061,91 @@ test('scheduler settings retain the UI revision and do not overwrite fields not 
   expect(request).toHaveBeenLastCalledWith('config.patch', { baseHash: 'viewed-revision', raw: JSON.stringify({ cron: { sessionRetention: false } }) });
   request.mockRejectedValueOnce(new Error('revision conflict'));
   await expect(service.updateSchedulerSettings({ revision: 'stale-revision', patch: { enabled: true } })).rejects.toThrow('revision conflict');
+});
+
+describe('native automation configuration and diagnostic projections', () => {
+  const input = {
+    name: 'Report', description: '', enabled: true,
+    schedule: { kind: 'at' as const, at: '2027-01-01T00:00:00.000Z' },
+    sessionTarget: 'isolated' as const, wakeMode: 'now' as const,
+    payload: { kind: 'agentTurn' as const, message: 'Create a report' },
+  };
+  const job = {
+    ...input, id: 'report-task', state: {}, deleteAfterRun: false,
+    createdAtMs: 1_700_000_000_000, updatedAtMs: 1_700_000_000_000,
+  };
+
+  test('clears only requested payload overrides and preserves false and empty fallback lists', async () => {
+    const request = vi.fn(async (method: string) => {
+      if (method === 'cron.get' || method === 'cron.update') return job;
+      throw new Error(`Unexpected method: ${method}`);
+    });
+    const service = new CronJobService({ getGatewayClient: () => ({ request }) as never, ensureGatewayReady: vi.fn() });
+    await service.updateJob(job.id, {
+      permissionMode: 'read-only',
+      payload: { kind: 'agentTurn', model: null, thinking: null, timeoutSeconds: null, fallbacks: [], lightContext: false },
+    });
+    expect(request).toHaveBeenLastCalledWith('cron.update', {
+      id: job.id,
+      patch: { payload: {
+        kind: 'agentTurn', model: null, thinking: null, timeoutSeconds: null, fallbacks: [], lightContext: false,
+        permissionMode: 'read-only', toolsAllow: [...SCHEDULED_TASK_READ_ONLY_TOOLS],
+      } },
+    });
+    await service.updateJob(job.id, { payload: { kind: 'agentTurn', fallbacks: null } });
+    expect(request).toHaveBeenLastCalledWith('cron.update', { id: job.id, patch: { payload: { kind: 'agentTurn', fallbacks: null } } });
+    expect(mapGatewayJob(job)).toMatchObject({ management: 'editable', deleteAfterRun: false });
+    expect(mapGatewayJob({ ...job, owner: { agentId: 'main' } }).management).toBe('advanced');
+    await service.updateJob(job.id, { deleteAfterRun: true });
+    expect(request).toHaveBeenLastCalledWith('cron.update', { id: job.id, patch: { deleteAfterRun: true } });
+  });
+
+  test('rejects malformed advanced inputs before creating a native task', async () => {
+    const request = vi.fn().mockResolvedValue(job);
+    const service = new CronJobService({ getGatewayClient: () => ({ request }) as never, ensureGatewayReady: vi.fn() });
+    await expect(service.addJob({ ...input, payload: { ...input.payload, timeoutSeconds: -1 } })).rejects.toThrow(/timeout/);
+    await expect(service.addJob({ ...input, schedule: { kind: 'cron', expr: '0 9 * * *', tz: 'invalid/timezone' } })).rejects.toThrow(/timezone/);
+    await expect(service.updateJob(job.id, { payload: { kind: 'agentTurn', lightContext: null } } as never)).rejects.toThrow(/light context/);
+    expect(request).not.toHaveBeenCalled();
+  });
+
+  test('preserves execution status separately from completion, failure diagnostics, and actual model use', () => {
+    const run = mapGatewayRun({
+      jobId: job.id, runId: 'run-1', ts: 10, runAtMs: 5, status: 'ok', completionStatus: 'unknown',
+      errorReason: 'timeout', model: 'actual', provider: 'internal', usage: { input_tokens: 0 },
+      diagnostics: { entries: [{ ts: 8, source: 'delivery', severity: 'warn', message: 'Not confirmed', details: { token: 'discard' } }] },
+    });
+    expect(run).toMatchObject({ status: 'success', completionStatus: 'unknown', errorReason: 'timeout', model: 'actual', usage: { input_tokens: 0 } });
+    expect(run.diagnostics?.entries[0]).toEqual({ ts: 8, source: 'delivery', severity: 'warn', message: 'Not confirmed' });
+  });
+
+  test('publishes complete native task snapshots when polling only observes an enabled/configuration change', async () => {
+    const send = vi.fn();
+    getAllWindowsMock.mockReturnValue([{ isDestroyed: () => false, webContents: { send } } as never]);
+    let current = { ...job, enabled: true, configRevision: 'revision-1' };
+    const request = vi.fn().mockImplementation(async () => ({ jobs: [current] }));
+    const service = new CronJobService({ getGatewayClient: () => ({ request }) as never, ensureGatewayReady: vi.fn() });
+    try {
+      service.startPolling();
+      await vi.waitFor(() => expect(send).toHaveBeenCalledWith(IpcChannel.Refresh));
+      send.mockClear();
+      current = { ...current, enabled: false, configRevision: 'revision-2' };
+      await (service as unknown as { pollOnce: () => Promise<void> }).pollOnce();
+      expect(send).toHaveBeenCalledWith(IpcChannel.StatusUpdate, expect.objectContaining({
+        taskId: job.id, task: expect.objectContaining({ enabled: false, configRevision: 'revision-2' }),
+      }));
+      await service.reconcileGatewayChange({ jobId: job.id, action: 'finished', job: {
+        ...current, state: { autoDisabled: { reason: 'consecutive-failures', atMs: 20, consecutiveErrors: 5 } },
+      }, status: 'error', runId: 'run-1', runAtMs: 5, ts: 20 });
+      expect(send).toHaveBeenLastCalledWith(IpcChannel.RunUpdate, expect.any(Object));
+      expect(send).toHaveBeenCalledWith(IpcChannel.StatusUpdate, expect.objectContaining({
+        task: expect.objectContaining({ enabled: false, state: expect.objectContaining({
+          autoDisabled: { reason: 'consecutive-failures', atMs: 20, consecutiveErrors: 5 },
+        }) }),
+      }));
+    } finally {
+      service.stopPolling();
+      getAllWindowsMock.mockReturnValue([]);
+    }
+  });
 });

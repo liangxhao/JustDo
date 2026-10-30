@@ -22,6 +22,24 @@ describe('scheduled task result presentation', () => {
     expect(getHeartbeatSkippedReason('execution failed')).toBeNull();
   });
 
+  test('keeps failed or unconfirmed silent runs and diagnostic warnings visible', () => {
+    const silent = { status: TaskStatus.Success, summary: 'NO_REPLY', error: null };
+    expect(isRoutineScheduledTaskResult({ ...silent, completionStatus: 'failed' })).toBe(false);
+    expect(isRoutineScheduledTaskResult({ ...silent, completionStatus: 'unknown' })).toBe(false);
+    expect(isRoutineScheduledTaskResult({ ...silent, deliveryError: 'delivery failed' })).toBe(
+      false,
+    );
+    expect(
+      isRoutineScheduledTaskResult({
+        ...silent,
+        diagnostics: {
+          entries: [{ ts: 1, source: 'agent-run', severity: 'warn', message: 'Incomplete work' }],
+        },
+      }),
+    ).toBe(false);
+    expect(isRoutineScheduledTaskResult({ ...silent, completionStatus: 'succeeded' })).toBe(true);
+  });
+
   test('classifies silent successes and skipped heartbeats as routine', () => {
     expect(
       isRoutineScheduledTaskResult({

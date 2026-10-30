@@ -3,28 +3,34 @@ import { describe, expect, test } from 'vitest';
 import { buildSystemTaskSettingsPatch, readSystemTaskSettings } from './systemTaskSettings';
 
 describe('native system task settings', () => {
-  test('reads native defaults and preserves proposals mode', () => {
+  test('reads memory defaults without exposing retired skill automation settings', () => {
     expect(readSystemTaskSettings({})).toEqual({
       memoryDreamingEnabled: true,
       memoryAvailable: true,
-      skillMode: 'off',
     });
-    expect(
-      readSystemTaskSettings({ skills: { workshop: { autonomous: { mode: 'propose' } } } })
-        .skillMode,
-    ).toBe('propose');
+    expect(readSystemTaskSettings({ skills: { workshop: { autonomous: { mode: 'propose' } } } }))
+      .toEqual(readSystemTaskSettings({}));
   });
   test('writes only requested native config fields without overriding unrelated plugin settings', () => {
     expect(buildSystemTaskSettingsPatch({ memoryDreamingEnabled: false }, {})).toEqual({
       plugins: { entries: { 'memory-core': { config: { dreaming: { enabled: false } } } } },
     });
-    expect(buildSystemTaskSettingsPatch({ skillMode: 'off' }, {})).toEqual({
-      skills: { workshop: { autonomous: { mode: 'off' } } },
-    });
     expect(buildSystemTaskSettingsPatch({}, {})).toEqual({});
   });
-  test('rejects arbitrary fields, invalid modes and disabled memory plugins or slots', () => {
-    expect(() => buildSystemTaskSettingsPatch({ skillMode: 'invalid' } as never, {})).toThrow();
+  test('rejects retired skill mutations without changing their existing config', () => {
+    const config = { skills: { workshop: { autonomous: { mode: 'propose' } } } };
+    const original = structuredClone(config);
+    for (const skillMode of ['off', 'propose', 'auto']) {
+      expect(() => buildSystemTaskSettingsPatch({ skillMode } as never, config)).toThrow(
+        'Invalid system task settings',
+      );
+    }
+    expect(buildSystemTaskSettingsPatch({ memoryDreamingEnabled: false }, config)).toEqual({
+      plugins: { entries: { 'memory-core': { config: { dreaming: { enabled: false } } } } },
+    });
+    expect(config).toEqual(original);
+  });
+  test('rejects arbitrary fields and disabled memory plugins or slots', () => {
     expect(() => buildSystemTaskSettingsPatch({ tools: {} } as never, {})).toThrow();
     for (const plugins of [
       { enabled: false },

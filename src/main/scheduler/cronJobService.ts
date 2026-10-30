@@ -18,8 +18,13 @@ import {
   applyScheduledTaskPermission,
   ScheduledTaskPermission,
 } from '../../shared/scheduledTask/permissions';
+import {
+  normalizeScheduledTaskDiagnostics,
+  normalizeScheduledTaskRunMetadata,
+} from '../../shared/scheduledTask/runMetadata';
 import type {
   EditableScheduledTaskPayload,
+  EditableScheduledTaskPayloadPatch,
   Schedule,
   ScheduledTask,
   ScheduledTaskAdvancedFeature,
@@ -31,6 +36,7 @@ import type {
   ScheduledTaskRun,
   ScheduledTaskRunPage,
   ScheduledTaskRunWithName,
+  ScheduledTaskUpdateInput,
   SchedulerSettingsSnapshot,
   SchedulerSettingsUpdate,
   TaskState,
@@ -124,8 +130,7 @@ type GatewayPayload =
       toolBudget?: number;
       toolsAllow?: string[];
     }
-  | { kind: 'heartbeat' }
-  | { kind: 'skillCollectionReview' };
+  | { kind: 'heartbeat' };
 
 interface GatewayDelivery {
   mode: DeliveryModeType;
@@ -147,6 +152,11 @@ interface GatewayJobState {
   lastError?: string;
   lastDurationMs?: number;
   consecutiveErrors?: number;
+  consecutiveSkipped?: number;
+  autoDisabled?: unknown;
+  lastErrorReason?: string;
+  lastDiagnostics?: unknown;
+  lastDiagnosticSummary?: string;
   /** Delivery status from the last run. */
   lastDeliveryStatus?: string;
   /** Delivery error message from the last run. */
@@ -201,6 +211,13 @@ interface GatewayRunLogEntry {
   summary?: string;
   deliveryStatus?: string;
   deliveryError?: string;
+  completionStatus?: unknown;
+  errorReason?: unknown;
+  diagnostics?: unknown;
+  deliverySuppressionReason?: unknown;
+  model?: unknown;
+  provider?: unknown;
+  usage?: unknown;
 }
 
 interface GatewayRunPage {
@@ -349,6 +366,99 @@ function toGatewayPayload(payload: EditableScheduledTaskPayload): GatewayPayload
   };
 }
 
+function toGatewayPayloadPatch(
+  payload: EditableScheduledTaskPayloadPatch,
+): Record<string, unknown> {
+  if (payload.kind === PayloadKind.SystemEvent) {
+    return {
+      kind: PayloadKind.SystemEvent,
+      ...(payload.text !== undefined ? { text: payload.text } : {}),
+      ...(payload.toolsAllow !== undefined ? { toolsAllow: [...payload.toolsAllow] } : {}),
+    };
+  }
+  const patch: Record<string, unknown> = { kind: PayloadKind.AgentTurn };
+  for (const field of [
+    'message',
+    'permissionMode',
+    'timeoutSeconds',
+    'model',
+    'fallbacks',
+    'thinking',
+    'allowUnsafeExternalContent',
+    'lightContext',
+    'toolsAllow',
+  ] as const) {
+    const value = payload[field];
+    if (value !== undefined) patch[field] = Array.isArray(value) ? [...value] : value;
+  }
+  if (payload.model === '') patch.model = null;
+  return patch;
+}
+
+function validateAdvancedInput(
+  input: ScheduledTaskInput | ScheduledTaskUpdateInput,
+  update: boolean,
+): void {
+  if (input.deleteAfterRun !== undefined && typeof input.deleteAfterRun !== 'boolean') {
+    throw new Error('Invalid scheduled task retention policy');
+  }
+  if (input.schedule?.kind === ScheduleKind.Cron) {
+    const { tz, staggerMs } = input.schedule;
+    if (tz !== undefined) {
+      if (typeof tz !== 'string' || tz.length > 128)
+        throw new Error('Invalid scheduled task timezone');
+      if (tz) {
+        try {
+          new Intl.DateTimeFormat('en-US', { timeZone: tz }).format();
+        } catch {
+          throw new Error('Invalid scheduled task timezone');
+        }
+      }
+    }
+    if (
+      staggerMs !== undefined &&
+      (!Number.isSafeInteger(staggerMs) || staggerMs < 0 || staggerMs > 8_640_000_000_000_000)
+    ) {
+      throw new Error('Invalid scheduled task stagger window');
+    }
+  }
+  const payload = input.payload;
+  if (payload?.kind !== PayloadKind.AgentTurn) return;
+  if (
+    payload.timeoutSeconds !== undefined &&
+    !(update && payload.timeoutSeconds === null) &&
+    (typeof payload.timeoutSeconds !== 'number' ||
+      !Number.isFinite(payload.timeoutSeconds) ||
+      payload.timeoutSeconds < 0)
+  ) {
+    throw new Error('Invalid scheduled task timeout');
+  }
+  for (const field of ['model', 'thinking'] as const) {
+    const value = payload[field];
+    if (
+      value !== undefined &&
+      !(update && value === null) &&
+      (typeof value !== 'string' || value.length > 1024 || (field === 'thinking' && !value.trim()))
+    ) {
+      throw new Error(`Invalid scheduled task ${field}`);
+    }
+  }
+  if (
+    payload.fallbacks !== undefined &&
+    !(update && payload.fallbacks === null) &&
+    (!Array.isArray(payload.fallbacks) ||
+      payload.fallbacks.length > 128 ||
+      payload.fallbacks.some(
+        value => typeof value !== 'string' || !value.trim() || value.length > 1024,
+      ))
+  ) {
+    throw new Error('Invalid scheduled task fallback models');
+  }
+  if (payload.lightContext !== undefined && typeof payload.lightContext !== 'boolean') {
+    throw new Error('Invalid scheduled task light context option');
+  }
+}
+
 function mapGatewayPayload(payload: GatewayPayload): ScheduledTaskPayload {
   switch (payload.kind) {
     case 'systemEvent':
@@ -403,17 +513,12 @@ function mapGatewayPayload(payload: GatewayPayload): ScheduledTaskPayload {
         ...(payload.toolsAllow ? { toolsAllow: [...payload.toolsAllow] } : {}),
       };
     case 'heartbeat':
-    case 'skillCollectionReview':
       return { kind: payload.kind };
   }
 }
 
 function resolveGatewayJobManagement(job: GatewayJob): ScheduledTask['management'] {
-  if (
-    job.declarationKey ||
-    job.payload.kind === 'heartbeat' ||
-    job.payload.kind === 'skillCollectionReview'
-  ) {
+  if (job.declarationKey || job.payload.kind === 'heartbeat') {
     return 'managed';
   }
   if (
@@ -422,7 +527,7 @@ function resolveGatewayJobManagement(job: GatewayJob): ScheduledTask['management
     job.pacing !== undefined ||
     job.trigger !== undefined ||
     job.failureAlert !== undefined ||
-    (job.deleteAfterRun !== undefined && job.deleteAfterRun !== (job.schedule.kind === 'at')) ||
+    (job.schedule.kind !== 'at' && job.deleteAfterRun === true) ||
     job.schedule.kind === 'on-exit' ||
     job.schedule.kind === 'stream' ||
     job.payload.kind === 'command' ||
@@ -445,14 +550,12 @@ function collectGatewayAdvancedFeatures(job: GatewayJob): ScheduledTaskAdvancedF
   if (job.pacing !== undefined) features.push('pacing');
   if (job.trigger !== undefined) features.push('trigger');
   if (job.failureAlert !== undefined) features.push('failure-alert');
+  if (job.schedule.kind !== 'at' && job.deleteAfterRun === true) features.push('delete-after-run');
   if (job.payload.kind === 'command' && job.payload.env !== undefined) {
     features.push('command-environment');
   }
   if (job.payload.kind === 'command' && job.payload.input !== undefined) {
     features.push('command-input');
-  }
-  if (job.deleteAfterRun !== undefined && job.deleteAfterRun !== (job.schedule.kind === 'at')) {
-    features.push('delete-after-run');
   }
   if (
     job.delivery?.threadId !== undefined ||
@@ -496,6 +599,25 @@ export function mapGatewayTaskState(state: GatewayJobState): TaskState {
     ? TaskStatus.Running
     : mapGatewayResultStatus(state.lastRunStatus ?? state.lastStatus);
 
+  const diagnostics = normalizeScheduledTaskDiagnostics(state.lastDiagnostics);
+  const disabled =
+    state.autoDisabled && typeof state.autoDisabled === 'object'
+      ? (state.autoDisabled as Record<string, unknown>)
+      : {};
+  const autoDisabled =
+    (disabled.reason === 'consecutive-failures' || disabled.reason === 'schedule-errors') &&
+    typeof disabled.atMs === 'number' &&
+    Number.isSafeInteger(disabled.atMs) &&
+    disabled.atMs >= 0 &&
+    typeof disabled.consecutiveErrors === 'number' &&
+    Number.isSafeInteger(disabled.consecutiveErrors) &&
+    disabled.consecutiveErrors >= 0
+      ? ({
+          reason: disabled.reason,
+          atMs: disabled.atMs,
+          consecutiveErrors: disabled.consecutiveErrors,
+        } as NonNullable<TaskState['autoDisabled']>)
+      : undefined;
   return {
     nextRunAtMs: safeFiniteNumberOrNull(state.nextRunAtMs),
     lastRunAtMs: safeFiniteNumberOrNull(state.lastRunAtMs),
@@ -504,6 +626,25 @@ export function mapGatewayTaskState(state: GatewayJobState): TaskState {
     lastDurationMs: safeFiniteNumberOrNull(state.lastDurationMs),
     runningAtMs: safeFiniteNumberOrNull(state.runningAtMs),
     consecutiveErrors: safeFiniteNumber(state.consecutiveErrors ?? 0, 0),
+    ...(autoDisabled ? { autoDisabled } : {}),
+    ...(typeof state.lastErrorReason === 'string'
+      ? { lastErrorReason: state.lastErrorReason.slice(0, 512) }
+      : {}),
+    ...(diagnostics ? { lastDiagnostics: diagnostics } : {}),
+    ...(typeof state.lastDiagnosticSummary === 'string'
+      ? { lastDiagnosticSummary: state.lastDiagnosticSummary.slice(0, 4096) }
+      : {}),
+    ...(typeof state.consecutiveSkipped === 'number' &&
+    Number.isSafeInteger(state.consecutiveSkipped) &&
+    state.consecutiveSkipped >= 0
+      ? { consecutiveSkipped: state.consecutiveSkipped }
+      : {}),
+    ...(typeof state.lastDeliveryStatus === 'string'
+      ? { lastDeliveryStatus: state.lastDeliveryStatus.slice(0, 128) }
+      : {}),
+    ...(typeof state.lastDeliveryError === 'string'
+      ? { lastDeliveryError: state.lastDeliveryError.slice(0, 2048) }
+      : {}),
   };
 }
 
@@ -516,6 +657,7 @@ export function mapGatewayJob(job: GatewayJob): ScheduledTask {
     name: job.displayName?.trim() || job.name,
     description: job.description ?? '',
     enabled: job.enabled,
+    ...(typeof job.deleteAfterRun === 'boolean' ? { deleteAfterRun: job.deleteAfterRun } : {}),
     schedule: mapGatewaySchedule(job.schedule),
     sessionTarget: job.sessionTarget,
     wakeMode: job.wakeMode,
@@ -554,6 +696,7 @@ export function mapGatewayRun(entry: GatewayRunLogEntry): ScheduledTaskRun {
       : `${entry.jobId}:${completionMs}`);
 
   return {
+    ...normalizeScheduledTaskRunMetadata(entry),
     id: stableId,
     taskId: entry.jobId,
     sessionId: entry.sessionId ?? null,
@@ -636,13 +779,13 @@ export class CronJobService {
 
       const knownIdsBeforePoll = new Set(this.lastKnownStates.keys());
       for (const job of jobs) {
-        const stateHash = JSON.stringify(job.state);
+        const stateHash = JSON.stringify(mapGatewayJob(job));
         const previousHash = this.lastKnownStates.get(job.id);
         if (previousHash !== stateHash) {
           this.lastKnownStates.set(job.id, stateHash);
           if (previousHash !== undefined) {
             const task = mapGatewayJob(job);
-            this.emitStatusUpdate(task.id, task.state);
+            this.emitStatusUpdate(task);
           }
         }
       }
@@ -670,10 +813,14 @@ export class CronJobService {
     }
   }
 
-  private emitStatusUpdate(taskId: string, state: TaskState): void {
+  private emitStatusUpdate(task: ScheduledTask): void {
     BrowserWindow.getAllWindows().forEach(window => {
       if (!window.isDestroyed()) {
-        window.webContents.send(IpcChannel.StatusUpdate, { taskId, state });
+        window.webContents.send(IpcChannel.StatusUpdate, {
+          taskId: task.id,
+          state: task.state,
+          task,
+        });
       }
     });
   }
@@ -698,7 +845,7 @@ export class CronJobService {
     const event = this.parseGatewayCronEvent(payload);
     if (event?.job) {
       const task = mapGatewayJob(event.job);
-      this.emitStatusUpdate(task.id, task.state);
+      this.emitStatusUpdate(task);
     }
     if (event?.action === 'finished') {
       this.emitRunUpdate({
@@ -881,6 +1028,7 @@ export class CronJobService {
   }
 
   private async addJobLocked(input: ScheduledTaskInput): Promise<ScheduledTask> {
+    validateAdvancedInput(input, false);
     console.log('[CronJobService][addJob] input:', stringifyScheduledTaskLog(input));
     const client = await this.client();
     const gatewayDelivery = toGatewayDelivery(input.delivery);
@@ -888,6 +1036,7 @@ export class CronJobService {
       name: input.name,
       description: input.description || undefined,
       enabled: input.enabled,
+      ...(input.deleteAfterRun !== undefined ? { deleteAfterRun: input.deleteAfterRun } : {}),
       schedule: toGatewaySchedule(input.schedule),
       sessionTarget: input.sessionTarget,
       wakeMode: input.wakeMode,
@@ -912,14 +1061,15 @@ export class CronJobService {
     return mapped;
   }
 
-  async updateJob(id: string, input: Partial<ScheduledTaskInput>): Promise<ScheduledTask> {
+  async updateJob(id: string, input: ScheduledTaskUpdateInput): Promise<ScheduledTask> {
     return this.updateJobLocked(id, input);
   }
 
   private async updateJobLocked(
     id: string,
-    input: Partial<ScheduledTaskInput>,
+    input: ScheduledTaskUpdateInput,
   ): Promise<ScheduledTask> {
+    validateAdvancedInput(input, true);
     console.log('[CronJobService][updateJob] id:', id, 'input:', stringifyScheduledTaskLog(input));
     const client = await this.client();
     const job = await this.withTaskMutation(id, async () => {
@@ -928,21 +1078,30 @@ export class CronJobService {
       this.assertJobIsEditable(current);
 
       const patch: Record<string, unknown> = {};
-      const permissionPayload = input.payload ?? mapGatewayPayload(current.payload);
-      const nextPayload =
-        input.permissionMode !== undefined
-          ? (() => {
-              if (permissionPayload.kind !== PayloadKind.AgentTurn) {
-                throw new Error('Permission presets require an agent-turn task payload');
-              }
-              return toGatewayPayload(
-                applyScheduledTaskPermission(permissionPayload, input.permissionMode),
-              );
-            })()
-          : input.payload
-            ? toGatewayPayload(input.payload)
-            : current.payload;
-      const payloadKindChanged = nextPayload.kind !== current.payload.kind;
+      const nextPayloadKind = input.payload?.kind ?? current.payload.kind;
+      const payloadKindChanged = nextPayloadKind !== current.payload.kind;
+      const payloadPatch = input.payload ? toGatewayPayloadPatch(input.payload) : undefined;
+      if (input.permissionMode !== undefined) {
+        if (nextPayloadKind !== PayloadKind.AgentTurn) {
+          throw new Error('Permission presets require an agent-turn task payload');
+        }
+        const permitted = applyScheduledTaskPermission(
+          { kind: PayloadKind.AgentTurn, message: '' },
+          input.permissionMode,
+        );
+        if (
+          permitted.kind === PayloadKind.AgentTurn &&
+          input.permissionMode !== ScheduledTaskPermission.Custom
+        ) {
+          patch.payload = {
+            kind: PayloadKind.AgentTurn,
+            ...payloadPatch,
+            permissionMode: permitted.permissionMode,
+            toolsAllow: permitted.toolsAllow,
+          };
+        }
+      }
+      if (payloadPatch && patch.payload === undefined) patch.payload = payloadPatch;
 
       if (input.name !== undefined) {
         if (current.displayName?.trim()) {
@@ -953,26 +1112,19 @@ export class CronJobService {
       }
       if (input.description !== undefined) patch.description = input.description || undefined;
       if (input.enabled !== undefined) patch.enabled = input.enabled;
+      if (input.deleteAfterRun !== undefined) patch.deleteAfterRun = input.deleteAfterRun;
       if (input.schedule !== undefined) patch.schedule = toGatewaySchedule(input.schedule);
       if (input.sessionTarget !== undefined) {
         patch.sessionTarget = input.sessionTarget;
       } else if (payloadKindChanged) {
         patch.sessionTarget =
-          nextPayload.kind === PayloadKind.AgentTurn ? SessionTarget.Isolated : SessionTarget.Main;
+          nextPayloadKind === PayloadKind.AgentTurn ? SessionTarget.Isolated : SessionTarget.Main;
       }
       if (input.wakeMode !== undefined) patch.wakeMode = input.wakeMode;
-      if (input.payload !== undefined || input.permissionMode !== undefined) {
-        // Native cron.update merges payload fields; omission retains an existing override.
-        // An explicitly empty editor selection must use the native null reset sentinel.
-        patch.payload =
-          input.payload?.kind === PayloadKind.AgentTurn && input.payload.model === ''
-            ? { ...nextPayload, model: null }
-            : nextPayload;
-      }
       if (input.delivery !== undefined) {
         patch.delivery = toGatewayDelivery(input.delivery);
       }
-      if (nextPayload.kind === PayloadKind.AgentTurn) {
+      if (nextPayloadKind === PayloadKind.AgentTurn) {
         if (payloadKindChanged) {
           patch.agentId = input.agentId?.trim() || 'main';
         } else if (input.agentId !== undefined) {

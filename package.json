@@ -178,6 +178,7 @@
     "acorn": "8.17.0",
     "autoprefixer": "^10.4.17",
     "concurrently": "^8.2.2",
+    "croner": "10.0.1",
     "cronstrue": "^3.14.0",
     "cross-env": "^7.0.3",
     "dompurify": "^3.4.15",

@@ -9,6 +9,7 @@ import type {
   ScheduledTaskRunEvent,
   ScheduledTaskStatusEvent,
   ScheduledTaskUnreadCountEvent,
+  ScheduledTaskUpdateInput,
 } from '@shared/scheduledTask/types';
 
 import { saveScheduledTaskResultPreferences } from '@/features/scheduled-tasks/scheduledTaskResultPreferences';
@@ -117,6 +118,10 @@ export class ScheduledTaskService {
     if (!api) return;
 
     const cleanupStatus = api.onStatusUpdate((event: ScheduledTaskStatusEvent) => {
+      if (event.task && event.task.id === event.taskId) {
+        store.dispatch(updateTask(event.task));
+        return;
+      }
       store.dispatch(
         updateTaskState({
           taskId: event.taskId,
@@ -210,7 +215,7 @@ export class ScheduledTaskService {
     }
   }
 
-  async updateTaskById(id: string, input: Partial<ScheduledTaskInput>): Promise<void> {
+  async updateTaskById(id: string, input: ScheduledTaskUpdateInput): Promise<void> {
     const api = window.electron?.scheduledTasks;
     if (!api) throw new Error('Scheduled task API is unavailable');
 

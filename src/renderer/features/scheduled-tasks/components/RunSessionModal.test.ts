@@ -65,6 +65,35 @@ test('shows intentional silence immediately when no session identity was recorde
   expect(onClose).toHaveBeenCalledOnce();
 });
 
+test('does not describe a silent response with failed completion as normal completion', () => {
+  Object.defineProperty(window, 'electron', {
+    configurable: true,
+    value: { scheduledTasks: { resolveSession: vi.fn() } },
+  });
+  const run: ScheduledTaskRun = {
+    id: 'run-incomplete',
+    taskId: 'task',
+    sessionId: null,
+    sessionKey: null,
+    status: 'success',
+    summary: 'NO_REPLY',
+    startedAt: '2026-10-31T01:00:00Z',
+    finishedAt: '2026-10-31T01:00:01Z',
+    durationMs: 1000,
+    error: null,
+    deliveryStatus: 'unknown',
+    deliveryError: null,
+    completionStatus: 'failed',
+  };
+  render(React.createElement(RunSessionModal, { run, onClose: vi.fn() }));
+
+  expect(screen.queryByText('scheduledTasksSilentResultTitle')).toBeNull();
+  expect(
+    screen.getByText('scheduledTasksCompletionLabel: scheduledTasksCompletionFailed'),
+  ).toBeTruthy();
+  expect(screen.queryByText('NO_REPLY')).toBeNull();
+});
+
 test('reports exhausted history lookups and clears the failure after a successful retry', async () => {
   vi.useFakeTimers();
   const resolveSession = vi.fn().mockResolvedValue({ success: true, history: null });

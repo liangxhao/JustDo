@@ -41,6 +41,13 @@ export const TaskStatus = {
 } as const;
 export type TaskStatus = (typeof TaskStatus)[keyof typeof TaskStatus];
 
+export const TaskCompletionStatus = {
+  Succeeded: 'succeeded',
+  Failed: 'failed',
+  Unknown: 'unknown',
+} as const;
+export type TaskCompletionStatus = (typeof TaskCompletionStatus)[keyof typeof TaskCompletionStatus];
+
 // ─── Gateway Status (OpenClaw wire format) ────────────────────────────────���─
 export const GatewayStatus = {
   Ok: 'ok',

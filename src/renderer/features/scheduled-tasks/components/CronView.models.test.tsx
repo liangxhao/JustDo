@@ -71,10 +71,9 @@ test('preserves a model outside the catalog, clears it explicitly, and resets on
   expect(modelSelect().value).toBe('external/legacy');
   save();
   await waitFor(() => expect(onSave).toHaveBeenCalledOnce());
-  expect(onSave.mock.calls[0][0].payload).toMatchObject({
-    model: 'external/legacy',
-    thinking: 'high',
-  });
+  // Omitted native update fields retain the existing overrides.
+  expect(onSave.mock.calls[0][0].payload).not.toHaveProperty('model');
+  expect(onSave.mock.calls[0][0].payload).not.toHaveProperty('thinking');
   await waitFor(() =>
     expect(
       (screen.getByText(i18nService.t('cronDialogSaveChanges')) as HTMLButtonElement).disabled,
@@ -83,7 +82,8 @@ test('preserves a model outside the catalog, clears it explicitly, and resets on
   fireEvent.change(modelSelect(), { target: { value: '' } });
   save();
   await waitFor(() => expect(onSave).toHaveBeenCalledTimes(2));
-  expect(onSave.mock.calls[1][0].payload).toMatchObject({ model: '', thinking: 'high' });
+  expect(onSave.mock.calls[1][0].payload).toMatchObject({ model: '' });
+  expect(onSave.mock.calls[1][0].payload).not.toHaveProperty('thinking');
   rerender(<CreateEditDialog {...props} open={false} job={job} />);
   rerender(<CreateEditDialog {...props} open job={job} />);
   expect(modelSelect().value).toBe('external/legacy');

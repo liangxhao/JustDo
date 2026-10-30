@@ -392,6 +392,34 @@ test('reopening current history bindings preserves already adopted session choic
   }
 });
 
+test('adds native receipt metadata without losing existing results or read state', () => {
+  const directory = createTempDir();
+  const original = new BetterSqlite3(path.join(directory, DB_FILENAME));
+  original.exec(`
+    CREATE TABLE scheduled_task_run_receipts (
+      run_id TEXT PRIMARY KEY, task_id TEXT NOT NULL, task_name TEXT NOT NULL,
+      system_managed INTEGER NOT NULL DEFAULT 0, session_id TEXT, session_key TEXT,
+      status TEXT NOT NULL, summary TEXT, error TEXT, delivery_status TEXT, delivery_error TEXT,
+      started_at INTEGER NOT NULL, finished_at INTEGER, duration_ms INTEGER,
+      observed_at INTEGER NOT NULL, read_at INTEGER, updated_at INTEGER NOT NULL
+    );
+    INSERT INTO scheduled_task_run_receipts
+      (run_id, task_id, task_name, status, summary, started_at, observed_at, read_at, updated_at)
+      VALUES ('existing-run', 'task', 'Report', 'success', 'Saved result', 100, 200, 300, 400);
+  `);
+  original.close();
+  const current = SqliteStore.create(directory);
+  try {
+    expect(current.getDatabase().prepare('SELECT summary, read_at, metadata_json FROM scheduled_task_run_receipts').get())
+      .toEqual({ summary: 'Saved result', read_at: 300, metadata_json: '{}' });
+  } finally { current.close(); }
+  const reopened = SqliteStore.create(directory);
+  try {
+    expect(reopened.getDatabase().prepare('SELECT metadata_json FROM scheduled_task_run_receipts').get())
+      .toEqual({ metadata_json: '{}' });
+  } finally { reopened.close(); }
+});
+
 test('keeps current assistant deletion metadata and tombstones across restart', () => {
   const directory = createTempDir();
   const initial = SqliteStore.create(directory);

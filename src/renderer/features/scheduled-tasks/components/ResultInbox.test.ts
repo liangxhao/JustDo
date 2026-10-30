@@ -22,13 +22,14 @@ describe('ResultInbox task presentation', () => {
   test('uses the assistant display name in results, task filters, and deletion confirmation', () => {
     i18nService.setLanguage('zh', { persist: false });
     const task: ScheduledTask = {
-      id: 'skill-review-research',
-      name: 'Skill collection review (research)',
+      id: 'maintenance-research',
+      name: 'Project maintenance',
       description: '',
       agentId: 'research',
       management: 'managed',
       enabled: true,
-      payload: { kind: 'skillCollectionReview' },
+      payload: { kind: 'agentTurn', message: 'Check project status' },
+      declarationKey: 'maintenance:research',
       schedule: { kind: 'every', everyMs: 604_800_000 },
       sessionTarget: 'main',
       sessionKey: null,
@@ -47,14 +48,14 @@ describe('ResultInbox task presentation', () => {
       updatedAt: '2026-09-23T00:00:00Z',
     };
     const run: ScheduledTaskResult = {
-      id: 'review-run',
+      id: 'maintenance-run',
       taskId: task.id,
       taskName: task.name,
       systemManaged: true,
       sessionId: null,
       sessionKey: null,
       status: 'success',
-      summary: 'Reviewed skills',
+      summary: 'Checked project status',
       startedAt: task.createdAt,
       finishedAt: task.createdAt,
       durationMs: 10,
@@ -78,7 +79,7 @@ describe('ResultInbox task presentation', () => {
     });
     render(createElement(Provider, { store, children: createElement(ResultInbox) }));
 
-    const title = '技能库自动整理';
+    const title = task.name;
     expect(screen.getByRole('option', { name: title + ' · @研究助手' })).toBeTruthy();
     expect(screen.getByRole('heading', { name: title })).toBeTruthy();
     expect(screen.getByText('@研究助手')).toBeTruthy();
@@ -90,7 +91,6 @@ describe('ResultInbox task presentation', () => {
         i18nService.t('scheduledTasksResultsDeleteConfirm').replace('{name}', title),
       ),
     ).toBeTruthy();
-    expect(screen.queryByText(task.name)).toBeNull();
   });
 
   test('does not label hidden system task results as deleted', () => {

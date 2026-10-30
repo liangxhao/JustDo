@@ -1,5 +1,8 @@
 import { ArrowPathIcon, XMarkIcon } from '@heroicons/react/24/outline';
-import { isSilentScheduledTaskResult } from '@shared/scheduledTask/resultPresentation';
+import {
+  isRoutineScheduledTaskResult,
+  isSilentScheduledTaskResult,
+} from '@shared/scheduledTask/resultPresentation';
 import type { ScheduledTaskRun, ScheduledTaskSessionHistory } from '@shared/scheduledTask/types';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 
@@ -7,6 +10,8 @@ import ChatMessageDisplay from '@/features/cowork/components/chat/ChatMessageDis
 import { normalizeGatewayHistoryForDisplay } from '@/libs/openclaw-chat/pipeline/history-display-normalizer';
 import type { GatewayMessage } from '@/libs/openclaw-chat/types';
 import { i18nService } from '@/services/i18n';
+
+import RunDiagnostics from './RunDiagnostics';
 
 interface RunSessionModalProps {
   run: ScheduledTaskRun;
@@ -27,7 +32,9 @@ const RunSessionModal: React.FC<RunSessionModalProps> = ({
   onAvailabilityChange,
 }) => {
   const isIntentionalSilence =
-    run.status === 'success' && !run.error?.trim() && isSilentScheduledTaskResult(run.summary);
+    run.status === 'success' &&
+    isSilentScheduledTaskResult(run.summary) &&
+    isRoutineScheduledTaskResult(run);
   const [history, setHistory] = useState<ScheduledTaskSessionHistory | null>(null);
   const [loading, setLoading] = useState(Boolean(run.sessionKey?.trim()));
   const [unavailable, setUnavailable] = useState(false);
@@ -177,9 +184,7 @@ const RunSessionModal: React.FC<RunSessionModalProps> = ({
     });
   };
 
-  const hasSavedResult = Boolean(
-    (!isIntentionalSilence && run.summary?.trim()) || run.error?.trim(),
-  );
+  const hasSavedResult = Boolean(!isSilentScheduledTaskResult(run.summary) && run.summary?.trim());
 
   return (
     <div className="fixed inset-0 z-[9999] flex items-center justify-center" onClick={onClose}>
@@ -211,6 +216,20 @@ const RunSessionModal: React.FC<RunSessionModalProps> = ({
         </div>
 
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          <div className="max-h-56 shrink-0 overflow-y-auto border-b border-border-subtle px-5 py-3">
+            <p className="mb-1.5 text-xs font-medium text-foreground">
+              {i18nService.t(
+                run.status === 'success'
+                  ? 'scheduledTasksStatusSuccess'
+                  : run.status === 'error'
+                    ? 'scheduledTasksStatusError'
+                    : run.status === 'skipped'
+                      ? 'scheduledTasksStatusSkipped'
+                      : 'scheduledTasksStatusRunning',
+              )}
+            </p>
+            <RunDiagnostics run={run} />
+          </div>
           {loading && (
             <div className="flex shrink-0 flex-col items-center justify-center gap-3 px-6 py-8">
               <svg className="h-5 w-5 animate-spin text-secondary" viewBox="0 0 24 24" fill="none">
@@ -281,11 +300,6 @@ const RunSessionModal: React.FC<RunSessionModalProps> = ({
               </p>
               {run.summary?.trim() && (
                 <p className="whitespace-pre-wrap text-sm text-foreground">{run.summary}</p>
-              )}
-              {run.error?.trim() && (
-                <p className="mt-2 whitespace-pre-wrap text-sm text-red-600 dark:text-red-400">
-                  {run.error}
-                </p>
               )}
             </div>
           )}

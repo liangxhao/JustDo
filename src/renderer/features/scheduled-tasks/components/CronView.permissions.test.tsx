@@ -55,7 +55,6 @@ describe('scheduled task permission form', () => {
     expect(onSave.mock.calls[0][0].payload).toEqual({
       kind: 'agentTurn',
       message: 'Report updates',
-      toolsAllow: ['*'],
     });
 
     await waitFor(() =>

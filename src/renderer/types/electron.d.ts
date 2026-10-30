@@ -459,6 +459,7 @@ import type {
   ScheduledTaskRunEvent,
   ScheduledTaskStatusEvent,
   ScheduledTaskUnreadCountEvent,
+  ScheduledTaskUpdateInput,
 } from '@shared/scheduledTask/types';
 
 import type { Agent } from '@/features/agents/agentTypes';
@@ -1595,7 +1596,7 @@ interface IElectronAPI {
     }>;
     update: (
       id: string,
-      input: Partial<ScheduledTaskInput>,
+      input: ScheduledTaskUpdateInput,
     ) => Promise<{
       success: boolean;
       task?: ScheduledTask;

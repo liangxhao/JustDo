@@ -9,7 +9,6 @@ export function readSystemTaskSettings(value: unknown): SystemTaskSettings {
   const plugins = record(config.plugins);
   const memory = record(record(plugins.entries)['memory-core']);
   const slot = record(plugins.slots).memory;
-  const mode = record(record(record(config.skills).workshop).autonomous).mode;
   return {
     memoryDreamingEnabled: record(record(memory.config).dreaming).enabled !== false,
     memoryAvailable:
@@ -22,7 +21,6 @@ export function readSystemTaskSettings(value: unknown): SystemTaskSettings {
       ) &&
       memory.enabled !== false &&
       !(Array.isArray(plugins.deny) && plugins.deny.includes('memory-core')),
-    skillMode: mode === 'auto' || mode === 'propose' ? mode : 'off',
   };
 }
 
@@ -34,7 +32,7 @@ export function buildSystemTaskSettingsPatch(
     !input ||
     typeof input !== 'object' ||
     Array.isArray(input) ||
-    Object.keys(input).some(key => !['memoryDreamingEnabled', 'skillMode'].includes(key))
+    Object.keys(input).some(key => key !== 'memoryDreamingEnabled')
   )
     throw new Error('Invalid system task settings');
   const patch: ConfigRecord = {};
@@ -49,11 +47,6 @@ export function buildSystemTaskSettingsPatch(
         'memory-core': { config: { dreaming: { enabled: input.memoryDreamingEnabled } } },
       },
     };
-  }
-  if (input.skillMode !== undefined) {
-    if (!['off', 'propose', 'auto'].includes(input.skillMode))
-      throw new Error('Invalid skill automation mode');
-    patch.skills = { workshop: { autonomous: { mode: input.skillMode } } };
   }
   return patch;
 }

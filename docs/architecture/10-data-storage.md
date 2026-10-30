@@ -471,6 +471,14 @@ agents 的 model 为空表示继承；main 不以遗留档案 model 作为用户
 
 结果收件箱以 run_id 为主键，保存摘要、状态、原生 session、投递结果和 read_at。按 started_at/run_id 分页，按 task_id 查询，未读有部分索引。upsert 保留 read_at；baseline 与追赶水位不放在 Renderer 内存中充当持久事实。
 
+`scheduled_task_run_receipts.metadata_json` 保存有界原生回执元数据：整体完成状态、错误分类、
+投递抑制原因、实际模型／提供商、有限非负 token 用量，以及白名单诊断摘要和条目。
+诊断最多 32 条，每条消息最多 2048 字符、摘要最多 4096 字符，不复制 transcript、工具参数、
+任意详情对象或工具输出历史。产品开库仅在该表缺列时增补默认 `{}` 的列，既有结果、read_at
+和删除标记不变；这不是原生数据库迁移。部分同步省略元数据时保留已有事实，非法元数据不进入
+Renderer。例行结果 SQL 过滤与共享规则一致：完成失败／未知、真实投递错误和警告／错误诊断
+不会因摘要为 NO_REPLY 而隐藏或自动当作正常静默。
+
 删除结果先抑制并发同步写回，清理原生 artifact，再移除 receipt 并写 tombstone。清理表记录已处理路径；失败保留可重试条目。两种删除都不是一个跨网络 SQLite transaction。
 
 ## 9. 浏览器与服务端数据

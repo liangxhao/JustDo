@@ -107,11 +107,5 @@ export function useMemoryDreamingControl(tasks: ScheduledTask[], enabled = true)
     },
     [settings, update],
   );
-  const toggleSkills = useCallback(
-    async (enabled: boolean) => {
-      return update({ skillMode: enabled ? 'auto' : 'off' });
-    },
-    [update],
-  );
-  return { settings, busy, failed, toggle, toggleSkills };
+  return { settings, busy, failed, toggle };
 }

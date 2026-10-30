@@ -1,4 +1,10 @@
-import type { DeliveryMode, SessionTarget, TaskStatus, WakeMode } from './constants';
+import type {
+  DeliveryMode,
+  SessionTarget,
+  TaskCompletionStatus,
+  TaskStatus,
+  WakeMode,
+} from './constants';
 
 export interface ScheduleAt {
   kind: 'at';
@@ -76,10 +82,22 @@ export interface ScriptPayload {
 }
 
 export interface GatewayManagedPayload {
-  kind: 'heartbeat' | 'skillCollectionReview';
+  kind: 'heartbeat';
 }
 
 export type EditableScheduledTaskPayload = AgentTurnPayload | SystemEventPayload;
+export type AgentTurnPayloadPatch = Omit<
+  Partial<AgentTurnPayload>,
+  'kind' | 'model' | 'fallbacks' | 'thinking' | 'timeoutSeconds'
+> & {
+  kind: 'agentTurn';
+  model?: string | null;
+  fallbacks?: string[] | null;
+  thinking?: string | null;
+  timeoutSeconds?: number | null;
+};
+export type SystemEventPayloadPatch = Partial<SystemEventPayload> & { kind: 'systemEvent' };
+export type EditableScheduledTaskPayloadPatch = AgentTurnPayloadPatch | SystemEventPayloadPatch;
 export type ScheduledTaskPayload =
   EditableScheduledTaskPayload | CommandPayload | ScriptPayload | GatewayManagedPayload;
 
@@ -107,6 +125,46 @@ export interface ScheduledTaskDelivery {
 
 export type TaskLastStatus = TaskStatus | null;
 
+export interface ScheduledTaskRunDiagnostic {
+  ts: number;
+  source:
+    | 'cron-preflight'
+    | 'cron-setup'
+    | 'model-preflight'
+    | 'agent-run'
+    | 'tool'
+    | 'exec'
+    | 'delivery';
+  severity: 'info' | 'warn' | 'error';
+  message: string;
+  toolName?: string;
+  exitCode?: number | null;
+  truncated?: boolean;
+}
+
+export interface ScheduledTaskRunDiagnostics {
+  summary?: string;
+  entries: ScheduledTaskRunDiagnostic[];
+}
+
+export interface ScheduledTaskRunUsage {
+  input_tokens?: number;
+  output_tokens?: number;
+  total_tokens?: number;
+  cache_read_tokens?: number;
+  cache_write_tokens?: number;
+}
+
+export interface ScheduledTaskRunMetadata {
+  completionStatus?: TaskCompletionStatus;
+  errorReason?: string;
+  diagnostics?: ScheduledTaskRunDiagnostics;
+  deliverySuppressionReason?: string;
+  model?: string;
+  provider?: string;
+  usage?: ScheduledTaskRunUsage;
+}
+
 export interface TaskState {
   nextRunAtMs: number | null;
   lastRunAtMs: number | null;
@@ -115,6 +173,17 @@ export interface TaskState {
   lastDurationMs: number | null;
   runningAtMs: number | null;
   consecutiveErrors: number;
+  autoDisabled?: {
+    reason: 'consecutive-failures' | 'schedule-errors';
+    atMs: number;
+    consecutiveErrors: number;
+  };
+  lastErrorReason?: string;
+  lastDiagnostics?: ScheduledTaskRunDiagnostics;
+  lastDiagnosticSummary?: string;
+  consecutiveSkipped?: number;
+  lastDeliveryStatus?: string;
+  lastDeliveryError?: string;
 }
 
 export interface ScheduledTask {
@@ -122,6 +191,7 @@ export interface ScheduledTask {
   name: string;
   description: string;
   enabled: boolean;
+  deleteAfterRun?: boolean;
   schedule: Schedule;
   sessionTarget: ScheduledTaskSessionTarget;
   wakeMode: WakeMode;
@@ -142,7 +212,7 @@ export interface ScheduledTask {
   updatedAt: string;
 }
 
-export interface ScheduledTaskRun {
+export interface ScheduledTaskRun extends ScheduledTaskRunMetadata {
   id: string;
   taskId: string;
   sessionId: string | null;
@@ -202,6 +272,7 @@ export interface ScheduledTaskInput {
   name: string;
   description: string;
   enabled: boolean;
+  deleteAfterRun?: boolean;
   schedule: EditableSchedule;
   sessionTarget: SessionTarget;
   wakeMode: WakeMode;
@@ -210,6 +281,11 @@ export interface ScheduledTaskInput {
   agentId?: string | null;
   sessionKey?: string | null;
 }
+
+/** Native updates merge payload fields; null explicitly clears an override. */
+export type ScheduledTaskUpdateInput = Omit<Partial<ScheduledTaskInput>, 'payload'> & {
+  payload?: EditableScheduledTaskPayloadPatch;
+};
 
 export interface ScheduledTaskManualRunResult {
   enqueued: boolean;
@@ -225,6 +301,8 @@ export interface ScheduledTaskRunPage {
 export interface ScheduledTaskStatusEvent {
   taskId: string;
   state: TaskState;
+  /** Full native projection also reconciles enabled and configuration changes. */
+  task?: ScheduledTask;
 }
 
 export interface ScheduledTaskRunEvent {
@@ -255,12 +333,9 @@ export interface ScheduledTaskChannelOption {
 export interface SystemTaskSettings {
   memoryDreamingEnabled: boolean;
   memoryAvailable: boolean;
-  skillMode: 'off' | 'propose' | 'auto';
 }
 
-export type SystemTaskSettingsPatch = Partial<
-  Pick<SystemTaskSettings, 'memoryDreamingEnabled' | 'skillMode'>
->;
+export type SystemTaskSettingsPatch = Partial<Pick<SystemTaskSettings, 'memoryDreamingEnabled'>>;
 
 export interface SchedulerSettings {
   enabled: boolean;

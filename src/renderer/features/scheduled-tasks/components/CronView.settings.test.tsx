@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import type { ScheduledTask } from '@shared/scheduledTask/types';
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
 import { scheduledTaskService } from '@/features/scheduled-tasks/scheduledTaskService';
@@ -20,6 +20,8 @@ const state = {
     error: null as string | null,
     unreadResultCount: 0,
     runs: {},
+    runsHasMore: {},
+    runsNextOffset: {},
   },
   agent: { agents: [] as { id: string; name: string; deletedAt?: number }[] },
 };
@@ -31,11 +33,20 @@ vi.mock('@/services/i18n', () => ({
 }));
 vi.mock('@/app/shell/window/WindowTitleBar', () => ({ default: () => null }));
 vi.mock('@/features/scheduled-tasks/scheduledTaskService', () => ({
-  scheduledTaskService: { loadTasks: vi.fn(), listChannels: vi.fn().mockResolvedValue([]) },
+  scheduledTaskService: {
+    loadTasks: vi.fn(),
+    loadRuns: vi.fn().mockResolvedValue(undefined),
+    listChannels: vi.fn().mockResolvedValue([]),
+  },
 }));
 vi.mock('./memoryDreamingControl', async importOriginal => ({
   ...(await importOriginal<typeof import('./memoryDreamingControl')>()),
-  useMemoryDreamingControl: () => ({ settings: null }),
+  useMemoryDreamingControl: () => ({
+    settings: { memoryDreamingEnabled: false, memoryAvailable: true },
+    busy: false,
+    failed: false,
+    toggle: vi.fn(),
+  }),
   withMemoryDreamingCard: (tasks: unknown[]) => tasks,
 }));
 vi.mock('./SchedulerSettingsDialog', () => ({
@@ -130,40 +141,46 @@ test('does not report an empty inventory after a failed initial task read', () =
   expect(screen.queryByText('cronEmptyTitle')).toBeNull();
 });
 
-test('removes a deleted assistant from skill review members when the roster refreshes', async () => {
+test('does not synthesize additional tasks from native memory settings', () => {
+  Object.defineProperty(window, 'electron', {
+    configurable: true,
+    value: { platform: 'win32', scheduledTasks: {} },
+  });
+  render(<CronView />);
+  expect(screen.queryByTestId(/^cron-job-card-/)).toBeNull();
+  expect(screen.getByText('cronEmptyTitle')).toBeTruthy();
+  expect(state.scheduledTask.tasks).toEqual([]);
+});
+
+test('keeps native system-managed tasks available by their real history identity', async () => {
   const { withMemoryDreamingCard } =
     await vi.importActual<typeof import('./memoryDreamingControl')>('./memoryDreamingControl');
   const base = withMemoryDreamingCard([], {
     memoryDreamingEnabled: false,
     memoryAvailable: true,
-    skillMode: 'auto',
   })[0];
-  state.scheduledTask.tasks = ['main', 'reviewer'].map(agentId => ({
+  const managed = {
     ...base,
-    id: agentId,
-    agentId,
-    declarationKey: `skill-collection-review:${agentId}`,
-    payload: { kind: 'agentTurn', message: 'Review skills' },
-  }));
-  state.agent.agents = [
-    { id: 'main', name: 'Main' },
-    { id: 'reviewer', name: 'Reviewer' },
-  ];
+    id: 'maintenance-reviewer',
+    name: 'Project maintenance',
+    agentId: 'reviewer',
+    declarationKey: 'maintenance:reviewer',
+    payload: { kind: 'agentTurn' as const, message: 'Check project status' },
+  };
+  state.scheduledTask.tasks = [managed];
+  state.agent.agents = [{ id: 'reviewer', name: 'Reviewer' }];
   Object.defineProperty(window, 'electron', {
     configurable: true,
     value: { platform: 'win32', scheduledTasks: {} },
   });
-  const { rerender } = render(<CronView />);
-  expect(screen.getByText('@Reviewer')).toBeTruthy();
-  state.agent.agents = [
-    { id: 'main', name: 'Main' },
-    { id: 'reviewer', name: 'Reviewer', deletedAt: 123 },
-  ];
-  rerender(<CronView />);
-  expect(screen.queryByText('@Reviewer')).toBeNull();
-  expect(screen.getByText('@Main')).toBeTruthy();
-  expect(screen.getByText('cronSkillReviewMembers (1)')).toBeTruthy();
-  expect(state.scheduledTask.tasks).toHaveLength(2);
+  render(<CronView />);
+  const card = screen.getByTestId('cron-job-card-maintenance-reviewer');
+  expect(screen.getAllByTestId(/^cron-job-card-/)).toHaveLength(1);
+  expect(within(card).queryByRole('switch')).toBeNull();
+  expect(within(card).queryByRole('button', { name: 'cronDialogEditTitle' })).toBeNull();
+  fireEvent.click(within(card).getByRole('button', { name: 'cronCardHistory' }));
+  expect(scheduledTaskService.loadRuns).toHaveBeenCalledWith(managed.id);
+  expect(state.scheduledTask.tasks).toEqual([managed]);
 });
 
 test('a delayed initial settings read does not overwrite the saved scheduling state', async () => {

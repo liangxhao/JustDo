@@ -21,7 +21,6 @@ const WEEKDAY_KEYS = [
 ] as const;
 
 const MEMORY_DREAMING_TRIGGER = '__openclaw_memory_core_short_term_promotion_dream__';
-const SKILL_COLLECTION_REVIEW_DECLARATION_PREFIX = 'skill-collection-review:';
 
 export function isMemoryDreamingTask(task: Pick<ScheduledTask, 'management' | 'payload'>): boolean {
   if (task.management !== 'managed') return false;
@@ -34,19 +33,6 @@ export function isMemoryDreamingTask(task: Pick<ScheduledTask, 'management' | 'p
   return false;
 }
 
-export function isSkillCollectionReviewTask(
-  task: Pick<ScheduledTask, 'management' | 'payload' | 'declarationKey'>,
-): boolean {
-  if (task.management !== 'managed') return false;
-  // v2026.9.6 uses agentTurn for execution; only the native declaration owns the feature.
-  // Keep the payload marker for the renderer-only aggregate card.
-  return (
-    task.payload.kind === 'skillCollectionReview' ||
-    (task.declarationKey?.startsWith(SKILL_COLLECTION_REVIEW_DECLARATION_PREFIX) === true &&
-      task.declarationKey.length > SKILL_COLLECTION_REVIEW_DECLARATION_PREFIX.length)
-  );
-}
-
 export function getKnownSystemTaskPresentation(
   task: Pick<ScheduledTask, 'management' | 'payload' | 'declarationKey'>,
 ): { name: string; description: string; managedHint: string } | null {
@@ -55,13 +41,6 @@ export function getKnownSystemTaskPresentation(
       name: i18nService.t('scheduledTasksMemoryDreamingName'),
       description: i18nService.t('scheduledTasksMemoryDreamingDescription'),
       managedHint: i18nService.t('scheduledTasksMemoryDreamingManagedHint'),
-    };
-  }
-  if (isSkillCollectionReviewTask(task)) {
-    return {
-      name: i18nService.t('scheduledTasksSkillReviewName'),
-      description: i18nService.t('scheduledTasksSkillReviewDescription'),
-      managedHint: i18nService.t('scheduledTasksSkillReviewManagedHint'),
     };
   }
   return null;
@@ -269,13 +248,12 @@ function formatCronExpr(schedule: ScheduleCron): string {
 }
 
 function fallbackCron(schedule: ScheduleCron): string {
-  const tzLabel = schedule.tz ? ` (${schedule.tz})` : '';
   try {
     const locale = i18nService.getLanguage() === 'zh' ? 'zh_CN' : 'en';
     const desc = cronstrue.toString(schedule.expr, { locale, use24HourTimeFormat: true });
-    return `${desc}${tzLabel}`;
+    return desc;
   } catch {
-    return `Cron · ${schedule.expr}${tzLabel}`;
+    return `Cron · ${schedule.expr}`;
   }
 }
 
@@ -313,7 +291,7 @@ export function formatScheduleLabel(schedule: Schedule): string {
     return `${i18nService.t('scheduledTasksScheduleStream')} · ${schedule.command.join(' ')}`;
   }
 
-  return formatCronExpr(schedule);
+  return `${formatCronExpr(schedule)}${schedule.tz ? ` (${schedule.tz})` : ''}`;
 }
 
 /**
@@ -347,12 +325,6 @@ export function formatPayloadLabel(payload: ScheduledTaskPayload): string {
   }
   if (payload.kind === 'heartbeat') {
     return i18nService.t('scheduledTasksPayloadHeartbeat');
-  }
-  if (payload.kind === 'skillCollectionReview') {
-    return i18nService.t('scheduledTasksPayloadSkillReview');
-  }
-  if (payload.kind !== 'agentTurn') {
-    return payload.kind;
   }
   const timeoutLabel =
     typeof payload.timeoutSeconds === 'number' ? ` · ${payload.timeoutSeconds}s` : '';
@@ -442,7 +414,8 @@ export function scheduleToPlanInfo(schedule: Schedule): PlanInfo {
   const parts = schedule.expr.trim().split(/\s+/);
   if (parts.length !== 5) return { ...DEFAULT_PLAN_INFO, planType: 'advanced' };
 
-  const [minRaw, hourRaw, domRaw, , dowRaw] = parts;
+  const [minRaw, hourRaw, domRaw, monthRaw, dowRaw] = parts;
+  if (monthRaw !== '*') return { ...DEFAULT_PLAN_INFO, planType: 'advanced' };
   const min = parseField(minRaw);
   const hour = parseField(hourRaw);
   const dom = parseField(domRaw);
@@ -453,7 +426,7 @@ export function scheduleToPlanInfo(schedule: Schedule): PlanInfo {
   }
 
   // Hourly: M * * * *
-  if (hour && hour.type === 'any' && dom && dom.type === 'any') {
+  if (hour && hour.type === 'any' && dom && dom.type === 'any' && dowRaw === '*') {
     return { ...DEFAULT_PLAN_INFO, planType: 'hourly', minute: min.value };
   }
 
@@ -514,8 +487,6 @@ export function getTaskPromptText(task: ScheduledTask): string {
       return task.payload.script;
     case 'heartbeat':
       return i18nService.t('scheduledTasksPayloadHeartbeat');
-    case 'skillCollectionReview':
-      return i18nService.t('scheduledTasksPayloadSkillReview');
   }
 }
 

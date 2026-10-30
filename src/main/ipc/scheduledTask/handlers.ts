@@ -7,6 +7,7 @@ import type {
   ScheduledTaskInput,
   ScheduledTaskResultQuery,
   ScheduledTaskSessionResolveContext,
+  ScheduledTaskUpdateInput,
   SchedulerSettingsUpdate,
 } from '../../../shared/scheduledTask/types';
 import type { ScheduledTaskResultStore } from '../../data/scheduledTaskResultStore';
@@ -150,7 +151,7 @@ export function registerScheduledTaskHandlers(deps: ScheduledTaskHandlerDeps): v
 
   ipcMain.handle(
     ScheduledTaskIpc.Update,
-    async (_event, id: string, input: Partial<ScheduledTaskInput>) => {
+    async (_event, id: string, input: ScheduledTaskUpdateInput) => {
       try {
         const normalizedInput = { ...input };
         const task = await getCronJobService().updateJob(id, normalizedInput);

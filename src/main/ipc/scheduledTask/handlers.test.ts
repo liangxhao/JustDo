@@ -235,7 +235,7 @@ test('deletes one result and publishes the updated unread count', async () => {
 });
 
 test('passes native system feature settings through explicit IPC methods', async () => {
-  const settings = { memoryDreamingEnabled: true, memoryAvailable: true, skillMode: 'auto' };
+  const settings = { memoryDreamingEnabled: true, memoryAvailable: true };
   const getSystemSettings = vi.fn().mockResolvedValue(settings);
   const updateSystemSettings = vi.fn().mockResolvedValue(undefined);
   registerScheduledTaskHandlers({
@@ -248,9 +248,9 @@ test('passes native system feature settings through explicit IPC methods', async
     settings,
   });
   await expect(
-    handlers.get(ScheduledTaskIpc.UpdateSystemSettings)?.({}, { skillMode: 'off' }),
+    handlers.get(ScheduledTaskIpc.UpdateSystemSettings)?.({}, { memoryDreamingEnabled: false }),
   ).resolves.toEqual({ success: true });
-  expect(updateSystemSettings).toHaveBeenCalledWith({ skillMode: 'off' });
+  expect(updateSystemSettings).toHaveBeenCalledWith({ memoryDreamingEnabled: false });
 });
 
 

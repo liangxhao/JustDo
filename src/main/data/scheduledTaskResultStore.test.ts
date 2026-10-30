@@ -38,7 +38,7 @@ describe('ScheduledTaskResultStore', () => {
         run_id TEXT PRIMARY KEY, task_id TEXT NOT NULL, task_name TEXT NOT NULL,
         system_managed INTEGER NOT NULL DEFAULT 0,
         session_id TEXT, session_key TEXT, status TEXT NOT NULL, summary TEXT, error TEXT,
-        delivery_status TEXT, delivery_error TEXT, started_at INTEGER NOT NULL,
+        delivery_status TEXT, delivery_error TEXT, metadata_json TEXT NOT NULL DEFAULT '{}', started_at INTEGER NOT NULL,
         finished_at INTEGER, duration_ms INTEGER, observed_at INTEGER NOT NULL,
         read_at INTEGER, updated_at INTEGER NOT NULL
       );
@@ -222,6 +222,41 @@ describe('ScheduledTaskResultStore', () => {
         .results.map(result => result.id),
     ).toEqual(['a']);
     expect(() => store.listResults({ cursor: 'bad' })).toThrow('Invalid result cursor');
+  });
+
+  test('retains native run metadata after reopening the receipt store and later partial synchronization', () => {
+    store.initializeBaseline([], 1000);
+    const receipt = store.upsertResult({
+      ...run('metadata'), completionStatus: 'unknown', model: 'actual-model', provider: 'internal',
+      usage: { input_tokens: 0 }, errorReason: 'timeout',
+      diagnostics: { entries: [{ ts: 1, source: 'delivery', severity: 'warn', message: 'Unconfirmed' }] },
+    }, 'Task')?.result;
+    expect(receipt?.readAt).toBeNull();
+    store.markRead('metadata', 2000);
+    store = new ScheduledTaskResultStore(db);
+    store.upsertResult(run('metadata'), 'Task');
+    expect(store.getResult('metadata')).toMatchObject({
+      completionStatus: 'unknown', model: 'actual-model', provider: 'internal', usage: { input_tokens: 0 },
+      errorReason: 'timeout', readAt: new Date(2000).toISOString(),
+      diagnostics: { entries: [{ ts: 1, source: 'delivery', severity: 'warn', message: 'Unconfirmed' }] },
+    });
+    expect(store.countUnread()).toBe(0);
+  });
+
+  test('keeps silent failures, unknown completions, and diagnostic warnings visible and unread', () => {
+    store.initializeBaseline([], 1000);
+    store.upsertResult({ ...run('quiet'), summary: 'NO_REPLY', completionStatus: 'succeeded' }, 'Task');
+    store.upsertResult({ ...run('failed'), summary: 'NO_REPLY', completionStatus: 'failed' }, 'Task');
+    store.upsertResult({ ...run('unknown'), summary: 'NO_REPLY', completionStatus: 'unknown' }, 'Task');
+    store.upsertResult({ ...run('warning'), summary: 'NO_REPLY', diagnostics: {
+      entries: [{ ts: 1, source: 'agent-run', severity: 'warn', message: 'Incomplete' }],
+    } }, 'Task');
+    expect(store.listResults().results.map(result => result.id).sort()).toEqual(['failed', 'unknown', 'warning']);
+    expect(store.countUnread()).toBe(3);
+    expect(store.getResult('quiet')?.readAt).not.toBeNull();
+    db.prepare('UPDATE scheduled_task_run_receipts SET metadata_json = ? WHERE run_id = ?').run('invalid JSON', 'quiet');
+    expect(store.getResult('quiet')?.completionStatus).toBeUndefined();
+    expect(() => store.listResults()).not.toThrow();
   });
 
   test('deletes one result and prevents bulk reconciliation from restoring it', () => {

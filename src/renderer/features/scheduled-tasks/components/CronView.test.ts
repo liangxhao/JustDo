@@ -18,7 +18,6 @@ import {
   getTaskDisplayName,
   getTaskPromptText,
   isMemoryDreamingTask,
-  isSkillCollectionReviewTask,
 } from './utils';
 
 describe('CronView schedule form mapping', () => {
@@ -277,17 +276,18 @@ describe('CronView schedule form mapping', () => {
     expect(getTaskPromptText(userTask)).toBe('__openclaw_memory_core_short_term_promotion_dream__');
   });
 
-  test('presents the system-owned skill review payload as automatic skill cleanup', () => {
+  test('preserves native managed task text and formats its configured assistant label', () => {
     i18nService.setLanguage('zh', { persist: false });
     const task: ScheduledTask = {
-      id: 'skill-review-main',
-      name: 'Skill collection review (main)',
+      id: 'maintenance-main',
+      name: 'Project maintenance',
       description: '',
       enabled: true,
       schedule: { kind: 'every', everyMs: 7 * 24 * 60 * 60_000 },
       sessionTarget: 'main',
       wakeMode: 'next-heartbeat',
-      payload: { kind: 'skillCollectionReview' },
+      payload: { kind: 'agentTurn', message: 'Check project status' },
+      declarationKey: 'maintenance:main',
       delivery: { mode: 'none' },
       agentId: 'main',
       sessionKey: null,
@@ -305,21 +305,13 @@ describe('CronView schedule form mapping', () => {
       updatedAt: '2026-09-04T00:00:00.000Z',
     };
 
-    expect(isSkillCollectionReviewTask(task)).toBe(true);
-    expect(getTaskDisplayName(task)).toBe('技能库自动整理');
+    expect(getTaskDisplayName(task)).toBe(task.name);
     expect(getTaskAgentLabel(task)).toBe('@主助手');
     const peerTask = { ...task, agentId: 'research' };
     expect(getTaskAgentLabel(peerTask, [{ id: 'research', name: '研究助手' }])).toBe('@研究助手');
     expect(getTaskAgentLabel(peerTask)).toBe('@research');
-    expect(getTaskDisplayName({ ...task, agentId: null })).toBe('技能库自动整理');
+    expect(getTaskDisplayName({ ...task, agentId: null })).toBe(task.name);
     expect(getTaskAgentLabel(task, [{ id: 'main', name: '我的助手' }])).toBe('@我的助手');
-    expect(getTaskPromptText(task)).toBe(
-      '每周检查自动学习生成的技能，合并重复内容并清理低质量条目。',
-    );
-
-    const userTask = { ...task, management: 'editable' as const };
-    expect(isSkillCollectionReviewTask(userTask)).toBe(false);
-    expect(getTaskDisplayName(userTask)).toBe('Skill collection review (main)');
-    expect(getTaskPromptText(userTask)).toBe('技能集合审查');
+    expect(getTaskPromptText(task)).toBe('Check project status');
   });
 });

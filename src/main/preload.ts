@@ -266,6 +266,7 @@ import type {
   ScheduledTaskRunEvent,
   ScheduledTaskStatusEvent,
   ScheduledTaskUnreadCountEvent,
+  ScheduledTaskUpdateInput,
 } from '../shared/scheduledTask/types';
 import {
   type ApprovalDecision,
@@ -1323,7 +1324,7 @@ contextBridge.exposeInMainWorld('electron', {
     list: () => ipcRenderer.invoke(ScheduledTaskIpc.List),
     get: (id: string) => ipcRenderer.invoke(ScheduledTaskIpc.Get, id),
     create: (input: ScheduledTaskInput) => ipcRenderer.invoke(ScheduledTaskIpc.Create, input),
-    update: (id: string, input: Partial<ScheduledTaskInput>) =>
+    update: (id: string, input: ScheduledTaskUpdateInput) =>
       ipcRenderer.invoke(ScheduledTaskIpc.Update, id, input),
     delete: (id: string) => ipcRenderer.invoke(ScheduledTaskIpc.Delete, id),
     toggle: (id: string, enabled: boolean) =>
