@@ -80,7 +80,9 @@ npm test
   app-server integration; host build adapters may reuse application chat code.
 - Plugin business, protocols, schemas, UI rules and validation documentation
   live in `docs/plugins/<category>/<plugin-id>/`; generic plugin documentation is grouped by topic
-  under `docs/plugins/`. Do not add `plugins/docs/` or plugin-local `docs/` folders.
+  under `docs/plugins/`. Host-wide plugin architecture belongs in `docs/architecture/`;
+  product plugin-management flows belong in `docs/features/plugins/`.
+  Do not add `plugins/docs/` or plugin-local `docs/` folders.
   Distributed plugin READMEs stay concise and self-contained, with no paths or
   links outside the distributed plugin directory. They must not link back to
   application development documentation. When moving
@@ -243,7 +245,7 @@ Read the matching contract before editing; use [feature index](docs/features/REA
 for other areas. Current validation limits belong in the owning feature or architecture document.
 
 App plugin Main/UI loading, SDK contributions, independent packaging and lifecycle
-follow [App plugin host](docs/plugins/management/app-plugin-runtime.md) and
+follow [App plugin host](docs/plugins/sdk/app-plugin-runtime.md) and
 [SDK authoring](docs/plugins/sdk/app-plugin-sdk.md). Team and Workflow application
 business stays inside its plugin; Core composes only generic capabilities.
 
@@ -255,7 +257,7 @@ business stays inside its plugin; Core composes only generic capabilities.
 | Chat rendering, widgets                                    | [Chat rendering](docs/architecture/15-chat-rendering.md), [interactive answers](docs/features/chat/interactive-answers.md)                                                                             |
 | Assistant profiles, Team collaboration/discussions/holding | [Assistants](docs/features/assistants/profiles-and-subagents.md), [Agent Team](docs/plugins/extensions/agent-team/guide.md)                                                                            |
 | Swarm DAG, batches, host/browser ownership                 | [Workflow](docs/plugins/extensions/swarm-workflow/workflows.md), [batches](docs/plugins/extensions/swarm-workflow/batches.md)                                                                          |
-| Plugins, skills, managed adapters, computer control        | [Plugin system](docs/plugins/management/plugin-system.md), [Plugin Hub](docs/plugins/management/plugin-hub.md)                                                                                         |
+| Plugins, skills, managed adapters, computer control        | [Plugin system](docs/architecture/07-plugin-system.md), [Plugin Hub](docs/features/plugins/plugin-hub.md)                                                                                         |
 | Browser pairing/relay and extension chat                   | [Browser settings](docs/features/browser/browser-settings-design.md), [side chat](docs/plugins/chrome-extensions/chrome-assistant/side-panel.md)                                                       |
 | Models, speech, video, decision providers                  | [Model management](docs/features/models/model-management.md), [local speech](docs/features/speech/voice-and-transcription.md), [Jev/TypeSafe](docs/plugins/extensions/typesafe/decision-evaluation.md) |
 | Login SDK and model authentication                         | [Login integration](docs/features/account/login-sdk-template.md), [model authentication](docs/features/account/authentication-builtin-model-lifecycle.md)                                              |

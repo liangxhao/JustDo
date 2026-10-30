@@ -13,6 +13,7 @@ export const FLOW_RPC = {
   intervene: 'swarmWorkflow.intervene',
   batch: 'swarmWorkflow.batch',
   retryBatch: 'swarmWorkflow.retryBatch',
+  executionSession: 'swarmWorkflow.executionSession',
 } as const;
 export type FlowStatus = 'running' | 'paused' | 'blocked' | 'stopping' | 'cancelled' | 'completed';
 export type NodeStatus =

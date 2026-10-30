@@ -4,6 +4,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildSync } from 'esbuild';
+import { parseAppPluginManifest } from '@app-plugin/sdk/contracts';
+import { APP_NATIVE_PROFILE } from '@app-plugin/sdk/native-profile';
 
 const repository = fileURLToPath(new URL('../../../', import.meta.url));
 const receiptName = 'extension-assembly-receipt.json';
@@ -108,22 +110,68 @@ export function verifyCollaborationExtensionAssembly(requestedRuntime, options =
   for (const id of extensionIds) {
     const directory = path.join(sourceRoot, id);
     const pkg = JSON.parse(fs.readFileSync(path.join(directory, 'package.json'), 'utf8'));
-    assert.equal(pkg.justdo.bundle, true);
+    assert.ok(pkg.app && typeof pkg.app === 'object', 'App extensions require independent app build declarations');
     assert.equal(pkg.openclaw.extensions.length, 1);
+    const appManifest = parseAppPluginManifest(JSON.parse(fs.readFileSync(path.join(directory, 'app.plugin.json'), 'utf8')));
+    assert.equal(appManifest.id, id);
+    assert.equal(appManifest.nativePluginId, id);
+    assert.equal(pkg.version, appManifest.version);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(directory, 'openclaw.plugin.json'), 'utf8')).id, id);
+    assert.ok(fs.lstatSync(inside(directory, pkg.app.main)).isFile());
+    assert.ok(fs.lstatSync(inside(directory, pkg.app.browser)).isFile());
+    const nativeEntry = inside(directory, pkg.openclaw.extensions[0]);
     const output = path.join(runtime, 'dist/extensions', id, 'index.js');
-    const compiled = buildSync({ absWorkingDir: repository,
-      entryPoints: [inside(directory, pkg.openclaw.extensions[0])], outfile: output,
-      bundle: true, platform: 'node', format: 'esm', target: 'node24', packages: 'external',
-      write: false, metafile: true });
+    // Reproduce the public builder's Native surface, including its authenticated
+    // dispatch wrapper and bundled npm/SDK closure. Main/UI are checked below as
+    // an immutable companion; this guard does not claim a fresh UI source build.
+    const compiled = buildSync({
+      absWorkingDir: directory,
+      tsconfigRaw: {},
+      nodePaths: [path.join(repository, 'node_modules')],
+      stdin: {
+        contents: `
+          import * as entry from ${JSON.stringify(nativeEntry)};
+          export * from ${JSON.stringify(nativeEntry)};
+          import { dispatchGatewayMethod } from 'openclaw/plugin-sdk/gateway-method-runtime';
+          import { withAppNative } from '@app-plugin/sdk/native';
+          export default withAppNative(entry.default ?? entry, dispatchGatewayMethod);
+        `,
+        resolveDir: directory, sourcefile: 'app-native-entry.mjs', loader: 'js',
+      },
+      bundle: true, platform: 'node', format: 'esm', target: 'node24',
+      external: ['openclaw/plugin-sdk/*'], write: false, metafile: true,
+    });
     assert.equal(compiled.outputFiles.length, 1);
     assert.ok(Buffer.from(compiled.outputFiles[0].contents).equals(fs.readFileSync(output)),
       `Current native ${id} bundle does not match the production source closure.`);
     for (const input of Object.keys(compiled.metafile.inputs)) {
+      if (input === 'app-native-entry.mjs') continue; // The public builder's fixed virtual entry.
       assert.ok(!input.startsWith('<'), `Unbound virtual assembly input: ${input}`);
-      addSource(path.resolve(repository, input));
+      addSource(path.resolve(directory, input));
     }
-    for (const name of ['package.json', 'openclaw.plugin.json'])
+    for (const name of ['package.json', 'openclaw.plugin.json', 'app.plugin.json'])
       addSource(path.join(directory, name));
+    const installedRoot = path.dirname(output);
+    const installedPackage = JSON.parse(fs.readFileSync(path.join(installedRoot, 'package.json'), 'utf8'));
+    assert.deepEqual(installedPackage.openclaw.extensions, ['./index.js']);
+    assert.equal(installedPackage.name, pkg.name);
+    assert.equal(installedPackage.version, appManifest.version);
+    for (const field of ['app', 'scripts', 'dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies'])
+      assert.equal(installedPackage[field], undefined, `Install packages must not retain source declaration ${field}`);
+    const nativeManifest = JSON.parse(fs.readFileSync(path.join(installedRoot, 'openclaw.plugin.json'), 'utf8'));
+    assert.equal(nativeManifest.id, id);
+    assert.ok(nativeManifest.contracts.gatewayMethodDispatch.includes('authenticated-request'));
+    const companion = path.join(installedRoot, 'app');
+    const artifact = JSON.parse(fs.readFileSync(path.join(companion, 'app.artifact.json'), 'utf8'));
+    assert.deepEqual(artifact.manifest, appManifest);
+    assert.equal(artifact.hash, sha(JSON.stringify({ manifest: artifact.manifest, files: artifact.files })));
+    for (const required of [appManifest.entries.main, appManifest.entries.browser, ...(appManifest.entries.presentation ? [appManifest.entries.presentation] : []), 'native.binding.json'])
+      assert.ok(Object.hasOwn(artifact.files, required), `Missing companion file: ${required}`);
+    verifyFiles(companion, Object.entries(artifact.files).map(([name, sha256]) => ({ path: name, sha256 })));
+    const nativeBinding = JSON.parse(fs.readFileSync(path.join(companion, 'native.binding.json'), 'utf8'));
+    assert.equal(nativeBinding.entry, 'index.js');
+    assert.equal(nativeBinding.profile, APP_NATIVE_PROFILE);
+    assert.equal(nativeBinding.sha256, hashFile(output));
     entries.push({ id, path: slash(path.relative(runtime, output)), sha256: hashFile(output) });
   }
   const sources = [...sourcePaths.values()].sort((left, right) =>

@@ -126,6 +126,7 @@ export interface CoworkInteractionRequest {
   requestId: string;
   toolUseId?: string | null;
   interactionKind?: CoworkInteractionKind;
+  origin?: import('@shared/cowork/interactions/interactions').CoworkInteractionOrigin;
 }
 
 export type CoworkInteractionPresentation = 'modal' | 'floating';

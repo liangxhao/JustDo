@@ -6,7 +6,7 @@ Main 的 GoalContinuationCoordinator 只协调续跑、等待和停止，不保�
 
 首次启动和显式恢复要求原生 restart-safe 准入。Runtime Services 的内部存储会话通过
 原生锁定 harness 禁止执行，不注册会使全部 Goal 准入失败的全局执行拦截钩子；
-保护边界见[应用插件宿主](../../plugins/management/app-plugin-runtime.md)。
+保护边界见[应用插件宿主](../../plugins/sdk/app-plugin-runtime.md)。
 
 ## 续跑与不确定发送
 

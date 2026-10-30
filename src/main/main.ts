@@ -1095,6 +1095,15 @@ const getCoworkEngineService = (): CoworkEngineService => {
       fetchSessionTitle: mainProcessTitleFetch,
       getUserDataPath: () => app.getPath('userData'),
       onRuntimeCreated: runtime => {
+        runtime.setExecutionSessionResolver(
+          query => getAppPlugins().resolveExecutionSession(query),
+          nativeId => getAppPlugins().isNativeOnlyExecutionSource(nativeId),
+        );
+        getAppPlugins().onExecutionSessionsChanged(metadataOnly => {
+          void runtime.refreshExecutionSessionInteractions(metadataOnly).catch(() => {
+            console.warn('[AppPlugins] Failed to refresh execution interactions.');
+          });
+        });
         const diagnostics = getSessionDiagnosticsService();
         runtime.on('gatewayEvent', event => diagnostics.observe(event));
         runtime.on('diagnosticCancellation', event => diagnostics.recordCancellation(event));
@@ -1353,6 +1362,11 @@ const bindEmbeddedBrowserGateway = (): void => {
       normalizeBrowserMode(getStore().get<AppConfigSettings>('app_config')?.browserMode) ===
       BrowserMode.Embedded,
     getDesktopSession: sessionKey => resolveBrowserDesktopSession(getCoworkStore(), sessionKey),
+    resolveExecutionSession: query => getAppPlugins().resolveExecutionSession(query),
+    isNativeOnlyExecutionSource: nativeId => getAppPlugins().isNativeOnlyExecutionSource(nativeId),
+    isExecutionSourceCurrent: (pluginId, epoch) => getAppPlugins().snapshot().some(
+      plugin => plugin.id === pluginId && plugin.epoch === epoch && plugin.state === 'active',
+    ),
     getScheduledTask: jobId => getCronJobService().getJob(jobId),
     execute: (sessionKey, command, signal, scope) =>
       browserAgentBridge.executeCommand(sessionKey, command, signal, scope),
@@ -1365,6 +1379,11 @@ const bindEmbeddedBrowserGateway = (): void => {
   runtimeAdapter.on('gatewayEvent', event => bridge.handleEvent(event));
   runtimeAdapter.on('gatewayDisconnected', () => bridge.revoke());
   runtimeAdapter.on('sessionDeleted', sessionId => bridge.deleteSession(sessionId));
+  getAppPlugins().onExecutionSessionsChanged(metadataOnly => {
+    void bridge.reconcileOwners(metadataOnly).catch(() => {
+      console.warn('[EmbeddedBrowserGatewayBridge] Failed to reconcile execution owners.');
+    });
+  });
   embeddedBrowserGatewayBridge = bridge;
 };
 
@@ -2017,6 +2036,7 @@ if (agentBridgeArgv) {
         getInitialTheme() === 'dark' ? TITLEBAR_COLORS.dark.color : '#F8F9FB',
       getIconPath: getAppIconPath,
       getRendererPreferenceStore: getStore,
+      isBrowserGuestAutomating: guestId => browserAgentBridge.isAutomatingGuest(guestId),
       browserGuestPreloadPath: BROWSER_GUEST_PRELOAD_PATH,
       mediaPlaybackPreloadPath: MEDIA_PLAYBACK_PRELOAD_PATH,
       widgetViewerPreloadPath: WIDGET_VIEWER_PRELOAD_PATH,

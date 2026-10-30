@@ -11,7 +11,7 @@ import {
 import { afterAll, beforeAll, describe, expect, test, vi } from 'vitest';
 
 import { SwarmWorkflowGatewayEvent, WorkflowEventName } from '../../contracts/events';
-import { type Flow, viewFlow } from '../../contracts/flow';
+import { type Flow, FLOW_RPC, viewFlow } from '../../contracts/flow';
 import { SwarmWorkflowGateway } from '../../contracts/workflow';
 import { FlowStore } from '../../data/store';
 import { FlowEngine, type FlowHost } from '../../execution/engine';
@@ -44,6 +44,7 @@ type AppHostResources = Omit<
   | 'publishEvent'
   | 'getPluginDataDirectory'
   | 'getRetainedPluginDataDirectory'
+  | 'executionSessionsChanged'
 >;
 type GatewayClientLike = {
   start(): void;
@@ -111,7 +112,7 @@ describe.skipIf(!hostRoot)('Host integration (requires APP_PLUGIN_HOST_ROOT)', (
     };
     const binding: AppNativeBinding = {
       ...identity,
-      gatewayMethods: [SwarmWorkflowGateway.List, SwarmWorkflowGateway.Control].map(
+      gatewayMethods: [SwarmWorkflowGateway.List, SwarmWorkflowGateway.Control, FLOW_RPC.executionSession].map(
         (method, ordinal) => ({
           method,
           alias: appNativeGatewayMethodAlias(identity, ordinal),
@@ -120,7 +121,19 @@ describe.skipIf(!hostRoot)('Host integration (requires APP_PLUGIN_HOST_ROOT)', (
     };
     const listAlias = binding.gatewayMethods[0].alias;
     const controlAlias = binding.gatewayMethods[1].alias;
+    const sourceAlias = binding.gatewayMethods[2].alias;
+    const sourceQuery = {
+      sessionKey: 'agent:worker:subagent:workflow-node', nativeSessionId: 'native-worker',
+      runId: 'native-run', ownerPluginId: 'swarm-workflow',
+    };
+    let responseCurrent = true;
     const request = vi.fn(async (method: string, params: unknown) => {
+      if (method === sourceAlias) {
+        expect(params).toEqual(sourceQuery);
+        return { executionSession: {
+          ...sourceQuery, parentKey, parentNativeSessionId: flow.parentId, label: 'Worker',
+        } };
+      }
       if (method === listAlias) {
         expect(params).toEqual({ parentKeys: [parentKey] });
         return {
@@ -149,6 +162,7 @@ describe.skipIf(!hostRoot)('Host integration (requires APP_PLUGIN_HOST_ROOT)', (
       stop: vi.fn(),
     } as unknown as GatewayClientLike);
     const runtime = {
+      captureGatewayResponseContext: () => ({ isCurrent: () => responseCurrent }),
       getGatewayClient: () => client,
       getSessionKeysForSession: () => [
         'agent:main:openai-user:telegram:channel',
@@ -168,6 +182,7 @@ describe.skipIf(!hostRoot)('Host integration (requires APP_PLUGIN_HOST_ROOT)', (
       const resources = {
         getNativeStateDirectory: () => nativeDirectory,
         getRuntime: () => runtime,
+        requestConnectedGateway: (method: string, params: Record<string, unknown>) => client.request(method, params),
         getSessions: () => ({
           getSession: (id: string) => (id === 'source' ? { id } : null),
           getSessionByNativeKey: () => null,
@@ -273,6 +288,19 @@ describe.skipIf(!hostRoot)('Host integration (requires APP_PLUGIN_HOST_ROOT)', (
         flows: [{ id: 'owned', revision: 4, status: 'stopping' }],
       });
       expect(request.mock.calls.filter(([method]) => method === controlAlias)).toHaveLength(2);
+      // Exercise the built resolver through the real host facade and bound RPC alias.
+      expect(await registry.resolveExecutionSession(sourceQuery)).toEqual({
+        pluginId: 'swarm-workflow', nativePluginId: 'swarm-workflow',
+        epoch: restored.epoch, ownerSessionId: 'source', label: 'Worker',
+      });
+      expect(request).toHaveBeenLastCalledWith(sourceAlias, sourceQuery, undefined);
+      responseCurrent = false;
+      expect(await registry.resolveExecutionSession(sourceQuery)).toBeNull();
+      responseCurrent = true;
+      registry.removeOwner('swarm-workflow');
+      const requestsBefore = request.mock.calls.length;
+      expect(await registry.resolveExecutionSession(sourceQuery)).toBeNull();
+      expect(request).toHaveBeenCalledTimes(requestsBefore);
     } finally {
       registry.dispose();
       engine.stop();

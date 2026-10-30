@@ -1,5 +1,5 @@
 import { OpenClawToolName } from '../../plugins/nativeIds';
-import { CoworkInteractionKind } from './interactions';
+import { CoworkInteractionKind, type CoworkInteractionOrigin } from './interactions';
 
 export const AskUserQuestionGateway = {
   LIST: 'askUserQuestion.list',
@@ -54,6 +54,16 @@ export type AskUserRequest = {
   questions: AskUserQuestion[];
   waitPolicy: AskUserWaitPolicy;
   expiresAt?: number;
+  source?: {
+    sessionKey: string;
+    nativeSessionId: string;
+    toolCallId: string;
+    runId: string;
+    lifecycleRevision?: string | null;
+    agentId?: string;
+    ownerPluginId?: string;
+  };
+  createdAt?: number;
 };
 
 export type AskUserQuestionAnswer = {
@@ -71,12 +81,15 @@ export type AskUserInteractionEnvelope = {
     requestId: string;
     toolName: typeof OpenClawToolName.ASK_USER_QUESTION;
     interactionKind: typeof CoworkInteractionKind.STRUCTURED_QUESTION;
+    origin?: CoworkInteractionOrigin;
     toolInput: {
       questions: AskUserQuestion[];
       waitPolicy: AskUserWaitPolicy;
       expiresAt?: number;
       sessionKey?: string;
       sessionId: string;
+      source?: AskUserRequest['source'];
+      createdAt?: number;
     };
   };
 };
@@ -273,6 +286,60 @@ export const parseAskUserRequest = (value: unknown): AskUserRequest | null => {
   if (!waitPolicy) return null;
   if (value.sessionKey !== undefined && typeof value.sessionKey !== 'string') return null;
   const sessionKey = typeof value.sessionKey === 'string' ? value.sessionKey.trim() : '';
+  let source: AskUserRequest['source'];
+  if (value.source !== undefined) {
+    if (!isRecord(value.source)) return null;
+    const raw = value.source;
+    const field = (key: string, max: number) =>
+      typeof raw[key] === 'string' &&
+      raw[key].length > 0 &&
+      raw[key].length <= max &&
+      raw[key] === raw[key].trim() &&
+      !/[\u0000-\u001f]/u.test(raw[key])
+        ? raw[key]
+        : null;
+    const key = field('sessionKey', 512),
+      nativeSessionId = field('nativeSessionId', 256),
+      toolCallId = field('toolCallId', 256);
+    const runId = field('runId', 256);
+    const lifecycleRevision: string | null | undefined =
+      raw.lifecycleRevision === undefined
+        ? undefined
+        : raw.lifecycleRevision === null
+          ? null
+          : field('lifecycleRevision', 256);
+    const agentId = raw.agentId === undefined ? undefined : field('agentId', 128);
+    const ownerPluginId = raw.ownerPluginId === undefined ? undefined : field('ownerPluginId', 96);
+    if (
+      !key ||
+      !nativeSessionId ||
+      !toolCallId ||
+      !runId ||
+      agentId === null ||
+      ownerPluginId === null ||
+      (raw.lifecycleRevision !== undefined &&
+        raw.lifecycleRevision !== null &&
+        lifecycleRevision === null) ||
+      (sessionKey && sessionKey !== key)
+    )
+      return null;
+    source = {
+      sessionKey: key,
+      nativeSessionId,
+      toolCallId,
+      runId,
+      ...(lifecycleRevision !== undefined ? { lifecycleRevision } : {}),
+      ...(agentId ? { agentId } : {}),
+      ...(ownerPluginId ? { ownerPluginId } : {}),
+    };
+  }
+  if (
+    value.createdAt !== undefined &&
+    (typeof value.createdAt !== 'number' ||
+      !Number.isFinite(value.createdAt) ||
+      value.createdAt < 0)
+  )
+    return null;
   if (
     value.expiresAt !== undefined &&
     (typeof value.expiresAt !== 'number' || !Number.isFinite(value.expiresAt))
@@ -288,6 +355,8 @@ export const parseAskUserRequest = (value: unknown): AskUserRequest | null => {
   return {
     requestId,
     ...(sessionKey ? { sessionKey } : {}),
+    ...(source ? { source, sessionKey: source.sessionKey } : {}),
+    ...(typeof value.createdAt === 'number' ? { createdAt: value.createdAt } : {}),
     questions,
     waitPolicy,
     ...(typeof value.expiresAt === 'number' ? { expiresAt: value.expiresAt } : {}),

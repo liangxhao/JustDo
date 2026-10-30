@@ -54,6 +54,23 @@ Main 仅接受主窗口主 frame 的类型化请求；拒绝外部来源、原�
 
 原生 exec/plugin approval 有独立 pending、期限和 decision 集合。Main 验证响应属于有效请求；关弹窗、页面卸载、断线不表示允许。审批已解决、过期和拒绝也不是执行整轮终态。桌面已有命令会话授权按精确命令与环境指纹复用，收到原生会话 reset/new/delete 或显式清理时撤销；普通一轮执行完成不会自动清空该会话的授权。
 
+“本会话允许”必须有真实原生 session ID，指纹同时包含该 incarnation 和精确命令环境，
+不能只按 session key 在重置后的会话复用。Main 先确认原生单次批准，再提交本地 grant；
+等待期间的重置、停止、连接替换或连接代次变化会使待提交 grant 失效。失效的旧响应不能
+把已清除授权重新写回，也不会清除其他子 Agent 的授权。缺少原生身份的请求仍可按原生
+提供的单次决策处理，界面不提供会话复用按钮。
+
+待审批列表和会话 grant 的自动应用绑定开始读取时的 Gateway client、连接代次与
+响应上下文；列表返回、逐项应用及最终快照提交前均重新核对。旧连接的快照不能向
+新连接发送批准，也不能在自动批准失败后重新发布旧请求。读取失败保留现有界面队列，
+由重连后的权威快照收敛。解析失败的错误文字即使含 `unknown`、`expired` 或
+`not found`，也不证明该请求已结算；只有成功响应、原生 resolved 事件、成功快照
+或请求自身期限到达才移除审批入口。
+
+外部客户端的审批展示 owner 同样捕获该连接绑定。等待人工选择、原生身份读取或
+展示失败后，连接已变更就不向后继连接发送批准或补发拒绝；owner 仍保留排他归属，
+直到实际执行结算后释放，不能在取消未确认时转交桌面审批。
+
 ### app-server 客户端审批
 
 app-server 复用同一原生审批路由，标准 presenter 位于 `main/clients/appServer/protocol/`，浏览器发送 owner 和连接撤回位于 `main/chrome/`。只有实际发送连接能接收该运行的审批；恢复订阅、观察者、客户端声明或当前 UI 选择不能转移 owner。已知原生 run 使用精确绑定；发送前尚无实际 run ID 时，先保留精确 key、物理 SID、revision、客户端和连接代次上的 owner，等待原生 ACK 后再展示匹配的请求。审批自己的 runId 不能反向认领发送；无法归属的请求拒绝并保留 owner，不回落到桌面或新连接授权。
@@ -100,3 +117,9 @@ Main 不提供 Widget 业务下载通道。完整页面使用独立网页 embed�
 主入口是 `src/main/openclaw/permissions/sessionPermissionModeCoordinator.ts`，发送由 Cowork handler/Router 复用，合约位于 `src/shared/security/approvals.ts`。测试应覆盖活动期间变更、失败重试、快速切换、删除与新 turn 同步，而不是只断言生成的 JSON 有某字段。
 
 客户端审批还覆盖 ACK 前等待、逻辑与原生 run ID 不同、同会话并发提交、撤回后的迟到响应、原生 resolve 结果未知、会话指纹不匹配、持久 App action 伪造和取消期间身份变化。运行授权、审批交互结束和执行结算分别验证，不能由一次正常允许替代。
+
+审批边界测试位于 `openclawRuntimeAdapter.approvals.test.ts`、
+`sessionExecApprovalGrants.test.ts`、`externalApprovalRouting.test.ts` 与
+`approvalQueue.test.ts`：覆盖同文不同来源、缺少原生身份、清理与迟到确认、client
+替换、同 client 连接代次变化、响应上下文失效、逐条自动批准中重连，以及无法确认
+结果时保留队列。界面决策与期限覆盖见 `ExecApprovalModal.test.ts`。

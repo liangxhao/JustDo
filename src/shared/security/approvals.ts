@@ -154,6 +154,8 @@ export const isApprovalDecision = (value: unknown): value is ApprovalDecision =>
 export const canGrantExecApprovalForSession = (request: ExecApprovalRequest): boolean => {
   const payload = request.request;
   const hasSession = typeof payload.sessionKey === 'string' && payload.sessionKey.trim().length > 0;
+  const hasNativeSession =
+    typeof payload.sessionId === 'string' && payload.sessionId.trim().length > 0;
   const hasCommand =
     (typeof payload.command === 'string' && payload.command.length > 0) ||
     (Array.isArray(payload.commandArgv) &&
@@ -161,5 +163,5 @@ export const canGrantExecApprovalForSession = (request: ExecApprovalRequest): bo
       payload.commandArgv.every(value => typeof value === 'string'));
   const hasUnboundEnvironment =
     Array.isArray(payload.envKeys) && payload.envKeys.length > 0 && !payload.systemRunBinding;
-  return hasSession && hasCommand && !hasUnboundEnvironment;
+  return hasSession && hasNativeSession && hasCommand && !hasUnboundEnvironment;
 };

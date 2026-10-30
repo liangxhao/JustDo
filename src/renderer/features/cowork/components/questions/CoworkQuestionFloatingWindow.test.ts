@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { CoworkInteractionKind } from '@shared/cowork/interactions/interactions';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';

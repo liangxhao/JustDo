@@ -13,11 +13,28 @@ import { interventionAvailability } from '../execution/intervention';
 import { parentPolicy } from '../execution/policy';
 import { swarmWorkflowSettings } from '../settings';
 import type { WorkflowContext } from './context';
+import { readWorkflowExecutionSession } from './execution-session';
+import { isAppExecutionSessionQuery } from '@app-plugin/sdk/execution-source';
 import { entry, inPlanMode, managed } from './native-context';
 import type { StartAdmission } from './state';
 
 export function registerWorkflowGateway(context: WorkflowContext): void {
   const { api, state, ensure, assertParent, assertParentIdentity, availableAgents, nativeSubagent } = context;
+  api.registerGatewayMethod(
+    FLOW_RPC.executionSession,
+    async ({ params, respond }) => {
+      try {
+        if (!isAppExecutionSessionQuery(params)) throw new Error('Invalid execution identity.');
+        respond(true, { executionSession: await readWorkflowExecutionSession(context, params) });
+      } catch {
+        respond(false, undefined, {
+          code: 'swarm_workflow_error',
+          message: 'Execution source is unavailable.',
+        });
+      }
+    },
+    { scope: 'operator.read' },
+  );
   api.registerGatewayMethod(
     FLOW_RPC.activity,
     ({ params, respond }) => {

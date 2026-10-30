@@ -5,6 +5,7 @@ import { jsxDEV } from 'react/jsx-dev-runtime';
 import type { AppBrowserHost } from '@app-plugin/sdk/browser';
 import type { AppBrowserRuntime } from '@app-plugin/sdk/browser-runtime';
 import type { AppPrimitives } from '@app-plugin/sdk/presentation';
+import { createResourceScope } from '@app-plugin/sdk/resources';
 
 import { swarmWorkflowTranslations } from '../browser/translations';
 
@@ -41,6 +42,7 @@ export function setHistoryRenderer(render: AppBrowserHost['renderHistory']) {
 export function createBrowserHost(signal: AbortSignal): AppBrowserHost {
   return {
     signal,
+    resources: createResourceScope({ signal }),
     invoke(command: string, ...args: unknown[]) {
       const method = commands[command.replace(/^workflow\./u, '')];
       const invoke = workflowTestPorts[method];

@@ -1,5 +1,9 @@
 // Pure transport contract shared with the desktop host. Execution identity is
 // supplied by native hooks, never by the model's browser arguments.
+import {
+  readAppExecutionSourceBinding,
+  type AppExecutionSourceBinding,
+} from '@app-plugin/sdk/execution-source';
 export const EMBEDDED_BROWSER_REQUESTED_EVENT = 'plugin.embedded-browser.requested';
 export const EMBEDDED_BROWSER_CANCELLED_EVENT = 'plugin.embedded-browser.cancelled';
 export const EMBEDDED_BROWSER_REVOKED_EVENT = 'plugin.embedded-browser.revoked';
@@ -9,6 +13,7 @@ export const EMBEDDED_BROWSER_STOPPED_EVENT = 'plugin.embedded-browser.stopped';
 export type BrowserExecutionRun = {
   sessionKey: string;
   sessionId: string;
+  lifecycleRevision?: string | null;
   runId: string;
   trigger: 'user' | 'cron';
   workspaceDir: string;
@@ -24,6 +29,7 @@ export type BrowserRequestedEvent = {
   toolCallId: string;
   command: Record<string, unknown>;
   policy: { allowLocalFiles: boolean };
+  executionSource?: AppExecutionSourceBinding;
 };
 
 export type BrowserCancelledEvent = Omit<BrowserRequestedEvent, 'command' | 'policy'>;
@@ -64,6 +70,12 @@ export const readBrowserExecutionRun = (value: unknown): BrowserExecutionRun | n
   const runId = readIdentifier(value.runId);
   const workspaceDir = readIdentifier(value.workspaceDir, 32_768);
   const jobId = value.jobId === undefined ? undefined : readIdentifier(value.jobId);
+  const lifecycleRevision: string | null | undefined =
+    value.lifecycleRevision === null
+      ? null
+      : value.lifecycleRevision === undefined
+        ? undefined
+        : (readIdentifier(value.lifecycleRevision) ?? undefined);
   if (
     !sessionKey ||
     !sessionId ||
@@ -71,6 +83,9 @@ export const readBrowserExecutionRun = (value: unknown): BrowserExecutionRun | n
     !workspaceDir ||
     (value.trigger !== 'user' && value.trigger !== 'cron') ||
     (value.jobId !== undefined && !jobId) ||
+    (value.lifecycleRevision !== undefined &&
+      value.lifecycleRevision !== null &&
+      !lifecycleRevision) ||
     (value.trigger === 'cron' && !jobId) ||
     (value.trigger === 'user' && jobId !== undefined)
   )
@@ -81,6 +96,7 @@ export const readBrowserExecutionRun = (value: unknown): BrowserExecutionRun | n
     runId,
     trigger: value.trigger,
     workspaceDir,
+    ...(lifecycleRevision !== undefined ? { lifecycleRevision } : {}),
     ...(jobId ? { jobId } : {}),
   };
 };
@@ -104,8 +120,22 @@ export const readBrowserCancelledEvent = (value: unknown): BrowserCancelledEvent
 
 export const readBrowserRequestedEvent = (value: unknown): BrowserRequestedEvent | null => {
   const identity = readBrowserCancelledEvent(value);
+  const executionSource =
+    identity && isRecord(value) && value.executionSource !== undefined
+      ? readAppExecutionSourceBinding(
+          { executionSource: value.executionSource },
+          {
+            sessionKey: identity.run.sessionKey,
+            nativeSessionId: identity.run.sessionId,
+            ...(identity.run.lifecycleRevision !== undefined
+              ? { lifecycleRevision: identity.run.lifecycleRevision }
+              : {}),
+          },
+        )
+      : null;
   return identity &&
     isRecord(value) &&
+    (value.executionSource === undefined || executionSource !== null) &&
     isRecord(value.command) &&
     isRecord(value.policy) &&
     typeof value.policy.allowLocalFiles === 'boolean'
@@ -113,6 +143,7 @@ export const readBrowserRequestedEvent = (value: unknown): BrowserRequestedEvent
         ...identity,
         command: value.command,
         policy: { allowLocalFiles: value.policy.allowLocalFiles },
+        ...(executionSource ? { executionSource } : {}),
       }
     : null;
 };

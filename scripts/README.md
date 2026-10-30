@@ -119,7 +119,7 @@ business imports are permitted in these artifacts. `plugins:app:verify` runs por
 SDK and actual built Main/Chromium smoke probes. Additional isolated negative controls in
 `scripts/test/plugin-host/` cover authorization lifetimes, retained cleanup, cold process
 stop, native execution receipts, resource veto and structured input. See
-`docs/plugins/management/app-plugin-runtime.md` for supported scope and remaining acceptance.
+`docs/plugins/sdk/app-plugin-runtime.md` for supported scope and remaining acceptance.
 
 The implementation lives in `plugins/sdk/app-plugin-build/`, distributed as
 `@app-plugin/build`; the public App SDK source is `plugins/sdk/app-plugin-sdk/`. It resolves

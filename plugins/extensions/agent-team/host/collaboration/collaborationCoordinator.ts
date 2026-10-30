@@ -451,6 +451,7 @@ export class CollaborationCoordinator {
         if (delivery.runId) this.stoppedDuringSetup.add(delivery.runId);
       }
     }
+    if (rooms.size) this.notifySessionsChanged();
     let released = false;
     return () => {
       if (released) return;
@@ -1013,6 +1014,10 @@ export class CollaborationCoordinator {
               : 'failed';
           if (delivery.state !== nextState)
             this.metadata.transition(delivery.id, delivery.state, nextState, input.runId);
+          // The exact Native ACK is already durable. Release receipt waiters
+          // and refresh first-tool UI before awaiting a separate launch receipt.
+          this.notifyNativeAdmission(delivery.roomId, delivery.to);
+          this.notifySessionsChanged();
           if (accepted)
             await this.deps
               .onLaunchAccepted?.({
@@ -1022,8 +1027,6 @@ export class CollaborationCoordinator {
                 receiptId: delivery.id,
               })
               .catch((): void => undefined);
-          this.notifyNativeAdmission(delivery.roomId, delivery.to);
-          this.notifySessionsChanged();
         }
         await this.deps.requestGateway(CollaborationGateway.Resolve, {
           requestId: request.requestId,
@@ -1508,6 +1511,7 @@ export class CollaborationCoordinator {
       if (failed) throw failed.reason;
     });
     this.stoppingRooms.set(room.id, stopping);
+    this.notifySessionsChanged();
     try {
       await stopping;
     } finally {

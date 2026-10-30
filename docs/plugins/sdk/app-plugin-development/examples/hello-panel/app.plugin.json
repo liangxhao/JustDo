@@ -1,0 +1,12 @@
+{
+  "manifestVersion": 1,
+  "apiVersion": 1,
+  "id": "hello-panel",
+  "version": "1.0.0",
+  "nativePluginId": "hello-panel",
+  "entries": { "main": "main.mjs", "browser": "browser.mjs" },
+  "capabilities": [],
+  "commands": ["info.read"],
+  "slots": ["plugin.settings"],
+  "native": { "defaultEnabled": false, "userToggleable": true }
+}

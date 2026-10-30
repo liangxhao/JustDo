@@ -50,4 +50,15 @@ describe('external connection approval session grants', () => {
     expect(fresh.canGrant({ ...h.binding, clientGeneration: undefined }, h.request)).toBe(false);
     expect(fresh.canGrant({ ...h.binding, isCurrent: () => false }, h.request)).toBe(false);
   });
+
+  it('does not fill a missing approval incarnation from its prepared owner', () => {
+    const h = fixture();
+    const scope = new ExternalApprovalSessionScope();
+    const missing = { ...h.request, request: { ...h.request.request, sessionId: undefined } };
+    expect(scope.canGrant(h.binding, missing)).toBe(false);
+    expect(scope.grant(h.binding, missing)).toBe(false);
+    expect(scope.grant(h.binding, h.request)).toBe(true);
+    expect(scope.matches(h.binding, missing)).toBe(false);
+    scope.close();
+  });
 });

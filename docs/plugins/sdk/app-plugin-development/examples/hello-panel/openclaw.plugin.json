@@ -1,0 +1,11 @@
+{
+  "id": "hello-panel",
+  "name": "Hello Panel",
+  "description": "A read-only app plugin authoring example.",
+  "activation": { "onStartup": true },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}

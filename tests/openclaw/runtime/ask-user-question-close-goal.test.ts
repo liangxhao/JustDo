@@ -29,7 +29,15 @@ vi.mock('electron', () => ({
   },
 }));
 
-vi.mock('../../../src/main/cowork/coworkLogger', () => ({ coworkLog: vi.fn() }));
+vi.mock('../../../src/main/cowork/coworkLogger', () => ({
+  coworkLog: vi.fn(),
+}));
+vi.mock('openclaw/plugin-sdk/session-store-runtime', () => ({
+  getSessionEntry: () => ({
+    sessionId: 'native-session-1',
+    lifecycleRevision: 'revision-1',
+  }),
+}));
 
 import questionPlugin, {
   type AskUserRequest,
@@ -50,8 +58,15 @@ import { GoalExecutionPhase, type SessionGoal } from '../../../src/shared/cowork
 
 const sessionId = 'session-1';
 const sessionKey = 'agent:main:justdo:session-1';
-const nativeIdentity = { sessionId: 'native-session-1', lifecycleRevision: 'revision-1' };
-const runIdentity = { sessionKey, sessionId: nativeIdentity.sessionId, runId: 'parent-run' };
+const nativeIdentity = {
+  sessionId: 'native-session-1',
+  lifecycleRevision: 'revision-1',
+};
+const runIdentity = {
+  sessionKey,
+  sessionId: nativeIdentity.sessionId,
+  runId: 'parent-run',
+};
 
 type RuntimeInternals = {
   gatewayClient: GatewayClientLike;
@@ -87,6 +102,7 @@ const createHarness = () => {
     }),
     getConfig: () => ({ maxGoalContinuationTurns: 25 }),
     getAgentRuntimeSettings: () => createDefaultAgentRuntimeSettings(),
+    getAgent: () => ({ id: 'main', name: 'Main assistant' }),
     updateSession: vi.fn(),
   };
   const adapter = new OpenClawRuntimeAdapter(store as never, {} as never);
@@ -94,14 +110,19 @@ const createHarness = () => {
   const registerService = vi.fn();
   const registerTool = vi.fn();
   const registerGatewayMethod = vi.fn();
+  const on = vi.fn();
   questionPlugin.register({
     logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
     registerService,
     registerTool,
     registerGatewayMethod,
+    on,
   } as never);
   const emit = vi.fn((name: string, payload: unknown) => {
-    runtime.handleGatewayEvent({ event: `plugin.ask-user-question.${name}`, payload });
+    runtime.handleGatewayEvent({
+      event: `plugin.ask-user-question.${name}`,
+      payload,
+    });
   });
   const service = registerService.mock.calls[0][0];
   service.start({ gatewayEvents: { emit } });
@@ -164,13 +185,38 @@ const createHarness = () => {
   });
   registerCoworkInteractionHandlers({ getRuntime: () => adapter });
 
+  const nativeTool = registerTool.mock.calls[0][0].create({
+    sessionKey,
+    sessionId: nativeIdentity.sessionId,
+    agentId: 'main',
+    assertInvocationCurrent: () => {},
+  });
   return {
     adapter,
     runtime,
     request,
     emit,
     service,
-    tool: registerTool.mock.calls[0][0]({ sessionKey }),
+    tool: {
+      execute: (toolCallId: string, params: unknown, signal?: AbortSignal) => {
+        const context = {
+          ...runIdentity,
+          toolName: 'ask_user_question',
+          toolCallId,
+          abortSignal: signal,
+        };
+        const before = on.mock.calls.find(([name]) => name === 'before_tool_call')![1](
+          { toolName: 'ask_user_question', runId: context.runId, toolCallId },
+          context,
+        );
+        if (before?.block) throw new Error(before.blockReason);
+        return nativeTool
+          .execute(toolCallId, params, signal)
+          .finally(() =>
+            on.mock.calls.find(([name]) => name === 'after_tool_call')![1]({}, context),
+          );
+      },
+    },
     list: (): AskUserRequest[] => callPlugin(AskUserQuestionGateway.LIST, {}).requests,
   };
 };
@@ -217,7 +263,12 @@ test.each([
         ...runIdentity,
         seq: 2,
         stream: 'tool',
-        data: { phase: 'result', name: 'ask_user_question', toolCallId: 'call-question', result },
+        data: {
+          phase: 'result',
+          name: 'ask_user_question',
+          toolCallId: 'call-question',
+          result,
+        },
       });
       return result;
     });
@@ -252,7 +303,11 @@ test.each([
         await vi.advanceTimersByTimeAsync(2 * 60_000);
       });
       expect(consumed).not.toHaveBeenCalled();
-      fireEvent.click(screen.getByRole(questionCount > 1 ? 'checkbox' : 'radio', { name: 'HTML' }));
+      fireEvent.click(
+        screen.getByRole(questionCount > 1 ? 'checkbox' : 'radio', {
+          name: 'HTML',
+        }),
+      );
 
       await act(async () => {
         fireEvent.click(screen.getByRole('button', { name: /^Close$|^关闭$/ }));
@@ -268,6 +323,15 @@ test.each([
       expect(harness.request).toHaveBeenCalledWith(AskUserQuestionGateway.RESOLVE, {
         requestId: pending.requestId,
         behavior: 'cancel',
+        source: pending.source,
+      });
+      expect(pending.source).toMatchObject({
+        sessionKey,
+        nativeSessionId: nativeIdentity.sessionId,
+        runId: runIdentity.runId,
+        lifecycleRevision: nativeIdentity.lifecycleRevision,
+        toolCallId: expect.any(String),
+        agentId: 'main',
       });
       expect(harness.list()).toEqual([]);
       expect(mocks.sendToRenderer).toHaveBeenCalledWith(CoworkInteractionIpc.Dismiss, {

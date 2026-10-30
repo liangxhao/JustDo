@@ -58,10 +58,20 @@ describe('OpenClaw approval contracts', () => {
       kind: ApprovalKind.Exec,
       createdAtMs: 1,
       expiresAtMs: 2,
-      request: { command: 'git status', sessionKey: 'agent:main:justdo:session-1' },
+      request: {
+        command: 'git status',
+        sessionKey: 'agent:main:justdo:session-1',
+        sessionId: 'native-session-1',
+      },
     } as const;
 
     expect(canGrantExecApprovalForSession(base)).toBe(true);
+    expect(
+      canGrantExecApprovalForSession({
+        ...base,
+        request: { ...base.request, sessionId: undefined },
+      }),
+    ).toBe(false);
     expect(
       canGrantExecApprovalForSession({
         ...base,

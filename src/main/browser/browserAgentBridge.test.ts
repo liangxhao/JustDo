@@ -459,7 +459,7 @@ test('guides capacity recovery across profiles without closing pages until expli
   ).resolves.toMatchObject({ ok: true });
 });
 
-test('lists and focuses only registered live guests while redacting sensitive URLs', async () => {
+test('lists and logically focuses only registered live guests while redacting sensitive URLs', async () => {
   const sendToRenderer = vi.fn();
   bridge = new BrowserAgentBridge(sendToRenderer, senderId => senderId === 10);
   bridge.registerIpc();
@@ -487,14 +487,15 @@ test('lists and focuses only registered live guests while redacting sensitive UR
       },
     ],
   });
-  await bridge.executeCommand('agent:main:justdo:session-1', {
-    action: 'focus',
-    targetId: 'embedded-1',
-  });
-  expect(sendToRenderer).toHaveBeenCalledWith(BrowserIpc.AgentFocusTab, {
-    sessionId: 'session-1',
-    targetId: 'embedded-1',
-  });
+  await expect(
+    bridge.executeCommand('agent:main:justdo:session-1', {
+      action: 'focus',
+      targetId: 'embedded-1',
+    }),
+  ).resolves.toMatchObject({ targetId: 'embedded-1' });
+  expect(sendToRenderer.mock.calls.some(([channel]) => channel === BrowserIpc.AgentFocusTab)).toBe(
+    false,
+  );
 });
 
 test('keeps imported-profile tabs isolated from the default embedded profile', async () => {
@@ -894,6 +895,7 @@ test('discovers, names, and clicks a control inside an open shadow root', async 
     (_worldId: number, scripts: Array<{ code: string }>) => window.eval(scripts[0]!.code),
   );
   const sendInputEvent = vi.fn();
+  const sendCommand = vi.fn().mockResolvedValue(undefined);
   bridge = new BrowserAgentBridge(vi.fn(), () => true);
   bridge.registerIpc();
   electron.guests.set(7, {
@@ -905,6 +907,14 @@ test('discovers, names, and clicks a control inside an open shadow root', async 
     getURL: () => 'https://example.com/',
     executeJavaScriptInIsolatedWorld,
     sendInputEvent,
+    debugger: {
+      isAttached: vi.fn(() => false),
+      attach: vi.fn(),
+      detach: vi.fn(),
+      on: vi.fn(),
+      off: vi.fn(),
+      sendCommand,
+    },
   });
   registerGuest(7);
 
@@ -925,6 +935,7 @@ test('discovers, names, and clicks a control inside an open shadow root', async 
   expect(sendInputEvent).toHaveBeenCalledWith(
     expect.objectContaining({ type: 'mouseDown', x: 60, y: 32 }),
   );
+  expect(sendCommand).not.toHaveBeenCalledWith('Input.dispatchMouseEvent', expect.anything());
   dom.window.close();
 });
 

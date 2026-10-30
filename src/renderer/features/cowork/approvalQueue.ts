@@ -1,9 +1,27 @@
-import type { ApprovalRequest } from '@shared/security/approvals';
+import type { ApprovalDecision, ApprovalKind, ApprovalRequest } from '@shared/security/approvals';
 
 type ApprovalListResult = {
   success: boolean;
   requests: ApprovalRequest[];
   error?: string;
+};
+
+export const submitApprovalDecision = async (options: {
+  approval: ApprovalRequest;
+  decision: ApprovalDecision;
+  resolve: (id: string, decision: ApprovalDecision, kind: ApprovalKind) => Promise<{
+    success: boolean;
+    error?: string;
+  }>;
+  dismiss: (approval: ApprovalRequest) => void;
+  failureMessage: string;
+}): Promise<void> => {
+  const { approval, decision } = options;
+  const result = await options.resolve(approval.id, decision, approval.kind);
+  if (!result.success) {
+    throw new Error(result.error || options.failureMessage);
+  }
+  options.dismiss(approval);
 };
 
 export const loadPendingApprovalsWithRetry = async (options: {

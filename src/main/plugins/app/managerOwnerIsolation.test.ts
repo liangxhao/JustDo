@@ -145,6 +145,8 @@ test('complete absence retires journal ownership instead of restoring an abandon
   expect(f.loadModule).not.toHaveBeenCalled();
   expect(f.inventory).not.toHaveBeenCalled();
   expect(f.metadata()).toEqual([{ value: 'kept' }]);
+  expect(f.manager.isNativeOnlyExecutionSource('owner-fixture')).toBe(false);
+  expect(f.manager.isNativeOnlyExecutionSource('native-worker')).toBe(true);
   expect(() => f.manager.registry.assertResourceOwners(['source'])).not.toThrow();
   await expect(f.manager.registry.preparePackageMutation()).resolves.toBeUndefined();
 });

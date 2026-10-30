@@ -64,7 +64,7 @@ export type BrowserAgentTabRegistration = {
 export type BrowserAgentTabReference = Pick<
   BrowserAgentTabRegistration,
   'sessionId' | 'targetId'
-> & { profile?: BrowserAgentProfile };
+> & { profile?: BrowserAgentProfile; ownerSessionId?: string };
 
 export type BrowserAgentInteractionState = BrowserAgentTabReference & {
   busy: boolean;
@@ -77,6 +77,7 @@ export type BrowserAgentInteractionReady = BrowserAgentTabReference & {
 
 export type BrowserAgentSessionEvent = {
   sessionId: string;
+  ownerSessionId?: string;
   url?: string;
   targetId?: string;
   label?: string;
@@ -643,6 +644,8 @@ export type BrowserConnectionTestResult = BrowserActionResult & {
 export type BrowserPanelTab = {
   id: string;
   targetId: string;
+  /** Native execution resource; the containing panel still belongs to its product page. */
+  resourceSessionId?: string;
   title: string;
   customTitle?: string;
   faviconUrl?: string;

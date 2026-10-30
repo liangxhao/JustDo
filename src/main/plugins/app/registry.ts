@@ -15,16 +15,21 @@ import {
   isAppWireValue,
 } from '../../../../plugins/sdk/app-plugin-sdk/contracts';
 import { resolvePluginDataDirectory } from '../../../../plugins/sdk/app-plugin-sdk/data';
+import { isAppExecutionSessionQuery } from '../../../../plugins/sdk/app-plugin-sdk/execution-source';
 import type {
   AppAgent,
+  AppExecutionSessionQuery,
   AppMainHost,
   AppMainModule,
   AppMainRegistration,
   AppNativeRuntime,
+  AppResolvedExecutionSession,
+  AppSession,
   AppSessionExecution,
   AppSubmissionParticipant,
 } from '../../../../plugins/sdk/app-plugin-sdk/main';
 import { isAppNativeBinding } from '../../../../plugins/sdk/app-plugin-sdk/native-contract';
+import { createResourceScope } from '../../../../plugins/sdk/app-plugin-sdk/resources';
 import {
   type PluginRequestBinding,
   runWithoutPluginRequestBinding,
@@ -45,6 +50,7 @@ export type AppHostResources = Omit<
   | 'publishEvent'
   | 'getPluginDataDirectory'
   | 'getRetainedPluginDataDirectory'
+  | 'executionSessionsChanged'
 >;
 export interface AppNativeState {
   enabled: boolean;
@@ -71,6 +77,7 @@ interface Instance {
   releaseBusiness?: () => void;
   disposed: boolean;
   resourceLeases: number;
+  getExecutionOwner?: (id: string) => AppSession | null;
   maintenanceTimer?: ReturnType<typeof setInterval>;
   maintenancePending?: Promise<void>;
 }
@@ -91,12 +98,14 @@ export class AppPluginRegistry {
   private readonly instances = new Map<string, Instance>();
   private readonly lanes = new Map<string, Promise<unknown>>();
   private readonly listeners = new Set<() => void>();
+  private readonly executionSessionListeners = new Set<() => void>();
   private readonly invocation = new AsyncLocalStorage<{
     id: string;
     epoch: string;
     family: 'business' | 'cleanup' | 'schema' | 'receipt';
     schemaLease?: { active: boolean };
     cleanupLease?: { active: boolean };
+    executionLookup?: true;
   }>();
   private readonly preparingIds = new Set<string>();
   private readonly preparingNativeIds = new Set<string>();
@@ -160,6 +169,7 @@ export class AppPluginRegistry {
       businessAllowed: !options.cleanupOnly,
       disposed: false,
       resourceLeases: 0,
+      getExecutionOwner: id => resources.getSessions().getSession(id),
     };
     const assertActive = () => {
       const scope = this.invocation.getStore();
@@ -413,6 +423,19 @@ export class AppPluginRegistry {
             return instance.epoch;
           },
           signal: controller.signal,
+          executionSessionsChanged: () => {
+            assertRetained();
+            const scope = this.invocation.getStore();
+            if (
+              scope?.id !== manifest.id ||
+              scope.executionLookup === true ||
+              scope.epoch !== instance.epoch ||
+              !['business', 'cleanup', 'receipt'].includes(scope.family)
+            )
+              throw new Error(AppPluginError.Unavailable);
+            if (scope.family === 'business') assertActive();
+            for (const listener of this.executionSessionListeners) isolateObserver(listener);
+          },
           publishEvent: (name, payload) => {
             assertBusinessEffect();
             if (!isAppIdentifier(name) || !isAppWireValue(payload))
@@ -1088,6 +1111,84 @@ export class AppPluginRegistry {
     );
     return [...this.instances.values()].map(instance => instance.registration).concat(retained);
   }
+  async resolveExecutionSession(
+    query: AppExecutionSessionQuery,
+  ): Promise<AppResolvedExecutionSession | null> {
+    const identifier = (value: unknown, maximum = 512): value is string =>
+      typeof value === 'string' &&
+      value.length > 0 &&
+      value.length <= maximum &&
+      value.trim() === value &&
+      !/[\u0000-\u001f\u007f-\u009f]/.test(value);
+    if (!isAppExecutionSessionQuery(query)) return null;
+    const input = Object.freeze({ ...query });
+    const owners: Array<{ owner: AppResolvedExecutionSession; isCurrent(): boolean }> = [];
+    for (const instance of this.instances.values()) {
+      const resolve = instance.registration.resolveExecutionSession;
+      if (!resolve) continue;
+      const epoch = instance.epoch;
+      const manifest = instance.artifact.artifact.manifest;
+      if (input.ownerPluginId !== undefined && input.ownerPluginId !== manifest.nativePluginId)
+        continue;
+      const binding = JSON.stringify(this.readNativeState(manifest.nativePluginId).binding);
+      const isCurrent = () =>
+        !this.disposed &&
+        this.instances.get(manifest.id) === instance &&
+        instance.epoch === epoch &&
+        instance.businessAllowed &&
+        instance.enabled &&
+        instance.activated &&
+        !instance.blocked &&
+        !instance.fenced &&
+        !instance.disposed &&
+        !instance.controller.signal.aborted &&
+        this.isNativeEnabled(manifest.nativePluginId) &&
+        JSON.stringify(this.readNativeState(manifest.nativePluginId).binding) === binding;
+      if (!isCurrent()) continue;
+      try {
+        const owner = await this.runBusiness(instance, epoch, () =>
+          this.invocation.run({ ...this.invocation.getStore()!, executionLookup: true }, () =>
+            resolve(input),
+          ),
+        );
+        if (!isCurrent()) return null;
+        if (owner === null || owner === undefined) continue;
+        if (
+          (owner.ownerSessionId === undefined && owner.label === undefined) ||
+          (owner.pending !== undefined && owner.pending !== true) ||
+          (owner.ownerSessionId !== undefined && !identifier(owner.ownerSessionId)) ||
+          (owner.label !== undefined && !identifier(owner.label, 256))
+        )
+          return null;
+        if (
+          owner.ownerSessionId !== undefined &&
+          !instance.getExecutionOwner?.(owner.ownerSessionId)
+        )
+          return null;
+        const ownerIsCurrent = () =>
+          isCurrent() &&
+          (owner.ownerSessionId === undefined ||
+            Boolean(instance.getExecutionOwner?.(owner.ownerSessionId)));
+        owners.push({
+          owner: {
+            pluginId: manifest.id,
+            nativePluginId: manifest.nativePluginId,
+            epoch,
+            ...(owner.ownerSessionId !== undefined ? { ownerSessionId: owner.ownerSessionId } : {}),
+            ...(owner.label !== undefined ? { label: owner.label } : {}),
+            ...(owner.pending === true ? { pending: true as const } : {}),
+          },
+          isCurrent: ownerIsCurrent,
+        });
+      } catch {
+        return null;
+      }
+    }
+    // A later provider may yield while an earlier owner's epoch is withdrawn.
+    // Even identical-looking claims from different plugins are ambiguous.
+    if (owners.length !== 1 || !owners[0].isCurrent()) return null;
+    return owners[0].owner;
+  }
   async preparePackageMutation(
     options: { allowPackageAdmissionBlocked?: boolean } = {},
   ): Promise<void> {
@@ -1211,6 +1312,10 @@ export class AppPluginRegistry {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   }
+  onExecutionSessionsChanged(listener: () => void): () => void {
+    this.executionSessionListeners.add(listener);
+    return () => this.executionSessionListeners.delete(listener);
+  }
   dispose(): void {
     for (const candidate of this.candidates) candidate.abort();
     const owned = new Set([
@@ -1228,6 +1333,7 @@ export class AppPluginRegistry {
     this.mutatingInstances.clear();
     this.changed();
     this.listeners.clear();
+    this.executionSessionListeners.clear();
   }
   private disposeInstance(instance: Instance): void {
     if (instance.disposed) return;
@@ -1245,9 +1351,7 @@ export class AppPluginRegistry {
       if (this.disposed || instance.disposed || instance.maintenancePending) return;
       const lease = { active: true };
       const pending = Promise.resolve()
-        .then(() =>
-          this.runCleanup(instance, () => instance.registration.maintenance?.(), lease),
-        )
+        .then(() => this.runCleanup(instance, () => instance.registration.maintenance?.(), lease))
         .then((): void => undefined)
         .catch(() => {
           // A failed receipt read is not terminal evidence; the next tick only reconciles.
@@ -1300,15 +1404,19 @@ export class AppPluginRegistry {
       !instance.fenced &&
       instance.businessEpoch !== instance.epoch
     ) {
+      const resources = createResourceScope({ signal: instance.controller.signal });
       try {
         const release = requireSynchronous(
-          this.runBusiness(instance, instance.epoch, () => instance.registration.onEnable?.()),
+          this.runBusiness(instance, instance.epoch, () =>
+            instance.registration.onEnable?.(resources),
+          ),
           'onEnable',
         );
-        instance.releaseBusiness =
-          typeof release === 'function' ? () => this.runCleanup(instance, release) : undefined;
+        if (typeof release === 'function') resources.defer(release);
+        instance.releaseBusiness = () => this.runCleanup(instance, resources.dispose);
         instance.businessEpoch = instance.epoch;
       } catch {
+        this.runCleanup(instance, resources.dispose);
         instance.blocked = true;
         instance.fenced = true;
       }

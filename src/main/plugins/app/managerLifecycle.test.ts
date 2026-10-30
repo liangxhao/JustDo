@@ -39,6 +39,7 @@ async function fixture(options: {
   initiallyDisconnected?: boolean;
   unknownGatewayProcess?: boolean;
   prepareState?(state: string): Promise<void>;
+  notifyMetadataOnRead?: boolean;
 } = {}) {
   const root = await mkdtemp(path.join(tmpdir(), 'app-manager-lifecycle-'));
   disposers.push(() => rm(root, { recursive: true, force: true }));
@@ -124,7 +125,12 @@ async function fixture(options: {
           const registration = module.register(host);
           return {
             ...registration,
-            commands: [...registration.commands, {
+            commands: [...registration.commands.map(command => options.notifyMetadataOnRead && command.id === 'read'
+              ? { ...command, invoke: (...args: unknown[]) => {
+                  host.executionSessionsChanged();
+                  return command.invoke(...args);
+                } }
+              : command), {
               id: 'native', invoke: () => host.requestGateway('lifecycle.start', {}),
             }],
             beforePackageMutation: options.beforePackageMutation,
@@ -208,6 +214,86 @@ test('prepares new managed data under the stopped replacement lease', async () =
   expect(resolvePluginDataDirectory(f.stateDirectory, id)).toBe(path.join(f.stateDirectory, 'plugin-data', id));
   expect(existsSync(path.join(f.stateDirectory, id))).toBe(false);
   expect(f.manager.snapshot()[0].version).toBe('2.0.0');
+});
+
+test('does not withdraw execution sources for unchanged refreshes or ordinary read commands', async () => {
+  const f = await fixture();
+  const initial = f.manager.snapshot();
+  const changed = vi.fn();
+  const release = f.manager.onExecutionSessionsChanged(changed);
+  try {
+    await f.manager.refresh();
+    await f.manager.refresh();
+    expect(await f.read()).toEqual({ success: true, value: '1.0.0' });
+    expect(f.manager.snapshot()).toEqual(initial);
+    expect(changed).not.toHaveBeenCalled();
+  } finally {
+    release();
+  }
+});
+
+test('preserves explicit metadata notifications while deduplicating the unchanged lifecycle publication around a read', async () => {
+  const f = await fixture({ notifyMetadataOnRead: true });
+  const changed = vi.fn();
+  const release = f.manager.onExecutionSessionsChanged(changed);
+  try {
+    await f.read();
+    await f.read();
+    expect(changed.mock.calls).toEqual([[true], [true]]);
+  } finally {
+    release();
+  }
+});
+
+test('still withdraws sources when an actual enable state or Native binding changes', async () => {
+  const f = await fixture();
+  const changed = vi.fn();
+  const release = f.manager.onExecutionSessionsChanged(changed);
+  try {
+    f.enabled(false);
+    await f.manager.refresh();
+    expect(f.manager.snapshot()[0].state).toBe('cleanup');
+    expect(changed).toHaveBeenCalledWith(false);
+    changed.mockClear();
+    f.enabled(true);
+    await f.manager.refresh();
+    expect(f.manager.snapshot()[0].state).toBe('active');
+    expect(changed).toHaveBeenCalledWith(false);
+    changed.mockClear();
+    f.receipt().registrationId = randomUUID();
+    const previousEpoch = f.manager.snapshot()[0].epoch;
+    await f.manager.refresh();
+    expect(f.manager.snapshot()[0].epoch).not.toBe(previousEpoch);
+    expect(changed).toHaveBeenCalledWith(false);
+    changed.mockClear();
+    await f.manager.refresh();
+    expect(changed).not.toHaveBeenCalled();
+  } finally {
+    release();
+  }
+});
+
+test('records the source signature before notifying so a same-state listener refresh cannot recurse', async () => {
+  const f = await fixture();
+  let depth = 0;
+  let maximumDepth = 0;
+  const release = f.manager.onExecutionSessionsChanged(() => {
+    depth++;
+    maximumDepth = Math.max(maximumDepth, depth);
+    try {
+      if (depth < 4) f.manager.registry.refresh();
+    } finally {
+      depth--;
+    }
+  });
+  try {
+    f.enabled(false);
+    await f.manager.refresh();
+    expect(maximumDepth).toBe(1);
+    expect(f.manager.snapshot()[0].state).toBe('cleanup');
+  } finally {
+    release();
+  }
 });
 
 test('adopts a replacement Main/UI artifact after Gateway stop without restarting the application', async () => {

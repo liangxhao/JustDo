@@ -76,6 +76,6 @@ test('waits for layout and propagates capture failure without retrying or using 
 test('retains the native capture behavior of the foreground sidebar', async () => {
   const f = setup();
   await f.capture(false);
-  expect(f.nativeCapture).toHaveBeenCalledExactlyOnceWith();
+  expect(f.nativeCapture).toHaveBeenCalledExactlyOnceWith(undefined, { stayHidden: true });
   expect(f.context.enableDebuggerDomains).not.toHaveBeenCalled();
 });

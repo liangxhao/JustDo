@@ -9,6 +9,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, expect, test, vi } from 'vitest';
 
 import manifest from '../../app.plugin.json';
+import { createResourceScope } from '@app-plugin/sdk/resources';
 
 const fixture = vi.hoisted(() => ({
   metadata: { cowork: { currentSession: { id: 'source' } } },
@@ -57,6 +58,7 @@ test.each([
   const invoke = vi.fn().mockResolvedValue({ success: false, reason });
   register({
     signal: new AbortController().signal,
+    resources: createResourceScope(),
     registerView: vi.fn(), registerSessionPresentation: vi.fn(), registerMessagePresentation: vi.fn(),
     registerTranslations: vi.fn(), registerMode: (value: AppComposerMode) => { mode = value; }, invoke,
   } as unknown as AppBrowserHost);
@@ -69,6 +71,7 @@ test('presents preparation transport failures as unavailable without accepting t
   const invoke = vi.fn().mockRejectedValue(new Error('Native connection unavailable'));
   register({
     signal: new AbortController().signal,
+    resources: createResourceScope(),
     registerView: vi.fn(), registerSessionPresentation: vi.fn(), registerMessagePresentation: vi.fn(),
     registerTranslations: vi.fn(), registerMode: (value: AppComposerMode) => { mode = value; }, invoke,
   } as unknown as AppBrowserHost);
@@ -86,6 +89,7 @@ test('discovers workflow summary content while summary and graph remain closed a
   const openWorkspace = vi.fn();
   const host = {
     signal: controller.signal,
+    resources: createResourceScope({ signal: controller.signal }),
     application: {
       metadata: { getSnapshot: () => fixture.metadata, subscribe: () => () => undefined },
     },

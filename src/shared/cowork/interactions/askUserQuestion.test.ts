@@ -31,6 +31,40 @@ const rawQuestions = [
 ];
 
 describe('AskUserQuestion validation', () => {
+  test('retains exact Native invocation provenance and rejects partial or conflicting source identities', () => {
+    const input = {
+      requestId: 'question-1',
+      questions: rawQuestions,
+      waitPolicy: { mode: 'required' },
+      source: {
+        sessionKey: 'agent:worker:subagent:child',
+        nativeSessionId: 'native-child',
+        toolCallId: 'question-call',
+        runId: 'native-run',
+        lifecycleRevision: 'revision',
+        ownerPluginId: 'swarm-workflow',
+      },
+      createdAt: 5,
+    };
+    expect(parseAskUserRequest(input)).toMatchObject({
+      source: input.source,
+      sessionKey: input.source.sessionKey,
+      createdAt: 5,
+    });
+    expect(parseAskUserRequest({ ...input, sessionKey: 'unrelated-source' })).toBeNull();
+    expect(
+      parseAskUserRequest({
+        ...input,
+        source: { ...input.source, runId: undefined },
+      }),
+    ).toBeNull();
+    expect(
+      parseAskUserRequest({
+        ...input,
+        source: { ...input.source, nativeSessionId: '' },
+      }),
+    ).toBeNull();
+  });
   test('parses rich questions and option-specific inputs', () => {
     const questions = parseAskUserQuestions(rawQuestions);
 
@@ -61,7 +95,9 @@ describe('AskUserQuestion validation', () => {
     }));
 
     expect(parseAskUserQuestions(questions)).toHaveLength(MAX_ASK_USER_QUESTIONS);
-    expect(parseAskUserQuestions([...questions, { ...rawQuestions[0], id: 'question_9' }])).toBeNull();
+    expect(
+      parseAskUserQuestions([...questions, { ...rawQuestions[0], id: 'question_9' }]),
+    ).toBeNull();
     expect(parseAskUserQuestions([...rawQuestions, rawQuestions[0]])).toBeNull();
     expect(parseAskUserQuestions([{ ...rawQuestions[0], id: 'constructor' }])).toBeNull();
   });
@@ -69,7 +105,10 @@ describe('AskUserQuestion validation', () => {
   test('validates headers, skips, free text, and required option inputs', () => {
     expect(
       parseAskUserQuestions([
-        { ...rawQuestions[0], header: 'x'.repeat(MAX_ASK_USER_HEADER_LENGTH + 1) },
+        {
+          ...rawQuestions[0],
+          header: 'x'.repeat(MAX_ASK_USER_HEADER_LENGTH + 1),
+        },
       ]),
     ).toBeNull();
     const questions = parseAskUserQuestions(rawQuestions)!;
@@ -77,9 +116,9 @@ describe('AskUserQuestion validation', () => {
     expect(
       parseAskUserAnswers({ deployment: { selected: [], other: 'Ask me later' } }, questions),
     ).toEqual({ deployment: { selected: [], other: 'Ask me later' } });
-    expect(
-      parseAskUserAnswers({ deployment: { selected: [], skipped: true } }, questions),
-    ).toEqual({ deployment: { selected: [], skipped: true } });
+    expect(parseAskUserAnswers({ deployment: { selected: [], skipped: true } }, questions)).toEqual(
+      { deployment: { selected: [], skipped: true } },
+    );
   });
 
   test('validates timeout defaults and complete request envelopes', () => {
@@ -104,9 +143,12 @@ describe('AskUserQuestion validation', () => {
         waitPolicy,
         expiresAt: 1_000,
       }),
-    ).toMatchObject({ requestId: 'ask-1', questions, waitPolicy, expiresAt: 1_000 });
-    expect(
-      parseAskUserRequest({ requestId: 'ask-1', questions, waitPolicy }),
-    ).toBeNull();
+    ).toMatchObject({
+      requestId: 'ask-1',
+      questions,
+      waitPolicy,
+      expiresAt: 1_000,
+    });
+    expect(parseAskUserRequest({ requestId: 'ask-1', questions, waitPolicy })).toBeNull();
   });
 });

@@ -84,6 +84,19 @@ export interface AppStateSnapshot {
       requestId: string;
       toolUseId?: string | null;
       interactionKind?: string;
+      origin?: {
+        sessionKey: string;
+        nativeSessionId?: string;
+        runId?: string;
+        toolCallId?: string;
+        agentId?: string;
+        createdAt?: number;
+        ownerSessionId?: string;
+        label?: string;
+        pluginId?: string;
+        epoch?: string;
+        available: boolean;
+      };
     }[];
     draftPrompts: Record<string, string>;
     draftMessageQuotes: Record<string, { id: string; text: string; kind?: string }[]>;

@@ -5,10 +5,7 @@ const retainedTabsByDraftKey = new Map<string, BrowserPanelTab[]>();
 export const getRetainedBrowserPanelTabs = (draftKey: string): BrowserPanelTab[] | undefined =>
   retainedTabsByDraftKey.get(draftKey);
 
-export const setRetainedBrowserPanelTabs = (
-  draftKey: string,
-  tabs: BrowserPanelTab[],
-): void => {
+export const setRetainedBrowserPanelTabs = (draftKey: string, tabs: BrowserPanelTab[]): void => {
   retainedTabsByDraftKey.set(draftKey, tabs);
 };
 
@@ -37,7 +34,8 @@ export const promotePendingBrowserPanelItems = <T>(
 export const isAgentBrowserSessionAvailable = (
   sessionIds: readonly string[],
   sessionId: string,
-): boolean => Boolean(sessionId && !sessionId.startsWith('temp-') && sessionIds.includes(sessionId));
+): boolean =>
+  Boolean(sessionId && !sessionId.startsWith('temp-') && sessionIds.includes(sessionId));
 
 export type PendingBrowserAgentPanelState = {
   event: BrowserAgentInteractionState;
@@ -46,8 +44,7 @@ export type PendingBrowserAgentPanelState = {
 
 export const browserAgentPanelOperationKey = (
   event: BrowserAgentInteractionState,
-): string | null =>
-  event.operationId ? `${event.sessionId}\u0000${event.operationId}` : null;
+): string | null => (event.operationId ? `${event.sessionId}\u0000${event.operationId}` : null);
 
 export const takeAvailableBrowserAgentPanelStates = (
   pendingByOperation: Map<string, PendingBrowserAgentPanelState>,
@@ -56,7 +53,7 @@ export const takeAvailableBrowserAgentPanelStates = (
   const availableSessionIds = new Set(sessionIds);
   const available: PendingBrowserAgentPanelState[] = [];
   for (const [operationKey, pending] of pendingByOperation) {
-    if (!availableSessionIds.has(pending.event.sessionId)) continue;
+    if (!availableSessionIds.has(pending.event.ownerSessionId ?? pending.event.sessionId)) continue;
     pendingByOperation.delete(operationKey);
     available.push(pending);
   }

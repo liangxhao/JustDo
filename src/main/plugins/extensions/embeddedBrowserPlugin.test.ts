@@ -125,7 +125,7 @@ const registrations = (emit = vi.fn(), start = true) => {
     };
   };
   if (start) service.start({ gatewayEvents: { emit } });
-  return { on, emit, factory, gatewayMethod, logger, methodName, service };
+  return { on, emit, factory, createNativeTool: create, hooks, gatewayMethod, logger, methodName, service };
 };
 
 const requestedEnvelope = (emit: ReturnType<typeof vi.fn>) => {
@@ -141,6 +141,7 @@ const requestedEnvelope = (emit: ReturnType<typeof vi.fn>) => {
 };
 
 beforeEach(() => {
+  mediaStoreMocks.entries.clear();
   mediaStoreMocks.saveMediaBuffer.mockReset();
   mediaStoreMocks.saveMediaBuffer.mockResolvedValue({
     id: 'embedded-browser-screenshot---test.png',
@@ -190,12 +191,67 @@ describe('Embedded browser extension', () => {
     );
   });
 
-  test('is only exposed to desktop sessions', () => {
-    const { factory, service } = registrations();
+  test('executes a non-desktop child only through its current Native scope and Gateway response', async () => {
+    const { factory, emit, gatewayMethod, service } = registrations();
+    try {
+      const sessionKey = 'agent:worker:subagent:delegated-task';
+      const tool = factory({ sessionKey });
+      expect(tool?.name).toBe('browser');
 
-    expect(factory({ sessionKey: 'agent:main:other:session-1' })).toBeNull();
-    expect(factory({ sessionKey: 'agent:main:justdo:session-1' })).not.toBeNull();
-    service.stop();
+      const pending = tool!.execute('child-call', { action: 'status', headless: true });
+      const request = requestedEnvelope(emit);
+      expect(request).toMatchObject({ sessionKey, toolCallId: 'child-call',
+        run: { sessionKey, sessionId: mediaStoreMocks.entries.get(sessionKey)!.sessionId,
+          lifecycleRevision: 'revision-1', trigger: 'user', workspaceDir: 'C:\\workspace' },
+        command: { action: 'status', headless: true } });
+      gatewayMethod({ params: { requestId: request.requestId, ok: true, result: { connected: true } }, respond: vi.fn() });
+
+      const result = await pending;
+      expect(result.isError).toBeUndefined();
+      expect(result.content[0]?.text).toContain('connected');
+    } finally { service.stop(); }
+  });
+
+  test('cannot substitute model parameters for missing Native identity or execution admission', async () => {
+    const { createNativeTool, emit, service } = registrations();
+    try {
+      const sessionKey = 'agent:worker:subagent:unadmitted-task';
+      expect(createNativeTool({ sessionKey, assertInvocationCurrent: () => {} })).toBeNull();
+      const tool = createNativeTool({ sessionKey, sessionId: 'unadmitted-native', assertInvocationCurrent: () => {} });
+      const result = await tool!.execute('forged-call', { action: 'status', headless: true,
+        sessionKey, sessionId: 'unadmitted-native', runId: 'model-run', trigger: 'user', workspaceDir: 'C:\\workspace' });
+
+      expect(result).toMatchObject({ isError: true, content: [{ text: expect.stringContaining('no current native execution authority') }] });
+      expect(emit).not.toHaveBeenCalled();
+    } finally { service.stop(); }
+  });
+
+  test.each(['invocation', 'incarnation'] as const)('rejects a child whose Native %s retires after admission', async retirement => {
+    const { createNativeTool, hooks, emit, service } = registrations();
+    try {
+      const identity = { sessionKey: 'agent:worker:subagent:retiring-task', sessionId: 'native-child',
+        runId: `child-run-${++nativeRunSequence}`, lifecycleRevision: 'revision-1', trigger: 'user', workspaceDir: 'C:\\workspace' };
+      mediaStoreMocks.entries.set(identity.sessionKey, { sessionId: identity.sessionId, lifecycleRevision: identity.lifecycleRevision });
+      let current = true;
+      const assertInvocationCurrent = vi.fn(() => { if (!current) throw new Error('Native invocation retired'); });
+      const tool = createNativeTool({ ...identity, assertInvocationCurrent });
+      hooks.get('before_prompt_build')!({}, { ...identity,
+        toolAuthority: { assertActive: () => {}, allows: () => true } });
+      hooks.get('before_tool_call')!({ toolName: 'browser', runId: identity.runId, toolCallId: 'retiring-call' },
+        { ...identity, toolName: 'browser', toolCallId: 'retiring-call' });
+      if (retirement === 'invocation') current = false;
+      else mediaStoreMocks.entries.set(identity.sessionKey, { sessionId: 'replacement-child', lifecycleRevision: 'revision-2' });
+
+      const result = await tool!.execute('retiring-call', { action: 'status', headless: true });
+
+      expect(assertInvocationCurrent).toHaveBeenCalled();
+      expect(result).toMatchObject({ isError: true, content: [{ text: expect.stringContaining(
+        retirement === 'invocation' ? 'Native invocation retired' : 'no current native execution authority') }] });
+      expect(emit.mock.calls.filter(([event]) => event === 'requested')).toEqual([]);
+      if (retirement === 'incarnation') expect(emit).toHaveBeenCalledExactlyOnceWith('released',
+        { run: identity, reason: 'revoked', discardPages: true }, { scope: 'operator.read' });
+      else expect(emit).not.toHaveBeenCalled();
+    } finally { service.stop(); }
   });
 
   test('uses native execution authority hooks without adding prompt text', () => {

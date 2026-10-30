@@ -2,6 +2,11 @@ import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 
+import {
+  type AppExecutionSourceBinding,
+  createAppExecutionSourceBindings,
+  readAppExecutionSourceBinding,
+} from '@app-plugin/sdk/execution-source';
 import type { OpenClawPluginApi, OpenClawPluginGatewayEvents } from 'openclaw/plugin-sdk/core';
 import { saveMediaBuffer } from 'openclaw/plugin-sdk/media-store';
 import { getSessionEntry } from 'openclaw/plugin-sdk/session-store-runtime';
@@ -263,6 +268,7 @@ class EmbeddedBrowserRequestManager {
     command: BrowserCommand,
     policy: { allowLocalFiles: boolean },
     signal?: AbortSignal,
+    executionSource?: AppExecutionSourceBinding,
   ): Promise<BrowserResponse> {
     call.assertCurrent();
     signal?.throwIfAborted();
@@ -305,7 +311,16 @@ class EmbeddedBrowserRequestManager {
       call.assertCurrent();
       emitGatewayEvent(
         'requested',
-        { requestId, sessionKey, run, admissionRevision, toolCallId, command, policy },
+        {
+          requestId,
+          sessionKey,
+          run,
+          admissionRevision,
+          toolCallId,
+          command,
+          policy,
+          ...(executionSource ? { executionSource } : {}),
+        },
         { scope: 'operator.read' },
       );
     } catch (error) {
@@ -537,6 +552,36 @@ const plugin = {
                   toolCallId,
                   context.assertInvocationCurrent,
                 );
+                const entry = getSessionEntry({ sessionKey, readConsistency: 'latest' });
+                if (
+                  !entry ||
+                  entry.sessionId !== sessionId ||
+                  (entry.lifecycleRevision ?? null) !== (call.run.lifecycleRevision ?? null)
+                )
+                  throw new Error('The native browser incarnation is no longer current.');
+                const sourceIdentity = {
+                  sessionKey,
+                  nativeSessionId: sessionId,
+                  lifecycleRevision: entry?.lifecycleRevision ?? null,
+                };
+                let executionSource = readAppExecutionSourceBinding(
+                  context.toolBindings,
+                  sourceIdentity,
+                );
+                if (
+                  context.toolBindings &&
+                  Object.hasOwn(context.toolBindings, 'executionSource') &&
+                  !executionSource
+                )
+                  throw new Error('The execution source binding is no longer current.');
+                if (!executionSource && entry.pluginOwnerId)
+                  executionSource = readAppExecutionSourceBinding(
+                    createAppExecutionSourceBindings({
+                      ...sourceIdentity,
+                      ownerPluginId: entry.pluginOwnerId,
+                    }),
+                    sourceIdentity,
+                  );
                 if (
                   context.browser?.allowHostControl === false ||
                   (context.sandboxed === true && context.browser?.allowHostControl !== true) ||
@@ -570,6 +615,11 @@ const plugin = {
                   'trigger',
                   'jobId',
                   'workspaceDir',
+                  'lifecycleRevision',
+                  'ownerSessionId',
+                  'resourceSessionId',
+                  'executionSource',
+                  'ownerPluginId',
                   'policy',
                 ])
                   delete input[key];
@@ -597,6 +647,7 @@ const plugin = {
                   deviceDescriptor ? { ...command, deviceDescriptor } : command,
                   { allowLocalFiles: context.fsPolicy?.workspaceOnly !== true },
                   operationSignal,
+                  executionSource ?? undefined,
                 );
                 operationSignal?.throwIfAborted();
                 call.assertCurrent();

@@ -116,8 +116,12 @@ export class BrowserAgentBridge {
   private readonly fileChoosers = new BrowserFileChooser(
     id => this.backgroundHost.has(id) || this.armedUploads.has(id),
     id => this.releaseAgentInteractionLease(id),
-    id => this.appendLog(this.errorLogs, id, { timestamp: Date.now(), level: 'error',
-      text: 'File chooser interception could not be restored.' }),
+    id =>
+      this.appendLog(this.errorLogs, id, {
+        timestamp: Date.now(),
+        level: 'error',
+        text: 'File chooser interception could not be restored.',
+      }),
     id => this.ownedDebuggerGuests.has(id),
   );
   private readonly runtimeCleanup = new Map<number, () => void>();
@@ -150,7 +154,7 @@ export class BrowserAgentBridge {
   >();
 
   constructor(
-    private readonly sendToRenderer: (channel: string, payload: unknown) => void,
+    private readonly deliverToRenderer: (channel: string, payload: unknown) => void,
     private readonly isTrustedRenderer: (webContentsId: number) => boolean,
     private readonly getSessionWorkspace: (sessionId: string) => string | null = () => null,
     private readonly requireRendererInteractionAck = false,
@@ -168,6 +172,22 @@ export class BrowserAgentBridge {
     } catch {
       // Profile persistence is advisory during early startup; built-ins remain available.
     }
+  }
+
+  private readonly sendToRenderer = (channel: string, payload: unknown): void => {
+    const event = asRecord(payload);
+    const resourceId = typeof event?.sessionId === 'string' ? event.sessionId : undefined;
+    const ownerSessionId = resourceId
+      ? this.executionScopes.get(resourceId)?.ownerSessionId
+      : undefined;
+    this.deliverToRenderer(
+      channel,
+      ownerSessionId && ownerSessionId !== resourceId ? { ...event, ownerSessionId } : payload,
+    );
+  };
+
+  isAutomatingGuest(webContentsId: number): boolean {
+    return this.agentInteractionLeases.has(webContentsId);
   }
 
   registerIpc(): void {
@@ -869,6 +889,7 @@ export class BrowserAgentBridge {
     );
     if (!command) throw new Error('Invalid browser command.');
     if (executionScope) {
+      executionScope.assertCurrent?.();
       if (!executionScope.sessionId || !path.isAbsolute(executionScope.workspaceDir)) {
         throw new Error('The browser execution scope is invalid.');
       }
@@ -882,6 +903,7 @@ export class BrowserAgentBridge {
   }
 
   releaseExecutionScope(sessionId: string, closeBackgroundPages: boolean): void {
+    const delegated = Boolean(this.executionScopes.get(sessionId)?.ownerSessionId);
     for (const tab of this.listLiveTabsForSession(sessionId)) {
       this.clearArmedDialog(tab.webContentsId);
       this.clearArmedUpload(tab.webContentsId, webContents.fromId(tab.webContentsId) ?? undefined);
@@ -891,6 +913,10 @@ export class BrowserAgentBridge {
         new Error('The native browser run has ended.'),
       );
       if (closeBackgroundPages && tab.headless) {
+        this.discardTabRuntime(tab);
+        this.removeRegisteredTab(browserScopeId(sessionId, tab.profile), tab.targetId);
+      } else if (closeBackgroundPages && delegated) {
+        this.sendToRenderer(BrowserIpc.AgentCloseTab, { sessionId, targetId: tab.targetId });
         this.discardTabRuntime(tab);
         this.removeRegisteredTab(browserScopeId(sessionId, tab.profile), tab.targetId);
       }
@@ -964,12 +990,18 @@ export class BrowserAgentBridge {
       label?: string;
       forceNew?: boolean;
       headless?: boolean;
+      assertCurrent?: () => void;
+      ownerSessionId?: string;
     } = {},
   ): Promise<RegisteredTab> {
+    const ownerSessionId =
+      options.ownerSessionId ?? this.executionScopes.get(rendererSessionId)?.ownerSessionId;
     signal?.throwIfAborted();
+    options.assertCurrent?.();
     if (!options.headless) {
       await registerBrowserProxySession(session.fromPartition(browserPartitionForProfile(profile)));
     }
+    options.assertCurrent?.();
     signal?.throwIfAborted();
     const existing = options.forceNew
       ? null
@@ -1013,6 +1045,7 @@ export class BrowserAgentBridge {
           profile,
           targetId: requestedTargetId,
           signal,
+          assertCurrent: options.assertCurrent,
         });
         signal?.throwIfAborted();
         const tab: RegisteredTab = {
@@ -1040,6 +1073,7 @@ export class BrowserAgentBridge {
         });
         await this.enableDebuggerDomains(tab, guest);
         signal?.throwIfAborted();
+        options.assertCurrent?.();
         return tab;
       } catch (error) {
         if (guest) this.backgroundHost.close(guest.id);
@@ -1060,14 +1094,32 @@ export class BrowserAgentBridge {
         clearTimeout(waiter.timer);
         signal?.removeEventListener('abort', handleAbort);
         waiters.delete(waiter);
-        if (waiters.size === 0) this.tabWaiters.delete(scopeId);
+        if (waiters.size === 0 && this.tabWaiters.get(scopeId) === waiters)
+          this.tabWaiters.delete(scopeId);
+      };
+      const closeUnclaimedTarget = () => {
+        if (
+          ownerSessionId &&
+          ![...(this.tabWaiters.get(scopeId) ?? [])].some(
+            candidate => candidate.targetId === requestedTargetId,
+          )
+        )
+          // The scope may already have been released, or a successor may own
+          // its resource ID. Route cleanup with the original display identity.
+          this.deliverToRenderer(BrowserIpc.AgentCloseTab, {
+            sessionId: rendererSessionId,
+            ownerSessionId,
+            targetId: requestedTargetId,
+          });
       };
       const handleAbort = () => {
         cleanup();
+        closeUnclaimedTarget();
         reject(new Error('Browser request was cancelled.'));
       };
       const timer = setTimeout(() => {
         cleanup();
+        closeUnclaimedTarget();
         console.warn(
           `[BrowserAgentBridge] Timed out waiting for embedded browser tab (session=${rendererSessionId}, profile=${profile}, registered=${this.tabsBySession.get(scopeId)?.size ?? 0})`,
         );
@@ -1146,6 +1198,7 @@ export class BrowserAgentBridge {
           ? LONG_COMMAND_TIMEOUT_MS
           : COMMAND_TIMEOUT_MS;
     const assertActive = (): void => {
+      executionScope?.assertCurrent?.();
       signal?.throwIfAborted();
       if (cancelled) throw new Error('Browser command timed out.');
       if (
@@ -1161,6 +1214,7 @@ export class BrowserAgentBridge {
     const tracked = this.intervention.track(interventionSessionId);
     signal = signal ? AbortSignal.any([signal, tracked.signal]) : tracked.signal;
     const operation = (async () => {
+      assertActive();
       const sessionId = interventionSessionId;
       if (!sessionId) throw new Error('This browser tool is only available in desktop tasks.');
       if (command.profile && !isBrowserAgentProfile(command.profile)) {
@@ -1221,14 +1275,13 @@ export class BrowserAgentBridge {
         headless
           ? Promise.resolve().then(() => {
               operationController.signal.throwIfAborted();
+              assertActive();
               return operation();
             })
-          : this.withPanelInteractionLease(
-              sessionId,
-              profile,
-              operationController.signal,
-              operation,
-            );
+          : this.withPanelInteractionLease(sessionId, profile, operationController.signal, () => {
+              assertActive();
+              return operation();
+            });
       const resolveGuest = (tab: RegisteredTab): Electron.WebContents => {
         const guest = this.resolveRegisteredGuest(tab);
         if (executionScope?.allowLocalFiles === false && /^file:/iu.test(guest.getURL())) {
@@ -1483,8 +1536,11 @@ export class BrowserAgentBridge {
               ...(label ? { label } : {}),
               forceNew: true,
               headless,
+              assertCurrent: assertActive,
+              ownerSessionId: executionScope?.ownerSessionId,
             },
           );
+          assertActive();
           if (label) {
             const labels = this.labelsBySession.get(scopeId) ?? new Map<string, string>();
             labels.set(label, tab.targetId);
@@ -1511,11 +1567,8 @@ export class BrowserAgentBridge {
           throw new Error(targetId ? `Browser tab not found: ${targetId}` : 'No browser tab.');
         if (command.action === 'focus') {
           return withPanelLease(() => {
-            if (!tab.headless)
-              this.sendToRenderer(BrowserIpc.AgentFocusTab, {
-                sessionId,
-                targetId: tab.targetId,
-              });
+            // Tool focus chooses this execution's default target. Presentation
+            // stays with the user even when several executions share a sidebar.
             this.activeTargets.set(scopeId, tab.targetId);
             return { ok: true, ...describeTab(tab) };
           });
@@ -1538,7 +1591,11 @@ export class BrowserAgentBridge {
             sessionId,
             profile,
             operationController.signal,
-            { headless },
+            {
+              headless,
+              assertCurrent: assertActive,
+              ownerSessionId: executionScope?.ownerSessionId,
+            },
           );
           return this.enqueue(createdTab.webContentsId, async () => {
             const guest = resolveGuest(createdTab);
@@ -1587,6 +1644,7 @@ export class BrowserAgentBridge {
         activeGuest = guest;
         activeGuestId = tab.webContentsId;
         const executeOnGuest = async () => {
+          assertActive();
           const generation = this.navigationGenerations.get(tab.webContentsId) ?? 0;
           const assertChooserCurrent = () => {
             assertActive();
@@ -1596,7 +1654,8 @@ export class BrowserAgentBridge {
               this.tabsBySession.get(browserScopeId(sessionId, profile))?.get(tab.targetId)
                 ?.webContentsId !== tab.webContentsId ||
               (this.navigationGenerations.get(tab.webContentsId) ?? 0) !== generation ||
-              (executionScope && this.executionScopes.get(sessionId)?.runId !== executionScope.runId)
+              (executionScope &&
+                this.executionScopes.get(sessionId)?.runId !== executionScope.runId)
             ) {
               throw new Error('The file chooser page or native run changed.');
             }
@@ -1606,7 +1665,10 @@ export class BrowserAgentBridge {
             ? await (async () => {
                 await this.enableDebuggerDomains(tab, guest);
                 return this.fileChoosers.begin({
-                  tab, guest, runId: executionScope?.runId, signal,
+                  tab,
+                  guest,
+                  runId: executionScope?.runId,
+                  signal,
                   assertCurrent: assertChooserCurrent,
                 });
               })()
@@ -1615,15 +1677,33 @@ export class BrowserAgentBridge {
             const pending = this.blockedFileChooserResult(tab.webContentsId);
             const observing = command.action === 'act' && nestedKind === 'wait';
             const result =
-              pending && locksInteraction && !observing &&
+              pending &&
+              locksInteraction &&
+              !observing &&
               !['upload', 'close', 'navigate'].includes(command.action)
                 ? pending
                 : await this.executeOnGuest(
-                    command, tab, guest, assertActive, sessionId, profile,
+                    command,
+                    tab,
+                    guest,
+                    assertActive,
+                    sessionId,
+                    profile,
                     operationController.signal,
                   );
-            const sendsInput = command.action === 'act' &&
-              ['click', 'clickCoords', 'type', 'press', 'hover', 'drag', 'select', 'fill', 'batch'].includes(nestedKind ?? '');
+            const sendsInput =
+              command.action === 'act' &&
+              [
+                'click',
+                'clickCoords',
+                'type',
+                'press',
+                'hover',
+                'drag',
+                'select',
+                'fill',
+                'batch',
+              ].includes(nestedKind ?? '');
             if (sendsInput && !guest.isDestroyed() && !this.dialogs.has(tab.webContentsId))
               await this.fileChoosers.settle(guest, signal);
             assertActive();
@@ -1645,11 +1725,6 @@ export class BrowserAgentBridge {
         };
         return locksInteraction
           ? withPanelLease(() => {
-              if (!tab.headless)
-                this.sendToRenderer(BrowserIpc.AgentFocusTab, {
-                  sessionId,
-                  targetId: tab.targetId,
-                });
               return this.withAgentInteractionLease(
                 tab,
                 sessionId,
@@ -1760,11 +1835,6 @@ export class BrowserAgentBridge {
       [{ code }],
       false,
     ) as Promise<T>;
-  }
-
-  private focusGuestForKeyboardInput(guest: Electron.WebContents): void {
-    if (guest.isDestroyed()) throw new Error('The browser tab is no longer available.');
-    guest.focus();
   }
 
   private async executeInDebuggerWorld<T>(
@@ -2143,10 +2213,14 @@ export class BrowserAgentBridge {
 
   private blockedFileChooserResult(webContentsId: number): Record<string, unknown> | null {
     const fileChooser = this.fileChoosers.read(webContentsId);
-    return fileChooser ? {
-      blockedByFileChooser: true, fileChooser,
-      message: 'A file chooser is waiting on this target. Use upload with paths and targetId to complete this same selection; no further click is needed.',
-    } : null;
+    return fileChooser
+      ? {
+          blockedByFileChooser: true,
+          fileChooser,
+          message:
+            'A file chooser is waiting on this target. Use upload with paths and targetId to complete this same selection; no further click is needed.',
+        }
+      : null;
   }
 
   private appendLog(
@@ -2188,11 +2262,15 @@ export class BrowserAgentBridge {
       debuggerSessionId?: string,
     ) => {
       if (method === 'Page.fileChooserOpened' && debuggerSessionId) {
-        this.clearArmedUpload(tab.webContentsId, guest,
-          new Error('The file chooser belongs to an unsupported debugger frame session.'));
+        this.clearArmedUpload(
+          tab.webContentsId,
+          guest,
+          new Error('The file chooser belongs to an unsupported debugger frame session.'),
+        );
         this.fileChoosers.retire(tab.webContentsId);
         this.appendLog(this.errorLogs, tab.webContentsId, {
-          timestamp: Date.now(), level: 'error',
+          timestamp: Date.now(),
+          level: 'error',
           text: 'The file chooser belongs to an unsupported debugger frame session.',
         });
         return;
@@ -2803,7 +2881,6 @@ export class BrowserAgentBridge {
       executeInTargetWorld: { get: () => this.executeInTargetWorld.bind(this) },
       resolveTargetFrameOffset: { get: () => this.resolveTargetFrameOffset.bind(this) },
       waitWhileActive: { get: () => this.waitWhileActive.bind(this) },
-      focusGuestForKeyboardInput: { get: () => this.focusGuestForKeyboardInput.bind(this) },
       enableDebuggerDomains: { get: () => this.enableDebuggerDomains.bind(this) },
       assertCurrentRef: { get: () => this.assertCurrentRef.bind(this) },
       executeInBrowserWorld: { get: () => this.executeInBrowserWorld.bind(this) },

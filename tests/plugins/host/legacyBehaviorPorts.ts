@@ -2,6 +2,7 @@ import React from 'react';
 import { beforeEach } from 'vitest';
 
 import type { AppBrowserHost } from '../../../plugins/sdk/app-plugin-sdk/browser';
+import { createResourceScope } from '../../../plugins/sdk/app-plugin-sdk/resources';
 
 type FixtureBridge = Record<string, Record<string, (...args: unknown[]) => unknown>>;
 interface BrowserBehaviorOptions {
@@ -37,6 +38,7 @@ export function installBrowserBehaviorPorts(options: BrowserBehaviorOptions): vo
     const controller = new AbortController();
     const host = {
       signal: controller.signal,
+      resources: createResourceScope({ signal: controller.signal }),
       onEvent: (_name: string, listener: (payload: unknown) => void) =>
         options.subscribe?.(listener, electron()) ?? (() => {}),
       t: (key: string) => i18nService.t(key),

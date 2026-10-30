@@ -991,7 +991,7 @@ contains 判定替代文本归属。Shadow DOM 优先使用 getComposedRanges，
 
 ### 插件展示和原生补取
 
-可选插件的业务面板、功能草稿、引用、时间线及资源设置由包内 Browser 入口提供。Core 只组合通用插槽与原生历史，不维护业务组件或第二份 transcript。关闭撤回交互，卸载或换包后旧规则及异步结果失效。详见[应用插件宿主](../plugins/management/app-plugin-runtime.md)。
+可选插件的业务面板、功能草稿、引用、时间线及资源设置由包内 Browser 入口提供。Core 只组合通用插槽与原生历史，不维护业务组件或第二份 transcript。关闭撤回交互，卸载或换包后旧规则及异步结果失效。详见[应用插件宿主](../plugins/sdk/app-plugin-runtime.md)。
 
 各业务视图的展示规则由[插件文档](../plugins/README.md)维护；final、idle 和视图卸载均不能建立执行终态。
 

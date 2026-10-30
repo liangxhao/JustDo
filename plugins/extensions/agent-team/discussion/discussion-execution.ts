@@ -1,3 +1,4 @@
+import { createAppExecutionSourceBindings } from '@app-plugin/sdk/execution-source';
 import {
   dispatchChannelInboundTurn,
   getGroupThreadDeliverySession,
@@ -212,11 +213,23 @@ export async function executeGroupDiscussion(options: DiscussionExecutionOptions
         const agentId = params.ctx.AgentId;
         if (!agentId) throw new Error('teamDiscussionMissingIdentity');
         if (agentId !== participant.agentId) throw new Error('teamDiscussionInvalidMembers');
-        const { member } = assertMember(agentId);
+        const { member, sessionKey: memberKey } = assertMember(agentId);
         // Core deliberately strips root-session pinning when it fans out. Restore
         // each participant's own exact identity at the public dispatcher boundary.
         return await channelRuntime.reply.dispatchReplyFromConfig({
           ...params,
+          ctx: {
+            ...params.ctx,
+            GatewayRunToolBindings: {
+              ...params.ctx.GatewayRunToolBindings,
+              ...createAppExecutionSourceBindings({
+                ownerPluginId: 'agent-team',
+                sessionKey: memberKey,
+                nativeSessionId: member.sessionId,
+                lifecycleRevision: member.lifecycleRevision,
+              }),
+            },
+          },
           replyOptions: {
             ...params.replyOptions,
             expectedExistingSessionId: member.sessionId,

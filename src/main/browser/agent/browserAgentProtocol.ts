@@ -118,6 +118,11 @@ export type RegisteredTab = BrowserAgentTabRegistration & { ownerId: number; hea
 /** Prepared by the authenticated Gateway bridge, never read from model parameters. */
 export type BrowserExecutionScope = {
   sessionId: string;
+  ownerSessionId?: string;
+  sourcePluginId?: string;
+  sourceEpoch?: string;
+  /** Additional product-source veto; it cannot supply Native invocation authority. */
+  assertCurrent?: () => void;
   runId: string;
   workspaceDir: string;
   headlessOnly: boolean;

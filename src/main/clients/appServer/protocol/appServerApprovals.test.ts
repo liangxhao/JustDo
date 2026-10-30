@@ -92,6 +92,19 @@ describe('Codex native approval presenter', () => {
     expect(h.request.mock.calls[1][1].availableDecisions).toEqual(['accept', 'decline', 'cancel']);
   });
 
+  it('keeps a command without its own incarnation eligible only for a single approval', async () => {
+    const h = fixture();
+    const present = createCodexApprovalPresenter(h.context, 'external-thread', 'turn', h.run.signal, h.cancel, { allowSession: true });
+    const native = approval();
+    if (native.kind !== ApprovalKind.Exec) throw new Error('Invalid fixture.');
+    delete native.request.sessionId;
+
+    expect(await present(native, h.pending.signal)).toBe('allow-once');
+    expect(h.request.mock.calls[0][1].availableDecisions).toEqual(['accept', 'decline', 'cancel']);
+    h.request.mockResolvedValue({ decision: 'acceptForSession' });
+    expect(await present(native, h.pending.signal)).toBe('deny');
+  });
+
   it('preserves argv-only command data instead of inventing shell quoting', async () => {
     const h = fixture();
     const native = approval();

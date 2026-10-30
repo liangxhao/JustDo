@@ -1,6 +1,7 @@
 import type { AppBrowserHost } from '@app-plugin/sdk/browser';
 import type { AppBrowserRuntime } from '@app-plugin/sdk/browser-runtime';
 import type { AppPrimitives } from '@app-plugin/sdk/presentation';
+import { createResourceScope } from '@app-plugin/sdk/resources';
 import React from 'react';
 import { jsxDEV } from 'react/jsx-dev-runtime';
 import { jsx, jsxs } from 'react/jsx-runtime';
@@ -33,6 +34,7 @@ export async function createBrowserHost(signal: AbortSignal): Promise<AppBrowser
   const bridge = () => (window as unknown as { electron: Bridge }).electron;
   return {
     signal,
+    resources: createResourceScope({ signal }),
     async invoke(command: string, ...args: unknown[]) {
       const pair = commands[command];
       if (!pair) return Promise.reject(new Error('Unknown fixture command: ' + command));

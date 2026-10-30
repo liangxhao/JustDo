@@ -65,6 +65,18 @@ export const resolveApprovalSummary = (approval: ApprovalRequest): string => {
   return [toolName, detail || description].filter(Boolean).join(' ');
 };
 
+/** Native source fields identify this approval without assigning it another session's permissions. */
+export const resolveApprovalSource = (approval: ApprovalRequest): string =>
+  [
+    approval.request.agentId,
+    approval.request.sessionKey,
+    ...(approval.kind === ApprovalKind.Exec ? [approval.request.sessionId] : []),
+    approval.request.runId,
+    approval.request.toolCallId,
+  ]
+    .filter(value => typeof value === 'string' && value.trim())
+    .join(' · ');
+
 export const resolveApprovalDeadline = (
   expiresAtMs: number,
   now: number,
@@ -103,6 +115,7 @@ const ExecApprovalModal: React.FC<ExecApprovalModalProps> = ({ approval, onExpir
     ? approval.request.title?.trim() || i18nService.t('pluginApprovalHeading')
     : i18nService.t('execApprovalHeading');
   const summary = resolveApprovalSummary(approval);
+  const source = resolveApprovalSource(approval);
   const cwd = approval.kind === ApprovalKind.Exec ? approval.request.cwd?.trim() : undefined;
 
   useEffect(() => {
@@ -192,6 +205,11 @@ const ExecApprovalModal: React.FC<ExecApprovalModalProps> = ({ approval, onExpir
         </div>
 
         <div className="min-h-0 overflow-y-auto px-5 py-4">
+          {source && (
+            <p className="mb-3 break-all text-xs text-secondary" data-approval-source>
+              {source}
+            </p>
+          )}
           {summary && (
             <div
               id="exec-approval-content"

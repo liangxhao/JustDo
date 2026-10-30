@@ -24,7 +24,7 @@ Shared 只承载跨进程合约和纯逻辑，不是第四个业务 owner。Main
 | Goal 内容和预算、会话 mode/root            | 续跑阶段、产品期望与串行准备/回读    |
 | Skill 赢家、角色文件、peer send、cron      | 文件事务、档案、成员准入、结果收件箱 |
 
-App 插件的 Main/Browser 业务留在插件内，通过[通用宿主](../plugins/management/app-plugin-runtime.md)提供的窄端口组合；不能以 SDK 接入为由把业务重新放回 Core。
+App 插件的 Main/Browser 业务留在插件内，通过[通用宿主](../plugins/sdk/app-plugin-runtime.md)提供的窄端口组合；不能以 SDK 接入为由把业务重新放回 Core。
 
 ## 2. 再定义产品投影
 

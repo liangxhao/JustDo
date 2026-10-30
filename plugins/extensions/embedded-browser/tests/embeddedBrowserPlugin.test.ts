@@ -1,3 +1,4 @@
+import { createAppExecutionSourceBindings } from '@app-plugin/sdk/execution-source';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { BrowserExecutionRun } from '../browserExecutionContract';
@@ -19,13 +20,16 @@ function fixture(
   trigger: 'user' | 'cron' = 'user',
   start = true,
   nativeContext: Record<string, unknown> = {},
+  sessionKey?: string,
 ) {
   const run: BrowserExecutionRun = {
     sessionKey:
-      trigger === 'user'
+      sessionKey ??
+      (trigger === 'user'
         ? 'agent:main:justdo:product-session'
-        : 'agent:main:cron:job:run:native-session',
+        : 'agent:main:cron:job:run:native-session'),
     sessionId: 'native-session',
+    lifecycleRevision: 'one',
     runId: `native-run-${++sequence}`,
     trigger,
     workspaceDir: 'E:\\workspace\\task',
@@ -145,6 +149,68 @@ describe('embedded browser trusted execution integration', () => {
     expect(f.requested()[0].command.action).toBe('open');
   });
 
+  it('uses the current Native plugin owner for service-created workers before any browser call was claimed', async () => {
+    const sessionKey = 'agent:worker:subagent:workflow-node';
+    const f = fixture('user', true, {}, sessionKey);
+    sdk.session.mockReturnValue({
+      sessionId: f.run.sessionId,
+      lifecycleRevision: 'one',
+      pluginOwnerId: 'swarm-workflow',
+    });
+    f.prompt();
+    f.prepare();
+    await f.tool.execute('call', { action: 'status', headless: true, ownerPluginId: 'forged' });
+    expect(f.requested()[0].executionSource).toEqual({
+      version: 1,
+      ownerPluginId: 'swarm-workflow',
+      sessionKey,
+      nativeSessionId: f.run.sessionId,
+      lifecycleRevision: 'one',
+    });
+    expect(f.requested()[0].command).not.toHaveProperty('ownerPluginId');
+  });
+  it('forwards only the exact initiator binding and rejects a retained foreign incarnation', async () => {
+    const sessionKey = 'agent:worker:justdo-team:group:room';
+    const toolBindings = createAppExecutionSourceBindings({
+      ownerPluginId: 'agent-team',
+      sessionKey,
+      nativeSessionId: 'native-session',
+      lifecycleRevision: 'one',
+    });
+    const f = fixture('user', true, { toolBindings }, sessionKey);
+    f.prompt();
+    expect(f.prepare()).toBeUndefined();
+    await f.tool.execute('call', {
+      action: 'status',
+      ownerPluginId: 'forged',
+      executionSource: { ownerPluginId: 'forged' },
+    });
+    expect(f.requested()).toHaveLength(1);
+    expect(f.requested()[0]).toMatchObject({
+      executionSource: toolBindings.executionSource,
+      run: { sessionKey, sessionId: 'native-session', lifecycleRevision: 'one' },
+    });
+    expect(f.requested()[0].command).not.toHaveProperty('executionSource');
+    const stale = fixture(
+      'user',
+      true,
+      {
+        toolBindings: createAppExecutionSourceBindings({
+          ownerPluginId: 'agent-team',
+          sessionKey,
+          nativeSessionId: 'old-native',
+          lifecycleRevision: 'one',
+        }),
+      },
+      sessionKey,
+    );
+    stale.prompt();
+    stale.prepare();
+    expect(await stale.tool.execute('call', { action: 'status', headless: true })).toMatchObject({
+      isError: true,
+    });
+    expect(stale.requested()).toHaveLength(0);
+  });
   it('keeps one browser tool and foreground schema default, with post-policy and v2 guards', async () => {
     const f = fixture();
     expect(f.factory.contextVersion).toBe(2);

@@ -104,10 +104,12 @@ type HistoryHandler = (request: {
 }) => Promise<void>;
 
 const temporaryStateDirs = new Set<string>();
-const retireRegistrations = new Set<() => void>();
+const retireRegistrations: Array<() => void> = [];
 afterEach(() => {
-  for (const retire of retireRegistrations) retire();
-  retireRegistrations.clear();
+  retireRegistrations
+    .splice(0)
+    .reverse()
+    .forEach(retire => retire());
   const base = path.resolve(os.tmpdir()) + path.sep;
   for (const directory of temporaryStateDirs) {
     if (
@@ -131,13 +133,14 @@ function registerPlugin() {
   const registerTrustedToolPolicy = vi.fn();
   const registerService = vi.fn();
   const registerRuntimeLifecycle = vi.fn();
-  const registration = new AbortController();
+  const controller = new AbortController();
   const disposers = new Set<() => void>();
-  retireRegistrations.add(() => {
-    registration.abort();
-    for (const dispose of [...disposers]) dispose();
+  const retire = () => {
+    controller.abort();
+    [...disposers].forEach(dispose => dispose());
     disposers.clear();
-  });
+  };
+  retireRegistrations.push(retire);
   runtimeServicesPlugin.register({
     id: runtimeServicesPlugin.id,
     config: { memory: { search: { enabled: false } } },
@@ -150,16 +153,16 @@ function registerPlugin() {
       config: { current: () => ({}) },
     },
     lifecycle: {
-      signal: registration.signal,
-      onDispose(cleanup: () => void) {
-        disposers.add(cleanup);
-        return () => { disposers.delete(cleanup); };
+      registerRuntimeLifecycle,
+      signal: controller.signal,
+      onDispose: (dispose: () => void) => {
+        disposers.add(dispose);
+        return () => disposers.delete(dispose);
       },
-      runInBackgroundContext<T>(run: () => T): T {
-        registration.signal.throwIfAborted();
+      runInBackgroundContext: <T>(run: () => T): T => {
+        controller.signal.throwIfAborted();
         return run();
       },
-      registerRuntimeLifecycle,
     },
     registerTrustedToolPolicy,
     registerAgentToolResultMiddleware: vi.fn(),
@@ -172,6 +175,7 @@ function registerPlugin() {
     logger: { info: vi.fn() },
   } as never);
   return {
+    retire,
     hooks,
     emitAgentEvent,
     registerGatewayMethod,
@@ -807,4 +811,28 @@ test('reads one native transcript message through advancing bounded chunks', asy
     sessionId: 'native-session-1',
   });
   expect(sdk.readVisibleSessionTranscriptMessageEntries).toHaveBeenCalledTimes(1);
+});
+
+test('retires the real capability registration rather than keeping a fixture provider alive', () => {
+  const { registerGatewayMethod, retire } = registerPlugin();
+  const handler = registerGatewayMethod.mock.calls.find(
+    ([method]) => method === 'runtimeServices.capabilities',
+  )![1];
+  const respond = vi.fn();
+  handler({ respond });
+  expect(respond).toHaveBeenLastCalledWith(
+    true,
+    expect.objectContaining({
+      version: 2,
+      providerToken: expect.any(String),
+      capabilities: { executionAdmission: 2 },
+    }),
+  );
+  retire();
+  handler({ respond });
+  expect(respond).toHaveBeenLastCalledWith(
+    false,
+    undefined,
+    expect.objectContaining({ code: 'UNAVAILABLE' }),
+  );
 });

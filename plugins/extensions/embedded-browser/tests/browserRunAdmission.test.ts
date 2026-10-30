@@ -6,6 +6,7 @@ import { BrowserRunAdmission, isBrowserSessionCandidate } from '../browserRunAdm
 const desktop: BrowserExecutionRun = {
   sessionKey: 'agent:main:justdo:product-session',
   sessionId: 'native-session',
+  lifecycleRevision: 'generation-one',
   runId: 'native-run',
   workspaceDir: 'E:\\workspace\\task',
   trigger: 'user',
@@ -57,6 +58,21 @@ function fixture(identity = desktop) {
 }
 
 describe('embedded browser native run admission', () => {
+  it.each(['agent:worker:subagent:work', 'agent:worker:justdo-team:group:room'])(
+    'admits %s only with finalized authority and an exact current native call',
+    sessionKey => {
+      const identity = { ...desktop, sessionKey };
+      const f = fixture(identity);
+      expect(isBrowserSessionCandidate(sessionKey)).toBe(true);
+      expect(() => f.prepare()).toThrow('authority');
+      f.observe();
+      f.prepare();
+      const call = f.claim();
+      expect(call.run).toEqual({ ...identity, lifecycleRevision: 'generation-one' });
+      f.setEntry({ sessionId: identity.sessionId, lifecycleRevision: 'replacement' });
+      expect(() => call.assertCurrent()).toThrow('authority');
+    },
+  );
   it.each([desktop, cron])('binds the trusted $trigger run and its exact tool call', identity => {
     const f = fixture(identity);
     f.observe();

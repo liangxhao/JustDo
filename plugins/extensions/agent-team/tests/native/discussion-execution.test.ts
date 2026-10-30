@@ -1,4 +1,5 @@
 import { beforeEach, expect, it, vi } from 'vitest';
+import { readAppExecutionSourceBinding } from '@app-plugin/sdk/execution-source';
 
 import { executeGroupDiscussion } from '../../discussion/discussion-execution';
 import { discussionExecutionPolicyFingerprint } from '../../discussion/discussion-source-policy';
@@ -68,6 +69,19 @@ it('keeps normal tools on a borrowed source turn and waits for its whole-run out
   const tool = vi.fn();
   const onOutcome = vi.fn();
   const dispatcher = vi.fn(async params => {
+    expect(
+      readAppExecutionSourceBinding(params.ctx.GatewayRunToolBindings, {
+        sessionKey: 'agent:main:justdo:source',
+        nativeSessionId: 'main',
+        lifecycleRevision: 'rev',
+      }),
+    ).toEqual({
+      version: 1,
+      ownerPluginId: 'agent-team',
+      sessionKey: 'agent:main:justdo:source',
+      nativeSessionId: 'main',
+      lifecycleRevision: 'rev',
+    });
     expect(params.replyOptions.toolsAllow).toBeUndefined();
     expect(params.replyOptions.disableTools).toBeUndefined();
     params.replyOptions.onAgentRunStart('source-run');

@@ -23,6 +23,7 @@ const stop = vi.fn();
 const runtimeStatus = vi.fn();
 const prepare = vi.fn();
 const notifyChanged = vi.fn();
+const launchAccepted = vi.fn();
 const onSessionDeleted = vi.fn();
 const createAssistant = vi.fn();
 const discussion = vi.fn();
@@ -75,6 +76,7 @@ beforeEach(() => {
     return { roomId: 'group' };
   });
   notifyChanged.mockReset();
+  launchAccepted.mockReset().mockResolvedValue(undefined);
   onSessionDeleted.mockReset();
   createAssistant.mockReset().mockImplementation(async (_input, _identity, assertActive) => {
     assertActive();
@@ -125,6 +127,7 @@ beforeEach(() => {
   getRouter.mockReset().mockReturnValue(router);
   coordinator = new CollaborationCoordinator({
     onSessionsChanged: notifyChanged,
+    onLaunchAccepted: launchAccepted,
     createAssistant,
     discussion,
     stopDiscussions,
@@ -151,6 +154,31 @@ const ensure = (from = 'a', agentId = 'b', runId = 'user-run', call = 'call') =>
     expiresAt: Date.now() + 8000,
     input: { agentId },
   });
+
+it('publishes an exact Native admission before a separate launch-confirmation request finishes', async () => {
+  metadata.beginRound('room', 'user-turn', 'a');
+  const delivery = metadata.enqueue('room', 'user-turn', key('a'), 'pending-send', 'user-run', {
+    to: 'b', message: 'Work requiring a first-tool question',
+  });
+  metadata.transition(delivery.id, 'queued', 'dispatching');
+  let release!: () => void;
+  const waiting = new Promise<void>(resolve => { release = resolve; });
+  launchAccepted.mockReturnValue(waiting);
+  const handling = coordinator.handle({
+    requestId: 'native-ack', operation: 'native-result', sessionKey: key('a'),
+    sourceRunId: 'user-run', toolCallId: 'pending-send',
+    input: { deliveryId: delivery.id, status: 'accepted', runId: 'actual-peer-run' },
+  });
+  try {
+    await Promise.resolve();
+    expect(metadata.getDelivery(delivery.id)).toMatchObject({ state: 'accepted', runId: 'actual-peer-run' });
+    expect(notifyChanged).toHaveBeenCalledOnce();
+    expect(request.mock.calls.some(([, params]) => params?.requestId === 'native-ack')).toBe(false);
+  } finally {
+    release();
+  }
+  await handling;
+});
 
 describe('point-scoped collaboration creation and cleanup', () => {
   it('returns the anchor organizer on discovery and preparation, including to a peer', async () => {

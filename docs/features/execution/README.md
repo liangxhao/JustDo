@@ -10,3 +10,5 @@
 引擎尚未启动时见[引擎失败诊断](../../architecture/05-agent-engine.md#按需采集引擎失败诊断)；Stop ACK、消息结束或空闲均不能替代精确执行终态。
 
 [返回功能文档索引](../README.md)
+
+多 Agent 的来源、工具与交互隔离见[多 Agent 工具与交互](multi-agent-tools.md)。

@@ -167,6 +167,88 @@ test('opens existing local HTML in sidebar and background pages', async () => {
   }
 });
 
+test('does not create a local page when its plugin source is withdrawn during file validation', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'browser-navigation-'));
+  let finishValidation!: (value: fs.Stats) => void;
+  const validation = new Promise<fs.Stats>(resolve => {
+    finishValidation = resolve;
+  });
+  const stat = vi.spyOn(fs.promises, 'stat');
+  try {
+    const file = path.join(directory, 'report.html');
+    fs.writeFileSync(file, '<html>Report</html>');
+    const details = fs.statSync(file);
+    stat.mockImplementationOnce(() => validation);
+    let sourceCurrent = true;
+    const pending = bridge.executeCommand(
+      'agent:main:justdo:conversation',
+      { action: 'open', url: pathToFileURL(file).href, headless: true },
+      undefined,
+      {
+        ...scope(),
+        sourcePluginId: 'agent-team',
+        sourceEpoch: 'epoch-one',
+        assertCurrent: () => {
+          if (!sourceCurrent) throw new Error('The owning plugin has retired.');
+        },
+      },
+    );
+    const rejected = expect(pending).rejects.toThrow('owning plugin has retired');
+    await vi.waitFor(() => expect(stat).toHaveBeenCalledWith(file));
+    expect(state.host.create).not.toHaveBeenCalled();
+    sourceCurrent = false;
+    finishValidation(details);
+    await rejected;
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(state.host.create).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+  } finally {
+    stat.mockRestore();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('does not navigate an existing page when its request is aborted during local file validation', async () => {
+  const page = (await execute({
+    action: 'open',
+    url: 'https://example.com',
+    headless: true,
+  })) as PageResult;
+  const contents = getGuest(20);
+  contents.loadURL.mockClear();
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'browser-navigation-'));
+  let finishValidation!: (value: fs.Stats) => void;
+  const validation = new Promise<fs.Stats>(resolve => {
+    finishValidation = resolve;
+  });
+  const stat = vi.spyOn(fs.promises, 'stat');
+  try {
+    const file = path.join(directory, 'report.html');
+    fs.writeFileSync(file, '<html>Report</html>');
+    const details = fs.statSync(file);
+    stat.mockImplementationOnce(() => validation);
+    const controller = new AbortController();
+    const pending = bridge.executeCommand(
+      'agent:main:justdo:conversation',
+      { action: 'navigate', targetId: page.targetId, url: pathToFileURL(file).href },
+      controller.signal,
+      scope(),
+    );
+    const rejected = expect(pending).rejects.toThrow();
+    await vi.waitFor(() => expect(stat).toHaveBeenCalledWith(file));
+    expect(contents.loadURL).not.toHaveBeenCalled();
+    controller.abort();
+    finishValidation(details);
+    await rejected;
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(contents.loadURL).not.toHaveBeenCalled();
+    expect(contents.getURL()).toBe('https://example.com/');
+  } finally {
+    stat.mockRestore();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test('rejects embed registration even with the sidebar host and profile storage while allowing a sidebar page', async () => {
   const embed = guest(false);
   const sidebar = guest(false);

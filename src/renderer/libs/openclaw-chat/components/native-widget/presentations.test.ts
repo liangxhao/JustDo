@@ -331,7 +331,7 @@ test('hidden and occluded presentation targets revoke visibility without moving 
   expect(entry.visible).toBe(false);
 });
 
-test.each(['visibility', 'inert', 'aria-hidden'] as const)(
+test.each(['visibility', 'opacity', 'inert', 'aria-hidden'] as const)(
   'an expanded widget respects its source ancestor %s',
   async hiddenBy => {
     const f = fixture();
@@ -347,6 +347,7 @@ test.each(['visibility', 'inert', 'aria-hidden'] as const)(
     entry.view.expanded = true;
     Reflect.set(entry.view, 'suggestion', 'Old selection');
     if (hiddenBy === 'visibility') surface.style.visibility = 'hidden';
+    else if (hiddenBy === 'opacity') surface.style.opacity = '0';
     else surface.setAttribute(hiddenBy, 'true');
     f.manager.layout();
     await settle(entry.view);

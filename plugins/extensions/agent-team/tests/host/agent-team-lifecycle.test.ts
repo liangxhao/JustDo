@@ -10,6 +10,7 @@ import { appNativeDispatchMethod } from '@app-plugin/sdk/native-contract';
 import {
   CUSTODY_RPC,
   type ExecutionReceipt,
+  type ExecutionReceiptSubject,
   INERT_CUSTODY_HARNESS,
 } from '@runtime-services/sdk/custody';
 import { custodyResourceId } from '@runtime-services/sdk/custody-client';
@@ -56,6 +57,7 @@ type AppHostResources = Omit<
   | 'assertActive'
   | 'onExecutionReceipt'
   | 'publishEvent'
+  | 'executionSessionsChanged'
 >;
 type GatewayClientLike = {
   start(): void;
@@ -128,10 +130,10 @@ async function fixture(initiallyEnabled = false) {
       if (!enabled) throw new Error('teamDiscussionDisabled');
       return statuses.get(String(params.discussionId)) ?? { state: 'unknown' };
     }
-    if (method === CUSTODY_RPC.receiptInspect || method === CUSTODY_RPC.receiptCancel)
-      return {
-        receipt: structuredClone(executionReceipts.get(String(params.operationId)) ?? null),
-      };
+    if (method === CUSTODY_RPC.receiptInspect || method === CUSTODY_RPC.receiptCancel) {
+      if (params.ownerId !== 'agent-team') throw new Error('Unexpected custody owner');
+      return { receipt: structuredClone(executionReceipts.get(String(params.operationId)) ?? null) };
+    }
     if (method === CUSTODY_RPC.cancel) return { cancelled: true };
     if (method === CUSTODY_RPC.inspect)
       return {
@@ -263,6 +265,16 @@ async function fixture(initiallyEnabled = false) {
     statuses,
     executionReceipts,
     holdingStates,
+    recordReceipt(kind: 'discussion' | 'summary', discussionId: string, subjects: ExecutionReceiptSubject[]) {
+      const receipt: ExecutionReceipt = {
+        ownerId: 'agent-team', operationId: discussionOperationId(kind, discussionId),
+        writerRegistrationId: 'native-team-registration', inputSha256: 'f'.repeat(64),
+        state: 'settled', subjects, settledRunIds: subjects.map(subject => subject.runId),
+        cleanupComplete: true, cancelRequested: false,
+      };
+      executionReceipts.set(receipt.operationId, receipt);
+      return receipt;
+    },
     resources,
     emit(event: string, payload: unknown) {
       for (const listener of nativeListeners) listener({ event, payload });
@@ -621,18 +633,52 @@ describe.skipIf(!hostRoot)('Host integration (requires APP_PLUGIN_HOST_ROOT)', (
     f.setProofAvailable(false);
     await vi.advanceTimersByTimeAsync(3000);
 
-    expect(f.metadata.summary(run.discussionId)?.state).toBe('unknown');
-    expect(f.calls).toContainEqual({
-      method: CUSTODY_RPC.receiptCancel,
-      params: {
-        ownerId: 'agent-team',
-        operationId: discussionOperationId('summary', run.discussionId),
-      },
-      bound: false,
-    });
+    expect(f.metadata.summary(run.discussionId)?.state).toBe('pending');
+    expect(
+      f.calls.some(
+        call => call.method === CUSTODY_RPC.receiptInspect &&
+          call.params.operationId === discussionOperationId('summary', run.discussionId),
+      ),
+    ).toBe(true);
+    expect(f.calls.some(call => call.method === CUSTODY_RPC.receiptCancel)).toBe(false);
     expect(f.calls.some(call => call.method === Gateway.Summary)).toBe(false);
     expect(f.resources.ensureReady).not.toHaveBeenCalled();
     expect(f.registry.snapshot()[0].state).toBe('cleanup');
+  });
+
+  it('persists an explicit disable cancellation and settles it only from the exact Required receipt', async () => {
+    const f = await fixture(true);
+    const room = f.room('explicit-disable');
+    const run = f.metadata.reserve(send(room.id));
+    f.metadata.transition(room.id, run.discussionId, run.generation, 'completed');
+    expect(f.metadata.summary(run.discussionId)?.state).toBe('pending');
+
+    await f.setEnabled(false);
+    expect(f.metadata.summary(run.discussionId)?.state).toBe('stopping');
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(f.metadata.summary(run.discussionId)?.state).toBe('stopping');
+    f.recordReceipt('summary', run.discussionId, [{
+      ...room.summarySource!, runId: 'actual-summary-run', outcome: 'cancelled',
+    }]);
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(f.metadata.summary(run.discussionId)?.state).toBe('cancelled');
+    expect(f.calls.some(call => call.method === CUSTODY_RPC.receiptCancel &&
+      call.params.operationId === discussionOperationId('summary', run.discussionId))).toBe(true);
+    expect(f.calls.some(call => call.method === Gateway.Summary)).toBe(false);
+  });
+
+  it('does not turn a missing Required receipt into a retryable uncertain summary after proof loss', async () => {
+    const f = await fixture(true);
+    const room = f.room('uncertain-summary');
+    const run = f.metadata.reserve(send(room.id));
+    f.metadata.transition(room.id, run.discussionId, run.generation, 'completed');
+    f.metadata.updateSummary(run.discussionId, 'unknown', 'uncertain-native-run');
+    f.setProofAvailable(false);
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(f.metadata.summary(run.discussionId)).toMatchObject({
+      state: 'unknown', runId: 'uncertain-native-run',
+    });
+    expect(f.calls.some(call => call.method === Gateway.Summary || call.method === CUSTODY_RPC.receiptCancel)).toBe(false);
   });
 
   it('settles an unknown FIFO admission only from an exact existing offline run receipt', async () => {
@@ -687,6 +733,7 @@ describe.skipIf(!hostRoot)('Host integration (requires APP_PLUGIN_HOST_ROOT)', (
     };
     for (const unavailable of [
       null,
+      { ...receipt, ownerId: 'foreign' },
       { ...receipt, operationId: discussionOperationId('discussion', 'foreign') },
       { ...receipt, subjects: [{ ...receipt.subjects[0], sessionId: 'foreign-native' }] },
     ]) {

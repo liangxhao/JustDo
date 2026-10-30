@@ -160,15 +160,16 @@ test('prepares the native OpenClaw session root and permission mode', async () =
     if (method === 'automationPermission.info') {
       return { loaded: true, policyId: 'native-session-automation-permission' };
     }
-    if (method === 'sessions.create') return {
-      key: 'agent:main:justdo:session-1',
-      sessionId: 'gateway-session-1',
-      entry: {
+    if (method === 'sessions.create')
+      return {
+        key: 'agent:main:justdo:session-1',
         sessionId: 'gateway-session-1',
-        permissionMode: 'workspace',
-        sessionRoot: workspace,
-      },
-    };
+        entry: {
+          sessionId: 'gateway-session-1',
+          permissionMode: 'workspace',
+          sessionRoot: workspace,
+        },
+      };
     throw new Error(`Unexpected method: ${method}`);
   });
   const internals = getSessionPreparationInternals(adapter);
@@ -187,9 +188,15 @@ test('prepares the native OpenClaw session root and permission mode', async () =
   });
 
   expect(request).toHaveBeenCalledTimes(2);
-  expect(request).toHaveBeenNthCalledWith(1, 'sessions.describe', {
-    key: 'agent:main:justdo:session-1', agentId: 'main',
-  }, expect.objectContaining({ signal: expect.any(AbortSignal), timeoutMs: expect.any(Number) }));
+  expect(request).toHaveBeenNthCalledWith(
+    1,
+    'sessions.describe',
+    {
+      key: 'agent:main:justdo:session-1',
+      agentId: 'main',
+    },
+    expect.objectContaining({ signal: expect.any(AbortSignal), timeoutMs: expect.any(Number) }),
+  );
   expect(request).toHaveBeenNthCalledWith(2, 'sessions.create', {
     key: 'agent:main:justdo:session-1',
     cwd: workspace,
@@ -197,8 +204,9 @@ test('prepares the native OpenClaw session root and permission mode', async () =
   });
   expect(ensureProjectGitRepository).toHaveBeenCalledOnce();
   expect(ensureProjectGitRepository).toHaveBeenCalledWith(workspace);
-  expect(ensureProjectGitRepository.mock.invocationCallOrder[0])
-    .toBeGreaterThan(request.mock.invocationCallOrder[1]);
+  expect(ensureProjectGitRepository.mock.invocationCallOrder[0]).toBeGreaterThan(
+    request.mock.invocationCallOrder[1],
+  );
 });
 
 test('continues an adopted worktree session without creating a replacement', async () => {
@@ -208,7 +216,12 @@ test('continues an adopted worktree session without creating a replacement', asy
   Object.assign(session, { nativeSessionKey: nativeKey });
   const adapter = new OpenClawRuntimeAdapter(store, {});
   const request = vi.fn(async () => ({
-    session: { sessionId: 'native-child-id', spawnedCwd: session.cwd, permissionMode: 'full', worktree: { id: 'tree-1' } },
+    session: {
+      sessionId: 'native-child-id',
+      spawnedCwd: session.cwd,
+      permissionMode: 'full',
+      worktree: { id: 'tree-1' },
+    },
   }));
   const internals = getSessionPreparationInternals(adapter);
   internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
@@ -226,38 +239,71 @@ test('continues an adopted worktree session without creating a replacement', asy
 test.each([
   { mode: 'ask' as const, nativeMode: 'guarded', rootKey: 'sessionRoot' },
   { mode: 'auto' as const, nativeMode: 'workspace', rootKey: 'spawnedCwd' },
-])('synchronizes an existing worktree session to $mode before preparing it', async ({ mode, nativeMode, rootKey }) => {
-  const { store, session } = createEmptyStore();
-  const key = 'agent:main:subagent:child';
-  Object.assign(session, { nativeSessionKey: key });
-  const adapter = new OpenClawRuntimeAdapter(store, {});
-  const request = vi.fn(async (method: string) => method === 'sessions.describe'
-    ? { session: { sessionId: 'native-child-id', [rootKey]: session.cwd, permissionMode: 'full', worktree: { id: 'tree-1' } } }
-    : { key, entry: { sessionId: 'native-child-id', [rootKey]: session.cwd, permissionMode: nativeMode, worktree: { id: 'tree-1' } } });
-  const internals = getSessionPreparationInternals(adapter);
-  internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
-  internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+])(
+  'synchronizes an existing worktree session to $mode before preparing it',
+  async ({ mode, nativeMode, rootKey }) => {
+    const { store, session } = createEmptyStore();
+    const key = 'agent:main:subagent:child';
+    Object.assign(session, { nativeSessionKey: key });
+    const adapter = new OpenClawRuntimeAdapter(store, {});
+    const request = vi.fn(async (method: string) =>
+      method === 'sessions.describe'
+        ? {
+            session: {
+              sessionId: 'native-child-id',
+              [rootKey]: session.cwd,
+              permissionMode: 'full',
+              worktree: { id: 'tree-1' },
+            },
+          }
+        : {
+            key,
+            entry: {
+              sessionId: 'native-child-id',
+              [rootKey]: session.cwd,
+              permissionMode: nativeMode,
+              worktree: { id: 'tree-1' },
+            },
+          },
+    );
+    const internals = getSessionPreparationInternals(adapter);
+    internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+    internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
 
-  await expect(adapter.prepareSession(session.id, { permissionMode: mode })).resolves.toMatchObject({ sessionKey: key });
-  expect(request).toHaveBeenCalledWith('sessions.patch', {
-    key, permissionMode: nativeMode, expectedSessionId: 'native-child-id', expectedPermissionMode: 'full',
-  });
-  expect(request).not.toHaveBeenCalledWith('sessions.create', expect.anything());
-});
+    await expect(
+      adapter.prepareSession(session.id, { permissionMode: mode }),
+    ).resolves.toMatchObject({ sessionKey: key });
+    expect(request).toHaveBeenCalledWith('sessions.patch', {
+      key,
+      permissionMode: nativeMode,
+      expectedSessionId: 'native-child-id',
+      expectedPermissionMode: 'full',
+    });
+    expect(request).not.toHaveBeenCalledWith('sessions.create', expect.anything());
+  },
+);
 
 test('rejects worktree preparation when native permission synchronization did not take effect', async () => {
   const { store, session } = createEmptyStore();
   const key = 'agent:main:subagent:child';
   Object.assign(session, { nativeSessionKey: key });
   const adapter = new OpenClawRuntimeAdapter(store, {});
-  const entry = { sessionId: 'native-child-id', sessionRoot: session.cwd, permissionMode: 'full', worktree: { id: 'tree-1' } };
-  const request = vi.fn(async (method: string) => method === 'sessions.describe' ? { session: entry } : { key, entry });
+  const entry = {
+    sessionId: 'native-child-id',
+    sessionRoot: session.cwd,
+    permissionMode: 'full',
+    worktree: { id: 'tree-1' },
+  };
+  const request = vi.fn(async (method: string) =>
+    method === 'sessions.describe' ? { session: entry } : { key, entry },
+  );
   const internals = getSessionPreparationInternals(adapter);
   internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
   internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
 
-  await expect(adapter.prepareSession(session.id, { permissionMode: 'ask' }))
-    .rejects.toThrow('did not persist the requested session permission mode');
+  await expect(adapter.prepareSession(session.id, { permissionMode: 'ask' })).rejects.toThrow(
+    'did not persist the requested session permission mode',
+  );
 });
 
 test('rejects a session response that did not persist the permission mode', async () => {
@@ -269,14 +315,15 @@ test('rejects a session response that did not persist the permission mode', asyn
     if (method === 'automationPermission.info') {
       return { loaded: true, policyId: 'native-session-automation-permission' };
     }
-    if (method === 'sessions.create') return {
-      sessionId: 'gateway-session-1',
-      entry: {
+    if (method === 'sessions.create')
+      return {
         sessionId: 'gateway-session-1',
-        permissionMode: 'guarded',
-        sessionRoot: process.cwd(),
-      },
-    };
+        entry: {
+          sessionId: 'gateway-session-1',
+          permissionMode: 'guarded',
+          sessionRoot: process.cwd(),
+        },
+      };
     throw new Error(`Unexpected method: ${method}`);
   });
   const internals = getSessionPreparationInternals(adapter);
@@ -406,6 +453,7 @@ test('reuses an exact command grant only in the approved session', async () => {
       host: 'gateway',
       agentId: 'main',
       sessionKey: 'agent:main:justdo:session-1',
+      sessionId: 'native-approval-session-1',
       security: 'allowlist',
       ask: 'on-miss',
     },
@@ -484,17 +532,37 @@ test('reuses an exact command grant only in the approved session', async () => {
 test('allows a view grant only for the current native MCP approval action', async () => {
   const { store } = createEmptyStore();
   const adapter = new OpenClawRuntimeAdapter(store, {});
-  const pending = [{ id: 'app-approval', request: { pluginId: 'bundle-mcp', allowedDecisions: ['allow-always'], actions: [{ kind: 'decision', decision: 'allow-always', command: 'allow-always' }] } }];
-  const request = vi.fn(async (method: string) => method === 'plugin.approval.list' ? pending : {});
+  const pending = [
+    {
+      id: 'app-approval',
+      request: {
+        pluginId: 'bundle-mcp',
+        allowedDecisions: ['allow-always'],
+        actions: [{ kind: 'decision', decision: 'allow-always', command: 'allow-always' }],
+      },
+    },
+  ];
+  const request = vi.fn(async (method: string) =>
+    method === 'plugin.approval.list' ? pending : {},
+  );
   const internals = getSessionPreparationInternals(adapter);
   internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
   internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
-  await expect(adapter.resolveApproval('app-approval', ApprovalDecision.AllowForView, ApprovalKind.Plugin)).resolves.toBeUndefined();
-  expect(request).toHaveBeenLastCalledWith('plugin.approval.resolve', { id: 'app-approval', decision: 'allow-always' });
+  await expect(
+    adapter.resolveApproval('app-approval', ApprovalDecision.AllowForView, ApprovalKind.Plugin),
+  ).resolves.toBeUndefined();
+  expect(request).toHaveBeenLastCalledWith('plugin.approval.resolve', {
+    id: 'app-approval',
+    decision: 'allow-always',
+  });
   request.mockClear();
   pending[0].request.actions = [];
-  await expect(adapter.resolveApproval('app-approval', ApprovalDecision.AllowForView, ApprovalKind.Plugin)).rejects.toThrow('does not offer');
-  await expect(adapter.resolveApproval('app-approval', ApprovalDecision.AllowForView, ApprovalKind.Exec)).rejects.toThrow('plugin approval');
+  await expect(
+    adapter.resolveApproval('app-approval', ApprovalDecision.AllowForView, ApprovalKind.Plugin),
+  ).rejects.toThrow('does not offer');
+  await expect(
+    adapter.resolveApproval('app-approval', ApprovalDecision.AllowForView, ApprovalKind.Exec),
+  ).rejects.toThrow('plugin approval');
   expect(request).toHaveBeenCalledTimes(1);
 });
 
@@ -508,7 +576,9 @@ test('rejects a view grant if the Gateway connection changes during native appro
   });
   internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
   internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
-  await expect(adapter.resolveApproval('app-approval', ApprovalDecision.AllowForView, ApprovalKind.Plugin)).rejects.toThrow('connection changed');
+  await expect(
+    adapter.resolveApproval('app-approval', ApprovalDecision.AllowForView, ApprovalKind.Plugin),
+  ).rejects.toThrow('connection changed');
   expect(request).toHaveBeenCalledTimes(1);
 });
 
@@ -522,6 +592,7 @@ test('commits a session grant only after Gateway confirms the current request', 
       command: 'git status',
       commandArgv: ['git', 'status'],
       sessionKey: 'agent:main:justdo:session-race',
+      sessionId: 'native-approval-session-race',
     },
     createdAtMs: 1,
     expiresAtMs: Date.now() + 60_000,
@@ -585,6 +656,209 @@ test('commits a session grant only after Gateway confirms the current request', 
     }),
   );
   expect(sendToRenderer).not.toHaveBeenCalled();
+});
+
+test.each(['reset', 'stop', 'connection-generation', 'client-replacement'] as const)(
+  'does not recreate a session grant when %s occurs before the Native acknowledgement',
+  async change => {
+    sendToRenderer.mockClear();
+    const { store } = createEmptyStore();
+    const adapter = new OpenClawRuntimeAdapter(store, {});
+    const pending = {
+      id: 'grant-before-reset',
+      request: {
+        command: 'git status',
+        sessionKey: 'agent:main:subagent:independent-worker',
+        sessionId: 'native-worker-incarnation',
+      },
+      createdAtMs: Date.now(),
+      expiresAtMs: Date.now() + 60_000,
+    };
+    let acknowledge!: () => void;
+    const acknowledgement = new Promise<void>(resolve => {
+      acknowledge = resolve;
+    });
+    const request = vi.fn(async (method: string) => {
+      if (method === 'exec.approval.list') return [pending];
+      if (method === 'exec.approval.resolve') await acknowledgement;
+      if (method === 'sessions.abort') return { ok: true, status: 'aborted' };
+      return {};
+    });
+    const internals = adapter as unknown as {
+      gatewayClient: GatewayClientLike;
+      gatewayClientGeneration: number;
+      ensureGatewayClientReady(): Promise<void>;
+      activeTurns: Map<string, SessionTurn>;
+    };
+    internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+    internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+    const approving = adapter.resolveApproval(
+      pending.id,
+      ApprovalDecision.AllowForSession,
+      ApprovalKind.Exec,
+    );
+    await vi.waitFor(() =>
+      expect(request).toHaveBeenCalledWith('exec.approval.resolve', {
+        id: pending.id,
+        decision: ExecApprovalDecision.AllowOnce,
+      }),
+    );
+
+    if (change === 'reset') adapter.clearSessionExecApprovalGrants(pending.request.sessionKey);
+    else if (change === 'stop') {
+      const turn = createSessionTurn({ sessionKey: pending.request.sessionKey });
+      internals.activeTurns.set(turn.sessionId, turn);
+      await adapter.stopSession(turn.sessionId);
+    } else if (change === 'connection-generation') internals.gatewayClientGeneration++;
+    else internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+    acknowledge();
+    await approving;
+    request.mockClear();
+    adapter.handleGatewayEvent({
+      event: 'exec.approval.requested',
+      payload: { ...pending, id: 'after-change' },
+    });
+
+    await vi.waitFor(() =>
+      expect(sendToRenderer).toHaveBeenCalledWith(
+        OpenClawApprovalIpc.Requested,
+        expect.objectContaining({ id: 'after-change' }),
+      ),
+    );
+    expect(request).not.toHaveBeenCalledWith('exec.approval.resolve', expect.anything());
+  },
+);
+
+test.each(['source-reset', 'source-stop', 'peer-reset'] as const)(
+  'fences the original request-list await against %s without revoking unrelated grants',
+  async change => {
+    const { store } = createEmptyStore();
+    const adapter = new OpenClawRuntimeAdapter(store, {});
+    const pending = {
+      id: 'reading-approval',
+      createdAtMs: Date.now(),
+      expiresAtMs: Date.now() + 60_000,
+      request: {
+        command: 'git status',
+        sessionKey: 'agent:main:justdo:session-1',
+        sessionId: 'native-current',
+      },
+    };
+    let complete!: (value: unknown) => void;
+    const list = new Promise(resolve => {
+      complete = resolve;
+    });
+    const request = vi.fn(async (method: string) => {
+      if (method === 'exec.approval.list') return list;
+      if (method === 'sessions.abort') return { ok: true, status: 'aborted' };
+      return {};
+    });
+    const internals = adapter as unknown as StopTestAdapter;
+    internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+    internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+    const result = adapter
+      .resolveApproval(pending.id, ApprovalDecision.AllowForSession, ApprovalKind.Exec)
+      .then(
+        () => ({ allowed: true, error: undefined }),
+        error => ({ allowed: false, error }),
+      );
+    await vi.waitFor(() => expect(request).toHaveBeenCalledWith('exec.approval.list'));
+    if (change === 'source-stop') {
+      internals.activeTurns.set('session-1', createSessionTurn());
+      await adapter.stopSession('session-1');
+    } else
+      adapter.clearSessionExecApprovalGrants(
+        change === 'peer-reset' ? 'agent:main:justdo:peer-session' : pending.request.sessionKey,
+      );
+    complete([pending]);
+
+    const outcome = await result;
+    expect(outcome.allowed).toBe(change === 'peer-reset');
+    if (change === 'peer-reset')
+      expect(request).toHaveBeenCalledWith('exec.approval.resolve', {
+        id: pending.id,
+        decision: ExecApprovalDecision.AllowOnce,
+      });
+    else expect(request).not.toHaveBeenCalledWith('exec.approval.resolve', expect.anything());
+  },
+);
+
+test('requires the current connection acknowledgement when the same approval ID survives a reconnect', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const pending = {
+    id: 'approval-across-connections',
+    createdAtMs: Date.now(),
+    expiresAtMs: Date.now() + 60_000,
+    request: {
+      command: 'git status',
+      sessionKey: 'agent:main:justdo:session-1',
+      sessionId: 'native-same-session',
+    },
+  };
+  let acknowledgeOld!: () => void;
+  let acknowledgeCurrent!: () => void;
+  const oldAcknowledgement = new Promise<void>(resolve => {
+    acknowledgeOld = resolve;
+  });
+  const currentAcknowledgement = new Promise<void>(resolve => {
+    acknowledgeCurrent = resolve;
+  });
+  const oldRequest = vi.fn(async () => oldAcknowledgement);
+  const currentRequest = vi.fn(async (method: string) => {
+    if (method === 'exec.approval.list') return [pending];
+    if (method === 'exec.approval.resolve') return currentAcknowledgement;
+    return {};
+  });
+  const internals = adapter as unknown as {
+    gatewayClient: GatewayClientLike;
+    gatewayClientGeneration: number;
+    ensureGatewayClientReady(): Promise<void>;
+    sessionExecApprovalGrants: { matches(request: typeof pending): boolean };
+  };
+  internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+  internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request: oldRequest };
+  const oldDecision = adapter.resolveApproval(
+    pending.id,
+    ApprovalDecision.AllowOnce,
+    ApprovalKind.Exec,
+  );
+  await vi.waitFor(() => expect(oldRequest).toHaveBeenCalledOnce());
+
+  internals.gatewayClientGeneration++;
+  internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request: currentRequest };
+  let currentSettled = false;
+  const currentDecision = adapter
+    .resolveApproval(pending.id, ApprovalDecision.AllowForSession, ApprovalKind.Exec)
+    .then(() => {
+      currentSettled = true;
+    });
+  await vi.waitFor(() =>
+    expect(currentRequest).toHaveBeenCalledWith('exec.approval.resolve', {
+      id: pending.id,
+      decision: ExecApprovalDecision.AllowOnce,
+    }),
+  );
+  acknowledgeOld();
+  await oldDecision;
+
+  expect(currentSettled).toBe(false);
+  expect(internals.sessionExecApprovalGrants.matches(pending)).toBe(false);
+  // The old promise's finally cannot erase the current resolution's dedup entry.
+  const sameConnectionDecision = adapter.resolveApproval(
+    pending.id,
+    ApprovalDecision.AllowOnce,
+    ApprovalKind.Exec,
+  );
+  await Promise.resolve();
+  expect(
+    currentRequest.mock.calls.filter(([method]) => method === 'exec.approval.resolve'),
+  ).toHaveLength(1);
+  acknowledgeCurrent();
+  await Promise.all([currentDecision, sameConnectionDecision]);
+
+  expect(currentSettled).toBe(true);
+  expect(internals.sessionExecApprovalGrants.matches(pending)).toBe(true);
 });
 
 test.each(['unavailable', 'unresponsive'])(
@@ -654,6 +928,210 @@ test('broadcasts an authoritative pending approval snapshot during reconciliatio
   ]);
   expect(sendToRenderer).not.toHaveBeenCalledWith(OpenClawApprovalIpc.Requested, expect.anything());
 });
+
+test.each(['client-replacement', 'connection-generation', 'response-context'] as const)(
+  'rejects an old approval inventory before applying a session grant after %s changes',
+  async change => {
+    const { store } = createEmptyStore();
+    const adapter = new OpenClawRuntimeAdapter(store, {});
+    const pending = {
+      id: 'old-connection-approval',
+      request: {
+        command: 'git status',
+        sessionKey: 'agent:worker:subagent:approval-child',
+        sessionId: 'native-approval-child',
+      },
+      createdAtMs: 1,
+      expiresAtMs: Date.now() + 60_000,
+    };
+    let finishList!: (value: unknown[]) => void;
+    const inventory = new Promise<unknown[]>(resolve => { finishList = resolve; });
+    const oldRequest = vi.fn((method: string) => method === 'exec.approval.list'
+      ? inventory : Promise.resolve([]));
+    const currentRequest = vi.fn().mockResolvedValue({});
+    let responseCurrent = true;
+    const internals = adapter as unknown as {
+      gatewayClient: GatewayClientLike;
+      gatewayClientGeneration: number;
+      ensureGatewayClientReady(): Promise<void>;
+      sessionExecApprovalGrants: { grant(request: typeof pending): boolean };
+    };
+    internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+    internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request: oldRequest };
+    vi.spyOn(adapter, 'captureGatewayResponseContext').mockImplementation(() => ({
+      isCurrent: () => responseCurrent,
+      isResponseError: () => false,
+    }));
+    internals.sessionExecApprovalGrants.grant(pending);
+
+    const listing = adapter.listPendingApprovals();
+    const rejected = expect(listing).rejects.toThrow(/connection changed/i);
+    await vi.waitFor(() => expect(oldRequest).toHaveBeenCalledWith('exec.approval.list'));
+    if (change === 'client-replacement') {
+      internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request: currentRequest };
+    } else if (change === 'connection-generation') {
+      internals.gatewayClientGeneration++;
+    } else responseCurrent = false;
+    finishList([pending]);
+    await rejected;
+
+    expect(currentRequest).not.toHaveBeenCalled();
+    expect(oldRequest).not.toHaveBeenCalledWith('exec.approval.resolve', expect.anything());
+  },
+);
+
+test('does not publish an old approval after its auto-resolution fails on a retired connection', async () => {
+  sendToRenderer.mockClear();
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const pending = {
+    id: 'retired-live-approval',
+    request: {
+      command: 'git status',
+      sessionKey: 'agent:worker:subagent:approval-child',
+      sessionId: 'native-approval-child',
+    },
+    createdAtMs: 1,
+    expiresAtMs: Date.now() + 60_000,
+  };
+  let rejectResolution!: (error: Error) => void;
+  const resolution = new Promise<never>((_resolve, reject) => { rejectResolution = reject; });
+  const request = vi.fn(() => resolution);
+  const internals = adapter as unknown as {
+    gatewayClient: GatewayClientLike;
+    gatewayClientGeneration: number;
+    sessionExecApprovalGrants: { grant(request: typeof pending): boolean };
+    handleExecApprovalRequested(payload: unknown): Promise<void>;
+  };
+  internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+  internals.sessionExecApprovalGrants.grant(pending);
+
+  const handling = internals.handleExecApprovalRequested(pending);
+  expect(request).toHaveBeenCalledWith('exec.approval.resolve', expect.objectContaining({ id: pending.id }));
+  internals.gatewayClientGeneration++;
+  rejectResolution(new Error('Gateway disconnected'));
+  await handling;
+
+  expect(sendToRenderer).not.toHaveBeenCalled();
+});
+
+test('does not continue applying an inventory after the first auto-resolution crosses a reconnect', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const pending = {
+    id: 'first-old-approval',
+    request: {
+      command: 'git status',
+      sessionKey: 'agent:worker:subagent:approval-child',
+      sessionId: 'native-approval-child',
+    },
+    createdAtMs: 1,
+    expiresAtMs: Date.now() + 60_000,
+  };
+  let acknowledge!: () => void;
+  const acknowledgement = new Promise<void>(resolve => { acknowledge = resolve; });
+  const request = vi.fn((method: string) => {
+    if (method === 'exec.approval.list') return Promise.resolve([pending, { ...pending, id: 'second-old-approval' }]);
+    if (method === 'exec.approval.resolve') return acknowledgement;
+    return Promise.resolve([]);
+  });
+  const internals = adapter as unknown as {
+    gatewayClient: GatewayClientLike;
+    gatewayClientGeneration: number;
+    ensureGatewayClientReady(): Promise<void>;
+    sessionExecApprovalGrants: { grant(request: typeof pending): boolean };
+  };
+  internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+  internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+  internals.sessionExecApprovalGrants.grant(pending);
+  const listing = adapter.listPendingApprovals();
+  const rejected = expect(listing).rejects.toThrow(/connection changed/i);
+  await vi.waitFor(() => expect(request).toHaveBeenCalledWith('exec.approval.resolve', {
+    id: pending.id,
+    decision: ExecApprovalDecision.AllowOnce,
+  }));
+
+  internals.gatewayClientGeneration++;
+  acknowledge();
+  await rejected;
+
+  expect(request).not.toHaveBeenCalledWith('exec.approval.resolve', {
+    id: 'second-old-approval',
+    decision: ExecApprovalDecision.AllowOnce,
+  });
+});
+
+test('never auto-resolves an expired request using an otherwise matching session grant', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const pending = {
+    id: 'expired-approval',
+    request: {
+      command: 'git status',
+      sessionKey: 'agent:worker:subagent:approval-child',
+      sessionId: 'native-approval-child',
+    },
+    createdAtMs: 1,
+    expiresAtMs: 2,
+  };
+  const request = vi.fn((method: string) => Promise.resolve(method === 'exec.approval.list' ? [pending] : []));
+  const internals = adapter as unknown as {
+    gatewayClient: GatewayClientLike;
+    ensureGatewayClientReady(): Promise<void>;
+    sessionExecApprovalGrants: { grant(request: typeof pending): boolean };
+  };
+  internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+  internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+  internals.sessionExecApprovalGrants.grant(pending);
+
+  await adapter.listPendingApprovals();
+
+  expect(request).not.toHaveBeenCalledWith('exec.approval.resolve', expect.anything());
+});
+
+test.each(['allow', 'throw'] as const)(
+  'does not send an external %s decision after the same client changes connection generation',
+  async outcome => {
+    const { store } = createEmptyStore();
+    const adapter = new OpenClawRuntimeAdapter(store, {});
+    const row = { key: 'external-native-key', sessionId: 'external-native-id', lifecycleRevision: 'revision-1' };
+    const pending = {
+      id: 'external-approval',
+      request: { command: 'git status', sessionKey: row.key, sessionId: row.sessionId, runId: 'external-run' },
+      createdAtMs: 1,
+      expiresAtMs: Date.now() + 60_000,
+    };
+    const request = vi.fn((method: string) => Promise.resolve(method === 'sessions.describe' ? { session: row } : {}));
+    const client = { start: vi.fn(), stop: vi.fn(), request };
+    let decide!: (value: 'allow-once') => void;
+    let fail!: (error: Error) => void;
+    const present = vi.fn(() => new Promise<'allow-once'>((resolve, reject) => { decide = resolve; fail = reject; }));
+    const internals = adapter as unknown as {
+      gatewayClient: GatewayClientLike;
+      gatewayClientGeneration: number;
+      handleExecApprovalRequested(payload: unknown): Promise<void>;
+      externalApprovalRouting: { ownsRequest(kind: ApprovalKind, id: string): boolean };
+    };
+    internals.gatewayClient = client;
+    const release = adapter.claimExternalApprovalOwner({
+      sessionKey: row.key,
+      sessionId: row.sessionId,
+      lifecycleRevision: row.lifecycleRevision,
+      runId: 'external-run',
+      client,
+    }, present);
+
+    await internals.handleExecApprovalRequested(pending);
+    await vi.waitFor(() => expect(present).toHaveBeenCalledOnce());
+    internals.gatewayClientGeneration++;
+    if (outcome === 'allow') decide('allow-once');
+    else fail(new Error('Permission presentation disconnected'));
+    await vi.waitFor(() => expect(internals.externalApprovalRouting.ownsRequest(ApprovalKind.Exec, pending.id)).toBe(false));
+
+    expect(request).not.toHaveBeenCalledWith('exec.approval.resolve', expect.anything());
+    release();
+  },
+);
 
 test('replays an approval requested during reconciliation after the snapshot', async () => {
   sendToRenderer.mockClear();

@@ -17,6 +17,7 @@ import type {
 } from '../../../../../plugins/sdk/app-plugin-sdk/contracts';
 import { isAppIdentifier, isAppWireValue } from '../../../../../plugins/sdk/app-plugin-sdk/contracts';
 import type { AppHistoryPresentationModule } from '../../../../../plugins/sdk/app-plugin-sdk/history-presentation';
+import { createResourceScope } from '../../../../../plugins/sdk/app-plugin-sdk/resources';
 import { registerMessagePresentation } from './messagePresentation';
 import { AppUiStateStore } from './uiState';
 
@@ -31,6 +32,7 @@ export interface AppMode extends AppComposerMode {
 interface Instance {
   snapshot: AppPluginSnapshot;
   controller: AbortController;
+  registered: boolean;
   dispose?: () => void;
   releases: (() => void)[];
 }
@@ -62,7 +64,9 @@ export class AppBrowserRegistry {
   private modes: AppMode[] = [];
   private presentations: {
     pluginId: string;
-    resolve(sessionKey: string): { visible: boolean; label?: string } | undefined;
+    resolve(
+      sessionKey: string,
+    ): { visible: boolean; label?: string; ownerDocument?: Document } | undefined;
   }[] = [];
   private sessionPresentations: {
     pluginId: string;
@@ -105,10 +109,20 @@ export class AppBrowserRegistry {
   readonly getViews = (): readonly AppView[] => this.views;
   readonly getModes = (): readonly AppMode[] => this.modes;
   readonly getContextRevision = () => this.contextRevision;
+  isBusinessCurrent(pluginId: string, epoch?: string): boolean {
+    const instance = this.instances.get(pluginId);
+    return Boolean(
+      instance &&
+      instance.registered &&
+      !instance.controller.signal.aborted &&
+      (epoch === undefined || instance.snapshot.epoch === epoch),
+    );
+  }
   readonly getWorkspaceRequests = () => this.workspaceRequests;
   sessionPresentation(sessionId: string): AppSessionPresentation {
     const presentation = this.sessionPresentations.reduce<AppSessionPresentation>(
       (result, item) => {
+        if (!this.isBusinessCurrent(item.pluginId)) return result;
         try {
           return { ...result, ...item.resolve(sessionId) };
         } catch {
@@ -123,6 +137,7 @@ export class AppBrowserRegistry {
   }
   sessionNavigation(sessionId: string) {
     for (const item of this.sessionPresentations) {
+      if (!this.isBusinessCurrent(item.pluginId)) continue;
       const presentation = item.resolve(sessionId);
       if (!presentation?.anchorSessionId) continue;
       const instance = this.instances.get(item.pluginId);
@@ -156,6 +171,7 @@ export class AppBrowserRegistry {
   interactionPresentation(sessionKey: unknown) {
     if (typeof sessionKey !== 'string') return undefined;
     for (const contribution of this.presentations) {
+      if (!this.isBusinessCurrent(contribution.pluginId)) continue;
       try {
         const result = contribution.resolve(sessionKey);
         if (result) return result;
@@ -213,12 +229,24 @@ export class AppBrowserRegistry {
         snapshot.browserEntry.includes('..')
       )
         continue;
-      const instance: Instance = { snapshot, controller: new AbortController(), releases: [] };
+      const instance: Instance = {
+        snapshot,
+        controller: new AbortController(),
+        registered: false,
+        releases: [],
+      };
       this.instances.set(snapshot.id, instance);
       const current = () =>
         this.instances.get(snapshot.id) === instance && !instance.controller.signal.aborted;
       const assertCurrent = () => {
         if (!current()) throw new Error('appPluginRetired');
+      };
+      const contextChanged = () => {
+        // Synchronous registration publishes one complete context, including
+        // presentation-only plugins. Later additions notify on their own.
+        if (!instance.registered) return;
+        this.contextRevision++;
+        this.changed();
       };
       try {
         const module = await this.load(snapshot.browserEntry);
@@ -227,6 +255,7 @@ export class AppBrowserRegistry {
         const host: AppBrowserHost = {
           plugin: snapshot,
           signal: instance.controller.signal,
+          resources: createResourceScope({ signal: instance.controller.signal }),
           uiState: {
             get: key => {
               assertCurrent();
@@ -398,8 +427,7 @@ export class AppBrowserRegistry {
           application: guardApplicationServices(this.services.application, assertCurrent),
           interactionContextChanged: () => {
             assertCurrent();
-            this.contextRevision++;
-            this.changed();
+            contextChanged();
           },
           onNavigation: listener => {
             assertCurrent();
@@ -422,10 +450,13 @@ export class AppBrowserRegistry {
               pluginId: snapshot.id,
               resolve: (key: string) => {
                 assertCurrent();
-                return resolve(key);
+                const result = resolve(key);
+                assertCurrent();
+                return result;
               },
             };
             this.presentations.push(contribution);
+            contextChanged();
             const release = () => {
               this.presentations = this.presentations.filter(item => item !== contribution);
               this.contextRevision++;
@@ -446,6 +477,7 @@ export class AppBrowserRegistry {
               },
             };
             this.sessionPresentations.push(contribution);
+            contextChanged();
             const release = () => {
               this.sessionPresentations = this.sessionPresentations.filter(
                 item => item !== contribution,
@@ -512,6 +544,8 @@ export class AppBrowserRegistry {
           instance.releases.push(() => style.remove());
         }
         assertCurrent();
+        instance.registered = true;
+        contextChanged();
       } catch {
         if (current()) {
           console.error('[AppPlugins] Browser registration failed:', snapshot.id);
@@ -542,7 +576,10 @@ export class AppBrowserRegistry {
     await Promise.all(
       admitted.map(async snapshot => {
         if (this.historyPresentations.has(snapshot.id)) return;
-        const instance = { hash: snapshot.hash, release: undefined as (() => void) | undefined };
+        const instance = {
+          hash: snapshot.hash,
+          release: undefined as (() => void) | undefined,
+        };
         this.historyPresentations.set(snapshot.id, instance);
         const current = () =>
           !this.disposed && this.historyPresentations.get(snapshot.id) === instance;
@@ -718,7 +755,9 @@ function guardApplicationServices(
             : result;
         }
       : value && typeof value === 'object'
-        ? new Proxy(value, { get: (target, key) => wrap(Reflect.get(target, key), target) })
+        ? new Proxy(value, {
+            get: (target, key) => wrap(Reflect.get(target, key), target),
+          })
         : value;
   const services = wrap(input ?? {}) as AppServices;
   return {
@@ -759,7 +798,12 @@ function guardViewContext(context: AppViewContext, assertCurrent: () => void): A
     ...(context.openWorkspace ? { openWorkspace: guard(context.openWorkspace) } : {}),
     ...(context.onOpenSubtask ? { onOpenSubtask: guard(context.onOpenSubtask) } : {}),
     ...(context.draft
-      ? { draft: { append: guard(context.draft.append), focus: guard(context.draft.focus) } }
+      ? {
+          draft: {
+            append: guard(context.draft.append),
+            focus: guard(context.draft.focus),
+          },
+        }
       : {}),
     ...(context.navigation
       ? {

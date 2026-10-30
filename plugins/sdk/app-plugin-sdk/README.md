@@ -8,4 +8,6 @@ Import public npm exports such as `@app-plugin/sdk/main`, `@app-plugin/sdk/brows
 
 Native, Main and Browser entries are separate artifacts. A companion declares its capabilities, commands and slots in its manifest; the host validates them and withdraws stale callbacks when its lifetime ends. Do not import application source or create a transcript cache.
 
+Main `onEnable(resources)` and Browser `host.resources` provide local resource scopes for listeners, timers and cooperative tasks. Dispose component child scopes during effect cleanup. These helpers manage local lifetimes; they do not grant native execution authority or prove task completion.
+
 Installing the SDK does not install a plugin or provide Runtime Services. Managed execution requires a compatible, explicitly admitted runtime. Main and Browser modules run trusted code; the SDK is not a hostile-code sandbox.

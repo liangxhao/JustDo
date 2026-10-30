@@ -37,6 +37,7 @@ interface Owner {
   prepared: boolean;
   runId?: string;
   ready?: Promise<void>;
+  isConnectionCurrent: () => boolean;
 }
 
 interface PendingApproval { controller: AbortController; resolved: boolean }
@@ -52,10 +53,12 @@ export class ExternalApprovalRouting {
     binding: ExternalApprovalBinding,
     present: ExternalPermissionPresenter,
     signal?: AbortSignal,
+    isConnectionCurrent: () => boolean = () => true,
   ): () => void {
     if (this.owners.has(binding.sessionKey)) throw new Error('The session already has an approval owner.');
-    if (this.getClient() !== binding.client) throw new Error('The approval connection changed.');
-    const owner: Owner = { binding, present, controller: new AbortController(),
+    if (this.getClient() !== binding.client || !isConnectionCurrent())
+      throw new Error('The approval connection changed.');
+    const owner: Owner = { binding, present, controller: new AbortController(), isConnectionCurrent,
       prepared: binding.runIdReady !== undefined, runId: binding.runId };
     this.owners.set(binding.sessionKey, owner);
     if (binding.runIdReady) {
@@ -117,13 +120,17 @@ export class ExternalApprovalRouting {
 
   private async current(owner: Owner): Promise<boolean> {
     const binding = owner.binding;
-    if (this.getClient() !== binding.client || owner.controller.signal.aborted || binding.isCurrent?.() === false) return false;
+    if (!this.connectionCurrent(owner) || owner.controller.signal.aborted || binding.isCurrent?.() === false) return false;
     const result = await binding.client.request<{ session?: Record<string, unknown> }>(
       'sessions.describe', { key: binding.sessionKey },
     );
-    return this.getClient() === binding.client && !owner.controller.signal.aborted && binding.isCurrent?.() !== false &&
+    return this.connectionCurrent(owner) && !owner.controller.signal.aborted && binding.isCurrent?.() !== false &&
       result.session?.key === binding.sessionKey && result.session.sessionId === binding.sessionId &&
       result.session.lifecycleRevision === binding.lifecycleRevision;
+  }
+
+  private connectionCurrent(owner: Owner): boolean {
+    return this.getClient() === owner.binding.client && owner.isConnectionCurrent();
   }
 
   private matches(owner: Owner, request: ApprovalRequest): boolean {
@@ -167,7 +174,7 @@ export class ExternalApprovalRouting {
       }
       if (decision === ExecApprovalDecision.AllowAlways && !canGrantPersistentAppApproval(request))
         decision = ExecApprovalDecision.Deny;
-      if (pending.resolved || this.getClient() !== owner.binding.client) return;
+      if (pending.resolved || !this.connectionCurrent(owner)) return;
       // The asynchronous authority read can finish just before cancellation.
       // Recheck without an await between withdrawal and the decision send.
       if (signal.aborted || owner.controller.signal.aborted || request.expiresAtMs <= Date.now()) {
@@ -183,7 +190,7 @@ export class ExternalApprovalRouting {
     } catch {
       // An unavailable authority never grants permission. Native expiry/abort
       // remains authoritative; never replay a decision on a new connection.
-      if (!sent && !pending.resolved && this.getClient() === owner.binding.client) {
+      if (!sent && !pending.resolved && this.connectionCurrent(owner)) {
         await owner.binding.client.request(
           request.kind === ApprovalKind.Plugin ? 'plugin.approval.resolve' : 'exec.approval.resolve',
           { id: request.id, decision: ExecApprovalDecision.Deny },

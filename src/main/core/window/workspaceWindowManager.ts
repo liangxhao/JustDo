@@ -61,6 +61,7 @@ export class WorkspaceWindowManager {
   private contents: Electron.WebContents | null = null;
   private shell: BrowserWindow | null = null;
   private update: WorkspaceWindowUpdate | null = null;
+  private viewportSize: { width: number; height: number } | null = null;
   private hiddenWithOwner = false;
   private disposed = false;
   private readonly ownerId: number;
@@ -309,10 +310,21 @@ export class WorkspaceWindowManager {
       return;
     }
     contents.setZoomFactor(this.owner.webContents.getZoomFactor());
+    const resizeViewport = (width: number, height: number) => {
+      if (width > 0 && height > 0) this.viewportSize = { width, height };
+      const ownerSize = this.owner.getContentSize();
+      const viewport = (this.viewportSize ??= {
+        width: Math.max(1, ownerSize[0]),
+        height: Math.max(1, ownerSize[1]),
+      });
+      // Hidden presentation can have a zero clip, while its retained guests
+      // still need a real viewport for background tools and hit testing.
+      view.setBounds({ x: 0, y: 0, ...viewport });
+    };
     if (this.shell) {
       const [width, height] = this.shell.getContentSize();
       root.setBounds({ x: 0, y: 0, width, height });
-      view.setBounds({ x: 0, y: 0, width, height });
+      resizeViewport(width, height);
       root.setVisible(true);
     } else if (this.update) {
       const [width, height] = this.owner.getContentSize();
@@ -322,10 +334,13 @@ export class WorkspaceWindowManager {
         this.owner.webContents.getZoomFactor(),
       );
       root.setBounds(bounds);
-      view.setBounds({ x: 0, y: 0, width: bounds.width, height: bounds.height });
+      resizeViewport(bounds.width, bounds.height);
       root.setVisible(
         this.update.visible && !this.update.occluded && bounds.width > 0 && bounds.height > 0,
       );
+    } else {
+      const [width, height] = this.owner.getContentSize();
+      resizeViewport(width, height);
     }
     this.surfaces.applyLayout();
   }
@@ -512,6 +527,7 @@ export class WorkspaceWindowManager {
     this.generation = randomUUID();
     this.grant = null;
     this.update = null;
+    this.viewportSize = null;
     const root = this.root;
     const contents = this.contents;
     const shell = this.shell;

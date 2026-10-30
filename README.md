@@ -217,7 +217,7 @@ Most detailed project documentation is currently in Chinese.
 | Multi-stage and batch work          | [Swarm Workflow](docs/plugins/extensions/swarm-workflow/workflows.md) · [Batch execution](docs/plugins/extensions/swarm-workflow/batches.md)    |
 | Browser tasks and demonstrations    | [Browser modes](docs/features/browser/browser-settings-design.md) · [Operation recording](docs/features/browser/browser-operation-recording.md) |
 | Visual answers and diagrams         | [Interactive answers](docs/features/chat/interactive-answers.md) · [draw.io](docs/plugins/extensions/drawio/offline-editor.md)                  |
-| Models and extensions               | [Model settings](docs/features/models/model-management.md) · [Plugin Hub](docs/plugins/management/plugin-hub.md)                                |
+| Models and extensions               | [Model settings](docs/features/models/model-management.md) · [Plugin Hub](docs/features/plugins/plugin-hub.md)                                |
 | Development and troubleshooting     | [Development guide](docs/development.md) · [Documentation index](docs/README.md)                                                                |
 
 ## Contribute

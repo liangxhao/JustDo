@@ -537,18 +537,22 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
       ref={panelRef}
       className={
         portal.native
-          ? `${visible ? 'flex' : 'hidden'} relative h-full w-full min-w-0 flex-col ${portal.detached ? '' : 'border-l border-border'} bg-background`
-          : `${isOpen ? 'flex' : 'hidden'} cowork-display-panel absolute inset-y-0 right-0 z-50 max-w-[calc(100%-2rem)] flex-col border-l border-border bg-background shadow-xl`
+          ? `flex relative h-full w-full min-w-0 flex-col ${portal.detached ? '' : 'border-l border-border'} bg-background`
+          : 'flex cowork-display-panel absolute inset-y-0 right-0 z-50 max-w-[calc(100%-2rem)] flex-col border-l border-border bg-background shadow-xl'
       }
       style={
-        portal.native
-          ? undefined
-          : isWorkspaceFullscreen
-            ? { width: '100%', maxWidth: 'none', position: 'absolute', inset: 0, zIndex: 50 }
-            : ({
-                width,
-                '--display-panel-width': `${width}px`,
-              } as React.CSSProperties)
+        {
+          opacity: visible ? 1 : 0,
+          pointerEvents: visible ? undefined : 'none',
+          ...(portal.native
+            ? {}
+            : isWorkspaceFullscreen
+              ? { width: '100%', maxWidth: 'none', position: 'absolute', inset: 0, zIndex: 50 }
+              : {
+                  width,
+                  '--display-panel-width': `${width}px`,
+                }),
+        } as React.CSSProperties
       }
       aria-label={i18nService.t('coworkCanvasTitle')}
       aria-hidden={!visible}
@@ -886,17 +890,22 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
       <aside
         ref={slotRef}
         aria-hidden={!isOpen || portal.detached}
-        className={`${isOpen && !portal.detached ? 'flex' : 'hidden'} cowork-display-panel absolute inset-y-0 right-0 z-50 max-w-[calc(100%-2rem)]`}
+        className="flex cowork-display-panel absolute inset-y-0 right-0 z-50 max-w-[calc(100%-2rem)]"
+        {...(!isOpen || portal.detached ? { inert: '' } : {})}
         data-workspace-fullscreen={isWorkspaceFullscreen}
         style={
-          isWorkspaceFullscreen
-            ? { width: '100%', maxWidth: 'none', inset: 0, transition: 'none', transform: 'none' }
-            : ({
-                width,
-                '--display-panel-width': `${width}px`,
-                transition: 'none',
-                transform: 'none',
-              } as React.CSSProperties)
+          {
+            opacity: isOpen && !portal.detached ? 1 : 0,
+            pointerEvents: isOpen && !portal.detached ? undefined : 'none',
+            ...(isWorkspaceFullscreen
+              ? { width: '100%', maxWidth: 'none', inset: 0, transition: 'none', transform: 'none' }
+              : {
+                  width,
+                  '--display-panel-width': `${width}px`,
+                  transition: 'none',
+                  transform: 'none',
+                }),
+          } as React.CSSProperties
         }
       >
         {!isWorkspaceFullscreen && (

@@ -1,6 +1,6 @@
 # 数据存储：权威、约束与恢复
 
-桌面可选业务使用独立 Native/Main/Browser 插件包；通用 SDK、可信代码审核、冷包变更和历史清理所有权见 [应用插件宿主](../plugins/management/app-plugin-runtime.md)。
+桌面可选业务使用独立 Native/Main/Browser 插件包；通用 SDK、可信代码审核、冷包变更和历史清理所有权见 [应用插件宿主](../plugins/sdk/app-plugin-runtime.md)。
 
 本文按 Core 的 SqliteStore、CoworkStore、ScheduledTaskResultStore，以及所属插件的领域 Store 组织。产品数据、原生 transcript、浏览器数据与服务端统计分别拥有独立生命周期，不能用“SQLite 中有数据”概括所有持久状态。
 
@@ -39,7 +39,7 @@ flowchart LR
 
 产品数据库位于 app.getPath('userData') 下，默认 `<appData>/<productName>/justdo.sqlite`。内部文件名稳定，productName 改变时不自动迁移旧品牌目录。Gateway state 和项目目录不是该数据库的子表，备份和删除时需要分别处理。
 
-声明受管数据目录的 App 插件通过公开 SDK 访问 `<state>/plugin-data/<plugin-id>/`。默认可清理目录用于模型、私有组件及缓存，更新和停用保留，卸载可选择清理；执行恢复账本可声明保留策略，卸载也不清理。目录归属、策略及安全清理见[应用插件宿主](../plugins/management/app-plugin-runtime.md)。既有业务库和原生历史沿用各自的存储与删除规则。
+声明受管数据目录的 App 插件通过公开 SDK 访问 `<state>/plugin-data/<plugin-id>/`。默认可清理目录用于模型、私有组件及缓存，更新和停用保留，卸载可选择清理；执行恢复账本可声明保留策略，卸载也不清理。目录归属、策略及安全清理见[应用插件宿主](../plugins/sdk/app-plugin-runtime.md)。既有业务库和原生历史沿用各自的存储与删除规则。
 
 ## 2. 初始化与兼容规则
 

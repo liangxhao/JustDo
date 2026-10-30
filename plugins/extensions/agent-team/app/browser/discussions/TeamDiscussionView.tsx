@@ -116,9 +116,10 @@ export function useAgentTeamEntry() {
   );
   useEffect(() => {
     const open = (event: Event) => setEntry((event as CustomEvent<AgentTeamEntry>).detail);
-    window.addEventListener(OPEN_AGENT_TEAM, open);
-    return () => window.removeEventListener(OPEN_AGENT_TEAM, open);
-  }, [setEntry]);
+    const resources = host.resources.child();
+    resources.listen(window, OPEN_AGENT_TEAM, open);
+    return resources.dispose;
+  }, [host, setEntry]);
   return [entry, setEntry] as const;
 }
 
@@ -215,8 +216,8 @@ export default function TeamDiscussionView({
   const [permission, setPermission] = useState<'ask' | 'auto' | 'full'>('ask');
 
   useEffect(() => {
-    if (viewActive && room?.id) return acquireTeamDiscussionFocus(room.id);
-  }, [viewActive, room?.id]);
+    if (viewActive && room?.id) return acquireTeamDiscussionFocus(room.id, ownerDocument);
+  }, [viewActive, room?.id, ownerDocument]);
   const [previousCursor, setPreviousCursor] = useState<string | undefined>();
   const cursorInitialized = useRef(false);
   const [lastState, setLastState] = useState('');

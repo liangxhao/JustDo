@@ -26,7 +26,7 @@ Browser utility CSS 使用宿主完整 Tailwind 主题，禁用重复 preflight�
 
 Main SDK 的 execution facade 按真实路由实例复用，不能每次创建新的包装对象，否则插件自己的 `getRouter() === capturedRouter` 围栏会误拒绝同一实例。底层路由替换后旧 facade 失效。响应上下文只暴露 `isCurrent()`，同时核对原生响应上下文、当前运行时引用和插件 epoch；定向状态查询原样传递预期 session ID 与 lifecycle revision，不用空闲投影代替精确身份或终态。
 
-SDK 1.1 的通用 Python 能力由宿主定位受管解释器，使用干净环境探测实际版本，并绑定核心文件哈希。Gateway 启动时由宿主覆盖 `APP_PLUGIN_PYTHON_RUNTIME`，Native 通过公开 `@app-plugin/sdk/runtimes` 获取同一描述并复核文件身份。Main 的 `getPythonRuntime()` 只读取当前 Gateway 实际发布的描述，并在异步读取前后核对业务寿命；启动时缺失或后来变更的描述保持不可用，直到正常重启 Gateway 后重新发布。不查找系统 Python、不安装依赖。该描述只证明运行时可用性，不授予工具执行或文件权限；插件继续通过公开进程接口、私有依赖和独立输入授权执行，且不向 Browser 暴露路径。接口与环境隔离要求见 [SDK 说明](../sdk/app-plugin-sdk.md)。
+SDK 1.1 的通用 Python 能力由宿主定位受管解释器，使用干净环境探测实际版本，并绑定核心文件哈希。Gateway 启动时由宿主覆盖 `APP_PLUGIN_PYTHON_RUNTIME`，Native 通过公开 `@app-plugin/sdk/runtimes` 获取同一描述并复核文件身份。Main 的 `getPythonRuntime()` 只读取当前 Gateway 实际发布的描述，并在异步读取前后核对业务寿命；启动时缺失或后来变更的描述保持不可用，直到正常重启 Gateway 后重新发布。不查找系统 Python、不安装依赖。该描述只证明运行时可用性，不授予工具执行或文件权限；插件继续通过公开进程接口、私有依赖和独立输入授权执行，且不向 Browser 暴露路径。接口与环境隔离要求见 [SDK 说明](app-plugin-sdk.md)。
 
 插件包自行组织 Native、Main 与 Browser 源码和数据 schema，通过公开 SDK 返回配置、工具及技能贡献。Core 按贡献 ID 合并配置并保留用户显式开关，不按业务名称分支。插件不导入应用 src，原生入口不加载 Main/Browser 入口。
 
@@ -54,7 +54,7 @@ Custody 存储会话使用原生 harness 命名空间，以 `agentHarnessId` 和
 
 `npm run plugins:app:build` 独立构建 SDK 和插件。产物为 `build/app-plugins/<id>/<hash>`；可安装完整包位于其 `packages/<id>/<hash>`，包含单文件原生 ESM、技能及 `app/`。Main 的 npm 依赖进入自己的 ESM 包；Browser 的 React/ReactDOM 指向宿主真实单例，插件自行编译 CSS/Tailwind。产物逐文件 SHA-256 和清单共同生成身份，限制路径、链接、文件数、大小及可解析模块图。
 
-保留目录复制后再校验，防止从可变安装目录执行 Main 代码。作者操作见 [SDK 说明](../sdk/app-plugin-sdk.md)。
+保留目录复制后再校验，防止从可变安装目录执行 Main 代码。作者操作见 [SDK 说明](app-plugin-sdk.md)。
 
 安装与删除继续使用原生扩展流程；安装时由 Main 自动接受原生能力声明，不再弹出人工确认。用户主动安装／更新也授权该次确切 Main/UI 产物的代码信任；原生安装已确认后，Main 在同一停止 Gateway 的包变更租约内核对 canonical 安装路径、原生身份与绑定、逐文件产物 hash，保留不可变代码，再登记精确 hash。外部代码不复用原生 review token，不因市场来源或目录存在而获准；安装未知或校验失败不能登记信任。原生提交后登记失败明确返回已安装及具体原因，不能丢失回执或重放安装。审批文件位于产品数据的 `app-plugins/approvals.json`，只保存当前 hash 和有界历史批准；保留的不可变产物位于 `app-plugins/artifacts/<id>/<hash>`。损坏或不匹配的记录不能授权执行。安装目录同 ID 的自定义插件覆盖捆绑候选，不会退回执行另一个同名版本。
 
@@ -144,6 +144,46 @@ Main 的 canonical Gateway client 用 `AsyncLocalStorage` 保留当前业务注�
 
 派发前的拒绝保持明确错误；派发后超时、取消或撤销可能已经产生副作用，helper 返回严格关联插件、注册、进程和方法的未知结果标记。Main 只对完整匹配当前调用的标记转换为既有 `CLIENT_TIMEOUT` / `requestSent: true` 未知结果，保留发送围栏并核对原生收据。原生明确返回的错误原样保留。任何路径都不自动重发未知操作，不以重启、空闲或 owner 更换建立执行终态。
 
+### 子 Agent 的工具来源
+
+Main 伴随插件可实现 `resolveExecutionSession(query)`，根据自身真实业务关系返回显示来源：
+`ownerSessionId?` 与 `label?`。Query 包含原生会话 key、必需的 Native session ID，以及可用的
+run ID、lifecycle revision 和原生 producer ID。宿主在异步查询前后核对插件实例、准入代次、
+Native 注册和产品会话存续；多个插件同时认领视为未知。结果中的插件 ID、Native ID 和
+epoch 由宿主盖章，插件不能自行指定。
+
+投递回执尚未唯一关联实际 run 时，插件可返回 `pending: true`。这只声明归属待确认，
+不放行问答回复或浏览器资源创建，也不借用当前会话。精确回执、停止或清理改变关联后，
+插件通过 `host.executionSessionsChanged()` 通知宿主重新投影。通知绑定当前插件调用上下文，
+不改变业务 epoch、不启动 Gateway、不重放工具或消息；过期调用不能恢复旧关联。
+来源 resolver 的只读调用内禁止发布此通知，避免查询自身触发无限重新投影。
+
+普通读取或刷新保持同一来源身份时，不发布生命周期撤回；宿主按完整 App/Native 身份及
+库存准入条件去重该通知。真实启停、绑定替换或库存失效仍撤回，元数据通知与正常快照
+广播继续独立发送，不能用通知签名缓存代替实时执行准入。
+
+元数据通知与业务生命周期撤回分开：无关 Agent 的收据更新不先隐藏正在输入的已确认问答，
+回复仍逐次核对精确来源；真正关闭、换代或卸载继续同步撤回。浏览器准入期间收到通知时，
+只对本次来源做至多一次只读重核，身份、资源和工作区约束未变才执行一次操作。
+
+该接口只定位问答与浏览器资源，不传消息正文、不授予父会话权限，不代替 Native V2
+工具调用检查或全程终态。没有产品来源的独立群聊可以只返回成员标签；不能伪造产品会话。
+Team 的房间、成员和执行关系由其自身 resolver 查询，Workflow 的节点与批次关系由其
+只读原生 RPC 查询；Core 与 Runtime Services 不导入这两个可选业务的存储。
+
+`execution-source` 是 SDK 的纯契约入口。需要复用已有原生会话的发起者通过公开
+`GatewayRunToolBindings` 写入绑定，包含同一 Native key、session ID 和 revision。工具从
+真实工厂上下文与 Native entry 取来源，拒绝过期绑定，不从模型参数或 key 命名推断归属。
+普通 Native-only 插件可以保留独立问答和显式后台浏览；宿主仅在 App 候选发现完整且没有
+待修复库存时确认这一分类。原生包只有在可读取的包元数据明确不声明 App companion 时，
+才作为普通 Native 库存保留；缺损或不明确的包不能提供该分类的正证据。已知 App producer
+的身份在卸载或退休后仍保留，关闭的 App 插件不能因查询返回空值而降成普通来源。
+
+业务代次撤回同步否决旧交互与页面效果，再异步重新投影；此通知不表示 Native 执行已
+结束，也不隐式停止独立 Workflow。浏览器资源 ID 与显示会话 ID 分离，实际目标注册、
+ACK、文件策略和回收均使用资源 ID。详细用户行为与验证范围见
+[多 Agent 工具与交互](../../features/execution/multi-agent-tools.md)。
+
 ## 启停、替换与恢复
 
 | 操作          | 继续保留                     | 必须撤回或核对                             |
@@ -191,6 +231,10 @@ owner 的可释放空间，不改变原生 ID 大小写。读取期间或确认�
 `register`、`activate`、`onEnable` 和 Browser 注册为同步契约。无效 thenable 会被处理并阻止激活；同步 activation 的清理 lease 在返回时撤销，异步尾部无法继续删除或写数据库。`activate` 每实例一次；`onEnable` 每业务 epoch 一次并返回 disposer。异步工作通过命令、合法清理参与者和预检执行。
 
 可选 Main `maintenance` 在实例激活后运行，不依赖业务启用状态。宿主每次给予新的、仅本次 Promise 有效的清理 lease，串行执行，释放实例时撤销；只能使用已声明且参数符合 predicate 的清理能力，不能恢复业务注册、启动 Gateway 或发起新执行。旧资源 owner 可保留维护，不能因此发布旧版本界面。
+
+临时缺失 Native 业务证明只进入清理权限下的只读核对，不等同于用户取消授权。
+尚未尝试的待发意图缺少原生收据时仍保持待发，未知发送继续保持未知；取消须有
+所属插件的显式持久意图，不能因准入证明暂缺而取消或重新投递。
 
 清理 RPC 的参数 predicate 也必须同步返回严格 `true`，其临时权限在返回时撤销。配置投影同步运行于只读作用域，不继承调用方的业务或清理权限。Gateway 离线时，保存成功的配置开关与实际原生运行证明分别记录；就绪后可以恢复业务，配置结果未知或运行身份未确认时拒绝业务调用。
 
@@ -271,11 +315,20 @@ Browser `uiState.get/set` 提供当前插件 ID/hash 隔离的有界内存 plain
 
 插件草稿的恢复锁和业务准备状态由插件管理；宿主提供的有界 uiState 不建立原生接纳或结算事实，缺失回执不能自动解除未知提交。
 
+公开 SDK 的本地资源作用域统一持有订阅、定时器、DOM listener 和协作式后台任务。Browser 的 `host.resources` 随当前实例退休，组件用 child scope 兼顾 effect 卸载；Main 的 `onEnable(resources)` 每个业务 epoch 取得新 scope，关闭、围栏、失败和退休时释放，不能用保留实例的 `host.signal` 替代业务寿命。hook 返回的释放函数也纳入当前作用域管理。释放幂等且逆序，一个失败不阻断其他资源；排队回调和异步结果均核对 scope，但操作内部仍需遵守准确身份及现有权限围栏。取消本地任务不证明 Native 结算，也不重放未知业务。
+
+插件作者通过完整示例、开发指南和公开 SDK 开发，编译和打包使用开发工具链；软件运行与插件管理走桌面界面。构建成功不代表原生授权、产品业务或安装验收通过。
+
+
 插件资源参与者扩展删除集合至固定点；先获取所有删除 lease，再完成所有预检，最后删除。全部参与者冲突、失败或未知均否决删除，避免只清理一半。产品库新增 `app_plugin_resources` 保存 resource ID、owner ID 与 artifact hash；空投影不能删除旧保护记录，跨版本采用必须显式确认完整集合。插件使用同一个实际 SQLite 连接的受控端口，同库原子事务不拆分；产品表和插件原有表位置不变。
 
 产品会话删除与包变更互斥，包括没有插件资源的普通会话。删除在任何插件回调前同步取得 lease，直到整个删除事务结束才归还；包变更从预检、库存修复、停止 Gateway 到最终重连期间拒绝新的删除。删除预检即使异步等待，也不能被换包切换到未取得本次 fence、未参与预检的新资源 owner。准入失败和操作异常均归还临时互斥 lease，既有未知结果和资源保护围栏继续独立生效。
 
 ### Browser 插槽和撤回
+
+Browser 只有同步注册完整成功后才发布当前业务上下文。初始交互与会话展示贡献也会通知
+已挂载的消费者重算；后续动态添加及释放同样通知。加载中、半注册或注册失败的实例
+不能成为当前业务 epoch，迟到的旧加载不能重新显示问答、设置、历史或输入模式。
 
 Browser 可声明 workspace、composer、plugin settings/history、chat action、session summary/details/presentation、application page 和 message/interaction presentation。主输入、普通详情和扩展列表只组合插槽。视图可声明有限数值 `order`，同序保留注册顺序；摘要按贡献顺序组合，计数与焦点由各视图拥有。
 

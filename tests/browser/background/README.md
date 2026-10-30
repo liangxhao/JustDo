@@ -5,6 +5,34 @@ An explicit `--dependencies-root <checkout>` can reuse another checkout's alread
 installed Electron (matching `package.json`) and esbuild without installing or
 rebuilding it.
 
+Run `node scripts/test/browser/verify-background-browser.cjs --sidebar-tabs` to verify
+retained sidebar pages separately, with the same bounded process deadline. This
+phase bundles the production Main bridge/input implementation and the production
+Renderer `browserPanelFocus` helper, then uses two real sandboxed webviews behind
+a synthetic discussion X. It checks that opening pages, hover/click, typing,
+character and Enter keys, drag and nonblank screenshots preserve the user's
+selected Tab and input focus. Starting work while B already has keyboard focus
+must withdraw that stale guest focus before acknowledging the operation lock,
+while keeping B selected. A concurrent B/C input case verifies independent
+form submissions, including select-all, caret movement and Backspace editing;
+selecting B and then operating, focusing, right-clicking and
+closing C must preserve B. Native key and context-menu callbacks must retain the
+exact guest's automation lease. Sidebar tools must not send CDP Input commands.
+
+Native input dispatch does not acknowledge completion of the page's DOM event
+handler. The hover check observes the effect of its single dispatch with the
+existing bounded read-only wait; `hoverDelivery` records immediate and observed
+counts plus elapsed time. It does not replay input or extend the process deadline.
+
+Only the fixture owner's root document uses focus emulation to model an already
+active user interface while all OS windows remain hidden and unfocused. Agent
+guests do not use focus emulation, replacement input transports, forced window
+activation or fixed focus-restoration targets. The tool ingress and sidebar
+composition are synthetic; the production focus helper and Main input operate
+unchanged. Renderer component tests cover composition and mounting. This phase
+does not claim real Gateway/React/OS-hardware end-to-end coverage or verify
+switching the active desktop application.
+
 The opt-in runner builds the production background host, CDP input transport,
 actions, shared session policy, `BrowserAgentBridge` and
 `EmbeddedBrowserGatewayBridge`. It launches one hidden Electron process against

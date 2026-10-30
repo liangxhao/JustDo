@@ -148,8 +148,16 @@ export class TeamDiscussionCoordinator {
       }
     };
     try {
-      const cancellations = this.metadata
-        .list()
+      const rooms = this.metadata.list();
+      // Only an explicit user disable creates cancellation intent. A missing
+      // Main registration proof merely withdraws business and keeps receipts
+      // readable; it does not authorize stopping an existing native summary.
+      let changed = false;
+      for (const room of rooms) {
+        if (this.metadata.cancelSummaries(room.id).length) changed = true;
+      }
+      if (changed) this.deps.onChanged();
+      const cancellations = rooms
         .filter(room => this.metadata.queue.hasActive(room.id))
         .map(room => this.queueCoordinator.cancelAll(room.id));
       await Promise.all(cancellations);
@@ -206,7 +214,6 @@ export class TeamDiscussionCoordinator {
           room?.sourceSessionId && this.deps.getStore().getSession(room.sourceSessionId);
         if (!room) continue;
         const cancel =
-          options.cleanupOnly === true ||
           summary.state === 'stopping' ||
           this.stopping.has(room.id) ||
           this.deleting.has(room.id) ||
@@ -215,7 +222,8 @@ export class TeamDiscussionCoordinator {
           source.agentId !== room.summarySource.agentId;
         try {
           const request = this.deps.requestConnectedGateway;
-          const offline = () => this.custodySummaryStatus(request, room, summary.discussionId, cancel);
+          const offline = () => this.custodySummaryStatus(request, room, summary.discussionId, cancel,
+            options.cleanupOnly === true && summary.state === 'pending');
           // Cleanup can inspect or cancel an existing receipt, never start a
           // summary or infer rejection from a missing business service.
           const state = options.cleanupOnly
@@ -750,6 +758,7 @@ export class TeamDiscussionCoordinator {
 
   private async custodySummaryStatus(
     request: CustodyRequest, room: TeamDiscussionRoom, discussionId: string, cancel = false,
+    pendingWhenAbsent = false,
   ): Promise<{ state: TeamDiscussionSummary['state']; runId?: string }> {
     const receipt = await readExecutionReceipt(request, 'summary', discussionId, cancel);
     const source = room.summarySource;
@@ -757,6 +766,7 @@ export class TeamDiscussionCoordinator {
         subject.sessionKey !== source.sessionKey || subject.sessionId !== source.sessionId ||
         subject.lifecycleRevision !== source.lifecycleRevision))
       throw new Error('teamDiscussionSessionChanged');
+    if (!cancel && pendingWhenAbsent && receipt === null) return { state: 'pending' };
     const outcome = executionReceiptOutcome(receipt);
     // Completion of a native run does not prove that its output was delivered.
     return { state: outcome === 'cancelled' || outcome === 'failed' ? outcome : 'unknown',

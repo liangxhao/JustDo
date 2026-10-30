@@ -2,6 +2,8 @@
 
 This package defines the public contract between a trusted app companion and its application host. Native, Electron Main, and React code are built as independent artifacts through public SDK contracts.
 
+For a step-by-step tutorial and a complete minimal example, start with the [app plugin development guide](app-plugin-development/README.md).
+
 ## Build and package
 
 Use Node 24 as specified by the package metadata. React and ReactDOM are peer dependencies; a browser artifact uses the host's actual React instance.
@@ -99,6 +101,22 @@ instance or an expired cleanup callback alive.
 Resolve once for a request, check the plugin's required ABI/platform, and call `assertHostPythonRuntimeCurrent(runtime)` after asynchronous preparation, immediately before process launch, and before accepting its result. The SDK checks core-file hashes and retains file-identity fences on that descriptor. A missing, replaced or incompatible runtime is unavailable; do not fall back to a system interpreter. Descriptors express availability, never file or execution authorization, and stay in Native/Main rather than Browser events.
 
 Use the existing authorized process API to launch `runtime.executable` with `-I -B` and plugin-owned runner resources. Pass `createHostPythonEnvironment()` as an explicit clean base (for example, OpenClaw `runCommandBuffered` with `baseEnv: {}` and `env` set to this result), then supply private temporary/cache directories as needed. An environment overlay alone retains inherited package paths. Windows embedded Python can still import `sitecustomize` through its `._pth` despite `-S`; the runner bootstrap must restrict `sys.path` to `runtime.standardLibraryPaths` plus its own verified dependency directory. Bundle ABI-matched dependencies in plugin-private resources, without changing host or user site-packages.
+
+### Managed local resources
+
+`onEnable(resources)` receives a fresh `AppResourceScope` for that business epoch. The host disposes the scope on withdrawal, failed enable, epoch replacement or retirement, including when the retained Main instance's `host.signal` stays alive for cleanup. Register local releases with `resources.defer`; an optional disposer returned by the hook is also collected. Resource helpers do not create or rebind invocation authority. Main release callbacks use the existing cleanup-only retirement path; host ports still enforce current ownership and epoch.
+
+Browser `host.resources` follows the current Browser instance. Use `.child()` for each React effect and dispose that child on effect cleanup; retiring the plugin also retires its children. The public `@app-plugin/sdk/resources` entry exposes the same pure `createResourceScope({signal?, onError?})` helper for explicitly owned local scopes.
+
+Scopes provide `defer`, `listen`, `setTimeout`, `setInterval`, `child`, `run` and `dispose`. Releases are idempotent and run in reverse order; one failure does not stop remaining cleanup. `run(operation, onResult?)` returns a local cancel function, passes a cooperative AbortSignal to the operation and suppresses results after retirement. It observes callback failures without replaying work. It cannot stop arbitrary JavaScript, revoke a completed side effect, grant host authority, or establish a Native execution outcome. Tasks must still check lifetime before effects and use the guarded host ports.
+
+### Execution source presentation
+
+Main registrations may implement `resolveExecutionSession(query)` to locate a delegated native run's display owner. `AppExecutionSessionQuery` contains its native key, session ID and available run, lifecycle revision and native producer identity. Return only a verified `ownerSessionId` and bounded label, or `pending: true` when a unique receipt is not yet available. The host adds plugin identity and epoch and rechecks the current instance and product session after the asynchronous resolver. Conflicting claims remain unavailable.
+
+Call `host.executionSessionsChanged()` from current business callbacks when a receipt or relationship changes. This is a transient metadata notification; it does not start a Gateway, change the business epoch or replay an operation. Do not publish it from the read-only resolver itself. Disabling, replacing or uninstalling the plugin withdraws old display associations independently of ordinary metadata updates.
+
+The pure `@app-plugin/sdk/execution-source` entry defines these source contracts and validates exact native bindings. Display ownership never transfers a parent session's tools, permissions, workspace or execution outcome to a child. Source resolution does not expose transcript content and does not replace Native invocation checks.
 
 ## Browser contract
 

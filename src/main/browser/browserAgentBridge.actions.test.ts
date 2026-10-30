@@ -149,7 +149,11 @@ test('uses a nested act targetId to select the requested tab', async () => {
     details: { ok: true, targetId: 'embedded-2', pressed: 'Enter' },
   });
   expect(firstSendInputEvent).not.toHaveBeenCalled();
-  expect(secondSendInputEvent).toHaveBeenCalledTimes(2);
+  expect(secondSendInputEvent.mock.calls.map(([event]) => event.type)).toEqual([
+    'keyDown',
+    'char',
+    'keyUp',
+  ]);
 });
 
 test('rejects legacy flattened act parameters', async () => {
@@ -321,7 +325,7 @@ test('maps ControlOrMeta for trusted input and rejects unknown modifiers', async
   expect(sendInputEvent).toHaveBeenCalledWith(
     expect.objectContaining({
       type: 'mouseDown',
-      modifiers: [process.platform === 'darwin' ? 'meta' : 'control'],
+      modifiers: expect.arrayContaining([process.platform === 'darwin' ? 'meta' : 'control']),
     }),
   );
   await bridge.executeCommand('justdo:session-1', {
@@ -332,7 +336,7 @@ test('maps ControlOrMeta for trusted input and rejects unknown modifiers', async
     expect.objectContaining({
       type: 'keyDown',
       keyCode: 'A',
-      modifiers: [process.platform === 'darwin' ? 'meta' : 'control'],
+      modifiers: expect.arrayContaining([process.platform === 'darwin' ? 'meta' : 'control']),
     }),
   );
   await expect(
@@ -526,13 +530,19 @@ test('stops a batch before the next action when a dialog opens asynchronously', 
       },
     },
   });
-  expect(sendInputEvent).not.toHaveBeenCalledWith(
-    expect.objectContaining({ type: 'char', keyCode: 'n' }),
-  );
+  const scripts = (
+    electron.guests.get(7)!.executeJavaScriptInIsolatedWorld as ReturnType<typeof vi.fn>
+  ).mock.calls;
+  expect(
+    scripts.some(([, values]) =>
+      values.some((value: { code: string }) => value.code.includes('#should-not-run')),
+    ),
+  ).toBe(false);
 });
 
-test('uses trusted CDP mouse input for drag actions', async () => {
+test('uses trusted input on the original sidebar guest for drag actions', async () => {
   const sendCommand = vi.fn().mockResolvedValue(undefined);
+  const sendInputEvent = vi.fn();
   bridge = new BrowserAgentBridge(vi.fn(), () => true);
   bridge.registerIpc();
   electron.guests.set(7, {
@@ -541,6 +551,7 @@ test('uses trusted CDP mouse input for drag actions', async () => {
     session: electron.partition,
     hostWebContents: { id: 10 },
     getURL: () => 'https://example.com/',
+    sendInputEvent,
     executeJavaScriptInIsolatedWorld: vi.fn().mockResolvedValue({
       start: { x: 10, y: 20 },
       end: { x: 110, y: 120 },
@@ -561,12 +572,11 @@ test('uses trusted CDP mouse input for drag actions', async () => {
     request: { kind: 'drag', startSelector: '#source', endSelector: '#target' },
   });
 
-  expect(sendCommand).toHaveBeenCalledWith(
-    'Input.dispatchMouseEvent',
-    expect.objectContaining({ type: 'mousePressed', button: 'left' }),
+  expect(sendInputEvent).toHaveBeenCalledWith(
+    expect.objectContaining({ type: 'mouseDown', button: 'left' }),
   );
-  expect(sendCommand).toHaveBeenCalledWith(
-    'Input.dispatchMouseEvent',
-    expect.objectContaining({ type: 'mouseReleased', x: 110, y: 120 }),
+  expect(sendInputEvent).toHaveBeenCalledWith(
+    expect.objectContaining({ type: 'mouseUp', x: 110, y: 120 }),
   );
+  expect(sendCommand).not.toHaveBeenCalledWith('Input.dispatchMouseEvent', expect.anything());
 });

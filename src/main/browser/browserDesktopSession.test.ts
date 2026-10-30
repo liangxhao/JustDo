@@ -28,55 +28,76 @@ describe('desktop browser session ownership', () => {
     fs.rmSync(directory, { recursive: true, force: true });
   });
 
-  it.each(['main', 'research'])('admits a normal %s chat without a persisted native-key binding', async agentId => {
-    const session = store.createSession('Browser task', directory, 'local', [], agentId);
-    const sessionKey = buildCoworkSessionKey(session.id, agentId);
-    // Normal chats derive their key; they are neither adopted native children nor imports.
-    expect(store.getSessionByNativeKey(sessionKey)).toBeNull();
-    expect(resolveBrowserDesktopSession(store, sessionKey)?.id).toBe(session.id);
-    const execute = vi.fn(async () => ({ ok: true }));
-    const resolve = vi.fn(async () => undefined);
-    const bridge = new EmbeddedBrowserGatewayBridge({
-      isEnabled: () => true,
-      getDesktopSession: key => resolveBrowserDesktopSession(store, key),
-      getScheduledTask: async () => null,
-      execute,
-      resolve,
-      releaseScope: vi.fn(),
-      revokeAll: vi.fn(),
-    });
+  it.each(['main', 'research'])(
+    'admits a normal %s chat without a persisted native-key binding',
+    async agentId => {
+      const session = store.createSession('Browser task', directory, 'local', [], agentId);
+      const sessionKey = buildCoworkSessionKey(session.id, agentId);
+      // Normal chats derive their key; they are neither adopted native children nor imports.
+      expect(store.getSessionByNativeKey(sessionKey)).toBeNull();
+      expect(resolveBrowserDesktopSession(store, sessionKey)?.id).toBe(session.id);
+      const execute = vi.fn(async () => ({ ok: true }));
+      const resolve = vi.fn(async () => undefined);
+      const bridge = new EmbeddedBrowserGatewayBridge({
+        isEnabled: () => true,
+        getDesktopSession: key => resolveBrowserDesktopSession(store, key),
+        getScheduledTask: async () => null,
+        execute,
+        resolve,
+        releaseScope: vi.fn(),
+        revokeAll: vi.fn(),
+      });
 
-    bridge.handleEvent({
-      event: EMBEDDED_BROWSER_REQUESTED_EVENT,
-      payload: {
-        requestId: 'request-1',
+      bridge.handleEvent({
+        event: EMBEDDED_BROWSER_REQUESTED_EVENT,
+        payload: {
+          requestId: 'request-1',
+          sessionKey,
+          run: {
+            sessionKey,
+            sessionId: 'native-1',
+            runId: 'run-1',
+            trigger: 'user',
+            workspaceDir: directory,
+          },
+          admissionRevision: 1,
+          toolCallId: 'call-1',
+          command: { action: 'open', url: 'https://example.com' },
+          policy: { allowLocalFiles: true },
+        },
+      });
+
+      await vi.waitFor(() =>
+        expect(resolve).toHaveBeenCalledWith('request-1', { ok: true, result: { ok: true } }),
+      );
+      expect(execute).toHaveBeenCalledWith(
         sessionKey,
-        run: { sessionKey, sessionId: 'native-1', runId: 'run-1', trigger: 'user', workspaceDir: directory },
-        admissionRevision: 1,
-        toolCallId: 'call-1',
-        command: { action: 'open', url: 'https://example.com' },
-        policy: { allowLocalFiles: true },
-      },
-    });
-
-    await vi.waitFor(() => expect(resolve).toHaveBeenCalledWith('request-1', { ok: true, result: { ok: true } }));
-    expect(execute).toHaveBeenCalledWith(sessionKey, expect.objectContaining({ action: 'open' }), expect.any(AbortSignal), {
-      sessionId: session.id,
-      runId: 'run-1',
-      workspaceDir: directory,
-      headlessOnly: false,
-      allowLocalFiles: true,
-    });
-  });
+        expect.objectContaining({ action: 'open' }),
+        expect.any(AbortSignal),
+        {
+          sessionId: session.id,
+          runId: 'run-1',
+          workspaceDir: directory,
+          headlessOnly: false,
+          allowLocalFiles: true,
+        },
+      );
+    },
+  );
 
   it('retains an exact imported binding whose native key differs from the local row ID', () => {
     const session = store.createSession('Imported chat', directory);
     const sessionKey = buildCoworkSessionKey('imported-native-key');
-    database.getDatabase().prepare(`
+    database
+      .getDatabase()
+      .prepare(
+        `
       INSERT INTO history_session_bindings (
         session_id,session_key,native_session_id,availability,source_agent_id,source_session_key,transaction_id
       ) VALUES (?,?,?,'native','main',?,'browser-test')
-    `).run(session.id, sessionKey, 'native-import', sessionKey);
+    `,
+      )
+      .run(session.id, sessionKey, 'native-import', sessionKey);
 
     expect(resolveBrowserDesktopSession(store, sessionKey)).toMatchObject({
       id: session.id,
@@ -90,9 +111,25 @@ describe('desktop browser session ownership', () => {
     const nativeKey = buildCoworkSessionKey('native-key', 'research');
     store.bindNativeSession(session.id, nativeKey, null);
     expect(resolveBrowserDesktopSession(store, nativeKey)?.id).toBe(session.id);
-    expect(resolveBrowserDesktopSession(store, buildCoworkSessionKey(session.id, 'research'))).toBeNull();
+    expect(
+      resolveBrowserDesktopSession(store, buildCoworkSessionKey(session.id, 'research')),
+    ).toBeNull();
     store.bindNativeSession(session.id, buildCoworkSessionKey('native-key', 'other'), null);
-    expect(resolveBrowserDesktopSession(store, buildCoworkSessionKey('native-key', 'other'))).toBeNull();
+    expect(
+      resolveBrowserDesktopSession(store, buildCoworkSessionKey('native-key', 'other')),
+    ).toBeNull();
+  });
+
+  it('retains an explicitly adopted native child without deriving a desktop key', () => {
+    const session = store.createSession('Worktree child', directory, 'local', [], 'research');
+    const nativeKey = 'agent:research:subagent:worktree-child';
+    store.bindNativeSession(session.id, nativeKey, null);
+    expect(resolveBrowserDesktopSession(store, nativeKey)?.id).toBe(session.id);
+    expect(resolveBrowserDesktopSession(store, 'agent:other:subagent:worktree-child')).toBeNull();
+    expect(
+      resolveBrowserDesktopSession(store, buildCoworkSessionKey(session.id, 'research')),
+    ).toBeNull();
+    expect(resolveBrowserDesktopSession(store, 'agent:research:subagent:unbound')).toBeNull();
   });
 
   it('rejects missing, cross-assistant, partial and noncanonical keys', () => {
@@ -106,6 +143,7 @@ describe('desktop browser session ownership', () => {
       ` ${canonical}`,
       `${canonical} `,
       `agent:main:cron:${session.id}`,
-    ]) expect(resolveBrowserDesktopSession(store, key)).toBeNull();
+    ])
+      expect(resolveBrowserDesktopSession(store, key)).toBeNull();
   });
 });

@@ -12,6 +12,7 @@
     "moduleResolution": "node",
     "resolveJsonModule": true,
     "paths": {
+      "@app-plugin/sdk/execution-source": ["plugins/sdk/app-plugin-sdk/execution-source.ts"],
       "@shared/*": ["src/shared/*"],
       "*": ["node_modules/*"]
     }

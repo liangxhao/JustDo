@@ -1,5 +1,12 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
+vi.mock('openclaw/plugin-sdk/session-store-runtime', () => ({
+  getSessionEntry: () => ({
+    sessionId: 'native-session-1',
+    lifecycleRevision: 'revision-1',
+  }),
+}));
+
 import { parseQuestionResult, readQuestionResult } from '../contracts/result';
 import plugin, {
   ASK_USER_QUESTION_DESCRIPTION,
@@ -23,18 +30,52 @@ const createHarness = (pluginConfig?: { timeoutMinutes: number }) => {
   const registerService = vi.fn();
   const registerTool = vi.fn();
   const registerGatewayMethod = vi.fn();
-  const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+  const on = vi.fn();
+  const logger = {
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  };
   plugin.register({
     logger,
     pluginConfig,
     registerService,
     registerTool,
     registerGatewayMethod,
+    on,
   } as never);
   const emit = vi.fn();
   const service = registerService.mock.calls[0][0];
   service.start({ gatewayEvents: { emit } });
-  const tool = registerTool.mock.calls[0][0]({ sessionKey: 'agent:main:justdo:session-1' });
+  const factory = registerTool.mock.calls[0][0];
+  expect(factory.contextVersion).toBe(2);
+  const nativeContext = {
+    sessionKey: 'agent:main:justdo:session-1',
+    sessionId: 'native-session-1',
+    agentId: 'main',
+    assertInvocationCurrent: () => {},
+  };
+  const nativeTool = factory.create(nativeContext);
+  const tool = {
+    execute: (toolCallId: string, params: unknown, signal?: AbortSignal) => {
+      const context = {
+        ...nativeContext,
+        toolName: 'ask_user_question',
+        runId: 'native-run',
+        toolCallId,
+        abortSignal: signal,
+      };
+      const before = on.mock.calls.find(([name]) => name === 'before_tool_call')![1](
+        { toolName: 'ask_user_question', toolCallId, runId: context.runId },
+        context,
+      );
+      if (before?.block) throw new Error(before.blockReason);
+      return nativeTool
+        .execute(toolCallId, params, signal)
+        .finally(() => on.mock.calls.find(([name]) => name === 'after_tool_call')![1]({}, context));
+    },
+  };
   const list = (): AskUserRequest[] => {
     const respond = vi.fn();
     registerGatewayMethod.mock.calls.find(([method]) => method === 'askUserQuestion.list')![1]({
@@ -45,7 +86,12 @@ const createHarness = (pluginConfig?: { timeoutMinutes: number }) => {
   const resolve = (requestId: string, behavior: 'submit' | 'cancel', answers?: unknown) => {
     const respond = vi.fn();
     registerGatewayMethod.mock.calls.find(([method]) => method === 'askUserQuestion.resolve')![1]({
-      params: { requestId, behavior, answers },
+      params: {
+        requestId,
+        behavior,
+        answers,
+        source: list().find(request => request.requestId === requestId)!.source,
+      },
       respond,
     });
     expect(respond.mock.calls[0][0]).toBe(true);
@@ -154,13 +200,20 @@ describe('AskUserQuestion tool timeout', () => {
       content: [
         {
           type: 'text',
-          text: textSummary('The user did not respond before the timeout. The configured defaults were selected automatically.\n\nWhich report format should I use?\nUser selected: Markdown (Recommended)'),
+          text: textSummary(
+            'The user did not respond before the timeout. The configured defaults were selected automatically.\n\nWhich report format should I use?\nUser selected: Markdown (Recommended)',
+          ),
         },
       ],
       details: {
         askUserQuestion: {
           version: 1,
-          questions: [expect.objectContaining({ ...question, defaultOptionIds: ['markdown'] })],
+          questions: [
+            expect.objectContaining({
+              ...question,
+              defaultOptionIds: ['markdown'],
+            }),
+          ],
           response: {
             status: 'answered',
             answers: { report_format: { selected: ['markdown'] } },
@@ -183,7 +236,11 @@ describe('AskUserQuestion tool timeout', () => {
     const execution = tool.execute('call-mixed', {
       questions: [
         { ...question, defaultOptionIds: ['markdown'] },
-        { ...question, id: 'appendix', question: 'Which appendix format should I use?' },
+        {
+          ...question,
+          id: 'appendix',
+          question: 'Which appendix format should I use?',
+        },
       ],
     });
     expect(list()[0].waitPolicy).toMatchObject({ onTimeout: 'model-decides' });
@@ -192,7 +249,10 @@ describe('AskUserQuestion tool timeout', () => {
 
     await expect(execution).resolves.toMatchObject({
       content: [
-        { type: 'text', text: textSummary('No answer arrived before the timeout; proceed with best judgment.') },
+        {
+          type: 'text',
+          text: textSummary('No answer arrived before the timeout; proceed with best judgment.'),
+        },
       ],
       details: { askUserQuestion: { response: { status: 'timeout' } } },
     });
@@ -212,7 +272,11 @@ describe('AskUserQuestion tool timeout', () => {
     await vi.advanceTimersByTimeAsync(10 * 60_000);
 
     await expect(execution).resolves.toMatchObject({
-      content: [{ text: textSummary('No answer arrived before the timeout; proceed with best judgment.') }],
+      content: [
+        {
+          text: textSummary('No answer arrived before the timeout; proceed with best judgment.'),
+        },
+      ],
     });
     expect(list()).toEqual([]);
     expect(logger.warn).toHaveBeenCalledOnce();
@@ -226,7 +290,11 @@ describe('AskUserQuestion tool timeout', () => {
     controller.abort();
 
     await expect(execution).resolves.toMatchObject({
-      content: [{ text: textSummary('The question was cancelled; proceed with best judgment.') }],
+      content: [
+        {
+          text: textSummary('The question was cancelled; proceed with best judgment.'),
+        },
+      ],
       details: { askUserQuestion: { response: { status: 'cancelled' } } },
     });
     await vi.advanceTimersByTimeAsync(10 * 60_000);
@@ -236,14 +304,21 @@ describe('AskUserQuestion tool timeout', () => {
 
   test('keeps human answers and their question snapshot in structured native result details', async () => {
     const { tool, list, resolve } = createHarness();
-    const execution = tool.execute('call-human-answer', { questions: [question] });
-    resolve(list()[0].requestId, 'submit', { report_format: { selected: ['html'] } });
+    const execution = tool.execute('call-human-answer', {
+      questions: [question],
+    });
+    resolve(list()[0].requestId, 'submit', {
+      report_format: { selected: ['html'] },
+    });
 
     const result = await execution;
     expect(parseQuestionResult(result.details.askUserQuestion)).toEqual({
       version: 1,
       questions: [{ ...question, allowOther: true }],
-      response: { status: 'answered', answers: { report_format: { selected: ['html'] } } },
+      response: {
+        status: 'answered',
+        answers: { report_format: { selected: ['html'] } },
+      },
     });
     expect(result.content).toHaveLength(1);
     expect(JSON.parse(result.content[0].text)).toEqual({
@@ -258,7 +333,9 @@ describe('AskUserQuestion tool timeout', () => {
   test('uses the configured wait time when the timeout flag is omitted', async () => {
     vi.useFakeTimers();
     const { tool, list } = createHarness({ timeoutMinutes: 2 });
-    const execution = tool.execute('call-configured', { questions: [question] });
+    const execution = tool.execute('call-configured', {
+      questions: [question],
+    });
     expect(list()[0]).toMatchObject({
       waitPolicy: { mode: 'timeout', timeoutMinutes: 2 },
       expiresAt: Date.now() + 2 * 60_000,
@@ -267,7 +344,11 @@ describe('AskUserQuestion tool timeout', () => {
     await vi.advanceTimersByTimeAsync(2 * 60_000);
 
     await expect(execution).resolves.toMatchObject({
-      content: [{ text: textSummary('No answer arrived before the timeout; proceed with best judgment.') }],
+      content: [
+        {
+          text: textSummary('No answer arrived before the timeout; proceed with best judgment.'),
+        },
+      ],
     });
     expect(list()).toEqual([]);
   });
@@ -278,7 +359,10 @@ describe('AskUserQuestion tool timeout', () => {
       const { tool, service, list } = createHarness();
       try {
         await expect(
-          tool.execute('call-invalid', { questions: [question], timeoutEnabled }),
+          tool.execute('call-invalid', {
+            questions: [question],
+            timeoutEnabled,
+          }),
         ).resolves.toMatchObject({ isError: true });
         expect(list()).toEqual([]);
       } finally {

@@ -42,13 +42,19 @@ vi.mock('electron', () => ({
   webContents: { fromId: (id: number) => electron.guests.get(id) ?? null },
 }));
 
+import {
+  EMBEDDED_BROWSER_RELEASED_EVENT,
+  EMBEDDED_BROWSER_REQUESTED_EVENT,
+} from '../../../plugins/extensions/embedded-browser/browserExecutionContract';
 import { BROWSER_AGENT_PANEL_TARGET_ID, BrowserIpc } from '../../shared/browser/browser';
 import {
   BrowserInterventionIpc,
   type BrowserInterventionResult,
 } from '../../shared/browser/browserIntervention';
 import { BrowserRecordingChannel } from '../../shared/browser/browserRecording';
+import { ENSURE_TAB_TIMEOUT_MS } from './agent/browserAgentProtocol';
 import { BrowserAgentBridge } from './browserAgentBridge';
+import { EmbeddedBrowserGatewayBridge } from './embeddedBrowserGatewayBridge';
 
 let bridge: BrowserAgentBridge | null = null;
 
@@ -74,6 +80,7 @@ const registerGuest = (
   webContentsId: number,
   targetId = 'embedded-1',
   profile: 'embedded' | 'imported' = 'embedded',
+  resourceSessionId = 'session-1',
 ): void => {
   const guest = electron.guests.get(webContentsId);
   if (
@@ -97,7 +104,7 @@ const registerGuest = (
   }
   if (guest && !guest.focus) guest.focus = vi.fn();
   electron.handlers.get(BrowserIpc.AgentRegisterTab)?.(trustedEvent(), {
-    sessionId: 'session-1',
+    sessionId: resourceSessionId,
     targetId,
     webContentsId,
     profile,
@@ -276,6 +283,418 @@ test('acknowledges a panel lock before lazily creating the first tab', async () 
   await expect(pending).resolves.toMatchObject({ ok: true, targetId });
 });
 
+test('keeps sibling foreground resources separate behind one product sidebar and checks their exact ACKs', async () => {
+  const send = vi.fn();
+  bridge = new BrowserAgentBridge(
+    send,
+    () => true,
+    () => null,
+    true,
+  );
+  bridge.registerIpc();
+  const scopes = ['a', 'b'].map(id => ({
+    sessionId: `resource-${id}`,
+    ownerSessionId: 'product-owner',
+    runId: `run-${id}`,
+    workspaceDir: process.cwd(),
+    headlessOnly: false,
+  }));
+  const targets: string[] = [];
+  for (const [index, scope] of scopes.entries()) {
+    const pending = bridge
+      .executeCommand(
+        `agent:worker:subagent:${index}`,
+        { action: 'open', url: 'https://example.test/' },
+        undefined,
+        scope,
+      )
+      .then(
+        result => ({ result, error: undefined }),
+        error => ({ result: undefined, error }),
+      );
+    await vi.waitFor(() =>
+      expect(send).toHaveBeenCalledWith(
+        BrowserIpc.AgentInteractionState,
+        expect.objectContaining({
+          sessionId: scope.sessionId,
+          ownerSessionId: 'product-owner',
+          busy: true,
+        }),
+      ),
+    );
+    const interaction = send.mock.calls.find(
+      ([channel, value]) =>
+        channel === BrowserIpc.AgentInteractionState &&
+        value.sessionId === scope.sessionId &&
+        value.busy === true,
+    )![1];
+    electron.handlers.get(BrowserIpc.AgentInteractionReady)?.(trustedEvent(), {
+      sessionId: 'product-owner',
+      targetId: BROWSER_AGENT_PANEL_TARGET_ID,
+      profile: 'embedded',
+      operationId: interaction.operationId,
+    });
+    expect(
+      send.mock.calls.some(
+        ([channel, value]) =>
+          channel === BrowserIpc.AgentEnsureTab && value.sessionId === scope.sessionId,
+      ),
+    ).toBe(false);
+    electron.handlers.get(BrowserIpc.AgentInteractionReady)?.(trustedEvent(), {
+      sessionId: scope.sessionId,
+      targetId: BROWSER_AGENT_PANEL_TARGET_ID,
+      profile: 'embedded',
+      operationId: interaction.operationId,
+    });
+    await vi.waitFor(() =>
+      expect(send).toHaveBeenCalledWith(
+        BrowserIpc.AgentEnsureTab,
+        expect.objectContaining({ sessionId: scope.sessionId, ownerSessionId: 'product-owner' }),
+      ),
+    );
+    const targetId = send.mock.calls.find(
+      ([channel, value]) =>
+        channel === BrowserIpc.AgentEnsureTab && value.sessionId === scope.sessionId,
+    )![1].targetId;
+    targets.push(targetId);
+    const id = 7 + index;
+    electron.guests.set(id, {
+      id,
+      getType: () => 'webview',
+      isDestroyed: () => false,
+      session: electron.partition,
+      hostWebContents: { id: 10 },
+      getTitle: () => `Child ${index}`,
+      getURL: () => 'about:blank',
+      loadURL: vi.fn().mockResolvedValue(undefined),
+    });
+    registerGuest(id, targetId, 'embedded', scope.sessionId);
+    await expect(pending).resolves.toMatchObject({ result: { targetId }, error: undefined });
+  }
+  await expect(
+    bridge.executeCommand(
+      'agent:worker:subagent:a',
+      { action: 'close', targetId: targets[1] },
+      undefined,
+      scopes[0],
+    ),
+  ).rejects.toThrow('not found');
+  bridge.releaseExecutionScope(scopes[0].sessionId, true);
+  expect(send).toHaveBeenCalledWith(BrowserIpc.AgentCloseTab, {
+    sessionId: scopes[0].sessionId,
+    ownerSessionId: 'product-owner',
+    targetId: targets[0],
+  });
+  expect(
+    send.mock.calls.some(
+      ([channel, value]) => channel === BrowserIpc.AgentCloseTab && value.targetId === targets[1],
+    ),
+  ).toBe(false);
+  await expect(
+    bridge.executeCommand('agent:worker:subagent:b', { action: 'tabs' }, undefined, scopes[1]),
+  ).resolves.toMatchObject({ tabs: [expect.objectContaining({ targetId: targets[1] })] });
+  bridge.releaseExecutionScope('product-owner', true);
+  expect(
+    send.mock.calls.some(
+      ([channel, value]) => channel === BrowserIpc.AgentCloseTab && value.targetId === targets[1],
+    ),
+  ).toBe(false);
+  await expect(
+    bridge.executeCommand('agent:worker:subagent:b', { action: 'tabs' }, undefined, scopes[1]),
+  ).resolves.toMatchObject({ tabs: [expect.objectContaining({ targetId: targets[1] })] });
+});
+
+test('parent terminal page cleanup leaves independent child pages live while owner deletion closes every associated page', async () => {
+  const send = vi.fn();
+  const browser = (bridge = new BrowserAgentBridge(
+    send,
+    () => true,
+    () => null,
+  ));
+  browser.registerIpc();
+  const parent = {
+    sessionKey: 'agent:main:justdo:product-owner',
+    sessionId: 'native-parent',
+    lifecycleRevision: 'one',
+    runId: 'parent-run',
+    trigger: 'user',
+    workspaceDir: process.cwd(),
+  };
+  const execute = vi.fn(browser.executeCommand.bind(browser));
+  const releaseScope = vi.fn(browser.releaseExecutionScope.bind(browser));
+  const resolve = vi.fn(async () => undefined);
+  const gateway = new EmbeddedBrowserGatewayBridge({
+    isEnabled: () => true,
+    getDesktopSession: key =>
+      key === parent.sessionKey
+        ? {
+            id: 'product-owner',
+            cwd: process.cwd(),
+            historyBinding: { nativeSessionId: parent.sessionId },
+          }
+        : null,
+    getScheduledTask: async () => null,
+    resolveExecutionSession: async query =>
+      query.sessionKey === parent.sessionKey
+        ? null
+        : {
+            ownerSessionId: 'product-owner',
+            pluginId: 'swarm-workflow',
+            nativePluginId: 'swarm-workflow',
+            epoch: 'current',
+          },
+    isExecutionSourceCurrent: () => true,
+    execute,
+    releaseScope,
+    revokeAll: () => browser.revokeBackgroundPages(),
+    resolve,
+  });
+  const request = (run: typeof parent, requestId: string, command: Record<string, unknown>) => ({
+    event: EMBEDDED_BROWSER_REQUESTED_EVENT,
+    payload: {
+      requestId,
+      sessionKey: run.sessionKey,
+      run,
+      admissionRevision: 1,
+      toolCallId: requestId,
+      command,
+      policy: { allowLocalFiles: true },
+    },
+  });
+  gateway.handleEvent(request(parent, 'parent', { action: 'profiles' }));
+  await vi.waitFor(() =>
+    expect(resolve).toHaveBeenCalledWith('parent', expect.objectContaining({ ok: true })),
+  );
+  expect(execute.mock.calls.find(([key]) => key === parent.sessionKey)?.[3]?.sessionId).toBe(
+    'product-owner',
+  );
+  const children = [];
+  for (const index of [0, 1]) {
+    const run = {
+      ...parent,
+      sessionKey: `agent:worker:subagent:workflow-${index}`,
+      sessionId: `native-child-${index}`,
+      runId: `child-run-${index}`,
+    };
+    gateway.handleEvent(
+      request(run, `child-${index}`, { action: 'open', url: 'https://example.test/' }),
+    );
+    await vi.waitFor(() =>
+      expect(
+        send.mock.calls.filter(([channel]) => channel === BrowserIpc.AgentEnsureTab),
+      ).toHaveLength(index + 1),
+    );
+    const ensured = send.mock.calls.filter(([channel]) => channel === BrowserIpc.AgentEnsureTab)[
+      index
+    ][1];
+    const guestId = 7 + index;
+    electron.guests.set(guestId, {
+      id: guestId,
+      getType: () => 'webview',
+      isDestroyed: () => false,
+      session: electron.partition,
+      hostWebContents: { id: 10 },
+      getTitle: () => `Child ${index}`,
+      getURL: () => 'about:blank',
+      loadURL: vi.fn().mockResolvedValue(undefined),
+    });
+    registerGuest(guestId, ensured.targetId, 'embedded', ensured.sessionId);
+    await vi.waitFor(() =>
+      expect(resolve).toHaveBeenCalledWith(`child-${index}`, expect.objectContaining({ ok: true })),
+    );
+    const scope = execute.mock.calls.find(([key]) => key === run.sessionKey)![3]!;
+    children.push({ run, scope, targetId: ensured.targetId });
+  }
+
+  gateway.handleEvent({
+    event: EMBEDDED_BROWSER_RELEASED_EVENT,
+    payload: { run: parent, reason: 'settled', discardPages: true },
+  });
+  expect(releaseScope).toHaveBeenCalledWith('product-owner', true);
+  expect(send.mock.calls.some(([channel]) => channel === BrowserIpc.AgentCloseTab)).toBe(false);
+  for (const child of children)
+    await expect(
+      browser.executeCommand(child.run.sessionKey, { action: 'tabs' }, undefined, child.scope),
+    ).resolves.toMatchObject({ tabs: [expect.objectContaining({ targetId: child.targetId })] });
+
+  gateway.deleteSession('product-owner');
+  for (const child of children) {
+    expect(releaseScope).toHaveBeenCalledWith(child.scope.sessionId, true);
+    expect(send).toHaveBeenCalledWith(BrowserIpc.AgentCloseTab, {
+      sessionId: child.scope.sessionId,
+      ownerSessionId: 'product-owner',
+      targetId: child.targetId,
+    });
+  }
+});
+
+test.each(['abort', 'timeout'] as const)(
+  'closes only the original delegated pending tab on %s even after its scope was released',
+  async outcome => {
+    if (outcome === 'timeout') vi.useFakeTimers();
+    const send = vi.fn();
+    bridge = new BrowserAgentBridge(
+      send,
+      () => true,
+      () => null,
+    );
+    bridge.registerIpc();
+    const controller = new AbortController();
+    const pending = bridge
+      .executeCommand(
+        'agent:worker:subagent:pending',
+        {
+          action: 'open',
+          url: 'https://example.test/',
+        },
+        controller.signal,
+        {
+          sessionId: 'pending-resource',
+          ownerSessionId: 'original-owner',
+          runId: 'pending-run',
+          workspaceDir: process.cwd(),
+          headlessOnly: false,
+        },
+      )
+      .then(
+        result => ({ result, error: undefined }),
+        error => ({ result: undefined, error }),
+      );
+    await vi.waitFor(() =>
+      expect(send).toHaveBeenCalledWith(
+        BrowserIpc.AgentEnsureTab,
+        expect.objectContaining({
+          sessionId: 'pending-resource',
+          ownerSessionId: 'original-owner',
+        }),
+      ),
+    );
+    const targetId = send.mock.calls.find(([channel]) => channel === BrowserIpc.AgentEnsureTab)![1]
+      .targetId;
+    bridge.releaseExecutionScope('pending-resource', true);
+    expect(send.mock.calls.some(([channel]) => channel === BrowserIpc.AgentCloseTab)).toBe(false);
+    if (outcome === 'abort') controller.abort();
+    else await vi.advanceTimersByTimeAsync(ENSURE_TAB_TIMEOUT_MS);
+
+    const completed = await pending;
+    expect(completed.error).toBeInstanceOf(Error);
+    expect(completed.error.message).toContain(outcome === 'abort' ? 'cancelled' : 'not available');
+    expect(send.mock.calls.filter(([channel]) => channel === BrowserIpc.AgentCloseTab)).toEqual([
+      [
+        BrowserIpc.AgentCloseTab,
+        { sessionId: 'pending-resource', ownerSessionId: 'original-owner', targetId },
+      ],
+    ]);
+  },
+);
+
+test('keeps a shared pending target until its last caller cancels and leaves other targets waiting', async () => {
+  const send = vi.fn();
+  bridge = new BrowserAgentBridge(
+    send,
+    () => true,
+    () => null,
+  );
+  const tabs = bridge as unknown as {
+    getActiveTab(
+      scopeId: string,
+      sessionId: string,
+      profile: 'embedded',
+      signal: AbortSignal,
+      options: { targetId: string; forceNew: boolean; ownerSessionId: string },
+    ): Promise<unknown>;
+  };
+  const controllers = [new AbortController(), new AbortController(), new AbortController()];
+  const pending = controllers.map((controller, index) =>
+    tabs
+      .getActiveTab('pending-resource', 'pending-resource', 'embedded', controller.signal, {
+        targetId: index < 2 ? 'shared-target' : 'other-target',
+        forceNew: true,
+        ownerSessionId: 'original-owner',
+      })
+      .then(
+        () => null,
+        error => error,
+      ),
+  );
+  await vi.waitFor(() =>
+    expect(
+      send.mock.calls.filter(([channel]) => channel === BrowserIpc.AgentEnsureTab),
+    ).toHaveLength(2),
+  );
+  controllers[0].abort();
+  await pending[0];
+  expect(send.mock.calls.some(([channel]) => channel === BrowserIpc.AgentCloseTab)).toBe(false);
+
+  controllers[1].abort();
+  await pending[1];
+  expect(send.mock.calls.filter(([channel]) => channel === BrowserIpc.AgentCloseTab)).toEqual([
+    [
+      BrowserIpc.AgentCloseTab,
+      {
+        sessionId: 'pending-resource',
+        ownerSessionId: 'original-owner',
+        targetId: 'shared-target',
+      },
+    ],
+  ]);
+  controllers[2].abort();
+  await pending[2];
+});
+
+test('rechecks a delegated plugin epoch after the renderer ACK before creating a page', async () => {
+  const send = vi.fn();
+  let active = true;
+  bridge = new BrowserAgentBridge(
+    send,
+    () => true,
+    () => null,
+    true,
+  );
+  bridge.registerIpc();
+  const pending = bridge
+    .executeCommand(
+      'agent:worker:subagent:work',
+      { action: 'open', url: 'https://example.test/' },
+      undefined,
+      {
+        sessionId: 'resource',
+        ownerSessionId: 'owner',
+        runId: 'run',
+        workspaceDir: process.cwd(),
+        headlessOnly: false,
+        assertCurrent: () => {
+          if (!active) throw new Error('Source plugin retired');
+        },
+      },
+    )
+    .then(
+      result => ({ result, error: undefined }),
+      error => ({ result: undefined, error }),
+    );
+  await vi.waitFor(() =>
+    expect(send).toHaveBeenCalledWith(
+      BrowserIpc.AgentInteractionState,
+      expect.objectContaining({ sessionId: 'resource', busy: true }),
+    ),
+  );
+  const interaction = send.mock.calls.find(
+    ([channel, value]) => channel === BrowserIpc.AgentInteractionState && value.busy,
+  )![1];
+  active = false;
+  electron.handlers.get(BrowserIpc.AgentInteractionReady)?.(trustedEvent(), {
+    sessionId: 'resource',
+    targetId: BROWSER_AGENT_PANEL_TARGET_ID,
+    profile: 'embedded',
+    operationId: interaction.operationId,
+  });
+  const outcome = await pending;
+  expect(outcome.error).toBeInstanceOf(Error);
+  expect(outcome.error.message).toContain('Source plugin retired');
+  expect(outcome.result).toBeUndefined();
+  expect(send.mock.calls.some(([channel]) => channel === BrowserIpc.AgentEnsureTab)).toBe(false);
+});
+
 test('keeps a shared panel lock ready when the first concurrent caller is cancelled', async () => {
   const sendToRenderer = vi.fn();
   bridge = new BrowserAgentBridge(
@@ -297,6 +716,13 @@ test('keeps a shared panel lock ready when the first concurrent caller is cancel
       hostWebContents: { id: 10 },
       getTitle: () => targetId,
       getURL: () => `https://example.com/${targetId}`,
+      loadURL: vi.fn().mockResolvedValue(undefined),
+      executeJavaScriptInIsolatedWorld: vi.fn().mockResolvedValue({
+        title: targetId,
+        url: 'https://example.com/selected',
+        text: '',
+        elements: [],
+      }),
     });
     registerGuest(id, targetId);
   }
@@ -338,10 +764,21 @@ test('keeps a shared panel lock ready when the first concurrent caller is cancel
   });
 
   await expect(second).resolves.toMatchObject({ ok: true, targetId: 'embedded-2' });
-  expect(sendToRenderer).toHaveBeenCalledWith(BrowserIpc.AgentFocusTab, {
-    sessionId: 'session-1',
-    targetId: 'embedded-2',
+  expect(sendToRenderer).not.toHaveBeenCalledWith(BrowserIpc.AgentFocusTab, expect.anything());
+  sendToRenderer.mockImplementation((channel, state) => {
+    if (channel === BrowserIpc.AgentInteractionState && state.busy)
+      queueMicrotask(() =>
+        electron.handlers.get(BrowserIpc.AgentInteractionReady)?.(trustedEvent(), state),
+      );
   });
+  await bridge.executeCommand('justdo:session-1', {
+    action: 'navigate',
+    url: 'https://example.com/selected',
+  });
+  expect(electron.guests.get(8)?.loadURL).toHaveBeenCalledExactlyOnceWith(
+    'https://example.com/selected',
+  );
+  expect(electron.guests.get(7)?.loadURL).not.toHaveBeenCalled();
 });
 
 test('rejects a cross-profile panel operation while the user annotates this session', async () => {
@@ -380,6 +817,111 @@ test('rejects a cross-profile panel operation while the user annotates this sess
     BrowserIpc.AgentInteractionState,
     expect.objectContaining({ targetId: BROWSER_AGENT_PANEL_TARGET_ID, busy: true }),
   );
+});
+
+test('routes concurrent sibling keyboard input to separate guests without selecting a sidebar tab', async () => {
+  const send = vi.fn();
+  bridge = new BrowserAgentBridge(send, () => true);
+  bridge.registerIpc();
+  const children = ['a', 'b'].map((name, index) => {
+    const id = 7 + index;
+    const targetId = `page-${name}`;
+    const sessionId = `resource-${name}`;
+    const sendCommand = vi.fn().mockResolvedValue(undefined);
+    const focus = vi.fn();
+    const sendInputEvent = vi.fn(() => expect(bridge!.isAutomatingGuest(id)).toBe(true));
+    electron.guests.set(id, {
+      id,
+      getType: () => 'webview',
+      isDestroyed: () => false,
+      session: electron.partition,
+      hostWebContents: { id: 10 },
+      getTitle: () => name,
+      getURL: () => 'https://example.test/',
+      focus,
+      sendInputEvent,
+      debugger: {
+        isAttached: vi.fn(() => false),
+        attach: vi.fn(),
+        detach: vi.fn(),
+        on: vi.fn(),
+        off: vi.fn(),
+        sendCommand,
+      },
+    });
+    registerGuest(id, targetId, 'embedded', sessionId);
+    return {
+      key: `agent:worker:subagent:${name}`,
+      scope: {
+        sessionId,
+        ownerSessionId: 'product-owner',
+        runId: `run-${name}`,
+        workspaceDir: process.cwd(),
+        headlessOnly: false,
+      },
+      targetId,
+      sendCommand,
+      focus,
+      sendInputEvent,
+    };
+  });
+  await Promise.all(
+    children.map((child, index) =>
+      bridge!.executeCommand(
+        child.key,
+        {
+          action: 'act',
+          request: {
+            kind: 'press',
+            targetId: child.targetId,
+            key: index ? 'Escape' : 'Enter',
+            delayMs: 30,
+          },
+        },
+        undefined,
+        child.scope,
+      ),
+    ),
+  );
+
+  for (const [index, child] of children.entries()) {
+    const key = index ? 'Escape' : 'Enter';
+    expect(child.sendInputEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'keyDown', keyCode: key }),
+    );
+    expect(child.sendInputEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ keyCode: index ? 'Enter' : 'Escape' }),
+    );
+    expect(child.sendCommand).not.toHaveBeenCalledWith('Input.dispatchKeyEvent', expect.anything());
+    expect(child.focus).not.toHaveBeenCalled();
+    expect(bridge.isAutomatingGuest(7 + index)).toBe(false);
+  }
+  expect(send).not.toHaveBeenCalledWith(BrowserIpc.AgentFocusTab, expect.anything());
+  expect(send).not.toHaveBeenCalledWith(BrowserIpc.AgentEnsureTab, expect.anything());
+
+  // Annotation is a per-resource veto; a sibling sharing its display owner keeps working.
+  electron.handlers.get(BrowserIpc.UserInteractionState)?.(trustedEvent(), {
+    sessionId: children[0].scope.sessionId,
+    targetId: children[0].targetId,
+    profile: 'embedded',
+    busy: true,
+  });
+  await expect(
+    bridge.executeCommand(
+      children[0].key,
+      { action: 'act', request: { kind: 'press', key: 'Enter' } },
+      undefined,
+      children[0].scope,
+    ),
+  ).rejects.toThrow('user is annotating');
+  await expect(
+    bridge.executeCommand(
+      children[1].key,
+      { action: 'act', request: { kind: 'press', key: 'Escape' } },
+      undefined,
+      children[1].scope,
+    ),
+  ).resolves.toMatchObject({ details: { pressed: 'Escape' } });
 });
 
 test('rejects page mutations while the user is annotating and resumes afterward', async () => {
@@ -956,7 +1498,7 @@ test.each([
 );
 
 test('releases a trusted drag when it is cancelled after mouse press', async () => {
-  const sendCommand = vi.fn().mockResolvedValue(undefined);
+  const sendInputEvent = vi.fn();
   bridge = new BrowserAgentBridge(vi.fn(), () => true);
   bridge.registerIpc();
   electron.guests.set(7, {
@@ -967,18 +1509,11 @@ test('releases a trusted drag when it is cancelled after mouse press', async () 
     hostWebContents: { id: 10 },
     getURL: () => 'https://example.com/',
     stop: vi.fn(),
+    sendInputEvent,
     executeJavaScriptInIsolatedWorld: vi.fn().mockResolvedValue({
       start: { x: 10, y: 20 },
       end: { x: 100, y: 120 },
     }),
-    debugger: {
-      isAttached: vi.fn(() => false),
-      attach: vi.fn(),
-      detach: vi.fn(),
-      on: vi.fn(),
-      off: vi.fn(),
-      sendCommand,
-    },
   });
   registerGuest(7);
   const controller = new AbortController();
@@ -991,38 +1526,34 @@ test('releases a trusted drag when it is cancelled after mouse press', async () 
     controller.signal,
   );
   await vi.waitFor(() =>
-    expect(sendCommand).toHaveBeenCalledWith(
-      'Input.dispatchMouseEvent',
-      expect.objectContaining({ type: 'mousePressed' }),
-    ),
+    expect(sendInputEvent).toHaveBeenCalledWith(expect.objectContaining({ type: 'mouseDown' })),
   );
 
   controller.abort();
 
   await expect(pending).rejects.toThrow('cancelled');
   await vi.waitFor(() =>
-    expect(sendCommand).toHaveBeenCalledWith(
-      'Input.dispatchMouseEvent',
+    expect(sendInputEvent).toHaveBeenCalledWith(
       expect.objectContaining({
-        type: 'mouseReleased',
+        type: 'mouseUp',
         button: 'left',
-        buttons: 0,
+        modifiers: [],
       }),
     ),
   );
-  const mouseCommands = sendCommand.mock.calls.filter(
-    call => call[0] === 'Input.dispatchMouseEvent',
-  );
-  const pressedIndex = mouseCommands.findIndex(call => call[1]?.type === 'mousePressed');
-  const released = mouseCommands.filter(call => call[1]?.type === 'mouseReleased');
+  const mouseCommands = sendInputEvent.mock.calls;
+  const pressedIndex = mouseCommands.findIndex(call => call[0]?.type === 'mouseDown');
+  const released = mouseCommands.filter(call => call[0]?.type === 'mouseUp');
   expect(released).toHaveLength(1);
   expect(pressedIndex).toBeGreaterThanOrEqual(0);
   expect(mouseCommands.indexOf(released[0]!)).toBeGreaterThan(pressedIndex);
   const lastDraggedPoint = mouseCommands
     .slice(0, mouseCommands.indexOf(released[0]!))
-    .findLast(call => call[1]?.type === 'mouseMoved' && call[1]?.buttons === 1);
-  const expectedReleasePoint = lastDraggedPoint?.[1] ?? mouseCommands[pressedIndex]?.[1];
-  expect(released[0]?.[1]).toEqual(
+    .findLast(
+      call => call[0]?.type === 'mouseMove' && call[0]?.modifiers?.includes('leftbuttondown'),
+    );
+  const expectedReleasePoint = lastDraggedPoint?.[0] ?? mouseCommands[pressedIndex]?.[0];
+  expect(released[0]?.[0]).toEqual(
     expect.objectContaining({ x: expectedReleasePoint?.x, y: expectedReleasePoint?.y }),
   );
 });

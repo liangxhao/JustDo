@@ -1,6 +1,6 @@
 # 插件系统：读取、变更与原生应用
 
-插件管理不是一份安装目录清单。用户配置、文件提交、原生配置应用和当前 Gateway inventory 是不同事实，必须分别确认。本页按读取和变更的调用链组织；桌面 Main/Browser 代码的公开 SDK、审核与加载另见[应用插件宿主](app-plugin-runtime.md)。
+插件管理不是一份安装目录清单。用户配置、文件提交、原生配置应用和当前 Gateway inventory 是不同事实，必须分别确认。本页按读取和变更的调用链组织；桌面 Main/Browser 代码的公开 SDK、审核与加载另见[应用插件宿主](../plugins/sdk/app-plugin-runtime.md)。
 
 ## 按问题定位
 
@@ -32,15 +32,15 @@ Plugin Hub 有四类插件概念；市场当前只开放 extension、skill、mcp
 
 内置插件源码统一位于仓库根目录的 `plugins/`，按 `extensions/`、`skills/`、`mcp-servers/`、`hooks/`、`chrome-extensions/` 分类。OpenClaw 扩展位于 `plugins/extensions/<plugin-id>/`，独立技能及筛选清单位于 `plugins/skills/`；扩展自带的技能保留在所属扩展内部。`mcp-servers/`、`hooks/` 当前仅预留目录，尚无内置加载逻辑。
 
-构建仍将 OpenClaw 扩展和选中技能组装到原生的 `dist/extensions/`、`skills/`、`custodian-skills/`，开发源码发现读取对应扩展目录。应用图标和原生文档模板位于 `resources/`；下载缓存使用仓库根 `cache/`，工具运行时准备和打包中间产物使用 `build/`，不反向写回资源源码目录。现行 OpenClaw 冻结运行包仍位于 `vendor/openclaw-runtime/`，具体以[构建链](../../architecture/12-tech-stack.md#5-openclaw-供应链)为准。源码与资源约定见[内置插件说明](../../../plugins/README.md)和[资源说明](../../../resources/README.md)。
+构建仍将 OpenClaw 扩展和选中技能组装到原生的 `dist/extensions/`、`skills/`、`custodian-skills/`，开发源码发现读取对应扩展目录。应用图标和原生文档模板位于 `resources/`；下载缓存使用仓库根 `cache/`，工具运行时准备和打包中间产物使用 `build/`，不反向写回资源源码目录。现行 OpenClaw 冻结运行包仍位于 `vendor/openclaw-runtime/`，具体以[构建链](12-tech-stack.md#5-openclaw-供应链)为准。源码与资源约定见[内置插件说明](../../plugins/README.md)和[资源说明](../../resources/README.md)。
 
-`plugins/sdk/` 保存公开 App SDK 和构建工具开发包，使用 npm workspace 或打包制品接入；扩展发现仍只扫描 `plugins/extensions/`。源码位置、发布和消费契约见[应用插件宿主](app-plugin-runtime.md)。
+`plugins/sdk/` 保存公开 App SDK 和构建工具开发包，使用 npm workspace 或打包制品接入；扩展发现仍只扫描 `plugins/extensions/`。源码位置、发布和消费契约见[应用插件宿主](../plugins/sdk/app-plugin-runtime.md)。
 
 Chrome Assistant 位于 `plugins/chrome-extensions/chrome-assistant/`，由 Chrome 安装和加载，不进入 Plugin Hub 的 OpenClaw 扩展管理。它保留上游基线及产品侧栏补充，自有组装脚本、Markdown 源码和单元测试随包维护；复用应用聊天代码的构建适配与 Native Messaging helper 留在宿主，Main 继续拥有连接、权限和会话。
 
-构建生成 `build/chrome-extension/chrome-extension/`，打包后位于安装资源目录的 `chrome-extension/chrome-extension/`；此安装目录不是仓库 `resources/` 下的源码。显示名称和固定扩展身份独立于源码包目录。详见[侧栏对话](../chrome-extensions/chrome-assistant/side-panel.md)。
+构建生成 `build/chrome-extension/chrome-extension/`，打包后位于安装资源目录的 `chrome-extension/chrome-extension/`；此安装目录不是仓库 `resources/` 下的源码。显示名称和固定扩展身份独立于源码包目录。详见[侧栏对话](../plugins/chrome-extensions/chrome-assistant/side-panel.md)。
 
-插件专属的工具、界面、资源、构建/校验脚本和单元测试归 `plugins/extensions/<plugin-id>/` 所有。主工程保留通用 MCP Apps 宿主、权限与保存桥、配置/打包接入，以及验证宿主边界的集成测试；插件不能反向导入应用 `src`。根 npm 命令和打包流程只委托插件自己的脚本，draw.io 的目录约定见[插件说明](../extensions/drawio/overview.md)。
+插件专属的工具、界面、资源、构建/校验脚本和单元测试归 `plugins/extensions/<plugin-id>/` 所有。主工程保留通用 MCP Apps 宿主、权限与保存桥、配置/打包接入，以及验证宿主边界的集成测试；插件不能反向导入应用 `src`。根 npm 命令和打包流程只委托插件自己的脚本，draw.io 的目录约定见[插件说明](../plugins/extensions/drawio/overview.md)。
 
 ## 2. 清单读取与界面投影
 
@@ -82,7 +82,7 @@ MCP 保存、删除、启停和市场更新在提交前使已有测试结果与�
 串行重读权威目录并通知全部仍存在的窗口；已保存但运行时重启失败时也发出实际
 状态，不用请求值假定成功。导入/市场安装和卸载同步通知；通知读取失败保留操作
 结果且不伪造状态。Renderer 按插件合并在途开关，关闭版本使快速关闭/开启后的
-旧标签选择失效。详见[输入框功能菜单](../../features/chat/composer-feature-menu.md)。
+旧标签选择失效。详见[输入框功能菜单](../features/chat/composer-feature-menu.md)。
 
 ### 分组、排序与管理权限
 
@@ -212,7 +212,7 @@ installationCommitted，不能作为未安装再次提交。
 
 系统维护技能留在原生 `custodian-skills/`，仅由系统 Agent（应用配置为 `main`）发现。安装和打包共用同一筛选逻辑，所有选中源校验通过后才清理目录；缺失上游技能时必须从锁定的原始包重建运行时，不能静默跳过。打包资源必须与 manifest 一致；数量不应散落在 UI 常量中。
 
-独立技能保留上游正文及配套资源，仅调整实际宿主与内网约束。manifest 的 `upstream` 字段记录维护基线，不参与原生状态判断；具体来源和适配见[内置 Skill](../skills/builtin-skills.md)。Python 可选依赖只使用已配置的内网源或离线 wheel，不要求安装外部系统应用。绘图 HTML/SVG 默认使用本地字体，PNG 通过已安装的 Edge 离线导出；未执行的渲染、重算和视觉检查不得报告为已通过。
+独立技能保留上游正文及配套资源，仅调整实际宿主与内网约束。manifest 的 `upstream` 字段记录维护基线，不参与原生状态判断；具体来源和适配见[内置 Skill](../plugins/skills/builtin-skills.md)。Python 可选依赖只使用已配置的内网源或离线 wheel，不要求安装外部系统应用。绘图 HTML/SVG 默认使用本地字体，PNG 通过已安装的 Edge 离线导出；未执行的渲染、重算和视觉检查不得报告为已通过。
 
 技能列表和详情使用 Gateway 状态，详情提供有权限的启用／关闭入口，并在更新后显示最新状态与缺失依赖。若原生技能要求显式开启自身的 `skills.entries.<skillKey>.enabled`（如 `coding-agent`），Main 在该条件缺失时显示未启用，即使原生 `disabled` 为 false；其他缺失依赖只影响可用性，不改变启用状态。
 
@@ -221,7 +221,7 @@ installationCommitted，不能作为未安装再次提交。
 
 Renderer 的缺失依赖徽标和详情提示不重复列出该技能自身的启用条件，由开关表示；其余程序、环境变量、配置和系统要求保持原生结果。原生 `missing.anyBins` 表示任选一种工具即可满足的要求，计为一个缺失依赖组，列表提示和详情明确说明“至少安装一个”；开启技能不会清除该依赖提示。原始 Gateway 状态不受展示过滤影响。
 
-TypeSafe 扩展声明决策模型提供方；原生 `decision_evaluate` 工具按 Agent 的 `decisionModel` 自动提供。9.8 不再注册专用评估工具或 skill，Boolean、Choice、Score 输入由提供方翻译。具体接入见 [Jev evaluations](../extensions/typesafe/decision-evaluation.md)。
+TypeSafe 扩展声明决策模型提供方；原生 `decision_evaluate` 工具按 Agent 的 `decisionModel` 自动提供。9.8 不再注册专用评估工具或 skill，Boolean、Choice、Score 输入由提供方翻译。具体接入见 [Jev evaluations](../plugins/extensions/typesafe/decision-evaluation.md)。
 
 内网发行版通过 `plugins/extensions/prune-policy.json` 声明当前 OpenClaw 版本内置扩展的保留和移除清单，排除 Anthropic、ElevenLabs、
 GitHub、Kie、Z.AI 和 Novita 插件；运行时资源准备与安装包构建共用该剪裁策略。
@@ -252,7 +252,7 @@ HTTP 策略、允许显式配置的私有网络地址、拒绝重定向和不确
 安装对应插件也不会加入视频选项。配置同步按 OpenAI 插件库存清除缺失的视频选择，
 不写入对应新凭据。
 完整和最小同步遵循相同规则。新视频插件通过原生 provider 扩展接入，不恢复 9.6
-旧自定义视频配置或迁移。具体协议与输入限制见 [模型管理](../../features/models/model-management.md)。
+旧自定义视频配置或迁移。具体协议与输入限制见 [模型管理](../features/models/model-management.md)。
 
 skills.status 提供 effective source、eligibility、disabled、缺失依赖和安装选项。产品文件服务只管理用户导入目录；它不能从 SKILL.md 自行重建运行元数据。受管根使用原生 stateDir/skills，避免重复 extraDirs 引入同一路径。
 
@@ -363,7 +363,7 @@ Extension 提供的 MCP 通过受管子进程直接调用原生 manifest registr
 
 MCP 的传输支持状态使用原生清单的 `unsupported` 标记；`hasStdioTransport: false` 也可能表示受支持的 HTTP 传输，不能据此标记为不支持。
 
-交互界面是工具的附加能力，仍使用相同 MCP 清单和启停流程。连接测试保留标准 `ui://` 资源元数据，列表显示紧凑的界面标识；不因名称、transport 或 resources 能力推断。内置 draw.io 的已审查提示在连接定义被覆盖后撤回，实际工具目录优先。其 stdio 服务、Web 编辑器、只读 loopback 资源和完整离线打包契约见 [draw.io 离线绘图](../extensions/drawio/offline-editor.md)。
+交互界面是工具的附加能力，仍使用相同 MCP 清单和启停流程。连接测试保留标准 `ui://` 资源元数据，列表显示紧凑的界面标识；不因名称、transport 或 resources 能力推断。内置 draw.io 的已审查提示在连接定义被覆盖后撤回，实际工具目录优先。其 stdio 服务、Web 编辑器、只读 loopback 资源和完整离线打包契约见 [draw.io 离线绘图](../plugins/extensions/drawio/offline-editor.md)。
 
 发现只增加缺失项，不因原生配置暂时缺失就删除产品记录。产品主动删除/改名后不能先读旧原生配置，否则会复活旧 name。未被表单建模的 cwd、OAuth、TLS、tool filter 等字段需要保留合并，不能保存一次表单就丢失。
 
@@ -459,7 +459,7 @@ CLI 到达超时预算或收到成功文字后可以请求终止，但只有目�
 
 锁定版本的插件管理 RPC 会直接应用运行时变更。热安装和卸载核对完整原生回执；原生确认已热应用且无需重启时直接完成。CLI 导入等待最终运行时回执：Gateway 已应用则无需额外操作，仅保存到磁盘时调用 `plugins.reload`。卸载 RPC 仍请求重启时，以及 CLI 卸载和启停回退后，优先调用 `plugins.refresh`；仍需重启或无法热应用时才申请 Gateway 重启。独立的原生重启要求不能被网络策略的可热更新结论覆盖。
 
-扩展普通配置先等待配置 reload ACK，无环境变量变更时再尝试定向 `plugins.reload`；SecretRef 更新先调用 `secrets.reload` 刷新准备快照，失败报告并保留待刷新，不能靠重启掩盖。配置应用与重启协调见[引擎](../../architecture/05-agent-engine.md)；保留原生对活动任务的重启延迟，不能与宿主冷重启竞争。原生不支持热应用的运行时代码及网络策略仍可能需要重启；Windows 文件操作的目录锁恢复保持独立。
+扩展普通配置先等待配置 reload ACK，无环境变量变更时再尝试定向 `plugins.reload`；SecretRef 更新先调用 `secrets.reload` 刷新准备快照，失败报告并保留待刷新，不能靠重启掩盖。配置应用与重启协调见[引擎](05-agent-engine.md)；保留原生对活动任务的重启延迟，不能与宿主冷重启竞争。原生不支持热应用的运行时代码及网络策略仍可能需要重启；Windows 文件操作的目录锁恢复保持独立。
 
 原生插件或配置操作的互斥租约忙碌时，Main 仅对锁定版本明确返回的“尚未进入写入”的 `UNAVAILABLE` 拒绝等待后重新申请准入：必须同时具有精确忙碌原因、`retryable: true` 和有效 `retryAfterMs`，且不含提交、运行时尝试或结果未知等元数据。等待最多 30 秒，并共享原请求总超时；等待期间进度进入排队阶段。重新申请必须保持原 Gateway PID 与进程代次、相同参数及能力确认令牌。Main 请求适配器在连接准备前和实际发送前再次校验身份与预算，校验回调不进入原生传输。
 
@@ -491,7 +491,7 @@ RPC。正常发布不增加卷探测或全树比较。网络目录、未知结�
 提交后错误不重试；持续占用耗尽预算后沿原生失败与旧版恢复流程处理。
 
 补丁的
-精确原生边界、产物证明及删除条件见[当前补丁总账的目录发布能力](../../../scripts/patches/v2026.10.7/README.md#capability-gaps-and-removal-conditions)。
+精确原生边界、产物证明及删除条件见[当前补丁总账的目录发布能力](../../scripts/patches/v2026.10.7/README.md#capability-gaps-and-removal-conditions)。
 
 Extension CLI 卸载保留目录锁预检；原生安装／更新改为实际失败后诊断。文件锁均不能触发 Gateway stop/mutate/start；占用者即使是 Gateway，也先报告真实失败，不通过重启、关闭外部程序或重复破坏性命令绕过。只有明确未发送的原生卸载请求允许 CLI 离线恢复；超时、断线或原生关联拒绝不证明未提交。响应丢失时先核对权威清单和本次原安装路径，确认已移除后只收敛运行态；无法确认时提示结果待确认，不重放卸载或通过重启绕过。
 
@@ -547,9 +547,9 @@ schema 的相关路径不作为普通文本公开；带通配符的秘密契约�
 
 受管状态由所属设置和 Main 策略返回，普通管理入口不能按名称推断或覆盖。必需服务与可选业务独立；可选插件关闭不得撤销仍需完成的通用收据核对和清理。
 
-插件按清单贡献工具、配置、技能、Main 与 UI，宿主负责统一准入、配置合并、产物身份和贡献撤回。关闭、卸载或换包不证明执行已结算，也不能重放未知提交。通用机制见[应用插件宿主](app-plugin-runtime.md)。
+插件按清单贡献工具、配置、技能、Main 与 UI，宿主负责统一准入、配置合并、产物身份和贡献撤回。关闭、卸载或换包不证明执行已结算，也不能重放未知提交。通用机制见[应用插件宿主](../plugins/sdk/app-plugin-runtime.md)。
 
-具体插件的工具协议、模式、参数、存储和验证限制只在[插件文档](../README.md)维护，随所属源码包分发。宿主不复制各插件的内部模块清单或业务状态机。
+具体插件的工具协议、模式、参数、存储和验证限制只在[插件文档](../plugins/README.md)维护，随所属源码包分发。宿主不复制各插件的内部模块清单或业务状态机。
 
 ### 敏感配置和准备凭据
 
@@ -571,7 +571,7 @@ Extension 可用 outbound-header-policy.json 显式声明 HTTP 或 HTTPS 目标�
 
 协议、主机、端口和路径边界按统一匹配器精确匹配；HTTP 声明不会授权 HTTPS、其他端口或相邻路径。URL 继续禁止嵌入账号信息、query、fragment、localhost、loopback、link-local 和 unspecified 地址。默认端口由 URL 的协议规范化，HTTP 的 443 和 HTTPS 的 80 不会被清除。无效地址的错误标明声明文件、原始组与地址序号及具体原因，不回显原 URL 或凭据。
 
-它不能写永久手工 config，也不提供任意凭据 API。Gateway 同进程 Node Extension 仍处于可信代码边界，sidecar 并不是恶意插件网络沙盒。详细规范见[出站指南](../../developer-integration/outbound-headers/README.md)。
+它不能写永久手工 config，也不提供任意凭据 API。Gateway 同进程 Node Extension 仍处于可信代码边界，sidecar 并不是恶意插件网络沙盒。详细规范见[出站指南](../developer-integration/outbound-headers/README.md)。
 
 ## 9. 构建与运行时状态单例
 
@@ -624,7 +624,7 @@ Gateway 单文件打包与动态 SDK 必须共享原生运行授权及私有会�
 
 ### 回归入口
 
-从 `src/main/plugins/` 的文件事务、MCP/Hook 同步、Extension import 与格式拒绝、registry 测试检查产品层；从 `tests/openclaw/extensions/` 与 skill-resolution runtime contract 检查最终原生能力。市场增加 kind 前需完成安装、更新、启停、删除与状态对账闭环，详见[市场适配](../marketplace/adapter.md)。
+从 `src/main/plugins/` 的文件事务、MCP/Hook 同步、Extension import 与格式拒绝、registry 测试检查产品层；从 `tests/openclaw/extensions/` 与 skill-resolution runtime contract 检查最终原生能力。市场增加 kind 前需完成安装、更新、启停、删除与状态对账闭环，详见[市场适配](../plugins/marketplace/adapter.md)。
 
 ### 真实环境限制
 

@@ -4,6 +4,7 @@ import { expect, it, vi } from 'vitest';
 import {
   acquireTeamDiscussionFocus,
   currentFocusedRoom,
+  currentFocusedDocument,
   TEAM_ROOM_FOCUSED,
 } from './teamDiscussionFocus';
 
@@ -24,6 +25,23 @@ it('does not let an older view release a newer room focus', () => {
     releaseFirst();
     releaseSecond();
     window.removeEventListener(TEAM_ROOM_FOCUSED, changed);
+  }
+});
+
+it('follows the visible room document while stale view release cannot move the question to another window', () => {
+  const firstDocument = document.implementation.createHTMLDocument();
+  const secondDocument = document.implementation.createHTMLDocument();
+  const releaseFirst = acquireTeamDiscussionFocus('same-room', firstDocument);
+  const releaseSecond = acquireTeamDiscussionFocus('same-room', secondDocument);
+  try {
+    expect(currentFocusedDocument()).toBe(secondDocument);
+    releaseFirst();
+    expect(currentFocusedDocument()).toBe(secondDocument);
+    releaseSecond();
+    expect(currentFocusedDocument()).toBeUndefined();
+  } finally {
+    releaseFirst();
+    releaseSecond();
   }
 });
 

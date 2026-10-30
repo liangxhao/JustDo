@@ -14,6 +14,8 @@
 [Python 示例](../app-server-api/examples/python/README.md)覆盖对话、并发、历史、订阅、审批及标准图片；
 支持范围与尚未实现的官方能力见[兼容性说明](../app-server-api/compatibility.md)。
 
+编写应用插件或定制 Team / Workflow 时，从[应用插件开发指南](../plugins/sdk/app-plugin-development/README.md)开始；其中提供完整示例、Native / Main / Browser 开发步骤和验证边界。
+
 ## 当前接入项
 
 登录 SDK 开发先阅读[登录接入模板](../features/account/login-sdk-template.md)，再核对下表中的

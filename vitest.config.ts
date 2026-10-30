@@ -20,7 +20,9 @@ const pluginSetups = readdirSync(extensionRoot, { withFileTypes: true }).flatMap
 });
 
 if (process.versions.electron) {
-  throw new Error('Vitest requires standalone Node.js 24. Electron drivers are disabled; run `npm test` with Node.js.');
+  throw new Error(
+    'Vitest requires standalone Node.js 24. Electron drivers are disabled; run `npm test` with Node.js.',
+  );
 }
 
 export default defineConfig({
@@ -30,6 +32,9 @@ export default defineConfig({
       enforce: 'pre',
       resolveId(source, importer) {
         if (!importer) return;
+        if (source === 'openclaw/plugin-sdk/session-store-runtime') {
+          return path.resolve(__dirname, 'tests/plugins/host/nativeSessionStore.ts');
+        }
         if (
           source === '@app-plugin/sdk/browser-runtime' ||
           /\/plugins\/sdk\/app-plugin-sdk\/browser-runtime(?:\.ts)?$/.test(

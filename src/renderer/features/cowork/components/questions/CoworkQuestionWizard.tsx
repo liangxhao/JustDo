@@ -45,6 +45,7 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({
     if (!toolInput || typeof toolInput !== 'object') return [];
     return parseAskUserQuestions((toolInput as Record<string, unknown>).questions) ?? [];
   }, [interaction.interactionKind, toolInput]);
+  const questionIdentity = JSON.stringify([interaction.requestId, questions]);
 
   const [currentStep, setCurrentStep] = useState(0);
   const [answers, setAnswers] = useState<Record<string, string[]>>({});
@@ -75,7 +76,7 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({
       if (advanceTimerRef.current) clearTimeout(advanceTimerRef.current);
       advanceTimerRef.current = null;
     };
-  }, [interaction.requestId, toolInput]);
+  }, [questionIdentity]);
 
   if (questions.length === 0) {
     return null;

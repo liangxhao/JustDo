@@ -9,6 +9,7 @@ import { describe, expect, it } from 'vitest';
 import {
   resolveAllowedDecisions,
   resolveApprovalDeadline,
+  resolveApprovalSource,
   resolveApprovalSummary,
 } from './ExecApprovalModal';
 
@@ -18,6 +19,7 @@ const approval = (request: Record<string, unknown>): ApprovalRequest => ({
   request: {
     command: 'git status',
     sessionKey: 'agent:main:justdo:session-1',
+    sessionId: 'native-session-1',
     ...request,
   },
   createdAtMs: 1,
@@ -25,6 +27,11 @@ const approval = (request: Record<string, unknown>): ApprovalRequest => ({
 });
 
 describe('resolveAllowedDecisions', () => {
+  it('does not offer a session grant for an approval without Native incarnation identity', () => {
+    expect(resolveAllowedDecisions(approval({ sessionId: undefined }))).not.toContain(
+      ApprovalDecision.AllowForSession,
+    );
+  });
   it('treats an empty Gateway decision list as unspecified for compatibility', () => {
     expect(resolveAllowedDecisions(approval({ allowedDecisions: [] }))).toEqual([
       ApprovalDecision.AllowOnce,
@@ -52,6 +59,36 @@ describe('resolveAllowedDecisions', () => {
       resolveAllowedDecisions(approval({ envKeys: ['TOKEN'], systemRunBinding: null })),
     ).not.toContain(ApprovalDecision.AllowForSession);
   });
+});
+
+it('identifies the actual delegated execution rather than substituting its source conversation', () => {
+  expect(
+    resolveApprovalSource(
+      approval({
+        agentId: 'worker',
+        sessionKey: 'agent:worker:subagent:child',
+        sessionId: 'native-child',
+        runId: 'child-run',
+        toolCallId: 'exec-call',
+      }),
+    ),
+  ).toBe('worker · agent:worker:subagent:child · native-child · child-run · exec-call');
+  expect(
+    resolveApprovalSource({
+      id: 'plugin',
+      kind: ApprovalKind.Plugin,
+      createdAtMs: 1,
+      expiresAtMs: 2,
+      request: {
+        title: 'Permission',
+        description: 'Write',
+        agentId: 'worker',
+        sessionKey: 'native-child-key',
+        runId: 'native-run',
+        toolCallId: 'plugin-call',
+      },
+    }),
+  ).toBe('worker · native-child-key · native-run · plugin-call');
 });
 
 describe('resolveApprovalSummary', () => {

@@ -5,6 +5,13 @@ import type {
   CoworkInteractionRequest,
   CoworkInteractionResult,
 } from '@/features/cowork/coworkTypes';
+import { i18nService } from '@/services/i18n';
+import {
+  isDomElement,
+  isDomHTMLElement,
+  useOwnerDocument,
+  useOwnerWindow,
+} from '@/shared/dom/ownerDocument';
 
 import CoworkInteractionModal from './CoworkInteractionModal';
 import CoworkQuestionWizard from './CoworkQuestionWizard';
@@ -13,6 +20,8 @@ interface CoworkQuestionFloatingWindowProps {
   interaction: CoworkInteractionRequest;
   isVisible: boolean;
   sourceLabel?: string;
+  queue?: readonly { id: string; label: string }[];
+  onSelectRequest?(id: string): void;
   onRespond: (result: CoworkInteractionResult) => Promise<boolean>;
 }
 
@@ -72,8 +81,12 @@ const CoworkQuestionFloatingWindow: React.FC<CoworkQuestionFloatingWindowProps> 
   interaction,
   isVisible,
   sourceLabel,
+  queue,
+  onSelectRequest,
   onRespond,
 }) => {
+  const ownerDocument = useOwnerDocument();
+  const ownerWindow = useOwnerWindow();
   const [offset, setOffset] = useState<WindowOffset>({ x: 0, y: 0 });
   const panelRef = useRef<HTMLElement>(null);
   const dragStateRef = useRef<DragState | null>(null);
@@ -96,44 +109,44 @@ const CoworkQuestionFloatingWindow: React.FC<CoworkQuestionFloatingWindowProps> 
     const panel = panelRef.current;
     if (!panel) return;
     const correction = resolveQuestionWindowOffsetCorrection(panel.getBoundingClientRect(), {
-      width: window.innerWidth,
-      height: window.innerHeight,
+      width: ownerWindow.innerWidth,
+      height: ownerWindow.innerHeight,
     });
     if (correction.x === 0 && correction.y === 0) return;
     setOffset(current => ({
       x: current.x + correction.x,
       y: current.y + correction.y,
     }));
-  }, [isVisible]);
+  }, [isVisible, ownerWindow]);
 
   useEffect(() => {
     const handleResize = () => {
       cancelActiveDrag();
       setOffset({ x: 0, y: 0 });
     };
-    window.addEventListener('resize', handleResize);
+    ownerWindow.addEventListener('resize', handleResize);
     return () => {
-      window.removeEventListener('resize', handleResize);
+      ownerWindow.removeEventListener('resize', handleResize);
       cancelActiveDrag();
     };
-  }, [cancelActiveDrag]);
+  }, [cancelActiveDrag, ownerWindow]);
 
   useEffect(() => {
     if (isVisible) return;
     cancelActiveDrag();
-    const activeElement = document.activeElement;
-    if (activeElement instanceof HTMLElement && panelRef.current?.contains(activeElement)) {
+    const activeElement = ownerDocument.activeElement;
+    if (isDomHTMLElement(activeElement) && panelRef.current?.contains(activeElement)) {
       activeElement.blur();
     }
-  }, [cancelActiveDrag, isVisible]);
+  }, [cancelActiveDrag, isVisible, ownerDocument]);
 
   useEffect(() => {
     const panel = panelRef.current;
-    if (!panel || typeof ResizeObserver === 'undefined') return;
+    if (!panel || typeof ownerWindow.ResizeObserver === 'undefined') return;
     let frameId: number | null = null;
-    const observer = new ResizeObserver(() => {
-      if (frameId !== null) window.cancelAnimationFrame(frameId);
-      frameId = window.requestAnimationFrame(() => {
+    const observer = new ownerWindow.ResizeObserver(() => {
+      if (frameId !== null) ownerWindow.cancelAnimationFrame(frameId);
+      frameId = ownerWindow.requestAnimationFrame(() => {
         frameId = null;
         keepPanelInViewport();
       });
@@ -141,14 +154,14 @@ const CoworkQuestionFloatingWindow: React.FC<CoworkQuestionFloatingWindowProps> 
     observer.observe(panel);
     return () => {
       observer.disconnect();
-      if (frameId !== null) window.cancelAnimationFrame(frameId);
+      if (frameId !== null) ownerWindow.cancelAnimationFrame(frameId);
     };
-  }, [keepPanelInViewport]);
+  }, [keepPanelInViewport, ownerWindow]);
 
   const handlePointerDown = (event: React.PointerEvent<HTMLElement>) => {
     if (event.button !== 0 || !panelRef.current) return;
     const target = event.target;
-    if (!(target instanceof Element) || !target.closest('[data-question-drag-handle]')) return;
+    if (!isDomElement(target) || !target.closest('[data-question-drag-handle]')) return;
     if (target.closest(INTERACTIVE_SELECTOR)) return;
 
     event.preventDefault();
@@ -159,9 +172,9 @@ const CoworkQuestionFloatingWindow: React.FC<CoworkQuestionFloatingWindowProps> 
       startY: event.clientY,
       origin: offset,
       minX: offset.x + VIEWPORT_MARGIN_PX - rect.left,
-      maxX: offset.x + window.innerWidth - VIEWPORT_MARGIN_PX - rect.right,
+      maxX: offset.x + ownerWindow.innerWidth - VIEWPORT_MARGIN_PX - rect.right,
       minY: offset.y + VIEWPORT_MARGIN_PX - rect.top,
-      maxY: offset.y + window.innerHeight - VIEWPORT_MARGIN_PX - rect.bottom,
+      maxY: offset.y + ownerWindow.innerHeight - VIEWPORT_MARGIN_PX - rect.bottom,
     };
     panelRef.current.setPointerCapture(event.pointerId);
   };
@@ -204,7 +217,7 @@ const CoworkQuestionFloatingWindow: React.FC<CoworkQuestionFloatingWindowProps> 
     >
       <aside
         ref={panelRef}
-        className={`question-dialog-panel pointer-events-auto max-h-[80vh] w-full overflow-hidden rounded-2xl bg-surface shadow-modal will-change-transform ${
+        className={`question-dialog-panel pointer-events-auto flex max-h-[80vh] w-full flex-col overflow-hidden rounded-2xl bg-surface shadow-modal will-change-transform ${
           hasMultipleQuestions ? 'max-w-2xl' : 'max-w-lg'
         }`}
         style={{ transform: `translate3d(${offset.x}px, ${offset.y}px, 0)` }}
@@ -214,7 +227,28 @@ const CoworkQuestionFloatingWindow: React.FC<CoworkQuestionFloatingWindowProps> 
         onPointerCancel={endDrag}
         onLostPointerCapture={handleLostPointerCapture}
       >
-        {sourceLabel && <p className="px-5 pt-4 text-sm text-secondary">{sourceLabel}</p>}
+        {sourceLabel && (
+          <p className="shrink-0 break-all px-5 pt-4 text-xs text-secondary">{sourceLabel}</p>
+        )}
+        {queue && queue.length > 1 && (
+          <nav
+            className="flex shrink-0 flex-wrap gap-2 px-5 pt-3"
+            aria-label={i18nService.t('coworkPendingQuestions')}
+          >
+            {queue.map((item, index) => (
+              <button
+                key={item.id}
+                type="button"
+                aria-current={item.id === interaction.requestId ? 'true' : undefined}
+                className={`rounded px-2 py-1 text-xs ${item.id === interaction.requestId ? 'bg-primary text-white' : 'bg-surface-raised text-secondary'}`}
+                title={item.label}
+                onClick={() => onSelectRequest?.(item.id)}
+              >
+                {i18nService.t('coworkQuestionQueueItem').replace('{index}', String(index + 1))}
+              </button>
+            ))}
+          </nav>
+        )}
         {hasMultipleQuestions ? (
           <CoworkQuestionWizard
             interaction={interaction}

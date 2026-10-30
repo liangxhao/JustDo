@@ -566,6 +566,49 @@ it('does not treat a completed summary execution as proof that its output was de
   } });
   await coordinator.reconcile({ cleanupOnly: true });
   expect(coordinator.metadata.summary(run.discussionId)?.state).toBe('unknown');
+  expect(connectedRequest).toHaveBeenCalledWith(CUSTODY_RPC.receiptInspect, {
+    ownerId: 'agent-team', operationId: discussionOperationId('summary', run.discussionId),
+  });
+  expect(request).not.toHaveBeenCalled();
+});
+
+it.each(['pending', 'unknown'] as const)(
+  'preserves a %s summary on read-only proof loss without cancellation or a new send', async state => {
+    bindSummarySource();
+    const run = coordinator.metadata.reserve(send);
+    coordinator.metadata.transition('room', run.discussionId, run.generation, 'completed');
+    if (state === 'unknown') coordinator.metadata.updateSummary(run.discussionId, 'unknown', 'uncertain-run');
+    connectedRequest.mockResolvedValue({ receipt: null });
+
+    await coordinator.reconcile({ cleanupOnly: true });
+
+    expect(coordinator.metadata.summary(run.discussionId)?.state).toBe(state);
+    expect(connectedRequest).toHaveBeenCalledExactlyOnceWith(CUSTODY_RPC.receiptInspect, {
+      ownerId: 'agent-team', operationId: discussionOperationId('summary', run.discussionId),
+    });
+    expect(request).not.toHaveBeenCalled();
+  },
+);
+
+it('persists explicit-disable summary cancellation and requires complete native cleanup before settling it', async () => {
+  bindSummarySource();
+  const run = coordinator.metadata.reserve(send);
+  coordinator.metadata.transition('room', run.discussionId, run.generation, 'completed');
+  const release = await coordinator.cancelPendingForDisable();
+  release();
+  expect(coordinator.metadata.summary(run.discussionId)?.state).toBe('stopping');
+  const receipt = {
+    ownerId: 'agent-team', operationId: discussionOperationId('summary', run.discussionId),
+    writerRegistrationId: 'registration', inputSha256: '0'.repeat(64), state: 'settled',
+    subjects: [{ ...summarySource, runId: 'summary-run', outcome: 'cancelled' }],
+    settledRunIds: ['summary-run'], cleanupComplete: false, cancelRequested: true,
+  };
+  connectedRequest.mockResolvedValue({ receipt });
+  await coordinator.reconcile({ cleanupOnly: true });
+  expect(coordinator.metadata.summary(run.discussionId)?.state).toBe('stopping');
+  receipt.cleanupComplete = true;
+  await coordinator.reconcile({ cleanupOnly: true });
+  expect(coordinator.metadata.summary(run.discussionId)?.state).toBe('cancelled');
   expect(connectedRequest).toHaveBeenCalledWith(CUSTODY_RPC.receiptCancel, {
     ownerId: 'agent-team', operationId: discussionOperationId('summary', run.discussionId),
   });

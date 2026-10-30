@@ -93,6 +93,13 @@ test('installs packed tools and SDK without a host checkout, and checks the real
     await put('node_modules/openclaw/package.json', { name: 'openclaw', type: 'module', exports: { './plugin-sdk/core': { types: './core.d.ts', default: './core.js' } } });
     await put('node_modules/openclaw/core.d.ts', 'export interface OpenClawPluginApi { id: string; }\n');
     const cli = path.join(root, 'node_modules/@app-plugin/build/cli.mjs');
+    await run(process.execPath, ['--input-type=module', '-e', [
+      "import assert from 'node:assert/strict';",
+      "import { createResourceScope } from '@app-plugin/sdk/resources';",
+      'const scope = createResourceScope(); let released = 0;',
+      'scope.defer(() => { released++; }); scope.dispose(); scope.dispose();',
+      'assert.equal(released, 1); assert.equal(scope.signal.aborted, true);',
+    ].join('\n')], { cwd: root });
     const check = () => run(process.execPath, [cli, 'check', '--source', pkg], { cwd: root });
     await check();
     // CLI source resolution must not depend on the caller's working directory.

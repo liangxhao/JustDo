@@ -194,6 +194,26 @@ test('withdraws an ACK-pending presenter without releasing its approval owner', 
   release();
 });
 
+test('an ACK-pending owner never presents or sends a decision after the same client reconnects', async () => {
+  const h = setup();
+  let accept!: (runId: string) => void;
+  const runIdReady = new Promise<string>(resolve => { accept = resolve; });
+  const { runId: _runId, ...identity } = h.binding;
+  let generation = 1;
+  const present = vi.fn(async () => 'allow-once' as const);
+  const release = h.routing.claim({ ...identity, runIdReady }, present, undefined, () => generation === 1);
+  const actual = { ...h.approval, request: { ...h.approval.request, runId: 'ack-native-root' } };
+  expect(h.routing.route(actual)).toBe(true);
+  generation++;
+  accept('ack-native-root');
+
+  await vi.waitFor(() => expect(h.routing.ownsRequest(ApprovalKind.Exec, actual.id)).toBe(false));
+  expect(h.request).not.toHaveBeenCalled();
+  expect(present).not.toHaveBeenCalled();
+  expect(h.routing.owns(actual)).toBe(true);
+  release();
+});
+
 test('expires an approval awaiting its native ACK without fabricating run ownership', async () => {
   const h = setup();
   const { runId: _runId, ...identity } = h.binding;
@@ -240,6 +260,32 @@ test('an uncertain native allow-once response never installs a session grant', a
   });
   const release = h.routing.claim(binding, async () => 'allow-session');
   h.routing.route(h.approval);
+  await vi.waitFor(() => expect(h.routing.ownsRequest(ApprovalKind.Exec, h.approval.id)).toBe(false));
+  expect(scope.matches(binding, h.approval)).toBe(false);
+  expect(h.request.mock.calls.filter(([method]) => method === 'exec.approval.resolve')).toHaveLength(1);
+  release();
+  scope.close();
+});
+
+test('a confirmed decision from a retired connection cannot install a session grant', async () => {
+  const h = setup();
+  const scope = new ExternalApprovalSessionScope();
+  const binding = { ...h.binding, clientGeneration: 1, isCurrent: () => true, approvalScope: scope };
+  let generation = 1;
+  let acknowledge!: () => void;
+  h.request.mockImplementation(async method => {
+    if (method === 'sessions.describe') return { session: h.row };
+    await new Promise<void>(resolve => { acknowledge = resolve; });
+    return {};
+  });
+  const release = h.routing.claim(binding, async () => 'allow-session', undefined, () => generation === 1);
+  h.routing.route(h.approval);
+  await vi.waitFor(() => expect(h.request).toHaveBeenCalledWith('exec.approval.resolve', {
+    id: h.approval.id, decision: 'allow-once',
+  }));
+  generation++;
+  acknowledge();
+
   await vi.waitFor(() => expect(h.routing.ownsRequest(ApprovalKind.Exec, h.approval.id)).toBe(false));
   expect(scope.matches(binding, h.approval)).toBe(false);
   expect(h.request.mock.calls.filter(([method]) => method === 'exec.approval.resolve')).toHaveLength(1);

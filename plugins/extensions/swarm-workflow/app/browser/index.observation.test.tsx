@@ -4,6 +4,7 @@ import type {
   AppBrowserHost,
   AppSessionPresentation,
 } from '@app-plugin/sdk/browser';
+import { createResourceScope } from '@app-plugin/sdk/resources';
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, test, vi } from 'vitest';
 
@@ -39,6 +40,7 @@ function fixture() {
   const openWorkspace = vi.fn();
   const host = {
     signal: controller.signal,
+    resources: createResourceScope({ signal: controller.signal }),
     invoke,
     onEvent: (_name: string, listener: (event: SwarmWorkflowChangedEvent) => void) => {
       events.add(listener);

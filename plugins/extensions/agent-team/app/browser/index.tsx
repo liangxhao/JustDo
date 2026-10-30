@@ -5,6 +5,7 @@ import AgentTeamSettingsDialog from './settings/AgentTeamSettingsDialog';
 import { bindBrowserHost } from './ports';
 import { TeamSummary, TeamWorkspace } from './workspace';
 import { TeamApplicationPage, currentFocusedRoom } from './applicationPage';
+import { currentFocusedDocument } from './discussions/teamDiscussionFocus';
 import { parseTeamDiscussionSessionKey } from '../../contracts/teamDiscussion';
 import { application } from './ports';
 import { OPEN_TEAM_RECORDS } from './display/agentTeamHistory';
@@ -58,6 +59,7 @@ export function register(host: AppBrowserHost): () => void {
     if (!identity) return undefined;
     return {
       visible: identity.roomId === currentFocusedRoom(),
+      ownerDocument: currentFocusedDocument(),
       label: `${host.t('teamGroup')} · ${application.metadata.getSnapshot().agent.agents.find(agent => agent.id === identity.agentId)?.name ?? ''}`,
     };
   });

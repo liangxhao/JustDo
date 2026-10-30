@@ -9,7 +9,8 @@ import { useSwarmWorkflowDiscovery } from './useSwarmWorkflowDiscovery';
 import { bindBrowserHost } from './workflowBrowserPorts';
 
 export function register(host: AppBrowserHost): () => void {
-  const release = bindBrowserHost(host);
+  const resources = host.resources.child();
+  resources.defer(bindBrowserHost(host));
   let summary: { sessionId: string; available: boolean } | undefined;
   host.registerSessionPresentation(sessionId => {
     const summaryAvailable = summary?.sessionId === sessionId && summary.available;
@@ -126,5 +127,5 @@ export function register(host: AppBrowserHost): () => void {
     labelKey: 'swarmWorkflowTitle',
     component: SummaryEntry,
   });
-  return release;
+  return resources.dispose;
 }

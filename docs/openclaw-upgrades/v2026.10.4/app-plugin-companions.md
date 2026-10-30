@@ -285,8 +285,8 @@ P2，修复后交叉复核未发现其他可操作的 P1/P2：
 以上使用隔离的请求/模型端口 fixture，不等同于正式安装包与实际模型业务验收。
 
 本节之后是此前补丁方案的历史构建和 review 证据，**不能作为当前公开 SDK 方案的
-验收结论**。当前契约以[应用插件宿主](../../plugins/management/app-plugin-runtime.md)为准，
-剩余正式安装包和真实模型验收见[验收清单](../../plugins/management/app-plugin-runtime.md#尚未完成的生产验证)。
+验收结论**。当前契约以[应用插件宿主](../../plugins/sdk/app-plugin-runtime.md)为准，
+剩余正式安装包和真实模型验收见[验收清单](../../plugins/sdk/app-plugin-runtime.md#尚未完成的生产验证)。
 
 本记录针对独立 Native / Main / Browser 应用插件分支。基线为 `dev` 的
 `4241027a6`，OpenClaw 源码核对 `v2026.10.4` / `383c124cc32`；发布产物使用
@@ -452,7 +452,7 @@ Team、Workflow 的业务与界面继续归各自插件。Runtime Services 只�
 原生 `config-reload.ts`，该设置不跳过显式 plugin lifecycle 的原生应用和权限检查。
 默认监听的预跑观察到配置过渡拒绝和 `config reload superseded`，未自动重试该变更
 请求，也未把这些预跑记为通过。自动监听与显式启停交错、正式安装包、真实模型任务
-及其他平台仍按[应用插件验收清单](../../plugins/management/app-plugin-runtime.md#尚未完成的生产验证) 分别验收。
+及其他平台仍按[应用插件验收清单](../../plugins/sdk/app-plugin-runtime.md#尚未完成的生产验证) 分别验收。
 
 最终 Electron TypeScript 编译通过。低并发完整回归命令为
 `npm test -- --maxWorkers=2 --testTimeout=20000`：10,697 项通过、1 项失败、70 项跳过，

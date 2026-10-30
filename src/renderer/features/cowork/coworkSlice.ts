@@ -22,7 +22,10 @@ import type {
 import type { Model } from '@/features/models/modelSlice';
 
 import type { MessageQuote } from './components/composer/draft/messageQuote';
-import { MESSAGE_QUOTE_KIND, validCollaborationQuote } from './components/composer/draft/messageQuote';
+import {
+  MESSAGE_QUOTE_KIND,
+  validCollaborationQuote,
+} from './components/composer/draft/messageQuote';
 
 export interface DraftAttachment {
   path: string;
@@ -146,7 +149,8 @@ const rememberDirectoryEntry = (state: CoworkState, session: CoworkSessionSummar
     status: session.status,
     pinned: session.pinned,
     agentId: session.agentId,
-    groupId: session.groupId !== undefined ? session.groupId : state.sessionDirectory[index]?.groupId,
+    groupId:
+      session.groupId !== undefined ? session.groupId : state.sessionDirectory[index]?.groupId,
     source: session.source,
     external: session.external,
     nativeSessionKey: session.nativeSessionKey,
@@ -181,7 +185,8 @@ const coworkSlice = createSlice({
         state.currentSession.pinned = selected.pinned;
         state.currentSession.groupId = selected.groupId;
         state.currentSession.updatedAt = Math.max(
-          state.currentSession.updatedAt, selected.updatedAt,
+          state.currentSession.updatedAt,
+          selected.updatedAt,
         );
       }
       state.unreadSessionIds = state.unreadSessionIds.filter(
@@ -328,7 +333,8 @@ const coworkSlice = createSlice({
             ...(preservedModelRef ? { modelRef: preservedModelRef } : {}),
             updatedAt: Math.max(
               incomingSession.updatedAt,
-              state.sessionDirectory?.find(session => session.id === incomingSession.id)?.updatedAt ?? 0,
+              state.sessionDirectory?.find(session => session.id === incomingSession.id)
+                ?.updatedAt ?? 0,
               state.sessions.find(session => session.id === incomingSession.id)?.updatedAt ?? 0,
               state.currentSession?.id === incomingSession.id ? state.currentSession.updatedAt : 0,
             ),
@@ -565,10 +571,16 @@ const coworkSlice = createSlice({
     },
 
     enqueuePendingInteraction(state, action: PayloadAction<CoworkInteractionRequest>) {
-      const alreadyQueued = state.pendingInteractions.some(
+      const alreadyQueued = state.pendingInteractions.find(
         interaction => interaction.requestId === action.payload.requestId,
       );
-      if (alreadyQueued) return;
+      if (alreadyQueued) {
+        // Presentation refreshes must not replace the frozen question snapshot
+        // or reset answer drafts in an already mounted question component.
+        alreadyQueued.origin = action.payload.origin;
+        alreadyQueued.sessionId = action.payload.sessionId;
+        return;
+      }
       state.pendingInteractions.push(action.payload);
     },
 

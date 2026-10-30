@@ -102,6 +102,7 @@ type MainWindowFactoryOptions = {
   getIconPath: () => string | undefined;
   getRendererPreferenceStore: () => { get(key: string): unknown };
   getBrowserDownloadSettings: () => BrowserDownloadSettings;
+  isBrowserGuestAutomating?: (webContentsId: number) => boolean;
   getProxyCredentials: () => {
     host: string;
     password: string;
@@ -656,6 +657,7 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
         return { action: 'deny' };
       });
       guestContents.on('before-input-event', (event, input) => {
+        if (options.isBrowserGuestAutomating?.(guestContents.id)) return;
         const shortcutAction =
           input.type === 'keyDown' && !input.isAutoRepeat
             ? resolveBrowserPanelShortcutAction(
@@ -716,6 +718,7 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
         }
       });
       guestContents.on('context-menu', (_contextEvent, params) => {
+        if (options.isBrowserGuestAutomating?.(guestContents.id)) return;
         const template: Electron.MenuItemConstructorOptions[] = [];
         if (params.linkURL && isAllowedBrowserPanelNavigationUrl(params.linkURL)) {
           template.push(

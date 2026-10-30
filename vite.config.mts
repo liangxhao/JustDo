@@ -46,6 +46,9 @@ export default defineConfig({
         entry: 'src/main/main.ts',
         vite: {
           root: projectRoot,
+          resolve: { alias: {
+            '@app-plugin/sdk/execution-source': path.join(projectRoot, 'plugins/sdk/app-plugin-sdk/execution-source.ts'),
+          } },
           plugins: [createApplicationLicensePlugin({ repoRoot: projectRoot, scope: 'main' })],
           build: {
             sourcemap: !isProductionBuild,
@@ -190,6 +193,7 @@ export default defineConfig({
   base: process.env.NODE_ENV === 'development' ? '/' : './',
   resolve: {
     alias: {
+      '@app-plugin/sdk/execution-source': path.join(projectRoot, 'plugins/sdk/app-plugin-sdk/execution-source.ts'),
       '@shared': path.resolve(projectRoot, './src/shared'),
       '@': path.resolve(projectRoot, './src/renderer'),
       // Use mermaid core build (no dynamic imports, all diagrams statically bundled)

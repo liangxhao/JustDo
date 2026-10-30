@@ -3,7 +3,11 @@ import path from 'node:path';
 
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
-import { BROWSER_PANEL_PARTITION } from '../../../shared/browser/browser';
+import {
+  BROWSER_GUEST_COMMAND_CHANNEL,
+  BROWSER_PANEL_PARTITION,
+  BrowserIpc,
+} from '../../../shared/browser/browser';
 import { registerBackgroundBrowserGuest } from '../../browser/backgroundBrowserGuestRegistry';
 
 const mocks = vi.hoisted(() => ({
@@ -18,6 +22,8 @@ const mocks = vi.hoisted(() => ({
   registerDiagnostics: vi.fn(),
   attachWidget: vi.fn(),
   attachWebpage: vi.fn(),
+  automating: vi.fn(),
+  menuPopup: vi.fn(),
 }));
 vi.mock('electron', () => ({
   app: { getPath: mocks.getPath },
@@ -29,6 +35,7 @@ vi.mock('electron', () => ({
   dialog: { showSaveDialog: mocks.showSaveDialog },
   ipcMain: { on: vi.fn(), off: vi.fn(), handle: vi.fn(), removeHandler: vi.fn() },
   session: { fromPartition: mocks.fromPartition },
+  Menu: { buildFromTemplate: () => ({ popup: mocks.menuPopup }) },
 }));
 vi.mock('../../browser/data/browserDataImportService', () => ({
   recordBrowserDownload: mocks.record,
@@ -95,6 +102,7 @@ let origin: EventEmitter & {
 
 beforeEach(() => {
   vi.useFakeTimers();
+  mocks.automating.mockReset().mockReturnValue(false);
   mocks.claim.mockReset();
   mocks.attachWidget.mockReturnValue(false);
   mocks.attachWebpage.mockReturnValue(false);
@@ -111,6 +119,7 @@ beforeEach(() => {
     webContents: Object.assign(new EventEmitter(), {
       session: makeSession(),
       setWindowOpenHandler: vi.fn(),
+      send: vi.fn(),
     }),
   });
   mocks.createWindow.mockReturnValue(window);
@@ -129,6 +138,7 @@ beforeEach(() => {
     getIconPath: () => undefined,
     getRendererPreferenceStore: () => ({ get: vi.fn(), set: vi.fn() }),
     getBrowserDownloadSettings: () => settings,
+    isBrowserGuestAutomating: mocks.automating,
     getProxyCredentials: () => null,
     getTitleBarOverlay: () => ({}),
     showSystemMenu: vi.fn(),
@@ -156,6 +166,45 @@ beforeEach(() => {
     {},
     origin,
   );
+});
+
+test('keeps an automated guest input out of shell shortcuts and native menus until its exact lease ends', () => {
+  const sendToGuest = vi.fn();
+  Object.assign(origin, {
+    send: sendToGuest,
+    navigationHistory: { canGoBack: () => false, canGoForward: () => false },
+    reload: vi.fn(),
+  });
+  const host = (window as unknown as { webContents: { send: ReturnType<typeof vi.fn> } })
+    .webContents;
+  const preventDefault = vi.fn();
+  const key = {
+    type: 'keyDown',
+    key: 'p',
+    control: true,
+    alt: false,
+    shift: false,
+    meta: false,
+    isAutoRepeat: false,
+  };
+  mocks.automating.mockImplementation(id => id === origin.id);
+  origin.emit('before-input-event', { preventDefault }, key);
+  origin.emit('before-input-event', { preventDefault }, { ...key, key: 'l' });
+  origin.emit('context-menu', {}, {});
+  expect(mocks.automating).toHaveBeenCalledWith(origin.id);
+  expect(preventDefault).not.toHaveBeenCalled();
+  expect(host.send).not.toHaveBeenCalledWith(BrowserIpc.PanelShortcutAction, expect.anything());
+  expect(sendToGuest).not.toHaveBeenCalled();
+  expect(mocks.menuPopup).not.toHaveBeenCalled();
+
+  mocks.automating.mockReturnValue(false);
+  origin.emit('before-input-event', { preventDefault }, key);
+  origin.emit('before-input-event', { preventDefault }, { ...key, key: 'l' });
+  origin.emit('context-menu', {}, {});
+  expect(host.send).toHaveBeenCalledWith(BrowserIpc.PanelShortcutAction, 'files');
+  expect(sendToGuest).toHaveBeenCalledWith(BROWSER_GUEST_COMMAND_CHANNEL, 'focus-address');
+  expect(mocks.menuPopup).toHaveBeenCalledOnce();
+  expect(preventDefault).toHaveBeenCalledTimes(2);
 });
 
 afterEach(() => {

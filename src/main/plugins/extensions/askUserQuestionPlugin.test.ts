@@ -4,6 +4,10 @@ import path from 'node:path';
 import { Value } from 'typebox/value';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
+vi.mock('openclaw/plugin-sdk/session-store-runtime', () => ({
+  getSessionEntry: vi.fn(),
+}));
+
 import {
   ASK_USER_QUESTION_DESCRIPTION,
   ASK_USER_TIMEOUT_MINUTES,
@@ -25,6 +29,16 @@ const question = {
     { id: 'production', label: 'Production' },
   ],
 };
+
+const invocation = (sessionKey = 'justdo:session-1') => ({
+  source: {
+    sessionKey,
+    nativeSessionId: 'native-session-1',
+    toolCallId: 'call-1',
+    runId: 'native-run',
+  },
+  assertCurrent: () => {},
+});
 
 const logger = {
   debug: vi.fn(),
@@ -56,7 +70,7 @@ describe('AskUserQuestion extension', () => {
     );
   });
 
-  test('uses only native plugin services, scoped RPCs, and JustDo root sessions', () => {
+  test('uses current Native V2 invocation authority for root and delegated sessions', () => {
     const registerGatewayMethod = vi.fn();
     const registerService = vi.fn();
     const registerTool = vi.fn();
@@ -67,27 +81,39 @@ describe('AskUserQuestion extension', () => {
       registerGatewayMethod,
       registerService,
       registerTool,
+      on: vi.fn(),
     } as never);
 
     expect(registerService).toHaveBeenCalledOnce();
     expect(registerTool).toHaveBeenCalledOnce();
-    expect(registerTool.mock.calls[0][1]).toEqual({ name: 'ask_user_question' });
+    expect(registerTool.mock.calls[0][1]).toEqual({
+      name: 'ask_user_question',
+    });
     expect(OpenClawToolName.ASK_USER_QUESTION).toBe('ask_user_question');
     expect(registerGatewayMethod.mock.calls.map(call => [call[0], call[2]])).toEqual([
       ['askUserQuestion.list', { scope: 'operator.read' }],
       ['askUserQuestion.resolve', { scope: 'operator.write' }],
     ]);
     const factory = registerTool.mock.calls[0][0];
-    expect(factory({ sessionKey: 'agent:main:subagent:child' })).toBeNull();
-    expect(factory({ sessionKey: 'agent:main:unrelated:session' })).toBeNull();
-    expect(factory({ sessionKey: 'agent:alice:justdo-team:group:room' })).toBeNull();
-    expect(factory({ sessionKey: 'agent:alice:agent-team:group:room' })).toMatchObject({
-      name: 'ask_user_question',
-    });
-    expect(factory({ sessionKey: 'agent:main:justdo:session-1' })).toMatchObject({
-      name: 'ask_user_question',
-      description: ASK_USER_QUESTION_DESCRIPTION,
-    });
+    expect(factory.contextVersion).toBe(2);
+    expect(factory.create({ sessionKey: 'agent:main:subagent:child' })).toBeNull();
+    for (const sessionKey of [
+      'agent:main:subagent:child',
+      'agent:main:unrelated:session',
+      'agent:alice:agent-team:group:room',
+      'agent:main:justdo:session-1',
+    ]) {
+      expect(
+        factory.create({
+          sessionKey,
+          sessionId: 'native-child',
+          assertInvocationCurrent: () => {},
+        }),
+      ).toMatchObject({
+        name: 'ask_user_question',
+        description: ASK_USER_QUESTION_DESCRIPTION,
+      });
+    }
   });
 
   test('owns pending state and resolution inside the extension', async () => {
@@ -95,13 +121,20 @@ describe('AskUserQuestion extension', () => {
     const emit = vi.fn();
     manager.setGatewayEventEmitter(emit);
 
-    const response = manager.request([question], { mode: 'required' }, 'justdo:session-1');
+    const response = manager.request([question], { mode: 'required' }, invocation());
     const request = manager.list()[0];
-    expect(emit).toHaveBeenCalledWith('requested', request, { scope: 'operator.read' });
-
-    manager.resolve(request.requestId, 'submit', {
-      deploy_target: { selected: ['staging'] },
+    expect(emit).toHaveBeenCalledWith('requested', request, {
+      scope: 'operator.read',
     });
+
+    manager.resolve(
+      request.requestId,
+      'submit',
+      {
+        deploy_target: { selected: ['staging'] },
+      },
+      request.source,
+    );
 
     await expect(response).resolves.toEqual({
       status: 'answered',
@@ -129,7 +162,7 @@ describe('AskUserQuestion extension', () => {
     const defaulted = manager.request(
       [withDefaults],
       { mode: 'timeout', timeoutMinutes: 1, onTimeout: 'use-defaults' },
-      'justdo:session-1',
+      invocation(),
     );
     await vi.advanceTimersByTimeAsync(60_000);
     await expect(defaulted).resolves.toEqual({
@@ -141,7 +174,7 @@ describe('AskUserQuestion extension', () => {
     const modelDecides = manager.request(
       [question],
       { mode: 'timeout', timeoutMinutes: 1, onTimeout: 'model-decides' },
-      'justdo:session-1',
+      invocation(),
     );
     await vi.advanceTimersByTimeAsync(60_000);
     await expect(modelDecides).resolves.toEqual({ status: 'timeout' });
@@ -155,7 +188,7 @@ describe('AskUserQuestion extension', () => {
     controller.abort();
 
     expect(() =>
-      manager.request([question], { mode: 'required' }, 'justdo:session-1', controller.signal),
+      manager.request([question], { mode: 'required' }, invocation(), controller.signal),
     ).toThrow();
     expect(manager.list()).toEqual([]);
     expect(emit).not.toHaveBeenCalled();
@@ -173,7 +206,9 @@ describe('AskUserQuestion extension', () => {
 
     expect(manifest.contracts.tools).toEqual([OpenClawToolName.ASK_USER_QUESTION]);
     expect(manifest.configSchema.properties).toEqual({
-      timeoutMinutes: expect.objectContaining({ default: ASK_USER_TIMEOUT_MINUTES }),
+      timeoutMinutes: expect.objectContaining({
+        default: ASK_USER_TIMEOUT_MINUTES,
+      }),
     });
     expect(JSON.stringify(manifest)).not.toContain('callback');
     expect(JSON.stringify(manifest)).not.toContain('secret');

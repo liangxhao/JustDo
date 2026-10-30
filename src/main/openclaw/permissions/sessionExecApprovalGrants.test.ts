@@ -6,9 +6,7 @@ import {
   SessionExecApprovalGrants,
 } from './sessionExecApprovalGrants';
 
-const request = (
-  overrides: Partial<ExecApprovalRequest['request']> = {},
-): ExecApprovalRequest => ({
+const request = (overrides: Partial<ExecApprovalRequest['request']> = {}): ExecApprovalRequest => ({
   id: 'approval-1',
   createdAtMs: 1,
   expiresAtMs: Date.now() + 60_000,
@@ -19,6 +17,7 @@ const request = (
     host: 'gateway',
     agentId: 'main',
     sessionKey: 'agent:main:justdo:session-1',
+    sessionId: 'native-session-1',
     envKeys: ['PATH', 'CI'],
     systemRunBinding: { envHash: 'env-hash-1' },
     systemRunPlan: { mutableFileOperand: { path: 'script.ps1', sha256: 'hash-1' } },
@@ -40,6 +39,7 @@ describe('SessionExecApprovalGrants', () => {
 
   it.each([
     { sessionKey: 'agent:main:justdo:session-2' },
+    { sessionId: 'replacement-native-session' },
     { command: 'git push' },
     { commandArgv: ['git', 'status', '--short'] },
     { cwd: 'E:/workspace/other' },
@@ -67,6 +67,7 @@ describe('SessionExecApprovalGrants', () => {
   });
 
   it('rejects requests without a trustworthy session and command identity', () => {
+    expect(buildSessionExecApprovalFingerprint(request({ sessionId: null }))).toBeNull();
     expect(buildSessionExecApprovalFingerprint(request({ sessionKey: null }))).toBeNull();
     expect(
       buildSessionExecApprovalFingerprint(request({ command: undefined, commandArgv: [] })),
@@ -82,5 +83,42 @@ describe('SessionExecApprovalGrants', () => {
 
     expect(grants.matches(request({ command: 'git status ' }))).toBe(false);
     expect(grants.matches(request({ cwd: 'E:/workspace/project ' }))).toBe(false);
+  });
+
+  it('cannot revive a cleared grant after an old approval response', () => {
+    const grants = new SessionExecApprovalGrants();
+    const old = grants.prepareGrant(request())!;
+    const peer = grants.prepareGrant(request({ sessionKey: 'agent:main:subagent:peer' }))!;
+
+    grants.clearSession('agent:main:justdo:session-1');
+
+    expect(old.commit()).toBe(false);
+    expect(peer.commit()).toBe(true);
+    expect(grants.matches(request())).toBe(false);
+    expect(grants.matches(request({ sessionKey: 'agent:main:subagent:peer' }))).toBe(true);
+  });
+
+  it('commits only the immutable identity captured before the Native request', () => {
+    const grants = new SessionExecApprovalGrants();
+    const pending = request();
+    const ticket = grants.prepareGrant(pending)!;
+    pending.request.sessionId = 'new-native-session';
+
+    expect(ticket.commit()).toBe(true);
+    expect(ticket.commit()).toBe(false);
+    expect(grants.matches(pending)).toBe(false);
+    expect(grants.matches(request())).toBe(true);
+  });
+
+  it('retains per-source clear evidence while a pending request list is still being read', () => {
+    const grants = new SessionExecApprovalGrants();
+    const read = grants.captureRequest()!;
+    grants.clearSession('agent:main:justdo:session-1');
+
+    expect(read.isCurrent(request())).toBe(false);
+    expect(read.isCurrent(request({ sessionKey: 'agent:main:subagent:peer' }))).toBe(true);
+    read.release();
+    expect(read.isCurrent(request({ sessionKey: 'agent:main:subagent:peer' }))).toBe(false);
+    expect(grants.captureRequest()!.isCurrent(request())).toBe(true);
   });
 });

@@ -1,6 +1,8 @@
 # 产品运行计时的终态证据收敛
 
-状态：未实施。2026-10-24 发现；整理时复核 `src/main/ipc/cowork/sessions.ts`，下述后备规则仍存在。本文记录产品计时的实现缺口，不改变[执行引擎](../architecture/05-agent-engine.md)要求的终态权威。
+状态：桌面计时的后备结算仍待收敛。2026-11-07 复核 `src/main/ipc/cowork/sessions.ts`，下述后备规则仍存在。本文记录产品计时的实现缺口，不改变[执行引擎](../architecture/05-agent-engine.md)要求的终态权威。
+
+只读 CLI 与历史 app-server 会话已由其外部执行 owner 管理回执；`reconcileRuntimeStatus` 对这些来源提前返回，桌面观察不能创建、重开、绑定或结束其计时。该边界已有 `sessions.test.ts` 回归，不属于剩余改造范围；下文针对仍进入桌面后备分支的会话。
 
 ## 已确认的缺口
 

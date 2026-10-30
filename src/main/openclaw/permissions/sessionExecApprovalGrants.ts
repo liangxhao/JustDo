@@ -1,6 +1,7 @@
 import type { ExecApprovalRequest } from '../../../shared/security/approvals';
 
 const MAX_GRANTS_PER_SESSION = 256;
+const MAX_GRANT_SESSIONS = 1_024;
 
 const exactOptionalString = (value: unknown): string | null | undefined => {
   if (value === null || value === undefined) return null;
@@ -35,6 +36,8 @@ export const buildSessionExecApprovalFingerprint = (
 ): string | null => {
   const payload = request.request;
   if (!payload || !resolveSessionKey(request)) return null;
+  const sessionId = exactOptionalString(payload.sessionId);
+  if (!sessionId || sessionId !== sessionId.trim()) return null;
 
   const command = exactOptionalString(payload.command);
   const commandArgv = exactStringArray(payload.commandArgv);
@@ -58,10 +61,20 @@ export const buildSessionExecApprovalFingerprint = (
     payload.turnSourceAccountId,
   ].map(exactOptionalString);
   if (exactFields.some(value => value === undefined)) return null;
-  const [cwd, host, agentId, security, ask, resolvedPath, turnSourceChannel, turnSourceTo,
-    turnSourceAccountId] = exactFields;
+  const [
+    cwd,
+    host,
+    agentId,
+    security,
+    ask,
+    resolvedPath,
+    turnSourceChannel,
+    turnSourceTo,
+    turnSourceAccountId,
+  ] = exactFields;
 
   return JSON.stringify({
+    sessionId,
     command,
     commandArgv,
     cwd,
@@ -82,11 +95,67 @@ export const buildSessionExecApprovalFingerprint = (
 
 export class SessionExecApprovalGrants {
   private readonly fingerprintsBySession = new Map<string, Set<string>>();
+  private readonly pendingBySession = new Map<string, Set<object>>();
+  private readonly reads = new Set<{ cleared: Set<string>; overflow: boolean }>();
+
+  /** Cover the initial list await, before its exact source key is known. */
+  captureRequest(): { isCurrent(request: ExecApprovalRequest): boolean; release(): void } | null {
+    if (this.reads.size >= MAX_GRANTS_PER_SESSION) return null;
+    const read = { cleared: new Set<string>(), overflow: false };
+    this.reads.add(read);
+    return {
+      isCurrent: request => {
+        const key = resolveSessionKey(request);
+        return Boolean(key && this.reads.has(read) && !read.overflow && !read.cleared.has(key));
+      },
+      release: () => {
+        this.reads.delete(read);
+      },
+    };
+  }
+
+  /** A reset/stop must invalidate an in-flight Native allow-once response. */
+  prepareGrant(request: ExecApprovalRequest): { commit(): boolean; release(): void } | null {
+    const sessionKey = resolveSessionKey(request);
+    const fingerprint = buildSessionExecApprovalFingerprint(request);
+    if (!sessionKey || !fingerprint) return null;
+    if (!this.pendingBySession.has(sessionKey) && this.pendingBySession.size >= MAX_GRANT_SESSIONS)
+      return null;
+    const pending = this.pendingBySession.get(sessionKey) ?? new Set<object>();
+    if (pending.size >= MAX_GRANTS_PER_SESSION) return null;
+    const ticket = {};
+    pending.add(ticket);
+    this.pendingBySession.set(sessionKey, pending);
+    const release = () => {
+      pending.delete(ticket);
+      if (!pending.size && this.pendingBySession.get(sessionKey) === pending)
+        this.pendingBySession.delete(sessionKey);
+    };
+    return {
+      commit: () => {
+        if (this.pendingBySession.get(sessionKey) !== pending || !pending.has(ticket)) return false;
+        // Use the identity captured before the await, never a mutable request.
+        const granted = this.addFingerprint(sessionKey, fingerprint);
+        release();
+        return granted;
+      },
+      release,
+    };
+  }
 
   grant(request: ExecApprovalRequest): boolean {
     const sessionKey = resolveSessionKey(request);
     const fingerprint = buildSessionExecApprovalFingerprint(request);
     if (!sessionKey || !fingerprint) return false;
+    return this.addFingerprint(sessionKey, fingerprint);
+  }
+
+  private addFingerprint(sessionKey: string, fingerprint: string): boolean {
+    if (
+      !this.fingerprintsBySession.has(sessionKey) &&
+      this.fingerprintsBySession.size >= MAX_GRANT_SESSIONS
+    )
+      return false;
 
     const fingerprints = this.fingerprintsBySession.get(sessionKey) ?? new Set<string>();
     fingerprints.delete(fingerprint);
@@ -104,14 +173,21 @@ export class SessionExecApprovalGrants {
     const sessionKey = resolveSessionKey(request);
     const fingerprint = buildSessionExecApprovalFingerprint(request);
     return Boolean(
-      sessionKey &&
-        fingerprint &&
-        this.fingerprintsBySession.get(sessionKey)?.has(fingerprint),
+      sessionKey && fingerprint && this.fingerprintsBySession.get(sessionKey)?.has(fingerprint),
     );
   }
 
   clearSession(sessionKey: string): void {
     const normalized = sessionKey.trim();
-    if (normalized) this.fingerprintsBySession.delete(normalized);
+    if (normalized) {
+      for (const read of this.reads) {
+        if (read.cleared.size >= MAX_GRANT_SESSIONS) {
+          read.overflow = true;
+          read.cleared.clear();
+        } else if (!read.overflow) read.cleared.add(normalized);
+      }
+      this.fingerprintsBySession.delete(normalized);
+      this.pendingBySession.delete(normalized);
+    }
   }
 }

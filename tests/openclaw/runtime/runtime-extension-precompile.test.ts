@@ -158,8 +158,11 @@ describe('local extension packaging', () => {
     const secondBuild = fs.readFileSync(path.join(outputDir, 'index.js'), 'utf8');
     expect(secondBuild).not.toBe(firstBuild);
     expect(secondBuild).toContain('testBuildRevision');
-    expect(secondBuild.includes('runtimeServices.ownerBinding')).toBe(true);
-    expect(secondBuild.includes('runtimeServices.historyDetails')).toBe(true);
+    expect(secondBuild).toContain('runtimeServices.ownerBinding');
+    expect(secondBuild).toContain('runtimeServices.historyDetails');
+    expect(secondBuild).toContain('runtimeServices.custody.inspect');
+    expect(secondBuild).toContain('runtimeServices.executionAdmission');
+    expect(secondBuild).toContain('runtimeServices.capabilities');
     expect(secondBuild).not.toContain('teamDiscussion.offlineControl');
     expect(secondBuild).not.toContain('teamDiscussion.history');
     expect(secondBuild).not.toMatch(/from ["']\.\.\/.*src\//);

@@ -3,6 +3,68 @@ export const MAX_ASK_USER_HEADER_LENGTH = 12;
 export const ASK_USER_ID_PATTERN = '^[A-Za-z][A-Za-z0-9_-]{0,63}$';
 export const ASK_USER_QUESTION_TOOL_NAME = 'ask_user_question';
 
+/** Native factory identity, never supplied by model tool arguments. */
+export interface AskUserSource {
+  sessionKey: string;
+  nativeSessionId: string;
+  toolCallId: string;
+  runId: string;
+  lifecycleRevision?: string | null;
+  agentId?: string;
+  ownerPluginId?: string;
+}
+export const parseAskUserSource = (value: unknown): AskUserSource | null => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const source = value as Record<string, unknown>;
+  const text = (key: string, max: number): string | null =>
+    typeof source[key] === 'string' &&
+    source[key].length > 0 &&
+    source[key].length <= max &&
+    source[key] === source[key].trim() &&
+    !/[\u0000-\u001f]/u.test(source[key])
+      ? source[key]
+      : null;
+  const sessionKey = text('sessionKey', 512);
+  const nativeSessionId = text('nativeSessionId', 256);
+  const toolCallId = text('toolCallId', 256);
+  const runId = text('runId', 256);
+  const lifecycleRevision: string | null | undefined =
+    source.lifecycleRevision === undefined
+      ? undefined
+      : source.lifecycleRevision === null
+        ? null
+        : text('lifecycleRevision', 256);
+  const agentId = source.agentId === undefined ? undefined : text('agentId', 128);
+  const ownerPluginId = source.ownerPluginId === undefined ? undefined : text('ownerPluginId', 96);
+  return sessionKey &&
+    nativeSessionId &&
+    toolCallId &&
+    runId &&
+    agentId !== null &&
+    ownerPluginId !== null &&
+    (source.lifecycleRevision === undefined ||
+      source.lifecycleRevision === null ||
+      lifecycleRevision !== null)
+    ? {
+        sessionKey,
+        nativeSessionId,
+        toolCallId,
+        runId,
+        ...(lifecycleRevision !== undefined ? { lifecycleRevision } : {}),
+        ...(agentId ? { agentId } : {}),
+        ...(ownerPluginId ? { ownerPluginId } : {}),
+      }
+    : null;
+};
+export const sameAskUserSource = (left: AskUserSource, right: AskUserSource): boolean =>
+  left.sessionKey === right.sessionKey &&
+  left.nativeSessionId === right.nativeSessionId &&
+  left.toolCallId === right.toolCallId &&
+  left.runId === right.runId &&
+  left.lifecycleRevision === right.lifecycleRevision &&
+  left.agentId === right.agentId &&
+  left.ownerPluginId === right.ownerPluginId;
+
 type QuestionOption = {
   id: string;
   label: string;

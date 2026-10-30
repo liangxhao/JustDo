@@ -403,6 +403,8 @@ export const chatTranslations = {
     coworkQuestionTimeoutCountdown: '剩余 {countdown}',
     coworkQuestionDefaultChoice: '默认',
     coworkQuestionWizardTitle: '需要回应',
+    coworkPendingQuestions: '待回答的问题',
+    coworkQuestionQueueItem: '问题 {index}',
     coworkQuestionWizardSkip: '跳过',
     coworkQuestionWizardSkipped: '已跳过',
     coworkQuestionWizardPrevious: '上一个',
@@ -1106,7 +1108,8 @@ export const chatTranslations = {
     coworkYouLabel: 'You',
     coworkWidgetLoading: 'Loading interactive view…',
     coworkWidgetLoadCurrent: 'Load',
-    coworkWidgetUnsupported: 'This card type or its required capabilities are unsupported. Regenerate the content.',
+    coworkWidgetUnsupported:
+      'This card type or its required capabilities are unsupported. Regenerate the content.',
     coworkWidgetLoadFailed:
       'View unavailable. Check the connection and browser proxy, then reload.',
     coworkWidgetStop: 'Unload',
@@ -1155,6 +1158,8 @@ export const chatTranslations = {
     coworkQuestionTimeoutCountdown: '{countdown} remaining',
     coworkQuestionDefaultChoice: 'Default',
     coworkQuestionWizardTitle: 'Response Needed',
+    coworkPendingQuestions: 'Pending questions',
+    coworkQuestionQueueItem: 'Question {index}',
     coworkQuestionWizardSkip: 'Skip',
     coworkQuestionWizardSkipped: 'Skipped',
     coworkQuestionWizardPrevious: 'Previous',

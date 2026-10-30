@@ -1,7 +1,7 @@
 'use strict';
 
 // Opt-in real Electron probe. No Gateway, application launch or user browser profile.
-// node scripts/test/browser/verify-background-browser.cjs [--dependencies-root <checkout>]
+// node scripts/test/browser/verify-background-browser.cjs [--dependencies-root <checkout>] [--sidebar-tabs]
 const assert = require('node:assert/strict');
 const { spawn } = require('node:child_process');
 const fs = require('node:fs');
@@ -10,12 +10,19 @@ const path = require('node:path');
 const root = path.resolve(__dirname, '../../..');
 const args = process.argv.slice(2);
 const flags = new Map();
-for (let index = 0; index < args.length; index += 2) {
+for (let index = 0; index < args.length;) {
+  if (args[index] === '--sidebar-tabs') {
+    assert.ok(!flags.has(args[index]), 'Duplicate --sidebar-tabs');
+    flags.set(args[index], true);
+    index += 1;
+    continue;
+  }
   assert.ok(
     args[index] === '--dependencies-root' && args[index + 1] && !flags.has(args[index]),
-    'Expected optional --dependencies-root <checkout>',
+    'Expected optional --dependencies-root <checkout> and --sidebar-tabs',
   );
   flags.set(args[index], args[index + 1]);
+  index += 2;
 }
 const dependencies = flags.has('--dependencies-root')
   ? path.resolve(flags.get('--dependencies-root'))
@@ -58,7 +65,8 @@ async function main() {
       `export { isSameBrowserSession } from ${JSON.stringify(path.join(root, 'src/main/browser/browserSessionIdentity.ts'))};`,
       `export { recordImportedBrowserProfile } from ${JSON.stringify(path.join(root, 'src/main/browser/data/browserDataImportService.ts'))};`,
       `export { BrowserAgentBridge } from ${JSON.stringify(path.join(root, 'src/main/browser/browserAgentBridge.ts'))};`,
-      `export { BrowserIpc } from ${JSON.stringify(path.join(root, 'src/shared/browser/browser.ts'))};`,
+      `export { BrowserIpc, BROWSER_AGENT_PANEL_TARGET_ID } from ${JSON.stringify(path.join(root, 'src/shared/browser/browser.ts'))};`,
+      `export { BrowserInterventionIpc } from ${JSON.stringify(path.join(root, 'src/shared/browser/browserIntervention.ts'))};`,
       `export { EmbeddedBrowserGatewayBridge } from ${JSON.stringify(path.join(root, 'src/main/browser/embeddedBrowserGatewayBridge.ts'))};`,
       `export { BrowserAgentCdpInput } from ${JSON.stringify(path.join(root, 'src/main/browser/agent/browserAgentInput.ts'))};`,
       `export { executeAct } from ${JSON.stringify(path.join(root, 'src/main/browser/agent/browserAgentActions.ts'))};`,
@@ -75,6 +83,20 @@ async function main() {
     external: ['electron'],
     packages: 'external',
   });
+  if (flags.has('--sidebar-tabs')) {
+    await require(resolveDependency('esbuild')).build({
+      stdin: {
+        contents: `export { retainBrowserPanelFocus } from ${JSON.stringify(path.join(root, 'src/renderer/features/browser/browserPanelFocus.ts'))};`,
+        resolveDir: root,
+        loader: 'ts',
+      },
+      outfile: path.join(output, 'sidebar-focus.browser.js'),
+      bundle: true,
+      platform: 'browser',
+      format: 'iife',
+      globalName: 'BrowserPanelFocus',
+    });
+  }
 
   const env = Object.fromEntries(
     Object.entries(process.env).filter(
@@ -105,7 +127,13 @@ async function main() {
   const stderr = fs.createWriteStream(path.join(runRoot, 'stderr.log'));
   const child = spawn(
     electron,
-    [path.join(root, 'tests/browser/background/main.cjs'), output, runRoot, runtimeRoot],
+    [
+      path.join(root, 'tests/browser/background/main.cjs'),
+      output,
+      runRoot,
+      runtimeRoot,
+      ...(flags.has('--sidebar-tabs') ? ['sidebar-tabs'] : []),
+    ],
     {
       cwd: root,
       env,

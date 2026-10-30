@@ -17,6 +17,17 @@ vi.mock('../../cowork/coworkLogger', () => ({ coworkLog: vi.fn() }));
 const sessionId = 'session-1';
 const nativeIdentity = { sessionId: 'native-session-1', lifecycleRevision: 'revision-1' };
 const sessionKey = 'agent:main:justdo:session-1';
+const createQuestionInvocation = () => ({
+  source: {
+    sessionKey,
+    nativeSessionId: nativeIdentity.sessionId,
+    lifecycleRevision: nativeIdentity.lifecycleRevision,
+    runId: 'parent-run',
+    toolCallId: 'call-question',
+    agentId: 'main',
+  },
+  assertCurrent: vi.fn(),
+});
 
 const goal = (status: SessionGoal['status'] = SessionGoalStatus.Active): SessionGoal => ({
   schemaVersion: 1,
@@ -150,7 +161,9 @@ it.each([false, true])(
       });
       const waitPolicy = buildWaitPolicy(undefined, questions)!;
       expect(waitPolicy).toMatchObject({ mode: 'timeout', timeoutMinutes: 10 });
-      const response = manager.request(questions, waitPolicy, sessionKey);
+      const invocation = createQuestionInvocation();
+      const response = manager.request(questions, waitPolicy, invocation);
+      expect(manager.list()[0].source).toEqual(invocation.source);
       await vi.advanceTimersByTimeAsync(10 * 60_000);
       const result = await response;
       expect(result).toMatchObject(
@@ -205,7 +218,8 @@ it('keeps an essential Goal question waiting when timeoutEnabled is explicitly f
     await harness.coordinator.handleLifecycle({
       runId: 'parent-run', sessionKey, sessionId: nativeIdentity.sessionId, phase: 'start',
     });
-    response = manager.request(questions, buildWaitPolicy(false, questions)!, sessionKey);
+    const invocation = createQuestionInvocation();
+    response = manager.request(questions, buildWaitPolicy(false, questions)!, invocation);
     const completed = vi.fn();
     void response.then(completed);
 
@@ -213,6 +227,7 @@ it('keeps an essential Goal question waiting when timeoutEnabled is explicitly f
 
     expect(completed).not.toHaveBeenCalled();
     expect(manager.list()).toHaveLength(1);
+    expect(manager.list()[0].source).toEqual(invocation.source);
     expect(harness.coordinator.getSnapshot(sessionId)?.phase).toBe(GoalExecutionPhase.Running);
     expect(harness.request).not.toHaveBeenCalled();
   } finally {

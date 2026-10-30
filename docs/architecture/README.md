@@ -11,7 +11,7 @@
 | 进程如何通信           | [进程模型](03-process-model.md)                             | preload、IPC、Gateway、guest 与请求寿命             |
 | 一次聊天如何推进       | [Cowork](04-cowork-system.md)                               | 产品会话、发送准备、停止及恢复的组合流程            |
 | 运行时如何准备与恢复   | [执行引擎](05-agent-engine.md)                              | Manager/Adapter、配置发布、执行准入及原生回执       |
-| 插件如何安装与应用     | [插件系统](../plugins/management/plugin-system.md)          | 文件事务、原生 inventory、配置及打包边界            |
+| 插件如何安装与应用     | [插件系统](07-plugin-system.md)          | 文件事务、原生 inventory、配置及打包边界            |
 | 定时任务如何交付结果   | [定时任务](08-scheduled-tasks.md)                           | 原生 cron 与产品收件箱、同步及删除补偿              |
 | 数据保存在哪里         | [数据存储](10-data-storage.md)                              | schema、持久身份、事务、索引及恢复                  |
 | 信任与权限如何划分     | [安全模型](11-security-model.md)                            | Electron、文件、网络、凭据及代码信任                |
@@ -20,11 +20,11 @@
 | 如何决定新能力放在哪层 | [集成决策](14-openclaw-frontend-boundary.md)                | 原生 API、Main、Renderer、Extension 与 patch 的选择 |
 | 消息如何显示与恢复     | [聊天渲染](15-chat-rendering.md)                            | history/live、顺序、补取、显示终态与交互投影        |
 | 公司市场如何接入       | [市场适配](../plugins/marketplace/adapter.md)               | Provider、安装身份、来源对账及失败处理              |
-| 桌面业务插件如何加载   | [应用插件宿主](../plugins/management/app-plugin-runtime.md) | 公开 SDK、Native/Main/Browser 寿命及资源清理        |
+| 桌面业务插件如何加载   | [应用插件宿主](../plugins/sdk/app-plugin-runtime.md) | 公开 SDK、Native/Main/Browser 寿命及资源清理        |
 | Windows 工具如何隔离   | [原生任务沙盒](17-windows-native-sandbox.md)                | MXC 准入、配置、系统准备及失败关闭                  |
 | 升级时应核对哪些能力   | [Gateway 能力矩阵](openclaw-gateway-capability-matrix.md)   | 原生契约、产品消费方及升级检查入口                  |
 
-文件编号保留既有链接身份，不表示执行顺序或连续章节；两个 `17-` 分别是插件宿主与 Windows 沙盒专题。
+文件编号保留既有链接身份，不表示执行顺序或连续章节。
 
 ## 聊天渲染专题
 

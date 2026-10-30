@@ -7,7 +7,8 @@ const http = require('node:http');
 const path = require('node:path');
 const { app, BrowserWindow, nativeImage } = require('electron');
 
-const [output, runRoot, runtimeRoot] = process.argv.slice(2);
+const [output, runRoot, runtimeRoot, phase] = process.argv.slice(2);
+assert.ok(phase === undefined || phase === 'sidebar-tabs', 'Unknown isolated browser phase');
 assert.ok(
   [output, runRoot, runtimeRoot].every(value => path.isAbsolute(value)),
   'Use the probe runner',
@@ -247,6 +248,21 @@ app
         if (error.code !== 'EADDRINUSE' || attempt >= 20) throw error;
       }
     }
+    if (phase === 'sidebar-tabs') {
+      await require('./sidebar-tabs.cjs').run({
+        implementation: require(path.join(output, 'browser.cjs')),
+        output,
+        runRoot,
+        url: `http://127.0.0.1:${server.address().port}/fixture`,
+        report,
+        checked,
+        bounded,
+        until,
+      });
+      report.ok = true;
+      finish(0);
+      return;
+    }
     host = new BackgroundBrowserHost();
     const request = {
       scopeId: 'fixture-run',
@@ -338,6 +354,9 @@ app
       );
 
     await act({ kind: 'type', selector: '#text', text: '你好，后台浏览器🙂', submit: true });
+    report.headlessInput = await read(`({value:document.querySelector('#text').value,
+      focused:document.activeElement?.id,hasFocus:document.hasFocus(),visibility:document.visibilityState,
+      keyUps:fixture.keyUps,inputEvents:fixture.inputEvents,submissions:fixture.submissions})`);
     await until(
       async () => (await read('fixture.submissions.length')) === 1,
       'Chinese form submission',

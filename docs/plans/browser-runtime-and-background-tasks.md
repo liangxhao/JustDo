@@ -3,8 +3,8 @@
 状态：待 POC。**零新增、零调整 OpenClaw patch 是硬约束。** 本文仅维护唯一工具门面、
 Chrome 控制授权和统一同页宿主的剩余设计，不代表已经支持。
 
-原始设计日期：2026-10-26；历史研究基线为 `dev@c48a21e69`、OpenClaw `v2026.10.7`。
-实施前必须按当前锁定运行时重新验证公开 SDK 与调用控制流，不能把研究基线当作当前版本声明。
+2026-11-07 核对：下述门面、Chrome 控制 grant 和统一 WCV 宿主仍未实施。
+实施前必须按当前锁定运行时重新验证公开 SDK 与调用控制流。
 
 内置前后台执行已有实现，当前契约和验证限制见[浏览器设置](../features/browser/browser-settings-design.md#内置浏览器的前台与后台执行)
 与[定时任务](../architecture/08-scheduled-tasks.md#内置浏览器后台执行)。现有 `browser` 名称、
@@ -63,22 +63,14 @@ Electron 的 offscreen 文档描述的是绘制输出方式，不能据此推导
 
 ## 与当前实现的差异
 
-现行能力由功能文档维护；以下代码入口用于避免重复设计已实现机制，并标明下一步迁移边界。
+现行能力由[浏览器设置](../features/browser/browser-settings-design.md)维护，以下仅保留迁移差异：
 
-| 现有机制                                                        | 入口                                                                                                   | 本方案剩余差异                                                                             |
-| --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------ |
-| 原生/内置工具同名 `browser`，按模式互斥                         | `plugins/extensions/embedded-browser/index.ts`；`src/main/openclaw/config/plugins/pluginProjection.ts` | 未来单门面与原生服务共存需要新目录/权限投影                                                |
-| 真实 native run、toolCall、toolAuthority 与 v2 live guard       | `plugins/extensions/embedded-browser/browserRunAdmission.ts`                                           | 复用已实现准入；扩到门面后须重新证明 Chrome 调用边界                                       |
-| 带 run/toolCall 的请求及 prepare/commit/取消/撤权               | `browserExecutionContract.ts`、`index.ts`；`src/main/browser/embeddedBrowserGatewayBridge.ts`          | 不从旧 `{requestId, sessionKey, command}` 桥重新起步；新门面仍需复核通道最小权限与未知回执 |
-| 内置 cron 已核验 editable、isolated、agentTurn 并使用原生工作区 | `src/main/browser/embeddedBrowserGatewayBridge.ts` 的 `prepareScope()`                                 | 当前后台准入已实现；未来 Chrome 路由和新偏好尚未接入                                       |
-| 前台 Renderer webview，后台 Main-owned 离屏 BrowserWindow       | `BrowserPanel.tsx`、`src/main/browser/backgroundBrowserHost.ts`                                        | 统一 WCV 才能研究同实例前后台显示与接管；不能声称现有后台页可直接移入侧栏                  |
-| 后台 CDP 输入与前台输入分别处理                                 | `src/main/browser/agent/browserAgentActions.ts`                                                        | 新宿主保留既有输入能力，按 G1 做迁移验证                                                   |
-| foreground guest 与 background registry 分别验证                | `browserAgentBridge.ts`、`backgroundBrowserGuestRegistry.ts`                                           | WCV 必须有精确 registry，不能宽泛放行所有窗口                                              |
-| 工作区 WCV 承载侧栏壳并支持同组分离                             | `src/main/core/window/workspaceWindowManager.ts`                                                       | 可复用展示几何，不等于真实网页已由统一宿主管理                                             |
+- 工具仍名为 `browser`，原生/内置插件按模式互斥（`embedded-browser/index.ts`、`config/plugins/pluginProjection.ts`）；待改为唯一门面与原生服务共存，并完成权限名过渡。
+- 前台仍由 `BrowserPanel.tsx` 的 webview 管理，后台为 `backgroundBrowserHost.ts` 的离屏 BrowserWindow；统一 WCV、同实例展示与接管仍待实现。工作区已有 WCV 只承载侧栏壳，不代表真实网页已迁移。
+- exact-run/toolCall、v2 live guard、prepare/commit/取消撤权和内置 cron 的 editable/isolated/agentTurn 准入已经实现（`browserRunAdmission.ts`、`embeddedBrowserGatewayBridge.ts`）。剩余是迁移后的通道、身份、未知回执与 Chrome 分支证明，不重建旧桥。
 
-全运行终态、ACK、final 与 idle 的边界继续遵循[引擎](../architecture/05-agent-engine.md)；
-只读任务不因迁移自动获得浏览器权限。主计划与配套设计中的门面、Chrome grant、统一页面 registry 和
-presentation lease 均为未来目标，不能据此推断已完成。
+门面、Chrome grant、统一页面 registry 和 presentation lease 都是未来目标。
+全运行终态、ACK、final 与 idle 的边界继续遵循[引擎](../architecture/05-agent-engine.md)；只读任务不因迁移自动获得浏览器权限。
 
 ## 分阶段实施与验证门槛
 
@@ -112,8 +104,7 @@ presentation lease 均为未来目标，不能据此推断已完成。
 
 ### 证据边界
 
-历史原生源码研究支持公开接口组合的候选路线；它不等于 G0–G5、统一 WCV 或安装包 POC
-已通过。原设计阶段原生测试曾因依赖导出缺失而未执行，该历史环境故障不作为当前测试结论。
+原生源码研究只支持公开接口组合的候选路线，不等于 G0–G5、统一 WCV 或安装包 POC 已通过。
 实施时使用锁定运行时建立最小真实 POC，再执行变更域必要检查。现有后台功能的验证限制
 只在所属功能文档维护；本计划的门槛不能覆盖或抹去这些限制。
 
@@ -123,12 +114,12 @@ presentation lease 均为未来目标，不能据此推断已完成。
 
 G1/G2 失败的备选顺序：隐藏 BrowserWindow 对照→在显式受限能力下继续研究 Electron→独立受管 Chromium headless 另案。最后一项会增加安装包、profile、可视接管和升级成本，不属于本方案暗含 fallback。纯 offscreen 与零渲染都不能当作已解决替代方案。
 
-实施完成后，把当前合约分别合入 [浏览器设置](../features/browser/browser-settings-design.md)、[扩展侧聊](../plugins/chrome-extensions/chrome-assistant/side-panel.md)、[人工介入](../features/browser/browser-intervention.md)、[分离侧栏](../features/workspace/detached-workspace.md)、[执行引擎](../architecture/05-agent-engine.md)、[定时任务](../architecture/08-scheduled-tasks.md)、[进程模型](../architecture/03-process-model.md)、[插件系统](../plugins/management/plugin-system.md) 和 [数据存储](../architecture/10-data-storage.md)。确认没有未实施要求后删除本计划；若仍有阻塞，只保留确切剩余需求。
+实施完成后，把当前合约分别合入 [浏览器设置](../features/browser/browser-settings-design.md)、[扩展侧聊](../plugins/chrome-extensions/chrome-assistant/side-panel.md)、[人工介入](../features/browser/browser-intervention.md)、[分离侧栏](../features/workspace/detached-workspace.md)、[执行引擎](../architecture/05-agent-engine.md)、[定时任务](../architecture/08-scheduled-tasks.md)、[进程模型](../architecture/03-process-model.md)、[插件系统](../architecture/07-plugin-system.md) 和 [数据存储](../architecture/10-data-storage.md)。确认没有未实施要求后删除本计划；若仍有阻塞，只保留确切剩余需求。
 
 ## 离线交付、日志与资源
 
 首期只使用已交付 Electron 和原生 SDK，避免新增浏览器安装器、Rust/Python 服务或外部模型代理。需要的新静态 overlay/脚本随安装包交付，通过现有 loopback、immutable asset、CSP 与导航守卫加载；不能使用公网 CDN、遥测、自动更新或首次使用下载兜底。若以后引入依赖，其离线下载 URL/文件/准备流程只写入 [offline-downloads](../offline-downloads.md)。
 
-日志使用领域前缀，仅记录 epoch、哈希/截断后的运行定位、资源数、耗时和结构化错误；不记录 Cookie、nonce、auth header、完整页面正文、选区、密码或任务 prompt。允许的 metadata receipt 有界并清理，不借诊断建立 transcript 缓存。
+诊断只保留有界 metadata receipt，不记录页面正文、选区、任务 prompt 或控制凭据，不借诊断建立 transcript 缓存；通用日志规范遵循仓库规则。
 
 量测 cold startup、页面创建、首个快照、动作耗时、carrier/page 内存、active/pending 数和释放后残留 WebContents；在清空缓存、公网阻断、中文/空格安装路径、100%/150%/200% DPI 下验证。截图和调试产物只保存本机合成页面，避免把真实账号数据写入仓库。

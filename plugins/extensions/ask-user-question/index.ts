@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import type { OpenClawPluginApi, OpenClawPluginGatewayEvents } from 'openclaw/plugin-sdk/core';
+import { getSessionEntry } from 'openclaw/plugin-sdk/session-store-runtime';
 import { Type } from 'typebox';
 
 import {
@@ -11,10 +12,14 @@ import {
   MAX_ASK_USER_HEADER_LENGTH,
   MAX_ASK_USER_QUESTIONS,
   parseAnswers,
+  parseAskUserSource,
+  sameAskUserSource,
+  type AskUserSource,
   parseQuestions,
   type Question,
   QUESTION_RESULT_VERSION,
 } from './contracts/result';
+import { AskUserInvocationScopes } from './invocation';
 
 export {
   ASK_USER_ID_PATTERN,
@@ -45,13 +50,20 @@ export type AskUserRequest = {
   questions: Question[];
   waitPolicy: WaitPolicy;
   expiresAt?: number;
+  source: AskUserSource;
+  createdAt: number;
 };
+export interface AskUserInvocation {
+  source: AskUserSource;
+  assertCurrent(): void;
+}
 
 type PendingRequest = {
   request: AskUserRequest;
   resolve: (response: AskUserResponse) => void;
   timeout?: ReturnType<typeof setTimeout>;
   removeAbortListener?: () => void;
+  invocation: AskUserInvocation;
 };
 
 type PluginConfig = {
@@ -140,7 +152,7 @@ type GatewayEventEmitter = OpenClawPluginGatewayEvents['emit'];
 
 export class AskUserQuestionManager {
   private readonly pending = new Map<string, PendingRequest>();
-  private readonly requestIdBySession = new Map<string, string>();
+  private readonly requestIdByInvocation = new Map<string, string>();
   private emitGatewayEvent: GatewayEventEmitter | null = null;
 
   constructor(private readonly logger: OpenClawPluginApi['logger']) {}
@@ -150,21 +162,32 @@ export class AskUserQuestionManager {
   }
 
   list(): AskUserRequest[] {
+    for (const [id, pending] of this.pending) {
+      try {
+        pending.invocation.assertCurrent();
+      } catch {
+        this.settle(id, { status: 'cancelled' });
+      }
+    }
     return [...this.pending.values()].map(entry => entry.request);
   }
 
   request(
     questions: Question[],
     waitPolicy: WaitPolicy,
-    sessionKey: string | undefined,
+    invocation: AskUserInvocation,
     signal?: AbortSignal,
   ): Promise<AskUserResponse> {
     signal?.throwIfAborted();
+    invocation.assertCurrent();
+    const source = parseAskUserSource(invocation.source);
+    if (!source) throw new Error('Native question identity is unavailable.');
     if (!this.emitGatewayEvent) {
       throw new Error('Gateway event delivery is unavailable.');
     }
-    if (sessionKey && this.requestIdBySession.has(sessionKey)) {
-      throw new Error('This session already has a pending ask_user_question request.');
+    const identity = JSON.stringify(source);
+    if (this.requestIdByInvocation.has(identity)) {
+      throw new Error('This native tool invocation already has a pending question.');
     }
 
     const requestId = `ask_${randomUUID()}`;
@@ -172,7 +195,9 @@ export class AskUserQuestionManager {
       waitPolicy.mode === 'timeout' ? Date.now() + waitPolicy.timeoutMinutes * 60_000 : undefined;
     const request: AskUserRequest = {
       requestId,
-      ...(sessionKey ? { sessionKey } : {}),
+      sessionKey: source.sessionKey,
+      source,
+      createdAt: Date.now(),
       questions,
       waitPolicy,
       ...(expiresAt ? { expiresAt } : {}),
@@ -182,7 +207,11 @@ export class AskUserQuestionManager {
     const response = new Promise<AskUserResponse>(resolve => {
       resolveResponse = resolve;
     });
-    const pending: PendingRequest = { request, resolve: resolveResponse };
+    const pending: PendingRequest = {
+      request,
+      resolve: resolveResponse,
+      invocation,
+    };
     if (signal) {
       const onAbort = () => this.settle(requestId, { status: 'cancelled' });
       signal.addEventListener('abort', onAbort, { once: true });
@@ -190,6 +219,12 @@ export class AskUserQuestionManager {
     }
     if (waitPolicy.mode === 'timeout') {
       pending.timeout = setTimeout(() => {
+        try {
+          invocation.assertCurrent();
+        } catch {
+          this.settle(requestId, { status: 'cancelled' });
+          return;
+        }
         const answers =
           waitPolicy.onTimeout === 'use-defaults' ? buildDefaultAnswers(questions) : null;
         this.settle(
@@ -200,7 +235,7 @@ export class AskUserQuestionManager {
       pending.timeout.unref?.();
     }
     this.pending.set(requestId, pending);
-    if (sessionKey) this.requestIdBySession.set(sessionKey, requestId);
+    this.requestIdByInvocation.set(identity, requestId);
 
     try {
       this.emitGatewayEvent('requested', request, { scope: 'operator.read' });
@@ -211,9 +246,22 @@ export class AskUserQuestionManager {
     return response;
   }
 
-  resolve(requestId: string, behavior: 'submit' | 'cancel', value?: unknown): AskUserRequest {
+  resolve(
+    requestId: string,
+    behavior: 'submit' | 'cancel',
+    value: unknown,
+    source: AskUserSource,
+  ): AskUserRequest {
     const pending = this.pending.get(requestId);
     if (!pending) throw new Error('The question is no longer waiting for an answer.');
+    if (!sameAskUserSource(source, pending.request.source))
+      throw new Error('The question source changed.');
+    try {
+      pending.invocation.assertCurrent();
+    } catch (error) {
+      this.settle(requestId, { status: 'cancelled' });
+      throw error;
+    }
     if (behavior === 'cancel') {
       this.settle(requestId, { status: 'cancelled' });
       return pending.request;
@@ -234,7 +282,7 @@ export class AskUserQuestionManager {
     const pending = this.pending.get(requestId);
     if (!pending) return false;
     this.pending.delete(requestId);
-    if (pending.request.sessionKey) this.requestIdBySession.delete(pending.request.sessionKey);
+    this.requestIdByInvocation.delete(JSON.stringify(pending.request.source));
     if (pending.timeout) clearTimeout(pending.timeout);
     pending.removeAbortListener?.();
     pending.resolve(response);
@@ -254,7 +302,11 @@ export class AskUserQuestionManager {
 }
 
 const QuestionOptionSchema = Type.Object({
-  id: Type.String({ minLength: 1, maxLength: 64, pattern: ASK_USER_ID_PATTERN }),
+  id: Type.String({
+    minLength: 1,
+    maxLength: 64,
+    pattern: ASK_USER_ID_PATTERN,
+  }),
   label: Type.String({ description: 'Option label (1-5 words).' }),
   description: Type.Optional(Type.String({ description: 'Short explanation or tradeoff.' })),
   input: Type.Optional(
@@ -266,8 +318,14 @@ const QuestionOptionSchema = Type.Object({
 });
 
 const QuestionSchema = Type.Object({
-  id: Type.String({ minLength: 1, maxLength: 64, pattern: ASK_USER_ID_PATTERN }),
-  question: Type.String({ description: 'One clear question shown to the user.' }),
+  id: Type.String({
+    minLength: 1,
+    maxLength: 64,
+    pattern: ASK_USER_ID_PATTERN,
+  }),
+  question: Type.String({
+    description: 'One clear question shown to the user.',
+  }),
   header: Type.Optional(
     Type.String({
       maxLength: MAX_ASK_USER_HEADER_LENGTH,
@@ -287,11 +345,18 @@ const QuestionSchema = Type.Object({
     }),
   ),
   defaultOptionIds: Type.Optional(
-    Type.Array(Type.String({ minLength: 1, maxLength: 64, pattern: ASK_USER_ID_PATTERN }), {
-      minItems: 1,
-      maxItems: 4,
-      description: 'Defaults used only after an enabled timeout.',
-    }),
+    Type.Array(
+      Type.String({
+        minLength: 1,
+        maxLength: 64,
+        pattern: ASK_USER_ID_PATTERN,
+      }),
+      {
+        minItems: 1,
+        maxItems: 4,
+        description: 'Defaults used only after an enabled timeout.',
+      },
+    ),
   ),
 });
 
@@ -336,6 +401,9 @@ const plugin = {
   register(api: OpenClawPluginApi) {
     const config = parsePluginConfig(api.pluginConfig);
     const manager = new AskUserQuestionManager(api.logger);
+    const scopes = new AskUserInvocationScopes(sessionKey =>
+      getSessionEntry({ sessionKey, readConsistency: 'latest' }),
+    );
 
     api.registerService({
       id: 'ask-user-question',
@@ -344,11 +412,38 @@ const plugin = {
           throw new Error('ask_user_question requires plugin Gateway events.');
         }
         manager.setGatewayEventEmitter(ctx.gatewayEvents.emit);
+        scopes.activate();
       },
       stop() {
+        scopes.clear();
         manager.cancelAll();
         manager.setGatewayEventEmitter(null);
       },
+    });
+
+    api.on(
+      'before_tool_call',
+      (event, context) => {
+        try {
+          if (
+            event.toolName !== ASK_USER_QUESTION_TOOL_NAME ||
+            (event.runId !== undefined && event.runId !== context.runId) ||
+            (event.toolCallId !== undefined && event.toolCallId !== context.toolCallId)
+          ) {
+            throw new Error('The question tool identity changed.');
+          }
+          scopes.prepare(context);
+        } catch (error) {
+          return {
+            block: true,
+            blockReason: error instanceof Error ? error.message : 'Question unavailable.',
+          };
+        }
+      },
+      { matcher: [ASK_USER_QUESTION_TOOL_NAME] },
+    );
+    api.on('after_tool_call', (_event, context) => scopes.finish(context), {
+      matcher: [ASK_USER_QUESTION_TOOL_NAME],
     });
 
     api.registerGatewayMethod(
@@ -362,14 +457,16 @@ const plugin = {
         try {
           const requestId = readRequiredString(params.requestId);
           const behavior = params.behavior;
-          if (!requestId || (behavior !== 'submit' && behavior !== 'cancel')) {
+          const source = parseAskUserSource(params.source);
+          if (!requestId || !source || (behavior !== 'submit' && behavior !== 'cancel')) {
             throw new Error('Invalid ask_user_question resolution request.');
           }
-          const request = manager.resolve(requestId, behavior, params.answers);
+          const request = manager.resolve(requestId, behavior, params.answers, source);
           respond(true, {
             requestId,
             status: behavior === 'submit' ? 'answered' : 'cancelled',
             ...(request.sessionKey ? { sessionKey: request.sessionKey } : {}),
+            source: request.source,
           });
         } catch (error) {
           respond(false, undefined, {
@@ -382,57 +479,85 @@ const plugin = {
     );
 
     api.registerTool(
-      ctx => {
-        const sessionKey = ctx.sessionKey?.trim() ?? '';
-        if (
-          !sessionKey.startsWith('justdo:') &&
-          !/^agent:[^:]+:(?:justdo:|agent-team:group:)/.test(sessionKey)
-        ) {
-          return null;
-        }
-        return {
-          name: ASK_USER_QUESTION_TOOL_NAME,
-          label: 'Ask User Question',
-          description: ASK_USER_QUESTION_DESCRIPTION,
-          parameters: AskUserQuestionSchema,
-          async execute(_toolCallId: string, params: unknown, signal?: AbortSignal) {
-            const input = isRecord(params) ? params : {};
-            const questions = parseQuestions(input.questions);
-            const waitPolicy = questions
-              ? buildWaitPolicy(input.timeoutEnabled, questions, config.timeoutMinutes)
-              : null;
-            if (!questions || !waitPolicy) {
-              return {
-                content: [{ type: 'text', text: 'Invalid questions or timeoutEnabled flag.' }],
-                isError: true,
-              };
-            }
-            try {
-              const response = await manager.request(questions, waitPolicy, sessionKey, signal);
-              const questionResult = { version: QUESTION_RESULT_VERSION, questions, response };
-              return {
-                content: [{
-                  type: 'text',
-                  text: JSON.stringify({
-                    askUserQuestion: questionResult,
-                    summary: formatResponse(response, questions),
-                  }),
-                }],
-                details: { askUserQuestion: questionResult },
-              };
-            } catch (error) {
-              return {
-                content: [
-                  {
-                    type: 'text',
-                    text: `ask_user_question failed: ${error instanceof Error ? error.message : String(error)}`,
-                  },
-                ],
-                isError: true,
-              };
-            }
-          },
-        };
+      {
+        contextVersion: 2,
+        create: ctx => {
+          const sessionKey = ctx.sessionKey?.trim() ?? '';
+          if (
+            !sessionKey ||
+            !ctx.sessionId?.trim() ||
+            typeof ctx.assertInvocationCurrent !== 'function'
+          ) {
+            return null;
+          }
+          ctx.assertInvocationCurrent();
+          return {
+            name: ASK_USER_QUESTION_TOOL_NAME,
+            label: 'Ask User Question',
+            description: ASK_USER_QUESTION_DESCRIPTION,
+            parameters: AskUserQuestionSchema,
+            async execute(toolCallId: string, params: unknown, signal?: AbortSignal) {
+              const input = isRecord(params) ? params : {};
+              const questions = parseQuestions(input.questions);
+              const waitPolicy = questions
+                ? buildWaitPolicy(input.timeoutEnabled, questions, config.timeoutMinutes)
+                : null;
+              if (!questions || !waitPolicy) {
+                return {
+                  content: [
+                    {
+                      type: 'text',
+                      text: 'Invalid questions or timeoutEnabled flag.',
+                    },
+                  ],
+                  isError: true,
+                };
+              }
+              try {
+                const invocation = scopes.claim(
+                  { ...ctx, sessionKey, sessionId: ctx.sessionId! },
+                  toolCallId,
+                );
+                const signals = [signal, invocation.signal].filter((value): value is AbortSignal =>
+                  Boolean(value),
+                );
+                const response = await manager.request(
+                  questions,
+                  waitPolicy,
+                  invocation,
+                  signals.length ? AbortSignal.any(signals) : undefined,
+                );
+                const questionResult = {
+                  version: QUESTION_RESULT_VERSION,
+                  questions,
+                  response,
+                };
+                return {
+                  content: [
+                    {
+                      type: 'text',
+                      text: JSON.stringify({
+                        askUserQuestion: questionResult,
+                        summary: formatResponse(response, questions),
+                      }),
+                    },
+                  ],
+                  details: { askUserQuestion: questionResult },
+                };
+              } catch (error) {
+                return {
+                  content: [
+                    {
+                      type: 'text',
+                      text: `ask_user_question failed: ${error instanceof Error ? error.message : String(error)}`,
+                    },
+                  ],
+                  isError: true,
+                };
+              }
+            },
+          };
+        },
       },
       { name: ASK_USER_QUESTION_TOOL_NAME },
     );

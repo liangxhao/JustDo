@@ -1,7 +1,10 @@
 import type Database from 'better-sqlite3';
 
 import type { AppPluginManifest, AppSubmission } from './contracts';
+import type { AppExecutionSessionQuery } from './execution-source';
+import type { AppResourceScope } from './resources';
 import type { AppPythonRuntime } from './runtimes';
+export type { AppExecutionSessionQuery } from './execution-source';
 
 export interface AppSession {
   id: string;
@@ -116,6 +119,8 @@ export interface AppMainHost {
   ): () => void;
   onSessionStopped(listener: (sessionId: string) => void): () => void;
   sessionsChanged(): void;
+  /** Re-read content-free execution associations after exact receipt metadata changes. */
+  executionSessionsChanged(): void;
   createAssistant(input: unknown, identity: string, assertActive: () => void): Promise<unknown>;
 }
 export interface AppCommand {
@@ -146,6 +151,19 @@ export interface AppResourceParticipant {
   prepareDelete(sessionIds: readonly string[]): Promise<void>;
   deleteManaged(sessionId: string): Promise<boolean>;
 }
+/** Content-free navigation/resource association. This grants no parent tool permissions. */
+export interface AppExecutionSessionOwner {
+  ownerSessionId?: string;
+  label?: string;
+  /** Association is not yet proven; retain pending questions and admit no UI effects. */
+  pending?: true;
+}
+/** Registry-stamped active plugin identity. Providers cannot select this epoch. */
+export interface AppResolvedExecutionSession extends AppExecutionSessionOwner {
+  pluginId: string;
+  nativePluginId: string;
+  epoch: string;
+}
 export interface AppMainRegistration {
   commands: AppCommand[];
   schemas?: { id: string; initialize(database: Database.Database): void }[];
@@ -153,8 +171,13 @@ export interface AppMainRegistration {
   nativePolicy?: { skills?: string[]; sandboxTools?: string[]; surfaces?: Record<string, unknown> };
   submission?: AppSubmissionParticipant;
   resources?: AppResourceParticipant;
+  /** Resolve only a proven current execution; unknown, borrowed, or ambiguous relations return null. */
+  resolveExecutionSession?: (
+    query: AppExecutionSessionQuery,
+  ) => AppExecutionSessionOwner | null | Promise<AppExecutionSessionOwner | null>;
   activate?: () => void;
-  onEnable?: () => void | (() => void);
+  /** Resources retire with this business epoch, independently of the retained host signal. */
+  onEnable?: (resources: AppResourceScope) => void | (() => void);
   /** Periodic receipt reconciliation with a fresh cleanup-only lease, including while disabled. */
   maintenance?: () => void | Promise<void>;
   /** Explicit cleanup-only RPCs; this never grants native authorization or enables business commands. */

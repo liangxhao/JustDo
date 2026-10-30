@@ -448,7 +448,7 @@ MCP Apps 使用原生认证 WS 接口，不使用生命周期补丁。关闭视�
       在“可更新”筛选下仍可看到待处理反馈。页内切换、离页再返回、多窗口及交错读取
       不释放在途安装锁、不覆盖较新清单，不依靠重复安装修复刷新失败。
 
-参考：[插件系统](../plugins/management/plugin-system.md)、[Plugin Hub](../plugins/management/plugin-hub.md)、
+参考：[插件系统](../architecture/07-plugin-system.md)、[Plugin Hub](../features/plugins/plugin-hub.md)、
 [市场适配](../plugins/marketplace/adapter.md)、
 [Agent Team](../plugins/extensions/agent-team/guide.md)、[Workflow](../plugins/extensions/swarm-workflow/workflows.md)、
 [批次](../plugins/extensions/swarm-workflow/batches.md)、[Workboard](../plugins/extensions/workboard/integration.md)、

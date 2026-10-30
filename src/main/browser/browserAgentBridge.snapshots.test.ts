@@ -267,6 +267,7 @@ test('converts same-origin iframe snapshot refs to top-level click and hover coo
   const frameDocument = { defaultView: { frameElement: frame } };
   const button = new FakeElement(frameDocument, { left: 10, top: 20, width: 30, height: 40 });
   const sendInputEvent = vi.fn();
+  const sendCommand = vi.fn().mockResolvedValue(undefined);
   const executeJavaScriptInIsolatedWorld = vi.fn(
     (_worldId: number, scripts: Array<{ code: string }>) => {
       const code = scripts[0]?.code ?? '';
@@ -314,6 +315,14 @@ test('converts same-origin iframe snapshot refs to top-level click and hover coo
     getURL: () => 'https://example.com/',
     executeJavaScriptInIsolatedWorld,
     sendInputEvent,
+    debugger: {
+      isAttached: vi.fn(() => false),
+      attach: vi.fn(),
+      detach: vi.fn(),
+      on: vi.fn(),
+      off: vi.fn(),
+      sendCommand,
+    },
   });
   registerGuest(7);
 
@@ -327,13 +336,16 @@ test('converts same-origin iframe snapshot refs to top-level click and hover coo
     request: { kind: 'click', ref: 'e1' },
   });
 
-  expect(sendInputEvent).toHaveBeenCalledWith({ type: 'mouseMove', x: 127, y: 243 });
+  expect(sendInputEvent).toHaveBeenCalledWith(
+    expect.objectContaining({ type: 'mouseMove', x: 127, y: 243 }),
+  );
   expect(sendInputEvent).toHaveBeenCalledWith(
     expect.objectContaining({ type: 'mouseDown', x: 127, y: 243 }),
   );
   expect(sendInputEvent).toHaveBeenCalledWith(
     expect.objectContaining({ type: 'mouseUp', x: 127, y: 243 }),
   );
+  expect(sendCommand).not.toHaveBeenCalledWith('Input.dispatchMouseEvent', expect.anything());
 });
 
 test('converts same-origin iframe snapshot refs to top-level drag coordinates', async () => {
@@ -364,6 +376,7 @@ test('converts same-origin iframe snapshot refs to top-level drag coordinates', 
   const source = new FakeElement(frameDocument, { left: 10, top: 20, width: 30, height: 40 });
   const target = new FakeElement(frameDocument, { left: 210, top: 220, width: 20, height: 20 });
   const sendCommand = vi.fn().mockResolvedValue(undefined);
+  const sendInputEvent = vi.fn();
   const executeJavaScriptInIsolatedWorld = vi.fn(
     (_worldId: number, scripts: Array<{ code: string }>) => {
       const code = scripts[0]?.code ?? '';
@@ -418,6 +431,7 @@ test('converts same-origin iframe snapshot refs to top-level drag coordinates', 
     hostWebContents: { id: 10 },
     getURL: () => 'https://example.com/',
     executeJavaScriptInIsolatedWorld,
+    sendInputEvent,
     debugger: {
       isAttached: vi.fn(() => false),
       attach: vi.fn(),
@@ -435,14 +449,13 @@ test('converts same-origin iframe snapshot refs to top-level drag coordinates', 
     request: { kind: 'drag', startRef: 'e1', endRef: 'e2' },
   });
 
-  expect(sendCommand).toHaveBeenCalledWith(
-    'Input.dispatchMouseEvent',
-    expect.objectContaining({ type: 'mousePressed', x: 127, y: 243 }),
+  expect(sendInputEvent).toHaveBeenCalledWith(
+    expect.objectContaining({ type: 'mouseDown', x: 127, y: 243 }),
   );
-  expect(sendCommand).toHaveBeenCalledWith(
-    'Input.dispatchMouseEvent',
-    expect.objectContaining({ type: 'mouseReleased', x: 322, y: 433 }),
+  expect(sendInputEvent).toHaveBeenCalledWith(
+    expect.objectContaining({ type: 'mouseUp', x: 322, y: 433 }),
   );
+  expect(sendCommand).not.toHaveBeenCalledWith('Input.dispatchMouseEvent', expect.anything());
 });
 
 test('resolves stable aria refs from a same-origin iframe in their creating world', async () => {
@@ -545,6 +558,7 @@ test('resolves stable aria refs from a same-origin iframe in their creating worl
   expect(sendInputEvent).toHaveBeenCalledWith(
     expect.objectContaining({ type: 'mouseDown', x: 127, y: 243 }),
   );
+  expect(sendCommand).not.toHaveBeenCalledWith('Input.dispatchMouseEvent', expect.anything());
   expect(sendCommand).not.toHaveBeenCalledWith(
     'Page.createIsolatedWorld',
     expect.objectContaining({ frameId: expect.anything() }),
@@ -628,7 +642,10 @@ test('falls back to a child-frame ARIA snapshot for a cross-origin iframe', asyn
     action: 'act',
     request: { kind: 'hover', ref: 'ax1' },
   });
-  expect(sendInputEvent).toHaveBeenCalledWith({ type: 'mouseMove', x: 115, y: 225 });
+  expect(sendInputEvent).toHaveBeenCalledWith(
+    expect.objectContaining({ type: 'mouseMove', x: 115, y: 225 }),
+  );
+  expect(sendCommand).not.toHaveBeenCalledWith('Input.dispatchMouseEvent', expect.anything());
 });
 
 test('automatically merges top-level cross-origin iframe nodes into AI snapshots', async () => {
@@ -1434,6 +1451,53 @@ test('keeps new-element baselines isolated by snapshot option family', async () 
   expect(secondBroad.details.newElements).toBe(1);
   expect(secondBroad.content[0]?.text).toContain('"New notice" [ref=e3] [new]');
 });
+
+test.each(['png', 'jpeg'] as const)(
+  'captures a sidebar %s without temporarily showing its guest',
+  async imageType => {
+    const png = Buffer.from('captured-native-png');
+    const jpeg = Buffer.from('captured-native-jpeg');
+    const image = { toPNG: vi.fn(() => png), toJPEG: vi.fn(() => jpeg) };
+    const capturePage = vi.fn().mockResolvedValue(image);
+    const guest = {
+      getType: () => 'webview',
+      isDestroyed: () => false,
+      session: electron.partition,
+      hostWebContents: { id: 10 },
+      getURL: () => 'https://example.com/',
+      capturePage,
+    };
+    bridge = new BrowserAgentBridge(vi.fn(), () => true);
+    bridge.registerIpc();
+    electron.guests.set(7, guest);
+    registerGuest(7);
+
+    const result = (await bridge.executeCommand('justdo:session-1', {
+      action: 'screenshot',
+      type: imageType,
+    })) as { content: Array<Record<string, unknown>>; details: Record<string, unknown> };
+
+    expect(capturePage).toHaveBeenCalledExactlyOnceWith(undefined, { stayHidden: true });
+    expect(result.content[0]).toMatchObject({
+      type: 'image',
+      mimeType: `image/${imageType}`,
+      data: (imageType === 'jpeg' ? jpeg : png).toString('base64'),
+    });
+    expect(result.details).toMatchObject({
+      ok: true,
+      type: imageType,
+      targetId: 'embedded-1',
+      media: { outbound: false },
+    });
+    if (imageType === 'jpeg') {
+      expect(image.toJPEG).toHaveBeenCalledExactlyOnceWith(80);
+      expect(image.toPNG).not.toHaveBeenCalled();
+    } else {
+      expect(image.toPNG).toHaveBeenCalledOnce();
+      expect(image.toJPEG).not.toHaveBeenCalled();
+    }
+  },
+);
 
 test('returns a labeled image for AI snapshots and preserves stable aria refs', async () => {
   const imageData = Buffer.from('png').toString('base64');

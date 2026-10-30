@@ -1,4 +1,4 @@
-import { ApprovalKind, type ApprovalRequest } from '@shared/security/approvals';
+import { ApprovalDecision, ApprovalKind, type ApprovalRequest } from '@shared/security/approvals';
 import { describe, expect, it } from 'vitest';
 import { vi } from 'vitest';
 
@@ -8,6 +8,7 @@ import {
   markApprovalResolved,
   reconcilePendingApprovalSnapshot,
   removePendingApproval,
+  submitApprovalDecision,
   upsertPendingApproval,
 } from './approvalQueue';
 
@@ -22,6 +23,48 @@ const request = (overrides: Partial<ApprovalRequest> = {}): ApprovalRequest =>
   }) as ApprovalRequest;
 
 describe('approval queue', () => {
+  it.each(['Gateway authority expired', 'unknown connection state', 'approval expired or not found'])(
+    'preserves a pending request after an unconfirmed resolution error: %s', async error => {
+      const approval = request();
+      const other = request({ kind: ApprovalKind.Plugin, request: { title: 'Edit', description: 'x' } });
+      const queue = [approval, other];
+      const dismiss = vi.fn();
+
+      await expect(submitApprovalDecision({
+        approval,
+        decision: ApprovalDecision.AllowOnce,
+        resolve: vi.fn().mockResolvedValue({ success: false, error }),
+        dismiss,
+        failureMessage: 'Failed',
+      })).rejects.toThrow(error);
+
+      expect(dismiss).not.toHaveBeenCalled();
+      expect(removePendingApproval(queue, other)).toEqual([approval]);
+    },
+  );
+
+  it('dismisses only the submitted request after its confirmed resolution', async () => {
+    const approval = request();
+    const other = request({ kind: ApprovalKind.Plugin, request: { title: 'Edit', description: 'x' } });
+    let queue = [approval, other];
+    const tombstones = new Map<string, number>();
+    const resolve = vi.fn().mockResolvedValue({ success: true });
+
+    await submitApprovalDecision({
+      approval,
+      decision: ApprovalDecision.AllowOnce,
+      resolve,
+      dismiss: resolved => {
+        markApprovalResolved(tombstones, resolved, 2_000);
+        queue = removePendingApproval(queue, resolved);
+      },
+      failureMessage: 'Failed',
+    });
+
+    expect(resolve).toHaveBeenCalledWith(approval.id, ApprovalDecision.AllowOnce, ApprovalKind.Exec);
+    expect(queue).toEqual([other]);
+    expect(upsertPendingApproval(queue, approval, tombstones, 3_000)).toEqual([other]);
+  });
   it('retries transient list failures and returns the first successful result', async () => {
     const approval = request();
     const list = vi

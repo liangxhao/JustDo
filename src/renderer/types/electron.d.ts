@@ -258,6 +258,7 @@ interface CoworkInteractionRequest {
   requestId: string;
   toolUseId?: string | null;
   interactionKind?: import('../../shared/cowork/interactions/interactions').CoworkInteractionKind;
+  origin?: import('../../shared/cowork/interactions/interactions').CoworkInteractionOrigin;
 }
 
 interface CoworkApiConfig {

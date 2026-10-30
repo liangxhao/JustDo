@@ -36,6 +36,7 @@ import {
   markApprovalResolved,
   reconcilePendingApprovalSnapshot,
   removePendingApproval,
+  submitApprovalDecision,
   upsertPendingApproval,
 } from '@/features/cowork/approvalQueue';
 import { CoworkView, type CoworkViewHandle } from '@/features/cowork/components';
@@ -46,9 +47,12 @@ import {
   runGuardedFilePreviewNavigation,
 } from '@/features/cowork/components/preview/filePreviewNavigation';
 import CoworkInteractionModal from '@/features/cowork/components/questions/CoworkInteractionModal';
-import CoworkQuestionFloatingWindow, {
-  shouldShowCoworkQuestionWindow,
-} from '@/features/cowork/components/questions/CoworkQuestionFloatingWindow';
+import CoworkQuestionFloatingWindow from '@/features/cowork/components/questions/CoworkQuestionFloatingWindow';
+import {
+  questionSourceLabel,
+  visibleQuestionQueue,
+} from '@/features/cowork/components/questions/questionQueue';
+import { QuestionSurface } from '@/features/cowork/components/questions/QuestionSurface';
 import {
   selectCurrentSessionId,
   selectPendingInteractions,
@@ -129,6 +133,7 @@ const InitializedApp: React.FC = () => {
   const dispatch = useDispatch();
   const currentSessionId = useSelector(selectCurrentSessionId);
   const pendingInteractions = useSelector(selectPendingInteractions);
+  const [selectedQuestionId, setSelectedQuestionId] = useState<string | null>(null);
   const isWindows = window.electron.platform === 'win32';
 
   const dismissApproval = useCallback((approval: Pick<ApprovalRequest, 'id' | 'kind'>) => {
@@ -276,7 +281,9 @@ const InitializedApp: React.FC = () => {
         setInitError(
           error instanceof Error
             ? error
-            : Object.assign(new Error('Application initialization failed'), { cause: error }),
+            : Object.assign(new Error('Application initialization failed'), {
+                cause: error,
+              }),
         );
         setIsInitialized(true);
       }
@@ -806,17 +813,15 @@ const InitializedApp: React.FC = () => {
       ),
     [pendingInteractions],
   );
-  const activeQuestionInteraction = structuredQuestionInteractions.find(interaction => {
-    const presentation = appBrowserRegistry.interactionPresentation(
-      interaction.toolInput.sessionKey,
-    );
-    if (presentation) return !showSettings && mainView === 'cowork' && presentation.visible;
-    return shouldShowCoworkQuestionWindow(
-      interaction.sessionId,
-      currentSessionId,
-      !appPageVisible && !showSettings && mainView === 'cowork',
-    );
+  const questionQueue = visibleQuestionQueue(structuredQuestionInteractions, {
+    currentSessionId,
+    visible: !showSettings && mainView === 'cowork',
+    sourceViewVisible: !appPageVisible,
+    presentation: key => appBrowserRegistry.interactionPresentation(key),
+    isPluginCurrent: (id, epoch) => appBrowserRegistry.isBusinessCurrent(id, epoch),
   });
+  const activeQuestionInteraction =
+    questionQueue.find(item => item.requestId === selectedQuestionId) ?? questionQueue[0];
   const activeQuestionRequestId = activeQuestionInteraction?.requestId ?? null;
   const isQuestionWindowVisible = activeQuestionRequestId !== null;
   const displayedPlanInteraction = isQuestionWindowVisible ? undefined : activePlanInteraction;
@@ -831,24 +836,29 @@ const InitializedApp: React.FC = () => {
 
   const activeApproval = pendingApprovals[0] ?? null;
 
-  const questionWindows = useMemo(() => {
-    return structuredQuestionInteractions.map(interaction => (
-      <CoworkQuestionFloatingWindow
-        key={interaction.requestId}
-        interaction={interaction}
-        sourceLabel={
-          appBrowserRegistry.interactionPresentation(interaction.toolInput.sessionKey)?.label
-        }
-        isVisible={!activeApproval && interaction.requestId === activeQuestionRequestId}
-        onRespond={result => handleInteractionResponse(interaction.requestId, result)}
-      />
-    ));
-  }, [
-    structuredQuestionInteractions,
-    activeQuestionRequestId,
-    activeApproval,
-    handleInteractionResponse,
-  ]);
+  const questionWindows = structuredQuestionInteractions.map(interaction => {
+    const presentation = appBrowserRegistry.interactionPresentation(
+      interaction.toolInput.sessionKey,
+    );
+    return (
+      <QuestionSurface key={interaction.requestId} target={presentation?.ownerDocument}>
+        <CoworkQuestionFloatingWindow
+          interaction={interaction}
+          sourceLabel={questionSourceLabel(interaction, presentation)}
+          queue={questionQueue.map(item => ({
+            id: item.requestId,
+            label: questionSourceLabel(
+              item,
+              appBrowserRegistry.interactionPresentation(item.toolInput.sessionKey),
+            ),
+          }))}
+          onSelectRequest={setSelectedQuestionId}
+          isVisible={!activeApproval && interaction.requestId === activeQuestionRequestId}
+          onRespond={result => handleInteractionResponse(interaction.requestId, result)}
+        />
+      </QuestionSurface>
+    );
+  });
 
   const interactionModal = useMemo(() => {
     if (!modalInteraction) return null;
@@ -866,20 +876,13 @@ const InitializedApp: React.FC = () => {
   const resolveExecApproval = useCallback(
     async (decision: ApprovalDecision) => {
       if (!activeApproval) return;
-      const result = await window.electron.openclaw.approvals.resolve(
-        activeApproval.id,
+      await submitApprovalDecision({
+        approval: activeApproval,
         decision,
-        activeApproval.kind,
-      );
-      if (!result.success) {
-        const message = result.error || i18nService.t('execApprovalFailed');
-        if (/unknown|expired|not found|already resolved/i.test(message)) {
-          dismissApproval(activeApproval);
-          return;
-        }
-        throw new Error(message);
-      }
-      dismissApproval(activeApproval);
+        resolve: window.electron.openclaw.approvals.resolve,
+        dismiss: dismissApproval,
+        failureMessage: i18nService.t('execApprovalFailed'),
+      });
     },
     [activeApproval, dismissApproval],
   );

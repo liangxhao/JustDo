@@ -47,6 +47,26 @@ const buildInteraction = (
 afterEach(cleanup);
 
 describe('CoworkQuestionWizard multi-select navigation', () => {
+  test('preserves a partially completed wizard when replay updates its source metadata', () => {
+    const original = buildInteraction();
+    const { rerender } = render(
+      <CoworkQuestionWizard interaction={original} onRespond={vi.fn()} />,
+    );
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Desktop' }));
+    rerender(
+      <CoworkQuestionWizard
+        interaction={{
+          ...original,
+          toolInput: structuredClone(original.toolInput),
+          origin: { sessionKey: 'exact-child', available: true },
+        }}
+        onRespond={vi.fn()}
+      />,
+    );
+    expect((screen.getByRole('checkbox', { name: 'Desktop' }) as HTMLInputElement).checked).toBe(
+      true,
+    );
+  });
   test('focuses the dialog instead of highlighting the close button when opened', async () => {
     render(
       <CoworkQuestionWizard

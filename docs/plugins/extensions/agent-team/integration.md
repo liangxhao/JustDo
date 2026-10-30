@@ -28,6 +28,10 @@ Native RPC 仍要求 OpenClaw 的可信安装准入；桌面 Main/UI 的产物 h
 
 此路径不调用产品会话停止，不触发全队级联、不清空未来输入，也不关闭协作轮次；后续合法协作消息仍可启动该成员。响应须原生确认成功且状态为 `aborted` 或 `no-active-run`；`aborted` 还须携带相同 `abortedRunId`。`no-active-run` 也仅是该次停止请求的响应。停止 ACK 与精确 whole-run 终态、托管工具清理继续分别核对，失败保留原运行观察与错误提示。
 
+## 子执行的显示来源
+
+`resolveExecutionSession` 由 Team 查询自己的成员、房间和精确原生运行关系。成员详情中的独立用户运行归成员自己的产品聊天；只有精确匹配该 Native run 的未停止、未结算 incoming delivery 才把协作交互映射到组织者。房间成员关系、历史批次和缺少 run 回执的投递不能代替证明。尚未关联精确 ACK 时返回 pending，回执或停止意图改变后发布来源元数据通知；不重放调用。独立群聊没有产品来源时只返回成员标签，不拿房间 ID 冒充产品会话。
+
 ## Browser 草稿与准备恢复
 
 [Browser 入口](../../../../plugins/extensions/agent-team/app/browser/index.tsx) 注册模式、工作区、设置、历史、摘要、应用页与详情贡献；宿主只组合这些通用插槽。纯展示入口独立于业务启用状态，不能借展示恢复工具或读取额外历史。

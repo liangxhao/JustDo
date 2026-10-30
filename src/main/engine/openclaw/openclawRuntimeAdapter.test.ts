@@ -377,15 +377,27 @@ test('does not authorize requests returned by a stale Gateway reconciliation', a
 test('rejects forged answers before calling the extension resolve RPC', async () => {
   const { store } = createEmptyStore();
   const adapter = new OpenClawRuntimeAdapter(store, {});
-  const pendingRequest = createAskUserRequest();
-  adapter.handleGatewayEvent({
-    event: AskUserQuestionGateway.REQUESTED_EVENT,
-    payload: pendingRequest,
-  });
+  const question = createAskUserRequest();
+  const pendingRequest = {
+    ...question,
+    createdAt: Date.now(),
+    source: {
+      sessionKey: question.sessionKey,
+      nativeSessionId: 'native-question-session',
+      lifecycleRevision: 'question-revision',
+      runId: 'question-run',
+      toolCallId: 'question-call',
+      agentId: 'main',
+    },
+  };
   const request = vi.fn();
   const internals = getSessionPreparationInternals(adapter);
   internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
   internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+  adapter.handleGatewayEvent({
+    event: AskUserQuestionGateway.REQUESTED_EVENT,
+    payload: pendingRequest,
+  });
 
   await expect(
     adapter.resolveAskUserInteraction(pendingRequest.requestId, {

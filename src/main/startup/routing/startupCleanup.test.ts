@@ -21,11 +21,12 @@ const javascript = ts.transpileModule('const ' + matches[0].getText(source) + ';
 }).outputText;
 afterEach(() => vi.restoreAllMocks());
 
-test.each([false, true, 'admission', 'integrations'] as const)('Main attempts every retirement when shutdown failure is %s', async rejects => {
+test.each([false, true, 'admission', 'integrations', 'plugins', 'development-assets'] as const)('Main attempts every retirement when shutdown failure is %s', async rejects => {
   vi.spyOn(console, 'log').mockImplementation(() => {});
   vi.spyOn(console, 'error').mockImplementation(() => {});
   const calls: string[] = [];
   const retired = new Error('Native child retirement remains unconfirmed');
+  const closeStore = vi.fn(() => { calls.push('product-db'); });
   const context = {
     startupHistoryAdmissionReady: true,
     startupEnginePreparationController: undefined,
@@ -42,9 +43,9 @@ test.each([false, true, 'admission', 'integrations'] as const)('Main attempts ev
       stopGateway: async () => { calls.push('stop-gateway'); },
     },
     devSessionLifecycle: undefined, detachDevelopmentParent: undefined,
-    store: { close: () => { calls.push('product-db'); } },
-    appPlugins: { dispose: async () => { calls.push('plugins'); } },
-    stopAppDevelopmentAssets: undefined,
+    store: { close: closeStore },
+    appPlugins: { dispose: () => { calls.push('plugins'); if (rejects === 'plugins') throw retired; } },
+    stopAppDevelopmentAssets: async () => { calls.push('development-assets'); if (rejects === 'development-assets') throw retired; },
     builtinModelCredentialMonitor: undefined, loginService: undefined,
     userActivityService: undefined, builtinModelTokenExchange: undefined,
     builtinModelAuthCoordinator: undefined,
@@ -65,10 +66,12 @@ test.each([false, true, 'admission', 'integrations'] as const)('Main attempts ev
   else await expect(owner.cleanup()).resolves.toBeUndefined();
   expect(owner.admitted()).toBe(false);
   expect(calls[0]).toBe('block-gateway');
-  expect(calls).toEqual(['block-gateway', 'startup-confirmation', 'app-server', 'history', 'native', 'profile-isolation', 'plugins',
+  expect(calls).toEqual(['block-gateway', 'startup-confirmation', 'app-server', 'history', 'native', 'profile-isolation', 'plugins', 'development-assets',
     'credentials', 'tray', 'scheduler', 'stop-gateway', 'browser-routing', 'browser-bridge', ...(rejects ? [] : ['product-db'])]);
+  expect(closeStore).toHaveBeenCalledTimes(rejects ? 0 : 1);
   if (rejects) expect(console.error).toHaveBeenCalledWith(
-    expect.stringContaining('retirement remains unconfirmed'), 'startup',
+    expect.stringContaining('retirement remains unconfirmed'),
+    rejects === 'plugins' || rejects === 'development-assets' ? 'services' : 'startup',
     expect.any(AggregateError),
   );
 });

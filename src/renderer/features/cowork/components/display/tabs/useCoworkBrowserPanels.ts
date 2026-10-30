@@ -105,13 +105,37 @@ export function useCoworkBrowserPanels({
   handleBrowserTargetChange,
   openBrowserTab,
 }: CoworkBrowserPanelsOptions) {
+  const displayStatesRef = useRef(displayStates);
+  displayStatesRef.current = displayStates;
+  const pendingResourceTargetsRef = useRef(new Map<string, Map<string, string>>());
+  useEffect(() => {
+    for (const [owner, targets] of pendingResourceTargetsRef.current) {
+      for (const [target, resource] of targets)
+        if (
+          displayStates[owner]?.browserTabs.some(
+            tab => tab.targetId === target && tab.resourceSessionId === resource,
+          )
+        )
+          targets.delete(target);
+      if (!targets.size) pendingResourceTargetsRef.current.delete(owner);
+    }
+  }, [displayStates]);
+  const hasResourceTarget = useCallback(
+    (owner: string, target: string | undefined, resource: string): boolean =>
+      Boolean(
+        target &&
+        (displayStatesRef.current[owner]?.browserTabs.some(
+          tab => tab.targetId === target && (tab.resourceSessionId ?? owner) === resource,
+        ) ||
+          pendingResourceTargetsRef.current.get(owner)?.get(target) === resource),
+      ),
+    [],
+  );
   const initializingTabSessionRef = useRef<string | null>(null);
   const previousDisplayTabsRef = useRef({ displaySessionKey, hasDisplayTabs });
   const messageNavigationScopeRef = useRef<object | null>(null);
   const openBrowserTabRef = useRef(openBrowserTab);
   openBrowserTabRef.current = openBrowserTab;
-  const displayStatesRef = useRef(displayStates);
-  displayStatesRef.current = displayStates;
   const displayControlsRef = useRef({
     displaySessionKey,
     setIsDisplayPanelOpen,
@@ -237,17 +261,18 @@ export function useCoworkBrowserPanels({
 
   const applyBrowserAgentPanelState = useCallback(
     (event: BrowserAgentInteractionState) => {
+      const ownerSessionId = event.ownerSessionId ?? event.sessionId;
       setBrowserAgentPanelStates(current => {
         const next = new Map(current);
-        const sessionStates = new Map(next.get(event.sessionId) ?? []);
+        const sessionStates = new Map(next.get(ownerSessionId) ?? []);
         if (event.busy) sessionStates.set(event.operationId!, event);
         else sessionStates.delete(event.operationId!);
-        if (sessionStates.size) next.set(event.sessionId, sessionStates);
-        else next.delete(event.sessionId);
+        if (sessionStates.size) next.set(ownerSessionId, sessionStates);
+        else next.delete(ownerSessionId);
         return next;
       });
       if (event.busy) {
-        setSessionField(event.sessionId, 'hasBrowserPanelOpened', true);
+        setSessionField(ownerSessionId, 'hasBrowserPanelOpened', true);
       }
     },
     [setBrowserAgentPanelStates, setSessionField],
@@ -276,6 +301,7 @@ export function useCoworkBrowserPanels({
 
   useEffect(() => {
     const removeInteractionListener = window.electron.browser.onAgentInteractionState(event => {
+      const ownerSessionId = event.ownerSessionId ?? event.sessionId;
       if (
         event.targetId !== BROWSER_AGENT_PANEL_TARGET_ID ||
         !event.operationId ||
@@ -291,7 +317,7 @@ export function useCoworkBrowserPanels({
         pendingBrowserAgentPanelStatesRef.current.delete(operationKey);
       }
       if (
-        !isAgentBrowserSessionAvailable(availableAgentBrowserSessionIdsRef.current, event.sessionId)
+        !isAgentBrowserSessionAvailable(availableAgentBrowserSessionIdsRef.current, ownerSessionId)
       ) {
         if (event.busy) {
           const timeoutId = window.setTimeout(() => {
@@ -304,80 +330,109 @@ export function useCoworkBrowserPanels({
       applyBrowserAgentPanelState(event);
     });
     const removeEnsureListener = window.electron.browser.onAgentEnsureTab(event => {
+      const ownerSessionId = event.ownerSessionId ?? event.sessionId;
       if (
-        !isAgentBrowserSessionAvailable(availableAgentBrowserSessionIdsRef.current, event.sessionId)
+        !isAgentBrowserSessionAvailable(availableAgentBrowserSessionIdsRef.current, ownerSessionId)
       ) {
         return;
+      }
+      if (event.targetId && event.ownerSessionId) {
+        const existing = displayStatesRef.current[ownerSessionId]?.browserTabs.find(
+          tab => tab.targetId === event.targetId,
+        );
+        const pending = pendingResourceTargetsRef.current.get(ownerSessionId)?.get(event.targetId);
+        if (
+          (existing && (existing.resourceSessionId ?? ownerSessionId) !== event.sessionId) ||
+          (pending !== undefined && pending !== event.sessionId)
+        )
+          return;
       }
       const tab = createBrowserPanelTab(event.url, {
         targetId: event.targetId,
         customTitle: event.label,
         profile: event.profile,
+        ...(event.ownerSessionId ? { resourceSessionId: event.sessionId } : {}),
       });
+      // Only the selected main conversation presents its newly opened page.
+      // Delegated executions share its sidebar but keep the user's selection.
+      const reveal =
+        !event.ownerSessionId &&
+        event.sessionId === displayControlsRef.current.displaySessionKey;
       // initialTabs only seeds an empty panel. An already mounted panel owns
       // its live tabs and must create the requested guest through its handle.
-      const created = browserPanelRefs.current.get(event.sessionId)?.openTab(tab.url, {
+      const created = browserPanelRefs.current.get(ownerSessionId)?.openTab(tab.url, {
         targetId: tab.targetId,
         customTitle: event.label,
         profile: event.profile,
         notifyOnCapacity: false,
+        ...(tab.resourceSessionId ? { resourceSessionId: tab.resourceSessionId } : {}),
+        preserveSelection: !reveal,
       });
       // A mounted panel may reject creation at its capacity limit. Keep the
       // current selection and parent state aligned with its actual guests.
       if (created === false) return;
-      setSessionField(event.sessionId, 'browserTabs', current => {
+      if (tab.resourceSessionId) {
+        const pending = pendingResourceTargetsRef.current.get(ownerSessionId) ?? new Map();
+        pending.set(tab.targetId, tab.resourceSessionId);
+        pendingResourceTargetsRef.current.set(ownerSessionId, pending);
+      }
+      setSessionField(ownerSessionId, 'browserTabs', current => {
         const existingTab = event.targetId
           ? current.find(candidate => candidate.targetId === event.targetId)
           : current[0];
         return existingTab ? current : [...current, tab];
       });
-      setSessionField(event.sessionId, 'browserPanelTargetId', tab.targetId);
-      setSessionField(event.sessionId, 'preferredDisplayTabId', browserDisplayTabId(tab.targetId));
-      setSessionField(event.sessionId, 'hasBrowserPanelOpened', true);
-      setSessionField(event.sessionId, 'isBrowserPanelOpen', true);
-      if (event.sessionId === displaySessionKey) {
-        setIsWorkspaceFilesOpen(false);
-        setIsDisplayPanelOpen(true);
+      setSessionField(ownerSessionId, 'hasBrowserPanelOpened', true);
+      setSessionField(ownerSessionId, 'isBrowserPanelOpen', true);
+      if (reveal) {
+        setSessionField(ownerSessionId, 'browserPanelTargetId', tab.targetId);
+        setSessionField(ownerSessionId, 'preferredDisplayTabId', browserDisplayTabId(tab.targetId));
+        setSessionField(ownerSessionId, 'isWorkspaceFilesOpen', false);
+        setSessionField(ownerSessionId, 'isDisplayPanelOpen', true);
       }
-    });
-    const removeFocusListener = window.electron.browser.onAgentFocusTab(event => {
-      if (event.sessionId !== displaySessionKey) {
-        setSessionField(event.sessionId, 'browserPanelTargetId', event.targetId);
-        setSessionField(
-          event.sessionId,
-          'preferredDisplayTabId',
-          browserDisplayTabId(event.targetId),
-        );
-        setSessionField(event.sessionId, 'hasBrowserPanelOpened', true);
-        setSessionField(event.sessionId, 'isBrowserPanelOpen', true);
-        return;
-      }
-      setIsWorkspaceFilesOpen(false);
-      setIsDisplayPanelOpen(true);
-      setHasBrowserPanelOpened(true);
-      setIsBrowserPanelOpen(true);
-      handleBrowserTargetChange(event.targetId);
     });
     const removeCloseListener = window.electron.browser.onAgentCloseTab(event => {
-      const panel = browserPanelRefs.current.get(event.sessionId);
+      const ownerSessionId = event.ownerSessionId ?? event.sessionId;
+      const panel = browserPanelRefs.current.get(ownerSessionId);
       if (panel) {
-        panel.closeTab(event.targetId);
+        if (
+          event.targetId &&
+          pendingResourceTargetsRef.current.get(ownerSessionId)?.get(event.targetId) ===
+            event.sessionId
+        )
+          pendingResourceTargetsRef.current.get(ownerSessionId)?.delete(event.targetId);
+        if (event.ownerSessionId)
+          panel.closeTab(event.targetId, {
+            resourceSessionId: event.sessionId,
+            preserveFocus: true,
+          });
+        else panel.closeTab(event.targetId, { preserveFocus: true });
         return;
       }
-      setSessionField(event.sessionId, 'browserTabs', current =>
-        current.filter(tab => tab.targetId !== event.targetId),
+      if (
+        event.ownerSessionId &&
+        !hasResourceTarget(ownerSessionId, event.targetId, event.sessionId)
+      )
+        return;
+      if (event.targetId)
+        pendingResourceTargetsRef.current.get(ownerSessionId)?.delete(event.targetId);
+      setSessionField(ownerSessionId, 'browserTabs', current =>
+        current.filter(
+          tab =>
+            tab.targetId !== event.targetId ||
+            (tab.resourceSessionId ?? ownerSessionId) !== event.sessionId,
+        ),
       );
-      setSessionField(event.sessionId, 'browserPanelTargetId', current =>
+      setSessionField(ownerSessionId, 'browserPanelTargetId', current =>
         current === event.targetId ? null : current,
       );
-      setSessionField(event.sessionId, 'preferredDisplayTabId', current =>
+      setSessionField(ownerSessionId, 'preferredDisplayTabId', current =>
         current === browserDisplayTabId(event.targetId) ? null : current,
       );
     });
     return () => {
       removeInteractionListener();
       removeEnsureListener();
-      removeFocusListener();
       removeCloseListener();
     };
   }, [
@@ -386,6 +441,7 @@ export function useCoworkBrowserPanels({
     browserPanelRefs,
     displaySessionKey,
     handleBrowserTargetChange,
+    hasResourceTarget,
     pendingBrowserAgentPanelStatesRef,
     setHasBrowserPanelOpened,
     setIsBrowserPanelOpen,

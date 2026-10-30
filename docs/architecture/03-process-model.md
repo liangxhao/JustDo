@@ -1,6 +1,6 @@
 # 进程模型、通信与请求生命周期
 
-桌面可选业务使用独立 Native/Main/Browser 插件包；通用 SDK、可信代码审核、冷包变更和历史清理所有权见 [应用插件宿主](../plugins/management/app-plugin-runtime.md)。
+桌面可选业务使用独立 Native/Main/Browser 插件包；通用 SDK、可信代码审核、冷包变更和历史清理所有权见 [应用插件宿主](../plugins/sdk/app-plugin-runtime.md)。
 
 本页按当前 preload、Main 注册入口和共享合约描述通信机制。接口常量及 payload 以 `src/shared/` 为准；这里解释为什么不同通道分开、请求如何结束、旧响应如何失效。
 
@@ -518,7 +518,7 @@ PTY。附着失败会提示终端不可用，需要用户新开标签，不会�
 
 ## 10. 插件业务的进程边界
 
-Team/Workflow 的 Browser 通过通用 App SDK 调用所属 Main 命令，Main 再经绑定当前 Native 注册收据的请求桥调用原生业务方法。Core preload 不提供专属 `teamDiscussion` 或 Workflow API。宿主校验产物、epoch、窗口及调用权限；业务身份、队列和数据事务由插件核验。Renderer 卸载撤销视图与订阅，不能推断后台执行结束。详见[应用插件宿主](../plugins/management/app-plugin-runtime.md)与[Agent Team](../plugins/extensions/agent-team/guide.md)。
+Team/Workflow 的 Browser 通过通用 App SDK 调用所属 Main 命令，Main 再经绑定当前 Native 注册收据的请求桥调用原生业务方法。Core preload 不提供专属 `teamDiscussion` 或 Workflow API。宿主校验产物、epoch、窗口及调用权限；业务身份、队列和数据事务由插件核验。Renderer 卸载撤销视图与订阅，不能推断后台执行结束。详见[应用插件宿主](../plugins/sdk/app-plugin-runtime.md)与[Agent Team](../plugins/extensions/agent-team/guide.md)。
 
 ## 11. 错误要保留可操作的区别
 

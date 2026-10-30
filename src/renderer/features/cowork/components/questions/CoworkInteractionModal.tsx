@@ -47,6 +47,7 @@ const CoworkInteractionModal: React.FC<CoworkInteractionModalProps> = ({
   }, [interaction.interactionKind, toolInput]);
 
   const isQuestionTool = questions.length > 0;
+  const questionIdentity = JSON.stringify([interaction.requestId, questions]);
 
   const [answers, setAnswers] = useState<Record<string, string[]>>({});
   const [optionInputs, setOptionInputs] = useState<Record<string, Record<string, string>>>({});
@@ -75,7 +76,7 @@ const CoworkInteractionModal: React.FC<CoworkInteractionModalProps> = ({
     setOtherInputs({});
     setOtherActive({});
     setSkippedQuestions({});
-  }, [isQuestionTool, interaction.requestId, toolInput]);
+  }, [questionIdentity]);
 
   const formatToolInput = (input: Record<string, unknown>): string => {
     try {

@@ -60,7 +60,7 @@ const isDesktopSession = (sessionKey: string): boolean =>
 // Session-key syntax limits the directory candidate. It never grants execution;
 // only native trigger, exact incarnation, final tool authority and invocation do.
 export const isBrowserSessionCandidate = (sessionKey: string): boolean =>
-  isDesktopSession(sessionKey) || /^agent:[^:]+:cron:[^:]+(?::run:[^:]+)?$/u.test(sessionKey);
+  isDesktopSession(sessionKey) || /^agent:[^:\s]+:[^\s]+$/u.test(sessionKey);
 
 export class BrowserRunAdmission {
   private active = false;
@@ -86,18 +86,26 @@ export class BrowserRunAdmission {
 
   observeRun(context: RunContext): void {
     if (!this.active) return;
-    const identity = readBrowserExecutionRun(context);
-    if (!identity || !isBrowserSessionCandidate(identity.sessionKey)) return;
-    if (identity.trigger === 'user' && !isDesktopSession(identity.sessionKey)) return;
-    const key = runKey(identity);
+    const observed = readBrowserExecutionRun(context);
+    if (!observed || !isBrowserSessionCandidate(observed.sessionKey)) return;
+    if (observed.trigger === 'user' && /^agent:[^:]+:cron:/u.test(observed.sessionKey)) return;
+    const key = runKey(observed);
     if (this.closedRuns.has(key)) return;
     const previous = this.runs.get(key);
     try {
       // This capability closes at hook return. Do not retain it for execution.
       context.toolAuthority?.assertActive();
       if (!context.toolAuthority?.allows(TOOL_NAME)) throw new Error(UNAVAILABLE);
-      const entry = this.readNativeEntry(identity.sessionKey);
-      if (entry?.sessionId !== identity.sessionId) throw new Error(UNAVAILABLE);
+      const entry = this.readNativeEntry(observed.sessionKey);
+      if (entry?.sessionId !== observed.sessionId) throw new Error(UNAVAILABLE);
+      if (
+        observed.lifecycleRevision !== undefined &&
+        observed.lifecycleRevision !== (entry.lifecycleRevision ?? null)
+      )
+        throw new Error(UNAVAILABLE);
+      const delegated = observed.trigger !== 'cron' && !isDesktopSession(observed.sessionKey);
+      if (delegated && !entry.lifecycleRevision) throw new Error(UNAVAILABLE);
+      const identity = { ...observed, lifecycleRevision: entry.lifecycleRevision ?? null };
       if (
         previous &&
         (previous.lifecycleRevision !== (entry.lifecycleRevision ?? null) ||

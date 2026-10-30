@@ -1,3 +1,5 @@
+import type { AppExecutionSessionQuery } from '@app-plugin/sdk/execution-source';
+import type { AppExecutionSessionOwner } from '@app-plugin/sdk/main';
 import { createHash } from 'crypto';
 import { BrowserWindow } from 'electron';
 import path from 'path';
@@ -14,6 +16,7 @@ import {
   type CoworkInteractionEnvelope,
   CoworkInteractionIpc,
   CoworkInteractionKind,
+  type CoworkInteractionOrigin,
 } from '../../../shared/cowork/interactions/interactions';
 import {
   type CoworkPlanArtifactReference,
@@ -37,12 +40,31 @@ import { isRecord } from '../gateway/helpers';
 import type { GatewayClientLike, SessionTurn } from '../gateway/types';
 import type { CoworkStartOptions, CoworkStopOptions } from '../types';
 import { ASK_USER_TERMINAL_CACHE_SIZE } from './runtimeAdapterSupport';
+export interface AskUserBinding {
+  client: GatewayClientLike;
+  generation: number;
+  request: AskUserRequest;
+  revision: number;
+  withdrawalRevision: number;
+  claimedPluginId?: string;
+  origin?: CoworkInteractionOrigin;
+  reply?: { unconfirmed: boolean };
+}
+export type ExecutionSessionResolver = (
+  query: AppExecutionSessionQuery,
+) => Promise<
+  (AppExecutionSessionOwner & { pluginId?: string; nativePluginId?: string; epoch?: string }) | null
+>;
 export interface RuntimePlanInteractionsContext {
   readonly resolveSessionIdBySessionKey: (sessionKey: string) => string | null;
   readonly resolvePlanModeSessionId: (request: PlanModeRequest) => string;
   readonly resolveAskUserSessionId: (request: AskUserRequest) => string;
   readonly terminalAskUserIds: Set<string>;
   readonly pendingAskUserRequests: Map<string, AskUserRequest>;
+  readonly pendingAskUserBindings: Map<string, AskUserBinding>;
+  readonly askUserOriginRefresh: { revision: number; pending?: Promise<void> };
+  readonly executionSessionResolver: ExecutionSessionResolver | undefined;
+  readonly isNativeOnlyExecutionSource: ((nativePluginId: string) => boolean) | undefined;
   readonly sendCoworkInteraction: (interaction: CoworkInteractionEnvelope) => void;
   readonly toAskUserInteraction: (request: AskUserRequest) => AskUserInteractionEnvelope;
   readonly rememberTerminalAskUser: (requestId: string) => void;
@@ -156,7 +178,11 @@ export interface RuntimePlanInteractionsContext {
   ) => AskUserRequest | null;
   readonly resolvePlanModeInteraction: (
     pendingPlan: PlanModeRequest,
-    response: { behavior: 'plan'; decision: 'implement' | 'revise' | 'cancel'; feedback?: string },
+    response: {
+      behavior: 'plan';
+      decision: 'implement' | 'revise' | 'cancel';
+      feedback?: string;
+    },
   ) => Promise<{ sessionId: string }>;
   readonly isSessionActive: (sessionId: string) => boolean;
   readonly toSessionKey: (sessionId: string, agentId?: string) => string;
@@ -166,9 +192,9 @@ export function resolveAskUserSessionId(
   this: RuntimePlanInteractionsContext,
   request: AskUserRequest,
 ): string {
-  return request.sessionKey
-    ? (this.resolveSessionIdBySessionKey(request.sessionKey) ?? '__askuser__')
-    : '__askuser__';
+  const origin = this.pendingAskUserBindings.get(request.requestId)?.origin;
+  if (origin) return origin.ownerSessionId ?? '';
+  return request.sessionKey ? (this.resolveSessionIdBySessionKey(request.sessionKey) ?? '') : '';
 }
 
 export function resolvePlanModeSessionId(
@@ -217,12 +243,17 @@ export function toAskUserInteraction(
       requestId: request.requestId,
       toolName: OpenClawToolName.ASK_USER_QUESTION,
       interactionKind: CoworkInteractionKind.STRUCTURED_QUESTION,
+      ...(this.pendingAskUserBindings.get(request.requestId)?.origin
+        ? { origin: this.pendingAskUserBindings.get(request.requestId)!.origin }
+        : {}),
       toolInput: {
         questions: request.questions,
         waitPolicy: request.waitPolicy,
         ...(request.expiresAt ? { expiresAt: request.expiresAt } : {}),
         ...(request.sessionKey ? { sessionKey: request.sessionKey } : {}),
         sessionId,
+        ...(request.source ? { source: request.source } : {}),
+        ...(request.createdAt !== undefined ? { createdAt: request.createdAt } : {}),
       },
     },
   };
@@ -269,6 +300,161 @@ export function rememberTerminalAskUser(
   }
 }
 
+function bindAskUserRequest(
+  this: RuntimePlanInteractionsContext,
+  request: AskUserRequest,
+  client: GatewayClientLike,
+): AskUserBinding | null {
+  const existing = this.pendingAskUserBindings.get(request.requestId);
+  if (
+    existing &&
+    (existing.client !== client ||
+      existing.generation !== this.gatewayClientGeneration ||
+      JSON.stringify(existing.request) !== JSON.stringify(request))
+  )
+    return null;
+  const binding = existing ?? {
+    client,
+    generation: this.gatewayClientGeneration,
+    request,
+    revision: 0,
+    withdrawalRevision: 0,
+  };
+  this.pendingAskUserRequests.set(request.requestId, binding.request);
+  this.pendingAskUserBindings.set(request.requestId, binding);
+  return binding;
+}
+function currentAskUserBinding(
+  this: RuntimePlanInteractionsContext,
+  binding: AskUserBinding,
+): boolean {
+  return (
+    this.gatewayClient === binding.client &&
+    this.gatewayClientGeneration === binding.generation &&
+    this.pendingAskUserBindings.get(binding.request.requestId) === binding &&
+    this.pendingAskUserRequests.get(binding.request.requestId) === binding.request &&
+    !this.terminalAskUserIds.has(binding.request.requestId)
+  );
+}
+function isNativeOnlyQuestion(
+  this: RuntimePlanInteractionsContext,
+  binding: AskUserBinding,
+): boolean {
+  const owner = binding.request.source?.ownerPluginId;
+  if (!owner || binding.claimedPluginId) return false;
+  try {
+    return this.isNativeOnlyExecutionSource?.(owner) === true;
+  } catch {
+    return false;
+  }
+}
+async function projectAskUserOrigin(
+  this: RuntimePlanInteractionsContext,
+  binding: AskUserBinding,
+  publish = true,
+): Promise<boolean> {
+  const revision = ++binding.revision;
+  const request = binding.request;
+  const source = request.source;
+  const sessionKey = source?.sessionKey ?? request.sessionKey ?? '';
+  const direct = !source?.ownerPluginId ? this.resolveSessionIdBySessionKey(sessionKey) : null;
+  const nativeOnly = isNativeOnlyQuestion.call(this, binding);
+  let owner: Awaited<ReturnType<ExecutionSessionResolver>> = null;
+  let failed = false;
+  if (source && !nativeOnly && this.executionSessionResolver) {
+    try {
+      owner = await this.executionSessionResolver({
+        sessionKey,
+        nativeSessionId: source.nativeSessionId,
+        runId: source.runId,
+        ...(source.lifecycleRevision !== undefined
+          ? { lifecycleRevision: source.lifecycleRevision }
+          : {}),
+        ...(source.ownerPluginId ? { ownerPluginId: source.ownerPluginId } : {}),
+      });
+    } catch {
+      failed = true;
+    }
+  }
+  if (!currentAskUserBinding.call(this, binding) || revision !== binding.revision) return false;
+  const nativeOwnerMatches =
+    !source?.ownerPluginId || owner?.nativePluginId === source.ownerPluginId;
+  if (owner?.pluginId && nativeOwnerMatches) binding.claimedPluginId ??= owner.pluginId;
+  const validOwner =
+    owner &&
+    nativeOwnerMatches &&
+    (!owner.ownerSessionId || this.store.getSession(owner.ownerSessionId)) &&
+    (!binding.claimedPluginId || owner.pluginId === binding.claimedPluginId);
+  const ownerSessionId = validOwner ? owner.ownerSessionId : (direct ?? undefined);
+  const available =
+    !failed &&
+    owner?.pending !== true &&
+    (binding.claimedPluginId || source?.ownerPluginId ? Boolean(validOwner) || nativeOnly : true);
+  const agent = source?.agentId ? this.store.getAgent(source.agentId) : null;
+  binding.origin = {
+    sessionKey,
+    ...(source
+      ? {
+          nativeSessionId: source.nativeSessionId,
+          toolCallId: source.toolCallId,
+          runId: source.runId,
+          ...(source.agentId ? { agentId: source.agentId } : {}),
+        }
+      : {}),
+    ...(request.createdAt !== undefined ? { createdAt: request.createdAt } : {}),
+    ...(ownerSessionId ? { ownerSessionId } : {}),
+    ...(owner?.label || agent?.name ? { label: owner?.label ?? agent!.name } : {}),
+    ...(binding.claimedPluginId ? { pluginId: binding.claimedPluginId } : {}),
+    ...(validOwner && owner.epoch ? { epoch: owner.epoch } : {}),
+    available,
+  };
+  if (publish) this.sendCoworkInteraction(this.toAskUserInteraction(request));
+  return true;
+}
+export function refreshExecutionSessionInteractions(
+  this: RuntimePlanInteractionsContext,
+  metadataOnly = false,
+): Promise<void> {
+  const state = this.askUserOriginRefresh;
+  state.revision++;
+  // Lifecycle withdrawal hides old UI synchronously. An ordinary receipt only
+  // rechecks the association, preserving its confirmed display while awaiting
+  // Native evidence. Replies always perform their own exact source check.
+  for (const binding of this.pendingAskUserBindings.values()) {
+    if (binding.origin?.available && isNativeOnlyQuestion.call(this, binding)) continue;
+    binding.revision++;
+    if (!metadataOnly && (binding.claimedPluginId || binding.request.source?.ownerPluginId))
+      binding.withdrawalRevision++;
+    if (
+      !metadataOnly &&
+      (binding.claimedPluginId || binding.request.source?.ownerPluginId) &&
+      binding.origin?.available
+    ) {
+      binding.origin = { ...binding.origin, available: false };
+      this.sendCoworkInteraction(this.toAskUserInteraction(binding.request));
+    }
+  }
+  if (state.pending) return state.pending;
+  const work = async (): Promise<void> => {
+    let revision: number;
+    do {
+      revision = state.revision;
+      await Promise.all(
+        [...this.pendingAskUserBindings.values()].map(binding =>
+          binding.origin?.available && isNativeOnlyQuestion.call(this, binding)
+            ? Promise.resolve(true)
+            : projectAskUserOrigin.call(this, binding),
+        ),
+      );
+    } while (revision !== state.revision);
+  };
+  const pending = work().finally(() => {
+    if (state.pending === pending) state.pending = undefined;
+  });
+  state.pending = pending;
+  return pending;
+}
+
 export function handleAskUserRequested(
   this: RuntimePlanInteractionsContext,
   payload: unknown,
@@ -279,8 +465,11 @@ export function handleAskUserRequested(
     return;
   }
   if (this.terminalAskUserIds.has(request.requestId)) return;
-  this.pendingAskUserRequests.set(request.requestId, request);
-  this.sendCoworkInteraction(this.toAskUserInteraction(request));
+  const client = this.gatewayClient;
+  if (!client) return;
+  const binding = bindAskUserRequest.call(this, request, client);
+  if (!binding) return;
+  void projectAskUserOrigin.call(this, binding).catch((): void => undefined);
 }
 
 export function handleAskUserResolved(
@@ -297,6 +486,7 @@ export function handleAskUserResolved(
   }
   const requestId = payload.requestId.trim();
   this.rememberTerminalAskUser(requestId);
+  this.pendingAskUserBindings.delete(requestId);
   if (!this.pendingAskUserRequests.delete(requestId)) return;
   this.sendAskUserDismiss(requestId);
 }
@@ -456,21 +646,48 @@ export async function readPendingAskUserInteractions(
   this: RuntimePlanInteractionsContext,
   client: GatewayClientLike,
 ): Promise<AskUserInteractionEnvelope[]> {
+  const generation = this.gatewayClientGeneration;
+  const prior = new Map(this.pendingAskUserBindings);
+  // Only a read started after an uncertain send can prove it still waits.
+  // An older in-flight snapshot must never unlock a possible Native effect.
+  const unconfirmedReplies = new Map<string, NonNullable<AskUserBinding['reply']>>();
+  for (const [id, binding] of prior) {
+    if (binding.reply?.unconfirmed) unconfirmedReplies.set(id, binding.reply);
+  }
   const result = await client.request(AskUserQuestionGateway.LIST, {});
+  if (client !== this.gatewayClient || generation !== this.gatewayClientGeneration) return [];
   if (!isRecord(result) || !Array.isArray(result.requests)) {
     throw new Error('ask_user_question list returned an invalid payload.');
   }
   const interactions: AskUserInteractionEnvelope[] = [];
+  const seen = new Set<string>();
+  let complete = true;
   for (const [index, rawRequest] of result.requests.entries()) {
     const request = parseAskUserRequest(rawRequest);
     if (!request) {
+      complete = false;
       coworkLog('WARN', 'OpenClawRuntime', 'Ignored malformed ask_user_question list entry', {
         index,
       });
       continue;
     }
     if (this.terminalAskUserIds.has(request.requestId)) continue;
+    seen.add(request.requestId);
+    const binding = bindAskUserRequest.call(this, request, client);
+    if (!binding) continue;
+    if (binding.reply && unconfirmedReplies.get(request.requestId) === binding.reply)
+      delete binding.reply;
+    await projectAskUserOrigin.call(this, binding, false);
+    if (!currentAskUserBinding.call(this, binding)) continue;
     interactions.push(this.toAskUserInteraction(request));
+  }
+  if (client !== this.gatewayClient || generation !== this.gatewayClientGeneration) return [];
+  for (const [id, binding] of complete ? prior : []) {
+    if (seen.has(id) || this.pendingAskUserBindings.get(id) !== binding) continue;
+    this.pendingAskUserBindings.delete(id);
+    this.pendingAskUserRequests.delete(id);
+    this.rememberTerminalAskUser(id);
+    this.sendAskUserDismiss(id);
   }
   return interactions;
 }
@@ -844,10 +1061,9 @@ export async function startApprovedPlanImplementation(
   const implementationRunId = `justdo-plan-implementation-${request.requestId}`;
   const activeTurn = this.activeTurns.get(sessionId);
   if (activeTurn?.sessionKey === sessionKey && activeTurn.knownRunIds.has(implementationRunId)) {
-    const described = await client.request<{ session?: Record<string, unknown> | null }>(
-      'sessions.describe',
-      { key: sessionKey },
-    );
+    const described = await client.request<{
+      session?: Record<string, unknown> | null;
+    }>('sessions.describe', { key: sessionKey });
     const gatewaySessionId =
       typeof described.session?.sessionId === 'string' ? described.session.sessionId.trim() : '';
     if (generation !== this.gatewayClientGeneration || client !== this.gatewayClient) {
@@ -899,10 +1115,9 @@ export async function startApprovedPlanImplementation(
 
   await this.stopPlanningTurnForImplementation(sessionId, planningTurn);
 
-  const described = await client.request<{ session?: Record<string, unknown> | null }>(
-    'sessions.describe',
-    { key: sessionKey },
-  );
+  const described = await client.request<{
+    session?: Record<string, unknown> | null;
+  }>('sessions.describe', { key: sessionKey });
   const previousGatewaySessionId =
     typeof described.session?.sessionId === 'string' ? described.session.sessionId.trim() : '';
   if (!previousGatewaySessionId) {
@@ -1020,7 +1235,11 @@ export async function isPlanRequestMissing(
 export async function resolvePlanModeInteraction(
   this: RuntimePlanInteractionsContext,
   pendingPlan: PlanModeRequest,
-  response: { behavior: 'plan'; decision: 'implement' | 'revise' | 'cancel'; feedback?: string },
+  response: {
+    behavior: 'plan';
+    decision: 'implement' | 'revise' | 'cancel';
+    feedback?: string;
+  },
 ): Promise<{ sessionId: string }> {
   const requestId = pendingPlan.requestId;
   const sessionId = this.resolvePlanModeSessionId(pendingPlan);
@@ -1127,7 +1346,8 @@ export async function listPendingAskUserInteractions(
       continue;
     }
     const request = this.parseAskUserInteractionRequest(interaction);
-    if (request) this.pendingAskUserRequests.set(request.requestId, request);
+    if (request && !this.pendingAskUserBindings.has(request.requestId))
+      bindAskUserRequest.call(this, request, client);
   }
   return interactions;
 }
@@ -1138,7 +1358,11 @@ export async function resolveAskUserInteraction(
   response:
     | { behavior: 'submit'; answers: unknown }
     | { behavior: 'cancel' }
-    | { behavior: 'plan'; decision: 'implement' | 'revise' | 'cancel'; feedback?: string },
+    | {
+        behavior: 'plan';
+        decision: 'implement' | 'revise' | 'cancel';
+        feedback?: string;
+      },
 ): Promise<{ sessionId: string }> {
   const normalizedRequestId = requestId.trim();
   const pendingPlan = this.pendingPlanModeRequests.get(normalizedRequestId);
@@ -1166,25 +1390,102 @@ export async function resolveAskUserInteraction(
   if (response.behavior === 'submit' && !answers) {
     throw new Error('The submitted answers do not match the pending question.');
   }
-  await this.ensureGatewayClientReady();
-  const client = this.requireGatewayClient();
-  const result = await client.request(AskUserQuestionGateway.RESOLVE, {
-    requestId: normalizedRequestId,
-    behavior: response.behavior,
-    ...(answers ? { answers } : {}),
-  });
-  if (
-    !isRecord(result) ||
-    result.requestId !== normalizedRequestId ||
-    !['answered', 'cancelled'].includes(String(result.status))
-  ) {
-    throw new Error('ask_user_question resolve returned an invalid payload.');
+  const binding = this.pendingAskUserBindings.get(normalizedRequestId);
+  if (!binding || !currentAskUserBinding.call(this, binding))
+    throw new Error('The question connection changed.');
+  if (binding.reply?.unconfirmed) {
+    const withdrawalRevision = binding.withdrawalRevision;
+    // This is a fresh human retry. First prove the previous uncertain send
+    // left this exact request pending; never replay it from a background read.
+    await this.readPendingAskUserInteractions(binding.client);
+    if (!currentAskUserBinding.call(this, binding))
+      throw new Error('The question connection changed.');
+    if (binding.withdrawalRevision !== withdrawalRevision)
+      throw new Error('The question source is unavailable.');
   }
-  this.rememberTerminalAskUser(normalizedRequestId);
-  if (this.pendingAskUserRequests.delete(normalizedRequestId)) {
-    this.sendAskUserDismiss(normalizedRequestId);
+  if (binding.reply) {
+    throw new Error(
+      binding.reply.unconfirmed
+        ? 'The previous answer is not yet confirmed. Refresh pending questions before trying again.'
+        : 'This question is already being answered.',
+    );
   }
-  return { sessionId: this.resolveAskUserSessionId(pending) };
+  // This claim belongs to the exact request/connection binding, not a window.
+  // Take it before source projection so competing windows cannot both send.
+  const reply = { unconfirmed: false };
+  binding.reply = reply;
+  let nativeSendStarted = false;
+  try {
+    const withdrawalRevision = binding.withdrawalRevision;
+    let projected = await projectAskUserOrigin.call(this, binding, false);
+    if (
+      !projected &&
+      currentAskUserBinding.call(this, binding) &&
+      binding.withdrawalRevision === withdrawalRevision &&
+      binding.origin?.available === true
+    ) {
+      // An unrelated receipt may supersede the first read. Recheck this source
+      // once before sending; never retry an answer that reached Native.
+      projected = await projectAskUserOrigin.call(this, binding, false);
+    }
+    if (
+      !projected ||
+      !currentAskUserBinding.call(this, binding) ||
+      binding.withdrawalRevision !== withdrawalRevision ||
+      binding.origin?.available !== true
+    ) {
+      // A reply can supersede an in-flight metadata refresh. Publish this fresh
+      // negative proof so the old, display-only form does not remain visible.
+      if (
+        projected &&
+        currentAskUserBinding.call(this, binding) &&
+        binding.origin?.available === false
+      )
+        this.sendCoworkInteraction(this.toAskUserInteraction(pending));
+      throw new Error('The question source is unavailable.');
+    }
+    const client = binding.client;
+    const ownerSessionId = binding.origin.ownerSessionId ?? '';
+    nativeSendStarted = true;
+    const result = await client.request(AskUserQuestionGateway.RESOLVE, {
+      requestId: normalizedRequestId,
+      behavior: response.behavior,
+      ...(answers ? { answers } : {}),
+      ...(pending.source ? { source: pending.source } : {}),
+    });
+    if (client !== this.gatewayClient || binding.generation !== this.gatewayClientGeneration)
+      throw new Error('The question connection changed.');
+    const resultSource =
+      isRecord(result) && pending.source
+        ? parseAskUserRequest({ ...pending, source: result.source })?.source
+        : undefined;
+    if (
+      !isRecord(result) ||
+      result.requestId !== normalizedRequestId ||
+      !['answered', 'cancelled'].includes(String(result.status)) ||
+      (pending.source && JSON.stringify(resultSource) !== JSON.stringify(pending.source))
+    ) {
+      throw new Error('ask_user_question resolve returned an invalid payload.');
+    }
+    this.rememberTerminalAskUser(normalizedRequestId);
+    this.pendingAskUserBindings.delete(normalizedRequestId);
+    if (this.pendingAskUserRequests.delete(normalizedRequestId)) {
+      this.sendAskUserDismiss(normalizedRequestId);
+    }
+    return { sessionId: ownerSessionId };
+  } catch (error) {
+    if (nativeSendStarted) {
+      // A failed acknowledgement does not prove Native rejected the answer.
+      // Reconcile once without replaying it; preserve the claim if this read
+      // also fails. An exact later pending snapshot can release the claim.
+      reply.unconfirmed = true;
+      if (currentAskUserBinding.call(this, binding))
+        await this.readPendingAskUserInteractions(binding.client).catch((): void => undefined);
+    }
+    throw error;
+  } finally {
+    if (binding.reply === reply && !reply.unconfirmed) delete binding.reply;
+  }
 }
 
 export async function reconcilePendingAskUserInteractions(
@@ -1216,7 +1517,8 @@ export async function reconcilePendingAskUserInteractions(
         }
         const request = this.parseAskUserInteractionRequest(interaction);
         if (!request) continue;
-        this.pendingAskUserRequests.set(request.requestId, request);
+        if (!this.pendingAskUserBindings.has(request.requestId))
+          bindAskUserRequest.call(this, request, client);
         this.sendCoworkInteraction(interaction);
       }
     }
@@ -1228,6 +1530,8 @@ export async function reconcilePendingAskUserInteractions(
 }
 
 export function dismissAllAskUserInteractions(this: RuntimePlanInteractionsContext): void {
+  this.askUserOriginRefresh.revision++;
+  this.pendingAskUserBindings.clear();
   for (const requestId of this.pendingAskUserRequests.keys()) {
     this.sendAskUserDismiss(requestId);
   }
@@ -1310,10 +1614,9 @@ export async function getPlanMode(
   await this.ensureGatewayClientReady();
   const agentId = session.agentId || DEFAULT_MANAGED_AGENT_ID;
   const sessionKey = this.toSessionKey(sessionId, agentId);
-  const result = await this.requireGatewayClient().request<{ session?: Record<string, unknown> }>(
-    'sessions.describe',
-    { key: sessionKey },
-  );
+  const result = await this.requireGatewayClient().request<{
+    session?: Record<string, unknown>;
+  }>('sessions.describe', { key: sessionKey });
   const pluginExtensions = Array.isArray(result.session?.pluginExtensions)
     ? result.session.pluginExtensions
     : [];

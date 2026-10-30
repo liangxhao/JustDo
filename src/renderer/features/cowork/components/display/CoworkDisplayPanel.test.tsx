@@ -89,6 +89,31 @@ afterEach(() => {
 });
 
 describe('CoworkDisplayPanel', () => {
+  it('keeps a collapsed workspace laid out and inert for retained background guests', () => {
+    const view = render(
+      <CoworkDisplayPanel activeTabId="team" isOpen={false} width={640} onClose={vi.fn()} tabs={[]}>
+        <div data-testid="retained-background-stage" />
+      </CoworkDisplayPanel>,
+    );
+    const panel = view.container.querySelector('#cowork-display-panel') as HTMLElement;
+    expect(panel.classList.contains('hidden')).toBe(false);
+    expect(panel.classList.contains('flex')).toBe(true);
+    expect(panel.style.opacity).toBe('0');
+    expect(panel.style.pointerEvents).toBe('none');
+    expect(panel.hasAttribute('inert')).toBe(true);
+    expect(panel.getAttribute('aria-hidden')).toBe('true');
+    expect(parseFloat(panel.style.width)).toBeGreaterThan(0);
+    const stage = view.getByTestId('retained-background-stage');
+    view.rerender(
+      <CoworkDisplayPanel activeTabId="team" isOpen width={640} onClose={vi.fn()} tabs={[]}>
+        <div data-testid="retained-background-stage" />
+      </CoworkDisplayPanel>,
+    );
+    expect(view.getByTestId('retained-background-stage')).toBe(stage);
+    expect(panel.style.opacity).toBe('1');
+    expect(panel.hasAttribute('inert')).toBe(false);
+  });
+
   it('shares the current plugin file icon between tabs and the tree and clears it after disable', async () => {
     const src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg"/%3E';
     const catalog: McpAppDiscovery = {

@@ -1,6 +1,6 @@
 import { describe, expect, test, vi } from 'vitest';
 
-import { BrowserAgentCdpInput } from './browserAgentInput';
+import { BrowserAgentCdpInput, BrowserAgentNativeInput } from './browserAgentInput';
 
 const createInput = () => {
   let cancelled = false;
@@ -101,7 +101,7 @@ describe('focus independent Chromium input', () => {
     const commands = fixture.sendCommand.mock.calls.map(([, parameters]) => parameters);
     expect(
       commands.filter(command => command?.buttons === 1 && command.type === 'mouseMoved'),
-    ).toEqual([{ type: 'mouseMoved', x: 10, y: 20, button: 'left', buttons: 1 }]);
+    ).toEqual([{ type: 'mouseMoved', x: 10, y: 20, button: 'left', buttons: 1, modifiers: 0 }]);
     expect(commands.at(-1)).toEqual({
       type: 'mouseReleased',
       x: 10,
@@ -109,6 +109,7 @@ describe('focus independent Chromium input', () => {
       button: 'left',
       buttons: 0,
       clickCount: 1,
+      modifiers: 0,
     });
   });
 
@@ -154,5 +155,124 @@ describe('focus independent Chromium input', () => {
       clickCount: 1,
       modifiers: 12,
     });
+  });
+});
+
+describe('direct sidebar guest input', () => {
+  const createNativeInput = () => {
+    let cancelled = false;
+    let destroyed = false;
+    const guest = { sendInputEvent: vi.fn(), isDestroyed: () => destroyed, focus: vi.fn() };
+    const input = new BrowserAgentNativeInput(guest, () => {
+      if (cancelled) throw new Error('cancelled');
+    });
+    return {
+      input,
+      guest,
+      cancel: () => {
+        cancelled = true;
+      },
+      destroy: () => {
+        destroyed = true;
+      },
+    };
+  };
+  test.each([
+    ['Enter', [], '\r'],
+    ['1', ['shift'], '!'],
+    ['Space', [], ' '],
+    ['A', ['control'], ''],
+    ['A', ['alt'], ''],
+    ['A', ['meta'], ''],
+    ['Control', [], ''],
+    ['Shift', [], ''],
+    ['Alt', [], ''],
+    ['Meta', [], ''],
+    ['VolumeUp', [], ''],
+    ['F24', [], ''],
+  ] as const)(
+    'keeps native %s semantics with %j and no guest focus',
+    async (key, modifiers, text) => {
+      const { input, guest } = createNativeInput();
+      await input.press(key, [...modifiers], async () => {});
+      expect(guest.sendInputEvent.mock.calls.map(([event]) => event)).toEqual([
+        { type: 'keyDown', keyCode: key, modifiers: [...modifiers] },
+        ...(text ? [{ type: 'char', keyCode: text, modifiers: [...modifiers] }] : []),
+        { type: 'keyUp', keyCode: key, modifiers: [...modifiers] },
+      ]);
+      expect(guest.focus).not.toHaveBeenCalled();
+    },
+  );
+  test.each([
+    ['ArrowLeft', 'Left', [], ''],
+    ['ArrowRight', 'Right', [], ''],
+    ['arrowup', 'Up', [], ''],
+    ['ArrowDown', 'Down', [], ''],
+    ['KeyA', 'A', ['control'], ''],
+    ['KeyA', 'A', [], 'a'],
+    ['Digit1', '1', ['shift'], '!'],
+    ['Digit1', '1', [], '1'],
+  ] as const)(
+    'translates %s to the native Accelerator %s without changing modifiers',
+    async (key, nativeKey, modifiers, text) => {
+      const { input, guest } = createNativeInput();
+      await input.press(key, [...modifiers], async () => {});
+      expect(guest.sendInputEvent.mock.calls.map(([event]) => event)).toEqual([
+        { type: 'keyDown', keyCode: nativeKey, modifiers: [...modifiers] },
+        ...(text ? [{ type: 'char', keyCode: text, modifiers: [...modifiers] }] : []),
+        { type: 'keyUp', keyCode: nativeKey, modifiers: [...modifiers] },
+      ]);
+      expect(guest.focus).not.toHaveBeenCalled();
+    },
+  );
+  test('cancels between native key-down and char while still releasing the key', async () => {
+    const fixture = createNativeInput();
+    fixture.guest.sendInputEvent.mockImplementationOnce(() => fixture.cancel());
+    await expect(fixture.input.press('a', [], async () => {})).rejects.toThrow('cancelled');
+    expect(fixture.guest.sendInputEvent.mock.calls.map(([event]) => event.type)).toEqual([
+      'keyDown',
+      'keyUp',
+    ]);
+  });
+  test('releases a native drag at its last actual coordinate with held-button state', async () => {
+    const fixture = createNativeInput();
+    await expect(
+      fixture.input.drag({ x: 0, y: 0 }, { x: 100, y: 200 }, async milliseconds => {
+        if (milliseconds === 16) fixture.cancel();
+      }),
+    ).rejects.toThrow('cancelled');
+    expect(fixture.guest.sendInputEvent).toHaveBeenCalledWith({
+      type: 'mouseMove',
+      x: 10,
+      y: 20,
+      button: 'left',
+      modifiers: ['leftbuttondown'],
+    });
+    expect(fixture.guest.sendInputEvent).toHaveBeenLastCalledWith({
+      type: 'mouseUp',
+      x: 10,
+      y: 20,
+      button: 'left',
+      clickCount: 1,
+      modifiers: [],
+    });
+    expect(fixture.guest.focus).not.toHaveBeenCalled();
+  });
+  test('keeps the original native press error when releasing also fails', async () => {
+    const { input, guest } = createNativeInput();
+    guest.sendInputEvent
+      .mockImplementationOnce(() => {
+        throw new Error('press lost');
+      })
+      .mockImplementationOnce(() => {
+        throw new Error('release lost');
+      });
+    await expect(input.click({ x: 20, y: 30 }, 'left', 1, [], async () => {})).rejects.toThrow(
+      'press lost',
+    );
+    expect(guest.sendInputEvent.mock.calls.map(([event]) => event.type)).toEqual([
+      'mouseDown',
+      'mouseUp',
+    ]);
   });
 });

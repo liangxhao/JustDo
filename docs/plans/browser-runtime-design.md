@@ -454,7 +454,7 @@ G4 只回归现有链路：并发发送、停止/迟到事件、长正文截断�
 | 可信策略   | `plugins/extensions/runtime-services/` 浏览器域                                                       | 公开 hooks、run admission、错后端拒绝、取消/清理；入口保持薄                    |
 | 配置/权限  | config/plugins/pluginProjection.ts、policies/executionPolicyProjection.ts、Plan Mode                  | 双插件服务启用、标准 browser deny 遮蔽、权限来源/新名过渡及动作分类             |
 | Renderer   | `features/browser/BrowserPanel.tsx`、`features/cowork/components/display/`                            | metadata 投影、typed UI 操作、bounds、观察/接管；删除真实 webview 生命周期      |
-| IPC        | browser owning handler、`preload.ts`、`renderer/types/electron.d.ts`                                  | 常量→校验→权限→最小 preload；无 generic webContents 调用                        |
+| IPC        | browser owning handler、`src/main/preload/` 领域 helper 与薄入口 `index.ts`、`renderer/types/electron.d.ts` | 常量→校验→权限→最小 preload；无 generic webContents 调用                     |
 | 定时       | `main/scheduler/`、`main/ipc/scheduledTask/`、`shared/scheduledTask/` 与编辑/详情 UI                  | 本地偏好、原生权限核验、run 页面入口、未知配置对账                              |
 | 扩展       | `plugins/chrome-extensions/chrome-assistant/`、Main app-server/Native Messaging                       | 显式控制 grant、真实 tab/relay 映射，保留当前 backend 聊天 transport            |
 | 执行适配   | `main/engine/openclaw/`、既有发送准备                                                                 | 登记精确 run/grant、保留 backend epoch/未知发送/terminal；不加 copilot 客户端   |

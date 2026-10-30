@@ -23,6 +23,11 @@ Swarm Workflow 是独立任务流插件，与 OpenClaw 原生 collector 分组�
 
 ## 执行边界
 
+节点工具的界面来源与流程变更通知共用精确的 live key 映射：普通聊天派生 key 只提供
+产品 ID 候选，导入会话继续核对持久绑定与 Native SID，最终由当前 runtime 的实际 key
+集合准入。异步读取前后核对 Gateway 响应上下文与 runtime；Native 同时核对 service
+generation、store、engine 及精确 run 收据，退休的查询不能附着到新实例。
+
 ```mermaid
 flowchart LR
   Input[主会话目标] --> Hook[核对本次原生输入身份]

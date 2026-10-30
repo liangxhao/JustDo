@@ -10,7 +10,7 @@ import {
   projectBrowserAgentDownload,
   reserveBrowserAgentOutputPath,
 } from '../downloads/browserAgentDownloadCoordinator';
-import { BrowserAgentCdpInput } from './browserAgentInput';
+import { BrowserAgentCdpInput, BrowserAgentNativeInput } from './browserAgentInput';
 import {
   ACT_DOWNLOAD_EVENT_GRACE_MS,
   ACT_DOWNLOAD_MAX_DRAIN_MS,
@@ -76,7 +76,6 @@ export interface BrowserAgentActionsContext {
     frameSelector: string,
   ) => Promise<{ x: number; y: number }>;
   readonly waitWhileActive: (milliseconds: number, assertActive: () => void) => Promise<void>;
-  readonly focusGuestForKeyboardInput: (guest: Electron.WebContents) => void;
   readonly enableDebuggerDomains: (
     tab: RegisteredTab,
     guest: Electron.WebContents,
@@ -124,7 +123,10 @@ export interface BrowserAgentActionsContext {
   readonly blockedFileChooserResult?: (webContentsId: number) => Record<string, unknown> | null;
   readonly isFileChooserCaptureActive?: (webContentsId: number) => boolean;
   readonly consumePendingUpload?: (
-    tab: RegisteredTab, guest: Electron.WebContents, files: string[], assertCurrent: () => void,
+    tab: RegisteredTab,
+    guest: Electron.WebContents,
+    files: string[],
+    assertCurrent: () => void,
   ) => Promise<boolean>;
   readonly resolveUploadPaths: (sessionId: string, requestedPaths: unknown) => string[];
   readonly captureSnapshot: (
@@ -188,8 +190,9 @@ export async function executeAct(
       throw new Error('Nested act targetId does not match the selected tab.');
     }
   }
-  const backgroundInput = async (): Promise<BrowserAgentCdpInput> => {
+  const targetInput = async (): Promise<BrowserAgentCdpInput | BrowserAgentNativeInput> => {
     assertActive();
+    if (!tab.headless) return new BrowserAgentNativeInput(guest, assertActive);
     const guestDebugger = await this.enableDebuggerDomains(tab, guest);
     assertActive();
     return new BrowserAgentCdpInput(guestDebugger, assertActive, () => guest.isDestroyed());
@@ -204,8 +207,13 @@ export async function executeAct(
     for (let index = 0; index < actions.length; index += 1) {
       assertActive();
       if (this.isFileChooserCaptureActive?.(tab.webContentsId) === false) {
-        return { results, captureRetired: true, skipped: actions.length - index,
-          message: 'The browser page or chooser capture changed. Inspect the current page before continuing.' };
+        return {
+          results,
+          captureRetired: true,
+          skipped: actions.length - index,
+          message:
+            'The browser page or chooser capture changed. Inspect the current page before continuing.',
+        };
       }
       const nested = asRecord(actions[index]);
       if (!nested || nested.kind === 'batch') throw new Error('Nested batch actions are invalid.');
@@ -355,11 +363,7 @@ export async function executeAct(
     assertActive();
     if (kind === 'scrollIntoView') return { scrolled: target.label };
     if (kind === 'hover') {
-      if (tab.headless === true) {
-        await (await backgroundInput()).move(prepared);
-      } else {
-        guest.sendInputEvent({ type: 'mouseMove', x: prepared.x, y: prepared.y });
-      }
+      await (await targetInput()).move(prepared);
       return { hovered: target.label };
     }
     if (kind === 'click') {
@@ -372,38 +376,10 @@ export async function executeAct(
         assertActive,
       );
       const clickCount = request.doubleClick === true ? 2 : 1;
-      if (tab.headless === true) {
-        const input = await backgroundInput();
-        await input.move(prepared, clickModifiers);
-        for (let count = 1; count <= clickCount; count += 1) {
-          await input.click(prepared, clickButton, count, clickModifiers, async () => undefined);
-        }
-      } else {
-        guest.sendInputEvent({
-          type: 'mouseMove',
-          x: prepared.x,
-          y: prepared.y,
-          modifiers: clickModifiers,
-        });
-        for (let count = 1; count <= clickCount; count += 1) {
-          assertActive();
-          guest.sendInputEvent({
-            type: 'mouseDown',
-            x: prepared.x,
-            y: prepared.y,
-            button: clickButton,
-            clickCount: count,
-            modifiers: clickModifiers,
-          });
-          guest.sendInputEvent({
-            type: 'mouseUp',
-            x: prepared.x,
-            y: prepared.y,
-            button: clickButton,
-            clickCount: count,
-            modifiers: clickModifiers,
-          });
-        }
+      const input = await targetInput();
+      await input.move(prepared, clickModifiers);
+      for (let count = 1; count <= clickCount; count += 1) {
+        await input.click(prepared, clickButton, count, clickModifiers, async () => undefined);
       }
     } else {
       if (!prepared.editable) throw new Error('The selected element is not editable.');
@@ -493,13 +469,7 @@ export async function executeAct(
         throw new Error('Browser text input did not reach the selected element.');
       }
       if (request.submit === true) {
-        if (tab.headless === true) {
-          await (await backgroundInput()).press('Enter', [], async () => undefined);
-        } else {
-          this.focusGuestForKeyboardInput(guest);
-          guest.sendInputEvent({ type: 'keyDown', keyCode: 'Enter' });
-          guest.sendInputEvent({ type: 'keyUp', keyCode: 'Enter' });
-        }
+        await (await targetInput()).press('Enter', [], async () => undefined);
       }
     }
     if (!preserveSnapshot && (kind === 'click' || request.submit === true)) {
@@ -516,23 +486,12 @@ export async function executeAct(
       request.button === 'right' || request.button === 'middle' ? request.button : 'left';
     const modifiers = normalizeInputModifiers(request.modifiers);
     const delayMs = Math.max(0, Math.min(1_000, Number(request.delayMs) || 0));
-    if (tab.headless === true) {
-      const input = await backgroundInput();
-      await input.move({ x, y }, modifiers);
-      for (let count = 1; count <= clickCount; count += 1) {
-        await input.click({ x, y }, button, count, modifiers, () =>
-          this.waitWhileActive(delayMs, assertActive),
-        );
-      }
-    } else {
-      guest.sendInputEvent({ type: 'mouseDown', x, y, button, clickCount, modifiers });
-      try {
-        if (delayMs > 0) await this.waitWhileActive(delayMs, assertActive);
-      } finally {
-        if (!guest.isDestroyed()) {
-          guest.sendInputEvent({ type: 'mouseUp', x, y, button, clickCount, modifiers });
-        }
-      }
+    const input = await targetInput();
+    await input.move({ x, y }, modifiers);
+    for (let count = 1; count <= clickCount; count += 1) {
+      await input.click({ x, y }, button, count, modifiers, () =>
+        this.waitWhileActive(delayMs, assertActive),
+      );
     }
     if (!preserveSnapshot) this.snapshots.delete(tab.webContentsId);
     return { clicked: { x, y } };
@@ -542,19 +501,9 @@ export async function executeAct(
     if (!key || key.length > 64) throw new Error('key is required.');
     const { keyCode, modifiers } = normalizeKeyChord(key);
     const delayMs = Math.max(0, Math.min(1_000, Number(request.delayMs) || 0));
-    if (tab.headless === true) {
-      await (
-        await backgroundInput()
-      ).press(keyCode, modifiers, () => this.waitWhileActive(delayMs, assertActive));
-    } else {
-      this.focusGuestForKeyboardInput(guest);
-      guest.sendInputEvent({ type: 'keyDown', keyCode, modifiers });
-      try {
-        if (delayMs > 0) await this.waitWhileActive(delayMs, assertActive);
-      } finally {
-        if (!guest.isDestroyed()) guest.sendInputEvent({ type: 'keyUp', keyCode, modifiers });
-      }
-    }
+    await (
+      await targetInput()
+    ).press(keyCode, modifiers, () => this.waitWhileActive(delayMs, assertActive));
     if (!preserveSnapshot) this.snapshots.delete(tab.webContentsId);
     return { pressed: key };
   }
@@ -610,7 +559,7 @@ export async function executeAct(
     points.end.x += frameOffset.x;
     points.end.y += frameOffset.y;
     await (
-      await backgroundInput()
+      await targetInput()
     ).drag(points.start, points.end, milliseconds =>
       this.waitWhileActive(milliseconds, assertActive),
     );
@@ -871,7 +820,14 @@ export async function setFileInputFiles(
   assertActive();
   const reference = inputRef || ref;
   if (!reference && !elementSelector) {
-    if (await this.consumePendingUpload?.(tab, guest, this.resolveUploadPaths(sessionId, files), assertActive)) {
+    if (
+      await this.consumePendingUpload?.(
+        tab,
+        guest,
+        this.resolveUploadPaths(sessionId, files),
+        assertActive,
+      )
+    ) {
       assertActive();
       return { armed: false, completed: true };
     }
@@ -880,7 +836,9 @@ export async function setFileInputFiles(
     return { armed: true, completed: false };
   }
   if (this.blockedFileChooserResult?.(tab.webContentsId))
-    throw new Error('A file chooser is already waiting. Use upload with paths and targetId without another locator.');
+    throw new Error(
+      'A file chooser is already waiting. Use upload with paths and targetId without another locator.',
+    );
   this.clearArmedUpload(
     tab.webContentsId,
     guest,

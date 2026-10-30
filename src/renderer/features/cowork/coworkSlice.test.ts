@@ -108,6 +108,32 @@ describe('cowork session permissions', () => {
 });
 
 describe('cowork Plan mode state', () => {
+  test('refreshes question availability without replacing the mounted immutable question payload', () => {
+    const request = {
+      requestId: 'question-one',
+      sessionId: 'source',
+      toolName: 'ask_user_question',
+      interactionKind: 'structured-question' as const,
+      toolInput: { questions: ['frozen-question'] },
+      origin: { sessionKey: 'exact-native', available: true },
+    };
+    const initial = coworkReducer(undefined, enqueuePendingInteraction(request));
+    const refreshed = coworkReducer(
+      initial,
+      enqueuePendingInteraction({
+        ...request,
+        sessionId: '',
+        toolInput: structuredClone(request.toolInput),
+        origin: { sessionKey: 'exact-native', available: false },
+      }),
+    );
+    expect(refreshed.pendingInteractions).toHaveLength(1);
+    expect(refreshed.pendingInteractions[0].toolInput).toBe(
+      initial.pendingInteractions[0].toolInput,
+    );
+    expect(refreshed.pendingInteractions[0].origin?.available).toBe(false);
+    expect(refreshed.pendingInteractions[0].sessionId).toBe('');
+  });
   test('removes per-session state when sessions are deleted', () => {
     let state = coworkReducer(undefined, setPlanMode({ sessionId: 'session-1', enabled: true }));
     state = coworkReducer(state, setPlanMode({ sessionId: 'session-2', enabled: true }));
@@ -150,10 +176,19 @@ describe('cowork session model ownership', () => {
 
   test('keeps the background default visible and pending after navigating to a new chat', () => {
     const homeKey = '__home__\0main';
-    let state = coworkReducer(undefined, setCurrentSession(createSession('session-1', 'provider-b/model-b')));
-    state = coworkReducer(state, beginManualModelSelection({
-      contextKey: homeKey, taskId: 1, model: modelB, previousModel: modelA,
-    }));
+    let state = coworkReducer(
+      undefined,
+      setCurrentSession(createSession('session-1', 'provider-b/model-b')),
+    );
+    state = coworkReducer(
+      state,
+      beginManualModelSelection({
+        contextKey: homeKey,
+        taskId: 1,
+        model: modelB,
+        previousModel: modelA,
+      }),
+    );
     state = coworkReducer(state, clearCurrentSession());
     expect(state.manualModelSelections[homeKey]).toEqual(modelB);
     expect(state.pendingModelSelectionTaskIds[homeKey]).toBe(1);
@@ -165,12 +200,24 @@ describe('cowork session model ownership', () => {
 
   test('an older session default save cannot replace or release a newer home selection', () => {
     const contextKey = '__home__\0main';
-    let state = coworkReducer(undefined, beginManualModelSelection({
-      contextKey, taskId: 2, model: modelC, previousModel: modelA,
-    }));
-    state = coworkReducer(state, beginManualModelSelection({
-      contextKey, taskId: 1, model: modelB, previousModel: modelA,
-    }));
+    let state = coworkReducer(
+      undefined,
+      beginManualModelSelection({
+        contextKey,
+        taskId: 2,
+        model: modelC,
+        previousModel: modelA,
+      }),
+    );
+    state = coworkReducer(
+      state,
+      beginManualModelSelection({
+        contextKey,
+        taskId: 1,
+        model: modelB,
+        previousModel: modelA,
+      }),
+    );
     state = coworkReducer(state, confirmDefaultModelSelection({ contextKey, model: modelB }));
     state = coworkReducer(state, completeManualModelSelection({ contextKey, taskId: 1 }));
     state = coworkReducer(state, rollbackManualModelSelection({ contextKey, taskId: 1 }));

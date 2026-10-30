@@ -1177,7 +1177,7 @@ export async function captureScreenshot(
         if (typeof captured.data !== 'string') throw new Error('Browser screenshot failed.');
         data = captured.data;
       } else {
-        const image = await guest.capturePage();
+        const image = await guest.capturePage(undefined, { stayHidden: true });
         data =
           imageType === 'jpeg'
             ? image.toJPEG(80).toString('base64')

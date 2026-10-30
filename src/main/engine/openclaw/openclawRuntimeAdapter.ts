@@ -33,7 +33,11 @@ import { type RuntimeGoalOperationsContext } from './runtimeGoalOperations';
 import * as runtimeHistory from './runtimeHistory';
 import { type RuntimeHistoryContext } from './runtimeHistory';
 import * as runtimePlanInteractions from './runtimePlanInteractions';
-import { type RuntimePlanInteractionsContext } from './runtimePlanInteractions';
+import {
+  type AskUserBinding,
+  type ExecutionSessionResolver,
+  type RuntimePlanInteractionsContext,
+} from './runtimePlanInteractions';
 import * as runtimeSessionStatus from './runtimeSessionStatus';
 import { type RuntimeSessionStatusContext } from './runtimeSessionStatus';
 export { mergeGatewayHistoryPages } from './runtimeAdapterSupport';
@@ -184,7 +188,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private readonly recentTerminalRunIds = new Map<string, number>();
   private readonly retiredRunBindings = new Map<
     string,
-    Pick<SessionTurn, 'runId' | 'sessionKey' | 'gatewaySessionId' | 'lifecycleGeneration' | 'lastAgentSeq'> & {
+    Pick<
+      SessionTurn,
+      'runId' | 'sessionKey' | 'gatewaySessionId' | 'lifecycleGeneration' | 'lastAgentSeq'
+    > & {
       clientGeneration: number;
     }
   >();
@@ -232,7 +239,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   // Channel session sync
   private readonly latestTurnTokenBySession = new Map<string, number>();
   private readonly sessionExecApprovalGrants = new SessionExecApprovalGrants();
-  private readonly approvalResolutionByKey = new Map<string, Promise<void>>();
+  private readonly approvalResolutionByKey = new Map<
+    string,
+    { client: GatewayClientLike; generation: number; promise: Promise<void> }
+  >();
   private readonly externalApprovalRouting = new ExternalApprovalRouting(() => this.gatewayClient);
   private readonly planResolutionByRequestId = new Map<string, Promise<{ sessionId: string }>>();
   private approvalReconciliation: {
@@ -240,6 +250,26 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     events: Array<{ channel: string; payload: Record<string, unknown> }>;
   } | null = null;
   private readonly pendingAskUserRequests = new Map<string, AskUserRequest>();
+  private readonly pendingAskUserBindings = new Map<string, AskUserBinding>();
+  private readonly askUserOriginRefresh: { revision: number; pending?: Promise<void> } = {
+    revision: 0,
+  };
+  private executionSessionResolver?: ExecutionSessionResolver;
+  private isNativeOnlyExecutionSource?: (nativePluginId: string) => boolean;
+  setExecutionSessionResolver(
+    resolver: ExecutionSessionResolver,
+    nativeOnly?: (nativePluginId: string) => boolean,
+  ): void {
+    this.executionSessionResolver = resolver;
+    this.isNativeOnlyExecutionSource = nativeOnly;
+    void this.refreshExecutionSessionInteractions().catch((): void => undefined);
+  }
+  refreshExecutionSessionInteractions(metadataOnly = false): Promise<void> {
+    return runtimePlanInteractions.refreshExecutionSessionInteractions.call(
+      this.runtimePlanInteractionsContext,
+      metadataOnly,
+    );
+  }
   private readonly pendingPlanModeRequests = new Map<string, PlanModeRequest>();
   private readonly terminalAskUserIds = new Set<string>();
   private readonly subagentStatusCache = new Map<
@@ -260,7 +290,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private readonly subagentStatusGenerations = new Map<string, number>();
   private runtimeSessionSnapshot: (RuntimeSessionSnapshot & { expiresAt: number }) | null = null;
   private runtimeSessionSnapshotPromise: Promise<RuntimeSessionSnapshot> | null = null;
-  private runtimeSessionSnapshotQueuedRefresh: RuntimeSessionStatusContext['runtimeSessionSnapshotQueuedRefresh'] = null;
+  private runtimeSessionSnapshotQueuedRefresh: RuntimeSessionStatusContext['runtimeSessionSnapshotQueuedRefresh'] =
+    null;
   private runtimeSessionSnapshotGeneration = 0;
   private lastRuntimeStatusWarningAt = 0;
   private readonly sessionHistorySnapshots = new Map<
@@ -473,9 +504,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     options: CoworkPrepareSessionOptions = {},
   ): Promise<CoworkPreparedSession> {
     let session = this.store.getSession(sessionId);
-    const adoptedDefaults = !!session?.historyBinding && this.store.applyHistorySessionDefaults?.(sessionId);
-    if (adoptedDefaults)
-      session = this.store.getSession(sessionId);
+    const adoptedDefaults =
+      !!session?.historyBinding && this.store.applyHistorySessionDefaults?.(sessionId);
+    if (adoptedDefaults) session = this.store.getSession(sessionId);
     if (!session) throw new Error(`Session ${sessionId} not found`);
     if (session.branchCreationPending && !options.pendingBranchPreparation) {
       throw new Error(t('coworkBranchCreationPending'));
@@ -486,9 +517,13 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       throw new Error('The session workspace must be an absolute path.');
     }
     if (session.historyBinding && !fs.existsSync(workspaceRoot)) {
-      throw new Error('The historical workspace is unavailable. Select an existing folder before continuing.');
+      throw new Error(
+        'The historical workspace is unavailable. Select an existing folder before continuing.',
+      );
     }
-    const permissionMode: PermissionMode = adoptedDefaults ? session.permissionMode : options.permissionMode ?? session.permissionMode;
+    const permissionMode: PermissionMode = adoptedDefaults
+      ? session.permissionMode
+      : (options.permissionMode ?? session.permissionMode);
     const nativePermissionMode = toOpenClawSessionPermissionMode(permissionMode);
     const originalSessionAgentId = session.agentId;
     const originalSessionCwd = session.cwd;
@@ -505,30 +540,39 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     const initialModelConnectionGeneration = this.gatewayClientGeneration;
     const isInitialModelContextCurrent = () => {
       const current = this.store.getSession(sessionId);
-      return !options.signal?.aborted && this.gatewayClient === initialModelClient &&
-        this.gatewayClientGeneration === initialModelConnectionGeneration && !!current &&
-        current.agentId === originalSessionAgentId && current.cwd === originalSessionCwd &&
+      return (
+        !options.signal?.aborted &&
+        this.gatewayClient === initialModelClient &&
+        this.gatewayClientGeneration === initialModelConnectionGeneration &&
+        !!current &&
+        current.agentId === originalSessionAgentId &&
+        current.cwd === originalSessionCwd &&
         current.permissionMode === originalSessionPermissionMode &&
         current.nativeSessionKey === originalNativeSessionKey &&
         current.historyBinding?.sessionKey === originalBindingKey &&
         current.historyBinding?.nativeSessionId === originalBindingSessionId &&
-        current.branchCreationPending === originalBranchCreationPending;
+        current.branchCreationPending === originalBranchCreationPending
+      );
     };
     const assertPreparationCurrent = () => {
       options.signal?.throwIfAborted();
       if (!isInitialModelContextCurrent()) throw new Error(t('sessionModelPreparationChanged'));
     };
     assertPreparationCurrent();
-    const pinInitialModel = (gatewaySessionId: string) => pinPreparedManagedSessionModel({
-      client: initialModelClient,
-      isCurrentConnection: isInitialModelContextCurrent,
-      sessionKey,
-      gatewaySessionId,
-      modelRef: options.modelRef!,
-      persistModelRef: modelRef => this.store.updateSession(sessionId, { modelRef }),
-    });
-    if (session.historyBinding && options.expectedSessionId &&
-      options.expectedSessionId !== session.historyBinding.nativeSessionId)
+    const pinInitialModel = (gatewaySessionId: string) =>
+      pinPreparedManagedSessionModel({
+        client: initialModelClient,
+        isCurrentConnection: isInitialModelContextCurrent,
+        sessionKey,
+        gatewaySessionId,
+        modelRef: options.modelRef!,
+        persistModelRef: modelRef => this.store.updateSession(sessionId, { modelRef }),
+      });
+    if (
+      session.historyBinding &&
+      options.expectedSessionId &&
+      options.expectedSessionId !== session.historyBinding.nativeSessionId
+    )
       throw new Error('The prepared historical conversation identity does not match its binding.');
     if (options.expectedSessionId) {
       const client = this.requireGatewayClient();
@@ -537,8 +581,11 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         session?: Record<string, unknown>;
       }>('sessions.describe', { key: sessionKey, agentId: session.agentId });
       assertPreparationCurrent();
-      if (this.gatewayClient !== client || this.gatewayClientGeneration !== generation ||
-        entry?.sessionId !== options.expectedSessionId)
+      if (
+        this.gatewayClient !== client ||
+        this.gatewayClientGeneration !== generation ||
+        entry?.sessionId !== options.expectedSessionId
+      )
         throw new Error('The prepared App conversation identity changed.');
       this.assertPreparedSessionEntry(entry, nativePermissionMode, workspaceRoot);
       if (options.modelRef) await pinInitialModel(options.expectedSessionId);
@@ -546,7 +593,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         const configGeneration = this.engineManager.getGatewayConfigReloadGeneration();
         await reconcilePreparedManagedSessionModel({
           client,
-          isCurrentConnection: () => isInitialModelContextCurrent() && this.gatewayClient === client &&
+          isCurrentConnection: () =>
+            isInitialModelContextCurrent() &&
+            this.gatewayClient === client &&
             this.gatewayClientGeneration === generation &&
             this.engineManager.getGatewayConfigReloadGeneration() === configGeneration,
           sessionKey,
@@ -642,13 +691,19 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     assertPreparationCurrent();
     if (session.historyBinding) {
       const described = await client.request<{ session?: { sessionId?: string } }>(
-        'sessions.describe', { key: sessionKey, agentId: session.agentId },
+        'sessions.describe',
+        { key: sessionKey, agentId: session.agentId },
       );
       assertPreparationCurrent();
-      if (this.gatewayClient !== client || this.gatewayClientGeneration !== generation ||
+      if (
+        this.gatewayClient !== client ||
+        this.gatewayClientGeneration !== generation ||
         session.historyBinding.sessionKey !== sessionKey ||
-        described.session?.sessionId !== session.historyBinding.nativeSessionId)
-        throw new Error('The imported conversation identity changed. No replacement conversation was created.');
+        described.session?.sessionId !== session.historyBinding.nativeSessionId
+      )
+        throw new Error(
+          'The imported conversation identity changed. No replacement conversation was created.',
+        );
     }
     assertPreparationCurrent();
     const preparationProcessGeneration = this.engineManager.getGatewayProcessGeneration?.();
@@ -685,16 +740,28 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     if (!gatewaySessionId) {
       throw new Error('OpenClaw sessions.create returned no sessionId.');
     }
-    if (session.historyBinding && (gatewaySessionId !== session.historyBinding.nativeSessionId ||
-      this.gatewayClient !== client || this.gatewayClientGeneration !== generation))
+    if (
+      session.historyBinding &&
+      (gatewaySessionId !== session.historyBinding.nativeSessionId ||
+        this.gatewayClient !== client ||
+        this.gatewayClientGeneration !== generation)
+    )
       throw new Error('The imported conversation changed during preparation.');
     this.assertPreparedSessionEntry(result.entry, nativePermissionMode, workspaceRoot);
     if (options.modelRef) {
       if (!isInitialModelContextCurrent()) throw new Error(t('sessionModelPreparationChanged'));
-      this.store.updateSession(sessionId, { modelRef: confirmPreparedManagedSessionModelSelection(
-        result, sessionKey, gatewaySessionId, options.modelRef,
-      ) });
-    } else if (typeof result.entry?.modelOverride === 'string' && result.entry.modelOverride.trim()) {
+      this.store.updateSession(sessionId, {
+        modelRef: confirmPreparedManagedSessionModelSelection(
+          result,
+          sessionKey,
+          gatewaySessionId,
+          options.modelRef,
+        ),
+      });
+    } else if (
+      typeof result.entry?.modelOverride === 'string' &&
+      result.entry.modelOverride.trim()
+    ) {
       if (result.key !== sessionKey || result.entry.sessionId !== gatewaySessionId) {
         throw new Error(t('sessionModelIdentityChanged'));
       }
@@ -702,7 +769,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       await reconcilePreparedManagedSessionModel({
         client,
         isCurrentConnection: () =>
-          isInitialModelContextCurrent() && this.gatewayClient === client && this.gatewayClientGeneration === generation &&
+          isInitialModelContextCurrent() &&
+          this.gatewayClient === client &&
+          this.gatewayClientGeneration === generation &&
           this.engineManager.getGatewayConfigReloadGeneration() === configGeneration,
         sessionKey,
         gatewaySessionId,
@@ -822,6 +891,14 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     options: CoworkStopOptions,
     cancelPendingStart: boolean,
   ): Promise<void> {
+    // Permission revocation is local and immediate, independent of Stop ACK or
+    // uncertain Native execution. Do not touch independently owned peers.
+    for (const key of new Set([
+      ...this.getSessionKeysForSession(sessionId),
+      this.activeTurns.get(sessionId)?.sessionKey,
+    ])) {
+      if (key) this.sessionExecApprovalGrants.clearSession(key);
+    }
     const pendingStart = cancelPendingStart ? this.pendingTurnStarts.get(sessionId) : undefined;
     const unknownRun = this.unknownSessionRuns.get(sessionId);
     if (cancelPendingStart && unknownRun) unknownRun.cancelled = true;
@@ -1294,7 +1371,15 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       const replayClientGeneration = this.gatewayClientGeneration;
       const replaySourceIdentity = () => {
         const source = this.store.getSession(sessionId);
-        return source && JSON.stringify([source.agentId, source.nativeSessionKey, source.historyBinding, source.external]);
+        return (
+          source &&
+          JSON.stringify([
+            source.agentId,
+            source.nativeSessionKey,
+            source.historyBinding,
+            source.external,
+          ])
+        );
       };
       const replayCapturedIdentity = replaySourceIdentity();
       try {
@@ -1345,29 +1430,45 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         const send = async () => {
           if (options.initialModelRef) {
             const assertCurrent = () => {
-              if (this.gatewayClient !== initialDispatchClient ||
+              if (
+                this.gatewayClient !== initialDispatchClient ||
                 this.gatewayClientGeneration !== initialDispatchGeneration ||
-                client !== initialDispatchClient || isStartCancelled()) {
-                throw Object.assign(new Error(t('sessionModelPreparationChanged')), { requestSent: false });
+                client !== initialDispatchClient ||
+                isStartCancelled()
+              ) {
+                throw Object.assign(new Error(t('sessionModelPreparationChanged')), {
+                  requestSent: false,
+                });
               }
             };
             assertCurrent();
             const described = await client.request<{ session?: Record<string, unknown> }>(
-              'sessions.describe', { key: sessionKey },
+              'sessions.describe',
+              { key: sessionKey },
             );
             assertCurrent();
             const entry = described.session;
             if (entry?.key !== sessionKey || entry.sessionId !== preparedSession.gatewaySessionId) {
-              throw Object.assign(new Error(t('sessionModelIdentityChanged')), { requestSent: false });
+              throw Object.assign(new Error(t('sessionModelIdentityChanged')), {
+                requestSent: false,
+              });
             }
-            this.assertPreparedSessionEntry(entry, toOpenClawSessionPermissionMode(session.permissionMode),
-              (options.workspaceRoot || session.cwd).trim());
+            this.assertPreparedSessionEntry(
+              entry,
+              toOpenClawSessionPermissionMode(session.permissionMode),
+              (options.workspaceRoot || session.cwd).trim(),
+            );
             // The public describe row projects selection in model/provider; activeModel
             // is execution evidence. Require the explicit user pin's provenance too.
             const selectedRef = readModelRef(entry);
-            if (entry.modelOverrideSource !== 'user' || !selectedRef ||
-              !matchesModelSelectionIdentity(options.initialModelRef, selectedRef)) {
-              throw Object.assign(new Error(t('sessionModelPreparationUnconfirmed')), { requestSent: false });
+            if (
+              entry.modelOverrideSource !== 'user' ||
+              !selectedRef ||
+              !matchesModelSelectionIdentity(options.initialModelRef, selectedRef)
+            ) {
+              throw Object.assign(new Error(t('sessionModelPreparationUnconfirmed')), {
+                requestSent: false,
+              });
             }
           }
           if (options.finalSyncAdmission || options.onNativeAccepted) {
@@ -1388,9 +1489,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
             ? options.dispatchChatSend(sendParams, preparedSession)
             : client.request('chat.send', sendParams);
         };
-        const result = await (options.initialModelRef
+        const result = (await (options.initialModelRef
           ? enqueueSessionModelOperation(sessionKey, send)
-          : send()) as SessionGoalMutationResult | { runId?: string };
+          : send())) as SessionGoalMutationResult | { runId?: string };
         if (goalStartObjective === null && isChatSendStopReceipt(result)) {
           this.cleanupSessionTurn(sessionId);
           this.rootRunIdBySession.delete(sessionId);
@@ -1436,28 +1537,51 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         let replayUnconfirmed = false;
         if ('replayed' in result && result.replayed) {
           const replayRunId = result.runId?.trim();
-          let runtimeRow: { key?: unknown; sessionId?: unknown; goal?: unknown; activeRunIds?: unknown } | null | undefined;
+          let runtimeRow:
+            | { key?: unknown; sessionId?: unknown; goal?: unknown; activeRunIds?: unknown }
+            | null
+            | undefined;
           try {
-            runtimeRow = (await client.request<{ session?: typeof runtimeRow }>('sessions.describe',
-              { key: sessionKey, agentId })).session;
-          } catch { replayUnconfirmed = true; }
-          if (this.gatewayClient !== client || this.gatewayClientGeneration !== replayClientGeneration ||
+            runtimeRow = (
+              await client.request<{ session?: typeof runtimeRow }>('sessions.describe', {
+                key: sessionKey,
+                agentId,
+              })
+            ).session;
+          } catch {
+            replayUnconfirmed = true;
+          }
+          if (
+            this.gatewayClient !== client ||
+            this.gatewayClientGeneration !== replayClientGeneration ||
             replaySourceIdentity() !== replayCapturedIdentity ||
-            this.activeTurns.get(sessionId) !== turn || runtimeRow?.key !== sessionKey ||
-            runtimeRow.sessionId !== preparedSession.gatewaySessionId) replayUnconfirmed = true;
+            this.activeTurns.get(sessionId) !== turn ||
+            runtimeRow?.key !== sessionKey ||
+            runtimeRow.sessionId !== preparedSession.gatewaySessionId
+          )
+            replayUnconfirmed = true;
           const currentGoal = normalizeSessionGoal(runtimeRow?.goal);
           const activeRunIds = readActiveRunIds(runtimeRow?.activeRunIds);
-          if (currentGoal?.id === result.goalId && currentGoal.status === SessionGoalStatus.Active &&
+          if (
+            currentGoal?.id === result.goalId &&
+            currentGoal.status === SessionGoalStatus.Active &&
             (!Array.isArray(runtimeRow?.activeRunIds) ||
-              !runtimeRow.activeRunIds.every(id => typeof id === 'string' && id.trim()))) replayUnconfirmed = true;
+              !runtimeRow.activeRunIds.every(id => typeof id === 'string' && id.trim()))
+          )
+            replayUnconfirmed = true;
           const replayStillCurrent =
             !!replayRunId &&
             activeRunIds.includes(replayRunId) &&
             currentGoal?.id === result.goalId &&
             currentGoal.status === SessionGoalStatus.Active;
           if (replayUnconfirmed) {
-            this.registerUnknownSessionRun(sessionId, replayRunId || runId, { cancelled: isStartCancelled() });
-            if (isStartCancelled()) pendingStart.cancellationAbortError = new Error('The Goal replay is still unconfirmed.');
+            this.registerUnknownSessionRun(sessionId, replayRunId || runId, {
+              cancelled: isStartCancelled(),
+            });
+            if (isStartCancelled())
+              pendingStart.cancellationAbortError = new Error(
+                'The Goal replay is still unconfirmed.',
+              );
           } else if (replayStillCurrent) {
             this.rootRunIdBySession.set(sessionId, replayRunId);
             this.sessionIdByRunId.set(replayRunId, sessionId);
@@ -1978,10 +2102,30 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     return payload as unknown as ExecApprovalRequest;
   }
 
-  private async tryAutoResolveSessionApproval(request: ExecApprovalRequest): Promise<boolean> {
+  private captureApprovalConnection(): {
+    client: GatewayClientLike | null;
+    generation: number;
+    isCurrent: () => boolean;
+  } {
+    const client = this.gatewayClient;
+    const generation = this.gatewayClientGeneration;
+    const responseContext = this.captureGatewayResponseContext();
+    return {
+      client,
+      generation,
+      isCurrent: () => this.gatewayClient === client && this.gatewayClientGeneration === generation &&
+        (!responseContext || responseContext.isCurrent()),
+    };
+  }
+
+  private async tryAutoResolveSessionApproval(
+    request: ExecApprovalRequest,
+    connection = this.captureApprovalConnection(),
+  ): Promise<boolean> {
     if (!this.sessionExecApprovalGrants.matches(request)) return false;
+    if (!Number.isFinite(request.expiresAtMs) || request.expiresAtMs <= Date.now()) return false;
     try {
-      await this.resolveApprovalAllowOnce(ApprovalKind.Exec, request.id);
+      await this.resolveApprovalAllowOnce(ApprovalKind.Exec, request.id, connection);
       return true;
     } catch (error) {
       coworkLog('WARN', 'OpenClawRuntime', 'Failed to apply session exec approval grant', {
@@ -1993,12 +2137,17 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     }
   }
 
-  private resolveApprovalAllowOnce(kind: ApprovalKind, id: string): Promise<void> {
+  private resolveApprovalAllowOnce(
+    kind: ApprovalKind,
+    id: string,
+    connection = this.captureApprovalConnection(),
+  ): Promise<void> {
     const key = `${kind}:${id}`;
-    const current = this.approvalResolutionByKey.get(key);
-    if (current) return current;
-    const client = this.gatewayClient;
+    const { client, generation } = connection;
+    if (!connection.isCurrent()) return Promise.reject(new Error('Approval connection changed.'));
     if (!client) return Promise.reject(new Error('OpenClaw Gateway is unavailable.'));
+    const current = this.approvalResolutionByKey.get(key);
+    if (current?.client === client && current.generation === generation) return current.promise;
     const resolving = client
       .request(kind === ApprovalKind.Plugin ? 'plugin.approval.resolve' : 'exec.approval.resolve', {
         id,
@@ -2006,23 +2155,37 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       })
       .then((): void => undefined)
       .finally((): void => {
-        this.approvalResolutionByKey.delete(key);
+        if (this.approvalResolutionByKey.get(key)?.promise === resolving) {
+          this.approvalResolutionByKey.delete(key);
+        }
       });
-    this.approvalResolutionByKey.set(key, resolving);
+    this.approvalResolutionByKey.set(key, { client, generation, promise: resolving });
     return resolving;
   }
 
   private async handleExecApprovalRequested(payload: unknown): Promise<void> {
+    const connection = this.captureApprovalConnection();
     const request = this.normalizeExecApprovalRequest(payload);
-    if (request && this.externalApprovalRouting.route({ ...request, kind: ApprovalKind.Exec })) return;
-    if (!request || !(await this.tryAutoResolveSessionApproval(request))) {
+    if (request && this.externalApprovalRouting.route({ ...request, kind: ApprovalKind.Exec }))
+      return;
+    const resolved = request && await this.tryAutoResolveSessionApproval(request, connection);
+    if (!connection.isCurrent()) return;
+    if (!resolved) {
       this.broadcastApproval(OpenClawApprovalIpc.Requested, ApprovalKind.Exec, payload);
     }
   }
 
   private handlePluginApprovalRequested(payload: unknown): void {
-    if (isRecord(payload) && typeof payload.id === 'string' && isRecord(payload.request) &&
-      this.externalApprovalRouting.route({ ...payload, kind: ApprovalKind.Plugin } as ApprovalRequest)) return;
+    if (
+      isRecord(payload) &&
+      typeof payload.id === 'string' &&
+      isRecord(payload.request) &&
+      this.externalApprovalRouting.route({
+        ...payload,
+        kind: ApprovalKind.Plugin,
+      } as ApprovalRequest)
+    )
+      return;
     this.broadcastApproval(OpenClawApprovalIpc.Requested, ApprovalKind.Plugin, payload);
   }
 
@@ -2031,27 +2194,38 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     present: ExternalPermissionPresenter,
     signal?: AbortSignal,
   ): () => void {
-    return this.externalApprovalRouting.claim(binding, present, signal);
+    const connection = this.captureApprovalConnection();
+    return this.externalApprovalRouting.claim(binding, present, signal, connection.isCurrent);
   }
 
   async listPendingApprovals(): Promise<ApprovalRequest[]> {
     await this.ensureGatewayClientReady();
     const client = this.requireGatewayClient();
+    const connection = this.captureApprovalConnection();
+    const assertCurrent = () => {
+      if (!connection.isCurrent()) throw new Error('Approval connection changed.');
+    };
     const [execRequests, pluginRequests] = await Promise.all([
       client.request<ExecApprovalRequest[]>('exec.approval.list'),
       client.request<PluginApprovalRequest[]>('plugin.approval.list'),
     ]);
+    assertCurrent();
     const requests: ApprovalRequest[] = [];
     for (const request of Array.isArray(execRequests) ? execRequests : []) {
+      assertCurrent();
       if (this.externalApprovalRouting.route({ ...request, kind: ApprovalKind.Exec })) continue;
-      if (!(await this.tryAutoResolveSessionApproval(request))) {
+      const resolved = await this.tryAutoResolveSessionApproval(request, connection);
+      assertCurrent();
+      if (!resolved) {
         requests.push({ ...request, kind: ApprovalKind.Exec });
       }
     }
     for (const request of Array.isArray(pluginRequests) ? pluginRequests : []) {
+      assertCurrent();
       if (this.externalApprovalRouting.route({ ...request, kind: ApprovalKind.Plugin })) continue;
       requests.push({ ...request, kind: ApprovalKind.Plugin });
     }
+    assertCurrent();
     return requests.sort((a, b) => a.createdAtMs - b.createdAtMs);
   }
 
@@ -2063,45 +2237,88 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     if (this.externalApprovalRouting.ownsRequest(kind, id)) {
       throw new Error('This approval belongs to the external client.');
     }
+    if (decision === ApprovalDecision.AllowForSession) {
+      if (kind !== ApprovalKind.Exec) {
+        throw new Error('Session approval is only available for host commands.');
+      }
+      return this.resolveSessionExecApproval(id);
+    }
     await this.ensureGatewayClientReady();
     const client = this.requireGatewayClient();
     if (decision === ApprovalDecision.AllowForView) {
       const generation = this.gatewayClientGeneration;
       if (kind !== ApprovalKind.Plugin) throw new Error('App grants require a plugin approval.');
       const pending = await client.request<PluginApprovalRequest[]>('plugin.approval.list');
-      if (this.gatewayClient !== client || this.gatewayClientGeneration !== generation) throw new Error('App approval connection changed.');
-      const request = Array.isArray(pending) ? pending.find(item => item.id === id)?.request : undefined;
-      if (request?.pluginId !== 'bundle-mcp' ||
+      if (this.gatewayClient !== client || this.gatewayClientGeneration !== generation)
+        throw new Error('App approval connection changed.');
+      const request = Array.isArray(pending)
+        ? pending.find(item => item.id === id)?.request
+        : undefined;
+      if (
+        request?.pluginId !== 'bundle-mcp' ||
         !request.allowedDecisions?.includes(ExecApprovalDecision.AllowAlways) ||
-        !request.actions?.some(action => action.kind === 'decision' &&
-          action.decision === ExecApprovalDecision.AllowAlways && action.command === 'allow-always')) {
+        !request.actions?.some(
+          action =>
+            action.kind === 'decision' &&
+            action.decision === ExecApprovalDecision.AllowAlways &&
+            action.command === 'allow-always',
+        )
+      ) {
         throw new Error('This approval does not offer a current App grant.');
       }
-      await client.request('plugin.approval.resolve', { id, decision: ExecApprovalDecision.AllowAlways });
+      await client.request('plugin.approval.resolve', {
+        id,
+        decision: ExecApprovalDecision.AllowAlways,
+      });
       return;
     }
-    if (decision !== ApprovalDecision.AllowForSession) {
-      if (decision === ApprovalDecision.AllowOnce) {
-        await this.resolveApprovalAllowOnce(kind, id);
-        return;
-      }
-      await client.request(
-        kind === ApprovalKind.Plugin ? 'plugin.approval.resolve' : 'exec.approval.resolve',
-        { id, decision },
-      );
+    if (decision === ApprovalDecision.AllowOnce) {
+      await this.resolveApprovalAllowOnce(kind, id);
       return;
     }
-    if (kind !== ApprovalKind.Exec) {
-      throw new Error('Session approval is only available for host commands.');
-    }
+    await client.request(
+      kind === ApprovalKind.Plugin ? 'plugin.approval.resolve' : 'exec.approval.resolve',
+      { id, decision },
+    );
+  }
 
-    const pending = await client.request<ExecApprovalRequest[]>('exec.approval.list');
-    const request = Array.isArray(pending) ? pending.find(item => item.id === id) : undefined;
-    if (!request || !buildSessionExecApprovalFingerprint(request)) {
-      throw new Error('The pending command cannot be granted for this session.');
+  private async resolveSessionExecApproval(id: string): Promise<void> {
+    const read = this.sessionExecApprovalGrants.captureRequest();
+    if (!read) throw new Error('The pending command cannot be granted for this session.');
+    try {
+      await this.ensureGatewayClientReady();
+      const client = this.requireGatewayClient();
+      const generation = this.gatewayClientGeneration;
+      const pending = await client.request<ExecApprovalRequest[]>('exec.approval.list');
+      if (this.gatewayClient !== client || this.gatewayClientGeneration !== generation) {
+        throw new Error('Session approval connection changed.');
+      }
+      const request = Array.isArray(pending) ? pending.find(item => item.id === id) : undefined;
+      if (
+        !request ||
+        !read.isCurrent(request) ||
+        !Number.isFinite(request.expiresAtMs) ||
+        request.expiresAtMs <= Date.now() ||
+        !buildSessionExecApprovalFingerprint(request)
+      ) {
+        throw new Error('The pending command cannot be granted for this session.');
+      }
+      const grant = this.sessionExecApprovalGrants.prepareGrant(request);
+      if (!grant) throw new Error('The pending command cannot be granted for this session.');
+      try {
+        await this.resolveApprovalAllowOnce(ApprovalKind.Exec, id);
+        if (
+          this.gatewayClient === client &&
+          this.gatewayClientGeneration === generation &&
+          read.isCurrent(request)
+        )
+          grant.commit();
+      } finally {
+        grant.release();
+      }
+    } finally {
+      read.release();
     }
-    await this.resolveApprovalAllowOnce(ApprovalKind.Exec, id);
-    this.sessionExecApprovalGrants.grant(request);
   }
 
   clearSessionExecApprovalGrants(sessionKey: string): void {
@@ -2232,26 +2449,26 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   }
 
   private observeRunTerminal(event: NormalizedAgentEvent, admitted = false): void {
-    if (
-      event.deliveryEvent !== 'agent' ||
-      event.spawnedBy ||
-      !event.sessionKey ||
-      !event.sessionId
-    ) return;
+    if (event.deliveryEvent !== 'agent' || event.spawnedBy || !event.sessionKey || !event.sessionId)
+      return;
     const active = [...this.activeTurns.values()].find(turn => turn.runId === event.runId);
-    const binding = admitted && active
-      ? { ...active, clientGeneration: this.gatewayClientGeneration }
-      : this.retiredRunBindings.get(event.runId);
+    const binding =
+      admitted && active
+        ? { ...active, clientGeneration: this.gatewayClientGeneration }
+        : this.retiredRunBindings.get(event.runId);
     if (
       !binding ||
       binding.clientGeneration !== this.gatewayClientGeneration ||
       binding.runId !== event.runId ||
       binding.gatewaySessionId !== event.sessionId ||
-      (binding.lifecycleGeneration && event.lifecycleGeneration &&
+      (binding.lifecycleGeneration &&
+        event.lifecycleGeneration &&
         binding.lifecycleGeneration !== event.lifecycleGeneration) ||
-      normalizeMessageSessionKey(binding.sessionKey) !== normalizeMessageSessionKey(event.sessionKey) ||
+      normalizeMessageSessionKey(binding.sessionKey) !==
+        normalizeMessageSessionKey(event.sessionKey) ||
       (!admitted && event.agentSeq <= binding.lastAgentSeq)
-    ) return;
+    )
+      return;
     if (!admitted) {
       this.retiredRunBindings.set(event.runId, {
         ...binding,
@@ -2264,18 +2481,24 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       event.data.executionSettled !== true ||
       event.data.yielded === true ||
       !['end', 'error'].includes(String(event.data.phase))
-    ) return;
+    )
+      return;
     const previous = this.runTerminalReceipts.get(event.runId);
     if (previous && event.agentSeq <= previous.agentSeq) return;
-    const timedOut = event.data.status === 'timeout' || event.data.status === 'timed_out' ||
+    const timedOut =
+      event.data.status === 'timeout' ||
+      event.data.status === 'timed_out' ||
       event.data.stopReason === 'timeout';
-    const interrupted = !timedOut && (
-      event.data.aborted === true || event.data.stopReason === 'aborted' || event.data.stopReason === 'rpc'
-    );
-    const failed = !interrupted && (
-      timedOut || event.data.status === 'error' ||
-      (event.data.phase === 'error' && !isInternalManagedSubagentHandoffError(event.data.error))
-    );
+    const interrupted =
+      !timedOut &&
+      (event.data.aborted === true ||
+        event.data.stopReason === 'aborted' ||
+        event.data.stopReason === 'rpc');
+    const failed =
+      !interrupted &&
+      (timedOut ||
+        event.data.status === 'error' ||
+        (event.data.phase === 'error' && !isInternalManagedSubagentHandoffError(event.data.error)));
     this.runTerminalReceipts.set(event.runId, {
       runId: event.runId,
       sessionKey: binding.sessionKey,
@@ -2289,7 +2512,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         typeof event.data.endedAt === 'number' && Number.isFinite(event.data.endedAt)
           ? event.data.endedAt
           : event.timestamp,
-      ...(failed && typeof event.data.error === 'string' ? { error: event.data.error.slice(0, 4096) } : {}),
+      ...(failed && typeof event.data.error === 'string'
+        ? { error: event.data.error.slice(0, 4096) }
+        : {}),
     });
     while (this.runTerminalReceipts.size > 100) {
       this.runTerminalReceipts.delete(this.runTerminalReceipts.keys().next().value!);
@@ -2799,7 +3024,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   }
 
   captureGatewayResponseContext(): GatewayResponseContext | null {
-    return runtimeGatewayConnection.captureGatewayResponseContext.call(this.runtimeGatewayConnectionContext);
+    return runtimeGatewayConnection.captureGatewayResponseContext.call(
+      this.runtimeGatewayConnectionContext,
+    );
   }
 
   getRunTerminalReceipt(runId: string): NativeRunTerminalReceipt | null {
@@ -2808,7 +3035,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   }
 
   getDiagnosticGatewayInfo(): DiagnosticGatewayInfo | null {
-    return this.gatewayClient && this.diagnosticGatewayInfo ? { ...this.diagnosticGatewayInfo } : null;
+    return this.gatewayClient && this.diagnosticGatewayInfo
+      ? { ...this.diagnosticGatewayInfo }
+      : null;
   }
 
   getSessionKeysForSession(sessionId: string): string[] {
@@ -2949,8 +3178,13 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       }>('agent.wait', { runId: turn.runId, timeoutMs: 0 });
       if (this.gatewayClient !== client || this.activeTurns.get(sessionId) !== turn) return;
       if (result.runId !== turn.runId) return;
-      if (result.yielded === true && result.status === 'ok' && !result.error &&
-        result.stopReason !== 'aborted' && result.stopReason !== 'rpc') {
+      if (
+        result.yielded === true &&
+        result.status === 'ok' &&
+        !result.error &&
+        result.stopReason !== 'aborted' &&
+        result.stopReason !== 'rpc'
+      ) {
         this.confirmUnknownSessionRunAdmission(sessionId, turn);
         // Yield proves admission, but not whole-session completion. Release the
         // old request identity to normal parent/descendant activity aggregation.
@@ -2971,8 +3205,11 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
             sessionId: turn.gatewaySessionId,
             lifecycleGeneration: turn.lifecycleGeneration,
             runId: turn.runId,
-            phase: 'end', executionSettled: true, yielded: true,
-            livenessState: 'paused', stopReason: 'end_turn',
+            phase: 'end',
+            executionSettled: true,
+            yielded: true,
+            livenessState: 'paused',
+            stopReason: 'end_turn',
           });
         }
         this.scheduleGoalRecovery(this.gatewayClientGeneration);
@@ -3102,17 +3339,20 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     if (!sessionKey || !source || !client) return undefined;
     if (source.historyBinding && source.historyBinding.sessionKey !== sessionKey) return undefined;
     const generation = this.gatewayClientGeneration;
-    const identity = (row: typeof source) => JSON.stringify([
-      row.agentId, row.nativeSessionKey, row.historyBinding, row.external,
-    ]);
+    const identity = (row: typeof source) =>
+      JSON.stringify([row.agentId, row.nativeSessionKey, row.historyBinding, row.external]);
     const capturedIdentity = identity(source);
     const expectedSessionId = source.historyBinding?.nativeSessionId;
     const agentId = source.agentId || DEFAULT_MANAGED_AGENT_ID;
     const current = () => {
       const row = this.store.getSession(localSessionId);
-      return this.gatewayClient === client && this.gatewayClientGeneration === generation &&
-        !!row && identity(row) === capturedIdentity &&
-        this.findSessionKeyBySessionId(localSessionId) === sessionKey;
+      return (
+        this.gatewayClient === client &&
+        this.gatewayClientGeneration === generation &&
+        !!row &&
+        identity(row) === capturedIdentity &&
+        this.findSessionKeyBySessionId(localSessionId) === sessionKey
+      );
     };
 
     const deadline = Date.now() + TITLE_SESSION_ID_RESOLUTION_TIMEOUT_MS;
@@ -3123,25 +3363,37 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         this.activeTurns.get(localSessionId)?.gatewaySessionId,
       );
       if (activeSessionId)
-        return !expectedSessionId || activeSessionId === expectedSessionId ? activeSessionId : undefined;
+        return !expectedSessionId || activeSessionId === expectedSessionId
+          ? activeSessionId
+          : undefined;
 
       const now = Date.now();
       if (now >= nextSnapshotAt) {
         type NativeTitleSession = { key?: unknown; sessionId?: unknown; agentId?: unknown };
         let session: NativeTitleSession | null | undefined;
         try {
-          session = (await client.request<{ session?: NativeTitleSession | null }>('sessions.describe',
-            { key: sessionKey, agentId }, { timeoutMs: Math.max(1, deadline - Date.now()) })).session;
+          session = (
+            await client.request<{ session?: NativeTitleSession | null }>(
+              'sessions.describe',
+              { key: sessionKey, agentId },
+              { timeoutMs: Math.max(1, deadline - Date.now()) },
+            )
+          ).session;
         } catch {
           // Only the existing key may be observed again within the original budget.
         }
         if (!current()) return undefined;
         if (session) {
-          if (session.key !== sessionKey || (session.agentId !== undefined && session.agentId !== agentId))
+          if (
+            session.key !== sessionKey ||
+            (session.agentId !== undefined && session.agentId !== agentId)
+          )
             return undefined;
           const nativeSessionId = this.runtimeRowString(session.sessionId);
           if (nativeSessionId)
-            return !expectedSessionId || nativeSessionId === expectedSessionId ? nativeSessionId : undefined;
+            return !expectedSessionId || nativeSessionId === expectedSessionId
+              ? nativeSessionId
+              : undefined;
         }
         nextSnapshotAt = Date.now() + TITLE_SESSION_ID_SNAPSHOT_INTERVAL_MS;
       }
@@ -3194,6 +3446,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       resolveAskUserSessionId: { get: () => this.resolveAskUserSessionId.bind(this) },
       terminalAskUserIds: { get: () => this.terminalAskUserIds },
       pendingAskUserRequests: { get: () => this.pendingAskUserRequests },
+      pendingAskUserBindings: { get: () => this.pendingAskUserBindings },
+      askUserOriginRefresh: { get: () => this.askUserOriginRefresh },
+      executionSessionResolver: { get: () => this.executionSessionResolver },
+      isNativeOnlyExecutionSource: { get: () => this.isNativeOnlyExecutionSource },
       sendCoworkInteraction: { get: () => this.sendCoworkInteraction.bind(this) },
       toAskUserInteraction: { get: () => this.toAskUserInteraction.bind(this) },
       rememberTerminalAskUser: { get: () => this.rememberTerminalAskUser.bind(this) },

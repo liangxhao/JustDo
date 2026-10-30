@@ -204,7 +204,7 @@ app-server 客户端审批复用原生 owner，并区分逻辑 turn 与 ACK 确�
 
 插件业务记录、界面和控制协议归包内；Core 通过通用提交、导航、删除和清理参与者组合产品流程。撤回贡献不证明原生执行结算，也不能重放未知输入。
 
-角色文件与执行目录仍分开：助手角色位于 `stateDir/agent-workspaces/<agentId>`，每个原生会话的 `cwd` 决定执行目录。切换助手创建新对话，不移动历史或重写工程规则。完整业务契约见[长期助手](../features/assistants/profiles-and-subagents.md)、[Agent Team](../plugins/extensions/agent-team/guide.md)和[Swarm Workflow](../plugins/extensions/swarm-workflow/workflows.md)，通用接入见[应用插件宿主](../plugins/management/app-plugin-runtime.md)。
+角色文件与执行目录仍分开：助手角色位于 `stateDir/agent-workspaces/<agentId>`，每个原生会话的 `cwd` 决定执行目录。切换助手创建新对话，不移动历史或重写工程规则。完整业务契约见[长期助手](../features/assistants/profiles-and-subagents.md)、[Agent Team](../plugins/extensions/agent-team/guide.md)和[Swarm Workflow](../plugins/extensions/swarm-workflow/workflows.md)，通用接入见[应用插件宿主](../plugins/sdk/app-plugin-runtime.md)。
 
 ## 12. 实现与回归入口
 
@@ -220,6 +220,6 @@ Main 从 `ipc/cowork/sessionExecution.ts`、`sessions.ts`、`sessionRuntime.ts`�
 
 Cowork 界面保持单层领域结构：`display` 组合标签、选择和会话面板状态，`preview` 渲染文件并浏览工作区，`terminal` 承载 Gateway 终端，`review` 展示工作区差异，`approvals` 处理执行与计划审核。`subagents` 展示原生子任务和 collector 分组；独立插件的工作流图、节点历史及介入界面归 `swarm-workflow`。跨领域的文件图标、文档样式、图形样式和连接辅助归 `shared`；这些公共模块不持有新的运行或 transcript 状态。
 
-可选业务通过公开 SDK 注册配置、资源与 UI。Core 保留普通产品会话及基础能力，撤回旧 epoch 后由插件自行读取保留业务状态；通用机制见[应用插件宿主](../plugins/management/app-plugin-runtime.md)。
+可选业务通过公开 SDK 注册配置、资源与 UI。Core 保留普通产品会话及基础能力，撤回旧 epoch 后由插件自行读取保留业务状态；通用机制见[应用插件宿主](../plugins/sdk/app-plugin-runtime.md)。
 
 回归应覆盖准入前取消、重复 clientTurn、原生先完成后响应、停止失败、会话切换迟到事件、Plan reset、Goal fence、协作删除部分成功和历史恢复。对应 handler、Store、Adapter 与 controller 都有领域测试；一次正常发送不能替代这些边界验证。

@@ -56,7 +56,11 @@ const PUNCTUATION_KEYS: Array<[string, string, string, number]> = [
   ["'", '"', 'Quote', 222],
 ];
 
-const describeKey = (rawKey: string, modifiers: InputModifier[]): KeyDescription => {
+const describeKey = (
+  rawKey: string,
+  modifiers: InputModifier[],
+  native = false,
+): KeyDescription => {
   const named = NAMED_KEYS[rawKey.toLowerCase()];
   if (named) return named;
   const functionKey = /^F([1-9]|1\d|2[0-4])$/i.exec(rawKey);
@@ -97,27 +101,59 @@ const describeKey = (rawKey: string, modifiers: InputModifier[]): KeyDescription
   if ([...rawKey].length === 1) {
     return { key: rawKey, code: '', keyCode: 0, text: rawKey };
   }
+  // The native API validates its own Accelerator names, including platform
+  // keys outside CDP's mapping. Keep the original sidebar acceptance range.
+  if (native) return { key: rawKey, code: '', keyCode: 0 };
   throw new Error(`Unsupported background browser key: ${rawKey}`);
 };
 
-/** Sends only to the original guest target; it never focuses an OS window. */
-export class BrowserAgentCdpInput {
+const nativeAcceleratorKey = (key: string): string => {
+  const arrow = /^Arrow(Left|Right|Up|Down)$/i.exec(key);
+  if (arrow) return arrow[1]![0]!.toUpperCase() + arrow[1]!.slice(1).toLowerCase();
+  const letter = /^Key([a-z])$/i.exec(key);
+  if (letter) return letter[1]!.toUpperCase();
+  const digit = /^Digit([0-9])$/.exec(key);
+  return digit ? digit[1]! : key;
+};
+
+type MousePacket = {
+  phase: 'move' | 'down' | 'up';
+  point: Point;
+  button: MouseButton | 'none';
+  buttons: number;
+  modifiers: InputModifier[];
+  clickCount?: number;
+};
+type KeyPacket = {
+  phase: 'down' | 'up';
+  key: string;
+  description: KeyDescription;
+  modifiers: InputModifier[];
+  text: string;
+};
+interface BrowserAgentInputTarget {
+  native?: boolean;
+  mouse(event: MousePacket): Promise<void>;
+  key(event: KeyPacket): Promise<void>;
+}
+
+/** Input sequencing and cancellation belong to the original target. */
+class BrowserAgentInputSequence {
   constructor(
-    private readonly guestDebugger: InputDebugger,
+    private readonly target: BrowserAgentInputTarget,
     private readonly assertActive: () => void,
     private readonly isDestroyed: () => boolean,
   ) {}
 
-  private async send(method: string, parameters: Record<string, unknown>): Promise<void> {
+  private async send(operation: () => Promise<void>): Promise<void> {
     this.assertActive();
-    await this.guestDebugger.sendCommand(method, parameters);
+    await operation();
     this.assertActive();
   }
 
   private async withRelease(
     work: () => Promise<void>,
-    method: string,
-    parameters: () => Record<string, unknown>,
+    release: () => Promise<void>,
   ): Promise<void> {
     this.assertActive();
     let failure: { error: unknown } | undefined;
@@ -126,11 +162,11 @@ export class BrowserAgentCdpInput {
     } catch (error) {
       failure = { error };
     } finally {
-      // Cancellation prevents new input, but must release an already attempted press.
-      // A rejected press can have reached Chromium, so it also receives a release.
+      // A failed press may already have reached Chromium. Cancellation blocks
+      // new input while still releasing that press on its original target.
       if (!this.isDestroyed()) {
         try {
-          await this.guestDebugger.sendCommand(method, parameters());
+          await release();
         } catch (error) {
           failure ??= { error };
         }
@@ -141,14 +177,9 @@ export class BrowserAgentCdpInput {
   }
 
   async move(point: Point, modifiers: InputModifier[] = []): Promise<void> {
-    await this.send('Input.dispatchMouseEvent', {
-      type: 'mouseMoved',
-      x: point.x,
-      y: point.y,
-      button: 'none',
-      buttons: 0,
-      modifiers: modifierMask(modifiers),
-    });
+    await this.send(() =>
+      this.target.mouse({ phase: 'move', point, button: 'none', buttons: 0, modifiers }),
+    );
   }
 
   async click(
@@ -158,52 +189,36 @@ export class BrowserAgentCdpInput {
     modifiers: InputModifier[],
     hold: () => Promise<void>,
   ): Promise<void> {
-    const parameters = {
-      x: point.x,
-      y: point.y,
-      button,
-      clickCount,
-      modifiers: modifierMask(modifiers),
-    };
+    const parameters = { point, button, clickCount, modifiers };
     await this.withRelease(
       async () => {
-        await this.send('Input.dispatchMouseEvent', {
-          type: 'mousePressed',
-          ...parameters,
-          buttons: { left: 1, right: 2, middle: 4 }[button],
-        });
+        await this.send(() =>
+          this.target.mouse({
+            phase: 'down',
+            ...parameters,
+            buttons: { left: 1, right: 2, middle: 4 }[button],
+          }),
+        );
         await hold();
         this.assertActive();
       },
-      'Input.dispatchMouseEvent',
-      () => ({ type: 'mouseReleased', ...parameters, buttons: 0 }),
+      () => this.target.mouse({ phase: 'up', ...parameters, buttons: 0 }),
     );
   }
 
   async press(key: string, modifiers: InputModifier[], hold: () => Promise<void>): Promise<void> {
-    const description = describeKey(key, modifiers);
-    const parameters = {
-      key: description.key,
-      code: description.code,
-      windowsVirtualKeyCode: description.keyCode,
-      modifiers: modifierMask(modifiers),
-    };
+    const description = describeKey(key, modifiers, this.target.native);
     const text = modifiers.some(modifier => ['control', 'alt', 'meta'].includes(modifier))
       ? ''
       : (description.text ?? '');
+    const parameters = { key, description, modifiers, text };
     await this.withRelease(
       async () => {
-        await this.send('Input.dispatchKeyEvent', {
-          type: text ? 'keyDown' : 'rawKeyDown',
-          ...parameters,
-          text,
-          unmodifiedText: text,
-        });
+        await this.send(() => this.target.key({ phase: 'down', ...parameters }));
         await hold();
         this.assertActive();
       },
-      'Input.dispatchKeyEvent',
-      () => ({ type: 'keyUp', ...parameters }),
+      () => this.target.key({ phase: 'up', ...parameters }),
     );
   }
 
@@ -216,13 +231,16 @@ export class BrowserAgentCdpInput {
     let lastPoint = start;
     await this.withRelease(
       async () => {
-        await this.send('Input.dispatchMouseEvent', {
-          type: 'mousePressed',
-          ...start,
-          button: 'left',
-          buttons: 1,
-          clickCount: 1,
-        });
+        await this.send(() =>
+          this.target.mouse({
+            phase: 'down',
+            point: start,
+            button: 'left',
+            buttons: 1,
+            clickCount: 1,
+            modifiers: [],
+          }),
+        );
         await wait(50);
         for (let step = 1; step <= 10; step += 1) {
           this.assertActive();
@@ -231,17 +249,105 @@ export class BrowserAgentCdpInput {
             x: start.x + (end.x - start.x) * progress,
             y: start.y + (end.y - start.y) * progress,
           };
-          await this.send('Input.dispatchMouseEvent', {
-            type: 'mouseMoved',
-            ...lastPoint,
-            button: 'left',
-            buttons: 1,
-          });
+          await this.send(() =>
+            this.target.mouse({
+              phase: 'move',
+              point: lastPoint,
+              button: 'left',
+              buttons: 1,
+              modifiers: [],
+            }),
+          );
           await wait(16);
         }
       },
-      'Input.dispatchMouseEvent',
-      () => ({ type: 'mouseReleased', ...lastPoint, button: 'left', buttons: 0, clickCount: 1 }),
+      () =>
+        this.target.mouse({
+          phase: 'up',
+          point: lastPoint,
+          button: 'left',
+          buttons: 0,
+          clickCount: 1,
+          modifiers: [],
+        }),
+    );
+  }
+}
+
+/** CDP input for the independent, offscreen background-window target. */
+export class BrowserAgentCdpInput extends BrowserAgentInputSequence {
+  constructor(guestDebugger: InputDebugger, assertActive: () => void, isDestroyed: () => boolean) {
+    super(
+      {
+        mouse: async event => {
+          await guestDebugger.sendCommand('Input.dispatchMouseEvent', {
+            type: { move: 'mouseMoved', down: 'mousePressed', up: 'mouseReleased' }[event.phase],
+            x: event.point.x,
+            y: event.point.y,
+            button: event.button,
+            buttons: event.buttons,
+            modifiers: modifierMask(event.modifiers),
+            ...(event.clickCount !== undefined ? { clickCount: event.clickCount } : {}),
+          });
+        },
+        key: async event => {
+          const { description, text } = event;
+          await guestDebugger.sendCommand('Input.dispatchKeyEvent', {
+            type: event.phase === 'up' ? 'keyUp' : text ? 'keyDown' : 'rawKeyDown',
+            key: description.key,
+            code: description.code,
+            windowsVirtualKeyCode: description.keyCode,
+            modifiers: modifierMask(event.modifiers),
+            ...(event.phase === 'down' ? { text, unmodifiedText: text } : {}),
+          });
+        },
+      },
+      assertActive,
+      isDestroyed,
+    );
+  }
+}
+
+/** Direct sidebar guest input avoids CDP InputInjector's implicit widget focus. */
+export class BrowserAgentNativeInput extends BrowserAgentInputSequence {
+  constructor(
+    guest: Pick<Electron.WebContents, 'sendInputEvent' | 'isDestroyed'>,
+    assertActive: () => void,
+  ) {
+    super(
+      {
+        native: true,
+        mouse: async event => {
+          const buttons: NonNullable<Electron.MouseInputEvent['modifiers']> = [...event.modifiers];
+          if (event.buttons & 1) buttons.push('leftbuttondown');
+          if (event.buttons & 2) buttons.push('rightbuttondown');
+          if (event.buttons & 4) buttons.push('middlebuttondown');
+          guest.sendInputEvent({
+            type: { move: 'mouseMove', down: 'mouseDown', up: 'mouseUp' }[
+              event.phase
+            ] as Electron.MouseInputEvent['type'],
+            x: Math.round(event.point.x),
+            y: Math.round(event.point.y),
+            ...(event.button !== 'none' ? { button: event.button } : {}),
+            modifiers: buttons,
+            ...(event.clickCount !== undefined ? { clickCount: event.clickCount } : {}),
+          });
+        },
+        key: async event => {
+          const keyCode = nativeAcceleratorKey(event.key);
+          guest.sendInputEvent({
+            type: event.phase === 'up' ? 'keyUp' : 'keyDown',
+            keyCode,
+            modifiers: event.modifiers,
+          });
+          if (event.phase === 'down' && event.text) {
+            assertActive();
+            guest.sendInputEvent({ type: 'char', keyCode: event.text, modifiers: event.modifiers });
+          }
+        },
+      },
+      assertActive,
+      () => guest.isDestroyed(),
     );
   }
 }

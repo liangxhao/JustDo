@@ -229,6 +229,7 @@ export class CoworkService {
           requestId: request.requestId,
           toolUseId: request.toolUseId ?? null,
           interactionKind: request.interactionKind,
+          ...(request.origin ? { origin: request.origin } : {}),
         }),
       );
     });
@@ -383,11 +384,13 @@ export class CoworkService {
   async ensureSessionSummaries(sessionIds: string[], force = false): Promise<boolean> {
     const generation = this.initializationGeneration;
     if (force) {
-      const active = [...new Set(
-        sessionIds.map(id => this.summaryReads.get(id)).filter(
-          (task): task is Promise<boolean> => task !== undefined,
+      const active = [
+        ...new Set(
+          sessionIds
+            .map(id => this.summaryReads.get(id))
+            .filter((task): task is Promise<boolean> => task !== undefined),
         ),
-      )];
+      ];
       if (active.length) {
         await Promise.all(active);
         if (generation !== this.initializationGeneration) return false;
@@ -427,12 +430,16 @@ export class CoworkService {
           const currentTitles = new Map(
             store.getState().cowork.sessions.map(session => [session.id, session.title]),
           );
-          store.dispatch(upsertSessionSummaries(result.sessions.map(session => {
-            const title = currentTitles.get(session.id);
-            return title !== undefined && title !== titlesAtRequest.get(session.id)
-              ? { ...session, title }
-              : session;
-          })));
+          store.dispatch(
+            upsertSessionSummaries(
+              result.sessions.map(session => {
+                const title = currentTitles.get(session.id);
+                return title !== undefined && title !== titlesAtRequest.get(session.id)
+                  ? { ...session, title }
+                  : session;
+              }),
+            ),
+          );
           const current = store.getState().cowork;
           const currentIds = current.sessionDirectory
             ? new Set(current.sessionDirectory.map(entry => entry.id))
@@ -1197,7 +1204,8 @@ export class CoworkService {
     const result = await cowork.getSession(sessionId);
     if (options.canSelect?.() === false) return null;
     // Superseded failures are as stale as superseded successful reads.
-    if (requestId !== this.latestLoadSessionRequestId) return result.success ? result.session ?? null : null;
+    if (requestId !== this.latestLoadSessionRequestId)
+      return result.success ? (result.session ?? null) : null;
     if (result.success && result.session) {
       const mainRuntimeRunning =
         store.getState().cowork.sessionMainRuntimeActivity[sessionId] === true ||
@@ -1660,7 +1668,8 @@ export class CoworkService {
       if (options.canApply?.() === false) return;
       if (revision !== (this.sessionModelRevisions.get(sessionId) ?? 0)) return;
       if (readVersion !== this.sessionModelReadVersions.get(sessionId)) return;
-      if (confirmedModelRef !== store.getState().cowork.userConfirmedSessionModelRefs[sessionId]) return;
+      if (confirmedModelRef !== store.getState().cowork.userConfirmedSessionModelRefs[sessionId])
+        return;
       if (result.success && result.source === 'gateway' && result.modelRef) {
         store.dispatch(
           receiveSessionModelSelection({ sessionId, agentId, modelRef: result.modelRef }),

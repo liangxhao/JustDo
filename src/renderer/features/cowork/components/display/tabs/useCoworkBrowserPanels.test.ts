@@ -3,7 +3,7 @@ import { BrowserLinkTarget } from '@shared/browser/browserLinkOpening';
 import { DEFAULT_BROWSER_TAB_LIMIT } from '@shared/browser/browserTabLimit';
 import { MessageFileLinkSourceKind } from '@shared/preview/messageFileLink';
 import { act, cleanup, renderHook } from '@testing-library/react';
-import { createElement, StrictMode } from 'react';
+import { createElement, StrictMode, useLayoutEffect } from 'react';
 import { afterEach, expect, test, vi } from 'vitest';
 
 import { defaultConfig } from '@/app/config';
@@ -187,6 +187,7 @@ test.each([
       profile: 'embedded',
       customTitle: undefined,
       notifyOnCapacity: false,
+      preserveSelection: false,
     });
   else expect(openTab).not.toHaveBeenCalled();
   if (mounted && !accepted) {
@@ -197,6 +198,16 @@ test.each([
   const update = setSessionField.mock.calls.find(call => call[1] === 'browserTabs')![2];
   expect(update([])).toEqual([expect.objectContaining({ targetId: 'requested' })]);
   expect(setSessionField).toHaveBeenCalledWith('session', 'hasBrowserPanelOpened', true);
+  expect(setSessionField).toHaveBeenCalledWith('session', 'browserPanelTargetId', 'requested');
+  expect(setSessionField).toHaveBeenCalledWith(
+    'session',
+    'preferredDisplayTabId',
+    'browser:requested',
+  );
+  expect(setSessionField).toHaveBeenCalledWith('session', 'isDisplayPanelOpen', true);
+  expect(setSessionField).toHaveBeenCalledWith('session', 'isWorkspaceFilesOpen', false);
+  expect(options.setIsDisplayPanelOpen).not.toHaveBeenCalled();
+  expect(options.setIsWorkspaceFilesOpen).not.toHaveBeenCalled();
   openTab.mockClear();
   act(() => ensure({ sessionId: 'other-session', targetId: 'foreign', profile: 'embedded' }));
   expect(openTab).not.toHaveBeenCalled();
@@ -209,7 +220,7 @@ function createOptions(overrides: Partial<Options> = {}): Options {
       browser: {
         onAgentEnsureTab: () => vi.fn(),
         onAgentInteractionState: () => vi.fn(),
-        onAgentFocusTab: () => vi.fn(),
+        onAgentFocusTab: vi.fn(() => vi.fn()),
         onAgentCloseTab: () => vi.fn(),
       },
     },
@@ -239,6 +250,315 @@ function createOptions(overrides: Partial<Options> = {}): Options {
     ...overrides,
   };
 }
+
+test.each([
+  { sessionId: 'session', ownerSessionId: undefined, reveal: true },
+  { sessionId: 'other-session', ownerSessionId: undefined, reveal: false },
+  { sessionId: 'team-leader', ownerSessionId: 'session', reveal: false },
+  { sessionId: 'team-member', ownerSessionId: 'session', reveal: false },
+  { sessionId: 'workflow-node', ownerSessionId: 'session', reveal: false },
+])(
+  'only reveals a new browser page from the selected main conversation: $sessionId',
+  ({ sessionId, ownerSessionId, reveal }) => {
+    type Ensure = Parameters<Window['electron']['browser']['onAgentEnsureTab']>[0];
+    let ensure!: Ensure;
+    const options = createOptions({
+      availableAgentBrowserSessionIdsRef: { current: ['session', 'other-session'] },
+      hasDisplayTabs: true,
+    });
+    vi.spyOn(window.electron.browser, 'onAgentEnsureTab').mockImplementation(callback => {
+      ensure = callback;
+      return vi.fn();
+    });
+    const { result } = renderHook(() => {
+      const display = useSessionDisplayState('session', 520);
+      useCoworkBrowserPanels({
+        ...options,
+        ...display.setters,
+        displayStates: display.states,
+        browserTabs: display.state.browserTabs,
+        isDisplayPanelOpen: display.state.isDisplayPanelOpen,
+        setSessionField: display.setSessionField,
+        openBrowserTab: display.openBrowserTab,
+      });
+      return display;
+    });
+    act(() => {
+      result.current.setters.setPreferredDisplayTabId('app:agent-team:team');
+      result.current.setters.setIsWorkspaceFilesOpen(true);
+    });
+    act(() => ensure({ sessionId, ownerSessionId, targetId: 'new-page', label: 'Main Agent' }));
+    const owner = ownerSessionId ?? sessionId;
+    expect(result.current.states[owner].browserTabs).toEqual([
+      expect.objectContaining({ targetId: 'new-page' }),
+    ]);
+    expect(result.current.state.preferredDisplayTabId).toBe(
+      reveal ? 'browser:new-page' : 'app:agent-team:team',
+    );
+    expect(result.current.state.browserPanelTargetId).toBe(reveal ? 'new-page' : null);
+    expect(result.current.state.isDisplayPanelOpen).toBe(reveal);
+    expect(result.current.state.isWorkspaceFilesOpen).toBe(!reveal);
+
+    if (!reveal) return;
+    act(() => result.current.setters.setIsDisplayPanelOpen(false));
+    act(() => ensure({ sessionId, targetId: 'second-page' }));
+    expect(result.current.state.browserTabs.map(tab => tab.targetId)).toEqual([
+      'new-page',
+      'second-page',
+    ]);
+    expect(result.current.state.preferredDisplayTabId).toBe('browser:second-page');
+    expect(result.current.state.browserPanelTargetId).toBe('second-page');
+    expect(result.current.state.isDisplayPanelOpen).toBe(true);
+  },
+);
+
+test('does not reveal an old conversation page while switching, before listeners are replaced', () => {
+  type Ensure = Parameters<Window['electron']['browser']['onAgentEnsureTab']>[0];
+  let ensure!: Ensure;
+  const openTab = vi.fn(() => true);
+  const setSessionField = vi.fn();
+  const options = createOptions({
+    setSessionField,
+    availableAgentBrowserSessionIdsRef: { current: ['session', 'other-session'] },
+    browserPanelRefs: {
+      current: new Map([
+        [
+          'session',
+          {
+            openTab,
+            closeTab: vi.fn(),
+            openTabContextMenu: vi.fn(),
+            promoteRecordingSession: vi.fn(),
+          },
+        ],
+      ]),
+    },
+  });
+  vi.spyOn(window.electron.browser, 'onAgentEnsureTab').mockImplementation(callback => {
+    ensure = callback;
+    return vi.fn();
+  });
+  const { rerender } = renderHook(
+    props => {
+      useCoworkBrowserPanels(props);
+      useLayoutEffect(() => {
+        if (props.displaySessionKey === 'other-session') {
+          ensure({ sessionId: 'session', targetId: 'late-page' });
+        }
+      }, [props.displaySessionKey]);
+    },
+    { initialProps: options },
+  );
+  rerender({ ...options, displaySessionKey: 'other-session', currentSessionId: 'other-session' });
+  expect(openTab).toHaveBeenCalledWith(
+    'about:blank',
+    expect.objectContaining({ targetId: 'late-page', preserveSelection: true }),
+  );
+  expect(
+    setSessionField.mock.calls.some(([, field]) =>
+      [
+        'browserPanelTargetId',
+        'preferredDisplayTabId',
+        'isDisplayPanelOpen',
+        'isWorkspaceFilesOpen',
+      ].includes(field),
+    ),
+  ).toBe(false);
+});
+
+test('routes sibling execution resources into their owner sidebar without changing their resource identity', () => {
+  type Ensure = Parameters<Window['electron']['browser']['onAgentEnsureTab']>[0];
+  type Close = Parameters<Window['electron']['browser']['onAgentCloseTab']>[0];
+  let ensure!: Ensure;
+  let close!: Close;
+  const openTab = vi.fn(() => true);
+  const closeTab = vi.fn();
+  const setSessionField = vi.fn();
+  const options = createOptions({
+    availableAgentBrowserSessionIdsRef: { current: ['owner'] },
+    displaySessionKey: 'owner',
+    setSessionField,
+    browserPanelRefs: {
+      current: new Map([
+        [
+          'owner',
+          {
+            openTab,
+            closeTab,
+            openTabContextMenu: vi.fn(),
+            promoteRecordingSession: vi.fn(),
+          },
+        ],
+      ]),
+    },
+  });
+  vi.spyOn(window.electron.browser, 'onAgentEnsureTab').mockImplementation(callback => {
+    ensure = callback;
+    return vi.fn();
+  });
+  vi.spyOn(window.electron.browser, 'onAgentCloseTab').mockImplementation(callback => {
+    close = callback;
+    return vi.fn();
+  });
+  renderHook(() => useCoworkBrowserPanels(options));
+  act(() => {
+    ensure({
+      sessionId: 'child-a',
+      ownerSessionId: 'owner',
+      targetId: 'page-a',
+      profile: 'embedded',
+    });
+    ensure({
+      sessionId: 'child-b',
+      ownerSessionId: 'owner',
+      targetId: 'page-b',
+      profile: 'embedded',
+    });
+  });
+  expect(openTab).toHaveBeenNthCalledWith(
+    1,
+    'about:blank',
+    expect.objectContaining({
+      targetId: 'page-a',
+      resourceSessionId: 'child-a',
+      preserveSelection: true,
+    }),
+  );
+  expect(openTab).toHaveBeenNthCalledWith(
+    2,
+    'about:blank',
+    expect.objectContaining({
+      targetId: 'page-b',
+      resourceSessionId: 'child-b',
+      preserveSelection: true,
+    }),
+  );
+  const updates = setSessionField.mock.calls.filter(([, field]) => field === 'browserTabs');
+  expect(updates.every(([id]) => id === 'owner')).toBe(true);
+  const tabs = updates.reduce((current, [, , update]) => update(current), []);
+  expect(tabs).toEqual([
+    expect.objectContaining({ targetId: 'page-a', resourceSessionId: 'child-a' }),
+    expect.objectContaining({ targetId: 'page-b', resourceSessionId: 'child-b' }),
+  ]);
+  expect(
+    setSessionField.mock.calls.some(([, field]) =>
+      [
+        'browserPanelTargetId',
+        'preferredDisplayTabId',
+        'isDisplayPanelOpen',
+        'isWorkspaceFilesOpen',
+      ].includes(field),
+    ),
+  ).toBe(false);
+  expect(options.handleBrowserTargetChange).not.toHaveBeenCalled();
+  expect(options.setIsDisplayPanelOpen).not.toHaveBeenCalled();
+  expect(options.setIsWorkspaceFilesOpen).not.toHaveBeenCalled();
+  expect(window.electron.browser.onAgentFocusTab).not.toHaveBeenCalled();
+  act(() => close({ sessionId: 'child-a', ownerSessionId: 'owner', targetId: 'page-a' }));
+  expect(closeTab).toHaveBeenCalledExactlyOnceWith('page-a', {
+    resourceSessionId: 'child-a',
+    preserveFocus: true,
+  });
+  expect(setSessionField.mock.calls.some(([id]) => id === 'child-a' || id === 'child-b')).toBe(
+    false,
+  );
+});
+
+test('does not clear another resource selection when its panel is not mounted', () => {
+  type Ensure = Parameters<Window['electron']['browser']['onAgentEnsureTab']>[0];
+  type Close = Parameters<Window['electron']['browser']['onAgentCloseTab']>[0];
+  let ensure!: Ensure;
+  let close!: Close;
+  const setSessionField = vi.fn();
+  const options = createOptions({
+    setSessionField,
+    availableAgentBrowserSessionIdsRef: { current: ['owner'] },
+    displaySessionKey: 'owner',
+  });
+  vi.spyOn(window.electron.browser, 'onAgentEnsureTab').mockImplementation(callback => {
+    ensure = callback;
+    return vi.fn();
+  });
+  vi.spyOn(window.electron.browser, 'onAgentCloseTab').mockImplementation(callback => {
+    close = callback;
+    return vi.fn();
+  });
+  renderHook(() => useCoworkBrowserPanels(options));
+  act(() => ensure({ sessionId: 'child-a', ownerSessionId: 'owner', targetId: 'page-a' }));
+  setSessionField.mockClear();
+  act(() => close({ sessionId: 'child-b', ownerSessionId: 'owner', targetId: 'page-a' }));
+  expect(setSessionField).not.toHaveBeenCalled();
+  act(() => close({ sessionId: 'child-a', ownerSessionId: 'owner', targetId: 'page-a' }));
+  expect(setSessionField).toHaveBeenCalledWith(
+    'owner',
+    'browserPanelTargetId',
+    expect.any(Function),
+  );
+  const remove = setSessionField.mock.calls.find(([, field]) => field === 'browserTabs')![2];
+  expect(
+    remove([
+      { targetId: 'page-a', resourceSessionId: 'child-a' },
+      { targetId: 'page-b', resourceSessionId: 'child-b' },
+    ]),
+  ).toEqual([{ targetId: 'page-b', resourceSessionId: 'child-b' }]);
+});
+
+test('retains the actual group selection, sidebar visibility and file tree across sibling tab creation', () => {
+  type Ensure = Parameters<Window['electron']['browser']['onAgentEnsureTab']>[0];
+  type Close = Parameters<Window['electron']['browser']['onAgentCloseTab']>[0];
+  let ensure!: Ensure;
+  let close!: Close;
+  const options = createOptions({
+    displaySessionKey: 'owner',
+    currentSessionId: 'owner',
+    availableAgentBrowserSessionIdsRef: { current: ['owner'] },
+    hasDisplayTabs: true,
+  });
+  vi.spyOn(window.electron.browser, 'onAgentEnsureTab').mockImplementation(callback => {
+    ensure = callback;
+    return vi.fn();
+  });
+  vi.spyOn(window.electron.browser, 'onAgentCloseTab').mockImplementation(callback => {
+    close = callback;
+    return vi.fn();
+  });
+  const { result } = renderHook(() => {
+    const display = useSessionDisplayState('owner', 520);
+    useCoworkBrowserPanels({
+      ...options,
+      ...display.setters,
+      displayStates: display.states,
+      browserTabs: display.state.browserTabs,
+      isDisplayPanelOpen: display.state.isDisplayPanelOpen,
+      setSessionField: display.setSessionField,
+      openBrowserTab: display.openBrowserTab,
+    });
+    return display;
+  });
+  act(() => {
+    result.current.setters.setPreferredDisplayTabId('app:agent-team:team');
+    result.current.setters.setIsDisplayPanelOpen(true);
+    result.current.setters.setIsWorkspaceFilesOpen(true);
+  });
+  act(() => {
+    ensure({ sessionId: 'child-b', ownerSessionId: 'owner', targetId: 'b' });
+    ensure({ sessionId: 'child-c', ownerSessionId: 'owner', targetId: 'c' });
+  });
+  expect(result.current.state.browserTabs.map(tab => tab.targetId)).toEqual(['b', 'c']);
+  expect(result.current.state.preferredDisplayTabId).toBe('app:agent-team:team');
+  expect(result.current.state.browserPanelTargetId).toBeNull();
+  expect(result.current.state.isDisplayPanelOpen).toBe(true);
+  expect(result.current.state.isWorkspaceFilesOpen).toBe(true);
+  act(() => {
+    result.current.setters.setBrowserPanelTargetId('b');
+    result.current.setters.setPreferredDisplayTabId('browser:b');
+    result.current.setters.setIsDisplayPanelOpen(false);
+  });
+  act(() => close({ sessionId: 'child-c', ownerSessionId: 'owner', targetId: 'c' }));
+  expect(result.current.state.browserPanelTargetId).toBe('b');
+  expect(result.current.state.preferredDisplayTabId).toBe('browser:b');
+  expect(result.current.state.isDisplayPanelOpen).toBe(false);
+});
 
 const localHtmlPreview = {
   success: true,

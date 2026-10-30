@@ -61,7 +61,7 @@ SDK 负责下载和认证，Main 不自行拼下载 URL 或重复实现公司协
 
 本地 Extension 和市场目录共用类型安装器。原生 `openclaw.plugin.json` 包交原生安装器验证；其他格式在提交前明确拒绝，提示当前产品所需的原生 manifest 和运行入口，不承诺格式转换。
 
-Extension 安装由 Main 固定 `autoAcceptCapabilities`，选择安装包即执行一次安装，不要求人工审核令牌再次提交。市场来源另带明确的来源策略；原生仍核对声明、来源和 staging，operator grants 与 App 代码 hash 信任保持独立。涉及 App 伴随代码时采用冷包流程，普通原生扩展优先通过已连接 Gateway 热安装；原本离线的引擎使用停止租约内的 CLI。具体路由及未知结果保护见[插件系统](../management/plugin-system.md#6-extension审核提交与未知结果)。Provider 不能直接写 runtime 目录，也不能把可执行安装脚本作为普通 Skill payload 偷渡。
+Extension 安装由 Main 固定 `autoAcceptCapabilities`，选择安装包即执行一次安装，不要求人工审核令牌再次提交。市场来源另带明确的来源策略；原生仍核对声明、来源和 staging，operator grants 与 App 代码 hash 信任保持独立。涉及 App 伴随代码时采用冷包流程，普通原生扩展优先通过已连接 Gateway 热安装；原本离线的引擎使用停止租约内的 CLI。具体路由及未知结果保护见[插件系统](../../architecture/07-plugin-system.md#6-extension审核提交与未知结果)。Provider 不能直接写 runtime 目录，也不能把可执行安装脚本作为普通 Skill payload 偷渡。
 
 新增 Agent、Command、CLI、Hook 或其他 kind，需要同时完成安装、启停、更新、卸载、状态对账和权限语义；只加一个 enum 与卡片不构成接入。
 

@@ -138,6 +138,7 @@ const createSessionTurn = (overrides: Partial<SessionTurn> = {}): SessionTurn =>
 
 type SessionPreparationInternals = {
   gatewayClient: GatewayClientLike | null;
+  gatewayClientGeneration: number;
   ensureGatewayClientReady: () => Promise<void>;
 };
 
@@ -170,6 +171,970 @@ const createPlanModeRequest = () => ({
   plan: '1. Inspect\n2. Implement\n3. Verify',
 });
 
+const createChildQuestion = (id = 'child') => ({
+  ...createAskUserRequest(),
+  requestId: `ask_${id}`,
+  sessionKey: `agent:worker:subagent:${id}`,
+  source: {
+    sessionKey: `agent:worker:subagent:${id}`,
+    nativeSessionId: `native-${id}`,
+    runId: `run-${id}`,
+    toolCallId: `call-${id}`,
+    agentId: 'worker',
+    lifecycleRevision: 'revision-1',
+  },
+  createdAt: 1,
+});
+
+test('independent Native children have real sources without a fabricated product parent', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const pending = createChildQuestion();
+  const request = vi.fn(async (method: string) =>
+    method === AskUserQuestionGateway.LIST
+      ? { requests: [pending] }
+      : { requestId: pending.requestId, status: 'cancelled', source: pending.source },
+  );
+  getSessionPreparationInternals(adapter).gatewayClient = {
+    start: vi.fn(),
+    stop: vi.fn(),
+    request,
+  };
+  getSessionPreparationInternals(adapter).ensureGatewayClientReady = vi
+    .fn()
+    .mockResolvedValue(undefined);
+  const resolveOwner = vi.fn().mockResolvedValue(null);
+  adapter.setExecutionSessionResolver(resolveOwner);
+  const [envelope] = await adapter.listPendingAskUserInteractions();
+  expect(envelope.sessionId).toBe('');
+  expect(envelope.request.origin).toMatchObject({
+    sessionKey: pending.sessionKey,
+    nativeSessionId: 'native-child',
+    toolCallId: 'call-child',
+    available: true,
+  });
+  expect(resolveOwner).toHaveBeenCalledWith(
+    expect.objectContaining({
+      sessionKey: pending.sessionKey,
+      nativeSessionId: 'native-child',
+      lifecycleRevision: 'revision-1',
+      runId: 'run-child',
+    }),
+  );
+  await expect(
+    adapter.resolveAskUserInteraction(pending.requestId, { behavior: 'cancel' }),
+  ).resolves.toEqual({ sessionId: '' });
+  expect(request).toHaveBeenLastCalledWith(AskUserQuestionGateway.RESOLVE, {
+    requestId: pending.requestId,
+    behavior: 'cancel',
+    source: pending.source,
+  });
+});
+
+test('a standalone plugin question is claimed without inventing an owner session; disable hides it without cancelling Native', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const pending = {
+    ...createChildQuestion(),
+    source: { ...createChildQuestion().source, ownerPluginId: 'agent-team' },
+  };
+  const request = vi.fn().mockResolvedValue({ requests: [pending] });
+  getSessionPreparationInternals(adapter).gatewayClient = {
+    start: vi.fn(),
+    stop: vi.fn(),
+    request,
+  };
+  getSessionPreparationInternals(adapter).ensureGatewayClientReady = vi
+    .fn()
+    .mockResolvedValue(undefined);
+  let enabled = true;
+  adapter.setExecutionSessionResolver(async () =>
+    enabled
+      ? {
+          pluginId: 'agent-team',
+          nativePluginId: 'agent-team',
+          epoch: 'epoch-1',
+          label: 'Standalone · Worker',
+        }
+      : null,
+  );
+  expect((await adapter.listPendingAskUserInteractions())[0]).toMatchObject({
+    sessionId: '',
+    request: { origin: { pluginId: 'agent-team', label: 'Standalone · Worker', available: true } },
+  });
+  request.mockClear();
+  sendToRenderer.mockClear();
+  enabled = false;
+  await adapter.refreshExecutionSessionInteractions();
+  expect(sendToRenderer).toHaveBeenLastCalledWith(
+    CoworkInteractionIpc.Stream,
+    expect.objectContaining({
+      request: expect.objectContaining({
+        origin: expect.objectContaining({ pluginId: 'agent-team', available: false }),
+      }),
+    }),
+  );
+  await expect(
+    adapter.resolveAskUserInteraction(pending.requestId, { behavior: 'cancel' }),
+  ).rejects.toThrow('source is unavailable');
+  expect(request).not.toHaveBeenCalled();
+  enabled = true;
+  await adapter.refreshExecutionSessionInteractions();
+  expect(sendToRenderer).toHaveBeenLastCalledWith(
+    CoworkInteractionIpc.Stream,
+    expect.objectContaining({
+      request: expect.objectContaining({ origin: expect.objectContaining({ available: true }) }),
+    }),
+  );
+});
+
+test('a first late event with Native-owned plugin provenance cannot fall back to an unclaimed question after disable', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  getSessionPreparationInternals(adapter).gatewayClient = {
+    start: vi.fn(),
+    stop: vi.fn(),
+    request: vi.fn(),
+  };
+  adapter.setExecutionSessionResolver(async () => null);
+  adapter.handleGatewayEvent({
+    event: AskUserQuestionGateway.REQUESTED_EVENT,
+    payload: {
+      ...createChildQuestion(),
+      source: { ...createChildQuestion().source, ownerPluginId: 'swarm-workflow' },
+    },
+  });
+  await adapter.refreshExecutionSessionInteractions();
+  expect(sendToRenderer).toHaveBeenLastCalledWith(
+    CoworkInteractionIpc.Stream,
+    expect.objectContaining({
+      request: expect.objectContaining({
+        origin: expect.objectContaining({ available: false }),
+      }),
+    }),
+  );
+});
+
+test('an affirmative Native-only source can ask independently without acquiring an App owner or losing its draft eligibility on unrelated refresh', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const pending = {
+    ...createChildQuestion('native-only'),
+    source: { ...createChildQuestion('native-only').source, ownerPluginId: 'native-worker' },
+  };
+  const request = vi.fn(async (method: string) =>
+    method === AskUserQuestionGateway.LIST
+      ? { requests: [pending] }
+      : { requestId: pending.requestId, status: 'cancelled', source: pending.source },
+  );
+  getSessionPreparationInternals(adapter).gatewayClient = {
+    start: vi.fn(),
+    stop: vi.fn(),
+    request,
+  };
+  getSessionPreparationInternals(adapter).ensureGatewayClientReady = vi
+    .fn()
+    .mockResolvedValue(undefined);
+  const resolver = vi.fn().mockResolvedValue(null);
+  adapter.setExecutionSessionResolver(resolver, id => id === 'native-worker');
+
+  const [envelope] = await adapter.listPendingAskUserInteractions();
+  expect(envelope.sessionId).toBe('');
+  expect(envelope.request.origin).toMatchObject({
+    available: true,
+    nativeSessionId: 'native-native-only',
+  });
+  expect(envelope.request.origin).not.toHaveProperty('pluginId');
+  expect(resolver).not.toHaveBeenCalled();
+  sendToRenderer.mockClear();
+  await adapter.refreshExecutionSessionInteractions();
+  expect(sendToRenderer).not.toHaveBeenCalled();
+  await expect(
+    adapter.resolveAskUserInteraction(pending.requestId, { behavior: 'cancel' }),
+  ).resolves.toEqual({ sessionId: '' });
+  expect(request).toHaveBeenLastCalledWith(AskUserQuestionGateway.RESOLVE, {
+    requestId: pending.requestId,
+    behavior: 'cancel',
+    source: pending.source,
+  });
+});
+
+test.each(['inventory-unknown', 'known-app', 'classification-failed'] as const)(
+  'does not treat %s Native ownership as an affirmative Native-only source',
+  async state => {
+    const { store } = createEmptyStore();
+    const adapter = new OpenClawRuntimeAdapter(store, {});
+    const pending = {
+      ...createChildQuestion(state),
+      source: { ...createChildQuestion(state).source, ownerPluginId: 'plugin-worker' },
+    };
+    const request = vi.fn().mockResolvedValue({ requests: [pending] });
+    getSessionPreparationInternals(adapter).gatewayClient = {
+      start: vi.fn(),
+      stop: vi.fn(),
+      request,
+    };
+    getSessionPreparationInternals(adapter).ensureGatewayClientReady = vi
+      .fn()
+      .mockResolvedValue(undefined);
+    adapter.setExecutionSessionResolver(
+      async () => null,
+      state === 'inventory-unknown'
+        ? undefined
+        : () => {
+            if (state === 'classification-failed') throw new Error('Inventory unavailable');
+            return false;
+          },
+    );
+    const [envelope] = await adapter.listPendingAskUserInteractions();
+    expect(envelope.request.origin?.available).toBe(false);
+    await expect(
+      adapter.resolveAskUserInteraction(pending.requestId, { behavior: 'cancel' }),
+    ).rejects.toThrow('source is unavailable');
+    expect(request).not.toHaveBeenCalledWith(AskUserQuestionGateway.RESOLVE, expect.anything());
+  },
+);
+
+test('losing affirmative Native-only classification synchronously vetoes an outstanding independent question', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const pending = {
+    ...createChildQuestion('inventory'),
+    source: { ...createChildQuestion('inventory').source, ownerPluginId: 'native-worker' },
+  };
+  getSessionPreparationInternals(adapter).gatewayClient = {
+    start: vi.fn(),
+    stop: vi.fn(),
+    request: vi.fn().mockResolvedValue({ requests: [pending] }),
+  };
+  getSessionPreparationInternals(adapter).ensureGatewayClientReady = vi
+    .fn()
+    .mockResolvedValue(undefined);
+  let nativeOnly = true;
+  let complete!: (value: null) => void;
+  const slow = new Promise<null>(resolve => {
+    complete = resolve;
+  });
+  adapter.setExecutionSessionResolver(
+    () => slow,
+    () => nativeOnly,
+  );
+  expect((await adapter.listPendingAskUserInteractions())[0].request.origin?.available).toBe(true);
+
+  sendToRenderer.mockClear();
+  nativeOnly = false;
+  const refreshing = adapter.refreshExecutionSessionInteractions();
+  expect(sendToRenderer).toHaveBeenLastCalledWith(
+    CoworkInteractionIpc.Stream,
+    expect.objectContaining({
+      request: expect.objectContaining({ origin: expect.objectContaining({ available: false }) }),
+    }),
+  );
+  complete(null);
+  await refreshing;
+});
+
+test('a previously claimed App cannot downgrade to a Native-only question after losing its owner', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const pending = {
+    ...createChildQuestion('claimed'),
+    source: { ...createChildQuestion('claimed').source, ownerPluginId: 'app-worker' },
+  };
+  getSessionPreparationInternals(adapter).gatewayClient = {
+    start: vi.fn(),
+    stop: vi.fn(),
+    request: vi.fn().mockResolvedValue({ requests: [pending] }),
+  };
+  getSessionPreparationInternals(adapter).ensureGatewayClientReady = vi
+    .fn()
+    .mockResolvedValue(undefined);
+  let claimed = true;
+  adapter.setExecutionSessionResolver(
+    async () =>
+      claimed
+        ? { pluginId: 'app-worker', nativePluginId: 'app-worker', epoch: 'epoch', label: 'Worker' }
+        : null,
+    () => !claimed,
+  );
+  expect((await adapter.listPendingAskUserInteractions())[0].request.origin?.available).toBe(true);
+  claimed = false;
+  expect((await adapter.listPendingAskUserInteractions())[0].request.origin?.available).toBe(false);
+  await expect(
+    adapter.resolveAskUserInteraction(pending.requestId, { behavior: 'cancel' }),
+  ).rejects.toThrow('source is unavailable');
+});
+
+test('keeps a plugin manifest identity distinct from its Native plugin owner while projecting a pending question', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const pending = {
+    ...createChildQuestion(),
+    source: { ...createChildQuestion().source, ownerPluginId: 'native-tools' },
+  };
+  const request = vi.fn().mockResolvedValue({ requests: [pending] });
+  getSessionPreparationInternals(adapter).gatewayClient = {
+    start: vi.fn(),
+    stop: vi.fn(),
+    request,
+  };
+  getSessionPreparationInternals(adapter).ensureGatewayClientReady = vi
+    .fn()
+    .mockResolvedValue(undefined);
+  adapter.setExecutionSessionResolver(async () => ({
+    pluginId: 'display-tools',
+    nativePluginId: 'native-tools',
+    epoch: 'ui-epoch',
+    label: 'Worker',
+    ownerSessionId: 'session-1',
+  }));
+  expect((await adapter.listPendingAskUserInteractions())[0]).toMatchObject({
+    sessionId: 'session-1',
+    request: { origin: { pluginId: 'display-tools', epoch: 'ui-epoch', available: true } },
+  });
+  adapter.setExecutionSessionResolver(async () => ({
+    pluginId: 'display-tools',
+    nativePluginId: 'another-native',
+    epoch: 'ui-epoch',
+    label: 'Wrong owner',
+    ownerSessionId: 'session-1',
+  }));
+  await adapter.refreshExecutionSessionInteractions();
+  await expect(
+    adapter.resolveAskUserInteraction(pending.requestId, { behavior: 'cancel' }),
+  ).rejects.toThrow('source is unavailable');
+});
+
+test('a pending origin lookup cannot authorize a reply after a newer refresh retracts that source', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const pending = createChildQuestion();
+  const request = vi.fn().mockResolvedValue({ requests: [pending] });
+  getSessionPreparationInternals(adapter).gatewayClient = {
+    start: vi.fn(),
+    stop: vi.fn(),
+    request,
+  };
+  getSessionPreparationInternals(adapter).ensureGatewayClientReady = vi
+    .fn()
+    .mockResolvedValue(undefined);
+  const owner = {
+    pluginId: 'swarm-workflow',
+    epoch: 'one',
+    ownerSessionId: 'session-1',
+    label: 'Node',
+  };
+  const resolver = vi.fn().mockResolvedValue(owner);
+  adapter.setExecutionSessionResolver(resolver);
+  await adapter.listPendingAskUserInteractions();
+  let finish!: (value: typeof owner) => void;
+  resolver
+    .mockImplementationOnce(
+      () =>
+        new Promise(resolve => {
+          finish = resolve;
+        }),
+    )
+    .mockResolvedValue(null);
+  request.mockClear();
+  const reply = adapter.resolveAskUserInteraction(pending.requestId, { behavior: 'cancel' });
+  const failed = expect(reply).rejects.toThrow('source is unavailable');
+  await adapter.refreshExecutionSessionInteractions();
+  finish(owner);
+  await failed;
+  expect(request).not.toHaveBeenCalled();
+});
+
+test('withdraws an owned question immediately even while an earlier origin lookup is awaiting Native feedback', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const pending = createChildQuestion();
+  const request = vi.fn().mockResolvedValue({ requests: [pending] });
+  getSessionPreparationInternals(adapter).gatewayClient = {
+    start: vi.fn(),
+    stop: vi.fn(),
+    request,
+  };
+  getSessionPreparationInternals(adapter).ensureGatewayClientReady = vi
+    .fn()
+    .mockResolvedValue(undefined);
+  const owner = {
+    pluginId: 'display-owner',
+    nativePluginId: 'native-owner',
+    epoch: 'one',
+    ownerSessionId: 'session-1',
+  };
+  const resolver = vi.fn().mockResolvedValue(owner);
+  adapter.setExecutionSessionResolver(resolver);
+  await adapter.listPendingAskUserInteractions();
+  let finish!: (value: typeof owner) => void;
+  resolver
+    .mockImplementationOnce(
+      () =>
+        new Promise(resolve => {
+          finish = resolve;
+        }),
+    )
+    .mockResolvedValue(null);
+  sendToRenderer.mockClear();
+  const refreshing = adapter.refreshExecutionSessionInteractions();
+  const withdrawal = adapter.refreshExecutionSessionInteractions();
+  expect(sendToRenderer).toHaveBeenCalledWith(
+    CoworkInteractionIpc.Stream,
+    expect.objectContaining({
+      request: expect.objectContaining({ origin: expect.objectContaining({ available: false }) }),
+    }),
+  );
+  const bindings = (
+    adapter as unknown as {
+      pendingAskUserBindings: Map<string, { origin: { available: boolean } }>;
+    }
+  ).pendingAskUserBindings;
+  expect(bindings.get(pending.requestId)?.origin.available).toBe(false);
+  request.mockClear();
+  finish(owner);
+  await Promise.all([refreshing, withdrawal]);
+  expect(bindings.get(pending.requestId)?.origin.available).toBe(false);
+  await expect(
+    adapter.resolveAskUserInteraction(pending.requestId, { behavior: 'cancel' }),
+  ).rejects.toThrow('source is unavailable');
+  expect(request).not.toHaveBeenCalled();
+});
+
+test('an unrelated metadata notification keeps an already displayed child question eligible while its exact source is being rechecked', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const one = createChildQuestion('visible-source');
+  const two = createChildQuestion('other-source');
+  const request = vi.fn().mockResolvedValue({ requests: [one, two] });
+  getSessionPreparationInternals(adapter).gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+  getSessionPreparationInternals(adapter).ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+  const owner = {
+    pluginId: 'fixture-team', nativePluginId: 'fixture-team', epoch: 'current',
+    ownerSessionId: 'session-1', label: 'Worker',
+  };
+  const resolver = vi.fn().mockResolvedValue(owner);
+  adapter.setExecutionSessionResolver(resolver);
+  expect(await adapter.listPendingAskUserInteractions()).toHaveLength(2);
+  let finish!: (value: typeof owner) => void;
+  resolver.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  sendToRenderer.mockClear();
+  const refreshing = adapter.refreshExecutionSessionInteractions(true);
+  expect(sendToRenderer).not.toHaveBeenCalledWith(CoworkInteractionIpc.Stream, expect.objectContaining({
+    request: expect.objectContaining({ requestId: one.requestId, origin: expect.objectContaining({ available: false }) }),
+  }));
+  const bindings = (adapter as unknown as {
+    pendingAskUserBindings: Map<string, { origin: { available: boolean } }>;
+  }).pendingAskUserBindings;
+  expect(bindings.get(one.requestId)?.origin.available).toBe(true);
+  finish(owner);
+  await refreshing;
+  expect(bindings.get(one.requestId)?.origin.available).toBe(true);
+  expect(sendToRenderer.mock.calls.filter(([channel, envelope]) =>
+    channel === CoworkInteractionIpc.Stream && envelope.request?.origin?.available === false,
+  )).toEqual([]);
+});
+
+test('a lifecycle withdrawal immediately hides a question despite an earlier metadata-only lookup and fences its late result', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const pending = createChildQuestion('metadata-then-disable');
+  const request = vi.fn().mockResolvedValue({ requests: [pending] });
+  getSessionPreparationInternals(adapter).gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+  getSessionPreparationInternals(adapter).ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+  const owner = {
+    pluginId: 'fixture-team', nativePluginId: 'fixture-team', epoch: 'old', ownerSessionId: 'session-1',
+  };
+  const resolver = vi.fn().mockResolvedValue(owner);
+  adapter.setExecutionSessionResolver(resolver);
+  await adapter.listPendingAskUserInteractions();
+  let finish!: (value: typeof owner) => void;
+  resolver.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; })).mockResolvedValue(null);
+  sendToRenderer.mockClear();
+  const metadata = adapter.refreshExecutionSessionInteractions(true);
+  const retired = adapter.refreshExecutionSessionInteractions();
+  expect(sendToRenderer).toHaveBeenCalledWith(CoworkInteractionIpc.Stream, expect.objectContaining({
+    request: expect.objectContaining({ requestId: pending.requestId, origin: expect.objectContaining({ available: false }) }),
+  }));
+  sendToRenderer.mockClear();
+  finish(owner);
+  await Promise.all([metadata, retired]);
+  expect(sendToRenderer).not.toHaveBeenCalledWith(CoworkInteractionIpc.Stream, expect.objectContaining({
+    request: expect.objectContaining({ requestId: pending.requestId, origin: expect.objectContaining({ available: true }) }),
+  }));
+  request.mockClear();
+  await expect(adapter.resolveAskUserInteraction(pending.requestId, { behavior: 'cancel' })).rejects.toThrow('source is unavailable');
+  expect(request).not.toHaveBeenCalled();
+});
+
+test('preserving a displayed question during metadata refresh never grants permission to answer a newly unavailable source', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const pending = createChildQuestion('display-is-not-authority');
+  const request = vi.fn().mockResolvedValue({ requests: [pending] });
+  getSessionPreparationInternals(adapter).gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+  getSessionPreparationInternals(adapter).ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+  const owner = {
+    pluginId: 'fixture-team', nativePluginId: 'fixture-team', epoch: 'current', ownerSessionId: 'session-1',
+  };
+  const resolver = vi.fn().mockResolvedValue(owner);
+  adapter.setExecutionSessionResolver(resolver);
+  await adapter.listPendingAskUserInteractions();
+  let finish!: (value: typeof owner) => void;
+  resolver.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; })).mockResolvedValue(null);
+  const metadata = adapter.refreshExecutionSessionInteractions(true);
+  sendToRenderer.mockClear();
+  request.mockClear();
+  await expect(adapter.resolveAskUserInteraction(pending.requestId, { behavior: 'cancel' })).rejects.toThrow('source is unavailable');
+  expect(request).not.toHaveBeenCalled();
+  expect(sendToRenderer).toHaveBeenCalledWith(CoworkInteractionIpc.Stream, expect.objectContaining({
+    request: expect.objectContaining({ requestId: pending.requestId, origin: expect.objectContaining({ available: false }) }),
+  }));
+  sendToRenderer.mockClear();
+  finish(owner);
+  await metadata;
+  expect(sendToRenderer).not.toHaveBeenCalledWith(CoworkInteractionIpc.Stream, expect.objectContaining({
+    request: expect.objectContaining({ requestId: pending.requestId, origin: expect.objectContaining({ available: true }) }),
+  }));
+});
+
+async function ownedAnswerRaceFixture() {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const pending = createChildQuestion('reply-source-race');
+  const request = vi.fn(async (method: string) => method === AskUserQuestionGateway.LIST
+    ? { requests: [pending] }
+    : { requestId: pending.requestId, status: 'cancelled', source: pending.source });
+  getSessionPreparationInternals(adapter).gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+  getSessionPreparationInternals(adapter).ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+  const owner = {
+    pluginId: 'fixture-team', nativePluginId: 'fixture-team', epoch: 'current', ownerSessionId: 'session-1',
+  };
+  const resolver = vi.fn().mockResolvedValue(owner);
+  adapter.setExecutionSessionResolver(resolver);
+  await adapter.listPendingAskUserInteractions();
+  request.mockClear();
+  resolver.mockClear();
+  return { adapter, pending, request, resolver, owner };
+}
+
+test('two windows cannot send conflicting answers to the same question while a sibling remains independent', async () => {
+  const f = await ownedAnswerRaceFixture();
+  let confirm!: (value: { requestId: string; status: string; source: typeof f.pending.source }) => void;
+  f.request.mockImplementationOnce(() => new Promise(resolve => { confirm = resolve; }));
+  const first = f.adapter.resolveAskUserInteraction(f.pending.requestId, { behavior: 'cancel' });
+  await vi.waitFor(() => expect(confirm).toBeTypeOf('function'));
+
+  await expect(f.adapter.resolveAskUserInteraction(f.pending.requestId, {
+    behavior: 'submit', answers: { deploy_target: { selected: ['production'] } },
+  })).rejects.toThrow('already being answered');
+  expect(f.request).toHaveBeenCalledTimes(1);
+
+  const sibling = createChildQuestion('unblocked-sibling');
+  f.adapter.handleGatewayEvent({ event: AskUserQuestionGateway.REQUESTED_EVENT, payload: sibling });
+  f.request.mockImplementationOnce(async () => ({
+    requestId: sibling.requestId, status: 'cancelled', source: sibling.source,
+  }));
+  await expect(f.adapter.resolveAskUserInteraction(sibling.requestId, { behavior: 'cancel' }))
+    .resolves.toEqual({ sessionId: 'session-1' });
+  confirm({ requestId: f.pending.requestId, status: 'cancelled', source: f.pending.source });
+  await expect(first).resolves.toEqual({ sessionId: 'session-1' });
+  expect(f.request).toHaveBeenNthCalledWith(2, AskUserQuestionGateway.RESOLVE, {
+    requestId: sibling.requestId, behavior: 'cancel', source: sibling.source,
+  });
+});
+
+test('two windows claim a question before any source lookup can start a competing answer', async () => {
+  const f = await ownedAnswerRaceFixture();
+  let project!: (value: typeof f.owner) => void;
+  f.resolver.mockImplementationOnce(() => new Promise(resolve => { project = resolve; }));
+  const first = f.adapter.resolveAskUserInteraction(f.pending.requestId, { behavior: 'cancel' });
+  await expect(f.adapter.resolveAskUserInteraction(f.pending.requestId, { behavior: 'cancel' }))
+    .rejects.toThrow('already being answered');
+  expect(f.resolver).toHaveBeenCalledTimes(1);
+  expect(f.request).not.toHaveBeenCalled();
+  project(f.owner);
+  await expect(first).resolves.toEqual({ sessionId: 'session-1' });
+  expect(f.request).toHaveBeenCalledTimes(1);
+});
+
+test('an uncertain answer stays claimed until a newer pending read proves that exact request still waits', async () => {
+  const f = await ownedAnswerRaceFixture();
+  let snapshot!: (value: { requests: (typeof f.pending)[] }) => void;
+  f.request.mockImplementationOnce(() => new Promise(resolve => { snapshot = resolve; }));
+  const olderRead = f.adapter.listPendingAskUserInteractions();
+  f.request.mockRejectedValueOnce(new Error('Acknowledgement lost'))
+    .mockRejectedValueOnce(new Error('Pending read unavailable'));
+  await expect(f.adapter.resolveAskUserInteraction(f.pending.requestId, { behavior: 'cancel' }))
+    .rejects.toThrow('Acknowledgement lost');
+  snapshot({ requests: [f.pending] });
+  await olderRead;
+  f.request.mockClear();
+  f.request.mockRejectedValueOnce(new Error('Pending read still unavailable'));
+  await expect(f.adapter.resolveAskUserInteraction(f.pending.requestId, { behavior: 'cancel' }))
+    .rejects.toThrow('Pending read still unavailable');
+  expect(f.request).toHaveBeenCalledExactlyOnceWith(AskUserQuestionGateway.LIST, {});
+
+  f.request.mockImplementationOnce(async () => ({ requests: [f.pending] }));
+  f.request.mockClear();
+  await expect(f.adapter.resolveAskUserInteraction(f.pending.requestId, { behavior: 'cancel' }))
+    .resolves.toEqual({ sessionId: 'session-1' });
+  expect(f.request).toHaveBeenCalledTimes(2);
+  expect(f.request).toHaveBeenNthCalledWith(1, AskUserQuestionGateway.LIST, {});
+  expect(f.request).toHaveBeenNthCalledWith(2, AskUserQuestionGateway.RESOLVE, {
+    requestId: f.pending.requestId, behavior: 'cancel', source: f.pending.source,
+  });
+});
+
+test('a failed answer reconciles without replay and a confirmed pending request accepts a later explicit retry', async () => {
+  const f = await ownedAnswerRaceFixture();
+  f.request.mockRejectedValueOnce(new Error('Acknowledgement lost'));
+  await expect(f.adapter.resolveAskUserInteraction(f.pending.requestId, { behavior: 'cancel' }))
+    .rejects.toThrow('Acknowledgement lost');
+  expect(f.request).toHaveBeenCalledTimes(2);
+  expect(f.request).toHaveBeenNthCalledWith(1, AskUserQuestionGateway.RESOLVE, {
+    requestId: f.pending.requestId, behavior: 'cancel', source: f.pending.source,
+  });
+  expect(f.request).toHaveBeenNthCalledWith(2, AskUserQuestionGateway.LIST, {});
+  f.request.mockClear();
+  await expect(f.adapter.resolveAskUserInteraction(f.pending.requestId, { behavior: 'cancel' }))
+    .resolves.toEqual({ sessionId: 'session-1' });
+  expect(f.request).toHaveBeenCalledTimes(1);
+});
+
+test('two explicit retries cannot use an older pending confirmation to release a newer window claim', async () => {
+  const f = await ownedAnswerRaceFixture();
+  f.request.mockRejectedValueOnce(new Error('Acknowledgement lost'))
+    .mockRejectedValueOnce(new Error('Pending read unavailable'));
+  await expect(f.adapter.resolveAskUserInteraction(f.pending.requestId, { behavior: 'cancel' }))
+    .rejects.toThrow('Acknowledgement lost');
+  f.request.mockClear();
+  let confirmFirst!: (value: { requests: (typeof f.pending)[] }) => void;
+  let confirmSecond!: (value: { requests: (typeof f.pending)[] }) => void;
+  let confirmAnswer!: (value: { requestId: string; status: string; source: typeof f.pending.source }) => void;
+  f.request
+    .mockImplementationOnce(() => new Promise(resolve => { confirmFirst = resolve; }))
+    .mockImplementationOnce(() => new Promise(resolve => { confirmSecond = resolve; }))
+    .mockImplementationOnce(() => new Promise(resolve => { confirmAnswer = resolve; }));
+  const first = f.adapter.resolveAskUserInteraction(f.pending.requestId, { behavior: 'cancel' });
+  const second = f.adapter.resolveAskUserInteraction(f.pending.requestId, { behavior: 'cancel' });
+  const rejected = expect(second).rejects.toThrow('already being answered');
+  confirmFirst({ requests: [f.pending] });
+  await vi.waitFor(() => expect(confirmAnswer).toBeTypeOf('function'));
+  confirmSecond({ requests: [f.pending] });
+  await rejected;
+  confirmAnswer({ requestId: f.pending.requestId, status: 'cancelled', source: f.pending.source });
+  await expect(first).resolves.toEqual({ sessionId: 'session-1' });
+  expect(f.request.mock.calls.filter(([method]) => method === AskUserQuestionGateway.RESOLVE))
+    .toHaveLength(1);
+});
+
+test.each(['withdrawal', 'reconnect'] as const)(
+  'an explicit retry cannot cross a %s while its pending confirmation waits', async change => {
+    const f = await ownedAnswerRaceFixture();
+    f.request.mockRejectedValueOnce(new Error('Acknowledgement lost'))
+      .mockRejectedValueOnce(new Error('Pending read unavailable'));
+    await expect(f.adapter.resolveAskUserInteraction(f.pending.requestId, { behavior: 'cancel' }))
+      .rejects.toThrow('Acknowledgement lost');
+    f.request.mockClear();
+    let confirm!: (value: { requests: (typeof f.pending)[] }) => void;
+    f.request.mockImplementationOnce(() => new Promise(resolve => { confirm = resolve; }));
+    const retry = f.adapter.resolveAskUserInteraction(f.pending.requestId, { behavior: 'cancel' });
+    const rejected = expect(retry).rejects.toThrow(change === 'withdrawal'
+      ? 'source is unavailable' : 'connection changed');
+    if (change === 'withdrawal') {
+      f.resolver.mockResolvedValue(null);
+      await f.adapter.refreshExecutionSessionInteractions();
+      f.resolver.mockResolvedValue({ ...f.owner, epoch: 'replacement' });
+      await f.adapter.refreshExecutionSessionInteractions(true);
+    } else getSessionPreparationInternals(f.adapter).gatewayClientGeneration++;
+    confirm({ requests: [f.pending] });
+    await rejected;
+    expect(f.request).toHaveBeenCalledExactlyOnceWith(AskUserQuestionGateway.LIST, {});
+  },
+);
+
+test('an answer lost in transit is dismissed when the later authoritative pending snapshot no longer contains it', async () => {
+  const f = await ownedAnswerRaceFixture();
+  f.request.mockRejectedValueOnce(new Error('Acknowledgement lost'))
+    .mockImplementationOnce(async () => ({ requests: [] }));
+  sendToRenderer.mockClear();
+  await expect(f.adapter.resolveAskUserInteraction(f.pending.requestId, { behavior: 'cancel' }))
+    .rejects.toThrow('Acknowledgement lost');
+  expect(sendToRenderer).toHaveBeenCalledWith(CoworkInteractionIpc.Dismiss, {
+    requestId: f.pending.requestId,
+  });
+  f.request.mockClear();
+  await expect(f.adapter.resolveAskUserInteraction(f.pending.requestId, { behavior: 'cancel' }))
+    .rejects.toThrow('not an active');
+  expect(f.request).not.toHaveBeenCalled();
+});
+
+test('a failed source check releases its unsent claim without treating it as an uncertain Native answer', async () => {
+  const f = await ownedAnswerRaceFixture();
+  f.resolver.mockResolvedValueOnce(null);
+  await expect(f.adapter.resolveAskUserInteraction(f.pending.requestId, { behavior: 'cancel' }))
+    .rejects.toThrow('source is unavailable');
+  expect(f.request).not.toHaveBeenCalled();
+  await expect(f.adapter.resolveAskUserInteraction(f.pending.requestId, { behavior: 'cancel' }))
+    .resolves.toEqual({ sessionId: 'session-1' });
+  expect(f.request).toHaveBeenCalledTimes(1);
+});
+
+test('a same-object Gateway reconnect during source lookup cannot send an old window answer', async () => {
+  const f = await ownedAnswerRaceFixture();
+  let project!: (value: typeof f.owner) => void;
+  f.resolver.mockImplementationOnce(() => new Promise(resolve => { project = resolve; }));
+  const first = f.adapter.resolveAskUserInteraction(f.pending.requestId, { behavior: 'cancel' });
+  const rejected = expect(first).rejects.toThrow('source is unavailable');
+  getSessionPreparationInternals(f.adapter).gatewayClientGeneration += 1;
+  project(f.owner);
+  await rejected;
+  expect(f.request).not.toHaveBeenCalled();
+});
+
+test('an unrelated metadata refresh cannot reject a valid reply whose exact source lookup is awaiting', async () => {
+  const f = await ownedAnswerRaceFixture();
+  let finish!: (value: typeof f.owner) => void;
+  f.resolver.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  const reply = f.adapter.resolveAskUserInteraction(f.pending.requestId, { behavior: 'cancel' });
+  const accepted = expect(reply).resolves.toEqual({ sessionId: 'session-1' });
+  await f.adapter.refreshExecutionSessionInteractions(true);
+  finish(f.owner);
+  await accepted;
+  expect(f.resolver).toHaveBeenCalledTimes(3);
+  expect(f.request).toHaveBeenCalledExactlyOnceWith(AskUserQuestionGateway.RESOLVE, {
+    requestId: f.pending.requestId, behavior: 'cancel', source: f.pending.source,
+  });
+});
+
+test('negative source metadata prevents an awaiting reply from performing a new admission or Native answer', async () => {
+  const f = await ownedAnswerRaceFixture();
+  let finish!: (value: typeof f.owner) => void;
+  f.resolver.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; })).mockResolvedValue(null);
+  const reply = f.adapter.resolveAskUserInteraction(f.pending.requestId, { behavior: 'cancel' });
+  const rejected = expect(reply).rejects.toThrow('source is unavailable');
+  await f.adapter.refreshExecutionSessionInteractions(true);
+  finish(f.owner);
+  await rejected;
+  expect(f.resolver).toHaveBeenCalledTimes(2);
+  expect(f.request).not.toHaveBeenCalled();
+});
+
+test('a second metadata change during the one allowed reply source recheck is rejected without a third read or Native send', async () => {
+  const f = await ownedAnswerRaceFixture();
+  let finish!: (value: typeof f.owner) => void;
+  let revalidated!: (value: typeof f.owner) => void;
+  f.resolver.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  const reply = f.adapter.resolveAskUserInteraction(f.pending.requestId, { behavior: 'cancel' });
+  const rejected = expect(reply).rejects.toThrow('source is unavailable');
+  await f.adapter.refreshExecutionSessionInteractions(true);
+  f.resolver.mockImplementationOnce(() => new Promise(resolve => { revalidated = resolve; }));
+  finish(f.owner);
+  await vi.waitFor(() => expect(revalidated).toBeTypeOf('function'));
+  await f.adapter.refreshExecutionSessionInteractions(true);
+  revalidated(f.owner);
+  await rejected;
+  expect(f.resolver).toHaveBeenCalledTimes(4);
+  expect(f.request).not.toHaveBeenCalled();
+});
+
+test('a lifecycle withdrawal cannot revive an old reply even if a new epoch restores question visibility before its lookup returns', async () => {
+  const f = await ownedAnswerRaceFixture();
+  let finish!: (value: typeof f.owner) => void;
+  f.resolver.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; })).mockResolvedValue(null);
+  const reply = f.adapter.resolveAskUserInteraction(f.pending.requestId, { behavior: 'cancel' });
+  const rejected = expect(reply).rejects.toThrow('source is unavailable');
+  await f.adapter.refreshExecutionSessionInteractions();
+  f.resolver.mockResolvedValue({ ...f.owner, epoch: 'replacement' });
+  await f.adapter.refreshExecutionSessionInteractions(true);
+  finish(f.owner);
+  await rejected;
+  expect(f.resolver).toHaveBeenCalledTimes(3);
+  expect(f.request).not.toHaveBeenCalled();
+});
+
+test('an authoritative pending list removes only missing questions without cancelling sibling Native execution', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  let requests = [createChildQuestion('one'), createChildQuestion('two')];
+  const request = vi.fn().mockImplementation(async () => ({ requests }));
+  getSessionPreparationInternals(adapter).gatewayClient = {
+    start: vi.fn(),
+    stop: vi.fn(),
+    request,
+  };
+  getSessionPreparationInternals(adapter).ensureGatewayClientReady = vi
+    .fn()
+    .mockResolvedValue(undefined);
+  await adapter.listPendingAskUserInteractions();
+  requests = requests.slice(1);
+  sendToRenderer.mockClear();
+  expect(await adapter.listPendingAskUserInteractions()).toHaveLength(1);
+  expect(sendToRenderer).toHaveBeenCalledWith(CoworkInteractionIpc.Dismiss, {
+    requestId: 'ask_one',
+  });
+  expect(request.mock.calls.every(([method]) => method !== AskUserQuestionGateway.RESOLVE)).toBe(
+    true,
+  );
+});
+
+test.each([false, true])(
+  'keeps an independent member question in its own product chat (Native owner: %s)',
+  async owned => {
+    const { store } = createEmptyStore();
+    const adapter = new OpenClawRuntimeAdapter(store, {});
+    const child = createChildQuestion('member-local');
+    const pending = {
+      ...child,
+      sessionKey: 'agent:main:justdo:session-1',
+      source: {
+        ...child.source,
+        sessionKey: 'agent:main:justdo:session-1',
+        ...(owned ? { ownerPluginId: 'fixture-team' } : {}),
+      },
+    };
+    const request = vi.fn(async (method: string) =>
+      method === AskUserQuestionGateway.LIST
+        ? { requests: [pending] }
+        : { requestId: pending.requestId, status: 'cancelled', source: pending.source },
+    );
+    getSessionPreparationInternals(adapter).gatewayClient = {
+      start: vi.fn(), stop: vi.fn(), request,
+    };
+    getSessionPreparationInternals(adapter).ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+    adapter.setExecutionSessionResolver(async () => ({
+      pluginId: 'fixture-team', nativePluginId: 'fixture-team', epoch: 'current',
+      ownerSessionId: 'session-1', label: 'Member',
+    }));
+
+    const [interaction] = await adapter.listPendingAskUserInteractions();
+    expect(interaction).toMatchObject({
+      sessionId: 'session-1',
+      request: { origin: { ownerSessionId: 'session-1', available: true } },
+    });
+    await expect(adapter.resolveAskUserInteraction(pending.requestId, { behavior: 'cancel' }))
+      .resolves.toEqual({ sessionId: 'session-1' });
+    expect(request).toHaveBeenLastCalledWith(AskUserQuestionGateway.RESOLVE, {
+      requestId: pending.requestId, behavior: 'cancel', source: pending.source,
+    });
+  },
+);
+
+test('answering one child while a sibling source lookup awaits preserves the other exact pending request', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const one = createChildQuestion('parallel-one');
+  const two = createChildQuestion('parallel-two');
+  const request = vi.fn(async (method: string, params: { requestId?: string }) => {
+    if (method === AskUserQuestionGateway.LIST) return { requests: [one, two] };
+    const pending = params.requestId === one.requestId ? one : two;
+    return { requestId: pending.requestId, status: 'cancelled', source: pending.source };
+  });
+  getSessionPreparationInternals(adapter).gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+  getSessionPreparationInternals(adapter).ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+  const resolver = vi.fn().mockResolvedValue(null);
+  adapter.setExecutionSessionResolver(resolver);
+  expect(await adapter.listPendingAskUserInteractions()).toHaveLength(2);
+  let finish!: (value: null) => void;
+  resolver.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  const firstReply = adapter.resolveAskUserInteraction(one.requestId, { behavior: 'cancel' });
+  sendToRenderer.mockClear();
+  await expect(adapter.resolveAskUserInteraction(two.requestId, { behavior: 'cancel' }))
+    .resolves.toEqual({ sessionId: '' });
+  expect(sendToRenderer).toHaveBeenCalledWith(CoworkInteractionIpc.Dismiss, { requestId: two.requestId });
+  expect(sendToRenderer).not.toHaveBeenCalledWith(CoworkInteractionIpc.Dismiss, { requestId: one.requestId });
+  finish(null);
+  await expect(firstReply).resolves.toEqual({ sessionId: '' });
+  expect(request.mock.calls.filter(([method]) => method === AskUserQuestionGateway.RESOLVE)
+    .map(([, params]) => params.requestId)).toEqual([two.requestId, one.requestId]);
+});
+
+test.each(['sessionKey', 'nativeSessionId', 'runId', 'toolCallId', 'lifecycleRevision'] as const)(
+  'does not dismiss a question when the Native answer receipt changes its %s',
+  async field => {
+    const { store } = createEmptyStore();
+    const adapter = new OpenClawRuntimeAdapter(store, {});
+    const pending = createChildQuestion('receipt');
+    let invalid = true;
+    const request = vi.fn(async (method: string) => method === AskUserQuestionGateway.LIST
+      ? { requests: [pending] }
+      : {
+          requestId: pending.requestId,
+          status: 'cancelled',
+          source: invalid ? { ...pending.source, [field]: 'different' } : pending.source,
+        });
+    getSessionPreparationInternals(adapter).gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+    getSessionPreparationInternals(adapter).ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+    await adapter.listPendingAskUserInteractions();
+    sendToRenderer.mockClear();
+    await expect(adapter.resolveAskUserInteraction(pending.requestId, { behavior: 'cancel' }))
+      .rejects.toThrow('invalid payload');
+    expect(sendToRenderer).not.toHaveBeenCalledWith(CoworkInteractionIpc.Dismiss, { requestId: pending.requestId });
+    invalid = false;
+    expect((await adapter.listPendingAskUserInteractions()).map(item => item.request.requestId))
+      .toEqual([pending.requestId]);
+  },
+);
+
+test('a failed pending read preserves both child questions until an authoritative recovery removes one', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const one = createChildQuestion('recovery-one');
+  const two = createChildQuestion('recovery-two');
+  const request = vi.fn().mockResolvedValue({ requests: [one, two] });
+  getSessionPreparationInternals(adapter).gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+  getSessionPreparationInternals(adapter).ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+  expect(await adapter.listPendingAskUserInteractions()).toHaveLength(2);
+  request.mockRejectedValueOnce(new Error('Transport unavailable'));
+  sendToRenderer.mockClear();
+  await expect(adapter.listPendingAskUserInteractions()).rejects.toThrow('Transport unavailable');
+  expect(sendToRenderer).not.toHaveBeenCalled();
+  request.mockResolvedValue({ requests: [one, two] });
+  expect((await adapter.listPendingAskUserInteractions()).map(item => item.request.requestId))
+    .toEqual([one.requestId, two.requestId]);
+  request.mockResolvedValue({ requests: [two] });
+  expect((await adapter.listPendingAskUserInteractions()).map(item => item.request.requestId))
+    .toEqual([two.requestId]);
+  expect(sendToRenderer).toHaveBeenCalledWith(CoworkInteractionIpc.Dismiss, { requestId: one.requestId });
+  expect(sendToRenderer).not.toHaveBeenCalledWith(CoworkInteractionIpc.Dismiss, { requestId: two.requestId });
+});
+
+test('holds a question without guessing its parent until the exact delayed execution receipt becomes available', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const pending = createChildQuestion('delayed-admission');
+  const request = vi.fn(async (method: string) => method === AskUserQuestionGateway.LIST
+    ? { requests: [pending] }
+    : { requestId: pending.requestId, status: 'cancelled', source: pending.source });
+  getSessionPreparationInternals(adapter).gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+  getSessionPreparationInternals(adapter).ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+  let admitted = false;
+  adapter.setExecutionSessionResolver(async () => ({
+    pluginId: 'fixture-team', nativePluginId: 'fixture-team', epoch: 'same-epoch',
+    ownerSessionId: 'session-1', ...(admitted ? {} : { pending: true as const }),
+  }));
+  const [held] = await adapter.listPendingAskUserInteractions();
+  expect(held.request.origin).toMatchObject({ pluginId: 'fixture-team', available: false });
+  request.mockClear();
+  await expect(adapter.resolveAskUserInteraction(pending.requestId, { behavior: 'cancel' }))
+    .rejects.toThrow('source is unavailable');
+  expect(request).not.toHaveBeenCalled();
+  admitted = true;
+  sendToRenderer.mockClear();
+  await adapter.refreshExecutionSessionInteractions(true);
+  expect(sendToRenderer).toHaveBeenLastCalledWith(CoworkInteractionIpc.Stream, expect.objectContaining({
+    sessionId: 'session-1', request: expect.objectContaining({
+      requestId: pending.requestId, origin: expect.objectContaining({ available: true }),
+    }),
+  }));
+  await expect(adapter.resolveAskUserInteraction(pending.requestId, { behavior: 'cancel' }))
+    .resolves.toEqual({ sessionId: 'session-1' });
+  expect(request).toHaveBeenCalledExactlyOnceWith(AskUserQuestionGateway.RESOLVE, {
+    requestId: pending.requestId, behavior: 'cancel', source: pending.source,
+  });
+});
+
 const createApprovedPlanArtifactStore = (
   verifiedMarkdown = '1. Inspect\n2. Implement\n3. Verify',
 ) => ({
@@ -198,34 +1163,42 @@ const seedPresentedPlan = (
   internals.pendingPlanModeRequests.set(request.requestId, request);
 };
 
-test.each(['answered', 'cancelled', 'timeout'])('forwards AskUserQuestion events and dismisses the question after %s', status => {
-  sendToRenderer.mockClear();
-  const { store } = createEmptyStore();
-  const adapter = new OpenClawRuntimeAdapter(store, {});
-  const request = createAskUserRequest();
+test.each(['answered', 'cancelled', 'timeout'])(
+  'forwards AskUserQuestion events and dismisses the question after %s',
+  status => {
+    sendToRenderer.mockClear();
+    const { store } = createEmptyStore();
+    const adapter = new OpenClawRuntimeAdapter(store, {});
+    const request = createAskUserRequest();
+    getSessionPreparationInternals(adapter).gatewayClient = {
+      start: vi.fn(),
+      stop: vi.fn(),
+      request: vi.fn(),
+    };
 
-  adapter.handleGatewayEvent({
-    event: AskUserQuestionGateway.REQUESTED_EVENT,
-    payload: request,
-  });
+    adapter.handleGatewayEvent({
+      event: AskUserQuestionGateway.REQUESTED_EVENT,
+      payload: request,
+    });
 
-  expect(sendToRenderer).toHaveBeenCalledWith(CoworkInteractionIpc.Stream, {
-    sessionId: 'session-1',
-    request: expect.objectContaining({
+    expect(sendToRenderer).toHaveBeenCalledWith(CoworkInteractionIpc.Stream, {
+      sessionId: 'session-1',
+      request: expect.objectContaining({
+        requestId: request.requestId,
+        toolName: 'ask_user_question',
+        toolInput: expect.objectContaining({ waitPolicy: { mode: 'required' } }),
+      }),
+    });
+
+    adapter.handleGatewayEvent({
+      event: AskUserQuestionGateway.RESOLVED_EVENT,
+      payload: { requestId: request.requestId, status },
+    });
+    expect(sendToRenderer).toHaveBeenCalledWith(CoworkInteractionIpc.Dismiss, {
       requestId: request.requestId,
-      toolName: 'ask_user_question',
-      toolInput: expect.objectContaining({ waitPolicy: { mode: 'required' } }),
-    }),
-  });
-
-  adapter.handleGatewayEvent({
-    event: AskUserQuestionGateway.RESOLVED_EVENT,
-    payload: { requestId: request.requestId, status },
-  });
-  expect(sendToRenderer).toHaveBeenCalledWith(CoworkInteractionIpc.Dismiss, {
-    requestId: request.requestId,
-  });
-});
+    });
+  },
+);
 
 test('resets context and starts an approved plan on the same OpenClaw session', async () => {
   const { store, planHandoffs } = createEmptyStore();
@@ -387,7 +1360,9 @@ test('admits an approved plan when chat.send acknowledgement is lost but activit
       return { requestId: planRequest.requestId, decision: 'implement' };
     }
     if (method === 'sessions.describe') {
-      return { session: { key: planRequest.sessionKey, agentId: 'main', sessionId: 'gateway-session-1' } };
+      return {
+        session: { key: planRequest.sessionKey, agentId: 'main', sessionId: 'gateway-session-1' },
+      };
     }
     if (method === 'sessions.reset') {
       return {

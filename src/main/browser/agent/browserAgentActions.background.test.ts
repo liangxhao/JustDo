@@ -27,6 +27,7 @@ const createActions = (headless = true) => {
     isDestroyed: () => false,
     getURL: () => 'https://example.com/',
     sendInputEvent: vi.fn(),
+    focus: vi.fn(),
   };
   const tab: RegisteredTab = {
     sessionId: 'session-1',
@@ -50,7 +51,6 @@ const createActions = (headless = true) => {
     executeInTargetWorld: vi.fn(async (_tab, _guest, _frame, code) => dom.window.eval(code)),
     resolveTargetFrameOffset: vi.fn(async () => ({ x: 5, y: 10 })),
     waitWhileActive: vi.fn(async (_milliseconds: number, check: () => void) => check()),
-    focusGuestForKeyboardInput: vi.fn(),
     enableDebuggerDomains: vi.fn(async () => ({ sendCommand })),
     sendToRenderer: vi.fn(),
     discardTabRuntime: vi.fn(),
@@ -82,48 +82,83 @@ const createActions = (headless = true) => {
 };
 
 describe('background browser actions', () => {
-  test('keeps foreground keyboard input on the existing path', async () => {
-    const { act, context, guest } = createActions(false);
+  test.each([false, true])(
+    'presses keys on its own target without native focus (headless=%s)',
+    async headless => {
+      const { act, context, sendCommand, guest } = createActions(headless);
 
-    await act({ kind: 'press', key: 'Enter' });
+      await act({ kind: 'press', key: 'Enter' });
 
-    expect(context.focusGuestForKeyboardInput).toHaveBeenCalledWith(guest);
-    expect(guest.sendInputEvent.mock.calls).toEqual([
-      [{ type: 'keyDown', keyCode: 'Enter', modifiers: [] }],
-      [{ type: 'keyUp', keyCode: 'Enter', modifiers: [] }],
-    ]);
-    expect(context.enableDebuggerDomains).not.toHaveBeenCalled();
-  });
+      expect(guest.focus).not.toHaveBeenCalled();
+      if (!headless) {
+        expect(context.enableDebuggerDomains).not.toHaveBeenCalled();
+        expect(guest.sendInputEvent.mock.calls.map(([event]) => event)).toEqual([
+          { type: 'keyDown', keyCode: 'Enter', modifiers: [] },
+          { type: 'char', keyCode: '\r', modifiers: [] },
+          { type: 'keyUp', keyCode: 'Enter', modifiers: [] },
+        ]);
+        return;
+      }
+      expect(guest.sendInputEvent).not.toHaveBeenCalled();
+      expect(context.enableDebuggerDomains).toHaveBeenCalledOnce();
+      expect(sendCommand).toHaveBeenCalledWith(
+        'Input.dispatchKeyEvent',
+        expect.objectContaining({ type: 'keyDown', key: 'Enter' }),
+      );
+      expect(sendCommand).toHaveBeenLastCalledWith(
+        'Input.dispatchKeyEvent',
+        expect.objectContaining({ type: 'keyUp', key: 'Enter' }),
+      );
+    },
+  );
 
-  test('types Chinese into the selected element and submits without native focus', async () => {
-    const { act, context, dom, sendCommand, guest } = createActions();
-    const input = dom.window.document.querySelector('input')!;
-    const changed = vi.fn();
-    input.addEventListener('input', changed);
+  test.each([false, true])(
+    'types Chinese and submits without native focus (headless=%s)',
+    async headless => {
+      const { act, dom, sendCommand, guest } = createActions(headless);
+      const input = dom.window.document.querySelector('input')!;
+      const changed = vi.fn();
+      input.addEventListener('input', changed);
 
-    await act({ kind: 'type', selector: '#input', text: '中文与 emoji 🙂', submit: true });
+      await act({ kind: 'type', selector: '#input', text: '中文与 emoji 🙂', submit: true });
 
-    expect(input.value).toBe('中文与 emoji 🙂');
-    expect(changed).toHaveBeenCalledOnce();
-    expect(sendCommand).toHaveBeenCalledWith(
-      'Input.dispatchKeyEvent',
-      expect.objectContaining({
-        type: 'keyDown',
-        key: 'Enter',
-        code: 'Enter',
-        text: '\r',
-      }),
-    );
-    expect(sendCommand).toHaveBeenLastCalledWith(
-      'Input.dispatchKeyEvent',
-      expect.objectContaining({
-        type: 'keyUp',
-        key: 'Enter',
-      }),
-    );
-    expect(context.focusGuestForKeyboardInput).not.toHaveBeenCalled();
-    expect(guest.sendInputEvent).not.toHaveBeenCalled();
-  });
+      expect(input.value).toBe('中文与 emoji 🙂');
+      expect(changed).toHaveBeenCalledOnce();
+      expect(guest.focus).not.toHaveBeenCalled();
+      if (!headless) {
+        expect(sendCommand).not.toHaveBeenCalled();
+        expect(guest.sendInputEvent).toHaveBeenCalledWith({
+          type: 'char',
+          keyCode: '\r',
+          modifiers: [],
+        });
+        expect(guest.sendInputEvent).toHaveBeenLastCalledWith({
+          type: 'keyUp',
+          keyCode: 'Enter',
+          modifiers: [],
+        });
+        return;
+      }
+      expect(sendCommand).toHaveBeenCalledWith(
+        'Input.dispatchKeyEvent',
+        expect.objectContaining({
+          type: 'keyDown',
+          key: 'Enter',
+          code: 'Enter',
+          text: '\r',
+        }),
+      );
+      expect(sendCommand).toHaveBeenLastCalledWith(
+        'Input.dispatchKeyEvent',
+        expect.objectContaining({
+          type: 'keyUp',
+          key: 'Enter',
+        }),
+      );
+      expect(guest.focus).not.toHaveBeenCalled();
+      expect(guest.sendInputEvent).not.toHaveBeenCalled();
+    },
+  );
 
   test('cancels slow typing before the next character or submission', async () => {
     const fixture = createActions();
@@ -143,66 +178,113 @@ describe('background browser actions', () => {
     expect(fixture.sendCommand).not.toHaveBeenCalled();
   });
 
-  test('uses frame-adjusted CDP hover and element clicks without foreground input', async () => {
-    const { act, sendCommand, guest } = createActions();
+  test.each([false, true])(
+    'uses frame-adjusted CDP hover and clicks without foreground input (headless=%s)',
+    async headless => {
+      const { act, sendCommand, guest } = createActions(headless);
 
-    await act({ kind: 'hover', selector: '#button' });
-    await act({ kind: 'click', selector: '#button', modifiers: ['Control'], doubleClick: true });
+      await act({ kind: 'hover', selector: '#button' });
+      await act({ kind: 'click', selector: '#button', modifiers: ['Control'], doubleClick: true });
 
-    expect(sendCommand).toHaveBeenNthCalledWith(1, 'Input.dispatchMouseEvent', {
-      type: 'mouseMoved',
-      x: 65,
-      y: 50,
-      button: 'none',
-      buttons: 0,
-      modifiers: 0,
-    });
-    const down = sendCommand.mock.calls
-      .map(([, parameters]) => parameters)
-      .filter(parameters => parameters?.type === 'mousePressed');
-    expect(down).toEqual(
-      [1, 2].map(clickCount => ({
-        type: 'mousePressed',
+      expect(guest.focus).not.toHaveBeenCalled();
+      if (!headless) {
+        expect(sendCommand).not.toHaveBeenCalled();
+        expect(guest.sendInputEvent).toHaveBeenNthCalledWith(1, {
+          type: 'mouseMove',
+          x: 65,
+          y: 50,
+          modifiers: [],
+        });
+        expect(
+          guest.sendInputEvent.mock.calls
+            .map(([event]) => event)
+            .filter(event => event.type === 'mouseDown'),
+        ).toEqual(
+          [1, 2].map(clickCount => ({
+            type: 'mouseDown',
+            x: 65,
+            y: 50,
+            button: 'left',
+            modifiers: ['control', 'leftbuttondown'],
+            clickCount,
+          })),
+        );
+        return;
+      }
+      expect(sendCommand).toHaveBeenNthCalledWith(1, 'Input.dispatchMouseEvent', {
+        type: 'mouseMoved',
         x: 65,
         y: 50,
+        button: 'none',
+        buttons: 0,
+        modifiers: 0,
+      });
+      const down = sendCommand.mock.calls
+        .map(([, parameters]) => parameters)
+        .filter(parameters => parameters?.type === 'mousePressed');
+      expect(down).toEqual(
+        [1, 2].map(clickCount => ({
+          type: 'mousePressed',
+          x: 65,
+          y: 50,
+          button: 'left',
+          buttons: 1,
+          modifiers: 2,
+          clickCount,
+        })),
+      );
+      expect(guest.sendInputEvent).not.toHaveBeenCalled();
+      expect(guest.focus).not.toHaveBeenCalled();
+    },
+  );
+
+  test.each([false, true])(
+    'releases a cancelled coordinate click before skipping the batch (headless=%s)',
+    async headless => {
+      const fixture = createActions(headless);
+      fixture.context.waitWhileActive.mockImplementation(async () => fixture.cancel());
+
+      await expect(
+        fixture.act({
+          kind: 'batch',
+          stopOnError: false,
+          actions: [
+            { kind: 'clickCoords', x: 10, y: 20, delayMs: 100 },
+            { kind: 'press', key: 'Enter' },
+          ],
+        }),
+      ).rejects.toThrow('cancelled');
+
+      if (!headless) {
+        expect(fixture.guest.sendInputEvent).toHaveBeenLastCalledWith({
+          type: 'mouseUp',
+          x: 10,
+          y: 20,
+          button: 'left',
+          modifiers: [],
+          clickCount: 1,
+        });
+        expect(fixture.sendCommand).not.toHaveBeenCalled();
+        expect(
+          fixture.guest.sendInputEvent.mock.calls.every(([event]) => !event.type.startsWith('key')),
+        ).toBe(true);
+        return;
+      }
+      expect(fixture.sendCommand).toHaveBeenLastCalledWith('Input.dispatchMouseEvent', {
+        type: 'mouseReleased',
+        x: 10,
+        y: 20,
         button: 'left',
-        buttons: 1,
-        modifiers: 2,
-        clickCount,
-      })),
-    );
-    expect(guest.sendInputEvent).not.toHaveBeenCalled();
-  });
-
-  test('releases a cancelled coordinate click and does not run another batch action', async () => {
-    const fixture = createActions();
-    fixture.context.waitWhileActive.mockImplementation(async () => fixture.cancel());
-
-    await expect(
-      fixture.act({
-        kind: 'batch',
-        stopOnError: false,
-        actions: [
-          { kind: 'clickCoords', x: 10, y: 20, delayMs: 100 },
-          { kind: 'press', key: 'Enter' },
-        ],
-      }),
-    ).rejects.toThrow('cancelled');
-
-    expect(fixture.sendCommand).toHaveBeenLastCalledWith('Input.dispatchMouseEvent', {
-      type: 'mouseReleased',
-      x: 10,
-      y: 20,
-      button: 'left',
-      buttons: 0,
-      modifiers: 0,
-      clickCount: 1,
-    });
-    expect(fixture.sendCommand).not.toHaveBeenCalledWith(
-      'Input.dispatchKeyEvent',
-      expect.anything(),
-    );
-  });
+        buttons: 0,
+        modifiers: 0,
+        clickCount: 1,
+      });
+      expect(fixture.sendCommand).not.toHaveBeenCalledWith(
+        'Input.dispatchKeyEvent',
+        expect.anything(),
+      );
+    },
+  );
 
   test('keeps nested batch actions on their selected target', async () => {
     const fixture = createActions();

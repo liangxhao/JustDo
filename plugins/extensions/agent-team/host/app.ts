@@ -11,12 +11,20 @@ import { TeamDiscussionCoordinator } from './discussion/teamDiscussionCoordinato
 import { AgentTeamLaunchCoordinator } from './launch/agentTeamLaunchCoordinator';
 import { TEAM_DISCUSSION_CHANNEL } from '../contracts/teamDiscussion';
 import { allowTeamCleanupGatewayRequest, TEAM_CLEANUP_GATEWAY_METHODS } from './cleanupGateway';
+import { resolveTeamExecutionSession } from './executionSession';
 
 /** App entry only. Never import this module from the native registration. */
 export function register(host: AppMainHost): AppMainRegistration {
   let collaboration: CollaborationCoordinator | undefined;
   let discussion: TeamDiscussionCoordinator | undefined;
   let launch: AgentTeamLaunchCoordinator | undefined;
+  const notifySessionsChanged = () => {
+    try {
+      host.sessionsChanged();
+    } finally {
+      host.executionSessionsChanged();
+    }
+  };
   const getLaunch = () =>
     (launch ??= new AgentTeamLaunchCoordinator({
       getStore: host.getSessions,
@@ -33,7 +41,7 @@ export function register(host: AppMainHost): AppMainRegistration {
       ensureReady: host.ensureReady,
       requestGateway: host.requestGateway,
       requestConnectedGateway: host.requestConnectedGateway,
-      onChanged: host.sessionsChanged,
+      onChanged: notifySessionsChanged,
     }));
   const getCollaboration = (): CollaborationCoordinator =>
     (collaboration ??= new CollaborationCoordinator({
@@ -48,7 +56,7 @@ export function register(host: AppMainHost): AppMainRegistration {
       discussion: (id, input, identity, assertActive) =>
         getDiscussion().fromAgent(id, input, identity, assertActive),
       createAssistant: host.createAssistant,
-      onSessionsChanged: host.sessionsChanged,
+      onSessionsChanged: notifySessionsChanged,
     }));
   const settings = () => new AgentTeamSettingsService(host.getDatabase());
   const roomStore = () => new CollaborationStore(host.getDatabase());
@@ -169,6 +177,7 @@ export function register(host: AppMainHost): AppMainRegistration {
   ];
   const disposers: (() => void)[] = [];
   return {
+    resolveExecutionSession: query => resolveTeamExecutionSession(host, query),
     nativePolicy: {
       skills: ['agent-team'],
       sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'],
@@ -252,18 +261,18 @@ export function register(host: AppMainHost): AppMainRegistration {
     maintenance: () => {
       if (!host.isEnabled()) return getDiscussion().reconcile({ cleanupOnly: true });
     },
-    onEnable: () => {
-      getDiscussion().startReconciliation();
-      const off = host.onNativeEvent(event => {
-        if (event.event === CollaborationGateway.Requested)
-          void getCollaboration()
-            .handle(event.payload)
-            .catch(() => undefined);
-      });
-      return () => {
-        off();
-        discussion?.dispose();
-      };
+    onEnable: resources => {
+      const coordinator = getDiscussion();
+      resources.defer(() => coordinator.dispose());
+      coordinator.startReconciliation();
+      resources.defer(
+        host.onNativeEvent(event => {
+          if (event.event === CollaborationGateway.Requested)
+            void getCollaboration()
+              .handle(event.payload)
+              .catch(() => undefined);
+        }),
+      );
     },
     beforeDisable: () => getDiscussion().cancelPendingForDisable(),
     beforePackageMutation: async () => {

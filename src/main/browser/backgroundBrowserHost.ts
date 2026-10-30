@@ -20,6 +20,7 @@ import { cancelBrowserAgentDownloadsForWebContents } from './downloads/browserAg
 export type BackgroundBrowserPage = Omit<BrowserAgentTabRegistration, 'webContentsId'> & {
   scopeId: string;
   signal?: AbortSignal;
+  assertCurrent?: () => void;
 };
 
 type OwnedPage = Omit<BackgroundBrowserPage, 'signal'> & {
@@ -96,6 +97,7 @@ export class BackgroundBrowserHost {
     const scopeGeneration = this.scopeGenerations.get(request.sessionId) ?? 0;
     this.pending.set(key, pending);
     const assertCurrent = () => {
+      request.assertCurrent?.();
       signal.throwIfAborted();
       if (
         generation !== this.generation ||

@@ -20,6 +20,10 @@ in the same browser. Users can log in through the sidebar before background exec
 and page memory remain tab-local. A new task without a retained target uses the ordinary foreground
 default again.
 
+New sidebar pages from the current main conversation are shown automatically; delegated Agents keep the user's current view.
+`focus` selects the target for later tool calls without changing the user's visible tab or window.
+For a manual step on a sidebar page, give its label and ask the user to select that tab.
+
 Never launch Chrome, the system browser, another browser process, or an image-only replacement
 through shell commands or operating-system APIs. `screenshot` is valid for Agent observation; in
 ordinary foreground mode it never replaces the live page that the user sees and operates.

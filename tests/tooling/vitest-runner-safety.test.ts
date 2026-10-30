@@ -2,6 +2,7 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import { expect, onTestFinished, test } from 'vitest';
 
@@ -17,7 +18,20 @@ test('rejects a real Electron test driver during config loading before any suite
   const suiteMarker = 'RUNNER_SAFETY_SUITE_EXECUTED';
   fs.mkdirSync(path.dirname(suitePath), { recursive: true });
   fs.writeFileSync(suitePath, `throw new Error('${suiteMarker}');\n`);
-  const args = [vitestCli, 'run', '--config', configPath, '--root', root, suitePath];
+  // The repository's real setup files are relative to its root. The isolated
+  // sentinel root must resolve them to the same files, not missing temp copies.
+  const isolatedConfig = path.join(root, 'vitest.config.mjs');
+  fs.writeFileSync(
+    isolatedConfig,
+    [
+      'import base from ' + JSON.stringify(pathToFileURL(configPath).href) + ';',
+      'import path from "node:path";',
+      'export default { ...base, test: { ...base.test, setupFiles: base.test.setupFiles.map(file => path.resolve(' +
+        JSON.stringify(projectRoot) +
+        ', file)) } };',
+    ].join('\n'),
+  );
+  const args = [vitestCli, 'run', '--config', isolatedConfig, '--root', root, suitePath];
   const options = {
     cwd: projectRoot,
     env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', NO_COLOR: '1' },

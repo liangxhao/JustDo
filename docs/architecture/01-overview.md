@@ -12,7 +12,7 @@
 
 ### 能力入口
 
-已接入的主要流程包括对话与计划审核、持续目标、定时任务、插件管理、四种浏览器模式、模型与认证及语音。相应行为与限制见 [Cowork](04-cowork-system.md)、[定时任务](08-scheduled-tasks.md)、[插件系统](../plugins/management/plugin-system.md)、[浏览器设计](../features/browser/browser-settings-design.md)、[模型管理](../features/models/model-management.md)和[语音](../features/speech/voice-and-transcription.md)。
+已接入的主要流程包括对话与计划审核、持续目标、定时任务、插件管理、四种浏览器模式、模型与认证及语音。相应行为与限制见 [Cowork](04-cowork-system.md)、[定时任务](08-scheduled-tasks.md)、[插件系统](07-plugin-system.md)、[浏览器设计](../features/browser/browser-settings-design.md)、[模型管理](../features/models/model-management.md)和[语音](../features/speech/voice-and-transcription.md)。
 
 外部 Agent 有两个调用方向：应用向其他 Agent 委派任务，见[外部 Agent 接入](../developer-integration/external-agent-integration-guide.md)；外部程序调用本应用的会话和执行能力，见[CLI / ACP](../features/external-clients/agent-cli.md)及[app-server API](../app-server-api/README.md)。两者不共用客户端身份或执行所有权。
 
@@ -95,7 +95,7 @@ sequenceDiagram
 
 浏览器扩展分为 OpenClaw 配对/relay 基线与独立 conversation-overlay，前者升级不能覆盖后者的聊天功能。嵌入式页面、操作演示、侧栏对话的权限和生命周期见[浏览器设计](../features/browser/browser-settings-design.md)。
 
-本地语音模型按需安装；附件转录与麦克风开关独立。Windows 命令沙盒约束工具进程，不能代替 Electron Renderer 的隔离。详见[插件系统](../plugins/management/plugin-system.md)和[安全模型](11-security-model.md)。
+本地语音模型按需安装；附件转录与麦克风开关独立。Windows 命令沙盒约束工具进程，不能代替 Electron Renderer 的隔离。详见[插件系统](07-plugin-system.md)和[安全模型](11-security-model.md)。
 
 ## 6. 产品标识与文件位置
 

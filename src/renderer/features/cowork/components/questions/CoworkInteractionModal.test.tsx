@@ -42,6 +42,27 @@ const buildInteraction = (
 afterEach(cleanup);
 
 describe('CoworkInteractionModal structured questions', () => {
+  test('preserves the answer when only a replayed request object or source presentation changes', () => {
+    const original = buildInteraction();
+    const respond = vi.fn();
+    const { rerender } = render(
+      <CoworkInteractionModal interaction={original} onRespond={respond} />,
+    );
+    fireEvent.click(screen.getByRole('radio', { name: /Modify design/ }));
+    rerender(
+      <CoworkInteractionModal
+        interaction={{
+          ...original,
+          origin: { sessionKey: 'exact-child', available: false },
+          toolInput: structuredClone(original.toolInput),
+        }}
+        onRespond={respond}
+      />,
+    );
+    expect((screen.getByRole('radio', { name: /Modify design/ }) as HTMLInputElement).checked).toBe(
+      true,
+    );
+  });
   test('focuses the dialog instead of highlighting the close button when opened', async () => {
     render(
       <CoworkInteractionModal
@@ -65,7 +86,9 @@ describe('CoworkInteractionModal structured questions', () => {
     expect(screen.getByText('Adjust the project name or pagination strategy.')).toBeTruthy();
     expect(screen.getByRole('radio', { name: /Other|其他/ })).toBeTruthy();
 
-    const submit = screen.getByRole('button', { name: /Submit current selection|提交当前选择/ });
+    const submit = screen.getByRole('button', {
+      name: /Submit current selection|提交当前选择/,
+    });
     expect((submit as HTMLButtonElement).disabled).toBe(true);
 
     fireEvent.click(screen.getByRole('radio', { name: /Modify design/ }));
@@ -87,7 +110,9 @@ describe('CoworkInteractionModal structured questions', () => {
     render(<CoworkInteractionModal interaction={buildInteraction()} onRespond={onRespond} />);
 
     const other = screen.getByRole('radio', { name: /Other|其他/ });
-    const submit = screen.getByRole('button', { name: /Submit current selection|提交当前选择/ });
+    const submit = screen.getByRole('button', {
+      name: /Submit current selection|提交当前选择/,
+    });
     fireEvent.click(other);
     expect((submit as HTMLButtonElement).disabled).toBe(true);
 
@@ -133,7 +158,9 @@ describe('CoworkInteractionModal structured questions', () => {
       />,
     );
 
-    const submit = screen.getByRole('button', { name: /Submit current selection|提交当前选择/ });
+    const submit = screen.getByRole('button', {
+      name: /Submit current selection|提交当前选择/,
+    });
     fireEvent.click(screen.getByRole('radio', { name: /Modify design/ }));
     expect((submit as HTMLButtonElement).disabled).toBe(false);
     fireEvent.click(submit);
@@ -180,7 +207,9 @@ describe('CoworkInteractionModal structured questions', () => {
     render(<CoworkInteractionModal interaction={buildInteraction()} onRespond={onRespond} />);
 
     fireEvent.click(screen.getByRole('radio', { name: /Modify design/ }));
-    const submit = screen.getByRole('button', { name: /Submit current selection|提交当前选择/ });
+    const submit = screen.getByRole('button', {
+      name: /Submit current selection|提交当前选择/,
+    });
     fireEvent.click(submit);
     fireEvent.click(submit);
 

@@ -2,6 +2,7 @@ import type { ComponentType, ReactNode } from 'react';
 
 import type { AppPluginBridge, AppPluginSnapshot } from './contracts';
 import type { AppServices, CoworkSessionSummary } from './application';
+import type { AppResourceScope } from './resources';
 
 /** A mounted native view exposes guarded effects, never its controller or credentials. */
 export interface AppNativeHistoryState {
@@ -24,7 +25,13 @@ export interface AppNativeHistoryState {
 }
 
 export interface AppViewContext {
-  session?: { id: string; title: string; cwd: string; agentId: string; status: string };
+  session?: {
+    id: string;
+    title: string;
+    cwd: string;
+    agentId: string;
+    status: string;
+  };
   sessionSummary?: CoworkSessionSummary;
   onInspectSession?(summary: CoworkSessionSummary): void;
   selection?: unknown;
@@ -114,6 +121,8 @@ export interface AppUiState {
 export interface AppBrowserHost {
   readonly plugin: AppPluginSnapshot;
   readonly signal: AbortSignal;
+  /** Current Browser instance ownership; children may retire with individual views. */
+  readonly resources: AppResourceScope;
   /** Local memory survives business epoch changes. Never retain permissions or send callbacks. */
   readonly uiState: AppUiState;
   invoke<T = unknown>(command: string, ...args: unknown[]): Promise<T>;
@@ -130,7 +139,9 @@ export interface AppBrowserHost {
   openWorkspace(contributionId: string, sessionId: string, selection?: unknown): void;
   readonly application: AppServices;
   registerInteractionPresentation(
-    resolve: (sessionKey: string) => { visible: boolean; label?: string } | undefined,
+    resolve: (
+      sessionKey: string,
+    ) => { visible: boolean; label?: string; ownerDocument?: Document } | undefined,
   ): () => void;
   interactionContextChanged(): void;
   onNavigation(listener: () => void): () => void;

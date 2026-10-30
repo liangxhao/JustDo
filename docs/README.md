@@ -17,7 +17,7 @@
 | [features/](features/README.md)                           | 按领域组织的现行功能说明                     | 查用户路径、实现契约和已知限制     |
 | [developer-integration/](developer-integration/README.md) | 网页 SDK、登录、外部 Agent、请求头等接入指南 | 第三方业务接入或增加集成时阅读     |
 | [app-server-api/](app-server-api/README.md)               | stdio／本机 WebSocket、审批、标准图片与示例  | 脚本或原生客户端对接时阅读         |
-| [plugins/](plugins/README.md)                             | 按主题和插件归类的详细说明                   | 查插件管理、开发、业务、协议与验证 |
+| [plugins/](plugins/README.md)                             | 按主题和插件归类的详细说明                   | 查插件管理、作者指南、示例、业务与协议 |
 | [plans/](plans/README.md)                                 | 具体未实施需求                               | 先核对现行能力，再推进真实差异     |
 | [openclaw-upgrades/](openclaw-upgrades/README.md)         | 按目标版本组织的升级记录                     | 从版本索引查差异、复核与验收演进   |
 | [releases/](releases/README.md)                           | 已发布应用版本说明                           | 保留发布时事实，不按当前源码改写   |

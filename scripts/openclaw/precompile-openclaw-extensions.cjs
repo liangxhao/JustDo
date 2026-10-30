@@ -42,6 +42,20 @@ const openclawInternalsPlugin = {
     }));
   },
 };
+// Runtime copies have no repository tsconfig/package alias. Bundle SDK source
+// helpers into ordinary Native extensions as well as app companion extensions.
+const appSdkSourcesPlugin = {
+  name: 'bundle-app-sdk-source',
+  setup(build) {
+    build.onResolve({ filter: /^@app-plugin\/sdk\/[a-z-]+$/ }, args => ({
+      path: path.join(
+        rootDir,
+        'plugins/sdk/app-plugin-sdk',
+        args.path.slice('@app-plugin/sdk/'.length) + '.ts',
+      ),
+    }));
+  },
+};
 
 /**
  * Resolve the TypeScript entry point for a plugin directory.
@@ -181,7 +195,7 @@ async function precompileOpenClawExtensions(runtimeDir, options = {}) {
           // doesn't need them in node_modules.
           external: [...SDK_EXTERNALS, ...NATIVE_EXTERNALS],
           ...(pkg.openclaw?.runtimeBundled === true ? { packages: 'external' } : {}),
-          plugins: [openclawInternalsPlugin],
+          plugins: [appSdkSourcesPlugin, openclawInternalsPlugin],
           // Silence warnings about __dirname/__filename in ESM
           logLevel: 'warning',
         });

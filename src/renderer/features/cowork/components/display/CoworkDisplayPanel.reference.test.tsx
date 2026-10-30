@@ -138,6 +138,18 @@ it.each(['mcp-app-reference:one', 'widget-reference:one'])(
     expect(
       workspaceDocument.querySelector('#cowork-display-panel')?.getAttribute('aria-hidden'),
     ).toBe('true');
+    const hiddenContent = workspaceDocument.getElementById('cowork-display-panel')!;
+    expect(hiddenContent.classList.contains('hidden')).toBe(false);
+    expect(hiddenContent.style.opacity).toBe('0');
+    expect(hiddenContent.style.pointerEvents).toBe('none');
+    expect(hiddenContent.hasAttribute('inert')).toBe(true);
+    const hiddenSlot = document.querySelector('aside.cowork-display-panel') as HTMLElement;
+    expect(hiddenSlot.classList.contains('hidden')).toBe(false);
+    expect(hiddenSlot.classList.contains('absolute')).toBe(true);
+    expect(hiddenSlot.style.opacity).toBe('0');
+    expect(hiddenSlot.style.pointerEvents).toBe('none');
+    expect(hiddenSlot.hasAttribute('inert')).toBe(true);
+    expect(parseFloat(hiddenSlot.style.width)).toBeGreaterThan(0);
     rerender(panel(true));
     expect(
       workspaceContent.getByRole('button', {

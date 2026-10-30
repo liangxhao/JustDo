@@ -66,7 +66,7 @@ test('stops before suites when isolated SQLite verification fails without rebuil
 });
 
 test('runs independent plugin suites after a failed main suite and disposes the private driver', () => {
-  const { commands, exit, dispose, spawnSync } = runTestRunner({ tests: 1 });
+  const { commands, exit, dispose, spawnSync, discover } = runTestRunner({ tests: 1 });
 
   expect(commands).toEqual([patchScript, vitestCli, vitestCli, vitestCli]);
   expect(dispose).toHaveBeenCalledOnce();
@@ -76,6 +76,11 @@ test('runs independent plugin suites after a failed main suite and disposes the 
       windowsHide: true,
     });
   }
+  expect(discover).toHaveBeenCalledExactlyOnceWith(projectRoot);
+  suites.forEach((suite, index) => {
+    expect(spawnSync.mock.calls[index + 2][1]).toEqual([vitestCli, 'run', '--config', suite.config]);
+    expect(spawnSync.mock.calls[index + 2][2]).toMatchObject({ cwd: suite.root });
+  });
   expect(exit).toHaveBeenCalledWith(1);
 });
 
