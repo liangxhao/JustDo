@@ -302,12 +302,12 @@ describe('active turn timeline', () => {
           type: 'terminal',
           status: 'error',
           message:
-            'Provider request failed. To view logs, run `openclaw logs --follow` in a terminal.',
+            'Provider request failed. For details, open Settings → Logs in the Control UI or run `openclaw logs --follow` in your terminal.',
         },
       }),
     );
     expect(rendered).toContain('Provider request failed.');
-    expect(rendered).not.toContain('To view logs');
+    expect(rendered).not.toContain('For details');
     expect(rendered).not.toContain('openclaw');
   });
 
@@ -611,8 +611,10 @@ describe('active turn timeline', () => {
   );
 
   test.each([
-    'Logs: openclaw logs --follow',
-    'To view logs, run `openclaw logs --follow` in a terminal.',
+    'For details, open Settings → Logs in the Control UI or run `openclaw logs --follow` in your terminal.',
+    'For details, open Settings → Logs in the Control UI or run `openclaw logs --follow`.',
+    'If it continues, open Settings → Logs in the Control UI or run `openclaw logs --follow`.',
+    'Troubleshooting: run `openclaw logs --follow` in a terminal.',
   ])('removes the OpenClaw log hint from streaming active Content: %s', hint => {
     const rendered = flatten(
       renderTimelineItem({
@@ -656,7 +658,7 @@ describe('active turn timeline', () => {
     expect(rendered).not.toContain(i18nService.t('coworkStatusCompleted'));
   });
 
-  test.each(['Logs:', 'Logs: openclaw', 'Logs: openclaw logs'])(
+  test.each(['For details, open Settings', 'If it continues, open Settings', 'Troubleshooting: run'])(
     'hides the incomplete OpenClaw log hint while it is streaming: %s',
     text => {
       const rendered = flatten(

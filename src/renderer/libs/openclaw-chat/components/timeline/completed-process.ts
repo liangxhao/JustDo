@@ -1,5 +1,6 @@
 import { html, nothing, type TemplateResult } from 'lit';
 import { keyed } from 'lit/directives/keyed.js';
+import { ref } from 'lit/directives/ref.js';
 import { repeat } from 'lit/directives/repeat.js';
 
 import { i18nService } from '@/services/i18n';
@@ -18,6 +19,7 @@ export function renderCompletedProcess(
     showAvatar: boolean;
     expanded?: boolean;
     assistantAvatar?: TemplateResult;
+    onRender?: (element?: Element) => void;
     renderItem: (item: SourceTimelineItem, showAvatar: boolean) => TemplateResult | typeof nothing;
     renderItems?: (render: (item: SourceTimelineItem, index: number) => unknown) => unknown;
   },
@@ -27,6 +29,7 @@ export function renderCompletedProcess(
       options.sessionIdentity,
       html`
         <details
+          ${ref(options.onRender)}
           class="completed-process"
           ?open=${options.expanded ?? false}
           data-completed-process-key=${item.key}

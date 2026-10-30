@@ -1239,11 +1239,12 @@ export function shouldRenderGroupAvatarByPrevItem(
  */
 export function renderStreamingThinkingGroup(
   text: string,
-  opts?: { showAvatar?: boolean; assistantAvatar?: TemplateResult; thinkingContent?: unknown },
+  opts?: { showAvatar?: boolean; assistantAvatar?: TemplateResult; thinkingContent?: unknown; processId?: string },
 ): TemplateResult {
   const isContinuation = opts?.showAvatar === false;
   return html`
     <div
+      data-live-process-id=${opts?.processId ?? nothing}
       class=${`chat-group chat-group--assistant chat-group--streaming-thinking${
         isContinuation ? ' chat-group--continuation' : ''
       }`}

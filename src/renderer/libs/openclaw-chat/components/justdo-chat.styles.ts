@@ -441,14 +441,42 @@ export const chatStyles = [
       pointer-events: none;
     }
 
-    .history-viewport-row:has(> .chat-history-row)
-      + .history-viewport-row:has(> .chat-history-row) {
+    .history-viewport-row:has(> :is(.chat-history-row, .chat-group--content))
+      + .history-viewport-row:has(> :is(.chat-history-row, .chat-group--content)) {
       padding-top: max(var(--justdo-message-gap, 8px), var(--justdo-assistant-row-gap, 0px));
     }
 
     .history-viewport-row:has(> :is(.chat-group--timeline, .completed-process))
       + .history-viewport-row:has(> :is(.chat-group--timeline, .completed-process)) {
       padding-top: max(var(--justdo-timeline-gap, 4px), var(--justdo-assistant-row-gap, 0px));
+    }
+
+    .history-viewport-row:has(> :is(.chat-group--timeline, .completed-process))
+      + .history-viewport-row:has(> :is(.chat-history-row, .chat-group--content)),
+    .history-viewport-row:has(> :is(.chat-history-row, .chat-group--content))
+      + .history-viewport-row:has(> :is(.chat-group--timeline, .completed-process)) {
+      padding-top: var(--justdo-assistant-row-gap, 0px);
+    }
+
+    .history-viewport-row:has(> :is(.chat-history-row, .chat-group--content))
+      + .history-viewport-spacer[data-viewport-edge='after']
+      + :is(.chat-history-row, .chat-group--content) {
+      margin-top: max(var(--justdo-message-gap, 8px), var(--justdo-assistant-row-gap, 0px));
+    }
+
+    .history-viewport-row:has(> :is(.chat-group--timeline, .completed-process))
+      + .history-viewport-spacer[data-viewport-edge='after']
+      + :is(.chat-group--timeline, .completed-process) {
+      margin-top: max(var(--justdo-timeline-gap, 4px), var(--justdo-assistant-row-gap, 0px));
+    }
+
+    .history-viewport-row:has(> :is(.chat-group--timeline, .completed-process))
+      + .history-viewport-spacer[data-viewport-edge='after']
+      + :is(.chat-history-row, .chat-group--content),
+    .history-viewport-row:has(> :is(.chat-history-row, .chat-group--content))
+      + .history-viewport-spacer[data-viewport-edge='after']
+      + :is(.chat-group--timeline, .completed-process) {
+      margin-top: var(--justdo-assistant-row-gap, 0px);
     }
 
     .phase-boundary {

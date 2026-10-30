@@ -596,12 +596,15 @@ describe('normalizeMessage assistant model label', () => {
 });
 
 describe('normalizeMessage gateway-injected log hint', () => {
+  const hint =
+    'For details, open Settings → Logs in the Control UI or run `openclaw logs --follow`.';
+
   test.each(['openclaw/gateway-injected', 'gateway-injected'])(
     'removes the OpenClaw log hint from %s messages',
     modelName => {
       const message = normalizeMessage({
         role: 'assistant',
-        content: 'Task failed\nLog: openclaw logs --follow',
+        content: `Task failed\n${hint}`,
         modelName,
       });
 
@@ -609,10 +612,10 @@ describe('normalizeMessage gateway-injected log hint', () => {
     },
   );
 
-  test('removes a standalone OpenClaw log hint from gateway-injected messages', () => {
+  test('removes a standalone native log hint from gateway-injected messages', () => {
     const message = normalizeMessage({
       role: 'assistant',
-      content: 'Log: openclaw logs --follow',
+      content: hint,
       provider: 'openclaw',
       model: 'gateway-injected',
     });
@@ -620,10 +623,10 @@ describe('normalizeMessage gateway-injected log hint', () => {
     expect(message.content).toEqual([]);
   });
 
-  test('removes the plural OpenClaw logs hint identified by the live sender label', () => {
+  test('removes the native log hint identified by the live sender label', () => {
     const message = normalizeMessage({
       role: 'assistant',
-      content: 'Task failed\nLogs: openclaw logs --follow',
+      content: `Task failed\n${hint}`,
       senderLabel: 'openclaw/gateway-injected',
     });
 
@@ -633,30 +636,29 @@ describe('normalizeMessage gateway-injected log hint', () => {
   test('recognizes case-insensitive multi-segment gateway-injected model refs', () => {
     const message = normalizeMessage({
       role: 'assistant',
-      content: 'Logs: openclaw logs --follow',
+      content: hint,
       modelName: 'OpenClaw/Internal/Gateway-Injected',
     });
 
     expect(message.content).toEqual([]);
   });
 
-  test('only removes a standalone log hint line and tolerates Markdown or extra spacing', () => {
+  test('keeps ordinary command instructions alongside the native hint', () => {
     const message = normalizeMessage({
       role: 'assistant',
-      content: 'Blog: openclaw logs --follow\nLogs: `openclaw  logs   --follow`\nStill visible',
+      content: `Logs: openclaw logs --follow\n${hint}\nStill visible`,
       modelName: 'gateway-injected',
     });
 
     expect(message.content).toEqual([
-      { type: 'text', text: 'Blog: openclaw logs --follow\nStill visible' },
+      { type: 'text', text: 'Logs: openclaw logs --follow\nStill visible' },
     ]);
   });
 
   test('removes every OpenClaw log hint from gateway-injected messages', () => {
     const message = normalizeMessage({
       role: 'assistant',
-      content:
-        'Task failed\nLog: openclaw logs --follow\nRetry failed\nLog: openclaw logs --follow',
+      content: `Task failed\n${hint}\nRetry failed\n${hint}`,
       modelName: 'gateway-injected',
     });
 
@@ -666,7 +668,7 @@ describe('normalizeMessage gateway-injected log hint', () => {
   test('removes the internal log hint from regular assistant messages too', () => {
     const message = normalizeMessage({
       role: 'assistant',
-      content: 'Log: openclaw logs --follow',
+      content: hint,
       model: 'gpt-4.1',
     });
 

@@ -32,6 +32,7 @@ import {
 } from '@/libs/openclaw-chat/components/timeline/active-turn-timeline';
 import { renderCompactionDivider } from '@/libs/openclaw-chat/components/timeline/compaction-divider';
 import { renderCompletedProcess } from '@/libs/openclaw-chat/components/timeline/completed-process';
+import { CompletedProcessMotion } from '@/libs/openclaw-chat/components/timeline/completed-process-motion';
 import { materializeDisclosureContents } from '@/libs/openclaw-chat/components/timeline/disclosure-content';
 import { historyViewport, type HistoryViewportHandle } from '@/libs/openclaw-chat/components/timeline/history-viewport';
 import { ChatScrollController } from '@/libs/openclaw-chat/controllers/chat-scroll-controller';
@@ -379,6 +380,7 @@ export class JustDoChatElement extends LitElement {
     this.streamRenderScheduler.schedule(),
   );
   private readonly historyDisclosureState = new HistoryDisclosureState();
+  private readonly completedProcessMotion = new CompletedProcessMotion(this);
   private readonly messageDisclosureState = new MessageDisclosureState();
   private renderStartedAt = 0;
   private readonly processSummaryTakeoverTracker = new ProcessSummaryTakeoverTracker();
@@ -482,6 +484,7 @@ export class JustDoChatElement extends LitElement {
     this.historyProcessIdentity.clear();
     this.historySearchIndex.clear();
     this.historyDisclosureState.reset(null);
+    this.completedProcessMotion.reset(null);
     this.messageDisclosureState.reset(null);
     this.thinkingContentPresentation.reset(null);
     this._controller = ctrl;
@@ -1042,6 +1045,7 @@ export class JustDoChatElement extends LitElement {
     this.persistedTimelineRenderCache.clear();
     this.historyRenderScheduler.clear();
     this.historyDisclosureState.reset(null);
+    this.completedProcessMotion.reset(null);
     this.messageDisclosureState.reset(null);
     this.thinkingContentPresentation.reset(null);
     this.processSummaryTakeoverTracker.clear();
@@ -1099,6 +1103,7 @@ export class JustDoChatElement extends LitElement {
   protected willUpdate(changedProperties: Map<string | number | symbol, unknown>): void {
     this.renderStartedAt = performance.now();
     this.historyDisclosureState.capture(this.renderRoot);
+    this.completedProcessMotion.capture(this.renderRoot);
     this.messageDisclosureState.capture(this.renderRoot as ShadowRoot);
     // Native details changes open synchronously; its toggle event is queued.
     // Capture before a stream/page commit can restore an older preference.
@@ -1131,6 +1136,7 @@ export class JustDoChatElement extends LitElement {
     this.focusedProcessSummaryKeyBeforeRender =
       focusedKey === this.openProcessSummaryKey ? focusedKey : null;
     if (changedProperties.has('processSummariesExpanded')) {
+      this.completedProcessMotion.reset(null);
       this.historyDisclosureState.clear();
       this.openProcessSummaryKey = null;
       this.renderedOpenProcessSummaryKey = null;
@@ -1178,6 +1184,7 @@ export class JustDoChatElement extends LitElement {
     this.messageDisclosureState.restore(this.renderRoot as ShadowRoot);
     this.richMessageControls.sync();
     this.syncReturningProcessSummaries();
+    this.completedProcessMotion.afterRender();
     this.chatScrollController.afterRender(transcriptRevision);
     this.syncScrollIndicator();
     this.scheduleEditDiffMonacoSync();
@@ -1258,6 +1265,11 @@ export class JustDoChatElement extends LitElement {
     activeItems: readonly VisibleTimelineItem[],
     sessionIdentity: string,
   ): void {
+    this.completedProcessMotion.reset(JSON.stringify([
+      sessionIdentity,
+      this._controller?.state.client?.generation ?? 0,
+      this.historyOwnerRevision,
+    ]));
     let persisted = this.persistedProcessSummaries.get(rows);
     if (!persisted) {
       persisted = unfoldProcessItems(rows.map(row => row.item))
@@ -1340,6 +1352,9 @@ export class JustDoChatElement extends LitElement {
       '.completed-process > summary, [data-message-disclosure-owner] details.markdown-disclosure > summary',
     );
     if (disclosureSummary) {
+      if (disclosureSummary.parentElement?.matches('.completed-process')) {
+        this.completedProcessMotion.cancel(disclosureSummary.parentElement as HTMLDetailsElement);
+      }
       this.chatScrollController.preserveAnchorForInteraction(disclosureSummary);
       return;
     }
@@ -1949,6 +1964,7 @@ export class JustDoChatElement extends LitElement {
     while (current) {
       const details: HTMLDetailsElement | null = current.closest('details');
       if (!details) return;
+      this.completedProcessMotion.cancel(details);
       details.open = true;
       current = details.parentElement;
     }
@@ -2241,6 +2257,7 @@ export class JustDoChatElement extends LitElement {
       defer: () => this.chatScrollController.isDraggingScrollbar,
       beforeCommit: () => {
         this.historyDisclosureState.capture(this.renderRoot);
+        this.completedProcessMotion.capture(this.renderRoot);
         this.messageDisclosureState.capture(this.renderRoot as ShadowRoot);
         this.chatScrollController.beforeRender();
       },
@@ -2249,6 +2266,7 @@ export class JustDoChatElement extends LitElement {
         this.messageDisclosureState.restore(this.renderRoot as ShadowRoot);
         this.richMessageControls?.sync();
         this.syncReturningProcessSummaries();
+        this.completedProcessMotion.afterRender();
         this.chatScrollController.afterRender(this._controller?.state.transcript.revision ?? 0);
         this.syncWidgetContexts();
         this.scheduleEditDiffMonacoSync();
@@ -2293,19 +2311,21 @@ export class JustDoChatElement extends LitElement {
         : nothing;
     }
     if (item.kind === 'completed-process') {
+      const expanded = this.historyDisclosureState.expanded(
+        item.key,
+        this.processSummariesExpanded,
+        item.items.flatMap(child => [
+          child.key,
+          ...(child.kind === 'process-summary'
+            ? child.items.map(process => `process:${process.id}`)
+            : []),
+        ]),
+      );
       return renderCompletedProcess(item, {
         sessionIdentity: this.processSummarySessionIdentity,
         showAvatar,
-        expanded: this.historyDisclosureState.expanded(
-          item.key,
-          this.processSummariesExpanded,
-          item.items.flatMap(child => [
-            child.key,
-            ...(child.kind === 'process-summary'
-              ? child.items.map(process => `process:${process.id}`)
-              : []),
-          ]),
-        ),
+        expanded,
+        onRender: this.completedProcessMotion.ref(item, expanded),
         assistantAvatar: this.assistantAvatar,
         renderItem: (child, childShowsAvatar) =>
           this.renderVisibleTimelineItem(child, childShowsAvatar, false),

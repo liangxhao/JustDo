@@ -6,7 +6,7 @@ const path = require('node:path');
 const zlib = require('node:zlib');
 
 const ANIMATION_CONTRACT = Object.freeze({
-  schemaVersion: 1,
+  schemaVersion: 2,
   frameRate: 24,
   introFrames: 36,
   loopFirstFrame: 36,
@@ -14,9 +14,9 @@ const ANIMATION_CONTRACT = Object.freeze({
   lastFrame: 227,
   background: Object.freeze([251, 251, 253]),
   scales: Object.freeze([
-    Object.freeze({ percent: 100, width: 224, height: 180 }),
-    Object.freeze({ percent: 150, width: 336, height: 270 }),
-    Object.freeze({ percent: 200, width: 448, height: 360 }),
+    Object.freeze({ percent: 100, width: 224, height: 180, logoSize: 64 }),
+    Object.freeze({ percent: 150, width: 336, height: 270, logoSize: 96 }),
+    Object.freeze({ percent: 200, width: 448, height: 360, logoSize: 128 }),
   ]),
 });
 
@@ -29,7 +29,7 @@ const PALETTE = Array.from({ length: 256 }, (_, index) => {
   }
   if (index < 80) {
     const step = index - 64;
-    return [Math.round(166 + step * 5), Math.round(192 + step * 4), Math.round(225 + step * 2)];
+    return [Math.round(81 + step * 9), Math.round(144 + step * 6), Math.round(242 + step * .7)];
   }
   if (index === BACKGROUND_INDEX) return [...ANIMATION_CONTRACT.background];
   // These two ramps retain subtle ambient color instead of quantizing every
@@ -50,7 +50,8 @@ const PALETTE = Array.from({ length: 256 }, (_, index) => {
       Math.round(255 - amount * 8),
     ];
   }
-  return [255, 255, 255];
+  const step = index - 241;
+  return [Math.round(164 + step * 5.8), Math.round(151 + step * 6.5), Math.round(240 + step * .8)];
 });
 const CRC_TABLE = Uint32Array.from({ length: 256 }, (_, index) => {
   let value = index;
@@ -59,6 +60,7 @@ const CRC_TABLE = Uint32Array.from({ length: 256 }, (_, index) => {
 });
 let colorLookup;
 let pastelLookup;
+const geometryCache = new Map();
 
 function digest(bytes) {
   return crypto.createHash('sha256').update(bytes).digest('hex');
@@ -144,13 +146,17 @@ function decodeLogoPng(bytes) {
   // The installer has a fixed white background. Composite before interpolation
   // so transparent PNG pixels cannot create dark fringes around the source mark.
   const rgb = Buffer.alloc(width * height * 3);
+  const matteRgb = Buffer.alloc(width * height * 3);
   for (let pixel = 0; pixel < width * height; pixel += 1) {
     const alpha = rgba[pixel * 4 + 3] / 255;
     for (let channel = 0; channel < 3; channel += 1) {
       rgb[pixel * 3 + channel] = Math.round(rgba[pixel * 4 + channel] * alpha + 255 * (1 - alpha));
+      matteRgb[pixel * 3 + channel] = Math.round(
+        rgba[pixel * 4 + channel] * alpha + ANIMATION_CONTRACT.background[channel] * (1 - alpha),
+      );
     }
   }
-  return { width, height, rgb };
+  return { width, height, rgb, matteRgb };
 }
 
 function paletteLookup() {
@@ -161,7 +167,7 @@ function paletteLookup() {
       for (let b = 0; b < 32; b += 1) {
         let best = 0;
         let distance = Infinity;
-        for (let index = 0; index < 241; index += 1) {
+        for (let index = 0; index < PALETTE.length; index += 1) {
           const color = PALETTE[index];
           const candidate =
             (r * 8 + 3.5 - color[0]) ** 2 +
@@ -187,7 +193,7 @@ function pastelPaletteLookup() {
       for (let b = 232; b < 256; b += 1) {
         let best = 0;
         let distance = Infinity;
-        for (let index = 0; index < 241; index += 1) {
+        for (let index = 0; index < PALETTE.length; index += 1) {
           const color = PALETTE[index];
           const candidate = (r - color[0]) ** 2 + (g - color[1]) ** 2 + (b - color[2]) ** 2;
           if (candidate < distance) {
@@ -200,9 +206,9 @@ function pastelPaletteLookup() {
   return pastelLookup;
 }
 
-function sampleLogo(logo, x, y, channel) {
-  const px = Math.max(0, Math.min(logo.width - 1, (x / 112 + 0.5) * logo.width - 0.5));
-  const py = Math.max(0, Math.min(logo.height - 1, (y / 112 + 0.5) * logo.height - 0.5));
+function sampleImage(logo, pixels, sourceX, sourceY, channel) {
+  const px = Math.max(0, Math.min(logo.width - 1, sourceX));
+  const py = Math.max(0, Math.min(logo.height - 1, sourceY));
   const x0 = Math.floor(px);
   const y0 = Math.floor(py);
   const x1 = Math.min(x0 + 1, logo.width - 1);
@@ -210,22 +216,25 @@ function sampleLogo(logo, x, y, channel) {
   const fx = px - x0;
   const fy = py - y0;
   const upper =
-    logo.rgb[(y0 * logo.width + x0) * 3 + channel] * (1 - fx) +
-    logo.rgb[(y0 * logo.width + x1) * 3 + channel] * fx;
+    pixels[(y0 * logo.width + x0) * 3 + channel] * (1 - fx) +
+    pixels[(y0 * logo.width + x1) * 3 + channel] * fx;
   const lower =
-    logo.rgb[(y1 * logo.width + x0) * 3 + channel] * (1 - fx) +
-    logo.rgb[(y1 * logo.width + x1) * 3 + channel] * fx;
+    pixels[(y1 * logo.width + x0) * 3 + channel] * (1 - fx) +
+    pixels[(y1 * logo.width + x1) * 3 + channel] * fx;
   return upper * (1 - fy) + lower * fy;
 }
 
-function renderInstallerFrame(logo, scale, frameIndex) {
-  const width = scale.width;
-  const height = scale.height;
-  const ratio = width / 224;
-  const result = Buffer.alloc(width * height, BACKGROUND_INDEX);
+function sampleLogo(logo, x, y, channel) {
+  return sampleImage(
+    logo, logo.rgb, (x / 112 + 0.5) * logo.width - 0.5,
+    (y / 112 + 0.5) * logo.height - 0.5, channel,
+  );
+}
+
+function createQuantizer() {
   const lookup = paletteLookup();
   const pastels = pastelPaletteLookup();
-  const quantize = (r, g, b) => {
+  return (r, g, b) => {
     if (r === 251 && g === 251 && b === 253) return BACKGROUND_INDEX;
     if (r > 254.5 && g > 254.5 && b > 254.5) return 63;
     r = Math.round(r);
@@ -234,6 +243,73 @@ function renderInstallerFrame(logo, scale, frameIndex) {
     if (r >= 224 && g >= 224 && b >= 232) return pastels[((r - 224) * 32 + g - 224) * 24 + b - 232];
     return lookup[((r >> 3) << 10) | ((g >> 3) << 5) | (b >> 3)];
   };
+}
+
+function renderInstallerLogo(logo, size) {
+  const result = Buffer.alloc(size * size, BACKGROUND_INDEX);
+  const quantize = createQuantizer();
+  const fit = (size - 2) / Math.max(logo.width, logo.height);
+  const left = (size - logo.width * fit) / 2;
+  const top = (size - logo.height * fit) / 2;
+  for (let y = 1; y < size - 1; y += 1)
+    for (let x = 1; x < size - 1; x += 1) {
+      if (x + .5 < left || x + .5 >= size - left || y + .5 < top || y + .5 >= size - top) continue;
+      const sourceX = (x + .5 - left) / fit - .5;
+      const sourceY = (y + .5 - top) / fit - .5;
+      const color = [0, 1, 2].map(channel => sampleImage(logo, logo.matteRgb, sourceX, sourceY, channel));
+      result[y * size + x] = quantize(...color);
+    }
+  return result;
+}
+
+function frameGeometry(width, height) {
+  const key = `${width}x${height}`;
+  if (geometryCache.has(key)) return geometryCache.get(key);
+  const ratio = width / 224;
+  const fields = Array.from({ length: 10 }, () => new Float32Array(width * height));
+  const smooth = value => {
+    const t = Math.max(0, Math.min(1, value));
+    return t * t * (3 - 2 * t);
+  };
+  for (let y = 1; y < height - 1; y += 1)
+    for (let x = 1; x < width - 1; x += 1) {
+      const at = y * width + x;
+      const dx = (x + .5 - width / 2) / ratio;
+      const logicalY = (y + .5) / ratio;
+      const dy = logicalY - 88;
+      const edge = smooth((112 - Math.abs(dx)) / 24) * smooth(Math.min(logicalY, 180 - logicalY) / 20);
+      fields[0][at] = Math.exp(-((dx + 34) ** 2 / 2800 + (dy + 6) ** 2 / 2200)) * .63 * edge;
+      fields[1][at] = Math.exp(-((dx - 38) ** 2 / 2350 + (dy - 3) ** 2 / 2050)) * .59 * edge;
+      fields[2][at] = Math.exp(-((dx * dx) / 2350 + (logicalY - 160) ** 2 / 13)) * .12 * edge;
+      // Rotating light travels along a fixed oval. Precompute spatial fields
+      // once per DPI so rendering the full offline clip adds no per-pixel trig.
+      const ovalX = (dx * .969 - dy * .247) / 80;
+      const ovalY = (dx * .247 + dy * .969) / 65;
+      const radius = Math.hypot(ovalX, ovalY);
+      const safeRadius = Math.max(.001, radius);
+      fields[3][at] = Math.exp(-(((radius - 1) * 65 / 2.2) ** 2)) * edge;
+      fields[4][at] = Math.exp(-(((radius - 1) * 65 / 9) ** 2)) * edge;
+      fields[5][at] = ovalX / safeRadius;
+      fields[6][at] = ovalY / safeRadius;
+      const innerRadius = Math.hypot(dx / 71, dy / 74);
+      fields[7][at] = Math.exp(-(((innerRadius - 1) * 71 / 1.4) ** 2)) * edge;
+      fields[8][at] = (dx / 71) / Math.max(.001, innerRadius);
+      fields[9][at] = (dy / 74) / Math.max(.001, innerRadius);
+    }
+  // Build preparation uses only three scales; bound retained memory for callers
+  // that render arbitrary preview sizes in a long-lived process.
+  if (geometryCache.size >= 3) geometryCache.delete(geometryCache.keys().next().value);
+  geometryCache.set(key, fields);
+  return fields;
+}
+
+function renderInstallerFrame(logo, scale, frameIndex) {
+  const width = scale.width;
+  const height = scale.height;
+  const ratio = width / 224;
+  const result = Buffer.alloc(width * height, BACKGROUND_INDEX);
+  const quantize = createQuantizer();
+  const fields = frameGeometry(width, height);
   const intro = frameIndex < ANIMATION_CONTRACT.introFrames;
   const progress = intro ? frameIndex / (ANIMATION_CONTRACT.introFrames - 1) : 1;
   const separation = intro ? 48 * (1 - progress) ** 3 : 0;
@@ -248,29 +324,31 @@ function renderInstallerFrame(logo, scale, frameIndex) {
   const projection = Math.cos(turn);
   const centerX = width / 2;
   const centerY = (90 + bob) * ratio;
-  const smoothEdge = value => {
-    const t = Math.max(0, Math.min(1, value));
-    return t * t * (3 - 2 * t);
-  };
+  const orbitOpacity = intro ? Math.min(1, progress * 2) : 1;
+  const orbitCosine = Math.cos(phase);
+  const orbitSine = Math.sin(phase);
+  const trailCosine = Math.cos(phase - .6);
+  const trailSine = Math.sin(phase - .6);
+  const innerCosine = Math.cos(-phase + 2.2);
+  const innerSine = Math.sin(-phase + 2.2);
   // Both the ambient wash and contact shadow taper to the exact UI matte on
   // all four edges. Centered native controls can crop the decorative margins
   // at high DPI without cutting through the larger mark.
   for (let y = 1; y < height - 1; y += 1) {
     for (let x = 1; x < width - 1; x += 1) {
-      const dx = (x + 0.5 - centerX) / ratio;
-      const logicalY = (y + 0.5) / ratio;
-      const dy = logicalY - 88;
-      const edge =
-        smoothEdge((112 - Math.abs(dx)) / 24) * smoothEdge(Math.min(logicalY, 180 - logicalY) / 20);
+      const at = y * width + x;
       const breath = 0.88 + 0.12 * Math.cos(phase);
-      const blue = Math.exp(-((dx + 34) ** 2 / 2800 + (dy + 6) ** 2 / 2200)) * 0.63 * edge * breath;
-      const violet =
-        Math.exp(-((dx - 38) ** 2 / 2350 + (dy - 3) ** 2 / 2050)) * 0.59 * edge * breath;
-      const shadow = Math.exp(-((dx * dx) / 2350 + (logicalY - 160) ** 2 / 13)) * 0.12 * edge;
-      result[y * width + x] = quantize(
-        251 - blue * 31 - violet * 13 - shadow * 78,
-        251 - blue * 18 - violet * 25 - shadow * 57,
-        253 - shadow * 27,
+      const blue = fields[0][at] * breath;
+      const violet = fields[1][at] * breath;
+      const shadow = fields[2][at];
+      const head = Math.max(0, fields[5][at] * orbitCosine + fields[6][at] * orbitSine) ** 16;
+      const tail = Math.max(0, fields[5][at] * trailCosine + fields[6][at] * trailSine) ** 3;
+      const orbit = (fields[3][at] * (.07 + head * .69 + tail * .35) + fields[4][at] * (head * .22 + tail * .12)) * orbitOpacity;
+      const counter = fields[7][at] * (.035 + Math.max(0, fields[8][at] * innerCosine + fields[9][at] * innerSine) ** 4 * .22) * orbitOpacity;
+      result[at] = quantize(
+        251 - blue * 31 - violet * 13 - shadow * 78 - orbit * 151 - counter * 73,
+        251 - blue * 18 - violet * 25 - shadow * 57 - orbit * 94 - counter * 91,
+        253 - shadow * 27 - orbit * 8 - counter * 12,
       );
     }
   }
@@ -472,6 +550,7 @@ function assetDescription(directory, fingerprint, cacheHit) {
       ...scale,
       aviPath: path.join(directory, `brand-${scale.percent}.avi`),
       bitmapPath: path.join(directory, `brand-${scale.percent}.bmp`),
+      logoPath: path.join(directory, `logo-${scale.percent}.bmp`),
     })),
   };
 }
@@ -498,8 +577,7 @@ function readPrepared(directory, fingerprint) {
       if (JSON.stringify(manifest[key]) !== JSON.stringify(ANIMATION_CONTRACT[key])) return false;
     }
     for (const scale of ANIMATION_CONTRACT.scales)
-      for (const extension of ['avi', 'bmp']) {
-        const name = `brand-${scale.percent}.${extension}`;
+      for (const name of [`brand-${scale.percent}.avi`, `brand-${scale.percent}.bmp`, `logo-${scale.percent}.bmp`]) {
         const filePath = path.join(directory, name);
         const stat = fs.lstatSync(filePath);
         if (
@@ -562,6 +640,7 @@ function prepareInstallerAnimationAssets(projectDir) {
       const outputs = {
         [`brand-${scale.percent}.avi`]: createAvi(scale.width, scale.height, frames),
         [`brand-${scale.percent}.bmp`]: createBitmap(scale.width, scale.height, fallback),
+        [`logo-${scale.percent}.bmp`]: createBitmap(scale.logoSize, scale.logoSize, renderInstallerLogo(logo, scale.logoSize)),
       };
       for (const [name, bytes] of Object.entries(outputs)) {
         fs.writeFileSync(path.join(stage, name), bytes, { flag: 'wx' });
@@ -609,4 +688,5 @@ module.exports = {
   encodeRle8Frame,
   prepareInstallerAnimationAssets,
   renderInstallerFrame,
+  renderInstallerLogo,
 };

@@ -56,7 +56,7 @@ Function InstallerRunWindowMotion
   ${If} ${Silent}
     Goto InstallerMotionCleanup
   ${EndIf}
-  ${If} $InstallerPresentationReady != "1"
+  ${If} $InstallerWindowReady != "1"
     Goto InstallerMotionCleanup
   ${EndIf}
   ${If} $InstallerMotionKind == "${INSTALLER_MOTION_OPEN}"
@@ -130,7 +130,7 @@ Function InstallerRunWindowMotion
     ${EndIf}
     ; NSIS SHOW precedes its own ShowWindow(page). Render the actual page now,
     ; while the parent is transparent, rather than fading an empty first frame.
-    ShowWindow $JustDoInstFilesPage 8
+    ShowWindow $InstallerWindowPage 8
     SendMessage $HWNDPARENT ${JUSTDO_WM_SETREDRAW} 1 0
     ShowWindow $HWNDPARENT 4
     System::Call 'user32::RedrawWindow(p $HWNDPARENT, p 0, p 0, i ${JUSTDO_RDW_ATOMIC_REFRESH})i.r0'

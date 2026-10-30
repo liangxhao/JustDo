@@ -4,9 +4,13 @@ import { describe, expect, test } from 'vitest';
 import { normalizeMessage } from './message-normalizer';
 import { stripOpenClawLogHintText } from './system-message-display';
 
-const hint = 'To view logs, run `openclaw logs --follow` in a terminal.';
-const failure =
-  'Agent failed before reply: Inline API key for provider "zcode" is temporarily disabled after a provider auth/billing failure. Retry after about 10 minutes, or switch to a different auth profile/API key.';
+const hint =
+  'For details, open Settings → Logs in the Control UI or run `openclaw logs --follow` in your terminal.';
+const continuingHint =
+  'If it continues, open Settings → Logs in the Control UI or run `openclaw logs --follow`.';
+const troubleshootingHint = 'Troubleshooting: run `openclaw logs --follow` in a terminal.';
+const currentHints = [hint, hint.replace(' in your terminal', ''), continuingHint, troubleshootingHint];
+const failure = "OpenClaw couldn't finish this reply.";
 
 describe('system message display', () => {
   test.each([' ', '\n', '\r\n'])(
@@ -15,6 +19,41 @@ describe('system message display', () => {
       expect(stripOpenClawLogHintText(failure + separator + hint)).toBe(failure);
     },
   );
+
+  test.each(currentHints)('removes current native hints and retains diagnostics: %s', logHint => {
+    const detail = 'Provider finish_reason: content_filter';
+    expect(stripOpenClawLogHintText(`${failure} ${logHint}\n${detail}`)).toBe(
+      `${failure}\n${detail}`,
+    );
+    expect(stripOpenClawLogHintText(logHint)).toBe('');
+    expect(normalizeMessage({ role: 'assistant', content: `${failure} ${logHint}` }).content).toEqual([
+      { type: 'text', text: failure },
+    ]);
+    for (const role of ['user', 'toolResult']) {
+      expect(normalizeMessage({ role, content: logHint }).content[0]).toMatchObject({
+        type: 'text', text: logHint,
+      });
+    }
+  });
+
+  test.each([
+    hint.replace(/`/g, ''),
+    continuingHint.toUpperCase(),
+    troubleshootingHint.replace('openclaw logs', 'openclaw  logs'),
+  ])('recognizes display formatting variations: %s', logHint => {
+    expect(stripOpenClawLogHintText(`${failure} ${logHint}`)).toBe(failure);
+  });
+
+  test.each([
+    [hint, 'For details, open Settings'],
+    [hint.replace(' in your terminal', ''), 'For details, open Settings'],
+    [continuingHint, 'If it continues, open Settings'],
+    [troubleshootingHint, 'Troubleshooting: run'],
+  ])('hides matching streaming prefixes of %s', (logHint, prefix) => {
+    for (let length = prefix.length; length <= logHint.length; length++) {
+      expect(stripOpenClawLogHintText(`${failure} ${logHint.slice(0, length)}`, true)).toBe(failure);
+    }
+  });
 
   test.each([undefined, 'gateway-injected', 'openclaw/gateway-injected', 'provider/model'])(
     'cleans assistant content independently of model metadata %s',
@@ -34,40 +73,32 @@ describe('system message display', () => {
     }
   });
 
-  test('hides streaming sentence prefixes before the command becomes visible', () => {
-    for (let length = 'To view logs, run'.length; length <= hint.length; length++) {
-      expect(stripOpenClawLogHintText(failure + ' ' + hint.slice(0, length), true)).toBe(failure);
-    }
-  });
-
-  test.each(['', '`'])('hides bare streaming commands with Markdown prefix %j', markdown => {
-    const command = 'openclaw logs --follow';
-    for (let length = 'openclaw'.length; length <= command.length; length++) {
-      expect(
-        stripOpenClawLogHintText(`${failure}\n${markdown}${command.slice(0, length)}`, true),
-      ).toBe(failure);
-    }
-    expect(stripOpenClawLogHintText('openclaw logs --filter', true)).toBe('openclaw logs --filter');
-    expect(stripOpenClawLogHintText('openclaw logs --f')).toBe('openclaw logs --f');
-  });
-
-  test('preserves unrelated instructions and completed partial sentences', () => {
-    const text = 'To view logs, run your application.';
+  test.each([
+    'For details, open Settings → Updates in the Control UI.',
+    'If it continues, open Settings → Updates in the Control UI.',
+    'Troubleshooting: run your application.',
+    'Use `openclaw logs --follow` for debugging.',
+    'openclaw logs --follow',
+    'Log: openclaw logs --follow',
+    'Logs: `openclaw  logs   --follow`',
+    'Logs: openclaw',
+    'To view logs, run `openclaw logs --follow` in a terminal.',
+  ])('preserves ordinary instructions and obsolete hint text: %s', text => {
     expect(stripOpenClawLogHintText(text, true)).toBe(text);
-    expect(stripOpenClawLogHintText('To view logs, run')).toBe('To view logs, run');
-    expect(stripOpenClawLogHintText('Use `openclaw logs --follow` for debugging.')).toBe(
-      'Use `openclaw logs --follow` for debugging.',
-    );
+    expect(normalizeMessage({ role: 'assistant', content: text }).content).toEqual([
+      { type: 'text', text },
+    ]);
   });
 
-  test('removes bare commands and repeated hints while preserving following advice', () => {
+  test('releases incomplete hints once streaming ends', () => {
+    expect(stripOpenClawLogHintText('For details, open Settings')).toBe('For details, open Settings');
+    expect(stripOpenClawLogHintText('Troubleshooting: run')).toBe('Troubleshooting: run');
+  });
+
+  test('removes repeated hints while preserving following advice', () => {
     expect(
-      stripOpenClawLogHintText(`${failure}\nopenclaw logs --follow\n${hint}\nRetry later.`),
+      stripOpenClawLogHintText(`${failure}\n${hint}\n${troubleshootingHint}\nRetry later.`),
     ).toBe(`${failure}\nRetry later.`);
-  });
-
-  test('preserves legacy tolerance for whitespace inside Markdown commands', () => {
-    expect(stripOpenClawLogHintText('Logs: ` openclaw  logs   --follow `')).toBe('');
   });
 
   test.each([

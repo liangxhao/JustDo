@@ -24,6 +24,10 @@ const presentationScript = readFileSync(
   path.resolve(__dirname, '../../scripts/packaging/nsis-install-presentation.nsh'),
   'utf8',
 ).replaceAll('\r\n', '\n');
+const presentationWindowScript = readFileSync(
+  path.resolve(__dirname, '../../scripts/packaging/nsis-presentation-window.nsh'),
+  'utf8',
+);
 const builderHook = readFileSync(
   path.resolve(__dirname, '../../scripts/packaging/electron-builder-hooks.cjs'),
   'utf8',
@@ -1431,8 +1435,8 @@ describe('Windows installer presentation', () => {
     expect(nsisScript).toContain('Function JustDoInstFilesShow');
     expect(nsisScript).toContain('Call InstallerPresentationShow');
     expect(presentationScript).toContain('!define INSTALLER_BACKGROUND "FBFBFD"');
-    expect(presentationScript).toContain('user32::GetDpiForWindow');
-    expect(presentationScript).toContain('user32::GetMonitorInfoW');
+    expect(presentationWindowScript).toContain('user32::GetDpiForWindow');
+    expect(presentationWindowScript).toContain('user32::GetMonitorInfoW');
     expect(presentationScript).toContain('SysAnimate32');
     expect(presentationScript).toContain('${INSTALLER_ACM_PLAY} -1');
     expect(presentationScript).toContain('${INSTALLER_ANIMATION_LOOP_FIRST}');

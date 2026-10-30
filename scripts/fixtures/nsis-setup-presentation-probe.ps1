@@ -9,6 +9,7 @@ using System;
 using System.Text;
 using System.Drawing;
 using System.Runtime.InteropServices;
+using System.Threading;
 public class InstallerSetupProbe {
   public static string DebugImagePath, LastRegion;
   public delegate bool EnumProc(IntPtr window, IntPtr parameter);
@@ -18,6 +19,7 @@ public class InstallerSetupProbe {
   [DllImport("user32.dll", EntryPoint="SendMessageW", CharSet=CharSet.Unicode)] public static extern IntPtr ReadText(IntPtr window, uint message, IntPtr w, StringBuilder text);
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr window, out Rect rect);
   [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr window, out Rect rect);
+  [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr window, IntPtr after, int x, int y, int width, int height, uint flags);
   [DllImport("user32.dll")] public static extern IntPtr MonitorFromWindow(IntPtr window, uint flags);
   [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern bool GetMonitorInfo(IntPtr monitor, ref MonitorInfo info);
   [DllImport("user32.dll")] public static extern bool GetGUIThreadInfo(uint thread, ref GuiInfo info);
@@ -73,6 +75,105 @@ public class InstallerSetupProbe {
   public static bool HasModernWidth(IntPtr window) {
     Rect client;if(!GetClientRect(window,out client))return false;
     return client.Right>=Math.Min(620,620*(int)GetDpiForWindow(window)/96);
+  }
+  public static bool HasVisibleArea(IntPtr window) {
+    Rect rect;return IsWindowVisible(window) && GetWindowRect(window,out rect) && rect.Right>rect.Left && rect.Bottom>rect.Top;
+  }
+  public static string Rectangle(IntPtr window) {
+    Rect rect;if(!GetWindowRect(window,out rect))return "unavailable";
+    return rect.Left+"|"+rect.Top+"|"+rect.Right+"|"+rect.Bottom;
+  }
+  public static string MoveFromCenter(IntPtr window) {
+    Rect rect;var info=new MonitorInfo();info.Size=Marshal.SizeOf(info);
+    if(!GetWindowRect(window,out rect) || !GetMonitorInfo(MonitorFromWindow(window,2),ref info))
+      throw new Exception("Cannot read the setup window or its monitor.");
+    int x=Math.Min(info.Work.Right-(rect.Right-rect.Left)-8,rect.Left+62);
+    int y=Math.Min(info.Work.Bottom-(rect.Bottom-rect.Top)-8,rect.Top+38);
+    if(x==rect.Left && y==rect.Top)throw new Exception("No room to move the setup window for the navigation regression.");
+    // The native caption hit-test is checked separately. This reproduces the
+    // resulting position of a user drag without commandeering the mouse.
+    if(!SetWindowPos(window,IntPtr.Zero,x,y,0,0,0x15))throw new Exception("Cannot move the native setup window.");
+    return Rectangle(window);
+  }
+  static Thread rectangleWatch;
+  static volatile bool watching;
+  static string rectangleFailure;
+  public static void BeginRectangleWatch(IntPtr window,string expected) {
+    rectangleFailure=null;watching=true;
+    rectangleWatch=new Thread(()=>{
+      while(watching) {
+        string actual=Rectangle(window);
+        if(actual!=expected && rectangleFailure==null)rectangleFailure=actual;
+        Thread.Sleep(4);
+      }
+    });
+    rectangleWatch.IsBackground=true;rectangleWatch.Start();
+  }
+  public static string EndRectangleWatch() {
+    watching=false;
+    if(rectangleWatch!=null){rectangleWatch.Join(1000);rectangleWatch=null;}
+    return rectangleFailure;
+  }
+  public static bool RoundMark(IntPtr window,IntPtr logo) {
+    Rect outer,inner;if(!GetWindowRect(window,out outer) || !GetWindowRect(logo,out inner))return false;
+    using(var bitmap=new Bitmap(outer.Right-outer.Left,outer.Bottom-outer.Top))
+    using(var graphics=Graphics.FromImage(bitmap)) {
+      var dc=graphics.GetHdc();try{if(!PrintWindow(window,dc,2))return false;}finally{graphics.ReleaseHdc(dc);}
+      int minX=bitmap.Width,minY=bitmap.Height,maxX=-1,maxY=-1;
+      for(int y=inner.Top-outer.Top;y<inner.Bottom-outer.Top;y++)
+        for(int x=inner.Left-outer.Left;x<inner.Right-outer.Left;x++) {
+          var pixel=bitmap.GetPixel(x,y);
+          if(pixel.R<150 && pixel.G<150 && pixel.B<150){minX=Math.Min(minX,x);maxX=Math.Max(maxX,x);minY=Math.Min(minY,y);maxY=Math.Max(maxY,y);}
+        }
+      int width=maxX-minX+1,height=maxY-minY+1;
+      double aspect=height>0?(double)width/height:0;
+      LastRegion="painted mark="+width+"x"+height+" control="+(inner.Right-inner.Left)+"x"+(inner.Bottom-inner.Top);
+      return aspect>=0.9 && aspect<=1.1 && width>=(inner.Right-inner.Left)*0.65 && height>=(inner.Bottom-inner.Top)*0.65;
+    }
+  }
+  public static bool CaptionDivider(IntPtr window,IntPtr page) {
+    var divider=GetDlgItem(page,12351);
+    Rect outer,line,client,pageRect;
+    if(divider==IntPtr.Zero || !IsWindowVisible(divider) || !GetWindowRect(window,out outer)
+      || !GetWindowRect(divider,out line) || !GetClientRect(page,out client) || !GetWindowRect(page,out pageRect))return false;
+    if(line.Top!=pageRect.Top || line.Left!=pageRect.Left || line.Right-line.Left!=client.Right || line.Bottom-line.Top!=1)return false;
+    using(var bitmap=new Bitmap(outer.Right-outer.Left,outer.Bottom-outer.Top))
+    using(var graphics=Graphics.FromImage(bitmap)) {
+      var dc=graphics.GetHdc();try{if(!PrintWindow(window,dc,2))return false;}finally{graphics.ReleaseHdc(dc);}
+      foreach(int fraction in new int[]{1,2,3}) {
+        int x=line.Left-outer.Left+(line.Right-line.Left)*fraction/4;
+        var pixel=bitmap.GetPixel(x,line.Top-outer.Top);
+        if(Math.Abs(pixel.R-229)>3 || Math.Abs(pixel.G-231)>3 || Math.Abs(pixel.B-237)>3)return false;
+      }
+      return true;
+    }
+  }
+  public static bool FullHero(IntPtr window,IntPtr page,IntPtr scene,IntPtr title,IntPtr subtitle) {
+    Rect hero,heading,subheading;
+    if(!Inside(page,scene) || !Inside(page,title) || !Inside(page,subtitle)
+      || !GetWindowRect(scene,out hero) || !GetWindowRect(title,out heading) || !GetWindowRect(subtitle,out subheading))return false;
+    int width=hero.Right-hero.Left,height=hero.Bottom-hero.Top;
+    return width>=224 && height>=180 && heading.Top>=hero.Bottom+4 && subheading.Top>=heading.Bottom;
+  }
+  public static bool PaintedLowerOrbit(IntPtr window,IntPtr scene) {
+    Rect outer,hero;if(!GetWindowRect(window,out outer) || !GetWindowRect(scene,out hero))return false;
+    int width=hero.Right-hero.Left,height=hero.Bottom-hero.Top;
+    int dpi=(int)GetDpiForWindow(window);
+    int percent=dpi>=168 && width>=448 && height>=360?200:(dpi>=120 && width>=336 && height>=270?150:100);
+    int clipWidth=224*percent/100,clipHeight=180*percent/100;
+    int left=hero.Left-outer.Left+(width-clipWidth)/2,top=hero.Top-outer.Top+(height-clipHeight)/2;
+    using(var bitmap=new Bitmap(outer.Right-outer.Left,outer.Bottom-outer.Top))
+    using(var graphics=Graphics.FromImage(bitmap)) {
+      var dc=graphics.GetHdc();try{if(!PrintWindow(window,dc,2))return false;}finally{graphics.ReleaseHdc(dc);}
+      int count=0;
+      for(int y=top+clipHeight*7/10;y<top+clipHeight;y++)
+        for(int x=left;x<left+clipWidth;x++) {
+          var pixel=bitmap.GetPixel(x,y);
+          if(pixel.B-pixel.R>=50 && pixel.G-pixel.R>=15)count++;
+        }
+      LastRegion="lower blue orbit pixels="+count+" clip="+clipWidth+"x"+clipHeight+" native="+width+"x"+height;
+      return count>=5;
+    }
   }
   public static void SaveWindow(IntPtr window,string path) {
     Rect rect;GetWindowRect(window,out rect);
@@ -190,11 +291,13 @@ function Assert-Footer([IntPtr]$window) {
   }
 }
 function Assert-Heading([IntPtr]$page,[int]$offset) {
+  Assert-Condition ([InstallerSetupProbe]::CaptionDivider($window,$page)) 'The light caption is not separated from the page by a painted full-width hairline.'
   if ($case -ne 'short') {
     foreach ($index in @($offset,($offset+1),($offset+2))) {
       $control=[IntPtr][long]$pageState[$index]
       Assert-Condition ([InstallerSetupProbe]::Inside($page,$control)) 'A setup heading, subtitle or brand mark is hidden behind its native page.'
     }
+    Assert-Condition ([InstallerSetupProbe]::RoundMark($window,[IntPtr][long]$pageState[$offset+2])) ('The visible brand mark is squeezed or undersized: ' + [InstallerSetupProbe]::LastRegion)
   }
 }
 function Assert-PaintedPage([IntPtr]$window,[int[]]$indices,[string]$preview) {
@@ -222,7 +325,9 @@ function Assert-Directory([IntPtr]$window,[string]$preview) {
 }
 
 foreach ($case in @('fresh','upgrade','short','silent')) {
-  foreach ($marker in @('state.txt','elevation.txt','shield.txt','reset.txt','closed.txt','silent.txt','finished.txt')) {
+  $rectangleWatching=$false
+  $movedRectangle=$null
+  foreach ($marker in @('state.txt','elevation.txt','shield.txt','reset.txt','closed.txt','silent.txt','finished.txt','motion.txt')) {
     $markerPath=Join-Path $FixtureRoot $marker
     if (Test-Path -LiteralPath $markerPath) { Remove-Item -LiteralPath $markerPath }
   }
@@ -244,6 +349,7 @@ foreach ($case in @('fresh','upgrade','short','silent')) {
       $resources=([IO.File]::ReadAllText((Join-Path $FixtureRoot 'silent.txt'))) -split '\|'
       Assert-Condition ($resources.Count -eq 12 -and @($resources | Where-Object { $_ -ne '' -and $_ -ne '0' }).Count -eq 0) 'Silent setup created decoration resources.'
       Assert-Condition (!(Test-Path -LiteralPath (Join-Path $FixtureRoot 'state.txt'))) 'Silent setup visited a wizard page.'
+      Assert-Condition (!(Test-Path -LiteralPath (Join-Path $FixtureRoot 'motion.txt'))) 'Silent setup animated a hidden wizard.'
       continue
     }
     Wait-For { $script:window=[InstallerSetupProbe]::Find([uint32]$fixtureProcess.Id); $window -ne [IntPtr]::Zero } 'Setup fixture window was not created.'
@@ -266,6 +372,9 @@ foreach ($case in @('fresh','upgrade','short','silent')) {
       Wait-For { Test-Path -LiteralPath (Join-Path $FixtureRoot 'elevation.txt') } 'The fixture did not exercise the bounded elevation-denied branch.'
       Assert-Condition ((Read-State)[0] -eq 'mode' -and [InstallerSetupProbe]::IsWindowVisible($window)) 'Denied elevation left the native mode page.'
       Keyboard-Choose $window $current
+      $movedRectangle=[InstallerSetupProbe]::MoveFromCenter($window)
+      [InstallerSetupProbe]::BeginRectangleWatch($window,$movedRectangle)
+      $rectangleWatching=$true
     }
     Native-Command $window 1
     Wait-Page 'directory' 1
@@ -299,15 +408,36 @@ foreach ($case in @('fresh','upgrade','short','silent')) {
     }
     Native-Command $window 1
     Wait-Page 'progress' 1
+    if ($rectangleWatching) {
+      $transientRectangle=[InstallerSetupProbe]::EndRectangleWatch()
+      $rectangleWatching=$false
+      Assert-Condition ([string]::IsNullOrEmpty($transientRectangle)) "Navigation briefly moved or resized a dragged setup window: expected=$movedRectangle observed=$transientRectangle."
+      Assert-Condition ([InstallerSetupProbe]::Rectangle($window) -eq $movedRectangle) 'Entering installation did not preserve the dragged window rectangle.'
+    }
+    Assert-Condition ([InstallerSetupProbe]::CaptionDivider($window,[IntPtr][long]$pageState[2])) 'The installation page lost the shared caption divider.'
     $reset=([IO.File]::ReadAllText((Join-Path $FixtureRoot 'reset.txt'))) -split '\|'
     Assert-Condition ($reset.Count -eq 17 -and @($reset[0..14] | Where-Object { $_ -ne '0' }).Count -eq 0 -and $reset[15] -eq $reset[16]) 'Setup kept owned resources, navigation images or its font when entering progress.'
     Wait-For { (Test-Path -LiteralPath (Join-Path $FixtureRoot 'finished.txt')) -and [InstallerSetupProbe]::IsWindowEnabled([InstallerSetupProbe]::GetDlgItem($window,1)) } 'The harmless fixture install section did not finish.'
+    $nativeBack=[InstallerSetupProbe]::GetDlgItem($window,3)
+    Assert-Condition ($nativeBack -ne [IntPtr]::Zero -and ![InstallerSetupProbe]::HasVisibleArea($nativeBack) -and ![InstallerSetupProbe]::IsWindowEnabled($nativeBack)) 'The completed installation page exposed a legacy Back button or changed its native disabled state.'
+    if ($case -eq 'fresh') {
+      $progressPage=[IntPtr][long]$pageState[2]
+      $scene=[IntPtr][long]$pageState[3]
+      Assert-Condition ([InstallerSetupProbe]::FullHero($window,$progressPage,$scene,[IntPtr][long]$pageState[4],[IntPtr][long]$pageState[5])) 'The installation window clips the complete orbit canvas or overlaps it with the title.'
+      # Seek a real native AVI frame whose blue head reaches the lower orbit.
+      # Checking geometry alone would not catch clipping inside SysAnimate32.
+      [void][InstallerSetupProbe]::SendMessage($scene,0x465,[IntPtr]1,[IntPtr]0x00540054)
+      Wait-For { [InstallerSetupProbe]::PaintedLowerOrbit($window,$scene) } ('The lower blue orbit was not painted in the native player: ' + [InstallerSetupProbe]::LastRegion)
+      [InstallerSetupProbe]::SaveWindow($window,(Join-Path $PreviewRoot 'installer-setup-orbit-frame.png'))
+    }
     $installed=[IO.File]::ReadAllText((Join-Path $FixtureRoot 'finished.txt'),[Text.Encoding]::Unicode)
     $expected=if($case -eq 'upgrade'){Join-Path $FixtureRoot '已安装 软件'}else{Join-Path $FixtureRoot 'selected location'}
     Assert-Condition ($installed -eq $expected) "Presentation changed the selected native installation path ($case): actual=$installed expected=$expected."
     Native-Command $window 1
     Assert-Condition ($fixtureProcess.WaitForExit(7000)) 'Setup did not close after the harmless fixture section.'
     Assert-Condition ($fixtureProcess.ExitCode -eq 0) 'Setup fixture returned a failure.'
+    $motions=[IO.File]::ReadAllLines((Join-Path $FixtureRoot 'motion.txt'))
+    Assert-Condition (($motions -join '|') -eq 'open|close') ('The wizard must enter once and must not replay window motion during page navigation: ' + ($motions -join '|'))
     $closed=([IO.File]::ReadAllText((Join-Path $FixtureRoot 'closed.txt'))) -split '\|'
     Assert-Condition ($closed.Count -eq 12 -and @($closed | Where-Object { $_ -ne '0' }).Count -eq 0) 'Setup decoration resources were not cleared on GUI end.'
   } catch {
@@ -317,6 +447,7 @@ foreach ($case in @('fresh','upgrade','short','silent')) {
     }
     throw
   } finally {
+    if ($rectangleWatching) { [void][InstallerSetupProbe]::EndRectangleWatch() }
     if (!$fixtureProcess.HasExited) { Stop-Process -Id $fixtureProcess.Id -Force }
     $fixtureProcess.Dispose()
   }

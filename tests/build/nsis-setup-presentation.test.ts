@@ -17,7 +17,7 @@ function sourceFunction(source: string, name: string): string {
 
 describe.runIf(process.platform === 'win32' && existsSync(compiler)
   && process.env.INSTALLER_PRESENTATION_NATIVE_UI === '1')('native installer setup presentation', () => {
-  it('preserves native mode and directory behavior across back navigation and releases decoration before writing', () => {
+  it('preserves a dragged window across native wizard pages, paints an undistorted mark and releases setup decoration before writing', () => {
     const buildRoot = path.join(repoRoot, 'build');
     mkdirSync(buildRoot, { recursive: true });
     const root = mkdtempSync(path.join(buildRoot, 'installer-setup-test-'));
@@ -72,13 +72,16 @@ describe.runIf(process.platform === 'win32' && existsSync(compiler)
         '  !insertmacro InstallerText $JustDoStatusText "${ZH}" "${EN}"', '!macroend',
         '!macro JustDoAddInstallActivity ZH EN', '  DetailPrint "${EN}"', '!macroend',
         '!macro JustDoLogInstallEvent TEXT', '  ClearErrors', '!macroend',
-        '!macro InstallerSetupWorkArea', '  ${If} $FixtureCase == "short"',
-        '    StrCpy $InstallerSetupDpi 288', '  ${EndIf}', '!macroend',
-        '!macro InstallerSetupClampWorkArea', '  ${If} $FixtureCase == "short"',
-        '    ${If} $4 > 1366', '      StrCpy $4 1366', '    ${EndIf}',
-        '    ${If} $5 > 728', '      StrCpy $5 728', '    ${EndIf}', '  ${EndIf}', '!macroend',
+        '!macro InstallerWindowDpi', '  ${If} $FixtureCase == "short"',
+        '    StrCpy $InstallerDpi 288', '  ${EndIf}', '!macroend',
+        '!macro InstallerWindowWorkArea', '  ${If} $FixtureCase == "short"',
+        '    ${If} $InstallerWorkWidth > 1366', '      StrCpy $InstallerWorkWidth 1366', '    ${EndIf}',
+        '    ${If} $InstallerWorkHeight > 728', '      StrCpy $InstallerWorkHeight 728', '    ${EndIf}', '  ${EndIf}', '!macroend',
         definitions,
         `!define INSTALLER_CLOCK_LIBRARY "${nsisPath(clock.path)}"`,
+        '!macro InstallerMotionTraceComplete', '  Push $0',
+        `  FileOpen $0 "${literal('motion.txt')}" a`, '  FileSeek $0 0 END',
+        '  FileWrite $0 "$InstallerMotionKind$\\r$\\n"', '  FileClose $0', '  Pop $0', '!macroend',
         `!include "${nsisPath(path.join(repoRoot, 'scripts/packaging/nsis-install-presentation.nsh'))}"`,
         `!include "${literal('multi-user-fixture.nsh')}"`,
         '!define MUI_PAGE_CUSTOMFUNCTION_SHOW FixtureModeShow',
@@ -158,7 +161,8 @@ describe.runIf(process.platform === 'win32' && existsSync(compiler)
         '  Pop $5', '  Pop $4', '  Pop $3', '  Pop $2', '  Pop $1', '  Pop $0', 'FunctionEnd',
         'Function FixtureProgressShow', '  Call InstallerPresentationShow',
         '  Push $0', `  FileOpen $0 "${literal('state.txt')}" w`,
-        '  FileWrite $0 "progress|1"', '  FileClose $0', '  Pop $0', 'FunctionEnd',
+        '  FileWrite $0 "progress|1|$JustDoInstFilesPage|$InstallerScene|$InstallerTitle|$InstallerSubtitle|$InstallerSceneHeight|$InstallerCompactLayout"',
+        '  FileClose $0', '  Pop $0', 'FunctionEnd',
         'Function .onInstSuccess', '  Call InstallerPresentationCloseMotion', 'FunctionEnd',
         'Function .onGUIEnd', '  Call InstallerPresentationDestroy', '  Call InstallerSetupDestroy', '  Push $0',
         `  FileOpen $0 "${literal('closed.txt')}" w`, `  FileWrite $0 "${proof}"`,

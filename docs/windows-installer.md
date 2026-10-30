@@ -25,7 +25,9 @@ that case remains an attribution and vendor-escalation issue.
 
 The assisted installer's file-writing page uses a fixed light background and the
 repository's two-cat icon. The mark separates on entry, then remains intact while
-gently turning and floating against a faint blue/violet glow. Completion holds a still frame; failure stops
+gently turning and floating inside a blue orbit with a luminous head and trailing
+arc. A softer violet orbit runs in the opposite direction. The blue arc completes
+one revolution per eight-second loop. Completion holds a still frame; failure stops
 playback. Installation scope and directory selection use the same light canvas,
 typography, icon and rounded navigation buttons. Their native NSIS controls,
 radio callbacks, browse command, keyboard behavior and page-leave validation stay
@@ -41,12 +43,24 @@ it does not replace their installation policy. Scope selection retains the
 native Next button so its live elevation shield follows the selected account
 scope. Upgrades show the recorded directory with the input and browse action
 disabled. Returning with Back rebuilds the decoration from the current native
-page state. Setup releases its button images, logo and owned fonts before the
+page state. The setup header uses a separate square logo asset, preserving the
+original mark's proportions rather than shrinking the rectangular animation
+canvas into its slot. Passive rounded cards group the native scope choices;
+they do not replace or intercept the radio buttons. Setup releases its button images, logo and owned fonts before the
 file-writing page takes over. Each completed setup layout is shown and repainted
 on the UI thread so newly created headings and the mark appear with the native
 fields without relying on a later incidental repaint. The setup layout uses the current monitor's work
 area and DPI; short work areas reduce headings and secondary explanation before
 the essential fields and navigation controls.
+
+`nsis-presentation-window.nsh` owns a shared 680 × 540 logical-pixel client canvas
+for all assisted pages, clamped to the monitor work area. Setup centers only the
+first page; later pages read the real window rectangle and preserve the user's
+dragged position. A move to a smaller work area may clamp its edges without
+re-centering. An elevated inner instance reads the outer HWND through the existing
+UAC helper and uses that window's monitor, DPI and position when available. Each
+page owns a one-physical-pixel separator below the native caption. It remains
+visible when nsDialogs raises a new child page.
 
 `nsis-install-presentation.nsh` owns the presentation. A native `SysAnimate32`
 control plays a packaged RLE8 AVI independently of the NSIS install worker, so
@@ -93,7 +107,9 @@ pixels downward, full opacity to transparent). The window and native controls
 keep their real dimensions. These bounded UI-owner-thread calls temporarily add
 `WS_EX_LAYERED`; they use no script timer or message pump and do not consult
 Windows' animation preference. The entrance explicitly shows the prepared child
-page before fading, since NSIS normally shows it after the SHOW callback.
+page before fading, since NSIS normally shows it after the SHOW callback. It runs
+once on the first actual page, including scope selection; forward/back navigation
+and entry into the writing phase do not replay the window movement or fade.
 
 Exit runs once from successful completion, failed-result dismissal or the
 existing confirmed user-abort callback, before the native dialog is destroyed.
@@ -125,7 +141,11 @@ under `build/installer-clock/`; a successful rebuild updates the checked-in DLL
 and portable manifest. The DLL imports only Windows system libraries and has
 no CRT dependency. See [offline resources](offline-downloads.md#6-windows-安装器原生时钟)
 for verification, rebuilding and transfer to an offline build host.
-The installer chooses the fitting scale, clamps its window to the current
+The generated set also includes square 64/96/128-pixel setup logos. Cache evidence
+verifies all nine AVI/bitmap/logo outputs. The installer chooses an animation whose
+full pixel dimensions fit the scene; it does not crop a larger DPI variant just
+to fill the illustration. The normal layout reserves the full orbit canvas and a
+scrollable details area below the status. It clamps its window to the current
 monitor's work area and frees its owned fonts, bitmap and player on close. Short
 work areas reduce the illustration space; exceptionally short areas hide the
 hero and retain the status, details and closing controls.

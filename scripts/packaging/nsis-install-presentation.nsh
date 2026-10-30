@@ -47,6 +47,7 @@ Var InstallerElapsedSecond
 Var InstallerPresentationReady
 Var InstallerClockActive
 
+!include "${PROJECT_DIR}\scripts\packaging\nsis-presentation-window.nsh"
 !include "${PROJECT_DIR}\scripts\packaging\nsis-presentation-motion.nsh"
 
 !macro InstallerScale _OUTPUT _VALUE
@@ -471,64 +472,14 @@ Function InstallerPresentationShow
   StrCpy $InstallerElapsedSecond "-1"
   StrCpy $InstallerClockActive "0"
   StrCpy $InstallerOpenOnFinish "0"
-  System::Call 'user32::GetDpiForWindow(p $HWNDPARENT)i.r0'
-  ${If} $0 < 96
-    StrCpy $0 96
-  ${EndIf}
-  StrCpy $InstallerDpi $0
-
-  ; Center and clamp to the current monitor's work area, including high DPI.
-  System::Call 'user32::MonitorFromWindow(p $HWNDPARENT, i 2)p.r0'
-  System::Call '*(i 40, i 0, i 0, i 0, i 0, i 0, i 0, i 0, i 0, i 0)p.r1'
-  System::Call 'user32::GetMonitorInfoW(p r0, p r1)i.r2'
-  System::Call '*$1(i, i, i, i, i, i .r2, i .r3, i .r4, i .r5)'
-  System::Free $1
-  StrCpy $InstallerWorkLeft $2
-  StrCpy $InstallerWorkTop $3
-  IntOp $InstallerWorkWidth $4 - $2
-  IntOp $InstallerWorkHeight $5 - $3
-  !ifmacrodef InstallerPresentationWorkArea
-    !insertmacro InstallerPresentationWorkArea
-  !endif
-  System::Alloc 16
-  Pop $R5
-  System::Call 'user32::GetWindowRect(p $HWNDPARENT, p $R5)i.r0'
-  System::Call '*$R5(i .r0, i .r1, i .r2, i .r3)'
-  IntOp $R0 $2 - $0
-  IntOp $R1 $3 - $1
-  System::Call 'user32::GetClientRect(p $HWNDPARENT, p $R5)i.r0'
-  System::Call '*$R5(i, i, i .r2, i .r3)'
-  IntOp $R0 $R0 - $2
-  IntOp $R1 $R1 - $3
-  !insertmacro InstallerScale $InstallerWidth 680
-  !insertmacro InstallerScale $InstallerHeight 600
-  !insertmacro InstallerScale $0 32
-  IntOp $1 $InstallerWorkWidth - $0
-  IntOp $1 $1 - $R0
-  ${If} $InstallerWidth > $1
-    StrCpy $InstallerWidth $1
-  ${EndIf}
-  IntOp $1 $InstallerWorkHeight - $0
-  IntOp $1 $1 - $R1
-  ${If} $InstallerHeight > $1
-    StrCpy $InstallerHeight $1
-  ${EndIf}
-  IntOp $2 $InstallerWidth + $R0
-  IntOp $3 $InstallerHeight + $R1
-  IntOp $0 $InstallerWorkWidth - $2
-  IntOp $0 $0 / 2
-  IntOp $0 $0 + $InstallerWorkLeft
-  IntOp $1 $InstallerWorkHeight - $3
-  IntOp $1 $1 / 2
-  IntOp $1 $1 + $InstallerWorkTop
-  System::Call 'user32::SetWindowPos(p $HWNDPARENT, p 0, i r0, i r1, i r2, i r3, i 0x0014)i.r4'
+  Call InstallerWindowPrepare
+  StrCpy $InstallerWindowPage $JustDoInstFilesPage
   !insertmacro InstallerScale $4 54
   IntOp $4 $InstallerHeight - $4
   System::Call 'user32::SetWindowPos(p $JustDoInstFilesPage, p 0, i 0, i 0, i $InstallerWidth, i r4, i 0x0004)i.r4'
-  System::Free $R5
   SetCtlColors $HWNDPARENT "23232A" "${INSTALLER_BACKGROUND}"
   SetCtlColors $JustDoInstFilesPage "23232A" "${INSTALLER_BACKGROUND}"
-  Call InstallerPresentationChrome
+  !insertmacro InstallerWindowDivider $JustDoInstFilesPage
 
   ; Hide the MUI header, separators and Back button. Account/directory pages
   ; retain their original controls; this is the final page of assisted setup.
@@ -541,6 +492,12 @@ Function InstallerPresentationShow
     ${AndIf} $1 != 1
     ${AndIf} $1 != 2
       ShowWindow $0 0
+      ${If} $1 == 3
+        ; NSIS can show its disabled Back button again after worker completion.
+        ; This final page cannot navigate back; keep its real handle but remove
+        ; its drawing bounds so the old setup footer cannot reappear.
+        System::Call 'user32::SetWindowPos(p r0, p 0, i 0, i 0, i 0, i 0, i 0x0016)i.r1'
+      ${EndIf}
     ${EndIf}
     Goto InstallerHideChrome
   ${EndIf}
@@ -577,13 +534,15 @@ Function InstallerPresentationShow
   ; A clamped work area must compress the hero rather than overlap text rows.
   IntOp $InstallerStatusTop $R2 * 63
   IntOp $InstallerStatusTop $InstallerStatusTop / 100
-  !insertmacro InstallerScale $0 283
+  !insertmacro InstallerScale $0 223
   IntOp $1 $R2 - $0
   ${If} $InstallerStatusTop > $1
     StrCpy $InstallerStatusTop $1
   ${EndIf}
-  IntOp $InstallerSceneHeight $R2 / 3
-  !insertmacro InstallerScale $0 100
+  ; Keep the full orbit canvas when space permits. Short screens may hide the
+  ; hero, but normal layouts must not crop its rotating upper/lower light arcs.
+  !insertmacro InstallerScale $InstallerSceneHeight 180
+  !insertmacro InstallerScale $0 82
   IntOp $1 $InstallerStatusTop - $0
   ${If} $InstallerSceneHeight > $1
     StrCpy $InstallerSceneHeight $1
@@ -593,7 +552,7 @@ Function InstallerPresentationShow
   ${EndIf}
   StrCpy $InstallerCompactLayout "0"
   StrCpy $InstallerMinimalLayout "0"
-  !insertmacro InstallerScale $0 88
+  !insertmacro InstallerScale $0 82
   IntOp $0 $0 + $InstallerSceneHeight
   ${If} $InstallerStatusTop < $0
     StrCpy $InstallerCompactLayout "1"
@@ -614,11 +573,13 @@ Function InstallerPresentationShow
   SetCtlColors $InstallerScene "" "${INSTALLER_BACKGROUND}"
   InitPluginsDir
   ${If} $InstallerDpi >= 168
-  ${AndIf} $InstallerSceneHeight >= 256
+  ${AndIf} $InstallerSceneHeight >= 360
+  ${AndIf} $R1 >= 448
     File /oname=$PLUGINSDIR\installer-brand.avi "${INSTALLER_ANIMATION_DIR}\brand-200.avi"
     File /oname=$PLUGINSDIR\installer-brand.bmp "${INSTALLER_ANIMATION_DIR}\brand-200.bmp"
   ${ElseIf} $InstallerDpi >= 120
-  ${AndIf} $InstallerSceneHeight >= 192
+  ${AndIf} $InstallerSceneHeight >= 270
+  ${AndIf} $R1 >= 336
     File /oname=$PLUGINSDIR\installer-brand.avi "${INSTALLER_ANIMATION_DIR}\brand-150.avi"
     File /oname=$PLUGINSDIR\installer-brand.bmp "${INSTALLER_ANIMATION_DIR}\brand-150.bmp"
   ${Else}

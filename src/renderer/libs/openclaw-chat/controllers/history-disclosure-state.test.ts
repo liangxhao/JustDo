@@ -3,6 +3,20 @@ import { expect, test } from 'vitest';
 
 import { HistoryDisclosureState } from './history-disclosure-state';
 
+test('does not retain a temporary automatic fold as an explicit expansion choice', () => {
+  const state = new HistoryDisclosureState();
+  state.reset('native-session');
+  expect(state.expanded('process', false, ['source'])).toBe(false);
+  const root = document.createElement('div');
+  root.innerHTML = '<details data-completed-process-key="process" data-process-auto-fold open></details>';
+  state.capture(root);
+  expect(state.expanded('process', false, ['source'])).toBe(false);
+  const details = root.querySelector('details')!;
+  details.removeAttribute('data-process-auto-fold');
+  state.capture(root);
+  expect(state.expanded('process', false, ['source'])).toBe(true);
+});
+
 test('retains open and closed choices across window removal and returning summaries', () => {
   const state = new HistoryDisclosureState();
   state.reset('physical-session:history-1');

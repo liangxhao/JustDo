@@ -13,7 +13,14 @@ interface PreparedAssets {
   introFrames: number;
   loopFirstFrame: number;
   lastFrame: number;
-  scales: Array<{ percent: number; width: number; height: number; aviPath: string; bitmapPath: string }>;
+  scales: Array<{ percent: number; width: number; height: number; logoSize: number; aviPath: string; bitmapPath: string; logoPath: string }>;
+}
+
+interface DecodedLogo {
+  width: number;
+  height: number;
+  rgb: Buffer;
+  matteRgb: Buffer;
 }
 
 const {
@@ -23,13 +30,15 @@ const {
   encodeRle8Frame,
   prepareInstallerAnimationAssets,
   renderInstallerFrame,
+  renderInstallerLogo,
 } = require('../../scripts/packaging/installer-animation-assets.cjs') as {
-  ANIMATION_CONTRACT: { scales: Array<{ percent: number; width: number; height: number }> };
+  ANIMATION_CONTRACT: { scales: Array<{ percent: number; width: number; height: number; logoSize: number }> };
   createBitmap: (width: number, height: number, pixels: Buffer) => Buffer;
-  decodeLogoPng: (bytes: Buffer) => { width: number; height: number; rgb: Buffer };
+  decodeLogoPng: (bytes: Buffer) => DecodedLogo;
   encodeRle8Frame: (pixels: Buffer, width: number, height: number) => Buffer;
   prepareInstallerAnimationAssets: (projectDir: string) => PreparedAssets;
-  renderInstallerFrame: (logo: { width: number; height: number; rgb: Buffer }, scale: { width: number; height: number }, frame: number) => Buffer;
+  renderInstallerFrame: (logo: DecodedLogo, scale: { width: number; height: number }, frame: number) => Buffer;
+  renderInstallerLogo: (logo: DecodedLogo, size: number) => Buffer;
 };
 
 const sourceLogo = path.resolve(__dirname, '../../resources/icons/png/128x128.png');
@@ -209,10 +218,73 @@ describe('native installer animation assets', () => {
           const right = color(pixels[Math.round(scale.height / 2) * scale.width + Math.round(scale.width * .86)]);
           expect(left[2]).toBeGreaterThan(left[0] + 3);
           expect(left[1]).toBeGreaterThan(left[0]);
-          expect(right[2]).toBeGreaterThan(right[1] + 3);
-          expect(right[0]).toBeGreaterThan(right[1]);
+          expect(right[2]).toBeGreaterThan(Math.min(right[0], right[1]) + 3);
         }
       }
+    }
+  });
+
+  it('moves a visible blue light around the intact mark through all four sides of the loop', () => {
+    const logo = decodeLogoPng(readFileSync(sourceLogo));
+    const scale = ANIMATION_CONTRACT.scales[0];
+    const centers = [36, 84, 132, 180].map(frame => {
+      const pixels = renderInstallerFrame(logo, scale, frame);
+      const bitmap = createBitmap(scale.width, scale.height, pixels);
+      let weight = 0;
+      let centerX = 0;
+      let centerY = 0;
+      for (let y = 0; y < scale.height; y += 1)
+        for (let x = 0; x < scale.width; x += 1) {
+          const dx = x + .5 - scale.width / 2;
+          const dy = y + .5 - 88;
+          if (Math.hypot(dx, dy) < 62) continue;
+          const at = 54 + pixels[y * scale.width + x] * 4;
+          const [blue, green, red] = [...bitmap.subarray(at, at + 3)];
+          if (blue - red < 65 || green - red < 20) continue;
+          const light = blue - red - 65;
+          weight += light;
+          centerX += dx * light;
+          centerY += dy * light;
+        }
+      // A changing logo pose or almost-white static wash cannot pass this:
+      // require visible chroma outside the face, then track its actual position.
+      expect(weight).toBeGreaterThan(2_000);
+      return [centerX / weight, centerY / weight];
+    });
+    expect(centers[0][0]).toBeGreaterThan(40);
+    expect(centers[1][1]).toBeGreaterThan(40);
+    expect(centers[2][0]).toBeLessThan(-40);
+    expect(centers[3][1]).toBeLessThan(-40);
+    const first = renderInstallerFrame(logo, scale, 36);
+    const last = renderInstallerFrame(logo, scale, 227);
+    const boundaryChange = first.reduce((count, value, index) => count + Number(value !== last[index]), 0);
+    const quarter = renderInstallerFrame(logo, scale, 84);
+    const quarterChange = first.reduce((count, value, index) => count + Number(value !== quarter[index]), 0);
+    expect(boundaryChange).toBeLessThan(quarterChange / 2);
+  });
+
+  it('renders a separate square header mark with preserved aspect and an exact light matte at every DPI', () => {
+    const logo = decodeLogoPng(readFileSync(sourceLogo));
+    for (const { logoSize } of ANIMATION_CONTRACT.scales) {
+      const pixels = renderInstallerLogo(logo, logoSize);
+      const bitmap = createBitmap(logoSize, logoSize, pixels);
+      expect([...bitmap.subarray(54 + pixels[0] * 4, 58 + pixels[0] * 4)]).toEqual([253, 251, 251, 0]);
+      const darkX: number[] = [];
+      const darkY: number[] = [];
+      for (let y = 0; y < logoSize; y += 1)
+        for (let x = 0; x < logoSize; x += 1) {
+          const index = pixels[y * logoSize + x];
+          if (x === 0 || y === 0 || x === logoSize - 1 || y === logoSize - 1) expect(index).toBe(pixels[0]);
+          if (bitmap.subarray(54 + index * 4, 57 + index * 4).every(channel => channel < 80)) {
+            darkX.push(x);
+            darkY.push(y);
+          }
+        }
+      const markWidth = Math.max(...darkX) - Math.min(...darkX) + 1;
+      const markHeight = Math.max(...darkY) - Math.min(...darkY) + 1;
+      expect(markWidth).toBeGreaterThan(logoSize * .8);
+      expect(markHeight).toBeGreaterThan(logoSize * .8);
+      expect(Math.abs(markWidth - markHeight)).toBeLessThanOrEqual(logoSize * .06);
     }
   });
 
@@ -269,25 +341,34 @@ describe('native installer animation assets', () => {
       const fallback = readBitmap(readFileSync(scale.bitmapPath));
       expect([fallback.width, fallback.height]).toEqual([scale.width, scale.height]);
       expect(fallback.pixels).toEqual(loopStart);
+      hashes.set(path.basename(scale.bitmapPath), createHash('sha256').update(readFileSync(scale.bitmapPath)).digest('hex'));
+      const logoBytes = readFileSync(scale.logoPath);
+      hashes.set(path.basename(scale.logoPath), createHash('sha256').update(logoBytes).digest('hex'));
+      const headerLogo = readBitmap(logoBytes);
+      expect([headerLogo.width, headerLogo.height]).toEqual([scale.logoSize, scale.logoSize]);
+      expect(headerLogo.pixels).toEqual(renderInstallerLogo(decodeLogoPng(readFileSync(sourceLogo)), scale.logoSize));
       const background = format.data + 40 + loopStart[0] * 4;
       expect([...avi.subarray(background, background + 4)]).toEqual([253, 251, 251, 0]);
-      // The full-field pastel gradient adds color transitions; complete RLE
-      // key frames must still save at least 60% over raw indexed pixels.
-      expect(avi.length).toBeLessThan(scale.width * scale.height * 228 * .4);
+      // Fine moving light adds color transitions. Independent key frames must
+      // still save at least 45% over raw indexed pixels before installer LZMA.
+      expect(avi.length).toBeLessThan(scale.width * scale.height * 228 * .55);
     }
     const manifest = path.join(prepared.directory, 'manifest.json');
+    expect(Object.keys(JSON.parse(readFileSync(manifest, 'utf8')).files)).toHaveLength(9);
     const before = statSync(manifest).mtimeMs;
     const cached = prepareInstallerAnimationAssets(root);
     expect(cached.directory).toBe(prepared.directory);
     expect(cached.cacheHit).toBe(true);
     expect(statSync(manifest).mtimeMs).toBe(before);
-    const broken = prepared.scales[0].aviPath;
-    writeFileSync(broken, 'damaged prepared animation');
+    const broken = prepared.scales[0].logoPath;
+    writeFileSync(broken, 'damaged prepared header logo');
     const repaired = prepareInstallerAnimationAssets(root);
     expect(repaired.fingerprint).toBe(prepared.fingerprint);
     expect(repaired.cacheHit).toBe(false);
     for (const scale of repaired.scales) {
       expect(createHash('sha256').update(readFileSync(scale.aviPath)).digest('hex')).toBe(hashes.get(path.basename(scale.aviPath)));
+      expect(createHash('sha256').update(readFileSync(scale.bitmapPath)).digest('hex')).toBe(hashes.get(path.basename(scale.bitmapPath)));
+      expect(createHash('sha256').update(readFileSync(scale.logoPath)).digest('hex')).toBe(hashes.get(path.basename(scale.logoPath)));
     }
     expect(readdirSync(path.join(root, 'build', 'installer')).some(name => name.startsWith('.animation-staging-'))).toBe(false);
     expect(readdirSync(path.join(root, 'build', 'installer')).some(name => name.startsWith('.animation-invalid-'))).toBe(true);

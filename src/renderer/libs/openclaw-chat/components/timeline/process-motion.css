@@ -11,6 +11,10 @@
     background-color 200ms ease,
     box-shadow 200ms ease;
 }
+.process-summary {
+  border-radius: 6px;
+  padding: 2px 7px;
+}
 .completed-process__trigger {
   min-height: 38px;
   font-weight: 550;
@@ -114,14 +118,20 @@
     overflow: clip;
     transform: translateY(-6px);
     transition:
-      block-size 320ms cubic-bezier(0.22, 0.8, 0.25, 1),
-      opacity 220ms ease,
-      transform 320ms cubic-bezier(0.22, 0.8, 0.25, 1),
-      content-visibility 320ms allow-discrete;
+      block-size var(--process-auto-fold-duration, 320ms) cubic-bezier(0.22, 0.8, 0.25, 1),
+      opacity var(--process-auto-fold-duration, 220ms) ease,
+      transform var(--process-auto-fold-duration, 320ms) cubic-bezier(0.22, 0.8, 0.25, 1),
+      content-visibility var(--process-auto-fold-duration, 320ms) allow-discrete;
   }
   :is(.completed-process, .process-summary-group, .process-summary__tool)[open]::details-content {
     block-size: auto;
     opacity: 1;
     transform: translateY(0);
+  }
+  .completed-process[data-process-auto-fold][open]::details-content {
+    block-size: var(--process-auto-fold-size, auto);
+    opacity: var(--process-auto-fold-opacity, 1);
+    transform: var(--process-auto-fold-transform, translateY(0));
+    transition: none;
   }
 }

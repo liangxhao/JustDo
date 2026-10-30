@@ -282,8 +282,10 @@ test('does not add live Tool messages to stream items', () => {
 });
 
 test.each([
-  'Logs: openclaw logs --follow',
-  'To view logs, run `openclaw logs --follow` in a terminal.',
+  'For details, open Settings → Logs in the Control UI or run `openclaw logs --follow` in your terminal.',
+  'For details, open Settings → Logs in the Control UI or run `openclaw logs --follow`.',
+  'If it continues, open Settings → Logs in the Control UI or run `openclaw logs --follow`.',
+  'Troubleshooting: run `openclaw logs --follow` in a terminal.',
 ])('removes the OpenClaw log hint from the legacy assistant stream: %s', hint => {
   const items = build({
     stream: `Task failed\n${hint}`,

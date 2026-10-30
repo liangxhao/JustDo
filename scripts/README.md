@@ -25,6 +25,12 @@ while `packaging/nsis-shell-extraction.nsh` reads actual 7-Zip phase progress.
 pages the same light presentation while retaining native radio/browse commands,
 upgrade locking, elevation and page validation. Its images and fonts are
 released before the install-progress page takes ownership.
+`packaging/nsis-presentation-window.nsh` keeps a shared compact canvas across
+these pages, centers only its first display and retains a dragged position on
+Next/Back and entry into file writing. Each native page owns its caption hairline;
+scope cards retain the original radio controls. Separate square logo assets avoid
+distorting the wider animated scene. The scene's blue light arc makes a complete
+orbit, and NSIS selects only a DPI variant whose full canvas fits.
 `packaging/installer-clock-assets.cjs` verifies the checked-in native elapsed-time
 clock under `resources/installer-clock/win-x86/` before NSIS embeds it. Normal
 packaging needs no MSVC installation, SDK, network access or generated clock
@@ -62,6 +68,9 @@ they never install the application or modify its registration.
 The separate opt-in `tests/build/nsis-setup-presentation.test.ts` checks native
 setup-page navigation with isolated elevation ports and saves
 `build/installer-setup-mode.png` and `build/installer-setup-directory.png`.
+It checks the visible mark's proportions, the painted caption separator, and
+continuous native window coordinates after a drag through forward/back navigation
+and entry into file writing. The entrance runs once across that whole sequence.
 
 Vite's `scripts/packaging/application-license-assets.cjs` plugin records actual
 third-party modules for Renderer, Main and all preload builds. It copies

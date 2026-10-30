@@ -61,6 +61,11 @@ class DisclosureContentDirective extends AsyncDirective {
 
 export const disclosureContent = directive(DisclosureContentDirective);
 
+/** Prepare one disclosure without eagerly building its closed descendants. */
+export function materializeDisclosureContent(details: HTMLDetailsElement): void {
+  details.dispatchEvent(new Event(MATERIALIZE_DISCLOSURE));
+}
+
 /** Search/reveal explicitly request hidden text before walking the local DOM. */
 export function materializeDisclosureContents(root: ParentNode): void {
   const visited = new Set<HTMLDetailsElement>();
@@ -71,7 +76,7 @@ export function materializeDisclosureContents(root: ParentNode): void {
     if (!pending.length) return;
     for (const details of pending) {
       visited.add(details);
-      details.dispatchEvent(new Event(MATERIALIZE_DISCLOSURE));
+      materializeDisclosureContent(details);
     }
   }
 }

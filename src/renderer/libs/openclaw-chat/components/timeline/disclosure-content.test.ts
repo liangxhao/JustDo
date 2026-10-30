@@ -3,9 +3,25 @@
 import { html, nothing, render } from 'lit';
 import { afterEach, expect, test, vi } from 'vitest';
 
-import { disclosureContent, materializeDisclosureContents } from './disclosure-content';
+import { disclosureContent, materializeDisclosureContent, materializeDisclosureContents } from './disclosure-content';
 
 afterEach(() => document.body.replaceChildren());
+
+test('prepares an automatic fold without eagerly rendering closed nested tool details', () => {
+  const host = document.createElement('div');
+  document.body.append(host);
+  const tool = vi.fn(() => html`<p>Tool output</p>`);
+  render(html`<details>
+    <summary>Process</summary>
+    <div>${disclosureContent(() => html`<details>
+      <summary>Tool</summary><div>${disclosureContent(tool)}</div>
+    </details>`)}</div>
+  </details>`, host);
+  const details = host.querySelector('details')!;
+  materializeDisclosureContent(details);
+  expect(host.querySelectorAll('details')).toHaveLength(2);
+  expect(tool).not.toHaveBeenCalled();
+});
 
 test('defers closed Markdown/tool work, renders the latest body on open and retains mounted nodes on close', () => {
   const host = document.createElement('div');

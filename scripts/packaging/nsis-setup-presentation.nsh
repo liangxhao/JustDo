@@ -75,6 +75,57 @@ Var InstallerSetupBrowseControl
   SetCtlColors ${_CONTROL} "475569" "${INSTALLER_BACKGROUND}"
 !macroend
 
+; Choice cards are passive decoration behind the real auto-radio controls.
+; No group/tab style, command handler or selection state belongs to the card.
+!macro InstallerSetupChoiceCard _CONTROL _ID _TOP _HEIGHT
+  Push $0
+  Push $1
+  Push $2
+  Push $3
+  Push $4
+  Push $5
+  Push $6
+  Push $7
+  Push $8
+  Push $9
+  !insertmacro InstallerSetupScale $0 28
+  !insertmacro InstallerSetupScale $1 ${_TOP}
+  IntOp $2 $0 * 2
+  IntOp $2 $InstallerSetupWidth - $2
+  !insertmacro InstallerSetupScale $3 ${_HEIGHT}
+  GetDlgItem $4 $InstallerSetupPage ${_ID}
+  ${If} $4 == 0
+    System::Call 'user32::CreateWindowExW(i 0, w "STATIC", w "", i 0x54000000, i r0, i r1, i r2, i r3, p $InstallerSetupPage, p ${_ID}, p 0, p 0)p.r4'
+  ${EndIf}
+  ${If} $4 != 0
+    SetCtlColors $4 "F3F4F8" "F3F4F8"
+    !insertmacro InstallerSetupScale $5 14
+    IntOp $6 $2 + 1
+    IntOp $7 $3 + 1
+    System::Call 'gdi32::CreateRoundRectRgn(i 0, i 0, i r6, i r7, i r5, i r5)p.r8'
+    ${If} $8 != 0
+      System::Call 'user32::SetWindowRgn(p r4, p r8, i 0)i.r9'
+      ${If} $9 == 0
+        System::Call 'gdi32::DeleteObject(p r8)i.r9'
+      ${EndIf}
+    ${EndIf}
+    ; Keep the radio's native HWND and its existing group order above this
+    ; non-interactive surface. Windows owns a successfully assigned region.
+    System::Call 'user32::SetWindowPos(p r4, p 1, i r0, i r1, i r2, i r3, i 0x0010)i.r9'
+    SetCtlColors ${_CONTROL} "475569" "F3F4F8"
+  ${EndIf}
+  Pop $9
+  Pop $8
+  Pop $7
+  Pop $6
+  Pop $5
+  Pop $4
+  Pop $3
+  Pop $2
+  Pop $1
+  Pop $0
+!macroend
+
 ; Controls and their commands stay native. Only the decoration is owned here.
 Function InstallerSetupLeave
   !insertmacro InstallerSetupSave
@@ -147,6 +198,9 @@ FunctionEnd
 ; incidental later invalidation while only the original controls are drawn.
 Function InstallerSetupReveal
   Push $0
+  StrCpy $InstallerWindowPage $InstallerSetupPage
+  Call InstallerPresentationOpenMotion
+  SendMessage $HWNDPARENT ${JUSTDO_WM_SETREDRAW} 1 0
   ShowWindow $InstallerSetupPage 8
   ShowWindow $HWNDPARENT 4
   System::Call 'user32::RedrawWindow(p $HWNDPARENT, p 0, p 0, i 0x0185)i.r0'
@@ -157,19 +211,16 @@ FunctionEnd
 ; its real controls also handles Back navigation and a changed installation mode.
 Function InstallerSetupPrepare
   !insertmacro InstallerSetupSave
+  SendMessage $HWNDPARENT ${JUSTDO_WM_SETREDRAW} 0 0
   Call InstallerSetupDestroy
   StrCpy $InstallerSetupNextImage "0"
   StrCpy $InstallerSetupBackImage "0"
   StrCpy $InstallerSetupCancelImage "0"
   StrCpy $InstallerSetupBrowseImage "0"
-  System::Call 'user32::GetDpiForWindow(p $HWNDPARENT)i.r0'
-  ${If} $0 < 96
-    StrCpy $0 96
-  ${EndIf}
-  StrCpy $InstallerSetupDpi $0
-  !ifmacrodef InstallerSetupWorkArea
-    !insertmacro InstallerSetupWorkArea
-  !endif
+  Call InstallerWindowPrepare
+  StrCpy $InstallerSetupDpi $InstallerDpi
+  StrCpy $InstallerSetupWidth $InstallerWidth
+  StrCpy $InstallerSetupHeight $InstallerHeight
   GetDlgItem $0 $HWNDPARENT 1
   SendMessage $0 0x0031 0 0 $InstallerSetupNavFont
   StrCpy $InstallerSetupBodyFont $InstallerSetupNavFont
@@ -191,50 +242,6 @@ Function InstallerSetupPrepare
   Pop $InstallerSetupTitleFont
   StrCpy $InstallerSetupReady "1"
 
-  Call InstallerPresentationChrome
-  System::Call 'user32::MonitorFromWindow(p $HWNDPARENT, i 2)p.r0'
-  System::Call '*(i 40, i 0, i 0, i 0, i 0, i 0, i 0, i 0, i 0, i 0)p.r1'
-  System::Call 'user32::GetMonitorInfoW(p r0, p r1)i.r2'
-  System::Call '*$1(i, i, i, i, i, i .r2, i .r3, i .r4, i .r5)'
-  System::Free $1
-  IntOp $4 $4 - $2
-  IntOp $5 $5 - $3
-  !ifmacrodef InstallerSetupClampWorkArea
-    !insertmacro InstallerSetupClampWorkArea
-  !endif
-  System::Alloc 16
-  Pop $0
-  System::Call 'user32::GetWindowRect(p $HWNDPARENT, p r0)i.r1'
-  System::Call '*$0(i .r6, i .r7, i .r8, i .r9)'
-  IntOp $8 $8 - $6
-  IntOp $9 $9 - $7
-  System::Call 'user32::GetClientRect(p $HWNDPARENT, p r0)i.r1'
-  System::Call '*$0(i, i, i .r6, i .r7)'
-  System::Free $0
-  IntOp $8 $8 - $6
-  IntOp $9 $9 - $7
-  !insertmacro InstallerSetupScale $InstallerSetupWidth 680
-  !insertmacro InstallerSetupScale $InstallerSetupHeight 600
-  !insertmacro InstallerSetupScale $0 32
-  IntOp $6 $4 - $0
-  IntOp $6 $6 - $8
-  ${If} $InstallerSetupWidth > $6
-    StrCpy $InstallerSetupWidth $6
-  ${EndIf}
-  IntOp $6 $5 - $0
-  IntOp $6 $6 - $9
-  ${If} $InstallerSetupHeight > $6
-    StrCpy $InstallerSetupHeight $6
-  ${EndIf}
-  IntOp $6 $InstallerSetupWidth + $8
-  IntOp $7 $InstallerSetupHeight + $9
-  IntOp $4 $4 - $6
-  IntOp $4 $4 / 2
-  IntOp $2 $2 + $4
-  IntOp $5 $5 - $7
-  IntOp $5 $5 / 2
-  IntOp $3 $3 + $5
-  System::Call 'user32::SetWindowPos(p $HWNDPARENT, p 0, i r2, i r3, i r6, i r7, i 0x0014)i.r0'
   !insertmacro InstallerSetupScale $0 54
   IntOp $InstallerSetupPageHeight $InstallerSetupHeight - $0
   System::Call 'user32::SetWindowPos(p $InstallerSetupPage, p 1, i 0, i 0, i $InstallerSetupWidth, i $InstallerSetupPageHeight, i 0x0010)i.r0'
@@ -242,7 +249,7 @@ Function InstallerSetupPrepare
   SetCtlColors $InstallerSetupPage "23232A" "${INSTALLER_BACKGROUND}"
   StrCpy $InstallerSetupCompact "0"
   StrCpy $InstallerSetupMinimal "0"
-  !insertmacro InstallerSetupScale $0 500
+  !insertmacro InstallerSetupScale $0 440
   ${If} $InstallerSetupPageHeight < $0
     StrCpy $InstallerSetupCompact "1"
   ${EndIf}
@@ -267,22 +274,24 @@ Function InstallerSetupPrepare
     Goto InstallerSetupHideChrome
   ${EndIf}
   !insertmacro InstallerSetupScale $0 28
-  !insertmacro InstallerSetupScale $1 48
+  !insertmacro InstallerSetupScale $1 28
   !insertmacro InstallerSetupScale $2 64
   ${If} $InstallerSetupCompact == "1"
-    !insertmacro InstallerSetupScale $1 24
+    !insertmacro InstallerSetupScale $1 20
     !insertmacro InstallerSetupScale $2 48
   ${EndIf}
   ${If} $InstallerSetupMinimal != "1"
     System::Call 'user32::CreateWindowExW(i 0, w "STATIC", w "", i 0x5400020E, i r0, i r1, i r2, i r2, p $InstallerSetupPage, p 0, p 0, p 0)p.s'
     Pop $InstallerSetupLogo
     InitPluginsDir
+    ; This square asset contains only the original mark. The wider animation
+    ; canvas is never stretched into the square header slot.
     ${If} $InstallerSetupDpi >= 168
-      File /oname=$PLUGINSDIR\setup-brand.bmp "${INSTALLER_ANIMATION_DIR}\brand-200.bmp"
+      File /oname=$PLUGINSDIR\setup-brand.bmp "${INSTALLER_ANIMATION_DIR}\logo-200.bmp"
     ${ElseIf} $InstallerSetupDpi >= 120
-      File /oname=$PLUGINSDIR\setup-brand.bmp "${INSTALLER_ANIMATION_DIR}\brand-150.bmp"
+      File /oname=$PLUGINSDIR\setup-brand.bmp "${INSTALLER_ANIMATION_DIR}\logo-150.bmp"
     ${Else}
-      File /oname=$PLUGINSDIR\setup-brand.bmp "${INSTALLER_ANIMATION_DIR}\brand-100.bmp"
+      File /oname=$PLUGINSDIR\setup-brand.bmp "${INSTALLER_ANIMATION_DIR}\logo-100.bmp"
     ${EndIf}
     System::Call 'user32::LoadImageW(p 0, w "$PLUGINSDIR\setup-brand.bmp", i 0, i r2, i r2, i 0x2010)p.s'
     Pop $InstallerSetupBitmap
@@ -314,6 +323,8 @@ Function InstallerSetupPrepare
     Pop $InstallerSetupSubheading
     !insertmacro InstallerSetupFont $InstallerSetupSubheading
   ${EndIf}
+
+  !insertmacro InstallerWindowDivider $InstallerSetupPage
 
   !insertmacro InstallerSetupScale $0 52
   IntOp $1 $InstallerSetupHeight - $0
@@ -357,16 +368,16 @@ Function InstallerSetupModeShow
   !insertmacro InstallerSetupScale $0 28
   IntOp $2 $0 * 2
   IntOp $2 $InstallerSetupWidth - $2
-  !insertmacro InstallerSetupScale $1 176
-  !insertmacro InstallerSetupScale $3 48
-  !insertmacro InstallerSetupScale $4 254
-  !insertmacro InstallerSetupScale $5 320
-  !insertmacro InstallerSetupScale $6 404
+  !insertmacro InstallerSetupScale $1 148
+  !insertmacro InstallerSetupScale $3 40
+  !insertmacro InstallerSetupScale $4 208
+  !insertmacro InstallerSetupScale $5 272
+  !insertmacro InstallerSetupScale $6 352
   ${If} $InstallerSetupCompact == "1"
-    !insertmacro InstallerSetupScale $1 116
-    !insertmacro InstallerSetupScale $4 196
-    !insertmacro InstallerSetupScale $5 248
-    !insertmacro InstallerSetupScale $6 308
+    !insertmacro InstallerSetupScale $1 112
+    !insertmacro InstallerSetupScale $4 168
+    !insertmacro InstallerSetupScale $5 216
+    !insertmacro InstallerSetupScale $6 280
     !insertmacro InstallerSetupScale $3 36
   ${EndIf}
   ${If} $InstallerSetupMinimal == "1"
@@ -395,8 +406,16 @@ Function InstallerSetupModeShow
     !insertmacro InstallerSetupMove $MultiUser.InstallModePage.Text $0 $1 $2 $3
     !insertmacro InstallerSetupFont $MultiUser.InstallModePage.Text
   ${EndIf}
-  !insertmacro InstallerSetupMove $MultiUser.InstallModePage.CurrentUser $0 $4 $2 $3
-  !insertmacro InstallerSetupMove $MultiUser.InstallModePage.AllUsers $0 $5 $2 $3
+  StrCpy $7 $0
+  StrCpy $8 $2
+  ${If} $InstallerSetupMinimal != "1"
+    !insertmacro InstallerSetupScale $9 12
+    IntOp $7 $7 + $9
+    IntOp $8 $8 - $9
+    IntOp $8 $8 - $9
+  ${EndIf}
+  !insertmacro InstallerSetupMove $MultiUser.InstallModePage.CurrentUser $7 $4 $8 $3
+  !insertmacro InstallerSetupMove $MultiUser.InstallModePage.AllUsers $7 $5 $8 $3
   !insertmacro InstallerSetupFont $MultiUser.InstallModePage.CurrentUser
   !insertmacro InstallerSetupFont $MultiUser.InstallModePage.AllUsers
   !insertmacro InstallerSetupScale $1 20
@@ -414,6 +433,15 @@ Function InstallerSetupModeShow
   !insertmacro InstallerSetupScale $3 32
   ${If} $1 < $3
     ShowWindow $RadioButtonLabel1 0
+  ${EndIf}
+  ${If} $InstallerSetupMinimal != "1"
+    ${If} $InstallerSetupCompact == "1"
+      !insertmacro InstallerSetupChoiceCard $MultiUser.InstallModePage.CurrentUser 12352 164 44
+      !insertmacro InstallerSetupChoiceCard $MultiUser.InstallModePage.AllUsers 12353 212 44
+    ${Else}
+      !insertmacro InstallerSetupChoiceCard $MultiUser.InstallModePage.CurrentUser 12352 200 56
+      !insertmacro InstallerSetupChoiceCard $MultiUser.InstallModePage.AllUsers 12353 264 56
+    ${EndIf}
   ${EndIf}
   ; Restore the native mode-change presentation after returning from a skinned
   ; directory page. This keeps its live elevation shield and permission hints.
@@ -438,11 +466,11 @@ Function InstallerSetupDirectoryShow
   !insertmacro InstallerSetupScale $0 28
   IntOp $2 $0 * 2
   IntOp $2 $InstallerSetupWidth - $2
-  !insertmacro InstallerSetupScale $1 176
-  !insertmacro InstallerSetupScale $3 64
+  !insertmacro InstallerSetupScale $1 148
+  !insertmacro InstallerSetupScale $3 56
   ${If} $InstallerSetupCompact == "1"
-    !insertmacro InstallerSetupScale $1 116
-    !insertmacro InstallerSetupScale $3 52
+    !insertmacro InstallerSetupScale $1 112
+    !insertmacro InstallerSetupScale $3 48
   ${EndIf}
   !insertmacro InstallerSetupMove $mui.DirectoryPage.Text $0 $1 $2 $3
   !insertmacro InstallerSetupFont $mui.DirectoryPage.Text
@@ -451,9 +479,9 @@ Function InstallerSetupDirectoryShow
   ${EndIf}
   ShowWindow $mui.DirectoryPage.DirectoryBox 0
   System::Call 'user32::GetWindowTextW(p $mui.DirectoryPage.DirectoryBox, w .r4, i ${NSIS_MAX_STRLEN})i.r9'
-  !insertmacro InstallerSetupScale $1 260
+  !insertmacro InstallerSetupScale $1 224
   ${If} $InstallerSetupCompact == "1"
-    !insertmacro InstallerSetupScale $1 202
+    !insertmacro InstallerSetupScale $1 184
   ${EndIf}
   ${If} $InstallerSetupMinimal == "1"
     !insertmacro InstallerSetupScale $1 80

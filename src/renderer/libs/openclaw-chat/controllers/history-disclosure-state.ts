@@ -23,6 +23,7 @@ export class HistoryDisclosureState {
 
   capture(root: ParentNode): void {
     root.querySelectorAll<HTMLDetailsElement>('details').forEach(details => {
+      if (details.hasAttribute('data-process-auto-fold')) return;
       const key =
         details.dataset.completedProcessKey ??
         (details.firstElementChild as HTMLElement | null)?.dataset.processSummaryKey;

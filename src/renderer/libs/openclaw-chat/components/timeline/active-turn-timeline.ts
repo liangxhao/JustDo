@@ -8,6 +8,7 @@ import {
   extractPresentPlanPreview,
 } from '@shared/cowork/interactions/planPreview';
 import { REVIEW_OPEN_EVENT } from '@shared/cowork/sessionReview';
+import { PRODUCT_NAME } from '@shared/productMetadata';
 import { html, nothing, type TemplateResult } from 'lit';
 import { repeat } from 'lit/directives/repeat.js';
 
@@ -619,7 +620,9 @@ export function renderTerminalTimelineMessage(
   footer: TemplateResult | typeof nothing = nothing,
   assistantAvatar?: TemplateResult,
 ): TemplateResult {
-  const diagnosticMessage = stripOpenClawLogHintText(message).trim();
+  const filteredMessage = stripOpenClawLogHintText(message).trim();
+  const diagnosticMessage =
+    status === 'error' ? filteredMessage.replace(/\bOpenClaw\b/g, PRODUCT_NAME) : filteredMessage;
   const displayMessage =
     status === 'error' ? diagnosticMessage.replace(/^⚠[\uFE0E\uFE0F]?\s*/u, '') : diagnosticMessage;
   return renderAssistantTimelineRow(
@@ -852,6 +855,7 @@ export function renderTimelineItem(
   if (item.kind === 'live-process') {
     if (item.item.type === 'thinking') {
       return renderStreamingThinkingGroup(item.item.text, {
+        processId: item.item.id,
         showAvatar,
         assistantAvatar,
         thinkingContent: renderThinking?.(item.item),
@@ -896,6 +900,7 @@ export function renderTimelineItem(
     );
   }
   if (item.kind === 'process-summary') {
+    const tail = item.items[item.items.length - 1];
     const depths = toolNesting(
       item.items.filter((entry): entry is ToolItem => entry.type === 'tool'),
     );
@@ -918,6 +923,7 @@ export function renderTimelineItem(
             @click=${(event: Event) => event.preventDefault()}
             class="process-summary"
             data-process-summary-key=${item.key}
+            data-process-summary-tail=${tail ? JSON.stringify([tail.type, tail.id]) : nothing}
             aria-expanded=${expanded}
             aria-label=${`${summaryLabel(item)} · ${i18nService.t(
               expanded ? 'coworkProcessCloseDetails' : 'coworkProcessOpenDetails',

@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import { PRODUCT_NAME } from '@shared/productMetadata';
 import { nothing, render } from 'lit';
 import { afterEach, expect, test, vi } from 'vitest';
 
@@ -65,6 +66,31 @@ test.each(['\n', '\r\n'])(
     expect(copy.getAttribute('aria-label')).toBe(i18nService.t('coworkCopyError'));
   },
 );
+
+test.each([
+  'For details, open Settings → Logs in the Control UI or run `openclaw logs --follow` in your terminal.',
+  'If it continues, open Settings → Logs in the Control UI or run `openclaw logs --follow`.',
+  'Troubleshooting: run `openclaw logs --follow` in a terminal.',
+])('displays and copies the branded failure without the native log hint: %s', async hint => {
+  vi.useFakeTimers();
+  const writeText = vi.fn().mockResolvedValue(undefined);
+  vi.stubGlobal('navigator', { clipboard: { writeText } });
+  const detail = 'Provider finish_reason: content_filter';
+  const message = `⚠️ OpenClaw couldn't finish this reply. ${hint}\n${detail}`;
+
+  render(renderTerminalTimelineMessage(message, 'error'), document.body);
+  await document.querySelector<TerminalErrorMessage>('chat-terminal-error')?.updateComplete;
+
+  expect(document.querySelector('.process-terminal__error-text')?.textContent).toBe(
+    `${PRODUCT_NAME} couldn't finish this reply.: ${detail}`,
+  );
+  expect(document.querySelector('.process-terminal')?.textContent).not.toContain(hint);
+  document.querySelector<HTMLButtonElement>('.message-copy')!.click();
+  await Promise.resolve();
+  expect(writeText).toHaveBeenCalledExactlyOnceWith(
+    `⚠️ ${PRODUCT_NAME} couldn't finish this reply.\n${detail}`,
+  );
+});
 
 test('updates the working stage and timer without announcing every elapsed tick', () => {
   render(

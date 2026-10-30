@@ -2,6 +2,7 @@
 
 import './justdo-chat';
 
+import { PRODUCT_NAME } from '@shared/productMetadata';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
 import { ChatScrollController } from '@/libs/openclaw-chat/controllers/chat-scroll-controller';
@@ -231,7 +232,18 @@ describe('justdo-chat failed runs', () => {
       'Provider finish_reason: unsupported_terminal',
     );
   });
-  test('keeps a persisted failed run in the terminal error presentation', async () => {
+  test.each([
+    {
+      message:
+        'Provider request failed. For details, open Settings → Logs in the Control UI or run `openclaw logs --follow`.',
+      summary: 'Provider request failed.',
+    },
+    {
+      message:
+        "OpenClaw couldn't finish this reply. For details, open Settings → Logs in the Control UI or run `openclaw logs --follow` in your terminal.\nProvider finish_reason: content_filter",
+      summary: `${PRODUCT_NAME} couldn't finish this reply.: Provider finish_reason: content_filter`,
+    },
+  ])('keeps a persisted failed run in the terminal error presentation: $summary', async ({ message, summary }) => {
     const chat = document.createElement('justdo-chat') as JustDoChatElement;
     chat.runTimings = [
       {
@@ -248,8 +260,7 @@ describe('justdo-chat failed runs', () => {
     chat.messages = [
       {
         role: 'system',
-        content:
-          'Provider request failed. To view logs, run `openclaw logs --follow` in a terminal.',
+        content: message,
         timestamp: 6_000,
         runId: 'run-1',
         isError: true,
@@ -260,13 +271,15 @@ describe('justdo-chat failed runs', () => {
     ];
     document.body.append(chat);
     await chat.updateComplete;
+    await chat.shadowRoot?.querySelector<TerminalErrorMessage>('chat-terminal-error')?.updateComplete;
 
     const terminal = chat.shadowRoot?.querySelector<HTMLElement>(
       '.process-terminal.process-terminal--error',
     );
-    expect(terminal?.textContent).toContain('Provider request failed.');
-    expect(terminal?.textContent).not.toContain('To view logs');
+    expect(terminal?.textContent).toContain(summary);
+    expect(terminal?.textContent).not.toContain('For details');
     expect(terminal?.textContent).not.toContain('openclaw');
+    expect(chat.messages[0].content).toBe(message);
     expect(chat.shadowRoot?.querySelector('.chat-avatar.error')).not.toBeNull();
     expect(chat.shadowRoot?.querySelector('.chat-avatar.assistant')).toBeNull();
     expect(chat.shadowRoot?.querySelector('.chat-avatar.other')).toBeNull();
