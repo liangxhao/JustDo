@@ -25,11 +25,17 @@ while `packaging/nsis-shell-extraction.nsh` reads actual 7-Zip phase progress.
 pages the same light presentation while retaining native radio/browse commands,
 upgrade locking, elevation and page validation. Its images and fonts are
 released before the install-progress page takes ownership.
-`packaging/installer-clock-assets.cjs` compiles the small native elapsed-time
-clock with the installed MSVC x86 tools and Windows SDK, then verifies/reuses
-its cache under `build/installer-clock/`. The clock uses only Windows system
-libraries and keeps updating while the installation worker performs synchronous
-work; it never calls back into NSIS script code.
+`packaging/installer-clock-assets.cjs` verifies the checked-in native elapsed-time
+clock under `resources/installer-clock/win-x86/` before NSIS embeds it. Normal
+packaging needs no MSVC installation, SDK, network access or generated clock
+cache. Only its explicit `--rebuild` mode uses installed MSVC x86 tools and a
+Windows SDK, retaining compiler intermediates under `build/installer-clock/`.
+The manifest binds normalized source content, build flags and DLL bytes; missing,
+changed or stale assets fail with instructions to refresh the bundle. See
+[offline resources](../docs/offline-downloads.md#6-windows-安装器原生时钟) for commands.
+The clock uses only Windows system libraries and keeps updating while the
+installation worker performs synchronous work; it never calls back into NSIS
+script code.
 The presentation does not start Electron or initialize a user profile. See
 [Windows installer](../docs/windows-installer.md#installation-presentation-and-measured-progress)
 for progress boundaries, fallback behavior and validation limits.

@@ -16,7 +16,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const repoRoot = path.resolve(__dirname, '../..');
 const buildRoot = path.join(repoRoot, 'build');
-const { prepareInstallerClockAssets, discoverToolchain } = require('../../scripts/packaging/installer-clock-assets.cjs');
+const {
+  prepareInstallerClockAssets,
+  rebuildInstallerClockAssets,
+  buildInstallerClockAssets,
+  discoverToolchain,
+} = require('../../scripts/packaging/installer-clock-assets.cjs');
 let toolchainAvailable = false;
 if (process.platform === 'win32') {
   try {
@@ -34,8 +39,22 @@ function fixture(): string {
   fixtureRoots.push(root);
   const packaging = path.join(root, 'scripts', 'packaging');
   mkdirSync(packaging, { recursive: true });
-  for (const name of ['installer-clock.c', 'installer-clock.def']) {
+  for (const name of ['installer-clock.c', 'installer-clock.def', 'installer-clock-assets.cjs']) {
     copyFileSync(path.join(repoRoot, 'scripts', 'packaging', name), path.join(packaging, name));
+  }
+  return root;
+}
+
+function bundledDirectory(root: string): string {
+  return path.join(root, 'resources', 'installer-clock', 'win-x86');
+}
+
+function bundledFixture(): string {
+  const root = fixture();
+  const directory = bundledDirectory(root);
+  mkdirSync(directory, { recursive: true });
+  for (const name of ['installer-clock.dll', 'manifest.json']) {
+    copyFileSync(path.join(bundledDirectory(repoRoot), name), path.join(directory, name));
   }
   return root;
 }
@@ -82,6 +101,98 @@ afterEach(() => {
   }
 });
 
+describe('bundled installer clock assets', () => {
+  it('prepares a relocated checkout without build caches, compiler discovery or subprocesses', () => {
+    const root = bundledFixture();
+    const childProcess = require('node:child_process');
+    const spawned = vi.spyOn(childProcess, 'spawnSync').mockImplementation(() => {
+      throw new Error('Offline build host has no external tools.');
+    });
+
+    const prepared = prepareInstallerClockAssets(root);
+
+    expect(prepared.path).toBe(path.join(bundledDirectory(root), 'installer-clock.dll'));
+    expect(prepared.directory).toBe(bundledDirectory(root));
+    expect(prepared.fingerprint).toMatch(/^[a-f0-9]{64}$/);
+    expect(spawned).not.toHaveBeenCalled();
+    expect(existsSync(path.join(root, 'build'))).toBe(false);
+    const manifest = JSON.parse(readFileSync(path.join(prepared.directory, 'manifest.json'), 'utf8'));
+    expect(manifest.inputs.target).toBe('win32-ia32');
+    expect(manifest.inputs.sources.map((source: { path: string }) => source.path)).toEqual([
+      'scripts/packaging/installer-clock.c',
+      'scripts/packaging/installer-clock.def',
+      'scripts/packaging/installer-clock-assets.cjs',
+    ]);
+    const bytes = readFileSync(prepared.path);
+    expect(peTables(bytes)).toEqual({
+      imports: ['kernel32.dll', 'user32.dll'],
+      exports: ['CompleteActions', 'Destroy', 'Start', 'Stop'],
+    });
+  });
+
+  it('accepts either LF or CRLF checkout text without changing the bundle fingerprint', () => {
+    const root = bundledFixture();
+    const original = prepareInstallerClockAssets(root);
+    for (const newline of ['\n', '\r\n']) {
+      for (const name of ['installer-clock.c', 'installer-clock.def', 'installer-clock-assets.cjs']) {
+        const filename = path.join(root, 'scripts', 'packaging', name);
+        const normalized = readFileSync(filename, 'utf8').replace(/\r\n/g, '\n');
+        writeFileSync(filename, normalized.replace(/\n/g, newline));
+      }
+
+      expect(prepareInstallerClockAssets(root).fingerprint).toBe(original.fingerprint);
+    }
+  });
+
+  it('rejects a missing manifest and a damaged DLL with an actionable offline recovery message', () => {
+    const missingRoot = bundledFixture();
+    rmSync(path.join(bundledDirectory(missingRoot), 'manifest.json'));
+
+    expect(() => prepareInstallerClockAssets(missingRoot)).toThrow('Bundled DLL or manifest is missing');
+    expect(() => prepareInstallerClockAssets(missingRoot)).toThrow('installer-clock-assets.cjs --rebuild');
+
+    const damagedRoot = bundledFixture();
+    const filename = path.join(bundledDirectory(damagedRoot), 'installer-clock.dll');
+    const bytes = readFileSync(filename);
+    bytes[bytes.length - 1] ^= 1;
+    writeFileSync(filename, bytes);
+
+    expect(() => prepareInstallerClockAssets(damagedRoot)).toThrow('size or SHA256 does not match');
+    expect(existsSync(path.join(damagedRoot, 'build'))).toBe(false);
+  });
+
+  it('rejects stale sources and compiler flags instead of silently compiling a replacement', () => {
+    const sourceRoot = bundledFixture();
+    const source = path.join(sourceRoot, 'scripts', 'packaging', 'installer-clock.c');
+    writeFileSync(source, `${readFileSync(source, 'utf8')}\n/* Changed clock behavior. */\n`);
+
+    expect(() => prepareInstallerClockAssets(sourceRoot)).toThrow('does not match the current installer clock sources and build flags');
+
+    const flagsRoot = bundledFixture();
+    const manifestPath = path.join(bundledDirectory(flagsRoot), 'manifest.json');
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+    manifest.inputs.compileFlags.push('/DUNEXPECTED_BUILD_FLAG');
+    manifest.fingerprint = createHash('sha256').update(JSON.stringify(manifest.inputs)).digest('hex');
+    writeFileSync(manifestPath, JSON.stringify(manifest));
+
+    expect(() => prepareInstallerClockAssets(flagsRoot)).toThrow('does not match the current installer clock sources and build flags');
+    expect(existsSync(path.join(flagsRoot, 'build'))).toBe(false);
+  });
+
+  it('rejects a junction or symbolic link used as the bundled resource directory', () => {
+    const root = fixture();
+    const outside = bundledFixture();
+    const directory = bundledDirectory(root);
+    mkdirSync(path.dirname(directory), { recursive: true });
+    symlinkSync(bundledDirectory(outside), directory, process.platform === 'win32' ? 'junction' : 'dir');
+
+    expect(() => prepareInstallerClockAssets(root)).toThrow('without junctions or symbolic links');
+    expect(() => rebuildInstallerClockAssets(root)).toThrow('without junctions or symbolic links');
+    expect(existsSync(path.join(root, 'build'))).toBe(false);
+    expect(prepareInstallerClockAssets(outside).path).toBe(path.join(bundledDirectory(outside), 'installer-clock.dll'));
+  });
+});
+
 describe.runIf(toolchainAvailable)('native installer clock assets', () => {
   it('discovers an SDK registered outside Program Files without a developer-shell SDK variable', () => {
     const root = fixture();
@@ -125,7 +236,7 @@ describe.runIf(toolchainAvailable)('native installer clock assets', () => {
     mkdirSync(path.dirname(junction), { recursive: true });
     symlinkSync(outside, junction, 'junction');
 
-    expect(() => prepareInstallerClockAssets(root)).toThrow('without junctions or symbolic links');
+    expect(() => buildInstallerClockAssets(root)).toThrow('without junctions or symbolic links');
 
     expect(readFileSync(sentinel, 'utf8')).toBe('preserve external contents');
     expect(readdirSync(outside)).toEqual(['sentinel.txt']);
@@ -133,7 +244,7 @@ describe.runIf(toolchainAvailable)('native installer clock assets', () => {
 
   it('builds the x86, CRT-free DLL and reuses only a verified complete artifact', () => {
     const root = fixture();
-    const first = prepareInstallerClockAssets(root);
+    const first = buildInstallerClockAssets(root);
     const bytes = readFileSync(first.path);
     const pe = bytes.readUInt32LE(0x3c);
     const optional = pe + 24;
@@ -152,13 +263,13 @@ describe.runIf(toolchainAvailable)('native installer clock assets', () => {
     expect(readdirSync(first.directory).sort()).toEqual(['installer-clock.dll', 'manifest.json']);
     const manifest = path.join(first.directory, 'manifest.json');
     const before = statSync(manifest).mtimeMs;
-    const cached = prepareInstallerClockAssets(root);
+    const cached = buildInstallerClockAssets(root);
     expect(cached.path).toBe(first.path);
     expect(cached.cacheHit).toBe(true);
     expect(statSync(manifest).mtimeMs).toBe(before);
 
     writeFileSync(first.path, 'damaged native clock');
-    const repaired = prepareInstallerClockAssets(root);
+    const repaired = buildInstallerClockAssets(root);
     expect(repaired.cacheHit).toBe(false);
     expect(repaired.fingerprint).toBe(first.fingerprint);
     expect(readFileSync(repaired.path)).toEqual(bytes);
@@ -170,16 +281,35 @@ describe.runIf(toolchainAvailable)('native installer clock assets', () => {
   it('binds native source changes and never publishes a failed compilation', () => {
     const root = fixture();
     const source = path.join(root, 'scripts', 'packaging', 'installer-clock.c');
-    const original = prepareInstallerClockAssets(root);
+    const original = buildInstallerClockAssets(root);
     writeFileSync(source, `${readFileSync(source, 'utf8')}\n/* Changed build input. */\n`);
-    const changed = prepareInstallerClockAssets(root);
+    const changed = buildInstallerClockAssets(root);
     expect(changed.cacheHit).toBe(false);
     expect(changed.fingerprint).not.toBe(original.fingerprint);
     writeFileSync(source, 'invalid C source;');
-    expect(() => prepareInstallerClockAssets(root)).toThrow('Installer clock tool failed (cl.exe)');
+    expect(() => buildInstallerClockAssets(root)).toThrow('Installer clock tool failed (cl.exe)');
     expect(existsSync(path.join(changed.directory, 'manifest.json'))).toBe(true);
     expect(readdirSync(path.dirname(changed.directory)).sort()).toEqual([
       original.fingerprint, changed.fingerprint,
     ].sort());
+  }, 30_000);
+
+  it('publishes a portable bundle and preserves it when a subsequent native rebuild fails', () => {
+    const root = fixture();
+    const published = rebuildInstallerClockAssets(root);
+    const dllPath = path.join(published.directory, 'installer-clock.dll');
+    const manifestPath = path.join(published.directory, 'manifest.json');
+    const originalDll = readFileSync(dllPath);
+    const originalManifest = readFileSync(manifestPath);
+    const source = path.join(root, 'scripts', 'packaging', 'installer-clock.c');
+    const originalSource = readFileSync(source);
+    writeFileSync(source, 'invalid C source;');
+
+    expect(() => rebuildInstallerClockAssets(root)).toThrow('Installer clock tool failed (cl.exe)');
+
+    expect(readFileSync(dllPath)).toEqual(originalDll);
+    expect(readFileSync(manifestPath)).toEqual(originalManifest);
+    writeFileSync(source, originalSource);
+    expect(prepareInstallerClockAssets(root)).toEqual(published);
   }, 30_000);
 });

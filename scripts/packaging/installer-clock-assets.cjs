@@ -7,6 +7,12 @@ const path = require('node:path');
 
 const SCHEMA_VERSION = 1;
 const DLL_NAME = 'installer-clock.dll';
+const BUNDLED_DIRECTORY = 'resources/installer-clock/win-x86';
+const SOURCE_FILES = [
+  'scripts/packaging/installer-clock.c',
+  'scripts/packaging/installer-clock.def',
+  'scripts/packaging/installer-clock-assets.cjs',
+];
 const COMPILE_FLAGS = ['/nologo', '/c', '/W4', '/WX', '/O1', '/Os', '/GS-', '/Zl', '/utf-8', '/Brepro'];
 const LINK_FLAGS = [
   '/NOLOGO', '/DLL', '/NOENTRY', '/NODEFAULTLIB', '/MACHINE:X86', '/DYNAMICBASE',
@@ -140,11 +146,11 @@ function inspectClockDll(bytes) {
   return true;
 }
 
-function assertManagedDirectory(root, directory) {
-  const buildRoot = path.join(root, 'build');
+function assertManagedDirectory(root, directory, subtree = 'build') {
+  const buildRoot = path.join(root, subtree);
   const relative = path.relative(buildRoot, path.resolve(directory));
   if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
-    throw new Error('Installer clock path escaped the repository build directory.');
+    throw new Error(`Installer clock path escaped the repository ${subtree} directory.`);
   }
   let current = buildRoot;
   for (const component of ['', ...relative.split(path.sep).filter(Boolean)]) {
@@ -191,7 +197,7 @@ function removeStaging(directory, cacheRoot, root) {
   fs.rmSync(directory, { recursive: true, force: true });
 }
 
-function prepareInstallerClockAssets(repoRoot) {
+function buildInstallerClockAssets(repoRoot) {
   const root = path.resolve(repoRoot);
   const cacheRoot = path.join(root, 'build', 'installer-clock');
   assertManagedDirectory(root, cacheRoot);
@@ -261,8 +267,101 @@ function prepareInstallerClockAssets(repoRoot) {
   }
 }
 
-if (require.main === module) {
-  process.stdout.write(`${JSON.stringify(prepareInstallerClockAssets(path.resolve(__dirname, '../..')))}\n`);
+function bundledInputs(root) {
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    target: 'win32-ia32',
+    sources: SOURCE_FILES.map(filename => {
+      const absolute = path.join(root, filename);
+      if (!regularFile(absolute)) throw new Error(`Installer clock source must be a regular file: ${filename}`);
+      // Git may convert text files to CRLF on a different Windows build host.
+      const bytes = Buffer.from(fs.readFileSync(absolute, 'utf8').replace(/\r\n/g, '\n'));
+      return { path: filename, size: bytes.length, sha256: digest(bytes) };
+    }),
+    compileFlags: COMPILE_FLAGS,
+    linkFlags: LINK_FLAGS,
+  };
 }
 
-module.exports = { prepareInstallerClockAssets, discoverToolchain, inspectClockDll };
+function prepareInstallerClockAssets(repoRoot) {
+  const root = path.resolve(repoRoot);
+  const directory = path.join(root, BUNDLED_DIRECTORY);
+  try {
+    assertManagedDirectory(root, directory, 'resources');
+    const manifestPath = path.join(directory, 'manifest.json');
+    const dllPath = path.join(directory, DLL_NAME);
+    if (!regularFile(manifestPath) || !regularFile(dllPath)) {
+      throw new Error('Bundled DLL or manifest is missing or is not a regular file.');
+    }
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+    const inputs = bundledInputs(root);
+    const fingerprint = digest(JSON.stringify(inputs));
+    if (manifest.schemaVersion !== SCHEMA_VERSION || manifest.fingerprint !== fingerprint
+        || digest(JSON.stringify(manifest.inputs)) !== fingerprint) {
+      throw new Error('Bundled DLL does not match the current installer clock sources and build flags.');
+    }
+    const bytes = fs.readFileSync(dllPath);
+    if (manifest.dll?.size !== bytes.length || manifest.dll.sha256 !== digest(bytes)) {
+      throw new Error('Bundled DLL size or SHA256 does not match its manifest.');
+    }
+    inspectClockDll(bytes);
+    return { path: dllPath, directory, fingerprint };
+  } catch (error) {
+    throw new Error(`Bundled installer clock verification failed: ${error.message} `
+      + 'On a Windows host with MSVC x86 tools and a Windows SDK, run '
+      + 'node scripts/packaging/installer-clock-assets.cjs --rebuild, then transfer '
+      + `${BUNDLED_DIRECTORY}/ with the matching sources to the offline build host. `
+      + 'Normal packaging never downloads tools or compiles this DLL.', { cause: error });
+  }
+}
+
+function rebuildInstallerClockAssets(repoRoot) {
+  const root = path.resolve(repoRoot);
+  const directory = path.join(root, BUNDLED_DIRECTORY);
+  assertManagedDirectory(root, directory, 'resources');
+  // A failed native compilation must leave the checked-in bundle untouched.
+  const built = buildInstallerClockAssets(root);
+  const bytes = fs.readFileSync(built.path);
+  const buildManifest = JSON.parse(fs.readFileSync(path.join(built.directory, 'manifest.json'), 'utf8'));
+  const inputs = bundledInputs(root);
+  const manifest = {
+    schemaVersion: SCHEMA_VERSION,
+    fingerprint: digest(JSON.stringify(inputs)),
+    inputs,
+    toolchain: {
+      compilerVersion: buildManifest.inputs.compilerVersion,
+      sdkVersion: buildManifest.inputs.sdkVersion,
+    },
+    dll: { size: bytes.length, sha256: digest(bytes) },
+  };
+  assertManagedDirectory(root, directory, 'resources');
+  fs.mkdirSync(directory, { recursive: true });
+  for (const name of [DLL_NAME, 'manifest.json']) {
+    const filename = path.join(directory, name);
+    let info;
+    try {
+      info = fs.lstatSync(filename);
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+    }
+    if (info && (!info.isFile() || info.isSymbolicLink())) {
+      throw new Error(`Installer clock bundle output must be a regular file: ${filename}`);
+    }
+  }
+  fs.writeFileSync(path.join(directory, DLL_NAME), bytes);
+  fs.writeFileSync(path.join(directory, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
+  return prepareInstallerClockAssets(root);
+}
+
+if (require.main === module) {
+  const args = process.argv.slice(2);
+  const action = args.length === 0 ? prepareInstallerClockAssets
+    : args.length === 1 && args[0] === '--rebuild' ? rebuildInstallerClockAssets : undefined;
+  if (!action) throw new Error('Usage: installer-clock-assets.cjs [--rebuild]');
+  process.stdout.write(`${JSON.stringify(action(path.resolve(__dirname, '../..')))}\n`);
+}
+
+module.exports = {
+  prepareInstallerClockAssets, rebuildInstallerClockAssets, buildInstallerClockAssets,
+  discoverToolchain, inspectClockDll,
+};

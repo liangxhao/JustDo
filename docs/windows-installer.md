@@ -111,10 +111,20 @@ exit; it does not re-enter the GUI script from the install worker for an effect.
 `resources/icons/png/128x128.png`, at 100%, 150% and 200% scales. Inputs and output
 hashes bind the cache under `build/installer/<fingerprint>/`; generated files are
 not committed. The script uses Node's built-ins and adds no runtime download.
-The native clock is built from `installer-clock.c` with the installed MSVC x86
-toolchain and Windows SDK, using only Windows system libraries and no runtime
-download. `installer-clock-assets.cjs` verifies its source/toolchain-bound cache
-under `build/installer-clock/` before embedding the DLL in setup.
+The native clock is shipped as a checked-in x86 DLL and manifest under
+`resources/installer-clock/win-x86/`. Normal packaging verifies the DLL's size,
+SHA256 and native PE properties, plus the manifest's binding to the current C
+source, exports file, build script and compiler/linker flags, then embeds it
+directly in setup. Source proofs use repository-relative paths and normalized LF
+line endings so different checkout locations and Git newline settings remain
+portable. Packaging does not discover or execute C++ tools, download anything,
+or fall back to compiling a missing or stale bundle.
+Only an explicit clock rebuild requires the installed MSVC x86 toolchain and
+Windows SDK. Its intermediate files and source/toolchain-bound cache remain
+under `build/installer-clock/`; a successful rebuild updates the checked-in DLL
+and portable manifest. The DLL imports only Windows system libraries and has
+no CRT dependency. See [offline resources](offline-downloads.md#6-windows-安装器原生时钟)
+for verification, rebuilding and transfer to an offline build host.
 The installer chooses the fitting scale, clamps its window to the current
 monitor's work area and frees its owned fonts, bitmap and player on close. Short
 work areas reduce the illustration space; exceptionally short areas hide the

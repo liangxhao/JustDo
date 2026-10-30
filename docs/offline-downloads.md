@@ -61,3 +61,29 @@ npm 包通过镜像安装，不再单独列出。
 `npm run electron:dev:openclaw` 和 `npm run dist:win` 已自动准备，优先复用资源和本地归档，归档缺失才下载。断网电脑提前放好归档即可。
 
 归档校验后由项目自带的 Node `tar` 解包，每次使用独立暂存目录并在结束后清理。无需安装或更换系统 tar；修复脚本后可直接重新执行准备命令，旧的失败暂存目录不会参与本次构建。
+
+## 6. Windows 安装器原生时钟
+
+安装器使用的 `installer-clock.dll` 和 `manifest.json` 已随仓库提供，位于
+`resources/installer-clock/win-x86/`。普通 Windows 打包直接校验并嵌入这两个文件，
+无需安装 Visual Studio、MSVC 或 Windows SDK，也不会为此联网下载或现场编译。
+NSIS 安装器为 x86，因此此 DLL 也是 x86，与应用本体的 x64 架构无冲突。
+
+可提前单独校验：
+
+```powershell
+node scripts/packaging/installer-clock-assets.cjs
+```
+
+修改时钟 C 源码、导出定义、生成脚本或编译参数后，维护者需在已安装 MSVC x86
+工具链和 Windows SDK 的 Windows 电脑上显式重新生成：
+
+```powershell
+node scripts/packaging/installer-clock-assets.cjs --rebuild
+```
+
+重建中间文件保留在 `build/installer-clock/`；编译成功后更新上述 DLL 和清单。
+将两个文件与匹配的源码一起提交或拷贝到离线构建电脑即可，无需复制编译工具链。
+清单按固定仓库相对路径和规范化换行后的源码计算哈希，支持不同磁盘路径及 Git
+换行设置；DLL 缺失、损坏或与源码不匹配会明确失败，不会自动编译。
+旧的 `build/installer-clock/` 编译缓存不能代替这两个随仓库提供的资源。

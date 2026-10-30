@@ -14,6 +14,7 @@ assets belong in `plugins/`; repository design documentation belongs in `docs/`.
 | `python/` | Locked package requirements and embedded-Python `sitecustomize.py` |
 | `mac/` | macOS signing entitlements |
 | `licenses/` | Legal notices embedded in the Windows installer |
+| `installer-clock/win-x86/` | Precompiled native NSIS clock and source-bound verification manifest |
 | `pets/` | Pet sprites and animation metadata |
 | `openclaw/docs/` | OpenClaw runtime documentation and role templates |
 | `package-manager-config/` | Optional environment-specific npm and pip configuration |

@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 1,
+  "fingerprint": "77ec6ec69baee454c506fff52f19eaf6430d548a7cf0b80854294c1a06e5d7c6",
+  "inputs": {
+    "schemaVersion": 1,
+    "target": "win32-ia32",
+    "sources": [
+      {
+        "path": "scripts/packaging/installer-clock.c",
+        "size": 9804,
+        "sha256": "4f1c330ff781a1bfc44cb1e157480510ec06558ce24ff7d1960fd2d6461c0670"
+      },
+      {
+        "path": "scripts/packaging/installer-clock.def",
+        "size": 124,
+        "sha256": "55800f6a326d01b84c5acfc08cf37768b2641733ca52b5444c3a21eb820614ff"
+      },
+      {
+        "path": "scripts/packaging/installer-clock-assets.cjs",
+        "size": 15984,
+        "sha256": "a820cdd1a13039b1f6ea24eeaf530de9a839a5d923d2b77cbfa7d77891ad319e"
+      }
+    ],
+    "compileFlags": [
+      "/nologo",
+      "/c",
+      "/W4",
+      "/WX",
+      "/O1",
+      "/Os",
+      "/GS-",
+      "/Zl",
+      "/utf-8",
+      "/Brepro"
+    ],
+    "linkFlags": [
+      "/NOLOGO",
+      "/DLL",
+      "/NOENTRY",
+      "/NODEFAULTLIB",
+      "/MACHINE:X86",
+      "/DYNAMICBASE",
+      "/NXCOMPAT",
+      "/SAFESEH",
+      "/INCREMENTAL:NO",
+      "/OPT:REF",
+      "/OPT:ICF",
+      "/Brepro"
+    ]
+  },
+  "toolchain": {
+    "compilerVersion": "14.50.35717",
+    "sdkVersion": "10.0.26100.0"
+  },
+  "dll": {
+    "size": 5632,
+    "sha256": "ef4b3685933d5209c44486cf7f06bbe4aba12f2fc1ab651fae6ba5639a636516"
+  }
+}
