@@ -1,6 +1,6 @@
 # 原生 Worktree 与会话接入
 
-应用通过 OpenClaw 的托管接口创建和管理 Git worktree。分支、检出、快照、恢复与清理继续由原生运行时拥有；应用只保存产品会话映射、执行目录和入口偏好，不实现第二套 Git 生命周期。当前锁定运行时为 2026.10.7，未完成的真实 Gateway/模型验收见[现行说明与验证边界](#当前验证边界)。
+应用通过 OpenClaw 的托管接口创建和管理 Git worktree。分支、检出、快照、恢复与清理继续由原生运行时拥有；应用只保存产品会话映射、执行目录和入口偏好，不实现第二套 Git 生命周期。运行时版本以 `package.json.openclaw` 为准，未完成的真实 Gateway/模型验收见[现行说明与验证边界](#验证边界)。
 
 ## 用户入口
 
@@ -31,6 +31,8 @@ Worktree 会话暂不支持复制/分叉：普通消息 fork 不继承检出所�
 
 清单和操作使用 `worktrees.list/restore/remove/gc`，受原生 operator 权限及产品会话引用检查约束。仍被本地会话引用的 worktree 不能在面板直接移除，先处理关联会话。删除会话或取消创建须确认原生删除成功；`worktreePreserved` 或结果未知时保留入口与原因，不直接递归删除目录或分支，不把发送删除请求当成清理完成。
 
+### 清理回执与未知结果
+
 `worktrees.gc` 返回后台清理任务回执，`queued` / `running` 只表示已接收或仍在执行。Main 在同一 Gateway 生命周期内保留任务 ID，只查询同一个原生任务，收到 `completed` 后才刷新清单；`failed` 显示原生失败，观察期间界面保持忙碌。并发窗口共用当前观察，不重复提交清理。
 
 断线、90 秒观察预算耗尽、回执不合法或 Gateway 代次更换时，保留未确认任务与现有清单。再次检查已知任务只使用原 `jobId`，不能重新发送空参数启动替代清理；首次回复丢失、任务已不在原生保留窗口或原 Gateway 已退役时，无法确认原结果，不能报告清理完成。该观察回执只在当前 Main 进程内保留，不构成持久清理账本。
@@ -45,12 +47,10 @@ Worktree 会话暂不支持复制/分叉：普通消息 fork 不继承检出所�
 
 ## 验证边界
 
-行为测试覆盖 `worktreeSession` 的创建回执、未知结果和保留检出，`worktreeSettingsService` 的版本冲突与应用确认，OpenClaw IPC 的引用保护，以及 Runtime Adapter 的继续和权限同步。这些入口不是本轮重新执行通过的声明。
+行为测试覆盖 `worktreeSession` 的创建回执、未知结果和保留检出，`worktreeSettingsService` 的版本冲突与应用确认，OpenClaw IPC 的引用保护，以及 Runtime Adapter 的继续和权限同步。测试入口不代表本次文档整理重新执行通过。
 
-10.6 升级时新增的清理任务测试覆盖 queued/running/completed/failed、原任务查询、跨窗口合并、超时/断线保留、错误任务 ID、过期 Gateway 和旧同步结果拒绝。当时的原生协议用例从严格校验的 v2026.10.6 产物加载实际 maintenance owner，只控制 scheduler 与 `runGc`；它验证回执与提交次数，不执行真实文件回收，也不启动 Gateway。历史结果见[10.6模块接口审计](../../openclaw-upgrades/v2026.10.6/module-api-audit.md)；本版重新执行范围见[10.7验证](../../openclaw-upgrades/v2026.10.7/validation.md)。
+清理任务回归覆盖 queued/running/completed/failed、原任务查询、跨窗口合并、超时/断线保留、错误任务 ID、过期 Gateway 和旧同步结果拒绝。当时的原生协议用例从严格校验的 v2026.10.6 产物加载实际 maintenance owner，只控制 scheduler 与 `runGc`；它验证回执与提交次数，不执行真实文件回收，也不启动 Gateway。历史结果见[10.6模块接口审计](../../openclaw-upgrades/v2026.10.6/module-api-audit.md)；本版重新执行范围见[10.7验证](../../openclaw-upgrades/v2026.10.7/validation.md)。
 
-真实运行验证边界见下节，不将协议测试视为完整产品验收。
-
-## 当前验证边界
+协议测试不代表完整产品验收。
 
 真实模型发起、应用/Gateway 重启后发现与恢复、快照/清理失败和结果未知、中文/空格路径及 macOS/Linux 的完整链路尚未完成实际环境验收。取消或准备失败不得回源目录执行；清理失败不得报告已删除。

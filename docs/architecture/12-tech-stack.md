@@ -1,6 +1,6 @@
 # 工程构建、运行时资源与发布
 
-本文解释构建输入如何变成可运行安装包，以及为什么 Renderer 构建通过不代表 Gateway、原生模块和平台资源都已可用。日常启动、打包与测试命令见[开发指南](../development.md)。
+本文按“锁定输入 → 两套编译 → 运行时组装 → 平台打包 → 验证”的顺序解释构建输入如何变成可运行安装包，以及为什么 Renderer 构建通过不代表 Gateway、原生模块和平台资源都已可用。日常启动、打包与测试命令见[开发指南](../development.md)。
 
 ## 1. 版本与锁定来源
 
@@ -59,13 +59,24 @@ Builder 显式 npmRebuild=false，是因为项目自己准备 SQLite，node-pty 
 
 运行时从 source-lock 固定的 npm 包及完整性开始，验证 pristine contracts，再应用当前补丁。构建 recipe 变化会使冻结快照失效；同版本修改也需重建。历史/部分补丁形态明确拒绝，不做就地修补。
 
-平台脚本执行安装、current 同步、Gateway bundle、官方插件、产品资源、扩展预编译和裁剪。安装阶段同时准备并复制目标平台的完整 Node 分发包到 runtime 的 `node-runtime/`，不借用目标机器的系统 Node，也不在首次启动下载。必须对最终 bundle 验证能力，不能只验证邻近源码仓库。当前补丁职责、依赖和上游删除条件只维护在[版本目录](../../scripts/patches/v2026.10.7/README.md)。
+平台准备按依赖顺序完成：
+
+1. 按 source lock 安装 pristine 输入并同步 `current`。
+2. 构建 Gateway bundle，组装官方插件和产品资源。
+3. 预编译扩展并按目标平台裁剪。
+4. 对最终运行时及配套资源重新验证。
+
+安装阶段同时准备并复制目标平台的完整 Node 分发包到 runtime 的 `node-runtime/`，不借用目标机器的系统 Node，也不在首次启动下载。必须对最终 bundle 验证能力，不能只验证邻近源码仓库。当前补丁职责、依赖和上游删除条件只维护在[版本目录](../../scripts/patches/v2026.10.7/README.md)。
 
 ## 6. 平台资源和安装器
+
+### 工具运行时
 
 Windows 准备 MinGit、便携 Python 和 hashed requirements，依赖装入 bundled-site-packages；Python 工具基线不等于系统装有 LibreOffice/Poppler 等外部程序。本地语音引擎与按需模型分开，不能把运行时 DLL 存在当模型已安装。
 
 MXC 是 Windows 专属 OpenClaw 插件，SDK、执行器与提权 helper 有固定 hash 和签名验证。macOS/Linux 不携带或启用这个后端。
+
+### 安装器
 
 Windows 使用 NSIS，macOS 使用 DMG，Linux 使用 AppImage/deb。NSIS archive 固定 BCJ 过滤以兼容安装时解码器，包括 prepackaged 路径；不要删除这一构建约束后只验证 7za 本机能解压。具体安装故障处理见[安装器说明](../windows-installer.md)。
 

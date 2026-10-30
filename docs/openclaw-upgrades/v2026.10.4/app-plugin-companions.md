@@ -286,7 +286,7 @@ P2，修复后交叉复核未发现其他可操作的 P1/P2：
 
 本节之后是此前补丁方案的历史构建和 review 证据，**不能作为当前公开 SDK 方案的
 验收结论**。当前契约以[应用插件宿主](../../architecture/17-app-plugin-host.md)为准，
-剩余正式安装包和真实模型验收见[验收清单](../../architecture/17-app-plugin-host.md#验证与剩余验收)。
+剩余正式安装包和真实模型验收见[验收清单](../../architecture/17-app-plugin-host.md#尚未完成的生产验证)。
 
 本记录针对独立 Native / Main / Browser 应用插件分支。基线为 `dev` 的
 `4241027a6`，OpenClaw 源码核对 `v2026.10.4` / `383c124cc32`；发布产物使用
@@ -385,13 +385,13 @@ review 期间后来出现的 `dev` 提交 `497c970e9` 涉及新的工具调用�
 `app-plugin-runtime.mjs`（现已删除），
 由原生接入代码显式传入真实状态 owner，纳入构建配方、复制字节和最终产物校验。
 
-| 旧分支能力 | 新版承担方式 |
-| --- | --- |
-| 044：请求所属 Gateway / generation / instance 投影 | 030 暴露窄 SDK 门面；普通模块读取原生 registry、实例和 invocation，不建立第二份注册表 |
-| 045：canonical 请求绑定 | 复用 10.4 原生 handler authority、admitted-input 和 mutation custody，传入实例检查；保留设备/profile 授权和配置过渡拒绝 |
-| 046：实际执行入口字节收据 | 普通模块在真实 Node24 ESM 加载时签发收据；030 接入原生共享加载器和 retained namespace 复用途径 |
-| 旧版四份请求 schema 修改 | 新版只有一份共享 `RequestFrameSchema`，不再修改三个旧 worker/recovery 副本 |
-| 手工重复的等待后检查 | 交由新版已有的 handler lifetime 与提交检查消费同一围栏，保留授权后和真实提交边界的校验 |
+| 旧分支能力                                         | 新版承担方式                                                                                                            |
+| -------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| 044：请求所属 Gateway / generation / instance 投影 | 030 暴露窄 SDK 门面；普通模块读取原生 registry、实例和 invocation，不建立第二份注册表                                   |
+| 045：canonical 请求绑定                            | 复用 10.4 原生 handler authority、admitted-input 和 mutation custody，传入实例检查；保留设备/profile 授权和配置过渡拒绝 |
+| 046：实际执行入口字节收据                          | 普通模块在真实 Node24 ESM 加载时签发收据；030 接入原生共享加载器和 retained namespace 复用途径                          |
+| 旧版四份请求 schema 修改                           | 新版只有一份共享 `RequestFrameSchema`，不再修改三个旧 worker/recovery 副本                                              |
+| 手工重复的等待后检查                               | 交由新版已有的 handler lifetime 与提交检查消费同一围栏，保留授权后和真实提交边界的校验                                  |
 
 这不是通过删除身份检查减少文件数。原生已具备的控制流被复用；仍缺少的能力保留
 窄接入。仅凭插件注册回调、自报版本或磁盘 hash，无法证明当前 Gateway 的实际实例
@@ -423,19 +423,19 @@ Team、Workflow 的业务与界面继续归各自插件。Runtime Services 只�
 
 本轮已完成以下检查，全部使用隔离配置和合成请求：
 
-| 范围 | 结果 |
-| --- | --- |
-| 原始来源 | npm tarball 的 SHA-256 / integrity 与 source lock 一致，13,355 个源码文件逐一核对字节 |
-| 新补丁 | 37 项测试通过，包括真实协议边界、直接/延迟初始化 schema、词法改名及错误借用外层同名变量的拒绝 |
-| SDK 状态共享 | 3 项通过；共享真实执行帧和 class owner，无状态 getter 保留正常打包 |
-| 最终运行时 | 原始源码重新应用补丁、ASAR、Gateway bundle、资源同步、插件预编译和裁剪完成；29 项最终补丁校验通过 |
-| 最终 bundle 拒绝对照 | 10 处原生接线/复制模块/最终 bundle 损坏均被只读校验拒绝，未修改实际文件 |
-| 实际 Gateway | 冷入口、复制 SDK 身份、只读 RPC、显式关闭/重新启用、旧实例和伪造实例拒绝均通过 |
-| 真实副作用边界 | 有效请求及三种等待后有效请求能执行；关闭后的 commit / authorization / caller 检查均拒绝旧请求，新增副作用为零；有效身份仍不能获得缺少的 operator scope |
-| ESM 缓存和换码 | 未登记的预热 namespace 不签发收据；已登记缓存保留首次字节；外部 JavaScript 换码后，新捕获代次具有自己的入口字节收据 |
-| 多 Gateway | 同进程两个 Gateway 的 owner 相互隔离，跨 owner invocation 被拒绝 |
-| Electron | 真实 Electron 内置 Node 24.18.0 启动最终 Gateway bundle，入口字节和只读查询通过 |
-| 应用产物与文档 | 独立插件类型检查、实际 Main/SQLite/BrowserRegistry/Chromium 检查及开发文档示例验证通过；lint 与应用构建通过 |
+| 范围                 | 结果                                                                                                                                                   |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 原始来源             | npm tarball 的 SHA-256 / integrity 与 source lock 一致，13,355 个源码文件逐一核对字节                                                                  |
+| 新补丁               | 37 项测试通过，包括真实协议边界、直接/延迟初始化 schema、词法改名及错误借用外层同名变量的拒绝                                                          |
+| SDK 状态共享         | 3 项通过；共享真实执行帧和 class owner，无状态 getter 保留正常打包                                                                                     |
+| 最终运行时           | 原始源码重新应用补丁、ASAR、Gateway bundle、资源同步、插件预编译和裁剪完成；29 项最终补丁校验通过                                                      |
+| 最终 bundle 拒绝对照 | 10 处原生接线/复制模块/最终 bundle 损坏均被只读校验拒绝，未修改实际文件                                                                                |
+| 实际 Gateway         | 冷入口、复制 SDK 身份、只读 RPC、显式关闭/重新启用、旧实例和伪造实例拒绝均通过                                                                         |
+| 真实副作用边界       | 有效请求及三种等待后有效请求能执行；关闭后的 commit / authorization / caller 检查均拒绝旧请求，新增副作用为零；有效身份仍不能获得缺少的 operator scope |
+| ESM 缓存和换码       | 未登记的预热 namespace 不签发收据；已登记缓存保留首次字节；外部 JavaScript 换码后，新捕获代次具有自己的入口字节收据                                    |
+| 多 Gateway           | 同进程两个 Gateway 的 owner 相互隔离，跨 owner invocation 被拒绝                                                                                       |
+| Electron             | 真实 Electron 内置 Node 24.18.0 启动最终 Gateway bundle，入口字节和只读查询通过                                                                        |
+| 应用产物与文档       | 独立插件类型检查、实际 Main/SQLite/BrowserRegistry/Chromium 检查及开发文档示例验证通过；lint 与应用构建通过                                            |
 
 通用校验工具整理后已再次重建。最终 Gateway bundle 的 SHA-256 为
 `bce5564c63e6b0012bcfbc79969053e4cbcacda4cd147e13d26d51489296ae74`，
@@ -452,7 +452,7 @@ Team、Workflow 的业务与界面继续归各自插件。Runtime Services 只�
 原生 `config-reload.ts`，该设置不跳过显式 plugin lifecycle 的原生应用和权限检查。
 默认监听的预跑观察到配置过渡拒绝和 `config reload superseded`，未自动重试该变更
 请求，也未把这些预跑记为通过。自动监听与显式启停交错、正式安装包、真实模型任务
-及其他平台仍按[应用插件验收清单](../../architecture/17-app-plugin-host.md#验证与剩余验收) 分别验收。
+及其他平台仍按[应用插件验收清单](../../architecture/17-app-plugin-host.md#尚未完成的生产验证) 分别验收。
 
 最终 Electron TypeScript 编译通过。低并发完整回归命令为
 `npm test -- --maxWorkers=2 --testTimeout=20000`：10,697 项通过、1 项失败、70 项跳过，

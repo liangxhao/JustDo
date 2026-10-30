@@ -8,16 +8,16 @@
 
 下表记录清单中锁定的来源，不表示持续跟踪上游最新版本：
 
-| 本地 ID | 上游 | 当前保留内容与适配 |
-| --- | --- | --- |
-| docx | [ivangdavila/word-docx](https://clawhub.ai/ivangdavila/skills/word-docx) 1.0.2 | 恢复完整的样式、编号、分节、修订、字段及兼容性指导；保留本地 ID |
-| pptx | [ivangdavila/powerpoint-pptx](https://clawhub.ai/ivangdavila/skills/powerpoint-pptx) 1.0.1 | 恢复完整的模板、占位符、布局和独立内容／视觉检查指导 |
-| xlsx | [ivangdavila/excel-xlsx](https://clawhub.ai/ivangdavila/skills/excel-xlsx) 1.0.2 | 恢复完整的类型、公式、模板及大文件处理指导；重算以实际可用引擎为准 |
-| data-analysis | [ivangdavila/data-analysis](https://clawhub.ai/ivangdavila/skills/data-analysis) 1.0.2 | 保留分析正文和五份参考文档，移除发布卡片及市场操作 |
-| frontend-design | [anthropics/skills](https://github.com/anthropics/skills/tree/dbd4588f9e1033efb41dad4bef2f7947c8993d44/skills/frontend-design) | 同步该提交原文，补充本地资源约束 |
-| diagram-design | [cathrynlavery/diagram-design](https://github.com/cathrynlavery/diagram-design/tree/7a12007b5a4246894f342a2e52e78facbc62eca3) 2.6 | 同步 45 类图形、模板、导入和导出脚本；适配本地字体、Edge 和项目配置 |
-| pdf | [anthropics/skills](https://github.com/anthropics/skills/tree/dbd4588f9e1033efb41dad4bef2f7947c8993d44/skills/pdf) | 核对后保留既有 Python 适配；核对时七个辅助脚本与上游一致，保留 PDFium 渲染器，再补充 UTF-8 JSON 读写 |
-| skill-creator | [anthropics/skills](https://github.com/anthropics/skills/tree/dbd4588f9e1033efb41dad4bef2f7947c8993d44/skills/skill-creator) | 恢复创建、写作、测试、评分、反馈及迭代正文和评估资源；接入原生 workshop，保留已有校验／打包器 |
+| 本地 ID         | 上游                                                                                                                              | 当前保留内容与适配                                                                                   |
+| --------------- | --------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| docx            | [ivangdavila/word-docx](https://clawhub.ai/ivangdavila/skills/word-docx) 1.0.2                                                    | 恢复完整的样式、编号、分节、修订、字段及兼容性指导；保留本地 ID                                      |
+| pptx            | [ivangdavila/powerpoint-pptx](https://clawhub.ai/ivangdavila/skills/powerpoint-pptx) 1.0.1                                        | 恢复完整的模板、占位符、布局和独立内容／视觉检查指导                                                 |
+| xlsx            | [ivangdavila/excel-xlsx](https://clawhub.ai/ivangdavila/skills/excel-xlsx) 1.0.2                                                  | 恢复完整的类型、公式、模板及大文件处理指导；重算以实际可用引擎为准                                   |
+| data-analysis   | [ivangdavila/data-analysis](https://clawhub.ai/ivangdavila/skills/data-analysis) 1.0.2                                            | 保留分析正文和五份参考文档，移除发布卡片及市场操作                                                   |
+| frontend-design | [anthropics/skills](https://github.com/anthropics/skills/tree/dbd4588f9e1033efb41dad4bef2f7947c8993d44/skills/frontend-design)    | 同步该提交原文，补充本地资源约束                                                                     |
+| diagram-design  | [cathrynlavery/diagram-design](https://github.com/cathrynlavery/diagram-design/tree/7a12007b5a4246894f342a2e52e78facbc62eca3) 2.6 | 同步 45 类图形、模板、导入和导出脚本；适配本地字体、Edge 和项目配置                                  |
+| pdf             | [anthropics/skills](https://github.com/anthropics/skills/tree/dbd4588f9e1033efb41dad4bef2f7947c8993d44/skills/pdf)                | 核对后保留既有 Python 适配；核对时七个辅助脚本与上游一致，保留 PDFium 渲染器，再补充 UTF-8 JSON 读写 |
+| skill-creator   | [anthropics/skills](https://github.com/anthropics/skills/tree/dbd4588f9e1033efb41dad4bef2f7947c8993d44/skills/skill-creator)      | 恢复创建、写作、测试、评分、反馈及迭代正文和评估资源；接入原生 workshop，保留已有校验／打包器        |
 
 ClawHub 四项使用 manifest 锁定的发布版本和归档 SHA-256；变更版本时同步更新追溯信息。
 PDF 的既有许可证保持原样，Office 三项继续使用原有 MIT-0 来源，
@@ -32,6 +32,9 @@ PDF 的既有许可证保持原样，Office 三项继续使用原有 MIT-0 来�
   扩展的 `visualize` 单独负责当前会话中的显示交付：复用已有设计或源码，选择真实
   Widget 或网页卡片并完成显示。相关指引只在 `visualize` 及其参考中维护，不修改
   设计技能来分流请求，也不把可选技能变成内置技能的依赖。
+
+### 运行依赖与离线资源
+
 - Python 和 `openpyxl`、`pypdf`、PyYAML 等基础依赖随包提供，清单以
   `resources/python/requirements.txt` 为准。缺少的 Python 包只走已配置的内网源或离线
   wheel，不添加公网备用源，也不要求用户安装 LibreOffice、Pandoc、Poppler 或 Office。
@@ -43,13 +46,19 @@ PDF 的既有许可证保持原样，Office 三项继续使用原有 MIT-0 来�
   `srcset`／`imagesrcset` 图片候选地址。
 - PNG 导出使用 Playwright 的已安装 Edge 通道，阻断 HTTP(S) 子请求；不下载 Chromium。
   没有相应本地能力时交付 HTML/SVG 并说明限制，不虚报渲染、重算或视觉检查。
+
+### 项目绘图配置与导出
+
 - 绘图保留首次品牌设置、配置管理、schema 补齐、默认恢复及用户验收流程。
   工作副本是项目 `.agent-tasks/diagrams/style-guide.md`，配置库为
   `.agent-tasks/diagrams/profiles/`，项目选择保存在 `.agent-tasks/diagrams/profile`；
   普通生成只读取配置，不创建文件，也不改写安装目录或建立全局个人配置。
 - 中文文件名可直接导出 SVG；非 ASCII 文件名使用稳定摘要区分元素 ID 前缀。
   三种导入格式的示例输入随脚本打包，上游第三方许可名称和归属保持原样。
-- `skill-creator` 按本轮原生 `skill_workshop` 的 schema 和授权修改在线技能，不直接
+
+### Skill 创建与评估
+
+- `skill-creator` 按当前原生 `skill_workshop` 的 schema 和授权修改在线技能，不直接
   改写安装目录。普通 Workshop 修改立即生效、保存版本并可归档／恢复；个人库能力
   仅在原生实际提供时使用，按技能 ID 与 revision 读写，更新携带 expected revision，
   只发布用户请求的变更。个人库的 `proposal_content` 是版本正文，不是待审核提案。
@@ -70,10 +79,14 @@ PDF 的既有许可证保持原样，Office 三项继续使用原有 MIT-0 来�
 manifest 的 `openclaw.skills` 与 `openclaw.custodianSkills` 筛选，当前分别保留
 `coding-agent` 与 `diagnose-gateway`；这两项不计入八个独立技能，也不替代原生可用性判断。
 
+### ACP 路由技能的独立范围
+
 ACPX 扩展另携带 `acp-router`。它只按产品当前配置且启用的外部 Agent 目录和实际
 原生 schema 发送；上游 acpx 别名不代表产品已安装或授权。缺少依赖、连接失败或
 结果未知不会触发下载安装、修改全局命令、启用 Agent、切换执行方式或重放输入。
 明确直连请求也须核实与受管路径相同的命令、认证、权限和生命周期归属。
+
+### 维护检查
 
 检查所有选中技能的 frontmatter、相对引用及 Python 语法，执行
 `tests/scripts/sync-bundled-skills.test.ts`、skill-creator 自带测试及绘图脚本的

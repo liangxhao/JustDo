@@ -13,7 +13,7 @@
 
 | 目录                                                      | 内容                                             | 使用方式                         |
 | --------------------------------------------------------- | ------------------------------------------------ | -------------------------------- |
-| [architecture/](#架构专题)                                | 持续维护的所有权、状态、数据与进程契约           | 修改架构和判断实现边界时阅读     |
+| [architecture/](architecture/README.md)                   | 持续维护的所有权、状态、数据与进程契约           | 修改架构和判断实现边界时阅读     |
 | [features/](features/README.md)                           | 按领域组织的现行功能说明                         | 查用户路径、实现契约和已知限制   |
 | [developer-integration/](developer-integration/README.md) | 登录、外部 Agent、请求头等开发接入接口及分发示例 | 增加集成模块时阅读               |
 | [app-server-api/](app-server-api/README.md)               | 通用 stdio、WebSocket 与 Chrome 扩展协议规范     | 外部客户端对接时阅读             |
@@ -24,27 +24,11 @@
 
 开发操作指南入口：[开发与排障](development.md)、[升级检查清单](upgrade-checklist/README.md)、[运行时补丁](openclaw-runtime-patches.md)、[Windows 安装器](windows-installer.md)及[离线下载](offline-downloads.md)。升级先按功能域核对原生契约与真实验收，不只检查补丁是否能应用。全部离线资源的下载地址、文件名、目的路径与准备命令统一维护在离线下载指南。
 
-## 架构专题
+## 架构与功能的分工
 
-| 文档                                                                   | 主要问题                                     |
-| ---------------------------------------------------------------------- | -------------------------------------------- |
-| [系统架构](architecture/02-architecture.md)                            | 产品宿主、执行运行时与组合根                 |
-| [进程模型](architecture/03-process-model.md)                           | IPC、连接、请求与窗口生命周期                |
-| [Cowork](architecture/04-cowork-system.md)                             | 会话、发送、停止、目标与交互                 |
-| [Agent Engine](architecture/05-agent-engine.md)                        | 配置准入、Gateway、子任务与恢复              |
-| [插件系统](architecture/07-plugin-system.md)                           | Skill、MCP、Hook、Extension 的管理与执行边界 |
-| [定时任务](architecture/08-scheduled-tasks.md)                         | 原生 cron、结果收件箱与删除补偿              |
-| [数据存储](architecture/10-data-storage.md)                            | 产品 schema、原生历史、保留与恢复            |
-| [安全模型](architecture/11-security-model.md)                          | IPC、文件、网络、凭据与剩余风险              |
-| [工程构建与发布](architecture/12-tech-stack.md)                        | 依赖、平台资源、ABI 与打包链路               |
-| [薄前端设计](architecture/13-pure-frontend-design.md)                  | 显示投影与执行事实的区别                     |
-| [所有权判定](architecture/14-openclaw-frontend-boundary.md)            | 新能力应该落在哪一层                         |
-| [聊天渲染](architecture/15-chat-rendering.md)                          | 历史、实时流、工具、媒体与工作区显示         |
-| [市场适配](architecture/16-skill-marketplace-adapter.md)               | Provider contract 与安装事务                 |
-| [Windows 原生沙盒](architecture/17-windows-native-sandbox.md)          | 工具进程隔离与平台限制                       |
-| [Gateway 能力矩阵](architecture/openclaw-gateway-capability-matrix.md) | 原生能力、产品消费与升级核对                 |
+[架构索引](architecture/README.md)按进程、执行、数据、安全、插件和呈现查找跨域契约；[功能索引](features/README.md)按用户任务查找现行流程和限制。这里不再复制两份专题目录。
 
-编号 06 和 09 没有对应主题，不创建占位文档补齐编号。逐补丁能力、上游处置和移除条件只维护在[当前版本补丁总账](../scripts/patches/v2026.10.7/README.md)，版本选择以 `package.json.openclaw.version` 为准。
+判断一个需求是否已经实现，先读对应现行文档并核对注册与消费链路，再读[未实施需求](plans/README.md)。计划中的目标接口、候选架构和历史测量不能替代当前契约；已完成方案应将必要规则整合进现行文档后删除，历史由 Git 追溯。
 
 ## 维护规则
 

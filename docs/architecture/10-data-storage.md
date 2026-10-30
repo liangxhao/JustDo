@@ -2,87 +2,17 @@
 
 桌面可选业务使用独立 Native/Main/Browser 插件包；通用 SDK、可信代码审核、冷包变更和历史清理所有权见 [应用插件宿主](17-app-plugin-host.md)。
 
-本文按 SqliteStore、CoworkStore、CollaborationStore 和 ScheduledTaskResultStore 的当前实现组织。产品数据、原生 transcript、浏览器数据与服务端统计分别拥有独立生命周期，不能用“SQLite 中有数据”概括所有持久状态。
+本文按 Core 的 SqliteStore、CoworkStore、ScheduledTaskResultStore，以及所属插件的领域 Store 组织。产品数据、原生 transcript、浏览器数据与服务端统计分别拥有独立生命周期，不能用“SQLite 中有数据”概括所有持久状态。
 
 ## 1. 存储边界
 
-本地语音扩展模型偏好保存在既有 Main KV 的 `app_config.localSpeechExtensions`：
-`sttMode` / `ttsMode` 决定本地或在线路径；`sttModelId` / `ttsModelId` 和 `ttsVoiceId`
-保存本地选择，`onlineSttModelRef` / `onlineTtsModelRef` / `onlineTtsVoice` 引用模型页目录。
-两种模式保留各自选择，与 `app_config.voice` 的麦克风/朗读模型、音色独立。
-不新增表、旧版兼容或迁移；在线失效不能归一化为本地执行。
-Main 对稀疏补丁校验固定模型目录及合并后模型的有效音色编号，并在同一配置队列中合并，避免两种模型同时
-保存时互相覆盖；原有配置应用失败回滚继续生效。下载文件共用现有模型目录，
-Gateway 只接收生成的命令参数或受管在线配置，不建立第二份下载或模型索引。
-目录变更在同一队列中清理失效模型和音色引用，保留在线模式。端点和密钥由 Main 从当前
-目录解析；工具 STT、工具 TTS 和在线回复朗读分别通过现有受限 SecretRef 文件发布，
-引用绑定端点和密钥版本。原生工具偏好与在线朗读偏好使用受支持的独立路径，由原生
-拥有文件；产品不直接读取、迁移或重写这些偏好。回复朗读原生配置为
-`plugins.entries.runtime-services.config.replySpeech`，独立于工具的 `tts` 配置。
-
-首页 MCP App 文件预览使用 Gateway 创建的原生会话；Main 预留普通产品会话 ID，
-通过既有 canonical key 规则建立原生身份。
-Main 仅在窗口内存中保留请求标识、工作区签名及原生创建回执；产品 `cowork_sessions`、
-消息表和 KV 均不增加预览记录。原生身份与必要元数据仍由 Gateway 保存，Renderer 不读取
-或缓存其 transcript。用户发送首页首条消息时，以该预留 ID 一次性插入普通产品会话行，
-沿用原生 sessionId、视图及模型上下文，并从预览清理所有权移除，不增加列、表或迁移。
-未被采用的预览在切换工作区或窗口销毁后，通过原生删除接口并按创建时的精确
-sessionId/lifecycleRevision 清理自有会话；拒绝或未知结果不扩大清理范围。
-文件内容与插件文档库的所有权不变，见 [MCP Apps](../features/chat/mcp-apps.md)。
-
-内置浏览器的每会话标签页上限沿用 Main KV 的 `app_config.browserTabLimit`，
-默认 20，可设置为 1–50 的整数。旧配置缺失时直接使用默认值，不新增表或迁移；
-Main 与 Renderer 共用数值校验。它只控制新建准入，不持久化网页或回收已有标签。
-
-内置后台页面与侧栏按 `browserPartitionForProfile(profile)` 使用同一 Chromium Session。
-普通会话和定时任务共享该 profile 的 Cookie、localStorage、IndexedDB、HTTP 认证缓存及
-站点 Service Worker；默认、导入和命名 profile 之间仍隔离，也不共享应用外壳或卡片登录。
-不复制凭据或创建后台专属存储。页面仍按会话/精确运行管理，sessionStorage 和页面 JS
-内存仍按标签隔离，与侧栏同 profile 新标签行为相同，并非所有站点都支持跨标签免登录。
-
-任务清理只撤销自身工具与页面许可并销毁自己的 guest，不清 profile 的站点存储/worker，
-不关闭共享连接，不影响侧栏及其他任务。站点 worker 无可证页面归属时沿用 profile 网络
-政策；不能因任务结束推断站点派生请求或已发请求已停止，也不自动重试未知写入。
-
-浏览器数据摘要和手动 Cookie／站点数据、缓存清理继续覆盖既有 profile 清单。
-清理与后台页面创建共用 Main 准入门；后台 profile 正在创建、使用或等待 guest 销毁时，站点数据及缓存
-类别报告既有清理失败，其他所选记录类别可继续。清理门直到所有已发起的 Chromium
-清理结束后才释放，不以首个失败代替其他操作已经停止。
-
-独立 `swarm-workflow` 扩展在 Gateway `stateDir/swarm-workflow/flows.sqlite` 保存流程目标、
-已校验 DAG、阶段结果、修订号、启动意图和原生运行引用。它是插件调度状态，
-不属于产品 SQLite 的消息表，也不复制原生 transcript。执行会话由插件拥有，
-流程与主会话的关联是插件元数据，不写入主会话原生 ownership 或伪造 spawnedBy。
-未知提交和未知最终投递不自动重试；恢复先核对已有运行。
-主会话被删除后身份检查阻止下一次派发，原生工作历史与插件记录不会自动级联清除。
-参见 [Swarm Workflow](../features/workflow/swarm-workflow.md)。
-
-节点派发在既有插件 JSON 元数据中记录本次覆盖的补充条数，用于续跑及提交修正时保持同一输入快照，执行中新增的补充留待下一次任务尝试。只保存的补充说明由既有插件记录提供，每轮续跑重新装配系统上下文，不将临时系统提示当作已写入原生历史的证明。继续消息正文保留本次用户原文，原任务与会话历史仍由原生 transcript 提供；不新增表或消息缓存。
-
-侧栏活动与摘要数量通过插件的 `activity` / `summary` 只读接口从既有 `flows`、`batch_items` 聚合，不 hydrate 完整流程或读取批次结果，不新增表或持久缓存。活动分页携带本次 Store 实例的随机代次和已提交变更版本；跨实例或版本不一致的页不拼接为空闲结论，Main 继续核对原生父 key 的精确产品归属。
-
-会话诊断增加 `cowork_run_diagnostic_events` 和 `cowork_run_diagnostic_coverage`。两表通过产品 run 外键级联删除；前者只存闭合值运行元数据，后者保留采集起点和裁剪计数，不存正文或任意错误文本。每轮普通/关键事件分别限 200/32 条，全局 20,000 条、14 天；coverage 随既有 run 生命周期保留，事件裁剪不会抹掉丢失证据。
-
-停止判断使用原生 lifecycle 的 `executionSettled`、`stopReason`、超时阶段及
-终态回复类别，并可结合临时历史中的最后回复形状；不再采集自定义循环退出分支。
-只有已结算的整轮结束事件用于整轮结果，中途尝试的退出不代表整轮结束。
-没有新增表、消息缓存或历史回填。
-
-查询按已校验会话和 run 关联，复制/fork 不复制诊断表。事件 JSON 可包含闭合系统错误码、有效 HTTP 错误状态及有限非负耗时；原生 `command_output` 结束事件投影为 `command` 类型，保存整数退出码和失败状态，不重复增加工具失败计数。终态还可保留闭合的超时阶段、空回复类别和回复 disposition，不保留 terminalReply 正文。旧记录不回填；诊断表不保存错误原文、工具名称、参数或输出。Renderer 无持久诊断缓存，Main 仅保留最多 8 份、5 分钟的诊断快照。按需通过 `chat.history` 读取原生会话数据库，快照可以包含最多 40 条脱敏失败节选及工具名，每条正文最多 1600 字符，以及最后回复的内容种类布尔值和结束原因（用于识别 thinking-only/空响应）；不保存完整历史、不将节选或回复形状写入 SQLite。诊断不是 OpenClaw transcript 的第二份权威。见[会话诊断](../features/chat/session-diagnostics.md)。
-
-工具事件可额外保留闭合 `operation` 操作类别及 `toolValidationFailed` 布尔标记；后者只从上游固定参数校验摘要精确匹配生成，摘要原文不入库。新增可选字段沿用有界事件 JSON，不新增表或迁移。
-
-事件 JSON 另可保存固定公开失败文案的闭合观察 `runtimeFailure: replay_admission_rejected`，
-不保存该文案或私有版本/anchor。按需历史快照的失败回执可使用同值 `cause`；它仍是
-短期证据，不写入产品诊断表。原生具体抛错点未公开，不通过新增表或历史回填推断。
-
-按需诊断可以只读使用既有运行表的 `root_run_id` / `client_turn_id`，补足实时诊断
-事件过期或尚未记录时的原生身份关联。别名必须重新核对其产品会话／运行归属；
-复制或 fork 造成跨运行重复时，不将该标识授予新的精确诊断关联。这些别名仅作为
-本次采集的私有输入，不回填事件或增加数据库字段。会话绑定或回执在采集期间变化
-时撤回归属证据，显式导出不发布旧结果。40 条失败节选采用关联强度及末端故障优先
-的有界保留；正文日志仅在本地导出内存与 ZIP 中存在，页面只收到导出数量、来源缺口
-和采集时间。详见[会话诊断](../features/chat/session-diagnostics.md)。
+| 存储             | 权威与寿命                      | 应用可保存什么                                  |
+| ---------------- | ------------------------------- | ----------------------------------------------- |
+| 原生会话存储     | Gateway transcript、run 与 cron | 产品索引和无正文回执，不能复制消息              |
+| 产品 SQLite      | Main 连接和领域事务             | 会话元数据、配置、未读、诊断闭合值              |
+| 插件业务存储     | 插件 schema / 独立数据库        | 房间、DAG、预算、持久操作身份                   |
+| Chromium profile | 浏览器 Session                  | Cookie、站点存储和缓存，由 profile 生命周期管理 |
+| 受限凭据文件     | Main 凭据 owner 与 SecretRef    | 受限派生引用，不能进入普通 Renderer 状态        |
 
 ```mermaid
 flowchart LR
@@ -96,50 +26,71 @@ flowchart LR
 
 产品数据库位于 app.getPath('userData') 下，默认 `<appData>/<productName>/justdo.sqlite`。内部文件名稳定，productName 改变时不自动迁移旧品牌目录。Gateway state 和项目目录不是该数据库的子表，备份和删除时需要分别处理。
 
-原生 SQLite 连接退休时的 WAL checkpoint 不等待其他读取快照：仅在 close 回调内临时将 busy timeout 设为 0，并恢复原策略，避免 TRUNCATE 清理占住写锁、耗尽 Agent 会话写入的准入期限。仍有读取者时保留未完成 checkpoint 的事实与 WAL，不删除文件、不补造执行成功或重放未知请求；原生 close、lease 和后续维护继续拥有清理。普通事务及用户显式 checkpoint 的等待策略不变。关闭前先由原生 `beginClose()` 停止新维护任务，异步 `stop()` 等待已经运行的任务退出，再执行 close；不移除该 join。接线和实际 SQLite 并发复现见[运行时补丁 025](../../scripts/patches/v2026.10.7/README.md)。
+## 2. 初始化与兼容规则
+
+### 原生关闭与 WAL
+
+原生 SQLite 连接退休时的 WAL checkpoint 不等待其他读取快照：仅在 close 回调内临时将 busy timeout 设为 0，并恢复原策略，避免 TRUNCATE 清理占住写锁、耗尽 Agent 会话写入的准入期限。仍有读取者时保留未完成 checkpoint 的事实与 WAL，不删除文件、不补造执行成功或重放未知请求；原生 close、lease 和后续维护继续拥有清理。普通事务及用户显式 checkpoint 的等待策略不变。
+
+关闭前先由原生 `beginClose()` 停止新维护任务，异步 `stop()` 等待已经运行的任务退出，再执行 close；不移除该 join。接线和实际 SQLite 并发复现见[运行时补丁 025](../../scripts/patches/v2026.10.7/README.md)。
 
 较早版本的并发复现保留其历史产物范围；当前10.7的重新执行与未验收项见
 [本版验证](../openclaw-upgrades/v2026.10.7/validation.md)，不能只凭接线相同认定已通过。
 
+### 备份和替换的成功证据
+
 关闭未完成或出错时不得产生 clean integrity 回执。备份和更新通过原生验证快照取得已提交 WAL 数据，输出单文件副本；删除及更新替换仍需原生 maintenance owner、排他连接与精确代际。外部读者、外部维护 owner、过期代际或损坏快照必须保留源文件并拒绝操作，不能通过重试或把未完成关闭当作 clean 来放行。相关退出、强杀和新进程恢复回归见[生命周期验证](../../tests/openclaw/runtime/sqlite-retirement-lifecycle.native-smoke.mjs)；进程恢复证据不等同于断电或介质故障验证。
 
+### MCP 配置事务与失败补偿
+
 MCP 配置变更跨越 `mcp_servers` 与原生配置应用，不能用数据库事务包裹异步 Gateway reload。Main 在全局配置队列内串行执行变更并等待应用，阻止其他配置同步在提交前发现旧原生记录；失败时通过 `McpStore.restoreServer` 原样恢复原 ID、启用状态、配置及时间戳，再补偿同步。新增失败删除本次记录；删除成功后才移除市场安装身份。该恢复流程不新增表或迁移。
+
+### 登录资料文件
 
 账号模板不新增 SQLite 表或 Redux slice。LoginUserInfoStore 使用统一路径解析器，在
 `<appData>/<productName>/<directoryName>/<userInfoFileName>` 原子保存 mtoken、账号、工具 Header 值、
 可选显示资料和 Cookie 过期时间；默认与 userData 同目录，隔离开发 userData 下则不移动该文件。
+
 目录名与用户信息文件名由 `src/config/loginStorage.ts` 的 `LOGIN_STORAGE_CONFIG` 分别
 配置，实际名称以构建配置为准；更改后不自动迁移或回退读取旧文件。
 历史迁移及中断恢复均排除 `directoryName` 配置的整个登录目录，保留原位及其中的所有文件。
 Cookie 更新合并当前文件而保留长期 mtoken；账号替换先删除旧文件并完成退出刷新，
-退出只删除用户信息文件，保留目录及其他文件。SDK 派生 JWT 不回写，继续由原有私有凭据快照与 SecretRef 管理。
+退出只删除用户信息文件，保留目录及其他文件。
+
+SDK 派生 JWT 不回写，继续由原有私有凭据快照与 SecretRef 管理。
 账号显示与服务同步状态只在 Main 内存中，重启从文件/SDK 恢复，不持久化原始 SDK 错误或凭据到产品库。
 
+### 已发布 JSONL 历史导入
+
 消息唯一持久权威是 OpenClaw 的原生 SQLite transcript。已发布 JSONL 用户先备份并建立全新产品库；旧缓存中的独有历史转换后交由原生导入，目标不建立 cowork_messages。Renderer 按原生历史恢复，不从 Main 或 Redux 寻找持久正文。见[启动与历史升级](../features/app/startup-and-history-upgrade.md)。
+
+#### 历史状态与身份投影
 
 旧历史导入只恢复 main；其他执行身份及关联记录仅保留在原备份，不映射到 main，
 也不创建长期助手占位。历史 Doctor 显式选择 main，不使用全部 agent 的导入/检查范围。
 所有 main 历史子会话在启动迁移输出中按用户选定的规则统一为 `status: done`（有任一原始成功记录）
 或 `status: failed`（否则，包含无状态、未知、运行中、中断、停止和超时），不会保留待核实状态。
+
 只有旧索引保有终态、精确 `lastRunId`、合法结束时间且没有当前运行 owner 时，才可恢复该真实运行元数据；
 中断、停止和超时的快照按失败匹配。首次导入以公开原生读取器回读验证。
 不从最后一条正文推定成功，不恢复活动执行或旧结果投递；已完成迁移库不自动回填旧终态。
 同一旧规范键/物理会话/main 父关联的全部别名共用上述规则。只有所选结果对应唯一一致的完整
 原生快照时才携带其真实运行 ID/时间；其余只写显示状态，不编造运行身份或结算回执。
+
 该临时处理只在启动迁移模块内，复用现有原生状态展示，不新增 KV、产品表、IPC 或 Renderer 历史字段。
 旧工具调用同样在启动迁移的待导入 JSONL 副本中统一关闭：缺结果和空 Yield 使用原生静态缺失结果补件，
 保留已有输出及错误，不创建可执行调用或整轮结算证据。主文件、子会话、历史侧副本和压缩快照一并处理；
 原备份字节保持不变，后续交由原生 Doctor 导入，不由 Main 改写活动原生数据库。
 
-### 未发布 9.6 数据兼容已撤回
+### 不支持的旧原生 SQLite 代际
 
-9.6 版本未发布。按用户要求，本次 9.8 升级新增的 9.6→9.8 原生 SQLite 兼容迁移已移除，包括应用维护桥接、启动门禁、专项测试和构建资产。当前应用不承诺自动升级该未发布版本的 shared18／agent23 数据。
+当前应用不支持自动迁移未发布的 shared18／agent23 原生数据库，也不包含旧 SQLite 代际桥、独立启动门禁或构建资产。
 
 原生 transcript 与数据库格式仍由 OpenClaw 管理，应用不读取或复制正文到产品表。该撤回仅指未发布的 SQLite→SQLite 兼容，不包含另行授权的已发布 JSONL 历史导入；后者使用当前原生 Doctor 和公开读取器，不添加原生 SQLite 迁移 SQL 或自动删库重建逻辑。
 
 此前合成旧数据迁移演练仅保留为已撤回方案的历史证据，不属于现行能力或可复跑验收项。下文现有产品数据库初始化规则不在本次删除范围内；运行包仍须从 pristine 重建。
 
-## 2. 初始化与兼容规则
+### 产品库初始化
 
 产品设置只从当前 SQLite KV 读取，不再从根目录 `config.json` 导入旧 electron-store 数据。
 新建、迁移和重开数据库均不读取该文件；已有 KV 设置保持原样，不增加导入开关或跳过标记。
@@ -162,6 +113,7 @@ JSONL/SQLite 混合仍拒绝自动替换。
 `openclaw/`、`outbound-header-proxy/`、`developer/` 及 `justdo.sqlite*` 必须归档成功；其余非控制项
 尝试移动，遇到指定占用或权限错误时保留原位继续，新建与恢复事务使用同一规则。
 `logs/` 及根目录的 `install-timing.log`、`install-resource.log` 明确排除，始终留在原位。
+
 非必需项被重新生成而与旧归档重名时，另存 `retired-additions/` 或在占用时保留两处；
 必需项的重名冲突仍拒绝覆盖。完整错误边界由[启动与历史升级](../features/app/startup-and-history-upgrade.md)定义。
 
@@ -169,10 +121,12 @@ JSONL/SQLite 混合仍拒绝自动替换。
 正常启动完成后仅更新 `lastOpenedIdentity`，供后续版本顺序与降级判断使用；
 不把普通打开记录写成新的原生维护或规范校验完成证明，既有 `completedIdentity` 保留。
 未完成事务按版本方向接续同版本修复或向前升级，不以构建指纹不同作为兼容拦截。
+
 保留原事务、备份和恢复阶段；已有目标数据时，当前原生 owner 先只读检查，需要维护时持久记录
 新目标和 `schemaPreparationPending` 后执行自带复验的维护；无需维护时直接记录新目标，不重复扫描。
 未知结果保留标记，同目标重启也复验；早期检查
 不代替初始化、历史恢复完成后的最终准备。Complete 残留目标身份的记录转为正常升级继续确认。
+
 构建身份仍校验本次产物和子进程回执；降级及实际不支持的数据结构仍按所属规则处理，
 细节见[启动与历史升级](../features/app/startup-and-history-upgrade.md)。
 
@@ -201,11 +155,14 @@ certifier，避免校验的提交授权与同步插件加载争用 Gateway 事�
 正式 Renderer 的 HTTP 静态宿主每次启动使用随机端口，不能把持久偏好绑定该 origin。
 `kv['app.renderer-preferences.v1']` 通过既有 store preload 保存具名主题、宠物浮动位置、
 定时任务结果过滤、聊天列表宽度（`shell.session-list-width`），以及尚未提交的 Goal 完成反馈状态。启动先恢复这份快照，再导入 App
-和 Redux slice，确保初始过滤值和主题读取正确。只接受四个固定键与 Goal 草稿命名空间，
+和 Redux slice，确保初始过滤值和主题读取正确。
+
+只接受四个固定键与 Goal 草稿命名空间，
 最多 128 项、单值 64 KiB、总值 512 KiB；超额先淘汰最旧 Goal 草稿，固定偏好保留。
 窗口首屏的只读外观快照由 Main 从既有 `app_config.theme` 和这里的 `justdo-theme-id` 提取，
 通过受限同步 preload 读取提供，每次新文档及 reload 都取最新值；不另存主题副本、不依赖随机
 HTTP origin、不在首次临时窗口提前打开数据库。
+
 正式主界面只水合 Main KV 中的当前偏好，不再从旧 file 页面、当前 HTTP 或开发 origin 的
 localStorage 搬迁数据；Main 尚无记录时使用当前默认值。初始 Main 读取失败时，后续保存
 先恢复已知基线，再合并明确变化及删除，禁止用空快照覆盖未读数据。
@@ -216,7 +173,9 @@ Agent 运行设置复用 `cowork_config` 中的 `agentRuntimeSettings:v1` JSON �
 外部 Agent 设置复用 `externalAgentSettings:v1`。已有对象必须通过完整当前字段及数值范围校验，
 不再为早期 v1 记录逐字段补默认值，也不把退役的 MCP Apps `null` 偏好转换为布尔值。
 完全无记录时创建当前默认对象；损坏 JSON 或整对象校验失败时整体恢复默认，不混合保留
-旧字段与新默认。写入及 IPC 仍校验完整对象，界面局部编辑先合并完整草稿再提交。
+旧字段与新默认。
+
+写入及 IPC 仍校验完整对象，界面局部编辑先合并完整草稿再提交。
 外部 Agent 目录变化继续按当前 build catalog 补充新增 Agent 的安全默认并丢弃已移除的 ID，
 不因此放宽顶层执行及 bridge 偏好的必填校验。
 
@@ -224,11 +183,14 @@ Code Mode 为运行设置中的 `codeMode: { mode: "off" | "auto" | "on" }`；
 当前完整记录中的显式 `auto` 值保留，界面暂不允许新选自动模式。
 保存、配置同步和失败回滚沿用现有运行设置 IPC；
 产品不新增数据表，也不持久化 JavaScript VM、工具中间结果或等待快照。
+
 Code Mode 的显式 `store/load` JSON 值由原生会话 transcript 的
 `openclaw.code-mode-store` custom entries 保存和恢复；完成的 cell 才提交，失败或
 取消的未完成 cell 丢弃缓冲。Main/Redux 不复制这些值。覆盖/删除仅改变当前投影，
 旧值仍可能存在原生历史和导出中；与产品偏好、普通 VM 变量及当轮 `results.save`
-引用的生命周期分别管理。原生行为与隔离验证入口见[引擎](05-agent-engine.md)。
+引用的生命周期分别管理。
+
+原生行为与隔离验证入口见[引擎](05-agent-engine.md)。
 
 SqliteStore.create 打开当前目标库、设置 PRAGMA，使用完整当前 `CREATE TABLE IF NOT EXISTS`
 和索引定义初始化产品表，并调用领域 schema 初始化器。原生会话绑定、执行身份、助手删除
@@ -251,10 +213,12 @@ SqliteStore.create 打开当前目标库、设置 PRAGMA，使用完整当前 `C
 历史升级直接建立当前新表并插入选定元数据，不修改旧产品库。
 历史导入保留会话置顶布尔值，以及自定义分组名称和已准入会话的成员关系；空组及同名不同组仍保留。
 旧分组 ID 仅作关联键，颜色与排序使用新库默认值，分组创建时间使用本次恢复时间。
+
 旧字段/分组表缺失时采用未置顶、未分组默认值，悬空分组引用不创建虚构组。
 历史标题、置顶、分组及映射的导入事务临时使用 `synchronous=FULL`，先插组再插会话，提交并确认完整 checkpoint 后才允许阶段记录落盘，
 零会话也必须确认前序 schema 和默认值已落盘，
 然后恢复原 PRAGMA。检查阶段恢复只读取不可变绑定，不重写已确认的用户元数据，也不重建用户已删除的组。
+
 `history_session_bindings.defaults_applied` 记录历史会话是否已采用当前新会话默认配置。
 该列在当前表中默认置 1；新导入行显式置 0，首次打开/运行准备时在同一产品事务内采用
 当前默认权限、清空旧模型覆盖并置 1，此后保留用户主动选择。工作目录为空或不存在
@@ -266,10 +230,11 @@ Plan 的 segments 表，也不探测并销毁旧 handoff 表。旧环境由启�
 
 ## 3. 核心产品表全表清单
 
-产品表由 SqliteStore、会话诊断初始化器及 Agent Team 的协作/验收/群聊/待发初始化器共同建立。下表列出现行产品表；插件扩展复用 Main 提供的连接，schema 实现在各自 owning domain，不从旧版固定表数推断完整性。独立 Swarm 流程库、浏览器数据库和原生 transcript 不属于此表。
+产品表由 SqliteStore、会话诊断初始化器、App 插件资源保护账本及已安装插件的 schema 初始化器共同建立。下表列出现行产品表；插件扩展复用 Main 提供的连接，schema 实现在各自 owning domain，不从旧版固定表数推断完整性。独立 Swarm 流程库、浏览器数据库和原生 transcript 不属于此表。
 
 | 表                                   | 责任与关键身份                                           |
 | ------------------------------------ | -------------------------------------------------------- |
+| `app_plugin_resources`               | owner/resource 唯一，绑定产物 hash 的通用删除保护        |
 | `kv`                                 | JSON 设置与内部元数据，key 主键                          |
 | `cowork_sessions`                    | 产品会话索引，id 主键                                    |
 | `history_session_bindings`           | 历史产品会话、原生身份、原始外部映射及恢复事务；不存正文 |
@@ -318,15 +283,20 @@ Plan 的 segments 表，也不探测并销毁旧 handoff 表。旧环境由启�
 CLI 执行在同一映射行增加可空的 `execution_run_id`、`native_session_id`、
 `lifecycle_revision` 和 `execution_state`。旧库通过增列保持原映射及数据；没有正文、
 工具结果或原生 transcript 副本。开始发送前先保存 run 意图，原生准备后保存精确
-session key、SID 和 incarnation，再安装会话工具／审批归属。执行状态按
+session key、SID 和 incarnation，再安装会话工具／审批归属。
+
+执行状态按
 `preparing → running → settled` 推进；传输中断或无法归属的原生 continuation
 保留为 `unknown`，映射的显示状态仍为 running，继续占用会话。应用重启不把外部会话的
 running／unknown 推断为已取消，也不会自动重发；再次执行明确拒绝并保留诊断身份。
+
 已安装 ACP 会话工具或审批 owner 时，Gateway 连接替换也进入 unknown，不自动转移
 原连接的资源所有权；保留取消信号，后续 EOF／关闭仍可请求停止精确 run，停止 ACK
 本身不会清除 unknown 或释放持久执行占用。
 缺失原生 authority 或精确回执的核对窗口为 30 秒，单次读调用也受同一窗口限制；
-超窗返回 unknown，而不推断失败或取消。精确 pending／running 回执或同 SID／revision
+超窗返回 unknown，而不推断失败或取消。
+
+精确 pending／running 回执或同 SID／revision
 的 `activeRunIds` 仍包含当前 run 时刷新窗口，不为正常长任务设置总时限。调用方取消只
 撤销无界 `agent` RPC 等待并请求停止精确 run，随后仍须核对原生结算证据。
 
@@ -373,7 +343,9 @@ forked_from_* 保存原生分支来源，源会话删除时引用置空并保留
 `cowork_config`，完整准备成功后清理。标记按存在性关闭准入，不解析内容授予权限；
 详情与列表均投影 `branchCreationPending`。创建结果不明或后续准备失败时保留同一
 目标，标为 error 供检查/删除；重启、状态刷新、模型/Plan 更改及普通 prepare 均不能
-把它恢复为空会话。仅创建 handler 使用 Main 内部 typed 选项完成其原请求的准备。
+把它恢复为空会话。
+
+仅创建 handler 使用 Main 内部 typed 选项完成其原请求的准备。
 只有收到成功或明确拒绝响应、并确认原生 `session:null` 才撤销本地记录；未知请求的
 暂时不存在不足以排除迟到提交。产品删除与隔离标记清理在同一 SQLite 事务中完成。
 
@@ -381,15 +353,89 @@ forked_from_* 保存原生分支来源，源会话删除时引用置空并保留
 
 外部 session 另存来源、原生 key、首次绑定的 agent/cwd 和运行状态。删除产品会话的 trigger 写外部 tombstone；外部客户端再次同步不能复活用户已删记录。
 
+### 会话目录与按需摘要查询
+
+CoworkStore.listSessionDirectory 批量关联产品会话、外部来源和历史绑定键，返回不含标题、正文或完整历史绑定的轻量元数据；readSessionSummaries 按有界 ID 集合查询摘要，listSessionSearchSummaries 仅在打开搜索时读取完整简单摘要。它们复用产品库及现有主键，不新增表或复制 OpenClaw transcript。历史绑定与外部来源使用批量 JOIN，取消列表读取中的逐条查询；临时 holding 身份在目录与摘要的同一投影中排除。
+
+Renderer 持有完整目录和一个按需摘要实体集合。目录刷新才能裁剪失效会话的未读或展示资源；部分摘要响应不得复活已删除项。读取期间的活动、置顶及归组变化以当前目录为准，读取期间成功完成的重命名保留当前标题。单条完整会话详情保留 groupId，防止搜索或通知打开会话时丢失手动归组。
+
+首条发送的临时会话只属于当前聊天状态，不进入完整目录、分组计数或摘要查询；确认创建后仅接纳真实产品会话。选择尚未加载摘要的会话时，详情响应也须保留完整目录中较新的活动时间。搜索范围按去重后的会话 ID 集合判定，后台活动仅改变目录排序时保留既有搜索快照、正文命中及已加载页。
+
+### 诊断元数据与临时证据
+
+会话诊断增加 `cowork_run_diagnostic_events` 和 `cowork_run_diagnostic_coverage`。两表通过产品 run 外键级联删除；前者只存闭合值运行元数据，后者保留采集起点和裁剪计数，不存正文或任意错误文本。每轮普通/关键事件分别限 200/32 条，全局 20,000 条、14 天；coverage 随既有 run 生命周期保留，事件裁剪不会抹掉丢失证据。
+
+停止判断使用原生 lifecycle 的 `executionSettled`、`stopReason`、超时阶段及
+终态回复类别，并可结合临时历史中的最后回复形状；不再采集自定义循环退出分支。
+只有已结算的整轮结束事件用于整轮结果，中途尝试的退出不代表整轮结束。
+没有新增表、消息缓存或历史回填。
+
+查询按已校验会话和 run 关联，复制/fork 不复制诊断表。事件 JSON 可包含闭合系统错误码、有效 HTTP 错误状态及有限非负耗时；原生 `command_output` 结束事件投影为 `command` 类型，保存整数退出码和失败状态，不重复增加工具失败计数。终态还可保留闭合的超时阶段、空回复类别和回复 disposition，不保留 terminalReply 正文。旧记录不回填；诊断表不保存错误原文、工具名称、参数或输出。
+
+Renderer 无持久诊断缓存，Main 仅保留最多 8 份、5 分钟的诊断快照。按需通过 `chat.history` 读取原生会话数据库，快照可以包含最多 40 条脱敏失败节选及工具名，每条正文最多 1600 字符，以及最后回复的内容种类布尔值和结束原因（用于识别 thinking-only/空响应）；不保存完整历史、不将节选或回复形状写入 SQLite。诊断不是 OpenClaw transcript 的第二份权威。
+
+见[会话诊断](../features/chat/session-diagnostics.md)。
+
+工具事件可额外保留闭合 `operation` 操作类别及 `toolValidationFailed` 布尔标记；后者只从上游固定参数校验摘要精确匹配生成，摘要原文不入库。新增可选字段沿用有界事件 JSON，不新增表或迁移。
+
+事件 JSON 另可保存固定公开失败文案的闭合观察 `runtimeFailure: replay_admission_rejected`，
+不保存该文案或私有版本/anchor。按需历史快照的失败回执可使用同值 `cause`；它仍是
+短期证据，不写入产品诊断表。原生具体抛错点未公开，不通过新增表或历史回填推断。
+
+按需诊断可以只读使用既有运行表的 `root_run_id` / `client_turn_id`，补足实时诊断
+事件过期或尚未记录时的原生身份关联。别名必须重新核对其产品会话／运行归属；
+复制或 fork 造成跨运行重复时，不将该标识授予新的精确诊断关联。这些别名仅作为
+本次采集的私有输入，不回填事件或增加数据库字段。会话绑定或回执在采集期间变化
+时撤回归属证据，显式导出不发布旧结果。40 条失败节选采用关联强度及末端故障优先
+的有界保留；正文日志仅在本地导出内存与 ZIP 中存在，页面只收到导出数量、来源缺口
+和采集时间。详见[会话诊断](../features/chat/session-diagnostics.md)。
+
+### 首页预览会话的采用与清理
+
+首页 MCP App 文件预览使用 Gateway 创建的原生会话；Main 预留普通产品会话 ID，
+通过既有 canonical key 规则建立原生身份。
+Main 仅在窗口内存中保留请求标识、工作区签名及原生创建回执；产品 `cowork_sessions`、
+消息表和 KV 均不增加预览记录。原生身份与必要元数据仍由 Gateway 保存，Renderer 不读取
+或缓存其 transcript。
+
+用户发送首页首条消息时，以该预留 ID 一次性插入普通产品会话行，
+沿用原生 sessionId、视图及模型上下文，并从预览清理所有权移除，不增加列、表或迁移。
+未被采用的预览在切换工作区或窗口销毁后，通过原生删除接口并按创建时的精确
+sessionId/lifecycleRevision 清理自有会话；拒绝或未知结果不扩大清理范围。
+文件内容与插件文档库的所有权不变，见 [MCP Apps](../features/chat/mcp-apps.md)。
+
 ## 5. Plan 与 Goal
 
 Plan handoff 保存创建时 workspace root、相对路径、SHA-256、字节长度、原生身份与阶段时间。状态为 presented → dispatching → admitted → resolved，失败用 failed；每 session 只允许一个 presented/dispatching/admitted handoff。
 
 计划文件发布、SQLite 写入和 Gateway 准入跨三个系统。批准前与实施注入前复核文件身份，不能根据后改 cwd 重定位文件；原生接收后记录 admitted，避免恢复时把已发送实施当成未发送。
 
-Goal 内容、预算、六种状态和已接纳的自动续跑累计次数由原生 session 持有。原生私有 `goalContinuationTerminal` 只记录精确整轮结算证据，`goalContinuationAccepted` 只保留最后接纳回执；后者与 `goal.continuationTurns` 在同一事务提交，不保存提示或消息正文。`sessions.describe` 显式投影这些事实，缺失证据不推断结算；当前原生回交阻塞由最终准入返回结构化拒绝原因。`cowork_config` 的 `goalExecution:<sessionId>` 只保存 Main 阶段及原生次数投影等产品快照。读取校验 sessionId 和 phase，坏值不能触发自动运行；不从产品快照恢复一套计数或交接权威。usage_limited/budget_limited 保留原生语义，不归一化为 blocked。
+Goal 内容、预算、六种状态和已接纳的自动续跑累计次数由原生 session 持有。原生私有 `goalContinuationTerminal` 只记录精确整轮结算证据，`goalContinuationAccepted` 只保留最后接纳回执；后者与 `goal.continuationTurns` 在同一事务提交，不保存提示或消息正文。`sessions.describe` 显式投影这些事实，缺失证据不推断结算；当前原生回交阻塞由最终准入返回结构化拒绝原因。
 
-## 6. 配置与凭据不等于全库加密
+`cowork_config` 的 `goalExecution:<sessionId>` 只保存 Main 阶段及原生次数投影等产品快照。读取校验 sessionId 和 phase，坏值不能触发自动运行；不从产品快照恢复一套计数或交接权威。usage_limited/budget_limited 保留原生语义，不归一化为 blocked。
+
+## 6. 配置与凭据
+
+### 语音配置与原生偏好
+
+本地语音扩展模型偏好保存在既有 Main KV 的 `app_config.localSpeechExtensions`：
+`sttMode` / `ttsMode` 决定本地或在线路径；`sttModelId` / `ttsModelId` 和 `ttsVoiceId`
+保存本地选择，`onlineSttModelRef` / `onlineTtsModelRef` / `onlineTtsVoice` 引用模型页目录。
+
+两种模式保留各自选择，与 `app_config.voice` 的麦克风/朗读模型、音色独立。
+不新增表、旧版兼容或迁移；在线失效不能归一化为本地执行。
+Main 对稀疏补丁校验固定模型目录及合并后模型的有效音色编号，并在同一配置队列中合并，避免两种模型同时
+保存时互相覆盖；原有配置应用失败回滚继续生效。下载文件共用现有模型目录，
+Gateway 只接收生成的命令参数或受管在线配置，不建立第二份下载或模型索引。
+目录变更在同一队列中清理失效模型和音色引用，保留在线模式。
+
+端点和密钥由 Main 从当前
+目录解析；工具 STT、工具 TTS 和在线回复朗读分别通过现有受限 SecretRef 文件发布，
+引用绑定端点和密钥版本。原生工具偏好与在线朗读偏好使用受支持的独立路径，由原生
+拥有文件；产品不直接读取、迁移或重写这些偏好。回复朗读原生配置为
+`plugins.entries.runtime-services.config.replySpeech`，独立于工具的 `tts` 配置。
+
+### 凭据的保护范围
 
 kv.app_config 是应用配置来源。当前 appConfigCredentials 是纯配置规范化：读写时清空
 builtin provider 的 apiKey，以及选中 builtin 时或与 builtin key 相同的 API 快照 key，
@@ -397,13 +443,17 @@ builtin provider 的 apiKey，以及选中 builtin 时或与 builtin key 相同�
 不解密早期 OS 密文，也不依赖 safeStorage。开库不再扫描、转换或截断 WAL 来清理旧凭据；
 旧环境按启动迁移的归档和恢复范围处理。
 
-因此不能宣称数据库已全库加密，也不能宣称所有自定义 key 都使用 safeStorage。内置模型的新访问凭据不保存在 SQLite，而是短期 JWT 的受限派生快照，原生使用 exec SecretRef；X-User-Account 不再投影到内置 provider 配置或 SecretRef 解析输出，Gateway 请求继续通过既有出站代理取得该身份头。私有快照仍保留已验证账号和到期时间。自定义 provider secret file 由产品配置派生，采用文件权限保护。详情见[认证](../features/integrations/authentication-builtin-model-lifecycle.md)和[安全模型](11-security-model.md)。
+因此不能宣称数据库已全库加密，也不能宣称所有自定义 key 都使用 safeStorage。内置模型的新访问凭据不保存在 SQLite，而是短期 JWT 的受限派生快照，原生使用 exec SecretRef；X-User-Account 不再投影到内置 provider 配置或 SecretRef 解析输出，Gateway 请求继续通过既有出站代理取得该身份头。私有快照仍保留已验证账号和到期时间。自定义 provider secret file 由产品配置派生，采用文件权限保护。
+
+详情见[认证](../features/integrations/authentication-builtin-model-lifecycle.md)和[安全模型](11-security-model.md)。
 
 内置模型换证的 deviceId 由 Main 公共网卡模块按调用时状态读取，使用去冒号的大写 MAC，不进入产品 SQLite，也不保存或读取 model-device.json。登录接入复用同一模块；没有可用 MAC 时明确失败，不生成 UUID 或其他替代标识。MAC 不是凭据或设备持有证明。
 
 其他持久键包括更新偏好、结果 baseline/catch-up、市场安装身份与助手创建摘要。key prefix 是长期数据接口；改名要有明确迁移，不能让新旧模块各写一套。
 
 ## 7. 助手与协作
+
+`cowork_config.allowMainAgentSwitch` 保存会话助手选择开关，缺失时为 `false`。关闭后新会话选择回到 main，已有 `cowork_sessions.agent_id` 和原生历史不变；该配置不需要 schema 迁移。
 
 agents 的 model 为空表示继承；main 不以遗留档案 model 作为用户会话默认。角色文件归原生 agents.files，旧 system_prompt/identity 列不作为另一套编辑 backing store。
 
@@ -425,68 +475,63 @@ agents 的 model 为空表示继承；main 不以遗留档案 model 作为用户
 
 ## 9. 浏览器与服务端数据
 
+### Profile 共享和清理边界
+
+内置浏览器的每会话标签页上限沿用 Main KV 的 `app_config.browserTabLimit`，
+默认 20，可设置为 1–50 的整数。旧配置缺失时直接使用默认值，不新增表或迁移；
+Main 与 Renderer 共用数值校验。它只控制新建准入，不持久化网页或回收已有标签。
+
+内置后台页面与侧栏按 `browserPartitionForProfile(profile)` 使用同一 Chromium Session。
+普通会话和定时任务共享该 profile 的 Cookie、localStorage、IndexedDB、HTTP 认证缓存及
+站点 Service Worker；默认、导入和命名 profile 之间仍隔离，也不共享应用外壳或卡片登录。
+不复制凭据或创建后台专属存储。页面仍按会话/精确运行管理，sessionStorage 和页面 JS
+内存仍按标签隔离，与侧栏同 profile 新标签行为相同，并非所有站点都支持跨标签免登录。
+
+任务清理只撤销自身工具与页面许可并销毁自己的 guest，不清 profile 的站点存储/worker，
+不关闭共享连接，不影响侧栏及其他任务。站点 worker 无可证页面归属时沿用 profile 网络
+政策；不能因任务结束推断站点派生请求或已发请求已停止，也不自动重试未知写入。
+
+浏览器数据摘要和手动 Cookie／站点数据、缓存清理继续覆盖既有 profile 清单。
+清理与后台页面创建共用 Main 准入门；后台 profile 正在创建、使用或等待 guest 销毁时，站点数据及缓存
+类别报告既有清理失败，其他所选记录类别可继续。清理门直到所有已发起的 Chromium
+清理结束后才释放，不以首个失败代替其他操作已经停止。
+
+### 浏览器索引与站点图标
+
 browser-import.sqlite 独立保存导入历史、safeStorage 加密密码、下载记录和命名 profile；浏览器 Cookie/storage/cache 在 Chromium partition。Renderer 不获取密码密文或下载真实路径，打开文件按记录 ID 经 Main 验证。
 
 `imported_history.url` 同时记录 HTTP(S) 网页与浏览器实际访问的原生 `file://` 地址，保留文件名转义及非敏感 query/hash；本地记录同样支持检索、访问计数与删除。历史地址准入与网络图标地址准入分开，允许本地访问记录不授予 Main 任意本地图片读取。列表过滤旧预览服务的精确临时 token URL 形态，不删除底层旧行、不猜测 token 对应的原文件路径，也不排除普通 localhost 开发站点。表结构保持不变，重新访问本地文件后产生实际文件地址的记录。
 
-`imported_history.favicon_url` 保存内置浏览器声明的 HTTP(S) 图标 URL，沿用历史 URL 的凭据移除与敏感参数脱敏；`favicon_data_url` 保存对应浏览器 session 已加载成功的受限图片，供最近访问直接复用。旧数据库只读查询可返回无图标或图片的记录，首次写入时补列并保留历史。图标和图片可在页面加载结束前或后到达，Main 单独更新，不增加访问次数或改动访问时间；缺失图标的再次访问保留已有图标和图片。历史列表不批量携带图片正文；按已有页面 URL 的专用 IPC 单独读取，缺图记录在默认浏览器 partition 按浏览器网络设置补取声明图标及网站 favicon，并保存结果。接口不接受任意图标 URL，不为不存在或读取中已删除的历史记录创建条目。清理历史时图片随记录删除；清理缓存按访问时间清空图片列，保留访问记录和图标来源地址。无独立图标索引或缓存表。
+`imported_history.favicon_url` 保存内置浏览器声明的 HTTP(S) 图标 URL，沿用历史 URL 的凭据移除与敏感参数脱敏；`favicon_data_url` 保存对应浏览器 session 已加载成功的受限图片，供最近访问直接复用。旧数据库只读查询可返回无图标或图片的记录，首次写入时补列并保留历史。图标和图片可在页面加载结束前或后到达，Main 单独更新，不增加访问次数或改动访问时间；缺失图标的再次访问保留已有图标和图片。
+
+历史列表不批量携带图片正文；按已有页面 URL 的专用 IPC 单独读取，缺图记录在默认浏览器 partition 按浏览器网络设置补取声明图标及网站 favicon，并保存结果。接口不接受任意图标 URL，不为不存在或读取中已删除的历史记录创建条目。清理历史时图片随记录删除；清理缓存按访问时间清空图片列，保留访问记录和图标来源地址。无独立图标索引或缓存表。
+
+### 清理与迟到回调
 
 历史删除或图标缓存清理同时取消清理前开始的图片读取，并使已取得但尚未写回的图片失效，避免清理后被旧回调恢复。旧历史补取完成时比较来源和图片快照，保留并优先返回 native 浏览期间更新的图片，不覆盖新来源。
 
 按时间清理历史记录与清空 Chromium 存储的能力不同，后者可能全量清除，UI 必须说明。删除下载记录不等于删除磁盘文件。
 
+### 远端活动记录
+
 LiteLLM 活动记录是服务端 EndUser metadata，不属于本地产品表。客户端开关控制上报，JWT 负责身份校验；未收到活动不能证明用户没启动。服务端部署与字段保留见[认证专题](../features/integrations/authentication-builtin-model-lifecycle.md)。
 
-## 10. 备份、修复与变更验收
+## 10. 插件持久化
 
-### 会话冷归档
+### Workflow 独立流程库
 
-设置 → 统计与存储 → 会话存储直接查询 OpenClaw `sessions.storage.status`，按 Agent 展示数据库、WAL、外部冷归档字节数与冷热 transcript 数量。合计只累加 `databaseBytes + walBytes + archiveBytes`；`embeddedArchiveBytes` 已包含在数据库大小内，不再累加。该统计不涵盖浏览器缓存、项目、附件文件，也不等于产品会话列表数量。
+独立 `swarm-workflow` 扩展在 Gateway `stateDir/swarm-workflow/flows.sqlite` 保存流程目标、
+已校验 DAG、阶段结果、修订号、启动意图和原生运行引用。它是插件调度状态，
+不属于产品 SQLite 的消息表，也不复制原生 transcript。执行会话由插件拥有，
+流程与主会话的关联是插件元数据，不写入主会话原生 ownership 或伪造 spawnedBy。
+未知提交和未知最终投递不自动重试；恢复先核对已有运行。
 
-```mermaid
-flowchart LR
-  Settings[会话存储设置] --> IPC[Main 会话存储服务]
-  IPC --> Status[sessions.storage.status / run]
-  IPC --> Config[config.get / config.patch + baseHash]
-  Config --> NativePolicy[原生 coldStorage 策略]
-  Status --> NativeStore[原生 SQLite 与冷归档文件]
-  Chat[Renderer 历史读取] --> History[chat.startup / chat.history]
-  History --> Restore[原生校验与恢复]
-  Restore --> NativeStore
-```
+主会话被删除后身份检查阻止下一次派发，原生工作历史与插件记录不会自动级联清除。
+参见 [Swarm Workflow](../features/workflow/swarm-workflow.md)。
 
-`session.maintenance.coldStorage.enabled / afterDays` 由原生配置持久化，缺省展示关闭、30 天。归档设置单独保存，不写入产品运行时设置或新增 SQLite 表；普通启动、模型配置和最小配置同步保留已有 `coldStorage` 与非产品拥有的 maintenance 字段。保存携带用户读取到的配置 hash，冲突或响应不确定时重新读取，不自动重放写入。`config.get` 必须返回有效快照，且 `configRevisionHash` 与 `appliedConfigHash` 一致，才把策略视为已生效；诊断快照、损坏字段和缺少生效版本不降级为默认策略。维护状态逐字段投影，原生错误仅转换为错误码，不向 Renderer 透传内部诊断或数据库路径。
+节点派发在既有插件 JSON 元数据中记录本次覆盖的补充条数，用于续跑及提交修正时保持同一输入快照，执行中新增的补充留待下一次任务尝试。只保存的补充说明由既有插件记录提供，每轮续跑重新装配系统上下文，不将临时系统提示当作已写入原生历史的证明。继续消息正文保留本次用户原文，原任务与会话历史仍由原生 transcript 提供；不新增表或消息缓存。
 
-`sessions.storage.run({})` 是所有配置存储范围的一轮后台维护，不支持单会话、单助手参数，且要求原生归档开关已启用。结果返回不等于归档完成，页面按维护状态展示本轮数量和错误。关闭页面只释放轮询，不取消原生任务；维护记录仅反映当前 Gateway 生命周期。
-
-压缩、索引、活跃任务保护和恢复全部由 OpenClaw 管理。应用不直接改写原生数据库，也不更改 `cowork_sessions`、分组或助手历史归属。冷归档不是隐藏、删除或永久保留；既有 `pruneAfter: 365d`、`maxEntries: 500` 清理策略仍有效，本功能不修改它们。原生全文搜索会报告其可见冷历史范围，但不保证搜索归档正文，也不为搜索主动恢复全部历史。
-
-聊天导出仍是当前已加载快照，不能充当全会话备份；历史读取失败或未完成时禁止导出。仅复制 `justdo.sqlite` 无法恢复原生历史，完整备份还需包含原生数据库和关联冷归档文件，并按需求包含角色文件、项目及附件。在线备份应使用原生快照或正确的 SQLite 备份流程，不能遗漏 WAL。归档文件引用存在不代表附件实体已被备份。
-
-技能提炼提案及其草稿、支持文件、状态和 revisionHash 全部由 OpenClaw Workshop 持久化。
-应用不新增提案表或历史正文缓存，也不另建学习会话。用户在当前聊天发起原生 `/learn`，
-执行内容仍由该原生会话拥有；提案弹窗仅持有 main 的页面级快照，重启或重进页面通过
-skills.proposals.* 恢复。审核写入绑定 proposalId 与 expectedRevisionHash，不改变全局学习策略。
-
-正常备份先退出应用再复制产品数据；在线备份使用 SQLite backup/checkpoint 机制，不能只复制主文件忽略 WAL。原生 transcript、角色文件、模型派生凭据和项目文件要按需求另行纳入，不能把整套数据默认作为 issue 附件。
-
-修改产品 schema 时验证新库一次完整建成、当前完整库重开后数据与约束保留、旧消息缓存
-拒开库时原件不变，以及坏 JSON、部分操作中断和重试。旧中间 schema 的原地补列不再是
-验收目标；已发布历史的备份与导入继续按独立启动迁移契约验证。同步事务内不等待网络；
-写入前确定唯一键与查询索引，状态迁移使用 expected-state 约束。重点测试位于 sqliteStore、
-coworkStore、collaborationStore 与 scheduledTaskResultStore 旁。
-
-## 群组讨论元数据
-
-新增 team_discussion_rooms（固定成员映射、cwd、只读/权限、revision、generation、状态及来源任务）、team_discussion_runs（requestId / fingerprint / active slot / 状态）、team_discussion_executions（discussionId、成员、精确 sessionKey / sessionId / lifecycleRevision / runId / outcome）、team_discussion_task_links 和 team_discussion_deleted_rooms。只有房间元数据，不存正文。部分删除记录在成员元数据，compare-and-delete 成功后逐一标记；删除墓碑阻止复用旧 roomId。原生扩展 stateDir 的 discussion-receipts 保存无正文 admission / close receipt；消息与公开 channel-final mirror 均属于 OpenClaw native transcript。
-
-详见 [Agent Team 现行契约](../features/assistants/agent-team.md)。
-
-team_discussion_runs 的可空 initiator_agent_id 标识主助手通过工具发起的消息；正文仍从原生 transcript 读取。该列由当前完整建表定义声明，不再通过缺列检测补充旧表；用户请求指纹继续按当前幂等规则核对。详见[主会话组织团队](../features/assistants/agent-team.md)。
-
-`cowork_config.allowMainAgentSwitch` stores the opt-in conversation assistant selector as `true`/`false`; a missing key is false. Disabling resets new conversation selection to main and does not change existing `cowork_sessions.agent_id` or native transcripts. No schema migration is needed for this key.
-
-Swarm 节点派发前将实际发送的任务信封（message、createdAt）与运行意图一起保存到独立插件流程库，列表投影不携带信封，详情按会话归属及依赖边验证后按需读取。它是工作流执行输入，不是原生消息历史的镜像。节点详情复用 ChatMessageDisplay，通过独立 ChatController 直接读取 Gateway 原生历史与实时事件，不增加 Main 或 Redux transcript 缓存。连线只展示已保存的输入；缺失历史输入不重新生成。
+侧栏活动与摘要数量通过插件的 `activity` / `summary` 只读接口从既有 `flows`、`batch_items` 聚合，不 hydrate 完整流程或读取批次结果，不新增表或持久缓存。活动分页携带本次 Store 实例的随机代次和已提交变更版本；跨实例或版本不一致的页不拼接为空闲结论，Main 继续核对原生父 key 的精确产品归属。
 
 ### Swarm 节点提交记录
 
@@ -494,7 +539,9 @@ Swarm 节点派发前将实际发送的任务信封（message、createdAt）与�
 revision 写入中提交，用于回复丢失及重启后重放去重；身份由原生
 sessionKey/runId/toolCallId 与规范化动作派生，不保存主聊天消息。同一原生调用
 重放返回已有回执；新的 toolCallId 为新请求，必须携带新的有效 revision。
-节点补充沿用 `interventions` 去重。可选 `notices` 保存
+节点补充沿用 `interventions` 去重。
+
+可选 `notices` 保存
 最多 64 个阻塞指纹及 sending/sent/unconfirmed 投递状态，不存通知正文。发送前
 保存意图，异步 ACK 在最新流程上合并；原生 `chat.inject` 没有持久幂等参数，
 已保存意图不盲目重发。通知覆盖流程已 blocked、节点仍为 running 且带错误的
@@ -505,21 +552,41 @@ sessionKey/runId/toolCallId 与规范化动作派生，不保存主聊天消息�
 
 独立 `swarm-workflow` 插件的 `flows.sqlite` 保存有界阶段 JSON。节点包含本次提交记录（runId、总结、证据、验收结论、时间）及最多三次执行的身份/失败元数据。它们用于派发、验收和显式重试，不复制原生工具/Thinking/Content 聊天历史；原生会话键负责查看每次执行记录。不新增产品数据库表，不迁移或重写已保存节点；新节点依赖工具提交，旧节点按已派发的协议收敛。
 
-批量执行在同一插件库中增加 `batch_items`、`execution_runs`、`execution_leases`、`scheduler_state`、`interventions`。输入清单、每次尝试和产物索引仍是业务元数据；输入快照与各尝试目录统一位于父项目 `.agent-tasks/swarm-workflow/<flow>/<batch>/`，不进入聊天存储。浏览器默认产物使用同一根目录下的 `browser-artifacts/`；最近工作目录识别将该根目录内的路径归回所属项目。重试仍使用同一批次目录，不提供旧 Swarm 目录的兼容或迁移。阶段快照不内联执行项或产物全文；调度读取有界活动工作集，项目列表每页 50 项，汇总索引每页最多 20 项且最多 32 KiB。stage/batch item/预约更新与流程 revision CAS 同事务；runId 全局精确唯一，历史 sessionKey 不做全表 UNIQUE，操作身份在全部项之间去重。重启先重建预约并核对原生执行，不因缓存消失释放未知槽位。
+批量执行在同一插件库中增加 `batch_items`、`execution_runs`、`execution_leases`、`scheduler_state`、`interventions`。输入清单、每次尝试和产物索引仍是业务元数据；输入快照与各尝试目录统一位于父项目 `.agent-tasks/swarm-workflow/<flow>/<batch>/`，不进入聊天存储。浏览器默认产物使用同一根目录下的 `browser-artifacts/`；最近工作目录识别将该根目录内的路径归回所属项目。
 
-节点的私有 `submissionRepair` 保存当前修正 run ID、最多三轮的计数、有界修正指令、待派发标记及已结束 run 的身份/时间。服务先确认原生成功终态，再保存新 run 的启动意图，随后在原会话追加提交修正；启动结果未知时仍按原有规则核对，不能自动重放。重启后保留工具限制及预算；显式任务重试归档已结束的修正 run 身份并清除当前修正状态。列表投影不暴露该内部字段，原始连线派发消息不改写。具体错误从结束前钩子的原生投影即时提取；钩子被原生隔离结束路径跳过时，服务通过 `subagent.getSessionMessages` 按需读取本节点最后最多 64 条记录，仅形成最多 2000 字符的错误提示。读取前后重新校验归属与权限；返回的消息只在本次调用中存在，不保存原生消息、工具结果或 Thinking 历史副本。
+重试仍使用同一批次目录，不提供旧 Swarm 目录的兼容或迁移。阶段快照不内联执行项或产物全文；调度读取有界活动工作集，项目列表每页 50 项，汇总索引每页最多 20 项且最多 32 KiB。stage/batch item/预约更新与流程 revision CAS 同事务；runId 全局精确唯一，历史 sessionKey 不做全表 UNIQUE，操作身份在全部项之间去重。重启先重建预约并核对原生执行，不因缓存消失释放未知槽位。
 
-### 团队结果与执行回执（2026-10-03）
+节点的私有 `submissionRepair` 保存当前修正 run ID、最多三轮的计数、有界修正指令、待派发标记及已结束 run 的身份/时间。服务先确认原生成功终态，再保存新 run 的启动意图，随后在原会话追加提交修正；启动结果未知时仍按原有规则核对，不能自动重放。重启后保留工具限制及预算；显式任务重试归档已结束的修正 run 身份并清除当前修正状态。列表投影不暴露该内部字段，原始连线派发消息不改写。
 
-`team_discussion_rooms.summary_source_json` 固定来源 agentId/sessionKey/sessionId/lifecycleRevision；borrowed-source 成员存在 members_json，只借用身份，群删除不删除来源。`team_discussion_runs.summary_suppressed` 持久阻止用户停止后的迟到汇总。新表 `team_discussion_summaries` 以 discussion_id 为主键，外键关联批次/房间，保存 pending/running/stopping/delivered/failed/cancelled/unknown、run_id、updated_at，并按状态/更新时间索引。终态与 outbox 插入同一事务；网络提交在事务外。每轮最多轮询 16 条未终态汇总，每次尝试（包括传输失败）都推进 updated_at，使旧异常记录不会长期占满窗口；推进时间不覆盖并发停止或终态。附件准备等发生在原生提交前的失败只记录批次失败，不创建汇总 outbox；已提交但响应丢失仍保持未知状态，待原生回执确定终态后再汇总，不自动重发。
+具体错误从结束前钩子的原生投影即时提取；钩子被原生隔离结束路径跳过时，服务通过 `subagent.getSessionMessages` 按需读取本节点最后最多 64 条记录，仅形成最多 2000 字符的错误提示。读取前后重新校验归属与权限；返回的消息只在本次调用中存在，不保存原生消息、工具结果或 Thinking 历史副本。
+
+### 群组讨论元数据
+
+Agent Team schema 定义 team_discussion_rooms（固定成员映射、cwd、只读/权限、revision、generation、状态及来源任务）、team_discussion_runs（requestId / fingerprint / active slot / 状态）、team_discussion_executions（discussionId、成员、精确 sessionKey / sessionId / lifecycleRevision / runId / outcome）、team_discussion_task_links 和 team_discussion_deleted_rooms。
+
+只有房间元数据，不存正文。部分删除记录在成员元数据，compare-and-delete 成功后逐一标记；删除墓碑阻止复用旧 roomId。原生扩展 stateDir 的 discussion-receipts 保存无正文 admission / close receipt；消息与公开 channel-final mirror 均属于 OpenClaw native transcript。
+
+详见 [Agent Team 现行契约](../features/assistants/agent-team.md)。
+
+team_discussion_runs 的可空 initiator_agent_id 标识主助手通过工具发起的消息；正文仍从原生 transcript 读取。该列由当前完整建表定义声明，不再通过缺列检测补充旧表；用户请求指纹继续按当前幂等规则核对。详见[主会话组织团队](../features/assistants/agent-team.md)。
+
+Swarm 节点派发前将实际发送的任务信封（message、createdAt）与运行意图一起保存到独立插件流程库，列表投影不携带信封，详情按会话归属及依赖边验证后按需读取。它是工作流执行输入，不是原生消息历史的镜像。节点详情复用 ChatMessageDisplay，通过独立 ChatController 直接读取 Gateway 原生历史与实时事件，不增加 Main 或 Redux transcript 缓存。连线只展示已保存的输入；缺失历史输入不重新生成。
+
+### 团队结果与执行回执
+
+`team_discussion_rooms.summary_source_json` 固定来源 agentId/sessionKey/sessionId/lifecycleRevision；borrowed-source 成员存在 members_json，只借用身份，群删除不删除来源。`team_discussion_runs.summary_suppressed` 持久阻止用户停止后的迟到汇总。
+
+新表 `team_discussion_summaries` 以 discussion_id 为主键，外键关联批次/房间，保存 pending/running/stopping/delivered/failed/cancelled/unknown、run_id、updated_at，并按状态/更新时间索引。终态与 outbox 插入同一事务；网络提交在事务外。每轮最多轮询 16 条未终态汇总，每次尝试（包括传输失败）都推进 updated_at，使旧异常记录不会长期占满窗口；推进时间不覆盖并发停止或终态。
+
+附件准备等发生在原生提交前的失败只记录批次失败，不创建汇总 outbox；已提交但响应丢失仍保持未知状态，待原生回执确定终态后再汇总，不自动重发。
 
 `collaboration_rounds.closing_run_id` 记录显式 seal；seal 与新 delivery 注册事务互斥。`collaboration_execution_receipts` 按 `(room_id, session_key, run_id)` 保存 completed/failed/cancelled，房间删除级联；延迟接受回执可关联早到的 whole-run 证据。其数据不包含正文，不把接收状态改写为执行结果。
 
 房间停止操作在同一事务内依据批次派生状态，只为 open/closing 批次写入 `stopped_at`。已经 settled/failed 的历史批次保持原终态与验收状态；重复停止及后续迟到回执不把旧历史改成停止，也不重新开放已 seal 的批次。
 
-Gateway stateDir 中 summary-receipts 保存指纹、执行与可见输出 entryId；discussion-receipts 增加公开输出引用。群公开正文和最终总结始终在原生 transcript，Main 不存消息副本。上述产品字段由当前完整 schema 声明，不再为旧中间房间补列；原有独立 main 会话不迁移。停止和 unknown 恢复边界见[实施记录](../features/assistants/agent-team.md)。
+Gateway stateDir 中 summary-receipts 保存指纹、执行与可见输出 entryId；discussion-receipts 增加公开输出引用。群公开正文和最终总结始终在原生 transcript，Main 不存消息副本。上述产品字段由当前完整 schema 声明，不再为旧中间房间补列；原有独立 main 会话不迁移。停止和 unknown 恢复边界见[Agent Team 契约](../features/assistants/agent-team.md)。
 
-### 精确执行的独立验收（2026-10-04）
+### 精确执行的独立验收
 
 当前产品 schema 包含 `collaboration_reviews` 和 `collaboration_review_deliveries`，重复初始化不改写已有记录；这与已撤回的历史运行时迁移无关。报告以房间、验收助手及原生 runId 唯一，保存批次、验收投递回执、`passed / changes_requested / unverified` 和时间；关联表以 `(review_id, delivery_id)` 唯一绑定 1–16 个工作回执。报告/回执/房间删除级联，`(room_id, round_id, created_at)` 索引服务当前批次显示。
 
@@ -552,34 +619,81 @@ OpenClaw 9.6→9.8 存储迁移。没有 prompt、消息正文、工具结果或
 
 ### Agent Team 待发输入元数据
 
-`team_discussion_queue_control` 按 room_id 保存独立 queue generation；它与房间执行 generation 分离，正常重启不取消已经保存的输入。`team_discussion_pending_inputs` 以 room_id/request_id 为主键，保存 generation、原请求及原生规范化指纹、附件内容摘要、房间/权限快照摘要、轮次/通知对象/资源快照、状态、native identity 和 entry_id。没有正文、文件名、附件路径或 transcript 内容。接收容量与 request 指纹检查在 SQLite 事务中完成；同群最多 3 条活动待发输入，unknown 和 blocked 不释放名额，也不允许后续输入绕过队头。
+`team_discussion_queue_control` 按 room_id 保存独立 queue generation；它与房间执行 generation 分离，正常重启不取消已经保存的输入。`team_discussion_pending_inputs` 以 room_id/request_id 为主键，保存 generation、原请求及原生规范化指纹、附件内容摘要、房间/权限快照摘要、轮次/通知对象/资源快照、状态、native identity 和 entry_id。
 
-正文只进入常驻 Runtime Services 拥有的通用 `inert-custody` 原生会话，使用 custom-role/customType、`display:false` 与 `excludeFromContext:true`；native owner 标记在 `pluginExtensions.runtime-services.custody`。`stateDir/runtime-custody/` 只保存 opaque resourceId、epoch、owner、摘要、接收和取消元数据，不识别 Team 房间或轮次；Team 自己序列化业务内容并保存映射。原生稳定 idempotencyKey 与精确 raw delta 读回用于确认 saved。保存/读取需要当前写租约，关闭后的维护只能处理既有资源。ACK 丢失变为 unknown，重启仅核对原生条目，不再 append；无法核对则保留未知。Renderer 按需读取当前面板投影，不建立 Redux 或 Main 正文缓存。
+没有正文、文件名、附件路径或 transcript 内容。接收容量与 request 指纹检查在 SQLite 事务中完成；同群最多 3 条活动待发输入，unknown 和 blocked 不释放名额，也不允许后续输入绕过队头。
+
+正文只进入常驻 Runtime Services 拥有的通用 `inert-custody` 原生会话，使用 custom-role/customType、`display:false` 与 `excludeFromContext:true`；native owner 标记在 `pluginExtensions.runtime-services.custody`。
+
+`stateDir/runtime-custody/` 只保存 opaque resourceId、epoch、owner、摘要、接收和取消元数据，不识别 Team 房间或轮次；Team 自己序列化业务内容并保存映射。原生稳定 idempotencyKey 与精确 raw delta 读回用于确认 saved。保存/读取需要当前写租约，关闭后的维护只能处理既有资源。ACK 丢失变为 unknown，重启仅核对原生条目，不再 append；无法核对则保留未知。
+
+Renderer 按需读取当前面板投影，不建立 Redux 或 Main 正文缓存。
 
 逐项取消写持久 tombstone，全量 Stop/明确禁用推进 queue generation。已经开始原生派发而未取得结算证据的输入保持 unknown，不能因取消请求推断未执行。Main disable lease 在改扩展开关前同步关闭接收/建群/派发并持久取消，离线原生清理失败也不使产品输入恢复；快速重新启用在同一配置 lane 排队。正常 runtime shutdown 保留 saved，不能等同于明确禁用。
 
-附件复制为项目 `.agent-tasks/team-discussions/` 产物，原生 holding 条目保存稳定路径，产品只保存 SHA-256 摘要。启动前重新核对内容及当前权限；未知执行仍可能引用产物，取消 ACK 不授权删除。房间删除先关闭原生 holding admission，Main 按 exact sessionId/lifecycleRevision 归档，owning SDK 确认归档后解除锁，再由 Main `archivedOnly:true` 精确删除；确认全部 holding 身份缺失才清理产品待发行。已解锁后正常退出可能清除 native marker；只有持久 closed slot 的精确 key/SID/revision/harness/root 与 archived/unlocked 原生条目一致且没有冲突 marker，才允许补完删除，不放宽正文接收/读取。中途未知保留任务，不删除同 key 的替代 incarnation。详见[本轮实现及验证](../features/assistants/agent-team.md)。
+附件复制为项目 `.agent-tasks/team-discussions/` 产物，原生 holding 条目保存稳定路径，产品只保存 SHA-256 摘要。启动前重新核对内容及当前权限；未知执行仍可能引用产物，取消 ACK 不授权删除。
+
+房间删除先关闭原生 holding admission，Main 按 exact sessionId/lifecycleRevision 归档，owning SDK 确认归档后解除锁，再由 Main `archivedOnly:true` 精确删除；确认全部 holding 身份缺失才清理产品待发行。
+
+已解锁后正常退出可能清除 native marker；只有持久 closed slot 的精确 key/SID/revision/harness/root 与 archived/unlocked 原生条目一致且没有冲突 marker，才允许补完删除，不放宽正文接收/读取。中途未知保留任务，不删除同 key 的替代 incarnation。详见[本轮实现及验证](../features/assistants/agent-team.md)。
 
 ### Agent Team 发起守卫元数据
 
-Main KV 记录产品候选与提交边界；Team 自己的发起账本保留既有 `stateDir/runtime-services/agent-team-launch/` 路径，保存 generation、来源 incarnation、clientTurnId、prompt SHA-256、owner、业务状态及精确 whole-run 元数据。Required 服务的通用 `stateDir/runtime-services/execution-admissions/` 只保存精确 run、owner 租约、generation、接纳、终态和 cleanup attestation，不读取 Team schema。两者均不保存正文。持久写入使用 fsync 和原子替换；读取失败、损坏和写入未知不能转为空状态。原生 namespace 不作为跨重启唯一权威，退休 owner 不自动重放。已有文件保留，不增加旧协议回退、旧目录扫描或迁移桥。
+Main KV 记录产品候选与提交边界；Team 自己的发起账本保留既有 `stateDir/runtime-services/agent-team-launch/` 路径，保存 generation、来源 incarnation、clientTurnId、prompt SHA-256、owner、业务状态及精确 whole-run 元数据。
+
+Required 服务的通用 `stateDir/runtime-services/execution-admissions/` 只保存精确 run、owner 租约、generation、接纳、终态和 cleanup attestation，不读取 Team schema。两者均不保存正文。持久写入使用 fsync 和原子替换；读取失败、损坏和写入未知不能转为空状态。原生 namespace 不作为跨重启唯一权威，退休 owner 不自动重放。已有文件保留，不增加旧协议回退、旧目录扫描或迁移桥。
 
 released tombstone 的历史身份在合法 reset/revision 后仍可核对，原 SID 或当前精确 SID 可读取前代 generation；身份变化后旧 whole-run proof 不转移到当前 incarnation。新候选必须绑定当前 SID/revision 且 CAS 下一代，不能复用旧 clientTurnId。未 released 的身份变化不作历史完成推断。
+
+### 通用插件资源保护账本
 
 应用资源保护账本 `app_plugin_resources` 位于同一产品库，以 owner ID 和 resource ID 唯一标识资源，并绑定 artifact hash，保存元数据身份和删除围栏，不保存消息。插件 schema 初始化使用相同数据库连接；失败不能放行受保护删除。跨 hash 采用必须显式确认旧完整集合，空投影不能擦除保护。外部应用代码批准及历史批准 hash 保存于 `app-plugins/approvals.json`，不可变已批准代码保留于 `app-plugins/artifacts/`，只恢复账本引用的旧版本清理。
 
 完整可信清单确认可选插件已移除时，仅按 `owner_id` 解除该插件的宿主资源关联，不按共享的 `resource_id` 清除其他插件保护。插件业务表、助手、产品会话、原生历史和未确认执行的安全回执均保留；装回插件后重新读取既有元数据并登记关联。坏包、整体库存未知和数据库读取失败不等同于明确卸载，不通过空投影推断资源或执行已完成。此行为不新增数据库表或 transcript 缓存。
 
-## 当前验证边界
+## 11. 备份、修复与变更验收
+
+### 会话冷归档
+
+设置 → 统计与存储 → 会话存储直接查询 OpenClaw `sessions.storage.status`，按 Agent 展示数据库、WAL、外部冷归档字节数与冷热 transcript 数量。合计只累加 `databaseBytes + walBytes + archiveBytes`；`embeddedArchiveBytes` 已包含在数据库大小内，不再累加。该统计不涵盖浏览器缓存、项目、附件文件，也不等于产品会话列表数量。
+
+```mermaid
+flowchart LR
+  Settings[会话存储设置] --> IPC[Main 会话存储服务]
+  IPC --> Status[sessions.storage.status / run]
+  IPC --> Config[config.get / config.patch + baseHash]
+  Config --> NativePolicy[原生 coldStorage 策略]
+  Status --> NativeStore[原生 SQLite 与冷归档文件]
+  Chat[Renderer 历史读取] --> History[chat.startup / chat.history]
+  History --> Restore[原生校验与恢复]
+  Restore --> NativeStore
+```
+
+`session.maintenance.coldStorage.enabled / afterDays` 由原生配置持久化，缺省展示关闭、30 天。归档设置单独保存，不写入产品运行时设置或新增 SQLite 表；普通启动、模型配置和最小配置同步保留已有 `coldStorage` 与非产品拥有的 maintenance 字段。保存携带用户读取到的配置 hash，冲突或响应不确定时重新读取，不自动重放写入。
+
+`config.get` 必须返回有效快照，且 `configRevisionHash` 与 `appliedConfigHash` 一致，才把策略视为已生效；诊断快照、损坏字段和缺少生效版本不降级为默认策略。维护状态逐字段投影，原生错误仅转换为错误码，不向 Renderer 透传内部诊断或数据库路径。
+
+`sessions.storage.run({})` 是所有配置存储范围的一轮后台维护，不支持单会话、单助手参数，且要求原生归档开关已启用。结果返回不等于归档完成，页面按维护状态展示本轮数量和错误。关闭页面只释放轮询，不取消原生任务；维护记录仅反映当前 Gateway 生命周期。
+
+压缩、索引、活跃任务保护和恢复全部由 OpenClaw 管理。应用不直接改写原生数据库，也不更改 `cowork_sessions`、分组或助手历史归属。冷归档不是隐藏、删除或永久保留；既有 `pruneAfter: 365d`、`maxEntries: 500` 清理策略仍有效，本功能不修改它们。原生全文搜索会报告其可见冷历史范围，但不保证搜索归档正文，也不为搜索主动恢复全部历史。
+
+聊天导出仍是当前已加载快照，不能充当全会话备份；历史读取失败或未完成时禁止导出。仅复制 `justdo.sqlite` 无法恢复原生历史，完整备份还需包含原生数据库和关联冷归档文件，并按需求包含角色文件、项目及附件。在线备份应使用原生快照或正确的 SQLite 备份流程，不能遗漏 WAL。归档文件引用存在不代表附件实体已被备份。
+
+技能提炼提案及其草稿、支持文件、状态和 revisionHash 全部由 OpenClaw Workshop 持久化。
+应用不新增提案表或历史正文缓存，也不另建学习会话。用户在当前聊天发起原生 `/learn`，
+执行内容仍由该原生会话拥有；提案弹窗仅持有 main 的页面级快照，重启或重进页面通过
+skills.proposals.* 恢复。审核写入绑定 proposalId 与 expectedRevisionHash，不改变全局学习策略。
+
+正常备份先退出应用再复制产品数据；在线备份使用 SQLite backup/checkpoint 机制，不能只复制主文件忽略 WAL。原生 transcript、角色文件、模型派生凭据和项目文件要按需求另行纳入，不能把整套数据默认作为 issue 附件。
+
+修改产品 schema 时验证新库一次完整建成、当前完整库重开后数据与约束保留、旧消息缓存
+拒开库时原件不变，以及坏 JSON、部分操作中断和重试。旧中间 schema 的原地补列不再是
+验收目标；已发布历史的备份与导入继续按独立启动迁移契约验证。同步事务内不等待网络；
+写入前确定唯一键与查询索引，状态迁移使用 expected-state 约束。重点测试位于 sqliteStore、
+coworkStore、collaborationStore 与 scheduledTaskResultStore 旁。
+
+## 12. 当前验证边界
 
 冷归档在最终锁定运行时中的正常/损坏归档读取，以及归档后重启、恢复附件引用并继续会话，尚未完成真实环境验收；关闭自动归档后的历史读取也不能视为已经验证。原生读取失败必须保留错误，禁止用空历史、正文缓存或盲目重试掩盖恢复问题。
 
-OpenClaw v2026.10.7 的原生状态仍由独立随包 Node 24.22.1 及原生会话 API 拥有。产品 `better-sqlite3` 继续使用 Electron ABI，不能把两棵依赖或数据库句柄混用。本次不加入旧 SQLite 代际迁移桥、直接 transcript 读取或自动删库重建。Windows 验证缓存的路径别名统一由原生物理键承担，原 10.4 的 027 补丁退役。
-
-### 会话目录与按需摘要查询
-
-CoworkStore.listSessionDirectory 批量关联产品会话、外部来源和历史绑定键，返回不含标题、正文或完整历史绑定的轻量元数据；readSessionSummaries 按有界 ID 集合查询摘要，listSessionSearchSummaries 仅在打开搜索时读取完整简单摘要。它们复用产品库及现有主键，不新增表或复制 OpenClaw transcript。历史绑定与外部来源使用批量 JOIN，取消列表读取中的逐条查询；临时 holding 身份在目录与摘要的同一投影中排除。
-
-Renderer 持有完整目录和一个按需摘要实体集合。目录刷新才能裁剪失效会话的未读或展示资源；部分摘要响应不得复活已删除项。读取期间的活动、置顶及归组变化以当前目录为准，读取期间成功完成的重命名保留当前标题。单条完整会话详情保留 groupId，防止搜索或通知打开会话时丢失手动归组。
-
-首条发送的临时会话只属于当前聊天状态，不进入完整目录、分组计数或摘要查询；确认创建后仅接纳真实产品会话。选择尚未加载摘要的会话时，详情响应也须保留完整目录中较新的活动时间。搜索范围按去重后的会话 ID 集合判定，后台活动仅改变目录排序时保留既有搜索快照、正文命中及已加载页。
+原生状态由独立随包 Node 和原生会话 API 拥有；Node 版本由 `src/shared/openclaw/nodeRuntime.json` 锁定。产品 `better-sqlite3` 继续使用 Electron ABI，不能把两棵依赖或数据库句柄混用。不支持旧 SQLite 代际迁移桥、直接 transcript 读取或自动删库重建。Windows 验证缓存的路径别名由原生物理键承担。

@@ -2,49 +2,46 @@
 
 Agent Team 是默认关闭、用户可切换的可选扩展。任务协作保留持久助手之间的分工和消息投递；群组讨论提供公开讨论时间线，用户可直接参与。两种模式共享助手档案和来源任务导航，各自拥有执行、权限和结束契约，不转换已有会话历史。
 
-本说明维护当前实现。长期助手档案、角色文件与原生 SubAgent 的区别见[长期助手与任务内协作](assistants-and-collaboration.md)；跨进程及存储所有权见 [Cowork](../../architecture/04-cowork-system.md)、[插件系统](../../architecture/07-plugin-system.md)及[数据存储](../../architecture/10-data-storage.md)。当前业务验证边界见[现行说明与验证边界](#当前验证边界)。
+本说明维护当前实现。长期助手档案、角色文件与原生 SubAgent 的区别见[长期助手与任务内协作](assistants-and-collaboration.md)；跨进程及存储所有权见 [Cowork](../../architecture/04-cowork-system.md)、[插件系统](../../architecture/07-plugin-system.md)及[数据存储](../../architecture/10-data-storage.md)。
 
-源码通过安装的 `@app-plugin/sdk`、`@runtime-services/sdk` 和公开构建工具独立检查、构建与测试，不导入应用、Plan Mode 或相邻插件实现。discussion 协议、业务 receipt ledger、发起模式规则及纠正提示全部归 Team。Required Runtime Services 只提供通用执行准入、inert session 托管及精确收据/取消/清理能力，不解释 Team 业务。同步工具投影绑定真实 Native 实例，执行前再次读取限制，旧回调不能沿用新实例。Main 通过精确会话身份的通用原始 namespace 查询及 App SDK planning 解析器核对规划和待审核状态，不把被省略的展示投影当作已关闭。实现及部署边界见[应用插件宿主](../../architecture/17-app-plugin-host.md#源码独立构建与-required-能力)。
+当前业务验证边界见[现行说明与验证边界](#当前验证边界)。
 
 ## 用户入口与两种模式
 
 先在「插件 → 扩展」启用 Agent Team。主输入框的“+”菜单中选择 Agent Team，再选择「任务协作」或「群组讨论」；模式标签只代表下一次提交。发送前不创建团队，取消标签不删除已有团队，切换模式不搬迁、重写或拼接原生历史。Team 与 Swarm 的本次模式选择互斥，各自插件和已有执行独立。
 
-显式 Team 发送的两次空闲核验使用当前来源会话的原生 `sessions.describe` 活动投影，
-包含已排队或正在运行的后代。其他历史会话变更不能把该定点查询变成全局列表的不确定
-结果。仅尚未绑定且无历史、无本地执行或未知提交的新来源，才可将原生明确的空结果
-视为不存在；已绑定身份缺失、错 SID、连接或当前来源身份变动仍属未知。实际忙碌时
-提示等待结束，无法确认状态时明确提示暂不可确认；两者均保留草稿和模式，未知不重发。
+用户也可在普通主会话明确要求来源助手组织团队。显式选择模式时，应用在实际来源消息中附加组织说明与自包含交接要求；宿主使用通用有界 `<app-plugin-input>` envelope 承载当前 owner/epoch/mode，插件自己的组织提示仍使用 `<agent-team-request>` 标签，继续协作使用 `<collaboration-continuation>`，不保留旧标签或旧提示格式的处理分支。
 
-常规权限同步对已有会话的原生准备可能先收到 `sessions.create` 回应，随后才收到异步
-`sessions.changed`。如果只有事件令正在等待的定点观察失效，而产品、连接、代次和
-本地执行归属都未变化，Main 丢弃该旧观察，最多再精确读取一次。第二次必须保持首次
-响应的物理 SID 和 lifecycle revision，包括省略、null 与字符串的区别；再次失效、
-身份变化、原生错误或未确认提交仍拒绝。重新观察只读，不重放准备、注册或消息发送。
-
-准入测试须经过生产 Main 的会话物化、
-Adapter 事件处理及 Router，不能用固定返回空闲的宿主端口代替这段链路。
-
-Agent Team 的插件开关通过原生 API 同步插件和技能配置，使用现有 Gateway 的热应用回执。同包启停不能申请安全重启；原生要求重启或热应用未知时明确报告失败并保留围栏。代码包替换另走后台 Gateway 冷流程，不退出软件。`skills.update` 继续独立失效原生会话技能快照，技能写入失败报告部分失败并允许同状态修复；离线设置不启动 Gateway。技能文件及目录链接仍由 OpenClaw 发布，应用不复制到生成目录、不改写模型的读取参数、不注入读取兜底，也不新增运行时补丁。
-
-用户也可在普通主会话明确要求来源助手组织团队。显式选择模式时，应用在实际来源消息中附加组织说明与自包含交接要求；宿主使用通用有界 `<app-plugin-input>` envelope 承载当前 owner/epoch/mode，插件自己的组织提示仍使用 `<agent-team-request>` 标签，继续协作使用 `<collaboration-continuation>`，不保留旧标签或旧提示格式的处理分支。显示和编辑投影仅隐藏精确的当前应用后缀，原生正文不被改写。来源模型使用真实工具组织团队，工具结果才证明创建或接纳，正文宣称不能充当回执。
+显示和编辑投影仅隐藏精确的当前应用后缀，原生正文不被改写。来源模型使用真实工具组织团队，工具结果才证明创建或接纳，正文宣称不能充当回执。
 
 来源助手按任务发现已启用助手、准备成员并分工；用户无需手工构建 Graph 或预先组群。关闭插件会清除 Team 模式草稿并撤销旧回调，正文、附件及引用保留。普通对话不每轮注入 roster 或协作说明。
+
+### 来源普通输入与运行显示
 
 其他成员执行期间，用户仍可在左侧继续给来源助手发送普通消息；来源自身忙碌时按正常原生消息队列处理。普通发送会尝试核对旧 Team 发起请求的清理，但未完成或不可核实不会阻止发送，也不会因此取消或放宽其守卫。只有再次显式选择 Team 模式发起新请求时，才要求旧请求的精确终态和清理完成。停止中、未确认的消息准入、会话删除、权限和原生工具政策仍分别校验；新的普通消息不自动广播给成员。
 
 来源会话列表的运行图标包含成员原生运行及关联群聊的准备／提交／运行／停止状态。协作批次的 pending 计数表示尚缺精确执行终态回执，open／closing 也不能单独证明当前仍在运行；成员全部空闲后收起旋转图标，保留未收束批次、投递和未知结果，不据空闲补造完成回执。主输入框仅消费来源自身的主运行状态，后台成员和群聊不把发送按钮切换为停止。用户停止来源时先同步关闭发起准入，原生停止不等待守卫取消 RPC 返回；发起回执的精确清理仍由原协调器完成。
 
+### 当前团队与全部历史入口
+
 主会话标题栏「摘要」中的 Agent Team 项按本会话实际记录显示「协作 × m，群聊 × n」，数量为 0 的模式不显示。点击直接打开右侧团队 Tab，不在摘要内展开列表；有两个协作和三个群聊就显示「协作 × 2，群聊 × 3」，右侧对应五项真实页签。每次打开清除旧成员详情并定位默认团队，随后可在右侧切换具体批次或群聊。左侧会话列表不单独展示群聊分区。打开面板不创建房间；独立侧栏沿用 dev 的工作区窗口和可见性机制。
 
-Agent Team 启用时，「插件 → 扩展 → Agent Team」卡片的历史图标及详情页的「全部团队记录」提供独立的全局入口，统一列出保留的协作批次和群聊，按类型筛选或搜索团队及成员；独立群聊和来源已删除的群聊也在这里。摘要仅展示当前会话关联的 Agent Team；当前会话没有团队时整项隐藏，其他会话的历史记录不产生入口或计数。关闭插件隐藏摘要、全局记录、团队导航和参数设置入口，并关闭已打开的历史／设置弹窗；过期导航事件不能重新打开。重新启用后按保留记录恢复入口。列表只按需读取房间元数据，选择后定位精确协作批次或群聊，不创建房间或启用插件。摘要不再提供全局历史按钮；全部记录统一从插件进入。来源会话删除仍会清理协作团队，群聊保留自己的原生历史，本入口不改变删除策略。
+Agent Team 启用时，「插件 → 扩展 → Agent Team」卡片的历史图标及详情页的「全部团队记录」提供独立的全局入口，统一列出保留的协作批次和群聊，按类型筛选或搜索团队及成员；独立群聊和来源已删除的群聊也在这里。摘要仅展示当前会话关联的 Agent Team；当前会话没有团队时整项隐藏，其他会话的历史记录不产生入口或计数。
+
+关闭插件隐藏摘要、全局记录、团队导航和参数设置入口，并关闭已打开的历史／设置弹窗；过期导航事件不能重新打开。重新启用后按保留记录恢复入口。列表只按需读取房间元数据，选择后定位精确协作批次或群聊，不创建房间或启用插件。摘要不再提供全局历史按钮；全部记录统一从插件进入。来源会话删除仍会清理协作团队，群聊保留自己的原生历史，本入口不改变删除策略。
+
+### 启用状态与过期界面
 
 Renderer 的功能入口和团队 Tab 共用当前窗口已确认的扩展启用状态；打开或切换 Tab 不重置为未启用，也不重复读取扩展目录。首次状态未知时隐藏入口并禁止发送，群聊页仅在确认关闭后显示未启用提示；读取暂时失败保留已观测状态。禁用通知立即更新全部订阅者，并保留关闭版本以使快速关开间的旧界面失效；窗口重新聚焦仍刷新权威目录，最后一个订阅者卸载后释放监听并丢弃快照。
+
+### 两种模式如何使用
 
 | 模式     | 右侧视图                                           | 用户参与                                                        | 结果回到来源                                               |
 | -------- | -------------------------------------------------- | --------------------------------------------------------------- | ---------------------------------------------------------- |
 | 任务协作 | 真实消息投递 Graph；点击节点或连线查看对应原生历史 | 来源主会话正常输入；peer 详情可直接向当前助手发送消息           | 来源助手收取结果、安排检查、seal 收束，再回复用户          |
 | 群组讨论 | 单列气泡：各助手头像和消息在左侧，用户消息在右侧   | 底部输入框，附件、引用、轮次和 @ 自动补全；启用语音时可用麦克风 | 有固定来源的模型建群在讨论结束后自动汇总，无需手工发送结果 |
+
+### 查看成员、引用讨论与发送补充
 
 点击助手头像打开该成员的内部执行历史，公开讨论与 Thinking/工具过程分开显示。用户消息气泡沿用主聊天的主题背景、前景配色及圆角和内边距，正文、链接与附件地址继承气泡文字颜色，随明暗主题切换。群聊输入区沿用主输入框风格；顶部保留标题、紧凑状态和必要操作，次要操作收在更多菜单，不展示大段组织者说明、独占一行的查看主会话汇总或关联任务按钮。侧栏移到独立窗口后，设置弹窗、菜单、提及与输入焦点跟随实际窗口；IPC 和应用事件仍由原 Renderer 持有。
 
@@ -67,43 +64,86 @@ flowchart LR
   A --> R
 ```
 
+### 引用卡片与验收标签
+
+讨论引用按精确批次去重，与已有消息引用共用最多 8 条的限制；发送时序列化为
+`team_discussion` 的批次读取定位，由模型按当前权限读取。协作定位卡只保存房间、
+成员、批次身份和名称，不保存内部正文，不把历史 delivery 当成新消息的 `inReplyTo`。
+异步核验后来源或详情变化、房间删除、引用超限时不追加，也不自动发送。
+
+验收卡区分报告状态和结论：pending/unconfirmed/failed/cancelled 不显示验收通过，
+只有 confirmed 才展示 passed/changes_requested/unverified。图中的接纳、执行结果与
+验收结论仍是三个不同事实。
+
 ## 团队、权限与主助手
 
 组织者是实际来源助手，不以固定 main 字符串代替身份。来源的产品 session、native session key、sessionId/lifecycleRevision、项目和有效权限都需核验，跨来源请求不能借用其他任务的资格。成员共享项目目录不等于共享上下文或文件写入隔离；交接要包含目标、必要材料、约束、产物位置、依赖与检查标准。
 
 任务协作的组织者就是来源原生会话，承担邀请、派发、收取结果和收束。peer 是独立任务成员会话，创建时按来源当前可支持的权限准备，后续实际投递仍重新准入；权限不是一个随来源 UI 永远同步的布尔开关。不能用受限来源创建权限更大的成员或绕过原生审批。
 
+### 群聊组织者与来源汇总
+
 群聊绑定固定 `summarySource`。组织者默认不参与公开讨论，即使不参与仍负责发起与最终汇总。创建工具省略 `organizerParticipates` 时采用用户设置；明确用户要求可以覆盖参与偏好，选择群聊本身不强制覆盖。参与时借用左侧同一个来源原生实例，占助手名额，不复制出另一个 main。用户不占助手成员名额。
 
-自动汇总的输入是插件发起的内部交接，不是用户发言。原生历史保留这条输入及 `inter_session / agent-team / team_discussion` 来源标记，普通成员的 channel dispatch 和 borrowed 来源的 direct dispatch 都显式携带该标记。Renderer 同时识别原生 `__openclaw.transport.channel=agent-team`，使缺少 provenance 的已有群聊输入也按真实通道归属。主会话在组成可见消息前排除这类 user 输入，仅展示来源助手生成的汇总结果；成员执行详情保留这类输入，以“群聊调度”的专用头像和名字显示轮次提示及上下文。协作交接继续显示真实来源助手的身份，本成员自己的输出仍使用本成员头像。识别不依赖英文提示词或正文前缀；用户自己发送相同文字、其他来源消息和真正的 assistant 输出仍正常显示，不修改原生历史或增加正文缓存。
+自动汇总的输入是插件发起的内部交接，不是用户发言。原生历史保留这条输入及 `inter_session / agent-team / team_discussion` 来源标记，普通成员的 channel dispatch 和 borrowed 来源的 direct dispatch 都显式携带该标记。
+
+Renderer 同时识别原生 `__openclaw.transport.channel=agent-team`，使缺少 provenance 的已有群聊输入也按真实通道归属。主会话在组成可见消息前排除这类 user 输入，仅展示来源助手生成的汇总结果；成员执行详情保留这类输入，以“群聊调度”的专用头像和名字显示轮次提示及上下文。
+
+协作交接继续显示真实来源助手的身份，本成员自己的输出仍使用本成员头像。识别不依赖英文提示词或正文前缀；用户自己发送相同文字、其他来源消息和真正的 assistant 输出仍正常显示，不修改原生历史或增加正文缓存。
 
 普通群成员在创建后固定。闲置并且前批、汇总及清理均结算后可切换组织者参与；容量、源身份或权限不满足时拒绝，不静默移除成员。来源参与执行沿用同一原生会话的工具与执行设置；来源忙碌时不能把排队接纳或空闲快照描述成原子独占。
 
-模型与 UI 新建的关联群聊都由 Main 从来源推导项目、权限与精确 `summarySource`。普通成员继承来源当前的原生会话执行设置，以及工具、模型、skills 等有效助手配置，保留各自的身份、角色文本和原生历史；每次新讨论在预留执行前按已有成员的精确 SID/revision 准备，随后再次核对来源策略。已有只读关联群在下一次发送前更新原成员策略，不换会话、不搬历史，也不更改数据库结构。群聊不额外设置只读工具白名单、禁用工具或阻止成员按来源权限调用工具；原生权限、审批与有效工具政策继续生效。未验证的 ACP/harness/runtime 和不能安全继承的 creation-owned sandbox 仍拒绝。显式 Team 发起的 Plan 准入规则继续独立执行。
+### 成员配置继承
+
+模型与 UI 新建的关联群聊都由 Main 从来源推导项目、权限与精确 `summarySource`。普通成员继承来源当前的原生会话执行设置，以及工具、模型、skills 等有效助手配置，保留各自的身份、角色文本和原生历史；每次新讨论在预留执行前按已有成员的精确 SID/revision 准备，随后再次核对来源策略。
+
+已有只读关联群在下一次发送前更新原成员策略，不换会话、不搬历史，也不更改数据库结构。群聊不额外设置只读工具白名单、禁用工具或阻止成员按来源权限调用工具；原生权限、审批与有效工具政策继续生效。未验证的 ACP/harness/runtime 和不能安全继承的 creation-owned sandbox 仍拒绝。
+
+显式 Team 发起的 Plan 准入规则继续独立执行。
 
 成员保持插件自有的独立原生会话；通过公开 SDK 在精确身份上同步执行与模型选择字段，并在本次 dispatch 配置中继承来源助手设置。普通 `sessions.create` 不传来源 `parentSessionKey`，因为原生禁止插件关联不归自己创建的来源会话；配置继承不建立父子控制关系，也不借用来源的写入归属。
 
 准备和新批次 Start 核对完整继承配置；执行开始后继续固定权限、工具与 exec 边界，允许原生自行轮换认证档案或执行模型回退，不因这些运行内变化错误拒绝有效输出。
 
+### 独立群与借用来源的边界
+
 无来源的独立群，以及只有旧 `sourceSessionId`、缺少精确 `summarySource` 的既有独立群，沿用自身配置的权限；旧 `readOnly` 元数据不再添加工具限制。新建界面不再提供群聊专属只读选项，关联群显示继承主会话设置，独立群保留自身权限选择。borrowed source 永远不作为房间自有成员删除。
 
 ## 协作执行与独立验收
 
-协作流程标题栏提供“停止整个协作”，沿用来源会话的全队停止契约，关闭当前协作准入并停止成员和来源关联讨论。助手工作详情在“正在工作”旁提供“停止当前助手”，仅取消当前成员的精确 native run 及其原生受控子任务，不触发全队停止，不关闭其他成员的准入或清空后续输入；新的协作消息仍可启动该成员。该入口仅在协作成员实时执行详情中出现，历史消息回执和群聊详情不提供此按钮。Main 重新核对房间、成员、原生会话 incarnation 与活动 run，再调用原生 `sessions.abort({key,runId})`；ACK 不补造 execution outcome，详情及 Graph 继续等待原生生命周期证据。停止失败显示提示并保留运行状态。
+协作流程标题栏提供“停止整个协作”，沿用来源会话的全队停止契约，关闭当前协作准入并停止成员和来源关联讨论。助手工作详情在“正在工作”旁提供“停止当前助手”，仅取消当前成员的精确 native run 及其原生受控子任务，不触发全队停止，不关闭其他成员的准入或清空后续输入；新的协作消息仍可启动该成员。
+
+该入口仅在协作成员实时执行详情中出现，历史消息回执和群聊详情不提供此按钮。Main 重新核对房间、成员、原生会话 incarnation 与活动 run，再调用原生 `sessions.abort({key,runId})`；ACK 不补造 execution outcome，详情及 Graph 继续等待原生生命周期证据。
+
+停止失败显示提示并保留运行状态。
+
+### 发现成员、派发与接力
 
 `task_assistants` 发现助手、准备持久 peer 会话，不发送任务正文。原生 `sessions_send` 的前置 hook 将可信来源和精确目标交给 Main；Main 验证房间、轮次、权限、停止状态、幂等和预算后登记 delivery，扩展收到原生结果后记录接纳身份。模型自报 room/run/tool 身份不能授权。
 
-已建团队的发现和成员准备结果明确返回 `organizer`，其精确地址仅由房间的 `anchorSessionId` 成员推导，不把上一棒发送者或名为 main 的助手当作组织者。每次真实 peer 投递准入同时返回组织者、实际发送者和接收者地址；Native 核对当前调用与目标后，在原任务正文后追加有界的交接说明，保留真实 inter-session 来源与原生历史。原始任务正文继续按 16000 字符和原输入摘要校验；路由后缀只提供地址和工作约定，不授予执行权限，不参与后续准入。普通 turn、原生 SubAgent/ACP 发送不追加此上下文。
+已建团队的发现和成员准备结果明确返回 `organizer`，其精确地址仅由房间的 `anchorSessionId` 成员推导，不把上一棒发送者或名为 main 的助手当作组织者。每次真实 peer 投递准入同时返回组织者、实际发送者和接收者地址；Native 核对当前调用与目标后，在原任务正文后追加有界的交接说明，保留真实 inter-session 来源与原生历史。
+
+原始任务正文继续按 16000 字符和原输入摘要校验；路由后缀只提供地址和工作约定，不授予执行权限，不参与后续准入。普通 turn、原生 SubAgent/ACP 发送不追加此上下文。
 
 接力说明包含完整阶段、当前步骤、下一接收者、终止条件和组织者回传地址；成员不得自行增加阶段。明确指定的中间回传地址继续有效，不以本地任务完成推断整队接力完成。末棒完成或无法解析明确路线时，成员须通过真实 `sessions_send` 把结果或阻塞交回组织者，成员自己的最终回复不会自动回传用户。组织者收齐结果和所需检查后 seal 并回复。此改动不增加自动总结或自动补发。
 
-新协作 Graph（批次）只能由原始主会话的组织者发起。Main 只允许与房间 `anchorSessionId` 一致、精确匹配且仍在 running 的真实来源用户运行建立轮次；数据写入层再次核对实际来源会话为 anchor。成员的 peer send 必须由其精确 `sourceRunId` 匹配已准入的 incoming delivery，继承该 delivery 的同一轮次。成员独立用户运行、正文中的组织者声明、模型自报轮次、历史引用或名称均不能创建或借入批次；封闭或停止的旧轮次继续拒绝发送。Stop 仅冻结已有轮次并围栏已知精确运行，不补建任何轮次。组织者以非 main 名称或助手身份发起时仍按来源会话判断，不用名称字符串授权。
+### 批次由真实来源运行建立
+
+新协作 Graph（批次）只能由原始主会话的组织者发起。Main 只允许与房间 `anchorSessionId` 一致、精确匹配且仍在 running 的真实来源用户运行建立轮次；数据写入层再次核对实际来源会话为 anchor。成员的 peer send 必须由其精确 `sourceRunId` 匹配已准入的 incoming delivery，继承该 delivery 的同一轮次。
+
+成员独立用户运行、正文中的组织者声明、模型自报轮次、历史引用或名称均不能创建或借入批次；封闭或停止的旧轮次继续拒绝发送。Stop 仅冻结已有轮次并围栏已知精确运行，不补建任何轮次。组织者以非 main 名称或助手身份发起时仍按来源会话判断，不用名称字符串授权。
 
 Team 主会话发起、成员单聊、建房前检查和发起回执清理均不依赖全局 `sessions.list`。成员单聊仍要求全队当前空闲，但只按当前房间各成员的精确 key 查询；选中成员必须匹配其控制器的 native SID，其他成员不能借用与产品历史绑定不同的 SID。每次异步读取前后均核对当前 router、连接代次、产品身份和房间成员，明确的 nullable revision 保持原值，缺失或错误字段不推为空闲。未知状态与实际忙碌分别提示，历史未确认投递仍保留。
 
-建房过程固定同一 router、runtime 和实际连接代次，并在原生准备前后重核。准备拒绝、超时或连接换代均保留已经建立的房间及成员意图并向调用方抛错，不按 key 自动删除可能已创建的原生会话。重读现有房间只返回元数据，不证明成员已准备成功；实际发送仍须通过原生身份与定点活动准入。用户可显式删除待清理团队：删除只检查该房间成员，当前 native SID 与非空 revision 必须通过原生 compare-and-delete，缺少可比较 revision 时保持待清理，产品元数据最后原子删除。只有当前连接对该 key 明确返回 `session:null` 才确认已不存在，不把读取失败或替换身份当成删除成功。
+### 准备失败与迟到结果
 
-成员准备与助手创建、群聊准备共用 60 秒的宿主处理上限，外层 Gateway RPC 等待 75 秒，覆盖原生会话冷创建和权限准备；成员列表及普通投递准入仍使用 8 秒上限。`task_assistants` 先原子记录固定 product ID/key 的成员意图，再发起一次原生准备。失败、超时、停止或连接换代保留该意图并返回错误，不自动删除、换 UUID 或重发准备。后续发现同一成员只按精确 key、SID、明确 revision 和当前绑定进行只读核验；元数据存在、空结果或读取错误均不证明原生已准备，实际投递仍走原生准入。Main 在原生准备返回后重新检查期限、来源轮次、停止和删除状态，迟到回执不能恢复已过期请求或发起工作。
+建房过程固定同一 router、runtime 和实际连接代次，并在原生准备前后重核。准备拒绝、超时或连接换代均保留已经建立的房间及成员意图并向调用方抛错，不按 key 自动删除可能已创建的原生会话。重读现有房间只返回元数据，不证明成员已准备成功；实际发送仍须通过原生身份与定点活动准入。
+
+用户可显式删除待清理团队：删除只检查该房间成员，当前 native SID 与非空 revision 必须通过原生 compare-and-delete，缺少可比较 revision 时保持待清理，产品元数据最后原子删除。只有当前连接对该 key 明确返回 `session:null` 才确认已不存在，不把读取失败或替换身份当成删除成功。
+
+成员准备与助手创建、群聊准备共用 60 秒的宿主处理上限，外层 Gateway RPC 等待 75 秒，覆盖原生会话冷创建和权限准备；成员列表及普通投递准入仍使用 8 秒上限。`task_assistants` 先原子记录固定 product ID/key 的成员意图，再发起一次原生准备。
+
+失败、超时、停止或连接换代保留该意图并返回错误，不自动删除、换 UUID 或重发准备。后续发现同一成员只按精确 key、SID、明确 revision 和当前绑定进行只读核验；元数据存在、空结果或读取错误均不证明原生已准备，实际投递仍走原生准入。Main 在原生准备返回后重新检查期限、来源轮次、停止和删除状态，迟到回执不能恢复已过期请求或发起工作。
 
 平级发送只支持省略模式或 followup；steer、notify、resume 在登记和扣预算前拒绝，原生 SubAgent/ACP 继续由自己的原生契约控制。成员可使用已有成员关系，不能自行扩大房间或权限。普通 Team 不是 Swarm DAG，不提供统一的协作运行池或公平自动排队。
 
@@ -115,21 +155,70 @@ Team 主会话发起、成员单聊、建房前检查和发起回执清理均不
 
 报告先等待执行确认；验收 run 真实 accepted 且 whole-run 成功后才 confirmed。数据库只存 IDs、封闭结论和时间，标准、发现与证据在原生历史。返工产生新工作与新验收，旧报告只覆盖确切 deliveryIds，不证明后来文件版本或整个任务质量。来源模型仍需综合检查与结果，没有产品强制质量门禁。
 
+### 协作准备与投递链路
+
+```mermaid
+sequenceDiagram
+  participant A as 来源原生会话
+  participant E as Agent Team
+  participant M as 插件 host coordinator
+  participant G as OpenClaw
+  participant B as 成员会话
+  A->>E: task_assistants(agentId)
+  E->>M: 可信来源与成员准备请求
+  M->>M: 校验身份/权限，记录固定成员意图
+  M->>G: prepareSession
+  M->>M: 复核期限、停止与原生身份
+  M-->>A: 返回精确 sessionKey
+  A->>E: sessions_send 前置 hook
+  E->>M: native-send admission
+  M->>M: 核对路由、幂等与预算
+  M-->>E: deliveryId 与目标身份
+  E->>G: 一次原生发送
+  G->>B: 接收与执行
+  E->>M: native-result 回执
+```
+
+```mermaid
+stateDiagram-v2
+  [*] --> queued: 校验并预留投递
+  queued --> dispatching: 允许原生发送
+  queued --> failed: 无法恢复或取消
+  dispatching --> accepted: 原生接收运行身份确认
+  dispatching --> failed: 明确失败
+  dispatching --> unknown: 超时或中断且无法确认
+```
+
+`accepted` 只证明接收，业务完成仍需精确整轮终态；成员回复是另一条真实投递。
+重启时不可恢复的 queued 转 failed，中断的 dispatching 转 unknown，不自动重放。
+同房间、发送人、来源 run 和 toolCall 的重复请求读取原回执，参数摘要变化拒绝。
+协作消息按 receipt/provenance 定位，每批最多 16 条；失败时只补读缺失正文，不重新发送。
+
 ## 群聊执行与自动汇总
 
 群聊 Channel ID 固定为产品中立的 `agent-team`，成员会话键为 `agent:<agentId>:agent-team:group:<roomId>`，消息来源与 `surfaces` 配置使用同一标识。更名前的数据与原生身份保留原样，不提供旧通道别名、自动迁移或任务重放；旧 SID/revision 不能重新绑定到新会话键。
 
-`team_discussion` 提供 create/send/read/stop。Main 从来源绑定推导项目，固定 `summarySource` 和成员；Gateway 使用公开 `runGroupThread` 调度轮次、成员、提及和策略，每名普通成员独立进入 `dispatchChannelInboundTurn`，各自持有回复 dispatcher 和最终投递链路。这样并行成员的结果无需在同一个投递队列中跨助手串行切换数据库 Worker；历史落盘、投递凭据和精确执行终态仍全部等待原生确认。来源加入时由公开 group-thread 和 buffered dispatcher 保持原 canonical delivery、精确 pin 及来源原生执行策略。
+`team_discussion` 提供 create/send/read/stop。Main 从来源绑定推导项目，固定 `summarySource` 和成员；Gateway 使用公开 `runGroupThread` 调度轮次、成员、提及和策略，每名普通成员独立进入 `dispatchChannelInboundTurn`，各自持有回复 dispatcher 和最终投递链路。
 
-输入 @ 后下拉当前助手名称，没有常驻的一排 @ 按钮。未指定收件人时，全组由原生规则评估是否发言；@ 指定首轮路由，后续成员仍可能根据原生提及规则进入讨论。成员可 NO_REPLY，不能把 N 人 × R 轮描述成一定产生 N×R 条可见回复。“回复”选中精确收件人、引用并聚焦，保留其他草稿，不自动发送。输入框上方的引用卡片分别显示引用标签、发言者与最多两行的消息预览，只通过独立的移除按钮删除引用；多条引用在限高区域滚动，保留输入框空间。预览只使用当前面板中身份匹配的消息，未加载时显示提示，不把正文复制进草稿存储。
+这样并行成员的结果无需在同一个投递队列中跨助手串行切换数据库 Worker；历史落盘、投递凭据和精确执行终态仍全部等待原生确认。来源加入时由公开 group-thread 和 buffered dispatcher 保持原 canonical delivery、精确 pin 及来源原生执行策略。
 
-所有群使用公开 `runGroupThread`，继续由原生选择候选成员、构造轮次摘要并限制资源。插件只在 `runTurn` 的 `round > 1` 且 `digest` 严格等于锁定 2026.10.7 SDK 的完整空同伴摘要时跳过派发：没有其他成员的新回答时，不再次调用模型要求其解释“没有新内容”。真实文字、纯媒体及 message 工具的最终发言由原生判断并进入同伴摘要；message 工具 `final:false` 的进度交付不据其文本自行计为最终发言。被其他成员点名的助手仍可进入下一轮，借用来源采用相同规则。不另建发言集合或正文缓存，不按模型输出、正文关键词或摘要前缀判断；摘要缺失或模板变化时保留原生派发，升级须核验空摘要契约。跳过不生成模型执行或终态回执，身份检查、原生 whole-run 结算及许可清理继续独立核对。原生 `maxTurns` 在进入回调前计算候选，因此被跳过的候选仍占用该上限，不为补偿跳过而扩张预算。
+输入 @ 后下拉当前助手名称，没有常驻的一排 @ 按钮。未指定收件人时，全组由原生规则评估是否发言；@ 指定首轮路由，后续成员仍可能根据原生提及规则进入讨论。成员可 NO_REPLY，不能把 N 人 × R 轮描述成一定产生 N×R 条可见回复。“回复”选中精确收件人、引用并聚焦，保留其他草稿，不自动发送。
+
+输入框上方的引用卡片分别显示引用标签、发言者与最多两行的消息预览，只通过独立的移除按钮删除引用；多条引用在限高区域滚动，保留输入框空间。预览只使用当前面板中身份匹配的消息，未加载时显示提示，不把正文复制进草稿存储。
+
+所有群使用公开 `runGroupThread`，继续由原生选择候选成员、构造轮次摘要并限制资源。插件只在 `runTurn` 的 `round > 1` 且 `digest` 严格等于锁定 2026.10.7 SDK 的完整空同伴摘要时跳过派发：没有其他成员的新回答时，不再次调用模型要求其解释“没有新内容”。
+
+真实文字、纯媒体及 message 工具的最终发言由原生判断并进入同伴摘要；message 工具 `final:false` 的进度交付不据其文本自行计为最终发言。被其他成员点名的助手仍可进入下一轮，借用来源采用相同规则。不另建发言集合或正文缓存，不按模型输出、正文关键词或摘要前缀判断；摘要缺失或模板变化时保留原生派发，升级须核验空摘要契约。跳过不生成模型执行或终态回执，身份检查、原生 whole-run 结算及许可清理继续独立核对。原生 `maxTurns` 在进入回调前计算候选，因此被跳过的候选仍占用该上限，不为补偿跳过而扩张预算。
 
 配置同步在 `surfaces.agent-team.silentReply.group` 启用原生 `allow`；正常、最小及登录／登出同步均保留该策略和其他通道设置。回复准备读取运行时接纳的配置，临时 Channel 配置投影不能代替此设置。缺少该策略时，成员的 `NO_REPLY` 会触发空回复修复并要求再次回答。主会话与最终汇总仍使用各自回复要求；不修改全局静默策略或插件开关，不增加补丁。原生群组调度在整轮无公开发言时提前结束。
 
 群消息发言身份来自元数据，用户在右、助手在左。来源公开发言 mirror 在 room-owned 的原生历史中，仍保留实际来源 speaker 身份；原生来源会话保存其模型执行。仅 @ 来源时也保留完整公开问题，删除来源历史后仍可读取群公开发言。普通来源消息不复制进群。
 
-群聊标题栏合并名称和紧凑状态；响应成员、汇总说明及待回答问题的详情放在状态提示中，不重复占据说明行。引用、成员及停止使用小图标；成员列表使用带独立关闭按钮和成员数量的紧凑浮层，不挤压聊天区域，也不占满空白高度。成员卡片显示与群消息一致的头像和原生执行状态，主助手参与开关单独展示；内容超出可用高度时只滚动面板正文。设置、导出、删除和自动汇总失败后的补救入口收进“更多”，成功自动汇总不显示补救操作。头像打开原生内部执行记录，返回、引用及停止整个讨论也在详情标题栏；群聊详情不提供协作成员的单独停止。停止覆盖当前讨论、汇总和待发输入，仍等待精确原生终态；失败保持可见。准备中和准备失败分别显示，只有失败时提供重试。输入框继续复用主会话背景、阴影和尺寸；保留附件、按语音开关显示的麦克风、@ 下拉、轮次和小发送按钮。
+群聊标题栏合并名称和紧凑状态；响应成员、汇总说明及待回答问题的详情放在状态提示中，不重复占据说明行。引用、成员及停止使用小图标；成员列表使用带独立关闭按钮和成员数量的紧凑浮层，不挤压聊天区域，也不占满空白高度。成员卡片显示与群消息一致的头像和原生执行状态，主助手参与开关单独展示；内容超出可用高度时只滚动面板正文。
+
+设置、导出、删除和自动汇总失败后的补救入口收进“更多”，成功自动汇总不显示补救操作。头像打开原生内部执行记录，返回、引用及停止整个讨论也在详情标题栏；群聊详情不提供协作成员的单独停止。停止覆盖当前讨论、汇总和待发输入，仍等待精确原生终态；失败保持可见。准备中和准备失败分别显示，只有失败时提供重试。
+
+输入框继续复用主会话背景、阴影和尺寸；保留附件、按语音开关显示的麦克风、@ 下拉、轮次和小发送按钮。
 
 打开已有群聊首次读取消息时，消息区居中显示“首次加载群聊消息可能需要一些时间，请稍候”和三点错峰跳动动画，系统关闭动画或启用减少动态效果时仍保持动画。首次读取完成后移除提示；读取失败或原生历史不可用时显示原有错误/连接提示，不保留加载状态。后续后台轮询不重复显示首次加载提示，新建团队页面也不显示该提示。
 
@@ -137,9 +226,17 @@ Team 主会话发起、成员单聊、建房前检查和发起回执清理均不
 
 头像打开的成员内部执行历史只呈现原始模型输出与过程，分组前过滤具有完整群交付元数据的公开 channel-final 镜像，包括借用来源在其他成员会话中的公开发言镜像。否则镜像会占据最终正文位置，使原始正文被折入“处理过程”，展开后重复显示。过滤依赖原生镜像身份及群批次定位，不比较正文，不改写历史；群公开消息、附件、引用与导出继续读取原镜像。
 
-讨论与汇总分别拥有真实 native run 回执。许可池对 owned 与 borrowed 成员使用同一批次资源快照，在进入原生入站记录或 buffered dispatcher 前取得许可，覆盖准备、模型执行、公开投递和最终 custody 清理；排队成员不提前争用其他助手的数据库 Worker。必须同时有本次启动的全部精确 whole-run 终态和完整成员投递链路清理完成才释放许可。内部 dispatcher 返回时缺少终态即关闭本批准入，迟到终态只补充回执，不重新开放排队成员。工具接受、可见回复、owner 变化和原生 Stop ACK 都不能建立终态。未知成员执行或汇总继续占用准入。
+讨论与汇总分别拥有真实 native run 回执。许可池对 owned 与 borrowed 成员使用同一批次资源快照，在进入原生入站记录或 buffered dispatcher 前取得许可，覆盖准备、模型执行、公开投递和最终 custody 清理；排队成员不提前争用其他助手的数据库 Worker。
 
-讨论完成后 Main 创建元数据-only `team_discussion_summaries` outbox，固定来源 incarnation、批次及输出定位。来源汇总沿用主会话现有工具与执行设置，交接要求结合讨论结论继续已获授权的未完成任务，不把新讨论提案当作新增授权，也不要求总结后直接结束。来源忙碌时通过公开 buffered dispatcher 等待原生 owner，等待期间仍占用汇总准入，不把 followup 排队返回当作执行结束。汇总及其后续工具执行仍由同一次真实原生 run 拥有；只按精确原生 receipt 与可见输出 entry 判定已反馈，NO_REPLY 或无输出不显示成功。停止先持久化 `summary_suppressed`，再取消执行，迟到结果不能恢复汇总；中断或 ACK 丢失保留 unknown，不跨崩溃盲重跑。
+必须同时有本次启动的全部精确 whole-run 终态和完整成员投递链路清理完成才释放许可。内部 dispatcher 返回时缺少终态即关闭本批准入，迟到终态只补充回执，不重新开放排队成员。工具接受、可见回复、owner 变化和原生 Stop ACK 都不能建立终态。未知成员执行或汇总继续占用准入。
+
+### 来源汇总与反馈确认
+
+讨论完成后 Main 创建元数据-only `team_discussion_summaries` outbox，固定来源 incarnation、批次及输出定位。来源汇总沿用主会话现有工具与执行设置，交接要求结合讨论结论继续已获授权的未完成任务，不把新讨论提案当作新增授权，也不要求总结后直接结束。
+
+来源忙碌时通过公开 buffered dispatcher 等待原生 owner，等待期间仍占用汇总准入，不把 followup 排队返回当作执行结束。汇总及其后续工具执行仍由同一次真实原生 run 拥有；只按精确原生 receipt 与可见输出 entry 判定已反馈，NO_REPLY 或无输出不显示成功。
+
+停止先持久化 `summary_suppressed`，再取消执行，迟到结果不能恢复汇总；中断或 ACK 丢失保留 unknown，不跨崩溃盲重跑。
 
 公开结果超过当前 80KB 汇总边界或引用不完整时明确失败，不静默截断后声称完整总结。用户可显式要求来源读取精确批次。结构化问题通过已有提问窗口处理，只有匹配的 native room 身份才显示“需要你回应”；正文里的 @用户 不制造问题状态。
 
@@ -178,25 +275,41 @@ Main 的 queue generation 与房间执行 generation 分离。普通重启不会
 
 ### 原生 holding 的身份、隔离与删除
 
-Team 自己拥有讨论 holding 的业务 RPC、序列化及房间/代次映射；常驻 Runtime Services 提供通用 `inert-custody` harness、service 和 RPC。native `pluginExtensions.runtime-services.custody` 保存真实托管 owner 的绑定标记，通用层只识别 opaque resourceId、epoch、operationId 和精确 native identity。Team 将房间映射为 resourceId，在启用并取得当前写租约后准备、保存和读取；禁用后的维护只允许检查、取消、永久关闭及归档后解锁既有资源。保存只调用公开 transcript append，不调用模型或执行入口。原生条目使用通用 custom-role/customType、`display:false` 和 `excludeFromContext:true`；只有精确 native identity、entryId、稳定 idempotencyKey 和字节摘要吻合才确认 saved。同步提交 guard 检查取消代次和 owner，公开 raw delta 仅核对目标条目，不复制 transcript。
+#### 托管记录与保存确认
+
+Team 自己拥有讨论 holding 的业务 RPC、序列化及房间/代次映射；常驻 Runtime Services 提供通用 `inert-custody` harness、service 和 RPC。native `pluginExtensions.runtime-services.custody` 保存真实托管 owner 的绑定标记，通用层只识别 opaque resourceId、epoch、operationId 和精确 native identity。
+
+Team 将房间映射为 resourceId，在启用并取得当前写租约后准备、保存和读取；禁用后的维护只允许检查、取消、永久关闭及归档后解锁既有资源。保存只调用公开 transcript append，不调用模型或执行入口。原生条目使用通用 custom-role/customType、`display:false` 和 `excludeFromContext:true`；只有精确 native identity、entryId、稳定 idempotencyKey 和字节摘要吻合才确认 saved。同步提交 guard 检查取消代次和 owner，公开 raw delta 仅核对目标条目，不复制 transcript。
 
 holding 会话固定模型锁。主动调用执行入口可能先收到 ACK，然后产生精确 whole-run error。产品关闭 Agent Team 时常驻 custodian 仍保留 inert harness 和执行阻断；harness 缺失时模型锁也不能回退普通模型。普通聊天历史及公开会话搜索不展示 custom 待发正文，产品会话导入、列表、搜索和状态投影排除保留的 holding key；原生分页仍按原始页面推进，避免过滤后漏扫普通会话。
 
-Main SQLite 的 `team_discussion_queue_control` 与 `team_discussion_pending_inputs` 只保存 generation、请求指纹、参数/权限快照、状态、原生身份和 entry 定位。Runtime Services 的 `runtime-custody/` ledger 只保存通用资源、摘要及生命周期元数据，不保存房间、轮次或讨论正文。正文、附件路径和回复引用正文只在用户草稿、项目文件及 OpenClaw 原生存储内存在；读取待发正文只生成当前面板的临时投影。没有持久 Main 正文、Redux transcript 或原生文件直读。
+Main SQLite 的 `team_discussion_queue_control` 与 `team_discussion_pending_inputs` 只保存 generation、请求指纹、参数/权限快照、状态、原生身份和 entry 定位。Runtime Services 的 `runtime-custody/` ledger 只保存通用资源、摘要及生命周期元数据，不保存房间、轮次或讨论正文。
+
+正文、附件路径和回复引用正文只在用户草稿、项目文件及 OpenClaw 原生存储内存在；读取待发正文只生成当前面板的临时投影。没有持久 Main 正文、Redux transcript 或原生文件直读。
+
+#### 归档、解锁与精确删除
 
 关闭与删除遵守不同公开接口的归属：HoldingClose 先持久关闭房间并收齐迟到创建的身份，Main 的正常 operator 客户端按 exact sessionId/lifecycleRevision 归档；owning harness SDK 只在已归档且身份吻合时解除模型锁；Main 再执行 exact `archivedOnly:true` 原生删除，并确认所有 holding 身份缺失。plugin-owned Gateway 请求不能冒充 operator 删除 harness 创建的会话，也不能补造 pluginOwnerId。归档 ACK 丢失时必须重新取得 owner 验证的已归档事实后继续；任一步未知或 incarnation 改变均保留清理任务。实际归档不保证改变 lifecycleRevision，以公开返回的最新身份为准。
+
+#### 退出后继续清理的限制
 
 正常 SIGTERM 存在另一清理窗口：已归档并解锁、尚未删除的 holding 不再享有 locked-harness 退休保留规则，owner namespace 会被清除。此时只允许已持久关闭的房间，以 durable slot 的精确 key、agent、SID/revision、harness 和 sessionRoot 核对仍 archived/unlocked 的同一 incarnation，继续完成删除；冲突 marker、恢复归档、身份/修订变化均拒绝。Prepare/Save/Read/Status 的 marker、模型锁和正常准入要求未放宽。保存和聊天执行入口在这种恢复清理状态仍保持拒绝。
 
 ### 明确禁用与重启
 
+Agent Team 的插件开关通过原生 API 同步插件和技能配置，使用现有 Gateway 的热应用回执。同包启停不能申请安全重启；原生要求重启或热应用未知时明确报告失败并保留围栏。代码包替换另走后台 Gateway 冷流程，不退出软件。`skills.update` 继续独立失效原生会话技能快照，技能写入失败报告部分失败并允许同状态修复；离线设置不启动 Gateway。技能文件及目录链接仍由 OpenClaw 发布，应用不复制到生成目录、不改写模型的读取参数、不注入读取兜底，也不新增运行时补丁。
+
 同包启停在现有 Gateway 内热应用，不重启 Gateway。关闭后立即撤回设置、历史入口、输入模式和业务视图；已加载普通聊天的历史仍由插件独立纯展示入口保持原格式，不开放 Team 业务读取。插件草稿的正文、附件路径及未知请求冻结状态在当前产物 hash 的内存中保留，重新启用不自动重开发送或恢复旧对话框。
 
 原生热启用在候选服务启动后才发布新方法表。Team 的发起、讨论、汇总和待发存储 service.start 只初始化本地状态；已发布的业务请求在写入或执行前绑定当前 Required owner，握手前后复核权限、service 代次、停止状态和原生生命周期。开启不以尚未发布的 proof RPC 作为启动前置，也不沿用上个实例的租约；握手期间再次关闭或重启会拒绝旧请求。讨论与汇总的状态查询使用不落盘的回执快照，保留 unknown，不因读取重新登记或恢复执行。
 
+#### 禁用事务与取消围栏
+
 产品扩展 IPC 在修改 Agent Team 开关前取得 Main disable lease：先关闭新接收、建群及派发准入，再在产品数据库取消活动待发输入并推进代次，随后请求已连接 Gateway 取消原生 holding receipts，最后修改扩展配置。lease 在配置操作完成的 finally 中释放；同插件快速关闭/重开串行执行，不能让重开越过未完成的关闭。
 
 离线时产品 tombstone 仍有效，后续 prepare 使用最新 queue generation 与原生存储对齐，不恢复旧待发输入。正常 Gateway shutdown 保留 saved；明确禁用与正常 shutdown 不混为一种取消。热替换时旧 service.stop 可能仍看到旧启用配置，公开 stop 上下文没有可靠关闭原因，因此扩展自己的 stop 检查仅作补充，不能替代 Main 前置 fence。这里保证的是产品开关流程；任意外部或离线修改原生配置不被描述为已经完成产品取消事务。
+
+#### 关闭后仍允许的维护
 
 Main 协调器的寿命属于插件实例，业务关开只切换业务定时器，不能再次执行 `recoverInterrupted`。独立 `maintenance` 在关闭后继续核对已经存在的精确 whole-run、摘要停止和 holding 取消收据；不启动新摘要、读取 holding 正文、派发 FIFO 或重新准备成员。Main 暂时丢失 Native 绑定证明不等于明确禁用，不能据此取消待处理摘要。持久取消 tombstone 的幂等清理可继续，未知收据保持未知，不根据空闲推断结算。
 
@@ -206,23 +319,50 @@ Main 协调器的寿命属于插件实例，业务关开只切换业务定时器
 
 受管 peer 详情的独立输入框将用户消息直接提交到当前成员的原生会话。来源头像仍回主会话，引用卡片仍由用户明确选择加入主草稿；成员消息不调用主聊天发送，不附加请求主助手转发的提示，也不消耗主输入框正文、附件、引用或 Team/Swarm 选择。
 
-Main 在准备时核对真实来源、完整成员身份、当前原生 sessionId、可选历史 delivery、插件健康和全队完整 idle 状态；来源与目标的 Plan/Goal、停止/删除、无法核实的活动或 queued/dispatching/unknown 投递均拒绝。附件准备后重新核验准入。Renderer 只使用当前成员已连接、历史读取成功的 ChatController 发送，按该成员核对权限和登记/bind 用户运行；切换详情、原生实例变化、重连或插件关闭使旧提交失效。文本、文件、图片和语音附件均归当前成员，图片能力按目标模型判断。
+Main 在准备时核对真实来源、完整成员身份、当前原生 sessionId、可选历史 delivery、插件健康和全队完整 idle 状态；来源与目标的 Plan/Goal、停止/删除、无法核实的活动或 queued/dispatching/unknown 投递均拒绝。附件准备后重新核验准入。
+
+Renderer 只使用当前成员已连接、历史读取成功的 ChatController 发送，按该成员核对权限和登记/bind 用户运行；切换详情、原生实例变化、重连或插件关闭使旧提交失效。文本、文件、图片和语音附件均归当前成员，图片能力按目标模型判断。
 
 准备回执携带 Main 当前房间的临时控制代次；全队停止或删除准入同步换代。附件准备后以及权限核对、运行登记后，发送者都携原代次重新核验，再调用成员原生发送。停止完成后旧点击不能复活；用户新的显式发送重新取得当前代次。控制代次不保存正文或执行结果，不代替原生接纳与整轮终态证据。
 
+#### 成员消息未知与批次归属
+
 发送接纳只表示当前助手收到消息，不表示执行完成；ACK 丢失保留精确请求并冻结重发，只能用该成员同一 clientTurnId 的原生接纳证据恢复状态。历史 accepted 投递缺少 whole-run 终态时仍不根据 idle 补造结果，不重发旧消息或重开旧批次。成员详情输入只形成该成员自己的对话运行，没有批次准入；该运行尝试 peer send 时明确拒绝，不创建 Graph，也不按最新 open round 或历史引用推断归属。需要新的团队阶段时，用户从原始主会话发给组织者，由组织者按真实运行开启新批次和派发。公开 chat.send 没有通用 reject-if-busy，外部客户端的竞争不被描述为原子独占；运行中指导仍不在该输入入口开放。
+
+#### 中性 Goal 快照的处理
 
 普通会话结束或停止后，宿主 Goal 协调器也可能留下无 `goalId`、`phase: waiting/stopped` 的中性快照；这不是 Goal 存在或运行的证据，不阻断新的成员用户消息或新的显式 Team 发起。两条入口复用同一纯准入判断；原生 Goal、带目标身份的宿主快照、其他阶段、损坏状态或身份未确认仍拒绝。新的发起仍需核对前代精确结算和清理，成员消息仍核对全队空闲、停止代次和精确成员身份，不凭中性快照补造完成。
 
 ### 受限发起守卫
 
-显式 Team 发起守卫限定到可验证精确当前输入的正常来源提交。Main 记录无正文候选及 native identity；Team 的 `runtime/launch/` 拥有模式工具政策、发起状态及有界纠正。Runtime Services 仅保留已登记精确 run 的通用准入与退休围栏，不在 Team 缺席时解释团队规则。守卫核验当前来源及实际 Team 操作，不能由正文标记、assertActive、工具名或未知输入猜测授权。缺少精确用户事实、execution lineage、历史读取或当前插件可用性的证据时保守阻断；Code Mode 外壳与内部实际工具分别按公开上下文核对。
+显式 Team 发送的两次空闲核验使用当前来源会话的原生 `sessions.describe` 活动投影，
+包含已排队或正在运行的后代。其他历史会话变更不能把该定点查询变成全局列表的不确定
+结果。仅尚未绑定且无历史、无本地执行或未知提交的新来源，才可将原生明确的空结果
+视为不存在；已绑定身份缺失、错 SID、连接或当前来源身份变动仍属未知。实际忙碌时
+提示等待结束，无法确认状态时明确提示暂不可确认；两者均保留草稿和模式，未知不重发。
+
+常规权限同步对已有会话的原生准备可能先收到 `sessions.create` 回应，随后才收到异步
+`sessions.changed`。如果只有事件令正在等待的定点观察失效，而产品、连接、代次和
+本地执行归属都未变化，Main 丢弃该旧观察，最多再精确读取一次。第二次必须保持首次
+响应的物理 SID 和 lifecycle revision，包括省略、null 与字符串的区别；再次失效、
+身份变化、原生错误或未确认提交仍拒绝。重新观察只读，不重放准备、注册或消息发送。
+
+准入测试须经过生产 Main 的会话物化、
+Adapter 事件处理及 Router，不能用固定返回空闲的宿主端口代替这段链路。
+
+显式 Team 发起守卫限定到可验证精确当前输入的正常来源提交。Main 记录无正文候选及 native identity；Team 的 `runtime/launch/` 拥有模式工具政策、发起状态及有界纠正。Runtime Services 仅保留已登记精确 run 的通用准入与退休围栏，不在 Team 缺席时解释团队规则。
+
+守卫核验当前来源及实际 Team 操作，不能由正文标记、assertActive、工具名或未知输入猜测授权。缺少精确用户事实、execution lineage、历史读取或当前插件可用性的证据时保守阻断；Code Mode 外壳与内部实际工具分别按公开上下文核对。
 
 精确当前输入验证后，目标与必要上下文足够明确时优先尽快使用所选 Team 工具发起；仅在存在实质歧义或缺少必要上下文时，才先按原生权限读取材料、检索、检查环境、分析需求或初步规划。只补齐必要缺口，随后回到所选工具，不停留在分析或计划阶段。普通工具返回未决策，继续受原生权限、审批及其他工具政策约束；不设置额外准备白名单、不启用被禁用工具，也不直接改写原生目录或系统提示文本。普通工具准备不计为 Team attempt，不建立团队接纳证据；实际成员准备和协作操作仍登记发起尝试。助手将必要结论整理为自包含交接，不自行完成受委派工作或用其他模式代替用户所选模式。
 
 守卫继续按操作核验 Team 模式：两种模式都可发现助手和读取讨论；群聊模式不允许准备任务 peer 或发送协作消息，任务协作模式不允许发起群聊。普通工具（包括 Code Mode 内层工具）沿用原生策略，避免模型目录展示可用而发起白名单在调用时额外拒绝。助手创建仍由工具自身核验用户意图和权限；准备或临时子任务不能代替真实 Team 接纳回执。
 
-Agent Team 工具工厂通过自身发起账本读取无正文目录提示，并在注册定义时缩小自身工具的 schema 和描述。任务协作发起期间，`team_discussion` 只展示 `read`、必填 `roomId` 及可选的批次筛选 `discussionIds`；群聊发起期间，`team_discussion` 只展示 `create/read/stop`，`task_assistants` 只展示无参数发现，不再宣传 peer 准备、seal 或 review。原生 deferred 目录和 `tool_describe` 使用这些定义，不通过字符串删除目录项。取消、未知 owner、损坏或原生身份失配时隐藏 Team 自有工具；已接纳但来源尚未整轮结算时保留收窄，精确整轮终态或 released 后恢复后续请求的正常定义。目录提示不构成调用授权，执行前守卫继续校验精确来源与 run。
+#### 目录收窄与执行前校验
+
+Agent Team 工具工厂通过自身发起账本读取无正文目录提示，并在注册定义时缩小自身工具的 schema 和描述。任务协作发起期间，`team_discussion` 只展示 `read`、必填 `roomId` 及可选的批次筛选 `discussionIds`；群聊发起期间，`team_discussion` 只展示 `create/read/stop`，`task_assistants` 只展示无参数发现，不再宣传 peer 准备、seal 或 review。
+
+原生 deferred 目录和 `tool_describe` 使用这些定义，不通过字符串删除目录项。取消、未知 owner、损坏或原生身份失配时隐藏 Team 自有工具；已接纳但来源尚未整轮结算时保留收窄，精确整轮终态或 released 后恢复后续请求的正常定义。目录提示不构成调用授权，执行前守卫继续校验精确来源与 run。
 
 本期不增加 runtime patch。原生 `sessions_send` 的模式可见性及首次 Swarm 发起时对 Team 定义的同步裁剪仍未实现；这些路径继续依赖调用前检查，不能宣称所有禁止操作已从 system prompt 消失。
 
@@ -240,11 +380,21 @@ OpenClaw 的紧凑工具目录通过 `tool_search`、`tool_describe` 和 `tool_c
 
 原生 queued/followup 的通用提交/执行绑定仍未成立，显式 Team 在忙碌或已有未确认队列时保留草稿并拒绝普通 followup。有限纠正最多使用两次原生 revise，只能在精确阶段、尚无已确认或不确定副作用时执行；副作用已发生后不回退。此能力不保证建群成功，也不扩大工具权限。完整业务建群的剩余验收见[现行说明与验证边界](#当前验证边界)。
 
-Main 候选回执通过 KV CAS 保存原生 generation、来源 incarnation、clientTurnId、prompt SHA-256、通用 admission 引用和提交边界，没有正文。指纹按原生普通 `chat.send` 入库规则先 NFC、拒绝 NUL、移除禁止的控制字符再 trim；保持原生消息及普通聊天发送不变。正常 release 需要 Required 服务观测的精确 whole-run proof，以及 Main 对同一 key/SID/revision 的 fresh 定点状态和无活动/无队列核对收据；该 cleanup attestation 与原生终态分别保存，不将它声称为原生执行证明。发送前及 cleanup 不扫描全局目录。Stop、产品终态或空历史本身都不能释放。register ACK 丢失且无法确认已登记通用资源时保留 unknown，不依赖一次 absent 结果撤销、重新登记或重发。
+#### 发起回执与冷重启
 
-冷重启时原生插件 namespace 可被退休流程清除，不能作为跨进程守卫的唯一权威。Team 自己持有发起业务账本；既有 `stateDir/runtime-services/agent-team-launch/` 数据路径保留，这不再表示代码归 Required 服务。通用 `stateDir/runtime-services/execution-admissions/` 另存无正文的精确 run、generation、owner、接纳、终态和 cleanup 收据，不解析 Team 模式。账本先持久写入再确认；损坏、不可读、写入结果不明或退休 owner 保持 unknown，不凭缺失镜像恢复为空，也不复制原生正文。重新安装不重放旧任务；本次不提供旧协议或旧账本迁移层。
+Main 候选回执通过 KV CAS 保存原生 generation、来源 incarnation、clientTurnId、prompt SHA-256、通用 admission 引用和提交边界，没有正文。指纹按原生普通 `chat.send` 入库规则先 NFC、拒绝 NUL、移除禁止的控制字符再 trim；保持原生消息及普通聊天发送不变。正常 release 需要 Required 服务观测的精确 whole-run proof，以及 Main 对同一 key/SID/revision 的 fresh 定点状态和无活动/无队列核对收据；该 cleanup attestation 与原生终态分别保存，不将它声称为原生执行证明。
 
-本地 markSubmissionStarted 的 IPC ACK 丢失不等于用户输入已发送，也不能凭一次空历史撤销提交边界。只有已经不可恢复地关闭发送续体、实际未调用 native send 的 owning sender，才能调用 `TeamSubmissionAbortedBeforeSend`。Main 的 abortBeforeSend 再拒绝已接纳、已有 whole-run 或已 launched 的候选，并通过独立 native absence/idle/代次 tombstone 完成释放。已调用 native send 的未知结果不会走此入口，不自动重发；Renderer 与 Main adapter 分别在实际调用边界记录 issued，失败前关闭发送续体。
+发送前及 cleanup 不扫描全局目录。Stop、产品终态或空历史本身都不能释放。register ACK 丢失且无法确认已登记通用资源时保留 unknown，不依赖一次 absent 结果撤销、重新登记或重发。
+
+冷重启时原生插件 namespace 可被退休流程清除，不能作为跨进程守卫的唯一权威。Team 自己持有发起业务账本；既有 `stateDir/runtime-services/agent-team-launch/` 数据路径保留，这不再表示代码归 Required 服务。通用 `stateDir/runtime-services/execution-admissions/` 另存无正文的精确 run、generation、owner、接纳、终态和 cleanup 收据，不解析 Team 模式。
+
+账本先持久写入再确认；损坏、不可读、写入结果不明或退休 owner 保持 unknown，不凭缺失镜像恢复为空，也不复制原生正文。重新安装不重放旧任务；本次不提供旧协议或旧账本迁移层。
+
+#### 未发送释放与首条消息委托
+
+本地 markSubmissionStarted 的 IPC ACK 丢失不等于用户输入已发送，也不能凭一次空历史撤销提交边界。只有已经不可恢复地关闭发送续体、实际未调用 native send 的 owning sender，才能调用 `TeamSubmissionAbortedBeforeSend`。
+
+Main 的 abortBeforeSend 再拒绝已接纳、已有 whole-run 或已 launched 的候选，并通过独立 native absence/idle/代次 tombstone 完成释放。已调用 native send 的未知结果不会走此入口，不自动重发；Renderer 与 Main adapter 分别在实际调用边界记录 issued，失败前关闭发送续体。
 
 首条消息沿用 dev 的窗口/frame-bound viewer 委托：Main 完成准备并登记发起边界，再将同一 chat.send 交给实际展示的 Renderer，不回退双发。viewer 明确返回 requestSent:false 才执行未发送候选的释放核验；委托失联、超时及已发送未知均保留保护。执行前 Team 资格被撤销时不交给 viewer。
 
@@ -257,6 +407,7 @@ Main 候选回执通过 KV CAS 保存原生 generation、来源 incarnation、cl
 显式任务协作、群聊发起及成员单聊不以全局 `sessions.list` 是否成功决定单个目标可否发送。
 来源或成员由原生 `sessions.describe({key,agentId})` 读取；current status 包含主运行、queued
 及递归后代活动。`known:false` 单独反馈未知，不能显示为空闲或与真实 busy 混淆。
+
 首次新来源的 `session:null` 只有在没有历史/运行回执、继承来源或其它未确认状态时才可
 证明缺席；既有来源缺行仍未知，不自动创建替代会话。公开发送没有通用的原子
 reject-if-busy，外部客户端竞争仍由原生执行与权限规则决定。
@@ -278,9 +429,13 @@ release/abandon 仍核对该回执的精确 identity、whole-run、输入消费�
 `executionSettled:true` 的 whole-run end/error 可确定执行结局；chat final、Stop ACK、
 空闲和 owner 改变不替代该证据。
 
+### 正文与元数据的存储分工
+
 OpenClaw 保存长期 transcript、公开群消息、成员执行、汇总及待发正文。Main SQLite 只保存产品房间/成员/轮次、来源身份、权限与资源快照、参数指纹、定位和执行/取消/删除回执；Runtime Services 的账本同样不保存正文。Renderer 只维护当前挂载面板的投影，不新增 Main、Redux 或持久化 transcript 缓存。
 
 协作的 execution/review 表与群聊的 rooms/runs/executions/task_links/summaries/deleted_rooms、queue_control/pending_inputs 分别承担真实查询和恢复契约。原生幂等先于新预算扣除；未知不换 requestId 重发。旧独立群不迁移为 borrowed source，不引入已取消的 OpenClaw 9.6→9.8 数据桥。
+
+### 禁用、卸载与删除的区别
 
 关闭扩展保留已有团队和原生 transcript，应用隐藏历史和参数入口；协作消息详情与群聊历史 RPC 随 Agent Team 停用，重新启用后恢复记录读取。Runtime Services 只保留已登记精确 run 的通用退休围栏、inert custody 及无正文收据核对，不继续执行 Team 模式或 peer send 业务规则。产品显式关闭先取得准入 lease、写取消代次再改配置；正常 Gateway shutdown 保留已保存待发输入，不能当成明确禁用。扩展开关由配置同步保留用户选择。
 
@@ -290,23 +445,31 @@ OpenClaw 保存长期 transcript、公开群消息、成员执行、汇总及待
 
 ## 模块边界
 
+源码通过安装的 `@app-plugin/sdk`、`@runtime-services/sdk` 和公开构建工具独立检查、构建与测试，不导入应用、Plan Mode 或相邻插件实现。discussion 协议、业务 receipt ledger、发起模式规则及纠正提示全部归 Team。
+
+Required Runtime Services 只提供通用执行准入、inert session 托管及精确收据/取消/清理能力，不解释 Team 业务。同步工具投影绑定真实 Native 实例，执行前再次读取限制，旧回调不能沿用新实例。Main 通过精确会话身份的通用原始 namespace 查询及 App SDK planning 解析器核对规划和待审核状态，不把被省略的展示投影当作已关闭。
+
+实现及部署边界见[应用插件宿主](../../architecture/17-app-plugin-host.md#源码独立构建与-required-能力)。
+
 代码按执行职责和进程划分，测试跟随所属模块。协作与群聊共享产品身份和设置合约，各自保留原生执行和界面边界。
 
-| 模块                                       | 职责                                                                     |
-| ------------------------------------------ | ------------------------------------------------------------------------ |
-| Agent Team `contracts/`、`prompt/`         | 原生业务合约、身份与精确提示                                             |
-| Agent Team `host/`                         | Main 协调、队列、附件、metadata/settings 同库事务及合法清理              |
-| Agent Team `app/`                          | App Main 注册、纯展示入口及完整 React UI、模式、设置/历史/详情、翻译 |
-| Agent Team `browser/`                      | 纯浏览器草稿、继续证据、队列/提及/导出辅助                               |
-| Agent Team `collaboration/`、`discussion/` | 原生执行及启用时的业务历史                                               |
-| Agent Team `runtime/`                     | 发起模式政策、讨论 holding 适配及业务回执账本                           |
-| Runtime Services `admission/`、`custody/`   | 通用准入、inert 托管、精确收据、取消与清理                               |
-| `plugins/sdk/app-plugin-sdk/`                 | 无应用依赖的版本化 Main/Browser 端口                                     |
-| Core `plugins/app/`                        | 清单发现、可信产物、通用 IPC、配置/提交/删除参与者及 UI 插槽             |
+| 模块                                                                | 职责                                                                 |
+| ------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| Agent Team `contracts/`、`prompt/`                                  | 原生业务合约、身份与精确提示                                         |
+| Agent Team `host/`                                                  | Main 协调、队列、附件、metadata/settings 同库事务及合法清理          |
+| Agent Team `app/`                                                   | App Main 注册、纯展示入口及完整 React UI、模式、设置/历史/详情、翻译 |
+| Agent Team `browser/`                                               | 纯浏览器草稿、继续证据、队列/提及/导出辅助                           |
+| Agent Team `collaboration/`、`discussion/`                          | 原生执行及启用时的业务历史                                           |
+| Agent Team `runtime/`                                               | 发起模式政策、讨论 holding 适配及业务回执账本                        |
+| Runtime Services `admission/`、`custody/`                           | 通用准入、inert 托管、精确收据、取消与清理                           |
+| `plugins/sdk/app-plugin-sdk/`                                       | 无应用依赖的版本化 Main/Browser 端口                                 |
+| Core `src/main/plugins/app/` / `src/renderer/features/plugins/app/` | 清单发现、可信产物、通用 IPC、配置/提交/删除参与者及 UI 插槽         |
 
 不再保留 Team 专属 Main/shared 门面、preload/IPC 或应用内业务组件；独立构建/安装与生命周期见 [应用插件宿主](../../architecture/17-app-plugin-host.md)。
 
-协作消息详情 `collaboration.messages` 和公开群聊历史 `teamDiscussion.history` 归 Agent Team 的对应执行域，只在插件启用时读取原生正文。发起工具分类、模式和纠正提示、讨论输入解析/序列化、房间/轮次协议、业务 ledger 及 RPC 全部在 Team 内部。Runtime Services 按 `admission/`、`custody/` 提供与业务无关的能力，停用后保留的是精确资源的准入、收据及取消围栏。旧 `teamDiscussion.offlineControl` 不再提供常驻兼容入口，Main 清理直接使用通用 RPC；通用 FIFO 仍只提供容量和显式释放，不推断执行已完成。
+协作消息详情 `collaboration.messages` 和公开群聊历史 `teamDiscussion.history` 归 Agent Team 的对应执行域，只在插件启用时读取原生正文。发起工具分类、模式和纠正提示、讨论输入解析/序列化、房间/轮次协议、业务 ledger 及 RPC 全部在 Team 内部。
+
+Runtime Services 按 `admission/`、`custody/` 提供与业务无关的能力，停用后保留的是精确资源的准入、收据及取消围栏。旧 `teamDiscussion.offlineControl` 不再提供常驻兼容入口，Main 清理直接使用通用 RPC；通用 FIFO 仍只提供容量和显式释放，不推断执行已完成。
 
 ```mermaid
 flowchart LR
@@ -323,32 +486,49 @@ flowchart LR
   Browser --> TeamContracts
 ```
 
-两个插件及 Team 的 host/browser 实现均不导入 `src`，常驻插件不导入可选 Agent Team。通用宿主根据清单和已批准产物 hash 动态加载 Main、Browser 及可选纯展示入口，Core 不通过 Team 业务 import 接线；原生注册与应用入口独立。typed ports 每次读取真实 store/router，不复制宿主状态，保留原 SQLite 连接、同库事务、唯一协调器、禁用 lease 与收据核对。关闭后只保留合法清理参与者及同产物的纯历史展示，业务 UI、命令和旧 epoch 失效；旧 hash 的清理实例仅按资源账本引用保留。草稿留在 Renderer 的有界内存，不进入 Gateway 或持久正文缓存。Electron/Redux/preload、主输入框、权限和原生历史控制器继续由通用宿主维护。内置安装/卸载通道仍受产品策略限制，不能把框架可动态加载等同于已经开放任意插件安装。Gateway 根入口不导入 host/browser；边界测试分别验证原生、Main 和 Browser。原 Gateway 方法、产品表、持久化目录和团队身份保留，应用专属 IPC 则由通用插件桥替代。
+两个插件及 Team 的 host/browser 实现均不导入 `src`，常驻插件不导入可选 Agent Team。通用宿主根据清单和已批准产物 hash 动态加载 Main、Browser 及可选纯展示入口，Core 不通过 Team 业务 import 接线；原生注册与应用入口独立。
+
+typed ports 每次读取真实 store/router，不复制宿主状态，保留原 SQLite 连接、同库事务、唯一协调器、禁用 lease 与收据核对。关闭后只保留合法清理参与者及同产物的纯历史展示，业务 UI、命令和旧 epoch 失效；旧 hash 的清理实例仅按资源账本引用保留。
+
+草稿留在 Renderer 的有界内存，不进入 Gateway 或持久正文缓存。Electron/Redux/preload、主输入框、权限和原生历史控制器继续由通用宿主维护。内置安装/卸载通道仍受产品策略限制，不能把框架可动态加载等同于已经开放任意插件安装。Gateway 根入口不导入 host/browser；边界测试分别验证原生、Main 和 Browser。原 Gateway 方法、产品表、持久化目录和团队身份保留，应用专属 IPC 则由通用插件桥替代。
 
 ## 维护与验证边界
 
-原生调用失败按 `collaboration.bind` / `collaboration.dispatch` 等实际阶段报告封闭的原因码和错误引用；日志不记录消息正文、工具参数或原始异常内容。模型得到明确的停止重复尝试提示。绑定失败不会进入发送或投递预留；后续阶段的不确定结果仍按既有回执与 unknown 契约处理，不自动重试。单文件 Gateway 与动态 SDK 共享原生授权及私有会话绑定所有者，保持 host-issued 校验及撤销有效；真实 webchat 来源的多级转发须单独验证，不能仅用后台连接的成功结果代替。该链路已在隔离确定性模型及 Electron 环境中验证三个原生 accepted 投递、各执行的 whole-run terminal 和最后回传来源 main；这不替代真实业务模型及完整 Main room 流程验收。
+### 调用失败如何解释
 
-既有能力在 v2026.9.8 使用公开 Gateway/SDK 和当时补丁集完成接入，没有为上述 Team 功能新增运行时 patch。真实 holding、冷/热禁用、精确清理、guard/QuickJS、原生输入规范化和附件绑定已有隔离确定性模型验证；正式回归覆盖容量事务、FIFO/汇总结算、ACK 丢失、停止/迟到返回、权限漂移、独立补充草稿与可信发起身份。
+原生调用失败按 `collaboration.bind`、`collaboration.dispatch` 等实际阶段返回封闭原因码
+和错误引用。日志不记录消息正文、工具参数或原始异常。绑定失败不进入发送或投递预留；
+后续阶段的结果不确定仍保留原回执和 unknown，不自动重试。
 
-这些证据不等于完整生产 Main/room/业务模型、麦克风点击、系统级故障或讨论质量已验收。尚未运行的 dreaming、其他原生管理/channel 恢复路径不被概括为全部隔离。真实模型内容质量、完整 UI、多窗口与权限竞争验收继续见[现行说明与验证边界](#当前验证边界)。
+单文件 Gateway 与动态 SDK 必须共享原生授权及私有会话绑定 owner，保留 host-issued 校验
+与撤销。真实 webchat 的多级转发不能用后台连接成功代替。owned-run registry 由原生
+immutable actor 发布，Team 不接管该事务，也不为业务功能新增运行时 patch。
 
-修改时应同时核对 shared 合约、Main IPC/store/coordinator、扩展 service/guard、preload 和 Renderer，运行对应行为回归。不要只以文件存在或注册成功宣称功能完整；也不要将这份现行说明恢复成已完成计划和逐轮审查流水。
-
-当前 v2026.10.7 的 owned-run registry 接线仍通过原生 immutable actor 发布，Team 不接管该事务。目标版本的实际通过范围见[本版验证](../../openclaw-upgrades/v2026.10.7/validation.md)，上述历史验证不自动延续为本版真实模型验收。
+修改时核对插件纯合约、host store/coordinator、原生 service/guard、App Browser UI 和
+通用宿主端口。重点回归容量事务、FIFO/汇总结算、ACK 丢失、迟到结果、权限漂移、
+独立补充草稿与可信发起身份，不以文件存在或注册成功代替行为验证。
 
 ## 当前验证边界
 
-`plugins/extensions/agent-team/scripts/native/hot-reenable.native-probe.mjs` 在完整字节校验的冻结 Gateway、其 bundled Node 和本次独立插件产物上通过：同一进程连续两轮关闭、开启 Team，新 proof 换代、旧 App 绑定入口拒绝，以及每轮新实例的 launch inspect、inert holding prepare/save/read 均通过；另覆盖 Swarm 开启后关闭。探针使用独立状态和 loopback，显式采用 Native 测试专用的可信捆绑目录覆盖并关闭 minimal Gateway 模式，不替代生产安装信任、Main/UI 或业务模型验收；正常退出后仍核对模型请求、agent 事件和公网尝试全部为零。运行时须设置 `APP_PLUGIN_HOST_ROOT`，并使用所选运行时的 bundled Node 传入其目录。
+以下入口使用独立状态和合成资料；测试覆盖与当前产物实际通过是两回事。
+锁定产物的重验结果统一见[本版验证](../../openclaw-upgrades/v2026.10.7/validation.md)。
 
-下列 v2026.10.6 探针结果是对应旧产物的历史证据；当前版本的重新执行结果与未验收项见[本版验证](../../openclaw-upgrades/v2026.10.7/validation.md)。
+| 验证入口                                                              | 核对内容                                                             | 证据范围                                                          |
+| --------------------------------------------------------------------- | -------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| `scripts/native/hot-reenable.native-probe.mjs`                        | 同进程关闭/开启、新 proof、旧 App 绑定拒绝、launch 与 inert holding  | 已有冻结产物隔离证据；使用可信目录测试覆盖，非生产安装信任验收    |
+| `scripts/test/verify-group-discussion-runtime.mjs --tool-inheritance` | 成员工具、来源参与、讨论结束后来源继续工具执行、精确终态与汇总 entry | 历史 v2026.10.6 loopback 合成模型证据，不能延续为当前真实模型通过 |
+| `scripts/native/agent-team-message-paths.native-probe.mjs`            | 成员单聊、公开群聊、重放不新增调用、bind/dispatch、定点 CAS 清理     | 历史 v2026.10.6 原生链路证据，元数据与权限端口为 fixture          |
+| `scripts/native/main-send-admission.native-probe.mjs`                 | 实际 Store/Adapter/Router、定点观察重读、SID/连接变化、注册与清理    | 隔离合成模型；不代表整个生产应用没有后台全局查询                  |
 
-`plugins/extensions/agent-team/scripts/test/verify-group-discussion-runtime.mjs <isolated-runtime> --tool-inheritance` 已在 v2026.10.6 隔离 Gateway 上通过：七次 loopback 合成模型请求覆盖来源原始任务、普通成员真实写入、讨论结束后来源自动继续调用工具写入，以及来源参与讨论时真实写入。探针核对实际文件产物、逐会话订阅的精确 key/SID/run whole-run 终态、插件回执 `settledRunIds` 与 `cleanupComplete`，以及汇总输出 entry；Gateway 和客户端正常退出。工具选择由合成模型固定，该结果证明原生工具与续跑链路可用，不替代真实业务模型自主续跑或完整 Electron UI 验收。
+表中相对脚本路径均位于 `plugins/extensions/agent-team/`。原生探针须使用所选冻结运行时
+自带 Node 与相符的独立插件产物；热启用探针另须设置 `APP_PLUGIN_HOST_ROOT`。
+不得读取用户资料或把跳过、来源 proof 失效、未运行的用例计为通过。
 
-v2026.10.6 的 `plugins/extensions/agent-team/scripts/native/agent-team-message-paths.native-probe.mjs` 已在严格校验的独立资源产物上通过真实 host/native 链路：来源执行、成员单聊及两人公开群聊共四次本地模拟模型请求，逐项核对精确 SID/run 的 whole-run terminal，并核对成员和群聊的原生历史；群请求重放没有新增模型调用。真实 `bind → dispatch → Requested → host.handle → resolve` 另覆盖新增成员、已有成员只读复核及读取失败保留原错，后两种情况没有新建、发送或删除。发送、准备和三位成员的精确 CAS 清理均未调用全局 `sessions.list`，最后 Gateway 与客户端正常退出并完成 join。
+完整生产群 FIFO、首条消息 viewer 委托、真实 UI/语音、多窗口和权限竞争尚未完成端到端验收。
+历史开关探针通过不代表完整组织者流程通过：组织者探针仍在 sender/relay/authorization
+联合断言处失败。模型自主组织、讨论内容质量、企业模型工具选择和完整 Main room 流程
+也没有被固定响应模型证明。
 
-`plugins/extensions/agent-team/scripts/native/main-send-admission.native-probe.mjs` 另覆盖真实 CoworkStore SQL 物化、Adapter、Router、生产事件处理及 Team 发起协调器：同一 main 会话已有实际普通消息与原生历史后，准备保持 SID，将原生真实变更帧延迟到定点读取窗口，重新观察后完成 Team 注册、发送、whole-run 与原生历史验证。释放前独立等待精确原生活动空闲，随后只调用一次释放；whole-run 本身不替代清理证据。自定义助手、连接代次变化及错误 SID 也分别覆盖。该隔离探针有五次本地模型请求，暂停了无 Goal fixture 中独立的后台 Goal 库存恢复，不能据其零列表调用声称整个生产应用没有后台全局查询。
-
-前述成员/群聊探针调用当前生产 host 协调器并真实创建房间和原生会话，但产品元数据、权限适配端口及工具操作选择由隔离 fixture 控制，模型仅为 loopback 模拟服务。它不代表模型自主组织团队、完整 Electron IPC/React 界面或真实内网业务模型已验收；上述成功也不把保留的房间意图当成所有成员均已准备的证据。
-
-完整生产群 FIFO、首条消息 viewer 委托、真实 UI/语音、多窗口及权限竞争尚未完成端到端验收。隔离 Gateway 的历史开关探针通过，但完整组织者探针仍在 sender/relay/authorization 联合断言处失败，不能据此宣布组织者流程通过。长期记忆已有 custom-role/隐藏上下文及 FTS 局部证据，REM/NREM dreaming 和其他原生恢复入口尚未实际验收。
+长期记忆只有 custom-role/隐藏上下文及 FTS 的局部证据；REM/NREM dreaming 和其他原生
+管理/channel 恢复入口尚未实际验收。保存房间意图不等于每名成员已准备，accepted、空闲、
+Stop ACK 和可见最终文字均不能替代各执行的精确 whole-run 终态与工具清理。

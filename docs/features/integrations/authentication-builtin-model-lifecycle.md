@@ -1,6 +1,8 @@
 # 内置模型认证与账号生命周期
 
-内置 provider 的稳定 ID 为 builtin_models。当前生产路径使用登录 mtoken 换短期 JWT，服务端 Team 授权，OpenClaw SecretRef 解析。本文按客户端配置、换证、模型发现和服务端 Hook 分层说明，不把登录文件、JWT 和模型 API Key 混为同一凭据。
+内置 provider 的稳定 ID 为 `builtin_models`。认证主线是：登录 mtoken → 短期 JWT → 服务端 Team 授权 → OpenClaw SecretRef 解析。Main 管理换证与撤销，服务端负责验签和授权，正在执行的任务在每次模型请求前核验当前登录会话。
+
+部署先读配置与凭据去向；排查“续签成功但请求仍失败”时，按轮换章节分别检查快照发布、原生加载和请求级凭据。退出与目录发现失败的处理见第 6 节。
 
 登录模块实际接线、调用顺序和失败语义见[登录与模型生命周期接口](../../developer-integration/login-model-lifecycle-api.md)。
 
@@ -14,14 +16,16 @@
 
 ## 2. 凭据的去向
 
-| 数据           | 来源                    | 允许到达                                     |
-| -------------- | ----------------------- | -------------------------------------------- |
-| mtoken         | 登录组件 user_info.json | Main → 明确配置的换证服务                    |
-| X-User-Account | 同一登录身份            | Main 校验与直发请求、既有出站代理注入       |
-| deviceId       | 本机有效网卡 MAC        | 换证请求；不代表设备密钥绑定                 |
-| JWT            | 换证服务                | Main、私有派生快照、Gateway 内存、模型数据面 |
-| X-Cookie       | 既有登录/工具链         | 不作为 JWT 或模型独立授权                    |
-| Team 权限      | 服务端数据库            | 模型目录、预算、blocked、限流                |
+| 数据           | 来源             | 允许到达                                     |
+| -------------- | ---------------- | -------------------------------------------- |
+| mtoken         | 登录凭据文件     | Main → 明确配置的换证服务                    |
+| X-User-Account | 同一登录身份     | Main 校验与直发请求、既有出站代理注入        |
+| deviceId       | 本机有效网卡 MAC | 换证请求；不代表设备密钥绑定                 |
+| JWT            | 换证服务         | Main、私有派生快照、Gateway 内存、模型数据面 |
+| X-Cookie       | 既有登录/工具链  | 不作为 JWT 或模型独立授权                    |
+| Team 权限      | 服务端数据库     | 模型目录、预算、blocked、限流                |
+
+### 登录文件与产品 profile
 
 登录文件由 `resolveOutboundHeaderUserInfoPath()` 定位到
 `<app.getPath('appData')>/<productName>/<directoryName>/<userInfoFileName>`，目录名与文件名由
@@ -31,6 +35,8 @@ Windows 路径为 `%APPDATA%/<productName>/<directoryName>/<userInfoFileName>`�
 更改名称不自动迁移或回退读取旧文件；配置修改方式见[部署配置](../../../src/config/README.md#登录信息目录)。
 隔离开发 profile 仍读取这个固定产品路径，
 不能用该 profile 的 `userData` 推导登录文件。JWT 不回写登录文件，mtoken 不进入 Gateway 或产品数据库。
+
+### deviceId 与 MAC 的共同约定
 
 deviceId 通过 Main 公共模块 `src/main/core/network/macAddress.ts` 的 `getMacAddress(): string` 获取。按系统网卡枚举顺序选择第一个非 internal、非全零且格式有效的 MAC，去掉冒号并转为 12 位大写十六进制；不额外按网卡名称猜测物理、虚拟或连接状态。登录模块应复用同一函数。没有可用 MAC 或网卡查询失败时抛错，不生成替代标识；换证在发送请求前失败。
 
@@ -57,31 +63,67 @@ sequenceDiagram
   M->>G: 配置 exec SecretRef / secrets.reload
 ```
 
-换证拒绝 redirect，timeout 15 秒，响应最大 32 KiB。返回必须为 Bearer，uid/sub 与登录账号一致，JWT 期限需满足本地上限和 expires_in。Main 要求非对称算法、非空 iss/jti、整数 iat/exp 和字符串 `aud: 'justdo-litellm'`；kid 可选，兼容内网 `RS256`、无 kid 的签发形态。Main 做结构、账号、audience 与时间预检，真正的签名、可信 issuer、audience 和 Team 授权在服务端完成。
+### 换证响应校验
+
+换证拒绝 redirect，timeout 15 秒，响应最大 32 KiB。Main 在使用结果前检查：
+
+- 返回类型为 Bearer，uid/sub 与登录账号一致；
+- JWT 期限满足本地上限和 `expires_in`；
+- 非对称算法、非空 iss/jti、整数 iat/exp，以及字符串 `aud: 'justdo-litellm'`；
+- kid 可选，兼容内网 `RS256`、无 kid 的签发形态。
+
+这些是结构、账号、audience 与时间预检。签名、可信 issuer、audience 和 Team 授权仍由服务端验证。
+
+### 模型发现与原生凭据解析
 
 模型发现 `/models` 必需，`/model/info` 可选增强；区分 chat/embedding 并规范化能力。Main 直发请求使用 `Authorization: Bearer <真实JWT>`，同时保留 `X-ACCESS-JWT` 和 `X-User-Account`；api-key 开发模式只发送 Bearer key。provider 配置中的非秘密占位符仅用于应用内配置投影，不能作为网络请求凭据。Gateway 和 memory search 通过同一 JWT SecretRef 解析真实 JWT 并发送 Bearer 认证。
 
-换证日志只记录受控失败阶段（URL、MAC、网络请求、响应、JWT、身份复核）、固定原因、可选 HTTP 状态，并单独区分超时。网络请求异常可附带 `networkCode`，只接受固定白名单中的 DNS、连接和 TLS 错误码；有界读取 Error/cause 和聚合连接异常，不记录其原始内容、未知错误码、URL、请求体、响应体、mtoken、JWT、Cookie 或 MAC。本地凭据校验失败附带受控 `credentialCode`，区分编码、必需字段、账号、audience、算法、时间、期限上限及 `expires_in` 不一致，不记录 claims 的值，也不改变原有校验或表示客户端已验签。对外继续返回统一失败错误。
+### 受控诊断
+
+诊断只记录受控阶段、固定原因、可选 HTTP 状态，并单独区分超时。阶段包括 URL、MAC、网络请求、响应、JWT 与身份复核；阶段名不包含对应原始值。
+
+| 诊断字段         | 允许内容                                                                  | 不代表什么                               |
+| ---------------- | ------------------------------------------------------------------------- | ---------------------------------------- |
+| `networkCode`    | 固定白名单中的 DNS、连接、TLS 错误码；有界读取 Error/cause 和聚合连接异常 | 不允许记录原异常或未知错误码             |
+| `credentialCode` | 编码、必需字段、账号、audience、算法、时间、期限上限、`expires_in` 不一致 | 不输出 claims 的值，也不表示客户端已验签 |
+
+URL、请求/响应体、mtoken、JWT、Cookie、MAC 和原始异常均不写日志。对外仍返回统一失败错误，诊断字段不放宽凭据校验。
 
 ## 4. 轮换与并发
+
+### 续签调度与账号切换
 
 Main 监听登录文件，通常在剩余 60 秒续签；短生命周期 token 按有效期一半安排并预留安全窗口，避免高频循环换证。并发 refresh 合并，generation 和 AbortController 使账号切换后的旧结果失效。
 
 短暂网络错误可继续使用尚有效 token，到期前 15 秒失效；400/401/403 立即清除。显式退出后旧 mtoken 即使尚留文件也不能被后台重试重新启用。重新换证成功还需复核当前身份，不能把 A 账号结果写给 B。
 
-同一已确认认证会话的有效轮换直接发布派生快照并等待原生 `secrets.reload`，不再先等待模型目录发现。
-首次登录、显式刷新目录、认证会话替换及 provider 清理后的恢复仍执行完整目录同步；同 token 的新登录也不能复用旧会话确认。
-轮换不撤销同一登录中尚未完成的目录发现，发现完成后仍需投影最新目录；退出和新登录继续撤销旧会话工作。
-轮换应用失败保留待确认状态，不能把文件已写或后续文件字节未变当作已加载；只有同认证会话、同 Gateway 进程及生命周期的 ACK 和权限核验均成功才确认。
-配置与凭据同时变化时，先等待对应配置应用，并核对原生 `configRevisionHash` 与 `appliedConfigHash`，再重载凭据；
-`secrets.reload` 使用已加载的 source config，单独的成功 ACK 不能确认尚未加载的新 SecretRef。延后的配置重启同样保留未确认状态。
-已接受或请求结果未知的原生重启继续等待 ready，后续环境变更不能竞争发起宿主重启；
-同一进程的原生 ready 也不能结清仍需更新启动环境的完整重启。
+### 三个确认阶段：快照、配置、凭据加载
+
+同一已确认登录的正常轮换按以下顺序确认：
+
+1. 发布最新私有派生快照，不先等待模型目录发现。
+2. 若配置也变化，先等待对应配置应用，核对原生 `configRevisionHash` 与 `appliedConfigHash`，再执行 `secrets.reload`。
+3. 核对 ACK 属于同一认证会话、Gateway 进程及生命周期，并完成权限检查，才能确认凭据已应用。
+
+`secrets.reload` 使用已加载的 source config：单独成功的 ACK 不能证明新 SecretRef 已加载。
+文件已写、后续文件字节未变、延后配置重启，都不能结清未确认状态。
+
+| 场景                                                      | 与正常轮换的区别                                            |
+| --------------------------------------------------------- | ----------------------------------------------------------- |
+| 首次登录、显式刷新目录、替换认证会话、provider 清理后恢复 | 执行完整目录同步；即使 token 相同，新登录也不复用旧会话确认 |
+| 同一登录中的目录发现尚未完成                              | 轮换不撤销它；完成后仍投影最新目录                          |
+| 退出或新登录                                              | 撤销旧会话工作，旧结果不得应用                              |
+| 原生已接纳重启或重启请求结果未知                          | 继续等待其 ready，后续环境变更不竞争发起宿主重启            |
+| 同一进程已 ready，但启动环境仍待更新                      | ready 不代替所需的完整重启                                  |
+
+### 幂等重载的有界重试
 
 凭据重载对 `UNAVAILABLE`、客户端超时及明确的传输断连最多尝试三次，间隔 500/1500 毫秒。
 它是同一实例的幂等快照刷新，不重发聊天、模型请求或工具；原生权限、协议拒绝及非法 ACK 不按临时故障重试。
 每次请求前、重连后、ACK 后和最终停止前核对所属实例及认证会话，迟到结果不能确认替代登录或停止替代进程。
 Windows PowerShell 冷启动解析预算为 60 秒，凭据重载 RPC 为 90 秒，覆盖命令权限检查及快照发布；其他平台为 5/35 秒。
+
+### 重载失败与受控恢复
 
 连续失败仍拒绝应用并停止 Gateway。后续后台同步只允许对这次刷新导致的确切失败实例尝试一次受控启动恢复，
 重新加载当前配置并初始化权限；再次失败继续保持未确认，不循环重启，也不自动启动用户主动停止的实例。
@@ -89,15 +131,13 @@ Windows PowerShell 冷启动解析预算为 60 秒，凭据重载 RPC 为 90 秒
 显式退出先撤销旧刷新及恢复债务，退出同步不能借其重新启动 Gateway。
 正常轮换不重启活跃 Gateway。配置本身变化仍走原生配置 watcher 与受管同步。
 
+### 登录与退出的热更新
+
 正常登录启用、退出关闭内置模型同样使用热更新：增删 Provider、更新默认模型引用和 SecretRef，
 不会改变 Gateway 启动环境或监听配置。默认启用的 `memory-core` 为 `memory.search` 声明热更新归属，
 其索引服务可以重新加载，不代表整个 AI 引擎重启。显式禁用该插件或更换 memory slot 后，
 不能沿用这项服务归属假设。登录遇到正在启动的 Gateway 会先等待原启动完成再发布配置。
 登录的配置热更新未确认时仍允许恢复性重启；退出的撤权热更新未确认时停止 Gateway，不能自动恢复旧登录。
-
-隔离回归通过实际配置投影与锁定运行时的原生重载计划，覆盖无自定义供应商和保留自定义供应商时的
-启动、登录、退出及再次登录；同时检查监听配置、启动环境、内置 embedding 与默认模型引用。
-测试只收集原生记忆插件的服务声明，不启动 Gateway、索引服务或真实登录流程，不代表远端服务可达性验收。
 
 ### 长任务的请求级凭据
 
@@ -126,13 +166,19 @@ Main 为每次模型登录生成随机 `authSessionId`。JWT 正常续签和临�
 
 ## 5. 本地持久化边界
 
+### 产品投影与 SecretRef
+
 builtin provider 在 SQLite/Renderer 中 apiKey 为空，只保存 base URL、模型与产品标记。openclaw.json 中的 apiKey 和 X-ACCESS-JWT 使用 justdo_login exec SecretRef；launch env 不放 JWT。内置 provider 不再投影 X-User-Account 请求头，也不把它包装成 SecretRef；exec 解析器只返回 JWT 并拒绝请求账号，避免账号进入原生精确值脱敏名单或模型缓存。私有快照仍保存已验证的 JWT、账号和到期时间，不复制 X-Cookie。
 
 该调整不改变 Main 的 JWT sub/账号校验、Main 直发请求、服务端账号一致性校验或出站代理注入。Gateway 请求所需的 X-User-Account 继续由既有代理按 URL 白名单注入，同名头替换保持既有规则；依赖该身份头的服务必须匹配正确的代理策略。已经进入旧 Gateway 进程的账号脱敏记录不会因配置更新自动清除，需要在更新后重启应用；已有历史中已保存的星号不会据此恢复。
 
+### 快照保护的有效范围
+
 快照采用私有权限及 AES-GCM 包装，但材料可由客户端推导，不抵御同用户逆向；安全依赖短期凭据和服务端验证。解析器只接受已知 secret id，复核期限，通过受限管道返回，不新增长期本地 token 转发服务。
 
 自定义 provider 保持自己的 file SecretRef 路径和配置，不因 builtin logout 被清理。产品 appConfigCredentials 也不能被描述成统一加密所有自定义 key，见[存储](../../architecture/10-data-storage.md)。
+
+### 内网模型请求的网络策略
 
 内置语言模型与自定义语言模型统一投影 `models.providers.<id>.request.allowPrivateNetwork: true`，用于模型 HTTP 传输访问企业内网或代理 Fake-IP；授权也覆盖原生重定向。该字段随登录生成、凭据解析和轮换保留，退出时随内置 Provider 一起删除，不改变 JWT、开发 API Key、账号绑定或 SecretRef 验证。换证、目录发现及记忆检索沿用各自网络策略，不从这个模型请求字段继承授权。
 
@@ -155,6 +201,10 @@ builtin provider 在 SQLite/Renderer 中 apiKey 为空，只保存 base URL、�
 ACTIVITY_REPORTING_CONFIG 默认开启，控制 startup、周期心跳和失败重试。关闭不影响 JWT 或模型调用，不清除服务端历史。上报正文账号仍须与 JWT 一致，clientTime/loginTime 与数据库接收时间分开；离线未上报不能证明未启动。
 
 ## 9. 验证与限制
+
+隔离回归通过实际配置投影与锁定运行时的原生重载计划，覆盖无自定义供应商和保留自定义供应商时的
+启动、登录、退出及再次登录；同时检查监听配置、启动环境、内置 embedding 与默认模型引用。
+测试只收集原生记忆插件的服务声明，不启动 Gateway、索引服务或真实登录流程，不代表远端服务可达性验收。
 
 测试覆盖 claims、期限、跨账号迟到响应、退出后重试、必需/可选发现、SecretRef 轮换和敏感值不外泄。
 `runtime-services/tests/model-auth.test.ts` 覆盖请求级凭据替换、路由隔离、失败拒绝与取消；

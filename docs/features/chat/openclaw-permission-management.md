@@ -42,7 +42,9 @@ sessionRoot 来自产品任务 cwd，并规范化验证。变更项目路径、�
 当前桌面只加载无业务联网能力的 pinned HTML 卡片；声明非空 `netOrigins`、工具能力或
 使用不支持注册类型的 board 卡片，在审批、HTML 读取及执行前显示不支持。即使原生已
 返回 granted 或会话选择 full，也不绕过这项宿主准入；桌面不发起 `board.widget.grant`，
-不清空声明后运行。普通 inline Widget 沿用原生 CSP，不因代理或会话权限开放业务 fetch，
+不清空声明后运行。
+
+普通 inline Widget 沿用原生 CSP，不因代理或会话权限开放业务 fetch，
 Main 不提供 Widget 业务下载通道。完整页面使用独立网页 embed，按其浏览器设置、代理
 和来源规则准入，不继承 Widget 权限或草稿桥。详见[交互式回答](interactive-answers.md)
 与[消息中的独立网页](webpage-embeds.md)。
@@ -59,6 +61,6 @@ Main 不提供 Widget 业务下载通道。完整页面使用独立网页 embed�
 | 用户快速连续切换 | 串行收敛到最终持久期望       |
 | 已删除会话的重试 | 清 pending/timer，不重建会话 |
 
-## 6. 代码与测试
+## 6. 实现入口与验证范围
 
 主入口是 `src/main/openclaw/permissions/sessionPermissionModeCoordinator.ts`，发送由 Cowork handler/Router 复用，合约位于 `src/shared/security/approvals.ts`。测试应覆盖活动期间变更、失败重试、快速切换、删除与新 turn 同步，而不是只断言生成的 JSON 有某字段。

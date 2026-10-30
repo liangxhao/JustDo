@@ -1,199 +1,86 @@
-# Jev evaluations
+# Jev / TypeSafe 决策评估
 
-The application bundles the upstream TypeSafe plugin as an optional extension.
-The native core `decision_evaluate` tool is exposed when an agent has a decision model;
-the conversational model still controls when to call it. Jev supplies typed
-classification, rubric scores, and Boolean probabilities, not chat responses.
+Jev 提供类型化分类、量表评分和布尔概率，不生成聊天回复。应用将 TypeSafe 作为可选决策 provider 打包；原生 `decision_evaluate` 由当前助手的 `decisionModel` 选择服务，何时调用仍由对话模型或原生消费者决定。保存模型不自动建立业务流程。
 
-## Setup and use
+## 配置与使用
 
-1. Open Settings → Models → Decision models and add a provider.
-2. Enter the **URL and API Key**, both required. No account login or OAuth is offered.
-   Hosted Jev uses `https://api.typesafe.ai/v1`; an intranet server might use
-   `http://inference.corp:8009/v1`.
-3. Detect models or add one manually when `/models` is unavailable, for example
-   `jev-latest` for Jev or `kev-latest` for a deployed Kev server.
-4. Select the default model and save. This enables TypeSafe and selects native
-   `agents.defaults.decisionModel`.
-5. Ask the assistant to classify, score or estimate probabilities. The chat model
-   decides when to call the evaluation tool; native decision consumers use the
-   configured default. Saving a model does not create automatic business workflows.
+1. 在“设置 → 模型 → 决策模型”添加供应商，填写 URL 和 API Key，两项均必填，不提供账号登录或 OAuth。
+2. 服务必须实现 **TypeSafe System One**，仅兼容 OpenAI 聊天补全接口不够。基础地址后追加 `/systemone`，粘贴完整接口地址时会规范化。
+3. 发现模型；服务没有 `/models` 时手动填写实际模型 ID，例如部署的 `jev-latest` 或 `kev-latest`。
+4. 在模型行选择默认并保存。此操作启用 TypeSafe，发布原生 `agents.defaults.decisionModel`。
+5. 让助手按具体证据执行分类、评分或概率评估。结果不授予后续动作权限。
 
-The server must implement **TypeSafe System One**, not just OpenAI chat completions.
-The API base is followed by `/systemone`; a full endpoint URL is normalized.
-Requests go directly to the configured origin with Bearer auth, without redirects,
-environment proxies or hosted fallback. Deploy self-hosted servers separately.
-For a test server that ignores authentication, enter a nonempty test key; production
-authentication must be enforced by the server or reverse proxy.
+请求仅访问显式配置的服务，使用 Bearer 认证，不跟随重定向、不使用环境代理，也不回退到公共服务。公司内网部署需另行完成；地址可使用部署方提供的内网端点。忽略认证的测试服务仍需填写非空测试 key，生产认证由服务或反向代理实施。评估会发送任务证据；若用户自行配置托管服务，费用及数据处理由该服务承担。
 
-Only a valid default decision-model selection gives this category ownership of
-TypeSafe settings and activation. While selected, the extension panel cannot
-independently edit or toggle it. Use **Clear default** in the selected model's row
-and save to return configuration and activation to the extension panel. The provider
-and model lists both mark the selected default. This preserves
-the current enabled state, endpoint, credential reference and other plugin settings;
-the synchronizer clears only the exact native default it previously projected.
-An empty or unselected catalog never locks the extension. Subsequent startup,
-settings, login and logout synchronization preserves manual plugin changes, including
-after restarting the application. Native defaults without a known prior application
-projection are preserved rather than attributed to model settings by their name.
-Selecting **Set as default** enables the extension and takes ownership again.
-Saving or reopening an unselected catalog never chooses a provider automatically;
-deleting all providers also returns manual control. Provider import/export
-includes decision models using the same credential encryption as other model types.
+## 默认模型与手动插件配置
 
-Whenever no default decision model is selected, the generic extension form exposes the
-explicitly editable `baseUrl` and `serviceUrl` text fields alongside the credential.
-It displays saved addresses and saves only edited text; clearing an optional address
-removes that override. Clear the old address when switching modes, since the plugin
-rejects both endpoints together. This form does not select a decision model or enable
-the extension. Once managed by model settings, its existing configuration restrictions
-continue to apply. TypeSafe configuration and enable/disable operations share the
-application-settings transaction queue, so they observe committed settings after
-application or rollback. A failed first takeover restores the latest manual native
-configuration through an explicit rollback context; ordinary release does not
-restore an old snapshot or clear manual fields.
-Model-settings credentials use slots scoped to the endpoint and credential. A new
-selection cannot overwrite the value behind a reference retained by a released
-manual extension; failed takeover restores a reference that still resolves to its
-original value. Existing fixed-slot references remain readable without migration.
+| 操作或状态                       | 配置所有者 | 生效结果                                             |
+| -------------------------------- | ---------- | ---------------------------------------------------- |
+| 有效默认决策模型已保存           | 模型设置   | 启用扩展，锁定扩展页的独立配置和开关                 |
+| 取消默认并保存，或删除全部供应商 | 扩展页     | 保留当前端点、凭据引用、开关和其他字段，释放受管状态 |
+| 目录为空或有目录但未选默认       | 扩展页     | 不自动选择供应商，不因打开或保存目录而接管           |
+| 再次设为默认并保存               | 模型设置   | 重新接管并启用扩展                                   |
 
-Evaluation sends task evidence to the selected service. Hosted Jev may incur API
-charges. Results use the existing OpenClaw stream, without a transcript cache.
+取消默认只清除能证明由应用先前发布的准确原生默认值；无法确认来源的原生默认不按名称归因。释放管理后，启动、设置保存、登录和退出同步均保留手动改动，不恢复过时快照。供应商和模型列表都标识当前默认，导入导出沿用其他模型的密码加密流程。
 
-## Native decision tool
+未受管时，扩展通用表单可编辑 `baseUrl`、`serviceUrl` 与凭据。只保存实际修改的文本，清空可选地址删除覆盖；两种地址互斥，切换时须清空旧项。此表单不选择默认模型，也不启用扩展。
 
-OpenClaw 2026.10.7 owns the provider-neutral `decision_evaluate` tool. It accepts
-Boolean, Choice and Score questions and routes them through the selected agent's
-`decisionModel`. TypeSafe is a decision provider, with manifest-declared capabilities,
-lazy evaluator loading, and native decision fallback for TypeSafe HTTP 400, 413
-and 422 responses classified as unavailable/unsupported-input. This classification
-does not retry transport requests or expose response bodies. HTTP 401/403 remain
-authentication errors; 429 remains rate-limited with retryAfter metadata.
-The former TypeSafe-specific optional tool, plugin model setting and bundled skill
-were removed upstream. The application uses the current native tool and model
-selection only; it does not move legacy plugin model selections or rename old tool
-policies. The unreleased 9.6 compatibility additions were removed at the user's
-request. Current `decision_evaluate` policies and explicit denies remain respected.
+配置和启停共用应用设置事务队列，等待保存或回滚结束再准入后续操作。首次接管失败通过明确回滚上下文恢复最新手动配置；正常释放不还原旧快照。模型凭据槽按端点及密钥版本隔离，新选择不能覆盖仍被手动扩展引用的旧槽。失败恢复后的引用仍解析到原值，已有固定槽可读而不迁移。
 
-The native admission callback remains authoritative through lazy evaluator loading
-and HTTP preparation. TypeSafe rechecks it before guarded-fetch preparation and
-after native DNS/transport preparation, immediately before dispatch. If admission
-is revoked while either operation is pending, the evaluation returns unavailable
-without sending the request or retrying. The same checks protect authenticated
-intranet `serviceUrl` requests and the legacy loopback endpoint.
+## 原生工具、权限与错误
 
-## Ownership and credential lifecycle
+`decision_evaluate` 接受 Boolean、Choice 和 Score 问题。TypeSafe 按 manifest 声明能力、延迟加载 evaluator；当前工具和模型选择由原生拥有，不迁移旧插件专用模型、不改名旧工具政策，也不恢复未发布的兼容实现。
+
+原生最终调用准入贯穿延迟加载与 HTTP 准备。TypeSafe 在 guarded fetch 准备前，以及 DNS/transport 准备结束、实际派发前重新核验；任一步撤权都返回不可用，不发送或重试请求。认证内网 `serviceUrl` 和旧 loopback 端点遵循相同检查。
+
+| 响应                                    | 原生分类                        | 限制                                                          |
+| --------------------------------------- | ------------------------------- | ------------------------------------------------------------- |
+| HTTP 400 / 413 / 422 且属于不支持的输入 | unavailable / unsupported-input | 可进入原生决策 fallback，不重试本次 transport，不暴露响应正文 |
+| HTTP 401 / 403                          | 认证错误                        | 不伪装为可切换 provider 的输入限制                            |
+| HTTP 429                                | 限流                            | 保留 retryAfter 元数据                                        |
+
+显式工具 deny 和插件禁用继续有效。已有非空 `tools.allow` 直接加入原生决策工具；否则使用 `alsoAllow`，避免把原来不受限的空名单变为限制名单。本地和 sandbox 会话仍经过各自原生政策，决策输出不扩大权限。
+
+响应先通过原生 schema 校验，再做凭据反射检查。答案标签、评分图例和准确所选模型可以合法回显，短 key 与这些值或数字结果重叠不会误拒绝；意外 provider 模型名包含凭据仍拒绝，错误正文不返回模型。
+
+## 凭据发布、轮换与失败恢复
 
 ```mermaid
 flowchart LR
-  UI[Model settings] --> Main[Main config synchronizer]
-  Main --> Secret[Restricted extension-secrets.json]
-  Main --> Config[Plugin config with SecretRef]
-  Config --> Gateway[OpenClaw secret preparation]
-  Secret --> Gateway
-  Chat[Chat agent] --> Tool[decision_evaluate]
-  Gateway --> Tool
-  Tool --> API[Configured System One API]
+  UI[模型或扩展设置] --> Main[Main 配置事务]
+  Main --> Secret[受限 extension-secrets.json]
+  Main --> Config[原生配置中的 SecretRef]
+  Secret --> Gateway[原生 secrets 准备]
+  Config --> Gateway
+  Gateway --> Tool[decision_evaluate]
+  Tool --> API[显式 System One 服务]
 ```
 
-The extension service reads bundled configuration hints as well as locally
-installed extension hints. A field is stored as a SecretRef only when its
-manifest declares the secret input and a structured reference schema. Existing
-string-only plugin configuration remains supported.
+只有 manifest 同时声明 secret 输入和结构化引用 schema 的字段才发布 SecretRef；已有仅接受字符串的插件配置仍支持。Main 从内置及已安装扩展读取声明，将凭据写入 `<OpenClaw state directory>/extension-secrets.json`，使用既有 `justdo-extension-secrets` 文件 provider。临时文件先限制权限，再写入并原子发布；原生配置与 inventory 不含密钥值。
 
-Main stores these credentials separately in
-`<OpenClaw state directory>/extension-secrets.json`, using the
-`justdo-extension-secrets` file provider. It restricts the temporary file's
-permissions before writing any credential, then publishes it atomically. The native
-Gateway configuration and extension inventory contain no credential values.
-Model settings persist credentials in the existing application config, just like
-other model types; this application config is not an encrypted vault. This is
-filesystem access protection, not encryption at rest.
+模型设置中的凭据仍保存在现有应用配置，与其他模型一致。文件权限保护不等于静态加密，不能把应用配置称为加密保险库。
 
-Changing credentials in the extension dialog refreshes native prepared secrets with
-`secrets.reload`, then applies `plugins.reload` to the capturing plugin. A successful
-native hot-application receipt avoids a Gateway restart, including rotations where
-the reference itself is unchanged. The existing coordinator handles a restart only
-when hot application is unavailable or explicitly requires it. Saving the same value
-is a no-op. Disabling the plugin retains its credential for subsequent re-enablement.
+扩展对话框轮换凭据后先 `secrets.reload`，再 `plugins.reload` 使捕获凭据的插件热应用；取得原生确认则不重启 Gateway，即使引用本身没有变化。只有原生不支持热应用或明确要求时，既有 coordinator 才安排重启。相同值无变化时不写入，禁用扩展保留凭据。
 
-If configuration publication or runtime refresh fails after rotation, a pending
-refresh remains in the running application. Secret-provider errors are reported
-without attempting a restart. Retrying the same key still refreshes the runtime;
-a new application process loads the saved key on startup.
+轮换后若配置发布或运行时刷新失败，在当前应用保留 pending refresh；同 key 再次保存仍刷新，secret-provider 错误不通过重启兜底。新进程从已保存 key 启动。模型设置的仅密钥变更走受管 `secrets.reload`，运行时应用失败沿既有 app-config 回滚；完整、最小及登录/退出同步保留 secret provider 和无关工具政策。
 
-Full, minimal, login and logout synchronization applies the settings selection
-and preserves secret providers and additional tool policy. Model settings use
-managed credential refresh (`secrets.reload` when only the key changed). Failed
-runtime application triggers the existing app-config rollback flow.
-Existing nonempty `tools.allow` lists receive the native decision tool directly;
-otherwise synchronization uses `alsoAllow`, keeping empty allowlists unrestricted.
-Explicit tool denies remain in force across full and authentication syncs.
-The native tool is admitted in both local and sandbox sessions; native plugin
-disable and tool-deny policies still apply. Evaluation output does not grant
-permission to perform actions.
+## 打包与状态单例
 
-## Packaging and verification
+上游来源由 `plugins/extensions/typesafe/UPSTREAM.md` 锁定。local-extension 流水线安装锁定生产依赖、针对宿主 SDK 预编译并保留许可证，不依赖未来发布的 npm 包。
 
-`plugins/extensions/typesafe/UPSTREAM.md` records the reviewed upstream revision.
-The local-extension pipeline installs its locked production dependency,
-precompiles it against the host SDK, and preserves license files when pruning.
-It does not depend on a future npm publication of `@openclaw/typesafe`.
+Gateway bundle 与动态插件必须解析到同一组原生 `secret-input-runtime` ESM 状态所有者，包含 prepared secrets、配置快照/准备作用域、环境发布、auth revision/ownership/read cache、不可用 owner 和错误类。将这些模块分别内联会产生空凭据快照、失效错误缓存或破坏 `instanceof` 分类；不能靠修改原生凭据算法或能力检查补救。构建从锁定 pristine 包重建并保留这些外部模块。
 
-Focused tests cover secret isolation and rotation, bundled credential editing,
-default-off behavior, configuration persistence across lifecycle synchronization,
-and native decision tool admission. Real hosted validation requires an operator's API
-key; synthetic credentials must never be sent to the public endpoint.
+## 验证与未提供能力
 
-The native adapter suite can be run offline against a prepared runtime:
+定向测试覆盖凭据隔离与轮换、内置凭据编辑、默认关闭、配置释放/接管、生命周期同步及原生工具准入。适配器离线入口：
 
 ```sh
 npx vitest run --config scripts/openclaw/typesafe.vitest.config.mts
-```
-
-Set `OPENCLAW_RUNTIME` to use a different prepared SDK directory. It covers the
-explicit endpoint, authentication failure without fallback, schema validation,
-cancellation and existing upstream behavior. Registered-provider regressions also
-cover initial admission denial and revocation during lazy loading or native DNS
-preparation, including the authenticated intranet endpoint, with admitted requests
-as positive controls. No real hosted key is used.
-
-## Remaining scope
-
-Per-assistant model selection, automatic business routing, model downloads and
-server deployment are not added. Explicit native per-agent decision overrides
-remain native-owned. Settings configures an already deployed System One service.
-
-## Packaged Gateway credential identity
-
-Gateway bundling preserves the native `secret-input-runtime` SDK state-owner modules as
-external runtime modules. Both the Gateway and dynamically loaded plugins resolve
-the same ESM instances for prepared secrets, config snapshots, auth revisions and
-unavailable-owner state, including their configuration preparation scopes,
-environment publication, auth ownership/read caches and error classes. Inlining
-these owners into a second bundle can lose state, invalidate the wrong cache or
-break native `instanceof` error classification. Inlining the prepared-secret owner silently
-creates an empty SDK credential snapshot even when the file SecretRef is valid.
-No upstream credential implementation or capability-scope checks are changed.
-
-After preparing a pristine runtime with the current build recipe, run:
-
-```sh
 node scripts/test/verify-decision-secret-runtime.cjs vendor/openclaw-runtime/current
 ```
 
-This starts an isolated packaged Gateway and local synthetic System One provider.
-It invokes the actual plugin through `/tools/invoke`, rotates the file credential
-with `secrets.reload`, verifies unavailable owners cannot make provider requests,
-and verifies recovery. It does not invoke a conversational model or read user
-credentials. Its first synthetic credential overlaps the selected model name to
-cover short-key reflection false positives. The ordinary unit suite also reproduces
-the old split-module failure and checks scopes, class identity and transitive
-state sharing without changing native source bytes.
+`OPENCLAW_RUNTIME` 可选择其他已准备 SDK 目录。适配器套件覆盖端点、认证失败不回退、schema、取消、初始拒绝及加载/DNS 期间撤权，含内网正负例，不使用真实托管 key。
 
-Response credential checks run after native schema validation. Answer labels and
-score legends must match the request; the exact selected model is also an expected
-echo. Short credentials overlapping those values or numeric results do not cause
-false failures. An unexpected provider model name containing the credential is
-still rejected, and provider error bodies are never returned to the agent.
+第二个入口启动隔离的打包 Gateway 和本地合成 System One 服务，通过真实 `/tools/invoke` 验证凭据轮换、不可用 owner 拒绝及恢复；测试 key 刻意与模型名重叠。单测另复现模块状态分裂，并检查 scope、错误类和传递依赖单例，不改原生源码字节。这些验证不调用真实对话模型，也不读取用户凭据。
+
+真实托管验收需操作者自己的 key，合成 key 不得发往公共端点。应用不提供逐助手模型编辑、自动业务路由、模型下载或服务部署；已有原生 per-agent override 仍由原生拥有。此页面只配置已经部署的 System One 服务。

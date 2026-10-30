@@ -1,5 +1,7 @@
 # 登录 SDK 接入模板
 
+本页维护账号入口、Main 登录事务和 SDK 适配器。真实 SDK 尚未接入；模型 JWT 的换证、轮换和服务端授权见[内置模型认证](authentication-builtin-model-lifecycle.md)。接 SDK 先读适配器合同，接续期再读 credential lease，手工联调见末尾步骤。
+
 ## 范围与当前行为
 
 左侧窄导航栏底部提供账号头像入口，设置齿轮保留在其下方。收起主页聊天列表或切换功能页时，
@@ -10,6 +12,8 @@
 不使用 SDK 的头像图片。已登录点击徽标打开账号菜单，可退出或重试服务更新。
 登录弹窗由 SDK 适配器拥有。当前仓库没有真实登录 SDK，默认适配器明确返回不可用，
 界面提示登录组件尚未接入；不生成临时账号、模拟凭据或自制登录表单。
+
+### 已实现与待接入
 
 模板已实现账号状态投影、可信 SDK 结果的提交、凭据原子写入、登录/退出后的服务更新、
 取消与迟到结果保护、失败重试，以及 Cookie 更新与 mtoken 轮换的 Main 内部接入点。
@@ -23,7 +27,7 @@ flowchart LR
   Bridge --> Service[Main LoginService]
   Service --> SDK[SDK 适配器与弹窗]
   SDK -->|已验证的身份与凭据| Service
-  Service --> File[user_info.json 原子写入]
+  Service --> File[登录凭据文件原子写入]
   Service -->|提交后 await| Hooks[现有登录与退出入口]
   Hooks --> Models[JWT 换证 / 模型目录 / Gateway 同步]
   Hooks --> Headers[请求头值缓存]
@@ -37,14 +41,26 @@ Main 注入现有 `refreshAfterLogin`、`refreshAfterLogout` 和请求头值刷�
 
 ## 状态与失败语义
 
-账号状态是 `signed-out`、`signed-in` 或 `local-credentials`。最后一个仅表示本地文件具备
-mtoken 和账号，不宣称 SDK 已确认会话有效或模型服务已就绪。SDK 确认登录或恢复后才展示 `signed-in`。
-操作状态与 `idle/pending/completed/failed` 服务同步状态单独维护；completed 仅表示现有入口正常返回。
-模型凭据、目录与运行时可用性仍由已有模块判断。
+账号身份、当前操作和服务同步是三个不同状态；不能用“账号已登录”代表模型可用。
 
-登录取消不修改账号或文件。登录写入失败不执行登录刷新。登录已提交但换证/运行时同步失败时
-保留账号与文件，提供重试。退出先删除整个登录文件，再更新请求头与模型状态；运行时清理失败
-仍保持已退出，并允许重试清理。SDK 远端清理失败不恢复本地凭据。
+| 状态                                 | 含义                                                   |
+| ------------------------------------ | ------------------------------------------------------ |
+| `signed-out`                         | 当前未登录                                             |
+| `local-credentials`                  | 文件有 mtoken 与账号；SDK 尚未确认会话，不代表模型就绪 |
+| `signed-in`                          | SDK 已确认登录或恢复                                   |
+| 服务 `idle/pending/completed/failed` | 独立的后续同步阶段；completed 仅表示已有入口正常返回   |
+
+模型凭据、目录和运行时可用性继续由各自模块判断。
+
+| 操作结果                         | 账号/文件          | 后续动作                                             |
+| -------------------------------- | ------------------ | ---------------------------------------------------- |
+| 取消登录                         | 不修改             | 不执行登录刷新                                       |
+| 写入凭据失败                     | 未提交登录         | 不执行登录刷新                                       |
+| 登录已提交，换证或运行时同步失败 | 保留账号与文件     | 允许重试服务同步                                     |
+| 退出                             | 先删除整个登录文件 | 更新请求头与模型状态；清理失败仍保持退出，可重试清理 |
+| SDK 远端退出失败                 | 不恢复本地凭据     | 保留失败反馈                                         |
+
+### 并发与迟到结果
 
 多个登录点击共享一个弹窗；退出和应用销毁立即取消待提交登录。账号文件修改与服务回调使用
 同一个串行队列。SDK 即使忽略 AbortSignal，旧结果也不能写入。替换账号先删除旧文件并完成
@@ -64,6 +80,8 @@ mtoken 和账号，不宣称 SDK 已确认会话有效或模型服务已就绪�
 - `refreshCredentials({ signal })`：可选；供后续 Main 续期协调器使用，不向 Renderer 开放。
 - `dispose()`：可选；应用退出时取消 SDK 自己的续期任务并移除会话监听器。
 
+### SDK 结果与设备标识
+
 SDK session 必须提供 `account` 与长期 `mtoken`，可提供 `displayName`、HTTP(S) `avatarUrl`、
 `headerValues`（例如 `X-Cookie`）和 `cookieExpiresAt`（Unix 毫秒）。产品映射为
 `X-User-Account`、`mtoken`、`userName`、`avatarUrl` 和对应 Header 字段，并记录 loginTime。
@@ -77,7 +95,7 @@ SDK 登录需要设备标识时，应与模型换证共用 Main 的 `src/main/co
 
 ## Cookie 与 mtoken 更新
 
-Cookie 的半天有效期与 mtoken 的长期有效期独立；JWT 由已有模型凭据监控器续期。
+Cookie 有效期、长期 mtoken 与模型 JWT 分别管理；JWT 由已有模型凭据监控器续期。Cookie 的实际到期时间以接入 SDK/服务端返回为准，不能用账号仍登录推断 Cookie 有效。
 每次异步续期开始前，Main 协调器从 LoginService 捕获 credential lease，完成后提交：
 
 ```ts
@@ -93,6 +111,8 @@ mtoken 改变则重新执行完整登录刷新以换取新 JWT。lease 同时绑
 被外部更新会使旧 lease 失效；每次续期须重新捕获，过时的结果不改文件或界面。
 SDK 确认会话失效时可调用 `expireSession(lease)`；队列执行时会重新检查 lease 和磁盘版本后才删除
 凭据，避免清理等待期间替换的文件。不能把一次网络失败当成退出。
+
+### 后续续期调度的要求
 
 后续续期调度必须先确认 SDK 是否自行自动续期。应用自己调度时，在 Main 根据 SDK/服务端提供的
 过期时间提前刷新；登录后开始，退出/销毁时停止，恢复启动与休眠唤醒时检查。失败采用有界退避，
@@ -114,9 +134,13 @@ Cookie 真正过期后停止使用过期值；Cookie 过期不等同于 mtoken �
 产品数据库仍属于各自 userData；模型换证的 deviceId 每次由 Main 公共模块读取当前 MAC，
 不读写 `model-device.json`。
 
-联调步骤：配置真实的 tokenExchangeUrl、JWT 生命周期上限和内置模型 baseUrl；完全退出应用；
-复制包含同一账号 mtoken、X-User-Account 和有效 Cookie 的文件；为需要 Header 的真实服务
-配置 outbound-header-proxy/config.json；重新启动。分别验证目录出现和消息调用。
+联调顺序：
+
+1. 配置真实 `tokenExchangeUrl`、JWT 生命周期上限和内置模型 baseUrl。
+2. 完全退出应用，将同一账号的 mtoken、X-User-Account 和有效 Cookie 写入上述登录文件。
+3. 为需要 Header 的服务配置 `outbound-header-proxy/config.json`，再启动应用。
+4. 分别验证模型目录和实际消息调用；目录出现不等于消息认证通过。
+
 手动更新 Cookie 后完整重启以更新值缓存；设置页刷新模型不保证更新 Cookie。
 这些配置修改需要重启 Electron 开发进程或重新构建安装包，文件中的真实凭据不能提交。
 

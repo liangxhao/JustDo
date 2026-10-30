@@ -32,13 +32,25 @@ Runtime Services 只保留通用执行准入、inert session 托管、执行收�
 
 ## 清单、构建与授权
 
+### 清单字段与发现
+
 每个插件有 `openclaw.plugin.json` 和 `app.plugin.json`。应用清单固定 `manifestVersion:1`、`apiVersion:1`，声明相同的应用/原生 ID、版本、Main/Browser 文件、能力、命令与插槽；`package.json.app` 指向源码入口。清单 `native.defaultEnabled` 和 `native.userToggleable` 声明捆绑默认策略；宿主在 Main/schema 激活之前独立验证可信捆绑产物元数据，外部包不能凭这两个字段自动启用。构建脚本按文件发现清单，不维护业务入口列表。
 
-可选 `entries.presentation` 对应独立的纯历史展示入口，源码由 `package.json.app.presentation` 指定，仅导出 `presentation`。它可提供文本清洗、原生输入身份展示、精确镜像识别和双语词典，不取得 Browser host、React、命令、导航、数据或发送端口。构建与模块图校验拒绝其引用 Main、Browser 入口或 Browser runtime；普通 Browser 图也拒绝引用 Main 入口。独立浏览器模块与 `new URL('./worker.mjs', import.meta.url)` 的本地资源边继续验证和发布，Main 私有图不作为 HTTP 资源根。
+### 纯历史展示入口
 
-`npm run plugins:app:build` 独立构建 SDK 和插件。产物为 `build/app-plugins/<id>/<hash>`；可安装完整包位于其 `packages/<id>/<hash>`，包含单文件原生 ESM、技能及 `app/`。Main 的 npm 依赖进入自己的 ESM 包；Browser 的 React/ReactDOM 指向宿主真实单例，插件自行编译 CSS/Tailwind。产物逐文件 SHA-256 和清单共同生成身份，限制路径、链接、文件数、大小及可解析模块图。保留目录复制后再校验，防止从可变安装目录执行 Main 代码。作者操作见 [SDK 说明](../../plugins/sdk/app-plugin-sdk/README.md)。
+可选 `entries.presentation` 对应独立的纯历史展示入口，源码由 `package.json.app.presentation` 指定，仅导出 `presentation`。它可提供文本清洗、原生输入身份展示、精确镜像识别和双语词典，不取得 Browser host、React、命令、导航、数据或发送端口。构建与模块图校验拒绝其引用 Main、Browser 入口或 Browser runtime；普通 Browser 图也拒绝引用 Main 入口。
+
+独立浏览器模块与 `new URL('./worker.mjs', import.meta.url)` 的本地资源边继续验证和发布，Main 私有图不作为 HTTP 资源根。
+
+### 不可变产物和安装审核
+
+`npm run plugins:app:build` 独立构建 SDK 和插件。产物为 `build/app-plugins/<id>/<hash>`；可安装完整包位于其 `packages/<id>/<hash>`，包含单文件原生 ESM、技能及 `app/`。Main 的 npm 依赖进入自己的 ESM 包；Browser 的 React/ReactDOM 指向宿主真实单例，插件自行编译 CSS/Tailwind。产物逐文件 SHA-256 和清单共同生成身份，限制路径、链接、文件数、大小及可解析模块图。
+
+保留目录复制后再校验，防止从可变安装目录执行 Main 代码。作者操作见 [SDK 说明](../../plugins/sdk/app-plugin-sdk/README.md)。
 
 安装、删除与原生能力审核继续使用原生扩展流程。外部 Main/UI 代码另有绑定精确产物 hash 的审核，不复用原生 review token。审批文件位于产品数据的 `app-plugins/approvals.json`，只保存当前 hash 和有界历史批准；保留的不可变产物位于 `app-plugins/artifacts/<id>/<hash>`。损坏或不匹配的记录不能授权执行。安装目录同 ID 的自定义插件覆盖捆绑候选，不会退回执行另一个同名版本。
+
+### 代码信任限制
 
 首版运行可信 Main 进程内代码和同页面浏览器模块。contextIsolation 保护 preload 边界，不能隔离同页面插件。模块图和 SDK 门禁防止过期调用和格式错误，**不是恶意 JavaScript 沙箱**。新窗口种类、执行原语或不受 SDK 支持的宿主行为仍需要 SDK/宿主变更。
 
@@ -48,23 +60,37 @@ Runtime Services 只保留通用执行准入、inert session 托管、执行收�
 
 公共 App SDK 和构建工具源码集中在 `plugins/sdk/`，分别保留 `app-plugin-sdk/` 与 `app-plugin-build/` 子包；根 npm workspace 使用 `plugins/sdk/*`。插件发现继续读取 `plugins/extensions/`。目录调整保持 npm 包名、公开 exports、构建命令和产物布局不变。
 
-App SDK、`@runtime-services/sdk` 与 `@app-plugin/build` 分别分发契约、Required Service 的客户端/通用库和构建工具。宿主使用 npm workspaces 开发这些公开包，发布输出包含 ESM、声明和许可证；外部项目只安装打包后的依赖，不解析宿主源码或借宿主 `node_modules`。构建工具使用自己的公共 Tailwind preset 和 React 单例 adapter，忽略祖先 tsconfig 的源码 aliases，验证实际 npm 输入与许可证。外部 desktop companion 保留完整 Native/Main/Browser 包结构，与 MCP App 流水线分别处理。
+App SDK、`@runtime-services/sdk` 与 `@app-plugin/build` 分别分发契约、Required Service 的客户端/通用库和构建工具。宿主使用 npm workspaces 开发这些公开包，发布输出包含 ESM、声明和许可证；外部项目只安装打包后的依赖，不解析宿主源码或借宿主 `node_modules`。
+
+构建工具使用自己的公共 Tailwind preset 和 React 单例 adapter，忽略祖先 tsconfig 的源码 aliases，验证实际 npm 输入与许可证。外部 desktop companion 保留完整 Native/Main/Browser 包结构，与 MCP App 流水线分别处理。
 
 应用插件的 `package.json.app` 是通用源码构建声明，不再需要旧宿主专属 bundle 标记。运行时装配只消费已构建的完整包，不读取该源码目录的依赖锁、不执行 npm 安装，也不携带源码开发依赖或旧依赖缓存。其它 Native 扩展仍使用原有锁文件和生产依赖流程；应用声明及目录存在都不授予 Native trust。
 
 Team/Workflow 从公开 SDK 导入通用准入、FIFO、文件准入和执行能力。讨论协议和 `DiscussionLedger` 属于 Team，不再从 Runtime SDK 发布。Team 自己解释模式、房间、轮次及业务回执；Required 服务只维护精确原生身份、代次、owner 寿命、接纳、取消及终态/清理事实。未登记资源的普通会话不产生插件业务锁。
 
-Native 客户端先通过公开 `api.lifecycle.runInBackgroundContext` 在原注册绑定的 Gateway 上完成只读能力握手，再以随机实例 token 绑定同步投影。能力协议使用通用 `executionAdmission`，只返回执行通道的 `clear/held/unknown` 和无正文身份，不发布 Team 模式。实例、路径或插件 ID 不能代替该握手。同步 reader 也回到 Required 注册的公开上下文，不借外部 ambient Gateway；缺失、失败和退休均拒绝准入。新绑定使旧 handle 失效，旧工具闭包不附会新 provider。正常原生工具采用已启动 Gateway service 的注册；未采用准备好注册的 discovery factory 首次只触发合并的只读绑定并隐藏工具，后续合法 factory 才取得投影，不启动或重放业务。trusted tool policy、精确原生身份和副作用前校验继续独立生效。
+### 只读握手与写租约
+
+Native 客户端先通过公开 `api.lifecycle.runInBackgroundContext` 在原注册绑定的 Gateway 上完成只读能力握手，再以随机实例 token 绑定同步投影。能力协议使用通用 `executionAdmission`，只返回执行通道的 `clear/held/unknown` 和无正文身份，不发布 Team 模式。实例、路径或插件 ID 不能代替该握手。
+
+同步 reader 也回到 Required 注册的公开上下文，不借外部 ambient Gateway；缺失、失败和退休均拒绝准入。新绑定使旧 handle 失效，旧工具闭包不附会新 provider。正常原生工具采用已启动 Gateway service 的注册；未采用准备好注册的 discovery factory 首次只触发合并的只读绑定并隐藏工具，后续合法 factory 才取得投影，不启动或重放业务。trusted tool policy、精确原生身份和副作用前校验继续独立生效。
 
 写操作使用独立 owner 租约。客户端登记随机 proof RPC，Required 服务通过公开 Gateway method descriptor 核对实际插件归属，在同一绑定 Gateway 上完成单次 nonce 挑战；密钥只交给该注册的回调。只读 provider token、请求体中的插件 ID 和 Main 代码审核都不能授权写入。租约绑定原注册、provider scope 和真实 lifecycle，退休后旧回调不能写入。Required 服务继续保留已登记资源的收据与取消/清理围栏；owner 退休不构成执行已结算。
+
+### 发布、quiesce 和迟到握手
 
 热替换先启动候选 service，成功后才发布候选的 Gateway 方法表。因此 owner 客户端和 proof RPC 仍在注册期创建，但 service.start 只初始化本地资源，不能要求候选 proof 已能从当前 Gateway 调用。已发布的实际业务请求在副作用前等待 `ensureBound()`，并在握手前后重新核对调用权限、service 代次、停止状态及原生生命周期；失败直接拒绝该请求，不重放业务。停止后或跨越停止/重启的迟到握手不能恢复旧请求。只读回执快照不持久恢复状态，也不借查询取得写租约。
 
 Native 客户端和 provider 在注册期捕获普通调用上下文，再通过原公开 background runner 核对当前准入。Native 开始 quiesce 后，信号尚未 abort 或已准入 cleanup 仍可运行都不延长业务权限；迟到握手被拒绝，已失效句柄和租约不会复活，恢复需要新的真实注册。不读取 Native 私有实例字段，也不新增运行时补丁。
 
-Managed execution descriptor 明确声明 whole-run、run-owned cleanup 与精确 describe/cancel 协议。facade 始终调用原插件的 bound executor，并将 capability fence 与调用者 `assertCurrent` 合并；Runtime Services 不代执行。当前宿主的私有适配从公开 SDK 所属运行包、实际进程入口及交付 profile 核验预备 bundle 的版本/完整字节 hash 和既有执行能力基线。profile 由冻结运行时验证后的资源装配生成，绑定目标平台实际 bundle，并随 Required 包交付；外部 SDK 不包含 patch 路径或宿主目录。无 profile、不兼容或 pristine 环境不声明该能力，不退化为 Stop ACK 或 `waitForRun` 推断结算。本机制不增加或调整原生 patch。
+### 托管执行与原生能力证明
+
+Managed execution descriptor 明确声明 whole-run、run-owned cleanup 与精确 describe/cancel 协议。facade 始终调用原插件的 bound executor，并将 capability fence 与调用者 `assertCurrent` 合并；Runtime Services 不代执行。当前宿主的私有适配从公开 SDK 所属运行包、实际进程入口及交付 profile 核验预备 bundle 的版本/完整字节 hash 和既有执行能力基线。
+
+profile 由冻结运行时验证后的资源装配生成，绑定目标平台实际 bundle，并随 Required 包交付；外部 SDK 不包含 patch 路径或宿主目录。无 profile、不兼容或 pristine 环境不声明该能力，不退化为 Stop ACK 或 `waitForRun` 推断结算。本机制不增加或调整原生 patch。
 
 公开 `api.runtime.gateway.request` 继续受 OpenClaw 的 bundled / trusted official 安装准入约束。Main companion 的 hash 批准不能授予 Native trust；独立构建不代表任意手工安装包自动具备后台 RPC 权限。交付仍须通过既有可信安装或宿主显式捆绑流程，不新增权限绕过。能力握手测试证明路由与生命周期，不证明任意第三方分发策略已开放。
+
+### 计划状态和源码分发边界
 
 Plan Mode 不成为业务插件的源码/启用依赖。App SDK 的纯 planning 契约解释规划、待审核和异常状态；Runtime Services 不导入该解析器。Main 不能以 `sessions.describe` 省略投影证明无计划：Required 的只读 `runtimeServices.sessionNamespace` 在认证 backend、精确 SID/revision 下读取调用方指定的有界 namespace 快照，由消费者解释。该读取不写状态、不批准审核或扩大权限。
 
@@ -72,19 +98,31 @@ Plan Mode 不成为业务插件的源码/启用依赖。App SDK 的纯 planning 
 
 业务测试随插件独立配置运行；真实 Core 聊天控制器/历史边界的原有断言保留在显式宿主集成 profile。SDK 及宿主边界测试继续由 Core 测试运行器发现，不把缺少可选源码视为失败或转而搜索外部仓库。
 
+### Native 注册收据与当前代码
+
 `@app-plugin/sdk/native` 通过 OpenClaw 的公开 `registerGatewayMethod`、`api.lifecycle` 和 `openclaw/plugin-sdk/gateway-method-runtime` 接入。通用构建器自动包装 Native 入口，并在产物清单加入 `contracts.gatewayMethodDispatch: ["authenticated-request"]`；插件作者不需要修改宿主源码。Agent Team 和 Workflow 的源码入口也显式登记同一幂等 helper，以支持原有原生资源构建路径。原生入口不导入 Main/Browser。
 
-每次 Native 注册产生独立的随机注册 ID，公开 `<plugin-id>.app.handshake` 返回插件 ID、注册 ID、实际进程 PID、canonical Native 入口、注册时固定的源码摘要，以及本实例自有 RPC 的绑定入口。Main 同时核对配置、所管理 Gateway 的 PID/进程代次、已批准产物中的 `native.binding.json`、入口路径和磁盘字节；等待握手时跨过进程代次或失效事件的结果不能激活插件。配置未知、来源不符或握手失败均撤回业务。该收据是应用与插件注册之间的关联，**不是原生私有 instance/generation 权限，也不是实际 ESM namespace 执行字节证明**。
+每次 Native 注册产生独立的随机注册 ID，公开 `<plugin-id>.app.handshake` 返回插件 ID、注册 ID、实际进程 PID、canonical Native 入口、注册时固定的源码摘要，以及本实例自有 RPC 的绑定入口。Main 同时核对配置、所管理 Gateway 的 PID/进程代次、已批准产物中的 `native.binding.json`、入口路径和磁盘字节；等待握手时跨过进程代次或失效事件的结果不能激活插件。配置未知、来源不符或握手失败均撤回业务。
+
+该收据是应用与插件注册之间的关联，**不是原生私有 instance/generation 权限，也不是实际 ESM namespace 执行字节证明**。
 
 Gateway 的 HELLO 和健康检查不证明配置重载已经稳定。Main 对握手做有界的只读重查，并订阅原生公开的 `plugins.changed` / `config.changed` 重新核对注册；新代次、包变更和宿主释放都会撤销旧定时器。此机制只恢复可见性和准入，不重试业务命令或发送请求。
+
+### 字节身份与冷替换
 
 支持 `single-file-v1`：业务依赖打包，只允许静态、字面量公开 OpenClaw SDK 模块和支持的 Node 内建导入，拒绝替代 loader。Main/UI 使用保留目录内按 hash 定址的产物。改变 Native 或伴随代码必须先确认旧 Gateway 退出，再验证包并启动新进程；不在运行中的相同路径覆盖代码后热采纳新 hash。注册摘要不会随磁盘修改更新，运行时发现字节变化即撤回准入。不支持利用预热 namespace、自定义 loader 或私自原地改包获得新版本准入；代码审核与目录检查不是恶意本地代码隔离。
 
 开发运行时的 `vendor/openclaw-runtime/current` 可以是指向平台运行时目录的符号链接或 Windows 目录联接。发现捆绑插件时先解析并固定该受管运行时根目录的真实路径，再拼接 `dist/extensions/<id>`；插件包内部的目录或入口链接仍拒绝，Native 字节摘要及注册握手检查保持不变。产物验证同时覆盖真实 Main/SQLite 通过 `current` 目录联接加载 Team 与 Workflow，防止开发布局被误拒绝后丢失设置、历史等界面贡献。
 
+### 请求分发与权限传递
+
 SDK 用代理 API 观察插件的公开 `registerGatewayMethod` 登记，为插件自有 RPC 同时登记绑定本次注册 ID/PID 的直接入口。原参数保持原样，保留原方法的 scope、profileAccess、sessionAccess 及保留名称的权限要求；原 handler 看到的 `req.method` 仍为业务方法名。握手通过公开 handler context 的只读 Gateway 方法描述符核对原方法和绑定入口的实际 owner 与权限，原登记冲突或元数据不一致均不能发布映射。不读取其中的 opaque 插件 registry，不导入原生私有 registry/instance 模块。
 
-Main 的 canonical Gateway client 用 `AsyncLocalStorage` 保留当前业务注册收据。自有 RPC 走收据中的直接入口，Core RPC 才转换为 `<plugin-id>.app.dispatch` 的普通参数并调用公开 `dispatchGatewayMethod`；不扩展 `RequestFrameSchema` 或客户端协议。Native helper 核对注册 ID、PID、后台客户端、真实注册生命周期、请求取消和调用者权限。原生继续持有真实实例、会话 incarnation/generation、原始调用者与 profile/device 权限，并在授权等待及提交边界检查；应用注册收据不代替这些权威。清理请求不借用新业务注册，仍受插件清理方法和参数 predicate 约束。
+Main 的 canonical Gateway client 用 `AsyncLocalStorage` 保留当前业务注册收据。自有 RPC 走收据中的直接入口，Core RPC 才转换为 `<plugin-id>.app.dispatch` 的普通参数并调用公开 `dispatchGatewayMethod`；不扩展 `RequestFrameSchema` 或客户端协议。Native helper 核对注册 ID、PID、后台客户端、真实注册生命周期、请求取消和调用者权限。
+
+原生继续持有真实实例、会话 incarnation/generation、原始调用者与 profile/device 权限，并在授权等待及提交边界检查；应用注册收据不代替这些权威。清理请求不借用新业务注册，仍受插件清理方法和参数 predicate 约束。
+
+### 配置重载不代替注册寿命
 
 全局 `isConfigReloadSettled()` 不属于插件注册或请求的寿命证明，不作为握手、派发或响应的额外门禁。`agents.create/update` 等公开方法会写配置并自行确认应用；其成功响应可能早于全局重载收尾。只要真实注册和调用者仍有效，SDK 原样传递该响应，Main 重新核对同一注册收据时保持业务 epoch。实际关闭、调用者撤权、取消、实例更换或源码身份变化继续按既有围栏撤回，未知副作用不自动重发。
 
@@ -92,9 +130,19 @@ Main 的 canonical Gateway client 用 `AsyncLocalStorage` 保留当前业务注�
 
 这不替代 handler 自己的提交围栏。Native 是否提供 session mutation commit guard 取决于原方法的公开准入声明，不能假设每个自定义 RPC 都具有该 guard；插件仍须在异步等待后的副作用前检查实际调用者权限，并在 Native 提供 commit guard 时保留相应检查。绑定入口保持这些字段、getter 与权限上下文，不给原方法增加系统权限。
 
+### 明确拒绝与未知结果
+
 派发前的拒绝保持明确错误；派发后超时、取消或撤销可能已经产生副作用，helper 返回严格关联插件、注册、进程和方法的未知结果标记。Main 只对完整匹配当前调用的标记转换为既有 `CLIENT_TIMEOUT` / `requestSent: true` 未知结果，保留发送围栏并核对原生收据。原生明确返回的错误原样保留。任何路径都不自动重发未知操作，不以重启、空闲或 owner 更换建立执行终态。
 
 ## 启停、替换与恢复
+
+| 操作          | 继续保留                     | 必须撤回或核对                             |
+| ------------- | ---------------------------- | ------------------------------------------ |
+| 同包关闭      | 数据、未知回执、既有合法清理 | 业务 epoch、命令、UI 和新工作准入          |
+| 同包重开      | 同一产物及持久业务元数据     | 新业务 epoch，不重放未知输入               |
+| 代码包替换    | 旧版本必要的资源/清理引用    | 旧 Gateway 退出、hash 审核、新 Native 关联 |
+| 重连/实例变更 | 可恢复元数据和当前清理责任   | 旧收据和迟到响应，重新握手后才准入         |
+| 明确卸载      | 业务表、历史和安全回执       | 通用宿主关联按 owner 清理，不误删共享资源  |
 
 `register`、`activate`、`onEnable` 和 Browser 注册为同步契约。无效 thenable 会被处理并阻止激活；同步 activation 的清理 lease 在返回时撤销，异步尾部无法继续删除或写数据库。`activate` 每实例一次；`onEnable` 每业务 epoch 一次并返回 disposer。异步工作通过命令、合法清理参与者和预检执行。
 
@@ -110,11 +158,15 @@ Main 的 canonical Gateway client 用 `AsyncLocalStorage` 保留当前业务注�
 
 插件通过 `publishSessionActivity` 发布成功读取的完整活动 ID 集合。通用 Browser 宿主仅保留各插件最后确认的活动正证据，关闭时继续显示运行提示；旧 resolver、历史、设置和导航全部撤回。新 epoch 的初始空状态、读取中或失败不能清除旧证据，只有当前插件取得完整成功快照后才替换其集合；多个插件分别维护，不互相清除。Team 需两份完整团队列表均读取成功，Workflow 使用完整原生活动快照。这是界面提示，不建立执行终态、发送许可或历史权威。
 
-安装、更新、审核、删除等改变 Native 包身份的操作仍使用 Gateway 冷流程：先撤回所有已准入应用插件，检查业务及历史清理 owner，停止实际 Gateway，并阻止并发启动；只有确认原进程退出才改变包。停止超时保留活进程引用并阻止后续启动/替换。普通预检否决且未触碰原生变更时恢复旧业务；资源清单、schema 或清理失败的安全阻塞继续保留。操作后只读取一次真实清单，不重试未知变更；变更的 Main 模块通过新的不可变 hash 路径加载，旧业务、样式、资源 URL、UI 和 epoch 立即失效。必要历史清理 owner 按原 hash 保留，非必要旧实例释放。新 schemas 在原产品库中初始化，仍使用同一数据库端口。
+安装、更新、审核、删除等改变 Native 包身份的操作仍使用 Gateway 冷流程：先撤回所有已准入应用插件，检查业务及历史清理 owner，停止实际 Gateway，并阻止并发启动；只有确认原进程退出才改变包。停止超时保留活进程引用并阻止后续启动/替换。普通预检否决且未触碰原生变更时恢复旧业务；资源清单、schema 或清理失败的安全阻塞继续保留。操作后只读取一次真实清单，不重试未知变更；变更的 Main 模块通过新的不可变 hash 路径加载，旧业务、样式、资源 URL、UI 和 epoch 立即失效。
+
+必要历史清理 owner 按原 hash 保留，非必要旧实例释放。新 schemas 在原产品库中初始化，仍使用同一数据库端口。
 
 冷操作 lease 释放后，原先存在的 Gateway 在后台重新启动并重连，软件窗口、Core 和主进程保持运行；原本离线且无 Gateway 的应用不因只读审核准备而启动运行时。只有新进程握手通过才重新发布业务 UI。同包启停独立于改包流程，必须通过公开管理 API 在现有 Gateway 内热应用，不能触发 Gateway 重启。关闭后立即隐藏历史和设置入口，重新启用不恢复旧对话框或重放请求。
 
-捆绑及已批准的外部应用插件统一调用原生 `plugins.setEnabled`，保留其能力审核与运行态回执；不使用 CLI 作为失败后的替代路径，不使用 9.8 的 Skill 发现重启规避。附属 Skill 经 `skills.update` 同步后，只读核对 `config.get` 中技能开关及 `configRevisionHash === appliedConfigHash`，等待配置实际应用，避免紧接着的插件操作与尚在执行的配置监听争用 lease。热更新只使用已连接的 Gateway 客户端，每一步核对原连接、进程和代次；断线或身份变化直接失败，不进入通用请求的自动恢复流程。原生要求重启或热更新无法确认时明确返回失败，宿主不会自动停启 Gateway。Main/UI 只在当前 Native 注册握手通过后发布。
+捆绑及已批准的外部应用插件统一调用原生 `plugins.setEnabled`，保留其能力审核与运行态回执；不使用 CLI 作为失败后的替代路径，不使用 9.8 的 Skill 发现重启规避。附属 Skill 经 `skills.update` 同步后，只读核对 `config.get` 中技能开关及 `configRevisionHash === appliedConfigHash`，等待配置实际应用，避免紧接着的插件操作与尚在执行的配置监听争用 lease。
+
+热更新只使用已连接的 Gateway 客户端，每一步核对原连接、进程和代次；断线或身份变化直接失败，不进入通用请求的自动恢复流程。原生要求重启或热更新无法确认时明确返回失败，宿主不会自动停启 Gateway。Main/UI 只在当前 Native 注册握手通过后发布。
 
 非应用扩展的离线恢复同时核对用户安装包及实际捆绑目录、清单身份和配置策略，不能把用户安装目录中没有条目等同于内置插件未安装。其管理 API 超时或断线后，也只有明确的未派发证明才允许命令行恢复；已发送或结果不明的启停保留待确认结果，不重发、不凭配置布尔值推断原生重载已完成。应用插件启停不使用这条 CLI 恢复路径。
 
@@ -154,18 +206,28 @@ Composer 插件返回 `{prompt,input?}`，宿主填入 pluginId、epoch、mode �
 
 提交参与者的临时准入映射只绑定发送前守卫及当次 epoch；全部参与者成功完成 `markSubmissionStarted` 后回收同一映射，失败或未知仍保留，不能因历史会话累积耗尽新请求名额。精确确认删除后回收对应会话集合。该回收不推断发送或执行结果；持久收据、Native 身份及清理围栏继续由原参与者持有。
 
-Browser `uiState.get/set` 提供当前插件 ID/hash 隔离的有界内存 plain-data 草稿，克隆读写并拒绝函数、访问器、循环和活对象。关闭、断线或可恢复的业务围栏保留正文、附件路径和未知请求定位；真正卸载或更换 hash 后清除。它不保存控制器、插件模式、回调、原生授权或 transcript，也不在重新启用后自动发送。Team 恢复准备时，本地保存的 attempt 锁必须仍匹配当前草稿；只有读取同一 `draftId` 房间明确为 `ready/prepare_failed` 且没有冻结的待发送请求，才解除准备锁。原生 metadata 不保存该 UI attempt ID；缺失、断线和发送结果未知仍保持冻结。
+Browser `uiState.get/set` 提供当前插件 ID/hash 隔离的有界内存 plain-data 草稿，克隆读写并拒绝函数、访问器、循环和活对象。关闭、断线或可恢复的业务围栏保留正文、附件路径和未知请求定位；真正卸载或更换 hash 后清除。它不保存控制器、插件模式、回调、原生授权或 transcript，也不在重新启用后自动发送。
+
+Team 恢复准备时，本地保存的 attempt 锁必须仍匹配当前草稿；只有读取同一 `draftId` 房间明确为 `ready/prepare_failed` 且没有冻结的待发送请求，才解除准备锁。原生 metadata 不保存该 UI attempt ID；缺失、断线和发送结果未知仍保持冻结。
 
 插件资源参与者扩展删除集合至固定点；先获取所有删除 lease，再完成所有预检，最后删除。全部参与者冲突、失败或未知均否决删除，避免只清理一半。产品库新增 `app_plugin_resources` 保存 resource ID、owner ID 与 artifact hash；空投影不能删除旧保护记录，跨版本采用必须显式确认完整集合。插件使用同一个实际 SQLite 连接的受控端口，同库原子事务不拆分；产品表和插件原有表位置不变。
 
 产品会话删除与包变更互斥，包括没有插件资源的普通会话。删除在任何插件回调前同步取得 lease，直到整个删除事务结束才归还；包变更从预检、库存修复、停止 Gateway 到最终重连期间拒绝新的删除。删除预检即使异步等待，也不能被换包切换到未取得本次 fence、未参与预检的新资源 owner。准入失败和操作异常均归还临时互斥 lease，既有未知结果和资源保护围栏继续独立生效。
 
-Browser 可声明 workspace、composer、plugin settings/history、chat action、session summary/details/presentation、application page 和 message/interaction presentation。主输入、普通详情和扩展列表只组合插槽。视图可声明有限数值 `order`，同序保留注册顺序；摘要保留 Workflow → Team、右侧计数和原有焦点样式。摘要容器用单列自然高度轨道和 gap，避免无布局盒的样式边界吞掉旧子元素 margin 或压缩滚动内容。SDK 暴露只读产品元数据和显式草稿/导航/文件效果。原生历史由 Core ChatController/Gateway 维护挂载投影；插件获得视图、状态及绑定当前挂载会话的受控发送端口，不获得控制器或新的 transcript 缓存。发送端口保留权限准备、原生身份与重连核验、运行计时及未知回执，旧挂载或插件 epoch 不能继续使用。Team 的成员独立发送通过该端口完成，业务准备和停止代次核验归插件。资源通过宿主同源 hash/epoch URL 发布；不发布 Main 或 binding。开发代理使用本机私有 token 和有界专用路径。
+### Browser 插槽和撤回
+
+Browser 可声明 workspace、composer、plugin settings/history、chat action、session summary/details/presentation、application page 和 message/interaction presentation。主输入、普通详情和扩展列表只组合插槽。视图可声明有限数值 `order`，同序保留注册顺序；摘要保留 Workflow → Team、右侧计数和原有焦点样式。
+
+摘要容器用单列自然高度轨道和 gap，避免无布局盒的样式边界吞掉旧子元素 margin 或压缩滚动内容。SDK 暴露只读产品元数据和显式草稿/导航/文件效果。原生历史由 Core ChatController/Gateway 维护挂载投影；插件获得视图、状态及绑定当前挂载会话的受控发送端口，不获得控制器或新的 transcript 缓存。发送端口保留权限准备、原生身份与重连核验、运行计时及未知回执，旧挂载或插件 epoch 不能继续使用。Team 的成员独立发送通过该端口完成，业务准备和停止代次核验归插件。
+
+资源通过宿主同源 hash/epoch URL 发布；不发布 Main 或 binding。开发代理使用本机私有 token 和有界专用路径。
 
 工作区面板保持挂载以保留草稿，实际可见性通过 `AppViewContext.active` 传给插件。
 来源会话的摘要、历史及首次创建 Team 均通过 `workspace.tab` 进入右侧原有 Tab。
 每次明确打开增加 `selectionRevision`，使默认打开可以清除上次成员/子视图，普通切换 Tab 则保留状态。
-没有有效来源的 Team 记录沿用主内容页，`application.page` 的常驻控制器通过 epoch 绑定的 `page.setVisible` 请求显示，不能改为大弹窗。设置页临时遮住主内容但保留页面草稿；普通导航撤回页面和旧异步请求，插件关闭则卸载贡献。
+没有有效来源的 Team 记录沿用主内容页，`application.page` 的常驻控制器通过 epoch 绑定的 `page.setVisible` 请求显示，不能改为大弹窗。
+
+设置页临时遮住主内容但保留页面草稿；普通导航撤回页面和旧异步请求，插件关闭则卸载贡献。
 Team 群聊只在可见时持有当前房间焦点；切换标签或关闭视图释放该视图自己的焦点，
 不能清除后来打开的其他房间。隐藏面板不参与“当前可见群聊”的提问判断，重新显示
 时恢复焦点与原草稿。MCP App 面板仅由宿主的稳定容器挂载一次，避免重复 iframe
@@ -173,61 +235,30 @@ Team 群聊只在可见时持有当前房间焦点；切换标签或关闭视图
 
 `session.details` 可声明 `append`、`replace` 或 `hidden`；只有真实 Team 锚点替换普通详情。成员详情通过宿主重新读取实际会话 ID，保留 Native 身份、统计及返回，不导航到聊天或工作区；插件贡献失效后不能提交旧读取。插件设置的运行时参数链接通过通用导航服务打开原设置页。历史弹窗使用 SDK `OwnerDocumentProvider` 跟随点击窗口，关闭窗口或变更导航即撤销旧请求，不能把 Portal 固定到主文档。
 
+### 目录、摘要和原生历史视图
+
 Browser SDK 的完整会话目录只含轻量元数据，不含标题或正文；历史入口按该目录判断来源和锚点是否存在，再经有界 `ensureSummaries` 按需读取标题，不能用分页摘要判定历史不存在。通用 Native 历史视图保留控制器的准备中与准备超时状态，准备中不显示空历史或开放发送，重试仍交给原控制器。Team 公开镜像的精确定位判断属于 Team 的纯消息展示贡献；宿主只组合通用 `replyMirror`，按当前已批准产物的展示租约维护，不改写原生消息或建立执行结论。
 
 摘要记录发现不依赖摘要是否已经展开。插件在常驻 `application.page` observer 中读取元数据，并通过 `session.presentation.summaryAvailable` 与上下文变更通知报告当前会话存在摘要内容；Core 仅用这一通用提示执行原有的单次自动展开。Team 自己保留当前聊天首次新建协作/讨论时打开 Team Tab 的行为，既有基线、后台会话和已关闭记录不会重复触发；Workflow 自己发现流程并显示摘要入口，不主动重开已关闭图形 Tab。
 
+### 瞬时事件与视图刷新
+
 插件 Main 可发布有界、瞬时元数据事件；通用桥填入 owner、产物 hash 和业务 epoch，Browser 仅投递给当前同版本插件，关闭或重启后旧监听立即失效。Workflow 自己校验原生变更和父会话身份，发布 revision 通知，列表订阅后读取并合并在途变更，不恢复轮询或专用宿主 IPC。Gateway 重连撤回旧业务 epoch，重新准入后视图重新读取权威状态。
 
-## 验证与剩余验收
+## 验证入口与限制
 
-改造前后的逐项功能对照、已修复差异、真实探针与测试设施的边界见[功能审核记录](app-plugin-functional-audit.md)。
-
-隔离 probe 使用构建后的真实 Main/UI 产物、Electron/Chromium、真实 SQLite 和锁定 OpenClaw，验证单例 React、关闭/重开、旧 epoch、清理恢复、Gateway 停止/重连及公开请求桥。App 插件不向既有运行时补丁集合新增任何补丁。各 probe 明确 Gateway、模型、平台与应用端口 fixture 的范围，不替代生产业务和完整安装包验收。具体范围及未完成验证如下。
-
-### 本轮 dev 同步与验证（2026-10-29）
-
-从 `ed2eb48c0` 同步至 `3f3bcc360`，纳入 93 个 dev 提交，应用插件功能仍为基线之上的一个提交。运行时版本随 `package.json.openclaw`，本轮目标为 `v2026.10.7`；相对 dev 的原生补丁目录没有新增或改写。公开请求分发接口保持兼容；新 read-sharing 元数据保留原生包装语义，不比较原生为不同注册生成的 callback 引用，也不读取私有 registry。
-
-独立多 Agent 复核覆盖 SDK、Main 启动与热配置、Renderer 生命周期和追加的历史/日志变更。修复了显式模型路径遗留的业务变量、退出期间过早发现插件、参数保存误走包冷变更，以及模型准备期间插件撤回后降为普通消息的竞态；同时保留完整轻量目录、Native 历史准备、镜像定位及新版连续滚动。
-
-分批定向回归按每个文件的最终执行汇总为 141 个文件、2,762 项通过、1 项条件跳过，无剩余失败。跳过项依赖 worktree 相邻 OpenClaw 浏览器源码，不能计为通过；原始失败报告与修复复测分别保留。完整应用构建、独立插件类型检查、Main/Renderer 类型检查及 lint 通过。测试使用独立 Node 和隔离的同版本 SQLite 测试依赖，共享 Electron 原生依赖保持原样。
-
-本轮未运行全量 `npm test`、安装/冷启动演练或真实 Gateway/模型验收，没有将历史 `v2026.10.4` 实机结果作为新运行时的通过证据；本节仅记录上述接口、定向行为及构建验证。
-
-### 本轮界面回归修复与验证（2026-10-29）
-
-以 `594cc79da` 的改造前菜单工厂和界面结构对照，恢复菜单排序、子菜单、标签/删除/返回文案、输入焦点、Team 右侧 Tab、独立主内容页、成员详情返回、设置及历史窗口归属。独立复核还修复了摘要行样式、计数位置、顺序，以及样式边界导致的段间距丢失。功能仍保留为一个提交，验证完成后未重新 pick 到 dev。
-
-46 个定向测试文件、419 项测试全部通过；lint、独立插件类型检查、Main 类型检查和完整应用构建通过。`verify-ui-parity.mjs` 在隔离 Chromium 加载真实 Core 菜单、摘要及侧栏和独立构建的两插件 CSS/Browser：验证菜单对照、标签结构/尺寸、两种 CSS 加载顺序、插件独有 utility、摘要两处 16px 间距和自然行高、右侧 Tab 几何位置、设置 Portal 及关闭撤回。旧阴影规则的负例确实产生差异；宿主 CSS 不含被测的插件独有 utility，避免掩盖覆盖问题。
-
-浏览器探针通过 `workspace.open` 驱动真实侧栏，摘要/历史的点击路由另由定向测试覆盖；它不代表整套产品页面的端到端验收。标签 SVG 仅按原结构和尺寸对照，其中原 Team 标签图标尺寸为零，不能据此宣称可见图标绘制通过。本轮没有启动 Gateway、访问用户数据或重建共享原生依赖，没有把历史运行时实机结果重新计作本轮验证。
-
-### 助手创建超时回归（2026-10-29）
-
-实测失败日志显示，助手配置写入后，旧 SDK 将仍在收尾的全局热重载误判为插件失效，把 `agents.create` 的成功响应改成 unknown。随后的握手暂失败又撤回 Main epoch，旧协作请求无法回填 `collaboration.resolve`，最终表现为宿主处理超时。修复仅移除这项错误的全局门禁，并在最终角色文件读回校验后、启用产品档案前再次核对 Main 权限；没有增加超时、业务重试或原生补丁。
-
-旧代码在新增绑定链回归中准确失败于 `Native dispatch outcome is unknown: agents.create`；修复后 5 个文件、135 项定向测试通过，覆盖同注册握手、Core 派发、结果回填、撤权和失效负例，以及配置/角色验证结果未知时保留 preparing 身份、不重放操作。独立多 Agent 复核、lint、Main 类型检查、独立插件类型检查及完整应用构建通过。
-
-使用当前锁定版本的已准备 Gateway bundle 执行：
+宿主边界回归分别验证 SDK 消费、构建产物、资源发布、开发代理和真实原生桥。以下为可复现入口，运行条件与断言以脚本为准；脚本存在不表示本次或任意平台已通过：
 
 ```bash
+node scripts/test/plugin-host/verify-portable-app-sdk.mjs
+node scripts/test/plugin-host/verify-built-app-artifacts.mjs
+node scripts/test/plugin-host/verify-built-browser-artifacts.mjs
+node scripts/test/plugin-host/verify-development-assets.mjs
+node scripts/test/plugin-host/verify-development-application.mjs --runtime <prepared-runtime>
 node scripts/test/plugin-host/verify-native-gateway-bridge.mjs <prepared-runtime> --gateway-bundle --assistant-config-reload --block-public-network
 ```
 
-隔离探针以最小插件和产品元数据 fixture 调用真实 Main manager、助手创建适配器、请求绑定、公开 SDK 及原生配置/角色文件接口。三个并发请求经配置串行队列各完成一次 create、update 和角色写入/读回；业务 epoch、Native 注册 ID 及 Gateway PID 保持不变，未发生公网访问。该结果不代替完整 Team 工具、真实模型或安装版 UI 验收。
-
-### 独立源码分发与移除验证（2026-10-30）
-
-在不位于应用目录的临时工作区安装真实打包后的 App SDK、Runtime SDK 与构建器，公开包均为实际文件而非 workspace 链接。使用声明依赖离线安装、显式匹配的公开 OpenClaw SDK，以及匹配 Node ABI 的开发测试驱动；未借宿主源码、主题或依赖目录。Team 与 Workflow 分别完成四入口检查、完整包构建及独立默认测试：65 文件/991 项、36 文件/481 项通过。真实 npm 图标包的内部 module 元数据及所有实际打包依赖的许可证也经分发回归覆盖。SDK 重建清除已撤销接口的输出，且拒绝输出覆盖源码、源码父目录或指向源码的链接。
-
-当前完整应用构建、lint、Main 类型检查及新鲜 CommonJS 输出加载通过。48 文件/598 项代表 Core 回归通过；另在物理移除两可选源码目录的副本中，完整构建、Main 检查和同一组 598 项通过，生成空应用插件清单。实际 Electron Main 与隐藏 Chromium 探针分别验证两插件在场和空集；在场有 10 个视图/3 个模式，关闭和卸载撤回正确，空集有 0 个视图/模式，均无浏览器错误。普通 Core 不通过相邻仓库补缺失插件。
-
-源码 Native conformance 使用真实 registry、公开 API/lifecycle runner、请求授权和 dispatcher，在相同插件 ID、stateDir 和源码路径的两个独立 Gateway 请求上下文中完成 ABI2 读取和 owner 写绑定验证；销毁一个实例不影响另一个。另覆盖 signal 尚未 abort 的 quiesce、已准入 cleanup 上下文及迟到握手均不能恢复旧权限。测试只替代未使用的缺失第三方分支并使其抛错，不替代上述 Native 实现；它未启动监听 Gateway，也不代表真实模型验收。Required 契约、准入、托管、收据、文件和执行 facade 的 283 项定向测试通过，覆盖退休后普通新 run、ACK 丢失不重写、实际取消、代次和借用来源隔离、损坏元数据拒绝及 SDK 无业务依赖。新通用运行模块的严格类型检查通过。
-
-外部插件仓库的通用 desktop companion 分支已经接入发现、检查、构建和完整产物打包，不固定业务 ID；无该类插件时不加载新工具。既有 MCP Apps 的检查、构建、116 项测试及打包通过，新增依赖布局与装配定向验证通过。实际两个插件目录仍留在应用仓库，由用户后续移动；外仓已有用户文档改动未被覆盖。
-
-以上验证未读取用户聊天或启动用户 Gateway，未清理助手、会话、业务数据或安全回执，也未重建共享 Electron ABI。没有执行全量应用 `npm test`、正式安装包/真实模型或跨平台验收；这些限制继续保留如下。
+隔离探针采用真实 Main/UI 产物、SQLite、Electron/Chromium 或锁定 Gateway，并按场景替代模型或应用端口。它们证明指定边界，不能替代真实业务模型、正式安装包或所有平台的验收。Team/Workflow 的业务回归及真实模型限制分别随[Agent Team](../features/assistants/agent-team.md)和[Workflow](../features/workflow/swarm-workflow.md)维护。阶段性修复过程和测试数量由 Git 历史追溯，不作为当前契约重复维护。
 
 ### 尚未完成的生产验证
 

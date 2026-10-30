@@ -6,44 +6,7 @@
 
 Main 处理器按能力归入 `ipc/app`、`cowork`、`openclaw`、`plugins`、`speech`、`security`、`providers` 和 `scheduledTask`。插件安装与管理、语音、权限和媒体模型配置由各自领域直接注册，不通过 OpenClaw 或 app 目录转发。目录归属不改变 preload 方法、IPC 字符串、处理器注册顺序或 Gateway 请求协议。
 
-Renderer 启动先通过既有 store bridge 恢复有界界面偏好，完成后才导入 App/Redux。
-这避免随机 HTTP origin 使主题和过滤设置在重启时失效；不同步浏览器完整 storage 或聊天正文。
-普通窗口在每次文档 preload 执行时，通过 `window:appearance:get` 同步读取 Main 已打开 Store 中的
-`mode` / `themeId`，形成只读 `initialization.appearance`；该读取只接受所属 WebContents 的主 frame，
-销毁后移除监听。读取发生在既有偏好导入之后，reload 也取得最新值。入口 HTML 在首屏绘制前使用
-该快照和现有主题 CSS，不读取 origin 的配置、不启动配置服务或网络工作。首次临时窗口不发送该 IPC，
-使用与产品一致的默认浅色；主题快照不包含模型配置、凭据或其他持久偏好，不新增存储记录。
-
-Main 的 `startup/` 在打开产品 Store 前只读判定首次安装、已发布 JSONL 历史的迁移升级、
-当前代际的正常升级和正常启动，先冻结路由。真实路由文档首次 preload 时通过窗口专属
-`app:initialization:getEntryClock` 只读同步通道取得 Main 惰性设置的视觉时钟；只接受所属
-WebContents 主 frame，销毁即撤销。临时窗口、主窗口与 reload 沿用同一值，总耗时起点独立保留。
-路由判定前可显示无 preload、无用户数据读取能力的独立中性启动窗口；它只加载受校验的
-本地单页，不参与 Store、配置或引擎准入。独立窗口交接 owner 在 Windows 对齐无边框窗口的
-几何位置，后继 ready-to-show 后用 240ms 原生透明度淡入，旧窗口保持不透明直至退休；
-退出、销毁或迟到的 ready 回调不能重新显示窗口，后台自启继续隐藏；用户已最小化的
-启动窗口交给仍最小化的后继，不主动恢复到前台，并保留最大化状态；已主动显示的后继
-以用户的新窗口状态为准，不由旧窗口覆盖。无人操作的隐藏自启不通过最大化隐式显示窗口。
-已有完成记录且原生版本相同的普通启动在详细数据分类前直接分流，不打开数据库做
-预检、不扫描会话目录、不执行原生维护子进程；必要配置就绪后立即启动 Gateway，
-本机集成服务与其并行准备。引擎实际就绪仍由受认证连接与当前进程代次确认。
-普通启动的 Main `tasks` 仅投影数据、配置和本机集成的真实起止状态，Gateway 与 Renderer
-继续各自报告就绪。核心外壳 Ready 后可以加载工作区，本机集成的唯一后台 Promise
-继续运行；普通启动的 Gate 在 App 和首个工作区就绪后即揭幕，不等待引擎与本机集成。
-Renderer 通过共享只读订阅同时观察 Main 的准备 pending/failure 和引擎状态；只有当前
-代次认证与执行权限均获 Main 确认后才允许发送。未知或尚在准备的请求立即拒绝，不排队。
-引擎或可选集成的后台失败保留主页与领域提示，关键 Main/Renderer 初始化失败仍阻塞。
-退出先等待该 owner
-收尾，之后才关闭服务及 Store，不把异步任务超时当完成。
-Renderer 不能凭展示标记改变路由。历史升级先做选择性备份与旧环境隔离，再准备当前环境；
-在离线原生导入、身份校验、产品映射和历史身份投影完成之前，Gateway 及外部聊天入口不开放。
-临时引导不查询运行管理器；初始化 IPC 由 Main 的 `startup/initialization` 拥有，原入口为薄转发。
-详见[启动与历史升级](../features/app/startup-and-history-upgrade.md)。
-
-历史工作目录选择使用显式 `initialization.selectHistoryWorkspace` bridge，Renderer 只提交产品会话 ID。
-Main 只接受当前主窗口主 frame，校验确实为目录缺失的历史会话且没有运行或开放回执；
-系统选择器返回后再次核对窗口、frame、会话原生身份、目录和运行状态，再更新为用户选中的现存目录。
-切换窗口、开始运行或退出过程中不能提交迟到结果，也不会自动创建旧机器上的目录。
+本页按“信任域 → 通道 → 请求寿命 → 各类资源 → 失败”的顺序阅读。产品流程见[Cowork](04-cowork-system.md)，用户可见操作见[功能索引](../features/README.md)。同一个资源即使在多个窗口展示，执行和删除 owner 仍保持唯一。
 
 ## 1. 运行实体和信任范围
 
@@ -74,11 +37,15 @@ HTTP 响应携带生产 CSP、`no-store`、`nosniff` 与同源资源策略。脚
 聊天托管音视频使用独立的 prepare/release IPC：仅当前主窗口及受管工作区窗口的主
 frame 可申请随机 `localmedia://gateway/` 地址。工作区通过独立的 `mediaPlaybackPreload`
 只取得 prepare/release 两个方法，不安装完整 `window.electron`；实际媒体请求与申请
-来自同一目标窗口和 frame。Main 的媒体 owner 持有原生会话、
+来自同一目标窗口和 frame。
+
+Main 的媒体 owner 持有原生会话、
 固定 outgoing route、窗口/frame 和 Gateway process/lifecycle generation；defaultSession
 唯一的窄媒体 WebRequest listener 验证每次请求的精确 owner/frame，原生浏览器 partition
 继续由各自策略管理。流式响应通过 Main 内部 Gateway 认证读取原始字节，Renderer 仅
-持有可撤销地址，不取得 token 或整个文件正文。生命周期、Range 与摘要复用规则见
+持有可撤销地址，不取得 token 或整个文件正文。
+
+生命周期、Range 与摘要复用规则见
 [聊天渲染](15-chat-rendering.md)。
 
 ### 浏览器与非浏览器的代理范围
@@ -87,6 +54,7 @@ frame 可申请随机 `localmedia://gateway/` 地址。工作区通过独立的 
 普通 URL 使用无 preload 的顶层 webview，共享默认侧栏浏览器的站点存储；托管 ref 保留
 独立内存 session、固定 shell/iframe 与认证静态转发。Main 单一 session policy owner
 按精确 guest 分派准入；释放普通 URL 只关闭自身页面，不清共享登录、worker 或连接。
+
 无法归属页面的 worker 遵循 profile 基线政策，不获得 mount、转发、工具或工作区权限。
 网页代理准备可独立重试而不重建文档，详见[独立网页契约](../features/chat/webpage-embeds.md)。
 
@@ -106,134 +74,6 @@ flowchart LR
 普通 Widget 的专用内存 session 继续通过浏览器代理队列装载原生 sandbox，不共享浏览器
 存储或提供业务下载 IPC。非联网 pinned HTML 的当前身份与 ticket 由 Renderer 的认证
 loader 核对，完整页面使用独立网页承载。具体边界见[交互式回答](../features/chat/interactive-answers.md)。
-
-### 可分离的完整侧边栏
-
-侧边栏从首次展示起就使用固定的 `workspace.html` 文档承载。主 Renderer
-与工作区文档在开发和安装版均同 origin，安装版共享上述只读 HTTP 宿主。
-静态请求仅允许工作区入口携带单个 UUID 格式的 `generation` 或 `surface` 参数，以及 Widget viewer
-和独立网页 viewer 入口携带单个 UUID 格式的 `mount` 参数；其他入口或额外参数均拒绝。静态读取不授予
-原生窗口能力，窗口创建仍须匹配 Main 的当前授予。
-主 Renderer
-通过 React portal 渲染完整工具区；该文档没有应用入口脚本、完整应用 preload 或
-`window.electron`，只通过媒体最小 preload 提供当前文档的 prepare/release，
-也不创建第二个 Redux store。其它源组件闭包仍调用主 Renderer
-的显式 bridge。Main 用通用原生 `View` 组拥有整个侧边栏：工作区的 WebContentsView
-与已固定的消息卡片载体是组内的并列子视图。停靠时整组放入主窗口 contentView，
-分离时将同一组移入普通 BrowserWindow；所有侧栏内容统一跟随该组，不按内容类型
-另设主窗口表面。拆出和收回均不改变 portal 目标，不重建浏览器 guest、终端或编辑器。
-Main 对已创建的 WebContents 显式设置后台调度策略，确保视图收回后动画帧继续执行。
-
-主聊天中可固定的 MCP App 和 Widget 在首次 iframe、webview 或 AppBridge 创建之前，
-先取得独立的同源被动 `workspace.html?surface=<UUID>` 载体。载体同样没有应用 preload、
-独立 store 或 Gateway 连接；原组件和捕获的认证上下文仍由主 Renderer 所有。
-每个载体有稳定的 WebContentsView 和裁切 View；消息与侧栏之间只改变原生父视图及
-几何位置，不跨 Document 搬动 DOM、不重读原生视图或重建运行实例。裁切仅改变外层
-可见矩形及内层偏移，不缩小原文档的逻辑视口。固定后的载体进入完整侧栏组，因而
-消息、侧栏、独立窗口和返回停靠之间保留同一文档、输入、选择与本地运行状态。
-没有原生载体 API 的浏览器环境继续采用同 Document 的稳定容器。
-
-```mermaid
-flowchart LR
-  Renderer[主 Renderer：React / Redux / bridge] -->|稳定 portal| Document[workspace.html：无应用 preload]
-  Document --> View[固定工作区 WebContentsView]
-  Renderer -->|首次挂载前准备| Carrier[消息卡片：固定无 preload 载体]
-  View --> Group[完整侧栏 View 组]
-  Carrier -->|固定到侧栏：原生父视图| Group
-  Carrier -->|返回消息：原生父视图| MainWindow[主窗口 contentView]
-  Group -->|停靠| MainWindow
-  Group -->|分离| WorkspaceWindow[独立 BrowserWindow]
-  Renderer -->|窗口 IPC / generation| Manager[Main：窗口与原生视图管理]
-  Manager --> Group
-  Manager --> Carrier
-```
-
-创建文档须匹配一次性授予的 URL、frameName 和当前 generation；frameName 包含
-generation，同一存活文档重用名称，异常重建使用新名称，避免拿回正在销毁的旧文档。窗口打开的
-override preferences 在 Chromium 创建 WebContents 之前清除继承的应用
-preload。后续页面导航及新原生窗口被拒绝；未被消息交互接管的 `_blank` 外链
-共用主窗口的 URL 安全规则，由系统浏览器打开。聊天消息链接仍由源 Renderer
-按打开偏好进入内置网页 Tab 或 Chrome，本地 HTML 保留会话路径上下文。
-窗口 IPC 仅接受已登记主 Renderer 的
-主框架，浏览器 guest 注册仍保留主 Renderer 的 operator 身份，只额外接受
-该 operator 当前登记的精确 workspace host。浏览器 partition、固定 guest
-preload、权限、PDF、下载及导航策略由原有 factory 同时应用到两种 host。
-
-卡片载体使用独立的一次性精确 URL / frameName 授予；其展示回执 ID 只定位 Main 的
-原生承载资源，与 App viewId、Widget docId、会话或工具调用身份分开。位置更新与释放
-仅接受原主 Renderer 的主框架；侧栏目标还须匹配当前工作区 generation。载体不因此
-成为浏览器 operator 或获得任意 IPC。卡片的原生准入、client、generation、sessionKey、
-物理 sessionId 和权限继续由所属聊天验证，展示回执不能恢复失效授权或代替执行回执。
-
-Main 仅保存窗口位置、generation、展示回执、父视图、裁切及显示状态，不接收工具正文、终端输出
-或编辑草稿。源 Renderer 导航、reload 或进程丢失会撤销 generation、销毁
-旧 host 并取消其 browser host 授权。关闭独立窗口先收回视图；主窗口收起
-到托盘时隐藏独立窗口，恢复时重新显示；主窗口最小化不隐藏独立窗口。
-窗口恢复选择相交面积最大的显示器，屏幕移除后使用最近的可用工作区。
-两种窗口共用平台标题栏策略；独立窗口保持空标题，Windows 共用 Renderer
-窗口按钮。按钮通过主框架和当前 generation 校验后的专用 IPC 操作当前独立
-shell，窗口状态回传同一个 owner；不使用主窗口按钮的控制通道，也不向子文档
-暴露 preload。外观配置更新同时应用原生背景与标题栏 overlay，Renderer 框架和
-主题沿用主界面。标题栏框架始终保留工具树位置，不能因显示切换而重新挂载工具。
-
-非预期的子文档销毁或渲染进程退出使用同一失效处理：撤销旧 host/generation，
-只向仍可运行的源 Renderer 发出 Invalidated。Renderer 核对被撤销的 generation
-后重新取得被动文档，恢复原先的分离状态；旧通知重放无效。Main 导航、重载和
-退出的主动清理不触发这个恢复。真实进程丢失或文档销毁可能丢失页面未保存状态，
-界面明确提示这一点；它与正常拆出、收回时保留同一文档的语义不同。
-卡片载体自身失效时撤销该展示回执及交互，不因位置变化静默创建替代运行实例；
-恢复须由用户明确重试并沿原有认证读取流程处理，不重放工具。单独重建工作区框架时，
-仍存活的卡片载体先隐藏脱离旧组，待新 generation 的真实目标就绪后继续使用。
-
-原生视图高于主文档的 CSS 层。主文档的阻塞弹窗明确标记并暂停停靠视图；
-独立窗口使用后加入的顶层 modal dialog 引导用户返回主窗口，覆盖已有工具
-展开对话框。非阻塞菜单仅在与停靠视图相交时暂时遮挡它，不锁定独立窗口。
-通知和底部状态卡进入当前可见文档，宠物（包括悬浮模式）始终留在主窗口。
-宠物节点、状态、位置和拖动范围始终由主文档拥有，不随侧边栏切换文档。
-停靠原生视图会盖住主文档，因此在该视图中绘制同状态、主窗口坐标的局部投影，
-指针输入转换回主窗口坐标；收起、遮挡或分离时移除投影，不移动原宠物节点。
-独立窗口的阻塞提示也保留该窗口的控制按钮。系统音频授权仍由源主框架
-发起，并限定到本次选择的主框架或精确 workspace 框架，不能授权任意页面。
-
-### Gateway 启动与数据边界
-
-Gateway 启动由 Main 管理运行包准备、配置与进程生命周期。9.6 版本未发布，按用户要求，本次 9.8 升级新增的旧 SQLite 数据迁移桥接、启动门禁及对应构建资产已移除；启动链不再包含该独立迁移子进程。
-
-原生数据库继续由 OpenClaw 管理。10.7 的正常升级使用当前版本锁定的原生 owner，在 Gateway 停止且产品 Store 尚未打开时完成备份、原生维护和复验；它只接纳当前 shared20、agent24/25 的维护合同，不恢复前述 shared18/agent23 兼容桥。维护子进程实际关闭数据库并退出后才能准入 Gateway。未知结果保留恢复阶段并重新检查，不能按旧成功标记跳过维护。已有产品数据库初始化及 JSONL 历史迁移保持各自所有权；运行包仍从锁定 pristine 包重新构建。
-
-热加载必须等待原生 applied／failed 回执，不能把 detected 当作成功。原生 coordinator 已接受的 deferred/coalesced 热重启保持其所有权，不竞争启动另一个进程。Windows 启动环境及两个 CJS 启动器都执行 9.8 的长编译缓存路径保护。
-
-### Windows 首次启动初始化
-
-安装器只把应用和运行资源写入安装目录，AppData 中只追加安装日志。用户数据目录准备、SQLite 打开、本地运行环境及 Gateway 启动属于 Main 的启动流程。
-
-Windows 启动先使用不持久化的初始化窗口，避免用户目录不可用时先打开 Chromium profile。初始化窗口与正常窗口都从应用拥有的随机本地 HTTP origin 读取安装目录的不可变 dist，保留静态资源校验、CSP 和页面导航限制；Main 等待初始化页实际加载，再准备真实目录和数据库，加载错误记录后仍继续数据准备。真实目录创建及数据库打开成功后交接到正常窗口；Renderer 先订阅初始化事件再读取快照，在 Main 就绪前不启动配置和业务服务。正式窗口保持 UI 偏好先恢复、App/Redux 再导入的顺序。首次启动首页显示四个实际阶段的完成数，不估算耗时百分比。失败保留阶段、目录和原始错误，允许重启重试。
-
-初始化窗口通过专用 preload 参数声明 `initialization.isTransientWindow` 只读上下文。其 UI 偏好只使用该不持久化 partition 的页面存储，不访问尚未打开的产品 Store，也不导入或写回持久化偏好。正常主窗口不携带此参数，仍在 App/Redux 导入前等待 Main 偏好快照；读取失败时保留未知基线保护，不能用初始化窗口的默认值覆盖已保存偏好。
-
-`app:initialization:getState/changed/relaunch` 只提供产品初始化快照与失败后的重启入口，不启动 Gateway 或缓存会话。标记表示本地应用壳已初始化；标记写入失败仅记录日志。Python、默认项目目录、配置同步和 Gateway 的可恢复故障不阻止进入首页和设置，运行能力仍遵守原有配置/权限失败关闭规则。真实用户目录或 SQLite 无法使用时保留失败页；快照暂时读取失败后，可由后续有效事件恢复。
-
-```mermaid
-sequenceDiagram
-  participant UI as 初始化首页
-  participant Main as Main
-  participant Data as 用户目录/SQLite
-  participant Gateway as Gateway
-  UI->>Main: 订阅进度并读取快照
-  Main->>Data: 创建真实目录并打开数据库
-  Main-->>UI: 用户数据已完成
-  Main-->>UI: 本地环境与配置阶段
-  Main->>Gateway: 尝试启动，失败记录并保留运行状态
-  Main-->>UI: 完成，进入首页
-```
-
-主进程、初始化窗口和正常窗口的实际加载/预加载/Renderer 异常进入详细日志；普通消息与外部网页不纳入此窗口观察器。日志写入先用用户目录，实际失败后尝试安装目录的 `logs`，不增加启动前权限探针。日志维护失败不阻断应用；失败页显示当前日志位置。
-
-初始化失败快照的可选 `failure` 保留来源、发生时间、有界异常字段和 Main 的实际活动/日志路径。
-Renderer 通过同一快照读取详情，不增加任意日志路径读取或启动 Gateway 的权限。界面模块异常在浏览器内
-捕获；桥接或整页失效则由 Main 的窗口诊断弹出原生报错。主页面取消导航（ERR_ABORTED）及子 frame 加载
-失败不弹出应用启动错误。错误展示和复制统一遮盖常见凭据。引擎诊断仍使用原主窗口主 frame 准入、
-请求取消及精确故障身份检查，不另设启动专用采集通道。
 
 ## 2. 四类通道不能混用
 
@@ -266,7 +106,9 @@ Main 通过 webContents 事件通知会话变化、目标执行、审批、结�
 可调用。Main 的 LoginService 持有账号操作队列与 SDK 取消身份；SDK 在 Main 确认身份后
 返回凭据，产品原子写入登录文件，再 await 现有模型与 Header 生命周期入口。
 Renderer 仅接收含 revision 的显示资料、闭合错误码和独立账号/同步状态，先订阅再读取快照，
-不接收 token、Cookie 或 SDK 原始结果。文件导入只恢复 local-credentials 显示，不门禁原有
+不接收 token、Cookie 或 SDK 原始结果。
+
+文件导入只恢复 local-credentials 显示，不门禁原有
 模型启动；SDK 确认后才显示 signed-in。见[登录模板](../features/integrations/login-sdk-template.md)。
 
 ### 聊天数据
@@ -279,11 +121,17 @@ Thinking/Tool/Content 不经过 Main 复制给 UI。Main 只消费生命周期�
 
 ### 扩展与外部客户端
 
-Chrome Side Panel 不取得 Gateway token。Native host 在开发版和安装版均只发现已运行的桌面进程，返回动态 app-server URL；实例未运行时提示手动启动，扩展不能启动或重启应用。Main 校验 capability、精确 Origin、path 和消息大小。初始化完成后只接受实现的 thread/composer/turn 方法及独立的 `browser/extension/pair` 自动化配对方法。自动配对确认 Gateway 已运行后调用锁定 CLI 的本地 Gateway 唤醒入口，仅向扩展后台返回 relay pairing；不经过聊天 Controller，不将凭据交给桌面 Renderer 或写入发现文件／日志。协议详见[Chrome 接口](../app-server-api/browser/README.md)。
+Chrome Side Panel 不取得 Gateway token。Native host 在开发版和安装版均只发现已运行的桌面进程，返回动态 app-server URL；实例未运行时提示手动启动，扩展不能启动或重启应用。Main 校验 capability、精确 Origin、path 和消息大小。初始化完成后只接受实现的 thread/composer/turn 方法及独立的 `browser/extension/pair` 自动化配对方法。
+
+自动配对确认 Gateway 已运行后调用锁定 CLI 的本地 Gateway 唤醒入口，仅向扩展后台返回 relay pairing；不经过聊天 Controller，不将凭据交给桌面 Renderer 或写入发现文件／日志。协议详见[Chrome 接口](../app-server-api/browser/README.md)。
 
 Agent CLI launcher 通过当前用户管道提交白名单命令。Main 验证 token、frame、cwd、argv 与生命周期后，按 CLI、ACP 或 Codex app-server 协议进入同一会话与执行后端。只有 app-server 可传入可选 CODEX_HOME 标记目录；其他环境变量不转发。外部 CLI stdout 只返回约定可见结果，不透出运行凭据。它不复用 Chrome 的 URL capability。
 
-stdio、通用本机 WebSocket 和 Chrome 入口共用每连接一实例的 `AppServerConnection`，不再分别实现 RPC dispatcher；两类 WebSocket 复用 `AppServerWebSocketServer` 的连接、帧和背压处理。Main 在完成传输认证后注入固定能力 binding；客户端握手不能提升能力。Chrome binding 仅访问扩展来源会话，断开只释放订阅；stdio 与通用 WebSocket 复用 CLI binding，限制外部线程归属，断开请求精确取消。通用服务固定监听 loopback，要求独立 Bearer 凭据且不接受网页 Origin；主 frame 可只读查询无凭据状态，复制时按需取当前配置，重启后旧配置失效。公共协议关闭后丢弃迟到响应与通知，领域服务继续核对原生身份和整轮结算，不从连接状态推断结果。见[能力与生命周期矩阵](../features/integrations/app-server.md)。
+stdio、通用本机 WebSocket 和 Chrome 入口共用每连接一实例的 `AppServerConnection`，不再分别实现 RPC dispatcher；两类 WebSocket 复用 `AppServerWebSocketServer` 的连接、帧和背压处理。Main 在完成传输认证后注入固定能力 binding；客户端握手不能提升能力。
+
+Chrome binding 仅访问扩展来源会话，断开只释放订阅；stdio 与通用 WebSocket 复用 CLI binding，限制外部线程归属，断开请求精确取消。通用服务固定监听 loopback，要求独立 Bearer 凭据且不接受网页 Origin；主 frame 可只读查询无凭据状态，复制时按需取当前配置，重启后旧配置失效。公共协议关闭后丢弃迟到响应与通知，领域服务继续核对原生身份和整轮结算，不从连接状态推断结果。
+
+见[能力与生命周期矩阵](../features/integrations/app-server.md)。
 
 ## 3. 一次 IPC 请求必须有完整生命期
 
@@ -318,7 +166,234 @@ sequenceDiagram
 
 interaction response/replay 使用固定请求身份。ask_user_question 与 present_plan 的 pending 权威在对应 Extension；审批请求由原生机制拥有。Main 转接并验证，Renderer 只展示、提交选择和恢复待处理交互。
 
-## 5. Browser guest 是单独的资源边界
+## 5. 注册、订阅与重连
+
+`main.ts` 组合并注册 app/cowork/openclaw/scheduledTask 等 handler；preload 与 `src/renderer/types/electron.d.ts` 必须同步。IPC 兼容入口也只能允许白名单 channel，不能演变成任意 invoke。
+
+订阅建立时捕获的 session、连接 generation 和请求代次必须参与响应准入。页面卸载移除 listener；Gateway 重启刷新连接与待处理交互；系统唤醒触发连接恢复。不会因为网络恢复而重放所有未完成写请求。
+
+开发窗口跟随其 loopback Vite 服务：周期探测连续失败后进入正常退出，开发 URL 交接使旧探测结果失效。该行为不依赖终端父子进程关系，也不应影响安装版生命周期。
+
+进入退出状态时立即隐藏窗口并销毁托盘，后台清理继续执行；迟到的显示回调不恢复界面。
+Main 与开发启动器共享关闭监督预算，Gateway 关闭同一 child 的重复调用共享首次 deadline，
+实际正常 close/exit 才证明退休。原生清理允许 330 秒，强制后观察 15 秒；超时、信号或
+非零退出保留失败并阻止本进程重启 Gateway。Main 的启动资源、其他服务和 Gateway 分阶段
+退休，阶段超时只允许继续尝试其他清理，不代表原任务已 join；迟到结果不能进入成功分支。
+
+仅全部 owner 退休后关闭现存产品 Store，失败退出不继续安装更新。完整预算与开发监督边界见
+[开发说明](../development.md)和[启动与升级](../features/app/startup-and-history-upgrade.md)。
+
+## 6. 启动文档与数据准入
+
+### 启动只读桥与路由
+
+Renderer 启动先通过既有 store bridge 恢复有界界面偏好，完成后才导入 App/Redux。
+这避免随机 HTTP origin 使主题和过滤设置在重启时失效；不同步浏览器完整 storage 或聊天正文。
+
+普通窗口在每次文档 preload 执行时，通过 `window:appearance:get` 同步读取 Main 已打开 Store 中的
+`mode` / `themeId`，形成只读 `initialization.appearance`；该读取只接受所属 WebContents 的主 frame，
+销毁后移除监听。读取发生在既有偏好导入之后，reload 也取得最新值。入口 HTML 在首屏绘制前使用
+该快照和现有主题 CSS，不读取 origin 的配置、不启动配置服务或网络工作。
+
+首次临时窗口不发送该 IPC，
+使用与产品一致的默认浅色；主题快照不包含模型配置、凭据或其他持久偏好，不新增存储记录。
+
+Main 的 `startup/` 在打开产品 Store 前只读判定首次安装、已发布 JSONL 历史的迁移升级、
+当前代际的正常升级和正常启动，先冻结路由。真实路由文档首次 preload 时通过窗口专属
+`app:initialization:getEntryClock` 只读同步通道取得 Main 惰性设置的视觉时钟；只接受所属
+WebContents 主 frame，销毁即撤销。临时窗口、主窗口与 reload 沿用同一值，总耗时起点独立保留。
+
+路由判定前可显示无 preload、无用户数据读取能力的独立中性启动窗口；它只加载受校验的
+本地单页，不参与 Store、配置或引擎准入。独立窗口交接 owner 在 Windows 对齐无边框窗口的
+几何位置，后继 ready-to-show 后用 240ms 原生透明度淡入，旧窗口保持不透明直至退休；
+退出、销毁或迟到的 ready 回调不能重新显示窗口，后台自启继续隐藏；用户已最小化的
+启动窗口交给仍最小化的后继，不主动恢复到前台，并保留最大化状态；已主动显示的后继
+以用户的新窗口状态为准，不由旧窗口覆盖。
+
+无人操作的隐藏自启不通过最大化隐式显示窗口。
+已有完成记录且原生版本相同的普通启动在详细数据分类前直接分流，不打开数据库做
+预检、不扫描会话目录、不执行原生维护子进程；必要配置就绪后立即启动 Gateway，
+本机集成服务与其并行准备。引擎实际就绪仍由受认证连接与当前进程代次确认。
+普通启动的 Main `tasks` 仅投影数据、配置和本机集成的真实起止状态，Gateway 与 Renderer
+继续各自报告就绪。
+
+核心外壳 Ready 后可以加载工作区，本机集成的唯一后台 Promise
+继续运行；普通启动的 Gate 在 App 和首个工作区就绪后即揭幕，不等待引擎与本机集成。
+Renderer 通过共享只读订阅同时观察 Main 的准备 pending/failure 和引擎状态；只有当前
+代次认证与执行权限均获 Main 确认后才允许发送。未知或尚在准备的请求立即拒绝，不排队。
+引擎或可选集成的后台失败保留主页与领域提示，关键 Main/Renderer 初始化失败仍阻塞。
+
+退出先等待该 owner
+收尾，之后才关闭服务及 Store，不把异步任务超时当完成。
+Renderer 不能凭展示标记改变路由。历史升级先做选择性备份与旧环境隔离，再准备当前环境；
+在离线原生导入、身份校验、产品映射和历史身份投影完成之前，Gateway 及外部聊天入口不开放。
+临时引导不查询运行管理器；初始化 IPC 由 Main 的 `startup/initialization` 拥有，原入口为薄转发。
+
+详见[启动与历史升级](../features/app/startup-and-history-upgrade.md)。
+
+历史工作目录选择使用显式 `initialization.selectHistoryWorkspace` bridge，Renderer 只提交产品会话 ID。
+Main 只接受当前主窗口主 frame，校验确实为目录缺失的历史会话且没有运行或开放回执；
+系统选择器返回后再次核对窗口、frame、会话原生身份、目录和运行状态，再更新为用户选中的现存目录。
+切换窗口、开始运行或退出过程中不能提交迟到结果，也不会自动创建旧机器上的目录。
+
+### Gateway 启动与数据边界
+
+Gateway 启动由 Main 管理运行包准备、配置与进程生命周期。启动链不包含已撤回的旧原生 SQLite 代际迁移桥或其独立门禁。
+
+原生数据库继续由 OpenClaw 管理。当前锁定版本的正常升级使用当前版本锁定的原生 owner，在 Gateway 停止且产品 Store 尚未打开时完成备份、原生维护和复验；它只接纳当前 shared20、agent24/25 的维护合同，不恢复前述 shared18/agent23 兼容桥。维护子进程实际关闭数据库并退出后才能准入 Gateway。未知结果保留恢复阶段并重新检查，不能按旧成功标记跳过维护。已有产品数据库初始化及 JSONL 历史迁移保持各自所有权；运行包仍从锁定 pristine 包重新构建。
+
+热加载必须等待原生 applied／failed 回执，不能把 detected 当作成功。原生 coordinator 已接受的 deferred/coalesced 热重启保持其所有权，不竞争启动另一个进程。Windows 启动环境及两个 CJS 启动器都执行长编译缓存路径保护。
+
+### Windows 首次启动初始化
+
+安装器只把应用和运行资源写入安装目录，AppData 中只追加安装日志。用户数据目录准备、SQLite 打开、本地运行环境及 Gateway 启动属于 Main 的启动流程。
+
+Windows 启动先使用不持久化的初始化窗口，避免用户目录不可用时先打开 Chromium profile。初始化窗口与正常窗口都从应用拥有的随机本地 HTTP origin 读取安装目录的不可变 dist，保留静态资源校验、CSP 和页面导航限制；Main 等待初始化页实际加载，再准备真实目录和数据库，加载错误记录后仍继续数据准备。真实目录创建及数据库打开成功后交接到正常窗口；Renderer 先订阅初始化事件再读取快照，在 Main 就绪前不启动配置和业务服务。正式窗口保持 UI 偏好先恢复、App/Redux 再导入的顺序。首次启动首页显示四个实际阶段的完成数，不估算耗时百分比。失败保留阶段、目录和原始错误，允许重启重试。
+
+初始化窗口通过专用 preload 参数声明 `initialization.isTransientWindow` 只读上下文。其 UI 偏好只使用该不持久化 partition 的页面存储，不访问尚未打开的产品 Store，也不导入或写回持久化偏好。正常主窗口不携带此参数，仍在 App/Redux 导入前等待 Main 偏好快照；读取失败时保留未知基线保护，不能用初始化窗口的默认值覆盖已保存偏好。
+
+`app:initialization:getState/changed/relaunch` 只提供产品初始化快照与失败后的重启入口，不启动 Gateway 或缓存会话。标记表示本地应用壳已初始化；标记写入失败仅记录日志。Python、默认项目目录、配置同步和 Gateway 的可恢复故障不阻止进入首页和设置，运行能力仍遵守原有配置/权限失败关闭规则。真实用户目录或 SQLite 无法使用时保留失败页；快照暂时读取失败后，可由后续有效事件恢复。
+
+```mermaid
+sequenceDiagram
+  participant UI as 初始化首页
+  participant Main as Main
+  participant Data as 用户目录/SQLite
+  participant Gateway as Gateway
+  UI->>Main: 订阅进度并读取快照
+  Main->>Data: 创建真实目录并打开数据库
+  Main-->>UI: 用户数据已完成
+  Main-->>UI: 本地环境与配置阶段
+  Main->>Gateway: 尝试启动，失败记录并保留运行状态
+  Main-->>UI: 完成，进入首页
+```
+
+主进程、初始化窗口和正常窗口的实际加载/预加载/Renderer 异常进入详细日志；普通消息与外部网页不纳入此窗口观察器。日志写入先用用户目录，实际失败后尝试安装目录的 `logs`，不增加启动前权限探针。日志维护失败不阻断应用；失败页显示当前日志位置。
+
+初始化失败快照的可选 `failure` 保留来源、发生时间、有界异常字段和 Main 的实际活动/日志路径。
+Renderer 通过同一快照读取详情，不增加任意日志路径读取或启动 Gateway 的权限。界面模块异常在浏览器内
+捕获；桥接或整页失效则由 Main 的窗口诊断弹出原生报错。主页面取消导航（ERR_ABORTED）及子 frame 加载
+失败不弹出应用启动错误。错误展示和复制统一遮盖常见凭据。引擎诊断仍使用原主窗口主 frame 准入、
+请求取消及精确故障身份检查，不另设启动专用采集通道。
+
+## 7. 工作区文档与审阅
+
+### 可分离的完整侧边栏
+
+侧边栏从首次展示起就使用固定的 `workspace.html` 文档承载。主 Renderer
+与工作区文档在开发和安装版均同 origin，安装版共享上述只读 HTTP 宿主。
+静态请求仅允许工作区入口携带单个 UUID 格式的 `generation` 或 `surface` 参数，以及 Widget viewer
+和独立网页 viewer 入口携带单个 UUID 格式的 `mount` 参数；其他入口或额外参数均拒绝。静态读取不授予
+原生窗口能力，窗口创建仍须匹配 Main 的当前授予。
+
+主 Renderer
+通过 React portal 渲染完整工具区；该文档没有应用入口脚本、完整应用 preload 或
+`window.electron`，只通过媒体最小 preload 提供当前文档的 prepare/release，
+也不创建第二个 Redux store。其它源组件闭包仍调用主 Renderer
+的显式 bridge。Main 用通用原生 `View` 组拥有整个侧边栏：工作区的 WebContentsView
+与已固定的消息卡片载体是组内的并列子视图。
+
+停靠时整组放入主窗口 contentView，
+分离时将同一组移入普通 BrowserWindow；所有侧栏内容统一跟随该组，不按内容类型
+另设主窗口表面。拆出和收回均不改变 portal 目标，不重建浏览器 guest、终端或编辑器。
+Main 对已创建的 WebContents 显式设置后台调度策略，确保视图收回后动画帧继续执行。
+
+主聊天中可固定的 MCP App 和 Widget 在首次 iframe、webview 或 AppBridge 创建之前，
+先取得独立的同源被动 `workspace.html?surface=<UUID>` 载体。载体同样没有应用 preload、
+独立 store 或 Gateway 连接；原组件和捕获的认证上下文仍由主 Renderer 所有。
+
+每个载体有稳定的 WebContentsView 和裁切 View；消息与侧栏之间只改变原生父视图及
+几何位置，不跨 Document 搬动 DOM、不重读原生视图或重建运行实例。裁切仅改变外层
+可见矩形及内层偏移，不缩小原文档的逻辑视口。固定后的载体进入完整侧栏组，因而
+消息、侧栏、独立窗口和返回停靠之间保留同一文档、输入、选择与本地运行状态。
+没有原生载体 API 的浏览器环境继续采用同 Document 的稳定容器。
+
+```mermaid
+flowchart LR
+  Renderer[主 Renderer：React / Redux / bridge] -->|稳定 portal| Document[workspace.html：无应用 preload]
+  Document --> View[固定工作区 WebContentsView]
+  Renderer -->|首次挂载前准备| Carrier[消息卡片：固定无 preload 载体]
+  View --> Group[完整侧栏 View 组]
+  Carrier -->|固定到侧栏：原生父视图| Group
+  Carrier -->|返回消息：原生父视图| MainWindow[主窗口 contentView]
+  Group -->|停靠| MainWindow
+  Group -->|分离| WorkspaceWindow[独立 BrowserWindow]
+  Renderer -->|窗口 IPC / generation| Manager[Main：窗口与原生视图管理]
+  Manager --> Group
+  Manager --> Carrier
+```
+
+创建文档须匹配一次性授予的 URL、frameName 和当前 generation；frameName 包含
+generation，同一存活文档重用名称，异常重建使用新名称，避免拿回正在销毁的旧文档。窗口打开的
+override preferences 在 Chromium 创建 WebContents 之前清除继承的应用
+preload。后续页面导航及新原生窗口被拒绝；未被消息交互接管的 `_blank` 外链
+共用主窗口的 URL 安全规则，由系统浏览器打开。
+
+聊天消息链接仍由源 Renderer
+按打开偏好进入内置网页 Tab 或 Chrome，本地 HTML 保留会话路径上下文。
+窗口 IPC 仅接受已登记主 Renderer 的
+主框架，浏览器 guest 注册仍保留主 Renderer 的 operator 身份，只额外接受
+该 operator 当前登记的精确 workspace host。浏览器 partition、固定 guest
+preload、权限、PDF、下载及导航策略由原有 factory 同时应用到两种 host。
+
+卡片载体使用独立的一次性精确 URL / frameName 授予；其展示回执 ID 只定位 Main 的
+原生承载资源，与 App viewId、Widget docId、会话或工具调用身份分开。位置更新与释放
+仅接受原主 Renderer 的主框架；侧栏目标还须匹配当前工作区 generation。载体不因此
+成为浏览器 operator 或获得任意 IPC。卡片的原生准入、client、generation、sessionKey、
+物理 sessionId 和权限继续由所属聊天验证，展示回执不能恢复失效授权或代替执行回执。
+
+Main 仅保存窗口位置、generation、展示回执、父视图、裁切及显示状态，不接收工具正文、终端输出
+或编辑草稿。源 Renderer 导航、reload 或进程丢失会撤销 generation、销毁
+旧 host 并取消其 browser host 授权。关闭独立窗口先收回视图；主窗口收起
+到托盘时隐藏独立窗口，恢复时重新显示；主窗口最小化不隐藏独立窗口。
+窗口恢复选择相交面积最大的显示器，屏幕移除后使用最近的可用工作区。
+
+两种窗口共用平台标题栏策略；独立窗口保持空标题，Windows 共用 Renderer
+窗口按钮。按钮通过主框架和当前 generation 校验后的专用 IPC 操作当前独立
+shell，窗口状态回传同一个 owner；不使用主窗口按钮的控制通道，也不向子文档
+暴露 preload。外观配置更新同时应用原生背景与标题栏 overlay，Renderer 框架和
+主题沿用主界面。标题栏框架始终保留工具树位置，不能因显示切换而重新挂载工具。
+
+非预期的子文档销毁或渲染进程退出使用同一失效处理：撤销旧 host/generation，
+只向仍可运行的源 Renderer 发出 Invalidated。Renderer 核对被撤销的 generation
+后重新取得被动文档，恢复原先的分离状态；旧通知重放无效。Main 导航、重载和
+退出的主动清理不触发这个恢复。真实进程丢失或文档销毁可能丢失页面未保存状态，
+界面明确提示这一点；它与正常拆出、收回时保留同一文档的语义不同。
+
+卡片载体自身失效时撤销该展示回执及交互，不因位置变化静默创建替代运行实例；
+恢复须由用户明确重试并沿原有认证读取流程处理，不重放工具。单独重建工作区框架时，
+仍存活的卡片载体先隐藏脱离旧组，待新 generation 的真实目标就绪后继续使用。
+
+原生视图高于主文档的 CSS 层。主文档的阻塞弹窗明确标记并暂停停靠视图；
+独立窗口使用后加入的顶层 modal dialog 引导用户返回主窗口，覆盖已有工具
+展开对话框。非阻塞菜单仅在与停靠视图相交时暂时遮挡它，不锁定独立窗口。
+通知和底部状态卡进入当前可见文档，宠物（包括悬浮模式）始终留在主窗口。
+宠物节点、状态、位置和拖动范围始终由主文档拥有，不随侧边栏切换文档。
+
+停靠原生视图会盖住主文档，因此在该视图中绘制同状态、主窗口坐标的局部投影，
+指针输入转换回主窗口坐标；收起、遮挡或分离时移除投影，不移动原宠物节点。
+独立窗口的阻塞提示也保留该窗口的控制按钮。系统音频授权仍由源主框架
+发起，并限定到本次选择的主框架或精确 workspace 框架，不能授权任意页面。
+
+### 工作区审阅 IPC
+
+`cowork:sessionReview:load` 和 `cowork:sessionReview:file` 由主窗口 preload 的
+`cowork.review` 暴露。Renderer 仅提交产品 session ID、比较范围、可选 commit
+及文件相对路径/动作，不提交原生 key、repo root 或任意 Git 命令。
+
+Main 校验来源为窗口、产品会话存在、参数合法后，由 Runtime Adapter 解析
+受管原生 key；`sessions.describe` 在 Diff 前后核对 instance，客户端或会话映射
+变化即失败。读取直接调用原生 `sessions.diff`，沿用原生会话基线过滤和比较范围；
+Main 不执行 Git、不采集或存储 Git 快照。
+
+文件动作重新读取差异验证文件归属，拒绝删除文件、缺失远程 root、绝对路径、
+越界、Git 元数据和 Windows ADS 路径。对仓库 root、产品 cwd、目标 realpath
+做包含关系校验，防止链接/目录联接逃逸；完成路径解析后再核对原生 instance。
+文件打开仅允许单链接的普通文件，避免通过硬链接绕过原生 Diff 的内容保护。
+预览/Files 只返回核验过的路径，编辑器动作在 Main 调用现有 Windows 系统
+Open With 选择器。Renderer 不把原生远程路径交给本机 shell。
+
+## 8. Browser guest 是单独的资源边界
 
 Main 在 will-attach-webview 中为内置浏览器覆盖固定 preload；普通 URL embed 不安装 preload，托管 ref 仅在固定 shell 使用最小桥。各类 guest 强制 sandbox、context isolation、无 Node 和合法导航。tab 注册同时验证主窗口归属、webContents 类型、profile partition 与存储路径，不能只相信 Renderer 提交的数字 ID。
 
@@ -338,49 +413,19 @@ Renderer 通过显式 preload 方法 `listSubTaskChildren(sessionId, parentTaskI
 
 Main 先检查产品会话仍存在，再用 `sessions.describe` 读取精确原生 session key。子任务产品 ID 就是该 key，`spawnedBy` 表示原生执行控制归属；`parentSessionKey` 仅为导航关系，不能用于授权。嵌套任务最多逐级核对 64 层控制归属，并拒绝循环、跨产品会话、缺失节点或已删除会话。Renderer 提交的 ID、显示名称及 session key 不能单独充当归属证明。
 
-子树读取使用 `sessions.list({ archived: 'all', limit: 50, offset })`，按返回行的 `spawnedBy` 精确筛选当前层；原生请求的 spawnedBy 过滤依赖有保留期限的控制关系，不能用于完整历史发现。游标绑定当前根集合，不匹配的原生页面可继续跳读，直到找到成员或读取结束。分页不前进、缺少继续偏移量或归属验证失败按错误返回，不伪装为空列表。取消只接受原生明确的 aborted/no-active-run 回执；超时不自动重发。UI 在后续操作前重新核对精确子会话状态，取消 ACK 不补造执行结论。执行、完成通知与持久化仍由 OpenClaw 管理，不新增 SQLite 任务或 transcript 缓存。
+子树读取使用 `sessions.list({ archived: 'all', limit: 50, offset })`，按返回行的 `spawnedBy` 精确筛选当前层；原生请求的 spawnedBy 过滤依赖有保留期限的控制关系，不能用于完整历史发现。游标绑定当前根集合，不匹配的原生页面可继续跳读，直到找到成员或读取结束。分页不前进、缺少继续偏移量或归属验证失败按错误返回，不伪装为空列表。取消只接受原生明确的 aborted/no-active-run 回执；超时不自动重发。
 
-## 6. 注册、订阅与重连
+UI 在后续操作前重新核对精确子会话状态，取消 ACK 不补造执行结论。执行、完成通知与持久化仍由 OpenClaw 管理，不新增 SQLite 任务或 transcript 缓存。
 
-`main.ts` 组合并注册 app/cowork/openclaw/scheduledTask 等 handler；preload 与 `src/renderer/types/electron.d.ts` 必须同步。IPC 兼容入口也只能允许白名单 channel，不能演变成任意 invoke。
+### 人工介入与停止确认
 
-订阅建立时捕获的 session、连接 generation 和请求代次必须参与响应准入。页面卸载移除 listener；Gateway 重启刷新连接与待处理交互；系统唤醒触发连接恢复。不会因为网络恢复而重放所有未完成写请求。
+主窗口通过显式 `browser:intervention` IPC 请求 begin/read/confirmStop/resume/complete。Main 校验主 frame 和窗口所有权，首次介入要求真实注册 guest；既有介入绑定窗口，网页关闭后仍允许原窗口恢复。原窗口销毁后，只有持有同会话真实 guest 的新可信窗口可接管。BrowserAgentBridge 的会话级介入状态阻止新 browser 调用；取消信号与实际操作结束分别跟踪。
 
-开发窗口跟随其 loopback Vite 服务：周期探测连续失败后进入正常退出，开发 URL 交接使旧探测结果失效。该行为不依赖终端父子进程关系，也不应影响安装版生命周期。
-
-进入退出状态时立即隐藏窗口并销毁托盘，后台清理继续执行；迟到的显示回调不恢复界面。
-Main 与开发启动器共享关闭监督预算，Gateway 关闭同一 child 的重复调用共享首次 deadline，
-实际正常 close/exit 才证明退休。原生清理允许 330 秒，强制后观察 15 秒；超时、信号或
-非零退出保留失败并阻止本进程重启 Gateway。Main 的启动资源、其他服务和 Gateway 分阶段
-退休，阶段超时只允许继续尝试其他清理，不代表原任务已 join；迟到结果不能进入成功分支。
-仅全部 owner 退休后关闭现存产品 Store，失败退出不继续安装更新。完整预算与开发监督边界见
-[开发说明](../development.md)和[启动与升级](../features/app/startup-and-history-upgrade.md)。
-
-## 7. 错误要保留可操作的区别
-
-| 错误             | 通信层结果           | 消费方处理                   |
-| ---------------- | -------------------- | ---------------------------- |
-| payload 不合法   | 拒绝，领域操作不开始 | 修正输入，不重试原样请求     |
-| 引擎未就绪       | 状态/错误随响应返回  | 展示配置或启动问题           |
-| 明确原生拒绝     | failed               | 展示拒绝原因                 |
-| 超时且可能已接收 | unknown 或查询结果   | 不盲目再次发送               |
-| 旧请求结果       | 丢弃 UI 更新         | 不覆盖当前会话               |
-| 审批过期/已解决  | 原生终态             | 关闭过期交互，不提交默认允许 |
-| 窗口销毁         | 释放 owner 资源      | 后台执行按其任务生命周期处理 |
-
-## 8. 新增能力如何检查
-
-先在 shared 定义 channel、请求和返回契约；Main 边界验证并调用领域服务；preload 暴露最小方法；Renderer 声明与消费方同步；最后覆盖不合法参数、取消、销毁、迟到响应和重复请求。
-
-高风险接口还要验证来源身份和资源归属。不能只给 TypeScript interface 加字段就认定运行时边界成立。已有测试可从 `ipc/cowork/sessionExecution`、`ipc/app`、browser server 和聊天 controller 的领域测试开始定位。
-
-## 内置浏览器人工介入
-
-主窗口通过显式 `browser:intervention` IPC 请求 begin/read/confirmStop/resume/complete。Main 校验主 frame 和窗口所有权，首次介入要求真实注册 guest；既有介入绑定窗口，网页关闭后仍允许原窗口恢复。原窗口销毁后，只有持有同会话真实 guest 的新可信窗口可接管。BrowserAgentBridge 的会话级介入状态阻止新 browser 调用；取消信号与实际操作结束分别跟踪。Renderer 复用任务停止与运行状态核对，不能仅凭取消 RPC 返回开放人工输入。介入 token 限制重复或过期的继续请求，状态保留于 Main 内存，Renderer 重载不会自动释放。没有 SQLite 迁移或消息缓存。真实网页和会话回执仍由既有系统负责。
+Renderer 复用任务停止与运行状态核对，不能仅凭取消 RPC 返回开放人工输入。介入 token 限制重复或过期的继续请求，状态保留于 Main 内存，Renderer 重载不会自动释放。没有 SQLite 迁移或消息缓存。真实网页和会话回执仍由既有系统负责。
 
 停止回执与运行状态更新可以先后到达。Renderer 在介入 `stopping` 且 `stopConfirmed=false` 时每两秒复查会话及子任务的权威运行状态，并等待待发送任务取消完成；确认空闲后以原 token 补交停止确认。Main 分别保留停止确认和原始浏览器动作收尾状态，后者未完成时继续阻止人工交互。面板重新打开会恢复核对，过期异步结果不能更新新介入，不自动重发停止或继续请求。
 
-## 共享终端 IPC
+## 9. 共享终端 IPC
 
 终端面板的 xterm 仍由 Renderer 渲染；`terminal:create/write/resize/close`
 通过 preload 调用 Main 的受限终端服务。Main 只保存标签、窗口所有权、原生
@@ -450,26 +495,24 @@ PTY。附着失败会提示终端不可用，需要用户新开标签，不会�
 在执行前核对原生会话与终端归属，标签关闭或会话变化后提示重新选择，避免
 将原目标静默替换为另一终端。继续保留原生会话隔离与输入审批。
 
-## 工作区审阅 IPC
+## 10. 插件业务的进程边界
 
-`cowork:sessionReview:load` 和 `cowork:sessionReview:file` 由主窗口 preload 的
-`cowork.review` 暴露。Renderer 仅提交产品 session ID、比较范围、可选 commit
-及文件相对路径/动作，不提交原生 key、repo root 或任意 Git 命令。
+Team/Workflow 的 Browser 通过通用 App SDK 调用所属 Main 命令，Main 再经绑定当前 Native 注册收据的请求桥调用原生业务方法。Core preload 不提供专属 `teamDiscussion` 或 Workflow API。宿主校验产物、epoch、窗口及调用权限；业务身份、队列和数据事务由插件核验。Renderer 卸载撤销视图与订阅，不能推断后台执行结束。详见[应用插件宿主](17-app-plugin-host.md)与[Agent Team](../features/assistants/agent-team.md)。
 
-Main 校验来源为窗口、产品会话存在、参数合法后，由 Runtime Adapter 解析
-受管原生 key；`sessions.describe` 在 Diff 前后核对 instance，客户端或会话映射
-变化即失败。读取直接调用原生 `sessions.diff`，沿用原生会话基线过滤和比较范围；
-Main 不执行 Git、不采集或存储 Git 快照。
+## 11. 错误要保留可操作的区别
 
-文件动作重新读取差异验证文件归属，拒绝删除文件、缺失远程 root、绝对路径、
-越界、Git 元数据和 Windows ADS 路径。对仓库 root、产品 cwd、目标 realpath
-做包含关系校验，防止链接/目录联接逃逸；完成路径解析后再核对原生 instance。
-文件打开仅允许单链接的普通文件，避免通过硬链接绕过原生 Diff 的内容保护。
-预览/Files 只返回核验过的路径，编辑器动作在 Main 调用现有 Windows 系统
-Open With 选择器。Renderer 不把原生远程路径交给本机 shell。
+| 错误             | 通信层结果           | 消费方处理                   |
+| ---------------- | -------------------- | ---------------------------- |
+| payload 不合法   | 拒绝，领域操作不开始 | 修正输入，不重试原样请求     |
+| 引擎未就绪       | 状态/错误随响应返回  | 展示配置或启动问题           |
+| 明确原生拒绝     | failed               | 展示拒绝原因                 |
+| 超时且可能已接收 | unknown 或查询结果   | 不盲目再次发送               |
+| 旧请求结果       | 丢弃 UI 更新         | 不覆盖当前会话               |
+| 审批过期/已解决  | 原生终态             | 关闭过期交互，不提交默认允许 |
+| 窗口销毁         | 释放 owner 资源      | 后台执行按其任务生命周期处理 |
 
-## 群组讨论进程边界
+## 12. 新增能力如何检查
 
-Renderer 经显式 teamDiscussion preload / IPC 访问 Main；Main 原子预留请求后调用扩展 admin RPC。扩展响应 accepted 后仍等待 native dispatch 结束，以保持 Gateway admission scope。Renderer 卸载只释放读取订阅，不停止后台讨论；停止与删除是显式操作。
+先在 shared 定义 channel、请求和返回契约；Main 边界验证并调用领域服务；preload 暴露最小方法；Renderer 声明与消费方同步；最后覆盖不合法参数、取消、销毁、迟到响应和重复请求。
 
-详见 [Agent Team 现行契约](../features/assistants/agent-team.md)。
+高风险接口还要验证来源身份和资源归属。不能只给 TypeScript interface 加字段就认定运行时边界成立。已有测试可从 `ipc/cowork/sessionExecution`、`ipc/app`、browser server 和聊天 controller 的领域测试开始定位。

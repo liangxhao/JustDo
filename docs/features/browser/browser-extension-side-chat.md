@@ -1,6 +1,6 @@
 # Chrome 扩展侧栏对话
 
-侧栏对话已接入产品会话、模型/权限选择、附件、页面上下文和停止。本文说明当前 JustDo 行为，不再以其他产品某个已安装版本的静态观察作为功能承诺。逐字段规范见[Chrome 接口](../../app-server-api/browser/README.md)。
+侧栏对话已接入产品会话、模型/权限选择、附件、页面上下文和停止。本文说明产品会话接入与权限边界。逐字段规范见[Chrome 接口](../../app-server-api/browser/README.md)。
 
 ## 1. 用户入口与范围
 
@@ -69,6 +69,8 @@ Main 复用 Cowork 身份、权限、模型和原生历史。流直接转发原�
 扩展会话仍可在桌面继续、重命名、删除和搜索。扩展的列表、历史、图片、订阅、模型/权限选择、发送与停止均在 Main 按产品会话的 `source: browser-extension` 核验；传入其他来源的产品 ID 也不能接管会话。
 来源在重启后保留。此前未记录来源的会话保持原有列表归属，不依据标题或消息正文推断来源。
 
+### 空历史与待处理输入
+
 新建产品会话可能尚未创建原生会话或 transcript，此时 `chat.history` 合法返回不带游标的空页，甚至没有 `sessionId`。Main 再次读取并确认空页和身份未变化后返回空历史，不发布正文快照；读取失败、非空但缺少身份/游标、待处理输入不完整时仍报错，不能当作新会话。已有历史的完整页使用顶层 `sessionId`，增量页使用 `sessionInfo.sessionId`；分页、回执和最终确认均校验同一物理身份。
 
 首条输入已接收但尚未创建 transcript 时，正式历史也没有游标，`pendingInputs` 可以非空。Main 在同一物理会话内读取待处理分页并用不带游标的 `inputRunIds` 请求核对回执，确认正式历史仍为空、每个待处理页的身份、状态及可见性未变化后返回临时投影。取消或撤回旧页输入也可能不改变总数，不能只确认第一页。若期间输入已消费、状态改变或正式历史出现，则重新读取完整快照；待处理正文仍不进入 Main 历史快照。
@@ -89,10 +91,47 @@ composer/options 读取真实配置模型目录，已保存会话/助手模型�
 
 ## 6. 展示和中止
 
+### 发送接纳与未知结果
+
+发送时只保留一份乐观用户气泡：会话创建和页面上下文采集期间使用临时占位，会话准备好后立即交给流投影并移除占位。后续运行确认、流事件和正式历史更新不会再次追加它；历史读取失败仍保留流中的用户输入与回复。连续发送相同文字仍分别显示。
+
+每次提交在侧栏预先生成 `clientTurnId`，服务端保存同一输入身份；成功接收、发送结果未知及明确未发送分别处理。
+提交等待期间最多暂存 64 个流事件、100 万 UTF-16 字符，取得显式 `nativeRunId` 后才通过原 reducer
+投影该运行的帧；同会话迟到的旧运行不能抢占新输入。超限丢弃整条临时缓冲，本轮余下展示只读取权威历史校准，
+不显示缺前缀的 delta；被动查看已有会话仍沿原生历史和流准入，不为此建立发送绑定。
+未知提交保留原消息投影与身份，冻结该会话的再次发送，恢复连接后仅通过 `thread/read(turnId)` 核对。
+只有明确 `requestSent:false` 才撤回乐观输入并恢复可编辑草稿；不自动重发请求。
+
+运行层确认该输入的发送 owner 已关闭且未发出原生消息时，准备失败或取消也归入明确未发送，
+清理本次输入的待接纳状态；前序未知运行和停止等待仍由原有保护约束。
+
+### 停止、断线与精确结算
+
+停止绑定当前 turn 与确切原生运行，不因面板切换取消另一会话。Stop ACK 只进入停止等待；
+idle、Chat final、读取失败和轮询超时均不结束运行。只有同一执行的原生 whole-run 结算证据
+才能产生 `executionSettled:true` 完成通知。断线保留已知身份并暂停操作，重新发现、初始化与读取原生历史后核对。
+
+公共原生事件有意省略内部 `lifecycleGeneration`，不能把该字段设为收到整轮回执的前提；
+同一原生 run、物理 session、原生序列和 Main 连接代次仍须精确匹配，出现显式代次时继续拒绝冲突。
+明确 timeout 保留为失败，不能把模型超时触发的机械 abort 当作用户停止；yield 继续等待核对。
+
+#### 终态补查与冷重启限制
+
+若错过 live 终态，Main 仅在仍持有本进程发送准备的原生身份绑定时，补查该 run 的
+`agent.wait(timeoutMs:0)`；前后会话描述、当前连接代次、原生 run 映射与来源须保持一致。
+合法整轮终态必须有有限 `endedAt`，超时但没有结束时间、运行中、yield 或身份变化都保持未知。
+已核验结果保留为最多 100 项无正文的终态元数据，连续轮询及替换面板仍重新核对身份，
+不会因原生短期回执过期而把已确认结算改回未知。冷重启后没有原发送绑定的旧运行仍不能靠当前描述、
+正文回复或 idle 证明完成；刷新只核对，不自动重发消息。
+
+### 消息与过程展示
+
 Markdown 使用扩展离线 bundle，关闭原始 HTML，安全链接在外部 Tab 打开，不从 CDN 动态载入脚本。
 消息展示分为三个独立的浏览器模块：`sidepanel-messages` 拥有稳定 DOM、披露与阅读位置，
 `sidepanel-activity` 拥有运行活动条和界面时钟，`sidepanel-i18n` 提供中英文案；
 `sidepanel.js` 继续拥有连接、发送、停止和会话订阅，不另建执行控制器。
+
+#### 与桌面共用的过程折叠
 
 侧栏通过宿主构建适配导出的 `foldBrowserExtensionEntries` 复用桌面的
 `foldCompletedProcessRows`，不在插件中复制历史收拢规则。以用户消息和明确阶段边界分段，
@@ -114,6 +153,8 @@ Markdown 使用扩展离线 bundle，关闭原始 HTML，安全链接在外部 T
 可核对身份的节点，保留焦点、工具内部阅读位置及用户选择。
 偏好按产品会话保留在最多八个临时作用域中，不写入原生历史或产品数据库。
 
+#### 批量展开与选择保留
+
 标题栏提供与桌面同图标、同文案的“展开所有过程详情／折叠所有过程详情”按钮，
 同时更新 `title`、读屏名称和 `aria-pressed`。批量操作同步展开历史外组和内部过程摘要，
 并覆盖此前的过程单项选择；之后仍可单独展开或折叠，后续流和历史更新保留该选择。
@@ -125,6 +166,8 @@ Markdown 使用扩展离线 bundle，关闭原始 HTML，安全链接在外部 T
 提交等待、发送结果未知、已接纳但未结算、停止等待及尚有活动流的末尾轮次受保护，
 不会因 Chat final、Stop ACK、idle 或某个工具完成而被包入历史外组；较早轮次仍可收拢。
 该保护只控制展示，不产生或替代执行终态。
+
+#### 来源身份、问答与不支持的交互
 
 Main 仅透传经过白名单筛选的 `display` 信息，保留原生失败、停止原因、压缩和阶段边界。
 问答另透传经插件纯契约验证的 `questionResult`（题目快照与实际响应）；认证原生历史的完整 JSON
@@ -138,6 +181,8 @@ Main 仅透传经过白名单筛选的 `display` 信息，保留原生失败、�
 时才显示对应记录；没有正文的压缩占位继续由执行活动条反馈，不制造摘要或完成状态。
 纯未支持的交互内容只保留“此内容请在桌面应用中查看”的可见边界，不加载未知 HTML，
 不为 Widget、MCP App 或审批伪造准入和交互能力。
+
+#### 动画、活动条与阅读位置
 
 消息入场、折叠高度/透明度及工具状态采用本地 CSS 动画，以持续星芒与文字流光反馈运行。
 Windows 关闭系统动画或请求 `prefers-reduced-motion: reduce` 时仍保留这些效果。
@@ -154,32 +199,6 @@ Windows 关闭系统动画或请求 `prefers-reduced-motion: reduce` 时仍保�
 
 工具参数的流式预览和无正文进度状态不创建执行中的 Tool 卡片；收到真实工具 start 后才显示执行卡，随后由原生结果更新完成状态。
 
-发送时只保留一份乐观用户气泡：会话创建和页面上下文采集期间使用临时占位，会话准备好后立即交给流投影并移除占位。后续运行确认、流事件和正式历史更新不会再次追加它；历史读取失败仍保留流中的用户输入与回复。连续发送相同文字仍分别显示。
-
-每次提交在侧栏预先生成 `clientTurnId`，服务端保存同一输入身份；成功接收、发送结果未知及明确未发送分别处理。
-提交等待期间最多暂存 64 个流事件、100 万 UTF-16 字符，取得显式 `nativeRunId` 后才通过原 reducer
-投影该运行的帧；同会话迟到的旧运行不能抢占新输入。超限丢弃整条临时缓冲，本轮余下展示只读取权威历史校准，
-不显示缺前缀的 delta；被动查看已有会话仍沿原生历史和流准入，不为此建立发送绑定。
-未知提交保留原消息投影与身份，冻结该会话的再次发送，恢复连接后仅通过 `thread/read(turnId)` 核对。
-只有明确 `requestSent:false` 才撤回乐观输入并恢复可编辑草稿；不自动重发请求。
-运行层确认该输入的发送 owner 已关闭且未发出原生消息时，准备失败或取消也归入明确未发送，
-清理本次输入的待接纳状态；前序未知运行和停止等待仍由原有保护约束。
-
-停止绑定当前 turn 与确切原生运行，不因面板切换取消另一会话。Stop ACK 只进入停止等待；
-idle、Chat final、读取失败和轮询超时均不结束运行。只有同一执行的原生 whole-run 结算证据
-才能产生 `executionSettled:true` 完成通知。断线保留已知身份并暂停操作，重新发现、初始化与读取原生历史后核对。
-
-公共原生事件有意省略内部 `lifecycleGeneration`，不能把该字段设为收到整轮回执的前提；
-同一原生 run、物理 session、原生序列和 Main 连接代次仍须精确匹配，出现显式代次时继续拒绝冲突。
-明确 timeout 保留为失败，不能把模型超时触发的机械 abort 当作用户停止；yield 继续等待核对。
-
-若错过 live 终态，Main 仅在仍持有本进程发送准备的原生身份绑定时，补查该 run 的
-`agent.wait(timeoutMs:0)`；前后会话描述、当前连接代次、原生 run 映射与来源须保持一致。
-合法整轮终态必须有有限 `endedAt`，超时但没有结束时间、运行中、yield 或身份变化都保持未知。
-已核验结果保留为最多 100 项无正文的终态元数据，连续轮询及替换面板仍重新核对身份，
-不会因原生短期回执过期而把已确认结算改回未知。冷重启后没有原发送绑定的旧运行仍不能靠当前描述、
-正文回复或 idle 证明完成；刷新只核对，不自动重发消息。
-
 ## 7. 安全边界
 
 Native manifest 只允许固定公钥派生的扩展 ID。app-server 校验 capability、精确 extension Origin、path 和消息大小；Gateway token 和 relay key 不返回 Side Panel。Origin 不是单独凭据，随机 URL capability 也不能写日志。
@@ -188,7 +207,9 @@ Native manifest 只允许固定公钥派生的扩展 ID。app-server 校验 capa
 
 ## 8. 维护、测试和未交付范围
 
-源码包位于 `plugins/browser-extensions/browser-assistant/`，其中 `openclaw/` 保留锁定的上游 relay 基线，`conversation-overlay/` 保存产品侧栏及浏览器模块，`scripts/` 与 `tests/` 保存自身组装脚本、Markdown 源码和独立单元测试。它由 Chrome 加载，与 Gateway 的 OpenClaw Extension 安装、发现和启停流程独立。桌面聊天渲染及流的构建适配、Native Messaging helper 和注册继续归 `scripts/browser/`；跨宿主边界的测试保留在根 `tests/`。`browser-extension:prepare` 从该包生成 `build/browser-extension/chrome-extension/`，安装包继续交付到 `resources/browser-extension/chrome-extension/`，显示名称从产品元数据注入，扩展 ID 与配对身份保持既有值。详见[源码包说明](../../../plugins/browser-extensions/browser-assistant/README.md)。
+源码包位于 `plugins/browser-extensions/browser-assistant/`，其中 `openclaw/` 保留锁定的上游 relay 基线，`conversation-overlay/` 保存产品侧栏及浏览器模块，`scripts/` 与 `tests/` 保存自身组装脚本、Markdown 源码和独立单元测试。它由 Chrome 加载，与 Gateway 的 OpenClaw Extension 安装、发现和启停流程独立。桌面聊天渲染及流的构建适配、Native Messaging helper 和注册继续归 `scripts/browser/`；跨宿主边界的测试保留在根 `tests/`。
+
+`browser-extension:prepare` 从该包生成 `build/browser-extension/chrome-extension/`，安装包继续交付到 `resources/browser-extension/chrome-extension/`，显示名称从产品元数据注入，扩展 ID 与配对身份保持既有值。详见[源码包说明](../../../plugins/browser-extensions/browser-assistant/README.md)。
 
 产品组装保留锁定上游的 `manifest.version`，不将应用发布版本注入扩展 `version_name`。桌面“扩展版本”仅读取实际组装产物的 `manifest.version`，用户可在 Chrome 扩展管理页 → 详情 → 版本查看已安装版本并核对。应用版本与扩展版本分别维护；版本号不参与协议兼容判定，版本相同也不能代替连接验证，桌面不据此推断已安装扩展版本。
 
@@ -207,10 +228,8 @@ fixture 和本开发机通过不代表已复现用户安装现场；真正安装
 明确 reset 会隔开过程，但尚未复用桌面在非计划 reset 时清除旧显示前缀的完整投影。
 侧栏也不提供桌面 Widget、MCP App、计划审批、Monaco 工具差异和完整历史定位能力。
 
-## 上游 relay 基线
+## 上游来源与验证范围
 
-v2026.10.6 对齐 tag `fe06181dc5ecc01cf8904abbfc26925925efefbc` 的原始浏览器扩展；`prepare.cjs` 锁定 29 项源码/资源校验。新增串行队列及 relay URL query 校验模块，与原生 Tab 授权、内部导航和恢复清理一起完整同步；产品 app-server、配对 transport、Side Panel 和固定扩展身份仍经既有 overlay 组合。构建校验不能代替安装版 Chrome Native Messaging/relay 实机验收。
+relay 的来源提交、完整校验和及 overlay 接缝由[源码包说明](../../../plugins/browser-extensions/browser-assistant/README.md)与组装脚本维护。升级须核对锁定运行时的完整 pristine 基线；本地组装一致不代表安装版 Chrome Native Messaging/relay 已通过。
 
-当前v2026.10.7的实际 `extensions/browser/chrome-extension` 与该10.6基线无差异，
-保留已锁定的源文件与overlay；上述来源提交仍说明源文件最初采用的版本。
-本版重新验证与未验收范围见[10.7验证记录](../../openclaw-upgrades/v2026.10.7/validation.md)。
+历史 10.6 来源与当前产物的重验范围见[锁定版本验证记录](../../openclaw-upgrades/v2026.10.7/validation.md)。不把旧版本手动加载或源码无差异作为当前端到端通过证据。

@@ -1,27 +1,27 @@
 # Gateway 能力归属与升级核对矩阵
 
-基线：锁定 OpenClaw v2026.10.7 与当前产品注册代码。本页帮助判断升级需要核对哪些原生契约；逐补丁清单与上游处置统一在[版本目录 README](../../scripts/patches/v2026.10.7/README.md)，不在此复制编号表。
+基线来自 `package.json.openclaw`、当前 source lock 与实际产品注册代码。本页帮助判断升级需要核对哪些原生契约；逐补丁清单与上游处置统一在[版本目录 README](../../scripts/patches/v2026.10.7/README.md)，不在此复制编号表。
 
 ## 1. 能力与产品消费方
 
-| 能力          | 原生权威                         | 产品职责                 | 升级关键检查                                                     |
-| ------------- | -------------------------------- | ------------------------ | ---------------------------------------------------------------- |
-| chat/history  | transcript、实时与历史协议       | 身份准入、分页、渲染     | delta/snapshot、entry identity、可见分支                         |
-| session/model | 原生身份和模型设置               | 产品 key、选择与准入     | create/describe/patch、provider/model                            |
-| Goal          | 内容、状态、预算、续跑准入/回执/累计次数 | 自动续跑 phase、卡片 | 六状态、resume 预算、goalId/前驱 fence、原生回交互斥 |
-| task/Subagent | admission、queue、join、会话状态 | 父子状态、详情与停止     | spawnedBy 身份、运行状态、后代取消                               |
-| approval      | pending、期限、终态与撤销        | modal、选择校验          | stop/restart 及迟到回复                                          |
-| compaction    | context budget、压缩和恢复       | 进度、取消与详情         | operation identity、准备阶段取消、断线核对、无标记成功与后继身份 |
-| progress_card | session 当前进度                 | 原样展示、显式刷新       | revision、scope、clear、refresh 幂等                             |
-| run activity  | 模型实际传输活动、工具参数计数    | 阶段、耗时与原更新时间   | 现代/旧格式缓冲、保活排除、取消、两项有界快照、动画保持           |
-| cron          | job/run、调度与 delivery         | CRUD、结果 receipt       | owner 保留、默认 delivery、分页                                  |
-| Skill         | 解析赢家、资格与启停             | 文件事务、来源提示       | 同名 fallback、extension scope                                   |
-| Workshop      | 当前技能、版本、变更与归档/恢复 | 读取、选定版本和显式确认 | 10.6 提案 API 已退役；未知写不重放、恢复回执是变更前快照            |
-| Worktree GC   | 异步任务、实际目录与快照回收     | 同任务观察与状态展示     | jobId/state、同 Gateway 代、queued 非完成、未知提交不重提           |
-| Extension     | inventory、启停、卸载与能力审查  | 导入入口、保护和 UI      | installed-index、reviewToken                                     |
-| peer send     | 原生 sessions_send               | 成员/轮次准入、回执      | 精确目标、可信 provenance、未知接收                              |
-| Agent files   | 原生角色文件                     | 档案管理与冲突检测       | 工作区/文件身份，删除保留历史                                    |
-| browser       | 原生协议与工具语义               | 模式、guest bridge、配对 | action 对齐、profile、取消与导航                                 |
+| 能力          | 原生权威                                 | 产品职责                 | 升级关键检查                                                     |
+| ------------- | ---------------------------------------- | ------------------------ | ---------------------------------------------------------------- |
+| chat/history  | transcript、实时与历史协议               | 身份准入、分页、渲染     | delta/snapshot、entry identity、可见分支                         |
+| session/model | 原生身份和模型设置                       | 产品 key、选择与准入     | create/describe/patch、provider/model                            |
+| Goal          | 内容、状态、预算、续跑准入/回执/累计次数 | 自动续跑 phase、卡片     | 六状态、resume 预算、goalId/前驱 fence、原生回交互斥             |
+| task/Subagent | admission、queue、join、会话状态         | 父子状态、详情与停止     | spawnedBy 身份、运行状态、后代取消                               |
+| approval      | pending、期限、终态与撤销                | modal、选择校验          | stop/restart 及迟到回复                                          |
+| compaction    | context budget、压缩和恢复               | 进度、取消与详情         | operation identity、准备阶段取消、断线核对、无标记成功与后继身份 |
+| progress_card | session 当前进度                         | 原样展示、显式刷新       | revision、scope、clear、refresh 幂等                             |
+| run activity  | 模型实际传输活动、工具参数计数           | 阶段、耗时与原更新时间   | 现代/旧格式缓冲、保活排除、取消、两项有界快照、动画保持          |
+| cron          | job/run、调度与 delivery                 | CRUD、结果 receipt       | owner 保留、默认 delivery、分页                                  |
+| Skill         | 解析赢家、资格与启停                     | 文件事务、来源提示       | 同名 fallback、extension scope                                   |
+| Workshop      | 当前技能、版本、变更与归档/恢复          | 读取、选定版本和显式确认 | 10.6 提案 API 已退役；未知写不重放、恢复回执是变更前快照         |
+| Worktree GC   | 异步任务、实际目录与快照回收             | 同任务观察与状态展示     | jobId/state、同 Gateway 代、queued 非完成、未知提交不重提        |
+| Extension     | inventory、启停、卸载与能力审查          | 导入入口、保护和 UI      | installed-index、reviewToken                                     |
+| peer send     | 原生 sessions_send                       | 成员/轮次准入、回执      | 精确目标、可信 provenance、未知接收                              |
+| Agent files   | 原生角色文件                             | 档案管理与冲突检测       | 工作区/文件身份，删除保留历史                                    |
+| browser       | 原生协议与工具语义                       | 模式、guest bridge、配对 | action 对齐、profile、取消与导航                                 |
 
 窗口、更新、托盘、分组、未读、文件授权和市场 SDK 适配属于产品，不应为 UI 方便增加 Gateway patch。
 
@@ -54,6 +54,8 @@ sessions.abort，不恢复已移除的结果重投递/忽略接口。
 
 ## 5. 验证步骤
 
+先确认真实 handler 及消费方，再验证目标产物。不能把方法目录、邻近源码或旧 mock 当作最终运行包的合同。
+
 1. 确认 package/source-lock 与 pristine npm 产物一致。
 2. 运行原生契约检查，识别已上游化能力和新增差异。
 3. 对照补丁总账决定保留/删除/重写，从 pristine 重建。
@@ -64,6 +66,8 @@ sessions.abort，不恢复已移除的结果重投递/忽略接口。
 ## 6. 证据如何记录
 
 契约测试证明产物形态或协议；行为测试证明指定场景；真实模型测试证明该次交互；安装包验证证明对应平台与资源。四者不能互相替代。
+
+### 失败报告与未知结果
 
 报告失败时保留阶段、原生/产品身份和脱敏错误，不复制 raw transcript 或凭据。发现缺口写成明确限制，不通过恢复旧消息缓存、扩大权限或盲目重试把 UI 暂时修成绿色。
 

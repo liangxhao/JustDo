@@ -1,6 +1,6 @@
 # 安全模型：能力边界与剩余风险
 
-本页描述当前代码实施的控制，不把配置声明当成所有平台的实测保证。安全目标是让外部内容、模型参数、Renderer 请求和插件包只能通过明确能力访问用户资源；已有边界也有可见限制。
+本页描述当前代码实施的控制，不把配置声明当成所有平台的实测保证。安全目标是让外部内容、模型参数、Renderer 请求和插件包只能通过明确能力访问用户资源；已有边界也有可见限制。阅读时先区分受保护资产和信任域，再沿 IPC/文件/配置等实际访问路径核对；最后看凭据、网络和剩余风险。
 
 ## 1. 威胁与资产
 
@@ -25,7 +25,9 @@ Gateway 是受管组件，但其可加载的 Node Extension 与宿主工具仍�
 
 当前生产源码没有主动追加 no-sandbox。发布检查仍需查看实际启动参数和平台环境，不能仅凭 BrowserWindow preference 宣称 OS 级隔离始终可用。
 
-安装版应用由只读 loopback HTTP 宿主加载，主窗口不再使用 file 页面；资源清单、Host/来源、真实路径和文件版本在宿主边界校验。应用 CSP 的生产脚本仅允许 self 和可信打包入口的 SHA-256 内联哈希，不允许 JS／WebAssembly eval 或任意 inline script；禁止 object、表单提交和被其他页面嵌入。style 保留 inline，connect-src 仍为 self + 通配，frame 允许 self/http/https，因此 CSP 不是网络访问白名单。Widget 使用独立隔离 origin 与认证，本地 HTML 使用 Chromium 原生文件来源规则，二者不能借应用壳 CSP 获得权限。Markdown、Mermaid 和公式输出仍需统一清洗。
+安装版应用由只读 loopback HTTP 宿主加载，主窗口不再使用 file 页面；资源清单、Host/来源、真实路径和文件版本在宿主边界校验。应用 CSP 的生产脚本仅允许 self 和可信打包入口的 SHA-256 内联哈希，不允许 JS／WebAssembly eval 或任意 inline script；禁止 object、表单提交和被其他页面嵌入。
+
+style 保留 inline，connect-src 仍为 self + 通配，frame 允许 self/http/https，因此 CSP 不是网络访问白名单。Widget 使用独立隔离 origin 与认证，本地 HTML 使用 Chromium 原生文件来源规则，二者不能借应用壳 CSP 获得权限。Markdown、Mermaid 和公式输出仍需统一清洗。
 
 外链、guest 导航、子 frame、下载和权限请求分别验证。应用自己的认证弹窗不能被网页或 Agent 输入锁劫持；导航、超时和窗口销毁应取消所属请求。
 
@@ -60,6 +62,8 @@ ask/auto/full 映射原生 guarded/workspace/full。权限期望先保存产品�
 
 浏览器 Agent 上传限任务工作区内真实普通文件；PDF/下载目标验证真实父目录、拒绝覆盖并做 canonical reservation，防止并发争抢同一产物。取消和窗口销毁释放 reservation 并清理部分文件。
 
+### 本地展示协议
+
 `localfile://` 当前转换成 net.fetch(file://...)，保留文件名转义和 UNC host，只规范化 Windows 盘符分隔符；没有内建 allow-root/token。音视频使用独立 `localmedia://local/` 流式协议，支持单段 Range、MIME 与按范围读取，但没有增加会话根目录或 token 授权。两者都是敏感展示入口，不能描述成通用安全文件服务器；路径准入仍需由上层可信原生媒体/文件动作完成。
 
 ## 6. 插件包与代码信任
@@ -76,7 +80,7 @@ Extension 导入审查 capability surface、operator grants、来源和 integrit
 | ---------------------------- | -------------------------------------------------------------- |
 | Gateway token                | 本地认证能力，只交集中式聊天 client；不进入日志/Redux          |
 | Chrome app-server capability | 每进程随机，连同 path/Origin 验证；与 relay/Gateway token 分离 |
-| Agent CLI bridge token         | 当前用户受限发现文件与认证管道                                 |
+| Agent CLI bridge token       | 当前用户受限发现文件与认证管道                                 |
 | 内置模型 JWT                 | 短期、账号绑定、派生快照与 exec SecretRef；退出/到期清理       |
 | 自定义模型秘密               | 产品配置来源及受限权限派生 file SecretRef；不宣称全部 OS 加密  |
 | 导入浏览器密码               | browser-import.sqlite 内 safeStorage 密文，Renderer 不读取     |
@@ -95,6 +99,8 @@ Extension sidecar 只声明 HTTPS 目标、Header 名称和受管 user-info 引�
 
 远程 URL、redirect、loopback 及内网访问按具体服务校验，不因 CSP 通配而免除 SSRF 防线。原生网络工具与浏览器网页内容仍作为不可信模型输入。
 
+### 受信模型的内网访问
+
 应用管理的内置及自定义语言服务被作为受信模型传输：Main 为对应原生 Provider 统一写入 `request.allowPrivateNetwork: true`，以适配企业内网和代理 Fake-IP。原生因此允许该 Provider 的模型 HTTP 请求及其重定向访问私有／特殊地址；这不是精确域名授权，也不保留该传输中的元数据／特殊地址拦截。内置模型仍要求原有 JWT／开发凭据、SecretRef、账号及生命周期校验，网络授权不替代认证；退出时连同内置 Provider 一起删除。登录换证、模型发现、记忆检索、浏览器、`web_fetch` 和其他能力不继承此字段，仍执行其所属策略。不设置全局 SSRF 关闭开关。
 
 ## 9. 日志、更新与剩余风险
@@ -103,7 +109,14 @@ Extension sidecar 只声明 HTTPS 目标、Header 名称和受管 user-info 引�
 
 Windows updater 当前 verifyUpdateCodeSignature=false。构建的 hash/更新 artifact 校验不能被宣传为已完成发布者签名验证。runtime source lock、补丁和二进制 hash 校验也不能取代安装渠道的信任。
 
-剩余风险至少包括：广泛 connect-src、localfile 缺少 token/root 授权、同用户本地凭据可访问面、可信 Node 插件、共享项目写冲突，以及不同平台实际隔离差异。文档不能用“本地优先”隐藏这些边界。
+| 剩余边界                | 对使用和实现的影响                   |
+| ----------------------- | ------------------------------------ |
+| 广泛 connect-src        | CSP 不能作为网络白名单               |
+| localfile 无 token/root | 上层原生文件动作仍须完成准入         |
+| 同用户凭据访问面        | 本地优先不等于对同用户进程保密       |
+| 可信 Node 插件          | 安装审核不构成恶意代码隔离           |
+| 共享项目写入            | 成员和任务不自动获得冲突隔离         |
+| 平台隔离不同            | Windows 或 mock 探针不能代表全部平台 |
 
 ## 10. 安全回归按攻击路径组织
 

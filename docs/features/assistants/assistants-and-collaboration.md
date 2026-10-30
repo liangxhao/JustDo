@@ -10,17 +10,37 @@
 它们的记录仅保存在旧环境备份。迁移不为这些身份建立档案、选择器条目或兼容占位。
 新版中用户创建的助手及正常版本升级的既有助手不受这项旧历史导入范围影响。
 
-用户在“设置 → 助手”创建、编辑和禁用档案。列表支持搜索与启用筛选；首次打开优先选中 main，后续刷新保留未保存的编辑。软件工程师、代码审查员、调研分析师、产品设计师、数据分析师和文档作者六个预设会填写名称、职责及可编辑的 `AGENTS.md` 草稿；复制档案只复制名称、说明和模型到一个未保存草稿，不复制角色文件、记忆或历史。main 不能禁用，默认隐藏助手选择器。设置中的“允许切换主会话的助手”开关默认关闭，保存在 cowork_config.allowMainAgentSwitch；开启后在输入框上方、工程目录按钮左侧显示选择器。已有聊天切换助手会保留工程目录并进入新会话，不搬迁原生历史。运行中禁止切换；禁用或删除的助手不可选择。关闭开关重置新会话选择为 main，已有会话继续归属原助手。
+### 创建、复制与切换
 
-产品保存档案元数据和受管 roster，原生 `agents.files` 管理当前运行时支持的 `AGENTS.md`、`SOUL.md`、`IDENTITY.md`、`USER.md`、`BOOTSTRAP.md`、`MEMORY.md`。设置页提供这六个文件的读取与编辑；不存在的文件显示提示，由用户填写保存后创建，不自动生成。`BOOTSTRAP.md` 在初始化完成后可能不存在。OpenClaw 的 `run-orchestrator` 从会话 agent 身份解析 canonical workspace，`attempt-bootstrap-prepare` 加载该助手的 bootstrap 文件，再叠加执行工程根目录的 `AGENTS.md`。切换助手不复制、改写或删除工程文件；工程规则仍有效，其中若包含 main 专属身份指令，用户应将它们整理到角色文件中，避免与新助手身份冲突。所有原生助手（包括 main）的角色文件固定在 `stateDir/agent-workspaces/<agentId>`。配置中的 `agents.defaults.workspace` 指向该角色目录根，受管条目显式指定各自 workspace；原生 `cwd` 指向所选工程，具体会话仍以 `sessions.create.cwd` 持久化自己的任务目录。受管配置使用原生 `agents.defaults.skipBootstrap: true` 关闭工作区角色模板生成，继续保留原生工程 workspace/cwd 与权限语义，以及现有角色和工程规则加载。切换工程、常规保存和登录/退出登录同步都保持角色目录稳定。ACP 外部执行器保留其原有工程 workspace/cwd 合约。
+用户在“设置 → 助手”创建、编辑和禁用档案。列表支持搜索与启用筛选；首次打开优先选中 main，后续刷新保留未保存的编辑。软件工程师、代码审查员、调研分析师、产品设计师、数据分析师和文档作者六个预设会填写名称、职责及可编辑的 `AGENTS.md` 草稿；复制档案只复制名称、说明和模型到一个未保存草稿，不复制角色文件、记忆或历史。
 
-首次使用独立 main 角色目录时，会从 OpenClaw 运行时包的 `docs/reference/templates` 初始化 `AGENTS.md`、`SOUL.md`、`IDENTITY.md` 和 `USER.md`；已存在的角色文件不会被覆盖。该路径在开发环境来自 `vendor/openclaw-runtime/current`，安装后来自随应用打包的运行时。`MEMORY.md` 没有模板，由用户或助手创建。初始化不读取工程目录；工程 `AGENTS.md` 仍作为项目规则注入，旧工程中若有身份指令，需由用户核对整理。
+main 不能禁用，默认隐藏助手选择器。设置中的“允许切换主会话的助手”开关默认关闭，保存在 cowork_config.allowMainAgentSwitch；开启后在输入框上方、工程目录按钮左侧显示选择器。已有聊天切换助手会保留工程目录并进入新会话，不搬迁原生历史。运行中禁止切换；禁用或删除的助手不可选择。关闭开关重置新会话选择为 main，已有会话继续归属原助手。
+
+### 角色目录与工程规则
+
+产品保存档案元数据和受管 roster，原生 `agents.files` 管理当前运行时支持的 `AGENTS.md`、`SOUL.md`、`IDENTITY.md`、`USER.md`、`BOOTSTRAP.md`、`MEMORY.md`。设置页提供这六个文件的读取与编辑；不存在的文件显示提示，由用户填写保存后创建，不自动生成。
+
+`BOOTSTRAP.md` 在初始化完成后可能不存在。OpenClaw 的 `run-orchestrator` 从会话 agent 身份解析 canonical workspace，`attempt-bootstrap-prepare` 加载该助手的 bootstrap 文件，再叠加执行工程根目录的 `AGENTS.md`。
+
+切换助手不复制、改写或删除工程文件；工程规则仍有效，其中若包含 main 专属身份指令，用户应将它们整理到角色文件中，避免与新助手身份冲突。所有原生助手（包括 main）的角色文件固定在 `stateDir/agent-workspaces/<agentId>`。配置中的 `agents.defaults.workspace` 指向该角色目录根，受管条目显式指定各自 workspace；原生 `cwd` 指向所选工程，具体会话仍以 `sessions.create.cwd` 持久化自己的任务目录。受管配置使用原生 `agents.defaults.skipBootstrap: true` 关闭工作区角色模板生成，继续保留原生工程 workspace/cwd 与权限语义，以及现有角色和工程规则加载。
+
+切换工程、常规保存和登录/退出登录同步都保持角色目录稳定。ACP 外部执行器保留其原有工程 workspace/cwd 合约。
+
+### 模板初始化与已有文件
+
+首次使用独立 main 角色目录时，会从 OpenClaw 运行时包的 `docs/reference/templates` 初始化 `AGENTS.md`、`SOUL.md`、`IDENTITY.md` 和 `USER.md`；已存在的角色文件不会被覆盖。该路径在开发环境来自 `vendor/openclaw-runtime/current`，安装后来自随应用打包的运行时。
+
+`MEMORY.md` 没有模板，由用户或助手创建。初始化不读取工程目录；工程 `AGENTS.md` 仍作为项目规则注入，旧工程中若有身份指令，需由用户核对整理。
 
 不自动初始化 `BOOTSTRAP.md`：角色目录与执行工程分离时，原生 bootstrap routing 将其判为 `limited`，隐藏该文件正文并提示当前会话不能完成初始化；`skipBootstrap: true` 只关闭原生自动生成，不关闭已有文件触发的 pending。该模板保留给明确选择原生首次设置的场景，日常使用不需要它。已有文件和初始化 marker 保持原样，不自动删除或迁移；已有 pending 需用户核对设置意图后在角色目录完成或删除该文件，不能承诺通过改写正文就能绕过原生限制。
 
 原生 `skipBootstrap` 将自动生成与提示词注入分离：常规同步、无模型的最小配置、旧配置保留分支以及登录/退出登录同步都明确写入 `true`，不设置 `contextInjection: never`。手动创建档案保留缺失角色文件提示；模型创建通过 `agents.files.set` 写入明确提供的角色规则，原生身份更新仍写在助手角色目录。已有工程文件由用户管理，不自动删除。该策略无需修改 OpenClaw 的目录解析；沙箱将既有文件投影到其隔离目录的行为仍由原生运行时管理。
 
+### 工程 Git 初始化
+
 Git 初始化由产品单独执行：普通会话通过原生工程根目录和权限校验后，只对尚未归属 Git 仓库的工程执行 `git init --quiet --template=`，仅生成 `.git` 元数据，不复制角色文件、Git 模板或创建初始提交。已有仓库、上级仓库中的子目录、Git worktree 和裸仓库保持原状；同一工程并发准备共享初始化操作。Windows 使用应用附带的 MinGit，开发环境或其他系统可使用 PATH 中的 Git；忽略继承的 `GIT_*` 环境变量，避免初始化被重定向到其他目录。Git 缺失或初始化失败不阻止会话；接续已接管的原生 worktree 会话不执行初始化。
+
+### 保存、创建失败与退役
 
 档案保存经过配置同步、Gateway 可见性核对和失败回滚；保存后显示后端返回的规范元数据，但不覆盖未保存的角色文件编辑。角色文件单独保存并检查外部编辑冲突，标签页显示字符上限。切换档案、文件或离开页面时保护未保存修改，冲突检查不等于跨客户端原子锁。
 
@@ -34,7 +54,9 @@ Git 初始化由产品单独执行：普通会话通过原生工程根目录和�
 
 模板在保存前只是本地草稿，用户可修改名称、职责和角色规则。规则包含平级协作约定，允许在现有任务成员之间交流，不套用“专家只能通过协调者通信”的原生 SubAgent Team 指令，也不自动创建整队或打开扩展。
 
-内置 main 模板与助手职责预设同时声明规则范围：助手文件定义身份、职责和通用工作方式；工程 `AGENTS.md` 补充项目执行规范，在该工程内，具体执行要求优先于通用偏好，但不会改变助手身份或扩大权限。修改子目录文件前应检查适用的嵌套 `AGENTS.md`，更具体的目录规范仅作用于其范围。这是给模型的指令约定，不是代码合并或冲突消解；OpenClaw 仍按原生机制加载助手文件并追加工程根 `AGENTS.md`，不新增 Codex 式自动祖先扫描或 `AGENTS.override.md` 解析。已有角色文件保留用户编辑，不会自动追加新模板内容。
+内置 main 模板与助手职责预设同时声明规则范围：助手文件定义身份、职责和通用工作方式；工程 `AGENTS.md` 补充项目执行规范，在该工程内，具体执行要求优先于通用偏好，但不会改变助手身份或扩大权限。修改子目录文件前应检查适用的嵌套 `AGENTS.md`，更具体的目录规范仅作用于其范围。
+
+这是给模型的指令约定，不是代码合并或冲突消解；OpenClaw 仍按原生机制加载助手文件并追加工程根 `AGENTS.md`，不新增 Codex 式自动祖先扫描或 `AGENTS.override.md` 解析。已有角色文件保留用户编辑，不会自动追加新模板内容。
 
 `resources/openclaw/docs/reference/templates/` 的六份中文角色模板只包含 Markdown 正文，不保留 `summary`、`title`、`read_when` 等文档元数据。规则参考 Hermes 的执行与编码指导，以及 Codex 的工程判断和按风险验证；合并重复要求，不复制专属工具或运行时假设。它们仍是 OpenClaw 角色文件，不替换原生基础 system prompt、权限、工具或执行循环。
 
@@ -47,11 +69,21 @@ Git 初始化由产品单独执行：普通会话通过原生工程根目录和�
 | `BOOTSTRAP.md` | 可选的原生首次设置流程；不自动播种，只写已确认且符合可见范围的信息，完成后删除自身。                                                               |
 | `BOOT.md`      | 仅供已启用的 boot-md 启动钩子使用，默认无任务；保留原生消息投递与 `NO_REPLY` 协议。                                                                |
 
-参考实现为 Hermes `dce1e9b375` 的 `agent/prompt_builder.py`（完成、取证、外部写入核验、字面保留、记忆与技能分工）、`agent/coding_context.py`（编码工作指导）与 `SOUL.md`，以及 Codex `91c0ea5dd1` 的 `codex-rs/models-manager/models.json`（工程判断、按影响面验证）。类型安全、错误处理和根因修复还参考了官方 [Codex Prompting Guide 的 Recommended Starter Prompt](https://developers.openai.com/cookbook/examples/gpt-5/codex_prompting_guide)。模板按本产品能力重新表述，不移植品牌、专属工具名、终端持久状态、模型名称门控、缓存策略、自动技能写入或验证 stop gate；这类运行时行为不能靠提示词获得。编码约定仅用于软件工程任务，解释和审查不自动授权修改，必要的工程与技能检查仍须执行。
+#### 模板来源与适用边界
+
+参考实现为 Hermes `dce1e9b375` 的 `agent/prompt_builder.py`（完成、取证、外部写入核验、字面保留、记忆与技能分工）、`agent/coding_context.py`（编码工作指导）与 `SOUL.md`，以及 Codex `91c0ea5dd1` 的 `codex-rs/models-manager/models.json`（工程判断、按影响面验证）。
+
+类型安全、错误处理和根因修复还参考了官方 [Codex Prompting Guide 的 Recommended Starter Prompt](https://developers.openai.com/cookbook/examples/gpt-5/codex_prompting_guide)。
+
+模板按本产品能力重新表述，不移植品牌、专属工具名、终端持久状态、模型名称门控、缓存策略、自动技能写入或验证 stop gate；这类运行时行为不能靠提示词获得。编码约定仅用于软件工程任务，解释和审查不自动授权修改，必要的工程与技能检查仍须执行。
+
+#### 职责预设与保存
 
 设置页六类职责预设统一生成“完整工作基线 + 专业职责 + 条件协作”草稿。每个角色说明适用任务、专业判断方法与交付标准：软件工程师负责完整实现和缺陷根因，代码审查员负责有触发证据的独立审查，调研分析师负责有来源的判断与方案比较，产品设计师负责可实现的流程和验收场景，数据分析师负责指标口径与可复算分析，文档作者负责有材料依据的成稿与编辑。按任务需要选用方法，不强制固定计划、文档或逐项检查仪式。
 
 提示词只维护中文：`assistantTranslations` 在构建时以 `?raw` 导入同一份 `AGENTS.md` 正文供预设复用；职责与条件协作也只存一份中文，不通过 Renderer 文件系统或新增 IPC 读取。界面名称、说明和帮助保留中英文翻译，切换界面语言不改变提示词内容。协作符合用户要求且能力可用时，组织者可按适用技能准备成员、派发与收束；成员只在已准入团队内交流。不得擅自创建长期助手、整队配置或启用插件，也不无条件向其他成员发送消息。
+
+#### 上下文可见范围
 
 角色文本遵循原生上下文可见范围：普通子代理仅加载 `AGENTS.md`；群聊、频道与定时任务排除根 `MEMORY.md`，但仍可能加载 `USER.md`。因此用户资料仅保存适合共享的非敏感事实，私密跨任务信息须获用户授权并确认实际私密存储范围，按原生分类保存，不仅凭文件名推定私密，也不通过每日记录或技能绕过范围。`USER.md` 当前有独立的 4,000 字符注入上限，模板只要求事实句、必要的日期与范围、及时清理旧记录，不强制 HTML 日期或状态格式，避免维护无用元数据和完整变更史。
 
@@ -73,100 +105,31 @@ Git 初始化由产品单独执行：普通会话通过原生工程根目录和�
 它不依赖 agent-team、Workboard 或原生 collector 分组，不把工作会话当作长期助手成员。
 投影范围、权限和交互限制见 [Swarm 图形视图](../workflow/swarm-workflow.md)。
 
-原生 SubAgent 从摘要的子智能体条目查看。详情从原生会话投影读取执行状态、运行身份、耗时与累计用量，并按需分页打开嵌套子会话、返回父层。取消针对稳定原生 session key；Main 验证产品会话与原生 spawnedBy 控制树归属。OpenClaw v2026.9.8 移除了旧任务账本以及重投递/忽略结果操作，产品同步移除这些按钮，不伪造已不再暴露的交付状态、等待原因与变更统计。失败或不确定结果先核对状态，不自动重跑任务。根子任务状态轮询仍扫描完整直接子会话列表。具体协议和限制见[引擎设计](../../architecture/05-agent-engine.md)。
+原生 SubAgent 从摘要的子智能体条目查看。详情从原生会话投影读取执行状态、运行身份、耗时与累计用量，并按需分页打开嵌套子会话、返回父层。取消针对稳定原生 session key；Main 验证产品会话与原生 spawnedBy 控制树归属。当前原生不再提供旧任务账本与重投递/忽略结果操作，产品不展示对应按钮，不伪造已不再暴露的交付状态、等待原因与变更统计。
 
-运行时设置新增独立 Swarm 开关和并发、组内直接子任务数、组内总任务数，投影至原生 `tools.swarm`。它控制原生批量委派容量，与平级 Team 的房间、成员和消息预算分别管理。当前仍不自动把长期助手 roster 加入原生跨角色委派白名单，也不直接导入 `agents team create` 的整队配置。
+失败或不确定结果先核对状态，不自动重跑任务。根子任务状态轮询仍扫描完整直接子会话列表。具体协议和限制见[引擎设计](../../architecture/05-agent-engine.md)。
+
+运行时设置提供独立 Swarm 开关和并发、组内直接子任务数、组内总任务数，投影至原生 `tools.swarm`。它控制原生批量委派容量，与平级 Team 的房间、成员和消息预算分别管理。当前仍不自动把长期助手 roster 加入原生跨角色委派白名单，也不直接导入 `agents team create` 的整队配置。
 
 平级协作图保留消息接收状态与成员运行状态的区别；历史或回执重试只重新读取原生证据，不发送一条新的协作消息。Team 的 peer 投递与 SubAgent 的原生完成通知仍是两个独立生命周期。
 
-## 身份、所有权与限制
-
-| 对象 | 身份与职责                                                     |
-| ---- | -------------------------------------------------------------- |
-| 助手 | 持久 agentId，档案由产品保存，角色文件由原生 agents.files 管理 |
-| 任务 | roomId 与 anchorSessionId，负责产品归属和导航                  |
-| 成员 | room 内唯一 agentId，关联独立产品 sessionId 与原生 sessionKey  |
-| 轮次 | 用户运行派生的 roundId；成员回复继承该轮次，不自动重置预算     |
-| 投递 | 可信 sourceRunId/toolCallId 派生的幂等身份及原生接收 runId     |
-
-产品硬边界最多 12 名成员、每轮最多 16 次投递；用户设置可以收紧，见 [Team 资源设置](agent-team.md#资源设置)。消息参数上限 16000 字符，失败投递也计入轮次预算。原生 session 只能归属一个 room，一个助手在同一 room 只能有一个成员实例。
-
-产品 SQLite 保存路由、状态、摘要哈希和回执，不保存正文、模型输出或复制的 transcript。原生历史缺失时不能创建空白会话冒充恢复。
-
-## 准备和发送链路
-
-```mermaid
-sequenceDiagram
-  participant A as main 原生会话
-  participant E as agent-team
-  participant M as Main coordinator
-  participant G as OpenClaw
-  participant B as 成员会话
-  A->>E: task_assistants(agentId)
-  E->>M: 可信来源与 ensure 请求
-  M->>M: 验证身份、轮次、权限与成员上限
-  M->>G: prepareSession
-  M->>M: 持久化任务成员
-  M-->>A: 精确 sessionKey
-  A->>E: sessions_send 前置 hook
-  E->>M: native-send admission
-  M->>M: 验证路由、停止状态、幂等与预算
-  M-->>E: deliveryId 和目标身份
-  E->>G: 原生 sessions_send
-  G->>B: 原生接收与执行
-  E->>M: native-result 回执
-```
-
-`task_assistants` 准备会话，不发送正文或启动目标工作。可用助手只向有邀请资格的锚点会话返回；成员可以发现已有任务成员，但不能自行扩大房间或权限。Main 对同一锚点串行处理成员写入，原生准备完成后再次检查停止、删除和启用状态。
-
-平级成员发送仅支持省略 `mode` 或 `followup`。原生 `steer` 的消息回执与执行身份不同，`notify` 不建立执行，`resume` 属于任务恢复；扩展在登记投递和扣预算前明确拒绝这些 peer 模式。原生 SubAgent 与 ACP 子会话不经过平级投递流程，其模式与权限由 OpenClaw 判断。
-
-扩展从可信工具上下文绑定来源，不接受模型自报 room、run 或权限。发送许可限定目标原生实例及有效期，不通过全局扩大 `tools.sessions.visibility` 或 agentToAgent 放行。计划模式拒绝执行性协作请求。
-
-原生接收可能早于发送方的 after-tool 回执。Main 通过有界等待和匹配的原生运行身份处理快速回复，不能仅凭模型正文认定“已经收到”。
-
-## 投递状态与恢复
-
-```mermaid
-stateDiagram-v2
-  [*] --> queued: 校验并记录预算
-  queued --> dispatching: 允许原生发送
-  queued --> failed: 无法恢复或取消
-  dispatching --> accepted: 原生运行身份确认
-  dispatching --> failed: 明确失败
-  dispatching --> unknown: 超时或中断且无法确认
-```
-
-`accepted` 是接收确认，不是业务完成。回复必须由另一条真实投递及关联身份表达。具体原生结果分类由扩展 after-tool hook 和 Main `native-result` 分支共同决定。
-
-重启将不可恢复的 queued 标记为 failed，将中断的 dispatching 标记为 unknown；不自动重放。重复调用受房间、发送人、源 run 和 toolCall 的唯一约束保护，参数哈希变化拒绝。不能把网络超时解释为“目标没有收到”并自动重发。
-
-## 停止、删除与助手退役
-
-停止任务先冻结相关轮次，再停止成员会话；准备途中和迟到的请求也需校验冻结状态。新的显式用户 turn 可形成新轮次，旧回复不能自行重开旧轮次。
-
-删除任务是跨数据库与 Gateway 的补偿流程：持久化删除标记、停止成员、确认原生状态、逐一删除原生 session 并记录进度，最后事务删除产品会话。部分失败保留可重试任务，不重新删除已确认完成的成员。长期助手档案和项目目录不随任务删除。
-
-删除助手与删除任务相互独立；助手退役保留历史身份与角色文件，规则见上文“长期助手档案”。
-
-## 展示与正文读取
-
-图只绘制实际投递关系，失败和未知状态分别展示。选择一对成员展示两个方向的往来；节点详情读取原生消息，不改变主会话。消息读取每批最多 16 条，Main 先验证所有 delivery 属于当前房间，再交给可选 Agent Team 按 receipt 索引和 provenance 核对。
-
-图、搜索和虚拟滚动使用 Renderer 投影；不新增持久正文缓存。没有原生精确定位证据时，只打开成员历史，不伪造 transcript entry。成员共享项目目录并不共享上下文，也不提供文件写入隔离。
-
-图中的正文或单条回执读取失败后可原地重试；图保留已成功读取的正文，仅补取缺失项。重试不发送新协作消息，也不改变投递状态。
-
-## 维护和验证入口
-
-- `plugins/extensions/agent-team/host/collaboration/collaborationCoordinator.test.ts`：成员准备、可信来源、原生回执、停止和删除流程。
-- `plugins/extensions/agent-team/host/data/collaborationStore.test.ts`：唯一约束、预算、状态迁移及恢复。
-- `plugins/extensions/agent-team/app/contracts/collaboration.test.ts`：参数、路由和状态合约。
-- `tests/openclaw/extensions/agent-team/collaboration.test.ts`：扩展工具、hooks 和原生通信接入。
-- `src/main/openclaw/config/openclawConfigSync.logout.test.ts`：可选扩展开关保留。
-
-这些是现有验证入口，不表示本轮重新执行了上述测试。真实 Gateway 与模型验收需在隔离配置下检查：主会话创建并邀请助手、原生 `sessions_send` 往返、图与成员历史定位、停止后的迟到回复、部分失败删除与重试。主列表仍只有一条用户任务；导出只含主对话，协作任务不提供复制或手工交接。协议测试、模型自主协作质量、沙盒与多客户端竞态必须分别验收。
-
-本次适配的代码与协议测试覆盖精确任务操作、会话归属、嵌套分页、状态投影、Swarm 配置及模板草稿/失败恢复。上述实现说明不构成真实 Gateway 与模型的完整验收结论；真实并发、停止竞态、重启恢复与端到端协作需单独记录实测结果。
+## 记忆与历史
 
 记忆面板提供独立的助手选择，默认 main；可查看未删除助手（包括已禁用助手）的历史记忆。文件浏览、搜索、索引状态和重建均按所选助手的原生 workspace 隔离；切换助手会清空预览、搜索结果和提示，旧请求不会更新新助手视图。索引重建按助手去重，后台任务不因切换视图而取消。原生长期记忆整理继续按配置中的各助手工作区分别处理。
+
+## 协作契约与维护入口
+
+任务房间、轮次、成员权限、发送幂等、预算、停止/删除和正文读取统一维护在
+[Agent Team](agent-team.md)。长期档案与任务成员独立：关闭插件保留档案与历史，
+删除任务不删除角色文件或项目；助手退役不调用会清除原生会话索引的 `agents.delete`。
+原生 SubAgent、平级 Team、群聊和 Workflow 各有执行生命周期，不能用一种回执推断另一种完成。
+
+- 档案原生创建与恢复：`src/main/openclaw/config/agents/nativeAssistantCreation.test.ts`。
+- 预设与角色规则：`src/renderer/services/i18n/assistantTranslations.test.ts`。
+- 记忆选择与过期请求隔离：`src/renderer/features/memory/MemoryView.test.tsx`。
+- Team 业务测试归 `plugins/extensions/agent-team/host/`、`app/` 和 `tests/native/`，
+  原生通信接入用例为 `plugins/extensions/agent-team/tests/native/collaboration.test.ts`。
+
+上述是现有验证入口，不表示本次文档整理重新执行了测试。模板措辞、协议 fixture 或
+静态 UI 不能证明真实模型自主协作质量、停止/重启竞争、沙箱和多客户端场景均已通过；
+这些限制随[Team 验证边界](agent-team.md#当前验证边界)维护。

@@ -9,7 +9,7 @@
 | 主 Agent thinking                  | null    | 保留继承/未指定语义                       |
 | 主 Agent run timeout               | 0       | 未设置正向运行时限，不是立刻超时          |
 | 主 Agent 并发                      | null    | 不强制产品覆盖                            |
-| ask_user_question                    | 10 分钟 | 默认启用超时；必须回答时显式关闭          |
+| ask_user_question                  | 10 分钟 | 默认启用超时；必须回答时显式关闭          |
 | automation approval                | 2 分钟  | 允许 2/5/10 三档                          |
 | MCP request timeout                | 60 秒   | 用户 server 的默认请求等待                |
 | MCP Apps                           | true    | 交互界面宿主开关，投影到 mcp.apps.enabled |
@@ -26,6 +26,8 @@
 | Swarm maxChildrenPerGroup          | 50      | 组内存活子任务容量，范围 1–200            |
 | Swarm maxTotalPerGroup             | 200     | 组内累计子任务容量，范围 1–1000           |
 
+### 同页的产品设置
+
 同页还有两个产品设置，不属于 AgentRuntimeSettings 原生配置投影：后台侧栏标签保留
 上限默认 30、范围 0–200；Goal 自动续跑回合上限默认 25、范围 0–1000，0 表示不允许
 自动追加续跑，用户仍可显式手动继续，并非无限续跑。它们沿现有 Cowork 配置保存，
@@ -37,11 +39,13 @@ Goal 次数按当前目标在原生持久接纳的自动回合累计，准备、
 
 ## 2. 验证与旧值
 
-版本必须匹配共享合约，枚举、整数、范围和模型引用长度由 Main/shared 校验。部分 v1 早期字段缺失时填充受管默认，尤其 visibility=tree，避免升级后默默扩大访问。
+保存必须提交完整的当前版本结构；Main/shared 校验版本、枚举、整数、范围与模型引用长度。读取缺失、损坏或校验失败的记录时，`parseAgentRuntimeSettings` 整份采用当前默认值，不保留有效字段做逐项迁移；保存时则明确拒绝非法结构。
 
 主 Agent／Subagent 并发范围均为 1–16（主 Agent 另允许 null），children 为 1–20，depth 为 1–5；正向 run timeout 为 60–86400 秒，0 的特殊意义按字段校验。ask_user_question 为 1–1440 分钟，MCP request timeout 为 1–86400 秒，archiveAfterMinutes 为 0–525600 分钟。不要在 Renderer 自己 clamp 后让 Main 接受任意数据。
 
-MCP Apps 当前只保存布尔值，旧记录的缺失值或 null 补为 true，明确的 false 保留；界面不再提供继承选项。该开关不负责安装插件或创建手动应用入口。
+### MCP Apps 与整份默认配置
+
+`mcp.appsEnabled` 必须为布尔值，缺失或 null 使整份配置校验失败，并非只补这个字段。无有效当前配置时采用整份默认，其中 MCP Apps 启用；有效配置中的明确 false 保留。界面不提供继承选项，这个开关也不负责安装插件或创建手动入口。
 
 ## 3. 保存链路
 
@@ -87,15 +91,18 @@ visibility 的 self/tree/agent/all 是原生访问配置，不等于文件权限
 
 MCP request timeout 是已连接 server 的请求时限，不是连接建立超时，也不自动覆盖 Extension 托管 server。
 
+### Code Mode 的实验性状态
+
 Code Mode 保存 off/auto/on，并投影到 `tools.codeMode.enabled=false/"auto"/true`，
-executor 为 QuickJS。当前表单保留但禁选 auto，新配置缺字段补 off；已有显式 auto
+executor 为 QuickJS。当前表单保留但禁选 auto；整份默认配置为 off，缺少 Code Mode 字段会使整份配置校验失败。有效配置中的显式 auto
 保留并如实展示，是否启用取决于原生模型的 compat.codeMode，不按模型名推断。
+
 worker/WASM、exec/wait、取消与内部工具审批由原生管理，执行器缺失不降级到 Node VM。
-实际运行与产物入口见[引擎](../../architecture/05-agent-engine.md#code-mode-工具编排)。
+实际运行与产物入口见[引擎](../../architecture/05-agent-engine.md#10-code-mode-工具编排)。
 
 ## 6. 修改与验证
 
-参数新增需同步共享默认/校验、产品持久化、ConfigSync、设置页面、双语文案及原生消费测试。重点检查缺字段升级、0/null、边界值、配置失败和运行中变更。不要仅根据 Gateway 能接受的字段就把所有选项暴露为已支持产品能力。
+参数新增需同步共享默认/校验、产品持久化、ConfigSync、设置页面、双语文案及原生消费测试。重点检查缺字段时整份默认、0/null、边界值、配置失败和运行中变更。不要仅根据 Gateway 能接受的字段就把所有选项暴露为已支持产品能力。
 
 ## 实现核对入口
 

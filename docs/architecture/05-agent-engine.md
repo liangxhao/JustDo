@@ -1,81 +1,12 @@
 # 执行引擎：配置、准入与 Gateway 恢复
 
-当前 Cowork 执行引擎是 OpenClaw。Router 提供稳定产品接口，Adapter 隔离原生 wire 与生命周期，Manager 托管运行时进程。本文按当前 v2026.10.7 集成组织，运行时补丁清单只维护在[版本目录](../../scripts/patches/v2026.10.7/README.md)。目标产物及尚未验收的范围见[本版验证](../openclaw-upgrades/v2026.10.7/validation.md)；文中较早版本的复现记录不自动扩展为本版通过证据。
+当前 Cowork 执行引擎是 OpenClaw。Router 提供稳定产品接口，Adapter 隔离原生 wire 与生命周期，Manager 托管运行时进程。原生版本以 `package.json.openclaw` 为准，运行时补丁清单只维护在[版本目录](../../scripts/patches/v2026.10.7/README.md)。目标产物及尚未验收的范围见[本版验证](../openclaw-upgrades/v2026.10.7/validation.md)；文中较早版本的复现记录不自动扩展为本版通过证据。
 
 Agent 实时事件使用原生 payload 的 `seq`。Main、Renderer 与浏览器侧聊共用该契约，
 不再接受旧 `aseq`，也不使用 WebSocket frame 序号或本地计数补造 agent 序号。
 缺少原生序号的事件不提交执行结果；现有会话、run、代次和 whole-run 终态校验继续生效。
 Main complete 通知携带明确状态，运行快照携带正 revision；字段缺失时 Renderer 保持未知，
 不会按旧 preload 的缺省值推断完成或空闲。
-
-## Code Mode 工具编排
-
-运行设置中的 Code Mode 是原生 OpenClaw 工具编排能力，保存于现有
-`agentRuntimeSettings:v1` 配置记录的 `codeMode.mode`，取值为 `off / auto / on`。
-新配置默认 `off`，已保存的 v1 设置须符合完整当前结构，不再逐字段升级旧对象。界面保留
-“自动（待模型支持）”但禁止选择；已有显式 `auto` 值保留并如实显示，可改选开启或关闭。
-配置同步在完整配置、无模型配置、
-登录与退出路径中映射到 `tools.codeMode.enabled = false / "auto" / true`，并选择
-`executor: "quickjs"`。原生超时、输出、并发等其他 Code Mode 参数保留。
-
-`auto` 由实际模型目录的 `compat.codeMode` 能力标记决定，不根据模型名称自行猜测。
-应用投影的自定义模型可能没有该标记，因此自动模式不保证启用；需要验证这些模型时可
-选择开启。该设置控制嵌入式 OpenClaw 运行时，不控制外部 ACP 或 provider-native harness。
-本期界面管理全局启用方式，不提供逐模型覆盖编辑器；原生覆盖优先级由 OpenClaw 判定，
-认证范围同步保留已有 agent/model 覆盖。普通完整同步仍按应用的托管模型与助手配置重建，
-不能把手改生成配置当作持久的逐模型设置入口。
-
-模型生成的 JavaScript、工具目录/MCP 发现、结果暂存、`exec / wait`、取消及失败恢复
-均由 OpenClaw 管理；Main 不增加执行器或结果缓存。QuickJS 插件的显式禁用仍受尊重，
-执行器缺失或被禁用时原生运行失败，不自动降级到 Node VM。内部工具调用继续经过
-Gateway 权限、审批及 hooks；QuickJS 隔离本身不授予额外工具权限。
-
-可运行 `node scripts/test/verify-code-mode-runtime.mjs [runtime-directory]`，只读检查
-打包产物的 worker、WASM、文本编码模块，并实际验证执行、等待恢复、失败与取消。
-该检查无需模型凭据，不替代真实模型/MCP/审批端到端验证。
-
-### 已安装技能发现与会话中间结果
-
-10.4 原生 `skills_search` / `skills_read` 分别搜索有效的已安装技能和读取完整说明。
-提示词目录因预算省略技能时仍可搜索；禁用或禁止模型调用的技能不进入有效目录。
-有读取权限时搜索可使用有界正文，撤销读取权限后只保留元数据搜索；读取技能不授予
-执行技能所需工具的权限。Code Mode 使用同一目录的 `skills.search` / `skills.read`，
-Main 不建立第二份技能索引。
-
-交互式 Code Mode 的 `await store(key, value)` / `await load(key)` 可跨 cell、后续
-回复及 Gateway 重启复用当前原生会话中的小型 JSON 值；普通 JavaScript 变量和
-`results.save` 的当轮引用没有这一持久化语义。只有完成的 cell 提交缓冲写入，失败或
-取消的未完成 cell 不提交。单值上限 256 KiB、当前值总量上限 1 MiB；覆盖或删除不会
-抹除原生历史中的旧版本。此能力沿用 Code Mode 开关，没有独立的产品存储开关。
-
-`node scripts/test/verify-native-skill-state-runtime.mjs [runtime-directory]` 使用隔离
-Gateway、本机合成模型和与产品相同的 `stateDir/skills` 导入位置，检查上述发现、
-读取权限、跨轮/重启持久化、会话隔离及失败/取消行为。它通过正常聊天执行入口和
-精确 `executionSettled` 终态核对，不读取用户 transcript；合成模型不证明真实模型会
-主动选择技能或正确编排 Code Mode，也不替代 MXC 实机验收。
-
-## 最终 system prompt 替换
-
-Main 在 `runtime/systemPromptReplacementRegistry.ts` 注册内置规则，先规范化换行，
-再依序处理最终 system prompt。规则与自定义条目一起写入
-`openclaw/state/system-prompt-replacements.json`，通过现有补丁 002 在模型相关提示词
-组装完成后、provider dispatch 前应用，不改变用户输入、历史消息或工具参数。
-内置 ID 优先于同名持久化条目；自定义规则随后执行，最多 100 条。
-
-当前内置规则删除精确相邻的 OpenClaw Mirror/Source 两行，以及整个
-`OpenClaw Control`、`Authorized Senders`、`Control UI Side Chat`、`Care` 章节。
-章节匹配独占一行的精确二级标题，包含其三级及更深子段落，到下一个一级或二级标题
-或正文末尾为止；后续 `Skills`、`UI Presentation`、`Control UI Embed`、`Messaging` 和 `Runtime Context`
-章节保留。身份声明说明核心能力由 `PRODUCT_NAME` 开发，OpenClaw 仅提供运行时；
-仅将 `You are in a WebChat direct conversation` 中的 WebChat 替换为产品名。
-提示词中的 `.openclaw/tmp/` 替换为 `.${PRODUCT_NAME}/tmp/`，保留后续文件名。
-另外只删除指定的 `Reasoning=stream` 指导整行、`/approve is user command` 整行和
-`Approval preview` 整行，保留 `allow-once` 提示和原生执行审批策略。
-
-技能版本、版本刷新指导、Runtime 压缩、来源渠道路由、诊断指导和泛化品牌替换六项
-旧内置规则已撤销。合并持久化规则时过滤这六个旧 ID，启动同步将其移出规则文件，
-避免旧内置条目作为自定义规则继续执行；其它自定义条目及 Runtime 原文保持原样。
-相邻的注册表测试验证这些文本边界和持久化合并，不替代真实模型轮次验收。
 
 ## 1. 三层控制各管什么
 
@@ -92,13 +23,17 @@ Adapter 入口保留生命周期及状态，runtimeGatewayConnection、runtimeGa
 当前 schema、会话与插件的准入由 Gateway 自己在启动时负责。正常升级由 `startup/upgrade`
 在 Gateway 停止时调用锁定当前版本的原生维护 owner，等待备份、更新、严格复验与
 数据库关闭、子进程退出，再允许引擎及外部入口启动。维护失败或结果未知时不能由
-EngineManager 的重试绕过此条件。普通打开记录与原生维护完成回执分别保存，不以跳过
+EngineManager 的重试绕过此条件。
+
+普通打开记录与原生维护完成回执分别保存，不以跳过
 宿主预检伪造维护成功、引擎运行或任务执行终态。
 详细四路与失败恢复见[启动与历史升级](../features/app/startup-and-history-upgrade.md)。
 
 Chrome 侧聊通过 Runtime 的窄 `getRunTerminalReceipt` 读取已准入 whole-run `executionSettled:true` 的有界原生身份与终态元数据；chat final 后保留精确退役绑定以接受迟到末端。OpenClaw 10.7 仍不把内部 `lifecycleGeneration` 序列化到公共事件，缺字段不阻止精确原生 session、run、序列及 Main 连接代次准入；双方提供时仍拒绝冲突，首次显式代次会固定到退役绑定。yield 不作为整轮完成；原生明确 timeout 优先于机械 `aborted` 标志，保留为失败。
 
-live 回执缺失时，Controller 仅能使用本进程发送准备已捕获的物理 session/key/连接代次补查精确 `agent.wait({runId,timeoutMs:0})`，并在前后 `sessions.describe` 核对身份和生命周期 revision。合法整轮终态还须有匹配 run、有限 `endedAt` 且非 yield；普通 wait timeout、idle、Stop ACK 均不生成终态。已验证的 wait 结算只缓存最多 100 项结果与身份元数据，后续读取仍复核当前原生身份，避免原生 wait 缓存过期或后续轮询使已确认结果倒退；不保存正文、不伪造事件序列。冷重启、连接代次变化或缺少原发送绑定时证据不足仍保持 unknown，不用当前 session 为旧 run 补造授权，也不补发输入。
+live 回执缺失时，Controller 仅能使用本进程发送准备已捕获的物理 session/key/连接代次补查精确 `agent.wait({runId,timeoutMs:0})`，并在前后 `sessions.describe` 核对身份和生命周期 revision。合法整轮终态还须有匹配 run、有限 `endedAt` 且非 yield；普通 wait timeout、idle、Stop ACK 均不生成终态。
+
+已验证的 wait 结算只缓存最多 100 项结果与身份元数据，后续读取仍复核当前原生身份，避免原生 wait 缓存过期或后续轮询使已确认结果倒退；不保存正文、不伪造事件序列。冷重启、连接代次变化或缺少原发送绑定时证据不足仍保持 unknown，不用当前 session 为旧 run 补造授权，也不补发输入。
 
 10.7 的取消通知与真实执行结算仍是两个时刻。补丁 019 只为首次原生取消发布保留
 一次迟到结算名额，绑定原生 run、物理 session、agent 与内部生命周期代次；只有同一
@@ -137,6 +72,7 @@ Gateway 保留发送者的授权、目标校验和取消信号，但目标任务
 10.4 原生转发入口在恢复调用者上下文并核对当前授权之后，退出发送者的
 transcript/CLI-history 写入上下文，避免目标任务在自动压缩后的恢复或终止记录保存时
 误用发送者的写入归属。旧补丁 039 已移除；其它 RPC 和目标写入保护保持原生行为。
+
 构建同时使 bundle 与动态 SDK 共用原生 `transcript-write-context` 和其依赖的
 `cli-history-boundary` 状态模块；否则上下文清理函数与 CLI 写入者可能操作不同的
 AsyncLocalStorage。异步工作载体已经由上游的全局 singleton 共享，保持原生行为。
@@ -177,6 +113,7 @@ process/lifecycle 的准备操作与已确认身份，将 pending/failure 投影
 认证连接、执行权限检查及代次核对全部完成后才能开放 AI 功能。`Running` 或一个返回
 Running 但 `success=false` 的权限检查不能完成准入，后者保留准备失败，不伪造成功。
 普通启动的主页不等待该准备；引擎失败保留主页、诊断和重试，本地设置与登录可用。
+
 重试及独立重启沿用同一准备 owner，旧操作结果不能覆盖新操作；退出等待在途准备退休。
 新聊天和已有聊天发送 IPC 在任何配置等待前拒绝未就绪输入，等待后再次复核，防止将
 启动期间的点击延迟执行。Renderer 保留草稿，真正就绪后仅自动恢复只读加载，不自动发送。
@@ -185,7 +122,9 @@ Running 但 `success=false` 的权限检查不能完成准入，后者保留准�
 同时将内部 `developerMode` 草稿设为开启，不再提供额外总开关。只有保存后的内部标志与
 Control UI 偏好均为开启，配置同步才设置 `gateway.controlUi.enabled: true`，开发运行与
 打包应用采用同一规则。Control UI 草稿开启时，其设置下方显示“打开 Control UI”入口；尚未保存
-生效时入口禁用并提示先保存。打开过程沿用显式 preload 的端口及令牌读取，异步等待后
+生效时入口禁用并提示先保存。
+
+打开过程沿用显式 preload 的端口及令牌读取，异步等待后
 重新核对已保存配置；关闭草稿、保存中或离开页面均撤销在途打开请求。
 有效值变化沿用现有配置同步及运行时更新。
 完整、无模型、登录状态变化和兼容配置持久化都覆盖旧开关值，合并时保留其它字段；
@@ -194,6 +133,8 @@ Control UI 偏好均为开启，配置同步才设置 `gateway.controlUi.enabled
 Manager 对外 phase 为 ready、starting、running、error；canRetry 与 message 用于产品反馈。共享契约位于 `src/shared/openclaw/engineStatus.ts`；`starting` 上的 `restarting: true` 由 Main 提供，用于区分首次启动与真实重启。它们不是单个 Agent run 的状态。
 
 运行时文件就绪检查与 CLI 环境读取不改变正在启动或运行中的 Gateway phase；CLI 读取复用该进程已选定的端口，不因端口已被启动进程占用而重新分配。冷启动的异步资源准备已属于 starting，不能在此期间展示尚未启动的按钮。资源缺失或版本元数据无效仍报告 error。
+
+### 原生重启、退出和代次
 
 原生 `SIGUSR1`、`SIGUSR2` 或 in-process restart 的完整生命周期日志使当前受管进程进入
 `starting/restarting`；日志载荷中嵌入的相似文本不构成信号。并发启动共享原生重启的等待，
@@ -225,7 +166,9 @@ Manager 对外 phase 为 ready、starting、running、error；canRetry 与 messa
 
 打开“查看原因”即调用 `engine:diagnostics:collect`，自动采集 Main、Gateway 本地输出和可确认来源的原生日志；重新采集与复制均在该弹窗内完成。Main 的 Manager 为失败保留独立 `diagnosticId`、启动/失败时间和进程 generation；新启动及后续失败推进身份。采集请求可携带当前失败 ID，旧 ID 拒绝读取。报告返回固定故障快照，采集期间引擎身份、进程或状态改变时明确标记，不把旧故障当成新进程的原因。
 
-采集实现位于 `main/openclaw/runtime/engineDiagnostics.ts`，IPC 与来源校验位于 `main/ipc/openclaw/engineDiagnostics.ts`。Main 日志来自 logger 当前文件及保留的每日/轮转文件；Gateway 输出只读取 Manager 持有的固定日志路径。原生日志仅通过**已连接客户端**的 `logs.tail` 结构化 `file` 确认，再复用既有安全扫描器。离线、RPC 失败或来源不可信时单独记录缺口，仍采集本地来源；不从日志正文提取路径，不猜临时目录，不启动 Gateway、CLI、修复、模型请求或读取 transcript。Renderer 不能提供文件路径，IPC 仅接受主窗口主框架和合法请求/失败身份。
+采集实现位于 `main/openclaw/runtime/engineDiagnostics.ts`，IPC 与来源校验位于 `main/ipc/openclaw/engineDiagnostics.ts`。Main 日志来自 logger 当前文件及保留的每日/轮转文件；Gateway 输出只读取 Manager 持有的固定日志路径。原生日志仅通过**已连接客户端**的 `logs.tail` 结构化 `file` 确认，再复用既有安全扫描器。
+
+离线、RPC 失败或来源不可信时单独记录缺口，仍采集本地来源；不从日志正文提取路径，不猜临时目录，不启动 Gateway、CLI、修复、模型请求或读取 transcript。Renderer 不能提供文件路径，IPC 仅接受主窗口主框架和合法请求/失败身份。
 
 启动失败按本次启动开始至失败附近的时间关联，保留启动前后 2 秒上下文；运行中发生的错误使用失败前两分钟作为排查窗口，窗口结束不超过点击采集的时刻。复用完整文件捕获大小扫描和多行/UTF-8 拼接，不只取文件尾部，避免五分钟健康超时掩盖启动初期真正的错误。Main 与 Gateway 摘要中的时间按已有日志格式解释；缺少时间或记录过大时明确标记。来源是时间窗口关联，不证明因果、同一原生运行归属或故障已经恢复。
 
@@ -318,19 +261,27 @@ Gateway 运行期间不执行同步编译缓存序列化，缓存由 launcher �
 `sessions.describe({key, agentId})`，让原生 startup-read 路径等待该 Agent 的后台存储准备。
 同 Agent 的结构化 `agent-database-inspection-pending`，以及没有结构化故障码的原生
 `UNAVAILABLE`，只允许在这个只读探针内按 1/2/4/8 秒退避等待；完整请求和退避共用
-120 秒总期限。明确 inspection-failed、其他结构化故障、目标不符及非原生拒绝立即返回。
+120 秒总期限。
+
+明确 inspection-failed、其他结构化故障、目标不符及非原生拒绝立即返回。
 成功必须明确返回 `session:null`，或 key 与可选 Agent 字段匹配的公共行；不能将缺字段视为就绪。
 这不是宿主启动检查或写授权，后续 create、原生会话回执及发送准入仍保持原有保护。
 停止和替换 pending start 立即取消该等待，连接代次或产品会话的 Agent、绑定、目录、权限
-变化也撤销准备；每次异步完成及创建前重新核对。已经派发的 create/send 不因
+变化也撤销准备；每次异步完成及创建前重新核对。
+
+已经派发的 create/send 不因
 `SessionMutationFactsUnavailableError`、超时或断线再次提交，结果未知仍保持未知。
 等待保留原发送身份与点击时间，属于首 token 延迟，不额外请求 Gateway 重启。
 
 冷启动成功后单次后台检查遗留受管凭据，发现过程不占配置队列；实际孤立候选逐个进入短队列，重新读取当前配置和认证状态，只删除仍未配置供应商的精确受管默认 API key profile。配置回滚、手工凭据、客户端或进程替换均中止对应清理；任务只使用已有连接，不因后台维护启动 Gateway。普通受管会话准备若发现持久模型覆盖，则只核对当前会话的有效路由，在同一模型操作排序中重新描述并修复已删除的路由；有效原生选择保持，修复沿用设置同步的路由匹配与助手默认规则，并核对原生 session incarnation。无覆盖的新会话不增加此检查，不在首轮发送前扫描全量历史。
 
-新会话发送通过权限验证后，复用本次 `config.get` 快照；电脑插件显式启用且未被显式禁用时，以已有认证连接后台调用原生 `computer.status`，让宿主启动与会话及执行环境准备重叠。调用不阻塞发送或配置队列，同一连接和进程/配置代次只合并在途准备，不缓存可用性、不定时保活、不因后台准备启动或重连 Gateway。失败不影响聊天；原生执行仍判断模型图像能力、会话工具策略和 placement，准备不授予电脑操作权限。进程、配置或客户端变化后丢弃旧准备结果，宿主复用与闲置回收继续由原生服务负责。Main 仅记录准备 RPC 耗时与可用布尔值，不记录描述符、错误正文或截图；该耗时含 RPC 和宿主准备，不等同于 agent 内纯能力探测耗时。
+新会话发送通过权限验证后，复用本次 `config.get` 快照；电脑插件显式启用且未被显式禁用时，以已有认证连接后台调用原生 `computer.status`，让宿主启动与会话及执行环境准备重叠。调用不阻塞发送或配置队列，同一连接和进程/配置代次只合并在途准备，不缓存可用性、不定时保活、不因后台准备启动或重连 Gateway。失败不影响聊天；原生执行仍判断模型图像能力、会话工具策略和 placement，准备不授予电脑操作权限。进程、配置或客户端变化后丢弃旧准备结果，宿主复用与闲置回收继续由原生服务负责。
 
-运行状态、侧栏原生会话发现和配置变更后的模型修复扫描使用原生 `sessions.list` 的 `rowMode: compact`，省略能力目录、插件状态等详情字段；需要完整能力或权限事实时仍使用 `sessions.describe`。省略字段表示未知，不是清除回执。子任务列表仍读取完整行以保留 ACP runtime 分类。侧栏并发刷新只保留一个在途目录读取和一个共享后续读取；在读取期间到达的请求等待后续新读取，完成结果不缓存，不复制 transcript 或建立第二份目录权威。Renderer 将会话变更通知按固定 100 ms 窗口合并，读取期间的通知在完成后再刷新一次；手动读取不等待该窗口，清理监听时取消排队并淘汰旧结果。运行状态的并发强制刷新也共享一个后续读取，完整分页要求合并为更强的要求，原有快照代次校验及有效期保持不变。
+Main 仅记录准备 RPC 耗时与可用布尔值，不记录描述符、错误正文或截图；该耗时含 RPC 和宿主准备，不等同于 agent 内纯能力探测耗时。
+
+运行状态、侧栏原生会话发现和配置变更后的模型修复扫描使用原生 `sessions.list` 的 `rowMode: compact`，省略能力目录、插件状态等详情字段；需要完整能力或权限事实时仍使用 `sessions.describe`。省略字段表示未知，不是清除回执。子任务列表仍读取完整行以保留 ACP runtime 分类。侧栏并发刷新只保留一个在途目录读取和一个共享后续读取；在读取期间到达的请求等待后续新读取，完成结果不缓存，不复制 transcript 或建立第二份目录权威。
+
+Renderer 将会话变更通知按固定 100 ms 窗口合并，读取期间的通知在完成后再刷新一次；手动读取不等待该窗口，清理监听时取消排队并淘汰旧结果。运行状态的并发强制刷新也共享一个后续读取，完整分页要求合并为更强的要求，原有快照代次校验及有效期保持不变。
 
 Renderer 服务初始化共享一个在途任务，避免 StrictMode 或并发挂载重复加载列表，防止较早初始化的监听清理误淘汰较新的首屏读取。销毁推进初始化代次，旧任务结束后不能重新注册监听、标记初始化完成或清除替代任务；失败释放在途任务，后续初始化可重试。列表刷新合并和过期响应校验继续保留。
 
@@ -346,12 +297,18 @@ Main Gateway 客户端仅共享参数与超时策略相同的在途 `sessions.li
 权限拒绝、断线、超时和同文案本地异常不重试。首次匹配拒绝后有额外 10 秒预算，
 按 250/750/1500/2500 ms 最多重新读取四次，各页请求共用剩余超时与取消信号。
 每次清空部分结果及在途列表共享窗口，从第一页开始，并固定原客户端与连接代次；
-连接变化后不再请求或缓存结果。重新读取只在第一页开始时采用最新快照代次，
+连接变化后不再请求或缓存结果。
+
+重新读取只在第一页开始时采用最新快照代次，
 之后的失效通知继续淘汰该次读取。耗尽预算仍返回未知，成功恢复不记录应用查询失败；
 Gateway 首次拒绝的诊断日志仍可能出现。此恢复不重启运行时、不重放发送或写操作，
 不绕过原生插件实例撤销检查。
 
-桌面主聊天的首轮原生发送支持由实际 Renderer 连接执行：Adapter 准备 session/root、权限、模型、运行 ID 与 Goal intent 后，向受信窗口交出同一份 `chat.send` 参数；Main 保留监听与运行状态。只有已挂载原生 viewer 的 HTTP(S) 聊天连接公告 `inline-widgets`，原生执行按 originating client capability 决定 `show_widget` 是否可用。Main 的后台连接保持 headless，未增加 UI capability 或 native runtime patch。一次 ACK 必须对应原始幂等 ID，停止控制回执和 structured Goal receipt 分别校验；不确定发送只恢复状态，不重新启动任务。
+桌面主聊天的首轮原生发送支持由实际 Renderer 连接执行：Adapter 准备 session/root、权限、模型、运行 ID 与 Goal intent 后，向受信窗口交出同一份 `chat.send` 参数；Main 保留监听与运行状态。只有已挂载原生 viewer 的 HTTP(S) 聊天连接公告 `inline-widgets`，原生执行按 originating client capability 决定 `show_widget` 是否可用。
+
+Main 的后台连接保持 headless，未增加 UI capability 或 native runtime patch。一次 ACK 必须对应原始幂等 ID，停止控制回执和 structured Goal receipt 分别校验；不确定发送只恢复状态，不重新启动任务。
+
+### 配置发布与策略投影
 
 产品配置来自 app_config、cowork_config、agents、MCP/Hook Store、Extension 开关与受管文件。ConfigSync 构建原生投影，ConfigSyncService 在串行 mutation 中应用并验证。
 
@@ -362,11 +319,14 @@ Gateway 首次拒绝的诊断日志仍可能出现。此恢复不重启运行时
 
 产品禁用 OpenClaw 的设置修复委托、门户、会话仪表盘、GitHub 身份诊断、在线人员/设备查询、
 原生网页主题、会议记录、手机 UI 控制、事件提醒、聊天凭据管理和外部渠道会话等工具入口。
+
 全局 `tools.deny` 由一份固定名单统一管理：`ask_user`、
 `web_search`、`message`、`nodes`、`gateway`、`openclaw`、`file_fetch`、`dir_list`、`dir_fetch`、
 `file_write`、`portal`、`dashboard`、`github_identity_status`、`presence`、`theme`、
 `transcripts`、`mobile_ui`、`intent`、`secrets`、`conversations_send`、`conversations_list`、
-`conversations_turn`。完整配置、无模型配置及登录/退出同步均直接使用该名单，不合并旧配置的
+`conversations_turn`。
+
+完整配置、无模型配置及登录/退出同步均直接使用该名单，不合并旧配置的
 全局禁用项。电脑控制继续根据插件开关额外加入或移除 `computer`；其他权限策略保持原有规则。
 
 同步同时将 `transcripts` 直接设为 `{ enabled: false }`，关闭原生会议记录、自动采集和
@@ -442,11 +402,17 @@ Goal 重放核对、会话用量和标题身份也使用同一目标的 `session
 若无法核对当前 run，保留原执行及未知回执，不清成空闲或重新发送。标题查询只读且有界，
 源身份或连接代次改变即丢弃结果；这些点查不替代后台恢复或侧栏目录本身的职责。
 
-可见 worktree 子会话由模型经原生 `sessions_spawn` 创建。产品会话列表读取 Gateway 原生会话，按 `parentSessionKey` / `spawnedBy` 与受管父会话关联，并持久绑定原生 session key。继续该会话时 Adapter 用 `sessions.describe` 核对 sessionId、worktree 元数据与实际目录（`sessionRoot`、`spawnedCwd` 或 `spawnedWorkspaceDir`），不再调用 `sessions.create`；Renderer 历史使用同一原生 key。设置页 Worktree 面板调用 `worktrees.list/restore/remove/gc` 管理原生登记的记录，不能管理模型通过 shell 自建的普通 Git worktree。
+可见 worktree 子会话由模型经原生 `sessions_spawn` 创建。产品会话列表读取 Gateway 原生会话，按 `parentSessionKey` / `spawnedBy` 与受管父会话关联，并持久绑定原生 session key。
+
+继续该会话时 Adapter 用 `sessions.describe` 核对 sessionId、worktree 元数据与实际目录（`sessionRoot`、`spawnedCwd` 或 `spawnedWorkspaceDir`），不再调用 `sessions.create`；Renderer 历史使用同一原生 key。
+
+设置页 Worktree 面板调用 `worktrees.list/restore/remove/gc` 管理原生登记的记录，不能管理模型通过 shell 自建的普通 Git worktree。
 
 原生 `worktrees.gc` 先返回后台任务回执。Main 在同一 Gateway 代次内仅按原任务 ID 观察，`completed` 才报告完成；断线或超时保留未知结果，不能重新提交替代清理。完整行为与验证边界见[Worktree](../features/workspace/worktree.md#恢复删除与清理)。
 
-原生绑定的权限变化通过 `sessions.patch` 同步，并使用 `expectedSessionId` / `expectedPermissionMode` 防止写入已替换的会话或覆盖查询后的权限变化；回执必须确认同一检出、权限和实际目录。采用子会话时保留原生 guarded/workspace/full 模式，未声明模式时使用 ask；无法表示的 read-only 模式不接入产品会话。事件关联先查询持久原生 key，保证首次打开之前和重启后仍可映射生命周期、问题和计划事件。设置移除保护必须读取完整会话目录，而不是会话摘要；任何仍被产品会话引用的检出均不允许移除，保护范围包含检出内的子目录。Worktree 会话暂不支持复制/分叉，避免副本共享原检出却没有托管所有权；删除所属会话前也必须先删除使用该检出或其子目录的其他会话。
+原生绑定的权限变化通过 `sessions.patch` 同步，并使用 `expectedSessionId` / `expectedPermissionMode` 防止写入已替换的会话或覆盖查询后的权限变化；回执必须确认同一检出、权限和实际目录。采用子会话时保留原生 guarded/workspace/full 模式，未声明模式时使用 ask；无法表示的 read-only 模式不接入产品会话。事件关联先查询持久原生 key，保证首次打开之前和重启后仍可映射生命周期、问题和计划事件。
+
+设置移除保护必须读取完整会话目录，而不是会话摘要；任何仍被产品会话引用的检出均不允许移除，保护范围包含检出内的子目录。Worktree 会话暂不支持复制/分叉，避免副本共享原检出却没有托管所有权；删除所属会话前也必须先删除使用该检出或其子目录的其他会话。
 
 设置中的 `showWorktreeCheckbox` 默认关闭，仅控制新会话输入框右上角的 Worktree 选项是否显示。显示后每次新会话默认不勾选，既有会话和侧边提问不提供该选项。勾选时 Main 先绑定产品会话的原生 key，再调用无初始消息的 `sessions.create(worktree: true)`，校验原生权限、检出身份与实际目录后更新产品 `cwd`，最后才提交首轮消息。创建结果不确定时保留原生绑定与错误状态，避免重新分配目录；准备过程中取消不会发送首轮消息，创建完成后使用原生会话删除接口回收；只有明确的删除回执才能移除产品记录，清理失败时保留检查入口。明确的创建失败经原生查询确认会话不存在后移除产品记录。
 
@@ -472,6 +438,7 @@ runParams → attemptParams → 当前 Agent → AgentLoopConfig 传递能力，
 streamAgentResponse 在提交终态之前，只对实际完成响应及当前响应内三个零计数
 （已执行调用、已提交片段、执行批次）询问恢复能力。原始 SDK 失败、响应身份和 usage
 保持原样；core 仅提交 stop/endTurn:false 的不可执行副本，并返回显式校验反馈。
+
 runLoop 先执行原生 prepareNextTurn、shouldStopAfterTurn、steering 与取消检查，再将
 反馈作为插件自有的隐藏 custom 消息提交，由原生 generic custom 投影进入模型请求。
 不使用需要 prompt retention 的 runtime-context 载体。停止钩子拒绝
@@ -483,10 +450,13 @@ runLoop 先执行原生 prepareNextTurn、shouldStopAfterTurn、steering 与取�
 诊断、refusal、异步片段已提交、取消或模型变更均不借此取得纠正机会。没有恢复能力
 或不符合当前响应零计数时，原生早期 abort fence 保持不变。
 
+#### 纠正预算和禁止重放
+
 两次格式预算只计 JSON/对象格式纠正，schema 失败仍由原生工具循环检测处理。该预算
 跨 loop/compaction/attempt 共享，并消费原有总 run budget；成功调用工具不清零。接管后删除旧的 outer-attempt 格式重试，不允许 empty-error、模型 fallback
 或 text-only 补全另给一组机会。后续断连、503、超时与取消沿真实原生失败及结算通道
 结束；主聊天与 subagent 共用接线，Swarm 不新增节点重试。
+
 已接管结果在既有 meta.modelFallbackStopReason 使用 tool_call_format_recovery，
 保留已有原因和精确 executionSettled 终态。答案仍受 before_agent_finalize 约束；
 撤回草稿不得重新交付或再请求补全。无正文/thinking-only 不要求 text phase；有正文
@@ -497,6 +467,7 @@ observation 的唯一拒绝记录读取版本 1 白名单。反馈包含同批�
 固定错误类别、参数 UTF-16 长度及能可靠取得的真实位置，不包含工具名、参数原文、
 异常消息或结构预览。分类使用原拒绝点的同步 validator 验证一次性 dummy，不修改或
 执行原调用；潜在大整数预处理时省略细因和位置，预算之外的调用不被指认为失败。
+
 提示明确整批均未派发、合法兄弟也须重新评估，以及此前已完成结果继续有效。
 反馈缺失或非法时保留原有通用提示，不改变准入、排除、次数或终态；主聊天与原生
 subagent 共用这条接线，不增加 Swarm 节点重试。尚无目标内网模型的配对实验结果
@@ -523,6 +494,7 @@ Goal coordinator 在原生目标仍 active 时协调续跑，保存产品 phase 
 自动后继的最终准入由原生现有生命周期锁和会话 writer 仲裁，检查精确结算前驱、Goal、
 排队输入与子任务回交 owner；接纳回执与累计次数在同一原生事务提交。Main 显示 Waiting
 不等于主 run 正在执行，原生变更触发同连接代次内重新核对。
+
 Goal 事件独立核对原生会话、run 与原生序列，连接回调核对当前 client 和 Main 连接代次，
 并保留 chat final 后的合法迟到事件；不要求原生刻意省略的内部 lifecycleGeneration。
 结构化操作的回执异常与过期不能当作未提交；完整契约及保留的暂停恢复补丁见
@@ -530,7 +502,9 @@ Goal 事件独立核对原生会话、run 与原生序列，连接回调核对�
 
 Plan-mode 通过原生 session extension、turn hook、工具和 scoped RPC 实现。Main 持久化计划文件及 handoff，批准后用原生 reset 建立实施上下文；这是产品交接，不是另一套原生恢复状态机。
 
-子任务查询分页读取 `sessions.list({ archived:'all' })`，按返回记录的 `spawnedBy` 精确筛选，并通过 `sessions.describe` 核对详情；`sessions.changed` 使产品快照失效。原生请求的 `spawnedBy` 过滤使用有保留期限的控制关系，不能用于完整历史发现，否则已结束子会话会被遗漏。OpenClaw 从 v2026.9.8 起已移除旧任务账本与 `tasks.*` RPC，原生会话投影统一拥有委派执行与控制归属。原生仍负责 admission、队列、required-child join 与完成通知。平级协作发送使用原生 sessions_send，产品只负责任务范围和回执。SubAgent 与平级协作有独立生命周期；上游 `agents team create` 是角色预设与原生委派配置，不能直接替代产品 room。跨助手原生委派须同时设计目标授权与助手创建、禁用、软删除的同步；当前不自动将受管 roster 扩展为 `subagents.allowAgents`。
+子任务查询分页读取 `sessions.list({ archived:'all' })`，按返回记录的 `spawnedBy` 精确筛选，并通过 `sessions.describe` 核对详情；`sessions.changed` 使产品快照失效。原生请求的 `spawnedBy` 过滤使用有保留期限的控制关系，不能用于完整历史发现，否则已结束子会话会被遗漏。OpenClaw 从 v2026.9.8 起已移除旧任务账本与 `tasks.*` RPC，原生会话投影统一拥有委派执行与控制归属。
+
+原生仍负责 admission、队列、required-child join 与完成通知。平级协作发送使用原生 sessions_send，产品只负责任务范围和回执。SubAgent 与平级协作有独立生命周期；上游 `agents team create` 是角色预设与原生委派配置，不能直接替代产品 room。跨助手原生委派须同时设计目标授权与助手创建、禁用、软删除的同步；当前不自动将受管 roster 扩展为 `subagents.allowAgents`。
 
 展示保留原生 queued、running、done、failed、interrupted、killed、timeout 的区别；interrupted 在产品中显示为已停止。缺少终态证据不能显示成功。详情核对精确原生 session key，再使用同一会话投影中的累计 usage/runtime、activeRunIds 和 lastRunId；新活动运行清除旧终态时间与错误。主模型结束或 UI busy 消失不证明 required child 已被父运行消费。结果不确定时先查原生会话与运行身份，不能重发整个子任务；它可能已经产生文件、网络或 spawn 副作用。
 
@@ -562,13 +536,136 @@ Gateway 环境由 Manager 按 generation 构造，包含系统 CA、依赖工具
 
 embedding host 关闭 Bonjour、shell snapshot、自重生和非产品 channel；不要开启没有配套工具资源的全局 offline 假设。摘要日志会压缩高频消息，完整事件诊断必须对照原生 JSON 日志，见[日志排障](../development.md)。
 
-## 10. 分层定位与验证
+## 10. Code Mode 工具编排
+
+运行设置中的 Code Mode 是原生 OpenClaw 工具编排能力，保存于现有
+`agentRuntimeSettings:v1` 配置记录的 `codeMode.mode`，取值为 `off / auto / on`。
+新配置默认 `off`，已保存的 v1 设置须符合完整当前结构，不再逐字段升级旧对象。界面保留
+“自动（待模型支持）”但禁止选择；已有显式 `auto` 值保留并如实显示，可改选开启或关闭。
+
+配置同步在完整配置、无模型配置、
+登录与退出路径中映射到 `tools.codeMode.enabled = false / "auto" / true`，并选择
+`executor: "quickjs"`。原生超时、输出、并发等其他 Code Mode 参数保留。
+
+`auto` 由实际模型目录的 `compat.codeMode` 能力标记决定，不根据模型名称自行猜测。
+应用投影的自定义模型可能没有该标记，因此自动模式不保证启用；需要验证这些模型时可
+选择开启。该设置控制嵌入式 OpenClaw 运行时，不控制外部 ACP 或 provider-native harness。
+本期界面管理全局启用方式，不提供逐模型覆盖编辑器；原生覆盖优先级由 OpenClaw 判定，
+认证范围同步保留已有 agent/model 覆盖。普通完整同步仍按应用的托管模型与助手配置重建，
+不能把手改生成配置当作持久的逐模型设置入口。
+
+模型生成的 JavaScript、工具目录/MCP 发现、结果暂存、`exec / wait`、取消及失败恢复
+均由 OpenClaw 管理；Main 不增加执行器或结果缓存。QuickJS 插件的显式禁用仍受尊重，
+执行器缺失或被禁用时原生运行失败，不自动降级到 Node VM。内部工具调用继续经过
+Gateway 权限、审批及 hooks；QuickJS 隔离本身不授予额外工具权限。
+
+可运行 `node scripts/test/verify-code-mode-runtime.mjs [runtime-directory]`，只读检查
+打包产物的 worker、WASM、文本编码模块，并实际验证执行、等待恢复、失败与取消。
+该检查无需模型凭据，不替代真实模型/MCP/审批端到端验证。
+
+### 已安装技能发现与会话中间结果
+
+原生 `skills_search` / `skills_read` 分别搜索有效的已安装技能和读取完整说明。
+提示词目录因预算省略技能时仍可搜索；禁用或禁止模型调用的技能不进入有效目录。
+有读取权限时搜索可使用有界正文，撤销读取权限后只保留元数据搜索；读取技能不授予
+执行技能所需工具的权限。Code Mode 使用同一目录的 `skills.search` / `skills.read`，
+Main 不建立第二份技能索引。
+
+交互式 Code Mode 的 `await store(key, value)` / `await load(key)` 可跨 cell、后续
+回复及 Gateway 重启复用当前原生会话中的小型 JSON 值；普通 JavaScript 变量和
+`results.save` 的当轮引用没有这一持久化语义。只有完成的 cell 提交缓冲写入，失败或
+取消的未完成 cell 不提交。单值上限 256 KiB、当前值总量上限 1 MiB；覆盖或删除不会
+抹除原生历史中的旧版本。此能力沿用 Code Mode 开关，没有独立的产品存储开关。
+
+`node scripts/test/verify-native-skill-state-runtime.mjs [runtime-directory]` 使用隔离
+Gateway、本机合成模型和与产品相同的 `stateDir/skills` 导入位置，检查上述发现、
+读取权限、跨轮/重启持久化、会话隔离及失败/取消行为。它通过正常聊天执行入口和
+精确 `executionSettled` 终态核对，不读取用户 transcript；合成模型不证明真实模型会
+主动选择技能或正确编排 Code Mode，也不替代 MXC 实机验收。
+
+## 11. 最终 system prompt 替换
+
+Main 在 `runtime/systemPromptReplacementRegistry.ts` 注册内置规则，先规范化换行，
+再依序处理最终 system prompt。规则与自定义条目一起写入
+`openclaw/state/system-prompt-replacements.json`，通过现有补丁 002 在模型相关提示词
+组装完成后、provider dispatch 前应用，不改变用户输入、历史消息或工具参数。
+内置 ID 优先于同名持久化条目；自定义规则随后执行，最多 100 条。
+
+### 内置规则的精确匹配范围
+
+当前内置规则删除精确相邻的 OpenClaw Mirror/Source 两行，以及整个
+`OpenClaw Control`、`Authorized Senders`、`Control UI Side Chat`、`Care` 章节。
+章节匹配独占一行的精确二级标题，包含其三级及更深子段落，到下一个一级或二级标题
+或正文末尾为止；后续 `Skills`、`UI Presentation`、`Control UI Embed`、`Messaging` 和 `Runtime Context`
+章节保留。
+
+身份声明说明核心能力由 `PRODUCT_NAME` 开发，OpenClaw 仅提供运行时；
+仅将 `You are in a WebChat direct conversation` 中的 WebChat 替换为产品名。
+提示词中的 `.openclaw/tmp/` 替换为 `.${PRODUCT_NAME}/tmp/`，保留后续文件名。
+
+另外只删除指定的 `Reasoning=stream` 指导整行、`/approve is user command` 整行和
+`Approval preview` 整行，保留 `allow-once` 提示和原生执行审批策略。
+
+### 旧内置规则的退休
+
+技能版本、版本刷新指导、Runtime 压缩、来源渠道路由、诊断指导和泛化品牌替换六项
+旧内置规则已撤销。合并持久化规则时过滤这六个旧 ID，启动同步将其移出规则文件，
+避免旧内置条目作为自定义规则继续执行；其它自定义条目及 Runtime 原文保持原样。
+相邻的注册表测试验证这些文本边界和持久化合并，不替代真实模型轮次验收。
+
+## 12. 记忆浏览与索引诊断
+
+记忆页按用户所选助手读取其工作区 Markdown 资料，默认 `main`，不维护第二份记忆库。
+选择切换使旧请求失效；助手禁用不隐藏其已有记忆，已删除助手不再作为新选择。
+显式绝对工作区可离线浏览；用户目录、相对路径和隐式工作区通过原生
+`agents.files.list` 取得实际路径，避免复制 OpenClaw 的默认身份和目录推导规则。
+
+搜索经 `memory.search` 返回原生结果与 `searchMode / stale / warning / action`。
+页面保留会话和额外目录来源的检索片段，只有通过工作区内规范记忆文件校验的命中
+可打开本地预览；片段来源不扩大文件读取权限。过期或失败诊断不能伪装成普通空结果。
+
+索引状态来自 `memory status --agent <agentId> --json`，区分语义就绪、仅关键词、过期、
+关闭、不可用与尚未确认；原生 `vector.index.state=complete` 且索引身份有效时，
+单独标为“索引完整、服务未探测”，可确认索引重建完成，但不证明实时服务健康。
+读取到状态或存在分块不证明语义向量可用；需检查
+`vector.semanticAvailable`、FTS、索引身份与同步错误。未执行深度探测时不宣称
+embedding 服务实时健康。原生诊断经过脱敏后展示，操作建议保留原始命令。
+
+强制重建继续使用原生 `memory index --force --agent <agentId>`，保留原生原子发布语义。
+退出码为零后还需检查关闭/不支持重建提示与重建后的索引状态。状态无法确认时返回
+失败；仅关键词、未能确认索引完整性或命令告警时明确提示，不能显示无条件成功。
+文档统计只统计 Markdown 文件，不等价于原生 SQLite 短期召回、整理信号或记忆条目数量。
+
+计划任务的记忆总开关表示配置意愿，原生任务的 enabled 和调度记录表示任务状态。
+启用总开关不覆盖原生暂停状态，插件 allow/deny/slot 限制仍生效。
+
+## 13. 外部客户端执行
+
+CLI `exec`、入站 ACP 和已实现的 app-server 子集共用 Main 原生准备/模型队列、执行预约及会话后端。Windows 控制台启动器只拥有 stdio，直接连接认证命名管道；POSIX 使用应用隔离桥。无需客户端专用开关或 task-token，`CODEX_HOME` 标记只用于身份，不能授权恢复。
+
+准入前先安装会话 MCP 租约和独占运行审批 owner，并固定原生 SID/incarnation。只有准备好的 ACP 审批 owner 声明交互式 `webchat`（`deliver:false`）；普通 CLI 保持非交互审批。新协议使用 `source='cli'` 精确映射，旧来源仅作只读历史定位。
+
+未盖章的非 lifecycle 进度通过有界 FIFO 等待，同连接的精确 session/incarnation 与 active-run 或 owning lifecycle-start 证明后才采用。匹配的整轮终态可界定更早进度，但执行结算不等待进度读取。
+
+结果未知时持久预约继续保留。可见 final、Stop ACK 和连接替换均不证明执行结束；缺少可信 continuation 或带 scope 资源的替换连接不触发重放。只有原生取消确认才能返回 interrupted 协议结果。完整客户端流程见[CLI / ACP](../features/integrations/agent-cli.md)，通用协议见[app-server](../features/integrations/app-server.md)。
+
+### 原生 registry 发布边界
+
+当前锁定运行时的运行记录是不可变 postimage。产品 owned-run 元数据通过原生 `mutateSubagentRuns` 事务发布，保持物理 owner/generation、sessionId、epoch、revision 和提交回执核对；不直接修改已发布记录，也不调用已移除的持久化 API。取消、终态与清理继续依赖同一原生 owner；相同 runId 的新 owner 不继承旧回执。未知提交不启动第二次执行。
+
+## 14. 可选插件执行
+
+Team 和 Workflow 通过原生公开 API 管理其执行，产品宿主只持有通用准入、Native 注册关联及清理围栏。业务的来源参与、自动汇总与控制协议分别见[Agent Team](../features/assistants/agent-team.md)和[Workflow](../features/workflow/swarm-workflow.md)，不能在 Core 重建调度器。
+
+## 15. 分层定位与验证
 
 运行诊断在 Adapter 的原始 Gateway 事件入口旁路采集安全字段，先保留身份再让执行 owner 清理 active turn；迟到终态可以补充诊断，但不能重新激活执行。只有 `executionSettled: true` 的 lifecycle end/error 确认整轮结果，attempt finishing 和 chat final 另行解释。停止请求保留显式用户来源，连接清理前保存活动运行快照；诊断监听失败与执行隔离。
 
 诊断查询只使用 `getGatewayClient()` 返回的已连接客户端，不能走会自动启动运行时的 `requestGateway()`。可选 `diagnostics.stability` 仅提取全局数量与丢失计数，不能归因为某轮故障。不发送 `/diagnostics` 或调用反馈上传。
 
-用户打开、切换运行或刷新诊断时自动采集日志，也可单独重试；采集期间禁止导出半成品。日志采集使用同一已连接客户端的 `logs.tail`，由原生端选择正确日志源；不使用 stdout 中的路径执行本地文件读取。Main 对本软件 Main/Cowork、运行服务输出及原生结构化 `logs.tail.file` 确认的文件逐块完整扫描、关联及闭合值投影。默认原生日文件枚举同目录同命名族，自定义来源仅扫描精确文件；文件扫描不受预览条数、尾部字节或总耗时限制。每来源完成状态、解析缺口、全部匹配类别计数和预览省略数独立记录；单次 I/O 超时、取消和源文件变化不得标为扫描完成。日志只作为提示证据，不参与权威终态分类；采集生成新快照，导出与界面预览一致。来源不可用、截断和省略均保留在包内，离线不会启动运行时。
+用户打开、切换运行或刷新诊断时自动采集日志，也可单独重试；采集期间禁止导出半成品。日志采集使用同一已连接客户端的 `logs.tail`，由原生端选择正确日志源；不使用 stdout 中的路径执行本地文件读取。Main 对本软件 Main/Cowork、运行服务输出及原生结构化 `logs.tail.file` 确认的文件逐块完整扫描、关联及闭合值投影。默认原生日文件枚举同目录同命名族，自定义来源仅扫描精确文件；文件扫描不受预览条数、尾部字节或总耗时限制。
+
+每来源完成状态、解析缺口、全部匹配类别计数和预览省略数独立记录；单次 I/O 超时、取消和源文件变化不得标为扫描完成。日志只作为提示证据，不参与权威终态分类；采集生成新快照，导出与界面预览一致。来源不可用、截断和省略均保留在包内，离线不会启动运行时。
 
 | 层   | 典型故障                            | 证据                                     |
 | ---- | ----------------------------------- | ---------------------------------------- |
@@ -580,73 +677,3 @@ embedding host 关闭 Bonjour、shell snapshot、自重生和非产品 channel�
 | 显示 | 原生有事件但 UI 缺失                | controller generation、history reconcile |
 
 回归入口为 Manager/ConfigSyncService 测试、Adapter 各领域测试、wire validator 测试及 `tests/openclaw/runtime/`。版本升级必须验证 pristine contracts 与最终打包产物，不能用旁边的 OpenClaw 开发副本代替。
-
-## 群组讨论原生执行
-
-agent-team 本地 Channel 调用公开 dispatchChannelInboundTurn。适配器为各成员恢复精确会话 pinning，校验 cwd / permissionMode / lifecycleRevision，并在公开投递入原生 transcript 前再次校验。原生调度拥有轮次及沉默语义，Main 不编排逐 Agent 调用。执行 admission receipt 无消息正文，并在重启后禁止自动重放。
-
-详见 [Agent Team 现行契约](../features/assistants/agent-team.md)。
-
-## 记忆浏览与索引诊断
-
-首页记忆页只读取 `main` 的工作区 Markdown 资料，不维护第二份记忆库。
-显式绝对工作区可离线浏览；用户目录、相对路径和隐式工作区通过原生
-`agents.files.list` 取得实际路径，避免复制 OpenClaw 的默认身份和目录推导规则。
-
-搜索经 `memory.search` 返回原生结果与 `searchMode / stale / warning / action`。
-页面保留会话和额外目录来源的检索片段，只有通过工作区内规范记忆文件校验的命中
-可打开本地预览；片段来源不扩大文件读取权限。过期或失败诊断不能伪装成普通空结果。
-
-索引状态来自 `memory status --agent main --json`，区分语义就绪、仅关键词、过期、
-关闭、不可用与尚未确认；原生 `vector.index.state=complete` 且索引身份有效时，
-单独标为“索引完整、服务未探测”，可确认索引重建完成，但不证明实时服务健康。
-读取到状态或存在分块不证明语义向量可用；需检查
-`vector.semanticAvailable`、FTS、索引身份与同步错误。未执行深度探测时不宣称
-embedding 服务实时健康。原生诊断经过脱敏后展示，操作建议保留原始命令。
-
-强制重建继续使用原生 `memory index --force --agent main`，保留原生原子发布语义。
-退出码为零后还需检查关闭/不支持重建提示与重建后的索引状态。状态无法确认时返回
-失败；仅关键词、未能确认索引完整性或命令告警时明确提示，不能显示无条件成功。
-文档统计只统计 Markdown 文件，不等价于原生 SQLite 短期召回、整理信号或记忆条目数量。
-
-计划任务的记忆总开关表示配置意愿，原生任务的 enabled 和调度记录表示任务状态。
-启用总开关不覆盖原生暂停状态，插件 allow/deny/slot 限制仍生效。
-
-## Generic external runtime
-
-General CLI `exec` and inbound ACP share Main's native preparation/model queues
-and external execution reservations. They pin native session ID/incarnation and
-require exact whole-run lifecycle or wait receipts; display finals and Stop ACKs
-are insufficient. Session MCP leases and exclusive per-run approval presentation
-are installed before admission. Unknown outcomes retain durable reservations;
-unprovable yielded continuations and replacement connections with scoped resources
-do not trigger task replay. See [Agent CLI / ACP](../features/integrations/agent-cli.md).
-
-Unstamped non-lifecycle progress uses a bounded FIFO and the same connection's
-exact session/incarnation plus active-run or owning lifecycle-start proof. Matching
-whole-run terminals bound and can prove earlier queued progress, while execution
-settlement never waits for progress reads.
-Only a prepared ACP approval owner declares the internal interactive `webchat`
-surface with `deliver:false`; ordinary CLI runs retain non-interactive approvals.
-
-CLI, ACP and the implemented Codex app-server subset use one default-available
-entry, authenticated local bridge, session backend and native execution path.
-There is no client-specific enable switch, task-token requirement or second
-execution authority. The Windows console launcher owns stdio and connects to the
-named pipe directly; POSIX uses the application's isolated bridge entry. The
-optional app-server CODEX_HOME marker is identity-only and cannot authorize resume.
-All new protocols use the same source='cli' mappings and exact execution receipts;
-older source namespaces remain read-only historical mappings. Only confirmed native
-cancellation can produce an interrupted protocol result; unknown outcomes remain
-reserved and cannot be replayed. Client-specific instructions belong to the frontend
-examples. See [CLI / ACP / app-server](../features/integrations/agent-cli.md).
-
-### 来源参与与总结的原生路由
-
-含组织者的群由公开 `runGroupThread` 调度，来源回合经 `dispatchReplyWithBufferedBlockDispatcher` 使用 webchat/direct/inter_session，保持原 canonical delivery；普通成员仍走 Channel。最终 dispatch 边界重新校验原生身份并恢复 expectedExistingSessionId/pinExpectedExistingSession。关联群成员在新批次预留前按精确原生身份继承来源当前的会话执行策略，dispatch 配置继承来源工具、模型等助手设置；不复制角色或历史。群内来源和讨论结束后的自动汇总沿用原会话工具与执行设置，不添加群聊专属只读白名单或 disableTools。汇总交接允许继续原有授权范围内的未完成任务，工具运行仍归原生 whole-run 结算。未验证 ACP/runtime 与不能安全继承的 creation-owned sandbox 继续拒绝。
-
-公开来源发言镜像到 room-owned 原生历史，并保存 speaker 身份，保证源历史删除后群公开时间线仍可读。独立 summary receipt 固定 source incarnation、批次和输出 entryId，支持先于 admission 的取消墓碑及 exact AbortSignal；旧 owner 中断不盲重跑。见[验证边界](../features/assistants/agent-team.md)。
-
-### 目标版本 registry 发布边界
-
-v2026.10.7 的运行记录仍是不可变 postimage。产品 owned-run 元数据通过原生 `mutateSubagentRuns` 事务发布，保持物理 owner/generation、sessionId、epoch、revision 和提交回执核对；不直接修改已发布记录，也不调用已移除的持久化 API。取消、终态与清理继续依赖同一原生 owner；相同 runId 的新 owner 不继承旧回执。未知提交不启动第二次执行。

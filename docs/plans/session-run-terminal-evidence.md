@@ -1,18 +1,22 @@
 # 产品运行计时的终态证据收敛
 
-状态：未实施。2026-10-24 的 Team/Swarm 发送复查中发现，独立于本轮发送准入修复。
+状态：未实施。2026-10-24 发现；整理时复核 `src/main/ipc/cowork/sessions.ts`，下述后备规则仍存在。本文记录产品计时的实现缺口，不改变[执行引擎](../architecture/05-agent-engine.md)要求的终态权威。
 
 ## 已确认的缺口
 
-`src/main/ipc/cowork/sessions.ts` 的 `reconcileRuntimeStatus` 仍有历史后备规则：
-已接受计时在两次 known-idle 后，或原生 root 改变时，可以按产品状态结束为 completed/failed。
-Stop ACK 和 yielded 后的空闲也可能参与该收敛。现有 `sessions.test.ts` 明确覆盖这些规则，
-因此它们不是新的定点查询或 Goal 重放代码引入的行为。
+`src/main/ipc/cowork/sessions.ts` 的 `reconcileRuntimeStatus` 仍包含以下后备结算：
 
-这些规则不构成原生 whole-run 证据。不能用产品计时、空闲或本地展示 final 证明执行成功。
-`SessionRunBegin` 本轮改变的是零时长 aborted restart checkpoint 的查询方式；该启动标记
-不是一次实际运行的终态。Goal 历史重放的清理退役本次重复操作的等待和展示投影，
-不写入原生 `executionSettled` 回执，也不能作为旧执行完成证据。
+| 分支                      | 当前行为                                                                              | 缺少的证据                                              |
+| ------------------------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| 已接纳的计时              | 两次 known-idle 或 root 改变时，可按产品状态结束为 completed/failed                   | 原执行的精确整轮终态                                    |
+| Stop / yield 后变空闲     | 可能参与上述状态收敛                                                                  | Stop ACK / 空闲均不证明执行已结算                       |
+| 未知准入或缺 `acceptedAt` | 允许 `agent.wait` 省略 `runId`，以 `ok/error` 或带 `endedAt` 的 `timeout` 判 terminal | 精确 run 与 `executionSettled:true`，并排除普通观察超时 |
+
+`sessions.test.ts` 明确覆盖其中的旧规则；它们不是定点查询或 Goal 重放引入的新行为。
+只移除两次 idle 分支不足以满足目标契约，wait 后备与 root 替换也必须同时收敛。
+
+这些规则不构成原生 whole-run 证据。不能用产品计时、空闲、本地展示 final、启动 checkpoint
+或 Goal 历史重放的展示清理证明执行成功。发送准入和产品计时结算应分别验证。
 
 ## 实施要求
 

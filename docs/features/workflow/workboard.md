@@ -2,26 +2,26 @@
 
 ## 范围
 
-当前运行时版本由 `package.json.openclaw.version` 锁定（v2026.10.7），保留插件和既有启用策略。
+当前运行时版本由 `package.json.openclaw.version` 锁定，保留插件和既有启用策略。
 原生卡片不暴露 taskId；停止和执行身份统一使用 sessionKey/runId。没有关联原生会话的卡片不提供停止入口，也不调用旧任务账本。
 四栏只负责展示；OpenClaw 继续拥有任务、存储、认领、调度和执行生命周期。
 
 新建任务只需标题和说明；优先级、标签、助手和历史会话设置折叠在“更多设置”。
 triage、scheduled、review、blocked 以卡片上的简短说明解释等待原因。
-“怎么使用”改为简短操作说明，不再要求用户学习九个原生阶段。
+“怎么使用”提供简短操作说明，不要求用户学习全部原生阶段。
 
 ## 已核对的接口
 
-| 桌面操作           | 上游接口 / 约束                                                     |
-| ------------------ | ------------------------------------------------------------------- |
-| 加载               | cards.list、boards.list；返回 cards、boards、statuses               |
-| 创建 / 编辑        | cards.create / update；编辑携带 expectedUpdatedAt                   |
-| 状态操作           | cards.move；Main 拒绝活动执行，校验并转发界面所见 expectedUpdatedAt |
-| 启动               | cards.start；返回 card、sessionKey、runId                           |
-| 批量启动           | Main 先补默认助手并将无未来排期、无依赖的 todo/backlog 推进 ready，再调用 cards.dispatch           |
-| 停止               | sessions.list、chat.abort，再对 cards.update 做版本校验             |
-| 备注 / 归档 / 删除 | cards.comment / archive / delete                                    |
-| 更新通知           | plugin.workboard.changed；收到事件后刷新原生快照                    |
+| 桌面操作           | 上游接口 / 约束                                                                          |
+| ------------------ | ---------------------------------------------------------------------------------------- |
+| 加载               | cards.list、boards.list；返回 cards、boards、statuses                                    |
+| 创建 / 编辑        | cards.create / update；编辑携带 expectedUpdatedAt                                        |
+| 状态操作           | cards.move；Main 拒绝活动执行，校验并转发界面所见 expectedUpdatedAt                      |
+| 启动               | cards.start；返回 card、sessionKey、runId                                                |
+| 批量启动           | Main 先补默认助手并将无未来排期、无依赖的 todo/backlog 推进 ready，再调用 cards.dispatch |
+| 停止               | sessions.list、chat.abort，再对 cards.update 做版本校验                                  |
+| 备注 / 归档 / 删除 | cards.comment / archive / delete                                                         |
+| 更新通知           | plugin.workboard.changed；收到事件后刷新原生快照                                         |
 
 上游源码入口：`extensions/workboard/src/gateway.ts`、`gateway-workspace-methods.ts`、
 `gateway-helpers.ts`、`dispatcher.ts`、`store-core.ts`、`store-normalizers.ts`，

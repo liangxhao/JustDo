@@ -2,16 +2,29 @@
 
 本目录只维护当前已接入的用户流程、实现契约和已知限制。仅仍需记录的具体未实施需求见[需求索引](../plans/README.md)，验证边界随对应功能维护。尚未完成真实环境验收的功能仍保留限制，不能因移出计划目录而视为验收通过。
 
-[启动分流与历史升级](app/startup-and-history-upgrade.md) 维护首次安装、历史升级、普通启动、共用引导与恢复事务。
+## 应用导航与启动
 
-## 对话与助手
+| 文档                                                           | 维护范围                                             |
+| -------------------------------------------------------------- | ---------------------------------------------------- |
+| [导航、会话列表与设置外壳](app/navigation-and-session-list.md) | 左侧导航、完整目录与按需摘要、来源组、宽度和设置草稿 |
+| [启动分流与历史升级](app/startup-and-history-upgrade.md)       | 首装、历史导入、普通启动、共用引导与恢复事务         |
 
-[MCP Apps](chat/mcp-apps.md) 维护标准应用界面、手动入口、原生提问、文件和上下文交互的桌面宿主契约。
-[消息中的独立网页](chat/webpage-embeds.md) 维护 embed 短码、普通联网 HTML、精确托管认证与浏览器代理契约。
-[消息文件链接](chat/message-file-links.md) 维护保守路径识别、Markdown 文件输出约定、点击时当前工程解析及侧栏预览。
-[MCP App 引用接入](plugins/mcp-app-references.md) 维护通用侧栏引用、可选内容关联及历史回执的插件边界。
-[draw.io 离线绘图](chat/drawio-offline.md) 维护默认内置的编辑器、资源打包和本地导出流程。
-[draw.io 当前画布](chat/drawio-current-canvas.md) 维护稳定图表身份、侧栏复用、连续修改、撤销和确认结果恢复。
+## 对话与交互内容
+
+| 文档                                              | 维护范围                                                 |
+| ------------------------------------------------- | -------------------------------------------------------- |
+| [MCP Apps](chat/mcp-apps.md)                      | 标准应用界面、手动入口、原生提问、文件与上下文的桌面宿主 |
+| [消息中的独立网页](chat/webpage-embeds.md)        | embed 短码、联网 HTML、托管认证与浏览器代理              |
+| [消息文件链接](chat/message-file-links.md)        | 保守路径识别、输出约定、点击时工程解析与侧栏预览         |
+| [交互式回答](chat/interactive-answers.md)         | 原生卡片、可选组件、选择回到草稿与失败恢复               |
+| [draw.io 离线绘图](chat/drawio-offline.md)        | 编辑器、离线资源打包与本地导出                           |
+| [draw.io 当前画布](chat/drawio-current-canvas.md) | 图表身份、连续修改、撤销与确认结果恢复                   |
+
+标准 App 宿主管理视图与权限；[MCP App 引用接入](plugins/mcp-app-references.md)管理通用引用协议；
+draw.io 两篇只维护自己的资源与编辑业务。三者不互相复制完整契约。
+消息、Thinking、工具、音视频与 Review 的渲染链路统一在[聊天渲染架构](../architecture/15-chat-rendering.md)。
+
+## 运行与助手
 
 | 领域 | 现行文档                                                                                        | 分工                                                       |
 | ---- | ----------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
@@ -19,11 +32,8 @@
 | 对话 | [运行参数](chat/agent-runtime-settings.md) / [权限管理](chat/openclaw-permission-management.md) | 容量与超时调优、执行授权分别管理                           |
 | 对话 | [Goal 模式](chat/goal-mode.md)                                                                  | 自动续跑、原生身份校验、不确定发送与操作回执恢复           |
 | 对话 | [会话诊断](chat/session-diagnostics.md)                                                         | 本地证据、日志扫描、结束原因与脱敏导出                     |
-| 对话 | [交互式回答](chat/interactive-answers.md)                                                       | 原生卡片、可选组件、选择回到草稿与失败恢复                 |
 | 助手 | [长期助手与任务内协作](assistants/assistants-and-collaboration.md)                              | 角色档案、助手切换、agent-team 与原生 SubAgent 边界        |
 | 助手 | [Agent Team](assistants/agent-team.md)                                                          | 协作 Graph、群组讨论、组织者、资源设置、待发输入及执行恢复 |
-
-消息、Thinking、工具、音视频与 Review 的完整渲染链路统一在[聊天渲染架构](../architecture/15-chat-rendering.md)，不另用旧渲染计划维护现状。
 
 ## 工作区与工作流
 
@@ -57,7 +67,8 @@ Swarm 主会话管理已并入主说明；批次是独立的扩展契约。Workb
 | 模型       | [模型管理](models/model-management.md)                                 | 语言、决策、语音、图像与视频的目录和选择                 |
 | 模型       | [语音与本地转录](models/local-tts.md)                                  | 输入、朗读、附件转录与离线模型                           |
 | 模型       | [Jev / TypeSafe](models/jev-integration.md)                            | 决策模型与原生 decision_evaluate 的 provider 接入        |
-| 插件       | [内置技能](plugins/bundled-skills.md)                               | 技能源文件、运行时投影与维护边界                         |
+| 插件       | [内置技能](plugins/bundled-skills.md)                                  | 技能源文件、运行时投影与维护边界                         |
+| 插件       | [MCP App 引用接入](plugins/mcp-app-references.md)                      | 通用侧栏引用、稳定内容关联、紧凑历史回执与恢复边界       |
 | 插件       | [Plugin Hub](plugins/plugin-hub-experience.md)                         | 列表、来源、导入、市场与受保护扩展                       |
 | 账号       | [登录 SDK 模板](integrations/login-sdk-template.md)                    | 已实现的 LoginService 和 SDK 接缝；真实 SDK 尚未接入     |
 | 账号       | [内置模型认证](integrations/authentication-builtin-model-lifecycle.md) | mtoken/JWT、模型发现、轮换与退出清理                     |
@@ -66,3 +77,11 @@ Swarm 主会话管理已并入主说明；批次是独立的扩展契约。Workb
 | app-server | [统一 app-server](integrations/app-server.md)                          | Chrome 与 CLI 共用协议引擎，保留能力和生命周期边界       |
 
 账号 UI/SDK、模型换证与开发调用步骤的所有者不同：先从上表阅读相应实现，再从[开发接入索引](../developer-integration/README.md)查接口和示例。内网模型、企业网页及冷历史恢复的验证边界分别维护在插件、浏览器和数据存储说明中。
+
+## 文档归属
+
+- `architecture/` 维护跨进程边界、权威来源、安全与通用基础设施；本目录维护用户流程和领域契约。
+- 每项契约只在所属领域维护完整定义，其他文档链接到该定义。独立的授权与生命周期不能为减少文件而合并。
+- 验证段落说明测试入口、证据范围和当前限制；历史测试数量、逐轮审查和修复流水不作为现行契约。
+  运行时升级证据见对应 `openclaw-upgrades/` 记录，未验收不因整理或删除计划而变成通过。
+- 仍需实施的具体需求归 `plans/`；已完成或撤回内容回收到所属现行文档后删除，历史由 Git 追溯。

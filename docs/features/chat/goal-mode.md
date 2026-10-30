@@ -9,6 +9,7 @@ Main 的 GoalContinuationCoordinator 只协调续跑、等待和停止，不保�
 只有精确原生整轮 `executionSettled: true` 终态才允许安排下一轮；chat final、单次
 attempt 结束、Stop ACK 或空闲投影不能替代执行结算。目标仍 active、没有停止锁时，
 Main 准备权限并再次读取原生 Goal，核对 goalId、状态和会话 sessionId/lifecycleRevision。
+
 准备期间暂停、完成或预算耗尽时不发送；准备期间目标身份或原生会话身份被替换时停止自动续跑，等待用户
 重新审视。相同 goalId 的文字编辑使用准备后的最新 objective。
 
@@ -16,35 +17,49 @@ Main 准备权限并再次读取原生 Goal，核对 goalId、状态和会话 se
 expectedExistingSessionLifecycleRevision，在原生准入时继续限制会话身份。
 合成续跑提示不写入原生用户消息历史。ACK 必须包含原运行 ID 和 accepted/in_flight 状态。
 
+### 原生最终接纳与累计额度
+
 自动请求还携带闭合的 `goalContinuation` 条件：goalId、精确 predecessorRunId、
 automatic=true 和当前 maxAutomaticContinuations。补丁 031 在原生最后接纳位置重新核对
 相同前驱的整轮结算、Goal、原生实例、主运行、排队输入及原生子任务回交 owner。
+
 普通主回合直接 final 也可能仍有回交，因此不能仅检查 yielded 或 hasActiveSubagentRun。
 待提交的 requester settle wake 也占有回交责任；回交转为新主运行期间不能出现准入空窗。
 
+### 明确延后与退避
+
 明确的 GOAL_CONTINUATION_DEFERRED 是提交前拒绝，释放候选运行。暂态拒绝显示 Waiting，
 原生变更或既有 2/5/10/30/60 秒封顶退避触发再次核对；清理 lease 释放可能没有额外通知。
-每次仍携带原前驱和实例条件走完整最终准入，定时器不能替代原生授权；
-额度耗尽停止自动推进，Goal 非 active 则按原生状态显示。它不属于未知发送，不能按网络超时
+每次仍携带原前驱和实例条件走完整最终准入，定时器不能替代原生授权；额度耗尽停止自动推进，Goal 非 active 则按原生状态显示。它不属于未知发送，不能按网络超时
 处理。原生在同一会话写事务中记录最后接纳回执并增加 goal.continuationTurns；相同候选重放
 保留原生幂等响应，已完成运行可返回 status=ok 的终态结果，精确接纳回执可从
 sessions.describe 的 lastAccepted 核对，不重复执行或累计；相同前驱不能接纳另一候选。
 Main 使用已接纳的累计次数，权限准备、拒绝、重连
 或内存清理均不重置或增加额度。0 表示禁止自动追加，显式手动继续沿用原有用户操作语义。
 
+### 发送结果未知
+
 发送后超时、回执失配等结果不明确的情况保留同一 runId 和 Main 跟踪，标记
 identityPending，不清理运行、不生成新 ID 重发。现有恢复链通过精确 `agent.wait` 核对；
-缺失/失配 runId、无终态时间的 timeout 和读取失败都保留未知状态。确认整轮结算后才按
+缺失/失配 runId、无终态时间的 timeout 和读取失败都保留未知状态。
+
+确认整轮结算后才按
 最新 Goal 决定是否另起一轮。明确未发送或原生提交前拒绝仍可按原有退避重试；停止锁和
 连接代次变化始终使迟到结果失效。
 终态触发的重试始终携带该终态的原生 sessionId，以及该运行已知的 lifecycleRevision；
-查询失败、重复退避和停止失败后的恢复都保留这些约束。原生 reset 可沿用 sessionId，
+查询失败、重复退避和停止失败后的恢复都保留这些约束。
+
+原生 reset 可沿用 sessionId，
 因此已知 revision 不能被重试时的新查询结果覆盖。
 
-OpenClaw 10.7 的 `tool_execution` 工具超时可能将原生会话投影为 `interrupted`。
+### 工具超时后的后继轮
+
+原生 `tool_execution` 工具超时可能将原生会话投影为 `interrupted`。
 同一 active Goal 在精确整轮结算后仍按既有退避自动续跑，无需人工继续；它创建带上述
 条件的新后继 run，不重放原 run 或未知工具输入。后继轮提示先核对权威状态和现有结果，
-不得盲目重复可能产生副作用的调用。超时阶段与 interrupted 展示本身均不授权续跑，也
+不得盲目重复可能产生副作用的调用。
+
+超时阶段与 interrupted 展示本身均不授权续跑，也
 不能证明工具副作用已回滚。原生 `safeToolsRequired` 的专用恢复路径不等同于普通 Goal
 后继轮，不能宣称这里自动具备只读工具限制；实际模型能否正确核对结果仍需端到端验收。
 
@@ -81,6 +96,7 @@ flowchart TD
 
 精确 `end + executionSettled:true + yielded:true + livenessState:paused + stopReason:end_turn`
 且没有失败、取消或超时，表示当前主 run 结算并等待原生交接，Main 显示 Waiting。
+
 error/aborted/cancelled/timed_out/timeoutPhase 不能借由残留 yielded 标记变成正常等待。
 子任务仍活动时不伪造主 run 的 Running；原生完成通知和实际主 run 接纳继续由 OpenClaw 持有。
 
@@ -92,6 +108,7 @@ error/aborted/cancelled/timed_out/timeoutPhase 不能借由残留 yielded 标记
 重连恢复和 sessions.changed 共用合并核对。同一连接代次可以再次检查后续变更，
 不会因为第一次只发现子任务而永远停住。sessions.describe 的 goalContinuation 观察只投影
 原生结算前驱和最后接纳回执；缺少精确前驱证据时保持 Waiting，idle/list 活动位不授权启动。
+
 用户输入在 pendingTurnStarts 登记时立即递增会话决策 epoch；每次异步返回、catch 和 finally
 都校验原 owner，旧退避不能覆盖新输入，也不能释放后继决策的 lane。
 
@@ -100,10 +117,11 @@ error/aborted/cancelled/timed_out/timeoutPhase 不能借由残留 yielded 标记
 Goal 在主聊天 UI 结束后仍需接收迟到的工具和生命周期事件，因此保留独立的、有界于当前
 受管会话的运行身份记录。事件必须匹配原生 sessionKey、sessionId、runId 和单调递增的
 原生 agent sequence；WS frame 序号或本地补出的序号不能授权
-Goal 变更。Main 拥有精确后继运行时才可替换记录；chat final 后只接受已准入运行的后续
+Goal 变更。
+
+Main 拥有精确后继运行时才可替换记录；chat final 后只接受已准入运行的后续
 事件。旧会话、旧代次、其他运行、重复事件和身份缺失事件不得改变 Goal 或触发续跑。
-当前锁定 OpenClaw 的内部 lifecycleGeneration 不序列化到公共事件，不能将其作为必填字段；
-提供该字段时仍检查一致性。连接回调核对当前 client、Main 连接代次和停止标记，拒绝
+当前锁定 OpenClaw 的内部 lifecycleGeneration 不序列化到公共事件，不能将其作为必填字段；提供该字段时仍检查一致性。连接回调核对当前 client、Main 连接代次和停止标记，拒绝
 旧连接迟到事件；清除/删除会话及连接清理同时淘汰运行身份记录。
 
 ## 用户操作与回执恢复
@@ -126,7 +144,7 @@ INVALID_REQUEST 结合结构化 details.reason 分类。receipt-invalid 和未�
 限制。上游支持同等语义并通过原生回归前保留此补丁。
 
 自动化覆盖发送后 ACK 丢失、失配回执、暂停/替换准备竞态、原生事件隔离、迟到完成回执
-和过期操作恢复。合成测试不替代真实模型下的暂停、停止清理、断连和重启组合验收。
+和过期操作恢复。
 
 ## 当前验证边界
 
@@ -134,4 +152,4 @@ INVALID_REQUEST 结合结构化 details.reason 分类。receipt-invalid 和未�
 
 ## 实现核对入口
 
-[续跑协调与身份检查](../../../src/main/openclaw/goals/goalContinuationCoordinator.ts)；[共享状态与回执合约](../../../src/shared/cowork/sessionGoal.ts)；[协调回归用例](../../../src/main/openclaw/goals/goalContinuationCoordinator.test.ts)；[10.7 工具超时自动续跑](../../../src/main/openclaw/goals/goalContinuationCoordinator.toolTimeout.test.ts)。新增工具超时用例在本轮实际通过：接入真实事件准入，验证新条件后继、未结算/旧身份/重复终态拒绝及未知 ACK 不重发；其余测试的本轮结果以[验证记录](../../openclaw-upgrades/v2026.10.7/validation.md)为准。
+[续跑协调与身份检查](../../../src/main/openclaw/goals/goalContinuationCoordinator.ts)；[共享状态与回执合约](../../../src/shared/cowork/sessionGoal.ts)；[协调回归用例](../../../src/main/openclaw/goals/goalContinuationCoordinator.test.ts)；[10.7 工具超时自动续跑](../../../src/main/openclaw/goals/goalContinuationCoordinator.toolTimeout.test.ts)。工具超时用例接入真实事件准入，覆盖新条件后继、未结算/旧身份/重复终态拒绝及未知 ACK 不重发；锁定产物的执行结果以[验证记录](../../openclaw-upgrades/v2026.10.7/validation.md)为准。

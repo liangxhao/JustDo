@@ -1,7 +1,7 @@
 # 消息文件链接识别与侧栏打开
 
-2026-10-27 已接入消息识别、Main 文件准备和所属工作区侧栏打开。
-支持范围采用经确认的保守规则；验证边界见第 5 节，调研依据见附录。
+消息识别、Main 文件准备和所属工作区侧栏打开使用同一条文件预览链路。
+支持范围采用经确认的保守规则；验证边界见第 5 节。
 
 ## 1. 用户行为与支持范围
 
@@ -12,19 +12,19 @@
 首期采用“显式链接完整支持，裸路径保守识别”的方式。不通过“某某文件”等提示词猜测
 路径，也不把文件存在当作路径边界正确的证明。
 
-| 输入 | 首期行为 |
-| --- | --- |
-| `某某文件：C:/Users/xxx/dddd/book.pdf` | 自动链接完整路径；中文冒号属于合法起点 |
-| `某某文件：C:\Users\xxx\dddd\book.pdf` | 同上，保留原始反斜杠 |
-| `某某文件：C:/Users/xxx/dddd/My book.pdf` | 保持文字，不推断带空格的裸路径 |
-| `C:/dir/a.pdf backup.pdf` 或 `C:/dir/a.pdf extra text` | 整个候选语句区间不链接，不打开被截短的前半段 |
-| `[book.pdf](C:/Users/xxx/dddd/book.pdf)` | 文件链接；普通 Markdown 目标不要求尖括号 |
-| `[My book.pdf](<C:/Users/xxx/dddd/My book.pdf>)` | 文件链接；明确目标完整保留空格 |
-| `file:///C:/Users/xxx/dddd/My%20book.pdf` | 文件链接，按 URL 语义转换一次 |
-| `[报告](<./output/季度 report.pdf>)`、`[报告](../output/report.pdf)` | 文件链接，以用户点击时当前工程的有效根目录解析，由 Main 核对 |
-| 完整行内代码中的简单 Windows 绝对路径或标准文件 URL | 可链接，保留代码外观；整个 code token 必须是一个目标 |
-| 裸 POSIX、普通相对路径、单独文件名、引号内路径、代码语境内的命令或行号后缀 | 保持文字；不推测、不从排除区间内部重新匹配 |
-| 代码块、公式、图片目标、已有链接文字 | 不增加文件链接 |
+| 输入                                                                       | 首期行为                                                     |
+| -------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| `某某文件：C:/Users/xxx/dddd/book.pdf`                                     | 自动链接完整路径；中文冒号属于合法起点                       |
+| `某某文件：C:\Users\xxx\dddd\book.pdf`                                     | 同上，保留原始反斜杠                                         |
+| `某某文件：C:/Users/xxx/dddd/My book.pdf`                                  | 保持文字，不推断带空格的裸路径                               |
+| `C:/dir/a.pdf backup.pdf` 或 `C:/dir/a.pdf extra text`                     | 整个候选语句区间不链接，不打开被截短的前半段                 |
+| `[book.pdf](C:/Users/xxx/dddd/book.pdf)`                                   | 文件链接；普通 Markdown 目标不要求尖括号                     |
+| `[My book.pdf](<C:/Users/xxx/dddd/My book.pdf>)`                           | 文件链接；明确目标完整保留空格                               |
+| `file:///C:/Users/xxx/dddd/My%20book.pdf`                                  | 文件链接，按 URL 语义转换一次                                |
+| `[报告](<./output/季度 report.pdf>)`、`[报告](../output/report.pdf)`       | 文件链接，以用户点击时当前工程的有效根目录解析，由 Main 核对 |
+| 完整行内代码中的简单 Windows 绝对路径或标准文件 URL                        | 可链接，保留代码外观；整个 code token 必须是一个目标         |
+| 裸 POSIX、普通相对路径、单独文件名、引号内路径、代码语境内的命令或行号后缀 | 保持文字；不推测、不从排除区间内部重新匹配                   |
+| 代码块、公式、图片目标、已有链接文字                                       | 不增加文件链接                                               |
 
 新增行为适用于聊天正文的流式显示和历史重载，以及复用该正文组件的消息阅读面；
 文件内容预览、工具原文和嵌入网页不因此增加磁盘访问。没有文件打开能力的独立阅读器
@@ -104,10 +104,10 @@
 
 ### 2.4 只在一个边界转换 URI
 
-| 来源类型 | 转换规则 |
-| --- | --- |
-| `native-path` | 从原始消息保留原生路径；不进行 URI 解码 |
-| `file-url` | 保留编码 URL，Main 使用标准 URL 解析及 `fileURLToPath` 转换 |
+| 来源类型       | 转换规则                                                                         |
+| -------------- | -------------------------------------------------------------------------------- |
+| `native-path`  | 从原始消息保留原生路径；不进行 URI 解码                                          |
+| `file-url`     | 保留编码 URL，Main 使用标准 URL 解析及 `fileURLToPath` 转换                      |
 | `markdown-uri` | 保留 Markdown 解析后的 URI destination，Main 对路径解码一次再按盘符/相对规则解析 |
 
 显式 URI 内的字面百分号和井号使用 `%25`、`%23`。原生复杂字符不通过裁剪或解码猜测。
@@ -154,13 +154,13 @@ preview/shell 领域通过 `FilePreviewIpc.PrepareMessageLink` 和
 `shell.prepareMessageFileLink(request)` preload 方法准备文件，
 请求只发送目标及必要上下文，不发送整段消息或显示标签。
 
-| 请求字段 | 含义 |
-| --- | --- |
-| `sourceKind` | `native-path` / `file-url` / `markdown-uri`，使用共享常量 |
-| `target` | 对应来源的原始路径或编码 URI |
-| `workspaceSessionId?` | 相对目标必填；点击所属工作区当前工程绑定的产品会话标识，不取消息来源会话 |
-| `expectedProjectRoot?` | 点击时捕获的当前工程有效根目录，用于与 Main 权威目录比较 |
-| `navigationSuffix?` | 仅兼容已准入 HTML 的独立 query/hash；普通文件拒绝 |
+| 请求字段               | 含义                                                                     |
+| ---------------------- | ------------------------------------------------------------------------ |
+| `sourceKind`           | `native-path` / `file-url` / `markdown-uri`，使用共享常量                |
+| `target`               | 对应来源的原始路径或编码 URI                                             |
+| `workspaceSessionId?`  | 相对目标必填；点击所属工作区当前工程绑定的产品会话标识，不取消息来源会话 |
+| `expectedProjectRoot?` | 点击时捕获的当前工程有效根目录，用于与 Main 权威目录比较                 |
+| `navigationSuffix?`    | 仅兼容已准入 HTML 的独立 query/hash；普通文件拒绝                        |
 
 成功只返回 canonical 绝对原生路径及允许的 HTML 导航后缀；
 失败返回有限类别，如目标无效、未选择工程、工程变化、文件不存在、不是普通文件或准备失败。
@@ -202,28 +202,7 @@ HTML 仍遵循既有浏览器偏好与新建标签语义，不承诺按原文件
 DOMPurify 继续拦截直接 `file:` 导航。仅由识别器生成受限文件 metadata，
 原始 HTML 伪造 data 属性不获得打开能力。保持正常选择、复制、键盘聚焦和 Enter 激活。
 
-## 4. 实现入口
-
-| 位置 | 职责 |
-| --- | --- |
-| `components/markdown/markdownPathLinks.ts` | 纯识别器、原始范围与拒绝区间、不同来源类型的语法校验 |
-| `components/markdown/markdown-file-links.ts` | Markdown token 适配、每次渲染的受信 nonce 与元数据清洗 |
-| `components/markdown/markdown.ts` | 聊天模式接入、行内代码/显式链接适配、清洗与缓存模式 |
-| `components/message/message-content-interactions.ts` | 同步点击分流与 typed 当前工程/owner 上下文 |
-| `CoworkView.tsx`、`preview/useMessageFileLinkNavigation.ts` | 点击时当前工程绑定、期望根目录、所属工作区回调及请求过期检查 |
-| `UserMessageContent.tsx`、`justdo-chat.ts`、消息渲染及排队消息调用方 | 消费所属工作区打开能力，显式启用聊天文件链接 |
-| `preview/`、`display/tabs/useCoworkBrowserPanels.ts` | 暴露窄的所属工作区打开动作，复用图片、预览、App 和 HTML 行为 |
-| `src/shared/preview/` | Main/Renderer 共用准备契约、来源/错误常量和 IPC 名称 |
-| `src/main/ipc/app/shell.ts` 及 owning helper | 无副作用的文件准备与权威目录核对；handler 保持薄 |
-| `src/main/preload.ts`、`src/renderer/types/electron.d.ts` | 最小 typed bridge |
-| 所属 i18n 字典 | 成对 zh/en 错误与未选择工程提示，复用已有提示优先 |
-| `resources/openclaw/docs/reference/templates/AGENTS.md` | 在交付约定中增加本地文件地址必须使用 Markdown 链接的模型输出要求 |
-
-只为新消息入口保证以上契约，不全面重写 shell API、历史附件或浏览器。
-保留 `resolveShellOpenPath` 其他调用方的兼容行为，不增加 OpenClaw patch、消息缓存、
-Redux transcript、数据库表、公网服务或运行时下载依赖。
-
-### 4.1 模型输出格式约定
+## 模型输出格式约定
 
 仓库随运行时分发的
 [`resources/openclaw/docs/reference/templates/AGENTS.md`](../../../resources/openclaw/docs/reference/templates/AGENTS.md)
@@ -262,15 +241,34 @@ Redux transcript、数据库表、公网服务或运行时下载依赖。
 新建助手的基础规则也直接从此模板导入（`assistantTranslations`），由现有角色保存流程写入；
 已有角色不会因应用升级自动改写。
 
+## 4. 实现入口
+
+| 位置                                                                 | 职责                                                             |
+| -------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| `components/markdown/markdownPathLinks.ts`                           | 纯识别器、原始范围与拒绝区间、不同来源类型的语法校验             |
+| `components/markdown/markdown-file-links.ts`                         | Markdown token 适配、每次渲染的受信 nonce 与元数据清洗           |
+| `components/markdown/markdown.ts`                                    | 聊天模式接入、行内代码/显式链接适配、清洗与缓存模式              |
+| `components/message/message-content-interactions.ts`                 | 同步点击分流与 typed 当前工程/owner 上下文                       |
+| `CoworkView.tsx`、`preview/useMessageFileLinkNavigation.ts`          | 点击时当前工程绑定、期望根目录、所属工作区回调及请求过期检查     |
+| `UserMessageContent.tsx`、`justdo-chat.ts`、消息渲染及排队消息调用方 | 消费所属工作区打开能力，显式启用聊天文件链接                     |
+| `preview/`、`display/tabs/useCoworkBrowserPanels.ts`                 | 暴露窄的所属工作区打开动作，复用图片、预览、App 和 HTML 行为     |
+| `src/shared/preview/`                                                | Main/Renderer 共用准备契约、来源/错误常量和 IPC 名称             |
+| `src/main/ipc/app/shell.ts` 及 owning helper                         | 无副作用的文件准备与权威目录核对；handler 保持薄                 |
+| `src/main/preload.ts`、`src/renderer/types/electron.d.ts`            | 最小 typed bridge                                                |
+| 所属 i18n 字典                                                       | 成对 zh/en 错误与未选择工程提示，复用已有提示优先                |
+| `resources/openclaw/docs/reference/templates/AGENTS.md`              | 在交付约定中增加本地文件地址必须使用 Markdown 链接的模型输出要求 |
+
+只为新消息入口保证以上契约，不全面重写 shell API、历史附件或浏览器。
+保留 `resolveShellOpenPath` 其他调用方的兼容行为，不增加 OpenClaw patch、消息缓存、
+Redux transcript、数据库表、公网服务或运行时下载依赖。
+
 ## 5. 验证与限制
 
 纯识别、Markdown DOM/点击、Main 准备/IPC、React/Lit 工作区归属及异步导航已覆盖定向回归。
-2026-10-27 相关 47 组共 1129 项测试通过，最后的导航修复再通过 2 组 51 项回归；
-全仓 lint、生产 build、Electron 编译及差异检查通过。独立交叉审查发现的侧栏关闭、
-最后标签关闭及后续网页导航取消遗漏均已修复。
-隔离 Electron 完成 11 项真实鼠标点击检查：用户/助手路径、同文件去重、显式空格目标、
+既有隔离 Electron 鼠标点击检查覆盖：用户/助手路径、同文件去重、显式空格目标、
 字面百分号/井号单次解码、历史链接按点击时工程解析、图片协议加载、未知类型状态、
 相对 Office 分流、HTML 原生路径往返、裸空格排除及缺失文件反馈。
+
 测试使用真实 Main handler、文件系统、消息组件和预览 hook；Office 仅用 stub App 验证
 收到 canonical 目标，没有启动真实插件工具。该检查不等于完整认证 Gateway 的端到端验收，
 也未重新验证所有 PDF/媒体编码、工作区分离或真实模型遵守模板的稳定性。
@@ -280,29 +278,29 @@ Redux transcript、数据库表、公网服务或运行时下载依赖。
 
 ### 回归范围与目标行为
 
-| 案例 | 期望 |
-| --- | --- |
-| 用户和助手的 `某某文件：C:/Users/xxx/dddd/book.pdf` | 精确链接完整路径，点击进入文件预览 |
-| 对应反斜杠写法、中文目录和未知扩展名 | 原始字符准确；未知格式仅操作卡片或真实匹配 App |
-| 带空格裸路径、`C:/a.pdf backup.pdf`、行内命令 | 无链接、无前缀误开、无内部重新匹配 |
-| `C:/a.pdf，已经生成` 与 `C:/a.pdf 然后查看` | 前者链接；后者整段保持文字 |
-| 末尾 ASCII 句号、原生 `#`/`%`、行列后缀、设备/UNC | 不裁剪后打开，保持文字或明确拒绝 |
-| 显式含空格 Markdown、编码文件 URL、编码的字面 `%`/`#` | 一次解码且命中完整目标 |
-| 模型在普通正文中引用文件、中文/含空格文件地址 | 使用完整 Markdown 链接；标签、目标与实际文件一致，进入预览 |
-| 模型最终交付本地文件或符合渠道限制的 URL | 每项从行首独占一行 `MEDIA:`，目标保持原样；附件呈现与访问沿既有 MEDIA 和原生渠道协议 |
-| 模型回复中的命令、代码示例及原始内容包含路径 | 保留原始语义，不向命令/代码内容插入 Markdown 链接 |
-| 模板源码、运行时组装资源与实际会话约定 | 新要求按现有流程分发；分别记录新/既有角色与会话的真实生效范围 |
-| 当前工程为 `E:/workspace/JustDo`，点击 `./output/report.pdf`、`../output/report.pdf` | 分别解析为工程内 `output/report.pdf` 和上一级 `output/report.pdf`；经过既有访问核验 |
-| 消息生成后更换当前工程，再点击历史/排队消息中的相对链接 | 以点击时当前工程解析，不使用消息生成目录或引用来源目录 |
-| Worktree 工程、文件树选中子目录、多个工作区同时打开 | 使用点击所属工作区的当前工程有效根；不被源仓库、选中子目录或其他工作区影响 |
-| 未选择工程、无工程绑定的阅读器、工程/目录在准备中变化 | 相对目标明确失败，不补默认目录，不向新工程重试或挂载迟到结果 |
-| 裸 POSIX/相对路径、引号、未闭合链接/代码、HTTP(S) 内部路径 | 不生成嵌套或猜测文件链接 |
-| 文件 URL 图片、相对 Office、PDF、音视频和不支持类型 | 全部分流前先准备同一绝对路径，能力/文件树行为与现有预览一致 |
-| 相同普通文件不同表达重复点击、慢准备、切会话/新请求/卸载 | canonical 后复用既有文件页签，不挂载迟到结果；HTML 保留现有新标签行为 |
-| 准备后实际文件变化、目录、缺失/无访问权限 | 依照现有实际访问核验处理，不猜其他文件或目录 |
-| 普通窗口、独立工作区、键盘 Enter、复制消息及流式/历史 | 行为一致，复制保留原消息 |
-| 流式分段先出现 `C:/a.pdf`，再追加 ` backup.pdf` | 未结束行不提前生成链接，最终整段保持文字 |
-| 既有 HTML 的 POSIX/相对链接与导航后缀、网页偏好 | 明确兼容，无功能回退 |
+| 案例                                                                                 | 期望                                                                                 |
+| ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------ |
+| 用户和助手的 `某某文件：C:/Users/xxx/dddd/book.pdf`                                  | 精确链接完整路径，点击进入文件预览                                                   |
+| 对应反斜杠写法、中文目录和未知扩展名                                                 | 原始字符准确；未知格式仅操作卡片或真实匹配 App                                       |
+| 带空格裸路径、`C:/a.pdf backup.pdf`、行内命令                                        | 无链接、无前缀误开、无内部重新匹配                                                   |
+| `C:/a.pdf，已经生成` 与 `C:/a.pdf 然后查看`                                          | 前者链接；后者整段保持文字                                                           |
+| 末尾 ASCII 句号、原生 `#`/`%`、行列后缀、设备/UNC                                    | 不裁剪后打开，保持文字或明确拒绝                                                     |
+| 显式含空格 Markdown、编码文件 URL、编码的字面 `%`/`#`                                | 一次解码且命中完整目标                                                               |
+| 模型在普通正文中引用文件、中文/含空格文件地址                                        | 使用完整 Markdown 链接；标签、目标与实际文件一致，进入预览                           |
+| 模型最终交付本地文件或符合渠道限制的 URL                                             | 每项从行首独占一行 `MEDIA:`，目标保持原样；附件呈现与访问沿既有 MEDIA 和原生渠道协议 |
+| 模型回复中的命令、代码示例及原始内容包含路径                                         | 保留原始语义，不向命令/代码内容插入 Markdown 链接                                    |
+| 模板源码、运行时组装资源与实际会话约定                                               | 新要求按现有流程分发；分别记录新/既有角色与会话的真实生效范围                        |
+| 当前工程为 `E:/workspace/JustDo`，点击 `./output/report.pdf`、`../output/report.pdf` | 分别解析为工程内 `output/report.pdf` 和上一级 `output/report.pdf`；经过既有访问核验  |
+| 消息生成后更换当前工程，再点击历史/排队消息中的相对链接                              | 以点击时当前工程解析，不使用消息生成目录或引用来源目录                               |
+| Worktree 工程、文件树选中子目录、多个工作区同时打开                                  | 使用点击所属工作区的当前工程有效根；不被源仓库、选中子目录或其他工作区影响           |
+| 未选择工程、无工程绑定的阅读器、工程/目录在准备中变化                                | 相对目标明确失败，不补默认目录，不向新工程重试或挂载迟到结果                         |
+| 裸 POSIX/相对路径、引号、未闭合链接/代码、HTTP(S) 内部路径                           | 不生成嵌套或猜测文件链接                                                             |
+| 文件 URL 图片、相对 Office、PDF、音视频和不支持类型                                  | 全部分流前先准备同一绝对路径，能力/文件树行为与现有预览一致                          |
+| 相同普通文件不同表达重复点击、慢准备、切会话/新请求/卸载                             | canonical 后复用既有文件页签，不挂载迟到结果；HTML 保留现有新标签行为                |
+| 准备后实际文件变化、目录、缺失/无访问权限                                            | 依照现有实际访问核验处理，不猜其他文件或目录                                         |
+| 普通窗口、独立工作区、键盘 Enter、复制消息及流式/历史                                | 行为一致，复制保留原消息                                                             |
+| 流式分段先出现 `C:/a.pdf`，再追加 ` backup.pdf`                                      | 未结束行不提前生成链接，最终整段保持文字                                             |
+| 既有 HTML 的 POSIX/相对链接与导航后缀、网页偏好                                      | 明确兼容，无功能回退                                                                 |
 
 验证分为纯解析、Markdown DOM/点击、Main 准备/IPC、所属工作区异步导航测试，
 以及隔离 Electron 的实际文件打开。记录真实完成的验证边界，不把静态源码调研、
@@ -317,90 +315,3 @@ Redux transcript、数据库表、公网服务或运行时下载依赖。
 - [文件预览动作](../../../src/renderer/features/cowork/components/preview/useFilePreviewEvents.ts)
 - [Main 文件准备](../../../src/main/ipc/app/messageFileLink.ts)
 - [运行时工作约定模板](../../../resources/openclaw/docs/reference/templates/AGENTS.md)
-
-## 附录：调研依据与验证范围
-
-2026-10-27 调研以本地 `../hermes-agent` 的
-`dce1e9b37581dd62e480a9064dc04a709c2940d3`（2026-10-09）为准，另核对 Cline、
-VS Code 的公开源码与测试。以下区分聊天渲染、Markdown 文档预览和终端检测，
-不把其中某个路径分类函数的接受范围当作所有聊天正文都能自动识别的证明。
-
-| 项目与位置 | 实际方式 | 含空格路径的处理 |
-| --- | --- | --- |
-| Hermes 桌面聊天 | 预处理已经写成 Markdown 链接的绝对文件目标，转换为内部 preview/media 引用；裸正文与行内代码没有同类文件自动链接规则 | `<...>` 明确包住完整 destination，或使用百分号编码；有已有渲染回归测试 |
-| Cline 聊天 | 仅将满足受限格式的 inlineCode 标记为候选，异步检查实际文件，成功后提供打开按钮 | 当前候选正则不接受空格、中文及 Windows 盘符绝对路径；该字符限制不宜照搬 |
-| VS Code 终端 | 先解析候选，再通过文件系统核验；另外支持整行路径、Python/编译器错误、终端提示符等已知边界格式 | 明确格式的测试覆盖 Windows 含空格路径；不能据此断言支持任意聊天句子 |
-
-Hermes 的直接证据：
-
-- `apps/desktop/src/lib/markdown-preprocess.ts:216-225, 521-530` 中的 `FILE_LINK_RE`
-  匹配 `[label](target)`，普通目标排除空白，`<target>` 允许空格；内部目标编码后进入预览。
-  `640-653` 跳过行内代码；`markdown-text.tsx:665-667` 直接渲染普通 code 元素。
-- `apps/desktop/src/components/assistant-ui/markdown-text.filelinks.test.tsx:38-46`
-  覆盖 `[notes](<~/My Notes/todo with spaces.md>)`，断言展示文件名和 Open preview，
-  不出现 blocked。相同文件还覆盖百分号编码及普通相对链接不进入聊天文件预览。
-- `PreviewAttachment` 使用所属会话的 cwd，在 view/click 阶段通过预览规范化能力区分
-  文件、目录及缺失，并以请求代次拒绝迟到结果。主进程的整个目标分类器不扫描普通句子。
-- 提取该版本的实际 `FILE_LINK_RE` 做 7 个输入的独立匹配核对：
-  `某某文件：C:\Users\xxx\dddd\My book.pdf` 和无空格裸路径均不匹配；
-  Windows 正反斜杠的 `<...>` Markdown 目标、编码的文件 URL Markdown 目标匹配；
-  无 `<...>` 的含空格 Markdown 目标和 `./output/report.pdf` 相对目标不匹配。
-  该核对只验证候选规则，不代表运行了整个 Renderer；本地 Hermes 没有依赖安装，未执行其测试套件。
-
-外部一手资料：
-
-- [CommonMark 链接目标规范](https://spec.commonmark.org/0.31.2/#link-destination)：
-  `<...>` destination 允许空格；没有包围符的 destination 不允许空格。
-- [Cline 聊天检测源码](https://github.com/cline/cline/blob/main/apps/vscode/webview-ui/src/components/common/MarkdownBlock.tsx#L315-L381)：
-  inlineCode 候选标记与异步 `ifFileExistsRelativePath`。
-- [VS Code 终端格式检测](https://github.com/microsoft/vscode/blob/main/src/vs/workbench/contrib/terminalContrib/links/browser/terminalLocalLinkDetector.ts#L32-L54)、
-  [含空格路径测试](https://github.com/microsoft/vscode/blob/main/src/vs/workbench/contrib/terminalContrib/links/test/browser/terminalLocalLinkDetector.test.ts#L142-L173)、
-  [文件核验](https://github.com/microsoft/vscode/blob/main/src/vs/workbench/contrib/terminalContrib/links/browser/terminalLinkResolver.ts#L85-L106)。
-  [官方文档](https://code.visualstudio.com/docs/terminal/basics#_links)也区分已核验的文件链接与低置信度单词搜索。
-
-### ChatGPT 桌面安装包核对
-
-2026-10-27 追加只读检查本机安装的 OpenAI.Codex 桌面资源（含 ChatGPT/Work 共用模块）：Windows 包
-`OpenAI.Codex_26.1016.8622.0_x64__2p2nqsd0c76g0`，内置 package 版本
-`26.1016.62342`。该安装包包含 ChatGPT/Codex/Work 共用组件；结论限于本机已检查的
-发布模块，不能外推所有 ChatGPT 平台、独立旧客户端或在线版本。
-检查只读取安装资源，没有读取用户会话、设置或凭据，也没有触发应用操作。
-
-发布代码中的可复核入口为 `app.asar` 内的
-`webview/assets/chatgpt-markdown-view-49d8cc54ac3e.js`、
-`webview/assets/app-initial-ad16eaadf81f.js`。后者中的压缩函数名仅用于定位该版本证据，
-不作为本项目接口或标识：
-
-- Markdown anchor 渲染先尝试将完整 href 分类为内部资源/文件目标，再交给外链入口。
-  已查调用链为 `k_d → epd → npd → Uld → Zld → Bq`。
-- 文件目标与 `cwd`、`hostId`、会话信息及侧栏打开偏好一起传入统一打开入口；
-  后续区分文件/目录，选择预览或其他打开方式。焦点/悬停还会预取可用打开目标，
-  不能概括成所有核验都仅发生在点击之后。
-- 行内代码渲染器 `thd` 特殊处理 `@` 文件引用、整段 `[label](href)` 和技能引用。
-  普通原生路径（包括 `C:\Users\xxx\dddd\My book.pdf`）默认仍为行内代码，
-  没有无条件转为文件链接的分支。
-- 普通文本装饰入口 `Ymd` 的规则是技能/提及与色值；`gFn/CFn` 不是普通文件路径扫描器。
-  Markdown tokenizer 及后处理另支持明确的文件引用/链接；未找到
-  “文件：+ Windows 路径 + 行尾扩展名”的自然语言匹配规则。
-- 显式 Markdown 目标已有完整的语法边界，内部目标可以携带空格；这类链接的打开能力
-  不能用来证明同样的路径写在普通句子里也会自动识别。
-
-上述为发布代码静态调用链核对，未启动额外实例、发送测试消息或完成实际 UI 打开验收。
-[官方文件预览文档](https://learn.chatgpt.com/docs/artifacts-viewer?surface=app)确认
-桌面可在聊天旁预览生成文件，但没有公开普通裸路径的完整识别算法。
-[官方 Code Interpreter API](https://developers.openai.com/api/docs/guides/tools-code-interpreter#dealing-with-citations)
-还提供包含文件身份的生成文件 annotations；这是公开 API 契约，不能当作 ChatGPT App
-所有文件链接都采用同一内部数据结构的证据。
-
-据此，首期采用正文的保守规则：明确 Markdown/文件 URL 支持完整目标及空格；
-普通正文只做少量高置信识别；原生访问由 Main 核验。“文件：提示 +
-行尾扩展名”不作为识别条件，也没有证据表明上述项目支持这个中文句式。
-
-助手在普通正文中引用文件时须按模板要求使用 Markdown 链接，例如
-`某某文件：[book.pdf](C:/Users/xxx/dddd/book.pdf)`；目标含未编码空格时使用 `<...>`，
-或将空格编码为 `%20`。用户看到简洁文件名，完整目标由 Markdown 语法确定。如果未来需要识别含空格的裸正文，
-需单独设计有明确边界的候选与受限异步核验，不直接放宽空白正则；文件存在也不能替代
-边界判断，因为被截短的前半段可能恰好是另一个真实文件。
-
-不照搬 Hermes 的缺失后解码回退、跨主机文件传输，或 VS Code 的目录/行号/WSL 扩展；
-本项目保持单次解码、精确文件身份和既有 Gateway/宿主所有权边界。
