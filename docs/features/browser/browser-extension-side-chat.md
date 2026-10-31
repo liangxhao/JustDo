@@ -130,7 +130,7 @@ idle、Chat final、读取失败和轮询超时均不结束运行。只有同一
 
 ### 消息与过程展示
 
-Markdown 使用扩展离线 bundle，关闭原始 HTML，安全链接在外部 Tab 打开，不从 CDN 动态载入脚本。
+Markdown 使用扩展离线 bundle，仅允许 `details` / `summary` 折叠结构（仅保留 `details` 的 `open` 状态），其内部继续渲染 Markdown；其它原始 HTML 保持转义，标签事件和样式属性不透传。代码块和行内代码中的标签保持字面展示。安全链接在外部 Tab 打开，不从 CDN 动态载入脚本。
 消息展示分为三个独立的浏览器模块：`sidepanel-messages` 拥有稳定 DOM、披露与阅读位置，
 `sidepanel-activity` 拥有运行活动条和界面时钟，`sidepanel-i18n` 提供中英文案；
 `sidepanel.js` 继续拥有连接、发送、停止和会话订阅，不另建执行控制器。
