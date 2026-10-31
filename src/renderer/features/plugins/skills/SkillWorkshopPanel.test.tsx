@@ -89,8 +89,8 @@ test('loads only when open, shows immediate native semantics and distinguishes l
   const launcher = screen.getByRole('button', { name: 'Skill Workshop' });
   fireEvent.click(launcher);
   await screen.findByText('Current skills');
-  expect(await screen.findByText(/release · Live copy available/)).toBeTruthy();
-  expect(screen.getByText(/retired · Archived/)).toBeTruthy();
+  expect(await screen.findByRole('img', { name: 'Live copy available' })).toBeTruthy();
+  expect(screen.getByRole('img', { name: 'Archived' })).toBeTruthy();
   expect(screen.getByText(/Skill changes take effect immediately/)).toBeTruthy();
   expect(screen.queryByText(/Approve and apply|Reject proposal/)).toBeNull();
   fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
@@ -111,6 +111,71 @@ test('reads complete live instructions and selected support file using native re
     name: 'release',
     filePath: 'references/check.md',
   });
+});
+
+test('initially previews a live skill without selecting or restoring a historical version', async () => {
+  const fixture = setup();
+  fixture.mount();
+  await screen.findByText(/Last instruction/);
+  expect(fixture.api.read).toHaveBeenCalledExactlyOnceWith({
+    agentId: 'main',
+    name: 'release',
+    filePath: 'SKILL.md',
+  });
+  expect(screen.queryByRole('button', { name: 'Restore this version' })).toBeNull();
+  expect(fixture.api.restore).not.toHaveBeenCalled();
+});
+
+test('keeps the displayed document and identity while a different version is loading', async () => {
+  const fixture = setup();
+  fixture.mount();
+  const document = await screen.findByText(/Last instruction/);
+  let finish!: (value: unknown) => void;
+  fixture.api.read.mockImplementationOnce(
+    () =>
+      new Promise(resolve => {
+        finish = resolve;
+      }),
+  );
+  fireEvent.click(screen.getByRole('button', { name: /before-patch$/ }));
+  expect(screen.getByText(/Last instruction/)).toBe(document);
+  expect(screen.getByText('Live copy')).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Restore this version' })).toBeNull();
+  expect(
+    (screen.getByRole('button', { name: 'Archive skill' }) as HTMLButtonElement).disabled,
+  ).toBe(true);
+  expect((screen.getByRole('combobox', { name: 'File' }) as HTMLSelectElement).disabled).toBe(true);
+  expect(screen.getByRole('article').getAttribute('aria-busy')).toBe('true');
+  await act(async () =>
+    finish(
+      success({
+        name: 'release',
+        filePath: 'SKILL.md',
+        content: 'Historical instructions',
+        files: ['SKILL.md'],
+      }),
+    ),
+  );
+  expect(await screen.findByText('Historical instructions')).toBe(document);
+  expect(screen.getByText(/Saved version: before-patch/)).toBeTruthy();
+  expect(screen.getByRole('article').getAttribute('aria-busy')).toBe('false');
+  expect(
+    (screen.getByRole('button', { name: 'Restore this version' }) as HTMLButtonElement).disabled,
+  ).toBe(false);
+});
+
+test('failed replacement read retains the previous document without promoting the requested version', async () => {
+  const fixture = setup();
+  fixture.mount();
+  const document = await screen.findByText(/Last instruction/);
+  fixture.api.read.mockResolvedValueOnce({ success: false, error: 'skillWorkshopUnavailable' });
+  fireEvent.click(screen.getByRole('button', { name: /before-patch$/ }));
+  await screen.findByRole('alert');
+  expect(screen.getByText(/Last instruction/)).toBe(document);
+  expect(screen.getByText('Live copy')).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Restore this version' })).toBeNull();
+  expect(screen.getByRole('article').getAttribute('aria-busy')).toBe('false');
+  expect(fixture.api.restore).not.toHaveBeenCalled();
 });
 test('restores an explicitly inspected version; returned backup is not reused as target', async () => {
   const fixture = setup();
