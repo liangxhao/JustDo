@@ -29,7 +29,7 @@
   "uiHints": {
     "apiKey": {
       "label": "TypeSafe API credential",
-      "help": "Hosted Jev only. Select a SecretRef in Settings �� Secrets. Ignored for a local baseUrl. Never paste credentials in chat.",
+      "help": "Required for hosted Jev or a custom serviceUrl. Select a SecretRef in Settings > Secrets. Ignored when baseUrl is configured. Never paste credentials in chat.",
       "sensitive": true
     },
     "timeoutMs": {
