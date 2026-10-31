@@ -72,6 +72,7 @@ import {
   OpenClawConfigSyncResult,
   OpenClawProviderSelection,
   projectManagedOpenClawBrowserConfig,
+  projectManagedOpenClawExecNotifications,
   readPreinstalledPluginIds,
   resolveManagedOpenClawTtsConfig,
   verifyOpenClawConfigMatches,
@@ -819,8 +820,8 @@ export class OpenClawConfigSync {
         error: 'Failed to prepare managed model provider credentials.',
       };
     }
-    const configToPersist = projectManagedOpenClawBrowserConfig(
-      withComputerControlPolicy(preparedSecrets.config),
+    const configToPersist = projectManagedOpenClawExecNotifications(
+      projectManagedOpenClawBrowserConfig(withComputerControlPolicy(preparedSecrets.config)),
     );
     if (Object.hasOwn(existingAgentDefaults, 'decisionModel')) {
       const agents = isRecord(configToPersist.agents) ? configToPersist.agents : {};
@@ -1199,7 +1200,9 @@ export class OpenClawConfigSync {
       );
     }
     this.applyManagedRuntimeConfiguration(minimalConfig);
-    minimalConfig = projectManagedOpenClawBrowserConfig(withComputerControlPolicy(minimalConfig));
+    minimalConfig = projectManagedOpenClawExecNotifications(
+      projectManagedOpenClawBrowserConfig(withComputerControlPolicy(minimalConfig)),
+    );
     const nextContent = `${JSON.stringify(minimalConfig, null, 2)}\n`;
     const buildMinimalSyncResult = (
       expectedConfig: Record<string, unknown>,
@@ -1320,7 +1323,7 @@ export class OpenClawConfigSync {
                 existingConfig: canonicalExisting,
               }),
             );
-            const mergedConfig = projectManagedOpenClawBrowserConfig(
+            const mergedBrowserConfig = projectManagedOpenClawBrowserConfig(
               withMemorySearch(
                 {
                   ...canonicalExisting,
@@ -1399,6 +1402,7 @@ export class OpenClawConfigSync {
                 { enabled: false },
               ),
             );
+            const mergedConfig = projectManagedOpenClawExecNotifications(mergedBrowserConfig);
             this.applyManagedRuntimeConfiguration(mergedConfig);
             const configToWrite = withComputerControlPolicy(mergedConfig);
             const mergedContent = `${JSON.stringify(configToWrite, null, 2)}\n`;

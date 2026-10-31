@@ -7,6 +7,34 @@ import { projectTurnItems } from '@/libs/openclaw-chat/model/timeline/project-tu
 import { withFailureDetailsForDisplay } from '@/libs/openclaw-chat/model/turn/failed-run-message';
 import { projectWaitingStatus } from '@/libs/openclaw-chat/model/turn/run-activity';
 
+test('hides exec wake-up input on live append and history reload', async () => {
+  const sessionKey = 'agent:main:chat:exec-display';
+  const human = { role: 'user', content: 'Run the command', timestamp: 100 };
+  const internal = {
+    role: 'user', content: 'Exec completed (job, code 0)\nSession selected: provider/model',
+    timestamp: 200, provenance: { kind: 'internal_system', sourceTool: 'exec' },
+    __openclaw: { id: 'exec-input', messageSeq: 2 },
+  };
+  const request = vi.fn().mockResolvedValue({ messages: [human], sessionId: 'sid-exec' });
+  const controller = new ChatController();
+  controller.state.client = { request, stop: vi.fn() } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = sessionKey;
+  await controller.loadHistory();
+  const handleEvent = (
+    controller as unknown as { handleEvent(event: { event: string; payload: unknown }): void }
+  ).handleEvent.bind(controller);
+  handleEvent({
+    event: 'session.message',
+    payload: { sessionKey, sessionId: 'sid-exec', message: internal, messageSeq: 2 },
+  });
+  expect(controller.state.chatMessages).toEqual([human]);
+  request.mockResolvedValue({ messages: [human, internal], sessionId: 'sid-exec' });
+  await controller.loadHistory();
+  expect(controller.state.chatMessages).toEqual([human]);
+  controller.disconnect();
+});
+
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.useRealTimers();

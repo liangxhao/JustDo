@@ -11,21 +11,22 @@ import {
 } from 'openclaw/plugin-sdk/ssrf-runtime';
 
 import { registerExecutionAdmission } from './admission';
-import { registerCustody } from './custody/service';
-import { registerOwnerProvider } from './sdk/owner-provider';
-import { registerRuntimeServicesProvider } from './sdk/provider';
-import { readPreparedManagedExecutionDescriptor } from './execution/prepared-profile';
-import { registerSessionNamespaces } from './session-namespaces';
-import { registerExternalMcp } from './external-mcp';
 import {
   HISTORY_FAILURE_PARTIAL_BATCH_MAX_CHARS,
   type HistoryFailurePartial,
 } from './contracts/history-failure';
+import { registerCustody } from './custody/service';
+import { registerCommandResultPolicy } from './execution/command-result-policy';
+import { readPreparedManagedExecutionDescriptor } from './execution/prepared-profile';
+import { registerExternalMcp } from './external-mcp';
 import { isEmptyFailureSourceContent, projectFailurePartialContent } from './history-failure';
 import { registerMcpAppHistory } from './mcp-app-history';
 import { buildBuiltinModelAuthProvider } from './model-auth';
 import { registerReplayAdmissionObservations } from './replay-admission-observations';
 import { registerScheduledTaskHistory } from './scheduled-task-history';
+import { registerOwnerProvider } from './sdk/owner-provider';
+import { registerRuntimeServicesProvider } from './sdk/provider';
+import { registerSessionNamespaces } from './session-namespaces';
 import { registerSpeechSynthesis } from './speech';
 
 const PLUGIN_ID = 'runtime-services';
@@ -248,6 +249,7 @@ const plugin = {
   register(api: OpenClawPluginApi) {
     api.registerProvider(buildBuiltinModelAuthProvider());
     registerReplayAdmissionObservations(api);
+    registerCommandResultPolicy(api);
     const ownerProvider = registerOwnerProvider(api);
     const admission = registerExecutionAdmission(api, ownerProvider);
     registerCustody(api, ownerProvider);

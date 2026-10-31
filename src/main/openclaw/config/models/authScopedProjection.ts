@@ -11,6 +11,7 @@ import { mergeOpenClawPluginConfig, mergeOpenClawSkillConfig } from '../plugins/
 import {
   mergeManagedOptionalToolPolicy,
   OPENCLAW_MANAGED_TOOL_DENY,
+  projectManagedOpenClawExecNotifications,
 } from '../policies/executionPolicyProjection';
 import {
   buildManagedOpenClawSecrets,
@@ -338,5 +339,5 @@ export const buildAuthScopedOpenClawConfig = (
   if (Object.keys(managedSecrets).length === 0) {
     delete result.secrets;
   }
-  return result;
+  return projectManagedOpenClawExecNotifications(result);
 };

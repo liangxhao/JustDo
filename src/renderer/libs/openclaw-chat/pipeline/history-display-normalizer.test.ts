@@ -25,6 +25,24 @@ afterEach(() => {
 });
 
 describe('projectGatewayHistoryForDisplay', () => {
+  test.each(['Exec completed (job, code 0)', 'Exec failed (job, code 1)'])(
+    'hides native exec wake-ups while retaining human messages: %s',
+    text => {
+      const content = `${text}\nSession selected: provider/model Reason: high`;
+      const internal = {
+        role: 'user', content,
+        provenance: { kind: 'internal_system', sourceTool: 'exec' },
+      };
+      const human = { role: 'user', content };
+      const external = { ...human, provenance: { kind: 'external_user', sourceTool: 'exec' } };
+      const peer = { ...human, provenance: { kind: 'inter_session', sourceTool: 'exec' } };
+      const reply = { role: 'assistant', content: 'Command result received.' };
+      expect(projectGatewayHistoryForDisplay([human, internal, external, peer, reply]))
+        .toEqual([human, external, peer, reply]);
+      expect(projectGatewayHistoryForDisplay([{ ...internal, content: [{ type: 'text', text: content }] }]))
+        .toEqual([]);
+    },
+  );
   test('keeps a different recording pending even when both visible prompts are empty', () => {
     const prompt = (id: string) =>
       composeBrowserGatewayPrompt('', [], {

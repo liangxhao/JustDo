@@ -141,7 +141,7 @@ describe('native configuration execution policy contracts', () => {
     };
     const assertFallback = (config: ReturnType<typeof fixture.read>) => {
       expect(config.tools.fs.workspaceOnly).toBe(true);
-      expect(config.tools.exec).toMatchObject({ host: expectedHost, mode: 'ask' });
+      expect(config.tools.exec).toMatchObject({ host: expectedHost, mode: 'ask', notifyOnExit: false });
       expect(config.tools.sandbox).toEqual(expectedSandboxTools);
     };
 
@@ -167,7 +167,7 @@ describe('native configuration execution policy contracts', () => {
     const normalized = fixture.read();
     assertFallback(normalized);
     expect(normalized.tools.fs).toEqual({ workspaceOnly: true });
-    expect(normalized.tools.exec).toEqual({ host: expectedHost, mode: 'ask' });
+    expect(normalized.tools.exec).toEqual({ host: expectedHost, mode: 'ask', notifyOnExit: false });
 
     const authExisting = fixture.read();
     authExisting.tools.fs.workspaceOnly = false;

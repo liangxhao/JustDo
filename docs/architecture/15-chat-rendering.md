@@ -23,6 +23,11 @@ flowchart LR
 
 Main 只提供连接准备、权限、产品生命周期和受限详情读取，不复制 Thinking/Tool/Content。Redux 也不保存 transcript。原生历史丢失时不能用产品消息缓存冒充恢复。
 
+原生后台命令完成后的续跑输入虽然使用 `user` 角色，但带有
+`provenance.kind: internal_system` 和 `sourceTool: exec`。显示投影在历史读取及
+实时消息接收时隐藏这类内部输入，保留原生执行与历史记录；不按 `Exec completed`
+或模型状态等正文前缀过滤，用户引用相同文字及助手的实际结果仍正常展示。
+
 Composer 提交前只是草稿；Main 建立产品会话与 `clientTurnId`，并准备模型、权限和项目根目录。首轮由 Router 准备并委托当前聊天 client 一次发送（后台保留 Router 运输），后续回合由集中式聊天 client 发送。产品 receipt 只证明身份已建立，原生 admission 只证明执行已被接收，live final 也不能单独证明后代任务与 Goal 已全部结束。排障时先查原生 history 和完整 event，再查 admission、reducer 与渲染 pipeline；Main 的摘要日志缺少中间帧不能证明原生事件未发生。
 
 ## 2. 控制器和状态归属

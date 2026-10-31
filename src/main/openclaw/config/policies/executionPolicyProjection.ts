@@ -151,8 +151,41 @@ export const buildManagedOpenClawExecutionToolConfig = (
       ...(isRecord(tools.exec) ? tools.exec : {}),
       host: resolveOpenClawExecHost(mode),
       mode: OPENCLAW_FALLBACK_EXEC_MODE,
+      notifyOnExit: false,
     },
     sandbox: buildManagedOpenClawSandboxToolConfig(mode, pluginTools),
+  };
+};
+
+/** Keep command completion in the originating turn's explicit result collection. */
+export const projectManagedOpenClawExecNotifications = (
+  config: Record<string, unknown>,
+): Record<string, unknown> => {
+  const tools = isRecord(config.tools) ? config.tools : {};
+  const agents = isRecord(config.agents) ? config.agents : undefined;
+  const entries = agents && isRecord(agents.entries) ? agents.entries : undefined;
+  return {
+    ...config,
+    tools: {
+      ...tools,
+      exec: { ...(isRecord(tools.exec) ? tools.exec : {}), notifyOnExit: false },
+    },
+    ...(entries ? {
+      agents: {
+        ...agents,
+        entries: Object.fromEntries(Object.entries(entries).map(([id, entry]) => {
+          if (!isRecord(entry) ||
+              (isRecord(entry.runtime) && entry.runtime.type === 'acp') ||
+              !isRecord(entry.tools) || !isRecord(entry.tools.exec)) {
+            return [id, entry];
+          }
+          return [id, {
+            ...entry,
+            tools: { ...entry.tools, exec: { ...entry.tools.exec, notifyOnExit: false } },
+          }];
+        })),
+      },
+    } : {}),
   };
 };
 

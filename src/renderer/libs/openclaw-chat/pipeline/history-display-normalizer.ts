@@ -270,6 +270,14 @@ export function shouldHideMessage(message: unknown): boolean {
   const record = asRecord(message);
   if (!record) return false;
   const role = typeof record.role === 'string' ? record.role.toLowerCase() : '';
+  // Native exec wake-ups use a user turn to resume the agent. Their structured
+  // provenance distinguishes them from a human quoting the same command output.
+  const provenance = asRecord(record.provenance);
+  if (
+    role === 'user' &&
+    provenance?.kind === 'internal_system' &&
+    provenance.sourceTool === 'exec'
+  ) return true;
   if (role !== 'assistant') return false;
   if (isPersistedFailedAssistantMessage(record)) return false;
   const text = extractSnapshotText(message);
