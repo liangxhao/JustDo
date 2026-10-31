@@ -20,6 +20,7 @@ interface Dependencies {
   captureResponseContext: () => Promise<GatewayResponseContext | null>;
 }
 interface WorkspaceEntry {
+  stage: 'transport' | 'inspection' | 'creation';
   signature: string;
   released: boolean;
   productSessionId: string;
@@ -36,6 +37,33 @@ interface WorkspaceEntry {
   replacementTask?: Promise<McpAppWorkspaceBinding>;
   replacementEntry?: WorkspaceEntry;
 }
+interface PreparationAttempt {
+  entries?: Map<string, WorkspaceEntry>;
+  entry?: WorkspaceEntry;
+  stage?: 'transport' | 'verification';
+}
+
+const MAX_WORKSPACES_PER_DOCUMENT = 8;
+const localFailures = new Set([
+  'Invalid App workspace', 'App workspace is no longer current', 'App workspace is closed',
+  'App workspace changed', 'Too many App workspaces', 'App workspace changed during preparation',
+  'App workspace changed during replacement', 'Native App workspace changed',
+  'Reserved native App workspace already exists or is unavailable', 'Invalid native App workspace',
+]);
+const gatewayFailureCodes = new Set([
+  'UNAVAILABLE', 'FORBIDDEN', 'INVALID_REQUEST', 'CLIENT_TIMEOUT', 'CONNECTION_CLOSED',
+]);
+
+// Never put arbitrary native error text, task content or credentials into these diagnostics.
+function failureDetails(error: unknown) {
+  const failure = mcpAppRecord(error);
+  return {
+    reason: error instanceof Error && localFailures.has(error.message)
+      ? error.message : 'Native or transport failure',
+    code: typeof failure?.code === 'string' && gatewayFailureCodes.has(failure.code)
+      ? failure.code : undefined,
+  };
+}
 
 /** Owned native preview sessions, without creating a product conversation. */
 export class WorkspaceAppSessions {
@@ -44,6 +72,34 @@ export class WorkspaceAppSessions {
 
   constructor(private readonly deps: Dependencies) {}
 
+  private retireDocument(owner: WebContents, reason: string): void {
+    const entries = this.owners.get(owner);
+    if (!entries) return;
+    console.info('[WorkspaceAppSessions] Retiring document:', {
+      ownerId: owner.id, reason, count: entries.size,
+    });
+    // release synchronously revokes each entry before its first await. Detach
+    // this map now so a new document does not wait for native cleanup or inherit
+    // the old quota. Each cleanup retains its captured entry/map, never a successor.
+    for (const requestId of entries.keys())
+      void this.release(owner, requestId).catch((): undefined => undefined); // release logs the outcome.
+    if (this.owners.get(owner) === entries) this.owners.delete(owner);
+  }
+
+  private watchOwner(owner: WebContents): void {
+    if (this.watchedOwners.has(owner)) return;
+    this.watchedOwners.add(owner);
+    owner.on('did-start-navigation', details => {
+      if (details.isMainFrame && !details.isSameDocument)
+        this.retireDocument(owner, 'navigation-start');
+    });
+    // Revoke requests from the outgoing document admitted between start and
+    // commit. Same-document navigation and App iframe navigation do not fire this.
+    owner.on('did-navigate', () => this.retireDocument(owner, 'navigation-commit'));
+    owner.on('render-process-gone', () => this.retireDocument(owner, 'renderer-gone'));
+    owner.once('destroyed', () => this.retireDocument(owner, 'destroyed'));
+  }
+
   private async create(
     scope: ReturnType<WorkspaceAppSessions['scope']>,
     entry: WorkspaceEntry,
@@ -51,6 +107,7 @@ export class WorkspaceAppSessions {
   ) {
     const { productSessionId, sessionKey } = entry;
     assertCurrent();
+    entry.stage = 'inspection';
     // The native observation waits for background agent admission. Only a
     // refusal here proves that this owner has not dispatched any creation.
     const preflight = await this.deps.request<{ session: unknown }>(
@@ -59,6 +116,7 @@ export class WorkspaceAppSessions {
     assertCurrent();
     if (preflight?.session !== null) throw new Error('Reserved native App workspace already exists or is unavailable');
     entry.createIssued = true;
+    entry.stage = 'creation';
     const result = await this.deps.request<{
       key: string;
       sessionId: string;
@@ -124,6 +182,28 @@ export class WorkspaceAppSessions {
   }
 
   async prepare(owner: WebContents, raw: unknown): Promise<McpAppWorkspaceBinding> {
+    const attempt: PreparationAttempt = {};
+    try {
+      return await this.prepareCurrent(owner, raw, attempt);
+    } catch (error) {
+      const input = mcpAppRecord(raw);
+      const requestId = typeof input?.requestId === 'string' &&
+        /^[a-f0-9-]{36}$/i.test(input.requestId) ? input.requestId : undefined;
+      // Navigation may already have installed a successor map with the same ID.
+      // Report this attempt's receipt, never the current document's state.
+      const { entries, entry } = attempt;
+      console.warn('[WorkspaceAppSessions] Preparation failed:', {
+        ownerId: owner.id, requestId, stage: attempt.stage ?? entry?.stage ?? 'admission',
+        count: entries?.size ?? 0, limit: MAX_WORKSPACES_PER_DOCUMENT,
+        createIssued: entry?.createIssued ?? false, ...failureDetails(error),
+      });
+      throw error;
+    }
+  }
+
+  private async prepareCurrent(
+    owner: WebContents, raw: unknown, attempt: PreparationAttempt,
+  ): Promise<McpAppWorkspaceBinding> {
     const scope = this.scope(raw);
     if (owner.isDestroyed()) throw new Error('App workspace is closed');
     let entries = this.owners.get(owner);
@@ -131,20 +211,16 @@ export class WorkspaceAppSessions {
       entries = new Map();
       this.owners.set(owner, entries);
     }
-    if (!this.watchedOwners.has(owner)) {
-      this.watchedOwners.add(owner);
-      owner.once('destroyed', () => {
-        for (const id of this.owners.get(owner)?.keys() ?? [])
-          void this.release(owner, id).catch((): undefined => undefined);
-      });
-    }
+    this.watchOwner(owner);
+    attempt.entries = entries;
     let entry = entries.get(scope.requestId);
+    attempt.entry = entry;
     // Concurrent joiners of the same creation are not a later explicit re-read.
     const existing = entry?.creationSettled === true;
     if (entry && (entry.released || entry.signature !== scope.signature))
       throw new Error('App workspace changed');
     if (!entry) {
-      if (entries.size >= 8) throw new Error('Too many App workspaces');
+      if (entries.size >= MAX_WORKSPACES_PER_DOCUMENT) throw new Error('Too many App workspaces');
       const productSessionId = randomUUID();
       const assertOwnerCurrent = () => {
         if (
@@ -157,6 +233,7 @@ export class WorkspaceAppSessions {
         if (!next.responseContext?.isCurrent()) throw new Error('App workspace changed during preparation');
       };
       const next: WorkspaceEntry = {
+        stage: 'transport',
         signature: scope.signature,
         released: false,
         productSessionId,
@@ -187,9 +264,14 @@ export class WorkspaceAppSessions {
         }),
       };
       entries.set(scope.requestId, next);
+      attempt.entry = next;
+      console.info('[WorkspaceAppSessions] Reserved workspace:', {
+        ownerId: owner.id, requestId: scope.requestId, count: entries.size,
+      });
       entry = next;
     }
     const { binding } = await entry.task;
+    if (existing) attempt.stage = 'transport';
     const responseContext = existing ? await this.deps.captureResponseContext() : entry.responseContext;
     const assertReadCurrent = () => {
       if (this.owners.get(owner) !== entries || entries.get(scope.requestId) !== entry ||
@@ -198,6 +280,7 @@ export class WorkspaceAppSessions {
         throw new Error('App workspace changed during preparation');
     };
     assertReadCurrent();
+    attempt.stage = 'verification';
     const { session } = await this.deps.request<{ session?: Record<string, unknown> }>(
       'sessions.describe',
       { key: binding.sessionKey, agentId: binding.agentId },
@@ -242,6 +325,9 @@ export class WorkspaceAppSessions {
       session.permissionMode !== scope.permissionMode
     )
       throw new Error('Native App workspace changed');
+    console.info('[WorkspaceAppSessions] Workspace ready:', {
+      ownerId: owner.id, requestId: scope.requestId, count: entries.size,
+    });
     return binding;
   }
 
@@ -264,8 +350,10 @@ export class WorkspaceAppSessions {
     if (entry.releaseTask) return entry.releaseTask;
     entry.released = true;
     entry.releaseTask = (async (): Promise<null> => {
+      let stage: 'preparation' | 'deletion' = 'preparation';
       try {
         const { binding, lifecycleRevision } = await entry.task;
+        stage = 'deletion';
         await this.deps.request('sessions.delete', {
           key: binding.sessionKey,
           agentId: binding.agentId,
@@ -274,6 +362,13 @@ export class WorkspaceAppSessions {
           deleteTranscript: true,
           emitLifecycleHooks: false,
         });
+        console.info('[WorkspaceAppSessions] Cleanup acknowledged:', { ownerId: owner.id, requestId });
+      } catch (error) {
+        console.warn('[WorkspaceAppSessions] Cleanup unconfirmed; no retry:', {
+          ownerId: owner.id, requestId, stage, createIssued: entry.createIssued,
+          ...failureDetails(error),
+        });
+        throw error;
       } finally {
         if (entries?.get(requestId) === entry) entries.delete(requestId);
         if (!entries?.size && this.owners.get(owner) === entries) this.owners.delete(owner);
@@ -317,6 +412,7 @@ export class WorkspaceAppSessions {
     entry.released = true;
     entries.delete(scope.requestId);
     if (!entries.size) this.owners.delete(owner);
+    console.info('[WorkspaceAppSessions] Workspace adopted:', { ownerId: owner.id, requestId: scope.requestId });
     return { value, binding };
   }
 }

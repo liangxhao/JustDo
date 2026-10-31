@@ -185,28 +185,42 @@ export class McpWorkspaceSession {
 
   /** Read the owned workspace catalog without granting App interaction. */
   async discover(signal?: AbortSignal): Promise<McpWorkspaceCatalog> {
-    const binding = await this.prepareBinding();
-    let revision = this.apps.discoveryRevision;
-    let reread = false;
-    for (;;) {
-      try {
-        signal?.throwIfAborted();
-        const value = await this.apps.discover(signal);
-        if (!binding.isCurrent() || signal?.aborted) throw new Error('App workspace changed');
-        return { value, isCurrent: binding.isCurrent };
-      } catch (error) {
-        // Navigation revokes presentation operations, including an in-flight
-        // directory read. Only reread after that change on the same native owner.
-        if (
-          reread ||
-          signal?.aborted ||
-          !binding.isCurrent() ||
-          revision === this.apps.discoveryRevision
-        )
-          throw error;
-        reread = true;
-        revision = this.apps.discoveryRevision;
+    let stage: 'workspace-preparation' | 'catalog' = 'workspace-preparation';
+    try {
+      const binding = await this.prepareBinding();
+      stage = 'catalog';
+      let revision = this.apps.discoveryRevision;
+      let reread = false;
+      for (;;) {
+        try {
+          signal?.throwIfAborted();
+          const value = await this.apps.discover(signal);
+          if (!binding.isCurrent() || signal?.aborted) throw new Error('App workspace changed');
+          return { value, isCurrent: binding.isCurrent };
+        } catch (error) {
+          // Navigation revokes presentation operations, including an in-flight
+          // directory read. Only reread after that change on the same native owner.
+          if (
+            reread ||
+            signal?.aborted ||
+            !binding.isCurrent() ||
+            revision === this.apps.discoveryRevision
+          )
+            throw error;
+          reread = true;
+          revision = this.apps.discoveryRevision;
+        }
       }
+    } catch (error) {
+      if (this.current() && !signal?.aborted) {
+        // Main records the preparation reason. Keep this log free of native
+        // response text, tokens and App content; console warnings reach Main.
+        console.warn('[McpWorkspaceSession] Catalog read failed:', JSON.stringify({
+          requestId: this.scope.requestId, stage, connected: this.connected,
+          generation: this.client?.generation,
+        }));
+      }
+      throw error;
     }
   }
 

@@ -2,11 +2,17 @@ import { EventEmitter } from 'node:events';
 import path from 'node:path';
 
 import type { WebContents } from 'electron';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { GatewayRequestOptions } from '../../engine/types';
 import { parseManagedSessionKey } from '../../openclaw/sessions/openclawSessionKeys';
 import { WorkspaceAppSessions } from './workspaceAppSession';
+
+beforeEach(() => {
+  vi.spyOn(console, 'info').mockImplementation(() => undefined);
+  vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+});
+afterEach(() => vi.restoreAllMocks());
 
 function fixture() {
   const cwd = path.resolve('workspace-fixture');
@@ -49,7 +55,7 @@ function fixture() {
     captureResponseContext,
   });
   const emitter = new EventEmitter();
-  const owner = Object.assign(emitter, { isDestroyed: () => false }) as unknown as WebContents;
+  const owner = Object.assign(emitter, { id: 17, isDestroyed: () => false }) as unknown as WebContents;
   const input = { requestId: '12345678-1234-1234-1234-123456789abc', cwd, agentId: 'main' };
   return {
     service,
@@ -76,6 +82,130 @@ function fixture() {
 }
 
 describe('homepage native App workspace ownership', () => {
+  const navigate = (owner: WebContents) => {
+    (owner as unknown as EventEmitter).emit('did-start-navigation', {
+      isMainFrame: true, isSameDocument: false,
+    });
+  };
+
+  it('prepares across more than eight reloads of the same window without exhausting its quota', async () => {
+    const f = fixture();
+    for (let i = 0; i < 12; i++) {
+      await f.service.prepare(f.owner, { ...f.input, requestId: crypto.randomUUID() });
+      navigate(f.owner);
+      (f.owner as unknown as EventEmitter).emit('did-navigate');
+    }
+    await vi.waitFor(() =>
+      expect(f.request.mock.calls.filter(([method]) => method === 'sessions.delete')).toHaveLength(12),
+    );
+    expect(f.created()).toHaveLength(12);
+    expect(f.owner.listenerCount('did-start-navigation')).toBe(1);
+    expect(console.info).toHaveBeenCalledWith('[WorkspaceAppSessions] Retiring document:', {
+      ownerId: 17, reason: 'navigation-start', count: 1,
+    });
+  });
+
+  it('retains the active document quota and logs its concrete refusal without raw input', async () => {
+    const f = fixture();
+    for (let i = 0; i < 8; i++)
+      await f.service.prepare(f.owner, { ...f.input, requestId: crypto.randomUUID() });
+    await expect(f.service.prepare(f.owner, f.input)).rejects.toThrow('Too many App workspaces');
+    expect(console.warn).toHaveBeenLastCalledWith('[WorkspaceAppSessions] Preparation failed:', {
+      ownerId: 17, requestId: f.input.requestId, stage: 'admission', count: 8, limit: 8,
+      createIssued: false, reason: 'Too many App workspaces', code: undefined,
+    });
+  });
+
+  it('ignores App iframe and same-document navigation', async () => {
+    const f = fixture();
+    const first = await f.service.prepare(f.owner, f.input);
+    const events = f.owner as unknown as EventEmitter;
+    events.emit('did-start-navigation', { isMainFrame: false, isSameDocument: false });
+    events.emit('did-start-navigation', { isMainFrame: true, isSameDocument: true });
+    events.emit('did-navigate-in-page');
+    expect(await f.service.prepare(f.owner, f.input)).toEqual(first);
+    expect(f.request.mock.calls.filter(([method]) => method === 'sessions.delete')).toHaveLength(0);
+  });
+
+  it('keeps concurrent verification failure diagnostics separate from a successful preparation', async () => {
+    const f = fixture();
+    const binding = await f.service.prepare(f.owner, f.input);
+    const reads: Array<{ resolve: (value: unknown) => void; reject: (reason: Error) => void }> = [];
+    f.request.mockImplementation(() => new Promise((resolve, reject) => reads.push({ resolve, reject })));
+    const first = f.service.prepare(f.owner, f.input);
+    const second = f.service.prepare(f.owner, f.input);
+    const rejected = expect(second).rejects.toThrow('verification rejected');
+    await vi.waitFor(() => expect(reads).toHaveLength(2));
+    reads[0].resolve({ session: f.sessions.get(binding.sessionKey) });
+    await expect(first).resolves.toEqual(binding);
+    reads[1].reject(new Error('verification rejected'));
+    await rejected;
+    expect(console.warn).toHaveBeenLastCalledWith('[WorkspaceAppSessions] Preparation failed:',
+      expect.objectContaining({ requestId: f.input.requestId, stage: 'verification', createIssued: true }));
+  });
+
+  it('admits a new document while old deletion is pending and keeps its ownership after late cleanup', async () => {
+    const f = fixture();
+    const first = await f.service.prepare(f.owner, f.input);
+    const native = f.request.getMockImplementation()!;
+    let finish!: () => void;
+    f.request.mockImplementation(async (method, params, options) => {
+      if (method === 'sessions.delete' && (params as { key: string }).key === first.sessionKey)
+        await new Promise<void>(resolve => { finish = resolve; });
+      return native(method, params, options);
+    });
+    navigate(f.owner);
+    await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
+    // Even the same request ID must be isolated by document ownership.
+    const next = await f.service.prepare(f.owner, f.input);
+    expect(next.sessionKey).not.toBe(first.sessionKey);
+    finish();
+    await vi.waitFor(() => expect(console.info).toHaveBeenCalledWith(
+      '[WorkspaceAppSessions] Cleanup acknowledged:', { ownerId: 17, requestId: f.input.requestId },
+    ));
+    expect(await f.service.prepare(f.owner, f.input)).toEqual(next);
+    (f.owner as unknown as EventEmitter).emit('destroyed');
+    await vi.waitFor(() => expect(f.request).toHaveBeenLastCalledWith(
+      'sessions.delete', expect.objectContaining({ key: next.sessionKey }),
+    ));
+  });
+
+  it('revokes outgoing-page work admitted between navigation start and commit', async () => {
+    const f = fixture();
+    const first = await f.service.prepare(f.owner, f.input);
+    navigate(f.owner);
+    const outgoing = await f.service.prepare(f.owner, f.input);
+    (f.owner as unknown as EventEmitter).emit('did-navigate');
+    await expect(f.service.adopt(f.owner, f.input, vi.fn(), () => true)).rejects.toThrow('no longer available');
+    const current = await f.service.prepare(f.owner, f.input);
+    expect(current.sessionKey).not.toBe(outgoing.sessionKey);
+    await vi.waitFor(() => expect(f.request.mock.calls.filter(([method]) => method === 'sessions.delete'))
+      .toEqual([
+        ['sessions.delete', expect.objectContaining({ key: first.sessionKey })],
+        ['sessions.delete', expect.objectContaining({ key: outgoing.sessionKey })],
+      ]));
+  });
+
+  it('retires crashed documents and logs an unknown cleanup once without exposing native error text', async () => {
+    const f = fixture();
+    await f.service.prepare(f.owner, f.input);
+    const native = f.request.getMockImplementation()!;
+    f.request.mockImplementation(async (method, params, options) => {
+      if (method === 'sessions.delete') throw new Error('credential-fixture and task content');
+      return native(method, params, options);
+    });
+    (f.owner as unknown as EventEmitter).emit('render-process-gone');
+    (f.owner as unknown as EventEmitter).emit('destroyed');
+    await vi.waitFor(() => expect(console.warn).toHaveBeenCalledWith(
+      '[WorkspaceAppSessions] Cleanup unconfirmed; no retry:', expect.objectContaining({
+        ownerId: 17, requestId: f.input.requestId, stage: 'deletion', reason: 'Native or transport failure',
+      }),
+    ));
+    expect(f.request.mock.calls.filter(([method]) => method === 'sessions.delete')).toHaveLength(1);
+    expect(JSON.stringify(vi.mocked(console.warn).mock.calls)).not.toContain('credential-fixture');
+    await expect(f.service.prepare(f.owner, f.input)).resolves.toBeDefined();
+  });
+
   it('adopts its reserved product identity without recreating or deleting the live preview', async () => {
     const f = fixture();
     const binding = await f.service.prepare(f.owner, f.input);
@@ -87,6 +217,9 @@ describe('homepage native App workspace ownership', () => {
       binding,
     );
     await f.service.release(f.owner, f.input.requestId);
+    navigate(f.owner);
+    (f.owner as unknown as EventEmitter).emit('did-navigate');
+    (f.owner as unknown as EventEmitter).emit('render-process-gone');
     (f.owner as unknown as EventEmitter).emit('destroyed');
     expect(f.created()).toHaveLength(1);
     expect(f.request.mock.calls.some(([method]) => method === 'sessions.delete')).toBe(false);
@@ -199,7 +332,7 @@ describe('homepage native App workspace ownership', () => {
     });
   });
 
-  it('cleans a late preparation after the window closes without publishing it', async () => {
+  it.each(['destroyed', 'navigation'] as const)('cleans a late preparation after %s without publishing it', async kind => {
     const f = fixture();
     const native = f.request.getMockImplementation()!;
     let finish!: () => void;
@@ -212,9 +345,12 @@ describe('homepage native App workspace ownership', () => {
     });
     const pending = f.service.prepare(f.owner, f.input);
     await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
-    (f.owner as unknown as EventEmitter).emit('destroyed');
+    if (kind === 'navigation') navigate(f.owner);
+    else (f.owner as unknown as EventEmitter).emit('destroyed');
     finish();
     await expect(pending).rejects.toThrow('changed');
+    expect(console.warn).toHaveBeenCalledWith('[WorkspaceAppSessions] Preparation failed:',
+      expect.objectContaining({ stage: 'creation', createIssued: true }));
     await vi.waitFor(() =>
       expect(f.request.mock.calls.some(([method]) => method === 'sessions.delete')).toBe(true),
     );
@@ -370,6 +506,8 @@ describe('homepage native App workspace ownership', () => {
     expect(f.created()).toHaveLength(0);
     reject(failure);
     expect((await observed).every(result => result.status === 'rejected' && result.reason === failure)).toBe(true);
+    expect(console.warn).toHaveBeenCalledWith('[WorkspaceAppSessions] Preparation failed:',
+      expect.objectContaining({ stage: 'inspection', createIssued: false, code: 'UNAVAILABLE' }));
     expect(f.request).toHaveBeenCalledTimes(1);
     const [a, b] = await Promise.all([f.service.prepare(f.owner, f.input), f.service.prepare(f.owner, f.input)]);
     expect(a).toEqual(b);

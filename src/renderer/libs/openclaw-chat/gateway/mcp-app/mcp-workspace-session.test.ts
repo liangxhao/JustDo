@@ -45,6 +45,7 @@ afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.clearAllMocks();
+  vi.restoreAllMocks();
   fixture.clients.length = 0;
   fixture.autoHello = true;
 });
@@ -99,6 +100,27 @@ function setup() {
 }
 
 describe('homepage MCP workspace connection', () => {
+  it('logs the failing catalog phase without exposing native errors or credentials', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const f = setup();
+    f.prepareWorkspace.mockRejectedValueOnce(new Error('credential-fixture and task content'));
+    await expect(f.session.discover()).rejects.toThrow('credential-fixture');
+    expect(warn).toHaveBeenLastCalledWith('[McpWorkspaceSession] Catalog read failed:', JSON.stringify({
+      requestId: f.scope.requestId, stage: 'workspace-preparation', connected: true, generation: 1,
+    }));
+    warn.mockClear();
+    fixture.request.mockImplementation(async method => {
+      if (method === 'sessions.describe') return { session: { sessionId: f.native.gatewaySessionId } };
+      throw new Error('credential-fixture and task content');
+    });
+    await expect(f.session.discover()).rejects.toThrow('credential-fixture');
+    expect(warn).toHaveBeenLastCalledWith('[McpWorkspaceSession] Catalog read failed:', JSON.stringify({
+      requestId: f.scope.requestId, stage: 'catalog', connected: true, generation: 1,
+    }));
+    expect(JSON.stringify(warn.mock.calls)).not.toContain('credential-fixture');
+    f.session.dispose();
+  });
+
   it('prewarms a read-only catalog in the background without granting interactive capabilities', async () => {
     const f = setup();
     f.setInteractive(false);
