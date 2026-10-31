@@ -396,7 +396,11 @@ export default function FirstLaunchGuide({
                     {failed && (
                       <div className="mt-5 space-y-4">
                         {state.historyRecovery && (
-                          <HistoryRecoveryAdvice kind={state.historyRecovery} database={upgrade} />
+                          <HistoryRecoveryAdvice
+                            kind={state.historyRecovery}
+                            database={upgrade}
+                            diagnostic={state.historyLockDiagnostic}
+                          />
                         )}
                         <StartupCompatibilityAdvice code={compatibilityCode} />
                         <p

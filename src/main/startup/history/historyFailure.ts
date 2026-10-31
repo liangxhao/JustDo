@@ -1,6 +1,27 @@
-import { HistoryRecoveryKind } from '../../../shared/app/startup/history';
+import { type HistoryLockDiagnostic, HistoryRecoveryKind } from '../../../shared/app/startup/history';
 
 export const HISTORY_SOURCE_CHANGED = 'HISTORY_SOURCE_CHANGED';
+const lockDiagnostics = new WeakMap<object, HistoryLockDiagnostic>();
+
+function copyLockDiagnostic(diagnostic: HistoryLockDiagnostic): HistoryLockDiagnostic {
+  return { ...diagnostic, processes: diagnostic.processes.map(owner => ({ ...owner })) };
+}
+
+/** Keep diagnostic presentation separate from the original filesystem exception. */
+export function rememberHistoryLockDiagnostic(error: unknown, diagnostic: HistoryLockDiagnostic): void {
+  if (error && typeof error === 'object') lockDiagnostics.set(error, copyLockDiagnostic(diagnostic));
+}
+
+export function getHistoryLockDiagnostic(error: unknown): HistoryLockDiagnostic | undefined {
+  let current = error;
+  const visited = new Set<unknown>();
+  while (current && typeof current === 'object' && !visited.has(current) && visited.size < 8) {
+    visited.add(current);
+    const diagnostic = lockDiagnostics.get(current);
+    if (diagnostic) return copyLockDiagnostic(diagnostic);
+    current = (current as { cause?: unknown }).cause;
+  }
+}
 
 export function historySourceChanged(message: string): Error {
   return Object.assign(new Error(message), { code: HISTORY_SOURCE_CHANGED });

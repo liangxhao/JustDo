@@ -287,8 +287,9 @@ const resolveWindowsPowerShell = (): string => {
 
 export const findWindowsLockingProcesses = async (
   targetPath: string,
+  options: { signal?: AbortSignal } = {},
 ): Promise<WindowsLockDiagnosticResult> => {
-  if (process.platform !== 'win32') return { available: false, processes: [] };
+  if (process.platform !== 'win32' || options.signal?.aborted) return { available: false, processes: [] };
 
   const resolvedTarget = path.resolve(targetPath);
   try {
@@ -302,20 +303,35 @@ export const findWindowsLockingProcesses = async (
   }
 
   const encodedCommand = Buffer.from(RESTART_MANAGER_SCRIPT, 'utf16le').toString('base64');
-  const result = await new Promise<{ stdout: string; stderr: string; error?: Error }>(resolve => {
-    childProcess.execFile(
-      resolveWindowsPowerShell(),
-      ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', encodedCommand],
-      {
-        encoding: 'utf8',
-        env: { ...process.env, JUSTDO_LOCK_TARGET: resolvedTarget },
-        timeout: 10_000,
-        windowsHide: true,
-        maxBuffer: 1024 * 1024,
-      },
-      (error, stdout, stderr) => resolve({ stdout, stderr, ...(error ? { error } : {}) }),
-    );
+  type LookupResult = { stdout: string; stderr: string; error?: Error };
+  const result = await new Promise<LookupResult>(resolve => {
+    let reported: LookupResult | undefined;
+    let closed = false;
+    const finish = () => { if (closed && reported) resolve(reported); };
+    try {
+      const child = childProcess.execFile(
+        resolveWindowsPowerShell(),
+        ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', encodedCommand],
+        {
+          encoding: 'utf8',
+          env: { ...process.env, JUSTDO_LOCK_TARGET: resolvedTarget },
+          timeout: 10_000,
+          windowsHide: true,
+          maxBuffer: 1024 * 1024,
+          ...(options.signal ? { signal: options.signal } : {}),
+        },
+        (error, stdout, stderr) => {
+          reported = { stdout, stderr, ...(error ? { error } : {}) };
+          finish();
+        },
+      );
+      // AbortError can reach execFile's callback before the owned child closes.
+      child.once('close', () => { closed = true; finish(); });
+    } catch (error) {
+      resolve({ stdout: '', stderr: '', error: error instanceof Error ? error : new Error('Lock lookup could not start.') });
+    }
   });
+  if (options.signal?.aborted) return { available: false, processes: [] };
   if (result.error || !result.stdout.trim()) {
     const detail = result.error?.message || result.stderr.trim() || 'no process information';
     console.warn('[WindowsFileLockDiagnostics] Lock owner lookup failed:', detail);

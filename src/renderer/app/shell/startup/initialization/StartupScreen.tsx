@@ -167,7 +167,9 @@ export default function StartupScreen({
             <StartupSteps {...stepProps} />
             {failed && (
               <div className="startup-recovery">
-                {state.historyRecovery && <HistoryRecoveryAdvice kind={state.historyRecovery} />}
+                {state.historyRecovery && (
+                  <HistoryRecoveryAdvice kind={state.historyRecovery} diagnostic={state.historyLockDiagnostic} />
+                )}
                 <StartupCompatibilityAdvice code={compatibilityCode} />
                 <p
                   className="startup-error"

@@ -303,6 +303,7 @@ import { registerHistoryRecoveryHandlers } from './startup/history/historyRecove
 import { NativeHistoryRuntime } from './startup/history/nativeHistoryRuntime';
 import { StartupEnginePreparation } from './startup/initialization/startupEnginePreparation';
 import { registerStartupSupportHandlers } from './startup/initialization/startupSupport';
+import { releaseStartupProfileWorkingDirectory } from './startup/routing/profileIsolation';
 import { StartupCoordinator } from './startup/routing/startupCoordinator';
 import { NativeDatabaseUpgradeRuntime } from './startup/upgrade/nativeDatabaseUpgradeRuntime';
 
@@ -374,8 +375,11 @@ if (agentBridgeArgv) {
   console.error = () => undefined;
 }
 let startupPreparationError: unknown;
+let releasedStartupWorkingDirectory: string | undefined;
 try {
   configureUserDataPath(agentBridgeArgv ? resolveAgentBridgeProfile(process.argv) : undefined);
+  if (!agentBridgeArgv)
+    releasedStartupWorkingDirectory = releaseStartupProfileWorkingDirectory(app.getPath('userData'));
 } catch (error) {
   if (agentBridgeArgv) throw error;
   startupPreparationError = error;
@@ -383,6 +387,9 @@ try {
 if (!agentBridgeArgv) {
   try {
     initLogger();
+    if (releasedStartupWorkingDirectory)
+      console.info('[StartupCoordinator] Released inherited profile working directory before startup:',
+        releasedStartupWorkingDirectory);
   } catch (error) {
     console.warn('[AppInitialization] Logging is unavailable; continuing startup:', error);
   }
@@ -2036,6 +2043,7 @@ if (agentBridgeArgv) {
     await runApplicationCleanup({
       retireStartup: () => settleCleanupTasks([
         () => startupHistoryRuntime.stop(), () => startupDatabaseRuntime.stop(),
+        () => startupCoordinator?.settleProfileIsolation(),
         () => startupIntegrationPreparation,
         () => { if (admissionErrors.length) throw new AggregateError(admissionErrors, 'Startup admission revocation failed.'); },
       ]),

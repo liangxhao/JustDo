@@ -112,6 +112,10 @@ JSONL/SQLite 混合仍拒绝自动替换。
 迁移中已完成的归档保留在 `backups/<transactionId>/retired/`，完成后暂不删除。
 `openclaw/`、`outbound-header-proxy/`、`developer/` 及 `justdo.sqlite*` 必须归档成功；其余非控制项
 尝试移动，遇到指定占用或权限错误时保留原位继续，新建与恢复事务使用同一规则。
+启动早期会释放继承到必需归档目录内的进程 cwd；Windows 必需项移动支持有限的瞬时占用重试，
+重试仍检查路径边界、禁止覆盖并复核选择性备份中的历史来源，持续失败不得进入初始化。
+中断恢复、占用重试或来源变化后，从完整 `retired/` 原件重新取得一致性快照及导入计划，
+校验完成后通过启动记录原子选择新快照；旧备份保留，过期快照不会造成永久恢复阻断。
 `logs/` 及根目录的 `install-timing.log`、`install-resource.log` 明确排除，始终留在原位。
 
 非必需项被重新生成而与旧归档重名时，另存 `retired-additions/` 或在占用时保留两处；

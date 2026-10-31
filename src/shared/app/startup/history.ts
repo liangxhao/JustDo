@@ -23,6 +23,13 @@ export const HistoryRecoveryKind = {
 } as const;
 export type HistoryRecoveryKind = (typeof HistoryRecoveryKind)[keyof typeof HistoryRecoveryKind];
 
+/** Advisory observations only; an empty result cannot establish that a directory is unlocked. */
+export type HistoryLockDiagnostic = {
+  targetPath: string;
+  available: boolean;
+  processes: { name: string; pid: number; isMainProcess: boolean }[];
+};
+
 export const StartupSupportAction = {
   OpenData: 'openData',
   OpenBackup: 'openBackup',

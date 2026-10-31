@@ -9,6 +9,24 @@ import { StartupRoute } from '../../../shared/app/startup/routing';
 // Execute Main's real launch/ingress composition without starting Electron or a Gateway.
 const source = ts.createSourceFile('main.ts', fs.readFileSync(new URL('../../main.ts', import.meta.url), 'utf8'),
   ts.ScriptTarget.Latest, true);
+
+test('releases inherited profile cwd after path selection and before logging or startup windows', () => {
+  const calls = new Map<string, number>();
+  const collect = (node: ts.Node) => {
+    if (ts.isCallExpression(node)) {
+      const name = node.expression.getText(source);
+      if (['configureUserDataPath', 'releaseStartupProfileWorkingDirectory', 'initLogger',
+        'createStartupBootstrapWindow'].includes(name)) calls.set(name, node.getStart(source));
+    }
+    ts.forEachChild(node, collect);
+  };
+  collect(source);
+  const release = calls.get('releaseStartupProfileWorkingDirectory')!;
+  expect(release).toBeGreaterThan(calls.get('configureUserDataPath')!);
+  expect(release).toBeLessThan(calls.get('initLogger')!);
+  expect(release).toBeLessThan(calls.get('createStartupBootstrapWindow')!);
+});
+
 let statements: readonly ts.Statement[] = [];
 const visit = (node: ts.Node) => {
   if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === 'initApp' &&
@@ -48,6 +66,17 @@ test('history isolation finishes before the persistent main window can open its 
   }).outputText;
   await new Function(...Object.keys(context), `return (async () => { ${prefix} })();`)(...Object.values(context));
   expect(calls).toEqual(['memory-bootstrap', 'memory-initialization', 'isolate']);
+});
+
+test('product Store and network policy, certificates and proxy activation follow required profile isolation', () => {
+  const position = (prefix: string) => statements.findIndex(node => node.getText(source).startsWith(prefix));
+  const isolation = position('await startupCoordinator.prepareBeforeStore(');
+  const store = position('store = await initStore(');
+  expect(isolation).toBeGreaterThan(0);
+  expect(store).toBeGreaterThan(isolation);
+  for (const prefix of ['const initialOutboundHeaderPolicy =', 'await getOutboundHeaderProxy().start(',
+    'await applySystemProxyPreference(', 'await applyBrowserProxyPreference('])
+    expect(position(prefix)).toBeGreaterThan(store);
 });
 
 function fixture(route: StartupRoute, configReady = true, delayServices = false) {

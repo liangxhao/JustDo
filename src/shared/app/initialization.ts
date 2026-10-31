@@ -1,4 +1,4 @@
-import type { HistoryRecoveryKind } from './startup/history';
+import type { HistoryLockDiagnostic, HistoryRecoveryKind } from './startup/history';
 import {
   STARTUP_CLOCK_ARGUMENT,
   STARTUP_ROUTE_ARGUMENT,
@@ -120,6 +120,7 @@ export type AppInitializationState = {
   historySummary?: StartupHistorySummary;
   historyBackupPath?: string;
   historyRecovery?: HistoryRecoveryKind;
+  historyLockDiagnostic?: HistoryLockDiagnostic;
   completedSteps: number;
   totalSteps: number;
   userDataPath: string;

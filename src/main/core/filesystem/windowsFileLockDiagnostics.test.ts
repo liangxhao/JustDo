@@ -1,4 +1,5 @@
 import childProcess from 'child_process';
+import { EventEmitter } from 'events';
 import fs from 'fs';
 import { beforeEach, expect, test, vi } from 'vitest';
 
@@ -7,6 +8,12 @@ import { findWindowsLockingProcesses } from './windowsFileLockDiagnostics';
 beforeEach(() => {
   vi.restoreAllMocks();
 });
+
+function closingChild(): ReturnType<typeof childProcess.execFile> {
+  const child = new EventEmitter();
+  queueMicrotask(() => child.emit('close', 0, null));
+  return child as ReturnType<typeof childProcess.execFile>;
+}
 
 test('parses Windows lock owner details asynchronously', async () => {
   vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
@@ -25,7 +32,7 @@ test('parses Windows lock owner details asynchronously', async () => {
       ]),
       '',
     );
-    return {} as ReturnType<typeof childProcess.execFile>;
+    return closingChild();
   }) as typeof childProcess.execFile);
 
   await expect(findWindowsLockingProcesses('C:\\skills\\demo')).resolves.toEqual({
@@ -69,7 +76,7 @@ test('does not mistake an inaccessible target for an absent one', async () => {
     _file, _args, _options, callback,
   ) => {
     callback?.(null, '[]', '');
-    return {} as ReturnType<typeof childProcess.execFile>;
+    return closingChild();
   }) as typeof childProcess.execFile);
 
   await expect(findWindowsLockingProcesses('C:\\protected')).resolves.toEqual({
@@ -87,4 +94,45 @@ test('does not run Windows diagnostics on other platforms', async () => {
     processes: [],
   });
   expect(execFile).not.toHaveBeenCalled();
+});
+
+test('an already cancelled lookup never starts a diagnostic child', async () => {
+  vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
+  const controller = new AbortController();
+  controller.abort();
+  const execFile = vi.spyOn(childProcess, 'execFile');
+  await expect(findWindowsLockingProcesses('C:\\history', { signal: controller.signal })).resolves.toEqual({
+    available: false, processes: [],
+  });
+  expect(execFile).not.toHaveBeenCalled();
+});
+
+test('an aborted callback cannot report retirement before the owned child close', async () => {
+  vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
+  vi.spyOn(fs, 'lstatSync').mockReturnValue({} as fs.Stats);
+  const controller = new AbortController();
+  const child = new EventEmitter();
+  const execFile = vi.spyOn(childProcess, 'execFile').mockImplementation(((
+    _file, _args, options, callback,
+  ) => {
+    options.signal.addEventListener('abort', () => callback(Object.assign(new Error('cancelled'), { code: 'ABORT_ERR' }), '', ''));
+    return child as ReturnType<typeof childProcess.execFile>;
+  }) as typeof childProcess.execFile);
+  let retired = false;
+  const result = findWindowsLockingProcesses('C:\\history', { signal: controller.signal })
+    .then(value => { retired = true; return value; });
+  controller.abort();
+  await Promise.resolve();
+  expect(retired).toBe(false);
+  child.emit('close', null, 'SIGTERM');
+  await expect(result).resolves.toEqual({ available: false, processes: [] });
+  expect(execFile).toHaveBeenCalledOnce();
+});
+
+test('a synchronous diagnostic launch failure settles without a child to join', async () => {
+  vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
+  vi.spyOn(fs, 'lstatSync').mockReturnValue({} as fs.Stats);
+  vi.spyOn(console, 'warn').mockImplementation(() => {});
+  vi.spyOn(childProcess, 'execFile').mockImplementation(() => { throw new Error('spawn unavailable'); });
+  await expect(findWindowsLockingProcesses('C:\\history')).resolves.toEqual({ available: false, processes: [] });
 });

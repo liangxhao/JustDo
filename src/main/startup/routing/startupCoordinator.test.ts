@@ -5,10 +5,12 @@ import path from 'path';
 import { afterEach, expect, test, vi } from 'vitest';
 
 import { LOGIN_STORAGE_CONFIG } from '../../../config/loginStorage';
+import { AppInitializationActivity } from '../../../shared/app/initialization';
 import { HistoryRecoveryKind } from '../../../shared/app/startup/history';
 import { StartupRoute, StartupStage } from '../../../shared/app/startup/routing';
 import { StartupCompatibilityErrorCode } from '../../../shared/app/startup/versionPolicy';
 import { DB_FILENAME } from '../../core/appConstants';
+import { findWindowsLockingProcesses } from '../../core/filesystem/windowsFileLockDiagnostics';
 import { CoworkStore } from '../../data/coworkStore';
 import { GroupStore } from '../../data/groupStore';
 import { SqliteStore } from '../../data/sqliteStore';
@@ -41,6 +43,9 @@ import {
 vi.mock('electron', () => ({
   app: { getPath: () => os.tmpdir() },
   safeStorage: { isEncryptionAvailable: () => false },
+}));
+vi.mock('../../core/filesystem/windowsFileLockDiagnostics', () => ({
+  findWindowsLockingProcesses: vi.fn(async () => ({ available: false, processes: [] })),
 }));
 const roots: string[] = [];
 const root = () => {
@@ -277,7 +282,10 @@ test('a repair delivery resumes partial isolation without replacing the verified
   expect(readStartupJournal(source)).toMatchObject({ stage: StartupStage.Initialize,
     transactionId: journal.transactionId, targetIdentity: target });
   expect(fs.readFileSync(path.join(history, 'manifest.json'))).toEqual(manifest);
-  expect(fs.readdirSync(transaction).sort()).toEqual(['history', 'retired']);
+  expect(fs.readdirSync(transaction).sort()).toEqual([
+    'history', readStartupJournal(source)!.historySnapshotDirectory!, 'retired',
+  ].sort());
+  expect(coordinator.getHistoryBackupDirectory()).toBe(path.join(transaction, readStartupJournal(source)!.historySnapshotDirectory!));
   expect(fs.existsSync(path.join(transaction, 'retired', 'openclaw'))).toBe(true);
   expect(native.inspect).not.toHaveBeenCalled();
 });
@@ -893,8 +901,367 @@ test.each([DB_FILENAME, 'openclaw', 'outbound-header-proxy', 'developer', `${DB_
     await expect(new StartupCoordinator(source).prepareBeforeStore(progress())).rejects.toBe(denied);
     expect(readStartupJournal(source)?.stage).toBe(StartupStage.Isolate);
     expect(fs.existsSync(original)).toBe(true);
+    if (process.platform === 'win32')
+      expect(findWindowsLockingProcesses).toHaveBeenCalledWith(original, expect.objectContaining({ signal: expect.any(AbortSignal) }));
   },
 );
+
+test('closed startup readers leave every required directory and product database sidecar movable', async () => {
+  vi.mocked(findWindowsLockingProcesses).mockClear();
+  const source = root();
+  legacy(source);
+  const originalFiles = new Map([
+    ['openclaw/state/agents/main/agent/openclaw-agent.sqlite', 'opaque historical native original'],
+    ['outbound-header-proxy/certs/ca.pem', 'historical certificate'],
+    ['outbound-header-proxy/config.json', '{"enabled":true}'],
+    ['developer/settings.json', '{"developerMode":true}'],
+  ]);
+  for (const [relative, contents] of originalFiles) {
+    fs.mkdirSync(path.dirname(path.join(source, relative)), { recursive: true });
+    fs.writeFileSync(path.join(source, relative), contents);
+  }
+  expect(classifyInstallation(source).route).toBe(StartupRoute.Migration);
+  const journal = { ...newStartupJournal(StartupRoute.Migration), stage: StartupStage.Isolate,
+    isolatedEntries: fs.readdirSync(source) };
+  const transaction = path.join(source, 'backups', journal.transactionId);
+  const history = path.join(transaction, 'history');
+  await createHistoryBackup(source, history);
+  writeStartupJson(path.join(history, 'import-plan.json'), planLegacyHistory(history));
+  const productBytes = fs.readFileSync(path.join(source, DB_FILENAME));
+  // Model valid empty SQLite sidecars discovered after a committed backup.
+  // Resuming isolation reopens the retired database for a fresh snapshot.
+  const sidecars = ['-wal', '-shm', '-journal', '.legacy'].map(suffix => `${DB_FILENAME}${suffix}`);
+  for (const name of sidecars) fs.writeFileSync(path.join(source, name), name.endsWith('.legacy') ? 'opaque original' : '');
+  writeStartupJson(path.join(source, STARTUP_STATE_FILE), journal);
+  const move = vi.spyOn(fs.promises, 'rename');
+
+  await new StartupCoordinator(source).prepareBeforeStore(progress());
+
+  const retired = path.join(transaction, 'retired');
+  for (const name of ['openclaw', 'outbound-header-proxy', 'developer', DB_FILENAME, ...sidecars]) {
+    expect(move).toHaveBeenCalledWith(path.join(source, name), path.join(retired, name));
+    expect(fs.existsSync(path.join(source, name))).toBe(false);
+    expect(fs.existsSync(path.join(retired, name))).toBe(true);
+  }
+  for (const [relative, contents] of originalFiles)
+    expect(fs.readFileSync(path.join(retired, relative), 'utf8')).toBe(contents);
+  for (const name of sidecars)
+    expect(fs.readFileSync(path.join(retired, name), 'utf8')).toBe(name.endsWith('.legacy') ? 'opaque original' : '');
+  expect(fs.readFileSync(path.join(retired, DB_FILENAME))).toEqual(productBytes);
+  expect(readStartupJournal(source)?.stage).toBe(StartupStage.Initialize);
+  expect(findWindowsLockingProcesses).not.toHaveBeenCalled();
+});
+
+test.each(['native', 'JSONL'])('a %s history mutation during a sharing retry publishes a fresh snapshot and retains the old one', async kind => {
+  const source = root();
+  legacy(source);
+  const original = path.join(source, kind === 'native'
+    ? 'openclaw/state/agents/main/agent/openclaw-agent.sqlite'
+    : 'openclaw/state/agents/main/sessions/original-native.jsonl');
+  if (kind === 'native') {
+    fs.mkdirSync(path.dirname(original));
+    fs.writeFileSync(original, 'original native data');
+  }
+  vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
+  const rename = fs.promises.rename.bind(fs.promises);
+  let attempts = 0;
+  const latest = kind === 'native' ? 'changed native original'
+    : fs.readFileSync(original, 'utf8') + '{"type":"message","id":"late-message","message":{"role":"user","content":"latest text"}}\n';
+  vi.spyOn(fs.promises, 'rename').mockImplementation(async (from, to) => {
+    if (String(from) === path.join(source, 'openclaw') && attempts++ === 0) {
+      fs.writeFileSync(original, latest);
+      throw Object.assign(new Error('sharing violation'), { code: 'EPERM' });
+    }
+    await rename(from, to);
+  });
+  const coordinator = new StartupCoordinator(source);
+  await coordinator.prepareBeforeStore(progress());
+  const journal = readStartupJournal(source)!;
+  const transaction = path.join(source, 'backups', journal.transactionId);
+  const relative = path.relative(source, original);
+  expect(attempts).toBe(2);
+  expect(journal.stage).toBe(StartupStage.Initialize);
+  expect(journal.historySnapshotDirectory).toMatch(/^history-refresh-/);
+  expect(fs.readFileSync(path.join(transaction, 'retired', relative), 'utf8')).toBe(latest);
+  expect(fs.readFileSync(path.join(coordinator.getHistoryBackupDirectory()!, relative), 'utf8')).toBe(latest);
+  expect(fs.readFileSync(path.join(transaction, 'history', relative), 'utf8')).not.toBe(latest);
+  expect(() => verifyHistoryBackup(path.join(transaction, 'history'))).not.toThrow();
+});
+
+test('resuming isolation recaptures the latest JSONL instead of importing the old snapshot', async () => {
+  const source = root();
+  legacy(source);
+  const journal = { ...newStartupJournal(StartupRoute.Migration), stage: StartupStage.Isolate,
+    isolatedEntries: fs.readdirSync(source) };
+  const transaction = path.join(source, 'backups', journal.transactionId);
+  const history = path.join(transaction, 'history');
+  await createHistoryBackup(source, history);
+  writeStartupJson(path.join(source, STARTUP_STATE_FILE), journal);
+  const relative = 'openclaw/state/agents/main/sessions/original-native.jsonl';
+  const previous = fs.readFileSync(path.join(history, relative), 'utf8');
+  const latest = previous + '{"type":"message","id":"after-exit","message":{"role":"user","content":"written after previous startup"}}\n';
+  fs.writeFileSync(path.join(source, relative), latest);
+
+  const coordinator = new StartupCoordinator(source);
+  await coordinator.prepareBeforeStore(progress());
+
+  expect(readStartupJournal(source)?.stage).toBe(StartupStage.Initialize);
+  expect(fs.readFileSync(path.join(coordinator.getHistoryBackupDirectory()!, relative), 'utf8')).toBe(latest);
+  expect(fs.readFileSync(path.join(transaction, 'retired', relative), 'utf8')).toBe(latest);
+  expect(fs.readFileSync(path.join(history, relative), 'utf8')).toBe(previous);
+});
+
+test('a product database sharing retry recaptures the latest titles and cached messages', async () => {
+  const source = root();
+  legacy(source);
+  vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
+  const rename = fs.promises.rename.bind(fs.promises);
+  let blocked = false;
+  vi.spyOn(fs.promises, 'rename').mockImplementation(async (from, to) => {
+    if (!blocked && String(from) === path.join(source, DB_FILENAME)) {
+      blocked = true;
+      const db = new Database(path.join(source, DB_FILENAME));
+      try {
+        db.prepare('UPDATE cowork_sessions SET title=? WHERE id=?').run('latest cached title', 'cache');
+        db.prepare('INSERT INTO cowork_messages VALUES(?,?,?,?,?,?)')
+          .run('late-cache', 'cache', 'user', 'latest cached message', 1300, 3);
+      } finally { db.close(); }
+      throw Object.assign(new Error('sharing violation'), { code: 'EPERM' });
+    }
+    await rename(from, to);
+  });
+
+  const coordinator = new StartupCoordinator(source);
+  await coordinator.prepareBeforeStore(progress());
+
+  const journal = readStartupJournal(source)!;
+  const transaction = path.join(source, 'backups', journal.transactionId);
+  const refreshed = coordinator.getHistoryBackupDirectory()!;
+  expect(journal.stage).toBe(StartupStage.Initialize);
+  expect(planLegacyHistory(refreshed).conversations.find(row => row.id === 'cache')?.title).toBe('latest cached title');
+  expect(planLegacyHistory(path.join(transaction, 'history')).conversations.find(row => row.id === 'cache')?.title).toBe('缓存标题');
+  const db = new Database(path.join(refreshed, DB_FILENAME), { readonly: true, fileMustExist: true });
+  try {
+    expect(db.prepare('SELECT content FROM cowork_messages WHERE id=?').get('late-cache'))
+      .toEqual({ content: 'latest cached message' });
+  } finally { db.close(); }
+});
+
+test('an interrupted refresh retains both snapshots and a restart captures another candidate from retired originals', async () => {
+  const source = root();
+  legacy(source);
+  const journal = { ...newStartupJournal(StartupRoute.Migration), stage: StartupStage.Isolate,
+    isolatedEntries: fs.readdirSync(source) };
+  const transaction = path.join(source, 'backups', journal.transactionId);
+  const history = path.join(transaction, 'history');
+  await createHistoryBackup(source, history);
+  const oldManifest = fs.readFileSync(path.join(history, 'manifest.json'));
+  writeStartupJson(path.join(source, STARTUP_STATE_FILE), journal);
+  const copy = fs.promises.copyFile.bind(fs.promises);
+  let interrupted = false;
+  const failure = new Error('interrupted refresh copy');
+  vi.spyOn(fs.promises, 'copyFile').mockImplementation(async (from, to, mode) => {
+    await copy(from, to, mode);
+    if (!interrupted && String(to).includes(`${path.sep}history-refresh-`)) {
+      interrupted = true;
+      throw failure;
+    }
+  });
+  await expect(new StartupCoordinator(source).prepareBeforeStore(progress())).rejects.toBe(failure);
+  expect(readStartupJournal(source)).toMatchObject({ stage: StartupStage.Isolate });
+  expect(readStartupJournal(source)?.historySnapshotDirectory).toBeUndefined();
+  const incomplete = fs.readdirSync(transaction).find(name => name.startsWith('history-refresh-'))!;
+  expect(fs.existsSync(path.join(transaction, incomplete, 'manifest.json'))).toBe(false);
+  expect(fs.existsSync(path.join(transaction, 'retired', 'openclaw'))).toBe(true);
+
+  const coordinator = new StartupCoordinator(source);
+  await coordinator.prepareBeforeStore(progress());
+
+  const recovered = readStartupJournal(source)!;
+  expect(recovered.stage).toBe(StartupStage.Initialize);
+  expect(recovered.historySnapshotDirectory).not.toBe(incomplete);
+  expect(fs.existsSync(path.join(transaction, incomplete))).toBe(true);
+  expect(fs.readFileSync(path.join(history, 'manifest.json'))).toEqual(oldManifest);
+  expect(() => verifyHistoryBackup(coordinator.getHistoryBackupDirectory()!)).not.toThrow();
+  expect(new StartupCoordinator(source).getHistoryBackupDirectory()).toBe(coordinator.getHistoryBackupDirectory());
+});
+
+test('shutdown joins a refresh copy and prevents its candidate from advancing initialization', async () => {
+  const source = root();
+  legacy(source);
+  const journal = { ...newStartupJournal(StartupRoute.Migration), stage: StartupStage.Isolate,
+    isolatedEntries: fs.readdirSync(source) };
+  await createHistoryBackup(source, path.join(source, 'backups', journal.transactionId, 'history'));
+  writeStartupJson(path.join(source, STARTUP_STATE_FILE), journal);
+  const copy = fs.promises.copyFile.bind(fs.promises);
+  let releaseCopy!: () => void;
+  const heldCopy = new Promise<void>(resolve => { releaseCopy = resolve; });
+  let enteredCopy!: () => void;
+  const copying = new Promise<void>(resolve => { enteredCopy = resolve; });
+  let held = false;
+  vi.spyOn(fs.promises, 'copyFile').mockImplementation(async (from, to, mode) => {
+    if (!held && String(to).includes(`${path.sep}history-refresh-`)) {
+      held = true;
+      enteredCopy();
+      await heldCopy;
+    }
+    await copy(from, to, mode);
+  });
+  const coordinator = new StartupCoordinator(source);
+  const preparation = coordinator.prepareBeforeStore(progress());
+  const rejected = expect(preparation).rejects.toThrow(/startup was interrupted/);
+  try {
+    await copying;
+    coordinator.stop();
+    let settled = false;
+    const cleanup = coordinator.settleProfileIsolation().then(() => { settled = true; });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    releaseCopy();
+    await rejected;
+    await cleanup;
+    expect(readStartupJournal(source)?.stage).toBe(StartupStage.Isolate);
+    expect(readStartupJournal(source)?.historySnapshotDirectory).toBeUndefined();
+  } finally { releaseCopy(); }
+});
+
+test('a missing whole history root in an older isolation plan cannot publish a reduced snapshot', async () => {
+  const source = root();
+  legacy(source);
+  const journal = { ...newStartupJournal(StartupRoute.Migration), stage: StartupStage.Isolate,
+    isolatedEntries: [DB_FILENAME] };
+  const transaction = path.join(source, 'backups', journal.transactionId);
+  const history = path.join(transaction, 'history');
+  await createHistoryBackup(source, history);
+  fs.renameSync(path.join(source, 'openclaw'), path.join(root(), 'absent-history'));
+  writeStartupJson(path.join(source, STARTUP_STATE_FILE), journal);
+
+  await expect(new StartupCoordinator(source).prepareBeforeStore(progress())).rejects.toThrow(/history directory is missing/);
+
+  expect(readStartupJournal(source)?.stage).toBe(StartupStage.Isolate);
+  expect(readStartupJournal(source)?.historySnapshotDirectory).toBeUndefined();
+  expect(() => verifyHistoryBackup(history)).not.toThrow();
+});
+
+test('a product database disappearing during refresh cannot publish a snapshot that omits it', async () => {
+  const source = root();
+  legacy(source);
+  const journal = { ...newStartupJournal(StartupRoute.Migration), stage: StartupStage.Isolate,
+    isolatedEntries: fs.readdirSync(source) };
+  const transaction = path.join(source, 'backups', journal.transactionId);
+  const history = path.join(transaction, 'history');
+  await createHistoryBackup(source, history);
+  writeStartupJson(path.join(source, STARTUP_STATE_FILE), journal);
+  const preserved = path.join(root(), DB_FILENAME);
+  const preparationProgress = progress();
+  preparationProgress.reportActivity.mockImplementation(activity => {
+    if (activity === AppInitializationActivity.HistoryBackup)
+      fs.renameSync(path.join(transaction, 'retired', DB_FILENAME), preserved);
+  });
+
+  await expect(new StartupCoordinator(source).prepareBeforeStore(preparationProgress))
+    .rejects.toThrow(/conversation index is missing/);
+
+  expect(fs.existsSync(preserved)).toBe(true);
+  expect(readStartupJournal(source)?.stage).toBe(StartupStage.Isolate);
+  expect(readStartupJournal(source)?.historySnapshotDirectory).toBeUndefined();
+  expect(() => verifyHistoryBackup(history)).not.toThrow();
+});
+
+test('stopping during a sharing retry does not move another required item or advance initialization', async () => {
+  const source = root();
+  legacy(source);
+  const coordinator = new StartupCoordinator(source);
+  vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
+  const rename = fs.promises.rename.bind(fs.promises);
+  let attempts = 0;
+  vi.spyOn(fs.promises, 'rename').mockImplementation(async (from, to) => {
+    if (String(from) === path.join(source, 'openclaw')) {
+      attempts += 1;
+      coordinator.stop();
+      throw Object.assign(new Error('sharing violation'), { code: 'EPERM' });
+    }
+    await rename(from, to);
+  });
+  await expect(coordinator.prepareBeforeStore(progress())).rejects.toThrow(/startup was interrupted/);
+  expect(attempts).toBe(1);
+  expect(fs.existsSync(path.join(source, 'openclaw'))).toBe(true);
+  expect(readStartupJournal(source)?.stage).toBe(StartupStage.Isolate);
+});
+
+test('quit aborts the owned lookup and cleanup joins its retirement without replacing the rename error', async () => {
+  const source = root();
+  legacy(source);
+  const journal = { ...newStartupJournal(StartupRoute.Migration), stage: StartupStage.Isolate,
+    isolatedEntries: ['openclaw'] };
+  const transaction = path.join(source, 'backups', journal.transactionId);
+  await createHistoryBackup(source, path.join(transaction, 'history'));
+  fs.mkdirSync(path.join(transaction, 'retired'));
+  fs.renameSync(path.join(source, DB_FILENAME), path.join(transaction, 'retired', DB_FILENAME));
+  writeStartupJson(path.join(source, STARTUP_STATE_FILE), journal);
+  const coordinator = new StartupCoordinator(source);
+  vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
+  const failure = Object.assign(new Error('required entry is locked'), { code: 'EPERM' });
+  vi.spyOn(fs.promises, 'rename').mockRejectedValue(failure);
+  let lookupSignal: AbortSignal | undefined;
+  let finishLookup: (() => void) | undefined;
+  vi.mocked(findWindowsLockingProcesses).mockImplementationOnce((_target, options) => {
+    lookupSignal = options?.signal;
+    return new Promise(resolve => { finishLookup = () => resolve({ available: false, processes: [] }); });
+  });
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  try {
+    const preparation = coordinator.prepareBeforeStore(progress());
+    const rejected = expect(preparation).rejects.toBe(failure);
+    await vi.advanceTimersByTimeAsync(3100);
+    expect(finishLookup).toBeTypeOf('function');
+    coordinator.stop();
+    expect(lookupSignal?.aborted).toBe(true);
+    let settled = false;
+    const cleanup = coordinator.settleProfileIsolation().then(() => { settled = true; });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    finishLookup!();
+    await rejected;
+    await cleanup;
+    expect(readStartupJournal(source)?.stage).toBe(StartupStage.Isolate);
+    expect(fs.existsSync(path.join(source, 'openclaw'))).toBe(true);
+  } finally {
+    finishLookup?.();
+    vi.useRealTimers();
+  }
+});
+
+test('history changed during another required directory retry is recaptured after the first openclaw move', async () => {
+  const source = root();
+  legacy(source);
+  fs.mkdirSync(path.join(source, 'developer'));
+  const journal = { ...newStartupJournal(StartupRoute.Migration), stage: StartupStage.Isolate,
+    isolatedEntries: ['developer', DB_FILENAME, 'openclaw'] };
+  const transaction = path.join(source, 'backups', journal.transactionId);
+  await createHistoryBackup(source, path.join(transaction, 'history'));
+  writeStartupJson(path.join(source, STARTUP_STATE_FILE), journal);
+  const transcript = path.join(source, 'openclaw/state/agents/main/sessions/original-native.jsonl');
+  const rename = fs.promises.rename.bind(fs.promises);
+  vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
+  let blocked = false;
+  const move = vi.spyOn(fs.promises, 'rename').mockImplementation(async (from, to) => {
+    if (!blocked && String(from) === path.join(source, 'developer')) {
+      blocked = true;
+      fs.appendFileSync(transcript, '{"type":"message","id":"late-message","message":{"role":"user","content":"latest text"}}\n');
+      throw Object.assign(new Error('sharing violation'), { code: 'EPERM' });
+    }
+    await rename(from, to);
+  });
+  const coordinator = new StartupCoordinator(source);
+  await coordinator.prepareBeforeStore(progress());
+  expect(move.mock.calls.some(([from]) => String(from) === path.join(source, 'openclaw'))).toBe(true);
+  expect(fs.existsSync(path.join(source, 'openclaw'))).toBe(false);
+  expect(readStartupJournal(source)?.stage).toBe(StartupStage.Initialize);
+  const relative = path.relative(source, transcript);
+  expect(fs.readFileSync(path.join(coordinator.getHistoryBackupDirectory()!, relative), 'utf8')).toContain('latest text');
+  expect(fs.readFileSync(path.join(transaction, 'history', relative), 'utf8')).not.toContain('latest text');
+});
 
 test.each(['ENOSPC', 'EIO'])('a non-access %s failure still blocks optional isolation', async code => {
   const source = root();

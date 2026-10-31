@@ -88,3 +88,45 @@ test('a full disk explains recovery without offering process termination as its 
   expect(screen.getByText('initializationRecovery_spaceDescription')).toBeTruthy();
   expect(screen.queryByRole('button', { name: 'initializationOpenTaskManager' })).toBeNull();
 });
+
+test('shows observed process names and PIDs without treating their handles as proven lock ownership', () => {
+  const openSupport = bridge();
+  render(
+    <HistoryRecoveryAdvice
+      kind={HistoryRecoveryKind.Access}
+      diagnostic={{
+        targetPath: 'C:\\data\\openclaw', available: true,
+        processes: [
+          { name: 'DesktopApp', pid: 4102, isMainProcess: true },
+          { name: 'node', pid: 4203, isMainProcess: false },
+        ],
+      }}
+    />,
+  );
+  expect(screen.getByText('C:\\data\\openclaw')).toBeTruthy();
+  expect(screen.getByText('initializationLockDiagnosticObserved')).toBeTruthy();
+  const processes = screen.getByRole('list', { name: 'initializationLockProcesses' });
+  expect(within(processes).getAllByRole('listitem')).toHaveLength(2);
+  expect(within(processes).getByText('DesktopApp')).toBeTruthy();
+  expect(within(processes).getByText('node')).toBeTruthy();
+  expect(within(processes).getByText('initializationLockProcessPid 4102')).toBeTruthy();
+  expect(within(processes).getByText('initializationLockProcessPid 4203')).toBeTruthy();
+  expect(within(processes).getAllByText('initializationLockCurrentApplication')).toHaveLength(1);
+  expect(screen.getByText('initializationLockCurrentApplicationHint')).toBeTruthy();
+  expect(screen.getAllByRole('button')).toHaveLength(2);
+  expect(openSupport).not.toHaveBeenCalled();
+});
+
+test.each([false, true])('an unavailable or empty process result remains explicitly unknown (%s)', available => {
+  bridge();
+  render(
+    <HistoryRecoveryAdvice
+      kind={HistoryRecoveryKind.Access}
+      diagnostic={{ targetPath: 'C:\\data\\openclaw', available, processes: [] }}
+    />,
+  );
+  expect(screen.getByText(available ? 'initializationLockDiagnosticEmpty' : 'initializationLockDiagnosticUnavailable')).toBeTruthy();
+  expect(screen.queryByRole('list', { name: 'initializationLockProcesses' })).toBeNull();
+  expect(screen.queryByText('initializationLockDiagnosticObserved')).toBeNull();
+  expect(screen.getByRole('button', { name: 'initializationOpenTaskManager' })).toBeTruthy();
+});

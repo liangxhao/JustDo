@@ -31,8 +31,8 @@ export function ownedPath(root: string, relative: string, allowLeafLink = false)
 
 export function digestFile(file: string): string {
   const hash = createHash('sha256');
-  const fd = fs.openSync(file, 'r');
   const chunk = Buffer.allocUnsafe(1024 * 1024);
+  const fd = fs.openSync(file, 'r');
   try {
     let bytes: number;
     while ((bytes = fs.readSync(fd, chunk, 0, chunk.length, null)) > 0)
@@ -97,6 +97,46 @@ function nativeHistoryOriginals(source: string): string[] {
   return files.sort();
 }
 
+/** The same selective native-history inventory is used for copying and later source fences. */
+function selectiveHistorySources(source: string, originals = nativeHistoryOriginals(source)): string[] {
+  const files = new Set(originals);
+  const agentsRelative = path.join('openclaw', 'state', 'agents');
+  const agents = ownedPath(source, agentsRelative);
+  if (startupPathExists(agents)) {
+    for (const agent of fs.readdirSync(agents, { withFileTypes: true })) {
+      if (agent.isSymbolicLink()) throw new Error('Linked agent directories cannot be backed up.');
+      if (!agent.isDirectory()) continue;
+      if (!/^[a-zA-Z0-9_-]+$/.test(agent.name)) throw new Error('Invalid historical agent identity.');
+      const sessions = path.join(agentsRelative, agent.name, 'sessions');
+      const folder = ownedPath(source, sessions);
+      if (!startupPathExists(folder)) continue;
+      for (const entry of fs.readdirSync(folder, { withFileTypes: true })) {
+        if (entry.name === 'sessions.json' ||
+            (entry.name.endsWith('.jsonl') && !entry.name.endsWith('.trajectory.jsonl'))) {
+          const relative = path.join(sessions, entry.name);
+          assertRegular(ownedPath(source, relative));
+          files.add(relative);
+        }
+      }
+    }
+  }
+  const collectMedia = (relative: string): void => {
+    const folder = ownedPath(source, relative);
+    for (const entry of fs.readdirSync(folder, { withFileTypes: true })) {
+      if (entry.isSymbolicLink()) throw new Error('Linked historical attachment.');
+      const child = path.join(relative, entry.name);
+      if (entry.isDirectory()) collectMedia(child);
+      else {
+        assertRegular(ownedPath(source, child));
+        files.add(child);
+      }
+    }
+  };
+  const media = path.join('openclaw', 'state', 'media');
+  if (startupPathExists(ownedPath(source, media))) collectMedia(media);
+  return [...files].sort();
+}
+
 /** Fence the opaque originals again after planning, immediately before isolation. */
 export function verifyNativeHistoryOriginals(source: string, backup: string): void {
   const originals = nativeHistoryOriginals(source);
@@ -113,6 +153,21 @@ export function verifyNativeHistoryOriginals(source: string, backup: string): vo
     );
 }
 
+/** A sharing-lock wait must not admit stale JSONL, indexes, attachments or opaque originals. */
+export function verifyHistorySourcesBeforeIsolation(source: string, backup: string): void {
+  // The product snapshot includes committed WAL and is intentionally not byte-identical to its source.
+  const files = verifyHistoryBackup(backup).files.filter(entry => entry.path !== DB_FILENAME);
+  const expected = JSON.stringify(files.map(entry => entry.path).sort());
+  if (JSON.stringify(selectiveHistorySources(source)) !== expected ||
+      files.some(entry => {
+        const file = ownedPath(source, entry.path);
+        return assertRegular(file).size !== entry.size || digestFile(file) !== entry.sha256;
+      }) || JSON.stringify(selectiveHistorySources(source)) !== expected)
+    throw historySourceChanged(
+      'History files changed after backup. Close the previous application and retry.',
+    );
+}
+
 /** Published JSONL installations only. The snapshot includes committed product WAL. */
 export async function createHistoryBackup(source: string, destination: string): Promise<void> {
   if (fs.existsSync(path.join(destination, 'manifest.json'))) {
@@ -123,12 +178,15 @@ export async function createHistoryBackup(source: string, destination: string): 
   const files: BackupFile[] = [];
   const sourceFiles: { file: string; digest: string; size: number; mtime: number }[] = [];
   const nativeOriginals = nativeHistoryOriginals(source);
-  const product = path.join(source, DB_FILENAME);
-  const db = fs.existsSync(product)
+  const historySources = selectiveHistorySources(source, nativeOriginals);
+  const product = ownedPath(source, DB_FILENAME);
+  const productExists = startupPathExists(product);
+  if (productExists) assertRegular(product);
+  const db = productExists
     ? new Database(product, { readonly: true, fileMustExist: true })
     : null;
-  const dataVersion = db?.pragma('data_version', { simple: true });
   try {
+    const dataVersion = db?.pragma('data_version', { simple: true });
     const copy = async (file: string) => {
       ownedPath(source, path.relative(source, file));
       const before = assertRegular(file);
@@ -151,7 +209,6 @@ export async function createHistoryBackup(source: string, destination: string): 
       sourceFiles.push({ file, digest, size: before.size, mtime: before.mtimeMs });
     };
     if (db) {
-      assertRegular(product);
       const target = path.join(destination, DB_FILENAME);
       // An incomplete snapshot is never considered a committed backup.
       for (const suffix of ['', '-wal', '-shm']) fs.rmSync(`${target}${suffix}`, { force: true });
@@ -165,38 +222,7 @@ export async function createHistoryBackup(source: string, destination: string): 
       }
       files.push({ path: DB_FILENAME, size: fs.statSync(target).size, sha256: digestFile(target) });
     }
-    for (const relative of nativeOriginals) await copy(ownedPath(source, relative));
-    const agents = path.join(source, 'openclaw', 'state', 'agents');
-    if (fs.existsSync(agents)) {
-      for (const agent of fs.readdirSync(agents, { withFileTypes: true })) {
-        if (agent.isSymbolicLink())
-          throw new Error('Linked agent directories cannot be backed up.');
-        if (!agent.isDirectory()) continue;
-        if (!/^[a-zA-Z0-9_-]+$/.test(agent.name))
-          throw new Error('Invalid historical agent identity.');
-        const folder = path.join(agents, agent.name, 'sessions');
-        if (!fs.existsSync(folder)) continue;
-        if (fs.lstatSync(folder).isSymbolicLink()) throw new Error('Linked session directory.');
-        for (const entry of fs.readdirSync(folder, { withFileTypes: true })) {
-          if (
-            entry.name === 'sessions.json' ||
-            (entry.name.endsWith('.jsonl') && !entry.name.endsWith('.trajectory.jsonl'))
-          )
-            await copy(path.join(folder, entry.name));
-        }
-      }
-    }
-    const media = path.join(source, 'openclaw', 'state', 'media');
-    const copyMedia = async (folder: string): Promise<void> => {
-      if (fs.lstatSync(folder).isSymbolicLink()) throw new Error('Linked media directory.');
-      for (const entry of fs.readdirSync(folder, { withFileTypes: true })) {
-        if (entry.isSymbolicLink()) throw new Error('Linked historical attachment.');
-        const file = path.join(folder, entry.name);
-        if (entry.isDirectory()) await copyMedia(file);
-        else await copy(file);
-      }
-    };
-    if (fs.existsSync(media)) await copyMedia(media);
+    for (const relative of historySources) await copy(ownedPath(source, relative));
     // Detect writes to files copied early, and committed database writes across the snapshot.
     for (const entry of sourceFiles) {
       const stat = assertRegular(entry.file);
@@ -214,6 +240,10 @@ export async function createHistoryBackup(source: string, destination: string): 
     if (JSON.stringify(nativeHistoryOriginals(source)) !== JSON.stringify(nativeOriginals))
       throw historySourceChanged(
         'Native history files changed during backup. Close the previous application and retry.',
+      );
+    if (JSON.stringify(selectiveHistorySources(source)) !== JSON.stringify(historySources))
+      throw historySourceChanged(
+        'History files changed during backup. Close the previous application and retry.',
       );
     writeStartupJson(path.join(destination, 'manifest.json'), { version: 1, files });
     verifyHistoryBackup(destination);

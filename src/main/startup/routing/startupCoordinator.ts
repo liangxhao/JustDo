@@ -23,9 +23,10 @@ import {
   createHistoryBackup,
   ownedPath,
   verifyHistoryBackup,
+  verifyHistorySourcesBeforeIsolation,
   verifyNativeHistoryOriginals,
 } from '../history/historyBackup';
-import { nativeHistoryError } from '../history/historyFailure';
+import { HISTORY_SOURCE_CHANGED, nativeHistoryError } from '../history/historyFailure';
 import {
   planLegacyHistory,
   restoreHistoryMetadata,
@@ -34,6 +35,7 @@ import {
 } from '../history/legacyHistory';
 import type { NativeHistoryOperation } from '../history/nativeHistoryRuntime';
 import { classifyInstallation, type StartupDecision } from './classifyInstallation';
+import { archiveRequiredProfileEntry, profileEntryKey, requiresProfileIsolation } from './profileIsolation';
 import {
   newStartupJournal,
   readStartupJournal,
@@ -59,19 +61,9 @@ const STARTUP_ISOLATION_EXCLUSIONS = new Set([
 ].map(profileEntryKey));
 const OPTIONAL_PROFILE_ACCESS_ERRORS = new Set(['EPERM', 'EACCES', 'EBUSY', 'ETXTBSY']);
 
-function profileEntryKey(name: string): string {
-  return process.platform === 'win32' ? name.toLowerCase() : name;
-}
-
 function shouldIsolateProfileEntry(name: string): boolean {
   const key = profileEntryKey(name);
   return !STARTUP_ISOLATION_EXCLUSIONS.has(key) && !key.startsWith(`${STARTUP_STATE_FILE}.`);
-}
-
-function requiresProfileIsolation(name: string): boolean {
-  const key = profileEntryKey(name);
-  return key === 'openclaw' || key === 'outbound-header-proxy' || key === 'developer' ||
-    key.startsWith(profileEntryKey(DB_FILENAME));
 }
 
 function retainUnavailableOptionalProfileEntry(name: string, error: unknown): boolean {
@@ -106,6 +98,7 @@ function startupRecoveryKey(journal: StartupJournal): string {
     identity(journal.targetIdentity), identity(journal.completedIdentity), identity(journal.lastOpenedIdentity),
     journal.schemaPreparationPending === true,
     (journal.isolatedEntries ?? []).map(profileEntryKey).sort(),
+    journal.historySnapshotDirectory ?? null,
   ]);
 }
 
@@ -158,6 +151,8 @@ export class StartupCoordinator {
   private readonly downgradeSourceIdentity?: StartupIdentity;
   private downgradeConfirmed = false;
   private stopped = false;
+  private readonly profileIsolationAbort = new AbortController();
+  private profileIsolationOperation?: Promise<void>;
   private confirmationWaiter?: { resolve: () => void; reject: (error: Error) => void };
 
   constructor(private readonly userData: string, prepared?: StartupPreparation) {
@@ -300,8 +295,14 @@ export class StartupCoordinator {
 
   stop(): void {
     this.stopped = true;
+    this.profileIsolationAbort.abort();
     this.confirmationWaiter?.reject(new Error('Startup confirmation was cancelled. Existing data has been preserved.'));
     this.confirmationWaiter = undefined;
+  }
+
+  async settleProfileIsolation(): Promise<void> {
+    // The preparation caller retains the actual error; cleanup joins its owned worker.
+    await this.profileIsolationOperation?.catch(() => {});
   }
 
   private async waitForDowngradeConfirmation(): Promise<void> {
@@ -348,7 +349,8 @@ export class StartupCoordinator {
   }
 
   private get history(): string {
-    return ownedPath(this.userData, path.join('backups', this.journal.transactionId, 'history'));
+    return ownedPath(this.userData, path.join('backups', this.journal.transactionId,
+      this.journal.historySnapshotDirectory ?? 'history'));
   }
 
   getHistoryBackupDirectory(): string | null {
@@ -396,6 +398,7 @@ export class StartupCoordinator {
 
   async prepareBeforeStore(progress: Progress): Promise<void> {
     if (this.preparationError) throw this.preparationError;
+    const resumedIsolation = this.route === StartupRoute.Migration && this.journal.stage === StartupStage.Isolate;
     await this.waitForDowngradeConfirmation();
     const targetChanged = !!this.targetIdentity && !!this.journal.targetIdentity &&
       !sameStartupIdentity(this.journal.targetIdentity, this.targetIdentity);
@@ -486,10 +489,19 @@ export class StartupCoordinator {
         ...(this.targetIdentity ? { targetIdentity: this.targetIdentity } : {}) });
     }
     if (this.journal.stage === StartupStage.Isolate) {
-      verifyHistoryBackup(this.history);
+      const previousSnapshot = verifyHistoryBackup(this.history);
+      let refreshNeeded = resumedIsolation;
+      const observeHistoryChanges = () => {
+        try { verifyHistorySourcesBeforeIsolation(this.userData, this.history); }
+        catch (error) {
+          if ((error as { code?: unknown } | null)?.code !== HISTORY_SOURCE_CHANGED) throw error;
+          refreshNeeded = true;
+          console.info('[StartupCoordinator] History changed; a fresh snapshot will be captured after isolation.');
+        }
+      };
       // A resumed isolation may already have moved openclaw into retired/.
       if (startupPathExists(path.join(this.userData, 'openclaw')))
-        verifyNativeHistoryOriginals(this.userData, this.history);
+        observeHistoryChanges();
       const entries = [...this.journal.isolatedEntries ?? []];
       const planned = new Set(entries.map(profileEntryKey));
       for (const name of fs.readdirSync(this.userData)) {
@@ -508,6 +520,7 @@ export class StartupCoordinator {
       );
       fs.mkdirSync(retired, { recursive: true });
       for (const name of entries) {
+        if (this.stopped) throw new Error('Application startup was interrupted.');
         if (!shouldIsolateProfileEntry(name)) continue;
         const source = ownedPath(this.userData, name, true);
         const destination = ownedPath(retired, name, true);
@@ -539,7 +552,25 @@ export class StartupCoordinator {
           await fs.promises.mkdir(path.dirname(target), { recursive: true });
         }
         try {
-          await fs.promises.rename(source, target);
+          if (requiresProfileIsolation(name)) {
+            // Earlier required items may have waited on a sharing lock as well.
+            if (profileEntryKey(name) === 'openclaw')
+              observeHistoryChanges();
+            const operation = archiveRequiredProfileEntry(this.userData, name, path.relative(this.userData, target), {
+              signal: this.profileIsolationAbort.signal,
+              assertActive: () => {
+                if (this.stopped) throw new Error('Application startup was interrupted.');
+              },
+              beforeRetry: () => {
+                refreshNeeded = true;
+                if (profileEntryKey(name) === 'openclaw')
+                  observeHistoryChanges();
+              },
+            });
+            this.profileIsolationOperation = operation;
+            try { await operation; }
+            finally { if (this.profileIsolationOperation === operation) this.profileIsolationOperation = undefined; }
+          } else await fs.promises.rename(source, target);
         } catch (error) {
           if (retainUnavailableOptionalProfileEntry(name, error)) continue;
           throw error;
@@ -547,9 +578,40 @@ export class StartupCoordinator {
         if (target !== destination)
           console.info('[StartupCoordinator] Retained an additional profile entry:', target);
       }
+      if (this.stopped) throw new Error('Application startup was interrupted.');
       if (fs.readdirSync(this.userData).some(requiresProfileIsolation))
         throw new Error('Required legacy profile entries reappeared during isolation. Existing data has been preserved.');
-      this.commit(StartupStage.Initialize, this.targetIdentity ? { targetIdentity: this.targetIdentity } : {});
+      let freshSnapshotDirectory: string | undefined;
+      if (refreshNeeded) {
+        const expectsProductDatabase = previousSnapshot.files.some(file => file.path === DB_FILENAME);
+        if (expectsProductDatabase && !startupPathExists(ownedPath(retired, DB_FILENAME)))
+          throw new Error('The legacy conversation index is missing. Existing history has been preserved.');
+        if (previousSnapshot.files.some(file => file.path.split(path.sep)[0] === 'openclaw') &&
+            !startupPathExists(path.join(retired, 'openclaw')))
+          throw new Error('The legacy history directory is missing. Existing history has been preserved.');
+        freshSnapshotDirectory = `history-refresh-${randomUUID()}`;
+        const candidate = ownedPath(this.userData,
+          path.join('backups', this.journal.transactionId, freshSnapshotDirectory));
+        const refresh = (async () => {
+          progress.reportActivity(AppInitializationActivity.HistoryBackup);
+          await createHistoryBackup(retired, candidate);
+          if (this.stopped) throw new Error('Application startup was interrupted.');
+          if (expectsProductDatabase && !verifyHistoryBackup(candidate).files.some(file => file.path === DB_FILENAME))
+            throw new Error('The legacy conversation index is missing. Existing history has been preserved.');
+          writeStartupJson(path.join(candidate, 'import-plan.json'), planLegacyHistory(candidate));
+          verifyHistorySourcesBeforeIsolation(retired, candidate);
+        })();
+        this.profileIsolationOperation = refresh;
+        try { await refresh; }
+        finally { if (this.profileIsolationOperation === refresh) this.profileIsolationOperation = undefined; }
+      }
+      if (this.stopped) throw new Error('Application startup was interrupted.');
+      if (fs.readdirSync(this.userData).some(requiresProfileIsolation))
+        throw new Error('Required legacy profile entries reappeared during isolation. Existing data has been preserved.');
+      this.commit(StartupStage.Initialize, {
+        ...(this.targetIdentity ? { targetIdentity: this.targetIdentity } : {}),
+        ...(freshSnapshotDirectory ? { historySnapshotDirectory: freshSnapshotDirectory } : {}),
+      });
     }
     progress.advance(AppInitializationStep.UserData, 0);
   }

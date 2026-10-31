@@ -11,9 +11,48 @@ import {
   AppInitializationTaskStatus,
 } from '../../../shared/app/initialization';
 import { StartupRoute, StartupStage } from '../../../shared/app/startup/routing';
+import { rememberHistoryLockDiagnostic } from '../history/historyFailure';
 import { AppInitialization } from './appInitialization';
 
 const roots: string[] = [];
+
+test('publishes lock process observations with the original error and isolated state snapshots', () => {
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+  const onChanged = vi.fn();
+  const initialization = new AppInitialization(temporaryRoot(), StartupRoute.Migration, onChanged);
+  const error = Object.assign(new Error('EPERM: original rename failure'), { code: 'EPERM' });
+  rememberHistoryLockDiagnostic(error, { targetPath: 'C:/profile/openclaw', available: true,
+    processes: [{ name: 'fixture-app', pid: 42, isMainProcess: true }] });
+
+  initialization.fail(error);
+
+  const state = initialization.getState();
+  expect(state).toMatchObject({
+    phase: AppInitializationPhase.Failed, error: 'EPERM: original rename failure', historyRecovery: 'access',
+    historyLockDiagnostic: { targetPath: 'C:/profile/openclaw', available: true,
+      processes: [{ name: 'fixture-app', pid: 42, isMainProcess: true }] },
+    failure: { error: { message: 'EPERM: original rename failure', code: 'EPERM' } },
+  });
+  state.historyLockDiagnostic!.processes[0].name = 'mutated snapshot';
+  state.historyLockDiagnostic!.targetPath = 'different directory';
+  expect(initialization.getState().historyLockDiagnostic?.processes[0].name).toBe('fixture-app');
+  const published = onChanged.mock.lastCall![0];
+  expect(published.historyLockDiagnostic.targetPath).toBe('C:/profile/openclaw');
+  initialization.fail(new Error('unrelated failure'));
+  expect(initialization.getState().historyLockDiagnostic).toBeUndefined();
+  expect(published.historyLockDiagnostic.processes[0].name).toBe('fixture-app');
+});
+
+test.each([true, false])('publishes an unknown lock owner when lookup availability is %s', available => {
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+  const initialization = new AppInitialization(temporaryRoot(), StartupRoute.Migration, vi.fn());
+  const error = Object.assign(new Error('sharing violation'), { code: 'EPERM' });
+  rememberHistoryLockDiagnostic(error, { targetPath: 'C:/profile/openclaw', available, processes: [] });
+  initialization.fail(error);
+  expect(initialization.getState().historyLockDiagnostic).toEqual({
+    targetPath: 'C:/profile/openclaw', available, processes: [],
+  });
+});
 test('publishes structured Main failures with their actual activity and log location', () => {
   vi.spyOn(console, 'error').mockImplementation(() => {});
   const initialization = new AppInitialization(

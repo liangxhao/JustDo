@@ -17,7 +17,7 @@ import {
   StartupStage,
 } from '../../../shared/app/startup/routing';
 import { captureStartupFailure, StartupFailureSource } from '../../../shared/app/startupFailure';
-import { classifyHistoryFailure } from '../history/historyFailure';
+import { classifyHistoryFailure, getHistoryLockDiagnostic } from '../history/historyFailure';
 
 const INITIALIZED_MARKER = '.justdo-initialized';
 const MIGRATION_RESUME_PROGRESS: Partial<
@@ -122,7 +122,14 @@ export class AppInitialization {
   }
 
   getState(): AppInitializationState {
-    return { ...this.state, ...(this.state.tasks ? { tasks: { ...this.state.tasks } } : {}) };
+    return {
+      ...this.state,
+      ...(this.state.tasks ? { tasks: { ...this.state.tasks } } : {}),
+      ...(this.state.historyLockDiagnostic ? { historyLockDiagnostic: {
+        ...this.state.historyLockDiagnostic,
+        processes: this.state.historyLockDiagnostic.processes.map(owner => ({ ...owner })),
+      } } : {}),
+    };
   }
 
   setTaskStatus(task: AppInitializationTask, status: AppInitializationTaskStatus): void {
@@ -270,6 +277,7 @@ export class AppInitialization {
         [task, status === AppInitializationTaskStatus.Running ? AppInitializationTaskStatus.Failed : status])) } : {}),
       error: failure.error.message,
       failure,
+      historyLockDiagnostic: getHistoryLockDiagnostic(error),
       ...(this.state.route === StartupRoute.Migration || recovery !== HistoryRecoveryKind.Other
         ? { historyRecovery: recovery }
         : {}),

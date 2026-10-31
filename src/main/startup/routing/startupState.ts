@@ -44,6 +44,8 @@ export type StartupJournal = {
   transactionId: string;
   startedAt: number;
   isolatedEntries?: string[];
+  /** Published, verified migration snapshot below this transaction's backup directory. */
+  historySnapshotDirectory?: string;
   historySummary?: StartupHistorySummary;
   completedIdentity?: StartupIdentity;
   /** Last application opening; not a native database maintenance receipt. */
@@ -83,6 +85,9 @@ export function readStartupJournal(userData: string): StartupJournal | null {
     (value.targetIdentity !== undefined && !isStartupIdentity(value.targetIdentity)) ||
     (value.schemaPreparationPending !== undefined && typeof value.schemaPreparationPending !== 'boolean') ||
     (value.schemaPreparationPending === true && !isStartupIdentity(value.targetIdentity)) ||
+    (value.historySnapshotDirectory !== undefined &&
+      (typeof value.historySnapshotDirectory !== 'string' ||
+        !/^history-refresh-[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/.test(value.historySnapshotDirectory))) ||
     (value.route === StartupRoute.Upgrade && value.stage !== StartupStage.Complete &&
       !isStartupIdentity(value.targetIdentity)) ||
     (value.historySummary !== undefined &&

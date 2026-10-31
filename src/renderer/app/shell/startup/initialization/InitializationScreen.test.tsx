@@ -211,6 +211,39 @@ test('keeps a subsequent-launch failure out of the first-launch guide', () => {
   expect(screen.getByRole('alert').textContent).toBe('startup failed');
 });
 
+test.each([true, false])('shows lock observations and retains the original error in each startup screen (%s)', async firstLaunch => {
+  const openSupport = vi.fn().mockResolvedValue({ success: true });
+  Object.defineProperty(window, 'electron', {
+    configurable: true,
+    value: {
+      platform: 'win32',
+      initialization: { route: StartupRoute.Migration, openSupport, relaunch: vi.fn() },
+      log: { getPath: vi.fn().mockResolvedValue('') },
+    },
+  });
+  render(
+    <InitializationScreen
+      state={{
+        ...state, firstLaunch, route: firstLaunch ? StartupRoute.Migration : StartupRoute.Normal,
+        phase: AppInitializationPhase.Failed,
+        historyRecovery: HistoryRecoveryKind.Access,
+        error: 'EPERM: rename fixture history folder',
+        historyLockDiagnostic: {
+          targetPath: 'C:\\data\\openclaw', available: true,
+          processes: [{ name: 'DesktopApp', pid: 4102, isMainProcess: true }],
+        },
+      }}
+    />,
+  );
+  await act(async () => {});
+  expect(screen.getByText('DesktopApp')).toBeTruthy();
+  expect(screen.getByText('initializationLockProcessPid 4102')).toBeTruthy();
+  expect(screen.getByText('initializationLockCurrentApplication')).toBeTruthy();
+  expect(screen.getByText('EPERM: rename fixture history folder')).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'initializationOpenTaskManager' })).toBeTruthy();
+  expect(openSupport).not.toHaveBeenCalled();
+});
+
 test('updates elapsed time without inventing progress, and resets the wait hint on a real activity', () => {
   vi.useFakeTimers();
   vi.setSystemTime(state.startedAt);

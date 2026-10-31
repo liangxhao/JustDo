@@ -31,7 +31,8 @@ test.each([false, true, 'admission', 'integrations'] as const)('Main attempts ev
     startupEnginePreparationController: undefined,
     startupIntegrationPreparation: rejects === 'integrations' ? Promise.reject(retired) : undefined,
     runApplicationCleanup, settleCleanupTasks,
-    startupCoordinator: { stop: () => { calls.push('startup-confirmation'); } },
+    startupCoordinator: { stop: () => { calls.push('startup-confirmation'); },
+      settleProfileIsolation: async () => { calls.push('profile-isolation'); } },
     appServerIntegrationService: { stop: async () => { calls.push('app-server'); } },
     startupHistoryRuntime: { stop: async () => { calls.push('history'); } },
     startupDatabaseRuntime: { stop: async () => { calls.push('native'); if (rejects === true) throw retired; } },
@@ -42,7 +43,8 @@ test.each([false, true, 'admission', 'integrations'] as const)('Main attempts ev
     },
     devSessionLifecycle: undefined, detachDevelopmentParent: undefined,
     store: { close: () => { calls.push('product-db'); } },
-    getTeamDiscussionCoordinator: () => ({ dispose: () => { calls.push('team'); } }),
+    appPlugins: { dispose: async () => { calls.push('plugins'); } },
+    stopAppDevelopmentAssets: undefined,
     builtinModelCredentialMonitor: undefined, loginService: undefined,
     customerRegistrationService: undefined, builtinModelTokenExchange: undefined,
     builtinModelAuthCoordinator: undefined,
@@ -63,7 +65,7 @@ test.each([false, true, 'admission', 'integrations'] as const)('Main attempts ev
   else await expect(owner.cleanup()).resolves.toBeUndefined();
   expect(owner.admitted()).toBe(false);
   expect(calls[0]).toBe('block-gateway');
-  expect(calls).toEqual(['block-gateway', 'startup-confirmation', 'app-server', 'history', 'native', 'team',
+  expect(calls).toEqual(['block-gateway', 'startup-confirmation', 'app-server', 'history', 'native', 'profile-isolation', 'plugins',
     'credentials', 'tray', 'scheduler', 'stop-gateway', 'browser-routing', 'browser-bridge', ...(rejects ? [] : ['product-db'])]);
   if (rejects) expect(console.error).toHaveBeenCalledWith(
     expect.stringContaining('retirement remains unconfirmed'), 'startup',

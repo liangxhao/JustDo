@@ -9,12 +9,12 @@ export const initializationTranslations = {
     initializationDatabaseRecovery_space: '数据库升级已暂停：磁盘空间不足',
     initializationDatabaseRecovery_spaceDescription:
       '请释放数据所在磁盘的空间后重新启动。现有数据和已完成的备份会保留。',
-    initializationDatabaseRecovery_busy: '数据库正在被其他进程使用',
+    initializationDatabaseRecovery_busy: '数据库文件正在被使用',
     initializationDatabaseRecovery_busyDescription:
-      '请退出其他应用实例及其后台引擎，然后重新启动。',
+      '请核对正在使用数据的程序，退出相关实例及其后台引擎，然后重新启动。',
     initializationDatabaseRecovery_access: '数据库文件被占用或无权访问',
     initializationDatabaseRecovery_accessDescription:
-      '请检查数据目录读写权限并退出占用它的其他实例，再重新启动重试。',
+      '请检查数据目录读写权限并退出正在使用这些文件的程序，再重新启动重试。',
     initializationDatabaseRecovery_changing: '数据库状态在检查后发生变化',
     initializationDatabaseRecovery_changingDescription:
       '请退出其他应用实例，然后重新启动重试。',
@@ -77,9 +77,9 @@ export const initializationTranslations = {
     initializationRecovery_space: '磁盘空间不足，历史升级已暂停',
     initializationRecovery_spaceDescription:
       '请释放应用数据所在磁盘的空间，然后点击“重新启动并重试”。现有历史和已有备份已保留。',
-    initializationRecovery_busy: '历史文件正被其他程序占用',
+    initializationRecovery_busy: '历史文件正在被使用',
     initializationRecovery_busyDescription:
-      '请先退出旧版应用及其后台组件，关闭正在使用历史文件的程序，然后重新启动并重试。',
+      '请退出正在使用历史文件的程序，再重新启动并重试。尚未确认相关进程时，请先核对程序名称和位置。',
     initializationRecovery_access: '历史文件被占用，或当前账号无权访问',
     initializationRecovery_accessDescription:
       '请退出使用这些文件的程序，并检查当前账号对数据目录是否有读写权限。若文件仍被占用，处理占用后重新启动并重试。',
@@ -90,7 +90,18 @@ export const initializationTranslations = {
     initializationRecovery_otherDescription:
       '请先退出旧版应用，检查数据磁盘剩余空间及目录读写权限，再查看下方详细信息中的失败原因，处理后重新启动并重试。',
     initializationRecoveryTaskManagerHint:
-      '可在任务管理器中手动结束确认属于旧版应用的占用进程。请核对进程名称和位置，避免结束其他程序。',
+      '请先核对进程名称、PID 和程序位置，再在对应程序中退出，或在任务管理器中手动结束已确认的进程。',
+    initializationLockDiagnosticTitle: '目录访问检测',
+    initializationLockDiagnosticObserved:
+      '检测时发现以下进程访问了该目录，但尚不能确认它们是否阻止了移动。',
+    initializationLockProcesses: '检测到的进程',
+    initializationLockProcessPid: 'PID',
+    initializationLockCurrentApplication: '当前应用主进程',
+    initializationLockCurrentApplicationHint: '若标记为当前应用主进程，请完全退出本应用后再重新启动。',
+    initializationLockDiagnosticEmpty:
+      '本次未检测到可识别的进程，仍无法确认占用者。可能是短暂占用或权限问题，请结合下方原始错误检查。',
+    initializationLockDiagnosticUnavailable:
+      '未能获取进程信息，无法确认占用者。当前账号可能无权查看，请结合下方原始错误检查文件占用和目录权限。',
     initializationUpgradeWelcome: '迁移升级安装',
     initializationUpgradeTitle: '让历史对话继续陪伴你',
     initializationUpgradeDescription:
@@ -209,12 +220,12 @@ export const initializationTranslations = {
     initializationDatabaseRecovery_space: 'Database upgrade paused: insufficient disk space',
     initializationDatabaseRecovery_spaceDescription:
       'Free space on the data drive and restart. Existing data and completed backups are retained.',
-    initializationDatabaseRecovery_busy: 'Another process is using the database',
+    initializationDatabaseRecovery_busy: 'Database files are in use',
     initializationDatabaseRecovery_busyDescription:
-      'Exit other application instances and their background engines, then restart.',
+      'Identify the programs using the data, close the relevant instances and their background engines, then restart.',
     initializationDatabaseRecovery_access: 'Database files are locked or inaccessible',
     initializationDatabaseRecovery_accessDescription:
-      'Check data directory permissions and close other instances using it, then restart and retry.',
+      'Check data directory permissions and close programs using these files, then restart and retry.',
     initializationDatabaseRecovery_changing: 'Database state changed after inspection',
     initializationDatabaseRecovery_changingDescription:
       'Exit other application instances, then restart and retry.',
@@ -269,9 +280,9 @@ export const initializationTranslations = {
     initializationRecovery_space: 'History upgrade paused: the disk is full',
     initializationRecovery_spaceDescription:
       'Free space on the application data drive, then choose Restart and retry. Your history and existing backups are preserved.',
-    initializationRecovery_busy: 'Another program is using the history files',
+    initializationRecovery_busy: 'History files are in use',
     initializationRecovery_busyDescription:
-      'Quit the previous application and its background components, close programs using these files, then restart and retry.',
+      'Close programs using the history files, then restart and retry. Check the program name and location before handling an unidentified process.',
     initializationRecovery_access: 'History files are in use or access was denied',
     initializationRecovery_accessDescription:
       'Close programs using these files and check that your account can read and write the data folder. Resolve any file locks, then restart and retry.',
@@ -282,7 +293,18 @@ export const initializationTranslations = {
     initializationRecovery_otherDescription:
       'Quit the previous application, check free disk space and folder access, then review the failure details below. Resolve the cause and restart to retry. You do not need to clear the data folder manually.',
     initializationRecoveryTaskManagerHint:
-      'You can manually end a confirmed process belonging to the previous application in Task Manager. Check its name and location before ending it.',
+      'Check the process name, PID and program location, then quit that program or manually end the confirmed process in Task Manager.',
+    initializationLockDiagnosticTitle: 'Folder access check',
+    initializationLockDiagnosticObserved:
+      'These processes were observed accessing the folder. This does not confirm that they prevented it from being moved.',
+    initializationLockProcesses: 'Observed processes',
+    initializationLockProcessPid: 'PID',
+    initializationLockCurrentApplication: 'Current app main process',
+    initializationLockCurrentApplicationHint: 'If the current app main process is listed, fully quit this app and start it again.',
+    initializationLockDiagnosticEmpty:
+      'No identifiable process was found in this check. The lock owner remains unknown; review the original error below for temporary locks or permission issues.',
+    initializationLockDiagnosticUnavailable:
+      'Process information could not be obtained, so the lock owner remains unknown. Your account may lack permission to inspect it; review the original error below and check folder access.',
     initializationUpgradeWelcome: 'Migration upgrade',
     initializationUpgradeTitle: 'Keep your conversations going',
     initializationUpgradeDescription:

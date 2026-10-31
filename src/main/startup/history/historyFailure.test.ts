@@ -1,7 +1,33 @@
 import { expect, test } from 'vitest';
 
 import { HistoryRecoveryKind } from '../../../shared/app/startup/history';
-import { classifyHistoryFailure, historySourceChanged, nativeHistoryError } from './historyFailure';
+import { classifyHistoryFailure, getHistoryLockDiagnostic, historySourceChanged, nativeHistoryError, rememberHistoryLockDiagnostic } from './historyFailure';
+
+test('keeps copied lock observations separate from the unchanged filesystem exception', () => {
+  const error = Object.freeze(Object.assign(new Error('original rename failure'), { code: 'EPERM' }));
+  const diagnostic = { targetPath: 'C:/profile/openclaw', available: true,
+    processes: [{ name: 'observed process', pid: 42, isMainProcess: false }] };
+  rememberHistoryLockDiagnostic(error, diagnostic);
+  diagnostic.processes[0].name = 'later mutation';
+  const first = getHistoryLockDiagnostic(error)!;
+  expect(first.processes[0].name).toBe('observed process');
+  first.processes[0].pid = 123;
+  expect(getHistoryLockDiagnostic(error)?.processes[0].pid).toBe(42);
+  expect(error.message).toBe('original rename failure');
+  expect(error.code).toBe('EPERM');
+  expect(Object.keys(error)).toEqual(['code']);
+});
+
+test('reads lock observations through bounded error causes and safely handles cycles', () => {
+  const cause = new Error('original failure');
+  const diagnostic = { targetPath: 'C:/profile/openclaw', available: false, processes: [] };
+  rememberHistoryLockDiagnostic(cause, diagnostic);
+  expect(getHistoryLockDiagnostic(new Error('wrapped failure', { cause }))).toEqual(diagnostic);
+  const cycle: { cause?: unknown } = {};
+  cycle.cause = cycle;
+  expect(getHistoryLockDiagnostic(cycle)).toBeUndefined();
+  expect(getHistoryLockDiagnostic('EPERM')).toBeUndefined();
+});
 
 test.each([
   ['ENOSPC', HistoryRecoveryKind.Space],
