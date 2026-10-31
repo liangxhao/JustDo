@@ -1,6 +1,4 @@
 const MAX_ERROR_DETAIL_CHARS = 2000;
-const GENERIC_FAILURE_PATTERN =
-  /^(?:⚠️\s*)?(?:Agent run failed(?:\s*\((?:model|provider):[^\r\n]+\))?|(?:LLM|Provider) request failed(?: with an unknown error)?|The agent run failed before producing a reply|The run failed|Unknown error|[^\r\n]+ request failed(?:\s*\(HTTP \d{3}\))?)\.?$/iu;
 const UNCLASSIFIED_VALUES = new Set(['unknown', 'unclassified', 'no_error_details']);
 
 /** Combine existing display-safe diagnostics without replacing the native failure summary. */
@@ -9,8 +7,7 @@ export function appendErrorDisplayDetail(summary: string, detail: unknown): stri
   const text = detail.trim().slice(0, MAX_ERROR_DETAIL_CHARS);
   if (!summary.trim()) return text;
   if (summary.includes(text)) return summary;
-  const separator = GENERIC_FAILURE_PATTERN.test(summary.trim()) ? ' ' : '\n';
-  return `${summary.trim()}${separator}${text}`;
+  return `${summary.trim()}\n${text}`;
 }
 
 /** Read only the native public, already-redacted error-detail contract. */

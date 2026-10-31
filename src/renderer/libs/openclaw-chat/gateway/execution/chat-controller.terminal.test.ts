@@ -1799,7 +1799,8 @@ test('restores a persisted lifecycle failure after the controller restarts', asy
         {
           role: 'assistant',
           runId: 'run-1',
-          content: 'The agent run failed before producing a reply.',
+          content: '',
+          stopReason: 'error',
           timestamp: Date.now(),
         },
       ],

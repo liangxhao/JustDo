@@ -36,7 +36,7 @@ const chat = (state: 'delta' | 'final', message: unknown): BrowserExtensionStrea
 });
 
 describe('extension stream display rules', () => {
-  it.each(['NO_REPLY', 'NO_RE', 'HEARTBEAT_OK', 'The agent run failed before producing a reply.'])(
+  it.each(['NO_REPLY', 'NO_RE', 'HEARTBEAT_OK'])(
     'never retains hidden live text %s after authoritative empty history',
     text => {
       const view = new BrowserExtensionStream('one');
@@ -67,7 +67,7 @@ describe('extension stream display rules', () => {
       { type: 'agentMessage', text },
     ]);
   });
-  it.each(['NO_REPLY', 'NO_RE', 'HEARTBEAT_OK', 'The agent run failed before producing a reply.'])(
+  it.each(['NO_REPLY', 'NO_RE', 'HEARTBEAT_OK'])(
     'hides control text %s without losing final lifecycle',
     text => {
       expect(prepare(agent({ text }))).toBeNull();
@@ -98,6 +98,8 @@ describe('extension stream display rules', () => {
       { justdoTerminalGuardObservation: { token: 'a', action: 'rollback' } },
     ])
       expect(prepare(agent(data))).toEqual(agent(data));
+    const text = 'The agent run failed before producing a reply.';
+    expect(prepare(agent({ text }))).toEqual(agent({ text }));
   });
   it('removes a trailing silent marker from visible answers', () => {
     expect(prepare(agent({ text: 'Answer\nNO_REPLY' }))).toMatchObject({

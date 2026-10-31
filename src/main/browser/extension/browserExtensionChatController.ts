@@ -46,7 +46,6 @@ const MAX_ATTACHMENT_BASE64_LENGTH = 6 * 1024 * 1024;
 const MAX_MODEL_REF_LENGTH = 500;
 const MAX_TRACKED_TURN_ERRORS = 100;
 const MAX_RETAINED_TURN_RECEIPTS = 100;
-const GENERIC_FAILED_RUN_MESSAGE = 'The agent run failed before producing a reply.';
 
 type WaitTerminalReceipt = Omit<NativeRunTerminalReceipt, 'agentSeq'>;
 type RetainedWaitReceipt = {
@@ -307,10 +306,7 @@ const extractBrowserExtensionHistoryEntries = (messages: unknown[]): ExtensionHi
         );
       }
       return entries;
-    })
-    .filter(
-      entry => !(entry.role === 'assistant' && entry.text.trim() === GENERIC_FAILED_RUN_MESSAGE),
-    );
+    });
 
 const encodeBrowserContextValue = (value: string, maxLength: number): string => {
   let encoded = '"';
@@ -405,9 +401,11 @@ export class BrowserExtensionChatController implements BrowserExtensionChatApi {
     if (!this.findBrowserSession(sessionId)) return;
     const turn = this.activeTurns.get(sessionId);
     if (!turn) return;
+    const message = error.trim();
+    if (!message) return;
     this.activeTurns.set(sessionId, {
       ...turn,
-      message: error.trim() || 'The agent run failed before producing a reply.',
+      message,
     });
   };
 
@@ -819,9 +817,7 @@ export class BrowserExtensionChatController implements BrowserExtensionChatApi {
       const interrupted = receipt.status === 'interrupted';
       const failed = receipt.status === 'failed';
       const message = failed
-        ? receipt.error ||
-          this.activeTurns.get(sessionId)?.message ||
-          'The agent run failed before producing a reply.'
+        ? receipt.error?.trim() || this.activeTurns.get(sessionId)?.message?.trim() || undefined
         : undefined;
       this.clearActiveTurn(sessionId, timing.clientTurnId);
       store.finishSessionRun(

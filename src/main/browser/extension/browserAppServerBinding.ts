@@ -586,10 +586,8 @@ export class BrowserAppServerHub {
               turn: {
                 completedAt: Math.floor(Date.now() / 1000),
                 durationMs: null,
-                error: failed
-                  ? {
-                      message: recordedError ?? 'The agent run failed before producing a reply.',
-                    }
+                error: failed && recordedError
+                  ? { message: recordedError }
                   : null,
                 id: turnId,
                 items: [],

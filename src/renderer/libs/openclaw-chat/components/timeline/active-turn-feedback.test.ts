@@ -50,10 +50,10 @@ test.each(['\n', '\r\n'])(
     const error = document.querySelector<TerminalErrorMessage>('chat-terminal-error')!;
     await error.updateComplete;
     expect(error.querySelector('.process-terminal__error-text')?.textContent).toBe(
-      `${summary}: ${detail}`,
+      `${summary.replace(/\.$/u, '')}: ${detail}`,
     );
     expect(error.querySelector<HTMLButtonElement>('button')?.hidden).toBe(true);
-    expect(error.textContent?.split(summary)).toHaveLength(2);
+    expect(error.textContent?.split(summary.replace(/\.$/u, ''))).toHaveLength(2);
     expect(error.textContent).not.toContain('⚠');
     expect(document.querySelectorAll('.chat-avatar.error')).toHaveLength(1);
     expect(document.querySelector('.chat-avatar.assistant')).toBeNull();
@@ -82,7 +82,7 @@ test.each([
   await document.querySelector<TerminalErrorMessage>('chat-terminal-error')?.updateComplete;
 
   expect(document.querySelector('.process-terminal__error-text')?.textContent).toBe(
-    `${PRODUCT_NAME} couldn't finish this reply.: ${detail}`,
+    `${PRODUCT_NAME} couldn't finish this reply: ${detail}`,
   );
   expect(document.querySelector('.process-terminal')?.textContent).not.toContain(hint);
   document.querySelector<HTMLButtonElement>('.message-copy')!.click();

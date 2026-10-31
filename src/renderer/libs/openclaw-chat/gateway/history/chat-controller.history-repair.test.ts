@@ -4,6 +4,7 @@ import { ChatController } from '@/libs/openclaw-chat/gateway/chat-controller';
 import { beginAssistantTurn } from '@/libs/openclaw-chat/model/chat-transcript-state';
 import { projectPersistedMessagesForActiveTurn } from '@/libs/openclaw-chat/model/history/optimistic-history-tail';
 import { projectTurnItems } from '@/libs/openclaw-chat/model/timeline/project-turn-items';
+import { withFailureDetailsForDisplay } from '@/libs/openclaw-chat/model/turn/failed-run-message';
 import { projectWaitingStatus } from '@/libs/openclaw-chat/model/turn/run-activity';
 
 afterEach(() => {
@@ -336,7 +337,13 @@ test.each([
         controller.state.chatMessages,
         controller.state.transcript.activeTurn,
       ),
-    ).toEqual(controller.state.chatMessages);
+    ).toEqual([user]);
+    const display = withFailureDetailsForDisplay(
+      controller.state.transcript.activeTurn, controller.state.chatMessages,
+    );
+    expect(display?.items[0]).toMatchObject({
+      message: `${error}\n${diagnosis}`,
+    });
     controller.disconnect();
   },
 );

@@ -2,6 +2,11 @@ import { describe, expect, test } from 'vitest';
 
 import { beginAssistantTurn, createChatTranscriptState } from '../chat-transcript-state';
 import {
+  FAILED_RUN_MESSAGE_FLAG,
+  withFailureDetailsForDisplay,
+  withNativeFailureSummary,
+} from '../turn/failed-run-message';
+import {
   markOptimisticHistoryTail,
   projectInitialHistoryForActiveTurn,
   projectPersistedMessagesForActiveTurn,
@@ -14,6 +19,70 @@ const dependencies = {
 };
 
 describe('optimistic history tail ownership', () => {
+  test('groups complete native diagnostics without interpreting their wording', () => {
+    const state = createChatTranscriptState('session-1', 'sid-1');
+    const turn = beginAssistantTurn(state, { runId: 'run-current' }, dependencies);
+    turn.status = 'error';
+    turn.items.push({
+      id: 'terminal',
+      runId: turn.runId,
+      firstSeq: 2,
+      lastSeq: 2,
+      startedAt: 1,
+      updatedAt: 2,
+      type: 'terminal',
+      status: 'error',
+      message: 'La requête ne peut pas aboutir.',
+    });
+    const failure = {
+      role: 'system',
+      content: 'Managed model credentials are unavailable.',
+      errorMessage: 'Managed model credentials are unavailable.',
+      stopReason: 'error',
+      [FAILED_RUN_MESSAGE_FLAG]: true,
+      __openclaw: { id: 'failure', runId: turn.runId },
+    };
+    expect(projectPersistedMessagesForActiveTurn([failure], turn)).toEqual([]);
+    const warned = { ...failure, errorMessage: `⚠️ ${failure.errorMessage}` };
+    expect(projectPersistedMessagesForActiveTurn([warned], turn)).toEqual([]);
+    const identical = withNativeFailureSummary(failure, failure.errorMessage);
+    const identicalDisplay = withFailureDetailsForDisplay(turn, [identical]);
+    const identicalText = identicalDisplay?.items.find(item => item.type === 'terminal')?.message;
+    expect(identicalText?.split(failure.errorMessage)).toHaveLength(2);
+    const fallback = withNativeFailureSummary(
+      failure,
+      'The agent run failed before producing a reply.',
+    );
+    expect(projectPersistedMessagesForActiveTurn([fallback], turn)).toEqual([]);
+    const specific = withNativeFailureSummary(
+      failure,
+      'The AI service rejected this request. Check your account permissions.',
+    );
+    expect(projectPersistedMessagesForActiveTurn([specific], turn)).toEqual([]);
+    expect(withFailureDetailsForDisplay(turn, [specific])?.items[0]).toMatchObject({
+      message: expect.stringContaining('Check your account permissions.'),
+    });
+    const longFailure = {
+      ...failure,
+      content: 'A'.repeat(2000),
+      errorMessage: 'A'.repeat(2000),
+      __openclaw: { id: 'long-failure', runId: turn.runId },
+    };
+    // The aggregate display budget may omit a later source. Keep that source
+    // visible until its complete diagnostic is represented by the live row.
+    expect(projectPersistedMessagesForActiveTurn([longFailure, failure], turn)).toEqual([failure]);
+    for (const unrelated of [
+      { ...failure, __openclaw: { seq: 3, runId: turn.runId } },
+      { ...failure, __openclaw: { id: 'other', runId: 'run-other' } },
+      { ...failure, role: 'custom', customType: 'run-failed-before-reply' },
+    ]) {
+      expect(projectPersistedMessagesForActiveTurn([unrelated], turn)).toEqual([unrelated]);
+    }
+    // Coalescing presentation does not let a model error settle the live run.
+    expect(retireSettledActiveTurn(state, [failure])).toBe(false);
+    expect(state.activeTurn).toBe(turn);
+  });
+
   test('loads older history without losing its last reply when the active prompt is not persisted', () => {
     const state = createChatTranscriptState('session-1', 'sid-1');
     const turn = beginAssistantTurn(state, { runId: 'run-current', startedAt: 1000 }, dependencies);

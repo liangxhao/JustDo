@@ -690,7 +690,9 @@ export class JustDoChatElement extends LitElement {
     const activeTurnHistoryKey = activeTurn
       ? `${activeTurn.runId}:${activeTurn.status}:${[...activeTurn.toolById.keys()].join(
           ',',
-        )}:${pendingMessage === null ? 'settled' : 'pending'}:${JSON.stringify(compactionOwners)}`
+        )}:${pendingMessage === null ? 'settled' : 'pending'}:${JSON.stringify(compactionOwners)}:${JSON.stringify(
+          sourceActiveTurn?.items.filter(item => item.type === 'terminal').map(item => item.message),
+        )}`
       : 'idle';
     if (
       this.projectedActiveHistorySource !== activePersistedMessages ||
@@ -700,8 +702,9 @@ export class JustDoChatElement extends LitElement {
       this.projectedActiveTurnKey = activeTurnHistoryKey;
       this.projectedActiveMessages = projectPersistedMessagesForActiveTurn(
         activePersistedMessages,
-        activeTurn,
+        sourceActiveTurn,
         pendingMessage,
+        activeTurn,
       );
     }
     let messages = this.projectedActiveMessages;

@@ -122,7 +122,7 @@ describe('normalizeChatEvent', () => {
           },
         },
       })?.errorMessage,
-    ).toBe('Provider request failed. Selected deployment is paused');
+    ).toBe('Provider request failed.\nSelected deployment is paused');
   });
   test('keeps a native retraction sequence separate from its transport frame', () => {
     expect(

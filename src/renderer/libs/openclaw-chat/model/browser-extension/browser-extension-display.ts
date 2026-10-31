@@ -4,14 +4,11 @@ import { isTruncatedHistoryMessage } from '../../gateway/history/chat-history-pr
 import { stripHeartbeatTokenForDisplay } from '../../pipeline/heartbeat-display';
 import { stripSilentReplySuffixFromText } from '../../pipeline/history-display-normalizer';
 
-const GENERIC_FAILURE = 'The agent run failed before producing a reply.';
-
 function hidden(text: string): boolean {
   const trimmed = text.trim();
   return (
     Boolean(trimmed) &&
     ('NO_REPLY'.startsWith(trimmed.toUpperCase()) ||
-      trimmed === GENERIC_FAILURE ||
       stripHeartbeatTokenForDisplay(trimmed).shouldSkip)
   );
 }

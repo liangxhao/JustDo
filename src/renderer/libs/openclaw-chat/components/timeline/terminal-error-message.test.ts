@@ -59,6 +59,8 @@ describe('terminal error text', () => {
     ['\n', ''],
     ['Failure\n\n', 'Failure'],
     ['Failure:\nCause', 'Failure: Cause'],
+    ['Failure.\nCause', 'Failure: Cause'],
+    ['失败。\n原因', '失败: 原因'],
     ['失败：\n原因', '失败： 原因'],
   ])('handles empty text and existing separators: %j', (message, expected) => {
     expect(formatTerminalErrorText(message)).toBe(expected);

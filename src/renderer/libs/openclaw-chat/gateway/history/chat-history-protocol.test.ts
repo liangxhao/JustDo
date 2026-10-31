@@ -14,6 +14,30 @@ import {
 } from './chat-history-protocol';
 
 describe('OpenClaw chat history protocol', () => {
+  test.each([
+    "⚠️ OpenClaw couldn't finish this reply.",
+    'The agent run failed before producing a reply.',
+    "OpenClaw couldn't save this conversation because the disk is full.",
+  ])('preserves the actual Gateway summary separately from its cause: %s', async summary => {
+    const cause = 'Managed model credentials are unavailable.';
+    const original = [{
+      role: 'assistant', content: [{ type: 'text', text: summary }], stopReason: 'error',
+      __openclaw: { id: 'failure', runId: 'run-1' },
+    }];
+    const request = vi.fn().mockResolvedValue({
+      failureDetails: { failure: { emptyContent: true, errorMessage: cause } },
+    });
+    const hydrated = await hydrateTruncatedHistoryMessages(
+      { request } as unknown as GatewayClient, original, 'session-1',
+    );
+    expect(hydrated[0]).toMatchObject({ content: [], errorMessage: cause });
+    const normalized = await normalizeGatewayHistoryForDisplay(hydrated, {
+      sessionKey: 'session-1', includeFailedRunOverlays: false,
+    });
+    expect(normalized[0]).toMatchObject({ content: `${summary}\n${cause}`, errorMessage: cause });
+    expect(original[0].content).toEqual([{ type: 'text', text: summary }]);
+  });
+
   test('binds native message hydration and bounded fallback to the confirmed physical session', async () => {
     const complete = { role: 'toolResult', content: 'complete original output' };
     const request = vi.fn(async (method: string) =>
@@ -679,6 +703,7 @@ describe('OpenClaw chat history protocol', () => {
               id,
               {
                 errorMessage: id === 'e' ? 'Authentication failed.' : 'Connection error.',
+                emptyContent: true,
                 diagnostics: { private: 'must not copy' },
                 errorBody: 'must not copy',
               },
@@ -694,7 +719,9 @@ describe('OpenClaw chat history protocol', () => {
     );
     expect(request).toHaveBeenCalledTimes(1);
     expect(hydrated).toHaveLength(input.length);
-    expect(hydrated[1]).toEqual({ ...input[1], errorMessage: 'Connection error.' });
+    expect(hydrated[1]).toMatchObject({
+      ...input[1], content: [], errorMessage: 'Connection error.',
+    });
     expect(input).toEqual(original);
     const normalized = await normalizeGatewayHistoryForDisplay(hydrated, {
       sessionKey: 'session-1',
@@ -702,7 +729,12 @@ describe('OpenClaw chat history protocol', () => {
     const projected = projectPersistedTimeline(normalized as GatewayMessage[]);
     expect(
       projected.filter(item => item.kind === 'history-message').map(item => item.message.content),
-    ).toEqual(['First request', 'Connection error.', 'Second request', 'Authentication failed.']);
+    ).toEqual([
+      'First request',
+      'The agent run failed before producing a reply.\nConnection error.',
+      'Second request',
+      'The agent run failed before producing a reply.\nAuthentication failed.',
+    ]);
   });
 
   test('keeps a fallback when the exact failure detail is unavailable and leaves other rows alone', async () => {

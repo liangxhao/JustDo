@@ -239,6 +239,18 @@ describe('browser turn execution receipts', () => {
     },
   );
 
+  it('keeps a verified failure without inventing an unavailable error message', async () => {
+    const f = turnStateFixture();
+    f.receipt.status = 'failed';
+
+    const result = await f.controller.getTurnState('one', 'client-1');
+
+    expect(result).toMatchObject({ status: 'failed', executionSettled: true });
+    expect(result).not.toHaveProperty('error');
+    expect(f.controller.consumeTurnError('one', 'client-1')).toBeUndefined();
+    expect(f.finishSessionRun).toHaveBeenCalledWith('timing-1', 'failed', 1234);
+  });
+
   it.each([
     { runId: 'other-run' },
     { clientGeneration: 2 },
@@ -1060,7 +1072,7 @@ describe('BrowserExtensionChatController', () => {
     ]);
   });
 
-  it('omits the synthetic failed-run placeholder from extension history', async () => {
+  it('preserves native failure text and ordinary replies without classifying their wording', async () => {
     const controller = new BrowserExtensionChatController({
       ensureEngineRunning: vi.fn(),
       getRouter: vi.fn(),
@@ -1073,6 +1085,10 @@ describe('BrowserExtensionChatController', () => {
               {
                 role: 'assistant',
                 stopReason: 'error',
+                content: 'The agent run failed before producing a reply.',
+              },
+              {
+                role: 'assistant',
                 content: 'The agent run failed before producing a reply.',
               },
               { role: 'assistant', content: 'Recovered answer' },
@@ -1088,6 +1104,11 @@ describe('BrowserExtensionChatController', () => {
     });
 
     await expect(controller.getMessages('session-1')).resolves.toEqual([
+      {
+        role: 'assistant', text: 'The agent run failed before producing a reply.',
+        display: { stopReason: 'error' },
+      },
+      { role: 'assistant', text: 'The agent run failed before producing a reply.' },
       { role: 'assistant', text: 'Recovered answer' },
     ]);
   });
@@ -1428,6 +1449,7 @@ describe('BrowserExtensionChatController', () => {
 
     const result = await controller.sendMessage({ message: 'Hello', sessionId: session.id });
     reportRouterError(session.id, 'Provider quota exceeded.');
+    reportRouterError(session.id, '   ');
     resolveExecution();
 
     await Promise.resolve();

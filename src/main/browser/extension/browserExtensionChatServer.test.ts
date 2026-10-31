@@ -1001,7 +1001,7 @@ describe('BrowserExtensionChatServer', () => {
     await expect(completion).resolves.toMatchObject({
       params: {
         turn: {
-          error: { message: 'The agent run failed before producing a reply.' },
+          error: null,
           status: 'failed',
         },
       },

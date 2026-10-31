@@ -19,6 +19,7 @@ export function formatTerminalErrorText(message: string): string {
   }
   const detail = remainingLines.join('\n').trim();
   if (!detail) return summary;
+  summary = summary.replace(/[.。]$/u, '');
   return `${summary}${/[:：]$/u.test(summary) ? ' ' : ': '}${detail}`;
 }
 

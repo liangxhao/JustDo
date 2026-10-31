@@ -11,6 +11,7 @@ import {
   FAILED_RUN_MESSAGE_ID,
   isFailedRunMessage,
   readNativeFailureDetails,
+  readNativeFailureSummary,
 } from '@/libs/openclaw-chat/model/turn/failed-run-message';
 import { isAssistantHeartbeatAckForDisplay } from '@/libs/openclaw-chat/pipeline/heartbeat-display';
 import { normalizeMessage } from '@/libs/openclaw-chat/pipeline/message-normalizer';
@@ -22,7 +23,6 @@ import {
 import { stripAppInput } from '../../../../../plugins/extensions/runtime-services/contracts/app-input';
 
 const SILENT_REPLY_PATTERN = /^\s*NO_REPLY\s*$/;
-const AGENT_RUN_FAILED_BEFORE_REPLY = 'The agent run failed before producing a reply.';
 const FAILED_RUN_STORAGE_KEY = 'justdo-openclaw-failed-runs';
 const FAILED_RUN_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const INTERRUPTED_MESSAGE_STORAGE_KEY = 'justdo-openclaw-interrupted-messages';
@@ -591,7 +591,6 @@ function isEmptyMessageContent(content: unknown): boolean {
 
 export function isPersistedFailedAssistantMessage(message: Record<string, unknown>): boolean {
   if (String(message.role ?? '').toLowerCase() !== 'assistant') return false;
-  if (messageText(message.content).trim() === AGENT_RUN_FAILED_BEFORE_REPLY) return true;
   const stopReason = message.stopReason ?? message.stop_reason;
   return stopReason === 'error' && isEmptyMessageContent(message.content);
 }
@@ -686,7 +685,7 @@ function mergeMissingFailedRunMessages(
         const enriched = {
           ...raw,
           content:
-            messageText(raw.content).trim() === AGENT_RUN_FAILED_BEFORE_REPLY
+            isEmptyMessageContent(raw.content)
               ? record.error
               : raw.content,
           [FAILED_RUN_MESSAGE_ID]: id,
@@ -758,7 +757,9 @@ function normalizeFailedRunMessage(
   ) {
     return null;
   }
-  const resolvedError = durableError || persistedError || AGENT_RUN_FAILED_BEFORE_REPLY;
+  const error = durableError || persistedError || '';
+  const summary = readNativeFailureSummary(message);
+  const resolvedError = summary && !summary.includes(error) ? `${summary}\n${error}` : summary || error;
   const normalized = {
     ...raw,
     role: 'system',

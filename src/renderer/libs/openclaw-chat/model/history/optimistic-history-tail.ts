@@ -1,6 +1,13 @@
+import { cleanFailureDisplayText } from '../../pipeline/system-message-display';
 import type { AssistantTurn, ChatTranscriptState } from '../chat-transcript-state';
 import { isTurnCompactionMessage, matchesCompactionHistory } from '../turn/compaction-item';
-import { isFailedRunMessage, readFailedRunMessageText } from '../turn/failed-run-message';
+import {
+  isFailedRunMessage,
+  readFailedRunMessageText,
+  readNativeFailureDetails,
+  readNativeFailureSummary,
+  withFailureDetailsForDisplay,
+} from '../turn/failed-run-message';
 import { readTranscriptIdentity } from './transcript-identity';
 
 const LOCAL_OPTIMISTIC_MESSAGE_FLAG = '__justdoOptimisticHistoryTail';
@@ -114,8 +121,14 @@ export function projectPersistedMessagesForActiveTurn<T>(
   messages: T[],
   activeTurn: AssistantTurn | null,
   pendingUserMessage: unknown = null,
+  displayTurn = withFailureDetailsForDisplay(activeTurn, messages),
 ): T[] {
   if (!activeTurn) return messages;
+  const displayTerminal = displayTurn?.items.find(item => item.type === 'terminal');
+  const displayed =
+    displayTerminal?.type === 'terminal'
+      ? cleanFailureDisplayText(displayTerminal.message)
+      : '';
   // session.message can publish the producer-owned durable assistant row
   // before its Agent stream ends. Keep it in the authoritative transcript,
   // but leave the active turn as the sole visible owner until that projection
@@ -133,6 +146,20 @@ export function projectPersistedMessagesForActiveTurn<T>(
     // Only normalized error rows and native failure receipts are admitted here;
     // assistant partial text remains owned by the live turn.
     const identity = readTranscriptIdentity(message);
+    const detail = readNativeFailureDetails([message], activeTurn.runId);
+    const summary = cleanFailureDisplayText(readNativeFailureSummary(message));
+    // Group exact native sources only when their actual summary and cause are
+    // fully represented. Different explanations remain in the display copy;
+    // no wording can establish equivalence between failures or attempts.
+    if (
+      activeTurn.status === 'error' &&
+      identity?.kind.startsWith('openclaw-') === true &&
+      !isLocallyOptimisticHistoryTail(message) &&
+      detail &&
+      (!summary || displayed.includes(summary)) &&
+      displayed.includes(cleanFailureDisplayText(detail))
+    )
+      return false;
     return (
       activeTurn.status === 'error' &&
       identity?.kind.startsWith('openclaw-') === true &&

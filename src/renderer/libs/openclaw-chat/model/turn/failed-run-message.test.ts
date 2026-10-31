@@ -141,3 +141,28 @@ test('enriches a display copy of a generic terminal without changing execution s
   });
   expect(specific.items[0]).toMatchObject({ message: 'Session writer lost ownership' });
 });
+
+test('reads normalized model failures but never arbitrary system notices or private receipts', () => {
+  const failure = {
+    ...nativeFailure,
+    role: 'system',
+    content: detail,
+    [FAILED_RUN_MESSAGE_FLAG]: true,
+  };
+  expect(readNativeFailureDetails([failure], 'run-1')).toBe(detail);
+  expect(
+    readNativeFailureDetails(
+      [{ ...failure, errorMessage: `⚠️ OpenClaw couldn't finish this reply.\n${detail}` }],
+      'run-1',
+    ),
+  ).toBe(`⚠️ OpenClaw couldn't finish this reply.\n${detail}`);
+  for (const unrelated of [
+    { ...failure, [FAILED_RUN_MESSAGE_FLAG]: false },
+    { ...failure, stopReason: undefined },
+    { ...failure, __openclaw: { seq: 1, runId: 'run-1' } },
+    { ...failure, __openclaw: { id: 'other', runId: 'run-2' } },
+    { ...failure, role: 'custom', customType: 'run-failed-before-reply' },
+  ]) {
+    expect(readNativeFailureDetails([unrelated], 'run-1')).toBe('');
+  }
+});

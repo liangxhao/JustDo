@@ -1,8 +1,13 @@
 import { appendErrorDisplayDetail } from '@shared/openclaw/errorDisplay';
 import { isInternalManagedSubagentHandoffError } from '@shared/openclaw/internalRunError';
-import { isFailedRunMessage, readFailedRunMessageText } from '@shared/openclaw/runFailureDisplay';
+import {
+  FAILED_RUN_MESSAGE_FLAG,
+  isFailedRunMessage,
+  readFailedRunMessageText,
+} from '@shared/openclaw/runFailureDisplay';
 import { isGatewayInjectedModelRef, readModelRef } from '@shared/providers/modelRef';
 
+import { cleanFailureDisplayText } from '../../pipeline/system-message-display';
 import type { AssistantTurn } from '../chat-transcript-state';
 
 export {
@@ -26,6 +31,19 @@ function unwrapFailedRunMessage(value: unknown): {
   return { outer, message: asRecord(outer?.message) ?? outer };
 }
 
+const nativeFailureSummary = Symbol('native-failure-summary');
+
+/** Preserve only Gateway display copy on this in-memory, source-owned projection. */
+export function withNativeFailureSummary<T extends object>(message: T, summary: string): T {
+  return summary.trim() ? { ...message, [nativeFailureSummary]: summary.trim() } : message;
+}
+
+export function readNativeFailureSummary(value: unknown): string {
+  const { message } = unwrapFailedRunMessage(value);
+  const summary = (message as { [nativeFailureSummary]?: unknown } | null)?.[nativeFailureSummary];
+  return typeof summary === 'string' ? summary : '';
+}
+
 function nativeFailureRunId(value: unknown): string | null {
   const { outer, message } = unwrapFailedRunMessage(value);
   const marker = asRecord(message?.__openclaw) ?? asRecord(outer?.__openclaw);
@@ -35,12 +53,18 @@ function nativeFailureRunId(value: unknown): string | null {
 
 export function readAssistantFailureDetail(value: unknown): string {
   const { message } = unwrapFailedRunMessage(value);
-  return message?.role === 'assistant' &&
+  const modelFailure =
+    message?.role === 'assistant' ||
+    (message?.role === 'system' && message[FAILED_RUN_MESSAGE_FLAG] === true);
+  if (!(
+    message &&
+    modelFailure &&
     (message.stopReason ?? message.stop_reason) === 'error' &&
     typeof message.errorMessage === 'string' &&
     !isInternalManagedSubagentHandoffError(message.errorMessage)
-    ? appendErrorDisplayDetail('', message.errorMessage)
-    : '';
+  ))
+    return '';
+  return appendErrorDisplayDetail('', message.errorMessage);
 }
 
 export function readNativeFailureDetails(messages: readonly unknown[], runId: string): string {
@@ -64,11 +88,26 @@ export function withFailureDetailsForDisplay(
   messages: readonly unknown[],
 ): AssistantTurn | null {
   if (!turn || turn.status !== 'error') return turn;
-  const detail = readNativeFailureDetails(messages, turn.runId);
-  if (!detail) return turn;
+  const sources = messages.flatMap(value => {
+    const detail = readNativeFailureDetails([value], turn.runId);
+    return detail ? [{ detail, summary: readNativeFailureSummary(value) }] : [];
+  });
+  if (!sources.length) return turn;
   let changed = false;
   const items = turn.items.map(item => {
     if (item.type !== 'terminal') return item;
+    let detail = '';
+    for (const source of sources) {
+      let displayed = cleanFailureDisplayText(`${item.message}\n${detail}`);
+      const parts: string[] = [];
+      for (const part of [source.summary, source.detail].map(cleanFailureDisplayText)) {
+        if (!part || displayed.includes(part)) continue;
+        parts.push(part);
+        displayed += `\n${part}`;
+      }
+      const block = parts.join('\n');
+      if (block) detail = detail ? `${detail}\n\n${block}` : block;
+    }
     const message = appendErrorDisplayDetail(item.message, detail);
     if (message === item.message) return item;
     changed = true;
@@ -78,6 +117,9 @@ export function withFailureDetailsForDisplay(
 }
 
 export function readUncoveredFailureDetail(value: unknown, messages: readonly unknown[]): string {
+  // Normalized failure rows already render their diagnostic as their content.
+  // A source without a run id cannot use the cross-message coverage check below.
+  if (isFailedRunMessage(value)) return '';
   const detail = readAssistantFailureDetail(value);
   const runId = nativeFailureRunId(value);
   return detail &&

@@ -688,7 +688,9 @@ describe('normalizeGatewayHistoryForDisplay', () => {
       [
         {
           role: 'assistant',
-          content: 'The agent run failed before producing a reply.',
+          content: [],
+          stopReason: 'error',
+          errorMessage: 'Durable provider diagnostic',
         },
       ],
       {
@@ -700,9 +702,42 @@ describe('normalizeGatewayHistoryForDisplay', () => {
     expect(messages).toEqual([
       {
         role: 'system',
-        content: 'The agent run failed before producing a reply.',
+        content: 'Durable provider diagnostic',
+        stopReason: 'error',
+        errorMessage: 'Durable provider diagnostic',
         isError: true,
         __justdoFailedRunMessage: true,
+      },
+    ]);
+  });
+
+  test.each([
+    'The agent run failed before producing a reply.',
+    "OpenClaw couldn't finish this reply.",
+  ])('keeps ordinary assistant text without inferring a failure: %s', async content => {
+    const original = [{ role: 'assistant', content }];
+    const messages = await normalizeGatewayHistoryForDisplay(original, {
+      sessionKey: 'agent:main:ordinary-reply',
+      lastError: 'Unrelated latest session error',
+    });
+
+    expect(messages).toEqual(original);
+    expect(messages[0]).not.toHaveProperty(FAILED_RUN_MESSAGE_FLAG);
+  });
+
+  test('does not invent a diagnostic for an empty failure without a recorded cause', async () => {
+    const messages = await normalizeGatewayHistoryForDisplay(
+      [{ role: 'assistant', content: [], stopReason: 'error' }],
+      { sessionKey: 'agent:main:unknown-failure', includeFailedRunOverlays: false },
+    );
+
+    expect(messages).toEqual([
+      {
+        role: 'system',
+        content: '',
+        stopReason: 'error',
+        isError: true,
+        [FAILED_RUN_MESSAGE_FLAG]: true,
       },
     ]);
   });
@@ -722,7 +757,9 @@ describe('normalizeGatewayHistoryForDisplay', () => {
         {
           role: 'assistant',
           runId,
-          content: 'The agent run failed before producing a reply.',
+          content: [],
+          stopReason: 'error',
+          errorMessage: 'Older provider diagnostic',
           timestamp: timestamp - 4_000,
         },
         { role: 'user', content: 'Retry', timestamp: timestamp - 500 },
@@ -806,7 +843,7 @@ describe('normalizeGatewayHistoryForDisplay', () => {
     const messages = await normalizeGatewayHistoryForDisplay(
       [
         { role: 'user', content: 'Prompt', timestamp: timestamp - 500 },
-        { role: 'assistant', content: 'The agent run failed before producing a reply.' },
+        { role: 'assistant', content: [], stopReason: 'error' },
       ],
       { sessionKey },
     );
@@ -1154,7 +1191,8 @@ describe('normalizeGatewayHistoryForDisplay', () => {
         { role: 'user', content: 'Continue', timestamp: timestamp - 500 },
         {
           role: 'assistant',
-          content: 'The agent run failed before producing a reply.',
+          content: [],
+          stopReason: 'error',
         },
       ],
       { sessionKey: 'agent:main:justdo:session-1' },
@@ -1168,6 +1206,38 @@ describe('normalizeGatewayHistoryForDisplay', () => {
         __justdoFailedRunMessageId: 'run-1',
       }),
     ]);
+  });
+
+  test('assigns an anonymous failure identity without replacing its existing native text', async () => {
+    const storage = new Map<string, string>();
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => storage.set(key, value),
+    });
+    const timestamp = Date.now();
+    const sessionKey = 'agent:main:anonymous-failure';
+    persistFailedRun({
+      sessionKey,
+      runId: 'run-1',
+      error: 'Local authentication failure',
+      timestamp,
+      promptTimestamp: timestamp - 500,
+    });
+    const nativeFailure = {
+      role: 'system',
+      content: 'The agent run failed before producing a reply.',
+      isError: true,
+      [FAILED_RUN_MESSAGE_FLAG]: true,
+    };
+
+    const messages = await normalizeGatewayHistoryForDisplay(
+      [{ role: 'user', content: 'Continue', timestamp: timestamp - 500 }, nativeFailure],
+      { sessionKey },
+    );
+
+    expect(messages).toHaveLength(2);
+    expect(messages[1]).toEqual({ ...nativeFailure, [FAILED_RUN_MESSAGE_ID]: 'run-1' });
+    expect(nativeFailure).not.toHaveProperty(FAILED_RUN_MESSAGE_ID);
   });
 
   test('does not restore a failed attempt beside a successful sibling-branch reply', async () => {
@@ -1303,7 +1373,8 @@ describe('normalizeGatewayHistoryForDisplay', () => {
         {
           role: 'assistant',
           runId: 'run-1',
-          content: 'The agent run failed before producing a reply.',
+          content: [],
+          stopReason: 'error',
         },
       ],
       {
@@ -1353,12 +1424,14 @@ describe('normalizeGatewayHistoryForDisplay', () => {
         {
           role: 'assistant',
           runId: 'run-older',
-          content: 'The agent run failed before producing a reply.',
+          content: [],
+          stopReason: 'error',
         },
         {
           role: 'assistant',
           runId: 'run-internal',
-          content: 'The agent run failed before producing a reply.',
+          content: [],
+          stopReason: 'error',
         },
       ],
       {
@@ -1372,6 +1445,7 @@ describe('normalizeGatewayHistoryForDisplay', () => {
         role: 'system',
         runId: 'run-older',
         content: 'Older model request failed.',
+        stopReason: 'error',
         isError: true,
         __justdoFailedRunMessage: true,
       },
@@ -1387,7 +1461,9 @@ describe('normalizeGatewayHistoryForDisplay', () => {
           timestamp: 2_000,
           message: {
             role: 'assistant',
-            content: 'The agent run failed before producing a reply.',
+            content: [],
+            stopReason: 'error',
+            errorMessage: 'Durable provider request rejected',
           },
         },
       ],
@@ -1404,7 +1480,9 @@ describe('normalizeGatewayHistoryForDisplay', () => {
         timestamp: 2_000,
         message: {
           role: 'system',
-          content: 'The agent run failed before producing a reply.',
+          content: 'Durable provider request rejected',
+          stopReason: 'error',
+          errorMessage: 'Durable provider request rejected',
           isError: true,
           __justdoFailedRunMessage: true,
         },

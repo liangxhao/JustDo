@@ -1,10 +1,9 @@
-import { appendErrorDisplayDetail } from '@shared/openclaw/errorDisplay';
 import {
   OPENCLAW_HISTORY_DETAIL_MAX_IDS,
   readHistoryFailurePartial,
 } from '@shared/openclaw/historyIpc';
-import { isInternalManagedSubagentHandoffError } from '@shared/openclaw/internalRunError';
 
+import { withNativeFailureSummary } from '../../model/turn/failed-run-message';
 import {
   isPersistedFailedAssistantMessage,
   readCollapsedDeliveryArtifacts,
@@ -234,15 +233,12 @@ async function hydrateFailureDetails(
     }
     // Restore only the display copy's source shape. The durable transcript stays
     // untouched; normalization will render this as one run failure, not a reply.
-    if (detail.emptyContent && !isPersistedFailedAssistantMessage(raw)) {
+    if (detail.emptyContent) {
       return [
-        {
-          ...raw,
-          content: [],
-          errorMessage: isInternalManagedSubagentHandoffError(detail.errorMessage)
-            ? detail.errorMessage
-            : appendErrorDisplayDetail(extractText(raw)?.trim() || '', detail.errorMessage),
-        },
+        withNativeFailureSummary(
+          { ...raw, content: [], errorMessage: detail.errorMessage },
+          extractText(raw)?.trim() || '',
+        ),
       ];
     }
     return [{ ...raw, errorMessage: detail.errorMessage }];

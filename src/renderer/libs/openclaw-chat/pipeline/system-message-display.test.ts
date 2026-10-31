@@ -9,7 +9,12 @@ const hint =
 const continuingHint =
   'If it continues, open Settings → Logs in the Control UI or run `openclaw logs --follow`.';
 const troubleshootingHint = 'Troubleshooting: run `openclaw logs --follow` in a terminal.';
-const currentHints = [hint, hint.replace(' in your terminal', ''), continuingHint, troubleshootingHint];
+const currentHints = [
+  hint,
+  hint.replace(' in your terminal', ''),
+  continuingHint,
+  troubleshootingHint,
+];
 const failure = "OpenClaw couldn't finish this reply.";
 
 describe('system message display', () => {
@@ -26,12 +31,13 @@ describe('system message display', () => {
       `${failure}\n${detail}`,
     );
     expect(stripOpenClawLogHintText(logHint)).toBe('');
-    expect(normalizeMessage({ role: 'assistant', content: `${failure} ${logHint}` }).content).toEqual([
-      { type: 'text', text: failure },
-    ]);
+    expect(
+      normalizeMessage({ role: 'assistant', content: `${failure} ${logHint}` }).content,
+    ).toEqual([{ type: 'text', text: failure }]);
     for (const role of ['user', 'toolResult']) {
       expect(normalizeMessage({ role, content: logHint }).content[0]).toMatchObject({
-        type: 'text', text: logHint,
+        type: 'text',
+        text: logHint,
       });
     }
   });
@@ -51,7 +57,9 @@ describe('system message display', () => {
     [troubleshootingHint, 'Troubleshooting: run'],
   ])('hides matching streaming prefixes of %s', (logHint, prefix) => {
     for (let length = prefix.length; length <= logHint.length; length++) {
-      expect(stripOpenClawLogHintText(`${failure} ${logHint.slice(0, length)}`, true)).toBe(failure);
+      expect(stripOpenClawLogHintText(`${failure} ${logHint.slice(0, length)}`, true)).toBe(
+        failure,
+      );
     }
   });
 
@@ -91,7 +99,9 @@ describe('system message display', () => {
   });
 
   test('releases incomplete hints once streaming ends', () => {
-    expect(stripOpenClawLogHintText('For details, open Settings')).toBe('For details, open Settings');
+    expect(stripOpenClawLogHintText('For details, open Settings')).toBe(
+      'For details, open Settings',
+    );
     expect(stripOpenClawLogHintText('Troubleshooting: run')).toBe('Troubleshooting: run');
   });
 

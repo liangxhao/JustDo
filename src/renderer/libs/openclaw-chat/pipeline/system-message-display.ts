@@ -11,6 +11,10 @@ const LOG_SENTENCE_PATTERNS = [
   /(^|\s+)Troubleshooting: run[\t ]+`?openclaw[\t ]+logs[\t ]+--follow`?[\t ]+in a terminal\.(?=\s|$)/gi,
 ];
 
+export function cleanFailureDisplayText(text: string): string {
+  return stripOpenClawLogHintText(text).trim().replace(/^⚠[\uFE0E\uFE0F]?\s*/u, '').trim();
+}
+
 export function stripOpenClawLogHintText(text: string, hidePartial = false): string {
   let result = text;
   for (const pattern of LOG_SENTENCE_PATTERNS) result = result.replace(pattern, '');

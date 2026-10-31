@@ -6,11 +6,15 @@ import { PRODUCT_NAME } from '@shared/productMetadata';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
 import { ChatScrollController } from '@/libs/openclaw-chat/controllers/chat-scroll-controller';
+import type { GatewayClient } from '@/libs/openclaw-chat/gateway/client';
+import { hydrateTruncatedHistoryMessages } from '@/libs/openclaw-chat/gateway/history/chat-history-protocol';
 import {
   beginAssistantTurn,
   createChatTranscriptState,
 } from '@/libs/openclaw-chat/model/chat-transcript-state';
 import { FAILED_RUN_MESSAGE_FLAG } from '@/libs/openclaw-chat/model/turn/failed-run-message';
+import { normalizeGatewayHistoryForDisplay } from '@/libs/openclaw-chat/pipeline/history-display-normalizer';
+import type { GatewayMessage } from '@/libs/openclaw-chat/types';
 import { i18nService } from '@/services/i18n';
 
 import type { JustDoChatElement } from './justdo-chat';
@@ -22,6 +26,100 @@ afterEach(() => {
 });
 
 describe('justdo-chat failed runs', () => {
+  test('keeps one summary and model diagnostic before and after a session remount', async () => {
+    const state = createChatTranscriptState('session-1', 'sid-1');
+    const turn = beginAssistantTurn(state, { runId: 'run-1' }, {
+      now: () => 1,
+      createId: prefix => `${prefix}-1`,
+    });
+    const summary =
+      "⚠️ OpenClaw couldn't finish this reply. For details, open Settings → Logs in the Control UI or run `openclaw logs --follow` in your terminal.";
+    const detail = 'Managed model credentials are unavailable.';
+    turn.status = 'error';
+    const terminal = {
+      id: 'terminal',
+      runId: turn.runId,
+      firstSeq: 2,
+      lastSeq: 2,
+      startedAt: 1,
+      updatedAt: 2,
+      type: 'terminal' as const,
+      status: 'error' as const,
+      message: summary,
+    };
+    turn.items.push(terminal);
+    const nativeMessage = {
+      role: 'assistant',
+      content: [{ type: 'text', text: summary }],
+      stopReason: 'error',
+      __openclaw: { id: 'failure-1', runId: turn.runId },
+    };
+    const hydrated = await hydrateTruncatedHistoryMessages({
+      request: vi.fn().mockResolvedValue({
+        failureDetails: { 'failure-1': { emptyContent: true, errorMessage: detail } },
+      }),
+    } as unknown as GatewayClient, [nativeMessage], 'session-1');
+    const failures = await normalizeGatewayHistoryForDisplay(hydrated, {
+      sessionKey: 'session-1', sessionId: 'sid-1',
+    }) as GatewayMessage[];
+    const chat = document.createElement('justdo-chat') as JustDoChatElement;
+    chat.activeTurn = turn;
+    document.body.append(chat);
+    await chat.updateComplete;
+    chat.messages = failures;
+    await chat.updateComplete;
+    await chat.shadowRoot!.querySelector<TerminalErrorMessage>('chat-terminal-error')!.updateComplete;
+    const expected = `${PRODUCT_NAME} couldn't finish this reply: ${detail}`;
+    expect(chat.shadowRoot!.querySelectorAll('.chat-avatar.error')).toHaveLength(1);
+    expect(chat.shadowRoot!.querySelector('.process-terminal__error-text')?.textContent).toBe(expected);
+
+    terminal.message = 'Session writer lost ownership';
+    chat.requestUpdate();
+    await chat.updateComplete;
+    await chat.shadowRoot!.querySelector<TerminalErrorMessage>('chat-terminal-error')!.updateComplete;
+    expect(chat.shadowRoot!.querySelectorAll('.chat-avatar.error')).toHaveLength(1);
+    expect(chat.shadowRoot!.querySelector('.process-terminal__error-text')?.textContent)
+      .toContain('Session writer lost ownership');
+    expect(chat.shadowRoot!.querySelector('.process-terminal__error-text')?.textContent)
+      .toContain(detail);
+    terminal.message = summary;
+    chat.requestUpdate();
+    await chat.updateComplete;
+    expect(chat.shadowRoot!.querySelectorAll('.chat-avatar.error')).toHaveLength(1);
+
+    chat.activeTurn = null;
+    await chat.updateComplete;
+    await chat.shadowRoot!.querySelector<TerminalErrorMessage>('chat-terminal-error')!.updateComplete;
+    expect(chat.shadowRoot!.querySelectorAll('.chat-avatar.error')).toHaveLength(1);
+    expect(chat.shadowRoot!.querySelector('.process-terminal__error-text')?.textContent).toBe(expected);
+    chat.remove();
+    const restored = document.createElement('justdo-chat') as JustDoChatElement;
+    restored.messages = failures;
+    document.body.append(restored);
+    await restored.updateComplete;
+    await restored.shadowRoot!.querySelector<TerminalErrorMessage>('chat-terminal-error')!.updateComplete;
+    expect(restored.shadowRoot!.querySelectorAll('.chat-avatar.error')).toHaveLength(1);
+    expect(restored.shadowRoot!.querySelector('.process-terminal__error-text')?.textContent).toBe(expected);
+    expect(turn.items[0]).toMatchObject({ message: summary });
+    expect(nativeMessage.content).toEqual([{ type: 'text', text: summary }]);
+    expect(failures[0].errorMessage).toBe(detail);
+    expect(turn.status).toBe('error');
+  });
+
+  test('does not invent a summary when the native failure has only a cause', async () => {
+    const detail = 'Managed model credentials are unavailable.';
+    const chat = document.createElement('justdo-chat') as JustDoChatElement;
+    chat.messages = [{
+      role: 'assistant', content: [], errorMessage: detail, stopReason: 'error',
+      __openclaw: { id: 'failure', runId: 'run-1' },
+    }];
+    document.body.append(chat);
+    await chat.updateComplete;
+    await chat.shadowRoot!.querySelector<TerminalErrorMessage>('chat-terminal-error')!.updateComplete;
+    expect(chat.shadowRoot!.querySelector('.process-terminal__error-text')?.textContent).toBe(detail);
+    expect(chat.shadowRoot!.querySelectorAll('.chat-avatar.error')).toHaveLength(1);
+  });
+
   test('expands a clipped error before navigating to a search match in its diagnostic tail', async () => {
     const chat = document.createElement('justdo-chat') as JustDoChatElement;
     chat.messages = [
@@ -241,7 +339,7 @@ describe('justdo-chat failed runs', () => {
     {
       message:
         "OpenClaw couldn't finish this reply. For details, open Settings → Logs in the Control UI or run `openclaw logs --follow` in your terminal.\nProvider finish_reason: content_filter",
-      summary: `${PRODUCT_NAME} couldn't finish this reply.: Provider finish_reason: content_filter`,
+      summary: `${PRODUCT_NAME} couldn't finish this reply: Provider finish_reason: content_filter`,
     },
   ])('keeps a persisted failed run in the terminal error presentation: $summary', async ({ message, summary }) => {
     const chat = document.createElement('justdo-chat') as JustDoChatElement;
