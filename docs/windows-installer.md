@@ -425,7 +425,10 @@ This preserves completion and exit-code semantics for deployment automation.
   A missing/unwritable profile log does not prevent extraction. The helper and
   archive are removed on success; 7-Zip license notices remain in the installation
   root. Build-time package/CRC checks remain, without the obsolete plugin codec
-  allowlist.
+  allowlist. Both final-EXE listing and CRC testing explicitly select the embedded
+  7z archive and search up to the signed installer's file size. Bootstrap assets
+  can place the archive beyond 7-Zip's default 8 MiB search limit; that placement
+  alone must not reject a valid installer.
 - No free-space reserve, system-temp disk monitor, total extraction deadline or
   Python process/import check rejects an otherwise writable installation. Actual
   extraction/write errors still fail setup and restore the runtime backups.

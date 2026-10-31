@@ -1486,7 +1486,10 @@ function verifyWindowsInstallerArchiveListing(listing, productFilename) {
 function verifyWindowsInstallerArchive(installerPath, productFilename, options = {}) {
   const sevenZipExecutable = options.sevenZipExecutable || require('7zip-bin').path7za;
   const run = options.spawnSync || spawnSync;
-  const listingResult = run(sevenZipExecutable, ['l', '-slt', installerPath], {
+  // NSIS bootstrap assets can push the embedded archive beyond 7-Zip's
+  // default 8 MiB search limit. Bound the search by the final signed EXE size.
+  const archiveType = `-t7z:s${statSync(installerPath).size}b`;
+  const listingResult = run(sevenZipExecutable, ['l', '-slt', archiveType, installerPath], {
     encoding: 'utf8',
     maxBuffer: 16 * 1024 * 1024,
     windowsHide: true,
@@ -1504,7 +1507,7 @@ function verifyWindowsInstallerArchive(installerPath, productFilename, options =
 
   // Listing only reads archive headers. Test every compressed stream and CRC so
   // a truncated/corrupt data block cannot pass solely because paths survived.
-  const testResult = run(sevenZipExecutable, ['t', installerPath], {
+  const testResult = run(sevenZipExecutable, ['t', archiveType, installerPath], {
     encoding: 'utf8',
     maxBuffer: 16 * 1024 * 1024,
     windowsHide: true,

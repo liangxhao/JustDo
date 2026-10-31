@@ -48,7 +48,6 @@ import {
   ProviderName,
 } from '../shared/providers';
 import { BuiltinModelIpc, BuiltinModelSyncReason } from '../shared/providers/builtinModels';
-import { normalizeLocalSpeechExtensionSettings } from '../shared/speech/localSpeechExtensionSettings';
 import { LocalSpeechModelIpc } from '../shared/speech/localSpeechModels';
 import { normalizeLocalSpeechSettings } from '../shared/speech/localSpeechSettings';
 import { AppServerIntegrationService } from './appServer/appServerIntegrationService';
@@ -236,6 +235,7 @@ import {
   registerSpeechSynthesisHandlers,
 } from './ipc/speech';
 import { NativeAssistantCreation } from './openclaw/config/agents/nativeAssistantCreation';
+import { getOpenClawAppConfigSignature } from './openclaw/config/appConfigSignature';
 import { revokeBuiltinCredentialFile } from './openclaw/config/models/builtinCredentialFile';
 import { isDecisionModelManaged } from './openclaw/config/models/decisionModelConfig';
 import { resolveNativeVideoSelection } from './openclaw/config/models/nativeVideoModelConfig';
@@ -1327,35 +1327,6 @@ type AppConfigSettings = {
   onlineModelProviders?: { decision?: unknown; video?: unknown; 'speech-recognition'?: unknown; 'speech-synthesis'?: unknown };
   voice?: unknown;
   localSpeechExtensions?: unknown;
-};
-
-const getOpenClawAppConfigSignature = (config: unknown): string => {
-  const appConfig = (config ?? {}) as AppConfigSettings;
-  const voice = normalizeLocalSpeechSettings(appConfig.voice);
-  return JSON.stringify({
-    api: appConfig.api,
-    controlUiEnabled: appConfig.developerMode === true && appConfig.controlUiEnabled === true,
-    browserMode: appConfig.browserMode,
-    model: appConfig.model,
-    providers: appConfig.providers,
-    decisionModels: appConfig.onlineModelProviders?.decision,
-    nativeVideoModels: appConfig.onlineModelProviders?.video,
-    recognitionModels: appConfig.onlineModelProviders?.['speech-recognition'],
-    synthesisModels: appConfig.onlineModelProviders?.['speech-synthesis'],
-    localSpeechExtensions: normalizeLocalSpeechExtensionSettings(appConfig.localSpeechExtensions),
-    language: appConfig.language,
-    voice: {
-      outputEnabled: voice.outputEnabled,
-      synthesisMode: voice.synthesisMode,
-      ttsModelId: voice.ttsModelId,
-      voiceId: voice.voiceId,
-      speechRate: voice.speechRate,
-      synthesisThreads: voice.synthesisThreads,
-      onlineAsrModelRef: voice.onlineAsrModelRef,
-      onlineTtsModelRef: voice.onlineTtsModelRef,
-      onlineTtsVoice: voice.onlineTtsVoice,
-    },
-  });
 };
 
 const resolveThemeFromConfig = (config?: AppConfigSettings): 'light' | 'dark' => {

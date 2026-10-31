@@ -289,6 +289,8 @@ Method = LZMA2:20
   });
 
   test('rejects an installer whose compressed data fails the 7z integrity test', () => {
+    const installerPath = path.join(makeTemporaryDirectory(), 'Setup.exe');
+    writeFileSync(installerPath, Buffer.alloc(9 * 1024 * 1024));
     const listing = `Type = 7z\nMethod = LZMA2:20 BCJ\n${requiredEntries}`;
     const calls: string[][] = [];
     const fakeSpawnSync = (_executable: string, args: string[]) => {
@@ -298,11 +300,12 @@ Method = LZMA2:20
     };
 
     expect(() =>
-      verifyWindowsInstallerArchive('JustDo Setup.exe', 'JustDo', {
+      verifyWindowsInstallerArchive(installerPath, 'JustDo', {
         sevenZipExecutable: '7za',
         spawnSync: fakeSpawnSync,
       }),
     ).toThrow('Could not decompress and CRC-test');
     expect(calls.map(args => args[0])).toEqual(['l', 't']);
+    expect(calls.every(args => args.includes('-t7z:s9437184b'))).toBe(true);
   });
 });

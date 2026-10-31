@@ -257,6 +257,10 @@ Gateway 运行期间不执行同步编译缓存序列化，缓存由 launcher �
 
 配置投影由启动及设置变更流程负责；聊天发送等待已有配置 mutation 完成，复用运行中的 Gateway，不再以 `ensureRunning` 为由重新执行全量配置同步。运行中的执行准入仅并行读取 `config.get` 与 `exec.approvals.get`，验证当前宿主执行/文件边界和审批底线；不启动扩展 MCP 发现、不扫描历史会话模型、不清理凭据，也不修复审批配置。冷启动在同一配置队列中等待进程就绪，并通过原生审批 RPC 初始化必要的底线，再回读验证；不重复配置投影。权限不符仍拒绝准入，进程代次变化时旧校验不能放行、修改或停止新进程。原生会话自身的 mode/root 与身份准备继续保留。
 
+应用配置是否需要同步按实际运行时投影比较。缺失或无效语言与中文使用相同默认值，
+因此首次界面保存 `language: zh` 与语言初始化标记不重新同步 Gateway；真正切换中英文
+仍同步语音等依赖语言的配置。
+
 普通受管会话在唯一一次 `sessions.create` 之前，以认证连接定向调用
 `sessions.describe({key, agentId})`，让原生 startup-read 路径等待该 Agent 的后台存储准备。
 同 Agent 的结构化 `agent-database-inspection-pending`，以及没有结构化故障码的原生
