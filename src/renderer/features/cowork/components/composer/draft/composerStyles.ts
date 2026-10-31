@@ -2,12 +2,13 @@
 export const COMPOSER_FRAME_CLASS = 'rounded-2xl shadow-glow-accent';
 
 export const COMPOSER_SURFACE_CLASS =
-  'relative rounded-2xl border border-border bg-[var(--composer-bg)] shadow-card focus-within:shadow-elevated focus-within:ring-1 focus-within:ring-primary/40 focus-within:border-primary';
+  'relative min-h-[80px] rounded-2xl border border-border bg-[var(--composer-bg)] shadow-card focus-within:shadow-elevated focus-within:ring-1 focus-within:ring-primary/40 focus-within:border-primary';
 
 export const COMPOSER_TEXTAREA_CLASS =
-  'w-full resize-none bg-transparent px-4 pt-2.5 pb-2 text-foreground placeholder:dark:text-foregroundSecondary/60 placeholder:text-secondary/60 focus:outline-none text-[15px] leading-6';
+  'block w-full resize-none bg-transparent px-4 py-2 text-foreground placeholder:dark:text-foregroundSecondary/60 placeholder:text-secondary/60 focus:outline-none text-[15px] leading-6';
 
-export const COMPOSER_TEXTAREA_MIN_HEIGHT = 60;
+// 40px text + 38px toolbar + 2px border gives an 80px initial surface.
+export const COMPOSER_TEXTAREA_MIN_HEIGHT = 40;
 export const COMPOSER_TEXTAREA_MAX_HEIGHT = 200;
 
 export function resizeComposerTextarea(

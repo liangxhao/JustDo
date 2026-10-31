@@ -382,6 +382,7 @@ export class ChatController {
     text: string,
     attachments: CoworkAttachmentPayload[] = [],
     gatewayMessage?: string,
+    onOptimisticMessage?: (message: object) => void,
   ): void {
     debugLog('[ChatCtrl] setPendingUserMessage:', text.slice(0, 60));
     const attachmentBlocks = toAttachmentContentBlocks(attachments);
@@ -398,6 +399,7 @@ export class ChatController {
     };
     this.state.pendingUserMessage = (projectGatewayHistoryForDisplay([rawPendingMessage])[0] ??
       rawPendingMessage) as NonNullable<ChatState['pendingUserMessage']>;
+    onOptimisticMessage?.(this.state.pendingUserMessage);
     this.state.chatSending = true;
     this.beginRunActivity(`justdo-pending-${Date.now()}`);
     this.notify();
@@ -2313,6 +2315,7 @@ export class ChatController {
       onRunBound?: (runId: string) => void | Promise<void>;
       /** Synchronous owning-sender evidence, immediately before native submission. */
       onRequestIssued?: () => void;
+      onOptimisticMessage?: (message: object) => void;
     } = {},
   ): Promise<void> {
     const client = this.state.client;
@@ -2490,9 +2493,13 @@ export class ChatController {
     // A post-send history refresh can race Gateway transcript persistence,
     // especially when the run is stopped before the model replies. Protect
     // the prompt until chat.history contains its authoritative replacement.
+    const optimisticUserMessage = markOptimisticHistoryTail(userMessage);
+    if (optimisticUserMessage && typeof optimisticUserMessage === 'object') {
+      options.onOptimisticMessage?.(optimisticUserMessage);
+    }
     this.setCurrentSessionMessages([
       ...this.state.chatMessages,
-      markOptimisticHistoryTail(userMessage),
+      optimisticUserMessage,
     ]);
     beginAssistantTurn(
       this.state.transcript,

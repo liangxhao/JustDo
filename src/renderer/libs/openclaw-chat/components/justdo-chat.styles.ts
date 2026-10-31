@@ -746,6 +746,10 @@ export const chatStyles = [
       flex-direction: row-reverse;
     }
 
+    [data-send-motion-pending] .chat-bubble--user {
+      visibility: hidden;
+    }
+
     .chat-divider {
       display: flex;
       align-items: flex-start;

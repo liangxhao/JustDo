@@ -200,6 +200,7 @@ import { AppPluginSlot } from '@/features/plugins/app/AppPluginSlot';
 import { useAppWorkspace } from '@/features/plugins/app/useAppWorkspace';
 import { clearActiveSkills } from '@/features/plugins/skills/skillSlice';
 import type { SettingsOpenOptions } from '@/features/settings/Settings';
+import type { SendMotionOrigin } from '@/libs/openclaw-chat/components/message/send-motion';
 import type {
   ChatContextUsageSnapshot,
   RewindEditorDraft,
@@ -577,6 +578,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   const pendingMessageSubmissionsRef = useRef(new Map<string, SessionSubmission>());
   // Buffer for pending user message when JustDoChatWrapper isn't mounted yet
   const pendingPromptRef = useRef<string | null>(null);
+  const pendingSendMotionRef = useRef<SendMotionOrigin | undefined>(undefined);
   const pendingAttachmentsRef = useRef<CoworkAttachmentPayload[]>([]);
   const pendingGatewayPromptRef = useRef<string | undefined>(undefined);
   const pendingInitialGoalRef = useRef<{ sessionId: string; objective: string } | null>(null);
@@ -1242,6 +1244,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       // switched the ChatController. Applying it synchronously here can still
       // target the previously selected, running session.
       pendingPromptRef.current = prompt;
+      pendingSendMotionRef.current = submission?.sendMotionOrigin;
       pendingAttachmentsRef.current = attachments ?? [];
       pendingGatewayPromptRef.current = gatewayPrompt;
       debugLog('[CoworkView] handleStartSession:', {
@@ -1373,6 +1376,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
         chatWrapperRef.current?.clearSending(failedSessionKey);
         if (startCancelled && store.getState().cowork.currentSession?.id === tempSessionId) {
           pendingPromptRef.current = null;
+          pendingSendMotionRef.current = undefined;
           pendingAttachmentsRef.current = [];
           pendingGatewayPromptRef.current = undefined;
           // No canonical session was created. The unchanged home draft remains
@@ -2129,8 +2133,10 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       pendingPromptRef.current,
       pendingAttachmentsRef.current,
       pendingGatewayPromptRef.current,
+      pendingSendMotionRef.current,
     );
     pendingPromptRef.current = null;
+    pendingSendMotionRef.current = undefined;
     pendingAttachmentsRef.current = [];
     pendingGatewayPromptRef.current = undefined;
   });
@@ -2502,6 +2508,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
             ensureSubmissionCurrent();
           }
           await chatWrapper.sendMessage(prompt, attachments, gatewayPrompt, {
+            sendMotionOrigin: composerSubmission?.sendMotionOrigin,
             propagateRequestFailure: true,
             expectedSessionKey: targetSessionKey,
             isCancelled: () => {

@@ -13,6 +13,7 @@ import { normalizeLocalSpeechSettings } from '@shared/speech/localSpeechSettings
 import { html, LitElement, nothing, type TemplateResult } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { guard } from 'lit/directives/guard.js';
+import { ref } from 'lit/directives/ref.js';
 import { repeat } from 'lit/directives/repeat.js';
 
 import type { MessageQuoteHandler } from '@/features/cowork/components/composer/draft/messageQuote';
@@ -136,6 +137,7 @@ import {
   handleMessageImageContextMenu,
   handleMessageLinkClick,
 } from './message/message-content-interactions';
+import { sendMotionRef } from './message/send-motion';
 import { revealThinkingContent, ThinkingContentPresentation } from './message/thinking-content';
 import { NativeWidgetAnchor } from './native-widget/anchor';
 import {
@@ -2464,6 +2466,7 @@ export class JustDoChatElement extends LitElement {
           data-history-key=${item.key}
           data-minimap-anchor=${item.key}
           data-entry-id=${entryId ?? nothing}
+          ${ref(sendMotionRef(item.message))}
         >
           ${this.renderItems(
             historyItems,

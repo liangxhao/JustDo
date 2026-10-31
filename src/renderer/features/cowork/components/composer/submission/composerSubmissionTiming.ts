@@ -1,5 +1,8 @@
+import type { SendMotionOrigin } from '@/libs/openclaw-chat/components/message/send-motion';
+
 export interface ComposerSubmissionMetadata {
   startedAt: number;
+  sendMotionOrigin?: SendMotionOrigin;
 }
 
 /** Preserve the human Send click across model and composer preparation. */

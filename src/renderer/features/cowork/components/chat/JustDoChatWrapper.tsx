@@ -33,6 +33,7 @@ import { selectCurrentSession } from '@/features/cowork/coworkSelectors';
 import type { CoworkAttachmentPayload, CoworkSession } from '@/features/cowork/coworkTypes';
 import type { JustDoChatElement } from '@/libs/openclaw-chat/components/justdo-chat';
 import type { McpAppViewContext } from '@/libs/openclaw-chat/components/mcp-app/view';
+import { registerSendMotion, type SendMotionOrigin } from '@/libs/openclaw-chat/components/message/send-motion';
 import {
   NATIVE_WIDGET_DRAFT_EVENT,
   type NativeWidgetContext,
@@ -149,6 +150,7 @@ export interface JustDoChatWrapperRef {
       clientTurnId?: string;
       onRunBound?: (runId: string) => void | Promise<void>;
       onRequestIssued?: () => void;
+      sendMotionOrigin?: SendMotionOrigin;
     },
   ) => Promise<void>;
   getExportSnapshot: () => {
@@ -168,6 +170,7 @@ export interface JustDoChatWrapperRef {
     text: string,
     attachments?: CoworkAttachmentPayload[],
     gatewayMessage?: string,
+    sendMotionOrigin?: SendMotionOrigin,
   ) => void;
   /** Register the exact temporary/canonical pair created for a new session. */
   registerSessionPromotion: (sourceSessionKey: string, targetSessionKey: string) => void;
@@ -548,6 +551,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
       text: string;
       attachments: CoworkAttachmentPayload[];
       gatewayMessage?: string;
+      sendMotionOrigin?: SendMotionOrigin;
     } | null>(null);
     const promotionSourceByTargetRef = useRef(new Map<string, string>());
     const lastReportedSessionKeyRef = useRef('');
@@ -664,16 +668,20 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
           if (!controller.state.initialHistoryReady || controller.state.historyReadFailed) {
             throw new Error(i18nService.t('storageHistoryFailed'));
           }
-          await controller.sendMessage(text, attachments, gatewayMessage, options);
+          await controller.sendMessage(text, attachments, gatewayMessage, {
+            ...options,
+            onOptimisticMessage: message => registerSendMotion(message, options?.sendMotionOrigin),
+          });
         },
-        setPendingUserMessage: (text: string, attachments = [], gatewayMessage) => {
+        setPendingUserMessage: (text: string, attachments = [], gatewayMessage, sendMotionOrigin) => {
           const controller = controllerRef.current;
           // Always buffer the prompt — survives StrictMode remounts where the
           // controller is destroyed and recreated.
-          pendingUserMessageRef.current = { text, attachments, gatewayMessage };
+          pendingUserMessageRef.current = { text, attachments, gatewayMessage, sendMotionOrigin };
           if (controller) {
             debugLog('[JustDoChatWrapper] setPendingUserMessage (immediate):', text.slice(0, 60));
-            controller.setPendingUserMessage(text, attachments, gatewayMessage);
+            controller.setPendingUserMessage(text, attachments, gatewayMessage,
+              message => registerSendMotion(message, sendMotionOrigin));
           } else {
             debugLog(
               '[JustDoChatWrapper] setPendingUserMessage (buffered, no controller):',
@@ -909,6 +917,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
           pendingUserMessageRef.current.text,
           pendingUserMessageRef.current.attachments,
           pendingUserMessageRef.current.gatewayMessage,
+          message => registerSendMotion(message, pendingUserMessageRef.current?.sendMotionOrigin),
         );
         pendingUserMessageRef.current = null;
       }

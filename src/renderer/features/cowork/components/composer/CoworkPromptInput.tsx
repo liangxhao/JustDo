@@ -1,3 +1,5 @@
+import { captureSendMotionOrigin } from '@/libs/openclaw-chat/components/message/send-motion';
+
 import {
   appendMediaDirectiveLines,
   extractBase64FromDataUrl,
@@ -1512,7 +1514,10 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const handleSubmit = useCallback(
       async (promptOverride?: string) => {
         if (sendPreparationRef.current?.contextKey === modelSelectionContextKey) return;
-        const submission = { startedAt: Date.now() };
+        const submission: ComposerSubmissionMetadata = {
+          startedAt: Date.now(),
+          sendMotionOrigin: captureSendMotionOrigin(textareaRef.current),
+        };
         const owner = { contextKey: modelSelectionContextKey, token: Symbol() };
         const modelContext = renderedModelContextRef.current;
         const sendContext = composerSendContext.current;
@@ -1796,11 +1801,11 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
 
     const containerClass = isLarge
       ? COMPOSER_SURFACE_CLASS
-      : 'relative flex flex-wrap items-end gap-2 p-3 rounded-xl border border-border bg-[var(--composer-bg)]';
+      : 'relative flex min-h-[80px] flex-wrap items-end gap-x-2 gap-y-2.5 px-3 py-2 rounded-xl border border-border bg-[var(--composer-bg)]';
 
     const textareaClass = isLarge
       ? COMPOSER_TEXTAREA_CLASS
-      : 'flex-1 resize-none bg-transparent text-foreground placeholder:placeholder:text-secondary focus:outline-none text-sm leading-relaxed min-h-[24px] max-h-[200px]';
+      : 'block flex-1 resize-none bg-transparent text-foreground placeholder:placeholder:text-secondary focus:outline-none text-sm leading-6 min-h-[24px] max-h-[200px]';
 
     const truncatePath = (path: string, maxLength = 30): string => {
       if (!path) return i18nService.t('noFolderSelected');
@@ -2806,11 +2811,11 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                   onContextMenu={handleContextMenu}
                   placeholder={effectivePlaceholder}
                   disabled={disabled && !allowDraftWhileDisabled}
-                  rows={isLarge ? 2 : 1}
+                  rows={1}
                   className={textareaClass}
                   style={{ minHeight, maxHeight }}
                 />
-                <div className="flex flex-nowrap items-center justify-between gap-1 px-3 pb-2 pt-1.5">
+                <div className="flex flex-nowrap items-center justify-between gap-1 px-3 pb-2 pt-0.5">
                   <div className="relative flex shrink-0 items-center gap-1">
                     {appComposer.options}
                     {supportsAgentControls && (
