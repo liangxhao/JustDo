@@ -2278,7 +2278,9 @@ export const CronView: React.FC<CronViewProps> = ({
                                   </p>
                                 </div>
                               </div>
-                              <div className="grid grid-cols-[repeat(auto-fill,minmax(min(20rem,calc((100%-0.75rem)/2)),1fr))] gap-3">
+                              <div
+                                className={`grid gap-3 ${group.tasks.length <= 2 ? 'grid-cols-2' : 'grid-cols-3'}`}
+                              >
                                 {group.tasks.map(job => (
                                   <CronJobCard
                                     key={job.id}
