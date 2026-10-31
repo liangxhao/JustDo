@@ -353,6 +353,7 @@ export class JustDoChatElement extends LitElement {
   private readonly historySearchIndex = new HistorySearchIndex();
   private historyOwnerRevision = 0;
   private readonly thinkingContentPresentation = new ThinkingContentPresentation({
+    isFollowing: () => this.chatScrollController.state.mode === 'follow',
     requestUpdate: () => {
       this.thinkingViewRevision += 1;
     },
@@ -1235,6 +1236,7 @@ export class JustDoChatElement extends LitElement {
   }
 
   private syncScrollIndicator(): void {
+    this.thinkingContentPresentation.syncScrollMode();
     // Layout-dependent scroll state only changes this control, not the transcript.
     const indicator = this.renderRoot?.querySelector<HTMLButtonElement>('[data-jump-to-latest]');
     if (!indicator) return;

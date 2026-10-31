@@ -19,6 +19,9 @@ let nextBodyId = 0;
 
 type PreviewState = {
   expanded: boolean;
+  tailPreview: boolean;
+  offset: number;
+  wasStreaming: boolean;
   sourceLength: number;
   fingerprintFirst: number;
   fingerprintSecond: number;
@@ -27,12 +30,17 @@ type PreviewState = {
 type ThinkingContentContext = {
   requestUpdate: () => void;
   preserve: (element: HTMLElement) => void;
+  isFollowing?: () => boolean;
+  subscribeScrollMode?: (refresh: () => void) => () => void;
 };
 
 export type ThinkingContentRenderer = (item: ThinkingItem) => unknown;
 
 function emptyPreviewState(): PreviewState {
-  return { expanded: false, sourceLength: -1, fingerprintFirst: 0x811c9dc5, fingerprintSecond: 5381 };
+  return {
+    expanded: false, tailPreview: false, offset: 0, wasStreaming: false,
+    sourceLength: -1, fingerprintFirst: 0x811c9dc5, fingerprintSecond: 5381,
+  };
 }
 
 /** Non-authoritative display metadata; never used to establish native ownership. */
@@ -84,12 +92,30 @@ function renderNaturalSource(source: string, streaming: boolean): unknown {
   }`;
 }
 
-/** Only local expansion metadata survives a process moving between timeline locations. */
+/** Only local display metadata survives a process moving between timeline locations. */
 export class ThinkingContentPresentation {
   private scope: string | null = null;
   private states = new Map<string, PreviewState>();
+  private readonly previews = new Set<() => void>();
+  private readonly previewContext: ThinkingContentContext;
+  private following: boolean | undefined;
 
-  constructor(private readonly context: ThinkingContentContext) {}
+  constructor(context: ThinkingContentContext) {
+    this.previewContext = {
+      ...context,
+      subscribeScrollMode: refresh => {
+        this.previews.add(refresh);
+        return () => { this.previews.delete(refresh); };
+      },
+    };
+  }
+
+  syncScrollMode(): void {
+    const following = this.previewContext.isFollowing?.() ?? true;
+    if (following === this.following) return;
+    this.following = following;
+    for (const refresh of this.previews) refresh();
+  }
 
   reset(scope: string | null): void {
     if (scope === this.scope) return;
@@ -104,7 +130,7 @@ export class ThinkingContentPresentation {
       this.states.set(item.id, state);
       if (this.states.size > PREVIEW_STATE_LIMIT) this.states.delete(this.states.keys().next().value!);
     }
-    return thinkingContent(state, item.text, item.status === 'running', this.context);
+    return thinkingContent(state, item.text, item.status === 'running', this.previewContext);
   };
 }
 
@@ -118,6 +144,9 @@ class ThinkingContentDirective extends AsyncDirective {
   private content: HTMLElement | undefined;
   private observer: ResizeObserver | undefined;
   private hasOverflow = false;
+  private unsubscribeScrollMode: (() => void) | undefined;
+  private measurementQueued = false;
+  private settleTail = false;
 
   render(
     suppliedState: PreviewState | undefined,
@@ -130,7 +159,13 @@ class ThinkingContentDirective extends AsyncDirective {
       this.source = undefined;
     }
     this.state ??= emptyPreviewState();
-    this.context = context;
+    if (this.context !== context) {
+      this.unsubscribeScrollMode?.();
+      this.unsubscribeScrollMode = context?.subscribeScrollMode?.(this.scheduleMeasurement);
+      this.context = context;
+    }
+    if (this.state.wasStreaming && !streaming && (context?.isFollowing?.() ?? true)) this.settleTail = true;
+    this.state.wasStreaming = streaming;
     this.streaming = streaming;
     const state = this.state;
     if (source !== this.source) {
@@ -141,7 +176,12 @@ class ThinkingContentDirective extends AsyncDirective {
         ? source.startsWith(this.source)
         : source.length >= state.sourceLength &&
           prefix?.first === state.fingerprintFirst && prefix?.second === state.fingerprintSecond;
-      if (!append) state.expanded = false;
+      if (!append) {
+        state.expanded = false;
+        state.tailPreview = streaming;
+        state.offset = 0;
+        this.settleTail = streaming;
+      }
       const fingerprint = sourceFingerprint(
         source, append ? state.sourceLength : 0, source.length,
         append ? state.fingerprintFirst : undefined, append ? state.fingerprintSecond : undefined,
@@ -152,6 +192,7 @@ class ThinkingContentDirective extends AsyncDirective {
       this.source = source;
     }
 
+    this.scheduleMeasurement();
     return html`<div class="thinking-content markdown-content" data-thinking-content
       @thinking-content-reveal=${this.reveal}>
       <div class=${`thinking-content__viewport${state.expanded ? ' is-expanded' : ''}`}
@@ -175,6 +216,7 @@ class ThinkingContentDirective extends AsyncDirective {
             const button = event.currentTarget as HTMLElement;
             this.context?.preserve(state.expanded ? button : button.closest<HTMLElement>('[data-thinking-content]')!);
             state.expanded = !state.expanded;
+            if (!state.expanded && state.tailPreview) this.settleTail = true;
             this.refresh();
           }}>
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4" /></svg>
@@ -193,7 +235,16 @@ class ThinkingContentDirective extends AsyncDirective {
       this.observer = new owner.ResizeObserver(this.measureOverflow);
       this.observer.observe(this.content);
     }
-    queueMicrotask(this.measureOverflow);
+    this.scheduleMeasurement();
+  };
+
+  private readonly scheduleMeasurement = (): void => {
+    if (this.measurementQueued) return;
+    this.measurementQueued = true;
+    queueMicrotask(() => {
+      this.measurementQueued = false;
+      this.measureOverflow();
+    });
   };
 
   private readonly measureOverflow = (): void => {
@@ -203,6 +254,17 @@ class ThinkingContentDirective extends AsyncDirective {
     const lineHeight = Number.parseFloat(owner.getComputedStyle(content).lineHeight);
     if (!Number.isFinite(lineHeight) || lineHeight <= 0) return;
     const hasOverflow = content.scrollHeight > lineHeight * THINKING_PREVIEW_LINES + 1;
+    const state = this.state!;
+    const viewport = content.parentElement!;
+    const maxOffset = Math.max(0, content.scrollHeight - lineHeight * THINKING_PREVIEW_LINES);
+    if (state.tailPreview && !state.expanded &&
+      (this.settleTail || (this.streaming && (this.context?.isFollowing?.() ?? true)))) {
+      state.offset = maxOffset;
+    }
+    this.settleTail = false;
+    state.offset = Math.min(state.offset, maxOffset);
+    viewport.scrollTop = state.expanded ? 0 : state.offset;
+    viewport.classList.toggle('has-hidden-prefix', !state.expanded && state.offset > 0);
     if (hasOverflow === this.hasOverflow) return;
     this.hasOverflow = hasOverflow;
     this.refresh();
@@ -212,6 +274,10 @@ class ThinkingContentDirective extends AsyncDirective {
   private readonly reveal = (): void => {
     this.state!.expanded = true;
     this.content?.parentElement?.classList.add('is-expanded');
+    if (this.content?.parentElement) {
+      this.content.parentElement.scrollTop = 0;
+      this.content.parentElement.classList.remove('has-hidden-prefix');
+    }
     this.refresh();
   };
 
@@ -223,12 +289,15 @@ class ThinkingContentDirective extends AsyncDirective {
   }
 
   protected disconnected(): void {
+    this.unsubscribeScrollMode?.();
+    this.unsubscribeScrollMode = undefined;
     this.observer?.disconnect();
     this.observer = undefined;
     this.source = undefined;
   }
 
   protected reconnected(): void {
+    this.unsubscribeScrollMode = this.context?.subscribeScrollMode?.(this.scheduleMeasurement);
     this.observeContent(this.content);
   }
 }

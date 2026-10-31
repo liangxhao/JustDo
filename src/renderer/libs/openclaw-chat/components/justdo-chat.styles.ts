@@ -2550,7 +2550,13 @@ export const chatStyles = [
 
     .thinking-content__viewport:not(.is-expanded) {
       max-height: calc(var(--thinking-preview-lines, 10) * 1lh);
-      overflow: clip;
+      overflow: hidden;
+      overflow-anchor: none;
+      scroll-behavior: auto;
+    }
+
+    .thinking-content__viewport.has-hidden-prefix:not(.is-expanded) {
+      mask-image: linear-gradient(to bottom, transparent, black 1lh);
     }
 
     .thinking-content__body {

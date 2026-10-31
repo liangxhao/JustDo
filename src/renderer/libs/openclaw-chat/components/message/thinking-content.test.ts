@@ -34,7 +34,8 @@ function fixture(text: string, status: ThinkingItem['status'] = 'running') {
   let item = thinking(text, status);
   const commit = () => render(presentation.render(item), host);
   const preserve = vi.fn();
-  const presentation = new ThinkingContentPresentation({ requestUpdate: commit, preserve });
+  let following = true;
+  const presentation = new ThinkingContentPresentation({ requestUpdate: commit, preserve, isFollowing: () => following });
   presentation.reset('session:incarnation:0');
   commit();
   return {
@@ -42,6 +43,10 @@ function fixture(text: string, status: ThinkingItem['status'] = 'running') {
     presentation,
     preserve,
     commit,
+    follow(value: boolean) {
+      following = value;
+      presentation.syncScrollMode();
+    },
     update(source: string, nextStatus = item.status) {
       item = { ...item, text: source, status: nextStatus, lastSeq: item.lastSeq + 1 };
       commit();
@@ -130,6 +135,86 @@ describe('Thinking line preview', () => {
     expect(view.toggle()!.getAttribute('aria-expanded')).toBe('true');
     view.click('toggle-preview');
     expect(view.toggle()).toBeNull();
+  });
+
+  test('follows the streamed tail, freezes while reading, and resumes without a text update', async () => {
+    const view = preview();
+    const viewport = view.body().parentElement!;
+    expect(viewport.scrollTop).toBe(20);
+    expect(viewport.classList.contains('has-hidden-prefix')).toBe(true);
+    height = 360;
+    view.update('A thinking paragraph.\n\nA growing tail extended');
+    await Promise.resolve();
+    expect(viewport.scrollTop).toBe(160);
+    view.follow(false);
+    height = 480;
+    view.update('A thinking paragraph.\n\nA growing tail extended again');
+    await Promise.resolve();
+    expect(viewport.scrollTop).toBe(160);
+    view.follow(true);
+    await Promise.resolve();
+    expect(viewport.scrollTop).toBe(280);
+    view.update('A thinking paragraph.\n\nA growing tail extended again', 'completed');
+    await Promise.resolve();
+    expect(viewport.scrollTop).toBe(280);
+    view.follow(false);
+    view.follow(true);
+    height = 500;
+    resize();
+    expect(viewport.scrollTop).toBe(280);
+  });
+
+  test('restores a paused offset on remount and resets a replacement and historical scope to the head', async () => {
+    const view = preview();
+    view.follow(false);
+    render(nothing, view.host);
+    view.commit();
+    const body = view.body();
+    body.style.lineHeight = '20px';
+    vi.spyOn(body, 'getBoundingClientRect').mockReturnValue({ width: 320 } as DOMRect);
+    vi.spyOn(body, 'scrollHeight', 'get').mockImplementation(() => height);
+    height = 400;
+    resize();
+    expect(body.parentElement!.scrollTop).toBe(20);
+    view.update('Replacement history', 'completed');
+    await Promise.resolve();
+    expect(body.parentElement!.scrollTop).toBe(0);
+    expect(body.parentElement!.classList.contains('has-hidden-prefix')).toBe(false);
+    view.presentation.reset('fresh-history');
+    view.commit();
+    await Promise.resolve();
+    expect(view.body().parentElement!.scrollTop).toBe(0);
+  });
+
+  test('reveals the whole source from a tail preview and returns to the tail on collapse', async () => {
+    const view = preview();
+    const viewport = view.body().parentElement!;
+    revealThinkingContent(view.body());
+    expect(viewport.scrollTop).toBe(0);
+    expect(viewport.classList.contains('has-hidden-prefix')).toBe(false);
+    height = 400;
+    resize();
+    expect(viewport.scrollTop).toBe(0);
+    view.follow(false);
+    view.click('toggle-preview');
+    await Promise.resolve();
+    expect(viewport.scrollTop).toBe(200);
+    height = 100;
+    resize();
+    expect(viewport.scrollTop).toBe(0);
+  });
+
+  test('reveals final appended text when completion remounts the same process', () => {
+    const view = preview();
+    render(nothing, view.host);
+    height = 500;
+    view.update('A thinking paragraph.\n\nA growing tail and final text', 'completed');
+    const body = view.body();
+    body.style.lineHeight = '20px';
+    vi.spyOn(body, 'getBoundingClientRect').mockReturnValue({ width: 320 } as DOMRect);
+    vi.spyOn(body, 'scrollHeight', 'get').mockImplementation(() => height);
+    resize();
+    expect(body.parentElement!.scrollTop).toBe(300);
   });
 
   test('keeps expansion through append, completion and remount, and resets at a new scope or replacement', () => {
