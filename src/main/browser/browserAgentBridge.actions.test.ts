@@ -1,4 +1,7 @@
 import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import { pathToFileURL } from 'url';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
 const electron = vi.hoisted(() => ({
@@ -235,7 +238,7 @@ test('waits for a started main-frame navigation to finish before returning fresh
   });
 });
 
-test('allows about:blank navigation but rejects every other non-http protocol', async () => {
+test('navigates to blank and local HTML pages but rejects executable and inline protocols', async () => {
   let currentUrl = 'https://example.com/';
   const loadURL = vi.fn(async (url: string) => {
     currentUrl = url;
@@ -270,10 +273,19 @@ test('allows about:blank navigation but rejects every other non-http protocol', 
   });
   expect(loadURL).toHaveBeenCalledWith('about:blank');
 
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'browser-navigation-'));
+  temporaryRoots.push(directory);
+  const file = path.join(directory, '报告 #100%.html');
+  fs.writeFileSync(file, '<html>Report</html>');
+  const localUrl = `${pathToFileURL(file).href}?view=chart#section`;
+  await expect(bridge.executeCommand('justdo:session-1', {
+    action: 'navigate', targetUrl: localUrl,
+  })).resolves.toMatchObject({ details: { ok: true, url: localUrl } });
+  expect(loadURL).toHaveBeenLastCalledWith(localUrl);
+
   for (const targetUrl of [
     'about:srcdoc',
     'data:text/html,hello',
-    'file:///tmp/example.html',
     'javascript:void(0)',
   ]) {
     await expect(

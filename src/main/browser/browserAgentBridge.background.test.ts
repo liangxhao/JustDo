@@ -1,5 +1,8 @@
 import { EventEmitter } from 'events';
+import fs from 'fs';
+import os from 'os';
 import path from 'path';
+import { pathToFileURL } from 'url';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
 const state = vi.hoisted(() => ({
@@ -146,6 +149,22 @@ test('ordinary omission and false use the existing sidebar creation path', async
     2,
   );
   expect(state.host.create).not.toHaveBeenCalled();
+});
+
+test('opens existing local HTML in sidebar and background pages', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'browser-navigation-'));
+  try {
+    const file = path.join(directory, '报告.html');
+    fs.writeFileSync(file, '<html>Report</html>');
+    const url = `${pathToFileURL(file).href}?view=chart#section`;
+    for (const headless of [false, true]) {
+      await expect(execute({ action: 'open', url, headless })).resolves.toMatchObject({ ok: true, url });
+    }
+    expect(getGuest(20).loadURL).toHaveBeenCalledWith(url);
+    expect(getGuest(21).loadURL).toHaveBeenCalledWith(url);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test('rejects embed registration even with the sidebar host and profile storage while allowing a sidebar page', async () => {
@@ -306,9 +325,30 @@ test('workspace-only browser calls reject local file URLs before any page is cre
       undefined,
       { ...scope(), allowLocalFiles: false },
     ),
-  ).rejects.toThrow('Only http and https');
+  ).rejects.toThrow('Local file pages are unavailable');
   expect(state.host.create).not.toHaveBeenCalled();
   expect(send).not.toHaveBeenCalled();
+});
+
+test('workspace-only navigation rejects local files before loading or allocating a page', async () => {
+  await expect(bridge.executeCommand(
+    'agent:main:justdo:conversation',
+    { action: 'navigate', url: 'file:///outside/private.html', headless: true },
+    undefined,
+    { ...scope(), allowLocalFiles: false },
+  )).rejects.toThrow('Local file pages');
+  expect(state.host.create).not.toHaveBeenCalled();
+
+  const page = (await execute({ action: 'open', url: 'https://example.com', headless: true })) as PageResult;
+  const contents = getGuest(20);
+  contents.loadURL.mockClear();
+  await expect(bridge.executeCommand(
+    'agent:main:justdo:conversation',
+    { action: 'navigate', targetId: page.targetId, url: 'file:///outside/private.html' },
+    undefined,
+    { ...scope(), allowLocalFiles: false },
+  )).rejects.toThrow('Local file pages');
+  expect(contents.loadURL).not.toHaveBeenCalled();
 });
 
 test('waits for background session cleanup before completing bridge shutdown', async () => {

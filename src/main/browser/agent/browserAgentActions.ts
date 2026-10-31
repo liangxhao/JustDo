@@ -1058,7 +1058,7 @@ export async function executeOnGuest(
 ): Promise<unknown> {
   assertActive();
   if (command.action === 'navigate') {
-    const url = normalizeNavigationUrl(command.targetUrl ?? command.url);
+    const url = await normalizeNavigationUrl(command.targetUrl ?? command.url);
     this.snapshots.delete(tab.webContentsId);
     assertActive();
     await guest.loadURL(url);

@@ -1194,6 +1194,13 @@ export class BrowserAgentBridge {
       }
       const headless = selectedTab ? selectedTab.headless === true : defaultHeadless;
       if (
+        executionScope?.allowLocalFiles === false &&
+        (command.action === 'open' || command.action === 'navigate') &&
+        new URL(command.targetUrl ?? command.url ?? 'about:blank').protocol === 'file:'
+      ) {
+        throw new Error('Local file pages are unavailable under this browser filesystem policy.');
+      }
+      if (
         executionScope &&
         (command.action === 'start' ||
           command.action === 'open' ||
@@ -1451,7 +1458,7 @@ export class BrowserAgentBridge {
       if (command.action === 'tabs') return tabListResult();
 
       if (command.action === 'open') {
-        const url = normalizeNavigationUrl(command.targetUrl ?? command.url);
+        const url = await normalizeNavigationUrl(command.targetUrl ?? command.url);
         const label = command.label?.trim();
         if (label && this.labelsBySession.get(scopeId)?.has(label)) {
           throw new Error(`Browser tab label already exists: ${label}`);

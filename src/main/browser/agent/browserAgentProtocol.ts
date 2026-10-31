@@ -6,6 +6,7 @@ import {
 } from '../../../shared/browser/browser';
 import { isBlockedBrowserMetadataHost } from '../../core/window/browserPanelSecurity';
 import { sanitizeBrowserUrl as sanitizeUrlForModel } from '../data/browserDataSanitizers';
+import { resolveLocalHtmlPreviewFilePath } from '../preview/localHtmlPreviewServer';
 
 export type AgentBrowserCommand = {
   sessionKey: string;
@@ -607,13 +608,19 @@ export const normalizeKeyChord = (
   return { keyCode, modifiers };
 };
 
-export const normalizeNavigationUrl = (rawUrl: string | undefined): string => {
+export const normalizeNavigationUrl = async (rawUrl: string | undefined): Promise<string> => {
   const value = rawUrl?.trim();
   if (!value) throw new Error('url is required.');
   if (value === 'about:blank') return value;
   const url = new URL(value);
+  if (url.protocol === 'file:') {
+    if (!(await resolveLocalHtmlPreviewFilePath(value))) {
+      throw new Error('Local HTML URL must reference an existing .html, .htm or .xhtml file.');
+    }
+    return url.toString();
+  }
   if (!['http:', 'https:'].includes(url.protocol)) {
-    throw new Error('Only http and https URLs are supported.');
+    throw new Error('Only http, https and local HTML file URLs are supported.');
   }
   if (url.username || url.password) throw new Error('URL credentials are not supported.');
   if (isBlockedBrowserMetadataHost(url.hostname)) {
