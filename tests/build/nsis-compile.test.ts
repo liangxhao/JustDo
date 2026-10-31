@@ -10,6 +10,44 @@ const makensis = path.join(cacheRoot, 'nsis-3.0.4.1', 'makensis.exe');
 const plugins = path.join(cacheRoot, 'nsis-resources-3.4.1', 'plugins', 'x86-unicode');
 const templates = path.join(repoRoot, 'node_modules/app-builder-lib/templates/nsis');
 
+// Read RT_MANIFEST from the emitted PE, rather than matching the NSIS source:
+// an omitted manifest makes Windows stretch the entire supposedly scaled UI.
+function embeddedManifest(filename: string): string {
+  const pe = readFileSync(filename);
+  const nt = pe.readUInt32LE(0x3c);
+  const optional = nt + 24;
+  const directories = optional + (pe.readUInt16LE(optional) === 0x10b ? 96 : 112);
+  const sections = optional + pe.readUInt16LE(nt + 20);
+  const offsetOf = (rva: number): number => {
+    for (let index = 0; index < pe.readUInt16LE(nt + 6); index++) {
+      const section = sections + index * 40;
+      const start = pe.readUInt32LE(section + 12);
+      const size = Math.max(pe.readUInt32LE(section + 8), pe.readUInt32LE(section + 16));
+      if (rva >= start && rva < start + size) return pe.readUInt32LE(section + 20) + rva - start;
+    }
+    throw new Error(`PE resource RVA is outside its sections: ${rva}`);
+  };
+  const resources = offsetOf(pe.readUInt32LE(directories + 16));
+  const descend = (relative: number, type?: number): number => {
+    const directory = resources + relative;
+    const count = pe.readUInt16LE(directory + 12) + pe.readUInt16LE(directory + 14);
+    for (let index = 0; index < count; index++) {
+      const entry = directory + 16 + index * 8;
+      if (type === undefined || pe.readUInt32LE(entry) === type) return pe.readUInt32LE(entry + 4);
+    }
+    throw new Error('Compiled NSIS executable has no manifest resource.');
+  };
+  const type = descend(0, 24);
+  const name = descend(type & 0x7fffffff);
+  const data = descend(name & 0x7fffffff);
+  expect(type & 0x80000000).not.toBe(0);
+  expect(name & 0x80000000).not.toBe(0);
+  expect(data & 0x80000000).toBe(0);
+  const entry = resources + data;
+  const start = offsetOf(pe.readUInt32LE(entry));
+  return pe.subarray(start, start + pe.readUInt32LE(entry + 4)).toString('utf8');
+}
+
 describe('Windows NSIS template compilation', () => {
   it.runIf(process.platform === 'win32' && existsSync(makensis) && existsSync(plugins))(
     'compiles both real templates with all languages and warnings as errors',
@@ -98,6 +136,9 @@ describe('Windows NSIS template compilation', () => {
           });
           expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
           expect(existsSync(path.join(root, 'compile.exe'))).toBe(true);
+          expect(embeddedManifest(path.join(root, 'compile.exe'))).toMatch(
+            /<dpiAware\b[^>]*>true<\/dpiAware>/,
+          );
         }
       } finally {
         NsisTarget.prototype.computeCommonInstallerScriptHeader = originalHeader;

@@ -3,6 +3,7 @@
 
 !define INSTALLER_BUTTON_PRIMARY "primary"
 !define INSTALLER_BUTTON_SECONDARY "secondary"
+!define INSTALLER_BUTTON_ACCENT "accent"
 !define INSTALLER_BUTTON_LINK "link"
 !ifndef INSTALLER_BUTTON_BACKGROUND
   !define INSTALLER_BUTTON_BACKGROUND 0xFDFBFB
@@ -22,6 +23,12 @@
 !ifndef INSTALLER_BUTTON_LINK_TEXT
   !define INSTALLER_BUTTON_LINK_TEXT 0xB07762
 !endif
+!ifndef INSTALLER_BUTTON_ACCENT_FILL
+  !define INSTALLER_BUTTON_ACCENT_FILL 0xFFE8E9FF
+!endif
+!ifndef INSTALLER_BUTTON_ACCENT_TEXT
+  !define INSTALLER_BUTTON_ACCENT_TEXT 0xE5464F
+!endif
 
 ; These private parameters are consumed synchronously. Call only from the
 ; existing SHOW/LEAVE/section presentation functions, never a script timer or
@@ -31,6 +38,7 @@ Var InstallerButtonTarget
 Var InstallerButtonFont
 Var InstallerButtonDpi
 Var InstallerButtonKind
+Var InstallerButtonSurface
 Var InstallerButtonOwnedImage
 Var InstallerButtonResult
 Var InstallerButtonImage
@@ -48,14 +56,20 @@ Var InstallerButtonFill
 ; Set the native caption and final size before painting. Give each BUTTON its
 ; own image variable, initialized to 0. Repainting replaces/frees its prior
 ; owned HBITMAP. The caller owns the borrowed HFONT; no font is created here.
-!macro InstallerPaintButton _HANDLE _FONT _DPI _KIND _IMAGE
+; Surface is the opaque surrounding BGR color, independent of button kind.
+!macro InstallerPaintButtonOnSurface _HANDLE _FONT _DPI _KIND _SURFACE _IMAGE
   Push ${_HANDLE}
   Push ${_FONT}
   Push ${_DPI}
   Push "${_KIND}"
+  Push ${_SURFACE}
   Push ${_IMAGE}
   Call InstallerPaintNativeButton
   Pop ${_IMAGE}
+!macroend
+
+!macro InstallerPaintButton _HANDLE _FONT _DPI _KIND _IMAGE
+  !insertmacro InstallerPaintButtonOnSurface ${_HANDLE} ${_FONT} ${_DPI} "${_KIND}" ${INSTALLER_BUTTON_BACKGROUND} ${_IMAGE}
 !macroend
 
 ; Run before destroying the BUTTON or freeing its font. This detaches/frees
@@ -75,6 +89,7 @@ Var InstallerButtonFill
 
 Function InstallerPaintNativeButton
   Pop $InstallerButtonOwnedImage
+  Pop $InstallerButtonSurface
   Pop $InstallerButtonKind
   Pop $InstallerButtonDpi
   Pop $InstallerButtonFont
@@ -148,7 +163,7 @@ Function InstallerPaintNativeButton
   ${EndIf}
   System::Call 'gdi32::SelectObject(p $InstallerButtonMemoryDC, p $InstallerButtonImage)p.s'
   Pop $InstallerButtonPriorImage
-  System::Call 'gdi32::CreateSolidBrush(i ${INSTALLER_BUTTON_BACKGROUND})p.s'
+  System::Call 'gdi32::CreateSolidBrush(i $InstallerButtonSurface)p.s'
   Pop $InstallerButtonBackgroundBrush
   System::Call 'user32::FillRect(p $InstallerButtonMemoryDC, p $InstallerButtonRect, p $InstallerButtonBackgroundBrush)i.r0'
   ${If} $0 == 0
@@ -217,6 +232,9 @@ Function InstallerPaintNativeButton
     ${If} $InstallerButtonKind == "${INSTALLER_BUTTON_PRIMARY}"
       StrCpy $0 ${INSTALLER_BUTTON_PRIMARY_FILL}
       StrCpy $7 ${INSTALLER_BUTTON_PRIMARY_TEXT}
+    ${ElseIf} $InstallerButtonKind == "${INSTALLER_BUTTON_ACCENT}"
+      StrCpy $0 ${INSTALLER_BUTTON_ACCENT_FILL}
+      StrCpy $7 ${INSTALLER_BUTTON_ACCENT_TEXT}
     ${EndIf}
     System::Call 'gdiplus::GdipCreateSolidFill(i r0, *p .r2)i.r1'
     ${If} $1 != 0

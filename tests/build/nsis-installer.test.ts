@@ -1447,15 +1447,15 @@ describe('Windows installer presentation', () => {
     expect(presentationScript).toContain('Microsoft YaHei UI');
     expect(presentationScript).toContain('Segoe UI');
     expect(presentationScript).toContain('Installing ${PRODUCT_NAME}');
-    expect(presentationScript).toContain('ShowWindow $JustDoInstallLog 0');
-    expect(presentationScript).toContain('ShowWindow $JustDoShowLogButton 5');
+    expect(presentationScript).toContain('ShowWindow $JustDoInstallLog 5');
+    expect(presentationScript).toContain('ShowWindow $JustDoShowLogButton 0');
     expect(presentationScript).not.toContain('SPI_GETCLIENTAREAANIMATION');
     expect(presentationScript).not.toMatch(/https?:|WebView|nsTimer/);
     expect(builderConfig.nsis?.runAfterFinish).toBe(false);
     expect(nsisScript).toContain('Function InstallerLaunchApplication');
     expect(nsisScript).toContain('${OrIf} $InstallerOpenOnFinish != "1"');
     expect(nsisScript).toContain('${StdUtils.ExecShellAsUser} $0 "$launchLink" "open" "$1"');
-    expect(nsisScript).toContain('ShowInstDetails hide');
+    expect(nsisScript).toContain('ShowInstDetails show');
     expect(nsisScript).toContain('Call InstallerPresentationDestroy');
   });
 
@@ -1653,7 +1653,7 @@ describe('Windows installer presentation', () => {
     expect(nsisScript).toContain('!define MUI_PAGE_CUSTOMFUNCTION_PRE JustDoInstFilesPre');
     expect(instFilesPre).toContain('Call instFilesPre');
     expect(instFilesPre).toMatch(
-      /Call InstallerRestoreUpgradeDirectory\s*\$\{If\} \$InstallerUpgradeDirectory == ""\s*Call instFilesPre\s*\$\{EndIf\}/,
+      /Call InstallerRestoreUpgradeDirectory\s*\$\{If\} \$InstallerUpgradeDirectory == ""\s*!ifdef allowToChangeInstallationDirectory\s*Call instFilesPre\s*!endif\s*\$\{EndIf\}/,
     );
     expect(instFilesPre).toContain('StrCpy $JustDoInstallMode "$installMode"');
     expect(instFilesPre).toMatch(

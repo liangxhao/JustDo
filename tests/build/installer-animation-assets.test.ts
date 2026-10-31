@@ -41,7 +41,7 @@ const {
   renderInstallerLogo: (logo: DecodedLogo, size: number) => Buffer;
 };
 
-const sourceLogo = path.resolve(__dirname, '../../resources/icons/png/128x128.png');
+const sourceLogo = path.resolve(__dirname, '../../resources/icons/png/512x512.png');
 const temporaryRoot = mkdtempSync(path.join(os.tmpdir(), 'installer-animation-assets-'));
 
 afterAll(() => {
@@ -81,7 +81,7 @@ function testPng(colorType = 6): Buffer {
 
 function fixture(name: string): string {
   const root = path.join(temporaryRoot, name);
-  const logo = path.join(root, 'resources', 'icons', 'png', '128x128.png');
+  const logo = path.join(root, 'resources', 'icons', 'png', '512x512.png');
   mkdirSync(path.dirname(logo), { recursive: true });
   copyFileSync(sourceLogo, logo);
   return root;
@@ -160,10 +160,10 @@ function readBitmap(bytes: Buffer): { width: number; height: number; pixels: Buf
 describe('native installer animation assets', () => {
   it('reads the owned RGBA logo and composites transparent pixels on the white mark surface', () => {
     const original = decodeLogoPng(readFileSync(sourceLogo));
-    expect([original.width, original.height]).toEqual([128, 128]);
-    expect(original.rgb.length).toBe(128 * 128 * 3);
-    expect(Math.min(...original.rgb)).toBe(0);
-    expect(Math.max(...original.rgb)).toBe(255);
+    expect([original.width, original.height]).toEqual([512, 512]);
+    expect(original.rgb.length).toBe(512 * 512 * 3);
+    expect(original.rgb.includes(0)).toBe(true);
+    expect(original.rgb.includes(255)).toBe(true);
     expect([...decodeLogoPng(testPng()).rgb]).toEqual([0, 0, 0, 255, 255, 255]);
   });
 
@@ -298,7 +298,7 @@ describe('native installer animation assets', () => {
     expect(prepared.loopFirstFrame).toBe(36);
     expect(prepared.lastFrame).toBe(227);
     expect(prepared.scales.map(scale => [scale.percent, scale.width, scale.height])).toEqual([
-      [100, 180, 144], [150, 270, 216], [200, 360, 288],
+      [100, 180, 144], [125, 225, 180], [150, 270, 216], [175, 315, 252], [200, 360, 288],
     ]);
     const hashes = new Map<string, string>();
     for (const scale of prepared.scales) {
@@ -359,7 +359,7 @@ describe('native installer animation assets', () => {
       expect(frameBytes - rowTerminators).toBeLessThan(scale.width * scale.height * 228 * .55);
     }
     const manifest = path.join(prepared.directory, 'manifest.json');
-    expect(Object.keys(JSON.parse(readFileSync(manifest, 'utf8')).files)).toHaveLength(9);
+    expect(Object.keys(JSON.parse(readFileSync(manifest, 'utf8')).files)).toHaveLength(15);
     const before = statSync(manifest).mtimeMs;
     const cached = prepareInstallerAnimationAssets(root);
     expect(cached.directory).toBe(prepared.directory);
@@ -382,7 +382,7 @@ describe('native installer animation assets', () => {
 
   it('binds the cache to source bytes and never publishes a prepared set after invalid source input', () => {
     const root = fixture('source contract');
-    const logoPath = path.join(root, 'resources', 'icons', 'png', '128x128.png');
+    const logoPath = path.join(root, 'resources', 'icons', 'png', '512x512.png');
     const original = prepareInstallerAnimationAssets(root);
     writeFileSync(logoPath, testPng());
     const prepared = prepareInstallerAnimationAssets(root);

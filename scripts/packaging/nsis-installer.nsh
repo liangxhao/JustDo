@@ -1,3 +1,4 @@
+!include "${PROJECT_DIR}\scripts\packaging\nsis-presentation-dpi.nsh"
 !include "FileFunc.nsh"
 !include "LogicLib.nsh"
 !include "StdUtils.nsh"
@@ -76,6 +77,7 @@ Var JustDoExtractorEnvironmentConfigured
 Var JustDoPreviousTemp
 Var JustDoPreviousTmp
 Var InstallerUpgradeDirectory
+Var InstallerPreviousUninstallRoot
 
 !include "${PROJECT_DIR}\scripts\packaging\nsis-extractor-launch.nsh"
 
@@ -465,12 +467,14 @@ FunctionEnd
   ; after customInit. Its elevated inner instance also skips the normal section
   ; process check, so run that check from the install-page PRE callback, after
   ; restoring an upgrade's directory or normalizing a first-install selection.
-  !undef MUI_PAGE_CUSTOMFUNCTION_PRE
+  !ifdef MUI_PAGE_CUSTOMFUNCTION_PRE
+    !undef MUI_PAGE_CUSTOMFUNCTION_PRE
+  !endif
   !define MUI_PAGE_CUSTOMFUNCTION_PRE JustDoInstFilesPre
   !define MUI_PAGE_CUSTOMFUNCTION_SHOW JustDoInstFilesShow
   !define MUI_PAGE_CUSTOMFUNCTION_LEAVE InstallerPresentationLeave
-  ; Define the callback when electron-builder expands this macro, after its
-  ; multi-user template and native directory page have declared their variables.
+  ; Keep setup lifecycle helpers available when the build has no editable
+  ; directory page. The combined page normally includes them earlier.
   !include "${PROJECT_DIR}\scripts\packaging\nsis-setup-presentation.nsh"
 
   Function InstallerRestoreUpgradeDirectory
@@ -487,36 +491,14 @@ FunctionEnd
     ${EndIf}
   FunctionEnd
 
-  Function InstallerDirectoryPre
-    ; Keep electron-builder's updater page-skipping behavior.
-    ${If} ${isUpdated}
-      Abort
-    ${EndIf}
-    Call InstallerRestoreUpgradeDirectory
-  FunctionEnd
-
-  Function InstallerDirectoryShow
-    ${If} $InstallerUpgradeDirectory != ""
-      !insertmacro InstallerText $mui.Header.Text "确认升级位置" "Confirm upgrade location"
-      !insertmacro InstallerText $mui.Header.SubText "将 ${PRODUCT_NAME} 升级到现有安装目录。" "Upgrade ${PRODUCT_NAME} in its existing installation folder."
-      !insertmacro InstallerText $mui.DirectoryPage.Text \
-        "本次升级将沿用现有安装目录，无法更改安装位置。$\r$\n单击“安装”继续升级。" \
-        "This upgrade will use the existing installation folder shown below. The location cannot be changed.$\r$\nClick Install to continue."
-      EnableWindow $mui.DirectoryPage.Directory 0
-      EnableWindow $mui.DirectoryPage.BrowseButton 0
-    ${Else}
-      EnableWindow $mui.DirectoryPage.Directory 1
-      EnableWindow $mui.DirectoryPage.BrowseButton 1
-    ${EndIf}
-    Call InstallerSetupDirectoryShow
-  FunctionEnd
-
   Function JustDoInstFilesPre
-    ; Native directory-page leave handling updates INSTDIR after its callback.
-    ; Restore once more and avoid appending a product folder to historical paths.
+    ; The combined page commits INSTDIR before advancing. Restore a registered
+    ; location once more, preserving historical paths exactly.
     Call InstallerRestoreUpgradeDirectory
     ${If} $InstallerUpgradeDirectory == ""
-      Call instFilesPre
+      !ifdef allowToChangeInstallationDirectory
+        Call instFilesPre
+      !endif
     ${EndIf}
     StrCpy $JustDoInstallMode "$installMode"
     ${If} ${UAC_IsInnerInstance}
@@ -585,8 +567,8 @@ FunctionEnd
 !macroend
 
 !macro customHeader
-  ; Begin collapsed, while retaining the native details action and logging.
-  ShowInstDetails hide
+  ; Show the native log directly; presentation hides its redundant reveal button.
+  ShowInstDetails show
 !macroend
 
 !ifndef BUILD_UNINSTALLER
@@ -716,6 +698,50 @@ Function JustDoReadDesktopUserPaths
   StrCpy $1 "$JustDoCurrentUserLocalAppData"
   StrCpy $3 "$JustDoCurrentTemp"
 FunctionEnd
+
+; electron-builder normally Quits after a failed previous-version uninstall.
+; Abort the worker instead, retaining its failed native result and details.
+; A launch failure is also fatal: never write over an installation that setup
+; could not safely remove. Capture the error flag before best-effort logging.
+Function InstallerCheckPreviousUninstall
+  IfErrors InstallerPreviousUninstallLaunchFailed
+  ${If} $R0 == 0
+    !insertmacro JustDoLogInstallEvent "phase=previous-installation-removal-result root=$InstallerPreviousUninstallRoot result=success exit=$R0"
+    Return
+  ${EndIf}
+  !insertmacro JustDoLogInstallEvent "phase=previous-installation-removal-result root=$InstallerPreviousUninstallRoot result=failed reason=uninstaller-exit exit=$R0"
+  ${If} $LANGUAGE == ${JUSTDO_LANG_SIMPCHINESE}
+  ${OrIf} $LANGUAGE == ${JUSTDO_LANG_TRADCHINESE}
+    StrCpy $0 "无法移除旧版本（退出码 $R0）。请关闭占用安装目录的程序后重试；安装详情已保留。"
+  ${Else}
+    StrCpy $0 "The previous version could not be removed (exit code $R0). Close programs using the installation folder and try again. The installation details have been retained."
+  ${EndIf}
+  Goto InstallerPreviousUninstallFailed
+
+  InstallerPreviousUninstallLaunchFailed:
+  !insertmacro JustDoLogInstallEvent "phase=previous-installation-removal-result root=$InstallerPreviousUninstallRoot result=failed reason=uninstaller-launch"
+  ${If} $LANGUAGE == ${JUSTDO_LANG_SIMPCHINESE}
+  ${OrIf} $LANGUAGE == ${JUSTDO_LANG_TRADCHINESE}
+    StrCpy $0 "无法启动旧版本卸载程序，安装已停止。请查看安装详情，确认旧版本及安装目录可用后重试。"
+  ${Else}
+    StrCpy $0 "The previous version's uninstaller could not start. Setup has stopped. See the installation details and check that the previous version and installation folder are available before trying again."
+  ${EndIf}
+
+  InstallerPreviousUninstallFailed:
+  SetDetailsPrint both
+  SetErrorLevel 2
+  Abort "$0"
+FunctionEnd
+
+!macro customUnInstallCheck
+  StrCpy $InstallerPreviousUninstallRoot "$rootKey_uninstallResult"
+  Call InstallerCheckPreviousUninstall
+!macroend
+
+!macro customUnInstallCheckCurrentUser
+  StrCpy $InstallerPreviousUninstallRoot "$rootKey_uninstallResult"
+  Call InstallerCheckPreviousUninstall
+!macroend
 
 !macro customCheckAppRunning
   Call JustDoCheckAppRunning

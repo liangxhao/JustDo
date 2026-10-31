@@ -1,8 +1,73 @@
 !ifndef INSTALLER_PRESENTATION_WINDOW_INCLUDED
 !define INSTALLER_PRESENTATION_WINDOW_INCLUDED
 
+!include "${PROJECT_DIR}\scripts\packaging\nsis-presentation-dpi.nsh"
+
 Var InstallerWindowReady
 Var InstallerWindowPage
+
+!ifmacrodef UAC_AsUser_GetGlobal
+Var InstallerWindowOuter
+
+; UAC synchronizes every general register. Isolate the outer-HWND lookup so
+; it cannot replace the caller's live geometry, allocation or error markers.
+Function InstallerWindowReadOuter
+  Push $0
+  Push $1
+  Push $2
+  Push $3
+  Push $4
+  Push $5
+  Push $6
+  Push $7
+  Push $8
+  Push $9
+  Push $R0
+  Push $R1
+  Push $R2
+  Push $R3
+  Push $R4
+  Push $R5
+  Push $R6
+  Push $R7
+  Push $R8
+  Push $R9
+  StrCpy $R9 "0"
+  ${If} ${Errors}
+    StrCpy $R9 "1"
+  ${EndIf}
+  Push $R9
+  StrCpy $InstallerWindowOuter "0"
+  !insertmacro UAC_AsUser_GetGlobal $InstallerWindowOuter $HWNDPARENT
+  Pop $R9
+  ${If} $R9 == "1"
+    SetErrors
+  ${Else}
+    ClearErrors
+  ${EndIf}
+  Pop $R9
+  Pop $R8
+  Pop $R7
+  Pop $R6
+  Pop $R5
+  Pop $R4
+  Pop $R3
+  Pop $R2
+  Pop $R1
+  Pop $R0
+  Pop $9
+  Pop $8
+  Pop $7
+  Pop $6
+  Pop $5
+  Pop $4
+  Pop $3
+  Pop $2
+  Pop $1
+  Pop $0
+FunctionEnd
+!endif
+
 
 ; A separator belongs to the current child page, so nsDialogs cannot raise a
 ; newly shown page over it. The page's native destruction owns its lifetime.
@@ -36,6 +101,9 @@ Function InstallerWindowPrepare
   Push $R3
   Push $R4
   Push $R5
+  Push $R6
+  Push $R7
+  Push $R8
   Push $R9
   StrCpy $R9 "0"
   ${If} ${Errors}
@@ -52,7 +120,8 @@ Function InstallerWindowPrepare
     ; its existing helper; no command line, profile or installation state changes.
     !ifmacrodef UAC_AsUser_GetGlobal
       ${If} ${UAC_IsInnerInstance}
-        !insertmacro UAC_AsUser_GetGlobal $0 $HWNDPARENT
+        Call InstallerWindowReadOuter
+        StrCpy $0 $InstallerWindowOuter
         System::Call 'user32::IsWindow(p r0)i.r1'
         ${If} $1 != 0
           StrCpy $9 $0
@@ -181,6 +250,9 @@ Function InstallerWindowPrepare
     ClearErrors
   ${EndIf}
   Pop $R9
+  Pop $R8
+  Pop $R7
+  Pop $R6
   Pop $R5
   Pop $R4
   Pop $R3

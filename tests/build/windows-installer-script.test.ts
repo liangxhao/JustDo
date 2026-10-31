@@ -35,39 +35,52 @@ test('registers downloaded NSIS plugins before includes that expand UAC function
   ]);
 });
 
-test('binds upgrade directory callbacks only to the native assisted directory page', () => {
+test('logs each previous-version removal before invoking the uninstaller', () => {
   const script = createWindowsInstallerScript(templates);
-  expect(script).not.toContain('!include "assistedInstaller.nsh"');
-  expect(script.match(/!define MUI_PAGE_CUSTOMFUNCTION_PRE InstallerDirectoryPre/g)).toHaveLength(1);
-  expect(script).toContain([
-    '!define MUI_PAGE_CUSTOMFUNCTION_PRE InstallerDirectoryPre',
-    '    !define MUI_PAGE_CUSTOMFUNCTION_SHOW InstallerDirectoryShow',
-    '    !define MUI_PAGE_CUSTOMFUNCTION_LEAVE InstallerSetupLeave',
-    '    !insertmacro MUI_PAGE_DIRECTORY',
-  ].join('\n'));
-  expect(script).toContain('!insertmacro PAGE_INSTALL_MODE');
-  expect(script).toContain('!insertmacro skipPageIfUpdated');
+  for (const root of ['SHELL_CONTEXT', 'HKEY_CURRENT_USER']) {
+    expect(script).toContain([
+      `!insertmacro JustDoLogInstallEvent "phase=previous-installation-removal-start root=${root}"`,
+      `!insertmacro uninstallOldVersion ${root}`,
+    ].join('\n'));
+  }
 });
 
-test('decorates only the installer mode page and requires its callbacks to be consumed', () => {
+test('rejects an upstream previous-version removal seam change', () => {
+  const originalRead = fs.readFileSync;
+  const reader = vi.spyOn(fs, 'readFileSync').mockImplementation((...args: Parameters<typeof fs.readFileSync>) => {
+    const contents = originalRead(...args);
+    if (String(args[0]) !== path.join(templates, 'installSection.nsh')) return contents;
+    return String(contents).replace('!insertmacro uninstallOldVersion SHELL_CONTEXT', '; changed upstream removal');
+  });
+  try {
+    expect(() => createWindowsInstallerScript(templates)).toThrow('NSIS previous-version removal seam changed');
+  } finally {
+    reader.mockRestore();
+  }
+});
+
+test('combines the assisted scope and directory pages while retaining path normalization', () => {
+  const script = createWindowsInstallerScript(templates);
+  expect(script).not.toContain('!include "assistedInstaller.nsh"');
+  expect(script).not.toContain('!insertmacro MUI_PAGE_DIRECTORY');
+  expect(script).not.toContain('InstallerDirectoryShow');
+  expect(script).toContain('Function instFilesPre');
+  expect(script).toContain('StrCpy $INSTDIR "$INSTDIR\\${APP_FILENAME}"');
+  expect(script).toContain('!insertmacro InstallerSetupPage');
+});
+
+test('keeps the uninstaller mode page and registers setup for either assisted install mode', () => {
   const script = createWindowsInstallerScript(templates).replaceAll('\r\n', '\n');
-  expect(script.match(/^    !insertmacro PAGE_INSTALL_MODE$/gm)).toHaveLength(2);
-  expect(script.match(/!define MUI_PAGE_CUSTOMFUNCTION_SHOW InstallerSetupModeShow/g)).toHaveLength(1);
+  expect(script.match(/^    !insertmacro PAGE_INSTALL_MODE$/gm)).toHaveLength(1);
+  expect(script.match(/!insertmacro InstallerSetupPage/g)).toHaveLength(1);
+  expect(script).toContain('!ifdef BUILD_UNINSTALLER\n    !include multiUserUi.nsh\n  !endif');
   expect(script).toContain([
-    '!define MUI_PAGE_CUSTOMFUNCTION_SHOW InstallerSetupModeShow',
-    '    !define MUI_PAGE_CUSTOMFUNCTION_LEAVE InstallerSetupLeave',
-    '    !insertmacro PAGE_INSTALL_MODE',
-    '    !ifdef MUI_PAGE_CUSTOMFUNCTION_SHOW',
-    '      !error "The upstream NSIS install-mode page did not consume its SHOW callback."',
-    '    !endif',
-    '    !ifdef MUI_PAGE_CUSTOMFUNCTION_LEAVE',
-    '      !error "The upstream NSIS install-mode page did not consume its LEAVE callback."',
-    '    !endif',
+    '  !include "${PROJECT_DIR}\\scripts\\packaging\\nsis-setup-presentation.nsh"',
+    '  !insertmacro InstallerSetupPage',
   ].join('\n'));
   const uninstaller = script.slice(script.indexOf('!else\n  !ifndef removeDefaultUninstallWelcomePage'));
   expect(uninstaller).toContain('!insertmacro PAGE_INSTALL_MODE');
-  expect(uninstaller).not.toContain('MUI_PAGE_CUSTOMFUNCTION_SHOW InstallerSetupModeShow');
-  expect(uninstaller).not.toContain('MUI_PAGE_CUSTOMFUNCTION_LEAVE InstallerSetupLeave');
+  expect(uninstaller).not.toContain('InstallerSetupPage');
   expect(script).toContain('!insertmacro customPageAfterChangeDir');
 });
 

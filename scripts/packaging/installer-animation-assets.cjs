@@ -6,7 +6,7 @@ const path = require('node:path');
 const zlib = require('node:zlib');
 
 const ANIMATION_CONTRACT = Object.freeze({
-  schemaVersion: 2,
+  schemaVersion: 3,
   frameRate: 24,
   introFrames: 36,
   loopFirstFrame: 36,
@@ -15,7 +15,9 @@ const ANIMATION_CONTRACT = Object.freeze({
   background: Object.freeze([251, 251, 253]),
   scales: Object.freeze([
     Object.freeze({ percent: 100, width: 180, height: 144, logoSize: 64 }),
+    Object.freeze({ percent: 125, width: 225, height: 180, logoSize: 80 }),
     Object.freeze({ percent: 150, width: 270, height: 216, logoSize: 96 }),
+    Object.freeze({ percent: 175, width: 315, height: 252, logoSize: 112 }),
     Object.freeze({ percent: 200, width: 360, height: 288, logoSize: 128 }),
   ]),
 });
@@ -296,9 +298,9 @@ function frameGeometry(width, height) {
       fields[8][at] = (dx / 71) / Math.max(.001, innerRadius);
       fields[9][at] = (dy / 74) / Math.max(.001, innerRadius);
     }
-  // Build preparation uses only three scales; bound retained memory for callers
+  // Build preparation uses five scales; bound retained memory for callers
   // that render arbitrary preview sizes in a long-lived process.
-  if (geometryCache.size >= 3) geometryCache.delete(geometryCache.keys().next().value);
+  if (geometryCache.size >= ANIMATION_CONTRACT.scales.length) geometryCache.delete(geometryCache.keys().next().value);
   geometryCache.set(key, fields);
   return fields;
 }
@@ -611,7 +613,9 @@ function assertOwnedDirectory(root, candidate) {
 }
 
 function prepareInstallerAnimationAssets(projectDir) {
-  const source = fs.readFileSync(path.join(projectDir, 'resources', 'icons', 'png', '128x128.png'));
+  // Render down from the owned high-resolution mark, including the 180px body
+  // in the 200% movie; never magnify the old 128px source for a dense display.
+  const source = fs.readFileSync(path.join(projectDir, 'resources', 'icons', 'png', '512x512.png'));
   const fingerprint = digest(
     Buffer.concat([
       Buffer.from(JSON.stringify(ANIMATION_CONTRACT)),

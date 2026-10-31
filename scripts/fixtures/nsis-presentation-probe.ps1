@@ -22,6 +22,9 @@ public class InstallerPresentationProbe {
   [DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr window, ref Point point);
   [DllImport("user32.dll")] public static extern IntPtr GetParent(IntPtr window);
   [DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr window);
+  [DllImport("user32.dll")] public static extern IntPtr GetWindowDpiAwarenessContext(IntPtr window);
+  [DllImport("user32.dll")] public static extern int GetAwarenessFromDpiAwarenessContext(IntPtr context);
+  [DllImport("user32.dll")] public static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
   [DllImport("user32.dll")] public static extern IntPtr GetAncestor(IntPtr window, uint flags);
   [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr window, IntPtr dc, uint flags);
   [DllImport("user32.dll")] public static extern bool RedrawWindow(IntPtr window, IntPtr rect, IntPtr region, uint flags);
@@ -30,6 +33,7 @@ public class InstallerPresentationProbe {
   [DllImport("user32.dll")] public static extern IntPtr GetDlgItem(IntPtr parent, int id);
   [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr window);
   [DllImport("user32.dll")] public static extern bool IsWindowEnabled(IntPtr window);
+  [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr window);
   [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr window, int command);
   [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr window, int index);
   [StructLayout(LayoutKind.Sequential)] public struct Rect { public int Left, Top, Right, Bottom; }
@@ -95,7 +99,8 @@ public class InstallerPresentationProbe {
     var origin=new Point();
     if(steps.Length!=3 || !GetClientRect(parent,out client) || !ClientToScreen(parent,ref origin)
       || !GetWindowRect(log,out list) || !GetWindowRect(details,out action) || GetParent(details)!=page)return false;
-    int gap=Math.Max(4,4*(int)GetDpiForWindow(parent)/96),actionsBottom=list.Bottom;
+    int dpi=(int)GetDpiForWindow(parent),gap=Math.Max(4,4*dpi/96),actionsBottom=list.Bottom;
+    int bottomInset=24*dpi/96;
     if(IsWindowVisible(details)) {
       if(action.Top<list.Bottom+gap)return false;
       actionsBottom=Math.Max(actionsBottom,action.Bottom);
@@ -113,7 +118,8 @@ public class InstallerPresentationProbe {
       Rect step;
       if(GetParent(steps[index])!=parent || !IsWindowVisible(steps[index]) || !GetWindowRect(steps[index],out step)
         || step.Right<=step.Left || step.Bottom<=step.Top || step.Top<actionsBottom+gap
-        || step.Left<origin.X+gap || step.Right>origin.X+client.Right-gap || step.Bottom>origin.Y+client.Bottom-gap)return false;
+        || step.Left<origin.X+gap || step.Right>origin.X+client.Right-gap
+        || Math.Abs(origin.Y+client.Bottom-step.Bottom-bottomInset)>1)return false;
       if(index>0 && (previous.Right+gap>step.Left || previous.Top!=step.Top || previous.Bottom!=step.Bottom))return false;
       previous=step;
     }
@@ -208,6 +214,7 @@ public class InstallerPresentationProbe {
   }
 }
 '@
+[void][InstallerPresentationProbe]::SetThreadDpiAwarenessContext([IntPtr](-2))
 
 function Assert-Condition([bool]$condition, [string]$message) {
   if (!$condition) { throw $message }
@@ -282,7 +289,7 @@ function Assert-MotionTrace {
 foreach ($mode in @('complete','close','failed','short','silent')) {
   $isChinese = $mode -eq 'failed' -or $mode -eq 'close'
   Set-Action ''
-  foreach ($marker in @('blocked-worker.txt','blocked-worker-result.txt','blocked.txt','callback.txt','terminal.txt','open-request.txt','log-spacing.txt','footer.txt','close-start.txt')) {
+  foreach ($marker in @('blocked-worker.txt','blocked-worker-result.txt','blocked.txt','callback.txt','terminal.txt','open-request.txt','log-spacing.txt','log-font.txt','footer.txt','close-start.txt')) {
     $markerPath = Join-Path $FixtureRoot $marker
     if (Test-Path -LiteralPath $markerPath) { Remove-Item -LiteralPath $markerPath }
   }
@@ -303,6 +310,7 @@ foreach ($mode in @('complete','close','failed','short','silent')) {
     }
     $script:window = [IntPtr]::Zero
     Wait-For { $script:window=[InstallerPresentationProbe]::Find([uint32]$fixtureProcess.Id); $script:window -ne [IntPtr]::Zero } 'Fixture window was not created.'
+    Assert-Condition ([InstallerPresentationProbe]::GetAwarenessFromDpiAwarenessContext([InstallerPresentationProbe]::GetWindowDpiAwarenessContext($window)) -eq 1) 'The installation window is DPI unaware and Windows will bitmap-stretch its fonts.'
     $script:scene = [IntPtr]::Zero
     Wait-For { $script:scene=[InstallerPresentationProbe]::Child($window,'SysAnimate32',$null); $script:scene -ne [IntPtr]::Zero -and ($mode -eq 'short' -or [InstallerPresentationProbe]::SendMessage($scene,0x468,[IntPtr]::Zero,[IntPtr]::Zero).ToInt64() -eq 1) } 'Native animation did not start.'
     # The movie starts before the native entrance finishes moving the HWND.
@@ -327,7 +335,10 @@ foreach ($mode in @('complete','close','failed','short','silent')) {
       Assert-StepColors $window 0xEBEDFF 0xF0F2F7 0xF0F2F7 'checking'
     }
     Assert-Condition ([InstallerPresentationProbe]::HasCaptionDrag($window)) 'The light caption lost native dragging.'
-    Assert-Condition (![InstallerPresentationProbe]::IsWindowVisible([InstallerPresentationProbe]::Child($window,'SysListView32',$null))) 'Details unexpectedly expanded over the animation.'
+    $windowStyle=[InstallerPresentationProbe]::GetWindowLong($window,-16)
+    Assert-Condition (($windowStyle -band 0x00020000) -ne 0 -and ($windowStyle -band 0x00010000) -eq 0) 'The caption lost Minimize or exposed Maximize.'
+    Assert-Condition ([InstallerPresentationProbe]::IsWindowVisible([InstallerPresentationProbe]::Child($window,'SysListView32',$null))) 'Installation details were not visible on entry.'
+    Assert-Condition (![InstallerPresentationProbe]::IsWindowVisible([IntPtr][long]$footerState[3])) 'The redundant details reveal command was visible.'
     Start-Sleep -Milliseconds 1700
     if ($mode -ne 'short') {
       $first = [InstallerPresentationProbe]::Pixels($scene)
@@ -339,8 +350,15 @@ foreach ($mode in @('complete','close','failed','short','silent')) {
     Assert-Condition (Test-Path -LiteralPath (Join-Path $FixtureRoot 'blocked-worker.txt')) 'Worker did not enter its synchronous operation.'
     Assert-Condition (!(Test-Path -LiteralPath (Join-Path $FixtureRoot 'blocked-worker-result.txt'))) 'Synchronous operation finished before the clock probe.'
     $elapsedBefore = [InstallerPresentationProbe]::Text($elapsed)
+    $beforeMinimize=[InstallerPresentationProbe]::Rectangle($window)
+    [void][InstallerPresentationProbe]::PostMessage($window,0x112,[IntPtr]0xF020,[IntPtr]::Zero)
+    Wait-For { [InstallerPresentationProbe]::IsIconic($window) } 'The busy installer could not be minimized.'
     Wait-For { [InstallerPresentationProbe]::Text($elapsed) -ne $elapsedBefore } 'Elapsed time froze while the worker stopped polling.'
     Assert-Condition (!(Test-Path -LiteralPath (Join-Path $FixtureRoot 'blocked-worker-result.txt'))) 'Elapsed time updated only after the worker resumed.'
+    Assert-Condition (!$fixtureProcess.HasExited -and [InstallerPresentationProbe]::IsIconic($window)) 'A progress update restored or ended the minimized installer.'
+    [void][InstallerPresentationProbe]::PostMessage($window,0x112,[IntPtr]0xF120,[IntPtr]::Zero)
+    # IsIconic can clear before Windows finishes its native restore transition.
+    Wait-For { ![InstallerPresentationProbe]::IsIconic($window) -and [InstallerPresentationProbe]::Rectangle($window) -eq $beforeMinimize } 'Minimize and restore changed the installer position or size.'
     Wait-For { Test-Path -LiteralPath (Join-Path $FixtureRoot 'blocked-worker-result.txt') } 'Worker did not finish its synchronous operation.'
     Assert-Condition (([IO.File]::ReadAllText((Join-Path $FixtureRoot 'blocked-worker-result.txt'))) -eq 'clock-worker-canary|1') 'The clock changed worker registers or its NSIS error flag.'
     Set-Action 'blocked-close'
@@ -360,33 +378,17 @@ foreach ($mode in @('complete','close','failed','short','silent')) {
     }
 
     $details = [IntPtr][long]$footerState[3]
-    Assert-Condition ($details -ne [IntPtr]::Zero) 'Details button was not localized.'
-    $detailsCaption=[InstallerPresentationProbe]::Text($details)
-    Assert-Condition ($detailsCaption -match $(if($isChinese){'详情'}else{'details'})) 'Details button was not localized.'
-    Assert-Condition ([InstallerPresentationProbe]::GetParent($details) -eq $installPage) 'Details left the native install page and changed its command routing.'
-    $detailsVisible=[InstallerPresentationProbe]::IsWindowVisible($details)
-    $detailsEnabled=[InstallerPresentationProbe]::IsWindowEnabled($details)
-    $existingLog=[InstallerPresentationProbe]::Child($window,'SysListView32',$null)
-    if ((!$detailsVisible -or !$detailsEnabled) -and $PreviewPath) {
-      [InstallerPresentationProbe]::SaveWindow($window,(Join-Path (Split-Path -Parent $PreviewPath) 'installer-details-action-failure.png'))
-    }
-    Assert-Condition ($detailsVisible -and $detailsEnabled) "Details action was unavailable ($mode): visible=$detailsVisible enabled=$detailsEnabled logVisible=$([InstallerPresentationProbe]::IsWindowVisible($existingLog)) caption=$detailsCaption."
-    # Deliver the real button's BN_CLICKED notification to its native parent.
-    # BM_CLICK is documented to be unreliable for an inactive dialog.
-    [void][InstallerPresentationProbe]::PostMessage([InstallerPresentationProbe]::GetParent($details),0x111,[IntPtr]1027,$details)
+    Assert-Condition ($details -ne [IntPtr]::Zero -and [InstallerPresentationProbe]::GetParent($details) -eq $installPage) 'The hidden NSIS control lost its native owner.'
     $script:log = [InstallerPresentationProbe]::Child($window,'SysListView32',$null)
-    try {
-      Wait-For { [InstallerPresentationProbe]::IsWindowVisible($log) } 'Native details did not open.'
-    } catch {
-      if ($PreviewPath) { [InstallerPresentationProbe]::SaveWindow($window,(Join-Path (Split-Path -Parent $PreviewPath) 'installer-presentation-details-failure.png')) }
-      Write-Output "Details button=$details log=$log visible=$([InstallerPresentationProbe]::IsWindowVisible($log)) style=$([InstallerPresentationProbe]::GetWindowLong($log,-16))"
-      throw
-    }
-    Wait-For { ![InstallerPresentationProbe]::IsWindowVisible($details) } 'Native details did not retain their one-way reveal behavior.'
+    Assert-Condition ([InstallerPresentationProbe]::IsWindowVisible($log)) 'A stage update hid the installation details.'
+    Assert-Condition (![InstallerPresentationProbe]::IsWindowVisible($details)) 'A stage update exposed the redundant details reveal command.'
     $logDpi = if($mode -eq 'short'){288}else{[int][InstallerPresentationProbe]::GetDpiForWindow($window)}
     Assert-Condition ([InstallerPresentationProbe]::StyledLog($log,$logDpi)) 'Details kept a narrow column, gridlines, horizontal scrolling or the wrong text style.'
     $spacing = ([IO.File]::ReadAllText((Join-Path $FixtureRoot 'log-spacing.txt'))) -split '\|'
-    Assert-Condition ($spacing[0] -eq [string][int][math]::Floor(8*$logDpi/96) -and $spacing[1] -eq [string][int][math]::Floor(24*$logDpi/96) -and $spacing[2] -eq '1') 'Native log inset/row spacing did not scale.'
+    Assert-Condition ($spacing[0] -eq [string][int][math]::Floor(8*$logDpi/96) -and $spacing[1] -eq [string][int][math]::Floor(20*$logDpi/96) -and $spacing[2] -eq '1') 'Native log inset/row spacing did not scale.'
+    $logFont=([IO.File]::ReadAllText((Join-Path $FixtureRoot 'log-font.txt'))) -split '\|'
+    Assert-Condition ([int]$logFont[0] -eq -[math]::Floor(11*$logDpi/96) -and $logFont[1] -eq '5' -and $logFont[2] -eq '92') 'The detail log did not use its compact scaled ClearType font.'
+    Assert-Condition ([InstallerPresentationProbe]::SendMessage($log,0x31,[IntPtr]::Zero,[IntPtr]::Zero).ToInt64() -eq ([long]$logFont[3] -band 0xFFFFFFFFL)) 'The native log replaced its measured font.'
     $explanation = [InstallerPresentationProbe]::Child($window,'Static',$phaseText)
     $steps = [InstallerPresentationProbe]::Child($window,'Static',$(if($isChinese){'检查占用'}else{'Check location'}))
     $workingTitle = [InstallerPresentationProbe]::Child($window,'Static',$(if($isChinese){'正在安装'}else{'Installing '}),$true)
@@ -396,7 +398,7 @@ foreach ($mode in @('complete','close','failed','short','silent')) {
       Assert-Condition (![InstallerPresentationProbe]::IsWindowVisible($explanation) -and ![InstallerPresentationProbe]::IsWindowVisible($steps)) 'Short layout retained overlapping secondary rows.'
     } else {
       Assert-StepColors $window 0xEAF5EE 0xEBEDFF 0xF0F2F7 'writing'
-      Assert-Condition ([InstallerPresentationProbe]::DetailsBelow($window,$installPage,$log,$explanation,$details,5)) 'Busy details overlap visible controls or show fewer than five complete rows.'
+      Assert-Condition ([InstallerPresentationProbe]::DetailsBelow($window,$installPage,$log,$explanation,$details,7)) 'Busy details overlap visible controls or show fewer than seven complete rows.'
       Assert-Condition ([InstallerPresentationProbe]::FooterLayout($window,$installPage,$log,$details,$footerSteps)) 'The footer steps are not in a separate root row below the details and buttons.'
       Assert-Condition ([InstallerPresentationProbe]::IsWindowVisible($scene)) 'Details hid the illustration.'
       Assert-Condition ([InstallerPresentationProbe]::IsWindowVisible($workingTitle)) 'Details hid the installation title.'
@@ -417,13 +419,6 @@ foreach ($mode in @('complete','close','failed','short','silent')) {
       }
     }
 
-    # Exercise both native visibility states when terminal actions appear.
-    $keepExpanded=$mode -eq 'failed'
-    if (!$keepExpanded) {
-      [void][InstallerPresentationProbe]::ShowWindow($log,0)
-      [void][InstallerPresentationProbe]::ShowWindow($details,5)
-    }
-
     Set-Action $(if($mode -eq 'short' -or $mode -eq 'close'){'complete'}else{$mode})
     $terminalText = if($mode -eq 'failed'){'安装未完成'}elseif($isChinese){'安装完成'}else{'Installation complete'}
     Wait-For { [InstallerPresentationProbe]::Child($window,'Static',$terminalText) -ne [IntPtr]::Zero } 'Terminal title did not update.'
@@ -433,17 +428,15 @@ foreach ($mode in @('complete','close','failed','short','silent')) {
       } else {
         Assert-StepColors $window 0xEAF5EE 0xEAF5EE 0xEAF5EE 'complete'
       }
-      Assert-Condition ([InstallerPresentationProbe]::IsWindowVisible($log) -eq $keepExpanded) 'Resizing terminal details changed their native visibility state.'
-      Assert-Condition ([InstallerPresentationProbe]::DetailsBelow($window,$installPage,$log,$explanation,$details,3)) 'Terminal details overlap visible actions or show fewer than three complete rows.'
+      Assert-Condition ([InstallerPresentationProbe]::IsWindowVisible($log)) 'The terminal result hid the installation details.'
+      Assert-Condition ([InstallerPresentationProbe]::DetailsBelow($window,$installPage,$log,$explanation,$details,5)) 'Terminal details overlap visible actions or show fewer than five complete rows.'
       Wait-For { [InstallerPresentationProbe]::FooterLayout($window,$installPage,$log,$details,$footerSteps) } 'The result buttons or details overlap the final footer steps.'
-      if ($keepExpanded) {
-        Assert-Condition (![InstallerPresentationProbe]::IsWindowVisible($details)) 'Resizing terminal details re-showed the native one-way link.'
-        Assert-Condition ([InstallerPresentationProbe]::SendMessage($log,0x1027,[IntPtr]::Zero,[IntPtr]::Zero).ToInt64() -gt 0) 'Resizing terminal details reset their scroll position.'
-        [void][InstallerPresentationProbe]::PostMessage($log,0x115,[IntPtr]6,[IntPtr]::Zero)
-        Wait-For { [InstallerPresentationProbe]::SendMessage($log,0x1027,[IntPtr]::Zero,[IntPtr]::Zero).ToInt64() -eq 0 } 'Resized terminal details could not scroll to their beginning.'
-        [void][InstallerPresentationProbe]::PostMessage($log,0x115,[IntPtr]7,[IntPtr]::Zero)
-        Wait-For { [InstallerPresentationProbe]::SendMessage($log,0x1027,[IntPtr]::Zero,[IntPtr]::Zero).ToInt64() -gt 0 } 'Resized terminal details could not scroll to their end.'
-      }
+      Assert-Condition (![InstallerPresentationProbe]::IsWindowVisible($details)) 'The terminal result re-showed the redundant details reveal command.'
+      Assert-Condition ([InstallerPresentationProbe]::SendMessage($log,0x1027,[IntPtr]::Zero,[IntPtr]::Zero).ToInt64() -gt 0) 'Resizing terminal details reset their scroll position.'
+      [void][InstallerPresentationProbe]::PostMessage($log,0x115,[IntPtr]6,[IntPtr]::Zero)
+      Wait-For { [InstallerPresentationProbe]::SendMessage($log,0x1027,[IntPtr]::Zero,[IntPtr]::Zero).ToInt64() -eq 0 } 'Resized terminal details could not scroll to their beginning.'
+      [void][InstallerPresentationProbe]::PostMessage($log,0x115,[IntPtr]7,[IntPtr]::Zero)
+      Wait-For { [InstallerPresentationProbe]::SendMessage($log,0x1027,[IntPtr]::Zero,[IntPtr]::Zero).ToInt64() -gt 0 } 'Resized terminal details could not scroll to their end.'
     }
     Wait-For { [InstallerPresentationProbe]::SendMessage($scene,0x468,[IntPtr]::Zero,[IntPtr]::Zero).ToInt64() -eq 0 } 'Terminal state did not stop animation.'
     # A one-frame terminal seek is painted asynchronously after playback stops.
@@ -466,8 +459,7 @@ foreach ($mode in @('complete','close','failed','short','silent')) {
       Assert-Condition ([InstallerPresentationProbe]::Child($window,'Static',$(if($isChinese){'写入完成'}else{'Files written'})) -ne [IntPtr]::Zero) 'The completed step still says Write files.'
       Assert-Condition ([InstallerPresentationProbe]::SendMessage($finish,0xF6,[IntPtr]::Zero,[IntPtr]::Zero) -ne [IntPtr]::Zero) 'Primary button did not receive its modern image.'
       Assert-Condition (([InstallerPresentationProbe]::GetWindowLong($finish,-16) -band 0x80) -ne 0) 'The native result page removed the bitmap button style.'
-      # The native page extends under these root-owned buttons to retain its
-      # details link. Repaint both surfaces to expose sibling-clipping mistakes.
+      # Repaint both native surfaces to expose sibling-clipping mistakes.
       [void][InstallerPresentationProbe]::RedrawWindow($installPage,[IntPtr]::Zero,[IntPtr]::Zero,0x185)
       [void][InstallerPresentationProbe]::RedrawWindow($window,[IntPtr]::Zero,[IntPtr]::Zero,0x185)
       Wait-For { [InstallerPresentationProbe]::PaintedResultActions($window,$finish,$close) } 'A native page repaint erased the root Open or Close action.'

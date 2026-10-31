@@ -27,31 +27,75 @@ The assisted installer's file-writing page uses a fixed light background and the
 repository's two-cat icon. The mark separates on entry, then remains intact while
 gently turning and floating inside a blue orbit with a luminous head and trailing
 arc. A softer violet orbit runs in the opposite direction. The blue arc completes
-one revolution per eight-second loop. Completion holds a still frame; failure stops
-playback. Installation scope and directory selection use the same light canvas,
-typography, icon and rounded navigation buttons. Their native NSIS controls,
-radio callbacks, browse command, keyboard behavior and page-leave validation stay
-authoritative. The installation page is also the result page. Success changes the steps to
+one revolution per eight-second loop. The animated mark sits at the left of the
+installation header, beside a left-aligned title and description. The complete
+180 × 144 logical-pixel scene retains its orbit; it is not cropped to a square.
+The phase begins below this header, freeing more height for expanded details.
+Narrow or short work areas hide the header before its columns can overlap.
+Completion holds a still frame; failure stops playback. A single setup page
+combines installation scope and directory on the same light canvas, with native
+radio buttons, a directory edit, Browse, Install and Cancel. Install advances
+directly to file writing. The installation page is also the result page. Success changes the steps to
 **checked → files written → complete**, with **Open app** and **Close** actions.
 Only Open app launches the installed application through the current desktop
 user's shell; Close and the window's X finish successfully without launching.
 Silent updater installs retain the upstream explicit
 `--force-run` behavior.
 
-`nsis-setup-presentation.nsh` decorates the existing scope and directory pages;
-it does not replace their installation policy. Scope selection retains the
-native Next button so its live elevation shield follows the selected account
-scope. Upgrades show the recorded directory with the input and browse action
-disabled. Returning with Back rebuilds the decoration from the current native
-page state. The setup header uses a separate square logo asset, preserving the
-original mark's proportions rather than shrinking the rectangular animation
-canvas into its slot. Passive rounded cards group the native scope choices;
-they do not replace or intercept the radio buttons. Setup releases its button images, logo and owned fonts before the
-file-writing page takes over. Each completed setup layout is shown and repainted
-on the UI thread so newly created headings and the mark appear with the native
-fields without relying on a later incidental repaint. The setup layout uses the current monitor's work
-area and DPI; short work areas reduce headings and secondary explanation before
-the essential fields and navigation controls.
+The native installer declares system DPI awareness in its compiled manifest.
+Windows therefore renders its fonts and controls at the system scale instead of
+stretching an unaware 96-DPI window. The locale's installed Microsoft YaHei UI
+or Segoe UI face uses ClearType, a regular-weight heading and slate body text, following
+the application's startup presentation. The restrained 20-pixel heading reserves a 28-pixel
+logical line so the Chinese font's full ascent and descent fit without clipping;
+the copy remains in its own column above the phase and details. This is system DPI awareness, not
+per-monitor relayout: moving between monitors with different scaling can still
+cause Windows to rescale the window. No runtime awareness switch or global
+display-setting change is used. See the [NSIS manifest contract](https://nsis.sourceforge.io/Reference/ManifestDPIAware)
+and [Windows DPI-awareness behavior](https://learn.microsoft.com/en-us/windows/win32/hidpi/high-dpi-desktop-application-development-on-windows).
+
+`nsis-setup-presentation.nsh` owns this one native nsDialogs setup page. Scope
+choices sit beside one another above the directory and disk-space facts in a
+single quiet card. The short header names the product; no second directory
+page, Back button or instruction paragraph is shown. Separate per-scope drafts
+retain edits, including an empty draft, when switching between current user and
+all users. The native single-line directory edit uses its actual font line height
+and sits vertically centered inside a white rounded field. Clicking that field's
+padding focuses the enabled edit. Browse uses an indigo accent when available
+and a muted disabled appearance for a registered target; changing scope updates
+both its native enabled state and its presentation.
+The existing electron-builder mode macros still resolve defaults,
+shell context and command-line selections. Forced scope flags fix the selected
+scope. A registered target overrides edits and locks the directory and Browse;
+the installation boundary reads that registration again before writing.
+
+The existing fresh-path normalizer still adds the product subfolder when
+appropriate. Before committing the final target, the page checks absolute path
+syntax, drive/share availability and file ancestors using the bundled StdUtils
+plug-in and Win32. UNC components receive separate syntax checks because that
+plug-in's path validator accepts only drive paths. An invalid selection leaves
+the page open with a short inline error. These checks do not create a directory
+or establish write permissions; actual file operations remain authoritative.
+Disk-space reads refresh after scope changes, browsing or accepted validation,
+not on every edit to a potentially incomplete network path.
+Root availability is checked as the initiating user before elevation. A share
+that only another elevated account can read may therefore be rejected on this
+page; cross-account network-share acceptance is not covered by the native fixture.
+
+All-users installation keeps the native elevation shield when required. Install
+validates and snapshots the chosen target before calling the existing UAC
+helper. Its authenticated inner instance reads the accepted selection from the
+outer instance through the helper, rechecks the registered target and advances
+directly to writing. Cancelled or unsuccessful elevation restores the same
+settings page and draft; no second settings page appears after approval.
+Silent installation retains its upstream elevation flow, and updater invocations
+retain their skipped setup page. The uninstaller's separate mode page is unchanged.
+
+The setup header uses a separate square logo asset, preserving the mark's
+proportions. Passive card decoration does not own radio state or commands.
+Setup releases owned button images, logo and fonts before file writing takes
+over. Completed layouts paint on the UI thread; short work areas reduce the
+header and secondary facts before essential choices and installation actions.
 
 `nsis-presentation-window.nsh` owns a shared 600 × 460 logical-pixel client canvas
 for all assisted pages, clamped to the monitor work area. Setup centers only the
@@ -60,9 +104,8 @@ dragged position. A move to a smaller work area may clamp its edges without
 re-centering. An elevated inner instance reads the outer HWND through the existing
 UAC helper and uses that window's monitor, DPI and position when available. Each
 page owns a one-physical-pixel separator below the native caption. It remains
-visible when nsDialogs raises a new child page. Compact scope choices and a
-separate muted information card group the setup fields without a large empty
-lower panel. The directory page uses the same margins and compact header.
+visible when nsDialogs raises a new child page. Compact scope choices and the
+grouped directory field use the same margins and short header.
 
 `nsis-install-presentation.nsh` owns the presentation. A native `SysAnimate32`
 control plays a packaged RLE8 AVI independently of the NSIS install worker, so
@@ -70,22 +113,23 @@ synchronous file operations do not freeze the mark. Playback is explicitly
 started and is not conditional on Windows' animation preference. No browser,
 Electron process, network request, external font or user-data initialization is
 needed. If the native player cannot open the clip, setup displays its packaged
-bitmap and continues normally. Details use the native install log and open below
-the phase explanation, above a separate footer. The three steps are centered
-rounded capsules anchored near the bottom edge: muted when pending, indigo while
+bitmap and continues normally. Details use the native install log and appear
+directly below the phase explanation, above a separate footer. The three steps are centered
+rounded capsules with a 24-logical-pixel bottom inset: muted when pending, indigo while
 active, green when complete and rose for a failed write. They are passive native
-text controls, outside the log and action row. During installation, the expanded
+text controls, outside the log and action row. Details and result actions keep
+their own clearance above this inset. During installation, the visible
 log uses the idle action-row space and ends just above the footer, displaying at
-least five complete rows at normal scale. Only completion or failure shortens it
-to three rows before showing the result buttons. The same native list and its
-expanded/hidden state are retained; resizing rebuilds its round region so old
-bounds cannot clip new rows. The illustration, title, progress and elapsed time
-remain visible. The details link keeps its original native parent and command;
-short work areas reduce its width beside result buttons rather than overlap.
+least seven complete rows at normal scale. Completion or failure reserves space
+for result buttons while retaining at least five rows. The same native list stays
+visible throughout checking, writing and both terminal results. No reveal button
+or extra click is required; the unused native command remains hidden. Resizing
+rebuilds its round region so old bounds cannot clip new rows. The illustration, title, progress and elapsed time
+remain visible.
 Its single native column fills the available width without gridlines or a
 horizontal scrollbar. A muted slate text color, soft background and an owned
-empty image list provide a small left inset and comfortable row spacing. Log
-text uses a separate 12-pixel logical font, scaled with DPI; other body text
+empty image list provide a small left inset and compact 20-pixel row spacing. Log
+text uses a separate 11-pixel logical font, scaled with DPI; other body text
 retains its 14-pixel logical font. Existing
 native images, when present, are retained instead; log contents, selection,
 vertical scrolling and native long-label tips keep their original behavior.
@@ -103,11 +147,15 @@ Windows cannot start the native clock. Time is measured, not estimated progress.
 
 The caption uses a visibly distinct cool gray-blue (`#E6E9F2`) on supported DWM
 versions, above the near-white (`#FBFBFD`) content, retaining native caption dragging,
-the system menu and a single Close affordance. Supported Windows versions add
+the system menu, Minimize and Close. Maximize remains unavailable for this fixed
+layout. Minimizing does not stop writing or reset the clock; restoring retains the
+window position and selected settings. Supported Windows versions add
 rounded corners and suppress the border. `nsis-presentation-controls.nsh` paints
 rounded button images with Windows' built-in GDI+, retaining the real BUTTON
 handles, captions, enabled state, keyboard focus and commands. A drawing failure
 restores the current native text button rather than retaining a stale image.
+The opaque image surface matches its container; the directory card's browse
+button uses that card's background instead of the outer window background.
 The disabled cancellation action is hidden during writing; success and failure
 offer their respective native closing action. The native instfiles LEAVE
 callback reads `IfAbort` to stop playback at worker completion; the failure
@@ -120,8 +168,8 @@ keep their real dimensions. These bounded UI-owner-thread calls temporarily add
 `WS_EX_LAYERED`; they use no script timer or message pump and do not consult
 Windows' animation preference. The entrance explicitly shows the prepared child
 page before fading, since NSIS normally shows it after the SHOW callback. It runs
-once on the first actual page, including scope selection; forward/back navigation
-and entry into the writing phase do not replay the window movement or fade.
+once on the combined setup page, or writing when setup is skipped. Scope changes
+and entry into writing do not replay the window movement or fade.
 
 Exit runs once from successful completion, failed-result dismissal or the
 existing confirmed user-abort callback, before the native dialog is destroyed.
@@ -136,8 +184,8 @@ An earlier lock-check dialog that directly calls `Quit` retains that immediate
 exit; it does not re-enter the GUI script from the install worker for an effect.
 
 `installer-animation-assets.cjs` generates the AVI and bitmap at build time from
-`resources/icons/png/128x128.png`, at 100%, 150% and 200% scales. The compact movies
-are 180 × 144, 270 × 216 and 360 × 288 pixels; the complete mark and orbit are
+`resources/icons/png/512x512.png`, at 100%, 125%, 150%, 175% and 200% scales. The compact movies
+are 180 × 144, 225 × 180, 270 × 216, 315 × 252 and 360 × 288 pixels; the complete mark and orbit are
 rendered at each size rather than cropping the larger illustration. Inputs and output
 hashes bind the cache under `build/installer/<fingerprint>/`; generated files are
 not committed. The script uses Node's built-ins and adds no runtime download.
@@ -155,12 +203,12 @@ under `build/installer-clock/`; a successful rebuild updates the checked-in DLL
 and portable manifest. The DLL imports only Windows system libraries and has
 no CRT dependency. See [offline resources](offline-downloads.md#6-windows-安装器原生时钟)
 for verification, rebuilding and transfer to an offline build host.
-The generated set also includes square 64/96/128-pixel setup logos. Cache evidence
-verifies all nine AVI/bitmap/logo outputs. The installer chooses an animation whose
+The generated set also includes square 64/80/96/112/128-pixel setup logos. Cache evidence
+verifies all fifteen AVI/bitmap/logo outputs. The installer chooses an animation whose
 full pixel dimensions fit the scene; it does not crop a larger DPI variant just
 to fill the illustration. The normal layout reserves the full orbit canvas and a
-scrollable details area below the status, with five native log rows while working
-and three when terminal controls need the action row, at normal
+scrollable details area below the status, with at least seven native log rows while
+working and five when terminal controls need the action row, at normal
 scale. It clamps its window to the current
 monitor's work area and frees its owned fonts, bitmap and player on close. Short
 work areas reduce the illustration space; exceptionally short areas hide the
@@ -205,15 +253,39 @@ a full release installer or multi-monitor/DPI acceptance run. Windows' animation
 preference was enabled during the native smoke check; disabled-preference
 behavior follows the explicit player calls and has not been verified by changing
 the machine's global setting.
+The native fixtures inspect the compiled manifest and query the actual HWND's
+DPI-awareness context. Additional 125%, 175% and 200% layout cases check font and
+art dimensions, the resolved CJK font and the live control's font handle after
+the native page is shown, and save native screenshots; these simulate layout scaling without
+changing Windows display settings and do not constitute acceptance on a physical
+2K monitor at those system scales.
 The fixture also reads back native opacity, position, dimensions and styles for
 intermediate entrance/exit frames, checks restoration and one-time exit, and
 rejects a close while file writing is marked active. It does not infer a visible
 transition merely from the elapsed time or the requested animation values.
 The separate `tests/build/nsis-setup-presentation.test.ts` opt-in native fixture
-exercises scope selection, directory editing, upgrade locking and Back
-navigation, checks decoration cleanup before writing and silent UI absence, and
-checks rendered heading/mark pixels and saves setup-page screenshots. It substitutes isolated account/elevation
+exercises one combined setup page, per-scope drafts, invalid input, native Browse,
+upgrade locking, forced scope and accepted/cancelled elevation handoff. It checks
+direct entry into writing, decoration cleanup, skipped setup and silent UI
+absence, rendered heading/mark pixels and saved screenshots. It substitutes isolated account/elevation
 ports and never installs the application or requests administrator credentials.
+
+### Previous-version removal failures
+
+Before copying a new payload, setup must finish the existing installation's
+uninstaller. A launch failure or nonzero exit now aborts the installation worker
+and leaves the native failed result open, with details available, until the user
+closes it. It must not call `Quit`, continue into payload replacement, or launch the
+application as though installation succeeded. The supported electron-builder
+uninstall-result hooks apply this rule to both the selected shell scope and an
+additional current-user installation removed by an all-users upgrade. Silent
+installs still return a nonzero result without showing UI.
+
+Details and the append-only installation log retain the removal scope and actual
+exit code or launch-failure reason. A focused native fixture exercises failed
+and successful previous-uninstaller processes without installing the application.
+This covers a known early-exit path found during investigation; available field
+logs did not establish that it caused the reported intermittent exit.
 
 ### Data compatibility after installation
 
@@ -293,11 +365,11 @@ mode.
 For an interactive upgrade or repair, the selected account scope's registered
 `InstallLocation` is reused. The native directory input and Browse button are
 disabled. The page confirms the upgrade location and explains that setup will
-reuse it, without inviting the user to browse for another folder. First-install
-pages retain their normal selection instructions. Setup restores that exact
+reuse it, without inviting the user to browse for another folder. A first install
+shows editable scope and directory controls on the same page. Setup restores that exact
 directory again before writing, bypassing
 first-install folder-name normalization; a custom historical path does not gain
-another product-name subfolder. Returning to switch account scope resolves the
+another product-name subfolder. Switching account scope resolves the
 directory again. A first install without a registration in the selected scope
 keeps both controls enabled. This does not change silent `/D=` handling or the
 updater's existing skipped-page behavior.
@@ -306,7 +378,7 @@ For an interactive installer that starts elevated outside electron-builder's
 own UAC inner instance, setup re-launches itself once through the current
 desktop shell before it reads `APPDATA` or `LOCALAPPDATA`. This handles “Run as
 administrator” with credentials from an old account. If the user later selects
-all users, the normal multi-user page performs the explicit elevation.
+all users, Install on the combined settings page performs the explicit elevation.
 If the desktop shell is unavailable, an interactive elevated setup offers to
 restart explicitly in `/allusers` mode; it never silently treats the credential
 account as the selected current user.

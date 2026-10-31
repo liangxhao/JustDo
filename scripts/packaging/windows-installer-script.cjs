@@ -77,35 +77,44 @@ function createWindowsInstallerScript(templatesDir) {
   const files = installerFiles
     .replace(cacheCopy, '; Installer caching is deferred to the running updater.')
     .replace('!include "extractAppPackage.nsh"', extraction);
-  const section = read('installSection.nsh').replace('!include installer.nsh', files);
-  const assisted = read('assistedInstaller.nsh');
-  // The same mode macro also appears in the uninstaller. Bind only its install
-  // site before the directory page and require both original sites to remain.
-  const installModePage = /    !insertmacro PAGE_INSTALL_MODE(?=\r?\n  !endif\r?\n\r?\n  !ifdef allowToChangeInstallationDirectory)/g;
+  let section = read('installSection.nsh').replace('!include installer.nsh', files);
+  for (const root of ['SHELL_CONTEXT', 'HKEY_CURRENT_USER']) {
+    const removal = `!insertmacro uninstallOldVersion ${root}`;
+    if (section.split(removal).length !== 2) {
+      throw new Error('The upstream NSIS previous-version removal seam changed; review the template.');
+    }
+    section = section.replace(removal, [
+      `!insertmacro JustDoLogInstallEvent "phase=previous-installation-removal-start root=${root}"`,
+      removal,
+    ].join('\n'));
+  }
+  const assistedSource = read('assistedInstaller.nsh');
+  const nativeModeUi = '!include multiUserUi.nsh';
+  if (assistedSource.split(nativeModeUi).length !== 2) {
+    throw new Error('The upstream NSIS native mode UI include seam changed; review the template.');
+  }
+  const assisted = assistedSource.replace(nativeModeUi, [
+    '!ifdef BUILD_UNINSTALLER',
+    '    !include multiUserUi.nsh',
+    '  !endif',
+  ].join('\n'));
+  // The assisted installer has one combined scope/location page. Keep the
+  // uninstaller's independent mode page and require both upstream sites.
+  const installModePage = /  !ifndef INSTALL_MODE_PER_ALL_USERS\r?\n    !insertmacro PAGE_INSTALL_MODE\r?\n  !endif(?=\r?\n\r?\n  !ifdef allowToChangeInstallationDirectory)/g;
   if (Array.from(assisted.matchAll(installModePage)).length !== 1
       || (assisted.match(/^    !insertmacro PAGE_INSTALL_MODE\r?$/gm) || []).length !== 2) {
     throw new Error('The upstream NSIS install-mode page seam changed; review the template.');
   }
   const assistedWithModePresentation = assisted.replace(installModePage, [
-    '    !define MUI_PAGE_CUSTOMFUNCTION_SHOW InstallerSetupModeShow',
-    '    !define MUI_PAGE_CUSTOMFUNCTION_LEAVE InstallerSetupLeave',
-    '    !insertmacro PAGE_INSTALL_MODE',
-    '    !ifdef MUI_PAGE_CUSTOMFUNCTION_SHOW',
-    '      !error "The upstream NSIS install-mode page did not consume its SHOW callback."',
-    '    !endif',
-    '    !ifdef MUI_PAGE_CUSTOMFUNCTION_LEAVE',
-    '      !error "The upstream NSIS install-mode page did not consume its LEAVE callback."',
-    '    !endif',
+    '  !include "${PROJECT_DIR}\\scripts\\packaging\\nsis-setup-presentation.nsh"',
+    '  !insertmacro InstallerSetupPage',
   ].join('\n'));
   const directoryPage = /    !insertmacro skipPageIfUpdated\r?\n    !insertmacro MUI_PAGE_DIRECTORY/g;
   if (Array.from(assisted.matchAll(directoryPage)).length !== 1) {
     throw new Error('The upstream NSIS directory-page seam changed; review the template.');
   }
   const assistedWithDirectoryLock = assistedWithModePresentation.replace(directoryPage, [
-    '    !define MUI_PAGE_CUSTOMFUNCTION_PRE InstallerDirectoryPre',
-    '    !define MUI_PAGE_CUSTOMFUNCTION_SHOW InstallerDirectoryShow',
-    '    !define MUI_PAGE_CUSTOMFUNCTION_LEAVE InstallerSetupLeave',
-    '    !insertmacro MUI_PAGE_DIRECTORY',
+    '    ; Directory selection belongs to the combined setup page.',
   ].join('\n'));
   const installer = read('installer.nsi');
   const assistedInclude = '!include "assistedInstaller.nsh"';

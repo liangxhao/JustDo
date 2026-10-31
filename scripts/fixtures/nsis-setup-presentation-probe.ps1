@@ -2,7 +2,8 @@
       [Parameter(Mandatory=$true)][string]$FixtureRoot,
       [Parameter(Mandatory=$true)][string]$PreviewRoot,
       [Parameter(Mandatory=$true)][int]$HeroWidth,
-      [Parameter(Mandatory=$true)][int]$HeroHeight)
+      [Parameter(Mandatory=$true)][int]$HeroHeight,
+      [Parameter(Mandatory=$true)][string]$ProductName)
 
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Drawing
@@ -14,7 +15,9 @@ using System.Runtime.InteropServices;
 using System.Threading;
 public class InstallerSetupProbe {
   public static string DebugImagePath, LastRegion;
+  public static IntPtr CardBrowse;
   public static int HeroWidth, HeroHeight;
+  public static int LayoutDpi;
   public delegate bool EnumProc(IntPtr window, IntPtr parameter);
   [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc callback, IntPtr parameter);
   [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr window, out uint pid);
@@ -30,6 +33,7 @@ public class InstallerSetupProbe {
   [DllImport("user32.dll")] public static extern IntPtr GetParent(IntPtr window);
   [DllImport("user32.dll")] public static extern IntPtr GetDlgItem(IntPtr parent, int id);
   [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr window);
+  [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr window);
   [DllImport("user32.dll")] public static extern bool IsWindowEnabled(IntPtr window);
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr window);
   [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
@@ -37,10 +41,25 @@ public class InstallerSetupProbe {
   [DllImport("dwmapi.dll")] public static extern int DwmGetWindowAttribute(IntPtr window, int attribute, out uint value, int size);
   [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr window, int index);
   [DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr window);
+  [DllImport("user32.dll")] public static extern IntPtr GetWindowDpiAwarenessContext(IntPtr window);
+  [DllImport("user32.dll")] public static extern int GetAwarenessFromDpiAwarenessContext(IntPtr context);
+  [DllImport("user32.dll")] public static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
   [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr window, uint message, IntPtr w, IntPtr l);
   [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr window, uint message, IntPtr w, IntPtr l);
   [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr window, IntPtr dc, uint flags);
   [StructLayout(LayoutKind.Sequential)] public struct Rect { public int Left, Top, Right, Bottom; }
+  public static int Dpi(IntPtr window) { return LayoutDpi>0?LayoutDpi:(int)GetDpiForWindow(window); }
+  public static bool SelectedMovie(string filename,IntPtr scene) {
+    Rect hero;if(!GetWindowRect(scene,out hero))return false;
+    int width=hero.Right-hero.Left,height=hero.Bottom-hero.Top,percent=100;
+    foreach(int candidate in new int[]{200,175,150,125}) {
+      if(Dpi(scene)>=96*candidate/100 && width>=HeroWidth*candidate/100 && height>=HeroHeight*candidate/100){percent=candidate;break;}
+    }
+    var bytes=System.IO.File.ReadAllBytes(filename);
+    int selectedWidth=BitConverter.ToInt32(bytes,64),selectedHeight=BitConverter.ToInt32(bytes,68);
+    LastRegion="selected AVI="+selectedWidth+"x"+selectedHeight+" expected scale="+percent+" scene="+width+"x"+height;
+    return Encoding.ASCII.GetString(bytes,24,4)=="avih" && selectedWidth==HeroWidth*percent/100 && selectedHeight==HeroHeight*percent/100;
+  }
   [StructLayout(LayoutKind.Sequential)] public struct MonitorInfo { public int Size; public Rect Monitor, Work; public uint Flags; }
   [StructLayout(LayoutKind.Sequential)] public struct GuiInfo {
     public int Size, Flags;
@@ -52,7 +71,12 @@ public class InstallerSetupProbe {
     EnumWindows((window,parameter)=>{uint pid;GetWindowThreadProcessId(window,out pid);if(pid==wanted && Text(window).Contains("Installer setup fixture")){found=window;return false;}return true;},IntPtr.Zero);
     return found;
   }
-  public static string Text(IntPtr window) {var text=new StringBuilder(2048);ReadText(window,0xD,(IntPtr)2048,text);return text.ToString();}
+  public static IntPtr FindOther(uint wanted,IntPtr main) {
+    IntPtr found=IntPtr.Zero;
+    EnumWindows((window,parameter)=>{uint pid;GetWindowThreadProcessId(window,out pid);if(pid==wanted && window!=main && IsWindowVisible(window)){found=window;return false;}return true;},IntPtr.Zero);
+    return found;
+  }
+  public static string Text(IntPtr window) {int size=Math.Min(32767,Math.Max(0,SendMessage(window,0xE,IntPtr.Zero,IntPtr.Zero).ToInt32()))+1;var text=new StringBuilder(size);ReadText(window,0xD,(IntPtr)size,text);return text.ToString();}
   public static bool Focused(IntPtr window) {
     uint pid;var thread=GetWindowThreadProcessId(window,out pid);
     var info=new GuiInfo();info.Size=Marshal.SizeOf(info);
@@ -83,7 +107,7 @@ public class InstallerSetupProbe {
   }
   public static bool HasCompactCanvas(IntPtr window) {
     Rect client;if(!GetClientRect(window,out client))return false;
-    int dpi=(int)GetDpiForWindow(window);
+    int dpi=Dpi(window);
     return client.Right<=600*dpi/96+1 && client.Bottom<=460*dpi/96+1;
   }
   public static bool TintedCaption(IntPtr window) {
@@ -165,7 +189,8 @@ public class InstallerSetupProbe {
     var divider=GetDlgItem(page,12351);
     Rect outer,line,client,pageRect;
     if(divider==IntPtr.Zero || !IsWindowVisible(divider) || !GetWindowRect(window,out outer)
-      || !GetWindowRect(divider,out line) || !GetClientRect(page,out client) || !GetWindowRect(page,out pageRect))return false;
+      || !GetWindowRect(divider,out line) || !GetClientRect(page,out client) || !GetWindowRect(page,out pageRect)){LastRegion="divider not visible on page="+page;return false;}
+    LastRegion="divider="+line.Left+","+line.Top+","+line.Right+","+line.Bottom+" page="+pageRect.Left+","+pageRect.Top+" width="+client.Right;
     if(line.Top!=pageRect.Top || line.Left!=pageRect.Left || line.Right-line.Left!=client.Right || line.Bottom-line.Top!=1)return false;
     using(var bitmap=new Bitmap(outer.Right-outer.Left,outer.Bottom-outer.Top))
     using(var graphics=Graphics.FromImage(bitmap)) {
@@ -173,17 +198,25 @@ public class InstallerSetupProbe {
       foreach(int fraction in new int[]{1,2,3}) {
         int x=line.Left-outer.Left+(line.Right-line.Left)*fraction/4;
         var pixel=bitmap.GetPixel(x,line.Top-outer.Top);
+        LastRegion="divider sample="+pixel.R+","+pixel.G+","+pixel.B+" fraction="+fraction;
         if(Math.Abs(pixel.R-229)>3 || Math.Abs(pixel.G-231)>3 || Math.Abs(pixel.B-237)>3)return false;
       }
       return true;
     }
   }
-  public static bool FullHero(IntPtr window,IntPtr page,IntPtr scene,IntPtr title,IntPtr subtitle) {
-    Rect hero,heading,subheading;
-    if(!Inside(page,scene) || !Inside(page,title) || !Inside(page,subtitle)
-      || !GetWindowRect(scene,out hero) || !GetWindowRect(title,out heading) || !GetWindowRect(subtitle,out subheading))return false;
-    int width=hero.Right-hero.Left,height=hero.Bottom-hero.Top;
-    return width>=HeroWidth && height>=HeroHeight && heading.Top>=hero.Bottom+4 && subheading.Top>=heading.Bottom;
+  public static bool FullHero(IntPtr window,IntPtr page,IntPtr scene,IntPtr title,IntPtr subtitle,IntPtr status) {
+    Rect body,hero,heading,subheading,phase;
+    if(!Inside(page,scene) || !Inside(page,title) || !Inside(page,subtitle) || !Inside(page,status)
+      || !GetWindowRect(page,out body) || !GetWindowRect(scene,out hero) || !GetWindowRect(title,out heading)
+      || !GetWindowRect(subtitle,out subheading) || !GetWindowRect(status,out phase))return false;
+    int dpi=Dpi(window),width=hero.Right-hero.Left,height=hero.Bottom-hero.Top;
+    LastRegion="left hero="+width+"x"+height+" heading gap="+(heading.Left-hero.Right)+" phase gap="+(phase.Top-Math.Max(hero.Bottom,subheading.Bottom));
+    return width==HeroWidth*dpi/96 && height==HeroHeight*dpi/96
+      && hero.Left-body.Left==28*dpi/96 && hero.Top-body.Top==8*dpi/96
+      && heading.Left>=hero.Right+20*dpi/96 && heading.Right<=body.Right-28*dpi/96
+      && subheading.Left==heading.Left && subheading.Right==heading.Right
+      && heading.Top>=hero.Top && subheading.Top>=heading.Bottom+4*dpi/96
+      && subheading.Bottom<=hero.Bottom && phase.Top>=Math.Max(hero.Bottom,subheading.Bottom)+14*dpi/96;
   }
   public static bool LogShowsTwoRows(IntPtr page,IntPtr log) {
     Rect client;if(!Inside(page,log) || !GetClientRect(log,out client))return false;
@@ -195,8 +228,10 @@ public class InstallerSetupProbe {
   public static bool PaintedLowerOrbit(IntPtr window,IntPtr scene) {
     Rect outer,hero;if(!GetWindowRect(window,out outer) || !GetWindowRect(scene,out hero))return false;
     int width=hero.Right-hero.Left,height=hero.Bottom-hero.Top;
-    int dpi=(int)GetDpiForWindow(window);
-    int percent=dpi>=168 && width>=HeroWidth*2 && height>=HeroHeight*2?200:(dpi>=120 && width>=HeroWidth*3/2 && height>=HeroHeight*3/2?150:100);
+    int dpi=Dpi(window),percent=100;
+    foreach(int candidate in new int[]{200,175,150,125}) {
+      if(dpi>=96*candidate/100 && width>=HeroWidth*candidate/100 && height>=HeroHeight*candidate/100){percent=candidate;break;}
+    }
     int clipWidth=HeroWidth*percent/100,clipHeight=HeroHeight*percent/100;
     int left=hero.Left-outer.Left+(width-clipWidth)/2,top=hero.Top-outer.Top+(height-clipHeight)/2;
     using(var bitmap=new Bitmap(outer.Right-outer.Left,outer.Bottom-outer.Top))
@@ -232,16 +267,61 @@ public class InstallerSetupProbe {
         int count=0;
         for(int y=Math.Max(0,inner.Top-outer.Top);y<Math.Min(bitmap.Height,inner.Bottom-outer.Top) && count<=8;y++)
           for(int x=Math.Max(0,inner.Left-outer.Left);x<Math.Min(bitmap.Width,inner.Right-outer.Left) && count<=8;x++) {
-            var pixel=bitmap.GetPixel(x,y);if(pixel.R<210 && pixel.G<210 && pixel.B<210)count++;
+            var pixel=bitmap.GetPixel(x,y);if((pixel.R*2126+pixel.G*7152+pixel.B*722)/10000<210)count++;
           }
         if(count<=8) {
           if(!String.IsNullOrEmpty(DebugImagePath))bitmap.Save(DebugImagePath,System.Drawing.Imaging.ImageFormat.Png);
           return false;
         }
       }
+      // Native BUTTON owns disabled bitmap tinting. The enabled surface must
+      // blend exactly with its card; upgrade locking is asserted separately.
+      if(CardBrowse!=IntPtr.Zero && IsWindowEnabled(CardBrowse)) {
+        Rect button;if(!GetWindowRect(CardBrowse,out button))return false;
+        int inset=Math.Max(2,2*Dpi(window)/96),y=button.Top-outer.Top+inset;
+        foreach(int x in new int[]{button.Left-outer.Left+inset,button.Right-outer.Left-inset-1}) {
+          if(x<0 || y<0 || x>=bitmap.Width || y>=bitmap.Height)return false;
+          var pixel=bitmap.GetPixel(x,y);
+          LastRegion="Browse card corner="+pixel.R+","+pixel.G+","+pixel.B;
+          if(Math.Abs(pixel.R-243)>2 || Math.Abs(pixel.G-244)>2 || Math.Abs(pixel.B-248)>2)return false;
+        }
+      }
       if(!String.IsNullOrEmpty(path))bitmap.Save(path,System.Drawing.Imaging.ImageFormat.Png);
     }
     return true;
+  }
+  public static bool DirectoryPresentation(IntPtr window,IntPtr surface,IntPtr edit,IntPtr browse) {
+    Rect outer,field,line,button;
+    if(!GetWindowRect(window,out outer) || !GetWindowRect(surface,out field)
+      || !GetWindowRect(edit,out line) || !GetWindowRect(browse,out button))return false;
+    if((GetWindowLong(edit,-16)&4)!=0 || GetParent(surface)!=GetParent(edit)
+      || Math.Abs(line.Top+line.Bottom-field.Top-field.Bottom)>1
+      || field.Top!=button.Top || field.Bottom!=button.Bottom || !Inside(surface,edit))return false;
+    DwmFlush();
+    using(var bitmap=new Bitmap(outer.Right-outer.Left,outer.Bottom-outer.Top))
+    using(var graphics=Graphics.FromImage(bitmap)) {
+      var dc=graphics.GetHdc();try{if(!PrintWindow(window,dc,2))return false;}finally{graphics.ReleaseHdc(dc);}
+      int top=int.MaxValue,bottom=-1,count=0;
+      for(int y=line.Top;y<line.Bottom;y++)for(int x=line.Left;x<line.Right;x++) {
+        var pixel=bitmap.GetPixel(x-outer.Left,y-outer.Top);
+        if(pixel.R<220 && pixel.G<220 && pixel.B<220){top=Math.Min(top,y);bottom=Math.Max(bottom,y);count++;}
+      }
+      LastRegion="Directory glyphs="+top+".."+bottom+" field="+field.Top+".."+field.Bottom;
+      if(count<8 || Math.Abs(top+bottom-field.Top-field.Bottom+1)>Math.Max(4,4*Dpi(window)/96))return false;
+      // Sample the fill away from the native caption and rounded corners.
+      var fill=bitmap.GetPixel(button.Left-outer.Left+12*Dpi(window)/96,button.Top-outer.Top+(button.Bottom-button.Top)/2);
+      LastRegion+=" Browse enabled="+IsWindowEnabled(browse)+" fill="+fill.R+","+fill.G+","+fill.B;
+      if(IsWindowEnabled(browse)) {
+        if(Math.Abs(fill.R-232)>3 || Math.Abs(fill.G-233)>3 || Math.Abs(fill.B-255)>3)return false;
+        int ink=0;
+        for(int y=button.Top;y<button.Bottom;y++)for(int x=button.Left;x<button.Right;x++) {
+          var pixel=bitmap.GetPixel(x-outer.Left,y-outer.Top);
+          if(pixel.B>pixel.R+40 && pixel.B>pixel.G+40 && pixel.R<160 && pixel.G<160)ink++;
+        }
+        return ink>8;
+      }
+      return Math.Abs(fill.R-fill.B)<20 && Math.Abs(fill.G-fill.B)<20;
+    }
   }
   public static bool SaveScreen(IntPtr window,string path) {
     if(GetForegroundWindow()!=window)return false;
@@ -256,17 +336,16 @@ public class InstallerSetupProbe {
   }
 }
 '@
-[InstallerSetupProbe]::DebugImagePath=Join-Path $PreviewRoot 'installer-setup-empty-region.png'
+
+[InstallerSetupProbe]::DebugImagePath=Join-Path $PreviewRoot 'installer-combined-empty-region.png'
 [InstallerSetupProbe]::HeroWidth=$HeroWidth
 [InstallerSetupProbe]::HeroHeight=$HeroHeight
-
-function Assert-Condition([bool]$condition,[string]$message) {
-  if (!$condition) { throw $message }
-}
+[void][InstallerSetupProbe]::SetThreadDpiAwarenessContext([IntPtr](-2))
+function Assert-Condition([bool]$condition,[string]$message) { if(!$condition){throw $message} }
 function Wait-For([scriptblock]$condition,[string]$message) {
-  for ($attempt=0; $attempt -lt 80; $attempt++) {
-    if (& $condition) { return }
-    Start-Sleep -Milliseconds 75
+  for($attempt=0;$attempt -lt 100;$attempt++){
+    if(& $condition){return}
+    Start-Sleep -Milliseconds 60
   }
   throw $message
 }
@@ -274,234 +353,276 @@ function Read-State {
   try { return ([IO.File]::ReadAllText((Join-Path $FixtureRoot 'state.txt'))) -split '\|' }
   catch [IO.IOException] { return @() }
 }
-function Wait-Page([string]$kind,[int]$visit) {
-  try {
-    Wait-For {
-      $script:pageState = @(Read-State)
-      $pageState.Count -ge 2 -and $pageState[0] -eq $kind -and $pageState[1] -eq [string]$visit -and
-        ($kind -eq 'progress' -or ($pageState.Count -ge 3 -and [InstallerSetupProbe]::IsWindowVisible([IntPtr][long]$pageState[2])))
-    } "The $kind page (visit $visit) did not appear."
-  } catch {
-    Write-Output "Last native state: $($pageState -join '|')"
-    if ($pageState.Count -ge 3) { Write-Output "Page visible: $([InstallerSetupProbe]::IsWindowVisible([IntPtr][long]$pageState[2]))" }
-    throw
-  }
+function Wait-Page([string]$kind) {
+  Wait-For {
+    $script:pageState=@(Read-State)
+    $pageState.Count -ge 3 -and $pageState[0] -eq $kind -and [InstallerSetupProbe]::IsWindowVisible([IntPtr][long]$pageState[2])
+  } "The $kind page did not appear."
 }
 function Native-Command([IntPtr]$window,[int]$id) {
-  $button = [InstallerSetupProbe]::GetDlgItem($window,$id)
-  Assert-Condition ([InstallerSetupProbe]::IsWindowEnabled($button)) "Native navigation button $id is disabled."
+  $button=[InstallerSetupProbe]::GetDlgItem($window,$id)
+  Assert-Condition ([InstallerSetupProbe]::IsWindowEnabled($button)) "Native action $id is disabled."
   [void][InstallerSetupProbe]::PostMessage($window,0x111,[IntPtr]$id,$button)
 }
-function Keyboard-Choose([IntPtr]$window,[IntPtr]$radio) {
-  [void][InstallerSetupProbe]::SetForegroundWindow($window)
+function Set-Path([IntPtr]$edit,[string]$value) {
+  [void][InstallerSetupProbe]::SendText($edit,0xC,[IntPtr]::Zero,$value)
+  Wait-For { [InstallerSetupProbe]::Text($edit) -eq $value } 'The path editor did not keep the entered text.'
+}
+function Normalized-Path([string]$value) {
+  if($value.IndexOf($ProductName,[StringComparison]::OrdinalIgnoreCase) -ge 0){return $value}
+  return Join-Path $value $ProductName
+}
+function Assert-ClosedResources {
+  $closed=([IO.File]::ReadAllText((Join-Path $FixtureRoot 'closed.txt'))) -split '\|'
+  Assert-Condition ($closed.Count -eq 9 -and @($closed | Where-Object { $_ -ne '0' }).Count -eq 0) "The combined page retained owned fonts, images or controls ($case): $($closed -join '|')."
+}
+function Keyboard-Choose([IntPtr]$radio) {
+  $sequencePath=Join-Path $FixtureRoot 'scope-sequence.txt'
+  $before=0
+  if(Test-Path -LiteralPath $sequencePath){$before=[int](([IO.File]::ReadAllText($sequencePath,[Text.Encoding]::Unicode)) -split '\|')[0]}
+  $mode=if($radio -eq $all){'all'}else{'CurrentUser'}
   [void][InstallerSetupProbe]::PostMessage([InstallerSetupProbe]::GetParent($radio),0x28,$radio,[IntPtr]1)
-  Wait-For { [InstallerSetupProbe]::Focused($radio) } 'A native radio could not receive keyboard focus.'
+  Wait-For { [InstallerSetupProbe]::Focused($radio) } 'A scope choice could not receive keyboard focus.'
   [void][InstallerSetupProbe]::PostMessage($radio,0x100,[IntPtr]32,[IntPtr]::Zero)
   [void][InstallerSetupProbe]::PostMessage($radio,0x101,[IntPtr]32,[IntPtr]::Zero)
-  Wait-For { [InstallerSetupProbe]::SendMessage($radio,0xF0,[IntPtr]::Zero,[IntPtr]::Zero).ToInt64() -eq 1 } 'Keyboard Space did not select the native radio.'
+  Wait-For {
+    try { $observed=([IO.File]::ReadAllText($sequencePath,[Text.Encoding]::Unicode)) -split '\|' }
+    catch [IO.IOException] { return $false }
+    [int]$observed[0] -gt $before -and $observed[1] -eq $mode -and [InstallerSetupProbe]::SendMessage($radio,0xF0,[IntPtr]::Zero,[IntPtr]::Zero).ToInt64() -eq 1
+  } 'Keyboard Space did not finish the actual scope-change callback.'
 }
-function Assert-NativeMode([IntPtr]$window) {
+function Assert-Font([IntPtr]$control,[int]$pixels,[int]$weight) {
+  $rows=@([IO.File]::ReadAllLines((Join-Path $FixtureRoot 'dpi-fonts.txt')) | Where-Object { $_.StartsWith("$control|") })
+  Assert-Condition ($rows.Count -gt 0) "No in-process font measurement was recorded for $control."
+  $font=$rows[-1] -split '\|'
+  $dpi=[InstallerSetupProbe]::Dpi($window)
+  $face=if($case -eq 'english' -or $case -eq 'short'){'Segoe UI'}else{'Microsoft YaHei UI'}
+  Assert-Condition ([int]$font[1] -eq -[math]::Floor($pixels*$dpi/96) -and [int]$font[2] -eq $weight -and $font[3] -eq '5' -and $font[8] -eq $face) "The combined page has the wrong scaled font: $($font -join '|')."
+  Assert-Condition ([InstallerSetupProbe]::SendMessage($control,0x31,[IntPtr]::Zero,[IntPtr]::Zero).ToInt64() -eq ([long]$font[9] -band 0xFFFFFFFFL)) 'The page replaced its measured font after Show.'
+  Assert-Condition ([int]$font[4] -le [int]$font[7] -and [int]$font[5] -le [int]$font[6]) 'The combined heading clips its actual native font.'
+}
+function Assert-Painted([IntPtr[]]$controls,[string]$filename) {
+  $path=if($filename){Join-Path $PreviewRoot $filename}else{$null}
+  try { Wait-For { [InstallerSetupProbe]::PaintedFrame($window,$controls,$path) } 'The complete combined setup did not paint in one frame.' }
+  catch { throw ('The complete combined setup did not paint in one frame: ' + [InstallerSetupProbe]::LastRegion) }
+}
+function Assert-DirectoryPresentation {
+  try { Wait-For { [InstallerSetupProbe]::DirectoryPresentation($window,$directorySurface,$edit,$browse) } 'Directory alignment or Browse state is incorrect.' }
+  catch { throw ('Directory alignment or Browse state is incorrect: ' + [InstallerSetupProbe]::LastRegion) }
+}
+function Assert-Setup {
   $page=[IntPtr][long]$pageState[2]
-  $all = [IntPtr][long]$pageState[3]
-  $current = [IntPtr][long]$pageState[4]
-  $next = [InstallerSetupProbe]::GetDlgItem($window,1)
-  Assert-Condition ([InstallerSetupProbe]::HasModernWidth($window)) 'Setup retained its narrow legacy window.'
-  Assert-Condition ([InstallerSetupProbe]::Inside($page,$all) -and [InstallerSetupProbe]::Inside($page,$current)) 'Mode radios are clipped or hidden.'
-  Assert-Condition ([InstallerSetupProbe]::RowsSeparate($all,$current)) 'Mode choice rows overlap.'
-  Assert-Condition (([InstallerSetupProbe]::GetWindowLong($all,-16) -band 0xF) -eq 9 -and ([InstallerSetupProbe]::GetWindowLong($current,-16) -band 0xF) -eq 9) 'Setup replaced the native auto-radio controls.'
-  $nextStyle=[InstallerSetupProbe]::GetWindowLong($next,-16)
-  $nextImage=[InstallerSetupProbe]::SendMessage($next,0xF6,[IntPtr]::Zero,[IntPtr]::Zero)
-  Assert-Condition ($pageState[7] -eq '0' -and $pageState[8] -eq '1') "Styling changed the native radio user data: current=$($pageState[7]) all=$($pageState[8])."
-  # Native BCM_SETSHIELD itself can toggle BS_BITMAP or assign an internal
-  # image. The presentation must own no Next bitmap and retain native text.
-  Assert-Condition ($pageState[6] -eq '0' -and [InstallerSetupProbe]::Text($next).Length -gt 0) "Mode Next no longer retains native text/UAC-shield drawing: style=$nextStyle image=$nextImage."
-  Assert-Footer $window
-  Assert-Condition ([InstallerSetupProbe]::RowsSeparate($all,$next)) 'Mode radios overlap the footer.'
-}
-function Assert-Footer([IntPtr]$window) {
+  $script:current=[IntPtr][long]$pageState[3]
+  $script:all=[IntPtr][long]$pageState[4]
+  $script:edit=[IntPtr][long]$pageState[5]
+  $script:browse=[IntPtr][long]$pageState[6]
+  $script:hint=[IntPtr][long]$pageState[7]
+  $script:directorySurface=[IntPtr][long]$pageState[19]
+  foreach($control in @($current,$all,$edit,$browse)){
+    Assert-Condition ([InstallerSetupProbe]::Inside($page,$control)) 'A scope or directory field is not on the one combined page.'
+  }
+  Assert-Condition ([InstallerSetupProbe]::ColumnsSeparate($edit,$browse)) 'The combined path and Browse overlap.'
+  Assert-Condition ([InstallerSetupProbe]::RowsSeparate($current,$edit) -and [InstallerSetupProbe]::RowsSeparate($all,$edit)) 'Scope choices overlap the directory field.'
+  $scopeLabel=[IntPtr][long]$pageState[17]
+  $folderLabel=[IntPtr][long]$pageState[18]
+  if([InstallerSetupProbe]::IsWindowVisible($scopeLabel)){
+    Assert-Condition ([InstallerSetupProbe]::RowsSeparate($scopeLabel,$current) -and [InstallerSetupProbe]::RowsSeparate($scopeLabel,$all)) 'The scope label overlaps its radio choices.'
+  }
+  Assert-Condition ([InstallerSetupProbe]::Inside($page,$folderLabel) -and [InstallerSetupProbe]::RowsSeparate($folderLabel,$edit) -and [InstallerSetupProbe]::RowsSeparate($all,$folderLabel)) 'The folder label overlaps another combined-page control.'
+  Assert-Condition ([InstallerSetupProbe]::GetParent($current) -eq $page -and [InstallerSetupProbe]::GetParent($edit) -eq $page) 'The choices and editor belong to separate hidden pages.'
+  Assert-Condition (([InstallerSetupProbe]::GetWindowLong($current,-16) -band 0xF) -eq 9 -and ([InstallerSetupProbe]::GetWindowLong($all,-16) -band 0xF) -eq 9) 'The merged scope controls lost native auto-radio behavior.'
+  Assert-Condition ([InstallerSetupProbe]::FitsWorkArea($window) -and [InstallerSetupProbe]::HasCompactCanvas($window)) 'The combined page exceeds its work area or compact canvas.'
+  Assert-Condition (([InstallerSetupProbe]::GetWindowLong($window,-16) -band 0x00020000) -ne 0 -and ([InstallerSetupProbe]::GetWindowLong($window,-16) -band 0x00010000) -eq 0) 'The setup caption lost Minimize or added Maximize.'
+  Wait-For { [InstallerSetupProbe]::CaptionDivider($window,$page) } 'The combined page lost the caption separator.'
+  Assert-Condition ([InstallerSetupProbe]::TintedCaption($window)) 'The combined page lost its tinted native caption.'
   $next=[InstallerSetupProbe]::GetDlgItem($window,1)
   $cancel=[InstallerSetupProbe]::GetDlgItem($window,2)
-  $back=[InstallerSetupProbe]::GetDlgItem($window,3)
-  Assert-Condition ([InstallerSetupProbe]::FitsWorkArea($window)) 'Setup extends outside the actual monitor work area.'
-  if ($case -ne 'short') {
-    Assert-Condition ([InstallerSetupProbe]::HasCompactCanvas($window)) 'Setup grew beyond its compact 600 by 460 logical-pixel canvas.'
-  }
-  Assert-Condition ([InstallerSetupProbe]::Inside($window,$next) -and [InstallerSetupProbe]::Inside($window,$cancel)) 'Next or Cancel is clipped.'
-  Assert-Condition ([InstallerSetupProbe]::ColumnsSeparate($next,$cancel)) 'Next and Cancel overlap.'
-  if ([InstallerSetupProbe]::IsWindowVisible($back)) {
-    Assert-Condition ([InstallerSetupProbe]::Inside($window,$back) -and [InstallerSetupProbe]::ColumnsSeparate($back,$next)) 'Back is clipped or overlaps Next.'
-  }
-}
-function Assert-Heading([IntPtr]$page,[int]$offset) {
-  Assert-Condition ([InstallerSetupProbe]::TintedCaption($window)) ('The native caption did not receive its distinct blue-gray background: ' + [InstallerSetupProbe]::LastRegion)
-  Assert-Condition ([InstallerSetupProbe]::CaptionDivider($window,$page)) 'The light caption is not separated from the page by a painted full-width hairline.'
-  if ($case -ne 'short') {
-    foreach ($index in @($offset,($offset+1),($offset+2))) {
-      $control=[IntPtr][long]$pageState[$index]
-      Assert-Condition ([InstallerSetupProbe]::Inside($page,$control)) 'A setup heading, subtitle or brand mark is hidden behind its native page.'
-    }
-    Assert-Condition ([InstallerSetupProbe]::RoundMark($window,[IntPtr][long]$pageState[$offset+2])) ('The visible brand mark is squeezed or undersized: ' + [InstallerSetupProbe]::LastRegion)
+  Assert-Condition ([InstallerSetupProbe]::Inside($window,$next) -and [InstallerSetupProbe]::Inside($window,$cancel) -and [InstallerSetupProbe]::ColumnsSeparate($next,$cancel)) 'Install or Cancel is clipped or overlapped.'
+  Assert-Condition ([InstallerSetupProbe]::Text($next) -match 'Install|安装') 'The combined page still requires a Next step.'
+  Assert-Condition (![InstallerSetupProbe]::HasVisibleArea([InstallerSetupProbe]::GetDlgItem($window,3))) 'The merged first page still exposes Back.'
+  $heading=[IntPtr][long]$pageState[10]
+  $subtitle=[IntPtr][long]$pageState[11]
+  $logo=[IntPtr][long]$pageState[12]
+  if([InstallerSetupProbe]::IsWindowVisible($logo)){
+    Assert-Condition ([InstallerSetupProbe]::RoundMark($window,$logo)) ('The combined logo is distorted: ' + [InstallerSetupProbe]::LastRegion)
+    Assert-Condition ([InstallerSetupProbe]::Text($heading).Contains($ProductName) -and [InstallerSetupProbe]::Text($heading).Length -le $ProductName.Length+12) 'The combined heading lost product branding or retained boilerplate.'
+    Assert-Font $heading 20 400
+    Assert-Font $subtitle 14 400
+    $bitmap=([IO.File]::ReadAllText((Join-Path $FixtureRoot 'dpi-bitmap.txt'))) -split '\|'
+    $logoPixels=if($pageState[15] -eq '1'){48}else{64}
+    Assert-Condition ([int]$bitmap[0] -eq [math]::Floor($logoPixels*[InstallerSetupProbe]::Dpi($window)/96) -and $bitmap[0] -eq $bitmap[1]) 'The combined logo is not rendered at its native pixel density.'
   }
 }
-function Assert-PaintedPage([IntPtr]$window,[int[]]$indices,[string]$preview) {
-  $controls=[IntPtr[]]@($indices | ForEach-Object { [IntPtr][long]$pageState[$_] })
-  $path=if($preview){Join-Path $PreviewRoot $preview}else{$null}
-  try {
-    Wait-For { [InstallerSetupProbe]::PaintedFrame($window,$controls,$path) } "The $case $($pageState[0]) page (visit $($pageState[1])) did not naturally paint all decoration in one frame."
-  } catch {
-    Write-Output "Last unpainted region: $([InstallerSetupProbe]::LastRegion)"
-    throw
-  }
-}
-function Assert-Directory([IntPtr]$window,[string]$preview) {
-  $page=[IntPtr][long]$pageState[2]
-  $edit=[IntPtr][long]$pageState[3]
-  $browse=[IntPtr][long]$pageState[4]
-  $label=[IntPtr][long]$pageState[9]
-  Assert-Condition ([InstallerSetupProbe]::Inside($page,$edit) -and [InstallerSetupProbe]::Inside($page,$browse)) 'The directory field or Browse button is clipped.'
-  Assert-Condition ([InstallerSetupProbe]::ColumnsSeparate($edit,$browse)) 'The directory field and Browse overlap.'
-  Assert-Condition ([InstallerSetupProbe]::Inside($page,$label)) 'The directory field label is clipped or hidden.'
-  Assert-Footer $window
-  Assert-Heading $page 6
-  $indices=if($case -eq 'short'){@(9)}else{@(6,7,8,9)}
-  Assert-PaintedPage $window $indices $preview
-}
-
-foreach ($case in @('fresh','upgrade','short','silent')) {
-  $rectangleWatching=$false
-  $movedRectangle=$null
-  foreach ($marker in @('state.txt','elevation.txt','shield.txt','reset.txt','closed.txt','silent.txt','finished.txt','motion.txt')) {
-    $markerPath=Join-Path $FixtureRoot $marker
-    if (Test-Path -LiteralPath $markerPath) { Remove-Item -LiteralPath $markerPath }
+$cases=@('fresh','upgrade','mixed-scope','english','dpi125','dpi175','dpi200','forced-current','forced-all','handoff','inner','inner-denied','inner-empty','inner-relative','inner-not-ready','inner-bridge-failed','updated','compact','header-short','short','silent')
+foreach($case in $cases){
+  [InstallerSetupProbe]::LayoutDpi=if($case -match '^dpi(\d+)$'){96*[int]$Matches[1]/100}elseif($case -eq 'short'){288}elseif($case -eq 'header-short' -or $case -eq 'compact'){192}else{0}
+  foreach($name in @('state.txt','scope-sequence.txt','elevation.txt','closed.txt','silent.txt','finished.txt','motion.txt','dpi-fonts.txt','dpi-bitmap.txt')){
+    $file=Join-Path $FixtureRoot $name
+    if(Test-Path -LiteralPath $file){Remove-Item -LiteralPath $file}
   }
   $arguments=@('/case='+$case)
-  if ($case -eq 'silent') { $arguments=@('/S','/case='+$case) }
-  # The enclosing runner is hidden. Do not pass SW_HIDE as GUI STARTUPINFO:
-  # Windows can then ignore the installer's first native ShowWindow request.
-  $start=New-Object Diagnostics.ProcessStartInfo
-  $start.FileName=$Executable
-  $start.Arguments=$arguments -join ' '
-  $start.UseShellExecute=$false
-  $start.CreateNoWindow=$true
-  $fixtureProcess=[Diagnostics.Process]::Start($start)
-  $script:window=[IntPtr]::Zero
+  if($case -eq 'silent'){$arguments=@('/S','/case='+$case)}
+  $fixtureProcess=Start-Process -FilePath $Executable -ArgumentList $arguments -PassThru
+  $window=[IntPtr]::Zero
+  $watching=$false
   try {
-    if ($case -eq 'silent') {
-      Assert-Condition ($fixtureProcess.WaitForExit(7000)) 'Silent setup fixture did not finish.'
-      Assert-Condition ($fixtureProcess.ExitCode -eq 0) 'Silent setup fixture failed.'
-      $resources=([IO.File]::ReadAllText((Join-Path $FixtureRoot 'silent.txt'))) -split '\|'
-      Assert-Condition ($resources.Count -eq 12 -and @($resources | Where-Object { $_ -ne '' -and $_ -ne '0' }).Count -eq 0) 'Silent setup created decoration resources.'
-      Assert-Condition (!(Test-Path -LiteralPath (Join-Path $FixtureRoot 'state.txt'))) 'Silent setup visited a wizard page.'
-      Assert-Condition (!(Test-Path -LiteralPath (Join-Path $FixtureRoot 'motion.txt'))) 'Silent setup animated a hidden wizard.'
+    if($case -eq 'silent'){
+      Assert-Condition ($fixtureProcess.WaitForExit(7000) -and $fixtureProcess.ExitCode -eq 0) 'Silent setup failed.'
+      Assert-Condition (!(Test-Path -LiteralPath (Join-Path $FixtureRoot 'state.txt')) -and !(Test-Path -LiteralPath (Join-Path $FixtureRoot 'motion.txt'))) 'Silent setup created a page or motion.'
       continue
     }
-    Wait-For { $script:window=[InstallerSetupProbe]::Find([uint32]$fixtureProcess.Id); $window -ne [IntPtr]::Zero } 'Setup fixture window was not created.'
-    Wait-Page 'mode' 1
-    Assert-NativeMode $window
-    Assert-Heading ([IntPtr][long]$pageState[2]) 9
-    $indices=if($case -eq 'short'){@(9)}else{@(9,10,11)}
-    $preview=if($case -eq 'fresh'){'installer-setup-mode.png'}else{$null}
-    Assert-PaintedPage $window $indices $preview
-    $all=[IntPtr][long]$pageState[3]
-    $current=[IntPtr][long]$pageState[4]
-    Assert-Condition ([InstallerSetupProbe]::SendMessage($current,0xF0,[IntPtr]::Zero,[IntPtr]::Zero).ToInt64() -eq 1) 'Current-user mode stopped being the default.'
-    if ($case -eq 'fresh') {
-      Keyboard-Choose $window $all
-      Assert-Condition ([InstallerSetupProbe]::SendMessage($current,0xF0,[IntPtr]::Zero,[IntPtr]::Zero).ToInt64() -eq 0) 'The native radio group retained two checked choices.'
-      Wait-For { (Test-Path -LiteralPath (Join-Path $FixtureRoot 'shield.txt')) -and [IO.File]::ReadAllText((Join-Path $FixtureRoot 'shield.txt')).Contains('on') } 'Selecting all users lost the upstream elevation-shield request.'
-      Wait-For { [InstallerSetupProbe]::SendMessage([InstallerSetupProbe]::GetDlgItem($window,1),0xF6,[IntPtr]::Zero,[IntPtr]::Zero) -ne [IntPtr]::Zero } 'Native all-users Next did not expose its elevation image.'
-      Assert-NativeMode $window
-      Native-Command $window 1
-      Wait-For { Test-Path -LiteralPath (Join-Path $FixtureRoot 'elevation.txt') } 'The fixture did not exercise the bounded elevation-denied branch.'
-      Assert-Condition ((Read-State)[0] -eq 'mode' -and [InstallerSetupProbe]::IsWindowVisible($window)) 'Denied elevation left the native mode page.'
-      Keyboard-Choose $window $current
-      $movedRectangle=[InstallerSetupProbe]::MoveFromCenter($window)
-      [InstallerSetupProbe]::BeginRectangleWatch($window,$movedRectangle)
-      $rectangleWatching=$true
+    if($case -like 'inner-*'){
+      $rejectionExit=if($case -eq 'inner-denied'){0x666666}else{2}
+      Assert-Condition ($fixtureProcess.WaitForExit(7000) -and $fixtureProcess.ExitCode -eq $rejectionExit) "A rejected handoff did not return its expected failure code ($case, actual=$($fixtureProcess.ExitCode), expected=$rejectionExit)."
+      Assert-Condition (!(Test-Path -LiteralPath (Join-Path $FixtureRoot 'finished.txt')) -and !(Test-Path -LiteralPath (Join-Path $FixtureRoot 'state.txt'))) 'A rejected inner handoff created a setup page or wrote payload files.'
+      continue
     }
-    Native-Command $window 1
-    Wait-Page 'directory' 1
-    $edit=[IntPtr][long]$pageState[3]
-    $browse=[IntPtr][long]$pageState[4]
-    $preview=if($case -eq 'upgrade'){'installer-setup-upgrade.png'}elseif($case -eq 'short'){'installer-setup-short.png'}else{'installer-setup-directory.png'}
-    Assert-Directory $window $preview
-    if ($case -ne 'upgrade') {
-      Assert-Condition ([InstallerSetupProbe]::IsWindowEnabled($edit) -and [InstallerSetupProbe]::IsWindowEnabled($browse)) 'Fresh-install directory controls were disabled.'
-      Assert-Condition ([InstallerSetupProbe]::SendMessage($browse,0xF6,[IntPtr]::Zero,[IntPtr]::Zero) -ne [IntPtr]::Zero) 'Browse did not receive its shared rounded-button image.'
-      if ($case -eq 'fresh') {
-        Native-Command $window 3
-        Wait-Page 'mode' 2
-        Assert-NativeMode $window
-        Assert-Heading ([IntPtr][long]$pageState[2]) 9
-        Assert-PaintedPage $window @(9,10,11) 'installer-setup-mode-back.png'
-        Native-Command $window 1
-        Wait-Page 'directory' 2
-        $edit=[IntPtr][long]$pageState[3]
-        Assert-Directory $window 'installer-setup-directory-back.png'
-        Assert-Condition ([InstallerSetupProbe]::IsWindowEnabled($edit)) 'Back navigation lost the editable fresh-install directory.'
-      }
-      [void][InstallerSetupProbe]::SendText($edit,0xC,[IntPtr]::Zero,(Join-Path $FixtureRoot 'selected location'))
-      Assert-Condition ([InstallerSetupProbe]::Text($edit) -eq (Join-Path $FixtureRoot 'selected location')) 'The native directory field did not accept an edited location.'
+    Wait-For { $script:window=[InstallerSetupProbe]::Find([uint32]$fixtureProcess.Id); $window -ne [IntPtr]::Zero } 'The installer window was not created.'
+    Assert-Condition ([InstallerSetupProbe]::GetAwarenessFromDpiAwarenessContext([InstallerSetupProbe]::GetWindowDpiAwarenessContext($window)) -eq 1) 'The installer is not system DPI aware.'
+    $expectedMode='CurrentUser'
+    $expectedPath=$null
+    if($case -eq 'inner' -or $case -eq 'updated'){
+      Wait-Page 'progress'
+      Assert-Condition ($pageState[1] -eq '0') 'The elevated/updated instance showed the setup form again.'
+      if($case -eq 'inner'){
+        $expectedMode='all'
+        $expectedPath=Normalized-Path (Join-Path $FixtureRoot 'selected machine')
+      }else{$expectedPath=Normalized-Path (Join-Path $FixtureRoot 'fresh location')}
     } else {
-      Assert-Condition (![InstallerSetupProbe]::IsWindowEnabled($edit) -and ![InstallerSetupProbe]::IsWindowEnabled($browse)) 'Styling re-enabled a locked upgrade location.'
-      Assert-Condition ([InstallerSetupProbe]::Text($edit) -eq (Join-Path $FixtureRoot '已安装 软件')) 'The locked upgrade location changed.'
-      # Screen capture is optional: Windows can deny foreground activation in
-      # an unattended desktop. Required pixel checks use the native window.
-      [void][InstallerSetupProbe]::SaveScreen($window,(Join-Path $PreviewRoot 'installer-setup-upgrade-screen.png'))
+      Wait-Page 'setup'
+      Assert-Condition ($pageState[1] -eq '1') 'More than one setup page was materialized.'
+      Assert-Setup
+      $controls=@($current,$all,$edit,$browse)
+      foreach($index in @(10,11,12)){
+        $control=[IntPtr][long]$pageState[$index]
+        if([InstallerSetupProbe]::IsWindowVisible($control)){$controls+=$control}
+      }
+      $preview=if($case -eq 'fresh'){'installer-combined-setup.png'}elseif($case -eq 'english'){'installer-combined-setup-english.png'}elseif($case -like 'dpi*'){"installer-combined-$case.png"}else{$null}
+      Assert-Painted $controls $preview
+      Assert-DirectoryPresentation
+      $selectedCurrent=Join-Path $FixtureRoot 'selected current 汉字 & %value%'
+      $selectedMachine=Join-Path $FixtureRoot 'selected machine'
+      if($case -eq 'fresh'){
+        $initialPath=[InstallerSetupProbe]::Text($edit)
+        [void][InstallerSetupProbe]::PostMessage($window,0x28,$current,[IntPtr]1)
+        Wait-For { [InstallerSetupProbe]::Focused($current) } 'The scope choice could not receive focus before the padding click.'
+        [void][InstallerSetupProbe]::PostMessage($directorySurface,0x201,[IntPtr]1,[IntPtr]0x00020002)
+        [void][InstallerSetupProbe]::PostMessage($directorySurface,0x202,[IntPtr]::Zero,[IntPtr]0x00020002)
+        Wait-For { [InstallerSetupProbe]::Focused($edit) } 'Clicking the white directory padding did not focus its native edit.'
+        [void][InstallerSetupProbe]::PostMessage($window,0x112,[IntPtr]0xF020,[IntPtr]::Zero)
+        Wait-For { [InstallerSetupProbe]::IsIconic($window) } 'The combined setup did not minimize through its native system command.'
+        [void][InstallerSetupProbe]::PostMessage($window,0x112,[IntPtr]0xF120,[IntPtr]::Zero)
+        Wait-For { ![InstallerSetupProbe]::IsIconic($window) -and [InstallerSetupProbe]::IsWindowVisible($window) -and [InstallerSetupProbe]::IsWindowEnabled($window) } 'The combined setup did not restore after minimizing.'
+        Assert-Condition ([InstallerSetupProbe]::Text($edit) -eq $initialPath -and [InstallerSetupProbe]::IsWindowEnabled($browse)) 'Minimizing and restoring lost the setup path or actions.'
+        $moved=[InstallerSetupProbe]::MoveFromCenter($window)
+        [InstallerSetupProbe]::BeginRectangleWatch($window,$moved)
+        $watching=$true
+        $pathLimit=[int][IO.File]::ReadAllText((Join-Path $FixtureRoot 'path-limit.txt'))
+        foreach($invalid in @('', 'relative folder', (Join-Path (Join-Path $FixtureRoot 'existing-file') 'nested'), ($FixtureRoot + '\' + ('x'*($pathLimit+1))))){
+          Set-Path $edit $selectedCurrent
+          Set-Path $edit $invalid
+          $before=[InstallerSetupProbe]::Text($hint)
+          Native-Command $window 1
+          Wait-For { [InstallerSetupProbe]::Text($hint).Length -gt 0 -and [InstallerSetupProbe]::Focused($edit) } "Invalid directory input did not retain the form with an inline error (length=$($invalid.Length), prefix=$($invalid.Substring(0,[Math]::Min(80,$invalid.Length))))."
+          Assert-Condition ([InstallerSetupProbe]::Text($edit) -eq $invalid -and !(Test-Path -LiteralPath (Join-Path $FixtureRoot 'finished.txt'))) 'Invalid input was silently replaced or began installation.'
+          if($invalid -eq ''){
+            Keyboard-Choose $all
+            Keyboard-Choose $current
+            Wait-For { [InstallerSetupProbe]::Text($edit) -eq '' } 'Changing scope replaced an empty path draft with a default.'
+          }
+        }
+        Set-Path $edit $selectedCurrent
+        [void][InstallerSetupProbe]::PostMessage($browse,0xF5,[IntPtr]::Zero,[IntPtr]::Zero)
+        Wait-For { $script:folderDialog=[InstallerSetupProbe]::FindOther([uint32]$fixtureProcess.Id,$window); $folderDialog -ne [IntPtr]::Zero } 'The native folder picker did not open.'
+        [void][InstallerSetupProbe]::PostMessage($folderDialog,0x10,[IntPtr]::Zero,[IntPtr]::Zero)
+        Wait-For { [InstallerSetupProbe]::IsWindowEnabled($window) } 'Cancelling folder selection did not return to the combined page.'
+        Assert-Condition ([InstallerSetupProbe]::Text($edit) -eq $selectedCurrent) 'Cancelling folder selection changed the chosen path.'
+        Keyboard-Choose $all
+        Set-Path $edit $selectedMachine
+        Keyboard-Choose $current
+        Wait-For { [InstallerSetupProbe]::Text($edit) -eq $selectedCurrent } 'Changing scope lost the current-user path draft.'
+        Keyboard-Choose $all
+        Wait-For { [InstallerSetupProbe]::Text($edit) -eq $selectedMachine } 'Changing scope lost the all-users path draft.'
+        Native-Command $window 1
+        Wait-For { Test-Path -LiteralPath (Join-Path $FixtureRoot 'elevation.txt') } 'All-users installation did not request elevation.'
+        Wait-For { [InstallerSetupProbe]::IsWindowVisible($window) -and [InstallerSetupProbe]::IsWindowEnabled($window) } 'Declining elevation did not restore the existing page.'
+        Assert-Condition ([InstallerSetupProbe]::Text($edit) -eq $selectedMachine -and [InstallerSetupProbe]::SendMessage($all,0xF0,[IntPtr]::Zero,[IntPtr]::Zero).ToInt64() -eq 1) 'Declining elevation lost the scope or edited path.'
+        Keyboard-Choose $current
+        Wait-For { [InstallerSetupProbe]::Text($edit) -eq $selectedCurrent } 'Retrying as current user lost its draft.'
+      } elseif($case -eq 'mixed-scope'){
+        Assert-Condition (![InstallerSetupProbe]::IsWindowEnabled($edit) -and ![InstallerSetupProbe]::IsWindowEnabled($browse)) 'The registered current-user path was not locked.'
+        Keyboard-Choose $all
+        Assert-Condition ([InstallerSetupProbe]::IsWindowEnabled($edit) -and [InstallerSetupProbe]::IsWindowEnabled($browse)) 'Switching to a fresh scope did not enable its controls.'
+        Assert-DirectoryPresentation
+        Assert-Painted $controls 'installer-directory-editable.png'
+        Keyboard-Choose $current
+        Assert-Condition (![InstallerSetupProbe]::IsWindowEnabled($edit) -and ![InstallerSetupProbe]::IsWindowEnabled($browse)) 'Switching back to a registered scope did not lock its controls.'
+        Assert-DirectoryPresentation
+        Assert-Painted $controls 'installer-directory-locked.png'
+        $expectedPath=Join-Path $FixtureRoot '已安装 软件'
+      } elseif($case -eq 'upgrade'){
+        Assert-Condition (![InstallerSetupProbe]::IsWindowEnabled($edit) -and ![InstallerSetupProbe]::IsWindowEnabled($browse)) 'An existing installation was not locked.'
+        Assert-Condition ([InstallerSetupProbe]::Text($edit) -eq (Join-Path $FixtureRoot '已安装 软件')) 'The registered user path was not selected.'
+        Keyboard-Choose $all
+        Wait-For { [InstallerSetupProbe]::Text($edit) -eq (Join-Path $FixtureRoot 'machine existing') } 'Changing scope did not select its registered machine path.'
+        Assert-Condition (![InstallerSetupProbe]::IsWindowEnabled($edit) -and ![InstallerSetupProbe]::IsWindowEnabled($browse)) 'Changing scope unlocked an existing installation.'
+        Keyboard-Choose $current
+        $expectedPath=Join-Path $FixtureRoot '已安装 软件'
+      } else {
+        Set-Path $edit $selectedCurrent
+      }
+      if($case -eq 'forced-current'){
+        Assert-Condition (![InstallerSetupProbe]::IsWindowEnabled($all)) 'Forced current-user setup allowed an all-users selection.'
+      }
+      if($case -eq 'forced-all' -or $case -eq 'handoff'){
+        $expectedMode='all'
+        Set-Path $edit $selectedMachine
+        Assert-Condition (![InstallerSetupProbe]::IsWindowEnabled($current)) 'Forced all-users setup allowed a current-user selection.'
+        Native-Command $window 1
+        Wait-For { Test-Path -LiteralPath (Join-Path $FixtureRoot 'elevation.txt') } 'Forced all-users setup never requested elevation.'
+        if($case -eq 'handoff'){
+          Assert-Condition ($fixtureProcess.WaitForExit(7000) -and $fixtureProcess.ExitCode -eq 0) 'Successful elevation handoff did not finish the outer instance.'
+          Assert-Condition (!(Test-Path -LiteralPath (Join-Path $FixtureRoot 'finished.txt'))) 'The handoff outer instance wrote application files.'
+          $handoff=[IO.File]::ReadAllText((Join-Path $FixtureRoot 'elevation.txt'),[Text.Encoding]::Unicode)
+          Assert-Condition ($handoff -eq "$(Normalized-Path $selectedMachine)|all") 'The selected directory was not available before elevation.'
+          Assert-ClosedResources
+          continue
+        }
+        Wait-For { [InstallerSetupProbe]::IsWindowVisible($window) -and [InstallerSetupProbe]::IsWindowEnabled($window) } 'Cancelling forced elevation closed the form.'
+        Assert-Condition ([InstallerSetupProbe]::Text($edit) -eq $selectedMachine -and !$fixtureProcess.HasExited) 'Cancelling forced elevation changed the path or exited.'
+        Native-Command $window 2
+        Assert-Condition ($fixtureProcess.WaitForExit(7000)) 'The declined-elevation form did not close on explicit Cancel.'
+        Assert-ClosedResources
+        continue
+      }
+      if(!$expectedPath){$expectedPath=Normalized-Path $selectedCurrent}
+      Native-Command $window 1
+      Wait-Page 'progress'
+      Assert-Condition ($pageState[1] -eq '1') 'Installation passed through another scope or directory page.'
+      if($watching){
+        $transient=[InstallerSetupProbe]::EndRectangleWatch()
+        $watching=$false
+        Assert-Condition ([string]::IsNullOrEmpty($transient) -and [InstallerSetupProbe]::Rectangle($window) -eq $moved) "The window jumped after selecting Install: $transient"
+      }
     }
+    Wait-For { (Test-Path -LiteralPath (Join-Path $FixtureRoot 'finished.txt')) -and [InstallerSetupProbe]::IsWindowEnabled([InstallerSetupProbe]::GetDlgItem($window,1)) } 'The harmless installation section did not finish.'
+    $finished=[IO.File]::ReadAllText((Join-Path $FixtureRoot 'finished.txt'),[Text.Encoding]::Unicode) -split '\|'
+    Assert-Condition ($finished[0] -eq $expectedMode -and $finished[1] -eq $expectedPath) "Wrong final mode or installation directory ($case): $($finished -join '|') expected=$expectedMode|$expectedPath"
+    if($case -eq 'inner'){Assert-Condition ($finished[2] -eq '1') 'The elevated inner instance skipped the occupancy preflight.'}
+    Assert-Condition (![InstallerSetupProbe]::HasVisibleArea([InstallerSetupProbe]::GetDlgItem($window,3))) 'The installation result exposed Back.'
+    Assert-Condition ([InstallerSetupProbe]::IsWindowVisible([IntPtr][long]$pageState[8]) -and ![InstallerSetupProbe]::IsWindowVisible([InstallerSetupProbe]::GetDlgItem([IntPtr][long]$pageState[2],1027))) 'Installation did not show its log directly or retained the details link.'
     Native-Command $window 1
-    Wait-Page 'progress' 1
-    if ($rectangleWatching) {
-      $transientRectangle=[InstallerSetupProbe]::EndRectangleWatch()
-      $rectangleWatching=$false
-      Assert-Condition ([string]::IsNullOrEmpty($transientRectangle)) "Navigation briefly moved or resized a dragged setup window: expected=$movedRectangle observed=$transientRectangle."
-      Assert-Condition ([InstallerSetupProbe]::Rectangle($window) -eq $movedRectangle) 'Entering installation did not preserve the dragged window rectangle.'
-    }
-    Assert-Condition ([InstallerSetupProbe]::CaptionDivider($window,[IntPtr][long]$pageState[2])) 'The installation page lost the shared caption divider.'
-    $reset=([IO.File]::ReadAllText((Join-Path $FixtureRoot 'reset.txt'))) -split '\|'
-    Assert-Condition ($reset.Count -eq 17 -and @($reset[0..14] | Where-Object { $_ -ne '0' }).Count -eq 0 -and $reset[15] -eq $reset[16]) 'Setup kept owned resources, navigation images or its font when entering progress.'
-    Wait-For { (Test-Path -LiteralPath (Join-Path $FixtureRoot 'finished.txt')) -and [InstallerSetupProbe]::IsWindowEnabled([InstallerSetupProbe]::GetDlgItem($window,1)) } 'The harmless fixture install section did not finish.'
-    Assert-Condition ([InstallerSetupProbe]::TintedCaption($window)) ('The installation page lost the tinted native caption: ' + [InstallerSetupProbe]::LastRegion)
-    if ($case -ne 'short') {
-      Assert-Condition ([InstallerSetupProbe]::HasCompactCanvas($window)) 'The installation page grew beyond the compact wizard canvas.'
-    }
-    $nativeBack=[InstallerSetupProbe]::GetDlgItem($window,3)
-    Assert-Condition ($nativeBack -ne [IntPtr]::Zero -and ![InstallerSetupProbe]::HasVisibleArea($nativeBack) -and ![InstallerSetupProbe]::IsWindowEnabled($nativeBack)) 'The completed installation page exposed a legacy Back button or changed its native disabled state.'
-    if ($case -eq 'fresh') {
-      $progressPage=[IntPtr][long]$pageState[2]
-      $scene=[IntPtr][long]$pageState[3]
-      Assert-Condition ([InstallerSetupProbe]::FullHero($window,$progressPage,$scene,[IntPtr][long]$pageState[4],[IntPtr][long]$pageState[5])) 'The installation window clips the complete orbit canvas or overlaps it with the title.'
-      # Seek a real native AVI frame whose blue head reaches the lower orbit.
-      # Checking geometry alone would not catch clipping inside SysAnimate32.
-      [void][InstallerSetupProbe]::SendMessage($scene,0x465,[IntPtr]1,[IntPtr]0x00540054)
-      Wait-For { [InstallerSetupProbe]::PaintedLowerOrbit($window,$scene) } ('The lower blue orbit was not painted in the native player: ' + [InstallerSetupProbe]::LastRegion)
-      [InstallerSetupProbe]::SaveWindow($window,(Join-Path $PreviewRoot 'installer-setup-orbit-frame.png'))
-      $log=[IntPtr][long]$pageState[8]
-      $details=[InstallerSetupProbe]::GetDlgItem($progressPage,1027)
-      [void][InstallerSetupProbe]::PostMessage($details,0xF5,[IntPtr]::Zero,[IntPtr]::Zero)
-      Wait-For { [InstallerSetupProbe]::IsWindowVisible($log) } 'Native details did not open in the compact installer.'
-      Assert-Condition ([InstallerSetupProbe]::LogShowsTwoRows($progressPage,$log)) ('The compact installer no longer shows two complete native log rows: ' + [InstallerSetupProbe]::LastRegion)
-    }
-    $installed=[IO.File]::ReadAllText((Join-Path $FixtureRoot 'finished.txt'),[Text.Encoding]::Unicode)
-    $expected=if($case -eq 'upgrade'){Join-Path $FixtureRoot '已安装 软件'}else{Join-Path $FixtureRoot 'selected location'}
-    Assert-Condition ($installed -eq $expected) "Presentation changed the selected native installation path ($case): actual=$installed expected=$expected."
-    Native-Command $window 1
-    Assert-Condition ($fixtureProcess.WaitForExit(7000)) 'Setup did not close after the harmless fixture section.'
-    Assert-Condition ($fixtureProcess.ExitCode -eq 0) 'Setup fixture returned a failure.'
-    $motions=[IO.File]::ReadAllLines((Join-Path $FixtureRoot 'motion.txt'))
-    Assert-Condition (($motions -join '|') -eq 'open|close') ('The wizard must enter once and must not replay window motion during page navigation: ' + ($motions -join '|'))
-    $closed=([IO.File]::ReadAllText((Join-Path $FixtureRoot 'closed.txt'))) -split '\|'
-    Assert-Condition ($closed.Count -eq 12 -and @($closed | Where-Object { $_ -ne '0' }).Count -eq 0) 'Setup decoration resources were not cleared on GUI end.'
+    Assert-Condition ($fixtureProcess.WaitForExit(7000) -and $fixtureProcess.ExitCode -eq 0) 'The result did not close normally.'
+    Assert-ClosedResources
   } catch {
-    if ($window -ne [IntPtr]::Zero -and !$fixtureProcess.HasExited) {
-      [void][InstallerSetupProbe]::SaveScreen($window,(Join-Path $PreviewRoot 'installer-setup-failure-screen.png'))
-      [InstallerSetupProbe]::SaveWindow($window,(Join-Path $PreviewRoot 'installer-setup-failure.png'))
+    if($window -ne [IntPtr]::Zero -and !$fixtureProcess.HasExited){
+      [InstallerSetupProbe]::SaveWindow($window,(Join-Path $PreviewRoot 'installer-combined-failure.png'))
     }
     throw
   } finally {
-    if ($rectangleWatching) { [void][InstallerSetupProbe]::EndRectangleWatch() }
-    if (!$fixtureProcess.HasExited) { Stop-Process -Id $fixtureProcess.Id -Force }
+    if($watching){[void][InstallerSetupProbe]::EndRectangleWatch()}
+    if(!$fixtureProcess.HasExited){Stop-Process -Id $fixtureProcess.Id -Force}
     $fixtureProcess.Dispose()
   }
 }
-Write-Output 'setup presentation checks passed'
+Write-Output 'combined setup presentation checks passed'

@@ -12,7 +12,7 @@ const powershell = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32/
 // windows can be throttled by Windows even while ACM_ISPLAYING returns true.
 describe.runIf(process.platform === 'win32' && existsSync(compiler)
   && process.env.INSTALLER_PRESENTATION_NATIVE_UI === '1')('native installer presentation', () => {
-  it('keeps time during blocked work, opens lower details, fits short work areas and stops at terminal states', () => {
+  it('keeps time through blocked work and minimizing, shows details directly, fits short work areas and stops at terminal states', () => {
     const buildRoot = path.join(repoRoot, 'build');
     mkdirSync(buildRoot, { recursive: true });
     const root = mkdtempSync(path.join(buildRoot, 'installer-presentation-test-'));
@@ -32,7 +32,7 @@ describe.runIf(process.platform === 'win32' && existsSync(compiler)
       const source = [
         'Unicode true',
         'RequestExecutionLevel user',
-        'ShowInstDetails hide',
+        'ShowInstDetails show',
         'Name "Installer presentation fixture"',
         `OutFile "${executable}"`,
         '!include "LogicLib.nsh"',
@@ -142,15 +142,23 @@ describe.runIf(process.platform === 'win32' && existsSync(compiler)
         'FunctionEnd',
         'Function FixtureShow',
         '  Call InstallerPresentationShow',
-        '  Push $0', '  Push $1', '  Push $2', '  Push $3',
+        '  Push $0', '  Push $1', '  Push $2', '  Push $3', '  Push $4', '  Push $5',
         "  System::Call 'comctl32::ImageList_GetIconSize(p $InstallerLogSpacingImages, *i .r0, *i .r1)i.r2'",
         `  FileOpen $3 "${root}\\log-spacing.txt" w`,
         '  FileWrite $3 "$0|$1|$2|$InstallerDpi"',
         '  FileClose $3',
+        '  System::Alloc 92', '  Pop $4',
+        '  SendMessage $JustDoInstallLog 0x0031 0 0 $5',
+        "  System::Call 'gdi32::GetObjectW(p r5, i 92, p r4)i.r2'",
+        "  System::Call '*$4(i .r0)'", '  IntOp $1 $4 + 26',
+        "  System::Call '*$1(&i1 .r1)'",
+        `  FileOpen $3 "${root}\\log-font.txt" w`,
+        '  FileWrite $3 "$0|$1|$2|$5"', '  FileClose $3',
+        '  System::Free $4',
         `  FileOpen $3 "${root}\\footer.txt" w`,
         '  FileWrite $3 "$InstallerStepCheck|$InstallerStepWrite|$InstallerStepDone|$JustDoShowLogButton|$JustDoInstFilesPage|$JustDoInstallLog"',
         '  FileClose $3',
-        '  Pop $3', '  Pop $2', '  Pop $1', '  Pop $0',
+        '  Pop $5', '  Pop $4', '  Pop $3', '  Pop $2', '  Pop $1', '  Pop $0',
         '  ClearErrors',
         '  ShowWindow $HWNDPARENT 4', // SW_SHOWNOACTIVATE; visible, no focus request.
         'FunctionEnd',
