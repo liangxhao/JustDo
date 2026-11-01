@@ -104,7 +104,10 @@ type HistoryHandler = (request: {
 }) => Promise<void>;
 
 const temporaryStateDirs = new Set<string>();
+const retireRegistrations = new Set<() => void>();
 afterEach(() => {
+  for (const retire of retireRegistrations) retire();
+  retireRegistrations.clear();
   const base = path.resolve(os.tmpdir()) + path.sep;
   for (const directory of temporaryStateDirs) {
     if (
@@ -128,17 +131,36 @@ function registerPlugin() {
   const registerTrustedToolPolicy = vi.fn();
   const registerService = vi.fn();
   const registerRuntimeLifecycle = vi.fn();
+  const registration = new AbortController();
+  const disposers = new Set<() => void>();
+  retireRegistrations.add(() => {
+    registration.abort();
+    for (const dispose of [...disposers]) dispose();
+    disposers.clear();
+  });
   runtimeServicesPlugin.register({
+    id: runtimeServicesPlugin.id,
     config: { memory: { search: { enabled: false } } },
     on: (name: string, hook: Hook) => hooks.set(name, hook),
     agent: { events: { emitAgentEvent } },
     session: { state: { registerSessionExtension: vi.fn() } },
     runtime: {
-      events: { onAgentEvent: vi.fn() },
+      events: { onAgentEvent: vi.fn(() => vi.fn()) },
       state: { resolveStateDir: () => stateDir },
       config: { current: () => ({}) },
     },
-    lifecycle: { registerRuntimeLifecycle },
+    lifecycle: {
+      signal: registration.signal,
+      onDispose(cleanup: () => void) {
+        disposers.add(cleanup);
+        return () => { disposers.delete(cleanup); };
+      },
+      runInBackgroundContext<T>(run: () => T): T {
+        registration.signal.throwIfAborted();
+        return run();
+      },
+      registerRuntimeLifecycle,
+    },
     registerTrustedToolPolicy,
     registerTool,
     registerProvider: vi.fn(),

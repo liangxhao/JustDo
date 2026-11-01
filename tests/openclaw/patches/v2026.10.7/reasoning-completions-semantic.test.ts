@@ -11,6 +11,7 @@ import { beforeAll, describe, expect, it, type Mock, vi } from 'vitest';
 import { createChatTranscriptState } from '../../../../src/renderer/libs/openclaw-chat/model/chat-transcript-state';
 import { projectTurnItems } from '../../../../src/renderer/libs/openclaw-chat/model/timeline/project-turn-items';
 import { reduceAgentEvent } from '../../../../src/renderer/libs/openclaw-chat/model/turn/agent-event-reducer';
+import { resolveReasoningRuntime } from './reasoning-runtime';
 
 type Message = {
   content: Array<{ type: string; text?: string; thinking?: string; textSignature?: string; arguments?: unknown }>;
@@ -53,7 +54,7 @@ type SubscriberApi = {
 const { transform, CONTRACT } = require('../../../../scripts/patches/v2026.10.7/028-reasoning-completions-streaming.cjs').__testing;
 const { transform: transformCommentary } = require('../../../../scripts/patches/v2026.10.7/034-commentary-block-ownership.cjs').__testing;
 const { functionRange } = require('../../../../scripts/patches/v2026.10.7/prepared-read-patch-shapes.js');
-const runtime = process.env.JUSTDO_EXECUTION_PRISTINE_DIR ?? process.env.OPENCLAW_TEST_NATIVE_RUNTIME_DIR ?? path.resolve('build/runtimes/openclaw/win-x64');
+const runtime = resolveReasoningRuntime();
 const runtimeNodeModules = path.join(process.env.OPENCLAW_RUNTIME_DIR ?? runtime, 'node_modules');
 const ai = path.join(runtime, 'node_modules/@openclaw/ai/dist');
 const transport = fs.readdirSync(ai).find(name => /^openai-completions-transport-.*\.mjs$/.test(name))!;

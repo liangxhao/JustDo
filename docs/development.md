@@ -82,7 +82,20 @@ npm run compile:electron
 npm test
 ```
 
-`npm test` 会先将 better-sqlite3 切到 Node ABI，结束后恢复 Electron ABI。不要与依赖该模块的开发会话或原生重建并行执行。需要手动修复 Electron 原生依赖时运行 `npm run rebuild:electron-native`。
+`npm test` 先应用仓库已有的依赖补丁，再为本次测试准备独立的 Node SQLite 模块；
+不替换应用的 Electron 原生二进制，因此运行中的桌面实例不会与测试争用该文件。
+模块在真实 Node 子进程中创建内存数据库验证，通过后传入主工程和独立插件测试，
+全部子进程退出后只清理本次拥有的目录。准备细节见[离线下载清单](offline-downloads.md#测试用-node-sqlite)。
+显式设置 `SQLITE_TEST_MODULE` 可以使用已经准备好的兼容模块；运行器仍验证它，但不删除外部模块。
+需要修复应用的 Electron 原生依赖时运行 `npm run rebuild:electron-native`。
+
+默认全量运行会执行主工程和所有独立 App 插件测试，即使其中某个套件失败也继续收集其余结果，
+最终只要存在失败就返回失败。使用 `npm test -- <测试文件>` 只执行指定范围。
+
+原生 reasoning 测试优先选择已准备的锁定版本构建目录，其次选择
+`vendor/openclaw-runtime/current`。显式的 `JUSTDO_EXECUTION_PRISTINE_DIR` 或
+`OPENCLAW_TEST_NATIVE_RUNTIME_DIR` 不可用、选中的产物不完整或版本不匹配时明确失败，
+不会悄悄改用另一份运行时或跳过必需覆盖。当前补丁形态继续由实际转换与原生行为测试核验。
 
 仅修改文档时运行 `git diff --check`，并检查改动 Markdown 的格式和本地链接；不需要构建或运行全量测试。
 

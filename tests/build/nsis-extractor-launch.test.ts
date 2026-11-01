@@ -162,6 +162,7 @@ describe.runIf(process.platform === 'win32' && existsSync(compiler))('native hid
         'Function JustDoCleanupExtractorEnvironment', 'FunctionEnd',
         // This silent cleanup fixture exercises the progress-file guard only.
         // Presentation teardown is covered by the native presentation fixture.
+        'Function InstallerSetupDestroy', 'FunctionEnd',
         'Function InstallerPresentationDestroy', 'FunctionEnd',
         'Function JustDoWriteInstallSessionEnd', 'FunctionEnd', onGuiEnd,
         'Section', `SetOutPath "${root}"`,

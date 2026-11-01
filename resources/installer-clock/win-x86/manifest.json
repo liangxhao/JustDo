@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "fingerprint": "77ec6ec69baee454c506fff52f19eaf6430d548a7cf0b80854294c1a06e5d7c6",
+  "fingerprint": "2ad0040b2c02f417ec2bbc0985a2ff313ec2f0c5779cd3279dffeb59959d74bd",
   "inputs": {
     "schemaVersion": 1,
     "target": "win32-ia32",
@@ -17,8 +17,8 @@
       },
       {
         "path": "scripts/packaging/installer-clock-assets.cjs",
-        "size": 15984,
-        "sha256": "a820cdd1a13039b1f6ea24eeaf530de9a839a5d923d2b77cbfa7d77891ad319e"
+        "size": 19564,
+        "sha256": "a128f0c58612611317734354fa21d82a716541f708afa5a67703028b9c588260"
       }
     ],
     "compileFlags": [

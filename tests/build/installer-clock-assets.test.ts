@@ -21,6 +21,8 @@ const {
   rebuildInstallerClockAssets,
   buildInstallerClockAssets,
   discoverToolchain,
+  publishClockAssets,
+  removeStaging,
 } = require('../../scripts/packaging/installer-clock-assets.cjs');
 let toolchainAvailable = false;
 if (process.platform === 'win32') {
@@ -57,6 +59,23 @@ function bundledFixture(): string {
     copyFileSync(path.join(bundledDirectory(repoRoot), name), path.join(directory, name));
   }
   return root;
+}
+
+function publicationFixture() {
+  const root = bundledFixture();
+  const bundled = bundledDirectory(root);
+  const fingerprint = JSON.parse(readFileSync(path.join(bundled, 'manifest.json'), 'utf8')).fingerprint;
+  const cacheRoot = path.join(root, 'build', 'installer-clock');
+  mkdirSync(cacheRoot, { recursive: true });
+  const staging = mkdtempSync(path.join(cacheRoot, '.clock-staging-'));
+  for (const name of ['installer-clock.dll', 'manifest.json']) {
+    copyFileSync(path.join(bundled, name), path.join(staging, name));
+  }
+  const directory = path.join(cacheRoot, fingerprint);
+  const refused = (extra = {}) => Object.assign(new Error('Publish refused'), {
+    code: 'EPERM', syscall: 'rename', path: staging, dest: directory, ...extra,
+  });
+  return { root, staging, directory, fingerprint, refused };
 }
 
 function peTables(bytes: Buffer): { imports: string[]; exports: string[] } {
@@ -102,6 +121,127 @@ afterEach(() => {
 });
 
 describe('bundled installer clock assets', () => {
+  it('retries a refused Windows publish while retaining the verified staging artifact', () => {
+    const f = publicationFixture();
+    const rename = vi.fn().mockImplementationOnce(() => { throw f.refused(); }).mockReturnValue(undefined);
+    const wait = vi.fn();
+    expect(publishClockAssets(f.root, f.staging, f.directory, f.fingerprint, { rename, wait, platform: 'win32' })).toBe(false);
+    expect(rename).toHaveBeenCalledTimes(2);
+    expect(wait).toHaveBeenCalledExactlyOnceWith(50);
+    expect(readFileSync(path.join(f.staging, 'installer-clock.dll'))).toEqual(readFileSync(path.join(bundledDirectory(f.root), 'installer-clock.dll')));
+  });
+
+  it('bounds a permanent Windows publish lock and preserves its original failure', () => {
+    const f = publicationFixture();
+    const failure = f.refused({ code: 'EBUSY' });
+    const rename = vi.fn(() => { throw failure; });
+    const wait = vi.fn();
+    expect(() => publishClockAssets(f.root, f.staging, f.directory, f.fingerprint, { rename, wait, platform: 'win32' })).toThrow(failure);
+    expect(rename).toHaveBeenCalledTimes(6);
+    expect(wait.mock.calls.map(([ms]) => ms)).toEqual([50, 100, 150, 200, 250]);
+    expect(existsSync(f.directory)).toBe(false);
+    expect(existsSync(path.join(f.staging, 'installer-clock.dll'))).toBe(true);
+  });
+
+  it.each(['unrelated error', 'different rename', 'non-Windows'])('does not retry an %s publication failure', kind => {
+    const f = publicationFixture();
+    const failure = f.refused(kind === 'unrelated error' ? { code: 'EIO' } : kind === 'different rename' ? { path: 'another-stage' } : {});
+    const rename = vi.fn(() => { throw failure; });
+    const wait = vi.fn();
+    expect(() => publishClockAssets(f.root, f.staging, f.directory, f.fingerprint, {
+      rename, wait, platform: kind === 'non-Windows' ? 'linux' : 'win32',
+    })).toThrow(failure);
+    expect(rename).toHaveBeenCalledOnce();
+    expect(wait).not.toHaveBeenCalled();
+  });
+
+  it('stops before a retry if the owned staging identity changes', () => {
+    const f = publicationFixture();
+    const fs = require('node:fs');
+    const actualStat = fs.lstatSync;
+    let replaced = false;
+    vi.spyOn(fs, 'lstatSync').mockImplementation((filename: string, options: { bigint?: boolean }) => {
+      const stat = actualStat(filename, options);
+      return replaced && filename === f.staging && options?.bigint ? { ...stat, ino: stat.ino + 1n } : stat;
+    });
+    const rename = vi.fn(() => { throw f.refused(); });
+    expect(() => publishClockAssets(f.root, f.staging, f.directory, f.fingerprint, {
+      rename, platform: 'win32', wait: () => { replaced = true; },
+    })).toThrow('staging artifact changed');
+    expect(rename).toHaveBeenCalledOnce();
+    expect(existsSync(f.directory)).toBe(false);
+  });
+
+  it('accepts a concurrent publisher only when its complete artifact is verified', () => {
+    const f = publicationFixture();
+    mkdirSync(f.directory);
+    for (const name of ['installer-clock.dll', 'manifest.json']) {
+      copyFileSync(path.join(f.staging, name), path.join(f.directory, name));
+    }
+    const failure = f.refused({ code: 'EEXIST' });
+    const rename = vi.fn(() => { throw failure; });
+    const wait = vi.fn();
+    expect(publishClockAssets(f.root, f.staging, f.directory, f.fingerprint, { rename, wait })).toBe(true);
+    expect(rename).toHaveBeenCalledOnce();
+    expect(wait).not.toHaveBeenCalled();
+    writeFileSync(path.join(f.directory, 'installer-clock.dll'), 'damaged concurrent artifact');
+    expect(() => publishClockAssets(f.root, f.staging, f.directory, f.fingerprint, { rename, wait })).toThrow(failure);
+    expect(wait).not.toHaveBeenCalled();
+  });
+
+  it('rejects rewritten staged bytes even when their new manifest is internally valid', () => {
+    const f = publicationFixture();
+    const rename = vi.fn().mockImplementationOnce(() => { throw f.refused(); }).mockReturnValue(undefined);
+    const wait = () => {
+      const dllPath = path.join(f.staging, 'installer-clock.dll');
+      const manifestPath = path.join(f.staging, 'manifest.json');
+      const bytes = Buffer.concat([readFileSync(dllPath), Buffer.from([0])]);
+      const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+      manifest.dll = { size: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') };
+      writeFileSync(dllPath, bytes);
+      writeFileSync(manifestPath, JSON.stringify(manifest));
+    };
+    expect(() => publishClockAssets(f.root, f.staging, f.directory, f.fingerprint, { rename, wait, platform: 'win32' })).toThrow('staging artifact changed');
+    expect(rename).toHaveBeenCalledOnce();
+    expect(existsSync(f.directory)).toBe(false);
+  });
+
+  it('rejects a replaced staged file even when its bytes remain unchanged', () => {
+    const f = publicationFixture();
+    const fs = require('node:fs');
+    const actualStat = fs.lstatSync;
+    const dllPath = path.join(f.staging, 'installer-clock.dll');
+    let replaced = false;
+    vi.spyOn(fs, 'lstatSync').mockImplementation((filename: string, options: { bigint?: boolean }) => {
+      const stat = actualStat(filename, options);
+      return replaced && filename === dllPath && options?.bigint
+        ? Object.assign(Object.create(Object.getPrototypeOf(stat)), stat, { ino: stat.ino + 1n })
+        : stat;
+    });
+    const rename = vi.fn().mockImplementationOnce(() => { throw f.refused(); }).mockReturnValue(undefined);
+    expect(() => publishClockAssets(f.root, f.staging, f.directory, f.fingerprint, {
+      rename, platform: 'win32', wait: () => { replaced = true; },
+    })).toThrow('staging artifact changed');
+    expect(rename).toHaveBeenCalledOnce();
+    expect(existsSync(f.directory)).toBe(false);
+  });
+
+  it('preserves a replacement staging directory during cleanup', () => {
+    const f = publicationFixture();
+    const fs = require('node:fs');
+    const actualStat = fs.lstatSync;
+    const owned = actualStat(f.staging, { bigint: true });
+    vi.spyOn(fs, 'lstatSync').mockImplementation((filename: string, options: { bigint?: boolean }) => {
+      const stat = actualStat(filename, options);
+      return filename === f.staging && options?.bigint
+        ? Object.assign(Object.create(Object.getPrototypeOf(stat)), stat, { ino: stat.ino + 1n })
+        : stat;
+    });
+    removeStaging(f.staging, path.dirname(f.staging), f.root, owned);
+    expect(existsSync(path.join(f.staging, 'installer-clock.dll'))).toBe(true);
+    expect(existsSync(path.join(f.staging, 'manifest.json'))).toBe(true);
+  });
+
   it('prepares a relocated checkout without build caches, compiler discovery or subprocesses', () => {
     const root = bundledFixture();
     const childProcess = require('node:child_process');

@@ -163,7 +163,7 @@ test.skipIf(!projectionFile)(
     expect(failedNormalized[0]).toMatchObject({
       role: 'system',
       isError: true,
-      content: message.errorMessage,
+      content: `The agent run failed before producing a reply.\n${message.errorMessage}`,
     });
     expect(JSON.stringify(failedNormalized)).not.toContain(
       '[assistant turn failed before producing content]',

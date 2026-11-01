@@ -18,6 +18,70 @@ const LINK_FLAGS = [
   '/NOLOGO', '/DLL', '/NOENTRY', '/NODEFAULTLIB', '/MACHINE:X86', '/DYNAMICBASE',
   '/NXCOMPAT', '/SAFESEH', '/INCREMENTAL:NO', '/OPT:REF', '/OPT:ICF', '/Brepro',
 ];
+const CLOCK_RENAME_MAX_RETRIES = 5;
+const CLOCK_RENAME_RETRY_DELAY_MS = 50;
+
+function publicationFileProof(filename) {
+  const linked = fs.lstatSync(filename, { bigint: true });
+  if (!linked.isFile() || linked.isSymbolicLink()) throw new Error('Installer clock staging artifact changed before publication.');
+  const descriptor = fs.openSync(filename, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
+  try {
+    const before = fs.fstatSync(descriptor, { bigint: true });
+    const bytes = fs.readFileSync(descriptor);
+    const after = fs.fstatSync(descriptor, { bigint: true });
+    const current = fs.lstatSync(filename, { bigint: true });
+    if (!current.isFile() || current.isSymbolicLink() || before.dev !== linked.dev || before.ino !== linked.ino
+        || ['dev', 'ino', 'size', 'mtimeNs', 'ctimeNs'].some(key => before[key] !== after[key] || after[key] !== current[key])
+        || BigInt(bytes.length) !== after.size) {
+      throw new Error('Installer clock staging artifact changed before publication.');
+    }
+    return { dev: before.dev, ino: before.ino, size: bytes.length, sha256: digest(bytes) };
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
+function publishClockAssets(root, staging, directory, fingerprint, options = {}) {
+  const rename = options.rename || fs.renameSync;
+  const wait = options.wait || (ms => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms));
+  const platform = options.platform || process.platform;
+  assertManagedDirectory(root, staging);
+  assertManagedDirectory(root, directory);
+  const owned = fs.lstatSync(staging, { bigint: true });
+  const names = [DLL_NAME, 'manifest.json'].sort();
+  const files = names.map(name => ({ name, ...publicationFileProof(path.join(staging, name)) }));
+  for (let attempt = 0; ; attempt += 1) {
+    assertManagedDirectory(root, staging);
+    assertManagedDirectory(root, directory);
+    const current = fs.lstatSync(staging, { bigint: true });
+    if (current.dev !== owned.dev || current.ino !== owned.ino || !readPrepared(staging, fingerprint, root)) {
+      throw new Error('Installer clock staging artifact changed before publication.');
+    }
+    const currentNames = fs.readdirSync(staging).sort();
+    if (currentNames.length !== names.length || currentNames.some((name, index) => name !== names[index])) {
+      throw new Error('Installer clock staging artifact changed before publication.');
+    }
+    for (const file of files) {
+      const proof = publicationFileProof(path.join(staging, file.name));
+      if (['dev', 'ino', 'size', 'sha256'].some(key => proof[key] !== file[key])) {
+        throw new Error('Installer clock staging artifact changed before publication.');
+      }
+    }
+    try {
+      rename(staging, directory);
+      return false;
+    } catch (error) {
+      const exactRename = error?.syscall === 'rename' && error.path === staging && error.dest === directory;
+      const refusal = exactRename && ['EPERM', 'EBUSY'].includes(error.code);
+      const collision = exactRename && ['EEXIST', 'ENOTEMPTY'].includes(error.code);
+      if ((refusal || collision) && readPrepared(directory, fingerprint, root)) return true;
+      if (platform !== 'win32' || !refusal || attempt >= CLOCK_RENAME_MAX_RETRIES) throw error;
+      // A closed, verified DLL can still be held briefly by a Windows scanner.
+      // Retry only this exact refused publish, retaining the same owned stage.
+      wait(CLOCK_RENAME_RETRY_DELAY_MS * (attempt + 1));
+    }
+  }
+}
 
 function digest(bytes) {
   return crypto.createHash('sha256').update(bytes).digest('hex');
@@ -188,11 +252,13 @@ function readPrepared(directory, fingerprint, root) {
   }
 }
 
-function removeStaging(directory, cacheRoot, root) {
+function removeStaging(directory, cacheRoot, root, owned) {
   if (path.dirname(path.resolve(directory)) !== path.resolve(cacheRoot)
       || !path.basename(directory).startsWith('.clock-staging-')) {
     throw new Error('Installer clock staging cleanup escaped its build directory.');
   }
+  const current = fs.lstatSync(directory, { bigint: true });
+  if (!current.isDirectory() || current.isSymbolicLink() || current.dev !== owned.dev || current.ino !== owned.ino) return;
   assertManagedDirectory(root, directory);
   fs.rmSync(directory, { recursive: true, force: true });
 }
@@ -222,6 +288,7 @@ function buildInstallerClockAssets(repoRoot) {
   fs.mkdirSync(cacheRoot, { recursive: true });
   assertManagedDirectory(root, cacheRoot);
   const staging = fs.mkdtempSync(path.join(cacheRoot, '.clock-staging-'));
+  const ownedStaging = fs.lstatSync(staging, { bigint: true });
   try {
     const object = path.join(staging, 'installer-clock.obj');
     const dll = path.join(staging, DLL_NAME);
@@ -253,17 +320,9 @@ function buildInstallerClockAssets(repoRoot) {
     if (fs.existsSync(directory)) {
       fs.renameSync(directory, path.join(cacheRoot, `.clock-invalid-${crypto.randomUUID()}`));
     }
-    try {
-      assertManagedDirectory(root, staging);
-      assertManagedDirectory(root, directory);
-      fs.renameSync(staging, directory);
-    } catch (error) {
-      if (!readPrepared(directory, fingerprint, root)) throw error;
-      return result(true);
-    }
-    return result(false);
+    return result(publishClockAssets(root, staging, directory, fingerprint));
   } finally {
-    if (fs.existsSync(staging)) removeStaging(staging, cacheRoot, root);
+    if (fs.existsSync(staging)) removeStaging(staging, cacheRoot, root, ownedStaging);
   }
 }
 
@@ -364,4 +423,6 @@ if (require.main === module) {
 module.exports = {
   prepareInstallerClockAssets, rebuildInstallerClockAssets, buildInstallerClockAssets,
   discoverToolchain, inspectClockDll,
+  publishClockAssets,
+  removeStaging,
 };

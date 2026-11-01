@@ -1,22 +1,19 @@
 const { spawnSync } = require('node:child_process');
 const path = require('node:path');
 const { discoverAppPluginTestSuites } = require('./app-plugin-test-suites.cjs');
+const { prepareSqliteTestModule } = require('./sqlite-test-module.cjs');
 
 const projectRoot = path.resolve(__dirname, '../..');
-const npmCli = process.env.npm_execpath;
 const vitestCli = path.join(path.dirname(require.resolve('vitest/package.json')), 'vitest.mjs');
-const electronRebuildScript = path.join(__dirname, '../electron/rebuild-electron-native.cjs');
-const nativeVerificationScript = [
-  `const Database = require(${JSON.stringify(path.join(projectRoot, 'node_modules/better-sqlite3'))});`,
-  "const database = new Database(':memory:');",
-  'database.close();',
-].join('');
+const dependencyPatchScript = path.join(__dirname, '../runtime/patch-http-mitm-proxy.cjs');
+let testEnv = { ...process.env };
 
 function runNodeScript(script, args = [], cwd = projectRoot) {
   return spawnSync(process.execPath, [script, ...args], {
     cwd,
-    env: { ...process.env },
+    env: testEnv,
     stdio: 'inherit',
+    windowsHide: true,
   });
 }
 
@@ -32,42 +29,40 @@ function resultExitCode(result, label) {
   return result.status ?? 1;
 }
 
-if (!npmCli) {
+if (!process.env.npm_execpath) {
   console.error('npm_execpath is unavailable. Run tests through `npm test`.');
   process.exit(1);
 }
 
 let exitCode = 1;
+let sqlite;
 
 try {
-  console.log('Preparing better-sqlite3 for the host Node.js runtime...');
-  const nodeRebuild = runNodeScript(npmCli, ['rebuild', 'better-sqlite3', '--foreground-scripts']);
-  exitCode = resultExitCode(nodeRebuild, 'Node.js native module rebuild');
+  exitCode = resultExitCode(runNodeScript(dependencyPatchScript), 'Test dependency patch preparation');
 
   if (exitCode === 0) {
-    // A successful rebuild command does not prove that the binding matches Node.
-    // Verify in a child so Windows can replace the binding when restoring Electron.
-    const nativeVerification = runNodeScript('-e', [nativeVerificationScript]);
-    exitCode = resultExitCode(nativeVerification, 'Node.js native module verification');
-  }
-
-  if (exitCode === 0) {
+    console.log('Preparing an isolated SQLite module for Node.js tests...');
+    sqlite = prepareSqliteTestModule(projectRoot, testEnv);
+    testEnv = { ...testEnv, SQLITE_TEST_MODULE: sqlite.modulePath, APP_PLUGIN_TEST_SQLITE_MODULE: sqlite.modulePath };
     const testResult = runNodeScript(vitestCli, ['run', ...process.argv.slice(2)]);
     exitCode = resultExitCode(testResult, 'Vitest');
-    if (exitCode === 0 && process.argv.length === 2) {
+    if (process.argv.length === 2) {
       for (const suite of discoverAppPluginTestSuites(projectRoot)) {
         const pluginResult = runNodeScript(vitestCli, ['run', '--config', suite.config], suite.root);
-        exitCode = resultExitCode(pluginResult, `App plugin tests (${path.basename(suite.root)})`);
-        if (exitCode !== 0) break;
+        const pluginExit = resultExitCode(pluginResult, `App plugin tests (${path.basename(suite.root)})`);
+        if (pluginExit !== 0) exitCode = pluginExit;
       }
     }
   }
+} catch (error) {
+  console.error('Test preparation or execution failed:', error);
+  exitCode = 1;
 } finally {
-  console.log('Restoring better-sqlite3 for the Electron runtime...');
-  const electronRebuild = runNodeScript(electronRebuildScript);
-  const restoreExitCode = resultExitCode(electronRebuild, 'Electron native module rebuild');
-  if (restoreExitCode !== 0) {
-    exitCode = restoreExitCode;
+  try {
+    sqlite?.dispose();
+  } catch (error) {
+    console.error('SQLite test dependency cleanup failed:', error);
+    exitCode = 1;
   }
 }
 

@@ -55,6 +55,6 @@ Agent 新标签请求必须在已挂载面板创建真实 guest，保留 targetI
 
 维护入口为 `src/main/browser/agent/browserIntervention.ts`、`src/renderer/features/browser/intervention/` 及同目录行为测试。`node scripts/test/browser-intervention-smoke.cjs` 使用独立 Electron profile、真实 guest 与 IPC，验证取消收敛、人工阶段拒绝自动调用、原网页输入保留和重复继续拒绝；不连接 Gateway 或模型。
 
-回归还覆盖空白页/关闭最后网页后的恢复、旧窗口销毁后的受限接管、清理异常仍结束 drain、在途普通提交不被短暂 idle 绕过、停止确认延迟、断线、过期确认、跨窗口请求及原始动作晚于取消 ACK。全量测试使用当前 `npm test` 的 ABI 切换/恢复包装。
+回归还覆盖空白页/关闭最后网页后的恢复、旧窗口销毁后的受限接管、清理异常仍结束 drain、在途普通提交不被短暂 idle 绕过、停止确认延迟、断线、过期确认、跨窗口请求及原始动作晚于取消 ACK。全量测试使用当前 `npm test` 的独立 Node 原生依赖，不替换应用的 Electron 二进制。
 
 真实企业登录、多页面和后台任务的目标隔离、模型端到端、停止排空、断线后未知操作不重发、继续前重新观察，以及平台设备仍需实际环境证据。合成状态、源码与 Electron fixture 均不能声明这些场景已经验收。

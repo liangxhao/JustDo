@@ -4,6 +4,7 @@ import path from 'node:path';
 import { defineConfig } from 'vitest/config';
 
 const extensionRoot = path.resolve(__dirname, 'plugins/extensions');
+const sqliteTestModule = process.env.SQLITE_TEST_MODULE;
 const independentPlugins = readdirSync(extensionRoot, { withFileTypes: true })
   .filter(entry => entry.isDirectory() && existsSync(path.join(extensionRoot, entry.name, 'vitest.config.ts')))
   .map(entry => entry.name);
@@ -49,6 +50,7 @@ export default defineConfig({
   },
   resolve: {
     alias: {
+      ...(sqliteTestModule ? { 'better-sqlite3': path.resolve(sqliteTestModule) } : {}),
       '@app-plugin/sdk': path.resolve(__dirname, './plugins/sdk/app-plugin-sdk'),
       '@shared': path.resolve(__dirname, './src/shared'),
       '@': path.resolve(__dirname, './src/renderer'),
@@ -68,7 +70,7 @@ export default defineConfig({
       'plugins/browser-extensions/*/tests/**/*.test.ts',
     ],
     setupFiles: [
-      'tests/plugin-host/messagePresentationFixtures.ts',
+      path.resolve(__dirname, 'tests/plugin-host/messagePresentationFixtures.ts'),
       ...pluginSetups,
     ],
     env: { APP_PLUGIN_HOST_ROOT: path.resolve(__dirname) },

@@ -4,11 +4,17 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
-
 import { AppPluginError, parseAppPluginManifest } from '@app-plugin/sdk/contracts';
 import type { AppMainHost, AppMainRegistration } from '@app-plugin/sdk/main';
 import { appNativeDispatchMethod } from '@app-plugin/sdk/native-contract';
+import {
+  CUSTODY_RPC,
+  type ExecutionReceipt,
+  INERT_CUSTODY_HARNESS,
+} from '@runtime-services/sdk/custody';
+import { custodyResourceId } from '@runtime-services/sdk/custody-client';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
 import { CollaborationGateway } from '../../contracts/collaboration';
 import {
   TeamDiscussionGateway as Gateway,
@@ -18,6 +24,7 @@ import {
 import { register } from '../../host/app';
 import { CollaborationStore } from '../../host/data/collaborationStore';
 import { TeamDiscussionStore } from '../../host/data/teamDiscussionStore';
+import { discussionOperationId } from '../../runtime/discussion/receipt';
 
 const pluginRoot = path.resolve(import.meta.dirname, '../..');
 const hostRoot = process.env.APP_PLUGIN_HOST_ROOT;
@@ -108,6 +115,7 @@ async function fixture(initiallyEnabled = false) {
   let proofAvailable = true;
   let current = true;
   const statuses = new Map<string, Record<string, unknown>>();
+  const executionReceipts = new Map<string, ExecutionReceipt | null>();
   const holdingStates = new Map<string, string>();
   const calls: Array<{ method: string; params: Record<string, unknown>; bound: boolean }> = [];
   const nativeRequest = vi.fn(async (wireMethod: string, value?: unknown) => {
@@ -120,18 +128,19 @@ async function fixture(initiallyEnabled = false) {
       if (!enabled) throw new Error('teamDiscussionDisabled');
       return statuses.get(String(params.discussionId)) ?? { state: 'unknown' };
     }
-    if (method === Gateway.OfflineControl) {
-      if (enabled) throw new Error('teamDiscussionBusy');
-      if (params.operation === 'summary-stop') return { state: 'cancelled' };
-      return statuses.get(String(params.discussionId)) ?? { state: 'unknown' };
-    }
-    if (method === Gateway.HoldingCancel) return { cancelled: true };
-    if (method === Gateway.HoldingStatus)
+    if (method === CUSTODY_RPC.receiptInspect || method === CUSTODY_RPC.receiptCancel)
       return {
-        state: holdingStates.get(String(params.requestId)) ?? 'unknown',
-        requestId: params.requestId,
-        fingerprint: params.fingerprint,
-        entryId: `entry-${params.requestId}`,
+        receipt: structuredClone(executionReceipts.get(String(params.operationId)) ?? null),
+      };
+    if (method === CUSTODY_RPC.cancel) return { cancelled: true };
+    if (method === CUSTODY_RPC.inspect)
+      return {
+        resourceId: params.resourceId,
+        epoch: params.epoch,
+        operationId: params.operationId,
+        sha256: params.sha256,
+        state: holdingStates.get(String(params.operationId)) ?? 'unknown',
+        entryId: params.entryId ?? `entry-${params.operationId}`,
       };
     if (method === CollaborationGateway.Health) return { version: 2 };
     if (method === CollaborationGateway.Resolve) return { ok: true };
@@ -252,6 +261,7 @@ async function fixture(initiallyEnabled = false) {
     nativeRequest,
     calls,
     statuses,
+    executionReceipts,
     holdingStates,
     resources,
     emit(event: string, payload: unknown) {
@@ -338,13 +348,15 @@ describe.skipIf(!hostRoot)('Host integration (requires APP_PLUGIN_HOST_ROOT)', (
     const f = await fixture();
     const room = f.room();
     const run = f.metadata.reserve(send(room.id));
-    f.statuses.set(run.discussionId, {
-      roomId: room.id,
-      discussionId: run.discussionId,
-      state: 'completed',
-      executions: [
+    const operationId = discussionOperationId('discussion', run.discussionId);
+    f.executionReceipts.set(operationId, {
+      ownerId: 'agent-team',
+      operationId,
+      writerRegistrationId: 'fixture-registration',
+      inputSha256: '0'.repeat(64),
+      state: 'settled',
+      subjects: [
         {
-          discussionId: run.discussionId,
           agentId: 'alice',
           sessionKey: teamDiscussionSessionKey(room.id, 'alice'),
           sessionId: 'member-alice',
@@ -353,13 +365,21 @@ describe.skipIf(!hostRoot)('Host integration (requires APP_PLUGIN_HOST_ROOT)', (
           outcome: 'completed',
         },
       ],
+      settledRunIds: ['native-run'],
+      cleanupComplete: true,
+      cancelRequested: false,
     });
     await vi.advanceTimersByTimeAsync(3000);
 
     expect(f.metadata.get(room.id)).toMatchObject({ state: 'ready' });
     expect(f.metadata.get(room.id)?.activeDiscussionId).toBeUndefined();
     expect(f.metadata.executions(run.discussionId)).toMatchObject([{ runId: 'native-run' }]);
-    expect(f.metadata.summary(run.discussionId)?.state).toBe('cancelled');
+    expect(f.metadata.summary(run.discussionId)).toBeUndefined();
+    expect(f.calls).toContainEqual({
+      method: CUSTODY_RPC.receiptInspect,
+      params: { ownerId: 'agent-team', operationId },
+      bound: false,
+    });
     expect(await f.invoke('discussion.read', room.id)).toMatchObject({
       success: false,
       error: AppPluginError.Unavailable,
@@ -413,10 +433,12 @@ describe.skipIf(!hostRoot)('Host integration (requires APP_PLUGIN_HOST_ROOT)', (
     const queue = f.metadata.queue;
     const first = queue.reserve(room, send(room.id, 'saved'), 'policy', resources);
     const identity = {
+      resourceId: custodyResourceId('agent-team', room.id),
+      epoch: first.generation,
       roomId: room.id,
       generation: first.generation,
       agentId: 'alice',
-      sessionKey: `agent:alice:harness:retired-holding:${room.id}:${first.generation}`,
+      sessionKey: `agent:alice:harness:${INERT_CUSTODY_HARNESS}:${custodyResourceId('agent-team', room.id)}:${first.generation}`,
       sessionId: 'holding-native',
       lifecycleRevision: 'holding-revision',
     };
@@ -433,11 +455,23 @@ describe.skipIf(!hostRoot)('Host integration (requires APP_PLUGIN_HOST_ROOT)', (
     expect(queue.get(room.id, unknown.requestId)?.state).toBe('receiving_unknown');
     expect(f.calls).toContainEqual(
       expect.objectContaining({
-        method: Gateway.HoldingCancel,
+        method: CUSTODY_RPC.inspect,
         params: expect.objectContaining({
-          roomId: room.id,
-          generation: first.generation,
-          requestIds: [first.requestId],
+          resourceId: identity.resourceId,
+          epoch: unknown.generation,
+          operationId: unknown.requestId,
+          sha256: unknown.fingerprint,
+        }),
+        bound: false,
+      }),
+    );
+    expect(f.calls).toContainEqual(
+      expect.objectContaining({
+        method: CUSTODY_RPC.cancel,
+        params: expect.objectContaining({
+          resourceId: identity.resourceId,
+          epoch: first.generation,
+          operationIds: [first.requestId],
         }),
         bound: false,
       }),
@@ -450,14 +484,14 @@ describe.skipIf(!hostRoot)('Host integration (requires APP_PLUGIN_HOST_ROOT)', (
       ),
     ).toBe(false);
     await vi.advanceTimersByTimeAsync(3000);
-    expect(f.calls.filter(call => call.method === Gateway.HoldingCancel)).toHaveLength(1);
+    expect(f.calls.filter(call => call.method === CUSTODY_RPC.cancel)).toHaveLength(1);
     const generation = queue.cancelAll(room.id);
     await vi.advanceTimersByTimeAsync(3000);
     expect(queue.generation(room.id)).toBe(generation);
     expect(f.calls).toContainEqual({
-      method: Gateway.HoldingCancel,
+      method: CUSTODY_RPC.cancel,
       bound: false,
-      params: { roomId: room.id, generation },
+      params: { resourceId: identity.resourceId, epoch: generation },
     });
   });
 
@@ -579,7 +613,7 @@ describe.skipIf(!hostRoot)('Host integration (requires APP_PLUGIN_HOST_ROOT)', (
     expect(f.metadata.get(room.id)?.state).toBe('running');
   });
 
-  it('does not cancel or start a pending summary merely because the Main native proof is unavailable', async () => {
+  it('does not infer cancellation or start a summary merely because the Main native proof is unavailable', async () => {
     const f = await fixture(true);
     const room = f.room('proof');
     const run = f.metadata.reserve(send(room.id));
@@ -587,13 +621,17 @@ describe.skipIf(!hostRoot)('Host integration (requires APP_PLUGIN_HOST_ROOT)', (
     f.setProofAvailable(false);
     await vi.advanceTimersByTimeAsync(3000);
 
-    expect(f.metadata.summary(run.discussionId)?.state).toBe('pending');
-    expect(
-      f.calls.some(
-        call => call.method === Gateway.OfflineControl && call.params.operation === 'summary-stop',
-      ),
-    ).toBe(true);
+    expect(f.metadata.summary(run.discussionId)?.state).toBe('unknown');
+    expect(f.calls).toContainEqual({
+      method: CUSTODY_RPC.receiptCancel,
+      params: {
+        ownerId: 'agent-team',
+        operationId: discussionOperationId('summary', run.discussionId),
+      },
+      bound: false,
+    });
     expect(f.calls.some(call => call.method === Gateway.Summary)).toBe(false);
+    expect(f.resources.ensureReady).not.toHaveBeenCalled();
     expect(f.registry.snapshot()[0].state).toBe('cleanup');
   });
 
@@ -610,10 +648,12 @@ describe.skipIf(!hostRoot)('Host integration (requires APP_PLUGIN_HOST_ROOT)', (
     queue.setIdentity(
       input,
       {
+        resourceId: custodyResourceId('agent-team', room.id),
+        epoch: input.generation,
         roomId: room.id,
         generation: input.generation,
         agentId: 'alice',
-        sessionKey: `agent:alice:harness:retired-holding:${room.id}:${input.generation}`,
+        sessionKey: `agent:alice:harness:${INERT_CUSTODY_HARNESS}:${custodyResourceId('agent-team', room.id)}:${input.generation}`,
         sessionId: 'holding-native',
         lifecycleRevision: 'holding-revision',
       },
@@ -624,18 +664,38 @@ describe.skipIf(!hostRoot)('Host integration (requires APP_PLUGIN_HOST_ROOT)', (
     expect(queue.claim(queue.get(room.id, input.requestId)!)).toBe(true);
     const run = f.metadata.reserve(send(room.id), undefined, undefined, input.requestId);
     queue.transition(input, ['dispatching'], 'unknown');
-    f.statuses.set(run.discussionId, {
-      roomId: 'foreign',
-      discussionId: run.discussionId,
-      state: 'completed',
-    });
-    await vi.advanceTimersByTimeAsync(3000);
-    expect(queue.get(room.id, input.requestId)?.state).toBe('unknown');
-    f.statuses.set(run.discussionId, {
-      roomId: room.id,
-      discussionId: run.discussionId,
-      state: 'completed',
-    });
+    const operationId = discussionOperationId('discussion', run.discussionId);
+    const receipt: ExecutionReceipt = {
+      ownerId: 'agent-team',
+      operationId,
+      writerRegistrationId: 'fixture-registration',
+      inputSha256: '0'.repeat(64),
+      state: 'settled',
+      cleanupComplete: true,
+      cancelRequested: false,
+      subjects: [
+        {
+          agentId: 'alice',
+          sessionKey: teamDiscussionSessionKey(room.id, 'alice'),
+          sessionId: 'member-alice',
+          lifecycleRevision: 'revision',
+          runId: 'native-run',
+          outcome: 'completed',
+        },
+      ],
+      settledRunIds: ['native-run'],
+    };
+    for (const unavailable of [
+      null,
+      { ...receipt, operationId: discussionOperationId('discussion', 'foreign') },
+      { ...receipt, subjects: [{ ...receipt.subjects[0], sessionId: 'foreign-native' }] },
+    ]) {
+      f.executionReceipts.set(operationId, unavailable);
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(queue.get(room.id, input.requestId)?.state).toBe('unknown');
+      expect(f.metadata.get(room.id)?.activeDiscussionId).toBe(run.discussionId);
+    }
+    f.executionReceipts.set(operationId, receipt);
     await vi.advanceTimersByTimeAsync(3000);
     expect(queue.get(room.id, input.requestId)?.state).toBe('dispatched');
     expect(f.metadata.latestRun(room.id)?.state).toBe('completed');

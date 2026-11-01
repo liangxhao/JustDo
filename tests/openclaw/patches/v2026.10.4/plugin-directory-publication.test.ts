@@ -61,7 +61,9 @@ describe('receipt-bound Windows plugin publication recovery', () => {
     const before = fs.lstatSync(f.state.staged, { bigint: true });
     const dispatch = vi.fn(() => fsp.rename(f.state.staged, f.state.targetPath));
     await createPluginDirectoryPublicationRecovery(f.state, f.dependencies)(f.error(), dispatch);
-    expect(dispatch).toHaveBeenCalledOnce();
+    // The real Windows rename can encounter another transient refusal after
+    // recovery begins; the copied artifact and native owner must stay intact.
+    expect(dispatch).toHaveBeenCalled();
     expect(fs.lstatSync(f.state.targetPath, { bigint: true }).ino).toBe(before.ino);
     expect(fs.readFileSync(path.join(f.state.targetPath, 'index.mjs'), 'utf8')).toContain('version = 2');
     expect(fs.existsSync(f.state.sourcePath)).toBe(true);

@@ -7,11 +7,12 @@ import { build } from 'esbuild';
 import { beforeAll, describe, expect, it } from 'vitest';
 
 import { PRISTINE_REASONING_PARSER } from './reasoning-stream-parser-fixture';
+import { resolveReasoningRuntime } from './reasoning-runtime';
 
 const { transformReasoningTagPartitioner: transform, PARSER_CONTRACT } = require(
   '../../../../scripts/patches/v2026.10.7/structured-reasoning-stream.js',
 );
-const runtime = process.env.JUSTDO_EXECUTION_PRISTINE_DIR ?? process.env.OPENCLAW_TEST_NATIVE_RUNTIME_DIR ?? path.resolve('build/runtimes/openclaw/win-x64');
+const runtime = resolveReasoningRuntime();
 const file = path.join(runtime, 'node_modules/@openclaw/ai/dist/reasoning-tag-text-partitioner-CpOy9-IQ.mjs');
 const source = fs.readFileSync(file, 'utf8');
 type Delta = { kind: string; text: string };

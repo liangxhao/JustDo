@@ -278,7 +278,7 @@ test('builds current App companions before native resource sync and isolated dev
   );
 });
 
-test('restores Electron native modules after tests even when Vitest fails', () => {
+test('isolates Node test dependencies from the application Electron native module', () => {
   const packageJson = JSON.parse(
     fs.readFileSync(path.resolve(__dirname, '../..', 'package.json'), 'utf8'),
   ) as { scripts: Record<string, string> };
@@ -290,9 +290,12 @@ test('restores Electron native modules after tests even when Vitest fails', () =
   expect(packageJson.scripts.test).toBe('node scripts/test/run-tests.cjs');
   expect(packageJson.scripts.pretest).toBe('npm run plugins:app:build');
   expect(packageJson.scripts.pretest).not.toContain('rebuild');
-  expect(testRunner).toContain("['rebuild', 'better-sqlite3', '--foreground-scripts']");
-  expect(testRunner).toContain("path.join(__dirname, '../electron/rebuild-electron-native.cjs')");
+  expect(testRunner).toContain("require('./sqlite-test-module.cjs')");
+  expect(testRunner).toContain('SQLITE_TEST_MODULE: sqlite.modulePath');
+  expect(testRunner).not.toContain('rebuild-electron-native.cjs');
+  expect(testRunner).not.toContain("['rebuild', 'better-sqlite3'");
   expect(testRunner).toContain('finally');
+  expect(testRunner).toContain('sqlite?.dispose()');
 });
 
 test('keeps build-only dependencies and diagnostics out of the packaged app', () => {

@@ -203,6 +203,11 @@ under `build/installer-clock/`; a successful rebuild updates the checked-in DLL
 and portable manifest. The DLL imports only Windows system libraries and has
 no CRT dependency. See [offline resources](offline-downloads.md#6-windows-安装器原生时钟)
 for verification, rebuilding and transfer to an offline build host.
+Publishing a freshly compiled clock retries an exact Windows `EPERM`/`EBUSY`
+rename refusal at most five times with short increasing delays. Every attempt
+revalidates the same managed staging directory, manifest and DLL; a concurrent
+publisher is accepted only when its complete artifact passes the existing proof.
+Unrelated errors and changed staging ownership fail immediately.
 The generated set also includes square 64/80/96/112/128-pixel setup logos. Cache evidence
 verifies all fifteen AVI/bitmap/logo outputs. The installer chooses an animation whose
 full pixel dimensions fit the scene; it does not crop a larger DPI variant just

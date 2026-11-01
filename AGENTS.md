@@ -32,8 +32,9 @@ npm test
   unless investigating a directly related failure or explicitly requested.
   Prefer representative failure cases over Cartesian products of the same branch.
 - For docs-only changes, run `git diff --check`.
-- `npm test` uses Node better-sqlite3, then restores the Electron ABI;
-  `npm run rebuild:electron-native` repairs native dependencies when needed.
+- `npm test` prepares a private Node better-sqlite3 under `build/test-dependencies/`
+  without replacing the application's Electron binary; `npm run rebuild:electron-native`
+  repairs application native dependencies when needed.
 - Packaging and runtime preparation commands are in `package.json` and
   [scripts/README.md](scripts/README.md).
 - For specific implementation details, refer to the OpenClaw source code at ../openclaw (relative to the dev branch)."
