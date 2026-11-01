@@ -72,6 +72,14 @@ sequenceDiagram
 - 非对称算法、非空 iss/jti、整数 iat/exp，以及字符串 `aud: 'justdo-litellm'`；
 - kid 可选，兼容内网 `RS256`、无 kid 的签发形态。
 
+JWT 的签发时长 `exp - iat` 仍严格受配置上限约束。Main 对 `iat` 的未来时间和 `exp`
+的未来上界统一允许 30 秒时钟偏差：`iat <= 本机时间 + 30`、
+`exp <= 本机时间 + maxJwtLifetimeSeconds + 30`。响应 `expires_in` 以客户端收到并读取
+响应后的时间为基准检查，允许同样的 30 秒偏差，避免请求耗时占用容差。该容差不延长
+token 的实际有效期；Main 仍在剩余不足 15 秒时拒绝使用。LiteLLM Hook 对两个未来上界
+使用其配置的 `LITELLM_JWT_CLOCK_SKEW_SECONDS`（默认 30 秒），仍严格拒绝已到期 token，
+并保留签名、issuer、audience、账号与签发时长检查。客户端、签发服务与模型服务仍须同步系统时间。
+
 这些是结构、账号、audience 与时间预检。签名、可信 issuer、audience 和 Team 授权仍由服务端验证。
 
 ### 模型发现与原生凭据解析

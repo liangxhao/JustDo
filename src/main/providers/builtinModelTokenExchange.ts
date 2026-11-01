@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import type { BuiltinModelAuthConfig } from '../../config/builtinModelAuth';
 import { getMacAddress } from '../core/network/macAddress';
 import {
+  BUILTIN_TOKEN_CLOCK_SKEW_SECONDS,
   type BuiltinModelCredential,
   BuiltinModelCredentialFailureCode,
   clearActiveBuiltinModelCredential,
@@ -185,7 +186,6 @@ export class BuiltinModelTokenExchange {
       }
       stage = 'device';
       const deviceId = getMacAddress();
-      const requestedAt = Math.floor(Date.now() / 1000);
       stage = 'request';
       timeoutSignal = AbortSignal.timeout(EXCHANGE_TIMEOUT_MS);
       const response = await this.dependencies.fetch(endpoint.href, {
@@ -215,13 +215,15 @@ export class BuiltinModelTokenExchange {
         throw new TokenExchangeError('Invalid token exchange response shape');
       }
       stage = 'credential';
-      const validation = inspectBuiltinModelCredential(value.access_token, login.account, undefined, config.maxJwtLifetimeSeconds);
+      const receivedAt = Math.floor(Date.now() / 1000);
+      const validation = inspectBuiltinModelCredential(value.access_token, login.account, receivedAt, config.maxJwtLifetimeSeconds);
       const credential = validation.credential;
       if (!credential) {
         credentialCode = validation.failureCode ?? undefined;
         throw new TokenExchangeError(EXCHANGE_STAGE_ERRORS.credential);
       }
-      if (credential.expiresAt > requestedAt + value.expires_in + 30) {
+      // expires_in describes the response lifetime; request latency must not consume the clock tolerance.
+      if (credential.expiresAt > receivedAt + value.expires_in + BUILTIN_TOKEN_CLOCK_SKEW_SECONDS) {
         credentialCode = BuiltinModelCredentialFailureCode.ResponseLifetime;
         throw new TokenExchangeError(EXCHANGE_STAGE_ERRORS.credential);
       }

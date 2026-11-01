@@ -85,7 +85,8 @@ describe('built-in model credential', () => {
     { overrides: { iat: NOW_SECONDS + 31 }, code: BuiltinModelCredentialFailureCode.IssuedInFuture },
     { overrides: { exp: NOW_SECONDS + 301 }, code: BuiltinModelCredentialFailureCode.LifetimeExceeded },
     { overrides: { exp: NOW_SECONDS }, code: BuiltinModelCredentialFailureCode.Lifetime },
-    { overrides: { iat: NOW_SECONDS + 30, exp: NOW_SECONDS + 330 }, code: BuiltinModelCredentialFailureCode.ExpiryTooFar },
+    { overrides: { iat: NOW_SECONDS + 30, exp: NOW_SECONDS + 331 }, code: BuiltinModelCredentialFailureCode.LifetimeExceeded },
+    { overrides: { iat: NOW_SECONDS - 300, exp: NOW_SECONDS - 1 }, code: BuiltinModelCredentialFailureCode.Expired },
     { overrides: { exp: NOW_SECONDS + 14 }, code: BuiltinModelCredentialFailureCode.Expired },
   ])('classifies local credential rejection without returning claims: $code', ({ overrides, code }) => {
     const token = createJwt('user-123', overrides);
@@ -126,6 +127,18 @@ describe('built-in model credential', () => {
     });
   });
 
+  test.each([1, 30])('accepts a maximum-lifetime JWT when the issuer clock is %i seconds ahead', clockSkewSeconds => {
+    const accessToken = createJwt('user-123', {
+      iat: NOW_SECONDS + clockSkewSeconds,
+      exp: NOW_SECONDS + clockSkewSeconds + 10_800,
+    });
+    const credential = { accessToken, userAccount: 'user-123', expiresAt: NOW_SECONDS + clockSkewSeconds + 10_800 };
+
+    expect(validateBuiltinModelCredential(accessToken, 'user-123', NOW_SECONDS, 10_800)).toEqual(credential);
+    setActiveBuiltinModelCredential(credential, 10_800);
+    expect(getActiveBuiltinModelCredential()).toEqual(credential);
+  });
+
   test('reads a short-lived JWT whose subject matches the account header', () => {
     const accessToken = createJwt();
     const userInfoPath = writeUserInfo({
@@ -159,8 +172,8 @@ describe('built-in model credential', () => {
     [
       {
         [BUILTIN_MODEL_JWT_FIELD]: createJwt('user-123', {
-          iat: NOW_SECONDS + 30,
-          exp: NOW_SECONDS + 330,
+          iat: NOW_SECONDS + 31,
+          exp: NOW_SECONDS + 331,
         }),
         [BUILTIN_MODEL_USER_ACCOUNT_FIELD]: 'user-123',
       },

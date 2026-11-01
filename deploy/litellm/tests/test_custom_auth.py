@@ -45,11 +45,13 @@ def request_with_headers(**headers: str) -> Request:
 @pytest.fixture(autouse=True)
 def clear_settings_cache(monkeypatch):
     monkeypatch.delenv("LITELLM_JWT_ALLOW_HTTP_JWKS", raising=False)
-    custom_auth.load_settings.cache_clear()
-    custom_auth._get_jwks_client.cache_clear()
+    clear_settings = custom_auth.load_settings.cache_clear
+    clear_jwks_clients = custom_auth._get_jwks_client.cache_clear
+    clear_settings()
+    clear_jwks_clients()
     yield
-    custom_auth.load_settings.cache_clear()
-    custom_auth._get_jwks_client.cache_clear()
+    clear_settings()
+    clear_jwks_clients()
 
 
 def test_load_settings_rejects_symmetric_algorithms_and_remote_http(monkeypatch):
@@ -189,7 +191,7 @@ def test_validate_claims_limits_token_lifetime_and_requires_jti():
         custom_auth.validate_claims({**claims, "exp": now + 301}, settings(), now)
     with pytest.raises(ProxyException, match="lifetime"):
         custom_auth.validate_claims(
-            {**claims, "iat": now + 30, "exp": now + 330}, settings(), now
+            {**claims, "iat": now + 30, "exp": now + 331}, settings(), now
         )
     with pytest.raises(ProxyException, match="expired"):
         custom_auth.validate_claims(
@@ -199,9 +201,31 @@ def test_validate_claims_limits_token_lifetime_and_requires_jti():
         custom_auth.validate_claims({**claims, "jti": ""}, settings(), now)
 
 
+@pytest.mark.parametrize("clock_skew_seconds,lifetime", [(1, 300), (30, 10_800)])
+def test_validate_claims_accepts_maximum_lifetime_within_clock_skew(clock_skew_seconds, lifetime):
+    now = 2_000_000_000
+    claims = {"sub": "user-001", "jti": "token-1", "iat": now + clock_skew_seconds,
+              "exp": now + clock_skew_seconds + lifetime}
+
+    assert custom_auth.validate_claims(claims, settings(max_lifetime_seconds=lifetime), now) == (
+        "user-001", claims["exp"],
+    )
+
+
+@pytest.mark.parametrize("clock_skew_seconds,issued_ahead", [(30, 31), (0, 1)])
+def test_validate_claims_rejects_issuance_beyond_configured_clock_skew(clock_skew_seconds, issued_ahead):
+    now = 2_000_000_000
+    claims = {"sub": "user-001", "jti": "token-1", "iat": now + issued_ahead,
+              "exp": now + issued_ahead + 300}
+
+    with pytest.raises(ProxyException, match="future"):
+        custom_auth.validate_claims(claims, settings(clock_skew_seconds=clock_skew_seconds), now)
+
+
 @pytest.mark.asyncio
+@pytest.mark.parametrize("clock_skew_seconds", [0, 30])
 async def test_decode_and_validate_token_verifies_signature_issuer_and_audience(
-    monkeypatch,
+    monkeypatch, clock_skew_seconds,
 ):
     now = int(time.time())
     private_key = rsa.generate_private_key(public_exponent=65_537, key_size=2_048)
@@ -210,8 +234,8 @@ async def test_decode_and_validate_token_verifies_signature_issuer_and_audience(
             "iss": "https://login.example.test",
             "aud": "model-service",
             "sub": "user-001",
-            "iat": now,
-            "exp": now + 300,
+            "iat": now + clock_skew_seconds,
+            "exp": now + clock_skew_seconds + 300,
             "jti": "token-1",
         },
         private_key,
@@ -233,7 +257,7 @@ async def test_decode_and_validate_token_verifies_signature_issuer_and_audience(
 
     assert claims["jti"] == "token-1"
     assert user_id == "user-001"
-    assert expires_at == now + 300
+    assert expires_at == now + clock_skew_seconds + 300
 
 
 @pytest.mark.asyncio

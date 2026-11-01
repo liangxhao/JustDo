@@ -228,7 +228,7 @@ def validate_claims(
     if (
         expires_at <= issued_at
         or expires_at - issued_at > settings.max_lifetime_seconds
-        or expires_at > now + settings.max_lifetime_seconds
+        or expires_at > now + settings.max_lifetime_seconds + settings.clock_skew_seconds
     ):
         raise _proxy_error(JwtFailure.LIFETIME)
     return user_id, expires_at

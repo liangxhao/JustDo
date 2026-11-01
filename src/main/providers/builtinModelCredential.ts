@@ -10,7 +10,7 @@ export const EXPECTED_JWT_AUDIENCE = 'justdo-litellm';
 const MAX_JWT_LENGTH = 8_192;
 const MAX_USER_ACCOUNT_LENGTH = 512;
 const DEFAULT_MAX_JWT_LIFETIME_SECONDS = 5 * 60;
-const CLOCK_SKEW_SECONDS = 30;
+export const BUILTIN_TOKEN_CLOCK_SKEW_SECONDS = 30;
 const MIN_REMAINING_LIFETIME_SECONDS = 15;
 export const BUILTIN_TOKEN_REFRESH_MARGIN_SECONDS = 60;
 const HTTP_HEADER_VALUE_PATTERN = /^[\u0020-\u007e\u0080-\u00ff]+$/;
@@ -171,10 +171,11 @@ export const inspectBuiltinModelCredential = (
   ) {
     return rejectCredential(BuiltinModelCredentialFailureCode.Timestamps);
   }
-  if (issuedAt > nowSeconds + CLOCK_SKEW_SECONDS) return rejectCredential(BuiltinModelCredentialFailureCode.IssuedInFuture);
+  if (issuedAt > nowSeconds + BUILTIN_TOKEN_CLOCK_SKEW_SECONDS) return rejectCredential(BuiltinModelCredentialFailureCode.IssuedInFuture);
   if (expiresAt - issuedAt > maxLifetime) return rejectCredential(BuiltinModelCredentialFailureCode.LifetimeExceeded);
   if (expiresAt - issuedAt <= 0) return rejectCredential(BuiltinModelCredentialFailureCode.Lifetime);
-  if (expiresAt > nowSeconds + maxLifetime) return rejectCredential(BuiltinModelCredentialFailureCode.ExpiryTooFar);
+  // Apply the same clock tolerance to both future bounds; the signed lifetime remains capped above.
+  if (expiresAt > nowSeconds + maxLifetime + BUILTIN_TOKEN_CLOCK_SKEW_SECONDS) return rejectCredential(BuiltinModelCredentialFailureCode.ExpiryTooFar);
   if (expiresAt < nowSeconds + MIN_REMAINING_LIFETIME_SECONDS) return rejectCredential(BuiltinModelCredentialFailureCode.Expired);
 
   return { credential: Object.freeze({ accessToken, userAccount, expiresAt }), failureCode: null };

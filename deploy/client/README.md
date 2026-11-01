@@ -59,9 +59,10 @@ Main 使用应用已保存的直连、系统或自定义代理配置，不能只
 | `invalid-token-format` / `invalid-jwt-json` | `access_token` 必须是完整三段 JWT，不能带 `Bearer ` 前缀；header/payload 必须是 JSON 对象 |
 | `invalid-timestamps` | `iat` / `exp` 必须是整数数字、Unix 秒，不能是字符串 |
 | `issued-in-future` | 签发时间比本机时间晚超过 30 秒；核对客户端与签发服务时钟 |
-| `lifetime-exceeded` / `expiry-too-far` | `exp - iat` 和 `exp - 本机时间` 均不能超过编入 Main 的 `maxJwtLifetimeSeconds` |
+| `lifetime-exceeded` | `exp - iat` 不能超过编入 Main 的 `maxJwtLifetimeSeconds`，时钟容差不放宽签发时长上限 |
+| `expiry-too-far` | `exp` 不能晚于本机时间加 `maxJwtLifetimeSeconds` 再加 30 秒；与 `iat` 的未来时间检查使用同一时钟容差 |
 | `invalid-lifetime` / `expired-or-expiring` | `exp` 必须晚于 `iat`，且本机校验时至少还有 15 秒有效期 |
-| `expires-in-mismatch` | `exp` 不能晚于客户端请求时间加响应 `expires_in` 再加 30 秒 |
+| `expires-in-mismatch` | `exp` 不能晚于客户端收到并读取响应后的时间加响应 `expires_in` 再加 30 秒；请求耗时不占用时钟容差 |
 
 这些是客户端本地预检结果；JWT 签名由模型服务验证，服务端 HTTP JWKS 开关不改变
 上述客户端校验。修改配置后重启开发 Main 或重新打包。排查时只分享失败代码，不分享

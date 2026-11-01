@@ -18,9 +18,9 @@ let config = {
   developmentAuthMode: 'jwt' as const,
   developmentApiKey: '',
 };
-const jwt = (account = 'user-1', seconds = 300) => {
+const jwt = (account = 'user-1', seconds = 300, clockSkewSeconds = 0) => {
   const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString('base64url');
-  const now = Math.floor(Date.now() / 1000);
+  const now = Math.floor(Date.now() / 1000) + clockSkewSeconds;
   return [encode({ alg: 'RS256', typ: 'JWT' }), encode({
     iss: 'https://issuer.test', aud: 'justdo-litellm', sub: account, iat: now, exp: now + seconds, jti: `fixture-${now}`,
   }), 'signature'].join('.');
@@ -187,6 +187,35 @@ test('accepts a three-hour JWT without kid with an explicit exchange endpoint', 
 
   expect((await service.refresh())?.expiresAt).toBe(NOW + 10_800);
   expect(fetch).toHaveBeenCalledWith(config.tokenExchangeUrl, expect.any(Object));
+});
+
+test('accepts the first exchange response at the clock-skew boundary despite request latency', async () => {
+  login();
+  config.maxJwtLifetimeSeconds = 10_800;
+  const fetch = vi.fn(async () => {
+    vi.setSystemTime((NOW + 5) * 1000);
+    return success({ access_token: jwt('user-1', 10_800, 30), expires_in: 10_800 });
+  });
+  const { service } = setup(fetch);
+
+  const credential = await service.refresh();
+
+  expect(credential).toMatchObject({ userAccount: 'user-1', expiresAt: NOW + 5 + 30 + 10_800 });
+  expect(getActiveBuiltinModelCredential()).toEqual(credential);
+  expect(fetch).toHaveBeenCalledOnce();
+  expect(errorLog).not.toHaveBeenCalled();
+});
+
+test('rejects an inconsistent response lifetime even when the issuer clock is within tolerance', async () => {
+  login();
+  const { service } = setup(vi.fn(async () => success({ access_token: jwt('user-1', 300, 30), expires_in: 299 })));
+
+  await expect(service.refresh()).rejects.toThrow('Model authentication token exchange failed.');
+
+  expect(getActiveBuiltinModelCredential()).toBeNull();
+  expect(errorLog).toHaveBeenCalledWith('[BuiltinModelTokenExchange] exchange failed:', {
+    stage: 'credential', reason: 'Invalid or expired access token', credentialCode: 'expires-in-mismatch',
+  });
 });
 
 test('diagnoses an invalid exchange URL without exposing URL credentials', async () => {
