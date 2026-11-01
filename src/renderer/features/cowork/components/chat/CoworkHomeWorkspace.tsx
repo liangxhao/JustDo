@@ -200,6 +200,7 @@ export function renderCoworkHomeWorkspace({
           recordingReviewTabs.tabs.length > 0 ||
           hasRetainedRuntimePanels) && (
           <CoworkDisplayPanel
+            browserSessionKey={displaySessionKey}
             key="cowork-display-panel"
             activeTabId={activeDisplayTabId ?? ''}
             isOpen={isDisplayPanelOpen}
@@ -228,7 +229,6 @@ export function renderCoworkHomeWorkspace({
                 <DisplayPanelLauncher
                   appItems={mcpAppMenu?.items}
                   visible={isDisplayPanelOpen || isWorkspaceDetached}
-                  browserDisabled={browserTabs.length >= maximumBrowserTabs}
                   onCreateBrowser={handleCreateBrowserTab}
                   onCreateTerminal={handleCreateTerminalTab}
                   onOpenFiles={homeWorkspaceFolderPath ? handleOpenWorkspaceFiles : undefined}
@@ -269,7 +269,7 @@ export function renderCoworkHomeWorkspace({
             }
             actions={
               <NewDisplayTabButton
-                disabled={browserTabs.length >= maximumBrowserTabs}
+                capacityReached={browserTabs.length >= maximumBrowserTabs}
                 onCreateTab={() => handleCreateBrowserTab()}
               />
             }

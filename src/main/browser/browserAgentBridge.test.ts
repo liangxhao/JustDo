@@ -366,6 +366,99 @@ test('counts pending tab requests across profiles without sharing capacity betwe
   }
 });
 
+test('guides capacity recovery across profiles without closing pages until explicitly requested', async () => {
+  const sendToRenderer = vi.fn((channel, payload) => {
+    if (channel !== BrowserIpc.AgentEnsureTab) return;
+    const id = electron.guests.size + 100;
+    let url = payload.url;
+    electron.guests.set(id, {
+      id,
+      getType: () => 'webview',
+      isDestroyed: () => false,
+      session: electron.partition,
+      hostWebContents: { id: 10 },
+      getTitle: () => 'Page',
+      getURL: () => url,
+      executeJavaScriptInIsolatedWorld: vi.fn(async () => ({
+        title: 'Page',
+        url,
+        text: '',
+        elements: [],
+      })),
+      loadURL: vi.fn(async (value: string) => {
+        url = value;
+      }),
+    });
+    registerGuest(id, payload.targetId, payload.profile);
+  });
+  bridge = new BrowserAgentBridge(
+    sendToRenderer,
+    () => true,
+    undefined,
+    false,
+    undefined,
+    () => 1,
+  );
+  bridge.registerIpc();
+  const existing = (await bridge.executeCommand('justdo:session-1', {
+    action: 'open',
+    profile: 'imported',
+    targetUrl: 'https://example.com/existing',
+  })) as { targetId: string };
+
+  const failure = await bridge
+    .executeCommand('justdo:session-1', {
+      action: 'open',
+      targetUrl: 'https://example.com/new',
+    })
+    .catch(error => error);
+
+  expect(failure).toBeInstanceOf(Error);
+  expect(failure.message).toContain('at most 1 tabs');
+  expect(failure.message).toContain('Currently 1 slots');
+  expect(failure.message).toContain('open or pending pages across all profiles');
+  expect(failure.message).toContain('sidebar and headless pages');
+  expect(failure.message).toContain('action=tabs with the relevant profile');
+  expect(failure.message).toContain('action=profiles');
+  expect(failure.message).toContain('action=navigate');
+  expect(failure.message).toContain('action=close with its targetId and the same profile');
+  expect(failure.message).toContain('Ask the user');
+  expect(failure.message).toContain('Do not blindly retry');
+  expect(
+    sendToRenderer.mock.calls.filter(([channel]) => channel === BrowserIpc.AgentCloseTab),
+  ).toEqual([]);
+  await expect(
+    bridge.executeCommand('justdo:session-1', { action: 'tabs' }),
+  ).resolves.toMatchObject({ tabCount: 0 });
+  await expect(
+    bridge.executeCommand('justdo:session-1', { action: 'tabs', profile: 'imported' }),
+  ).resolves.toMatchObject({
+    tabCount: 1,
+    tabs: [expect.objectContaining({ targetId: existing.targetId })],
+  });
+  await expect(
+    bridge.executeCommand('justdo:session-1', {
+      action: 'navigate',
+      profile: 'imported',
+      targetId: existing.targetId,
+      url: 'https://example.com/reused',
+    }),
+  ).resolves.toMatchObject({ details: { ok: true, targetId: existing.targetId } });
+  await expect(
+    bridge.executeCommand('justdo:session-1', {
+      action: 'close',
+      profile: 'imported',
+      targetId: existing.targetId,
+    }),
+  ).resolves.toMatchObject({ ok: true, targetId: existing.targetId });
+  await expect(
+    bridge.executeCommand('justdo:session-1', {
+      action: 'open',
+      targetUrl: 'https://example.com/new',
+    }),
+  ).resolves.toMatchObject({ ok: true });
+});
+
 test('lists and focuses only registered live guests while redacting sensitive URLs', async () => {
   const sendToRenderer = vi.fn();
   bridge = new BrowserAgentBridge(sendToRenderer, senderId => senderId === 10);

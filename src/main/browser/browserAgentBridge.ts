@@ -986,7 +986,16 @@ export class BrowserAgentBridge {
         this.listLiveTabs(candidateScope).length + (this.tabWaiters.get(candidateScope)?.size ?? 0);
     }
     if (occupiedTabs >= maximumTabs) {
-      throw new Error(`The embedded browser supports at most ${maximumTabs} tabs per task.`);
+      throw new Error(
+        [
+          `The embedded browser supports at most ${maximumTabs} tabs per task.`,
+          `Currently ${occupiedTabs} slots are occupied by open or pending pages across all profiles, including sidebar and headless pages.`,
+          'Use action=tabs with the relevant profile to inspect existing pages; action=profiles lists other profiles.',
+          'Prefer reusing a suitable target with action=navigate.',
+          'Only close a page you know is no longer needed using action=close with its targetId and the same profile, then retry opening.',
+          'Ask the user before closing a page whose state or ownership is uncertain. Do not blindly retry while capacity is full.',
+        ].join(' '),
+      );
     }
 
     const requestedTargetId = options.targetId ?? `embedded-${randomUUID()}`;

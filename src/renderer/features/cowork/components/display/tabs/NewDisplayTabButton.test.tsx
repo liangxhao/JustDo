@@ -50,6 +50,16 @@ test('does not create a tab when unavailable or at capacity', () => {
   expect(createTab).not.toHaveBeenCalled();
 });
 
+test('keeps the capacity explanation reachable from the new-tab button', () => {
+  i18nService.setLanguage('en', { persist: false });
+  const createTab = vi.fn();
+  render(<NewDisplayTabButton capacityReached onCreateTab={createTab} />);
+  const button = screen.getByRole('button', { name: 'New tab' });
+  expect(button.title).toContain('Browser tab limit reached');
+  fireEvent.click(button);
+  expect(createTab).toHaveBeenCalledOnce();
+});
+
 test('keeps focus on the new tab address field after creation', () => {
   render(
     <>

@@ -25,6 +25,7 @@ import BrowserPanel, {
   getBrowserTabDisplayTitle,
 } from './BrowserPanel';
 import { promoteBrowserPanelTabs } from './browserPanelRetention';
+import { BROWSER_TAB_CAPACITY_EVENT } from './browserTabCapacity';
 
 vi.mock('@/features/cowork/components/composer/speech/LocalSpeechInputButton', () => ({
   LocalSpeechInputButton: () => null,
@@ -1173,6 +1174,39 @@ describe('BrowserPanel embedded webview', () => {
       expect(panelHandle?.openTab('https://example.com/0', { targetId: 'page-0' })).toBe(true);
     });
     expect(container.querySelectorAll('webview')).toHaveLength(9);
+  });
+
+  it('reports user popup rejection but keeps Agent capacity rejection quiet', () => {
+    vi.spyOn(configService, 'getConfig').mockReturnValue({ ...configService.getConfig(), browserTabLimit: 1 });
+    let panel: BrowserPanelHandle | null = null;
+    const dispatch = vi.spyOn(window, 'dispatchEvent');
+    const { container } = render(<BrowserPanelHarness initialTabs={[pageTab]} panelRef={value => { panel = value; }} />);
+    act(() => { expect(panel?.openTab('https://agent.example', { notifyOnCapacity: false })).toBe(false); });
+    expect(dispatch.mock.calls.filter(([event]) => event.type === BROWSER_TAB_CAPACITY_EVENT)).toHaveLength(0);
+    act(() => panelOpenTabListener?.({ url: 'https://popup.example' }));
+    expect(dispatch.mock.calls.filter(([event]) => event.type === BROWSER_TAB_CAPACITY_EVENT)).toHaveLength(1);
+    expect(container.querySelectorAll('webview')).toHaveLength(1);
+  });
+
+  it('preserves the reopen entry when capacity rejects restoration', () => {
+    const config = configService.getConfig();
+    const getConfig = vi.spyOn(configService, 'getConfig').mockReturnValue({ ...config, browserTabLimit: 2 });
+    let panel: BrowserPanelHandle | null = null;
+    const { container } = render(<BrowserPanelHarness initialTabs={[pageTab]} panelRef={value => { panel = value; }} />);
+    act(() => { panel?.openTab('https://restore.example', { targetId: 'restore' }); });
+    act(() => panel?.closeTab('restore'));
+    getConfig.mockReturnValue({ ...config, browserTabLimit: 1 });
+    const reopen = () => {
+      const command = new Event('ipc-message');
+      Object.assign(command, { channel: 'justdo-browser-command', args: ['reopen-tab'] });
+      fireEvent(container.querySelector('webview')!, command);
+    };
+    reopen();
+    expect(container.querySelectorAll('webview')).toHaveLength(1);
+    getConfig.mockReturnValue({ ...config, browserTabLimit: 2 });
+    reopen();
+    expect(container.querySelectorAll('webview')).toHaveLength(2);
+    expect(screen.getByLabelText('Browser address')).toHaveProperty('value', 'restore.example');
   });
 
   it('focuses the address bar when a shortcut opens a blank embedded tab', async () => {

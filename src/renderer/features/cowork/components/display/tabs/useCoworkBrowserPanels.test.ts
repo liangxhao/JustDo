@@ -7,11 +7,13 @@ import { createElement, StrictMode } from 'react';
 import { afterEach, expect, test, vi } from 'vitest';
 
 import { defaultConfig } from '@/app/config';
+import { BROWSER_TAB_CAPACITY_EVENT } from '@/features/browser/browserTabCapacity';
 import { MessageBrowserEvent } from '@/features/browser/messageBrowserLinks';
 import { useMessageFileLinkNavigation } from '@/features/cowork/components/preview/useMessageFileLinkNavigation';
 import { configService } from '@/services/config';
 
 import { useCoworkBrowserPanels } from './useCoworkBrowserPanels';
+import { useSessionDisplayState } from './useSessionDisplayState';
 
 type Options = Parameters<typeof useCoworkBrowserPanels>[0];
 
@@ -183,6 +185,7 @@ test.each([
       targetId: 'requested',
       profile: 'embedded',
       customTitle: undefined,
+      notifyOnCapacity: false,
     });
   else expect(openTab).not.toHaveBeenCalled();
   if (mounted && !accepted) {
@@ -890,6 +893,7 @@ test('queues another blank page on each creation and includes pending tabs in th
     })),
   });
   const { result } = renderHook(() => useCoworkBrowserPanels(options));
+  const dispatch = vi.spyOn(window, 'dispatchEvent');
 
   act(() => {
     result.current.handleCreateBrowserTab();
@@ -899,6 +903,27 @@ test('queues another blank page on each creation and includes pending tabs in th
 
   expect(options.pendingBrowserTabsRef.current.get('session')).toEqual([{}, {}]);
   expect(options.setBrowserTabCreationSequence).toHaveBeenCalledTimes(2);
+  expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({
+    type: BROWSER_TAB_CAPACITY_EVENT, detail: { sessionKey: 'session' },
+  }));
+});
+
+test('explains capacity for message links and local HTML without creating a phantom page', async () => {
+  vi.spyOn(configService, 'getConfig').mockReturnValue({ ...defaultConfig, browserTabLimit: 1 });
+  const options = createOptions({
+    hasDisplayTabs: true,
+    browserTabs: [{ id: 'one', targetId: 'one', title: 'Page', url: 'https://example.com' }],
+  });
+  window.electron.browser.createLocalHtmlPreview = vi.fn().mockResolvedValue({
+    success: true, url: 'file:///C:/project/report.html', filePath: 'C:/project/report.html',
+  });
+  const { result } = renderHook(() => useCoworkBrowserPanels(options));
+  const dispatch = vi.spyOn(window, 'dispatchEvent');
+  act(() => window.dispatchEvent(new CustomEvent(MessageBrowserEvent.OpenWebUrl, { detail: { url: 'https://new.example' } })));
+  await act(async () => result.current.openLocalHtml({ filePath: 'C:/project/report.html' }));
+  expect(dispatch.mock.calls.filter(([event]) => event.type === BROWSER_TAB_CAPACITY_EVENT)).toHaveLength(2);
+  expect(options.openBrowserTab).not.toHaveBeenCalled();
+  expect(options.pendingBrowserTabsRef.current.size).toBe(0);
 });
 
 test('waits for a temporary conversation to become available before creating its first tab', () => {
@@ -909,6 +934,74 @@ test('waits for a temporary conversation to become available before creating its
   rerender({ ...options, currentSessionId: 'session' });
 
   expect(options.pendingBrowserTabsRef.current.get('session')).toEqual([{}]);
+});
+
+test('a late capacity rejection preserves the active conversation and its retained pages', async () => {
+  vi.spyOn(configService, 'getConfig').mockReturnValue({ ...defaultConfig, browserTabLimit: 1 });
+  const options = createOptions({ hasDisplayTabs: true });
+  let finishPreview!: (value: typeof localHtmlPreview) => void;
+  window.electron.browser.createLocalHtmlPreview = vi.fn().mockReturnValue(
+    new Promise(resolve => { finishPreview = resolve; }),
+  );
+  const { result, rerender } = renderHook(({ sessionId }) => {
+    const display = useSessionDisplayState(sessionId, 520, 1);
+    const panels = useCoworkBrowserPanels({
+      ...options,
+      ...display.setters,
+      displaySessionKey: display.sessionKey,
+      currentSessionId: sessionId,
+      browserTabs: display.state.browserTabs,
+      displayStates: display.states,
+      isDisplayPanelOpen: display.state.isDisplayPanelOpen,
+      setSessionField: display.setSessionField,
+      openBrowserTab: display.openBrowserTab,
+    });
+    return { display, panels };
+  }, { initialProps: { sessionId: 'session-a' } });
+  const browserTab = (id: string) => ({ id, targetId: id, title: id, url: 'https://example.com' });
+  act(() => result.current.display.setters.setBrowserTabs([browserTab('browser-a')]));
+  let opening!: Promise<void>;
+  act(() => { opening = result.current.panels.openLocalHtml({ filePath: 'report.html' }); });
+
+  rerender({ sessionId: 'session-b' });
+  act(() => {
+    result.current.display.setters.setBrowserTabs([browserTab('browser-b')]);
+    result.current.display.setters.setTerminalTabs([{ id: 'terminal:b', cwd: 'C:/project', label: 'Terminal' }]);
+  });
+  expect(result.current.display.state.browserTabs).toHaveLength(1);
+  await act(async () => { finishPreview(localHtmlPreview); await opening; });
+
+  expect(result.current.display.state.browserTabs.map(tab => tab.targetId)).toEqual(['browser-b']);
+  expect(result.current.display.state.terminalTabs).toHaveLength(1);
+  expect(result.current.display.states['session-a'].isDisplayPanelOpen).toBe(false);
+});
+
+test('reports a same-batch message rejection before the panel mounts and releases capacity after closing', () => {
+  vi.spyOn(configService, 'getConfig').mockReturnValue({ ...defaultConfig, browserTabLimit: 1 });
+  const options = createOptions();
+  const { result } = renderHook(() => {
+    const display = useSessionDisplayState('session', 520);
+    useCoworkBrowserPanels({
+      ...options,
+      ...display.setters,
+      browserTabs: display.state.browserTabs,
+      displayStates: display.states,
+      isDisplayPanelOpen: display.state.isDisplayPanelOpen,
+      hasDisplayTabs: display.state.browserTabs.length > 0,
+      setSessionField: display.setSessionField,
+      openBrowserTab: display.openBrowserTab,
+    });
+    return display;
+  });
+  const dispatch = vi.spyOn(window, 'dispatchEvent');
+  const open = (url: string) => window.dispatchEvent(new CustomEvent(MessageBrowserEvent.OpenWebUrl, { detail: { url } }));
+  act(() => { open('https://first.example/'); open('https://second.example/'); });
+  expect(result.current.state.browserTabs.map(tab => tab.url)).toEqual(['https://first.example/']);
+  expect(dispatch.mock.calls.filter(([event]) => event.type === BROWSER_TAB_CAPACITY_EVENT)).toHaveLength(1);
+  act(() => result.current.setters.setBrowserTabs([]));
+  act(() => { open('https://third.example/'); });
+  expect(result.current.state.browserTabs.map(tab => tab.url)).toEqual(['https://third.example/']);
+  expect(dispatch.mock.calls.filter(([event]) => event.type === BROWSER_TAB_CAPACITY_EVENT)).toHaveLength(1);
 });
 
 test('drains the initial page once when its browser panel becomes ready', () => {

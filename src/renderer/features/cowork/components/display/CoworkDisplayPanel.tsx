@@ -6,6 +6,7 @@ import React, { useCallback, useEffect, useId, useLayoutEffect, useRef, useState
 import { createPortal } from 'react-dom';
 
 import WindowHeader from '@/app/shell/window/WindowHeader';
+import BrowserTabLimitDialog from '@/features/browser/BrowserTabLimitDialog';
 import { getMcpAppPresentations } from '@/libs/openclaw-chat/components/mcp-app/presentations';
 import { McpAppView } from '@/libs/openclaw-chat/components/mcp-app/view';
 import { i18nService } from '@/services/i18n';
@@ -26,7 +27,11 @@ import {
   requestDisplayTabFocus,
   subscribeDisplayTabFocus,
 } from './tabs/displayTabFocus';
-import { FILE_DISPLAY_TAB_PREFIX, WORKSPACE_FILES_DISPLAY_TAB_ID } from './tabs/displayTabIds';
+import {
+  BROWSER_DISPLAY_TAB_PREFIX,
+  FILE_DISPLAY_TAB_PREFIX,
+  WORKSPACE_FILES_DISPLAY_TAB_ID,
+} from './tabs/displayTabIds';
 import DisplayTabListMenu from './tabs/DisplayTabListMenu';
 import useDisplayTabLayout from './tabs/useDisplayTabLayout';
 import { useWorkspacePortal } from './workspace/useWorkspacePortal';
@@ -56,6 +61,7 @@ export interface CoworkDisplayTabCloseActions {
 
 interface CoworkDisplayPanelProps {
   activeTabId: string;
+  browserSessionKey?: string;
   actions?: React.ReactNode;
   children: React.ReactNode;
   /** Selected message content shares the persistent workspace with all other tabs. */
@@ -90,6 +96,7 @@ const getDisplayPanelMaxWidth = (element: HTMLElement | null): number => {
 
 const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
   activeTabId,
+  browserSessionKey,
   actions,
   children,
   referenceContent,
@@ -862,6 +869,10 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
           onCloseRight={menuCloseActions.closeRight}
         />
       )}
+      <BrowserTabLimitDialog
+        sessionKey={browserSessionKey}
+        tabs={tabs.filter(tab => tab.id.startsWith(BROWSER_DISPLAY_TAB_PREFIX))}
+      />
     </aside>
   );
   const fileIconContent = (

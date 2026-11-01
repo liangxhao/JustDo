@@ -84,6 +84,7 @@ import { i18nService } from '@/services/i18n';
 import Tooltip from '@/shared/components/ui/Tooltip';
 import { isDomElement, useOwnerDocument, useOwnerWindow } from '@/shared/dom/ownerDocument';
 
+import { reportBrowserTabCapacity } from './browserTabCapacity';
 import BrowserTabIcon from './BrowserTabIcon';
 import {
   browserToolbarButtonClassName as modeButton,
@@ -166,6 +167,7 @@ type BrowserLocalHtmlSource = {
 
 type BrowserOpenTabOptions = Partial<BrowserLocalHtmlSource> & {
   insertAfterTargetId?: string;
+  notifyOnCapacity?: boolean;
   targetId?: string;
   customTitle?: string;
   profile?: BrowserPanelTab['profile'];
@@ -331,11 +333,13 @@ interface BrowserPanelProps {
   pageToolsVisible?: boolean;
   navigationBarVisible?: boolean;
   renderStartPage?: (navigate: (url: string) => void) => React.ReactNode;
+  capacityFeedbackEnabled?: boolean;
 }
 
 const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function BrowserPanel(
   {
     draftKey,
+    capacityFeedbackEnabled = true,
     isOpen,
     width,
     activeTargetId,
@@ -850,7 +854,13 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
         return true;
       }
       const url = normalizeUrl(rawUrl);
-      if (!url || tabsRef.current.length >= getBrowserTabLimit()) return false;
+      if (!url) return false;
+      if (tabsRef.current.length >= getBrowserTabLimit()) {
+        if (capacityFeedbackEnabled && options?.notifyOnCapacity !== false) {
+          reportBrowserTabCapacity(draftKey);
+        }
+        return false;
+      }
       const tab = createBrowserPanelTab(url, options);
       initialUrlsRef.current.set(tab.targetId, tab.url);
       const insertionIndex = options?.insertAfterTargetId
@@ -874,7 +884,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
       }
       return true;
     },
-    [clearAnnotations, onActiveTargetChange, ownerWindow],
+    [capacityFeedbackEnabled, clearAnnotations, draftKey, onActiveTargetChange, ownerWindow],
   );
 
   useEffect(
@@ -1054,15 +1064,16 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
         return;
       }
       if (command === 'reopen-tab') {
-        const closedTab = closedTabsRef.current.pop();
+        const closedTab = closedTabsRef.current[closedTabsRef.current.length - 1];
         if (closedTab) {
-          openTab(closedTab.url, {
+          const reopened = openTab(closedTab.url, {
             profile: closedTab.profile,
             sourceFilePath: closedTab.sourceFilePath,
             sourcePreviewUrl: closedTab.sourcePreviewUrl,
             sourceRootPath: closedTab.sourceRootPath,
             sourcePreviewRootUrl: closedTab.sourcePreviewRootUrl,
           });
+          if (reopened) closedTabsRef.current.pop();
         }
         return;
       }
@@ -2241,7 +2252,9 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
             ))}
           </div>
           <Tooltip
-            content={i18nService.t('browserPanelNewTab')}
+            content={i18nService.t(
+              tabs.length >= maximumTabs ? 'browserTabCapacityFallback' : 'browserPanelNewTab',
+            )}
             position="bottom"
             renderInPortal
             dismissOnClick
@@ -2249,7 +2262,6 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
             <button
               type="button"
               className={modeButton(false)}
-              disabled={tabs.length >= maximumTabs}
               onClick={() => openTab()}
               aria-label={i18nService.t('browserPanelNewTab')}
             >

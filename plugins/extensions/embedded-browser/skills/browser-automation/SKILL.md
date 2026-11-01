@@ -108,6 +108,15 @@ All tabs are application-owned sidebar or background pages. Opening a tab must n
 external Chrome or system browser tab. Use labels for long flows, close duplicates explicitly, and
 never create duplicate tabs as timeout recovery.
 
+If opening a page reaches the tab limit, do not repeatedly retry `open`. Capacity includes sidebar
+and headless pages, all profiles in the current conversation, and pending creations. Inspect
+`action=tabs` with the relevant `profile`; use `action=profiles` to find other profiles when needed.
+Tab lists and target operations remain isolated by profile. Prefer reusing a suitable page with
+`action=navigate`, its `targetId`, and the same `profile`. To free capacity, only close a page known
+to be no longer needed with `action=close`, its `targetId`, and the same `profile`, then retry
+opening. Ask the user before closing a page whose state or ownership is uncertain. Pending
+creations also occupy capacity; an empty tab list in one profile does not mean capacity is free.
+
 ## Code mode
 
 Resolve the catalogued Browser tool handle in each code cell. Code-mode calls use structured

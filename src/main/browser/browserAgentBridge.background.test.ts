@@ -270,7 +270,7 @@ test('cron omission is forced into the background and false is rejected', async 
   expect(send).not.toHaveBeenCalled();
 });
 
-test('foreground and background pages share the per-conversation tab limit', async () => {
+test('foreground and background pages share capacity and allow explicit close before retry', async () => {
   bridge = new BrowserAgentBridge(
     send,
     id => id === 1,
@@ -280,11 +280,29 @@ test('foreground and background pages share the per-conversation tab limit', asy
     () => 1,
   );
   bridge.registerIpc();
-  await execute({ action: 'open', url: 'https://example.com' });
+  const foreground = (await execute({ action: 'open', url: 'https://example.com' })) as PageResult;
   await expect(
     execute({ action: 'open', url: 'https://example.com', headless: true }),
   ).rejects.toThrow('at most 1');
   expect(state.host.create).not.toHaveBeenCalled();
+  expect(state.host.close).not.toHaveBeenCalled();
+  await execute({ action: 'close', targetId: foreground.targetId });
+  const background = (await execute({
+    action: 'open',
+    url: 'https://example.com/background',
+    headless: true,
+  })) as PageResult;
+  await expect(
+    execute({ action: 'open', url: 'https://example.com/new', headless: false }),
+  ).rejects.toThrow('sidebar and headless pages');
+  await expect(execute({ action: 'tabs' })).resolves.toMatchObject({
+    tabCount: 1,
+    tabs: [expect.objectContaining({ targetId: background.targetId, headless: true })],
+  });
+  await execute({ action: 'close', targetId: background.targetId });
+  await expect(
+    execute({ action: 'open', url: 'https://example.com/new', headless: false }),
+  ).resolves.toMatchObject({ ok: true, headless: false });
 });
 
 test('closing a background page destroys its owned host and sends no Renderer close', async () => {

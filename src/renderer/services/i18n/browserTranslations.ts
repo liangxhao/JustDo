@@ -2,6 +2,14 @@ import { PRODUCT_NAME } from '@shared/productMetadata';
 
 export const browserTranslations = {
   zh: {
+    browserTabCapacityTitle: '浏览器标签页已达上限',
+    browserTabCapacityDescription: '每个会话最多打开 {limit} 个浏览器标签页。请复用已有页面，或关闭确认不再需要的页面后重新尝试。关闭页面会丢失其中未提交的内容。',
+    browserTabCapacityFallback: '浏览器标签页已达上限，请关闭不再需要的浏览器标签页后重试。',
+    browserTabCapacitySidebarPages: '当前侧栏页面（后台浏览器页面也可能占用容量）',
+    browserTabCapacityClosePage: '关闭页面：{title}',
+    browserTabCapacityNoSidebarPages: '当前侧栏没有可关闭的页面；请让助手检查并关闭不再需要的后台浏览器页面，或稍后重试。',
+    browserTabCapacityCloseFailed: '未能关闭页面，请切换到该页面后重试。',
+    browserTabCapacityDone: '完成',
     browserSettings: '浏览器',
     browserWebpageEmbedTitle: '允许消息内嵌外部网页',
     browserWebpageEmbedDescription:
@@ -338,6 +346,14 @@ export const browserTranslations = {
       '适用于侧边栏内置浏览器和聊天可视化卡片；Chrome 和浏览器扩展沿用各自的代理设置。',
   },
   en: {
+    browserTabCapacityTitle: 'Browser tab limit reached',
+    browserTabCapacityDescription: 'Each conversation supports up to {limit} browser tabs. Reuse an existing page, or close a page you no longer need and try again. Closing a page discards its unsubmitted content.',
+    browserTabCapacityFallback: 'Browser tab limit reached. Close browser tabs you no longer need and try again.',
+    browserTabCapacitySidebarPages: 'Current sidebar pages (background browser pages may also use capacity)',
+    browserTabCapacityClosePage: 'Close page: {title}',
+    browserTabCapacityNoSidebarPages: 'There are no sidebar pages to close. Ask the assistant to check and close background browser pages you no longer need, or try again later.',
+    browserTabCapacityCloseFailed: 'Unable to close the page. Switch to that page and try again.',
+    browserTabCapacityDone: 'Done',
     browserSettings: 'Browser',
     browserWebpageEmbedTitle: 'Allow external webpages in messages',
     browserWebpageEmbedDescription:

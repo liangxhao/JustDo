@@ -9,7 +9,7 @@ import {
   isWebBrowserLink,
   normalizeBrowserLinkTarget,
 } from '@shared/browser/browserLinkOpening';
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
 
 import { type BrowserPanelHandle, createBrowserPanelTab } from '@/features/browser/BrowserPanel';
 import {
@@ -18,6 +18,7 @@ import {
   type PendingBrowserAgentPanelState,
   takeAvailableBrowserAgentPanelStates,
 } from '@/features/browser/browserPanelRetention';
+import { reportBrowserTabCapacity } from '@/features/browser/browserTabCapacity';
 import { MessageBrowserEvent } from '@/features/browser/messageBrowserLinks';
 import { getBrowserTabLimit } from '@/features/browser/useBrowserTabLimit';
 import type { CoworkSessionSummary } from '@/features/cowork/coworkTypes';
@@ -109,6 +110,19 @@ export function useCoworkBrowserPanels({
   const messageNavigationScopeRef = useRef<object | null>(null);
   const openBrowserTabRef = useRef(openBrowserTab);
   openBrowserTabRef.current = openBrowserTab;
+  const displayStatesRef = useRef(displayStates);
+  displayStatesRef.current = displayStates;
+  const displayControlsRef = useRef({
+    displaySessionKey,
+    setIsDisplayPanelOpen,
+    setIsBrowserPanelOpen,
+  });
+  displayControlsRef.current = { displaySessionKey, setIsDisplayPanelOpen, setIsBrowserPanelOpen };
+  // Account for message-created tabs until the next commit publishes them.
+  const messageTabAdmissionsRef = useRef(new Map<string, number>());
+  useLayoutEffect(() => {
+    messageTabAdmissionsRef.current.clear();
+  });
   useEffect(() => {
     const scope = {};
     messageNavigationScopeRef.current = scope;
@@ -120,11 +134,13 @@ export function useCoworkBrowserPanels({
     (url?: string, invalidatePendingNavigation = false) => {
       setIsDisplayPanelOpen(true);
       const pendingTabs = pendingBrowserTabsRef.current.get(displaySessionKey) ?? [];
-      if (
-        currentSessionId?.startsWith('temp-') ||
-        browserTabs.length + pendingTabs.length >= getBrowserTabLimit()
-      )
+      if (currentSessionId?.startsWith('temp-')) return;
+      const messageAdmissions = messageTabAdmissionsRef.current.get(displaySessionKey) ?? 0;
+      if (browserTabs.length + pendingTabs.length + messageAdmissions >= getBrowserTabLimit()) {
+        if (browserTabs.length) setIsBrowserPanelOpen(true);
+        reportBrowserTabCapacity(displaySessionKey);
         return;
+      }
       if (invalidatePendingNavigation && filePreviewRequestIdRef) {
         filePreviewRequestIdRef.current += 1;
       }
@@ -304,6 +320,7 @@ export function useCoworkBrowserPanels({
         targetId: tab.targetId,
         customTitle: event.label,
         profile: event.profile,
+        notifyOnCapacity: false,
       });
       // A mounted panel may reject creation at its capacity limit. Keep the
       // current selection and parent state aligned with its actual guests.
@@ -379,6 +396,18 @@ export function useCoworkBrowserPanels({
 
   const openMessageBrowserTab = useCallback(
     (tab: BrowserPanelTab) => {
+      const pendingTabs = pendingBrowserTabsRef.current.get(displaySessionKey) ?? [];
+      const currentTabs = displayStatesRef.current[displaySessionKey]?.browserTabs ?? browserTabs;
+      const messageAdmissions = messageTabAdmissionsRef.current.get(displaySessionKey) ?? 0;
+      if (currentTabs.length + pendingTabs.length + messageAdmissions >= getBrowserTabLimit()) {
+        const controls = displayControlsRef.current;
+        if (controls.displaySessionKey === displaySessionKey) {
+          controls.setIsDisplayPanelOpen(true);
+          if (currentTabs.length) controls.setIsBrowserPanelOpen(true);
+        }
+        reportBrowserTabCapacity(displaySessionKey);
+        return;
+      }
       // A mounted panel owns its live tabs; changing initialTabs only seeds an
       // empty panel. Use the same identity in both the guest and parent state.
       const created = browserPanelRefs.current.get(displaySessionKey)?.openTab(tab.url, {
@@ -389,9 +418,12 @@ export function useCoworkBrowserPanels({
         sourcePreviewRootUrl: tab.sourcePreviewRootUrl,
       });
       if (created === false) return;
+      if (created === undefined) {
+        messageTabAdmissionsRef.current.set(displaySessionKey, messageAdmissions + 1);
+      }
       openBrowserTabRef.current(displaySessionKey, tab, getBrowserTabLimit());
     },
-    [browserPanelRefs, displaySessionKey],
+    [browserPanelRefs, browserTabs, displaySessionKey, pendingBrowserTabsRef],
   );
   const openLocalHtml = useCallback(
     async (detail: OpenLocalHtmlOptions) => {

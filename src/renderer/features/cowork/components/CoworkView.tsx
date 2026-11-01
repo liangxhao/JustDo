@@ -1866,12 +1866,6 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
 
   const handleOpenSummaryResource = (resource: SummaryResource) => {
     if (!currentGatewaySessionKey) return;
-    if (resource.target.kind === 'url' && browserTabs.length >= maximumBrowserTabs) {
-      window.dispatchEvent(
-        new CustomEvent('app:showToast', { detail: i18nService.t('coworkSummaryBrowserLimit') }),
-      );
-      return;
-    }
     summaryVisibility.close();
     const sessionKey = currentGatewaySessionKey;
     const scope = summaryNavigationScope.current;
@@ -1911,8 +1905,6 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
         if (isWorkspaceDetached) window.electron.workspaceWindow?.focus();
       },
       openUrl: url => {
-        if (browserTabs.length >= maximumBrowserTabs)
-          throw new Error(i18nService.t('coworkSummaryBrowserLimit'));
         handleCreateBrowserTab(url);
         if (isWorkspaceDetached) window.electron.workspaceWindow?.focus();
       },
@@ -2248,9 +2240,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
         visible={isWorkspaceVisible}
         showAddressInput={!onNavigateBrowser}
         onNavigateBrowser={onNavigateBrowser}
-        browserDisabled={
-          Boolean(currentSessionId?.startsWith('temp-')) || browserTabs.length >= maximumBrowserTabs
-        }
+        browserDisabled={Boolean(currentSessionId?.startsWith('temp-'))}
         filesDisabled={!workspaceFilesRootPath || Boolean(currentSessionId?.startsWith('temp-'))}
         onCreateBrowser={handleCreateBrowserTab}
         onCreateSideChat={currentSession ? replaceStartPage(handleCreateSideChat) : undefined}
@@ -2299,6 +2289,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                 }}
                 key={`browser-runtime:${displayState.runtimeId}`}
                 draftKey={sessionKey}
+                capacityFeedbackEnabled={isActiveSession}
                 onStopTask={
                   sessionKey === HOME_DISPLAY_SESSION_KEY
                     ? undefined
@@ -3589,6 +3580,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
             displayTabs.length > 0 ||
             hasRetainedRuntimePanels) && (
             <CoworkDisplayPanel
+              browserSessionKey={displaySessionKey}
               key="cowork-display-panel"
               activeTabId={activeDisplayTabId ?? ''}
               referenceContent={
@@ -3655,10 +3647,8 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
               onSidePanelClose={() => setIsWorkspaceFilesOpen(false)}
               actions={
                 <NewDisplayTabButton
-                  disabled={
-                    currentSession.id.startsWith('temp-') ||
-                    browserTabs.length >= maximumBrowserTabs
-                  }
+                  disabled={currentSession.id.startsWith('temp-')}
+                  capacityReached={browserTabs.length >= maximumBrowserTabs}
                   onCreateTab={() => handleCreateBrowserTab()}
                 />
               }

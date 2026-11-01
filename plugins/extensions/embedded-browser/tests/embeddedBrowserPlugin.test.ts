@@ -115,12 +115,36 @@ function fixture(
     setResponse: (value: any) => {
       response = value;
     },
+    respondWithError: (requestId: string, error: string) => {
+      methods.get('embeddedBrowser.resolve')!({ params: { requestId, ok: false, error }, respond });
+    },
     requested: () =>
       emit.mock.calls.filter(([name]) => name === 'requested').map(([, event]) => event),
   };
 }
 
 describe('embedded browser trusted execution integration', () => {
+  it('delivers host capacity guidance as a tool error without retrying or closing pages', async () => {
+    const f = fixture();
+    f.autoRespond(false);
+    f.prompt();
+    f.prepare();
+    const pending = f.tool.execute('call', { action: 'open', url: 'https://example.test/' });
+    await vi.waitFor(() => expect(f.requested()).toHaveLength(1));
+    const guidance =
+      'Tab limit reached. Use action=tabs with profile, reuse a target or use action=close with targetId and the same profile.';
+
+    f.respondWithError(f.requested()[0].requestId, guidance);
+
+    const result = await pending;
+    expect(result.isError).toBe(true);
+    expect(result.content).toEqual([
+      expect.objectContaining({ type: 'text', text: expect.stringContaining(guidance) }),
+    ]);
+    expect(f.requested()).toHaveLength(1);
+    expect(f.requested()[0].command.action).toBe('open');
+  });
+
   it('keeps one browser tool and foreground schema default, with post-policy and v2 guards', async () => {
     const f = fixture();
     expect(f.factory.contextVersion).toBe(2);

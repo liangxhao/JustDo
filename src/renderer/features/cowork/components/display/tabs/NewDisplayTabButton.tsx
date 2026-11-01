@@ -7,6 +7,7 @@ import { i18nService } from '@/services/i18n';
 
 interface NewDisplayTabButtonProps {
   disabled?: boolean;
+  capacityReached?: boolean;
   onCreateTab: () => void;
   buttonRef?: Ref<HTMLButtonElement>;
   boxedIcon?: boolean;
@@ -15,6 +16,7 @@ interface NewDisplayTabButtonProps {
 
 const NewDisplayTabButton = ({
   disabled = false,
+  capacityReached = false,
   onCreateTab,
   buttonRef,
   boxedIcon = false,
@@ -44,9 +46,11 @@ const NewDisplayTabButton = ({
       title={
         detached
           ? i18nService.t('coworkDisplayWindowFocus')
-          : shortcut
-            ? `${i18nService.t('coworkNewDisplayTab')} (${shortcut})`
-            : i18nService.t('coworkNewDisplayTab')
+          : capacityReached
+            ? i18nService.t('browserTabCapacityFallback')
+            : shortcut
+              ? `${i18nService.t('coworkNewDisplayTab')} (${shortcut})`
+              : i18nService.t('coworkNewDisplayTab')
       }
     >
       {boxedIcon ? (
