@@ -11,7 +11,6 @@ export const skillWorkshopTranslations = {
     skillWorkshopNoSkills: '尚无工坊技能。',
     skillWorkshopUseCount: '使用次数：',
     skillWorkshopVersions: '历史版本',
-    skillWorkshopVersionsHint: '已归档的技能可从历史版本恢复。',
     skillWorkshopStillLive: '有当前副本',
     skillWorkshopArchived: '已归档',
     skillWorkshopSelectHint: '选择当前技能或已保存的版本，查看完整指令和支持文件。',
@@ -71,7 +70,6 @@ export const skillWorkshopTranslations = {
     skillWorkshopNoSkills: 'No Workshop skills yet.',
     skillWorkshopUseCount: 'Uses:',
     skillWorkshopVersions: 'Saved versions',
-    skillWorkshopVersionsHint: 'Archived skills can be restored from saved versions.',
     skillWorkshopStillLive: 'Live copy available',
     skillWorkshopArchived: 'Archived',
     skillWorkshopSelectHint:

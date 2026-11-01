@@ -62,9 +62,6 @@ export const appTranslations = {
     sidebarPinFeature: '将{name}固定到侧边栏',
     sidebarUnpinFeature: '取消固定{name}',
     sidebarPinSaveFailed: '无法保存侧边栏固定设置，请重试。',
-    startupTitle: '正在启动',
-    startupDescription: '准备完成后将自动进入首页。',
-    startupPreparing: '正在加载应用',
     startupSessionsLoading: '正在读取最近对话',
     startupSessionsError: '暂时无法读取最近对话',
     // 通用
@@ -144,9 +141,6 @@ export const appTranslations = {
     sidebarPinFeature: 'Pin {name} to sidebar',
     sidebarUnpinFeature: 'Unpin {name} from sidebar',
     sidebarPinSaveFailed: 'Unable to save sidebar pins. Please try again.',
-    startupTitle: 'Starting up',
-    startupDescription: 'The home page will open when ready.',
-    startupPreparing: 'Loading the application',
     startupSessionsLoading: 'Loading recent conversations',
     startupSessionsError: 'Unable to load recent conversations',
     // Common

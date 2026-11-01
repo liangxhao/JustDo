@@ -278,8 +278,6 @@ export const sessionDiagnosticsTranslations = {
     diagnosticsProblem_unknown: 'Error or warning recorded; cause unavailable',
     diagnosticsEvidenceUnrelated:
       'These logs have no matching run identity. They cannot establish a problem in this run; confirm the association before changing settings.',
-    diagnosticsEvidenceToolLimits:
-      'This confirms a failed tool result was received. Tool names and error details were not recorded, so this page cannot identify the failed step or its cause. Use the recorded time to locate the tool result in the conversation.',
     diagnosticsEvidenceToolFailed: 'The runtime marked a tool result as failed.',
     diagnosticsEvidenceCategory: 'An execution event reported: {category}.',
     diagnosticsEvidenceEventError:
@@ -301,10 +299,6 @@ export const sessionDiagnosticsTranslations = {
       '{count} records have the same time and description; grouped for display, not counted as separate failures.',
     diagnosticsEvidenceMore: 'Show {count} more evidence groups',
     diagnosticsFindings: 'Problems and clues',
-    diagnosticsFindingsScope:
-      'Observed during execution; a normal ending does not mean every step succeeded. Log clues are not confirmed causes. Evidence entries may duplicate the same event.',
-    diagnosticsFindingsEmpty:
-      'No recognizable problem was found in the available evidence. This does not establish that the task succeeded; missing records and task-quality problems may not be detected.',
     diagnosticsFindingsPending:
       'Log evidence has not been collected yet. Any recorded execution problems will appear here.',
     diagnosticsFindingAssociation_event: 'Observed in this run',
@@ -399,7 +393,6 @@ export const sessionDiagnosticsTranslations = {
     diagnosticsLogsTail:
       'The source was truncated by collection limits; earlier records may be absent.',
     diagnosticsLogsFiles: 'Files read',
-    diagnosticsLogsBytes: 'Bytes read',
     diagnosticsLogsRead: 'Records read',
     diagnosticsLogsEmitted: 'Included',
     diagnosticsLogsSuppressed: 'Omitted',
@@ -504,8 +497,6 @@ export const sessionDiagnosticsTranslations = {
     diagnosticsConnection_connected: 'Runtime service connected at collection time',
     diagnosticsConnection_offline:
       'Runtime service offline at collection time; the run may still be active.',
-    diagnosticsConfidence_confirmed: 'Confirmed',
-    diagnosticsConfidence_unknown: 'Unable to confirm',
     diagnosticsReason_unknown: 'There is not enough evidence to confirm why this run ended.',
     diagnosticsReason_running: 'The last observed evidence indicates this run was active.',
     diagnosticsReason_completed: 'This turn ended, but the specific reason is not recorded.',
@@ -784,8 +775,6 @@ export const sessionDiagnosticsTranslations = {
     diagnosticsProblem_unknown: '记录到错误或警告，缺少具体原因',
     diagnosticsEvidenceUnrelated:
       '这些日志没有匹配本轮运行标识，不能据此判断本轮存在此问题；请先确认关联，再调整配置。',
-    diagnosticsEvidenceToolLimits:
-      '只能确认收到过工具失败标记。当前记录未保存工具名称和错误详情，无法从本页确定哪个步骤失败、为什么失败；请按记录时间查看会话中的工具结果。',
     diagnosticsEvidenceToolFailed: '运行服务将工具结果标记为失败。',
     diagnosticsEvidenceCategory: '运行事件报告：{category}。',
     diagnosticsEvidenceEventError: '运行服务报告了错误，未记录具体原因。',
@@ -803,10 +792,6 @@ export const sessionDiagnosticsTranslations = {
       '{count} 条记录的时间和描述相同，已合并展示；不代表发生了同样次数的故障。',
     diagnosticsEvidenceMore: '展开其余 {count} 组依据',
     diagnosticsFindings: '问题与线索',
-    diagnosticsFindingsScope:
-      '执行过程中出现的异常；正常结束不代表每一步都成功。日志线索不等于已确认根因，证据条数也不等于独立故障次数。',
-    diagnosticsFindingsEmpty:
-      '现有证据中未识别到明确问题，不代表任务成功。记录缺失、答非所问或任务未完成等情况可能无法识别。',
     diagnosticsFindingsPending: '尚未采集日志证据，已记录的执行问题会显示在这里。',
     diagnosticsFindingAssociation_event: '本轮事件已记录',
     diagnosticsFindingAssociation_run: '日志匹配本轮，待核实',
@@ -884,7 +869,6 @@ export const sessionDiagnosticsTranslations = {
       '覆盖取决于日志保留情况和各来源扫描状态。预览容量不会中止扫描；仅按时间匹配的记录可能属于其他会话。',
     diagnosticsLogsTail: '此来源受采集上限截断，较早记录可能缺失。',
     diagnosticsLogsFiles: '读取文件数',
-    diagnosticsLogsBytes: '读取字节数',
     diagnosticsLogsRead: '读取记录数',
     diagnosticsLogsEmitted: '已纳入',
     diagnosticsLogsSuppressed: '已省略',
@@ -983,8 +967,6 @@ export const sessionDiagnosticsTranslations = {
     diagnosticsEnvironment_unavailable: '在线环境不可用，仍可查看本地证据。',
     diagnosticsConnection_connected: '采集时运行服务已连接',
     diagnosticsConnection_offline: '采集时运行服务离线；运行可能仍在后台继续。',
-    diagnosticsConfidence_confirmed: '已确认',
-    diagnosticsConfidence_unknown: '无法确认',
     diagnosticsReason_unknown: '现有证据不足以确认本轮结束原因。',
     diagnosticsReason_running: '最后观测到的证据表明本轮仍在运行。',
     diagnosticsReason_completed: '本轮已结束，但没有记录具体结束原因。',

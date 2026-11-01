@@ -1,12 +1,6 @@
 export const swarmTranslations = {
   zh: {
     swarmTitle: 'Swarm 协作',
-    swarmAuto: '自动分工',
-    swarmResearch: '分头研究',
-    swarmReview: '独立审查',
-    swarmVerify: '独立检查结果',
-    swarmNext: '仅本次提交',
-    swarmOff: '取消并行协作',
     swarmPreparing: '等待原生子任务',
     swarmEmpty: '尚无并行任务。从输入框开启并行协作后发送目标。',
     swarmUnavailable: '无法读取最新状态，保留上次快照。',
@@ -38,12 +32,6 @@ export const swarmTranslations = {
   },
   en: {
     swarmTitle: 'Swarm collaboration',
-    swarmAuto: 'Auto split',
-    swarmResearch: 'Parallel research',
-    swarmReview: 'Independent review',
-    swarmVerify: 'Independent result check',
-    swarmNext: 'Next submission only',
-    swarmOff: 'Turn off parallel work',
     swarmPreparing: 'Waiting for native subtasks',
     swarmEmpty: 'No parallel tasks yet. Enable parallel work in the composer and send a goal.',
     swarmUnavailable: 'Latest status unavailable. Showing the previous snapshot.',

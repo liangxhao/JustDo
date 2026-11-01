@@ -1,9 +1,7 @@
 export const workspaceDisplayTranslations = {
   zh: {
     coworkNewDisplayTab: '新建标签页',
-    coworkNewBrowserTab: '浏览器',
     coworkNewTerminalTab: '终端',
-    coworkDisplayPanelOpen: '打开侧边栏',
     coworkLauncherTools: '工具',
     coworkLauncherRecentVisits: '最近访问',
     coworkLauncherDeleteRecentVisit: '删除 {title} 的访问记录',
@@ -27,9 +25,7 @@ export const workspaceDisplayTranslations = {
   },
   en: {
     coworkNewDisplayTab: 'New tab',
-    coworkNewBrowserTab: 'Browser',
     coworkNewTerminalTab: 'Terminal',
-    coworkDisplayPanelOpen: 'Open sidebar',
     coworkLauncherTools: 'Tools',
     coworkLauncherRecentVisits: 'Recently visited',
     coworkLauncherDeleteRecentVisit: 'Delete visit to {title}',

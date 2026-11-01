@@ -199,15 +199,11 @@ export const assistantTranslations = {
     agentStartChat: '开始对话',
     agentFiles: '角色文件',
     agentSaveFile: '保存角色文件',
-    agentManagerHelp:
-      '默认与主助手对话，也可开启助手切换。每个助手的角色目录独立于工程目录。请在没有任务运行时保存配置。',
     agentFilesHelp:
       '所有助手（包括主助手）的角色与记忆保存在各自独立目录。首次启用时会从内置模板初始化主助手角色文件，不覆盖已编辑的文件。工程 AGENTS.md 仍作为项目规则加载；如含身份指令，请核对整理，以免冲突。',
     agentCreateFirst: '先创建助手，再按需编辑角色规则。',
     agentDiscardChanges: '放弃尚未保存的修改？',
     agentFilter: '按 Agent 筛选会话',
-    agentAllSessions: '全部会话',
-    agentChatWith: '对话对象',
     agentInvalidProfile: '请填写有效的名称和角色配置。',
     agentInvalidModel: '请选择有效的模型。',
     agentUnavailable: '该 Agent 不可用，请先启用。',
@@ -329,15 +325,11 @@ export const assistantTranslations = {
     agentStartChat: 'Start chat',
     agentFiles: 'Role files',
     agentSaveFile: 'Save role file',
-    agentManagerHelp:
-      'Conversations default to main, with optional assistant switching. Each assistant has a role folder separate from the project. Save configuration when no tasks are running.',
     agentFilesHelp:
       'Every assistant, including main, keeps role files and memory in a separate folder. On first use, main role files are initialized from bundled templates without replacing edited files. The project AGENTS.md still supplies project rules; review any identity instructions in it to avoid conflicts.',
     agentCreateFirst: 'Save the agent first, then edit its role files.',
     agentDiscardChanges: 'Discard unsaved changes?',
     agentFilter: 'Filter sessions by agent',
-    agentAllSessions: 'All conversations',
-    agentChatWith: 'Chat with',
     agentInvalidProfile: 'Enter a valid name and agent configuration.',
     agentInvalidModel: 'Select a valid model.',
     agentUnavailable: 'This agent is unavailable. Enable it first.',

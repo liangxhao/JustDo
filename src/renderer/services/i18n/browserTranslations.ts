@@ -26,21 +26,11 @@ export const browserTranslations = {
     browserModeUserOption: '日常 Chrome',
     browserModeExtensionOption: 'Chrome 扩展',
     browserModeIsolatedTitle: '连接隔离 Chrome',
-    browserModeIsolatedDescription:
-      '使用独立的浏览器资料，不读取日常 Chrome 的账号、Cookie 或标签页。',
     browserModeIsolatedActive:
       '当前使用隔离浏览器。它与日常 Chrome 完全分开，也是默认和更安全的选择。',
     browserModeIsolatedNetworkNotice: '隔离浏览器仅支持访问公司内网，无法访问互联网。',
     browserModeUserTitle: '连接日常 Chrome',
-    browserModeUserDescription:
-      '连接日常 Chrome，复用其中的登录状态、Cookie 和标签页，需要你主动授权。',
     browserModeExtensionTitle: '通过扩展连接 Chrome',
-    browserModeExtensionDescription:
-      '通过已安装的扩展连接 Chrome，可共享全部网页或仅共享指定标签页。',
-    browserModeExtensionActive:
-      '当前浏览器操作通过已安装的 Chrome 扩展连接。扩展会自动配对本机应用，请在 Tab Access 中选择允许共享的网页范围。',
-    browserModeEmbeddedTitle: '连接内置浏览器',
-    browserModeEmbeddedDescription: 'AI 与你共同操作应用侧边栏里的同一个实时网页。',
     browserModeEmbeddedActive:
       '当前使用内置浏览器。浏览器操作会显示在会话侧边栏中，你可以随时直接接管。',
     browserModeChangeFailed: '浏览器模式切换失败',
@@ -49,7 +39,6 @@ export const browserTranslations = {
     browserModeChangeComplete: '已切换',
     browserModeActiveSessionWarning:
       '有会话正在运行，暂时无法切换浏览器模式。请等待会话结束后重试，避免 AI 引擎重启中断当前任务。',
-    browserUserChromeTitle: '连接你的 Chrome',
     browserUserChromeDescription:
       '复用日常 Chrome 的登录状态、Cookie 和标签页。Chrome 会在首次连接时要求你明确授权。',
     browserStatusReady: 'Chrome 已准备好，可以请求授权',
@@ -99,9 +88,6 @@ export const browserTranslations = {
       '本软件升级后，如果连不上，请重装该扩展。Chrome 扩展管理页可核对已安装扩展的版本号。',
     browserExtensionSectionDescription:
       '支持侧栏对话、授权本软件操作 Chrome。',
-    browserExtensionTitle: '通过扩展连接你的 Chrome',
-    browserExtensionDescription:
-      '保持桌面应用与 Chrome 运行，扩展会自动发现并配对本机应用；配对后可在 Tab Access 中调整共享范围。',
     browserExtensionStepInstallTitle: '安装或更新 Chrome 扩展',
     browserExtensionStepInstallDescription:
       '首次安装：\n（1）点击“打开扩展管理页”，将复制的地址粘贴到 Chrome 地址栏并打开，再开启“开发者模式”。\n（2）点击“打开扩展文件夹”，将其中的“chrome-extension”文件夹拖入 Chrome 扩展管理页。\n（3）点击 Chrome 右上角的 {extensionsButton} 找到此扩展；可点击图钉将它固定到工具栏。\n\n核对版本与更新：\n在扩展管理页找到此扩展，点击“详情”查看“版本”，与本页的扩展版本核对。升级后若无法连接，先重新加载扩展；仍无法连接时，移除旧扩展，再按上述步骤从当前扩展文件夹安装。',
@@ -120,20 +106,14 @@ export const browserTranslations = {
     browserExtensionCopyPairing: '复制配对信息',
     browserExtensionPairingCopied: '已复制，请粘贴到扩展中',
     browserExtensionPairingFailed: '无法生成扩展配对信息',
-    browserExtensionStepVerifyTitle: '测试连接',
-    browserExtensionStepVerifyDescription:
-      '确认扩展设置页的连接状态显示 Connected，然后点击右侧按钮验证连接。',
     browserExtensionTestConnection: '测试扩展连接',
     browserExtensionRelayUnavailable:
       '本地连接服务未响应。请重启应用；仍无法连接时，请检查安全软件是否阻止本地连接。',
     browserExtensionNotConnected: 'Chrome 扩展尚未连接，请确认扩展已启用或重新配对。',
     browserPanelTitle: '浏览器',
     browserPanelAgentControlling: 'Agent 正在操作浏览器',
-    browserPanelOpen: '打开浏览器面板',
     browserPanelClose: '关闭浏览器面板',
-    browserPanelRestoreWidth: '恢复浏览器面板默认宽度',
     browserPanelResize: '调整浏览器面板宽度',
-    browserPanelRefresh: '刷新浏览器',
     browserPanelLoadFailed: '无法加载浏览器',
     browserPdfUseToolbar: '请使用 PDF 自带工具栏中的打印按钮',
     browserPanelPostNavigationBlocked: '此页面尝试在新标签页提交表单，当前不支持，已阻止',
@@ -192,11 +172,6 @@ export const browserTranslations = {
     browserSearchEngineGoogle: 'Google',
     browserSearchEngineSaveFailed: '无法保存搜索引擎设置',
     browserEmbeddedSettingsTitle: '内置浏览器设置',
-    browserEmbeddedSettingsDescription: '链接打开位置与内置浏览器偏好。',
-    browserGeneralSettingsTitle: '浏览',
-    browserGeneralSettingsDescription: '设置链接、搜索和历史',
-    browserDownloadSettingsTitle: '下载',
-    browserDownloadSettingsDescription: '管理内置浏览器的文件保存与下载记录',
     browserDownloadLocationTitle: '下载位置',
     browserDownloadSystemFolder: '系统下载文件夹',
     browserDownloadChangeLocation: '更改',
@@ -206,7 +181,6 @@ export const browserTranslations = {
     browserManage: '管理',
     browserPanelInspect: '添加注释',
     browserPanelCancelInspect: '取消添加注释',
-    browserPanelInspectDisabled: '浏览器设置已禁用元素检查',
     browserPanelInspectFailed: '无法检查此网页元素',
     browserPanelPen: '画笔标注',
     browserPanelRectangle: '矩形标注',
@@ -267,7 +241,6 @@ export const browserTranslations = {
     browserImportSubtitle: '选择要导入到内置浏览器的数据',
     browserImportFrom: '从',
     browserImportSource: '导入来源',
-    browserImportProfile: '用户 1',
     browserImportLoading: '正在查找 Chrome Profile…',
     browserImportNoSources: '未找到 Chrome Profile',
     browserImportSourceFailed: '无法读取 Chrome Profile',
@@ -291,12 +264,10 @@ export const browserTranslations = {
       '已导入：{passwords} 个密码、{cookies} 个 Cookie、{history} 条历史记录。',
     browserImportLoginStateNotTransferred:
       'Chrome 登录状态未能迁移；请在内嵌浏览器中登录一次，之后会持续保留。',
-    browserImportAppBoundSkipped: '另有 {count} 项受 Chrome 应用绑定加密保护，已安全跳过。',
     browserImportAppBoundCookiesSkipped:
       '有 {count} 个受 Chrome 应用绑定保护的 Cookie 无法迁移，相关网站需要在内嵌浏览器中登录一次。',
     browserImportAppBoundPasswordsSkipped: '有 {count} 个受 Chrome 应用绑定保护的密码无法迁移。',
     browserHistoryTitle: '浏览历史',
-    browserHistoryDescription: '查看和管理在内置浏览器中访问过的页面',
     browserHistorySearch: '搜索浏览历史',
     browserHistoryAll: '全部历史记录',
     browserHistoryClear: '清除浏览数据',
@@ -310,7 +281,6 @@ export const browserTranslations = {
     browserHistoryLoadFailed: '无法加载浏览历史',
     browserHistoryDeleteFailed: '无法删除浏览历史',
     browserDownloadsTitle: '下载历史记录',
-    browserDownloadsDescription: '查看和管理内置浏览器下载的文件',
     browserDownloadsSearch: '搜索下载历史记录',
     browserDownloadsAll: '全部下载记录',
     browserDownloadsClear: '清除全部',
@@ -329,10 +299,6 @@ export const browserTranslations = {
     browserDownloadState_completed: '已完成',
     browserDownloadState_cancelled: '已取消',
     browserDownloadState_interrupted: '已中断',
-    browserPanelNotRunning: '浏览器尚未运行',
-    browserPanelUserNotConnected: '尚未连接用户浏览器，请在 Chrome 中完成远程调试授权',
-    browserPanelExtensionNotConnected: '浏览器扩展尚未连接或没有已授权的标签页',
-    browserPanelStart: '启动浏览器',
     browserPanelEmpty: '新建或选择一个标签页',
     browserPanelViewport: '浏览器网页检查与标注区域',
     browserInspectorLocked: '已锁定，点击其他元素可重新选择',
@@ -353,7 +319,6 @@ export const browserTranslations = {
     browserAnnotationTooLarge: '标注图片超过 20 MB，无法加入草稿',
     browserAnnotationCommentPlaceholder: '添加评论…',
     browserAnnotationElementDetails: '展开 HTML 元素详情',
-    browserAnnotationRegionSummary: '{count} 个标注',
     browserAnnotationCommentSubmit: '将标注和评论添加到对话',
     browserAnnotationCommentDismiss: '收起评论框',
     browserAnnotationTextOnly: '当前模型仅接收文本上下文',
@@ -388,7 +353,6 @@ export const browserTranslations = {
     browserWebpageEmbedError_forbidden: 'This connection cannot change the setting.',
     browserWebpageEmbedError_unavailable: 'The AI engine is disconnected. Refresh after it connects.',
     browserWebpageEmbedError_unknown: 'Unable to confirm the setting. Refresh and try again.',
-    browserUserChromeTitle: 'Connect your Chrome',
     browserModeTitle: 'Choose a browser',
     browserModeDescription: 'Choose which browser the AI uses.',
     browserModeChromeGroupTitle: 'Chrome',
@@ -398,23 +362,12 @@ export const browserTranslations = {
     browserModeUserOption: 'Everyday Chrome',
     browserModeExtensionOption: 'Chrome extension',
     browserModeIsolatedTitle: 'Connect isolated Chrome',
-    browserModeIsolatedDescription:
-      'Uses a separate browser profile without access to your everyday Chrome accounts, cookies, or tabs.',
     browserModeIsolatedActive:
       'The isolated browser is active. It stays separate from everyday Chrome and is the default, safer choice.',
     browserModeIsolatedNetworkNotice:
       'The isolated browser can access company intranet sites only and cannot access the internet.',
     browserModeUserTitle: 'Connect everyday Chrome',
-    browserModeUserDescription:
-      'Connects to everyday Chrome and reuses its sign-in state, cookies, and tabs after you explicitly authorize it.',
     browserModeExtensionTitle: 'Connect through extension',
-    browserModeExtensionDescription:
-      'Connect to Chrome through the installed extension and share all eligible pages or selected tabs.',
-    browserModeExtensionActive:
-      'Browser actions currently connect through the installed Chrome extension. It pairs with the local app automatically; choose which pages to share under Tab Access.',
-    browserModeEmbeddedTitle: 'Connect built-in browser',
-    browserModeEmbeddedDescription:
-      'You and the AI share the same live page in the conversation sidebar.',
     browserModeEmbeddedActive:
       'The built-in browser is active. Browser actions appear in the conversation sidebar, where you can take over at any time.',
     browserModeChangeFailed: 'Failed to change browser mode',
@@ -473,9 +426,6 @@ export const browserTranslations = {
       'If it cannot connect after an app upgrade, reinstall the extension. Check the installed extension’s version on Chrome’s extensions page.',
     browserExtensionSectionDescription:
       'Chat in the side panel and authorize this app to control Chrome.',
-    browserExtensionTitle: 'Connect your Chrome through the extension',
-    browserExtensionDescription:
-      'Keep the desktop app and Chrome running. The extension discovers and pairs with the local app automatically; adjust sharing under Tab Access after pairing.',
     browserExtensionStepInstallTitle: 'Install or update the Chrome extension',
     browserExtensionStepInstallDescription:
       'First-time installation:\n(1) Select Open extensions page, paste the copied address into Chrome’s address bar and open it, then enable Developer mode.\n(2) Select Open extension folder, then drag the chrome-extension folder onto Chrome’s extension management page.\n(3) Select {extensionsButton} at the top right of Chrome to find this extension; use the pin icon to keep it in the toolbar.\n\nChecking the version and updating:\nFind this extension on the extensions page and select Details → Version to compare it with the extension version shown here. If it cannot connect after an app upgrade, reload it first. If it still cannot connect, remove it, then follow the installation steps above using the current extension folder.',
@@ -495,20 +445,14 @@ export const browserTranslations = {
     browserExtensionCopyPairing: 'Copy pairing information',
     browserExtensionPairingCopied: 'Copied; paste it into the extension',
     browserExtensionPairingFailed: 'Unable to generate extension pairing information',
-    browserExtensionStepVerifyTitle: 'Test the connection',
-    browserExtensionStepVerifyDescription:
-      'Confirm the connection status in extension settings shows Connected, then use the button on the right to verify the connection.',
     browserExtensionTestConnection: 'Test extension connection',
     browserExtensionRelayUnavailable:
       'The local connection service is not responding. Restart the app; if it still cannot connect, check whether security software blocks local connections.',
     browserExtensionNotConnected: 'The Chrome extension is not connected. Enable it or pair again.',
     browserPanelTitle: 'Browser',
     browserPanelAgentControlling: 'Agent is controlling the browser',
-    browserPanelOpen: 'Open browser panel',
     browserPanelClose: 'Close browser panel',
-    browserPanelRestoreWidth: 'Restore default browser panel width',
     browserPanelResize: 'Resize browser panel',
-    browserPanelRefresh: 'Refresh browser',
     browserPanelLoadFailed: 'Unable to load the browser',
     browserPdfUseToolbar: 'Use the print button in the PDF toolbar.',
     browserPanelPostNavigationBlocked:
@@ -571,12 +515,6 @@ export const browserTranslations = {
     browserSearchEngineGoogle: 'Google',
     browserSearchEngineSaveFailed: 'Unable to save the search engine setting',
     browserEmbeddedSettingsTitle: 'Built-in browser settings',
-    browserEmbeddedSettingsDescription: 'Link opening and built-in browser preferences.',
-    browserGeneralSettingsTitle: 'Browsing',
-    browserGeneralSettingsDescription: 'Manage links, search and history',
-    browserDownloadSettingsTitle: 'Downloads',
-    browserDownloadSettingsDescription:
-      'Manage file saving and download history for the built-in browser',
     browserDownloadLocationTitle: 'Download location',
     browserDownloadSystemFolder: 'System downloads folder',
     browserDownloadChangeLocation: 'Change',
@@ -587,7 +525,6 @@ export const browserTranslations = {
     browserManage: 'Manage',
     browserPanelInspect: 'Add comment',
     browserPanelCancelInspect: 'Stop adding comments',
-    browserPanelInspectDisabled: 'Element inspection is disabled in browser settings',
     browserPanelInspectFailed: 'Unable to inspect this page element',
     browserPanelPen: 'Draw annotation',
     browserPanelRectangle: 'Rectangle annotation',
@@ -648,7 +585,6 @@ export const browserTranslations = {
     browserImportSubtitle: 'Choose the data to import into the built-in browser',
     browserImportFrom: 'From',
     browserImportSource: 'Import source',
-    browserImportProfile: 'Profile 1',
     browserImportLoading: 'Finding Chrome profiles…',
     browserImportNoSources: 'No Chrome profile found',
     browserImportSourceFailed: 'Unable to read the Chrome profile',
@@ -676,14 +612,11 @@ export const browserTranslations = {
       'Imported: {passwords} passwords, {cookies} cookies, and {history} history entries.',
     browserImportLoginStateNotTransferred:
       'Chrome sign-in state was not transferred. Sign in once in the embedded browser and it will be retained.',
-    browserImportAppBoundSkipped:
-      '{count} additional items were protected by Chrome app-bound encryption and were safely skipped.',
     browserImportAppBoundCookiesSkipped:
       '{count} cookies protected by Chrome app-bound encryption could not be transferred. Sign in to the affected sites once in the embedded browser.',
     browserImportAppBoundPasswordsSkipped:
       '{count} passwords protected by Chrome app-bound encryption could not be transferred.',
     browserHistoryTitle: 'Browsing history',
-    browserHistoryDescription: 'View and manage pages visited in the built-in browser',
     browserHistorySearch: 'Search browsing history',
     browserHistoryAll: 'All history',
     browserHistoryClear: 'Clear browsing data',
@@ -697,7 +630,6 @@ export const browserTranslations = {
     browserHistoryLoadFailed: 'Unable to load browsing history',
     browserHistoryDeleteFailed: 'Unable to delete browsing history',
     browserDownloadsTitle: 'Download history',
-    browserDownloadsDescription: 'View and manage files downloaded in the built-in browser',
     browserDownloadsSearch: 'Search download history',
     browserDownloadsAll: 'All downloads',
     browserDownloadsClear: 'Clear all',
@@ -716,12 +648,6 @@ export const browserTranslations = {
     browserDownloadState_completed: 'Completed',
     browserDownloadState_cancelled: 'Cancelled',
     browserDownloadState_interrupted: 'Interrupted',
-    browserPanelNotRunning: 'The browser is not running',
-    browserPanelUserNotConnected:
-      'The user browser is not connected; approve remote debugging in Chrome',
-    browserPanelExtensionNotConnected:
-      'The browser extension is disconnected or has no authorized tab',
-    browserPanelStart: 'Start browser',
     browserPanelEmpty: 'Open or select a tab',
     browserPanelViewport: 'Browser page inspection and annotation area',
     browserInspectorLocked: 'Locked; click another element to select it',
@@ -742,7 +668,6 @@ export const browserTranslations = {
     browserAnnotationTooLarge: 'The annotation image exceeds 20 MB',
     browserAnnotationCommentPlaceholder: 'Add a comment…',
     browserAnnotationElementDetails: 'Expand HTML element details',
-    browserAnnotationRegionSummary: '{count} annotation(s)',
     browserAnnotationCommentSubmit: 'Add annotation and comment to chat',
     browserAnnotationCommentDismiss: 'Dismiss comment box',
     browserAnnotationTextOnly: 'The current model receives text context only',
