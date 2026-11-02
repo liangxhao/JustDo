@@ -9,6 +9,7 @@ import {
   PluginOperationStage,
 } from '../../../shared/plugins/pluginOperation';
 import { enqueueAppConfigUpdate } from '../../data/appConfigUpdateQueue';
+import { EnginePreparationPendingCode, EnginePreparationPendingError } from '../../engine/enginePreparationError';
 import type { OpenClawEngineManager } from '../../openclaw/runtime/openclawEngineManager';
 import { OpenClawExtensionImportService } from '../../plugins/extensions';
 import type { PluginInstallationService } from '../../plugins/installation';
@@ -519,6 +520,62 @@ test('retains unknown ownership and the original failure when package recovery a
   expect(await handlers.get(ExtensionIpc.Import)!(f.event, {
     requestId: 'unknown-import', sourcePath: 'C:/source',
   })).toMatchObject({ operationUnconfirmed: true, installSourceInUse: true });
+});
+
+test('carries confirmed installation and pending recovery through both custom import projections', async () => {
+  const f = fixture(undefined, async operation => {
+    await operation();
+    throw new EnginePreparationPendingError(EnginePreparationPendingCode.LIFECYCLE_CHANGED, 'Retired engine verification');
+  });
+  f.service.importPath.mockResolvedValue({ success: true, extensionId: 'feature-plugin' });
+  const installer = f.installation.registerInstaller.mock.calls[0][0];
+
+  const result = await installer.install({
+    payload: { kind: PluginKind.EXTENSION, sourcePath: 'C:/source' }, origin: 'custom',
+  });
+  expect(result).toMatchObject({
+    success: false, installationCommitted: true,
+    mutationCompleted: true, runtimeRecoveryPending: true,
+    error: expect.stringContaining('Retired engine verification'),
+  });
+  f.installation.install.mockResolvedValue(result);
+  expect(await handlers.get(ExtensionIpc.Import)!(f.event, {
+    requestId: 'completed-import', sourcePath: 'C:/source',
+  })).toMatchObject({ mutationCompleted: true, runtimeRecoveryPending: true });
+  expect(f.service.importPath).toHaveBeenCalledOnce();
+});
+
+test('keeps a confirmed removal successful when only its recovery observation is pending', async () => {
+  const f = fixture(undefined, async operation => {
+    await operation();
+    throw new EnginePreparationPendingError(EnginePreparationPendingCode.SUPERSEDED, 'Newer engine verification owns recovery');
+  });
+  f.service.delete.mockResolvedValue({ success: true });
+  const result = await handlers.get(ExtensionIpc.Delete)!(f.event, { extensionId: 'feature-plugin' });
+
+  expect(result).toMatchObject({
+    success: true, refreshWarning: true, mutationCompleted: true, runtimeRecoveryPending: true,
+  });
+  expect(f.service.delete).toHaveBeenCalledOnce();
+  expect(f.forgetMarketplace).toHaveBeenCalledWith(PluginKind.EXTENSION, 'feature-plugin');
+});
+
+test.each([
+  { success: false, operationUnconfirmed: true, error: 'Native removal unconfirmed' },
+  { success: true, refreshWarning: true, error: 'Outbound policy cleanup failed' },
+])('pending recovery cannot conceal an earlier mutation or cleanup problem: $error', async receipt => {
+  const f = fixture(undefined, async operation => {
+    await operation();
+    throw new EnginePreparationPendingError(EnginePreparationPendingCode.STARTING, 'Engine still starting');
+  });
+  f.service.delete.mockResolvedValue(receipt);
+  const result = await handlers.get(ExtensionIpc.Delete)!(f.event, { extensionId: 'feature-plugin' });
+
+  expect(result).toMatchObject({ ...receipt, error: expect.stringContaining(receipt.error) });
+  expect(result.error).toContain(receipt.error);
+  expect(result).not.toHaveProperty('mutationCompleted');
+  expect(result).not.toHaveProperty('runtimeRecoveryPending');
+  expect(f.service.delete).toHaveBeenCalledOnce();
 });
 
 test('preserves capability review evidence when the package wrapper subsequently fails', async () => {

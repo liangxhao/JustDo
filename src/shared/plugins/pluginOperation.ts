@@ -66,6 +66,10 @@ export interface PluginOperationFeedback {
   operationUnconfirmed?: true;
   /** Lifecycle completion or a following inventory read failed; preserve the mutation receipt. */
   refreshWarning?: true;
+  /** The original mutation returned a clean success before runtime recovery was observed. */
+  mutationCompleted?: true;
+  /** Runtime recovery was superseded or still pending; this is not a native mutation outcome. */
+  runtimeRecoveryPending?: true;
 }
 
 const operationStages = new Set<string>(Object.values(PluginOperationStage));

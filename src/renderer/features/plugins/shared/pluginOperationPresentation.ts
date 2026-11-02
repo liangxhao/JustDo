@@ -2,11 +2,21 @@ import { PluginOperationAction, PluginOperationStage } from '@shared/plugins/plu
 
 import { i18nService } from '@/services/i18n';
 
-import { type PluginOperationFailure, PluginOperationFailureState } from './pluginOperationService';
+import {
+  isPluginOperationRecoveryPending,
+  type PluginOperationFailure,
+  PluginOperationFailureState,
+} from './pluginOperationService';
 
 type FailureContext = Pick<
   PluginOperationFailure,
-  'action' | 'state' | 'failedStage' | 'operationUnconfirmed' | 'installSourceInUse'
+  | 'action'
+  | 'state'
+  | 'failedStage'
+  | 'operationUnconfirmed'
+  | 'installSourceInUse'
+  | 'mutationCompleted'
+  | 'runtimeRecoveryPending'
 >;
 type PresentationContext = FailureContext & Pick<PluginOperationFailure, 'items'>;
 
@@ -45,10 +55,7 @@ export const pluginOperationNeedsConfirmation = (
   operation.operationUnconfirmed === true ||
   operation.installSourceInUse === true;
 
-export function pluginOperationFailureGuidance(operation: FailureContext): string {
-  if (pluginOperationNeedsConfirmation(operation)) {
-    return i18nService.t('pluginOperationFailureNext.unconfirmed');
-  }
+const operationGuidanceKey = (operation: FailureContext) => {
   let guidance = operation.failedStage ? guidanceByStage[operation.failedStage] : undefined;
   if (operation.action === PluginOperationAction.REMOVE) {
     if (operation.state === PluginOperationFailureState.REFRESH_FAILED && operation.failedStage) {
@@ -67,23 +74,34 @@ export function pluginOperationFailureGuidance(operation: FailureContext): strin
     (guidance === 'enable' || guidance === 'configuration')
   )
     guidance = 'status';
-  const next = i18nService.t(
-    guidance
-      ? `pluginOperationFailureGuidance.${guidance}`
-      : operation.failedStage
-        ? 'pluginOperationFailureGuidance.support'
-        : 'pluginOperationFailureGuidance.missingStage',
-  );
+  return guidance ?? (operation.failedStage ? 'support' : 'missingStage');
+};
+
+export function pluginOperationFailureGuidance(operation: FailureContext): string {
+  if (pluginOperationNeedsConfirmation(operation)) {
+    return i18nService.t('pluginOperationFailureNext.unconfirmed');
+  }
+  const next = i18nService.t(`pluginOperationFailureGuidance.${operationGuidanceKey(operation)}`);
   return operation.state === PluginOperationFailureState.COMMITTED
     ? `${next} ${i18nService.t('pluginOperationFailureGuidance.saved')}`
     : next;
 }
 
+export const pluginOperationHasPendingRecovery = isPluginOperationRecoveryPending;
+
 export function pluginOperationFailurePresentation(operation: PresentationContext) {
+  if (pluginOperationHasPendingRecovery(operation)) {
+    return {
+      title: i18nService.t(`pluginOperationCompleted.${operation.action}`),
+      guidance: i18nService.t('pluginOperationRecoveryPendingNext'),
+      nextStep: i18nService.t('pluginOperationRecoveryPendingNext'),
+    };
+  }
   if ((operation.items?.length ?? 0) > 1) {
     return {
       title: i18nService.t('pluginOperationFailureTitle.batch'),
       guidance: i18nService.t('pluginOperationFailureGuidance.batch'),
+      nextStep: i18nService.t('pluginOperationFailureShortNext.batch'),
     };
   }
   let titleKey = `pluginOperationFailureTitle.${operation.state}`;
@@ -98,10 +116,20 @@ export function pluginOperationFailurePresentation(operation: PresentationContex
       operation.action === PluginOperationAction.INSTALL ||
       operation.action === PluginOperationAction.UPDATE
     ) {
-      titleKey = `pluginOperationFailureTitle.${operation.action}.committed`;
+      titleKey = `pluginOperationFailureTitle.${operation.action}.${
+        operation.mutationCompleted && !pluginOperationNeedsConfirmation(operation)
+          ? 'completed'
+          : 'committed'
+      }`;
     }
   } else if (operation.state === PluginOperationFailureState.REFRESH_FAILED) {
     if (
+      operation.mutationCompleted &&
+      (operation.action === PluginOperationAction.INSTALL ||
+        operation.action === PluginOperationAction.UPDATE)
+    ) {
+      titleKey = `pluginOperationFailureTitle.${operation.action}.completed`;
+    } else if (
       (operation.action === PluginOperationAction.ENABLE ||
         operation.action === PluginOperationAction.DISABLE) &&
       operation.failedStage === PluginOperationStage.CONFIRMING
@@ -143,5 +171,12 @@ export function pluginOperationFailurePresentation(operation: PresentationContex
   return {
     title: i18nService.t(titleKey).replace('{problem}', problem),
     guidance: pluginOperationFailureGuidance(operation),
+    nextStep: i18nService.t(
+      `pluginOperationFailureShortNext.${
+        pluginOperationNeedsConfirmation(operation)
+          ? 'unconfirmed'
+          : operationGuidanceKey(operation)
+      }`,
+    ),
   };
 }

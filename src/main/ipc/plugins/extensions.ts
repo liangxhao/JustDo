@@ -126,6 +126,8 @@ export const registerExtensionHandlers = ({
         ...(result.installationCommitted ? { installationCommitted: true as const } : {}),
         ...(result.installSourceInUse ? { installSourceInUse: true as const } : {}),
         ...(result.operationUnconfirmed ? { operationUnconfirmed: true as const } : {}),
+        ...(result.mutationCompleted ? { mutationCompleted: true as const } : {}),
+        ...(result.runtimeRecoveryPending ? { runtimeRecoveryPending: true as const } : {}),
         pluginId: result.extensionId,
         installPath,
         failedStage: result.operationFailedStage ?? result.failedStage,
@@ -214,6 +216,8 @@ export const registerExtensionHandlers = ({
           ...(result.installationCommitted ? { installationCommitted: true as const } : {}),
           ...(result.installSourceInUse ? { installSourceInUse: true as const } : {}),
           ...(result.operationUnconfirmed ? { operationUnconfirmed: true as const } : {}),
+          ...(result.mutationCompleted ? { mutationCompleted: true as const } : {}),
+          ...(result.runtimeRecoveryPending ? { runtimeRecoveryPending: true as const } : {}),
           ...(result.refreshWarning ? { refreshWarning: true as const } : {}),
         });
       } catch (error) {

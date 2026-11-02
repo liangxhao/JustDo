@@ -16,16 +16,30 @@ export const pluginsTranslations = {
     'pluginOperationFailureTitle.install': '安装未完成',
     'pluginOperationFailureTitle.install.committed': '安装内容已保存，但{problem}',
     'pluginOperationFailureTitle.update.committed': '更新内容已保存，但{problem}',
+    'pluginOperationFailureTitle.install.completed': '插件已安装，但{problem}',
+    'pluginOperationFailureTitle.update.completed': '插件已更新，但{problem}',
+    'pluginOperationCompleted.install': '插件已安装',
+    'pluginOperationCompleted.update': '插件已更新',
+    'pluginOperationCompleted.remove': '插件已卸载',
+    'pluginOperationCompleted.enable': '启用设置已保存',
+    'pluginOperationCompleted.disable': '关闭设置已保存',
+    'pluginOperationCompleted.save': '配置已保存',
+    'pluginOperationCompleted.sync': '配置已同步',
+    pluginOperationRecoveryPending: 'AI 引擎状态待确认',
+    pluginOperationRecoveryPendingNext: '请查看标题栏的 AI 引擎状态，无需重复操作插件。',
+    pluginOperationPendingStage: '待确认环节',
+    pluginOperationNoticeDismiss: '关闭提示',
+    pluginOperationReportDetails: '查看详情',
+    pluginOperationReportCopy: '复制详情',
     'pluginOperationFailureTitle.batch': '插件操作未全部完成',
     'pluginOperationFailureProblem.stage': '“{stage}”未完成',
     'pluginOperationFailureProblem.confirming': '无法确认插件状态',
     'pluginOperationFailureProblem.missingStage': '服务未返回出错步骤',
     'pluginOperationFailureProblem.unconfirmed': '最终结果仍待确认',
     'pluginOperationFailureTitle.refresh': '插件状态刷新失败',
-    'pluginOperationInstallationOutcome.committed':
-      '安装或更新内容已经保存，因此“用户安装”列表中可能已有该插件。请根据下面的原因和处理建议核对状态，避免重复安装。',
+    'pluginOperationInstallationOutcome.committed': '内容已保存，无需重复安装；插件状态仍需核对。',
     'pluginOperationInstallationOutcome.unconfirmed':
-      '目前无法确认本次安装或更新的最终结果。列表中出现条目也不能证明本次操作已完成，请先核对状态和版本，不要重复提交。',
+      '列表中出现插件不能证明本次操作已完成；确认前不要重复提交。',
     'pluginOperationFailureTitle.update': '更新未完成',
     'pluginOperationFailureTitle.remove': '卸载未完成',
     'pluginOperationFailureTitle.remove.recovery_failed': '插件已卸载，运行环境恢复失败',
@@ -89,6 +103,31 @@ export const pluginsTranslations = {
       '安装或更新内容已经保存，核对结果前不要再次安装或卸载。',
     'pluginOperationFailureGuidance.batch':
       '请逐项查看下面的失败步骤、原因和处理建议。已保存的项目不要重新安装；结果待确认的项目先核对状态，不要重复提交。',
+    'pluginOperationFailureShortNext.unconfirmed': '请先核对最新状态，确认前不要重复提交。',
+    'pluginOperationFailureShortNext.connection': '请检查插件市场服务和网络连接。',
+    'pluginOperationFailureShortNext.package': '请复制错误详情，联系插件提供方检查安装包。',
+    'pluginOperationFailureShortNext.dependencies': '请按具体原因核对所需依赖和安装目录权限。',
+    'pluginOperationFailureShortNext.enable':
+      '请在插件详情核对依赖及可用的配置入口，无需重新安装。',
+    'pluginOperationFailureShortNext.configuration':
+      '如插件详情提供配置入口，请按具体原因修正后保存。',
+    'pluginOperationFailureShortNext.runtime':
+      '请查看标题栏的 AI 引擎状态；启动失败时点“查看原因”。',
+    'pluginOperationFailureShortNext.status':
+      '请重新进入对应插件分类核对状态，确认前不要重复提交。',
+    'pluginOperationFailureShortNext.removal': '请按具体原因处理后，核对插件仍在列表中再手动卸载。',
+    'pluginOperationFailureShortNext.removalRuntime':
+      '无需再次卸载。请查看标题栏的 AI 引擎状态；启动失败时点“查看原因”。',
+    'pluginOperationFailureShortNext.removalPolicy':
+      '无需再次卸载。请复制错误详情，联系管理员检查网络策略或运行配置。',
+    'pluginOperationFailureShortNext.removalConfiguration':
+      '无需再次卸载。请复制错误详情，联系管理员检查插件允许加载列表及剩余配置。',
+    'pluginOperationFailureShortNext.recovery':
+      '请复制错误详情，联系管理员处理；不要重复安装、卸载或手动删除目录。',
+    'pluginOperationFailureShortNext.missingStage':
+      '服务未返回出错步骤，请复制错误详情和操作编号联系管理员。',
+    'pluginOperationFailureShortNext.support': '请复制错误详情和操作编号，联系管理员或插件提供方。',
+    'pluginOperationFailureShortNext.batch': '请逐项核对结果；已保存或待确认的项目不要重复提交。',
     pluginOperationFailureDetails: '查看错误详情',
     pluginOperationFailureCopy: '复制错误详情',
     pluginOperationFailureCopied: '已复制',
@@ -490,6 +529,22 @@ export const pluginsTranslations = {
     'pluginOperationFailureTitle.install': 'Installation incomplete',
     'pluginOperationFailureTitle.install.committed': 'Installation saved, but {problem}',
     'pluginOperationFailureTitle.update.committed': 'Update saved, but {problem}',
+    'pluginOperationFailureTitle.install.completed': 'Plugin installed, but {problem}',
+    'pluginOperationFailureTitle.update.completed': 'Plugin updated, but {problem}',
+    'pluginOperationCompleted.install': 'Plugin installed',
+    'pluginOperationCompleted.update': 'Plugin updated',
+    'pluginOperationCompleted.remove': 'Plugin uninstalled',
+    'pluginOperationCompleted.enable': 'Enable setting saved',
+    'pluginOperationCompleted.disable': 'Disable setting saved',
+    'pluginOperationCompleted.save': 'Configuration saved',
+    'pluginOperationCompleted.sync': 'Configuration synchronized',
+    pluginOperationRecoveryPending: 'AI engine status needs confirmation',
+    pluginOperationRecoveryPendingNext:
+      'Check the AI engine status in the title bar. Do not repeat the plugin operation.',
+    pluginOperationPendingStage: 'Pending confirmation',
+    pluginOperationNoticeDismiss: 'Dismiss notification',
+    pluginOperationReportDetails: 'View details',
+    pluginOperationReportCopy: 'Copy details',
     'pluginOperationFailureTitle.batch': 'Some plugin operations are incomplete',
     'pluginOperationFailureProblem.stage': 'the step “{stage}” did not complete',
     'pluginOperationFailureProblem.confirming': 'plugin status could not be confirmed',
@@ -497,17 +552,20 @@ export const pluginsTranslations = {
     'pluginOperationFailureProblem.unconfirmed': 'the final result is still unconfirmed',
     'pluginOperationFailureTitle.refresh': 'Plugin status refresh failed',
     'pluginOperationInstallationOutcome.committed':
-      'Installation or update content was saved, so the plugin may already appear under User installed. Check its status using the reason and advice below instead of installing it again.',
+      'Content was saved. Check plugin status without installing it again.',
     'pluginOperationInstallationOutcome.unconfirmed':
-      'The final result of this installation or update is unknown. An entry in the list does not prove that this operation completed. Check its status and version before submitting the operation again.',
+      'An entry in the list does not confirm this operation completed. Check its status before submitting it again.',
     'pluginOperationFailureTitle.update': 'Update incomplete',
     'pluginOperationFailureTitle.remove': 'Removal incomplete',
-    'pluginOperationFailureTitle.remove.recovery_failed': 'Plugin uninstalled; runtime recovery failed',
+    'pluginOperationFailureTitle.remove.recovery_failed':
+      'Plugin uninstalled; runtime recovery failed',
     'pluginOperationFailureTitle.remove.followup_failed': 'Plugin uninstalled, but {problem}',
     'pluginOperationFailureTitle.enable': 'Enabling incomplete',
-    'pluginOperationFailureTitle.enable.followup_failed': 'Enable setting saved, but plugin status could not be confirmed',
+    'pluginOperationFailureTitle.enable.followup_failed':
+      'Enable setting saved, but plugin status could not be confirmed',
     'pluginOperationFailureTitle.disable': 'Disabling incomplete',
-    'pluginOperationFailureTitle.disable.followup_failed': 'Disable setting saved, but plugin status could not be confirmed',
+    'pluginOperationFailureTitle.disable.followup_failed':
+      'Disable setting saved, but plugin status could not be confirmed',
     'pluginOperationFailureTitle.save': 'Configuration save incomplete',
     'pluginOperationFailureTitle.sync': 'Configuration sync incomplete',
     'pluginOperationFailureTitle.committed': 'Changes saved, but {problem}',
@@ -563,6 +621,38 @@ export const pluginsTranslations = {
       'Installation or update content was saved. Do not install or remove it again before confirming the result.',
     'pluginOperationFailureGuidance.batch':
       'Review the failed step, reason and advice for each item below. Do not reinstall saved items; check the status of unconfirmed items before repeating an operation.',
+    'pluginOperationFailureShortNext.unconfirmed':
+      'Check the latest status before submitting the operation again.',
+    'pluginOperationFailureShortNext.connection':
+      'Check the plugin marketplace service and your network connection.',
+    'pluginOperationFailureShortNext.package':
+      'Copy error details and ask the plugin provider to check the package.',
+    'pluginOperationFailureShortNext.dependencies':
+      'Use the reported reason to check dependencies and installation-folder access.',
+    'pluginOperationFailureShortNext.enable':
+      'Check dependencies and any editable configuration in plugin details. Do not reinstall it.',
+    'pluginOperationFailureShortNext.configuration':
+      'If plugin details offer editable settings, correct and save them using the reported reason.',
+    'pluginOperationFailureShortNext.runtime':
+      'Check the AI engine status in the title bar. If startup failed, click “View reason”.',
+    'pluginOperationFailureShortNext.status':
+      'Reopen the corresponding plugin category to check its status before repeating the operation.',
+    'pluginOperationFailureShortNext.removal':
+      'Resolve the reported issue, then confirm the plugin is still installed before removing it manually.',
+    'pluginOperationFailureShortNext.removalRuntime':
+      'Do not remove it again. Check the AI engine status in the title bar; if startup failed, click “View reason”.',
+    'pluginOperationFailureShortNext.removalPolicy':
+      'Do not remove it again. Copy error details and ask your administrator to check network policy or runtime configuration.',
+    'pluginOperationFailureShortNext.removalConfiguration':
+      'Do not remove it again. Copy error details and ask your administrator to check the allowed-plugin list and remaining configuration.',
+    'pluginOperationFailureShortNext.recovery':
+      'Copy error details for your administrator. Do not reinstall, remove or manually delete plugin folders.',
+    'pluginOperationFailureShortNext.missingStage':
+      'The failed step was not reported. Copy error details and the operation ID for your administrator.',
+    'pluginOperationFailureShortNext.support':
+      'Copy error details and the operation ID for your administrator or plugin provider.',
+    'pluginOperationFailureShortNext.batch':
+      'Check each result. Do not repeat saved or unconfirmed operations.',
     pluginOperationFailureDetails: 'View error details',
     pluginOperationFailureCopy: 'Copy error details',
     pluginOperationFailureCopied: 'Copied',

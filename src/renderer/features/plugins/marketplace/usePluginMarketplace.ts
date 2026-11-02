@@ -84,6 +84,8 @@ export interface MarketplaceOperation {
   message?: string;
   version?: string;
   restartRequired?: boolean;
+  /** Presentation is owned by the shared operation notice; version guards remain here. */
+  runtimeRecoveryPending?: true;
 }
 export const marketplaceKey = (item: Pick<MarketplacePlugin, 'sourceId' | 'id'>) =>
   JSON.stringify([item.sourceId, item.id]);
@@ -492,6 +494,8 @@ export function usePluginMarketplace(options: MarketplaceOptions) {
           installationCommitted: response.installationCommitted,
           installSourceInUse: response.installSourceInUse,
           operationUnconfirmed: response.operationUnconfirmed,
+          mutationCompleted: response.mutationCompleted,
+          runtimeRecoveryPending: response.runtimeRecoveryPending,
         });
       }
       const failureMessage = response.failedStage
@@ -521,6 +525,10 @@ export function usePluginMarketplace(options: MarketplaceOptions) {
           committed: true,
           version: candidate.version,
           restartRequired: response.restartRequired,
+          ...(response.mutationCompleted && response.runtimeRecoveryPending &&
+              !response.operationUnconfirmed && !response.installSourceInUse
+            ? { runtimeRecoveryPending: true as const }
+            : {}),
           ...(response.success
             ? {
                 message: i18nService

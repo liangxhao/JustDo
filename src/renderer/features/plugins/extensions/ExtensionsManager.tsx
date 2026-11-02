@@ -64,6 +64,7 @@ import {
 } from '@/features/plugins/shared/pluginMutationFeedback';
 import {
   type PluginOperationFailureItem,
+  PluginOperationFailureState,
   pluginSourceLabel,
   reportPluginOperationFailure,
   startPluginOperation,
@@ -399,11 +400,32 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
   };
 
   const finishImportBatch = (
-    completedLabels: string[],
+    completed: PluginOperationFailureItem[],
     failures: PluginOperationFailureItem[],
     refreshFailed: boolean,
     startedAt: number,
   ) => {
+    const completedLabels = completed.map(item => item.label);
+    const warnings = completed.filter(item => item.failedStage || item.message !== i18nService.t('pluginImportItemSuccess'));
+    const pendingRecovery = completed.find(item => item.runtimeRecoveryPending);
+    if (failures.length === 0 && pendingRecovery && completed.every(item =>
+      item.mutationCompleted && !item.operationUnconfirmed && !item.installSourceInUse &&
+      (item.runtimeRecoveryPending || !item.failedStage),
+    )) {
+      reportPluginOperationFailure(
+        { kind: PluginKind.EXTENSION, action: PluginOperationAction.INSTALL, label: completedLabels.join(', ') },
+        {
+          ...pendingRecovery,
+          state: PluginOperationFailureState.REFRESH_FAILED,
+          mutationCompleted: true,
+          runtimeRecoveryPending: true,
+          ...(refreshFailed ? { details: i18nService.t('pluginOperationRefreshFailed') } : {}),
+          elapsedMs: Date.now() - startedAt,
+          items: completed.map(item => ({ ...item, type: 'success' as const })),
+        },
+      );
+      return;
+    }
     if (failures.length > 0) {
       reportPluginOperationFailure(
         {
@@ -426,12 +448,14 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
           ...(refreshFailed ? { details: i18nService.t('pluginOperationRefreshFailed') } : {}),
           elapsedMs: Date.now() - startedAt,
           items: [
-            ...completedLabels.map(label => ({
-              label,
-              message: i18nService.t('pluginImportItemSuccess'),
+            ...completed.map(item => ({
+              ...item,
               type: 'success' as const,
             })),
-            ...failures.map(item => ({ ...item, type: 'error' as const })),
+            ...failures.map(item => ({
+              ...item,
+              type: item.mutationCompleted && item.runtimeRecoveryPending ? 'success' as const : 'error' as const,
+            })),
           ],
         },
       );
@@ -440,9 +464,14 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
         {
           kind: PluginKind.EXTENSION,
           action: PluginOperationAction.INSTALL,
-          label: i18nService.t('importExtension'),
+          label: completed.length === 1 ? completed[0].label : i18nService.t('importExtension'),
         },
-        { ...pluginOperationRefreshFailure(), elapsedMs: Date.now() - startedAt },
+        {
+          ...pluginOperationRefreshFailure(),
+          ...(warnings.length === 1 && completed.length === 1 ? warnings[0] : {}),
+          ...(warnings.length > 0 ? { items: completed } : {}),
+          elapsedMs: Date.now() - startedAt,
+        },
       );
     } else if (completedLabels.length > 0 && inventoryMounted.current) {
       setActionOutcome({
@@ -499,13 +528,26 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
         results.push({ sourcePath, ...importResult });
       }
 
-      const succeeded = results.filter(item => item.success);
-      const failed = results.filter(item => !item.success);
+      const completedWithPendingRecovery = (item: ExtensionImportResult) =>
+        item.mutationCompleted && item.runtimeRecoveryPending &&
+        !item.operationUnconfirmed && !item.installSourceInUse && !item.capabilityReview;
+      const succeeded = results.filter(item => item.success || completedWithPendingRecovery(item));
+      const failed = results.filter(item => !item.success && !completedWithPendingRecovery(item));
       // Reconcile with disk even when a later installer step reports failure. OpenClaw
       // may have already published the extension before its CLI or Gateway restart fails.
       const inventory = await refreshAfterImport();
       finishImportBatch(
-        succeeded.map(item => item.extensionId || pluginSourceLabel(item.sourcePath)),
+        succeeded.map(item => ({
+          label: item.extensionId || pluginSourceLabel(item.sourcePath),
+          ...(item.refreshWarning || completedWithPendingRecovery(item)
+            ? pluginOperationFailure(item, i18nService.t('pluginOperationRefreshFailed'))
+            : {
+                message: i18nService.t('pluginImportItemSuccess'),
+                ...(!item.error && !item.failedStage && !item.operationUnconfirmed && !item.installSourceInUse
+                  ? { mutationCompleted: true as const }
+                  : {}),
+              }),
+        })),
         failed.map(item => ({
           label: pluginSourceLabel(item.sourcePath),
           ...pluginOperationFailure(item, i18nService.t('extensionImportFailed')),
@@ -570,6 +612,7 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
         setActionOutcome({
           type: 'success',
           title: i18nService.t('extensionDelete'),
+          ...(mutationResult.warnings?.length ? { persistent: true as const } : {}),
           message: [
             i18nService.t('extensionDeleteSuccess').replace('{name}', extension.name),
             ...(mutationResult.warnings ?? []),

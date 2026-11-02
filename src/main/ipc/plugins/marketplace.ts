@@ -151,6 +151,8 @@ const publicInstallResult = (
     installSourceInUse?: true;
     operationUnconfirmed?: true;
     refreshWarning?: true;
+    mutationCompleted?: true;
+    runtimeRecoveryPending?: true;
     failedStage?: string;
     publicReason?: string;
   },
@@ -169,6 +171,8 @@ const publicInstallResult = (
         : {}),
       ...(result.installSourceInUse ? { installSourceInUse: true as const } : {}),
       ...(result.operationUnconfirmed ? { operationUnconfirmed: true as const } : {}),
+      ...(result.mutationCompleted ? { mutationCompleted: true as const } : {}),
+      ...(result.runtimeRecoveryPending ? { runtimeRecoveryPending: true as const } : {}),
       error:
         sanitizeInstallationFailureReason(result.publicReason) || 'Marketplace installation failed',
       errorCode: MarketplaceErrorCode.INTERNAL,
@@ -178,6 +182,8 @@ const publicInstallResult = (
   return {
     success: true,
     ...(result.refreshWarning ? { refreshWarning: true as const } : {}),
+    ...(result.mutationCompleted ? { mutationCompleted: true as const } : {}),
+    ...(result.runtimeRecoveryPending ? { runtimeRecoveryPending: true as const } : {}),
     ...(pluginId ? { pluginId } : {}),
     ...(typeof result.restartRequired === 'boolean'
       ? { restartRequired: result.restartRequired }

@@ -47,14 +47,16 @@ export const createPluginOperationReporter = (
   const logDuration = (now: number) => {
     if (!context || !currentStage) return;
     // Closed metadata only: package paths, names, credentials and SDK output stay private.
-    console.info('[PluginOperations] Stage finished', {
-      requestId: context.requestId,
-      kind,
-      action,
-      stage: currentStage,
-      durationMs: Math.round(now - stageStartedAt),
-      elapsedMs: Math.round(now - startedAt),
-    });
+    console.info(
+      `[PluginOperations] Stage finished ${JSON.stringify({
+        requestId: context.requestId,
+        kind,
+        action,
+        stage: currentStage,
+        durationMs: Math.round(now - stageStartedAt),
+        elapsedMs: Math.round(now - startedAt),
+      })}`,
+    );
   };
   return {
     report: stage => {

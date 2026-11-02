@@ -37,6 +37,8 @@ export interface PluginInstallResult {
   installSourceInUse?: true;
   operationUnconfirmed?: true;
   refreshWarning?: true;
+  mutationCompleted?: true;
+  runtimeRecoveryPending?: true;
   pluginId?: string;
   /** Internal install location used to disambiguate layered capabilities. Never expose over IPC. */
   installPath?: string;

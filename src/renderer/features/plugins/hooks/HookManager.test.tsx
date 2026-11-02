@@ -13,6 +13,8 @@ import HookManager from './HookManager';
 vi.mock('@/app/shell/startup/routing/useEngineReadiness', () => ({
   getEngineReadinessSnapshot: () => ({ ready: true }),
   subscribeEngineReadiness: () => vi.fn(),
+  useEngineReadiness: () => ({ ready: true }),
+  refreshEngineReadiness: async () => undefined,
 }));
 
 vi.mock('@/features/plugins/hooks/hookService', () => ({

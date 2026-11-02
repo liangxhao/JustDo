@@ -4,6 +4,7 @@ import { AppInitializationPhase } from '../../../shared/app/initialization';
 import { StartupRoute } from '../../../shared/app/startup/routing';
 import { EnginePhase, type OpenClawEngineStatus } from '../../../shared/openclaw/engineStatus';
 import { t } from '../../core/i18n';
+import { EnginePreparationPendingCode } from '../../engine/enginePreparationError';
 import { AppInitialization } from './appInitialization';
 import { StartupEnginePreparation } from './startupEnginePreparation';
 
@@ -80,6 +81,7 @@ test('a superseded attempt cannot return old Running to its caller after a succe
   await f.coordinator.run(async () => running);
   old.resolve(running);
   await expect(task).rejects.toThrow(t('enginePreparationSuperseded'));
+  await expect(task).rejects.toMatchObject({ code: EnginePreparationPendingCode.SUPERSEDED });
   expect(f.coordinator.isReady()).toBe(true);
   expect(f.initialization.getState().enginePreparationFailure).toBeUndefined();
 });
@@ -159,6 +161,7 @@ test('explains a changed lifecycle without attributing its error to an older ver
   verification.resolve(running);
 
   await expect(task).rejects.toThrow(t('enginePreparationLifecycleChanged'));
+  await expect(task).rejects.toMatchObject({ code: EnginePreparationPendingCode.LIFECYCLE_CHANGED });
   expect(f.initialization.getState().enginePreparationFailure?.error.message).toBe(reason);
   expect(f.coordinator.isReady()).toBe(false);
   expect(f.prepare).not.toHaveBeenCalled();

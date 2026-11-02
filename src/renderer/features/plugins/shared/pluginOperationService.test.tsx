@@ -52,6 +52,107 @@ const options = {
   label: 'Diagram editor',
 };
 
+test('preserves explicit mutation completion and pending runtime recovery without deriving them from progress', () => {
+  const { owner } = setup();
+  const operation = owner.start(options);
+  operation.fail({
+    message: 'The engine preparation observation was replaced',
+    state: 'refresh_failed',
+    mutationCompleted: true,
+    runtimeRecoveryPending: true,
+    items: [
+      {
+        label: 'Diagram tool',
+        message: 'Native installation completed',
+        mutationCompleted: true,
+        runtimeRecoveryPending: true,
+      },
+    ],
+  });
+  operation.finish();
+  expect(owner.failureSnapshot()[0]).toMatchObject({
+    mutationCompleted: true,
+    runtimeRecoveryPending: true,
+    items: [{ mutationCompleted: true, runtimeRecoveryPending: true }],
+  });
+  const rejected = owner.start(options);
+  rejected.fail({
+    message: 'Native package rejected',
+    failedStage: PluginOperationStage.VALIDATING,
+  });
+  rejected.fail({
+    message: 'Recovery pending',
+    state: 'refresh_failed',
+    mutationCompleted: true,
+    runtimeRecoveryPending: true,
+  });
+  rejected.finish();
+  expect(owner.failureSnapshot()[1]).toMatchObject({
+    message: 'Native package rejected',
+    failedStage: PluginOperationStage.VALIDATING,
+    details: 'Recovery pending',
+  });
+  expect(owner.failureSnapshot()[1].mutationCompleted).toBeUndefined();
+  expect(owner.failureSnapshot()[1].runtimeRecoveryPending).toBeUndefined();
+});
+
+test('records recovery only for the confirmed completed request and preserves unknown and failed receipts', () => {
+  const { owner } = setup();
+  const completed = owner.start(options);
+  completed.fail({
+    message: 'Native install completed; engine admission remains pending.',
+    state: 'committed',
+    mutationCompleted: true,
+    runtimeRecoveryPending: true,
+  });
+  completed.finish();
+  const unconfirmed = owner.start(options);
+  unconfirmed.fail({
+    message: 'The original mutation receipt is unavailable.',
+    operationUnconfirmed: true,
+    mutationCompleted: true,
+    runtimeRecoveryPending: true,
+  });
+  unconfirmed.finish();
+  const rejected = owner.start(options);
+  rejected.fail({ message: 'Native package validation failed.' });
+  rejected.finish();
+  const before = owner.failureSnapshot();
+
+  owner.confirmRuntimeRecovery([unconfirmed.context.requestId, rejected.context.requestId]);
+  expect(owner.failureSnapshot()).toBe(before);
+  owner.confirmRuntimeRecovery([completed.context.requestId]);
+  expect(owner.failureSnapshot()[0]).toEqual({ ...before[0], runtimeRecovered: true });
+  expect(owner.failureSnapshot()[1]).toBe(before[1]);
+  expect(owner.failureSnapshot()[2]).toBe(before[2]);
+  const recovered = owner.failureSnapshot();
+  owner.confirmRuntimeRecovery([completed.context.requestId]);
+  expect(owner.failureSnapshot()).toBe(recovered);
+});
+
+test('keeps the displayed blocking error when pending notices precede it in bounded presentation history', () => {
+  const { owner } = setup();
+  const pending = owner.start(options);
+  pending.fail({
+    message: 'Engine preparation pending',
+    state: 'refresh_failed',
+    mutationCompleted: true,
+    runtimeRecoveryPending: true,
+  });
+  pending.finish();
+  const displayed = owner.start(options);
+  displayed.fail({ message: 'The error currently shown in the dialog' });
+  displayed.finish();
+  for (let index = 0; index < 100; index += 1) {
+    const following = owner.start(options);
+    following.fail({ message: `Later error ${index}` });
+    following.finish();
+  }
+  expect(owner.failureSnapshot()).toHaveLength(100);
+  expect(owner.failureSnapshot()[0].requestId).toBe(displayed.context.requestId);
+  expect(owner.failureSnapshot().at(-1)?.message).toBe('Later error 99');
+});
+
 test('accepts only matching request, kind and action progress', () => {
   const { owner, notify } = setup();
   const operation = owner.start(options);

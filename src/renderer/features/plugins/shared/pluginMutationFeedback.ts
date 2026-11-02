@@ -25,6 +25,8 @@ export const pluginOperationFailure = (
   ...(result.installationCommitted ? { installationCommitted: true as const } : {}),
   ...(result.installSourceInUse ? { installSourceInUse: true as const } : {}),
   ...(result.operationUnconfirmed ? { operationUnconfirmed: true as const } : {}),
+  ...(result.mutationCompleted ? { mutationCompleted: true as const } : {}),
+  ...(result.runtimeRecoveryPending ? { runtimeRecoveryPending: true as const } : {}),
 });
 
 export const pluginOperationRefreshFailure = (result: PluginOperationFeedback = {}) => ({

@@ -2,6 +2,7 @@ import { AppInitializationPhase } from '../../../shared/app/initialization';
 import { StartupRoute } from '../../../shared/app/startup/routing';
 import { EnginePhase, type OpenClawEngineStatus } from '../../../shared/openclaw/engineStatus';
 import { t } from '../../core/i18n';
+import { EnginePreparationPendingCode, EnginePreparationPendingError } from '../../engine/enginePreparationError';
 import type { OpenClawEngineManager } from '../../openclaw/runtime/openclawEngineManager';
 import type { AppInitialization } from './appInitialization';
 
@@ -49,23 +50,25 @@ export class StartupEnginePreparation {
     if (this.deps.initialization.getState().phase === AppInitializationPhase.Failed)
       return new Error(t('enginePreparationInitializationUnavailable'));
     if (attempt && this.latestAttempt !== attempt)
-      return new Error(t('enginePreparationSuperseded'));
+      return new EnginePreparationPendingError(EnginePreparationPendingCode.SUPERSEDED, t('enginePreparationSuperseded'));
     if (identity && !this.matches(identity))
-      return new Error(t('enginePreparationLifecycleChanged'));
+      return new EnginePreparationPendingError(EnginePreparationPendingCode.LIFECYCLE_CHANGED, t('enginePreparationLifecycleChanged'));
 
     const current = this.deps.manager.getStatus();
     // observe(Error) clears admitted, but a current attempt can still own this
     // generation's failure. A successor's error must never explain an old call.
     if (attempt && this.latestAttempt === attempt && identity && this.matches(identity) &&
-        current.phase === EnginePhase.Error && current.message)
-      return new Error(current.message);
-    if (returned?.phase === EnginePhase.Error && returned.message)
-      return new Error(returned.message);
-    return new Error(t(current.phase === EnginePhase.Ready
-      ? 'enginePreparationStopped'
-      : current.phase === EnginePhase.Starting
-        ? 'enginePreparationStillStarting'
-        : 'enginePreparationUnconfirmed'));
+        current.phase === EnginePhase.Error)
+      return new Error(current.message || t('enginePreparationFailed'));
+    if (returned?.phase === EnginePhase.Error)
+      return new Error(returned.message || t('enginePreparationFailed'));
+    if (current.phase === EnginePhase.Ready) return new Error(t('enginePreparationStopped'));
+    return new EnginePreparationPendingError(
+      current.phase === EnginePhase.Starting
+        ? EnginePreparationPendingCode.STARTING
+        : EnginePreparationPendingCode.UNCONFIRMED,
+      t(current.phase === EnginePhase.Starting ? 'enginePreparationStillStarting' : 'enginePreparationUnconfirmed'),
+    );
   }
 
   isReady(): boolean {

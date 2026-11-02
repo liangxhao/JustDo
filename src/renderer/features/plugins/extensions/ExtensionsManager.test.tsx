@@ -49,10 +49,16 @@ function publishAppViews(epoch: string | null) {
 
 import ExtensionsManager from './ExtensionsManager';
 
+const engineReadiness = vi.hoisted(() => ({ ready: true }));
 vi.mock('@/app/shell/startup/routing/useEngineReadiness', () => ({
-  getEngineReadinessSnapshot: () => ({ ready: true }),
+  getEngineReadinessSnapshot: () => engineReadiness,
   subscribeEngineReadiness: () => vi.fn(),
+  useEngineReadiness: () => engineReadiness,
+  refreshEngineReadiness: async () => undefined,
 }));
+beforeEach(() => {
+  engineReadiness.ready = true;
+});
 
 vi.mock('@/features/plugins/marketplace/MarketplaceView', () => ({
   MarketplaceResults: ({
@@ -852,6 +858,43 @@ describe('ExtensionsManager extension toggle', () => {
       { extensionId: extension.id },
       { requestId: expect.any(String) },
     );
+  });
+
+  test('shows completed removal with pending recovery outside the modal even when inventory cannot yet refresh', async () => {
+    engineReadiness.ready = false;
+    let removed = false;
+    const deleteExtension = vi.fn(async () => {
+      removed = true;
+      return {
+        success: true, refreshWarning: true,
+        mutationCompleted: true, runtimeRecoveryPending: true,
+        failedStage: PluginOperationStage.PREPARING_RUNTIME,
+        error: 'Removal completed; recovery verification was superseded.',
+      };
+    });
+    Object.defineProperty(window, 'electron', {
+      configurable: true,
+      value: {
+        extensions: {
+          list: vi.fn(async () => removed
+            ? { success: false, error: 'Engine inventory not ready' }
+            : { success: true, extensions: [extension] }),
+          delete: deleteExtension,
+          onChanged: vi.fn(() => () => undefined),
+        },
+      },
+    });
+    render(<><ExtensionsManager /><PluginOperationFeedback /></>);
+    fireEvent.click(await screen.findByRole('button', { name: 'subtaskShowInfo: Sample Extension' }));
+    fireEvent.click(screen.getByRole('button', { name: 'extensionDelete' }));
+    fireEvent.click(screen.getByRole('button', { name: 'delete' }));
+
+    await waitFor(() => expect(getPluginOperationOwner().failureSnapshot()[0]).toMatchObject({
+      mutationCompleted: true, runtimeRecoveryPending: true,
+    }));
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(deleteExtension).toHaveBeenCalledOnce();
+    expect(screen.queryByRole('button', { name: 'delete' })).toBeNull();
   });
 
   test('reports runtime recovery failure after confirmed removal without offering another removal', async () => {
@@ -1829,6 +1872,47 @@ describe('ExtensionsManager extension toggle', () => {
     expect(getPluginOperationOwner().failureSnapshot()[0].message).toBe('1 succeeded and 1 failed.');
     expect(screen.queryByText('extensionCapabilityReviewTitle')).toBeNull();
   });
+});
+
+test.each([false, true])('keeps completed custom installations with pending recovery out of the error modal (normal success in batch: %s)', async withNormalSuccess => {
+  engineReadiness.ready = false;
+  const importPath = vi.fn(async (): Promise<ExtensionImportResult> => ({
+    success: false, installationCommitted: true,
+    mutationCompleted: true, runtimeRecoveryPending: true,
+    extensionId: 'installed-first',
+    failedStage: PluginOperationStage.PREPARING_RUNTIME,
+    error: 'Installation completed; engine recovery verification was superseded.',
+  }));
+  if (withNormalSuccess) importPath.mockResolvedValueOnce({
+    success: true, extensionId: 'installed-normal',
+  });
+  Object.defineProperty(window, 'electron', {
+    configurable: true,
+    value: {
+      extensions: {
+        list: vi.fn(async () => ({ success: true, extensions: [] })),
+        importPath, onChanged: () => () => undefined,
+      },
+      dialog: {
+        selectFolders: vi.fn(async () => ({
+          success: true,
+          paths: withNormalSuccess ? ['C:/imports/normal', 'C:/imports/first'] : ['C:/imports/first'],
+        })),
+      },
+    },
+  });
+  render(<><ExtensionsManager /><PluginOperationFeedback /></>);
+  fireEvent.click(await screen.findByRole('button', { name: 'importExtension' }));
+  fireEvent.click(screen.getByRole('button', { name: /selectExtensionFolders selectExtensionFoldersDescription/ }));
+
+  await screen.findByText('pluginOperationRecoveryPending');
+  expect(screen.queryByRole('alertdialog')).toBeNull();
+  expect(getPluginOperationOwner().failureSnapshot()[0]).toMatchObject({
+    mutationCompleted: true, runtimeRecoveryPending: true,
+    items: expect.arrayContaining([expect.objectContaining({ mutationCompleted: true, runtimeRecoveryPending: true })]),
+  });
+  expect(importPath).toHaveBeenCalledTimes(withNormalSuccess ? 2 : 1);
+  cleanup();
 });
 
 test('retains an earlier refresh warning when a later import unexpectedly requests review', async () => {

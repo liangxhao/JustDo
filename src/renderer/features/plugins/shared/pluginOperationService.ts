@@ -40,6 +40,8 @@ export type PluginOperationFailureItem = {
   installationCommitted?: true;
   installSourceInUse?: true;
   operationUnconfirmed?: true;
+  mutationCompleted?: true;
+  runtimeRecoveryPending?: true;
 };
 
 export type PluginOperationFailureInput = {
@@ -51,6 +53,8 @@ export type PluginOperationFailureInput = {
   installationCommitted?: true;
   installSourceInUse?: true;
   operationUnconfirmed?: true;
+  mutationCompleted?: true;
+  runtimeRecoveryPending?: true;
   state?: (typeof PluginOperationFailureState)[keyof typeof PluginOperationFailureState];
   items?: PluginOperationFailureItem[];
 };
@@ -65,8 +69,38 @@ export type PluginOperationFailure = PluginOperationOptions & {
   installationCommitted?: true;
   installSourceInUse?: true;
   operationUnconfirmed?: true;
+  mutationCompleted?: true;
+  runtimeRecoveryPending?: true;
+  /** Presentation-only confirmation of current engine admission; original receipt flags stay intact. */
+  runtimeRecovered?: true;
   items?: PluginOperationFailureInput['items'];
 };
+
+export const isPluginOperationRecoveryPending = (
+  operation: Pick<
+    PluginOperationFailure,
+    | 'state'
+    | 'mutationCompleted'
+    | 'runtimeRecoveryPending'
+    | 'operationUnconfirmed'
+    | 'installSourceInUse'
+    | 'items'
+  >,
+) =>
+  operation.mutationCompleted === true &&
+  operation.runtimeRecoveryPending === true &&
+  (operation.state === PluginOperationFailureState.REFRESH_FAILED ||
+    operation.state === PluginOperationFailureState.COMMITTED) &&
+  !operation.operationUnconfirmed &&
+  !operation.installSourceInUse &&
+  !(operation.items ?? []).some(
+    item =>
+      !item.mutationCompleted ||
+      item.operationUnconfirmed ||
+      item.installSourceInUse ||
+      (item.failedStage && !item.runtimeRecoveryPending) ||
+      (item.type !== 'success' && !item.runtimeRecoveryPending),
+  );
 
 const FAILURE_HISTORY_LIMIT = 100;
 const safeText = (value: string, limit: number) => redactLogText(value).slice(0, limit);
@@ -90,6 +124,21 @@ class PluginOperationOwner {
   };
   dismissFailure = (requestId: string) => {
     this.publishFailures(this.failures.filter(failure => failure.requestId !== requestId));
+  };
+  confirmRuntimeRecovery = (requestIds: readonly string[]) => {
+    const confirmed = new Set(requestIds);
+    let changed = false;
+    const failures = this.failures.map(failure => {
+      if (
+        !confirmed.has(failure.requestId) ||
+        failure.runtimeRecovered ||
+        !isPluginOperationRecoveryPending(failure)
+      )
+        return failure;
+      changed = true;
+      return { ...failure, runtimeRecovered: true as const };
+    });
+    if (changed) this.publishFailures(failures);
   };
   subscribe = (listener: () => void) => {
     this.listeners.add(listener);
@@ -222,6 +271,8 @@ class PluginOperationOwner {
           ...(input.installationCommitted ? { installationCommitted: true as const } : {}),
           ...(input.installSourceInUse ? { installSourceInUse: true as const } : {}),
           ...(input.operationUnconfirmed ? { operationUnconfirmed: true as const } : {}),
+          ...(input.mutationCompleted ? { mutationCompleted: true as const } : {}),
+          ...(input.runtimeRecoveryPending ? { runtimeRecoveryPending: true as const } : {}),
           ...(input.items?.length
             ? {
                 items: input.items.slice(0, 100).map(item => ({
@@ -234,6 +285,8 @@ class PluginOperationOwner {
                   ...(item.installationCommitted ? { installationCommitted: true as const } : {}),
                   ...(item.installSourceInUse ? { installSourceInUse: true as const } : {}),
                   ...(item.operationUnconfirmed ? { operationUnconfirmed: true as const } : {}),
+                  ...(item.mutationCompleted ? { mutationCompleted: true as const } : {}),
+                  ...(item.runtimeRecoveryPending ? { runtimeRecoveryPending: true as const } : {}),
                 })),
               }
             : {}),
@@ -247,9 +300,17 @@ class PluginOperationOwner {
         );
         if (failure) {
           // Keep the currently displayed result when bounding settled presentation data.
+          const displayed =
+            this.failures.find(result => !isPluginOperationRecoveryPending(result)) ??
+            this.failures[0];
           const retained =
             this.failures.length >= FAILURE_HISTORY_LIMIT
-              ? [this.failures[0], ...this.failures.slice(-(FAILURE_HISTORY_LIMIT - 2))]
+              ? [
+                  displayed,
+                  ...this.failures
+                    .filter(result => result !== displayed)
+                    .slice(-(FAILURE_HISTORY_LIMIT - 2)),
+                ]
               : this.failures;
           this.publishFailures([...retained, failure]);
         }

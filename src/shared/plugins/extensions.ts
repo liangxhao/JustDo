@@ -194,5 +194,7 @@ export type ExtensionImportResult = {
   installSourceInUse?: true;
   operationUnconfirmed?: true;
   refreshWarning?: true;
+  mutationCompleted?: true;
+  runtimeRecoveryPending?: true;
   capabilityReview?: OpenClawPluginCapabilityReview;
 };

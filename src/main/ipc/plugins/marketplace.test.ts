@@ -340,6 +340,21 @@ test('sanitizes public reasons again without changing committed and unknown-resu
   expect(JSON.stringify(response)).not.toContain('private');
 });
 
+test.each([true, false])('preserves completed mutation and pending recovery evidence over marketplace IPC (success: %s)', async success => {
+  const manager = createPluginManager();
+  vi.mocked(manager.installFromMarketplace).mockResolvedValue({
+    success, pluginId: 'writer', mutationCompleted: true, runtimeRecoveryPending: true,
+    ...(!success ? { installationCommitted: true, publicReason: 'Recovery verification was superseded' } : {}),
+  });
+  registerMarketplaceHandlers(manager);
+  const response = await handlers.get(MarketplaceIpc.Install)?.({}, {
+    sourceId: 'enterprise', pluginId: 'writer', kind: PluginKind.EXTENSION,
+  });
+
+  expect(response).toMatchObject({ success, mutationCompleted: true, runtimeRecoveryPending: true });
+  expect(manager.installFromMarketplace).toHaveBeenCalledOnce();
+});
+
 test('keeps the reported failure phase after cleanup progresses', async () => {
   const manager = createPluginManager();
   vi.mocked(manager.installFromMarketplace).mockImplementation(async (_request, onProgress) => {

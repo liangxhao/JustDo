@@ -2,6 +2,7 @@ import {
   CheckCircleIcon,
   ChevronDownIcon,
   ClipboardDocumentIcon,
+  ClockIcon,
   ExclamationTriangleIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
@@ -11,11 +12,11 @@ import { createPortal } from 'react-dom';
 
 import { i18nService } from '@/services/i18n';
 import Modal from '@/shared/components/ui/Modal';
-import { isDomHTMLElement, useOwnerDocument } from '@/shared/dom/ownerDocument';
+import { isDomHTMLElement, isDomNode, useOwnerDocument } from '@/shared/dom/ownerDocument';
 
 import {
-  pluginOperationFailureGuidance,
   pluginOperationFailurePresentation,
+  pluginOperationHasPendingRecovery,
   pluginOperationNeedsConfirmation,
 } from './pluginOperationPresentation';
 import {
@@ -23,6 +24,7 @@ import {
   type PluginOperationFailureItem,
   PluginOperationFailureState,
 } from './pluginOperationService';
+import { PluginOperationStatusContent } from './PluginOperationStatusSlot';
 
 export type OperationResultItem = PluginOperationFailureItem;
 
@@ -31,6 +33,7 @@ export type OperationResult = {
   title: string;
   message?: string;
   items?: OperationResultItem[];
+  persistent?: true;
 };
 
 interface OperationResultModalProps {
@@ -60,42 +63,62 @@ const operationStageLabel = (operation: PluginOperationFailure) =>
         ? i18nService.t('pluginOperationFailureStagesInItems')
         : i18nService.t('pluginOperationFailureStageUnavailable');
 
-const operationItemGuidance = (action: PluginOperationAction, item: PluginOperationFailureItem) =>
-  pluginOperationFailureGuidance({
+const operationItemPresentation = (
+  action: PluginOperationAction,
+  item: PluginOperationFailureItem,
+) =>
+  pluginOperationFailurePresentation({
     action,
     state:
       item.operationUnconfirmed || item.installSourceInUse
         ? PluginOperationFailureState.UNCONFIRMED
-        : item.installationCommitted
-          ? PluginOperationFailureState.COMMITTED
-          : PluginOperationFailureState.FAILED,
+        : item.mutationCompleted && item.runtimeRecoveryPending
+          ? PluginOperationFailureState.REFRESH_FAILED
+          : item.installationCommitted
+            ? PluginOperationFailureState.COMMITTED
+            : PluginOperationFailureState.FAILED,
     failedStage: item.failedStage,
+    operationUnconfirmed: item.operationUnconfirmed,
+    installSourceInUse: item.installSourceInUse,
+    mutationCompleted: item.mutationCompleted,
+    runtimeRecoveryPending: item.runtimeRecoveryPending,
   });
+
+const operationItemStageDescription = (item: PluginOperationFailureItem, runtimeRecovered?: true) =>
+  i18nService.t(
+    runtimeRecovered || item.operationUnconfirmed || item.installSourceInUse
+      ? 'pluginOperationFailureLastStage'
+      : item.mutationCompleted && item.runtimeRecoveryPending
+        ? 'pluginOperationPendingStage'
+        : 'pluginOperationFailureStage',
+  );
 
 const operationDuration = (operation: PluginOperationFailure) =>
   i18nService
     .t('pluginOperationElapsed')
     .replace('{seconds}', String(Math.max(0, Math.floor(operation.elapsedMs / 1000))));
 
-const OperationFailureContent: React.FC<{ operation: PluginOperationFailure }> = ({
-  operation,
-}) => {
+const operationStageDescription = (operation: PluginOperationFailure, runtimeRecovered?: true) =>
+  i18nService.t(
+    runtimeRecovered || pluginOperationNeedsConfirmation(operation)
+      ? 'pluginOperationFailureLastStage'
+      : pluginOperationHasPendingRecovery(operation)
+        ? 'pluginOperationPendingStage'
+        : 'pluginOperationFailureStage',
+  );
+
+const OperationReportDetails: React.FC<{
+  operation: PluginOperationFailure;
+  visibleReason?: string;
+  runtimeRecovered?: true;
+}> = ({ operation, visibleReason, runtimeRecovered }) => {
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
   const copyGeneration = useRef(0);
   const errorDetails = [
     ...new Set([operation.message, operation.details?.trim()].filter(Boolean)),
   ].join('\n\n');
-  const reason =
-    operation.message.trim() || i18nService.t('pluginOperationFailureReasonUnavailable');
-  const showDetails = errorDetails !== reason || reason.length > 240;
   const guidance = pluginOperationFailurePresentation(operation).guidance;
-  const installationOutcome =
-    (operation.items?.length ?? 0) < 2 &&
-    (operation.action === PluginOperationAction.INSTALL ||
-      operation.action === PluginOperationAction.UPDATE) &&
-    (operation.state === 'committed' || operation.state === 'unconfirmed')
-      ? i18nService.t(`pluginOperationInstallationOutcome.${operation.state}`)
-      : undefined;
+  const nextStep = pluginOperationFailurePresentation(operation).nextStep;
 
   useEffect(() => {
     copyGeneration.current += 1;
@@ -111,31 +134,24 @@ const OperationFailureContent: React.FC<{ operation: PluginOperationFailure }> =
       pluginOperationFailurePresentation(operation).title,
       operation.label,
       i18nService.t(`pluginOperationLabel.${operation.action}`),
-      `${i18nService.t(
-        pluginOperationNeedsConfirmation(operation)
-          ? 'pluginOperationFailureLastStage'
-          : 'pluginOperationFailureStage',
-      )}: ${operationStageLabel(operation)}`,
+      `${operationStageDescription(operation, runtimeRecovered)}: ${operationStageLabel(operation)}`,
       operationDuration(operation),
       errorDetails,
-      guidance,
+      ...(!runtimeRecovered ? [...(nextStep !== guidance ? [nextStep] : []), guidance] : []),
       ...(operation.items ?? [])
         .flatMap(item => [
           item.label,
           item.failedStage
-            ? `${i18nService.t(
-                item.operationUnconfirmed || item.installSourceInUse
-                  ? 'pluginOperationFailureLastStage'
-                  : 'pluginOperationFailureStage',
-              )}: ${i18nService.t(`pluginOperationStageLabel.${item.failedStage}`)}`
+            ? `${operationItemStageDescription(item, runtimeRecovered)}: ${i18nService.t(`pluginOperationStageLabel.${item.failedStage}`)}`
             : '',
           item.message,
-          item.type === 'success' ? '' : operationItemGuidance(operation.action, item),
-          item.installationCommitted
-            ? i18nService.t('pluginOperationFailureItemCommitted')
-            : item.operationUnconfirmed || item.installSourceInUse
-              ? i18nService.t('pluginOperationFailureItemUnconfirmed')
-              : '',
+          item.type === 'success' || runtimeRecovered
+            ? ''
+            : operationItemPresentation(operation.action, item).guidance,
+          item.installationCommitted ? i18nService.t('pluginOperationFailureItemCommitted') : '',
+          item.operationUnconfirmed || item.installSourceInUse
+            ? i18nService.t('pluginOperationFailureItemUnconfirmed')
+            : '',
         ])
         .filter(Boolean),
       `${i18nService.t('pluginOperationFailureReference')}: ${operation.requestId}`,
@@ -149,22 +165,23 @@ const OperationFailureContent: React.FC<{ operation: PluginOperationFailure }> =
   };
 
   return (
-    <div className="space-y-4">
-      <div className="rounded-xl border border-border bg-surface-raised p-4">
-        <div className="break-words text-sm font-semibold text-foreground [overflow-wrap:anywhere]">
-          {operation.label}
-        </div>
-        <div className="mt-1 text-xs text-secondary">
-          {i18nService.t(`pluginOperationLabel.${operation.action}`)}
-        </div>
-        <dl className="mt-4 grid grid-cols-[minmax(0,1fr)_auto] gap-4 border-t border-border pt-3 text-xs">
+    <details className="group border-t border-border pt-3">
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-2 rounded-lg text-xs font-medium text-secondary outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-primary [&::-webkit-details-marker]:hidden">
+        {i18nService.t(
+          pluginOperationHasPendingRecovery(operation)
+            ? 'pluginOperationReportDetails'
+            : 'pluginOperationFailureDetails',
+        )}
+        <ChevronDownIcon
+          aria-hidden="true"
+          className="h-3.5 w-3.5 shrink-0 transition-transform group-open:rotate-180"
+        />
+      </summary>
+      <div className="mt-3 space-y-3">
+        <dl className="grid grid-cols-[minmax(0,1fr)_auto] gap-3 text-xs">
           <div className="min-w-0">
             <dt className="text-secondary">
-              {i18nService.t(
-                pluginOperationNeedsConfirmation(operation)
-                  ? 'pluginOperationFailureLastStage'
-                  : 'pluginOperationFailureStage',
-              )}
+              {operationStageDescription(operation, runtimeRecovered)}
             </dt>
             <dd className="mt-1 break-words font-medium text-foreground">
               {operationStageLabel(operation)}
@@ -175,59 +192,94 @@ const OperationFailureContent: React.FC<{ operation: PluginOperationFailure }> =
             <dd className="mt-1 tabular-nums text-foreground">{operationDuration(operation)}</dd>
           </div>
         </dl>
-      </div>
-
-      {installationOutcome && (
-        <p className="rounded-xl bg-surface-raised px-4 py-3 text-sm leading-6 text-foreground">
-          {installationOutcome}
-        </p>
-      )}
-
-      <div>
-        <h3 className="text-xs font-medium text-secondary">
-          {i18nService.t('pluginOperationFailureReason')}
-        </h3>
-        <p className="mt-1.5 max-h-32 overflow-y-auto whitespace-pre-wrap break-words text-sm leading-6 text-foreground [overflow-wrap:anywhere]">
-          {reason}
-        </p>
-      </div>
-
-      <div className="rounded-xl bg-surface-raised px-4 py-3 text-xs leading-5 text-secondary">
-        <h3 className="mb-1 font-medium text-foreground">
-          {i18nService.t('pluginOperationFailureNextStep')}
-        </h3>
-        <p>{guidance}</p>
-      </div>
-
-      {showDetails && (
-        <details className="group rounded-xl border border-border">
-          <summary className="flex cursor-pointer list-none items-center justify-between gap-2 rounded-xl px-4 py-3 text-xs font-medium text-secondary outline-none transition-colors hover:bg-surface-raised focus-visible:ring-2 focus-visible:ring-primary [&::-webkit-details-marker]:hidden">
-            {i18nService.t('pluginOperationFailureDetails')}
-            <ChevronDownIcon className="h-3.5 w-3.5 shrink-0 transition-transform group-open:rotate-180" />
-          </summary>
-          <pre className="max-h-48 overflow-auto border-t border-border px-4 py-3 font-mono text-[11px] leading-5 text-secondary whitespace-pre-wrap [overflow-wrap:anywhere]">
+        {errorDetails && errorDetails !== visibleReason && (
+          <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-surface-raised px-3 py-2 font-mono text-[11px] leading-5 text-secondary [overflow-wrap:anywhere]">
             {errorDetails}
           </pre>
-        </details>
-      )}
-
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-        <button
-          type="button"
-          onClick={() => void copyDetails()}
-          className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs text-secondary transition-colors hover:bg-surface-raised hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-        >
-          <ClipboardDocumentIcon className="h-4 w-4" aria-hidden="true" />
-          {i18nService.t('pluginOperationFailureCopy')}
-        </button>
-        <span role="status" className="text-xs text-secondary">
-          {copyState === 'copied'
-            ? i18nService.t('pluginOperationFailureCopied')
-            : copyState === 'failed'
-              ? i18nService.t('pluginOperationFailureCopyFailed')
-              : ''}
-        </span>
+        )}
+        {pluginOperationHasPendingRecovery(operation) && (operation.items?.length ?? 0) > 1 && (
+          <div className="max-h-48 space-y-3 overflow-y-auto">
+            {operation.items?.map((item, index) => (
+              <div
+                key={`${item.label}:${index}`}
+                className="break-words text-xs leading-5 [overflow-wrap:anywhere]"
+              >
+                <p className="font-medium text-foreground">{item.label}</p>
+                {item.failedStage && (
+                  <p className="text-secondary">
+                    {i18nService.t(
+                      runtimeRecovered
+                        ? 'pluginOperationFailureLastStage'
+                        : 'pluginOperationPendingStage',
+                    )}{' '}
+                    · {i18nService.t(`pluginOperationStageLabel.${item.failedStage}`)}
+                  </p>
+                )}
+                <p className="whitespace-pre-wrap text-secondary">{item.message}</p>
+              </div>
+            ))}
+          </div>
+        )}
+        <p className="break-all text-[11px] text-secondary">
+          {i18nService.t('pluginOperationFailureReference')}: {operation.requestId}
+        </p>
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+          <button
+            type="button"
+            onClick={() => void copyDetails()}
+            className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs text-secondary transition-colors hover:bg-surface-raised hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+          >
+            <ClipboardDocumentIcon className="h-4 w-4" aria-hidden="true" />
+            {i18nService.t(
+              pluginOperationHasPendingRecovery(operation)
+                ? 'pluginOperationReportCopy'
+                : 'pluginOperationFailureCopy',
+            )}
+          </button>
+          <span role="status" className="text-xs text-secondary">
+            {copyState === 'copied'
+              ? i18nService.t('pluginOperationFailureCopied')
+              : copyState === 'failed'
+                ? i18nService.t('pluginOperationFailureCopyFailed')
+                : ''}
+          </span>
+        </div>
       </div>
+    </details>
+  );
+};
+
+const OperationFailureContent: React.FC<{ operation: PluginOperationFailure }> = ({
+  operation,
+}) => {
+  const nativeReason = operation.message.trim();
+  const reason = nativeReason
+    ? `${nativeReason.slice(0, 480)}${nativeReason.length > 480 ? '…' : ''}`
+    : i18nService.t('pluginOperationFailureReasonUnavailable');
+  const installationOutcome =
+    !(operation.mutationCompleted && !pluginOperationNeedsConfirmation(operation)) &&
+    (operation.items?.length ?? 0) < 2 &&
+    (operation.action === PluginOperationAction.INSTALL ||
+      operation.action === PluginOperationAction.UPDATE) &&
+    (operation.state === 'committed' || operation.state === 'unconfirmed')
+      ? i18nService.t(`pluginOperationInstallationOutcome.${operation.state}`)
+      : undefined;
+  return (
+    <div className="space-y-3">
+      <p className="break-words text-sm font-medium text-secondary [overflow-wrap:anywhere]">
+        {operation.label}
+      </p>
+      {installationOutcome && (
+        <p className="text-xs leading-5 text-secondary">{installationOutcome}</p>
+      )}
+      <p className="max-h-32 overflow-y-auto whitespace-pre-wrap break-words text-sm leading-6 text-foreground [overflow-wrap:anywhere]">
+        {reason}
+      </p>
+      <div className="text-xs leading-5 text-secondary">
+        <h3 className="sr-only">{i18nService.t('pluginOperationFailureNextStep')}</h3>
+        <p>{pluginOperationFailurePresentation(operation).nextStep}</p>
+      </div>
+      <OperationReportDetails operation={operation} visibleReason={reason} />
     </div>
   );
 };
@@ -314,6 +366,103 @@ const StructuredMessage: React.FC<{ message: string; type: OperationResult['type
   );
 };
 
+export const OperationResultNotice: React.FC<{
+  result: OperationResult;
+  onClose: () => void;
+  operation?: PluginOperationFailure;
+  runtimeRecovered?: true;
+}> = ({ result, onClose, operation, runtimeRecovered }) => {
+  const [hovered, setHovered] = useState(false);
+  const [focused, setFocused] = useState(false);
+  const paused = hovered || focused;
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  useEffect(() => {
+    if (
+      (operation && (!runtimeRecovered || operation.details?.trim())) ||
+      result.persistent ||
+      paused
+    )
+      return;
+    const timer = window.setTimeout(() => onCloseRef.current(), 3000);
+    return () => window.clearTimeout(timer);
+  }, [operation, runtimeRecovered, paused, result.title, result.message, result.persistent]);
+
+  return (
+    <PluginOperationStatusContent>
+      <div
+        className="rounded-xl border border-border bg-surface px-4 py-3 shadow-lg animate-fade-in-up"
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+        onFocusCapture={() => setFocused(true)}
+        onBlurCapture={event => {
+          if (!isDomNode(event.relatedTarget) || !event.currentTarget.contains(event.relatedTarget))
+            setFocused(false);
+        }}
+      >
+        <div className="flex items-start gap-2.5">
+          <CheckCircleIcon
+            aria-hidden="true"
+            className="mt-0.5 h-5 w-5 shrink-0 text-emerald-600 dark:text-emerald-400"
+          />
+          <div className="min-w-0 flex-1" role="status" aria-live="polite">
+            <p className="break-words text-sm font-semibold text-foreground [overflow-wrap:anywhere]">
+              {result.title}
+            </p>
+            {operation && (
+              <p className="mt-0.5 break-words text-xs text-secondary [overflow-wrap:anywhere]">
+                {operation.label}
+              </p>
+            )}
+            {result.message && (
+              <p className="mt-1 max-h-32 overflow-y-auto whitespace-pre-wrap break-words text-xs leading-5 text-secondary [overflow-wrap:anywhere]">
+                {result.message}
+              </p>
+            )}
+            {operation && !runtimeRecovered && (
+              <p className="mt-2 flex items-center gap-1.5 text-xs text-amber-700 dark:text-amber-300">
+                <ClockIcon aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
+                {i18nService.t('pluginOperationRecoveryPending')}
+              </p>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label={i18nService.t('pluginOperationNoticeDismiss')}
+            className="-mr-1 -mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-secondary transition-colors hover:bg-surface-raised hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+          >
+            <XMarkIcon aria-hidden="true" className="h-4 w-4" />
+          </button>
+        </div>
+        {result.items?.map((item, index) => (
+          <p
+            key={`${item.label}:${index}`}
+            className="mt-2 break-words text-xs leading-5 text-secondary [overflow-wrap:anywhere]"
+          >
+            <span className="font-medium">{item.label}</span> · {item.message}
+          </p>
+        ))}
+        {operation && (
+          <div className="mt-3 space-y-3">
+            {!runtimeRecovered && (
+              <p className="text-xs leading-5 text-secondary">
+                {pluginOperationFailurePresentation(operation).nextStep}
+              </p>
+            )}
+            {runtimeRecovered && operation.details?.trim() && (
+              <p className="max-h-32 overflow-y-auto whitespace-pre-wrap break-words text-xs leading-5 text-amber-700 dark:text-amber-300 [overflow-wrap:anywhere]">
+                {operation.details}
+              </p>
+            )}
+            <OperationReportDetails operation={operation} runtimeRecovered={runtimeRecovered} />
+          </div>
+        )}
+      </div>
+    </PluginOperationStatusContent>
+  );
+};
+
 const OperationResultModal: React.FC<OperationResultModalProps> = ({
   result,
   onClose,
@@ -324,7 +473,18 @@ const OperationResultModal: React.FC<OperationResultModalProps> = ({
   const descriptionId = useId();
   const dialogRef = useRef<HTMLDivElement>(null);
   const onCloseRef = useRef(onClose);
-  const isOpen = result !== null;
+  const isSuccessNotice =
+    result?.type === 'success' &&
+    !operation &&
+    !(result.items ?? []).some(
+      item =>
+        item.type === 'error' ||
+        item.operationUnconfirmed ||
+        item.installSourceInUse ||
+        item.failedStage ||
+        (item.installationCommitted && !item.mutationCompleted),
+    );
+  const isOpen = result !== null && !isSuccessNotice;
   const operationId = operation?.requestId;
   onCloseRef.current = onClose;
 
@@ -359,7 +519,11 @@ const OperationResultModal: React.FC<OperationResultModalProps> = ({
         ...dialogRef.current.querySelectorAll<HTMLElement>(
           'button, [href], input, select, textarea, summary, [tabindex]:not([tabindex="-1"])',
         ),
-      ].filter(element => !element.hasAttribute('disabled'));
+      ].filter(element => {
+        if (element.hasAttribute('disabled')) return false;
+        const closedDetails = element.closest('details:not([open])');
+        return !closedDetails || closedDetails.querySelector('summary')?.contains(element);
+      });
       if (focusable.length === 0) {
         event.preventDefault();
         dialogRef.current.focus();
@@ -401,13 +565,14 @@ const OperationResultModal: React.FC<OperationResultModalProps> = ({
   }, [isOpen, operationId, ownerDocument]);
 
   if (!result) return null;
+  if (isSuccessNotice) return <OperationResultNotice result={result} onClose={onClose} />;
 
   return createPortal(
     <Modal
       onClose={onClose}
       closeOnBackdrop={false}
       overlayClassName={`fixed inset-0 ${operation ? 'z-[80]' : 'z-50'} flex items-center justify-center bg-black/50 backdrop-blur-[2px]`}
-      className="mx-4 w-full max-w-lg overflow-hidden rounded-[20px] border border-border bg-surface shadow-2xl animate-fade-in-up"
+      className="mx-4 w-full max-w-md overflow-hidden rounded-2xl border border-border bg-surface shadow-2xl animate-fade-in-up"
     >
       <div
         ref={dialogRef}
@@ -417,9 +582,9 @@ const OperationResultModal: React.FC<OperationResultModalProps> = ({
         aria-describedby={operation ? descriptionId : undefined}
         tabIndex={-1}
       >
-        <div className="flex items-center gap-3 px-6 pb-4 pt-5">
+        <div className="flex items-start gap-3 px-5 pb-3 pt-5">
           <div
-            className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${
+            className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${
               result.type === 'success'
                 ? 'bg-green-500/10'
                 : operation && operation.state !== 'failed'
@@ -435,7 +600,10 @@ const OperationResultModal: React.FC<OperationResultModalProps> = ({
               />
             )}
           </div>
-          <div id={titleId} className="min-w-0 flex-1 text-lg font-semibold text-foreground">
+          <div
+            id={titleId}
+            className="min-w-0 flex-1 pt-1 text-base font-semibold leading-6 text-foreground"
+          >
             {result.title}
           </div>
           <button
@@ -450,11 +618,11 @@ const OperationResultModal: React.FC<OperationResultModalProps> = ({
 
         {operation && (
           <p id={descriptionId} className="sr-only">
-            {operation.label}. {pluginOperationFailurePresentation(operation).guidance}
+            {operation.label}. {pluginOperationFailurePresentation(operation).nextStep}
           </p>
         )}
 
-        <div className="max-h-[55vh] overflow-y-auto px-6 pb-5">
+        <div className="max-h-[60vh] overflow-y-auto px-5 pb-4">
           <div className="space-y-3">
             {operation ? (
               <OperationFailureContent key={operation.requestId} operation={operation} />
@@ -462,10 +630,7 @@ const OperationResultModal: React.FC<OperationResultModalProps> = ({
               result.message && <StructuredMessage message={result.message} type={result.type} />
             )}
             {result.items?.map((item, index) => (
-              <div
-                key={`${item.label}:${index}`}
-                className="rounded-xl border border-border bg-surface-raised p-4"
-              >
+              <div key={`${item.label}:${index}`} className="border-t border-border pt-3">
                 <div className="mb-3 flex items-center gap-2">
                   <span
                     className={`h-2 w-2 rounded-full ${
@@ -481,12 +646,8 @@ const OperationResultModal: React.FC<OperationResultModalProps> = ({
                 </div>
                 {item.failedStage && (
                   <p className="mb-2 text-xs text-secondary">
-                    {i18nService.t(
-                      item.operationUnconfirmed || item.installSourceInUse
-                        ? 'pluginOperationFailureLastStage'
-                        : 'pluginOperationFailureStage',
-                    )}{' '}
-                    · {i18nService.t(`pluginOperationStageLabel.${item.failedStage}`)}
+                    {operationItemStageDescription(item)} ·{' '}
+                    {i18nService.t(`pluginOperationStageLabel.${item.failedStage}`)}
                   </p>
                 )}
                 {(item.installationCommitted ||
@@ -503,7 +664,7 @@ const OperationResultModal: React.FC<OperationResultModalProps> = ({
                 <StructuredMessage message={item.message} type={item.type ?? result.type} />
                 {operation && (item.type ?? result.type) === 'error' && (
                   <p className="mt-2 text-xs leading-5 text-secondary">
-                    {operationItemGuidance(operation.action, item)}
+                    {operationItemPresentation(operation.action, item).nextStep}
                   </p>
                 )}
               </div>
@@ -511,12 +672,12 @@ const OperationResultModal: React.FC<OperationResultModalProps> = ({
           </div>
         </div>
 
-        <div className="flex justify-end border-t border-border bg-surface-raised px-6 py-4">
+        <div className="flex justify-end px-5 pb-5">
           <button
             type="button"
             onClick={onClose}
             data-primary-action
-            className="min-w-20 rounded-xl bg-primary px-5 py-2 text-sm font-medium text-white shadow-sm transition-all hover:brightness-105 active:scale-[0.98]"
+            className="min-w-20 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white transition-all hover:brightness-105 active:scale-[0.98]"
           >
             {i18nService.t(operation ? 'pluginOperationFailureDismiss' : 'confirm')}
           </button>

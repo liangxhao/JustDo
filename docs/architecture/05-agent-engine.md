@@ -138,6 +138,14 @@ Control UI 偏好均为开启，配置同步才设置 `gateway.controlUi.enabled
 
 Manager 对外 phase 为 ready、starting、running、error；canRetry 与 message 用于产品反馈。共享契约位于 `src/shared/openclaw/engineStatus.ts`；`starting` 上的 `restarting: true` 由 Main 提供，用于区分首次启动与真实重启。它们不是单个 Agent run 的状态。
 
+Gateway 冷启动在同一个启动时限内等待 HTTP 健康检查与本次受管进程的原生 `ready`
+标记，然后才发布 Running；提前开放的 HTTP 监听不建立运行代次。等待绑定确切子进程、
+进程代次和启动取消信号，退出、停止及后继进程的迟到响应不能恢复旧启动。原生就绪后
+仍由上述准备 owner 完成认证连接和执行权限准入，不以健康检查或日志标记代替权限检查。
+Renderer 的只读就绪刷新只有在本次或更新的读取／通知实际确认 Main 准入和引擎状态后
+才返回已就绪。并发刷新跟随更新的读取；被替代的旧请求完成不证明缓存仍然有效。
+订阅结束后不再确认恢复，该刷新也不触发引擎启动、重启或插件变更。
+
 运行时文件就绪检查与 CLI 环境读取不改变正在启动或运行中的 Gateway phase；CLI 读取复用该进程已选定的端口，不因端口已被启动进程占用而重新分配。冷启动的异步资源准备已属于 starting，不能在此期间展示尚未启动的按钮。资源缺失或版本元数据无效仍报告 error。
 
 ### 原生重启、退出和代次

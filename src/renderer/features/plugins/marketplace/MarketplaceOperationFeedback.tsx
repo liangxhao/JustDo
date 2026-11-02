@@ -9,7 +9,7 @@ export default function MarketplaceOperationFeedback({
   controller: PluginMarketplaceController;
 }) {
   const entries = Object.entries(controller.operations).flatMap(([key, operation]) => {
-    if (operation.busy) return [];
+    if (operation.busy || operation.runtimeRecoveryPending) return [];
     const warning =
       (operation.unconfirmed
         ? i18nService.t('marketplaceStatusPending')

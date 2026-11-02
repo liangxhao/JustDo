@@ -440,6 +440,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
           setActionOutcome({
             type: 'success',
             title: i18nService.t('deleteSkill'),
+            ...(resolutionMessage ? { persistent: true as const } : {}),
             message: resolutionMessage ? `${deleteMessage}\n\n${resolutionMessage}` : deleteMessage,
           });
       }

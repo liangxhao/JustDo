@@ -301,6 +301,7 @@ export class OpenClawEngineManager extends EventEmitter {
   private desiredVersion: string | null;
   private status: OpenClawEngineStatus;
   private gatewayProcess: GatewayProcess | null = null;
+  private coldStartingGateway?: { child: GatewayProcess; processGeneration: number };
   private readonly gatewayNetworkEnvironments = new WeakMap<object, Readonly<NodeJS.ProcessEnv>>();
   private readonly expectedGatewayExits = new WeakSet<object>();
   private gatewayShutdown: GatewayProcessShutdown | undefined;
@@ -971,6 +972,7 @@ export class OpenClawEngineManager extends EventEmitter {
   }
 
   private async doStartGateway(): Promise<OpenClawEngineStatus> {
+    const startSignal = this.gatewayRestartWait?.signal;
     if (this.gatewayShutdown?.failure) throw this.gatewayShutdownFailure();
     await this.gatewayShutdown?.waitForStops();
     if (this.applicationShuttingDown || this.gatewayRestartWait?.signal.aborted) {
@@ -1215,6 +1217,7 @@ export class OpenClawEngineManager extends EventEmitter {
 
     // Use the supported bundled Node on every platform. Electron's embedded
     // Node release can lag the native SQLite correctness floor.
+    const lifecycleBeforeStart = this.gatewayConfigReloadMonitor.getGatewayLifecycleGeneration();
     const child: GatewayProcess = spawn(
       getElectronNodeRuntimePath(),
       ['--require', ensureGatewayShutdownPreload(this.baseDir), openclawEntry, ...forkArgs],
@@ -1232,6 +1235,8 @@ export class OpenClawEngineManager extends EventEmitter {
     this.gatewayProcess = child;
     this.gatewayNetworkEnvironments.set(child, Object.freeze({ ...gatewayEnv }));
     this.gatewayProcessGeneration += 1;
+    const processGeneration = this.gatewayProcessGeneration;
+    this.coldStartingGateway = { child, processGeneration };
     this.launchedGatewayEnvironmentGeneration = launchEnvironmentGeneration;
     this.attachGatewayProcessLogs(child);
     this.attachGatewayExitHandlers(child);
@@ -1244,44 +1249,82 @@ export class OpenClawEngineManager extends EventEmitter {
       );
     });
 
-    const ready = await this.waitForGatewayReady(port, GATEWAY_BOOT_TIMEOUT_MS);
-    console.log(
-      `[OpenClaw] startGateway: waitForGatewayReady returned (${elapsed()}), ready=${ready}`,
-    );
-    if (!ready) {
-      if (this.shutdownRequested) {
-        console.log('[OpenClaw] startGateway: startup cancelled by shutdown');
+    return this.completeGatewayStart({
+      child, processGeneration, lifecycleBeforeStart, port, version: runtime.version,
+      startedAt: t0, signal: startSignal,
+    });
+  }
+
+  private async completeGatewayStart({
+    child, processGeneration, lifecycleBeforeStart, port, version, startedAt, signal,
+    timeoutMs = GATEWAY_BOOT_TIMEOUT_MS,
+  }: {
+    child: GatewayProcess;
+    processGeneration: number;
+    lifecycleBeforeStart: number;
+    port: number;
+    version: string;
+    startedAt: number;
+    signal?: AbortSignal;
+    timeoutMs?: number;
+  }): Promise<OpenClawEngineStatus> {
+    const deadline = Date.now() + timeoutMs;
+    const current = () => this.gatewayProcess === child &&
+      this.gatewayProcessGeneration === processGeneration && isGatewayProcessAlive(child);
+    const cancelled = () => this.shutdownRequested || this.applicationShuttingDown || signal?.aborted;
+    const observation = new AbortController();
+    const abort = () => observation.abort();
+    const unavailable = () => cancelled() || observation.signal.aborted || !current() ||
+      this.status.phase === EnginePhase.Error;
+    signal?.addEventListener('abort', abort, { once: true });
+    child.once('exit', abort);
+    if (unavailable()) abort();
+    try {
+      const healthy = await this.waitForGatewayReady(port, timeoutMs, observation.signal);
+      if (unavailable()) return this.getStatus();
+      // The HTTP listener opens before native services publish their ready marker.
+      // Publish Running only after that marker, so admission captures its lifecycle.
+      let ready = healthy;
+      let lifecycle = lifecycleBeforeStart;
+      while (ready) {
+        ready = await this.gatewayConfigReloadMonitor.waitForGatewayReadyAfter(
+          lifecycle, Math.max(0, deadline - Date.now()), observation.signal,
+        );
+        if (unavailable()) return this.getStatus();
+        if (!ready || !this.gatewayConfigReloadMonitor.isGatewayRestartPending()) break;
+        lifecycle = this.gatewayConfigReloadMonitor.getGatewayLifecycleGeneration();
+      }
+      console.log(`[OpenClaw] startGateway: startup readiness returned (${Date.now() - startedAt}ms), ready=${ready}`);
+      if (!ready) {
+        this.setStatus({
+          phase: EnginePhase.Error, version, message: t('gatewayStartupUnconfirmed'), canRetry: true,
+        });
+        void this.stopGatewayProcess(child).catch(error => {
+          console.error('[OpenClaw] Failed startup process retirement remains unconfirmed:', error);
+        });
         return this.getStatus();
       }
+      if (this.coldStartingGateway?.child === child &&
+          this.coldStartingGateway.processGeneration === processGeneration)
+        this.coldStartingGateway = undefined;
+      console.log(`[OpenClaw] startGateway: gateway is running, total startup time: ${Date.now() - startedAt}ms`);
+      if ('send' in child && child.connected) {
+        child.send(GATEWAY_READY_MESSAGE, () => {
+          // Cache persistence is best-effort.
+        });
+      }
+      this.gatewayRestartAttempt = 0;
       this.setStatus({
-        phase: 'error',
-        version: runtime.version,
-        message: 'OpenClaw gateway failed to become healthy in time.',
-        canRetry: true,
+        phase: EnginePhase.Running, version,
+        message: `OpenClaw gateway is running on loopback:${port}.`, canRetry: false,
       });
-      void this.stopGatewayProcess(child).catch(error => {
-        console.error('[OpenClaw] Failed startup process retirement remains unconfirmed:', error);
-      });
+      this.gatewayPortListener?.(port);
       return this.getStatus();
+    } finally {
+      observation.abort();
+      signal?.removeEventListener('abort', abort);
+      child.removeListener('exit', abort);
     }
-
-    console.log(`[OpenClaw] startGateway: gateway is running, total startup time: ${elapsed()}`);
-    if ('send' in child && child.connected) {
-      child.send(GATEWAY_READY_MESSAGE, () => {
-        // Cache persistence is best-effort.
-      });
-    }
-    // Reset restart counter on successful start — gateway is healthy
-    this.gatewayRestartAttempt = 0;
-    this.setStatus({
-      phase: 'running',
-      version: runtime.version,
-      message: `OpenClaw gateway is running on loopback:${port}.`,
-      canRetry: false,
-    });
-    this.gatewayPortListener?.(port);
-
-    return this.getStatus();
   }
 
   beginApplicationShutdown(): void {
@@ -2054,14 +2097,27 @@ export class OpenClawEngineManager extends EventEmitter {
     return healthy;
   }
 
-  private waitForGatewayReady(port: number, timeoutMs: number): Promise<boolean> {
+  private waitForGatewayReady(port: number, timeoutMs: number, signal?: AbortSignal): Promise<boolean> {
     const startedAt = Date.now();
     let pollCount = 0;
     return new Promise(resolve => {
+      let settled = false;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
+      const finish = (ready: boolean) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        clearTimeout(deadlineTimer);
+        signal?.removeEventListener('abort', onAbort);
+        resolve(ready);
+      };
+      const onAbort = () => finish(false);
       const tick = async () => {
-        if (this.shutdownRequested) {
+        if (settled) return;
+        if (this.shutdownRequested || this.applicationShuttingDown || signal?.aborted) {
           console.log('[OpenClaw] waitForGatewayReady: shutdown requested, giving up');
-          resolve(false);
+          finish(false);
           return;
         }
 
@@ -2069,7 +2125,7 @@ export class OpenClawEngineManager extends EventEmitter {
           console.log(
             '[OpenClaw] waitForGatewayReady: gateway process is gone (exited early), giving up',
           );
-          resolve(false);
+          finish(false);
           return;
         }
 
@@ -2079,11 +2135,16 @@ export class OpenClawEngineManager extends EventEmitter {
         // Log verbose probe details every 10 polls to diagnose health check failures.
         const verboseProbe = pollCount % 10 === 0;
         const healthy = await this.isGatewayHealthy(port, verboseProbe);
+        if (settled) return;
+        if (this.shutdownRequested || this.applicationShuttingDown || signal?.aborted) {
+          finish(false);
+          return;
+        }
         if (healthy) {
           console.log(
             `[OpenClaw] waitForGatewayReady: gateway healthy after ${elapsedMs}ms (${pollCount} polls)`,
           );
-          resolve(true);
+          finish(true);
           return;
         }
 
@@ -2091,7 +2152,7 @@ export class OpenClawEngineManager extends EventEmitter {
           console.log(
             `[OpenClaw] waitForGatewayReady: timed out after ${timeoutMs}ms (${pollCount} polls)`,
           );
-          resolve(false);
+          finish(false);
           return;
         }
 
@@ -2101,11 +2162,13 @@ export class OpenClawEngineManager extends EventEmitter {
           );
         }
 
-        setTimeout(() => {
+        timer = setTimeout(() => {
           void tick();
         }, GATEWAY_HEALTH_POLL_INTERVAL_MS);
       };
 
+      signal?.addEventListener('abort', onAbort, { once: true });
+      deadlineTimer = setTimeout(() => finish(false), timeoutMs);
       void tick();
     });
   }
@@ -2239,6 +2302,7 @@ export class OpenClawEngineManager extends EventEmitter {
       if (isCurrentProcess) {
         this.gatewayConfigReloadMonitor.observeGatewayExit();
         this.gatewayProcess = null;
+        if (this.coldStartingGateway?.child === child) this.coldStartingGateway = undefined;
         // A stop timeout retains this owner until its actual exit is observed.
         // A superseded process cannot release the current owner's fence.
         this.gatewayMutationUnresolved = false;
@@ -2266,6 +2330,9 @@ export class OpenClawEngineManager extends EventEmitter {
     const wasRestarting = this.gatewayConfigReloadMonitor.isGatewayRestartPending();
     this.gatewayConfigReloadMonitor.observeLine(line);
     if (this.shutdownRequested || this.applicationShuttingDown) return;
+    const coldStarting = this.coldStartingGateway?.child === child &&
+      this.coldStartingGateway.processGeneration === this.gatewayProcessGeneration;
+    if (coldStarting && this.status.phase === EnginePhase.Error) return;
     const isRestarting = this.gatewayConfigReloadMonitor.isGatewayRestartPending();
     if (isRestarting && !wasRestarting) {
       this.setStatus({
@@ -2275,7 +2342,7 @@ export class OpenClawEngineManager extends EventEmitter {
         canRetry: false,
         restarting: true,
       });
-    } else if (wasRestarting && !isRestarting) {
+    } else if (wasRestarting && !isRestarting && !coldStarting) {
       this.setStatus({
         phase: EnginePhase.Running,
         version: this.status.version,

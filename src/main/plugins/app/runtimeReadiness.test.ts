@@ -2,6 +2,7 @@ import { expect, test, vi } from 'vitest';
 
 import { EnginePhase, type OpenClawEngineStatus } from '../../../shared/openclaw/engineStatus';
 import { t } from '../../core/i18n';
+import { EnginePreparationPendingCode, EnginePreparationPendingError } from '../../engine/enginePreparationError';
 import { ensureAppPluginRuntimeReady } from './runtimeReadiness';
 
 test('returns the original running receipt after one preparation', async () => {
@@ -44,7 +45,9 @@ test('reports missing failure details without reading an older preparation failu
     phase: EnginePhase.Error, version: 'fixture', canRetry: true,
   }));
 
-  await expect(ensureAppPluginRuntimeReady(prepare)).rejects.toThrow(t('enginePreparationUnconfirmed'));
+  const result = ensureAppPluginRuntimeReady(prepare);
+  await expect(result).rejects.toThrow(t('enginePreparationFailed'));
+  await expect(result).rejects.not.toBeInstanceOf(EnginePreparationPendingError);
 
   expect(prepare).toHaveBeenCalledOnce();
 });
@@ -55,5 +58,17 @@ test('preserves a rejected preparation without starting another attempt', async 
 
   await expect(ensureAppPluginRuntimeReady(prepare)).rejects.toBe(failure);
 
+  expect(prepare).toHaveBeenCalledOnce();
+});
+
+test('distinguishes a still-starting runtime from a concrete preparation failure', async () => {
+  const prepare = vi.fn(async (): Promise<OpenClawEngineStatus> => ({
+    phase: EnginePhase.Starting, version: 'fixture', canRetry: false,
+  }));
+
+  await expect(ensureAppPluginRuntimeReady(prepare)).rejects.toMatchObject({
+    code: EnginePreparationPendingCode.STARTING,
+    message: t('enginePreparationStillStarting'),
+  });
   expect(prepare).toHaveBeenCalledOnce();
 });

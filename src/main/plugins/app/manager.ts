@@ -539,27 +539,39 @@ export class AppPluginManager {
                 preflightVeto: veto,
                 packageMutation: true,
               });
+        let outcome: { value: T } | { error: unknown };
         try {
-          return await next(0);
+          outcome = { value: await next(0) };
         } catch (error) {
+          outcome = { error };
           if (error === veto) {
             rejectedBeforeMutation = true;
             this.registry.restorePackageAdmissions(ids);
             await this.refresh();
           }
-          throw error;
         } finally {
           this.packageMutation = false;
-          if (!rejectedBeforeMutation) {
-            this.invalidate();
-            if (entered && wasRunning) {
-              // The stop lease has been released. Reconnect the existing application,
-              // then admit only the new registration's independently checked receipt.
-              await this.dependencies.resources.ensureReady();
-              await this.refresh();
-            }
+          if (!rejectedBeforeMutation) this.invalidate();
+        }
+        if (!rejectedBeforeMutation && entered && wasRunning) {
+          // The stop lease has been released. Reconnect the existing application,
+          // then admit only the new registration's independently checked receipt.
+          try {
+            await this.dependencies.resources.ensureReady();
+            await this.refresh();
+          } catch (recoveryError) {
+            if (!('error' in outcome)) throw recoveryError;
+            // A pending recovery must not hide an earlier reconciliation failure.
+            throw new AggregateError(
+              [outcome.error, recoveryError],
+              [outcome.error, recoveryError]
+                .map(error => error instanceof Error ? error.message : AppPluginError.Unavailable)
+                .join('\n'),
+            );
           }
         }
+        if ('error' in outcome) throw outcome.error;
+        return outcome.value;
       }),
     );
   }

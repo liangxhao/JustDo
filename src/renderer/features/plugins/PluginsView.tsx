@@ -248,7 +248,9 @@ const PluginsView: React.FC<PluginsViewProps> = ({
           </PluginOperationStatusSlot.Provider>
         </div>
       </main>
-      <PluginOperationFeedback />
+      <PluginOperationStatusSlot.Provider value={operationStatusSlot}>
+        <PluginOperationFeedback />
+      </PluginOperationStatusSlot.Provider>
     </div>
   );
 };

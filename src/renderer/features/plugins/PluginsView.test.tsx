@@ -2,7 +2,7 @@
 
 import { PluginKind } from '@shared/plugins/marketplace';
 import { PluginOperationAction } from '@shared/plugins/pluginOperation';
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
 import { mcpService } from '@/features/plugins/mcp/mcpService';
@@ -15,6 +15,8 @@ const engine = vi.hoisted(() => ({ ready: true, pending: false, failed: false })
 const portalAction = vi.hoisted(() => vi.fn());
 vi.mock('@/app/shell/startup/routing/useEngineReadiness', () => ({
   useEngineReadiness: () => engine,
+  getEngineReadinessSnapshot: () => engine,
+  refreshEngineReadiness: async () => undefined,
 }));
 vi.mock('@/features/plugins/mcp/mcpService', () => ({
   mcpService: { loadExtensionServers: vi.fn(async () => []) },
@@ -132,6 +134,45 @@ test('shares the progress stack during an engine restart without losing the acti
   expect(screen.getByText('Updating extension').closest('.fixed')).toBe(stack);
   act(() => operation.finish());
   expect(screen.queryByText('Updating extension')).toBeNull();
+});
+
+test('stacks a pending completed operation with engine feedback and keeps its details and dismissal usable during preparation', async () => {
+  const props = { isSidebarCollapsed: false, onToggleSidebar: vi.fn(), onNewChat: vi.fn() };
+  const { rerender } = render(<PluginsView {...props} />);
+  const input = screen.getByRole('textbox', { name: 'extension-draft' }) as HTMLInputElement;
+  fireEvent.change(input, { target: { value: 'preserved configuration' } });
+  Object.assign(engine, { ready: false, pending: true });
+  rerender(<PluginsView {...props} />);
+  act(() => {
+    const operation = startPluginOperation({
+      kind: PluginKind.EXTENSION,
+      action: PluginOperationAction.REMOVE,
+      label: 'Removed extension',
+    });
+    operation.fail({
+      message: 'The recovery observation was replaced',
+      state: 'refresh_failed',
+      mutationCompleted: true,
+      runtimeRecoveryPending: true,
+    });
+    operation.finish();
+  });
+  const stack = screen.getByText('enginePreparingContent').closest('.fixed');
+  expect(screen.getByText('pluginOperationCompleted.remove').closest('.fixed')).toBe(stack);
+  expect(document.querySelectorAll('.fixed.bottom-4.right-4')).toHaveLength(1);
+  expect(screen.queryByRole('alertdialog')).toBeNull();
+  const details = screen.getByText('pluginOperationReportDetails').closest('details')!;
+  fireEvent.click(details.querySelector('summary')!);
+  expect(details.open).toBe(true);
+  const writeText = vi.fn().mockResolvedValue(undefined);
+  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+  fireEvent.click(screen.getByRole('button', { name: 'pluginOperationReportCopy' }));
+  await waitFor(() => expect(writeText).toHaveBeenCalledOnce());
+  expect(writeText.mock.calls[0][0]).toContain('The recovery observation was replaced');
+  fireEvent.click(screen.getByRole('button', { name: 'pluginOperationNoticeDismiss' }));
+  expect(screen.queryByText('pluginOperationCompleted.remove')).toBeNull();
+  expect(screen.getByText('enginePreparingContent')).toBeTruthy();
+  expect(input.value).toBe('preserved configuration');
 });
 
 test('uses one capability switcher instead of separate installed and marketplace pages', () => {

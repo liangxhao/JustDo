@@ -138,6 +138,40 @@ function Harness({
   );
 }
 
+test('keeps completed marketplace installation with pending recovery nonblocking and retains version protection', async () => {
+  api.install.mockResolvedValueOnce({
+    success: false, installationCommitted: true,
+    mutationCompleted: true, runtimeRecoveryPending: true,
+    pluginId: 'writer', failedStage: PluginOperationStage.PREPARING_RUNTIME,
+    error: 'Installation completed; engine recovery verification was superseded.',
+  });
+  render(<>
+    <Harness kind={PluginKind.EXTENSION} onInstalled={async () => { throw new Error('Inventory not ready'); }} />
+    <PluginOperationFeedback />
+  </>);
+  fireEvent.click(await screen.findByRole('button', { name: 'marketplaceInstall' }));
+
+  await screen.findByText('pluginOperationRecoveryPending');
+  expect(screen.queryByRole('alertdialog')).toBeNull();
+  expect(screen.getAllByText('pluginOperationCompleted.install')).toHaveLength(1);
+  expect(screen.queryByRole('button', { name: 'marketplaceRefreshStatus' })).toBeNull();
+  expect(getPluginOperationOwner().failureSnapshot()[0]).toMatchObject({
+    mutationCompleted: true, runtimeRecoveryPending: true,
+    details: 'marketplaceRefreshAfterInstallFailed',
+  });
+  act(() => getPluginOperationOwner().confirmRuntimeRecovery([
+    getPluginOperationOwner().failureSnapshot()[0].requestId,
+  ]));
+  expect(screen.queryByText('pluginOperationRecoveryPending')).toBeNull();
+  expect(screen.getByText('marketplaceRefreshAfterInstallFailed').closest('details')).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'pluginOperationNoticeDismiss' }));
+  expect(screen.queryByText('pluginOperationRecoveryPending')).toBeNull();
+  const pending = screen.getByRole('button', { name: 'marketplaceStatusPending' });
+  expect(pending.hasAttribute('disabled')).toBe(true);
+  fireEvent.click(pending);
+  expect(api.install).toHaveBeenCalledOnce();
+});
+
 test('keeps market loading in the bottom progress stack until results arrive', async () => {
   let finish!: () => void;
   api.search.mockImplementationOnce(

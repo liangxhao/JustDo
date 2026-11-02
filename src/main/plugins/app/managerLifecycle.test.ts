@@ -10,6 +10,7 @@ import type { AppMainModule, AppResourceParticipant } from '../../../../plugins/
 import { appNativeGatewayMethodAlias, type AppNativeHandshake } from '../../../../plugins/sdk/app-plugin-sdk/native-contract';
 import { EnginePhase, type OpenClawEngineStatus } from '../../../shared/openclaw/engineStatus';
 import { PluginOperationStage } from '../../../shared/plugins/pluginOperation';
+import { EnginePreparationPendingCode, EnginePreparationPendingError } from '../../engine/enginePreparationError';
 import { bindPluginGatewayClient } from '../../engine/gateway/pluginRequestBinding';
 import { removeExtensionPackage } from '../extensions/extensionMutation';
 import { artifactDigest } from './artifact';
@@ -355,6 +356,29 @@ test('repairs transient inventory failure in the same application without replay
   expect(f.manager.snapshot()[0].state).toBe('active');
   expect(f.manager.snapshot()[0].presentationEntry).toBe(display);
   expect(await readAppAsset(display.slice(1))).not.toBeNull();
+});
+
+test('retains a package reconciliation error when engine recovery is also pending after native removal', async () => {
+  const f = await fixture({ ensureReady: async () => {
+    throw new EnginePreparationPendingError(EnginePreparationPendingCode.LIFECYCLE_CHANGED, 'Retired engine verification');
+  } });
+  const operation = vi.fn(async () => {
+    f.failCatalog(true);
+    return { success: true };
+  });
+
+  const result = await removeExtensionPackage(operation, callback => f.manager.mutatePackage(callback));
+
+  expect(result).toMatchObject({
+    success: true, refreshWarning: true, mutationCompleted: true,
+    error: expect.stringContaining('temporary catalog failure'),
+  });
+  expect(result.error).toContain('Retired engine verification');
+  expect(result).not.toHaveProperty('runtimeRecoveryPending');
+  expect(operation).toHaveBeenCalledOnce();
+  expect(f.counts()).toEqual({ stops: 1, resumes: 1 });
+  expect(f.manager.snapshot()[0].state).toBe('cleanup');
+  expect(f.manager.snapshot()[0].presentationEntry).toBeUndefined();
 });
 
 test('checks Native quiescence before stopping Gateway to repair package admission', async () => {

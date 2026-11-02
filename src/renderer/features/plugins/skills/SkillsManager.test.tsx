@@ -18,6 +18,8 @@ import SkillsManager from './SkillsManager';
 vi.mock('@/app/shell/startup/routing/useEngineReadiness', () => ({
   getEngineReadinessSnapshot: () => ({ ready: true }),
   subscribeEngineReadiness: () => vi.fn(),
+  useEngineReadiness: () => ({ ready: true }),
+  refreshEngineReadiness: async () => undefined,
 }));
 
 vi.mock('@/features/plugins/marketplace/MarketplaceView', () => ({
@@ -674,7 +676,7 @@ test.each(['folders', 'archives'] as const)(
   },
 );
 
-test('refreshes the list and shows a success dialog when all imports succeed', async () => {
+test('refreshes the list and shows a nonblocking success notice when all imports succeed', async () => {
   vi.mocked(skillService.importSkill).mockResolvedValue({
     success: true,
     skillId: importedSkill.id,
@@ -685,8 +687,8 @@ test('refreshes the list and shows a success dialog when all imports succeed', a
 
   const store = await startImport(['C:/imports/imported-skill']);
 
-  const dialog = await screen.findByRole('alertdialog', { name: 'importSkill' });
-  expect(within(dialog).getByText('Skill imported-skill imported successfully')).toBeTruthy();
+  await screen.findByText('Skill imported-skill imported successfully');
+  expect(screen.queryByRole('alertdialog')).toBeNull();
   await screen.findByRole('button', { name: 'subtaskShowInfo: imported-skill' });
   expect(store.getState().skill.skills).toEqual([skill, importedSkill]);
   expect(skillService.loadSkills).toHaveBeenCalledTimes(2);
@@ -720,9 +722,9 @@ test('confirms successful deletion without calling the removed skill unavailable
   fireEvent.click(screen.getByRole('button', { name: 'deleteSkill' }));
   fireEvent.click(screen.getByRole('button', { name: 'delete' }));
 
-  const dialog = await screen.findByRole('alertdialog', { name: 'deleteSkill' });
-  expect(within(dialog).getByText('Skill "imported-skill" deleted')).toBeTruthy();
-  expect(within(dialog).queryByText(/currently unavailable/)).toBeNull();
+  await screen.findByText('Skill "imported-skill" deleted');
+  expect(screen.queryByRole('alertdialog')).toBeNull();
+  expect(screen.queryByText(/currently unavailable/)).toBeNull();
   expect(store.getState().skill.skills).toEqual([]);
   expect(screen.queryByRole('button', { name: 'subtaskShowInfo: imported-skill' })).toBeNull();
   expect(skillService.deleteSkill).toHaveBeenCalledWith(importedSkill.id, importedSkill.source);
@@ -742,14 +744,12 @@ test('confirms deletion and explains the actual same-name fallback', async () =>
   fireEvent.click(screen.getByRole('button', { name: 'deleteSkill' }));
   fireEvent.click(screen.getByRole('button', { name: 'delete' }));
 
-  const dialog = await screen.findByRole('alertdialog', { name: 'deleteSkill' });
-  expect(within(dialog).getByText('Skill "imported-skill" deleted')).toBeTruthy();
-  expect(
-    within(dialog).getByText(
-      '"imported-skill" now uses pluginSkillSource.openclaw-bundled instead of pluginSkillSource.openclaw-managed.',
-    ),
-  ).toBeTruthy();
-  expect(within(dialog).queryByText(/currently unavailable/)).toBeNull();
+  const notice = await screen.findByText(/Skill "imported-skill" deleted/);
+  expect(notice.textContent).toContain(
+    '"imported-skill" now uses pluginSkillSource.openclaw-bundled instead of pluginSkillSource.openclaw-managed.',
+  );
+  expect(screen.queryByRole('alertdialog')).toBeNull();
+  expect(screen.queryByText(/currently unavailable/)).toBeNull();
   expect(store.getState().skill.skills).toEqual([fallback]);
 });
 

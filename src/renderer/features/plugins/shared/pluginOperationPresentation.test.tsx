@@ -64,6 +64,11 @@ function guidanceIn(dialog: HTMLElement): HTMLElement {
   return heading.nextElementSibling as HTMLElement;
 }
 
+function openReportDetails(dialog: HTMLElement) {
+  const details = dialog.querySelector('details')!;
+  if (!details.open) fireEvent.click(details.querySelector('summary')!);
+}
+
 function batchItem(label: string): HTMLElement {
   return screen.getByText(label, { exact: true }).parentElement!.parentElement!;
 }
@@ -83,14 +88,16 @@ test('explains a saved update with its failed restart and points to the visible 
   expect(displayedReason.className).toContain('whitespace-pre-wrap');
   const guidance = guidanceIn(dialog).textContent!;
   expect(guidance).toContain('标题栏');
-  expect(guidance).toContain('最小化、最大化按钮旁');
   expect(guidance).toContain('查看原因');
-  expect(guidance).toContain('仅在提供“启动 AI 引擎”按钮时');
   expect(guidance).not.toMatch(/设置|通用|重新启动 AI 引擎/);
-  expect(guidance).toContain('复制错误详情');
-  expect(guidance).toMatch(/不要.*安装或卸载/);
+  expect(
+    within(dialog).getByText(
+      pluginsTranslations.zh['pluginOperationInstallationOutcome.committed'],
+    ),
+  ).toBeTruthy();
   expect(dialog.textContent).not.toContain('pluginOperation');
 
+  openReportDetails(dialog);
   fireEvent.click(within(dialog).getByRole('button', { name: '复制错误详情' }));
   await waitFor(() => expect(writeText).toHaveBeenCalledOnce());
   const copied = writeText.mock.calls[0][0];
@@ -98,6 +105,8 @@ test('explains a saved update with its failed restart and points to the visible 
   expect(copied).toContain('重启运行环境并重新连接');
   expect(copied).toContain(guidance);
   expect(copied).toContain(requestId);
+  expect(copied).toContain('仅在提供“启动 AI 引擎”按钮时');
+  expect(copied).toMatch(/不要.*安装或卸载/);
 });
 
 test('explicitly reports missing stage and cause instead of inventing a repair, and offers evidence to copy', async () => {
@@ -111,10 +120,11 @@ test('explicitly reports missing stage and cause instead of inventing a repair, 
   const guidance = guidanceIn(dialog).textContent!;
   expect(guidance).toContain('服务未返回出错步骤');
   expect(guidance).toContain('操作编号');
-  expect(guidance).toContain('管理员或插件提供方');
+  expect(guidance).toContain('管理员');
   expect(guidance).not.toMatch(/重新启动|手动启用/);
   expect(dialog.textContent).not.toContain('pluginOperation');
 
+  openReportDetails(dialog);
   fireEvent.click(within(dialog).getByRole('button', { name: '复制错误详情' }));
   await waitFor(() => expect(writeText).toHaveBeenCalledOnce());
   expect(writeText.mock.calls[0][0]).toContain(guidance);
@@ -174,6 +184,7 @@ test('preserves saved content while treating an unconfirmed activation as read-o
     installationCommitted: true,
     operationUnconfirmed: true,
   });
+  openReportDetails(dialog);
   fireEvent.click(within(dialog).getByRole('button', { name: '复制错误详情' }));
   await waitFor(() => expect(writeText).toHaveBeenCalledOnce());
   expect(writeText.mock.calls[0][0]).toContain('更新内容已保存，但最终结果仍待确认');
@@ -233,20 +244,21 @@ test('keeps mixed batch facts and advice with each item instead of claiming one 
       pluginsTranslations.zh['pluginOperationInstallationOutcome.committed'],
     ),
   ).toBeNull();
-  expect(guidanceIn(dialog).textContent).toContain('请逐项查看');
+  expect(guidanceIn(dialog).textContent).toContain('请逐项核对');
   const invalid = batchItem('Invalid package');
-  expect(within(invalid).getByText(/联系插件提供方核对格式、安全校验或兼容性/)).toBeTruthy();
+  expect(within(invalid).getByText(/联系插件提供方检查安装包/)).toBeTruthy();
   expect(invalid.textContent).not.toContain('已经保存');
   const saved = batchItem('Saved package');
-  expect(within(saved).getByText(/先查看插件详情中的依赖说明/)).toBeTruthy();
-  expect(saved.textContent).toContain('核对结果前不要再次安装或卸载');
+  expect(within(saved).getByText(/在插件详情核对依赖/)).toBeTruthy();
+  expect(saved.textContent).toContain('无需重新安装');
   const unconfirmed = batchItem('Unconfirmed package');
   expect(unconfirmed.textContent).toContain('最后已知步骤');
-  const verification = within(unconfirmed).getByText(/目前无法确认最终结果/);
+  const verification = within(unconfirmed).getByText(/请先核对最新状态/);
   expect(verification.textContent).toContain('不要重复提交');
   expect(verification.textContent).not.toMatch(/重新启动|重试/);
   expect(dialog.textContent).not.toContain('pluginOperation');
 
+  openReportDetails(dialog);
   fireEvent.click(within(dialog).getByRole('button', { name: '复制错误详情' }));
   await waitFor(() => expect(writeText).toHaveBeenCalledOnce());
   const copied = writeText.mock.calls[0][0];
