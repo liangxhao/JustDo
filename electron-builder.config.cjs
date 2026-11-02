@@ -8,14 +8,16 @@
 process.env.ELECTRON_BUILDER_7Z_FILTER = 'BCJ';
 
 const baseConfig = require('./electron-builder.json');
+const packageJson = require('./package.json');
+const {
+  resolveBuilderProductMetadata,
+  validatePackageVersions,
+} = require('./scripts/packaging/electron-builder-product-metadata.cjs');
+validatePackageVersions(packageJson);
 const {
   configureWindowsInstallerScript,
 } = require('./scripts/packaging/windows-installer-script.cjs');
 configureWindowsInstallerScript(__dirname);
-const packageJson = require('./package.json');
-const {
-  resolveBuilderProductMetadata,
-} = require('./scripts/packaging/electron-builder-product-metadata.cjs');
 const { readWindowsUpdateConfig } = require('./scripts/packaging/windows-update-config.cjs');
 
 const { appId, productName } = resolveBuilderProductMetadata(packageJson.productName);

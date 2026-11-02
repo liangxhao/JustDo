@@ -913,6 +913,19 @@ the deployment's responsibility.
 Deployments configure their internal feed in `src/config/appUpdate.ts` before
 rebuilding; inherited environment variables cannot silently enable networking.
 
+Application and OpenClaw release versions are validated before resource
+preparation or release cleanup, and again when Builder loads its configuration.
+They must follow the same stable numeric version contract as startup admission:
+three components, an optional lowercase `v`, no leading zeros or version suffixes.
+For example, `v2026.11.2` is valid and `v2026.11.02` is rejected before packaging.
+Update metadata generation uses the same parser.
+
+Updater initialization errors remain local to the update service and produce the
+existing safe update error state. They do not prevent the startup window from
+opening. An unavailable updater schedules no checks or download/install actions;
+the startup coordinator still independently enforces data compatibility.
+Synchronous check failures are handled like rejected update-check promises.
+
 - Static installer contract tests cover current-user bootstrap ordering,
   preservation of the multi-user choices, the fresh-install process skip,
   removal of CIM usage, install-root payload/temp isolation, cleanup and log ownership.

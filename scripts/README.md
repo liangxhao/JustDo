@@ -115,6 +115,14 @@ do not rely on the caller's working directory when locating repository assets.
 Versioned patches remain under `patches/`; runtime orchestration belongs in
 `openclaw/`.
 
+`validate:product-metadata` validates the product name and both application and
+OpenClaw release versions before packaging prepares resources or removes old
+outputs. Version validation shares the startup parser: three numeric components,
+an optional lowercase `v`, no leading zeros or prerelease/build suffixes. For
+example, use `v2026.11.2`, not `v2026.11.02`. Builder configuration loading and
+update metadata generation also enforce this rule; invalid values fail with the
+field and original value rather than being silently normalized.
+
 `npm test` runs Vitest with standalone Node.js 24 and restores the Electron native
 bindings afterward. The Vitest configuration rejects Electron drivers before any
 suite loads: Electron's filesystem behavior does not provide the standalone Node

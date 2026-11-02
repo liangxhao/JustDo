@@ -84,13 +84,20 @@ Windows 使用 NSIS，macOS 使用 DMG，Linux 使用 AppImage/deb。NSIS archiv
 
 Builder 从 productName 派生 executableName、appId、桌面显示和安装器名称，内部 justdo 协议保持稳定。productName 仅允许英文字母，安装路径和项目路径可含中文、空格；测试不应把品牌校验扩展成路径限制。
 
+应用和 OpenClaw 发布版本共用启动兼容性检查的数字版本解析器：三段非负安全整数，
+允许小写 `v` 前缀，不接受补零、空白或预发布/构建后缀。例如 `v2026.11.2` 合法，
+`v2026.11.02` 非法。打包入口在资源准备和旧产物清理前校验
+`package.json.version` 与 `package.json.openclaw.version`，Builder 配置加载时也校验，
+覆盖直接调用及 `--prepackaged`。校验失败指出字段和原值，不自动改写发布身份；
+更新元数据生成使用同一规则，仅去掉合法的小写 `v` 前缀。
+
 Windows 更新使用 generic feed，发布元数据和 artifact hash 由专用脚本核对；verifyUpdateCodeSignature 当前关闭，不能宣称已建立发布者签名验证。自动安装前先完成应用 shutdown cleanup。
 
 ## 8. 命令和验证的实际范围
 
 | 命令                            | 证明范围                              |
 | ------------------------------- | ------------------------------------- |
-| validate:product-metadata       | 品牌声明与派生规则                    |
+| validate:product-metadata       | 品牌声明、派生规则与应用/原生发布版本格式 |
 | lint                            | 配置范围内的静态规则                  |
 | build                           | Renderer 类型与 Vite 产物             |
 | compile:electron                | Main/shared/config 编译及 native 前置 |

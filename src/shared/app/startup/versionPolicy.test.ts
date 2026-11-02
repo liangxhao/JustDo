@@ -21,8 +21,8 @@ test('adoption validates the target without claiming a prior version or native c
 });
 
 test.each(['', '2026.10', '2026.10.6.1', 'v2026.10.6-beta.1', '2026.10.6+build',
-  ' 2026.10.6', '2026.10.6 ', '+2026.10.6', '-1.10.6', '2026.010.6',
-  '2026.10.06', 'V2026.10.6', '9007199254740992.0.0'])
+  ' 2026.10.6', '2026.10.6 ', '2026.10.6\n', '+2026.10.6', '-1.10.6', '2026.010.6',
+  '2026.10.06', 'v2026.11.02', 'V2026.10.6', '9007199254740992.0.0'])
 ('rejects unknown version syntax on either delivery: %j', value => {
   for (const field of ['appVersion', 'runtimeVersion'] as const) {
     expect(assessStartupDelivery({ source: { ...source, [field]: value }, target: source }))

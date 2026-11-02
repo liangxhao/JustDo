@@ -1226,6 +1226,7 @@ module.exports = { applyPatch, verifyPatch };
     'src/main/startup/upgrade/nativeDatabaseUpgradeSource.ts',
     'src/main/startup/upgrade/nativeDatabaseUpgradeRuntime.ts',
     'src/shared/app/startup/versionPolicy.ts',
+    'src/shared/app/startup/version.ts',
     'plugins/extensions/runtime-services/index.ts',
     'plugins/extensions/runtime-services/openclaw.plugin.json',
     'plugins/extensions/runtime-services/package.json',

@@ -51,6 +51,7 @@ const {
 } = require('../openclaw/pack-openclaw-tar.cjs');
 const { isLegalMetadataFile } = require('../openclaw/prune-openclaw-runtime.cjs');
 const { readWindowsUpdateConfig } = require('./windows-update-config.cjs');
+const { normalizeStableVersion, validatePackageVersions } = require('./electron-builder-product-metadata.cjs');
 
 function readBuiltinModelDevelopmentAuthConfig(projectDir) {
   const configPath = path.join(projectDir, 'src', 'config', 'builtinModelAuth.ts');
@@ -849,6 +850,7 @@ function installSkillDependencies() {
 }
 
 async function beforePack(context) {
+  validatePackageVersions(context.packager.info.metadata);
   await verifyApplicationLicenseAssets({ repoRoot: context.appDir || path.join(__dirname, '../..') });
   require('../../plugins/extensions/drawio/scripts/prepare.cjs').verifyDrawioAssets();
   verifyPackagedBuiltinModelAuthConfig(context.appDir || path.join(__dirname, '../..'));
@@ -1392,15 +1394,14 @@ function verifyPackagedWindowsNativeModules(context) {
 }
 
 function normalizeUpdateVersion(packageVersion) {
-  const normalized = String(packageVersion || '')
-    .trim()
-    .replace(/^v/i, '');
-  if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(normalized)) {
+  try {
+    return normalizeStableVersion(packageVersion);
+  } catch (error) {
     throw new Error(
       `[electron-builder-hooks] Invalid application version for updates: ${packageVersion}`,
+      { cause: error },
     );
   }
-  return normalized;
 }
 
 function readReleaseNotes(releaseNotesPath) {

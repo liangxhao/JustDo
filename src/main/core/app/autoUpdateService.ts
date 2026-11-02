@@ -163,8 +163,7 @@ export const resolveNextAutomaticUpdateCheckAt = ({
     typeof lastCheckAt === 'number' && Number.isFinite(lastCheckAt) ? lastCheckAt : undefined;
   if (
     !skipMissedCheck &&
-    (normalizedLastCheckAt === undefined ||
-      normalizedLastCheckAt < mostRecentCheckTime.getTime())
+    (normalizedLastCheckAt === undefined || normalizedLastCheckAt < mostRecentCheckTime.getTime())
   ) {
     return now + MISSED_CHECK_DELAY_MS;
   }
@@ -189,7 +188,7 @@ const normalizeReleaseNotes = (releaseNotes: UpdateInfo['releaseNotes']): string
 };
 
 export class AutoUpdateService {
-  private readonly updater!: AppUpdater;
+  private readonly updater: AppUpdater | null = null;
   private state: AppUpdateState;
   private checkPromise: Promise<AppUpdateState> | null = null;
   private downloadPromise: Promise<AppUpdateActionResult> | null = null;
@@ -208,14 +207,20 @@ export class AutoUpdateService {
 
     if (!options.enabled) return;
 
-    this.updater = options.updater ?? autoUpdater;
-    this.updater.autoDownload = false;
-    this.updater.autoInstallOnAppQuit = false;
-    this.updater.allowDowngrade = false;
-    this.updater.allowPrerelease = false;
-    this.updater.disableDifferentialDownload = true;
-    this.updater.logger = log;
-    this.bindUpdaterEvents();
+    try {
+      const updater = options.updater ?? autoUpdater;
+      updater.autoDownload = false;
+      updater.autoInstallOnAppQuit = false;
+      updater.allowDowngrade = false;
+      updater.allowPrerelease = false;
+      updater.disableDifferentialDownload = true;
+      updater.logger = log;
+      this.bindUpdaterEvents(updater);
+      this.updater = updater;
+    } catch (error) {
+      console.error('[AutoUpdate] Failed to initialize updater:', error);
+      this.state = { ...this.state, revision: 1, phase: 'error', errorCode: 'CHECK_FAILED' };
+    }
   }
 
   getState(): AppUpdateState {
@@ -275,7 +280,7 @@ export class AutoUpdateService {
       this.automaticCheckTimer = null;
     }
     this.nextAutomaticCheckAt = undefined;
-    if (!this.options.enabled) return;
+    if (!this.updater) return;
 
     const frequency = normalizeAppUpdateCheckFrequency(this.options.getCheckFrequency());
     const now = Date.now();
@@ -308,7 +313,7 @@ export class AutoUpdateService {
   }
 
   checkForUpdates(): Promise<AppUpdateState> {
-    if (!this.options.enabled) {
+    if (!this.updater) {
       return Promise.resolve(this.getState());
     }
     if (this.checkPromise) {
@@ -324,8 +329,15 @@ export class AutoUpdateService {
     });
     console.log('[AutoUpdate] Checking for updates...');
 
-    this.checkPromise = this.updater
-      .checkForUpdates()
+    let checkTask: ReturnType<AppUpdater['checkForUpdates']>;
+    try {
+      checkTask = this.updater.checkForUpdates();
+    } catch (error) {
+      this.handleError('CHECK_FAILED', error);
+      return Promise.resolve(this.getState());
+    }
+
+    this.checkPromise = checkTask
       .then(() => this.getState())
       .catch(error => {
         this.handleError('CHECK_FAILED', error);
@@ -338,7 +350,7 @@ export class AutoUpdateService {
   }
 
   downloadUpdate(): Promise<AppUpdateActionResult> {
-    if (!this.options.enabled) {
+    if (!this.updater) {
       return Promise.resolve({
         success: false,
         state: this.getState(),
@@ -411,7 +423,8 @@ export class AutoUpdateService {
   }
 
   quitAndInstall(): AppUpdateActionResult {
-    if (this.state.phase !== 'downloaded' || this.installRequested) {
+    const updater = this.updater;
+    if (!updater || this.state.phase !== 'downloaded' || this.installRequested) {
       return {
         success: false,
         state: this.getState(),
@@ -423,7 +436,7 @@ export class AutoUpdateService {
     console.log('[AutoUpdate] Update installation requested; cleaning up before restart.');
     this.options.installAfterCleanup(() => {
       try {
-        this.updater.quitAndInstall(false, true);
+        updater.quitAndInstall(false, true);
       } catch (error) {
         this.handleInstallFailure(error);
       }
@@ -432,29 +445,35 @@ export class AutoUpdateService {
     return { success: true, state: this.getState() };
   }
 
-  private bindUpdaterEvents(): void {
-    this.updater.on('checking-for-update', () => {
+  private bindUpdaterEvents(updater: AppUpdater): void {
+    updater.on('checking-for-update', () => {
+      if (this.updater !== updater) return;
       this.setState({
         phase: 'checking',
         currentVersion: this.options.currentVersion,
       });
     });
-    this.updater.on('update-available', info => {
+    updater.on('update-available', info => {
+      if (this.updater !== updater) return;
       console.log(`[AutoUpdate] Update available: ${info.version}`);
       this.setState(this.stateFromUpdateInfo('available', info));
     });
-    this.updater.on('update-not-available', info => {
+    updater.on('update-not-available', info => {
+      if (this.updater !== updater) return;
       console.log('[AutoUpdate] Current version is up to date.');
       this.setState(this.stateFromUpdateInfo('up-to-date', info, false));
     });
-    this.updater.on('download-progress', progress => {
+    updater.on('download-progress', progress => {
+      if (this.updater !== updater) return;
       this.handleDownloadProgress(progress);
     });
-    this.updater.on('update-downloaded', info => {
+    updater.on('update-downloaded', info => {
+      if (this.updater !== updater) return;
       console.log(`[AutoUpdate] Update downloaded: ${info.version}`);
       this.setState(this.stateFromUpdateInfo('downloaded', info));
     });
-    this.updater.on('error', error => {
+    updater.on('error', error => {
+      if (this.updater !== updater) return;
       if (this.installRequested) {
         this.handleInstallFailure(error);
         return;

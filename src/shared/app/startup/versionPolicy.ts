@@ -1,3 +1,5 @@
+import { parseStableVersion } from './version';
+
 export const StartupCompatibilityErrorCode = {
   DowngradeBlocked: 'STARTUP_DOWNGRADE_BLOCKED',
   VersionUnconfirmed: 'STARTUP_VERSION_UNCONFIRMED',
@@ -25,13 +27,6 @@ type Direction = 'adoption' | 'same' | 'upgrade' | 'build-change' | 'declared-do
 export type StartupDeliveryAssessment =
   | { allowed: true; direction: Direction }
   | { allowed: false; blockReason: StartupCompatibilityErrorCode; requiresNativeInspection?: true };
-
-function parseStableVersion(value: string): readonly number[] | null {
-  if (typeof value !== 'string' || !/^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(value))
-    return null;
-  const parts = value.replace(/^v/, '').split('.').map(Number);
-  return parts.every(Number.isSafeInteger) ? parts : null;
-}
 
 function comparableIdentity(value: StartupDeliveryIdentity): boolean {
   return !!value && !!parseStableVersion(value.appVersion) && !!parseStableVersion(value.runtimeVersion) &&

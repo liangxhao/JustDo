@@ -86,6 +86,7 @@ const BUILD_RECIPE_FILES = [
   'src/main/startup/upgrade/nativeDatabaseUpgradeSource.ts',
   'src/main/startup/upgrade/nativeDatabaseUpgradeRuntime.ts',
   'src/shared/app/startup/versionPolicy.ts',
+  'src/shared/app/startup/version.ts',
   'src/main/openclaw/runtime/native-support/plugin-owned-execution.mjs',
   'src/main/openclaw/runtime/native-support/compaction-lifecycle.mjs',
   'src/main/openclaw/runtime/native-support/goal-continuation.mjs',

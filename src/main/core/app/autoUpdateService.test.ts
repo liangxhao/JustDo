@@ -222,6 +222,102 @@ describe('AutoUpdateService', () => {
     expect(service.getState()).toMatchObject({ phase: 'unsupported' });
   });
 
+  test.each(['resolve', 'configure', 'bind'] as const)(
+    'keeps updater initialization failures local to updates: %s',
+    async failureStage => {
+      vi.useFakeTimers();
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      try {
+        const updater = new FakeUpdater();
+        const failure = new Error('invalid app version https://secret.example/token-value');
+        if (failureStage === 'configure') {
+          Object.defineProperty(updater, 'autoDownload', {
+            set: () => {
+              throw failure;
+            },
+          });
+        }
+        if (failureStage === 'bind') {
+          const on = updater.on.bind(updater);
+          vi.spyOn(updater, 'on').mockImplementation((event, listener) => {
+            const result = on(event, listener);
+            if (event === 'update-available') throw failure;
+            return result;
+          });
+        }
+        const getWindows = vi.fn(() => {
+          throw new Error('Windows are not available during construction.');
+        });
+        const getCheckFrequency = vi.fn(() => AppUpdateCheckFrequency.Daily);
+        const setLastAutomaticCheckAt = vi.fn();
+        const installAfterCleanup = vi.fn();
+        const service = new AutoUpdateService({
+          currentVersion: 'v2026.11.02',
+          enabled: true,
+          getWindows,
+          installAfterCleanup,
+          recoverAfterInstallFailure: vi.fn(),
+          getCheckFrequency,
+          setCheckFrequency: vi.fn(),
+          getLastAutomaticCheckAt: () => undefined,
+          setLastAutomaticCheckAt,
+          get updater() {
+            if (failureStage === 'resolve') throw failure;
+            return updater as unknown as AppUpdater;
+          },
+        });
+
+        expect(service.getState()).toMatchObject({ phase: 'error', errorCode: 'CHECK_FAILED' });
+        expect(JSON.stringify(service.getState())).not.toContain('token-value');
+        service.scheduleAutomaticChecks();
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(getCheckFrequency).not.toHaveBeenCalled();
+        expect(setLastAutomaticCheckAt).not.toHaveBeenCalled();
+        await expect(service.checkForUpdates()).resolves.toMatchObject({
+          phase: 'error',
+          errorCode: 'CHECK_FAILED',
+        });
+        await expect(service.downloadUpdate()).resolves.toMatchObject({ success: false });
+        expect(service.quitAndInstall().success).toBe(false);
+        updater.emit('update-available', { version: '2026.11.3' });
+        expect(service.getState()).toMatchObject({ phase: 'error', errorCode: 'CHECK_FAILED' });
+        expect(updater.checkForUpdates).not.toHaveBeenCalled();
+        expect(updater.downloadUpdate).not.toHaveBeenCalled();
+        expect(updater.quitAndInstall).not.toHaveBeenCalled();
+        expect(installAfterCleanup).not.toHaveBeenCalled();
+        expect(getWindows).not.toHaveBeenCalled();
+      } finally {
+        consoleError.mockRestore();
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  test('handles a synchronous update check failure and permits a later manual retry', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const updater = new FakeUpdater();
+      updater.checkForUpdates
+        .mockImplementationOnce(() => {
+          throw new Error('https://secret.example/token-value');
+        })
+        .mockResolvedValue(null);
+      const { service } = makeService(updater);
+
+      await expect(service.checkForUpdates()).resolves.toMatchObject({
+        phase: 'error',
+        errorCode: 'CHECK_FAILED',
+      });
+      expect(JSON.stringify(service.getState())).not.toContain('token-value');
+      const retry = service.checkForUpdates();
+      updater.emit('update-not-available', { version: '2026.7.23' });
+      await expect(retry).resolves.toMatchObject({ phase: 'up-to-date' });
+      expect(updater.checkForUpdates).toHaveBeenCalledTimes(2);
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
   test('publishes a safe error state without leaking the raw updater error', () => {
     const updater = new FakeUpdater();
     const { service } = makeService(updater);
@@ -521,18 +617,19 @@ describe('resolveNextAutomaticUpdateCheckAt', () => {
       now: new Date(2026, 7, 31, 9, 0, 0).getTime(),
       nextCheckAt: new Date(2026, 7, 31, 10, 0, 0).getTime(),
     },
-  ])('schedules a regular $frequency slot at startup without a previous check: $now', ({
-    frequency,
-    now,
-    nextCheckAt,
-  }) => {
-    expect(resolveNextAutomaticUpdateCheckAt({
-      frequency,
-      lastCheckAt: undefined,
-      now,
-      skipMissedCheck: true,
-    })).toBe(nextCheckAt);
-  });
+  ])(
+    'schedules a regular $frequency slot at startup without a previous check: $now',
+    ({ frequency, now, nextCheckAt }) => {
+      expect(
+        resolveNextAutomaticUpdateCheckAt({
+          frequency,
+          lastCheckAt: undefined,
+          now,
+          skipMissedCheck: true,
+        }),
+      ).toBe(nextCheckAt);
+    },
+  );
 
   test('allows catch-up when the latest daily slot was missed', () => {
     const now = new Date(2026, 7, 29, 15, 0, 0).getTime();

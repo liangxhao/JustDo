@@ -60,6 +60,11 @@ afterEach(() => {
 });
 
 describe('Windows Generic update manifest', () => {
+  test.each(['v2026.11.02', '2026.09.30', ' 2026.11.2', 'V2026.11.2', '2026.11.2-beta.1'])
+  ('rejects update versions that cannot pass startup admission: %s', version => {
+    expect(() => normalizeUpdateVersion(version)).toThrow('Invalid application version');
+  });
+
   test('unconfigured NSIS builds remove stale update metadata without requiring an installer feed', async () => {
     const directory = makeTemporaryDirectory();
     for (const name of ['latest.yml', 'release-history.json']) writeFileSync(path.join(directory, name), 'stale');

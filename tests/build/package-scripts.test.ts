@@ -18,10 +18,20 @@ test('relies on the npm predist:win lifecycle without invoking it twice', () => 
   ) as { scripts: Record<string, string> };
 
   expect(packageJson.scripts['predist:win']).toBe(
-    'npm run drawio:prepare -- --ensure --download && npm run clean:release && node scripts/packaging/prepare-windows-build.cjs',
+    'npm run validate:product-metadata && npm run drawio:prepare -- --ensure --download && npm run clean:release && node scripts/packaging/prepare-windows-build.cjs',
   );
   expect(packageJson.scripts['dist:win']).not.toContain('npm run predist:win');
   expect(packageJson.scripts['dist:win']).not.toMatch(/setup:(?:mingit|python-runtime)/);
+});
+
+test('validates delivery versions before packaging resource preparation or output cleanup', () => {
+  const { scripts } = JSON.parse(fs.readFileSync(path.resolve('package.json'), 'utf8')) as {
+    scripts: Record<string, string>;
+  };
+  for (const name of ['prebuild', 'pack', 'dist', 'predist:win', 'predist:linux'])
+    expect(scripts[name], name).toMatch(/^npm run validate:product-metadata && /);
+  for (const name of ['predist:mac', 'dist:mac:x64', 'dist:mac:arm64', 'dist:mac:universal'])
+    expect(scripts[name], name).toMatch(/^npm run build && /);
 });
 
 test('retires widget library preparation and excludes leftover assets on non-Windows targets', () => {
