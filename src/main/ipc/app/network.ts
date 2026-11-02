@@ -181,19 +181,36 @@ export const registerNetworkHandlers = (): void => {
       });
 
       const contentType = response.headers.get('content-type') || '';
-      let data: string | object;
-
-      if (contentType.includes('application/json')) {
-        data = await response.json();
-      } else {
-        data = await response.text();
-      }
-
-      return {
-        ok: response.ok,
+      const responseMetadata = {
         status: response.status,
         statusText: response.statusText,
         headers: Object.fromEntries(response.headers.entries()),
+      };
+      let data: unknown = null;
+      let text: string;
+      try {
+        text = await response.text();
+      } catch (error) {
+        return {
+          ...responseMetadata,
+          ok: false,
+          data,
+          error: error instanceof Error ? error.message : 'Unknown error',
+        };
+      }
+      data = text;
+
+      if (/\bapplication\/(?:[\w.-]+\+)?json\b/i.test(contentType)) {
+        try {
+          data = JSON.parse(text);
+        } catch {
+          // An invalid JSON body must not hide the HTTP status or server response.
+        }
+      }
+
+      return {
+        ...responseMetadata,
+        ok: response.ok,
         data,
       };
     };

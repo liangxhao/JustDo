@@ -84,6 +84,87 @@ test('completes an authenticated model probe against a real loopback fake model'
   }
 });
 
+test('preserves the HTTP status and structured server error for a failed model discovery', async () => {
+  mocks.applyMainProcessOutboundHeaderPolicy.mockImplementation((_url, headers) => headers);
+  const data = { error: { message: 'The requested models endpoint does not exist.' } };
+  mocks.fetch.mockResolvedValue(new Response(JSON.stringify(data), {
+    status: 404,
+    statusText: 'Not Found',
+    headers: { 'content-type': 'application/problem+json', 'x-request-id': 'discovery-404' },
+  }));
+  registerNetworkHandlers();
+  const handler = mocks.handle.mock.calls.find(([channel]) => channel === 'api:fetch')![1] as ApiFetchHandler;
+
+  await expect(handler({}, {
+    url: 'https://model.test/v1/models', method: 'GET', headers: {},
+    purpose: NetworkFetchPurpose.ModelDiscovery,
+  })).resolves.toMatchObject({
+    ok: false,
+    status: 404,
+    statusText: 'Not Found',
+    headers: { 'x-request-id': 'discovery-404' },
+    data,
+  });
+});
+
+test.each([
+  ['application/json', '{"error": incomplete'],
+  ['text/plain', 'The configured service has no models endpoint.'],
+])('preserves the HTTP error and raw %s response', async (contentType, body) => {
+  mocks.fetch.mockResolvedValue(new Response(body, {
+    status: 404,
+    statusText: 'Not Found',
+    headers: { 'content-type': contentType },
+  }));
+  registerNetworkHandlers();
+  const handler = mocks.handle.mock.calls.find(([channel]) => channel === 'api:fetch')![1] as ApiFetchHandler;
+
+  await expect(handler({}, {
+    url: 'https://model.test/v1/models', method: 'GET', headers: {},
+  })).resolves.toMatchObject({ ok: false, status: 404, statusText: 'Not Found', data: body });
+});
+
+test('preserves received HTTP metadata when reading the response body fails', async () => {
+  mocks.fetch.mockResolvedValue(new Response(new ReadableStream({
+    start(controller) {
+      controller.error(new Error('net::ERR_CONNECTION_CLOSED'));
+    },
+  }), {
+    status: 502,
+    statusText: 'Bad Gateway',
+    headers: { 'x-request-id': 'discovery-502' },
+  }));
+  registerNetworkHandlers();
+  const handler = mocks.handle.mock.calls.find(([channel]) => channel === 'api:fetch')![1] as ApiFetchHandler;
+
+  await expect(handler({}, {
+    url: 'https://model.test/v1/models', method: 'GET', headers: {},
+  })).resolves.toMatchObject({
+    ok: false,
+    status: 502,
+    statusText: 'Bad Gateway',
+    headers: { 'x-request-id': 'discovery-502' },
+    data: null,
+    error: 'net::ERR_CONNECTION_CLOSED',
+  });
+});
+
+test('retains the transport error when no HTTP response was received', async () => {
+  mocks.fetch.mockRejectedValue(new Error('net::ERR_CONNECTION_CLOSED'));
+  registerNetworkHandlers();
+  const handler = mocks.handle.mock.calls.find(([channel]) => channel === 'api:fetch')![1] as ApiFetchHandler;
+
+  await expect(handler({}, {
+    url: 'https://model.test/v1/models', method: 'GET', headers: {},
+  })).resolves.toMatchObject({
+    ok: false,
+    status: 0,
+    statusText: 'net::ERR_CONNECTION_CLOSED',
+    data: null,
+    error: 'net::ERR_CONNECTION_CLOSED',
+  });
+});
+
 test('rejects an unconfigured built-in probe without sending credentials or making a request', async () => {
   testProviderConfig.baseUrl = '';
   installJwt();

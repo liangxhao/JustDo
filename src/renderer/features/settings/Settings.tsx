@@ -120,12 +120,11 @@ import UsageAndStorageSettings from '@/features/settings/usage/UsageAndStorageSe
 import { configService } from '@/services/config';
 import { i18nService, LanguageType } from '@/services/i18n';
 import { themeService } from '@/services/theme';
-import ErrorMessage from '@/shared/components/ui/ErrorMessage';
 
 import appLogoUrl from '../../../../resources/icons/logo.png';
 import { createModelConnectionTestActions } from './models/modelConnectionTestActions';
+import { formatModelDiscoveryError } from './models/modelDiscoveryError';
 import {
-  getConnectivityErrorMessage,
   getCustomProviderKeysInOrder,
   getDefaultActiveProvider,
   getDefaultProviders,
@@ -145,6 +144,7 @@ import { AppearancePreferences } from './preferences/AppearancePreferences';
 import { GeneralSettingsPage } from './preferences/GeneralSettingsPage';
 import { PetSettingsPage } from './preferences/PetSettingsPage';
 import { SETTINGS_PAGES, type SettingsTab } from './settingsCatalog';
+import { SettingsFeedbackDialog } from './SettingsFeedbackDialog';
 import { SettingsNavigation } from './SettingsNavigation';
 
 type TabType = SettingsTab;
@@ -849,10 +849,7 @@ const Settings: React.FC<SettingsProps> = ({
         return;
       }
       if (!modelsResponse.ok) {
-        const detail =
-          getConnectivityErrorMessage(modelsResponse.data) ||
-          `${modelsResponse.status} ${modelsResponse.statusText}`.trim();
-        throw new Error(detail);
+        throw new Error(formatModelDiscoveryError(modelsResponse));
       }
       if (!Array.isArray(toConnectivityRecord(modelsResponse.data)?.data)) {
         throw new Error(i18nService.t('connectionInvalidResponse'));
@@ -891,7 +888,7 @@ const Settings: React.FC<SettingsProps> = ({
         discoveryError instanceof Error
           ? discoveryError.message
           : i18nService.t('modelDetectionFailed');
-      setError(`${i18nService.t('modelDetectionFailed')}: ${detail}`);
+      setError(`${i18nService.t('modelDetectionFailed')}\n${detail}`);
     } finally {
       if (discoveryGeneration === modelDiscoveryGenerationRef.current) {
         setIsDetectingModels(false);
@@ -1882,18 +1879,6 @@ const Settings: React.FC<SettingsProps> = ({
 
         {/* Right content */}
         <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden bg-background">
-          {noticeMessage && (
-            <div className="px-6">
-              <ErrorMessage message={noticeMessage} onClose={() => setNoticeMessage(null)} />
-            </div>
-          )}
-
-          {error && (
-            <div className="px-6">
-              <ErrorMessage message={error} onClose={() => setError(null)} />
-            </div>
-          )}
-
           <form
             onSubmit={event => {
               if (activeTab === 'agents' || activeTab === 'computer') event.preventDefault();
@@ -2048,6 +2033,18 @@ const Settings: React.FC<SettingsProps> = ({
             </div>
           </form>
         </div>
+
+        {(error || noticeMessage) && (
+          <SettingsFeedbackDialog
+            key={error ? 'error' : 'notice'}
+            message={error || noticeMessage!}
+            isError={Boolean(error)}
+            onClose={() => {
+              if (error) setError(null);
+              else setNoticeMessage(null);
+            }}
+          />
+        )}
 
         {isTestResultModalOpen && testResult && (
           <div

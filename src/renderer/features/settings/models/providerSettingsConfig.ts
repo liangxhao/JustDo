@@ -74,6 +74,14 @@ export const getConnectivityErrorMessage = (data: unknown): string | null => {
     return record.message;
   }
 
+  if (typeof record.error === 'string' && record.error.trim()) {
+    return record.error;
+  }
+
+  if (typeof record.detail === 'string' && record.detail.trim()) {
+    return record.detail;
+  }
+
   return null;
 };
 
