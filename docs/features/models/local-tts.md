@@ -67,7 +67,7 @@ flowchart LR
 
 模型在 `<userData>/local-speech-models/<model-id>`。完整已安装模型复用；部分下载和 staging 清理，不能把半个目录标成 ready。包携带相应许可证。
 
-开发环境从 `build/runtimes/local-tts/win-x64/` 读取准备好的运行时；未安装到用户目录的模型可从该目录下复用。安装版运行时仍位于安装资源的 `local-tts/win-x64/`，模型继续从用户目录读取。离线准备命令见[下载清单](../../offline-downloads.md)。
+开发环境从 `build/runtimes/local-tts/win-x64/` 读取准备好的运行时；未安装到用户目录的模型可从该目录下复用。安装版运行时仍位于安装资源的 `local-tts/win-x64/`，模型继续从用户目录读取。原始资源见[下载清单](../../offline-downloads.md)，准备和打包命令见[语音模型打包与发布](local-speech-model-release.md)。
 
 ### 分段下载、安装与失败回收
 
@@ -136,7 +136,7 @@ sequenceDiagram
 
 ### 离线资源发布
 
-模型发布使用 setup:local-speech-models 和 build:local-speech-model-artifacts，上传生成的 speech-models/v1 产物。已发布文件不可原地换字节；模型变更或包装修订使用新身份/文件名并更新编译期大小与 hash，保留旧客户端所需旧包。
+模型准备、打包、上传目录、内网服务配置和发布校验统一见[语音模型打包与发布](local-speech-model-release.md)。已发布文件不可原地换字节；模型变更或包装修订使用新身份/文件名并更新编译期大小与 hash，保留旧客户端所需旧包。
 
 ## 8. 验证与限制
 

@@ -15,6 +15,9 @@ use `build/runtimes/`, Windows runtime archives use `build/tar/`, local speech m
 `build/speech-models/v1/`, and the browser package uses `build/browser-extension/`.
 The build and cache directories are ignored by Git.
 
+Local speech model preparation, packaging and upload to the internal download
+service are documented in [speech model releases](../docs/features/models/local-speech-model-release.md).
+
 `packaging/installer-animation-assets.cjs` renders the existing application icon
 into native installer AVI/bitmap assets under `build/installer/<fingerprint>/`.
 Windows NSIS script composition prepares and verifies this cache automatically;
@@ -40,7 +43,8 @@ cache. Only its explicit `--rebuild` mode uses installed MSVC x86 tools and a
 Windows SDK, retaining compiler intermediates under `build/installer-clock/`.
 The manifest binds normalized source content, build flags and DLL bytes; missing,
 changed or stale assets fail with instructions to refresh the bundle. See
-[offline resources](../docs/offline-downloads.md#6-windows-安装器原生时钟) for commands.
+[Windows installer](../docs/windows-installer.md#installation-presentation-and-measured-progress)
+for verification and rebuild commands.
 The clock uses only Windows system libraries and keeps updating while the
 installation worker performs synchronous work; it never calls back into NSIS
 script code.
@@ -444,8 +448,8 @@ The implementation lives in `plugins/sdk/app-plugin-build/`, distributed as
 `@app-plugin/build`; the public App SDK source is `plugins/sdk/app-plugin-sdk/`. It resolves
 installed SDK exports and the public theme preset, without ancestor tsconfig source
 aliases. `plugins:runtime:sdk` emits the separate Runtime Services library into
-`build/runtime-services-sdk`; preparation and pack commands are in
-`docs/offline-downloads.md`. Each app plugin declares its dependencies and has its own
+`build/runtime-services-sdk`; preparation and pack commands are in the
+[SDK development guide](../plugins/sdk/README.md#distribution). Each app plugin declares its dependencies and has its own
 Vitest configuration. Default `npm test` discovers those suites and runs them after
 Core tests; explicit `tests/host/` boundaries remain in the Core integration profile.
 

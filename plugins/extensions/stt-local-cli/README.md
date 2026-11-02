@@ -15,10 +15,5 @@ Local model assets must first be installed in model settings. The microphone ena
 switch is independent of this tool. The plugin can be disabled in Plugins.
 
 The app currently provisions Windows x64 only. Audio is decoded by the pinned
-platform FFmpeg package. Keep its executable, package metadata, and license files
-when packaging; its path resolver is loaded lazily relative to the extension.
-FFmpeg is a separate process and has its own license; see the installed platform
-package's README/license for the build and upstream source information.
-
-See `docs/architecture/07-plugin-system.md` in the application repository for
-limits, attachment staging, permissions, cancellation, and lifecycle ownership.
+platform FFmpeg package, resolved relative to this extension.
+FFmpeg runs as a separate process and has its own license.

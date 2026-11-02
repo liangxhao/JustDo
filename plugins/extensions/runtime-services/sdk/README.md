@@ -39,6 +39,4 @@ owned cleanup remain distinct facts. A retired run's fence does not become a too
 restriction on later ordinary chat turns. No legacy protocol or data migration
 fallback is provided; existing data files are left in place without replay.
 
-Use the repository's `plugins:runtime:sdk` command to emit JavaScript and declarations,
-then pack its output as an npm artifact. External builds consume the resulting
-package through exports, without sibling plugin or application source paths.
+Consume the compiled package through its declared npm exports.

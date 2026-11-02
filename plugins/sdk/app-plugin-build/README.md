@@ -7,11 +7,11 @@ dependencies, and matching public OpenClaw declarations. No application checkout
 theme source, sibling plugin source, or runtime download is used.
 
 ```sh
-app-plugin-build check --source plugins/extensions/example --sdk-root /prepared/openclaw/dist/plugin-sdk
-app-plugin-build build --source plugins/extensions/example --out build/app-plugins
+app-plugin-build check --source ./example-plugin --sdk-root /prepared/openclaw/dist/plugin-sdk
+app-plugin-build build --source ./example-plugin --out ./build/app-plugins
 ```
 
-`--source-root plugins/extensions` builds or checks an inventory instead. An
+`--source-root ./plugins` builds or checks an inventory instead. An
 existing empty inventory produces `catalog.json` containing `[]`; malformed
 packages and missing declared entries fail. `OPENCLAW_SDK_ROOT` supplies the same
 explicit declaration input as `--sdk-root`; otherwise normal installed public

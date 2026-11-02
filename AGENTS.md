@@ -166,7 +166,7 @@ npm test
   or use explicitly configured internal services. Do not depend on public CDNs,
   first-launch package downloads, public update checks or public-service fallbacks.
   Validate cold startup without caches and with public network access blocked;
-  build-time resource preparation follows `docs/offline-downloads.md`.
+  manual development/Windows packaging downloads are listed in `docs/offline-downloads.md`.
 
 - Before any OpenClaw version upgrade or local OpenAI fork refresh, read
   [upgrade checklist](docs/upgrade-checklist/checklist.md). Validate patches, SDK
@@ -247,8 +247,15 @@ business stays inside its plugin; Core composes only generic capabilities.
   metadata instead of repeating concrete versions; retain concrete versions where
   needed, such as for release identity, compatibility constraints, historical
   validation evidence or reproducible resource preparation.
-- Keep all offline-download URLs, filenames, destinations and preparation
-  commands in `docs/offline-downloads.md`.
+- `docs/offline-downloads.md` lists only files that must be manually downloaded
+  into repository-root `cache/` for development startup or Windows EXE packaging.
+  Each entry needs its download URL, complete filename and cache destination.
+  Keep generated artifacts, bundled files, dependency installation, test setup
+  and maintenance/build commands in their owning documentation, not this list.
+- READMEs distributed with a plugin or SDK package must stand on their own.
+  Refer only to documents within that package. Keep repository-only preparation,
+  packaging and integration-test instructions in repository documentation.
+  Describe bundled assets directly rather than assuming the user's network state.
 - Use English Conventional Commits: `type(scope): imperative summary`.
   Before PRs, review full branch history and the appropriate release-base diff,
   use `.github/PULL_REQUEST_TEMPLATE.md`, and push new branches with `-u`.

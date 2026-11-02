@@ -16,12 +16,6 @@ adapter processes, isolated adapter state, and permission mediation.
 - The product catalog selects which protocol adapters are shipped. Agent executables
   are supplied by the user and are never bundled. Adapter commands are
   build-time definitions and are never accepted from desktop settings.
-- All local extensions use `scripts/openclaw/sync-openclaw-runtime-resources.cjs`.
-  Extensions with production dependencies are installed from their lockfile for
-  the runtime target, then reused by later packaging passes through a verified
-  target/fingerprint manifest. The first install allows 20 minutes by default;
-  slow registries may set `JUSTDO_EXTENSION_NPM_CI_TIMEOUT_MS` to a
-  bounded value from 60000 through 3600000.
 
 The installed application never downloads adapters or agents. Assembly removes the
 Codex and Claude platform-binary packages pulled in by adapter dependencies, while
@@ -52,15 +46,8 @@ are rejected with a diagnostic asking for the actual JS or executable path.
 Configure that path through `CLAUDE_CODE_EXECUTABLE` or `claudeExecutable`;
 custom interpreter/adapter behavior belongs in an explicit build-time adapter.
 
-A clean source build still
-needs these locked npm artifacts through an approved registry or a pre-warmed
-npm cache. Product variants add or replace adapters through the build-time
-catalog and this vendored extension without patching OpenClaw core. Removing an
-agent from a product also requires removing its packages from this manifest and
-lockfile before assembling the runtime; disabling it in settings prevents
-execution but does not remove packaged files. External agents start disabled
-with read-only permissions. The complete extension template is documented in
-`docs/developer-integration/external-agent-integration-guide.md`.
+External agents start disabled with read-only permissions. Disabling an agent
+in settings prevents execution while preserving its packaged files.
 
 ## Compatibility
 

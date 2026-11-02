@@ -18,14 +18,10 @@ HTTP route, additional tool or runtime patch is registered.
 - `ui/` owns fixed component schema, document composition, renderer, labels and styles.
 - `document/` owns the shared serialization and renderer-loading helpers.
 - `skills/visualize/` owns viewer selection and its on-demand authoring references.
-- `tests/` owns fixed-component and resource-loading tests. Host integration and
-  packaging tests stay in the application's test tree.
+- `tests/` owns fixed-component and resource-loading tests.
 
-The local-extension pipeline copies and precompiles the plugin and its single
-skill. There are no production or development npm dependencies in this plugin.
-Source synchronization and packaging exclude unused source assets. It is enabled
-by default; configuration preserves explicit enable/disable choices. Disabling
-it does not delete native history or rewrite saved documents.
+The plugin is enabled by default; configuration preserves explicit enable/disable
+choices. Disabling it does not delete native history or rewrite saved documents.
 
 ## Delivery
 
@@ -75,29 +71,3 @@ records the kind as `smart-canvas:interactive-answer`.
 Local inputs survive component switches. Reloading restores the supplied defaults;
 no selection store or historical document update API is added. Optional follow-up
 creates a bounded, reviewable draft for the user's existing confirmation flow.
-
-## Checks
-
-```powershell
-node node_modules/vitest/vitest.mjs run plugins/extensions/smart-canvas/tests tests/scripts/smart-canvas
-& '<runtime>/node-runtime/node.exe' scripts/test/smart-canvas/verify-runtime.mjs '<runtime>'
-& '<runtime>/node-runtime/node.exe' scripts/test/smart-canvas/verify-gateway.mjs '<runtime>'
-```
-
-The registrar check uses the locked runtime's native SDK. The Gateway check uses
-an isolated state directory and synthetic loopback provider to verify plugin
-loading, native tool schema, resources, authenticated views, history/restart and
-disable. It does not use the active application Gateway or user credentials.
-
-Additional Gateway probe modes run separately:
-
-- `--tool-dispatch`: native HTML through Tool Search with this plugin disabled.
-- `--retention`: native 32-document retention and isolation between sessions.
-- `--interaction-contract`: trusted activation, immutable documents and the
-  actual native private prompt bridge.
-- `--interaction-contract --presentation`: real viewer/sandbox checks for fixed
-  components and HTML in light/dark themes at wide and narrow card widths.
-
-Use a freshly prepared runtime matching the current source recipe. Actual model
-quality and platform coverage remain in the
-[feature contract](../../../docs/features/chat/interactive-answers.md#当前验证边界).

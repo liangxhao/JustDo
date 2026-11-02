@@ -25,7 +25,3 @@ server's loopback origin, such as `http://127.0.0.1:8009`, omit `apiKey`, and se
 `typesafe/kev-latest`. The plugin calls `/v1/systemone` without a hosted credential.
 Start the server separately with your chosen checkpoint; the decision-model
 selection labels requests and does not download or load a model.
-
-See the [TypeSafe AI setup guide](https://docs.openclaw.ai/plugins/typesafe) and
-[decision-model documentation](https://docs.openclaw.ai/concepts/decision-models)
-for configuration, rubrics, and API semantics.

@@ -22,7 +22,7 @@
 | [releases/](releases/README.md)                           | 已发布应用版本说明                               | 保留发布时事实，不按当前源码改写 |
 | `assets/`                                                 | 文档引用的资源                                   | 不存放方案或独立功能说明         |
 
-开发操作指南入口：[开发与排障](development.md)、[升级检查清单](upgrade-checklist/README.md)、[运行时补丁](openclaw-runtime-patches.md)、[Windows 安装器](windows-installer.md)及[离线下载](offline-downloads.md)。升级先按功能域核对原生契约与真实验收，不只检查补丁是否能应用。全部离线资源的下载地址、文件名、目的路径与准备命令统一维护在离线下载指南。
+开发操作指南入口：[开发与排障](development.md)、[升级检查清单](upgrade-checklist/README.md)、[运行时补丁](openclaw-runtime-patches.md)、[Windows 安装器](windows-installer.md)及[离线下载](offline-downloads.md)。升级先按功能域核对原生契约与真实验收，不只检查补丁是否能应用。离线下载指南仅列开发启动或 EXE 打包前需手动下载到仓库 `cache/` 的文件及地址；构建、依赖安装与维护命令放在各自所属指南。
 
 ## 架构与功能的分工
 

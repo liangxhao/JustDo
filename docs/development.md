@@ -85,7 +85,7 @@ npm test
 `npm test` 先应用仓库已有的依赖补丁，再为本次测试准备独立的 Node SQLite 模块；
 不替换应用的 Electron 原生二进制，因此运行中的桌面实例不会与测试争用该文件。
 模块在真实 Node 子进程中创建内存数据库验证，通过后传入主工程和独立插件测试，
-全部子进程退出后只清理本次拥有的目录。准备细节见[离线下载清单](offline-downloads.md#测试用-node-sqlite)。
+全部子进程退出后只清理本次拥有的目录。实现见[测试依赖准备脚本](../scripts/test/sqlite-test-module.cjs)。
 显式设置 `SQLITE_TEST_MODULE` 可以使用已经准备好的兼容模块；运行器仍验证它，但不删除外部模块。
 需要修复应用的 Electron 原生依赖时运行 `npm run rebuild:electron-native`。
 

@@ -1,37 +1,9 @@
 # 离线资源下载清单
 
-本文记录额外运行资源及独立插件构建制品；Node.js/npm 等前提环境不在本清单范围。
-常规 npm 依赖通过锁定镜像安装，不逐项列出。
+本文只记录开发启动或 Windows EXE 打包前，无法自动下载、需手动放入仓库 `cache/` 的文件。
+每项必须给出下载地址、完整文件名和 `cache/` 下的放置路径。
 
 路径相对仓库根目录。下载后保留原包，无需解压。
-
-## 测试用 Node SQLite
-
-`npm test` 将已安装的锁定 `better-sqlite3` 包自身源码复制到本次拥有的
-`build/test-dependencies/sqlite-*/`，不复制或替换应用的 Electron 原生二进制。
-该目录只用于测试，测试结束后清理，不进入安装包。
-
-测试通过该包已有的 `prebuild-install` 按当前 Node ABI、平台和架构准备二进制，
-优先使用 npm 预构建缓存；离线机器需先按现有 npm 镜像/缓存流程准备同版本同目标的包。
-缺少预构建时在这个私有目录使用已安装的 `node-gyp` 从同一包源码编译，
-需要提前准备 Node headers 和平台编译工具。也可显式设置 `SQLITE_TEST_MODULE`
-为已经准备好的兼容模块入口，运行器验证后复用且不删除它。
-准备和验证都失败时测试明确失败，不回退到应用的 Electron 二进制。
-
-## 独立插件公共 npm 制品
-
-外部插件构建使用版本匹配的公开 SDK 和构建器，不能从宿主源码目录补依赖。准备机先安装根锁文件中的依赖，再生成本地 npm 制品：
-
-```sh
-npm run plugins:app:sdk
-npm run plugins:runtime:sdk
-node -e "require('node:fs').mkdirSync('cache/app-plugin-packages', { recursive: true })"
-npm pack ./build/app-plugin-sdk --pack-destination cache/app-plugin-packages
-npm pack ./build/runtime-services-sdk --pack-destination cache/app-plugin-packages
-npm pack ./plugins/sdk/app-plugin-build --pack-destination cache/app-plugin-packages
-```
-
-SDK 的编译输出分别位于 `build/app-plugin-sdk/`、`build/runtime-services-sdk/`；归档保留于 `cache/app-plugin-packages/`，实际文件名随包元数据。将制品送入配置的内网 npm 源，或在目标工作区以显式本地 tarball 安装并更新其根锁文件。其余依赖按锁文件与镜像准备，离线环境使用缓存安装，不自动查询公网或下载运行依赖。外部类型检查可显式设置 `OPENCLAW_SDK_ROOT` 为匹配版本的公开 SDK；这不提供未声明的运行能力，也不授予 Native trust。
 
 ## 1. Windows MinGit
 
@@ -39,16 +11,11 @@ SDK 的编译输出分别位于 `build/app-plugin-sdk/`、`build/runtime-service
 | --- | --- |
 | [MinGit 2.55.0.3 x64](https://github.com/git-for-windows/git/releases/download/v2.55.0.windows.3/MinGit-2.55.0.3-64-bit.zip) | `cache/mingit/MinGit-2.55.0.3-64-bit.zip` |
 
-准备：`npm run setup:mingit`，输出到 `build/runtimes/mingit/`。
-
 ## 2. Windows Python
 
 | 下载地址 | 放置位置 |
 | --- | --- |
 | [CPython 3.12.10 x64](https://www.python.org/ftp/python/3.12.10/python-3.12.10-embed-amd64.zip) | `cache/python/python-3.12.10-embed-amd64.zip` |
-
-准备：`npm run setup:python-runtime`，输出到 `build/runtimes/python-win/`。
-受管依赖清单和路径初始化源码位于 `resources/python/`。
 
 ## 3. 本地语音引擎（Windows x64）
 
@@ -56,8 +23,6 @@ SDK 的编译输出分别位于 `build/app-plugin-sdk/`、`build/runtime-service
 | --- | --- |
 | [Sherpa ONNX 1.13.7 运行时](https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.7/sherpa-onnx-v1.13.7-win-x64-shared-MD-MinSizeRel.tar.bz2) | `cache/local-speech/sherpa-onnx-v1.13.7-win-x64-shared-MD-MinSizeRel.tar.bz2` |
 | [Sherpa 许可证](https://raw.githubusercontent.com/k2-fsa/sherpa-onnx/v1.13.7/LICENSE) | `cache/local-speech/sherpa-onnx-LICENSE` |
-
-准备：`npm run setup:local-tts`，输出到 `build/runtimes/local-tts/win-x64/`。
 
 ## 4. 语音模型
 
@@ -73,45 +38,8 @@ SDK 的编译输出分别位于 `build/app-plugin-sdk/`、`build/runtime-service
 | [Piper Lessac INT8](https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_US-lessac-medium-int8.tar.bz2) | `cache/local-speech/vits-piper-en_US-lessac-medium-int8.tar.bz2` |
 | [Lessac 数据许可证](https://www.cstr.ed.ac.uk/projects/blizzard/2013/lessac_blizzard2013/license.html) | `cache/local-speech/vits-piper-en_US-lessac-medium-int8-LICENSE` |
 
-准备：`npm run setup:local-speech-models`，模型输出到 `build/runtimes/local-tts/win-x64/<model-id>/`，开发环境可直接复用。
-
-生成发布包：`npm run build:local-speech-model-artifacts`，输出到 `build/speech-models/v1/`。
-
 ## 5. draw.io 离线编辑器
 
 | 下载地址 | 放置位置 |
 | --- | --- |
 | [draw.io 锁定源码归档](https://codeload.github.com/jgraph/drawio/tar.gz/9034053fba80a435e27d68d374bc564b83917ae9) | `cache/drawio/drawio-9034053fba80a435e27d68d374bc564b83917ae9.tar.gz` |
-| [saxes 6.0.0 许可证](https://raw.githubusercontent.com/lddubeau/saxes/v6.0.0/LICENSE) | `plugins/extensions/drawio/licenses/saxes-6.0.0.txt`（仓库已包含，无需下载） |
-
-准备：`npm run drawio:prepare`；校验：`npm run drawio:verify`。
-
-`npm run electron:dev:openclaw` 和 `npm run dist:win` 已自动准备，优先复用资源和本地归档，归档缺失才下载。断网电脑提前放好归档即可。
-
-归档校验后由项目自带的 Node `tar` 解包，每次使用独立暂存目录并在结束后清理。无需安装或更换系统 tar；修复脚本后可直接重新执行准备命令，旧的失败暂存目录不会参与本次构建。
-
-## 6. Windows 安装器原生时钟
-
-安装器使用的 `installer-clock.dll` 和 `manifest.json` 已随仓库提供，位于
-`resources/installer-clock/win-x86/`。普通 Windows 打包直接校验并嵌入这两个文件，
-无需安装 Visual Studio、MSVC 或 Windows SDK，也不会为此联网下载或现场编译。
-NSIS 安装器为 x86，因此此 DLL 也是 x86，与应用本体的 x64 架构无冲突。
-
-可提前单独校验：
-
-```powershell
-node scripts/packaging/installer-clock-assets.cjs
-```
-
-修改时钟 C 源码、导出定义、生成脚本或编译参数后，维护者需在已安装 MSVC x86
-工具链和 Windows SDK 的 Windows 电脑上显式重新生成：
-
-```powershell
-node scripts/packaging/installer-clock-assets.cjs --rebuild
-```
-
-重建中间文件保留在 `build/installer-clock/`；编译成功后更新上述 DLL 和清单。
-将两个文件与匹配的源码一起提交或拷贝到离线构建电脑即可，无需复制编译工具链。
-清单按固定仓库相对路径和规范化换行后的源码计算哈希，支持不同磁盘路径及 Git
-换行设置；DLL 缺失、损坏或与源码不匹配会明确失败，不会自动编译。
-旧的 `build/installer-clock/` 编译缓存不能代替这两个随仓库提供的资源。

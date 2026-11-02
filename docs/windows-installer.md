@@ -201,8 +201,10 @@ Only an explicit clock rebuild requires the installed MSVC x86 toolchain and
 Windows SDK. Its intermediate files and source/toolchain-bound cache remain
 under `build/installer-clock/`; a successful rebuild updates the checked-in DLL
 and portable manifest. The DLL imports only Windows system libraries and has
-no CRT dependency. See [offline resources](offline-downloads.md#6-windows-安装器原生时钟)
-for verification, rebuilding and transfer to an offline build host.
+no CRT dependency. Run `node scripts/packaging/installer-clock-assets.cjs` to
+verify the bundle; after changing its inputs, explicitly run
+`node scripts/packaging/installer-clock-assets.cjs --rebuild`. Transfer both
+checked-in files together with their matching source to an offline build host.
 Publishing a freshly compiled clock retries an exact Windows `EPERM`/`EBUSY`
 rename refusal at most five times with short increasing delays. Every attempt
 revalidates the same managed staging directory, manifest and DLL; a concurrent

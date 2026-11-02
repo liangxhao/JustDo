@@ -1,19 +1,19 @@
 # App Plugin SDK v1
 
-This package defines the public contract between a trusted app companion and its application host. Agent Team and Swarm Workflow are complete examples under `plugins/extensions/`. Their native, Electron Main, and React code are built as independent artifacts; none imports application `src`.
+This package defines the public contract between a trusted app companion and its application host. Native, Electron Main, and React code are built as independent artifacts through public SDK contracts.
 
 ## Build and package
 
-Use Node 24 as specified by the package metadata. In this repository, `npm run plugins:app:sdk` emits portable JavaScript, declarations, npm exports and LICENSE into `build/app-plugin-sdk`. `npm pack ./build/app-plugin-sdk` produces the SDK package for an unrelated plugin project. React and ReactDOM are peer dependencies; a browser artifact uses the host's actual React instance.
+Use Node 24 as specified by the package metadata. React and ReactDOM are peer dependencies; a browser artifact uses the host's actual React instance.
 
 An independent project installs compatible `@app-plugin/sdk`, `@app-plugin/build`, and its declared dependencies. Supply matching public OpenClaw declarations through `OPENCLAW_SDK_ROOT` or `--sdk-root` for native type checking:
 
 ```sh
-app-plugin-build check --source plugins/extensions/example --sdk-root /prepared/openclaw/dist/plugin-sdk
-app-plugin-build build --source plugins/extensions/example --out build/app-plugins
+app-plugin-build check --source ./example-plugin --sdk-root /prepared/openclaw/dist/plugin-sdk
+app-plugin-build build --source ./example-plugin --out ./build/app-plugins
 ```
 
-The repository scripts under `scripts/plugins/` are thin embedding adapters around the same public builder. The builder resolves installed package exports and uses its public Tailwind preset; it does not read application source, host theme files, ancestor TypeScript aliases or sibling plugin implementations. The examples use the public Runtime Services SDK for shared protocols. Their required running capabilities are separate from npm dependencies; successful compilation does not prove that an arbitrary native runtime supports managed execution.
+The builder resolves installed package exports and uses its public Tailwind preset; it does not read application source, host theme files, ancestor TypeScript aliases or sibling plugin implementations. Required running capabilities are separate from npm dependencies; successful compilation does not prove that an arbitrary native runtime supports managed execution.
 
 `@app-plugin/sdk/planning` is a pure application policy contract. Native consumers
 can interpret an exact raw session entry; Main consumers inject an authenticated,
@@ -54,7 +54,7 @@ Disabling a native plugin withdraws all its views, settings/history actions, tra
 
 ## Tests and source relocation
 
-Keep plugin business tests and native probes in the plugin's own `tests/` and `scripts/` directories. Core tests use synthetic SDK contributions, and generic artifact probes discover the actual manifest set, including an empty set. The host's Vitest configuration discovers optional `tests/hostSetup.ts` files without naming individual plugins.
+Keep plugin business tests and native probes in the plugin's own `tests/` and `scripts/` directories.
 
 Each companion can provide its own Vitest configuration and SDK-port fixtures. `@app-plugin/build/testing` installs a supplied public Browser runtime and returns a disposer; it supplies no private application behavior. Business tests run independently by default. Tests that intentionally exercise a real host receive its absolute directory through `APP_PLUGIN_HOST_ROOT`; they skip explicitly when no host was supplied and fail on an invalid supplied host. This test integration does not authorize production imports from host source. Declare and provide all SDK and npm dependencies before building in a separate repository. The host does not fall back to a sibling repository for missing plugins.
 
