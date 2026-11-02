@@ -68,6 +68,20 @@ function fixture() {
 }
 
 describe('native accepted input recovery', () => {
+  test('keeps internal pending inputs out of cards, timelines and on-demand details', async () => {
+    const f = fixture();
+    const internal = input(1);
+    internal.message.provenance = { kind: 'internal_system' };
+    const human = input(2);
+    await f.refresh(page([internal, human]));
+    expect(queuedInputSnapshot(f.state, []).items.map(item => item.id)).toEqual(['2']);
+    expect(projectNativePendingInputs(f.state, [], []).messages).toMatchObject([
+      { content: human.message.content },
+    ]);
+    expect(queuedInputDetail(f.state, internal.id)).toBeNull();
+    expect(queuedInputDetail(f.state, human.id)).toMatchObject({ message: { content: human.message.content } });
+  });
+
   test.each(['new-conversation', 'ordinary-continuation'])(
     'keeps an ordinary accepted input in the timeline without queue cards: %s',
     async scenario => {

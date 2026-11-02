@@ -295,8 +295,10 @@ export function queuedInputDetail(state: ChatState, inputId: string): QueuedInpu
     isFollowupInput(item) && item.message.display !== false,
   );
   if (!input) return null;
+  const message = projectGatewayHistoryForDisplay([input.message])[0] as GatewayMessage | undefined;
+  if (!message) return null;
   return {
-    message: projectGatewayHistoryForDisplay([input.message])[0] as GatewayMessage,
+    message,
     truncated: isTruncatedHistoryMessage(input.message),
   };
 }

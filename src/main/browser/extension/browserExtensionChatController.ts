@@ -12,6 +12,7 @@ import type {
 } from '../../../shared/openclaw/assistantMedia';
 import { isGatewayRequestOutcomeUnknown } from '../../../shared/openclaw/gatewayRequestOutcome';
 import { normalizeMessageSessionKey } from '../../../shared/openclaw/messageDomain';
+import { isHiddenNativeMessage } from '../../../shared/openclaw/messageVisibility';
 import {
   isFailedRunMessage,
   readFailedRunMessageText,
@@ -219,6 +220,7 @@ const projectRichHistory = (
 
 const extractBrowserExtensionHistoryEntries = (messages: unknown[]): ExtensionHistoryEntry[] =>
   messages
+    .filter(message => !isHiddenNativeMessage(message))
     .flatMap(message => {
       const originalDisplay = readBrowserExtensionHistoryDisplay(message).display;
       const withSource = (entries: ExtensionHistoryEntry[], sourceIndex: number) =>

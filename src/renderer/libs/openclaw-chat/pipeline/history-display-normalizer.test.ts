@@ -25,6 +25,26 @@ afterEach(() => {
 });
 
 describe('projectGatewayHistoryForDisplay', () => {
+  test.each([true, false])('hides internal plugin handoffs while preserving human text and results (ok=%s)', ok => {
+    const content = `Plugin reload result: ${JSON.stringify({ ok })}\nContinue the original task in this conversation. Do not repeat a completed reload.`;
+    const internal = {
+      role: 'user', content,
+      provenance: { kind: 'internal_system', sourceTool: 'plugin' },
+    };
+    const human = { role: 'user', content };
+    const external = { ...human, provenance: { kind: 'external_user', sourceTool: 'plugin' } };
+    const peer = { ...human, provenance: { kind: 'inter_session', sourceTool: 'plugin' } };
+    const otherSource = { ...human, provenance: { kind: 'unknown', sourceTool: 'other' } };
+    const assistant = { ...internal, role: 'assistant' };
+    const error = { ...internal, role: 'system' };
+    const visible = [human, external, peer, otherSource, assistant, error];
+    expect(projectGatewayHistoryForDisplay([internal, ...visible])).toEqual(visible);
+    expect(projectGatewayHistoryForDisplay([
+      { ...internal, content: [{ type: 'text', text: content }] },
+      { ...internal, content: 'An internal plugin event with different wording.' },
+    ])).toEqual([]);
+  });
+
   test.each(['Exec completed (job, code 0)', 'Exec failed (job, code 1)'])(
     'hides native exec wake-ups while retaining human messages: %s',
     text => {

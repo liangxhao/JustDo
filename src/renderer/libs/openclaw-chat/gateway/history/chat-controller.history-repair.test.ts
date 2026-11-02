@@ -7,12 +7,15 @@ import { projectTurnItems } from '@/libs/openclaw-chat/model/timeline/project-tu
 import { withFailureDetailsForDisplay } from '@/libs/openclaw-chat/model/turn/failed-run-message';
 import { projectWaitingStatus } from '@/libs/openclaw-chat/model/turn/run-activity';
 
-test('hides exec wake-up input on live append and history reload', async () => {
+test.each(['exec', 'plugin'])('hides internal %s input on live append and history reload', async sourceTool => {
   const sessionKey = 'agent:main:chat:exec-display';
   const human = { role: 'user', content: 'Run the command', timestamp: 100 };
   const internal = {
-    role: 'user', content: 'Exec completed (job, code 0)\nSession selected: provider/model',
-    timestamp: 200, provenance: { kind: 'internal_system', sourceTool: 'exec' },
+    role: 'user',
+    content: sourceTool === 'exec'
+      ? 'Exec completed (job, code 0)\nSession selected: provider/model'
+      : 'Plugin reload result: {"ok":true}\nContinue the original task in this conversation. Do not repeat a completed reload.',
+    timestamp: 200, provenance: { kind: 'internal_system', sourceTool },
     __openclaw: { id: 'exec-input', messageSeq: 2 },
   };
   const request = vi.fn().mockResolvedValue({ messages: [human], sessionId: 'sid-exec' });

@@ -2,6 +2,7 @@ import { parseBrowserAnnotationPrompt } from '@shared/browser/browser';
 import { appendErrorDisplayDetail } from '@shared/openclaw/errorDisplay';
 import { OPENCLAW_HISTORY_DETAIL_MAX_IDS } from '@shared/openclaw/historyIpc';
 import { isInternalManagedSubagentHandoffError } from '@shared/openclaw/internalRunError';
+import { isHiddenNativeMessage } from '@shared/openclaw/messageVisibility';
 import { extractGoalFollowUpRequest } from '@shared/prompts/goalFollowUpPrompt';
 import { isGatewayInjectedModelRef } from '@shared/providers/modelRef';
 
@@ -267,17 +268,10 @@ function isPersistedSilentReplyArtifactText(text: string): boolean {
 }
 
 export function shouldHideMessage(message: unknown): boolean {
+  if (isHiddenNativeMessage(message)) return true;
   const record = asRecord(message);
   if (!record) return false;
   const role = typeof record.role === 'string' ? record.role.toLowerCase() : '';
-  // Native exec wake-ups use a user turn to resume the agent. Their structured
-  // provenance distinguishes them from a human quoting the same command output.
-  const provenance = asRecord(record.provenance);
-  if (
-    role === 'user' &&
-    provenance?.kind === 'internal_system' &&
-    provenance.sourceTool === 'exec'
-  ) return true;
   if (role !== 'assistant') return false;
   if (isPersistedFailedAssistantMessage(record)) return false;
   const text = extractSnapshotText(message);

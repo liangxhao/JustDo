@@ -1,4 +1,6 @@
 // Control UI chat module implements build chat items behavior.
+import { isHiddenNativeMessage } from '@shared/openclaw/messageVisibility';
+
 import {
   isAssistantHeartbeatAckForDisplay,
   stripHeartbeatTokenForDisplay,
@@ -977,12 +979,15 @@ export function buildChatItems(props: BuildChatItemsProps): Array<ChatItem | Mes
   const history = enrichToolResultsWithInputs(
     (Array.isArray(props.messages) ? props.messages : []).filter(
       message =>
+        !isHiddenNativeMessage(message) &&
         !isAssistantHeartbeatAckForDisplay(message) &&
         (props.peerPerspective === true ||
           (!isTrustedPeerInput(message) && !isTeamDiscussionInput(message))),
     ),
   );
-  const tools = Array.isArray(props.toolMessages) ? props.toolMessages : [];
+  const tools = Array.isArray(props.toolMessages)
+    ? props.toolMessages.filter(message => !isHiddenNativeMessage(message))
+    : [];
   const segments = props.streamSegments ?? [];
 
   const liftedCanvasSources = tools

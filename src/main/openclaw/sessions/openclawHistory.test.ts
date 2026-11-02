@@ -8,6 +8,34 @@ import {
 } from './openclawHistory';
 
 describe('openclawHistory', () => {
+  test('omits native internal inputs and display-disabled messages from display entries', () => {
+    const hidden = [
+      { role: 'user', content: 'private recovery input', provenance: { kind: 'internal_system' } },
+      { role: 'user', content: 'private event', provenance: { kind: 'internal_system', sourceTool: 'future-source' } },
+      { role: 'user', content: 'private approval', provenance: { kind: 'inter_session', sourceTool: 'exec_approval_followup' } },
+      { role: 'assistant', display: false, content: [
+        { type: 'text', text: 'private assistant' },
+        { type: 'toolCall', id: 'hidden-tool', name: 'read', arguments: {} },
+      ] },
+    ];
+    for (const message of hidden) expect(extractGatewayHistoryEntry(message)).toBeNull();
+    expect(extractGatewayHistoryEntries(hidden)).toEqual([]);
+    const content = 'Plugin reload result: user-provided example';
+    expect(extractGatewayHistoryEntries([
+      { role: 'user', content },
+      { role: 'user', content, provenance: { kind: 'external_user' } },
+      { role: 'user', content, provenance: { kind: 'inter_session', sourceTool: 'sessions_send' } },
+      { role: 'assistant', content: 'Visible outcome' },
+      { role: 'system', content: 'Visible failure' },
+    ])).toEqual([
+      { role: 'user', text: content },
+      { role: 'user', text: content },
+      { role: 'user', text: content },
+      { role: 'assistant', text: 'Visible outcome' },
+      { role: 'system', text: 'Visible failure' },
+    ]);
+  });
+
   test('extracts plain text content blocks', () => {
     expect(
       extractGatewayMessageText({

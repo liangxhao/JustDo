@@ -16,6 +16,18 @@ function build(overrides: Partial<Parameters<typeof buildChatItems>[0]> = {}) {
   });
 }
 
+test('raw chat-item callers follow native visibility without interpreting human text', () => {
+  const human = { role: 'user', content: 'Continue the original task.', timestamp: 100 };
+  const assistant = { role: 'assistant', content: 'Actual result.', timestamp: 200 };
+  expect(build({ messages: [
+    { role: 'user', content: 'Private recovery', provenance: { kind: 'internal_system', sourceTool: 'future-source' } },
+    human,
+    { role: 'user', content: 'Private approval follow-up', provenance: { kind: 'inter_session', sourceTool: 'exec_approval_followup' } },
+    { role: 'assistant', display: false, content: 'Private assistant context' },
+    assistant,
+  ] })).toEqual(build({ messages: [human, assistant] }));
+});
+
 test.each([
   ['failed', '上下文压缩失败'],
   ['skipped', '上下文压缩已跳过'],

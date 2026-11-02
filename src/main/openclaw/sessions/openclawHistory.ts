@@ -1,5 +1,6 @@
 import { isGatewayToolFailureNotice } from '../../../shared/cowork/toolFailureNotice';
 import { OPENCLAW_NESTED_TOOL_CUSTOM_TYPE } from '../../../shared/openclaw/constants';
+import { isHiddenNativeMessage } from '../../../shared/openclaw/messageVisibility';
 import { modelRefFromIdentity, normalizeModelRef } from '../../../shared/providers/modelRef';
 import {
   parseScheduledReminderPrompt,
@@ -311,7 +312,7 @@ export const buildScheduledReminderSystemMessage = (text: string): string | null
 };
 
 export const extractGatewayHistoryEntry = (message: unknown): GatewayHistoryEntry | null => {
-  if (!isRecord(message)) {
+  if (!isRecord(message) || isHiddenNativeMessage(message)) {
     return null;
   }
 
@@ -476,6 +477,7 @@ export const extractGatewayHistoryEntry = (message: unknown): GatewayHistoryEntr
 
 export const extractGatewayHistoryEntries = (messages: unknown[]): GatewayHistoryEntry[] => {
   return messages.flatMap(message => {
+    if (isHiddenNativeMessage(message)) return [];
     const primary = extractGatewayHistoryEntry(message);
     return [
       ...(primary ? [primary] : []),

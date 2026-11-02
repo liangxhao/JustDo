@@ -23,10 +23,25 @@ flowchart LR
 
 Main 只提供连接准备、权限、产品生命周期和受限详情读取，不复制 Thinking/Tool/Content。Redux 也不保存 transcript。原生历史丢失时不能用产品消息缓存冒充恢复。
 
-原生后台命令完成后的续跑输入虽然使用 `user` 角色，但带有
-`provenance.kind: internal_system` 和 `sourceTool: exec`。显示投影在历史读取及
-实时消息接收时隐藏这类内部输入，保留原生执行与历史记录；不按 `Exec completed`
-或模型状态等正文前缀过滤，用户引用相同文字及助手的实际结果仍正常展示。
+展示可见性由纯共享规则 `shared/openclaw/messageVisibility.ts` 统一解释，不按正文前缀
+或不断追加的来源名称列表判断。以下消息保留在原生记录中，但不进入聊天展示：
+
+- 原生明确标记 `display: false` 的消息。
+- `user` 角色且 `provenance.kind: internal_system` 的内部输入，包含缺少或新增
+  `sourceTool` 的情况，覆盖命令、插件、心跳、定时调度、重启和会话恢复等来源。
+- 原生将执行审批后续控制输入标为 `inter_session / exec_approval_followup` 的特殊情况。
+  其他跨会话协作消息继续沿用原有归属展示。
+- 原生私有上下文 `custom / openclaw.runtime-context`，以及
+  `custom / openclaw.system-update` 中 `details.kind: runtime-context` 的载体。
+
+Main 的可见历史、浏览器侧聊及会话可见统计在丢弃来源元数据或展开富媒体前过滤；
+Renderer 的历史、实时追加、直接历史视图、旧聊天列表和待处理输入详情共用同一规则。
+搜索和 minimap 从可见时间线派生，不为隐藏输入建立另一份文本过滤或缓存。
+
+用户粘贴相同文字、普通协作消息、未被原生显式隐藏的助手结果及错误仍正常展示。
+原生已将 cron 回报投影为 `assistant` 时保留其结果；可见卡片、工具活动、压缩和
+`prompt-update` 也不因内部来源被整体删除。过滤仅作用于展示，不参与执行结算、
+授权或准入，亦不取消插件 `reloadAndResume`、恢复及审批后的原生接力执行。
 
 Composer 提交前只是草稿；Main 建立产品会话与 `clientTurnId`，并准备模型、权限和项目根目录。首轮由 Router 准备并委托当前聊天 client 一次发送（后台保留 Router 运输），后续回合由集中式聊天 client 发送。产品 receipt 只证明身份已建立，原生 admission 只证明执行已被接收，live final 也不能单独证明后代任务与 Goal 已全部结束。排障时先查原生 history 和完整 event，再查 admission、reducer 与渲染 pipeline；Main 的摘要日志缺少中间帧不能证明原生事件未发生。
 

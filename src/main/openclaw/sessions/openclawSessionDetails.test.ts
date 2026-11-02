@@ -6,6 +6,23 @@ import {
 } from './openclawSessionDetails';
 
 describe('Gateway session detail statistics', () => {
+  it('excludes hidden native controls from visible summaries and message or tool counts', () => {
+    const messages = [
+      { role: 'user', content: 'private restart instruction', provenance: { kind: 'internal_system' } },
+      { role: 'assistant', display: false, content: [
+        { type: 'text', text: 'private outcome' },
+        { type: 'toolCall', id: 'hidden-call', name: 'read', arguments: {} },
+      ] },
+      { role: 'user', content: 'Real question' },
+      { role: 'assistant', content: 'Real answer' },
+    ];
+    expect(buildGatewaySessionDetailStats({}, 'fallback summary', messages)).toMatchObject({
+      summary: 'Real question', messageCount: 2, userMessageCount: 1,
+      assistantMessageCount: 1, toolCallCount: 0,
+    });
+    expect(messages).toHaveLength(4);
+  });
+
   it('uses the canonical total while preserving the provider token breakdown', () => {
     expect(
       buildGatewaySessionDetailStats(

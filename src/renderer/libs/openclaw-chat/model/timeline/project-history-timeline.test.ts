@@ -9,6 +9,26 @@ import { projectPersistedTimeline } from './project-history-timeline';
 import { projectTurnItems } from './project-turn-items';
 
 describe('projectPersistedTimeline', () => {
+  test('filters raw native control inputs before direct-view timelines and keeps projected results', () => {
+    const human: GatewayMessage = { role: 'user', content: 'Continue the original task.', __openclaw: { id: 'human' } };
+    const result: GatewayMessage = {
+      role: 'assistant', content: 'Scheduled result.', provenance: { kind: 'internal_system', sourceTool: 'cron' },
+      __openclaw: { id: 'result' },
+    };
+    const timeline = projectPersistedTimeline([
+      human,
+      { role: 'user', content: 'Private recovery instructions', provenance: { kind: 'internal_system' } },
+      { role: 'custom', customType: 'openclaw.runtime-context', content: 'Private context' },
+      { role: 'assistant', display: false, content: [{ type: 'toolCall', id: 'private-tool', name: 'exec', arguments: {} }] },
+      result,
+    ]);
+    expect(timeline).toMatchObject([
+      { kind: 'history-message', message: human },
+      { kind: 'history-message', message: result },
+    ]);
+    expect(human.content).toBe('Continue the original task.');
+  });
+
   test('retains a stopped unanswered native question after its run receipt interrupts the call', () => {
     const questions = [{ id: 'stack', question: 'Which stack?', options: [{ id: 'react', label: 'React' }, { id: 'vue', label: 'Vue' }] }];
     const result = projectPersistedTimeline([

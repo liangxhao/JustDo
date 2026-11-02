@@ -766,6 +766,50 @@ describe('BrowserExtensionChatController', () => {
     );
   });
 
+  it('omits internal history and queued inputs before rich projection drops their provenance', async () => {
+    const content = 'Plugin reload result: a human-provided example';
+    const hiddenRichInput = {
+      role: 'user', content: [{ type: 'text', text: 'PRIVATE_NATIVE_CONTROL' }, {
+        type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'YWJj' },
+      }],
+      provenance: { kind: 'internal_system', sourceTool: 'future-source' },
+    };
+    const history = {
+      messages: [
+        { role: 'user', content: 'PRIVATE_RECOVERY', provenance: { kind: 'internal_system' } },
+        hiddenRichInput,
+        { role: 'assistant', content: 'PRIVATE_ASSISTANT', display: false },
+        { role: 'user', content, timestamp: 100 },
+        { role: 'assistant', content: 'Real result', timestamp: 300 },
+        { role: 'system', content: 'Real failure', timestamp: 400 },
+      ],
+      pendingInputs: [
+        { id: 'internal-pending', acceptedAt: 150, state: 'queued', message: hiddenRichInput },
+        { id: 'human-pending', acceptedAt: 200, state: 'queued', message: {
+          role: 'user', content: 'Real queued request', provenance: { kind: 'external_user' },
+        } },
+      ],
+    };
+    const controller = new BrowserExtensionChatController({
+      ensureEngineRunning: vi.fn(), getRouter: vi.fn(),
+      getRuntime: () => ({
+        ensureReady: vi.fn(),
+        fetchSessionHistoryByKey: vi.fn(async () => history),
+        getSessionKeysForSession: () => ['agent:main:justdo:session-1'],
+      }) as never,
+      getStore: () => ({
+        getSession: () => ({ id: 'session-1', source: CoworkSessionSource.BrowserExtension }),
+      }) as never,
+    });
+    const messages = await controller.getMessages('session-1');
+    expect(messages.map(message => message.text)).toEqual([
+      content, 'Real queued request', 'Real result', 'Real failure',
+    ]);
+    expect(messages[1].pendingInput).toEqual({ id: 'human-pending', state: 'queued' });
+    expect(JSON.stringify(messages)).not.toContain('PRIVATE_');
+    expect(history.messages).toContain(hiddenRichInput);
+  });
+
   it('projects accepted inputs in native time order and retires withdrawn input on refresh', async () => {
     const history = {
       sessionKey: 'agent:main:justdo:session-1',

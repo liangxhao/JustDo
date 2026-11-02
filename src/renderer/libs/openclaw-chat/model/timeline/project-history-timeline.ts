@@ -1,6 +1,7 @@
 import { isPresentPlanToolName } from '@shared/cowork/interactions/planPreview';
 import type { SessionRunTiming } from '@shared/cowork/sessionRun';
 import { normalizeToolTerminalStatus } from '@shared/openclaw/messageDomain';
+import { isHiddenNativeMessage } from '@shared/openclaw/messageVisibility';
 import type { McpAppDescriptor } from '@shared/plugins/mcpApps';
 import { isGatewayInjectedModelRef } from '@shared/providers/modelRef';
 
@@ -674,7 +675,7 @@ export function projectPersistedTimeline(
     return applied;
   };
 
-  const visibleMessages = collapseRepeatedFailures(messages);
+  const visibleMessages = collapseRepeatedFailures(messages.filter(message => !isHiddenNativeMessage(message)));
   const failureDetailOwners = new Map<string, GatewayMessage>();
   for (const value of visibleMessages) {
     if (!readAssistantFailureDetail(value)) continue;
@@ -796,7 +797,7 @@ export function projectPersistedTimeline(
       if (typeof marker?.id === 'string' && failureDetailOwners.get(marker.id) !== outerMessage) {
         return;
       }
-      const detail = readUncoveredFailureDetail(outerMessage, messages);
+      const detail = readUncoveredFailureDetail(outerMessage, visibleMessages);
       if (!detail) return;
       // Emit once per native source, after all of its Content/Thinking/Tool
       // segments, including sources that have no visible Content blocks.
