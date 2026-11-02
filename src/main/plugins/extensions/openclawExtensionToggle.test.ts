@@ -82,6 +82,72 @@ it('does not silently replace hot reload with a restart when Native requests one
   expect(f.runCommand).not.toHaveBeenCalled();
 });
 
+it('preserves a native toggle restart requirement when the outbound policy also changes', async () => {
+  const requestGateway = vi.fn(async () => ({ ok: true, restartRequired: true }));
+  const restartGatewayAfterMutation = vi.fn(async () => ({ phase: 'running' }));
+  const reconcile = vi.fn()
+    .mockReturnValueOnce({ enabled: true, groups: [], digest: 'before' })
+    .mockReturnValue({ enabled: true, groups: [], digest: 'after' });
+  const service = new OpenClawExtensionImportService({
+    getOpenClawEngineManager: () => ({ getStatus: () => ({ phase: 'running' }) }) as OpenClawEngineManager,
+    requestGateway,
+    restartGatewayAfterMutation,
+    outboundHeaderPolicy: { inspectExtension: vi.fn(), reconcile },
+  });
+
+  await expect(service.setEnabled('sample-plugin', true)).resolves.toMatchObject({ success: true });
+
+  expect(restartGatewayAfterMutation).toHaveBeenCalledExactlyOnceWith('extension-status-change', {
+    networkPolicyChanged: true,
+  });
+});
+
+it.each([true, false])('hot-applies an App policy change on enable=%s through its existing network route', async enabled => {
+  const f = fixture();
+  const canReuseGatewayNetworkEnvironment = vi.fn(() => true);
+  const manager = { ...f.manager, canReuseGatewayNetworkEnvironment };
+  const reconcile = vi.fn()
+    .mockReturnValueOnce({ enabled: true, groups: [], digest: 'before' })
+    .mockReturnValue({ enabled: true, groups: [], digest: 'after' });
+  const service = new OpenClawExtensionImportService({
+    ...f.deps,
+    getOpenClawEngineManager: () => manager as unknown as OpenClawEngineManager,
+    outboundHeaderPolicy: { inspectExtension: vi.fn(), reconcile },
+  });
+
+  await expect(service.setEnabled('swarm-workflow', enabled)).resolves.toMatchObject({ success: true });
+
+  expect(f.requestGateway).toHaveBeenCalledExactlyOnceWith('plugins.setEnabled', {
+    pluginId: 'swarm-workflow', enabled,
+  });
+  expect(canReuseGatewayNetworkEnvironment).toHaveBeenCalledOnce();
+  expect(f.restartGatewayAfterMutation).not.toHaveBeenCalled();
+  expect(f.runCommand).not.toHaveBeenCalled();
+  expect(f.ordinaryRequest).not.toHaveBeenCalled();
+});
+
+it('requires a reusable route before hot-applying an App policy change', async () => {
+  const f = fixture();
+  const manager = { ...f.manager, canReuseGatewayNetworkEnvironment: vi.fn(() => false) };
+  const reconcile = vi.fn()
+    .mockReturnValueOnce({ enabled: true, groups: [], digest: 'before' })
+    .mockReturnValue({ enabled: true, groups: [], digest: 'after' });
+  const service = new OpenClawExtensionImportService({
+    ...f.deps,
+    getOpenClawEngineManager: () => manager as unknown as OpenClawEngineManager,
+    outboundHeaderPolicy: { inspectExtension: vi.fn(), reconcile },
+  });
+
+  await expect(service.setEnabled('swarm-workflow', true)).resolves.toMatchObject({
+    success: false, error: t('extensionHotToggleRestartRequired'),
+  });
+
+  expect(f.requestGateway).toHaveBeenCalledOnce();
+  expect(f.restartGatewayAfterMutation).not.toHaveBeenCalled();
+  expect(f.manager.withStoppedGatewayForMutation).not.toHaveBeenCalled();
+  expect(f.runCommand).not.toHaveBeenCalled();
+});
+
 it('does not use a cold mutation when the hot-reload bridge is unavailable', async () => {
   const f = fixture();
   expect(

@@ -8,10 +8,16 @@ import {
   PluginOperationIpc,
   PluginOperationStage,
 } from '../../../shared/plugins/pluginOperation';
+import { t } from '../../core/i18n';
 import { enqueueAppConfigUpdate } from '../../data/appConfigUpdateQueue';
 import { EnginePreparationPendingCode, EnginePreparationPendingError } from '../../engine/enginePreparationError';
 import type { OpenClawEngineManager } from '../../openclaw/runtime/openclawEngineManager';
 import { OpenClawExtensionImportService } from '../../plugins/extensions';
+import {
+  type ApplyExtensionPackageMutation,
+  ExtensionPackageLifecycleMode,
+  type WithExtensionPackageMutation,
+} from '../../plugins/extensions/extensionPackageLifecycle';
 import type { PluginInstallationService } from '../../plugins/installation';
 import { registerStoreHandlers } from '../app/store';
 
@@ -38,6 +44,8 @@ function fixture(
   beforeAgentTeamDisable?: () => Promise<() => void>,
   mutateAppPackage?: <T>(operation: () => Promise<T>) => Promise<T>,
   mutateAppPlugin?: <T>(id: string, enabled: boolean, operation: () => Promise<T>) => Promise<T>,
+  approveInstalledAppPackage?: (input: { nativePluginId: string; installPath: string }) => Promise<void>,
+  withExtensionPackageMutation?: WithExtensionPackageMutation,
 ) {
   const sender = { isDestroyed: vi.fn(() => false), send: vi.fn() };
   const peer = { isDestroyed: vi.fn(() => false), send: vi.fn() };
@@ -65,6 +73,8 @@ function fixture(
     extensionImportService: service as unknown as OpenClawExtensionImportService,
     installationService: installation as unknown as PluginInstallationService,
     mutateAppPackage,
+    withExtensionPackageMutation,
+    approveInstalledAppPackage,
     mutateAppPlugin: mutateAppPlugin ?? (() => {
       let lane: Promise<unknown> = Promise.resolve();
       return <T>(_id: string, enabled: boolean, operation: () => Promise<T>) => {
@@ -314,9 +324,71 @@ test('installs a local extension without a review token once inside the package 
   expect(f.forgetMarketplace).toHaveBeenCalledExactlyOnceWith(PluginKind.EXTENSION, 'feature-plugin');
 });
 
+test.each([ExtensionPackageLifecycleMode.HOT, ExtensionPackageLifecycleMode.STOPPED])(
+  'reserves package ordering and approves only the selected stopped lifecycle: %s', async mode => {
+    let reserved = false;
+    let applying = false;
+    const apply: ApplyExtensionPackageMutation = vi.fn(async (_target, operation) => {
+      expect(reserved).toBe(true);
+      applying = true;
+      try { return await operation(mode); }
+      finally { applying = false; }
+    });
+    const withExtensionPackageMutation: WithExtensionPackageMutation = vi.fn(async operation => {
+      reserved = true;
+      try { return await operation(apply); }
+      finally { reserved = false; }
+    });
+    const mutateAppPackage = vi.fn(async <T>(operation: () => Promise<T>) => operation());
+    const approveInstalledAppPackage = vi.fn(async () => {
+      expect(reserved).toBe(true);
+      expect(applying).toBe(true);
+    });
+    const f = fixture(undefined, mutateAppPackage, undefined,
+      approveInstalledAppPackage, withExtensionPackageMutation);
+    f.service.importPath.mockImplementation(async (_source, _progress, _review, options) => {
+      expect(reserved).toBe(true);
+      expect(applying).toBe(false);
+      expect(options.autoAcceptCapabilities).toBe(true);
+      return options.applyPackageMutation({ nativePluginIds: ['feature-plugin'] },
+        (selectedMode: ExtensionPackageLifecycleMode) => options.onInstalled({
+          success: true, extensionId: 'feature-plugin', installPath: 'C:/installed/feature-plugin',
+        }, selectedMode));
+    });
+    const installer = f.installation.registerInstaller.mock.calls[0][0];
+    const result = await installer.install({
+      operation: 'install', origin: 'custom',
+      payload: { kind: PluginKind.EXTENSION, sourcePath: 'C:/source' },
+    });
+    expect(result).toMatchObject({ success: true, pluginId: 'feature-plugin' });
+    expect(withExtensionPackageMutation).toHaveBeenCalledOnce();
+    expect(apply).toHaveBeenCalledOnce();
+    expect(f.service.importPath).toHaveBeenCalledOnce();
+    expect(mutateAppPackage).not.toHaveBeenCalled();
+    expect(approveInstalledAppPackage).toHaveBeenCalledTimes(
+      mode === ExtensionPackageLifecycleMode.STOPPED ? 1 : 0);
+    expect(reserved).toBe(false);
+  },
+);
+
+test('passes removal through the same outer reservation without an unconditional stopped wrapper', async () => {
+  const apply: ApplyExtensionPackageMutation = vi.fn(async (_target, operation) =>
+    operation(ExtensionPackageLifecycleMode.HOT));
+  const withExtensionPackageMutation: WithExtensionPackageMutation = vi.fn(async operation => operation(apply));
+  const mutateAppPackage = vi.fn(async <T>(operation: () => Promise<T>) => operation());
+  const f = fixture(undefined, mutateAppPackage, undefined, undefined, withExtensionPackageMutation);
+  f.service.delete.mockResolvedValue({ success: true });
+  expect(await handlers.get(ExtensionIpc.Delete)!(f.event, { extensionId: 'feature-plugin' }))
+    .toMatchObject({ success: true });
+  expect(withExtensionPackageMutation).toHaveBeenCalledOnce();
+  expect(f.service.delete).toHaveBeenCalledExactlyOnceWith('feature-plugin', expect.any(Function), apply);
+  expect(mutateAppPackage).not.toHaveBeenCalled();
+});
+
 test('preserves an unknown local installation without requesting another review or repeating it', async () => {
   const mutateAppPackage = vi.fn(async <T>(operation: () => Promise<T>) => operation());
-  const f = fixture(undefined, mutateAppPackage);
+  const approveInstalledAppPackage = vi.fn(async () => undefined);
+  const f = fixture(undefined, mutateAppPackage, undefined, approveInstalledAppPackage);
   f.service.importPath.mockResolvedValue({
     success: false,
     extensionId: 'feature-plugin',
@@ -344,7 +416,181 @@ test('preserves an unknown local installation without requesting another review 
   expect(result).not.toHaveProperty('installationCommitted');
   expect(mutateAppPackage).toHaveBeenCalledOnce();
   expect(f.service.importPath).toHaveBeenCalledOnce();
+  expect(approveInstalledAppPackage).not.toHaveBeenCalled();
   expect(f.forgetMarketplace).not.toHaveBeenCalled();
+});
+
+test('approves only the committed app package inside the existing stopped-Gateway installation owner', async () => {
+  const sequence: string[] = [];
+  let packageMutationActive = false;
+  const mutateAppPackage = vi.fn(async <T>(operation: () => Promise<T>): Promise<T> => {
+    sequence.push('stop');
+    packageMutationActive = true;
+    try {
+      return await operation();
+    } finally {
+      packageMutationActive = false;
+      sequence.push('reconnect');
+    }
+  });
+  const approveInstalledAppPackage = vi.fn(async () => {
+    expect(packageMutationActive).toBe(true);
+    sequence.push('approve');
+  });
+  const f = fixture(undefined, mutateAppPackage, undefined, approveInstalledAppPackage);
+  const installPath = 'C:/installed/中文 app package';
+  f.service.importPath.mockImplementation(async () => {
+    expect(packageMutationActive).toBe(true);
+    sequence.push('install');
+    return { success: true, extensionId: 'feature-plugin', installPath };
+  });
+  const installer = f.installation.registerInstaller.mock.calls[0][0];
+  const onProgress = vi.fn();
+
+  const result = await installer.install({
+    operation: 'install',
+    origin: 'custom',
+    payload: { kind: PluginKind.EXTENSION, sourcePath: 'C:/selected/source' },
+    onProgress,
+  });
+
+  expect(result).toMatchObject({ success: true, pluginId: 'feature-plugin', installPath });
+  expect(sequence).toEqual(['stop', 'install', 'approve', 'reconnect']);
+  expect(mutateAppPackage).toHaveBeenCalledOnce();
+  expect(approveInstalledAppPackage).toHaveBeenCalledExactlyOnceWith({
+    nativePluginId: 'feature-plugin', installPath,
+  });
+  expect(onProgress.mock.calls.map(([progress]) => progress.stage)).toEqual([
+    PluginOperationStage.VALIDATING,
+    PluginOperationStage.PREPARING_RUNTIME,
+    PluginOperationStage.REFRESHING_INVENTORY,
+  ]);
+  expect(f.service.importPath).toHaveBeenCalledOnce();
+  expect(f.service.listInstalled).not.toHaveBeenCalled();
+  expect(f.service.setEnabled).not.toHaveBeenCalled();
+});
+
+test('lets native-only app inspection finish without another package owner or enabling action', async () => {
+  const mutateAppPackage = vi.fn(async <T>(operation: () => Promise<T>) => operation());
+  const approveInstalledAppPackage = vi.fn(async () => undefined);
+  const f = fixture(undefined, mutateAppPackage, undefined, approveInstalledAppPackage);
+  f.service.importPath.mockResolvedValue({
+    success: true, extensionId: 'native-only', installPath: 'C:/installed/native-only',
+  });
+  const installer = f.installation.registerInstaller.mock.calls[0][0];
+
+  const result = await installer.install({
+    operation: 'install',
+    origin: 'marketplace',
+    payload: { kind: PluginKind.EXTENSION, sourcePath: 'C:/downloaded/native-only' },
+  });
+
+  expect(result).toMatchObject({ success: true, pluginId: 'native-only' });
+  expect(mutateAppPackage).toHaveBeenCalledOnce();
+  expect(approveInstalledAppPackage).toHaveBeenCalledExactlyOnceWith({
+    nativePluginId: 'native-only', installPath: 'C:/installed/native-only',
+  });
+  expect(f.service.importPath).toHaveBeenCalledOnce();
+  expect(f.service.setEnabled).not.toHaveBeenCalled();
+});
+
+test('keeps the committed installation and app-validation error when runtime recovery also fails', async () => {
+  const mutateAppPackage = vi.fn(async <T>(operation: () => Promise<T>): Promise<T> => {
+    const receipt = await operation();
+    expect(receipt).toMatchObject({
+      success: false,
+      installationCommitted: true,
+      failedStage: PluginOperationStage.VALIDATING,
+    });
+    throw new Error('Synthetic runtime recovery failure');
+  });
+  const approveInstalledAppPackage = vi.fn(async () => {
+    throw new Error('App artifact hash mismatch at C:/installed/feature-plugin; accessCode=synthetic-secret');
+  });
+  const f = fixture(undefined, mutateAppPackage, undefined, approveInstalledAppPackage);
+  f.service.importPath.mockResolvedValue({
+    success: true, extensionId: 'feature-plugin', installPath: 'C:/installed/feature-plugin',
+  });
+  const installer = f.installation.registerInstaller.mock.calls[0][0];
+
+  const result = await installer.install({
+    operation: 'install',
+    origin: 'custom',
+    payload: { kind: PluginKind.EXTENSION, sourcePath: 'C:/selected/source' },
+  });
+
+  expect(result).toMatchObject({
+    success: false,
+    installationCommitted: true,
+    pluginId: 'feature-plugin',
+    installPath: 'C:/installed/feature-plugin',
+    failedStage: PluginOperationStage.VALIDATING,
+    refreshWarning: true,
+    error: expect.stringContaining(t('extensionAppCodeApprovalFailed')),
+  });
+  expect(result.error).toContain('App artifact hash mismatch');
+  expect(result.error).toContain('Synthetic runtime recovery failure');
+  expect(result.error).not.toContain('C:/installed/feature-plugin');
+  expect(result.error).not.toContain('synthetic-secret');
+  expect(result).not.toHaveProperty('mutationCompleted');
+  expect(result).not.toHaveProperty('runtimeRecoveryPending');
+  expect(mutateAppPackage).toHaveBeenCalledOnce();
+  expect(approveInstalledAppPackage).toHaveBeenCalledOnce();
+  expect(f.service.importPath).toHaveBeenCalledOnce();
+  expect(f.forgetMarketplace).toHaveBeenCalledExactlyOnceWith(PluginKind.EXTENSION, 'feature-plugin');
+});
+
+test('does not authorize app code when the committed installation has no verified path', async () => {
+  const mutateAppPackage = vi.fn(async <T>(operation: () => Promise<T>) => operation());
+  const approveInstalledAppPackage = vi.fn(async () => undefined);
+  const f = fixture(undefined, mutateAppPackage, undefined, approveInstalledAppPackage);
+  f.service.importPath.mockResolvedValue({ success: true, extensionId: 'feature-plugin' });
+  const installer = f.installation.registerInstaller.mock.calls[0][0];
+
+  const result = await installer.install({
+    operation: 'install',
+    origin: 'custom',
+    payload: { kind: PluginKind.EXTENSION, sourcePath: 'C:/source' },
+  });
+
+  expect(result).toMatchObject({
+    success: false,
+    installationCommitted: true,
+    pluginId: 'feature-plugin',
+    failedStage: PluginOperationStage.CONFIRMING,
+    error: t('extensionPackageOwnershipUnconfirmed'),
+  });
+  expect(approveInstalledAppPackage).not.toHaveBeenCalled();
+  expect(f.service.importPath).toHaveBeenCalledOnce();
+});
+
+test('does not approve app code after a committed native follow-up failure', async () => {
+  const approveInstalledAppPackage = vi.fn(async () => undefined);
+  const f = fixture(undefined, async operation => operation(), undefined, approveInstalledAppPackage);
+  f.service.importPath.mockResolvedValue({
+    success: false,
+    extensionId: 'feature-plugin',
+    installPath: 'C:/installed/feature-plugin',
+    installationCommitted: true,
+    operationFailedStage: PluginOperationStage.SAVING_CONFIGURATION,
+    error: 'Native allowlist save failed',
+  });
+  const installer = f.installation.registerInstaller.mock.calls[0][0];
+
+  const result = await installer.install({
+    operation: 'install',
+    origin: 'custom',
+    payload: { kind: PluginKind.EXTENSION, sourcePath: 'C:/source' },
+  });
+
+  expect(result).toMatchObject({
+    success: false,
+    installationCommitted: true,
+    failedStage: PluginOperationStage.SAVING_CONFIGURATION,
+    error: 'Native allowlist save failed',
+  });
+  expect(approveInstalledAppPackage).not.toHaveBeenCalled();
+  expect(f.service.importPath).toHaveBeenCalledOnce();
 });
 
 test.each(['install', 'update'])(

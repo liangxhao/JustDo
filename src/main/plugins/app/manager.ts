@@ -11,7 +11,7 @@ import type {
   AppPluginReview,
   AppPluginSnapshot,
 } from '../../../../plugins/sdk/app-plugin-sdk/contracts';
-import { AppPluginError, AppPluginIpc } from '../../../../plugins/sdk/app-plugin-sdk/contracts';
+import { APP_PLUGIN_ARTIFACT, AppPluginError, AppPluginIpc } from '../../../../plugins/sdk/app-plugin-sdk/contracts';
 import type { AppMainModule } from '../../../../plugins/sdk/app-plugin-sdk/main';
 import {
   appNativeHandshakeMethod,
@@ -22,7 +22,13 @@ import {
   APP_NATIVE_PROFILE,
   verifyAppNativeModule,
 } from '../../../../plugins/sdk/app-plugin-sdk/native-profile';
+import { t } from '../../core/i18n';
 import { runWithoutPluginRequestBinding } from '../../engine/gateway/pluginRequestBinding';
+import {
+  type ApplyExtensionPackageMutation,
+  ExtensionPackageLifecycleMode,
+  type ExtensionPackageMutationTarget,
+} from '../extensions/extensionPackageLifecycle';
 import { inspectAppArtifact, retainAppArtifact, type VerifiedAppArtifact } from './artifact';
 import { appAssetPath, appPresentationAssetPath, publishAppAssets } from './assets';
 import type { AppHostResources, AppNativeState } from './registry';
@@ -105,6 +111,7 @@ export class AppPluginManager {
   private databaseInitialized = false;
   private activated = false;
   private packageMutation = false;
+  private stoppedPackageMutation?: object;
   private packageRepairPending = false;
   private invalidation = 0;
   private readonly nativeIdentities = new Map<string, string>();
@@ -464,6 +471,83 @@ export class AppPluginManager {
     });
     return { success: true };
   }
+  /** A confirmed installation may trust only its exact companion inside the existing cold owner. */
+  async approveInstalledPackage(input: {
+    nativePluginId: string;
+    installPath: string;
+  }): Promise<void> {
+    const owner = this.stoppedPackageMutation;
+    const generation = this.dependencies.getGatewayProcessGeneration?.();
+    const assertOwner = () => {
+      this.assertAvailable();
+      if (!owner || owner !== this.stoppedPackageMutation || !this.packageMutation ||
+          this.dependencies.isGatewayConnected() || this.dependencies.getGatewayProcessId?.() != null ||
+          generation !== this.dependencies.getGatewayProcessGeneration?.())
+        throw new Error(t('extensionInstallMutationUnavailable'));
+    };
+    const identityMismatch = () => new Error(t('extensionAppCodeIdentityMismatch'));
+    assertOwner();
+    const nativePluginId = input?.nativePluginId;
+    const installPath = input?.installPath;
+    if (typeof nativePluginId !== 'string' || !nativePluginId.trim() || nativePluginId.length > 512 ||
+        typeof installPath !== 'string' || !path.isAbsolute(installPath))
+      throw identityMismatch();
+    const nativeRoot = path.resolve(installPath);
+    const appRoot = path.join(nativeRoot, 'app');
+    const samePath = (left: string, right: string): boolean => {
+      const normalize = (value: string) => process.platform === 'win32'
+        ? path.resolve(value).toLowerCase() : path.resolve(value);
+      return normalize(left) === normalize(right);
+    };
+    const inspectInstalled = async (expectedHash?: string): Promise<VerifiedAppArtifact | null> => {
+      assertOwner();
+      let indexStats: ReturnType<typeof lstatSync>;
+      try { indexStats = lstatSync(path.join(appRoot, APP_PLUGIN_ARTIFACT)); }
+      catch (error) {
+        if (error && typeof error === 'object' && 'code' in error &&
+            (error.code === 'ENOENT' || error.code === 'ENOTDIR'))
+          return null;
+        throw error;
+      }
+      if (!indexStats.isFile() || indexStats.isSymbolicLink()) throw identityMismatch();
+      const candidates = await this.dependencies.candidates();
+      assertOwner();
+      const installed = candidates.filter(candidate =>
+        !candidate.bundled && !candidate.cleanupOnly && !candidate.retainedReceipt &&
+        candidate.nativePluginId === nativePluginId,
+      );
+      if (installed.length !== 1 || !samePath(installed[0].nativeRoot, nativeRoot) ||
+          !samePath(installed[0].root, appRoot))
+        throw identityMismatch();
+      const appStats = lstatSync(appRoot);
+      if (realpathSync(nativeRoot) !== nativeRoot || !lstatSync(nativeRoot).isDirectory() ||
+          !appStats.isDirectory() || appStats.isSymbolicLink() || realpathSync(appRoot) !== appRoot)
+        throw identityMismatch();
+      const identity = installed[0].identity && { ...installed[0].identity };
+      const artifact = await inspectAppArtifact(appRoot);
+      assertOwner();
+      if (artifact.root !== appRoot || artifact.artifact.manifest.id !== nativePluginId ||
+          artifact.artifact.manifest.nativePluginId !== nativePluginId ||
+          (identity && (!isOwnerReceipt(identity.id, identity.hash) ||
+            identity.id !== nativePluginId || identity.hash !== artifact.artifact.hash)) ||
+          (expectedHash !== undefined && artifact.artifact.hash !== expectedHash))
+        throw identityMismatch();
+      try { await readNativeBinding(artifact, nativeRoot, true); }
+      catch { throw identityMismatch(); }
+      assertOwner();
+      return artifact;
+    };
+    const artifact = await inspectInstalled();
+    if (!artifact) return;
+    const approveArtifact = this.dependencies.approveArtifact;
+    if (!approveArtifact) throw new Error(t('extensionAppCodeTrustUnavailable'));
+    await retainAppArtifact(artifact, this.dependencies.retentionRoot);
+    assertOwner();
+    if (!await inspectInstalled(artifact.artifact.hash)) throw identityMismatch();
+    await approveArtifact(nativePluginId, artifact.artifact.hash);
+    assertOwner();
+    if (!await inspectInstalled(artifact.artifact.hash)) throw identityMismatch();
+  }
   async mutate<T>(id: string, enabled: boolean, operation: () => Promise<T>): Promise<T> {
     const selected = this.selected.get(id);
     if (enabled && !selected) {
@@ -492,88 +576,174 @@ export class AppPluginManager {
       }),
     );
   }
+  /** Reserve Main before the extension queue; only App package changes retire its lifetimes. */
+  async withExtensionPackageMutation<T>(
+    operation: (apply: ApplyExtensionPackageMutation) => Promise<T>,
+  ): Promise<T> {
+    return this.serialMutation(() => this.sessions.withPackageMutation(async () => {
+      let active = true;
+      let used = false;
+      let pending: Promise<unknown> | undefined;
+      const assertReservation = () => {
+        this.assertAvailable();
+        if (!active) throw new Error(t('extensionInstallMutationUnavailable'));
+      };
+      const apply: ApplyExtensionPackageMutation = (target, write) => {
+        const result = (async () => {
+          assertReservation();
+          if (used) throw new Error(t('extensionInstallMutationUnavailable'));
+          used = true;
+          this.assertExtensionMutationTarget(target);
+          // Restore unresolved App inventory before choosing a new path. An
+          // ordinary package can stay hot on the repaired connection.
+          if (this.packageRepairPending) await this.repairPackageInventory();
+          assertReservation();
+          const stopped = await this.requiresStoppedExtensionMutation(target);
+          assertReservation();
+          return stopped
+            ? this.mutatePackageExclusive(() => write(ExtensionPackageLifecycleMode.STOPPED), assertReservation)
+            : write(ExtensionPackageLifecycleMode.HOT);
+        })();
+        pending ??= result;
+        // Retain ownership even if an internal caller accidentally detaches apply.
+        void result.catch((): void => undefined);
+        return result;
+      };
+      try {
+        return await operation(apply);
+      } finally {
+        active = false;
+        await pending?.catch((): void => undefined);
+      }
+    }));
+  }
+  private assertExtensionMutationTarget(target: ExtensionPackageMutationTarget): void {
+    if (!target || !Array.isArray(target.nativePluginIds) || !target.nativePluginIds.length ||
+        target.nativePluginIds.length > 4096 || target.nativePluginIds.some(id =>
+          typeof id !== 'string' || !id.trim() || id !== id.trim() || id.length > 512) ||
+        [target.installPath, target.sourceDirectory].some(directory =>
+          directory !== undefined && (typeof directory !== 'string' || !path.isAbsolute(directory))))
+      throw new Error(AppPluginError.Invalid);
+  }
+  private async requiresStoppedExtensionMutation(target: ExtensionPackageMutationTarget): Promise<boolean> {
+    const ids = new Set(target.nativePluginIds);
+    const installPath = target.installPath;
+    const matchesPath = (nativeRoot: string) =>
+      !!installPath && !!nativeRoot && samePackagePath(installPath, nativeRoot);
+    if ([target.sourceDirectory, installPath].some(directory =>
+      directory !== undefined && hasAppCompanionMarker(directory))) return true;
+    for (const [nativeId, selected] of this.selected) {
+      if (ids.has(nativeId) || ids.has(selected.artifact.artifact.manifest.id) ||
+          matchesPath(selected.nativeRoot)) return true;
+    }
+    if ([...this.registry.resourceOwners(), ...this.bootstrap.resourceOwners()]
+      .some(owner => ids.has(owner.ownerId)) ||
+        [...this.retained.values()].some(owner => ids.has(owner.id))) return true;
+    const candidates = await this.dependencies.candidates();
+    this.assertAvailable();
+    for (const candidate of candidates) {
+      if (!ids.has(candidate.nativePluginId ?? '') && !ids.has(candidate.identity?.id ?? '') &&
+          !ids.has(candidate.retainedReceipt?.id ?? '') && !matchesPath(candidate.nativeRoot)) continue;
+      if (candidate.identity || candidate.retainedReceipt || candidate.bundled ||
+          candidate.cleanupOnly || candidate.trusted ||
+          (candidate.nativeRoot && hasAppCompanionMarker(candidate.nativeRoot))) return true;
+    }
+    // Offline writes need the startup fence, even when no App companion is involved.
+    // An alive disconnected process stays on the hot path, whose native admission
+    // must fail before send rather than stopping a Gateway solely for reconnect.
+    return !this.dependencies.isGatewayConnected() && this.dependencies.getGatewayProcessId?.() == null;
+  }
   /** Package changes stop only Gateway; retained Main/UI companions are reconciled in this process. */
   async mutatePackage<T>(operation: () => Promise<T>): Promise<T> {
     return this.serialMutation(() =>
-      this.sessions.withPackageMutation(async () => {
-        if (this.packageRepairPending) await this.repairPackageInventory();
-        await this.registry.preparePackageMutation();
-        const ids = this.registry.snapshot().map(item => item.id);
-        const veto = new Error('appPluginCleanupUnresolved');
-        let rejectedBeforeMutation = false;
-        let entered = false;
-        const wasRunning = this.dependencies.isGatewayConnected() ||
-          this.dependencies.getGatewayProcessId?.() != null;
-        const guarded = async () => {
-          try {
-            await this.registry.preparePackageMutation();
-          } catch {
-            throw veto;
-          }
-          if (!this.dependencies.withStoppedGateway) throw veto;
-          return this.dependencies.withStoppedGateway(async () => {
-            this.assertAvailable();
-            entered = true;
-            this.packageMutation = true;
-            this.invalidate();
-            let outcome: { value: T } | { error: unknown };
-            try { outcome = { value: await operation() }; }
-            catch (error) { outcome = { error }; }
-            // The operation may have committed before returning an error. Read the
-            // actual inventory once; never retry an unknown package mutation.
-            try {
-              await this.reconcileStoppedPackages();
-            } catch (error) {
-              this.packageRepairPending = true;
-              this.registry.setPackageAdmissionBlocked(true);
-              throw error;
-            }
-            if ('error' in outcome) throw outcome.error;
-            return outcome.value;
-          });
-        };
-        const next = (index: number): Promise<T> =>
-          index === ids.length
-            ? guarded()
-            : this.registry.mutate(ids[index], false, () => next(index + 1), {
-                preflightVeto: veto,
-                packageMutation: true,
-              });
-        let outcome: { value: T } | { error: unknown };
-        try {
-          outcome = { value: await next(0) };
-        } catch (error) {
-          outcome = { error };
-          if (error === veto) {
-            rejectedBeforeMutation = true;
-            this.registry.restorePackageAdmissions(ids);
-            await this.refresh();
-          }
-        } finally {
-          this.packageMutation = false;
-          if (!rejectedBeforeMutation) this.invalidate();
-        }
-        if (!rejectedBeforeMutation && entered && wasRunning) {
-          // The stop lease has been released. Reconnect the existing application,
-          // then admit only the new registration's independently checked receipt.
-          try {
-            await this.dependencies.resources.ensureReady();
-            await this.refresh();
-          } catch (recoveryError) {
-            if (!('error' in outcome)) throw recoveryError;
-            // A pending recovery must not hide an earlier reconciliation failure.
-            throw new AggregateError(
-              [outcome.error, recoveryError],
-              [outcome.error, recoveryError]
-                .map(error => error instanceof Error ? error.message : AppPluginError.Unavailable)
-                .join('\n'),
-            );
-          }
-        }
-        if ('error' in outcome) throw outcome.error;
-        return outcome.value;
-      }),
+      this.sessions.withPackageMutation(() => this.mutatePackageExclusive(operation)),
     );
+  }
+  private async mutatePackageExclusive<T>(operation: () => Promise<T>, assertCurrent = () => this.assertAvailable()): Promise<T> {
+    assertCurrent();
+    if (this.packageRepairPending) await this.repairPackageInventory();
+    await this.registry.preparePackageMutation();
+    assertCurrent();
+    const ids = this.registry.snapshot().map(item => item.id);
+    const veto = new Error('appPluginCleanupUnresolved');
+    let rejectedBeforeMutation = false;
+    let entered = false;
+    const wasRunning = this.dependencies.isGatewayConnected() ||
+      this.dependencies.getGatewayProcessId?.() != null;
+    const guarded = async () => {
+      try {
+        await this.registry.preparePackageMutation();
+      } catch {
+        throw veto;
+      }
+      assertCurrent();
+      if (!this.dependencies.withStoppedGateway) throw veto;
+      return this.dependencies.withStoppedGateway(async () => {
+        assertCurrent();
+        entered = true;
+        this.packageMutation = true;
+        this.stoppedPackageMutation = {};
+        try {
+          this.invalidate();
+          let outcome: { value: T } | { error: unknown };
+          try { outcome = { value: await operation() }; }
+          catch (error) { outcome = { error }; }
+          // The operation may have committed before returning an error. Read the
+          // actual inventory once; never retry an unknown package mutation.
+          try {
+            await this.reconcileStoppedPackages();
+          } catch (error) {
+            this.packageRepairPending = true;
+            this.registry.setPackageAdmissionBlocked(true);
+            throw error;
+          }
+          if ('error' in outcome) throw outcome.error;
+          return outcome.value;
+        } finally {
+          this.stoppedPackageMutation = undefined;
+        }
+      });
+    };
+    const next = (index: number): Promise<T> =>
+      index === ids.length
+        ? guarded()
+        : this.registry.mutate(ids[index], false, () => next(index + 1), {
+            preflightVeto: veto,
+            packageMutation: true,
+          });
+    let outcome: { value: T } | { error: unknown };
+    try {
+      outcome = { value: await next(0) };
+    } catch (error) {
+      outcome = { error };
+      if (error === veto) {
+        rejectedBeforeMutation = true;
+        this.registry.restorePackageAdmissions(ids);
+        await this.refresh();
+      }
+    } finally {
+      this.packageMutation = false;
+      if (!rejectedBeforeMutation) this.invalidate();
+    }
+    if (!rejectedBeforeMutation && entered && wasRunning) {
+      // The stop lease has been released. Reconnect the existing application,
+      // then admit only the new registration's independently checked receipt.
+      try {
+        await this.dependencies.resources.ensureReady();
+        await this.refresh();
+      } catch (recoveryError) {
+        if (!('error' in outcome)) throw recoveryError;
+        // A pending recovery must not hide an earlier reconciliation failure.
+        throw new AggregateError(
+          [outcome.error, recoveryError],
+          [outcome.error, recoveryError]
+            .map(error => error instanceof Error ? error.message : AppPluginError.Unavailable)
+            .join('\n'),
+        );
+      }
+    }
+    if ('error' in outcome) throw outcome.error;
+    return outcome.value;
   }
   /** Retry only read/admission recovery, never the package operation with an unknown result. */
   private async repairPackageInventory(): Promise<void> {
@@ -835,6 +1005,29 @@ export class AppPluginManager {
     this.retained.forEach(item => item.registry?.dispose());
   }
 }
+
+const samePackagePath = (left: string, right: string): boolean => {
+  const normalize = (value: string) => process.platform === 'win32'
+    ? path.resolve(value).toLowerCase() : path.resolve(value);
+  return normalize(left) === normalize(right);
+};
+
+/** Presence, including an invalid marker, requires App lifecycle reconciliation. */
+const hasAppCompanionMarker = (nativeRoot: string): boolean => {
+  try {
+    if (lstatSync(nativeRoot).isSymbolicLink()) return true;
+    const appRoot = path.join(nativeRoot, 'app');
+    const appStats = lstatSync(appRoot);
+    if (appStats.isSymbolicLink()) return true;
+    if (!appStats.isDirectory()) return !appStats.isFile();
+    lstatSync(path.join(appRoot, APP_PLUGIN_ARTIFACT));
+    return true;
+  } catch (error) {
+    if (error && typeof error === 'object' && 'code' in error &&
+        (error.code === 'ENOENT' || error.code === 'ENOTDIR')) return false;
+    throw error;
+  }
+};
 
 /** Discovery is data-driven. An installed native owner shadows the shipped companion even if untrusted. */
 export const discoverAppCandidates = async (

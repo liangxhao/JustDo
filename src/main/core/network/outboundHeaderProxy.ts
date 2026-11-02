@@ -651,6 +651,10 @@ export class OutboundHeaderProxy {
   private upstreamProxyBypassEntries: readonly string[] = Object.freeze([]);
   private readonly authenticatedConnectCapabilities = new WeakMap<http.IncomingMessage, string>();
   private readonly authenticatedConnectSockets = new Set<Duplex>();
+  private readonly rawConnectTargets = new Map<
+    Duplex,
+    { authority: ConnectAuthority; protocol: 'http:' | 'https:' }
+  >();
   private readonly configuredPolicy: OutboundHeaderProxyConfig | null;
   private readonly resolveUpstreamProxy: (targetUrl: string) => Promise<string | null>;
   private readonly userInfoPath: string;
@@ -782,7 +786,10 @@ export class OutboundHeaderProxy {
       }
       this.authenticatedConnectCapabilities.set(request, capability);
       this.authenticatedConnectSockets.add(socket);
-      socket.once('close', () => this.authenticatedConnectSockets.delete(socket));
+      socket.once('close', () => {
+        this.authenticatedConnectSockets.delete(socket);
+        this.rawConnectTargets.delete(socket);
+      });
       const handleTunnelData = (data: Buffer): void => {
         socket.pause();
         const protocol = detectConnectProtocol(data);
@@ -791,6 +798,9 @@ export class OutboundHeaderProxy {
           proxyInternals._onHttpServerConnectData(request, socket, data);
           return;
         }
+        // A raw keep-alive tunnel cannot adopt later interception rules. Retain
+        // its actual routing decision until the connection closes naturally.
+        this.rawConnectTargets.set(socket, { authority, protocol });
         void this.resolveGatewayUpstreamProxy(
           `${protocol}//${authority.hostname}:${authority.port}/`,
         )
@@ -956,11 +966,16 @@ export class OutboundHeaderProxy {
   private destroyAuthenticatedConnectSockets(): void {
     for (const socket of this.authenticatedConnectSockets) socket.destroy();
     this.authenticatedConnectSockets.clear();
+    this.rawConnectTargets.clear();
   }
 
   /** The local first hop is stable; upstream preferences are resolved per request. */
   isGatewayEnvironmentReusable(env: Readonly<NodeJS.ProcessEnv>): boolean {
     if (!this.info || !this.capability || !this.activePolicy) return false;
+    const policy = this.getActiveRequestPolicy();
+    if (policy && [...this.rawConnectTargets].some(([socket, target]) =>
+      !socket.destroyed && isConnectInterceptionCandidate(target.authority, target.protocol, policy)))
+      return false;
     const proxyUrl = new URL(this.info.proxyUrl);
     proxyUrl.username = LOCAL_PROXY_USERNAME;
     proxyUrl.password = this.capability;

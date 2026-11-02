@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -10,9 +10,11 @@ import type { AppMainModule, AppResourceParticipant } from '../../../../plugins/
 import { appNativeGatewayMethodAlias, type AppNativeHandshake } from '../../../../plugins/sdk/app-plugin-sdk/native-contract';
 import { EnginePhase, type OpenClawEngineStatus } from '../../../shared/openclaw/engineStatus';
 import { PluginOperationStage } from '../../../shared/plugins/pluginOperation';
+import { t } from '../../core/i18n';
 import { EnginePreparationPendingCode, EnginePreparationPendingError } from '../../engine/enginePreparationError';
 import { bindPluginGatewayClient } from '../../engine/gateway/pluginRequestBinding';
 import { removeExtensionPackage } from '../extensions/extensionMutation';
+import { type ApplyExtensionPackageMutation, ExtensionPackageLifecycleMode } from '../extensions/extensionPackageLifecycle';
 import { artifactDigest } from './artifact';
 import { readAppAsset } from './assets';
 import { type AppCandidate, AppPluginManager } from './manager';
@@ -29,6 +31,7 @@ async function fixture(options: {
   resources?: AppResourceParticipant;
   ensureReady?(): Promise<void>;
   stopGateway?(): Promise<void>;
+  cleanupOnly?: boolean;
 } = {}) {
   const root = await mkdtemp(path.join(tmpdir(), 'app-manager-lifecycle-'));
   disposers.push(() => rm(root, { recursive: true, force: true }));
@@ -57,10 +60,11 @@ async function fixture(options: {
         nativeEntry: path.join(nativeRoot, 'index.js'), sourceSha256: sha(native) } as AppNativeHandshake };
   }
   let current = await version('1.0.0');
+  if (options.cleanupOnly) current.candidate.cleanupOnly = true;
   let candidates = [current.candidate];
   let enabled = true;
   let connected = true;
-  let processId = 100;
+  let processId: number | null = 100;
   let generation = 1;
   let resumes = 0;
   let stops = 0;
@@ -85,7 +89,7 @@ async function fixture(options: {
         const receipt = { ...current.receipt }; await pendingRead; return receipt;
       },
       ensureReady: async () => {
-        resumes++; processId++; generation++; connected = true;
+        resumes++; processId = (processId ?? 100) + 1; generation++; connected = true;
         current.receipt = { ...current.receipt, processId, registrationId: randomUUID() };
         await options.ensureReady?.();
       },
@@ -125,7 +129,7 @@ async function fixture(options: {
   disposers.push(() => manager.dispose());
   await manager.prepare(); await manager.activate(); await manager.refresh();
   const read = (epoch = manager.snapshot()[0].epoch) => manager.invoke({ id, command: 'read', epoch, args: [] });
-  return { manager, read, version,
+  return { manager, read, version, root,
     native: (epoch = manager.snapshot()[0].epoch) => manager.invoke({ id, command: 'native', epoch, args: [] }),
     nativeRequests,
     receipt: () => current.receipt,
@@ -133,12 +137,14 @@ async function fixture(options: {
       current.receipt = { ...current.receipt, gatewayMethods: value as AppNativeHandshake['gatewayMethods'] };
     },
     replace: (next: typeof current) => { current = next; candidates = [next.candidate]; },
+    setCandidates: (next: AppCandidate[]) => { candidates = next; },
     enabled: (value: boolean) => { enabled = value; },
     wrongProcess: () => { current.receipt.processId++; },
     delayRead: (task: Promise<void> | undefined) => { pendingRead = task; },
     supersede: () => { generation++; },
     uncertainStop: () => { stopConfirmed = false; },
     disconnect: () => { connected = false; },
+    offline: () => { connected = false; processId = null; },
     failCatalog: (value: boolean) => { catalogFailure = value; },
     nativeReady: (value: boolean) => { nativeReady = value; },
     counts: () => ({ resumes, stops }),
@@ -158,6 +164,220 @@ test('adopts a replacement Main/UI artifact after Gateway stop without restartin
   expect(f.manager.snapshot()[0].restartRequired).not.toBe(true);
   expect(await f.read()).toEqual({ success: true, value: '2.0.0' });
   expect(await f.read(old.epoch)).toMatchObject({ success: false });
+});
+
+test('ordinary package changes keep the Gateway, App epoch and assets active', async () => {
+  const f = await fixture();
+  const original = f.manager.snapshot()[0];
+  const write = vi.fn(async mode => {
+    expect(mode).toBe(ExtensionPackageLifecycleMode.HOT);
+    expect(f.manager.snapshot()[0]).toEqual(original);
+    expect(await f.read()).toEqual({ success: true, value: '1.0.0' });
+    return 'installed';
+  });
+
+  const result = await f.manager.withExtensionPackageMutation(apply => apply({
+    nativePluginIds: ['ordinary-package', 'ordinary-package/child'],
+    installPath: path.join(f.root, 'ordinary'),
+  }, write));
+
+  expect(result).toBe('installed');
+  expect(write).toHaveBeenCalledOnce();
+  expect(f.counts()).toEqual({ stops: 0, resumes: 0 });
+  expect(f.manager.snapshot()[0]).toEqual(original);
+  expect(await readAppAsset(original.presentationEntry!.slice(1))).not.toBeNull();
+});
+
+test('a disconnected but still owned Gateway is left for hot admission to reject before send', async () => {
+  const f = await fixture();
+  f.disconnect();
+  const write = vi.fn(async mode => {
+    expect(mode).toBe(ExtensionPackageLifecycleMode.HOT);
+    throw new Error('connected native client is unavailable before send');
+  });
+
+  await expect(f.manager.withExtensionPackageMutation(apply => apply({
+    nativePluginIds: ['ordinary-package'],
+  }, write))).rejects.toThrow('before send');
+
+  expect(f.counts()).toEqual({ stops: 0, resumes: 0 });
+  expect(write).toHaveBeenCalledOnce();
+});
+
+test('offline ordinary package changes retain the startup fence without starting Gateway', async () => {
+  const f = await fixture();
+  f.offline();
+  const write = vi.fn(async mode => mode);
+
+  const mode = await f.manager.withExtensionPackageMutation(apply => apply({
+    nativePluginIds: ['ordinary-package'],
+  }, write));
+
+  expect(mode).toBe(ExtensionPackageLifecycleMode.STOPPED);
+  expect(f.counts()).toEqual({ stops: 1, resumes: 0 });
+});
+
+test.each(['malformed', 'directory', 'broken symlink'] as const)(
+  'incoming %s App artifact markers use stopped reconciliation', async kind => {
+    const f = await fixture();
+    const sourceDirectory = path.join(f.root, 'incoming');
+    const appRoot = path.join(sourceDirectory, 'app');
+    await mkdir(appRoot, { recursive: true });
+    const marker = path.join(appRoot, 'app.artifact.json');
+    if (kind === 'malformed') await writeFile(marker, '{');
+    else if (kind === 'directory') await mkdir(marker);
+    else await symlink(path.join(f.root, 'missing-marker'), marker,
+      process.platform === 'win32' ? 'junction' : 'file');
+
+    const mode = await f.manager.withExtensionPackageMutation(apply => apply({
+      nativePluginIds: ['new-app-package'], sourceDirectory,
+    }, async mode => mode));
+
+    expect(mode).toBe(ExtensionPackageLifecycleMode.STOPPED);
+    expect(f.counts()).toEqual({ stops: 1, resumes: 1 });
+  },
+);
+
+test.each(['file', 'directory'] as const)('an ordinary app resource %s does not require a restart', async kind => {
+  const f = await fixture();
+  const sourceDirectory = path.join(f.root, 'ordinary');
+  await mkdir(sourceDirectory);
+  const appRoot = path.join(sourceDirectory, 'app');
+  if (kind === 'file') await writeFile(appRoot, 'ordinary resource');
+  else {
+    await mkdir(appRoot);
+    await writeFile(path.join(appRoot, 'index.html'), '<p>ordinary resource</p>');
+  }
+
+  const mode = await f.manager.withExtensionPackageMutation(apply => apply({
+    nativePluginIds: ['ordinary-package'], sourceDirectory,
+  }, async mode => mode));
+
+  expect(mode).toBe(ExtensionPackageLifecycleMode.HOT);
+  expect(f.counts()).toEqual({ stops: 0, resumes: 0 });
+});
+
+test('plain package replacement still cleans the selected App owner when its marker is missing', async () => {
+  const f = await fixture();
+  const nativeRoot = path.join(f.root, '1.0.0');
+  await rm(path.join(nativeRoot, 'app'), { recursive: true });
+
+  const mode = await f.manager.withExtensionPackageMutation(apply => apply({
+    nativePluginIds: ['replacement-child'], installPath: nativeRoot,
+  }, async mode => {
+    f.setCandidates([]);
+    return mode;
+  }));
+
+  expect(mode).toBe(ExtensionPackageLifecycleMode.STOPPED);
+  expect(f.counts()).toEqual({ stops: 1, resumes: 1 });
+  expect(f.manager.snapshot()).toEqual([]);
+});
+
+test('a selected cleanup-only App owner still requires stopped package mutation', async () => {
+  const f = await fixture({ cleanupOnly: true });
+  expect(f.manager.isAppCompanion(id)).toBe(false);
+
+  const mode = await f.manager.withExtensionPackageMutation(apply => apply({
+    nativePluginIds: [id],
+  }, async mode => mode));
+
+  expect(mode).toBe(ExtensionPackageLifecycleMode.STOPPED);
+  expect(f.counts()).toEqual({ stops: 1, resumes: 1 });
+});
+
+test.each(['unapproved', 'bundled', 'retained'] as const)(
+  '%s App identities survive missing package markers in routing', async kind => {
+    const f = await fixture();
+    const hash = 'a'.repeat(64);
+    f.setCandidates([{
+      root: path.join(f.root, 'missing-app'), nativeRoot: path.join(f.root, 'missing-native'),
+      nativePluginId: 'historical-app', trusted: false,
+      identity: { id: 'historical-app', hash },
+      ...(kind === 'bundled' ? { bundled: true } : {}),
+      ...(kind === 'retained' ? { cleanupOnly: true, retainedReceipt: { id: 'historical-app', hash } } : {}),
+    }]);
+
+    const mode = await f.manager.withExtensionPackageMutation(apply => apply({
+      nativePluginIds: ['package-child', 'historical-app'],
+    }, async mode => mode));
+
+    expect(mode).toBe(ExtensionPackageLifecycleMode.STOPPED);
+    expect(f.counts()).toEqual({ stops: 1, resumes: 1 });
+  },
+);
+
+test('unreadable App inventory rejects ordinary admission before stopping or writing', async () => {
+  const f = await fixture();
+  f.failCatalog(true);
+  const write = vi.fn(async () => 'installed');
+
+  await expect(f.manager.withExtensionPackageMutation(apply => apply({
+    nativePluginIds: ['ordinary-package'],
+  }, write))).rejects.toThrow('temporary catalog failure');
+
+  expect(write).not.toHaveBeenCalled();
+  expect(f.counts()).toEqual({ stops: 0, resumes: 0 });
+});
+
+test('package reservations reject reused and stale apply callbacks without borrowing a later owner', async () => {
+  const f = await fixture();
+  const target = { nativePluginIds: ['ordinary-package'] };
+  const write = vi.fn(async () => 'installed');
+  let stale!: ApplyExtensionPackageMutation;
+  await f.manager.withExtensionPackageMutation(async apply => {
+    stale = apply;
+    expect(await apply(target, write)).toBe('installed');
+    await expect(apply(target, write)).rejects.toThrow(t('extensionInstallMutationUnavailable'));
+  });
+
+  await f.manager.withExtensionPackageMutation(async apply => {
+    await expect(stale(target, write)).rejects.toThrow(t('extensionInstallMutationUnavailable'));
+    expect(await apply(target, write)).toBe('installed');
+  });
+
+  expect(write).toHaveBeenCalledTimes(2);
+  expect(f.counts()).toEqual({ stops: 0, resumes: 0 });
+});
+
+test('an invalid package target cannot enter Native mutation or cold lifecycle', async () => {
+  const f = await fixture();
+  const write = vi.fn(async () => 'installed');
+
+  await expect(f.manager.withExtensionPackageMutation(apply => apply({
+    nativePluginIds: [],
+  }, write))).rejects.toThrow('appPluginInvalidRequest');
+
+  expect(write).not.toHaveBeenCalled();
+  expect(f.counts()).toEqual({ stops: 0, resumes: 0 });
+});
+
+test('the outer package reservation orders toggles and fences deletion throughout preparation', async () => {
+  const f = await fixture();
+  let finish!: () => void;
+  const gate = new Promise<void>(resolve => { finish = resolve; });
+  let started!: () => void;
+  const entered = new Promise<void>(resolve => { started = resolve; });
+  const order: string[] = [];
+  const installing = f.manager.withExtensionPackageMutation(async apply => {
+    order.push('prepare'); started(); await gate;
+    return apply({ nativePluginIds: ['ordinary-package'] }, async () => { order.push('write'); });
+  });
+  await entered;
+  const toggling = f.manager.mutate('ordinary-package', false, async () => { order.push('toggle'); });
+  try {
+    expect(() => f.manager.sessions.acquireDeletion(['ordinary-session']))
+      .toThrow('appPluginCleanupUnresolved');
+    expect(order).toEqual(['prepare']);
+  } finally {
+    finish();
+    await installing;
+    await toggling;
+  }
+
+  expect(order).toEqual(['prepare', 'write', 'toggle']);
+  const release = f.manager.sessions.acquireDeletion(['ordinary-session']);
+  release();
 });
 
 test('preserves a completed removal and its actual returned preparation failure before refreshing the host catalog', async () => {
@@ -356,6 +576,28 @@ test('repairs transient inventory failure in the same application without replay
   expect(f.manager.snapshot()[0].state).toBe('active');
   expect(f.manager.snapshot()[0].presentationEntry).toBe(display);
   expect(await readAppAsset(display.slice(1))).not.toBeNull();
+});
+
+test('repairs pending App inventory before a routed ordinary mutation without a second restart', async () => {
+  const f = await fixture();
+  const firstWrite = vi.fn(async () => { f.failCatalog(true); });
+  await expect(f.manager.mutatePackage(firstWrite)).rejects.toThrow('temporary catalog failure');
+  expect(f.manager.snapshot()[0].state).toBe('cleanup');
+  f.failCatalog(false);
+  const nextWrite = vi.fn(async mode => {
+    expect(mode).toBe(ExtensionPackageLifecycleMode.HOT);
+    expect(f.manager.snapshot()[0].state).toBe('active');
+    return 'installed';
+  });
+
+  await expect(f.manager.withExtensionPackageMutation(apply => apply({
+    nativePluginIds: ['ordinary-package'],
+  }, nextWrite))).resolves.toBe('installed');
+
+  expect(firstWrite).toHaveBeenCalledOnce();
+  expect(nextWrite).toHaveBeenCalledOnce();
+  expect(f.counts()).toEqual({ stops: 2, resumes: 2 });
+  expect(await f.read()).toEqual({ success: true, value: '1.0.0' });
 });
 
 test('retains a package reconciliation error when engine recovery is also pending after native removal', async () => {

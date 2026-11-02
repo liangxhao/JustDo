@@ -305,11 +305,17 @@ export class OpenClawConfigSyncService {
     return this.enqueueSyncOperation(() => this.restartGatewayAfterExclusiveMutation(reason));
   }
 
-  async restartGatewayAfterExclusiveMutation(reason: string): Promise<OpenClawEngineStatus> {
+  async restartGatewayAfterExclusiveMutation(
+    reason: string,
+    options?: { networkPolicyChanged?: true },
+  ): Promise<OpenClawEngineStatus> {
     const engineManager = this.deps.getOpenClawEngineManager();
-    if (reason.startsWith('extension-') && reason !== 'extension-network-policy-change') {
+    const restartReason = options?.networkPolicyChanged &&
+      !engineManager.canReuseGatewayNetworkEnvironment()
+      ? 'extension-network-policy-change' : reason;
+    if (restartReason.startsWith('extension-') && restartReason !== 'extension-network-policy-change') {
       const nativeRestart = await requestGatewayConfigRestart(
-        engineManager, this.deps.requestGateway, reason,
+        engineManager, this.deps.requestGateway, restartReason,
       );
       if (nativeRestart === GatewayConfigRestartOutcome.Ready) {
         const restored = await this.restoreGatewayBridgeOrFailClosed({
@@ -328,7 +334,7 @@ export class OpenClawConfigSyncService {
         throw new Error(t('engineRestartUnconfirmed'));
       }
     }
-    const result = await this.restartGatewayOrDefer(reason, true, true);
+    const result = await this.restartGatewayOrDefer(restartReason, true, true);
     return result.status ?? this.deps.getOpenClawEngineManager().getStatus();
   }
 
@@ -1660,8 +1666,11 @@ export class OpenClawConfigSyncService {
         status,
       };
     }
-    if (reason === 'proxy-change' && engineManager.canReuseGatewayNetworkEnvironment()) {
-      console.log('[OpenClaw] Proxy preference applied through the existing local network route.');
+    if (
+      (reason === 'proxy-change' || reason === 'extension-network-policy-change') &&
+      engineManager.canReuseGatewayNetworkEnvironment()
+    ) {
+      console.log('[OpenClaw] Network policy applied through the existing local network route.');
       return { success: true, changed, configSynced: true, status };
     }
     const targetProcessGeneration = engineManager.getGatewayProcessGeneration();

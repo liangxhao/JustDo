@@ -234,10 +234,8 @@ describe('OpenClawExtensionImportService', () => {
       Object.assign(new Error(reason), { code: 'CLIENT_CLOSED', requestSent: true }),
     );
     const recoveryReason = 'Outbound header policy recovery failed';
-    let policyReads = 0;
     const reconcile = vi.fn(() => {
-      policyReads += 1;
-      if (recoveryFails && policyReads === 4) throw new Error(recoveryReason);
+      if (recoveryFails && requestGateway.mock.calls.length > 0) throw new Error(recoveryReason);
       return { overwrite: false, enabled: false, groups: [], digest: 'unchanged' };
     });
     const restartGatewayAfterMutation = vi.fn();
@@ -282,7 +280,9 @@ describe('OpenClawExtensionImportService', () => {
       expect(result.error).toBe(reason);
     }
     expect(result.installSourceInUse).toBeUndefined();
-    expect(reconcile).toHaveBeenCalledTimes(4);
+    expect(reconcile.mock.invocationCallOrder.at(-1)).toBeGreaterThan(
+      requestGateway.mock.invocationCallOrder[0],
+    );
     expect(runCommand).toHaveBeenCalledOnce();
     expect(requestGateway).toHaveBeenCalledOnce();
     expect(requestGateway).toHaveBeenCalledWith('plugins.setEnabled', {
@@ -1686,6 +1686,7 @@ describe('OpenClawExtensionImportService', () => {
     );
     const manager = {
       getStateDir: vi.fn(() => stateDir),
+      getConfigPath: vi.fn(() => path.join(stateDir, 'openclaw.json')),
       getStatus: vi.fn(() => ({ phase: 'running' })),
     } as unknown as OpenClawEngineManager;
     const requestGateway = vi

@@ -2267,14 +2267,62 @@ describe('OpenClawConfigSyncService', () => {
     expect(harness.requestGateway).not.toHaveBeenCalledWith('gateway.restart.request', expect.anything());
   });
 
-  it.each(['running', 'starting'] as const)('hot-applies proxy preferences through an existing local route in %s', async phase => {
-    const harness = createHarness({ phase, reusableNetworkEnvironment: true });
-    await harness.service.restartGatewayAfterExclusiveMutation('proxy-change');
+  it.each(['proxy-change', 'extension-network-policy-change'])(
+    'hot-applies %s through an existing local route',
+    async reason => {
+      const harness = createHarness({ reusableNetworkEnvironment: true });
+      await harness.service.restartGatewayAfterExclusiveMutation(reason);
+      expect(harness.engineManager.restartGateway).not.toHaveBeenCalled();
+      expect(harness.disconnectGatewayClient).not.toHaveBeenCalled();
+      expect(harness.requestGateway).not.toHaveBeenCalled();
+      expect(harness.startGateway).not.toHaveBeenCalled();
+    },
+  );
+
+  it('waits for an existing start before reusing its local network route', async () => {
+    const harness = createHarness({ phase: 'starting', reusableNetworkEnvironment: true });
+    await harness.service.restartGatewayAfterExclusiveMutation('extension-network-policy-change');
     expect(harness.engineManager.restartGateway).not.toHaveBeenCalled();
     expect(harness.disconnectGatewayClient).not.toHaveBeenCalled();
     expect(harness.requestGateway).not.toHaveBeenCalled();
-    expect(harness.startGateway).toHaveBeenCalledTimes(phase === 'starting' ? 1 : 0);
+    expect(harness.startGateway).toHaveBeenCalledOnce();
   });
+
+  it('preserves an explicit native plugin restart when the local network route is reusable', async () => {
+    const harness = createHarness({
+      nativeRestartStatus: 'scheduled',
+      reusableNetworkEnvironment: true,
+    });
+    await harness.service.restartGatewayAfterExclusiveMutation('extension-delete');
+    expect(harness.requestGateway).toHaveBeenCalledWith('gateway.restart.request', expect.anything());
+    expect(harness.connectGatewayClient).toHaveBeenCalledOnce();
+    expect(harness.engineManager.canReuseGatewayNetworkEnvironment).not.toHaveBeenCalled();
+  });
+
+  it.each([true, false])(
+    'applies native and network changes in one restart (existing route reusable: %s)',
+    async reusableNetworkEnvironment => {
+      const harness = createHarness({
+        nativeRestartStatus: 'scheduled',
+        reusableNetworkEnvironment,
+      });
+
+      await harness.service.restartGatewayAfterExclusiveMutation('extension-delete', {
+        networkPolicyChanged: true,
+      });
+
+      if (reusableNetworkEnvironment) {
+        expect(harness.requestGateway).toHaveBeenCalledWith('gateway.restart.request', expect.anything());
+        expect(harness.engineManager.restartGateway).not.toHaveBeenCalled();
+        expect(harness.stopGateway).not.toHaveBeenCalled();
+      } else {
+        expect(harness.requestGateway).not.toHaveBeenCalledWith('gateway.restart.request', expect.anything());
+        expect(harness.engineManager.restartGateway).toHaveBeenCalledOnce();
+        expect(harness.stopGateway).toHaveBeenCalledOnce();
+        expect(harness.startGateway).toHaveBeenCalledOnce();
+      }
+    },
+  );
 
   it.each(['config', 'extension'])('does not repeat a %s restart with an unknown request outcome', async kind => {
     const harness = createHarness({ waitForReload: false, nativeRestartError: new Error('request timed out') });
@@ -2291,7 +2339,7 @@ describe('OpenClawConfigSyncService', () => {
     expect(harness.requestGateway).not.toHaveBeenCalledWith('gateway.suspend.prepare', expect.anything());
   });
 
-  it('keeps extension network policy changes on the cold restart path', async () => {
+  it('cold-restarts extension network policy changes when the child environment cannot be reused', async () => {
     const harness = createHarness({ nativeRestartStatus: 'scheduled' });
     await harness.service.restartGatewayAfterExclusiveMutation('extension-network-policy-change');
     expect(harness.engineManager.restartGateway).toHaveBeenCalledOnce();

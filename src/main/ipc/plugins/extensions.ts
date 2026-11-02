@@ -18,6 +18,7 @@ import {
   PluginOperationStage,
   toPluginOperationStage,
 } from '../../../shared/plugins/pluginOperation';
+import { t } from '../../core/i18n';
 import { enqueueAppConfigUpdate } from '../../data/appConfigUpdateQueue';
 import type { OpenClawExtensionImportService } from '../../plugins/extensions';
 import {
@@ -25,7 +26,13 @@ import {
   removeExtensionPackage,
   setExtensionEnabled,
 } from '../../plugins/extensions/extensionMutation';
+import {
+  type ApplyExtensionPackageMutation,
+  ExtensionPackageLifecycleMode,
+  type WithExtensionPackageMutation,
+} from '../../plugins/extensions/extensionPackageLifecycle';
 import { type PluginInstallationService, PluginInstallOrigin } from '../../plugins/installation';
+import { sanitizeInstallationFailureReason } from '../../plugins/installation/installationFailureReason';
 import {
   createPluginOperationReporter,
   type PluginOperationReporter,
@@ -38,6 +45,11 @@ type ExtensionHandlerDependencies = {
   onMarketplacePluginDeleted?: (kind: typeof PluginKind.EXTENSION, runtimeId: string) => void;
   mutateAppPlugin?: <T>(id: string, enabled: boolean, operation: () => Promise<T>) => Promise<T>;
   mutateAppPackage?: <T>(operation: () => Promise<T>) => Promise<T>;
+  withExtensionPackageMutation?: WithExtensionPackageMutation;
+  approveInstalledAppPackage?: (input: {
+    nativePluginId: string;
+    installPath: string;
+  }) => Promise<void>;
 };
 
 export const registerExtensionHandlers = ({
@@ -46,6 +58,8 @@ export const registerExtensionHandlers = ({
   onMarketplacePluginDeleted,
   mutateAppPlugin,
   mutateAppPackage,
+  withExtensionPackageMutation,
+  approveInstalledAppPackage,
 }: ExtensionHandlerDependencies): void => {
   // Mutations can persist before reporting a restart error. Publish observed state,
   // including installs/removals, and keep catalog notifications in completion order.
@@ -83,7 +97,58 @@ export const registerExtensionHandlers = ({
         return { success: false, error: 'Invalid extension installation payload' };
       }
       const payload = request.payload;
-      const install = () =>
+      const approveInstalled = async (
+        result: Awaited<ReturnType<OpenClawExtensionImportService['importPath']>>,
+        mode: ExtensionPackageLifecycleMode,
+      ): Promise<Awaited<ReturnType<OpenClawExtensionImportService['importPath']>>> => {
+        if (
+          mode === ExtensionPackageLifecycleMode.HOT ||
+          !approveInstalledAppPackage ||
+          !result.success || result.error || result.failedStage || result.operationFailedStage ||
+          result.operationUnconfirmed || result.installSourceInUse || result.capabilityReview ||
+          result.refreshWarning || result.runtimeRecoveryPending
+        ) return result;
+        if (
+          !result.extensionId?.trim() ||
+          !result.installPath?.trim()
+        ) {
+          return {
+            ...result,
+            success: false,
+            installationCommitted: true as const,
+            failedStage: PluginOperationStage.CONFIRMING,
+            operationFailedStage: PluginOperationStage.CONFIRMING,
+            error: t('extensionPackageOwnershipUnconfirmed'),
+          };
+        }
+        request.onProgress?.({ stage: PluginOperationStage.VALIDATING, percent: 0 });
+        try {
+          // Bind app-code trust to this committed package before the existing
+          // stopped-Gateway owner reconciles artifacts and reconnects once.
+          await approveInstalledAppPackage({
+            nativePluginId: result.extensionId,
+            installPath: result.installPath,
+          });
+          request.onProgress?.({ stage: PluginOperationStage.PREPARING_RUNTIME, percent: 0 });
+          return result;
+        } catch (error) {
+          const reason = sanitizeInstallationFailureReason(
+            error instanceof Error ? error.message : error,
+            [payload.sourcePath, result.installPath],
+          ) ?? t('extensionFollowupFailureReasonUnavailable');
+          // Return the committed receipt even when its app artifact is invalid;
+          // throwing would lose it in the package-recovery observer.
+          return {
+            ...result,
+            success: false,
+            installationCommitted: true as const,
+            failedStage: PluginOperationStage.VALIDATING,
+            operationFailedStage: PluginOperationStage.VALIDATING,
+            error: `${t('extensionAppCodeApprovalFailed')}\n${reason}`,
+          };
+        }
+      };
+      const importPackage = (applyPackageMutation?: ApplyExtensionPackageMutation) =>
         extensionImportService.importPath(
           payload.sourcePath,
           request.onProgress,
@@ -95,9 +160,15 @@ export const registerExtensionHandlers = ({
             ...(request.onProgress
               ? { onOperationProgress: (stage: PluginOperationStage) => request.onProgress?.({ stage, percent: 0 }) }
               : {}),
+            ...(applyPackageMutation
+              ? { applyPackageMutation, onInstalled: approveInstalled } : {}),
           },
         );
-      const result = await installExtensionPackage(install, mutateAppPackage);
+      const result = withExtensionPackageMutation
+        ? await withExtensionPackageMutation(importPackage)
+        : await installExtensionPackage(async () => approveInstalled(
+          await importPackage(), ExtensionPackageLifecycleMode.STOPPED,
+        ), mutateAppPackage);
       if (
         (result.success || result.installationCommitted) &&
         result.extensionId &&
@@ -249,8 +320,12 @@ export const registerExtensionHandlers = ({
         let result;
         let refreshWarning = false;
         try {
-          const remove = () => extensionImportService.delete(extensionId, progress.report);
-          result = await removeExtensionPackage(remove, mutateAppPackage);
+          const reportProgress = progress.report;
+          result = withExtensionPackageMutation
+            ? await withExtensionPackageMutation(apply =>
+              extensionImportService.delete(extensionId, reportProgress, apply))
+            : await removeExtensionPackage(
+              () => extensionImportService.delete(extensionId, reportProgress), mutateAppPackage);
           progress.result(result);
         } catch (error) {
           progress.captureFailure();

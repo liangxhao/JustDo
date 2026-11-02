@@ -16,6 +16,7 @@ import {
   mainProcessTitleFetch,
 } from './mainProcessFetch';
 import {
+  activateOutboundHeaderPolicyConfig,
   getOutboundHeaderPolicyConfig,
   getOutboundHeaderUserInfo,
   loadOutboundHeaderPolicyAndUserInfoCache,
@@ -1104,6 +1105,118 @@ test('switches upstream routes for new requests without replacing the Gateway en
       server.closeAllConnections();
       server.close(() => resolve());
     })));
+  }
+});
+
+test('requires coordinated recovery when a live raw CONNECT tunnel newly needs interception', async () => {
+  const sockets = new Set<net.Socket>();
+  const forwardedHeaders: http.IncomingHttpHeaders[] = [];
+  const interceptedReuse: boolean[] = [];
+  let reuseWhileServing: (() => boolean) | undefined;
+  const rawRequests: string[] = [];
+  const upstream = http.createServer((request, response) => {
+    forwardedHeaders.push(request.headers);
+    interceptedReuse.push(reuseWhileServing?.() === true);
+    response.writeHead(200, { 'Content-Length': 7 });
+    response.end('fixture');
+  });
+  const coveredHost = 'intercepted.runtime.invalid:8183';
+  upstream.on('connection', socket => {
+    sockets.add(socket);
+    socket.once('close', () => sockets.delete(socket));
+  });
+  upstream.on('connect', (_request, socket, head) => {
+    socket.once('end', () => socket.end());
+    socket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
+    let pending = '';
+    const receive = (data: Buffer) => {
+      pending += data.toString();
+      let end: number;
+      while ((end = pending.indexOf('\r\n\r\n')) >= 0) {
+        rawRequests.push(pending.slice(0, end));
+        pending = pending.slice(end + 4);
+        socket.write('HTTP/1.1 200 OK\r\nContent-Length: 7\r\nConnection: keep-alive\r\n\r\nfixture');
+      }
+    };
+    socket.on('data', receive);
+    if (head.length) receive(head);
+  });
+  await new Promise<void>(resolve => upstream.listen(0, '127.0.0.1', resolve));
+  const address = upstream.address();
+  if (!address || typeof address === 'string') throw new Error('Fixture proxy did not start');
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'outbound-policy-tunnels-'));
+  temporaryDirectories.push(directory);
+  const userInfoPath = path.join(directory, 'user_info.json');
+  fs.writeFileSync(userInfoPath, JSON.stringify({
+    [HEADER_NAMES.USER_ACCOUNT]: 'fixture-account', [HEADER_NAMES.COOKIE]: 'fixture-cookie',
+  }));
+  const previousPolicy = getOutboundHeaderPolicyConfig();
+  const covered = { baseUrlWhitelist: [`http://${coveredHost}/`], headerNames: [HEADER_NAMES.USER_ACCOUNT] };
+  const publish = (groups: { baseUrlWhitelist: string[]; headerNames: string[] }[]) =>
+    activateOutboundHeaderPolicyConfig({ enabled: true, groups }, userInfoPath);
+  publish([covered]);
+  const outboundProxy = new OutboundHeaderProxy(undefined,
+    async () => `http://127.0.0.1:${address.port}`,
+    userInfoPath, path.join(directory, 'ca'));
+  const clients: net.Socket[] = [];
+  const request = (socket: net.Socket, host: string): Promise<void> => new Promise((resolve, reject) => {
+    let response = '';
+    const timeout = setTimeout(() => fail(new Error(`Fixture request timed out: ${host}; ${response}`)), 1000);
+    const cleanup = () => {
+      clearTimeout(timeout);
+      socket.off('data', receive);
+      socket.off('error', fail);
+    };
+    const fail = (error: Error) => { cleanup(); reject(error); };
+    const receive = (data: Buffer) => {
+      response += data.toString();
+      const end = response.indexOf('\r\n\r\n');
+      if (end < 0 || response.length < end + 4 + 7) return;
+      cleanup();
+      if (response.startsWith('HTTP/1.1 200')) resolve();
+      else reject(new Error(`Fixture tunnel request failed: ${response}`));
+    };
+    socket.on('data', receive);
+    socket.once('error', fail);
+    socket.write(`GET /probe HTTP/1.1\r\nHost: ${host}\r\nConnection: keep-alive\r\n\r\n`);
+  });
+  try {
+    await outboundProxy.start();
+    const env = outboundProxy.buildGatewayEnvironment({});
+    reuseWhileServing = () => outboundProxy.isGatewayEnvironmentReusable(env);
+    const proxyUrl = new URL(env.HTTP_PROXY!);
+    const authorization = `Basic ${Buffer.from(`${decodeURIComponent(proxyUrl.username)}:${decodeURIComponent(proxyUrl.password)}`).toString('base64')}`;
+    proxyUrl.username = ''; proxyUrl.password = '';
+    const raw = await openAuthenticatedTunnel(proxyUrl, 'raw.runtime.invalid', 8182, authorization);
+    clients.push(raw);
+    await request(raw, 'raw.runtime.invalid:8182');
+    expect(outboundProxy.isGatewayEnvironmentReusable(env)).toBe(true);
+    publish([covered, { baseUrlWhitelist: ['http://unrelated.runtime.invalid/'], headerNames: [HEADER_NAMES.COOKIE] }]);
+    expect(outboundProxy.isGatewayEnvironmentReusable(env)).toBe(true);
+    expect(await requestHttpThroughConnectProxy(proxyUrl, 'intercepted.runtime.invalid', 8183,
+      authorization)).toBe(200);
+    expect(forwardedHeaders.at(-1)?.[HEADER_NAMES.USER_ACCOUNT.toLowerCase()]).toBe('fixture-account');
+    const updated = { ...covered, headerNames: [HEADER_NAMES.COOKIE] };
+    publish([updated]);
+    expect(outboundProxy.isGatewayEnvironmentReusable(env)).toBe(true);
+    expect(await requestHttpThroughConnectProxy(proxyUrl, 'intercepted.runtime.invalid', 8183,
+      authorization)).toBe(200);
+    expect(forwardedHeaders.at(-1)?.[HEADER_NAMES.COOKIE.toLowerCase()]).toBe('fixture-cookie');
+    expect(interceptedReuse).toEqual([true, true]);
+    publish([updated, { baseUrlWhitelist: ['http://raw.runtime.invalid:8182/'], headerNames: [HEADER_NAMES.COOKIE] }]);
+    expect(outboundProxy.isGatewayEnvironmentReusable(env)).toBe(false);
+    expect(raw.destroyed).toBe(false);
+    await request(raw, 'raw.runtime.invalid:8182');
+    expect(rawRequests).toHaveLength(2);
+    expect(rawRequests.every(value => !value.includes(HEADER_NAMES.COOKIE))).toBe(true);
+    raw.destroy();
+    await vi.waitFor(() => expect(outboundProxy.isGatewayEnvironmentReusable(env)).toBe(true));
+  } finally {
+    clients.forEach(socket => socket.destroy());
+    outboundProxy.stop();
+    sockets.forEach(socket => socket.destroy());
+    await new Promise<void>(resolve => upstream.close(() => resolve()));
+    activateOutboundHeaderPolicyConfig(previousPolicy, userInfoPath);
   }
 });
 

@@ -10,6 +10,10 @@ import { t } from '../../core/i18n';
 import { OutboundHeaderPolicyService } from '../../core/network/outboundHeaderPolicyService';
 import type { OpenClawEngineManager } from '../../openclaw/runtime/openclawEngineManager';
 import { removeExtensionPackage } from './extensionMutation';
+import {
+  type ApplyExtensionPackageMutation,
+  ExtensionPackageLifecycleMode,
+} from './extensionPackageLifecycle';
 import { OpenClawExtensionImportService } from './openclawExtensionImportService';
 
 vi.mock('../../core/filesystem/windowsFileLockDiagnostics', () => ({
@@ -45,6 +49,8 @@ describe('extension removal receipts and package lifecycle', () => {
     options: {
       realPolicy?: boolean;
       directoryOperations?: ManagedDirectoryOperationCoordinator;
+      connectedOnly?: boolean;
+      packagePluginIds?: string[];
     } = {},
   ) {
     const stateDir = path.join(fixtureRoot, 'state');
@@ -52,6 +58,9 @@ describe('extension removal receipts and package lifecycle', () => {
     const configPath = path.join(stateDir, 'openclaw.json');
     fs.mkdirSync(installedDir, { recursive: true });
     fs.writeFileSync(path.join(installedDir, 'openclaw.plugin.json'), '{"id":"network-plugin"}');
+    if (options.packagePluginIds) fs.writeFileSync(path.join(installedDir, 'package.json'), JSON.stringify({
+      openclaw: { extensions: options.packagePluginIds.map(id => `./${id}.js`) },
+    }));
     fs.writeFileSync(
       path.join(installedDir, 'outbound-header-policy.json'),
       JSON.stringify({
@@ -71,13 +80,15 @@ describe('extension removal receipts and package lifecycle', () => {
       configPath,
       JSON.stringify({ plugins: { allow: ['network-plugin', 'other'] } }),
     );
-    const state = { leased: false };
+    const state = { leased: false, running: true, connected: true, configMutation: false, generation: 1 };
     const manager = {
       getStatus: () => ({
-        phase: state.leased ? 'ready' : 'running',
+        phase: state.leased || !state.running ? 'ready' : 'running',
         message: state.leased ? 'OpenClaw runtime is ready. Gateway is stopped.' : undefined,
       }),
       isGatewayMutationInProgress: () => state.leased,
+      getGatewayProcessId: () => state.leased || !state.running ? null : 100,
+      getGatewayProcessGeneration: () => state.generation,
       getStateDir: () => stateDir,
       getBaseDir: () => fixtureRoot,
       getConfigPath: () => configPath,
@@ -95,6 +106,13 @@ describe('extension removal receipts and package lifecycle', () => {
       if (state.leased) throw new Error('OpenClaw runtime is ready. Gateway is stopped.');
       if (method === 'plugins.uninstall') fs.rmSync(installedDir, { recursive: true });
       return { ok: true, restartRequired: false, warnings: ['Native removal warning'] };
+    });
+    const recoveringGateway = vi.fn(async (method: string) => requestGateway(method));
+    const client = { request: requestGateway as <T>(method: string) => Promise<T> };
+    const runConfigMutationExclusive = vi.fn(async <T>(operation: () => Promise<T>): Promise<T> => {
+      state.configMutation = true;
+      try { return await operation(); }
+      finally { state.configMutation = false; }
     });
     const restartGatewayAfterMutation = vi.fn(async () => ({ phase: 'running' }));
     const reconcile = vi.fn(() => ({
@@ -114,10 +132,16 @@ describe('extension removal receipts and package lifecycle', () => {
     service = new OpenClawExtensionImportService({
       getOpenClawEngineManager: () => manager,
       runCommand,
-      requestGateway: requestGateway as <T>(method: string) => Promise<T>,
+      requestGateway: (options.connectedOnly ? recoveringGateway : requestGateway) as
+        <T>(method: string) => Promise<T>,
+      ...(options.connectedOnly ? { getConnectedGatewayClient: () => state.connected ? client : null } : {}),
+      runConfigMutationExclusive,
       restartGatewayAfterMutation,
       outboundHeaderPolicy: policy ?? { inspectExtension: vi.fn(), reconcile },
       directoryOperations: options.directoryOperations,
+      ...(options.packagePluginIds ? { readPackageOwnership: async () => [{
+        ownerId: 'network-plugin', pluginIds: options.packagePluginIds!, installPath: installedDir,
+      }] } : {}),
     });
     return {
       service,
@@ -126,6 +150,8 @@ describe('extension removal receipts and package lifecycle', () => {
       configPath,
       runCommand,
       requestGateway,
+      recoveringGateway,
+      runConfigMutationExclusive,
       restartGatewayAfterMutation,
       reconcile,
       policy,
@@ -158,6 +184,200 @@ describe('extension removal receipts and package lifecycle', () => {
     expect(after.digest).not.toBe(before.digest);
   });
 
+  it('selects native removal from its exact queued package and keeps the existing Gateway connection', async () => {
+    const f = fixture({ connectedOnly: true });
+    const apply = vi.fn<ApplyExtensionPackageMutation>(async (target, operation) => {
+      expect(target).toEqual({
+        nativePluginIds: ['network-plugin'],
+        installPath: f.installedDir,
+      });
+      expect(f.state.configMutation).toBe(false);
+      return operation(ExtensionPackageLifecycleMode.HOT);
+    });
+
+    await expect(f.service.delete('network-plugin', undefined, apply)).resolves.toEqual({
+      success: true, warnings: ['Native removal warning'],
+    });
+
+    expect(apply).toHaveBeenCalledOnce();
+    expect(f.requestGateway).toHaveBeenCalledExactlyOnceWith('plugins.uninstall', {
+      pluginId: 'network-plugin',
+    });
+    expect(f.runCommand).not.toHaveBeenCalled();
+    expect(f.recoveringGateway).not.toHaveBeenCalled();
+    expect(f.restartGatewayAfterMutation).not.toHaveBeenCalled();
+  });
+
+  it('classifies removal of a child entry with its entire native package owner and path', async () => {
+    const f = fixture({ connectedOnly: true, packagePluginIds: ['first-entry', 'second-entry'] });
+    const apply = vi.fn<ApplyExtensionPackageMutation>(async (target, operation) => {
+      expect(target).toEqual({
+        nativePluginIds: ['first-entry', 'network-plugin', 'second-entry'],
+        installPath: f.installedDir,
+      });
+      return operation(ExtensionPackageLifecycleMode.HOT);
+    });
+
+    await expect(f.service.delete('first-entry', undefined, apply)).resolves.toMatchObject({ success: true });
+
+    expect(apply).toHaveBeenCalledOnce();
+    expect(f.requestGateway).toHaveBeenCalledExactlyOnceWith('plugins.uninstall', {
+      pluginId: 'first-entry',
+    });
+    expect(f.runCommand).not.toHaveBeenCalled();
+  });
+
+  it('retains the selective cold removal receipt after config access ends and recovery fails', async () => {
+    const f = fixture({ connectedOnly: true });
+    const apply: ApplyExtensionPackageMutation = async (_target, operation) => {
+      f.state.leased = true;
+      try {
+        await operation(ExtensionPackageLifecycleMode.STOPPED);
+        expect(f.state.configMutation).toBe(false);
+      } finally {
+        f.state.leased = false;
+      }
+      throw new Error('Gateway recovery could not bind the selected port');
+    };
+
+    const result = await f.service.delete('network-plugin', undefined, apply);
+
+    expect(result).toMatchObject({
+      success: true, refreshWarning: true, mutationCompleted: true,
+      failedStage: PluginOperationStage.PREPARING_RUNTIME,
+      error: 'Gateway recovery could not bind the selected port',
+    });
+    expect(f.runCommand).toHaveBeenCalledOnce();
+    expect(f.requestGateway).not.toHaveBeenCalled();
+    expect(f.recoveringGateway).not.toHaveBeenCalled();
+    expect(f.restartGatewayAfterMutation).not.toHaveBeenCalled();
+  });
+
+  it('requires an actual stopped Gateway lease before executing the selected offline removal', async () => {
+    const f = fixture({ connectedOnly: true });
+    const apply: ApplyExtensionPackageMutation = (_target, operation) =>
+      operation(ExtensionPackageLifecycleMode.STOPPED);
+
+    await expect(f.service.delete('network-plugin', undefined, apply)).resolves.toMatchObject({ success: false });
+
+    expect(f.requestGateway).not.toHaveBeenCalled();
+    expect(f.recoveringGateway).not.toHaveBeenCalled();
+    expect(f.runCommand).not.toHaveBeenCalled();
+    expect(f.reconcile).not.toHaveBeenCalled();
+    expect(f.restartGatewayAfterMutation).not.toHaveBeenCalled();
+  });
+
+  it('does not start a disconnected Gateway to dispatch an offline removal', async () => {
+    const f = fixture({ connectedOnly: true });
+    f.state.connected = false;
+    f.state.running = false;
+
+    await expect(f.service.delete('network-plugin')).resolves.toEqual({ success: true });
+
+    expect(f.recoveringGateway).not.toHaveBeenCalled();
+    expect(f.requestGateway).not.toHaveBeenCalled();
+    expect(f.runCommand).toHaveBeenCalledOnce();
+    expect(f.restartGatewayAfterMutation).not.toHaveBeenCalled();
+  });
+
+  it('rejects an alive disconnected hot removal before any native or policy mutation', async () => {
+    const f = fixture({ connectedOnly: true });
+    f.state.connected = false;
+    const apply: ApplyExtensionPackageMutation = (_target, operation) =>
+      operation(ExtensionPackageLifecycleMode.HOT);
+
+    await expect(f.service.delete('network-plugin', undefined, apply)).resolves.toEqual({
+      success: false, error: t('extensionHotToggleUnavailable'),
+    });
+
+    expect(f.requestGateway).not.toHaveBeenCalled();
+    expect(f.recoveringGateway).not.toHaveBeenCalled();
+    expect(f.runCommand).not.toHaveBeenCalled();
+    expect(f.reconcile).not.toHaveBeenCalled();
+    expect(f.restartGatewayAfterMutation).not.toHaveBeenCalled();
+  });
+
+  it('does not replace a captured hot removal with offline CLI when dispatch was fenced', async () => {
+    const f = fixture({ connectedOnly: true });
+    f.requestGateway.mockRejectedValueOnce(Object.assign(new Error('Gateway connection changed'), {
+      code: 'CLIENT_CLOSED', requestSent: false,
+    }));
+    const apply: ApplyExtensionPackageMutation = (_target, operation) =>
+      operation(ExtensionPackageLifecycleMode.HOT);
+
+    await expect(f.service.delete('network-plugin', undefined, apply)).resolves.toMatchObject({
+      success: false, error: t('extensionHotToggleUnavailable'),
+    });
+
+    expect(f.requestGateway).toHaveBeenCalledOnce();
+    expect(f.recoveringGateway).not.toHaveBeenCalled();
+    expect(f.runCommand).not.toHaveBeenCalled();
+    expect(f.restartGatewayAfterMutation).not.toHaveBeenCalled();
+  });
+
+  it('does not recover or replay an unknown removal through a replacement connection', async () => {
+    const f = fixture({ connectedOnly: true });
+    f.requestGateway.mockImplementationOnce(async () => {
+      f.state.connected = false;
+      throw Object.assign(new Error('Gateway reply was lost'), { code: 'CLIENT_TIMEOUT', requestSent: true });
+    });
+    const apply: ApplyExtensionPackageMutation = (_target, operation) =>
+      operation(ExtensionPackageLifecycleMode.HOT);
+
+    await expect(f.service.delete('network-plugin', undefined, apply)).resolves.toMatchObject({
+      success: false, operationUnconfirmed: true,
+    });
+
+    expect(f.requestGateway).toHaveBeenCalledOnce();
+    expect(f.recoveringGateway).not.toHaveBeenCalled();
+    expect(f.runCommand).not.toHaveBeenCalled();
+    expect(f.restartGatewayAfterMutation).not.toHaveBeenCalled();
+    expect(fs.existsSync(f.installedDir)).toBe(true);
+  });
+
+  it('preserves a confirmed removal without restarting a newer Gateway generation', async () => {
+    const f = fixture({ connectedOnly: true });
+    f.requestGateway.mockImplementationOnce(async () => {
+      f.state.generation++;
+      return { ok: true, restartRequired: true };
+    });
+
+    const result = await f.service.delete('network-plugin');
+
+    expect(result).toMatchObject({ success: true, refreshWarning: true });
+    expect(f.requestGateway).toHaveBeenCalledOnce();
+    expect(f.recoveringGateway).not.toHaveBeenCalled();
+    expect(f.runCommand).not.toHaveBeenCalled();
+    expect(f.restartGatewayAfterMutation).not.toHaveBeenCalled();
+  });
+
+  it('resolves package identity after an earlier queued mutation has changed its root', async () => {
+    const f = fixture({ connectedOnly: true });
+    let release!: () => void;
+    const entered = new Promise<void>(resolve => { release = resolve; });
+    const first = f.service.delete('network-plugin', undefined, async () => {
+      await entered;
+      fs.renameSync(f.installedDir, `${f.installedDir}-moved`);
+      throw new Error('Preparation ended before the native write');
+    }).catch((error: Error) => error);
+    f.requestGateway.mockImplementation(async () => {
+      fs.rmSync(`${f.installedDir}-moved`, { recursive: true });
+      return { ok: true, restartRequired: false };
+    });
+    const apply = vi.fn<ApplyExtensionPackageMutation>(async (target, operation) => {
+      expect(target.installPath).toBe(`${f.installedDir}-moved`);
+      return operation(ExtensionPackageLifecycleMode.HOT);
+    });
+    const second = f.service.delete('network-plugin', undefined, apply);
+    release();
+
+    await first;
+    await second;
+
+    expect(apply).toHaveBeenCalledOnce();
+    expect(f.requestGateway).toHaveBeenCalledOnce();
+  });
+
   it('retains the offline removal receipt and actual recovery cause after the lease is released', async () => {
     const f = fixture();
     const result = await removeExtensionPackage(
@@ -176,10 +396,11 @@ describe('extension removal receipts and package lifecycle', () => {
     expect(result).toMatchObject({
       success: true,
       refreshWarning: true,
+      mutationCompleted: true,
       failedStage: PluginOperationStage.PREPARING_RUNTIME,
     });
-    expect(result.error).toContain('EADDRINUSE');
-    expect(result.error).toContain(t('extensionRemovalSavedRecoveryFailed'));
+    expect(result.error).toBe('EADDRINUSE: engine port 18789 is already in use');
+    expect(result).not.toHaveProperty('runtimeRecoveryPending');
     expect(result.error).not.toContain('Gateway is stopped');
     expect(f.requestGateway).not.toHaveBeenCalled();
     expect(f.runCommand).toHaveBeenCalledOnce();
@@ -294,9 +515,9 @@ describe('extension removal receipts and package lifecycle', () => {
     expect(f.requestGateway).not.toHaveBeenCalled();
   });
 
-  it('does not invent a removal receipt or replay the mutation after an invalid RPC response', async () => {
+  it.each([undefined, { ok: true }])('does not invent a removal receipt after an invalid RPC response: %j', async response => {
     const f = fixture();
-    f.requestGateway.mockResolvedValueOnce(undefined);
+    f.requestGateway.mockResolvedValueOnce(response);
 
     const result = await f.service.delete('network-plugin');
 
@@ -311,6 +532,30 @@ describe('extension removal receipts and package lifecycle', () => {
     expect(f.restartGatewayAfterMutation).not.toHaveBeenCalled();
     expect(fs.existsSync(f.installedDir)).toBe(true);
   });
+
+  it.each([true, false])(
+    'keeps native restart requirements independent from a changed policy (refresh still requires restart: %s)',
+    async refreshRequiresRestart => {
+      const f = fixture({ connectedOnly: true });
+      f.requestGateway
+        .mockResolvedValueOnce({ ok: true, restartRequired: true })
+        .mockResolvedValueOnce({ ok: true, restartRequired: refreshRequiresRestart });
+      f.reconcile
+        .mockReturnValueOnce({ enabled: true, overwrite: false, groups: [], digest: 'before' })
+        .mockReturnValue({ enabled: true, overwrite: false, groups: [], digest: 'after' });
+
+      await expect(f.service.delete('network-plugin')).resolves.toEqual({ success: true });
+
+      expect(f.requestGateway).toHaveBeenNthCalledWith(2, 'plugins.refresh', {});
+      expect(f.restartGatewayAfterMutation.mock.calls).toEqual([
+        refreshRequiresRestart
+          ? ['extension-delete', { networkPolicyChanged: true }]
+          : ['extension-network-policy-change'],
+      ]);
+      expect(f.runCommand).not.toHaveBeenCalled();
+      expect(f.recoveringGateway).not.toHaveBeenCalled();
+    },
+  );
 
   it('keeps a timed-out cold uninstall unconfirmed without recommending another mutation', async () => {
     const f = fixture();

@@ -725,14 +725,8 @@ const getOpenClawExtensionImportService = (): OpenClawExtensionImportService => 
       getCoworkEngineService().requestGateway<T>(method, params, options),
     runConfigMutationExclusive: operation =>
       getOpenClawConfigSyncService().runConfigMutationExclusive(operation),
-    restartGatewayAfterMutation: reason => {
-      const desiredDigest = getOutboundHeaderPolicyService().getSnapshot().digest;
-      return getOpenClawConfigSyncService().restartGatewayAfterExclusiveMutation(
-        activeOutboundHeaderPolicyDigest !== desiredDigest
-          ? 'extension-network-policy-change'
-          : reason,
-      );
-    },
+    restartGatewayAfterMutation: (reason, options) =>
+      getOpenClawConfigSyncService().restartGatewayAfterExclusiveMutation(reason, options),
     getNativeSkillIds: id => getAppPlugins().registry.nativePolicy(id).skills ?? [],
     directoryOperations: getOpenClawDirectoryOperations(),
     outboundHeaderPolicy: {
@@ -1606,6 +1600,8 @@ if (agentBridgeArgv) {
   registerExtensionHandlers({
     mutateAppPlugin: (id, enabled, operation) => getAppPlugins().mutate(id, enabled, operation),
     mutateAppPackage: operation => getAppPlugins().mutatePackage(operation),
+    withExtensionPackageMutation: operation => getAppPlugins().withExtensionPackageMutation(operation),
+    approveInstalledAppPackage: input => getAppPlugins().approveInstalledPackage(input),
     extensionImportService: getOpenClawExtensionImportService(),
     installationService: pluginInstallationService,
     onMarketplacePluginDeleted: (kind, runtimeId) =>

@@ -7,8 +7,123 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { OpenClawPluginCapabilityReview } from '../../../shared/plugins/extensions';
 import { ManagedDirectoryOperationCoordinator } from '../../core/filesystem/managedDirectoryOperations';
 import type { OpenClawEngineManager } from '../../openclaw/runtime/openclawEngineManager';
-import { prepareExtensionInstallSource } from './extensionInstallSource';
+import {
+  prepareExtensionInstallArchive,
+  prepareExtensionInstallSource,
+} from './extensionInstallSource';
 import { OpenClawExtensionImportService } from './openclawExtensionImportService';
+
+describe('managed extension source snapshots', () => {
+  let root: string;
+  let source: string;
+  beforeEach(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'extension-snapshot-test-'));
+    source = path.join(root, '中文 source');
+    fs.mkdirSync(source);
+    fs.writeFileSync(path.join(source, 'openclaw.plugin.json'), '{"id":"demo"}');
+    fs.writeFileSync(path.join(source, 'index.js'), 'export default {};');
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it('freezes the classified bytes independently of later original changes', async () => {
+    const prepared = await prepareExtensionInstallSource(source, root, { snapshot: true });
+    try {
+      expect(prepared.directory).not.toBe(source);
+      fs.writeFileSync(path.join(source, 'openclaw.plugin.json'), '{"id":"other"}');
+      fs.mkdirSync(path.join(source, 'app'));
+      fs.writeFileSync(path.join(source, 'app', 'app.artifact.json'), '{}');
+      expect(fs.readFileSync(path.join(prepared.directory, 'openclaw.plugin.json'), 'utf8'))
+        .toBe('{"id":"demo"}');
+      expect(fs.existsSync(path.join(prepared.directory, 'app'))).toBe(false);
+    } finally {
+      await prepared.cleanup();
+    }
+    expect(fs.existsSync(prepared.directory)).toBe(false);
+    expect(fs.existsSync(source)).toBe(true);
+  });
+
+  it('reuses a checked operation-owned extraction tree', async () => {
+    const prepared = await prepareExtensionInstallSource(source, root, {
+      snapshot: true, reuseOwnedDirectory: true,
+    });
+    expect(prepared.directory).toBe(source);
+    await prepared.cleanup();
+    expect(fs.existsSync(source)).toBe(true);
+  });
+
+  it.each(['symlink', 'hardlink'] as const)('does not normalize an unsafe %s into plain files', async kind => {
+    const outsideDirectory = path.join(root, 'outside');
+    fs.mkdirSync(outsideDirectory);
+    const outside = path.join(outsideDirectory, 'content.txt');
+    fs.writeFileSync(outside, 'outside');
+    if (kind === 'symlink')
+      fs.symlinkSync(outsideDirectory, path.join(source, 'alias'), process.platform === 'win32' ? 'junction' : 'dir');
+    else fs.linkSync(outside, path.join(source, 'alias'));
+    await expect(prepareExtensionInstallSource(source, root, { snapshot: true })).rejects.toThrow();
+    expect(fs.readFileSync(outside, 'utf8')).toBe('outside');
+  });
+
+  it('rejects a source tree that gains files while its snapshot is copied', async () => {
+    const originalOpen = fsp.open.bind(fsp);
+    const temporary = vi.spyOn(fsp, 'mkdtemp');
+    let changed = false;
+    vi.spyOn(fsp, 'open').mockImplementation(async (file, flags, mode) => {
+      if (!changed && file === path.join(source, 'index.js')) {
+        changed = true;
+        fs.writeFileSync(path.join(source, 'late.js'), 'late');
+      }
+      return originalOpen(file, flags, mode);
+    });
+    await expect(prepareExtensionInstallSource(source, root, { snapshot: true })).rejects.toThrow();
+    expect(fs.existsSync(await temporary.mock.results[0].value)).toBe(false);
+  });
+});
+
+describe('managed extension archive snapshots', () => {
+  let root: string;
+  let archive: string;
+  beforeEach(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'extension-archive-test-'));
+    archive = path.join(root, '中文 package.tgz');
+    fs.writeFileSync(archive, 'original archive bytes');
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it('keeps the archive name and frozen bytes independently of the original pathname', async () => {
+    const prepared = await prepareExtensionInstallArchive(archive);
+    try {
+      fs.writeFileSync(archive, 'changed bytes');
+      expect(path.basename(prepared.file)).toBe(path.basename(archive));
+      expect(prepared.file).not.toBe(archive);
+      expect(fs.readFileSync(prepared.file, 'utf8')).toBe('original archive bytes');
+    } finally {
+      await prepared.cleanup();
+    }
+    expect(fs.existsSync(prepared.file)).toBe(false);
+  });
+
+  it('rejects a pathname replacement between inspection and opening the archive', async () => {
+    const originalOpen = fsp.open.bind(fsp);
+    const temporary = vi.spyOn(fsp, 'mkdtemp');
+    let replaced = false;
+    vi.spyOn(fsp, 'open').mockImplementation(async (file, flags, mode) => {
+      if (!replaced && file === archive) {
+        replaced = true;
+        fs.renameSync(archive, path.join(root, 'original.tgz'));
+        fs.writeFileSync(archive, 'replacement archive');
+      }
+      return originalOpen(file, flags, mode);
+    });
+    await expect(prepareExtensionInstallArchive(archive)).rejects.toThrow();
+    expect(fs.existsSync(await temporary.mock.results[0].value)).toBe(false);
+  });
+});
 
 describe.skipIf(process.platform !== 'win32')('Windows extension import source', () => {
   let root: string;
