@@ -215,29 +215,28 @@ test('retains an extension failure after leaving the category and preserves the 
   ]);
 });
 
-test.each(['cancel', 'unmount'] as const)(
-  'keeps earlier import failures when capability review ends by %s',
-  async end => {
-    const importPath = vi
+test.each(['folders', 'archives'] as const)(
+  'imports a selected local %s source once without an installation capability dialog',
+  async sourceType => {
+    const reply = deferred<ExtensionImportResult>();
+    const sourcePath = sourceType === 'folders' ? 'C:/imports/example' : 'C:/imports/example.zip';
+    const importPath = vi.fn(() => reply.promise);
+    const list = vi
       .fn()
-      .mockResolvedValueOnce({
-        success: false,
-        error: 'Invalid first package',
-        failedStage: PluginOperationStage.VALIDATING,
-      })
-      .mockResolvedValueOnce({ success: false, capabilityReview });
+      .mockResolvedValueOnce({ success: true, extensions: [] })
+      .mockResolvedValue({ success: true, extensions: [extension] });
     Object.defineProperty(window, 'electron', {
       configurable: true,
       value: {
         extensions: {
-          list: vi.fn().mockResolvedValue({ success: true, extensions: [] }),
+          list,
           importPath,
           onChanged: () => () => undefined,
         },
         dialog: {
-          selectFolders: vi.fn().mockResolvedValue({
+          [sourceType === 'folders' ? 'selectFolders' : 'selectFiles']: vi.fn().mockResolvedValue({
             success: true,
-            paths: ['C:/imports/invalid', 'C:/imports/reviewed'],
+            paths: [sourcePath],
           }),
         },
       },
@@ -246,29 +245,30 @@ test.each(['cancel', 'unmount'] as const)(
     fireEvent.click(await screen.findByRole('button', { name: 'importExtension' }));
     fireEvent.click(
       screen.getByRole('button', {
-        name: /selectExtensionFolders selectExtensionFoldersDescription/,
+        name: sourceType === 'folders' ? /selectExtensionFolders/ : /selectExtensionArchives/,
       }),
     );
-    await screen.findByText('extensionCapabilityReviewTitle');
-    if (end === 'cancel') fireEvent.click(screen.getByRole('button', { name: 'cancel' }));
-    else view.unmount();
+    await waitFor(() => expect(importPath).toHaveBeenCalledOnce());
+    expect(screen.queryByText('extensionCapabilityReviewTitle')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'extensionCapabilityAccept' })).toBeNull();
 
-    const failures = getPluginOperationOwner().failureSnapshot();
-    expect(failures).toHaveLength(1);
-    expect(failures[0].items).toEqual([
-      expect.objectContaining({
-        label: 'invalid',
-        message: 'Invalid first package',
-        failedStage: PluginOperationStage.VALIDATING,
-      }),
-    ]);
-    expect(importPath).toHaveBeenCalledTimes(2);
-    cleanup();
+    await act(async () => reply.resolve({ success: true, extensionId: extension.id }));
+
+    await screen.findByText('extensionImportSuccess');
+    expect(screen.getByText(extension.name)).toBeTruthy();
+    expect(importPath).toHaveBeenCalledExactlyOnceWith(
+      { sourcePath, requestId: expect.any(String) },
+      { requestId: expect.any(String) },
+    );
+    expect(list).toHaveBeenCalledTimes(2);
+    expect(getPluginOperationOwner().failureSnapshot()).toEqual([]);
+    expect(getPluginOperationOwner().snapshot()).toEqual([]);
+    view.unmount();
   },
 );
 
-test('keeps accumulated errors when the next review response arrives after unmount', async () => {
-  const review = deferred<ExtensionImportResult>();
+test('finishes each selected source once and retains accumulated failures after leaving the category', async () => {
+  const reply = deferred<ExtensionImportResult>();
   const importPath = vi
     .fn()
     .mockResolvedValueOnce({
@@ -276,7 +276,8 @@ test('keeps accumulated errors when the next review response arrives after unmou
       error: 'First package rejected',
       failedStage: PluginOperationStage.VALIDATING,
     })
-    .mockReturnValueOnce(review.promise);
+    .mockReturnValueOnce(reply.promise)
+    .mockResolvedValueOnce({ success: true, extensionId: 'third-extension' });
   Object.defineProperty(window, 'electron', {
     configurable: true,
     value: {
@@ -288,7 +289,10 @@ test('keeps accumulated errors when the next review response arrives after unmou
       dialog: {
         selectFolders: vi
           .fn()
-          .mockResolvedValue({ success: true, paths: ['C:/imports/first', 'C:/imports/second'] }),
+          .mockResolvedValue({
+            success: true,
+            paths: ['C:/imports/first', 'C:/imports/second', 'C:/imports/third'],
+          }),
       },
     },
   });
@@ -301,13 +305,46 @@ test('keeps accumulated errors when the next review response arrives after unmou
   );
   await waitFor(() => expect(importPath).toHaveBeenCalledTimes(2));
   view.unmount();
-  await act(async () => review.resolve({ success: false, capabilityReview }));
+  await act(async () => reply.resolve({
+    success: false,
+    capabilityReview,
+    error: 'Native activation outcome unknown',
+    failedStage: PluginOperationStage.ENABLING,
+    installationCommitted: true,
+    operationUnconfirmed: true,
+    refreshWarning: true,
+  }));
 
   expect(getPluginOperationOwner().failureSnapshot()).toEqual([
     expect.objectContaining({
-      items: [expect.objectContaining({ message: 'First package rejected' })],
+      message: '1 succeeded and 2 failed.',
+      details: 'pluginOperationRefreshFailed',
+      items: [
+        expect.objectContaining({ label: 'third-extension', type: 'success' }),
+        expect.objectContaining({
+          label: 'first',
+          message: 'First package rejected',
+          failedStage: PluginOperationStage.VALIDATING,
+        }),
+        expect.objectContaining({
+          label: 'second',
+          message: 'Native activation outcome unknown',
+          failedStage: PluginOperationStage.ENABLING,
+          installationCommitted: true,
+          operationUnconfirmed: true,
+        }),
+      ],
     }),
   ]);
+  expect(importPath.mock.calls.map(([request]) => request.sourcePath)).toEqual([
+    'C:/imports/first', 'C:/imports/second', 'C:/imports/third',
+  ]);
+  for (const [request] of importPath.mock.calls) expect(request).not.toHaveProperty('reviewToken');
+  expect(getPluginOperationOwner().snapshot()).toEqual([]);
+  render(<PluginOperationFeedback />);
+  expect(screen.getByRole('alertdialog', { name: 'pluginOperationFailureTitle.batch' })).toBeTruthy();
+  expect(screen.queryByText('extensionCapabilityReviewTitle')).toBeNull();
+  cleanup();
 });
 
 describe('ExtensionsManager extension toggle', () => {
@@ -318,6 +355,28 @@ describe('ExtensionsManager extension toggle', () => {
 
   afterEach(() => {
     cleanup();
+  });
+
+  test('keeps inventory loading outside the Extension list until it finishes', async () => {
+    const pending = deferred<{ success: boolean; extensions: InstalledOpenClawExtension[] }>();
+    Object.defineProperty(window, 'electron', {
+      configurable: true,
+      value: {
+        extensions: {
+          list: vi.fn(() => pending.promise),
+          onChanged: () => () => undefined,
+        },
+      },
+    });
+    const view = render(<ExtensionsManager />);
+    const loading = await screen.findByText('loading');
+    expect(loading.closest('article, section')).toBeNull();
+    expect(loading.closest('.fixed')?.classList.contains('bottom-4')).toBe(true);
+    expect(view.container.contains(loading)).toBe(false);
+
+    await act(async () => pending.resolve({ success: true, extensions: [extension] }));
+    expect(screen.getByText(extension.name)).toBeTruthy();
+    expect(screen.queryByText('loading')).toBeNull();
   });
 
   test.each([true, false])('shows a confirmed toggle separately from a failed follow-up (enabled: %s)', async enabled => {
@@ -1722,17 +1781,15 @@ describe('ExtensionsManager extension toggle', () => {
     expect(screen.getByRole('alert').textContent).toBe('Plugin failed to load');
   });
 
-  test('continues a batch after the reviewed extension fails to install', async () => {
+  test('submits each selected source once and continues a batch after an installation failure', async () => {
     const importPath = vi
       .fn<
         ({
           sourcePath,
         }: {
           sourcePath: string;
-          reviewToken?: string;
         }) => Promise<ExtensionImportResult>
       >()
-      .mockResolvedValueOnce({ success: false, capabilityReview })
       .mockResolvedValueOnce({ success: false, error: 'first failed' })
       .mockResolvedValueOnce({ success: true, extensionId: 'second-extension' });
 
@@ -1756,31 +1813,39 @@ describe('ExtensionsManager extension toggle', () => {
     render(<ExtensionsManager />);
     fireEvent.click(await screen.findByRole('button', { name: 'importExtension' }));
     fireEvent.click(await screen.findByRole('button', { name: /selectExtensionFolders/ }));
-    fireEvent.click(await screen.findByRole('button', { name: 'extensionCapabilityAccept' }));
 
-    await waitFor(() => expect(importPath).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(getPluginOperationOwner().failureSnapshot()).toHaveLength(1));
+    expect(importPath).toHaveBeenCalledTimes(2);
     expect(importPath).toHaveBeenNthCalledWith(
-      3,
-      expect.objectContaining({ sourcePath: 'C:\\extensions\\second' }),
+      1,
+      { sourcePath: 'C:\\extensions\\first', requestId: expect.any(String) },
       { requestId: expect.any(String) },
     );
+    expect(importPath).toHaveBeenNthCalledWith(
+      2,
+      { sourcePath: 'C:\\extensions\\second', requestId: expect.any(String) },
+      { requestId: expect.any(String) },
+    );
+    expect(getPluginOperationOwner().failureSnapshot()[0].message).toBe('1 succeeded and 1 failed.');
+    expect(screen.queryByText('extensionCapabilityReviewTitle')).toBeNull();
   });
 });
 
-test('retains an earlier refresh warning when a later capability review is cancelled', async () => {
+test('retains an earlier refresh warning when a later import unexpectedly requests review', async () => {
+  const importPath = vi
+    .fn()
+    .mockResolvedValueOnce({
+      success: true,
+      extensionId: 'installed-first',
+      refreshWarning: true,
+    })
+    .mockResolvedValueOnce({ success: false, capabilityReview });
   Object.defineProperty(window, 'electron', {
     configurable: true,
     value: {
       extensions: {
         list: vi.fn().mockResolvedValue({ success: true, extensions: [] }),
-        importPath: vi
-          .fn()
-          .mockResolvedValueOnce({
-            success: true,
-            extensionId: 'installed-first',
-            refreshWarning: true,
-          })
-          .mockResolvedValueOnce({ success: false, capabilityReview }),
+        importPath,
         onChanged: () => () => undefined,
       },
       dialog: {
@@ -1797,19 +1862,28 @@ test('retains an earlier refresh warning when a later capability review is cance
       name: /selectExtensionFolders selectExtensionFoldersDescription/,
     }),
   );
-  await screen.findByText('extensionCapabilityReviewTitle');
-  fireEvent.click(screen.getByRole('button', { name: 'cancel' }));
-
-  expect(getPluginOperationOwner().failureSnapshot()).toEqual([
+  await waitFor(() => expect(getPluginOperationOwner().failureSnapshot()).toEqual([
     expect.objectContaining({
-      state: 'refresh_failed',
-      items: [expect.objectContaining({ label: 'installed-first', type: 'success' })],
+      state: 'failed',
+      message: '1 succeeded and 1 failed.',
+      details: 'pluginOperationRefreshFailed',
+      items: [
+        expect.objectContaining({ label: 'installed-first', type: 'success' }),
+        expect.objectContaining({
+          label: 'second',
+          type: 'error',
+          message: 'extensionImportReviewUnexpected',
+        }),
+      ],
     }),
-  ]);
+  ]));
+  expect(importPath).toHaveBeenCalledTimes(2);
+  expect(screen.queryByText('extensionCapabilityReviewTitle')).toBeNull();
+  expect(screen.queryByRole('button', { name: 'extensionCapabilityAccept' })).toBeNull();
   cleanup();
 });
 
-test.each([true, false])('shows a warning while preserving capability review (runtime recovery: %s)', async recovery => {
+test.each([true, false])('reports an unexpected installation review once without losing a follow-up error (runtime recovery: %s)', async recovery => {
   const importPath = vi.fn().mockResolvedValue({
     success: false,
     capabilityReview,
@@ -1836,17 +1910,23 @@ test.each([true, false])('shows a warning while preserving capability review (ru
   fireEvent.click(await screen.findByRole('button', { name: 'importExtension' }));
   fireEvent.click(screen.getByRole('button', { name: /selectExtensionFolders selectExtensionFoldersDescription/ }));
 
-  await screen.findByText('extensionCapabilityReviewTitle');
-  expect(screen.getByRole('alertdialog', { name: 'pluginOperationFailureTitle.install' })).toBeTruthy();
-  expect(screen.getByText(recovery ? 'Source surface changed. Runtime environment recovery failed.' : 'pluginOperationFailureTitle.refresh')).toBeTruthy();
-  expect(screen.getByText(recovery ? /pluginOperationStageLabel.preparing_runtime/ : /pluginOperationStageLabel.refreshing_inventory/)).toBeTruthy();
-  expect(screen.queryByText('pluginOperationRefreshFailed')).toBeNull();
-  expect(getPluginOperationOwner().failureSnapshot()[0]).not.toHaveProperty('installationCommitted', true);
+  await screen.findByRole('alertdialog', { name: 'pluginOperationFailureTitle.install' });
+  const reasons = screen.getAllByText(recovery
+    ? 'Source surface changed. Runtime environment recovery failed.'
+    : 'extensionImportReviewUnexpected');
+  for (const reason of reasons) expect(reason.closest('article, section')).toBeNull();
+  expect(screen.getAllByText(recovery
+    ? /pluginOperationStageLabel.preparing_runtime/
+    : 'pluginOperationFailureStageUnavailable').length).toBeGreaterThan(0);
+  const failure = getPluginOperationOwner().failureSnapshot()[0];
+  expect(failure.details).toBe('pluginOperationRefreshFailed');
+  expect(failure).not.toHaveProperty('installationCommitted', true);
+  expect(screen.queryByText('extensionCapabilityReviewTitle')).toBeNull();
+  expect(screen.queryByRole('button', { name: 'extensionCapabilityAccept' })).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: 'pluginOperationFailureDismiss' }));
-  fireEvent.click(screen.getByRole('button', { name: 'extensionCapabilityAccept' }));
-  await waitFor(() => expect(importPath).toHaveBeenCalledTimes(2));
-  expect(importPath).toHaveBeenLastCalledWith(
-    expect.objectContaining({ sourcePath: 'C:/imports/extension', reviewToken: capabilityReview.reviewToken }),
+  expect(getPluginOperationOwner().failureSnapshot()).toEqual([]);
+  expect(importPath).toHaveBeenCalledExactlyOnceWith(
+    { sourcePath: 'C:/imports/extension', requestId: expect.any(String) },
     { requestId: expect.any(String) },
   );
   cleanup();

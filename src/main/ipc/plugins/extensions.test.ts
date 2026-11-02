@@ -276,6 +276,76 @@ test('installations notify consumers through the shared installer used by custom
   });
 });
 
+test('installs a local extension without a review token once inside the package mutation owner', async () => {
+  let packageMutationActive = false;
+  const mutateAppPackage = vi.fn(async <T>(operation: () => Promise<T>): Promise<T> => {
+    packageMutationActive = true;
+    try {
+      return await operation();
+    } finally {
+      packageMutationActive = false;
+    }
+  });
+  const f = fixture(undefined, mutateAppPackage);
+  f.service.importPath.mockImplementation(async () => {
+    expect(packageMutationActive).toBe(true);
+    return { success: true, extensionId: 'feature-plugin' };
+  });
+  const installer = f.installation.registerInstaller.mock.calls[0][0];
+
+  const result = await installer.install({
+    operation: 'install',
+    origin: 'custom',
+    payload: { kind: PluginKind.EXTENSION, sourcePath: 'C:/source' },
+  });
+
+  expect(result).toMatchObject({ success: true, pluginId: 'feature-plugin' });
+  expect(result.capabilityReview).toBeUndefined();
+  expect(f.service.importPath).toHaveBeenCalledExactlyOnceWith(
+    'C:/source', undefined, undefined, {
+      autoAcceptCapabilities: true,
+      trustMarketplaceSource: false,
+      preserveActivation: false,
+    },
+  );
+  expect(mutateAppPackage).toHaveBeenCalledOnce();
+  expect(packageMutationActive).toBe(false);
+  expect(f.forgetMarketplace).toHaveBeenCalledExactlyOnceWith(PluginKind.EXTENSION, 'feature-plugin');
+});
+
+test('preserves an unknown local installation without requesting another review or repeating it', async () => {
+  const mutateAppPackage = vi.fn(async <T>(operation: () => Promise<T>) => operation());
+  const f = fixture(undefined, mutateAppPackage);
+  f.service.importPath.mockResolvedValue({
+    success: false,
+    extensionId: 'feature-plugin',
+    installSourceInUse: true,
+    operationUnconfirmed: true,
+    operationFailedStage: PluginOperationStage.INSTALLING,
+    error: 'Native installation outcome unknown',
+  });
+  const installer = f.installation.registerInstaller.mock.calls[0][0];
+
+  const result = await installer.install({
+    operation: 'install',
+    origin: 'custom',
+    payload: { kind: PluginKind.EXTENSION, sourcePath: 'C:/source' },
+  });
+
+  expect(result).toMatchObject({
+    success: false,
+    installSourceInUse: true,
+    operationUnconfirmed: true,
+    failedStage: PluginOperationStage.INSTALLING,
+    error: 'Native installation outcome unknown',
+  });
+  expect(result.capabilityReview).toBeUndefined();
+  expect(result).not.toHaveProperty('installationCommitted');
+  expect(mutateAppPackage).toHaveBeenCalledOnce();
+  expect(f.service.importPath).toHaveBeenCalledOnce();
+  expect(f.forgetMarketplace).not.toHaveBeenCalled();
+});
+
 test.each(['install', 'update'])(
   'passes activation preservation only for marketplace updates: %s',
   async operation => {
@@ -288,6 +358,7 @@ test.each(['install', 'update'])(
       payload: { kind: PluginKind.EXTENSION, sourcePath: 'C:/source' },
     });
     expect(f.service.importPath).toHaveBeenCalledWith('C:/source', undefined, undefined, {
+      autoAcceptCapabilities: true,
       trustMarketplaceSource: true,
       preserveActivation: operation === 'update',
     });
@@ -487,12 +558,13 @@ test('does not label a capability-review catalog read failure as runtime recover
   expect(result).not.toHaveProperty('installationCommitted');
 });
 
-test('does not invent an installation receipt when the package wrapper rejects before the callback', async () => {
+test.each(['custom', 'marketplace'])(
+  'does not install or invent a receipt when the package owner rejects before a %s import', async origin => {
   const f = fixture(undefined, async () => { throw new Error('Package preparation failed'); });
   const installer = f.installation.registerInstaller.mock.calls[0][0];
   await expect(installer.install({
     payload: { kind: PluginKind.EXTENSION, sourcePath: 'C:/source' },
-    origin: 'marketplace',
+    origin,
   })).rejects.toThrow('Package preparation failed');
   expect(f.service.importPath).not.toHaveBeenCalled();
   expect(f.service.listInstalled).not.toHaveBeenCalled();
@@ -534,6 +606,27 @@ test('does not turn an unconfirmed removal into success when package recovery al
   });
   expect(f.forgetMarketplace).not.toHaveBeenCalled();
   expect(f.service.delete).toHaveBeenCalledOnce();
+});
+
+test('retains the first post-removal failure and cause when runtime recovery also fails', async () => {
+  const f = fixture(undefined, async operation => {
+    await operation();
+    throw new Error('Gateway port is occupied');
+  });
+  f.service.delete.mockResolvedValue({
+    success: true, refreshWarning: true,
+    failedStage: PluginOperationStage.APPLYING_CONFIGURATION,
+    error: 'Plugin uninstalled, but outbound policy config could not be written',
+  });
+  const result = await handlers.get(ExtensionIpc.Delete)!(f.event, { extensionId: 'feature-plugin' });
+  expect(result).toMatchObject({
+    success: true, refreshWarning: true,
+    failedStage: PluginOperationStage.APPLYING_CONFIGURATION,
+    error: expect.stringMatching(/^Plugin uninstalled, but outbound policy config could not be written\n/),
+  });
+  expect(result.error).toContain('Gateway port is occupied');
+  expect(f.service.delete).toHaveBeenCalledOnce();
+  expect(f.forgetMarketplace).toHaveBeenCalledWith(PluginKind.EXTENSION, 'feature-plugin');
 });
 
 test('preserves a native failure step while finally refreshing the catalog', async () => {

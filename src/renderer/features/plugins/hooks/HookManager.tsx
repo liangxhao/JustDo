@@ -15,6 +15,7 @@ import { HookEntry, HookListResult } from '@/features/plugins/hooks/hook';
 import { hookService } from '@/features/plugins/hooks/hookService';
 import { observeDeferredInventoryRefresh } from '@/features/plugins/shared/deferredInventoryRefresh';
 import ExtensionBadge from '@/features/plugins/shared/ExtensionBadge';
+import PluginActivityStatus from '@/features/plugins/shared/PluginActivityStatus';
 import { getPluginArtworkTone } from '@/features/plugins/shared/pluginArtwork';
 import PluginCard from '@/features/plugins/shared/PluginCard';
 import {
@@ -478,9 +479,10 @@ const HookManager: React.FC<HookManagerProps> = ({
               </div>
             )}
             {isLoading ? (
-              <div className="py-8 text-center text-sm text-secondary">
-                {i18nService.t('loading')}
-              </div>
+              <PluginActivityStatus
+                title={i18nService.t('hooks')}
+                message={i18nService.t('loading')}
+              />
             ) : filteredHooks.length === 0 && searchQuery.trim() ? (
               <div className="py-8 text-center text-sm text-secondary">
                 {gatewayOffline

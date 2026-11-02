@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process';
-import { EventEmitter } from 'node:events';
 import { createHash } from 'node:crypto';
+import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -8,7 +8,6 @@ import path from 'node:path';
 import { expect, test, vi } from 'vitest';
 
 import { APP_PLUGIN_PYTHON_RUNTIME_ENV } from '../../../../plugins/sdk/app-plugin-sdk/runtimes';
-
 import { SHUTDOWN_BUDGET_MS } from '../../../shared/app/shutdownPolicy';
 import cliRuntimeFiles from '../../../shared/openclaw/cliRuntimeFiles.json';
 import { PRODUCT_NAME_LOWERCASE } from '../../../shared/productMetadata';

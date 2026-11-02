@@ -4,6 +4,7 @@ import path from 'path';
 import * as tar from 'tar';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { PluginOperationStage } from '../../../shared/plugins/pluginOperation';
 import { ManagedDirectoryOperationCoordinator } from '../../core/filesystem/managedDirectoryOperations';
 import { getLanguage, setLanguage, t } from '../../core/i18n';
 import type { OpenClawEngineManager } from '../../openclaw/runtime/openclawEngineManager';
@@ -543,7 +544,9 @@ describe('OpenClawExtensionImportService', () => {
       directoryOperations: new ManagedDirectoryOperationCoordinator({ findLockingProcesses }),
     });
 
-    await expect(service.delete('demo')).resolves.toEqual({ success: false, error: error.message });
+    await expect(service.delete('demo')).resolves.toEqual({
+      success: false, failedStage: PluginOperationStage.UNINSTALLING, error: error.message,
+    });
 
     expect(requestGateway).toHaveBeenCalledExactlyOnceWith('plugins.uninstall', {
       pluginId: 'demo',
@@ -1556,6 +1559,7 @@ describe('OpenClawExtensionImportService', () => {
 
     await expect(service.delete('rejected-extension')).resolves.toEqual({
       success: false,
+      failedStage: PluginOperationStage.UNINSTALLING,
       error: error.message,
     });
     expect(requestGateway).toHaveBeenCalledExactlyOnceWith('plugins.uninstall', {
@@ -2261,6 +2265,9 @@ describe('OpenClawExtensionImportService', () => {
             await expect(mutation.invoke(fixture.service)).resolves.toEqual({
               success: false,
               error: expected,
+              ...(mutation.action === 'remove'
+                ? { failedStage: PluginOperationStage.UNINSTALLING }
+                : {}),
             });
             expect(fixture.requestGateway).toHaveBeenCalledOnce();
             expect(fixture.requestGateway.mock.calls[0][0]).toBe(mutation.method);
@@ -2484,6 +2491,9 @@ describe('OpenClawExtensionImportService', () => {
         await expect(mutation.invoke(fixture.service)).resolves.toEqual({
           success: false,
           error: message,
+          ...(mutation.action === 'remove'
+            ? { failedStage: PluginOperationStage.UNINSTALLING }
+            : {}),
         });
         expect(fixture.requestGateway).toHaveBeenCalledOnce();
         expect(fixture.runCommand).not.toHaveBeenCalled();

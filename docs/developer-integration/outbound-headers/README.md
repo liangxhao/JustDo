@@ -60,7 +60,7 @@ Windows 上的路径格式是：
   "enabled": true,
   "groups": [
     {
-      "baseUrlWhitelist": ["https://api.example.com/v1/"],
+      "baseUrlWhitelist": ["http://intranet.example:8080/v1/", "https://api.example.com/v1/"],
       "headerNames": ["X-User-Account", "X-Access-Token"]
     }
   ]
@@ -131,7 +131,7 @@ README 或用户说明中写清楚需要配置的 `user_info.json` 属性。`USE
   "schemaVersion": 1,
   "groups": [
     {
-      "baseUrlWhitelist": ["https://api.example.com/v1/"],
+      "baseUrlWhitelist": ["http://intranet.example:8080/v1/", "https://api.example.com/v1/"],
       "headerNames": ["X-User-Account", "X-Access-Token"]
     }
   ]
@@ -147,7 +147,7 @@ Extension 只声明 URL 和 Header 名称。Header 值固定从 `user_info.json`
 - 必须是普通文件，不能是符号链接或硬链接，最大 64 KiB。
 - `schemaVersion` 当前只能是 `1`。
 - 必须包含 1–32 个 group；每个 group 可包含 1–64 个 URL、1–32 个 Header。
-- URL 必须使用 HTTPS，不能包含用户名、密码、query 或 fragment。路径末尾的 `/` 可省略；应用会按路径边界匹配。
+- URL 必须是完整的 HTTP 或 HTTPS 地址，支持内网 HTTP 服务；不能包含用户名、密码、query 或 fragment（包括空的 `?`、`#` 标记）。路径末尾的 `/` 可省略；应用会按路径边界匹配。
 - 不允许 localhost、loopback、IPv4/IPv6 link-local 或 unspecified 地址。
 - Header 名称最长 128 个字符，必须是合法 HTTP Header 名称。
 - 禁止声明连接和传输层 Header：`Host`、`Content-Length`、`Connection`、
@@ -171,8 +171,11 @@ Extension 只声明 URL 和 Header 名称。Header 值固定从 `user_info.json`
 | `https://api.example.com:8443/v1/models`              | 否       | port 不同                                |
 | `https://files.example.com/v1/models`                 | 否       | hostname 必须完全相同                    |
 
-手工 `config.json` 可声明 HTTP 或 HTTPS；Extension sidecar 只能声明 HTTPS。路径末尾的 `/` 可省略，
+手工 `config.json` 和 Extension sidecar 均可显式声明 HTTP 或 HTTPS。路径末尾的 `/` 可省略，
 `/v1` 与 `/v1/` 含义相同，且都不会误命中 `/v10`。
+
+HTTP 与 HTTPS 不互相授权。默认端口按协议规范化；例如 `http://api.example.com:443/v1/`
+仍只匹配 HTTP 的 443 端口，不会变成 HTTP 的默认 80 端口。
 
 本地 loopback 请求不会注入 Header。不要配置 `localhost`、`127.x.x.x`、`0.0.0.0` 或 `::1`。
 
@@ -243,13 +246,20 @@ Extension 的规则，请禁用或卸载该 Extension，不要关闭全局开关
 3. Extension 是否已安装且已启用；
 4. 请求的 protocol、hostname、port 和 path prefix 是否全部匹配；
 5. `headerNames` 与 `user_info.json` 属性名是否完全一致；
-6. JSON 是否有效，Extension URL 是否为 HTTPS；
+6. JSON 是否有效，Extension URL 是否为完整的 HTTP 或 HTTPS 地址；
 7. 请求是否属于第 5 节列出的有效场景。
 
 ### 修改后旧规则仍然存在
 
 手工文件没有热更新，请完全退出并重启应用。Extension 启停失败时，不要直接删除其安装目录；
 应从应用的 Extension 管理界面重试禁用或卸载，让应用完成规则和 Gateway 生命周期收敛。
+
+### 安装时提示声明中的地址无效
+
+错误会指出 `outbound-header-policy.json` 中原始的组和地址序号，并区分地址格式、
+协议、嵌入账号信息、query、fragment 或被禁止的本机地址。请将该位置和原因交给
+插件提供方修正对应声明。错误不会回显 URL 或凭据；已保存或结果待确认的操作，
+继续按结果弹窗核对状态，不因声明错误重复提交。
 
 ### 能否把 token 直接写进 `outbound-header-policy.json`
 
@@ -265,7 +275,7 @@ Extension 的规则，请禁用或卸载该 Extension，不要关闭全局开关
 - 示例中没有真实账号、token、Cookie 或内部域名；
 - Extension 根目录包含合法的 `outbound-header-policy.json`；
 - Extension 的 README 或 `USER_SETUP.md` 已列出用户必须提供的 `user_info.json` 属性；
-- 所有 Extension URL 使用 HTTPS；
+- 所有 Extension URL 显式使用 HTTP 或 HTTPS，且不含账号信息、query 或 fragment；
 - `user_info.json` 中的 key 与 Header 名称完全一致；
 - 已在安装、启用、禁用、更新、卸载和应用重启后分别验证；
 - 已验证 Gateway 请求、标题生成、模型测试和 MCP 测试中实际需要的场景。

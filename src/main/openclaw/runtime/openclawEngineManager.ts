@@ -12,7 +12,6 @@ import {
   parseHostPythonRuntime,
   verifyHostPythonRuntime,
 } from '../../../../plugins/sdk/app-plugin-sdk/runtimes';
-
 import OPENCLAW_CLI_ROOT_FILES from '../../../shared/openclaw/cliRuntimeFiles.json';
 import { DEFAULT_OPENCLAW_GATEWAY_PORT } from '../../../shared/openclaw/constants';
 import type { EngineFailureContext } from '../../../shared/openclaw/engineDiagnostics';
@@ -31,9 +30,9 @@ import {
   buildTrustedCaBundle,
 } from '../../core/network/trustedCertificates';
 import { applyDependencyManagerConfigEnv } from '../../core/runtime/dependencyManagerConfig';
+import { appendPluginPythonRuntimeToEnv } from '../../core/runtime/pluginPythonRuntime';
 import { applyPortableGitRuntimeEnv } from '../../core/runtime/portableGitRuntime';
 import { appendPythonRuntimeToEnv } from '../../core/runtime/pythonRuntime';
-import { appendPluginPythonRuntimeToEnv } from '../../core/runtime/pluginPythonRuntime';
 import { syncLocalOpenClawExtensionsIntoRuntime } from '../../plugins/extensions';
 import { GATEWAY_RESTART_COMPLETION_TIMEOUT_MS, GatewayConfigReloadMonitor } from './gatewayConfigReloadMonitor';
 import {

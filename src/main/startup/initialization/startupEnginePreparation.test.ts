@@ -3,6 +3,7 @@ import { expect, test, vi } from 'vitest';
 import { AppInitializationPhase } from '../../../shared/app/initialization';
 import { StartupRoute } from '../../../shared/app/startup/routing';
 import { EnginePhase, type OpenClawEngineStatus } from '../../../shared/openclaw/engineStatus';
+import { t } from '../../core/i18n';
 import { AppInitialization } from './appInitialization';
 import { StartupEnginePreparation } from './startupEnginePreparation';
 
@@ -23,8 +24,8 @@ async function fixture() {
   const coordinator = new StartupEnginePreparation({ initialization, isQuitting: () => state.quitting,
     manager: { getStatus: () => status, getGatewayProcessGeneration: () => state.process,
       getGatewayLifecycleGeneration: () => state.lifecycle }, prepare });
-  const publish = (phase: OpenClawEngineStatus['phase']) => {
-    status = { ...status, phase };
+  const publish = (phase: OpenClawEngineStatus['phase'], message?: string) => {
+    status = { ...status, phase, message };
     coordinator.observe(status);
     return status;
   };
@@ -78,7 +79,7 @@ test('a superseded attempt cannot return old Running to its caller after a succe
   const running = f.publish(EnginePhase.Running);
   await f.coordinator.run(async () => running);
   old.resolve(running);
-  await expect(task).rejects.toThrow();
+  await expect(task).rejects.toThrow(t('enginePreparationSuperseded'));
   expect(f.coordinator.isReady()).toBe(true);
   expect(f.initialization.getState().enginePreparationFailure).toBeUndefined();
 });
@@ -100,6 +101,115 @@ test('a stable admitted verification cannot return Running after its lifecycle i
   expect(f.coordinator.isReady()).toBe(false);
   f.prepared.resolve(running);
   await vi.waitFor(() => expect(f.coordinator.isReady()).toBe(true));
+});
+
+test('retains the current generation error when an admitted verification returns stale Running', async () => {
+  const f = await fixture();
+  const first = deferred();
+  const initial = f.coordinator.run(() => first.promise);
+  const running = f.publish(EnginePhase.Running);
+  first.resolve(running);
+  await initial;
+  const verification = deferred();
+  const task = f.coordinator.run(() => verification.promise);
+  const reason = 'The active permission policy could not be verified: required RPC is unavailable';
+  f.publish(EnginePhase.Error, reason);
+
+  verification.resolve(running);
+
+  await expect(task).rejects.toThrow(reason);
+  expect(f.coordinator.isReady()).toBe(false);
+  expect(f.initialization.getState().enginePreparationFailure?.error.message).toBe(reason);
+  expect(f.prepare).not.toHaveBeenCalled();
+});
+
+test('does not borrow a newer preparation failure to explain a superseded attempt', async () => {
+  const f = await fixture();
+  const old = deferred();
+  const task = f.coordinator.run(() => old.promise);
+  const running = f.publish(EnginePhase.Running);
+  const current = deferred();
+  const successor = f.coordinator.run(() => current.promise);
+  const reason = 'The newer preparation found a certificate error';
+  current.resolve(f.publish(EnginePhase.Error, reason));
+  await successor;
+
+  old.resolve(running);
+
+  await expect(task).rejects.toThrow(t('enginePreparationSuperseded'));
+  expect(f.initialization.getState().enginePreparationFailure?.error.message).toBe(reason);
+  expect(f.coordinator.isReady()).toBe(false);
+  expect(f.prepare).not.toHaveBeenCalled();
+});
+
+test('explains a changed lifecycle without attributing its error to an older verification', async () => {
+  const f = await fixture();
+  const first = deferred();
+  const initial = f.coordinator.run(() => first.promise);
+  const running = f.publish(EnginePhase.Running);
+  first.resolve(running);
+  await initial;
+  const verification = deferred();
+  const task = f.coordinator.run(() => verification.promise);
+  f.state.lifecycle += 1;
+  f.publish(EnginePhase.Starting);
+  const reason = 'The replacement lifecycle failed to load its configuration';
+  f.publish(EnginePhase.Error, reason);
+
+  verification.resolve(running);
+
+  await expect(task).rejects.toThrow(t('enginePreparationLifecycleChanged'));
+  expect(f.initialization.getState().enginePreparationFailure?.error.message).toBe(reason);
+  expect(f.coordinator.isReady()).toBe(false);
+  expect(f.prepare).not.toHaveBeenCalled();
+});
+
+test.each(['running', 'error', 'rejected'] as const)(
+  'retains the successor lifecycle failure after an old active preparation returns %s', async outcome => {
+  const f = await fixture();
+  const operation = deferred();
+  const task = f.coordinator.run(() => operation.promise);
+  const running = f.publish(EnginePhase.Running);
+  f.state.lifecycle += 1;
+  f.publish(EnginePhase.Starting);
+  const reason = 'The replacement lifecycle failed certificate verification';
+  f.publish(EnginePhase.Error, reason);
+  const failure = f.initialization.getState().enginePreparationFailure;
+
+  if (outcome === 'rejected') {
+    const retired = new Error('The retired permission verification failed');
+    operation.reject(retired);
+    await expect(task).rejects.toBe(retired);
+  } else {
+    const returned = outcome === 'running' ? running : {
+      ...running, phase: EnginePhase.Error, message: 'The retired lifecycle failed',
+    };
+    operation.resolve(returned);
+    if (outcome === 'running')
+      await expect(task).rejects.toThrow(t('enginePreparationLifecycleChanged'));
+    else await expect(task).resolves.toBe(returned);
+  }
+
+  expect(f.initialization.getState().enginePreparationFailure).toBe(failure);
+  expect(f.initialization.getState().enginePreparationFailure?.error.message).toBe(reason);
+  expect(f.coordinator.isReady()).toBe(false);
+  expect(f.prepare).not.toHaveBeenCalled();
+});
+
+test('explains a stopped result without presenting its normal status message as a startup error', async () => {
+  const f = await fixture();
+  const operation = deferred();
+  const task = f.coordinator.run(() => operation.promise);
+  const stopped = f.publish(EnginePhase.Ready, 'OpenClaw runtime is ready. Gateway is stopped.');
+
+  operation.resolve(stopped);
+
+  await expect(task).resolves.toEqual(stopped);
+  expect(f.initialization.getState().enginePreparationFailure?.error.message).toBe(
+    t('enginePreparationStopped'),
+  );
+  expect(f.coordinator.isReady()).toBe(false);
+  expect(f.prepare).not.toHaveBeenCalled();
 });
 
 test.each([EnginePhase.Running, EnginePhase.Error])(
@@ -142,7 +252,7 @@ test('late startup completion and ready events cannot reopen admission during sh
   const task = f.coordinator.run(() => admission.promise);
   f.state.quitting = true;
   admission.resolve(f.publish(EnginePhase.Running));
-  await expect(task).rejects.toThrow();
+  await expect(task).rejects.toThrow(t('enginePreparationShuttingDown'));
   expect(f.coordinator.isReady()).toBe(false);
   expect(f.initialization.getState().enginePreparationPending).toBe(true);
   expect(f.prepare).not.toHaveBeenCalled();
@@ -158,7 +268,8 @@ test.each(['quitting', 'failed'] as const)(
     if (reason === 'quitting') f.state.quitting = true;
     else f.initialization.fail(new Error('The application shell failed'));
     const operation = vi.fn(async () => ({ phase: EnginePhase.Running, version: 'test', canRetry: false }));
-    await expect(f.coordinator.run(operation)).rejects.toThrow();
+    await expect(f.coordinator.run(operation)).rejects.toThrow(t(reason === 'quitting'
+      ? 'enginePreparationShuttingDown' : 'enginePreparationInitializationUnavailable'));
     expect(operation).not.toHaveBeenCalled();
     expect(f.coordinator.isReady()).toBe(false);
     await f.coordinator.settle();

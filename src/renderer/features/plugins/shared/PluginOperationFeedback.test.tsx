@@ -10,10 +10,17 @@ import { useState } from 'react';
 import { afterEach, expect, test, vi } from 'vitest';
 
 import EngineInteractionBoundary from '@/app/shell/startup/routing/EngineInteractionBoundary';
+import { i18nService } from '@/services/i18n';
+import { pluginsTranslations } from '@/services/i18n/pluginsTranslations';
 
 import OperationResultModal from './OperationResultModal';
 import PluginOperationFeedback from './PluginOperationFeedback';
-import { getPluginOperationOwner } from './pluginOperationService';
+import { pluginOperationFailurePresentation } from './pluginOperationPresentation';
+import {
+  getPluginOperationOwner,
+  type PluginOperationFailureInput,
+  PluginOperationFailureState,
+} from './pluginOperationService';
 import PluginOperationStatus from './PluginOperationStatus';
 import {
   PluginOperationStatusContent,
@@ -53,6 +60,160 @@ const options = {
   action: PluginOperationAction.INSTALL,
   label: 'Library tool',
 };
+
+function useActualTranslations(language: 'zh' | 'en') {
+  const dictionary = pluginsTranslations[language] as Record<string, string>;
+  vi.spyOn(i18nService, 't').mockImplementation(key => dictionary[key] ?? key);
+}
+
+function showRemovalFailure(input: PluginOperationFailureInput) {
+  const { owner } = setup();
+  const operation = owner.start({ ...options, action: PluginOperationAction.REMOVE });
+  operation.fail(input);
+  operation.finish();
+  render(<PluginOperationFeedback />);
+  return { dialog: screen.getByRole('alertdialog'), requestId: operation.context.requestId };
+}
+
+test('explains a confirmed removal separately from a failed engine restart and copies the reason and advice', async () => {
+  useActualTranslations('zh');
+  const reason = '原生卸载已完成。\n恢复引擎连接时本地服务退出。';
+  const { dialog, requestId } = showRemovalFailure({
+    message: reason,
+    state: PluginOperationFailureState.REFRESH_FAILED,
+    failedStage: PluginOperationStage.RESTARTING_GATEWAY,
+  });
+  expect(
+    screen.getByRole('alertdialog', { name: '插件已卸载，运行环境恢复失败' }),
+  ).toBe(dialog);
+  expect(screen.getByText(reason, { normalizer: value => value })).toBeTruthy();
+  const guidance = screen.getByRole('heading', { name: '接下来可以做什么' })
+    .nextElementSibling!.textContent!;
+  expect(guidance).toContain('无需再次卸载');
+  expect(guidance).toContain('标题栏');
+  expect(guidance).toContain('查看原因');
+  expect(guidance).toContain('仅在提供“启动 AI 引擎”按钮时');
+  expect(guidance).not.toMatch(/设置|通用|重新安装|启用插件|仍无法使用插件/);
+  expect(dialog.textContent).not.toContain('pluginOperation');
+
+  const writeText = vi.fn().mockResolvedValue(undefined);
+  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+  fireEvent.click(screen.getByRole('button', { name: '复制错误详情' }));
+  await waitFor(() => expect(writeText).toHaveBeenCalledOnce());
+  expect(writeText.mock.calls[0][0]).toContain(reason);
+  expect(writeText.mock.calls[0][0]).toContain(guidance);
+  expect(writeText.mock.calls[0][0]).toContain(requestId);
+});
+
+test('describes both explicit runtime recovery stages as a completed removal in English', () => {
+  useActualTranslations('en');
+  for (const failedStage of [
+    PluginOperationStage.PREPARING_RUNTIME,
+    PluginOperationStage.RESTARTING_GATEWAY,
+  ]) {
+    const presentation = pluginOperationFailurePresentation({
+      action: PluginOperationAction.REMOVE,
+      state: PluginOperationFailureState.REFRESH_FAILED,
+      failedStage,
+    });
+    expect(presentation.title).toBe('Plugin uninstalled; runtime recovery failed');
+    expect(presentation.guidance).toContain('do not remove it again');
+    expect(presentation.guidance).toContain('title bar');
+    expect(presentation.guidance).toContain('only if a “Start AI engine” button is offered');
+    expect(presentation.guidance).not.toMatch(/Settings|General|enable the plugin|plugin still cannot be used/);
+  }
+});
+
+test.each([
+  {
+    language: 'zh' as const,
+    failedStage: PluginOperationStage.APPLYING_CONFIGURATION,
+    title: /插件已卸载.*应用配置并等待运行环境/,
+    advice: '网络策略或运行配置',
+    saved: '无需再次卸载',
+    copy: '复制错误详情',
+  },
+  {
+    language: 'en' as const,
+    failedStage: PluginOperationStage.SAVING_CONFIGURATION,
+    title: /Plugin uninstalled.*Save plugin configuration/,
+    advice: 'allowed-plugin list',
+    saved: 'do not remove it again',
+    copy: 'Copy error details',
+  },
+])('names the unfinished removal configuration step and offers administrator help: $failedStage', async ({ language, failedStage, title, advice, saved, copy }) => {
+  useActualTranslations(language);
+  const reason = 'Native removal finished. Configuration cleanup failed.';
+  const { dialog, requestId } = showRemovalFailure({
+    message: reason,
+    state: PluginOperationFailureState.REFRESH_FAILED,
+    failedStage,
+  });
+  expect(screen.getByRole('alertdialog', { name: title })).toBe(dialog);
+  const nextStep = pluginsTranslations[language].pluginOperationFailureNextStep;
+  const guidance = screen.getByRole('heading', { name: nextStep }).nextElementSibling!.textContent!;
+  expect(guidance).toContain(saved);
+  expect(guidance).toContain(advice);
+  expect(guidance).toMatch(/管理员|administrator/);
+  expect(guidance).not.toMatch(/设置|Settings|手动卸载|removing it manually|手动启用/);
+
+  const writeText = vi.fn().mockResolvedValue(undefined);
+  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+  fireEvent.click(screen.getByRole('button', { name: copy }));
+  await waitFor(() => expect(writeText).toHaveBeenCalledOnce());
+  expect(writeText.mock.calls[0][0]).toContain(reason);
+  expect(writeText.mock.calls[0][0]).toContain(guidance);
+  expect(writeText.mock.calls[0][0]).toContain(requestId);
+});
+
+test('offers conditional file-use and permission remedies for a known uninstall failure', async () => {
+  useActualTranslations('zh');
+  const reason = '无法移除插件文件：目标文件仍被相关程序占用。';
+  const { dialog } = showRemovalFailure({
+    message: reason,
+    failedStage: PluginOperationStage.UNINSTALLING,
+  });
+  expect(screen.getByRole('alertdialog', { name: '卸载未完成' })).toBe(dialog);
+  const guidance = screen.getByRole('heading', { name: '接下来可以做什么' })
+    .nextElementSibling!.textContent!;
+  expect(guidance).toContain('如提示文件被占用');
+  expect(guidance).toContain('关闭正在使用该插件的相应程序');
+  expect(guidance).toContain('如提示无权限');
+  expect(guidance).toContain('标题栏状态');
+  expect(guidance).toContain('核对插件仍在列表中，再手动卸载');
+  expect(guidance).not.toMatch(/启用|设置|核对版本、开关/);
+
+  const writeText = vi.fn().mockResolvedValue(undefined);
+  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+  fireEvent.click(screen.getByRole('button', { name: '复制错误详情' }));
+  await waitFor(() => expect(writeText).toHaveBeenCalledOnce());
+  expect(writeText.mock.calls[0][0]).toContain(reason);
+  expect(writeText.mock.calls[0][0]).toContain(guidance);
+});
+
+test.each([
+  {
+    state: PluginOperationFailureState.REFRESH_FAILED,
+    failedStage: PluginOperationStage.RESTARTING_GATEWAY,
+    operationUnconfirmed: true as const,
+  },
+  {
+    state: PluginOperationFailureState.COMMITTED,
+    failedStage: PluginOperationStage.SAVING_CONFIGURATION,
+    installSourceInUse: true as const,
+  },
+])('never claims removal finished when an unknown flag is present: $state / $failedStage', input => {
+  useActualTranslations('zh');
+  const { dialog } = showRemovalFailure({ message: '尚未收到原生卸载的最终回执。', ...input });
+  expect(screen.getByRole('alertdialog', { name: '操作状态待确认' })).toBe(dialog);
+  expect(screen.getByText('最后已知步骤')).toBeTruthy();
+  const guidance = screen.getByRole('heading', { name: '接下来可以做什么' })
+    .nextElementSibling!.textContent!;
+  expect(guidance).toContain('核对最新状态');
+  expect(guidance).toContain('不要重复提交');
+  expect(guidance).not.toMatch(/无需再次卸载|再手动卸载|启动 AI 引擎|设置|启用/);
+  expect(dialog.textContent).not.toContain('插件已卸载');
+});
 
 test('shares the progress stack with settled feedback and blocks its portal actions during an engine restart', () => {
   const { owner } = setup();

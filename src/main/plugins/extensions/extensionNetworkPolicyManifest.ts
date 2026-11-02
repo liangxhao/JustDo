@@ -6,6 +6,7 @@ import {
   EXTENSION_OUTBOUND_HEADER_MANIFEST_FILE,
   type ExtensionOutboundHeaderManifestV1,
 } from '../../../shared/plugins/outboundHeaderPolicy';
+import { t } from '../../core/i18n';
 
 const MAX_MANIFEST_BYTES = 64 * 1024;
 const MAX_GROUPS = 32;
@@ -54,36 +55,33 @@ const isDisallowedLocalHostname = (hostname: string): boolean => {
     /^::ffff:169\.254(?:\.\d{1,3}){2}$/.test(normalized) ||
     (!!mappedIpv4 &&
       (Number.parseInt(mappedIpv4[1], 16) >> 8 === 127 ||
-        Number.parseInt(mappedIpv4[1], 16) === 0xa9fe)) ||
+        Number.parseInt(mappedIpv4[1], 16) === 0xa9fe ||
+        (Number.parseInt(mappedIpv4[1], 16) === 0 && Number.parseInt(mappedIpv4[2], 16) === 0))) ||
     (ipVersion === 6 && firstIpv6Value >= 0xfe80 && firstIpv6Value <= 0xfebf)
   );
 };
 
-const normalizeBaseUrl = (raw: unknown): string => {
-  if (typeof raw !== 'string' || raw.length === 0 || raw.length > MAX_URL_LENGTH) {
-    throw new Error(
-      'Network policy base URLs must be non-empty strings of at most 2048 characters.',
-    );
-  }
+const normalizeBaseUrl = (raw: unknown, groupIndex: number, urlIndex: number): string => {
+  const invalid = (reasonKey: string): Error => new Error(t('networkPolicyUrlInvalid')
+    .replace('{file}', EXTENSION_OUTBOUND_HEADER_MANIFEST_FILE)
+    .replace('{group}', String(groupIndex + 1))
+    .replace('{url}', String(urlIndex + 1))
+    .replace('{reason}', t(reasonKey)));
+  if (typeof raw !== 'string') throw invalid('networkPolicyUrlType');
+  if (raw.length === 0 || raw.length > MAX_URL_LENGTH) throw invalid('networkPolicyUrlLength');
   let url: URL;
   try {
     url = new URL(raw);
   } catch {
-    throw new Error('Network policy base URL is invalid.');
+    throw invalid('networkPolicyUrlAbsolute');
   }
-  if (
-    url.protocol !== 'https:' ||
-    url.username ||
-    url.password ||
-    url.search ||
-    url.hash ||
-    isDisallowedLocalHostname(url.hostname)
-  ) {
-    throw new Error('Network policy base URL is not an allowed HTTPS target.');
-  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') throw invalid('networkPolicyUrlProtocol');
+  if (url.username || url.password) throw invalid('networkPolicyUrlCredentials');
+  if (url.href.split('#', 1)[0].includes('?')) throw invalid('networkPolicyUrlQuery');
+  if (url.href.includes('#')) throw invalid('networkPolicyUrlFragment');
+  if (isDisallowedLocalHostname(url.hostname)) throw invalid('networkPolicyUrlLocal');
   if (!url.pathname.endsWith('/')) url.pathname = `${url.pathname}/`;
   url.hostname = url.hostname.toLowerCase();
-  if (url.port === '443') url.port = '';
   return url.toString();
 };
 
@@ -188,7 +186,9 @@ export const inspectExtensionNetworkPolicyManifest = (
       );
     }
 
-    const baseUrlWhitelist = [...new Set(rawGroup.baseUrlWhitelist.map(normalizeBaseUrl))].sort();
+    const baseUrlWhitelist = [...new Set(rawGroup.baseUrlWhitelist.map(
+      (raw, urlIndex) => normalizeBaseUrl(raw, groupIndex, urlIndex),
+    ))].sort();
     const seenHeaderNames = new Set<string>();
     const headerNames = rawGroup.headerNames
       .map((rawHeaderName, headerIndex) => {

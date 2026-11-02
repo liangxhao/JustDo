@@ -31,6 +31,13 @@ const guidanceByStage: Partial<Record<PluginOperationStage, string>> = {
   [PluginOperationStage.ROLLING_BACK]: 'recovery',
 };
 
+const removalFollowupGuidanceByStage: Partial<Record<PluginOperationStage, string>> = {
+  [PluginOperationStage.PREPARING_RUNTIME]: 'removalRuntime',
+  [PluginOperationStage.RESTARTING_GATEWAY]: 'removalRuntime',
+  [PluginOperationStage.APPLYING_CONFIGURATION]: 'removalPolicy',
+  [PluginOperationStage.SAVING_CONFIGURATION]: 'removalConfiguration',
+};
+
 export const pluginOperationNeedsConfirmation = (
   operation: Pick<FailureContext, 'state' | 'operationUnconfirmed' | 'installSourceInUse'>,
 ) =>
@@ -43,6 +50,16 @@ export function pluginOperationFailureGuidance(operation: FailureContext): strin
     return i18nService.t('pluginOperationFailureNext.unconfirmed');
   }
   let guidance = operation.failedStage ? guidanceByStage[operation.failedStage] : undefined;
+  if (operation.action === PluginOperationAction.REMOVE) {
+    if (operation.state === PluginOperationFailureState.REFRESH_FAILED && operation.failedStage) {
+      guidance = removalFollowupGuidanceByStage[operation.failedStage] ?? guidance;
+    } else if (
+      operation.state === PluginOperationFailureState.FAILED &&
+      operation.failedStage === PluginOperationStage.UNINSTALLING
+    ) {
+      guidance = 'removal';
+    }
+  }
   // Closing/removing a plugin must never recommend enabling it as a repair.
   if (
     (operation.action === PluginOperationAction.DISABLE ||
@@ -72,7 +89,8 @@ export function pluginOperationFailurePresentation(operation: PresentationContex
   let titleKey = `pluginOperationFailureTitle.${operation.state}`;
   if (
     pluginOperationNeedsConfirmation(operation) &&
-    operation.state !== PluginOperationFailureState.COMMITTED
+    (operation.state !== PluginOperationFailureState.COMMITTED ||
+      operation.action === PluginOperationAction.REMOVE)
   ) {
     titleKey = 'pluginOperationFailureTitle.unconfirmed';
   } else if (operation.state === PluginOperationFailureState.COMMITTED) {
@@ -91,9 +109,17 @@ export function pluginOperationFailurePresentation(operation: PresentationContex
       titleKey = `pluginOperationFailureTitle.${operation.action}.followup_failed`;
     else if (
       operation.action === PluginOperationAction.REMOVE &&
-      operation.failedStage === PluginOperationStage.PREPARING_RUNTIME
+      (operation.failedStage === PluginOperationStage.PREPARING_RUNTIME ||
+        operation.failedStage === PluginOperationStage.RESTARTING_GATEWAY)
     ) {
       titleKey = 'pluginOperationFailureTitle.remove.recovery_failed';
+    } else if (
+      operation.action === PluginOperationAction.REMOVE &&
+      (operation.failedStage === PluginOperationStage.APPLYING_CONFIGURATION ||
+        operation.failedStage === PluginOperationStage.SAVING_CONFIGURATION ||
+        operation.failedStage === PluginOperationStage.CONFIRMING)
+    ) {
+      titleKey = 'pluginOperationFailureTitle.remove.followup_failed';
     }
   } else if (operation.state === PluginOperationFailureState.FAILED) {
     titleKey =

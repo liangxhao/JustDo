@@ -73,13 +73,17 @@ export function removeExtensionPackage(
 ): Promise<ExtensionDeleteResult> {
   return observeExtensionMutation(operation, mutate, (result, error) => {
     const recovery = recoveryMessage(
-      t(result.success ? 'extensionRemovalSavedRecoveryFailed' : 'extensionPackageRecoveryFailed'),
+      t(result.success && !result.error
+        ? 'extensionRemovalSavedRecoveryFailed'
+        : 'extensionPackageRecoveryFailed'),
       error,
     );
     return {
       ...result,
       refreshWarning: true,
-      ...(result.success ? { failedStage: PluginOperationStage.PREPARING_RUNTIME } : {}),
+      ...(result.success && !result.failedStage
+        ? { failedStage: PluginOperationStage.PREPARING_RUNTIME }
+        : {}),
       error: result.error ? `${result.error}\n${recovery}` : recovery,
     };
   });

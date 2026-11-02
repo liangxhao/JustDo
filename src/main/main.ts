@@ -275,6 +275,7 @@ import {
 import { AppApprovalStore } from './plugins/app/approvalStore';
 import { startAppDevelopmentAssets } from './plugins/app/developmentAssets';
 import { AppPluginManager, discoverAppCandidates } from './plugins/app/manager';
+import { ensureAppPluginRuntimeReady } from './plugins/app/runtimeReadiness';
 import { WorkspaceAppSessions } from './plugins/mcp/workspaceAppSession';
 import { SkillWorkshopService } from './plugins/skills/skillWorkshopService';
 import {
@@ -587,7 +588,7 @@ const getAppPlugins = (): AppPluginManager =>
       getNativeStateDirectory: () => getOpenClawEngineManager().getStateDir(),
       getPythonRuntime: async () => getOpenClawEngineManager().getGatewayPythonRuntime(),
       getRuntime: getOpenClawRuntimeAdapter,
-      ensureReady: ensureOpenClawRunningForCowork,
+      ensureReady: () => ensureAppPluginRuntimeReady(ensureOpenClawRunningForCowork),
       requestGateway: (method, params) => getCoworkEngineService().requestGateway(method, params),
       requestConnectedGateway: (method, params) => {
         const client = getOpenClawRuntimeAdapter()?.getGatewayClient();

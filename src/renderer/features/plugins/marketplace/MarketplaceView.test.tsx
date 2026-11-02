@@ -138,6 +138,27 @@ function Harness({
   );
 }
 
+test('keeps market loading in the bottom progress stack until results arrive', async () => {
+  let finish!: () => void;
+  api.search.mockImplementationOnce(
+    () =>
+      new Promise(resolve => {
+        finish = () =>
+          resolve({ success: true, result: { items: [writer], nextCursor: undefined } });
+      }),
+  );
+  const view = render(<Harness />);
+  await waitFor(() => expect(api.search).toHaveBeenCalledOnce());
+  const loading = screen.getByText('marketplaceLoading');
+  expect(loading.closest('article, section')).toBeNull();
+  expect(loading.closest('.fixed')?.classList.contains('bottom-4')).toBe(true);
+  expect(view.container.contains(loading)).toBe(false);
+
+  await act(async () => finish());
+  expect(screen.getByText(writer.name)).toBeTruthy();
+  expect(screen.queryByText('marketplaceLoading')).toBeNull();
+});
+
 test('searches the market and includes installed matches found only in market metadata once', async () => {
   render(<Harness installed={INSTALLED} query="notes" />);
   expect(await screen.findByTestId('local-writer')).toBeTruthy();

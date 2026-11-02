@@ -47,8 +47,8 @@ method、允许的模型 endpoint、header 与 body，并重建固定的连接�
 生效条件只有三项：Extension 已安装、已启用、声明文件合法。
 
 本功能不增加独立的权限弹窗、审批令牌、授权记录、SQLite 表或 Renderer 状态。Extension 的
-安装和启用已经是用户动作，不再为同一个动作叠加第二套授权协议。OpenClaw 自己已有的通用
-Extension 能力审查保持原样，但与出站请求头声明无关。
+安装和启用已经是用户动作，不再为同一个动作叠加第二套授权协议。通用 Extension 安装
+直接接受原生能力声明，不弹安装审核；显式启用的确认边界保持独立，均不因出站请求头声明增加弹窗。
 
 Extension 根目录可选包含：
 
@@ -76,12 +76,19 @@ outbound-header-policy.json
 约束：
 
 - 仅支持 `schemaVersion: 1`；
-- 仅支持绝对 `https://` URL；
-- URL 路径末尾的 `/` 可省略，统一按 origin、端口和路径边界匹配；
-- 禁止 localhost、loopback、链路本地地址和带用户名密码的 URL；
+- 支持显式声明绝对 `http://` 或 `https://` URL，包括内网 HTTP 服务；
+- URL 路径末尾的 `/` 可省略，统一按协议、主机、端口和路径边界精确匹配；
+- 禁止 localhost、loopback、链路本地、未指定地址，以及带用户名密码、query 或 fragment 的 URL（包括空的 `?`、`#` 标记）；
 - 禁止 `Host`、`Connection`、`Content-Length`、`Proxy-Authorization` 等传输层头；
 - 请求头值固定从 `user_info.json` 的同名 key 读取；
 - 声明文件只描述“在哪里添加哪个头”，不保存密钥值。
+
+HTTP 与 HTTPS 不互相授权；主机、端口或相邻路径不同也不会命中。默认端口按 URL 协议规范化，
+例如 HTTP 的 `:80` 和 HTTPS 的 `:443` 可省略，但 HTTP 的 `:443` 与 HTTPS 的 `:80` 必须保留。
+
+无效 URL 的错误会给出声明文件名、原始组和地址的序号以及具体约束，区分格式、协议、嵌入
+账号信息、query、fragment 和受禁目标；错误不回显原 URL、账号、凭据或查询内容。将位置和
+原因交给插件提供方修正对应声明；已保存或结果待确认的操作仍按结果弹窗核对，不重复提交。
 
 ### 手工规则与 Extension 的合并
 
@@ -407,6 +414,7 @@ credential 对象、URL query 或代理认证信息。
 - 安装并启用带合法 sidecar 的 Extension 后，无额外弹窗即可对两条数据路径生效；
 - 禁用或卸载 Extension 后规则立即从新 generation 消失；
 - 无效 sidecar、危险 URL 和危险传输头被拒绝；
+- 显式内网 HTTP 和 HTTPS 声明均按协议、主机、端口和路径精确匹配，保留跨协议的非默认端口；
 - Main 重定向不会把策略头带到不匹配目标；
 - Gateway 子进程得到隔离的代理环境，其他进程不受影响；
 - 日志和错误中不出现请求头值。

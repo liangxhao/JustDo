@@ -14,6 +14,9 @@ import HookManager from '@/features/plugins/hooks/HookManager';
 import { MarketplaceToolbarSlot } from '@/features/plugins/marketplace/MarketplaceToolbarSlot';
 import McpManager from '@/features/plugins/mcp/McpManager';
 import { mcpService } from '@/features/plugins/mcp/mcpService';
+import PluginActivityStatus, {
+  PluginActivityTone,
+} from '@/features/plugins/shared/PluginActivityStatus';
 import PluginOperationFeedback from '@/features/plugins/shared/PluginOperationFeedback';
 import PluginOperationStatus from '@/features/plugins/shared/PluginOperationStatus';
 import { PluginOperationStatusSlot } from '@/features/plugins/shared/PluginOperationStatusSlot';
@@ -196,18 +199,19 @@ const PluginsView: React.FC<PluginsViewProps> = ({
           </div>
 
           <PluginOperationStatus feedbackSlotRef={setOperationStatusSlot} />
-          {!engine.ready && (
-            <p
-              role="status"
-              className="mt-5 rounded-xl bg-surface px-4 py-5 text-sm text-secondary"
-            >
-              {i18nService.t(engine.failed ? 'engineUnavailableContent' : 'enginePreparingContent')}
-            </p>
-          )}
-          <div className="mt-5">
-            {(engine.ready || hasAdmittedEngine) && (
-              <EngineInteractionBoundary disabled={!engine.ready}>
-                <PluginOperationStatusSlot.Provider value={operationStatusSlot}>
+          <PluginOperationStatusSlot.Provider value={operationStatusSlot}>
+            {!engine.ready && (
+              <PluginActivityStatus
+                title={i18nService.t('plugins')}
+                message={i18nService.t(
+                  engine.failed ? 'engineUnavailableContent' : 'enginePreparingContent',
+                )}
+                tone={engine.failed ? PluginActivityTone.ERROR : PluginActivityTone.PROGRESS}
+              />
+            )}
+            <div className="mt-5">
+              {(engine.ready || hasAdmittedEngine) && (
+                <EngineInteractionBoundary disabled={!engine.ready}>
                   <MarketplaceToolbarSlot.Provider value={toolbarSlot}>
                     {activeTab === 'extensions' && (
                       <ExtensionsManager
@@ -238,10 +242,10 @@ const PluginsView: React.FC<PluginsViewProps> = ({
                       />
                     )}
                   </MarketplaceToolbarSlot.Provider>
-                </PluginOperationStatusSlot.Provider>
-              </EngineInteractionBoundary>
-            )}
-          </div>
+                </EngineInteractionBoundary>
+              )}
+            </div>
+          </PluginOperationStatusSlot.Provider>
         </div>
       </main>
       <PluginOperationFeedback />

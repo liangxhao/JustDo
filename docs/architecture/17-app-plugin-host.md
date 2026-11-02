@@ -50,7 +50,7 @@ Runtime Services 只保留通用执行准入、inert session 托管、执行收�
 
 保留目录复制后再校验，防止从可变安装目录执行 Main 代码。作者操作见 [SDK 说明](../../plugins/sdk/app-plugin-sdk/README.md)。
 
-安装、删除与原生能力审核继续使用原生扩展流程。外部 Main/UI 代码另有绑定精确产物 hash 的审核，不复用原生 review token。审批文件位于产品数据的 `app-plugins/approvals.json`，只保存当前 hash 和有界历史批准；保留的不可变产物位于 `app-plugins/artifacts/<id>/<hash>`。损坏或不匹配的记录不能授权执行。安装目录同 ID 的自定义插件覆盖捆绑候选，不会退回执行另一个同名版本。
+安装与删除继续使用原生扩展流程；安装时由 Main 自动接受原生能力声明，不再弹出人工确认。外部 Main/UI 代码另有绑定精确产物 hash 的审核，不复用原生 review token。审批文件位于产品数据的 `app-plugins/approvals.json`，只保存当前 hash 和有界历史批准；保留的不可变产物位于 `app-plugins/artifacts/<id>/<hash>`。损坏或不匹配的记录不能授权执行。安装目录同 ID 的自定义插件覆盖捆绑候选，不会退回执行另一个同名版本。
 
 ### 代码信任限制
 
@@ -165,6 +165,17 @@ Main 的 canonical Gateway client 用 `AsyncLocalStorage` 保留当前业务注�
 必要历史清理 owner 按原 hash 保留，非必要旧实例释放。新 schemas 在原产品库中初始化，仍使用同一数据库端口。
 
 冷操作 lease 释放后，原先存在的 Gateway 在后台重新启动并重连，软件窗口、Core 和主进程保持运行；原本离线且无 Gateway 的应用不因只读审核准备而启动运行时。只有新进程握手通过才重新发布业务 UI。同包启停独立于改包流程，必须通过公开管理 API 在现有 Gateway 内热应用，不能触发 Gateway 重启。关闭后立即隐藏历史和设置入口，重新启用不恢复旧对话框或重放请求。
+
+安装入口不再要求人工能力确认，所有实际本地安装也进入同一冷包变更 owner。可信市场
+对普通扩展的安装后启用只在已确认的停止租约内通过原生离线 enable 完成一次；App
+companion 明确保留 `--no-enable`，不走自动启用，也不借市场信任绕过独立代码 hash 批准。
+
+Main 为 App 插件提供的 `ensureReady` 在组合点检查本次引擎准备返回值：只有经
+原准备 owner 确认的 Running 才正常返回。Error 保留本次具体错误；Ready 或
+Starting 使用未运行／仍在准备的受控说明，不能把正常停止状态当根因。非就绪
+结果在读取插件清单前拒绝，避免后续“清单不可用”覆盖启动原因；原异常原样
+透传，不取旧诊断、不重复启动或重放包变更。SDK 的通用返回类型和准备 owner
+的代次、准入及返回合同保持不变。
 
 捆绑及已批准的外部应用插件统一调用原生 `plugins.setEnabled`，保留其能力审核与运行态回执；不使用 CLI 作为失败后的替代路径，不使用 9.8 的 Skill 发现重启规避。附属 Skill 经 `skills.update` 同步后，只读核对 `config.get` 中技能开关及 `configRevisionHash === appliedConfigHash`，等待配置实际应用，避免紧接着的插件操作与尚在执行的配置监听争用 lease。
 

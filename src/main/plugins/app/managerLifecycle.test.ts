@@ -8,11 +8,15 @@ import { afterEach, expect, test, vi } from 'vitest';
 import type { AppPluginManifest } from '../../../../plugins/sdk/app-plugin-sdk/contracts';
 import type { AppMainModule, AppResourceParticipant } from '../../../../plugins/sdk/app-plugin-sdk/main';
 import { appNativeGatewayMethodAlias, type AppNativeHandshake } from '../../../../plugins/sdk/app-plugin-sdk/native-contract';
+import { EnginePhase, type OpenClawEngineStatus } from '../../../shared/openclaw/engineStatus';
+import { PluginOperationStage } from '../../../shared/plugins/pluginOperation';
 import { bindPluginGatewayClient } from '../../engine/gateway/pluginRequestBinding';
+import { removeExtensionPackage } from '../extensions/extensionMutation';
 import { artifactDigest } from './artifact';
 import { readAppAsset } from './assets';
 import { type AppCandidate, AppPluginManager } from './manager';
 import type { AppHostResources } from './registry';
+import { ensureAppPluginRuntimeReady } from './runtimeReadiness';
 
 const id = 'lifecycle-fixture';
 const sha = (text: string) => createHash('sha256').update(text).digest('hex');
@@ -153,6 +157,32 @@ test('adopts a replacement Main/UI artifact after Gateway stop without restartin
   expect(f.manager.snapshot()[0].restartRequired).not.toBe(true);
   expect(await f.read()).toEqual({ success: true, value: '2.0.0' });
   expect(await f.read(old.epoch)).toMatchObject({ success: false });
+});
+
+test('preserves a completed removal and its actual returned preparation failure before refreshing the host catalog', async () => {
+  const reason = 'Network generation preparation failed: the local certificate store is unavailable';
+  const prepare = vi.fn(async (): Promise<OpenClawEngineStatus> => ({
+    phase: EnginePhase.Error, version: 'fixture', canRetry: true, message: reason,
+  }));
+  const f = await fixture({ ensureReady: async () => {
+    await ensureAppPluginRuntimeReady(prepare);
+  } });
+  const refresh = vi.spyOn(f.manager, 'refresh');
+  const operation = vi.fn(async () => ({ success: true }));
+
+  const result = await removeExtensionPackage(operation, callback => f.manager.mutatePackage(callback));
+
+  expect(result).toMatchObject({
+    success: true,
+    refreshWarning: true,
+    failedStage: PluginOperationStage.PREPARING_RUNTIME,
+    error: expect.stringContaining(reason),
+  });
+  expect(operation).toHaveBeenCalledOnce();
+  expect(prepare).toHaveBeenCalledOnce();
+  expect(f.counts()).toEqual({ stops: 1, resumes: 1 });
+  expect(refresh).not.toHaveBeenCalled();
+  refresh.mockRestore();
 });
 
 test('rejects package replacement while the original deletion owner is awaiting preparation', async () => {

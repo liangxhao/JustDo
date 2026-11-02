@@ -89,6 +89,7 @@ export const registerExtensionHandlers = ({
           request.onProgress,
           payload.reviewToken,
           {
+            autoAcceptCapabilities: true,
             trustMarketplaceSource: request.origin === PluginInstallOrigin.MARKETPLACE,
             preserveActivation: request.operation === MarketplaceInstallOperation.UPDATE,
             ...(request.onProgress
@@ -96,12 +97,7 @@ export const registerExtensionHandlers = ({
               : {}),
           },
         );
-      const result = await installExtensionPackage(
-        install,
-        request.payload.reviewToken || request.origin === PluginInstallOrigin.MARKETPLACE
-          ? mutateAppPackage
-          : undefined,
-      );
+      const result = await installExtensionPackage(install, mutateAppPackage);
       if (
         (result.success || result.installationCommitted) &&
         result.extensionId &&

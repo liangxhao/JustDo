@@ -133,6 +133,50 @@ const findCardProbe = async (name = 'personal-mcp') => {
   return within(card).getByRole('button', { name: 'mcpTestServer' });
 };
 
+test('shows inventory loading in the corner status stack without an empty-list claim', async () => {
+  let finishLoading!: (servers: ExtensionProvidedMcpServer[]) => void;
+  vi.mocked(mcpService.loadExtensionServers).mockReturnValue(
+    new Promise(resolve => {
+      finishLoading = resolve;
+    }),
+  );
+  renderManager();
+
+  const activity = screen.getByText('mcpLoadingServers');
+  expect(activity.closest('.fixed.bottom-4.right-4')).toBeTruthy();
+  expect(screen.queryByText('mcpNoInstalledServers')).toBeNull();
+
+  await act(async () => finishLoading([demoServer('personal')]));
+
+  expect(await screen.findByText('personal-mcp')).toBeTruthy();
+  expect(screen.queryByText('mcpLoadingServers')).toBeNull();
+});
+
+test('moves sync activity to the corner while retaining the full-window pointer gate until completion', async () => {
+  renderManager();
+  await screen.findByText('personal-mcp');
+  const startCalls = vi.mocked(mcpService.onConfigSyncStart).mock.calls;
+  const doneCalls = vi.mocked(mcpService.onConfigSyncDone).mock.calls;
+  const syncStart = startCalls[startCalls.length - 1][0];
+  const syncDone = doneCalls[doneCalls.length - 1][0];
+
+  act(() => syncStart());
+
+  const activity = screen.getByText('mcpBridgeSyncing');
+  const pointerGate = document.querySelector('[aria-hidden="true"].fixed.inset-0.z-50');
+  expect(activity.closest('.fixed.bottom-4.right-4')).toBeTruthy();
+  expect(pointerGate).toBeTruthy();
+  expect(pointerGate?.contains(activity)).toBe(false);
+  expect(pointerGate?.textContent).toBe('');
+  expect(pointerGate?.querySelector('svg')).toBeNull();
+
+  act(() => syncDone({ tools: 0 }));
+
+  expect(pointerGate?.isConnected).toBe(false);
+  expect(screen.queryByText('mcpBridgeSyncing')).toBeNull();
+  expect(screen.queryByRole('alertdialog')).toBeNull();
+});
+
 test('configuration sync succeeds silently and reports failures in a dismissible dialog', async () => {
   renderManager();
   await screen.findByText('personal-mcp');

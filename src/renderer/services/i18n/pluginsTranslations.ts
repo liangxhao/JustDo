@@ -29,6 +29,7 @@ export const pluginsTranslations = {
     'pluginOperationFailureTitle.update': '更新未完成',
     'pluginOperationFailureTitle.remove': '卸载未完成',
     'pluginOperationFailureTitle.remove.recovery_failed': '插件已卸载，运行环境恢复失败',
+    'pluginOperationFailureTitle.remove.followup_failed': '插件已卸载，但{problem}',
     'pluginOperationFailureTitle.enable': '启用未完成',
     'pluginOperationFailureTitle.enable.followup_failed': '启用设置已保存，但无法确认插件状态',
     'pluginOperationFailureTitle.disable': '关闭未完成',
@@ -70,6 +71,14 @@ export const pluginsTranslations = {
       '关闭提示后，查看标题栏（最小化、最大化按钮旁）的 AI 引擎状态。启动中请等待；启动失败时点“查看原因”，按提示处理。仅在提供“启动 AI 引擎”按钮时手动启动；若仍无法使用插件，请复制错误详情联系管理员或插件提供方。',
     'pluginOperationFailureGuidance.status':
       '关闭提示后，重新进入对应插件分类，核对版本、开关和可用状态。若仍无法读取或与本次操作不符，请复制错误详情联系管理员或插件提供方；确认前不要重复提交。',
+    'pluginOperationFailureGuidance.removal':
+      '请按上方具体原因处理：如提示文件被占用，关闭正在使用该插件的相应程序；如提示无权限，复制错误详情联系管理员。若原因涉及 AI 引擎，查看标题栏状态，启动失败时点“查看原因”。处理后核对插件仍在列表中，再手动卸载。',
+    'pluginOperationFailureGuidance.removalRuntime':
+      '插件已卸载，无需再次卸载。关闭提示后，查看标题栏（最小化、最大化按钮旁）的 AI 引擎状态；启动中请等待，启动失败时点“查看原因”。仅在提供“启动 AI 引擎”按钮时手动启动；若引擎仍无法就绪，请复制错误详情联系管理员或插件提供方。',
+    'pluginOperationFailureGuidance.removalPolicy':
+      '插件已卸载，无需再次卸载。请复制错误详情，联系管理员核对卸载后的网络策略或运行配置。',
+    'pluginOperationFailureGuidance.removalConfiguration':
+      '插件已卸载，无需再次卸载。请复制错误详情，联系管理员核对卸载后的插件允许加载列表及剩余配置。',
     'pluginOperationFailureGuidance.recovery':
       '请复制错误详情，联系管理员处理临时文件或配置恢复问题。不要通过重复安装、卸载或手动删除插件目录尝试修复。',
     'pluginOperationFailureGuidance.missingStage':
@@ -401,7 +410,9 @@ export const pluginsTranslations = {
     extensionStatusUpdatedWithWarnings: '扩展状态已更新（有警告）',
     extensionCapabilityReviewTitle: '审查扩展能力',
     extensionCapabilityReviewDescription:
-      '扩展“{name}”请求以下能力。确认后将安装或启用它，并记录本次能力声明。',
+      '扩展“{name}”请求以下能力。确认后将启用它，并记录本次能力声明。',
+    extensionImportReviewUnexpected:
+      '安装服务返回了额外确认要求，未能完成本次请求。请复制错误详情联系管理员或插件提供方；未自动重复安装。',
     extensionCapabilityWidened: '新增能力',
     extensionCapabilityDeclared: '完整能力声明',
     extensionCapabilityNone: '未声明可枚举能力',
@@ -492,6 +503,7 @@ export const pluginsTranslations = {
     'pluginOperationFailureTitle.update': 'Update incomplete',
     'pluginOperationFailureTitle.remove': 'Removal incomplete',
     'pluginOperationFailureTitle.remove.recovery_failed': 'Plugin uninstalled; runtime recovery failed',
+    'pluginOperationFailureTitle.remove.followup_failed': 'Plugin uninstalled, but {problem}',
     'pluginOperationFailureTitle.enable': 'Enabling incomplete',
     'pluginOperationFailureTitle.enable.followup_failed': 'Enable setting saved, but plugin status could not be confirmed',
     'pluginOperationFailureTitle.disable': 'Disabling incomplete',
@@ -533,6 +545,14 @@ export const pluginsTranslations = {
       'Close this notice and check the AI engine status in the title bar beside the minimize and maximize buttons. Wait while it starts; if startup fails, click “View reason” and follow the reported advice. Start it manually only if a “Start AI engine” button is offered. If the plugin still cannot be used, copy the error details and contact your administrator or the plugin provider.',
     'pluginOperationFailureGuidance.status':
       'Close this notice and reopen the corresponding plugin category to check its version, switch and availability. If status cannot be read or does not match the requested operation, copy the error details and contact your administrator or the plugin provider. Do not repeat the operation before confirming its result.',
+    'pluginOperationFailureGuidance.removal':
+      'Follow the reported reason: if a file is in use, close the program using this plugin; if access is denied, copy the error details and contact your administrator. For an AI engine issue, check its status in the title bar and click “View reason” if startup failed. After resolving the reported issue, confirm the plugin is still installed before removing it manually.',
+    'pluginOperationFailureGuidance.removalRuntime':
+      'The plugin was uninstalled; do not remove it again. Close this notice and check the AI engine status in the title bar beside the minimize and maximize buttons. Wait while it starts; if startup fails, click “View reason”. Start it manually only if a “Start AI engine” button is offered. If the engine still cannot become ready, copy the error details and contact your administrator or the plugin provider.',
+    'pluginOperationFailureGuidance.removalPolicy':
+      'The plugin was uninstalled; do not remove it again. Copy the error details and ask your administrator to check network policy or runtime configuration after removal.',
+    'pluginOperationFailureGuidance.removalConfiguration':
+      'The plugin was uninstalled; do not remove it again. Copy the error details and ask your administrator to check the allowed-plugin list and remaining configuration after removal.',
     'pluginOperationFailureGuidance.recovery':
       'Copy the error details and ask your administrator to handle temporary-file cleanup or configuration recovery. Do not try to repair this by reinstalling, removing or manually deleting plugin folders.',
     'pluginOperationFailureGuidance.missingStage':
@@ -886,7 +906,9 @@ export const pluginsTranslations = {
     extensionStatusUpdatedWithWarnings: 'Extension status updated with warnings',
     extensionCapabilityReviewTitle: 'Review extension capabilities',
     extensionCapabilityReviewDescription:
-      'Extension “{name}” requests the following capabilities. Confirming installs or enables it and records this declared surface.',
+      'Extension “{name}” requests the following capabilities. Confirming enables it and records this declared surface.',
+    extensionImportReviewUnexpected:
+      'The installation service returned an unexpected confirmation requirement and could not complete this request. Copy the error details and contact your administrator or plugin provider. The installation was not repeated.',
     extensionCapabilityWidened: 'New capabilities',
     extensionCapabilityDeclared: 'Complete declared surface',
     extensionCapabilityNone: 'No enumerable capabilities declared',

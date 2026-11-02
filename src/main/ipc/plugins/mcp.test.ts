@@ -218,6 +218,7 @@ test('marketplace MCP install rejects an existing catalog id', async () => {
   expect(result).toEqual({
     success: false,
     error: 'MCP server is already installed',
+    publicReason: 'MCP server is already installed',
     failedStage: PluginOperationStage.VALIDATING,
   });
   expect(store.createServer).not.toHaveBeenCalled();

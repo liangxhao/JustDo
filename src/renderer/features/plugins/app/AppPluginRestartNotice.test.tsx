@@ -49,8 +49,16 @@ function bridge(read: () => Promise<AppPluginSnapshot[]>) {
 
 test('clears the pending notice after the Gateway reload completes', async () => {
   const api = bridge(async () => snapshots(true));
-  const view = render(<AppPluginRestartNotice />);
-  expect(await screen.findByRole('status')).toBeTruthy();
+  const view = render(
+    <section>
+      <AppPluginRestartNotice />
+    </section>,
+  );
+  const notice = await screen.findByRole('status');
+  expect(notice.closest('article, section')).toBeNull();
+  expect(notice.closest('.fixed')?.classList.contains('bottom-4')).toBe(true);
+  expect(notice.querySelector('.animate-spin')).toBeNull();
+  expect(view.container.contains(notice)).toBe(false);
 
   act(() => api.publish(false));
   expect(screen.queryByRole('status')).toBeNull();

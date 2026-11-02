@@ -1,13 +1,18 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { PluginKind } from '@shared/plugins/marketplace';
+import { PluginOperationAction } from '@shared/plugins/pluginOperation';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
 import { mcpService } from '@/features/plugins/mcp/mcpService';
+import { startPluginOperation } from '@/features/plugins/shared/pluginOperationService';
+import { PluginOperationStatusContent } from '@/features/plugins/shared/PluginOperationStatusSlot';
 
 import PluginsView from './PluginsView';
 
 const engine = vi.hoisted(() => ({ ready: true, pending: false, failed: false }));
+const portalAction = vi.hoisted(() => vi.fn());
 vi.mock('@/app/shell/startup/routing/useEngineReadiness', () => ({
   useEngineReadiness: () => engine,
 }));
@@ -19,6 +24,9 @@ vi.mock('@/features/plugins/extensions/ExtensionsManager', () => ({
     <div data-testid="extensions-manager">
       {JSON.stringify(props)}
       <input aria-label="extension-draft" defaultValue="" />
+      <PluginOperationStatusContent>
+        <button onClick={portalAction}>extension-portal-action</button>
+      </PluginOperationStatusContent>
     </div>
   ),
 }));
@@ -53,15 +61,23 @@ test('keeps categories accessible while engine preparation defers native invento
   Object.assign(engine, { ready: false, pending: true });
   const props = { isSidebarCollapsed: false, onToggleSidebar: vi.fn(), onNewChat: vi.fn() };
   const { rerender } = render(<PluginsView {...props} />);
-  expect(screen.getByRole('status').textContent).toBe('enginePreparingContent');
+  const notice = screen.getByText('enginePreparingContent');
+  expect(notice.closest('main')).toBeNull();
+  expect(notice.closest('.fixed.bottom-4.right-4')).toBeTruthy();
+  expect(notice.closest('[role="status"]')?.querySelector('.animate-spin')).toBeTruthy();
   expect(screen.queryByTestId('extensions-manager')).toBeNull();
   expect(mcpService.loadExtensionServers).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByRole('button', { name: /skills/ }));
+  for (const tab of ['extensions', 'mcpServers', 'hooks', 'skills']) {
+    fireEvent.click(screen.getByRole('button', { name: tab }));
+    expect(screen.getAllByText('enginePreparingContent')).toHaveLength(1);
+    expect(screen.getByText('enginePreparingContent').closest('main')).toBeNull();
+  }
   expect(screen.queryByText('skills-manager')).toBeNull();
 
   Object.assign(engine, { ready: true, pending: false });
   rerender(<PluginsView {...props} />);
   expect(screen.getByText('skills-manager')).toBeTruthy();
+  expect(screen.queryByText('enginePreparingContent')).toBeNull();
   expect(mcpService.loadExtensionServers).toHaveBeenCalledOnce();
 });
 
@@ -70,11 +86,19 @@ test('shows engine recovery guidance and retains an admitted manager draft throu
   const { rerender } = render(<PluginsView {...props} />);
   const input = screen.getByRole('textbox', { name: 'extension-draft' }) as HTMLInputElement;
   fireEvent.change(input, { target: { value: 'unsaved configuration' } });
+  const portalButton = screen.getByRole('button', { name: 'extension-portal-action' });
+  fireEvent.click(portalButton);
+  expect(portalAction).toHaveBeenCalledOnce();
 
   Object.assign(engine, { ready: false, pending: false, failed: true });
   rerender(<PluginsView {...props} />);
-  expect(screen.getByRole('status').textContent).toBe('engineUnavailableContent');
+  const notice = screen.getByText('engineUnavailableContent');
+  expect(notice.closest('main')).toBeNull();
+  expect(notice.closest('.fixed.bottom-4.right-4')).toBeTruthy();
+  expect(notice.closest('[role="status"]')?.querySelector('.animate-spin')).toBeNull();
   expect(input.closest('[inert]')).toBeTruthy();
+  fireEvent.click(portalButton);
+  expect(portalAction).toHaveBeenCalledOnce();
   const skillsTab = screen.getByRole('button', { name: /skills/ }) as HTMLButtonElement;
   expect(skillsTab.disabled).toBe(true);
   fireEvent.click(skillsTab);
@@ -85,6 +109,29 @@ test('shows engine recovery guidance and retains an admitted manager draft throu
   expect(screen.getByRole('textbox', { name: 'extension-draft' })).toBe(input);
   expect(input.value).toBe('unsaved configuration');
   expect(input.closest('[inert]')).toBeNull();
+  fireEvent.click(portalButton);
+  expect(portalAction).toHaveBeenCalledTimes(2);
+  expect(screen.queryByText('engineUnavailableContent')).toBeNull();
+});
+
+test('shares the progress stack during an engine restart without losing the active operation', () => {
+  const operation = startPluginOperation({
+    kind: PluginKind.EXTENSION,
+    action: PluginOperationAction.UPDATE,
+    label: 'Updating extension',
+  });
+  const props = { isSidebarCollapsed: false, onToggleSidebar: vi.fn(), onNewChat: vi.fn() };
+  const { rerender } = render(<PluginsView {...props} />);
+  Object.assign(engine, { ready: false, pending: true });
+  rerender(<PluginsView {...props} />);
+  const stack = screen.getByText('Updating extension').closest('.fixed');
+  expect(screen.getByText('enginePreparingContent').closest('.fixed')).toBe(stack);
+  Object.assign(engine, { ready: true, pending: false });
+  rerender(<PluginsView {...props} />);
+  expect(screen.queryByText('enginePreparingContent')).toBeNull();
+  expect(screen.getByText('Updating extension').closest('.fixed')).toBe(stack);
+  act(() => operation.finish());
+  expect(screen.queryByText('Updating extension')).toBeNull();
 });
 
 test('uses one capability switcher instead of separate installed and marketplace pages', () => {

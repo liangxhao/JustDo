@@ -48,6 +48,25 @@ beforeEach(() => {
   });
 });
 
+test('keeps Hook loading in the bottom progress stack until inventory arrives', async () => {
+  let finish!: (value: { success: boolean; hooks: HookEntry[] }) => void;
+  vi.mocked(hookService.loadHooks).mockReturnValueOnce(
+    new Promise(resolve => {
+      finish = resolve;
+    }),
+  );
+  const view = render(<HookManager />);
+  const loading = await screen.findByText('loading');
+  expect(loading.closest('article, section')).toBeNull();
+  expect(loading.closest('.fixed')?.classList.contains('bottom-4')).toBe(true);
+  expect(view.container.contains(loading)).toBe(false);
+  expect(screen.queryByText('noHooksAvailable')).toBeNull();
+
+  await act(async () => finish({ success: true, hooks: [] }));
+  expect(screen.queryByText('loading')).toBeNull();
+  expect(screen.getByText('noHooksAvailable')).toBeTruthy();
+});
+
 test('reloads provider Hooks on an extension change and ignores an older failed list', async () => {
   let finishOld!: (result: { success: boolean; error: string }) => void;
   const providerHook: HookEntry = {

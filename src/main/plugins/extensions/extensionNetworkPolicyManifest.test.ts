@@ -1,11 +1,18 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { getLanguage, setLanguage, t } from '../../core/i18n';
+import { sanitizeInstallationFailureReason } from '../installation/installationFailureReason';
 import { inspectExtensionNetworkPolicyManifest } from './extensionNetworkPolicyManifest';
 
 const tempDirectories: string[] = [];
+let previousLanguage: ReturnType<typeof getLanguage>;
+
+beforeEach(() => {
+  previousLanguage = getLanguage();
+});
 
 const createExtension = (manifest: unknown): string => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-network-policy-'));
@@ -19,10 +26,31 @@ const createExtension = (manifest: unknown): string => {
 };
 
 afterEach(() => {
+  setLanguage(previousLanguage);
   for (const directory of tempDirectories.splice(0)) {
     fs.rmSync(directory, { recursive: true, force: true });
   }
 });
+
+const invalidUrlReason = (value: unknown): string => {
+  const extensionRoot = createExtension({
+    schemaVersion: 1,
+    groups: [
+      { baseUrlWhitelist: ['https://first.example.test/'], headerNames: ['X-User-Account'] },
+      {
+        baseUrlWhitelist: ['https://second.example.test/', value],
+        headerNames: ['X-Cookie'],
+      },
+    ],
+  });
+  try {
+    inspectExtensionNetworkPolicyManifest(extensionRoot);
+  } catch (error) {
+    if (error instanceof Error) return error.message;
+    throw error;
+  }
+  throw new Error('Expected an invalid URL declaration');
+};
 
 describe('inspectExtensionNetworkPolicyManifest', () => {
   it('normalizes a declarative outbound-header policy', () => {
@@ -44,7 +72,6 @@ describe('inspectExtensionNetworkPolicyManifest', () => {
   });
 
   it.each([
-    ['http target', 'http://api.example.com/v1/', 'X-User-Account'],
     ['loopback target', 'https://127.0.0.1/v1/', 'X-User-Account'],
     ['IPv4 link-local target', 'https://169.254.169.254/v1/', 'X-User-Account'],
     ['IPv6 link-local target', 'https://[fe80::1]/v1/', 'X-User-Account'],
@@ -62,6 +89,66 @@ describe('inspectExtensionNetworkPolicyManifest', () => {
     });
 
     expect(() => inspectExtensionNetworkPolicyManifest(extensionRoot)).toThrow();
+  });
+
+  it('accepts explicit intranet HTTP addresses while preserving a non-default port and encoded path delimiters', () => {
+    const extensionRoot = createExtension({
+      schemaVersion: 1,
+      groups: [{
+        baseUrlWhitelist: [
+          'http://10.1.2.3:443/v1%3Fpart%23fragment',
+          'http://API.intranet.test:80/v1',
+        ],
+        headerNames: ['X-User-Account', 'X-Cookie'],
+      }],
+    });
+
+    expect(inspectExtensionNetworkPolicyManifest(extensionRoot)?.manifest.groups[0].baseUrlWhitelist)
+      .toEqual([
+        'http://10.1.2.3:443/v1%3Fpart%23fragment/',
+        'http://api.intranet.test/v1/',
+      ]);
+  });
+
+  it.each([
+    { name: 'non-string', value: 42, key: 'networkPolicyUrlType' },
+    { name: 'empty', value: '', key: 'networkPolicyUrlLength' },
+    { name: 'too long', value: 'x'.repeat(2049), key: 'networkPolicyUrlLength' },
+    { name: 'relative address', value: './private-source', key: 'networkPolicyUrlAbsolute' },
+    { name: 'unsupported protocol', value: 'ftp://private.example.test/v1/', key: 'networkPolicyUrlProtocol' },
+    { name: 'credentials', value: 'https://private-user:private-password@api.example.test/', key: 'networkPolicyUrlCredentials' },
+    { name: 'query', value: 'http://api.example.test/?token=private-query', key: 'networkPolicyUrlQuery' },
+    { name: 'empty query', value: 'https://api.example.test/?', key: 'networkPolicyUrlQuery' },
+    { name: 'fragment', value: 'https://api.example.test/#private-fragment', key: 'networkPolicyUrlFragment' },
+    { name: 'question mark inside a fragment', value: 'https://api.example.test/#section?label=private-fragment', key: 'networkPolicyUrlFragment' },
+    { name: 'empty fragment', value: 'http://api.example.test/#', key: 'networkPolicyUrlFragment' },
+    { name: 'local target', value: 'http://service.localhost/', key: 'networkPolicyUrlLocal' },
+    { name: 'mapped unspecified target', value: 'https://[::ffff:0.0.0.0]/', key: 'networkPolicyUrlLocal' },
+  ])('locates the original group and URL and explains the $name constraint without echoing the input', ({ value, key }) => {
+    setLanguage('en');
+
+    const reason = invalidUrlReason(value);
+
+    expect(reason).toContain('outbound-header-policy.json, group 2, URL 2:');
+    expect(reason).toContain(t(key));
+    expect(reason).toContain('plugin provider');
+    if (typeof value === 'string' && value) expect(reason).not.toContain(value);
+    expect(sanitizeInstallationFailureReason(reason)).toBe(reason);
+  });
+
+  it.each(['zh', 'en'] as const)('reports the declaration position in %s while keeping secret URL parts out of local and marketplace errors', language => {
+    setLanguage(language);
+    const raw = 'http://private-user:private-password@private.example.test/private-path?token=private-query#private-fragment';
+
+    const reason = invalidUrlReason(raw);
+
+    expect(reason).toContain(language === 'zh'
+      ? 'outbound-header-policy.json 第 2 组第 2 个 URL'
+      : 'outbound-header-policy.json, group 2, URL 2');
+    expect(reason).toContain(t('networkPolicyUrlCredentials'));
+    expect(reason).not.toContain('private');
+    expect(reason).not.toMatch(/重新安装|reinstall/i);
+    expect(sanitizeInstallationFailureReason(reason)).toBe(reason);
   });
 
   it('rejects the unpublished policies shape', () => {

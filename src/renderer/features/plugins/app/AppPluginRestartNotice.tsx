@@ -1,5 +1,8 @@
 import { useEffect, useState } from 'react';
 
+import PluginActivityStatus, {
+  PluginActivityTone,
+} from '@/features/plugins/shared/PluginActivityStatus';
 import { i18nService } from '@/services/i18n';
 
 /** A pending Gateway reload never requires closing the application. */
@@ -28,11 +31,9 @@ export default function AppPluginRestartNotice() {
     };
   }, []);
   return required ? (
-    <p
-      role="status"
-      className="mb-3 rounded-lg border border-border bg-surface-raised px-3 py-2 text-sm text-secondary"
-    >
-      {i18nService.t('appPluginRestartRequired')}
-    </p>
+    <PluginActivityStatus
+      message={i18nService.t('appPluginRestartRequired')}
+      tone={PluginActivityTone.WARNING}
+    />
   ) : null;
 }

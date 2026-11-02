@@ -70,7 +70,7 @@ ask/auto/full 映射原生 guarded/workspace/full。权限期望先保存产品�
 
 解包拒绝 traversal、绝对/别名路径、symlink、特殊文件、重复项和过大展开。目标必须位于精确受管根；删除系统或父 Extension 托管项不能由 UI 任意构造 path 完成。
 
-Extension 导入审查 capability surface、operator grants、来源和 integrity，再以 reviewToken 绑定同一内容。审查后重新校验，包变化就失效。已安装 inventory 才是运行态事实。
+Extension 导入由用户选择安装包后直接执行，Main 在停止 Gateway 的包变更保护内通过原生 CLI 自动接受能力声明，不再要求安装审核确认或携带 reviewToken 再次提交。格式、来源、声明、staging 与提交校验仍由原生负责，operator grants 和 App 代码 hash 信任边界保持独立。已安装 inventory 才是运行态事实。
 
 这些检查减少安装错误和未授权能力，不把 Node Extension 变成恶意代码沙盒。它可能读取 Gateway 进程环境；安装可信代码仍是重要信任决定。
 
@@ -95,7 +95,7 @@ appConfigCredentials 当前兼容读取早期 OS 加密记录并清空旧 builti
 
 Electron session、Main fetch 和 Gateway 子进程是三个作用域。代理切换按 generation 串行处理，避免旧连接和全局 env 污染。模型连接测试通过受限 purpose 入口校验 method/endpoint/body，通用 fetch 不拥有任意请求头注入权。
 
-Extension sidecar 只声明 HTTPS 目标、Header 名称和受管 user-info 引用，不包含值，不写永久手工配置。安装后 canonical readback 决定有效声明；代理选择性注入，不把凭据下发 UI。此机制是合作式配置，不是阻止恶意 Gateway 插件读取环境的沙盒。
+Extension sidecar 显式声明 HTTP 或 HTTPS 目标、Header 名称和受管 user-info 引用，不包含值，不写永久手工配置。安装后 canonical readback 决定有效声明；代理按协议、主机、端口和路径边界选择性注入，不把凭据下发 UI。声明仍禁止嵌入账号信息、query、fragment、localhost、loopback、link-local 和 unspecified 地址。此机制是合作式配置，不是阻止恶意 Gateway 插件读取环境的沙盒。
 
 远程 URL、redirect、loopback 及内网访问按具体服务校验，不因 CSP 通配而免除 SSRF 防线。原生网络工具与浏览器网页内容仍作为不可信模型输入。
 
@@ -114,7 +114,7 @@ Windows updater 当前 verifyUpdateCodeSignature=false。构建的 hash/更新 a
 | 广泛 connect-src        | CSP 不能作为网络白名单               |
 | localfile 无 token/root | 上层原生文件动作仍须完成准入         |
 | 同用户凭据访问面        | 本地优先不等于对同用户进程保密       |
-| 可信 Node 插件          | 安装审核不构成恶意代码隔离           |
+| 可信 Node 插件          | 格式和声明校验不构成恶意代码隔离     |
 | 共享项目写入            | 成员和任务不自动获得冲突隔离         |
 | 平台隔离不同            | Windows 或 mock 探针不能代表全部平台 |
 

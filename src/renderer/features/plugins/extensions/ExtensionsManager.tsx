@@ -46,6 +46,7 @@ import { observeDeferredInventoryRefresh } from '@/features/plugins/shared/defer
 import OperationResultModal, {
   type OperationResult,
 } from '@/features/plugins/shared/OperationResultModal';
+import PluginActivityStatus from '@/features/plugins/shared/PluginActivityStatus';
 import { getPluginArtworkTone } from '@/features/plugins/shared/pluginArtwork';
 import {
   PLUGIN_DETAIL_BODY_CLASS_NAME,
@@ -137,52 +138,6 @@ interface ExtensionsManagerProps extends PluginHubManagerProps {
   onRequestedExtensionHandled?: () => void;
 }
 
-const reportInterruptedImportFailures = (pending: {
-  completedLabels: string[];
-  failures: PluginOperationFailureItem[];
-  startedAt: number;
-  refreshFailed?: boolean;
-}) => {
-  if (pending.failures.length === 0 && !pending.refreshFailed) return;
-  reportPluginOperationFailure(
-    {
-      kind: PluginKind.EXTENSION,
-      action: PluginOperationAction.INSTALL,
-      label:
-        pending.failures.length === 1 && pending.completedLabels.length === 0
-          ? pending.failures[0].label
-          : i18nService.t('importExtension'),
-    },
-    {
-      ...(pending.failures.length === 1 && pending.completedLabels.length === 0
-        ? pending.failures[0]
-        : {}),
-      ...(pending.failures.length === 0 ? pluginOperationRefreshFailure() : {}),
-      message:
-        pending.failures.length === 0
-          ? i18nService.t('pluginOperationRefreshFailed')
-          : pending.completedLabels.length > 0 || pending.failures.length > 1
-            ? i18nService
-                .t('pluginImportPartialSummary')
-                .replace('{successCount}', String(pending.completedLabels.length))
-                .replace('{failureCount}', String(pending.failures.length))
-            : pending.failures[0].message || i18nService.t('extensionImportFailed'),
-      elapsedMs: Date.now() - pending.startedAt,
-      ...(pending.failures.length > 0 && pending.refreshFailed
-        ? { details: i18nService.t('pluginOperationRefreshFailed') }
-        : {}),
-      items: [
-        ...pending.completedLabels.map(label => ({
-          label,
-          message: i18nService.t('pluginImportItemSuccess'),
-          type: 'success' as const,
-        })),
-        ...pending.failures.map(item => ({ ...item, type: 'error' as const })),
-      ],
-    },
-  );
-};
-
 const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
   searchQuery: sharedSearchQuery,
   visibility = 'all',
@@ -217,34 +172,11 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
   const [pendingDelete, setPendingDelete] = useState<InstalledOpenClawExtension | null>(null);
   const [deletingExtensionId, setDeletingExtensionId] = useState<string | null>(null);
   const [togglingExtensionId, setTogglingExtensionId] = useState<string | null>(null);
-  const [pendingCapabilityReview, setPendingCapabilityReview] = useState<
-    | {
-        kind: 'toggle';
-        extension: InstalledOpenClawExtension;
-        review: OpenClawPluginCapabilityReview;
-      }
-    | {
-        kind: 'import';
-        requestId: string;
-        sourcePath: string;
-        displayName: string;
-        review: OpenClawPluginCapabilityReview;
-        remainingSourcePaths: string[];
-        completedLabels: string[];
-        failures: PluginOperationFailureItem[];
-        startedAt: number;
-        refreshFailed: boolean;
-      }
-    | null
-  >(null);
-  const pendingReviewRef = useRef(pendingCapabilityReview);
-  pendingReviewRef.current = pendingCapabilityReview;
-  const cancelCapabilityReview = () => {
-    const pending = pendingReviewRef.current;
-    pendingReviewRef.current = null;
-    setPendingCapabilityReview(null);
-    if (pending?.kind === 'import') reportInterruptedImportFailures(pending);
-  };
+  const [pendingCapabilityReview, setPendingCapabilityReview] = useState<{
+    extension: InstalledOpenClawExtension;
+    review: OpenClawPluginCapabilityReview;
+  } | null>(null);
+  const cancelCapabilityReview = () => setPendingCapabilityReview(null);
   const [selectedExtension, setSelectedExtension] = useState<InstalledOpenClawExtension | null>(
     null,
   );
@@ -352,9 +284,6 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
       if (inventoryUnavailable.current) void loadExtensions();
     });
     return () => {
-      const pending = pendingReviewRef.current;
-      pendingReviewRef.current = null;
-      if (pending?.kind === 'import') reportInterruptedImportFailures(pending);
       inventoryMounted.current = false;
       detailGeneration.current += 1;
       inventoryGeneration.current += 1;
@@ -437,7 +366,7 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
     return [{ id: ExtensionGroupId.USER, extensions: [] }, ...groupedExtensions];
   }, [groupedExtensions, searchQuery]);
 
-  const importExtension = (request: ExtensionImportRequest) => {
+  const importExtension = (request: Pick<ExtensionImportRequest, 'requestId' | 'sourcePath'>) => {
     importOperation.current?.finish();
     const operation = startPluginOperation({
       kind: PluginKind.EXTENSION,
@@ -448,15 +377,16 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
     return window.electron.extensions
       .importPath(request, operation.context)
       .then(result => {
-        if (result.capabilityReview && result.refreshWarning) {
-          // Keep the review available without hiding a recovery or catalog read error.
-          const failure = pluginOperationFailure(result, i18nService.t('pluginOperationFailureTitle.refresh'));
-          operation.fail({
-            ...failure,
-            failedStage: failure.failedStage ?? PluginOperationStage.REFRESHING_INVENTORY,
-          });
-        }
-        return result;
+        if (!result.capabilityReview) return result;
+        // Installation has no review/resubmission flow. Preserve any real error
+        // and receipt evidence, and report an unexpected review as one failure.
+        return {
+          ...result,
+          success: false,
+          error: result.error?.trim()
+            ? result.error
+            : i18nService.t('extensionImportReviewUnexpected'),
+        };
       })
       .catch((error): ExtensionImportResult => ({
         success: false,
@@ -566,44 +496,6 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
       for (const [index, sourcePath] of result.paths.entries()) {
         const requestId = `${Date.now()}-${index}-${Math.random().toString(36).slice(2)}`;
         const importResult = await importExtension({ requestId, sourcePath });
-        if (importResult.capabilityReview) {
-          const completedLabels = results
-            .filter(item => item.success)
-            .map(
-              item => item.extensionId || item.sourcePath.split(/[/\\]/).pop() || item.sourcePath,
-            );
-          const failures = results
-            .filter(item => !item.success)
-            .map(item => ({
-              label: item.sourcePath.split(/[/\\]/).pop() || item.sourcePath,
-              ...pluginOperationFailure(item, i18nService.t('extensionImportFailed')),
-            }));
-          const inventory = await refreshAfterImport();
-          const refreshFailed =
-            inventory === null || results.some(item => item.refreshWarning === true);
-          if (!inventoryMounted.current) {
-            reportInterruptedImportFailures({
-              completedLabels,
-              failures,
-              startedAt,
-              refreshFailed,
-            });
-            return;
-          }
-          setPendingCapabilityReview({
-            kind: 'import',
-            requestId,
-            sourcePath,
-            displayName: sourcePath.split(/[/\\]/).pop() || sourcePath,
-            review: importResult.capabilityReview,
-            remainingSourcePaths: result.paths.slice(index + 1),
-            completedLabels,
-            failures,
-            startedAt,
-            refreshFailed,
-          });
-          return;
-        }
         results.push({ sourcePath, ...importResult });
       }
 
@@ -724,7 +616,7 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
           });
         }
         if (!inventoryMounted.current) return;
-        setPendingCapabilityReview({ kind: 'toggle', extension, review: result.capabilityReview });
+        setPendingCapabilityReview({ extension, review: result.capabilityReview });
         return;
       }
       if (!result.success) {
@@ -757,105 +649,6 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
         });
       setTogglingExtensionId(null);
       operation.finish();
-    }
-  };
-
-  const handleConfirmImportCapability = async (
-    pending: Extract<NonNullable<typeof pendingCapabilityReview>, { kind: 'import' }>,
-  ) => {
-    if (extensionActionBusy) return;
-    try {
-      setPendingCapabilityReview(null);
-      pendingReviewRef.current = null;
-      setImporting(true);
-      setActionOutcome(null);
-      const result = await importExtension({
-        requestId: pending.requestId,
-        sourcePath: pending.sourcePath,
-        reviewToken: pending.review.reviewToken,
-      });
-      if (result.capabilityReview) {
-        if (!inventoryMounted.current) {
-          reportInterruptedImportFailures(pending);
-          return;
-        }
-        setPendingCapabilityReview({ ...pending, review: result.capabilityReview });
-        return;
-      }
-      const completedLabels = [...pending.completedLabels];
-      const failures = [...pending.failures];
-      let refreshFailed = pending.refreshFailed || result.refreshWarning === true;
-      if (result.success) {
-        completedLabels.push(result.extensionId || pending.displayName);
-      } else {
-        failures.push({
-          label: pending.displayName,
-          ...pluginOperationFailure(result, i18nService.t('extensionImportFailed')),
-        });
-      }
-      for (const [index, sourcePath] of pending.remainingSourcePaths.entries()) {
-        const requestId = `${Date.now()}-${index}-${Math.random().toString(36).slice(2)}`;
-        const nextResult = await importExtension({ requestId, sourcePath });
-        refreshFailed ||= nextResult.refreshWarning === true;
-        if (nextResult.capabilityReview) {
-          const inventory = await refreshAfterImport();
-          refreshFailed = refreshFailed || inventory === null;
-          if (!inventoryMounted.current) {
-            reportInterruptedImportFailures({
-              completedLabels,
-              failures,
-              startedAt: pending.startedAt,
-              refreshFailed,
-            });
-            return;
-          }
-          setPendingCapabilityReview({
-            kind: 'import',
-            requestId,
-            sourcePath,
-            displayName: sourcePath.split(/[/\\]/).pop() || sourcePath,
-            review: nextResult.capabilityReview,
-            remainingSourcePaths: pending.remainingSourcePaths.slice(index + 1),
-            completedLabels,
-            failures,
-            startedAt: pending.startedAt,
-            refreshFailed,
-          });
-          return;
-        }
-        const label = nextResult.extensionId || sourcePath.split(/[/\\]/).pop() || sourcePath;
-        if (nextResult.success) {
-          completedLabels.push(label);
-        } else {
-          failures.push({
-            label,
-            ...pluginOperationFailure(nextResult, i18nService.t('extensionImportFailed')),
-          });
-        }
-      }
-      const inventory = await refreshAfterImport();
-      finishImportBatch(
-        completedLabels,
-        failures,
-        inventory === null || refreshFailed,
-        pending.startedAt,
-      );
-    } catch (error) {
-      reportPluginOperationFailure(
-        {
-          kind: PluginKind.EXTENSION,
-          action: PluginOperationAction.INSTALL,
-          label: pending.displayName,
-        },
-        {
-          message: error instanceof Error ? error.message : i18nService.t('extensionImportFailed'),
-          elapsedMs: Date.now() - pending.startedAt,
-        },
-      );
-    } finally {
-      importOperation.current?.finish();
-      importOperation.current = null;
-      setImporting(false);
     }
   };
 
@@ -1144,9 +937,10 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
               )}
 
               {loadingExtensions ? (
-                <div className="py-10 text-center text-sm text-secondary">
-                  {i18nService.t('loading')}
-                </div>
+                <PluginActivityStatus
+                  title={i18nService.t('extensions')}
+                  message={i18nService.t('loading')}
+                />
               ) : filteredExtensions.length === 0 && searchQuery.trim() ? null : (
                 <div className="space-y-5">
                   {displayExtensionGroups.map(group => (
@@ -1586,9 +1380,7 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
                 .t('extensionCapabilityReviewDescription')
                 .replace(
                   '{name}',
-                  pendingCapabilityReview.kind === 'toggle'
-                    ? pendingCapabilityReview.extension.name
-                    : pendingCapabilityReview.displayName,
+                  pendingCapabilityReview.extension.name,
                 )}
             </p>
             {pendingCapabilityReview.review.source && (
@@ -1715,11 +1507,7 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
                 onClick={() => {
                   const pending = pendingCapabilityReview;
                   setPendingCapabilityReview(null);
-                  if (pending.kind === 'toggle') {
-                    void handleToggleExtension(pending.extension, pending.review.reviewToken);
-                  } else {
-                    void handleConfirmImportCapability(pending);
-                  }
+                  void handleToggleExtension(pending.extension, pending.review.reviewToken);
                 }}
                 className="rounded-lg bg-primary px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-hover"
               >

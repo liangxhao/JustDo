@@ -5,6 +5,7 @@ import {
 } from '@shared/plugins/marketplace';
 import React, { useEffect, useRef, useState } from 'react';
 
+import PluginActivityStatus from '@/features/plugins/shared/PluginActivityStatus';
 import { getPluginArtworkTone } from '@/features/plugins/shared/pluginArtwork';
 import { i18nService } from '@/services/i18n';
 
@@ -109,9 +110,7 @@ export function MarketplaceResults({
         <p className="py-4 text-sm text-secondary">{i18nService.t('marketplaceNotConfigured')}</p>
       )}
       {(c.loading || c.source === undefined) && (
-        <p role="status" className="text-sm text-secondary">
-          {i18nService.t('marketplaceLoading')}
-        </p>
+        <PluginActivityStatus message={i18nService.t('marketplaceLoading')} />
       )}
       <div className="grid min-w-0 grid-cols-[repeat(auto-fill,minmax(min(100%,20rem),1fr))] gap-1 gap-x-4">
         {c.visibleItems.map((item, index) => {

@@ -7,11 +7,14 @@ import type { AppInitialization } from './appInitialization';
 
 type Generation = { process: number; lifecycle: number };
 type Preparation = { identity?: Generation };
+type PreparationAttempt = object;
 
 /** Owns ordinary startup admission; process Running alone cannot discharge it. */
 export class StartupEnginePreparation {
   private active?: Preparation;
   private admitted?: Generation;
+  // Error attribution only; this token never grants or changes execution admission.
+  private latestAttempt?: PreparationAttempt;
   private readonly pending = new Set<Promise<OpenClawEngineStatus>>();
 
   constructor(private readonly deps: {
@@ -35,6 +38,34 @@ export class StartupEnginePreparation {
   private usable(): boolean {
     return !this.deps.isQuitting() &&
       this.deps.initialization.getState().phase !== AppInitializationPhase.Failed;
+  }
+
+  private preparationFailure(
+    attempt?: PreparationAttempt,
+    identity?: Generation,
+    returned?: OpenClawEngineStatus,
+  ): Error {
+    if (this.deps.isQuitting()) return new Error(t('enginePreparationShuttingDown'));
+    if (this.deps.initialization.getState().phase === AppInitializationPhase.Failed)
+      return new Error(t('enginePreparationInitializationUnavailable'));
+    if (attempt && this.latestAttempt !== attempt)
+      return new Error(t('enginePreparationSuperseded'));
+    if (identity && !this.matches(identity))
+      return new Error(t('enginePreparationLifecycleChanged'));
+
+    const current = this.deps.manager.getStatus();
+    // observe(Error) clears admitted, but a current attempt can still own this
+    // generation's failure. A successor's error must never explain an old call.
+    if (attempt && this.latestAttempt === attempt && identity && this.matches(identity) &&
+        current.phase === EnginePhase.Error && current.message)
+      return new Error(current.message);
+    if (returned?.phase === EnginePhase.Error && returned.message)
+      return new Error(returned.message);
+    return new Error(t(current.phase === EnginePhase.Ready
+      ? 'enginePreparationStopped'
+      : current.phase === EnginePhase.Starting
+        ? 'enginePreparationStillStarting'
+        : 'enginePreparationUnconfirmed'));
   }
 
   isReady(): boolean {
@@ -69,7 +100,7 @@ export class StartupEnginePreparation {
   }
 
   run(operation: () => Promise<OpenClawEngineStatus>): Promise<OpenClawEngineStatus> {
-    if (!this.usable()) return Promise.reject(new Error(t('enginePreparationFailed')));
+    if (!this.usable()) return Promise.reject(this.preparationFailure());
     const task = this.prepare(operation);
     this.pending.add(task);
     void task.then(() => this.pending.delete(task), () => this.pending.delete(task));
@@ -82,6 +113,8 @@ export class StartupEnginePreparation {
 
   private async prepare(operation: () => Promise<OpenClawEngineStatus>): Promise<OpenClawEngineStatus> {
     if (this.deps.initialization.getState().route !== StartupRoute.Normal) return operation();
+    const attempt: PreparationAttempt = {};
+    this.latestAttempt = attempt;
     if (this.matches(this.admitted) && !this.active &&
         this.deps.manager.getStatus().phase === EnginePhase.Running) {
       const admitted = this.admitted;
@@ -90,7 +123,7 @@ export class StartupEnginePreparation {
         if (status.phase !== EnginePhase.Running ||
             this.deps.manager.getStatus().phase !== EnginePhase.Running ||
             !this.usable() || this.admitted !== admitted || this.active || !this.matches(admitted))
-          throw new Error(status.message || t('enginePreparationFailed'));
+          throw this.preparationFailure(attempt, admitted, status);
         return status;
       } catch (error) {
         if (this.admitted === admitted && !this.active && this.usable()) {
@@ -104,12 +137,20 @@ export class StartupEnginePreparation {
     }
     const preparation: Preparation = this.deps.manager.getStatus().phase === EnginePhase.Running
       ? { identity: this.identity() } : {};
+    const publishFailure = (error: unknown): void => {
+      // A replacement lifecycle's observed Error owns its diagnosis. A retired
+      // call can explain its own result without replacing that current failure.
+      if (preparation.identity && !this.matches(preparation.identity) &&
+          this.deps.manager.getStatus().phase === EnginePhase.Error) return;
+      this.deps.initialization.failEnginePreparation(error);
+    };
     this.active = preparation;
     this.admitted = undefined;
     this.deps.initialization.setEnginePreparationPending(true);
     try {
       const status = await operation();
-      if (this.active !== preparation || !this.usable()) throw new Error(t('enginePreparationFailed'));
+      if (this.active !== preparation || !this.usable())
+        throw this.preparationFailure(attempt, preparation.identity, status);
       const currentRunning = this.deps.manager.getStatus().phase === EnginePhase.Running;
       const running = status.phase === EnginePhase.Running && currentRunning;
       if (running && this.matches(preparation.identity)) {
@@ -117,12 +158,14 @@ export class StartupEnginePreparation {
         this.deps.initialization.setEnginePreparationPending(false);
       } else if (currentRunning && preparation.identity && !this.matches(preparation.identity)) {
         // The old permission check belongs to a retired lifecycle, not its successor.
+        const failure = this.preparationFailure(attempt, preparation.identity, status);
         this.active = undefined;
         this.refresh();
-        throw new Error(t('enginePreparationFailed'));
+        throw failure;
       } else {
-        if (status.phase === EnginePhase.Running) throw new Error(t('enginePreparationFailed'));
-        this.deps.initialization.failEnginePreparation(new Error(status.message || t('enginePreparationFailed')));
+        const failure = this.preparationFailure(attempt, preparation.identity, status);
+        if (status.phase === EnginePhase.Running) throw failure;
+        publishFailure(failure);
       }
       return status;
     } catch (error) {
@@ -132,7 +175,7 @@ export class StartupEnginePreparation {
           this.active = undefined;
           this.refresh();
         } else {
-          this.deps.initialization.failEnginePreparation(error);
+          publishFailure(error);
         }
       }
       throw error;
