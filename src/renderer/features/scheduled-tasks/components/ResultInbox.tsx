@@ -3,6 +3,7 @@ import {
   CheckIcon,
   ChevronDownIcon,
   Cog6ToothIcon,
+  DocumentTextIcon,
   ExclamationTriangleIcon,
   EyeIcon,
   EyeSlashIcon,
@@ -26,7 +27,7 @@ import { i18nService } from '@/services/i18n';
 import type { RootState } from '@/store';
 
 import ResultSummary from './ResultSummary';
-import RunDiagnostics from './RunDiagnostics';
+import RunDetailsModal from './RunDetailsModal';
 import { getTaskAgentLabel, getTaskDisplayName } from './utils';
 
 function formatDuration(durationMs: number | null): string {
@@ -121,6 +122,7 @@ const ResultInbox: React.FC = () => {
   } = useSelector((state: RootState) => state.scheduledTask);
   const agents = useSelector((state: RootState) => state.agent.agents);
   const [viewingResult, setViewingResult] = useState<ScheduledTaskResult | null>(null);
+  const [detailsResultId, setDetailsResultId] = useState<string | null>(null);
   const [unavailableRunIds, setUnavailableRunIds] = useState<Set<string>>(new Set());
   const [resultToDelete, setResultToDelete] = useState<ScheduledTaskResult | null>(null);
   const [selectingResults, setSelectingResults] = useState(false);
@@ -131,6 +133,10 @@ const ResultInbox: React.FC = () => {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const deleteTriggerRef = useRef<HTMLButtonElement | null>(null);
   const settingsRef = useRef<HTMLDivElement | null>(null);
+  const detailsResult = results.find(result => result.id === detailsResultId);
+  useEffect(() => {
+    if (detailsResultId && !detailsResult) setDetailsResultId(null);
+  }, [detailsResultId, detailsResult]);
   const resultGroups = groupResultsByDate(results);
   const selectableResultIds = results
     .filter(result => result.status !== 'running')
@@ -208,6 +214,7 @@ const ResultInbox: React.FC = () => {
   };
 
   const openResult = (result: ScheduledTaskResult) => {
+    setDetailsResultId(null);
     void scheduledTaskService.markResultRead(result.id);
     if (result.status !== 'skipped' && result.sessionKey) setViewingResult(result);
   };
@@ -657,6 +664,20 @@ const ResultInbox: React.FC = () => {
                                     <EyeSlashIcon className="h-4 w-4" />
                                   </span>
                                 )}
+                                <button
+                                  type="button"
+                                  className="inline-flex h-7 w-7 items-center justify-center rounded-md text-secondary transition-colors hover:bg-surface-raised hover:text-primary"
+                                  aria-label={t('scheduledTasksResultsRunDetails')}
+                                  title={t('scheduledTasksResultsRunDetails')}
+                                  onClick={event => {
+                                    event.stopPropagation();
+                                    event.currentTarget.focus();
+                                    setViewingResult(null);
+                                    setDetailsResultId(result.id);
+                                  }}
+                                >
+                                  <DocumentTextIcon className="h-4 w-4" />
+                                </button>
                                 {!selectingResults && result.status !== 'running' && (
                                   <button
                                     type="button"
@@ -696,8 +717,6 @@ const ResultInbox: React.FC = () => {
                             ) : result.summary && !isSilentScheduledTaskResult(result.summary) ? (
                               <ResultSummary content={result.summary} className="mt-3" />
                             ) : null}
-                            <RunDiagnostics run={result} compact issuesOnly className="mt-3" />
-                            <RunDiagnostics run={result} collapsible />
                           </div>
                         </div>
                       </article>
@@ -721,6 +740,14 @@ const ResultInbox: React.FC = () => {
         >
           {t('scheduledTasksLoadMore')}
         </button>
+      )}
+
+      {detailsResult && (
+        <RunDetailsModal
+          run={detailsResult}
+          title={getResultTitle(detailsResult)}
+          onClose={() => setDetailsResultId(null)}
+        />
       )}
 
       {viewingResult?.status !== 'skipped' && viewingResult?.sessionKey && (

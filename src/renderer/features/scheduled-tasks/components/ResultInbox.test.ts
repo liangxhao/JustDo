@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { configureStore } from '@reduxjs/toolkit';
 import type { ScheduledTask, ScheduledTaskResult } from '@shared/scheduledTask/types';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { createElement } from 'react';
 import { Provider } from 'react-redux';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { scheduledTaskService } from '@/features/scheduled-tasks/scheduledTaskService';
 import { i18nService } from '@/services/i18n';
 
-import scheduledTaskReducer from '../scheduledTaskSlice';
+import scheduledTaskReducer, { replaceResults } from '../scheduledTaskSlice';
 import ResultInbox, { isResultTaskDeleted } from './ResultInbox';
 
 vi.mock('@/features/scheduled-tasks/scheduledTaskService', () => ({
@@ -143,31 +143,49 @@ function renderReceipt(overrides: Partial<ScheduledTaskResult> = {}) {
   };
   const store = configureStore({
     reducer: {
-      scheduledTask: () => ({ ...initial, results: [receipt] }),
+      scheduledTask: scheduledTaskReducer,
       agent: () => ({ agents: [] }),
     },
+    preloadedState: { scheduledTask: { ...initial, results: [receipt] } },
   });
-  return render(createElement(Provider, { store, children: createElement(ResultInbox) }));
+  return {
+    ...render(createElement(Provider, { store, children: createElement(ResultInbox) })),
+    store,
+    receipt,
+  };
 }
 
-test('formats result content and keeps routine metadata inside a closed disclosure', () => {
-  renderReceipt();
+test('opens one run-details dialog beside the session button without reading the session', () => {
+  const resolveSession = vi.fn();
+  Object.defineProperty(window, 'electron', {
+    configurable: true,
+    value: { scheduledTasks: { resolveSession } },
+  });
+  const view = renderReceipt();
   expect(screen.getByText('今日早报').tagName).toBe('STRONG');
   expect(screen.getByText('上海天气晴').tagName).toBe('LI');
-  const model = screen.getByText('实际模型: internal/report');
-  const details = model.closest('details')!;
-  expect(details.open).toBe(false);
-  expect(screen.getByText('Token 用量: 总计 42').closest('details')).toBe(details);
-  expect(screen.getByText('整体完成: 已完成').closest('details')).toBe(details);
-  expect(screen.getByText('外部通知: 未请求').closest('details')).toBe(details);
+  expect(screen.queryByTestId('scheduled-run-diagnostics')).toBeNull();
+  expect(view.container.querySelector('article details')).toBeNull();
+  const detailsButton = screen.getByRole('button', { name: '运行详情' });
+  expect(
+    screen.getByRole('button', { name: i18nService.t('scheduledTasksResultsViewFull') })
+      .nextElementSibling,
+  ).toBe(detailsButton);
 
-  fireEvent.click(screen.getByText('运行详情'));
-  expect(details.open).toBe(true);
+  fireEvent.click(detailsButton);
+  const dialog = screen.getByRole('dialog', { name: '运行详情' });
+  expect(screen.getAllByRole('dialog')).toHaveLength(1);
+  expect(within(dialog).getAllByText('实际模型: internal/report')).toHaveLength(1);
+  expect(within(dialog).getByText('Token 用量: 总计 42')).toBeTruthy();
+  expect(within(dialog).getByText('整体完成: 已完成')).toBeTruthy();
+  expect(within(dialog).getByText('外部通知: 未请求')).toBeTruthy();
+  expect(dialog.querySelector('details')).toBeNull();
   expect(scheduledTaskService.markResultRead).not.toHaveBeenCalled();
+  expect(resolveSession).not.toHaveBeenCalled();
 });
 
-test('folds completion and notification failures into details even for NO_REPLY results', () => {
-  renderReceipt({
+test('shows error information and diagnostics once inside the run-details dialog', () => {
+  const view = renderReceipt({
     summary: 'NO_REPLY',
     status: 'error',
     error: 'Notification service unavailable',
@@ -187,21 +205,20 @@ test('folds completion and notification failures into details even for NO_REPLY 
       ],
     },
   });
-  const details = screen.getByText('整体完成: 未完成').closest('details')!;
-  expect(details.open).toBe(false);
-  expect(screen.getByText('外部通知: 发送结果未知').closest('details')).toBe(details);
-  expect(
-    screen.getByText('外部通知失败: Notification service unavailable').closest('details'),
-  ).toBe(details);
-  expect(
-    screen.getAllByText('Notification service unavailable').every(node => node.closest('details')),
-  ).toBe(true);
-  fireEvent.click(screen.getByText('运行详情'));
-  expect(details.open).toBe(true);
+  expect(screen.queryByText('Notification service unavailable')).toBeNull();
+  expect(view.container.querySelector('article details')).toBeNull();
+
+  fireEvent.click(screen.getByRole('button', { name: '运行详情' }));
+  const dialog = screen.getByRole('dialog');
+  expect(within(dialog).getByText('整体完成: 未完成')).toBeTruthy();
+  expect(within(dialog).getByText('外部通知: 发送结果未知')).toBeTruthy();
+  expect(within(dialog).getAllByText('Notification service unavailable')).toHaveLength(1);
+  expect(within(dialog).getByRole('heading', { name: '运行诊断 (1)' })).toBeTruthy();
+  expect(dialog.querySelector('details')).toBeNull();
   expect(screen.queryByText('NO_REPLY')).toBeNull();
 });
 
-test('keeps skipped-result reasons and details accessible without a native session', () => {
+test('shows skipped-result details even without a native session', () => {
   renderReceipt({
     status: 'skipped',
     summary: null,
@@ -211,14 +228,81 @@ test('keeps skipped-result reasons and details accessible without a native sessi
     completionStatus: undefined,
   });
   expect(
-    screen
-      .getAllByText(i18nService.t('scheduledTasksReasonDisabled'))
-      .some(node => !node.closest('details')),
-  ).toBe(true);
-  expect(
     screen.queryByRole('button', { name: i18nService.t('scheduledTasksResultsViewFull') }),
   ).toBeNull();
-  fireEvent.click(screen.getByText('运行详情'));
-  expect(screen.getByText('实际模型: internal/report').closest('details')?.open).toBe(true);
+  expect(screen.queryByText(i18nService.t('scheduledTasksReasonDisabled'))).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: '运行详情' }));
+  const dialog = screen.getByRole('dialog');
+  expect(within(dialog).getByText(i18nService.t('scheduledTasksReasonDisabled'))).toBeTruthy();
+  expect(within(dialog).getByText('实际模型: internal/report')).toBeTruthy();
   expect(scheduledTaskService.markResultRead).not.toHaveBeenCalled();
+});
+
+test('keeps focus inside details and restores its trigger after Escape, close, or backdrop', () => {
+  renderReceipt();
+  const trigger = screen.getByRole('button', { name: '运行详情' });
+  fireEvent.click(trigger);
+  let dialog = screen.getByRole('dialog');
+  let close = within(dialog).getByRole('button', { name: i18nService.t('close') });
+  const content = dialog.querySelector<HTMLElement>('[tabindex="0"]')!;
+  expect(document.activeElement).toBe(close);
+  fireEvent.keyDown(close, { key: 'Tab', shiftKey: true });
+  expect(document.activeElement).toBe(content);
+  fireEvent.keyDown(content, { key: 'Tab' });
+  expect(document.activeElement).toBe(close);
+  fireEvent.keyDown(window, { key: 'Escape' });
+  expect(screen.queryByRole('dialog')).toBeNull();
+  expect(document.activeElement).toBe(trigger);
+
+  fireEvent.click(trigger);
+  dialog = screen.getByRole('dialog');
+  close = within(dialog).getByRole('button', { name: i18nService.t('close') });
+  fireEvent.click(close);
+  expect(screen.queryByRole('dialog')).toBeNull();
+  expect(document.activeElement).toBe(trigger);
+
+  fireEvent.click(trigger);
+  dialog = screen.getByRole('dialog');
+  const overlay = dialog.closest('[data-workspace-overlay]')!;
+  fireEvent.mouseDown(dialog);
+  fireEvent.click(overlay);
+  expect(screen.getByRole('dialog')).toBeTruthy();
+  fireEvent.mouseDown(overlay);
+  fireEvent.click(overlay);
+  expect(screen.queryByRole('dialog')).toBeNull();
+  expect(document.activeElement).toBe(trigger);
+});
+
+test('keeps the eye action dedicated to reading the complete native session', async () => {
+  const resolveSession = vi.fn().mockResolvedValue({
+    success: true,
+    history: { sessionKey: 'native-session-key', messages: [], unavailableReason: 'not-found' },
+  });
+  Object.defineProperty(window, 'electron', {
+    configurable: true,
+    value: { scheduledTasks: { resolveSession } },
+  });
+  renderReceipt();
+  fireEvent.click(
+    screen.getByRole('button', { name: i18nService.t('scheduledTasksResultsViewFull') }),
+  );
+  await waitFor(() => expect(resolveSession).toHaveBeenCalledOnce());
+  expect(scheduledTaskService.markResultRead).toHaveBeenCalledWith('report-run');
+  expect(screen.queryByRole('dialog', { name: '运行详情' })).toBeNull();
+  expect(screen.getAllByRole('dialog')).toHaveLength(1);
+});
+
+test('does not reopen details when a removed receipt returns in a later page', () => {
+  const { store, receipt } = renderReceipt();
+  fireEvent.click(screen.getByRole('button', { name: '运行详情' }));
+  expect(screen.getByRole('dialog')).toBeTruthy();
+  act(() => {
+    store.dispatch(replaceResults({ results: [], nextCursor: null }));
+  });
+  expect(screen.queryByRole('dialog')).toBeNull();
+  act(() => {
+    store.dispatch(replaceResults({ results: [receipt], nextCursor: null }));
+  });
+  expect(screen.queryByRole('dialog')).toBeNull();
+  expect(screen.getByRole('button', { name: '运行详情' })).toBeTruthy();
 });
