@@ -70,6 +70,12 @@ export class BuiltinModelCredentialMonitor {
     this.clearTimers();
   }
 
+  retryAfterError(error: unknown): void {
+    if (!this.started) return;
+    this.dependencies.onError?.(error);
+    this.scheduleRefresh(ERROR_RETRY_MS);
+  }
+
   private clearTimers(): void {
     if (this.debounceTimer) clearTimeout(this.debounceTimer);
     if (this.expiryTimer) clearTimeout(this.expiryTimer);
@@ -93,8 +99,7 @@ export class BuiltinModelCredentialMonitor {
         const credential = await this.dependencies.refresh();
         if (this.started) this.scheduleExpiryRefresh(credential);
       } catch (error) {
-        this.dependencies.onError?.(error);
-        this.scheduleRefresh(ERROR_RETRY_MS);
+        this.retryAfterError(error);
       }
     };
     this.refreshTail = this.refreshTail.then(refresh, refresh);

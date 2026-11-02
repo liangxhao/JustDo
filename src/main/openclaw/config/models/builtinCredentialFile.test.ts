@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { BUILTIN_MODEL_USER_ACCOUNT_FIELD } from '../../../providers/builtinModelCredential';
 import {
-  BUILTIN_SECRET_ID, BUILTIN_SECRET_SOURCE, openBuiltinCredential,
+  BUILTIN_SECRET_ID, BUILTIN_SECRET_SOURCE, openBuiltinCredential, publishBuiltinCredentialFile,
   sealBuiltinCredential, syncBuiltinCredentialFile as syncCredentialFile,
 } from './builtinCredentialFile';
 import {
@@ -80,6 +80,23 @@ describe('encrypted binary builtin credentials', () => {
     expect(rotated.secretsChanged).toBe(true);
     expect(rotated.config).toEqual(first.config);
     expect(JSON.parse(openBuiltinCredential(fs.readFileSync(file))).accessToken).toBe(`${secret}-rotated`);
+  });
+
+  it('publishes renewal before config sync without rewriting unchanged credentials', () => {
+    const state = directory();
+    const first = syncBuiltinCredentialFile(source(), state, credential);
+    const renewed = { ...credential, accessToken: `${secret}-renewed` };
+    expect(publishBuiltinCredentialFile(state, renewed, sessionId)).toBe(true);
+    const file = path.join(state, 'credentials', 'credentials.bin');
+    const published = fs.readFileSync(file);
+    expect(JSON.parse(openBuiltinCredential(published)))
+      .toMatchObject({ ...renewed, authSessionId: sessionId });
+    expect(publishBuiltinCredentialFile(state, renewed, sessionId)).toBe(false);
+    expect(syncBuiltinCredentialFile(first.config, state, renewed).secretsChanged).toBe(false);
+    expect(fs.readFileSync(file)).toEqual(published);
+    expect(() => publishBuiltinCredentialFile(state, { ...renewed, expiresAt: 0 }, sessionId)).toThrow();
+    expect(() => publishBuiltinCredentialFile(state, renewed, 'invalid')).toThrow();
+    expect(fs.readFileSync(file)).toEqual(published);
   });
 
   it('rotates account snapshots without publishing the account through native secret configuration', () => {

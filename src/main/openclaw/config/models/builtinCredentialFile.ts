@@ -104,6 +104,27 @@ function publishPrivateFile(file: string, data: Buffer | string, executable = fa
   }
 }
 
+/** Publish a validated login snapshot without waiting for configuration application. */
+export function publishBuiltinCredentialFile(
+  stateDir: string,
+  credential: BuiltinModelCredential,
+  authSessionId: string,
+): boolean {
+  if (credential.expiresAt <= Date.now() / 1000 + 15) throw new Error('Builtin credential is unavailable.');
+  if (!MODEL_AUTH_SESSION_PATTERN.test(authSessionId)) throw new Error('Builtin credential session is unavailable.');
+  const directory = path.join(stateDir, 'credentials');
+  const file = path.join(directory, 'credentials.bin');
+  const serialized = JSON.stringify({ ...credential, authSessionId });
+  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+  if (fs.existsSync(file)) {
+    try {
+      if (openBuiltinCredential(fs.readFileSync(file)) === serialized) return false;
+    } catch { /* Replace corrupted ciphertext. */ }
+  }
+  publishPrivateFile(file, sealBuiltinCredential(serialized));
+  return true;
+}
+
 /** Keep only JWT SecretRefs in JSON; publish an encrypted binary before its reference. */
 export function syncBuiltinCredentialFile(
   config: Record<string, unknown>,
@@ -134,13 +155,7 @@ export function syncBuiltinCredentialFile(
   }
   if (!credential || credential.expiresAt <= Date.now() / 1000 + 15) throw new Error('Builtin credential is unavailable.');
   if (!authSessionId || !MODEL_AUTH_SESSION_PATTERN.test(authSessionId)) throw new Error('Builtin credential session is unavailable.');
-  const serializedCredential = JSON.stringify({ ...credential, authSessionId });
-  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
-  let secretsChanged = true;
-  if (fs.existsSync(credentialFile)) {
-    try { secretsChanged = openBuiltinCredential(fs.readFileSync(credentialFile)) !== serializedCredential; } catch { /* Replace corrupted ciphertext. */ }
-  }
-  if (secretsChanged) publishPrivateFile(credentialFile, sealBuiltinCredential(serializedCredential));
+  const secretsChanged = publishBuiltinCredentialFile(stateDir, credential, authSessionId);
   const resolver = path.join(directory, 'read-builtin.cjs');
   publishPrivateFile(resolver, builtinCredentialResolverSource());
   let command = runtimePath;

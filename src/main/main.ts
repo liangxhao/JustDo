@@ -236,7 +236,7 @@ import {
 } from './ipc/speech';
 import { NativeAssistantCreation } from './openclaw/config/agents/nativeAssistantCreation';
 import { getOpenClawAppConfigSignature } from './openclaw/config/appConfigSignature';
-import { revokeBuiltinCredentialFile } from './openclaw/config/models/builtinCredentialFile';
+import { publishBuiltinCredentialFile, revokeBuiltinCredentialFile } from './openclaw/config/models/builtinCredentialFile';
 import { isDecisionModelManaged } from './openclaw/config/models/decisionModelConfig';
 import { resolveNativeVideoSelection } from './openclaw/config/models/nativeVideoModelConfig';
 import {
@@ -985,6 +985,10 @@ const getBuiltinModelAuthCoordinator = (): BuiltinModelAuthCoordinator => {
     exchange: () => getBuiltinModelTokenExchange().refresh(),
     getActive: getActiveBuiltinModelCredential,
     getAuthSessionId: getActiveBuiltinModelCredentialSessionId,
+    publishCredential: (credential, authSessionId) => {
+      publishBuiltinCredentialFile(getOpenClawEngineManager().getStateDir(), credential, authSessionId);
+    },
+    onBackgroundError: error => builtinModelCredentialMonitor?.retryAfterError(error),
     login: () => getBuiltinModelLifecycle().refreshAfterLogin(),
     rotate: () => getBuiltinModelLifecycle().refreshAfterCredentialRotation(),
     invalidate: () => {
@@ -2612,7 +2616,7 @@ if (agentBridgeArgv) {
     initialization.reportActivity(AppInitializationActivity.Finalize);
     builtinModelCredentialMonitor = new BuiltinModelCredentialMonitor({
       userInfoPath: resolveOutboundHeaderUserInfoPath(),
-      refresh: refreshBuiltinModelCredentialFromLoginFile,
+      refresh: () => getBuiltinModelAuthCoordinator().refreshInBackground(),
       onError: error => {
         console.error('[BuiltinModelCredentialMonitor] Credential refresh failed:', error);
       },

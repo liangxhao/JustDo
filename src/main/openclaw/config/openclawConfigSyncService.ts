@@ -597,6 +597,14 @@ export class OpenClawConfigSyncService {
   ): Promise<SyncOpenClawConfigResult> {
     console.log(`[OpenClaw] syncOpenClawConfig: called (reason: ${options.reason})`);
     const isAuthLogout = options.reason === BuiltinModelSyncReason.AuthLogout;
+    // Expiry cleanup can wait behind other work while the same login recovers.
+    // Explicit logout clears the credential synchronously before queuing here.
+    const authLogoutIsCurrent = (): boolean => !isAuthLogout ||
+      (this.deps.getModelAuthSessionId?.() ?? null) === null;
+    const supersededLogout = (): SyncOpenClawConfigResult => this.unconfirmedConfigApplication({
+      success: false, changed: false, configSynced: false,
+    });
+    if (!authLogoutIsCurrent()) return supersededLogout();
     // Logout owns cleanup, never a previous credential failure's recovery ticket.
     if (isAuthLogout) this.pendingCredentialReload = null;
 
@@ -613,11 +621,13 @@ export class OpenClawConfigSyncService {
     try {
       extensionMcpNames = (await this.deps.getExtensionMcpServerNames?.()) ?? new Set<string>();
     } catch {
+      if (!authLogoutIsCurrent()) return supersededLogout();
       return this.failClosedConfigApplication(
         { success: false, changed: false, configSynced: false },
         'Native extension MCP ownership could not be read; configuration was preserved.',
       );
     }
+    if (!authLogoutIsCurrent()) return supersededLogout();
     if (options.discoverExternalMcpServers !== false) {
       try {
         const discovered = discoverOpenClawManagedMcpServers(
@@ -654,7 +664,8 @@ export class OpenClawConfigSyncService {
     const preflightProcessGeneration = engineManager.getGatewayProcessGeneration();
     const preflightLifecycleGeneration = engineManager.getGatewayLifecycleGeneration();
     const preflightAuthSessionId = this.deps.getModelAuthSessionId?.() ?? null;
-    const preflightIsCurrent = (): boolean => engineManager.getStatus().phase === statusBeforeSync.phase &&
+    const preflightIsCurrent = (): boolean => authLogoutIsCurrent() &&
+      engineManager.getStatus().phase === statusBeforeSync.phase &&
       engineManager.getGatewayProcessGeneration() === preflightProcessGeneration &&
       engineManager.getGatewayLifecycleGeneration() === preflightLifecycleGeneration &&
       (this.deps.getModelAuthSessionId?.() ?? null) === preflightAuthSessionId;
@@ -763,7 +774,10 @@ export class OpenClawConfigSyncService {
     // Retain that obligation even when a later sync sees identical file bytes.
     const authSessionId = this.deps.getModelAuthSessionId?.() ?? null;
     if (this.pendingCredentialReload?.authSessionId !== authSessionId) this.pendingCredentialReload = null;
-    if (syncResult.secretsChanged && statusBeforeSync.phase === 'running' &&
+    // Background renewal publishes before entering this queue. Identical bytes
+    // here therefore do not establish that the running Gateway loaded them.
+    const authCredentialsPublished = options.reason === BuiltinModelSyncReason.AuthLogin && authSessionId !== null;
+    if ((syncResult.secretsChanged || authCredentialsPublished) && statusBeforeSync.phase === 'running' &&
       (!isAuthLogout || !syncResult.configChanged)) {
       this.pendingCredentialReload ??= { authSessionId, recoveryUsed: isAuthLogout };
       this.pendingCredentialReload.acknowledged = undefined;
@@ -801,9 +815,15 @@ export class OpenClawConfigSyncService {
           gatewayLaunchEnvVarsChanged,
           requiresGatewayRestart: syncResult.requiresGatewayRestart,
         });
+    const logoutOwnership: ConfigApplicationOwnership | undefined = isAuthLogout &&
+      statusBeforeSync.phase === EnginePhase.Running ? {
+        ownsProcess: () => authLogoutIsCurrent() &&
+          engineManager.getGatewayProcessGeneration() === processGenerationBeforeSync,
+        isCurrent: preflightIsCurrent,
+      } : undefined;
     const verificationOptions = {
       retiredProviderIds: options.retiredProviderIds,
-      ownership: this.getCredentialReloadOwnership(this.pendingCredentialReload),
+      ownership: this.getCredentialReloadOwnership(this.pendingCredentialReload) ?? logoutOwnership,
       // This is based on the complete persisted diff, never on the sync reason alone.
       skipSessionModelReconciliation: syncResult.modelDefaultsOnly === true &&
         !syncResult.secretsChanged && !gatewayLaunchEnvVarsChanged,

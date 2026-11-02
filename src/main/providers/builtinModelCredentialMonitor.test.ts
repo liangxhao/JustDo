@@ -77,4 +77,28 @@ describe('BuiltinModelCredentialMonitor', () => {
     expect(refresh).not.toHaveBeenCalled();
     monitor.stop();
   });
+
+  test('retries asynchronous application errors without waiting for the next credential deadline', async () => {
+    vi.useFakeTimers();
+    const refresh = vi.fn(async () => null);
+    const onError = vi.fn();
+    const monitor = new BuiltinModelCredentialMonitor({
+      userInfoPath: 'fixture', refresh, onError, watchFile: vi.fn(), unwatchFile: vi.fn(),
+    });
+    monitor.start(null);
+    const failure = new Error('configuration confirmation failed');
+
+    monitor.retryAfterError(failure);
+    await vi.advanceTimersByTimeAsync(4_999);
+    expect(refresh).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(onError).toHaveBeenCalledWith(failure);
+    expect(refresh).toHaveBeenCalledOnce();
+
+    monitor.stop();
+    monitor.retryAfterError(failure);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(onError).toHaveBeenCalledOnce();
+    expect(refresh).toHaveBeenCalledOnce();
+  });
 });

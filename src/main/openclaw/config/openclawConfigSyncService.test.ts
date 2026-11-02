@@ -1248,6 +1248,21 @@ describe('OpenClawConfigSyncService', () => {
     },
   );
 
+  it('confirms credentials published before a queued login sync even when the file is unchanged', async () => {
+    const harness = createHarness({
+      configChanged: false,
+      secretsChanged: false,
+      getModelAuthSessionId: () => 'active-session',
+    });
+    await expect(harness.service.syncConfig({ reason: BuiltinModelSyncReason.AuthLogin }))
+      .resolves.toMatchObject({ success: true, configSynced: true });
+    expect(harness.requestGateway).toHaveBeenCalledWith('secrets.reload', undefined, {
+      timeoutMs: resolveManagedCredentialReloadTimeoutMs(),
+    });
+    expect(harness.engineManager.waitForGatewayConfigReload).not.toHaveBeenCalled();
+    expect(harness.stopGateway).not.toHaveBeenCalled();
+  });
+
   it('refreshes rotated file credentials without restarting or waiting for a config file event', async () => {
     const harness = createHarness({ configChanged: false, secretsChanged: true });
     await expect(harness.service.syncConfig({ reason: 'provider-key-change' })).resolves.toMatchObject({ success: true, changed: true });
@@ -2985,7 +3000,29 @@ describe('OpenClawConfigSyncService', () => {
     }
   });
 
-  it.each([null, 'original-session'])('discards a credential recovery ticket on logout for auth session %s', async authSessionId => {
+  it.each(['queued', 'preflight'] as const)('preserves renewed credentials when obsolete logout cleanup is %s', async phase => {
+    let authSessionId: string | null = phase === 'queued' ? 'restored-session' : null;
+    let releaseOwnership!: () => void;
+    const ownership = new Promise<ReadonlySet<string>>(resolve => {
+      releaseOwnership = () => resolve(new Set());
+    });
+    const readOwnership = vi.fn(() => ownership);
+    const harness = createHarness({
+      getModelAuthSessionId: () => authSessionId,
+      getExtensionMcpServerNames: readOwnership,
+    });
+    const cleanup = harness.service.syncConfig({ reason: BuiltinModelSyncReason.AuthLogout });
+    if (phase === 'preflight') await vi.waitFor(() => expect(readOwnership).toHaveBeenCalledOnce());
+    authSessionId = 'restored-session';
+    releaseOwnership();
+    await expect(cleanup).resolves.toMatchObject({ success: false, configSynced: false });
+    expect(harness.configSync.sync).not.toHaveBeenCalled();
+    expect(harness.stopGateway).not.toHaveBeenCalled();
+    expect(harness.requestGateway).not.toHaveBeenCalled();
+  });
+
+  it.each([null, 'original-session'])('discards a credential recovery ticket on logout for auth session %s', async initialSessionId => {
+    let authSessionId = initialSessionId;
     vi.useFakeTimers();
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'credential-logout-recovery-'));
     const configPath = path.join(directory, 'openclaw.json');
@@ -3003,6 +3040,7 @@ describe('OpenClawConfigSyncService', () => {
       const published = harness.configSync.sync.getMockImplementation()!();
       harness.configSync.sync.mockReturnValue({ ...published, changed: false, configChanged: false, secretsChanged: false });
 
+      authSessionId = null;
       await expect(harness.service.syncConfig({ reason: 'auth-logout' })).resolves.toMatchObject({ success: true });
 
       expect(harness.startGateway).not.toHaveBeenCalled();
@@ -3073,6 +3111,31 @@ describe('OpenClawConfigSyncService', () => {
     }
   });
 
+  it.each([false, true])('does not stop or reconcile a recovered login after a late logout reload (reloaded: %s)', async reloaded => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'credential-logout-late-ack-'));
+    const configPath = path.join(directory, 'openclaw.json');
+    fs.writeFileSync(configPath, JSON.stringify({ models: {}, memory: { search: { enabled: false } } }));
+    let authSessionId: string | null = null;
+    let releaseReload!: (value: boolean) => void;
+    const reload = new Promise<boolean>(resolve => { releaseReload = resolve; });
+    const harness = createHarness({ configPath, getModelAuthSessionId: () => authSessionId });
+    harness.engineManager.waitForGatewayConfigReload.mockReturnValue(reload);
+    try {
+      const cleanup = harness.service.syncConfig({ reason: BuiltinModelSyncReason.AuthLogout });
+      await vi.waitFor(() => expect(harness.engineManager.waitForGatewayConfigReload).toHaveBeenCalledOnce());
+      authSessionId = 'restored-session';
+      harness.requestGateway.mockClear();
+      releaseReload(reloaded);
+      await expect(cleanup).resolves.toMatchObject({ success: false, configSynced: false });
+      expect(harness.stopGateway).not.toHaveBeenCalled();
+      expect(harness.startGateway).not.toHaveBeenCalled();
+      expect(harness.requestGateway).not.toHaveBeenCalled();
+    } finally {
+      releaseReload(reloaded);
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it('stops the Gateway when logout hot reload times out', async () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-logout-hot-reload-'));
     const configPath = path.join(directory, 'openclaw.json');
@@ -3087,6 +3150,12 @@ describe('OpenClawConfigSyncService', () => {
     const harness = createHarness({
       configPath,
       waitForReload: false,
+    });
+    const stop = harness.stopGateway.getMockImplementation()!;
+    harness.stopGateway.mockImplementation(async () => {
+      await stop();
+      // A real process exit advances the lifecycle even for our own stop.
+      harness.engineManager.getGatewayLifecycleGeneration.mockReturnValue(2);
     });
 
     try {
