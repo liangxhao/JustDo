@@ -84,13 +84,14 @@ function fixture() {
       root.replaceChildren(container);
       const contents = vi.fn(() => html`<p>Existing process content</p>`);
       render(html`<details class="completed-process" ?open=${expanded}>
-        <summary>Process</summary><div>${disclosureContent(contents)}</div>
+        <summary>Process</summary><div class="process-disclosure-content">${disclosureContent(contents)}</div>
       </details>`, container);
       const details = container.querySelector('details')!;
+      const body = details.querySelector<HTMLElement>('.process-disclosure-content')!;
       vi.spyOn(details.querySelector('summary')!, 'getBoundingClientRect')
         .mockReturnValue(new DOMRect(0, 20, 640, 38));
       motion.ref(item, expanded)(details);
-      return { details, contents };
+      return { details, body, contents };
     },
   };
 }
@@ -304,7 +305,8 @@ test.each(['same-key', 'native-history-shape'] as const)(
     view.source();
     view.motion.capture(view.root);
     const first = view.mount();
-    vi.spyOn(first.details, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 20, 640, 98));
+    vi.spyOn(first.details, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 20, 640, 180));
+    vi.spyOn(first.body, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 58, 640, 60));
     view.motion.afterRender();
     nextFrame();
     expect(first.details.open).toBe(false);
@@ -327,9 +329,13 @@ test.each(['same-key', 'native-history-shape'] as const)(
     nextFrame();
     expect(next.details.open).toBe(false);
     expect(next.details.style.getPropertyValue('--process-auto-fold-duration')).toBe('204ms');
-    const completed = new Event('transitionend');
+    const nested = new Event('transitionend', { bubbles: true });
+    Object.defineProperty(nested, 'propertyName', { value: 'block-size' });
+    next.body.querySelector('p')!.dispatchEvent(nested);
+    expect(next.details.style.getPropertyValue('--process-auto-fold-duration')).toBe('204ms');
+    const completed = new Event('transitionend', { bubbles: true });
     Object.defineProperty(completed, 'propertyName', { value: 'block-size' });
-    next.details.dispatchEvent(completed);
+    next.body.dispatchEvent(completed);
     expect(next.details.style.getPropertyValue('--process-auto-fold-duration')).toBe('');
     view.motion.afterRender();
     expect(frames.size).toBe(0);

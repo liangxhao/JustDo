@@ -69,6 +69,10 @@
   border-left-width: 2px;
   border-left-color: color-mix(in srgb, var(--justdo-chat-accent, #2563eb) 20%, transparent);
 }
+.process-disclosure-content {
+  display: flow-root;
+  min-width: 0;
+}
 .process-summary__item-heading,
 .process-summary__tool-title {
   min-height: 28px;
@@ -113,6 +117,14 @@
     interpolate-size: allow-keywords;
   }
   :is(.completed-process, .process-summary-group, .process-summary__tool)::details-content {
+    transition: content-visibility var(--process-auto-fold-duration, 320ms) allow-discrete;
+  }
+  :is(.completed-process, .process-summary-group, .process-summary__tool)[open]::details-content {
+    /* Keep native scrolling independent of the UA shadow content box. */
+    display: contents;
+  }
+  :is(.completed-process, .process-summary-group, .process-summary__tool)
+    > .process-disclosure-content {
     block-size: 0;
     opacity: 0;
     overflow: clip;
@@ -120,18 +132,26 @@
     transition:
       block-size var(--process-auto-fold-duration, 320ms) cubic-bezier(0.22, 0.8, 0.25, 1),
       opacity var(--process-auto-fold-duration, 220ms) ease,
-      transform var(--process-auto-fold-duration, 320ms) cubic-bezier(0.22, 0.8, 0.25, 1),
-      content-visibility var(--process-auto-fold-duration, 320ms) allow-discrete;
+      transform var(--process-auto-fold-duration, 320ms) cubic-bezier(0.22, 0.8, 0.25, 1);
   }
-  :is(.completed-process, .process-summary-group, .process-summary__tool)[open]::details-content {
+  :is(.completed-process, .process-summary-group, .process-summary__tool)[open]
+    > .process-disclosure-content {
     block-size: auto;
     opacity: 1;
-    transform: translateY(0);
+    transform: none;
   }
-  .completed-process[data-process-auto-fold][open]::details-content {
+  @starting-style {
+    :is(.completed-process, .process-summary-group, .process-summary__tool)[open]:not([data-process-auto-fold])
+      > .process-disclosure-content {
+      block-size: 0;
+      opacity: 0;
+      transform: translateY(-6px);
+    }
+  }
+  .completed-process[data-process-auto-fold][open] > .process-disclosure-content {
     block-size: var(--process-auto-fold-size, auto);
     opacity: var(--process-auto-fold-opacity, 1);
-    transform: var(--process-auto-fold-transform, translateY(0));
+    transform: var(--process-auto-fold-transform, none);
     transition: none;
   }
 }

@@ -58,14 +58,16 @@ export function renderCompletedProcess(
               </span>
             </span>
           </summary>
-          <div class="completed-process__items">
-            ${disclosureContent(() =>
-              options.renderItems?.((child, index) => options.renderItem(child, index === 0 && options.showAvatar)) ?? repeat(
-                item.items,
-                child => child.key,
-                (child, index) => options.renderItem(child, index === 0 && options.showAvatar),
-              ),
-            )}
+          <div class="process-disclosure-content">
+            <div class="completed-process__items">
+              ${disclosureContent(() =>
+                options.renderItems?.((child, index) => options.renderItem(child, index === 0 && options.showAvatar)) ?? repeat(
+                  item.items,
+                  child => child.key,
+                  (child, index) => options.renderItem(child, index === 0 && options.showAvatar),
+                ),
+              )}
+            </div>
           </div>
         </details>
       `,

@@ -114,6 +114,12 @@ function insideHiddenDisclosure(element: HTMLElement): boolean {
   return false;
 }
 
+function processDisclosureContent(details: HTMLDetailsElement | null): HTMLElement | null {
+  return Array.from(details?.children ?? []).find(element =>
+    element.classList.contains('process-disclosure-content'),
+  ) as HTMLElement | undefined ?? null;
+}
+
 /** Animates only an already visible flat process becoming a new disclosure. */
 export class CompletedProcessMotion {
   private scope: string | null = null;
@@ -253,9 +259,10 @@ export class CompletedProcessMotion {
 
   private stage(group: ProcessGroup, extent: number, retained?: PendingFold): void {
     const details = group.element;
+    const content = processDisclosureContent(details);
     const ownerWindow = this.host.ownerDocument.defaultView;
     const css = (ownerWindow as (Window & typeof globalThis) | null)?.CSS;
-    if (this.scope === null || !details?.isConnected || !this.host.isConnected ||
+    if (this.scope === null || !details?.isConnected || !content || !this.host.isConnected ||
       !ownerWindow || !css?.supports('interpolate-size', 'allow-keywords') ||
       !css.supports('selector(details::details-content)')) {
       this.stop(group, true);
@@ -287,7 +294,7 @@ export class CompletedProcessMotion {
     if (pending.transform) details.style.setProperty(AUTO_FOLD_TRANSFORM, pending.transform);
     details.open = true;
     materializeDisclosureContent(details);
-    // Establish the open size before the next frame changes native details state.
+    // Establish the real content box before the next frame closes the disclosure.
     details.getBoundingClientRect();
     pending.frame = ownerWindow.requestAnimationFrame(() => {
       pending.frame = null;
@@ -301,7 +308,7 @@ export class CompletedProcessMotion {
       const remaining = Math.max(0, pending.deadline - now);
       details.style.setProperty(AUTO_FOLD_DURATION, `${remaining}ms`);
       pending.transitionEnd = event => {
-        if (event.target !== details ||
+        if (event.target !== content ||
           !['block-size', 'height'].includes((event as TransitionEvent).propertyName)) return;
         if (group.pending === pending) this.stop(group, false);
       };
@@ -324,9 +331,10 @@ export class CompletedProcessMotion {
   private measurePending(pending: PendingFold): void {
     const details = pending.element;
     if (pending.deadline === null || !details?.isConnected) return;
-    const header = details.firstElementChild?.getBoundingClientRect().height ?? 0;
-    pending.size = Math.max(0, details.getBoundingClientRect().height - header);
-    const style = pending.window.getComputedStyle(details, '::details-content');
+    const content = processDisclosureContent(details);
+    if (!content) return;
+    pending.size = Math.max(0, content.getBoundingClientRect().height);
+    const style = pending.window.getComputedStyle(content);
     pending.opacity = style.opacity;
     pending.transform = style.transform;
   }

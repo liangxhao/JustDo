@@ -741,12 +741,14 @@ function renderProcessItem(
                     >${toolSummary(process)}</span
                   >
                 </summary>
-                ${renderToolDetail(
-                  process,
-                  editDiffModes.get(process.id) ?? 'unified',
-                  onEditDiffModeChange,
-                  sessionKey,
-                )}
+                <div class="process-disclosure-content">
+                  ${renderToolDetail(
+                    process,
+                    editDiffModes.get(process.id) ?? 'unified',
+                    onEditDiffModeChange,
+                    sessionKey,
+                  )}
+                </div>
               </details>
             `
       }
@@ -889,7 +891,9 @@ export function renderTimelineItem(
                 >${toolSummary(tool)}</span
               >
             </summary>
-            ${renderToolDetail(tool, editDiffModes.get(tool.id) ?? 'unified', onEditDiffModeChange, contentOptions?.sessionKey)}
+            <div class="process-disclosure-content">
+              ${renderToolDetail(tool, editDiffModes.get(tool.id) ?? 'unified', onEditDiffModeChange, contentOptions?.sessionKey)}
+            </div>
           </details>
         </section>
       `,
@@ -933,7 +937,9 @@ export function renderTimelineItem(
             <span>${summaryLabel(item)}</span>
             <span class="process-summary__chevron" aria-hidden="true">›</span>
           </summary>
-          ${expanded ? renderContents() : disclosureContent(renderContents)}
+          <div class="process-disclosure-content">
+            ${expanded ? renderContents() : disclosureContent(renderContents)}
+          </div>
         </details>
       `,
       showAvatar,

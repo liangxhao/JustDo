@@ -222,10 +222,13 @@
           requestAnimationFrame(() =>
             requestAnimationFrame(() => {
               if (!details.isConnected) return;
+              const content = details.querySelector('.process-disclosure-content');
+              if (!content) return;
               metrics.disclosure = {
                 open: details.open,
-                contentTransition: getComputedStyle(details, '::details-content').transition,
-                contentSize: getComputedStyle(details, '::details-content').blockSize,
+                contentTransition: getComputedStyle(content).transition,
+                contentSize: getComputedStyle(content).blockSize,
+                nativeContentDisplay: getComputedStyle(details, '::details-content').display,
                 transitions: details
                   .getAnimations({ subtree: true })
                   .filter(animation => typeof animation.transitionProperty === 'string')
