@@ -25,6 +25,7 @@ import {
 import { i18nService } from '@/services/i18n';
 import type { RootState } from '@/store';
 
+import ResultSummary from './ResultSummary';
 import RunDiagnostics from './RunDiagnostics';
 import { getTaskAgentLabel, getTaskDisplayName } from './utils';
 
@@ -145,6 +146,8 @@ const ResultInbox: React.FC = () => {
     if (storedTaskName && storedTaskName !== result.taskId) return storedTaskName;
     return t('scheduledTasksResultsDeletedTaskTitle');
   };
+  const getResultAgentLabel = (result: ScheduledTaskResult): string | null =>
+    getTaskAgentLabel(tasks.find(task => task.id === result.taskId) ?? { agentId: null }, agents);
 
   useEffect(() => {
     const visibleResultIds = new Set(results.map(result => result.id));
@@ -579,25 +582,9 @@ const ResultInbox: React.FC = () => {
                           <div className="min-w-0 flex-1">
                             <div className="flex items-start gap-2">
                               <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
-                                <h3 className="font-medium text-foreground">
+                                <h3 className="text-sm font-semibold leading-6 text-foreground">
                                   {getResultTitle(result)}
                                 </h3>
-                                {getTaskAgentLabel(
-                                  tasks.find(task => task.id === result.taskId) ?? {
-                                    agentId: null,
-                                  },
-                                  agents,
-                                ) && (
-                                  <p className="order-last mt-1 flex w-full items-center gap-2 text-xs text-secondary">
-                                    <UserIcon className="h-3.5 w-3.5" />
-                                    {getTaskAgentLabel(
-                                      tasks.find(task => task.id === result.taskId) ?? {
-                                        agentId: null,
-                                      },
-                                      agents,
-                                    )}
-                                  </p>
-                                )}
                                 {!tasksLoading && !error && isResultTaskDeleted(result, tasks) && (
                                   <span className="text-xs text-secondary">
                                     {t('scheduledTasksResultsDeletedTask')}
@@ -626,10 +613,6 @@ const ResultInbox: React.FC = () => {
                                     {t('scheduledTasksResultsRoutine')}
                                   </span>
                                 )}
-                                <span className="text-xs text-secondary">
-                                  {formatResultTime(result.startedAt)} ·{' '}
-                                  {formatDuration(result.durationMs)}
-                                </span>
                               </div>
                               <div className="flex shrink-0 items-center gap-1">
                                 {result.status !== 'skipped' && result.sessionKey ? (
@@ -691,18 +674,30 @@ const ResultInbox: React.FC = () => {
                                 )}
                               </div>
                             </div>
+                            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-secondary">
+                              <span>
+                                {formatResultTime(result.startedAt)}
+                                {result.durationMs !== null &&
+                                  ` · ${formatDuration(result.durationMs)}`}
+                              </span>
+                              {getResultAgentLabel(result) && (
+                                <span className="inline-flex items-center gap-1">
+                                  <UserIcon className="h-3 w-3" />
+                                  {getResultAgentLabel(result)}
+                                </span>
+                              )}
+                            </div>
                             {result.status === 'success' &&
                             isSilentScheduledTaskResult(result.summary) &&
                             isRoutineScheduledTaskResult(result) ? (
-                              <p className="mt-2 line-clamp-3 whitespace-pre-wrap text-sm text-secondary">
+                              <p className="mt-3 text-sm text-secondary">
                                 {t('scheduledTasksResultsSilent')}
                               </p>
                             ) : result.summary && !isSilentScheduledTaskResult(result.summary) ? (
-                              <p className="mt-2 line-clamp-3 whitespace-pre-wrap text-sm text-secondary">
-                                {result.summary}
-                              </p>
+                              <ResultSummary content={result.summary} className="mt-3" />
                             ) : null}
-                            <RunDiagnostics run={result} compact className="mt-2" />
+                            <RunDiagnostics run={result} compact issuesOnly className="mt-3" />
+                            <RunDiagnostics run={result} collapsible />
                           </div>
                         </div>
                       </article>

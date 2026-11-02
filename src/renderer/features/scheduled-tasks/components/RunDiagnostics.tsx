@@ -1,3 +1,4 @@
+import { TaskCompletionStatus, TaskStatus } from '@shared/scheduledTask/constants';
 import type { ScheduledTaskRun } from '@shared/scheduledTask/types';
 
 import { i18nService } from '@/services/i18n';
@@ -30,63 +31,104 @@ const USAGE_KEYS = {
 export default function RunDiagnostics({
   run,
   compact = false,
+  issuesOnly = false,
+  collapsible = false,
   className = '',
 }: {
   run: ScheduledTaskRun;
   compact?: boolean;
+  issuesOnly?: boolean;
+  collapsible?: boolean;
   className?: string;
 }) {
   const t = i18nService.t.bind(i18nService);
-  const explanation = getRunExplanation(run);
-  const reason = getRunErrorReasonLabel(run.errorReason);
-  const model = formatRunModel(run);
-  const usage = Object.entries(USAGE_KEYS).flatMap(([key, label]) => {
-    const value = run.usage?.[key as keyof typeof USAGE_KEYS];
-    return typeof value === 'number' && Number.isFinite(value) && value >= 0
-      ? [`${t(label)} ${value.toLocaleString()}`]
-      : [];
+  const entries = run.diagnostics?.entries ?? [];
+  const issueEntries = entries.filter(entry => entry.severity !== 'info');
+  const diagnostics = issuesOnly
+    ? issueEntries.filter(entry => entry.source !== 'delivery')
+    : entries;
+  const deliveryMessages = new Set(
+    [
+      run.deliveryError,
+      ...issueEntries.filter(entry => entry.source === 'delivery').map(entry => entry.message),
+    ]
+      .map(message => message?.trim())
+      .filter((message): message is string => Boolean(message)),
+  );
+  // Native delivery failures can repeat their message in execution error fields.
+  const errorIsDelivery =
+    issuesOnly && Boolean(run.error?.trim() && deliveryMessages.has(run.error.trim()));
+  const deliveryOnlyIssues =
+    issueEntries.length > 0 && issueEntries.every(entry => entry.source === 'delivery');
+  const reason = getRunErrorReasonLabel(errorIsDelivery ? undefined : run.errorReason);
+  const model = issuesOnly ? undefined : formatRunModel(run);
+  const provider = issuesOnly ? undefined : run.provider;
+  const completionStatus = issuesOnly ? undefined : run.completionStatus;
+  const deliveryStatus = issuesOnly ? undefined : run.deliveryStatus;
+  const suppressionReason = issuesOnly ? undefined : run.deliverySuppressionReason;
+  const usage = issuesOnly
+    ? []
+    : Object.entries(USAGE_KEYS).flatMap(([key, label]) => {
+        const value = run.usage?.[key as keyof typeof USAGE_KEYS];
+        return typeof value === 'number' && Number.isFinite(value) && value >= 0
+          ? [`${t(label)} ${value.toLocaleString()}`]
+          : [];
+      });
+  const visibleDeliveryError = issuesOnly ? undefined : run.deliveryError?.trim();
+  const showDiagnosticSummary =
+    diagnostics.length === 0 &&
+    (run.status === TaskStatus.Error || run.status === TaskStatus.Skipped) &&
+    !(
+      issuesOnly &&
+      (deliveryOnlyIssues || deliveryMessages.has(run.diagnostics?.summary?.trim() ?? ''))
+    );
+  const explanation = getRunExplanation({
+    ...run,
+    error: errorIsDelivery ? null : run.error,
+    diagnostics: issuesOnly
+      ? {
+          entries: diagnostics,
+          ...(showDiagnosticSummary ? { summary: run.diagnostics?.summary } : {}),
+        }
+      : run.diagnostics,
   });
-  const deliveryError = run.deliveryError?.trim();
-  const visibleDeliveryError = deliveryError;
-  const diagnostics = run.diagnostics?.entries ?? [];
   if (
     !explanation &&
     !reason &&
     !model &&
-    !run.provider &&
+    !provider &&
     !usage.length &&
-    !run.completionStatus &&
-    !run.deliveryStatus &&
+    !completionStatus &&
+    !deliveryStatus &&
     !visibleDeliveryError &&
-    !run.deliverySuppressionReason &&
+    !suppressionReason &&
     !diagnostics.length
   )
     return null;
 
-  return (
+  const content = (
     <div
       className={`space-y-1.5 text-xs text-secondary ${className}`}
       data-testid="scheduled-run-diagnostics"
     >
-      {(run.completionStatus || run.deliveryStatus) && (
+      {(completionStatus || deliveryStatus) && (
         <p className="flex flex-wrap gap-x-4 gap-y-1">
-          {run.completionStatus && (
+          {completionStatus && (
             <span
               className={
-                run.completionStatus === 'failed' || run.completionStatus === 'unknown'
+                completionStatus === TaskCompletionStatus.Failed ||
+                completionStatus === TaskCompletionStatus.Unknown
                   ? 'text-amber-700 dark:text-amber-400'
                   : undefined
               }
             >
-              {t('scheduledTasksCompletionLabel')}: {t(COMPLETION_KEYS[run.completionStatus])}
+              {t('scheduledTasksCompletionLabel')}: {t(COMPLETION_KEYS[completionStatus])}
             </span>
           )}
-          {run.deliveryStatus && (
+          {deliveryStatus && (
             <span>
               {t('scheduledTasksDeliveryLabel')}:{' '}
-              {DELIVERY_KEYS[run.deliveryStatus]
-                ? t(DELIVERY_KEYS[run.deliveryStatus])
-                : run.deliveryStatus}
+              {DELIVERY_KEYS[deliveryStatus] ? t(DELIVERY_KEYS[deliveryStatus]) : deliveryStatus}
             </span>
           )}
         </p>
@@ -109,16 +151,16 @@ export default function RunDiagnostics({
           {t('scheduledTasksResultsDeliveryWarning')}: {visibleDeliveryError}
         </p>
       )}
-      {run.deliverySuppressionReason && (
+      {suppressionReason && (
         <p className="whitespace-pre-wrap break-words">
-          {t('scheduledTasksDeliverySuppressionLabel')}: {run.deliverySuppressionReason}
+          {t('scheduledTasksDeliverySuppressionLabel')}: {suppressionReason}
         </p>
       )}
-      {(model || run.provider) && (
+      {(model || provider) && (
         <p className="break-words">
           {model
             ? `${t('scheduledTasksActualModel')}: ${model}`
-            : `${t('scheduledTasksActualProvider')}: ${run.provider}`}
+            : `${t('scheduledTasksActualProvider')}: ${provider}`}
         </p>
       )}
       {usage.length > 0 && (
@@ -163,5 +205,17 @@ export default function RunDiagnostics({
         </details>
       )}
     </div>
+  );
+
+  if (!collapsible) return content;
+  return (
+    <details className="mt-3 text-xs text-secondary" onClick={event => event.stopPropagation()}>
+      <summary className="w-fit cursor-pointer transition-colors hover:text-foreground">
+        {t('scheduledTasksResultsRunDetails')}
+      </summary>
+      <div className="mt-2 rounded-lg border border-border-subtle bg-surface-raised/50 p-3">
+        {content}
+      </div>
+    </details>
   );
 }

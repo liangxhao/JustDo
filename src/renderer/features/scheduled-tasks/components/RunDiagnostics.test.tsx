@@ -130,6 +130,161 @@ test('does not invent completion, model, or usage facts for old records', () => 
   expect(view.container.textContent).toBe('');
 });
 
+test('keeps routine metadata and informational diagnostics out of the inbox preview', () => {
+  const view = render(
+    <RunDiagnostics
+      run={{
+        ...run,
+        completionStatus: 'succeeded',
+        deliveryStatus: 'not-requested',
+        model: 'internal/report',
+        usage: { total_tokens: 42 },
+        diagnostics: {
+          summary: 'Routine checks passed',
+          entries: [
+            { ts: 1, source: 'agent-run', severity: 'info', message: 'Routine checks passed' },
+          ],
+        },
+      }}
+      issuesOnly
+      compact
+    />,
+  );
+
+  expect(view.container.textContent).toBe('');
+});
+
+test('keeps execution warnings visible while completion and delivery metadata stay folded', () => {
+  i18nService.setLanguage('zh', { persist: false });
+  render(
+    <RunDiagnostics
+      run={{
+        ...run,
+        summary: 'NO_REPLY',
+        completionStatus: 'unknown',
+        deliveryStatus: 'unknown',
+        deliveryError: 'Internal notification endpoint unavailable',
+        diagnostics: {
+          summary: 'Run finished',
+          entries: [
+            { ts: 1, source: 'agent-run', severity: 'info', message: 'Starting' },
+            { ts: 2, source: 'tool', severity: 'warn', message: 'Report attachment is missing' },
+            { ts: 3, source: 'delivery', severity: 'error', message: 'Notification failed' },
+          ],
+        },
+      }}
+      issuesOnly
+      compact
+    />,
+  );
+
+  expect(screen.queryByText('整体完成: 结果未知')).toBeNull();
+  expect(screen.queryByText('外部通知: 发送结果未知')).toBeNull();
+  expect(screen.queryByText('外部通知失败: Internal notification endpoint unavailable')).toBeNull();
+  expect(screen.queryByText('Notification failed')).toBeNull();
+  expect(
+    screen.getAllByText('Report attachment is missing').some(node => !node.closest('details')),
+  ).toBe(true);
+  expect(screen.queryByText('Starting')).toBeNull();
+  expect(screen.queryByText('Run finished')).toBeNull();
+});
+
+test('keeps delivery outcomes out of the inbox preview regardless of suppression', () => {
+  i18nService.setLanguage('zh', { persist: false });
+  const view = render(
+    <RunDiagnostics
+      run={{
+        ...run,
+        status: 'error',
+        error: 'Notification failed',
+        errorReason: 'timeout',
+        deliveryStatus: 'not-delivered',
+        deliveryError: 'Notification failed',
+        diagnostics: {
+          summary: 'Notification failed',
+          entries: [
+            { ts: 1, source: 'delivery', severity: 'error', message: 'Notification failed' },
+          ],
+        },
+      }}
+      issuesOnly
+    />,
+  );
+  expect(view.container.textContent).toBe('');
+  view.rerender(
+    <RunDiagnostics
+      run={{
+        ...run,
+        status: 'error',
+        diagnostics: {
+          summary: 'Notification failed',
+          entries: [
+            { ts: 1, source: 'delivery', severity: 'error', message: 'Notification failed' },
+          ],
+        },
+      }}
+      issuesOnly
+    />,
+  );
+  expect(view.container.textContent).toBe('');
+  view.rerender(
+    <RunDiagnostics
+      run={{
+        ...run,
+        deliveryStatus: 'not-delivered',
+        deliverySuppressionReason: 'silent-reply',
+      }}
+      issuesOnly
+    />,
+  );
+  expect(view.container.textContent).toBe('');
+});
+
+test('keeps independent execution failures visible alongside folded notification errors', () => {
+  i18nService.setLanguage('zh', { persist: false });
+  render(
+    <RunDiagnostics
+      run={{
+        ...run,
+        status: 'error',
+        error: 'Model unavailable',
+        errorReason: 'model_not_found',
+        deliveryError: 'Notification failed',
+        diagnostics: {
+          summary: 'Notification failed',
+          entries: [
+            { ts: 1, source: 'model-preflight', severity: 'error', message: 'Model unavailable' },
+            { ts: 2, source: 'delivery', severity: 'error', message: 'Notification failed' },
+          ],
+        },
+      }}
+      issuesOnly
+    />,
+  );
+
+  expect(screen.getAllByText('Model unavailable').some(node => !node.closest('details'))).toBe(
+    true,
+  );
+  expect(screen.getByText('原因: 配置的模型不可用。').closest('details')).toBeNull();
+  expect(screen.queryByText(/Notification failed/)).toBeNull();
+});
+
+test('preserves the only native explanation for a failure without diagnostic entries', () => {
+  render(
+    <RunDiagnostics
+      run={{
+        ...run,
+        status: 'error',
+        diagnostics: { summary: 'The configured model is unavailable', entries: [] },
+      }}
+      issuesOnly
+      compact
+    />,
+  );
+
+  expect(screen.getByText('The configured model is unavailable').closest('details')).toBeNull();
+});
+
 test('identifies native automatic pauses and does not keep that notice after re-enabling', () => {
   i18nService.setLanguage('zh', { persist: false });
   const state: TaskState = {

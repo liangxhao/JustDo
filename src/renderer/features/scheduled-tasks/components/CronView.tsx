@@ -22,6 +22,7 @@ import {
   XCircleIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
+import { TaskStatus } from '@shared/scheduledTask/constants';
 import {
   getScheduledTaskPermission,
   ScheduledTaskPermission,
@@ -262,7 +263,9 @@ export function CronJobCard({
   const toggleDisabled = isMemory ? memoryToggleDisabled : isManaged;
   const isEditable = job.management === 'editable';
   const hasLastRun = Boolean(job.state.lastRunAtMs);
-  const lastStatus = job.state.lastStatus;
+  const runningAtMs = job.state.runningAtMs;
+  const isRunning = runningAtMs !== null && Number.isFinite(runningAtMs);
+  const lastStatus = job.state.lastStatus === TaskStatus.Running ? null : job.state.lastStatus;
   const lastError = job.state.lastError;
   const nextRunMs = job.state.nextRunAtMs;
   const scheduleLabel = isPlaceholder
@@ -308,10 +311,7 @@ export function CronJobCard({
         )}
 
         {isManaged && !isMemory ? (
-          <span
-            className="shrink-0 text-xs text-secondary"
-            title={t('cronCardManagedHint')}
-          >
+          <span className="shrink-0 text-xs text-secondary" title={t('cronCardManagedHint')}>
             {t(isEnabled ? 'cronStatsActive' : 'cronStatsPaused')}
           </span>
         ) : (
@@ -389,14 +389,19 @@ export function CronJobCard({
           {promptText}
         </p>
 
-        {hasLastRun && (
+        {isRunning ? (
           <>
-            {lastStatus === 'success' ? (
+            <ArrowPathIcon className="h-3.5 w-3.5 animate-spin text-primary" />
+            <span className="min-w-0 truncate leading-4 text-primary" role="status">
+              {t('scheduledTasksStatusRunning')}: {formatDateTime(new Date(runningAtMs))}
+            </span>
+          </>
+        ) : hasLastRun ? (
+          <>
+            {lastStatus === TaskStatus.Success ? (
               <CheckCircleIcon className="h-3.5 w-3.5 text-green-500" />
-            ) : lastStatus === 'error' ? (
+            ) : lastStatus === TaskStatus.Error ? (
               <XCircleIcon className="h-3.5 w-3.5 text-red-500" />
-            ) : lastStatus === 'running' ? (
-              <ArrowPathIcon className="h-3.5 w-3.5 animate-spin text-primary" />
             ) : (
               <ClockIcon className="h-3.5 w-3.5" />
             )}
@@ -413,7 +418,7 @@ export function CronJobCard({
               )}
             </span>
           </>
-        )}
+        ) : null}
       </div>
 
       <TaskStateNotice state={job.state} enabled={job.enabled} className="px-3 pb-2" />

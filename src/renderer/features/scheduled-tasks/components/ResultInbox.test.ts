@@ -4,14 +4,26 @@ import type { ScheduledTask, ScheduledTaskResult } from '@shared/scheduledTask/t
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { createElement } from 'react';
 import { Provider } from 'react-redux';
-import { afterEach, describe, expect, test } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
+import { scheduledTaskService } from '@/features/scheduled-tasks/scheduledTaskService';
 import { i18nService } from '@/services/i18n';
 
 import scheduledTaskReducer from '../scheduledTaskSlice';
 import ResultInbox, { isResultTaskDeleted } from './ResultInbox';
 
-afterEach(cleanup);
+vi.mock('@/features/scheduled-tasks/scheduledTaskService', () => ({
+  resolveVisibleResultTaskId: (_tasks: unknown[], taskId: string | null) => taskId,
+  scheduledTaskService: {
+    markResultRead: vi.fn().mockResolvedValue(undefined),
+    setResultsFilter: vi.fn(),
+  },
+}));
+beforeEach(() => vi.clearAllMocks());
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 
 const result = {
   taskId: 'heartbeat-main',
@@ -103,4 +115,110 @@ describe('ResultInbox task presentation', () => {
       isResultTaskDeleted({ ...result, systemManaged: false }, [{ id: 'heartbeat-main' }]),
     ).toBe(false);
   });
+});
+
+function renderReceipt(overrides: Partial<ScheduledTaskResult> = {}) {
+  i18nService.setLanguage('zh', { persist: false });
+  const initial = scheduledTaskReducer(undefined, { type: '@@init' });
+  const receipt: ScheduledTaskResult = {
+    id: 'report-run',
+    taskId: 'report',
+    taskName: '早晨简报',
+    sessionId: 'native-session',
+    sessionKey: 'native-session-key',
+    status: 'success',
+    summary: '**今日早报**\n\n- 上海天气晴',
+    startedAt: '2026-11-02T02:01:06.000Z',
+    finishedAt: '2026-11-02T02:10:00.000Z',
+    durationMs: 534000,
+    error: null,
+    deliveryStatus: 'not-requested',
+    deliveryError: null,
+    completionStatus: 'succeeded',
+    model: 'internal/report',
+    usage: { total_tokens: 42 },
+    observedAt: '2026-11-02T02:10:00.000Z',
+    readAt: null,
+    ...overrides,
+  };
+  const store = configureStore({
+    reducer: {
+      scheduledTask: () => ({ ...initial, results: [receipt] }),
+      agent: () => ({ agents: [] }),
+    },
+  });
+  return render(createElement(Provider, { store, children: createElement(ResultInbox) }));
+}
+
+test('formats result content and keeps routine metadata inside a closed disclosure', () => {
+  renderReceipt();
+  expect(screen.getByText('今日早报').tagName).toBe('STRONG');
+  expect(screen.getByText('上海天气晴').tagName).toBe('LI');
+  const model = screen.getByText('实际模型: internal/report');
+  const details = model.closest('details')!;
+  expect(details.open).toBe(false);
+  expect(screen.getByText('Token 用量: 总计 42').closest('details')).toBe(details);
+  expect(screen.getByText('整体完成: 已完成').closest('details')).toBe(details);
+  expect(screen.getByText('外部通知: 未请求').closest('details')).toBe(details);
+
+  fireEvent.click(screen.getByText('运行详情'));
+  expect(details.open).toBe(true);
+  expect(scheduledTaskService.markResultRead).not.toHaveBeenCalled();
+});
+
+test('folds completion and notification failures into details even for NO_REPLY results', () => {
+  renderReceipt({
+    summary: 'NO_REPLY',
+    status: 'error',
+    error: 'Notification service unavailable',
+    errorReason: 'timeout',
+    completionStatus: 'failed',
+    deliveryStatus: 'unknown',
+    deliveryError: 'Notification service unavailable',
+    diagnostics: {
+      summary: 'Notification service unavailable',
+      entries: [
+        {
+          ts: 1,
+          source: 'delivery',
+          severity: 'error',
+          message: 'Notification service unavailable',
+        },
+      ],
+    },
+  });
+  const details = screen.getByText('整体完成: 未完成').closest('details')!;
+  expect(details.open).toBe(false);
+  expect(screen.getByText('外部通知: 发送结果未知').closest('details')).toBe(details);
+  expect(
+    screen.getByText('外部通知失败: Notification service unavailable').closest('details'),
+  ).toBe(details);
+  expect(
+    screen.getAllByText('Notification service unavailable').every(node => node.closest('details')),
+  ).toBe(true);
+  fireEvent.click(screen.getByText('运行详情'));
+  expect(details.open).toBe(true);
+  expect(screen.queryByText('NO_REPLY')).toBeNull();
+});
+
+test('keeps skipped-result reasons and details accessible without a native session', () => {
+  renderReceipt({
+    status: 'skipped',
+    summary: null,
+    error: 'disabled',
+    sessionId: null,
+    sessionKey: null,
+    completionStatus: undefined,
+  });
+  expect(
+    screen
+      .getAllByText(i18nService.t('scheduledTasksReasonDisabled'))
+      .some(node => !node.closest('details')),
+  ).toBe(true);
+  expect(
+    screen.queryByRole('button', { name: i18nService.t('scheduledTasksResultsViewFull') }),
+  ).toBeNull();
+  fireEvent.click(screen.getByText('运行详情'));
+  expect(screen.getByText('实际模型: internal/report').closest('details')?.open).toBe(true);
+  expect(scheduledTaskService.markResultRead).not.toHaveBeenCalled();
 });

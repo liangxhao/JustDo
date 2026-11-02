@@ -38,6 +38,11 @@ const TaskRunHistory: React.FC<TaskRunHistoryProps> = ({
   loadError,
   onRetry,
 }) => {
+  const runningAtMs = useSelector(
+    (state: RootState) =>
+      state.scheduledTask.tasks.find(task => task.id === taskId)?.state.runningAtMs ?? null,
+  );
+  const isRunning = runningAtMs !== null && Number.isFinite(runningAtMs);
   const hasMore = useSelector(
     (state: RootState) => state.scheduledTask.runsHasMore[taskId] ?? false,
   );
@@ -63,43 +68,27 @@ const TaskRunHistory: React.FC<TaskRunHistoryProps> = ({
     }
   };
 
-  if (loading && runs.length === 0) {
-    return (
-      <div className="flex items-center justify-center gap-2 py-6 text-sm text-secondary">
-        <span
-          className="h-4 w-4 animate-spin rounded-full border-2 border-current border-r-transparent"
-          aria-hidden="true"
-        />
-        {i18nService.t('loading')}
-      </div>
-    );
-  }
-
-  if (runs.length === 0) {
-    if (loadError) {
-      return (
-        <div className="py-6 text-center text-sm text-secondary" role="alert">
-          <p>{i18nService.t('scheduledTasksLoadRunsFailed')}</p>
-          <button
-            type="button"
-            onClick={onRetry}
-            className="mt-3 text-primary hover:text-primary-hover"
-          >
-            {i18nService.t('scheduledTasksRetry')}
-          </button>
-        </div>
-      );
-    }
-    return (
-      <div className="text-center py-6 text-sm text-secondary">
-        {i18nService.t('scheduledTasksNoRuns')}
-      </div>
-    );
-  }
-
   return (
     <div>
       <div className="divide-y divide-border/50">
+        {isRunning && (
+          <div className="flex items-center justify-between gap-3 py-2.5 px-1">
+            <div className="flex items-center gap-3 min-w-0">
+              <span className="text-sm font-bold text-blue-500" aria-hidden="true">
+                {statusIcons.running.icon}
+              </span>
+              <time
+                className="text-sm text-foreground"
+                dateTime={new Date(runningAtMs).toISOString()}
+              >
+                {formatDateTime(new Date(runningAtMs))}
+              </time>
+            </div>
+            <span className="shrink-0 text-xs text-blue-500">
+              {i18nService.t('scheduledTasksStatusRunning')}
+            </span>
+          </div>
+        )}
         {runs.map(run => {
           const statusInfo = statusIcons[run.status] || { icon: '?', color: '' };
           return (
@@ -139,6 +128,31 @@ const TaskRunHistory: React.FC<TaskRunHistoryProps> = ({
           );
         })}
       </div>
+      {runs.length === 0 &&
+        (loading ? (
+          <div className="flex items-center justify-center gap-2 py-6 text-sm text-secondary">
+            <span
+              className="h-4 w-4 animate-spin rounded-full border-2 border-current border-r-transparent"
+              aria-hidden="true"
+            />
+            {i18nService.t('loading')}
+          </div>
+        ) : loadError ? (
+          <div className="py-6 text-center text-sm text-secondary" role="alert">
+            <p>{i18nService.t('scheduledTasksLoadRunsFailed')}</p>
+            <button
+              type="button"
+              onClick={onRetry}
+              className="mt-3 text-primary hover:text-primary-hover"
+            >
+              {i18nService.t('scheduledTasksRetry')}
+            </button>
+          </div>
+        ) : !isRunning ? (
+          <div className="text-center py-6 text-sm text-secondary">
+            {i18nService.t('scheduledTasksNoRuns')}
+          </div>
+        ) : null)}
       {hasMore && (
         <button
           type="button"
