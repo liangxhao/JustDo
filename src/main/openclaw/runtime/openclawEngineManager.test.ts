@@ -1,10 +1,13 @@
 import { spawnSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
 import { expect, test, vi } from 'vitest';
+
+import { APP_PLUGIN_PYTHON_RUNTIME_ENV } from '../../../../plugins/sdk/app-plugin-sdk/runtimes';
 
 import { SHUTDOWN_BUDGET_MS } from '../../../shared/app/shutdownPolicy';
 import cliRuntimeFiles from '../../../shared/openclaw/cliRuntimeFiles.json';
@@ -147,6 +150,42 @@ test('only reuses the current live child network environment confirmed by its ow
   expect(manager.canReuseGatewayNetworkEnvironment()).toBe(false);
   internals.gatewayProcess = null;
   expect(manager.canReuseGatewayNetworkEnvironment()).toBe(false);
+});
+
+test('reports Python only from the current live Gateway launch and refuses changed files', () => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'gateway-python-runtime-')));
+  try {
+    const executable = path.join(root, 'python.exe');
+    const library = path.join(root, 'python312.zip');
+    for (const file of [executable, library]) fs.writeFileSync(file, path.basename(file));
+    const descriptor = { schemaVersion: 1, implementation: 'cpython', version: '3.12.10',
+      platform: process.platform, architecture: process.arch, executable,
+      standardLibraryPaths: [library, root], files: [executable, library].map(file => ({ path: file,
+        bytes: fs.statSync(file).size, sha256: createHash('sha256').update(fs.readFileSync(file)).digest('hex'),
+      })) };
+    const env = Object.freeze({ [APP_PLUGIN_PYTHON_RUNTIME_ENV]: JSON.stringify(descriptor) });
+    const previous = { pid: 1233, exitCode: null };
+    const current = { pid: 1234, exitCode: null as number | null };
+    const manager = Object.create(OpenClawEngineManager.prototype) as OpenClawEngineManager;
+    const internals = manager as unknown as { gatewayProcess: typeof current | null;
+      gatewayNetworkEnvironments: WeakMap<object, Readonly<NodeJS.ProcessEnv>>; shutdownRequested: boolean };
+    internals.gatewayProcess = current;
+    internals.gatewayNetworkEnvironments = new WeakMap([[previous, env]]);
+    expect(manager.getGatewayPythonRuntime()).toBeNull();
+    internals.gatewayNetworkEnvironments.set(current, env);
+    expect(manager.getGatewayPythonRuntime()?.version).toBe('3.12.10');
+    fs.writeFileSync(executable, 'changed Python');
+    expect(manager.getGatewayPythonRuntime()).toBeNull();
+    fs.writeFileSync(executable, path.basename(executable));
+    expect(manager.getGatewayPythonRuntime()?.version).toBe('3.12.10');
+    internals.shutdownRequested = true;
+    expect(manager.getGatewayPythonRuntime()).toBeNull();
+    internals.shutdownRequested = false;
+    current.exitCode = 0;
+    expect(manager.getGatewayPythonRuntime()).toBeNull();
+    internals.gatewayProcess = null;
+    expect(manager.getGatewayPythonRuntime()).toBeNull();
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
 test('resolves the public OpenClaw CLI independently from the Gateway bundle', () => {

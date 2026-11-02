@@ -26,6 +26,8 @@ Browser utility CSS 使用宿主完整 Tailwind 主题，禁用重复 preflight�
 
 Main SDK 的 execution facade 按真实路由实例复用，不能每次创建新的包装对象，否则插件自己的 `getRouter() === capturedRouter` 围栏会误拒绝同一实例。底层路由替换后旧 facade 失效。响应上下文只暴露 `isCurrent()`，同时核对原生响应上下文、当前运行时引用和插件 epoch；定向状态查询原样传递预期 session ID 与 lifecycle revision，不用空闲投影代替精确身份或终态。
 
+SDK 1.1 的通用 Python 能力由宿主定位受管解释器，使用干净环境探测实际版本，并绑定核心文件哈希。Gateway 启动时由宿主覆盖 `APP_PLUGIN_PYTHON_RUNTIME`，Native 通过公开 `@app-plugin/sdk/runtimes` 获取同一描述并复核文件身份。Main 的 `getPythonRuntime()` 只读取当前 Gateway 实际发布的描述，并在异步读取前后核对业务寿命；启动时缺失或后来变更的描述保持不可用，直到正常重启 Gateway 后重新发布。不查找系统 Python、不安装依赖。该描述只证明运行时可用性，不授予工具执行或文件权限；插件继续通过公开进程接口、私有依赖和独立输入授权执行，且不向 Browser 暴露路径。接口与环境隔离要求见 [SDK 说明](../../plugins/sdk/app-plugin-sdk/README.md)。
+
 Agent Team 的 `host/` 持有协调器、队列、附件和产品数据库事务；`host/app.ts` 注册 Main，`app/` 持有应用契约及完整 React UI；既有 `browser/` 保留与原生入口无关的纯浏览器辅助。Workflow 的 `host/` 和 `app/browser/` 分别持有 Main 注册与完整 UI，`browser/` 保留纯辅助。两者自己的配置投影、沙箱工具声明和技能声明通过注册返回。Core 对贡献 ID 统一合并用户配置、保留显式开关，按技能声明处理同步和发现重启，没有 Team/Workflow 特例。它们均不导入应用 `src`。原生 `index.ts` 不导入应用入口。
 
 Runtime Services 只保留通用执行准入、inert session 托管、执行收据、取消/清理、文件系统和 FIFO。它不识别可选插件 ID、工具、模式、房间或轮次。Team 的启动规则、纠正提示、讨论协议及业务账本归 Team；Workflow 的流程规则及流程库归 Workflow。插件握手与请求转发归每个插件的公开 SDK 接入。Required 服务不加载可选插件 Main/UI，也不提供它们关闭后的业务入口。

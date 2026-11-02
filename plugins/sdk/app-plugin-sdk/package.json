@@ -1,6 +1,6 @@
 {
   "name": "@app-plugin/sdk",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "type": "module",
   "license": "MIT",
@@ -19,6 +19,7 @@
     "./planning": "./planning.ts",
     "./presentation": "./presentation.ts",
     "./rendering": "./rendering.ts",
+    "./runtimes": "./runtimes.ts",
     "./ui": "./ui.ts"
   },
   "peerDependencies": {

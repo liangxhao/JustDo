@@ -585,6 +585,7 @@ const getAppPlugins = (): AppPluginManager =>
       getSessions: getCoworkStore,
       getExecution: getCoworkEngineRouter,
       getNativeStateDirectory: () => getOpenClawEngineManager().getStateDir(),
+      getPythonRuntime: async () => getOpenClawEngineManager().getGatewayPythonRuntime(),
       getRuntime: getOpenClawRuntimeAdapter,
       ensureReady: ensureOpenClawRunningForCowork,
       requestGateway: (method, params) => getCoworkEngineService().requestGateway(method, params),

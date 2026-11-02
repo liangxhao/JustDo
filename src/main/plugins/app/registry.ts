@@ -251,6 +251,14 @@ export class AppPluginRegistry {
       },
       getNativeStateDirectory: () =>
         path.join(resources.getNativeStateDirectory(), manifest.nativePluginId),
+      getPythonRuntime: async () => {
+        assertBusinessEffect();
+        const epoch = instance.epoch;
+        const runtime = await resources.getPythonRuntime();
+        assertBusinessEffect();
+        if (epoch !== instance.epoch) throw new Error(AppPluginError.Unavailable);
+        return runtime;
+      },
       getSessions: () => ({
         getSession: id => resources.getSessions().getSession(id),
         getSessionByNativeKey: key => resources.getSessions().getSessionByNativeKey(key),

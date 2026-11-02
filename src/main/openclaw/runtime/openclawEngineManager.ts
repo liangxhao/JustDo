@@ -6,6 +6,13 @@ import fs from 'fs';
 import net from 'net';
 import path from 'path';
 
+import {
+  APP_PLUGIN_PYTHON_RUNTIME_ENV,
+  type AppPythonRuntime,
+  parseHostPythonRuntime,
+  verifyHostPythonRuntime,
+} from '../../../../plugins/sdk/app-plugin-sdk/runtimes';
+
 import OPENCLAW_CLI_ROOT_FILES from '../../../shared/openclaw/cliRuntimeFiles.json';
 import { DEFAULT_OPENCLAW_GATEWAY_PORT } from '../../../shared/openclaw/constants';
 import type { EngineFailureContext } from '../../../shared/openclaw/engineDiagnostics';
@@ -26,6 +33,7 @@ import {
 import { applyDependencyManagerConfigEnv } from '../../core/runtime/dependencyManagerConfig';
 import { applyPortableGitRuntimeEnv } from '../../core/runtime/portableGitRuntime';
 import { appendPythonRuntimeToEnv } from '../../core/runtime/pythonRuntime';
+import { appendPluginPythonRuntimeToEnv } from '../../core/runtime/pluginPythonRuntime';
 import { syncLocalOpenClawExtensionsIntoRuntime } from '../../plugins/extensions';
 import { GATEWAY_RESTART_COMPLETION_TIMEOUT_MS, GatewayConfigReloadMonitor } from './gatewayConfigReloadMonitor';
 import {
@@ -398,6 +406,20 @@ export class OpenClawEngineManager extends EventEmitter {
     return { ...this.gatewayLaunchEnvVars };
   }
 
+  /** Availability must match the descriptor actually published to this Gateway process. */
+  getGatewayPythonRuntime(): AppPythonRuntime | null {
+    const child = this.gatewayProcess;
+    if (this.shutdownRequested || !isGatewayProcessAlive(child)) return null;
+    try {
+      const raw = this.gatewayNetworkEnvironments.get(child)?.[APP_PLUGIN_PYTHON_RUNTIME_ENV];
+      if (!raw || Buffer.byteLength(raw) > 64 * 1024) return null;
+      const runtime = parseHostPythonRuntime(JSON.parse(raw));
+      if (!runtime) return null;
+      verifyHostPythonRuntime(runtime);
+      return runtime;
+    } catch { return null; }
+  }
+
   hasPendingGatewayLaunchEnvironmentChanges(): boolean {
     return (
       this.gatewayLaunchEnvironmentGeneration !==
@@ -763,6 +785,7 @@ export class OpenClawEngineManager extends EventEmitter {
     }
 
     appendPythonRuntimeToEnv(env as Record<string, string | undefined>);
+    await appendPluginPythonRuntimeToEnv(env as Record<string, string | undefined>);
     applyPortableGitRuntimeEnv(env as Record<string, string | undefined>);
     applyDependencyManagerConfigEnv(env);
     applyTrustedCertificateEnv(

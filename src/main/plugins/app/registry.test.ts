@@ -349,6 +349,31 @@ it('preserves live runtime and client identity without hiding real replacements'
   expect(() => firstClient!.request('fixture.read', {})).toThrow();
 });
 
+it('fences managed Python discovery before calls and after a delayed epoch change', async () => {
+  let enabled = true;
+  let host!: AppMainHost;
+  let finish!: (value: null) => void;
+  const discover = vi.fn(() => new Promise<null>(resolve => { finish = resolve; }));
+  const registry = new AppPluginRegistry(() => ({ enabled, confirmed: true, binding }));
+  try {
+    await registry.prepare(artifact, { getPythonRuntime: discover } as unknown as AppHostResources,
+      async () => ({ register: value => {
+        host = value;
+        return { commands: [{ id: 'read', invoke: () => host.getPythonRuntime() }] };
+      } }));
+    registry.activate();
+    await expect(host.getPythonRuntime()).rejects.toThrow(AppPluginError.Unavailable);
+    expect(discover).not.toHaveBeenCalled();
+    const pending = registry.invoke({ id: 'fixture', epoch: registry.snapshot()[0].epoch,
+      command: 'read', args: [] });
+    await vi.waitFor(() => expect(discover).toHaveBeenCalledTimes(1));
+    enabled = false;
+    registry.refresh();
+    finish(null);
+    await expect(pending).resolves.toEqual({ success: false, error: AppPluginError.Unavailable });
+  } finally { registry.dispose(); }
+});
+
 it('publishes metadata only from current business calls with host-owned identity', async () => {
   let enabled = true;
   let host!: AppMainHost;

@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3';
 
 import type { AppPluginManifest, AppSubmission } from './contracts';
+import type { AppPythonRuntime } from './runtimes';
 
 export interface AppSession {
   id: string;
@@ -90,6 +91,8 @@ export interface AppMainHost {
   assertActive(): void;
   getDatabase(): Database.Database;
   getNativeStateDirectory(): string;
+  /** Managed interpreter availability only; no file or execution authorization. */
+  getPythonRuntime(): Promise<AppPythonRuntime | null>;
   getSessions(): AppSessionStore;
   getExecution(): AppSessionExecution;
   getRuntime(): AppNativeRuntime | null;
