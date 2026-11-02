@@ -25,8 +25,11 @@ class DeploymentLayoutTests(unittest.TestCase):
         self.assertIn('"--app-dir", str(ROOT.parent)', launcher)
 
         dockerfile = (root / 'docker' / 'Dockerfile').read_text()
-        for name in ('hooks', 'requirements.txt', 'start.py register.py'):
+        for name in ('hooks', 'requirements.txt', 'start.py register.py', 'logging.json'):
             self.assertIn('COPY ' + name, dockerfile)
+        self.assertIn('"--log-config", "/opt/litellm-hooks/logging.json"', dockerfile)
+        self.assertIn('"--no-access-log"', dockerfile)
+        self.assertIn('!logging.json', (root / 'docker/Dockerfile.dockerignore').read_text())
 
         for directory in ('native', 'docker'):
             self.assertFalse((root / directory / 'proxy_app.py').exists())

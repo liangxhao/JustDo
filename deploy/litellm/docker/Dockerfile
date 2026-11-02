@@ -11,5 +11,6 @@ ARG PYTHONPATH
 ENV PYTHONPATH=/opt/litellm-hooks/vendor:${PYTHONPATH}
 COPY hooks /opt/litellm-hooks/hooks
 COPY start.py register.py upgrade.py /opt/litellm-hooks/
-ENTRYPOINT ["python", "-m", "uvicorn", "start:create_app", "--factory", "--app-dir", "/opt/litellm-hooks"]
+COPY logging.json /opt/litellm-hooks/logging.json
+ENTRYPOINT ["python", "-m", "uvicorn", "start:create_app", "--factory", "--app-dir", "/opt/litellm-hooks", "--log-config", "/opt/litellm-hooks/logging.json", "--no-access-log"]
 CMD ["--host", "0.0.0.0", "--port", "9108", "--workers", "2"]

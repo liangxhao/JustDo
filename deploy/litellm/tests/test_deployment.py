@@ -68,6 +68,10 @@ def test_native_end_user_mapping_and_legacy_header_setting(monkeypatch, role, fa
 def test_compose_exposes_exactly_one_litellm_service():
     services = yaml.safe_load((ROOT / 'docker/docker-compose.yml').read_text())['services']
     assert set(services) == {'litellm', 'db', 'redis', 'init'}
+    for deployed in services.values():
+        assert deployed['logging'] == {
+            'driver': 'json-file', 'options': {'max-size': '10m', 'max-file': '3'},
+        }
     assert services['init']['restart'] == 'no'
     assert 'ports' not in services['init']
     assert services['init']['entrypoint'] == ['python', '/opt/litellm-hooks/start.py', 'init']

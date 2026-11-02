@@ -1,10 +1,15 @@
 """Shared service factory and explicit first-deployment database initialization."""
 
 import asyncio
+import json
+import logging.config
 import os
+from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from register import build_app, configure_auth, configured_hooks, initialize_hooks
+
+LOG = logging.getLogger('litellm.deployment')
 
 
 def configure_database(settings, environ):
@@ -47,13 +52,17 @@ def create_app():
     if settings.get('disable_prisma_schema_update') is not True:
         raise ValueError('Disable automatic Prisma schema updates')
 
-    configured_hooks(os.environ)
+    hooks = configured_hooks(os.environ)
     configure_database(settings, os.environ)
     os.environ['DISABLE_SCHEMA_UPDATE'] = 'true'
     from litellm.proxy.proxy_server import app
 
     configure_auth(settings, os.environ)
-    return build_app(app, os.environ)
+    wrapped = build_app(app, os.environ)
+    LOG.info('Worker configured hooks=%s database_pool_limit=%s database_pool_timeout_seconds=%s',
+             ','.join(hooks), settings.get('database_connection_pool_limit', 4),
+             settings.get('database_connection_timeout', 30))
+    return wrapped
 
 
 async def initialize_extensions():
@@ -68,13 +77,16 @@ async def initialize_extensions():
 
 
 def initialize_database():
+    hooks = configured_hooks(os.environ)
+    LOG.info('Database initialization started')
     from litellm.proxy.db.prisma_client import PrismaManager
 
-    configured_hooks(os.environ)
     if not PrismaManager.setup_database(use_migrate=True, use_v2_resolver=True):
         raise SystemExit('LiteLLM database migration failed')
 
+    LOG.info('Native database migration complete; initializing hooks=%s', ','.join(hooks))
     asyncio.run(initialize_extensions())
+    LOG.info('Database initialization complete')
 
 
 if __name__ == '__main__':
@@ -83,4 +95,6 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('command', choices=['init'])
     parser.parse_args()
+    with (Path(__file__).resolve().parent / 'logging.json').open(encoding='utf-8') as source:
+        logging.config.dictConfig(json.load(source))
     initialize_database()

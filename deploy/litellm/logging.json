@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "disable_existing_loggers": false,
+  "formatters": {
+    "console": {
+      "format": "%(asctime)s %(levelname)s [%(name)s] [pid=%(process)d] %(message)s",
+      "datefmt": "%Y-%m-%dT%H:%M:%S%z"
+    }
+  },
+  "handlers": {
+    "console": {
+      "class": "logging.StreamHandler",
+      "formatter": "console",
+      "stream": "ext://sys.stderr"
+    }
+  },
+  "loggers": {
+    "uvicorn": {
+      "handlers": ["console"],
+      "level": "INFO",
+      "propagate": false
+    },
+    "uvicorn.access": {
+      "handlers": ["console"],
+      "level": "INFO",
+      "propagate": false
+    },
+    "litellm": {
+      "handlers": ["console"],
+      "level": "WARNING",
+      "propagate": false
+    },
+    "litellm.deployment": {
+      "level": "INFO"
+    }
+  },
+  "root": {
+    "handlers": ["console"],
+    "level": "WARNING"
+  }
+}

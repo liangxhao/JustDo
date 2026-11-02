@@ -434,7 +434,7 @@ Customer/EndUser 记录是独立的活动和用量主体；存在 EndUser 记录
 只有仍需保留旧客户端调用时才执行此项，普通代码更新无需重新登记旧 Key。
 `upgrade.py` 和 `init` 都不会创建 legacy Team，不会登记旧 Key，也不会延长它的期限。
 
-按[旧版客户端兼容步骤](README.md#4-旧版客户端只兼容-30-天)完成：若旧共享值仍是 master key，
+按[旧版客户端兼容步骤](README.md#旧版客户端只兼容-30-天)完成：若旧共享值仍是 master key，
 先保留加密盐并更换服务端 master key；手动创建独立 legacy Team、设置模型和
 `{"legacy_clients": true}`，再运行一次登记脚本。重复登记不会续期，不能在每次重启时重新开始 30 天窗口。
 旧活动上报另需摘要令牌和绝对截止时间，不能晚于旧模型 Key 的到期时间。

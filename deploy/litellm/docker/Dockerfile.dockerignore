@@ -3,6 +3,7 @@
 !start.py
 !register.py
 !upgrade.py
+!logging.json
 !hooks/
 !hooks/**
 **/.env

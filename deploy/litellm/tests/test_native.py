@@ -50,6 +50,8 @@ def test_launch_uses_venv_tools_loopback_and_literal_secrets(launcher):
     assert command[command.index('--workers') + 1] == '4'
     assert 'secret' not in ' '.join(command)
     assert 'start:create_app' in command
+    assert Path(command[command.index('--log-config') + 1]) == launcher.ROOT.parent / 'logging.json'
+    assert '--no-access-log' in command
     assert environment['DISABLE_SCHEMA_UPDATE'] == 'true'
 
 
