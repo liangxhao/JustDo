@@ -12,8 +12,6 @@ import { scheduledTaskService } from '@/features/scheduled-tasks/scheduledTaskSe
 import { i18nService } from '@/services/i18n';
 import { RootState } from '@/store';
 
-import RunDiagnostics from './RunDiagnostics';
-
 interface TaskRunHistoryProps {
   taskId: string;
   taskName?: string;
@@ -123,7 +121,6 @@ const TaskRunHistory: React.FC<TaskRunHistoryProps> = ({
                   )}
                 </div>
               </div>
-              <RunDiagnostics run={run} compact className="ml-7 mt-2" />
             </div>
           );
         })}

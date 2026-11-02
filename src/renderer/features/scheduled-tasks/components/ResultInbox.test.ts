@@ -17,6 +17,8 @@ vi.mock('@/features/scheduled-tasks/scheduledTaskService', () => ({
   scheduledTaskService: {
     markResultRead: vi.fn().mockResolvedValue(undefined),
     setResultsFilter: vi.fn(),
+    loadResults: vi.fn().mockResolvedValue(undefined),
+    deleteResults: vi.fn().mockResolvedValue({ deletedIds: ['report-run'], failedIds: [] }),
   },
 }));
 beforeEach(() => vi.clearAllMocks());
@@ -162,6 +164,8 @@ test('opens one run-details dialog beside the session button without reading the
     value: { scheduledTasks: { resolveSession } },
   });
   const view = renderReceipt();
+  expect(screen.getByText('今日早报 上海天气晴').tagName).toBe('P');
+  fireEvent.click(screen.getByRole('button', { name: '展开摘要' }));
   expect(screen.getByText('今日早报').tagName).toBe('STRONG');
   expect(screen.getByText('上海天气晴').tagName).toBe('LI');
   expect(screen.queryByTestId('scheduled-run-diagnostics')).toBeNull();
@@ -305,4 +309,101 @@ test('does not reopen details when a removed receipt returns in a later page', (
   });
   expect(screen.queryByRole('dialog')).toBeNull();
   expect(screen.getByRole('button', { name: '运行详情' })).toBeTruthy();
+});
+
+test('keeps same-task runs in separate timeline cards and collapses their date as a group', () => {
+  const { store, receipt, container } = renderReceipt();
+  const newer = {
+    ...receipt,
+    id: 'later-run',
+    startedAt: '2026-11-02T11:44:25.000Z',
+    durationMs: 150000,
+  };
+  act(() => {
+    store.dispatch(replaceResults({ results: [newer, receipt], nextCursor: 'next-native-page' }));
+  });
+  expect(screen.getAllByRole('article')).toHaveLength(2);
+  const times = [...container.querySelectorAll('time')];
+  expect(times.map(time => time.dateTime)).toEqual([newer.startedAt, receipt.startedAt]);
+  expect(times[0].title).toBe(new Date(newer.startedAt).toLocaleString('zh-CN', { hour12: false }));
+  expect(times[0].textContent).toMatch(/^\d{2}:\d{2}$/u);
+  expect(screen.getByText('2分钟30秒')).toBeTruthy();
+  const collapse = screen.getByRole('button', { name: / · 收起$/ });
+  fireEvent.click(collapse);
+  expect(screen.queryByRole('article')).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: / · 展开$/ }));
+  expect(screen.getAllByRole('article')).toHaveLength(2);
+  fireEvent.click(screen.getByRole('button', { name: i18nService.t('scheduledTasksLoadMore') }));
+  expect(scheduledTaskService.loadResults).toHaveBeenCalledWith(true);
+  expect(store.getState().scheduledTask.resultsNextCursor).toBe('next-native-page');
+  expect(scheduledTaskService.markResultRead).not.toHaveBeenCalled();
+});
+
+test('preserves unread eligibility and system or routine labels on the timeline', () => {
+  const { store, receipt } = renderReceipt();
+  act(() => {
+    store.dispatch(
+      replaceResults({
+        results: [
+          receipt,
+          { ...receipt, id: 'system-run', systemManaged: true },
+          { ...receipt, id: 'routine-run', summary: 'NO_REPLY' },
+        ],
+        nextCursor: null,
+      }),
+    );
+  });
+  expect(screen.getAllByLabelText(i18nService.t('scheduledTasksResultsUnreadLabel'))).toHaveLength(
+    1,
+  );
+  expect(screen.getByText(i18nService.t('scheduledTasksResultsSystem'))).toBeTruthy();
+  expect(screen.getByText(i18nService.t('scheduledTasksResultsRoutine'))).toBeTruthy();
+  expect(screen.getByText(i18nService.t('scheduledTasksResultsSilent'))).toBeTruthy();
+});
+
+test('excludes running results from batch selection and keeps selection independent of session reads', async () => {
+  const { store, receipt } = renderReceipt();
+  act(() => {
+    store.dispatch(
+      replaceResults({
+        results: [
+          receipt,
+          { ...receipt, id: 'active-run', status: 'running', finishedAt: null, durationMs: null },
+        ],
+        nextCursor: null,
+      }),
+    );
+  });
+  const runningCard = screen
+    .getAllByRole('article')
+    .find(card => within(card).queryByText(i18nService.t('scheduledTasksStatusRunning')))!;
+  expect(
+    within(runningCard).queryByRole('button', {
+      name: i18nService.t('scheduledTasksResultsDelete'),
+    }),
+  ).toBeNull();
+  fireEvent.click(
+    screen.getByRole('button', { name: i18nService.t('scheduledTasksResultsBatchDelete') }),
+  );
+  const rows = screen.getAllByRole('checkbox', {
+    name: i18nService.t('scheduledTasksResultsSelectResult').replace('{name}', '早晨简报'),
+  });
+  expect(rows.filter(row => (row as HTMLInputElement).disabled)).toHaveLength(1);
+  fireEvent.click(
+    screen.getByRole('checkbox', { name: i18nService.t('scheduledTasksResultsSelectAll') }),
+  );
+  expect(
+    screen.getByText(i18nService.t('scheduledTasksResultsSelected').replace('{count}', '1')),
+  ).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: i18nService.t('delete'), exact: true }));
+  fireEvent.click(
+    within(screen.getByRole('dialog')).getByRole('button', {
+      name: i18nService.t('delete'),
+      exact: true,
+    }),
+  );
+  await waitFor(() =>
+    expect(scheduledTaskService.deleteResults).toHaveBeenCalledWith(['report-run']),
+  );
+  expect(scheduledTaskService.markResultRead).not.toHaveBeenCalled();
 });

@@ -1,3 +1,5 @@
+import './ResultInbox.css';
+
 import {
   ArrowPathIcon,
   CheckIcon,
@@ -8,7 +10,6 @@ import {
   EyeIcon,
   EyeSlashIcon,
   TrashIcon,
-  UserIcon,
 } from '@heroicons/react/24/outline';
 import {
   isRoutineScheduledTaskResult,
@@ -28,13 +29,28 @@ import type { RootState } from '@/store';
 
 import ResultSummary from './ResultSummary';
 import RunDetailsModal from './RunDetailsModal';
-import { getTaskAgentLabel, getTaskDisplayName } from './utils';
+import { formatDateTime, getTaskAgentLabel, getTaskDisplayName } from './utils';
 
 function formatDuration(durationMs: number | null): string {
-  if (durationMs === null) return '—';
-  if (durationMs < 1000) return `${durationMs} ms`;
-  if (durationMs < 60_000) return `${Math.round(durationMs / 100) / 10} s`;
-  return `${Math.round(durationMs / 6000) / 10} min`;
+  if (durationMs === null || !Number.isFinite(durationMs) || durationMs < 0) return '—';
+  const locale = i18nService.getLanguage() === 'zh' ? 'zh-CN' : 'en-US';
+  const formatUnit = (value: number, unit: string) =>
+    new Intl.NumberFormat(locale, {
+      style: 'unit',
+      unit,
+      unitDisplay: 'narrow',
+    }).format(value);
+  if (durationMs < 1000) return formatUnit(Math.round(durationMs), 'millisecond');
+  const totalSeconds = Math.round(durationMs / 1000);
+  const units: Array<[number, string]> = [
+    [Math.floor(totalSeconds / 3600), 'hour'],
+    [Math.floor((totalSeconds % 3600) / 60), 'minute'],
+    [totalSeconds % 60, 'second'],
+  ];
+  return units
+    .filter(([value]) => value > 0)
+    .map(([value, unit]) => formatUnit(value, unit))
+    .join(i18nService.getLanguage() === 'zh' ? '' : ' ');
 }
 
 const statusClass: Record<ScheduledTaskResult['status'], string> = {
@@ -84,7 +100,7 @@ function formatTimelineDate(dateKey: string): string {
         : null;
   const locale = i18nService.getLanguage() === 'zh' ? 'zh-CN' : 'en-US';
   const formatted = new Intl.DateTimeFormat(locale, {
-    year: 'numeric',
+    ...(date.getFullYear() !== today.getFullYear() ? { year: 'numeric' as const } : {}),
     month: 'long',
     day: 'numeric',
     weekday: 'short',
@@ -96,8 +112,7 @@ function formatResultTime(value: string): string {
   return new Intl.DateTimeFormat(i18nService.getLanguage() === 'zh' ? 'zh-CN' : 'en-US', {
     hour: '2-digit',
     minute: '2-digit',
-    second: '2-digit',
-    hour12: false,
+    hourCycle: 'h23',
   }).format(new Date(value));
 }
 
@@ -413,7 +428,7 @@ const ResultInbox: React.FC = () => {
           ))}
         </div>
         <select
-          className="h-9 rounded-xl border border-border bg-background px-3 text-sm text-foreground"
+          className="h-9 w-44 min-w-0 max-w-full truncate rounded-xl border border-border bg-background px-3 text-sm text-foreground"
           value={resultFilter.taskId ?? ''}
           onChange={event =>
             void scheduledTaskService.setResultsFilter(
@@ -496,25 +511,23 @@ const ResultInbox: React.FC = () => {
           )}
         </div>
       ) : (
-        <div className="overflow-hidden rounded-2xl border border-border-subtle bg-surface">
+        <div className="space-y-7">
           {resultGroups.map(group => {
             const collapsed = collapsedDateKeys.has(group.dateKey);
             return (
-              <section
-                key={group.dateKey}
-                className="border-b border-border-subtle last:border-b-0"
-              >
-                <h2>
+              <section key={group.dateKey}>
+                <h2 className="mb-4">
                   <button
                     type="button"
-                    className="flex w-full items-center gap-2 bg-surface-raised/60 px-4 py-2.5 text-left hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/40"
+                    className="inline-flex items-center gap-2 rounded-md py-1 text-left hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
                     aria-expanded={!collapsed}
-                    aria-label={`${formatTimelineDate(group.dateKey)} · ${
-                      collapsed ? t('expand') : t('collapse')
-                    }`}
+                    aria-label={`${formatTimelineDate(group.dateKey)} · ${collapsed ? t('expand') : t('collapse')}`}
                     onClick={() => toggleDateGroup(group.dateKey)}
                   >
-                    <span className="text-sm font-semibold text-foreground">
+                    <ChevronDownIcon
+                      className={`h-3.5 w-3.5 text-secondary transition-transform ${collapsed ? '-rotate-90' : ''}`}
+                    />
+                    <span className="text-sm font-medium text-foreground">
                       {formatTimelineDate(group.dateKey)}
                     </span>
                     <span className="text-xs text-secondary">
@@ -523,83 +536,78 @@ const ResultInbox: React.FC = () => {
                         String(group.results.length),
                       )}
                     </span>
-                    <ChevronDownIcon
-                      className={`h-4 w-4 text-secondary transition-transform ${
-                        collapsed ? '-rotate-90' : ''
-                      }`}
-                    />
                   </button>
                 </h2>
                 {!collapsed && (
-                  <div className="divide-y divide-border-subtle">
-                    {group.results.map(result => (
-                      <article
-                        key={result.id}
-                        className={`relative px-4 py-4 transition-colors ${
-                          result.status !== 'skipped' && result.sessionKey
-                            ? 'cursor-pointer hover:bg-surface-raised/60'
-                            : ''
-                        } ${
-                          result.readAt === null &&
-                          result.systemManaged !== true &&
-                          !isRoutineScheduledTaskResult(result)
-                            ? 'bg-primary/[0.025]'
-                            : ''
-                        }`}
-                        onClick={() => {
-                          if (
-                            !selectingResults &&
-                            result.status !== 'skipped' &&
-                            result.sessionKey
-                          ) {
-                            openResult(result);
-                          }
-                        }}
-                      >
-                        <div className="flex items-start gap-3">
-                          {selectingResults && (
-                            <input
-                              type="checkbox"
-                              className="mt-1.5"
-                              checked={selectedResultIds.has(result.id)}
-                              disabled={result.status === 'running'}
-                              aria-label={t('scheduledTasksResultsSelectResult').replace(
-                                '{name}',
-                                getResultTitle(result),
-                              )}
-                              onChange={() => toggleResultSelection(result.id)}
+                  <div className="result-inbox-timeline">
+                    {group.results.map(result => {
+                      const routine = isRoutineScheduledTaskResult(result);
+                      const unread =
+                        result.readAt === null && result.systemManaged !== true && !routine;
+                      const title = getResultTitle(result);
+                      const agentLabel = getResultAgentLabel(result);
+                      return (
+                        <div key={result.id} className="result-inbox-row">
+                          <div className="result-inbox-rail">
+                            <time
+                              dateTime={result.startedAt}
+                              title={formatDateTime(new Date(result.startedAt))}
+                              aria-label={formatDateTime(new Date(result.startedAt))}
+                              className="block text-sm font-medium text-foreground"
+                            >
+                              {formatResultTime(result.startedAt)}
+                            </time>
+                            {result.durationMs !== null && (
+                              <span className="mt-1 block text-[11px] leading-4 text-secondary [overflow-wrap:anywhere]">
+                                {formatDuration(result.durationMs)}
+                              </span>
+                            )}
+                            <span
+                              className={`result-inbox-dot ${unread ? 'bg-primary' : 'bg-border'}`}
+                              aria-label={
+                                unread ? t('scheduledTasksResultsUnreadLabel') : undefined
+                              }
                             />
-                          )}
-                          <span
-                            className={`mt-2 h-2 w-2 shrink-0 rounded-full ${
-                              result.readAt === null &&
-                              result.systemManaged !== true &&
-                              !isRoutineScheduledTaskResult(result)
-                                ? 'bg-primary'
-                                : 'bg-transparent'
-                            }`}
-                            aria-label={
-                              result.readAt === null &&
-                              result.systemManaged !== true &&
-                              !isRoutineScheduledTaskResult(result)
-                                ? t('scheduledTasksResultsUnreadLabel')
-                                : undefined
-                            }
-                          />
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-start gap-2">
-                              <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
-                                <h3 className="text-sm font-semibold leading-6 text-foreground">
-                                  {getResultTitle(result)}
-                                </h3>
-                                {!tasksLoading && !error && isResultTaskDeleted(result, tasks) && (
-                                  <span className="text-xs text-secondary">
-                                    {t('scheduledTasksResultsDeletedTask')}
-                                  </span>
+                          </div>
+                          <article
+                            className={`result-inbox-card rounded-xl border border-border-subtle bg-surface transition-colors ${result.status !== 'skipped' && result.sessionKey ? 'cursor-pointer hover:border-border' : ''}`}
+                            onClick={() => {
+                              if (
+                                !selectingResults &&
+                                result.status !== 'skipped' &&
+                                result.sessionKey
+                              )
+                                openResult(result);
+                            }}
+                          >
+                            <div className="result-inbox-card-header">
+                              <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
+                                {selectingResults && (
+                                  <input
+                                    type="checkbox"
+                                    className="h-4 w-4 shrink-0 accent-primary"
+                                    checked={selectedResultIds.has(result.id)}
+                                    disabled={result.status === 'running'}
+                                    aria-label={t('scheduledTasksResultsSelectResult').replace(
+                                      '{name}',
+                                      title,
+                                    )}
+                                    onClick={event => event.stopPropagation()}
+                                    onChange={() => toggleResultSelection(result.id)}
+                                  />
                                 )}
-                                <span
-                                  className={`rounded-full px-2 py-0.5 text-xs font-medium ${statusClass[result.status]}`}
+                                <h3
+                                  className="min-w-0 truncate text-sm font-medium leading-6 text-foreground"
+                                  title={title}
                                 >
+                                  {title}
+                                </h3>
+                                <span
+                                  className={`inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-medium ${statusClass[result.status]}`}
+                                >
+                                  {result.status === 'success' && (
+                                    <CheckIcon className="h-3 w-3" aria-hidden="true" />
+                                  )}
                                   {t(
                                     result.status === 'success'
                                       ? 'scheduledTasksStatusSuccess'
@@ -610,18 +618,37 @@ const ResultInbox: React.FC = () => {
                                           : 'scheduledTasksStatusRunning',
                                   )}
                                 </span>
+                                {agentLabel && (
+                                  <span
+                                    className="max-w-full truncate text-xs text-secondary"
+                                    title={agentLabel}
+                                  >
+                                    {agentLabel}
+                                  </span>
+                                )}
+                                {!tasksLoading && !error && isResultTaskDeleted(result, tasks) && (
+                                  <span
+                                    className="max-w-full truncate text-xs text-secondary"
+                                    title={t('scheduledTasksResultsDeletedTask')}
+                                  >
+                                    {t('scheduledTasksResultsDeletedTask')}
+                                  </span>
+                                )}
                                 {result.systemManaged === true && (
-                                  <span className="rounded-full bg-violet-500/10 px-2 py-0.5 text-xs font-medium text-violet-600 dark:text-violet-400">
+                                  <span className="rounded-md bg-violet-500/10 px-1.5 py-0.5 text-[11px] font-medium text-violet-600 dark:text-violet-400">
                                     {t('scheduledTasksResultsSystem')}
                                   </span>
                                 )}
-                                {isRoutineScheduledTaskResult(result) && (
-                                  <span className="rounded-full bg-surface-raised px-2 py-0.5 text-xs font-medium text-secondary">
+                                {routine && (
+                                  <span className="rounded-md bg-surface-raised px-1.5 py-0.5 text-[11px] font-medium text-secondary">
                                     {t('scheduledTasksResultsRoutine')}
                                   </span>
                                 )}
                               </div>
-                              <div className="flex shrink-0 items-center gap-1">
+                              <div
+                                className="result-inbox-actions"
+                                onClick={event => event.stopPropagation()}
+                              >
                                 {result.status !== 'skipped' && result.sessionKey ? (
                                   <button
                                     type="button"
@@ -695,32 +722,19 @@ const ResultInbox: React.FC = () => {
                                 )}
                               </div>
                             </div>
-                            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-secondary">
-                              <span>
-                                {formatResultTime(result.startedAt)}
-                                {result.durationMs !== null &&
-                                  ` · ${formatDuration(result.durationMs)}`}
-                              </span>
-                              {getResultAgentLabel(result) && (
-                                <span className="inline-flex items-center gap-1">
-                                  <UserIcon className="h-3 w-3" />
-                                  {getResultAgentLabel(result)}
-                                </span>
-                              )}
-                            </div>
                             {result.status === 'success' &&
                             isSilentScheduledTaskResult(result.summary) &&
-                            isRoutineScheduledTaskResult(result) ? (
-                              <p className="mt-3 text-sm text-secondary">
+                            routine ? (
+                              <p className="mt-3 text-[13px] leading-6 text-secondary">
                                 {t('scheduledTasksResultsSilent')}
                               </p>
                             ) : result.summary && !isSilentScheduledTaskResult(result.summary) ? (
                               <ResultSummary content={result.summary} className="mt-3" />
                             ) : null}
-                          </div>
+                          </article>
                         </div>
-                      </article>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </section>
