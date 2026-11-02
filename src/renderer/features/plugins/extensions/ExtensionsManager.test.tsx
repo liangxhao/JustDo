@@ -320,6 +320,105 @@ describe('ExtensionsManager extension toggle', () => {
     cleanup();
   });
 
+  test.each([true, false])('shows a confirmed toggle separately from a failed follow-up (enabled: %s)', async enabled => {
+    let savedEnabled = !enabled;
+    const setEnabled = vi.fn(async () => {
+      savedEnabled = enabled;
+      return {
+        success: true,
+        refreshWarning: true,
+        failedStage: PluginOperationStage.CONFIRMING,
+        warnings: ['Native warning that must not replace the error'],
+        error: 'Toggle setting saved; companion status confirmation failed.',
+      };
+    });
+    Object.defineProperty(window, 'electron', {
+      configurable: true,
+      value: {
+        extensions: {
+          list: vi.fn(async () => ({ success: true, extensions: [{ ...extension, enabled: savedEnabled }] })),
+          setEnabled,
+          onChanged: () => () => undefined,
+        },
+      },
+    });
+    render(<><ExtensionsManager /><PluginOperationFeedback /></>);
+    fireEvent.click(await screen.findByRole('switch', { name: enabled ? 'extensionEnable' : 'extensionDisable' }));
+
+    await screen.findByRole('alertdialog', { name: `pluginOperationFailureTitle.${enabled ? 'enable' : 'disable'}.followup_failed` });
+    expect(screen.getByText('Toggle setting saved; companion status confirmation failed.')).toBeTruthy();
+    expect(screen.getByText(/pluginOperationStageLabel.confirming/)).toBeTruthy();
+    expect(screen.getByRole('switch', { name: enabled ? 'extensionDisable' : 'extensionEnable' }).getAttribute('aria-checked')).toBe(String(enabled));
+    expect(screen.queryByText('Native warning that must not replace the error')).toBeNull();
+    expect(setEnabled).toHaveBeenCalledOnce();
+  });
+
+  test('keeps a toggle outcome unknown despite a matching inventory and another follow-up error', async () => {
+    let called = false;
+    const setEnabled = vi.fn(async () => {
+      called = true;
+      return {
+        success: false,
+        operationUnconfirmed: true,
+        refreshWarning: true,
+        failedStage: PluginOperationStage.ENABLING,
+        error: 'Native toggle response lost. Companion confirmation also failed.',
+      };
+    });
+    Object.defineProperty(window, 'electron', {
+      configurable: true,
+      value: {
+        extensions: {
+          list: vi.fn(async () => ({ success: true, extensions: [{ ...extension, enabled: called }] })),
+          setEnabled,
+          onChanged: () => () => undefined,
+        },
+      },
+    });
+    render(<><ExtensionsManager /><PluginOperationFeedback /></>);
+    fireEvent.click(await screen.findByRole('switch', { name: 'extensionEnable' }));
+    await screen.findByRole('alertdialog', { name: 'pluginOperationFailureTitle.unconfirmed' });
+    expect(screen.getByText(/pluginOperationStageLabel.enabling/)).toBeTruthy();
+    expect(getPluginOperationOwner().failureSnapshot()).toEqual([
+      expect.objectContaining({ state: 'unconfirmed', message: 'Native toggle response lost. Companion confirmation also failed.' }),
+    ]);
+    expect(setEnabled).toHaveBeenCalledOnce();
+  });
+
+  test('keeps capability review available without hiding a toggle follow-up error', async () => {
+    const setEnabled = vi.fn().mockResolvedValue({
+      success: false,
+      capabilityReview,
+      refreshWarning: true,
+      failedStage: PluginOperationStage.CONFIRMING,
+      error: 'Companion status confirmation failed while waiting for review.',
+    });
+    Object.defineProperty(window, 'electron', {
+      configurable: true,
+      value: {
+        extensions: {
+          list: vi.fn().mockResolvedValue({ success: true, extensions: [extension] }),
+          setEnabled,
+          onChanged: () => () => undefined,
+        },
+      },
+    });
+    render(<><ExtensionsManager /><PluginOperationFeedback /></>);
+    fireEvent.click(await screen.findByRole('switch', { name: 'extensionEnable' }));
+
+    await screen.findByText('extensionCapabilityReviewTitle');
+    await screen.findByRole('alertdialog', { name: 'pluginOperationFailureTitle.enable' });
+    expect(screen.getByText('Companion status confirmation failed while waiting for review.')).toBeTruthy();
+    expect(getPluginOperationOwner().failureSnapshot()[0].state).toBe('failed');
+    fireEvent.click(screen.getByRole('button', { name: 'pluginOperationFailureDismiss' }));
+    fireEvent.click(screen.getByRole('button', { name: 'extensionCapabilityAccept' }));
+    await waitFor(() => expect(setEnabled).toHaveBeenCalledTimes(2));
+    expect(setEnabled).toHaveBeenLastCalledWith(
+      { extensionId: extension.id, enabled: true, reviewToken: capabilityReview.reviewToken },
+      { requestId: expect.any(String) },
+    );
+  });
+
   test('recovers an unavailable catalog on Native readiness without clearing observed cards', async () => {
     const ready = new Set<(snapshots: []) => void>();
     const release = vi.fn();
@@ -694,6 +793,40 @@ describe('ExtensionsManager extension toggle', () => {
       { extensionId: extension.id },
       { requestId: expect.any(String) },
     );
+  });
+
+  test('reports runtime recovery failure after confirmed removal without offering another removal', async () => {
+    let installed = true;
+    const deleteExtension = vi.fn(async () => {
+      installed = false;
+      return {
+        success: true,
+        refreshWarning: true,
+        failedStage: PluginOperationStage.PREPARING_RUNTIME,
+        error: 'Plugin uninstalled; runtime environment recovery failed. Do not repeat removal.',
+      };
+    });
+    Object.defineProperty(window, 'electron', {
+      configurable: true,
+      value: {
+        extensions: {
+          list: vi.fn(async () => ({ success: true, extensions: installed ? [extension] : [] })),
+          delete: deleteExtension,
+          onChanged: vi.fn(() => () => undefined),
+        },
+      },
+    });
+    render(<><ExtensionsManager /><PluginOperationFeedback /></>);
+    fireEvent.click(await screen.findByRole('button', { name: 'subtaskShowInfo: Sample Extension' }));
+    fireEvent.click(screen.getByRole('button', { name: 'extensionDelete' }));
+    fireEvent.click(screen.getByRole('button', { name: 'delete' }));
+
+    await screen.findByRole('alertdialog', { name: 'pluginOperationFailureTitle.remove.recovery_failed' });
+    expect(screen.getByText('Plugin uninstalled; runtime environment recovery failed. Do not repeat removal.')).toBeTruthy();
+    expect(screen.getByText(/pluginOperationStageLabel.preparing_runtime/)).toBeTruthy();
+    expect(screen.queryByText('Extension "Sample Extension" deleted')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'delete' })).toBeNull();
+    expect(deleteExtension).toHaveBeenCalledOnce();
   });
 
   test.each([true, false])(
@@ -1673,5 +1806,48 @@ test('retains an earlier refresh warning when a later capability review is cance
       items: [expect.objectContaining({ label: 'installed-first', type: 'success' })],
     }),
   ]);
+  cleanup();
+});
+
+test.each([true, false])('shows a warning while preserving capability review (runtime recovery: %s)', async recovery => {
+  const importPath = vi.fn().mockResolvedValue({
+    success: false,
+    capabilityReview,
+    refreshWarning: true,
+    ...(recovery ? {
+      failedStage: PluginOperationStage.PREPARING_RUNTIME,
+      error: 'Source surface changed. Runtime environment recovery failed.',
+    } : {}),
+  });
+  Object.defineProperty(window, 'electron', {
+    configurable: true,
+    value: {
+      extensions: {
+        list: vi.fn().mockResolvedValue({ success: true, extensions: [] }),
+        importPath,
+        onChanged: () => () => undefined,
+      },
+      dialog: {
+        selectFolders: vi.fn().mockResolvedValue({ success: true, paths: ['C:/imports/extension'] }),
+      },
+    },
+  });
+  render(<><ExtensionsManager /><PluginOperationFeedback /></>);
+  fireEvent.click(await screen.findByRole('button', { name: 'importExtension' }));
+  fireEvent.click(screen.getByRole('button', { name: /selectExtensionFolders selectExtensionFoldersDescription/ }));
+
+  await screen.findByText('extensionCapabilityReviewTitle');
+  expect(screen.getByRole('alertdialog', { name: 'pluginOperationFailureTitle.install' })).toBeTruthy();
+  expect(screen.getByText(recovery ? 'Source surface changed. Runtime environment recovery failed.' : 'pluginOperationFailureTitle.refresh')).toBeTruthy();
+  expect(screen.getByText(recovery ? /pluginOperationStageLabel.preparing_runtime/ : /pluginOperationStageLabel.refreshing_inventory/)).toBeTruthy();
+  expect(screen.queryByText('pluginOperationRefreshFailed')).toBeNull();
+  expect(getPluginOperationOwner().failureSnapshot()[0]).not.toHaveProperty('installationCommitted', true);
+  fireEvent.click(screen.getByRole('button', { name: 'pluginOperationFailureDismiss' }));
+  fireEvent.click(screen.getByRole('button', { name: 'extensionCapabilityAccept' }));
+  await waitFor(() => expect(importPath).toHaveBeenCalledTimes(2));
+  expect(importPath).toHaveBeenLastCalledWith(
+    expect.objectContaining({ sourcePath: 'C:/imports/extension', reviewToken: capabilityReview.reviewToken }),
+    { requestId: expect.any(String) },
+  );
   cleanup();
 });

@@ -65,6 +65,10 @@ const SUPPORTED_ARCHIVE_EXTENSIONS = ['.zip', '.tar', '.tar.gz', '.tgz'];
 const INSTALL_TIMEOUT_MS = 300_000;
 const GATEWAY_INSTALL_TIMEOUT_MS = 600_000;
 const MAX_COMMAND_OUTPUT_CHARS = 64_000;
+const appendRecoveryFailure = (primary: string, recovery?: string): string =>
+  recovery && recovery !== primary
+    ? `${primary}\n${t('extensionPackageRecoveryFailed')}\n${recovery}`
+    : primary;
 const OPENCLAW_UNINSTALL_SUCCESS_PATTERN = /(?:^|\r?\n)Uninstalled plugin\s+['"][^'"\r\n]+['"]/i;
 const OPENCLAW_TOGGLE_SUCCESS_PATTERN =
   /(?:^|\r?\n)(?:Enabled|Disabled) plugin\s+['"][^'"\r\n]+['"]/i;
@@ -2038,8 +2042,13 @@ export class OpenClawExtensionImportService {
     extensionId: string,
     enabled: boolean,
     reviewToken?: string,
-    onProgress?: OperationProgress,
+    reportProgress?: OperationProgress,
   ): Promise<ExtensionSetEnabledResult> {
+    let currentStage: PluginOperationStage = PluginOperationStage.VALIDATING;
+    const onProgress: OperationProgress = stage => {
+      currentStage = stage;
+      reportProgress?.(stage);
+    };
     onProgress?.(PluginOperationStage.VALIDATING);
     if (this.deps.getManagedPluginIds?.().includes(extensionId)) {
       return { success: false, error: 'Managed extensions cannot be changed here.' };
@@ -2057,15 +2066,15 @@ export class OpenClawExtensionImportService {
     const policyDigestBefore = this.deps.outboundHeaderPolicy?.reconcile().digest;
     let gatewayMayNeedRestore = false;
     const convergeColdState = async (forceRestart = false): Promise<string | undefined> => {
-      const policyDigestAfter = this.deps.outboundHeaderPolicy?.reconcile().digest;
-      if (!wasRuntimeActive || (!forceRestart && policyDigestAfter === policyDigestBefore)) {
-        return undefined;
-      }
-      if (forceRestart && policyDigestAfter === policyDigestBefore) {
-        onProgress?.(PluginOperationStage.APPLYING_CONFIGURATION);
-        if (await this.reloadPluginAfterCliMutation('plugins.refresh')) return undefined;
-      }
       try {
+        const policyDigestAfter = this.deps.outboundHeaderPolicy?.reconcile().digest;
+        if (!wasRuntimeActive || (!forceRestart && policyDigestAfter === policyDigestBefore)) {
+          return undefined;
+        }
+        if (forceRestart && policyDigestAfter === policyDigestBefore) {
+          onProgress?.(PluginOperationStage.APPLYING_CONFIGURATION);
+          if (await this.reloadPluginAfterCliMutation('plugins.refresh')) return undefined;
+        }
         onProgress?.(PluginOperationStage.RESTARTING_GATEWAY);
         const status = await this.restartGatewayAfterMutation(
           policyDigestAfter !== policyDigestBefore
@@ -2212,6 +2221,7 @@ export class OpenClawExtensionImportService {
       return convergenceError ? { success: false, error: convergenceError } : { success: true };
     }
     try {
+      onProgress(PluginOperationStage.PREPARING_RUNTIME);
       const cli = await manager.buildCliEnvironment();
       if (enabled) {
         updateExtensionAllowlist(
@@ -2240,7 +2250,11 @@ export class OpenClawExtensionImportService {
         const error = formatCommandError(result);
         console.error('[OpenClawExtensionImportService] Plugin status update failed:', error);
         const convergenceError = await convergeColdState(gatewayMayNeedRestore);
-        return { success: false, error: convergenceError ?? error };
+        return {
+          success: false,
+          failedStage: enabled ? PluginOperationStage.ENABLING : PluginOperationStage.DISABLING,
+          error: appendRecoveryFailure(error, convergenceError),
+        };
       }
 
       onProgress?.(PluginOperationStage.CONFIRMING);
@@ -2249,9 +2263,11 @@ export class OpenClawExtensionImportService {
         const convergenceError = await convergeColdState(gatewayMayNeedRestore);
         return {
           success: false,
-          error:
-            convergenceError ??
+          failedStage: PluginOperationStage.CONFIRMING,
+          error: appendRecoveryFailure(
             `OpenClaw did not ${enabled ? 'enable' : 'disable'} the extension. Check the global plugin policy, allowlist, and denylist.`,
+            convergenceError,
+          ),
         };
       }
 
@@ -2259,12 +2275,15 @@ export class OpenClawExtensionImportService {
       const convergenceError = await convergeColdState(wasRuntimeActive);
       return convergenceError ? { success: false, error: convergenceError } : { success: true };
     } catch (error) {
+      const failedStage = currentStage;
       const convergenceError = await convergeColdState(gatewayMayNeedRestore);
       return {
         success: false,
-        error:
-          convergenceError ??
-          (error instanceof Error ? error.message : 'Failed to update extension status'),
+        failedStage,
+        error: appendRecoveryFailure(
+          error instanceof Error ? error.message : 'Failed to update extension status',
+          convergenceError,
+        ),
       };
     }
   }
@@ -2715,15 +2734,25 @@ export class OpenClawExtensionImportService {
         );
         if (!activated.success) {
           const failedOperation = committedOperationFailure();
-          await convergeNetworkPolicyFailClosed();
+          const failedStage = currentStage;
+          let error = activated.error || 'Extension installed, but it could not be enabled.';
+          try {
+            await convergeNetworkPolicyFailClosed();
+          } catch (recoveryError) {
+            error = recoveryError instanceof Error
+              ? appendRecoveryFailure(error, recoveryError.message)
+              : `${error}\n${t('extensionPackageRecoveryFailed')}`;
+          }
           return {
             success: false,
             extensionId,
-            error: activated.error || 'Extension installed, but it could not be enabled.',
+            error,
             installationCommitted: true,
+            ...(activated.operationUnconfirmed ? { operationUnconfirmed: true as const } : {}),
             ...(installationPath ? { installPath: installationPath } : {}),
-            failedStage: currentStage,
+            failedStage,
             ...failedOperation,
+            ...(activated.failedStage ? { operationFailedStage: activated.failedStage } : {}),
           };
         }
       }

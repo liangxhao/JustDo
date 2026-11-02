@@ -5,10 +5,7 @@ import { DEFAULT_MCP_REQUEST_TIMEOUT_SECONDS } from '@shared/plugins/mcp';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 
-import {
-  InstalledMarketplaceAction,
-  MarketplaceFeedback,
-} from '@/features/plugins/marketplace/MarketplaceActions';
+import { InstalledMarketplaceAction } from '@/features/plugins/marketplace/MarketplaceActions';
 import MarketplaceToolbar from '@/features/plugins/marketplace/MarketplaceToolbar';
 import { MarketplaceResults } from '@/features/plugins/marketplace/MarketplaceView';
 import {
@@ -899,7 +896,6 @@ const McpManager: React.FC<McpManagerProps> = ({
             </Tooltip>
           ) : null
         }
-        feedback={<MarketplaceFeedback controller={marketplace} id={server.id} />}
       />
     );
   };

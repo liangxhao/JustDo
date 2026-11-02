@@ -658,7 +658,7 @@ test.each(['folders', 'archives'] as const)(
     const store = await startImport(paths, sourceType);
 
     const dialog = await screen.findByRole('alertdialog', {
-      name: 'pluginOperationFailureTitle.install',
+      name: 'pluginOperationFailureTitle.batch',
     });
     expect(within(dialog).getByText('1 succeeded and 1 failed.')).toBeTruthy();
     expect(within(dialog).getByText(`invalid-skill${suffix}`)).toBeTruthy();
@@ -701,7 +701,7 @@ test('shows every failure and keeps the list when all imports fail', async () =>
   const store = await startImport(['C:/imports/missing-skill', 'C:/imports/invalid-skill']);
 
   const dialog = await screen.findByRole('alertdialog', {
-    name: 'pluginOperationFailureTitle.install',
+    name: 'pluginOperationFailureTitle.batch',
   });
   expect(within(dialog).getByText('missing-skill')).toBeTruthy();
   expect(within(dialog).getByText('SKILL.md is missing')).toBeTruthy();

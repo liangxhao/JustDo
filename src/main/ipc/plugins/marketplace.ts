@@ -22,6 +22,7 @@ import {
   toPluginOperationStage,
 } from '../../../shared/plugins/pluginOperation';
 import type { PluginManager } from '../../plugins';
+import { sanitizeInstallationFailureReason } from '../../plugins/installation/installationFailureReason';
 import { MarketplaceError } from '../../plugins/marketplace/types';
 import { createPluginOperationReporter } from './pluginOperationProgress';
 
@@ -151,6 +152,7 @@ const publicInstallResult = (
     operationUnconfirmed?: true;
     refreshWarning?: true;
     failedStage?: string;
+    publicReason?: string;
   },
   currentStage?: PluginOperationStage,
 ): MarketplaceInstallResponse => {
@@ -167,7 +169,8 @@ const publicInstallResult = (
         : {}),
       ...(result.installSourceInUse ? { installSourceInUse: true as const } : {}),
       ...(result.operationUnconfirmed ? { operationUnconfirmed: true as const } : {}),
-      error: 'Marketplace installation failed',
+      error:
+        sanitizeInstallationFailureReason(result.publicReason) || 'Marketplace installation failed',
       errorCode: MarketplaceErrorCode.INTERNAL,
       ...(failedStage ? { failedStage } : {}),
     };

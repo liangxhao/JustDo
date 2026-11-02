@@ -64,7 +64,7 @@ export interface PluginOperationFeedback {
   installSourceInUse?: true;
   /** The native mutation was admitted but its final state cannot yet be verified. */
   operationUnconfirmed?: true;
-  /** The mutation completed, but the following inventory read failed. */
+  /** Lifecycle completion or a following inventory read failed; preserve the mutation receipt. */
   refreshWarning?: true;
 }
 

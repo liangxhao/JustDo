@@ -48,3 +48,37 @@ test('rejects duplicate installers for the same plugin kind', () => {
     'Plugin installer already registered for extension',
   );
 });
+
+test('issues a public reason for a returned host validation failure without publishing private output', async () => {
+  const service = new PluginInstallationService();
+  const reason =
+    'package install requires compiled runtime output for TypeScript entry ./index.ts: expected ./dist/index.js. This is a plugin packaging issue.';
+  service.registerInstaller({
+    kind: PluginKind.EXTENSION,
+    install: vi.fn(async () => ({ success: false, error: reason, failedStage: 'validating' })),
+  });
+  await expect(
+    service.install({
+      operation: MarketplaceInstallOperation.INSTALL,
+      origin: PluginInstallOrigin.MARKETPLACE,
+      payload: { kind: PluginKind.EXTENSION, sourcePath: 'C:\\downloads\\package' },
+    }),
+  ).resolves.toMatchObject({ success: false, publicReason: reason, failedStage: 'validating' });
+});
+
+test('does not turn an unexpected installer exception into a public reason', async () => {
+  const service = new PluginInstallationService();
+  service.registerInstaller({
+    kind: PluginKind.MCP,
+    install: vi.fn(async () => {
+      throw new Error('Bearer private-provider-token');
+    }),
+  });
+  await expect(
+    service.install({
+      operation: MarketplaceInstallOperation.INSTALL,
+      origin: PluginInstallOrigin.MARKETPLACE,
+      payload: { kind: PluginKind.MCP, config: {} },
+    }),
+  ).rejects.toThrow('Bearer private-provider-token');
+});

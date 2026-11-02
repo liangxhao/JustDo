@@ -204,6 +204,25 @@ const customHook: HookEntry = {
   ...getHookManagement({ source: 'openclaw-managed' }),
 };
 
+test('keeps Hook operation notices outside the card after changing enabled state', async () => {
+  const disabled = { ...customHook, enabled: false };
+  vi.mocked(hookService.loadHooks).mockResolvedValue({ success: true, hooks: [customHook] });
+  vi.mocked(hookService.getHooks).mockReturnValue([disabled]);
+  vi.mocked(hookService.setHookEnabled).mockResolvedValueOnce({
+    success: true,
+    hooks: [disabled],
+    restartRequired: true,
+  });
+  render(<HookManager />);
+  fireEvent.click(await screen.findByRole('switch', { name: 'disableHook' }));
+  expect((await screen.findByText('hookRestartRequired')).closest('article')).toBeNull();
+  const card = screen.getByRole('article');
+  expect(within(card).queryByRole('status')).toBeNull();
+  expect(
+    within(card).getByRole('switch', { name: 'enableHook' }).getAttribute('aria-checked'),
+  ).toBe('false');
+});
+
 test('a read consumed during a switch cannot restore the old Hook state or leave loading active', async () => {
   let finishRead!: (result: { success: boolean; hooks: HookEntry[] }) => void;
   let finishSwitch!: (result: { success: boolean; hooks: HookEntry[] }) => void;

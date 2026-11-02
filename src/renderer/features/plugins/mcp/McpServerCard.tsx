@@ -16,7 +16,6 @@ interface McpServerCardProps {
   actions?: ReactNode;
   stateAction?: ReactNode;
   iconBadge?: ReactNode;
-  feedback?: ReactNode;
   visualIndex: number;
   group: 'user' | 'system';
   onOpen?: () => void;
@@ -34,7 +33,6 @@ const McpServerCard = ({
   actions,
   stateAction,
   iconBadge,
-  feedback,
   visualIndex,
   group,
   onOpen,
@@ -88,7 +86,6 @@ const McpServerCard = ({
     }
     description={description}
     reserveDescriptionSpace={false}
-    feedback={feedback}
   />
 );
 

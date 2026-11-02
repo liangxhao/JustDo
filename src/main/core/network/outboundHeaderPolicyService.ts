@@ -87,9 +87,16 @@ export class OutboundHeaderPolicyService {
       }
     }
 
+    const seenGroups = new Set<string>();
+    const uniqueGroups = groups.filter(group => {
+      const signature = JSON.stringify(group);
+      if (seenGroups.has(signature)) return false;
+      seenGroups.add(signature);
+      return true;
+    });
     const normalized = {
-      enabled: groups.length > 0,
-      groups,
+      enabled: uniqueGroups.length > 0,
+      groups: uniqueGroups,
     } satisfies OutboundHeaderPolicyConfig;
     const digest = digestPolicy(normalized);
     const snapshot: EffectiveOutboundHeaderPolicySnapshot = Object.freeze({

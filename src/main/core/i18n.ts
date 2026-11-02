@@ -87,6 +87,12 @@ const translations: Record<LanguageType, Record<string, string>> = {
     decisionModelConfigurationInvalid:
       '决策模型配置未能生效，请检查供应商 URL、API Key、默认模型及凭据文件访问权限。',
     extensionCredentialStoreUnavailable: '无法读取本地扩展凭据文件，请检查文件内容和访问权限。',
+    extensionPackageRecoveryFailed: '此外，运行环境恢复失败。',
+    extensionInstallSavedRecoveryFailed: '插件安装已保存，但运行环境恢复失败。请核对插件状态，无需重复安装。',
+    extensionRemovalSavedRecoveryFailed: '插件已卸载，但运行环境恢复失败。无需重复卸载。',
+    extensionEnableSavedFollowupFailed: '启用设置已保存，但后续状态确认失败。请刷新核对插件是否可用。',
+    extensionDisableSavedFollowupFailed: '关闭设置已保存，但后续状态确认失败。请刷新核对插件状态。',
+    extensionStateFollowupFailed: '此外，插件后续状态确认失败。',
     extensionCredentialInherited: '此凭据由系统环境变量提供，请修改该变量并重启应用。',
     extensionConfigurationNumberInvalid: '请输入范围内的有效数值。',
     extensionConfigurationTextInvalid: '配置文本不符合扩展要求，请检查必填项、长度和格式。',
@@ -285,6 +291,12 @@ const translations: Record<LanguageType, Record<string, string>> = {
       'Invalid video configuration. Check the provider, model, service URL and API key.',
     decisionModelConfigurationInvalid:
       'Unable to apply decision model configuration. Check the provider URL, API Key, default model and credential file access.',
+    extensionPackageRecoveryFailed: 'The runtime environment also failed to recover.',
+    extensionInstallSavedRecoveryFailed: 'Plugin installation was saved, but the runtime environment failed to recover. Check the plugin status; do not repeat installation.',
+    extensionRemovalSavedRecoveryFailed: 'The plugin was uninstalled, but the runtime environment failed to recover. Do not repeat removal.',
+    extensionEnableSavedFollowupFailed: 'The enable setting was saved, but follow-up status confirmation failed. Refresh to check whether the plugin is available.',
+    extensionDisableSavedFollowupFailed: 'The disable setting was saved, but follow-up status confirmation failed. Refresh to check the plugin status.',
+    extensionStateFollowupFailed: 'Follow-up plugin status confirmation also failed.',
     extensionCredentialStoreUnavailable:
       'Unable to read the local extension credential file. Check its contents and access permissions.',
     extensionCredentialStoreWriteFailed:

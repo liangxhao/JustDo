@@ -1,5 +1,13 @@
+import path from 'node:path';
+
 import type { PluginKind } from '../../../shared/plugins/marketplace';
-import type { PluginInstaller, PluginInstallRequest, PluginInstallResult } from './types';
+import { sanitizeInstallationFailureReason } from './installationFailureReason';
+import {
+  type PluginInstaller,
+  PluginInstallOrigin,
+  type PluginInstallRequest,
+  type PluginInstallResult,
+} from './types';
 
 export class PluginInstallationService {
   private readonly installers = new Map<PluginKind, PluginInstaller>();
@@ -19,6 +27,17 @@ export class PluginInstallationService {
         error: `No plugin installer registered for ${request.payload.kind}`,
       };
     }
-    return installer.install(request);
+    const result = await installer.install(request);
+    if (result.success || request.origin !== PluginInstallOrigin.MARKETPLACE) return result;
+    const sourcePath = 'sourcePath' in request.payload ? request.payload.sourcePath : undefined;
+    return {
+      ...result,
+      publicReason: sanitizeInstallationFailureReason(result.error, [
+        typeof sourcePath === 'string' && sourcePath ? path.resolve(sourcePath) : undefined,
+        typeof result.installPath === 'string' && result.installPath
+          ? path.resolve(result.installPath)
+          : undefined,
+      ]),
+    };
   }
 }

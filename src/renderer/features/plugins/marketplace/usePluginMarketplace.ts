@@ -13,6 +13,7 @@ import { PluginOperationAction, PluginOperationStage } from '@shared/plugins/plu
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 
 import {
+  PluginOperationFailureState,
   reportPluginOperationFailure,
   startPluginOperation,
 } from '@/features/plugins/shared/pluginOperationService';
@@ -33,7 +34,7 @@ const preparationFailureKeys: Partial<Record<PluginOperationStage, string>> = {
 };
 
 const installFailurePresentation = (response: MarketplaceInstallResponse) => {
-  const key =
+  const controlledKey =
     !response.success &&
     response.installationCommitted === true &&
     response.errorCode === MarketplaceErrorCode.INTERNAL &&
@@ -45,6 +46,13 @@ const installFailurePresentation = (response: MarketplaceInstallResponse) => {
           response.failedStage
         ? preparationFailureKeys[response.failedStage]
         : undefined;
+  const key =
+    controlledKey ||
+    (!response.success && (!response.error || response.error === 'Marketplace installation failed')
+      ? response.failedStage === PluginOperationStage.VALIDATING
+        ? 'marketplaceValidationReasonUnavailable'
+        : 'marketplaceFailureReasonUnavailable'
+      : undefined);
   return {
     message: key ? i18nService.t(key) : response.error || i18nService.t('marketplaceInstallFailed'),
     ...(key && response.error ? { details: response.error } : {}),
@@ -67,6 +75,7 @@ export interface MarketplaceOptions {
   onInstalled?: () => void | Promise<void>;
 }
 export interface MarketplaceOperation {
+  label?: string;
   busy?: boolean;
   committed?: boolean;
   unconfirmed?: boolean;
@@ -410,9 +419,18 @@ export function usePluginMarketplace(options: MarketplaceOptions) {
             kind,
             action: PluginOperationAction.SYNC,
             label:
-              items.find(item => marketplaceKey(item) === key)?.name || i18nService.t('plugins'),
+              owner.operations[key]?.label ||
+              items.find(item => marketplaceKey(item) === key)?.name ||
+              i18nService.t('plugins'),
           },
-          failure,
+          {
+            ...failure,
+            state: owner.operations[key]?.unconfirmed
+              ? PluginOperationFailureState.UNCONFIRMED
+              : owner.operations[key]?.committed
+                ? PluginOperationFailureState.REFRESH_FAILED
+                : PluginOperationFailureState.FAILED,
+          },
         );
       setOperations(current => ({
         ...current,
@@ -445,7 +463,7 @@ export function usePluginMarketplace(options: MarketplaceOptions) {
     )
       return;
     locks.add(key);
-    setOperations(current => ({ ...current, [key]: { busy: true } }));
+    setOperations(current => ({ ...current, [key]: { busy: true, label: item.name } }));
     const operation = startPluginOperation({
       kind,
       action: local ? PluginOperationAction.UPDATE : PluginOperationAction.INSTALL,
@@ -603,6 +621,7 @@ export function usePluginMarketplace(options: MarketplaceOptions) {
     checking,
     recentlyUpdated,
     localFor,
+    isInstalledKey: (key: string) => mapped.has(key),
     conflicts,
     matchesInstalled,
     operationFor,

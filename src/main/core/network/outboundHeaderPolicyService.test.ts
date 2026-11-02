@@ -231,3 +231,95 @@ test('keeps the manual policy when Extension inventory cannot be read', () => {
     },
   ]);
 });
+
+test('keeps the policy digest stable when a duplicate multi-URL Extension contribution is added or removed', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'outbound-policy-duplicate-'));
+  tempDirectories.push(directory);
+  const configPath = path.join(directory, 'config.json');
+  const existingModelUrl = 'https://built-in-model.example.test/v1/';
+  const manual = {
+    enabled: true,
+    groups: [{ baseUrlWhitelist: [existingModelUrl], headerNames: ['X-User-Account', 'X-Cookie'] }],
+  };
+  fs.writeFileSync(configPath, JSON.stringify(manual));
+  const userInfoPath = path.join(directory, 'user_info.json');
+  fs.writeFileSync(userInfoPath, JSON.stringify({
+    'X-User-Account': 'account-fixture', 'X-Cookie': 'cookie-fixture',
+  }));
+  const urls = ['https://api-one.example.test/v1/', 'https://api-two.example.test/service/'];
+  const entries = ['first', 'second'].map(id => {
+    const installPath = path.join(directory, id);
+    fs.mkdirSync(installPath);
+    fs.writeFileSync(path.join(installPath, 'outbound-header-policy.json'), JSON.stringify({
+      schemaVersion: 1,
+      groups: [{ baseUrlWhitelist: urls, headerNames: ['X-User-Account', 'X-Cookie'] }],
+    }));
+    return {
+      id, name: id, description: '', enabled: true, installPath,
+      missingRequirements: [], configurationFields: [],
+    };
+  });
+  let installed = [entries[0]];
+  const service = new OutboundHeaderPolicyService({
+    listInstalledExtensions: () => installed, configPath, userInfoPath,
+  });
+  const first = service.reconcile();
+  installed = entries;
+  const both = service.reconcile();
+  expect(both.digest).toBe(first.digest);
+  expect(both.groups).toEqual(first.groups);
+  for (const url of urls) {
+    expect(applyMainProcessOutboundHeaderPolicy(`${url}models`, {}, MainProcessOutboundHeaderSource.ModelProbe)).toEqual({
+      'X-User-Account': 'account-fixture', 'X-Cookie': 'cookie-fixture',
+    });
+  }
+  installed = [entries[0]];
+  expect(service.reconcile().digest).toBe(first.digest);
+  installed = [];
+  const removed = service.reconcile();
+  expect(removed.digest).not.toBe(first.digest);
+  expect(removed.enabled).toBe(true);
+  expect(applyMainProcessOutboundHeaderPolicy(`${existingModelUrl}models`, {}, MainProcessOutboundHeaderSource.ModelProbe)).toEqual({
+    'X-User-Account': 'account-fixture', 'X-Cookie': 'cookie-fixture',
+  });
+  expect(JSON.parse(fs.readFileSync(configPath, 'utf8'))).toEqual(manual);
+});
+
+test('preserves the precedence of overlapping groups with distinct Header casing', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'outbound-policy-precedence-'));
+  tempDirectories.push(directory);
+  const configPath = path.join(directory, 'config.json');
+  fs.writeFileSync(configPath, JSON.stringify({ enabled: true, groups: [] }));
+  const userInfoPath = path.join(directory, 'user_info.json');
+  fs.writeFileSync(userInfoPath, JSON.stringify({
+    'X-Cookie': 'upper-fixture', 'x-cookie': 'lower-fixture',
+  }));
+  const url = 'https://api-one.example.test/v1/';
+  const entries = ['X-Cookie', 'x-cookie', 'X-Cookie'].map((header, index) => {
+    const id = `extension-${index}`;
+    const installPath = path.join(directory, id);
+    fs.mkdirSync(installPath);
+    fs.writeFileSync(path.join(installPath, 'outbound-header-policy.json'), JSON.stringify({
+      schemaVersion: 1, groups: [{ baseUrlWhitelist: [url], headerNames: [header] }],
+    }));
+    return {
+      id, name: id, description: '', enabled: true, installPath,
+      missingRequirements: [], configurationFields: [],
+    };
+  });
+  let installed = entries;
+  const service = new OutboundHeaderPolicyService({
+    listInstalledExtensions: () => installed, configPath, userInfoPath,
+  });
+  const before = service.reconcile();
+  expect(before.groups.slice(PREDEFINED_OUTBOUND_HEADER_POLICY_CONFIG.groups.length)).toHaveLength(2);
+  expect(applyMainProcessOutboundHeaderPolicy(`${url}models`, {}, MainProcessOutboundHeaderSource.ModelProbe)).toEqual({
+    'X-Cookie': 'upper-fixture',
+  });
+  installed = entries.slice(1);
+  const after = service.reconcile();
+  expect(after.digest).not.toBe(before.digest);
+  expect(applyMainProcessOutboundHeaderPolicy(`${url}models`, {}, MainProcessOutboundHeaderSource.ModelProbe)).toEqual({
+    'x-cookie': 'lower-fixture',
+  });
+});

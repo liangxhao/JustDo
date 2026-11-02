@@ -16,6 +16,7 @@ import McpManager from '@/features/plugins/mcp/McpManager';
 import { mcpService } from '@/features/plugins/mcp/mcpService';
 import PluginOperationFeedback from '@/features/plugins/shared/PluginOperationFeedback';
 import PluginOperationStatus from '@/features/plugins/shared/PluginOperationStatus';
+import { PluginOperationStatusSlot } from '@/features/plugins/shared/PluginOperationStatusSlot';
 import SkillsManager from '@/features/plugins/skills/SkillsManager';
 import type { SpeechModelCatalogTarget } from '@/features/speech/speechModelCatalogNavigation';
 import { i18nService } from '@/services/i18n';
@@ -75,6 +76,7 @@ const PluginsView: React.FC<PluginsViewProps> = ({
   const [activeTab, setActiveTab] = useState<PluginTab>('extensions');
   const [searchQuery, setSearchQuery] = useState('');
   const [toolbarSlot, setToolbarSlot] = useState<HTMLDivElement | null>(null);
+  const [operationStatusSlot, setOperationStatusSlot] = useState<HTMLDivElement | null>(null);
   const [requestedExtensionId, setRequestedExtensionId] = useState<string>();
   useEffect(() => {
     if (!engine.ready) return;
@@ -193,7 +195,7 @@ const PluginsView: React.FC<PluginsViewProps> = ({
             </div>
           </div>
 
-          <PluginOperationStatus />
+          <PluginOperationStatus feedbackSlotRef={setOperationStatusSlot} />
           {!engine.ready && (
             <p
               role="status"
@@ -205,36 +207,38 @@ const PluginsView: React.FC<PluginsViewProps> = ({
           <div className="mt-5">
             {(engine.ready || hasAdmittedEngine) && (
               <EngineInteractionBoundary disabled={!engine.ready}>
-                <MarketplaceToolbarSlot.Provider value={toolbarSlot}>
-                  {activeTab === 'extensions' && (
-                    <ExtensionsManager
-                      onOpenRuntime={onOpenRuntime}
-                      onManageSpeechModels={onManageSpeechModels}
-                      isActive={isActive}
-                      searchQuery={searchQuery}
-                      visibility="all"
-                      requestedExtensionId={requestedExtensionId}
-                      onRequestedExtensionHandled={() => setRequestedExtensionId(undefined)}
-                    />
-                  )}
-                  {activeTab === 'skills' && (
-                    <SkillsManager searchQuery={searchQuery} visibility="all" />
-                  )}
-                  {activeTab === 'mcp' && (
-                    <McpManager
-                      searchQuery={searchQuery}
-                      visibility="all"
-                      onOpenExtension={openExtensionDetail}
-                    />
-                  )}
-                  {activeTab === 'hooks' && (
-                    <HookManager
-                      searchQuery={searchQuery}
-                      visibility="all"
-                      onOpenExtension={openExtensionDetail}
-                    />
-                  )}
-                </MarketplaceToolbarSlot.Provider>
+                <PluginOperationStatusSlot.Provider value={operationStatusSlot}>
+                  <MarketplaceToolbarSlot.Provider value={toolbarSlot}>
+                    {activeTab === 'extensions' && (
+                      <ExtensionsManager
+                        onOpenRuntime={onOpenRuntime}
+                        onManageSpeechModels={onManageSpeechModels}
+                        isActive={isActive}
+                        searchQuery={searchQuery}
+                        visibility="all"
+                        requestedExtensionId={requestedExtensionId}
+                        onRequestedExtensionHandled={() => setRequestedExtensionId(undefined)}
+                      />
+                    )}
+                    {activeTab === 'skills' && (
+                      <SkillsManager searchQuery={searchQuery} visibility="all" />
+                    )}
+                    {activeTab === 'mcp' && (
+                      <McpManager
+                        searchQuery={searchQuery}
+                        visibility="all"
+                        onOpenExtension={openExtensionDetail}
+                      />
+                    )}
+                    {activeTab === 'hooks' && (
+                      <HookManager
+                        searchQuery={searchQuery}
+                        visibility="all"
+                        onOpenExtension={openExtensionDetail}
+                      />
+                    )}
+                  </MarketplaceToolbarSlot.Provider>
+                </PluginOperationStatusSlot.Provider>
               </EngineInteractionBoundary>
             )}
           </div>

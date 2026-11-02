@@ -36,6 +36,7 @@ afterEach(() => vi.restoreAllMocks());
 function fixture(
   beforeAgentTeamDisable?: () => Promise<() => void>,
   mutateAppPackage?: <T>(operation: () => Promise<T>) => Promise<T>,
+  mutateAppPlugin?: <T>(id: string, enabled: boolean, operation: () => Promise<T>) => Promise<T>,
 ) {
   const sender = { isDestroyed: vi.fn(() => false), send: vi.fn() };
   const peer = { isDestroyed: vi.fn(() => false), send: vi.fn() };
@@ -63,7 +64,7 @@ function fixture(
     extensionImportService: service as unknown as OpenClawExtensionImportService,
     installationService: installation as unknown as PluginInstallationService,
     mutateAppPackage,
-    mutateAppPlugin: (() => {
+    mutateAppPlugin: mutateAppPlugin ?? (() => {
       let lane: Promise<unknown> = Promise.resolve();
       return <T>(_id: string, enabled: boolean, operation: () => Promise<T>) => {
         const next = lane
@@ -381,6 +382,160 @@ test('retains committed installation identity when applying its runtime state fa
   });
 });
 
+test('retains the native installation receipt when package recovery rejects after installation', async () => {
+  const mutate = vi.fn(async <T>(operation: () => Promise<T>): Promise<T> => {
+    await operation();
+    throw new Error('Outbound proxy preparation failed; accessCode=synthetic-secret');
+  });
+  const f = fixture(undefined, mutate);
+  f.service.importPath.mockResolvedValue({
+    success: true,
+    extensionId: 'feature-plugin/child',
+    installPath: 'C:/installed/feature-plugin',
+  });
+  const installer = f.installation.registerInstaller.mock.calls[0][0];
+
+  const result = await installer.install({
+    payload: { kind: PluginKind.EXTENSION, sourcePath: 'C:/source' },
+    origin: 'marketplace',
+  });
+
+  expect(result).toMatchObject({
+    success: false,
+    pluginId: 'feature-plugin/child',
+    installPath: 'C:/installed/feature-plugin',
+    installationCommitted: true,
+    failedStage: PluginOperationStage.PREPARING_RUNTIME,
+    error: expect.stringContaining('Outbound proxy preparation failed'),
+  });
+  expect(result.error).not.toContain('synthetic-secret');
+  expect(mutate).toHaveBeenCalledOnce();
+  expect(f.service.importPath).toHaveBeenCalledOnce();
+  expect(f.peer.send).toHaveBeenCalledWith(ExtensionIpc.Changed, {
+    extensionId: 'feature-plugin/child', enabled: false,
+  });
+});
+
+test('retains unknown ownership and the original failure when package recovery also fails', async () => {
+  const f = fixture(undefined, async operation => {
+    await operation();
+    throw new Error('Synthetic runtime recovery failure');
+  });
+  f.service.importPath.mockResolvedValue({
+    success: false,
+    extensionId: 'feature-plugin',
+    operationFailedStage: PluginOperationStage.CONFIRMING,
+    installSourceInUse: true,
+    operationUnconfirmed: true,
+    error: 'Native installation outcome unknown',
+  });
+  const installer = f.installation.registerInstaller.mock.calls[0][0];
+  const result = await installer.install({
+    payload: { kind: PluginKind.EXTENSION, sourcePath: 'C:/source' },
+    origin: 'marketplace',
+  });
+  expect(result).toMatchObject({
+    success: false,
+    failedStage: PluginOperationStage.CONFIRMING,
+    installSourceInUse: true,
+    operationUnconfirmed: true,
+    refreshWarning: true,
+    error: expect.stringMatching(/^Native installation outcome unknown\n/),
+  });
+  expect(result.error).toContain('Synthetic runtime recovery failure');
+  expect(result).not.toHaveProperty('installationCommitted');
+  f.installation.install.mockResolvedValue(result);
+  expect(await handlers.get(ExtensionIpc.Import)!(f.event, {
+    requestId: 'unknown-import', sourcePath: 'C:/source',
+  })).toMatchObject({ operationUnconfirmed: true, installSourceInUse: true });
+});
+
+test('preserves capability review evidence when the package wrapper subsequently fails', async () => {
+  const f = fixture(undefined, async operation => {
+    await operation();
+    throw new Error('Synthetic runtime recovery failure');
+  });
+  const capabilityReview = { reviewToken: 'replacement-review' };
+  f.service.importPath.mockResolvedValue({ success: false, capabilityReview });
+  const installer = f.installation.registerInstaller.mock.calls[0][0];
+  const result = await installer.install({
+    payload: { kind: PluginKind.EXTENSION, sourcePath: 'C:/source', reviewToken: 'original-review' },
+    origin: 'custom',
+  });
+  expect(result).toMatchObject({
+    success: false, capabilityReview, refreshWarning: true,
+    failedStage: PluginOperationStage.PREPARING_RUNTIME,
+    error: expect.stringContaining('Synthetic runtime recovery failure'),
+  });
+  expect(result).not.toHaveProperty('installationCommitted');
+});
+
+test('does not label a capability-review catalog read failure as runtime recovery failure', async () => {
+  const f = fixture();
+  vi.spyOn(console, 'warn').mockImplementation(() => {});
+  const capabilityReview = { reviewToken: 'original-review' };
+  f.service.importPath.mockResolvedValue({ success: false, extensionId: 'feature-plugin', capabilityReview });
+  f.service.listCatalog.mockRejectedValue(new Error('Catalog unavailable'));
+  const installer = f.installation.registerInstaller.mock.calls[0][0];
+  const result = await installer.install({
+    payload: { kind: PluginKind.EXTENSION, sourcePath: 'C:/source' },
+    origin: 'custom',
+  });
+  expect(result).toMatchObject({ success: false, capabilityReview, refreshWarning: true });
+  expect(result.failedStage).toBeUndefined();
+  expect(result.error).toBeUndefined();
+  expect(result).not.toHaveProperty('installationCommitted');
+});
+
+test('does not invent an installation receipt when the package wrapper rejects before the callback', async () => {
+  const f = fixture(undefined, async () => { throw new Error('Package preparation failed'); });
+  const installer = f.installation.registerInstaller.mock.calls[0][0];
+  await expect(installer.install({
+    payload: { kind: PluginKind.EXTENSION, sourcePath: 'C:/source' },
+    origin: 'marketplace',
+  })).rejects.toThrow('Package preparation failed');
+  expect(f.service.importPath).not.toHaveBeenCalled();
+  expect(f.service.listInstalled).not.toHaveBeenCalled();
+});
+
+test('reports completed removal separately from package recovery failure and clears marketplace identity', async () => {
+  const f = fixture(undefined, async operation => {
+    await operation();
+    throw new Error('Synthetic outbound environment recovery failure');
+  });
+  f.service.delete.mockResolvedValue({ success: true });
+  f.service.listCatalog.mockResolvedValue([]);
+  const result = await handlers.get(ExtensionIpc.Delete)!(f.event, { extensionId: 'feature-plugin' });
+  expect(result).toMatchObject({
+    success: true, refreshWarning: true, failedStage: PluginOperationStage.PREPARING_RUNTIME,
+    error: expect.stringContaining('Synthetic outbound environment recovery failure'),
+  });
+  expect(f.service.delete).toHaveBeenCalledOnce();
+  expect(f.forgetMarketplace).toHaveBeenCalledWith(PluginKind.EXTENSION, 'feature-plugin');
+  expect(f.peer.send).toHaveBeenCalledWith(ExtensionIpc.Changed, {
+    extensionId: 'feature-plugin', enabled: false,
+  });
+});
+
+test('does not turn an unconfirmed removal into success when package recovery also fails', async () => {
+  const f = fixture(undefined, async operation => {
+    await operation();
+    throw new Error('Synthetic runtime recovery failure');
+  });
+  f.service.delete.mockResolvedValue({
+    success: false, operationUnconfirmed: true, failedStage: PluginOperationStage.UNINSTALLING,
+    error: 'Native removal unconfirmed',
+  });
+  const result = await handlers.get(ExtensionIpc.Delete)!(f.event, { extensionId: 'feature-plugin' });
+  expect(result).toMatchObject({
+    success: false, operationUnconfirmed: true, refreshWarning: true,
+    failedStage: PluginOperationStage.UNINSTALLING,
+    error: expect.stringMatching(/^Native removal unconfirmed\n/),
+  });
+  expect(f.forgetMarketplace).not.toHaveBeenCalled();
+  expect(f.service.delete).toHaveBeenCalledOnce();
+});
+
 test('preserves a native failure step while finally refreshing the catalog', async () => {
   const f = fixture();
   f.service.setEnabled.mockImplementation(async (_id, _enabled, _token, report) => {
@@ -592,6 +747,89 @@ test('releases the disable admission lease after a failed native mutation', asyn
     }),
   ).toMatchObject({ success: false, error: 'config rejected' });
   expect(releaseDisable).toHaveBeenCalledOnce();
+});
+
+test.each([true, false])('preserves a confirmed toggle when lifecycle completion fails (enabled: %s)', async enabled => {
+  const mutate = vi.fn(async <T>(_id: string, _enabled: boolean, operation: () => Promise<T>): Promise<T> => {
+    await operation();
+    throw new Error('Companion status confirmation failed; accessCode=synthetic-private-code');
+  });
+  const f = fixture(undefined, undefined, mutate);
+  f.service.setEnabled.mockResolvedValue({ success: true, warnings: ['Native warning'] });
+
+  const result = await handlers.get(ExtensionIpc.SetEnabled)!(f.event, { extensionId: 'feature-plugin', enabled });
+
+  expect(result).toMatchObject({
+    success: true,
+    refreshWarning: true,
+    failedStage: PluginOperationStage.CONFIRMING,
+    warnings: ['Native warning'],
+    error: expect.stringContaining('Companion status confirmation failed'),
+  });
+  expect(result).not.toHaveProperty('installationCommitted');
+  expect(result).not.toHaveProperty('operationUnconfirmed');
+  expect((result as { error: string }).error).not.toContain('synthetic-private-code');
+  expect(f.service.setEnabled).toHaveBeenCalledOnce();
+  expect(mutate).toHaveBeenCalledOnce();
+  expect(f.peer.send).toHaveBeenCalledWith(ExtensionIpc.Changed, {
+    extensionId: 'feature-plugin', enabled: false,
+  });
+});
+
+test('keeps an unconfirmed toggle and its native failure ahead of a later lifecycle failure', async () => {
+  const f = fixture(undefined, undefined, async (_id, _enabled, operation) => {
+    await operation();
+    throw new Error('Companion status confirmation failed');
+  });
+  f.service.setEnabled.mockResolvedValue({
+    success: false,
+    operationUnconfirmed: true,
+    failedStage: PluginOperationStage.DISABLING,
+    error: 'Native toggle response was lost',
+  });
+
+  const result = await handlers.get(ExtensionIpc.SetEnabled)!(f.event, { extensionId: 'feature-plugin', enabled: false });
+
+  expect(result).toMatchObject({
+    success: false,
+    operationUnconfirmed: true,
+    refreshWarning: true,
+    failedStage: PluginOperationStage.DISABLING,
+    error: expect.stringMatching(/^Native toggle response was lost\n/),
+  });
+  expect((result as { error: string }).error).toContain('Companion status confirmation failed');
+  expect(result).not.toHaveProperty('installationCommitted');
+  expect(f.service.setEnabled).toHaveBeenCalledOnce();
+});
+
+test('keeps a toggle capability review and reports a separate lifecycle failure', async () => {
+  const f = fixture(undefined, undefined, async (_id, _enabled, operation) => {
+    await operation();
+    throw new Error('Companion status confirmation failed');
+  });
+  const capabilityReview = { reviewToken: 'new-toggle-review' };
+  f.service.setEnabled.mockResolvedValue({ success: false, capabilityReview });
+  const result = await handlers.get(ExtensionIpc.SetEnabled)!(f.event, { extensionId: 'feature-plugin', enabled: true });
+  expect(result).toMatchObject({
+    success: false, capabilityReview, refreshWarning: true,
+    failedStage: PluginOperationStage.CONFIRMING,
+    error: expect.stringContaining('Companion status confirmation failed'),
+  });
+  expect(result).not.toHaveProperty('installationCommitted');
+});
+
+test.each([true, false])('does not fabricate a toggle receipt after a rejected lifecycle (before callback: %s)', async beforeCallback => {
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+  const f = fixture(undefined, undefined, async (_id, _enabled, operation) => {
+    if (beforeCallback) throw new Error('Enable preflight rejected');
+    return operation();
+  });
+  f.service.setEnabled.mockRejectedValue(new Error('Native toggle did not return'));
+  const result = await handlers.get(ExtensionIpc.SetEnabled)!(f.event, { extensionId: 'feature-plugin', enabled: true });
+  expect(result).toMatchObject({ success: false, error: beforeCallback ? 'Enable preflight rejected' : 'Native toggle did not return' });
+  expect(result).not.toHaveProperty('refreshWarning');
+  expect(result).not.toHaveProperty('installationCommitted');
+  expect(f.service.setEnabled).toHaveBeenCalledTimes(beforeCallback ? 0 : 1);
 });
 
 test('keeps the extension configuration unchanged when the required queue fence fails', async () => {

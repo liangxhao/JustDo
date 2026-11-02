@@ -9,7 +9,6 @@ interface PluginCardProps {
   compact?: boolean;
   actions?: ReactNode;
   footer?: ReactNode;
-  feedback?: ReactNode;
   onOpen?: () => void;
   openLabel?: string;
 }
@@ -23,7 +22,6 @@ const PluginCard = ({
   compact = false,
   actions,
   footer,
-  feedback,
   onOpen,
   openLabel,
 }: PluginCardProps) => (
@@ -72,11 +70,6 @@ const PluginCard = ({
     {footer && (
       <div className="relative mt-auto flex min-h-10 items-center justify-between gap-3 pt-3 text-[10px] text-secondary">
         {footer}
-      </div>
-    )}
-    {feedback && (
-      <div className="relative" onClick={event => event.stopPropagation()}>
-        {feedback}
       </div>
     )}
   </article>

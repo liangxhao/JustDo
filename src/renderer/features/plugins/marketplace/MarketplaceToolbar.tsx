@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 
 import { i18nService } from '@/services/i18n';
 
+import MarketplaceOperationFeedback from './MarketplaceOperationFeedback';
 import { MarketplaceToolbarSlot } from './MarketplaceToolbarSlot';
 import { MarketplaceFilter, type PluginMarketplaceController } from './usePluginMarketplace';
 
@@ -45,6 +46,7 @@ export default function MarketplaceToolbar({
   return (
     <div className="mb-4 space-y-2 empty:hidden">
       {slot ? createPortal(controls, slot) : controls}
+      <MarketplaceOperationFeedback controller={controller} />
       {controller.filter !== MarketplaceFilter.ALL && controller.sourceError && (
         <p role="alert" className="text-xs text-amber-700 dark:text-amber-300">
           {controller.sourceError}

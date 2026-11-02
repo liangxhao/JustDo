@@ -43,6 +43,8 @@ export interface PluginInstallResult {
   restartRequired?: boolean;
   failedStage?: string;
   error?: string;
+  /** Sanitized user-facing reason issued by the host installation service, not a Provider. */
+  publicReason?: string;
   capabilityReview?: import('../../../shared/plugins/extensions').OpenClawPluginCapabilityReview;
 }
 

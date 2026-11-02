@@ -279,6 +279,67 @@ test('does not expose internal installation failure details', async () => {
   expect(JSON.stringify(response)).not.toContain('private-download');
 });
 
+test('shows an explicitly public host validation reason while keeping private result fields internal', async () => {
+  const manager = createPluginManager();
+  const reason =
+    'package install requires compiled runtime output for TypeScript entry ./index.ts: expected ./dist/index.js. This is a plugin packaging issue.';
+  vi.mocked(manager.installFromMarketplace).mockResolvedValue({
+    success: false,
+    error: 'private native output',
+    publicReason: reason,
+    failedStage: PluginOperationStage.VALIDATING,
+    installPath: 'C:\\private-download',
+  });
+  registerMarketplaceHandlers(manager);
+  const response = await handlers.get(MarketplaceIpc.Install)?.(
+    {},
+    {
+      sourceId: 'enterprise',
+      pluginId: 'writer',
+      kind: PluginKind.EXTENSION,
+    },
+  );
+  expect(response).toEqual({
+    success: false,
+    error: reason,
+    errorCode: MarketplaceErrorCode.INTERNAL,
+    failedStage: PluginOperationStage.VALIDATING,
+  });
+});
+
+test('sanitizes public reasons again without changing committed and unknown-result evidence', async () => {
+  const manager = createPluginManager();
+  vi.mocked(manager.installFromMarketplace).mockResolvedValue({
+    success: false,
+    installationCommitted: true,
+    operationUnconfirmed: true,
+    installSourceInUse: true,
+    pluginId: 'writer',
+    publicReason: String.raw`Cannot enable plugin at "C:\private source\plugin": accessCode=private-value`,
+    error: 'private native output',
+    failedStage: PluginOperationStage.ENABLING,
+  });
+  registerMarketplaceHandlers(manager);
+  const response = await handlers.get(MarketplaceIpc.Install)?.(
+    {},
+    {
+      sourceId: 'enterprise',
+      pluginId: 'writer',
+      kind: PluginKind.EXTENSION,
+    },
+  );
+  expect(response).toMatchObject({
+    success: false,
+    installationCommitted: true,
+    operationUnconfirmed: true,
+    installSourceInUse: true,
+    pluginId: 'writer',
+    error: expect.stringContaining('Cannot enable plugin'),
+    failedStage: PluginOperationStage.ENABLING,
+  });
+  expect(JSON.stringify(response)).not.toContain('private');
+});
+
 test('keeps the reported failure phase after cleanup progresses', async () => {
   const manager = createPluginManager();
   vi.mocked(manager.installFromMarketplace).mockImplementation(async (_request, onProgress) => {

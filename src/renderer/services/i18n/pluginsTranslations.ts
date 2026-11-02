@@ -1,6 +1,10 @@
 export const pluginsTranslations = {
   zh: {
-    marketplaceActivationIncomplete: '插件已安装，但未能完成启用。请检查插件配置和当前状态。',
+    marketplaceValidationReasonUnavailable:
+      '插件校验未能完成，安装服务没有返回具体原因。请复制错误详情，联系插件提供方检查安装包。',
+    marketplaceFailureReasonUnavailable:
+      '安装服务没有返回具体失败原因。请复制错误详情和操作编号，联系插件提供方排查。',
+    marketplaceActivationIncomplete: '插件已保存，但未能完成启用；安装服务没有返回具体原因。',
     'marketplacePreparationFailure.fetching_metadata':
       '无法从插件市场获取插件信息。请检查市场服务和网络连接后重试。',
     'marketplacePreparationFailure.downloading':
@@ -10,15 +14,30 @@ export const pluginsTranslations = {
     pluginOperationRefreshFailed:
       '操作已提交，但未能读取最新插件状态。请关闭提示后重新进入对应插件分类核对结果。',
     'pluginOperationFailureTitle.install': '安装未完成',
+    'pluginOperationFailureTitle.install.committed': '安装内容已保存，但{problem}',
+    'pluginOperationFailureTitle.update.committed': '更新内容已保存，但{problem}',
+    'pluginOperationFailureTitle.batch': '插件操作未全部完成',
+    'pluginOperationFailureProblem.stage': '“{stage}”未完成',
+    'pluginOperationFailureProblem.confirming': '无法确认插件状态',
+    'pluginOperationFailureProblem.missingStage': '服务未返回出错步骤',
+    'pluginOperationFailureProblem.unconfirmed': '最终结果仍待确认',
+    'pluginOperationFailureTitle.refresh': '插件状态刷新失败',
+    'pluginOperationInstallationOutcome.committed':
+      '安装或更新内容已经保存，因此“用户安装”列表中可能已有该插件。请根据下面的原因和处理建议核对状态，避免重复安装。',
+    'pluginOperationInstallationOutcome.unconfirmed':
+      '目前无法确认本次安装或更新的最终结果。列表中出现条目也不能证明本次操作已完成，请先核对状态和版本，不要重复提交。',
     'pluginOperationFailureTitle.update': '更新未完成',
     'pluginOperationFailureTitle.remove': '卸载未完成',
+    'pluginOperationFailureTitle.remove.recovery_failed': '插件已卸载，运行环境恢复失败',
     'pluginOperationFailureTitle.enable': '启用未完成',
+    'pluginOperationFailureTitle.enable.followup_failed': '启用设置已保存，但无法确认插件状态',
     'pluginOperationFailureTitle.disable': '关闭未完成',
+    'pluginOperationFailureTitle.disable.followup_failed': '关闭设置已保存，但无法确认插件状态',
     'pluginOperationFailureTitle.save': '配置保存未完成',
     'pluginOperationFailureTitle.sync': '配置同步未完成',
-    'pluginOperationFailureTitle.committed': '更改已保存，后续步骤未完成',
+    'pluginOperationFailureTitle.committed': '更改已保存，但{problem}',
     'pluginOperationFailureTitle.unconfirmed': '操作状态待确认',
-    'pluginOperationFailureTitle.refresh_failed': '操作已提交，状态刷新失败',
+    'pluginOperationFailureTitle.refresh_failed': '插件状态读取失败',
     'pluginOperationLabel.install': '安装插件',
     'pluginOperationLabel.update': '更新插件',
     'pluginOperationLabel.remove': '卸载插件',
@@ -31,17 +50,36 @@ export const pluginsTranslations = {
     pluginOperationFailureStageUnavailable: '未收到步骤信息',
     pluginOperationFailureStagesInItems: '详见下方各项',
     pluginOperationFailureDuration: '操作耗时',
-    pluginOperationFailureReason: '原因',
-    pluginOperationFailureReasonUnavailable: '未返回具体原因',
+    pluginOperationFailureReason: '具体原因',
+    pluginOperationFailureReasonUnavailable:
+      '服务没有返回具体错误原因。请点击“复制错误详情”，将操作编号和已知步骤交给管理员或插件提供方排查。',
     pluginOperationFailureNextStep: '接下来可以做什么',
-    'pluginOperationFailureNext.failed':
-      '请检查上面的原因。处理后关闭提示，重新进入对应插件分类，核对最新状态。',
-    'pluginOperationFailureNext.committed':
-      '更改已经保存。关闭提示后，重新进入对应插件分类，核对最新状态及配置。确认结果前不要重复安装或卸载。',
     'pluginOperationFailureNext.unconfirmed':
       '目前无法确认最终结果。关闭提示后，重新进入对应插件分类核对最新状态。确认前不要重复提交相同操作。',
-    'pluginOperationFailureNext.refresh_failed':
-      '操作已提交，已保存的更改仍然保留。关闭提示后，重新进入对应插件分类核对最新状态，再决定下一步。',
+    'pluginOperationFailureGuidance.connection':
+      '请检查与插件市场的网络连接，并确认市场服务可访问；仍无法连接时，复制错误详情联系管理员。',
+    'pluginOperationFailureGuidance.package':
+      '请点击“复制错误详情”，联系插件提供方核对格式、安全校验或兼容性，并取得修正后的安装包。',
+    'pluginOperationFailureGuidance.dependencies':
+      '按上方原因核对插件所需依赖和安装目录的访问权限；无法自行处理时，复制错误详情联系管理员或插件提供方。',
+    'pluginOperationFailureGuidance.enable':
+      '先查看插件详情中的依赖说明；如提供可编辑的配置入口，按上方原因修正配置。核对插件仍未启用后，再手动启用；无需重新安装。',
+    'pluginOperationFailureGuidance.configuration':
+      '请按上方原因检查配置。如插件详情提供可编辑入口，修正后保存；没有入口或仍失败时，复制错误详情联系管理员或插件提供方。',
+    'pluginOperationFailureGuidance.runtime':
+      '关闭提示后，查看标题栏（最小化、最大化按钮旁）的 AI 引擎状态。启动中请等待；启动失败时点“查看原因”，按提示处理。仅在提供“启动 AI 引擎”按钮时手动启动；若仍无法使用插件，请复制错误详情联系管理员或插件提供方。',
+    'pluginOperationFailureGuidance.status':
+      '关闭提示后，重新进入对应插件分类，核对版本、开关和可用状态。若仍无法读取或与本次操作不符，请复制错误详情联系管理员或插件提供方；确认前不要重复提交。',
+    'pluginOperationFailureGuidance.recovery':
+      '请复制错误详情，联系管理员处理临时文件或配置恢复问题。不要通过重复安装、卸载或手动删除插件目录尝试修复。',
+    'pluginOperationFailureGuidance.missingStage':
+      '服务未返回出错步骤，无法给出针对该环节的处理办法。请点击“复制错误详情”，将操作编号和现有原因交给管理员或插件提供方排查。',
+    'pluginOperationFailureGuidance.support':
+      '请根据上方具体原因处理；无法确定如何处理时，点击“复制错误详情”，将操作编号和错误内容交给管理员或插件提供方。',
+    'pluginOperationFailureGuidance.saved':
+      '安装或更新内容已经保存，核对结果前不要再次安装或卸载。',
+    'pluginOperationFailureGuidance.batch':
+      '请逐项查看下面的失败步骤、原因和处理建议。已保存的项目不要重新安装；结果待确认的项目先核对状态，不要重复提交。',
     pluginOperationFailureDetails: '查看错误详情',
     pluginOperationFailureCopy: '复制错误详情',
     pluginOperationFailureCopied: '已复制',
@@ -151,8 +189,7 @@ export const pluginsTranslations = {
     marketplaceInstallFailed: '安装插件失败',
     marketplaceInstallSucceeded: '“{name}”已安装。',
     marketplaceUpdateSucceeded: '“{name}”已更新。',
-    marketplaceRefreshAfterInstallFailed: '安装已完成，但插件状态刷新失败，请稍后重试。',
-    marketplaceInstallCommittedWithError: '安装已保存，但后续步骤失败。请检查插件状态。',
+    marketplaceRefreshAfterInstallFailed: '插件状态刷新失败，请稍后重试。',
     openExtensionDetails: '查看扩展“{name}”的详情',
     marketplaceDetailFailed: '加载插件详情失败',
     marketplaceRequirements: '运行要求',
@@ -425,8 +462,12 @@ export const pluginsTranslations = {
     gatewayOfflineHooksUnavailable: 'AI 引擎未连接，Hook 功能暂时不可用',
   },
   en: {
+    marketplaceValidationReasonUnavailable:
+      'Plugin validation did not complete, and the installation service returned no specific reason. Copy the error details and ask the plugin provider to check the package.',
+    marketplaceFailureReasonUnavailable:
+      'The installation service returned no specific failure reason. Copy the error details and operation reference and contact the plugin provider.',
     marketplaceActivationIncomplete:
-      'The plugin was installed, but activation could not be completed. Check its configuration and current status.',
+      'The plugin was saved, but activation did not complete; the installation service returned no specific reason.',
     'marketplacePreparationFailure.fetching_metadata':
       'Plugin information could not be retrieved from the marketplace. Check the marketplace service and your connection, then try again.',
     'marketplacePreparationFailure.downloading':
@@ -436,15 +477,30 @@ export const pluginsTranslations = {
     pluginOperationRefreshFailed:
       'The operation was submitted, but the latest plugin status could not be read. Close this notice and reopen its plugin category to check the result.',
     'pluginOperationFailureTitle.install': 'Installation incomplete',
+    'pluginOperationFailureTitle.install.committed': 'Installation saved, but {problem}',
+    'pluginOperationFailureTitle.update.committed': 'Update saved, but {problem}',
+    'pluginOperationFailureTitle.batch': 'Some plugin operations are incomplete',
+    'pluginOperationFailureProblem.stage': 'the step “{stage}” did not complete',
+    'pluginOperationFailureProblem.confirming': 'plugin status could not be confirmed',
+    'pluginOperationFailureProblem.missingStage': 'the service did not report which step failed',
+    'pluginOperationFailureProblem.unconfirmed': 'the final result is still unconfirmed',
+    'pluginOperationFailureTitle.refresh': 'Plugin status refresh failed',
+    'pluginOperationInstallationOutcome.committed':
+      'Installation or update content was saved, so the plugin may already appear under User installed. Check its status using the reason and advice below instead of installing it again.',
+    'pluginOperationInstallationOutcome.unconfirmed':
+      'The final result of this installation or update is unknown. An entry in the list does not prove that this operation completed. Check its status and version before submitting the operation again.',
     'pluginOperationFailureTitle.update': 'Update incomplete',
     'pluginOperationFailureTitle.remove': 'Removal incomplete',
+    'pluginOperationFailureTitle.remove.recovery_failed': 'Plugin uninstalled; runtime recovery failed',
     'pluginOperationFailureTitle.enable': 'Enabling incomplete',
+    'pluginOperationFailureTitle.enable.followup_failed': 'Enable setting saved, but plugin status could not be confirmed',
     'pluginOperationFailureTitle.disable': 'Disabling incomplete',
+    'pluginOperationFailureTitle.disable.followup_failed': 'Disable setting saved, but plugin status could not be confirmed',
     'pluginOperationFailureTitle.save': 'Configuration save incomplete',
     'pluginOperationFailureTitle.sync': 'Configuration sync incomplete',
-    'pluginOperationFailureTitle.committed': 'Changes saved; a later step is incomplete',
+    'pluginOperationFailureTitle.committed': 'Changes saved, but {problem}',
     'pluginOperationFailureTitle.unconfirmed': 'Operation status needs confirmation',
-    'pluginOperationFailureTitle.refresh_failed': 'Operation submitted; status refresh failed',
+    'pluginOperationFailureTitle.refresh_failed': 'Plugin status could not be read',
     'pluginOperationLabel.install': 'Install plugin',
     'pluginOperationLabel.update': 'Update plugin',
     'pluginOperationLabel.remove': 'Remove plugin',
@@ -457,17 +513,36 @@ export const pluginsTranslations = {
     pluginOperationFailureStageUnavailable: 'No step information received',
     pluginOperationFailureStagesInItems: 'See each item below',
     pluginOperationFailureDuration: 'Elapsed time',
-    pluginOperationFailureReason: 'Reason',
-    pluginOperationFailureReasonUnavailable: 'No specific reason was returned',
+    pluginOperationFailureReason: 'Reported reason',
+    pluginOperationFailureReasonUnavailable:
+      'The service did not return a specific reason. Click “Copy error details” and share the operation ID and reported step with your administrator or the plugin provider.',
     pluginOperationFailureNextStep: 'What you can do next',
-    'pluginOperationFailureNext.failed':
-      'Check the reason above. After resolving it, close this notice and reopen the corresponding plugin category to check the latest status.',
-    'pluginOperationFailureNext.committed':
-      'Changes have been saved. Close this notice and reopen the corresponding plugin category to check its latest status and configuration. Avoid installing or removing it again before confirming the result.',
     'pluginOperationFailureNext.unconfirmed':
       'The final result could not be confirmed. Close this notice and reopen the corresponding plugin category to check its latest status before submitting the same operation again.',
-    'pluginOperationFailureNext.refresh_failed':
-      'The operation was submitted and saved changes remain in place. Close this notice and reopen the corresponding plugin category to check the latest status before deciding what to do next.',
+    'pluginOperationFailureGuidance.connection':
+      'Check your connection to the plugin marketplace and whether its service is accessible. If it remains unavailable, copy the error details and contact your administrator.',
+    'pluginOperationFailureGuidance.package':
+      'Click “Copy error details” and ask the plugin provider to check package format, safety checks or compatibility and supply a corrected package.',
+    'pluginOperationFailureGuidance.dependencies':
+      'Use the reason above to check required dependencies and access to the installation folder. If you cannot resolve it, copy the error details and contact your administrator or the plugin provider.',
+    'pluginOperationFailureGuidance.enable':
+      'Check the dependencies listed in plugin details. If editable configuration is available, correct it using the reason above. Check that the plugin is still disabled before enabling it manually; do not reinstall it.',
+    'pluginOperationFailureGuidance.configuration':
+      'Check the configuration against the reason above. If plugin details offer editable settings, correct and save them. If there is no editor or the error persists, copy the error details and contact your administrator or the plugin provider.',
+    'pluginOperationFailureGuidance.runtime':
+      'Close this notice and check the AI engine status in the title bar beside the minimize and maximize buttons. Wait while it starts; if startup fails, click “View reason” and follow the reported advice. Start it manually only if a “Start AI engine” button is offered. If the plugin still cannot be used, copy the error details and contact your administrator or the plugin provider.',
+    'pluginOperationFailureGuidance.status':
+      'Close this notice and reopen the corresponding plugin category to check its version, switch and availability. If status cannot be read or does not match the requested operation, copy the error details and contact your administrator or the plugin provider. Do not repeat the operation before confirming its result.',
+    'pluginOperationFailureGuidance.recovery':
+      'Copy the error details and ask your administrator to handle temporary-file cleanup or configuration recovery. Do not try to repair this by reinstalling, removing or manually deleting plugin folders.',
+    'pluginOperationFailureGuidance.missingStage':
+      'The service did not report the failed step, so step-specific advice is unavailable. Click “Copy error details” and share the operation ID and reported reason with your administrator or the plugin provider.',
+    'pluginOperationFailureGuidance.support':
+      'Follow the specific reason above. If you are unsure how to resolve it, click “Copy error details” and share the operation ID and error with your administrator or the plugin provider.',
+    'pluginOperationFailureGuidance.saved':
+      'Installation or update content was saved. Do not install or remove it again before confirming the result.',
+    'pluginOperationFailureGuidance.batch':
+      'Review the failed step, reason and advice for each item below. Do not reinstall saved items; check the status of unconfirmed items before repeating an operation.',
     pluginOperationFailureDetails: 'View error details',
     pluginOperationFailureCopy: 'Copy error details',
     pluginOperationFailureCopied: 'Copied',
@@ -588,10 +663,7 @@ export const pluginsTranslations = {
     marketplaceInstallFailed: 'Failed to install plugin',
     marketplaceInstallSucceeded: '“{name}” was installed.',
     marketplaceUpdateSucceeded: '“{name}” was updated.',
-    marketplaceInstallCommittedWithError:
-      'The installation was saved, but a subsequent step failed. Check the plugin status.',
-    marketplaceRefreshAfterInstallFailed:
-      'Installation completed, but plugin status could not be refreshed. Try again later.',
+    marketplaceRefreshAfterInstallFailed: 'Plugin status could not be refreshed. Try again later.',
     openExtensionDetails: 'View details for extension “{name}”',
     marketplaceDetailFailed: 'Failed to load plugin details',
     marketplaceRequirements: 'Requirements',

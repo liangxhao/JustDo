@@ -6,12 +6,19 @@ import {
   PluginOperationStage,
 } from '@shared/plugins/pluginOperation';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { useState } from 'react';
 import { afterEach, expect, test, vi } from 'vitest';
+
+import EngineInteractionBoundary from '@/app/shell/startup/routing/EngineInteractionBoundary';
 
 import OperationResultModal from './OperationResultModal';
 import PluginOperationFeedback from './PluginOperationFeedback';
 import { getPluginOperationOwner } from './pluginOperationService';
 import PluginOperationStatus from './PluginOperationStatus';
+import {
+  PluginOperationStatusContent,
+  PluginOperationStatusSlot,
+} from './PluginOperationStatusSlot';
 
 vi.mock('@/services/i18n', () => ({
   i18nService: {
@@ -47,6 +54,40 @@ const options = {
   label: 'Library tool',
 };
 
+test('shares the progress stack with settled feedback and blocks its portal actions during an engine restart', () => {
+  const { owner } = setup();
+  const operation = owner.start(options);
+  const refresh = vi.fn();
+  function StatusHarness({ blocked }: { blocked: boolean }) {
+    const [slot, setSlot] = useState<HTMLDivElement | null>(null);
+    return (
+      <>
+        <PluginOperationStatus feedbackSlotRef={setSlot} />
+        <EngineInteractionBoundary disabled={blocked}>
+          <PluginOperationStatusSlot.Provider value={slot}>
+            <PluginOperationStatusContent>
+              <button onClick={refresh}>Refresh pending installation</button>
+            </PluginOperationStatusContent>
+          </PluginOperationStatusSlot.Provider>
+        </EngineInteractionBoundary>
+      </>
+    );
+  }
+  const view = render(<StatusHarness blocked={false} />);
+  const button = screen.getByRole('button', { name: 'Refresh pending installation' });
+  const progressStack = screen.getByText('pluginOperationStage.queued').closest('.fixed');
+  expect(button.closest('.fixed')).toBe(progressStack);
+  expect(button.closest('.pointer-events-auto')).toBeTruthy();
+  act(() => operation.finish());
+  expect(screen.queryByText('pluginOperationStage.queued')).toBeNull();
+  expect(button.closest('.fixed')).toBe(progressStack);
+  fireEvent.click(button);
+  expect(refresh).toHaveBeenCalledOnce();
+  view.rerender(<StatusHarness blocked />);
+  fireEvent.click(button);
+  expect(refresh).toHaveBeenCalledOnce();
+});
+
 test('replaces running feedback with one result after final reconciliation and preserves its failure stage', () => {
   const { owner, notify } = setup();
   const operation = owner.start(options);
@@ -75,13 +116,14 @@ test('replaces running feedback with one result after final reconciliation and p
 
   act(() => operation.finish());
   const dialog = screen.getByRole('alertdialog', {
-    name: 'pluginOperationFailureTitle.committed',
+    name: 'pluginOperationFailureTitle.install.committed',
   });
   expect(dialog.getAttribute('aria-describedby')).toBeTruthy();
   expect(screen.getByText('pluginOperationStageLabel.enabling')).toBeTruthy();
   expect(screen.getByText('Required configuration is missing')).toBeTruthy();
+  expect(screen.getByText('pluginOperationInstallationOutcome.committed')).toBeTruthy();
   expect(screen.queryByText('pluginOperationStage.refreshing_inventory')).toBeNull();
-  expect(screen.getByText('pluginOperationFailureNext.committed')).toBeTruthy();
+  expect(screen.getByText('pluginOperationFailureGuidance.enable pluginOperationFailureGuidance.saved')).toBeTruthy();
   expect(screen.queryByRole('button', { name: /retry/i })).toBeNull();
   expect(dialog.closest('[data-workspace-overlay]')?.className).toContain('z-[80]');
 });
@@ -140,29 +182,44 @@ test('keeps long details collapsed and copies the original error, supplemental n
   expect(writeText).toHaveBeenCalledWith(expect.stringContaining(operation.context.requestId));
 });
 
-test.each([true, false])('a batch only refers to its item stages when they exist (%s)', withStage => {
-  const { owner } = setup();
-  const operation = owner.start(options);
-  operation.fail({
-    message: 'One succeeded and one failed',
-    items: [
-      { label: 'Good package', message: 'Imported successfully', type: 'success' },
-      {
-        label: 'Invalid package', message: 'Native format was rejected', type: 'error',
-        ...(withStage ? { failedStage: PluginOperationStage.VALIDATING } : {}),
-      },
-    ],
-  });
-  operation.finish();
-  render(<PluginOperationFeedback />);
-  expect(screen.getByText(withStage
-    ? 'pluginOperationFailureStagesInItems' : 'pluginOperationFailureStageUnavailable')).toBeTruthy();
-  expect(screen.queryByText(withStage
-    ? 'pluginOperationFailureStageUnavailable' : 'pluginOperationFailureStagesInItems')).toBeNull();
-  expect(screen.getByText('Imported successfully')).toBeTruthy();
-  expect(screen.getByText('Native format was rejected')).toBeTruthy();
-  if (withStage) expect(screen.getByText(/pluginOperationStageLabel.validating/)).toBeTruthy();
-});
+test.each([true, false])(
+  'a batch only refers to its item stages when they exist (%s)',
+  withStage => {
+    const { owner } = setup();
+    const operation = owner.start(options);
+    operation.fail({
+      message: 'One succeeded and one failed',
+      items: [
+        { label: 'Good package', message: 'Imported successfully', type: 'success' },
+        {
+          label: 'Invalid package',
+          message: 'Native format was rejected',
+          type: 'error',
+          ...(withStage ? { failedStage: PluginOperationStage.VALIDATING } : {}),
+        },
+      ],
+    });
+    operation.finish();
+    render(<PluginOperationFeedback />);
+    expect(
+      screen.getByText(
+        withStage
+          ? 'pluginOperationFailureStagesInItems'
+          : 'pluginOperationFailureStageUnavailable',
+      ),
+    ).toBeTruthy();
+    expect(
+      screen.queryByText(
+        withStage
+          ? 'pluginOperationFailureStageUnavailable'
+          : 'pluginOperationFailureStagesInItems',
+      ),
+    ).toBeNull();
+    expect(screen.getByText('Imported successfully')).toBeTruthy();
+    expect(screen.getByText('Native format was rejected')).toBeTruthy();
+    if (withStage) expect(screen.getByText(/pluginOperationStageLabel.validating/)).toBeTruthy();
+  },
+);
 
 test('a clipboard failure retains the error dialog and reports how to copy manually', async () => {
   const { owner } = setup();

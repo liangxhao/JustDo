@@ -5,6 +5,7 @@ import {
   ExclamationTriangleIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
+import { PluginOperationAction } from '@shared/plugins/pluginOperation';
 import React, { useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
@@ -12,7 +13,16 @@ import { i18nService } from '@/services/i18n';
 import Modal from '@/shared/components/ui/Modal';
 import { isDomHTMLElement, useOwnerDocument } from '@/shared/dom/ownerDocument';
 
-import type { PluginOperationFailure, PluginOperationFailureItem } from './pluginOperationService';
+import {
+  pluginOperationFailureGuidance,
+  pluginOperationFailurePresentation,
+  pluginOperationNeedsConfirmation,
+} from './pluginOperationPresentation';
+import {
+  type PluginOperationFailure,
+  type PluginOperationFailureItem,
+  PluginOperationFailureState,
+} from './pluginOperationService';
 
 export type OperationResultItem = PluginOperationFailureItem;
 
@@ -38,11 +48,29 @@ const topDialog = (stack: DialogLayer[]) =>
   );
 
 const operationStageLabel = (operation: PluginOperationFailure) =>
-  operation.failedStage
-    ? i18nService.t(`pluginOperationStageLabel.${operation.failedStage}`)
-    : operation.items?.some(item => item.failedStage)
-      ? i18nService.t('pluginOperationFailureStagesInItems')
-      : i18nService.t('pluginOperationFailureStageUnavailable');
+  (operation.items?.length ?? 0) > 1
+    ? i18nService.t(
+        operation.items?.some(item => item.failedStage)
+          ? 'pluginOperationFailureStagesInItems'
+          : 'pluginOperationFailureStageUnavailable',
+      )
+    : operation.failedStage
+      ? i18nService.t(`pluginOperationStageLabel.${operation.failedStage}`)
+      : operation.items?.some(item => item.failedStage)
+        ? i18nService.t('pluginOperationFailureStagesInItems')
+        : i18nService.t('pluginOperationFailureStageUnavailable');
+
+const operationItemGuidance = (action: PluginOperationAction, item: PluginOperationFailureItem) =>
+  pluginOperationFailureGuidance({
+    action,
+    state:
+      item.operationUnconfirmed || item.installSourceInUse
+        ? PluginOperationFailureState.UNCONFIRMED
+        : item.installationCommitted
+          ? PluginOperationFailureState.COMMITTED
+          : PluginOperationFailureState.FAILED,
+    failedStage: item.failedStage,
+  });
 
 const operationDuration = (operation: PluginOperationFailure) =>
   i18nService
@@ -57,10 +85,17 @@ const OperationFailureContent: React.FC<{ operation: PluginOperationFailure }> =
   const errorDetails = [
     ...new Set([operation.message, operation.details?.trim()].filter(Boolean)),
   ].join('\n\n');
-  const lines = operation.message.split(/\r?\n/).filter(line => line.trim());
-  const reason = lines[0]?.trim() || i18nService.t('pluginOperationFailureReasonUnavailable');
+  const reason =
+    operation.message.trim() || i18nService.t('pluginOperationFailureReasonUnavailable');
   const showDetails = errorDetails !== reason || reason.length > 240;
-  const guidance = i18nService.t(`pluginOperationFailureNext.${operation.state}`);
+  const guidance = pluginOperationFailurePresentation(operation).guidance;
+  const installationOutcome =
+    (operation.items?.length ?? 0) < 2 &&
+    (operation.action === PluginOperationAction.INSTALL ||
+      operation.action === PluginOperationAction.UPDATE) &&
+    (operation.state === 'committed' || operation.state === 'unconfirmed')
+      ? i18nService.t(`pluginOperationInstallationOutcome.${operation.state}`)
+      : undefined;
 
   useEffect(() => {
     copyGeneration.current += 1;
@@ -73,16 +108,29 @@ const OperationFailureContent: React.FC<{ operation: PluginOperationFailure }> =
   const copyDetails = async () => {
     const generation = ++copyGeneration.current;
     const text = [
+      pluginOperationFailurePresentation(operation).title,
       operation.label,
       i18nService.t(`pluginOperationLabel.${operation.action}`),
-      operationStageLabel(operation),
+      `${i18nService.t(
+        pluginOperationNeedsConfirmation(operation)
+          ? 'pluginOperationFailureLastStage'
+          : 'pluginOperationFailureStage',
+      )}: ${operationStageLabel(operation)}`,
       operationDuration(operation),
       errorDetails,
+      guidance,
       ...(operation.items ?? [])
         .flatMap(item => [
           item.label,
-          item.failedStage ? i18nService.t(`pluginOperationStageLabel.${item.failedStage}`) : '',
+          item.failedStage
+            ? `${i18nService.t(
+                item.operationUnconfirmed || item.installSourceInUse
+                  ? 'pluginOperationFailureLastStage'
+                  : 'pluginOperationFailureStage',
+              )}: ${i18nService.t(`pluginOperationStageLabel.${item.failedStage}`)}`
+            : '',
           item.message,
+          item.type === 'success' ? '' : operationItemGuidance(operation.action, item),
           item.installationCommitted
             ? i18nService.t('pluginOperationFailureItemCommitted')
             : item.operationUnconfirmed || item.installSourceInUse
@@ -113,7 +161,7 @@ const OperationFailureContent: React.FC<{ operation: PluginOperationFailure }> =
           <div className="min-w-0">
             <dt className="text-secondary">
               {i18nService.t(
-                operation.state === 'unconfirmed'
+                pluginOperationNeedsConfirmation(operation)
                   ? 'pluginOperationFailureLastStage'
                   : 'pluginOperationFailureStage',
               )}
@@ -128,6 +176,12 @@ const OperationFailureContent: React.FC<{ operation: PluginOperationFailure }> =
           </div>
         </dl>
       </div>
+
+      {installationOutcome && (
+        <p className="rounded-xl bg-surface-raised px-4 py-3 text-sm leading-6 text-foreground">
+          {installationOutcome}
+        </p>
+      )}
 
       <div>
         <h3 className="text-xs font-medium text-secondary">
@@ -396,7 +450,7 @@ const OperationResultModal: React.FC<OperationResultModalProps> = ({
 
         {operation && (
           <p id={descriptionId} className="sr-only">
-            {operation.label}. {i18nService.t(`pluginOperationFailureNext.${operation.state}`)}
+            {operation.label}. {pluginOperationFailurePresentation(operation).guidance}
           </p>
         )}
 
@@ -427,8 +481,12 @@ const OperationResultModal: React.FC<OperationResultModalProps> = ({
                 </div>
                 {item.failedStage && (
                   <p className="mb-2 text-xs text-secondary">
-                    {i18nService.t('pluginOperationFailureStage')} ·{' '}
-                    {i18nService.t(`pluginOperationStageLabel.${item.failedStage}`)}
+                    {i18nService.t(
+                      item.operationUnconfirmed || item.installSourceInUse
+                        ? 'pluginOperationFailureLastStage'
+                        : 'pluginOperationFailureStage',
+                    )}{' '}
+                    · {i18nService.t(`pluginOperationStageLabel.${item.failedStage}`)}
                   </p>
                 )}
                 {(item.installationCommitted ||
@@ -443,6 +501,11 @@ const OperationResultModal: React.FC<OperationResultModalProps> = ({
                   </p>
                 )}
                 <StructuredMessage message={item.message} type={item.type ?? result.type} />
+                {operation && (item.type ?? result.type) === 'error' && (
+                  <p className="mt-2 text-xs leading-5 text-secondary">
+                    {operationItemGuidance(operation.action, item)}
+                  </p>
+                )}
               </div>
             ))}
           </div>

@@ -35,10 +35,7 @@ import {
   groupExtensionsByOwnership,
 } from '@/features/plugins/extensions/extensionGroups';
 import { getExtensionManagementLabel } from '@/features/plugins/extensions/extensionManagementLabel';
-import {
-  InstalledMarketplaceAction,
-  MarketplaceFeedback,
-} from '@/features/plugins/marketplace/MarketplaceActions';
+import { InstalledMarketplaceAction } from '@/features/plugins/marketplace/MarketplaceActions';
 import MarketplaceToolbar from '@/features/plugins/marketplace/MarketplaceToolbar';
 import { MarketplaceResults } from '@/features/plugins/marketplace/MarketplaceView';
 import {
@@ -450,6 +447,17 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
     importOperation.current = operation;
     return window.electron.extensions
       .importPath(request, operation.context)
+      .then(result => {
+        if (result.capabilityReview && result.refreshWarning) {
+          // Keep the review available without hiding a recovery or catalog read error.
+          const failure = pluginOperationFailure(result, i18nService.t('pluginOperationFailureTitle.refresh'));
+          operation.fail({
+            ...failure,
+            failedStage: failure.failedStage ?? PluginOperationStage.REFRESHING_INVENTORY,
+          });
+        }
+        return result;
+      })
       .catch((error): ExtensionImportResult => ({
         success: false,
         error: error instanceof Error ? error.message : i18nService.t('extensionImportFailed'),
@@ -708,6 +716,13 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
       );
       mutationResult = result;
       if (result.capabilityReview) {
+        if (result.refreshWarning) {
+          const failure = pluginOperationFailure(result, i18nService.t('pluginOperationFailureTitle.refresh'));
+          operation.fail({
+            ...failure,
+            failedStage: failure.failedStage ?? PluginOperationStage.REFRESHING_INVENTORY,
+          });
+        }
         if (!inventoryMounted.current) return;
         setPendingCapabilityReview({ kind: 'toggle', extension, review: result.capabilityReview });
         return;
@@ -1098,7 +1113,6 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
             </Tooltip>
           )}
         </div>
-        <MarketplaceFeedback controller={marketplace} id={extension.id} />
       </article>
     );
   };

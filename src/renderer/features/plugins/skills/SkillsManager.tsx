@@ -14,10 +14,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useDispatch, useSelector } from 'react-redux';
 
-import {
-  InstalledMarketplaceAction,
-  MarketplaceFeedback,
-} from '@/features/plugins/marketplace/MarketplaceActions';
+import { InstalledMarketplaceAction } from '@/features/plugins/marketplace/MarketplaceActions';
 import MarketplaceToolbar from '@/features/plugins/marketplace/MarketplaceToolbar';
 import { MarketplaceResults } from '@/features/plugins/marketplace/MarketplaceView';
 import {
@@ -597,7 +594,6 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
             </div>
           ) : undefined
         }
-        feedback={<MarketplaceFeedback controller={marketplace} id={skill.id} />}
       />
     );
   };

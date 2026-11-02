@@ -209,6 +209,88 @@ describe('OpenClawExtensionImportService', () => {
     expect(restart).not.toHaveBeenCalled();
   });
 
+  it.each([false, true])('preserves a committed marketplace install when the activation reply is lost without replaying it (recovery fails: %s)', async recoveryFails => {
+    const sourceDir = path.join(fixtureRoot, 'source');
+    const stateDir = path.join(fixtureRoot, 'state');
+    const installedDir = path.join(stateDir, 'extensions', 'market-extension');
+    const configPath = path.join(stateDir, 'openclaw.json');
+    fs.mkdirSync(sourceDir);
+    fs.mkdirSync(stateDir);
+    fs.writeFileSync(
+      path.join(sourceDir, 'openclaw.plugin.json'),
+      JSON.stringify({ id: 'market-extension' }),
+    );
+    const runCommand = vi.fn(async () => {
+      fs.cpSync(sourceDir, installedDir, { recursive: true });
+      fs.writeFileSync(
+        configPath,
+        JSON.stringify({ plugins: { entries: { 'market-extension': { enabled: false } } } }),
+      );
+      return { exitCode: 0, stdout: 'Installed plugin: market-extension', stderr: '' };
+    });
+    const reason = 'Gateway activation response was lost';
+    const requestGateway = vi.fn().mockRejectedValue(
+      Object.assign(new Error(reason), { code: 'CLIENT_CLOSED', requestSent: true }),
+    );
+    const recoveryReason = 'Outbound header policy recovery failed';
+    let policyReads = 0;
+    const reconcile = vi.fn(() => {
+      policyReads += 1;
+      if (recoveryFails && policyReads === 4) throw new Error(recoveryReason);
+      return { overwrite: false, enabled: false, groups: [], digest: 'unchanged' };
+    });
+    const restartGatewayAfterMutation = vi.fn();
+    const service = new OpenClawExtensionImportService({
+      getOpenClawEngineManager: () =>
+        ({
+          getStatus: () => ({ phase: 'ready' }),
+          getBaseDir: () => fixtureRoot,
+          getStateDir: () => stateDir,
+          getConfigPath: () => configPath,
+          buildCliEnvironment: async () => ({
+            env: { JUSTDO_ELECTRON_PATH: process.execPath, OPENCLAW_STATE_DIR: stateDir },
+            runtimeRoot: fixtureRoot,
+            openclawEntry: path.join(fixtureRoot, 'openclaw.mjs'),
+          }),
+        }) as unknown as OpenClawEngineManager,
+      runCommand,
+      requestGateway,
+      restartGatewayAfterMutation,
+      outboundHeaderPolicy: {
+        inspectExtension: vi.fn().mockReturnValue(null),
+        reconcile,
+      },
+    });
+
+    const result = await service.importPath(sourceDir, undefined, undefined, {
+      trustMarketplaceSource: true,
+    });
+
+    expect(result).toMatchObject({
+      success: false,
+      extensionId: 'market-extension',
+      installPath: installedDir,
+      installationCommitted: true,
+      operationUnconfirmed: true,
+      operationFailedStage: 'enabling',
+    });
+    if (recoveryFails) {
+      expect(result.error?.startsWith(reason)).toBe(true);
+      expect(result.error).toContain(recoveryReason);
+    } else {
+      expect(result.error).toBe(reason);
+    }
+    expect(result.installSourceInUse).toBeUndefined();
+    expect(reconcile).toHaveBeenCalledTimes(4);
+    expect(runCommand).toHaveBeenCalledOnce();
+    expect(requestGateway).toHaveBeenCalledOnce();
+    expect(requestGateway).toHaveBeenCalledWith('plugins.setEnabled', {
+      pluginId: 'market-extension',
+      enabled: true,
+    });
+    expect(restartGatewayAfterMutation).not.toHaveBeenCalled();
+  });
+
   it.each([0, 1])(
     'reports commit evidence only after native install succeeds (exit: %s)',
     async exitCode => {
@@ -1690,69 +1772,176 @@ describe('OpenClawExtensionImportService', () => {
     });
   });
 
-  it('enables a network sidecar without an outbound-header capability review', async () => {
-    const stateDir = path.join(fixtureRoot, 'state');
-    const installedDir = path.join(stateDir, 'extensions', 'network-extension');
-    const configPath = path.join(stateDir, 'openclaw.json');
-    fs.mkdirSync(installedDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(installedDir, 'openclaw.plugin.json'),
-      JSON.stringify({ id: 'network-extension', name: 'Network Extension' }),
-    );
-    fs.writeFileSync(
-      configPath,
-      JSON.stringify({ plugins: { entries: { 'network-extension': { enabled: false } } } }),
-    );
-    const requestGateway = vi.fn(async () => {
+  it.each([true, false])(
+    'updates a network sidecar on enabled=%s without a second capability review',
+    async enabled => {
+      const stateDir = path.join(fixtureRoot, 'state');
+      const installedDir = path.join(stateDir, 'extensions', 'network-extension');
+      const configPath = path.join(stateDir, 'openclaw.json');
+      fs.mkdirSync(installedDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(installedDir, 'openclaw.plugin.json'),
+        JSON.stringify({ id: 'network-extension', name: 'Network Extension' }),
+      );
       fs.writeFileSync(
         configPath,
-        JSON.stringify({ plugins: { entries: { 'network-extension': { enabled: true } } } }),
+        JSON.stringify({ plugins: { entries: { 'network-extension': { enabled: !enabled } } } }),
       );
-      return { ok: true, restartRequired: false };
-    });
-    const reconcile = vi
-      .fn()
-      .mockReturnValueOnce({
-        overwrite: false,
-        enabled: true,
-        groups: [],
-        digest: 'before-enable',
-      })
-      .mockReturnValue({
-        overwrite: false,
-        enabled: true,
-        groups: [],
-        digest: 'after-enable',
+      const requestGateway = vi.fn(async () => {
+        fs.writeFileSync(
+          configPath,
+          JSON.stringify({ plugins: { entries: { 'network-extension': { enabled } } } }),
+        );
+        return { ok: true, restartRequired: false };
       });
-    const restartGatewayAfterMutation = vi.fn().mockResolvedValue({ phase: 'running' });
-    const service = new OpenClawExtensionImportService({
-      getNativeSkillIds: id => (id === 'agent-team' ? ['agent-team'] : []),
-      getOpenClawEngineManager: () =>
-        ({
-          getStatus: () => ({ phase: 'ready' }),
-          getStateDir: () => stateDir,
-          getBaseDir: () => fixtureRoot,
-          getConfigPath: () => configPath,
-        }) as OpenClawEngineManager,
-      requestGateway,
-      restartGatewayAfterMutation,
-      outboundHeaderPolicy: {
-        inspectExtension: vi.fn(),
-        reconcile,
-      },
-    });
+      const reconcile = vi
+        .fn()
+        .mockReturnValueOnce({
+          overwrite: false,
+          enabled: true,
+          groups: [],
+          digest: 'before-toggle',
+        })
+        .mockReturnValue({
+          overwrite: false,
+          enabled: true,
+          groups: [],
+          digest: 'after-toggle',
+        });
+      const restartGatewayAfterMutation = vi.fn().mockResolvedValue({ phase: 'running' });
+      const service = new OpenClawExtensionImportService({
+        getNativeSkillIds: id => (id === 'agent-team' ? ['agent-team'] : []),
+        getOpenClawEngineManager: () =>
+          ({
+            getStatus: () => ({ phase: 'ready' }),
+            getStateDir: () => stateDir,
+            getBaseDir: () => fixtureRoot,
+            getConfigPath: () => configPath,
+          }) as OpenClawEngineManager,
+        requestGateway,
+        restartGatewayAfterMutation,
+        outboundHeaderPolicy: {
+          inspectExtension: vi.fn(),
+          reconcile,
+        },
+      });
 
-    await expect(service.setEnabled('network-extension', true)).resolves.toEqual({
-      success: true,
-      warnings: undefined,
-    });
-    expect(requestGateway).toHaveBeenLastCalledWith('plugins.setEnabled', {
-      pluginId: 'network-extension',
-      enabled: true,
-    });
-    expect(reconcile).toHaveBeenCalledTimes(2);
-    expect(restartGatewayAfterMutation).toHaveBeenCalledWith('extension-network-policy-change');
-  });
+      await expect(service.setEnabled('network-extension', enabled)).resolves.toEqual({
+        success: true,
+        warnings: undefined,
+      });
+      expect(requestGateway).toHaveBeenLastCalledWith('plugins.setEnabled', {
+        pluginId: 'network-extension',
+        enabled,
+      });
+      expect(reconcile).toHaveBeenCalledTimes(2);
+      expect(restartGatewayAfterMutation).toHaveBeenCalledWith('extension-network-policy-change');
+    },
+  );
+
+  it.each([
+    { enabled: true, outcome: 'exit', recovery: 'restart' },
+    { enabled: false, outcome: 'reject', recovery: 'restart' },
+    { enabled: false, outcome: 'exit', recovery: 'reconcile' },
+  ] as const)(
+    'retains the cold toggle $outcome failure before a later network-policy $recovery failure (enabled=$enabled)',
+    async ({ enabled, outcome, recovery: recoveryPhase }) => {
+      const stateDir = path.join(fixtureRoot, 'state');
+      const installedDir = path.join(stateDir, 'extensions', 'network-extension');
+      const configPath = path.join(stateDir, 'openclaw.json');
+      fs.mkdirSync(installedDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(installedDir, 'openclaw.plugin.json'),
+        JSON.stringify({ id: 'network-extension' }),
+      );
+      fs.writeFileSync(
+        configPath,
+        JSON.stringify({ plugins: { entries: { 'network-extension': { enabled: !enabled } } } }),
+      );
+      const primary = 'Native plugin configuration rejected: required endpoint is missing';
+      const recovery =
+        recoveryPhase === 'reconcile'
+          ? 'Outbound request-header policy activation failed'
+          : 'Outbound request-header runtime recovery failed';
+      const requestGateway = vi.fn().mockRejectedValueOnce(
+        Object.assign(new Error('Gateway request was not sent'), {
+          code: 'CLIENT_CLOSED',
+          requestSent: false,
+        }),
+      );
+      const runCommand = vi.fn(async () => {
+        if (outcome === 'reject') throw new Error(primary);
+        return { exitCode: 1, stdout: '', stderr: primary };
+      });
+      const restartGatewayAfterMutation = vi
+        .fn()
+        .mockResolvedValue({ phase: 'error', message: recovery });
+      const reconcile = vi
+        .fn()
+        .mockReturnValueOnce({ enabled: true, groups: [], digest: 'before-toggle' });
+      if (recoveryPhase === 'reconcile') {
+        reconcile.mockImplementation(() => {
+          throw new Error(recovery);
+        });
+      } else {
+        reconcile.mockReturnValue({ enabled: true, groups: [], digest: 'after-toggle' });
+      }
+      const service = new OpenClawExtensionImportService({
+        getOpenClawEngineManager: () =>
+          ({
+            getStatus: () => ({ phase: 'running' }),
+            getStateDir: () => stateDir,
+            getBaseDir: () => fixtureRoot,
+            getConfigPath: () => configPath,
+            buildCliEnvironment: async () => ({
+              env: { JUSTDO_ELECTRON_PATH: process.execPath, OPENCLAW_STATE_DIR: stateDir },
+              runtimeRoot: fixtureRoot,
+              openclawEntry: path.join(fixtureRoot, 'openclaw.mjs'),
+            }),
+          }) as unknown as OpenClawEngineManager,
+        requestGateway,
+        runCommand,
+        restartGatewayAfterMutation,
+        outboundHeaderPolicy: { inspectExtension: vi.fn(), reconcile },
+      });
+      const onProgress = vi.fn();
+
+      const result = await service.setEnabled('network-extension', enabled, undefined, onProgress);
+
+      expect(result).toMatchObject({
+        success: false,
+        failedStage: enabled ? 'enabling' : 'disabling',
+        error: expect.stringMatching(
+          /^Native plugin configuration rejected: required endpoint is missing\n/,
+        ),
+      });
+      expect(result.error).toContain(recovery);
+      expect(requestGateway).toHaveBeenCalledExactlyOnceWith('plugins.setEnabled', {
+        pluginId: 'network-extension',
+        enabled,
+      });
+      expect(runCommand).toHaveBeenCalledExactlyOnceWith(
+        process.execPath,
+        [
+          path.join(fixtureRoot, 'openclaw.mjs'),
+          'plugins',
+          enabled ? 'enable' : 'disable',
+          'network-extension',
+        ],
+        expect.any(Object),
+      );
+      expect(reconcile).toHaveBeenCalledTimes(2);
+      if (recoveryPhase === 'reconcile') {
+        expect(restartGatewayAfterMutation).not.toHaveBeenCalled();
+        expect(onProgress).toHaveBeenLastCalledWith(enabled ? 'enabling' : 'disabling');
+      } else {
+        expect(restartGatewayAfterMutation).toHaveBeenCalledExactlyOnceWith(
+          'extension-network-policy-change',
+        );
+        expect(onProgress).toHaveBeenLastCalledWith('restarting_gateway');
+      }
+    },
+  );
 
   it('keeps a lost enable response unconfirmed even when the saved flag matches', async () => {
     const stateDir = path.join(fixtureRoot, 'state');

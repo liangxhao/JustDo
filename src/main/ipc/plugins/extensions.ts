@@ -20,6 +20,11 @@ import {
 } from '../../../shared/plugins/pluginOperation';
 import { enqueueAppConfigUpdate } from '../../data/appConfigUpdateQueue';
 import type { OpenClawExtensionImportService } from '../../plugins/extensions';
+import {
+  installExtensionPackage,
+  removeExtensionPackage,
+  setExtensionEnabled,
+} from '../../plugins/extensions/extensionMutation';
 import { type PluginInstallationService, PluginInstallOrigin } from '../../plugins/installation';
 import {
   createPluginOperationReporter,
@@ -91,10 +96,12 @@ export const registerExtensionHandlers = ({
               : {}),
           },
         );
-      const result = await (mutateAppPackage &&
-      (request.payload.reviewToken || request.origin === PluginInstallOrigin.MARKETPLACE)
-        ? mutateAppPackage(install)
-        : install());
+      const result = await installExtensionPackage(
+        install,
+        request.payload.reviewToken || request.origin === PluginInstallOrigin.MARKETPLACE
+          ? mutateAppPackage
+          : undefined,
+      );
       if (
         (result.success || result.installationCommitted) &&
         result.extensionId &&
@@ -122,12 +129,13 @@ export const registerExtensionHandlers = ({
         success: result.success,
         ...(result.installationCommitted ? { installationCommitted: true as const } : {}),
         ...(result.installSourceInUse ? { installSourceInUse: true as const } : {}),
+        ...(result.operationUnconfirmed ? { operationUnconfirmed: true as const } : {}),
         pluginId: result.extensionId,
         installPath,
         failedStage: result.operationFailedStage ?? result.failedStage,
         error: result.error,
         capabilityReview: result.capabilityReview,
-        ...(refreshWarning ? { refreshWarning: true as const } : {}),
+        ...(refreshWarning || result.refreshWarning ? { refreshWarning: true as const } : {}),
       };
     },
   });
@@ -209,6 +217,7 @@ export const registerExtensionHandlers = ({
           capabilityReview: result.capabilityReview,
           ...(result.installationCommitted ? { installationCommitted: true as const } : {}),
           ...(result.installSourceInUse ? { installSourceInUse: true as const } : {}),
+          ...(result.operationUnconfirmed ? { operationUnconfirmed: true as const } : {}),
           ...(result.refreshWarning ? { refreshWarning: true as const } : {}),
         });
       } catch (error) {
@@ -241,7 +250,7 @@ export const registerExtensionHandlers = ({
         let refreshWarning = false;
         try {
           const remove = () => extensionImportService.delete(extensionId, progress.report);
-          result = await (mutateAppPackage ? mutateAppPackage(remove) : remove());
+          result = await removeExtensionPackage(remove, mutateAppPackage);
           progress.result(result);
         } catch (error) {
           progress.captureFailure();
@@ -317,9 +326,13 @@ export const registerExtensionHandlers = ({
         const apply = () => extensionId === OpenClawExtensionId.TYPESAFE
           ? enqueueAppConfigUpdate(mutate)
           : mutate();
-        return await (mutateAppPlugin
-          ? mutateAppPlugin(extensionId, request.enabled, apply)
-          : apply());
+        return await setExtensionEnabled(
+          request.enabled,
+          apply,
+          mutateAppPlugin
+            ? operation => mutateAppPlugin(extensionId, request.enabled, operation)
+            : undefined,
+        );
       } catch (error) {
         const errorMsg =
           error instanceof Error ? error.message : 'Failed to update extension status';

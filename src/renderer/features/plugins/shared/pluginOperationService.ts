@@ -62,6 +62,9 @@ export type PluginOperationFailure = PluginOperationOptions & {
   failedStage?: PluginOperationStage;
   elapsedMs: number;
   state: (typeof PluginOperationFailureState)[keyof typeof PluginOperationFailureState];
+  installationCommitted?: true;
+  installSourceInUse?: true;
+  operationUnconfirmed?: true;
   items?: PluginOperationFailureInput['items'];
 };
 
@@ -216,6 +219,9 @@ class PluginOperationOwner {
               : input.installSourceInUse || input.operationUnconfirmed
                 ? PluginOperationFailureState.UNCONFIRMED
                 : PluginOperationFailureState.FAILED),
+          ...(input.installationCommitted ? { installationCommitted: true as const } : {}),
+          ...(input.installSourceInUse ? { installSourceInUse: true as const } : {}),
+          ...(input.operationUnconfirmed ? { operationUnconfirmed: true as const } : {}),
           ...(input.items?.length
             ? {
                 items: input.items.slice(0, 100).map(item => ({

@@ -31,6 +31,7 @@ import {
   pluginOperationRefreshFailure,
 } from '@/features/plugins/shared/pluginMutationFeedback';
 import { reportPluginOperationFailure } from '@/features/plugins/shared/pluginOperationService';
+import { PluginOperationStatusContent } from '@/features/plugins/shared/PluginOperationStatusSlot';
 import { comparePluginNames } from '@/features/plugins/shared/pluginOrdering';
 import PluginStateButton, {
   PluginLockedIndicator,
@@ -422,29 +423,42 @@ const HookManager: React.FC<HookManagerProps> = ({
 
       {actionError && <ErrorMessage message={actionError} onClose={() => setActionError('')} />}
 
-      {importSuccess && (
-        <div className="rounded-xl border border-green-500/30 bg-green-500/10 p-3 text-sm text-green-600">
-          {i18nService.t('hookImportSuccess').replace('{hookId}', importSuccess)}
-        </div>
-      )}
+      {(importSuccess || deleteSuccess || restartNotice) && (
+        <PluginOperationStatusContent>
+          {importSuccess && (
+            <div
+              role="status"
+              className="rounded-xl border border-border bg-surface px-3 py-2.5 text-sm text-green-600 shadow-lg"
+            >
+              {i18nService.t('hookImportSuccess').replace('{hookId}', importSuccess)}
+            </div>
+          )}
 
-      {deleteSuccess && (
-        <div className="rounded-xl border border-green-500/30 bg-green-500/10 p-3 text-sm text-green-600">
-          {i18nService.t('hookDeleteSuccess').replace('{name}', deleteSuccess)}
-        </div>
-      )}
+          {deleteSuccess && (
+            <div
+              role="status"
+              className="rounded-xl border border-border bg-surface px-3 py-2.5 text-sm text-green-600 shadow-lg"
+            >
+              {i18nService.t('hookDeleteSuccess').replace('{name}', deleteSuccess)}
+            </div>
+          )}
 
-      {restartNotice && (
-        <div className="flex items-center justify-between gap-3 rounded-xl border border-yellow-500/30 bg-yellow-500/10 px-3 py-2 text-sm text-yellow-700 dark:text-yellow-300">
-          <span>{i18nService.t('hookRestartRequired')}</span>
-          <button
-            type="button"
-            onClick={() => setRestartNotice(false)}
-            className="rounded-lg px-2 py-1 text-xs transition-colors hover:bg-yellow-500/10"
-          >
-            {i18nService.t('dismiss')}
-          </button>
-        </div>
+          {restartNotice && (
+            <div
+              role="status"
+              className="flex items-center justify-between gap-3 rounded-xl border border-border bg-surface px-3 py-2.5 text-sm text-yellow-700 shadow-lg dark:text-yellow-300"
+            >
+              <span>{i18nService.t('hookRestartRequired')}</span>
+              <button
+                type="button"
+                onClick={() => setRestartNotice(false)}
+                className="rounded-lg px-2 py-1 text-xs transition-colors hover:bg-yellow-500/10"
+              >
+                {i18nService.t('dismiss')}
+              </button>
+            </div>
+          )}
+        </PluginOperationStatusContent>
       )}
 
       {visibility !== 'available' ? (

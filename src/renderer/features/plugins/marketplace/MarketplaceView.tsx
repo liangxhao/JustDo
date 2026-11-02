@@ -8,8 +8,9 @@ import React, { useEffect, useRef, useState } from 'react';
 import { getPluginArtworkTone } from '@/features/plugins/shared/pluginArtwork';
 import { i18nService } from '@/services/i18n';
 
-import { MarketplaceAction, MarketplaceFeedback } from './MarketplaceActions';
+import { MarketplaceAction } from './MarketplaceActions';
 import MarketplaceDetail from './MarketplaceDetail';
+import MarketplaceOperationFeedback from './MarketplaceOperationFeedback';
 import {
   type InstalledMarketplacePlugin,
   MarketplaceFilter,
@@ -147,7 +148,6 @@ export function MarketplaceResults({
                 </button>
                 <MarketplaceAction controller={c} item={item} installOnly />
               </div>
-              {(!local || !renderInstalled) && <MarketplaceFeedback controller={c} item={item} />}
             </article>
           );
         })}
@@ -220,6 +220,7 @@ export default function MarketplaceView(props: StandaloneProps) {
           placeholder={i18nService.t('marketplaceSearchPlaceholder')}
         />
       )}
+      <MarketplaceOperationFeedback controller={controller} />
       <MarketplaceResults controller={controller} icon={props.icon} />
     </>
   );

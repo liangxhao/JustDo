@@ -29,6 +29,6 @@ export const pluginOperationFailure = (
 
 export const pluginOperationRefreshFailure = (result: PluginOperationFeedback = {}) => ({
   ...pluginOperationFailure(result, i18nService.t('pluginOperationRefreshFailed')),
-  failedStage: PluginOperationStage.REFRESHING_INVENTORY,
+  failedStage: result.failedStage ?? PluginOperationStage.REFRESHING_INVENTORY,
   state: 'refresh_failed' as const,
 });
