@@ -806,6 +806,9 @@ Markdown-it 处理列表、代码、表格、公式和链接，DOMPurify 统一�
 主 Renderer 的 `presentations.ts` 管理稳定 App 容器、消息／侧栏位置、会话内序号及必要保活；
 桌面在首次 iframe / bridge 创建前确定独立原生载体文档，历史行接管不重新创建已有实例。
 普通未固定实例随最后锚点释放；固定及等待原消息返回的实例才保留。
+draw.io 编辑器还为原会话已派发且尚无精确整轮终态的画布运行跨导航保留，独立通道
+继续读取和应用回执；新发送准备及普通 App 界面权限仍暂停。全部登记运行的原绑定
+`executionSettled: true` lifecycle end/error 到达后，释放没有展示锚点或固定状态的实例。
 产品会话删除和展示区域销毁清理所属实例，不引入转录或内容缓存。
 
 workspace 的固定文档接收同一 `CoworkDisplayPanel` 与标签状态，普通组件树持续挂载。

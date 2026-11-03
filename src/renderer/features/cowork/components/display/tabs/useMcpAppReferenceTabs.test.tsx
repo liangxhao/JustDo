@@ -14,6 +14,31 @@ afterEach(async () => {
   await new Promise(resolve => setTimeout(resolve, 10));
 });
 
+test('an inline background canvas retains its controller on Home without adding a pinned tab', () => {
+  const manager = getMcpAppPresentations();
+  const dispose = vi.fn();
+  manager.entries.push({
+    scope: 'drawing-chat',
+    pinned: false,
+    returnPending: false,
+    anchors: new Set(),
+    layer: document.createElement('div'),
+    visible: false,
+    view: { resume: vi.fn(), retainOnNavigation: true },
+    dispose,
+  } as unknown as McpAppPresentation);
+  const { result, rerender } = renderHook(
+    ({ ids }) => useMcpAppReferenceTabs('home', vi.fn(), vi.fn(), undefined, ids),
+    { initialProps: { ids: ['drawing-chat'] } },
+  );
+  expect(result.current.hasRetainedPanels).toBe(true);
+  expect(result.current.tabs).toEqual([]);
+  expect(dispose).not.toHaveBeenCalled();
+  rerender({ ids: [] });
+  expect(result.current.hasRetainedPanels).toBe(false);
+  expect(dispose).toHaveBeenCalledOnce();
+});
+
 test('a stale session list retains the active App and removes it after leaving the deleted scope', () => {
   const manager = getMcpAppPresentations();
   const dispose = vi.fn();

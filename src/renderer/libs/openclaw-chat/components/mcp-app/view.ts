@@ -72,6 +72,7 @@ type Resources = {
   localNotice?: string;
   contentTitle?: string;
   sharedHeader?: boolean;
+  retainOnNavigation?: boolean;
 };
 
 const STYLE = `
@@ -184,7 +185,7 @@ export class McpAppView extends LitElement {
     if (!this.isConnected) return;
     if (this.resources && !this.loading && this.resources.session.isCurrent())
       this.resources.session.preservePresentation =
-        (this.fillContainer || this.retainPresentation) && Boolean(this.context?.resume);
+        this.shouldPreservePresentation();
     if (this.waitingApps !== this.context?.apps) {
       this.stopWaiting?.();
       this.waitingApps = this.context?.apps;
@@ -409,10 +410,15 @@ export class McpAppView extends LitElement {
     this.resources = resources;
     this.lastSession = resources.session;
     const stopContext = context.apps.subscribe(() => {
+      if (!this.loading) resources.session.preservePresentation = this.shouldPreservePresentation();
       if (resources.session.suspended) {
         this.selection = null;
         this.confirmation?.respond(false);
         this.confirmation = undefined;
+        if (!this.shouldPreservePresentation()) {
+          this.clear();
+          this.requestUpdate();
+        }
         return;
       }
       if (!this.closed && (!resources.session.isCurrent() || !this.context?.isCurrent())) {
@@ -629,11 +635,19 @@ export class McpAppView extends LitElement {
         context,
         bridge,
         current: () => current() && !this.closed && this.context?.canDraft() === true,
+        operationCurrent: () =>
+          this.isConnected &&
+          this.resources === resources &&
+          this.version === version &&
+          !this.closed &&
+          !resources.controller.signal.aborted &&
+          resources.session.isDiagramCurrent(),
         priority: () => (this.visible() ? (this.fillContainer ? 2 : 1) : 0),
       });
       resources.content = plugin?.content;
       resources.localNotice = plugin?.localNotice;
       resources.contentTitle = plugin?.title;
+      resources.retainOnNavigation = plugin?.retainOnNavigation;
       resources.update = () => bridge.setHostContext(buildContext());
       const observer = new (owner as Window & typeof globalThis).MutationObserver(() =>
         resources.update?.(),
@@ -655,7 +669,7 @@ export class McpAppView extends LitElement {
       if (payload.updateModelContextSupported) await host.refreshContext();
       if (!current()) return;
       resources.session.preservePresentation =
-        (this.fillContainer || this.retainPresentation) && Boolean(this.context?.resume);
+        this.shouldPreservePresentation();
       this.loading = false;
     } catch {
       if (this.resources === resources) {
@@ -815,6 +829,21 @@ export class McpAppView extends LitElement {
     return this.resources?.contentTitle;
   }
 
+  /** A native canvas may still serve its originating run after its row disappears. */
+  get retainOnNavigation(): boolean {
+    return Boolean(
+      !this.closed && this.resources?.retainOnNavigation && this.context?.resume &&
+      this.resources.session.hasPendingDiagramRun,
+    );
+  }
+
+  private shouldPreservePresentation(): boolean {
+    return (
+      (this.fillContainer || this.retainPresentation || this.retainOnNavigation) &&
+      Boolean(this.context?.resume)
+    );
+  }
+
   get canReference(): boolean {
     return Boolean(
       !this.closed &&
@@ -831,7 +860,7 @@ export class McpAppView extends LitElement {
     this.retainPresentation = retain;
     if (this.resources && !this.loading && this.resources.session.isCurrent())
       this.resources.session.preservePresentation =
-        (this.fillContainer || retain) && Boolean(this.context?.resume);
+        this.shouldPreservePresentation();
   }
 
   returnToMessage(): void {

@@ -110,6 +110,23 @@ test('same admitted view shares one presentation; pin and unpin never close or l
   stop();
 });
 
+test('a navigation-only canvas is released once its exact run retention ends', async () => {
+  const f = fixture(), anchor = f.anchor();
+  const entry = f.manager.acquire(anchor, f.preview(), f.context())!;
+  const retain = vi.spyOn(entry.view, 'retainOnNavigation', 'get').mockReturnValue(true);
+  entry.view.context!.isCurrent = () => false;
+  anchor.remove();
+  f.manager.release(anchor, entry);
+  await new Promise(resolve => setTimeout(resolve, 10));
+  expect(f.manager.entries).toContain(entry);
+  retain.mockReturnValue(false);
+  // Native settlement publishes through the same App session notification.
+  f.context().apps.refreshBinding();
+  await Promise.resolve();
+  expect(f.manager.entries).not.toContain(entry);
+  expect(entry.view.isConnected).toBe(false);
+});
+
 test('copied or identity-mutated descriptors cannot create or merge a presentation', () => {
   const f = fixture(),
     preview = f.preview();
@@ -162,6 +179,27 @@ test('replacement native incarnations cannot take over the original retained ins
   expect(old.view.context?.isCurrent()).toBe(false);
   expect(old.pinned).toBe(true);
   expect(next.pinned).toBe(false);
+});
+
+test('a background canvas survives its disappearing message anchor and is reused when returning', async () => {
+  const f = fixture(), original = f.anchor(), preview = f.preview();
+  const entry = f.manager.acquire(original, preview, f.context())!;
+  vi.spyOn(entry.view, 'retainOnNavigation', 'get').mockReturnValue(true);
+  const context = entry.view.context!;
+  context.isCurrent = () => false;
+  original.remove();
+  f.manager.release(original, entry);
+  await new Promise(resolve => setTimeout(resolve, 10));
+  expect(f.manager.entries).toContain(entry);
+  expect(entry.view.isConnected).toBe(true);
+  const resume = vi.spyOn(entry.view, 'resume');
+  f.manager.resume(entry.scope);
+  expect(resume).not.toHaveBeenCalled();
+  context.isCurrent = () => true;
+  expect(f.manager.acquire(f.anchor(), preview, f.context())).toBe(entry);
+  f.manager.reconcileScopes(new Set());
+  expect(f.manager.entries).not.toContain(entry);
+  expect(entry.view.isConnected).toBe(false);
 });
 
 test('history disposal keeps only UI numbering so the same target returns with its original ordinal', async () => {

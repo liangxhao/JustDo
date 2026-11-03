@@ -22,6 +22,39 @@ function seedControllerMessages(controller: ChatController, messages: unknown[])
   ).setCurrentSessionMessages(messages, { resetLoadedHistory: true });
 }
 
+test('retains the exact native canvas owner in a background conversation until its incarnation changes', async () => {
+  const sessionKey = 'agent:main:drawing-chat';
+  let physicalId = 'physical-one';
+  const request = vi.fn(async (method: string, params?: { sessionKey?: string }) =>
+    method === 'chat.history' || method === 'chat.startup'
+      ? { messages: [], sessionId: params?.sessionKey === sessionKey ? physicalId : 'physical-other' }
+      : {},
+  );
+  const controller = new ChatController();
+  controller.state.client = { request, generation: 1 } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = sessionKey;
+  controller.state.currentSessionId = physicalId;
+  controller.state.initialHistoryReady = true;
+  const view = controller.mcpApps.bind('mcp-app-canvas');
+  await view.view();
+  view.preservePresentation = true;
+  await controller.switchSession('agent:main:other-chat');
+  expect(view.isCurrent()).toBe(false);
+  expect(view.isDiagramCurrent()).toBe(true);
+  await view.diagramRequest({ action: 'next', token: 'private' });
+  expect(request).toHaveBeenLastCalledWith('drawio.canvas', expect.objectContaining({
+    sessionKey, sessionId: 'physical-one', viewId: 'mcp-app-canvas',
+  }), expect.anything());
+  physicalId = 'replacement';
+  await controller.switchSession(sessionKey);
+  expect(controller.state.currentSessionId).toBe('replacement');
+  expect(view.isDiagramCurrent()).toBe(false);
+  expect(controller.mcpApps.resume(view)).toBe(false);
+  await expect(view.diagramRequest({ action: 'ack' })).rejects.toThrow('expired');
+  await view.close();
+});
+
 test('keeps an ambiguously rejected side run isolated from late agent events', async () => {
   const sessionKey = 'agent:main:justdo:session-1';
   const controller = new ChatController();

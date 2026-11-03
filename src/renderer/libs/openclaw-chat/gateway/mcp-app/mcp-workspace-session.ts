@@ -269,6 +269,7 @@ export class McpWorkspaceSession {
         sessionKey: native.sessionKey,
         sessionId: native.gatewaySessionId,
         agentId: this.scope.agentId,
+        isOwnerCurrent: () => binding.isCurrent(),
         isCurrent: () =>
           this.current() &&
           this.binding === binding &&

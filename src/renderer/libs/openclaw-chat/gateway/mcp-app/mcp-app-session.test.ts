@@ -5,20 +5,23 @@ import {
   DRAWIO_CANVAS_METHOD,
   DRAWIO_CURRENT_METHOD,
   DRAWIO_RESTORE_METHOD,
+  DRAWIO_SEND_NOT_ISSUED,
 } from '../../../../../../plugins/extensions/drawio/contracts';
 import {
   MCP_APP_HISTORY_TOOL_METHOD,
   MCP_APP_HISTORY_VIEW_METHOD,
 } from '../../../../../../plugins/extensions/runtime-services/contracts/mcp-apps';
-import type { GatewayClient, GatewayRequestOptions } from '../client';
+import type { GatewayClient, GatewayEventFrame, GatewayRequestOptions } from '../client';
 import {
   hasMcpAppCanvasPreparations,
   McpAppSession,
   prepareMcpAppChatSend,
 } from './mcp-app-session';
 
-function fixture() {
+function fixture(background = false) {
   let current = true;
+  let ownerCurrent = true;
+  const listeners = new Set<(event: GatewayEventFrame) => void>();
   const request = vi.fn(
     async (
       _method: string,
@@ -30,7 +33,10 @@ function fixture() {
     generation: 3,
     gatewayUrl: 'ws://127.0.0.1:18789',
     request,
-    subscribeEvents: vi.fn(() => () => undefined),
+    subscribeEvents: vi.fn((listener: (event: GatewayEventFrame) => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    }),
   };
   const apps = new McpAppSession(() => ({
     client: client as unknown as GatewayClient,
@@ -39,18 +45,136 @@ function fixture() {
     sessionId: 'native-incarnation',
     agentId: 'a',
     isCurrent: () => current,
+    isOwnerCurrent: background ? () => ownerCurrent : undefined,
   }));
   return {
     apps,
     client,
     request,
+    emit: (event: GatewayEventFrame) => { for (const listener of listeners) listener(event); },
     expire: () => {
       current = false;
     },
+    expireOwner: () => { ownerCurrent = false; },
   };
 }
 
 describe('MCP App native session authority', () => {
+  it('releases a retained run only with proof that its prepared send was not issued', async () => {
+    const f = fixture(true);
+    const view = f.apps.bind('mcp-app-canvas');
+    await view.view();
+    const unregister = f.apps.registerCanvasPreparation(view.viewId!, async () => ({
+      token: 'private', viewId: view.nativeViewId!, selected: false, priority: 1,
+    }), () => view.isCurrent(), runId => view.retainDiagramRun(runId));
+    try {
+      const send = await f.apps.prepareChatSend({
+        sessionKey: view.sessionKey, sessionId: view.sessionId, idempotencyKey: 'run-one',
+      });
+      send.onRequest?.();
+      send.onRejected?.(Object.assign(new Error('outcome unknown'), { gatewayCode: 'UNAVAILABLE' }));
+      expect(view.hasPendingDiagramRun).toBe(true);
+      send.onRejected?.({ requestSent: false });
+      expect(view.hasPendingDiagramRun).toBe(false);
+      const refused = await f.apps.prepareChatSend({
+        sessionKey: view.sessionKey, sessionId: view.sessionId, idempotencyKey: 'run-two',
+      });
+      refused.onRequest?.();
+      refused.onRejected?.({ details: { code: DRAWIO_SEND_NOT_ISSUED } });
+      expect(view.hasPendingDiagramRun).toBe(false);
+    } finally {
+      unregister();
+      await view.close();
+    }
+  });
+
+  it('retains only the exact prepared runs until whole-run terminal evidence arrives', async () => {
+    const f = fixture(true);
+    const view = f.apps.bind('mcp-app-canvas');
+    await view.view();
+    view.preservePresentation = true;
+    const unregister = f.apps.registerCanvasPreparation(view.viewId!, async () => ({
+      token: 'private', viewId: view.nativeViewId!, selected: false, priority: 1,
+    }), () => view.isCurrent(), runId => view.retainDiagramRun(runId));
+    const send = await f.apps.prepareChatSend({
+      sessionKey: view.sessionKey, sessionId: view.sessionId, idempotencyKey: 'run-one',
+    });
+    expect(view.hasPendingDiagramRun).toBe(false);
+    send.onRequest?.();
+    expect(send.params.canvases).toEqual([{
+      token: 'private', viewId: view.nativeViewId, selected: true,
+    }]);
+    view.retainDiagramRun('run-two');
+    f.apps.invalidate(true);
+    f.expire();
+    const payload = {
+      sessionKey: view.sessionKey, sessionId: view.sessionId, runId: 'run-one',
+      stream: 'lifecycle', data: { phase: 'end', executionSettled: true },
+    };
+    for (const wrong of [
+      { ...payload, sessionId: 'replacement' },
+      { ...payload, sessionKey: 'agent:a:other' },
+      { ...payload, runId: 'unrelated' },
+      { ...payload, data: { phase: 'end', executionSettled: false } },
+      { ...payload, data: { phase: 'finishing', executionSettled: true } },
+    ]) f.emit({ type: 'event', event: 'agent', payload: wrong });
+    f.emit({ type: 'event', event: 'chat', payload: { ...payload, state: 'final' } });
+    expect(view.hasPendingDiagramRun).toBe(true);
+    f.emit({ type: 'event', event: 'agent', payload });
+    expect(view.hasPendingDiagramRun).toBe(true);
+    f.emit({ type: 'event', event: 'agent', payload: { ...payload, runId: 'run-two' } });
+    expect(view.hasPendingDiagramRun).toBe(false);
+    unregister();
+    await view.close();
+  });
+
+  it('keeps only canvas next/ack on the original owner across navigation and resume', async () => {
+    const f = fixture(true);
+    const view = f.apps.bind('mcp-app-canvas');
+    await view.view();
+    view.preservePresentation = true;
+    let finish!: (value: unknown) => void;
+    f.request.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    const pending = view.diagramRequest({ action: 'next', token: 'private' });
+    const options = f.request.mock.calls.at(-1)![2];
+    f.apps.invalidate(true);
+    f.expire();
+    expect(view.isCurrent()).toBe(false);
+    expect(view.isDiagramCurrent()).toBe(true);
+    expect(options?.signal?.aborted).toBe(false);
+    await expect(view.diagramRequest({ action: 'prepare' })).rejects.toThrow('expired');
+    await expect(view.request(McpAppMethod.CallTool, { name: 'business' })).rejects.toThrow('expired');
+    await view.diagramRequest({ action: 'ack', token: 'private' });
+    finish({ operation: null });
+    await expect(pending).resolves.toEqual({ operation: null });
+    f.expireOwner();
+    expect(view.isDiagramCurrent()).toBe(false);
+    await expect(view.diagramRequest({ action: 'next' })).rejects.toThrow('expired');
+    await view.close();
+  });
+
+  it('accepts an in-flight canvas response across pause/resume but retires it on close', async () => {
+    const f = fixture(true);
+    const view = f.apps.bind('mcp-app-canvas');
+    await view.view();
+    view.preservePresentation = true;
+    let finish!: (value: unknown) => void;
+    f.request.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    const pending = view.diagramRequest({ action: 'next', token: 'private' });
+    f.apps.invalidate(true);
+    expect(f.apps.resume(view)).toBe(true);
+    finish({ operation: null });
+    await expect(pending).resolves.toEqual({ operation: null });
+    f.request.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    const closing = view.diagramRequest({ action: 'ack', token: 'private' });
+    const rejected = expect(closing).rejects.toThrow('superseded');
+    const options = f.request.mock.calls.at(-1)![2];
+    await view.close();
+    expect(options?.signal?.aborted).toBe(true);
+    finish({});
+    await rejected;
+  });
+
   it('projects only the latest existing discovery for icons without replaying any App operation', async () => {
     const { apps, request } = fixture();
     const notify = vi.fn();

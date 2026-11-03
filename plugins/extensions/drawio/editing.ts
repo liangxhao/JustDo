@@ -11,6 +11,7 @@ import {
   DRAWIO_ENTRY_TOOLS,
   DRAWIO_RESOURCE,
   DRAWIO_SEND_METHOD,
+  DRAWIO_SEND_NOT_ISSUED,
   DRAWIO_SERVER,
   type PreparedDiagramCanvas,
 } from './contracts';
@@ -397,7 +398,9 @@ export function registerDiagramEditing(api: OpenClawPluginApi) {
         respond(true, result.payload);
       } catch {
         if (issued) state.canvases.markUnknown(runId);
-        respond(false, undefined, unavailable);
+        respond(false, undefined, issued ? unavailable : {
+          ...unavailable, details: { code: DRAWIO_SEND_NOT_ISSUED },
+        });
       }
     },
     { scope: 'operator.admin' },

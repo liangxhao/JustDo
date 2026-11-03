@@ -88,8 +88,12 @@ editor generation before one undoable `replaceFileData` transaction. The host
 registers immutable native identity and routes an exact prepared send through
 `drawio.chat.send`. The v2 plugin tool consumes trusted native invocation metadata,
 and only an exact editor ACK yields a successful native tool result. Switching
-chats retires pending authority, including preparations whose response was lost;
-unknown dispatches are never replayed. Recovery grants no original MCP tools.
+chats cancels unfinished send preparations while an already frozen run retains
+its original editor and authenticated next/ACK route. General App interactions
+remain paused. Navigation-only inline editors are released after an exact
+whole-run terminal with `executionSettled: true`; unknown runs remain retained
+until explicit close or owner disposal. Unknown dispatches are never replayed.
+Recovery grants no original MCP tools.
 There is no new document database or user-facing version history.
 
 Confirmed updates also emit a bounded `drawio.diagram-reference.v1` text record

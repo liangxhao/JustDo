@@ -69,6 +69,7 @@ export function connectAppContent(input: {
   context: McpAppViewContext;
   bridge: AppBridge;
   current: () => boolean;
+  operationCurrent?: () => boolean;
   priority: () => number;
 }) {
   const { identity, payload, session, context, bridge, current, priority } = input;
@@ -107,20 +108,24 @@ export function connectAppContent(input: {
           diagramId,
           bridge,
           viewId: () => session.nativeViewId!,
-          current,
+          current: input.operationCurrent ?? current,
+          canPrepare: current,
           priority,
           request: value => session.diagramRequest(value),
           release: (token, forgetSource) => session.releaseDiagram(token, forgetSource),
-          subscribe: listener => session.subscribe(listener),
+          subscribe: listener => session.subscribeDiagram(listener),
           onSuspend: listener => session.onSuspend(listener),
           register: prepare =>
-            context.apps.registerCanvasPreparation(input.previewViewId, prepare, current),
+            context.apps.registerCanvasPreparation(
+              input.previewViewId, prepare, current, runId => session.retainDiagramRun(runId),
+            ),
         })
       : () => undefined;
   const title = mcpAppRecord(payload.toolResult?.structuredContent)?.title;
   return {
     content,
     dispose,
+    retainOnNavigation: payload.messageSupported === true,
     localNotice: 'mcpAppsDiagramLocal',
     title: typeof title === 'string' ? title.slice(0, 160) : undefined,
   };

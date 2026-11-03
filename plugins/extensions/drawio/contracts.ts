@@ -7,6 +7,7 @@ export const DRAWIO_RESOURCE = 'ui://drawio/editor';
 
 export const DRAWIO_CANVAS_METHOD = 'drawio.canvas';
 export const DRAWIO_SEND_METHOD = 'drawio.chat.send';
+export const DRAWIO_SEND_NOT_ISSUED = 'DRAWIO_SEND_NOT_ISSUED';
 export const DRAWIO_EDIT_TOOL = 'drawio_diagram';
 export const DRAWIO_SNAPSHOT_TOOL = 'diagram_snapshot';
 export const DRAWIO_APPLY_TOOL = 'diagram_apply';

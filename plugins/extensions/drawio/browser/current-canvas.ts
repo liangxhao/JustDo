@@ -20,6 +20,7 @@ interface CanvasHost {
   diagramId: string;
   bridge: AppBridge;
   current: () => boolean;
+  canPrepare?: () => boolean;
   priority: () => number;
   request: <T>(input: Record<string, unknown>) => Promise<T>;
   release: (token: string, forgetSource?: boolean) => Promise<unknown>;
@@ -49,22 +50,30 @@ export function connectCurrentDiagram(host: CanvasHost) {
   let retiredToken = '';
   let retireOnPrepare = false;
   let epoch = 0;
+  let preparationEpoch = 0;
   let disposed = false;
   let polling = false;
   const current = () => !disposed && host.current();
+  const canPrepare = () => current() && (host.canPrepare?.() ?? true);
   const retire = (forgetSource = false) => {
     epoch++;
+    preparationEpoch++;
     retireOnPrepare = true;
     if (token) retiredToken = token;
     token = '';
     // Exact-owner cleanup also cancels preparations whose response was lost.
     void (forgetSource ? host.release('', true) : host.release('')).catch(() => undefined);
   };
-  const stopSuspension = host.onSuspend(retire);
+  const stopSuspension = host.onSuspend(() => {
+    // Navigation cancels an unfinished send preparation, but an already frozen
+    // native run keeps its original editor and exact next/apply/ack route.
+    if (!current() || !token) retire();
+    else preparationEpoch++;
+  });
   const unregister = host.register(async () => {
-    const revision = epoch;
-    const unchanged = () => current() && revision === epoch;
-    if (!current()) throw new Error('Diagram editor unavailable');
+    const revision = preparationEpoch;
+    const unchanged = () => canPrepare() && revision === preparationEpoch;
+    if (!canPrepare()) throw new Error('Diagram editor unavailable');
     const result = await host.bridge.callTool({ name: DRAWIO_SNAPSHOT_TOOL, arguments: {} });
     if (!unchanged() || result.isError) throw new Error('Could not prepare diagram');
     const snapshot = readSnapshot(result.structuredContent, host.diagramId);
@@ -76,7 +85,7 @@ export function connectCurrentDiagram(host: CanvasHost) {
       retire: retireOnPrepare,
     });
     if (!unchanged() || typeof prepared.token !== 'string') {
-      if (typeof prepared.token === 'string')
+      if (typeof prepared.token === 'string' && prepared.token !== token)
         void host.release(prepared.token).catch(() => undefined);
       throw new Error('Diagram preparation changed');
     }

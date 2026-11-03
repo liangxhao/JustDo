@@ -232,7 +232,11 @@ export class McpAppPresentations {
         queueMicrotask(() => {
           // invalidate() publishes before the controller finishes switching owner.
           if (!this.entries.includes(current)) return;
-          view.resume(undefined, true);
+          // An unpinned canvas kept only for a background run needs its real
+          // history anchor again before it can prepare a new foreground send.
+          if (current.pinned || current.returnPending || current.anchors.size)
+            view.resume(undefined, true);
+          this.releaseUnanchored(current);
           this.changed();
         }),
       );
@@ -266,16 +270,22 @@ export class McpAppPresentations {
       entry.primary = [...entry.anchors].find(value => value.isConnected);
     // Live rows and authenticated history may replace each other in the same turn.
     this.ownerWindow.setTimeout(() => {
-      if (!entry.anchors.size && !entry.pinned && !entry.returnPending) {
-        const index = this.entries.indexOf(entry);
-        if (index >= 0) {
-          this.entries.splice(index, 1);
-          entry.dispose();
-          this.changed();
-        }
-      }
+      if (this.releaseUnanchored(entry)) this.changed();
     }, 0);
     this.schedule();
+  }
+
+  private releaseUnanchored(entry: McpAppPresentation): boolean {
+    if (
+      entry.anchors.size || entry.pinned || entry.returnPending ||
+      (entry.view.retainOnNavigation && !entry.view.context?.isCurrent())
+    )
+      return false;
+    const index = this.entries.indexOf(entry);
+    if (index < 0) return false;
+    this.entries.splice(index, 1);
+    entry.dispose();
+    return true;
   }
 
   find(view: McpAppView) {
@@ -362,7 +372,9 @@ export class McpAppPresentations {
   }
 
   resume(scope: string) {
-    for (const entry of this.entries) if (entry.scope === scope) entry.view.resume(undefined, true);
+    for (const entry of this.entries)
+      if (entry.scope === scope && (entry.pinned || entry.returnPending || entry.anchors.size))
+        entry.view.resume(undefined, true);
     this.schedule();
   }
 

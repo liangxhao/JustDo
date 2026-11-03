@@ -17,8 +17,10 @@ const operation = {
   title: 'Updated',
 };
 const cleanups: Array<() => void> = [];
-function fixture() {
+function fixture(background = false) {
   vi.useFakeTimers();
+  let active = true;
+  let ownerCurrent = true;
   let prepare!: () => Promise<unknown>;
   let suspend!: () => void;
   let notify!: (event: { event: string }) => void;
@@ -39,7 +41,8 @@ function fixture() {
     viewId: () => 'mcp-app-original',
     diagramId: snapshot.diagramId,
     bridge: { callTool } as never,
-    current: () => true,
+    current: () => ownerCurrent && (active || background),
+    canPrepare: () => active && ownerCurrent,
     priority: () => 2,
     request: request as never,
     release,
@@ -60,7 +63,17 @@ function fixture() {
   cleanups.push(dispose);
   return {
     prepare: () => prepare(),
-    suspend: () => suspend(),
+    suspend: () => {
+      active = false;
+      suspend();
+      active = true;
+    },
+    navigateAway: () => {
+      active = false;
+      suspend();
+    },
+    resume: () => { active = true; },
+    expireOwner: () => { ownerCurrent = false; },
     notify: () => notify({ event: DRAWIO_CANVAS_EVENT }),
     request,
     release,
@@ -74,6 +87,49 @@ afterEach(() => {
 });
 
 describe('diagram navigation lifecycle', () => {
+  it('finishes a pending take and acknowledgement in the hidden original editor without preparing another send', async () => {
+    const f = fixture(true);
+    await f.prepare();
+    let finish!: (value: unknown) => void;
+    f.request.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    f.notify();
+    f.navigateAway();
+    await expect(f.prepare()).rejects.toThrow('unavailable');
+    expect(f.release).not.toHaveBeenCalled();
+    f.callTool.mockResolvedValueOnce({
+      structuredContent: { operationId: operation.operationId, status: 'applied', snapshot },
+    } as never);
+    finish({ operation });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(f.callTool).toHaveBeenLastCalledWith({ name: DRAWIO_APPLY_TOOL, arguments: operation });
+    expect(f.request).toHaveBeenLastCalledWith(expect.objectContaining({ action: 'ack', token: 'first' }));
+    f.resume();
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(f.release).not.toHaveBeenCalled();
+    f.expireOwner();
+    const calls = f.request.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(f.request).toHaveBeenCalledTimes(calls);
+  });
+
+  it('preserves an established run token when a refreshed preparation returns after navigation', async () => {
+    const f = fixture(true);
+    await f.prepare();
+    let finish!: (value: unknown) => void;
+    f.request.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    const preparing = f.prepare();
+    const rejected = expect(preparing).rejects.toThrow('changed');
+    await vi.advanceTimersByTimeAsync(0);
+    f.navigateAway();
+    finish({ token: 'first' });
+    await rejected;
+    expect(f.release).not.toHaveBeenCalled();
+    f.request.mockResolvedValueOnce({ operation: null });
+    f.notify();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(f.request).toHaveBeenLastCalledWith({ action: 'next', token: 'first' });
+  });
+
   it('keeps source admission while suspended and releases it only when the editor is disposed', () => {
     const f = fixture();
     f.suspend();

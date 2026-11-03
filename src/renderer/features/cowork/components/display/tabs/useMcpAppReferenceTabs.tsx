@@ -98,7 +98,9 @@ export function useMcpAppReferenceTabs(
   });
   return {
     tabs,
-    hasRetainedPanels: manager.entries.some(entry => entry.pinned || entry.returnPending),
+    hasRetainedPanels: manager.entries.some(
+      entry => entry.pinned || entry.returnPending || entry.view.retainOnNavigation,
+    ),
     panel: (activeId: string | null) => {
       const entry = entries.find(value => value.id === activeId);
       return entry ? <ReferencePanel key={entry.id} entry={entry} /> : undefined;

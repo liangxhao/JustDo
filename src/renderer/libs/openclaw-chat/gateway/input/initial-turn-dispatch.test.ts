@@ -22,6 +22,7 @@ describe('prepared initial turn dispatch', () => {
         idempotencyKey: 'turn',
       };
       let cancelled = false;
+      const retainRun = vi.fn();
       const apps = new McpAppSession(() => ({
         client: client as unknown as GatewayClient,
         generation: 1,
@@ -43,6 +44,7 @@ describe('prepared initial turn dispatch', () => {
             resolve = done;
           }),
         () => true,
+        retainRun,
       );
       const beforeRequest = vi.fn();
       try {
@@ -58,11 +60,39 @@ describe('prepared initial turn dispatch', () => {
         expect(beforeRequest).not.toHaveBeenCalled();
         expect(request).not.toHaveBeenCalled();
         expect(state.client.request).not.toHaveBeenCalled();
+        expect(retainRun).not.toHaveBeenCalled();
       } finally {
         unregister();
       }
     },
   );
+
+  it('retains an issued canvas run immediately before dispatch and keeps an unknown send retained', async () => {
+    const calls: string[] = [];
+    const request = vi.fn(async () => {
+      calls.push('request');
+      throw new Error('lost response');
+    });
+    const client = { generation: 1, gatewayUrl: 'ws://127.0.0.1:1', request };
+    const state = { connected: true, sessionKey: 'agent:main:one', currentSessionId: 'physical', client };
+    const apps = new McpAppSession(() => ({
+      ...state, client: client as unknown as GatewayClient, generation: 1,
+      sessionId: state.currentSessionId, agentId: 'main', isCurrent: () => true,
+    }));
+    const retainRun = vi.fn(() => { calls.push('retain'); });
+    const unregister = apps.registerCanvasPreparation('mcp-app-editor', async () => ({
+      token: 'private', viewId: 'mcp-app-editor', selected: true, priority: 2,
+    }), () => true, retainRun);
+    try {
+      await expect(dispatchInitialTurn(state, {
+        sessionKey: state.sessionKey, sessionId: state.currentSessionId, idempotencyKey: 'turn',
+      }, () => { calls.push('before'); })).rejects.toMatchObject({ requestSent: true });
+      expect(calls).toEqual(['before', 'retain', 'request']);
+      expect(retainRun).toHaveBeenCalledExactlyOnceWith('turn');
+    } finally {
+      unregister();
+    }
+  });
 
   it('uses only chat.send on the current rendering client and does not retry an uncertain failure', async () => {
     const request = vi.fn().mockRejectedValue(new Error('lost response'));

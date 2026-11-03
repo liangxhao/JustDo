@@ -195,6 +195,13 @@ export class ChatController {
       sessionKey,
       sessionId: currentSessionId,
       agentId,
+      isOwnerCurrent: () =>
+        this.state.client === client &&
+        this.state.connected &&
+        client.generation === generation &&
+        (this.state.sessionKey === sessionKey
+          ? this.state.currentSessionId === currentSessionId && !this.state.historyReadFailed
+          : this.liveStateBySession.get(sessionKey)?.currentSessionId === currentSessionId),
       isCurrent: () =>
         this.state.client === client &&
         this.state.connected &&
@@ -2519,6 +2526,7 @@ export class ChatController {
     let sendAcknowledged = false;
     try {
       options.onRequestIssued?.();
+      if ('onRequest' in preparedSend) preparedSend.onRequest?.();
       const ack = await client.request<
         SessionGoalMutationResult | { runId?: string; status?: string }
       >(preparedSend.method, preparedSend.params);
@@ -2601,6 +2609,7 @@ export class ChatController {
         this.settleChatSend(sessionKey, acknowledgedRunId, 'final');
       }
     } catch (err) {
+      if (!sendAcknowledged && 'onRejected' in preparedSend) preparedSend.onRejected?.(err);
       // A lost ACK does not prove rejection. Keep its operation identity live.
       // Ordinary sends with proof that no frame was sent can release the draft.
       // Goal starts retain their existing operation reconciliation rules.

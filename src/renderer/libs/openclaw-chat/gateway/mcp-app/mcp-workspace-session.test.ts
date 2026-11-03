@@ -100,6 +100,27 @@ function setup() {
 }
 
 describe('homepage MCP workspace connection', () => {
+  it('keeps an adopted canvas owner while its chat is hidden, then revokes it on disconnect', async () => {
+    const f = setup();
+    await f.session.prepare();
+    f.session.adopt('drawing-chat');
+    const view = f.session.apps.bind('mcp-app-canvas');
+    await view.view();
+    view.preservePresentation = true;
+    f.setInteractive(false);
+    f.session.apps.invalidate(true);
+    expect(view.isCurrent()).toBe(false);
+    expect(view.isDiagramCurrent()).toBe(true);
+    await view.diagramRequest({ action: 'next', token: 'private' });
+    expect(fixture.request).toHaveBeenLastCalledWith('drawio.canvas', expect.objectContaining({
+      action: 'next', sessionKey: f.native.sessionKey, sessionId: f.native.gatewaySessionId,
+    }), expect.anything());
+    await expect(view.diagramRequest({ action: 'prepare' })).rejects.toThrow('expired');
+    f.session.dispose();
+    expect(view.isDiagramCurrent()).toBe(false);
+    await expect(view.diagramRequest({ action: 'ack' })).rejects.toThrow('expired');
+  });
+
   it('logs the failing catalog phase without exposing native errors or credentials', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const f = setup();

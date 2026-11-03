@@ -29,7 +29,8 @@ export async function dispatchInitialTurn(
   const client = state.client as GatewayClient;
   const generation = client.generation;
   const nativeSessionId = state.currentSessionId;
-  let prepared: { method: string; params: Record<string, unknown> };
+  let prepared: { method: string; params: Record<string, unknown>; onRequest?: () => void;
+    onRejected?: (error: unknown) => void };
   try {
     const target = {
       client,
@@ -60,8 +61,10 @@ export async function dispatchInitialTurn(
   }
   beforeRequest?.();
   try {
+    prepared.onRequest?.();
     return await client.request(prepared.method, prepared.params);
   } catch (error) {
+    prepared.onRejected?.(error);
     const failure = error as { requestSent?: unknown; gatewayCode?: unknown };
     if (failure?.requestSent === false || typeof failure?.gatewayCode === 'string') throw error;
     // Once the actual client was invoked, an unclassified transport failure must

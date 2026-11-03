@@ -6,7 +6,9 @@ vi.mock('openclaw/plugin-sdk/gateway-method-runtime', () => ({
 }));
 vi.mock('openclaw/plugin-sdk/session-store-runtime', () => ({ getSessionEntry: sdk.entry }));
 
-import { DRAWIO_CANVAS_METHOD, DRAWIO_EDIT_TOOL, DRAWIO_SEND_METHOD } from '../contracts';
+import {
+  DRAWIO_CANVAS_METHOD, DRAWIO_EDIT_TOOL, DRAWIO_SEND_METHOD, DRAWIO_SEND_NOT_ISSUED,
+} from '../contracts';
 import { getDiagramEditingState, registerDiagramEditing } from '../editing';
 
 const scope = { sessionKey: 'agent:main:canvas', sessionId: 'physical', agentId: 'main' };
@@ -39,7 +41,8 @@ async function request(
     hasCurrentClientAuthority: () => live,
   });
   const call = respond.mock.calls[0];
-  if (call[0] !== true) throw new Error(call[2]?.message ?? 'RPC failed');
+  if (call[0] !== true)
+    throw Object.assign(new Error(call[2]?.message ?? 'RPC failed'), { details: call[2]?.details });
   return call[1];
 }
 const admit = (override: Record<string, unknown> = {}) =>
@@ -113,6 +116,24 @@ afterEach(() => {
 });
 
 describe('authenticated draw.io editing adapter', () => {
+  it('marks only pre-dispatch send rejection as proof that no native request was issued', async () => {
+    await expect(request(DRAWIO_SEND_METHOD, {
+      ...scope, send: { ...scope, idempotencyKey: 'invalid' }, canvases: [],
+    })).rejects.toMatchObject({ details: { code: DRAWIO_SEND_NOT_ISSUED } });
+    expect(sdk.dispatch.mock.calls.some(([method]) => method === 'chat.send')).toBe(false);
+    const { token } = await prepare();
+    const dispatch = sdk.dispatch.getMockImplementation()!;
+    sdk.dispatch.mockImplementation(async (method, params) => {
+      if (method === 'chat.send') throw new Error('lost native response');
+      return dispatch(method, params);
+    });
+    await expect(request(DRAWIO_SEND_METHOD, {
+      ...scope,
+      send: { ...scope, idempotencyKey: 'unknown' },
+      canvases: [{ token, viewId: 'mcp-app-original', selected: true }],
+    })).rejects.not.toMatchObject({ details: { code: DRAWIO_SEND_NOT_ISSUED } });
+  });
+
   const refreshing = {
     ok: false,
     error: {
