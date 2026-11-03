@@ -121,9 +121,98 @@ function createWindowsInstallerScript(templatesDir) {
   if (installer.split(assistedInclude).length !== 2) {
     throw new Error('The upstream NSIS assisted-installer seam changed; review the template.');
   }
+  const installUtil = read('include/installUtil.nsh').replaceAll('\r\n', '\n');
+  const previousDirectory = [
+    '  !insertmacro readReg $installationDir "$rootKey" "${INSTALL_REGISTRY_KEY}" InstallLocation',
+    '  ${if} $installationDir == ""',
+    '  ${andIf} $uninstallerFileName != ""',
+    '    # https://github.com/electron-userland/electron-builder/issues/735#issuecomment-246918567',
+    '    Push $uninstallerFileName',
+    '    Call GetFileParent',
+    '    Pop $installationDir',
+    '  ${endif}',
+  ].join('\n');
+  if (installUtil.split(previousDirectory).length !== 2 ||
+      installer.split('!include "installUtil.nsh"').length !== 2) {
+    throw new Error('The upstream NSIS previous-installation directory seam changed; review the template.');
+  }
+  const unusedParentFunction = /^Function GetFileParent\n[\s\S]*?^FunctionEnd$/gm;
+  if (Array.from(installUtil.matchAll(unusedParentFunction)).length !== 1) {
+    throw new Error('The upstream NSIS previous-installation path helper changed; review the template.');
+  }
+  const verifiedInstallUtil = installUtil.replace(previousDirectory, [
+    '  ; Scope, upgrade target and the uninstaller share the same evidence.',
+    '  StrCpy $InstallerLookupMode "$installMode"',
+    '  ${if} $rootKey == "HKEY_CURRENT_USER"',
+    '    StrCpy $InstallerLookupMode "CurrentUser"',
+    '  ${elseif} $rootKey == "HKEY_LOCAL_MACHINE"',
+    '    StrCpy $InstallerLookupMode "all"',
+    '  ${endif}',
+    '  Call InstallerResolveRegisteredDirectory',
+    '  StrCpy $installationDir "$InstallerLookupUninstallDirectory"',
+    '  ${if} $installationDir == ""',
+    '    ${if} $InstallerLookupState == "missing"',
+    '      !insertmacro JustDoLogInstallEvent "phase=previous-installation-removal-skipped root=$rootKey reason=missing-product-files"',
+    '      StrCpy $R0 0',
+    '      ClearErrors',
+    '      Return',
+    '    ${endif}',
+    '    !insertmacro JustDoLogInstallEvent "phase=previous-installation-target-unconfirmed root=$rootKey result=$InstallerLookupState"',
+    '    SetErrors',
+    '    Return',
+    '  ${endif}',
+    '  ; Never execute an unpaired path from the earlier registry read.',
+    '  StrCpy $uninstallerFileName "$installationDir\\${UNINSTALL_FILENAME}"',
+    '  ; Released uninstallers run initMultiUser and read InstallLocation again.',
+    '  ; Keep that same scope registration consistent before starting old code.',
+    '  ClearErrors',
+    '  ${if} $InstallerLookupMode == "all"',
+    '    ReadRegStr $0 HKLM "${INSTALL_REGISTRY_KEY}" InstallLocation',
+    '  ${else}',
+    '    ReadRegStr $0 HKCU "${INSTALL_REGISTRY_KEY}" InstallLocation',
+    '  ${endif}',
+    '  StrCpy $2 "1"',
+    '  !insertmacro InstallerLookupAbsolutePath "$0" $1',
+    '  ${if} $1 == "1"',
+    '    GetFullPathName $0 "$0\\."',
+    '    GetFullPathName $1 "$installationDir\\."',
+    '    ${if} $0 != ""',
+    '    ${andIf} $1 != ""',
+    '    ${andIf} $0 == $1',
+    '      StrCpy $2 "0"',
+    '    ${endif}',
+    '  ${endif}',
+    '  ${if} $2 == "1"',
+    '    ClearErrors',
+    '    ${if} $InstallerLookupMode == "all"',
+    '      WriteRegStr HKLM "${INSTALL_REGISTRY_KEY}" InstallLocation "$installationDir"',
+    '    ${else}',
+    '      WriteRegStr HKCU "${INSTALL_REGISTRY_KEY}" InstallLocation "$installationDir"',
+    '    ${endif}',
+    '    IfErrors InstallerPreviousLocationCorrectionFailed',
+    '    ${if} $InstallerLookupMode == "all"',
+    '      ReadRegStr $0 HKLM "${INSTALL_REGISTRY_KEY}" InstallLocation',
+    '    ${else}',
+    '      ReadRegStr $0 HKCU "${INSTALL_REGISTRY_KEY}" InstallLocation',
+    '    ${endif}',
+    '    IfErrors InstallerPreviousLocationCorrectionFailed',
+    '    ${if} $0 != $installationDir',
+    '      Goto InstallerPreviousLocationCorrectionFailed',
+    '    ${endif}',
+    '    !insertmacro JustDoLogInstallEvent "phase=previous-installation-location-corrected root=$rootKey directory=$installationDir"',
+    '    Goto InstallerPreviousLocationCorrectionDone',
+    '    InstallerPreviousLocationCorrectionFailed:',
+    '    !insertmacro JustDoLogInstallEvent "phase=previous-installation-target-unconfirmed root=$rootKey reason=registration-correction-failed"',
+    '    SetErrors',
+    '    Return',
+    '    InstallerPreviousLocationCorrectionDone:',
+    '  ${endif}',
+    '  ClearErrors',
+  ].join('\n')).replace(unusedParentFunction, '');
   return installer
     .replace(assistedInclude, () => assistedWithDirectoryLock)
-    .replace('!include "installSection.nsh"', section);
+    .replace('!include "installSection.nsh"', section)
+    .replace('!include "installUtil.nsh"', () => verifiedInstallUtil);
 }
 
 function configureWindowsInstallerScript(projectDir) {

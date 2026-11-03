@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+
 import { expect, test, vi } from 'vitest';
 
 const { createWindowsInstallerScript, orderNsisPluginDirectories } = require('../../scripts/packaging/windows-installer-script.cjs');
@@ -45,6 +46,30 @@ test('logs each previous-version removal before invoking the uninstaller', () =>
   }
 });
 
+test('uses one verified target for previous uninstall and skips missing product entries without reviving stale paths', () => {
+  const script = createWindowsInstallerScript(templates);
+  expect(script).toContain('Call InstallerResolveRegisteredDirectory');
+  expect(script).toContain('StrCpy $installationDir "$InstallerLookupUninstallDirectory"');
+  expect(script).toContain('StrCpy $uninstallerFileName "$installationDir\\${UNINSTALL_FILENAME}"');
+  expect(script).toContain('reason=missing-product-files');
+  expect(script).not.toContain('!insertmacro readReg $installationDir "$rootKey" "${INSTALL_REGISTRY_KEY}" InstallLocation');
+  expect(script).not.toContain('Call GetFileParent\n    Pop $installationDir');
+});
+
+test('rejects an upstream previous-uninstall target seam change', () => {
+  const originalRead = fs.readFileSync;
+  const reader = vi.spyOn(fs, 'readFileSync').mockImplementation((...args: Parameters<typeof fs.readFileSync>) => {
+    const contents = originalRead(...args);
+    if (String(args[0]) !== path.join(templates, 'include/installUtil.nsh')) return contents;
+    return String(contents).replace('Pop $installationDir', 'Pop $changedUpstreamDirectory');
+  });
+  try {
+    expect(() => createWindowsInstallerScript(templates)).toThrow('NSIS previous-installation directory seam changed');
+  } finally {
+    reader.mockRestore();
+  }
+});
+
 test('rejects an upstream previous-version removal seam change', () => {
   const originalRead = fs.readFileSync;
   const reader = vi.spyOn(fs, 'readFileSync').mockImplementation((...args: Parameters<typeof fs.readFileSync>) => {
@@ -71,7 +96,7 @@ test('combines the assisted scope and directory pages while retaining path norma
 
 test('keeps the uninstaller mode page and registers setup for either assisted install mode', () => {
   const script = createWindowsInstallerScript(templates).replaceAll('\r\n', '\n');
-  expect(script.match(/^    !insertmacro PAGE_INSTALL_MODE$/gm)).toHaveLength(1);
+  expect(script.match(/^ {4}!insertmacro PAGE_INSTALL_MODE$/gm)).toHaveLength(1);
   expect(script.match(/!insertmacro InstallerSetupPage/g)).toHaveLength(1);
   expect(script).toContain('!ifdef BUILD_UNINSTALLER\n    !include multiUserUi.nsh\n  !endif');
   expect(script).toContain([
@@ -86,7 +111,7 @@ test('keeps the uninstaller mode page and registers setup for either assisted in
 
 test.each(['missing', 'duplicate'] as const)('rejects a %s installer mode-page seam without binding the uninstaller', change => {
   const originalRead = fs.readFileSync;
-  const nativeModePage = /    !insertmacro PAGE_INSTALL_MODE(?=\r?\n  !endif\r?\n\r?\n  !ifdef allowToChangeInstallationDirectory)/;
+  const nativeModePage = / {4}!insertmacro PAGE_INSTALL_MODE(?=\r?\n {2}!endif\r?\n\r?\n {2}!ifdef allowToChangeInstallationDirectory)/;
   const reader = vi.spyOn(fs, 'readFileSync').mockImplementation((...args: Parameters<typeof fs.readFileSync>) => {
     const contents = originalRead(...args);
     const [filename] = args;
@@ -102,7 +127,7 @@ test.each(['missing', 'duplicate'] as const)('rejects a %s installer mode-page s
 
 test.each(['missing', 'duplicate'] as const)('rejects a %s upstream directory-page seam', change => {
   const originalRead = fs.readFileSync;
-  const nativeDirectoryPage = /    !insertmacro skipPageIfUpdated\r?\n    !insertmacro MUI_PAGE_DIRECTORY/;
+  const nativeDirectoryPage = / {4}!insertmacro skipPageIfUpdated\r?\n {4}!insertmacro MUI_PAGE_DIRECTORY/;
   const reader = vi.spyOn(fs, 'readFileSync').mockImplementation((...args: Parameters<typeof fs.readFileSync>) => {
     const contents = originalRead(...args);
     const [filename] = args;

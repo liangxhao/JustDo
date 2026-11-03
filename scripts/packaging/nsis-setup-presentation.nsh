@@ -25,6 +25,7 @@ Var InstallerSetupBrowseImage
 Var InstallerSetupBrowseControl
 
 !include "nsDialogs.nsh"
+!include "${PROJECT_DIR}\scripts\packaging\nsis-existing-installation.nsh"
 
 Var InstallerCombinedPage
 Var InstallerCombinedCurrentUser
@@ -552,31 +553,36 @@ Function InstallerCombinedRefreshFacts
   !insertmacro InstallerSetupRestore
 FunctionEnd
 
-; Interactive upgrades retain their registered scope. Explicit deployment flags
+; Interactive upgrades retain a uniquely confirmed scope. Explicit deployment flags
 ; continue to select a scope, and the UAC inner/updater paths skip this resolver.
 Function InstallerCombinedResolveUpgradeMode
   !insertmacro InstallerSetupSave
   StrCpy $InstallerCombinedLockedMode ""
+  StrCpy $0 "not-inspected"
+  StrCpy $1 "not-inspected"
+  StrCpy $2 ""
+  StrCpy $3 ""
   ${If} $InstallerCombinedForcedMode == ""
-    ReadRegStr $0 HKCU "${INSTALL_REGISTRY_KEY}" InstallLocation
-    ReadRegStr $1 HKLM "${INSTALL_REGISTRY_KEY}" InstallLocation
-    ${If} $0 != ""
-    ${AndIf} $1 == ""
+    StrCpy $InstallerLookupMode "CurrentUser"
+    Call InstallerResolveRegisteredDirectory
+    StrCpy $0 "$InstallerLookupState"
+    StrCpy $2 "$InstallerLookupDirectory"
+    StrCpy $InstallerLookupMode "all"
+    Call InstallerResolveRegisteredDirectory
+    StrCpy $1 "$InstallerLookupState"
+    StrCpy $3 "$InstallerLookupDirectory"
+    ${If} $0 == "confirmed"
+    ${AndIf} $1 == "missing"
       StrCpy $InstallerCombinedLockedMode "CurrentUser"
-    ${ElseIf} $0 == ""
-    ${AndIf} $1 != ""
+    ${ElseIf} $0 == "missing"
+    ${AndIf} $1 == "confirmed"
       StrCpy $InstallerCombinedLockedMode "all"
-    ${ElseIf} $0 != ""
-    ${AndIf} $1 != ""
-      StrCpy $InstallerCombinedLockedMode "$InstallerCombinedMode"
-      ${If} $InstallerCombinedLockedMode != "all"
-        StrCpy $InstallerCombinedLockedMode "CurrentUser"
-      ${EndIf}
     ${EndIf}
   ${EndIf}
   ${If} $InstallerCombinedLockedMode != ""
     StrCpy $InstallerCombinedMode "$InstallerCombinedLockedMode"
   ${EndIf}
+  !insertmacro JustDoLogInstallEvent "phase=setup-target-resolution current-user-state=$0 current-user-dir=$2 all-users-state=$1 all-users-dir=$3 selected-mode=$InstallerCombinedMode locked-mode=$InstallerCombinedLockedMode"
   !insertmacro InstallerSetupRestore
 FunctionEnd
 

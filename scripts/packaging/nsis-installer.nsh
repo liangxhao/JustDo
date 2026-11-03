@@ -479,13 +479,10 @@ FunctionEnd
 
   Function InstallerRestoreUpgradeDirectory
     StrCpy $InstallerUpgradeDirectory ""
-    ; The command-line mode flags can mark a fresh install as already present.
-    ; Only the selected mode's registered location establishes an upgrade.
-    ${If} $installMode == "all"
-      ReadRegStr $InstallerUpgradeDirectory HKLM "${INSTALL_REGISTRY_KEY}" InstallLocation
-    ${ElseIf} $installMode == "CurrentUser"
-      ReadRegStr $InstallerUpgradeDirectory HKCU "${INSTALL_REGISTRY_KEY}" InstallLocation
-    ${EndIf}
+    ; A stale registration cannot override the user's selected directory.
+    StrCpy $InstallerLookupMode "$installMode"
+    Call InstallerResolveRegisteredDirectory
+    StrCpy $InstallerUpgradeDirectory "$InstallerLookupDirectory"
     ${If} $InstallerUpgradeDirectory != ""
       StrCpy $INSTDIR "$InstallerUpgradeDirectory"
     ${EndIf}

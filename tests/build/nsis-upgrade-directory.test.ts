@@ -14,6 +14,7 @@ const compiler = [
 ].find(candidate => existsSync(candidate));
 const installer = readFileSync(path.join(repositoryRoot, 'scripts/packaging/nsis-installer.nsh'), 'utf8');
 const upstream = readFileSync(path.join(repositoryRoot, 'node_modules/app-builder-lib/templates/nsis/assistedInstaller.nsh'), 'utf8');
+const lookup = readFileSync(path.join(repositoryRoot, 'scripts/packaging/nsis-existing-installation.nsh'), 'utf8');
 
 function sourceFunction(source: string, name: string): string {
   const result = source.match(new RegExp(`Function ${name}\\b[^]*?FunctionEnd`));
@@ -45,11 +46,14 @@ describe.runIf(process.platform === 'win32' && Boolean(compiler))('native instal
     for (const directory of [registeredUser, registeredMachine, candidate, selection]) {
       mkdirSync(directory, { recursive: true });
     }
+    for (const directory of [registeredUser, registeredMachine]) writeFileSync(path.join(directory, 'DirectoryFixture.exe'), 'fixture executable');
     try {
       // Exercise the final target authority used after the combined page.
       // Registry ports are isolated. The actual combined-page fixture owns
       // UI locking, draft switching and updater-page skipping checks.
       const policy = [
+        lookup.replaceAll('HKLM "${INSTALL_REGISTRY_KEY}"', 'HKCU "${INSTALL_REGISTRY_KEY}\\machine"')
+          .replaceAll('HKCU "${INSTALL_REGISTRY_KEY}"', 'HKCU "${INSTALL_REGISTRY_KEY}\\user"'),
         sourceFunction(installer, 'InstallerRestoreUpgradeDirectory')
           .replace('HKLM "${INSTALL_REGISTRY_KEY}"', 'HKCU "${INSTALL_REGISTRY_KEY}\\machine"')
           .replace('HKCU "${INSTALL_REGISTRY_KEY}"', 'HKCU "${INSTALL_REGISTRY_KEY}\\user"'),
@@ -73,8 +77,10 @@ describe.runIf(process.platform === 'win32' && Boolean(compiler))('native instal
         `!include "${path.join(repositoryRoot, 'node_modules/app-builder-lib/templates/nsis/include/StrContains.nsh')}"`,
         `OutFile "${nsisPath(path.join(root, 'directory.exe'))}"`,
         'Name "Directory policy fixture"', '!define APP_FILENAME "DirectoryFixture"',
+        '!define APP_EXECUTABLE_FILENAME "DirectoryFixture.exe"', '!define UNINSTALL_FILENAME "Uninstall DirectoryFixture.exe"',
         '!define allowToChangeInstallationDirectory',
         `!define INSTALL_REGISTRY_KEY "${registryKey}"`,
+        `!define UNINSTALL_REGISTRY_KEY "${registryKey}\\uninstall"`,
         ...['InstallerUpgradeDirectory', 'InstallerCombinedLockedMode', 'InstallerCombinedMode',
           'installMode', 'JustDoInstallMode', 'ProbeCase', 'ProbeInner', 'ProbeSwitch', 'ProbeProcessChecks']
           .map(name => `Var ${name}`),

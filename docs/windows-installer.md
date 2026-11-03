@@ -59,8 +59,8 @@ choices sit beside one another above the directory and disk-space facts in a
 single quiet card. The short header names the product; no second directory
 page, Back button or instruction paragraph is shown. On a fresh installation,
 separate per-scope drafts retain edits, including an empty draft, when switching
-between current user and all users. Ordinary interactive upgrades retain the
-registered scope and disable both scope choices along with the directory controls.
+between current user and all users. An ordinary interactive upgrade with one
+confirmed existing scope retains it and disables the scope and directory controls.
 The native single-line directory edit uses its actual font line height
 and sits vertically centered inside a white rounded field. Clicking that field's
 padding focuses the enabled edit. Browse uses an indigo accent when available
@@ -371,20 +371,72 @@ Fresh assisted installation offers both **current user** and **all users**.
 **Current user remains the default** for a fresh installation.
 
 An ordinary interactive upgrade or repair, without an explicit scope flag,
-reads the actual HKCU and HKLM `InstallLocation` values. A single registered scope
-is selected automatically. If both scopes are already registered, setup retains
-the initially selected registered scope. Both scope choices, the native directory
-input and Browse are disabled. This prevents an accidental scope change from
-selecting a different program directory while the current user's application
-data remains shared. It does not establish that another installation or background
-process is closed, and does not broaden the process-termination boundary.
+resolves the current product's HKCU and HKLM records through the shared
+`nsis-existing-installation.nsh` helper. A nonempty `InstallLocation` alone is not
+proof of an installed application. A candidate must be absolute and contain an
+actual `${APP_EXECUTABLE_FILENAME}` file; a directory named like that executable
+is not accepted. Read-only files remain valid. Attribute-query errors other than
+file/path absence remain unknown, not missing; a later successful query cannot
+erase that uncertainty. Existing directory paths are normalized with `\.` before
+comparison, so a trailing separator does not create a false conflict or depend
+on a missing main executable during repair. Empty normalization results remain
+unknown. No runtime inventory,
+write-permission probe or version gate is added.
+
+The same product's quoted `UninstallString` can recover a missing or stale location
+when it points to an existing, correctly named `${UNINSTALL_FILENAME}` beside the
+application executable. Conflicting live locations are left unconfirmed. Scope is
+taken from the registry hive, never inferred from Program Files or the drive name.
+Only readable records for the current product GUID and registry view are inspected,
+using NSIS's existing registry-read semantics. Setup does not search drives or
+other product identities for an installation; no candidate is not proof that the
+machine has no other installation.
+
+A single confirmed scope with no conflicting alternative is selected automatically
+and both scope choices, the directory input and Browse are disabled. A stale
+current-user C-drive record cannot hide a confirmed D-drive machine installation.
+If both scopes contain actual installations, the scope choices remain enabled;
+each selected scope reuses its own confirmed directory. When a scope's target is
+missing or conflicting, its directory controls remain editable and repeated
+callbacks must not restore its raw stale value over a user's choice. These rules
+do not establish that another installation or background process is closed, and
+do not broaden the process-termination boundary.
 
 The locked scope is also enforced by the selection callback and before file
 writing; disabling the controls alone is not the authority. Setup restores the
 exact registered directory again before writing, bypassing first-install
 folder-name normalization; a custom historical path does not gain another
-product-name subfolder. When no scope has a registered location, the page retains
+product-name subfolder. When no scope has a confirmed location, the page retains
 editable scope and directory controls and its per-scope drafts.
+
+Before old-version removal, the installer calls the same helper and pairs the
+actual expected uninstaller with its own directory for `_?=`. It does not revive
+the upstream raw-location or arbitrary parent fallback. Released uninstallers
+run their own multi-user initialization and read `InstallLocation` again, so
+passing `_?=` alone cannot protect the target. Once the old uninstaller and its
+parent have been verified, setup compares that scope's registered location with
+the confirmed parent. An already equivalent absolute path is left unchanged;
+otherwise setup corrects that single current-product value in the same hive/view
+and reads it back before copying or starting the old uninstaller. A failed write
+or mismatched readback stops removal. Unconfirmed, conflicting and skipped dead
+records are not rewritten, no key or uninstall command is cleared, and failure
+does not restore a value already known to be stale.
+
+A completely missing
+product entry is skipped without deleting its registration. A nonempty removal
+command with a live conflict or unpaired live product stops removal before copying
+new files; the upstream skip for an entirely absent uninstall command remains.
+An existing
+correctly named uninstaller remains usable for repair when the main executable
+is missing, without locking the UI to an unconfirmed directory. The resource
+payload need not be complete to identify or repair an existing installation.
+
+Focused native fixtures cover stale C-drive-style user records beside live
+D-drive-style machine records, both live scopes, recovered uninstall locations,
+unconfirmed directory edits, attribute-access failures, trailing separators, and
+the actual directory retained by a harmless old uninstaller after running real
+multi-user initialization. The fixtures use temporary program folders and isolated registry
+keys, never real installed applications.
 
 Explicit `/currentuser` and `/allusers` invocations retain their existing scope
 selection semantics. Silent installation, silent `/D=` handling and the updater's

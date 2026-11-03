@@ -35,9 +35,16 @@ describe.runIf(process.platform === 'win32' && existsSync(compiler)
       const installer = readFileSync(path.join(repoRoot, 'scripts/packaging/nsis-installer.nsh'), 'utf8');
       const upstream = readFileSync(path.join(repoRoot, 'node_modules/app-builder-lib/templates/nsis/assistedInstaller.nsh'), 'utf8');
       const combined = readFileSync(path.join(repoRoot, 'scripts/packaging/nsis-setup-presentation.nsh'), 'utf8');
+      const lookup = readFileSync(path.join(repoRoot, 'scripts/packaging/nsis-existing-installation.nsh'), 'utf8');
+      writeFileSync(path.join(root, 'lookup-fixture.nsh'), lookup
+        .replaceAll('HKLM "' + macro('INSTALL_REGISTRY_KEY') + '"', 'HKCU "' + macro('INSTALL_REGISTRY_KEY') + '\\machine"')
+        .replaceAll('HKCU "' + macro('INSTALL_REGISTRY_KEY') + '"', 'HKCU "' + macro('INSTALL_REGISTRY_KEY') + '\\user"')
+        .replaceAll('HKLM "' + macro('UNINSTALL_REGISTRY_KEY') + '"', 'HKCU "' + macro('UNINSTALL_REGISTRY_KEY') + '\\machine"')
+        .replaceAll('HKCU "' + macro('UNINSTALL_REGISTRY_KEY') + '"', 'HKCU "' + macro('UNINSTALL_REGISTRY_KEY') + '\\user"'));
       expect(combined.match(/^\s*nsDialogs::Show\s*$/gm)).toHaveLength(1);
       // Run actual production callbacks; isolate only account/UAC ports.
       writeFileSync(path.join(root, 'combined-fixture.nsh'), combined
+        .replace('"' + macro('PROJECT_DIR') + '\\scripts\\packaging\\nsis-existing-installation.nsh"', '"' + literal('lookup-fixture.nsh') + '"')
         .replaceAll('HKLM "' + macro('INSTALL_REGISTRY_KEY') + '"', 'HKCU "' + macro('INSTALL_REGISTRY_KEY') + '\\machine"')
         .replaceAll('HKCU "' + macro('INSTALL_REGISTRY_KEY') + '"', 'HKCU "' + macro('INSTALL_REGISTRY_KEY') + '\\user"')
         .replace(/^\s*nsDialogs::Show\s*$/m, '\n  Call FixtureCombinedObserved\n  nsDialogs::Show')
@@ -55,6 +62,8 @@ describe.runIf(process.platform === 'win32' && existsSync(compiler)
         '!include "' + nsisPath(path.join(repoRoot, 'node_modules/app-builder-lib/templates/nsis/include/StrContains.nsh')) + '"',
         '!define PROJECT_DIR "' + nsisPath(repoRoot) + '"', '!define PRODUCT_NAME "' + productName + '"',
         '!define APP_FILENAME "' + productName + '"', '!define INSTALL_REGISTRY_KEY "' + registryKey + '"',
+        '!define APP_EXECUTABLE_FILENAME "' + productName + '.exe"', '!define UNINSTALL_FILENAME "Uninstall ' + productName + '.exe"',
+        '!define UNINSTALL_REGISTRY_KEY "' + registryKey + '\\uninstall"',
         '!define MUI_ICON "' + nsisPath(path.join(repoRoot, 'resources/icons/win/icon.ico')) + '"',
         '!define JUSTDO_LANG_SIMPCHINESE 2052', '!define JUSTDO_LANG_TRADCHINESE 1028',
         '!define JUSTDO_WM_SETTEXT 0x000C', '!define JUSTDO_WM_SETREDRAW 0x000B',
@@ -137,6 +146,16 @@ describe.runIf(process.platform === 'win32' && existsSync(compiler)
         '  ' + macro('ElseIf') + ' $FixtureCase == "upgrade-machine"',
         '    WriteRegStr HKCU "' + macro('INSTALL_REGISTRY_KEY') + '\\machine" InstallLocation "' + literal('machine existing') + '"',
         '    StrCpy $FixtureAdmin "1"', '  ' + macro('EndIf'),
+        '  ' + macro('If') + ' $FixtureCase == "stale-user-live-machine"',
+        '    WriteRegStr HKCU "' + macro('INSTALL_REGISTRY_KEY') + '\\user" InstallLocation "' + literal('stale location') + '"',
+        '    WriteRegStr HKCU "' + macro('INSTALL_REGISTRY_KEY') + '\\machine" InstallLocation "' + literal('machine existing') + '"',
+        '    StrCpy $FixtureAdmin "1"',
+        '  ' + macro('ElseIf') + ' $FixtureCase == "recovered-location"',
+        '    WriteRegStr HKCU "' + macro('INSTALL_REGISTRY_KEY') + '\\user" InstallLocation "' + literal('stale location') + '"',
+        '    WriteRegStr HKCU "' + macro('UNINSTALL_REGISTRY_KEY') + '\\user" UninstallString \'"' + literal('已安装 软件\\Uninstall ' + productName + '.exe') + '" /currentuser\'',
+        '  ' + macro('ElseIf') + ' $FixtureCase == "stale-only"',
+        '    WriteRegStr HKCU "' + macro('INSTALL_REGISTRY_KEY') + '\\user" InstallLocation "' + literal('stale location') + '"',
+        '  ' + macro('EndIf'),
         '  !insertmacro setInstallModePerUser',
         '  ' + macro('If') + ' $FixtureCase == "both-all"',
         '    !insertmacro setInstallModePerAllUsers', '    StrCpy $FixtureAdmin "1"',
@@ -230,6 +249,10 @@ describe.runIf(process.platform === 'win32' && existsSync(compiler)
       ].join('\n');
       writeFileSync(path.join(root, 'setup.nsi'), source);
       for (const folder of ['fresh location', 'machine location', '已安装 软件', 'machine existing', 'selected current 汉字 & %value%', 'selected machine']) mkdirSync(path.join(root, folder));
+      for (const folder of ['已安装 软件', 'machine existing']) {
+        writeFileSync(path.join(root, folder, `${productName}.exe`), 'fixture product executable');
+        writeFileSync(path.join(root, folder, `Uninstall ${productName}.exe`), 'fixture uninstaller');
+      }
       writeFileSync(path.join(root, 'existing-file'), 'path validation canary');
       const compiled = spawnSync(compiler, ['/WX', '/V2', '/INPUTCHARSET', 'UTF8', path.join(root, 'setup.nsi')], { encoding: 'utf8', windowsHide: true, timeout: 30_000 });
       expect(compiled.status, compiled.stdout + '\n' + compiled.stderr).toBe(0);

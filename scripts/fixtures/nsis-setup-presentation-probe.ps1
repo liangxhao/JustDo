@@ -453,7 +453,7 @@ function Assert-Setup {
     Assert-Condition ([int]$bitmap[0] -eq [math]::Floor($logoPixels*[InstallerSetupProbe]::Dpi($window)/96) -and $bitmap[0] -eq $bitmap[1]) 'The combined logo is not rendered at its native pixel density.'
   }
 }
-$cases=@('fresh','upgrade','mixed-scope','upgrade-machine','both-all','english','dpi125','dpi175','dpi200','forced-current','forced-all','handoff','inner','inner-denied','inner-empty','inner-relative','inner-not-ready','inner-bridge-failed','updated','compact','header-short','short','silent')
+$cases=@('fresh','upgrade','mixed-scope','upgrade-machine','both-all','stale-user-live-machine','recovered-location','stale-only','english','dpi125','dpi175','dpi200','forced-current','forced-all','handoff','inner','inner-denied','inner-empty','inner-relative','inner-not-ready','inner-bridge-failed','updated','compact','header-short','short','silent')
 foreach($case in $cases){
   [InstallerSetupProbe]::LayoutDpi=if($case -match '^dpi(\d+)$'){96*[int]$Matches[1]/100}elseif($case -eq 'short'){288}elseif($case -eq 'header-short' -or $case -eq 'compact'){192}else{0}
   foreach($name in @('state.txt','scope-sequence.txt','elevation.txt','closed.txt','silent.txt','finished.txt','motion.txt','dpi-fonts.txt','dpi-bitmap.txt')){
@@ -549,10 +549,21 @@ foreach($case in $cases){
         Assert-Condition ([InstallerSetupProbe]::Text($edit) -eq $selectedMachine -and [InstallerSetupProbe]::SendMessage($all,0xF0,[IntPtr]::Zero,[IntPtr]::Zero).ToInt64() -eq 1) 'Declining elevation lost the scope or edited path.'
         Keyboard-Choose $current
         Wait-For { [InstallerSetupProbe]::Text($edit) -eq $selectedCurrent } 'Retrying as current user lost its draft.'
-      } elseif($case -in @('mixed-scope','upgrade','upgrade-machine','both-all')){
+      } elseif($case -in @('upgrade','both-all')){
+        Assert-Condition ([InstallerSetupProbe]::IsWindowEnabled($current) -and [InstallerSetupProbe]::IsWindowEnabled($all)) 'Two real installations must permit selecting the installation scope.'
+        Assert-Condition (![InstallerSetupProbe]::IsWindowEnabled($edit) -and ![InstallerSetupProbe]::IsWindowEnabled($browse)) 'The selected real installation folder was not retained.'
+        $initialPath=if($case -eq 'both-all'){Join-Path $FixtureRoot 'machine existing'}else{Join-Path $FixtureRoot '已安装 软件'}
+        Assert-Condition ([InstallerSetupProbe]::Text($edit) -eq $initialPath) 'The initial real installation folder was not retained.'
+        Keyboard-Choose $all
+        Wait-For { [InstallerSetupProbe]::Text($edit) -eq (Join-Path $FixtureRoot 'machine existing') } 'Selecting the machine installation lost its real directory.'
+        Keyboard-Choose $current
+        $expectedPath=Join-Path $FixtureRoot '已安装 软件'
+        Wait-For { [InstallerSetupProbe]::Text($edit) -eq $expectedPath } 'Selecting the user installation lost its real directory.'
+        Assert-DirectoryPresentation
+      } elseif($case -in @('mixed-scope','upgrade-machine','stale-user-live-machine','recovered-location')){
         Assert-Condition (![InstallerSetupProbe]::IsWindowEnabled($current) -and ![InstallerSetupProbe]::IsWindowEnabled($all)) 'An ordinary upgrade allowed its installation scope to change.'
         Assert-Condition (![InstallerSetupProbe]::IsWindowEnabled($edit) -and ![InstallerSetupProbe]::IsWindowEnabled($browse)) 'An ordinary upgrade allowed its installation folder to change.'
-        if($case -in @('upgrade-machine','both-all')){
+        if($case -in @('upgrade-machine','stale-user-live-machine')){
           $expectedMode='all'
           $expectedPath=Join-Path $FixtureRoot 'machine existing'
           Assert-Condition ([InstallerSetupProbe]::SendMessage($all,0xF0,[IntPtr]::Zero,[IntPtr]::Zero).ToInt64() -eq 1) 'The registered machine scope was not retained.'
@@ -565,6 +576,9 @@ foreach($case in $cases){
         Assert-DirectoryPresentation
         Assert-Painted $controls 'installer-directory-locked.png'
       } else {
+        if($case -eq 'stale-only'){
+          Assert-Condition ([InstallerSetupProbe]::IsWindowEnabled($current) -and [InstallerSetupProbe]::IsWindowEnabled($all) -and [InstallerSetupProbe]::IsWindowEnabled($edit) -and [InstallerSetupProbe]::IsWindowEnabled($browse)) 'A stale registration locked the installation target.'
+        }
         Set-Path $edit $selectedCurrent
       }
       if($case -eq 'forced-current'){
