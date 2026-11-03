@@ -22,6 +22,7 @@ import { toSanitizedMarkdownHtml } from '@/libs/openclaw-chat/components/markdow
 import { i18nService } from '@/services/i18n';
 
 const PROGRESS_NOTE_PREVIEW_HEIGHT_PX = 279;
+const PROGRESS_CARD_ROUND_ENDED = 'round-ended';
 
 interface SessionProgressCardProps {
   card: ProgressCard;
@@ -38,8 +39,15 @@ const currentProgressStep = (steps: readonly ProgressCardStep[]): ProgressCardSt
   null;
 
 const stepStatusLabel = (
-  status: ProgressCardStep['status'] | 'paused' | 'waiting' | 'failed' | 'aborted',
+  status:
+    | ProgressCardStep['status']
+    | 'paused'
+    | 'waiting'
+    | 'failed'
+    | 'aborted'
+    | typeof PROGRESS_CARD_ROUND_ENDED,
 ): string => {
+  if (status === PROGRESS_CARD_ROUND_ENDED) return i18nService.t('coworkProgressCardRoundEnded');
   if (status === 'paused') return i18nService.t('coworkProgressCardPaused');
   if (status === 'waiting') return i18nService.t('coworkProgressCardWaiting');
   if (status === 'failed') return i18nService.t('coworkProgressCardFailed');
@@ -52,6 +60,25 @@ const stepStatusLabel = (
   }
   return i18nService.t('coworkProgressCardPending');
 };
+
+function progressNoteHtml(markdown: string, fallbackLabel: string): string {
+  const content = document.createElement('div');
+  content.innerHTML = toSanitizedMarkdownHtml(markdown, {
+    allowProgressElement: true,
+    parseLimit: 8_192,
+  });
+  for (const progress of content.querySelectorAll('progress')) {
+    const meter = document.createElement('span');
+    meter.className = 'cowork-progress-card__meter';
+    const label = document.createElement('span');
+    label.className = 'cowork-progress-card__meter-label';
+    label.setAttribute('aria-hidden', 'true');
+    label.textContent = progress.getAttribute('aria-label') || fallbackLabel;
+    progress.replaceWith(meter);
+    meter.append(label, progress);
+  }
+  return content.innerHTML;
+}
 
 function ProgressCardNote({ html, id }: { html: string; id: string }) {
   const noteRef = useRef<HTMLDivElement>(null);
@@ -144,15 +171,10 @@ const SessionProgressCard = ({ card, runState, onRefresh }: SessionProgressCardP
     setExpanded(true);
   }, [card.sessionKey]);
 
+  const fallbackProgressLabel = i18nService.t('coworkProgressCardProgress');
   const markdownHtml = useMemo(
-    () =>
-      card.markdown
-        ? toSanitizedMarkdownHtml(card.markdown, {
-            allowProgressElement: true,
-            parseLimit: 8_192,
-          })
-        : '',
-    [card.markdown],
+    () => (card.markdown ? progressNoteHtml(card.markdown, fallbackProgressLabel) : ''),
+    [card.markdown, fallbackProgressLabel],
   );
   const paused =
     current?.status === ProgressCardStepStatus.InProgress && runState === 'idle' && !complete;
@@ -167,7 +189,9 @@ const SessionProgressCard = ({ card, runState, onRefresh }: SessionProgressCardP
   const headerState = complete
     ? ProgressCardStepStatus.Completed
     : runState === 'completed'
-      ? 'waiting'
+      ? steps.length > 0
+        ? 'waiting'
+        : PROGRESS_CARD_ROUND_ENDED
       : runState === 'failed' || runState === 'aborted'
         ? runState
         : paused
@@ -216,6 +240,8 @@ const SessionProgressCard = ({ card, runState, onRefresh }: SessionProgressCardP
             >
               {complete ? (
                 <CheckCircleIcon />
+              ) : headerState === PROGRESS_CARD_ROUND_ENDED ? (
+                <CheckCircleIcon />
               ) : runState === 'completed' ? (
                 <PauseCircleSolidIcon />
               ) : runState === 'failed' ? (
@@ -229,6 +255,7 @@ const SessionProgressCard = ({ card, runState, onRefresh }: SessionProgressCardP
               ) : (
                 <ClipboardDocumentCheckIcon />
               )}
+              <span>{headerStateLabel}</span>
             </span>
             {completedCountText && (
               <span className="cowork-progress-card__count">{completedCountText}</span>

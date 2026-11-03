@@ -446,7 +446,12 @@ function installHooks(): void {
         data.attrValue = '#';
       }
     }
-    if (tagName === 'progress' && data.attrName !== 'value' && data.attrName !== 'max') {
+    if (
+      tagName === 'progress' &&
+      data.attrName !== 'value' &&
+      data.attrName !== 'max' &&
+      data.attrName !== 'aria-label'
+    ) {
       data.keepAttr = false;
     } else if (data.attrName === 'open' && tagName !== 'details') {
       data.keepAttr = false;
@@ -458,7 +463,9 @@ function installHooks(): void {
   DOMPurify.addHook('afterSanitizeAttributes', node => {
     sanitizeMessageFileLinkNode(node, activeMessageFileLinkRegistry);
     if (node.nodeName.toLowerCase() === 'progress') {
-      node.setAttribute('aria-label', i18nService.t('coworkProgressCardProgress'));
+      if (!node.getAttribute('aria-label')?.trim()) {
+        node.setAttribute('aria-label', i18nService.t('coworkProgressCardProgress'));
+      }
       return;
     }
     if (!(node instanceof HTMLAnchorElement)) return;
@@ -1048,7 +1055,7 @@ export interface MarkdownRenderOptions {
   parseLimit?: number;
   stripFrontmatter?: boolean;
   renderFrontmatter?: boolean;
-  /** Allow only OpenClaw's progress-card `<progress value max>` extension. */
+  /** Allow only OpenClaw's progress-card `<progress value max aria-label>` extension. */
   allowProgressElement?: boolean;
   /** Render HTML comments as subdued source markers instead of ordinary raw HTML text. */
   styleHtmlComments?: boolean;

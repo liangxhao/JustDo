@@ -63,6 +63,81 @@ describe('SessionProgressCard', () => {
     expect(screen.queryByText('查看当前状态')).toBeNull();
   });
 
+  it('shows the native progress label as text without admitting HTML from the label', () => {
+    i18nService.setLanguage('en', { persist: false });
+    const label = 'Files checked · 3/7 <img src=x onerror=alert(1)>';
+    const { container } = render(
+      <SessionProgressCard
+        card={{
+          ...activeCard,
+          markdown:
+            '<progress aria-label="Files checked · 3/7 &lt;img src=x onerror=alert(1)&gt;" value="3" max="7"></progress>\n\nReviewing the remaining files.',
+        }}
+        runState="running"
+      />,
+    );
+
+    expect(screen.getByText(label)).toBeTruthy();
+    expect(screen.getByRole('progressbar', { name: label })).toBeTruthy();
+    expect(screen.getByText('Reviewing the remaining files.')).toBeTruthy();
+    expect(container.querySelector('img, [onerror]')).toBeNull();
+  });
+
+  it('updates the visible fallback label when the language changes on the same card', () => {
+    i18nService.setLanguage('zh', { persist: false });
+    const { rerender } = render(<SessionProgressCard card={activeCard} runState="running" />);
+    expect(screen.getByText('任务完成进度')).toBeTruthy();
+
+    i18nService.setLanguage('en', { persist: false });
+    rerender(<SessionProgressCard card={activeCard} runState="running" />);
+
+    expect(screen.getByText('Task completion progress')).toBeTruthy();
+    expect(screen.getByRole('progressbar', { name: 'Task completion progress' })).toBeTruthy();
+    expect(screen.queryByText('任务完成进度')).toBeNull();
+  });
+
+  it('presents a finished Markdown-only turn neutrally without marking the task complete', () => {
+    i18nService.setLanguage('zh', { persist: false });
+    render(
+      <SessionProgressCard
+        card={{
+          sessionKey: activeCard.sessionKey,
+          revision: 4,
+          updatedAt: Date.now(),
+          markdown:
+            '<progress aria-label="文件已检查 · 7/7" value="7" max="7"></progress>\n\n检查结果见回复。',
+        }}
+        runState="completed"
+      />,
+    );
+
+    expect(screen.getByText('文件已检查 · 7/7')).toBeTruthy();
+    expect(screen.getByText('本轮已结束')).toBeTruthy();
+    expect(screen.getByRole('button', { name: /本轮已结束/ })).toBeTruthy();
+    expect(screen.queryByText('等待继续')).toBeNull();
+    expect(screen.queryByText('已完成')).toBeNull();
+    expect(screen.queryByRole('list')).toBeNull();
+  });
+
+  it('does not infer a finished turn from a full progress bar when the run outcome is unknown', () => {
+    i18nService.setLanguage('en', { persist: false });
+    render(
+      <SessionProgressCard
+        card={{
+          sessionKey: activeCard.sessionKey,
+          revision: 4,
+          updatedAt: Date.now(),
+          markdown: '<progress aria-label="Files checked · 7/7" value="7" max="7"></progress>',
+        }}
+        runState="idle"
+      />,
+    );
+
+    expect(screen.getByText('Files checked · 7/7')).toBeTruthy();
+    expect(screen.queryByText('Turn ended')).toBeNull();
+    expect(screen.queryByText('Completed')).toBeNull();
+  });
+
   it('lets the user collapse an active card without losing it', () => {
     i18nService.setLanguage('en', { persist: false });
     render(<SessionProgressCard card={activeCard} runState="running" />);
@@ -100,7 +175,15 @@ describe('SessionProgressCard', () => {
 
   it('presents an incomplete plan as waiting when its run finishes normally', () => {
     i18nService.setLanguage('zh', { persist: false });
-    const { container } = render(<SessionProgressCard card={activeCard} runState="completed" />);
+    const { container } = render(
+      <SessionProgressCard
+        card={{
+          ...activeCard,
+          markdown: '<progress aria-label="检查已结束 · 7/7" value="7" max="7"></progress>',
+        }}
+        runState="completed"
+      />,
+    );
 
     expect(screen.getByRole('button', { name: /等待继续/ })).toBeTruthy();
     expect(screen.getByRole('img', { name: '等待继续' }).textContent).toBe('Ⅱ');

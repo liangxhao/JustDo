@@ -10,6 +10,7 @@ import {
   toSanitizedMarkdownHtml,
   toStreamingMarkdownHtml,
 } from '@/libs/openclaw-chat/components/markdown/markdown';
+import { i18nService } from '@/services/i18n';
 
 describe('local HTML links', () => {
   test('decodes a relative HTML link with spaces and Chinese characters for the native file lookup', () => {
@@ -169,6 +170,30 @@ describe('Progress card Markdown', () => {
 
     expect(html).not.toContain('value=');
     expect(html).not.toContain('max=');
+  });
+
+  test('preserves the native work-unit label while rejecting presentation and event attributes', () => {
+    const container = document.createElement('div');
+    container.innerHTML = toSanitizedMarkdownHtml(
+      '<progress aria-label="Files checked · 3/7" value="3" max="7" class="evil" style="position:fixed" onclick="alert(1)"></progress>',
+      { allowProgressElement: true },
+    );
+    const progress = container.querySelector('progress')!;
+
+    expect(progress.getAttribute('aria-label')).toBe('Files checked · 3/7');
+    expect(progress.getAttributeNames().sort()).toEqual(['aria-label', 'max', 'value']);
+  });
+
+  test('uses the localized accessible name when the native label is blank', () => {
+    const container = document.createElement('div');
+    container.innerHTML = toSanitizedMarkdownHtml(
+      '<progress aria-label="  " value="0" max="7"></progress>',
+      { allowProgressElement: true },
+    );
+
+    expect(container.querySelector('progress')?.getAttribute('aria-label')).toBe(
+      i18nService.t('coworkProgressCardProgress'),
+    );
   });
 });
 
