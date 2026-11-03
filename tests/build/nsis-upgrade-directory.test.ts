@@ -2,6 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 
 const repositoryRoot = path.resolve(__dirname, '../..');
@@ -74,7 +75,8 @@ describe.runIf(process.platform === 'win32' && Boolean(compiler))('native instal
         'Name "Directory policy fixture"', '!define APP_FILENAME "DirectoryFixture"',
         '!define allowToChangeInstallationDirectory',
         `!define INSTALL_REGISTRY_KEY "${registryKey}"`,
-        ...['InstallerUpgradeDirectory', 'installMode', 'JustDoInstallMode', 'ProbeCase', 'ProbeInner', 'ProbeSwitch', 'ProbeProcessChecks']
+        ...['InstallerUpgradeDirectory', 'InstallerCombinedLockedMode', 'InstallerCombinedMode',
+          'installMode', 'JustDoInstallMode', 'ProbeCase', 'ProbeInner', 'ProbeSwitch', 'ProbeProcessChecks']
           .map(name => `Var ${name}`),
         '!macro JustDoLogInstallEvent TEXT', '  DetailPrint "${TEXT}"', '!macroend',
         'Function JustDoCheckAppRunning', '  IntOp $ProbeProcessChecks $ProbeProcessChecks + 1', 'FunctionEnd',
@@ -82,6 +84,7 @@ describe.runIf(process.platform === 'win32' && Boolean(compiler))('native instal
         'Function .onInit', '  SetRegView 64',
         '  ${GetParameters} $0', '  ${GetOptions} $0 "/case=" $ProbeCase',
         '  DeleteRegKey HKCU "${INSTALL_REGISTRY_KEY}"', '  StrCpy $ProbeProcessChecks 0',
+        '  StrCpy $InstallerCombinedLockedMode ""',
         `  StrCpy $INSTDIR "${nsisPath(candidate)}"`, ...initializers, 'FunctionEnd',
         'Section', '  Call InstallerRestoreUpgradeDirectory',
         `  FileOpen $3 "${nsisPath(path.join(root, 'result.txt'))}" w`,

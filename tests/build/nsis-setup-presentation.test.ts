@@ -2,6 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 
 const repoRoot = path.resolve(__dirname, '../..');
@@ -37,6 +38,8 @@ describe.runIf(process.platform === 'win32' && existsSync(compiler)
       expect(combined.match(/^\s*nsDialogs::Show\s*$/gm)).toHaveLength(1);
       // Run actual production callbacks; isolate only account/UAC ports.
       writeFileSync(path.join(root, 'combined-fixture.nsh'), combined
+        .replaceAll('HKLM "' + macro('INSTALL_REGISTRY_KEY') + '"', 'HKCU "' + macro('INSTALL_REGISTRY_KEY') + '\\machine"')
+        .replaceAll('HKCU "' + macro('INSTALL_REGISTRY_KEY') + '"', 'HKCU "' + macro('INSTALL_REGISTRY_KEY') + '\\user"')
         .replace(/^\s*nsDialogs::Show\s*$/m, '\n  Call FixtureCombinedObserved\n  nsDialogs::Show')
         .replace('  InstallerCombinedScopeDone:', '  InstallerCombinedScopeDone:\n  Call FixtureScopeObserved'));
       const resolver = sourceFunction(installer, 'InstallerRestoreUpgradeDirectory')
@@ -124,18 +127,25 @@ describe.runIf(process.platform === 'win32' && existsSync(compiler)
         '  DeleteRegKey HKCU "' + macro('INSTALL_REGISTRY_KEY') + '"',
         '  ' + macro('GetParameters') + ' $0', '  ' + macro('GetOptions') + ' $0 "/case=" $FixtureCase', '  StrCpy $LANGUAGE 2052',
         '  ' + macro('If') + ' $FixtureCase == "short"', '  ' + macro('OrIf') + ' $FixtureCase == "english"', '    StrCpy $LANGUAGE 1033', '  ' + macro('EndIf'),
-        '  ' + macro('If') + ' $FixtureCase == "upgrade"',
+        '  ' + macro('If') + ' $FixtureCase == "upgrade"', '  ' + macro('OrIf') + ' $FixtureCase == "both-all"',
         '    WriteRegStr HKCU "' + macro('INSTALL_REGISTRY_KEY') + '\\user" InstallLocation "' + literal('已安装 软件') + '"',
         '    WriteRegStr HKCU "' + macro('INSTALL_REGISTRY_KEY') + '\\machine" InstallLocation "' + literal('machine existing') + '"',
         '    StrCpy $hasPerUserInstallation "1"', '    StrCpy $hasPerMachineInstallation "1"',
         '  ' + macro('ElseIf') + ' $FixtureCase == "mixed-scope"',
         '    WriteRegStr HKCU "' + macro('INSTALL_REGISTRY_KEY') + '\\user" InstallLocation "' + literal('已安装 软件') + '"',
-        '    StrCpy $hasPerUserInstallation "1"', '  ' + macro('EndIf'),
+        '    StrCpy $hasPerUserInstallation "1"',
+        '  ' + macro('ElseIf') + ' $FixtureCase == "upgrade-machine"',
+        '    WriteRegStr HKCU "' + macro('INSTALL_REGISTRY_KEY') + '\\machine" InstallLocation "' + literal('machine existing') + '"',
+        '    StrCpy $FixtureAdmin "1"', '  ' + macro('EndIf'),
         '  !insertmacro setInstallModePerUser',
-        '  ' + macro('If') + ' $FixtureCase == "forced-current"', '    StrCpy $FixtureForceCurrent "1"',
+        '  ' + macro('If') + ' $FixtureCase == "both-all"',
+        '    !insertmacro setInstallModePerAllUsers', '    StrCpy $FixtureAdmin "1"',
+        '  ' + macro('ElseIf') + ' $FixtureCase == "forced-current"', '    StrCpy $FixtureForceCurrent "1"',
         '  ' + macro('ElseIf') + ' $FixtureCase == "forced-all"', '    StrCpy $FixtureForceMachine "1"', '    !insertmacro setInstallModePerAllUsers',
         '  ' + macro('ElseIf') + ' $FixtureCase == "handoff"', '    StrCpy $FixtureForceMachine "1"', '    !insertmacro setInstallModePerAllUsers',
         '  ' + macro('ElseIf') + ' $FixtureCase == "inner"', '    StrCpy $FixtureInner "1"', '    StrCpy $FixtureAdmin "1"',
+        // The elevated account's HKCU must not reselect the outer user's scope.
+        '    WriteRegStr HKCU "' + macro('INSTALL_REGISTRY_KEY') + '\\user" InstallLocation "' + literal('已安装 软件') + '"',
         '    !insertmacro setInstallModePerAllUsers', '    StrCpy $InstallerCombinedSelectionReady "1"',
         '    StrCpy $InstallerCombinedSelectionPath "' + literal('selected machine') + '"',
         '  ' + macro('ElseIf') + ' $FixtureCase == "inner-denied"', '    StrCpy $FixtureInner "1"',

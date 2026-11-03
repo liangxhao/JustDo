@@ -494,6 +494,15 @@ FunctionEnd
   Function JustDoInstFilesPre
     ; The combined page commits INSTDIR before advancing. Restore a registered
     ; location once more, preserving historical paths exactly.
+    ${If} $InstallerCombinedLockedMode != ""
+      StrCpy $installMode "$InstallerCombinedLockedMode"
+      StrCpy $InstallerCombinedMode "$InstallerCombinedLockedMode"
+      ${If} $installMode == "all"
+        SetShellVarContext all
+      ${Else}
+        SetShellVarContext current
+      ${EndIf}
+    ${EndIf}
     Call InstallerRestoreUpgradeDirectory
     ${If} $InstallerUpgradeDirectory == ""
       !ifdef allowToChangeInstallationDirectory

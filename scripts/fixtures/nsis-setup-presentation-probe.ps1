@@ -453,7 +453,7 @@ function Assert-Setup {
     Assert-Condition ([int]$bitmap[0] -eq [math]::Floor($logoPixels*[InstallerSetupProbe]::Dpi($window)/96) -and $bitmap[0] -eq $bitmap[1]) 'The combined logo is not rendered at its native pixel density.'
   }
 }
-$cases=@('fresh','upgrade','mixed-scope','english','dpi125','dpi175','dpi200','forced-current','forced-all','handoff','inner','inner-denied','inner-empty','inner-relative','inner-not-ready','inner-bridge-failed','updated','compact','header-short','short','silent')
+$cases=@('fresh','upgrade','mixed-scope','upgrade-machine','both-all','english','dpi125','dpi175','dpi200','forced-current','forced-all','handoff','inner','inner-denied','inner-empty','inner-relative','inner-not-ready','inner-bridge-failed','updated','compact','header-short','short','silent')
 foreach($case in $cases){
   [InstallerSetupProbe]::LayoutDpi=if($case -match '^dpi(\d+)$'){96*[int]$Matches[1]/100}elseif($case -eq 'short'){288}elseif($case -eq 'header-short' -or $case -eq 'compact'){192}else{0}
   foreach($name in @('state.txt','scope-sequence.txt','elevation.txt','closed.txt','silent.txt','finished.txt','motion.txt','dpi-fonts.txt','dpi-bitmap.txt')){
@@ -549,25 +549,21 @@ foreach($case in $cases){
         Assert-Condition ([InstallerSetupProbe]::Text($edit) -eq $selectedMachine -and [InstallerSetupProbe]::SendMessage($all,0xF0,[IntPtr]::Zero,[IntPtr]::Zero).ToInt64() -eq 1) 'Declining elevation lost the scope or edited path.'
         Keyboard-Choose $current
         Wait-For { [InstallerSetupProbe]::Text($edit) -eq $selectedCurrent } 'Retrying as current user lost its draft.'
-      } elseif($case -eq 'mixed-scope'){
-        Assert-Condition (![InstallerSetupProbe]::IsWindowEnabled($edit) -and ![InstallerSetupProbe]::IsWindowEnabled($browse)) 'The registered current-user path was not locked.'
-        Keyboard-Choose $all
-        Assert-Condition ([InstallerSetupProbe]::IsWindowEnabled($edit) -and [InstallerSetupProbe]::IsWindowEnabled($browse)) 'Switching to a fresh scope did not enable its controls.'
-        Assert-DirectoryPresentation
-        Assert-Painted $controls 'installer-directory-editable.png'
-        Keyboard-Choose $current
-        Assert-Condition (![InstallerSetupProbe]::IsWindowEnabled($edit) -and ![InstallerSetupProbe]::IsWindowEnabled($browse)) 'Switching back to a registered scope did not lock its controls.'
+      } elseif($case -in @('mixed-scope','upgrade','upgrade-machine','both-all')){
+        Assert-Condition (![InstallerSetupProbe]::IsWindowEnabled($current) -and ![InstallerSetupProbe]::IsWindowEnabled($all)) 'An ordinary upgrade allowed its installation scope to change.'
+        Assert-Condition (![InstallerSetupProbe]::IsWindowEnabled($edit) -and ![InstallerSetupProbe]::IsWindowEnabled($browse)) 'An ordinary upgrade allowed its installation folder to change.'
+        if($case -in @('upgrade-machine','both-all')){
+          $expectedMode='all'
+          $expectedPath=Join-Path $FixtureRoot 'machine existing'
+          Assert-Condition ([InstallerSetupProbe]::SendMessage($all,0xF0,[IntPtr]::Zero,[IntPtr]::Zero).ToInt64() -eq 1) 'The registered machine scope was not retained.'
+        } else {
+          $expectedPath=Join-Path $FixtureRoot '已安装 软件'
+          Assert-Condition ([InstallerSetupProbe]::SendMessage($current,0xF0,[IntPtr]::Zero,[IntPtr]::Zero).ToInt64() -eq 1) 'The registered current-user scope was not retained.'
+        }
+        Assert-Condition ([InstallerSetupProbe]::Text($edit) -eq $expectedPath) 'The locked scope did not retain its registered folder.'
+        Assert-Condition ([InstallerSetupProbe]::Text([IntPtr][long]$pageState[7]) -match '原安装范围') 'The upgrade hint did not describe its retained installation scope.'
         Assert-DirectoryPresentation
         Assert-Painted $controls 'installer-directory-locked.png'
-        $expectedPath=Join-Path $FixtureRoot '已安装 软件'
-      } elseif($case -eq 'upgrade'){
-        Assert-Condition (![InstallerSetupProbe]::IsWindowEnabled($edit) -and ![InstallerSetupProbe]::IsWindowEnabled($browse)) 'An existing installation was not locked.'
-        Assert-Condition ([InstallerSetupProbe]::Text($edit) -eq (Join-Path $FixtureRoot '已安装 软件')) 'The registered user path was not selected.'
-        Keyboard-Choose $all
-        Wait-For { [InstallerSetupProbe]::Text($edit) -eq (Join-Path $FixtureRoot 'machine existing') } 'Changing scope did not select its registered machine path.'
-        Assert-Condition (![InstallerSetupProbe]::IsWindowEnabled($edit) -and ![InstallerSetupProbe]::IsWindowEnabled($browse)) 'Changing scope unlocked an existing installation.'
-        Keyboard-Choose $current
-        $expectedPath=Join-Path $FixtureRoot '已安装 软件'
       } else {
         Set-Path $edit $selectedCurrent
       }

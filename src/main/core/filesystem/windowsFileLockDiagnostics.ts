@@ -162,7 +162,7 @@ public static class JustDoHandleScanner {
     return candidate.StartsWith(target + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
   }
 
-  public static LockingProcess[] Find(string targetPath) {
+  public static bool Find(string targetPath, int priorityPid, Action<LockingProcess> report) {
     string target = NormalizePath(Path.GetFullPath(targetPath));
     int bufferLength = 1024 * 1024;
     IntPtr buffer = IntPtr.Zero;
@@ -180,50 +180,54 @@ public static class JustDoHandleScanner {
           bufferLength = Math.Max(bufferLength * 2, requiredLength + 65536);
         }
       } while (status == StatusInfoLengthMismatch);
-      if (status != 0) return new LockingProcess[0];
+      if (status != 0) return false;
 
       long handleCount = Marshal.ReadIntPtr(buffer).ToInt64();
       int entrySize = Marshal.SizeOf(typeof(SYSTEM_HANDLE_TABLE_ENTRY_INFO_EX));
-      long offset = IntPtr.Size * 2L;
       IntPtr currentProcess = GetCurrentProcess();
-      for (long index = 0; index < handleCount; index++, offset += entrySize) {
-        IntPtr entryPointer = new IntPtr(buffer.ToInt64() + offset);
-        var entry = (SYSTEM_HANDLE_TABLE_ENTRY_INFO_EX)Marshal.PtrToStructure(
-          entryPointer, typeof(SYSTEM_HANDLE_TABLE_ENTRY_INFO_EX));
-        int pid;
-        try { pid = checked((int)entry.UniqueProcessId.ToInt64()); }
-        catch { continue; }
-        if (pid <= 0 || matches.ContainsKey(pid)) continue;
+      int scannerPid = Process.GetCurrentProcess().Id;
+      // Report the application's own handles before unrelated path queries can stall.
+      for (int pass = 0; pass < 2; pass++) {
+        long offset = IntPtr.Size * 2L;
+        for (long index = 0; index < handleCount; index++, offset += entrySize) {
+          IntPtr entryPointer = new IntPtr(buffer.ToInt64() + offset);
+          var entry = (SYSTEM_HANDLE_TABLE_ENTRY_INFO_EX)Marshal.PtrToStructure(
+            entryPointer, typeof(SYSTEM_HANDLE_TABLE_ENTRY_INFO_EX));
+          int pid;
+          try { pid = checked((int)entry.UniqueProcessId.ToInt64()); }
+          catch { continue; }
+          if (pid <= 0 || pid == scannerPid || matches.ContainsKey(pid) ||
+              ((pass == 0) != (pid == priorityPid))) continue;
 
-        IntPtr sourceProcess;
-        if (!processHandles.TryGetValue(pid, out sourceProcess)) {
-          sourceProcess = OpenProcess(ProcessDuplicateHandle, false, pid);
-          processHandles[pid] = sourceProcess;
-        }
-        if (sourceProcess == IntPtr.Zero) continue;
+          IntPtr sourceProcess;
+          if (!processHandles.TryGetValue(pid, out sourceProcess)) {
+            sourceProcess = OpenProcess(ProcessDuplicateHandle, false, pid);
+            processHandles[pid] = sourceProcess;
+          }
+          if (sourceProcess == IntPtr.Zero) continue;
 
-        IntPtr duplicate;
-        if (!DuplicateHandle(
-          sourceProcess, entry.HandleValue, currentProcess, out duplicate,
-          0, false, DuplicateSameAccess)) continue;
-        try {
-          if (GetFileType(duplicate) != FileTypeDisk) continue;
-          var pathBuffer = new StringBuilder(32768);
-          uint length = GetFinalPathNameByHandle(duplicate, pathBuffer, (uint)pathBuffer.Capacity, 0);
-          if (length == 0 || length >= pathBuffer.Capacity) continue;
-          if (!IsWithinTarget(NormalizePath(pathBuffer.ToString()), target)) continue;
+          IntPtr duplicate;
+          if (!DuplicateHandle(
+            sourceProcess, entry.HandleValue, currentProcess, out duplicate,
+            0, false, DuplicateSameAccess)) continue;
+          try {
+            if (GetFileType(duplicate) != FileTypeDisk) continue;
+            var pathBuffer = new StringBuilder(32768);
+            uint length = GetFinalPathNameByHandle(duplicate, pathBuffer, (uint)pathBuffer.Capacity, 0);
+            if (length == 0 || length >= pathBuffer.Capacity) continue;
+            if (!IsWithinTarget(NormalizePath(pathBuffer.ToString()), target)) continue;
 
-          string name;
-          try { name = Process.GetProcessById(pid).ProcessName; }
-          catch { name = "PID " + pid; }
-          matches[pid] = new LockingProcess { name = name, pid = pid, serviceName = "" };
-        } finally {
-          CloseHandle(duplicate);
+            string name;
+            try { name = Process.GetProcessById(pid).ProcessName; }
+            catch { name = "PID " + pid; }
+            matches[pid] = new LockingProcess { name = name, pid = pid, serviceName = "" };
+            report(matches[pid]);
+          } finally {
+            CloseHandle(duplicate);
+          }
         }
       }
-      var result = new LockingProcess[matches.Count];
-      matches.Values.CopyTo(result, 0);
-      return result;
+      return true;
     } finally {
       foreach (IntPtr processHandle in processHandles.Values) {
         if (processHandle != IntPtr.Zero) CloseHandle(processHandle);
@@ -234,12 +238,22 @@ public static class JustDoHandleScanner {
 }
 '@
 
-$handle = 0
-$key = [Guid]::NewGuid().ToString('N')
-$started = [JustDoRestartManager]::RmStartSession([ref]$handle, 0, $key)
-if ($started -ne 0) { throw "RmStartSession failed: $started" }
+$reported = New-Object 'System.Collections.Generic.HashSet[int]'
+$emitProcess = {
+  param($entry)
+  if ($reported.Add([int]$entry.pid)) {
+    [Console]::Out.WriteLine((ConvertTo-Json -InputObject $entry -Compress))
+    [Console]::Out.Flush()
+  }
+}
 
+$handle = 0
+$sessionStarted = $false
 try {
+  $key = [Guid]::NewGuid().ToString('N')
+  $started = [JustDoRestartManager]::RmStartSession([ref]$handle, 0, $key)
+  if ($started -ne 0) { throw "RmStartSession failed: $started" }
+  $sessionStarted = $true
   $resources = [string[]]@($env:JUSTDO_LOCK_TARGET)
   $registered = [JustDoRestartManager]::RmRegisterResources(
     $handle, $resources.Length, $resources, 0, $null, 0, $null)
@@ -268,13 +282,23 @@ try {
       serviceName = $_.strServiceShortName
     }
   })
-  if ($restartManagerProcesses.Count -gt 0) {
-    ConvertTo-Json -InputObject @($restartManagerProcesses) -Compress
-  } else {
-    ConvertTo-Json -InputObject @([JustDoHandleScanner]::Find($env:JUSTDO_LOCK_TARGET)) -Compress
-  }
+  foreach ($entry in $restartManagerProcesses) { & $emitProcess $entry }
+} catch {
+  [Console]::Error.WriteLine($_.Exception.Message)
 } finally {
-  [void][JustDoRestartManager]::RmEndSession($handle)
+  if ($sessionStarted) { [void][JustDoRestartManager]::RmEndSession($handle) }
+}
+
+# Restart Manager does not support directory resources; its failure must not skip handles.
+try {
+  $report = [System.Action[JustDoHandleScanner+LockingProcess]] {
+    param($entry)
+    & $emitProcess $entry
+  }
+  $complete = [JustDoHandleScanner]::Find($env:JUSTDO_LOCK_TARGET, [int]$env:FILE_LOCK_PRIORITY_PID, $report)
+  if ($complete) { [Console]::Out.WriteLine('{"complete":true}') }
+} catch {
+  [Console]::Error.WriteLine($_.Exception.Message)
 }
 `;
 
@@ -302,6 +326,9 @@ export const findWindowsLockingProcesses = async (
     if (code === 'ENOENT' || code === 'ENOTDIR') return { available: false, processes: [] };
   }
 
+  let lookupTarget = resolvedTarget;
+  try { lookupTarget = fs.realpathSync.native(resolvedTarget); } catch { /* Keep inaccessible aliases unknown. */ }
+
   const encodedCommand = Buffer.from(RESTART_MANAGER_SCRIPT, 'utf16le').toString('base64');
   type LookupResult = { stdout: string; stderr: string; error?: Error };
   const result = await new Promise<LookupResult>(resolve => {
@@ -314,7 +341,7 @@ export const findWindowsLockingProcesses = async (
         ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', encodedCommand],
         {
           encoding: 'utf8',
-          env: { ...process.env, JUSTDO_LOCK_TARGET: resolvedTarget },
+          env: { ...process.env, JUSTDO_LOCK_TARGET: lookupTarget, FILE_LOCK_PRIORITY_PID: String(process.pid) },
           timeout: 10_000,
           windowsHide: true,
           maxBuffer: 1024 * 1024,
@@ -332,33 +359,40 @@ export const findWindowsLockingProcesses = async (
     }
   });
   if (options.signal?.aborted) return { available: false, processes: [] };
-  if (result.error || !result.stdout.trim()) {
-    const detail = result.error?.message || result.stderr.trim() || 'no process information';
-    console.warn('[WindowsFileLockDiagnostics] Lock owner lookup failed:', detail);
-    return { available: false, processes: [] };
+  // Each complete line is independent evidence. A later timeout cannot erase it.
+  const entries: unknown[] = [];
+  let completed = false;
+  for (const line of result.stdout.split(/\r?\n/u)) {
+    if (!line.trim()) continue;
+    try {
+      const entry = JSON.parse(line) as unknown;
+      if (entry && typeof entry === 'object' && !Array.isArray(entry) &&
+          Object.keys(entry).length === 1 && (entry as { complete?: unknown }).complete === true) completed = true;
+      else entries.push(entry);
+    } catch { /* A killed lookup can leave a truncated final record. */ }
   }
-
-  try {
-    const parsed = JSON.parse(result.stdout) as unknown;
-    const entries = Array.isArray(parsed) ? parsed : [parsed];
-    const processes = entries
-      .filter(
-        (entry): entry is Record<string, unknown> =>
-          Boolean(entry) && typeof entry === 'object' && !Array.isArray(entry),
-      )
-      .map(entry => ({
-        name:
-          typeof entry.name === 'string' && entry.name.trim()
-            ? entry.name.trim()
-            : `PID ${String(entry.pid)}`,
-        pid: typeof entry.pid === 'number' ? entry.pid : Number(entry.pid),
-        ...(typeof entry.serviceName === 'string' && entry.serviceName.trim()
-          ? { serviceName: entry.serviceName.trim() }
-          : {}),
-      }))
-      .filter(entry => Number.isInteger(entry.pid) && entry.pid > 0);
-    return { available: true, processes };
-  } catch {
-    return { available: false, processes: [] };
+  const processes = entries
+    .filter((entry): entry is Record<string, unknown> & { name: string; pid: number } => {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return false;
+      const record = entry as Record<string, unknown>;
+      return typeof record.name === 'string' && !!record.name.trim() &&
+        typeof record.pid === 'number' && Number.isSafeInteger(record.pid) && record.pid > 0;
+    })
+    .map(entry => ({
+      name: entry.name.trim(),
+      pid: entry.pid,
+      ...(typeof entry.serviceName === 'string' && entry.serviceName.trim()
+        ? { serviceName: entry.serviceName.trim() }
+        : {}),
+    }));
+  const uniqueProcesses = [...new Map(processes.map(owner => [owner.pid, owner])).values()];
+  const available = uniqueProcesses.length > 0 || (!result.error && completed);
+  if (result.error || !available) {
+    console.warn('[WindowsFileLockDiagnostics] Lock owner lookup incomplete:', {
+      code: (result.error as NodeJS.ErrnoException | undefined)?.code,
+      detail: result.stderr.trim().slice(0, 2048) || 'no completed scan',
+      observedProcesses: uniqueProcesses.length,
+    });
   }
+  return { available, processes: uniqueProcesses };
 };

@@ -50,6 +50,7 @@ Var InstallerCombinedUpdating
 Var InstallerCombinedReady
 Var InstallerCombinedEvent
 Var InstallerCombinedForcedMode
+Var InstallerCombinedLockedMode
 Var InstallerCombinedElevationResult
 Var InstallerCombinedHintIsError
 Var InstallerCombinedHandoffReady
@@ -478,7 +479,9 @@ FunctionEnd
 
 Function InstallerCombinedClearHint
   StrCpy $InstallerCombinedHintIsError "0"
-  ${If} $InstallerCombinedLockedDirectory != ""
+  ${If} $InstallerCombinedLockedMode != ""
+    !insertmacro InstallerText $InstallerCombinedHint "检测到现有版本，将沿用原安装范围和目录更新" "Existing version detected. Setup will keep its installation scope and folder."
+  ${ElseIf} $InstallerCombinedLockedDirectory != ""
     !insertmacro InstallerText $InstallerCombinedHint "检测到现有版本，将在原目录更新" "Existing version detected. Setup will update it in this folder."
   ${Else}
     SendMessage $InstallerCombinedHint ${JUSTDO_WM_SETTEXT} 0 'STR:'
@@ -549,9 +552,40 @@ Function InstallerCombinedRefreshFacts
   !insertmacro InstallerSetupRestore
 FunctionEnd
 
+; Interactive upgrades retain their registered scope. Explicit deployment flags
+; continue to select a scope, and the UAC inner/updater paths skip this resolver.
+Function InstallerCombinedResolveUpgradeMode
+  !insertmacro InstallerSetupSave
+  StrCpy $InstallerCombinedLockedMode ""
+  ${If} $InstallerCombinedForcedMode == ""
+    ReadRegStr $0 HKCU "${INSTALL_REGISTRY_KEY}" InstallLocation
+    ReadRegStr $1 HKLM "${INSTALL_REGISTRY_KEY}" InstallLocation
+    ${If} $0 != ""
+    ${AndIf} $1 == ""
+      StrCpy $InstallerCombinedLockedMode "CurrentUser"
+    ${ElseIf} $0 == ""
+    ${AndIf} $1 != ""
+      StrCpy $InstallerCombinedLockedMode "all"
+    ${ElseIf} $0 != ""
+    ${AndIf} $1 != ""
+      StrCpy $InstallerCombinedLockedMode "$InstallerCombinedMode"
+      ${If} $InstallerCombinedLockedMode != "all"
+        StrCpy $InstallerCombinedLockedMode "CurrentUser"
+      ${EndIf}
+    ${EndIf}
+  ${EndIf}
+  ${If} $InstallerCombinedLockedMode != ""
+    StrCpy $InstallerCombinedMode "$InstallerCombinedLockedMode"
+  ${EndIf}
+  !insertmacro InstallerSetupRestore
+FunctionEnd
+
 Function InstallerCombinedApplyMode
   !insertmacro InstallerSetupSave
   StrCpy $InstallerCombinedUpdating "1"
+  ${If} $InstallerCombinedLockedMode != ""
+    StrCpy $InstallerCombinedMode "$InstallerCombinedLockedMode"
+  ${EndIf}
   ${If} $InstallerCombinedMode == "all"
     !ifmacrodef setInstallModePerAllUsers
       !insertmacro setInstallModePerAllUsers
@@ -606,7 +640,9 @@ Function InstallerCombinedScopeChanged
     Goto InstallerCombinedScopeDone
   ${EndIf}
   Call InstallerCombinedSaveDraft
-  ${If} $InstallerCombinedForcedMode != ""
+  ${If} $InstallerCombinedLockedMode != ""
+    StrCpy $InstallerCombinedMode "$InstallerCombinedLockedMode"
+  ${ElseIf} $InstallerCombinedForcedMode != ""
     StrCpy $InstallerCombinedMode "$InstallerCombinedForcedMode"
   ${ElseIf} $InstallerCombinedEvent == $InstallerCombinedAllUsers
     !ifmacrodef setInstallModePerAllUsers
@@ -907,6 +943,7 @@ Function InstallerCombinedCreate
   ${If} $InstallerCombinedForcedMode != ""
     StrCpy $InstallerCombinedMode "$InstallerCombinedForcedMode"
   ${EndIf}
+  Call InstallerCombinedResolveUpgradeMode
   nsDialogs::Create 1018
   Pop $InstallerCombinedPage
   ${If} $InstallerCombinedPage == "error"
@@ -1069,7 +1106,10 @@ Function InstallerCombinedCreate
   ShowWindow $0 0
   EnableWindow $0 0
   System::Call 'user32::SetWindowPos(p r0, p 0, i 0, i 0, i 0, i 0, i 0x0016)i.r9'
-  ${If} $InstallerCombinedForcedMode == "all"
+  ${If} $InstallerCombinedLockedMode != ""
+    EnableWindow $InstallerCombinedCurrentUser 0
+    EnableWindow $InstallerCombinedAllUsers 0
+  ${ElseIf} $InstallerCombinedForcedMode == "all"
     EnableWindow $InstallerCombinedCurrentUser 0
   ${ElseIf} $InstallerCombinedForcedMode == "CurrentUser"
     EnableWindow $InstallerCombinedAllUsers 0
@@ -1096,6 +1136,9 @@ FunctionEnd
 
 Function InstallerCombinedLeave
   Call InstallerCombinedSaveDraft
+  ${If} $InstallerCombinedLockedMode != ""
+    Call InstallerCombinedApplyMode
+  ${EndIf}
   Call InstallerCombinedValidateDirectory
   ${If} $InstallerCombinedPathValid != "1"
     Abort

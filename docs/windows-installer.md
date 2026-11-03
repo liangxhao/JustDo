@@ -57,9 +57,11 @@ and [Windows DPI-awareness behavior](https://learn.microsoft.com/en-us/windows/w
 `nsis-setup-presentation.nsh` owns this one native nsDialogs setup page. Scope
 choices sit beside one another above the directory and disk-space facts in a
 single quiet card. The short header names the product; no second directory
-page, Back button or instruction paragraph is shown. Separate per-scope drafts
-retain edits, including an empty draft, when switching between current user and
-all users. The native single-line directory edit uses its actual font line height
+page, Back button or instruction paragraph is shown. On a fresh installation,
+separate per-scope drafts retain edits, including an empty draft, when switching
+between current user and all users. Ordinary interactive upgrades retain the
+registered scope and disable both scope choices along with the directory controls.
+The native single-line directory edit uses its actual font line height
 and sits vertically centered inside a white rounded field. Clicking that field's
 padding focuses the enabled edit. Browse uses an indigo accent when available
 and a muted disabled appearance for a registered target; changing scope updates
@@ -365,21 +367,31 @@ the final upgrade lock decision has no PowerShell dependency.
 
 ### Account ownership
 
-The assisted installer continues to offer both **current user** and **all
-users**. **Current user remains the default**; setup does not force either
-mode.
+Fresh assisted installation offers both **current user** and **all users**.
+**Current user remains the default** for a fresh installation.
 
-For an interactive upgrade or repair, the selected account scope's registered
-`InstallLocation` is reused. The native directory input and Browse button are
-disabled. The page confirms the upgrade location and explains that setup will
-reuse it, without inviting the user to browse for another folder. A first install
-shows editable scope and directory controls on the same page. Setup restores that exact
-directory again before writing, bypassing
-first-install folder-name normalization; a custom historical path does not gain
-another product-name subfolder. Switching account scope resolves the
-directory again. A first install without a registration in the selected scope
-keeps both controls enabled. This does not change silent `/D=` handling or the
-updater's existing skipped-page behavior.
+An ordinary interactive upgrade or repair, without an explicit scope flag,
+reads the actual HKCU and HKLM `InstallLocation` values. A single registered scope
+is selected automatically. If both scopes are already registered, setup retains
+the initially selected registered scope. Both scope choices, the native directory
+input and Browse are disabled. This prevents an accidental scope change from
+selecting a different program directory while the current user's application
+data remains shared. It does not establish that another installation or background
+process is closed, and does not broaden the process-termination boundary.
+
+The locked scope is also enforced by the selection callback and before file
+writing; disabling the controls alone is not the authority. Setup restores the
+exact registered directory again before writing, bypassing first-install
+folder-name normalization; a custom historical path does not gain another
+product-name subfolder. When no scope has a registered location, the page retains
+editable scope and directory controls and its per-scope drafts.
+
+Explicit `/currentuser` and `/allusers` invocations retain their existing scope
+selection semantics. Silent installation, silent `/D=` handling and the updater's
+skipped setup page are unchanged. Scope inference runs only in the initiating
+user's ordinary interactive setup page. An elevated inner instance continues to
+use the accepted outer selection and machine registration; it does not select a
+different scope using the administrator account's HKCU registration.
 
 For an interactive installer that starts elevated outside electron-builder's
 own UAC inner instance, setup re-launches itself once through the current

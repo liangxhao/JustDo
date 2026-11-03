@@ -48,12 +48,29 @@ function waitForProfileRetry(delay: number, signal?: AbortSignal): Promise<void>
   });
 }
 
+function requiredWorkingDirectoryEntry(userData: string, current: string): string | undefined {
+  if (!isWithin(userData, current)) return;
+  const entry = path.relative(userData, current).split(path.sep)[0];
+  return entry && requiresProfileIsolation(entry) ? entry : undefined;
+}
+
 /** Release an inherited directory handle before windows or children can inherit it. */
 export function releaseStartupProfileWorkingDirectory(userData: string): string | undefined {
   const current = process.cwd();
-  if (!isWithin(userData, current)) return;
-  const entry = path.relative(userData, current).split(path.sep)[0];
-  if (!entry || !requiresProfileIsolation(entry)) return;
+  let entry = requiredWorkingDirectoryEntry(userData, current);
+  if (!entry) {
+    let realUserData: string;
+    let realCurrent: string;
+    try {
+      realUserData = fs.realpathSync.native(userData);
+      realCurrent = fs.realpathSync.native(current);
+    } catch {
+      // Missing profiles or unavailable aliases must not add a startup gate.
+      return;
+    }
+    entry = requiredWorkingDirectoryEntry(realUserData, realCurrent);
+  }
+  if (!entry) return;
   process.chdir(userData);
   return entry;
 }
