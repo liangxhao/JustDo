@@ -1,11 +1,73 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { useState } from 'react';
 import { afterEach, expect, test, vi } from 'vitest';
 
+import { resizeComposerTextarea } from './composerStyles';
 import FeatureTextarea from './FeatureTextarea';
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
+
+test('resizes a plain draft immediately after controlled multiline content commits', () => {
+  const props = {
+    onLayoutChange: resizeComposerTextarea,
+    onChange: vi.fn(),
+    removeLabel: 'Remove feature',
+    onRemoveFeature: vi.fn(),
+  };
+  const view = render(<FeatureTextarea {...props} value="" />);
+  const input = screen.getByRole('textbox') as HTMLTextAreaElement;
+  Object.defineProperty(input, 'scrollHeight', {
+    configurable: true,
+    get: () => input.value ? 112 : 40,
+  });
+
+  view.rerender(<FeatureTextarea {...props} value={'one\ntwo\nthree\nfour'} />);
+  expect(input.style.height).toBe('112px');
+  view.rerender(<FeatureTextarea {...props} value="" />);
+  expect(input.style.height).toBe('40px');
+});
+
+test('resizes an unchanged plain draft after width changes and ignores height-only observer feedback', () => {
+  vi.spyOn(window, 'requestAnimationFrame').mockImplementation(callback => {
+    callback(0);
+    return 1;
+  });
+  const callbacks: ResizeObserverCallback[] = [];
+  vi.stubGlobal('ResizeObserver', class {
+    constructor(callback: ResizeObserverCallback) { callbacks.push(callback); }
+    observe() {}
+    disconnect() {}
+    unobserve() {}
+  });
+  const changed = vi.fn(resizeComposerTextarea);
+  const view = render(<FeatureTextarea value="a draft that wraps" onChange={vi.fn()}
+    onLayoutChange={changed} removeLabel="Remove feature" onRemoveFeature={vi.fn()} />);
+  const input = screen.getByRole('textbox') as HTMLTextAreaElement;
+  let width = 400;
+  vi.spyOn(input, 'getBoundingClientRect').mockImplementation(() => ({
+    width, height: 40, left: 0, top: 0, right: width, bottom: 40, x: 0, y: 0,
+    toJSON: () => ({}),
+  }));
+  Object.defineProperty(input, 'scrollHeight', { configurable: true, get: () => width < 400 ? 112 : 40 });
+  const emit = () => act(() => {
+    for (const callback of callbacks) {
+      callback([{ target: input, contentRect: { width } } as ResizeObserverEntry], {} as ResizeObserver);
+    }
+  });
+  emit();
+  width = 180;
+  emit();
+  expect(input.style.height).toBe('112px');
+  const calls = changed.mock.calls.length;
+  emit();
+  expect(changed).toHaveBeenCalledTimes(calls);
+  view.unmount();
+});
 test('renders the adapter icon without coupling the atomic tag to any plugin', () => {
   render(
     <FeatureTextarea

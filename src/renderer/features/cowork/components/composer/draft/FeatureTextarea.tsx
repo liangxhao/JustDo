@@ -72,7 +72,28 @@ const FeatureTextarea = forwardRef<
   }, [featureLabel, props.className, ownerWindow]);
   useLayoutEffect(() => {
     if (input.current) layoutChanged.current?.(input.current);
-  }, [featureLabel, layout.width]);
+  }, [featureLabel, layout.width, props.value, props.disabled, onLayoutChange]);
+  useLayoutEffect(() => {
+    const field = input.current;
+    if (!field || !ownerWindow.ResizeObserver) return;
+    let width = field.getBoundingClientRect().width;
+    let frame: number | undefined;
+    const observer = new ownerWindow.ResizeObserver(() => {
+      const nextWidth = field.getBoundingClientRect().width;
+      if (nextWidth === width) return;
+      width = nextWidth;
+      if (frame !== undefined) ownerWindow.cancelAnimationFrame(frame);
+      frame = ownerWindow.requestAnimationFrame(() => {
+        frame = undefined;
+        if (field.isConnected) layoutChanged.current?.(field);
+      });
+    });
+    observer.observe(field);
+    return () => {
+      observer.disconnect();
+      if (frame !== undefined) ownerWindow.cancelAnimationFrame(frame);
+    };
+  }, [ownerWindow]);
   const hasFullSelection = (field: HTMLTextAreaElement) =>
     field.selectionStart === 0 && field.selectionEnd === field.value.length;
   const remove = () => {

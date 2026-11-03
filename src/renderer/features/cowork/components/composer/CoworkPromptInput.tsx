@@ -933,14 +933,6 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       [minHeight],
     );
 
-    // Auto-resize textarea
-    useEffect(() => {
-      const textarea = textareaRef.current;
-      if (textarea) {
-        resizeTextarea(textarea);
-      }
-    }, [value, resizeTextarea]);
-
     useEffect(() => {
       const handleFocusInput = (event: Event) => {
         const detail = (event as CustomEvent<{ clear?: boolean }>).detail;
@@ -2116,7 +2108,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         {
           action: 'paste' as const,
           label: i18nService.t('contextMenuPaste'),
-          disabled: disabled || isRunActive,
+          disabled,
         },
         {
           action: 'selectAll' as const,
@@ -2124,7 +2116,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           disabled: value.length === 0,
         },
       ];
-    }, [disabled, isRunActive, value, contextMenuPos]);
+    }, [disabled, value, contextMenuPos]);
 
     const canSubmit =
       !disabled &&

@@ -48,6 +48,74 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+test('keeps a running conversation draft growing, capped and shrinkable across idle transition', () => {
+  vi.stubGlobal('electron', {
+    extensions: {
+      list: vi.fn().mockResolvedValue({ success: true, extensions: [] }),
+      onChanged: () => () => {},
+    },
+    localAsr: { getStatus: vi.fn().mockResolvedValue({ available: false }) },
+    localSpeechModels: { onChanged: () => () => {} },
+  });
+  const onSubmit = vi.fn();
+  const renderComposer = (isStreaming: boolean) => (
+    <Provider store={store}>
+      <CoworkPromptInput size="large" isStreaming={isStreaming} onSubmit={onSubmit} />
+    </Provider>
+  );
+  const view = render(renderComposer(true));
+  const input = screen.getByRole('textbox') as HTMLTextAreaElement;
+  Object.defineProperty(input, 'scrollHeight', {
+    configurable: true,
+    get: () => input.value.split('\n').length * 24 + 16,
+  });
+
+  fireEvent.change(input, { target: { value: 'one\ntwo\nthree\nfour' } });
+  expect(input.disabled).toBe(false);
+  expect(input.style.height).toBe('112px');
+  fireEvent.change(input, { target: { value: Array(20).fill('line').join('\n') } });
+  expect(input.style.height).toBe('200px');
+  view.rerender(renderComposer(false));
+  expect(input.style.height).toBe('200px');
+  fireEvent.change(input, { target: { value: '' } });
+  expect(input.style.height).toBe('40px');
+  expect(onSubmit).not.toHaveBeenCalled();
+});
+
+test('pastes multiline clipboard text from the context menu while a conversation is running', async () => {
+  vi.stubGlobal('electron', {
+    extensions: {
+      list: vi.fn().mockResolvedValue({ success: true, extensions: [] }),
+      onChanged: () => () => {},
+    },
+    localAsr: { getStatus: vi.fn().mockResolvedValue({ available: false }) },
+    localSpeechModels: { onChanged: () => () => {} },
+  });
+  const text = 'pasted line one\npasted line two\npasted line three\npasted line four';
+  const readText = vi.fn().mockResolvedValue(text);
+  vi.stubGlobal('navigator', Object.assign(Object.create(navigator), { clipboard: { readText } }));
+  const onSubmit = vi.fn();
+  render(
+    <Provider store={store}>
+      <CoworkPromptInput size="large" isStreaming onSubmit={onSubmit} />
+    </Provider>,
+  );
+  const input = screen.getByRole('textbox') as HTMLTextAreaElement;
+  Object.defineProperty(input, 'scrollHeight', {
+    configurable: true,
+    get: () => input.value.split('\n').length * 24 + 16,
+  });
+  fireEvent.contextMenu(input, { clientX: 20, clientY: 20 });
+  const paste = screen.getByRole('menuitem', { name: i18nService.t('contextMenuPaste') }) as HTMLButtonElement;
+  expect(paste.disabled).toBe(false);
+  fireEvent.click(paste);
+
+  await waitFor(() => expect(input.value).toBe(text));
+  expect(readText).toHaveBeenCalledOnce();
+  expect(input.style.height).toBe('112px');
+  expect(onSubmit).not.toHaveBeenCalled();
+});
+
 test.each(['normal', 'large'] as const)(
   'restores declared mode tokens and composer focus for size %s',
   async size => {
