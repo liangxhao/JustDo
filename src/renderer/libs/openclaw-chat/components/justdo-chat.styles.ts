@@ -750,6 +750,10 @@ export const chatStyles = [
       visibility: hidden;
     }
 
+    [data-send-motion-active] .chat-group--user .chat-group__footer {
+      visibility: hidden;
+    }
+
     .chat-divider {
       display: flex;
       align-items: flex-start;

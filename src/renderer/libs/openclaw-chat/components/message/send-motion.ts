@@ -49,6 +49,7 @@ export function playSendMotion(row: Element | undefined, message: object): void 
   const view = row.ownerDocument.defaultView;
   if (!origin || !pending || pending.expiresAt < Date.now() || origin.document !== row.ownerDocument || !view) return;
   row.setAttribute('data-send-motion-pending', '');
+  row.setAttribute('data-send-motion-active', '');
 
   let frame = 0;
   let animation: Animation | undefined;
@@ -64,6 +65,7 @@ export function playSendMotion(row: Element | undefined, message: object): void 
     animation?.cancel();
     restore?.();
     row.removeAttribute('data-send-motion-pending');
+    row.removeAttribute('data-send-motion-active');
     observer?.disconnect();
     view.removeEventListener('resize', cleanup);
     row.ownerDocument.removeEventListener('scroll', cleanup, true);

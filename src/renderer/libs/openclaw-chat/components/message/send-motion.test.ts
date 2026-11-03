@@ -44,7 +44,10 @@ test('binds one flight to the exact message object, preserving live content and 
   await vi.advanceTimersByTimeAsync(32);
   expect(animate).not.toHaveBeenCalled();
   sendMotionRef(message)(row);
+  expect(row.hasAttribute('data-send-motion-active')).toBe(true);
   await vi.advanceTimersByTimeAsync(32);
+  expect(row.hasAttribute('data-send-motion-pending')).toBe(false);
+  expect(row.hasAttribute('data-send-motion-active')).toBe(true);
   expect(animate).toHaveBeenCalledOnce();
   expect(animate.mock.calls[0][1]).toMatchObject({ duration: 520 });
   expect(animate.mock.calls[0][0][0].transform).toContain('400px');
@@ -58,6 +61,7 @@ test('binds one flight to the exact message object, preserving live content and 
   expect(bubble.style.width).toBe('75%');
   expect(bubble.style.margin).toBe('2px');
   expect(parent.style.minHeight).toBe('');
+  expect(row.hasAttribute('data-send-motion-active')).toBe(false);
   playSendMotion(row, message);
   await vi.advanceTimersByTimeAsync(32);
   expect(animate).toHaveBeenCalledOnce();
@@ -75,6 +79,7 @@ test.each(['scroll', 'resize', 'ref-disconnect'])('settles immediately on %s wit
   expect(cancel).toHaveBeenCalledOnce();
   expect(bubble.style.position).toBe('');
   expect(parent.style.minHeight).toBe('');
+  expect(row.hasAttribute('data-send-motion-active')).toBe(false);
 });
 
 test('unmount before deferred layout cancels animation and origin cannot replay', async () => {
