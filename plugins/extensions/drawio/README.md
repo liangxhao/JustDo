@@ -96,6 +96,14 @@ until explicit close or owner disposal. Unknown dispatches are never replayed.
 Recovery grants no original MCP tools.
 There is no new document database or user-facing version history.
 
+Unchanged XML and editor generation reuse their existing stamp within the bounded
+snapshot cache; a new result clears that cache. XML or generation changes always
+produce a new stamp, including undo back to identical XML. A stale submitted stamp
+is rejected before dispatch and allows a fresh read of the current run's prepared
+snapshot followed by a regenerated candidate. Real manual-edit conflicts and
+unknown application results remain non-replayable; never just replace the stamp
+on rejected XML.
+
 Confirmed updates also emit a bounded `drawio.diagram-reference.v1` text record
 so native history can retain the title, original content source and exact call
 association when custom details are filtered. Full XML remains in the existing

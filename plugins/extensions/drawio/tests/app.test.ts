@@ -50,6 +50,34 @@ const loaded = () =>
     .map(data => JSON.parse(data) as { action: string; xml?: string; title?: string })
     .filter(data => data.action === 'load');
 
+test('keeps unchanged canvas stamps across preparations but refreshes them for edits and new results', async () => {
+  const result = { xml: original, title: 'Current', diagramId: 'diagram-current' };
+  await fixture.app.ontoolresult({ structuredContent: result });
+  const frame = document.querySelector<HTMLIFrameElement>('#editor')!.contentWindow!;
+  const read = async (xml: string, generation: number) => {
+    const pending = fixture.tools.get('diagram_snapshot')!();
+    const request = JSON.parse(posted.at(-1)!);
+    message(new MessageEvent('message', {
+      source: frame, origin: 'null',
+      data: JSON.stringify({ event: 'diagram-snapshot', requestId: request.requestId, xml, generation }),
+    }));
+    return (await pending).structuredContent;
+  };
+  const first = await read(original, 5);
+  expect((await read(original, 5)).contentStamp).toBe(first.contentStamp);
+  const afterUndo = await read(original, 6);
+  expect(afterUndo.contentStamp).not.toBe(first.contentStamp);
+  const changed = await read(original.replace('提交申请', 'Manual edit'), 6);
+  expect(changed.contentStamp).not.toBe(afterUndo.contentStamp);
+  await fixture.app.ontoolresult({ structuredContent: result });
+  const reloaded = await read(original, 5);
+  expect(reloaded.contentStamp).not.toBe(first.contentStamp);
+  expect((await fixture.tools.get('diagram_apply')!({
+    operationId: 'stale-editor-operation', diagramId: first.diagramId,
+    baseContentStamp: first.contentStamp, xml: changed.xml, title: 'Updated',
+  })).isError).toBe(true);
+});
+
 test('prepared browser snapshots commit all pages and apply by exact generation without reloading the iframe', async () => {
   await fixture.app.ontoolresult({
     structuredContent: { xml: original, title: 'Prepared', diagramId: 'diagram-current' },

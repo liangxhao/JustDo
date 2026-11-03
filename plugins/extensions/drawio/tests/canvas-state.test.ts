@@ -92,7 +92,7 @@ describe('current diagram routing', () => {
     ).not.toThrow();
     expect(state.read('run', identity).snapshot.contentStamp).toBe('applied');
     await expect(
-      state.update('run', 'call', identity, { ...input, baseContentStamp: 'applied' }, () => {}),
+      state.update('run', 'call', identity, input, () => {}),
     ).rejects.toThrow('already issued');
   });
 
@@ -133,7 +133,7 @@ describe('current diagram routing', () => {
     const { state, host, token } = fixture();
     await expect(
       state.update('run', 'stale', identity, { ...input, baseContentStamp: 'stale' }, () => {}),
-    ).rejects.toThrow('content changed');
+    ).rejects.toThrow('no update was dispatched');
     const update = state.update('run', 'conflict', identity, input, () => {});
     const rejected = expect(update).rejects.toThrow('manual edits were preserved');
     const operation = state.take(host, token)!;

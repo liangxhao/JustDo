@@ -82,9 +82,14 @@ const requestCanvas = (action: string, data: Record<string, unknown> = {}) => {
 const rememberSnapshot = (value: Record<string, unknown>) => {
   if (!validXml(value.xml) || !Number.isSafeInteger(value.generation))
     throw new Error('Invalid current diagram');
-  const contentStamp = crypto.randomUUID();
-  if (snapshots.size >= 8) snapshots.delete(snapshots.keys().next().value!);
-  snapshots.set(contentStamp, { xml: value.xml, generation: value.generation as number });
+  const previous = [...snapshots].find(
+    ([, snapshot]) => snapshot.xml === value.xml && snapshot.generation === value.generation,
+  );
+  const contentStamp = previous?.[0] ?? crypto.randomUUID();
+  if (!previous) {
+    if (snapshots.size >= 8) snapshots.delete(snapshots.keys().next().value!);
+    snapshots.set(contentStamp, { xml: value.xml, generation: value.generation as number });
+  }
   xml = value.xml;
   return { diagramId, xml, title: name, contentStamp };
 };

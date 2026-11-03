@@ -9,11 +9,16 @@ For diagram requests, prefer the actual draw.io MCP tool so the user receives an
 editable diagram in the message. This is separate from HTML widgets and data
 charts. Respect an explicit request for a different format or plain source.
 
-1. First use `drawio_diagram` with `action: "read"` when this chat has an opened
+1. First use `drawio_diagram` with `action: "read"` in each turn when this chat has an opened
    canvas or the user asks to continue a diagram. A blank sidebar canvas is an
    existing target too. Read returns its stable ID, current XML and content stamp.
    Use `action: "update"` with that ID, `baseContentStamp`, complete XML and title
    to edit the same canvas. Preserve unrelated pages and existing cell IDs.
+   Do not reuse an earlier turn's XML or stamp without reading this turn's snapshot.
+   If the tool explicitly rejects a stale preparation before dispatching any update,
+   read this turn's prepared snapshot and regenerate the candidate from it; do not
+   resubmit the rejected XML. This does not permit retrying a real canvas conflict
+   or unknown application result.
    The successful result is already applied and undoable; do not create another
    editor. Resolve ambiguity with the user, and preserve manual edits on conflict.
    Never replay a result reported unknown. For an explicitly new diagram, or

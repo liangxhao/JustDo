@@ -186,10 +186,14 @@ export class DiagramCanvasState {
   ) {
     assertInvocationCurrent();
     const prepared = this.read(runId, identity, input.diagramId);
-    if (input.baseContentStamp !== prepared.snapshot.contentStamp)
-      throw new Error('Diagram content changed; read it again');
     const call = `${identity.sessionId}/${runId}/${toolCallId}`;
     if (this.calls.has(call)) throw new Error('Diagram operation already issued; do not replay');
+    if (input.baseContentStamp !== prepared.snapshot.contentStamp)
+      throw new Error(
+        'Stale diagram preparation; no update was dispatched. Use drawio_diagram action=read ' +
+        'to read this run\'s prepared snapshot, then regenerate the update using its contentStamp. ' +
+        'Do not reuse the rejected XML.',
+      );
     if (
       [...this.operations.values()].some(
         op =>

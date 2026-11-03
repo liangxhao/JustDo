@@ -126,14 +126,17 @@ const apps = new McpAppSession(() =>
 );
 const view = new McpAppView();
 void apps.discover();
-fixture.fixturePrepareDiagram = () =>
-  apps.prepareChatSend({
+fixture.fixturePrepareDiagram = async () => {
+  const { method, params } = await apps.prepareChatSend({
     sessionKey: 'agent:main:offline',
     presentationScope: 'conversation',
     sessionId: 'offline',
     idempotencyKey: crypto.randomUUID(),
     message: 'Edit diagram',
   });
+  // Electron's inspection bridge cannot clone the host-local lifecycle callbacks.
+  return { method, params };
+};
 fixture.fixtureApplyDiagram = xml =>
   new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('Editor ACK timed out')), 30_000);

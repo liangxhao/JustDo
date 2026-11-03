@@ -435,6 +435,88 @@ describe('authenticated draw.io editing adapter', () => {
     ).rejects.toThrow();
   });
 
+  it('rejects a previous run stamp before dispatch and applies a regenerated current-run candidate', async () => {
+    const { token } = await prepare();
+    const send = (runId: string) => request(DRAWIO_SEND_METHOD, {
+      ...scope,
+      send: { ...scope, idempotencyKey: runId, message: 'Edit the current diagram' },
+      canvases: [{ token, viewId: 'mcp-app-original', selected: true }],
+    });
+    const metadata = (runId: string, toolCallId: string) => ({
+      toolCallId,
+      hookContext: { ...scope, runId },
+    });
+    await send('previous-run');
+    const previousTool = factory.create({ ...scope, assertInvocationCurrent: () => {} });
+    previousTool.prepareBeforeToolCallParams({}, metadata('previous-run', 'previous-read'));
+    const previous = JSON.parse(
+      (await previousTool.execute('previous-read', { action: 'read' })).content[0].text,
+    );
+    const manualCell = '<mxCell id="manual-node" value="Keep this" parent="1"/>';
+    const fresh = {
+      ...snapshot,
+      xml: xml.replace('</root>', `${manualCell}</root>`),
+      contentStamp: 'fresh-preparation',
+    };
+    await prepareOnly({ snapshot: fresh, token });
+    await send('current-run');
+    const tool = factory.create({ ...scope, assertInvocationCurrent: () => {} });
+    const staleXml = previous.xml.replace('</root>', '<mxCell id="stale-ai" parent="1"/></root>');
+    tool.prepareBeforeToolCallParams({}, metadata('current-run', 'stale-update'));
+
+    await expect(tool.execute('stale-update', {
+      action: 'update',
+      diagramId: previous.diagramId,
+      baseContentStamp: previous.contentStamp,
+      xml: staleXml,
+      title: 'Stale candidate',
+    })).rejects.toThrow('no update was dispatched');
+    expect(emitted).not.toHaveBeenCalled();
+    const canvas = { ...scope, viewId: 'mcp-app-original', token };
+    expect((await request(DRAWIO_CANVAS_METHOD, { ...canvas, action: 'next' })).operation).toBeNull();
+
+    tool.prepareBeforeToolCallParams({}, metadata('current-run', 'current-read'));
+    const current = JSON.parse(
+      (await tool.execute('current-read', { action: 'read' })).content[0].text,
+    );
+    expect(current).toEqual(fresh);
+    const regeneratedXml = current.xml.replace(
+      '</root>', '<mxCell id="current-ai" parent="1"/></root>',
+    );
+    tool.prepareBeforeToolCallParams({}, metadata('current-run', 'regenerated-update'));
+    const updating = tool.execute('regenerated-update', {
+      action: 'update',
+      diagramId: current.diagramId,
+      baseContentStamp: current.contentStamp,
+      xml: regeneratedXml,
+      title: 'Regenerated candidate',
+    });
+    expect(emitted).toHaveBeenCalledTimes(1);
+    const { operation } = await request(DRAWIO_CANVAS_METHOD, { ...canvas, action: 'next' });
+    expect(operation).toMatchObject({
+      baseContentStamp: current.contentStamp,
+      xml: regeneratedXml,
+    });
+    expect(operation.xml).not.toBe(staleXml);
+    expect(operation.xml).toContain(manualCell);
+    await request(DRAWIO_CANVAS_METHOD, {
+      ...canvas,
+      action: 'ack',
+      operationId: operation.operationId,
+      result: {
+        status: 'applied',
+        snapshot: { ...fresh, xml: regeneratedXml, contentStamp: 'confirmed' },
+      },
+    });
+    expect((await updating).details.diagramUpdate).toMatchObject({
+      status: 'applied',
+      runId: 'current-run',
+      toolCallId: 'regenerated-update',
+      xml: regeneratedXml,
+      baseContentStamp: fresh.contentStamp,
+    });
+  });
+
   it('does not authorize a guessed run or retained invocation after source invalidation', async () => {
     const tool = factory.create({
       ...scope,

@@ -458,11 +458,20 @@ if (!process.versions.electron) {
         );
         const prepared = await win.webContents.executeJavaScript('window.fixtureSnapshot');
         assert.match(prepared.xml, /提交申请/);
+        await win.webContents.executeJavaScript('window.fixturePrepareDiagram()');
+        const repeated = await win.webContents.executeJavaScript('window.fixtureSnapshot');
+        assert.equal(repeated.contentStamp, prepared.contentStamp,
+          'Preparing an unchanged real editor must preserve its content stamp');
         const candidate = prepared.xml.replaceAll('提交申请', 'AI 修改后的申请');
         const applied = await win.webContents.executeJavaScript(
           `window.fixtureApplyDiagram(${JSON.stringify(candidate)})`,
         );
         assert.equal(applied.status, 'applied');
+        assert.notEqual(applied.snapshot.contentStamp, prepared.contentStamp);
+        await win.webContents.executeJavaScript('window.fixturePrepareDiagram()');
+        const nextTurn = await win.webContents.executeJavaScript('window.fixtureSnapshot');
+        assert.equal(nextTurn.contentStamp, applied.snapshot.contentStamp,
+          'An unchanged follow-up preparation must preserve the confirmed updated content stamp');
         await until(
           () => editor.executeJavaScript('document.body.innerText.includes("AI 修改后的申请")'),
           'AI update visible',
