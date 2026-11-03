@@ -10,7 +10,10 @@ import {
   type WebpageEmbedStateEvent,
 } from '../../../shared/browser/webpageEmbed';
 import { isSameBrowserSession } from '../../browser/browserSessionIdentity';
-import { registerBrowserSessionGuestPolicy } from '../../browser/browserSessionPolicy';
+import {
+  ensureBrowserSessionPolicy,
+  registerBrowserSessionGuestPolicy,
+} from '../../browser/browserSessionPolicy';
 import {
   BrowserProxyStatus,
   getBrowserProxySessionState,
@@ -193,6 +196,7 @@ export function createBrowserSessionWebpageGuests(options: Options) {
       const partition = `webpage-embed:${binding.mountId}:${nonce}`;
       const startupUrl = `${STARTUP_PREFIX}${binding.mountId}%3A${nonce}--%3E`;
       const browserSession = session.fromPartition(BROWSER_PANEL_PARTITION);
+      ensureBrowserSessionPolicy(browserSession);
       const mount: Mount = {
         ...binding,
         partition,

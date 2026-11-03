@@ -8,6 +8,7 @@ import {
   isBackgroundBrowserGuest,
 } from './backgroundBrowserGuestRegistry';
 import { browserSessionStorageKey, isSameBrowserSession } from './browserSessionIdentity';
+import { getBrowserUserAgent } from './browserSessionUserAgent';
 import { claimBrowserAgentDownload } from './downloads/browserAgentDownloadCoordinator';
 
 type PermissionCheck = NonNullable<Parameters<Electron.Session['setPermissionCheckHandler']>[0]>;
@@ -77,6 +78,11 @@ export const ensureBrowserSessionPolicy = (browserSession: Electron.Session): vo
     policies.set(browserSession, existing);
     return;
   }
+  // Session UA only applies to future WebContents. Prepare it before creating
+  // sidebar, background or shared-profile webpage guests and dedicated workers.
+  const userAgent = browserSession.getUserAgent();
+  const browserUserAgent = getBrowserUserAgent(userAgent);
+  if (browserUserAgent !== userAgent) browserSession.setUserAgent(browserUserAgent);
   const state: SessionPolicy = {
     guests: new Map(),
     knownGuestIds: new Set(),

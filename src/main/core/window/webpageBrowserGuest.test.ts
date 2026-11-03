@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   on: vi.fn(),
   off: vi.fn(),
   policy: vi.fn(),
+  ensurePolicy: vi.fn(),
   register: vi.fn(),
   observe: vi.fn(),
   state: vi.fn(),
@@ -23,6 +24,7 @@ vi.mock('electron', () => ({
   session: { fromPartition: mocks.fromPartition },
 }));
 vi.mock('../../browser/browserSessionPolicy', () => ({
+  ensureBrowserSessionPolicy: mocks.ensurePolicy,
   registerBrowserSessionGuestPolicy: mocks.policy,
 }));
 vi.mock('../network/systemProxyPreference', () => ({
@@ -227,6 +229,8 @@ test('ignores new-window links while the proxy or source binding is unavailable'
 test('uses the sidebar session without loading an app shell or installing profile handlers', async () => {
   const f = fixture();
   const mount = f.register();
+  expect(mocks.ensurePolicy).toHaveBeenCalledExactlyOnceWith(f.shared);
+  expect(mocks.policy).not.toHaveBeenCalled();
   const { preferences, event } = f.prepare(mount);
   expect(event.preventDefault).not.toHaveBeenCalled();
   expect(mocks.fromPartition).toHaveBeenCalledWith(BROWSER_PANEL_PARTITION);

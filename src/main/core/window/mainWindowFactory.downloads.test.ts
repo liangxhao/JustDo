@@ -53,6 +53,8 @@ import { createMainWindow } from './mainWindowFactory';
 
 const makeSession = () =>
   Object.assign(new EventEmitter(), {
+    getUserAgent: () => 'Chrome/148.0.0.0',
+    setUserAgent: vi.fn(),
     setPermissionCheckHandler: vi.fn(),
     setPermissionRequestHandler: vi.fn(),
     setDisplayMediaRequestHandler: vi.fn(),

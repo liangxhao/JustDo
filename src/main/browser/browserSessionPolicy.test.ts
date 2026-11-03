@@ -34,6 +34,11 @@ const fixture = () => {
   let request!: BrowserSessionUiPolicy['requestPermission'];
   const session = Object.assign(new EventEmitter(), {
     storagePath: `/browser/policy-${nextId}`,
+    getUserAgent: vi.fn(
+      () =>
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) ExampleDesktop/2.0 Chrome/148.0.7778.280 Electron/42.7.0 Safari/537.36',
+    ),
+    setUserAgent: vi.fn(),
     resolveHost: vi.fn(async () => ({ endpoints: [{ address: '192.0.2.1' }] })),
     webRequest: {
       onBeforeRequest: vi.fn((handler: BeforeRequest) => {
@@ -111,6 +116,9 @@ describe('shared browser session policy ownership', () => {
     configureBrowserSessionUi(f.nativeSession, f.uiOwner, { download: f.ui.download });
 
     expect(f.session.webRequest.onBeforeRequest).toHaveBeenCalledTimes(1);
+    expect(f.session.setUserAgent).toHaveBeenCalledExactlyOnceWith(
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.7778.280 Safari/537.36',
+    );
     expect(f.session.webRequest.onHeadersReceived).toHaveBeenCalledTimes(1);
     expect(f.session.setPermissionRequestHandler).toHaveBeenCalledTimes(1);
     expect(f.session.listenerCount('will-download')).toBe(1);

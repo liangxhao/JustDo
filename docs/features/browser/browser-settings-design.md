@@ -104,6 +104,8 @@ flowchart LR
 
 默认 embedded、导入 imported 及合法命名 profile 使用隔离持久 partition。弹窗、复制、恢复和派生 Tab 继承来源 profile，不能意外共享应用壳 Cookie 或认证。后台任务可创建自身 Tab，但不抢用户当前工作区。
 
+浏览器 profile 在创建首个页面前，由共享 Session 策略将 Electron 默认 User-Agent 中的应用与 Electron 标记移除，保留当前运行时真实 Chromium 版本和平台。侧栏、后台页以及共用 profile 的网页采用相同配置；应用主界面与独立 Widget Session 不受影响。Client Hints 继续由 Chromium 生成，语言及已有设备模拟覆盖保持原有行为，不改写站点登录参数或请求签名。页面、iframe 和普通 Worker 使用此配置；独立 Service Worker 仍可能使用 Electron 的全局原生 UA，不为此扩大为全应用覆写。该配置修复客户端标识的兼容性，不保证站点短信、验证码或风控放行；第三方登录仍需在实际环境手工验证。
+
 ### 内置浏览器的前台与后台执行
 
 内置模式仍只注册一个 `browser` 工具，新增可选布尔参数 `headless`；不新增 Chrome 适配或 OpenClaw patch，不改变四种模式的互斥配置。
