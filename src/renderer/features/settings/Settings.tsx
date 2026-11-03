@@ -71,7 +71,7 @@ import {
 } from '@/app/config';
 import { APP_NAME } from '@/app/constants';
 import WindowHeader from '@/app/shell/window/WindowHeader';
-import AgentManager from '@/features/agents/AgentManager';
+import AgentManager, { type AgentLeaveGuard } from '@/features/agents/AgentManager';
 import { updateConfig as updateCoworkConfig } from '@/features/cowork/coworkSlice';
 import {
   BUILTIN_MODELS_UPDATED_EVENT,
@@ -204,7 +204,7 @@ const Settings: React.FC<SettingsProps> = ({
 }) => {
   const dispatch = useDispatch();
   // 状态
-  const agentLeaveGuard = useRef<(() => boolean) | null>(null);
+  const agentLeaveGuard = useRef<AgentLeaveGuard | null>(null);
   const [activeTab, setActiveTab] = useState<TabType>(getEnabledSettingsTab(initialTab));
   const [generalTitleClicks, setGeneralTitleClicks] = useState(0);
   const developerModeAvailable =
@@ -321,9 +321,12 @@ const Settings: React.FC<SettingsProps> = ({
   }, [cancelConnectionTest]);
 
   const handleCloseSettings = useCallback(() => {
-    if (agentLeaveGuard.current && !agentLeaveGuard.current()) return;
-    cancelConnectionTest();
-    onClose();
+    const close = () => {
+      cancelConnectionTest();
+      onClose();
+    };
+    if (agentLeaveGuard.current) agentLeaveGuard.current(close);
+    else close();
   }, [cancelConnectionTest, onClose]);
 
   useEffect(
@@ -737,10 +740,17 @@ const Settings: React.FC<SettingsProps> = ({
   }, [buildNoticeMessage]);
 
   useEffect(() => {
+    let cancelled = false;
     if (initialTab) {
-      if (agentLeaveGuard.current && !agentLeaveGuard.current()) return;
-      setActiveTab(getEnabledSettingsTab(initialTab));
+      const changeTab = () => {
+        if (!cancelled) setActiveTab(getEnabledSettingsTab(initialTab));
+      };
+      if (agentLeaveGuard.current) agentLeaveGuard.current(changeTab);
+      else changeTab();
     }
+    return () => {
+      cancelled = true;
+    };
   }, [initialTab]);
 
   // Subscribe to language changes
@@ -1382,21 +1392,24 @@ const Settings: React.FC<SettingsProps> = ({
   // 标签页切换处理
   const handleTabChange = (tab: TabType) => {
     if (tab === activeTab) return;
-    if (agentLeaveGuard.current && !agentLeaveGuard.current()) return;
-    if (tab !== 'model') {
-      setIsAddingModel(false);
-      setIsEditingModel(false);
-      setEditingModelId(null);
-      setNewModelName('');
-      setNewModelId('');
-      setNewModelSupportsImage(false);
-      setNewModelContextLength(undefined);
-      setNewModelMaxTokens(undefined);
-      setModelCapabilitiesInitiallyConfirmed(false);
-      setModelCapabilitiesDirty(false);
-      setModelFormError(null);
-    }
-    setActiveTab(tab);
+    const changeTab = () => {
+      if (tab !== 'model') {
+        setIsAddingModel(false);
+        setIsEditingModel(false);
+        setEditingModelId(null);
+        setNewModelName('');
+        setNewModelId('');
+        setNewModelSupportsImage(false);
+        setNewModelContextLength(undefined);
+        setNewModelMaxTokens(undefined);
+        setModelCapabilitiesInitiallyConfirmed(false);
+        setModelCapabilitiesDirty(false);
+        setModelFormError(null);
+      }
+      setActiveTab(tab);
+    };
+    if (agentLeaveGuard.current) agentLeaveGuard.current(changeTab);
+    else changeTab();
   };
 
   // 快捷键更新处理

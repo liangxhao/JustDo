@@ -43,10 +43,12 @@ const emptyProfile = (): AgentProfileInput => ({
 const inputClass =
   'mt-1.5 w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/10 disabled:opacity-50';
 
+export type AgentLeaveGuard = (proceed: () => void) => void;
+
 export default function AgentManager({
   leaveGuard,
 }: {
-  leaveGuard: MutableRefObject<(() => boolean) | null>;
+  leaveGuard: MutableRefObject<AgentLeaveGuard | null>;
 }) {
   const allowMainAgentSwitch = useSelector(
     (state: RootState) => state.cowork.config.allowMainAgentSwitch === true,
@@ -69,6 +71,11 @@ export default function AgentManager({
   const deleteDialogRef = useRef<HTMLDivElement>(null);
   const cancelDeleteRef = useRef<HTMLButtonElement>(null);
   useDialogFocusTrap(deleteDialogRef, cancelDeleteRef, 'delete-agent', true, confirmDelete);
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
+  const discardActionRef = useRef<(() => void) | null>(null);
+  const discardDialogRef = useRef<HTMLDivElement>(null);
+  const cancelDiscardRef = useRef<HTMLButtonElement>(null);
+  useDialogFocusTrap(discardDialogRef, cancelDiscardRef, 'discard-agent', true, confirmDiscard);
   const [loadingFile, setLoadingFile] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -80,8 +87,23 @@ export default function AgentManager({
   const profileDirty = JSON.stringify(profile) !== original;
   const fileDirty = snapshot !== null && snapshot.content !== content;
   const dirty = profileDirty || fileDirty || roleDraft !== null;
-  const canLeave = () =>
-    !busy && !confirmDelete && (!dirty || window.confirm(t('agentDiscardChanges')));
+  const requestDiscard = (proceed: () => void, needsConfirmation: boolean) => {
+    if (busy || confirmDelete || discardActionRef.current) return;
+    if (!needsConfirmation) {
+      proceed();
+      return;
+    }
+    // Keep the first navigation intent until this dialog is resolved.
+    discardActionRef.current = proceed;
+    setConfirmDiscard(true);
+  };
+  const canLeave: AgentLeaveGuard = proceed => requestDiscard(proceed, dirty);
+  const resolveDiscard = (discard: boolean) => {
+    const proceed = discardActionRef.current;
+    discardActionRef.current = null;
+    setConfirmDiscard(false);
+    if (discard) proceed?.();
+  };
   useEffect(() => {
     leaveGuard.current = canLeave;
     return () => {
@@ -91,31 +113,31 @@ export default function AgentManager({
   useEffect(() => {
     void agentService.loadAgents();
   }, []);
-  const selectProfile = (id?: string) => {
-    if (!canLeave()) return;
-    initialized.current = true;
-    const source = agents.find(agent => agent.id === id);
-    const next = source
-      ? {
-          id: source.id,
-          name: source.name,
-          description: source.description,
-          icon: source.icon,
-          model: source.id === 'main' ? '' : source.model,
-          enabled: source.enabled,
-          isDefault: source.isDefault,
-        }
-      : emptyProfile();
-    setRoleDraft(null);
-    setFileName('AGENTS.md');
-    setReload(value => value + 1);
-    setProfile(next);
-    setOriginal(JSON.stringify(next));
-    setSnapshot(null);
-    setContent('');
-    setError('');
-    setNotice('');
-  };
+  const selectProfile = (id?: string) =>
+    canLeave(() => {
+      initialized.current = true;
+      const source = agents.find(agent => agent.id === id);
+      const next = source
+        ? {
+            id: source.id,
+            name: source.name,
+            description: source.description,
+            icon: source.icon,
+            model: source.id === 'main' ? '' : source.model,
+            enabled: source.enabled,
+            isDefault: source.isDefault,
+          }
+        : emptyProfile();
+      setRoleDraft(null);
+      setFileName('AGENTS.md');
+      setReload(value => value + 1);
+      setProfile(next);
+      setOriginal(JSON.stringify(next));
+      setSnapshot(null);
+      setContent('');
+      setError('');
+      setNotice('');
+    });
   useEffect(() => {
     if (initialized.current || !agents.length) return;
     initialized.current = true;
@@ -130,18 +152,18 @@ export default function AgentManager({
         .toLocaleLowerCase()
         .includes(query.trim().toLocaleLowerCase()),
   );
-  const beginDraft = (next: AgentProfileInput, rules: string | null = null) => {
-    if (!canLeave()) return;
-    initialized.current = true;
-    setProfile(next);
-    setRoleDraft(rules);
-    setOriginal(JSON.stringify(emptyProfile()));
-    setSnapshot(null);
-    setContent('');
-    setFileName('AGENTS.md');
-    setError('');
-    setNotice('');
-  };
+  const beginDraft = (next: AgentProfileInput, rules: string | null = null) =>
+    canLeave(() => {
+      initialized.current = true;
+      setProfile(next);
+      setRoleDraft(rules);
+      setOriginal(JSON.stringify(emptyProfile()));
+      setSnapshot(null);
+      setContent('');
+      setFileName('AGENTS.md');
+      setError('');
+      setNotice('');
+    });
   const duplicate = () => {
     const source = agents.find(agent => agent.id === profile.id);
     if (!source) return;
@@ -153,11 +175,27 @@ export default function AgentManager({
     });
   };
   const changeFile = (next: AgentFileName) => {
-    if ((fileDirty || roleDraft !== null) && !window.confirm(t('agentDiscardChanges'))) return;
-    setRoleDraft(null);
-    setError('');
-    setNotice('');
-    setFileName(next);
+    if (next === fileName) return;
+    requestDiscard(
+      () => {
+        setRoleDraft(null);
+        setError('');
+        setNotice('');
+        setFileName(next);
+      },
+      fileDirty || roleDraft !== null,
+    );
+  };
+  const reloadFile = () => {
+    requestDiscard(
+      () => {
+        setRoleDraft(null);
+        setError('');
+        setNotice('');
+        setReload(value => value + 1);
+      },
+      fileDirty || roleDraft !== null,
+    );
   };
   useEffect(() => {
     let cancelled = false;
@@ -713,17 +751,7 @@ export default function AgentManager({
                         title={t('agentReloadFile')}
                         aria-label={t('agentReloadFile')}
                         disabled={busy || loadingFile}
-                        onClick={() => {
-                          if (
-                            (fileDirty || roleDraft !== null) &&
-                            !window.confirm(t('agentDiscardChanges'))
-                          )
-                            return;
-                          setRoleDraft(null);
-                          setError('');
-                          setNotice('');
-                          setReload(value => value + 1);
-                        }}
+                        onClick={reloadFile}
                       >
                         <ArrowPathIcon
                           className={`h-4 w-4 ${loadingFile ? 'animate-spin' : ''}`}
@@ -805,6 +833,48 @@ export default function AgentManager({
           )}
         </div>
       </div>
+      {confirmDiscard &&
+        createPortal(
+          <Modal
+            onClose={() => resolveDiscard(false)}
+            className="w-full max-w-sm rounded-2xl border border-border bg-surface p-5 shadow-modal"
+          >
+            <div
+              ref={discardDialogRef}
+              role="dialog"
+              aria-modal="true"
+              aria-label={t('agentDiscardChanges')}
+              tabIndex={-1}
+              onKeyDown={event => {
+                if (event.key === 'Escape') {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  resolveDiscard(false);
+                }
+              }}
+            >
+              <p className="text-sm leading-relaxed text-foreground">{t('agentDiscardChanges')}</p>
+              <div className="mt-5 flex justify-end gap-2">
+                <button
+                  ref={cancelDiscardRef}
+                  type="button"
+                  onClick={() => resolveDiscard(false)}
+                  className="rounded-lg border border-border px-3 py-2 text-sm text-foreground hover:bg-surface-raised"
+                >
+                  {t('cancel')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => resolveDiscard(true)}
+                  className="rounded-lg bg-primary px-3 py-2 text-sm text-white hover:opacity-90"
+                >
+                  {t('agentDiscard')}
+                </button>
+              </div>
+            </div>
+          </Modal>,
+          document.body,
+        )}
       {confirmDelete &&
         createPortal(
           <Modal

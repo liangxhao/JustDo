@@ -1,13 +1,13 @@
 // @vitest-environment jsdom
 import { configureStore } from '@reduxjs/toolkit';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { Provider } from 'react-redux';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { coworkService } from '@/features/cowork/coworkService';
 import { assistantTranslations } from '@/services/i18n/assistantTranslations';
 
-import AgentManager from './AgentManager';
+import AgentManager, { type AgentLeaveGuard } from './AgentManager';
 import agentReducer, { setAgents } from './agentSlice';
 const translationState = vi.hoisted(() => ({ language: null as 'zh' | 'en' | null }));
 vi.mock('@/services/i18n', () => ({
@@ -53,7 +53,7 @@ function mount(profiles = [profile]) {
     },
   });
   store.dispatch(setAgents(profiles));
-  const leaveGuard = { current: null as (() => boolean) | null };
+  const leaveGuard = { current: null as AgentLeaveGuard | null };
   render(
     <Provider store={store}>
       <AgentManager leaveGuard={leaveGuard} />
@@ -263,7 +263,9 @@ describe('independent Agent manager', () => {
     const { leaveGuard } = mount();
     await waitFor(() => expect(readFile).toHaveBeenCalled());
     fireEvent.click(screen.getByRole('button', { name: 'agentDelete' }));
-    expect(leaveGuard.current?.()).toBe(false);
+    const leave = vi.fn();
+    act(() => leaveGuard.current?.(leave));
+    expect(leave).not.toHaveBeenCalled();
     fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(deleteAgent).not.toHaveBeenCalled();
@@ -355,7 +357,7 @@ describe('independent Agent manager', () => {
     expect(save).not.toHaveBeenCalled();
   });
   it('protects unsaved rule text when switching files or reloading', async () => {
-    vi.spyOn(window, 'confirm').mockReturnValue(false);
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
     mount();
     await waitFor(() =>
       expect(screen.getByRole('textbox', { name: 'AGENTS.md' })).toHaveProperty(
@@ -367,12 +369,35 @@ describe('independent Agent manager', () => {
       target: { value: 'Unsaved rules' },
     });
     fireEvent.click(screen.getByRole('tab', { name: 'SOUL.md' }));
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'cancel' }));
     fireEvent.click(screen.getByRole('button', { name: 'agentReloadFile' }));
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
     expect(screen.getByRole('textbox', { name: 'AGENTS.md' })).toHaveProperty(
       'value',
       'Unsaved rules',
     );
     expect(readFile).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(confirm).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'agentReloadFile' }));
+    fireEvent.click(
+      within(screen.getByRole('dialog')).getByRole('button', { name: 'agentDiscard' }),
+    );
+    await waitFor(() => expect(readFile).toHaveBeenCalledTimes(2));
+    expect(screen.getByRole('textbox', { name: 'AGENTS.md' })).toHaveProperty('value', 'Read only');
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'AGENTS.md' }), {
+      target: { value: 'Another draft' },
+    });
+    // Selecting the current tab keeps its draft without a confirmation.
+    fireEvent.click(screen.getByRole('tab', { name: 'AGENTS.md' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    fireEvent.click(screen.getByRole('tab', { name: 'SOUL.md' }));
+    fireEvent.click(
+      within(screen.getByRole('dialog')).getByRole('button', { name: 'agentDiscard' }),
+    );
+    await waitFor(() => expect(readFile).toHaveBeenLastCalledWith('review', 'SOUL.md'));
   });
 
   it('opens role files without exposing a direct chat or default-agent control', async () => {
@@ -423,13 +448,85 @@ describe('independent Agent manager', () => {
       'My rules',
     );
   });
-  it('does not discard an unsaved profile when the user cancels closing', () => {
-    vi.spyOn(window, 'confirm').mockReturnValue(false);
+  it('does not discard an unsaved profile when the user cancels closing', async () => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
     const { leaveGuard } = mount();
+    await waitFor(() => expect(readFile).toHaveBeenCalled());
     fireEvent.change(screen.getByRole('textbox', { name: 'agentName' }), {
       target: { value: 'Research' },
     });
-    expect(leaveGuard.current?.()).toBe(false);
+    const leave = vi.fn();
+    act(() => leaveGuard.current?.(leave));
+    expect(leave).not.toHaveBeenCalled();
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'cancel' }));
+    expect(leave).not.toHaveBeenCalled();
+    expect(screen.getByRole('textbox', { name: 'agentName' })).toHaveProperty('value', 'Research');
+    expect(confirm).not.toHaveBeenCalled();
+  });
+  it('keeps a busy save editable and confirms only the first pending navigation', async () => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    writeFile.mockResolvedValueOnce({ success: false, error: 'agentBusy' });
+    const { leaveGuard } = mount();
+    const editor = screen.getByRole('textbox', { name: 'AGENTS.md' });
+    await waitFor(() => expect(editor).toHaveProperty('value', 'Read only'));
+    fireEvent.change(editor, { target: { value: 'My rules' } });
+    fireEvent.click(screen.getByRole('button', { name: 'agentSaveFile' }));
+    expect(await screen.findByRole('alert')).toHaveProperty('textContent', 'agentBusy');
+    expect(editor).toHaveProperty('value', 'My rules');
+    expect(editor).toHaveProperty('disabled', false);
+    expect(screen.getByRole('button', { name: 'agentSaveFile' })).toHaveProperty('disabled', false);
+    fireEvent.change(editor, { target: { value: 'Still editable' } });
+
+    const leave = vi.fn();
+    const laterLeave = vi.fn();
+    act(() => {
+      leaveGuard.current?.(leave);
+      leaveGuard.current?.(laterLeave);
+    });
+    expect(leave).not.toHaveBeenCalled();
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(editor).toHaveProperty('value', 'Still editable');
+    expect(leave).not.toHaveBeenCalled();
+    expect(laterLeave).not.toHaveBeenCalled();
+
+    act(() => {
+      leaveGuard.current?.(leave);
+      leaveGuard.current?.(laterLeave);
+    });
+    fireEvent.click(
+      within(screen.getByRole('dialog')).getByRole('button', { name: 'agentDiscard' }),
+    );
+    expect(leave).toHaveBeenCalledOnce();
+    expect(laterLeave).not.toHaveBeenCalled();
+    expect(confirm).not.toHaveBeenCalled();
+  });
+  it('discards edits before switching profiles or preparing a new draft', async () => {
+    mount();
+    await waitFor(() => expect(readFile).toHaveBeenCalled());
+    fireEvent.change(screen.getByRole('textbox', { name: 'agentName' }), {
+      target: { value: 'Edited name' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Reviewer/ }));
+    fireEvent.click(
+      within(screen.getByRole('dialog')).getByRole('button', { name: 'agentDiscard' }),
+    );
+    expect(screen.getByRole('textbox', { name: 'agentName' })).toHaveProperty('value', 'Reviewer');
+    await waitFor(() =>
+      expect(screen.getByRole('textbox', { name: 'AGENTS.md' })).toHaveProperty('disabled', false),
+    );
+    fireEvent.change(screen.getByRole('textbox', { name: 'AGENTS.md' }), {
+      target: { value: 'Draft rules' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'agentDuplicate' }));
+    fireEvent.click(
+      within(screen.getByRole('dialog')).getByRole('button', { name: 'agentDiscard' }),
+    );
+    expect(screen.getByRole('textbox', { name: 'agentName' })).toHaveProperty(
+      'value',
+      'agentCopyName',
+    );
+    expect(screen.queryByRole('textbox', { name: 'AGENTS.md' })).toBeNull();
   });
 });
 
