@@ -35,6 +35,8 @@ describe('runtime app configuration changes', () => {
 
     expect(getOpenClawAppConfigSignature({ providers: {} })).not.toBe(baseline);
     expect(getOpenClawAppConfigSignature({ voice: { outputEnabled: true } })).not.toBe(baseline);
+    expect(getOpenClawAppConfigSignature({ voice: { inputEnabled: true } })).not.toBe(baseline);
+    expect(getOpenClawAppConfigSignature({ voice: { recognitionMode: 'online' } })).not.toBe(baseline);
   });
 
   it('only changes Control UI admission when both developer mode and its switch are enabled', () => {

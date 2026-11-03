@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import { EnginePhase, type OpenClawEngineStatus } from '@shared/openclaw/engineStatus';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -15,6 +16,58 @@ afterEach(() => {
 });
 
 describe('LocalSpeechInputButton', () => {
+  it('refreshes online recognition after the engine starts and ignores stale readiness results', async () => {
+    const currentConfig = configService.getConfig();
+    vi.spyOn(configService, 'getConfig').mockReturnValue({
+      ...currentConfig,
+      voice: { ...currentConfig.voice, inputEnabled: true, recognitionMode: 'online' },
+    });
+    let finishInitial!: (status: { available: boolean }) => void;
+    const getStatus = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise(resolve => {
+            finishInitial = resolve;
+          }),
+      )
+      .mockResolvedValue({ available: true });
+    let engineChanged!: (status: OpenClawEngineStatus) => void;
+    const unsubscribe = vi.fn();
+    Object.defineProperty(window, 'electron', {
+      configurable: true,
+      value: {
+        onlineAsr: { getStatus, onEvent: vi.fn().mockReturnValue(() => undefined) },
+        localSpeechModels: { onChanged: vi.fn().mockReturnValue(() => undefined) },
+        openclaw: {
+          engine: {
+            onProgress: vi.fn(callback => {
+              engineChanged = callback;
+              return unsubscribe;
+            }),
+          },
+        },
+      },
+    });
+    const { unmount } = render(<LocalSpeechInputButton disabled={false} onTranscript={vi.fn()} />);
+    expect(screen.queryByRole('button')).toBeNull();
+
+    await act(async () => {
+      engineChanged({ phase: EnginePhase.Running, canRetry: false, version: null });
+    });
+    expect(screen.getByRole('button', { name: i18nService.t('localAsrStart') })).toBeTruthy();
+    await act(async () => {
+      finishInitial({ available: false });
+    });
+    expect(screen.getByRole('button', { name: i18nService.t('localAsrStart') })).toBeTruthy();
+    expect(getStatus).toHaveBeenCalledTimes(2);
+
+    act(() => engineChanged({ phase: EnginePhase.Starting, canRetry: false, version: null }));
+    expect(screen.queryByRole('button')).toBeNull();
+    unmount();
+    expect(unsubscribe).toHaveBeenCalledOnce();
+  });
+
   it('renders the microphone only when local recognition assets are available', async () => {
     const currentConfig = configService.getConfig();
     vi.spyOn(configService, 'getConfig').mockReturnValue({
@@ -323,101 +376,125 @@ describe('LocalSpeechInputButton', () => {
     await vi.waitFor(() => expect(stop).toHaveBeenCalledOnce());
   });
 
-  it('streams microphone audio through an OpenClaw transcription Talk session', async () => {
-    const currentConfig = configService.getConfig();
-    vi.spyOn(configService, 'getConfig').mockReturnValue({
-      ...currentConfig,
-      voice: {
-        ...currentConfig.voice,
-        inputEnabled: true,
-        recognitionMode: 'online',
-        inputSource: 'microphone',
-      },
-    });
-    const audioTrack = {
-      readyState: 'live',
-      addEventListener: vi.fn(),
-      stop: vi.fn(),
-    };
-    const stream = {
-      active: true,
-      getTracks: () => [audioTrack],
-      getAudioTracks: () => [audioTrack],
-    } as unknown as MediaStream;
-    Object.defineProperty(navigator, 'mediaDevices', {
-      configurable: true,
-      value: { getUserMedia: vi.fn().mockResolvedValue(stream) },
-    });
-    let processAudio: ((event: AudioProcessingEvent) => void) | null = null;
-    class FakeAudioContext {
-      sampleRate = 8000;
-      state = 'running';
-      destination = {};
-      resume = vi.fn().mockResolvedValue(undefined);
-      createMediaStreamSource = () => ({ connect: vi.fn(), disconnect: vi.fn() });
-      createScriptProcessor = () => ({
-        get onaudioprocess() {
-          return processAudio;
+  it.each([false, true])(
+    'streams microphone audio and cancels a changed model: %s',
+    async changeModel => {
+      const currentConfig = configService.getConfig();
+      const getConfig = vi.spyOn(configService, 'getConfig').mockReturnValue({
+        ...currentConfig,
+        voice: {
+          ...currentConfig.voice,
+          inputEnabled: true,
+          recognitionMode: 'online',
+          inputSource: 'microphone',
         },
-        set onaudioprocess(handler: ((event: AudioProcessingEvent) => void) | null) {
-          processAudio = handler;
-        },
-        connect: vi.fn(),
-        disconnect: vi.fn(),
       });
-      createGain = () => ({ gain: { value: 1 }, connect: vi.fn(), disconnect: vi.fn() });
-      close = vi.fn().mockResolvedValue(undefined);
-    }
-    Object.defineProperty(window, 'AudioContext', {
-      configurable: true,
-      value: FakeAudioContext,
-    });
-    let emitOnlineEvent:
-      ((event: import('@shared/speech/onlineAsr').OnlineAsrEvent) => void) | undefined;
-    const appendAudio = vi.fn().mockResolvedValue(undefined);
-    const close = vi.fn().mockResolvedValue(undefined);
-    Object.defineProperty(window, 'electron', {
-      configurable: true,
-      value: {
-        localSpeechModels: { onChanged: vi.fn().mockReturnValue(() => undefined) },
-        onlineAsr: {
-          getStatus: vi.fn().mockResolvedValue({ available: true, provider: 'deepgram' }),
-          start: vi.fn().mockResolvedValue({
-            sessionId: 'talk-1',
-            transcriptionSessionId: 'transcription-1',
-            provider: 'deepgram',
-            inputEncoding: 'g711_ulaw',
-            inputSampleRateHz: 8000,
-          }),
-          appendAudio,
-          close,
-          onEvent: vi.fn((callback: typeof emitOnlineEvent) => {
-            emitOnlineEvent = callback;
-            return () => undefined;
-          }),
+      const audioTrack = {
+        readyState: 'live',
+        addEventListener: vi.fn(),
+        stop: vi.fn(),
+      };
+      const stream = {
+        active: true,
+        getTracks: () => [audioTrack],
+        getAudioTracks: () => [audioTrack],
+      } as unknown as MediaStream;
+      Object.defineProperty(navigator, 'mediaDevices', {
+        configurable: true,
+        value: { getUserMedia: vi.fn().mockResolvedValue(stream) },
+      });
+      let processAudio: ((event: AudioProcessingEvent) => void) | null = null;
+      class FakeAudioContext {
+        sampleRate = 8000;
+        state = 'running';
+        destination = {};
+        resume = vi.fn().mockResolvedValue(undefined);
+        createMediaStreamSource = () => ({ connect: vi.fn(), disconnect: vi.fn() });
+        createScriptProcessor = () => ({
+          get onaudioprocess() {
+            return processAudio;
+          },
+          set onaudioprocess(handler: ((event: AudioProcessingEvent) => void) | null) {
+            processAudio = handler;
+          },
+          connect: vi.fn(),
+          disconnect: vi.fn(),
+        });
+        createGain = () => ({ gain: { value: 1 }, connect: vi.fn(), disconnect: vi.fn() });
+        close = vi.fn().mockResolvedValue(undefined);
+      }
+      Object.defineProperty(window, 'AudioContext', {
+        configurable: true,
+        value: FakeAudioContext,
+      });
+      let emitOnlineEvent:
+        ((event: import('@shared/speech/onlineAsr').OnlineAsrEvent) => void) | undefined;
+      const appendAudio = vi.fn().mockResolvedValue(undefined);
+      const close = vi.fn().mockResolvedValue(undefined);
+      Object.defineProperty(window, 'electron', {
+        configurable: true,
+        value: {
+          localSpeechModels: { onChanged: vi.fn().mockReturnValue(() => undefined) },
+          onlineAsr: {
+            getStatus: vi.fn().mockResolvedValue({ available: true, provider: 'deepgram' }),
+            start: vi.fn().mockResolvedValue({
+              sessionId: 'talk-1',
+              transcriptionSessionId: 'transcription-1',
+              provider: 'deepgram',
+              inputEncoding: 'g711_ulaw',
+              inputSampleRateHz: 8000,
+            }),
+            appendAudio,
+            close,
+            onEvent: vi.fn((callback: typeof emitOnlineEvent) => {
+              emitOnlineEvent = callback;
+              return () => undefined;
+            }),
+          },
         },
-      },
-    });
-    const onTranscript = vi.fn();
+      });
+      const onTranscript = vi.fn();
 
-    render(<LocalSpeechInputButton disabled={false} onTranscript={onTranscript} />);
-    fireEvent.click(await screen.findByRole('button', { name: i18nService.t('localAsrStart') }));
-    await screen.findByRole('button', { name: i18nService.t('localAsrStop') });
-    const audioHandler = processAudio as ((event: AudioProcessingEvent) => void) | null;
-    audioHandler?.({
-      inputBuffer: { getChannelData: () => new Float32Array([0, 0.5, -0.5]) },
-    } as unknown as AudioProcessingEvent);
-    await vi.waitFor(() => expect(appendAudio).toHaveBeenCalledWith('talk-1', expect.any(String)));
-    fireEvent.click(screen.getByRole('button', { name: i18nService.t('localAsrStop') }));
+      render(<LocalSpeechInputButton disabled={false} onTranscript={onTranscript} />);
+      fireEvent.click(await screen.findByRole('button', { name: i18nService.t('localAsrStart') }));
+      await screen.findByRole('button', { name: i18nService.t('localAsrStop') });
+      const audioHandler = processAudio as ((event: AudioProcessingEvent) => void) | null;
+      audioHandler?.({
+        inputBuffer: { getChannelData: () => new Float32Array([0, 0.5, -0.5]) },
+      } as unknown as AudioProcessingEvent);
+      await vi.waitFor(() =>
+        expect(appendAudio).toHaveBeenCalledWith('talk-1', expect.any(String)),
+      );
+      if (changeModel) {
+        const previousConfig = configService.getConfig();
+        getConfig.mockReturnValue({
+          ...previousConfig,
+          voice: { ...previousConfig.voice, onlineAsrModelRef: 'internal/another-model' },
+        });
+        await act(async () => {
+          window.dispatchEvent(new CustomEvent('config-updated'));
+        });
+        await vi.waitFor(() => expect(close).toHaveBeenCalledWith('talk-1'));
+        emitOnlineEvent?.({
+          transcriptionSessionId: 'transcription-1',
+          type: 'transcript',
+          text: 'Old model transcript',
+          final: true,
+        });
+        expect(onTranscript).not.toHaveBeenCalled();
+        return;
+      }
+      fireEvent.click(screen.getByRole('button', { name: i18nService.t('localAsrStop') }));
 
-    await vi.waitFor(() => expect(close).toHaveBeenCalledWith('talk-1'));
-    emitOnlineEvent?.({
-      transcriptionSessionId: 'transcription-1',
-      type: 'transcript',
-      text: '在线识别结果',
-      final: true,
-    });
-    emitOnlineEvent?.({ transcriptionSessionId: 'transcription-1', type: 'close' });
-    expect(onTranscript).toHaveBeenCalledWith('在线识别结果');
-  });
+      await vi.waitFor(() => expect(close).toHaveBeenCalledWith('talk-1'));
+      emitOnlineEvent?.({
+        transcriptionSessionId: 'transcription-1',
+        type: 'transcript',
+        text: '在线识别结果',
+        final: true,
+      });
+      emitOnlineEvent?.({ transcriptionSessionId: 'transcription-1', type: 'close' });
+      expect(onTranscript).toHaveBeenCalledWith('在线识别结果');
+    },
+  );
 });

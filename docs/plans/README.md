@@ -8,6 +8,7 @@
 | [运行计时终态证据](session-run-terminal-evidence.md)            | 移除空闲/root 变更推断及宽松 `agent.wait` 结算              | 已确认代码债，待实现               |
 | [Gateway 启动耗时](gateway-startup-latency.md)                  | 历史慢启动的分段定位与可复现性能改善                        | 待调查；历史测量不代表当前所有启动 |
 | [浏览器共存与同页接管](browser-runtime-and-background-tasks.md) | 唯一工具门面、Chrome 控制授权和统一页面宿主                 | 候选设计，尚待 POC                 |
+| [多协议语音与实时对话](speech-protocols-and-realtime.md) | 显式语音协议、HTTP 录音识别、MiMo 朗读与原生实时对话 | 候选设计，待分阶段实现 |
 
 浏览器计划的协议和页面宿主细节另见[配套候选设计](browser-runtime-design.md)，实施门槛只在主计划维护。
 

@@ -19,6 +19,8 @@
 
 本地麦克风诊断采集有界录音，显示电平、可回放，并用同一段音频转录，区分无声音、设备路由和识别质量。TTS 试听使用可编辑样本文字与实际选中 provider。
 
+朗读模型、音色及其它输出选项均保留在设置草稿中，点击保存后才应用；取消不修改实际朗读配置。当前草稿与已保存的有效输出选项不一致时，试听提示先保存，不使用旧设置冒充新选择。在线朗读状态在引擎就绪和已保存配置变化后重新读取，迟到结果不能覆盖较新的检查。
+
 ### 扩展齿轮独立设置
 
 `stt-local-cli` 和 `tts-local-cli` 的启停仅由插件 → 扩展控制，首次安装采用各自扩展清单声明的默认值。语音设置、模型安装、启动及登录/退出同步只更新运行参数，不改变这两个扩展的明确启停选择及已有准入策略；sandboxed 会话不注册 host 转录工具。
@@ -104,6 +106,10 @@ sequenceDiagram
 
 采用 gateway-relay、brain=none 的 transcription-only 会话。Main 限定调用 Renderer 所有权；event 按 transcriptionSessionId 匹配。停止、设备丢失、权限失败、设置变化、导航或卸载都关闭原生会话，迟到事件不能写入另一草稿。
 
+在线输入的当前模型由 Main 从已保存的 `voice.onlineAsrModelRef` 和语音识别目录解析，投影到本地 OpenAI 扩展自有的 `config.transcription`。模型选择 IPC 只传模型引用，端点与凭据由 Main 读取；凭据通过该扩展声明的 `transcription.apiKey` SecretRef 水合。配置同步、启动及登录退出均重建此配置，不依赖未随应用安装的 `voice-call` 插件。关闭输入、切换本地模式或删除所选模型会撤下配置，不借用附件转录或回复朗读的选择。
+
+适配器通过原生 `resolveConfig` 动态读取自己的输入配置，明确撤下的配置不能回退到其它原生配置或默认模型。Main 按目录中已配置的 OpenAI 适配器与实际输入配置判定就绪，并在创建 Talk 会话时明确指定适配器和模型，避免外部电话插件设置改变输入选择。输入框在引擎启动完成后重新检查在线识别，旧探测结果不得覆盖较新的状态；未开启或实际能力未就绪时仍不提供录音入口。
+
 ## 6. 附件转录工具
 
 `stt-local-cli` 保留唯一的 `transcribe_audio` 工具。显式 `mode: local` 使用已安装 Sherpa；`mode: online` 使用模型目录所配置 HTTP(S) 服务的 `/audio/transcriptions`，逐段提交 PCM 音频及所选模型。麦克风实时识别仍走 Talk WebSocket；仅有 WS(S) 地址的目录项不能作为附件转录服务，界面说明这一区别。两种模式均限制 256 MiB、一小时、一次一个转录，使用受限本地解码、有效 fsPolicy root/workspaceOnly 和 sandbox 准入；外部附件先 staging 到项目再发送。
@@ -121,6 +127,8 @@ sequenceDiagram
 在线回复朗读使用独立的 `runtime-services.config.replySpeech` 受管配置。现有在线设置 IPC 只提交 `{modelRef, voice}`，Main 从当前模型目录读取端点和凭据，不覆盖助手工具的全局 `tts`。播放调用受认证的 `runtimeServices.speech.synthesize`，仅接收文字；Runtime Services 在请求内构建 OpenAI 兼容 provider 视图，通过公开 `tts-runtime.synthesizeSpeech`、显式 provider 校验和 `disableFallback: true` 执行。
 
 独立 `reply-reading` persona 仅绑定该 provider；通过公开 `runtime.state.resolveStateDir()` 定位 `speech-tools/reply-preferences.json`，将路径作为 `resolveExplicitTtsOverrides` / `synthesizeSpeech` 的独立 `prefsPath` 参数，不放进 `cfg.tts`，也不读取工具偏好路径。显式参数优先于 Gateway 的工具偏好环境变量；禁用 `tts-local-cli` 不影响回复朗读。权限或配置变化后的迟到输出丢弃。原生公开 TTS API 暂无取消信号，停止播放不宣称已经中止该合成请求。
+
+关闭回复朗读会撤下 `replySpeech`，保留产品中的模型和音色选择。Main 在合成返回后再次核对当前有效输出设置，本地或在线的迟到结果均不得在停用或换音色后继续播放。聊天朗读入口在引擎就绪后刷新；输出模型、音色、端点或凭据变化时立即停止旧播放并撤销待播放结果，无关的输入和主题设置不打断朗读。设置页试听采用同一撤销规则。
 
 ### 凭据隔离与原生 schema
 

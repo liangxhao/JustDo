@@ -177,6 +177,8 @@ export const settingsTranslations = {
     voiceSelectModel: '请选择模型',
     voiceSelectSpeaker: '请选择音色',
     voiceNoSpeakersConfigured: '尚未配置可用音色',
+    voiceSelectedModelNeedsVoices:
+      '此模型尚未配置音色。请在“管理模型”中编辑该模型，添加服务支持的音色 ID 后再选择。',
     voiceSpeechRate: '朗读语速',
     voiceSpeechRateDescription: '1× 为模型原始速度，数值越大朗读越快。',
     voiceOutputDiagnosticTitle: '朗读效果测试',
@@ -187,6 +189,7 @@ export const settingsTranslations = {
     voiceOutputDiagnosticGenerating: '正在生成',
     voiceOutputDiagnosticStop: '停止',
     voiceOutputDiagnosticUnavailable: '朗读服务就绪后即可试听。',
+    voiceOutputDiagnosticSaveFirst: '请先保存语音设置，再试听当前选择。',
     voiceOutputDiagnosticFailed: '生成或播放试听语音失败，请检查朗读服务设置。',
     voiceSynthesisThreads: '合成线程数',
     voiceSynthesisModel: '语音合成模型',
@@ -1126,6 +1129,8 @@ export const settingsTranslations = {
     voiceSelectModel: 'Select a model',
     voiceSelectSpeaker: 'Select a voice',
     voiceNoSpeakersConfigured: 'No voices configured',
+    voiceSelectedModelNeedsVoices:
+      'This model has no voices configured. Edit it in Manage models and add voice IDs supported by the service.',
     voiceSpeechRate: 'Speaking rate',
     voiceSpeechRateDescription: '1× is the original model speed; higher values speak faster.',
     voiceOutputDiagnosticTitle: 'Test read-aloud',
@@ -1138,6 +1143,7 @@ export const settingsTranslations = {
     voiceOutputDiagnosticStop: 'Stop',
     voiceOutputDiagnosticUnavailable:
       'Preview will be available when the reading service is ready.',
+    voiceOutputDiagnosticSaveFirst: 'Save voice settings before previewing this selection.',
     voiceOutputDiagnosticFailed:
       'Could not generate or play the preview. Check the reading service settings.',
     voiceSynthesisThreads: 'Synthesis threads',

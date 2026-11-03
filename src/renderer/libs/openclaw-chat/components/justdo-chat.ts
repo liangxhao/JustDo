@@ -7,9 +7,17 @@
  * 2. Via a ChatController reference (controller property)
  */
 import type { SessionRunTiming } from '@shared/cowork/sessionRun';
+import { EnginePhase, type OpenClawEngineStatus } from '@shared/openclaw/engineStatus';
 import { McpAppEvent } from '@shared/plugins/mcpApps';
 import { LocalSpeechModelKind } from '@shared/speech/localSpeechModels';
-import { normalizeLocalSpeechSettings } from '@shared/speech/localSpeechSettings';
+import {
+  getSpeechSynthesisSettingsKey,
+  normalizeLocalSpeechSettings,
+} from '@shared/speech/localSpeechSettings';
+import {
+  getOnlineSpeechVoiceOptions,
+  resolveOnlineSpeechModel,
+} from '@shared/speech/onlineSpeechModels';
 import { html, LitElement, nothing, type TemplateResult } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { guard } from 'lit/directives/guard.js';
@@ -511,13 +519,41 @@ export class JustDoChatElement extends LitElement {
   private speechObjectUrl: string | null = null;
   private speechRequestGeneration = 0;
   private localTtsStatusGeneration = 0;
+  private speechConfigurationKey = '';
   private unsubscribeLocalSpeechModels: (() => void) | null = null;
+  private unsubscribeSpeechEngine: (() => void) | null = null;
 
   private async refreshLocalTtsStatus(): Promise<void> {
     const generation = this.localTtsStatusGeneration + 1;
     this.localTtsStatusGeneration = generation;
     try {
-      const settings = normalizeLocalSpeechSettings(configService.getConfig().voice);
+      const config = configService.getConfig();
+      const settings = normalizeLocalSpeechSettings(config.voice);
+      const selection =
+        settings.synthesisMode === 'online'
+          ? resolveOnlineSpeechModel(
+              config.onlineModelProviders?.['speech-synthesis'],
+              settings.onlineTtsModelRef,
+            )
+          : null;
+      const configurationKey = JSON.stringify([
+        getSpeechSynthesisSettingsKey(settings),
+        ...(settings.synthesisMode === 'online'
+          ? [
+              selection?.provider.baseUrl,
+              selection?.provider.apiKey,
+              selection?.model.id,
+              getOnlineSpeechVoiceOptions(selection?.model).some(
+                voice => voice.value === settings.onlineTtsVoice,
+              ),
+            ]
+          : []),
+      ]);
+      if (configurationKey !== this.speechConfigurationKey) {
+        this.speechConfigurationKey = configurationKey;
+        this.localTtsAvailable = false;
+        this.stopSpeech();
+      }
       if (!settings.outputEnabled) {
         this.localTtsAvailable = false;
         this.stopSpeech();
@@ -527,11 +563,11 @@ export class JustDoChatElement extends LitElement {
         settings.synthesisMode === 'online'
           ? await window.electron.onlineTts.getStatus()
           : await window.electron.localTts.getStatus(settings.ttsModelId);
-      if (generation !== this.localTtsStatusGeneration) return;
+      if (!this.isConnected || generation !== this.localTtsStatusGeneration) return;
       this.localTtsAvailable = status.available;
       if (!this.localTtsAvailable) this.stopSpeech();
     } catch {
-      if (generation !== this.localTtsStatusGeneration) return;
+      if (!this.isConnected || generation !== this.localTtsStatusGeneration) return;
       this.localTtsAvailable = false;
       this.stopSpeech();
     }
@@ -539,6 +575,18 @@ export class JustDoChatElement extends LitElement {
 
   private readonly handleSpeechConfigUpdated = (): void => {
     void this.refreshLocalTtsStatus();
+  };
+
+  private readonly handleSpeechEngineProgress = (status: OpenClawEngineStatus): void => {
+    if (normalizeLocalSpeechSettings(configService.getConfig().voice).synthesisMode !== 'online')
+      return;
+    if (status.phase === EnginePhase.Running) {
+      void this.refreshLocalTtsStatus();
+      return;
+    }
+    this.localTtsStatusGeneration += 1;
+    this.localTtsAvailable = false;
+    this.stopSpeech();
   };
 
   private stopSpeech(): void {
@@ -561,7 +609,7 @@ export class JustDoChatElement extends LitElement {
       return;
     }
     const controller = this._controller;
-    if (!controller || !text.trim()) return;
+    if (!this.isConnected || !this.localTtsAvailable || !controller || !text.trim()) return;
 
     this.stopSpeech();
     const requestGeneration = this.speechRequestGeneration;
@@ -1021,6 +1069,8 @@ export class JustDoChatElement extends LitElement {
     this.addEventListener('scroll', this.handleMermaidVisibilityScroll, { passive: true });
     this.addEventListener('scroll', this.handleMinimapScroll, { passive: true });
     window.addEventListener('config-updated', this.handleSpeechConfigUpdated);
+    this.unsubscribeSpeechEngine =
+      window.electron?.openclaw?.engine?.onProgress?.(this.handleSpeechEngineProgress) ?? null;
     this.unsubscribeLocalSpeechModels =
       window.electron?.localSpeechModels?.onChanged?.(status => {
         if (status.kind === LocalSpeechModelKind.Tts) void this.refreshLocalTtsStatus();
@@ -1056,6 +1106,8 @@ export class JustDoChatElement extends LitElement {
     this.thinkingContentPresentation.reset(null);
     this.processSummaryTakeoverTracker.clear();
     this.collapsedProcessSummaryTakeoverTracker.clear();
+    this.localTtsStatusGeneration += 1;
+    this.localTtsAvailable = false;
     this.stopSpeech();
     this.processSummarySessionIdentity = null;
     this.renderedOpenProcessSummaryKey = null;
@@ -1067,6 +1119,8 @@ export class JustDoChatElement extends LitElement {
     this.removeEventListener('scroll', this.handleMermaidVisibilityScroll);
     this.removeEventListener('scroll', this.handleMinimapScroll);
     window.removeEventListener('config-updated', this.handleSpeechConfigUpdated);
+    this.unsubscribeSpeechEngine?.();
+    this.unsubscribeSpeechEngine = null;
     this.unsubscribeLocalSpeechModels?.();
     this.unsubscribeLocalSpeechModels = null;
     if (this.mermaidScrollFrame !== null)

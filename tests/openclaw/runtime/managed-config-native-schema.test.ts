@@ -354,3 +354,61 @@ nativeTest('production speech projections remove the invalid preferences key bef
     expect(result.legacyIssues, result.label).toEqual([]);
   }
 }, 120_000);
+
+nativeTest('online speech profiles survive full and minimal configuration sync without voice-call', () => {
+  const cases: { label: string; config: unknown }[] = [];
+  for (const withChatModel of [false, true]) {
+    const directory = temporary();
+    const configPath = path.join(directory, 'openclaw.json');
+    setStoreGetter(() => ({ get: () => withChatModel ? {
+      model: { defaultModel: 'chat', defaultModelProvider: 'internal' },
+      providers: { internal: { enabled: true, apiKey: 'synthetic-chat-key',
+        baseUrl: 'http://models.example.test/v1', models: [{ id: 'chat' }] } },
+    } : {} }) as never);
+    const speech: ManagedSpeechModelSettings = {
+      language: 'zh',
+      extensions: defaultLocalSpeechExtensionSettings,
+      voice: { ...defaultLocalSpeechSettings, inputEnabled: true,
+        recognitionMode: 'online', onlineAsrModelRef: 'internal/asr',
+        outputEnabled: true, synthesisMode: 'online',
+        onlineTtsModelRef: 'internal/reader', onlineTtsVoice: 'voice-1' },
+      recognitionModels: { providers: { internal: {
+        baseUrl: 'wss://asr.example.test/v1', apiKey: '', models: [{ id: 'asr', name: 'ASR' }],
+      } } },
+      synthesisModels: { providers: { internal: {
+        baseUrl: 'http://tts.example.test/v1', apiKey: '',
+        models: [{ id: 'reader', name: 'Reader', voices: [{ id: 'voice-1', name: 'Voice' }] }],
+      } } },
+    };
+    const sync = new OpenClawConfigSync({
+      engineManager: { getConfigPath: () => configPath, getStateDir: () => directory,
+        getDesiredVersion: () => targetVersion.slice(1) },
+      getCoworkConfig: () => ({ workingDirectory: path.join(directory, 'project'),
+        executionMode: 'local', agentEngine: 'openclaw' }),
+      getAgents: () => [], getBrowserMode: () => BrowserMode.User,
+      getSpeechModelSettings: () => speech,
+    } as never);
+    for (const reason of ['startup', 'settings']) {
+      expect(sync.sync(reason)).toMatchObject({ ok: true });
+      const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+      expect(config.plugins.entries).not.toHaveProperty('voice-call');
+      expect(config.plugins.entries.openai).toMatchObject({ enabled: true, config: {
+        transcription: { baseUrl: 'wss://asr.example.test/v1', model: 'asr', apiKey: '' },
+      } });
+      expect(config.plugins.entries['runtime-services'].config.replySpeech).toMatchObject({
+        baseUrl: 'http://tts.example.test/v1', model: 'reader', speakerVoice: 'voice-1', apiKey: '',
+      });
+      cases.push({ label: `${withChatModel ? 'full' : 'minimal'} ${reason} speech`, config });
+    }
+    speech.voice = { ...(speech.voice as object), inputEnabled: false, outputEnabled: false };
+    expect(sync.sync('settings')).toMatchObject({ ok: true });
+    const disabled = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    expect(disabled.plugins.entries.openai.config.transcription).toBeNull();
+    expect(disabled.plugins.entries['runtime-services'].config.replySpeech).toBeNull();
+    cases.push({ label: `${withChatModel ? 'full' : 'minimal'} disabled speech`, config: disabled });
+  }
+  for (const result of assess(cases)) {
+    expect(result.schemaSuccess, result.label + ': ' + JSON.stringify(result.schemaIssues)).toBe(true);
+    expect(result.legacyIssues, result.label).toEqual([]);
+  }
+}, 120_000);

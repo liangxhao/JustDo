@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { defaultLocalSpeechExtensionSettings } from '../../../../shared/speech/localSpeechExtensionSettings';
 import { defaultLocalSpeechSettings } from '../../../../shared/speech/localSpeechSettings';
+import { mergeOpenClawPluginConfig } from '../plugins/pluginProjection';
 import {
   buildLocalSpeechExtensionSttConfig,
   buildLocalSpeechExtensionTtsConfig,
@@ -49,6 +50,7 @@ const settings = (): ManagedSpeechModelSettings => ({
   },
   voice: {
     ...defaultLocalSpeechSettings,
+    outputEnabled: true,
     synthesisMode: 'online',
     onlineTtsModelRef: 'replyProvider/reply',
     onlineTtsVoice: 'reply-voice',
@@ -89,6 +91,81 @@ describe('managed speech configuration', () => {
     stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'speech-config-'));
   });
   afterEach(() => fs.rmSync(stateDir, { recursive: true, force: true }));
+
+  it('keeps the composer selection in the installed adapter through plugin cleanup and withdraws stale models', () => {
+    const input = settings();
+    input.voice = {
+      ...defaultLocalSpeechSettings,
+      inputEnabled: true,
+      recognitionMode: 'online',
+      onlineAsrModelRef: 'composer/input',
+    };
+    input.recognitionModels = {
+      providers: {
+        ...category('asr', 'recognition-secret').providers,
+        composer: {
+          ...category('input', 'input-secret').providers.internal,
+          baseUrl: 'wss://input.internal/v1/realtime',
+        },
+      },
+    };
+    const config = nativeConfig();
+    const entries = (config.plugins as { entries: Record<string, unknown> }).entries;
+    entries.openai = { config: { personality: 'off' } };
+    applyManagedSpeechModelConfiguration(config, input, stateDir);
+    config.plugins = mergeOpenClawPluginConfig(config.plugins as Record<string, unknown>, {}, [], [
+      'openai', 'runtime-services', 'stt-local-cli', 'tts-local-cli',
+    ]);
+
+    const profile = pluginConfig(config, 'openai').transcription as Record<string, unknown>;
+    expect(profile).toMatchObject({
+      baseUrl: 'wss://input.internal/v1/realtime',
+      model: 'input',
+      apiKey: { source: 'file' },
+    });
+    expect(pluginConfig(config, 'openai').personality).toBe('off');
+    expect(pluginConfig(config, 'stt-local-cli').model).toBe('asr');
+    expect(JSON.stringify(config)).not.toContain('input-secret');
+    expect((config.plugins as { entries: Record<string, unknown> }).entries).not.toHaveProperty(
+      'voice-call',
+    );
+    const originalReference = profile.apiKey;
+    input.recognitionModels = {
+      providers: {
+        composer: {
+          ...category('input', 'rotated-input-secret').providers.internal,
+          baseUrl: 'wss://changed.internal/v1/realtime',
+        },
+      },
+    };
+    applyManagedSpeechModelConfiguration(config, input, stateDir);
+    expect(
+      (pluginConfig(config, 'openai').transcription as Record<string, unknown>).apiKey,
+    ).not.toEqual(originalReference);
+
+    input.recognitionModels = { providers: {} };
+    applyManagedSpeechModelConfiguration(config, input, stateDir);
+    expect(pluginConfig(config, 'openai').transcription).toBeNull();
+  });
+
+  it.each([{ inputEnabled: false }, { recognitionMode: 'local' }])(
+    'withdraws the composer profile when input settings change: %j',
+    patch => {
+      const input = settings();
+      input.voice = {
+        ...defaultLocalSpeechSettings,
+        inputEnabled: true,
+        recognitionMode: 'online',
+        onlineAsrModelRef: 'internal/asr',
+      };
+      const config = nativeConfig();
+      applyManagedSpeechModelConfiguration(config, input, stateDir);
+      expect(pluginConfig(config, 'openai').transcription).toMatchObject({ model: 'asr' });
+      input.voice = { ...(input.voice as object), ...patch };
+      applyManagedSpeechModelConfiguration(config, input, stateDir);
+      expect(pluginConfig(config, 'openai').transcription).toBeNull();
+    },
+  );
 
   it('projects independent online tool and reply selections without requiring local assets or changing plugin admission', () => {
     const input = settings();
@@ -190,14 +267,44 @@ describe('managed speech configuration', () => {
     expect(buildLocalSpeechExtensionTtsConfig).not.toHaveBeenCalled();
   });
 
+  it('withdraws disabled reply reading without changing the assistant tool profile or saved selection', () => {
+    const config = nativeConfig();
+    const input = settings();
+    applyManagedSpeechModelConfiguration(config, input, stateDir);
+    const tool = structuredClone(toolConfig(config));
+    input.voice = { ...(input.voice as object), outputEnabled: false };
+
+    applyManagedSpeechModelConfiguration(config, input, stateDir);
+
+    expect(pluginConfig(config, 'runtime-services').replySpeech).toBeNull();
+    expect(toolConfig(config)).toEqual(tool);
+    expect(input.voice).toMatchObject({
+      onlineTtsModelRef: 'replyProvider/reply',
+      onlineTtsVoice: 'reply-voice',
+    });
+    input.voice = { ...(input.voice as object), outputEnabled: true };
+    applyManagedSpeechModelConfiguration(config, input, stateDir);
+    expect(pluginConfig(config, 'runtime-services').replySpeech).toMatchObject({
+      model: 'reply',
+      speakerVoice: 'reply-voice',
+    });
+  });
+
   it('supports configured keyless internal services without a synthetic key', () => {
     const config = nativeConfig();
     const input = settings();
     input.recognitionModels = category('asr', '');
     input.synthesisModels = category('tool', '', ['tool-voice']);
+    input.voice = {
+      ...defaultLocalSpeechSettings,
+      inputEnabled: true,
+      recognitionMode: 'online',
+      onlineAsrModelRef: 'internal/asr',
+    };
     expect(applyManagedSpeechModelConfiguration(config, input, stateDir)).toBe(false);
     expect(toolConfig(config).apiKey).toBe('');
     expect(pluginConfig(config, 'stt-local-cli').apiKey).toBe('');
+    expect(pluginConfig(config, 'openai').transcription).toMatchObject({ apiKey: '' });
     expect(fs.existsSync(path.join(stateDir, 'extension-secrets.json'))).toBe(false);
   });
 

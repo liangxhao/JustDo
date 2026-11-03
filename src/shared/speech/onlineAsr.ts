@@ -26,10 +26,7 @@ export interface OnlineAsrConfiguration extends OnlineAsrStatus {
 }
 
 export interface OnlineAsrConfigurationUpdate {
-  provider: string;
-  baseUrl: string;
-  apiKey?: string;
-  model: string;
+  modelRef: string;
 }
 
 export interface OnlineAsrStatus {

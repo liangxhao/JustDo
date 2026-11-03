@@ -176,3 +176,14 @@ export const resolveLocalSpeechInputLanguage = (
   setting: LocalSpeechInputLanguage,
   appLanguage: 'zh' | 'en',
 ): Exclude<LocalSpeechInputLanguage, 'app'> => (setting === 'app' ? appLanguage : setting);
+
+export const getSpeechSynthesisSettingsKey = (value: unknown): string => {
+  const settings = normalizeLocalSpeechSettings(value);
+  return JSON.stringify([
+    settings.outputEnabled,
+    settings.synthesisMode,
+    ...(settings.synthesisMode === 'local'
+      ? [settings.ttsModelId, settings.voiceId, settings.speechRate, settings.synthesisThreads]
+      : [settings.onlineTtsModelRef, settings.onlineTtsVoice]),
+  ]);
+};

@@ -7,6 +7,7 @@ import type {
 import { normalizeResolvedSecretInputString } from 'openclaw/plugin-sdk/secret-input';
 import {
   asFiniteNumberInRange,
+  asOptionalRecord,
   asSafeIntegerInRange,
   normalizeOptionalString,
 } from 'openclaw/plugin-sdk/string-coerce-runtime';
@@ -58,14 +59,17 @@ function appendedUtf8ByteLength(previous: string, appended: string): number {
   return joinsSurrogatePair ? appendedBytes - 2 : appendedBytes;
 }
 
-function normalizeProviderConfig(config: RealtimeTranscriptionProviderConfig) {
+function normalizeProviderConfig(
+  config: RealtimeTranscriptionProviderConfig,
+  credentialPath = 'plugins.entries.voice-call.config.streaming.providers.openai.apiKey',
+) {
   const raw = resolveOpenAIProviderConfigRecord(config);
   return {
     baseUrl: normalizeOptionalString(raw?.baseUrl),
     apiKey:
       normalizeResolvedSecretInputString({
         value: raw?.apiKey,
-        path: 'plugins.entries.voice-call.config.streaming.providers.openai.apiKey',
+        path: credentialPath,
       }) ??
       normalizeResolvedSecretInputString({
         value: raw?.openaiApiKey,
@@ -88,7 +92,17 @@ export function buildOpenAIRealtimeTranscriptionProvider(
     aliases: ['openai-realtime'],
     defaultModel: OPENAI_REALTIME_TRANSCRIPTION_DEFAULT_MODEL,
     autoSelectOrder: 10,
-    resolveConfig: ({ rawConfig }) => normalizeProviderConfig(rawConfig),
+    resolveConfig: ({ cfg, rawConfig }) => {
+      const pluginConfig = cfg.plugins?.entries?.openai?.config;
+      if (!pluginConfig || !Object.hasOwn(pluginConfig, 'transcription')) {
+        return normalizeProviderConfig(rawConfig);
+      }
+      // An authored profile owns the endpoint and credentials together. A withdrawn
+      // or invalid profile must not borrow a stale voice-call service.
+      const profile = asOptionalRecord(pluginConfig.transcription);
+      if (!profile || !normalizeOptionalString(profile.model)) return normalizeProviderConfig({});
+      return normalizeProviderConfig(profile, 'plugins.entries.openai.config.transcription.apiKey');
+    },
     isConfigured: ({ providerConfig }) =>
       hasTranscriptionBaseUrl(normalizeProviderConfig(providerConfig).baseUrl),
     createSession: req => {

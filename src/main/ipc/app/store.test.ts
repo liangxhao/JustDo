@@ -12,6 +12,7 @@ vi.mock('electron', () => ({
 
 import { AppConfigIpc } from '../../../shared/app/appConfig';
 import { defaultLocalSpeechExtensionSettings } from '../../../shared/speech/localSpeechExtensionSettings';
+import { applyManagedSpeechModelConfiguration } from '../../openclaw/config/speech/speechModelConfig';
 import { registerDefaultModelHandlers } from '../cowork/defaultModel';
 import { registerStoreHandlers } from './store';
 
@@ -255,6 +256,80 @@ describe('store IPC', () => {
       onlineTtsModelRef: '',
       onlineTtsVoice: '',
     });
+  });
+
+  it('preserves an existing reply model without voices while withdrawing its invalid voice and runtime profile', async () => {
+    let config: Record<string, unknown> = {
+      onlineModelProviders: { 'speech-synthesis': speechCatalog },
+      voice: {
+        outputEnabled: true,
+        synthesisMode: 'online',
+        onlineTtsModelRef: 'internal/speech',
+        onlineTtsVoice: 'v1',
+      },
+      localSpeechExtensions: {
+        ...defaultLocalSpeechExtensionSettings,
+        sttMode: 'online',
+        ttsMode: 'online',
+        onlineTtsModelRef: 'internal/speech',
+        onlineTtsVoice: 'v1',
+      },
+    };
+    const native: Record<string, unknown> = {
+      plugins: {
+        entries: {
+          'runtime-services': {
+            config: {
+              replySpeech: {
+                baseUrl: 'https://speech.internal/v1',
+                model: 'speech',
+                speakerVoice: 'v1',
+              },
+            },
+          },
+        },
+      },
+    };
+    get.mockImplementation(() => config);
+    set.mockImplementation((_key, value) => {
+      config = value;
+    });
+    onAppConfigChanged.mockImplementation(async next => {
+      applyManagedSpeechModelConfiguration(native, {
+        language: 'zh',
+        extensions: next.localSpeechExtensions,
+        voice: next.voice,
+        recognitionModels: {},
+        synthesisModels: next.onlineModelProviders['speech-synthesis'],
+      }, 'unused-keyless-state');
+    });
+    const withoutVoices = {
+      providers: {
+        internal: {
+          ...speechCatalog.providers.internal,
+          models: [{ id: 'speech', name: 'Speech', voices: [] }],
+        },
+      },
+    };
+
+    await handlers.get(AppConfigIpc.Patch)!({}, {
+      onlineModelProviders: { 'speech-synthesis': withoutVoices },
+    });
+
+    expect(config.voice).toMatchObject({
+      outputEnabled: true,
+      synthesisMode: 'online',
+      onlineTtsModelRef: 'internal/speech',
+      onlineTtsVoice: '',
+    });
+    expect(config.localSpeechExtensions).toMatchObject({
+      onlineTtsModelRef: '',
+      onlineTtsVoice: '',
+    });
+    expect(native.plugins).toMatchObject({
+      entries: { 'runtime-services': { config: { replySpeech: null } } },
+    });
+    expect(onAppConfigChanged).toHaveBeenCalledOnce();
   });
 
   it('keeps stable references through display-name changes but rejects websocket-only file transcription selection', async () => {

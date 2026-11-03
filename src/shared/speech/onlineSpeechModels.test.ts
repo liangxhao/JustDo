@@ -68,6 +68,12 @@ describe('online speech model catalog', () => {
       ),
     ).toEqual(['internal/voice/model', 'internal/asr']);
     expect(() => normalizeOnlineSpeechBaseUrl('wss://speech.internal/realtime', 'stt')).toThrow();
+    const withFragment = {
+      providers: {
+        p: { ...category.providers.internal, baseUrl: 'wss://speech.internal/realtime#fragment' },
+      },
+    };
+    expect(getOnlineSpeechModelOptions(withFragment)).toEqual([]);
   });
 
   it('requires HTTP speech synthesis even when a websocket catalog model declares voices', () => {
@@ -78,7 +84,17 @@ describe('online speech model catalog', () => {
     ]) {
       const input = { providers: { p: { ...category.providers.internal, baseUrl } } };
       expect(getOnlineSpeechModelOptions(input, { requireVoice: true })).toEqual([]);
+      expect(getOnlineSpeechModelOptions(input, { requireHttp: true })).toEqual([]);
     }
+  });
+
+  it('lists HTTP models without requiring a voice while execution choices still require one', () => {
+    const input = { providers: { office: { baseUrl: 'https://speech.internal/v1', apiKey: '',
+      displayName: 'Office', models: [{ id: 'reader', name: 'Reader', voices: [] }] } } };
+    expect(getOnlineSpeechModelOptions(input, { requireHttp: true })).toEqual([
+      { value: 'office/reader', label: 'Office / Reader' },
+    ]);
+    expect(getOnlineSpeechModelOptions(input, { requireVoice: true })).toEqual([]);
   });
 
   it.each([undefined, null, [], { providers: [] }, { providers: { bad: { models: [null] } } }])(

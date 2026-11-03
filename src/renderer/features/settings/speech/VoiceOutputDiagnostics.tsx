@@ -11,11 +11,13 @@ type PreviewState = 'idle' | 'loading' | 'playing' | 'error';
 interface VoiceOutputDiagnosticsProps {
   available: boolean;
   configurationKey: string;
+  requiresSave?: boolean;
 }
 
 const VoiceOutputDiagnostics: React.FC<VoiceOutputDiagnosticsProps> = ({
   available,
   configurationKey,
+  requiresSave = false,
 }) => {
   const [text, setText] = useState(() => i18nService.t('voiceOutputDiagnosticSample'));
   const [state, setState] = useState<PreviewState>('idle');
@@ -42,11 +44,11 @@ const VoiceOutputDiagnostics: React.FC<VoiceOutputDiagnosticsProps> = ({
   useEffect(() => {
     stop();
     setError('');
-  }, [available, configurationKey, stop]);
+  }, [available, configurationKey, requiresSave, stop]);
 
   const play = useCallback(async () => {
     const previewText = text.trim();
-    if (!available || !previewText) return;
+    if (!available || requiresSave || !previewText) return;
     stop();
     const generation = generationRef.current;
     setState('loading');
@@ -80,10 +82,10 @@ const VoiceOutputDiagnostics: React.FC<VoiceOutputDiagnosticsProps> = ({
       setError(i18nService.t('voiceOutputDiagnosticFailed'));
       setState('error');
     }
-  }, [available, stop, text]);
+  }, [available, requiresSave, stop, text]);
 
   const busy = state === 'loading' || state === 'playing';
-  const canPlay = available && Boolean(text.trim());
+  const canPlay = available && !requiresSave && Boolean(text.trim());
 
   return (
     <div className="rounded-lg border border-border bg-surface-raised/50 p-4">
@@ -126,9 +128,11 @@ const VoiceOutputDiagnostics: React.FC<VoiceOutputDiagnosticsProps> = ({
         onChange={event => setText(event.target.value)}
         className="mt-4 w-full resize-y rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground outline-none transition placeholder:text-secondary focus:border-primary focus:ring-2 focus:ring-primary/20"
       />
-      {!available ? (
+      {requiresSave || !available ? (
         <p className="mt-3 text-xs text-secondary">
-          {i18nService.t('voiceOutputDiagnosticUnavailable')}
+          {i18nService.t(
+            requiresSave ? 'voiceOutputDiagnosticSaveFirst' : 'voiceOutputDiagnosticUnavailable',
+          )}
         </p>
       ) : null}
       {error ? (

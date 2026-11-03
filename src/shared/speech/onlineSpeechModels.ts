@@ -96,7 +96,7 @@ export const resolveOnlineSpeechModel = (
 
 export const getOnlineSpeechModelOptions = (
   category: unknown,
-  options: { requireVoice?: boolean; fileTranscription?: boolean } = {},
+  options: { requireVoice?: boolean; fileTranscription?: boolean; requireHttp?: boolean } = {},
 ): Array<{ value: string; label: string }> => {
   const unique = new Map<string, { value: string; label: string }>();
   for (const [providerId, provider] of providers(category)) {
@@ -106,7 +106,8 @@ export const getOnlineSpeechModelOptions = (
         !['http:', 'https:', 'ws:', 'wss:'].includes(url.protocol) ||
         url.username ||
         url.password ||
-        ((options.fileTranscription || options.requireVoice) &&
+        url.hash ||
+        ((options.requireHttp || options.fileTranscription || options.requireVoice) &&
           (!['http:', 'https:'].includes(url.protocol) || url.search || url.hash)) ||
         provider.baseUrl.length > 2048 ||
         provider.apiKey.length > 16384 ||

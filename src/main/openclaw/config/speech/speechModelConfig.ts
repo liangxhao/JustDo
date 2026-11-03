@@ -88,6 +88,26 @@ export function applyManagedSpeechModelConfiguration(
     return { ...target, apiKey: secret.references[field] };
   };
 
+  const inputSelection =
+    voice.inputEnabled &&
+    voice.recognitionMode === 'online' &&
+    getOnlineSpeechModelOptions(settings.recognitionModels).some(
+      option => option.value === voice.onlineAsrModelRef,
+    )
+      ? resolveOnlineSpeechModel(settings.recognitionModels, voice.onlineAsrModelRef)
+      : null;
+  const inputProfile = inputSelection
+    ? withSecret(
+        {
+          baseUrl: inputSelection.provider.baseUrl.trim(),
+          model: inputSelection.model.id,
+          apiKey: inputSelection.provider.apiKey.trim(),
+        },
+        'openai',
+        'composerAsr',
+      )
+    : null;
+
   const sttSelection =
     extensions.sttMode === 'online' ? online('stt', extensions.onlineSttModelRef) : null;
   const sttConfig =
@@ -139,16 +159,21 @@ export function applyManagedSpeechModelConfiguration(
   };
 
   const reply =
-    voice.synthesisMode === 'online'
+    voice.outputEnabled && voice.synthesisMode === 'online'
       ? online('tts', voice.onlineTtsModelRef, voice.onlineTtsVoice)
       : null;
   const nextPlugins = record(config.plugins);
   const nextEntries = record(nextPlugins.entries);
   const runtime = record(nextEntries['runtime-services']);
+  const openai = record(nextEntries.openai);
   config.plugins = {
     ...nextPlugins,
     entries: {
       ...nextEntries,
+      openai: {
+        ...openai,
+        config: { ...record(openai.config), transcription: inputProfile },
+      },
       'runtime-services': {
         ...runtime,
         config: {
@@ -158,7 +183,7 @@ export function applyManagedSpeechModelConfiguration(
       },
     },
   };
-  if (reply) {
+  if (reply || inputProfile) {
     config.plugins = mergeOpenClawPluginConfig(record(config.plugins), {
       openai: { enabled: true },
     });

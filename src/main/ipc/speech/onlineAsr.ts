@@ -1,5 +1,6 @@
 import { ipcMain, type WebContents } from 'electron';
 
+import { OpenClawExtensionId } from '../../../shared/plugins/nativeIds';
 import {
   type OnlineAsrConfiguration,
   type OnlineAsrConfigurationUpdate,
@@ -9,11 +10,22 @@ import {
   type OnlineAsrStartOptions,
   type OnlineAsrStatus,
 } from '../../../shared/speech/onlineAsr';
+import {
+  getOnlineSpeechModelOptions,
+  resolveOnlineSpeechModel,
+} from '../../../shared/speech/onlineSpeechModels';
 import type { GatewayEventFrame } from '../../engine/gateway/types';
 import type { OpenClawRuntimeAdapter } from '../../engine/openclaw/openclawRuntimeAdapter';
+import { buildSpeechCredentialSlot } from '../../openclaw/config/speech/speechCredentialSlot';
+import {
+  EXTENSION_SECRET_PROVIDER,
+  saveExtensionSecrets,
+} from '../../plugins/extensions/extensionSecretFile';
 
 interface Dependencies {
   getRuntime: () => OpenClawRuntimeAdapter | null;
+  getModelCategory: () => unknown;
+  getStateDir: () => string;
   requestGateway: <T>(method: string, params?: unknown) => Promise<T>;
   runConfigMutationExclusive?: <T>(operation: () => Promise<T>) => Promise<T>;
 }
@@ -27,11 +39,10 @@ interface OwnedSession {
 
 const CLOSED_SESSION_EVENT_TTL_MS = 10_000;
 const MAX_AUDIO_BASE64_LENGTH = 700_000;
-const MAX_PROVIDER_ID_LENGTH = 64;
 const MAX_BASE_URL_LENGTH = 2_048;
 const MAX_MODEL_ID_LENGTH = 256;
 const MAX_API_KEY_LENGTH = 16_384;
-const SUPPORTED_ONLINE_ASR_PROVIDER_IDS = new Set(['openai']);
+const SUPPORTED_ONLINE_ASR_PROVIDER_IDS = new Set<string>([OpenClawExtensionId.OPENAI]);
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -67,40 +78,58 @@ const parseProviders = (catalog: TalkCatalog): OnlineAsrConfiguration['providers
   return [...new Map(discovered.map(provider => [provider.id, provider])).values()];
 };
 
-const readStreamingConfig = (config: unknown): Record<string, unknown> => {
+const readTranscriptionProfile = (config: unknown): Record<string, unknown> => {
   if (!isRecord(config) || !isRecord(config.plugins)) return {};
   const entries = isRecord(config.plugins.entries) ? config.plugins.entries : {};
-  const voiceCall = isRecord(entries['voice-call']) ? entries['voice-call'] : {};
-  const pluginConfig = isRecord(voiceCall.config) ? voiceCall.config : {};
-  return isRecord(pluginConfig.streaming) ? pluginConfig.streaming : {};
+  const entry = entries[OpenClawExtensionId.OPENAI];
+  const openai = isRecord(entry) ? entry : {};
+  const pluginConfig = isRecord(openai.config) ? openai.config : {};
+  return isRecord(pluginConfig.transcription) ? pluginConfig.transcription : {};
+};
+
+const hasExplicitProfile = (profile: Record<string, unknown>): boolean => {
+  if (
+    typeof profile.baseUrl !== 'string' ||
+    profile.baseUrl.length > MAX_BASE_URL_LENGTH ||
+    typeof profile.model !== 'string' ||
+    !profile.model.trim() ||
+    profile.model.length > MAX_MODEL_ID_LENGTH ||
+    /[\r\n\0]/.test(profile.model)
+  )
+    return false;
+  try {
+    const url = new URL(profile.baseUrl.trim());
+    return (
+      ['http:', 'https:', 'ws:', 'wss:'].includes(url.protocol) &&
+      !url.username &&
+      !url.password &&
+      !url.hash
+    );
+  } catch {
+    return false;
+  }
 };
 
 const hasExplicitIntranetConfiguration = (
   catalog: TalkCatalog,
   config: unknown,
 ): { ready: boolean; provider?: string } => {
-  const streaming = readStreamingConfig(config);
-  const provider =
-    typeof streaming.provider === 'string' && SUPPORTED_ONLINE_ASR_PROVIDER_IDS.has(streaming.provider)
-      ? streaming.provider
-      : undefined;
-  const providerConfigs = isRecord(streaming.providers) ? streaming.providers : {};
-  const providerConfig = provider && isRecord(providerConfigs[provider]) ? providerConfigs[provider] : {};
+  const profile = readTranscriptionProfile(config);
+  const configured = hasExplicitProfile(profile);
   return {
     ready:
-      catalog.transcription?.ready === true &&
-      SUPPORTED_ONLINE_ASR_PROVIDER_IDS.has(provider ?? '') &&
-      catalog.transcription.activeProvider === provider &&
-      typeof providerConfig.baseUrl === 'string' &&
-      Boolean(providerConfig.baseUrl.trim()) &&
-      typeof providerConfig.model === 'string' &&
-      Boolean(providerConfig.model.trim()),
-    ...(provider ? { provider } : {}),
+      configured &&
+      parseProviders(catalog).some(
+        provider => provider.id === OpenClawExtensionId.OPENAI && provider.configured,
+      ),
+    ...(configured ? { provider: OpenClawExtensionId.OPENAI } : {}),
   };
 };
 
 export function registerOnlineAsrHandlers({
   getRuntime,
+  getModelCategory,
+  getStateDir,
   requestGateway,
   runConfigMutationExclusive,
 }: Dependencies): void {
@@ -180,138 +209,102 @@ export function registerOnlineAsrHandlers({
     }
   });
 
-  ipcMain.handle(
-    OnlineAsrIpc.GetConfiguration,
-    async (): Promise<OnlineAsrConfiguration> => {
-      try {
-        attachRuntime();
-        const [catalog, snapshot] = await Promise.all([
-          requestGateway<TalkCatalog>('talk.catalog', {}),
-          requestGateway<{ config?: unknown }>('config.get'),
-        ]);
-        const providers = parseProviders(catalog);
-        const streaming = readStreamingConfig(snapshot.config);
-        const configuredProvider =
-          typeof streaming.provider === 'string'
-            ? streaming.provider
-            : typeof catalog.transcription?.activeProvider === 'string'
-              ? catalog.transcription.activeProvider
-              : undefined;
-        const selectedProvider = providers.some(provider => provider.id === configuredProvider)
-          ? configuredProvider
-          : providers[0]?.id;
-        const providerConfigs = isRecord(streaming.providers) ? streaming.providers : {};
-        const selectedConfig =
-          selectedProvider && isRecord(providerConfigs[selectedProvider])
-            ? providerConfigs[selectedProvider]
-            : {};
-        const selectedCatalogProvider = providers.find(provider => provider.id === selectedProvider);
-        const readiness = hasExplicitIntranetConfiguration(catalog, snapshot.config);
-        return {
-          available: readiness.ready,
-          providers,
-          ...(typeof catalog.transcription?.activeProvider === 'string' &&
-            SUPPORTED_ONLINE_ASR_PROVIDER_IDS.has(catalog.transcription.activeProvider)
-            ? { provider: catalog.transcription.activeProvider }
-            : {}),
-          ...(selectedProvider ? { selectedProvider } : {}),
-          ...(typeof selectedConfig.baseUrl === 'string'
-            ? { baseUrl: selectedConfig.baseUrl }
-            : {}),
-          ...(typeof selectedConfig.model === 'string' ? { model: selectedConfig.model } : {}),
-          credentialConfigured: selectedCatalogProvider?.configured === true,
-        };
-      } catch (error) {
-        return {
-          available: false,
-          providers: [],
-          credentialConfigured: false,
-          error: error instanceof Error ? error.name : 'GatewayError',
-        };
-      }
-    },
-  );
+  ipcMain.handle(OnlineAsrIpc.GetConfiguration, async (): Promise<OnlineAsrConfiguration> => {
+    try {
+      attachRuntime();
+      const [catalog, snapshot] = await Promise.all([
+        requestGateway<TalkCatalog>('talk.catalog', {}),
+        requestGateway<{ config?: unknown }>('config.get'),
+      ]);
+      const providers = parseProviders(catalog);
+      const profile = readTranscriptionProfile(snapshot.config);
+      const readiness = hasExplicitIntranetConfiguration(catalog, snapshot.config);
+      return {
+        available: readiness.ready,
+        providers,
+        ...(readiness.provider ? { provider: readiness.provider } : {}),
+        ...(providers.length ? { selectedProvider: OpenClawExtensionId.OPENAI } : {}),
+        ...(typeof profile.baseUrl === 'string' ? { baseUrl: profile.baseUrl } : {}),
+        ...(typeof profile.model === 'string' ? { model: profile.model } : {}),
+        credentialConfigured: Boolean(profile.apiKey),
+      };
+    } catch (error) {
+      return {
+        available: false,
+        providers: [],
+        credentialConfigured: false,
+        error: error instanceof Error ? error.name : 'GatewayError',
+      };
+    }
+  });
 
   ipcMain.handle(
     OnlineAsrIpc.SaveConfiguration,
     async (_event, update: OnlineAsrConfigurationUpdate): Promise<void> => {
       attachRuntime();
-      const provider = typeof update?.provider === 'string' ? update.provider.trim() : '';
-      const baseUrl = typeof update?.baseUrl === 'string' ? update.baseUrl.trim() : '';
-      const apiKey = typeof update?.apiKey === 'string' ? update.apiKey.trim() : '';
-      const model = typeof update?.model === 'string' ? update.model.trim() : '';
-      let parsedBaseUrl: URL;
-      try {
-        parsedBaseUrl = new URL(baseUrl);
-      } catch {
-        throw new Error('Invalid online transcription service URL.');
-      }
       if (
-        !SUPPORTED_ONLINE_ASR_PROVIDER_IDS.has(provider) ||
-        provider.length > MAX_PROVIDER_ID_LENGTH ||
-        !/^[a-z][a-z0-9_-]*$/.test(provider) ||
-        !baseUrl ||
-        baseUrl.length > MAX_BASE_URL_LENGTH ||
-        !['http:', 'https:', 'ws:', 'wss:'].includes(parsedBaseUrl.protocol) ||
-        Boolean(parsedBaseUrl.username || parsedBaseUrl.password) ||
-        apiKey.length > MAX_API_KEY_LENGTH ||
-        !model ||
-        model.length > MAX_MODEL_ID_LENGTH
-      ) {
+        !update ||
+        typeof update.modelRef !== 'string' ||
+        !update.modelRef.trim() ||
+        update.modelRef.length > 512 ||
+        Object.keys(update).some(key => key !== 'modelRef')
+      )
         throw new Error('Invalid online transcription configuration.');
-      }
-      const catalog = await requestGateway<TalkCatalog>('talk.catalog', {});
-      const selectedProvider = parseProviders(catalog).find(candidate => candidate.id === provider);
-      if (!selectedProvider) {
-        throw new Error('Unknown online transcription provider.');
-      }
-      if (!apiKey && !selectedProvider.configured) {
-        throw new Error('Online transcription API key is required.');
-      }
       const mutate = async (): Promise<void> => {
-      const snapshot = await requestGateway<{ hash?: unknown; config?: unknown }>('config.get');
-      if (typeof snapshot.hash !== 'string' || !snapshot.hash) {
-        throw new Error('Online transcription configuration is unavailable.');
-      }
-      const existingStreaming = readStreamingConfig(snapshot.config);
-      const existingProvider =
-        typeof existingStreaming.provider === 'string' ? existingStreaming.provider : '';
-      const existingProviders = isRecord(existingStreaming.providers)
-        ? existingStreaming.providers
-        : {};
-      const existingProviderConfig = isRecord(existingProviders[provider])
-        ? existingProviders[provider]
-        : {};
-      const existingBaseUrl =
-        typeof existingProviderConfig.baseUrl === 'string'
-          ? existingProviderConfig.baseUrl.trim()
-          : '';
-      if (!apiKey && (existingProvider !== provider || existingBaseUrl !== baseUrl)) {
-        throw new Error('Online transcription API key is required when changing the service URL.');
-      }
-      const providerConfig = {
-        baseUrl,
-        ...(apiKey ? { apiKey } : {}),
-        model,
-      };
-      await requestGateway('config.patch', {
-        raw: JSON.stringify({
-          plugins: {
-            entries: {
-              [provider]: { enabled: true },
-              'voice-call': {
-                config: {
-                  streaming: {
-                    provider,
-                    providers: { [provider]: providerConfig },
+        const category = getModelCategory();
+        const reference = update.modelRef.trim();
+        if (!getOnlineSpeechModelOptions(category).some(option => option.value === reference))
+          throw new Error('The selected online transcription model is unavailable.');
+        const selection = resolveOnlineSpeechModel(category, reference);
+        if (!selection) throw new Error('The selected online transcription model is unavailable.');
+        const profile = {
+          baseUrl: selection.provider.baseUrl.trim(),
+          model: selection.model.id,
+        };
+        const apiKey = selection.provider.apiKey.trim();
+        if (
+          !hasExplicitProfile(profile) ||
+          apiKey.length > MAX_API_KEY_LENGTH ||
+          /[\r\n\0]/.test(selection.provider.apiKey)
+        )
+          throw new Error('Invalid online transcription configuration.');
+        const catalog = await requestGateway<TalkCatalog>('talk.catalog', {});
+        if (!parseProviders(catalog).length)
+          throw new Error('Unknown online transcription provider.');
+        const snapshot = await requestGateway<{ hash?: unknown; config?: unknown }>('config.get');
+        if (typeof snapshot.hash !== 'string' || !snapshot.hash)
+          throw new Error('Online transcription configuration is unavailable.');
+        const nativeConfig = isRecord(snapshot.config) ? snapshot.config : {};
+        const slot = buildSpeechCredentialSlot('composerAsr', profile.baseUrl, apiKey);
+        const references: Record<string, Record<string, string>> = apiKey
+          ? saveExtensionSecrets(nativeConfig, getStateDir(), OpenClawExtensionId.OPENAI, {
+              [slot]: apiKey,
+            }).references
+          : {};
+        const secrets = isRecord(nativeConfig.secrets) ? nativeConfig.secrets : {};
+        const secretProviders = isRecord(secrets.providers) ? secrets.providers : {};
+        await requestGateway('config.patch', {
+          raw: JSON.stringify({
+            ...(apiKey
+              ? {
+                  secrets: {
+                    providers: {
+                      [EXTENSION_SECRET_PROVIDER]: secretProviders[EXTENSION_SECRET_PROVIDER],
+                    },
                   },
+                }
+              : {}),
+            plugins: {
+              entries: {
+                [OpenClawExtensionId.OPENAI]: {
+                  enabled: true,
+                  config: { transcription: { ...profile, apiKey: references[slot] ?? '' } },
                 },
               },
             },
-          },
-        }),
-        baseHash: snapshot.hash,
-      });
+          }),
+          baseHash: snapshot.hash,
+        });
       };
       await (runConfigMutationExclusive ? runConfigMutationExclusive(mutate) : mutate());
     },
@@ -320,16 +313,17 @@ export function registerOnlineAsrHandlers({
   ipcMain.handle(OnlineAsrIpc.ClearConfiguration, async (): Promise<void> => {
     attachRuntime();
     const mutate = async (): Promise<void> => {
-    const snapshot = await requestGateway<{ hash?: unknown }>('config.get');
-    if (typeof snapshot.hash !== 'string' || !snapshot.hash) {
-      throw new Error('Online transcription configuration is unavailable.');
-    }
-    await requestGateway('config.patch', {
-      raw: JSON.stringify({
-        plugins: { entries: { 'voice-call': { config: { streaming: null } } } },
-      }),
-      baseHash: snapshot.hash,
-    });
+      const snapshot = await requestGateway<{ hash?: unknown }>('config.get');
+      if (typeof snapshot.hash !== 'string' || !snapshot.hash)
+        throw new Error('Online transcription configuration is unavailable.');
+      await requestGateway('config.patch', {
+        raw: JSON.stringify({
+          plugins: {
+            entries: { [OpenClawExtensionId.OPENAI]: { config: { transcription: null } } },
+          },
+        }),
+        baseHash: snapshot.hash,
+      });
     };
     await (runConfigMutationExclusive ? runConfigMutationExclusive(mutate) : mutate());
   });
@@ -354,6 +348,8 @@ export function registerOnlineAsrHandlers({
       }
       const result = await requestGateway<Record<string, unknown>>('talk.session.create', {
         mode: 'transcription',
+        provider: OpenClawExtensionId.OPENAI,
+        model: readTranscriptionProfile(snapshot.config).model,
         transport: 'gateway-relay',
         brain: 'none',
         ...(language !== 'auto' ? { language } : {}),
@@ -404,19 +400,22 @@ export function registerOnlineAsrHandlers({
     },
   );
 
-  ipcMain.handle(OnlineAsrIpc.AppendAudio, async (event, sessionId: unknown, audioBase64: unknown) => {
-    const session = typeof sessionId === 'string' ? sessions.get(sessionId) : undefined;
-    if (
-      !session ||
-      session.owner !== event.sender ||
-      typeof audioBase64 !== 'string' ||
-      !audioBase64 ||
-      audioBase64.length > MAX_AUDIO_BASE64_LENGTH
-    ) {
-      throw new Error('Invalid online transcription audio request.');
-    }
-    await requestGateway('talk.session.appendAudio', { sessionId, audioBase64 });
-  });
+  ipcMain.handle(
+    OnlineAsrIpc.AppendAudio,
+    async (event, sessionId: unknown, audioBase64: unknown) => {
+      const session = typeof sessionId === 'string' ? sessions.get(sessionId) : undefined;
+      if (
+        !session ||
+        session.owner !== event.sender ||
+        typeof audioBase64 !== 'string' ||
+        !audioBase64 ||
+        audioBase64.length > MAX_AUDIO_BASE64_LENGTH
+      ) {
+        throw new Error('Invalid online transcription audio request.');
+      }
+      await requestGateway('talk.session.appendAudio', { sessionId, audioBase64 });
+    },
+  );
 
   ipcMain.handle(OnlineAsrIpc.Close, async (event, sessionId: unknown) => {
     const session = typeof sessionId === 'string' ? sessions.get(sessionId) : undefined;

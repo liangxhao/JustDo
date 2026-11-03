@@ -103,8 +103,7 @@ export const registerStoreHandlers = ({
         );
         const voice = normalizeLocalSpeechSettings(next.voice);
         const ttsExists = getOnlineSpeechModelOptions(categories.tts, {
-          requireVoice: true,
-          fileTranscription: true,
+          requireHttp: true,
         }).some(option => option.value === voice.onlineTtsModelRef);
         const selectedTts = ttsExists
           ? resolveOnlineSpeechModel(categories.tts, voice.onlineTtsModelRef)

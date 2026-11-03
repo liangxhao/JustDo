@@ -37,6 +37,8 @@ export const getOpenClawAppConfigSignature = (config: unknown): string => {
     // preference does not reapply an already equivalent Gateway configuration.
     language: appConfig.language === 'en' ? 'en' : 'zh',
     voice: {
+      inputEnabled: voice.inputEnabled,
+      recognitionMode: voice.recognitionMode,
       outputEnabled: voice.outputEnabled,
       synthesisMode: voice.synthesisMode,
       ttsModelId: voice.ttsModelId,

@@ -1,8 +1,12 @@
 // @vitest-environment jsdom
 
-import { defaultLocalSpeechSettings } from '@shared/speech/localSpeechSettings';
+import { EnginePhase, type OpenClawEngineStatus } from '@shared/openclaw/engineStatus';
+import {
+  defaultLocalSpeechSettings,
+  type LocalSpeechSettings,
+} from '@shared/speech/localSpeechSettings';
 import { LOCAL_TTS_MODEL_ID, type LocalTtsModelId } from '@shared/speech/localTts';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { i18nService } from '@/services/i18n';
@@ -12,12 +16,13 @@ import VoiceSettingsTab from './VoiceSettingsTab';
 const { mockConfig } = vi.hoisted(() => ({
   mockConfig: { onlineModelProviders: {} } as {
     onlineModelProviders: Record<string, unknown>;
+    voice?: LocalSpeechSettings;
   },
 }));
 
 vi.mock('@/services/config', () => ({
   configService: {
-    getConfig: () => mockConfig,
+    getConfig: () => ({ ...mockConfig }),
   },
 }));
 
@@ -29,6 +34,7 @@ afterEach(() => {
 describe('VoiceSettingsTab', () => {
   beforeEach(() => {
     mockConfig.onlineModelProviders = {};
+    mockConfig.voice = defaultLocalSpeechSettings;
     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
       bottom: 132,
       height: 36,
@@ -249,10 +255,7 @@ describe('VoiceSettingsTab', () => {
         onlineAsrModelRef: 'office/sense-voice',
       });
       expect(saveConfiguration).toHaveBeenCalledWith({
-        provider: 'openai',
-        baseUrl: 'http://10.0.0.8:8000/v1',
-        apiKey: 'local',
-        model: 'sense-voice',
+        modelRef: 'office/sense-voice',
       });
     });
     expect(screen.queryByRole('button', { name: i18nService.t('voiceModelDownload') })).toBeNull();
@@ -371,7 +374,7 @@ describe('VoiceSettingsTab', () => {
     expect(onChange).not.toHaveBeenCalled();
   });
 
-  it('selects an online synthesis model from the user provider catalog', async () => {
+  it('keeps online synthesis model and voice selection in the draft without changing the runtime', async () => {
     mockConfig.onlineModelProviders = {
       'speech-synthesis': {
         providers: {
@@ -435,8 +438,8 @@ describe('VoiceSettingsTab', () => {
       name: i18nService.t('voiceSynthesisModel'),
     });
     expect(selector.textContent).toContain(i18nService.t('voiceSelectModel'));
-    expect(selector.textContent).not.toContain('Voice Missing');
     fireEvent.click(selector);
+    expect(screen.getByRole('option', { name: 'LAN voice / Voice Missing' })).toBeTruthy();
     fireEvent.click(screen.getByRole('option', { name: 'LAN voice / Voice Small' }));
 
     expect(onChange).toHaveBeenCalledWith({
@@ -475,12 +478,164 @@ describe('VoiceSettingsTab', () => {
         onlineTtsModelRef: 'lan-tts/voice-small',
         onlineTtsVoice: 'echo',
       });
-      expect(saveConfiguration).toHaveBeenCalledWith({
-        modelRef: 'lan-tts/voice-small',
-        voice: 'echo',
-      });
+      expect(saveConfiguration).not.toHaveBeenCalled();
     });
     expect(screen.queryByRole('button', { name: i18nService.t('voiceModelDownload') })).toBeNull();
+  });
+
+  it('allows a configured synthesis model without voices to be selected and explains what is missing', async () => {
+    mockConfig.onlineModelProviders = {
+      'speech-synthesis': {
+        providers: {
+          office: {
+            displayName: 'Office',
+            baseUrl: 'https://speech.lan/v1',
+            apiKey: '',
+            models: [{ id: 'reader', name: 'Reader', voices: [] }],
+          },
+        },
+      },
+    };
+    const saveConfiguration = vi.fn();
+    Object.defineProperty(window, 'electron', {
+      configurable: true,
+      value: {
+        localSpeechModels: {
+          list: vi.fn().mockResolvedValue({ supported: true, models: [] }),
+          onChanged: vi.fn().mockReturnValue(() => undefined),
+        },
+        onlineTts: {
+          getStatus: vi.fn().mockResolvedValue({ available: false }),
+          saveConfiguration,
+        },
+      },
+    });
+    const value: LocalSpeechSettings = {
+      ...defaultLocalSpeechSettings,
+      outputEnabled: true,
+      synthesisMode: 'online',
+    };
+    const onChange = vi.fn();
+    const view = render(<VoiceSettingsTab value={value} onChange={onChange} />);
+    const selector = screen.getByRole('combobox', {
+      name: i18nService.t('voiceSynthesisModel'),
+    }) as HTMLButtonElement;
+    expect(selector.disabled).toBe(false);
+    fireEvent.click(selector);
+    fireEvent.click(screen.getByRole('option', { name: 'Office / Reader' }));
+    const selected = { ...value, onlineTtsModelRef: 'office/reader', onlineTtsVoice: '' };
+    expect(onChange).toHaveBeenCalledWith(selected);
+    view.rerender(<VoiceSettingsTab value={selected} onChange={onChange} />);
+    expect(
+      screen.getByRole('combobox', { name: i18nService.t('voiceSynthesisModel') }).textContent,
+    ).toContain('Office / Reader');
+    expect(
+      (screen.getByRole('combobox', { name: i18nService.t('voiceSpeaker') }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+    expect(screen.getByText(i18nService.t('voiceSelectedModelNeedsVoices'))).toBeTruthy();
+    expect(saveConfiguration).not.toHaveBeenCalled();
+    expect(
+      (
+        screen.getByRole('button', {
+          name: i18nService.t('voiceOutputDiagnosticPlay'),
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
+  });
+
+  it('refreshes online synthesis after engine readiness and requires saving a changed voice before preview', async () => {
+    const savedVoice: LocalSpeechSettings = {
+      ...defaultLocalSpeechSettings,
+      outputEnabled: true,
+      synthesisMode: 'online',
+      onlineTtsModelRef: 'office/reader',
+      onlineTtsVoice: 'voice-a',
+    };
+    mockConfig.voice = savedVoice;
+    mockConfig.onlineModelProviders = {
+      'speech-synthesis': {
+        providers: {
+          office: {
+            baseUrl: 'http://speech.lan/v1',
+            apiKey: '',
+            models: [
+              {
+                id: 'reader',
+                name: 'Reader',
+                voices: [
+                  { id: 'voice-a', name: 'A' },
+                  { id: 'voice-b', name: 'B' },
+                ],
+              },
+            ],
+          },
+        },
+      },
+    };
+    let finishInitial!: (status: { available: boolean }) => void;
+    const getStatus = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise(resolve => {
+            finishInitial = resolve;
+          }),
+      )
+      .mockResolvedValue({ available: true });
+    let engineChanged!: (status: OpenClawEngineStatus) => void;
+    const unsubscribe = vi.fn();
+    const speak = vi.fn();
+    Object.defineProperty(window, 'electron', {
+      configurable: true,
+      value: {
+        localSpeechModels: {
+          list: vi.fn().mockResolvedValue({ supported: true, models: [] }),
+          onChanged: vi.fn().mockReturnValue(() => undefined),
+        },
+        onlineTts: { getStatus },
+        speechSynthesis: { speak },
+        openclaw: {
+          engine: {
+            onProgress: vi.fn(callback => {
+              engineChanged = callback;
+              return unsubscribe;
+            }),
+          },
+        },
+      },
+    });
+    const onChange = vi.fn();
+    const view = render(<VoiceSettingsTab value={savedVoice} onChange={onChange} />);
+    const preview = () =>
+      screen.getByRole('button', {
+        name: i18nService.t('voiceOutputDiagnosticPlay'),
+      }) as HTMLButtonElement;
+    expect(preview().disabled).toBe(true);
+    await act(async () =>
+      engineChanged({ phase: EnginePhase.Running, canRetry: false, version: null }),
+    );
+    expect(preview().disabled).toBe(false);
+    await act(async () => finishInitial({ available: false }));
+    expect(preview().disabled).toBe(false);
+    act(() => engineChanged({ phase: EnginePhase.Starting, canRetry: false, version: null }));
+    expect(preview().disabled).toBe(true);
+    await act(async () =>
+      engineChanged({ phase: EnginePhase.Running, canRetry: false, version: null }),
+    );
+
+    const draftVoice = { ...savedVoice, onlineTtsVoice: 'voice-b' };
+    view.rerender(<VoiceSettingsTab value={draftVoice} onChange={onChange} />);
+    expect(preview().disabled).toBe(true);
+    expect(screen.getByText(i18nService.t('voiceOutputDiagnosticSaveFirst'))).toBeTruthy();
+    fireEvent.click(preview());
+    expect(speak).not.toHaveBeenCalled();
+    mockConfig.voice = draftVoice;
+    await act(async () => window.dispatchEvent(new Event('config-updated')));
+    expect(preview().disabled).toBe(false);
+    expect(screen.getByText(i18nService.t('voiceOnlineTtsReady'))).toBeTruthy();
+    view.unmount();
+    expect(unsubscribe).toHaveBeenCalledOnce();
   });
 
   it('keeps the previous selection and reports a Gateway model switch failure', async () => {

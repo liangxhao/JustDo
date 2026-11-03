@@ -78,10 +78,47 @@
       "properties": ["personality"]
     }
   ],
+  "configContracts": {
+    "secretInputs": {
+      "bundledDefaultEnabled": true,
+      "paths": [
+        { "path": "transcription.apiKey", "expected": "string", "ownerKind": "capability" }
+      ]
+    }
+  },
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
     "properties": {
+      "transcription": {
+        "anyOf": [
+          { "type": "null" },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["baseUrl", "model"],
+            "properties": {
+              "baseUrl": { "type": "string", "minLength": 1, "maxLength": 2048 },
+              "model": { "type": "string", "minLength": 1, "maxLength": 256 },
+              "apiKey": {
+                "anyOf": [
+                  { "type": "string", "maxLength": 16384 },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["source", "provider", "id"],
+                    "properties": {
+                      "source": { "type": "string", "enum": ["env", "file", "exec", "store"] },
+                      "provider": { "type": "string", "minLength": 1 },
+                      "id": { "type": "string", "minLength": 1 }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
       "personality": {
         "type": "string",
         "enum": ["friendly", "on", "off"],

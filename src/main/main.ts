@@ -1556,6 +1556,8 @@ if (agentBridgeArgv) {
   registerOpenClawModelHandlers({ getRuntime: getOpenClawRuntimeAdapter });
   registerOnlineAsrHandlers({
     getRuntime: getOpenClawRuntimeAdapter,
+    getModelCategory: () => getStore().get<AppConfigSettings>('app_config')?.onlineModelProviders?.['speech-recognition'],
+    getStateDir: () => getOpenClawEngineManager().getStateDir(),
     requestGateway: <T>(method: string, params?: unknown) =>
       getCoworkEngineService().requestGateway<T>(method, params),
     runConfigMutationExclusive: operation =>

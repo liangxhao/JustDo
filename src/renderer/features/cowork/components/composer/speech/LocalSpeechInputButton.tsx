@@ -1,5 +1,6 @@
 import { DocumentArrowUpIcon, MicrophoneIcon, StopIcon } from '@heroicons/react/24/outline';
 import { MediaCaptureSurface } from '@shared/app/mediaCapture';
+import { EnginePhase } from '@shared/openclaw/engineStatus';
 import { LocalSpeechModelKind } from '@shared/speech/localSpeechModels';
 import {
   type LocalSpeechInputSource,
@@ -217,6 +218,15 @@ export function LocalSpeechInputButton({
     };
     refresh();
     window.addEventListener('config-updated', refresh);
+    const unsubscribeEngine = window.electron.openclaw?.engine?.onProgress(status => {
+      if (settingsRef.current.recognitionMode !== 'online') return;
+      if (status.phase === EnginePhase.Running) {
+        refresh();
+      } else {
+        statusRequestRef.current += 1;
+        setAvailable(false);
+      }
+    });
     const unsubscribeModels = window.electron.localSpeechModels.onChanged(status => {
       if (
         settingsRef.current.recognitionMode === 'local' &&
@@ -232,6 +242,7 @@ export function LocalSpeechInputButton({
       statusRequestRef.current += 1;
       transcriptionGenerationRef.current += 1;
       window.removeEventListener('config-updated', refresh);
+      unsubscribeEngine?.();
       unsubscribeModels();
       abortCapture();
     };
@@ -517,6 +528,7 @@ export function LocalSpeechInputButton({
     activeCaptureSettingsKeyRef.current = [
       settings.asrModelId,
       settings.recognitionMode,
+      settings.onlineAsrModelRef,
       settings.inputDeviceId,
       settings.inputSource,
       settings.meetingMode,
@@ -620,6 +632,7 @@ export function LocalSpeechInputButton({
     settings.meetingSegmentSeconds,
     settings.meetingMode,
     settings.recognitionMode,
+    settings.onlineAsrModelRef,
     appendOnlineSamples,
     startRecorder,
     stopRecording,
@@ -671,6 +684,7 @@ export function LocalSpeechInputButton({
     const settingsKey = [
       settings.asrModelId,
       settings.recognitionMode,
+      settings.onlineAsrModelRef,
       settings.inputDeviceId,
       settings.inputSource,
       settings.meetingMode,

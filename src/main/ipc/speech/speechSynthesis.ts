@@ -1,6 +1,9 @@
 import { ipcMain } from 'electron';
 
-import type { LocalSpeechSettings } from '../../../shared/speech/localSpeechSettings';
+import {
+  getSpeechSynthesisSettingsKey,
+  type LocalSpeechSettings,
+} from '../../../shared/speech/localSpeechSettings';
 import {
   SPEECH_SYNTHESIS_METHOD,
   SpeechSynthesisIpc,
@@ -29,12 +32,16 @@ export function registerSpeechSynthesisHandlers({
       }
       const settings = getSettings();
       if (!settings.outputEnabled) throw new Error('Speech output is disabled.');
-      if (settings.synthesisMode === 'local') {
-        return synthesizeLocalSpeech(normalizedText, settings);
-      }
-      return requestGateway<SpeechSynthesisResult>(SPEECH_SYNTHESIS_METHOD, {
-        text: normalizedText,
-      });
+      const settingsKey = getSpeechSynthesisSettingsKey(settings);
+      const result =
+        settings.synthesisMode === 'local'
+          ? await synthesizeLocalSpeech(normalizedText, settings)
+          : await requestGateway<SpeechSynthesisResult>(SPEECH_SYNTHESIS_METHOD, {
+              text: normalizedText,
+            });
+      if (getSpeechSynthesisSettingsKey(getSettings()) !== settingsKey)
+        throw new Error('Speech settings changed before synthesis completed.');
+      return result;
     },
   );
 }

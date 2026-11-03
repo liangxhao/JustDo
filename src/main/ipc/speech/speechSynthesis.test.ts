@@ -12,7 +12,10 @@ vi.mock('electron', () => ({
 
 vi.mock('../../speech/localTtsService', () => ({ synthesizeLocalSpeech: vi.fn() }));
 import { defaultLocalSpeechSettings } from '../../../shared/speech/localSpeechSettings';
-import { SpeechSynthesisIpc } from '../../../shared/speech/speechSynthesis';
+import {
+  SpeechSynthesisIpc,
+  type SpeechSynthesisResult,
+} from '../../../shared/speech/speechSynthesis';
 import { synthesizeLocalSpeech } from '../../speech/localTtsService';
 import { registerSpeechSynthesisHandlers } from './speechSynthesis';
 
@@ -54,6 +57,52 @@ describe('speech synthesis IPC', () => {
     await expect(handlers.get(SpeechSynthesisIpc.Speak)?.({}, 'hello')).rejects.toThrow('disabled');
     expect(requestGateway).not.toHaveBeenCalled();
     expect(synthesizeLocalSpeech).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { mode: 'online' as const, change: { outputEnabled: false } },
+    { mode: 'online' as const, change: { onlineTtsVoice: 'changed-voice' } },
+    { mode: 'local' as const, change: { voiceId: 1 } },
+  ])(
+    'discards late $mode audio after relevant output settings change: $change',
+    async ({ mode, change }) => {
+      settings.synthesisMode = mode;
+      let finish!: (result: SpeechSynthesisResult) => void;
+      const pendingResult = new Promise<SpeechSynthesisResult>(resolve => {
+        finish = resolve;
+      });
+      if (mode === 'online') requestGateway.mockReturnValue(pendingResult);
+      else vi.mocked(synthesizeLocalSpeech).mockReturnValue(pendingResult);
+      const pending = handlers.get(SpeechSynthesisIpc.Speak)?.({}, 'hello');
+      Object.assign(settings, change);
+      finish({
+        audioBase64: 'YXVkaW8=',
+        provider: 'tts-local-cli',
+        outputFormat: 'wav',
+        fileExtension: '.wav',
+        mimeType: 'audio/wav',
+      });
+      await expect(pending).rejects.toThrow('Speech settings changed');
+    },
+  );
+
+  it('keeps an online result when only recognition or inactive local settings change', async () => {
+    let finish!: (result: SpeechSynthesisResult) => void;
+    requestGateway.mockReturnValue(new Promise<SpeechSynthesisResult>(resolve => {
+      finish = resolve;
+    }));
+    const pending = handlers.get(SpeechSynthesisIpc.Speak)?.({}, 'hello');
+    settings.inputEnabled = true;
+    settings.voiceId = 1;
+    const result: SpeechSynthesisResult = {
+      audioBase64: 'YXVkaW8=',
+      provider: 'openai',
+      outputFormat: 'wav',
+      fileExtension: '.wav',
+      mimeType: 'audio/wav',
+    };
+    finish(result);
+    await expect(pending).resolves.toBe(result);
   });
 
   it('rejects empty and oversized preview text', async () => {
