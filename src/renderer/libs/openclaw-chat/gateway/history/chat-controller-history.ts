@@ -44,6 +44,7 @@ import {
   projectGatewayHistoryForDisplay,
   shouldHideMessage,
 } from '@/libs/openclaw-chat/pipeline/history-display-normalizer';
+import { assistantMediaUrls } from '@/libs/openclaw-chat/pipeline/message-normalizer';
 import type { GatewayMessage } from '@/libs/openclaw-chat/types';
 
 import {
@@ -639,6 +640,10 @@ export async function resolveManagedHistoryImages(
     messages.map(async message => {
       const record = asRecord(message);
       if (!record) return message;
+      // The normalizer replaces managed copies with these original delivery
+      // paths. Hydrating the copies first would erase their outgoing identity.
+      const usesOriginalDeliveryPaths =
+        record.role === 'assistant' && assistantMediaUrls(record).length > 0;
       const originalContent = Array.isArray(record.content)
         ? record.content
         : typeof record.content === 'string'
@@ -649,7 +654,11 @@ export async function resolveManagedHistoryImages(
           if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
           const block = value as Record<string, unknown>;
           const source = typeof block.url === 'string' ? block.url : '';
-          if (block.type !== 'image' || !source.startsWith('/api/chat/media/outgoing/')) {
+          if (
+            usesOriginalDeliveryPaths ||
+            block.type !== 'image' ||
+            !source.startsWith('/api/chat/media/outgoing/')
+          ) {
             return value;
           }
           try {

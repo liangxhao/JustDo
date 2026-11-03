@@ -17,6 +17,7 @@ const downloadItem = () =>
     getFilename: () => 'report.pdf',
     getState: () => 'progressing',
     getURL: () => 'https://example.com/report.pdf',
+    getMimeType: () => 'application/pdf',
     getReceivedBytes: () => 12,
     getTotalBytes: () => 12,
   }) as Electron.DownloadItem;
@@ -106,6 +107,7 @@ describe('browserAgentDownloadCoordinator', () => {
       path: 'C:\\workspace\\report.pdf',
       fileName: 'report.pdf',
       sourceUrl: 'https://example.com/report.pdf',
+      mimeType: 'application/pdf',
       receivedBytes: 12,
       totalBytes: 12,
     });

@@ -166,6 +166,25 @@ Main 将普通会话的 canonical key 映射到产品会话时，先查询显式
 
 页面文本、日志、脚本结果均按 network 不可信内容返回；诊断不收集 header/POST body，清理链接凭据和敏感 URL。完整原生 schema 对齐以 bridge/contract tests 为准，不能用“类似支持”返回伪造结果。
 
+### 条件等待与提交核验
+
+`act` 的嵌套 `request.kind=wait` 已支持正文出现／消失、可见 CSS selector、URL 子串、
+loadState 和有界 `fn` 条件；同时提供的条件须全部满足。动态页面优先等待当前页面的
+实际结果，再重新取得快照。可见元素不等于已启用；需要时用短小、只读的 DOM 条件核验
+控件状态。`fn` 会反复执行，不得在条件中点击、提交、发请求或修改状态。
+
+固定延迟、文档 load 和网络空闲不能证明搜索、上传或报表已完成；持续轮询页面尤其不应
+只等 networkidle。该选择参考 [Playwright 导航说明](https://playwright.dev/docs/navigations)
+及其 [load-state 限制](https://playwright.dev/docs/api/class-page#page-wait-for-load-state)。
+内置工具已有可见、禁用和遮挡检查，但不宣称具备
+[Playwright locator 的完整自动等待](https://playwright.dev/docs/actionability)；`requests`／
+`errors` 用于诊断，不能冒充 [Puppeteer 的响应条件等待](https://pptr.dev/api/puppeteer.page.waitforresponse)。
+
+浏览器 `ok:true` 只确认工具动作，不证明网站业务成功。保存、发送、提交或上传后超时／
+断连时，先检查当前页面、回执或站点历史，不盲目重放。只有明确在发送输入前被拒绝的
+stale-ref 动作，才能刷新同一 target 的快照后重试一次；批量动作还须核对已执行项及
+`aborted`／`skipped`，不能重跑整批。
+
 ### 聊天来源引用
 
 聊天「摘要 → 来源」复用当前会话真实 browser 工具访问结果，覆盖内置和 Chrome。Chrome 使用原生公共历史保留的 `browserTab`；内置工具仅从成功页面结果追加有界、独立的页面引用 JSON，使地址与可用标题能经过历史投影。来源按网页地址去重，不读取全局浏览历史、不额外请求页面；失败、下载、标签清单和正文内链接不作为来源。元数据准入与历史投影契约见[聊天渲染](../../architecture/15-chat-rendering.md)。
@@ -208,9 +227,53 @@ Main 强制固定 guest preload、sandbox、context isolation、无 Node/嵌套 
 
 HTTP auth challenge 绑定随机 request 与 guest，只有主窗口主 frame 可回应。导航、关闭、取消或期限结束统一清理；迟到响应忽略。凭据不写应用密码库和日志，Chromium 自身的 session 缓存另有生命周期。
 
+### JavaScript 对话框、弹窗与人工登录
+
+`dialog` 回应当前 target 的待处理 alert／confirm／prompt，可带当前 `dialogId`；没有待处理项时
+只准备下一次对话框响应，`armed:true` 不证明已出现或已接受。预设响应须限于已知、已获授权的
+决策；原生文件、打印和保存窗口不属于该接口。JavaScript 模态框会阻塞页面执行，处理语义
+参考 [Playwright 对话框说明](https://playwright.dev/docs/dialogs)。
+
+前台普通 HTTP(S) 新窗口链接可交给应用侧栏新 Tab，继续前须通过 `tabs` 确认新 target 和
+profile；携带 POST 的弹窗被拒绝，后台 `window.open` 也被拒绝。显式 `open` 适用于已观察到的
+普通地址，不能视为恢复原弹窗的 opener、POST 或标签内登录状态。SSO 依赖这些状态时使用
+站点提供的同标签方式或人工登录；不能重建认证请求、搬运凭据或换外部浏览器兜底。
+[Playwright 也将 popup 视作独立页面身份](https://playwright.dev/docs/pages#handling-popups)，
+此处沿用本应用既有弹窗与 profile 边界，不增加 popup 接管能力。
+
 ## 6. 文件、下载与 PDF
 
 人工下载遵循询问/目录设置。Agent 上传必须是真实任务工作区文件；download/pdf 只写工作区并拒绝覆盖，以真实父目录形成 canonical reservation 防并发冲突。未指定输出路径的 PDF、等待下载及普通操作触发的下载默认保存至工作区 `.agent-tasks/browser-artifacts/`，与 Swarm 使用同一通用任务根目录。下载事件还需匹配具体 guest 与等待请求；失败或取消终止下载并清理部分文件。
+
+`download` 必须指定工作区输出 `path`，并且恰好提供一种触发源：当前页面观察到的 HTTP(S)
+文件／图片直链 `url`，或真正发起下载的控件 `ref`。直链通过当前 guest 的
+`downloadURL` 发起，沿用原 profile Session 的代理、登录态和网络限制，不导航当前页面；
+不接受 URL 凭据、元数据服务地址或其它协议。普通图片预览／链接点击不保证触发下载，
+超时后应检查页面取得实际资源地址，不能反复点击同一非下载控件。缺少／冲突的触发参数
+在创建输出路径、登记等待和发出请求前失败；直链解析后再次核验当前执行许可。
+`waitfordownload` 仅观察将来的下载，不会主动保存当前页面。结果包含真实 `state` 和字节数，
+仅 `completed` 返回已保存路径，`cancelled`／`interrupted` 标记工具失败，不能作为成功文件。
+
+### 异步导出与结果证据
+
+下载控件包含异步生成或 Blob 下载时，应直接以 `download(ref, path, timeoutMs)` 在触发前
+建立等待，再由同次调用点击；不能先点击、再用 `waitfordownload` 补接可能已经发生的事件。
+此顺序参考 [Playwright 下载说明](https://playwright.dev/docs/downloads)和
+[事件等待方式](https://playwright.dev/docs/events)。若网站先创建报表任务、随后才显示下载
+入口，则创建任务一次，条件等待其结果、刷新快照，再下载最终控件或已观察到的 HTTP(S) 直链。
+
+普通 `act` 只有短暂自动下载捕获窗口，不是长时间导出订阅。动作结果中的 `downloads` 数组
+逐项保留真实 `state`、MIME 和字节数，仅 `completed` 项含工作区路径；失败项不能冒充已保存，
+也不能吞掉同次已完成项。结果正文同时提供不可信封装的下载 JSON，供只读取正文的调用方核验。
+动作已经发出而下载失败时，保留页面动作结果与失败证据，不据此自动重放点击或网站提交。
+下载缺失也不能证明网站没有开始工作；文件内容和实际 MIME 仍须与请求的交付类型核对。
+原生下载尚未取得终态、但保存路径或捕获设置失败时，单独返回 `downloadErrors`，不伪造
+下载终态或保存路径，并保留同次已完成文件。取消、撤权和会话身份变化仍使调用拒绝。
+
+`mimeType`、`receivedBytes` 和 `totalBytes` 来自当前 Chromium 下载对象；MIME 可能由站点
+或 Blob 提供，不能替代文件头／内容验证。`totalBytes:0` 可能表示总长度未知，不据此判定
+空文件或下载失败。这些字段和完成状态采用 [Electron DownloadItem](https://www.electronjs.org/docs/latest/api/download-item)
+的语义；传输成功不等于网站交付了所需文件，例如登录 HTML 仍可能被保存为 `.jpg`。
 
 ### 上传：定位输入或等待选择器
 

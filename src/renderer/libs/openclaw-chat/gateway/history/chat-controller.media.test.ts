@@ -2,10 +2,66 @@ import { composeBrowserGatewayPrompt } from '@shared/browser/browser';
 import { afterEach, expect, test, vi } from 'vitest';
 
 import { ChatController } from '@/libs/openclaw-chat/gateway/chat-controller';
+import { normalizeMessage } from '@/libs/openclaw-chat/pipeline/message-normalizer';
 
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.useRealTimers();
+});
+
+test.each([
+  { role: 'assistant', openclawDelivery: undefined },
+  { role: 'assistant', openclawDelivery: { mediaUrls: [' ', 42] } },
+  { role: 'user', openclawDelivery: { mediaUrls: ['downloads/photo.jpg'] } },
+])('hydrates managed outgoing images for $role with delivery $openclawDelivery', async input => {
+  const readAssistantMediaDataUrl = vi.fn().mockResolvedValue({
+    success: true,
+    dataUrl: 'data:image/jpeg;base64,YWJj',
+  });
+  vi.stubGlobal('window', {
+    electron: { openclaw: { engine: { readAssistantMediaDataUrl } } },
+  });
+  const source = '/api/chat/media/outgoing/session/photo/full';
+  const controller = new ChatController();
+  const [resolved] = await (
+    controller as unknown as {
+      resolveManagedHistoryImages(messages: unknown[], sessionKey: string): Promise<unknown[]>;
+    }
+  ).resolveManagedHistoryImages(
+    [{ ...input, content: [{ type: 'image', url: source }] }],
+    'agent:main:session',
+  );
+
+  expect(readAssistantMediaDataUrl).toHaveBeenCalledWith({ source, sessionKey: 'agent:main:session' });
+  expect(normalizeMessage(resolved).content).toMatchObject([
+    { type: 'attachment', attachment: { url: 'data:image/jpeg;base64,YWJj', kind: 'image' } },
+  ]);
+});
+
+test('preserves unrelated inline images alongside original assistant delivery paths', async () => {
+  const controller = new ChatController();
+  const [resolved] = await (
+    controller as unknown as {
+      resolveManagedHistoryImages(messages: unknown[], sessionKey: string): Promise<unknown[]>;
+    }
+  ).resolveManagedHistoryImages(
+    [
+      {
+        role: 'assistant',
+        openclawDelivery: { mediaUrls: ['downloads/photo.jpg'] },
+        content: [
+          { type: 'image', url: 'data:image/png;base64,YWJj' },
+          { type: 'image', url: '/api/chat/media/outgoing/session/photo/full' },
+        ],
+      },
+    ],
+    'agent:main:session',
+  );
+
+  expect(normalizeMessage(resolved).content).toMatchObject([
+    { type: 'attachment', attachment: { url: 'data:image/png;base64,YWJj' } },
+    { type: 'attachment', attachment: { url: 'downloads/photo.jpg' } },
+  ]);
 });
 
 test.each(['second image', ''])('sends and renders image attachments with text %j', async text => {

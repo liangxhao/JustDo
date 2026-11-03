@@ -193,6 +193,35 @@ app
         response.end('synthetic main-path download');
         return;
       }
+      if (request.url === '/inline-image.png') {
+        const authenticated = /(?:^|;\s*)synthetic-auth=[^;]+/u.test(request.headers.cookie ?? '');
+        report.directImageRequests = [...(report.directImageRequests ?? []), { authenticated }];
+        if (!authenticated) {
+          response.writeHead(401);
+          response.end('Synthetic login required');
+          return;
+        }
+        response.setHeader('Content-Type', 'image/png');
+        response.setHeader('Content-Disposition', 'inline; filename="inline-image.png"');
+        response.end(nativeImage.createFromBitmap(
+          Buffer.from([0x20, 0x80, 0xe0, 0xff]),
+          { width: 1, height: 1 },
+        ).toPNG());
+        return;
+      }
+      if (request.url === '/generate-export') {
+        assert.equal(request.method, 'POST');
+        report.exportGenerationRequests = (report.exportGenerationRequests ?? 0) + 1;
+        response.setHeader('Content-Type', 'text/csv; charset=utf-8');
+        response.end('name,value\nsynthetic,42\n');
+        return;
+      }
+      if (request.url === '/login-result.jpg') {
+        response.setHeader('Content-Type', 'text/html; charset=utf-8');
+        response.setHeader('Content-Disposition', 'attachment; filename="photo.jpg"');
+        response.end('<!doctype html><title>Synthetic login required</title>');
+        return;
+      }
       response.setHeader('Content-Type', 'text/html; charset=utf-8');
       response.setHeader('Cache-Control', 'no-store');
       response.end(html);

@@ -281,7 +281,7 @@ function mediaAttachment(url: string): Extract<MessageContentItem, { type: 'atta
   };
 }
 
-function assistantMediaUrls(message: Record<string, unknown>): string[] {
+export function assistantMediaUrls(message: Record<string, unknown>): string[] {
   const delivery = asRecord(message.openclawDelivery);
   if (!Array.isArray(delivery?.mediaUrls)) return [];
   return [

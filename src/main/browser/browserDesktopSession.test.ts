@@ -52,6 +52,7 @@ describe('desktop browser session ownership', () => {
         requestId: 'request-1',
         sessionKey,
         run: { sessionKey, sessionId: 'native-1', runId: 'run-1', trigger: 'user', workspaceDir: directory },
+        admissionRevision: 1,
         toolCallId: 'call-1',
         command: { action: 'open', url: 'https://example.com' },
         policy: { allowLocalFiles: true },

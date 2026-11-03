@@ -467,6 +467,184 @@ test('disarms a paths-only upload after its bounded wait expires', async () => {
   }
 });
 
+const createUrlDownloadFixture = () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'browser-url-download-'));
+  temporaryRoots.push(workspace);
+  bridge = new BrowserAgentBridge(vi.fn(), () => true, () => workspace);
+  bridge.registerIpc();
+  const guest = {
+    id: 7,
+    getType: () => 'webview',
+    isDestroyed: () => false,
+    session: electron.partition,
+    hostWebContents: { id: 10 },
+    getURL: () => 'https://example.test/search',
+    downloadURL: vi.fn(),
+    loadURL: vi.fn(),
+    sendInputEvent: vi.fn(),
+    executeJavaScriptInIsolatedWorld: vi.fn().mockResolvedValue({
+      x: 10,
+      y: 20,
+      disabled: false,
+      editable: false,
+    }),
+  };
+  electron.guests.set(7, guest);
+  registerGuest(7);
+  const item = {
+    cancel: vi.fn(),
+    getFilename: () => 'photo.jpg',
+    getURL: () => 'https://example.test/photo.jpg?access_token=secret',
+    getMimeType: () => 'image/jpeg',
+    getReceivedBytes: () => 12,
+    getTotalBytes: () => 12,
+    getState: () => 'progressing',
+  } as unknown as Electron.DownloadItem;
+  const claim = () => claimBrowserAgentDownload(
+    electron.partition as unknown as Electron.Session,
+    item,
+    guest as unknown as Electron.WebContents,
+  );
+  return { workspace, guest, item, claim };
+};
+
+test('downloads an observed image URL through the current guest without navigating', async () => {
+  const f = createUrlDownloadFixture();
+  const pending = bridge!.executeCommand('justdo:session-1', {
+    action: 'download',
+    targetId: 'embedded-1',
+    url: ' https://example.test/photo.jpg?access_token=secret ',
+    path: 'downloads/风景.jpg',
+  });
+  await vi.waitFor(() => expect(f.guest.downloadURL).toHaveBeenCalledWith(
+    'https://example.test/photo.jpg?access_token=secret',
+  ));
+  const claim = f.claim();
+  expect(claim?.savePath).toBe(path.join(fs.realpathSync(f.workspace), 'downloads', '风景.jpg'));
+  claim?.settle(f.item, 'completed');
+
+  await expect(pending).resolves.toMatchObject({
+    details: {
+      ok: true,
+      targetId: 'embedded-1',
+      download: {
+        state: 'completed',
+        path: claim?.savePath,
+        url: 'https://example.test/photo.jpg?access_token=%5BREDACTED%5D',
+        mimeType: 'image/jpeg',
+        receivedBytes: 12,
+        totalBytes: 12,
+      },
+    },
+  });
+  const result = await pending as {
+    content: Array<{ type: string; text: string }>;
+    details: { download: Record<string, unknown> };
+  };
+  expect(result.content[0]?.text).toContain(JSON.stringify(result.details.download, null, 2));
+  expect(f.guest.loadURL).not.toHaveBeenCalled();
+});
+
+test('reports native MIME and an unknown total size without inferring from the output extension', async () => {
+  const f = createUrlDownloadFixture();
+  f.item.getMimeType = () => 'text/html';
+  f.item.getTotalBytes = () => 0;
+  const pending = bridge!.executeCommand('justdo:session-1', {
+    action: 'download',
+    url: 'https://example.test/photo.jpg',
+    path: 'photo.jpg',
+  });
+  await vi.waitFor(() => expect(f.guest.downloadURL).toHaveBeenCalledOnce());
+  f.claim()?.settle(f.item, 'completed');
+
+  await expect(pending).resolves.toMatchObject({
+    details: { ok: true, download: {
+      state: 'completed', mimeType: 'text/html', receivedBytes: 12, totalBytes: 0,
+    } },
+  });
+});
+
+test('rejects missing, ambiguous and unsafe download triggers before creating output directories', async () => {
+  const f = createUrlDownloadFixture();
+  const invalidTriggers = [
+    {},
+    { url: ' ', ref: ' ' },
+    { ref: 42 },
+    { url: 'https://example.test/photo.jpg', ref: 'e1' },
+    { url: 'file:///C:/photo.html' },
+    { url: 'data:image/png;base64,AAAA' },
+    { url: 'https://user:password@example.test/photo.jpg' },
+    { url: 'http://169.254.169.254/latest/meta-data/' },
+  ];
+  for (const trigger of invalidTriggers) {
+    await expect(bridge!.executeCommand('justdo:session-1', {
+      action: 'download',
+      path: 'downloads/photo.jpg',
+      ...trigger,
+    })).rejects.toThrow();
+  }
+  expect(f.guest.downloadURL).not.toHaveBeenCalled();
+  expect(fs.existsSync(path.join(f.workspace, 'downloads'))).toBe(false);
+  expect(f.claim()).toBeNull();
+});
+
+test.each(['cancelled', 'interrupted'] as const)(
+  'reports a %s URL download as a tool failure without a saved path',
+  async state => {
+    const f = createUrlDownloadFixture();
+    const pending = bridge!.executeCommand('justdo:session-1', {
+      action: 'download',
+      url: 'https://example.test/photo.jpg',
+      path: 'downloads/photo.jpg',
+    });
+    await vi.waitFor(() => expect(f.guest.downloadURL).toHaveBeenCalledOnce());
+    const claim = f.claim();
+    expect(claim?.savePath).toBeTruthy();
+    fs.writeFileSync(claim!.savePath!, 'partial');
+    claim?.settle(f.item, state);
+
+    const result = await pending as { details: { download: Record<string, unknown> } };
+    expect(result).toMatchObject({ isError: true, details: { ok: false, download: { state } } });
+    expect(result.details.download).not.toHaveProperty('path');
+    expect(fs.existsSync(claim!.savePath!)).toBe(false);
+  },
+);
+
+test('does not overwrite an existing file when downloading a URL', async () => {
+  const f = createUrlDownloadFixture();
+  const outputPath = path.join(f.workspace, 'photo.jpg');
+  fs.writeFileSync(outputPath, 'existing');
+
+  await expect(bridge!.executeCommand('justdo:session-1', {
+    action: 'download',
+    url: 'https://example.test/photo.jpg',
+    path: 'photo.jpg',
+  })).rejects.toThrow('already exists');
+  expect(f.guest.downloadURL).not.toHaveBeenCalled();
+  expect(fs.readFileSync(outputPath, 'utf8')).toBe('existing');
+});
+
+test('cancels an in-flight URL download and rejects late download claims', async () => {
+  const f = createUrlDownloadFixture();
+  const controller = new AbortController();
+  const pending = bridge!.executeCommand('justdo:session-1', {
+    action: 'download',
+    url: 'https://example.test/photo.jpg',
+    path: 'photo.jpg',
+  }, controller.signal);
+  const rejected = expect(pending).rejects.toThrow();
+  await vi.waitFor(() => expect(f.guest.downloadURL).toHaveBeenCalledOnce());
+  const claim = f.claim();
+  expect(claim?.savePath).toBeTruthy();
+  fs.writeFileSync(claim!.savePath!, 'partial');
+  controller.abort();
+
+  await rejected;
+  expect(f.item.cancel).toHaveBeenCalledOnce();
+  expect(fs.existsSync(claim!.savePath!)).toBe(false);
+  expect(f.claim()).toBeNull();
+});
+
 test('captures downloads triggered by normal act clicks in the task workspace', async () => {
   const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-browser-act-download-'));
   temporaryRoots.push(temporaryRoot);
@@ -474,6 +652,7 @@ test('captures downloads triggered by normal act clicks in the task workspace', 
     cancel: vi.fn(),
     getFilename: () => 'report.pdf',
     getURL: () => 'https://example.com/report.pdf?access_token=secret',
+    getMimeType: () => 'application/pdf',
     getReceivedBytes: () => 12,
     getTotalBytes: () => 12,
     getState: () => 'progressing',
@@ -516,7 +695,10 @@ test('captures downloads triggered by normal act clicks in the task workspace', 
   const result = (await bridge.executeCommand('justdo:session-1', {
     action: 'act',
     request: { kind: 'click', selector: '#download' },
-  })) as { details: { downloads: Array<{ url: string; path: string }> } };
+  })) as {
+    content: Array<{ type: string; text: string }>;
+    details: { downloads: Array<{ url: string; path: string }> };
+  };
 
   expect(result.details.downloads[0]?.url).toBe(
     'https://example.com/report.pdf?access_token=%5BREDACTED%5D',
@@ -524,6 +706,142 @@ test('captures downloads triggered by normal act clicks in the task workspace', 
   expect(path.dirname(result.details.downloads[0]!.path)).toBe(
     path.join(fs.realpathSync(temporaryRoot), '.agent-tasks', 'browser-artifacts'),
   );
+  expect(result.details.downloads[0]).toMatchObject({
+    state: 'completed', mimeType: 'application/pdf', receivedBytes: 12, totalBytes: 12,
+  });
+  expect(result.content).toContainEqual({
+    type: 'text',
+    text: expect.stringContaining(JSON.stringify({ downloads: result.details.downloads }, null, 2)),
+  });
+});
+
+test('preserves a dispatched batch and completed files when another automatic download fails', async () => {
+  const f = createUrlDownloadFixture();
+  const interrupted = {
+    ...f.item,
+    getFilename: () => 'broken.csv',
+    getMimeType: () => 'text/csv',
+    getReceivedBytes: () => 3,
+    getTotalBytes: () => 0,
+  };
+  const paths: string[] = [];
+  f.guest.sendInputEvent.mockImplementation((event: { type?: string }) => {
+    if (event.type !== 'mouseUp') return;
+    for (const [item, state] of [[f.item, 'completed'], [interrupted, 'interrupted']] as const) {
+      const claim = claimBrowserAgentDownload(
+        electron.partition as unknown as Electron.Session,
+        item,
+        f.guest as unknown as Electron.WebContents,
+      );
+      expect(claim?.savePath).toBeTruthy();
+      paths.push(claim!.savePath!);
+      fs.writeFileSync(claim!.savePath!, state === 'completed' ? 'saved' : 'partial');
+      claim?.settle(item, state);
+    }
+  });
+
+  const result = await bridge!.executeCommand('justdo:session-1', {
+    action: 'act',
+    request: { kind: 'batch', actions: [{ kind: 'click', selector: '#export' }] },
+  }) as {
+    content: Array<{ type: string; text: string }>;
+    details: { downloads: Array<Record<string, unknown>> };
+  };
+
+  expect(result).toMatchObject({
+    isError: true,
+    details: { ok: false, results: [{ ok: true }], downloads: [
+      { state: 'completed', path: paths[0], mimeType: 'image/jpeg', receivedBytes: 12, totalBytes: 12 },
+      { state: 'interrupted', mimeType: 'text/csv', receivedBytes: 3, totalBytes: 0 },
+    ] },
+  });
+  expect(result.details.downloads[1]).not.toHaveProperty('path');
+  expect(fs.existsSync(paths[0]!)).toBe(true);
+  expect(fs.existsSync(paths[1]!)).toBe(false);
+  expect(result.content[0]?.text).toContain('"results"');
+  expect(result.content[1]?.text).toContain('"downloads"');
+  expect(result.content[1]?.text).toContain('"state": "interrupted"');
+  expect(result.content[1]?.text).toContain('Do not repeat the action');
+  expect(result.content[1]?.text).not.toContain(JSON.stringify(paths[1]));
+  expect(f.guest.sendInputEvent.mock.calls.filter(([event]) => event.type === 'mouseUp')).toHaveLength(1);
+});
+
+test('preserves completed automatic downloads alongside a sanitized save-path error', async () => {
+  const f = createUrlDownloadFixture();
+  const failedItem = { ...f.item, getFilename: () => 'denied.csv', cancel: vi.fn() };
+  const outputResolver = bridge! as unknown as {
+    resolveManagedOutputPath(sessionId: string, requestedPath: string | undefined, name: string): string;
+  };
+  const originalResolve = outputResolver.resolveManagedOutputPath.bind(bridge);
+  const resolver = vi.spyOn(outputResolver, 'resolveManagedOutputPath').mockImplementation(
+    (sessionId, requestedPath, name) => {
+      if (name.endsWith('-denied.csv')) {
+        throw new Error('Output unavailable: https://user:secret@example.test/export?access_token=secret');
+      }
+      return originalResolve(sessionId, requestedPath, name);
+    },
+  );
+  let completedPath = '';
+  f.guest.sendInputEvent.mockImplementation((event: { type?: string }) => {
+    if (event.type !== 'mouseUp') return;
+    const completed = f.claim();
+    completedPath = completed!.savePath!;
+    fs.writeFileSync(completedPath, 'saved');
+    completed?.settle(f.item, 'completed');
+    const failed = claimBrowserAgentDownload(
+      electron.partition as unknown as Electron.Session,
+      failedItem,
+      f.guest as unknown as Electron.WebContents,
+    );
+    expect(failed).toMatchObject({ cancelled: true, savePath: null });
+  });
+
+  try {
+    const result = await bridge!.executeCommand('justdo:session-1', {
+      action: 'act', request: { kind: 'click', selector: '#exports' },
+    }) as {
+      content: Array<{ type: string; text: string }>;
+      details: { downloads: Array<Record<string, unknown>>; downloadErrors: Array<Record<string, unknown>> };
+    };
+
+    expect(result).toMatchObject({
+      isError: true,
+      details: { ok: false, downloads: [{ state: 'completed', path: completedPath }], downloadErrors: [{
+        error: 'Output unavailable: https://example.test/export?access_token=%5BREDACTED%5D',
+      }] },
+    });
+    expect(result.details.downloads).toHaveLength(1);
+    expect(result.details.downloadErrors[0]).not.toHaveProperty('state');
+    expect(result.details.downloadErrors[0]).not.toHaveProperty('path');
+    expect(fs.readFileSync(completedPath, 'utf8')).toBe('saved');
+    expect(failedItem.cancel).toHaveBeenCalledOnce();
+    expect(result.content[1]?.text).toContain('"downloadErrors"');
+    expect(result.content[1]?.text).toContain('"state": "completed"');
+    expect(result.content[1]?.text).toContain('Do not repeat the action');
+    expect(JSON.stringify(result)).not.toContain('secret');
+  } finally {
+    resolver.mockRestore();
+  }
+});
+
+test('rejects cancellation while waiting for automatic download settlement', async () => {
+  vi.useFakeTimers();
+  const f = createUrlDownloadFixture();
+  f.guest.sendInputEvent.mockImplementation((event: { type?: string }) => {
+    if (event.type === 'mouseUp') expect(f.claim()?.savePath).toBeTruthy();
+  });
+  const controller = new AbortController();
+  const pending = bridge!.executeCommand('justdo:session-1', {
+    action: 'act', request: { kind: 'click', selector: '#export' },
+  }, controller.signal);
+  const rejection = expect(pending).rejects.toThrow();
+  await vi.advanceTimersByTimeAsync(500);
+  expect(f.guest.sendInputEvent).toHaveBeenCalled();
+  controller.abort();
+
+  await rejection;
+  expect(f.item.cancel).toHaveBeenCalledOnce();
+  expect(f.claim()).toBeNull();
 });
 
 test('tracks the action network lifecycle until a delayed download response starts', async () => {
@@ -533,6 +851,7 @@ test('tracks the action network lifecycle until a delayed download response star
     cancel: vi.fn(),
     getFilename: () => 'slow.pdf',
     getURL: () => 'https://example.com/slow.pdf',
+    getMimeType: () => 'application/pdf',
     getReceivedBytes: () => 4,
     getTotalBytes: () => 4,
     getState: () => 'progressing',
@@ -664,6 +983,7 @@ test.each(['download', 'waitfordownload'] as const)(
       getFilename: () => 'report.pdf',
       getState: () => 'progressing',
       getURL: () => 'https://example.com/report.pdf',
+      getMimeType: () => 'application/pdf',
       getReceivedBytes: () => 12,
       getTotalBytes: () => 12,
     } as unknown as Electron.DownloadItem;

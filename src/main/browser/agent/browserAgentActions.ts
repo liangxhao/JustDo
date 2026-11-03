@@ -7,6 +7,7 @@ import { sanitizeBrowserUrl as sanitizeUrlForModel } from '../data/browserDataSa
 import {
   armBrowserAgentDownload,
   beginBrowserAgentDownload,
+  projectBrowserAgentDownload,
   reserveBrowserAgentOutputPath,
 } from '../downloads/browserAgentDownloadCoordinator';
 import { BrowserAgentCdpInput } from './browserAgentInput';
@@ -1253,6 +1254,24 @@ export async function executeOnGuest(
   if (command.action === 'download' || command.action === 'waitfordownload') {
     const requestedName = command.path?.trim();
     if (command.action === 'download' && !requestedName) throw new Error('path required.');
+    if (command.ref !== undefined && typeof command.ref !== 'string') {
+      throw new Error('Download ref must be a string.');
+    }
+    const downloadRef = typeof command.ref === 'string' ? command.ref.trim() : '';
+    const requestedUrl = command.url?.trim();
+    let downloadUrl: string | undefined;
+    if (command.action === 'download') {
+      if (Boolean(downloadRef) === Boolean(requestedUrl)) {
+        throw new Error('download requires exactly one of url or a current download-trigger ref.');
+      }
+      if (requestedUrl) {
+        if (!['http:', 'https:'].includes(new URL(requestedUrl).protocol)) {
+          throw new Error('Download URLs must use http or https.');
+        }
+        downloadUrl = await normalizeNavigationUrl(requestedUrl);
+      }
+    }
+    assertActive();
     const outputPath = this.resolveManagedOutputPath(
       sessionId,
       requestedName,
@@ -1270,19 +1289,21 @@ export async function executeOnGuest(
         Math.min(LONG_COMMAND_TIMEOUT_MS, Number(command.timeoutMs) || LONG_COMMAND_TIMEOUT_MS),
       ),
       async () => {
+        assertActive();
         if (command.action === 'download') {
-          const request = { kind: 'click', ref: command.ref };
-          await this.executeAct(request, tab, guest, sessionId, profile, false, assertActive);
+          if (downloadUrl) {
+            guest.downloadURL(downloadUrl);
+          } else {
+            const request = { kind: 'click', ref: downloadRef };
+            await this.executeAct(request, tab, guest, sessionId, profile, false, assertActive);
+          }
         }
       },
       signal,
     );
-    const download = {
-      url: result.sourceUrl,
-      suggestedFilename: result.fileName,
-      path: result.path,
-    };
+    const download = projectBrowserAgentDownload(result);
     return {
+      ...(result.state === 'completed' ? {} : { isError: true }),
       content: [{ type: 'text', text: wrapBrowserContent(JSON.stringify(download, null, 2)) }],
       details: { ok: result.state === 'completed', targetId: tab.targetId, download },
     };
@@ -1416,36 +1437,61 @@ export async function executeOnGuest(
       }
     }
     downloadCaptures.forEach(capture => capture.finishIfUnclaimed());
-    const capturedDownloads = (await Promise.all(downloadCaptures.map(capture => capture.result)))
-      .filter(result => result !== null)
-      .map(result => ({
-        url: result.sourceUrl,
-        suggestedFilename: result.fileName,
-        path: result.path,
-      }));
+    const captureResults = await Promise.allSettled(downloadCaptures.map(capture => capture.result));
+    signal?.throwIfAborted();
+    assertActive();
+    const capturedDownloads = captureResults.flatMap(result =>
+      result.status === 'fulfilled' && result.value ? [projectBrowserAgentDownload(result.value)] : [],
+    );
+    const captureErrors = captureResults.flatMap(result =>
+      result.status === 'rejected' ? [{ error: sanitizeErrorForModel(result.reason) }] : [],
+    );
     const downloads = capturedDownloads.length ? capturedDownloads : undefined;
+    const downloadErrors = captureErrors.length ? captureErrors : undefined;
+    const failedDownloads = Boolean(downloadErrors) ||
+      (downloads?.some(download => download.state !== 'completed') ?? false);
+    const downloadContent = downloads || downloadErrors ? [{
+      type: 'text',
+      text: wrapBrowserContent(JSON.stringify({
+        ...(downloads ? { downloads } : {}),
+        ...(downloadErrors ? { downloadErrors } : {}),
+        ...(failedDownloads ? {
+          message: 'The browser action was dispatched, but one or more downloads failed. Do not repeat the action solely because of a download failure; inspect the page and individual download states first.',
+        } : {}),
+      }, null, 2)),
+    }] : [];
     const dialogResult = this.blockedDialogResult(tab.webContentsId);
     if (dialogResult) {
       return {
+        ...(failedDownloads ? { isError: true } : {}),
         content: [
           { type: 'text', text: wrapBrowserContent(JSON.stringify(dialogResult, null, 2)) },
+          ...downloadContent,
         ],
         details: {
           ok: true,
           targetId: tab.targetId,
           ...dialogResult,
           ...(downloads ? { downloads } : {}),
+          ...(downloadErrors ? { downloadErrors } : {}),
+          ...(failedDownloads ? { ok: false } : {}),
         },
       };
     }
     if (closedByAct) {
       return {
-        content: [{ type: 'text', text: wrapBrowserContent(JSON.stringify(details, null, 2)) }],
+        ...(failedDownloads ? { isError: true } : {}),
+        content: [
+          { type: 'text', text: wrapBrowserContent(JSON.stringify(details, null, 2)) },
+          ...downloadContent,
+        ],
         details: {
           ok: true,
           targetId: tab.targetId,
           ...details,
           ...(downloads ? { downloads } : {}),
+          ...(downloadErrors ? { downloadErrors } : {}),
+          ...(failedDownloads ? { ok: false } : {}),
         },
       };
     }
@@ -1458,12 +1504,14 @@ export async function executeOnGuest(
     if (navigated && !guest.isDestroyed()) {
       const pageState = await this.captureSnapshot(command, tab, guest);
       return {
+        ...(failedDownloads ? { isError: true } : {}),
         content: [
           {
             type: 'text',
             text: wrapBrowserContent(JSON.stringify(details, null, 2)),
           },
           ...pageState.content,
+          ...downloadContent,
         ],
         details: {
           ok: true,
@@ -1471,18 +1519,26 @@ export async function executeOnGuest(
           url: sanitizeUrlForModel(guest.getURL()),
           ...details,
           ...(downloads ? { downloads } : {}),
+          ...(downloadErrors ? { downloadErrors } : {}),
           pageState: pageState.details,
+          ...(failedDownloads ? { ok: false } : {}),
         },
       };
     }
     return {
-      content: [{ type: 'text', text: wrapBrowserContent(JSON.stringify(details, null, 2)) }],
+      ...(failedDownloads ? { isError: true } : {}),
+      content: [
+        { type: 'text', text: wrapBrowserContent(JSON.stringify(details, null, 2)) },
+        ...downloadContent,
+      ],
       details: {
         ok: true,
         targetId: tab.targetId,
         url: sanitizeUrlForModel(guest.getURL()),
         ...details,
         ...(downloads ? { downloads } : {}),
+        ...(downloadErrors ? { downloadErrors } : {}),
+        ...(failedDownloads ? { ok: false } : {}),
       },
     };
   }

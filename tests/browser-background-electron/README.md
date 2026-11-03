@@ -88,7 +88,12 @@ real scheduled-job launch.
 The Main checks also cover ordinary visible defaults and explicit headless mode,
 cron omission forcing headless mode, DOM input/snapshots, model-facing viewport,
 full-page and element images, workspace-only uploads and external-path denial,
-actual PDF and click-triggered download files, exact-call cancellation, no late
+actual PDF and click-triggered download files, direct URL download of an inline
+PNG using the profile's HttpOnly login cookie without navigation or a save dialog,
+prearmed download of a delayed POST-generated Blob export with exactly one click
+and one generation request, and actual HTML MIME reporting for a `.jpg` filename.
+Automatic-click downloads expose their terminal receipt in model-visible text.
+Other checks cover exact-call cancellation, no late
 resolve, armed upload/dialog cleanup, released-run rejection and older-release
 fencing. The local-document negative case seeds a synthetic file page directly
 in the test guest before the actual Main request refuses to read it. A delayed
@@ -101,7 +106,7 @@ without persisting base64 tool results.
 
 ## Real native cron timer probe
 
-This is separate from the 27-check Main fixture above. Run the following with an
+This is separate from the Main fixture above. Run the following with an
 explicit prepared runtime and its own bundled Node executable:
 
 ```powershell

@@ -9,9 +9,21 @@ export type BrowserAgentDownloadResult = {
   path: string;
   fileName: string;
   sourceUrl: string;
+  mimeType: string;
   receivedBytes: number;
   totalBytes: number;
 };
+
+/** Public tool receipt; a failed download never advertises its removed partial file. */
+export const projectBrowserAgentDownload = (result: BrowserAgentDownloadResult) => ({
+  state: result.state,
+  url: result.sourceUrl,
+  suggestedFilename: result.fileName,
+  mimeType: result.mimeType,
+  receivedBytes: result.receivedBytes,
+  totalBytes: result.totalBytes,
+  ...(result.state === 'completed' ? { path: result.path } : {}),
+});
 
 type PendingDownload = {
   targetSession: Session;
@@ -303,6 +315,7 @@ export const claimBrowserAgentDownload = (
           path: pending.savePath!,
           fileName: download.getFilename(),
           sourceUrl: sanitizeBrowserUrl(download.getURL()),
+          mimeType: download.getMimeType(),
           receivedBytes: download.getReceivedBytes(),
           totalBytes: download.getTotalBytes(),
         });

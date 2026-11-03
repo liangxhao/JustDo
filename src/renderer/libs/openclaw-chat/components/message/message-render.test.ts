@@ -17,6 +17,7 @@ import {
   shouldRenderGroupAvatarByPrevItem,
   shouldRenderGroupFooterByNextItem,
 } from '@/libs/openclaw-chat/components/message/message-render';
+import { ChatController } from '@/libs/openclaw-chat/gateway/chat-controller';
 import type { MessageGroup } from '@/libs/openclaw-chat/types';
 import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';
@@ -695,6 +696,55 @@ describe('renderMessageBlock', () => {
     expect(rendered).toContain('@contextmenu=');
     expect(rendered).not.toContain('message-attachment');
     expect(rendered).not.toContain('MEDIA:');
+  });
+
+  test('renders three original delivery images once after managed history hydration', async () => {
+    const readAssistantMediaDataUrl = vi.fn().mockResolvedValue({
+      success: true,
+      dataUrl: 'data:image/jpeg;base64,YWJj',
+    });
+    vi.stubGlobal('window', {
+      electron: { openclaw: { engine: { readAssistantMediaDataUrl } } },
+    });
+    const paths = ['downloads/lake.jpg', 'downloads/mountain.webp', 'downloads/shore.jpg'];
+    const message = {
+      role: 'assistant',
+      timestamp: 1,
+      openclawDelivery: { mediaUrls: paths },
+      content: [
+        { type: 'text', text: 'Downloaded three images.' },
+        ...paths.map((path, index) => ({
+          type: 'image',
+          url: `/api/chat/media/outgoing/session/image-${index}/full`,
+          alt: path.split('/').pop(),
+        })),
+      ],
+    };
+    const original = structuredClone(message);
+    const controller = new ChatController();
+    const [hydrated] = await (
+      controller as unknown as {
+        resolveManagedHistoryImages(messages: unknown[], sessionKey: string): Promise<unknown[]>;
+      }
+    ).resolveManagedHistoryImages([message], 'agent:main:session');
+    const rendered = stringifyTemplate(
+      renderMessageBlock(
+        {
+          kind: 'group',
+          key: 'downloaded-images',
+          role: 'assistant',
+          messages: [{ key: 'images', message: hydrated }],
+          timestamp: 1,
+          isStreaming: false,
+        },
+        { workingDirectory: 'E:/project' },
+      ),
+    );
+
+    expect(rendered.match(/class="chat-bubble__image"/g)).toHaveLength(3);
+    for (const path of paths) expect(rendered).toContain(`localfile:///E%3A/project/${path}`);
+    expect(readAssistantMediaDataUrl).not.toHaveBeenCalled();
+    expect(message).toEqual(original);
   });
 
   test.each(['user', 'assistant'])(

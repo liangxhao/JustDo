@@ -452,10 +452,98 @@ exports.run = async function run({
     });
     const downloadPath = managedArtifact(download.details.downloads[0].path);
     assert.equal(fs.readFileSync(downloadPath, 'utf8'), 'synthetic main-path download');
+    assert.equal(download.details.downloads[0].state, 'completed');
+    assert.equal(download.details.downloads[0].mimeType, 'application/octet-stream');
+    assert.ok(download.content.some(block => block.type === 'text' && block.text.includes(downloadPath.replaceAll('\\', '\\\\'))));
     integration.artifacts = { pdf: pdfPath, download: downloadPath };
     checked(
       'Main PDF and click-triggered download persist real artifacts inside the trusted workspace',
     );
+
+    const currentPageUrl = desktopGuest.getURL();
+    const foregroundDownloads = report.foreground.downloads.length;
+    const directImage = await request(desktopRun, {
+      action: 'download',
+      targetId: desktopTarget,
+      url: new URL('/inline-image.png', url).href,
+      path: '.agent-tasks/browser-artifacts/直链 图片.png',
+    });
+    assert.equal(directImage.details.ok, true);
+    assert.equal(directImage.details.download.state, 'completed');
+    const directImagePath = managedArtifact(directImage.details.download.path);
+    const directImageBytes = fs.readFileSync(directImagePath);
+    assert.deepEqual(directImageBytes.subarray(0, 8), Buffer.from('89504e470d0a1a0a', 'hex'));
+    assert.ok(!nativeImage.createFromBuffer(directImageBytes).isEmpty());
+    assert.equal(directImage.details.download.receivedBytes, directImageBytes.length);
+    assert.equal(desktopGuest.getURL(), currentPageUrl);
+    assert.equal(report.foreground.downloads.length, foregroundDownloads);
+    assert.deepEqual(report.directImageRequests, [{ authenticated: true }]);
+    integration.artifacts.directImage = directImagePath;
+    checked('Main direct URL downloads an inline image with native profile authentication, without navigation or a save dialog');
+
+    await request(desktopRun, {
+      action: 'act',
+      request: {
+        targetId: desktopTarget,
+        kind: 'evaluate',
+        fn: `() => {
+          const button = document.createElement('button');
+          button.id = 'delayed-export';
+          button.textContent = 'Export delayed blob';
+          button.dataset.clicks = '0';
+          button.addEventListener('click', async () => {
+            button.dataset.clicks = String(Number(button.dataset.clicks) + 1);
+            const response = await fetch('/generate-export', { method: 'POST' });
+            const csv = await response.text();
+            setTimeout(() => {
+              const objectUrl = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+              const link = document.createElement('a');
+              link.href = objectUrl;
+              link.download = 'delayed-report.csv';
+              link.click();
+              setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+            }, 650);
+          });
+          document.body.prepend(button);
+          return true;
+        }`,
+      },
+    });
+    const exportSnapshot = await request(desktopRun, {
+      action: 'snapshot', targetId: desktopTarget, selector: '#delayed-export',
+    });
+    const exportRef = exportSnapshot.content
+      .filter(block => block.type === 'text')
+      .map(block => block.text)
+      .join('\n')
+      .match(/button "Export delayed blob" \[ref=([^\]]+)\]/u)?.[1];
+    assert.ok(exportRef, 'The export button did not have a current snapshot ref');
+    const exported = await request(desktopRun, {
+      action: 'download', targetId: desktopTarget, ref: exportRef,
+      path: '.agent-tasks/browser-artifacts/延迟 报表.csv', timeoutMs: 8000,
+    });
+    assert.equal(exported.details.download.state, 'completed');
+    assert.equal(exported.details.download.mimeType, 'text/csv');
+    const exportPath = managedArtifact(exported.details.download.path);
+    assert.equal(fs.readFileSync(exportPath, 'utf8'), 'name,value\nsynthetic,42\n');
+    assert.equal(report.exportGenerationRequests, 1);
+    assert.equal(await read(desktopGuest, 'document.querySelector("#delayed-export").dataset.clicks'), '1');
+    assert.equal(desktopGuest.getURL(), currentPageUrl);
+    assert.equal(report.foreground.downloads.length, foregroundDownloads);
+    integration.artifacts.delayedExport = exportPath;
+    checked('prearmed Main download captures a delayed POST-generated Blob export with one click and one generation request');
+
+    const misleading = await request(desktopRun, {
+      action: 'download', targetId: desktopTarget,
+      url: new URL('/login-result.jpg', url).href,
+      path: '.agent-tasks/browser-artifacts/photo.jpg',
+    });
+    assert.equal(misleading.details.download.state, 'completed');
+    assert.equal(misleading.details.download.mimeType, 'text/html');
+    const misleadingPath = managedArtifact(misleading.details.download.path);
+    assert.match(fs.readFileSync(misleadingPath, 'utf8'), /Synthetic login required/u);
+    integration.artifacts.htmlNamedImage = misleadingPath;
+    checked('completed transfer reports the actual HTML MIME for a .jpg filename without claiming valid image contents');
 
     const cronOpen = await request(cronRun, { action: 'open', url });
     const cronGuest = guestsByTarget.get(cronOpen.targetId);
