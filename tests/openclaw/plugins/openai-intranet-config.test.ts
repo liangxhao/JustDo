@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { OpenAiCompatibleMediaConfigProviderIds } from '../../../plugins/extensions/openai/contracts/media-config';
+import manifest from '../../../plugins/extensions/openai/openclaw.plugin.json';
 import {
   imageConfig,
   requireServiceBaseUrl,
@@ -11,12 +13,19 @@ vi.mock('openclaw/plugin-sdk/secret-input', () => ({
 }));
 
 describe('OpenAI intranet configuration', () => {
+  it('declares the same image credential domain in the manifest and settings contract', () => {
+    expect(OpenAiCompatibleMediaConfigProviderIds.image).toBe('image-openai');
+    expect(manifest.imageGenerationProviderMetadata.openai.authSignals).toEqual([
+      { provider: OpenAiCompatibleMediaConfigProviderIds.image },
+    ]);
+  });
+
   it('uses only the image credential domain without mutating chat or video configuration', () => {
     const chat = { baseUrl: 'https://chat.example/v1', apiKey: 'synthetic-chat' };
     const image = { baseUrl: 'https://image.example/v1', apiKey: 'synthetic-image' };
     const video = { baseUrl: 'https://video.example/v1', apiKey: 'synthetic-video' };
     const cfg = {
-      models: { providers: { openai: chat, 'justdo-image-openai': image, 'video-openai': video } },
+      models: { providers: { openai: chat, 'image-openai': image, 'video-openai': video } },
     };
     const isolated = imageConfig(cfg as never);
     expect(isolated.models?.providers?.openai).toBe(image);

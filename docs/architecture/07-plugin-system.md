@@ -632,7 +632,7 @@ v2026.10.7。来源哈希与完整替换由本地插件清单及构建校验记�
 
 本地 manifest 和 setup 删除官网登录/API Key 引导、公网 catalog 和 usage；内网服务
 仍可配置 API Key/SecretRef，缺失能力地址时拒绝请求，不读取环境 Key 回退。
-图像使用 `justdo-image-openai` 的请求级配置副本；实时 STT 在自身源码中持有每个
+图像使用 `image-openai` 的请求级配置副本；实时 STT 在自身源码中持有每个
 会话的地址、请求头及原生协议/生命周期。冷发现和注册共用同一 factory。
 源码替换只在构建时组装；开发库存和启动源码复制排除该目录，由已编译 manifest
 决定可用性。

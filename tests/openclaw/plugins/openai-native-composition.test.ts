@@ -150,7 +150,7 @@ test.skipIf(!fs.existsSync(path.join(runtime, 'package.json'))).each(modes)(
       await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
       const base='http://127.0.0.1:'+server.address().port;
       try {
-        const cfg={models:{providers:{openai:{baseUrl:base+'/chat/v1',apiKey:'chat-only'},'justdo-image-openai':{baseUrl:base+'/image/v1',apiKey:'image-only',request:{allowPrivateNetwork:true}},'video-openai':{baseUrl:base+'/video/v1',apiKey:'video-only',request:{allowPrivateNetwork:true}}}}};
+        const cfg={models:{providers:{openai:{baseUrl:base+'/chat/v1',apiKey:'chat-only'},'image-openai':{baseUrl:base+'/image/v1',apiKey:'image-only',request:{allowPrivateNetwork:true}},'video-openai':{baseUrl:base+'/video/v1',apiKey:'video-only',request:{allowPrivateNetwork:true}}}}};
         const original=structuredClone(cfg);
         const image=registrations.get('registerImageGenerationProvider')[0];
         assert.equal(image.isConfigured({cfg}),true);

@@ -281,7 +281,7 @@ test('configures an intranet model with isolated credentials and private-network
     models: {
       providers: {
         openai: { baseUrl: 'http://chat.lan/v1', apiKey: 'chat-key' },
-        'justdo-image-openai': { apiKey: 'image-key' },
+        'image-openai': { apiKey: 'image-key' },
       },
     },
     plugins: { allow: ['other'], deny: ['openai'], entries: { other: { enabled: false } } },
@@ -303,7 +303,7 @@ test('configures an intranet model with isolated credentials and private-network
           request: { allowPrivateNetwork: true },
         },
         openai: { apiKey: 'chat-key' },
-        'justdo-image-openai': { apiKey: 'image-key' },
+        'image-openai': { apiKey: 'image-key' },
       },
     },
     plugins: {

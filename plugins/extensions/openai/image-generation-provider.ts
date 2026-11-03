@@ -36,6 +36,7 @@ import {
 } from './default-models.js';
 import { resolveModelAuthPolicy } from './provider-policy-api.js';
 import { resolveConfiguredOpenAIBaseUrl } from './shared.js';
+import { OpenAiCompatibleMediaConfigProviderIds } from './contracts/media-config.js';
 
 const DEFAULT_OPENAI_IMAGE_BASE_URL = 'https://api.openai.com/v1';
 const DEFAULT_OPENAI_CODEX_IMAGE_BASE_URL = OPENAI_CODEX_RESPONSES_BASE_URL;
@@ -709,7 +710,7 @@ export function buildOpenAIImageGenerationProvider(): ImageGenerationProvider {
       const imageAuth = {
         apiKey: resolveServiceApiKey(
           req.cfg.models?.providers?.openai?.apiKey,
-          'models.providers.justdo-image-openai.apiKey',
+          `models.providers.${OpenAiCompatibleMediaConfigProviderIds.image}.apiKey`,
         ),
       };
       const [

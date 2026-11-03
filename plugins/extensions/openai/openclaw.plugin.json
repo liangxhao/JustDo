@@ -52,7 +52,7 @@
     "openai": {
       "authSignals": [
         {
-          "provider": "justdo-image-openai"
+          "provider": "image-openai"
         }
       ]
     }

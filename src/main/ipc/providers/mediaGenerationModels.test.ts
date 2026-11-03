@@ -116,24 +116,30 @@ describe('OpenClaw media generation model IPC', () => {
       .mockResolvedValueOnce({ ok: true });
 
     await handlers.get(MediaGenerationModelsIpc.SaveConfiguration)?.({}, 'image', {
-      primary: 'openai/local-image',
-      fallbacks: [],
+      primary: 'openai/org/local-image',
+      fallbacks: ['openai/org/fallback-image'],
       baseUrl: 'http://image.lan/v1',
       apiKey: 'local-key',
     });
 
-    expect(JSON.parse((requestGateway.mock.calls[1]?.[1] as { raw: string }).raw)).toMatchObject({
+    expect(JSON.parse((requestGateway.mock.calls[1]?.[1] as { raw: string }).raw)).toEqual({
       agents: {
         defaults: {
-          mediaModels: { image: { primary: 'openai/local-image' } },
+          mediaModels: {
+            image: {
+              primary: 'openai/org/local-image',
+              fallbacks: ['openai/org/fallback-image'],
+            },
+          },
         },
       },
       models: {
         providers: {
-          'justdo-image-openai': {
+          'image-openai': {
             baseUrl: 'http://image.lan/v1',
             apiKey: 'local-key',
             api: 'openai-completions',
+            models: [],
             request: { allowPrivateNetwork: true },
           },
         },

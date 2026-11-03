@@ -54,11 +54,13 @@ STT、TTS 扩展齿轮与语音页共用在线模型目录；TTS 同时引用该
 | 在线识别 | talk.catalog、config API                          | transcription-only Talk，不触发对话脑                                |
 | 工具合成 | tts.providers.tts-local-cli、受管 persona         | 本地/在线模式及 voice 由插件齿轮独立选择                             |
 | 在线朗读 | runtime-services.config.replySpeech、受管合成 RPC | voice 属于具体模型，请求内配置不覆盖工具                             |
-| 图像生成 | agents.defaults.mediaModels.image                 | justdo-image-openai 配置域                                           |
+| 图像生成 | agents.defaults.mediaModels.image                 | image-openai 配置域                                                  |
 | 视频生成 | agents.defaults.mediaModels.video                 | video-openai 独立配置域，由 openai 插件提供                          |
 | 图像理解 | agents.defaults.imageModel                        | 不等同图像生成                                                       |
 
 原生 image 使用能力限定的配置视图，保留 manifest 的 canonical provider ID，不改写语言模型的 models.providers.openai。多个能力同用一种协议也不能互相覆盖 endpoint/key。
+
+图像设置发布独立配置域时显式声明 `models: []`，满足原生自定义供应商校验；图像模型及其 fallback 引用仍由 `agents.defaults.mediaModels.image` 持有，不加入语言模型目录。保存使用原生配置合并，不清除独立域中已有的模型声明。
 
 应用管理的语言模型供应商（包括内置和自定义）统一投影 `models.providers.<id>.request.allowPrivateNetwork: true`，允许其模型 HTTP 请求使用应用或用户配置的内网服务或代理 Fake-IP 地址。现有及以后新增的已启用供应商在启动、保存和认证同步时自动获得该策略，无需逐域名维护；手工修改原生配置不是持久设置入口。该授权覆盖对应供应商的模型传输及原生重定向，不是仅限初始域名的豁免；登录换证、模型发现、记忆检索、网页、网络工具及语音／图像／视频独立请求沿用各自策略。内置模型的 JWT、SecretRef、轮换和退出清理不变；供应商改名的唯一端点匹配忽略这一统一的允许值，仍保留其他请求选项和显式拒绝的差异。
 

@@ -184,6 +184,8 @@ export function registerMediaGenerationModelHandlers({
                   baseUrl: configuration.baseUrl,
                   ...(configuration.apiKey ? { apiKey: configuration.apiKey } : {}),
                   api: 'openai-completions',
+                  // This isolated config domain is not a bundled model-provider overlay.
+                  models: [] as [],
                   request: { allowPrivateNetwork: true },
                 },
               }
