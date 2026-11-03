@@ -2,14 +2,11 @@ import type {
   CompletedProcessTimelineItem,
   SourceTimelineItem,
 } from '../../model/timeline/timeline-avatar-state';
-import { materializeDisclosureContent } from './disclosure-content';
 
 const AUTO_FOLD_ATTRIBUTE = 'data-process-auto-fold';
 const AUTO_FOLD_SIZE = '--process-auto-fold-size';
 const AUTO_FOLD_DURATION = '--process-auto-fold-duration';
-const AUTO_FOLD_OPACITY = '--process-auto-fold-opacity';
-const AUTO_FOLD_TRANSFORM = '--process-auto-fold-transform';
-const COLLAPSE_DURATION_MS = 320;
+const COLLAPSE_DURATION_MS = 240;
 const SOURCE_SELECTOR = [
   '[data-history-key]',
   '[data-process-summary-key]',
@@ -31,8 +28,6 @@ interface PendingFold {
   frame: number | null;
   deadline: number | null;
   size: number | null;
-  opacity: string | null;
-  transform: string | null;
   timer: number | null;
   transitionEnd: ((event: Event) => void) | null;
 }
@@ -114,12 +109,6 @@ function insideHiddenDisclosure(element: HTMLElement): boolean {
   return false;
 }
 
-function processDisclosureContent(details: HTMLDetailsElement | null): HTMLElement | null {
-  return Array.from(details?.children ?? []).find(element =>
-    element.classList.contains('process-disclosure-content'),
-  ) as HTMLElement | undefined ?? null;
-}
-
 /** Animates only an already visible flat process becoming a new disclosure. */
 export class CompletedProcessMotion {
   private scope: string | null = null;
@@ -132,7 +121,7 @@ export class CompletedProcessMotion {
 
   reset(scope: string | null): void {
     if (this.scope === scope) return;
-    for (const group of this.groups.values()) this.stop(group, true);
+    for (const group of this.groups.values()) this.stop(group);
     this.groups.clear();
     this.seenGroups.clear();
     this.consumedSources.clear();
@@ -149,7 +138,10 @@ export class CompletedProcessMotion {
     const viewport = this.host.getBoundingClientRect();
     for (const element of root.querySelectorAll<HTMLElement>(SOURCE_SELECTOR)) {
       if (element.closest('.completed-process') || insideHiddenDisclosure(element)) continue;
-      const row = element.closest<HTMLElement>('.history-viewport-row, .chat-group') ?? element;
+      // Native takeover can retain only an inner process ID. Its displayed source
+      // still includes the enclosing summary's header, padding and open contents.
+      const source = element.closest<HTMLElement>('.process-summary-group') ?? element;
+      const row = source.closest<HTMLElement>('.history-viewport-row, .chat-group') ?? source;
       const bounds = row.getBoundingClientRect();
       if (bounds.height <= 0) continue;
       for (const identity of elementIdentities(element))
@@ -177,7 +169,7 @@ export class CompletedProcessMotion {
           if (registration.element === next) return;
           if (registration.pending) {
             this.suspend(registration.pending);
-            this.clearTransient(registration.element, true);
+            this.clearTransient(registration.element);
             registration.pending.element = null;
           }
           registration.element = next;
@@ -194,11 +186,11 @@ export class CompletedProcessMotion {
         if (previous === group || !pending ||
           ![...sources].some(source => previous.sources.has(source))) continue;
         if (pending.deadline !== null && pending.deadline <= pending.window.performance.now()) {
-          this.stop(previous, true);
+          this.stop(previous);
           continue;
         }
         this.suspend(pending);
-        this.clearTransient(pending.element, true);
+        this.clearTransient(pending.element);
         pending.element = null;
         group.pending = pending;
         previous.pending = null;
@@ -206,7 +198,7 @@ export class CompletedProcessMotion {
       }
     }
     group.expanded = expanded;
-    if (expanded) this.stop(group, false);
+    if (expanded) this.stop(group);
     return group.ref;
   }
 
@@ -214,12 +206,12 @@ export class CompletedProcessMotion {
     for (const [key, group] of this.groups) {
       const details = group.element;
       if (!details?.isConnected) {
-        this.stop(group, true);
+        this.stop(group);
         this.groups.delete(key);
         continue;
       }
       if (group.expanded || details.open && !group.pending) {
-        this.stop(group, false);
+        this.stop(group);
         this.remember(key, group);
         continue;
       }
@@ -246,7 +238,7 @@ export class CompletedProcessMotion {
   cancel(details: HTMLDetailsElement): void {
     for (const [key, group] of this.groups) {
       if (group.element !== details) continue;
-      this.stop(group, false);
+      this.stop(group);
       this.remember(key, group);
       break;
     }
@@ -259,84 +251,71 @@ export class CompletedProcessMotion {
 
   private stage(group: ProcessGroup, extent: number, retained?: PendingFold): void {
     const details = group.element;
-    const content = processDisclosureContent(details);
     const ownerWindow = this.host.ownerDocument.defaultView;
     const css = (ownerWindow as (Window & typeof globalThis) | null)?.CSS;
-    if (this.scope === null || !details?.isConnected || !content || !this.host.isConnected ||
-      !ownerWindow || !css?.supports('interpolate-size', 'allow-keywords') ||
-      !css.supports('selector(details::details-content)')) {
-      this.stop(group, true);
+    if (this.scope === null || !details?.isConnected || details.open || !this.host.isConnected ||
+      !ownerWindow || !css?.supports('block-size', '1px')) {
+      this.stop(group);
       return;
     }
-    const header = details.firstElementChild?.getBoundingClientRect().height ?? 0;
-    const size = retained?.size ?? Math.max(0, extent - header);
+    const targetSize = details.getBoundingClientRect().height;
+    const size = retained?.size ?? extent;
     const duration = retained?.deadline === null || retained?.deadline === undefined
       ? COLLAPSE_DURATION_MS
       : Math.max(0, retained.deadline - ownerWindow.performance.now());
-    if (size <= 0 || duration <= 0) {
-      this.stop(group, true);
+    if (size <= 0 || targetSize <= 0 || Math.abs(size - targetSize) < 0.5 || duration <= 0) {
+      this.stop(group);
       return;
     }
     const pending: PendingFold = {
       extent, element: details, window: ownerWindow, frame: null,
       deadline: retained?.deadline ?? null,
       size: retained?.size ?? null,
-      opacity: retained?.opacity ?? null,
-      transform: retained?.transform ?? null,
       timer: null,
       transitionEnd: null,
     };
     group.pending = pending;
     details.setAttribute(AUTO_FOLD_ATTRIBUTE, '');
     details.style.setProperty(AUTO_FOLD_SIZE, `${size}px`);
-    details.style.setProperty(AUTO_FOLD_DURATION, `${duration}ms`);
-    if (pending.opacity) details.style.setProperty(AUTO_FOLD_OPACITY, pending.opacity);
-    if (pending.transform) details.style.setProperty(AUTO_FOLD_TRANSFORM, pending.transform);
-    details.open = true;
-    materializeDisclosureContent(details);
-    // Establish the real content box before the next frame closes the disclosure.
+    details.style.setProperty(AUTO_FOLD_DURATION, '0ms');
+    // Keep the closed contents lazy. Only the outer box bridges the old layout;
+    // opening a replacement disclosure replays nested motion and shifts the answer.
     details.getBoundingClientRect();
     pending.frame = ownerWindow.requestAnimationFrame(() => {
       pending.frame = null;
       if (group.pending !== pending) return;
       if (!this.host.isConnected || !details.isConnected || group.element !== details) {
-        this.stop(group, true);
+        this.stop(group);
         return;
       }
       const now = ownerWindow.performance.now();
-      pending.deadline ??= now + COLLAPSE_DURATION_MS;
+      pending.deadline ??= now + duration;
       const remaining = Math.max(0, pending.deadline - now);
       details.style.setProperty(AUTO_FOLD_DURATION, `${remaining}ms`);
       pending.transitionEnd = event => {
-        if (event.target !== content ||
+        if (event.target !== details ||
           !['block-size', 'height'].includes((event as TransitionEvent).propertyName)) return;
-        if (group.pending === pending) this.stop(group, false);
+        if (group.pending === pending) this.stop(group);
       };
       details.addEventListener('transitionend', pending.transitionEnd);
-      details.open = false;
-      this.clearOpeningState(details);
+      details.style.setProperty(AUTO_FOLD_SIZE, `${targetSize}px`);
       pending.timer = ownerWindow.setTimeout(() => {
-        if (group.pending === pending) this.stop(group, false);
+        if (group.pending === pending) this.stop(group);
       }, remaining + 80);
     });
   }
 
-  private stop(group: ProcessGroup, close: boolean): void {
+  private stop(group: ProcessGroup): void {
     if (!group.pending) return;
     this.suspend(group.pending);
-    this.clearTransient(group.pending.element, close);
+    this.clearTransient(group.pending.element);
     group.pending = null;
   }
 
   private measurePending(pending: PendingFold): void {
     const details = pending.element;
     if (pending.deadline === null || !details?.isConnected) return;
-    const content = processDisclosureContent(details);
-    if (!content) return;
-    pending.size = Math.max(0, content.getBoundingClientRect().height);
-    const style = pending.window.getComputedStyle(content);
-    pending.opacity = style.opacity;
-    pending.transform = style.transform;
+    pending.size = Math.max(0, details.getBoundingClientRect().height);
   }
 
   private suspend(pending: PendingFold): void {
@@ -350,17 +329,10 @@ export class CompletedProcessMotion {
     pending.transitionEnd = null;
   }
 
-  private clearTransient(details: HTMLDetailsElement | null, close: boolean): void {
+  private clearTransient(details: HTMLDetailsElement | null): void {
     if (!details) return;
-    if (close) details.open = false;
-    this.clearOpeningState(details);
-    details.style.removeProperty(AUTO_FOLD_DURATION);
-  }
-
-  private clearOpeningState(details: HTMLDetailsElement): void {
     details.removeAttribute(AUTO_FOLD_ATTRIBUTE);
     details.style.removeProperty(AUTO_FOLD_SIZE);
-    details.style.removeProperty(AUTO_FOLD_OPACITY);
-    details.style.removeProperty(AUTO_FOLD_TRANSFORM);
+    details.style.removeProperty(AUTO_FOLD_DURATION);
   }
 }

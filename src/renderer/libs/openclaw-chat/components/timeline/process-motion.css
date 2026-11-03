@@ -73,6 +73,12 @@
   display: flow-root;
   min-width: 0;
 }
+.completed-process[data-process-auto-fold] {
+  /* Auto-fold bridges the old rows without opening or mounting their contents. */
+  block-size: var(--process-auto-fold-size);
+  overflow: clip;
+  transition: block-size var(--process-auto-fold-duration, 240ms) cubic-bezier(0.2, 0, 0, 1);
+}
 .process-summary__item-heading,
 .process-summary__tool-title {
   min-height: 28px;
@@ -117,7 +123,7 @@
     interpolate-size: allow-keywords;
   }
   :is(.completed-process, .process-summary-group, .process-summary__tool)::details-content {
-    transition: content-visibility var(--process-auto-fold-duration, 320ms) allow-discrete;
+    transition: content-visibility 320ms allow-discrete;
   }
   :is(.completed-process, .process-summary-group, .process-summary__tool)[open]::details-content {
     /* Keep native scrolling independent of the UA shadow content box. */
@@ -130,9 +136,9 @@
     overflow: clip;
     transform: translateY(-6px);
     transition:
-      block-size var(--process-auto-fold-duration, 320ms) cubic-bezier(0.22, 0.8, 0.25, 1),
-      opacity var(--process-auto-fold-duration, 220ms) ease,
-      transform var(--process-auto-fold-duration, 320ms) cubic-bezier(0.22, 0.8, 0.25, 1);
+      block-size 320ms cubic-bezier(0.22, 0.8, 0.25, 1),
+      opacity 220ms ease,
+      transform 320ms cubic-bezier(0.22, 0.8, 0.25, 1);
   }
   :is(.completed-process, .process-summary-group, .process-summary__tool)[open]
     > .process-disclosure-content {
@@ -147,11 +153,5 @@
       opacity: 0;
       transform: translateY(-6px);
     }
-  }
-  .completed-process[data-process-auto-fold][open] > .process-disclosure-content {
-    block-size: var(--process-auto-fold-size, auto);
-    opacity: var(--process-auto-fold-opacity, 1);
-    transform: var(--process-auto-fold-transform, none);
-    transition: none;
   }
 }

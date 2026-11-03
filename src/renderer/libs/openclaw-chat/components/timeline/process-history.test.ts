@@ -18,12 +18,13 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-test('animates a newly settled live process without saving its temporary open state', async () => {
+test('animates a newly settled live process without opening it or replacing the final answer', async () => {
   vi.stubGlobal('CSS', { supports: () => true });
   vi.spyOn(window, 'requestAnimationFrame').mockReturnValue(1);
   vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => {});
   vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function () {
-    return DOMRect.fromRect({ x: 0, y: 10, width: 600, height: this.tagName === 'SUMMARY' ? 32 : 160 });
+    return DOMRect.fromRect({ x: 0, y: 10, width: 600,
+      height: this.tagName === 'SUMMARY' || this.classList.contains('completed-process') ? 32 : 160 });
   });
   const chat = document.createElement('justdo-chat') as JustDoChatElement;
   const base = { runId: 'live-run', firstSeq: 1, lastSeq: 2, startedAt: 1_000, updatedAt: 2_000 };
@@ -40,23 +41,27 @@ test('animates a newly settled live process without saving its temporary open st
   document.body.append(chat);
   await chat.updateComplete;
   expect(chat.shadowRoot!.querySelector('.completed-process')).toBeNull();
+  const answer = chat.shadowRoot!.querySelector('[data-message-disclosure-owner*="answer"]');
+  expect(answer).not.toBeNull();
 
   chat.activeTurn = { ...turn, status: 'final', endedAt: 3_000 };
   await chat.updateComplete;
   const process = chat.shadowRoot!.querySelector<HTMLDetailsElement>('.completed-process')!;
-  expect(process.open).toBe(true);
+  expect(process.open).toBe(false);
   expect(process.hasAttribute('data-process-auto-fold')).toBe(true);
   expect(chat.shadowRoot!.textContent).toContain('Final answer.');
+  expect(process.querySelector('.process-summary')).toBeNull();
+  expect(answer!.isConnected).toBe(true);
 
   chat.requestUpdate();
   await chat.updateComplete;
   expect(process.hasAttribute('data-process-auto-fold')).toBe(true);
   process.querySelector('summary')!.click();
-  expect(process.open).toBe(false);
+  expect(process.open).toBe(true);
   expect(process.hasAttribute('data-process-auto-fold')).toBe(false);
   chat.requestUpdate();
   await chat.updateComplete;
-  expect(process.open).toBe(false);
+  expect(process.open).toBe(true);
 });
 
 // These structural tests also inspect closed rows. Request their contents through
