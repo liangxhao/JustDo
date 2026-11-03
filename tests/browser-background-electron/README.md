@@ -155,3 +155,37 @@ browser transport. Its provider is an explicit synthetic protocol fixture, so it
 does not validate a company model, SSO, production job persistence or a running
 user Gateway. Failures remain failures and are not converted to simulated events
 or weaker cleanup assertions.
+
+## Real native model-retry probe
+
+Run the opt-in retry probe with a prepared runtime and its bundled Node:
+
+```powershell
+& '<runtime>/node-runtime/node.exe' scripts/test/verify-browser-retry.cjs --runtime-dir '<runtime>'
+```
+
+The probe verifies the selected frozen runtime and creates a fresh `build/brp-*`
+home, configuration, device identity, state, cache and workspace. It compiles the
+current embedded-browser plugin and the actual `EmbeddedBrowserGatewayBridge`.
+An authenticated Gateway connection starts one ordinary desktop conversation.
+The loopback model emits a browser `open`, returns one HTTP 503 after receiving
+its successful tool result, then emits `status` after the native same-model
+retry. The real Main adapter handles plugin events and resolves native requests;
+only its browser `execute` port supplies a synthetic page result. No Electron
+browser, company endpoint, existing Gateway, user profile or transcript file is
+opened. This checks execution authorization across retry rather than browser
+rendering or SSO.
+
+The report requires the native retry log, old-effect revocation after the 503,
+both browser calls reaching the plugin and Main adapter with the same exact
+native run identity, a successful status result reaching the next model request,
+and an exact successful `executionSettled:true` terminal. The report and isolated
+native fixture files remain under `build/`; the report excludes the ephemeral
+Gateway token. A forced Gateway exit fails verification. The frozen artifact
+and independently compiled current plugin/Main code are recorded separately;
+`strictCurrentSourceProof:false` does not claim a freshly rebuilt whole installer.
+
+For a before/after comparison, `--source-root <baseline-source>` can select a
+saved source tree containing `plugins/extensions/embedded-browser/` and
+`src/main/browser/embeddedBrowserGatewayBridge.ts`. It changes only those two
+compiled probe inputs; the selected frozen native runtime remains read-only.

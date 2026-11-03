@@ -36,6 +36,7 @@ const request = (
   run = userRun,
   requestId = 'request-1',
   command: Record<string, unknown> = { action: 'open', url: 'https://example.com' },
+  admissionRevision = 1,
 ) => ({
   event: EMBEDDED_BROWSER_REQUESTED_EVENT,
   payload: {
@@ -43,6 +44,7 @@ const request = (
     run,
     sessionKey: run.sessionKey,
     toolCallId: `call-${requestId}`,
+    admissionRevision,
     command,
     policy: { allowLocalFiles: true },
   },
@@ -165,10 +167,12 @@ describe('authenticated embedded browser Gateway boundary', () => {
       historyBinding: { nativeSessionId: 'different-native-session' },
     } as ReturnType<typeof options.getDesktopSession>);
     bridge.handleEvent(request());
-    await vi.waitFor(() => expect(options.resolve).toHaveBeenCalledWith(
-      'request-1',
-      { ok: false, error: 'The browser session binding is unavailable.' },
-    ));
+    await vi.waitFor(() =>
+      expect(options.resolve).toHaveBeenCalledWith('request-1', {
+        ok: false,
+        error: 'The browser session binding is unavailable.',
+      }),
+    );
     expect(options.execute).not.toHaveBeenCalled();
   });
 
@@ -256,14 +260,20 @@ describe('authenticated embedded browser Gateway boundary', () => {
       await vi.waitFor(() => expect(options.resolve).toHaveBeenCalled());
       const signal = options.execute.mock.calls[0][2];
 
-      bridge.handleEvent({ event: EMBEDDED_BROWSER_REVOKED_EVENT, payload: { run: userRun } });
+      bridge.handleEvent({
+        event: EMBEDDED_BROWSER_REVOKED_EVENT,
+        payload: { run: userRun, admissionRevision: 1 },
+      });
 
       expect(signal.aborted).toBe(true);
       expect(options.releaseScope).toHaveBeenCalledExactlyOnceWith('conversation', false);
       bridge.handleEvent(request(userRun, 'after-disposal'));
       await vi.waitFor(() => expect(options.resolve).toHaveBeenCalledTimes(2));
       expect(options.execute).toHaveBeenCalledTimes(1);
-      bridge.handleEvent({ event: EMBEDDED_BROWSER_REVOKED_EVENT, payload: { run: userRun } });
+      bridge.handleEvent({
+        event: EMBEDDED_BROWSER_REVOKED_EVENT,
+        payload: { run: userRun, admissionRevision: 1 },
+      });
       expect(options.releaseScope).toHaveBeenCalledTimes(1);
 
       bridge.handleEvent({
@@ -282,7 +292,10 @@ describe('authenticated embedded browser Gateway boundary', () => {
     options.getScheduledTask.mockImplementation(() => new Promise(resolve => (finish = resolve)));
     bridge.handleEvent(request(cronRun));
 
-    bridge.handleEvent({ event: EMBEDDED_BROWSER_REVOKED_EVENT, payload: { run: cronRun } });
+    bridge.handleEvent({
+      event: EMBEDDED_BROWSER_REVOKED_EVENT,
+      payload: { run: cronRun, admissionRevision: 1 },
+    });
     finish({
       id: 'job-1',
       management: 'editable',
@@ -302,6 +315,145 @@ describe('authenticated embedded browser Gateway boundary', () => {
     expect(options.getScheduledTask).toHaveBeenCalledTimes(1);
   });
 
+  it('requires a higher admission revision to resume the same native run after disposal', async () => {
+    const { options, bridge } = setup();
+    bridge.handleEvent(request());
+    await vi.waitFor(() => expect(options.resolve).toHaveBeenCalledTimes(1));
+    const retiredSignal = options.execute.mock.calls[0][2];
+    bridge.handleEvent({
+      event: EMBEDDED_BROWSER_REVOKED_EVENT,
+      payload: { run: userRun, admissionRevision: 1 },
+    });
+
+    bridge.handleEvent(request(userRun, 'retired'));
+    await vi.waitFor(() =>
+      expect(options.resolve).toHaveBeenCalledWith(
+        'retired',
+        expect.objectContaining({ ok: false }),
+      ),
+    );
+    expect(options.execute).toHaveBeenCalledTimes(1);
+
+    bridge.handleEvent(request(userRun, 'renewed', { action: 'status' }, 2));
+    await vi.waitFor(() =>
+      expect(options.resolve).toHaveBeenCalledWith(
+        'renewed',
+        expect.objectContaining({ ok: true }),
+      ),
+    );
+    expect(options.execute).toHaveBeenCalledTimes(2);
+    expect(retiredSignal.aborted).toBe(true);
+    expect(options.execute.mock.calls[1][2].aborted).toBe(false);
+    expect(options.releaseScope).toHaveBeenCalledExactlyOnceWith('conversation', false);
+  });
+
+  it('retires an older live admission and ignores its delayed request, revocation and cancellation', async () => {
+    const { options, bridge } = setup();
+    bridge.handleEvent(request());
+    await vi.waitFor(() => expect(options.resolve).toHaveBeenCalledTimes(1));
+    const retiredSignal = options.execute.mock.calls[0][2];
+    let finish!: (result: { ok: boolean }) => void;
+    options.execute.mockImplementationOnce(
+      async () =>
+        new Promise(resolve => {
+          finish = resolve;
+        }),
+    );
+    const current = request(userRun, 'current', { action: 'status' }, 2);
+
+    bridge.handleEvent(current);
+    await vi.waitFor(() => expect(options.execute).toHaveBeenCalledTimes(2));
+    const currentSignal = options.execute.mock.calls[1][2];
+    expect(retiredSignal.aborted).toBe(true);
+    expect(options.releaseScope).toHaveBeenCalledExactlyOnceWith('conversation', false);
+    bridge.handleEvent(request(userRun, 'delayed-old-request'));
+    bridge.handleEvent({
+      event: EMBEDDED_BROWSER_REVOKED_EVENT,
+      payload: { run: userRun, admissionRevision: 1 },
+    });
+    bridge.handleEvent({
+      event: EMBEDDED_BROWSER_CANCELLED_EVENT,
+      payload: { ...current.payload, admissionRevision: 1 },
+    });
+    await vi.waitFor(() =>
+      expect(options.resolve).toHaveBeenCalledWith(
+        'delayed-old-request',
+        expect.objectContaining({ ok: false }),
+      ),
+    );
+    expect(currentSignal.aborted).toBe(false);
+    expect(options.execute).toHaveBeenCalledTimes(2);
+    expect(options.releaseScope).toHaveBeenCalledTimes(1);
+
+    finish({ ok: true });
+    await vi.waitFor(() =>
+      expect(options.resolve).toHaveBeenCalledWith(
+        'current',
+        expect.objectContaining({ ok: true }),
+      ),
+    );
+  });
+
+  it('fences an older cron admission that finishes ownership preparation after its replacement', async () => {
+    const { options, bridge } = setup();
+    const job = await options.getScheduledTask();
+    options.getScheduledTask.mockClear();
+    let finishRetired!: (value: ScheduledTask) => void;
+    options.getScheduledTask.mockImplementationOnce(
+      () =>
+        new Promise(resolve => {
+          finishRetired = resolve;
+        }),
+    );
+    bridge.handleEvent(request(cronRun, 'retired-preparation'));
+    bridge.handleEvent(request(cronRun, 'current-preparation', { action: 'status' }, 2));
+    await vi.waitFor(() =>
+      expect(options.resolve).toHaveBeenCalledWith(
+        'current-preparation',
+        expect.objectContaining({ ok: true }),
+      ),
+    );
+    const currentSignal = options.execute.mock.calls[0][2];
+
+    finishRetired(job);
+    await new Promise(resolve => setImmediate(resolve));
+    bridge.handleEvent({
+      event: EMBEDDED_BROWSER_REVOKED_EVENT,
+      payload: { run: cronRun, admissionRevision: 1 },
+    });
+
+    expect(options.execute).toHaveBeenCalledTimes(1);
+    expect(options.resolve).not.toHaveBeenCalledWith('retired-preparation', expect.anything());
+    expect(currentSignal.aborted).toBe(false);
+    expect(options.releaseScope).not.toHaveBeenCalled();
+  });
+
+  it.each(['settled', 'service-stopped'] as const)(
+    'does not reopen a closed native run with a higher admission revision after %s',
+    async reason => {
+      const { options, bridge } = setup();
+      bridge.handleEvent(request());
+      await vi.waitFor(() => expect(options.resolve).toHaveBeenCalledTimes(1));
+      if (reason === 'service-stopped')
+        bridge.handleEvent({ event: EMBEDDED_BROWSER_STOPPED_EVENT });
+      else
+        bridge.handleEvent({
+          event: EMBEDDED_BROWSER_RELEASED_EVENT,
+          payload: { run: userRun, reason: 'settled', discardPages: false },
+        });
+
+      bridge.handleEvent(request(userRun, 'after-close', { action: 'status' }, 2));
+      await vi.waitFor(() =>
+        expect(options.resolve).toHaveBeenCalledWith(
+          'after-close',
+          expect.objectContaining({ ok: false }),
+        ),
+      );
+      expect(options.execute).toHaveBeenCalledTimes(1);
+      expect(options.execute.mock.calls[0][2].aborted).toBe(true);
+    },
+  );
+
   it.each([EMBEDDED_BROWSER_REVOKED_EVENT, EMBEDDED_BROWSER_RELEASED_EVENT])(
     'ignores conflicting full identity during native job preparation: %s',
     async event => {
@@ -314,6 +466,7 @@ describe('authenticated embedded browser Gateway boundary', () => {
         event,
         payload: {
           run: { ...cronRun, workspaceDir: path.resolve('foreign') },
+          admissionRevision: 1,
           reason: 'revoked',
           discardPages: true,
         },
@@ -493,13 +646,15 @@ describe('plugin to Main cancellation after an armed browser result', () => {
       },
     });
     stops.push(() => service.stop());
-    hooks.get('before_prompt_build')!(
-      {},
-      {
-        ...run,
-        toolAuthority: { allows: () => true, assertActive() {} },
-      },
-    );
+    const prompt = () =>
+      hooks.get('before_prompt_build')!(
+        {},
+        {
+          ...run,
+          toolAuthority: { allows: () => true, assertActive() {} },
+        },
+      );
+    prompt();
     const tool = factory.create({ ...run, assertInvocationCurrent() {} });
     const prepare = (toolCallId: string, signal?: AbortSignal) =>
       hooks.get('before_tool_call')!(
@@ -518,6 +673,7 @@ describe('plugin to Main cancellation after an armed browser result', () => {
       options,
       run,
       tool,
+      prompt,
       prepare,
       releases,
       revocations,
@@ -556,7 +712,9 @@ describe('plugin to Main cancellation after an armed browser result', () => {
 
       controller.abort();
 
-      expect(f.revocations()).toEqual([{ name: 'revoked', payload: { run: f.run } }]);
+      expect(f.revocations()).toEqual([
+        { name: 'revoked', payload: { run: f.run, admissionRevision: 1 } },
+      ]);
       expect(f.releases()).toEqual([]);
       expect(f.options.execute.mock.calls[0][2].aborted).toBe(true);
       expect(f.options.releaseScope).toHaveBeenCalledExactlyOnceWith('conversation', false);
@@ -598,6 +756,41 @@ describe('plugin to Main cancellation after an armed browser result', () => {
     expect(f.delayedEffect).not.toHaveBeenCalled();
     second.abort();
     expect(f.revocations()).toHaveLength(1);
+  });
+
+  it('renews the plugin and Main admission only after a fresh authorized prompt while old armed effects stay retired', async () => {
+    const f = createBoundary();
+    const retiredSource = new AbortController();
+    f.prepare('before-retry', retiredSource.signal);
+    await f.tool.execute('before-retry', { action: 'dialog', accept: true, headless: true });
+    const retiredSignal = f.options.execute.mock.calls[0][2];
+
+    retiredSource.abort();
+    expect(f.prepare('without-fresh-authority')).toMatchObject({ block: true });
+    expect(retiredSignal.aborted).toBe(true);
+    expect(() => f.effects[0]()).toThrow();
+
+    f.prompt();
+    const currentSource = new AbortController();
+    expect(f.prepare('after-retry', currentSource.signal)).toBeUndefined();
+    const result = await f.tool.execute('after-retry', { action: 'status', headless: true });
+
+    expect(result.isError).toBeUndefined();
+    expect(f.options.execute).toHaveBeenCalledTimes(2);
+    expect(f.options.execute.mock.calls[1][2].aborted).toBe(false);
+    expect(() => f.effects[0]()).toThrow();
+    expect(() => f.effects[1]()).not.toThrow();
+    expect(f.releases()).toEqual([]);
+    expect(f.revocations()).toEqual([
+      { name: 'revoked', payload: { run: f.run, admissionRevision: 1 } },
+    ]);
+
+    currentSource.abort();
+    expect(f.revocations()).toEqual([
+      { name: 'revoked', payload: { run: f.run, admissionRevision: 1 } },
+      { name: 'revoked', payload: { run: f.run, admissionRevision: 2 } },
+    ]);
+    expect(() => f.effects[1]()).toThrow();
   });
 
   it.each([false, true])(

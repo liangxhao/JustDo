@@ -136,6 +136,7 @@ exports.run = async function run({
         requestId,
         sessionKey: run.sessionKey,
         run,
+        admissionRevision: 1,
         toolCallId: `synthetic-tool-call-${sequence}`,
         command,
         policy: { allowLocalFiles },
@@ -679,6 +680,7 @@ exports.run = async function run({
         requestId: waiting.requestId,
         sessionKey: desktopRun.sessionKey,
         run: desktopRun,
+        admissionRevision: waiting.event.payload.admissionRevision,
         toolCallId: 'synthetic-wrong-tool-call',
       },
     });
@@ -696,6 +698,7 @@ exports.run = async function run({
         requestId: waiting.requestId,
         sessionKey: desktopRun.sessionKey,
         run: desktopRun,
+        admissionRevision: waiting.event.payload.admissionRevision,
         toolCallId: waiting.event.payload.toolCallId,
       },
     });

@@ -20,6 +20,7 @@ const requested = {
   requestId: 'request',
   sessionKey: run.sessionKey,
   run,
+  admissionRevision: 1,
   toolCallId: 'call',
   command: { action: 'open', headless: true },
   policy: { allowLocalFiles: false },
@@ -33,9 +34,13 @@ describe('browser execution transport contract', () => {
       requestId: requested.requestId,
       sessionKey: run.sessionKey,
       run,
+      admissionRevision: 1,
       toolCallId: requested.toolCallId,
     });
-    expect(readBrowserRevokedEvent({ run })).toEqual({ run });
+    expect(readBrowserRevokedEvent({ run, admissionRevision: 1 })).toEqual({
+      run,
+      admissionRevision: 1,
+    });
     expect(readBrowserReleasedEvent({ run, reason: 'settled', discardPages: false })).toEqual({
       run,
       reason: 'settled',
@@ -58,6 +63,10 @@ describe('browser execution transport contract', () => {
     { run: { ...run, runId: 'r'.repeat(513) } },
     { sessionKey: 'other-session' },
     { toolCallId: '' },
+    { admissionRevision: undefined },
+    { admissionRevision: 0 },
+    { admissionRevision: 1.5 },
+    { admissionRevision: Number.MAX_SAFE_INTEGER + 1 },
     { command: [] },
     { policy: undefined },
     { policy: { allowLocalFiles: 'true' } },
@@ -78,6 +87,8 @@ describe('browser execution transport contract', () => {
     expect(readBrowserReleasedEvent({ run, reason: 'settled' })).toBeNull();
     expect(readBrowserReleasedEvent({ run, reason: 'settled', discardPages: 'false' })).toBeNull();
     expect(readBrowserRevokedEvent({ ...run })).toBeNull();
+    expect(readBrowserRevokedEvent({ run })).toBeNull();
+    expect(readBrowserRevokedEvent({ run, admissionRevision: -1 })).toBeNull();
     expect(readBrowserRevokedEvent({ run: { ...run, runId: '' } })).toBeNull();
   });
 });

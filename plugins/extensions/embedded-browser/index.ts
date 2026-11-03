@@ -44,6 +44,7 @@ type PendingRequest = {
   timeout: ReturnType<typeof setTimeout>;
   sessionKey: string;
   run: BrowserExecutionRun;
+  admissionRevision: number;
   toolCallId: string;
   removeAbortListener?: () => void;
 };
@@ -280,13 +281,14 @@ class EmbeddedBrowserRequestManager {
       });
     }, REQUEST_TIMEOUT_MS);
     timeout.unref?.();
-    const { run, toolCallId } = call;
+    const { run, admissionRevision, toolCallId } = call;
     const { sessionKey } = run;
     const pending: PendingRequest = {
       resolve: resolveResponse,
       timeout,
       sessionKey,
       run,
+      admissionRevision,
       toolCallId,
     };
     this.pending.set(requestId, pending);
@@ -303,7 +305,7 @@ class EmbeddedBrowserRequestManager {
       call.assertCurrent();
       emitGatewayEvent(
         'requested',
-        { requestId, sessionKey, run, toolCallId, command, policy },
+        { requestId, sessionKey, run, admissionRevision, toolCallId, command, policy },
         { scope: 'operator.read' },
       );
     } catch (error) {
@@ -341,6 +343,7 @@ class EmbeddedBrowserRequestManager {
           requestId,
           sessionKey: pending.sessionKey,
           run: pending.run,
+          admissionRevision: pending.admissionRevision,
           toolCallId: pending.toolCallId,
         },
         { scope: 'operator.read' },
@@ -377,7 +380,18 @@ class EmbeddedBrowserRequestManager {
   private publishRevocation(event: BrowserRevokedEvent): void {
     // Tool signals also retire on successful native cleanup. Invalidate effects
     // immediately without turning that cleanup into a whole-run outcome.
-    this.cancelRunRequests(event.run);
+    for (const [requestId, request] of this.pending) {
+      if (
+        request.admissionRevision === event.admissionRevision &&
+        request.run.sessionKey === event.run.sessionKey &&
+        request.run.sessionId === event.run.sessionId &&
+        request.run.runId === event.run.runId
+      )
+        this.cancel(requestId, {
+          ok: false,
+          error: 'The native browser admission is no longer active.',
+        });
+    }
     try {
       this.gatewayEventEmitter?.emit('revoked', event, { scope: 'operator.read' });
     } catch (error) {
@@ -548,6 +562,7 @@ const plugin = {
                 for (const key of [
                   'run',
                   'execution',
+                  'admissionRevision',
                   'sessionKey',
                   'sessionId',
                   'runId',

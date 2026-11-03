@@ -54,9 +54,18 @@ export class EmbeddedBrowserGatewayBridge {
   >();
   private readonly completed = new Set<string>();
   private readonly released = new Set<string>();
+  private readonly admissions = new Map<
+    string,
+    { run: BrowserExecutionRun; revision: number; revoked: boolean }
+  >();
   private readonly runs = new Map<
     string,
-    { run: BrowserExecutionRun; scope: BrowserExecutionScope; controller: AbortController }
+    {
+      run: BrowserExecutionRun;
+      admissionRevision: number;
+      scope: BrowserExecutionScope;
+      controller: AbortController;
+    }
   >();
   private readonly incarnations = new Map<string, string>();
   private readonly latestRuns = new Map<string, string>();
@@ -73,19 +82,18 @@ export class EmbeddedBrowserGatewayBridge {
       const value = readBrowserRevokedEvent(event.payload);
       if (!value) return;
       const key = runKey(value.run);
-      const active = this.runs.get(key);
+      if (this.released.has(key)) return;
       if (this.hasConflictingRun(value.run)) return;
-      const alreadyRevoked = this.released.has(key);
-      // Tool-generation disposal also aborts native tool signals on success.
-      // Fence effects immediately, but retain the identity for the true terminal.
-      this.remember(this.released, key);
-      for (const pending of this.pending.values()) {
-        if (sameRun(pending.event.run, value.run)) pending.controller.abort();
-      }
-      active?.controller.abort();
-      if (active && !alreadyRevoked && this.latestRuns.get(active.scope.sessionId) === key) {
-        this.options.releaseScope(active.scope.sessionId, value.run.trigger === 'cron');
-      }
+      const admission = this.admissions.get(key);
+      if (admission && admission.revision > value.admissionRevision) return;
+      // Retire only this tool admission. A fresh native-authorized attempt can
+      // advance the revision; whole-run terminals keep their independent fence.
+      this.admissions.set(key, {
+        run: value.run,
+        revision: value.admissionRevision,
+        revoked: true,
+      });
+      this.retireAdmissions(value.run, value.admissionRevision);
       return;
     }
     if (event.event === EMBEDDED_BROWSER_RELEASED_EVENT) {
@@ -114,6 +122,7 @@ export class EmbeddedBrowserGatewayBridge {
         }
       }
       this.runs.delete(runKey(value.run));
+      this.admissions.delete(runKey(value.run));
       return;
     }
     if (event.event === EMBEDDED_BROWSER_CANCELLED_EVENT) {
@@ -123,6 +132,7 @@ export class EmbeddedBrowserGatewayBridge {
         value &&
         pending &&
         sameRun(pending.event.run, value.run) &&
+        pending.event.admissionRevision === value.admissionRevision &&
         pending.event.toolCallId === value.toolCallId
       ) {
         pending.controller.abort();
@@ -151,10 +161,14 @@ export class EmbeddedBrowserGatewayBridge {
 
   revoke(): void {
     this.generation += 1;
+    for (const key of this.admissions.keys()) this.remember(this.released, key);
+    for (const pending of this.pending.values())
+      this.remember(this.released, runKey(pending.event.run));
     for (const pending of this.pending.values()) pending.controller.abort();
     for (const run of this.runs.values()) run.controller.abort();
     this.pending.clear();
     this.runs.clear();
+    this.admissions.clear();
     this.incarnations.clear();
     this.latestRuns.clear();
     this.options.revokeAll();
@@ -173,6 +187,7 @@ export class EmbeddedBrowserGatewayBridge {
         entry.controller.abort();
         this.remember(this.released, key);
         this.runs.delete(key);
+        this.admissions.delete(key);
       }
     }
     this.options.releaseScope(sessionId, true);
@@ -183,12 +198,27 @@ export class EmbeddedBrowserGatewayBridge {
   private hasConflictingRun(run: BrowserExecutionRun): boolean {
     const key = runKey(run);
     const active = this.runs.get(key);
+    const admission = this.admissions.get(key);
     return (
       Boolean(active && !sameRun(active.run, run)) ||
+      Boolean(admission && !sameRun(admission.run, run)) ||
       [...this.pending.values()].some(
         pending => runKey(pending.event.run) === key && !sameRun(pending.event.run, run),
       )
     );
+  }
+
+  private retireAdmissions(run: BrowserExecutionRun, throughRevision: number): void {
+    for (const pending of this.pending.values()) {
+      if (sameRun(pending.event.run, run) && pending.event.admissionRevision <= throughRevision)
+        pending.controller.abort();
+    }
+    const active = this.runs.get(runKey(run));
+    if (!active || active.admissionRevision > throughRevision || active.controller.signal.aborted)
+      return;
+    active.controller.abort();
+    if (this.latestRuns.get(active.scope.sessionId) === runKey(run))
+      this.options.releaseScope(active.scope.sessionId, run.trigger === 'cron');
   }
 
   private async dispatch(
@@ -196,21 +226,38 @@ export class EmbeddedBrowserGatewayBridge {
     controller: AbortController,
     generation: number,
   ): Promise<void> {
+    const key = runKey(event.run);
     const assertCurrent = (): void => {
       controller.signal.throwIfAborted();
+      const admission = this.admissions.get(key);
       if (
         generation !== this.generation ||
-        this.released.has(runKey(event.run)) ||
+        this.released.has(key) ||
+        admission?.revision !== event.admissionRevision ||
+        admission.revoked ||
         !this.options.isEnabled()
       ) {
         throw new Error('The browser execution is no longer available.');
       }
     };
     try {
+      controller.signal.throwIfAborted();
+      if (generation !== this.generation || this.released.has(key) || !this.options.isEnabled())
+        throw new Error('The browser execution is no longer available.');
+      if (this.hasConflictingRun(event.run)) throw new Error('Browser run identity changed.');
+      const admission = this.admissions.get(key);
+      if (!admission || admission.revision < event.admissionRevision) {
+        this.retireAdmissions(event.run, event.admissionRevision - 1);
+        this.admissions.set(key, {
+          run: event.run,
+          revision: event.admissionRevision,
+          revoked: false,
+        });
+      }
       assertCurrent();
-      let entry = this.runs.get(runKey(event.run));
+      let entry = this.runs.get(key);
       if (entry && !sameRun(entry.run, event.run)) throw new Error('Browser run identity changed.');
-      if (!entry) {
+      if (!entry || entry.admissionRevision !== event.admissionRevision) {
         const desktop =
           event.run.trigger === 'user'
             ? this.options.getDesktopSession(event.run.sessionKey)
@@ -221,10 +268,10 @@ export class EmbeddedBrowserGatewayBridge {
         assertCurrent();
         // Another call in the same native run may finish preparation first.
         // Reuse its lifetime controller; never orphan an already-admitted call.
-        entry = this.runs.get(runKey(event.run));
+        entry = this.runs.get(key);
         if (entry && !sameRun(entry.run, event.run))
           throw new Error('Browser run identity changed.');
-        if (!entry) {
+        if (!entry || entry.admissionRevision !== event.admissionRevision) {
           // A new native incarnation may reuse a product conversation, but never its old background page.
           const previousIncarnation = this.incarnations.get(scope.sessionId);
           if (previousIncarnation && previousIncarnation !== event.run.sessionId) {
@@ -241,8 +288,13 @@ export class EmbeddedBrowserGatewayBridge {
               this.runs.delete(key);
             }
           }
-          entry = { run: event.run, scope, controller: new AbortController() };
-          this.runs.set(runKey(event.run), entry);
+          entry = {
+            run: event.run,
+            admissionRevision: event.admissionRevision,
+            scope,
+            controller: new AbortController(),
+          };
+          this.runs.set(key, entry);
         }
       }
       this.latestRuns.set(entry.scope.sessionId, runKey(event.run));

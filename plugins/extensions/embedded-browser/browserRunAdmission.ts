@@ -24,6 +24,7 @@ type ToolContext = {
 };
 type Run = {
   identity: BrowserExecutionRun;
+  admissionRevision: number;
   lifecycleRevision: string | null;
   usedCallIds: Set<string>;
   cancellationListeners: Map<AbortSignal, () => void>;
@@ -38,6 +39,7 @@ type Call = {
 
 export type AdmittedBrowserCall = {
   run: BrowserExecutionRun;
+  admissionRevision: number;
   toolCallId: string;
   signal?: AbortSignal;
   assertCurrent(): void;
@@ -90,7 +92,6 @@ export class BrowserRunAdmission {
     const key = runKey(identity);
     if (this.closedRuns.has(key)) return;
     const previous = this.runs.get(key);
-    if (previous?.effectsRevoked) return;
     try {
       // This capability closes at hook return. Do not retain it for execution.
       context.toolAuthority?.assertActive();
@@ -104,15 +105,23 @@ export class BrowserRunAdmission {
       )
         throw new Error(UNAVAILABLE);
       if (this.runs.size >= MAX_RUNS && !previous) throw new Error(UNAVAILABLE);
+      const admissionRevision = previous
+        ? previous.admissionRevision + (previous.effectsRevoked ? 1 : 0)
+        : 1;
+      if (!Number.isSafeInteger(admissionRevision)) throw new Error(UNAVAILABLE);
       this.runs.set(
         key,
-        previous ?? {
-          identity,
-          lifecycleRevision: entry.lifecycleRevision ?? null,
-          usedCallIds: new Set(),
-          cancellationListeners: new Map(),
-          effectsRevoked: false,
-        },
+        previous && !previous.effectsRevoked
+          ? previous
+          : {
+              identity,
+              admissionRevision,
+              lifecycleRevision: entry.lifecycleRevision ?? null,
+              // A new authorized attempt must never replay an earlier invocation.
+              usedCallIds: previous?.usedCallIds ?? new Set(),
+              cancellationListeners: new Map(),
+              effectsRevoked: false,
+            },
       );
     } catch {
       if (previous) this.closeRun(previous, 'revoked');
@@ -120,6 +129,8 @@ export class BrowserRunAdmission {
   }
 
   prepareToolCall(context: ToolContext): void {
+    // A delayed old hook cannot bind an already-retired source to a successor.
+    context.abortSignal?.throwIfAborted();
     const run = this.findRun(context);
     this.assertRunCurrent(run);
     this.retainRunCancellation(run, context.abortSignal);
@@ -134,6 +145,7 @@ export class BrowserRunAdmission {
       this.calls.size >= MAX_CALLS
     )
       throw new Error(UNAVAILABLE);
+    run.usedCallIds.add(toolCallId);
     this.calls.set(key, { run, toolCallId, signal: context.abortSignal, claimed: false });
   }
 
@@ -154,9 +166,9 @@ export class BrowserRunAdmission {
     };
     assertCurrent();
     call.claimed = true;
-    call.run.usedCallIds.add(toolCallId);
     return {
       run: call.run.identity,
+      admissionRevision: call.run.admissionRevision,
       toolCallId,
       signal: call.signal,
       assertCurrent,
@@ -258,7 +270,7 @@ export class BrowserRunAdmission {
   private revokeEffects(run: Run): void {
     if (run.effectsRevoked || this.runs.get(runKey(run.identity)) !== run) return;
     this.invalidateEffects(run);
-    this.onRevoke({ run: run.identity });
+    this.onRevoke({ run: run.identity, admissionRevision: run.admissionRevision });
   }
 
   private closeRun(run: Run, reason: BrowserReleasedEvent['reason'], discardPages = true): void {

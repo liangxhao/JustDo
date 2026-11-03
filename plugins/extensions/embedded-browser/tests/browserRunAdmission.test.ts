@@ -182,11 +182,80 @@ describe('embedded browser native run admission', () => {
 
     f.signal.abort();
 
-    expect(f.revoked).toHaveBeenCalledExactlyOnceWith({ run: desktop });
+    expect(f.revoked).toHaveBeenCalledExactlyOnceWith({ run: desktop, admissionRevision: 1 });
     expect(f.released).not.toHaveBeenCalled();
-    expect(() => f.prepare()).toThrow('authority');
+    expect(() => f.prepare()).toThrow();
+    // A new final prompt hook permits a new attempt, never the old signal.
     f.observe();
-    expect(() => f.prepare()).toThrow('authority');
+    expect(() => f.prepare()).toThrow();
+    const nextSignal = new AbortController();
+    const nextContext = {
+      ...f.toolContext,
+      toolCallId: 'retry-call',
+      abortSignal: nextSignal.signal,
+    };
+    expect(() => f.admission.prepareToolCall(nextContext)).not.toThrow();
+    const nextCall = f.admission.claimToolCall(
+      desktop.sessionKey,
+      desktop.sessionId,
+      'retry-call',
+      vi.fn(),
+    );
+    expect(nextCall.admissionRevision).toBe(2);
+    expect(() => call.assertCurrent()).toThrow('authority');
+    expect(() => f.admission.prepareToolCall({ ...nextContext, toolCallId: 'call' })).toThrow(
+      'authority',
+    );
+  });
+
+  it('requires fresh active native authority before an aborted attempt can continue', () => {
+    const f = fixture();
+    f.observe();
+    f.prepare();
+    f.signal.abort();
+    const next = {
+      ...f.toolContext,
+      toolCallId: 'next',
+      abortSignal: new AbortController().signal,
+    };
+    expect(() => f.admission.prepareToolCall(next)).toThrow('authority');
+    f.authority.assertActive.mockImplementation(() => {
+      throw new Error('native run stopped');
+    });
+    f.observe();
+    expect(() => f.admission.prepareToolCall(next)).toThrow('authority');
+  });
+
+  it('keeps prepared old call IDs consumed and isolates the next attempt from retired signals', () => {
+    const f = fixture();
+    const lateSource = new AbortController();
+    f.observe();
+    f.prepare();
+    const call = f.claim();
+    call.retainCancellation(lateSource.signal);
+    f.admission.prepareToolCall({ ...f.toolContext, toolCallId: 'unclaimed' });
+    f.signal.abort();
+    f.observe();
+    const next = { ...f.toolContext, abortSignal: new AbortController().signal };
+    expect(() => f.admission.prepareToolCall({ ...next, toolCallId: 'unclaimed' })).toThrow(
+      'authority',
+    );
+    f.admission.prepareToolCall({ ...next, toolCallId: 'next' });
+    const current = f.admission.claimToolCall(
+      desktop.sessionKey,
+      desktop.sessionId,
+      'next',
+      vi.fn(),
+    );
+    lateSource.abort();
+    f.admission.finishToolCall(f.toolContext);
+    expect(() => current.assertCurrent()).not.toThrow();
+    expect(() =>
+      f.admission.prepareToolCall({ ...f.toolContext, toolCallId: 'late-hook' }),
+    ).toThrow();
+    expect(() => current.assertCurrent()).not.toThrow();
+    expect(f.revoked).toHaveBeenCalledTimes(1);
+    expect(() => call.assertCurrent()).toThrow('authority');
   });
 
   it('retains concurrent native cancellation sources and removes all on revocation', () => {
@@ -210,7 +279,7 @@ describe('embedded browser native run admission', () => {
 
     executeSource.abort();
 
-    expect(f.revoked).toHaveBeenCalledExactlyOnceWith({ run: desktop });
+    expect(f.revoked).toHaveBeenCalledExactlyOnceWith({ run: desktop, admissionRevision: 1 });
     expect(f.released).not.toHaveBeenCalled();
     expect(removeFirst).toHaveBeenCalledTimes(1);
     expect(removeSecond).toHaveBeenCalledTimes(1);
@@ -251,14 +320,14 @@ describe('embedded browser native run admission', () => {
     },
   );
 
-  it('revokes an already-aborted native source before admitting any browser call', () => {
+  it('rejects an already-aborted source without binding it to the live admission', () => {
     const f = fixture();
     f.observe();
     f.signal.abort();
 
     expect(() => f.prepare()).toThrow();
 
-    expect(f.revoked).toHaveBeenCalledExactlyOnceWith({ run: desktop });
+    expect(f.revoked).not.toHaveBeenCalled();
     expect(f.released).not.toHaveBeenCalled();
     expect(() => f.claim()).toThrow('authority');
   });
@@ -323,10 +392,10 @@ describe('embedded browser native run admission', () => {
     // The real native runtime also aborts tool signals during normal completion.
     f.signal.abort();
 
-    expect(f.revoked).toHaveBeenCalledExactlyOnceWith({ run: desktop });
+    expect(f.revoked).toHaveBeenCalledExactlyOnceWith({ run: desktop, admissionRevision: 1 });
     expect(f.released).not.toHaveBeenCalled();
     f.observe();
-    expect(() => f.prepare()).toThrow('authority');
+    expect(() => f.prepare()).toThrow();
     f.admission.observeLifecycle({ ...desktop, stream: 'lifecycle', data: { phase: 'end' } });
     expect(f.released).not.toHaveBeenCalled();
     f.admission.observeLifecycle({
@@ -345,7 +414,13 @@ describe('embedded browser native run admission', () => {
       discardPages,
     });
     f.observe();
-    expect(() => f.prepare()).toThrow('authority');
+    expect(() =>
+      f.admission.prepareToolCall({
+        ...f.toolContext,
+        toolCallId: 'after-terminal',
+        abortSignal: new AbortController().signal,
+      }),
+    ).toThrow('authority');
   });
 
   it('finally releases an already source-revoked run when its service stops', () => {
@@ -356,7 +431,7 @@ describe('embedded browser native run admission', () => {
 
     f.admission.revokeAll();
 
-    expect(f.revoked).toHaveBeenCalledExactlyOnceWith({ run: desktop });
+    expect(f.revoked).toHaveBeenCalledExactlyOnceWith({ run: desktop, admissionRevision: 1 });
     expect(f.released).toHaveBeenCalledExactlyOnceWith({
       run: desktop,
       reason: 'revoked',

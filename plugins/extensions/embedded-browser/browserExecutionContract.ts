@@ -19,6 +19,8 @@ export type BrowserRequestedEvent = {
   requestId: string;
   sessionKey: string;
   run: BrowserExecutionRun;
+  // Plugin-owned tool admission, independent of the native whole-run identity.
+  admissionRevision: number;
   toolCallId: string;
   command: Record<string, unknown>;
   policy: { allowLocalFiles: boolean };
@@ -28,6 +30,7 @@ export type BrowserCancelledEvent = Omit<BrowserRequestedEvent, 'command' | 'pol
 
 export type BrowserRevokedEvent = {
   run: BrowserExecutionRun;
+  admissionRevision: number;
 };
 
 export type BrowserReleasedEvent = {
@@ -50,6 +53,9 @@ const readIdentifier = (value: unknown, maximum = 512): string | null =>
   !/[\u0000-\u001f\u007f]/u.test(value)
     ? value
     : null;
+
+const readAdmissionRevision = (value: unknown): number | null =>
+  typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : null;
 
 export const readBrowserExecutionRun = (value: unknown): BrowserExecutionRun | null => {
   if (!isRecord(value)) return null;
@@ -84,8 +90,16 @@ export const readBrowserCancelledEvent = (value: unknown): BrowserCancelledEvent
   const run = readBrowserExecutionRun(value.run);
   const requestId = readIdentifier(value.requestId);
   const toolCallId = readIdentifier(value.toolCallId);
-  if (!run || !requestId || !toolCallId || value.sessionKey !== run.sessionKey) return null;
-  return { requestId, sessionKey: run.sessionKey, run, toolCallId };
+  const admissionRevision = readAdmissionRevision(value.admissionRevision);
+  if (
+    !run ||
+    !requestId ||
+    !toolCallId ||
+    !admissionRevision ||
+    value.sessionKey !== run.sessionKey
+  )
+    return null;
+  return { requestId, sessionKey: run.sessionKey, run, admissionRevision, toolCallId };
 };
 
 export const readBrowserRequestedEvent = (value: unknown): BrowserRequestedEvent | null => {
@@ -116,5 +130,6 @@ export const readBrowserReleasedEvent = (value: unknown): BrowserReleasedEvent |
 export const readBrowserRevokedEvent = (value: unknown): BrowserRevokedEvent | null => {
   if (!isRecord(value)) return null;
   const run = readBrowserExecutionRun(value.run);
-  return run ? { run } : null;
+  const admissionRevision = readAdmissionRevision(value.admissionRevision);
+  return run && admissionRevision ? { run, admissionRevision } : null;
 };

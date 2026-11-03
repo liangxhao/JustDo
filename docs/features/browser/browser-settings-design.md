@@ -134,7 +134,9 @@ Main 将普通会话的 canonical key 映射到产品会话时，先查询显式
 
 #### 撤权、终态与页面回收
 
-普通后台页在正常轮末保留，后续调用需新许可；失败或取消的确切终态销毁该会话自有后台页。原生工具信号在正常工具代次清理时也会 abort，不能把信号失效推断成整轮取消。任一原始信号失效先发布独立 revoked 事件，立即阻断本轮 browser 准入、取消 pending，并撤销已经返回 armed 的上传、对话框和 Agent 下载；保留确切运行身份，直到 whole-run end/error 且 executionSettled:true 才发布最终 released。普通页此时按真实终态决定保留或销毁，定时临时页在权限退役或最终释放时均回收。后续调用等待新一轮许可，不能借用已失效的工具代次。清理不代替原生运行结果证据，也不能撤回已经发出的站点请求。
+普通后台页在正常轮末保留，后续调用需新许可；失败或取消的确切终态销毁该会话自有后台页。原生工具信号在正常工具代次清理时也会 abort，不能把信号失效推断成整轮取消。任一原始信号失效先发布独立 revoked 事件，立即阻断当前工具代次、取消 pending，并撤销已经返回 armed 的上传、对话框和 Agent 下载；保留确切运行身份，直到 whole-run end/error 且 executionSettled:true 才发布最终 released。普通页此时按真实终态决定保留或销毁，定时临时页在权限退役或最终释放时均回收。清理不代替原生运行结果证据，也不能撤回已经发出的站点请求。
+
+模型服务失败后的原生重试可以沿用同一 runId，但必须重新经过最终工具权限 hook：只有当前原生 authority 仍有效、browser 仍被允许且 sessionId/lifecycleRevision、触发类型及工作区完全一致，插件才建立新的准入对象。插件自有的 `admissionRevision` 随之递增，并在 requested/cancelled/revoked 事件顶层传给 Main；它不改变原生运行身份，也不构成执行结果。Main 保留当前代次水位，撤销旧 controller 和 armed 效果，仅接受新代次请求。旧调用 ID 在 prepare 后即占用，跨重试不可重放；旧调用引用、取消信号、低代次事件和异步准备的迟到结果不能影响新代次。没有新原生授权、整轮终态、会话身份变化或服务停止时继续拒绝，不能通过重试提示词重新授权。
 
 服务停用/替换、断连、原生 incarnation 改变、会话删除和应用退出撤销相应资源，不重试未知写入。
 
@@ -149,6 +151,8 @@ Main 将普通会话的 canonical key 映射到产品会话时，先查询显式
 核对同一原生运行的精确成功 executionSettled 终态、后续 settled release、cron.runs 成功记录、自有页面回收和两个进程正常退出，不调用 cron.run 冒充定时触发。测试关闭隔离目录的可选 Node 编译缓存，避免其退出时序列化拖延，不改变任务或工具授权。
 
 两种入口及边界见[隔离验证说明](../../../tests/browser-background-electron/README.md)。真实定时验证使用已校验完整性的冻结原生产物，报告明确 `strictCurrentSourceProof:false`：它不验证按当前完整源码重新组装的安装包。公司实际模型、业务站点/SSO、锁屏/睡眠和 macOS/Linux 尚未验收。
+
+模型重试另有 `scripts/test/verify-browser-retry.cjs --runtime-dir <runtime>` 入口，使用选定运行时的随包 Node。冻结 Gateway、当前浏览器插件与真实 Main 事件桥连接本地合成模型，验证 open 成功后一次 HTTP 503 触发原生重试，随后同一原生运行的 status 重新准入并成功返回。旧代码对照稳定返回缺少执行授权，修复后通过；旧效果撤销和精确成功终态分别核验。该入口只模拟 Main 的网页执行结果，不启动 Electron 或访问公司服务，不代表完整安装包、真实页面或 SSO 验收，详见上述隔离验证说明。
 
 ## 3. 工具动作与观察
 

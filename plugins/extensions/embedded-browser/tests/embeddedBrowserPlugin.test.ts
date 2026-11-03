@@ -224,7 +224,11 @@ describe('embedded browser trusted execution integration', () => {
       run: f.run,
       toolCallId: 'call',
     });
-    expect(f.emit).toHaveBeenCalledWith('revoked', { run: f.run }, { scope: 'operator.read' });
+    expect(f.emit).toHaveBeenCalledWith(
+      'revoked',
+      { run: f.run, admissionRevision: 1 },
+      { scope: 'operator.read' },
+    );
     expect(f.emit.mock.calls.filter(([name]) => name === 'released')).toEqual([]);
   });
 
@@ -337,10 +341,16 @@ describe('embedded browser trusted execution integration', () => {
 
     source.abort();
 
-    expect(f.emit).toHaveBeenCalledWith('revoked', { run: f.run }, { scope: 'operator.read' });
+    expect(f.emit).toHaveBeenCalledWith(
+      'revoked',
+      { run: f.run, admissionRevision: 1 },
+      { scope: 'operator.read' },
+    );
     expect(f.emit.mock.calls.filter(([name]) => name === 'released')).toEqual([]);
     f.prompt();
-    expect(f.prepare('later')).toMatchObject({ block: true });
+    expect(f.prepare('later', new AbortController().signal)).toBeUndefined();
+    expect((await f.tool.execute('later', { action: 'status' })).isError).toBeUndefined();
+    expect(f.requested().at(-1)).toMatchObject({ admissionRevision: 2 });
     f.lifecycle({ ...f.run, stream: 'lifecycle', data: { phase: 'end' } });
     expect(f.emit.mock.calls.filter(([name]) => name === 'released')).toEqual([]);
 
