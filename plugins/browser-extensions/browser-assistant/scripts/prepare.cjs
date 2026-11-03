@@ -135,6 +135,12 @@ function applyBackgroundOverlay(value) {
   );
   result = replaceIntegrationAnchor(
     result,
+    '  error: { text: "!", color: "#B91C1C" },',
+    '  error: { text: "", color: "#000000" },',
+    'hide toolbar error badge',
+  );
+  result = replaceIntegrationAnchor(
+    result,
     'const RELAY_AUTH_TIMEOUT_MS = 10_000;',
     'const RELAY_AUTH_TIMEOUT_MS = 10_000;\n\n' +
       'void chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });',
