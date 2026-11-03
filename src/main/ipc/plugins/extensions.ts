@@ -135,6 +135,7 @@ export const registerExtensionHandlers = ({
           const reason = sanitizeInstallationFailureReason(
             error instanceof Error ? error.message : error,
             [payload.sourcePath, result.installPath],
+            { preserveLocalPaths: true },
           ) ?? t('extensionFollowupFailureReasonUnavailable');
           // Return the committed receipt even when its app artifact is invalid;
           // throwing would lose it in the package-recovery observer.

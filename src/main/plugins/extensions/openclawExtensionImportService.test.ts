@@ -337,7 +337,7 @@ describe('OpenClawExtensionImportService', () => {
     },
   );
 
-  it.each(['failure', 'timeout', 'throw', 'preflight-rejected'])(
+  it.each(['failure', 'timeout', 'throw', 'advisory-owner'])(
     'reports temporary source ownership after %s without assuming the native install stopped',
     async outcome => {
       const sourceDir = path.join(fixtureRoot, 'source');
@@ -372,7 +372,7 @@ describe('OpenClawExtensionImportService', () => {
           findLockingProcesses: vi.fn(async () => ({
             available: true,
             processes:
-              outcome === 'preflight-rejected' ? [{ pid: 12345, name: 'FixtureLock' }] : [],
+              outcome === 'advisory-owner' ? [{ pid: 12345, name: 'FixtureLock' }] : [],
           })),
         }),
       });
@@ -380,22 +380,24 @@ describe('OpenClawExtensionImportService', () => {
       const result = await service.importPath(sourceDir);
 
       expect(result.success).toBe(false);
-      expect(result.installSourceInUse).toBe(outcome === 'preflight-rejected' ? undefined : true);
-      expect(runCommand).toHaveBeenCalledTimes(outcome === 'preflight-rejected' ? 0 : 1);
+      expect(result.installSourceInUse).toBe(true);
+      expect(runCommand).toHaveBeenCalledOnce();
       expect(fs.existsSync(sourceDir)).toBe(true);
     },
   );
 
   it.each([false, true])(
-    'preserves existing activation policy during an update (enabled: %s)',
+    'updates a stopped CLI package despite advisory Explorer handles, preserving enabled=%s',
     async enabled => {
       const sourceDir = path.join(fixtureRoot, 'source');
       const stateDir = path.join(fixtureRoot, 'state');
+      const installedDir = path.join(stateDir, 'extensions', 'demo');
       fs.mkdirSync(sourceDir);
-      fs.mkdirSync(stateDir);
+      fs.mkdirSync(installedDir, { recursive: true });
+      fs.writeFileSync(path.join(installedDir, 'openclaw.plugin.json'), '{"id":"demo","version":"1.0.0"}');
       fs.writeFileSync(
         path.join(sourceDir, 'openclaw.plugin.json'),
-        JSON.stringify({ id: 'demo', configSchema: { type: 'object' } }),
+        JSON.stringify({ id: 'demo', version: '2.0.0', configSchema: { type: 'object' } }),
       );
       const configPath = path.join(stateDir, 'openclaw.json');
       const config = {
@@ -408,6 +410,7 @@ describe('OpenClawExtensionImportService', () => {
       fs.writeFileSync(configPath, JSON.stringify(config));
       const manager = {
         getStatus: () => ({ phase: 'ready' }),
+        isGatewayMutationInProgress: () => true,
         getBaseDir: () => fixtureRoot,
         getStateDir: () => stateDir,
         getConfigPath: () => configPath,
@@ -416,27 +419,52 @@ describe('OpenClawExtensionImportService', () => {
           runtimeRoot: fixtureRoot,
           openclawEntry: path.join(fixtureRoot, 'openclaw.mjs'),
         }),
+        stopGateway: vi.fn(),
+        startGateway: vi.fn(),
       } as unknown as OpenClawEngineManager;
-      const runCommand = vi.fn().mockResolvedValue({ exitCode: 0, stdout: '', stderr: '' });
+      const runCommand = vi.fn(async () => {
+        fs.copyFileSync(path.join(sourceDir, 'openclaw.plugin.json'), path.join(installedDir, 'openclaw.plugin.json'));
+        return {
+          exitCode: 0, stderr: '', nativeReceiptObserved: true,
+          stdout: 'Installed plugin: demo\nSaved for the next Gateway start.',
+        };
+      });
+      const findLockingProcesses = vi.fn(async () => ({
+        available: true, processes: [{ name: 'explorer', pid: 12996 }],
+      }));
+      const requestGateway = vi.fn();
+      const restartGatewayAfterMutation = vi.fn();
       const service = new OpenClawExtensionImportService({
         getNativeSkillIds: id => (id === 'agent-team' ? ['agent-team'] : []),
         getOpenClawEngineManager: () => manager,
         runCommand,
+        requestGateway,
+        restartGatewayAfterMutation,
+        directoryOperations: new ManagedDirectoryOperationCoordinator({ findLockingProcesses }),
       });
 
       await expect(
         service.importPath(sourceDir, undefined, undefined, {
           trustMarketplaceSource: true,
           preserveActivation: true,
+          autoAcceptCapabilities: true,
         }),
-      ).resolves.toEqual({ success: true, extensionId: 'demo' });
+      ).resolves.toMatchObject({ success: true, extensionId: 'demo', installPath: installedDir });
 
+      expect(runCommand).toHaveBeenCalledOnce();
       expect(runCommand).toHaveBeenCalledWith(
         process.execPath,
         expect.arrayContaining(['plugins', 'install', '--no-enable']),
         expect.any(Object),
       );
       expect(JSON.parse(fs.readFileSync(configPath, 'utf8'))).toEqual(config);
+      expect(JSON.parse(fs.readFileSync(path.join(installedDir, 'openclaw.plugin.json'), 'utf8')).version)
+        .toBe('2.0.0');
+      expect(findLockingProcesses).not.toHaveBeenCalled();
+      expect(requestGateway).not.toHaveBeenCalled();
+      expect(manager.stopGateway).not.toHaveBeenCalled();
+      expect(manager.startGateway).not.toHaveBeenCalled();
+      expect(restartGatewayAfterMutation).not.toHaveBeenCalled();
     },
   );
 
@@ -3336,7 +3364,7 @@ describe('OpenClawExtensionImportService', () => {
     );
   });
 
-  it('keeps the Gateway and network policy when an extension import directory is locked', async () => {
+  it('keeps the Gateway and network policy after a native install reports a directory lock', async () => {
     vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
     const sourceDir = path.join(fixtureRoot, 'locked-extension');
     const stateDir = path.join(fixtureRoot, 'state');
@@ -3382,7 +3410,9 @@ describe('OpenClawExtensionImportService', () => {
       startGateway,
       restartGateway,
     } as unknown as OpenClawEngineManager;
-    const runCommand = vi.fn();
+    const runCommand = vi.fn().mockResolvedValue({
+      exitCode: 1, stdout: '', stderr: 'EPERM: operation not permitted, rename extension directory',
+    });
     const restartGatewayAfterMutation = vi.fn().mockResolvedValue({ phase: 'running' });
     const reconcile = vi
       .fn()
@@ -3435,13 +3465,13 @@ describe('OpenClawExtensionImportService', () => {
       }),
     });
 
-    await expect(service.importPath(sourceDir)).resolves.toEqual({
+    await expect(service.importPath(sourceDir)).resolves.toMatchObject({
       success: false,
       extensionId: 'locked-extension',
       error: expect.any(String),
       failedStage: 'installing',
     });
-    expect(runCommand).not.toHaveBeenCalled();
+    expect(runCommand).toHaveBeenCalledOnce();
     expect(stopGateway).not.toHaveBeenCalled();
     expect(startGateway).not.toHaveBeenCalled();
     expect(restartGateway).not.toHaveBeenCalled();
@@ -3512,21 +3542,19 @@ describe('OpenClawExtensionImportService', () => {
         openclawEntry: path.join(fixtureRoot, 'runtime', 'openclaw.mjs'),
       }),
     } as unknown as OpenClawEngineManager;
-    const findLockingProcesses = vi
-      .fn()
-      .mockResolvedValueOnce({ available: true, processes: [] })
-      .mockResolvedValueOnce({
-        available: true,
-        processes: [{ name: 'explorer', pid: 10856 }],
-      });
+    const findLockingProcesses = vi.fn().mockResolvedValue({
+      available: true,
+      processes: [{ name: 'explorer', pid: 10856 }],
+    });
+    const runCommand = vi.fn().mockResolvedValue({
+      exitCode: 1,
+      stdout: '',
+      stderr: `Permission denied: '${path.join(stateDir, 'extensions', 'locked-extension')}'`,
+    });
     const service = new OpenClawExtensionImportService({
       getNativeSkillIds: id => (id === 'agent-team' ? ['agent-team'] : []),
       getOpenClawEngineManager: () => manager,
-      runCommand: vi.fn().mockResolvedValue({
-        exitCode: 1,
-        stdout: '',
-        stderr: `Permission denied: '${path.join(stateDir, 'extensions', 'locked-extension')}'`,
-      }),
+      runCommand,
       directoryOperations: new ManagedDirectoryOperationCoordinator({ findLockingProcesses }),
     });
 
@@ -3534,10 +3562,13 @@ describe('OpenClawExtensionImportService', () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toContain('explorer (PID 10856)');
-    expect(findLockingProcesses).toHaveBeenCalledTimes(2);
+    expect(runCommand).toHaveBeenCalledOnce();
+    expect(findLockingProcesses).toHaveBeenCalledOnce();
+    expect(findLockingProcesses.mock.invocationCallOrder[0])
+      .toBeGreaterThan(runCommand.mock.invocationCallOrder[0]);
   });
 
-  it('preflights the real install directory when its name differs from the extension id', async () => {
+  it('diagnoses the real failed update directory and preserves native recovery details', async () => {
     vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
     const sourceDir = path.join(fixtureRoot, 'update-source');
     const stateDir = path.join(fixtureRoot, 'state');
@@ -3567,7 +3598,8 @@ describe('OpenClawExtensionImportService', () => {
       available: true,
       processes: targetPath === installedDir ? [{ name: 'Typora', pid: 38412 }] : [],
     }));
-    const runCommand = vi.fn();
+    const nativeError = `EPERM: rename '${installedDir}'; could not restore existing install; backup retained`;
+    const runCommand = vi.fn().mockResolvedValue({ exitCode: 1, stdout: '', stderr: nativeError });
     const service = new OpenClawExtensionImportService({
       getNativeSkillIds: id => (id === 'agent-team' ? ['agent-team'] : []),
       getOpenClawEngineManager: () => manager,
@@ -3579,8 +3611,13 @@ describe('OpenClawExtensionImportService', () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toContain('Typora (PID 38412)');
+    expect(result.error).toContain(nativeError);
     expect(findLockingProcesses).toHaveBeenCalledWith(installedDir);
-    expect(runCommand).not.toHaveBeenCalled();
+    expect(findLockingProcesses.mock.invocationCallOrder[0])
+      .toBeGreaterThan(runCommand.mock.invocationCallOrder[0]);
+    expect(runCommand).toHaveBeenCalledOnce();
+    expect(fs.readFileSync(path.join(installedDir, 'openclaw.plugin.json'), 'utf8'))
+      .toContain('Canonical Extension');
   });
 
   it.each([false, true])(

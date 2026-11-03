@@ -1,6 +1,6 @@
 import path from 'node:path';
 
-import type { PluginKind } from '../../../shared/plugins/marketplace';
+import { PluginKind } from '../../../shared/plugins/marketplace';
 import { sanitizeInstallationFailureReason } from './installationFailureReason';
 import {
   type PluginInstaller,
@@ -37,7 +37,7 @@ export class PluginInstallationService {
         typeof result.installPath === 'string' && result.installPath
           ? path.resolve(result.installPath)
           : undefined,
-      ]),
+      ], request.payload.kind === PluginKind.EXTENSION ? { preserveLocalPaths: true } : {}),
     };
   }
 }

@@ -530,7 +530,7 @@ test('keeps the committed installation and app-validation error when runtime rec
   });
   expect(result.error).toContain('App artifact hash mismatch');
   expect(result.error).toContain('Synthetic runtime recovery failure');
-  expect(result.error).not.toContain('C:/installed/feature-plugin');
+  expect(result.error).toContain('C:/installed/feature-plugin');
   expect(result.error).not.toContain('synthetic-secret');
   expect(result).not.toHaveProperty('mutationCompleted');
   expect(result).not.toHaveProperty('runtimeRecoveryPending');

@@ -6,6 +6,7 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
 import type { OpenClawPluginCapabilityReview } from '../../../shared/plugins/extensions';
 import { PluginOperationStage } from '../../../shared/plugins/pluginOperation';
+import { ManagedDirectoryOperationCoordinator } from '../../core/filesystem/managedDirectoryOperations';
 import { t } from '../../core/i18n';
 import type { OpenClawEngineManager } from '../../openclaw/runtime/openclawEngineManager';
 import {
@@ -345,6 +346,7 @@ function routedFixture(options: {
   activationRestartRequired?: boolean;
   policyChangedOnActivation?: boolean;
   activationUnknown?: boolean;
+  directoryOperations?: ManagedDirectoryOperationCoordinator;
 } = {}) {
   const source = path.join(fixtureRoot, 'managed-source');
   const state = path.join(fixtureRoot, 'managed-state');
@@ -446,6 +448,7 @@ function routedFixture(options: {
     requestGateway,
     runCommand,
     restartGatewayAfterMutation,
+    ...(options.directoryOperations ? { directoryOperations: options.directoryOperations } : {}),
     runConfigMutationExclusive: async operation => {
       expect(configMutation).toBe(false);
       configMutation = true;
@@ -476,7 +479,7 @@ function routedFixture(options: {
     }
   });
   return {
-    service, source, installed, manager, sources, targets, applyPackageMutation,
+    service, source, installed, configPath, manager, sources, targets, applyPackageMutation,
     connectedRequest, requestGateway, runCommand, restartGatewayAfterMutation,
     disconnect: () => { connected = false; },
     inConfigMutation: () => configMutation,
@@ -507,6 +510,204 @@ test.each([
   expect(f.requestGateway).not.toHaveBeenCalled();
   expect(f.restartGatewayAfterMutation).not.toHaveBeenCalled();
   expect(fs.existsSync(f.sources[0])).toBe(false);
+});
+
+test('updates once despite an advisory Explorer handle and preserves the disabled state', async () => {
+  const findLockingProcesses = vi.fn(async () => ({
+    available: true, processes: [{ name: 'explorer', pid: 12996 }],
+  }));
+  const f = routedFixture({
+    marketplaceDisabled: true,
+    directoryOperations: new ManagedDirectoryOperationCoordinator({ findLockingProcesses }),
+  });
+  fs.mkdirSync(f.installed, { recursive: true });
+  fs.writeFileSync(path.join(f.installed, 'openclaw.plugin.json'),
+    JSON.stringify({ id: 'package-plugin', version: '1.0.0' }));
+  fs.writeFileSync(path.join(f.source, 'openclaw.plugin.json'),
+    JSON.stringify({ id: 'package-plugin', version: '2.0.0' }));
+  const originalConfig = fs.readFileSync(f.configPath, 'utf8');
+
+  const result = await f.service.importPath(f.source, undefined, undefined, {
+    autoAcceptCapabilities: true, trustMarketplaceSource: true, preserveActivation: true,
+    applyPackageMutation: f.applyPackageMutation,
+  });
+
+  expect(result).toMatchObject({ success: true, extensionId: 'package-plugin' });
+  expect(f.connectedRequest).toHaveBeenCalledExactlyOnceWith('plugins.install', {
+    source: 'local', path: f.sources[0], mode: 'update', enable: false,
+  }, { timeoutMs: 600_000 });
+  expect(findLockingProcesses).not.toHaveBeenCalled();
+  expect(JSON.parse(fs.readFileSync(path.join(f.installed, 'openclaw.plugin.json'), 'utf8')).version)
+    .toBe('2.0.0');
+  expect(fs.readFileSync(f.configPath, 'utf8')).toBe(originalConfig);
+  expect(f.runCommand).not.toHaveBeenCalled();
+  expect(f.requestGateway).not.toHaveBeenCalled();
+  expect(f.restartGatewayAfterMutation).not.toHaveBeenCalled();
+});
+
+test('diagnoses an explicit native update rejection after dispatch and keeps its recovery details', async () => {
+  const findLockingProcesses = vi.fn(async () => {
+    expect(f.connectedRequest).toHaveBeenCalledOnce();
+    return { available: true, processes: [{ name: 'explorer', pid: 12996 }] };
+  });
+  const f = routedFixture({
+    marketplaceDisabled: true,
+    directoryOperations: new ManagedDirectoryOperationCoordinator({ findLockingProcesses }),
+  });
+  fs.mkdirSync(f.installed, { recursive: true });
+  const oldManifest = JSON.stringify({ id: 'package-plugin', version: '1.0.0' });
+  fs.writeFileSync(path.join(f.installed, 'openclaw.plugin.json'), oldManifest);
+  const backupPath = path.join(fixtureRoot, 'native-retained-backup');
+  fs.cpSync(f.installed, backupPath, { recursive: true });
+  const nativeReason = `EPERM: operation not permitted, rename; could not restore existing install; backup recovery path: ${backupPath}`;
+  f.connectedRequest.mockRejectedValueOnce(Object.assign(new Error(nativeReason), {
+    gatewayCode: 'UNAVAILABLE',
+  }));
+  const originalConfig = fs.readFileSync(f.configPath, 'utf8');
+
+  const result = await f.service.importPath(f.source, undefined, undefined, {
+    autoAcceptCapabilities: true, trustMarketplaceSource: true, preserveActivation: true,
+    applyPackageMutation: f.applyPackageMutation,
+  });
+
+  expect(result).toMatchObject({
+    success: false, failedStage: 'installing', error: expect.stringContaining(nativeReason),
+  });
+  expect(result.error).toContain('explorer (PID 12996)');
+  expect(result.installationCommitted).not.toBe(true);
+  expect(result.installSourceInUse).not.toBe(true);
+  expect(findLockingProcesses).toHaveBeenCalledExactlyOnceWith(f.installed);
+  expect(fs.readFileSync(path.join(f.installed, 'openclaw.plugin.json'), 'utf8')).toBe(oldManifest);
+  expect(fs.readFileSync(path.join(backupPath, 'openclaw.plugin.json'), 'utf8')).toBe(oldManifest);
+  expect(fs.readFileSync(f.configPath, 'utf8')).toBe(originalConfig);
+  expect(f.connectedRequest).toHaveBeenCalledOnce();
+  expect(f.runCommand).not.toHaveBeenCalled();
+  expect(f.requestGateway).not.toHaveBeenCalled();
+  expect(f.restartGatewayAfterMutation).not.toHaveBeenCalled();
+});
+
+test('retains both ends of a long native update failure while redacting credentials before logging', async () => {
+  const findLockingProcesses = vi.fn(async () => ({
+    available: true, processes: [{ name: 'explorer', pid: 12996 }],
+  }));
+  const f = routedFixture({
+    directoryOperations: new ManagedDirectoryOperationCoordinator({ findLockingProcesses }),
+  });
+  fs.mkdirSync(f.installed, { recursive: true });
+  fs.writeFileSync(path.join(f.installed, 'openclaw.plugin.json'), '{"id":"package-plugin"}');
+  const backupPath = path.join(fixtureRoot, 'native-retained-backup');
+  const nativeReason = [
+    '\u001b[31mEPERM: original update rename failure\u001b[0m',
+    'Authorization: Bearer fixture-sensitive-authorization',
+    '_authToken=fixture-sensitive-npm-token',
+    String.raw`--token "C:\credential-private\私密 目录\fixture-sensitive-path-secret"`,
+    String.raw`password="C:\credential-private\私密 目录\config"`,
+    'native diagnostic context '.repeat(90),
+    `Could not restore existing install; backup recovery path: ${backupPath}`,
+  ].join('\n');
+  f.connectedRequest.mockRejectedValueOnce(Object.assign(new Error(nativeReason), {
+    gatewayCode: 'UNAVAILABLE',
+  }));
+  const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+  const result = await f.service.importPath(f.source, undefined, undefined, {
+    autoAcceptCapabilities: true, trustMarketplaceSource: true, preserveActivation: true,
+    applyPackageMutation: f.applyPackageMutation,
+  });
+
+  expect(result).toMatchObject({ success: false, failedStage: 'installing' });
+  expect(result.error).toContain('EPERM: original update rename failure');
+  expect(result.error).toContain('Could not restore existing install; backup recovery path:');
+  expect(result.error).toContain(backupPath);
+  expect(result.error).toContain('explorer (PID 12996)');
+  const logged = errorLog.mock.calls.flat().join('\n');
+  for (const output of [result.error!, logged]) {
+    expect(output).not.toContain('fixture-sensitive-authorization');
+    expect(output).not.toContain('fixture-sensitive-npm-token');
+    expect(output).not.toContain('credential-private');
+    expect(output).not.toContain('fixture-sensitive-path-secret');
+    expect(output).not.toContain('\u001b[31m');
+  }
+  expect(errorLog).toHaveBeenCalledOnce();
+  expect(findLockingProcesses).toHaveBeenCalledExactlyOnceWith(f.installed);
+  expect(f.connectedRequest).toHaveBeenCalledOnce();
+  expect(f.runCommand).not.toHaveBeenCalled();
+  expect(f.restartGatewayAfterMutation).not.toHaveBeenCalled();
+});
+
+test('redacts a JSON-encoded native credential before diagnostics and preserves its directory', async () => {
+  const findLockingProcesses = vi.fn(async () => ({
+    available: true, processes: [{ name: 'explorer', pid: 12996 }],
+  }));
+  const f = routedFixture({
+    directoryOperations: new ManagedDirectoryOperationCoordinator({ findLockingProcesses }),
+  });
+  fs.mkdirSync(f.installed, { recursive: true });
+  fs.writeFileSync(path.join(f.installed, 'openclaw.plugin.json'), '{"id":"package-plugin"}');
+  const message = `EPERM: ${JSON.stringify({
+    message: String.raw`--token "C:\fixture-private\私密 credential-tail\secret"`,
+    directory: f.installed,
+  })}`;
+  f.connectedRequest.mockRejectedValueOnce(Object.assign(new Error(message), { gatewayCode: 'UNAVAILABLE' }));
+  const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+  const result = await f.service.importPath(f.source, undefined, undefined, {
+    autoAcceptCapabilities: true, trustMarketplaceSource: true, preserveActivation: true,
+    applyPackageMutation: f.applyPackageMutation,
+  });
+
+  expect(result).toMatchObject({ success: false, failedStage: 'installing' });
+  expect(result.error).toContain('EPERM:');
+  expect(result.error).toContain(JSON.stringify(f.installed));
+  expect(result.error).toContain('explorer (PID 12996)');
+  for (const text of [result.error!, errorLog.mock.calls.flat().join('\n')]) {
+    expect(text).not.toContain('fixture-private');
+    expect(text).not.toContain('credential-tail');
+  }
+  expect(findLockingProcesses).toHaveBeenCalledExactlyOnceWith(f.installed);
+  expect(f.connectedRequest).toHaveBeenCalledOnce();
+  expect(f.runCommand).not.toHaveBeenCalled();
+  expect(f.restartGatewayAfterMutation).not.toHaveBeenCalled();
+});
+
+test('keeps a lost update reply unknown when its transport message includes filesystem wording', async () => {
+  const findLockingProcesses = vi.fn(async () => ({
+    available: true, processes: [{ name: 'explorer', pid: 12996 }],
+  }));
+  const f = routedFixture({
+    marketplaceDisabled: true,
+    directoryOperations: new ManagedDirectoryOperationCoordinator({ findLockingProcesses }),
+  });
+  fs.mkdirSync(f.installed, { recursive: true });
+  const oldManifest = JSON.stringify({ id: 'package-plugin', version: '1.0.0' });
+  fs.writeFileSync(path.join(f.installed, 'openclaw.plugin.json'), oldManifest);
+  f.connectedRequest.mockRejectedValueOnce(Object.assign(
+    new Error('Native update response lost while reporting EPERM rename'),
+    { code: 'CLIENT_TIMEOUT', requestSent: true },
+  ));
+  vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+  const result = await f.service.importPath(f.source, undefined, undefined, {
+    autoAcceptCapabilities: true, trustMarketplaceSource: true, preserveActivation: true,
+    applyPackageMutation: f.applyPackageMutation,
+  });
+
+  expect(result).toMatchObject({
+    success: false, installSourceInUse: true,
+    error: 'Native update response lost while reporting EPERM rename',
+  });
+  expect(result.installationCommitted).not.toBe(true);
+  expect(findLockingProcesses).not.toHaveBeenCalled();
+  expect(f.connectedRequest).toHaveBeenCalledOnce();
+  expect(f.runCommand).not.toHaveBeenCalled();
+  expect(f.requestGateway).not.toHaveBeenCalled();
+  expect(f.restartGatewayAfterMutation).not.toHaveBeenCalled();
+  const installSource = f.connectedRequest.mock.calls[0][1].path;
+  expect(fs.existsSync(installSource)).toBe(true);
+  expect(fs.readFileSync(path.join(f.installed, 'openclaw.plugin.json'), 'utf8')).toBe(oldManifest);
+  const retained = fs.realpathSync(path.dirname(installSource));
+  expect(path.basename(retained).startsWith('extension-install-source-')).toBe(true);
+  fs.rmSync(retained, { recursive: true, force: true });
 });
 
 test.each([

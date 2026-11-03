@@ -82,3 +82,56 @@ test('does not turn an unexpected installer exception into a public reason', asy
     }),
   ).rejects.toThrow('Bearer private-provider-token');
 });
+
+test('keeps extension update source, installation and backup directories in a credential-sanitized host reason', async () => {
+  const service = new PluginInstallationService();
+  const sourcePath = String.raw`C:\Downloads\插件 更新包.zip`;
+  const installPath = String.raw`C:\runtime\extensions\插件 目录`;
+  const backupPath = String.raw`C:\runtime\extensions\.backup\插件 目录`;
+  service.registerInstaller({
+    kind: PluginKind.EXTENSION,
+    install: vi.fn(async () => ({
+      success: false,
+      installPath,
+      failedStage: 'installing',
+      error: [
+        `Extension directory: "${installPath}"`,
+        `Source archive: "${sourcePath}"`,
+        `Backup recovery path: "${backupPath}"`,
+        'Authorization: Bearer fixture-private-authorization',
+        'Cookie: fixture-private-cookie',
+      ].join('\n'),
+    })),
+  });
+
+  const result = await service.install({
+    operation: MarketplaceInstallOperation.UPDATE,
+    origin: PluginInstallOrigin.MARKETPLACE,
+    payload: { kind: PluginKind.EXTENSION, sourcePath },
+  });
+
+  expect(result).toMatchObject({ success: false, failedStage: 'installing' });
+  for (const directory of [sourcePath, installPath, backupPath]) {
+    expect(result.publicReason).toContain(directory);
+  }
+  expect(result.publicReason).not.toContain('[REDACTED PATH]');
+  expect(result.publicReason).not.toContain('fixture-private-');
+});
+
+test('keeps path redaction for other host installer kinds', async () => {
+  const service = new PluginInstallationService();
+  const directory = String.raw`C:\private-source\skill`;
+  service.registerInstaller({
+    kind: PluginKind.SKILL,
+    install: vi.fn(async () => ({ success: false, error: `Cannot read "${directory}"` })),
+  });
+
+  const result = await service.install({
+    operation: MarketplaceInstallOperation.UPDATE,
+    origin: PluginInstallOrigin.MARKETPLACE,
+    payload: { kind: PluginKind.SKILL, sourcePath: directory },
+  });
+
+  expect(result.publicReason).toContain('[REDACTED PATH]');
+  expect(result.publicReason).not.toContain('private-source');
+});

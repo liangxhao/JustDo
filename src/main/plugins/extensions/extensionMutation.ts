@@ -35,6 +35,8 @@ async function observeExtensionMutation<T>(
 function recoveryMessage(summary: string, error: unknown, includeSummary = true): string {
   const detail = sanitizeInstallationFailureReason(
     error instanceof Error ? error.message : undefined,
+    [],
+    { preserveLocalPaths: true },
   );
   return detail ? includeSummary ? `${summary}\n${detail}` : detail : summary;
 }

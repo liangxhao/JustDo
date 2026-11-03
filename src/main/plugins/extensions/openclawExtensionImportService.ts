@@ -4,6 +4,7 @@ import os from 'os';
 import path from 'path';
 import * as tar from 'tar';
 
+import { redactLogText } from '../../../shared/diagnostics/redaction';
 import {
   type ExtensionDeleteResult,
   type ExtensionImportResult,
@@ -33,6 +34,7 @@ import type { GatewayRequestOptions } from '../../engine/types';
 import { restrictCredentialFile } from '../../openclaw/config/models/providerSecretFile';
 import { requireOpenClawCliExecutable } from '../../openclaw/runtime/launch/cliNodeRuntime';
 import type { OpenClawEngineManager } from '../../openclaw/runtime/openclawEngineManager';
+import { sanitizeInstallationFailureReason } from '../installation/installationFailureReason';
 import {
   type CommandOptions,
   type CommandResult,
@@ -803,15 +805,17 @@ const updateExtensionAllowlist = (
   }
 };
 
+const sanitizeCommandOutput = (output: string): string =>
+  redactLogText(output.replace(/\u001b\[[0-9;]*m/g, ''))
+    .replace(/(https?:\/\/)[^\s/@]+:[^\s/@]+@/gi, '$1***:***@')
+    .replace(/(_authToken\s*[=:]\s*)[^\s]+/gi, '$1***')
+    .trim();
+
 const formatCommandError = (result: CommandResult): string => {
   if (result.timedOut) {
     return t('extensionCommandTimedOutUnconfirmed');
   }
-  const output = (result.stderr || result.stdout)
-    .replace(/\u001b\[[0-9;]*m/g, '')
-    .replace(/(https?:\/\/)[^\s/@]+:[^\s/@]+@/gi, '$1***:***@')
-    .replace(/(_authToken\s*[=:]\s*)[^\s]+/gi, '$1***')
-    .trim();
+  const output = sanitizeCommandOutput(result.stderr || result.stdout);
   const packagingError = output.match(
     /package install requires compiled runtime output[\s\S]*?(?=\s*Also not a valid hook pack:|$)/i,
   )?.[0];
@@ -1127,18 +1131,33 @@ export class OpenClawExtensionImportService {
   private async runDirectoryCommand(
     targetPath: string,
     command: () => Promise<CommandResult>,
+    options: { preflightLockCheck?: boolean } = {},
   ): Promise<{ result: CommandResult; runtimeRestarted: boolean; error?: string }> {
     let lastResult: CommandResult | null = null;
+    let nativeCommandError: string | undefined;
     const operation = await this.directoryOperations.execute({
       resourceName: t('extensionDirectoryResource'),
       targetPath,
       manageRuntimeOnLock: false,
-      // OpenClaw's CLI owns the internal directory mutation. Detect external
-      // owners before invoking it so a failed recursive uninstall/update cannot
-      // leave the live extension directory only partially modified.
-      preflightLockCheck: true,
+      // Recursive uninstall retains its preflight. Native installation owns a
+      // staged update; an open directory handle alone cannot prove it will fail.
+      preflightLockCheck: options.preflightLockCheck ?? true,
       operation: async () => {
-        lastResult = await command();
+        try {
+          lastResult = await command();
+        } catch (error) {
+          const rawMessage = error instanceof Error ? error.message : String(error);
+          const message = sanitizeCommandOutput(rawMessage);
+          // Only an explicit native filesystem rejection can become a diagnosed
+          // command failure. Transport uncertainty must keep its original evidence.
+          if (options.preflightLockCheck !== false || !isRecord(error) ||
+              typeof error.gatewayCode !== 'string' || !isDirectoryLockError({ message, cause: error }) ||
+              !/\b(?:EACCES|EPERM|EBUSY|rename|rmdir|unlink)\b/i.test(message)) throw error;
+          nativeCommandError = sanitizeInstallationFailureReason(rawMessage, [], { preserveLocalPaths: true }) ??
+            t('extensionFollowupFailureReasonUnavailable');
+          lastResult = { exitCode: 1, stdout: '', stderr: nativeCommandError };
+          return managedDirectoryFailure(managedDirectoryFailureFromMessage(nativeCommandError, targetPath));
+        }
         if (lastResult.exitCode === 0) return managedDirectorySuccess(lastResult);
         return managedDirectoryFailure(
           managedDirectoryFailureFromMessage(formatCommandError(lastResult), targetPath),
@@ -1148,12 +1167,15 @@ export class OpenClawExtensionImportService {
     if (!('failure' in operation)) {
       return { result: operation.value, runtimeRestarted: operation.runtimeRestarted };
     }
+    const commandError = nativeCommandError ?? (lastResult ? formatCommandError(lastResult) : undefined);
     return {
       result:
         lastResult ??
         ({ exitCode: 1, stdout: '', stderr: operation.failure.message } satisfies CommandResult),
       runtimeRestarted: operation.runtimeRestarted,
-      error: operation.failure.message,
+      error: commandError && !operation.failure.message.includes(commandError)
+        ? `${commandError}\n\n${operation.failure.message}`
+        : operation.failure.message,
     };
   }
 
@@ -2785,7 +2807,7 @@ export class OpenClawExtensionImportService {
               }
             }
             return result;
-          });
+          }, { preflightLockCheck: false });
           const result = command.result;
           if (result.exitCode !== 0) {
             let error = command.error ?? formatCommandError(result);

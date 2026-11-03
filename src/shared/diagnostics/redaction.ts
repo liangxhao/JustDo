@@ -1,16 +1,44 @@
 const secretKey = (key: string) =>
-  /(?:password|passwd|token|secret|apikey|accesskey|privatekey|authorization|cookie|credentials?)$/i.test(
+  /(?:password|passwd|token|secret|apikey|accesskey|privatekey|authorization|cookie|credentials?|accesscode)$/i.test(
     key.replace(/[-_\s]/g, ''),
   );
+
+function redactQuotedCredentials(value: string): string {
+  const prefix = /(?<![\w-])((?:"([\w \t-]+)"|'([\w \t-]+)'|([\w-]+))[ \t]*[:=][ \t]*|--([\w-]+)[ \t]+)(["'])/g;
+  let result = '';
+  let copiedThrough = 0;
+  for (let match = prefix.exec(value); match; match = prefix.exec(value)) {
+    const key = (match[2] ?? match[3] ?? match[4] ?? match[5]).replace(/[-_\s]/g, '');
+    if (!/(?:password|passwd|token|secret|apikey|accesskey|privatekey|authorization|cookie|credential|accesscode)/i.test(key)) {
+      prefix.lastIndex--;
+      continue;
+    }
+    const quote = match[6];
+    let end = prefix.lastIndex;
+    while (end < value.length) {
+      if (value[end] === quote) break;
+      if (value[end] === '\\' && end + 1 < value.length) end++;
+      end++;
+    }
+    // Prefer confidentiality if the quoted value has no unambiguous closing delimiter.
+    const closed = value[end] === quote && (!value[end + 1] || /[\s,;&}\])]/.test(value[end + 1]));
+    const consumedThrough = closed ? end + 1 : value.length;
+    result += value.slice(copiedThrough, match.index) + match[1] + quote + '[REDACTED]' + quote;
+    copiedThrough = consumedThrough;
+    prefix.lastIndex = consumedThrough;
+  }
+  return result + value.slice(copiedThrough);
+}
 
 /** Best-effort credential masking; task content is intentionally retained for local export. */
 export function redactLogText(text: string): string {
   const maskText = (value: string) =>
-    value
-      .replace(
+    redactQuotedCredentials(
+      value.replace(
         /-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?-----END [^-]*PRIVATE KEY-----/g,
         '[REDACTED PRIVATE KEY]',
-      )
+      ),
+    )
       .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9+/_.=:-]+/gi, '$1 [REDACTED]')
       .replace(/\b((?:set-cookie|cookie|authorization)\s*:\s*)[^\r\n]+/gi, '$1[REDACTED]')
       .replace(/(https?:\/\/)[^\s/@:]+:[^\s/@]+@/gi, '$1[REDACTED]@')

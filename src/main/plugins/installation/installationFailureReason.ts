@@ -7,6 +7,7 @@ const MAX_PUBLIC_REASON_LENGTH = 4000;
 export function sanitizeInstallationFailureReason(
   value: unknown,
   privatePaths: readonly (string | undefined)[] = [],
+  options: { preserveLocalPaths?: true } = {},
 ): string | undefined {
   if (typeof value !== 'string' || value.length > MAX_REASON_INPUT_LENGTH) return undefined;
   let reason = value
@@ -22,31 +23,33 @@ export function sanitizeInstallationFailureReason(
       '$1[REDACTED]',
     )
     .replace(/(--access[_-]?code\s+)("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\S+)/gi, '$1[REDACTED]');
-  for (const privatePath of [...privatePaths].sort((a, b) => (b?.length ?? 0) - (a?.length ?? 0))) {
-    if (
-      !privatePath ||
-      !/^(?:[A-Za-z]:[\\/]|[\\/])/.test(privatePath) ||
-      /^(?:[A-Za-z]:)?[\\/]+$/.test(privatePath)
-    )
-      continue;
-    const variants = new Set([
-      privatePath,
-      privatePath.replace(/\\/g, '/'),
-      privatePath.replace(/\//g, '\\'),
-    ]);
-    for (const variant of variants) {
-      const escaped = variant.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      reason = reason.replace(new RegExp(escaped, 'gi'), '[REDACTED PATH]');
+  reason = reason.replace(/\b(?:https?|file):\/\/[^\s<>"']+/gi, '[REDACTED URL]');
+  if (!options.preserveLocalPaths) {
+    for (const privatePath of [...privatePaths].sort((a, b) => (b?.length ?? 0) - (a?.length ?? 0))) {
+      if (
+        !privatePath ||
+        !/^(?:[A-Za-z]:[\\/]|[\\/])/.test(privatePath) ||
+        /^(?:[A-Za-z]:)?[\\/]+$/.test(privatePath)
+      )
+        continue;
+      const variants = new Set([
+        privatePath,
+        privatePath.replace(/\\/g, '/'),
+        privatePath.replace(/\//g, '\\'),
+      ]);
+      for (const variant of variants) {
+        const escaped = variant.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        reason = reason.replace(new RegExp(escaped, 'gi'), '[REDACTED PATH]');
+      }
     }
+    reason = reason
+      .replace(/(["'`])(?:[A-Za-z]:[\\/]|[\\/])[^\r\n]*?\1/g, '$1[REDACTED PATH]$1')
+      .replace(
+        /(?:[A-Za-z]:[\\/]|\\\\|(?<![\w\\])\\)(?:[^\\/\r\n"'<>|:]+[\\/])*[^\s\\/"'<>|:,;]*/g,
+        '[REDACTED PATH]',
+      )
+      .replace(/(?<![\w.:])\/(?:[^/\r\n"'<>|:]+\/)*[^\s/"'<>|:,;]*/g, '[REDACTED PATH]');
   }
-  reason = reason
-    .replace(/\b(?:https?|file):\/\/[^\s<>"']+/gi, '[REDACTED URL]')
-    .replace(/(["'`])(?:[A-Za-z]:[\\/]|[\\/])[^\r\n]*?\1/g, '$1[REDACTED PATH]$1')
-    .replace(
-      /(?:[A-Za-z]:[\\/]|\\\\|(?<![\w\\])\\)(?:[^\\/\r\n"'<>|:]+[\\/])*[^\s\\/"'<>|:,;]*/g,
-      '[REDACTED PATH]',
-    )
-    .replace(/(?<![\w.:])\/(?:[^/\r\n"'<>|:]+\/)*[^\s/"'<>|:,;]*/g, '[REDACTED PATH]')
-    .trim();
+  reason = reason.trim();
   return reason ? reason.slice(0, MAX_PUBLIC_REASON_LENGTH) : undefined;
 }

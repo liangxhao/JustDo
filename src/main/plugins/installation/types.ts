@@ -40,7 +40,7 @@ export interface PluginInstallResult {
   mutationCompleted?: true;
   runtimeRecoveryPending?: true;
   pluginId?: string;
-  /** Internal install location used to disambiguate layered capabilities. Never expose over IPC. */
+  /** Main-only install identity, omitted as an IPC field; local error text may name its directory. */
   installPath?: string;
   restartRequired?: boolean;
   failedStage?: string;

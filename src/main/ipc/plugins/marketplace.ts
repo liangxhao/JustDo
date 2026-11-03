@@ -156,6 +156,7 @@ const publicInstallResult = (
     failedStage?: string;
     publicReason?: string;
   },
+  kind: MarketplacePluginKind,
   currentStage?: PluginOperationStage,
 ): MarketplaceInstallResponse => {
   const pluginId =
@@ -174,7 +175,11 @@ const publicInstallResult = (
       ...(result.mutationCompleted ? { mutationCompleted: true as const } : {}),
       ...(result.runtimeRecoveryPending ? { runtimeRecoveryPending: true as const } : {}),
       error:
-        sanitizeInstallationFailureReason(result.publicReason) || 'Marketplace installation failed',
+        sanitizeInstallationFailureReason(
+          result.publicReason,
+          [],
+          kind === MarketplacePluginKind.EXTENSION ? { preserveLocalPaths: true } : undefined,
+        ) || 'Marketplace installation failed',
       errorCode: MarketplaceErrorCode.INTERNAL,
       ...(failedStage ? { failedStage } : {}),
     };
@@ -355,7 +360,7 @@ export const registerMarketplaceHandlers = (pluginManager: PluginManager): void 
               context as PluginOperationContext,
             )
           : await pluginManager.installFromMarketplace(installRequest, onProgress);
-        return publicInstallResult(result, currentStage);
+        return publicInstallResult(result, installRequest.kind, currentStage);
       } catch (error) {
         logError('install', error);
         const failedStage =

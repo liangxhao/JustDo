@@ -12,6 +12,8 @@ import {
   PluginOperationStage,
 } from '../../../shared/plugins/pluginOperation';
 import type { PluginManager } from '../../plugins';
+import { PluginInstallationService } from '../../plugins/installation/pluginInstallationService';
+import { PluginInstallOrigin } from '../../plugins/installation/types';
 import { MarketplaceError } from '../../plugins/marketplace/types';
 
 const handlers = new Map<string, (...args: unknown[]) => unknown>();
@@ -252,7 +254,7 @@ test('projects successful install results onto the public response contract', as
   });
 });
 
-test('does not expose internal installation failure details', async () => {
+test.each([PluginKind.EXTENSION, PluginKind.SKILL])('does not expose raw installation failure details for %s', async kind => {
   const manager = createPluginManager();
   vi.mocked(manager.installFromMarketplace).mockResolvedValue({
     success: false,
@@ -266,7 +268,7 @@ test('does not expose internal installation failure details', async () => {
     {
       sourceId: 'enterprise',
       pluginId: 'writer',
-      kind: PluginKind.SKILL,
+      kind,
     },
   );
 
@@ -307,7 +309,7 @@ test('shows an explicitly public host validation reason while keeping private re
   });
 });
 
-test('sanitizes public reasons again without changing committed and unknown-result evidence', async () => {
+test('preserves extension paths on the second sanitizer pass without changing committed and unknown-result evidence', async () => {
   const manager = createPluginManager();
   vi.mocked(manager.installFromMarketplace).mockResolvedValue({
     success: false,
@@ -337,7 +339,91 @@ test('sanitizes public reasons again without changing committed and unknown-resu
     error: expect.stringContaining('Cannot enable plugin'),
     failedStage: PluginOperationStage.ENABLING,
   });
-  expect(JSON.stringify(response)).not.toContain('private');
+  expect(JSON.stringify(response)).not.toContain('private-value');
+  expect(JSON.stringify(response)).not.toContain('private native output');
+  expect(response).toHaveProperty('error', expect.stringContaining(String.raw`C:\private source\plugin`));
+});
+
+test('shows local extension update and backup directories through host service and final IPC sanitization', async () => {
+  const directory = String.raw`C:\Users\示例用户\插件 目录\writer`;
+  const backupDirectory = String.raw`C:\Users\示例用户\插件 目录\.writer-backup-旧版`;
+  const sourcePath = String.raw`C:\Users\示例用户\下载 临时包\writer.zip`;
+  const service = new PluginInstallationService();
+  service.registerInstaller({
+    kind: PluginKind.EXTENSION,
+    install: vi.fn(async () => ({
+      success: false,
+      installationCommitted: true as const,
+      operationUnconfirmed: true as const,
+      installSourceInUse: true as const,
+      pluginId: 'writer',
+      installPath: directory,
+      failedStage: PluginOperationStage.INSTALLING,
+      error: [
+        `扩展目录：${directory}`,
+        `安装源：${sourcePath}`,
+        '占用程序：explorer (PID 12996)',
+        `备份恢复目录：${backupDirectory}`,
+        'Authorization: Bearer fixture-private-bearer',
+        'Cookie: fixture-private-cookie',
+        'accessCode="fixture-private-access-code"',
+        'Download: https://example.test/private-package?token=fixture-private-query',
+        String.raw`    at install (C:\private-stack\installer.js:12:3)`,
+      ].join('\n'),
+    })),
+  });
+  const manager = createPluginManager();
+  vi.mocked(manager.installFromMarketplace).mockImplementation(async () => service.install({
+    operation: MarketplaceInstallOperation.UPDATE,
+    origin: PluginInstallOrigin.MARKETPLACE,
+    payload: { kind: PluginKind.EXTENSION, sourcePath },
+  }));
+  registerMarketplaceHandlers(manager);
+
+  const response = await handlers.get(MarketplaceIpc.Install)?.({}, {
+    sourceId: 'enterprise', pluginId: 'writer', kind: PluginKind.EXTENSION,
+    operation: MarketplaceInstallOperation.UPDATE,
+  });
+
+  expect(response).toMatchObject({
+    success: false, installationCommitted: true, operationUnconfirmed: true,
+    installSourceInUse: true, pluginId: 'writer', failedStage: PluginOperationStage.INSTALLING,
+    error: expect.stringContaining(directory),
+  });
+  expect(response).not.toHaveProperty('installPath');
+  expect(response).not.toHaveProperty('sourcePath');
+  expect(response).not.toHaveProperty('publicReason');
+  expect(response).toHaveProperty('error', expect.stringContaining(backupDirectory));
+  expect(response).toHaveProperty('error', expect.stringContaining(sourcePath));
+  expect(response).toHaveProperty('error', expect.stringContaining('explorer (PID 12996)'));
+  const text = JSON.stringify(response);
+  expect(text).not.toContain('[REDACTED PATH]');
+  for (const privateText of [
+    'fixture-private-bearer', 'fixture-private-cookie', 'fixture-private-access-code',
+    'fixture-private-query', 'private-package', 'private-stack',
+  ]) expect(text).not.toContain(privateText);
+  expect(manager.installFromMarketplace).toHaveBeenCalledOnce();
+});
+
+test.each([PluginKind.SKILL, PluginKind.MCP])('keeps local path redaction for %s regardless of request visibility hints', async kind => {
+  const directory = String.raw`C:\Users\示例用户\private local directory`;
+  const manager = createPluginManager();
+  vi.mocked(manager.installFromMarketplace).mockResolvedValue({
+    success: false,
+    publicReason: `Cannot access "${directory}"; accessCode=fixture-private-access-code`,
+    failedStage: PluginOperationStage.INSTALLING,
+  });
+  registerMarketplaceHandlers(manager);
+
+  const response = await handlers.get(MarketplaceIpc.Install)?.({}, {
+    sourceId: 'enterprise', pluginId: 'writer', kind, preserveLocalPaths: true,
+  });
+
+  expect(response).toMatchObject({ success: false, error: expect.stringContaining('[REDACTED PATH]') });
+  const text = JSON.stringify(response);
+  expect(text).not.toContain('示例用户');
+  expect(text).not.toContain('private local directory');
+  expect(text).not.toContain('fixture-private-access-code');
 });
 
 test.each([true, false])('preserves completed mutation and pending recovery evidence over marketplace IPC (success: %s)', async success => {
