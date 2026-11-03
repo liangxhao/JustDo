@@ -117,7 +117,8 @@ export function trackBrowserFavicon(
 ): void {
   let controller: AbortController | undefined;
   let attempted = false;
-  let lastCandidates = '';
+  let lastCandidates: string[] = [];
+  let loadedFavicon: { origin: string; faviconUrl: string; cacheSignal: AbortSignal } | undefined;
   const cancel = () => {
     controller?.abort();
     controller = undefined;
@@ -125,10 +126,9 @@ export function trackBrowserFavicon(
   const load = (favicons: string[]) => {
     if (guest.isDestroyed()) return;
     const pageUrl = guest.getURL();
-    const candidateKey = JSON.stringify(favicons);
-    if (attempted && candidateKey === lastCandidates) return;
+    if (attempted && JSON.stringify(favicons) === JSON.stringify(lastCandidates)) return;
     attempted = true;
-    lastCandidates = candidateKey;
+    lastCandidates = [...favicons];
     cancel();
     const current = new AbortController();
     controller = current;
@@ -144,6 +144,7 @@ export function trackBrowserFavicon(
         allowResource,
       );
       if (faviconUrl && !signal.aborted && !guest.isDestroyed()) {
+        loadedFavicon = { origin: new URL(pageUrl).origin, faviconUrl, cacheSignal };
         publish({ guestId: guest.id, url: guest.getURL(), faviconUrl }, cacheSignal);
       }
     })()
@@ -156,17 +157,37 @@ export function trackBrowserFavicon(
       });
   };
   guest.on('did-start-navigation', details => {
-    if (details.isMainFrame && !details.isSameDocument) cancel();
+    if (details.isMainFrame && !details.isSameDocument) {
+      cancel();
+      // A stopped navigation may never commit. Allow the current document's
+      // icon to resume, retaining its candidates until a new document commits.
+      attempted = false;
+    }
   });
   guest.on('did-navigate', (_event, url) => {
     cancel();
     attempted = false;
-    lastCandidates = '';
-    publish({ guestId: guest.id, url });
+    lastCandidates = [];
+    if (
+      loadedFavicon &&
+      !loadedFavicon.cacheSignal.aborted &&
+      isAllowedFaviconUrl(url) &&
+      new URL(url).origin === loadedFavicon.origin
+    ) {
+      // Keep the site's loaded icon while a same-origin document refreshes.
+      // A later native candidate can replace it without a transient empty icon.
+      publish(
+        { guestId: guest.id, url, faviconUrl: loadedFavicon.faviconUrl },
+        loadedFavicon.cacheSignal,
+      );
+    } else {
+      loadedFavicon = undefined;
+      publish({ guestId: guest.id, url });
+    }
   });
   guest.on('page-favicon-updated', (_event, favicons) => load(favicons));
   guest.on('did-stop-loading', () => {
-    if (!attempted) load([]);
+    if (!attempted) load(lastCandidates);
   });
   guest.on('destroyed', cancel);
 }

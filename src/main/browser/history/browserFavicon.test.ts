@@ -205,6 +205,96 @@ describe('browser tab favicons', () => {
     await vi.waitFor(() => expect(publish).toHaveBeenCalled());
   });
 
+  it('keeps the loaded site icon across same-origin documents until a replacement loads', async () => {
+    const { guest, fetch, publish } = createGuest();
+    guest.emit('page-favicon-updated', {}, ['https://cdn.example.com/icon.png']);
+    await vi.waitFor(() => expect(publish).toHaveBeenCalledOnce());
+    const cacheSignal = publish.mock.calls[0][1];
+
+    guest.emit('did-start-navigation', { isMainFrame: true, isSameDocument: false });
+    guest.getURL.mockReturnValue('https://example.com/home');
+    guest.emit('did-navigate', {}, guest.getURL());
+
+    expect(publish).toHaveBeenLastCalledWith(
+      { guestId: 7, url: 'https://example.com/home', faviconUrl: iconDataUrl },
+      cacheSignal,
+    );
+    fetch.mockRejectedValueOnce(new Error('The new document has no root favicon.'));
+    guest.emit('did-stop-loading');
+    await new Promise(done => setImmediate(done));
+    expect(publish).toHaveBeenCalledTimes(2);
+
+    const replacement = 'data:image/png;base64,bmV3';
+    guest.emit('page-favicon-updated', {}, [replacement]);
+    await vi.waitFor(() => expect(publish).toHaveBeenCalledTimes(3));
+    expect(publish).toHaveBeenLastCalledWith(
+      { guestId: 7, url: 'https://example.com/home', faviconUrl: replacement },
+      cacheSignal,
+    );
+  });
+
+  it.each(['https://other.example/', 'about:blank'])(
+    'clears the previous site icon when navigating to %s',
+    async url => {
+      const { guest, publish } = createGuest();
+      guest.emit('page-favicon-updated', {}, [iconDataUrl]);
+      await vi.waitFor(() => expect(publish).toHaveBeenCalledOnce());
+
+      guest.emit('did-start-navigation', { isMainFrame: true, isSameDocument: false });
+      guest.getURL.mockReturnValue(url);
+      guest.emit('did-navigate', {}, url);
+
+      expect(publish).toHaveBeenLastCalledWith({ guestId: 7, url });
+    },
+  );
+
+  it('does not retain a site icon invalidated by history or cache clearing', async () => {
+    const { guest, publish } = createGuest();
+    guest.emit('page-favicon-updated', {}, [iconDataUrl]);
+    await vi.waitFor(() => expect(publish).toHaveBeenCalledOnce());
+    invalidateBrowserFaviconCache();
+
+    guest.getURL.mockReturnValue('https://example.com/home');
+    guest.emit('did-navigate', {}, guest.getURL());
+
+    expect(publish).toHaveBeenLastCalledWith({ guestId: 7, url: 'https://example.com/home' });
+  });
+
+  it.each(['native update', 'loading stopped'])(
+    'resumes favicon loading after an uncommitted navigation on %s',
+    async recovery => {
+      const { guest, fetch, publish } = createGuest();
+      let resolve!: (response: Response) => void;
+      fetch.mockImplementationOnce(
+        () =>
+          new Promise<Response>(done => {
+            resolve = done;
+          }),
+      );
+      const candidates = ['https://example.com/icon.png'];
+      guest.emit('page-favicon-updated', {}, candidates);
+      const previousSignal = fetch.mock.calls[0][1].signal as AbortSignal;
+
+      // An Agent navigation may be stopped before a new document commits.
+      guest.emit('did-start-navigation', { isMainFrame: true, isSameDocument: false });
+      expect(previousSignal.aborted).toBe(true);
+      if (recovery === 'native update') guest.emit('page-favicon-updated', {}, candidates);
+      else guest.emit('did-stop-loading');
+
+      await vi.waitFor(() => expect(publish).toHaveBeenCalledOnce());
+      expect(fetch).toHaveBeenCalledTimes(2);
+      expect(fetch.mock.calls[1][0]).toBe(candidates[0]);
+      expect(publish.mock.calls[0][0]).toEqual({
+        guestId: 7,
+        url: 'https://example.com/docs',
+        faviconUrl: iconDataUrl,
+      });
+      resolve(iconResponse());
+      await new Promise(done => setImmediate(done));
+      expect(publish).toHaveBeenCalledOnce();
+    },
+  );
+
   it('aborts stalled requests at the timeout', async () => {
     vi.useFakeTimers();
     const { guest, fetch, publish } = createGuest();
