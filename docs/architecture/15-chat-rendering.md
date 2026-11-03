@@ -568,6 +568,13 @@ stateDiagram-v2
 
 停止成功回执通过 settleConfirmedRun 收敛当前 Renderer turn 的显示，不依赖 aborted stream 恰好送达。首个流事件尚未到达时只保存 fence，不制造空消息或结束别的 run。重复 receipt/abort/lifecycle 共用显示终态行及结束时间。这里的停止显示与 Main 的整轮执行结论分开：Stop ACK 不补造 execution outcome，后者仍要求匹配 run 的 `executionSettled:true` 生命周期证据。
 
+同一 run 已有原生 preamble 分段时，中止通知的整轮累计正文不能作为末尾答复。
+前台和后台均保留原有过程 owner 与顺序，仅将最后 preamble／Tool／compaction 边界之后的
+最后可见非 preamble 正文及尾段 Thinking 用作中断兜底，不拼接此前过程文字。
+只有过程输出时不生成额外助手正文，由原生历史接管；真正尚未持久化的部分答复
+继续使用已有单条中断兜底，避免历史刷新时丢失。中止通知中的原生非文本交付继续保留，
+后续仅含生命周期的重复通知不撤回这些内容。
+
 普通 send 尚未获得原生 handle 时，取消需要等待迟到 admission；UI 等待有界，超时不能假装原生已空闲。后台继续处理原操作取消，同一操作重试共用取消任务，完成前保留发送隔离。
 
 停止先同步关闭本地 Team 发起准入，并立即向 Gateway 发出原生停止；Team 守卫的异步清理和未知发送的取消意图回写不作为原生停止的前置等待。辅助回写失败仍保留未知操作与重试栅栏，不妨碍尝试停止主运行，也不补造原生终态。

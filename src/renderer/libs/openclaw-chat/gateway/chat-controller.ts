@@ -4,7 +4,6 @@ import {
   appendTerminalMessage,
   asRecord,
   assistantEventText,
-  buildInterruptedTurnMessage,
   ChatControllerOptions,
   ChatHistorySnapshot,
   ChatState,
@@ -12,7 +11,6 @@ import {
   ChatStreamListener,
   ChatStreamUpdateKind,
   cloneAssistantTurn,
-  collectActiveContentText,
   collectActiveThinkingText,
   contextUsageSnapshotsEqual,
   debugLog,
@@ -28,6 +26,7 @@ import {
   readChatContextUsageSnapshot,
   readNonBlankString,
   readStringList,
+  resolveInterruptedTurnMessage,
   RewindEditorDraft,
   SessionLiveState,
   SideChatResult,
@@ -1527,7 +1526,6 @@ export class ChatController {
       return;
     }
     const liveThinkingText = collectActiveThinkingText(cached.transcript.activeTurn);
-    const liveContentText = collectActiveContentText(cached.transcript.activeTurn);
     const startedAt = cached.transcript.activeTurn?.startedAt ?? null;
     const persistedFinal = findPersistedChatFinal(
       payload,
@@ -1550,11 +1548,12 @@ export class ChatController {
       payload.state === 'final'
         ? stripAssistantSilentReplySuffix(payload.message)
         : payload.message;
-    if (payload.state === 'aborted' && !terminalMessage) {
-      terminalMessage = buildInterruptedTurnMessage(
-        liveThinkingText,
-        liveContentText,
+    if (payload.state === 'aborted') {
+      terminalMessage = resolveInterruptedTurnMessage(
+        cached.transcript.activeTurn,
+        terminalMessage,
         payload.runId,
+        this.chatMessagesBySession.get(sessionKey)?.recentMessages,
       );
     }
     if (terminalMessage && !shouldHideMessage(terminalMessage) && !persistedFinal) {
@@ -1563,7 +1562,7 @@ export class ChatController {
           ? { ...(terminalMessage as Record<string, unknown>), runId: payload.runId }
           : terminalMessage;
       const projectedMessage = markOptimisticHistoryTail(
-        liveThinkingText
+        liveThinkingText && payload.state !== 'aborted'
           ? withThinkingContent(runScopedMessage, liveThinkingText)
           : runScopedMessage,
       );

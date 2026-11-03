@@ -888,6 +888,73 @@ export function buildInterruptedTurnMessage(
   };
 }
 
+/** A run-wide abort buffer cannot replace native commentary/message owners. */
+export function resolveInterruptedTurnMessage(
+  turn: AssistantTurn | null,
+  message: unknown,
+  runId: string | null,
+  messages: readonly unknown[] = [],
+): unknown | null {
+  if (
+    !turn || turn.runId !== runId ||
+    !turn.items.some(item => item.type === 'content' && item.preambleItemId !== undefined)
+  ) {
+    const thinkingText = collectActiveThinkingText(turn);
+    return message
+      ? thinkingText ? withThinkingContent(message, thinkingText) : message
+      : buildInterruptedTurnMessage(thinkingText, collectActiveContentText(turn), runId);
+  }
+  if (message && shouldHideMessage(message)) return message;
+
+  // Commentary before a Tool belongs to the process timeline. Only the last
+  // reply owner after that boundary can be an interrupted answer; never join
+  // earlier owners or use Chat's cumulative text to guess their association.
+  let boundary = -1;
+  turn.items.forEach((item, index) => {
+    if (
+      item.type === 'tool' || item.type === 'compaction' ||
+      (item.type === 'content' && item.preambleItemId !== undefined &&
+        !item.assistantTextScopeSuppressed && !item.assistantTextSourcePending &&
+        Boolean(item.text.trim()))
+    ) boundary = index;
+  });
+  const tail = turn.items.slice(boundary + 1);
+  const body = [...tail].reverse().find(item =>
+    item.type === 'content' && item.preambleItemId === undefined &&
+    !item.chatFallback && !item.assistantTextScopeSuppressed &&
+    !item.assistantTextSourcePending && Boolean(item.text.trim()),
+  );
+  const thinking = [...tail].reverse().find(item => item.type === 'thinking' && item.text.trim());
+  const partial = asRecord(buildInterruptedTurnMessage(
+    thinking?.type === 'thinking' ? thinking.text : null,
+    body?.type === 'content' ? body.text : null,
+    runId,
+  ));
+  const nativeMessage = asRecord(message);
+  const richBlocks = (record: Record<string, unknown> | null): unknown[] =>
+    Array.isArray(record?.content) ? record.content.filter(block => {
+      const item = asRecord(block);
+      return item && item.type !== 'text' && item.type !== 'thinking';
+    }) : [];
+  const previous = asRecord([...messages].reverse().find(candidate =>
+    isLocallyOptimisticHistoryTail(candidate) && readExplicitMessageRunId(candidate) === runId,
+  ));
+  // Abort snapshots can carry completed widgets. A later lifecycle-only
+  // notification is not a withdrawal of those already admitted deliveries.
+  const source = richBlocks(nativeMessage).length > 0 ? nativeMessage : previous;
+  const retainedBlocks = richBlocks(source);
+  if (retainedBlocks.length === 0) return partial;
+  const { content: _content, text: _text, ...metadata } = source ?? {};
+  return {
+    ...metadata,
+    ...partial,
+    role: 'assistant',
+    runId,
+    interrupted: true,
+    content: [...(Array.isArray(partial?.content) ? partial.content : []), ...retainedBlocks],
+  };
+}
+
 export function withThinkingContent(message: unknown, thinkingText: string): unknown {
   if (!message || typeof message !== 'object' || !thinkingText.trim()) return message;
   const record = message as Record<string, unknown>;

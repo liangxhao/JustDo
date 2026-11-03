@@ -57,10 +57,8 @@ import {
   appendTerminalMessage,
   asRecord,
   assistantEventText,
-  buildInterruptedTurnMessage,
   ChatState,
   ChatStreamUpdateKind,
-  collectActiveContentText,
   collectActiveThinkingText,
   completeTruncatedTerminalFromActiveTurn,
   debugLog,
@@ -86,6 +84,7 @@ import {
   readOpenClawMessageSeq,
   readPositiveSafeInteger,
   readStringList,
+  resolveInterruptedTurnMessage,
   SessionLiveState,
   SideChatResult,
   SideChatResultListener,
@@ -1762,12 +1761,9 @@ export function handleAborted(
   this.clearLifecycleEndFallback();
   this.finishCurrentTurnTiming('aborted', payload.runId);
   const liveThinkingText = collectActiveThinkingText(this.state.transcript.activeTurn);
-  const liveContentText = collectActiveContentText(this.state.transcript.activeTurn);
-  const interruptedMessage = payload.message
-    ? liveThinkingText
-      ? withThinkingContent(payload.message, liveThinkingText)
-      : payload.message
-    : buildInterruptedTurnMessage(liveThinkingText, liveContentText, abortedRunId);
+  const interruptedMessage = resolveInterruptedTurnMessage(
+    this.state.transcript.activeTurn, payload.message, abortedRunId, this.state.chatMessages,
+  );
   const message =
     interruptedMessage && abortedRunId && typeof interruptedMessage === 'object'
       ? { ...(interruptedMessage as Record<string, unknown>), runId: abortedRunId }
@@ -1780,7 +1776,7 @@ export function handleAborted(
   debugLog('[ChatCtrl] ▶ chat.aborted', {
     hasMessage: !!message,
     liveThinkingLen: liveThinkingText?.length ?? 0,
-    liveContentLen: liveContentText?.length ?? 0,
+    liveContentLen: extractSnapshotText(interruptedMessage)?.length ?? 0,
     ...this._snap(),
   });
   if (willAppend) {
