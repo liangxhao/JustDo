@@ -1,9 +1,10 @@
-import { randomUUID } from 'node:crypto';
-import type { IncomingMessage } from 'node:http';
+import { randomBytes, randomUUID } from 'node:crypto';
+import { createServer, type IncomingMessage } from 'node:http';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { WebSocket } from 'ws';
 
+import { isAppServerPort } from '../../shared/integrations/appServerIntegration';
 import { AgentCommandService } from '../integrations/externalAgent/agentCommandService';
 import type { ExternalAgentBackendFactory } from '../integrations/externalAgent/externalAgentBackend';
 import {
@@ -29,6 +30,22 @@ const deferred = <T = void>() => {
 };
 const tick = () => new Promise<void>(resolve => setImmediate(resolve));
 
+function memorySettings() {
+  let saved = { port: 0, token: randomBytes(32).toString('hex') };
+  return {
+    get: vi.fn(() => ({ ...saved })),
+    setPort: vi.fn((port: number) => {
+      if (!isAppServerPort(port)) throw new Error('Invalid application connection port.');
+      saved = { ...saved, port };
+      return { ...saved };
+    }),
+    regenerateToken: vi.fn(() => {
+      saved = { ...saved, token: randomBytes(32).toString('hex') };
+      return { ...saved };
+    }),
+  };
+}
+
 function fixture(run?: ExternalAgentBackend['run']) {
   const backends: ExternalAgentBackend[] = [];
   const connect = vi.fn(() => {
@@ -49,9 +66,10 @@ function fixture(run?: ExternalAgentBackend['run']) {
   });
   let cwd = process.cwd();
   const getDefaultCwd = vi.fn(() => cwd);
-  const service = new AppServerIntegrationService({ commandService, getDefaultCwd });
+  const settings = memorySettings();
+  const service = new AppServerIntegrationService({ commandService, getDefaultCwd, settings });
   services.push(service);
-  return { service, backends, connect, getDefaultCwd, setCwd: (value: string) => { cwd = value; } };
+  return { service, settings, backends, connect, getDefaultCwd, setCwd: (value: string) => { cwd = value; } };
 }
 
 async function open(service: AppServerIntegrationService) {
@@ -94,13 +112,13 @@ async function rejectedHandshake(url: string, headers: Record<string, string> = 
 describe('native-client WebSocket app-server', () => {
   it('requires its own Bearer credential without an Origin and never exposes it in status', async () => {
     const f = fixture();
-    expect(f.service.getStatus()).toEqual({ running: false, url: '' });
+    expect(f.service.getStatus()).toMatchObject({ running: false, url: '', configuredPort: 0, restartRequired: false });
     expect(() => f.service.getConnectionConfig()).toThrow('not running');
     await f.service.start();
     const config = f.service.getConnectionConfig();
     expect(config.url).toMatch(/^ws:\/\/127\.0\.0\.1:\d+\/app-server$/u);
     expect(config.headers.Authorization).toMatch(/^Bearer [0-9a-f]{64}$/u);
-    expect(f.service.getStatus()).toEqual({ running: true, url: config.url });
+    expect(f.service.getStatus()).toEqual({ running: true, url: config.url, configuredPort: 0, restartRequired: false });
     expect(JSON.stringify(f.service.getStatus())).not.toContain('Bearer');
     expect(JSON.stringify(f.service.getStatus())).not.toContain(config.headers.Authorization.slice(7));
     for (const headers of [
@@ -211,7 +229,7 @@ describe('native-client WebSocket app-server', () => {
       expect(signals[1].aborted).toBe(false);
       let stopped = false;
       const stopping = f.service.stop().then(() => { stopped = true; });
-      expect(f.service.getStatus()).toEqual({ running: false, url: '' });
+      expect(f.service.getStatus()).toMatchObject({ running: false, url: '', configuredPort: 0, restartRequired: false });
       expect(() => f.service.getConnectionConfig()).toThrow('not running');
       await vi.waitFor(() => expect(signals[1].aborted).toBe(true));
       await tick();
@@ -243,7 +261,7 @@ describe('native-client WebSocket app-server', () => {
     await vi.waitFor(() => expect(signal.aborted).toBe(true));
   });
 
-  it('rotates its credential on restart and never accepts the previous instance token', async () => {
+  it('retains its saved credential on restart', async () => {
     const f = fixture();
     const firstStart = f.service.start();
     expect(f.service.start()).toBe(firstStart);
@@ -252,13 +270,127 @@ describe('native-client WebSocket app-server', () => {
     await f.service.stop();
     await f.service.start();
     const after = f.service.getConnectionConfig();
-    expect(after.headers.Authorization).not.toEqual(before.headers.Authorization);
-    expect(await rejectedHandshake(after.url, before.headers)).toBe(401);
+    expect(after.headers.Authorization).toEqual(before.headers.Authorization);
     await open(f.service);
+  });
+
+  it('stages a fixed port and regenerated token without interrupting current connections or work', async () => {
+    const terminal = deferred();
+    let signal!: AbortSignal;
+    const f = fixture(async (_thread, _run, _text, _event, nativeSignal) => {
+      signal = nativeSignal;
+      await terminal.promise;
+      return 'Finished';
+    });
+    try {
+      await f.service.start();
+      const before = f.service.getConnectionConfig();
+      const port = Number(new URL(before.url).port);
+      const peer = await open(f.service);
+      const created = await peer.request('thread/start');
+      const threadId = (created.result as { thread: { id: string } }).thread.id;
+      await peer.request('turn/start', { threadId, input: [{ type: 'text', text: 'Wait' }] });
+      await vi.waitFor(() => expect(signal).toBeDefined());
+
+      expect(f.service.setPort(port)).toMatchObject({ configuredPort: port, restartRequired: true });
+      expect(f.service.setPort(0)).toMatchObject({ configuredPort: 0, restartRequired: false });
+      f.service.regenerateToken();
+      expect(f.service.setPort(port)).toMatchObject({ restartRequired: true });
+      expect(f.service.getConnectionConfig()).toEqual(before);
+      expect(JSON.stringify(f.service.getStatus())).not.toContain(f.settings.get().token);
+      expect(signal.aborted).toBe(false);
+      expect(peer.socket.readyState).toBe(WebSocket.OPEN);
+      await open(f.service);
+      terminal.resolve();
+      await vi.waitFor(() => expect(peer.messages.some(message => message.method === 'turn/completed')).toBe(true));
+
+      await f.service.stop();
+      await f.service.start();
+      const after = f.service.getConnectionConfig();
+      expect(after.url).toBe(before.url);
+      expect(after.headers.Authorization).not.toBe(before.headers.Authorization);
+      expect(f.service.getStatus()).toMatchObject({ configuredPort: port, restartRequired: false });
+      expect(await rejectedHandshake(after.url, before.headers)).toBe(401);
+      await open(f.service);
+    } finally {
+      terminal.resolve();
+    }
+  });
+
+  it('keeps the current credential and port when saving fails', async () => {
+    const f = fixture();
+    await f.service.start();
+    const before = f.service.getConnectionConfig();
+    f.settings.setPort.mockImplementationOnce(() => { throw new Error('Save failed.'); });
+    f.settings.regenerateToken.mockImplementationOnce(() => { throw new Error('Save failed.'); });
+    expect(() => f.service.setPort(43210)).toThrow('Save failed');
+    expect(() => f.service.regenerateToken()).toThrow('Save failed');
+    expect(f.service.getStatus()).toMatchObject({ configuredPort: 0, restartRequired: false });
+    expect(f.service.getConnectionConfig()).toEqual(before);
+    await open(f.service);
+  });
+
+  it('reports an occupied fixed port without falling back to a random port', async () => {
+    const occupied = createServer();
+    await new Promise<void>(resolve => occupied.listen(0, '127.0.0.1', resolve));
+    try {
+      const address = occupied.address();
+      if (!address || typeof address === 'string') throw new Error('Missing test listener.');
+      const f = fixture();
+      f.service.setPort(address.port);
+      await expect(f.service.start()).rejects.toHaveProperty('code', 'EADDRINUSE');
+      expect(f.service.getStatus()).toEqual({
+        running: false, url: '', configuredPort: address.port, restartRequired: false, failure: 'port-in-use',
+      });
+      expect(() => f.service.getConnectionConfig()).toThrow('not running');
+    } finally {
+      await new Promise<void>((resolve, reject) => occupied.close(error => error ? reject(error) : resolve()));
+    }
   });
 });
 
 describe('WebSocket service lifecycle fencing', () => {
+  it('rejects unreadable settings without creating a listener or replacing credentials', async () => {
+    const settings = memorySettings();
+    settings.get.mockImplementation(() => { throw new Error('Sensitive file contents'); });
+    const createServer = vi.fn();
+    const service = new AppServerIntegrationService({
+      commandService: { connectAppServer: vi.fn() }, getDefaultCwd: () => process.cwd(), settings, createServer,
+    });
+    services.push(service);
+    await expect(service.start()).rejects.toThrow('Application connection settings are unavailable.');
+    expect(createServer).not.toHaveBeenCalled();
+    expect(settings.regenerateToken).not.toHaveBeenCalled();
+  });
+
+  it('keeps the startup snapshot when settings change before the listener is ready', async () => {
+    const started = deferred();
+    const settings = memorySettings();
+    const original = settings.get();
+    let running = false;
+    let transportOptions!: AppServerWebSocketServerOptions;
+    const server = {
+      get running() { return running; },
+      start: vi.fn(async () => { await started.promise; running = true; }),
+      stop: vi.fn(async () => { running = false; }),
+      getUrl: () => 'ws://127.0.0.1:1234/app-server',
+    };
+    const service = new AppServerIntegrationService({
+      commandService: { connectAppServer: vi.fn() }, getDefaultCwd: () => process.cwd(), settings,
+      createServer: options => { transportOptions = options; return server; },
+    });
+    services.push(service);
+    const starting = service.start();
+    service.setPort(23456);
+    service.regenerateToken();
+    started.resolve();
+    await starting;
+    expect(transportOptions.port).toBe(original.port);
+    expect(service.getConnectionConfig().headers.Authorization).toBe(`Bearer ${original.token}`);
+    expect(service.getStatus()).toMatchObject({ running: true, configuredPort: 23456, restartRequired: true });
+    expect(server.stop).not.toHaveBeenCalled();
+  });
+
   it('can retry a failed listener only after its startup cleanup finishes', async () => {
     const cleanup = deferred();
     const failure = new Error('Listener failed.');
@@ -273,19 +405,19 @@ describe('WebSocket service lifecycle fencing', () => {
     }));
     const createServer = vi.fn(() => transports[createServer.mock.calls.length - 1]);
     const service = new AppServerIntegrationService({
-      commandService: { connectAppServer: vi.fn() }, getDefaultCwd: () => process.cwd(), createServer,
+      commandService: { connectAppServer: vi.fn() }, getDefaultCwd: () => process.cwd(), settings: memorySettings(), createServer,
     });
     services.push(service);
     const first = service.start();
     const failed = expect(first).rejects.toBe(failure);
     await tick();
-    expect(service.getStatus()).toEqual({ running: false, url: '' });
+    expect(service.getStatus()).toMatchObject({ running: false, url: '', configuredPort: 0, restartRequired: false });
     expect(service.start()).toBe(first);
     expect(createServer).toHaveBeenCalledOnce();
     cleanup.resolve();
     await failed;
     await service.start();
-    expect(service.getStatus()).toEqual({ running: true, url: transports[1].getUrl() });
+    expect(service.getStatus()).toEqual({ running: true, url: transports[1].getUrl(), configuredPort: 0, restartRequired: false });
   });
 
   it('does not start a queued replacement after a second stop revokes it', async () => {
@@ -298,7 +430,7 @@ describe('WebSocket service lifecycle fencing', () => {
     }));
     const createServer = vi.fn(() => transports[createServer.mock.calls.length - 1]);
     const service = new AppServerIntegrationService({
-      commandService: { connectAppServer: vi.fn() }, getDefaultCwd: () => process.cwd(), createServer,
+      commandService: { connectAppServer: vi.fn() }, getDefaultCwd: () => process.cwd(), settings: memorySettings(), createServer,
     });
     services.push(service);
     await service.start();
@@ -310,7 +442,7 @@ describe('WebSocket service lifecycle fencing', () => {
     cleanup.resolve();
     await Promise.all([stopped, replacement, stoppedAgain]);
     expect(transports[1].start).not.toHaveBeenCalled();
-    expect(service.getStatus()).toEqual({ running: false, url: '' });
+    expect(service.getStatus()).toMatchObject({ running: false, url: '', configuredPort: 0, restartRequired: false });
   });
 
   it('revokes pending startup immediately and never republishes its late listener or credential', async () => {
@@ -326,14 +458,14 @@ describe('WebSocket service lifecycle fencing', () => {
     };
     const commandService = { connectAppServer: vi.fn() };
     const service = new AppServerIntegrationService({
-      commandService, getDefaultCwd: () => process.cwd(),
+      commandService, getDefaultCwd: () => process.cwd(), settings: memorySettings(),
       createServer: options => { transportOptions = options; return server; },
     });
     services.push(service);
     const starting = service.start();
     await tick();
     const stopping = service.stop();
-    expect(service.getStatus()).toEqual({ running: false, url: '' });
+    expect(service.getStatus()).toMatchObject({ running: false, url: '', configuredPort: 0, restartRequired: false });
     expect(() => service.getConnectionConfig()).toThrow('not running');
     expect(transportOptions.authorize({ headers: {} } as IncomingMessage, new URL(server.getUrl()))).toBe(false);
     expect(() => transportOptions.createConnection(vi.fn())).toThrow('not running');
@@ -344,6 +476,6 @@ describe('WebSocket service lifecycle fencing', () => {
     expect(server.start).toHaveBeenCalledOnce();
     expect(server.stop).toHaveBeenCalledOnce();
     expect(commandService.connectAppServer).not.toHaveBeenCalled();
-    expect(service.getStatus()).toEqual({ running: false, url: '' });
+    expect(service.getStatus()).toMatchObject({ running: false, url: '', configuredPort: 0, restartRequired: false });
   });
 });

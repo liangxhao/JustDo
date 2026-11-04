@@ -35,7 +35,9 @@ afterEach(() => {
 
 function setup() {
   const getStatus = vi.fn(async (): Promise<AgentCliIntegrationStatus> => status);
-  const getWebSocketStatus = vi.fn(async () => ({ running: true, url: 'ws://127.0.0.1:34567/app-server' }));
+  const getWebSocketStatus = vi.fn(async () => ({
+    running: true, url: 'ws://127.0.0.1:34567/app-server', configuredPort: 0, restartRequired: false,
+  }));
   const getConnectionConfig = vi.fn();
   const writeText = vi.fn(async (_value: string): Promise<void> => {});
   vi.stubGlobal('electron', {

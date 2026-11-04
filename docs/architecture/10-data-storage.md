@@ -92,6 +92,15 @@ SDK 派生 JWT 不回写，继续由原有私有凭据快照与 SecretRef 管理
 
 ### 产品库初始化
 
+通用本机 WebSocket app-server 的端口和 Bearer token 由 Main 单独保存到
+`<userData>/app-server/connection.json`，不进入 SQLite KV 或 `app_config`。
+令牌首次随机生成后跨重启保留，端口 `0` 表示自动分配，也可配置固定端口。
+目录和文件使用受限权限（Windows ACL / Unix `700`、`600`），先保护临时文件再写入秘密，
+同步落盘并原子替换；只有文件确实不存在才初始化，损坏、读写或权限错误不自动重置。
+保存与重新生成令牌只更新下次 listener 启动配置，普通状态不返回秘密。
+此文件使用权限保护，不宣称 OS 加密；连接及待生效语义见
+[通用 app-server](../features/integrations/app-server.md)。
+
 产品设置只从当前 SQLite KV 读取，不再从根目录 `config.json` 导入旧 electron-store 数据。
 新建、迁移和重开数据库均不读取该文件；已有 KV 设置保持原样，不增加导入开关或跳过标记。
 迁移的必需归档项与可选项占用策略见

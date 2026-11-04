@@ -1,12 +1,14 @@
-import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage } from 'node:http';
 
-import type {
-  AppServerConnectionConfig,
-  AppServerIntegrationStatus,
+import {
+  type AppServerConnectionConfig,
+  AppServerIntegrationFailure,
+  type AppServerIntegrationStatus,
 } from '../../shared/integrations/appServerIntegration';
 import type { AgentCommandService } from '../integrations/externalAgent/agentCommandService';
 import { ExternalAgentStreamError } from '../integrations/externalAgent/externalAgentTypes';
+import type { AppServerSettings, AppServerSettingsStore } from './appServerSettingsStore';
 import {
   AppServerWebSocketServer,
   type AppServerWebSocketServerOptions,
@@ -17,12 +19,14 @@ type Server = Pick<AppServerWebSocketServer, 'running' | 'start' | 'stop' | 'get
 interface Options {
   getDefaultCwd: () => string;
   commandService: Pick<AgentCommandService, 'connectAppServer'>;
+  settings: Pick<AppServerSettingsStore, 'get' | 'setPort' | 'regenerateToken'>;
   createServer?: (options: AppServerWebSocketServerOptions) => Server;
 }
 
 interface Lease {
   generation: number;
   token: string;
+  port: number;
   ready: boolean;
   server: Server;
   start: Promise<void>;
@@ -50,15 +54,24 @@ export class AppServerIntegrationService {
   private generation = 0;
   private lease: Lease | undefined;
   private stopping: Promise<void> | undefined;
+  private failure: AppServerIntegrationStatus['failure'];
 
   constructor(private readonly options: Options) {}
 
   start(): Promise<void> {
     if (this.lease?.generation === this.generation) return this.lease.start;
+    let settings: AppServerSettings;
+    try {
+      settings = this.options.settings.get();
+    } catch {
+      this.failure = AppServerIntegrationFailure.Unavailable;
+      return Promise.reject(new Error('Application connection settings are unavailable.'));
+    }
     const previousStop = this.stopping;
     const lease = {
       generation: this.generation,
-      token: randomBytes(32).toString('hex'),
+      token: settings.token,
+      port: settings.port,
       ready: false,
       start: Promise.resolve(),
     } as Lease;
@@ -70,7 +83,9 @@ export class AppServerIntegrationService {
         return this.options.commandService.connectAppServer(this.options.getDefaultCwd(), send);
       },
       createTransportError: message => new ExternalAgentStreamError(message),
+      port: lease.port,
     });
+    this.failure = undefined;
     this.lease = lease;
     lease.start = Promise.resolve().then(async () => {
       try {
@@ -83,6 +98,11 @@ export class AppServerIntegrationService {
         }
         lease.ready = true;
       } catch (error) {
+        if (owns()) {
+          this.failure = (error as NodeJS.ErrnoException | null)?.code === 'EADDRINUSE'
+            ? AppServerIntegrationFailure.PortInUse
+            : AppServerIntegrationFailure.Unavailable;
+        }
         lease.ready = false;
         try {
           await this.drain(lease);
@@ -116,8 +136,25 @@ export class AppServerIntegrationService {
   }
 
   getStatus(): AppServerIntegrationStatus {
+    const settings = this.options.settings.get();
     const lease = this.current();
-    return { running: Boolean(lease), url: lease?.server.getUrl() ?? '' };
+    return {
+      running: Boolean(lease),
+      url: lease?.server.getUrl() ?? '',
+      configuredPort: settings.port,
+      restartRequired: Boolean(lease && (lease.port !== settings.port || lease.token !== settings.token)),
+      ...(this.failure ? { failure: this.failure } : {}),
+    };
+  }
+
+  setPort(port: number): AppServerIntegrationStatus {
+    this.options.settings.setPort(port);
+    return this.getStatus();
+  }
+
+  regenerateToken(): AppServerIntegrationStatus {
+    this.options.settings.regenerateToken();
+    return this.getStatus();
   }
 
   getConnectionConfig(): AppServerConnectionConfig {

@@ -474,6 +474,12 @@ interface IElectronAPI {
     getConnectionConfig: () => Promise<
       import('../../shared/integrations/appServerIntegration').AppServerConnectionConfig
     >;
+    setPort: (port: number) => Promise<
+      import('../../shared/integrations/appServerIntegration').AppServerIntegrationStatus
+    >;
+    regenerateToken: () => Promise<
+      import('../../shared/integrations/appServerIntegration').AppServerIntegrationStatus
+    >;
   };
   agentCli: {
     getStatus: () => Promise<

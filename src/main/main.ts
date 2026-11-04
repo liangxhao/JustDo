@@ -51,6 +51,7 @@ import { BuiltinModelIpc, BuiltinModelSyncReason } from '../shared/providers/bui
 import { LocalSpeechModelIpc } from '../shared/speech/localSpeechModels';
 import { normalizeLocalSpeechSettings } from '../shared/speech/localSpeechSettings';
 import { AppServerIntegrationService } from './appServer/appServerIntegrationService';
+import { AppServerSettingsStore } from './appServer/appServerSettingsStore';
 import { waitForAppServerShutdown } from './appServer/appServerShutdown';
 import { BrowserAgentBridge } from './browser/browserAgentBridge';
 import { resolveBrowserDesktopSession } from './browser/browserDesktopSession';
@@ -1186,6 +1187,7 @@ const getAppServerIntegrationService = (): AppServerIntegrationService => {
   appServerIntegrationService ??= new AppServerIntegrationService({
     commandService: getAgentCommandService(),
     getDefaultCwd: () => getCoworkStore().getConfig().workingDirectory,
+    settings: new AppServerSettingsStore(app.getPath('userData')),
   });
   return appServerIntegrationService;
 };

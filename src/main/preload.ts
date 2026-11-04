@@ -323,6 +323,10 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke(AppServerIntegrationIpc.GetStatus),
     getConnectionConfig: (): Promise<AppServerConnectionConfig> =>
       ipcRenderer.invoke(AppServerIntegrationIpc.GetConnectionConfig),
+    setPort: (port: number): Promise<AppServerIntegrationStatus> =>
+      ipcRenderer.invoke(AppServerIntegrationIpc.SetPort, port),
+    regenerateToken: (): Promise<AppServerIntegrationStatus> =>
+      ipcRenderer.invoke(AppServerIntegrationIpc.RegenerateToken),
   },
   store: {
     get: (key: string) => ipcRenderer.invoke('store:get', key),

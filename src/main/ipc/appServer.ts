@@ -1,6 +1,6 @@
 import { type BrowserWindow, ipcMain, type IpcMainInvokeEvent } from 'electron';
 
-import { AppServerIntegrationIpc } from '../../shared/integrations/appServerIntegration';
+import { AppServerIntegrationIpc, isAppServerPort } from '../../shared/integrations/appServerIntegration';
 import type { AppServerIntegrationService } from '../appServer/appServerIntegrationService';
 
 export function registerAppServerIntegrationHandlers(options: {
@@ -26,4 +26,10 @@ export function registerAppServerIntegrationHandlers(options: {
   ipcMain.handle(AppServerIntegrationIpc.GetConnectionConfig, event =>
     serviceFor(event).getConnectionConfig(),
   );
+  ipcMain.handle(AppServerIntegrationIpc.SetPort, (event, port: unknown) => {
+    const service = serviceFor(event);
+    if (!isAppServerPort(port)) throw new Error('Invalid application connection port.');
+    return service.setPort(port);
+  });
+  ipcMain.handle(AppServerIntegrationIpc.RegenerateToken, event => serviceFor(event).regenerateToken());
 }
