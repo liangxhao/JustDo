@@ -15,6 +15,9 @@ const mocks = vi.hoisted(() => ({
   claim: vi.fn(),
   cancelForGuest: vi.fn(),
   showSaveDialog: vi.fn(),
+  registerDiagnostics: vi.fn(),
+  attachWidget: vi.fn(),
+  attachWebpage: vi.fn(),
 }));
 vi.mock('electron', () => ({
   app: { getPath: mocks.getPath },
@@ -36,13 +39,19 @@ vi.mock('../../browser/downloads/browserAgentDownloadCoordinator', () => ({
   cancelBrowserAgentDownloadsForWebContents: mocks.cancelForGuest,
 }));
 vi.mock('../network/systemProxyPreference', () => ({ registerBrowserProxySession: vi.fn() }));
+vi.mock('../../browser/browserNetworkDiagnostics', () => ({
+  registerBrowserNetworkDiagnostics: mocks.registerDiagnostics,
+}));
 vi.mock('./appWindowFailure', () => ({ registerAppWindowDiagnostics: () => vi.fn() }));
 vi.mock('./renderer/packagedRendererLoader', () => ({
   loadPackagedRenderer: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock('./windowAppearance', () => ({ registerWindowAppearance: vi.fn() }));
 vi.mock('./widgetViewerGuest', () => ({
-  createWidgetViewerGuests: () => ({ attach: () => false }),
+  createWidgetViewerGuests: () => ({ attach: mocks.attachWidget }),
+}));
+vi.mock('./webpageEmbedGuest', () => ({
+  createWebpageEmbedGuests: () => ({ attach: mocks.attachWebpage, dispose: vi.fn() }),
 }));
 vi.mock('../../browser/history/browserHistoryTracking', () => ({
   trackBrowserHistory: () => vi.fn(),
@@ -87,6 +96,8 @@ let origin: EventEmitter & {
 beforeEach(() => {
   vi.useFakeTimers();
   mocks.claim.mockReset();
+  mocks.attachWidget.mockReturnValue(false);
+  mocks.attachWebpage.mockReturnValue(false);
   const sessions = new Map<string, ReturnType<typeof makeSession>>();
   mocks.fromPartition.mockImplementation((partition: string) => {
     if (!sessions.has(partition)) sessions.set(partition, makeSession());
@@ -151,6 +162,21 @@ afterEach(() => {
   window.emit('closed');
   vi.useRealTimers();
   vi.clearAllMocks();
+});
+
+test('registers network failure diagnostics for an ordinary sidebar guest', () => {
+  expect(mocks.registerDiagnostics).toHaveBeenCalledExactlyOnceWith(origin);
+});
+
+test.each(['widget', 'webpage'] as const)('leaves %s guest diagnostics with its existing owner', kind => {
+  (kind === 'widget' ? mocks.attachWidget : mocks.attachWebpage).mockReturnValue(true);
+  const separateGuest = Object.assign(new EventEmitter(), { id: 82 });
+
+  (window as unknown as { webContents: EventEmitter }).webContents.emit(
+    'did-attach-webview', {}, separateGuest,
+  );
+
+  expect(mocks.registerDiagnostics).toHaveBeenCalledExactlyOnceWith(origin);
 });
 
 test('uses one native save prompt configured synchronously for a download URL', async () => {

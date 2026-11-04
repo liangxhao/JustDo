@@ -32,6 +32,7 @@ import {
 } from '../../../shared/browser/browser';
 import { WebpageEmbedIpc, type WebpageEmbedRequest } from '../../../shared/browser/webpageEmbed';
 import type { WorkspaceWindowBounds } from '../../../shared/cowork/workspaceWindow';
+import { registerBrowserNetworkDiagnostics } from '../../browser/browserNetworkDiagnostics';
 import {
   configureBrowserSessionUi,
   ensureBrowserSessionPolicy,
@@ -596,6 +597,7 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
     host.on('did-attach-webview', (_event, guestContents) => {
       if (widgetViewers.attach(guestContents, host)) return;
       if (webpageViewers.attach(guestContents, host)) return;
+      registerBrowserNetworkDiagnostics(guestContents);
       browserGuests.add(guestContents);
       guestContents.once('destroyed', () => browserGuests.delete(guestContents));
       let externalProtocolPromptPending = false;

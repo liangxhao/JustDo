@@ -394,6 +394,31 @@ Main 分别应用两个偏好：非浏览器代理变化更新默认 session、�
 
 模型调试可采用“非浏览器自定义抓包代理 + 浏览器系统代理”，也可针对需要直连公司 IP 的浏览器设置不使用代理。系统模式沿用 OS 的代理与绕过规则，不新增应用自动 IP 分流。outbound-header 仍是 Gateway 的第一跳注入代理，第二跳由非浏览器设置决定；浏览器网页不进入 Header 注入数据面。
 
+### 浏览器网络故障日志
+
+Main 观察普通侧边栏 guest 的 HTTP(S) 主文档加载失败，忽略取消导航、子 frame 和本地文件。
+日志使用固定前缀 `[BrowserNetworkDiagnostics]` 与紧凑 JSON，每条仅占一行，可直接按前缀
+筛选；写入现有 Main 日志并随“导出日志”打包，不新增文件、IPC 或 Renderer 权限。
+`load-failed` 立即记录关联 ID、guest ID、目标 origin、数字错误码、规范化错误名，以及浏览器
+代理模式、Session 配置代次和准备状态；不记录目标路径、查询参数、fragment、URL 凭据、
+原始错误正文或堆栈。每个 guest 最多每 10 秒记录一次，检查受限时保留 busy/cooldown 原因。
+
+`proxy-check` 从故障 guest 的真实 Session 对完整失败 URL 重新调用 `resolveProxy()`，只输出
+严格解析后的代理 scheme、host、port 或 DIRECT；未知路由仅计数，不输出原始字符串。
+这是失败后观察到的候选路由，不能认定就是失败连接实际使用的端点。日志保留相同关联 ID。
+只有代理连接失败（`ERR_PROXY_CONNECTION_FAILED`）且 Session 代理准备成功时，才额外检查
+最多两个候选代理，每个最多两个 IP；固定 IP 跳过 DNS，域名使用该 Session 的 `resolveHost()`。
+元数据地址与非法解析结果不进入连接检查。Main 仅建立并立即关闭到代理 IP/端口的 TCP
+连接，不发送 HTTP、TLS、认证或业务请求，不连接 DIRECT 的目标网站，不刷新代理或重试导航。
+TCP 成功只证明 Main 进程到代理的传输层可达，不能证明 Chromium 请求、CONNECT 或认证成功。
+
+同一 Session 最多每 30 秒启动一次检查，全局同时最多两个，单次期限 5 秒、单个 TCP 连接
+期限 1.5 秒。持久 Session 按存储身份共享限流，最多保留 64 个尚在冷却或检查中的记录，
+额度不足时仅记录 busy。超时或解析失败记录当前检查阶段。新主导航、guest 销毁或代理配置
+换代取消检查、关闭 socket 并丢弃迟到结果。
+原生代理和 DNS 解析不能真正取消，超时后仍占用并发额度直到实际结束，避免后台调用积累。
+这些期限、限流和测试只验证诊断边界，不代替用户现场公司代理与安全软件的连接验收。
+
 ## 浏览历史与站点图标
 
 网页 Tab 图标由 Main 监听真实 guest 的原生 favicon 事件，通过该 guest 的 session 读取，沿用浏览器代理和 Cookie；主窗口 Renderer 只接收有大小限制的图片 data URL，不再从默认 session 重复请求网站图标。读取受 10 秒期限、256 KiB 网络图片体积、候选与重定向次数限制；内联 data URL 最长为 512 × 1024 个字符。逐跳执行网络图标 URL 校验，并继续经过 session 的网络请求保护，不提供任意本地文件读取。

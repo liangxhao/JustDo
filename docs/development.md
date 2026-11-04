@@ -152,4 +152,8 @@ Main 统一维护应用写入的 Main、Cowork 和 Gateway 摘要日志。单文
 
 启动失败先查 Main 初始化、原生模块和 runtime；聊天执行异常再对照 Gateway 日志与[会话诊断](features/chat/session-diagnostics.md)。分享日志前脱敏，不提交原始日志、数据库或完整配置。
 
+侧边栏网页加载失败时，在 Main 日志按 `[BrowserNetworkDiagnostics]` 筛选即可提取单行 JSON
+证据；`load-failed` 和 `proxy-check` 通过 `diagnosticId` 关联。普通“导出日志”已包含这些记录。
+路由与 TCP 检查的含义、频控及取消边界见[浏览器网络故障日志](features/browser/browser-settings-design.md#浏览器网络故障日志)。
+
 代码职责与协作约定见根目录 [AGENTS.md](../AGENTS.md)；按领域查阅[功能索引](features/README.md)，脚本实现见 [`scripts/README.md`](../scripts/README.md)。
