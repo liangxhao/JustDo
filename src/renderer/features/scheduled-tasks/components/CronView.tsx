@@ -506,7 +506,7 @@ interface TaskDetailsDialogProps {
   onClose: () => void;
 }
 
-function TaskDetailsDialog({ job, onClose }: TaskDetailsDialogProps) {
+export function TaskDetailsDialog({ job, onClose }: TaskDetailsDialogProps) {
   const t = i18nService.t.bind(i18nService);
   const systemPresentation = getKnownSystemTaskPresentation(job);
   const isKnownSystemTask = systemPresentation !== null;
@@ -540,7 +540,11 @@ function TaskDetailsDialog({ job, onClose }: TaskDetailsDialogProps) {
       ? t('cronDialogDeliveryModeNone')
       : [
           job.delivery.mode === 'announce'
-            ? t('cronDialogDeliveryModeAnnounce')
+            ? t(
+                job.payload.kind === 'agentTurn' && job.sessionTarget === 'current'
+                  ? 'cronDetailsDeliveryCurrent'
+                  : 'cronDetailsDeliveryAnnounce',
+              )
             : t('scheduledTasksFormDeliveryModeWebhook'),
           job.delivery.channel,
           job.delivery.to,
@@ -592,6 +596,12 @@ function TaskDetailsDialog({ job, onClose }: TaskDetailsDialogProps) {
                 .filter(Boolean)
                 .join(' · ')
             : '';
+  const allowedTools =
+    'toolsAllow' in job.payload && job.payload.toolsAllow?.length
+      ? job.payload.toolsAllow.includes('*')
+        ? t('cronDetailsAllTools')
+        : job.payload.toolsAllow.join(', ')
+      : undefined;
   const payloadOptions =
     job.payload.kind === 'command'
       ? [
@@ -605,9 +615,7 @@ function TaskDetailsDialog({ job, onClose }: TaskDetailsDialogProps) {
           typeof job.payload.outputMaxBytes === 'number'
             ? `${t('cronDetailsMaxOutput')}: ${job.payload.outputMaxBytes} bytes`
             : undefined,
-          job.payload.toolsAllow?.length
-            ? `${t('cronDetailsAllowedTools')}: ${job.payload.toolsAllow.join(', ')}`
-            : undefined,
+          allowedTools ? `${t('cronDetailsAllowedTools')}: ${allowedTools}` : undefined,
         ]
           .filter(Boolean)
           .join(' · ')
@@ -619,9 +627,7 @@ function TaskDetailsDialog({ job, onClose }: TaskDetailsDialogProps) {
             typeof job.payload.toolBudget === 'number'
               ? `${t('cronDetailsToolBudget')}: ${job.payload.toolBudget}`
               : undefined,
-            job.payload.toolsAllow?.length
-              ? `${t('cronDetailsAllowedTools')}: ${job.payload.toolsAllow.join(', ')}`
-              : undefined,
+            allowedTools ? `${t('cronDetailsAllowedTools')}: ${allowedTools}` : undefined,
           ]
             .filter(Boolean)
             .join(' · ')
@@ -634,14 +640,12 @@ function TaskDetailsDialog({ job, onClose }: TaskDetailsDialogProps) {
               typeof job.payload.timeoutSeconds === 'number'
                 ? `${t('cronDetailsTimeout')}: ${job.payload.timeoutSeconds} s`
                 : undefined,
-              job.payload.toolsAllow?.length
-                ? `${t('cronDetailsAllowedTools')}: ${job.payload.toolsAllow.join(', ')}`
-                : undefined,
+              allowedTools ? `${t('cronDetailsAllowedTools')}: ${allowedTools}` : undefined,
             ]
               .filter(Boolean)
               .join(' · ')
-          : job.payload.kind === 'systemEvent' && job.payload.toolsAllow?.length
-            ? `${t('cronDetailsAllowedTools')}: ${job.payload.toolsAllow.join(', ')}`
+          : job.payload.kind === 'systemEvent' && allowedTools
+            ? `${t('cronDetailsAllowedTools')}: ${allowedTools}`
             : '';
   const advancedFeatureLabels: Record<
     NonNullable<ScheduledTask['advancedFeatures']>[number],

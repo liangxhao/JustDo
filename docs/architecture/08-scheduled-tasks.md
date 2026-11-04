@@ -46,7 +46,14 @@ fallbacks 的空数组明确禁用备用模型，lightContext 的 false 明确�
 空值保留已有窗口，新任务交给原生默认；单次保留投影为 deleteAfterRun:false，仍可普通编辑。
 命令、脚本、会话续跑、外部通知新配置和工作目录仍不在本轮新增表单范围内。
 
-应用新建 job 默认显式发送 delivery mode=none，不依赖上游省略值的默认行为。announce/webhook 是原生外发配置；应用收件箱不是一种外发 channel，是否进入本地收件箱不取决于是否发到 IM。
+应用新建 job 默认显式发送 delivery mode=none，不依赖上游省略值的默认行为。announce 按任务或会话路由投递结果，webhook 用于外发；应用收件箱不是一种外发 channel，是否进入本地收件箱不取决于是否发到 IM。
+
+任务详情对 current + agentTurn + announce 明确说明最终回复会写入创建任务的会话，
+配置了外部通知时还会按其设置发送。其余 announce 使用中性的通知设置说明，保留已知通道、
+目标和账户信息；缺少这些字段不能推断为仅应用内发送，也不从任务名或提示词推断 `/loop` 身份。
+current + none 不显示回复原会话的承诺。高级任务仍保持原有编辑限制，提示用户可启停、
+立即运行或删除，并可在对话中向助手提供任务名称和修改要求；工具范围的 `*` 显示为所有工具，
+同时说明仍遵循权限设置，不将其解释为完全权限。
 
 模型发起任务变更时由 automation-permission 根据原生 session mode 审批。无人值守不意味着自动 full，也不能用某个 Agent 名称绕开审批。
 
