@@ -1,6 +1,12 @@
 import { BuiltinModelSyncReason } from '../../shared/providers/builtinModels';
 import type { SqliteStore } from '../data/sqliteStore';
 import {
+  BuiltinModelAuthDiagnosticEvent,
+  BuiltinModelAuthDiagnosticReason,
+  getBuiltinModelAuthErrorCode,
+  writeBuiltinModelAuthDiagnostic,
+} from './builtinModelAuthDiagnostics';
+import {
   BuiltinModelAccess,
   syncBuiltinModelProvider,
 } from './builtinModelProvider';
@@ -58,22 +64,25 @@ export class BuiltinModelLifecycle {
     try {
       syncResult = await this.enqueueOpenClawConfigSync(reason);
     } catch (error) {
+      writeBuiltinModelAuthDiagnostic('warn', BuiltinModelAuthDiagnosticEvent.ConfigSyncFailed, {
+        generation, requireApplication,
+        reason: BuiltinModelAuthDiagnosticReason.ConfigApplicationFailed,
+        errorCode: getBuiltinModelAuthErrorCode(error),
+      });
       if (generation === this.generation) {
         this.dependencies.notifyModelsChanged();
       }
       throw error;
     }
-    if (generation !== this.generation) {
-      return;
-    }
+    if (generation !== this.generation) return;
 
+    if (!syncResult.success) writeBuiltinModelAuthDiagnostic('warn', BuiltinModelAuthDiagnosticEvent.ConfigSyncFailed, {
+      generation, requireApplication, configSynced: syncResult.configSynced === true,
+      reason: BuiltinModelAuthDiagnosticReason.ConfigApplicationFailed,
+    });
     this.dependencies.notifyModelsChanged();
     if (!syncResult.success) {
       if (syncResult.configSynced && !requireApplication) {
-        const gatewayError = syncResult.error || 'Gateway did not apply the updated model config';
-        console.warn(
-          `[BuiltinModelLifecycle] Model config was synced after ${reason}, but Gateway application failed: ${gatewayError}`,
-        );
         return;
       }
       throw new Error(
@@ -83,9 +92,7 @@ export class BuiltinModelLifecycle {
   }
 
   private enqueueOpenClawConfigSync(reason: string): Promise<OpenClawConfigSyncResult> {
-    const sync = this.configSyncQueue.then(() =>
-      this.dependencies.syncOpenClawConfig({ reason }),
-    );
+    const sync = this.configSyncQueue.then(() => this.dependencies.syncOpenClawConfig({ reason }));
     this.configSyncQueue = sync.then(
       (): void => undefined,
       (): void => undefined,

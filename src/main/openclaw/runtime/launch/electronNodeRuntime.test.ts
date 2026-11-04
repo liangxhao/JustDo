@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 const bundledPaths = vi.hoisted(() => vi.fn(() => ({
   executable: '/verified-runtime/node',
+  executableSha256: 'a'.repeat(64),
   npmBin: '/verified-runtime/node_modules/npm/bin',
 })));
 
@@ -22,6 +23,7 @@ import {
   appendNodeRequireOption,
   buildElectronNodeShimScripts,
   buildWindowsChildProcessPreload,
+  getBuiltinCredentialNodeRuntimeSource,
   getElectronNodeRuntimePath,
   resolveElectronNpmBinDir,
 } from './electronNodeRuntime';
@@ -29,10 +31,11 @@ import {
 describe('Electron Node runtime', () => {
   it('keeps Node and npm on one admitted runtime for the Main process lifetime', () => {
     expect(getElectronNodeRuntimePath()).toBe('/verified-runtime/node');
-    bundledPaths.mockReturnValue({ executable: '/replacement/node', npmBin: '/replacement/npm/bin' });
+    bundledPaths.mockReturnValue({ executable: '/replacement/node', executableSha256: 'b'.repeat(64), npmBin: '/replacement/npm/bin' });
 
     expect(resolveElectronNpmBinDir()).toBe('/verified-runtime/node_modules/npm/bin');
     expect(getElectronNodeRuntimePath()).toBe('/verified-runtime/node');
+    expect(getBuiltinCredentialNodeRuntimeSource()).toEqual({ executable: '/verified-runtime/node', sha256: 'a'.repeat(64) });
     expect(bundledPaths).toHaveBeenCalledTimes(1);
   });
 

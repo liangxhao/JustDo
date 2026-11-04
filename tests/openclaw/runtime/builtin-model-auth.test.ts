@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -62,11 +63,13 @@ test.skipIf(!available)('a native task crosses a 30-minute JWT expiry and cannot
         baseUrl, api: 'openai-completions',
         apiKey: { source: 'exec', provider: 'justdo_login', id: 'X-ACCESS-JWT' },
       } } },
-    }, directory, { accessToken: firstToken, userAccount: 'fixture-account', expiresAt: now + 1800 }, process.execPath, session);
+    }, directory, { accessToken: firstToken, userAccount: 'fixture-account', expiresAt: now + 1800 }, {
+      executable: process.execPath, sha256: createHash('sha256').update(fs.readFileSync(process.execPath)).digest('hex'),
+    }, session);
     const snapshot = (token: string, authSessionId: string) => sealBuiltinCredential(JSON.stringify({
       accessToken: token, userAccount: 'fixture-account', expiresAt: now + 3600, authSessionId,
     })).toString('base64');
-    const credentialFile = path.join(directory, 'credentials/credentials.bin');
+    const credentialFile = path.join(directory, 'credentials/credentials.json');
     const preload = path.join(directory, 'preload.cjs');
     fs.writeFileSync(preload, buildWindowsChildProcessPreload());
     const url = (file: string) => JSON.stringify(pathToFileURL(file).href);

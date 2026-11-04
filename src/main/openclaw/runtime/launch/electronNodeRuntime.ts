@@ -5,6 +5,7 @@ import { join, win32 } from 'path';
 import { buildTrustedCertificatePreload } from '../../../core/network/trustedCertificates';
 import { coworkLog } from '../../../cowork/coworkLogger';
 import { resolveBundledNodeRuntimePaths } from './bundledNodeRuntime';
+import type { CredentialNodeRuntimeSource } from './credentialNodeRuntime';
 
 let cachedNodeRuntimePaths: ReturnType<typeof resolveBundledNodeRuntimePaths> | null = null;
 
@@ -210,6 +211,11 @@ function bundledNodePaths() {
 // the independently bundled Node distribution, whose SQLite fixes are required.
 export function getElectronNodeRuntimePath(): string {
   return bundledNodePaths().executable;
+}
+
+export function getBuiltinCredentialNodeRuntimeSource(): CredentialNodeRuntimeSource {
+  const { executable, executableSha256 } = bundledNodePaths();
+  return { executable, sha256: executableSha256 };
 }
 
 export function resolvePackagedNpmBinDir(resourcesPath: string): string {

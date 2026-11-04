@@ -1,14 +1,15 @@
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { BUILTIN_MODEL_USER_ACCOUNT_FIELD } from '../../../providers/builtinModelCredential';
 import {
   BUILTIN_SECRET_ID, BUILTIN_SECRET_SOURCE, openBuiltinCredential, publishBuiltinCredentialFile,
-  sealBuiltinCredential, syncBuiltinCredentialFile as syncCredentialFile,
+  revokeBuiltinCredentialFile, sealBuiltinCredential, syncBuiltinCredentialFile as syncCredentialFile,
 } from './builtinCredentialFile';
 import {
   resolveBuiltinCredentialResolverTimeoutMs,
@@ -22,6 +23,7 @@ const directory = () => {
   return value;
 };
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const item of directories.splice(0)) fs.rmSync(item, { recursive: true, force: true });
 });
 const source = () => ({
@@ -34,10 +36,24 @@ const source = () => ({
 const secret = 'synthetic-short-lived-jwt';
 const credential = { accessToken: secret, userAccount: 'test-user', expiresAt: Math.floor(Date.now() / 1000) + 300 };
 const sessionId = 'a'.repeat(32);
+const runtimeSource = { executable: process.execPath, sha256: createHash('sha256').update(fs.readFileSync(process.execPath)).digest('hex') };
 const syncBuiltinCredentialFile = (config: Record<string, unknown>, state: string, value: typeof credential | null, session = sessionId) =>
-  syncCredentialFile(config, state, value, process.execPath, session);
+  syncCredentialFile(config, state, value, runtimeSource, session);
 
-describe('encrypted binary builtin credentials', () => {
+describe('opaque JSON builtin credentials', () => {
+  it('preserves publication failure while recording only a single-line filesystem code', () => {
+    const state = directory();
+    const failure = Object.assign(new Error(`${secret}\nprivate-account private-path`), { code: 'EACCES' });
+    vi.spyOn(fs, 'renameSync').mockImplementationOnce(() => { throw failure; });
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {});
+    expect(() => publishBuiltinCredentialFile(state, credential, sessionId)).toThrow(failure);
+    expect(errorLog).toHaveBeenCalledOnce();
+    expect(errorLog.mock.calls[0]).toHaveLength(1);
+    const line = String(errorLog.mock.calls[0][0]);
+    expect(line).toContain('"errorCode":"EACCES"');
+    expect(line).toContain('"fileKind":"snapshot"');
+    expect(line).not.toMatch(/[\r\n]|synthetic-short-lived|private-account|private-path/);
+  });
   it.each(['win32', 'darwin', 'linux'] as const)('allows resolver completion before the reload RPC deadline on %s', platform => {
     const resolverTimeoutMs = resolveBuiltinCredentialResolverTimeoutMs(platform);
     expect(resolverTimeoutMs).toBe(platform === 'win32' ? 60_000 : 5_000);
@@ -49,8 +65,15 @@ describe('encrypted binary builtin credentials', () => {
     expect(first.includes(Buffer.from(secret))).toBe(false);
     expect(first.equals(sealBuiltinCredential(secret))).toBe(false);
     expect(openBuiltinCredential(first)).toBe(secret);
-    first[first.length - 1] ^= 1;
-    expect(() => openBuiltinCredential(first)).toThrow();
+    const envelope = JSON.parse(first.toString('utf8'));
+    expect(envelope).toMatchObject({ version: 1, iv: expect.any(String), tag: expect.any(String), data: expect.any(String) });
+    envelope.tag = (envelope.tag[0] === 'A' ? 'B' : 'A') + envelope.tag.slice(1);
+    expect(() => openBuiltinCredential(Buffer.from(JSON.stringify(envelope)))).toThrow();
+  });
+
+  it.each([{ version: 2 }, { iv: 'AA==' }, { tag: 'invalid-base64!' }, { data: '' }])('rejects an invalid JSON envelope %j', fields => {
+    const envelope = { ...JSON.parse(sealBuiltinCredential(secret).toString('utf8')), ...fields };
+    expect(() => openBuiltinCredential(Buffer.from(JSON.stringify(envelope)))).toThrow();
   });
 
   it('keeps config as references and reloads only when the credential changes', () => {
@@ -72,7 +95,7 @@ describe('encrypted binary builtin credentials', () => {
       },
     });
     expect(first.secretsChanged).toBe(true);
-    const file = path.join(state, 'credentials', 'credentials.bin');
+    const file = path.join(state, 'credentials', 'credentials.json');
     const original = fs.readFileSync(file);
     expect(syncBuiltinCredentialFile(first.config, state, credential).secretsChanged).toBe(false);
     expect(fs.readFileSync(file)).toEqual(original);
@@ -87,7 +110,7 @@ describe('encrypted binary builtin credentials', () => {
     const first = syncBuiltinCredentialFile(source(), state, credential);
     const renewed = { ...credential, accessToken: `${secret}-renewed` };
     expect(publishBuiltinCredentialFile(state, renewed, sessionId)).toBe(true);
-    const file = path.join(state, 'credentials', 'credentials.bin');
+    const file = path.join(state, 'credentials', 'credentials.json');
     const published = fs.readFileSync(file);
     expect(JSON.parse(openBuiltinCredential(published)))
       .toMatchObject({ ...renewed, authSessionId: sessionId });
@@ -108,7 +131,7 @@ describe('encrypted binary builtin credentials', () => {
     }, 'b'.repeat(32));
     expect(switched.config).not.toEqual(first.config);
     expect(JSON.stringify(switched.config)).not.toContain('next-user');
-    expect(JSON.parse(openBuiltinCredential(fs.readFileSync(path.join(state, 'credentials', 'credentials.bin')))))
+    expect(JSON.parse(openBuiltinCredential(fs.readFileSync(path.join(state, 'credentials', 'credentials.json')))))
       .toMatchObject({ userAccount: 'next-user', accessToken: 'next-user-jwt' });
     expect(input.models.providers.builtin_models).not.toHaveProperty('headers');
     expect(switched.secretsChanged).toBe(true);
@@ -137,7 +160,7 @@ describe('encrypted binary builtin credentials', () => {
     expect(denied.status).not.toBe(0);
     expect(denied.stdout).toBe('');
     expect(denied.stderr).not.toContain(secret);
-    fs.writeFileSync(path.join(state, 'credentials', 'credentials.bin'), sealBuiltinCredential(JSON.stringify({ ...credential, authSessionId: sessionId, expiresAt: 1 })));
+    fs.writeFileSync(path.join(state, 'credentials', 'credentials.json'), sealBuiltinCredential(JSON.stringify({ ...credential, authSessionId: sessionId, expiresAt: 1 })));
     const expired = run([BUILTIN_SECRET_ID]);
     expect(expired.status).not.toBe(0);
     expect(expired.stdout).toBe('');
@@ -173,12 +196,45 @@ describe('encrypted binary builtin credentials', () => {
     expect(JSON.parse(resolved.stdout).values[BUILTIN_SECRET_ID]).toBe('sk-development');
   });
 
+  it.skipIf(process.platform !== 'win32')('projects a direct private Node command with only the resolver argument', () => {
+    const state = directory();
+    const result = syncBuiltinCredentialFile(source(), state, credential);
+    const provider = (result.config.secrets as { providers: Record<string, {
+      command: string; args: string[]; env: Record<string, string>; timeoutMs: number;
+    }> }).providers[BUILTIN_SECRET_SOURCE];
+    expect(provider.command).toBe(path.join(state, 'credentials', 'runtime', runtimeSource.sha256, 'node.exe'));
+    expect(provider.args).toEqual([path.join(state, 'credentials', 'read-builtin.cjs')]);
+    expect(provider.env).toEqual({ MODEL_AUTH_SESSION_ID: sessionId, MODEL_AUTH_TYPE: 'jwt', SYSTEMROOT: process.env.SystemRoot || 'C:\\Windows' });
+    expect(JSON.stringify({ args: provider.args, env: provider.env })).not.toContain(secret);
+  });
+
+  it('replaces the derived binary snapshot and revokes both known snapshot names', () => {
+    const state = directory();
+    fs.mkdirSync(path.join(state, 'credentials'));
+    const legacy = path.join(state, 'credentials', 'credentials.bin');
+    fs.writeFileSync(legacy, 'obsolete encrypted snapshot');
+    syncBuiltinCredentialFile(source(), state, credential);
+    expect(fs.existsSync(legacy)).toBe(false);
+    expect(JSON.parse(fs.readFileSync(path.join(state, 'credentials', 'credentials.json'), 'utf8')).version).toBe(1);
+    fs.writeFileSync(legacy, 'obsolete encrypted snapshot');
+    const unlink = fs.unlinkSync.bind(fs);
+    vi.spyOn(fs, 'unlinkSync').mockImplementation(file => {
+      if (String(file).endsWith('credentials.json')) throw Object.assign(new Error('denied'), { code: 'EACCES' });
+      unlink(file);
+    });
+    expect(() => revokeBuiltinCredentialFile(state)).toThrow('denied');
+    expect(fs.existsSync(legacy)).toBe(false);
+    vi.restoreAllMocks();
+    revokeBuiltinCredentialFile(state);
+    expect(fs.existsSync(path.join(state, 'credentials', 'credentials.json'))).toBe(false);
+  });
+
   it('revokes the binary on logout and does not load a credential for custom-only config', () => {
     const state = directory();
     syncBuiltinCredentialFile(source(), state, credential);
     const loggedOut = syncBuiltinCredentialFile({}, state, null);
     expect(loggedOut.secretsChanged).toBe(true);
-    expect(fs.existsSync(path.join(state, 'credentials', 'credentials.bin'))).toBe(false);
+    expect(fs.existsSync(path.join(state, 'credentials', 'credentials.json'))).toBe(false);
   });
 
   it('rejects the old resolver after relogin even for the same account', () => {

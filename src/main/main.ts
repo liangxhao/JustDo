@@ -284,6 +284,11 @@ import {
 } from './providers/builtinModelAuthConfig';
 import { BuiltinModelAuthCoordinator } from './providers/builtinModelAuthCoordinator';
 import {
+  BuiltinModelAuthDiagnosticEvent,
+  getBuiltinModelAuthErrorCode,
+  writeBuiltinModelAuthDiagnostic,
+} from './providers/builtinModelAuthDiagnostics';
+import {
   type BuiltinModelCredential,
   clearActiveBuiltinModelCredential,
   getActiveBuiltinModelCredential,
@@ -952,7 +957,9 @@ const notifyBuiltinModelsChanged = (): void => {
     try {
       window.webContents.send(BuiltinModelIpc.Changed);
     } catch (error) {
-      console.error('[BuiltinModelLifecycle] Failed to notify Renderer:', error);
+      writeBuiltinModelAuthDiagnostic('warn', BuiltinModelAuthDiagnosticEvent.NotificationFailed, {
+        errorCode: getBuiltinModelAuthErrorCode(error),
+      });
     }
   }
 };
@@ -2455,10 +2462,9 @@ if (agentBridgeArgv) {
     try {
       builtinModelCredential = await getBuiltinModelTokenExchange().refresh();
     } catch (error) {
-      console.warn(
-        '[BuiltinModelTokenExchange] Startup exchange failed; retrying in background:',
-        error,
-      );
+      writeBuiltinModelAuthDiagnostic('warn', BuiltinModelAuthDiagnosticEvent.StartupFailed, {
+        errorCode: getBuiltinModelAuthErrorCode(error), willRetry: true,
+      });
     }
     if (appShutdown.isQuitting()) return;
 
@@ -2619,9 +2625,6 @@ if (agentBridgeArgv) {
     builtinModelCredentialMonitor = new BuiltinModelCredentialMonitor({
       userInfoPath: resolveOutboundHeaderUserInfoPath(),
       refresh: () => getBuiltinModelAuthCoordinator().refreshInBackground(),
-      onError: error => {
-        console.error('[BuiltinModelCredentialMonitor] Credential refresh failed:', error);
-      },
     });
     getBuiltinModelAuthCoordinator().initialize(
       startupSync?.success ? builtinModelCredential : null,

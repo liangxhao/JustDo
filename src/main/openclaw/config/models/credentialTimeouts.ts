@@ -2,8 +2,8 @@ const DEFAULT_CREDENTIAL_RESOLVER_TIMEOUT_MS = 5_000;
 const WINDOWS_CREDENTIAL_RESOLVER_TIMEOUT_MS = 60_000;
 const CREDENTIAL_RELOAD_OVERHEAD_MS = 30_000;
 
-// PowerShell module analysis and native image compilation can exceed ten seconds
-// on a cold or loaded Windows host. Keep the bound aligned with the native runtime.
+// The reader executes Node directly. Native Windows ACL verification can still
+// invoke system security tools on a cold host, so retain its existing bound.
 export const resolveBuiltinCredentialResolverTimeoutMs = (
   platform: NodeJS.Platform = process.platform,
 ): number => platform === 'win32'

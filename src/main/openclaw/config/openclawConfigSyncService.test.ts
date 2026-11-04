@@ -1281,16 +1281,13 @@ describe('OpenClawConfigSyncService', () => {
       success: false,
       error: expect.stringContaining('Failed to refresh managed model provider credentials.'),
     });
-    expect(errorLog).toHaveBeenCalledWith(
-      '[OpenClaw] Failed to refresh managed model provider credentials (secrets.reload):',
-      expect.objectContaining({
-        reason: 'provider-key-change',
-        gatewayPhase: 'running',
-        elapsedMs: expect.any(Number),
-        error: expect.stringContaining('credential reload timed out; Authorization: [REDACTED]'),
-      }),
-    );
-    expect(errorLog.mock.calls[0][1].error).toContain('openclawConfigSyncService.test.ts:');
+    expect(errorLog.mock.calls[0]).toHaveLength(1);
+    const line = String(errorLog.mock.calls[0][0]);
+    expect(JSON.parse(line.slice('[BuiltinModelAuth] '.length))).toMatchObject({
+      event: 'reload.failed', reason: 'reload-failed', gatewayPhase: 'running',
+      elapsedMs: expect.any(Number), errorCode: 'unknown',
+    });
+    expect(line).not.toMatch(/[\r\n]/);
     expect(JSON.stringify(errorLog.mock.calls)).not.toContain('reload-jwt-fixture');
     expect(harness.stopGateway).toHaveBeenCalledOnce();
     expect(errorLog.mock.invocationCallOrder[0]).toBeLessThan(harness.stopGateway.mock.invocationCallOrder[0]);
@@ -1304,7 +1301,10 @@ describe('OpenClawConfigSyncService', () => {
       secretsReloadError: 'gateway disconnected; apiKey=reload-key-fixture',
     });
     await expect(harness.service.syncConfig({ reason: 'provider-key-change' })).resolves.toMatchObject({ success: false });
-    expect(errorLog.mock.calls[0][1].error).toBe('gateway disconnected; apiKey=[REDACTED]');
+    expect(errorLog.mock.calls[0]).toHaveLength(1);
+    expect(JSON.parse(String(errorLog.mock.calls[0][0]).slice('[BuiltinModelAuth] '.length)))
+      .toMatchObject({ event: 'reload.failed', errorCode: 'unknown' });
+    expect(JSON.stringify(errorLog.mock.calls)).not.toContain('reload-key-fixture');
     expect(harness.stopGateway).toHaveBeenCalledOnce();
   });
 

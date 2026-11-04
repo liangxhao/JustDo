@@ -1,3 +1,9 @@
+import {
+  BuiltinModelAuthDiagnosticEvent,
+  type BuiltinModelAuthDiagnosticFields,
+  getBuiltinModelAuthErrorCode,
+  writeBuiltinModelAuthDiagnostic,
+} from './builtinModelAuthDiagnostics';
 import type { BuiltinModelCredential } from './builtinModelCredential';
 
 type Dependencies = {
@@ -19,6 +25,14 @@ type RefreshDecision = {
   authSessionId: string | null;
   refreshCatalog: boolean;
 };
+
+const decisionDiagnostics = (decision: RefreshDecision): BuiltinModelAuthDiagnosticFields => ({
+  generation: decision.generation,
+  backgroundRevision: decision.backgroundRevision,
+  background: decision.backgroundRevision !== undefined,
+  refreshCatalog: decision.refreshCatalog,
+  credentialPresent: decision.credential !== null,
+});
 
 /** Prevent obsolete asynchronous refreshes from overwriting a newer auth decision. */
 export class BuiltinModelAuthCoordinator {
@@ -109,21 +123,32 @@ export class BuiltinModelAuthCoordinator {
     if (!refreshCatalog && this.applied !== undefined &&
       credential?.accessToken === this.applied?.accessToken &&
       (!credential || (authSessionId !== null && authSessionId === this.appliedAuthSessionId))) return;
-    if (!credential) {
-      this.applied = undefined;
-      this.appliedAuthSessionId = null;
-      await this.dependencies.logout();
-      if (this.isCurrent(decision)) this.applied = null;
-    } else {
-      this.applied = undefined;
-      // Keep the confirmed session across a failed rotation, so retrying the
-      // same login does not put model discovery back in front of its credential.
-      const rotate = !refreshCatalog && authSessionId !== null && authSessionId === this.appliedAuthSessionId;
-      await (rotate ? this.dependencies.rotate() : this.dependencies.login());
-      if (this.isCurrent(decision) && authSessionId !== null) {
-        this.applied = credential;
-        this.appliedAuthSessionId = authSessionId;
+    try {
+      let applicationCurrent: boolean;
+      if (!credential) {
+        this.applied = undefined;
+        this.appliedAuthSessionId = null;
+        await this.dependencies.logout();
+        applicationCurrent = this.isCurrent(decision);
+        if (applicationCurrent) this.applied = null;
+      } else {
+        this.applied = undefined;
+        // Keep the confirmed session across a failed rotation, so retrying the
+        // same login does not put model discovery back in front of its credential.
+        const rotate = !refreshCatalog && authSessionId !== null && authSessionId === this.appliedAuthSessionId;
+        await (rotate ? this.dependencies.rotate() : this.dependencies.login());
+        applicationCurrent = this.isCurrent(decision);
+        if (applicationCurrent && authSessionId !== null) {
+          this.applied = credential;
+          this.appliedAuthSessionId = authSessionId;
+        }
       }
+    } catch (error) {
+      writeBuiltinModelAuthDiagnostic('warn', BuiltinModelAuthDiagnosticEvent.ApplicationFailed, {
+        ...decisionDiagnostics(decision),
+        errorCode: getBuiltinModelAuthErrorCode(error),
+      });
+      throw error;
     }
   }
 

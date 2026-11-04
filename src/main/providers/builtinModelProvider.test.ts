@@ -175,6 +175,8 @@ describe('syncBuiltinModelProvider', () => {
   });
 
   beforeEach(() => {
+    vi.spyOn(console, 'info').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
     testProviderConfig.baseUrl = 'http://127.0.0.1:1/v1';
     vi.mocked(mainProcessFetch).mockClear();
     setActiveBuiltinModelCredential(createCredential());
@@ -183,6 +185,69 @@ describe('syncBuiltinModelProvider', () => {
   afterEach(() => {
     clearActiveBuiltinModelCredential();
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  test('records required discovery HTTP failure on one line without reading its response body', async () => {
+    const json = vi.fn();
+    const text = vi.fn();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 401, json, text }));
+    const config = { providers: { builtin_models: { models: [{ id: 'cached', enabled: false }] } } };
+    const set = vi.fn();
+    const store = { get: () => config, set } as unknown as SqliteStore;
+
+    await syncBuiltinModelProvider(store, { access: BuiltinModelAccess.Enabled });
+
+    expect(json).not.toHaveBeenCalled();
+    expect(text).not.toHaveBeenCalled();
+    expect(set.mock.calls[0][1].providers.builtin_models.models).toEqual(config.providers.builtin_models.models);
+    const [line] = vi.mocked(console.warn).mock.calls[0];
+    expect(vi.mocked(console.warn).mock.calls[0]).toHaveLength(1);
+    expect(line).not.toMatch(/[\r\n]|user-123|test-signature|https?:\/\//);
+    expect(JSON.parse(String(line).slice('[BuiltinModelAuth] '.length))).toEqual(expect.objectContaining({
+      event: 'discovery.failed', discoveryStage: 'models', httpStatus: 401, reason: 'http-rejected',
+    }));
+  });
+
+  test('logs optional model-info rejection while accepting the required model list', async () => {
+    const json = vi.fn();
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ data: [{ id: 'chat-model' }] }) })
+      .mockResolvedValueOnce({ ok: false, status: 404, json }));
+    const set = vi.fn();
+    const store = { get: () => ({}), set } as unknown as SqliteStore;
+
+    await syncBuiltinModelProvider(store, { access: BuiltinModelAccess.Enabled });
+
+    expect(json).not.toHaveBeenCalled();
+    expect(set.mock.calls[0][1].providers.builtin_models.models).toEqual([expect.objectContaining({ id: 'chat-model' })]);
+    const records = [...vi.mocked(console.info).mock.calls, ...vi.mocked(console.warn).mock.calls].map(args => {
+      expect(args).toHaveLength(1);
+      expect(args[0]).not.toMatch(/[\r\n]|user-123|test-signature|chat-model/);
+      return JSON.parse(String(args[0]).slice('[BuiltinModelAuth] '.length));
+    });
+    expect(records).toContainEqual(expect.objectContaining({
+      event: 'discovery.optional-http-rejected', discoveryStage: 'model-info', httpStatus: 404,
+    }));
+    expect(records).toContainEqual(expect.objectContaining({ event: 'discovery.succeeded', chatModelCount: 1 }));
+    expect(records).toHaveLength(2);
+    expect(records.some(record => record.event === 'discovery.failed')).toBe(false);
+  });
+
+  test('logs malformed model-info JSON without its raw error or credentials', async () => {
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ data: [{ id: 'new-model' }] }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => { throw new SyntaxError('private-error-fixture\nBearer private-jwt-fixture'); } }));
+    const set = vi.fn();
+    const store = { get: () => ({}), set } as unknown as SqliteStore;
+
+    await syncBuiltinModelProvider(store, { access: BuiltinModelAccess.Enabled });
+
+    const [line] = vi.mocked(console.warn).mock.calls[0];
+    expect(line).not.toMatch(/[\r\n]|private-.*-fixture|Bearer/);
+    expect(JSON.parse(String(line).slice('[BuiltinModelAuth] '.length))).toEqual(expect.objectContaining({
+      event: 'discovery.failed', discoveryStage: 'model-info', reason: 'response-invalid-json',
+    }));
   });
 
   test('retains cached models and enabled flags when refreshing the built-in provider fails', async () => {

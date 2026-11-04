@@ -5,7 +5,6 @@ import { readModelRef } from '../../../shared/providers/modelRef';
 import type { WindowsSandboxStatus } from '../../../shared/security/windowsSandbox';
 import { ManagedDirectoryRuntimeStopAbortedError } from '../../core/filesystem/managedDirectoryOperations';
 import { t } from '../../core/i18n';
-import { redactLogText } from '../../core/logRedaction';
 import type { CoworkStore } from '../../data/coworkStore';
 import { createManagedSessionModelPolicy } from '../../engine/gateway/managedSessionModels';
 import { enqueueSessionModelOperation } from '../../engine/gateway/sessionModelOperations';
@@ -21,6 +20,12 @@ import type {
 import type { OpenClawHookStore } from '../../plugins/hooks';
 import type { McpStore } from '../../plugins/mcp';
 import { discoverOpenClawManagedMcpServers } from '../../plugins/mcp';
+import {
+  BuiltinModelAuthDiagnosticEvent,
+  BuiltinModelAuthDiagnosticReason,
+  getBuiltinModelAuthErrorCode,
+  writeBuiltinModelAuthDiagnostic,
+} from '../../providers/builtinModelAuthDiagnostics';
 import { ComputerHostPreparation } from '../runtime/computerHostPreparation';
 import {
   GatewayConfigRestartOutcome,
@@ -1089,9 +1094,10 @@ export class OpenClawConfigSyncService {
       try {
         recovered = await manager.startGateway();
       } catch (error) {
-        console.error('[OpenClaw] Managed credential recovery startup failed:', {
-          reason,
-          error: redactLogText(error instanceof Error ? error.stack || error.message : String(error)),
+        writeBuiltinModelAuthDiagnostic('error', BuiltinModelAuthDiagnosticEvent.RecoveryFailed, {
+          reason: BuiltinModelAuthDiagnosticReason.RecoveryFailed,
+          syncReason: reason === BuiltinModelSyncReason.AuthLogin || reason === BuiltinModelSyncReason.AuthLogout ? reason : 'other',
+          errorCode: getBuiltinModelAuthErrorCode(error),
         });
         return unconfirmed();
       }

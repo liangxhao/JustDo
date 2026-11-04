@@ -1,5 +1,5 @@
 import type fs from 'fs';
-import { afterEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
 import type { BuiltinModelCredential } from './builtinModelCredential';
 import {
@@ -7,7 +7,12 @@ import {
   resolveBuiltinModelCredentialExpiryDelayMs,
 } from './builtinModelCredentialMonitor';
 
+beforeEach(() => {
+  vi.spyOn(console, 'info').mockImplementation(() => {});
+  vi.spyOn(console, 'warn').mockImplementation(() => {});
+});
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.useRealTimers();
 });
 
@@ -86,7 +91,7 @@ describe('BuiltinModelCredentialMonitor', () => {
       userInfoPath: 'fixture', refresh, onError, watchFile: vi.fn(), unwatchFile: vi.fn(),
     });
     monitor.start(null);
-    const failure = new Error('configuration confirmation failed');
+    const failure = new Error('private-auth-fixture\nAuthorization: Bearer private-token-fixture');
 
     monitor.retryAfterError(failure);
     await vi.advanceTimersByTimeAsync(4_999);
@@ -100,5 +105,12 @@ describe('BuiltinModelCredentialMonitor', () => {
     await vi.advanceTimersByTimeAsync(30_000);
     expect(onError).toHaveBeenCalledOnce();
     expect(refresh).toHaveBeenCalledOnce();
+
+    const records = vi.mocked(console.warn).mock.calls.map(args => {
+      expect(args).toHaveLength(1);
+      expect(args[0]).not.toMatch(/[\r\n]|private-.*-fixture|Authorization/);
+      return JSON.parse(String(args[0]).slice('[BuiltinModelAuth] '.length));
+    });
+    expect(records).toContainEqual({ event: 'refresh.retry-scheduled', retryDelayMs: 5_000, errorCode: 'unknown' });
   });
 });

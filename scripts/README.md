@@ -98,6 +98,7 @@ staging tree.
 | `assets/`    | Application and tray icon generation, macOS icon repair                  |
 | `browser/`   | Host adapters for browser content bundles and Native Messaging           |
 | `build/`     | Vite build integration                                                   |
+| `diagnostics/` | Read-only extraction of small, sanitized support evidence               |
 | `electron/`  | Electron development startup, ports and native module rebuilds           |
 | `startup/`   | Browser-only rehearsal of the four startup presentations                |
 | `external-agent/` | Shared console CLI generation and profile-bound development launchers |
@@ -114,6 +115,23 @@ helpers explicitly. Resolve repository paths relative to the script location;
 do not rely on the caller's working directory when locating repository assets.
 Versioned patches remain under `patches/`; runtime orchestration belongs in
 `openclaw/`.
+
+`diagnostics/collect-model-auth-evidence.ps1` extracts a small model-authentication
+report from explicitly selected received log files. It works with Windows
+PowerShell 5.1 and PowerShell 7. Run it without arguments to choose one or more
+Main, Gateway or native JSON log files; it does not search the local application
+profile. By default it selects the latest authentication failure and includes
+30 minutes before and 5 minutes after it. `-ErrorTime` selects a specific incident;
+timestamps without an offset use `-SourceUtcOffset` (default `+08:00`).
+
+The UTF-8 report defaults to a hard 16 KiB limit, including headers and truncation
+notes; `-MaxKiB` accepts 4–64 KiB. It includes only recognized events and
+allowlisted scalar values, timestamps, source aliases and line numbers. It does
+not copy raw log text, filenames, paths, credentials or conversation content.
+Repeated mirrored records retain a record count rather than implying independent
+failures. Reports are written to the Desktop unless `-OutputDirectory` is given;
+the original files remain unchanged. No network, Gateway startup or repair command
+is used. See [development diagnostics](../docs/development.md#日志与排障).
 
 `validate:product-metadata` validates the product name and both application and
 OpenClaw release versions before packaging prepares resources or removes old

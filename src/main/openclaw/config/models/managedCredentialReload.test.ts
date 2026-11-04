@@ -10,6 +10,9 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+const entries = (mock: { mock: { calls: unknown[][] } }) =>
+  mock.mock.calls.map(([line]) => JSON.parse(String(line).slice('[BuiltinModelAuth] '.length)));
+
 const createHarness = () => {
   let current = true;
   const request = vi.fn<(timeoutMs: number) => Promise<{ ok?: boolean }>>()
@@ -17,11 +20,13 @@ const createHarness = () => {
   const wait = vi.fn<(delayMs: number) => Promise<void>>().mockResolvedValue(undefined);
   const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {});
   const infoLog = vi.spyOn(console, 'info').mockImplementation(() => {});
+  const warnLog = vi.spyOn(console, 'warn').mockImplementation(() => {});
   return {
     request,
     wait,
     errorLog,
     infoLog,
+    warnLog,
     setCurrent: (value: boolean) => { current = value; },
     reload: () => reloadManagedCredentials({
       reason: 'credential-rotation',
@@ -45,10 +50,7 @@ describe('managed credential snapshot reload', () => {
 
     expect(harness.request.mock.calls).toEqual(Array.from({ length: 3 }, () => [resolveManagedCredentialReloadTimeoutMs()]));
     expect(harness.wait.mock.calls).toEqual([[500], [1_500]]);
-    expect(harness.infoLog).toHaveBeenCalledWith(
-      '[OpenClaw] Managed model provider credentials refreshed after retry:',
-      expect.objectContaining({ reason: 'credential-rotation', attempts: 3 }),
-    );
+    expect(entries(harness.infoLog)).toContainEqual(expect.objectContaining({ event: 'reload.acknowledged', attempt: 3, ackState: 'accepted' }));
   });
 
   it('retries a sent CLIENT_TIMEOUT only through the snapshot reload callback', async () => {
@@ -93,10 +95,7 @@ describe('managed credential snapshot reload', () => {
 
     expect(harness.request).toHaveBeenCalledOnce();
     expect(harness.wait).not.toHaveBeenCalled();
-    expect(harness.errorLog).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.objectContaining({ error: expect.stringContaining('Secret snapshot was not refreshed.') }),
-    );
+    expect(entries(harness.errorLog)).toContainEqual(expect.objectContaining({ reason: 'reload-ack-invalid' }));
   });
 
   it('reports failure after three retryable attempts instead of reporting an applied snapshot', async () => {
@@ -111,8 +110,8 @@ describe('managed credential snapshot reload', () => {
 
     expect(harness.request).toHaveBeenCalledTimes(3);
     expect(harness.wait.mock.calls).toEqual([[500], [1_500]]);
-    expect(harness.infoLog).not.toHaveBeenCalled();
-    expect(harness.errorLog.mock.calls.map(([, entry]) => entry.willRetry)).toEqual([true, true, false]);
+    expect(entries(harness.infoLog).filter(entry => entry.event === 'reload.acknowledged')).toEqual([]);
+    expect(entries(harness.errorLog).map(entry => entry.willRetry)).toEqual([true, true, false]);
   });
 
   it('abandons the refresh when its owner changes during retry backoff', async () => {
@@ -126,7 +125,7 @@ describe('managed credential snapshot reload', () => {
 
     expect(harness.request).toHaveBeenCalledOnce();
     expect(harness.wait).toHaveBeenCalledOnce();
-    expect(harness.infoLog).not.toHaveBeenCalled();
+    expect(entries(harness.infoLog).filter(entry => entry.event === 'reload.acknowledged')).toEqual([]);
   });
 
   it('does not apply a late acknowledgement after its owner has changed', async () => {
@@ -141,11 +140,11 @@ describe('managed credential snapshot reload', () => {
     await expect(reloading).resolves.toEqual({ outcome: ManagedCredentialReloadOutcome.Superseded });
     expect(harness.request).toHaveBeenCalledOnce();
     expect(harness.wait).not.toHaveBeenCalled();
-    expect(harness.infoLog).not.toHaveBeenCalled();
+    expect(entries(harness.infoLog).filter(entry => entry.event === 'reload.acknowledged')).toEqual([]);
     expect(harness.errorLog).not.toHaveBeenCalled();
   });
 
-  it('retains stack traces, attempt numbers and timeout budgets while masking credentials', async () => {
+  it('records bounded error codes and retry timing on one line without raw error contents', async () => {
     const harness = createHarness();
     const failure = Object.assign(new Error('exec provider timed out; token=reload-token-fixture\nAuthorization: Bearer reload-jwt-fixture'), {
       gatewayCode: 'UNAVAILABLE', credentials: { apiKey: 'reload-key-fixture' },
@@ -154,15 +153,26 @@ describe('managed credential snapshot reload', () => {
 
     await expect(harness.reload()).resolves.toEqual({ outcome: ManagedCredentialReloadOutcome.Applied });
 
-    expect(harness.errorLog).toHaveBeenCalledWith(
-      '[OpenClaw] Failed to refresh managed model provider credentials (secrets.reload):',
+    expect(entries(harness.errorLog)).toContainEqual(
       expect.objectContaining({
-        reason: 'credential-rotation', gatewayPhase: 'running', attempt: 1, maxAttempts: 3,
+        reason: 'reload-failed', gatewayPhase: 'running', attempt: 1, maxAttempts: 3,
         elapsedMs: expect.any(Number), timeoutMs: resolveManagedCredentialReloadTimeoutMs(), willRetry: true,
-        error: expect.stringContaining('exec provider timed out; token=[REDACTED]'),
+        errorCode: 'UNAVAILABLE',
       }),
     );
-    expect(harness.errorLog.mock.calls[0][1].error).toContain('managedCredentialReload.test.ts:');
+    expect(harness.errorLog.mock.calls[0]).toHaveLength(1);
+    expect(harness.errorLog.mock.calls[0][0]).not.toMatch(/[\r\n]/);
     expect(JSON.stringify(harness.errorLog.mock.calls)).not.toMatch(/reload-(?:token|jwt|key)-fixture/);
+  });
+
+  it('records accepted ACK warnings without claiming recovery or changing retry behavior', async () => {
+    const harness = createHarness();
+    harness.request.mockResolvedValueOnce({ ok: true, warningCount: 2 } as { ok: boolean });
+    await expect(harness.reload()).resolves.toEqual({ outcome: ManagedCredentialReloadOutcome.Applied });
+    expect(entries(harness.warnLog)).toContainEqual(expect.objectContaining({
+      event: 'reload.acknowledged', ackState: 'accepted', warningCount: 2,
+    }));
+    expect(harness.request).toHaveBeenCalledOnce();
+    expect(harness.wait).not.toHaveBeenCalled();
   });
 });

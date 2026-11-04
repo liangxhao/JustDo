@@ -11,6 +11,30 @@ import { BuiltinModelTokenExchange } from './builtinModelTokenExchange';
 
 const NOW = 2_000_000_000;
 const errorLog = vi.fn();
+const failureReasons: Record<string, string> = {
+  'Invalid token exchange URL': 'url-invalid',
+  'Unable to obtain a valid MAC address': 'device-unavailable',
+  'Token exchange network request failed': 'network-failure',
+  'Token exchange timed out': 'request-timeout',
+  'Empty token exchange response': 'response-empty',
+  'Token exchange response exceeds size limit': 'response-too-large',
+  'Invalid token exchange response JSON': 'response-invalid-json',
+  'Invalid token exchange response shape': 'response-invalid-shape',
+  'Invalid or expired access token': 'credential-invalid',
+};
+const expectExchangeFailure = (fields: Record<string, unknown>) => {
+  const records = errorLog.mock.calls.map(([line]) => {
+    expect(typeof line).toBe('string');
+    expect(line).not.toMatch(/[\r\n]/);
+    return JSON.parse(line.slice('[BuiltinModelAuth] '.length));
+  });
+  const reason = String(fields.reason);
+  expect(records).toContainEqual(expect.objectContaining({
+    event: 'exchange.failed', ...fields,
+    reason: reason.startsWith('Token exchange HTTP ') ? 'http-rejected' : failureReasons[reason],
+  }));
+  expect(errorLog.mock.calls.every(args => args.length === 1)).toBe(true);
+};
 let directory: string;
 let config = {
   tokenExchangeUrl: 'https://issuer.test/api/litellm/mtoken2jwt',
@@ -45,6 +69,8 @@ const setup = (fetch = vi.fn(async () => success())) => ({
 beforeEach(() => {
   errorLog.mockClear();
   vi.spyOn(console, 'error').mockImplementation(errorLog);
+  vi.spyOn(console, 'info').mockImplementation(() => {});
+  vi.spyOn(console, 'warn').mockImplementation(() => {});
   vi.spyOn(os, 'networkInterfaces').mockReturnValue({
     Ethernet: [{
       address: '192.0.2.1', netmask: '255.255.255.0', family: 'IPv4',
@@ -142,6 +168,40 @@ test('exchanges only mtoken and a normalized MAC without changing the login file
   expect(fetch).toHaveBeenCalledTimes(1);
 });
 
+test('records one successful exchange with safe lifetime metadata while cached reads stay quiet', async () => {
+  login();
+  const { service } = setup();
+
+  await service.refresh();
+  await service.refresh();
+
+  const calls = vi.mocked(console.info).mock.calls;
+  expect(calls).toHaveLength(1);
+  const records = calls.map(args => {
+    expect(args).toHaveLength(1);
+    expect(args[0]).not.toMatch(/[\r\n]|user-1|mtoken-fixture|cookie-fixture|issuer\.test|signature/);
+    return JSON.parse(String(args[0]).slice('[BuiltinModelAuth] '.length));
+  });
+  expect(records).toEqual([
+    { event: 'exchange.succeeded', generation: expect.any(Number), elapsedMs: 0,
+      expiresInSeconds: 300, refreshInMs: 240_000 },
+  ]);
+});
+
+test('records a missing or malformed login only when its failure class changes', async () => {
+  const { service } = setup();
+  await service.refresh();
+  await service.refresh();
+  fs.writeFileSync(path.join(directory, 'user_info.json'), 'invalid private-login-fixture');
+  await service.refresh();
+
+  const lines = vi.mocked(console.warn).mock.calls.map(args => String(args[0]));
+  expect(lines).toHaveLength(2);
+  expect(lines.join('')).not.toMatch(/private-login-fixture|user_info|mtoken/);
+  expect(lines.map(line => JSON.parse(line.slice('[BuiltinModelAuth] '.length)).reason))
+    .toEqual(['login-missing', 'login-invalid-json']);
+});
+
 test('uses the shared MAC lookup when renewing credentials after a network change', async () => {
   login();
   const { service, fetch } = setup();
@@ -171,7 +231,7 @@ test('does not send an exchange request when no valid MAC is available', async (
 
   expect(fetch).not.toHaveBeenCalled();
   expect(getActiveBuiltinModelCredential()).toBeNull();
-  expect(errorLog).toHaveBeenCalledWith('[BuiltinModelTokenExchange] exchange failed:', {
+  expectExchangeFailure({
     stage: 'device', reason: 'Unable to obtain a valid MAC address',
   });
 });
@@ -213,7 +273,7 @@ test('rejects an inconsistent response lifetime even when the issuer clock is wi
   await expect(service.refresh()).rejects.toThrow('Model authentication token exchange failed.');
 
   expect(getActiveBuiltinModelCredential()).toBeNull();
-  expect(errorLog).toHaveBeenCalledWith('[BuiltinModelTokenExchange] exchange failed:', {
+  expectExchangeFailure({
     stage: 'credential', reason: 'Invalid or expired access token', credentialCode: 'expires-in-mismatch',
   });
 });
@@ -224,7 +284,7 @@ test('diagnoses an invalid exchange URL without exposing URL credentials', async
   const { service, fetch } = setup();
   await expect(service.refresh()).rejects.toThrow('Model authentication token exchange failed.');
   expect(fetch).not.toHaveBeenCalled();
-  expect(errorLog).toHaveBeenCalledWith('[BuiltinModelTokenExchange] exchange failed:', {
+  expectExchangeFailure({
     stage: 'url', reason: 'Invalid token exchange URL',
   });
   expect(JSON.stringify(errorLog.mock.calls)).not.toMatch(/mtoken-fixture|cookie-fixture/);
@@ -240,7 +300,7 @@ test.each([
   login();
   const { service } = setup(vi.fn(async () => response()));
   await expect(service.refresh()).rejects.toThrow('Model authentication token exchange failed.');
-  expect(errorLog).toHaveBeenCalledWith('[BuiltinModelTokenExchange] exchange failed:', {
+  expectExchangeFailure({
     stage: reason === 'Invalid or expired access token' ? 'credential' : 'response', reason,
     ...(credentialCode ? { credentialCode } : {}),
   });
@@ -257,7 +317,7 @@ test.each([
 
   await expect(service.refresh()).rejects.toThrow('Model authentication token exchange failed.');
 
-  expect(errorLog).toHaveBeenCalledWith('[BuiltinModelTokenExchange] exchange failed:', {
+  expectExchangeFailure({
     stage: 'credential', reason: 'Invalid or expired access token', credentialCode,
   });
   expect(getActiveBuiltinModelCredential()).toBeNull();
@@ -270,7 +330,7 @@ test('diagnoses network failures without logging their raw message or cause', as
     throw new Error('mtoken-fixture', { cause: new Error('cookie-fixture') });
   }));
   await expect(service.refresh()).rejects.toThrow('Model authentication token exchange failed.');
-  expect(errorLog).toHaveBeenCalledWith('[BuiltinModelTokenExchange] exchange failed:', {
+  expectExchangeFailure({
     stage: 'request', reason: 'Token exchange network request failed',
   });
   expect(JSON.stringify(errorLog.mock.calls)).not.toMatch(/mtoken-fixture|cookie-fixture/);
@@ -288,7 +348,7 @@ test.each(['ENOTFOUND', 'ECONNREFUSED', 'ECONNRESET', 'ENETUNREACH', 'UND_ERR_CO
 
     await expect(service.refresh()).rejects.toThrow('Model authentication token exchange failed.');
 
-    expect(errorLog).toHaveBeenCalledWith('[BuiltinModelTokenExchange] exchange failed:', {
+    expectExchangeFailure({
       stage: 'request', reason: 'Token exchange network request failed', networkCode: code,
     });
     expect(JSON.stringify(errorLog.mock.calls)).not.toMatch(/mtoken-fixture|cookie-fixture|private-host|192\.0\.2\.123/);
@@ -305,7 +365,7 @@ test('finds a transport code inside aggregated connection failures', async () =>
 
   await expect(service.refresh()).rejects.toThrow('Model authentication token exchange failed.');
 
-  expect(errorLog).toHaveBeenCalledWith('[BuiltinModelTokenExchange] exchange failed:', {
+  expectExchangeFailure({
     stage: 'request', reason: 'Token exchange network request failed', networkCode: 'ECONNREFUSED',
   });
   expect(JSON.stringify(errorLog.mock.calls)).not.toMatch(/mtoken-fixture|cookie-fixture|fetch failed/);
@@ -319,7 +379,7 @@ test('ignores unrecognized codes and cyclic transport causes', async () => {
 
   await expect(service.refresh()).rejects.toThrow('Model authentication token exchange failed.');
 
-  expect(errorLog).toHaveBeenCalledWith('[BuiltinModelTokenExchange] exchange failed:', {
+  expectExchangeFailure({
     stage: 'request', reason: 'Token exchange network request failed',
   });
   expect(JSON.stringify(errorLog.mock.calls)).not.toMatch(/mtoken-fixture|cookie-fixture/);
@@ -332,7 +392,7 @@ test('reports a timeout separately from a network failure', async () => {
     throw Object.assign(new Error('private transport error'), { code: 'ECONNRESET' });
   }));
   await expect(service.refresh()).rejects.toThrow('Model authentication token exchange failed.');
-  expect(errorLog).toHaveBeenCalledWith('[BuiltinModelTokenExchange] exchange failed:', {
+  expectExchangeFailure({
     stage: 'request', reason: 'Token exchange timed out',
   });
 });
@@ -395,6 +455,7 @@ test('discards a late exchange response after the login file switches accounts',
   resolve(success());
   expect(await request).toBeNull();
   expect(getActiveBuiltinModelCredential()).toBeNull();
+  expect(console.info).not.toHaveBeenCalled();
 });
 
 test('keeps a still-valid JWT during a temporary outage but clears it before expiration', async () => {
@@ -418,7 +479,7 @@ test('revokes on rejected mtoken and does not leak the server response', async (
   fetch.mockResolvedValue(new Response('mtoken-fixture cookie-fixture', { status: 401 }));
   await expect(service.refresh()).rejects.toThrow('Model authentication token exchange failed.');
   expect(getActiveBuiltinModelCredential()).toBeNull();
-  expect(errorLog).toHaveBeenCalledWith('[BuiltinModelTokenExchange] exchange failed:', {
+  expectExchangeFailure({
     stage: 'request', reason: 'Token exchange HTTP 401', httpStatus: 401,
   });
   expect(JSON.stringify(errorLog.mock.calls)).not.toMatch(/mtoken-fixture|cookie-fixture/);

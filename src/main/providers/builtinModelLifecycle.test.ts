@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
 import type { SqliteStore } from '../data/sqliteStore';
 import { BuiltinModelLifecycle } from './builtinModelLifecycle';
@@ -13,6 +13,7 @@ vi.mock('./builtinModelProvider', async importOriginal => {
 });
 
 const syncBuiltinModelProviderMock = vi.mocked(syncBuiltinModelProvider);
+afterEach(() => vi.restoreAllMocks());
 
 const createHarness = () => {
   const store = {} as SqliteStore;
@@ -29,6 +30,8 @@ const createHarness = () => {
 describe('BuiltinModelLifecycle', () => {
   beforeEach(() => {
     syncBuiltinModelProviderMock.mockReset().mockResolvedValue();
+    vi.spyOn(console, 'info').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
   });
 
   test('refreshes enabled models, syncs OpenClaw, and notifies renderers after login', async () => {
@@ -234,5 +237,25 @@ describe('BuiltinModelLifecycle', () => {
     await expect(harness.lifecycle.refreshAfterLogout()).rejects.toThrow('unexpected failure');
 
     expect(harness.notifyModelsChanged).toHaveBeenCalledOnce();
+  });
+
+  test('records configuration rejection without raw multiline error or credentials', async () => {
+    const harness = createHarness();
+    harness.syncOpenClawConfig.mockResolvedValue({
+      success: false, configSynced: true,
+      error: 'private-auth-fixture\nAuthorization: Bearer private-token-fixture',
+    });
+
+    await harness.lifecycle.refreshAfterLogin();
+
+    const lines = vi.mocked(console.warn).mock.calls.map(args => {
+      expect(args).toHaveLength(1);
+      expect(args[0]).not.toMatch(/[\r\n]|private-.*-fixture|Authorization/);
+      return JSON.parse(String(args[0]).slice('[BuiltinModelAuth] '.length));
+    });
+    expect(lines).toContainEqual(expect.objectContaining({
+      event: 'config-sync.failed', configSynced: true,
+      reason: 'config-application-failed',
+    }));
   });
 });

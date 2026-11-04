@@ -12,6 +12,12 @@ import { mainProcessFetch } from '../core/network/mainProcessFetch';
 import { enqueueAppConfigUpdate } from '../data/appConfigUpdateQueue';
 import type { SqliteStore } from '../data/sqliteStore';
 import {
+  BuiltinModelAuthDiagnosticEvent,
+  BuiltinModelAuthDiagnosticReason,
+  getBuiltinModelAuthErrorCode,
+  writeBuiltinModelAuthDiagnostic,
+} from './builtinModelAuthDiagnostics';
+import {
   buildBuiltinModelRequestHeaders,
   type BuiltinModelCredential,
   getActiveBuiltinModelCredential,
@@ -103,10 +109,23 @@ type BuiltinModels = {
 const compareModelIds = (left: ProviderModel, right: ProviderModel): number =>
   left.id < right.id ? -1 : left.id > right.id ? 1 : 0;
 
+type DiscoveryDiagnostic = {
+  stage: 'models' | 'model-info';
+  phase: 'request' | 'response';
+  optionalHttpStatus?: number;
+};
+
+class BuiltinModelDiscoveryHttpError extends Error {
+  constructor(readonly httpStatus: number) {
+    super(`GET /models failed with ${httpStatus}`);
+  }
+}
+
 async function fetchBuiltinModels(
   baseUrl: string,
   credential: BuiltinModelCredential,
   signal: AbortSignal,
+  diagnostic: DiscoveryDiagnostic,
 ): Promise<BuiltinModels> {
   const headers = buildBuiltinModelRequestHeaders(credential);
   signal = AbortSignal.any([signal, AbortSignal.timeout(15_000)]);
@@ -115,16 +134,21 @@ async function fetchBuiltinModels(
     signal,
     redirect: 'error',
   });
+  diagnostic.phase = 'response';
   if (!modelsResponse.ok) {
-    throw new Error(`GET /models failed with ${modelsResponse.status}`);
+    throw new BuiltinModelDiscoveryHttpError(modelsResponse.status);
   }
   const listedModels = parseProviderModelsResponse(await modelsResponse.json());
 
+  diagnostic.stage = 'model-info';
+  diagnostic.phase = 'request';
   const infoResponse = await mainProcessFetch(buildProviderModelInfoUrl(baseUrl), {
     headers,
     signal,
     redirect: 'error',
   });
+  diagnostic.phase = 'response';
+  if (!infoResponse.ok) diagnostic.optionalHttpStatus = infoResponse.status;
   const infoById = infoResponse.ok
     ? parseProviderModelInfoResponse(await infoResponse.json())
     : new Map();
@@ -252,22 +276,40 @@ export async function syncBuiltinModelProvider(
   let models: ProviderModel[] = [];
   let embeddingModels: ProviderModel[] = [];
   let catalogLoaded = false;
+  const startedAt = Date.now();
+  const diagnostic: DiscoveryDiagnostic = { stage: 'models', phase: 'request' };
   try {
     const fetchedModels = await fetchBuiltinModels(
       fileConfig.baseUrl,
       credential,
       syncState.controller!.signal,
+      diagnostic,
     );
     if (!isCurrentBuiltinModelSync(store, syncState)) return;
     models = fetchedModels.chatModels;
     embeddingModels = fetchedModels.embeddingModels;
     catalogLoaded = true;
-    console.log(
-      `[BuiltinModelProvider] Synced ${models.length} chat model(s) and ${embeddingModels.length} embedding model(s)`,
-    );
+    if (diagnostic.optionalHttpStatus !== undefined) {
+      writeBuiltinModelAuthDiagnostic('warn', BuiltinModelAuthDiagnosticEvent.DiscoveryOptionalHttpRejected, {
+        generation: syncState.generation, discoveryStage: 'model-info',
+        httpStatus: diagnostic.optionalHttpStatus, reason: BuiltinModelAuthDiagnosticReason.HttpRejected,
+      });
+    }
+    writeBuiltinModelAuthDiagnostic('info', BuiltinModelAuthDiagnosticEvent.DiscoverySucceeded, {
+      generation: syncState.generation, elapsedMs: Date.now() - startedAt,
+      chatModelCount: models.length, embeddingModelCount: embeddingModels.length,
+    });
   } catch (error) {
     if (!isCurrentBuiltinModelSync(store, syncState)) return;
-    console.warn('[BuiltinModelProvider] Failed to refresh models, retaining cached list:', error);
+    writeBuiltinModelAuthDiagnostic('warn', BuiltinModelAuthDiagnosticEvent.DiscoveryFailed, {
+      generation: syncState.generation, elapsedMs: Date.now() - startedAt,
+      discoveryStage: diagnostic.stage, errorCode: getBuiltinModelAuthErrorCode(error),
+      reason: error instanceof BuiltinModelDiscoveryHttpError ? BuiltinModelAuthDiagnosticReason.HttpRejected
+        : diagnostic.phase === 'request' ? BuiltinModelAuthDiagnosticReason.NetworkFailure
+          : error instanceof SyntaxError ? BuiltinModelAuthDiagnosticReason.ResponseInvalidJson
+            : BuiltinModelAuthDiagnosticReason.ResponseUnreadable,
+      ...(error instanceof BuiltinModelDiscoveryHttpError ? { httpStatus: error.httpStatus } : {}),
+    });
   }
   await persist(models, embeddingModels, catalogLoaded);
 }

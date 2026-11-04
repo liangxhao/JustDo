@@ -112,6 +112,22 @@ npm test
 
 `productName` 来自 `package.json`；隔离开发会话使用独立数据目录。Gateway 摘要会省略部分事件，缺少记录不能证明事件未发生；终端重定向文件只是控制台捕获。
 
+收到用户日志后，需要分享小体积认证证据时，可运行
+[`collect-model-auth-evidence.ps1`](../scripts/diagnostics/collect-model-auth-evidence.ps1)：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -STA -File .\scripts\diagnostics\collect-model-auth-evidence.ps1
+```
+
+弹窗中多选收到的 Main、Gateway 或原生 JSON 日志，脚本自动定位最近一次认证故障，
+默认提取前 30 分钟和后 5 分钟的受控字段，桌面生成最多 16 KiB 的单行事件 TXT。
+`-ErrorTime '2026-11-04T21:30:00+08:00'` 可指定故障时间，`-MaxKiB 4` 可进一步缩小。
+报告仅保留事件、固定原因码、数值／布尔状态和源文件别名行号，不复制日志原文、
+文件名／路径、账号、凭据或聊天内容。未知字段与未识别的记录会被丢弃；
+报告缺少某事件不能证明它未发生，需结合读取／截断统计和原日志范围判断。
+重复统计表示日志记录数，不能据此推算故障次数。提取不修改原文件，
+也不读取本机登录配置或启动 Gateway。
+
 Main 统一维护应用写入的 Main、Cowork 和 Gateway 摘要日志。单文件上限分别为
 80 MiB、5 MiB 和 20 MiB；写入前检查本条记录是否会超限，必要时先轮转，每个
 文件只保留一个备份，名称分别为 `main-YYYY-MM-DD.old.log`、`cowork.log.old`

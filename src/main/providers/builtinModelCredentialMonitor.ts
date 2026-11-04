@@ -1,5 +1,10 @@
 import fs from 'fs';
 
+import {
+  BuiltinModelAuthDiagnosticEvent,
+  getBuiltinModelAuthErrorCode,
+  writeBuiltinModelAuthDiagnostic,
+} from './builtinModelAuthDiagnostics';
 import { type BuiltinModelCredential, getBuiltinModelCredentialRefreshAtSeconds } from './builtinModelCredential';
 
 const DEFAULT_WATCH_INTERVAL_MS = 1_000;
@@ -72,6 +77,10 @@ export class BuiltinModelCredentialMonitor {
 
   retryAfterError(error: unknown): void {
     if (!this.started) return;
+    writeBuiltinModelAuthDiagnostic('warn', BuiltinModelAuthDiagnosticEvent.RefreshRetryScheduled, {
+      retryDelayMs: ERROR_RETRY_MS,
+      errorCode: getBuiltinModelAuthErrorCode(error),
+    });
     this.dependencies.onError?.(error);
     this.scheduleRefresh(ERROR_RETRY_MS);
   }
@@ -110,9 +119,10 @@ export class BuiltinModelCredentialMonitor {
     this.expiryTimer = null;
     if (!this.started) return;
     if (credential?.authType === 'api-key') return;
+    const delayMs = credential ? resolveBuiltinModelCredentialExpiryDelayMs(credential) : LOGIN_RETRY_MS;
     this.expiryTimer = setTimeout(() => {
       this.expiryTimer = null;
       this.enqueueRefresh();
-    }, credential ? resolveBuiltinModelCredentialExpiryDelayMs(credential) : LOGIN_RETRY_MS);
+    }, delayMs);
   }
 }

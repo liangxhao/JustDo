@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -45,7 +46,9 @@ test.skipIf(!fs.existsSync(dist))('native JWT references protect tokens without 
         providerName: 'builtin_models', apiKey: '', baseURL: 'http://127.0.0.1:9/v1', apiType: 'openai',
         models: [{ id: 'fixture' }], embeddingModels: [{ id: 'embedding-fixture' }],
       }]) },
-    }, directory, { accessToken: 'jwt-fixture-one', userAccount: 'user-fixture', expiresAt: Math.floor(Date.now() / 1000) + 300 }, process.execPath, 'a'.repeat(32));
+    }, directory, { accessToken: 'jwt-fixture-one', userAccount: 'user-fixture', expiresAt: Math.floor(Date.now() / 1000) + 300 }, {
+      executable: process.execPath, sha256: createHash('sha256').update(fs.readFileSync(process.execPath)).digest('hex'),
+    }, 'a'.repeat(32));
     const rotatedSnapshot = sealBuiltinCredential(JSON.stringify({ accessToken: 'jwt-fixture-two', userAccount: 'user-fixture', expiresAt: Math.floor(Date.now() / 1000) + 300, authSessionId: 'a'.repeat(32) }));
     const url = (name: string) => JSON.stringify(pathToFileURL(path.join(dist, name)).href);
     const script = `
@@ -92,7 +95,7 @@ test.skipIf(!fs.existsSync(dist))('native JWT references protect tokens without 
       const marker = JSON.parse(contents).providers.builtin_models.apiKey;
       if (marker !== 'secretref-managed') throw new Error('Unexpected cache marker');
       if (contents.includes('user-fixture') || contents.includes('X-User-Account')) throw new Error('Account persisted in model cache');
-      fs.writeFileSync(${JSON.stringify(path.join(directory, 'credentials', 'credentials.bin'))}, Buffer.from(${JSON.stringify(rotatedSnapshot.toString('base64'))}, 'base64'));
+      fs.writeFileSync(${JSON.stringify(path.join(directory, 'credentials', 'credentials.json'))}, Buffer.from(${JSON.stringify(rotatedSnapshot.toString('base64'))}, 'base64'));
       const rotated = await resolveSecretRefString(source.models.providers.builtin_models.apiKey, {config: source, env: process.env});
       if (rotated !== 'jwt-fixture-two') throw new Error('JWT did not rotate');
       process.stdout.write('verified');

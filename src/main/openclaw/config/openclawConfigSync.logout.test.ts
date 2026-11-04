@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -32,7 +34,9 @@ vi.mock('electron', () => ({
   },
 }));
 vi.mock('../runtime/launch/electronNodeRuntime', () => ({
-  getElectronNodeRuntimePath: () => process.execPath,
+  getBuiltinCredentialNodeRuntimeSource: () => ({
+    executable: process.execPath, sha256: createHash('sha256').update(fs.readFileSync(process.execPath)).digest('hex'),
+  }),
 }));
 
 // Config projection tests must not depend on the developer runtime being installed or

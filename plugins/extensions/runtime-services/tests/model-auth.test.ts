@@ -1,5 +1,5 @@
 import type { ProviderWrapStreamFnContext } from 'openclaw/plugin-sdk/plugin-entry';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   BUILTIN_SECRET_ID,
@@ -11,6 +11,7 @@ import { buildBuiltinModelAuthProvider, wrapBuiltinModelAuth } from '../model-au
 
 const sdk = vi.hoisted(() => ({ resolve: vi.fn() }));
 vi.mock('openclaw/plugin-sdk/secret-ref-runtime', () => ({ resolveSecretRefValues: sdk.resolve }));
+const authLog = vi.fn();
 
 const key = `exec:${BUILTIN_SECRET_SOURCE}:${BUILTIN_SECRET_ID}`;
 const baseUrl = 'https://models.example.test/v1';
@@ -50,7 +51,12 @@ const request = (wrap: ReturnType<typeof fixture>['wrap'], options = {}) =>
 
 beforeEach(() => {
   vi.resetAllMocks();
+  vi.spyOn(console, 'warn').mockImplementation(authLog);
   sdk.resolve.mockResolvedValue(new Map([[key, 'current']]));
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
 describe('managed model request authentication', () => {
@@ -94,6 +100,35 @@ describe('managed model request authentication', () => {
     expect(inner).toHaveBeenCalledTimes(1);
   });
 
+  it('logs one compact credential-free record with an allowlisted native error code', async () => {
+    const { wrap, inner } = fixture();
+    sdk.resolve.mockRejectedValueOnce(Object.assign(
+      new Error('private-token\r\nAuthorization: Bearer private-key; /private/account'),
+      { code: 'SECRET_PROVIDER_PATH_SECURITY_UNVERIFIABLE', token: 'private-token' },
+    ));
+
+    await expect(request(wrap)).rejects.toThrow('Managed model credentials are unavailable.');
+
+    expect(inner).not.toHaveBeenCalled();
+    expect(authLog).toHaveBeenCalledExactlyOnceWith(
+      '[BuiltinModelAuth] {"event":"request_credentials_rejected","reason":"secret_resolution_failed","resolverCode":"SECRET_PROVIDER_PATH_SECURITY_UNVERIFIABLE"}',
+    );
+    expect(authLog.mock.calls[0]).toHaveLength(1);
+    expect(authLog.mock.calls[0][0]).not.toMatch(/[\r\n]|private|models\.example|a{32}/);
+  });
+
+  it('does not expose unknown resolver codes or log successful credential reads', async () => {
+    const { wrap } = fixture();
+    await request(wrap);
+    expect(authLog).not.toHaveBeenCalled();
+    sdk.resolve.mockRejectedValueOnce({ code: 'private-token\nprivate-account' });
+
+    await expect(request(wrap)).rejects.toThrow('Managed model credentials are unavailable.');
+
+    expect(authLog.mock.calls[0][0]).toContain('"resolverCode":"unknown"');
+    expect(authLog.mock.calls[0][0]).not.toMatch(/private|[\r\n]/);
+  });
+
   it('pins the original session even if a caller replaces the config object', async () => {
     const cfg = config();
     const { wrap } = fixture(cfg);
@@ -125,6 +160,8 @@ describe('managed model request authentication', () => {
       const { wrap, inner } = fixture();
       await expect(request(wrap)).rejects.toThrow('Managed model credentials are unavailable.');
       expect(inner).not.toHaveBeenCalled();
+      expect(authLog.mock.calls[0][0]).toContain('"reason":"invalid_resolved_credential"');
+      expect(authLog.mock.calls[0][0]).not.toMatch(/[\r\n]/);
     },
   );
 
@@ -135,6 +172,8 @@ describe('managed model request authentication', () => {
     }
     expect(sdk.resolve).not.toHaveBeenCalled();
     expect(inner).not.toHaveBeenCalled();
+    expect(authLog.mock.calls.map(([line]) => JSON.parse(line.slice(line.indexOf('{'))).reason))
+      .toEqual(['provider_mismatch', 'route_mismatch']);
   });
 
   it('accepts native normalization of a trailing slash on the configured base URL', async () => {
@@ -151,6 +190,7 @@ describe('managed model request authentication', () => {
     const { wrap, inner } = fixture(cfg);
     await expect(request(wrap)).rejects.toThrow();
     expect(inner).not.toHaveBeenCalled();
+    expect(authLog.mock.calls[0][0]).toContain('"reason":"missing_auth_session"');
   });
 
   it('honors cancellation before and during credential resolution', async () => {
@@ -166,6 +206,29 @@ describe('managed model request authentication', () => {
     });
     await expect(request(wrap, { signal: active.signal })).rejects.toThrow();
     expect(inner).not.toHaveBeenCalled();
+    expect(authLog).not.toHaveBeenCalled();
+  });
+
+  it('preserves cancellation when the resolver rejects after abort, without a failure record', async () => {
+    const { wrap, inner } = fixture();
+    const controller = new AbortController();
+    sdk.resolve.mockImplementationOnce(async () => {
+      controller.abort();
+      throw new Error('private cancellation details');
+    });
+
+    await expect(request(wrap, { signal: controller.signal })).rejects.toThrow();
+
+    expect(inner).not.toHaveBeenCalled();
+    expect(authLog).not.toHaveBeenCalled();
+  });
+
+  it('preserves the existing auth rejection if diagnostic logging fails', async () => {
+    const { wrap } = fixture();
+    authLog.mockImplementationOnce(() => { throw new Error('logger unavailable'); });
+    sdk.resolve.mockRejectedValueOnce(new Error('private resolver failure'));
+
+    await expect(request(wrap)).rejects.toThrow('Managed model credentials are unavailable.');
   });
 
   it('registers the same policy for embedded tasks and direct completions only on builtin_models', () => {

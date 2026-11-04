@@ -165,7 +165,7 @@ import {
   validateConfiguredOpenClawProviderNames,
 } from '../../providers/providerApiConfig';
 import { buildAgentEntry, buildManagedAgentEntries } from '../models/openclawAgentModels';
-import { getElectronNodeRuntimePath } from '../runtime/launch/electronNodeRuntime';
+import { getBuiltinCredentialNodeRuntimeSource } from '../runtime/launch/electronNodeRuntime';
 import { resolveManagedAgentWorkspace, resolveManagedAgentWorkspaceRoot } from './agents/agentWorkspace';
 import { seedMainRoleFiles } from './agents/mainRoleFiles';
 import { syncBuiltinCredentialFile } from './models/builtinCredentialFile';
@@ -804,7 +804,7 @@ export class OpenClawConfigSync {
         preparedSecrets.config,
         this.engineManager.getStateDir(),
         getActiveBuiltinModelCredential(),
-        getElectronNodeRuntimePath(),
+        getBuiltinCredentialNodeRuntimeSource(),
       );
       preparedSecrets = {
         config: builtinSecrets.config,

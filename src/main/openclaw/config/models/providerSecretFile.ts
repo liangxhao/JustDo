@@ -8,8 +8,16 @@ const SECRET_FILE_NAME = 'model-provider-secrets.json';
 const BUILTIN_KEY = 'BUILTIN_MODELS';
 let windowsUserSid: string | undefined;
 export function restrictCredentialFile(filePath: string): void {
+  restrictCredentialPath(filePath, false);
+}
+
+export function restrictCredentialDirectory(directory: string): void {
+  restrictCredentialPath(directory, true);
+}
+
+function restrictCredentialPath(filePath: string, directory: boolean): void {
   if (process.platform !== 'win32') {
-    fs.chmodSync(filePath, 0o600);
+    fs.chmodSync(filePath, directory ? 0o700 : 0o600);
     return;
   }
   const systemDirectory = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32');
@@ -21,7 +29,9 @@ export function restrictCredentialFile(filePath: string): void {
   }
   execFileSync(path.join(systemDirectory, 'icacls.exe'), [
     filePath, '/inheritance:r', '/grant:r',
-    `*${windowsUserSid}:F`, '*S-1-5-18:F', '*S-1-5-32-544:F',
+    `*${windowsUserSid}:${directory ? '(OI)(CI)F' : 'F'}`,
+    `*S-1-5-18:${directory ? '(OI)(CI)F' : 'F'}`,
+    `*S-1-5-32-544:${directory ? '(OI)(CI)F' : 'F'}`,
   ], options);
 }
 const isRecord = (value: unknown): value is Record<string, unknown> =>

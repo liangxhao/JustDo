@@ -36,7 +36,10 @@ function fixture(packaged: boolean) {
 describe('bundled Node admission', () => {
   it.each([false, true])('resolves the locked executable and its complete external npm tree (packaged=%s)', packaged => {
     const value = fixture(packaged);
-    expect(resolveBundledNodeRuntimePaths(value.options)).toEqual({ executable: value.executable, npmBin: value.npmBin });
+    expect(resolveBundledNodeRuntimePaths(value.options)).toEqual({
+      executable: value.executable, npmBin: value.npmBin,
+      executableSha256: createHash('sha256').update(fs.readFileSync(value.executable)).digest('hex'),
+    });
   });
   it('rejects missing or changed payloads without falling back to Electron or PATH', () => {
     const value = fixture(true);

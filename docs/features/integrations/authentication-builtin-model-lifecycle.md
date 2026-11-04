@@ -51,6 +51,7 @@ sequenceDiagram
   participant I as 换证服务
   participant L as LiteLLM
   participant G as Gateway
+  participant N as 随包 Node 凭据读取器
   M->>F: 读取 mtoken 与账号
   M->>I: POST mtoken + deviceId
   I-->>M: Bearer token / expires_in / 可选 uid
@@ -61,6 +62,9 @@ sequenceDiagram
   M->>M: 保存无凭据 provider 投影
   M->>M: 原子发布私有 JWT 快照
   M->>G: 配置 exec SecretRef / secrets.reload
+  G->>N: 本地限量凭据读取协议
+  N->>N: 读取 JSON、解密、校验会话与有效期
+  N-->>G: JWT（仅原生管道）
 ```
 
 ### 换证响应校验
@@ -86,6 +90,28 @@ token 的实际有效期；Main 仍在剩余不足 15 秒时拒绝使用。LiteL
 
 模型发现 `/models` 必需，`/model/info` 可选增强；区分 chat/embedding 并规范化能力。Main 直发请求使用 `Authorization: Bearer <真实JWT>`，同时保留 `X-ACCESS-JWT` 和 `X-User-Account`；api-key 开发模式只发送 Bearer key。provider 配置中的非秘密占位符仅用于应用内配置投影，不能作为网络请求凭据。Gateway 和 memory search 通过同一 JWT SecretRef 解析真实 JWT 并发送 Bearer 认证。
 
+Main 将派生凭据原子写入 `stateDir/credentials/credentials.json`。
+文件是普通 JSON，仅包含 `version`、`iv`、`tag`、`data`，使用随机 IV 的 AES-GCM
+遮蔽 JWT、账号、有效期、登录会话和认证类型。固定公开材料只用于避免直接打开文件
+看到凭据，不是独立的密钥保险库；实际边界仍是私有文件 ACL、会话／期限校验和服务端验签。
+读取限 64 KiB，检查版本、base64、IV／tag 长度与完整性；解析器只接受指定的凭据 ID，
+并验证 token 基本格式、当前登录会话、认证类型及原有 15 秒到期拒绝窗口。
+JWT 不进入原生命令行、环境变量、配置或日志。
+
+Windows 的 exec 命令直接执行随包 Node 的私有副本，参数仅是 `read-builtin.cjs`。
+Main 以已校验的随包可执行文件及 SHA-256 身份，在
+`stateDir/credentials/runtime/<Node SHA-256>/node.exe` 准备普通文件副本：先建立私有
+目录和临时文件 ACL，再限量缓冲复制、校验哈希并原子发布。按内容哈希复用，
+不在续签／模型请求时反复复制，也不修改原安装目录、开发目录或源 Node 的权限。
+已有副本损坏或身份异常时拒绝发布；旧哈希目录保留，避免覆盖或删除仍被旧进程使用的文件。
+这移除了凭据传输的 PowerShell 管道，不放宽原生 exec 权限检查；原生 ACL 检查自身仍可能
+调用系统安全工具。企业若禁止从该用户数据路径执行程序，会明确失败，不回退 shell。
+macOS/Linux 保留既有用户所有的私有启动脚本，以满足原生 command 所有者检查。
+
+旧 `credentials.bin` 是可重新生成的短期派生数据，不做格式回读或迁移。
+发布新 JSON 后清理旧文件；退出会尝试撤销两种已知文件，即使其中一种删除失败也继续
+尝试另一种，并由既有撤权失败保护处理。退出后的原生已加载凭据仍通过既有重载／停止流程撤销。
+
 ### 受控诊断
 
 诊断只记录受控阶段、固定原因、可选 HTTP 状态，并单独区分超时。阶段包括 URL、MAC、网络请求、响应、JWT 与身份复核；阶段名不包含对应原始值。
@@ -96,6 +122,25 @@ token 的实际有效期；Main 仍在剩余不足 15 秒时拒绝使用。LiteL
 | `credentialCode` | 编码、必需字段、账号、audience、算法、时间、期限上限、`expires_in` 不一致 | 不输出 claims 的值，也不表示客户端已验签 |
 
 URL、请求/响应体、mtoken、JWT、Cookie、MAC 和原始异常均不写日志。对外仍返回统一失败错误，诊断字段不放宽凭据校验。
+
+认证链路日志使用 `[BuiltinModelAuth]` 前缀与紧凑 JSON，每条记录只有一行，
+不传递 Error、stack 或凭据对象。保留实际换证成功、快照发布／撤销、原生重载 ACK，
+以及认证、配置应用、重载、重试和模型发现的失败原因。失败字段限于固定阶段、JWT 原因码、
+白名单 HTTP／网络／文件错误码和必要的耗时／重试信息；模型发现成功保留模型数量。
+不记录监控启停、开始、排队、被替代、缓存读取或每次成功模型请求。
+可选模型元数据请求被拒绝仍沿用原有降级行为，错误响应正文不进入日志。
+
+`reload.acknowledged` 记录 RPC 接纳及可用的 `warningCount`；
+即使接纳，仍可能存在不可用的原生 owner，不能把该日志当作内置模型已经恢复。
+日志增强不改变现有 ACK 判定、重试、执行准入或停止行为。
+
+需要回传少量证据时，使用[日志提取工具](../../development.md#日志与排障)读取选定日志，
+只保留受控字段。诊断不自动读取或解密凭据快照，不启动额外凭据探测进程。
+
+Runtime Services 在模型请求前被拒绝时记录独立的单行原因，包括捕获配置、会话环境、
+认证类型、请求路由、原生解析器失败和凭据格式；取消不记成认证失败。
+服务端 JWT／Team 拒绝继续使用 LiteLLM 的 `litellm.validation` 单行
+`code/reason/request_id` 日志；客户端的本地解析错误不能替代服务端验签证据。
 
 ## 4. 轮换与并发
 
@@ -141,7 +186,8 @@ Main 监听登录文件，通常在剩余 60 秒续签；短生命周期 token �
 凭据重载对 `UNAVAILABLE`、客户端超时及明确的传输断连最多尝试三次，间隔 500/1500 毫秒。
 它是同一实例的幂等快照刷新，不重发聊天、模型请求或工具；原生权限、协议拒绝及非法 ACK 不按临时故障重试。
 每次请求前、重连后、ACK 后和最终停止前核对所属实例及认证会话，迟到结果不能确认替代登录或停止替代进程。
-Windows PowerShell 冷启动解析预算为 60 秒，凭据重载 RPC 为 90 秒，覆盖命令权限检查及快照发布；其他平台为 5/35 秒。
+Windows 解析预算仍为 60 秒，凭据重载 RPC 为 90 秒，覆盖原生命令权限检查及快照发布；其他平台为 5/35 秒。
+凭据读取已直接使用 Node，保留该预算是因为原生 Windows ACL 检查仍可能调用冷启动的系统工具。
 
 ### 重载失败与受控恢复
 

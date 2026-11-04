@@ -10,8 +10,49 @@ import {
 } from './contracts/model-auth';
 
 const AUTH_UNAVAILABLE = 'Managed model credentials are unavailable.';
+const AUTH_FAILURE_EVENT = 'request_credentials_rejected';
 const SECRET_KEY = `exec:${BUILTIN_SECRET_SOURCE}:${BUILTIN_SECRET_ID}`;
 const AUTH_HEADERS = new Set(['authorization', BUILTIN_SECRET_ID.toLowerCase()]);
+const AuthFailureReason = {
+  MissingProviderConfig: 'missing_provider_config',
+  MissingSession: 'missing_auth_session',
+  InvalidSession: 'invalid_auth_session',
+  InvalidAuthType: 'invalid_auth_type',
+  InvalidConfiguredRoute: 'invalid_configured_route',
+  ProviderMismatch: 'provider_mismatch',
+  RouteMismatch: 'route_mismatch',
+  SecretResolutionFailed: 'secret_resolution_failed',
+  InvalidResolvedCredential: 'invalid_resolved_credential',
+} as const;
+type AuthFailureReason = (typeof AuthFailureReason)[keyof typeof AuthFailureReason];
+const RESOLUTION_ERROR_CODES = new Set([
+  'SECRET_PROVIDER_PATH_SECURITY_UNVERIFIABLE',
+  'SECRET_PROVIDER_INVALID',
+  'SECRET_PROVIDER_NOT_CONFIGURED',
+  'SECRET_PROVIDER_UNAVAILABLE',
+  'SECRET_REF_NOT_FOUND',
+  'SECRET_REF_POLICY_DENIED',
+  'SECRET_REF_INVALID',
+  'SECRET_REF_REDACTED_VALUE',
+  'SECRET_REF_PROVIDER_ERROR',
+  'SECRET_REF_PROVIDER_CONTRACT',
+]);
+
+/** Never project provider error text, routes, captured identities or credentials. */
+function logAuthFailure(reason: AuthFailureReason, error?: unknown): void {
+  try {
+    const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined;
+    console.warn(`[BuiltinModelAuth] ${JSON.stringify({
+      event: AUTH_FAILURE_EVENT,
+      reason,
+      ...(reason === AuthFailureReason.SecretResolutionFailed ? {
+        resolverCode: typeof code === 'string' && RESOLUTION_ERROR_CODES.has(code) ? code : 'unknown',
+      } : {}),
+    })}`);
+  } catch {
+    // Diagnostics must not affect credential rejection or cancellation.
+  }
+}
 
 function routeKey(value: string | undefined): string | undefined {
   try {
@@ -63,18 +104,20 @@ export function wrapBuiltinModelAuth(ctx: ProviderWrapStreamFnContext) {
     options: Parameters<typeof inner>[2],
   ) => {
     options?.signal?.throwIfAborted();
-    if (
-      !config ||
-      !sessionId ||
-      !MODEL_AUTH_SESSION_PATTERN.test(sessionId) ||
-      (authType !== 'jwt' && authType !== 'api-key') ||
-      !baseUrl ||
-      model.provider !== BUILTIN_MODEL_PROVIDER_ID ||
-      routeKey(model.baseUrl) !== baseUrl
-    ) {
+    let rejection: AuthFailureReason | undefined;
+    if (!config) rejection = AuthFailureReason.MissingProviderConfig;
+    else if (!sessionId) rejection = AuthFailureReason.MissingSession;
+    else if (!MODEL_AUTH_SESSION_PATTERN.test(sessionId)) rejection = AuthFailureReason.InvalidSession;
+    else if (authType !== 'jwt' && authType !== 'api-key') rejection = AuthFailureReason.InvalidAuthType;
+    else if (!baseUrl) rejection = AuthFailureReason.InvalidConfiguredRoute;
+    else if (model.provider !== BUILTIN_MODEL_PROVIDER_ID) rejection = AuthFailureReason.ProviderMismatch;
+    else if (routeKey(model.baseUrl) !== baseUrl) rejection = AuthFailureReason.RouteMismatch;
+    if (!config || rejection) {
+      logAuthFailure(rejection ?? AuthFailureReason.MissingProviderConfig);
       throw new Error(AUTH_UNAVAILABLE);
     }
     let token: string;
+    let failureReason: AuthFailureReason = AuthFailureReason.SecretResolutionFailed;
     try {
       // A fresh resolver call deliberately has no cache: reload cannot replace a run's
       // captured resolvedApiKey/model.headers, and a settled read must not outlive logout.
@@ -90,13 +133,15 @@ export function wrapBuiltinModelAuth(ctx: ProviderWrapStreamFnContext) {
         resolved.length > 8192 ||
         /[\s\u0000-\u001f\u007f]/.test(resolved)
       ) {
+        failureReason = AuthFailureReason.InvalidResolvedCredential;
         throw new Error(AUTH_UNAVAILABLE);
       }
       token = resolved;
-    } catch {
+    } catch (error) {
       // Resolver diagnostics can contain paths/secret provider errors. Never expose them
       // through a model error, and never fall back to the old run credential.
       options?.signal?.throwIfAborted();
+      logAuthFailure(failureReason, error);
       throw new Error(AUTH_UNAVAILABLE);
     }
     options?.signal?.throwIfAborted();

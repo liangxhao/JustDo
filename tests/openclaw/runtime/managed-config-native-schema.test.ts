@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -19,7 +20,9 @@ vi.mock('electron', () => ({ app: { isPackaged: false, getAppPath: () => process
   getPath: () => path.resolve('build/managed-schema-isolated-user-data'),
 } }));
 vi.mock('../../../src/main/openclaw/runtime/launch/electronNodeRuntime', () => ({
-  getElectronNodeRuntimePath: () => process.execPath,
+  getBuiltinCredentialNodeRuntimeSource: () => ({
+    executable: process.execPath, sha256: createHash('sha256').update(fs.readFileSync(process.execPath)).digest('hex'),
+  }),
 }));
 // Only the product inventory and Electron shell are fixtures. Projection, persisted JSON,
 // target OpenClawSchema and native load-time legacy detection execute without replacements.

@@ -1,4 +1,5 @@
 import { type ChildProcess,fork } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { once } from 'node:events';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -83,7 +84,9 @@ test.skipIf(!available)('model requests keep renewing through a delayed config A
     const { config } = syncBuiltinCredentialFile({ models: { providers: { builtin_models: {
       baseUrl, api: 'openai-completions',
       apiKey: { source: 'exec', provider: 'justdo_login', id: 'X-ACCESS-JWT' },
-    } } } }, directory, initial, process.execPath, sessionId);
+    } } } }, directory, initial, {
+      executable: process.execPath, sha256: createHash('sha256').update(fs.readFileSync(process.execPath)).digest('hex'),
+    }, sessionId);
     const execProvider = (config.secrets as {
       providers: { justdo_login: { env: Record<string, string> } };
     }).providers.justdo_login;
@@ -95,7 +98,9 @@ test.skipIf(!available)('model requests keep renewing through a delayed config A
     const rotate = vi.fn(async () => {
       // Ordinary config preparation also publishes the current credential before
       // awaiting Gateway acknowledgement. Hold that acknowledgement indefinitely.
-      syncBuiltinCredentialFile(config, directory, getActiveBuiltinModelCredential(), process.execPath);
+      syncBuiltinCredentialFile(config, directory, getActiveBuiltinModelCredential(), {
+        executable: process.execPath, sha256: createHash('sha256').update(fs.readFileSync(process.execPath)).digest('hex'),
+      });
       await delayedAck;
     });
     const login = vi.fn(async () => undefined);
@@ -228,7 +233,7 @@ test.skipIf(!available)('model requests keep renewing through a delayed config A
     expect(await request('fixture-4')).toEqual({ ok: false, requests: 3, unavailable: true });
     acknowledgeRotation!();
     await vi.advanceTimersByTimeAsync(0);
-    expect(fs.existsSync(path.join(directory, 'credentials/credentials.bin'))).toBe(false);
+    expect(fs.existsSync(path.join(directory, 'credentials/credentials.json'))).toBe(false);
     expect(await request('fixture-4')).toEqual({ ok: false, requests: 3, unavailable: true });
     expect(backgroundError).not.toHaveBeenCalled();
     expect(monitorError).not.toHaveBeenCalled();

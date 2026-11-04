@@ -4,6 +4,13 @@ import fs from 'node:fs';
 import type { BuiltinModelAuthConfig } from '../../config/builtinModelAuth';
 import { getMacAddress } from '../core/network/macAddress';
 import {
+  BuiltinModelAuthDiagnosticEvent,
+  BuiltinModelAuthDiagnosticReason,
+  type BuiltinModelAuthErrorCode,
+  getBuiltinModelAuthErrorCode,
+  writeBuiltinModelAuthDiagnostic,
+} from './builtinModelAuthDiagnostics';
+import {
   BUILTIN_TOKEN_CLOCK_SKEW_SECONDS,
   type BuiltinModelCredential,
   BuiltinModelCredentialFailureCode,
@@ -26,6 +33,14 @@ const EXCHANGE_STAGE_ERRORS = {
   identity: 'Unable to verify current login or configuration',
 } as const;
 type ExchangeStage = keyof typeof EXCHANGE_STAGE_ERRORS;
+const EXCHANGE_STAGE_REASONS = {
+  url: BuiltinModelAuthDiagnosticReason.UrlInvalid,
+  device: BuiltinModelAuthDiagnosticReason.DeviceUnavailable,
+  request: BuiltinModelAuthDiagnosticReason.NetworkFailure,
+  response: BuiltinModelAuthDiagnosticReason.ResponseUnreadable,
+  credential: BuiltinModelAuthDiagnosticReason.CredentialInvalid,
+  identity: BuiltinModelAuthDiagnosticReason.IdentityUnavailable,
+} as const;
 
 const NETWORK_ERROR_CODES = new Set([
   'ENOTFOUND', 'EAI_AGAIN', 'ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT',
@@ -38,7 +53,7 @@ const NETWORK_ERROR_CODES = new Set([
 
 // Fetch wraps transport errors in cause; connection attempts may use AggregateError.
 // Only exact allowlisted codes may leave this bounded traversal, never raw error fields.
-const resolveNetworkErrorCode = (error: unknown): string | undefined => {
+const resolveNetworkErrorCode = (error: unknown): BuiltinModelAuthErrorCode | undefined => {
   const pending = [error];
   const visited = new Set<object>();
   for (let index = 0; index < pending.length && index < 16; index += 1) {
@@ -46,7 +61,7 @@ const resolveNetworkErrorCode = (error: unknown): string | undefined => {
     if (!value || typeof value !== 'object' || visited.has(value)) continue;
     visited.add(value);
     const candidate = value as { code?: unknown; cause?: unknown; errors?: unknown };
-    if (typeof candidate.code === 'string' && NETWORK_ERROR_CODES.has(candidate.code)) return candidate.code;
+    if (typeof candidate.code === 'string' && NETWORK_ERROR_CODES.has(candidate.code)) return candidate.code as BuiltinModelAuthErrorCode;
     pending.push(candidate.cause);
     if (Array.isArray(candidate.errors)) pending.push(...candidate.errors.slice(0, 4));
   }
@@ -54,7 +69,11 @@ const resolveNetworkErrorCode = (error: unknown): string | undefined => {
 };
 
 // Only locally constructed messages may enter the diagnostic log.
-class TokenExchangeError extends Error {}
+class TokenExchangeError extends Error {
+  constructor(message: string, readonly diagnosticReason: BuiltinModelAuthDiagnosticReason) {
+    super(message);
+  }
+}
 
 type Login = { mtoken: string; account: string; identity: string };
 type Dependencies = {
@@ -65,22 +84,35 @@ type Dependencies = {
   onInvalidated?: () => void;
 };
 
-const readLogin = (file: string): Login | null => {
+const readLogin = (
+  file: string,
+  onUnavailable?: (reason: BuiltinModelAuthDiagnosticReason, error?: unknown) => void,
+): Login | null => {
   try {
-    if (fs.statSync(file).size > 256 * 1024) return null;
+    if (fs.statSync(file).size > 256 * 1024) {
+      onUnavailable?.(BuiltinModelAuthDiagnosticReason.LoginTooLarge);
+      return null;
+    }
     const value = JSON.parse(fs.readFileSync(file, 'utf8'));
     const mtoken = typeof value?.mtoken === 'string' ? value.mtoken.trim() : '';
     const account = typeof value?.['X-User-Account'] === 'string'
       ? value['X-User-Account'].trim() : '';
-    if (!mtoken || mtoken.length > 32_768 || !account || account.length > 512) return null;
+    if (!mtoken || mtoken.length > 32_768 || !account || account.length > 512) {
+      onUnavailable?.(BuiltinModelAuthDiagnosticReason.LoginInvalidFields);
+      return null;
+    }
     return { mtoken, account, identity: createHash('sha256').update(JSON.stringify([mtoken, account])).digest('hex') };
-  } catch {
+  } catch (error) {
+    const errorCode = getBuiltinModelAuthErrorCode(error);
+    onUnavailable?.(error instanceof SyntaxError ? BuiltinModelAuthDiagnosticReason.LoginInvalidJson
+      : errorCode === 'ENOENT' ? BuiltinModelAuthDiagnosticReason.LoginMissing
+        : BuiltinModelAuthDiagnosticReason.LoginReadFailed, error);
     return null;
   }
 };
 
 const readResponse = async (response: Response): Promise<unknown> => {
-  if (!response.body) throw new TokenExchangeError('Empty token exchange response');
+  if (!response.body) throw new TokenExchangeError('Empty token exchange response', BuiltinModelAuthDiagnosticReason.ResponseEmpty);
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
   let size = 0;
@@ -89,13 +121,13 @@ const readResponse = async (response: Response): Promise<unknown> => {
       const chunk = await reader.read();
       if (chunk.done) break;
       size += chunk.value.byteLength;
-      if (size > MAX_RESPONSE_BYTES) throw new TokenExchangeError('Token exchange response exceeds size limit');
+      if (size > MAX_RESPONSE_BYTES) throw new TokenExchangeError('Token exchange response exceeds size limit', BuiltinModelAuthDiagnosticReason.ResponseTooLarge);
       chunks.push(chunk.value);
     }
     try {
       return JSON.parse(Buffer.concat(chunks).toString('utf8'));
     } catch {
-      throw new TokenExchangeError('Invalid token exchange response JSON');
+      throw new TokenExchangeError('Invalid token exchange response JSON', BuiltinModelAuthDiagnosticReason.ResponseInvalidJson);
     }
   } finally {
     await reader.cancel().catch((): void => undefined);
@@ -108,6 +140,7 @@ export class BuiltinModelTokenExchange {
   private identity: string | null = null;
   private generation = 0;
   private suspendedIdentity: string | null = null;
+  private unavailableReason: BuiltinModelAuthDiagnosticReason | null = null;
   private pending: { identity: string; controller: AbortController; promise: Promise<BuiltinModelCredential | null> } | null = null;
 
   constructor(private readonly dependencies: Dependencies) {}
@@ -135,6 +168,7 @@ export class BuiltinModelTokenExchange {
     try {
       config = this.dependencies.getConfig();
     } catch {
+      this.logUnavailable(BuiltinModelAuthDiagnosticReason.ConfigInvalid);
       this.invalidate();
       throw new Error('Invalid model authentication configuration.');
     }
@@ -148,12 +182,17 @@ export class BuiltinModelTokenExchange {
       }
       return getActiveBuiltinModelCredential();
     }
-    const login = readLogin(this.dependencies.userInfoPath);
+    const login = readLogin(this.dependencies.userInfoPath, (reason, error) => this.logUnavailable(reason, error));
     if (!login || !config.tokenExchangeUrl) {
+      if (login && !config.tokenExchangeUrl) this.logUnavailable(BuiltinModelAuthDiagnosticReason.EndpointMissing);
       this.invalidate();
       return null;
     }
-    if (login.identity === this.suspendedIdentity) return null;
+    if (login.identity === this.suspendedIdentity) {
+      this.logUnavailable(BuiltinModelAuthDiagnosticReason.LoginSuspended);
+      return null;
+    }
+    this.unavailableReason = null;
     const identity = JSON.stringify([login.identity, config]);
     if (this.identity !== identity) {
       this.invalidate();
@@ -174,7 +213,18 @@ export class BuiltinModelTokenExchange {
     }
   }
 
+  private logUnavailable(reason: BuiltinModelAuthDiagnosticReason, error?: unknown): void {
+    if (reason === this.unavailableReason) return;
+    this.unavailableReason = reason;
+    writeBuiltinModelAuthDiagnostic('warn', BuiltinModelAuthDiagnosticEvent.ExchangeUnavailable, {
+      generation: this.generation,
+      reason,
+      ...(error !== undefined ? { errorCode: getBuiltinModelAuthErrorCode(error) } : {}),
+    });
+  }
+
   private async exchange(login: Login, config: BuiltinModelAuthConfig, signal: AbortSignal, generation: number): Promise<BuiltinModelCredential | null> {
+    const startedAt = Date.now();
     let stage: ExchangeStage = 'url';
     let httpStatus: number | undefined;
     let credentialCode: BuiltinModelCredentialFailureCode | undefined;
@@ -182,7 +232,7 @@ export class BuiltinModelTokenExchange {
     try {
       const endpoint = new URL(config.tokenExchangeUrl);
       if (!['http:', 'https:'].includes(endpoint.protocol) || endpoint.username || endpoint.password || endpoint.hash) {
-        throw new TokenExchangeError(EXCHANGE_STAGE_ERRORS.url);
+        throw new TokenExchangeError(EXCHANGE_STAGE_ERRORS.url, EXCHANGE_STAGE_REASONS.url);
       }
       stage = 'device';
       const deviceId = getMacAddress();
@@ -205,14 +255,14 @@ export class BuiltinModelTokenExchange {
           clearActiveBuiltinModelCredential();
           this.dependencies.onInvalidated?.();
         }
-        throw new TokenExchangeError(`Token exchange HTTP ${response.status}`);
+        throw new TokenExchangeError(`Token exchange HTTP ${response.status}`, BuiltinModelAuthDiagnosticReason.HttpRejected);
       }
       stage = 'response';
       const value = await readResponse(response) as Record<string, unknown> | null;
       if (!value || typeof value.token_type !== 'string' || value.token_type.toLowerCase() !== 'bearer' ||
         typeof value.expires_in !== 'number' || !Number.isInteger(value.expires_in) || value.expires_in <= 15 ||
         (value.uid !== undefined && value.uid !== login.account)) {
-        throw new TokenExchangeError('Invalid token exchange response shape');
+        throw new TokenExchangeError('Invalid token exchange response shape', BuiltinModelAuthDiagnosticReason.ResponseInvalidShape);
       }
       stage = 'credential';
       const receivedAt = Math.floor(Date.now() / 1000);
@@ -220,12 +270,12 @@ export class BuiltinModelTokenExchange {
       const credential = validation.credential;
       if (!credential) {
         credentialCode = validation.failureCode ?? undefined;
-        throw new TokenExchangeError(EXCHANGE_STAGE_ERRORS.credential);
+        throw new TokenExchangeError(EXCHANGE_STAGE_ERRORS.credential, EXCHANGE_STAGE_REASONS.credential);
       }
       // expires_in describes the response lifetime; request latency must not consume the clock tolerance.
       if (credential.expiresAt > receivedAt + value.expires_in + BUILTIN_TOKEN_CLOCK_SKEW_SECONDS) {
         credentialCode = BuiltinModelCredentialFailureCode.ResponseLifetime;
-        throw new TokenExchangeError(EXCHANGE_STAGE_ERRORS.credential);
+        throw new TokenExchangeError(EXCHANGE_STAGE_ERRORS.credential, EXCHANGE_STAGE_REASONS.credential);
       }
       stage = 'identity';
       // Re-read identity after the request: a late response must not restore a logged-out account.
@@ -236,16 +286,21 @@ export class BuiltinModelTokenExchange {
         return null;
       }
       setActiveBuiltinModelCredential(credential, config.maxJwtLifetimeSeconds);
+      writeBuiltinModelAuthDiagnostic('info', BuiltinModelAuthDiagnosticEvent.ExchangeSucceeded, {
+        generation, elapsedMs: Date.now() - startedAt,
+        expiresInSeconds: Math.floor(credential.expiresAt - Date.now() / 1000),
+        refreshInMs: Math.max(0, getBuiltinModelCredentialRefreshAtSeconds(credential) * 1000 - Date.now()),
+      });
       return getActiveBuiltinModelCredential();
     } catch (error) {
       if (generation !== this.generation) return null;
       const networkCode = stage === 'request' && !(error instanceof TokenExchangeError) && !timeoutSignal?.aborted
         ? resolveNetworkErrorCode(error) : undefined;
-      console.error('[BuiltinModelTokenExchange] exchange failed:', {
-        stage,
+      writeBuiltinModelAuthDiagnostic('error', BuiltinModelAuthDiagnosticEvent.ExchangeFailed, {
+        generation, elapsedMs: Date.now() - startedAt, stage,
         reason: error instanceof TokenExchangeError
-          ? error.message
-          : timeoutSignal?.aborted ? 'Token exchange timed out' : EXCHANGE_STAGE_ERRORS[stage],
+          ? error.diagnosticReason
+          : timeoutSignal?.aborted ? BuiltinModelAuthDiagnosticReason.RequestTimeout : EXCHANGE_STAGE_REASONS[stage],
         ...(httpStatus !== undefined ? { httpStatus } : {}),
         ...(networkCode !== undefined ? { networkCode } : {}),
         ...(credentialCode !== undefined ? { credentialCode } : {}),

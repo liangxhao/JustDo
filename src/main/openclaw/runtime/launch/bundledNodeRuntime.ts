@@ -10,7 +10,7 @@ export const resolveBundledNodeRuntimePaths = (options: {
   appPath: string;
   platform: NodeJS.Platform;
   arch: string;
-}): { executable: string; npmBin: string } => {
+}): { executable: string; executableSha256: string; npmBin: string } => {
   const platform = { win32: 'win', darwin: 'mac', linux: 'linux' }[
     options.platform as 'win32' | 'darwin' | 'linux'
   ];
@@ -22,13 +22,15 @@ export const resolveBundledNodeRuntimePaths = (options: {
     : join(options.appPath, 'vendor', 'openclaw-runtime', 'current', 'node-runtime');
   const executable = join(root, contract.executable);
   const npmBin = join(root, contract.npmBin);
+  let executableSha256: string;
   try {
     const manifest = JSON.parse(readFileSync(join(root, 'node-runtime-manifest.json'), 'utf8'));
+    executableSha256 = createHash('sha256').update(readFileSync(executable)).digest('hex');
     if (manifest.version !== nodeRuntime.version || manifest.target !== target ||
         manifest.archive !== contract.archive || manifest.archiveSha256 !== contract.sha256 ||
         manifest.executable !== contract.executable ||
         !statSync(executable).isFile() ||
-        createHash('sha256').update(readFileSync(executable)).digest('hex') !==
+        executableSha256 !==
           manifest.files?.[contract.executable]?.sha256 ||
         !statSync(join(npmBin, 'npm-cli.js')).isFile() ||
         !statSync(join(npmBin, 'npx-cli.js')).isFile()) {
@@ -39,5 +41,5 @@ export const resolveBundledNodeRuntimePaths = (options: {
       cause: error,
     });
   }
-  return { executable, npmBin };
+  return { executable, executableSha256, npmBin };
 };
