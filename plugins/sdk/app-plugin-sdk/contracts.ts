@@ -29,6 +29,12 @@ export interface AppPluginManifest {
   commands: string[];
   slots: string[];
   native?: { defaultEnabled: boolean; userToggleable: boolean };
+  /** Host-managed private data; runtime safety records must declare retention. */
+  data?: {
+    directory: 'managed-v1';
+    retention?: 'retain';
+    migrateLegacyDirectory?: { requiredFiles: string[] };
+  };
 }
 export interface AppPluginArtifact {
   manifest: AppPluginManifest;
@@ -122,6 +128,7 @@ export const parseAppPluginManifest = (value: unknown): AppPluginManifest => {
           'commands',
           'slots',
           'native',
+          'data',
         ].includes(key),
     )
   )
@@ -168,6 +175,19 @@ export const parseAppPluginManifest = (value: unknown): AppPluginManifest => {
       typeof native.userToggleable !== 'boolean')
   )
     throw new Error(AppPluginError.Invalid);
+  const data = input.data as AppPluginManifest['data'];
+  if (data !== undefined) {
+    const migration = data?.migrateLegacyDirectory;
+    if (!data || typeof data !== 'object' || Array.isArray(data) || data.directory !== 'managed-v1' ||
+        Object.keys(data).some(key => !['directory', 'retention', 'migrateLegacyDirectory'].includes(key)) ||
+        (data.retention !== undefined && data.retention !== 'retain') ||
+        (migration !== undefined && (!migration || typeof migration !== 'object' || Array.isArray(migration) ||
+          Object.keys(migration).length !== 1 || !Array.isArray(migration.requiredFiles) ||
+          migration.requiredFiles.length < 1 || migration.requiredFiles.length > 32 ||
+          new Set(migration.requiredFiles).size !== migration.requiredFiles.length ||
+          migration.requiredFiles.some(file => !isAppArtifactPath(file) || file.length > 512))))
+      throw new Error(AppPluginError.Invalid);
+  }
   return {
     manifestVersion: 1,
     apiVersion: 1,
@@ -185,6 +205,11 @@ export const parseAppPluginManifest = (value: unknown): AppPluginManifest => {
     ...(native
       ? { native: { defaultEnabled: native.defaultEnabled, userToggleable: native.userToggleable } }
       : {}),
+    ...(data ? { data: { directory: data.directory,
+      ...(data.retention ? { retention: data.retention } : {}),
+      ...(data.migrateLegacyDirectory ? { migrateLegacyDirectory: {
+        requiredFiles: [...data.migrateLegacyDirectory.requiredFiles],
+      } } : {}) } } : {}),
   };
 };
 

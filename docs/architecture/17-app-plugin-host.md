@@ -154,6 +154,39 @@ Main 的 canonical Gateway client 用 `AsyncLocalStorage` 保留当前业务注�
 | 重连/实例变更 | 可恢复元数据和当前清理责任   | 旧收据和迟到响应，重新握手后才准入         |
 | 明确卸载      | 业务表、历史和安全回执       | 通用宿主关联按 owner 清理，不误删共享资源  |
 
+### 插件私有数据目录
+
+插件通过 `app.plugin.json.data.directory: managed-v1` 声明插件私有数据目录。
+宿主在 Gateway 启动前或已停止的包变更租约内准备
+`state/plugin-data/<nativePluginId>/`，以 `.owner.json` 绑定插件 ID 和独立数据身份。
+Main 的 `getPluginDataDirectory()` 与公开 Native SDK 的
+`resolvePluginDataDirectory(stateDirectory, pluginId)` 只校验并返回同一目录；
+Native 不创建或迁移目录，缺少准备时不可用。旧 `getNativeStateDirectory()`
+保持原有语义，已有业务表、原生历史和共享资源仍由各自的存储所有者管理。
+
+SDK 1.3 的 `data.retention: retain` 用于插件自有的执行安全收据等必需保留数据。
+宿主把该策略持久写入对应 `.owner.json`，即使插件包缺失或后续清单省略策略，也不允许
+卸载清理；已有目录只可加强为保留，不能自动降级。默认可清理目录继续使用原三字段
+归属记录，保留目录才增加 `retention: retain`，兼容既有 SDK 1.2 插件读取自己的数据目录。
+整包任一 owner 存在保留策略时，卸载不提供数据清理；普通卸载和启停仍可继续。
+
+SDK 1.4 的 `getRetainedPluginDataDirectory()` 提供保留型目录的只读路径查询，供当前
+业务或合法清理回调读取元数据，包括插件关闭后的资源保护检查。它同时要求清单和
+磁盘归属记录声明保留，继续核对实例及清理 lease 寿命；不授予写入、执行或 Gateway
+权限。原 `getPluginDataDirectory()` 仍只用于当前业务寿命，不能借清理回调恢复下载。
+
+插件可用 `data.migrateLegacyDirectory.requiredFiles` 显式声明同名旧目录的必要文件。
+宿主仅在确认 Gateway 已停止时验证旧目录及完整文件树，并在同一状态根内重命名；
+不扫描认领任意目录，不接受保留状态名称、链接或硬链接，不合并或覆盖目标目录。
+源与目标同时存在或布局不匹配时拒绝准入并记录具体原因，原始文件保留。
+
+更新和停用保留私有数据。卸载确认窗口读取整个原生包所有 owner 的可释放空间，
+默认保留数据，用户可勾选“同时删除插件数据”。选择清理后使用停止 Gateway
+的包变更流程，停止并等待插件任务，捕获所有 owner 的目录、归属收据及文件身份；
+只有原生卸载明确成功后才再次验证并清理。未知卸载结果不删除；清理失败保留
+已卸载事实和具体错误，不重发卸载。数据删除只包含当前收据拥有的普通文件及目录，
+使用逐项非递归操作，拒绝链接、目录替换、内容变化及未识别条目。
+
 `register`、`activate`、`onEnable` 和 Browser 注册为同步契约。无效 thenable 会被处理并阻止激活；同步 activation 的清理 lease 在返回时撤销，异步尾部无法继续删除或写数据库。`activate` 每实例一次；`onEnable` 每业务 epoch 一次并返回 disposer。异步工作通过命令、合法清理参与者和预检执行。
 
 可选 Main `maintenance` 在实例激活后运行，不依赖业务启用状态。宿主每次给予新的、仅本次 Promise 有效的清理 lease，串行执行，释放实例时撤销；只能使用已声明且参数符合 predicate 的清理能力，不能恢复业务注册、启动 Gateway 或发起新执行。旧资源 owner 可保留维护，不能因此发布旧版本界面。Team 利用它核对既有精确运行收据及持久取消任务；热关开复用同一协调器，不重新执行进程恢复或推进房间代次。

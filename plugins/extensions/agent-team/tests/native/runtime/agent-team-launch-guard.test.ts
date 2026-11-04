@@ -8,6 +8,8 @@ import vm from 'node:vm';
 import { buildSync } from 'esbuild';
 import { afterAll, describe, expect, it, vi } from 'vitest';
 
+import { prepareTeamPluginData } from '../fixtures/pluginData';
+
 
 const nativeRequire = createRequire(import.meta.url);
 const code = buildSync({
@@ -49,7 +51,7 @@ function fixture(persisted?: Record<string, unknown>, existingStateDir?: string)
   const stateDir =
     existingStateDir ?? mkdtempSync(path.join(os.tmpdir(), 'agent-team-guard-test-'));
   temporaryRoots.add(stateDir);
-  const ledgerDirectory = path.join(stateDir, 'runtime-services', 'agent-team-launch');
+  const ledgerDirectory = path.join(prepareTeamPluginData(stateDir), 'launch-receipts');
   const ledgerFile = path.join(
     ledgerDirectory,
     `${createHash('sha256').update(key).digest('hex')}.json`,

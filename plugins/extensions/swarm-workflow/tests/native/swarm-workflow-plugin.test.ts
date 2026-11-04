@@ -4,19 +4,20 @@ import os from 'node:os';
 import path from 'node:path';
 import vm from 'node:vm';
 
-import { buildSync } from 'esbuild';
-import { afterEach, expect, it, vi } from 'vitest';
-import * as nativeClient from '@runtime-services/sdk/native-client';
+import type { ExecutionAdmissionSnapshot } from '@runtime-services/sdk/admission';
 import * as execution from '@runtime-services/sdk/execution';
+import * as nativeClient from '@runtime-services/sdk/native-client';
 import {
   registerRuntimeServicesProvider,
   RUNTIME_SERVICES_BINDING_METHOD,
 } from '@runtime-services/sdk/provider';
-import type { ExecutionAdmissionSnapshot } from '@runtime-services/sdk/admission';
+import { buildSync } from 'esbuild';
+import { afterEach, expect, it, vi } from 'vitest';
 
 import { buildSwarmWorkflowInstruction, SwarmWorkflowGateway } from '../../app/contracts';
-import { FlowStore } from '../../data/store';
 import { FLOW_RPC } from '../../contracts/flow';
+import { FlowStore } from '../../data/store';
+import { prepareWorkflowPluginData } from './fixtures/pluginData';
 const requireNative = createRequire(import.meta.url);
 const pluginRoot = path.resolve(import.meta.dirname, '../..');
 const code = buildSync({
@@ -39,6 +40,7 @@ afterEach(async () => {
 async function fixture(options: { autoStart?: boolean; deferCapabilities?: boolean } = {}) {
   const emit = vi.fn();
   const root = mkdtempSync(path.join(os.tmpdir(), 'flow-plugin-'));
+  prepareWorkflowPluginData(root);
   const parentKey = 'agent:main:justdo:parent';
   const parent = { sessionId: 'native-parent', sessionRoot: root, permissionMode: 'workspace' };
   const methods = new Map<string, any>();
@@ -316,7 +318,7 @@ it('does not start an engine after stop retires a pending capability binding', a
   await rejected;
   expect(f.run).not.toHaveBeenCalled();
   expect(f.emit).not.toHaveBeenCalled();
-  expect(existsSync(path.join(f.root, 'swarm-workflow/flows.sqlite'))).toBe(false);
+  expect(existsSync(path.join(f.root, 'plugin-data/swarm-workflow/flows.sqlite'))).toBe(false);
   await expect(f.request('swarmWorkflow.list', { parentKeys: [f.parentKey] })).rejects.toThrow('unavailable');
 });
 
@@ -347,7 +349,7 @@ it('loads the manifest, tools, application RPCs and durable store under one Swar
   const summaryParams = Object.freeze({ parentKeys: Object.freeze([f.parentKey]) });
   expect(await f.request(summary.alias, summaryParams)).toEqual({ count: 0, running: false });
   expect(Object.keys(summaryParams)).toEqual(['parentKeys']);
-  expect(existsSync(path.join(f.root, 'swarm-workflow', 'flows.sqlite'))).toBe(true);
+  expect(existsSync(path.join(f.root, 'plugin-data', 'swarm-workflow', 'flows.sqlite'))).toBe(true);
 });
 
 it('admits the original workflow start through its registered alias and keeps readonly input intact', async () => {
@@ -385,7 +387,7 @@ it('reports active older flows beyond the twenty visible histories for owned par
     goal: 'Long-running task',
     mode: 'auto',
   });
-  const store = new FlowStore(path.join(f.root, 'swarm-workflow'));
+  const store = new FlowStore(path.join(f.root, 'plugin-data', 'swarm-workflow'));
   try {
     const active = store.forParents([f.parentKey])[0];
     for (let index = 0; index < 20; index++) {
@@ -453,7 +455,7 @@ it.each(['paused', 'blocked'] as const)(
       goal: 'Batch task',
       mode: 'auto',
     });
-    const store = new FlowStore(path.join(f.root, 'swarm-workflow'));
+    const store = new FlowStore(path.join(f.root, 'plugin-data', 'swarm-workflow'));
     try {
       const active = store.forParents([f.parentKey])[0];
       const stage = {

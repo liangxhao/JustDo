@@ -2,6 +2,8 @@ import { BrowserWindow, ipcMain } from 'electron';
 
 import {
   type ExtensionChangedEvent,
+  type ExtensionDataInfoRequest,
+  type ExtensionDataInfoResult,
   type ExtensionDeleteRequest,
   type ExtensionImportRequest,
   ExtensionIpc,
@@ -302,6 +304,15 @@ export const registerExtensionHandlers = ({
     },
   );
 
+  ipcMain.handle(ExtensionIpc.DataInfo, async (
+    _event, request: ExtensionDataInfoRequest,
+  ): Promise<ExtensionDataInfoResult> => {
+    if (!request || typeof request.extensionId !== 'string' || !request.extensionId.trim() ||
+        request.extensionId.length > 512)
+      return { success: false, error: 'Extension id is required' };
+    return extensionImportService.getDataInfo(request.extensionId.trim());
+  });
+
   ipcMain.handle(
     ExtensionIpc.Delete,
     async (event, request: ExtensionDeleteRequest, context?: PluginOperationContext) => {
@@ -314,7 +325,9 @@ export const registerExtensionHandlers = ({
           PluginOperationAction.REMOVE,
         );
         progress.report(PluginOperationStage.QUEUED);
-        if (!request || typeof request.extensionId !== 'string' || !request.extensionId.trim()) {
+        if (!request || typeof request.extensionId !== 'string' || !request.extensionId.trim() ||
+            request.extensionId.length > 512 ||
+            (request.deleteData !== undefined && typeof request.deleteData !== 'boolean')) {
           return progress.result({ success: false, error: 'Extension id is required' });
         }
         const extensionId = request.extensionId.trim();
@@ -324,9 +337,13 @@ export const registerExtensionHandlers = ({
           const reportProgress = progress.report;
           result = withExtensionPackageMutation
             ? await withExtensionPackageMutation(apply =>
-              extensionImportService.delete(extensionId, reportProgress, apply))
+              request.deleteData === true
+                ? extensionImportService.delete(extensionId, reportProgress, apply, { deleteData: true })
+                : extensionImportService.delete(extensionId, reportProgress, apply))
             : await removeExtensionPackage(
-              () => extensionImportService.delete(extensionId, reportProgress), mutateAppPackage);
+              () => request.deleteData === true
+                ? extensionImportService.delete(extensionId, reportProgress, undefined, { deleteData: true })
+                : extensionImportService.delete(extensionId, reportProgress), mutateAppPackage);
           progress.result(result);
         } catch (error) {
           progress.captureFailure();

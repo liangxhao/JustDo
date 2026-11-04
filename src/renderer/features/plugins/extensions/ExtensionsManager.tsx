@@ -79,6 +79,7 @@ import TrashIcon from '@/shared/components/icons/TrashIcon';
 import Modal from '@/shared/components/ui/Modal';
 import Tooltip from '@/shared/components/ui/Tooltip';
 
+import ExtensionDataCleanup from './ExtensionDataCleanup';
 import LocalSpeechExtensionSettingsButton from './LocalSpeechExtensionSettingsButton';
 import LocalSpeechExtensionSettingsDialog from './LocalSpeechExtensionSettingsDialog';
 
@@ -171,6 +172,7 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
   const inventoryUnavailable = useRef(true);
   const latestInventoryRead = useRef<Promise<InstalledOpenClawExtension[] | null> | null>(null);
   const [pendingDelete, setPendingDelete] = useState<InstalledOpenClawExtension | null>(null);
+  const [deletePluginData, setDeletePluginData] = useState(false);
   const [deletingExtensionId, setDeletingExtensionId] = useState<string | null>(null);
   const [togglingExtensionId, setTogglingExtensionId] = useState<string | null>(null);
   const [pendingCapabilityReview, setPendingCapabilityReview] = useState<{
@@ -587,7 +589,7 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
       setDeletingExtensionId(extension.id);
       setActionOutcome(null);
       const result = await window.electron.extensions.delete(
-        { extensionId: extension.id },
+        { extensionId: extension.id, ...(deletePluginData ? { deleteData: true } : {}) },
         operation.context,
       );
       mutationResult = result;
@@ -1325,6 +1327,7 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
                       onClick={() => {
                         const extension = selectedExtension;
                         closeExtensionDetails();
+                        setDeletePluginData(false);
                         setPendingDelete(extension);
                       }}
                       disabled={savingConfiguration || extensionActionBusy}
@@ -1377,6 +1380,13 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
             <p className="mt-2 text-sm text-secondary">
               {i18nService.t('extensionDeleteConfirm').replace('{name}', pendingDelete.name)}
             </p>
+            <ExtensionDataCleanup
+              key={pendingDelete.id}
+              extensionId={pendingDelete.id}
+              checked={deletePluginData}
+              disabled={deletingExtensionId !== null}
+              onChange={setDeletePluginData}
+            />
             <div className="mt-5 flex items-center justify-end gap-2">
               <button
                 type="button"

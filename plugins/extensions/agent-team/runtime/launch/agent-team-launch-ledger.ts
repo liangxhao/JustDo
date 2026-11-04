@@ -13,12 +13,14 @@ import {
 } from 'node:fs';
 import path from 'node:path';
 
+import { agentTeamDataDirectory } from '../data-directory';
+
 /** Persistent product metadata; native session extension state is only a projection. */
 export class AgentTeamLaunchLedger {
   readonly directory: string;
 
   constructor(stateDir: string) {
-    this.directory = path.resolve(stateDir, 'runtime-services', 'agent-team-launch');
+    this.directory = path.join(agentTeamDataDirectory(stateDir), 'launch-receipts');
   }
 
   private file(sessionKey: string): string {

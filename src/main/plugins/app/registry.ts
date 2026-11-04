@@ -14,6 +14,7 @@ import {
   isAppIdentifier,
   isAppWireValue,
 } from '../../../../plugins/sdk/app-plugin-sdk/contracts';
+import { resolvePluginDataDirectory } from '../../../../plugins/sdk/app-plugin-sdk/data';
 import type {
   AppAgent,
   AppMainHost,
@@ -42,6 +43,8 @@ export type AppHostResources = Omit<
   | 'assertActive'
   | 'onExecutionReceipt'
   | 'publishEvent'
+  | 'getPluginDataDirectory'
+  | 'getRetainedPluginDataDirectory'
 >;
 export interface AppNativeState {
   enabled: boolean;
@@ -237,7 +240,8 @@ export class AppPluginRegistry {
     const executions = new WeakMap<AppSessionExecution, AppSessionExecution>();
     type NativeClient = NonNullable<ReturnType<AppNativeRuntime['getGatewayClient']>>;
     const gatewayClients = new WeakMap<NativeClient, NativeClient>();
-    const scopedResources: AppHostResources = {
+    const scopedResources: AppHostResources & Pick<AppMainHost,
+      'getPluginDataDirectory' | 'getRetainedPluginDataDirectory'> = {
       ...resources,
       getDatabase: () => {
         if (instance.databasePort) return instance.databasePort;
@@ -251,6 +255,18 @@ export class AppPluginRegistry {
       },
       getNativeStateDirectory: () =>
         path.join(resources.getNativeStateDirectory(), manifest.nativePluginId),
+      getPluginDataDirectory: () => {
+        assertBusinessEffect();
+        if (!manifest.data) throw new Error(AppPluginError.Unavailable);
+        return resolvePluginDataDirectory(resources.getNativeStateDirectory(), manifest.nativePluginId,
+          manifest.data.retention === 'retain' ? { retention: 'retain' } : undefined);
+      },
+      getRetainedPluginDataDirectory: () => {
+        assertCleanupEffect();
+        if (manifest.data?.retention !== 'retain') throw new Error(AppPluginError.Unavailable);
+        return resolvePluginDataDirectory(resources.getNativeStateDirectory(), manifest.nativePluginId,
+          { retention: 'retain' });
+      },
       getPythonRuntime: async () => {
         assertBusinessEffect();
         const epoch = instance.epoch;

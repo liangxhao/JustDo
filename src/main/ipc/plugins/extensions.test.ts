@@ -65,6 +65,7 @@ function fixture(
     setEnabled: vi.fn(),
     updateConfiguration: vi.fn(),
     delete: vi.fn(),
+    getDataInfo: vi.fn(),
     importPath: vi.fn(),
   };
   const forgetMarketplace = vi.fn();
@@ -97,6 +98,44 @@ function fixture(
   });
   return { service, installation, sender, peer, forgetMarketplace, event: { sender } };
 }
+
+test('reads plugin data size without entering a package mutation', async () => {
+  const mutate = vi.fn();
+  const f = fixture(undefined, mutate);
+  f.service.getDataInfo.mockResolvedValue({ success: true, exists: true, bytes: 123, canDelete: true });
+
+  await expect(handlers.get(ExtensionIpc.DataInfo)!(f.event, { extensionId: 'feature-plugin' }))
+    .resolves.toEqual({ success: true, exists: true, bytes: 123, canDelete: true });
+
+  expect(f.service.getDataInfo).toHaveBeenCalledExactlyOnceWith('feature-plugin');
+  expect(f.service.delete).not.toHaveBeenCalled();
+  expect(mutate).not.toHaveBeenCalled();
+});
+
+test('rejects an invalid cleanup option before starting uninstall', async () => {
+  const f = fixture();
+
+  await expect(handlers.get(ExtensionIpc.Delete)!(f.event, {
+    extensionId: 'feature-plugin', deleteData: 'true',
+  })).resolves.toMatchObject({ success: false });
+
+  expect(f.service.delete).not.toHaveBeenCalled();
+});
+
+test('passes explicit data deletion through the existing package owner', async () => {
+  const apply = vi.fn();
+  const withMutation: WithExtensionPackageMutation = async operation => operation(apply);
+  const f = fixture(undefined, undefined, undefined, undefined, withMutation);
+  f.service.delete.mockResolvedValue({ success: true });
+
+  await expect(handlers.get(ExtensionIpc.Delete)!(f.event, {
+    extensionId: 'feature-plugin', deleteData: true,
+  })).resolves.toMatchObject({ success: true });
+
+  expect(f.service.delete).toHaveBeenCalledExactlyOnceWith(
+    'feature-plugin', expect.any(Function), apply, { deleteData: true },
+  );
+});
 
 function hotToggleIpcFixture(connectionLoss: 'before-toggle' | 'after-plugin-write') {
   const sender = { isDestroyed: () => false, send: vi.fn() };

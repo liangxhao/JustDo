@@ -860,6 +860,36 @@ describe('ExtensionsManager extension toggle', () => {
     );
   });
 
+  test('sends explicit plugin data cleanup only after the user selects it', async () => {
+    let installed = true;
+    const deleteExtension = vi.fn(async () => {
+      installed = false;
+      return { success: true };
+    });
+    Object.defineProperty(window, 'electron', {
+      configurable: true,
+      value: { extensions: {
+        list: vi.fn(async () => ({ success: true, extensions: installed ? [extension] : [] })),
+        dataInfo: vi.fn(async () => ({ success: true, exists: true, bytes: 1024, canDelete: true })),
+        delete: deleteExtension,
+        onChanged: vi.fn(() => () => undefined),
+      } },
+    });
+    render(<ExtensionsManager />);
+    fireEvent.click(await screen.findByRole('button', { name: 'subtaskShowInfo: Sample Extension' }));
+    fireEvent.click(screen.getByRole('button', { name: 'extensionDelete' }));
+    const checkbox = await screen.findByRole('checkbox', { name: 'extensionDeleteData' });
+    await waitFor(() => expect((checkbox as HTMLInputElement).disabled).toBe(false));
+    expect((checkbox as HTMLInputElement).checked).toBe(false);
+    fireEvent.click(checkbox);
+    fireEvent.click(screen.getByRole('button', { name: 'delete' }));
+
+    await screen.findByText('Extension "Sample Extension" deleted');
+    expect(deleteExtension).toHaveBeenCalledExactlyOnceWith(
+      { extensionId: extension.id, deleteData: true }, { requestId: expect.any(String) },
+    );
+  });
+
   test('shows completed removal with pending recovery outside the modal even when inventory cannot yet refresh', async () => {
     engineReadiness.ready = false;
     let removed = false;

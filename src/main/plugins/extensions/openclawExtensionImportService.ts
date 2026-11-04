@@ -6,6 +6,7 @@ import * as tar from 'tar';
 
 import { redactLogText } from '../../../shared/diagnostics/redaction';
 import {
+  type ExtensionDataInfoResult,
   type ExtensionDeleteResult,
   type ExtensionImportResult,
   type ExtensionImportStage,
@@ -34,6 +35,11 @@ import type { GatewayRequestOptions } from '../../engine/types';
 import { restrictCredentialFile } from '../../openclaw/config/models/providerSecretFile';
 import { requireOpenClawCliExecutable } from '../../openclaw/runtime/launch/cliNodeRuntime';
 import type { OpenClawEngineManager } from '../../openclaw/runtime/openclawEngineManager';
+import {
+  inspectPluginData,
+  preparePluginDataRemoval,
+  removePluginData,
+} from '../data/pluginDataService';
 import { sanitizeInstallationFailureReason } from '../installation/installationFailureReason';
 import {
   type CommandOptions,
@@ -178,6 +184,11 @@ type OpenClawExtensionImportServiceDeps = {
     reconcile: () => EffectiveOutboundHeaderPolicySnapshot;
   };
   readPackageOwnership?: typeof readExtensionPackageOwnership;
+  pluginData?: {
+    inspect: typeof inspectPluginData;
+    prepareRemoval: typeof preparePluginDataRemoval;
+    remove: typeof removePluginData;
+  };
 };
 
 const CAPABILITY_REVIEW_OUTPUT_PREFIX = 'JUSTDO_PLUGIN_CAPABILITY_REVIEW=';
@@ -1722,42 +1733,105 @@ export class OpenClawExtensionImportService {
     }
   }
 
+  private async resolveRemovalTarget(extensionId: string) {
+    const managedIds = this.deps.getManagedPluginIds?.() ?? [];
+    if (managedIds.includes(extensionId)) throw new Error('Managed extensions cannot be deleted.');
+    const local = this.listInstalled();
+    const direct = local.find(entry => entry.id === extensionId);
+    const packages = await this.readPackageOwnership(direct ? [direct] : local);
+    const owners = packages.filter(owner =>
+      owner.ownerId === extensionId || owner.pluginIds.includes(extensionId));
+    if (owners.length > 1) throw new Error(t('extensionPackageOwnershipUnconfirmed'));
+    const owner = owners[0];
+    const installed = direct ?? (owner && local.find(entry =>
+      entry.id === owner.ownerId && sameInstallPath(entry.installPath, owner.installPath)));
+    const nativePluginIds = [...new Set([
+      extensionId,
+      ...(installed ? [installed.id] : []),
+      ...(owner ? [owner.ownerId, ...owner.pluginIds] : []),
+    ])];
+    if (nativePluginIds.some(id => managedIds.includes(id)))
+      throw new Error('Managed extensions cannot be deleted.');
+    return { installed, owner, nativePluginIds };
+  }
+
+  /** Read package-owned data without starting Gateway or executing plugin code. */
+  async getDataInfo(extensionId: string): Promise<ExtensionDataInfoResult> {
+    try {
+      const { installed, owner, nativePluginIds } = await this.resolveRemovalTarget(extensionId);
+      if (!installed && !owner) throw new Error(t('extensionPackageOwnershipUnconfirmed'));
+      const info = await (this.deps.pluginData?.inspect ?? inspectPluginData)(
+        this.deps.getOpenClawEngineManager().getStateDir(), nativePluginIds,
+      );
+      return {
+        success: true, exists: info.exists, bytes: info.bytes, canDelete: info.canDelete,
+        ...(info.retained ? { retained: true as const } : {}),
+        ...(info.reason ? { error: sanitizeInstallationFailureReason(info.reason) } : {}),
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: sanitizeInstallationFailureReason(error instanceof Error ? error.message : error) ??
+          t('extensionDataInspectionFailed'),
+      };
+    }
+  }
+
   async delete(
     extensionId: string,
     onProgress?: OperationProgress,
     applyPackageMutation?: ApplyExtensionPackageMutation,
+    options: { deleteData?: boolean } = {},
   ): Promise<ExtensionDeleteResult> {
     onProgress?.(PluginOperationStage.QUEUED);
     return this.runMutationExclusive(async () => {
       onProgress?.(PluginOperationStage.VALIDATING);
-      const managedIds = this.deps.getManagedPluginIds?.() ?? [];
-      if (managedIds.includes(extensionId))
-        return { success: false, error: 'Managed extensions cannot be deleted.' };
       // Resolve package ownership after earlier extension mutations complete.
       // A child entry removes its entire package, including any App companion.
-      const local = this.listInstalled();
-      const direct = local.find(entry => entry.id === extensionId);
-      const packages = await this.readPackageOwnership(direct ? [direct] : local);
-      const owners = packages.filter(owner =>
-        owner.ownerId === extensionId || owner.pluginIds.includes(extensionId));
-      if (owners.length > 1) throw new Error(t('extensionPackageOwnershipUnconfirmed'));
-      const owner = owners[0];
-      const installed = direct ?? (owner && local.find(entry =>
-        entry.id === owner.ownerId && sameInstallPath(entry.installPath, owner.installPath)));
-      const nativePluginIds = [...new Set([
-        extensionId,
-        ...(installed ? [installed.id] : []),
-        ...(owner ? [owner.ownerId, ...owner.pluginIds] : []),
-      ])];
-      if (nativePluginIds.some(id => managedIds.includes(id)))
-        return { success: false, error: 'Managed extensions cannot be deleted.' };
+      let target: Awaited<ReturnType<OpenClawExtensionImportService['resolveRemovalTarget']>>;
+      try { target = await this.resolveRemovalTarget(extensionId); }
+      catch (error) {
+        return { success: false, error: error instanceof Error ? error.message : String(error) };
+      }
+      const { installed, owner, nativePluginIds } = target;
+      if (options.deleteData && (!applyPackageMutation || (!installed && !owner)))
+        return { success: false, error: t('extensionDataRemovalUnavailable') };
       let mode: ExtensionPackageLifecycleMode = ExtensionPackageLifecycleMode.HOT;
       return removeExtensionPackage(
-        () => this.runConfigMutationExclusive(() =>
-          this.deleteExclusive(extensionId, onProgress, installed, mode, !!applyPackageMutation)),
+        () => this.runConfigMutationExclusive(async () => {
+          if (options.deleteData && mode !== ExtensionPackageLifecycleMode.STOPPED)
+            return { success: false, error: t('extensionDataRemovalUnavailable') };
+          // Freeze all package-owned paths only after Main drained and Native stopped.
+          // Unsafe or changed data prevents admission before uninstall is sent.
+          const removal = options.deleteData
+            ? await (this.deps.pluginData?.prepareRemoval ?? preparePluginDataRemoval)(
+                this.deps.getOpenClawEngineManager().getStateDir(), nativePluginIds,
+              )
+            : undefined;
+          const result = await this.deleteExclusive(
+            extensionId, onProgress, installed, mode, !!applyPackageMutation,
+          );
+          if (!removal || !result.success || result.operationUnconfirmed) return result;
+          onProgress?.(PluginOperationStage.CLEANING_UP);
+          try {
+            await (this.deps.pluginData?.remove ?? removePluginData)(removal);
+            return result;
+          } catch (error) {
+            const detail = sanitizeInstallationFailureReason(
+              error instanceof Error ? error.message : error, [], { preserveLocalPaths: true },
+            );
+            return {
+              ...result,
+              refreshWarning: true as const,
+              failedStage: result.failedStage ?? PluginOperationStage.CLEANING_UP,
+              error: [result.error, t('extensionDataRemovalFailed'), detail].filter(Boolean).join('\n'),
+            };
+          }
+        }),
         applyPackageMutation
           ? operation => applyPackageMutation({
               nativePluginIds,
+              ...(options.deleteData ? { requireStopped: true as const } : {}),
               ...(owner?.installPath || installed?.installPath
                 ? { installPath: owner?.installPath ?? installed?.installPath }
                 : {}),

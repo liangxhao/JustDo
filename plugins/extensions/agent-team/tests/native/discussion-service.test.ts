@@ -10,6 +10,7 @@ import type { executeGroupDiscussion } from '../../discussion/discussion-executi
 import { registerDiscussionService } from '../../discussion/discussion-service';
 import { discussionOperationId } from '../../runtime/discussion/receipt';
 import { createCustodyClientFixture, createNativeLifecycleFixture } from './fixtures/custodyClient';
+import { prepareTeamPluginData } from './fixtures/pluginData';
 
 const custody = createCustodyClientFixture();
 vi.mock('@runtime-services/sdk/custody-client', () => ({ createCustodyClient: () => custody }));
@@ -56,6 +57,7 @@ afterEach(() => {
 
 async function sourcePolicyFixture(policy: Record<string, unknown> = {}, participates = false) {
   const root = mkdtempSync(path.join(os.tmpdir(), 'team-service-source-policy-'));
+  prepareTeamPluginData(root);
   roots.push(root);
   const methods = new Map<string, (input: Invocation) => unknown>();
   let service: Service;
@@ -211,7 +213,7 @@ it.each([
     expect.objectContaining({ message: 'teamDiscussionDisabled' }),
   );
   expect(custody.bind).not.toHaveBeenCalled();
-  expect(existsSync(path.join(f.root, 'agent-team/discussion-receipts/batch.json'))).toBe(false);
+  expect(existsSync(path.join(f.root, 'plugin-data/agent-team/discussion-receipts/batch.json'))).toBe(false);
   expect(custody.writeExecutionReceipt).not.toHaveBeenCalled();
   expect(sdk.execute).not.toHaveBeenCalled();
   expect(patchSessionEntry).not.toHaveBeenCalled();
@@ -236,8 +238,8 @@ it.each([TeamDiscussionGateway.Start, TeamDiscussionGateway.Stop, TeamDiscussion
       undefined,
       expect.objectContaining({ message: 'teamDiscussionDisabled' }),
     );
-    expect(existsSync(path.join(f.root, 'agent-team/discussion-receipts/batch.json'))).toBe(false);
-    expect(existsSync(path.join(f.root, 'agent-team/discussion-receipts/room.json.closed'))).toBe(
+    expect(existsSync(path.join(f.root, 'plugin-data/agent-team/discussion-receipts/batch.json'))).toBe(false);
+    expect(existsSync(path.join(f.root, 'plugin-data/agent-team/discussion-receipts/room.json.closed'))).toBe(
       false,
     );
     expect(custody.writeExecutionReceipt).not.toHaveBeenCalled();
@@ -288,7 +290,7 @@ it.each(['stop', 'abort', 'authority'] as const)(
       undefined,
       expect.objectContaining({ message: 'teamDiscussionDisabled' }),
     );
-    expect(existsSync(path.join(f.root, 'agent-team/discussion-receipts/batch.json'))).toBe(false);
+    expect(existsSync(path.join(f.root, 'plugin-data/agent-team/discussion-receipts/batch.json'))).toBe(false);
     expect(custody.writeExecutionReceipt).not.toHaveBeenCalled();
     expect(sdk.execute).not.toHaveBeenCalled();
   },
@@ -717,6 +719,7 @@ it.each(['before-rejection', 'after-rejection'] as const)(
       stop: () => Promise<void>;
     };
     const root = mkdtempSync(path.join(os.tmpdir(), 'team-settings-service-'));
+    prepareTeamPluginData(root);
     roots.push(root);
     registerDiscussionService({
       id: 'agent-team',

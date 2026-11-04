@@ -1,7 +1,8 @@
-import type { AppMainHost } from '@app-plugin/sdk/main';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+
+import type { AppMainHost } from '@app-plugin/sdk/main';
 import { expect, test, vi } from 'vitest';
 
 import type { Flow } from '../contracts/flow';
@@ -26,7 +27,7 @@ test('requires exact node cleanup before allowing deletion and never deletes bor
   const getSessionRuntimeStatus = vi.fn().mockResolvedValue({ known: true, running: false });
   const deleteSession = vi.fn();
   const resources = workflowResources({
-    getNativeStateDirectory: () => directory,
+    getRetainedPluginDataDirectory: () => directory,
     getSessions: () => ({
       getSessionByNativeKey: (key: string) => key === flow.parentKey ? { id: 'source' } : null,
       deleteSession,

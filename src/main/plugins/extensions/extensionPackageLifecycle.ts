@@ -11,6 +11,8 @@ export type ExtensionPackageMutationTarget = {
   nativePluginIds: readonly string[];
   installPath?: string;
   sourceDirectory?: string;
+  /** Data removal requires draining Main owners and stopping Native execution. */
+  requireStopped?: true;
 };
 
 export type ApplyExtensionPackageMutation = <T>(

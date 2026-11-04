@@ -1,12 +1,14 @@
-import type { AppMainHost } from '@app-plugin/sdk/main';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+
+import type { AppMainHost } from '@app-plugin/sdk/main';
 import { expect, test, vi } from 'vitest';
-import { register } from './app';
+
 import { SwarmWorkflowGatewayEvent, WorkflowEventName } from '../contracts/events';
 import type { Flow } from '../contracts/flow';
 import { FlowStore } from '../data/store';
+import { register } from './app';
 
 test('keeps persisted workflows independent of source admission and cancellation', async () => {
   const directory = await mkdtemp(path.join(tmpdir(), 'workflow-cancel-'));
@@ -22,7 +24,7 @@ test('keeps persisted workflows independent of source admission and cancellation
   const getSessionRuntimeStatus = vi.fn();
   try {
     const registration = register({
-      getNativeStateDirectory: () => directory,
+      getRetainedPluginDataDirectory: () => directory,
       getSessions: () => ({
         getSessionByNativeKey: (key: string) => ({ id: key === parentKey ? 'source' : 'other' }),
       }),

@@ -147,7 +147,7 @@ flowchart TD
 
 ## 持久化与恢复
 
-插件在 Gateway stateDir/swarm-workflow/flows.sqlite 保存目标、原始指派依据、依赖、修订号、阶段结果、执行意图、原生 run ID 和最终投递状态。主程序不新增消息表、Redux 消息缓存或第二套执行记录。工作会话完整历史继续归 OpenClaw 所有。
+插件在 Gateway `stateDir/plugin-data/swarm-workflow/flows.sqlite` 保存目标、原始指派依据、依赖、修订号、阶段结果、执行意图、原生 run ID 和最终投递状态。主程序不新增消息表、Redux 消息缓存或第二套执行记录。工作会话完整历史继续归 OpenClaw 所有。
 
 先保存启动意图再调用原生 run；重启后查询原有 run，不自动再次派发未知结果的节点。原生 pending、pendingError 和 yielded/paused 不推进下游；end_turn 等正常结束由原生成功状态判定。未知运行后来取得明确成功证据时转为可继续的暂停状态，不重新派发已完成节点。验收失败、结果格式错误、权限变化和无法确认的投递均明确阻塞，不假报完成。
 
@@ -337,7 +337,7 @@ running 且带错误的超时等待；一般节点变化显示于 Tab，最终�
 | Gateway 方法 / App 命令 | `swarmWorkflow.*` / `workflow.*`                        |
 | 消息发起标记            | `<swarm-workflow mode="auto\|research\|review"/>`       |
 | 进程内服务注册键        | `Symbol.for('swarm-workflow.service')`                  |
-| 流程数据库              | `stateDir/swarm-workflow/flows.sqlite`                  |
+| 流程数据库              | `stateDir/plugin-data/swarm-workflow/flows.sqlite`      |
 | 批次产物目录            | `.agent-tasks/swarm-workflow/`                          |
 | 应用类型、组件和翻译键  | `SwarmWorkflow*` / `swarmWorkflow*`                     |
 
@@ -363,6 +363,13 @@ Workflow 专属 UI、样式与会话连接由插件维护，不与原生 `subage
 流程协议、提示、配置与视图由插件维护。Main 协调和完整 React UI 分别在 `host/`、`app/browser/`，通过独立清单和通用 Desktop SDK 注册；应用移除 Workflow 专属 IPC/preload、shared 门面及编译期业务引用。参见 [应用插件宿主](../../architecture/17-app-plugin-host.md)与 [SDK 构建说明](../../../plugins/sdk/app-plugin-sdk/README.md)。
 
 `execution/` 拥有 DAG 推进、规划、策略、介入和结果提交；`batch/` 拥有输入冻结、单项目录、结果分页及批次存储操作；`data/` 管理插件流程库；`management/` 提供主会话工具与通知。`service/` 绑定这些能力与原生 Gateway：context 提供身份、权限、当前引擎和原生会话准备，state 保留进程共享状态，lifecycle 管理启动实例的代次、循环与停止，hooks、gateway、tools 各自注册原生入口。
+
+插件流程库统一位于 `state/plugin-data/swarm-workflow/flows.sqlite`，其 SQLite
+WAL/SHM 文件也留在同一目录。Native 通过公开 SDK 验证宿主预备的保留型目录，
+Main 在资源核验及关闭后的清理作用域通过 SDK 只读定位同一目录，并以只读连接
+检查未结算的流程、节点和执行租约。目录采用卸载后保留策略，新版本不迁移或
+回退读取旧路径。批次冻结输入、单项尝试及输出继续位于项目的
+`.agent-tasks/swarm-workflow/`，不纳入插件数据目录。
 
 `index.ts` 仅组合注册，域模块通过同一个 context 访问实时状态，不复制引擎或服务代次。各助手注册实例仍共享同一服务，同时保持独立调用授权。
 

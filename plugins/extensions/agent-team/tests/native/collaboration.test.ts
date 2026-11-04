@@ -5,16 +5,17 @@ import os from 'node:os';
 import path from 'node:path';
 import vm from 'node:vm';
 
+import type { ExecutionAdmissionSnapshot } from '@runtime-services/sdk/admission';
+import { MANAGED_EXECUTION_DESCRIPTOR, managedSubagent } from '@runtime-services/sdk/execution';
+import { createRuntimeServicesClient } from '@runtime-services/sdk/native-client';
+import { registerRuntimeServicesProvider } from '@runtime-services/sdk/provider';
 import { buildSync } from 'esbuild';
 import { Type } from 'typebox';
 import { Check } from 'typebox/value';
 import { afterAll, describe, expect, it, vi } from 'vitest';
 
-import { MANAGED_EXECUTION_DESCRIPTOR, managedSubagent } from '@runtime-services/sdk/execution';
-import { createRuntimeServicesClient } from '@runtime-services/sdk/native-client';
-import { registerRuntimeServicesProvider } from '@runtime-services/sdk/provider';
-import type { ExecutionAdmissionSnapshot } from '@runtime-services/sdk/admission';
 import type { TeamLaunchCatalogMode } from '../../runtime/launch/agent-team-launch-state';
+import { prepareTeamPluginData } from './fixtures/pluginData';
 
 const nativeRequire = createRequire(import.meta.url);
 const pluginRoot = path.resolve(import.meta.dirname, '../..');
@@ -42,6 +43,7 @@ const code = buildSync({
 }).outputFiles[0].text;
 async function fixture(teamEnabled = true, separateHooks = false, realSchemas = false) {
   const stateDir = mkdtempSync(path.join(os.tmpdir(), 'agent-team-catalog-test-'));
+  const dataDirectory = prepareTeamPluginData(stateDir);
   temporaryRoots.add(stateDir);
   const warn = vi.fn();
   let plan = false;
@@ -54,7 +56,7 @@ async function fixture(teamEnabled = true, separateHooks = false, realSchemas = 
   const methods = new Map<string, (...args: any[]) => any>();
   const requiredMethods = new Map<string, (...args: any[]) => any>();
   const bindings: Promise<boolean>[] = [];
-  const ledgerFile = (sessionKey: string) => path.join(stateDir, 'runtime-services/agent-team-launch', createHash('sha256').update(sessionKey).digest('hex') + '.json');
+  const ledgerFile = (sessionKey: string) => path.join(dataDirectory, 'launch-receipts', createHash('sha256').update(sessionKey).digest('hex') + '.json');
   const methodDescriptors = new Map<string, Record<string, unknown>>();
   const registerGatewayMethod = (
     name: string,

@@ -1,4 +1,5 @@
 import probePaths from '../probe-paths.cjs';
+import probeData from '../probe-data.cjs';
 const { hostRoot, pluginRoot, hostRequire } = probePaths;
 // Production Swarm host -> native plugin/managed-run boundary. Synthetic state only.
 import assert from 'node:assert/strict';
@@ -27,6 +28,7 @@ const evidenceRoot = path.join(repository, '.agent-tasks/runtime/swarm-workflow-
 fs.mkdirSync(evidenceRoot, { recursive: true });
 const evidence = fs.mkdtempSync(path.join(evidenceRoot, 'probe-'));
 const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'workflow-send-'));
+probeData.prepareWorkflowProbeData(stateDir);
 const workspace = path.join(stateDir, 'project');
 fs.mkdirSync(workspace);
 const compiled = path.join(evidence, 'host.cjs');

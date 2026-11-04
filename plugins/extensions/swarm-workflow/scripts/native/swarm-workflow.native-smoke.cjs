@@ -8,6 +8,7 @@ if(!original) throw new Error('Set SWARM_WORKFLOW_TEST_RUNTIME to a prepared Ope
 const runtimeEntry=process.env.SWARM_WORKFLOW_TEST_ENTRY||'openclaw.mjs';
 if(!['openclaw.mjs','gateway-launcher.cjs'].includes(runtimeEntry))throw Error('Unsupported fixture runtime entry.');
 const base=path.resolve(hostRoot, '.agent-tasks/swarm-workflow/native-smoke-'+Date.now());
+require('../probe-data.cjs').prepareWorkflowProbeData(path.join(base, 'state'));
 fs.mkdirSync(path.join(base,'extensions/swarm-workflow'),{recursive:true});
 fs.mkdirSync(path.join(base,'node_modules'),{recursive:true});
 fs.mkdirSync(path.join(base,'project'),{recursive:true});

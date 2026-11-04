@@ -22,6 +22,7 @@ import {
   type TeamDiscussionRoom,
   teamDiscussionSessionKey,
 } from '../contracts/teamDiscussion';
+import { agentTeamDataDirectory } from '../runtime/data-directory';
 import { DiscussionLedger } from '../runtime/discussion/ledger';
 import { discussionReceiptWriter } from '../runtime/discussion/receipt-runtime';
 import { bindDiscussionTransport, discussionChannel } from './discussion-channel';
@@ -152,7 +153,7 @@ export function registerDiscussionService(api: OpenClawPluginApi): void {
       serviceRevision++;
       if (api.lifecycle.signal?.aborted !== false) throw new Error('teamDiscussionDisabled');
       ledger = new DiscussionLedger(
-        path.join(context.stateDir, 'agent-team', 'discussion-receipts'),
+        path.join(agentTeamDataDirectory(context.stateDir), 'discussion-receipts'),
         false,
         discussionReceiptWriter(api, 'discussion'),
       );

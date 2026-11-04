@@ -13,6 +13,7 @@ export const ExtensionIpc = {
   List: 'extensions:list',
   Import: 'extensions:import',
   Delete: 'extensions:delete',
+  DataInfo: 'extensions:data-info',
   SetEnabled: 'extensions:set-enabled',
   UpdateConfiguration: 'extensions:update-configuration',
   Changed: 'extensions:changed',
@@ -156,6 +157,21 @@ export type ExtensionSetEnabledResult = import('./pluginOperation').PluginOperat
 
 export type ExtensionDeleteRequest = {
   extensionId: string;
+  /** Explicitly remove only host-managed, package-owned data after confirmed uninstall. */
+  deleteData?: boolean;
+};
+
+export type ExtensionDataInfoRequest = { extensionId: string };
+
+export type ExtensionDataInfoResult = {
+  success: boolean;
+  exists?: boolean;
+  /** Estimated bytes at the time of inspection. */
+  bytes?: number;
+  canDelete?: boolean;
+  /** Execution recovery records are retained even after uninstall. */
+  retained?: true;
+  error?: string;
 };
 
 export type ExtensionDeleteResult = import('./pluginOperation').PluginOperationFeedback & {

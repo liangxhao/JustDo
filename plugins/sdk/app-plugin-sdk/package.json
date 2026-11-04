@@ -1,6 +1,6 @@
 {
   "name": "@app-plugin/sdk",
-  "version": "1.1.0",
+  "version": "1.4.0",
   "private": true,
   "type": "module",
   "license": "MIT",
@@ -9,6 +9,7 @@
     "./browser-runtime": "./browser-runtime.ts",
     "./browser": "./browser.ts",
     "./contracts": "./contracts.ts",
+    "./data": "./data.ts",
     "./interactions": "./interactions.ts",
     "./history-presentation": "./history-presentation.ts",
     "./main": "./main.ts",

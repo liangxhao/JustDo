@@ -42,6 +42,56 @@ Cleanup capability declarations and parameter predicates are explicit. Cleanup m
 
 Use `host.publishEvent(name, payload)` for transient bounded metadata and Browser `host.onEvent(name, listener)` to observe it. The host binds the active plugin ID, artifact hash and business epoch; stale or foreign events are ignored and subscriptions retire with their browser instance. Validate and project native events in the plugin before publication. These events do not create another transcript or configuration authority.
 
+### Managed private data (SDK 1.2)
+
+Declare `app.plugin.json.data: {"directory":"managed-v1"}` for private models,
+downloads and caches. Main uses `host.getPluginDataDirectory()` during its current
+business lifetime. Native imports `resolvePluginDataDirectory(stateDirectory,
+pluginId)` from `@app-plugin/sdk/data`, supplying the public OpenClaw state root and
+its own native ID. Both resolve the same host-prepared `plugin-data/<plugin-id>`
+directory and verify its `.owner.json` receipt. The resolver never creates a
+directory, migrates data or falls back to another path. Missing preparation is
+unavailable; do not construct a substitute path.
+
+The optional declaration
+`"migrateLegacyDirectory":{"requiredFiles":["selection.json"]}` claims only the
+same plugin's former `<state>/<plugin-id>` directory. The host verifies the named
+regular files and the entire tree, then renames it while Gateway is stopped.
+Reserved state directories, links, hardlinks, unexpected ownership or two existing
+data directories prevent migration. It never merges or overwrites directories.
+Plugin code and required files remain plugin-owned; the host has no model-specific
+layout or download logic.
+
+Updating or disabling a plugin preserves this directory. Uninstalling preserves it
+by default and offers an explicit option to delete eligible private data.
+Only the receipt-owned managed directory participates; the host stops owned work,
+verifies every selected owner's current files and requires successful native
+uninstall evidence before cleanup. Size inspection does not grant removal
+authority. Keep shared resources, user documents, product database records and
+native history outside this directory.
+`getNativeStateDirectory()` keeps its existing meaning and retention behavior.
+
+SDK 1.3 adds `data.retention: "retain"` for plugin-owned execution safety records.
+The host persists this policy in that directory's owner receipt and excludes the
+whole directory from uninstall cleanup, including when the package is unavailable
+or a later manifest omits the policy. Existing removable directories can be
+strengthened to retained; retained data is never downgraded automatically. The
+owner `dataId` and existing files remain unchanged when strengthening the policy.
+Default removable directories keep the original three-field ownership record for
+SDK 1.2 compatibility; only retained directories add `retention: "retain"`.
+Native plugins that require retention pass `{retention: "retain"}` as the third
+resolver argument, so a missing durable policy is unavailable. The Main port
+enforces this condition automatically for a retained data declaration.
+
+SDK 1.4 adds `host.getRetainedPluginDataDirectory()` for read-only metadata lookup
+from current business or cleanup callbacks, including resource checks while the
+plugin is disabled. Both the manifest and durable owner receipt must specify
+`retention: "retain"`. The ordinary `getPluginDataDirectory()` remains limited to
+the business lifetime. The retained lookup does not create directories or grant
+write, execution or Gateway authority; open metadata stores read-only and preserve
+their own identity checks. A retained filesystem policy does not keep a disposed
+instance or an expired cleanup callback alive.
+
 ### Managed Python runtime (SDK 1.1)
 
 `await host.getPythonRuntime()` returns the host-managed CPython descriptor published to the current Gateway, or `null`; reads require the current business lifetime and are rechecked after the asynchronous call. Native code imports `resolveHostPythonRuntime`, `assertHostPythonRuntimeCurrent`, and `createHostPythonEnvironment` from `@app-plugin/sdk/runtimes`. The host publishes the same bounded descriptor through the documented `APP_PLUGIN_PYTHON_RUNTIME` Gateway environment field, replacing inherited values. It contains the actual version, platform, architecture, canonical executable, standard-library search paths, and pinned core-file hashes. Missing or changed launch metadata stays unavailable until a normal Gateway restart republishes it. No PATH discovery, interpreter download or package installation occurs.

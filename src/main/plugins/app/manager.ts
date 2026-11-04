@@ -12,6 +12,7 @@ import type {
   AppPluginSnapshot,
 } from '../../../../plugins/sdk/app-plugin-sdk/contracts';
 import { APP_PLUGIN_ARTIFACT, AppPluginError, AppPluginIpc } from '../../../../plugins/sdk/app-plugin-sdk/contracts';
+import { resolvePluginDataDirectory } from '../../../../plugins/sdk/app-plugin-sdk/data';
 import type { AppMainModule } from '../../../../plugins/sdk/app-plugin-sdk/main';
 import {
   appNativeHandshakeMethod,
@@ -22,8 +23,10 @@ import {
   APP_NATIVE_PROFILE,
   verifyAppNativeModule,
 } from '../../../../plugins/sdk/app-plugin-sdk/native-profile';
+import { redactLogText } from '../../../shared/diagnostics/redaction';
 import { t } from '../../core/i18n';
 import { runWithoutPluginRequestBinding } from '../../engine/gateway/pluginRequestBinding';
+import { preparePluginDataDirectory } from '../data/pluginDataService';
 import {
   type ApplyExtensionPackageMutation,
   ExtensionPackageLifecycleMode,
@@ -184,6 +187,9 @@ export class AppPluginManager {
         const selected = await selectCandidateArtifact(candidate, artifact);
         const id = artifact.artifact.manifest.nativePluginId;
         if (this.selected.has(id)) continue;
+        this.assertAvailable();
+        await this.prepareSelectedData(selected, !!this.dependencies.getGatewayProcessId &&
+          this.dependencies.getGatewayProcessId() === null && !this.dependencies.isGatewayConnected());
         this.assertAvailable();
         await this.registry.prepare(artifact, this.dependencies.resources, this.dependencies.loadModule, {
           cleanupOnly: selected.cleanupOnly,
@@ -622,10 +628,12 @@ export class AppPluginManager {
         target.nativePluginIds.length > 4096 || target.nativePluginIds.some(id =>
           typeof id !== 'string' || !id.trim() || id !== id.trim() || id.length > 512) ||
         [target.installPath, target.sourceDirectory].some(directory =>
-          directory !== undefined && (typeof directory !== 'string' || !path.isAbsolute(directory))))
+          directory !== undefined && (typeof directory !== 'string' || !path.isAbsolute(directory))) ||
+        (target.requireStopped !== undefined && target.requireStopped !== true))
       throw new Error(AppPluginError.Invalid);
   }
   private async requiresStoppedExtensionMutation(target: ExtensionPackageMutationTarget): Promise<boolean> {
+    if (target.requireStopped === true) return true;
     const ids = new Set(target.nativePluginIds);
     const installPath = target.installPath;
     const matchesPath = (nativeRoot: string) =>
@@ -785,11 +793,15 @@ export class AppPluginManager {
         const artifact = await retainAppArtifact(inspected, this.dependencies.retentionRoot);
         const id = artifact.artifact.manifest.nativePluginId;
         if (next.has(id)) continue;
-        next.set(id, await selectCandidateArtifact(candidate, artifact));
+        const selected = await selectCandidateArtifact(candidate, artifact);
+        await this.prepareSelectedData(selected, true);
+        this.assertAvailable();
+        next.set(id, selected);
         this.registry.restoreResourceAdmission(ownerId);
       } catch (error) {
         if (!ownerId) throw error;
         this.registry.blockResourceAdmission(ownerId);
+        console.warn('[AppPlugins] Candidate could not be admitted');
       }
     }
     for (const [id, current] of this.selected) {
@@ -821,6 +833,25 @@ export class AppPluginManager {
     }
     if (this.activated) this.registry.activate();
     if (this.databaseInitialized) this.removeAbsentOwners();
+  }
+  private async prepareSelectedData(selected: Selected, gatewayStopped: boolean): Promise<void> {
+    const manifest = selected.artifact.artifact.manifest;
+    if (selected.cleanupOnly || !manifest.data) return;
+    const stateDirectory = this.dependencies.resources.getNativeStateDirectory();
+    try {
+      if (gatewayStopped) {
+        await preparePluginDataDirectory(stateDirectory, manifest.nativePluginId, manifest.data);
+      } else {
+        // A disconnected process is still alive. Only read already prepared data here;
+        // creation and legacy migration wait for the normal stopped package lifecycle.
+        resolvePluginDataDirectory(stateDirectory, manifest.nativePluginId,
+          manifest.data.retention === 'retain' ? { retention: 'retain' } : undefined);
+      }
+    } catch (error) {
+      console.warn('[AppPlugins] Plugin data preparation failed', manifest.nativePluginId,
+        redactLogText(error instanceof Error ? error.message : 'Plugin data is unavailable'));
+      throw error;
+    }
   }
   private captureCurrentOwner(candidate: AppCandidate, id: string): void {
     if (!/^[a-z][a-z0-9-]{0,95}$/u.test(id) || candidate.retainedReceipt) return;

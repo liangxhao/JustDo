@@ -23,6 +23,7 @@ const port = 43245;
 const modelPort = 43246;
 fs.mkdirSync(project, { recursive: true });
 fs.mkdirSync(stateDir, { recursive: true });
+const workflowData = require('../probe-data.cjs').prepareWorkflowProbeData(stateDir);
 fs.mkdirSync(plugin, { recursive: true });
 fs.mkdirSync(path.join(base, 'node_modules'), { recursive: true });
 fs.symlinkSync(path.resolve(runtime), path.join(base, 'node_modules', 'openclaw'), 'junction');
@@ -128,7 +129,7 @@ async function prepareProjectBaseline() {
 const phaseValues = new Map();
 let phaseDatabase;
 function observeWorkflow(flowId) {
-  const file = path.join(stateDir, 'swarm-workflow', 'flows.sqlite');
+  const file = path.join(workflowData, 'flows.sqlite');
   if (!fs.existsSync(file)) return;
   try {
     phaseDatabase ??= new DatabaseSync(file, { readOnly: true });
@@ -356,7 +357,7 @@ async function connect() {
     assert.ok(done, 'Orders workflow did not complete.');
     assert.equal(plannerCalls, 2); assert.equal(corrected, true); assert.equal(processed.size, 12);
     assert.deepEqual(JSON.parse(fs.readFileSync(path.join(project, 'swarm-demo/summary.json'), 'utf8')), expected);
-    const db = new DatabaseSync(path.join(stateDir, 'swarm-workflow/flows.sqlite'), { readOnly: true });
+    const db = new DatabaseSync(path.join(workflowData, 'flows.sqlite'), { readOnly: true });
     try {
       const saved = JSON.parse(db.prepare('SELECT payload FROM flows WHERE id=?').get(done.id).payload);
       assert.equal(saved.nodes.find(node => node.id === 'plan').planningRepair.passes, 1);

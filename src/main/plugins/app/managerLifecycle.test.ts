@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -6,6 +7,7 @@ import path from 'node:path';
 import { afterEach, expect, test, vi } from 'vitest';
 
 import type { AppPluginManifest } from '../../../../plugins/sdk/app-plugin-sdk/contracts';
+import { resolvePluginDataDirectory } from '../../../../plugins/sdk/app-plugin-sdk/data';
 import type { AppMainModule, AppResourceParticipant } from '../../../../plugins/sdk/app-plugin-sdk/main';
 import { appNativeGatewayMethodAlias, type AppNativeHandshake } from '../../../../plugins/sdk/app-plugin-sdk/native-contract';
 import { EnginePhase, type OpenClawEngineStatus } from '../../../shared/openclaw/engineStatus';
@@ -32,10 +34,18 @@ async function fixture(options: {
   ensureReady?(): Promise<void>;
   stopGateway?(): Promise<void>;
   cleanupOnly?: boolean;
+  data?: AppPluginManifest['data'];
+  initiallyOffline?: boolean;
+  initiallyDisconnected?: boolean;
+  unknownGatewayProcess?: boolean;
+  prepareState?(state: string): Promise<void>;
 } = {}) {
   const root = await mkdtemp(path.join(tmpdir(), 'app-manager-lifecycle-'));
   disposers.push(() => rm(root, { recursive: true, force: true }));
-  async function version(value: string) {
+  const stateDirectory = path.join(root, 'state');
+  await mkdir(stateDirectory);
+  await options.prepareState?.(stateDirectory);
+  async function version(value: string, data = options.data) {
     const nativeRoot = path.join(root, value);
     const appRoot = path.join(nativeRoot, 'app');
     await mkdir(appRoot, { recursive: true });
@@ -45,6 +55,7 @@ async function fixture(options: {
       manifestVersion: 1, apiVersion: 1, id, nativePluginId: id, version: value,
       entries: { main: 'main.mjs', browser: 'browser.mjs', presentation: 'presentation.mjs' }, capabilities: [],
       commands: ['read', 'native'], slots: [],
+      ...(data ? { data } : {}),
     };
     const content = {
       'main.mjs': `export function register(){return {commands:[{id:'read',invoke:()=>({success:true,value:${JSON.stringify(value)}})}]};}`,
@@ -63,8 +74,8 @@ async function fixture(options: {
   if (options.cleanupOnly) current.candidate.cleanupOnly = true;
   let candidates = [current.candidate];
   let enabled = true;
-  let connected = true;
-  let processId: number | null = 100;
+  let connected = !options.initiallyOffline && !options.initiallyDisconnected;
+  let processId: number | null = options.initiallyOffline ? null : 100;
   let generation = 1;
   let resumes = 0;
   let stops = 0;
@@ -83,6 +94,7 @@ async function fixture(options: {
   const manager = new AppPluginManager({
     retentionRoot: path.join(root, 'retained'),
     resources: {
+      getNativeStateDirectory: () => stateDirectory,
       requestGateway: (method: string, params?: unknown) => client.request(method, params),
       requestConnectedGateway: async () => {
         if (!nativeReady) throw new Error('configuration is still settling');
@@ -100,7 +112,8 @@ async function fixture(options: {
       return candidates;
     },
     broadcast: () => {}, isGatewayConnected: () => connected,
-    getGatewayProcessId: () => processId, getGatewayProcessGeneration: () => generation,
+    getGatewayProcessId: options.unknownGatewayProcess ? undefined : () => processId,
+    getGatewayProcessGeneration: () => generation,
     loadModule: async url => {
       const source = await readFile(new URL(url), 'utf8');
       // Execute this test's fixed, import-free fixture; real ESM loading is covered
@@ -129,7 +142,7 @@ async function fixture(options: {
   disposers.push(() => manager.dispose());
   await manager.prepare(); await manager.activate(); await manager.refresh();
   const read = (epoch = manager.snapshot()[0].epoch) => manager.invoke({ id, command: 'read', epoch, args: [] });
-  return { manager, read, version, root,
+  return { manager, read, version, root, stateDirectory,
     native: (epoch = manager.snapshot()[0].epoch) => manager.invoke({ id, command: 'native', epoch, args: [] }),
     nativeRequests,
     receipt: () => current.receipt,
@@ -150,6 +163,52 @@ async function fixture(options: {
     counts: () => ({ resumes, stops }),
   };
 }
+
+test('prepares managed data and migrates a declared legacy directory before the first Gateway exists', async () => {
+  const f = await fixture({ initiallyOffline: true,
+    data: { directory: 'managed-v1', migrateLegacyDirectory: { requiredFiles: ['selection.json'] } },
+    prepareState: async state => {
+      await mkdir(path.join(state, id));
+      await writeFile(path.join(state, id, 'selection.json'), '{}');
+    },
+  });
+  expect(f.manager.snapshot()).toHaveLength(1);
+  expect(resolvePluginDataDirectory(f.stateDirectory, id)).toBe(path.join(f.stateDirectory, 'plugin-data', id));
+  expect(existsSync(path.join(f.stateDirectory, id))).toBe(false);
+});
+
+test.each(['disconnected-alive', 'unknown-process'] as const)(
+  'does not create or migrate data when Gateway stop is not established: %s', async mode => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const f = await fixture({ initiallyOffline: mode === 'unknown-process', initiallyDisconnected: true,
+        unknownGatewayProcess: mode === 'unknown-process',
+        data: { directory: 'managed-v1', migrateLegacyDirectory: { requiredFiles: ['selection.json'] } },
+        prepareState: async state => {
+          await mkdir(path.join(state, id));
+          await writeFile(path.join(state, id, 'selection.json'), '{}');
+        },
+      });
+      expect(f.manager.snapshot()).toEqual([]);
+      expect(existsSync(path.join(f.stateDirectory, id, 'selection.json'))).toBe(true);
+      expect(existsSync(path.join(f.stateDirectory, 'plugin-data'))).toBe(false);
+      expect(warn).toHaveBeenCalledWith('[AppPlugins] Plugin data preparation failed', id, expect.any(String));
+    } finally { warn.mockRestore(); }
+  },
+);
+
+test('prepares new managed data under the stopped replacement lease', async () => {
+  const f = await fixture();
+  await mkdir(path.join(f.stateDirectory, id));
+  await writeFile(path.join(f.stateDirectory, id, 'selection.json'), '{}');
+  const next = await f.version('2.0.0', { directory: 'managed-v1',
+    migrateLegacyDirectory: { requiredFiles: ['selection.json'] } });
+  expect(existsSync(path.join(f.stateDirectory, 'plugin-data'))).toBe(false);
+  await f.manager.mutatePackage(async () => { f.replace(next); });
+  expect(resolvePluginDataDirectory(f.stateDirectory, id)).toBe(path.join(f.stateDirectory, 'plugin-data', id));
+  expect(existsSync(path.join(f.stateDirectory, id))).toBe(false);
+  expect(f.manager.snapshot()[0].version).toBe('2.0.0');
+});
 
 test('adopts a replacement Main/UI artifact after Gateway stop without restarting the application', async () => {
   const f = await fixture(); const old = f.manager.snapshot()[0];
@@ -280,6 +339,16 @@ test('a selected cleanup-only App owner still requires stopped package mutation'
 
   const mode = await f.manager.withExtensionPackageMutation(apply => apply({
     nativePluginIds: [id],
+  }, async mode => mode));
+
+  expect(mode).toBe(ExtensionPackageLifecycleMode.STOPPED);
+  expect(f.counts()).toEqual({ stops: 1, resumes: 1 });
+});
+
+test('an ordinary plugin data removal requires the stopped package lifecycle', async () => {
+  const f = await fixture();
+  const mode = await f.manager.withExtensionPackageMutation(apply => apply({
+    nativePluginIds: ['ordinary-package'], requireStopped: true,
   }, async mode => mode));
 
   expect(mode).toBe(ExtensionPackageLifecycleMode.STOPPED);

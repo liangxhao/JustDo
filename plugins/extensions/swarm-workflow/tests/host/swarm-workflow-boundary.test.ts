@@ -3,19 +3,19 @@ import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { afterAll, beforeAll, describe, expect, test, vi } from 'vitest';
-
 import type { AppMainHost } from '@app-plugin/sdk/main';
-
 import {
   type AppNativeBinding,
   appNativeGatewayMethodAlias,
 } from '@app-plugin/sdk/native-contract';
-import { type Flow, viewFlow } from '../../contracts/flow';
+import { afterAll, beforeAll, describe, expect, test, vi } from 'vitest';
+
 import { SwarmWorkflowGatewayEvent, WorkflowEventName } from '../../contracts/events';
+import { type Flow, viewFlow } from '../../contracts/flow';
 import { SwarmWorkflowGateway } from '../../contracts/workflow';
 import { FlowStore } from '../../data/store';
 import { FlowEngine, type FlowHost } from '../../execution/engine';
+import { prepareWorkflowPluginData } from '../native/fixtures/pluginData';
 
 const pluginRoot = path.resolve(import.meta.dirname, '../..');
 const hostRoot = process.env.APP_PLUGIN_HOST_ROOT;
@@ -42,6 +42,8 @@ type AppHostResources = Omit<
   | 'assertActive'
   | 'onExecutionReceipt'
   | 'publishEvent'
+  | 'getPluginDataDirectory'
+  | 'getRetainedPluginDataDirectory'
 >;
 type GatewayClientLike = {
   start(): void;
@@ -75,7 +77,7 @@ describe.skipIf(!hostRoot)('Host integration (requires APP_PLUGIN_HOST_ROOT)', (
     if (!relative || relative.startsWith('..') || path.isAbsolute(relative))
       throw new Error('Unsafe boundary fixture cleanup');
     const nativeDirectory = path.join(directory, 'state');
-    const database = new FlowStore(path.join(nativeDirectory, 'swarm-workflow'));
+    const database = new FlowStore(prepareWorkflowPluginData(nativeDirectory));
     const parentKey = 'agent:main:justdo:source';
     const flow: Flow = {
       id: 'owned',

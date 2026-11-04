@@ -33,6 +33,10 @@
     "application.page",
     "messages.presentation"
   ],
+  "data": {
+    "directory": "managed-v1",
+    "retention": "retain"
+  },
   "native": {
     "defaultEnabled": false,
     "userToggleable": true

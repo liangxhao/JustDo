@@ -11,7 +11,7 @@ interface FlowResource {
 }
 /** Read only closed metadata projections from this plugin's own store, including while disabled. */
 function readResources(host: AppMainHost): FlowResource[] {
-  const file = path.join(host.getNativeStateDirectory(), 'flows.sqlite');
+  const file = path.join(host.getRetainedPluginDataDirectory(), 'flows.sqlite');
   if (!existsSync(file)) return [];
   if (lstatSync(file).isSymbolicLink() || realpathSync(file) !== file)
     throw new Error('appPluginUnavailable');

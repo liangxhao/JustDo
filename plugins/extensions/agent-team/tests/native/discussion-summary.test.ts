@@ -10,6 +10,7 @@ import { registerDiscussionSummary } from '../../discussion/discussion-summary';
 import { DiscussionLedger, type DiscussionReceipt } from '../../runtime/discussion/ledger';
 import { discussionOperationId } from '../../runtime/discussion/receipt';
 import { createCustodyClientFixture, createNativeLifecycleFixture } from './fixtures/custodyClient';
+import { prepareTeamPluginData } from './fixtures/pluginData';
 
 const custody = createCustodyClientFixture();
 vi.mock('@runtime-services/sdk/custody-client', () => ({ createCustodyClient: () => custody }));
@@ -119,6 +120,7 @@ async function emitFinal(params: Dispatch, text = 'Summary result') {
 
 async function harness() {
   const root = mkdtempSync(path.join(os.tmpdir(), 'team-summary-test-'));
+  const dataDirectory = prepareTeamPluginData(root);
   roots.push(root);
   let service: Service | undefined;
   let handler: ((input: Invocation) => Promise<void>) | undefined;
@@ -150,8 +152,8 @@ async function harness() {
   await service.start({ stateDir: root });
   services.push(service);
   const invoke = handler;
-  const groups = new DiscussionLedger(path.join(root, 'agent-team', 'discussion-receipts'));
-  const summaryDirectory = path.join(root, 'agent-team', 'summary-receipts');
+  const groups = new DiscussionLedger(path.join(dataDirectory, 'discussion-receipts'));
+  const summaryDirectory = path.join(dataDirectory, 'summary-receipts');
   function seedGroup(overrides: Partial<DiscussionReceipt> = {}) {
     groups.write({
       roomId: room.id,

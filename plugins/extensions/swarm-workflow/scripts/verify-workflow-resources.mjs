@@ -28,7 +28,6 @@ const compile = file => {
 const { FlowStore } = compile(path.join(pluginRoot, 'data/store.ts'));
 const { workflowResources } = compile(path.join(pluginRoot, 'host/resources.ts'));
 const { register } = compile(path.join(pluginRoot, 'host/app.ts'));
-const { SwarmWorkflowGateway } = compile(path.join(pluginRoot, 'contracts/workflow.ts'));
 const temporary = mkdtempSync(path.join(tmpdir(), 'workflow-resource-probe-'));
 let database;
 try {
@@ -41,7 +40,7 @@ try {
   const execution = { getSessionRuntimeStatus: async () => runtime };
   const participant = workflowResources({
     isEnabled: () => false,
-    getNativeStateDirectory: () => temporary,
+    getRetainedPluginDataDirectory: () => temporary,
     getSessions: () => ({
       getSessionByNativeKey: key => (key === parentKey ? { id: source } : null),
     }),
@@ -166,68 +165,29 @@ try {
       .run(item.id, item.requestId, item.parentKey, item.revision, JSON.stringify(item));
   }
   const controls = [];
-  let stopParentKeys = [parentKey];
-  let controlFailure = 'none';
   const registration = register({
     manifest: { id: 'swarm-workflow' },
-    getNativeStateDirectory: () => temporary,
+    getRetainedPluginDataDirectory: () => temporary,
     getSessions: () => ({
       getSessionByNativeKey: key => (key === parentKey ? { id: source } : null),
       getSession: () => ({ id: source }),
     }),
     getExecution: () => execution,
-    getRuntime: () => ({ getSessionKeysForSession: () => stopParentKeys }),
+    getRuntime: () => ({ getSessionKeysForSession: () => [parentKey] }),
     requestConnectedGateway: (method, params) => {
-      // The existing native UI List RPC intentionally returns only its first 20.
-      if (method === SwarmWorkflowGateway.List)
-        return Promise.resolve({ flows: stopFlows.slice(0, 20) });
-      assert.equal(method, SwarmWorkflowGateway.Control);
-      controls.push(params);
-      if (params.id === stopFlows[0].id) {
-        if (controlFailure === 'sync') throw new Error('synchronous unresolved stop');
-        if (controlFailure === 'async') return Promise.reject(new Error('unresolved stop'));
-      }
-      return Promise.resolve({ success: true });
+      controls.push({ method, params });
+      throw new Error('Source cancellation must not control independent workflows');
     },
   });
   await registration.submission.cancel(source);
-  checks.stopCoversAllOwnedFlows = stopFlows.every(item =>
-    controls.some(
-      control =>
-        control.id === item.id && control.revision === item.revision && control.action === 'stop',
-    ),
-  );
-  controls.length = 0;
-  controlFailure = 'async';
-  let stopFailed = false;
-  try {
-    await registration.submission.cancel(source);
-  } catch {
-    stopFailed = true;
-  }
-  checks.stopFailureStillAttemptsOtherFlows =
-    stopFailed && stopFlows.every(item => controls.some(control => control.id === item.id));
-  controls.length = 0;
-  controlFailure = 'sync';
-  stopFailed = false;
-  try {
-    await registration.submission.cancel(source);
-  } catch {
-    stopFailed = true;
-  }
-  checks.synchronousStopFailureStillAttemptsOtherFlows =
-    stopFailed && stopFlows.every(item => controls.some(control => control.id === item.id));
-  controls.length = 0;
-  controlFailure = 'none';
-  stopParentKeys = undefined;
-  stopFailed = false;
-  try {
-    await registration.submission.cancel(source);
-  } catch {
-    stopFailed = true;
-  }
-  checks.missingRuntimeIdentityCannotSilentlySkipOwnedStops =
-    stopFailed || stopFlows.every(item => controls.some(control => control.id === item.id));
+  await registration.submission.cancel(source, 'cancelled-source-turn');
+  checks.sourceCancellationDoesNotControlWorkflows = controls.length === 0;
+  checks.sourceCancellationPreservesAllOwnedFlows = stopFlows.every(item => {
+    const row = database.prepare('SELECT payload FROM flows WHERE id=?').get(item.id);
+    return row && JSON.parse(String(row.payload)).status === 'running';
+  });
+  await assert.rejects(registration.beforePackageMutation(), /swarmWorkflowDeleteUnresolved/);
+  checks.unsettledFlowsStillBlockPackageMutation = true;
   console.log(JSON.stringify({ realSqlite: true, completeWorkflowSchema: true, checks }));
   assert.ok(
     Object.values(checks).every(Boolean),

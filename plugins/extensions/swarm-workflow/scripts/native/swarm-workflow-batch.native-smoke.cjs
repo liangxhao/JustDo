@@ -14,6 +14,7 @@ const WebSocket = hostRequire('ws');
 const runtime = process.env.SWARM_WORKFLOW_TEST_RUNTIME;
 if (!runtime) throw new Error('Set SWARM_WORKFLOW_TEST_RUNTIME to an isolated, fully verified production runtime.');
 const base = path.resolve(hostRoot, '.agent-tasks/swarm-workflow/native-batch-smoke-' + Date.now());
+const workflowData = require('../probe-data.cjs').prepareWorkflowProbeData(path.join(base, 'state'));
 const project = path.join(base, 'project');
 const plugin = path.join(base, 'extensions', 'swarm-workflow');
 fs.mkdirSync(path.join(project, 'data'), { recursive: true });
@@ -174,7 +175,7 @@ async function connect() {
     assert.ok(done, 'Batch did not complete.'); assert.ok(hotChanged && retried); assert.equal(processed.size, 100); assert.ok(indexReads >= 5 && indexReads <= 100); assert.ok(maxPromptBytes <= 24576);
     assert.deepEqual(JSON.parse(fs.readFileSync(path.join(project, 'aggregate.json'), 'utf8')), { count: 100, sum: 10100 });
     for (let i = 1; i <= 100; i++) assert.deepEqual(JSON.parse(fs.readFileSync(path.join(project, 'data', String(i).padStart(3, '0') + '.json'), 'utf8')), { value: i });
-    const db = new DatabaseSync(path.join(base, 'state', 'swarm-workflow', 'flows.sqlite'), { readOnly: true });
+    const db = new DatabaseSync(path.join(workflowData, 'flows.sqlite'), { readOnly: true });
     try { const saved = JSON.parse(db.prepare('SELECT payload FROM flows WHERE id=?').get(done.id).payload); assert.equal(saved.settings.maxAttempts, 3); assert.equal(saved.settings.maxBatchItems, 1000);
       const rows = db.prepare('SELECT payload FROM batch_items WHERE flow_id=?').all(done.id).map(row => JSON.parse(row.payload)); assert.equal(rows.length, 100); assert.equal(rows.filter(row => row.attempt === 2).length, 3); assert.ok(rows.every(row => row.status === 'done' && row.cleanupSettled && row.artifacts.artifacts.length === 1)); assert.equal(db.prepare('SELECT count(*) AS count FROM execution_leases').get().count, 0);
     } finally { db.close(); }

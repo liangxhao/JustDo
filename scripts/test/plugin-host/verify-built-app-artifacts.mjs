@@ -56,7 +56,7 @@ try {
     `
 const assert=require('node:assert/strict');
 const {inspectAppArtifact,retainAppArtifact,AppPluginRegistry,AppPluginManager,discoverAppCandidates}=require(${JSON.stringify(compiled)});
-const {readFileSync,realpathSync}=require('node:fs');
+const {readFileSync,realpathSync,mkdirSync}=require('node:fs');
 const path=require('node:path');
 const Database=require(${JSON.stringify(require.resolve('better-sqlite3'))});
 const database=new Database(':memory:');
@@ -77,6 +77,8 @@ getExecution:()=>execution,
 getRuntime:()=>runtime,requestGateway:request,requestConnectedGateway:request,ensureReady:async()=>{},onNativeEvent:()=>()=>{},onSessionStopped:()=>()=>{},sessionsChanged:()=>{},createAssistant:async()=>{throw new Error('not exercised');}};
 const checks={};
 (async()=>{try{
+mkdirSync(${JSON.stringify(path.join(temporary, 'state'))},{recursive:true});
+let gatewayStarted=false;
 const handshakes=new Map();
 for(const artifact of ${JSON.stringify(artifacts)}){
  const binding=JSON.parse(readFileSync(path.join(artifact.root,'native.binding.json'),'utf8'));
@@ -86,10 +88,20 @@ const manager=new AppPluginManager({
  retentionRoot:${JSON.stringify(path.join(temporary, 'manager-retained'))},
  candidates:()=>discoverAppCandidates(${JSON.stringify(path.join(temporary, 'artifacts'))},${JSON.stringify(runtimeAlias)},[],{}),
  resources:{...resources,requestConnectedGateway:async method=>handshakes.get(method)},
- readDesiredEnabled:()=>true,isGatewayConnected:()=>true,getGatewayProcessId:()=>123,broadcast:()=>{}
+ readDesiredEnabled:()=>true,isGatewayConnected:()=>gatewayStarted,getGatewayProcessId:()=>gatewayStarted?123:null,broadcast:()=>{}
 });
 try{
- await manager.prepare();manager.initializeDatabase(database);await manager.activate();await manager.refresh();
+ await manager.prepare();
+ for(const artifact of ${JSON.stringify(artifacts)}){
+  const manifest=JSON.parse(readFileSync(path.join(artifact.root,'app.artifact.json'),'utf8')).manifest;
+  if(manifest.data){
+   const owner=JSON.parse(readFileSync(path.join(${JSON.stringify(path.join(temporary, 'state'))},'plugin-data',manifest.nativePluginId,'.owner.json'),'utf8'));
+   assert.equal(owner.pluginId,manifest.nativePluginId);
+   assert.equal(owner.retention,manifest.data.retention);
+  }
+ }
+ checks['actualManager:declaredDataPreparedBeforeGateway']=true;
+ gatewayStarted=true;manager.initializeDatabase(database);await manager.activate();await manager.refresh();
  assert.equal(manager.snapshot().length,${artifacts.length});
  assert.ok(manager.snapshot().every(item=>item.state==='active'&&item.browserEntry),JSON.stringify(manager.snapshot()));
  checks['actualManager:currentRuntimeJunctionAdmitted']=true;

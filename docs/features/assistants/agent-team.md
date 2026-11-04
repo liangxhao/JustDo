@@ -435,6 +435,13 @@ OpenClaw 保存长期 transcript、公开群消息、成员执行、汇总及待
 
 协作的 execution/review 表与群聊的 rooms/runs/executions/task_links/summaries/deleted_rooms、queue_control/pending_inputs 分别承担真实查询和恢复契约。原生幂等先于新预算扣除；未知不换 requestId 重发。旧独立群不迁移为 borrowed source，不引入已取消的 OpenClaw 9.6→9.8 数据桥。
 
+Agent Team 自有的原生磁盘账本统一使用 SDK 准备的
+`state/plugin-data/agent-team/`：`discussion-receipts/` 保存讨论执行收据，
+`summary-receipts/` 保存汇总收据，`launch-receipts/` 保存发起守卫账本。
+这些目录只保存执行身份和恢复元数据，采用卸载后保留策略；通用数据清理不会删除它们。
+新版本只读写该布局，不迁移或回退读取旧目录。产品数据库、原生历史和工作区附件
+继续由各自的存储规则管理。
+
 ### 禁用、卸载与删除的区别
 
 关闭扩展保留已有团队和原生 transcript，应用隐藏历史和参数入口；协作消息详情与群聊历史 RPC 随 Agent Team 停用，重新启用后恢复记录读取。Runtime Services 只保留已登记精确 run 的通用退休围栏、inert custody 及无正文收据核对，不继续执行 Team 模式或 peer send 业务规则。产品显式关闭先取得准入 lease、写取消代次再改配置；正常 Gateway shutdown 保留已保存待发输入，不能当成明确禁用。扩展开关由配置同步保留用户选择。
@@ -490,7 +497,7 @@ flowchart LR
 
 typed ports 每次读取真实 store/router，不复制宿主状态，保留原 SQLite 连接、同库事务、唯一协调器、禁用 lease 与收据核对。关闭后只保留合法清理参与者及同产物的纯历史展示，业务 UI、命令和旧 epoch 失效；旧 hash 的清理实例仅按资源账本引用保留。
 
-草稿留在 Renderer 的有界内存，不进入 Gateway 或持久正文缓存。Electron/Redux/preload、主输入框、权限和原生历史控制器继续由通用宿主维护。内置安装/卸载通道仍受产品策略限制，不能把框架可动态加载等同于已经开放任意插件安装。Gateway 根入口不导入 host/browser；边界测试分别验证原生、Main 和 Browser。原 Gateway 方法、产品表、持久化目录和团队身份保留，应用专属 IPC 则由通用插件桥替代。
+草稿留在 Renderer 的有界内存，不进入 Gateway 或持久正文缓存。Electron/Redux/preload、主输入框、权限和原生历史控制器继续由通用宿主维护。内置安装/卸载通道仍受产品策略限制，不能把框架可动态加载等同于已经开放任意插件安装。Gateway 根入口不导入 host/browser；边界测试分别验证原生、Main 和 Browser。原 Gateway 方法、产品表和团队身份保留，原生磁盘账本使用上述受管目录，应用专属 IPC 则由通用插件桥替代。
 
 ## 维护与验证边界
 

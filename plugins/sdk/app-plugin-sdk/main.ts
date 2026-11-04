@@ -91,6 +91,10 @@ export interface AppMainHost {
   assertActive(): void;
   getDatabase(): Database.Database;
   getNativeStateDirectory(): string;
+  /** Host-prepared private data; durable retention controls uninstall cleanup. */
+  getPluginDataDirectory(): string;
+  /** Read-only path lookup for retained data in current business or cleanup callbacks. */
+  getRetainedPluginDataDirectory(): string;
   /** Managed interpreter availability only; no file or execution authorization. */
   getPythonRuntime(): Promise<AppPythonRuntime | null>;
   getSessions(): AppSessionStore;

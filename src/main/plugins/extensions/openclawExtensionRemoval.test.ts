@@ -9,6 +9,7 @@ import { ManagedDirectoryOperationCoordinator } from '../../core/filesystem/mana
 import { t } from '../../core/i18n';
 import { OutboundHeaderPolicyService } from '../../core/network/outboundHeaderPolicyService';
 import type { OpenClawEngineManager } from '../../openclaw/runtime/openclawEngineManager';
+import type { PluginDataRemovalSnapshot } from '../data/pluginDataService';
 import { removeExtensionPackage } from './extensionMutation';
 import {
   type ApplyExtensionPackageMutation,
@@ -51,6 +52,7 @@ describe('extension removal receipts and package lifecycle', () => {
       directoryOperations?: ManagedDirectoryOperationCoordinator;
       connectedOnly?: boolean;
       packagePluginIds?: string[];
+      pluginData?: ConstructorParameters<typeof OpenClawExtensionImportService>[0]['pluginData'];
     } = {},
   ) {
     const stateDir = path.join(fixtureRoot, 'state');
@@ -139,6 +141,7 @@ describe('extension removal receipts and package lifecycle', () => {
       restartGatewayAfterMutation,
       outboundHeaderPolicy: policy ?? { inspectExtension: vi.fn(), reconcile },
       directoryOperations: options.directoryOperations,
+      pluginData: options.pluginData,
       ...(options.packagePluginIds ? { readPackageOwnership: async () => [{
         ownerId: 'network-plugin', pluginIds: options.packagePluginIds!, installPath: installedDir,
       }] } : {}),
@@ -157,6 +160,125 @@ describe('extension removal receipts and package lifecycle', () => {
       policy,
     };
   }
+
+  function dataFixture(options: { failCleanup?: boolean; packagePluginIds?: string[] } = {}) {
+    const order: string[] = [];
+    const snapshot = {} as PluginDataRemovalSnapshot;
+    const pluginData = {
+      inspect: vi.fn(async () => ({ exists: true, bytes: 123, canDelete: true })),
+      prepareRemoval: vi.fn(async () => {
+        expect(f.state.leased).toBe(true);
+        expect(f.state.configMutation).toBe(true);
+        order.push('snapshot');
+        return snapshot;
+      }),
+      remove: vi.fn(async (selected: PluginDataRemovalSnapshot) => {
+        expect(selected).toBe(snapshot);
+        expect(f.state.leased).toBe(true);
+        expect(fs.existsSync(f.installedDir)).toBe(false);
+        order.push('cleanup');
+        if (options.failCleanup) throw new Error('Model file is locked');
+      }),
+    };
+    const f = fixture({ pluginData, packagePluginIds: options.packagePluginIds });
+    const native = f.runCommand.getMockImplementation()!;
+    f.runCommand.mockImplementation(async (...args) => {
+      order.push('uninstall');
+      return native(...args);
+    });
+    const apply: ApplyExtensionPackageMutation = async (target, operation) => {
+      expect(target.requireStopped).toBe(true);
+      f.state.leased = true;
+      try { return await operation(ExtensionPackageLifecycleMode.STOPPED); }
+      finally { order.push('restore'); f.state.leased = false; }
+    };
+    return { ...f, pluginData, order, apply };
+  }
+
+  it('freezes the complete package data before uninstall and deletes only before runtime restoration', async () => {
+    const f = dataFixture({ packagePluginIds: ['network-child', 'second-child'] });
+    const info = await f.service.getDataInfo('network-child');
+    expect(info).toEqual({ success: true, exists: true, bytes: 123, canDelete: true });
+    expect(f.pluginData.inspect).toHaveBeenCalledWith(
+      path.join(fixtureRoot, 'state'), ['network-child', 'network-plugin', 'second-child'],
+    );
+
+    const result = await f.service.delete('network-child', undefined, f.apply, { deleteData: true });
+
+    expect(result).toEqual({ success: true });
+    expect(f.order).toEqual(['snapshot', 'uninstall', 'cleanup', 'restore']);
+    expect(f.pluginData.prepareRemoval).toHaveBeenCalledWith(
+      path.join(fixtureRoot, 'state'), ['network-child', 'network-plugin', 'second-child'],
+    );
+    expect(f.runCommand).toHaveBeenCalledOnce();
+  });
+
+  it('preserves plugin data by default without inspecting or deleting it', async () => {
+    const f = dataFixture();
+    await expect(f.service.delete('network-plugin')).resolves.toMatchObject({ success: true });
+    expect(f.pluginData.prepareRemoval).not.toHaveBeenCalled();
+    expect(f.pluginData.remove).not.toHaveBeenCalled();
+  });
+
+  it('reports retained execution records without presenting them as a read failure', async () => {
+    const f = dataFixture();
+    f.pluginData.inspect.mockResolvedValue(Object.assign(
+      { exists: true, bytes: 123, canDelete: false }, { retained: true as const },
+    ));
+
+    await expect(f.service.getDataInfo('network-plugin')).resolves.toEqual({
+      success: true, exists: true, bytes: 123, canDelete: false, retained: true,
+    });
+  });
+
+  it('rejects unsafe data before sending uninstall', async () => {
+    const f = dataFixture();
+    f.pluginData.prepareRemoval.mockRejectedValue(new Error('Data ownership changed'));
+
+    await expect(f.service.delete('network-plugin', undefined, f.apply, { deleteData: true }))
+      .rejects.toThrow('Data ownership changed');
+
+    expect(f.runCommand).not.toHaveBeenCalled();
+    expect(f.pluginData.remove).not.toHaveBeenCalled();
+    expect(fs.existsSync(f.installedDir)).toBe(true);
+  });
+
+  it('does not delete data after an unconfirmed native uninstall', async () => {
+    const f = dataFixture();
+    f.runCommand.mockResolvedValue({ exitCode: 1, stdout: '', stderr: 'Command timed out' });
+
+    const result = await f.service.delete('network-plugin', undefined, f.apply, { deleteData: true });
+
+    expect(result.success).toBe(false);
+    expect(f.pluginData.prepareRemoval).toHaveBeenCalledOnce();
+    expect(f.pluginData.remove).not.toHaveBeenCalled();
+    expect(f.runCommand).toHaveBeenCalledOnce();
+  });
+
+  it('keeps the confirmed uninstall receipt when data cleanup fails', async () => {
+    const f = dataFixture({ failCleanup: true });
+
+    const result = await f.service.delete('network-plugin', undefined, f.apply, { deleteData: true });
+
+    expect(result).toMatchObject({
+      success: true, refreshWarning: true, failedStage: PluginOperationStage.CLEANING_UP,
+      error: expect.stringContaining(t('extensionDataRemovalFailed')),
+    });
+    expect(result.error).toContain('Model file is locked');
+    expect(f.order).toEqual(['snapshot', 'uninstall', 'cleanup', 'restore']);
+    expect(f.runCommand).toHaveBeenCalledOnce();
+  });
+
+  it('requires the stopped package owner when data deletion is requested', async () => {
+    const f = dataFixture();
+
+    const result = await f.service.delete('network-plugin', undefined, undefined, { deleteData: true });
+
+    expect(result).toEqual({ success: false, error: t('extensionDataRemovalUnavailable') });
+    expect(f.runCommand).not.toHaveBeenCalled();
+    expect(f.requestGateway).not.toHaveBeenCalled();
+    expect(f.pluginData.prepareRemoval).not.toHaveBeenCalled();
+  });
 
   it('uses one offline uninstall while the package owner deliberately holds the Gateway stopped', async () => {
     const f = fixture({ realPolicy: true });

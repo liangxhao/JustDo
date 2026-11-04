@@ -373,6 +373,7 @@ contextBridge.exposeInMainWorld('electron', {
   },
   extensions: {
     list: () => ipcRenderer.invoke(ExtensionIpc.List),
+    dataInfo: (request: { extensionId: string }) => ipcRenderer.invoke(ExtensionIpc.DataInfo, request),
     delete: (request: ExtensionDeleteRequest, context?: PluginOperationContext) =>
       ipcRenderer.invoke(ExtensionIpc.Delete, request, context),
     setEnabled: (request: ExtensionSetEnabledRequest, context?: PluginOperationContext) =>

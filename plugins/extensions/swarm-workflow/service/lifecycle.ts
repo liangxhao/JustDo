@@ -1,19 +1,22 @@
-import { NativeLaunchNotInvokedError } from '../execution/launch-admission';
-import { continuationInstructions } from '../execution/intervention';
-import path from 'node:path';
 import { createHash } from 'node:crypto';
-import { FlowEngine } from '../execution/engine';
-import { FlowStore } from '../data/store';
-import { FlowNotifier } from '../management/notifications';
-import { FLOW_RPC } from '../contracts/flow';
+import path from 'node:path';
+
+import type { ManagedSubagent } from '@runtime-services/sdk/execution';
+import type { OpenClawPluginApi } from 'openclaw/plugin-sdk/core';
+
+import { freezeBatch, readBatchManifest, verifyItemResult } from '../batch/snapshot';
 import { WorkflowEventName, type WorkflowNativeChange } from '../contracts/events';
-import { freezeBatch, verifyItemResult, readBatchManifest } from '../batch/snapshot';
+import { FLOW_RPC } from '../contracts/flow';
+import { FlowStore } from '../data/store';
+import { FlowEngine } from '../execution/engine';
+import { continuationInstructions } from '../execution/intervention';
+import { NativeLaunchNotInvokedError } from '../execution/launch-admission';
 import { assertCrossAgentPolicy } from '../execution/policy';
 import { lastSubmissionError, submissionCorrectionInstructions } from '../execution/submission';
-import type { OpenClawPluginApi } from 'openclaw/plugin-sdk/core';
-import type { ManagedSubagent } from '@runtime-services/sdk/execution';
-import { swarmWorkflowCapacity, swarmWorkflowSettings } from '../settings';
+import { FlowNotifier } from '../management/notifications';
 import { DELIVERY_INSTRUCTIONS } from '../prompt/delivery';
+import { workflowDataDirectory } from '../runtime/data-directory';
+import { swarmWorkflowCapacity, swarmWorkflowSettings } from '../settings';
 import type { WorkflowContext } from './context';
 
 export function registerWorkflowLifecycle(context: WorkflowContext): void {
@@ -60,7 +63,7 @@ export function registerWorkflowLifecycle(context: WorkflowContext): void {
           ctx.logger.error('[SwarmWorkflow] Failed to publish workflow change.');
         }
       };
-      state.store = new FlowStore(path.join(ctx.stateDir, 'swarm-workflow'), publishChange);
+      state.store = new FlowStore(workflowDataDirectory(ctx.stateDir), publishChange);
       state.engine = new FlowEngine(state.store, {
         capacity: () => {
           const config = api.runtime.config.current();

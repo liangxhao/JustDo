@@ -626,6 +626,8 @@ interface IElectronAPI {
     ) => Promise<PluginOperationFeedback & { success: boolean; skills?: Skill[]; error?: string }>;
   };
   extensions: {
+    dataInfo: (request: import('../../shared/plugins/extensions').ExtensionDataInfoRequest) =>
+      Promise<import('../../shared/plugins/extensions').ExtensionDataInfoResult>;
     list: () => Promise<{
       success: boolean;
       extensions: InstalledOpenClawExtension[];
