@@ -202,9 +202,13 @@ export function registerCustody(api: OpenClawPluginApi, owners: OwnerProvider): 
       const run = api.lifecycle.runInBackgroundContext; if (!run) throw new Error('Custody native context is unavailable.'); run(write);
     },
   });
-  api.registerAgentHarness({ id: INERT_CUSTODY_HARNESS, label: 'Inert input storage', supports: () => ({ supported: false, reason: 'Inert storage cannot execute.' }), async runAttempt() { throw new Error('Inert storage cannot execute.'); } });
-  api.on('before_agent_run', (_event, context) => {
-    if (new RegExp(`^agent:[^:]+:harness:${INERT_CUSTODY_HARNESS}:`).test(context.sessionKey ?? '')) return { outcome: 'block', reason: 'Inert storage cannot execute.' };
+  // Native modelSelectionLocked pins custody sessions to this non-executing harness.
+  // A global before_agent_run hook would also disable unrelated restart-safe Goal admission.
+  api.registerAgentHarness({
+    id: INERT_CUSTODY_HARNESS,
+    label: 'Inert input storage',
+    supports: () => ({ supported: false, reason: 'Inert storage cannot execute.' }),
+    async runAttempt() { throw new Error('Inert storage cannot execute.'); },
   });
   let unsubscribe: (() => void) | undefined;
   api.registerService({ id: 'inert-custody', start(context) {

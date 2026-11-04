@@ -80,8 +80,14 @@ test('stores opaque body only in native inert storage and checks exact readback 
   expect(receipt.state).toBe('saved');
   const saved = await f.call(RPC.read, { ...f.writer, ...f.locator(identity) }, { noAuthority: true });
   expect(saved.payload).toBe('PRIVATE_OPAQUE_BODY');
-  expect(f.harness.mock.calls[0][0].id).toBe(INERT_CUSTODY_HARNESS);
-  expect(f.hooks.get('before_agent_run')({}, { sessionKey: identity.sessionKey })).toMatchObject({ outcome: 'block' });
+  const harness = f.harness.mock.calls[0][0];
+  expect(harness.id).toBe(INERT_CUSTODY_HARNESS);
+  expect(harness.supports({})).toEqual({ supported: false, reason: 'Inert storage cannot execute.' });
+  await expect(harness.runAttempt({})).rejects.toThrow('Inert storage cannot execute.');
+  expect(f.entries.get(identity.sessionKey)).toMatchObject({
+    agentHarnessId: INERT_CUSTODY_HARNESS, modelSelectionLocked: true, permissionMode: 'read-only',
+  });
+  expect(f.hooks.has('before_agent_run')).toBe(false);
   const contents = (directory: string): string => readdirSync(directory, { withFileTypes: true }).map(entry => entry.isDirectory() ? contents(path.join(directory, entry.name)) : readFileSync(path.join(directory, entry.name), 'utf8')).join('');
   expect(contents(f.root)).not.toContain('PRIVATE_OPAQUE_BODY');
   expect(await f.append(identity)).toEqual(receipt); expect(sdk.append).toHaveBeenCalledOnce();

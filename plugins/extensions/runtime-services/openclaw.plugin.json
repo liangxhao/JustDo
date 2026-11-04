@@ -13,6 +13,9 @@
     ]
   },
   "contracts": {
+    "agentToolResultMiddleware": [
+      "openclaw"
+    ],
     "gatewayMethodDispatch": [
       "authenticated-request"
     ],
@@ -24,7 +27,8 @@
       "execution-admission"
     ],
     "tools": [
-      "external_mcp"
+      "external_mcp",
+      "finish_goal_turn"
     ]
   },
   "configContracts": {

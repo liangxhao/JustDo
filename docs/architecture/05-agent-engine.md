@@ -534,6 +534,17 @@ Goal 事件独立核对原生会话、run 与原生序列，连接回调核对�
 结构化操作的回执异常与过期不能当作未提交；完整契约及保留的暂停恢复补丁见
 [Goal 模式](../features/chat/goal-mode.md)。
 
+自动后继成功完成 Goal 后，Runtime Services 的公开工具结果中间件通过本注册绑定的
+Gateway 只读核对 `sessions.describe.goalContinuation.lastAccepted` 与当前精确会话、
+运行及 Goal，统一完成结果的后续答复指导。`finish_goal_turn` 的工厂只在公开最新元数据
+确认当前精确会话有 active Goal 时提供工具；普通会话和已完成 Goal 的新回合不提供。
+已有交付且无新成果时，模型在完成更新后
+单独调用 `finish_goal_turn({ goalId, reply: "none" })`；只有同一中间件用原生当前 run
+上下文再次核对成功，才为这个显式结束调用返回公开 `terminate` 标志，避免 backend
+必答契约在 `NO_REPLY` 后强制补全并重发正文。`update_goal` 自身不被自动终止，仍可
+继续交付新成果。直接工具和原生 Tool Search 的明确工具信封均覆盖，未知路径不改写；
+模型正文不去重，不读取私有 entry 字段，也不以工具返回代替整轮结算。
+
 Plan-mode 通过原生 session extension、turn hook、工具和 scoped RPC 实现。Main 持久化计划文件及 handoff，批准后用原生 reset 建立实施上下文；这是产品交接，不是另一套原生恢复状态机。
 
 子任务查询分页读取 `sessions.list({ archived:'all' })`，按返回记录的 `spawnedBy` 精确筛选，并通过 `sessions.describe` 核对详情；`sessions.changed` 使产品快照失效。原生请求的 `spawnedBy` 过滤使用有保留期限的控制关系，不能用于完整历史发现，否则已结束子会话会被遗漏。OpenClaw 从 v2026.9.8 起已移除旧任务账本与 `tasks.*` RPC，原生会话投影统一拥有委派执行与控制归属。

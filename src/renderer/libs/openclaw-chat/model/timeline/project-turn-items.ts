@@ -42,6 +42,8 @@ export interface ContentTimelineItem {
   kind: 'content';
   key: string;
   item: ContentItem;
+  /** An admitted native owner; presentation adapters may use synthetic item run IDs. */
+  nativeRunId?: string;
 }
 
 export interface CompactionTimelineItem {
@@ -350,7 +352,9 @@ export function projectTurnItems(
       if (item.message) projected.push({ kind: 'compaction', key: item.id, item });
       summarySegment += 1;
     } else if (item.type === 'content') {
-      projected.push({ kind: 'content', key: item.id, item: content! });
+      projected.push({ kind: 'content', key: item.id, item: content!,
+        ...(item.runId === turn.runId ? { nativeRunId: turn.runId } : {}),
+      });
       summarySegment += 1;
     } else {
       // A failed Tool already has a red status indicator and expandable error

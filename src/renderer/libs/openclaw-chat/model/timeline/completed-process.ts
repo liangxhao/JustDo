@@ -3,6 +3,8 @@ import { isGatewayInjectedModelRef } from '@shared/providers/modelRef';
 import { getTranscriptMedia } from '../../attachments';
 import { extractTextCached } from '../../pipeline/message-extract';
 import { normalizeMessage } from '../../pipeline/message-normalizer';
+import { readActiveTurnMessageRunId } from '../history/optimistic-history-tail';
+import { readTranscriptIdentity } from '../history/transcript-identity';
 import { asToolRecord, unwrapToolMessage } from '../tools/tool-message-adapter';
 import { toolOutcome } from '../tools/tool-presentation';
 import { isFailedRunMessage } from '../turn/failed-run-message';
@@ -53,6 +55,33 @@ function ordinaryAssistantText(item: VisibleTimelineItem): boolean {
   return normalizeMessage(message).content.some(block =>
     block.type === 'text' && Boolean(block.text?.trim()),
   );
+}
+
+/** Exact delivery ownership only; display keys never establish a native run. */
+function nativeAnswerSource(item: VisibleTimelineItem) {
+  if (!ordinaryAssistantText(item)) return null;
+  if (item.kind === 'content') {
+    const runId = item.nativeRunId?.trim();
+    if (!runId || item.item.preambleItemId) return null;
+    const source = item.item.assistantTextScopeId ?? item.item.assistantItemId ?? item.key;
+    return { runId, key: JSON.stringify([runId, source]), explicitFinal: false };
+  }
+  if (item.kind !== 'history-message' || isFailedRunMessage(item.message)) return null;
+  const message = assistantMessage(item);
+  if (!message) return null;
+  const phase = message.phase ?? item.message.phase;
+  const fallback = asToolRecord(message.openclawStreamFallback ?? item.message.openclawStreamFallback);
+  const stopReason = message.stopReason ?? message.stop_reason;
+  if (phase === 'commentary' || fallback?.source === 'segment' ||
+    stopReason === 'toolUse' || stopReason === 'error' || stopReason === 'aborted') return null;
+  const runId = readActiveTurnMessageRunId(item.message);
+  if (!runId) return null;
+  const source = readTranscriptIdentity(item.message) ?? readTranscriptIdentity(message);
+  return {
+    runId,
+    key: JSON.stringify([runId, source ? [source.kind, source.value] : item.key]),
+    explicitFinal: phase === 'final_answer',
+  };
 }
 
 function hasUnresolvedTool(item: SourceTimelineItem): boolean {
@@ -169,6 +198,17 @@ export function foldCompletedProcessRows(
       turn = [];
       return;
     }
+    // A human turn can contain several Goal runs. Later bookkeeping must not
+    // turn an earlier run's delivered answer into intermediate process text.
+    const answerSources = turn.map(row => nativeAnswerSource(row.item));
+    const lastAnswerByRun = new Map<string, string>();
+    const visibleAnswerSources = new Set<string>();
+    for (const source of answerSources) {
+      if (!source) continue;
+      lastAnswerByRun.set(source.runId, source.key);
+      if (source.explicitFinal) visibleAnswerSources.add(source.key);
+    }
+    for (const source of lastAnswerByRun.values()) visibleAnswerSources.add(source);
     let prefix: VisibleTimelineRow[] = [];
     let lastOrdinaryTextIndex = -1;
     if (options.foldUnresolvedTools) {
@@ -216,7 +256,9 @@ export function foldCompletedProcessRows(
         const summary = unresolvedToolSummary(row.item);
         if (summary) row = { ...row, item: summary };
       }
-      if (index < finalIndex && !options.keepVisibleKeys?.has(row.item.key) &&
+      const answer = answerSources[index];
+      if (index < finalIndex && !(answer && visibleAnswerSources.has(answer.key)) &&
+        !options.keepVisibleKeys?.has(row.item.key) &&
         canFold(row.item, options.foldUnresolvedTools)) {
         prefix.push(row);
       } else {

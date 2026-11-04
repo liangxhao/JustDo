@@ -4,6 +4,10 @@ Goal 的 objective、token 预算和六种状态由 OpenClaw 原生会话持有�
 Main 的 GoalContinuationCoordinator 只协调续跑、等待和停止，不保存消息正文或重造执行器。
 自动续跑上限见[运行参数](agent-runtime-settings.md)，权限仍遵循[权限管理](openclaw-permission-management.md)。
 
+首次启动和显式恢复要求原生 restart-safe 准入。Runtime Services 的内部存储会话通过
+原生锁定 harness 禁止执行，不注册会使全部 Goal 准入失败的全局执行拦截钩子；
+保护边界见[应用插件宿主](../../architecture/17-app-plugin-host.md)。
+
 ## 续跑与不确定发送
 
 只有精确原生整轮 `executionSettled: true` 终态才允许安排下一轮；chat final、单次
@@ -16,6 +20,67 @@ Main 准备权限并再次读取原生 Goal，核对 goalId、状态和会话 se
 续跑使用 backend `agent` RPC，携带原生 expectedExistingSessionId 和
 expectedExistingSessionLifecycleRevision，在原生准入时继续限制会话身份。
 合成续跑提示不写入原生用户消息历史。ACK 必须包含原运行 ID 和 accepted/in_flight 状态。
+
+自动续跑先核对已有历史、产物及工具证据。目标已经达成且结果已交付时，模型应直接
+调用 `update_goal`，以简短非空 note 记录完成依据，不再输出进度说明、重复成果或
+“已确认完成”的回复；成功后以返回的 Goal ID 单独调用 `finish_goal_turn`，显式选择
+`reply: "none"` 结束本轮，不能与更新或其它工具并行。存在新成果或尚未交付的结果时
+仍提供所需正文，blocked 仍说明阻碍和需要的行动。提示约束不代替原生 Goal 更新，
+也不从“已经完成”的正文或静默回复推断完成；未更新而仍 active
+时继续遵循现有结算、身份与额度规则。真实模型是否遵循此提示仍需运行验收。
+
+### 完成工具结果与续跑指导
+
+原生 `update_goal` 的通用成功结果会提示继续提供可见答复；在结果已经交付的自动
+续跑中，这会与静默完成指导冲突。Runtime Services 通过公开工具结果中间件，仅在
+当前 OpenClaw 自动后继的精确身份已由 `sessions.describe` 核对后，对成功 complete
+结果的 `nextAction` 使用一致的条件指导：已有交付且没有新成果时调用 `finish_goal_turn`；
+仍有新成果或尚未交付的结果时正常回答。
+
+核对包括当前 key、agent、物理 session、非空 lifecycleRevision、Goal 身份与 complete
+状态，以及原生 `goalContinuation.lastAccepted` 的精确 run 和 Goal。该公开投影本身只在
+接纳回执仍属于当前原生 session/revision 时发布，不依赖私有 entry 字段或运行 ID 后缀。
+普通用户运行、blocked、失败、缺少或失配回执、读取失败和退休注册保留原结果。
+
+直接 `update_goal` 及原生 Tool Search `tool_call` 的明确 Core 工具信封均覆盖，后者同步
+更新模型可见 JSON 和 details 中同一个结果的指导。任意 Code Mode guest 返回值、其它
+工具、未知信封及正文均不递归改写；不按重复文字隐藏内容，不编辑既有历史。Goal、note、
+状态和执行回执保持原值，不给 `update_goal` 添加终止标志。
+
+### 显式结束已交付的自动续跑
+
+原生 backend 回合要求最终答复；单独输出 `NO_REPLY` 仍可能触发“工具已结束但缺少
+最终回答”的隔离补全，再次生成已经交付的正文。因此静默结束使用公开工具结果的
+`terminate` 契约，不修改原生回复要求或以隐藏字符充当回答。
+
+Runtime Services 的 `finish_goal_turn({ goalId, reply: "none" })` 只表达模型的显式结束
+选择，不更新 Goal。注册声明由插件统一持有，实际工具实例只在工厂构建时读取到当前
+精确会话的 active Goal 才提供。工厂通过公开会话元数据入口，以当前配置的存储路径、
+agent/key 和 `readConsistency: "latest"` 读取，核对物理 session ID、Goal ID 和 active
+状态，并在读取前后检查注册与调用权限；无 Goal、历史已完成、暂停、阻塞、额度限制、
+身份不明及读取异常均不提供工具，也不加入本轮 Tool Search 目录。此读取不接触消息正文。
+
+可见性只表示当前处于 Goal 模式。工具工厂没有当前 run ID，不能把最后接纳回执当成当前运行身份；
+只有拥有原生当前 run 上下文的工具结果中间件，才在上述精确只读核对成功后给该调用
+返回 `terminate: true`。直接调用和原生 Tool Search 的明确 Runtime Services 工具信封
+均覆盖。普通用户回合、不同 Goal、未完成目标、失配身份、退休注册和读取失败不能
+获得静默结束授权；失败结果继续交给原生处理。
+
+同一次执行已构建的工具实例在 `update_goal` 成功后继续存在，因而可以完成显式结束；
+执行时不再要求 Goal 仍 active，而由上述中间件验证 complete 和精确自动后继。后续
+新回合、权限刷新或压缩恢复重建工具时，已完成 Goal 不再提供该工具；如果完成后才发生
+重建，遵循工具不可用的实际结果，不为恢复静默结束而向普通回合持续暴露工具。
+
+工具必须在完成更新成功后直接调用或通过独立 `tool_call` 调用；Code Mode guest 返回值
+不授予终止标志，不能使用单独 `exec` 替代。原生仅在该工具批次全部成功、生命周期全部结算
+并且结果均明确终止时，才认可主动结束，跳过缺少回答的补全。取消、超时、失败及混合
+工具批次仍遵循原生证据，不把本工具结果当成整轮 `executionSettled`。已有正文不做去重
+或历史改写；新成果依然需要模型交付。真实模型能否选择正确分支仍需运行验收。
+
+每份模型文本和 details JSON 的输入／输出均限制为 64 KiB UTF-8，文本另限 64 Ki
+UTF-16 字符；结构检查最多深度 12、2,048 个节点。公开只读核对同时使用原生请求和
+本地 1.5 秒时限；完成结果指导在超时、迟到响应、形状失配或增长超限时只保留原工具
+结果，不把已经成功的 Goal 更新替换为中间件错误；显式结束工具未获核验时不终止。
 
 ### 原生最终接纳与累计额度
 

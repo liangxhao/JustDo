@@ -38,6 +38,19 @@ const summary = (
 });
 
 describe('browser extension desktop process folding adapter', () => {
+  it('preserves native run answers while treating unbound live entry keys as presentation identities', () => {
+    const nativeAnswer = (key: string, runId: string): BrowserExtensionAtomicEntry => ({
+      ...message(key), rawMessage: { role: 'assistant', content: key, __openclaw: { id: key, runId } },
+    });
+    const first = nativeAnswer('delivered-answer', 'run-a');
+    const final = nativeAnswer('confirmation', 'run-b');
+    const entries = [summary('first-process'), first, summary('second-process'), final];
+    expect(foldBrowserExtensionEntries(entries).map(entry => entry.role))
+      .toEqual(['completed-process', 'assistant', 'completed-process', 'assistant']);
+    const unbound = [{ ...message('live-progress'), status: 'completed' }, { ...message('live-final'), status: 'completed' }];
+    expect(foldBrowserExtensionEntries(unbound).map(entry => entry.role)).toEqual(['completed-process', 'assistant']);
+  });
+
   it('folds completed process and intermediate content together, preserving the full final block', () => {
     const entries = [
       message('question', 'user'),

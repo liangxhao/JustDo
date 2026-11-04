@@ -71,6 +71,38 @@ async function inspectProcessHistory(chat: JustDoChatElement): Promise<void> {
   materializeDisclosureContents(chat.shadowRoot!);
 }
 
+test('keeps each delivered native run answer outside the closed process disclosures after Goal continuation', async () => {
+  const chat = document.createElement('justdo-chat') as JustDoChatElement;
+  chat.messages = [
+    { role: 'user', content: 'Prepare a result' },
+    { role: 'assistant', stopReason: 'stop', __openclaw: { id: 'delivered', runId: 'run-a' }, content: [
+      { type: 'thinking', thinking: 'Preparing.' }, { type: 'text', text: 'Delivered result.\n\nSecond paragraph.' },
+    ] },
+    { role: 'assistant', stopReason: 'toolUse', __openclaw: { id: 'completion-tool', runId: 'run-b' }, content: [
+      { type: 'thinking', thinking: 'Recording completion.' }, { type: 'toolCall', id: 'goal-complete', name: 'update_goal' },
+    ] },
+    { role: 'toolResult', toolCallId: 'goal-complete', toolName: 'update_goal', content: 'Recorded.', __openclaw: { id: 'completion-result', runId: 'run-b' } },
+    { role: 'assistant', stopReason: 'stop', __openclaw: { id: 'confirmation', runId: 'run-b' }, content: [
+      { type: 'thinking', thinking: 'Finished.' }, { type: 'text', text: 'Completion confirmation.' },
+    ] },
+  ];
+  document.body.append(chat);
+  await chat.updateComplete;
+  const root = chat.shadowRoot!;
+  const answer = root.querySelector('[data-entry-id="delivered"]');
+  expect(answer).not.toBeNull();
+  expect(answer!.closest('.completed-process')).toBeNull();
+  expect(answer!.textContent).toContain('Second paragraph.');
+  expect(root.querySelector('[data-entry-id="confirmation"]')!.closest('.completed-process')).toBeNull();
+  const disclosures = root.querySelectorAll<HTMLDetailsElement>('.completed-process');
+  expect(disclosures).toHaveLength(2);
+  disclosures.forEach(disclosure => expect(disclosure.open).toBe(false));
+  chat.processSummariesExpanded = true;
+  await inspectProcessHistory(chat);
+  expect(answer!.isConnected).toBe(true);
+  expect(root.querySelectorAll('[data-entry-id="delivered"]')).toHaveLength(1);
+});
+
 test('archives historical Yield gaps in a single process disclosure with unknown, non-running indicators', async () => {
   const chat = document.createElement('justdo-chat') as JustDoChatElement;
   chat.messages = [

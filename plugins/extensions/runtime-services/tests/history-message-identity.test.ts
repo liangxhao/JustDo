@@ -33,6 +33,8 @@ vi.mock('../speech', () => ({ registerSpeechSynthesis: vi.fn() }));
 import plugin from '../index';
 
 function fixture() {
+  const middleware = vi.fn();
+  const tools = vi.fn();
   const handlers = new Map<
     string,
     (input: { params: unknown; respond: ReturnType<typeof vi.fn> }) => Promise<void>
@@ -40,15 +42,19 @@ function fixture() {
   plugin.register({
     registerProvider: vi.fn(),
     registerEmbeddingProvider: vi.fn(),
+    registerAgentToolResultMiddleware: middleware,
+    registerTool: tools,
+    lifecycle: { signal: new AbortController().signal, runInBackgroundContext: <T>(run: () => T) => run() },
     on: vi.fn(),
     registerGatewayMethod: (name: string, handler: never) => handlers.set(name, handler),
     logger: { info: vi.fn() },
   } as never);
-  return async (params: Record<string, unknown>) => {
+  const call = async (params: Record<string, unknown>) => {
     const respond = vi.fn();
     await handlers.get('runtimeServices.historyMessage')!({ params, respond });
     return respond;
   };
+  return Object.assign(call, { middleware, tools });
 }
 
 beforeEach(() => {
@@ -57,6 +63,14 @@ beforeEach(() => {
   native.transcript.mockResolvedValue([
     { entryId: 'message', message: { role: 'toolResult', content: 'original' } },
   ]);
+});
+
+it('registers the native Goal result policy for direct and Tool Search completion updates', () => {
+  const registered = fixture();
+  expect(registered.middleware).toHaveBeenCalledWith(expect.any(Function), {
+    runtimes: ['openclaw'], matcher: ['update_goal', 'finish_goal_turn', 'tool_call'],
+  });
+  expect(registered.tools).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ contextVersion: 2 }), { name: 'finish_goal_turn' });
 });
 
 it.each([null, 5, '', ' '])(

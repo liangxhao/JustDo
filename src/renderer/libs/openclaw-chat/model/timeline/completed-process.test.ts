@@ -1,9 +1,11 @@
 import { describe, expect, test } from 'vitest';
 
+import type { AssistantTurn } from '../chat-transcript-state';
 import { toolOutcome } from '../tools/tool-presentation';
 import { foldCompletedProcessRows } from './completed-process';
 import { type PersistedTimelineItem, projectPersistedTimeline } from './project-history-timeline';
 import type { ContentTimelineItem, ProcessSummaryTimelineItem, ProgressReceiptTimelineItem, QuestionPresentationTimelineItem } from './project-turn-items';
+import { projectTurnItems } from './project-turn-items';
 import { prepareVisibleTimelineRows } from './timeline-avatar-state';
 
 function message(key: string, role = 'assistant', completed = false): PersistedTimelineItem {
@@ -60,6 +62,122 @@ function question(key: string): QuestionPresentationTimelineItem {
 }
 
 describe('foldCompletedProcessRows', () => {
+  test.each([false, true])('keeps the delivered answers of exact native runs visible after Goal continuation (silent: %s)', silent => {
+    const history = [
+      { role: 'user', content: 'Prepare a result' },
+      {
+        role: 'assistant', stopReason: 'stop', __openclaw: { id: 'answer-a', runId: 'run-a' },
+        content: [{ type: 'thinking', thinking: 'Preparing.' }, { type: 'text', text: 'Delivered result.\n\nSecond paragraph.' }],
+      },
+      {
+        role: 'assistant', stopReason: 'stop', __openclaw: { id: 'answer-b', runId: 'run-b' },
+        content: [{ type: 'thinking', thinking: 'Checking.' }, { type: 'text', text: 'A separate delivered answer.' }],
+      },
+      {
+        role: 'assistant', stopReason: 'toolUse', __openclaw: { id: 'call-c', runId: 'run-c' },
+        content: [{ type: 'thinking', thinking: 'Recording completion.' }, { type: 'toolCall', id: 'goal-complete', name: 'update_goal' }],
+      },
+      { role: 'toolResult', toolCallId: 'goal-complete', toolName: 'update_goal', content: 'Recorded.', __openclaw: { id: 'result-c', runId: 'run-c' } },
+      ...(!silent ? [{
+        role: 'assistant', stopReason: 'stop', __openclaw: { id: 'answer-c', runId: 'run-c' },
+        content: [{ type: 'thinking', thinking: 'Finished.' }, { type: 'text', text: 'Completion confirmation.' }],
+      }] : []),
+    ];
+    const timeline = projectPersistedTimeline(history);
+    const before = structuredClone(timeline);
+    const folded = foldCompletedProcessRows(prepareVisibleTimelineRows(timeline));
+    const answers = folded.filter(row => row.item.kind === 'history-message' && row.item.message.role === 'assistant');
+    expect(answers.map(row => row.item.key)).toEqual(timeline.filter(item => item.kind === 'history-message' && item.message.role === 'assistant').map(item => item.key));
+    expect(answers).toHaveLength(silent ? 2 : 3);
+    expect(timeline).toEqual(before);
+    expect(foldCompletedProcessRows(folded)).toEqual(folded);
+  });
+
+  test('preserves every text segment of the selected native source without preserving earlier commentary', () => {
+    const timeline = projectPersistedTimeline([
+      { role: 'assistant', phase: 'commentary', content: 'Progress only.', __openclaw: { id: 'progress', runId: 'run-a' } },
+      {
+        role: 'assistant', stopReason: 'stop', __openclaw: { id: 'answer-a', runId: 'run-a' },
+        content: [{ type: 'text', text: 'First delivered section.' }, { type: 'thinking', thinking: 'Checking.' }, { type: 'text', text: 'Second delivered section.' }],
+      },
+      { role: 'assistant', content: 'Later confirmation.', __openclaw: { id: 'answer-b', runId: 'run-b' } },
+    ]);
+    const result = foldCompletedProcessRows(prepareVisibleTimelineRows(timeline));
+    const visible = result.filter(row => row.item.kind === 'history-message');
+    expect(visible.map(row => row.item.kind === 'history-message' ? row.item.message.__openclaw?.id : '')).toEqual(['answer-a', 'answer-a', 'answer-b']);
+    expect(result[0].item).toMatchObject({ kind: 'completed-process', items: [timeline[0]] });
+  });
+
+  test('folds an explicit commentary-only run and preserves explicit final-answer sources in a shared run', () => {
+    const phaseMessage = (key: string, phase: string, runId: string): PersistedTimelineItem => ({
+      kind: 'history-message', key,
+      message: { role: 'assistant', phase, content: key, __openclaw: { id: key, runId } },
+    });
+    const commentary = phaseMessage('commentary', 'commentary', 'run-a');
+    const first = phaseMessage('first-answer', 'final_answer', 'run-b');
+    const second = phaseMessage('second-answer', 'final_answer', 'run-b');
+    const result = foldCompletedProcessRows(prepareVisibleTimelineRows([summary('process'), commentary, first, second]));
+    expect(result.map(row => row.item.kind)).toEqual(['completed-process', 'history-message', 'history-message']);
+    expect(result[0].item).toMatchObject({ items: [summary('process'), commentary] });
+    expect(result.slice(1).map(row => row.item)).toEqual([first, second]);
+  });
+
+  test('does not promote a native commentary sidecar or an unscoped history row into an earlier answer', () => {
+    const sidecar = message('commentary-sidecar');
+    const unscoped = message('unscoped-answer');
+    if (sidecar.kind !== 'history-message' || unscoped.kind !== 'history-message') throw new Error('Invalid fixtures');
+    sidecar.message = { role: 'assistant', content: 'Native progress.',
+      openclawStreamFallback: { source: 'segment', itemId: 'preamble' },
+      __openclaw: { id: 'source-a', runId: 'run-a' } };
+    unscoped.message = { role: 'assistant', content: 'No native run binding.', __openclaw: { id: 'source-b' } };
+    const final = message('final');
+    const result = foldCompletedProcessRows(prepareVisibleTimelineRows([sidecar, unscoped, final]));
+    expect(result.map(row => row.item.kind)).toEqual(['completed-process', 'history-message']);
+    expect(result[0].item).toMatchObject({ items: [sidecar, unscoped] });
+  });
+
+  test('retains native live answers across runs while keeping preambles in process history', () => {
+    const live = (runId: string, id: string, preamble = false) => projectTurnItems({
+      id: `turn-${runId}`, runId, sessionId: 'session', sessionKey: 'session', lifecycleGeneration: null,
+      status: 'final', lastAgentSeq: 1, startedAt: 1, endedAt: 2, toolById: new Map(),
+      items: [{ type: 'content', id, runId, status: 'completed', text: id, sourceMode: 'snapshot',
+        firstSeq: 1, lastSeq: 1, startedAt: 1, updatedAt: 2,
+        ...(preamble ? { preambleItemId: id } : { assistantItemId: id }) }],
+    } as AssistantTurn);
+    const source = [...live('run-a', 'answer-a'), ...live('run-b', 'preamble', true), ...live('run-b', 'answer-b')];
+    const result = foldCompletedProcessRows(prepareVisibleTimelineRows(source));
+    expect(result.map(row => row.item.kind)).toEqual(['content', 'completed-process', 'content']);
+    expect(result[0].item).toBe(source[0]);
+    expect(result[1].item).toMatchObject({ items: [source[1]] });
+    expect(result[2].item).toBe(source[2]);
+  });
+
+  test('preserves a native answer through history prepends and a live-to-history takeover', () => {
+    const history = (withEarlier: boolean) => projectPersistedTimeline([
+      ...(withEarlier ? [{ role: 'user', content: 'Earlier input', __openclaw: { id: 'earlier' } }] : []),
+      { role: 'assistant', content: 'Delivered answer.', __openclaw: { id: 'answer-a', runId: 'run-a' } },
+    ]);
+    const turn: AssistantTurn = {
+      id: 'turn-b', runId: 'run-b', sessionId: 'session', sessionKey: 'session', lifecycleGeneration: null,
+      status: 'final', lastAgentSeq: 1, startedAt: 1, endedAt: 2, toolById: new Map(),
+      items: [{ type: 'content', id: 'native-answer-b', assistantItemId: 'native-answer-b', runId: 'run-b',
+        status: 'completed', text: 'Later confirmation.', sourceMode: 'snapshot',
+        firstSeq: 1, lastSeq: 1, startedAt: 1, updatedAt: 2 }],
+    };
+    const before = foldCompletedProcessRows(prepareVisibleTimelineRows([...history(false), ...projectTurnItems(turn)]));
+    const prepended = foldCompletedProcessRows(prepareVisibleTimelineRows([...history(true), ...projectTurnItems(turn)]));
+    expect(before.map(row => row.item.kind)).toEqual(['history-message', 'content']);
+    expect(prepended.map(row => row.item.kind)).toEqual(['history-message', 'history-message', 'content']);
+    expect(prepended[1].item.key).toBe(before[0].item.key);
+    const settled = foldCompletedProcessRows(prepareVisibleTimelineRows([
+      ...history(true), ...projectPersistedTimeline([
+        { role: 'assistant', content: 'Later confirmation.', __openclaw: { id: 'answer-b', runId: 'run-b' } },
+      ]),
+    ]));
+    expect(settled.map(row => row.item.kind)).toEqual(['history-message', 'history-message', 'history-message']);
+    expect(settled[1].item.key).toBe(before[0].item.key);
+  });
+
   test.each(['blocked', 'skipped'])('preserves a native %s outcome on an outputless persisted Yield result', outcome => {
     const timeline = projectPersistedTimeline([
       { role: 'assistant', content: [{ type: 'toolCall', id: 'yield-negative', name: 'sessions_yield' }] },

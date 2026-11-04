@@ -17,6 +17,7 @@ import {
 } from './contracts/history-failure';
 import { registerCustody } from './custody/service';
 import { registerCommandResultPolicy } from './execution/command-result-policy';
+import { registerGoalResultPolicy } from './execution/goal-result-policy';
 import { readPreparedManagedExecutionDescriptor } from './execution/prepared-profile';
 import { registerExternalMcp } from './external-mcp';
 import { isEmptyFailureSourceContent, projectFailurePartialContent } from './history-failure';
@@ -250,6 +251,7 @@ const plugin = {
     api.registerProvider(buildBuiltinModelAuthProvider());
     registerReplayAdmissionObservations(api);
     registerCommandResultPolicy(api);
+    registerGoalResultPolicy(api);
     const ownerProvider = registerOwnerProvider(api);
     const admission = registerExecutionAdmission(api, ownerProvider);
     registerCustody(api, ownerProvider);

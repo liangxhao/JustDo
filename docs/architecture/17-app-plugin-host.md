@@ -32,6 +32,12 @@ Agent Team 的 `host/` 持有协调器、队列、附件和产品数据库事务
 
 Runtime Services 只保留通用执行准入、inert session 托管、执行收据、取消/清理、文件系统和 FIFO。它不识别可选插件 ID、工具、模式、房间或轮次。Team 的启动规则、纠正提示、讨论协议及业务账本归 Team；Workflow 的流程规则及流程库归 Workflow。插件握手与请求转发归每个插件的公开 SDK 接入。Required 服务不加载可选插件 Main/UI，也不提供它们关闭后的业务入口。
 
+Custody 存储会话使用原生 harness 命名空间，以 `agentHarnessId` 和
+`modelSelectionLocked: true` 固定到不可执行的 `inert-custody` harness。该 harness
+声明不支持模型执行、不提供回退，直接调用 `runAttempt` 也拒绝；原生准入继续核对
+锁、harness 和物理会话身份。此保护不注册全局 `before_agent_run`：原生恢复安全检查
+将任何此类注册视为不安全，即使回调只拦截内部会话，也会阻止普通 Goal 启动和恢复。
+
 ## 清单、构建与授权
 
 ### 清单字段与发现

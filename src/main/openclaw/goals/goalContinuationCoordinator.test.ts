@@ -1066,18 +1066,19 @@ describe('GoalContinuationCoordinator', () => {
     expect(agentParams.extraSystemPrompt).toContain('do not repeat completed work');
     expect(agentParams.extraSystemPrompt).toContain('call update_goal with complete');
     expect(agentParams.extraSystemPrompt).toContain(
-      'always provide one concise user-visible final answer',
+      'immediately call update_goal with complete and that evidence note',
     );
     expect(agentParams.extraSystemPrompt).toContain(
-      'do not repeat, regenerate, paraphrase, or summarize them',
+      'do not emit progress commentary, a completion announcement, a summary, or references to earlier replies',
     );
     expect(agentParams.extraSystemPrompt).toContain(
-      'exactly one short sentence in the user\'s language',
+      'A prose claim that work is complete never substitutes for calling update_goal',
     );
     expect(agentParams.extraSystemPrompt).toContain(
-      'without referring to earlier messages or results',
+      'call finish_goal_turn with the returned goal.id and reply:"none" as a separate, sole tool call',
     );
-    expect(agentParams.extraSystemPrompt).not.toContain('NO_REPLY');
+    expect(agentParams.extraSystemPrompt).toContain('If the requested result has not been delivered or this turn produces a new result');
+    expect(agentParams.extraSystemPrompt).not.toContain('always provide one concise user-visible final answer');
     expect(agentParams.extraSystemPrompt).not.toContain('get_goal');
     expect(harness.coordinator.getSnapshot(sessionId)).toMatchObject({
       goalId: 'goal-1',
