@@ -90,6 +90,16 @@ describe('content-free model activity', () => {
 });
 
 describe('projectWaitingStatus', () => {
+  it('keeps connection preparation neutral even after a long wait', () => {
+    expect(
+      projectWaitingStatus({
+        activity: activity({ stage: 'retrying', retryReason: 'timeout', probeState: 'failed' }),
+        transportStatus: 'connecting',
+        now: 1_000 + RUN_LONG_NOTICE_MS,
+      }),
+    ).toBeNull();
+  });
+
   it('shows an explicit retry immediately without waiting for a stall', () => {
     expect(
       projectWaitingStatus({

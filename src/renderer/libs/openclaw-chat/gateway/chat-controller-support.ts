@@ -38,7 +38,7 @@ import {
   readPreambleText,
   readToolProgressText,
 } from '@/libs/openclaw-chat/model/turn/agent-event-reducer';
-import { type RunActivity } from '@/libs/openclaw-chat/model/turn/run-activity';
+import { type ChatTransportStatus, type RunActivity } from '@/libs/openclaw-chat/model/turn/run-activity';
 import { stripHeartbeatTokenForDisplay } from '@/libs/openclaw-chat/pipeline/heartbeat-display';
 import { shouldHideMessage } from '@/libs/openclaw-chat/pipeline/history-display-normalizer';
 import { i18nService } from '@/services/i18n';
@@ -48,7 +48,7 @@ import { i18nService } from '@/services/i18n';
 export interface ChatState {
   client: GatewayClient | null;
   connected: boolean;
-  transportStatus: 'disconnected' | 'connected' | 'reconnecting';
+  transportStatus: ChatTransportStatus;
   sessionKey: string;
   /** Backing OpenClaw session id returned by chat.startup/chat.history. */
   currentSessionId: string | null;

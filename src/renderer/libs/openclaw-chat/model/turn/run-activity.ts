@@ -4,6 +4,8 @@ export const RUN_LONG_NOTICE_MS = 240_000;
 export const RUN_PROBE_INTERVAL_MS = 15_000;
 export const RUN_CONFIRMATION_FRESH_MS = RUN_PROBE_INTERVAL_MS * 2;
 
+export type ChatTransportStatus = 'connecting' | 'disconnected' | 'connected' | 'reconnecting';
+
 export type RunProgressStage =
   | 'starting'
   | 'queued'
@@ -211,11 +213,13 @@ export function advanceRunActivity(
 
 export function projectWaitingStatus(params: {
   activity: RunActivity | null;
-  transportStatus: 'disconnected' | 'connected' | 'reconnecting';
+  transportStatus: ChatTransportStatus;
   now?: number;
 }): WaitingStatusProjection | null {
   const { activity, transportStatus } = params;
-  if (!activity) return null;
+  // Initial preparation and the first handshake do not establish transport loss
+  // or model silence. Keep the ordinary activity stage until connection evidence.
+  if (!activity || transportStatus === 'connecting') return null;
   const now = params.now ?? Date.now();
   const quietSince = Math.max(
     activity.lastModelActivityAt ?? activity.startedAt,

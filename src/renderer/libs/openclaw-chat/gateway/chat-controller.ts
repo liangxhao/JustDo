@@ -349,7 +349,7 @@ export class ChatController {
     this.state = {
       client: null,
       connected: false,
-      transportStatus: 'disconnected',
+      transportStatus: 'connecting',
       sessionKey: '',
       currentSessionId: null,
       initialHistoryReady: false,

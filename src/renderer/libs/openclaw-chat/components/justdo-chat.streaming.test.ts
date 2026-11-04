@@ -90,6 +90,28 @@ afterEach(() => {
 });
 
 describe('justdo-chat direct-property streaming', () => {
+  test('shows a neutral first-send indicator until a real connection interruption', async () => {
+    const frames = createAnimationFrameHarness();
+    const controller = prepareController();
+    controller.setPendingUserMessage('hello');
+    const chat = document.createElement('justdo-chat') as JustDoChatElement;
+    chat.controller = controller;
+    document.body.append(chat);
+    await chat.updateComplete;
+    await frames.drain(chat);
+
+    const label = chat.shadowRoot?.querySelector('.chat-working-indicator__label');
+    expect(label?.textContent).toContain(i18nService.t('coworkWorkingStarting'));
+    expect(chat.shadowRoot?.querySelector('.chat-working-indicator--warning')).toBeNull();
+    expect(chat.shadowRoot?.textContent).not.toContain(i18nService.t('coworkWaitingDisconnected'));
+
+    (controller as unknown as { handleClose(): void }).handleClose();
+    await frames.drain(chat);
+    expect(chat.shadowRoot?.querySelector('.chat-working-indicator__label')).toBe(label);
+    expect(label?.textContent).toContain(i18nService.t('coworkWaitingDisconnected'));
+    expect(chat.shadowRoot?.querySelector('.chat-working-indicator--warning')).not.toBeNull();
+  });
+
   test.each(['', '执行完成。'])('renders a whole commentary snapshot in one Markdown container and preserves answer %j', async answer => {
     const frames = createAnimationFrameHarness();
     const controller = prepareController();

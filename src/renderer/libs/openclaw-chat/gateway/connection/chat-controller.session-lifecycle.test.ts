@@ -7,6 +7,7 @@ import {
   pruneRecentRuns,
 } from '@/libs/openclaw-chat/model/chat-transcript-state';
 import { projectPersistedTimeline } from '@/libs/openclaw-chat/model/timeline/project-history-timeline';
+import { projectWaitingStatus } from '@/libs/openclaw-chat/model/turn/run-activity';
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -174,7 +175,7 @@ test.each([undefined, 'switched-provider/switched-model'])(
   },
 );
 
-test('preserves preparation timing when the initial Gateway connection starts', async () => {
+test('keeps first-send preparation neutral before and during the initial Gateway connection', async () => {
   class FakeWebSocket {
     static readonly OPEN = 1;
     readyState = 0;
@@ -184,13 +185,56 @@ test('preserves preparation timing when the initial Gateway connection starts', 
   vi.stubGlobal('WebSocket', FakeWebSocket);
   const controller = new ChatController();
   controller.setPendingUserMessage('first-session preparation');
+  const waitingStatus = () => projectWaitingStatus({
+    activity: controller.state.runActivity,
+    transportStatus: controller.state.transportStatus,
+  });
+  expect(waitingStatus()).toBeNull();
+  const observedStatuses: unknown[] = [];
+  const unsubscribe = controller.subscribe(() => observedStatuses.push(waitingStatus()));
 
   await controller.connect('ws://gateway.test', 'token', 'agent:main:justdo:temp-session-1');
 
+  expect(controller.state.connected).toBe(false);
+  expect(controller.state.transportStatus).toBe('connecting');
+  expect(observedStatuses.length).toBeGreaterThan(0);
+  expect(observedStatuses.every(status => status === null)).toBe(true);
   expect(controller.state.runActivity).toMatchObject({
     runId: expect.stringMatching(/^justdo-pending-/),
     stage: 'starting',
   });
+  (controller as unknown as { handleClose(): void }).handleClose();
+  expect(waitingStatus()).toMatchObject({ kind: 'reconnecting', tone: 'warning' });
+  expect(controller.state.chatSending).toBe(true);
+  unsubscribe();
+  controller.disconnect();
+  expect(controller.state.transportStatus).toBe('disconnected');
+});
+
+test('retires the previous connected status before notifying about a replacement connection', async () => {
+  class FakeWebSocket {
+    static readonly OPEN = 1;
+    readyState = 0;
+    addEventListener = vi.fn();
+    close = vi.fn();
+  }
+  vi.stubGlobal('WebSocket', FakeWebSocket);
+  const controller = new ChatController();
+  const stop = vi.fn();
+  controller.state.client = { stop } as never;
+  controller.state.connected = true;
+  controller.state.transportStatus = 'connected';
+  const observed: Array<{ connected: boolean; transportStatus: string }> = [];
+  const unsubscribe = controller.subscribe(state => observed.push({
+    connected: state.connected, transportStatus: state.transportStatus,
+  }));
+
+  const connecting = controller.connect('ws://gateway.test', 'token', 'agent:main:replacement');
+
+  expect(stop).toHaveBeenCalledOnce();
+  expect(observed).toEqual([{ connected: false, transportStatus: 'connecting' }]);
+  await connecting;
+  unsubscribe();
   controller.disconnect();
 });
 

@@ -826,6 +826,8 @@ export async function connect(
   this.rememberHistoryPagination(this.state.sessionKey);
   // Stop existing client
   this.state.client?.stop();
+  this.state.connected = false;
+  this.state.transportStatus = 'connecting';
   this.messageSubscriptionSeq += 1;
   this.connectionInitializationSeq += 1;
   this.subscribedMessageSessionKey = null;
