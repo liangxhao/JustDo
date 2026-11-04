@@ -15,7 +15,7 @@ Virtual Key；两者共用模型入口，模型权限、预算和限流由 Team 
 | 管理模型权限和用户 | [Team 与用户分组](#team-与用户分组) |
 | 调整连接池、超时等参数 | [服务配置](#服务配置) |
 | 查看日志、确认长期运行的保留策略 | [日志与长期运行](#日志与长期运行) |
-| 迁移旧客户端或接入活动上报 | [旧版兼容](#旧版客户端只兼容-30-天)、[活动记录](#enduser-注册与活动记录) |
+| 迁移旧客户端或接入活动上报 | [旧版兼容](#旧版客户端只兼容-30-天)、[活动记录](#用户活动记录) |
 | 使用模拟模型联调或开发 Hook | [本地认证联调](tests/integration/README.md)、[开发与验证](#开发与验证) |
 
 ## 复制与首次启动
@@ -76,8 +76,8 @@ Windows 命令见 [native 部署说明](native/README.md#初始化和启动)。
 生产部署不会自动创建测试 Key、模拟模型或 JWT 签发服务。无真实上游时可使用独立的
 [本地联调入口](tests/integration/README.md)；旧 Key 需按[旧版兼容步骤](#旧版客户端只兼容-30-天)单独登记。
 
-已有部署更新或重启时，按 [UPGRADE.md](UPGRADE.md)操作。原生表结构已就绪、只需补活动字段
-和默认组时，可使用 [upgrade.py](upgrade.py)，命令见[增量更新步骤](UPGRADE.md#使用增量更新脚本)。
+已有部署更新或重启时，按 [UPGRADE.md](UPGRADE.md)操作。原生表结构已就绪、只需检查 User metadata
+或准备默认组时，可使用 [upgrade.py](upgrade.py)，命令见[增量更新步骤](UPGRADE.md#使用增量更新脚本)。
 
 ## 认证与授权
 
@@ -92,7 +92,7 @@ Windows 命令见 [native 部署说明](native/README.md#初始化和启动)。
 
 - 带 `X-ACCESS-JWT` 或 JWT 形式 Bearer 的请求：校验 JWT 和受管 Team，失败直接拒绝，不回退普通 Key 或 legacy Key。
 - 普通 API Key、管理员密钥和管理页面会话：由 LiteLLM 原生认证校验。
-- 活动请求：JWT 绑定当前 EndUser；可选的旧活动令牌只在配置期限内有效，见[活动记录](#enduser-注册与活动记录)。
+- 活动请求：JWT 绑定当前 User，仅更新已存在用户的活动资料，见[活动记录](#用户活动记录)。
 
 所有模型请求仍经过 LiteLLM 的公共权限、预算和 TPM/RPM 限流检查。
 JWT 泄露后可在剩余有效期内被重放，应按需设置最短有效期。
@@ -334,14 +334,16 @@ Invoke-RestMethod -Method Post -Uri http://127.0.0.1:9108/key/delete `
 
 删除旧 Key 不影响 JWT 和管理功能，无需重启服务。
 
-## EndUser 注册与活动记录
+## 用户活动记录
 
 ### 上报流程
 
-新版客户端使用同一短期 JWT 调用 `POST /customer/activity`，不调用 Customer 管理 API。
-服务端先校验 JWT 和当前受管 Team，再要求正文 `user_id` 等于签名中的 `sub`。
-首次调用原子创建 EndUser；已有记录保留预算、blocked 及其他 metadata，更新产品版本 alias 和活动信息。
-被禁用的 Team 或 EndUser 不允许上报。模型权限仍由 LiteLLM 的公共授权检查执行。
+客户端使用同一短期 JWT 调用 `POST /user/activity`。服务端保留现有 JWT 与受管 Team 校验，并要求正文 `user_id` 等于签名中的 `sub`。
+活动存储只锁定已存在的 `LiteLLM_UserTable` 行，合并 `metadata.user_activity` 并保留其他 metadata；缺用户返回 404，不创建用户、不修改角色或 Team、不开通管理 API。
+这些约束指活动存储阶段；之前的共享 JWT 认证仍按既有配置处理自动开户和默认入组。404 仅表示认证完成后活动存储未找到 User，认证或 Team 授权失败仍返回原有错误。
+旧 `/customer/activity` 及旧共享活动令牌不再支持。允许先更新客户端、过几天再更新服务端；客户端将接口或字段尚不支持视为可选上报延后，不回退旧接口，也不影响登录、模型目录或聊天。
+
+原生请求中的 `end_user_id` 和 Customer 账号映射保持不变，继续供消费记录及网页 EndUser 筛选使用；User 活动与 EndUser 消费归属是两条独立路径。
 
 请求正文示例：
 
@@ -360,8 +362,8 @@ Invoke-RestMethod -Method Post -Uri http://127.0.0.1:9108/key/delete `
 }
 ```
 
-首次成功后每 24 小时上报 heartbeat；失败按 1、5、15 分钟补试，再等待 24 小时。
-重试复用事件 ID；保留最近 256 个 ID 去重及最近 90 个有活动的 UTC 日期。
+首次成功后每 24 小时上报 heartbeat。网络、服务端临时错误及限流按 1、5、15 分钟有界补试，再等待 24 小时；400/404/405/413/415/422/501 等接口或格式不支持响应直接延后到正常周期，避免旧服务上的密集失败请求。
+重试复用事件 ID 和冻结的完整正文，发送时重新取得当前 JWT。只有有界读取到成功响应 `{"ok":true}` 才确认并推进事件；重定向禁止，错误正文不进入日志。服务端保留最近 256 个 ID 去重及最近 90 个有活动的 UTC 日期。重复事件刷新接收活动时间，但不倒退较新的 metadata 快照或事件类型。
 数据库时间用于活动统计，客户端 loginTime 仅为声明值。正文最多 8 KiB，不接收 Cookie 或登录凭据。
 开发环境 API Key 模式仅验证模型，不上报活动。
 
@@ -369,24 +371,45 @@ Invoke-RestMethod -Method Post -Uri http://127.0.0.1:9108/key/delete `
 
 `LITELLM_ACTIVITY_DATABASE_URL` 是 asyncpg 使用的 PostgreSQL URI，必须与模型数据库一致，
 不能带 Prisma 专有的 `schema`、`connection_limit`、`pool_timeout` 等参数；默认 schema 为 public。
-初始化执行 `hooks/activity/schema.sql` 增加可空 metadata JSONB 列。运行账号需要 SELECT、INSERT，
-以及 metadata 和 alias 的 UPDATE 权限。行锁与事务保护并发写入。
+活动使用原生 `LiteLLM_UserTable.metadata`，不增加列。运行账号需要 User 表的 SELECT 和 metadata UPDATE 权限，不需要通过活动接口 INSERT 用户。
+行锁与事务保护并发合并；缺失或类型不正确的原生 metadata 应先处理原生 schema，不能给 EndUser 增列代替。
 
-原生 Customer API/UI 不自动展示新增列，可查询：
+可查询：
 
 ```sql
-SELECT user_id, alias, metadata->'customer_activity' AS activity
-FROM public."LiteLLM_EndUserTable";
+SELECT user_id, user_alias, metadata->'user_activity' AS activity
+FROM public."LiteLLM_UserTable";
 ```
 
-### 可选的旧版活动兼容
+### 活动与模型用量的边界
 
-将 `LITELLM_ACTIVITY_TOKEN` 设置为旧 Key 的 `SHA256("customer/activity/v1:" + oldKey)`，
-并在 `LITELLM_ACTIVITY_LEGACY_EXPIRES_AT` 设置带时区的绝对截止时间，不得晚于旧模型 Key 到期时间。
-默认留空即拒绝旧活动上报，不影响旧模型 Key 的调用。
+协议保持四个顶层字段 `event_id`（UUID）、`user_id`（匹配 JWT）、`event_type`、`metadata`，不接受其他顶层字段。
+`event_type` 接受 `[a-z][a-z0-9._-]{0,63}`，例如 `usage.snapshot`、`session.summary`。已有 startup、heartbeat、login 继续有效；客户端目前仍发送 startup/heartbeat，loginTime 是声明的登录资料。
 
-旧活动令牌不能证明用户身份，也不能创建 EndUser，且到期后拒绝上报。
-新版 JWT 请求失败不会回退到此令牌。
+未来字段统一放在 `metadata` 中，不必为每个指标修改服务端白名单。它必须是 JSON 对象，支持嵌套对象、数组、字符串、布尔、null 和有限数值。
+整个请求最多 8 KiB；metadata 根深度为 0、最大深度 6、最多 256 个节点、128 个对象键，单键最多 128 字符、单字符串最多 2048 字符。
+任意层级的明确凭据字段（如 Cookie、Authorization、mtoken、api_key、accessToken、privateKey）会被拒绝，NaN/Infinity、无效 Unicode、JSONB 不支持的 U+0000 或超限结构返回受控 400/413。
+
+例如后续客户端可在 metadata 增加：
+
+```json
+{
+  "usage": {"date": "2026-11-04", "source": "custom", "input_tokens": 400, "output_tokens": 200},
+  "sessions": {"active_count": 3},
+  "features": {"voice": true}
+}
+```
+
+这些值仅作为客户端提供的最新快照，写入 `UserTable.metadata.user_activity.metadata`，事件类型记在 `latest_event_type`。
+自定义事件和数值不自动累计、不反写原生消费或权限；只有 startup/login 执行已有的专属聚合。
+此接口不是每日历史账本或多设备用量聚合服务，当前也没有新增真实 token/会话采集。内置服务消费仍可查询原生 DailyUserSpend；自定义模型需要未来由客户端通过 OpenClaw 用量 API 采集并明确归属、日期、多设备和去重口径。
+
+### 分批升级与失败隔离
+
+活动接口是可选旁路。客户端的上报 Promise 不向调用者抛出错误，登录和启动不等待网络上报，也不因上报错误修改模型认证、Team 或 EndUser 归属。
+旧服务仍可能返回 HTTP 404、400 或其他错误状态，这是服务端未更新时的真实响应；新版客户端静默延后并仅记录受控信息，不弹出活动错误、不清除 JWT、不改用旧共享 Key。
+服务更新后，后续正常周期或应用重新启动会重新探测并恢复上报，无须再次发布客户端。
+未确认事件仅在当前进程内保留，不承诺跨重启或停服期间的事件完整补报。未来添加字段只需扩展 metadata；客户端服务的 `getMetadata` 本地同步回调可提供额外字段，抛错也不会影响主流程。
 
 ## 开发与验证
 

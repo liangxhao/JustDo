@@ -46,7 +46,7 @@ test.each([false, true, 'admission', 'integrations'] as const)('Main attempts ev
     appPlugins: { dispose: async () => { calls.push('plugins'); } },
     stopAppDevelopmentAssets: undefined,
     builtinModelCredentialMonitor: undefined, loginService: undefined,
-    customerRegistrationService: undefined, builtinModelTokenExchange: undefined,
+    userActivityService: undefined, builtinModelTokenExchange: undefined,
     builtinModelAuthCoordinator: undefined,
     clearActiveBuiltinModelCredential: () => { calls.push('credentials'); },
     clearBrowserExtensionAppServer: async () => {}, app: { getPath: () => '/unused-fixture' },

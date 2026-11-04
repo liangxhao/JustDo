@@ -1,6 +1,5 @@
 """Migrations must be explicit, versioned, and stop before extension DDL on failure."""
 import importlib.util
-import re
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -36,10 +35,12 @@ def test_extension_ddl_runs_only_after_successful_versioned_migrations(monkeypat
     migrate.assert_called_once_with(use_migrate=True, use_v2_resolver=True)
 
 
-def test_activity_schema_leaves_transaction_control_to_initializer():
-    schema = (Path(__file__).resolve().parents[1] / 'hooks/activity/schema.sql').read_text()
-    assert not re.search(r'\b(BEGIN|COMMIT|ROLLBACK)\b', schema, re.IGNORECASE)
-    assert 'SET LOCAL lock_timeout' in schema
+@pytest.mark.asyncio
+async def test_activity_initialization_does_not_mutate_native_user_schema():
+    from register import initialize_hooks
+    connection = AsyncMock()
+    await initialize_hooks(connection, {'LITELLM_HOOKS': 'activity', 'LITELLM_DEFAULT_TEAM_ID': ''})
+    connection.execute.assert_not_awaited()
 
 
 @pytest.mark.asyncio

@@ -3,22 +3,35 @@
 适用于已经有数据库、模型和用户的服务，更新为本目录代码后继续使用原有数据。
 当前部署固定支持 LiteLLM 1.99.1；更换 LiteLLM 版本前，须在预发布环境验证迁移、认证和模型调用。
 
-**普通重启不会更新数据库。原生表结构已就绪、只需补活动字段和默认组时，运行 `upgrade.py` 即可。**
-脚本仅增加缺失项，不执行原生迁移，不删除已有数据或修改已有组。
+**普通重启不会更新数据库。原生表结构已就绪、只需检查 User metadata 和准备默认组时，运行 `upgrade.py` 即可。**
+脚本检查原生 User metadata，并仅创建缺失的默认组；不执行原生迁移，不删除已有数据或修改已有组。
 已有组的标记、模型和已有用户的归属，需要管理员检查并补齐。
 
 可以选择下面三条操作路径：
 
-- **增量更新脚本**：按[增量更新步骤](#使用增量更新脚本)运行 `upgrade.py`，仅补活动字段和默认组，成功后正常启动服务。
+- **增量更新脚本**：按[增量更新步骤](#使用增量更新脚本)运行 `upgrade.py`，检查 User metadata 并准备默认组，成功后正常启动服务。
 - **原生迁移和完整初始化**：原生数据库版本需要升级或首次建库时，按
   [完整初始化入口](#完整初始化入口)运行 `native/start.py init`，成功后启动服务。
-- **手动补齐数据库**：原库已完成当前 LiteLLM 版本的原生迁移、只缺活动字段和默认组时，按
+- **手动补齐数据库**：原库已完成当前 LiteLLM 版本的原生迁移、只需检查 User metadata 或准备默认组时，按
   [手动更新步骤](#不用初始化脚本时手动更新数据库)执行 SQL，然后启动服务。
 
 存量更新以继续使用原数据库、保留已有用户、模型、Key、分组和历史记录为前提。
-本目录的 Hook 更新只新增缺失的列和默认组，不删除或清空已有记录；已有默认组也不会被重建。
+本目录的 Hook 更新只检查原生活动列并创建缺失的默认组，不删除或清空已有记录；已有默认组也不会被重建。
 **`init` 还会执行 LiteLLM 自带的版本化迁移，因此涉及 LiteLLM 版本变化时，须先在备份副本验证迁移内容。**
-只补本次两个 Hook 项目且不需要原生迁移时，使用 `upgrade.py` 或下文的手动 SQL。
+只检查活动存储并准备默认组且不需要原生迁移时，使用 `upgrade.py` 或下文的手动 SQL。
+
+
+## 本次活动接口切换
+
+本次仅替换活动代码、且原生 User 表与 Team 已就绪时，无须执行数据库迁移或重复 init；可用 `upgrade.py --check` 只读确认。
+可先更新客户端，再择机更新服务端：新接口是 `POST /user/activity`，旧 `/customer/activity` 不再接纳，旧活动共享令牌配置可移除。服务端尚未更新时，新客户端将接口/字段不支持响应作为上报延后，不影响登录、模型目录和聊天；不回退旧接口。
+请求仍使用现有 JWT 认证；本次不调整角色、Team 成员校验、默认入组或 EndUser 消费映射。
+用户由管理员补入 UserTable 并在网页加入原受管 Team；本次活动存储只更新已有 User，不处理成员补建。
+现有 Hook 对 TeamMembership 的要求保持原样，若网页加组后仍返回 AUTH-2003，应单独核对成员记录，不能把活动改造当作授权修复。
+
+请保留原生 EndUser 及消费统计数据。JWT 的 `end_user_id` 和 Customer 头映射继续用于消费归属和网页筛选；活动 metadata 改存 UserTable 不要求清空 EndUser。
+本次为 metadata 开放有界 JSON 扩展及通用 event_type，未来新增字段不要求逐个升级服务端白名单；快照只写 user_activity，不自动累计或修改原生账单。本次不新增真实用量采集，内置模型消费仍可查 DailyUserSpend，自定义模型统计需要后续客户端采集。
+旧服务可能返回真实 HTTP 错误，客户端只记录受控信息并继续主流程；兼容拒绝每 24 小时重新探测，临时故障有界重试。只收到 `{"ok":true}` 才确认，未确认事件不承诺跨进程补报。
 
 ## 使用增量更新脚本
 
@@ -37,7 +50,7 @@ cd /opt/litellm/native
 ```
 
 然后停止旧服务、备份原库并更新代码和依赖，保留原 `.env` 及加密盐。
-确认执行账号有建列和插入默认组的权限后，运行增量更新，成功后启动服务：
+确认执行账号可检查原生 User metadata，并具有按需插入默认组的权限后，运行增量更新，成功后启动服务：
 
 ```sh
 sudo -u litellm .venv/bin/python ../upgrade.py --env-file .env && sudo systemctl start litellm
@@ -70,12 +83,12 @@ docker compose up -d --no-deps --force-recreate litellm
 
 ### 脚本执行范围
 
-- 启用 `activity` 时，为 EndUser 增加缺失的 `metadata jsonb` 列。已有列及其内容保持不变。
+- 启用 `activity` 时，检查原生 `LiteLLM_UserTable.metadata` 为 jsonb；不执行增列或迁移活动数据。
 - `LITELLM_DEFAULT_TEAM_ID` 非空且组不存在时创建该组，默认 metadata 为 `{"jwt_managed":true}`，模型列表为空。
   ID 为空时不创建组，不擅自启用自动入组。
 - 已有组整行保留，包括 metadata、模型、预算、blocked 状态及成员关系。
 - 发现 metadata 类型不匹配或所需原生表不存在时停止，不删除、重建或强制转换旧结构。
-- 两项更新在同一个事务中执行，提交前任一步失败时回滚；重复执行跳过已存在的项目。
+- 检查和默认组创建在同一个事务中执行，提交前任一步失败时回滚；重复执行保留已有组。
   脚本不执行 LiteLLM 原生迁移、不修改 `.env`、不创建用户或 Key，也不启停服务。
 
 `--check` 使用只读事务，显示缺失项和需要管理员核对的设置。更新完成后的 `CHECK` 提示也需处理：
@@ -111,7 +124,7 @@ sudo -u litellm .venv/bin/python start.py init && sudo systemctl start litellm
 Windows 使用 `.venv\Scripts\python.exe start.py init`，成功后再运行
 `.venv\Scripts\python.exe start.py`。
 
-执行成功后，缺失的 EndUser `metadata` 列和默认组已补齐；仍需为默认组设置模型白名单，
+执行成功后，原生 User metadata 已检查、缺失的默认组已准备；仍需为默认组设置模型白名单，
 并检查已有用户的成员关系。之后同一代码和数据库的日常重启直接重启服务，无需再次初始化。
 
 ### Docker
@@ -136,14 +149,14 @@ docker compose up -d --no-deps --force-recreate litellm
 | 场景 | 需要执行的操作 |
 | --- | --- |
 | 同一份代码和配置，数据库已完成初始化，仅重启进程或机器 | 直接重启服务，不必重复加字段或建组 |
-| 原生表结构已就绪，更新代码后只缺本目录的活动字段或默认组 | 先用 `upgrade.py --check` 检查，停服备份后执行增量更新，再核对组和用户 |
+| 原生表结构已就绪，更新代码后需要检查 User metadata 或补默认组 | 先用 `upgrade.py --check` 检查，停服备份后执行增量更新，再核对组和用户 |
 | 首次建库或需要升级 LiteLLM 原生表结构 | 停服、备份、验证并执行 `init`，然后核对组和用户 |
 | 仅修改 `.env` 或 `config.yaml`，不涉及数据库或新 Hook 初始化 | native 重启；Docker 重新创建服务容器以应用环境变量 |
 | 首次启用 `activity`，或更改 `LITELLM_DEFAULT_TEAM_ID` 并需要创建新组 | 更新配置后执行 `upgrade.py`，再启动服务；新组还要配置模型 |
 | 仅在网页修改组、模型、预算或成员 | 保存即可，不需要数据库初始化；授权缓存传播需要时间 |
 
-`init` 可以对同一部署重复执行：增加列使用 `IF NOT EXISTS`，默认组使用
-`ON CONFLICT DO NOTHING`。**重复执行不会修复已有组的 metadata、添加模型或给已有用户入组。**
+`init` 可以对同一部署重复执行：原生版本化迁移由 LiteLLM 管理，默认组使用
+`ON CONFLICT DO NOTHING`；活动 Hook 不执行增列。**重复执行不会修复已有组的 metadata、添加模型或给已有用户入组。**
 原生迁移先于 Hook 初始化；Hook 初始化在一个事务内完成，失败会回滚该事务，不能据此认为原生迁移也已回滚。
 
 ## 更新前保留数据和配置
@@ -178,11 +191,10 @@ docker compose up -d --no-deps --force-recreate litellm
 | `LITELLM_JWT_MAX_LIFETIME_SECONDS` | 不小于实际 JWT 生命周期，支持 30–10800 秒，默认 300 秒；同时核对客户端上限 |
 | `LITELLM_DEFAULT_TEAM_ID` | 使用实际默认组的 **team_id**，例如 `standard`；不是网页显示名。留空关闭新用户自动入组，也不创建默认组 |
 | `LITELLM_HOOKS` | 需要活动记录时包含 `activity`；显式留空会关闭可选 Hook，不会关闭强制 JWT 和请求头校验 |
-| `LITELLM_ACTIVITY_TOKEN`、`LITELLM_ACTIVITY_LEGACY_EXPIRES_AT` | 仅旧版活动兼容需要；没有此需求时留空，不要生成新的兼容期限 |
 
 两个数据库 URL 在完整 `init` 入口中都需要提供，即使关闭了 `activity`；
 增量脚本只使用 `LITELLM_ACTIVITY_DATABASE_URL`。
-新增字段由初始化账号创建；活动运行账号需要 EndUser 表的 SELECT、INSERT，以及 metadata、alias 的 UPDATE 权限。
+活动复用原生 User metadata，不需要自定义 DDL；活动运行账号需要 User 表 SELECT 和 metadata UPDATE 权限。
 
 已有 `config.yaml` 至少保留以下认证和迁移配置，并合并当前模板中的其他必要变化：
 
@@ -228,7 +240,7 @@ general_settings:
    此命令使用已有虚拟环境。安装阶段不读取 `.env`；内网 Prisma 引擎配置按
    [native 安装说明](native/README.md#安装和配置)设置，确保变量在执行安装的服务账号环境中有效。
 
-3. 仅补活动字段和默认组时执行增量更新，命令会读取指定的 `native/.env`：
+3. 检查 User metadata 并准备默认组时执行增量更新，命令会读取指定的 `native/.env`：
 
    ```sh
    cd /opt/litellm/native
@@ -315,49 +327,34 @@ Hook 代码复制在镜像中，更新宿主机代码后必须重新构建，不
 
 ## 不用初始化脚本时手动更新数据库
 
-适用于**当前 LiteLLM 原生表结构已经就绪，只需要补本目录的活动字段和默认组**的已有数据库。
+适用于**当前 LiteLLM 原生表结构已经就绪，只需要检查原生 User metadata 和准备默认组**的已有数据库。
 这条路径不运行 `init`，也不会运行原生版本迁移。手动操作顺序如下：
 
 1. 停止 LiteLLM 服务，备份原库，保留原 `.env`、数据库地址和加密盐。
-2. 使用数据库管理工具或 `psql` 连接原库，先查询，再按需要执行下面的增列和建组 SQL。
+2. 使用数据库管理工具或 `psql` 连接原库，先检查原生 User metadata，再按需要执行建组 SQL。
 3. 确认默认组 ID 与 `.env` 的 `LITELLM_DEFAULT_TEAM_ID` 一致。复用已有组时补齐受管标记。
 4. 正常启动服务；native 运行 `start.py` 或 `systemctl start litellm`，Docker 用已构建的新镜像
    执行 `docker compose up -d --no-deps --force-recreate litellm`，数据库和 Redis 必须已健康。
 5. 在管理页面补齐模型白名单和已有用户的成员关系，通过后文验证后再开放客户端。
 
-SQL 仅使用增加列、插入不存在的组，以及按需合并指定组的 metadata；
+SQL 仅检查原生 User metadata、插入不存在的组，以及按需合并指定组的 metadata；
 不执行 `DROP`、`TRUNCATE`、`DELETE`，不重置用户、模型、Key、用量或已有成员。
 如果原生表不存在或原生版本未迁移完成，先完成该版本的迁移，不能用这些 SQL 代替。
 
-### EndUser metadata 列
+### 原生 User metadata
 
-这里的字段是 `public."LiteLLM_EndUserTable".metadata`，用于活动记录。
-它与 Team 上的 `metadata.jwt_managed` 标记是两件事。启用 `activity` 并成功执行 `upgrade.py` 或 `init` 后，
-通常无需再手动加列。连接实际使用的 PostgreSQL 数据库执行：
+活动记录使用 `public."LiteLLM_UserTable".metadata.user_activity`，原生 schema 已包含 metadata，部署不再为 EndUser 增列。
 
 ```sql
-SELECT table_schema, table_name, column_name, data_type, is_nullable
+SELECT table_schema, table_name, column_name, data_type
 FROM information_schema.columns
 WHERE table_schema = 'public'
-  AND table_name = 'LiteLLM_EndUserTable'
+  AND table_name = 'LiteLLM_UserTable'
   AND column_name = 'metadata';
 ```
 
-预期有一行，类型为 `jsonb`，允许 NULL。空值不需要手工填 `{}`，也不需要为每个用户预先填活动内容。
-如果没有该列，先检查是否关闭了 `activity`、初始化是否成功以及是否连接了同一个库。
-
-没有该列且需要启用活动记录时，在维护窗口执行与 Hook 相同的增列操作；已有行保留，新增列初始为 NULL：
-
-```sql
-BEGIN;
-SET LOCAL lock_timeout = '3s';
-SET LOCAL statement_timeout = '10s';
-ALTER TABLE public."LiteLLM_EndUserTable"
-  ADD COLUMN IF NOT EXISTS metadata jsonb;
-COMMIT;
-```
-
-已有列不是 `jsonb` 时，应先核查旧结构，不要直接删列重建。手动增列不能替代完整的原生迁移和其他 Hook 初始化。
+预期有一行，类型为 `jsonb`。缺失或类型不正确时核对原生数据库迁移，不通过活动 Hook 修改原生结构。
+旧 EndUser 上已有的活动 metadata 保留原位，本次不自动搬迁、清空或回读。
 
 ### 默认 Team
 
@@ -417,7 +414,7 @@ RETURNING team_id, metadata->'jwt_managed' AS jwt_managed;
 ### 已有用户和成员关系
 
 JWT 使用的是内部用户 `LiteLLM_UserTable` 及其 Team 成员关系。
-Customer/EndUser 记录是独立的活动和用量主体；存在 EndUser 记录不代表已经具备 Team 权限。
+Customer/EndUser 继续作为原生消费归属和网页筛选维度；存在 EndUser 记录不代表具备 Team 权限。活动上报改为更新 User metadata。
 
 - 数据库中尚不存在的内部用户，在首次通过 JWT 校验时可以自动加入已配置的默认组。
 - **数据库中已经存在的内部用户不会自动补组**，无组、移组或撤权状态均保留。
@@ -437,7 +434,7 @@ Customer/EndUser 记录是独立的活动和用量主体；存在 EndUser 记录
 按[旧版客户端兼容步骤](README.md#旧版客户端只兼容-30-天)完成：若旧共享值仍是 master key，
 先保留加密盐并更换服务端 master key；手动创建独立 legacy Team、设置模型和
 `{"legacy_clients": true}`，再运行一次登记脚本。重复登记不会续期，不能在每次重启时重新开始 30 天窗口。
-旧活动上报另需摘要令牌和绝对截止时间，不能晚于旧模型 Key 的到期时间。
+旧 `/customer/activity` 和旧共享活动令牌不再支持，活动客户端须配套更新为 `/user/activity`。旧模型 Key 兼容与活动接口分别管理。
 
 ## 开放客户端前验证
 
@@ -446,20 +443,20 @@ Customer/EndUser 记录是独立的活动和用量主体；存在 EndUser 记录
    模型请求必须携带合法 `X-User-Account` 和 `X-Cookie`，JWT 的账号必须与账号头一致。
 3. 需要自动入组时，使用一个数据库中尚不存在的合法测试账号验证默认组与默认成员策略。
    再验证无组或已撤权的已有账号仍被拒绝，跨组模型、blocked 和预算限额仍受控制。
-4. 启用活动记录时，用新版客户端触发启动上报，确认 `/customer/activity` 成功，并查询对应记录：
+4. 启用活动记录时，用新版客户端触发启动上报，确认 `/user/activity` 成功，并查询对应记录：
 
    ```sql
-   SELECT user_id, alias, metadata->'customer_activity' AS activity
-   FROM public."LiteLLM_EndUserTable"
+   SELECT user_id, user_alias, metadata->'user_activity' AS activity
+   FROM public."LiteLLM_UserTable"
    WHERE user_id = 'h00658810';
    ```
 
-   将账号替换为测试账号；活动 metadata 不会由原生 Customer API/UI 自动展示。
+   将账号替换为测试账号；活动摘要位于 User metadata；EndUser 消费筛选和原有 JWT/Team 授权保持不变。
 5. 仍需旧客户端时，验证旧 Key 可调用且保持原到期时间；检查日志中没有凭据明文。
 
 | 现象 | 优先检查 |
 | --- | --- |
-| 活动请求提示缺少 metadata 列 | 是否连接原库、是否启用 `activity`、是否成功运行 `upgrade.py`、完整 `init` 或手动增列 |
+| 活动请求提示缺少 metadata 列 | 是否连接原库、原生 User schema 是否完整；不再为 EndUser 手动增列 |
 | `AUTH-2006` | 默认 ID 对应的组不存在、非受管、被禁用或是 legacy 组 |
 | `AUTH-2004` | Team 模型白名单为空或无效；初始化创建的空组还没配置模型 |
 | `AUTH-2002` / `AUTH-2003` | 已有用户的唯一受管组和实际成员关系；重复初始化不会补组 |
@@ -472,9 +469,9 @@ Customer/EndUser 记录是独立的活动和用量主体；存在 EndUser 记录
 
 ## 实现依据
 
-- [增量更新脚本](upgrade.py)：只补缺失的活动列和默认组，提供只读检查，不运行原生迁移。
+- [增量更新脚本](upgrade.py)：检查原生 User metadata 并创建缺失的默认组，提供只读检查，不运行原生迁移。
 - [共享初始化入口](start.py)：先原生版本化迁移，再执行 Hook 初始化。
 - [默认 Team 初始化](hooks/jwt_auth/__init__.py)：仅插入不存在的组，保留已有配置。
-- [活动字段定义](hooks/activity/schema.sql)：可重复执行的 metadata 增列。
+- [活动存储](hooks/activity/store.py)：仅更新原生 User metadata，不创建用户或修改授权。
 - [新用户入组与已有用户授权](hooks/jwt_auth/handler.py)：已有内部用户不自动回填组。
 - [native 启动入口](native/start.py)、[systemd 模板](native/litellm.service)和 [Compose 定义](docker/docker-compose.yml)：区分初始化与正常启动。

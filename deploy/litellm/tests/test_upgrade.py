@@ -51,7 +51,7 @@ class UpgradeTests(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(self.redirect.__exit__, None, None, None)
 
     async def test_check_is_read_only_and_does_not_add_missing_items(self):
-        connection, _ = connection_fixture(column_type=None, team=None)
+        connection, _ = connection_fixture(team=None)
         with patch('upgrade.initialize_team', new_callable=AsyncMock) as create_team:
             await upgrade.update(connection, ENVIRONMENT, check=True)
         connection.transaction.assert_called_once_with(readonly=True)
@@ -60,14 +60,14 @@ class UpgradeTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(connection.execute.await_args.args[0].startswith('SET LOCAL'))
         self.assertIn('Read-only check complete', self.output.getvalue())
 
-    async def test_apply_adds_missing_column_and_delegates_insert_only_team_creation(self):
-        connection, transaction = connection_fixture(column_type=None, team=None)
+    async def test_apply_preserves_native_user_schema_and_delegates_insert_only_team_creation(self):
+        connection, transaction = connection_fixture(team=None)
         connection.fetchrow.side_effect = [None, TEAM]
         with patch('upgrade.initialize_team', new_callable=AsyncMock) as create_team:
             await upgrade.update(connection, ENVIRONMENT)
         create_team.assert_awaited_once_with(connection, ENVIRONMENT)
-        schema = (upgrade.ROOT / 'hooks/activity/schema.sql').read_text(encoding='utf-8')
-        connection.execute.assert_any_await(schema)
+        self.assertEqual(connection.execute.await_count, 1)
+        self.assertTrue(connection.execute.await_args.args[0].startswith('SET LOCAL'))
         transaction.__aexit__.assert_awaited_once_with(None, None, None)
         self.assertIn('Update complete', self.output.getvalue())
 
@@ -96,38 +96,40 @@ class UpgradeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('legacy Team', self.output.getvalue())
         self.assertIn('select allowed models', self.output.getvalue())
 
-    async def test_wrong_column_type_stops_before_any_persistent_write(self):
-        connection, _ = connection_fixture(column_type='text', team=None)
-        with patch('upgrade.initialize_team', new_callable=AsyncMock) as create_team:
-            with self.assertRaisesRegex(upgrade.UpgradeError, 'not jsonb'):
-                await upgrade.update(connection, ENVIRONMENT)
-        create_team.assert_not_awaited()
-        self.assertEqual(connection.execute.await_count, 1)
+    async def test_missing_or_wrong_native_column_stops_before_any_persistent_write(self):
+        for column_type in (None, 'text'):
+            with self.subTest(column_type=column_type):
+                connection, _ = connection_fixture(column_type=column_type, team=None)
+                with patch('upgrade.initialize_team', new_callable=AsyncMock) as create_team:
+                    with self.assertRaisesRegex(upgrade.UpgradeError, 'missing or not jsonb'):
+                        await upgrade.update(connection, ENVIRONMENT)
+                create_team.assert_not_awaited()
+                self.assertEqual(connection.execute.await_count, 1)
 
     async def test_missing_native_team_table_prevents_column_addition(self):
         connection, _ = connection_fixture(
-            column_type=None, missing_table='public."LiteLLM_TeamTable"')
+            missing_table='public."LiteLLM_TeamTable"')
         with self.assertRaisesRegex(upgrade.UpgradeError, 'native LiteLLM migration'):
             await upgrade.update(connection, ENVIRONMENT)
         self.assertEqual(connection.execute.await_count, 1)
 
     async def test_empty_team_id_does_not_create_or_assign_a_default_team(self):
-        connection, _ = connection_fixture(column_type=None)
+        connection, _ = connection_fixture()
         with patch('upgrade.initialize_team', new_callable=AsyncMock) as create_team:
             await upgrade.update(connection, {**ENVIRONMENT, 'LITELLM_DEFAULT_TEAM_ID': ''})
         create_team.assert_not_awaited()
         connection.fetchrow.assert_not_awaited()
         self.assertIn('skip creation', self.output.getvalue())
 
-    async def test_disabled_activity_does_not_require_end_user_table_or_change_schema(self):
-        connection, _ = connection_fixture(missing_table='public."LiteLLM_EndUserTable"')
+    async def test_disabled_activity_does_not_require_user_metadata_or_change_schema(self):
+        connection, _ = connection_fixture(missing_table='public."LiteLLM_UserTable"')
         await upgrade.update(connection, {**ENVIRONMENT, 'LITELLM_HOOKS': ''})
         self.assertEqual(connection.execute.await_count, 1)
         self.assertEqual(connection.fetchval.await_count, 1)
         self.assertIn('Activity is disabled', self.output.getvalue())
 
     async def test_team_creation_failure_rolls_back_transaction_and_closes_connection(self):
-        connection, transaction = connection_fixture(column_type=None, team=None)
+        connection, transaction = connection_fixture(team=None)
         failure = RuntimeError('test-only failure')
         driver = SimpleNamespace(connect=AsyncMock(return_value=connection))
         with patch.dict('sys.modules', {'asyncpg': driver}):

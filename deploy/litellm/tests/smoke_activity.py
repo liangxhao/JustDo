@@ -1,7 +1,7 @@
-"""Optional legacy-activity smoke test; creates/removes one unique test customer.
+"""Optional JWT activity smoke test against an existing dedicated test user.
 
-Run in the LiteLLM container while activity compatibility is enabled. For native
-deployment set LITELLM_SMOKE_BASE_URL=http://127.0.0.1:9108.
+Set LITELLM_SMOKE_JWT and LITELLM_SMOKE_USER_ID for that provisioned user.
+The test leaves one startup activity event and never creates/deletes accounts.
 """
 import asyncio
 import json
@@ -9,40 +9,58 @@ import os
 import urllib.request
 import urllib.error
 from uuid import uuid4
+
 import asyncpg
 
 
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, request, response, code, message, headers, new_url):
+        return None
+
+
 async def main():
-    if not os.environ.get('LITELLM_ACTIVITY_TOKEN'):
-        raise SystemExit('Legacy activity compatibility is disabled; use JWT integration tests instead.')
+    token = os.environ.get('LITELLM_SMOKE_JWT', '')
+    user_id = os.environ.get('LITELLM_SMOKE_USER_ID', '')
+    if not token or not user_id:
+        raise SystemExit('Configure a JWT and existing dedicated user for the activity smoke test.')
     base_url = os.getenv('LITELLM_SMOKE_BASE_URL', 'http://127.0.0.1:4000').rstrip('/')
     db = await asyncpg.connect(os.environ['LITELLM_ACTIVITY_DATABASE_URL'])
-    user_id = 'activity-smoke-' + str(uuid4())
+    opener = urllib.request.build_opener(NoRedirect())
     try:
-        await db.execute('INSERT INTO "LiteLLM_EndUserTable" (user_id, blocked, metadata) VALUES ($1, false, $2::jsonb)',
-                         user_id, '{"preserved":true}')
+        before = await db.fetchrow('SELECT metadata, user_alias FROM "LiteLLM_UserTable" WHERE user_id=$1', user_id)
+        if before is None:
+            raise SystemExit('The dedicated smoke-test user must already exist.')
+        before_metadata = json.loads(before['metadata'] or '{}')
         event = {'event_id': str(uuid4()), 'user_id': user_id, 'event_type': 'startup',
                  'metadata': {'productName': 'SmokeTest', 'version': '1'}}
-        def post(token):
-            request = urllib.request.Request(base_url + '/customer/activity',
-                data=json.dumps(event).encode(), headers={'Authorization': 'Bearer ' + token,
+
+        def post(credential):
+            request = urllib.request.Request(base_url + '/user/activity',
+                data=json.dumps(event).encode(), headers={'Authorization': 'Bearer ' + credential,
                                                         'Content-Type': 'application/json'})
             try:
-                with urllib.request.urlopen(request, timeout=10) as response:
+                with opener.open(request, timeout=10) as response:
                     return response.status
             except urllib.error.HTTPError as error:
                 return error.code
+
         assert await asyncio.to_thread(post, 'invalid') == 401
-        for _ in range(2):
-            assert await asyncio.to_thread(post, os.environ['LITELLM_ACTIVITY_TOKEN']) == 200
-        metadata = json.loads(await db.fetchval('SELECT metadata FROM "LiteLLM_EndUserTable" WHERE user_id=$1', user_id))
-        assert metadata['preserved'] is True
-        assert next(iter(metadata['customer_activity']['days'].values()))['start_count'] == 1
-        print('HTTP authentication, persistence, metadata preservation and duplicate suppression: PASS')
+        assert await asyncio.to_thread(post, token) == 200
+        first = json.loads(await db.fetchval('SELECT metadata FROM "LiteLLM_UserTable" WHERE user_id=$1', user_id))
+        assert await asyncio.to_thread(post, token) == 200
+        row = await db.fetchrow('SELECT metadata, user_alias FROM "LiteLLM_UserTable" WHERE user_id=$1', user_id)
+        metadata = json.loads(row['metadata'])
+        activity = metadata['user_activity']
+        assert activity['recent_event_ids'].count(event['event_id']) == 1
+        assert activity['last_started_at'] == first['user_activity']['last_started_at']
+        assert {day: value['start_count'] for day, value in activity['days'].items()} == {
+            day: value['start_count'] for day, value in first['user_activity']['days'].items()}
+        assert {key: value for key, value in metadata.items() if key != 'user_activity'} == {
+            key: value for key, value in before_metadata.items() if key != 'user_activity'}
+        assert row['user_alias'] == before['user_alias']
+        print('JWT authentication, metadata preservation and duplicate suppression: PASS')
     finally:
-        await db.execute('DELETE FROM "LiteLLM_EndUserTable" WHERE user_id=$1', user_id)
         await db.close()
-        print('Only the unique smoke-test customer was removed.')
 
 
 if __name__ == '__main__':

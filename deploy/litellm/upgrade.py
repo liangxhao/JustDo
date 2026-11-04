@@ -1,4 +1,4 @@
-"""Add missing deployment fields and the default Team without native migrations."""
+"""Check native user storage and prepare the default Team without native migrations."""
 
 import argparse
 import asyncio
@@ -7,8 +7,6 @@ import os
 from pathlib import Path
 
 from hooks.jwt_auth import initialize as initialize_team
-
-ROOT = Path(__file__).resolve().parent
 
 
 class UpgradeError(ValueError):
@@ -61,20 +59,16 @@ async def update(connection, environment, check=False):
             "SET LOCAL search_path = public; SET LOCAL lock_timeout = '3s'; "
             "SET LOCAL statement_timeout = '10s';")
 
-        # Inspect every selected item before issuing any DDL or INSERT.
-        missing_metadata = False
         if activity:
-            await require_table(connection, 'LiteLLM_EndUserTable')
+            await require_table(connection, 'LiteLLM_UserTable')
             column_type = await connection.fetchval(
                 "SELECT data_type FROM information_schema.columns WHERE table_schema = 'public' "
-                "AND table_name = 'LiteLLM_EndUserTable' AND column_name = 'metadata'")
-            if column_type not in (None, 'jsonb'):
-                raise UpgradeError('EndUser metadata exists but is not jsonb; no changes were applied.')
-            missing_metadata = column_type is None
-            print('[DatabaseUpgrade] EndUser metadata: ' + (
-                'add missing jsonb column.' if missing_metadata else 'already present; preserve it.'))
+                "AND table_name = 'LiteLLM_UserTable' AND column_name = 'metadata'")
+            if column_type != 'jsonb':
+                raise UpgradeError('Native User metadata is missing or not jsonb; no changes were applied.')
+            print('[DatabaseUpgrade] User metadata: native jsonb column present; preserve it.')
         else:
-            print('[DatabaseUpgrade] Activity is disabled; skip the metadata column.')
+            print('[DatabaseUpgrade] Activity is disabled; skip the user metadata check.')
 
         team = None
         if team_id:
@@ -88,8 +82,6 @@ async def update(connection, environment, check=False):
             print('[DatabaseUpgrade] Default Team ID is empty; skip creation and automatic enrollment.')
 
         if not check:
-            if missing_metadata:
-                await connection.execute((ROOT / 'hooks/activity/schema.sql').read_text(encoding='utf-8'))
             if team_id and team is None:
                 await initialize_team(connection, environment)
                 team = await connection.fetchrow(

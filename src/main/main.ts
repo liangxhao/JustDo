@@ -73,10 +73,10 @@ import { LoginUserInfoStore } from './core/app/auth/loginUserInfoStore';
 import { isAutoLaunched } from './core/app/autoLaunchManager';
 import { AutoUpdateService } from './core/app/autoUpdateService';
 import { runApplicationCleanup, settleCleanupTasks } from './core/app/cleanupPhases';
-import { CustomerRegistrationService } from './core/app/customerRegistrationService';
 import { isNsisInstalledApp } from './core/app/installedApp';
 import { createTray, destroyTray, updateTrayMenu } from './core/app/trayManager';
 import { resolveAppUpdateResourceUrl } from './core/app/updateResourceUrl';
+import { UserActivityService } from './core/app/userActivityService';
 import { APP_NAME, DEV_SERVER_URL_SWITCH, INSTALLER_QUIT_SWITCH } from './core/appConstants';
 import { resolveDevelopmentDataDirectory } from './core/development/developmentDataDirectory';
 import { getDevServerUrlFromCommandLine } from './core/development/devServerHandoff';
@@ -514,7 +514,7 @@ let openClawHookServices: OpenClawHookServices | null = null;
 let openClawConfigSyncService: OpenClawConfigSyncService | null = null;
 let localSpeechModelService: LocalSpeechModelService | null = null;
 let builtinModelLifecycle: BuiltinModelLifecycle | null = null;
-let customerRegistrationService: CustomerRegistrationService | null = null;
+let userActivityService: UserActivityService | null = null;
 let loginService: LoginService | null = null;
 let builtinModelCredentialMonitor: BuiltinModelCredentialMonitor | null = null;
 let builtinModelTokenExchange: BuiltinModelTokenExchange | null = null;
@@ -1020,12 +1020,12 @@ export const refreshAfterLogin = async (): Promise<void> => {
   updateOutboundHeaderUserInfoCache();
   getBuiltinModelTokenExchange().resume();
   await refreshBuiltinModelCredentialFromLoginFile(true);
-  customerRegistrationService?.start();
-  void customerRegistrationService?.sync();
+  userActivityService?.start();
+  void userActivityService?.sync();
 };
 
 export const refreshAfterLogout = (): Promise<void> => {
-  customerRegistrationService?.stop();
+  userActivityService?.stop();
   updateOutboundHeaderUserInfoCache();
   return getBuiltinModelAuthCoordinator().logout();
 };
@@ -2037,7 +2037,7 @@ if (agentBridgeArgv) {
         () => stopAppDevelopmentAssets?.(),
         () => builtinModelCredentialMonitor?.stop(),
         () => loginService?.dispose(),
-        () => customerRegistrationService?.stop(),
+        () => userActivityService?.stop(),
         () => builtinModelTokenExchange?.invalidate(),
         () => builtinModelAuthCoordinator?.initialize(null),
         () => clearActiveBuiltinModelCredential(),
@@ -2633,14 +2633,14 @@ if (agentBridgeArgv) {
     // This display restoration never gates or repeats the existing JWT/model startup flow.
     void getLoginService().restoreFromFile();
     if (BUILTIN_MODEL_PROVIDER_CONFIG.enabled && ACTIVITY_REPORTING_CONFIG.enabled) {
-      customerRegistrationService = new CustomerRegistrationService({
+      userActivityService = new UserActivityService({
         getCredential: getActiveBuiltinModelCredential,
         baseUrl: BUILTIN_MODEL_PROVIDER_CONFIG.baseUrl,
         productName: APP_NAME,
         version: app.getVersion(),
         userInfoPath: resolveOutboundHeaderUserInfoPath(),
       });
-      customerRegistrationService.start();
+      userActivityService.start();
     }
 
     createTray(() => mainWindow);

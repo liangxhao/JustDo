@@ -47,18 +47,12 @@ def test_logging_forwarding_and_preview_settings(name):
     assert config['router_settings']['num_retries'] == 2
 
 
-@pytest.mark.parametrize('role', ['customer', 'Customer'])
-@pytest.mark.parametrize('fallback_only', [False, True])
-def test_native_end_user_mapping_and_legacy_header_setting(monkeypatch, role, fallback_only):
+@pytest.mark.parametrize('name', ['docker', 'native'])
+def test_deployed_account_header_preserves_end_user_filtering(monkeypatch, name):
     from litellm.proxy import proxy_server
     from litellm.proxy.auth.auth_utils import get_end_user_id_from_request_body
 
-    settings = {'user_header_name': 'X-User-Account'}
-    if not fallback_only:
-        settings = {'user_header_mappings': [
-            {'header_name': 'X-User-Account', 'litellm_user_role': role},
-        ]}
-
+    settings = yaml.safe_load((ROOT / name / 'config.yaml').read_text())['general_settings']
     monkeypatch.setattr(proxy_server, 'general_settings', settings)
     assert get_end_user_id_from_request_body(
         {}, {'x-user-account': 'h00658810'},
@@ -81,7 +75,8 @@ def test_compose_exposes_exactly_one_litellm_service():
     assert service['ports'] == ['${LITELLM_PORT:-9108}:4000']
     assert service['depends_on']['redis']['condition'] == 'service_healthy'
     assert 'LITELLM_JWT_ISSUER' in service['environment']
-    assert 'LITELLM_ACTIVITY_TOKEN' in service['environment']
+    assert 'LITELLM_ACTIVITY_TOKEN' not in service['environment']
+    assert 'LITELLM_ACTIVITY_LEGACY_EXPIRES_AT' not in service['environment']
     assert 'ports' not in services['db']
     assert 'ports' not in services['redis']
     assert service['ulimits']['nofile']['soft'] >= 16384

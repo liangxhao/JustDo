@@ -90,7 +90,7 @@ sudo systemctl status litellm
 ```
 
 日志使用 `journalctl -u litellm` 查看。修改配置后重启该服务。
-更新前停止服务、备份数据库并安装有变化的依赖。只补活动字段和默认组时，运行
+更新前停止服务、备份数据库并安装有变化的依赖。只需检查 User metadata 或准备默认组时，运行
 `.venv/bin/python ../upgrade.py --env-file .env`；需要原生版本迁移时运行 `start.py init`。
 成功后重新启动服务；只读检查可在增量命令后加 `--check`，详见[更新步骤](../UPGRADE.md#使用增量更新脚本)。
 禁止使用 `prisma db push --accept-data-loss`。认证适配固定支持 LiteLLM 1.99.1，

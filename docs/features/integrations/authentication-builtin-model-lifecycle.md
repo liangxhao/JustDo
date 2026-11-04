@@ -264,7 +264,11 @@ builtin provider 在 SQLite/Renderer 中 apiKey 为空，只保存 base URL、�
 
 ## 8. 活动上报不是认证
 
-ACTIVITY_REPORTING_CONFIG 默认开启，控制 startup、周期心跳和失败重试。关闭不影响 JWT 或模型调用，不清除服务端历史。上报正文账号仍须与 JWT 一致，clientTime/loginTime 与数据库接收时间分开；离线未上报不能证明未启动。
+ACTIVITY_REPORTING_CONFIG 默认开启，控制 startup、周期心跳和失败重试。关闭不影响 JWT 或模型调用，不清除服务端历史。客户端使用 `POST /user/activity`；正文账号仍须与 JWT 一致，服务端锁定已有 User 行并合并 `metadata.user_activity`，保留其他 metadata。活动存储不开户、不修改 Team 或角色，原生 User/Team 认证和 EndUser 消费映射保持现有行为。旧 `/customer/activity` 不再支持。clientTime/loginTime 与数据库接收时间分开；离线未上报不能证明未启动。
+
+启动事件按事件 ID 去重，最近 90 个有活动的 UTC 日期与 256 个事件 ID 有界保留。事件类型使用最多 64 字符的小写命名规则，metadata 支持有界 JSON 扩展，未来字段无需逐个修改服务端白名单；详细限额见部署说明。仅 startup/login 执行已有专属聚合；自定义字段作为最新客户端快照保存，不自动累计或反写原生账单。内置消费可查 DailyUserSpend，自定义模型用量需要后续在客户端复用 OpenClaw API 采集，产品会话量不能用模型调用次数代替。
+
+允许客户端先升级、服务端后升级。活动接口或格式不支持时，客户端延后到正常周期；临时网络/服务故障有界重试。上报始终独立于主流程，sync 不向登录/启动抛错，禁止重定向和旧 Key/旧接口回退，只有有界成功确认才推进事件。stop/账号切换后的迟到响应不能确认新事件。未确认事件仅在进程内保留，不承诺完整历史补报。
 
 ## 9. 验证与限制
 

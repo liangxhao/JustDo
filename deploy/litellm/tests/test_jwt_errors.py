@@ -67,7 +67,7 @@ async def test_activity_preserves_jwt_error_id_status_and_does_not_write_store()
     error = JwtAuthError(JwtFailure.EXPIRED)
     store, downstream, receive, send = AsyncMock(), AsyncMock(), AsyncMock(), AsyncMock()
     hook = ActivityHook(downstream, store, authenticate=AsyncMock(side_effect=error))
-    await hook({'type': 'http', 'path': '/customer/activity', 'method': 'POST',
+    await hook({'type': 'http', 'path': '/user/activity', 'method': 'POST',
                 'headers': [(b'x-access-jwt', b'private-token')]}, receive, send)
     assert send.call_args_list[0].args[0]['status'] == 401
     assert json.loads(send.call_args_list[1].args[0]['body']) == {'error': error.to_dict()}

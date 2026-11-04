@@ -76,7 +76,7 @@ async def test_registered_hook_requires_headers_for_both_key_and_jwt(authorizati
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('path', ['/health/liveliness', '/health/readiness', '/ui', '/team/update',
-    '/key/generate', '/customer/activity', '/models', '/v1/models', '/model/info'])
+    '/key/generate', '/user/activity', '/models', '/v1/models', '/model/info'])
 async def test_management_health_and_discovery_are_not_intercepted(path):
     downstream, _, _ = await invoke(path, headers=[])
     downstream.assert_awaited_once()

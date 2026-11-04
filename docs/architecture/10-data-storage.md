@@ -527,7 +527,7 @@ browser-import.sqlite 独立保存导入历史、safeStorage 加密密码、下�
 
 ### 远端活动记录
 
-LiteLLM 活动记录是服务端 EndUser metadata，不属于本地产品表。客户端开关控制上报，JWT 负责身份校验；未收到活动不能证明用户没启动。服务端部署与字段保留见[认证专题](../features/integrations/authentication-builtin-model-lifecycle.md)。
+LiteLLM 客户端活动通过 `POST /user/activity` 写入服务端 `LiteLLM_UserTable.metadata.user_activity`，不属于本地产品表。原生消费的 EndUser 归属继续保留，用于已有日志筛选；活动接口不创建或修改 EndUser。可扩展 metadata 仅在 user_activity 命名空间保存最新快照，不将客户端自报值计入原生账单；重复事件不倒退最新快照，接口不可用时不阻塞客户端主流程。客户端开关控制上报，JWT 负责身份校验；未收到活动不能证明用户没启动。服务端部署与字段保留见[认证专题](../features/integrations/authentication-builtin-model-lifecycle.md)。
 
 ## 10. 插件持久化
 

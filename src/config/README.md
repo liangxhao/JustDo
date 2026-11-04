@@ -37,11 +37,12 @@ Windows 路径为 `%APPDATA%/<productName>/<directoryName>/<userInfoFileName>`�
 
 ## 活动上报
 
-`activityReporting.ts` 的 `endpointPath` 配置上报路径，默认 `/customer/activity`，需以 `/` 开头并与服务端路由一致；拼接时保留模型地址的部署路径前缀，仅去掉末尾 `/v1`。
+`activityReporting.ts` 的 `endpointPath` 配置上报路径，默认 `/user/activity`，需以 `/` 开头并与服务端路由一致；拼接时保留模型地址的部署路径前缀，仅去掉末尾 `/v1`。
 将 `enabled` 改为 `false`，关闭活动接口的启动上报、
 每日心跳及失败重试；登录回调也不会启动上报。设为 `true` 恢复原有上报行为，仍须内置模型启用且 JWT 有效。
-此开关不关闭 JWT 换证、模型请求或服务端必要的身份/EndUser 处理，不删除已经保存的活动数据。
+此开关不关闭 JWT 换证、模型请求或现有 User/Team 授权或 EndUser 消费归属，不删除已经保存的活动数据。
 修改后须重启 Electron 开发进程或重新打包，不是运行时设置。
+新版客户端可先于活动服务部署；接口或格式暂不支持时延后上报，网络/服务故障有界重试，不阻塞登录、启动或聊天。未来扩展字段使用 metadata JSON 对象，额外字段可由 UserActivityService 的 getMetadata 回调构造；不会改变顶层用户身份或登录凭据。
 
 ## 模型认证
 

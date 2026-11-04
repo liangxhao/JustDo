@@ -20,7 +20,7 @@ docker compose logs --tail 100 litellm
 项目名通过 `LITELLM_DEPLOYMENT_NAME` 配置，默认 `litellm`；部署后保持不变，以复用数据卷。
 在管理页面为初始化生成的默认 Team 设置模型和限额；旧 Key 登记见公共 README。
 
-初始化执行版本化迁移并增加 EndUser metadata 列，正常启动禁用自动 schema 同步。
+初始化执行原生版本化迁移并准备默认组；活动记录复用原生 UserTable.metadata，无额外增列，正常启动禁用自动 schema 同步。
 Compose 等待数据库健康后执行 `init`，成功后才启动 LiteLLM；`init` 显示 `Exited (0)` 为正常完成。
 升级既有数据库前先备份并安排维护窗口，不要在旧服务仍处理请求时执行迁移。
 管理页面使用 `.env` 中的 `UI_USERNAME`、`UI_PASSWORD` 登录。
@@ -30,6 +30,6 @@ Compose 等待数据库健康后执行 `init`，成功后才启动 LiteLLM；`in
 所有容器日志均按单文件 10 MB、最多 3 个文件轮转；默认关闭逐请求访问日志。
 已有容器应用日志策略需重新创建，执行 `docker compose up -d --build --force-recreate`；
 仅重启旧容器不会更新轮转配置。
-原生表结构已就绪、只补活动字段和默认组时，可用镜像内的 `upgrade.py` 增量更新，
+原生表结构已就绪、只需检查 User metadata 或准备默认组时，可用镜像内的 `upgrade.py` 检查与更新，
 不执行原生迁移；只读检查和运行命令见[更新步骤](../UPGRADE.md#使用增量更新脚本)。
 停止服务使用 `docker compose down`，不要加 `-v`，以免删除数据库和 Redis 数据卷。

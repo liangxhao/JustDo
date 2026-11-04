@@ -36,7 +36,7 @@ class PostgresStore:
         self.pool = None
         self.lock = asyncio.Lock()
 
-    async def record(self, event, authenticated=False):
+    async def record(self, event):
         if self.pool is None:
             async with self.lock:
                 if self.pool is None:
@@ -51,32 +51,21 @@ class PostgresStore:
                     )
         async with self.pool.acquire(timeout=3) as connection:
             async with connection.transaction():
-                if authenticated:
-                    await connection.execute(
-                        'INSERT INTO "LiteLLM_EndUserTable" (user_id, blocked, spend) '
-                        'VALUES ($1, false, 0) ON CONFLICT (user_id) DO NOTHING', event[1])
                 row = await connection.fetchrow(
-                    'SELECT metadata, blocked FROM "LiteLLM_EndUserTable" '
+                    'SELECT metadata FROM "LiteLLM_UserTable" '
                     'WHERE user_id=$1 FOR UPDATE',
                     event[1],
                 )
                 if row is None:
-                    raise LookupError('Customer does not exist')
-                if row['blocked']:
-                    raise PermissionError('Customer is blocked')
+                    raise LookupError('User does not exist')
                 previous = json.loads(row['metadata']) if row['metadata'] else {}
                 now = await connection.fetchval('SELECT clock_timestamp()')
                 merged = merge_activity(previous, event, now.astimezone(timezone.utc))
                 await connection.execute(
-                    'UPDATE "LiteLLM_EndUserTable" SET metadata=$2::jsonb WHERE user_id=$1',
+                    'UPDATE "LiteLLM_UserTable" SET metadata=$2::jsonb WHERE user_id=$1',
                     event[1],
                     json.dumps(merged),
                 )
-                supplied = json.loads(event[3])
-                if authenticated and supplied.get('productName') and supplied.get('version'):
-                    await connection.execute(
-                        'UPDATE "LiteLLM_EndUserTable" SET alias=$2 WHERE user_id=$1',
-                        event[1], supplied['productName'] + ' ' + supplied['version'])
 
     async def close(self):
         if self.pool is not None:
