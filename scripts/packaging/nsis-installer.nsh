@@ -6,8 +6,6 @@
 !include "x64.nsh"
 !include "UAC.nsh"
 
-!define JUSTDO_INSTALLER_QUIT_SWITCH "--justdo-request-quit-for-update"
-
 ; NSIS FileOpen ... a only seeks once when opening. Long-lived handles would
 ; overwrite records appended by callbacks or another installer process. Windows
 ; FILE_APPEND_DATA without FILE_WRITE_DATA appends each FileWrite atomically.
@@ -540,12 +538,40 @@ FunctionEnd
   System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("JUSTDO_CALLER_PID", "$0").r1'
   System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("JUSTDO_APP_PROCESS_NAME", "${APP_FILENAME}").r1'
   !insertmacro JustDoResolveNativePowerShell $R8
-  nsExec::ExecToStack /TIMEOUT=90000 '"$R8" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\justdo-process-helper.ps1" -Action Wait -MaxAttempts ${_MAX_ATTEMPTS}'
+  nsExec::ExecToStack /TIMEOUT=${INSTALLER_PROCESS_WAIT_TIMEOUT} '"$R8" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\justdo-process-helper.ps1" -Action Wait -MaxAttempts ${_MAX_ATTEMPTS}'
   Pop ${_RESULT}
   Pop $R9
   System::Call 'Kernel32::SetEnvironmentVariable(t "JUSTDO_INSTALL_ROOT", t "")i'
   System::Call 'Kernel32::SetEnvironmentVariable(t "JUSTDO_CALLER_PID", t "")i'
   System::Call 'Kernel32::SetEnvironmentVariable(t "JUSTDO_APP_PROCESS_NAME", t "")i'
+!macroend
+
+!macro RequestInstallerQuit _RESULT
+  System::Call 'Kernel32::GetCurrentProcessId()i.r0'
+  System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("JUSTDO_INSTALL_ROOT", "$INSTDIR").r1'
+  System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("JUSTDO_CALLER_PID", "$0").r1'
+  System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("JUSTDO_APP_PROCESS_NAME", "${APP_FILENAME}").r1'
+  !insertmacro JustDoResolveNativePowerShell $R8
+  nsExec::ExecToStack /TIMEOUT=15000 '"$R8" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\justdo-process-helper.ps1" -Action RequestQuit'
+  Pop ${_RESULT}
+  Pop $R9
+  System::Call 'Kernel32::SetEnvironmentVariable(t "JUSTDO_INSTALL_ROOT", t "")i'
+  System::Call 'Kernel32::SetEnvironmentVariable(t "JUSTDO_CALLER_PID", t "")i'
+  System::Call 'Kernel32::SetEnvironmentVariable(t "JUSTDO_APP_PROCESS_NAME", t "")i'
+!macroend
+
+!macro RequestAndWaitForInstallerQuit _RESULT
+  !insertmacro RequestInstallerQuit ${_RESULT}
+  !insertmacro JustDoLogInstallEvent "phase=graceful-shutdown-request result=${_RESULT} detail=$R9"
+  ${If} ${_RESULT} == "0"
+    !insertmacro WaitForJustDoProcesses ${_RESULT} ${INSTALLER_SHUTDOWN_ATTEMPTS}
+  ${ElseIf} ${_RESULT} == "1"
+    ; RequestQuit found that the existing process tree had already exited.
+    StrCpy ${_RESULT} "0"
+  ${ElseIf} ${_RESULT} == "3"
+    ; Legacy version or orphan children: still running, with no quit endpoint.
+    StrCpy ${_RESULT} "1"
+  ${EndIf}
 !macroend
 
 !macro StopJustDoProcesses _RESULT
@@ -608,10 +634,7 @@ Function JustDoCheckAppRunning
     !insertmacro JustDoLogInstallEvent "phase=process-check-result mode=silent result=$0 detail=$R9"
     ${If} $0 == "0"
       !insertmacro JustDoLogInstallEvent "phase=graceful-shutdown-start mode=silent"
-      ; Launch without ExecWait: a damaged older app must not be able to block
-      ; setup forever before the bounded process poll even starts.
-      Exec '"$INSTDIR\${APP_FILENAME}.exe" ${JUSTDO_INSTALLER_QUIT_SWITCH}'
-      !insertmacro WaitForJustDoProcesses $0 120
+      !insertmacro RequestAndWaitForInstallerQuit $0
       !insertmacro JustDoLogInstallEvent "phase=graceful-shutdown-result mode=silent result=$0 detail=$R9"
       ${If} $0 == "1"
         !insertmacro JustDoLogInstallEvent "phase=installer-abort reason=app-still-running"
@@ -647,15 +670,11 @@ Function JustDoCheckAppRunning
           Goto JustDoInstallProcessCheck
 
         JustDoInstallAutoClose:
-          ; Newer releases understand this second-instance switch and run the
-          ; normal Gateway/SQLite cleanup path before exiting. Older releases
-          ; simply discard the second instance, so a bounded force-close below
-          ; remains necessary for backward-compatible upgrades.
+          ; Signal existing Main directly. Never launch the installed EXE: old
+          ; versions and cross-account launches may open the startup UI instead.
+          ; Versions without an endpoint use the already-confirmed scoped stop.
           !insertmacro JustDoLogInstallEvent "phase=graceful-shutdown-start mode=interactive"
-          ; The bounded poll below owns the timeout. ExecWait would hang setup
-          ; indefinitely if an older or damaged app never exits.
-          Exec '"$INSTDIR\${APP_FILENAME}.exe" ${JUSTDO_INSTALLER_QUIT_SWITCH}'
-          !insertmacro WaitForJustDoProcesses $0 20
+          !insertmacro RequestAndWaitForInstallerQuit $0
           !insertmacro JustDoLogInstallEvent "phase=graceful-shutdown-result mode=interactive result=$0 detail=$R9"
           ${If} $0 == "0"
             Goto JustDoInstallProcessClosed
@@ -668,6 +687,16 @@ Function JustDoCheckAppRunning
           ${EndIf}
           ${If} $0 == "0"
             Goto JustDoInstallProcessClosed
+          ${EndIf}
+          ${If} $0 == "1"
+            !insertmacro JustDoLogInstallEvent "phase=installer-abort reason=app-still-running"
+            SetErrorLevel 2
+            ${If} $LANGUAGE == ${JUSTDO_LANG_SIMPCHINESE}
+            ${OrIf} $LANGUAGE == ${JUSTDO_LANG_TRADCHINESE}
+              Abort "${PRODUCT_NAME} 仍在运行，安装已停止。请从系统托盘退出应用后重试。"
+            ${Else}
+              Abort "${PRODUCT_NAME} is still running. Setup has stopped. Quit it from the system tray and try again."
+            ${EndIf}
           ${EndIf}
 
           Goto JustDoInstallInspectionFailed

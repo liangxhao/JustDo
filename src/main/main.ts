@@ -75,6 +75,7 @@ import { isAutoLaunched } from './core/app/autoLaunchManager';
 import { AutoUpdateService } from './core/app/autoUpdateService';
 import { runApplicationCleanup, settleCleanupTasks } from './core/app/cleanupPhases';
 import { isNsisInstalledApp } from './core/app/installedApp';
+import { createInstallerShutdownListener } from './core/app/installerShutdown';
 import { createTray, destroyTray, updateTrayMenu } from './core/app/trayManager';
 import { resolveAppUpdateResourceUrl } from './core/app/updateResourceUrl';
 import { USER_ACTIVITY_SCHEDULE_KEY, UserActivityService } from './core/app/userActivityService';
@@ -1445,6 +1446,10 @@ if (agentBridgeArgv) {
     );
   }
   app.quit();
+} else if (process.argv.includes(INSTALLER_QUIT_SWITCH)) {
+  // Older installers may still launch the control switch. With no incumbent,
+  // this request must exit instead of initializing a new application/profile.
+  app.exit(0);
 } else {
   const releaseRuntimeDevLease = acquireOpenClawRuntimeDevLease({
     appPath: app.getAppPath(),
@@ -2076,10 +2081,12 @@ if (agentBridgeArgv) {
     });
   };
 
+  let installerShutdown: ReturnType<typeof createInstallerShutdownListener> | undefined;
   const appShutdown = registerAppShutdown({
     cleanup: runAppCleanup,
     cleanupTimeoutMs: SHUTDOWN_BUDGET_MS.applicationExit,
     onBeginCleanup: () => {
+      installerShutdown?.markQuitting();
       stopLogMaintenance();
       startupWindowHandoff.stop();
       // Retire the visible shell immediately while native owners close safely.
@@ -2089,6 +2096,16 @@ if (agentBridgeArgv) {
       destroyTray();
     },
   });
+  if (isWindows && app.isPackaged) {
+    installerShutdown = createInstallerShutdownListener(() => {
+      console.log('[Main] Installer requested a graceful shutdown.');
+      app.quit();
+    });
+    void installerShutdown.ready.catch(error => {
+      console.warn('[InstallerShutdown] Could not listen for update shutdown:', error);
+    });
+    process.once('exit', () => installerShutdown?.stop());
+  }
   const developmentParentServerUrl = devServerUrl;
   const detachDevelopmentParent = !app.isPackaged
     ? bindDevelopmentParentShutdown(

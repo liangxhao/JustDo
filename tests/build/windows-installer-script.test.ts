@@ -3,8 +3,20 @@ import path from 'node:path';
 
 import { expect, test, vi } from 'vitest';
 
-const { createWindowsInstallerScript, orderNsisPluginDirectories } = require('../../scripts/packaging/windows-installer-script.cjs');
+import { SHUTDOWN_BUDGET_MS } from '../../src/shared/app/shutdownPolicy';
+
+const { createWindowsInstallerScript, orderNsisPluginDirectories, installerShutdownDefinitions } = require('../../scripts/packaging/windows-installer-script.cjs');
 const templates = path.join(path.dirname(require.resolve('app-builder-lib/package.json')), 'templates/nsis');
+
+test('allows the complete application shutdown and emergency-exit observation before replacement', () => {
+  const definitions = installerShutdownDefinitions();
+  const attempts = Number(/INSTALLER_SHUTDOWN_ATTEMPTS (\d+)/.exec(definitions)?.[1]);
+  const timeout = Number(/INSTALLER_PROCESS_WAIT_TIMEOUT (\d+)/.exec(definitions)?.[1]);
+  expect(attempts * 500).toBeGreaterThanOrEqual(SHUTDOWN_BUDGET_MS.applicationExit
+    + SHUTDOWN_BUDGET_MS.forceExitObservation + SHUTDOWN_BUDGET_MS.outerSchedulingMargin);
+  expect(timeout).toBeGreaterThan(attempts * 500);
+  expect(attempts).toBeLessThanOrEqual(1200);
+});
 
 test('stages the shell archive in INSTDIR and removes the default AppData installer copy', () => {
   const script = createWindowsInstallerScript(templates);

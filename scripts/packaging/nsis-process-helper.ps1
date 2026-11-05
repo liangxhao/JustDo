@@ -1,9 +1,9 @@
 param(
   [Parameter(Mandatory = $true)]
-  [ValidateSet('Find', 'Wait', 'Stop')]
+  [ValidateSet('Find', 'Wait', 'Stop', 'RequestQuit')]
   [string]$Action,
 
-  [ValidateRange(1, 120)]
+  [ValidateRange(1, 1200)]
   [int]$MaxAttempts = 120
 )
 
@@ -88,7 +88,60 @@ try {
     )
   }
 
+  function Request-InstalledQuit($process, $deadline) {
+    $pipe = $null
+    try {
+      # Connect only to an already running Main. Never launch an EXE to discover
+      # support: legacy builds can treat a control argument as an ordinary start.
+      if ($deadline.ElapsedMilliseconds -ge 5000) { return $false }
+      $pipe = [IO.Pipes.NamedPipeClientStream]::new(
+        '.', "desktop-installer-shutdown-$($process.Id)",
+        [IO.Pipes.PipeDirection]::InOut, [IO.Pipes.PipeOptions]::Asynchronous,
+        [Security.Principal.TokenImpersonationLevel]::Identification
+      )
+      $pipe.Connect(100)
+      $request = [Text.Encoding]::ASCII.GetBytes("quit-for-update`n")
+      $write = $pipe.WriteAsync($request, 0, $request.Length)
+      if (-not $write.Wait(1000)) { return $false }
+      [void]$write.GetAwaiter().GetResult()
+      $ack = [Text.Encoding]::ASCII.GetBytes("accepted`n")
+      $buffer = New-Object byte[] $ack.Length
+      $offset = 0
+      while ($offset -lt $buffer.Length) {
+        $remaining = [Math]::Min(1000, 5000 - $deadline.ElapsedMilliseconds)
+        if ($remaining -le 0) { return $false }
+        $read = $pipe.ReadAsync($buffer, $offset, $buffer.Length - $offset)
+        if (-not $read.Wait([int]$remaining)) { return $false }
+        $count = $read.GetAwaiter().GetResult()
+        if ($count -eq 0) { return $false }
+        $offset += $count
+      }
+      return [Text.Encoding]::ASCII.GetString($buffer) -ceq "accepted`n"
+    } catch {
+      # No endpoint, access denied, or no valid ACK means unsupported, never
+      # permission to start a replacement process or proof that this one exited.
+      return $false
+    } finally {
+      if ($null -ne $pipe) { $pipe.Dispose() }
+    }
+  }
+
   switch ($Action) {
+    'RequestQuit' {
+      $processes = @(Get-InstalledProcesses)
+      if ($processes.Count -eq 0) { exit 1 }
+      $appExecutablePath = Join-Path $installRoot "$appProcessName.exe"
+      $accepted = $false
+      $deadline = [Diagnostics.Stopwatch]::StartNew()
+      foreach ($process in $processes) {
+        if ($process.Path -ieq $appExecutablePath -and
+            (Request-InstalledQuit $process $deadline)) {
+          $accepted = $true
+        }
+      }
+      if ($accepted) { exit 0 }
+      exit 3
+    }
     'Find' {
       if ((Get-InstalledProcesses).Count -gt 0) { exit 0 }
       exit 1

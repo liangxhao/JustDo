@@ -2,6 +2,18 @@
 
 const fs = require('fs');
 const path = require('path');
+const shutdownPolicy = require('../../src/shared/app/shutdownPolicy.json');
+
+function installerShutdownDefinitions() {
+  // Cover Main cleanup, its emergency exit observation, and scheduling margin.
+  const timeoutMs = shutdownPolicy.startupAbortMs + shutdownPolicy.otherAppCleanupMs
+    + shutdownPolicy.nativeShutdownMs + shutdownPolicy.nativeExitMarginMs
+    + 3 * shutdownPolicy.forceExitObservationMs + 2 * shutdownPolicy.outerSchedulingMarginMs;
+  const attempts = Math.ceil(timeoutMs / 500);
+  if (attempts > 1200) throw new Error('Installer process wait exceeds the helper limit.');
+  return `!define INSTALLER_SHUTDOWN_ATTEMPTS ${attempts}\n`
+    + `!define INSTALLER_PROCESS_WAIT_TIMEOUT ${attempts * 500 + 15000}\n`;
+}
 
 // Compose upstream templates at build time. Keep the upstream upgrade, shortcut,
 // registry and uninstall behavior; change payload staging and cache ownership.
@@ -252,6 +264,7 @@ function configureWindowsInstallerScript(projectDir) {
     const { prepareInstallerAnimationScript } = require('./installer-animation-script.cjs');
     const { prepareInstallerClockAssets } = require('./installer-clock-assets.cjs');
     const definitions = this.isPortable ? '' : prepareInstallerAnimationScript(projectDir)
+      + installerShutdownDefinitions()
       + `!define INSTALLER_CLOCK_LIBRARY "${prepareInstallerClockAssets(projectDir).path.replaceAll('$', () => '$$')}"\n`;
     return orderNsisPluginDirectories(definitions + header);
   };
@@ -267,4 +280,5 @@ module.exports = {
   createWindowsInstallerScript,
   configureWindowsInstallerScript,
   orderNsisPluginDirectories,
+  installerShutdownDefinitions,
 };

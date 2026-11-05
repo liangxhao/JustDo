@@ -355,7 +355,25 @@ temporary-storage corrections in this change.
   another installation, a portable copy, or an unrelated process with the same
   name.
 - A healthy installed application still receives the graceful update shutdown
-  request before the bounded force-close fallback.
+  request before the bounded force-close fallback. Setup connects to a PID-bound
+  named pipe owned by an existing packaged Main inside the selected installation;
+  it never launches the installed EXE to request shutdown. The fixed, bounded
+  request/acknowledgement only requests the existing application cleanup. A valid
+  acknowledgement is not evidence that any process has exited. Main retains the
+  pipe's default Windows access controls. During cleanup it still acknowledges
+  retry requests without dispatching another quit, so an already-draining Main
+  cannot be mistaken for a legacy process. The pipe retires with the process.
+- Legacy applications without that endpoint use the already-confirmed, scoped
+  force-close in interactive setup. Silent setup does not force-close them and
+  fails while they remain running. A confirmed survivor after force-close stops
+  installation; it cannot enter the inspection-unavailable fallback.
+- After an accepted request, the process wait covers the shared application
+  cleanup policy, emergency-exit observation and scheduling margin. The NSIS
+  definitions are generated from `src/shared/app/shutdownPolicy.json` so setup
+  cannot cut normal Gateway cleanup down to a short fixed wait.
+- The compatibility quit switch remains accepted by Main for older installers.
+  If that control invocation acquires the singleton itself, it exits before
+  creating windows, preparing a profile or starting Gateway.
 - Setup no longer moves old runtime trees into a sibling staging directory.
   Upgrades use normal old-version removal followed by the complete new payload;
   runtime transaction backups, when needed by the extractor, stay in `resources`.
@@ -994,7 +1012,8 @@ Synchronous check failures are handled like rejected update-check promises.
   preservation of the multi-user choices, the fresh-install process skip,
   removal of CIM usage, install-root payload/temp isolation, cleanup and log ownership.
 - Windows integration tests execute the process helper against real processes
-  and exercise resource extraction/rollback fixtures, including irrelevant disk
+  (including live shutdown pipes, unsupported legacy processes, retained children
+  and a sibling portable installation) and exercise resource extraction/rollback fixtures, including irrelevant disk
   changes, native-extractor fallback, rollback, and managed-temp cleanup.
 - A release candidate should additionally be installed in two Windows accounts:
   choose current user after launching normally, choose current user after

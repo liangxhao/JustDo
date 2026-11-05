@@ -190,6 +190,17 @@ describe('Windows uninstaller process handling', () => {
 });
 
 describe('Windows installer process handling', () => {
+  it('never starts the installed application to request shutdown and blocks confirmed survivors', () => {
+    const check = nsisScript.slice(nsisScript.indexOf('Function JustDoCheckAppRunning'),
+      nsisScript.indexOf('FunctionEnd', nsisScript.indexOf('Function JustDoCheckAppRunning')));
+    expect(check).not.toMatch(/\bExec(?:Wait|Shell)?\s/);
+    expect(nsisScript).toContain('-Action RequestQuit');
+    const forced = check.slice(check.indexOf('!insertmacro StopJustDoProcesses $0'));
+    expect(forced.indexOf('Abort "${PRODUCT_NAME} is still running.')).toBeGreaterThan(-1);
+    expect(forced.indexOf('Abort "${PRODUCT_NAME} is still running.')).toBeLessThan(
+      forced.indexOf('Goto JustDoInstallInspectionFailed'));
+  });
+
   it('keeps the automatic-close, manual-retry, and cancel choices', () => {
     expect(nsisScript).toContain('MessageBox MB_YESNOCANCEL|MB_ICONEXCLAMATION');
     expect(nsisScript).toContain('IDYES JustDoInstallAutoClose');
@@ -209,7 +220,8 @@ describe('Windows installer process handling', () => {
     expect(nsisScript).toContain('JUSTDO_APP_PROCESS_NAME');
     expect(processHelper).toContain('$process.ProcessName -ieq $appProcessName');
     expect(nsisScript).toContain('!insertmacro FindJustDoProcesses $0');
-    expect(nsisScript).toContain('!insertmacro WaitForJustDoProcesses $0 20');
+    expect(nsisScript).toContain('!insertmacro RequestAndWaitForInstallerQuit $0');
+    expect(nsisScript).toContain('!insertmacro WaitForJustDoProcesses ${_RESULT} ${INSTALLER_SHUTDOWN_ATTEMPTS}');
     expect(nsisScript).toContain('!insertmacro StopJustDoProcesses $0');
     expect(nsisScript).not.toContain('nsProcess::FindProcess');
     expect(nsisScript).not.toContain('nsProcess::KillProcess');
@@ -252,7 +264,7 @@ describe('Windows installer process handling', () => {
 
   it('runs process checks from a script file instead of a fragile inline command', () => {
     expect(nsisScript).toContain('/TIMEOUT=15000');
-    expect(nsisScript).toContain('/TIMEOUT=90000');
+    expect(nsisScript).toContain('/TIMEOUT=${INSTALLER_PROCESS_WAIT_TIMEOUT}');
     expect(nsisScript).not.toContain('-Command "');
     expect(processHelper).not.toContain("StageRuntimes");
     expect(nsisScript).not.toContain("JustDoStageManagedRuntimes");
