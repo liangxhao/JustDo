@@ -261,6 +261,8 @@ Gateway 运行期间不执行同步编译缓存序列化，缓存由 launcher �
 
 进程 generation 与连接 generation 用于淘汰旧退出通知、重连结果和事件。唤醒或断线后建立新连接，不允许旧 socket 的终态更新新运行。Manager 的进程就绪只代表 Gateway 服务可用，模型认证与 session 权限还有独立验证。
 
+新输入遇到同会话尚未结束的原生重启恢复时，先等待该恢复推进；这时输入可能已经由 Gateway 接收，但尚未发出模型请求。应用进程换代的恢复边界使用真实会话记录判断启动时间，并以精确物理 sessionId 退休原有 `running + abortedLastRun` 记录；同一应用进程内的 Gateway 重启继续走原生恢复。无法确认身份或状态时保留原记录，报告本次恢复尝试受阻，不把它当成整轮执行失败，也不无限返回 deferred 使新输入每五秒重复等待。已确认退休与未确认写入分别记录 `prior_app_interrupted` 和 `prior_app_settlement_unconfirmed`，不沿用默认的 `preparation_failed` 归因。
+
 ## 4. 配置发布与执行准入
 
 宿主诊断可从已认证 lifecycle/chat 失败事件的固定公开错误识别

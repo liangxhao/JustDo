@@ -158,12 +158,17 @@ function createModelExecAutoReviewer(params) {
 }`,
 };
 const recoveryFixture = `async function recoverStore(params) {
-  const result = { started: 0, settled: 0, skipped: 0 };
+  const result = { started: 0, settled: 0, failed: 0, skipped: 0 };
   for (const { sessionKey, entry: loadedEntry } of params.entries) {
     let entry = loadedEntry;
-    const resumeDedupeKey = sessionKey;
-    if (params.handledSessionKeys.has(resumeDedupeKey)) continue;
-    const observed = await commitMainSessionRecovery({ entry });
+    let decision = { decision: "deferred", reason: "preparation_failed", nextOwner: "main-session-recovery" };
+    try {
+      if (stopped()) return result;
+      const dispatchTarget = { agentId: "main", sessionKey };
+      const resumeDedupeKey = JSON.stringify([dispatchTarget.agentId, sessionKey]);
+      if (params.handledSessionKeys.has(resumeDedupeKey)) continue;
+      const observed = await commitMainSessionRecovery({ entry });
+    } finally { mainSessionRecoveryLog.info(JSON.stringify(decision)); }
   }
   return result;
 }

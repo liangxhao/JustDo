@@ -15,6 +15,8 @@ The earlier alias-aware canonical-readiness patch remains retired: the pristine 
 ## Target changes and cross-review
 
 - **005:** native restart recovery adds `safeToolsRequired` and delegated-sender settlement, but has no host-process epoch. The prior-app boundary remains ahead of native recovery dispatch. A tool timeout's new `interrupted` session projection does not authorize replay or broaden the existing running-session settlement helper.
+
+  The boundary resolves the session entry from the recovery loop's exact destructured source, rather than an unrelated declaration after its stop check. Both application and verification require that same entry in the epoch guard and physical session ID. The earlier incorrect routing-object binding is rejected even with the current version marker; rebuild from the locked pristine archive. Confirmed prior-host retirement reports `settled/prior_app_interrupted`. An unconfirmed identity/status write preserves the row and reports a failed recovery attempt with `blocked/prior_app_settlement_unconfirmed`, so foreground admission does not retry it every five seconds indefinitely. This is not a new execution terminal or permission to recover non-running prior-host work.
 - **019:** native SQLite worker retirement now distinguishes refusal before opening and loss of a physical file. Those database lease facts are separate from plugin execution settlement and managed-tool cleanup. Native asynchronous current-session proofs, synchronous registry actor callbacks, exact `pluginOwnerId` checks and original admitted-entry return values remain intact. Native cancellation publication still needs the exact, single-use late `executionSettled:true` reservation; ordinary cancellation cannot establish whole-run settlement.
 - **022:** compaction adds admitted `requestFromEntryId` and pending-request provenance. The wrapper preserves that native recovery body. These changes do not add public preparation-scoped cancellation, final settlement receipts or complete recovery operation events. The real handler-custody export remains `t`, distinct from the in-process `n` binder.
 - **024:** plugin capture now uses `createPluginCaptureResolver` and Windows source aliases are rebased for safe copy. The accepted external absolute directory-junction gap remains; the patch preserves the full native reference, hardlink and containment filter.
@@ -111,6 +113,8 @@ The following paths were returned by a clean application on the pristine target.
 ## Test ownership
 
 Focused target tests live in `tests/openclaw/patches/v2026.10.7/`. Historical patch/test directories remain historical regression evidence; they do not count as target acceptance. Historical native suites admit only their exact package version: an unavailable or different implicit default skips only artifact-dependent scenarios, while an explicitly supplied missing or wrong-version runtime fails. Hermetic historical controls remain active.
+
+For 005, `startup-recovery.test.ts` retains the native stop-check/routing declaration order and exercises host-epoch, physical-identity, unconfirmed-write and historical-shape boundaries. Set `JUSTDO_EXECUTION_PRISTINE_DIR` to the locked unmodified package to also execute its actual recovery owner with in-memory storage seams; this checks the native candidate/finally control flow without starting Gateway, reading user state or making model requests. The compiled metadata suite separately checks source/bundle application, idempotence and atomic rejection.
 
 | Capability | Tests |
 | --- | --- |

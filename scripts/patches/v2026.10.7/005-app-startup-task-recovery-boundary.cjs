@@ -8,6 +8,9 @@
 
 const fs = require('fs');
 const path = require('path');
+const ts = require('typescript');
+const { canonicalHelper } = require('../../openclaw/native-support-contract.cjs');
+const { collect, one, parse } = require('./prepared-read-patch-shapes.js');
 const {
   countOccurrences,
   assertCurrentPatchContract,
@@ -99,55 +102,180 @@ function transformMain(content, filePath) {
     throw new Error(`${filePath}: historical or partial app-start main recovery patch detected`);
   }
 
-  const range = findRecoverStoreRange(content, filePath);
-  const resultName =
-    /\b(?:const|let)\s+([A-Za-z_$][\w$]*)\s*=\s*\{\s*started:\s*0,\s*settled:\s*0/u.exec(
-      range.body,
-    )?.[1];
-  const loopMatch =
-    /for\s*\(\s*(?:const|let)\s*\{\s*sessionKey(?:\s*:\s*([A-Za-z_$][\w$]*))?\s*,\s*entry:\s*([A-Za-z_$][\w$]*)\s*\}/u.exec(
-      range.body,
-    );
-  const sessionKeyName = loopMatch?.[1] ?? (loopMatch ? 'sessionKey' : undefined);
-  const observed = /(?:const|let)\s+[\w$]+\s*=\s*await\s+commitMainSessionRecovery\s*\(/u.exec(
-    range.body,
-  );
-  if (!resultName || !sessionKeyName || !observed) {
-    throw new Error(`${filePath}: app-start main recovery insertion context is unknown`);
-  }
-  const parameter = /recoverStore\(([^)]+)\)/.exec(content)[1].trim();
-  const entryName =
-    /(?:let|const)\s+([\w$]+)\s*=\s*/.exec(
-      range.body.slice(loopMatch.index).split('if (stopped())')[1] ?? '',
-    )?.[1] ||
-    new RegExp('(?:let|const)\\s+([\\w$]+)\\s*=\\s*' + loopMatch[2]).exec(
-      range.body.slice(loopMatch.index),
-    )?.[1];
-  const dedupeName = /handledSessionKeys\.has\(([^)]+)\)/.exec(range.body)?.[1];
-  if (!entryName || !dedupeName) throw new Error(filePath + ': recovery bindings missing');
-  const guard = `if (${MAIN_PRIOR_HELPER}(${entryName})) {
-      const justDoSettled = await ${MAIN_SETTLE_HELPER}({
-        sessionId: ${entryName}.sessionId,
-        sessionKey: ${sessionKeyName},
-        storePath: ${parameter}.storePath
-      });
-      if (justDoSettled) {
-        ${parameter}.handledSessionKeys.add(${dedupeName});
-        ${resultName}.settled++;
-        mainSessionRecoveryLog.info(\`interrupted prior-app main session: \${${sessionKeyName}}\`);
-      } else ${resultName}.skipped++;
-      continue;
-    }
-    `;
-  const observedIndex = range.bodyStart + 1 + observed.index;
+  const bindings = recoverStoreBindings(content, filePath);
+  const { range, observedIndex } = bindings;
+  const guard = mainRecoveryGuard(bindings);
   const updated =
     content.slice(0, range.signatureIndex) +
     MAIN_HELPER_BLOCK +
     content.slice(range.signatureIndex, observedIndex) +
     guard +
+    '\n' +
     content.slice(observedIndex);
   assertMainContracts(updated, filePath);
   return updated;
+}
+
+function mainRecoveryGuard({
+  entryName,
+  sessionKeyName,
+  parameter,
+  dedupeName,
+  resultName,
+  decisionName,
+}) {
+  return `if (${MAIN_PRIOR_HELPER}(${entryName})) {
+      const priorAppSettled = await ${MAIN_SETTLE_HELPER}({
+        sessionId: ${entryName}.sessionId,
+        sessionKey: ${sessionKeyName},
+        storePath: ${parameter}.storePath
+      });
+      if (priorAppSettled) {
+        ${parameter}.handledSessionKeys.add(${dedupeName});
+        ${resultName}.settled++;
+        ${decisionName} = { decision: "settled", reason: "prior_app_interrupted", nextOwner: "none" };
+        mainSessionRecoveryLog.info(\`interrupted prior-app main session: \${${sessionKeyName}}\`);
+      } else {
+        ${resultName}.failed++;
+        ${decisionName} = { decision: "blocked", reason: "prior_app_settlement_unconfirmed", nextOwner: "operator" };
+      }
+      continue;
+    }`;
+}
+
+function recoverStoreBindings(content, filePath) {
+  const range = findRecoverStoreRange(content, filePath);
+  const source = parse(content.slice(range.signatureIndex, range.bodyEnd + 1));
+  const owner = source.statements[0];
+  const exact = (values, label) => one(values, `${filePath}: recovery ${label}`);
+  if (
+    !ts.isFunctionDeclaration(owner) ||
+    !owner.body ||
+    owner.parameters.length !== 1 ||
+    !ts.isIdentifier(owner.parameters[0].name)
+  ) {
+    throw new Error(`${filePath}: recovery parameter binding changed`);
+  }
+  const declarations = block =>
+    block.statements.flatMap(statement =>
+      ts.isVariableStatement(statement) ? [...statement.declarationList.declarations] : [],
+    );
+  const hasProperties = (node, names) =>
+    node &&
+    ts.isObjectLiteralExpression(node) &&
+    names.every(name =>
+      node.properties.some(
+        property => ts.isPropertyAssignment(property) && property.name.getText(source) === name,
+      ),
+    );
+  const result = exact(
+    declarations(owner.body).filter(
+      declaration =>
+        ts.isIdentifier(declaration.name) &&
+        hasProperties(declaration.initializer, ['started', 'settled', 'failed', 'skipped']),
+    ),
+    'result binding',
+  );
+  const loop = exact(
+    owner.body.statements.filter(
+      statement =>
+        ts.isForOfStatement(statement) &&
+        ts.isVariableDeclarationList(statement.initializer) &&
+        statement.initializer.declarations.length === 1 &&
+        ts.isObjectBindingPattern(statement.initializer.declarations[0].name),
+    ),
+    'session loop',
+  );
+  if (!ts.isBlock(loop.statement)) throw new Error(`${filePath}: recovery loop body changed`);
+  const pattern = loop.initializer.declarations[0].name;
+  const element = property =>
+    exact(
+      pattern.elements.filter(
+        binding =>
+          ts.isIdentifier(binding.name) &&
+          (binding.propertyName?.getText(source) ?? binding.name.text) === property,
+      ),
+      `${property} binding`,
+    );
+  const sessionKeyName = element('sessionKey').name.text;
+  const loadedEntryName = element('entry').name.text;
+  // Follow the loop's actual entry source, never the first unrelated declaration
+  // after a stop check (the native dispatch target has no sessionId/startedAt).
+  const entry = exact(
+    declarations(loop.statement).filter(
+      declaration =>
+        ts.isIdentifier(declaration.name) &&
+        declaration.initializer &&
+        ts.isIdentifier(declaration.initializer) &&
+        declaration.initializer.text === loadedEntryName,
+    ),
+    'entry binding',
+  );
+  const bindingNames = name =>
+    ts.isIdentifier(name)
+      ? [name.text]
+      : name.elements.flatMap(element =>
+          ts.isBindingElement(element) ? bindingNames(element.name) : [],
+        );
+  exact(
+    collect(
+      loop.statement,
+      node => ts.isVariableDeclaration(node) && bindingNames(node.name).includes(entry.name.text),
+    ),
+    'unshadowed entry binding',
+  );
+  const decision = exact(
+    declarations(loop.statement).filter(
+      declaration =>
+        ts.isIdentifier(declaration.name) &&
+        hasProperties(declaration.initializer, ['decision', 'reason', 'nextOwner']),
+    ),
+    'decision binding',
+  );
+  const attempt = exact(loop.statement.statements.filter(ts.isTryStatement), 'attempt block');
+  const observed = exact(
+    attempt.tryBlock.statements.filter(
+      statement =>
+        ts.isVariableStatement(statement) &&
+        statement.declarationList.declarations.some(
+          declaration =>
+            declaration.initializer &&
+            ts.isAwaitExpression(declaration.initializer) &&
+            ts.isCallExpression(declaration.initializer.expression) &&
+            ts.isIdentifier(declaration.initializer.expression.expression) &&
+            declaration.initializer.expression.expression.text === 'commitMainSessionRecovery',
+        ),
+    ),
+    'native observe statement',
+  );
+  const dedupe = exact(
+    collect(
+      attempt.tryBlock,
+      node =>
+        ts.isCallExpression(node) &&
+        node.getStart(source) < observed.getStart(source) &&
+        ts.isPropertyAccessExpression(node.expression) &&
+        node.expression.name.text === 'has' &&
+        ts.isPropertyAccessExpression(node.expression.expression) &&
+        node.expression.expression.name.text === 'handledSessionKeys' &&
+        node.arguments.length === 1 &&
+        ts.isIdentifier(node.arguments[0]),
+    ),
+    'dedupe binding',
+  );
+  return {
+    range,
+    source,
+    attempt,
+    observedIndex: range.signatureIndex + observed.getStart(source),
+    observedStart: observed.getStart(source),
+    parameter: owner.parameters[0].name.text,
+    resultName: result.name.text,
+    entryName: entry.name.text,
+    sessionKeyName,
+    dedupeName: dedupe.arguments[0].text,
+    decisionName: decision.name.text,
+  };
 }
 
 function findRecoverStoreRange(content, filePath) {
@@ -205,11 +333,25 @@ function assertMainContracts(content, filePath) {
   ]) {
     if (!content.includes(required)) throw new Error(`${filePath}: missing ${required}`);
   }
-  const range = findRecoverStoreRange(content, filePath);
-  const boundaryIndex = range.body.indexOf(`${MAIN_PRIOR_HELPER}(`);
-  const dispatchIndex = range.body.indexOf('commitMainSessionRecovery(');
-  if (boundaryIndex < 0 || dispatchIndex < 0 || boundaryIndex > dispatchIndex) {
-    throw new Error(`${filePath}: prior-app main session can reach native recovery dispatch`);
+  const bindings = recoverStoreBindings(content, filePath);
+  const guards = collect(
+    bindings.attempt.tryBlock,
+    node =>
+      ts.isIfStatement(node) &&
+      ts.isCallExpression(node.expression) &&
+      ts.isIdentifier(node.expression.expression) &&
+      node.expression.expression.text === MAIN_PRIOR_HELPER,
+  );
+  if (
+    guards.length !== 1 ||
+    guards[0].parent !== bindings.attempt.tryBlock ||
+    guards[0].getStart(bindings.source) > bindings.observedStart ||
+    canonicalHelper(`async function boundary(){for(;;){${guards[0].getText(bindings.source)}}}`) !==
+      canonicalHelper(`async function boundary(){for(;;){${mainRecoveryGuard(bindings)}}}`)
+  ) {
+    throw new Error(
+      `${filePath}: historical or partial app-start main recovery patch detected; rebuild from pristine`,
+    );
   }
 }
 
