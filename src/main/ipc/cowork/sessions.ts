@@ -26,6 +26,7 @@ import {
   type SessionRunUnknownInput,
 } from '../../../shared/cowork/sessionRun';
 import { CoworkSessionSearchIpc } from '../../../shared/cowork/sessionSearch';
+import { ExternalSessionSource } from '../../../shared/integrations/externalSession';
 import { OpenClawExtensionId } from '../../../shared/plugins/nativeIds';
 import {
   isPermissionMode,
@@ -193,6 +194,21 @@ export const registerCoworkSessionHandlers = ({
   ): Promise<SessionRuntimeSnapshot> => {
     const store = getCoworkStore();
     let timing = store.getLatestSessionRun(sessionId);
+    const external = store.getSession?.(sessionId)?.external;
+    if (external?.readOnly === true && (
+      external.origin === ExternalSessionSource.Cli ||
+      external.origin === ExternalSessionSource.HistoricalAppServer
+    )) {
+      // These receipts belong to the external execution owner. Native activity
+      // snapshots may arrive after its exact settlement and cannot create,
+      // reopen, bind or finish a receipt through desktop observation.
+      return {
+        ...raw,
+        running: raw.running || timing?.state === 'running',
+        revision: nextRevision(sessionId),
+        ...(timing ? { timing } : {}),
+      };
+    }
 
     if (stoppingSessions.has(sessionId) && !raw.running) {
       return {

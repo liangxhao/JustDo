@@ -462,7 +462,7 @@ it('updates plugin activity without granting main execution state', () => {
 });
 
 describe('sidebar browser extension group', () => {
-  it('shows only Chrome and CLI source groups and keeps browser sessions out of manual groups', () => {
+  it('shows Chrome and Clients source groups and keeps browser sessions out of manual groups', () => {
     const store = createStore();
     store.dispatch(
       setGroups([{ id: 'work', name: 'Work', color: '#359daf', sortOrder: 0, createdAt: 1 }]),
@@ -493,16 +493,16 @@ describe('sidebar browser extension group', () => {
     expect(screen.queryByText('Browser newer')).toBeNull();
     expect(screen.queryByText('Browser older')).toBeNull();
     expect(screen.getByText('Desktop chat')).toBeTruthy();
-    expect(screen.getByRole('button', { name: /^CLI\s*1$/ }).getAttribute('aria-expanded')).toBe(
+    expect(screen.getByRole('button', { name: /^Clients\s*1$/ }).getAttribute('aria-expanded')).toBe(
       'false',
     );
-    expect(screen.queryByText('External clients')).toBeNull();
+    expect(screen.queryByRole('button', { name: /^CLI\s*1$/ })).toBeNull();
     expect(
       screen
         .getAllByRole('button')
         .filter(button => button.classList.contains('session-group-header'))
         .map(button => button.textContent),
-    ).toEqual(['CLI1', 'Chrome2', 'Work0']);
+    ).toEqual(['Clients1', 'Chrome2', 'Work0']);
 
     fireEvent.click(browserGroup);
     const panel = browserGroup.nextElementSibling as HTMLElement;
@@ -516,7 +516,7 @@ describe('sidebar browser extension group', () => {
     expect(screen.queryByText('Browser newer')).toBeNull();
   });
 
-  it('opens the CLI group when a CLI conversation is selected', () => {
+  it('opens the Clients group when a CLI conversation is selected', () => {
     const cli: CoworkSessionSummary = {
       ...summary('CLI chat', 1),
       external: {
@@ -534,9 +534,9 @@ describe('sidebar browser extension group', () => {
       </Provider>,
     );
 
-    const group = screen.getByRole('button', { name: /^CLI\s*1$/ });
+    const group = screen.getByRole('button', { name: /^Clients\s*1$/ });
     expect(group.getAttribute('aria-expanded')).toBe('true');
-    expect(screen.queryByText('External clients')).toBeNull();
+    expect(screen.queryByRole('button', { name: /^CLI\s*1$/ })).toBeNull();
     fireEvent.click(screen.getByText(cli.title));
     expect(props.onSelectSession).toHaveBeenCalledExactlyOnceWith(cli.id);
     expect(cli.external).toEqual({

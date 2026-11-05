@@ -150,7 +150,7 @@ describe('AgentBridgeServer', () => {
   it('cancels execution on stdin EOF while the output consumer is paused', async () => {
     const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'external-agent-bridge-'));
     temporaryDirectories.push(userDataPath);
-    const thread = { id: 'thread', cwd: userDataPath, agentId: 'main' };
+    const thread = { id: 'thread', cwd: userDataPath, agentId: 'main', modelRef: 'provider/model' };
     let started!: () => void;
     const running = new Promise<void>(resolve => {
       started = resolve;
@@ -181,7 +181,9 @@ describe('AgentBridgeServer', () => {
         activeTaskCount: 1,
         connect: (_cwd: string, _env: Record<string, string>, send: (message: unknown) => void) =>
           new CodexAppServerSession(
-            { models: () => [], start: async () => thread, resume: async () => thread, run },
+            { models: () => [], start: async () => thread, resume: async () => thread, run,
+              describe: () => ({ ...thread, name: 'Fixture', createdAt: 1000, updatedAt: 2000,
+                permissionMode: 'full', status: 'completed' }) },
             send,
           ),
       } as unknown as AgentBridgeCommandService,
@@ -212,7 +214,8 @@ describe('AgentBridgeServer', () => {
         encodeAgentBridgeMessage({
           type: 'stdin',
           data: [
-            { id: 1, method: 'initialize' },
+            { id: 1, method: 'initialize', params: { clientInfo: { name: 'test-client', version: '1.0.0' } } },
+            { method: 'initialized' },
             { id: 2, method: 'thread/start', params: {} },
             {
               id: 3,
@@ -241,7 +244,7 @@ describe('AgentBridgeServer', () => {
     const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'external-agent-bridge-'));
     temporaryDirectories.push(userDataPath);
     const text = '"'.repeat(7 * 1024 * 1024) + '任务🌍';
-    const thread = { id: 'thread', cwd: userDataPath, agentId: 'main' };
+    const thread = { id: 'thread', cwd: userDataPath, agentId: 'main', modelRef: 'provider/model' };
     const run = vi.fn<CodexAppServerBackend['run']>(async (_thread, _runId, input, onEvent) => {
       expect(input).toBe(text);
       onEvent({
@@ -256,7 +259,9 @@ describe('AgentBridgeServer', () => {
         activeTaskCount: 0,
         connect: (_cwd: string, _env: Record<string, string>, send: (message: unknown) => void) =>
           new CodexAppServerSession(
-            { models: () => [], start: async () => thread, resume: async () => thread, run },
+            { models: () => [], start: async () => thread, resume: async () => thread, run,
+              describe: () => ({ ...thread, name: 'Fixture', createdAt: 1000, updatedAt: 2000,
+                permissionMode: 'full', status: 'completed' }) },
             send,
           ),
       } as unknown as AgentBridgeCommandService,
@@ -298,7 +303,8 @@ describe('AgentBridgeServer', () => {
             }),
           );
           const input = [
-            { id: 1, method: 'initialize' },
+            { id: 1, method: 'initialize', params: { clientInfo: { name: 'test-client', version: '1.0.0' } } },
+            { method: 'initialized' },
             { id: 2, method: 'thread/start', params: {} },
             {
               id: 3,
@@ -351,7 +357,7 @@ describe('AgentBridgeServer', () => {
         text,
         text,
       ]);
-      expect(output.at(-1)).toMatchObject({
+      expect(output.findLast(message => message.method === 'turn/completed')).toMatchObject({
         method: 'turn/completed',
         params: { turn: { status: 'completed' } },
       });

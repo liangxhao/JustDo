@@ -61,6 +61,16 @@ export class ExternalSessionStore {
     return row ? this.map(row) : null;
   }
 
+  list(): ExternalSession[] {
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM cowork_external_sessions WHERE source = ?
+       ORDER BY created_at DESC, external_session_key ASC`,
+      )
+      .all(this.source) as ExternalSessionRow[];
+    return rows.map(row => this.map(row));
+  }
+
   countUnsettled(): number {
     return (
       this.db

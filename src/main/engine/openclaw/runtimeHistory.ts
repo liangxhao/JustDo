@@ -29,7 +29,13 @@ export async function fetchSessionHistoryByKey(
   this: RuntimeHistoryContext,
   sessionKey: string,
   fallbackSessionId?: string | null,
-  options: { forceFullSnapshot?: boolean; scheduledTaskRun?: boolean; includePendingInputs?: boolean } = {},
+  options: {
+    forceFullSnapshot?: boolean;
+    scheduledTaskRun?: boolean;
+    includePendingInputs?: boolean;
+    /** Cancellation for standard authenticated chat-history snapshots and deltas. */
+    signal?: AbortSignal;
+  } = {},
 ): Promise<RuntimeSessionHistory | null> {
   const client = this.gatewayClient;
   if (!client) return null;
@@ -52,18 +58,31 @@ export async function fetchSessionHistoryByKey(
       );
     }
   }
+  const signal = options.signal;
+  const assertActive = () => signal?.throwIfAborted();
+  const request = async <T = Record<string, unknown>>(method: string, params: unknown): Promise<T> => {
+    assertActive();
+    // Preserve the existing two-argument call contract when no cancellation was supplied.
+    const result = signal
+      ? await client.request<T>(method, params, { signal })
+      : await client.request<T>(method, params);
+    assertActive();
+    return result;
+  };
   try {
+    assertActive();
     const fetchHistory = async (key: string): Promise<unknown[]> => {
       const cached = options.forceFullSnapshot ? undefined : this.sessionHistorySnapshots.get(key);
       if (cached) {
         const delta = parseChatHistoryCursorResultV2026_10_6(
-          await client.request('chat.history', {
+          await request('chat.history', {
             sessionKey: key,
             cursor: cached.deltaCursor,
           }),
         );
         if (delta.kind === 'delta') {
           const messages = mergeGatewayHistoryPages(cached.messages, delta.messages);
+          assertActive();
           this.setSessionHistorySnapshot(key, messages, delta.deltaCursor);
           return messages;
         }
@@ -79,7 +98,7 @@ export async function fetchSessionHistoryByKey(
 
         try {
           while (true) {
-            const raw = await client.request('chat.history', {
+            const raw = await request('chat.history', {
               sessionKey: key,
               limit: FULL_HISTORY_SYNC_LIMIT,
               ...(offset !== undefined ? { offset } : {}),
@@ -117,7 +136,7 @@ export async function fetchSessionHistoryByKey(
           // alone cannot, and catches appends that land after the first page.
           if (deltaCursor !== undefined) {
             const delta = parseChatHistoryCursorResultV2026_10_6(
-              await client.request('chat.history', {
+              await request('chat.history', {
                 sessionKey: key,
                 cursor: deltaCursor,
               }),
@@ -125,6 +144,7 @@ export async function fetchSessionHistoryByKey(
             if (delta.kind === 'reset') throw new HistorySnapshotChangedError();
             messages = mergeGatewayHistoryPages(messages, delta.messages);
             deltaCursor = delta.deltaCursor;
+            assertActive();
             this.setSessionHistorySnapshot(key, messages, deltaCursor);
           } else {
             this.sessionHistorySnapshots.delete(key);
@@ -145,13 +165,12 @@ export async function fetchSessionHistoryByKey(
     let history = await fetchHistory(resolvedSessionKey);
 
     if (history.length === 0 && fallbackSessionId?.trim()) {
-      const resolved = await client
-        .request<{ ok?: boolean; key?: string }>('sessions.resolve', {
-          sessionId: fallbackSessionId.trim(),
-          allowMissing: true,
-          includeUnknown: true,
-        })
-        .catch((): null => null);
+      const resolved = await request<{ ok?: boolean; key?: string }>('sessions.resolve', {
+        sessionId: fallbackSessionId.trim(),
+        allowMissing: true,
+        includeUnknown: true,
+      }).catch((): null => null);
+      assertActive();
       const canonicalKey =
         resolved?.ok === true && typeof resolved.key === 'string' ? resolved.key.trim() : '';
       if (canonicalKey && canonicalKey !== resolvedSessionKey) {
@@ -161,12 +180,13 @@ export async function fetchSessionHistoryByKey(
     }
 
     if (history.length === 0) {
-      const stored = await client.request<{ messages?: unknown[] }>('sessions.get', {
+      const stored = await request<{ messages?: unknown[] }>('sessions.get', {
         key: resolvedSessionKey,
         limit: FULL_HISTORY_SYNC_LIMIT,
       });
       history = Array.isArray(stored?.messages) ? stored.messages : [];
     }
+    assertActive();
     return {
       sessionKey: resolvedSessionKey,
       messages: history,

@@ -16,6 +16,10 @@ export function createCodexAppServerBackend(
     options.codexHome === undefined ? undefined : prepareCodexSessionMarker(options.codexHome);
   return {
     models: () => backend.models(),
+    ...(backend.describe ? { describe: (id: string) => backend.describe!(id) } : {}),
+    ...(backend.list ? { list: () => backend.list!() } : {}),
+    ...(backend.setName ? { setName: (id: string, name: string) => backend.setName!(id, name) } : {}),
+    ...(backend.history ? { history: (id: string) => backend.history!(id) } : {}),
     start: async params => {
       const onCreated = marker();
       return backend.start({

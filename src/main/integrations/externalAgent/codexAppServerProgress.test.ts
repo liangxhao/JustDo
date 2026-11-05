@@ -25,9 +25,11 @@ const event = (stream: string, data: Record<string, unknown>): NormalizedAgentEv
 function fixture() {
   const notify = vi.fn<AppServerNotify>();
   const fail = vi.fn();
-  const progress = new CodexAppServerProgress('Actual user input', notify, fail);
+  const progress = new CodexAppServerProgress('Actual user input', notify, fail, () => 1000);
   return { progress, notify, fail };
 }
+
+const agentFields = { memoryCitation: null, delivery: null, questions: null };
 
 describe('Codex app-server progress', () => {
   it('admits the actual user item once at native start while the model is silent', () => {
@@ -41,8 +43,11 @@ describe('Codex app-server progress', () => {
     expect(item).toEqual({
       id: expect.any(String),
       type: 'userMessage',
-      content: [{ type: 'text', text: 'Actual user input' }],
+      clientId: null,
+      content: [{ type: 'text', text: 'Actual user input', text_elements: [] }],
     });
+    expect(notify.mock.calls[0][1].startedAtMs).toBe(1000);
+    expect(notify.mock.calls[1][1].completedAtMs).toBe(1000);
     expect(notify.mock.calls[1][1].item).toEqual(item);
     progress.finish();
     expect(notify).toHaveBeenCalledTimes(2);
@@ -57,7 +62,10 @@ describe('Codex app-server progress', () => {
     expect(notify.mock.calls).toEqual([
       [
         'item/started',
-        { item: { id: itemId, type: 'agentMessage', text: '', phase: 'commentary' } },
+        {
+          item: { id: itemId, type: 'agentMessage', text: '', phase: 'commentary', ...agentFields },
+          startedAtMs: 1000,
+        },
       ],
       ['item/agentMessage/delta', { itemId, delta: 'Hello' }],
       ['item/agentMessage/delta', { itemId, delta: ' world' }],
@@ -67,7 +75,10 @@ describe('Codex app-server progress', () => {
       ['item/agentMessage/delta', { itemId, delta: '!' }],
       [
         'item/completed',
-        { item: { id: itemId, type: 'agentMessage', text: 'Hello world!', phase: 'final_answer' } },
+        {
+          item: { id: itemId, type: 'agentMessage', text: 'Hello world!', phase: 'final_answer', ...agentFields },
+          completedAtMs: 1000,
+        },
       ],
     ]);
   });
@@ -86,9 +97,9 @@ describe('Codex app-server progress', () => {
       .map(([, params]) => params.item);
     expect(completed).toEqual([
       { id: expect.any(String), type: 'reasoning', summary: [], content: ['Check the file'] },
-      { id: expect.any(String), type: 'agentMessage', phase: 'commentary', text: 'Reading now.' },
+      { id: expect.any(String), type: 'agentMessage', phase: 'commentary', text: 'Reading now.', ...agentFields },
       { id: expect.any(String), type: 'reasoning', summary: [], content: ['Confirm result'] },
-      { id: expect.any(String), type: 'agentMessage', phase: 'final_answer', text: 'Verified' },
+      { id: expect.any(String), type: 'agentMessage', phase: 'final_answer', text: 'Verified', ...agentFields },
     ]);
     expect(
       notify.mock.calls
@@ -137,7 +148,9 @@ describe('Codex app-server progress', () => {
           type: 'agentMessage',
           phase: 'commentary',
           text: 'Partial',
+          ...agentFields,
         },
+        completedAtMs: 1000,
       },
     ]);
   });
@@ -167,6 +180,52 @@ describe('Codex app-server progress', () => {
         .map(([, params]) => params.delta),
     ).toEqual(['Visible']);
     expect(JSON.stringify(notify.mock.calls)).not.toContain('Hidden');
+  });
+
+  it('starts distinct native messages even when their text shares a prefix', () => {
+    const { progress, notify } = fixture();
+    progress.accept(event('assistant', { text: 'Same', assistantTextScope: { id: 'first' } }));
+    progress.accept(event('assistant', { delta: 'Same answer', assistantTextScope: { id: 'second' } }));
+    progress.finish('Same answer');
+    const completed = notify.mock.calls
+      .filter(([method]) => method === 'item/completed')
+      .map(([, params]) => params.item as Record<string, unknown>);
+    expect(completed.map(item => item.text)).toEqual(['Same', 'Same answer']);
+    expect(completed.map(item => item.phase)).toEqual(['commentary', 'final_answer']);
+    expect(completed[0].id).not.toBe(completed[1].id);
+    expect(completed.every(item => !('scopeId' in item) && !('nativeItemId' in item))).toBe(true);
+  });
+
+  it('keeps native item identity when committing guarded text', () => {
+    const { progress, notify } = fixture();
+    progress.accept(event('assistant', { text: 'Earlier', itemId: 'one' }));
+    progress.accept(event('assistant', {
+      delta: 'Earlier but separate',
+      itemId: 'two',
+      [TERMINAL_GUARD_OBSERVATION_KEY]: { token: 'guard', action: 'update' },
+    }));
+    progress.accept(event('assistant', {
+      [TERMINAL_GUARD_OBSERVATION_KEY]: { token: 'guard', action: 'commit' },
+    }));
+    progress.finish('Earlier but separate');
+    expect(notify.mock.calls
+      .filter(([method]) => method === 'item/agentMessage/delta')
+      .map(([, params]) => params.delta)).toEqual(['Earlier', 'Earlier but separate']);
+    const items = notify.mock.calls
+      .filter(([method]) => method === 'item/completed')
+      .map(([, params]) => params.item as Record<string, unknown>);
+    expect(items.map(item => item.text)).toEqual(['Earlier', 'Earlier but separate']);
+  });
+
+  it('includes lifecycle timestamps for reasoning and assistant items', () => {
+    const { progress, notify } = fixture();
+    progress.accept(event('thinking', { text: 'Thinking' }));
+    progress.accept(event('assistant', { text: 'Answer' }));
+    progress.finish('Answer');
+    for (const [method, params] of notify.mock.calls) {
+      if (method === 'item/started') expect(params.startedAtMs).toBe(1000);
+      if (method === 'item/completed') expect(params.completedAtMs).toBe(1000);
+    }
   });
 
   it.each(['assistant', 'thinking'])('rejects oversized %s events before sending text', stream => {

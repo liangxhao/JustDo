@@ -14,7 +14,7 @@ afterEach(async () => {
 });
 
 function fixture() {
-  const thread = { id: 'same-wire-id', cwd: process.cwd(), agentId: 'main' };
+  const thread = { id: 'same-wire-id', cwd: process.cwd(), agentId: 'main', modelRef: 'provider/model' };
   const browserThread = {
     ...thread, title: 'Browser conversation', permissionMode: 'auto' as const,
     createdAt: 1_000, updatedAt: 1_000, status: 'running',
@@ -36,6 +36,8 @@ function fixture() {
     models: vi.fn(() => [{ id: 'provider/model', name: 'Configured', isDefault: true }]),
     start: vi.fn(async () => thread),
     resume: vi.fn(async () => thread),
+    describe: vi.fn(() => ({ ...thread, name: 'Console conversation', createdAt: 1000, updatedAt: 1000,
+      permissionMode: 'full' as const, status: 'completed' as const })),
     run: vi.fn(async () => 'Console answer'),
   };
   const hub = new BrowserAppServerHub(api, 'test-version');
@@ -54,8 +56,8 @@ function fixture() {
       return output.findLast(value => value.id === id)!;
     };
     const initialize = async () => {
-      await request('initialize', { clientInfo: { name: 'untrusted caller' } });
-      if (browser) await connection.receive({ method: 'initialized' });
+      await request('initialize', { clientInfo: { name: 'untrusted caller', version: '1.0.0' } });
+      await connection.receive({ method: 'initialized' });
     };
     return { connection, output, request, initialize };
   };
@@ -83,7 +85,7 @@ describe.each([true, false])('real app-server binding through the shared engine 
     } else {
       expect(h.backend.start).toHaveBeenCalledExactlyOnceWith({ cwd: h.thread.cwd, model: undefined });
       expect(h.backend.run).toHaveBeenCalledWith(
-        h.thread, expect.any(String), 'Console input', expect.any(Function), expect.any(AbortSignal),
+        h.thread, expect.any(String), 'Console input', expect.any(Function), expect.any(AbortSignal), undefined,
       );
       expect(h.api.sendMessage).not.toHaveBeenCalled();
     }
@@ -97,8 +99,10 @@ it('does not mix capabilities or same-ID execution ownership between browser and
   await browser.initialize();
   await consolePeer.initialize();
   expect(await browser.request('thread/list')).toHaveProperty('result.data');
-  for (const method of ['thread/list', 'thread/read', 'thread/image', 'composer/options', 'browser/extension/pair'])
+  for (const method of ['thread/list', 'thread/image', 'composer/options', 'browser/extension/pair'])
     expect(await consolePeer.request(method, { threadId: h.thread.id })).toHaveProperty('error');
+  expect(await consolePeer.request('thread/read', { threadId: h.thread.id }))
+    .toMatchObject({ result: { thread: { name: 'Console conversation', turns: [] } } });
   for (const method of ['thread/resume', 'model/list', 'thread/name/set'])
     expect(await browser.request(method, { threadId: h.thread.id })).toHaveProperty('error');
   expect(h.api.getMessages).not.toHaveBeenCalled();

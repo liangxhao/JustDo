@@ -9,13 +9,16 @@ import { ExternalSessionSource } from '../../../shared/integrations/externalSess
 import { OpenClawProviderId } from '../../../shared/providers/constants';
 import { CoworkStore } from '../../data/coworkStore';
 import { SqliteStore } from '../../data/sqliteStore';
+import { buildManagedSessionKey } from '../../openclaw/sessions/openclawSessionKeys';
 import {
   ExternalAgentBackendFactory,
+  ExternalAgentBusyError,
   ExternalAgentCancelledError,
   ExternalAgentOutcomeUnknownError,
   ExternalAgentStreamError,
 } from './externalAgentBackend';
 import type { ExternalAgentExecution } from './externalAgentTypes';
+import { reserveExternalSession } from './externalSessionReservations';
 import { ExternalSessionStore } from './externalSessionStore';
 
 const cleanup: Array<() => void> = [];
@@ -51,6 +54,7 @@ function fixture() {
     external,
     models,
     execute,
+    onSessionsChanged,
     factory,
     options,
     backend: factory.connect(),
@@ -98,6 +102,295 @@ it('retains a selected assistant and confirmed model route while rejecting unava
   await expect(f.backend.start({ cwd: f.cwd, agentId: 'missing' })).rejects.toThrow(
     'assistant is unavailable',
   );
+});
+
+it('describes persisted per-thread metadata without exposing native execution identities', async () => {
+  const f = fixture();
+  const thread = await f.backend.start({ cwd: f.cwd, model: 'other/selected' });
+  const session = f.store.listSessions()[0];
+  f.store.updateSession(session.id, { title: 'Persisted title', permissionMode: 'ask' });
+  f.store.recordSessionActivity(session.id, Date.now() + 10_000);
+  const runId = randomUUID();
+  f.external.beginExecution(thread.id, runId);
+  f.external.bindExecution(thread.id, runId, {
+    sessionKey: 'private-native-key',
+    sessionId: 'private-native-id',
+    lifecycleRevision: 'private-native-revision',
+  });
+  f.external.markExecutionUnknown(thread.id, runId);
+
+  const metadata = f.backend.describe!(thread.id);
+
+  expect(metadata).toEqual({
+    id: thread.id,
+    name: 'Persisted title',
+    cwd: thread.cwd,
+    agentId: 'main',
+    modelRef: 'other/selected',
+    permissionMode: 'ask',
+    status: 'running',
+    executionState: 'unknown',
+    createdAt: session.createdAt,
+    updatedAt: f.store.getSession(session.id)!.updatedAt,
+  });
+  expect(f.store.getConfig().permissionMode).toBe('full');
+  expect(JSON.stringify(metadata)).not.toMatch(/private-native|executionRunId|coworkSessionId/);
+  expect(f.execute).not.toHaveBeenCalled();
+});
+
+it('lists only live CLI identities and does not hide database read failures', async () => {
+  const f = fixture();
+  const visible = await f.backend.start({ cwd: f.cwd });
+  const moved = await f.backend.start({ cwd: f.cwd });
+  const missingDirectory = path.join(f.cwd, 'removed-directory');
+  fs.mkdirSync(missingDirectory);
+  await f.backend.start({ cwd: missingDirectory });
+  fs.rmdirSync(missingDirectory);
+  const other = path.join(f.cwd, 'other-directory');
+  fs.mkdirSync(other);
+  f.store.updateSession(f.external.get(moved.id)!.coworkSessionId, { cwd: other });
+  const historicalSession = f.store.createSession('Historical', f.cwd);
+  new ExternalSessionStore(f.sqlite.getDatabase(), ExternalSessionSource.HistoricalAppServer).create({
+    externalSessionKey: randomUUID(),
+    coworkSessionId: historicalSession.id,
+    agentId: 'main',
+    cwd: f.cwd,
+    openclawSessionKey: '',
+  });
+  f.store.createSession('Ordinary desktop conversation', f.cwd);
+  const malformed = f.store.createSession('Malformed mapping', f.cwd);
+  f.external.create({
+    externalSessionKey: 'not-an-external-uuid',
+    coworkSessionId: malformed.id,
+    agentId: 'main',
+    cwd: f.cwd,
+    openclawSessionKey: '',
+  });
+  const changesBeforeRead = f.onSessionsChanged.mock.calls.length;
+
+  expect(f.backend.list!().map(thread => thread.id)).toEqual([visible.id]);
+  expect(f.onSessionsChanged).toHaveBeenCalledTimes(changesBeforeRead);
+  expect(f.execute).not.toHaveBeenCalled();
+  vi.spyOn(f.store, 'getSession').mockImplementationOnce(() => {
+    throw new Error('Database read failed');
+  });
+  expect(() => f.backend.list!()).toThrow('Database read failed');
+});
+
+it('persists validated thread names and keeps renamed metadata available across connections', async () => {
+  const f = fixture();
+  const thread = await f.backend.start({ cwd: f.cwd });
+  const changesBeforeRename = f.onSessionsChanged.mock.calls.length;
+
+  f.backend.setName!(thread.id, '  New task title  ');
+
+  expect(f.factory.connect().describe!(thread.id).name).toBe('New task title');
+  expect(f.store.getSession(f.external.get(thread.id)!.coworkSessionId)?.title).toBe('New task title');
+  expect(f.onSessionsChanged).toHaveBeenCalledTimes(changesBeforeRename + 1);
+  for (const name of ['   ', 'x'.repeat(501)]) {
+    expect(() => f.backend.setName!(thread.id, name)).toThrow('thread name');
+  }
+  expect(() => f.backend.setName!('agent:main:native-key', 'Wrong identity')).toThrow('identity');
+  expect(f.backend.describe!(thread.id).name).toBe('New task title');
+  expect(f.execute).not.toHaveBeenCalled();
+});
+
+it('rejects unavailable owners and historical namespaces during metadata access', async () => {
+  const f = fixture();
+  const thread = await f.backend.start({ cwd: f.cwd });
+  f.store.updateAgent(thread.agentId, { enabled: false });
+
+  expect(f.backend.list!()).toEqual([]);
+  expect(() => f.backend.describe!(thread.id)).toThrow('assistant is unavailable');
+  expect(() => f.backend.setName!(thread.id, 'Cannot rename')).toThrow('assistant is unavailable');
+  const historical = new ExternalSessionStore(
+    f.sqlite.getDatabase(),
+    ExternalSessionSource.HistoricalAppServer,
+  );
+  const wrongNamespace = new ExternalAgentBackendFactory({
+    ...f.options,
+    getExternalSessionStore: () => historical,
+  }).connect();
+  expect(() => wrongNamespace.list!()).toThrow('namespace is unavailable');
+});
+
+const bindHistory = async (f: ReturnType<typeof fixture>) => {
+  const thread = await f.backend.start({ cwd: f.cwd });
+  const external = f.external.get(thread.id)!;
+  f.store.bindNativeSession(external.coworkSessionId, 'private-history-key', null);
+  const runId = randomUUID();
+  f.external.beginExecution(thread.id, runId);
+  f.external.bindExecution(thread.id, runId, {
+    sessionKey: 'private-history-key', sessionId: 'private-history-sid', lifecycleRevision: 'history-revision',
+  });
+  f.external.finishExecution(thread.id, runId, 'completed');
+  const timing = f.store.beginSessionRun({ sessionId: external.coworkSessionId, clientTurnId: runId, startedAt: 1_000 });
+  return { thread, external, timing };
+};
+
+it('reads new empty histories without waking native services', async () => {
+  const f = fixture();
+  const thread = await f.backend.start({ cwd: f.cwd });
+  const readHistory = vi.fn(async () => ({ messages: [] }));
+  const backend = new ExternalAgentBackendFactory({ ...f.options, readHistory }).connect();
+
+  await expect(backend.history!(thread.id)).resolves.toEqual({ threadId: thread.id, messages: [], runs: [] });
+  expect(readHistory).not.toHaveBeenCalled();
+  expect(f.execute).not.toHaveBeenCalled();
+});
+
+it('loads authenticated snapshots using the exact binding without returning private native identities', async () => {
+  const f = fixture();
+  const h = await bindHistory(f);
+  f.store.finishSessionRun(h.timing.id, 'completed', 2_000);
+  const messages = [{ role: 'assistant', content: 'Verified native history' }];
+  const readHistory = vi.fn(async () => ({ messages }));
+  const backend = new ExternalAgentBackendFactory({ ...f.options, readHistory }).connect();
+
+  const result = await backend.history!(h.thread.id);
+
+  expect(readHistory).toHaveBeenCalledExactlyOnceWith({
+    sessionKey: 'private-history-key', nativeSessionId: 'private-history-sid', lifecycleRevision: 'history-revision',
+  });
+  expect(result).toMatchObject({
+    threadId: h.thread.id, messages, latestExternalRunId: h.timing.clientTurnId,
+    runs: [{ clientTurnId: h.timing.clientTurnId, state: 'completed' }],
+  });
+  expect(result.identityRevision).toEqual(expect.any(String));
+  expect(JSON.stringify(result)).not.toMatch(/private-history-key|private-history-sid|history-revision/);
+  expect(f.execute).not.toHaveBeenCalled();
+});
+
+it('pins receipt-only history to the external execution instead of a newer generic product timing', async () => {
+  const f = fixture();
+  const h = await bindHistory(f);
+  f.store.finishSessionRun(h.timing.id, 'completed', 2_000);
+  const unrelated = f.store.beginSessionRun({
+    sessionId: h.external.coworkSessionId, clientTurnId: randomUUID(), startedAt: 3_000,
+  });
+  const backend = new ExternalAgentBackendFactory({
+    ...f.options, readHistory: async () => ({ messages: [] }),
+  }).connect();
+
+  const result = await backend.history!(h.thread.id);
+
+  expect(result.latestExternalRunId).toBe(h.timing.clientTurnId);
+  expect(result.latestExternalRunId).not.toBe(unrelated.clientTurnId);
+  expect(result.runs).toHaveLength(2);
+});
+
+it('rejects deleted or replaced history ownership after an asynchronous native read', async () => {
+  const f = fixture();
+  const h = await bindHistory(f);
+  const readHistory = vi.fn(async () => {
+    f.external.setOpenClawSessionKey(h.thread.id, 'replacement-native-key');
+    return { messages: [{ role: 'assistant', content: 'Late previous history' }] };
+  });
+  const backend = new ExternalAgentBackendFactory({ ...f.options, readHistory }).connect();
+
+  await expect(backend.history!(h.thread.id)).rejects.toThrow('identity changed');
+  expect(readHistory).toHaveBeenCalledOnce();
+  f.external.setOpenClawSessionKey(h.thread.id, 'private-history-key');
+  readHistory.mockImplementationOnce(async () => {
+    f.store.deleteSession(h.external.coworkSessionId);
+    return { messages: [] };
+  });
+  await expect(backend.history!(h.thread.id)).rejects.toThrow('unavailable');
+});
+
+it('rejects changed product native bindings even when the external mapping still points at an older native session', async () => {
+  const f = fixture();
+  const h = await bindHistory(f);
+  const readHistory = vi.fn(async () => {
+    f.store.bindNativeSession(h.external.coworkSessionId, 'new-product-native-key', null);
+    return { messages: [{ role: 'assistant', content: 'Old native history' }] };
+  });
+  const backend = new ExternalAgentBackendFactory({ ...f.options, readHistory }).connect();
+
+  await expect(backend.history!(h.thread.id)).rejects.toThrow('product conversation binding');
+  expect(readHistory).toHaveBeenCalledOnce();
+  await expect(backend.history!(h.thread.id)).rejects.toThrow('product conversation binding');
+  expect(readHistory).toHaveBeenCalledOnce();
+});
+
+it('checks historical product session IDs before and after the native read', async () => {
+  const f = fixture();
+  const h = await bindHistory(f);
+  let replaced = false;
+  const getSession = f.store.getSession.bind(f.store);
+  vi.spyOn(f.store, 'getSession').mockImplementation(id => {
+    const session = getSession(id);
+    return session && {
+      ...session,
+      historyBinding: {
+        sessionKey: 'private-history-key',
+        nativeSessionId: replaced ? 'replacement-history-sid' : 'private-history-sid',
+        availability: 'native' as const,
+      },
+    };
+  });
+  const readHistory = vi.fn(async () => {
+    replaced = true;
+    return { messages: [] };
+  });
+  const backend = new ExternalAgentBackendFactory({ ...f.options, readHistory }).connect();
+
+  await expect(backend.history!(h.thread.id)).rejects.toThrow('product conversation binding');
+  await expect(backend.history!(h.thread.id)).rejects.toThrow('product conversation binding');
+  expect(readHistory).toHaveBeenCalledOnce();
+});
+
+it('accepts the exact derived product key while a managed thread has no explicit native-binding row', async () => {
+  const f = fixture();
+  const thread = await f.backend.start({ cwd: f.cwd });
+  const mapped = f.external.get(thread.id)!;
+  const sessionKey = buildManagedSessionKey(mapped.coworkSessionId, mapped.agentId);
+  const runId = randomUUID();
+  f.external.beginExecution(thread.id, runId);
+  f.external.bindExecution(thread.id, runId, {
+    sessionKey, sessionId: 'managed-sid', lifecycleRevision: 'managed-revision',
+  });
+  const readHistory = vi.fn(async () => ({ messages: [] }));
+  const backend = new ExternalAgentBackendFactory({ ...f.options, readHistory }).connect();
+
+  await expect(backend.history!(thread.id)).resolves.toMatchObject({ threadId: thread.id, messages: [] });
+  expect(readHistory).toHaveBeenCalledExactlyOnceWith({
+    sessionKey, nativeSessionId: 'managed-sid', lifecycleRevision: 'managed-revision',
+  });
+  expect(f.store.getSession(mapped.coworkSessionId)?.nativeSessionKey).toBeUndefined();
+});
+
+it('retries one receipt change and never mixes its earlier body snapshot with settled metadata', async () => {
+  const f = fixture();
+  const h = await bindHistory(f);
+  const readHistory = vi.fn(async () => ({ messages: [{ role: 'assistant', content: 'After settlement' }] }));
+  readHistory.mockImplementationOnce(async () => {
+    f.store.finishSessionRun(h.timing.id, 'completed', 2_000);
+    return { messages: [{ role: 'assistant', content: 'Before settlement' }] };
+  });
+  const backend = new ExternalAgentBackendFactory({ ...f.options, readHistory }).connect();
+
+  const result = await backend.history!(h.thread.id);
+
+  expect(readHistory).toHaveBeenCalledTimes(2);
+  expect(result.messages).toEqual([{ role: 'assistant', content: 'After settlement' }]);
+  expect(result.runs[0]).toMatchObject({ state: 'completed', endedAt: 2_000 });
+});
+
+it('rejects continuously changing receipts and incomplete bindings instead of returning empty history', async () => {
+  const f = fixture();
+  const h = await bindHistory(f);
+  let changes = 0;
+  const readHistory = vi.fn(async () => {
+    f.store.bindSessionRunRootRun(h.timing.id, `new-native-run-${++changes}`);
+    return { messages: [] };
+  });
+  const backend = new ExternalAgentBackendFactory({ ...f.options, readHistory }).connect();
+  await expect(backend.history!(h.thread.id)).rejects.toThrow('changed during the read');
+  expect(readHistory).toHaveBeenCalledTimes(2);
+  const incomplete = await f.backend.start({ cwd: f.cwd });
+  f.external.beginExecution(incomplete.id, randomUUID());
+  await expect(backend.history!(incomplete.id)).rejects.toThrow('identity is unavailable');
 });
 
 it('never recreates a deleted conversation or its tombstoned mapping', async () => {
@@ -169,12 +462,28 @@ it('holds a shared reservation through cancellation until native settlement', as
   const other = new ExternalAgentBackendFactory(f.options);
   await expect(
     other.connect().run(thread, randomUUID(), 'Other task', () => {}, new AbortController().signal),
-  ).rejects.toThrow('active or unconfirmed');
+  ).rejects.toBeInstanceOf(ExternalAgentBusyError);
   expect(f.factory.activeTaskCount).toBe(1);
   finish('Done');
   await running;
   expect(f.factory.activeTaskCount).toBe(0);
   expect(f.external.get(thread.id)?.status).toBe('completed');
+});
+
+it('classifies a shared reservation collision as busy without creating a second execution receipt', async () => {
+  const f = fixture();
+  const thread = await f.backend.start({ cwd: f.cwd });
+  const before = f.external.get(thread.id)!;
+  const release = reserveExternalSession(before.coworkSessionId);
+  try {
+    await expect(
+      f.backend.run(thread, randomUUID(), 'Other protocol task', () => {}, new AbortController().signal),
+    ).rejects.toBeInstanceOf(ExternalAgentBusyError);
+    expect(f.external.get(thread.id)).toEqual(before);
+    expect(f.execute).not.toHaveBeenCalled();
+  } finally {
+    release();
+  }
 });
 
 it('persists the exact binding before caller tool hooks and leaves unknown work reserved across factories', async () => {
@@ -214,7 +523,7 @@ it('persists the exact binding before caller tool hooks and leaves unknown work 
   expect(restarted.activeTaskCount).toBe(1);
   await expect(
     restarted.connect().run(thread, randomUUID(), 'Retry', () => {}, new AbortController().signal),
-  ).rejects.toThrow('unconfirmed');
+  ).rejects.toBeInstanceOf(ExternalAgentBusyError);
   expect(f.execute).toHaveBeenCalledTimes(1);
 });
 

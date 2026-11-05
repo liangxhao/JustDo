@@ -1,5 +1,9 @@
+import type { SessionRunTiming } from '../../../shared/cowork/sessionRun';
+import type { ExternalSessionStatus } from '../../../shared/integrations/externalSession';
 import type { NormalizedAgentEvent } from '../../../shared/openclaw/agentEvent';
+import type { PermissionMode } from '../../../shared/security/approvals';
 import type { GatewayClientLike } from '../../engine/gateway/types';
+import type { ExternalExecutionState } from './externalSessionStore';
 
 export interface ExternalAgentModel {
   id: string;
@@ -12,6 +16,38 @@ export interface ExternalAgentThread {
   cwd: string;
   agentId: string;
   modelRef?: string;
+}
+
+/** Product metadata only; native session identities never cross the client boundary. */
+export interface ExternalAgentThreadMetadata extends ExternalAgentThread {
+  name: string;
+  createdAt: number;
+  updatedAt: number;
+  permissionMode: PermissionMode;
+  status: ExternalSessionStatus;
+  executionState?: ExternalExecutionState;
+}
+
+/** Main-only native identity supplied to the authenticated history loader. */
+export interface ExternalAgentHistoryInput {
+  sessionKey: string;
+  nativeSessionId: string;
+  lifecycleRevision: string;
+}
+
+export interface ExternalAgentHistorySnapshot {
+  messages: unknown[];
+}
+
+/** One verified native snapshot and its separately persisted execution receipts. */
+export interface ExternalAgentThreadHistory extends ExternalAgentHistorySnapshot {
+  threadId: string;
+  runs: SessionRunTiming[];
+  /** Exact external execution receipt permitted to appear even before native message admission. */
+  latestExternalRunId?: string;
+  unknownRunId?: string;
+  /** Opaque incarnation pin for pagination; never contains raw native identities. */
+  identityRevision?: string;
 }
 
 export interface ExternalAgentNativeBinding {
@@ -43,6 +79,10 @@ export type ExternalAgentExecutionOutcome =
 
 export interface ExternalAgentBackend {
   models: () => ExternalAgentModel[];
+  describe?: (id: string) => ExternalAgentThreadMetadata;
+  list?: () => ExternalAgentThreadMetadata[];
+  setName?: (id: string, name: string) => void;
+  history?: (id: string) => Promise<ExternalAgentThreadHistory>;
   start: (params: {
     cwd: string;
     agentId?: string;
@@ -80,6 +120,9 @@ export type ExternalAgentExecution = (input: {
 
 /** An output transport failure must not be classified as a human cancellation. */
 export class ExternalAgentStreamError extends Error {}
+
+/** Admission was rejected because the product conversation is already reserved. */
+export class ExternalAgentBusyError extends Error {}
 
 /** Exact native cancellation, or explicit withdrawal before native submission. */
 export class ExternalAgentCancelledError extends Error {}

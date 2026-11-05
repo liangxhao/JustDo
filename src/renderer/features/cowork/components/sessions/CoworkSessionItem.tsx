@@ -8,7 +8,6 @@ import {
   Square2StackIcon,
 } from '@heroicons/react/24/outline';
 import { isSourceGroupedSession } from '@shared/cowork/sessionSource';
-import { ExternalSessionSource } from '@shared/integrations/externalSession';
 import { useSyncExternalStore } from 'react';
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
@@ -629,15 +628,6 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
                 />
               ) : (
                 <div className="flex-1 min-w-0 flex items-center gap-1">
-                  {session.external && (
-                    <span className="shrink-0 rounded bg-primary/10 px-1 py-0.5 text-[9px] font-semibold uppercase leading-none text-primary">
-                      {i18nService.t(
-                        session.external.origin === ExternalSessionSource.Cli
-                          ? 'agentCliSessionBadge'
-                          : 'externalClientSessionBadge',
-                      )}
-                    </span>
-                  )}
                   <Tooltip
                     content={
                       pluginPresentation.titleSuffix

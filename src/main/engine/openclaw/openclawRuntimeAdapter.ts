@@ -3002,6 +3002,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       forceFullSnapshot?: boolean;
       scheduledTaskRun?: boolean;
       includePendingInputs?: boolean;
+      /** Applies to standard authenticated chat-history reads. */
+      signal?: AbortSignal;
     } = {},
   ): Promise<runtimeHistory.RuntimeSessionHistory | null> {
     return runtimeHistory.fetchSessionHistoryByKey.call(

@@ -6,7 +6,7 @@ import path from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 
 import { createCodexAppServerBackend } from './codexAppServerBackend';
-import type { ExternalAgentBackend } from './externalAgentTypes';
+import type { ExternalAgentBackend, ExternalAgentThreadMetadata } from './externalAgentTypes';
 
 const directories: string[] = [];
 afterEach(() =>
@@ -63,4 +63,35 @@ it('prepares optional discovery metadata before start and never uses it as resum
   const invalid = createCodexAppServerBackend(h.backend, { cwd: h.cwd, codexHome: 'relative' });
   await expect(invalid.start({})).rejects.toThrow('absolute');
   expect(h.backend.start).toHaveBeenCalledTimes(1);
+});
+
+it('forwards metadata and rename capabilities without reading or writing client discovery markers', async () => {
+  const h = setup();
+  const metadata: ExternalAgentThreadMetadata = {
+    ...h.thread,
+    name: 'Stored title',
+    createdAt: 10,
+    updatedAt: 20,
+    permissionMode: 'auto',
+    status: 'completed',
+  };
+  h.backend.describe = vi.fn(() => metadata);
+  h.backend.list = vi.fn(() => [metadata]);
+  h.backend.setName = vi.fn();
+  h.backend.history = vi.fn(async () => ({ threadId: h.thread.id, messages: [], runs: [] }));
+  // An invalid marker directory proves these read/name paths never prepare it.
+  const adapter = createCodexAppServerBackend(h.backend, { cwd: h.cwd, codexHome: 'relative' });
+
+  expect(adapter.describe!(h.thread.id)).toBe(metadata);
+  expect(adapter.list!()).toEqual([metadata]);
+  adapter.setName!(h.thread.id, 'New title');
+  const historyRead = adapter.history!(h.thread.id);
+
+  expect(h.backend.describe).toHaveBeenCalledExactlyOnceWith(h.thread.id);
+  expect(h.backend.list).toHaveBeenCalledOnce();
+  expect(h.backend.setName).toHaveBeenCalledExactlyOnceWith(h.thread.id, 'New title');
+  await expect(historyRead).resolves.toEqual({ threadId: h.thread.id, messages: [], runs: [] });
+  expect(h.backend.start).not.toHaveBeenCalled();
+  expect(h.backend.resume).not.toHaveBeenCalled();
+  expect(fs.existsSync(path.join(h.cwd, 'sessions'))).toBe(false);
 });

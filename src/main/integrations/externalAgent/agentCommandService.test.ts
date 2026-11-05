@@ -15,11 +15,13 @@ import {
 } from './externalAgentBackend';
 
 function setup(overrides: Partial<ExternalAgentBackend> = {}) {
-  const thread = { id: randomUUID(), cwd: process.cwd(), agentId: 'main' };
+  const thread = { id: randomUUID(), cwd: process.cwd(), agentId: 'main', modelRef: 'provider/model' };
   const backend: ExternalAgentBackend = {
     models: vi.fn(() => [{ id: 'provider/model', name: 'Model', isDefault: true }]),
     start: vi.fn(async () => thread),
     resume: vi.fn(async () => thread),
+    describe: vi.fn(id => ({ ...thread, id, name: 'Fixture', createdAt: 1000, updatedAt: 2000,
+      permissionMode: 'full' as const, status: 'completed' as const })),
     run: vi.fn(async () => 'answer'),
     ...overrides,
   };
@@ -73,7 +75,8 @@ test('Codex app-server uses the generic backend without client-specific environm
     '--listen',
     'stdio://',
   ]);
-  await session.receive({ id: 1, method: 'initialize' });
+  await session.receive({ id: 1, method: 'initialize', params: { clientInfo: { name: 'test-client', version: '1.0.0' } } });
+  await session.receive({ method: 'initialized' });
   await session.receive({ id: 2, method: 'thread/start' });
   expect(h.backend.start).toHaveBeenCalledWith({ cwd: process.cwd(), model: undefined });
   expect(output).toHaveBeenCalledWith(
@@ -84,6 +87,65 @@ test('Codex app-server uses the generic backend without client-specific environm
   );
   await session.close();
   expect(h.connect).toHaveBeenCalledTimes(1);
+});
+
+test('loaded thread discovery follows actual app-server connection ownership and retirement', async () => {
+  const h = setup();
+  h.backend.start = vi.fn(async () => ({ ...h.thread, id: randomUUID() }));
+  const connect = async () => {
+    const output: Array<Record<string, unknown>> = [];
+    const peer = h.service.connect(process.cwd(), {}, value => output.push(value as Record<string, unknown>));
+    await peer.receive({ id: 1, method: 'initialize', params: { clientInfo: { name: 'client', version: '1' } } });
+    await peer.receive({ method: 'initialized' });
+    return { peer, output };
+  };
+  const first = await connect();
+  const second = await connect();
+  const observer = await connect();
+  await first.peer.receive({ id: 2, method: 'thread/start', params: {} });
+  await second.peer.receive({ id: 2, method: 'thread/start', params: {} });
+  const id = (entry: typeof first) => (entry.output.at(-1)!.result as { thread: { id: string } }).thread.id;
+  const firstId = id(first);
+  const secondId = id(second);
+  await observer.peer.receive({ id: 2, method: 'thread/loaded/list', params: {} });
+  expect(observer.output.at(-1)).toMatchObject({ result: { data: [firstId, secondId].sort(), nextCursor: null } });
+  await first.peer.close();
+  await observer.peer.receive({ id: 3, method: 'thread/loaded/list', params: {} });
+  expect(observer.output.at(-1)).toMatchObject({ result: { data: [secondId] } });
+  await second.peer.close();
+  await observer.peer.close();
+});
+
+test('app-server peers share live events while only the admitting peer can interrupt its turn', async () => {
+  let finish!: (text: string) => void;
+  const h = setup({ run: () => new Promise<string>(resolve => { finish = resolve; }) });
+  const connect = async () => {
+    const output: Array<Record<string, unknown>> = [];
+    const peer = h.service.connect(process.cwd(), {}, value => output.push(value as Record<string, unknown>));
+    await peer.receive({ id: 1, method: 'initialize', params: { clientInfo: { name: 'peer', version: '1' } } });
+    await peer.receive({ method: 'initialized' });
+    return { peer, output };
+  };
+  const owner = await connect();
+  const observer = await connect();
+  try {
+    await owner.peer.receive({ id: 2, method: 'thread/start', params: {} });
+    await observer.peer.receive({ id: 2, method: 'thread/resume', params: { threadId: h.thread.id, excludeTurns: true } });
+    await owner.peer.receive({ id: 3, method: 'turn/start', params: { threadId: h.thread.id, input: [{ type: 'text', text: 'work' }] } });
+    await vi.waitFor(() => expect(observer.output.some(value => value.method === 'turn/started')).toBe(true));
+    const started = owner.output.find(value => value.id === 3)!.result as { turn: { id: string } };
+    await observer.peer.receive({ id: 3, method: 'turn/interrupt', params: { threadId: h.thread.id, turnId: started.turn.id } });
+    expect(observer.output.find(value => value.id === 3)).toHaveProperty('error');
+    finish('shared result');
+    await vi.waitFor(() => expect(observer.output.some(value => value.method === 'turn/completed')).toBe(true));
+    for (const client of [owner, observer]) {
+      expect(client.output.filter(value => value.method === 'turn/completed')).toHaveLength(1);
+      expect(client.output).toContainEqual(expect.objectContaining({ method: 'item/agentMessage/delta', params: expect.objectContaining({ delta: 'shared result' }) }));
+    }
+  } finally {
+    finish?.('cleanup');
+    await Promise.all([owner.peer.close(), observer.peer.close()]);
+  }
 });
 
 test('resume retains its stored cwd unless the caller explicitly supplies a cwd', async () => {

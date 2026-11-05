@@ -4,7 +4,10 @@ export const AppServerMethod = {
   Initialized: 'initialized',
   ModelList: 'model/list',
   ThreadList: 'thread/list',
+  ThreadLoadedList: 'thread/loaded/list',
   ThreadRead: 'thread/read',
+  ThreadTurnsList: 'thread/turns/list',
+  ThreadItemsList: 'thread/items/list',
   ThreadStart: 'thread/start',
   ThreadResume: 'thread/resume',
   ThreadNameSet: 'thread/name/set',
@@ -18,6 +21,10 @@ export const AppServerMethod = {
 
 export const AppServerNotificationMethod = {
   ThreadStarted: 'thread/started',
+  ThreadNameUpdated: 'thread/name/updated',
+  ThreadStatusChanged: 'thread/status/changed',
+  ThreadClosed: 'thread/closed',
+  ServerRequestResolved: 'serverRequest/resolved',
   ThreadUpdated: 'thread/updated',
   ThreadStream: 'thread/stream',
   TurnStarted: 'turn/started',
@@ -30,6 +37,14 @@ export const AppServerNotificationMethod = {
 export type AppServerNotificationMethod =
   (typeof AppServerNotificationMethod)[keyof typeof AppServerNotificationMethod];
 
+export const AppServerRequestMethod = {
+  CommandExecutionApproval: 'item/commandExecution/requestApproval',
+  FileChangeApproval: 'item/fileChange/requestApproval',
+  ToolUserInput: 'item/tool/requestUserInput',
+} as const;
+export type AppServerRequestMethod =
+  (typeof AppServerRequestMethod)[keyof typeof AppServerRequestMethod];
+
 export type AppServerParams = Record<string, unknown>;
 export type AppServerResult = Record<string, unknown>;
 export type AppServerNotify = (
@@ -40,7 +55,29 @@ export type AppServerOperation = (
   params: AppServerParams,
 ) => AppServerResult | Promise<AppServerResult>;
 
-export const AppServerErrorStyle = { Standard: 'standard', Console: 'console' } as const;
+export const AppServerErrorStyle = {
+  Standard: 'standard',
+  Console: 'console',
+  Codex: 'codex',
+} as const;
+
+export const AppServerErrorCode = {
+  Parse: -32700,
+  InvalidRequest: -32600,
+  MethodNotFound: -32601,
+  InvalidParams: -32602,
+  NotInitialized: -32002,
+  Internal: -32603,
+  Console: -32000,
+} as const;
+
+/** Explicit protocol failures; only the Codex policy exposes their error codes. */
+export class AppServerRpcError extends Error {
+  constructor(readonly code: number, message: string) {
+    super(message);
+    this.name = 'AppServerRpcError';
+  }
+}
 
 /** These operations receive no RPC ID and cannot encode response envelopes. */
 export interface AppServerBinding {
@@ -54,7 +91,10 @@ export interface AppServerBinding {
     start: AppServerOperation;
     resume?: AppServerOperation;
     list?: AppServerOperation;
+    loadedList?: AppServerOperation;
     read?: AppServerOperation;
+    turnsList?: AppServerOperation;
+    itemsList?: AppServerOperation;
     setName?: AppServerOperation;
     unsubscribe?: AppServerOperation;
   };
@@ -69,6 +109,14 @@ export interface AppServerBinding {
 export interface AppServerConnectionContext {
   notify: AppServerNotify;
   isClosed: () => boolean;
+  /** Retire protocol admission synchronously after detached output failures. */
+  fail?: (reason: Error) => void;
+  request?: (
+    method: AppServerRequestMethod,
+    params: AppServerParams,
+    options?: { signal?: AbortSignal; timeoutMs?: number },
+  ) => Promise<unknown>;
+  isExperimentalApiEnabled?: () => boolean;
 }
 
 export const isAppServerRecord = (value: unknown): value is Record<string, unknown> =>

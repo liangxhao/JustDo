@@ -33,6 +33,10 @@ Chrome 侧聊通过 Runtime 的窄 `getRunTerminalReceipt` 读取已准入 whole
 
 live 回执缺失时，Controller 仅能使用本进程发送准备已捕获的物理 session/key/连接代次补查精确 `agent.wait({runId,timeoutMs:0})`，并在前后 `sessions.describe` 核对身份和生命周期 revision。合法整轮终态还须有匹配 run、有限 `endedAt` 且非 yield；普通 wait timeout、idle、Stop ACK 均不生成终态。
 
+桌面单个／批量 `runtimeStatus` 对 CLI 和历史 app-server 的只读外部映射只返回运行观察，
+不创建、重开、绑定或结算执行回执。外部执行器拥有这些回执；迟到 active 或 idle 快照
+不能进入桌面恢复记账。既有异常记录保留，不凭状态观察补造终态或执行数据修复。
+
 已验证的 wait 结算只缓存最多 100 项结果与身份元数据，后续读取仍复核当前原生身份，避免原生 wait 缓存过期或后续轮询使已确认结果倒退；不保存正文、不伪造事件序列。冷重启、连接代次变化或缺少原发送绑定时证据不足仍保持 unknown，不用当前 session 为旧 run 补造授权，也不补发输入。
 
 10.7 的取消通知与真实执行结算仍是两个时刻。补丁 019 只为首次原生取消发布保留

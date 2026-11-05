@@ -86,7 +86,9 @@ flowchart LR
 
 CLI、ACP、app-server 共用 `ExternalAgentBackendFactory`、`createExternalAgentExecution`
 和 `ExternalSessionStore`，新会话 `source='cli'`。`cowork_external_sessions` 只保留
-外部/原生身份与执行回执，不保存消息；新会话显示在 CLI 来源分组。
+外部/原生身份与执行回执，不保存消息；新会话显示在 `Clients` 来源分组。
+该分组与浏览器扩展的 `Chrome` 分组在中英文界面均使用上述英文名称；内部来源标识保持不变。
+来源通过分组展示，会话标题旁不再重复显示外部来源徽标。
 
 历史客户端的 scoped ID、tombstone 和原生映射保持原样，作为只读外部客户端历史展示。
 新协议不会推测旧 scope、扫描 marker 获取授权或用裸 UUID 认领旧记录。
@@ -98,12 +100,17 @@ CLI、ACP、app-server 共用 `ExternalAgentBackendFactory`、`createExternalAge
 ## 3. app-server 子集与客户端配置
 
 ACP 客户端使用复制出的 command 和 `args: ["acp"]`。app-server 是另一协议，使用
-`app-server --listen stdio://`。每个 app-server 连接只拥有一个外部线程。
+`app-server --listen stdio://`。每个 app-server 连接最多绑定 32 个外部线程，逐线程管理执行与订阅。
 
-支持 `initialize`、`model/list`、`thread/start`、`thread/resume`、`thread/name/set`、
+支持 `initialize`／`initialized`、`model/list`、`thread/start`、`thread/resume`、`thread/name/set`、
+`thread/list`／`thread/read`、`thread/loaded/list`、`thread/turns/list`／`thread/items/list`、`thread/unsubscribe`、
 `turn/start`、`turn/interrupt`，以及 reasoning、正文、用户准入和工具 item 通知。
+恢复默认回放原生历史，`excludeTurns: true` 可跳过；`thread/read(includeTurns: true)` 可显式读取。
+历史要求已有认证 Gateway，读取前后核对身份和回执，不启动运行时或存储正文副本。
+改名会真实保存到产品元数据，元数据读取不启动 Gateway。
 只接受文本；不支持的 execution override、额外输入、reasoning/service tier 和客户端专用 MCP
-配置会明确失败，不宣称拥有 ACP 的交互审批和会话 MCP 能力。
+配置会明确失败；支持原生命令一次性审批和实验插件确认，仍不提供客户端会话 MCP 配置。
+逐字段对照、官方 schema 校验基线和剩余兼容范围见[兼容性说明](../../app-server-api/compatibility.md)。
 
 Multica 的配置示例选择基础协议 **codex**，使用同一 command，不添加额外参数；其
 [适配器](https://github.com/multica-ai/multica/blob/main/server/pkg/agent/codex.go)
@@ -177,11 +184,11 @@ tool call 和 canonical 参数；客户端 annotations 不授权。root、权限
 
 ### 审批归属
 
-只有 ACP 在 prepared turn 安装精确 approval owner 后声明交互审批；内部使用
+ACP 与支持双向 RPC 的 app-server 在 prepared turn 安装精确 approval owner 后声明交互审批；内部使用
 `webchat` 和 `deliver:false` 以接收权限请求，不自动授权或向外部渠道投递回答。
 普通 `exec` 保留原生非交互审批行为。
 
-ACP 独占本轮精确 native run 的 exec/plugin 审批展示；桌面列表排除已路由给该 owner 的请求。
+交互客户端独占本轮精确 native run 的 exec/plugin 审批展示；桌面列表排除已路由给该 owner 的请求。
 客户端只能选择原生支持的一次性允许/拒绝，Main 在解决前复核 run、session、incarnation、
 连接、到期和 option ID。迟到、已取消、断连回复不允许操作；未知审批发送不在新连接重放。
 

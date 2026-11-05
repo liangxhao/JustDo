@@ -47,6 +47,8 @@ it('isolates the historical namespace while projecting both as read-only convers
   expect(f.external.source).toBe(ExternalSessionSource.Cli);
   expect(f.external.get('same-id')?.coworkSessionId).toBe(cli.id);
   expect(f.historical.get('same-id')?.coworkSessionId).toBe(historical.id);
+  expect(f.external.list().map(session => session.coworkSessionId)).toEqual([cli.id]);
+  expect(f.historical.list().map(session => session.coworkSessionId)).toEqual([historical.id]);
   expect(f.cowork.getSession(cli.id)?.external).toMatchObject({ origin: 'cli', readOnly: true });
   expect(f.cowork.getSession(historical.id)?.external).toMatchObject({
     origin: 'multica',
@@ -62,6 +64,7 @@ it('isolates the historical namespace while projecting both as read-only convers
   expect(f.external.wasDeleted('same-id')).toBe(true);
   expect(f.historical.wasDeleted('same-id')).toBe(false);
   expect(f.external.get('same-id')).toBeNull();
+  expect(f.external.list()).toEqual([]);
   expect(f.historical.get('same-id')).not.toBeNull();
 });
 

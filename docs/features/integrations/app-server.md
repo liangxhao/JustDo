@@ -33,12 +33,12 @@ Main 在创建连接时传入类型化能力绑定。客户端名称、请求的
 
 | 能力                            | Chrome 扩展连接                                  | stdio / 原生客户端 WebSocket     |
 | ------------------------------- | ------------------------------------------------ | -------------------------------- |
-| 连接范围                        | 扩展创建的会话                                   | 每连接一个外部线程               |
+| 连接范围                        | 扩展创建的会话                                   | 每连接最多绑定 32 个外部线程     |
 | 创建与继续                      | 扩展会话                                         | 新建或明确恢复外部线程           |
-| 列表、历史、图片与输入选项      | 扩展会话内提供                                   | 不提供                           |
+| 列表、历史、图片与输入选项      | 扩展会话内提供                                   | 元数据与原生 Turn/Item 历史分页  |
 | 模型发现                        | composer options                                 | `model/list`                     |
 | 文本与取消                      | 支持                                             | 支持                             |
-| 附件、页面上下文、每轮模型/权限 | 按现有校验支持                                   | 不提供                           |
+| 附件、页面上下文、每轮模型/权限 | 按现有校验支持                                   | 仅支持每轮模型选择               |
 | 进度                            | 原生 `thread/stream` 与校准后的 `thread/updated` | 标准 item、正文与 reasoning 通知 |
 | 自动化配对                      | 浏览器专用认证操作                               | 不提供                           |
 
@@ -54,7 +54,7 @@ Main 在创建连接时传入类型化能力绑定。客户端名称、请求的
 
 | 行为         | Chrome                                     | stdio / 原生客户端          |
 | ------------ | ------------------------------------------ | --------------------------- |
-| 初始化       | `initialize` 响应后还需 `initialized` 通知 | `initialize` 响应后即可使用 |
+| 初始化       | `initialize` 响应后还需 `initialized` 通知 | 同左；通用入口校验客户端字段类型 |
 | 客户端通知   | 执行已实现通知，不回复                     | 忽略可能产生工作的通知      |
 | 开始执行     | 原生进度可能早于发送 ACK                   | start 响应先于延后执行      |
 | 通知退出订阅 | 按完整方法名精确匹配                       | 同左                        |
@@ -62,6 +62,15 @@ Main 在创建连接时传入类型化能力绑定。客户端名称、请求的
 请求处理只等待操作准入，不阻塞到执行完成；尚未返回的 start 不能阻塞 interrupt。
 错误分类由共用引擎维护，保留各入口既有错误形态，尤其 Chrome 的
 `turn/start.error.data.requestSent` 保守语义。连接关闭后不再发布旧输出。
+通用入口按 Codex 策略区分非法请求、参数和未实现方法；初始化校验失败不会锁死握手。
+创建／改名通知在对应响应后发送，通知输出失败会同步撤销共享连接与 binding，阻止新任务准入。
+
+通用入口支持双向 RPC：服务端请求使用连接内唯一字符串 ID，最多 64 个待回复项。
+客户端 response 与普通 request 分向匹配，迟到、重复、其他连接的回复不能解决原请求。
+close 在等待执行清理前同步撤销所有 pending request，避免审批与断连互相等待。
+精确 run 的审批由原有 ExternalAgentResources 和原生 approval owner 管理；
+命令请求只映射一次性 accept/decline/cancel，不支持持久授权或策略修订。
+插件确认仅在成功握手声明 experimentalApi 后使用标准 user-input 请求。
 
 ## 3. 断连、重启与执行结算
 
@@ -78,6 +87,15 @@ Main 在创建连接时传入类型化能力绑定。客户端名称、请求的
 stdio EOF、原生客户端 WebSocket 断连或服务关闭，都会请求取消本连接拥有的 active/unknown
 执行，并等待清理。异常断连或输出失败保留 stream-error 原因，不能报告为成功或正常取消。
 关闭一条连接不能取消另一条连接的工作。
+
+`thread/unsubscribe` 只撤回观察；各线程拥有独立执行控制器，unknown 只阻塞对应线程。
+共享 hub 只保存当前订阅，不保存正文或重放事件。观察者输出故障只退役该连接；
+拥有者断连后，精确结算得到的 terminal 可送给仍在订阅的其他客户端，旧连接不再输出。
+观察者不能通过 interrupt 停止借用的运行，也不会取得审批展示权。
+
+历史读取前后核对产品映射、原生 key/SID/lifecycleRevision、运行回执与 Gateway 代次。
+仅复用当前认证连接，不启动 Gateway，不读取 transcript 文件或解析其他别名。
+原生快照按请求投影并以内容和身份 revision 绑定分页；变更后旧游标失效。
 
 应用退出最多等待该 drain 五秒，之后继续既有 Gateway 关闭流程；原 drain 仍被观察。
 这个期限只约束退出等待，不把执行标为已完成或已取消。
@@ -97,7 +115,7 @@ Bearer token；令牌首次生成后持久保存，正常重启保持有效。�
 浏览器使用自己的扩展入口。客户端名称或扩展凭据不能改变能力绑定。
 
 每连接通过 `AgentCommandService.connectAppServer` 使用与 stdio 相同的
-`CliAppServerBinding`、外部会话命名空间、预留和 CLI 来源分组。WebSocket 不读取客户端
+`CliAppServerBinding`、外部会话命名空间、预留和 `Clients` 来源分组。WebSocket 不读取客户端
 `CODEX_HOME` 或环境变量。认证时捕获应用配置的默认工作目录；`thread/start.cwd` 可以明确覆盖，
 resume 未传 cwd 时保留已存目录。
 
@@ -160,6 +178,7 @@ ACP 与普通 CLI 是独立的协议/命令适配器，复用外部执行后端�
 ## 6. 规范与支持范围
 
 - [外部客户端规范](../../app-server-api/external-clients.md)：stdio 与原生 WebSocket 字段。
+- [官方兼容性对照](../../app-server-api/compatibility.md)：校验基线、已实现接口和剩余宿主边界。
 - [Chrome 规范](../../app-server-api/browser/README.md)：浏览器专属字段和通知。
 - [Chrome 侧栏](../browser/browser-extension-side-chat.md)：用户流程和产品集成。
 - [上游协议参考](https://learn.chatgpt.com/docs/app-server#protocol)：本产品仅实现上述明确子集。

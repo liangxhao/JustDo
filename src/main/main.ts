@@ -149,6 +149,7 @@ import {
 import { AgentCommandService } from './integrations/externalAgent/agentCommandService';
 import { ExternalAgentBackendFactory } from './integrations/externalAgent/externalAgentBackend';
 import { createExternalAgentExecution } from './integrations/externalAgent/externalAgentExecution';
+import { createExternalAgentHistoryReader } from './integrations/externalAgent/externalAgentHistoryReader';
 import { getExternalAgentModelCatalog } from './integrations/externalAgent/externalAgentModelCatalog';
 import { ExternalAgentResources } from './integrations/externalAgent/externalAgentResources';
 import { ExternalSessionStore } from './integrations/externalAgent/externalSessionStore';
@@ -1173,6 +1174,7 @@ const getAgentCommandService = (): AgentCommandService => {
       },
       getModels: () => getExternalAgentModelCatalog(resolveDefaultAgentModelRef()),
       onSessionsChanged: notifyCoworkSessionsChanged,
+      readHistory: createExternalAgentHistoryReader(getOpenClawRuntimeAdapter),
       execute: createExternalAgentExecution({
         getStore: getCoworkStore,
         getRouter: getCoworkEngineRouter,
@@ -1182,6 +1184,7 @@ const getAgentCommandService = (): AgentCommandService => {
     }),
     createResources: () => new ExternalAgentResources(getOpenClawRuntimeAdapter),
     getStatus: () => getAgentCliIntegrationService().getStatus(),
+    getAppServerHome: () => path.join(app.getPath('userData'), 'app-server'),
   });
   return agentCommandService;
 };

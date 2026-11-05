@@ -428,6 +428,79 @@ test('rejects a non-advancing gateway history cursor instead of looping', async 
   expect(request).toHaveBeenCalledTimes(1);
 });
 
+test('forwards cancellation through every full snapshot page and cursor catch-up', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const controller = new AbortController();
+  const request = vi.fn()
+    .mockResolvedValueOnce({ messages: ['newest'], hasMore: true, nextOffset: 1, totalMessages: 2, deltaCursor: 'cursor-1' })
+    .mockResolvedValueOnce({ messages: ['oldest'], hasMore: false, totalMessages: 2 })
+    .mockResolvedValueOnce({ kind: 'delta', messages: [], deltaCursor: 'cursor-2' });
+  (adapter as unknown as { gatewayClient: GatewayClientLike | null }).gatewayClient = { request } as unknown as GatewayClientLike;
+
+  await expect(adapter.fetchSessionHistoryByKey('exact-key', undefined, {
+    forceFullSnapshot: true, signal: controller.signal,
+  })).resolves.toEqual({ sessionKey: 'exact-key', messages: ['oldest', 'newest'] });
+  expect(request).toHaveBeenCalledTimes(3);
+  for (const call of request.mock.calls) expect(call[2]).toEqual({ signal: controller.signal });
+});
+
+test('does not start standard history requests when already cancelled', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const controller = new AbortController();
+  controller.abort();
+  const request = vi.fn();
+  (adapter as unknown as { gatewayClient: GatewayClientLike | null }).gatewayClient = { request } as unknown as GatewayClientLike;
+
+  await expect(adapter.fetchSessionHistoryByKey('exact-key', undefined, {
+    forceFullSnapshot: true, signal: controller.signal,
+  })).resolves.toBeNull();
+  expect(request).not.toHaveBeenCalled();
+});
+
+test('a cancelled late page cannot continue pagination or fall back to another native lookup', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const controller = new AbortController();
+  const request = vi.fn(async () => {
+    controller.abort();
+    return { messages: [], hasMore: true, nextOffset: 1 };
+  });
+  (adapter as unknown as { gatewayClient: GatewayClientLike | null }).gatewayClient = { request } as unknown as GatewayClientLike;
+
+  await expect(adapter.fetchSessionHistoryByKey('exact-key', 'fallback-sid', {
+    forceFullSnapshot: true, signal: controller.signal,
+  })).resolves.toBeNull();
+  expect(request).toHaveBeenCalledExactlyOnceWith('chat.history', {
+    sessionKey: 'exact-key', limit: 1000,
+  }, { signal: controller.signal });
+});
+
+test('a late cancelled cursor reply cannot populate the shared history snapshot', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const controller = new AbortController();
+  let finish!: (value: unknown) => void;
+  const request = vi.fn()
+    .mockResolvedValueOnce({ messages: ['before-timeout'], hasMore: false, deltaCursor: 'cursor-1' })
+    .mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  (adapter as unknown as { gatewayClient: GatewayClientLike | null }).gatewayClient = { request } as unknown as GatewayClientLike;
+  const reading = adapter.fetchSessionHistoryByKey('exact-key', undefined, {
+    forceFullSnapshot: true, signal: controller.signal,
+  });
+  await vi.waitFor(() => expect(request).toHaveBeenCalledTimes(2));
+  controller.abort();
+  finish({ kind: 'delta', messages: ['late-data'], deltaCursor: 'cursor-late' });
+  await expect(reading).resolves.toBeNull();
+
+  request.mockResolvedValueOnce({ messages: ['fresh-read'], hasMore: false });
+  await expect(adapter.fetchSessionHistoryByKey('exact-key')).resolves.toEqual({
+    sessionKey: 'exact-key', messages: ['fresh-read'],
+  });
+  expect(request).toHaveBeenLastCalledWith('chat.history', { sessionKey: 'exact-key', limit: 1000 });
+});
+
 test('removes a deleted child after a complete native session read', async () => {
   const { store, session } = createEmptyStore();
   const adapter = new OpenClawRuntimeAdapter(store, {});

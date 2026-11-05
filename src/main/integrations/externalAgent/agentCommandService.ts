@@ -15,6 +15,7 @@ import { getLanguage, t } from '../../core/i18n';
 import type { AcpSessionResources } from './acpSession';
 import { AcpSession } from './acpSession';
 import { createCodexAppServerBackend } from './codexAppServerBackend';
+import { CodexAppServerEventHub } from './codexAppServerEventHub';
 import { CodexAppServerSession } from './codexAppServerSession';
 import {
   ExternalAgentBackendFactory,
@@ -27,6 +28,7 @@ interface Options {
   backend: ExternalAgentBackendFactory;
   createResources: () => AcpSessionResources;
   getStatus: () => AgentCliIntegrationStatus;
+  getAppServerHome?: () => string;
 }
 
 export interface AgentCommandResult {
@@ -38,6 +40,7 @@ export interface AgentCommandResult {
 export class AgentCommandService {
   private readonly sessions = new Set<AcpSession | CodexAppServerSession>();
   private readonly executions = new Set<AbortController>();
+  private readonly appServerEvents = new CodexAppServerEventHub();
 
   constructor(private readonly options: Options) {}
 
@@ -56,6 +59,13 @@ export class AgentCommandService {
     const session = new CodexAppServerSession(
       createCodexAppServerBackend(this.options.backend.connect(), { cwd, codexHome: env.CODEX_HOME }),
       send,
+      {
+        home: this.options.getAppServerHome?.() ?? cwd,
+        resources: this.options.createResources(),
+        hub: this.appServerEvents,
+        getLoadedThreadIds: () => [...this.sessions].flatMap(session =>
+          session instanceof CodexAppServerSession ? session.ownedThreadIds() : []),
+      },
     );
     this.sessions.add(session);
     return {

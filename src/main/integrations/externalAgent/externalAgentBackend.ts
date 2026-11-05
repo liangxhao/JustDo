@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -7,16 +7,21 @@ import {
   ExternalSessionStatus,
 } from '../../../shared/integrations/externalSession';
 import { matchesModelSelectionIdentity } from '../../../shared/providers/modelSelectionIdentity';
-import type { CoworkStore } from '../../data/coworkStore';
+import type { CoworkSession, CoworkStore } from '../../data/coworkStore';
+import { buildManagedSessionKey } from '../../openclaw/sessions/openclawSessionKeys';
 import {
   type ExternalAgentBackend,
+  ExternalAgentBusyError,
   ExternalAgentCancelledError,
   type ExternalAgentExecution,
   ExternalAgentExecutionOutcome,
+  type ExternalAgentHistoryInput,
+  type ExternalAgentHistorySnapshot,
   type ExternalAgentModel,
   ExternalAgentOutcomeUnknownError,
   ExternalAgentStreamError,
   type ExternalAgentThread,
+  type ExternalAgentThreadMetadata,
 } from './externalAgentTypes';
 import { reserveExternalSession } from './externalSessionReservations';
 import {
@@ -33,9 +38,11 @@ export interface ExternalAgentBackendOptions {
   getModels: () => ExternalAgentModel[];
   onSessionsChanged: () => void;
   execute: ExternalAgentExecution;
+  readHistory?: (input: ExternalAgentHistoryInput) => Promise<ExternalAgentHistorySnapshot>;
 }
 
 const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const MAX_THREAD_NAME_LENGTH = 500;
 
 const canonicalDirectory = (value: string): string => {
   if (typeof value !== 'string' || !path.isAbsolute(value) || !fs.statSync(value).isDirectory())
@@ -102,8 +109,112 @@ export class ExternalAgentBackendFactory {
       external: ExternalSession,
       modelRef: string,
     ): ExternalAgentThread => ({ id, cwd: external.cwd, agentId: external.agentId, modelRef });
+    const metadata = (
+      external: ExternalSession,
+      session: CoworkSession,
+    ): ExternalAgentThreadMetadata => ({
+      id: external.externalSessionKey,
+      name: session.title,
+      cwd: session.cwd,
+      agentId: session.agentId,
+      ...(session.modelRef ? { modelRef: session.modelRef } : {}),
+      createdAt: session.createdAt,
+      updatedAt: Math.max(session.updatedAt, external.updatedAt),
+      permissionMode: session.permissionMode,
+      status: external.status,
+      ...(external.executionState ? { executionState: external.executionState } : {}),
+    });
     return {
       models: () => this.models(),
+      describe: id => {
+        const external = get(id);
+        return metadata(external, store().getSession(external.coworkSessionId)!);
+      },
+      list: () => externalStore().list().flatMap(external => {
+        if (!SESSION_ID.test(external.externalSessionKey)) return [];
+        // Keep database failures visible. Only unavailable filesystem identities
+        // below are filtered along with stale/deleted product metadata.
+        const session = store().getSession(external.coworkSessionId);
+        if (!session || session.agentId !== external.agentId) return [];
+        const agent = store().getAgent(external.agentId);
+        if (!agent?.enabled || agent.deletedAt) return [];
+        try {
+          if (!sameDirectory(session.cwd, external.cwd)) return [];
+        } catch {
+          return [];
+        }
+        return [metadata(external, session)];
+      }),
+      setName: (id, name) => {
+        if (typeof name !== 'string' || !name.trim() || name.trim().length > MAX_THREAD_NAME_LENGTH)
+          throw new Error('The thread name must contain 1 to 500 characters.');
+        const external = get(id);
+        store().updateSession(external.coworkSessionId, { title: name.trim() });
+        this.options.onSessionsChanged();
+      },
+      history: async id => {
+        const productIdentity = (external: ExternalSession): string => {
+          const session = store().getSession(external.coworkSessionId)!;
+          const key = session.nativeSessionKey ?? session.historyBinding?.sessionKey ??
+            buildManagedSessionKey(session.id, session.agentId);
+          if (external.openclawSessionKey && key !== external.openclawSessionKey)
+            throw new Error('Native history does not match the product conversation binding.');
+          if (session.historyBinding && (
+            session.historyBinding.sessionKey !== external.openclawSessionKey ||
+            session.historyBinding.nativeSessionId !== external.nativeSessionId
+          ))
+            throw new Error('Native history does not match the product conversation binding.');
+          return JSON.stringify([
+            session.nativeSessionKey ?? null, session.historyBinding ?? null,
+            session.nativeParentSessionId ?? null,
+          ]);
+        };
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          const before = get(id);
+          const runs = store().getSessionRuns(before.coworkSessionId);
+          const productBefore = productIdentity(before);
+          if (!before.openclawSessionKey || !before.nativeSessionId || !before.lifecycleRevision) {
+            const session = store().getSession(before.coworkSessionId)!;
+            if (!runs.length && !before.executionRunId && !session.nativeSessionKey && !session.historyBinding)
+              return { threadId: id, messages: [], runs: [] };
+            throw new Error('Native history identity is unavailable.');
+          }
+          if (!this.options.readHistory) throw new Error('Authenticated native history is unavailable.');
+          const history = await this.options.readHistory({
+            sessionKey: before.openclawSessionKey,
+            nativeSessionId: before.nativeSessionId,
+            lifecycleRevision: before.lifecycleRevision,
+          });
+          const after = get(id);
+          if (
+            before.coworkSessionId !== after.coworkSessionId || before.agentId !== after.agentId ||
+            before.cwd !== after.cwd || before.openclawSessionKey !== after.openclawSessionKey ||
+            before.nativeSessionId !== after.nativeSessionId || before.lifecycleRevision !== after.lifecycleRevision ||
+            productBefore !== productIdentity(after)
+          )
+            throw new Error('Native history identity changed during the read.');
+          if (
+            JSON.stringify(runs) !== JSON.stringify(store().getSessionRuns(after.coworkSessionId)) ||
+            before.executionRunId !== after.executionRunId || before.executionState !== after.executionState ||
+            before.status !== after.status
+          ) {
+            if (attempt === 0) continue;
+            throw new Error('Native history changed during the read. Please read it again.');
+          }
+          return {
+            threadId: id,
+            messages: history.messages,
+            runs,
+            ...(after.executionRunId ? { latestExternalRunId: after.executionRunId } : {}),
+            identityRevision: createHash('sha256').update(JSON.stringify([
+              before.openclawSessionKey, before.nativeSessionId, before.lifecycleRevision,
+            ])).digest('base64url'),
+            ...(after.executionState === ExternalExecutionState.Unknown && after.executionRunId
+              ? { unknownRunId: after.executionRunId } : {}),
+          };
+        }
+        throw new Error('Native history could not be verified.');
+      },
       start: async params => {
         const cwd = canonicalDirectory(params.cwd);
         const agentId = params.agentId || 'main';
@@ -154,7 +265,7 @@ export class ExternalAgentBackendFactory {
           external.status === ExternalSessionStatus.Running ||
           external.executionState === ExternalExecutionState.Unknown
         )
-          throw new Error('This conversation has an active or unconfirmed execution.');
+          throw new ExternalAgentBusyError('This conversation has an active or unconfirmed execution.');
         if (!SESSION_ID.test(runId)) throw new Error('Invalid execution identity.');
         if (external.executionRunId === runId || store().getSessionRunByClientTurnId(runId))
           throw new Error('This execution identity has already been used.');
@@ -163,7 +274,12 @@ export class ExternalAgentBackendFactory {
         if (signal.aborted)
           throw new ExternalAgentCancelledError('Task cancelled before native submission.');
         const modelRef = selectModel(current.modelRef);
-        const release = reserveExternalSession(external.coworkSessionId);
+        let release: () => void;
+        try {
+          release = reserveExternalSession(external.coworkSessionId);
+        } catch {
+          throw new ExternalAgentBusyError('This conversation already has an active task.');
+        }
         const receipts = externalStore();
         let unconfirmed = false;
         let started = false;

@@ -49,11 +49,13 @@ function memorySettings() {
 function fixture(run?: ExternalAgentBackend['run']) {
   const backends: ExternalAgentBackend[] = [];
   const connect = vi.fn(() => {
-    const thread = { id: randomUUID(), cwd: process.cwd(), agentId: 'main' };
+    const thread = { id: randomUUID(), cwd: process.cwd(), agentId: 'main', modelRef: 'provider/model' };
     const backend: ExternalAgentBackend = {
       models: vi.fn(() => [{ id: 'provider/model', name: 'Configured', isDefault: true }]),
       start: vi.fn(async options => ({ ...thread, cwd: options.cwd })),
       resume: vi.fn(async id => ({ ...thread, id })),
+      describe: vi.fn(id => ({ ...thread, id, name: 'Fixture', createdAt: 1000, updatedAt: 2000,
+        permissionMode: 'full' as const, status: 'completed' as const })),
       run: run ?? vi.fn(async () => 'Exact answer'),
     };
     backends.push(backend);
@@ -93,6 +95,7 @@ async function open(service: AppServerIntegrationService) {
     clientInfo: { name: 'chrome-extension', version: 'untrusted' },
     capabilities: { browser: true },
   });
+  socket.send(JSON.stringify({ method: 'initialized' }));
   return { socket, messages, request };
 }
 
@@ -147,7 +150,8 @@ describe('native-client WebSocket app-server', () => {
     const created = await first.request('thread/start');
     const threadId = ((created.result as { thread: { id: string } }).thread).id;
     expect(f.backends[0].start).toHaveBeenCalledWith({ cwd: process.cwd(), model: undefined });
-    for (const method of ['thread/list', 'thread/read', 'thread/image', 'composer/options', 'browser/extension/pair']) {
+    expect(await first.request('thread/read', { threadId })).toHaveProperty('result.thread.id', threadId);
+    for (const method of ['thread/list', 'thread/image', 'composer/options', 'browser/extension/pair']) {
       expect(await first.request(method, { threadId })).toHaveProperty('error');
     }
     expect(await first.request('turn/start', { threadId, input: [{ type: 'text', text: 'Question' }] }))
@@ -161,7 +165,7 @@ describe('native-client WebSocket app-server', () => {
 
     const second = await open(f.service);
     const storedId = randomUUID();
-    expect(await second.request('thread/resume', { threadId: storedId })).toHaveProperty('result.thread.id', storedId);
+    expect(await second.request('thread/resume', { threadId: storedId, excludeTurns: true })).toHaveProperty('result.thread.id', storedId);
     expect(f.backends[1].resume).toHaveBeenCalledWith(storedId, { model: undefined });
     expect(f.getDefaultCwd).toHaveBeenCalledTimes(2);
   });

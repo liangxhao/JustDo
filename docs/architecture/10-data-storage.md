@@ -303,6 +303,21 @@ Plan 的 segments 表，也不探测并销毁旧 handoff 表。旧环境由启�
 任意原生 session key。创建、恢复与运行分别核对任务目录、产品助手和存活的产品行；
 删除触发器为各来源写入原有 tombstone，恢复不会重新创建已删会话。
 
+通用 app-server 的列表和元数据读取按同一 `source` 枚举外部映射，再核验存活的产品会话、
+助手与真实目录；返回的外部 ID 不替换为原生身份。`thread/name/set` 通过现有
+`cowork_sessions.title` 更新产品标题并广播列表变化，不新增字段或消息存储。
+这些方法不启动 Gateway、不写客户端 `CODEX_HOME` 标记，也不从显示状态推断执行结算。
+
+通用 app-server 的显式历史读取复用当前认证 Gateway 的完整快照，不直接读取 transcript 文件。
+读取前后核对外部映射、产品原生绑定、Gateway 连接代次和运行回执指纹；变化时有界重读或报错。
+Turn／Item 是请求内投影，不落库、不新增 Main 正文缓存。历史游标绑定物理 incarnation 与
+快照 revision；无法精确关联运行回执的可见旧消息保留在只读历史段，并标记结果未知。
+历史正文、工具完成或 assistant final 均不能补写运行结算或解除 unknown 占用。
+用户消息可按原生记录的完整输入幂等标识与精确回执关联，该关联只用于历史显示。
+通用计时记录不自动生成空 Turn；无消息的轮次只能由外部映射的精确执行指针明确保留。
+桌面单个／批量运行状态查询只观察这些外部会话，不创建、重开、绑定或结算其回执，
+防止迟到状态被记成新的恢复执行；不通过此前生成的恢复行推断外部任务结果。
+
 CLI 执行在同一映射行增加可空的 `execution_run_id`、`native_session_id`、
 `lifecycle_revision` 和 `execution_state`。旧库通过增列保持原映射及数据；没有正文、
 工具结果或原生 transcript 副本。开始发送前先保存 run 意图，原生准备后保存精确
@@ -313,7 +328,7 @@ session key、SID 和 incarnation，再安装会话工具／审批归属。
 保留为 `unknown`，映射的显示状态仍为 running，继续占用会话。应用重启不把外部会话的
 running／unknown 推断为已取消，也不会自动重发；再次执行明确拒绝并保留诊断身份。
 
-已安装 ACP 会话工具或审批 owner 时，Gateway 连接替换也进入 unknown，不自动转移
+已安装 ACP 会话工具或 ACP/app-server 审批 owner 时，Gateway 连接替换也进入 unknown，不自动转移
 原连接的资源所有权；保留取消信号，后续 EOF／关闭仍可请求停止精确 run，停止 ACK
 本身不会清除 unknown 或释放持久执行占用。
 缺失原生 authority 或精确回执的核对窗口为 30 秒，单次读调用也受同一窗口限制；

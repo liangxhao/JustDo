@@ -10,6 +10,8 @@ import { CoworkSessionForkIpc } from '../../../shared/cowork/sessionFork';
 import { SessionRunBeginErrorCode } from '../../../shared/cowork/sessionRun';
 import { SessionRunIpc } from '../../../shared/cowork/sessionRun';
 import { CoworkSessionSearchIpc } from '../../../shared/cowork/sessionSearch';
+import { CoworkSessionSource } from '../../../shared/cowork/sessionSource';
+import { ExternalSessionSource, ExternalSessionStatus } from '../../../shared/integrations/externalSession';
 import type { CoworkStore } from '../../data/coworkStore';
 import type { CoworkEngineRouter } from '../../engine';
 import {
@@ -76,6 +78,82 @@ test.each([false, true])('reads conversation activity without accepting renderer
     ...(external ? { fullScan: true } : { targeted: true }),
   });
   expect(finishSessionRun).not.toHaveBeenCalled();
+});
+
+test('keeps late external activity observations from creating or reopening a settled client receipt', async () => {
+  const timing = {
+    id: 'exact-receipt', sessionId: 'external-session', clientTurnId: 'external-turn', rootRunId: 'external-turn',
+    state: 'completed' as const, startedAt: 1_000, acceptedAt: 1_100, endedAt: 2_000,
+  };
+  const mutations = {
+    beginSessionRun: vi.fn(), reopenSessionRun: vi.fn(), bindSessionRunRootRun: vi.fn(), finishSessionRun: vi.fn(),
+  };
+  const store = {
+    getSession: () => ({ external: { origin: ExternalSessionSource.Cli, readOnly: true, status: ExternalSessionStatus.Completed, sessionKey: 'native-key' } }),
+    getLatestSessionRun: () => timing,
+    ...mutations,
+  } as unknown as CoworkStore;
+  const active = { known: true, mainRunning: true, subagentRunning: false, running: true };
+  const router = {
+    getSessionRuntimeStatus: vi.fn().mockResolvedValue(active),
+    getSessionRuntimeStatuses: vi.fn().mockResolvedValue({ 'external-session': { ...active, rootRunId: timing.rootRunId } }),
+  } as unknown as CoworkEngineRouter;
+  registerCoworkSessionHandlers({
+    getCoworkStore: () => store, getCoworkEngineRouter: () => router, setSessionPermissionMode: vi.fn(),
+  });
+  const single = mocks.handle.mock.calls.find(([name]) => name === 'cowork:session:runtimeStatus')![1] as IpcHandler;
+  const batch = mocks.handle.mock.calls.find(([name]) => name === 'cowork:sessions:runtimeStatus')![1] as IpcHandler;
+
+  const singleResult = await single(null, timing.sessionId);
+  const batchResult = await batch(null, [timing.sessionId]);
+
+  expect(singleResult).toMatchObject({ success: true, ...active, timing, revision: expect.any(Number) });
+  expect(batchResult).toMatchObject({ success: true, statuses: { [timing.sessionId]: { ...active, timing, revision: expect.any(Number) } } });
+  const revision = (singleResult as { revision: number }).revision;
+  expect(revision).toBeGreaterThan(0);
+  expect((batchResult as { statuses: Record<string, { revision: number }> }).statuses[timing.sessionId].revision).toBeGreaterThan(revision);
+  for (const mutate of Object.values(mutations)) expect(mutate).not.toHaveBeenCalled();
+  expect(timing.state).toBe('completed');
+  expect(timing.endedAt).toBe(2_000);
+});
+
+test('keeps historical external receipts running across repeated single and batch idle observations', async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(10_000);
+  const timing = {
+    id: 'exact-receipt', sessionId: 'external-session', clientTurnId: 'external-turn', rootRunId: 'external-turn',
+    state: 'running' as const, startedAt: 1_000, acceptedAt: 1_100,
+  };
+  const mutations = {
+    beginSessionRun: vi.fn(), reopenSessionRun: vi.fn(), bindSessionRunRootRun: vi.fn(), finishSessionRun: vi.fn(),
+  };
+  const store = {
+    getSession: () => ({ external: { origin: ExternalSessionSource.HistoricalAppServer, readOnly: true, status: ExternalSessionStatus.Running, sessionKey: 'native-key' } }),
+    getLatestSessionRun: () => timing,
+    ...mutations,
+  } as unknown as CoworkStore;
+  const idle = { known: true, mainRunning: false, subagentRunning: false, running: false };
+  const router = {
+    getSessionRuntimeStatus: vi.fn().mockResolvedValue(idle),
+    getSessionRuntimeStatuses: vi.fn().mockResolvedValue({ 'external-session': idle }),
+  } as unknown as CoworkEngineRouter;
+  const requestGateway = vi.fn();
+  registerCoworkSessionHandlers({
+    getCoworkStore: () => store, getCoworkEngineRouter: () => router, setSessionPermissionMode: vi.fn(), requestGateway,
+  });
+  const single = mocks.handle.mock.calls.find(([name]) => name === 'cowork:session:runtimeStatus')![1] as IpcHandler;
+  const batch = mocks.handle.mock.calls.find(([name]) => name === 'cowork:sessions:runtimeStatus')![1] as IpcHandler;
+
+  await expect(single(null, timing.sessionId)).resolves.toMatchObject({ success: true, ...idle, running: true, timing, revision: expect.any(Number) });
+  vi.setSystemTime(11_000);
+  await expect(batch(null, [timing.sessionId])).resolves.toMatchObject({ success: true, statuses: { [timing.sessionId]: { ...idle, running: true, timing, revision: expect.any(Number) } } });
+  vi.setSystemTime(12_000);
+  await expect(single(null, timing.sessionId)).resolves.toMatchObject({ success: true, ...idle, running: true, timing });
+
+  for (const mutate of Object.values(mutations)) expect(mutate).not.toHaveBeenCalled();
+  expect(requestGateway).not.toHaveBeenCalled();
+  expect(timing.state).toBe('running');
+  expect(timing).not.toHaveProperty('endedAt');
 });
 
 test.each(['copy', 'fork'] as const)('%s retains native external activity checks without treating the source as a new send', async action => {
@@ -2735,7 +2813,7 @@ test('allows a new run after a restart checkpoint is confirmed idle', async () =
   expect(beginSessionRun).toHaveBeenCalledWith(input);
 });
 
-test('starts a separate recovery clock for an unrelated active root run', async () => {
+test.each([undefined, CoworkSessionSource.BrowserExtension])('starts a separate recovery clock for an unrelated active root run (source=%s)', async source => {
   const completedTiming = {
     id: 'timing-1',
     sessionId: 'session-1',
@@ -2762,6 +2840,7 @@ test('starts a separate recovery clock for an unrelated active root run', async 
   const bindSessionRunRootRun = vi.fn().mockReturnValue(recoveryTiming);
   const reopenSessionRun = vi.fn();
   const store = {
+    getSession: () => ({ source }),
     getLatestSessionRun: vi.fn().mockReturnValue(completedTiming),
     beginSessionRun,
     bindSessionRunRootRun,

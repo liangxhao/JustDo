@@ -412,10 +412,9 @@ export const settingsTranslations = {
     toolIntegrationInboundDescription:
       '通过命令行或本机 WebSocket 调用助手，按客户端支持的协议选择接入方式。',
     agentCliTitle: '命令行入口（CLI）',
-    agentCliSessionBadge: 'CLI',
-    agentCliSessionGroup: 'CLI',
+    agentCliSessionGroup: 'Clients',
     agentCliSessionReadOnly:
-      '此会话通过本地 CLI 创建，仅供查看。请在发起会话的命令行或客户端中继续或停止任务。',
+      '此会话由外部客户端创建，仅供查看。请在发起会话的命令行或客户端中继续或停止任务。',
     agentCliDescription: '用于命令行任务和通过命令行连接的客户端。',
     agentCliStatusFailed: '无法更新 CLI 状态，请稍后重试。',
     agentCliCopyFailed: '复制失败，请重试。',
@@ -490,7 +489,6 @@ export const settingsTranslations = {
     applicationConnectionCopied: '已复制',
     applicationConnectionCopyValue: '复制{field}',
     applicationConnectionValueCopied: '已复制{field}',
-    externalClientSessionBadge: '外部',
     externalClientSessionReadOnly: '这是由旧版外部客户端入口创建的历史会话，仅供查看。',
     agentRuntimeRetry: '重新加载',
     agentRuntimeUnsaved: '有未保存更改',
@@ -1403,10 +1401,9 @@ export const settingsTranslations = {
     toolIntegrationInboundDescription:
       'Invoke the assistant through the command line or a local WebSocket. Choose the protocol supported by your client.',
     agentCliTitle: 'Command-line entry (CLI)',
-    agentCliSessionBadge: 'CLI',
-    agentCliSessionGroup: 'CLI',
+    agentCliSessionGroup: 'Clients',
     agentCliSessionReadOnly:
-      'This session was started through the local CLI and is read-only here. Continue or stop the task in the originating terminal or client.',
+      'This session was started by an external client and is read-only here. Continue or stop the task in the originating terminal or client.',
     agentCliDescription: 'For command-line tasks and clients launched through this command.',
     agentCliStatusFailed: 'Unable to update CLI status. Please try again.',
     agentCliCopyFailed: 'Copy failed. Please try again.',
@@ -1488,7 +1485,6 @@ export const settingsTranslations = {
     applicationConnectionCopied: 'Copied',
     applicationConnectionCopyValue: 'Copy {field}',
     applicationConnectionValueCopied: '{field} copied',
-    externalClientSessionBadge: 'External',
     externalClientSessionReadOnly:
       'This historical session was created through an earlier external client entry and is read-only.',
     agentRuntimeRetry: 'Reload',
