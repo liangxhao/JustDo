@@ -33,6 +33,7 @@ import {
   renderStreamingGroup,
   shouldRenderGroupAvatarByPrevItem,
   shouldRenderGroupFooterByNextItem,
+  type UserMessageStatus,
 } from '@/libs/openclaw-chat/components/message/message-render';
 import {
   type EditDiffMode,
@@ -468,6 +469,7 @@ export class JustDoChatElement extends LitElement {
   private _controller: ChatController | null = null;
   private _controllerUnsubscribe: (() => void) | null = null;
   private _streamUnsubscribe: (() => void) | null = null;
+  private pendingInputReadFailureScope: readonly unknown[] = [];
   private unsubscribeMessagePresentation: (() => void) | null = null;
   private readonly handleMessagePresentationChanged = () => {
     this.peerFilteredHistory = new WeakMap();
@@ -499,6 +501,7 @@ export class JustDoChatElement extends LitElement {
     this.messageDisclosureState.reset(null);
     this.thinkingContentPresentation.reset(null);
     this._controller = ctrl;
+    this.pendingInputReadFailureScope = [];
     this.editDiffModes = new Map();
     if (ctrl) this.subscribeController(ctrl);
     void this.refreshLocalTtsStatus();
@@ -918,11 +921,6 @@ export class JustDoChatElement extends LitElement {
             <div class="sr-only" role="status" aria-live="polite">
               ${activeTurn ? i18nService.t(this.activeTurnStatusKey(activeTurn)) : nothing}
             </div>
-            ${
-              ctrl && nativePendingInputReadFailed(ctrl.state)
-                ? html`<div role="status">${i18nService.t('messagePendingInputReadFailed')}</div>`
-                : nothing
-            }
             ${this.renderPersistedRows(timelineView.persistedRows)}
             ${
               timelineView.seamRow
@@ -1210,6 +1208,7 @@ export class JustDoChatElement extends LitElement {
 
   protected updated(changedProperties?: Map<string | number | symbol, unknown>): void {
     this.syncWidgetContexts();
+    this.syncPendingInputReadFailure();
     traceTimelineDom(this._controller?.state.sessionKey ?? '', this.shadowRoot);
     this.syncActiveTurnClock();
     if (
@@ -1773,6 +1772,25 @@ export class JustDoChatElement extends LitElement {
     event.stopPropagation();
     view.context = this.mcpAppContext();
   };
+
+  private syncPendingInputReadFailure(): void {
+    if (!this.isConnected) return;
+    const ctrl = this._controller;
+    const scope =
+      ctrl && nativePendingInputReadFailed(ctrl.state)
+        ? [ctrl, ctrl.state.client, ctrl.state.client?.generation, ctrl.state.sessionKey,
+            ctrl.state.currentSessionId, ctrl.state.transcript.historyGeneration]
+        : [];
+    const changed =
+      scope.length !== this.pendingInputReadFailureScope.length ||
+      scope.some((value, index) => value !== this.pendingInputReadFailureScope[index]);
+    this.pendingInputReadFailureScope = scope;
+    if (scope.length && changed) {
+      this.ownerDocument.defaultView?.dispatchEvent(
+        new CustomEvent('app:showToast', { detail: i18nService.t('messagePendingInputReadFailed') }),
+      );
+    }
+  }
 
   private subscribeController(ctrl: ChatController): void {
     this._controllerUnsubscribe = ctrl.subscribe(() => {
@@ -2435,6 +2453,20 @@ export class JustDoChatElement extends LitElement {
       );
       const entryId = openClawEntryId(item.message);
       const pendingInputState = nativePendingInputState(item.message);
+      const userMessageStatus: UserMessageStatus | undefined =
+        pendingInputState === 'cancelled' || pendingInputState === 'interrupted'
+          ? {
+              state: pendingInputState,
+              label: i18nService.t(
+                pendingInputState === 'cancelled'
+                  ? 'messagePendingInputCancelledShort' : 'messagePendingInputInterruptedShort',
+              ),
+              description: i18nService.t(
+                pendingInputState === 'cancelled'
+                  ? 'messagePendingInputCancelled' : 'messagePendingInputInterrupted',
+              ),
+            }
+          : undefined;
       const isPersistedUserMessage =
         !pendingInputState && item.message.role?.toLowerCase() === 'user' && entryId;
       const canEditOrWithdraw =
@@ -2530,14 +2562,8 @@ export class JustDoChatElement extends LitElement {
             userMessageActions,
             assistantMessageFork,
             item.key,
+            userMessageStatus,
           )}
-          ${
-            pendingInputState && pendingInputState !== 'queued'
-              ? html`<div class="active-turn__footer" data-pending-input-state=${pendingInputState}>
-                  ${i18nService.t(pendingInputState === 'cancelled' ? 'messagePendingInputCancelled' : 'messagePendingInputInterrupted')}
-                </div>`
-              : nothing
-          }
         </div>
       `;
     }
@@ -2889,6 +2915,7 @@ export class JustDoChatElement extends LitElement {
       onFork: (entryId: string) => void;
     },
     disclosureOwner?: string,
+    userMessageStatus?: UserMessageStatus,
   ): Array<TemplateResult | typeof nothing> {
     const rendered: Array<TemplateResult | typeof nothing> = [];
 
@@ -2947,6 +2974,7 @@ export class JustDoChatElement extends LitElement {
             speechState: this.getSpeechState(item.key),
             onSpeak: this.localTtsAvailable ? this.handleSpeak : undefined,
             userMessageActions,
+            userMessageStatus,
             assistantMessageFork,
           }),
         );

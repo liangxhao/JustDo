@@ -3,6 +3,8 @@ import './justdo-chat';
 
 import { afterEach, expect, test, vi } from 'vitest';
 
+import { i18nService } from '@/services/i18n';
+
 import { ChatController } from '../gateway/chat-controller';
 import { queuedInputSnapshot, refreshNativePendingInputs } from '../gateway/input/chat-pending-inputs';
 import type { JustDoChatElement } from './justdo-chat';
@@ -36,7 +38,7 @@ test('renders an ordinary first send as a user bubble while native custody is pe
   expect(bubble?.querySelector('[data-pending-input-state="queued"]')).toBeNull();
 });
 
-test('shows native pending statuses in accepted order without enabling transcript mutation actions', async () => {
+test.each(['cancelled', 'interrupted'] as const)('keeps %s status in the user footer without enabling transcript mutation actions', async state => {
   const controller = new ChatController();
   controller.state.sessionKey = 'agent:main:justdo:fixture';
   controller.state.currentSessionId = 'physical-fixture';
@@ -46,7 +48,7 @@ test('shows native pending statuses in accepted order without enabling transcrip
       inputReceipts: params.inputRunIds.map((runId: string) => ({
         runId,
         state: 'pending',
-        ...(runId === 'old' ? { cancelled: true } : {}),
+        ...(runId === 'old' && state === 'cancelled' ? { cancelled: true } : {}),
       })),
     })),
   } as unknown as NonNullable<typeof controller.state.client>;
@@ -78,7 +80,7 @@ test('shows native pending statuses in accepted order without enabling transcrip
       id: 'old',
       runId: 'old',
       acceptedAt: 1000,
-      state: 'cancelled',
+      state,
       message: {
         role: 'user',
         content: 'Older cancelled input',
@@ -109,6 +111,15 @@ test('shows native pending statuses in accepted order without enabling transcrip
     'canonical-reply',
   ]);
   expect(chat.shadowRoot!.querySelectorAll('[data-pending-input-state]')).toHaveLength(1);
+  const status = chat.shadowRoot!.querySelector(`[data-pending-input-state="${state}"]`);
+  expect(status?.closest('.chat-group--user .chat-group__footer')).not.toBeNull();
+  expect(status?.closest('.active-turn__footer')).toBeNull();
+  const shortKey = state === 'cancelled' ? 'messagePendingInputCancelledShort' : 'messagePendingInputInterruptedShort';
+  const descriptionKey = state === 'cancelled' ? 'messagePendingInputCancelled' : 'messagePendingInputInterrupted';
+  expect(status?.textContent).toBe(i18nService.t(shortKey));
+  expect(status?.getAttribute('title')).toBe(i18nService.t(descriptionKey));
+  expect(status?.getAttribute('aria-label')).toBe(i18nService.t(descriptionKey));
+  expect(chat.shadowRoot!.textContent).not.toContain(i18nService.t(descriptionKey));
   expect(chat.shadowRoot!.textContent).not.toContain('New queued input');
   expect(queuedInputSnapshot(controller.state, history).items).toEqual([
     { id: 'new', text: 'New queued input', canWithdraw: true },
@@ -131,4 +142,53 @@ test('shows native pending statuses in accepted order without enabling transcrip
   expect(queuedInputSnapshot(controller.state, history).items).toEqual([]);
   controller.state.sessionKey = 'another-session';
   expect(queuedInputSnapshot(controller.state, history).items).toEqual([]);
+});
+
+test('reports pending input read failures once through the app notification instead of the timeline', async () => {
+  const controller = new ChatController();
+  const client = { request: vi.fn(), generation: 1 };
+  Object.assign(controller.state, {
+    sessionKey: 'agent:main:pending-read', currentSessionId: 'physical-read', connected: true,
+    client,
+  });
+  const notify = () => (controller as unknown as { notify(): void }).notify();
+  const failRead = () => refreshNativePendingInputs(controller.state,
+    { pendingInputs: { items: [], total: -1 } }, notify, vi.fn());
+  // An already-failed controller must also report when first mounted.
+  await failRead();
+  const toast = vi.fn();
+  window.addEventListener('app:showToast', toast);
+  try {
+    const chat = document.createElement('justdo-chat') as JustDoChatElement;
+    chat.controller = controller;
+    document.body.append(chat);
+    await chat.updateComplete;
+    expect(toast).toHaveBeenCalledOnce();
+    expect((toast.mock.calls[0][0] as CustomEvent).detail).toBe(i18nService.t('messagePendingInputReadFailed'));
+    expect(chat.shadowRoot!.textContent).not.toContain(i18nService.t('messagePendingInputReadFailed'));
+    chat.requestUpdate();
+    await chat.updateComplete;
+    await failRead();
+    await chat.updateComplete;
+    expect(toast).toHaveBeenCalledOnce();
+    controller.state.connected = false;
+    notify();
+    await chat.updateComplete;
+    client.generation += 1;
+    controller.state.connected = true;
+    notify();
+    await chat.updateComplete;
+    expect(toast).toHaveBeenCalledOnce();
+    await failRead();
+    await chat.updateComplete;
+    expect(toast).toHaveBeenCalledTimes(2);
+    await refreshNativePendingInputs(controller.state,
+      { pendingInputs: { items: [], total: 0 } }, notify, vi.fn());
+    await chat.updateComplete;
+    await failRead();
+    await chat.updateComplete;
+    expect(toast).toHaveBeenCalledTimes(3);
+  } finally {
+    window.removeEventListener('app:showToast', toast);
+  }
 });

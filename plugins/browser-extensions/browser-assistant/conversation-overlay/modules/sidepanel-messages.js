@@ -515,10 +515,13 @@ export function createMessageRenderer(
         if (entry.pendingInput) {
           const label = document.createElement('small');
           label.className = 'pending-input-status';
-          label.textContent = pendingInputLabel(
+          const status = pendingInputLabel(
             entry.pendingInput.state,
             entry.pendingInput.incomplete,
           );
+          label.textContent = status.label;
+          label.title = status.description;
+          label.setAttribute('aria-label', status.description);
           node.append(label);
         }
         node.renderSignature = signature;

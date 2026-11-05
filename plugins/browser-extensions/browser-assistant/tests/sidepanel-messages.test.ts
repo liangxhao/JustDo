@@ -64,6 +64,33 @@ describe('side panel process presentation matches the desktop', () => {
   const disclosure = (key: string) => summary(key).parentElement as HTMLDetailsElement;
   const history = () => messages.querySelector<HTMLDetailsElement>('.completed-process')!;
 
+  it('keeps compact pending states inside their own user bubbles with accessible explanations', () => {
+    const languageGetter = vi.spyOn(navigator, 'language', 'get').mockReturnValue('en-US');
+    try {
+      const inputs = [
+        { state: 'queued', label: 'Pending', description: 'Input received, waiting for processing' },
+        { state: 'cancelled', label: 'Cancelled', description: 'Input cancelled before submission to the model' },
+        { state: 'interrupted', label: 'Interrupted', description: 'Input processing interrupted' },
+        { state: 'queued', incomplete: true, label: 'Content incomplete', description: 'Some pending inputs could not be loaded. Refresh to retry.' },
+      ];
+      renderer.render(inputs.map((input, index) => ({
+        role: 'user', key: `pending:${index}`, text: `Prompt ${index}`,
+        pendingInput: { state: input.state, incomplete: input.incomplete },
+      })), 'pending-statuses');
+      const labels = messages.querySelectorAll<HTMLElement>('.message.user .pending-input-status');
+      expect(labels).toHaveLength(inputs.length);
+      inputs.forEach((input, index) => {
+        expect(labels[index].textContent).toBe(input.label);
+        expect(labels[index].title).toBe(input.description);
+        expect(labels[index].getAttribute('aria-label')).toBe(input.description);
+        expect(labels[index].parentElement?.textContent).toContain(`Prompt ${index}`);
+        expect(messages.textContent).not.toContain(input.description);
+      });
+    } finally {
+      languageGetter.mockRestore();
+    }
+  });
+
   it('renders question answers inside the existing disclosure and updates the same Lit host after timeout', () => {
     const questions = [{
       id: 'stack', question: 'Which stack?',

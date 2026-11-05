@@ -17,6 +17,7 @@ type PendingView = {
   sessionId: string | null;
   generation: number;
   client: ChatState['client'];
+  clientGeneration: number | undefined;
   items: NativePendingInput[];
   failed: boolean;
   suppressedOptimistic?: ChatState['pendingUserMessage'];
@@ -34,6 +35,7 @@ const isScopeCurrent = (state: ChatState, view: PendingView): boolean =>
   views.get(state) === view &&
   state.connected &&
   state.client === view.client &&
+  state.client?.generation === view.clientGeneration &&
   state.sessionKey === view.sessionKey &&
   state.currentSessionId === view.sessionId &&
   state.transcript.historyGeneration === view.generation;
@@ -50,6 +52,7 @@ export async function refreshNativePendingInputs(
     sessionId: state.currentSessionId,
     generation: state.transcript.historyGeneration,
     client: state.client,
+    clientGeneration: state.client?.generation,
     items: [],
     failed: false,
   };

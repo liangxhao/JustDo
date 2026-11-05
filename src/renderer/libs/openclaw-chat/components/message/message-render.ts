@@ -47,6 +47,12 @@ import { renderThinkingContent } from './thinking-content';
 
 type AssistantCanvasItem = Extract<MessageContentItem, { type: 'canvas' }>;
 
+export type UserMessageStatus = {
+  state: 'cancelled' | 'interrupted';
+  label: string;
+  description: string;
+};
+
 type MessageRenderOptions = {
   disclosureOwner?: string;
   searchQuery?: string;
@@ -62,6 +68,7 @@ type MessageRenderOptions = {
   onOpenFile?: OpenMessageFileLink;
   speechState?: 'idle' | 'loading' | 'playing';
   onSpeak?: (groupKey: string, text: string) => void;
+  userMessageStatus?: UserMessageStatus;
   userMessageActions?: {
     entryId: string;
     canEdit?: boolean;
@@ -1124,11 +1131,12 @@ function renderGroupFooter(
   opts?: MessageRenderOptions,
 ): TemplateResult | typeof nothing {
   const userMessageActions = group.role === 'user' ? opts?.userMessageActions : undefined;
+  const userMessageStatus = group.role === 'user' ? opts?.userMessageStatus : undefined;
   const assistantMessageFork = group.role === 'assistant' ? opts?.assistantMessageFork : undefined;
   const showMetadata = opts?.showFooter ?? true;
-  if (!showMetadata && !userMessageActions && !assistantMessageFork) return nothing;
   const ts = group.timestamp;
-  if ((!ts || !showMetadata) && !userMessageActions && !assistantMessageFork) return nothing;
+  if ((!ts || !showMetadata) && !userMessageActions && !userMessageStatus && !assistantMessageFork)
+    return nothing;
   const date = new Date(ts);
   const time = ts && showMetadata ? formatGroupTimestamp(date) : '';
   const roleName = showMetadata
@@ -1151,6 +1159,18 @@ function renderGroupFooter(
           : nothing
       }
       ${ts && showMetadata ? html`<time class="chat-group__timestamp" datetime=${date.toISOString()}>${time}</time>` : nothing}
+      ${
+        userMessageStatus
+          ? html`
+              ${time ? html`<span class="chat-group__footer-separator" aria-hidden="true">·</span>` : nothing}
+              <span
+                data-pending-input-state=${userMessageStatus.state}
+                title=${userMessageStatus.description}
+                aria-label=${userMessageStatus.description}
+              >${userMessageStatus.label}</span>
+            `
+          : nothing
+      }
       ${
         duration
           ? html`

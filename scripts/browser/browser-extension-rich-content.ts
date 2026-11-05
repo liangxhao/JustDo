@@ -21,15 +21,29 @@ import { i18nService } from './browser-extension-i18n';
 import { renderMarkdownHtml } from '../../plugins/browser-extensions/browser-assistant/scripts/browser-extension-markdown-entry.mjs';
 
 const imageRetries = new WeakMap<HTMLImageElement, () => void>();
-export function pendingInputLabel(state: string, incomplete = false): string {
-  if (incomplete) return i18nService.t('messagePendingInputReadFailed');
-  return i18nService.t(
-    state === 'cancelled'
-      ? 'messagePendingInputCancelled'
-      : state === 'interrupted'
-        ? 'messagePendingInputInterrupted'
-        : 'messagePendingInputQueued',
+export function pendingInputLabel(
+  state: string,
+  incomplete = false,
+): { label: string; description: string } {
+  const description = i18nService.t(
+    incomplete
+      ? 'messagePendingInputReadFailed'
+      : state === 'cancelled'
+        ? 'messagePendingInputCancelled'
+        : state === 'interrupted'
+          ? 'messagePendingInputInterrupted'
+          : 'messagePendingInputQueued',
   );
+  const label = i18nService.t(
+    incomplete
+      ? 'messagePendingInputIncompleteShort'
+      : state === 'cancelled'
+        ? 'messagePendingInputCancelledShort'
+        : state === 'interrupted'
+          ? 'messagePendingInputInterruptedShort'
+          : 'messagePendingInputQueuedShort',
+  );
+  return { label, description };
 }
 export function retryRichImages(host: HTMLElement) {
   host.querySelectorAll('img').forEach(img => imageRetries.get(img)?.());

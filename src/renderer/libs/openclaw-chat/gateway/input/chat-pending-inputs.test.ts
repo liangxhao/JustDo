@@ -68,6 +68,25 @@ function fixture() {
 }
 
 describe('native accepted input recovery', () => {
+  test('invalidates pending content and late read failures after the same client reconnects', async () => {
+    const f = fixture();
+    const client = f.state.client!;
+    Object.assign(client, { generation: 1 });
+    await f.refresh(page([input(1)]));
+    expect(f.project().messages).toHaveLength(1);
+    Object.assign(client, { generation: 2 });
+    expect(f.project().messages).toEqual([]);
+    f.changed.mockClear();
+    let rejectRead!: (error: Error) => void;
+    f.request.mockImplementationOnce(() => new Promise((_, reject) => { rejectRead = reject; }));
+    const reading = f.refresh(page([input(2)]));
+    Object.assign(client, { generation: 3 });
+    rejectRead(new Error('Old connection closed'));
+    await reading;
+    expect(nativePendingInputReadFailed(f.state)).toBe(false);
+    expect(f.changed).not.toHaveBeenCalled();
+  });
+
   test('keeps internal pending inputs out of cards, timelines and on-demand details', async () => {
     const f = fixture();
     const internal = input(1);
