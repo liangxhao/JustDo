@@ -383,7 +383,7 @@ const ExternalAgentsSettingsSection: React.FC<Props> = ({
               <div className="text-sm font-semibold text-foreground">
                 {i18nService.t('externalAgentsSectionTitle')}
               </div>
-              <div className="mt-1 text-xs leading-5 text-secondary">
+              <div className="mt-1 whitespace-pre-line text-xs leading-5 text-secondary">
                 {i18nService.t('externalAgentsSectionDescription')}
               </div>
             </div>
@@ -439,9 +439,14 @@ const ExternalAgentsSettingsSection: React.FC<Props> = ({
                   >
                     <ExternalAgentBrandIcon agentId={definition.id} className="h-6 w-6" />
                   </span>
-                  <h3 className="min-w-0 flex-1 truncate text-sm font-semibold text-foreground">
-                    {definition.name}
-                  </h3>
+                  <div className="min-w-0 flex-1">
+                    <h3 className="truncate text-sm font-semibold text-foreground">
+                      {definition.name}
+                    </h3>
+                    <p className="mt-1 break-words text-[11px] leading-4 text-secondary">
+                      {i18nService.t(definition.descriptionKey)}
+                    </p>
+                  </div>
                   <div className="flex w-[92px] shrink-0 flex-col gap-1 rounded-xl border border-border/60 bg-surface-raised/55 p-1 shadow-inner">
                     <button
                       type="button"
