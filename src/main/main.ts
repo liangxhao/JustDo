@@ -237,6 +237,7 @@ import {
   registerOnlineTtsHandlers,
   registerSpeechSynthesisHandlers,
 } from './ipc/speech';
+import { removeLegacyWorkspaceSetupFile } from './openclaw/config/agents/legacyWorkspaceSetupCleanup';
 import { NativeAssistantCreation } from './openclaw/config/agents/nativeAssistantCreation';
 import { getOpenClawAppConfigSignature } from './openclaw/config/appConfigSignature';
 import { publishBuiltinCredentialFile, revokeBuiltinCredentialFile } from './openclaw/config/models/builtinCredentialFile';
@@ -2537,6 +2538,17 @@ if (agentBridgeArgv) {
     let startupSync: Awaited<ReturnType<typeof syncOpenClawConfig>> | undefined;
     initialization.reportActivity(AppInitializationActivity.DefaultFiles);
     await initialization.runOptionalTask('synchronize assistant configuration', async () => {
+      try {
+        removeLegacyWorkspaceSetupFile(getCoworkStore().getConfig().workingDirectory);
+      } catch (error) {
+        startupSync = {
+          success: false,
+          changed: false,
+          configSynced: false,
+          error: error instanceof Error ? error.message : String(error),
+        };
+        return;
+      }
       const result = await syncOpenClawConfig({
         reason: 'startup',
       });

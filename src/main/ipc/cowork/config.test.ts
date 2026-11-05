@@ -1,6 +1,30 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const handlers = new Map<string, (...args: unknown[]) => unknown>();
+const temporaryDirectories: string[] = [];
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  for (const directory of temporaryDirectories.splice(0)) {
+    const relative = path.relative(path.resolve(os.tmpdir()), path.resolve(directory));
+    if (!relative || path.isAbsolute(relative) || relative === '..' || relative.startsWith(`..${path.sep}`)) {
+      throw new Error('Refusing to remove a workspace fixture outside the temporary directory.');
+    }
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+const createWorkspaceFixture = () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'workspace-switch-'));
+  temporaryDirectories.push(directory);
+  const marker = path.join(directory, 'openclaw-workspace-state.json');
+  fs.writeFileSync(marker, '{"version":1,"setupCompletedAt":"legacy"}');
+  return { directory, marker };
+};
 
 vi.mock('electron', () => ({
   ipcMain: {
@@ -180,6 +204,73 @@ describe('cowork config IPC', () => {
 
     expect(result).toEqual({ success: true });
     expect(syncOpenClawConfig).toHaveBeenCalledWith({ reason: 'cowork-config-change' });
+  });
+
+  it('removes the selected project legacy setup file before synchronizing the new directory', async () => {
+    const previous = createWorkspaceFixture();
+    const selected = createWorkspaceFixture();
+    currentConfig = { ...baseConfig, workingDirectory: previous.directory };
+    syncOpenClawConfig.mockImplementation(async () => {
+      expect(fs.existsSync(selected.marker)).toBe(false);
+      expect(currentConfig.workingDirectory).toBe(selected.directory);
+      return { success: true, changed: true };
+    });
+
+    const result = await handlers.get('cowork:config:set')?.(
+      {}, { workingDirectory: selected.directory },
+    );
+
+    expect(result).toEqual({ success: true });
+    expect(fs.existsSync(previous.marker)).toBe(true);
+    expect(syncOpenClawConfig).toHaveBeenCalledOnce();
+  });
+
+  it('keeps the previous directory and avoids Gateway changes when legacy cleanup is denied', async () => {
+    const selected = createWorkspaceFixture();
+    const previous = { ...currentConfig };
+    vi.spyOn(fs, 'unlinkSync').mockImplementation(() => {
+      throw Object.assign(new Error('permission denied'), { code: 'EACCES' });
+    });
+
+    const result = await handlers.get('cowork:config:set')?.(
+      {}, { workingDirectory: selected.directory },
+    );
+
+    expect(result).toMatchObject({ success: false, error: expect.stringContaining(selected.marker) });
+    expect(currentConfig).toEqual(previous);
+    expect(fs.existsSync(selected.marker)).toBe(true);
+    expect(syncOpenClawConfig).not.toHaveBeenCalled();
+    expect(handleEngineConfigChanged).not.toHaveBeenCalled();
+  });
+
+  it('cleans the effective default directory when the stored directory is reset', async () => {
+    const selected = createWorkspaceFixture();
+    setConfig.mockImplementationOnce((update: Partial<CoworkConfig>) => {
+      currentConfig = { ...currentConfig, ...update, workingDirectory: selected.directory };
+    });
+
+    const result = await handlers.get('cowork:config:set')?.({}, { workingDirectory: '' });
+
+    expect(result).toEqual({ success: true });
+    expect(currentConfig.workingDirectory).toBe(selected.directory);
+    expect(fs.existsSync(selected.marker)).toBe(false);
+    expect(syncOpenClawConfig).toHaveBeenCalledOnce();
+  });
+
+  it('does not add cleanup to unchanged directory saves or external Agent enablement', async () => {
+    const selected = createWorkspaceFixture();
+    currentConfig = { ...baseConfig, workingDirectory: selected.directory };
+
+    await expect(handlers.get('cowork:config:set')?.(
+      {}, { workingDirectory: selected.directory },
+    )).resolves.toEqual({ success: true });
+    expect(syncOpenClawConfig).not.toHaveBeenCalled();
+    const settings = createDefaultExternalAgentSettings();
+    settings.agents.claude.enabled = true;
+    await expect(handlers.get(ExternalAgentIpc.SET_SETTINGS)?.({}, settings))
+      .resolves.toMatchObject({ success: true });
+
+    expect(fs.existsSync(selected.marker)).toBe(true);
   });
 
   it('preserves restart fallback when permission and other config change together', async () => {

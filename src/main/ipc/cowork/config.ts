@@ -16,6 +16,7 @@ import { SessionStorageIpc } from '../../../shared/openclaw/sessionStorage';
 import { isPermissionMode, type PermissionMode } from '../../../shared/security/approvals';
 import type { CoworkStore } from '../../data/coworkStore';
 import type { CoworkAgentEngine, CoworkEngineRouter } from '../../engine';
+import { removeLegacyWorkspaceSetupFile } from '../../openclaw/config/agents/legacyWorkspaceSetupCleanup';
 import type {
   OpenClawEngineManager,
   OpenClawEngineStatus,
@@ -391,6 +392,14 @@ export const registerCoworkConfigHandlers = ({
           const previous = store.getConfig();
           store.setConfig(normalized);
           const next = store.getConfig();
+          if (next.workingDirectory !== previous.workingDirectory) {
+            try {
+              removeLegacyWorkspaceSetupFile(next.workingDirectory);
+            } catch (error) {
+              store.setConfig(previous);
+              throw error;
+            }
+          }
 
           if (agentEngine !== undefined && agentEngine !== previous.agentEngine) {
             getCoworkEngineRouter().handleEngineConfigChanged(agentEngine);
