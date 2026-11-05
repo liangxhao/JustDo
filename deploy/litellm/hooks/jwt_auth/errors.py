@@ -34,6 +34,7 @@ class JwtFailure(Enum):
     MEMBER_MODELS = ('AUTH-2009', 403, 'Default member models are invalid')
     ENROLLMENT = ('AUTH-2501', 503, 'Authorization failed: automatic enrollment unavailable')
     TEAM_LOOKUP = ('AUTH-2502', 503, 'Authorization failed: Team lookup unavailable')
+    MEMBER_POLICY_LOOKUP = ('AUTH-2503', 503, 'Authorization failed: Team member policy lookup unavailable')
 
 
 class JwtAuthError(ProxyException):

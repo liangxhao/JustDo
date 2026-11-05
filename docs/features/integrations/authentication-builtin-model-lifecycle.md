@@ -90,6 +90,10 @@ token 的实际有效期；Main 仍在剩余不足 15 秒时拒绝使用。LiteL
 
 模型发现 `/models` 必需，`/model/info` 可选增强；区分 chat/embedding 并规范化能力。Main 直发请求使用 `Authorization: Bearer <真实JWT>`，同时保留 `X-ACCESS-JWT` 和 `X-User-Account`；api-key 开发模式只发送 Bearer key。provider 配置中的非秘密占位符仅用于应用内配置投影，不能作为网络请求凭据。Gateway 和 memory search 通过同一 JWT SecretRef 解析真实 JWT 并发送 Bearer 认证。
 
+模型服务同时校验用户所属的唯一受管 Team，以及该 Team 成员名单中的 `user_id`。
+`LiteLLM_TeamMembership` 保存可选个人策略，由原生预算、模型权限和限流检查执行；
+策略读取或缓存同步失败返回 503。服务端错误码见[校验与授权错误码](../../../deploy/litellm/hooks/ERRORS.md)。
+
 Main 将派生凭据原子写入 `stateDir/credentials/credentials.json`。
 文件是普通 JSON，仅包含 `version`、`iv`、`tag`、`data`，使用随机 IV 的 AES-GCM
 遮蔽 JWT、账号、有效期、登录会话和认证类型。固定公开材料只用于避免直接打开文件

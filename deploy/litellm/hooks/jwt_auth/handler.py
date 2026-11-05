@@ -24,7 +24,9 @@ from fastapi import Request
 from jwt import PyJWKClient
 
 from litellm.proxy._types import (
+    LiteLLM_TeamMembership,
     LitellmUserRoles,
+    Member,
     ProxyException,
     UserAPIKeyAuth,
 )
@@ -68,7 +70,7 @@ class JwtSettings:
 class ResolvedAccess:
     user: Any
     team: Any
-    membership: Any
+    membership: LiteLLM_TeamMembership | None
 
 
 def _auth_env(name: str, default: str = "") -> str:
@@ -417,9 +419,66 @@ async def _create_member_budget(tx: Any, team: dict, metadata: dict) -> str | No
     return budget_id
 
 
+async def _require_team_member(db: Any, user_id: str, team_id: str) -> None:
+    # Enrollment updates the roster outside the native Team cache.
+    try:
+        rows = await db.query_raw(
+            'SELECT members_with_roles FROM "LiteLLM_TeamTable" WHERE team_id = $1',
+            team_id,
+        )
+        members = rows[0]['members_with_roles'] if rows else []
+        if isinstance(members, str):
+            members = json.loads(members)
+        if members == {}:
+            members = []
+        if not isinstance(members, list):
+            raise ValueError('Invalid Team roster')
+        roster = [Member.model_validate(member) for member in members]
+    except Exception:
+        raise _proxy_error(JwtFailure.TEAM_LOOKUP) from None
+    if not any(member.user_id == user_id for member in roster):
+        raise _proxy_error(JwtFailure.MEMBERSHIP)
+
+
+async def _read_member_policy(
+    db: Any, cache: Any, user_id: str, team_id: str,
+) -> LiteLLM_TeamMembership | None:
+    # Native get_team_membership conflates missing rows with failed reads.
+    try:
+        row = await db.litellm_teammembership.find_unique(
+            where={'user_id_team_id': {'user_id': user_id, 'team_id': team_id}},
+            include={'litellm_budget_table': True},
+        )
+        if row is None:
+            return None
+        membership = LiteLLM_TeamMembership.model_validate(row.dict())
+        if membership.user_id != user_id or membership.team_id != team_id:
+            raise ValueError('Invalid member policy identity')
+        budget = membership.litellm_budget_table
+        if membership.budget_id is not None:
+            if not membership.budget_id or budget is None or budget.budget_id != membership.budget_id:
+                raise ValueError('Invalid member policy budget')
+        elif budget is not None:
+            raise ValueError('Unexpected member policy budget')
+
+        # Share the verified policy with native common checks.
+        from litellm.proxy.common_utils.user_api_key_cache import get_management_object_ttl
+        key = f'team_membership:{user_id}:{team_id}'
+        await cache.async_set_cache(
+            key=key, value=membership, model_type=LiteLLM_TeamMembership,
+            ttl=get_management_object_ttl(cache),
+        )
+        # DualCache can swallow write errors.
+        published = await cache.async_get_cache(key=key, model_type=LiteLLM_TeamMembership)
+        if published is None or published.model_dump() != membership.model_dump():
+            raise ValueError('Member policy cache publication failed')
+        return membership
+    except Exception:
+        raise _proxy_error(JwtFailure.MEMBER_POLICY_LOOKUP) from None
+
+
 async def resolve_managed_access(user_id: str) -> ResolvedAccess:
     from litellm.proxy.auth.auth_checks import (
-        get_team_membership,
         get_team_object,
         get_user_object,
     )
@@ -493,15 +552,8 @@ async def resolve_managed_access(user_id: str) -> ResolvedAccess:
         raise _proxy_error(JwtFailure.TEAM)
 
     team = managed_teams[0]
-    membership = await get_team_membership(
-        user_id=user_id,
-        team_id=team.team_id,
-        prisma_client=prisma_client,
-        user_api_key_cache=user_api_key_cache,
-        proxy_logging_obj=proxy_logging_obj,
-    )
-    if membership is None:
-        raise _proxy_error(JwtFailure.MEMBERSHIP)
+    await _require_team_member(prisma_client.db, user_id, team.team_id)
+    membership = await _read_member_policy(prisma_client.db, user_api_key_cache, user_id, team.team_id)
     return ResolvedAccess(user=user, team=team, membership=membership)
 
 
@@ -570,9 +622,9 @@ async def _authenticate(request: Request, api_key: str) -> UserAPIKeyAuth:
         team_blocked=team.blocked,
         team_metadata=team.metadata,
         team_object_permission_id=team.object_permission_id,
-        team_member_spend=membership.spend,
-        team_member_rpm_limit=membership.safe_get_team_member_rpm_limit(),
-        team_member_tpm_limit=membership.safe_get_team_member_tpm_limit(),
+        team_member_spend=membership.spend if membership is not None else 0.0,
+        team_member_rpm_limit=membership.safe_get_team_member_rpm_limit() if membership is not None else None,
+        team_member_tpm_limit=membership.safe_get_team_member_tpm_limit() if membership is not None else None,
         expires=datetime.fromtimestamp(expires_at, tz=timezone.utc),
         jwt_claims={
             claim: claims[claim]

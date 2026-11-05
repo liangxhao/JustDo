@@ -55,6 +55,9 @@ JWT/Team 使用固定的明确原因。不返回令牌、Cookie、实际 claims 
 | AUTH-2009 | 403 | Default member models are invalid |
 | AUTH-2501 | 503 | Authorization failed: automatic enrollment unavailable |
 | AUTH-2502 | 503 | Authorization failed: Team lookup unavailable |
+| AUTH-2503 | 503 | Authorization failed: Team member policy lookup unavailable |
+
+`AUTH-2003` 表示 Team 成员名单中缺少该账号；个人策略读取或缓存同步失败返回 `AUTH-2503`。
 
 ## 排障与范围
 
