@@ -188,6 +188,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   >();
   private readonly runTerminalReceipts = new Map<string, NativeRunTerminalReceipt>();
   private readonly compactionInFlightSessionIds = new Set<string>();
+  private readonly sessionPreparationCounts = new Map<string, number>();
+  private readonly unconfirmedSessionPreparationProcesses = new Map<string, number | undefined>();
   private readonly lifecycleEndFallbackTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
   // Gateway connection
@@ -413,13 +415,39 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     sessionId: string,
     options: CoworkPrepareSessionOptions = {},
   ): Promise<CoworkPreparedSession> {
-    const session = this.store.getSession(sessionId);
-    if (!session) throw new Error(`Session ${sessionId} not found`);
+    return this.withSessionPreparation(sessionId, async () => {
+      const session = this.store.getSession(sessionId);
+      if (!session) throw new Error(`Session ${sessionId} not found`);
 
-    const agentId = options.agentId || session.agentId || DEFAULT_MANAGED_AGENT_ID;
-    const sessionKey = session.nativeSessionKey || this.toSessionKey(sessionId, agentId);
-    const prepare = () => this.prepareSessionKey(sessionId, sessionKey, options);
-    return options.modelRef ? enqueueSessionModelOperation(sessionKey, prepare) : prepare();
+      const agentId = options.agentId || session.agentId || DEFAULT_MANAGED_AGENT_ID;
+      const sessionKey = session.nativeSessionKey || this.toSessionKey(sessionId, agentId);
+      const prepare = () => this.prepareSessionKey(sessionId, sessionKey, options);
+      // Include model-queue waits: their captured workspace can already be stale.
+      return options.modelRef ? enqueueSessionModelOperation(sessionKey, prepare) : prepare();
+    });
+  }
+
+  isSessionPreparing(sessionId: string): boolean {
+    return (this.sessionPreparationCounts.get(sessionId) ?? 0) > 0;
+  }
+
+  hasUnconfirmedSessionPreparation(sessionId: string): boolean {
+    if (!this.unconfirmedSessionPreparationProcesses.has(sessionId)) return false;
+    if (this.unconfirmedSessionPreparationProcesses.get(sessionId) ===
+      this.engineManager.getGatewayProcessGeneration?.()) return true;
+    this.unconfirmedSessionPreparationProcesses.delete(sessionId);
+    return false;
+  }
+
+  private async withSessionPreparation<T>(sessionId: string, prepare: () => Promise<T>): Promise<T> {
+    this.sessionPreparationCounts.set(sessionId, (this.sessionPreparationCounts.get(sessionId) ?? 0) + 1);
+    try {
+      return await prepare();
+    } finally {
+      const remaining = (this.sessionPreparationCounts.get(sessionId) ?? 1) - 1;
+      if (remaining) this.sessionPreparationCounts.set(sessionId, remaining);
+      else this.sessionPreparationCounts.delete(sessionId);
+    }
   }
 
   setContinuationPermissionPreparer(preparer: ((sessionId: string) => Promise<void>) | null): void {
@@ -427,6 +455,15 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   }
 
   private async prepareSessionKey(
+    sessionId: string,
+    sessionKey: string,
+    options: CoworkPrepareSessionOptions = {},
+  ): Promise<CoworkPreparedSession> {
+    return this.withSessionPreparation(sessionId, () =>
+      this.prepareSessionWorkspace(sessionId, sessionKey, options));
+  }
+
+  private async prepareSessionWorkspace(
     sessionId: string,
     sessionKey: string,
     options: CoworkPrepareSessionOptions = {},
@@ -610,6 +647,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         throw new Error('The imported conversation identity changed. No replacement conversation was created.');
     }
     assertPreparationCurrent();
+    const preparationProcessGeneration = this.engineManager.getGatewayProcessGeneration?.();
     const result = await client.request<{
       key?: unknown;
       sessionId?: unknown;
@@ -625,6 +663,13 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       cwd: workspaceRoot,
       permissionMode: nativePermissionMode,
       ...(options.modelRef ? { model: options.modelRef } : {}),
+    }).catch(error => {
+      // A transport timeout does not retire a dispatched native root mutation.
+      // A later WS connection or successful prepare cannot prove it has ended.
+      if (isGatewayRequestOutcomeUnknown(error) &&
+        preparationProcessGeneration === this.engineManager.getGatewayProcessGeneration?.())
+        this.unconfirmedSessionPreparationProcesses.set(sessionId, preparationProcessGeneration);
+      throw error;
     });
     assertPreparationCurrent();
     const gatewaySessionId =

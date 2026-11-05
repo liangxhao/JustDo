@@ -325,6 +325,11 @@ yield 后唤醒运行的前驱关系时，保留 unknown，而不从 run-ID 后�
 
 cowork_sessions 保存 title、status、pinned、cwd、execution_mode、permission_mode、active_skill_ids、agent_id、model_ref、group_id 及时间。status 是产品快照，不能替代原生 runtime 查询。列表索引服务 pinned/updated_at 排序和 Agent 范围查询。
 
+普通已有会话更改工作目录复用 `cwd` 字段，不新增表或复制历史；原生确认空闲及
+产品身份复核后保存期望值，后续消息／新终端的准备负责应用原生权限根。修改目录
+不刷新活动时间，不迁移文件或助手角色目录。Worktree、外部来源、插件托管及未处理
+计划等限制与并发准入见[会话权限](../features/chat/openclaw-permission-management.md#3-工作目录是权限的一部分)。
+
 `updated_at` 表示最近对话活动时间。Main 在广播运行时活动事件前将时间单调写入会话索引，
 确保继续历史会话后刷新列表或重启仍保留新时间。重命名、状态、模型、权限与分组等元数据
 修改不刷新该时间；活动时间不参与原生身份、执行准入或终态判断，也不需要读取或保存正文。

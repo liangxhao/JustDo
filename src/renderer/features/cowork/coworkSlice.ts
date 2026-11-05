@@ -614,6 +614,14 @@ const coworkSlice = createSlice({
       }
     },
 
+    updateCurrentSessionWorkspace(state, action: PayloadAction<{ sessionId: string; cwd: string }>) {
+      if (state.currentSession?.id === action.payload.sessionId) {
+        state.currentSession.cwd = action.payload.cwd;
+        if (state.currentSession.historyBinding)
+          state.currentSession.historyBinding.workspaceUnavailable = false;
+      }
+    },
+
     setSessionRuntimeSnapshot(
       state,
       action: PayloadAction<{ sessionId: string; snapshot: SessionRuntimeSnapshot }>,
@@ -980,6 +988,7 @@ export const {
   updateSessionPinned,
   updateSessionTitle,
   updateCurrentSessionPermissionMode,
+  updateCurrentSessionWorkspace,
   beginManualModelSelection,
   confirmManualModelSelection,
   confirmDefaultModelSelection,

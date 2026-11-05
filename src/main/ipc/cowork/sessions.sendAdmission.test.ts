@@ -28,7 +28,7 @@ function fixture(
     status: 'idle', nativeSessionKey: key, historyBinding: { nativeSessionId: 'native-current' } };
   const checkpoint = { id: 'restart-checkpoint', sessionId, clientTurnId: 'old-run',
     state: 'aborted', startedAt: 100, acceptedAt: 100, endedAt: 100 };
-  const next = { sessionId, clientTurnId: 'new-input', startedAt: 200 };
+  const next = { sessionId, clientTurnId: 'new-input', startedAt: 200, expectedWorkspaceRoot: source.cwd };
   const beginSessionRun = vi.fn(input => ({ ...input, id: 'new-receipt', state: 'running' }));
   const getLatestSessionRun = vi.fn<() => unknown>(() => checkpoint);
   const finishSessionRun = vi.fn();
@@ -101,6 +101,25 @@ test('rechecks startup admission after a native status read before creating a ru
   const f = fixture(() => pending ? { success: false, code: 'ENGINE_NOT_READY', error: 'starting' } : undefined);
   f.request.mockImplementation(async () => { pending = true; return { session: f.native }; });
   await expect(f.send()).resolves.toMatchObject({ success: false, code: 'ENGINE_NOT_READY' });
+  expect(f.beginSessionRun).not.toHaveBeenCalled();
+});
+
+test('rejects a send prepared before a completed workspace change', async () => {
+  const f = fixture();
+  f.source.cwd = '/new-workspace';
+  await expect(f.send()).resolves.toMatchObject({ success: false, error: expect.any(String) });
+  expect(f.beginSessionRun).not.toHaveBeenCalled();
+});
+
+test('rechecks the prepared workspace after asynchronous plugin admission', async () => {
+  const launch = {
+    releaseIfSettled: vi.fn().mockResolvedValue(true),
+    register: vi.fn(async () => { f.source.cwd = '/new-workspace'; }),
+    cancel: vi.fn().mockResolvedValue(undefined),
+  };
+  const f = fixture(undefined, () => launch);
+  await expect(f.send('explicit-input')).resolves.toMatchObject({ success: false });
+  expect(launch.cancel).toHaveBeenCalledWith(f.source.id, 'new-input');
   expect(f.beginSessionRun).not.toHaveBeenCalled();
 });
 

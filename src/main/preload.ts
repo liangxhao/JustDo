@@ -139,6 +139,7 @@ import {
 } from '../shared/cowork/sessionSearch';
 import { type CancelSessionStartInput, SessionStartIpc } from '../shared/cowork/sessionStart';
 import { type GenerateSessionTitleRequest, SessionTitleIpc } from '../shared/cowork/sessionTitle';
+import { SessionWorkspaceIpc, type SetSessionWorkspaceInput } from '../shared/cowork/sessionWorkspace';
 import { SlashCommandIpc } from '../shared/cowork/slashCommands';
 import {
   type CoworkSubagentAction,
@@ -891,6 +892,8 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke('cowork:session:pin', options),
     renameSession: (options: { sessionId: string; title: string }) =>
       ipcRenderer.invoke('cowork:session:rename', options),
+    setSessionWorkspace: (input: SetSessionWorkspaceInput) =>
+      ipcRenderer.invoke(SessionWorkspaceIpc.Set, input),
     setSessionPermissionMode: (options: {
       sessionId: string;
       permissionMode: 'ask' | 'auto' | 'full';
@@ -917,6 +920,7 @@ contextBridge.exposeInMainWorld('electron', {
       startedAt: number;
       modelRef?: string;
       pluginPrompt?: string;
+      expectedWorkspaceRoot?: string;
     }) => ipcRenderer.invoke('cowork:session:run:begin', input),
     markPluginSubmissionStarted: (input: { sessionId: string; clientTurnId: string }) =>
       ipcRenderer.invoke(SessionRunIpc.PluginSubmissionStarted, input),

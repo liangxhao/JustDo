@@ -37,6 +37,8 @@ export interface BeginSessionRunInput {
   modelRef?: string;
   /** Transient explicit Team input; Main persists only its hash and execution receipt. */
   pluginPrompt?: string;
+  /** Workspace captured before native permission preparation; never persisted. */
+  expectedWorkspaceRoot?: string;
 }
 
 export const SessionRunIpc = {

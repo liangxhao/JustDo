@@ -251,6 +251,7 @@ import { useMcpAppReferenceTabs } from './display/tabs/useMcpAppReferenceTabs';
 import { useWebpageEmbedTabs } from './display/tabs/useWebpageEmbedTabs';
 import { useWidgetReferenceTabs } from './display/tabs/useWidgetReferenceTabs';
 import SessionReviewPanel from './review/SessionReviewPanel';
+import SessionWorkspacePicker from './sessions/SessionWorkspacePicker';
 import type { SessionTranscriptMutation } from './sessions/useCoworkSessionActions';
 import {
   getSessionTranscriptActionError,
@@ -2482,6 +2483,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
             sessionId: currentSession.id,
             clientTurnId,
             startedAt,
+            expectedWorkspaceRoot: permission.workspaceRoot,
             ...(explicitPlugin ? { pluginPrompt: outboundPrompt } : {}),
           });
           runTimingId = timing.id;
@@ -3144,6 +3146,18 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                     <span className="truncate">{currentSessionFolderName}</span>
                   </button>
                 )}
+                {!currentSession.external && !currentSession.branchCreationPending &&
+                  (!currentSession.nativeSessionKey || currentSession.historyBinding) &&
+                  !currentSession.id.startsWith('temp-') && (
+                    <SessionWorkspacePicker
+                      key={currentSession.id}
+                      sessionId={currentSession.id}
+                      cwd={currentSessionFolderPath}
+                      disabled={!isEngineReady || currentSessionRuntimeRunning ||
+                        sessionTranscriptMutation !== null ||
+                        Boolean(queuedInputs?.items.length)}
+                    />
+                  )}
                 <button
                   type="button"
                   onMouseDown={event => event.stopPropagation()}

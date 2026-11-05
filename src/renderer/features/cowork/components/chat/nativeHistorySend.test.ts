@@ -31,7 +31,7 @@ function fixture() {
     initialHistoryReady: true,
   });
   const service = {
-    reconcileSessionPermissionMode: vi.fn().mockResolvedValue({ success: true }),
+    reconcileSessionPermissionMode: vi.fn().mockResolvedValue({ success: true, workspaceRoot: '/peer-workspace' }),
     beginSessionRun: vi.fn().mockResolvedValue({ id: 'member-timing' }),
     bindSessionRun: vi.fn().mockResolvedValue(undefined),
     markSessionRunUnknown: vi.fn().mockResolvedValue(undefined),
@@ -66,7 +66,7 @@ it('sends native chat.send only to the selected peer and records its run under t
   );
   expect(service.reconcileSessionPermissionMode).toHaveBeenCalledExactlyOnceWith('peer');
   expect(service.beginSessionRun).toHaveBeenCalledExactlyOnceWith(
-    expect.objectContaining({ sessionId: 'peer' }),
+    expect.objectContaining({ sessionId: 'peer', expectedWorkspaceRoot: '/peer-workspace' }),
   );
   expect(service.bindSessionRun).toHaveBeenCalledExactlyOnceWith(
     'member-timing',

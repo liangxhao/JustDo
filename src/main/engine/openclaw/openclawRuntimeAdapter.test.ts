@@ -161,6 +161,53 @@ test('unfinished branch records cannot create an empty target through prepare, m
   expect(internals.ensureGatewayClientReady).not.toHaveBeenCalled();
 });
 
+test('retains the workspace preparation fence until every in-flight native create has settled', async () => {
+  const { store, session } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const internals = getSessionPreparationInternals(adapter);
+  const pending: Array<{ resolve(value: unknown): void; reject(error: Error): void }> = [];
+  const request = vi.fn((method: string) => method === 'sessions.describe'
+    ? Promise.resolve({ session: null })
+    : new Promise((resolve, reject) => pending.push({ resolve, reject })));
+  internals.gatewayClient = { request } as unknown as GatewayClientLike;
+  internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+  const first = adapter.prepareSession(session.id);
+  const second = adapter.prepareSession(session.id).catch(error => error);
+  expect(adapter.isSessionPreparing(session.id)).toBe(true);
+  expect(adapter.isSessionPreparing('another-session')).toBe(false);
+  await vi.waitFor(() => expect(pending).toHaveLength(2));
+  pending[0].resolve(createPreparedSessionReceipt());
+  await first;
+  expect(adapter.isSessionPreparing(session.id)).toBe(true);
+  pending[1].reject(new Error('native preparation failed'));
+  await expect(second).resolves.toBeInstanceOf(Error);
+  expect(adapter.isSessionPreparing(session.id)).toBe(false);
+  expect(adapter.hasUnconfirmedSessionPreparation(session.id)).toBe(false);
+});
+
+test('keeps an unknown native workspace mutation fenced across reconnection until its process is replaced', async () => {
+  const { store, session } = createEmptyStore();
+  let processGeneration = 1;
+  const adapter = new OpenClawRuntimeAdapter(store, {
+    getGatewayProcessGeneration: () => processGeneration,
+  });
+  const internals = getSessionPreparationInternals(adapter);
+  const timeout = Object.assign(new Error('request timeout: sessions.create'), {
+    code: 'CLIENT_TIMEOUT', requestSent: true,
+  });
+  const request = vi.fn((method: string) => method === 'sessions.describe'
+    ? Promise.resolve({ session: null }) : Promise.reject(timeout));
+  internals.gatewayClient = { request } as unknown as GatewayClientLike;
+  internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+  await expect(adapter.prepareSession(session.id)).rejects.toBe(timeout);
+  expect(adapter.isSessionPreparing(session.id)).toBe(false);
+  expect(adapter.hasUnconfirmedSessionPreparation(session.id)).toBe(true);
+  internals.gatewayClient = { request } as unknown as GatewayClientLike;
+  expect(adapter.hasUnconfirmedSessionPreparation(session.id)).toBe(true);
+  processGeneration++;
+  expect(adapter.hasUnconfirmedSessionPreparation(session.id)).toBe(false);
+});
+
 const createAskUserRequest = () => ({
   requestId: 'ask_0123456789abcdef',
   questions: [

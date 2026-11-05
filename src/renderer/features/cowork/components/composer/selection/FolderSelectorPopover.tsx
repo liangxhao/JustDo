@@ -51,6 +51,7 @@ interface FolderSelectorPopoverProps {
   onSelectFolder: (path: string) => void;
   anchorRef: React.RefObject<HTMLElement>;
   currentFolder?: string;
+  description?: string;
 }
 
 export const areFolderPathsEqual = (
@@ -70,6 +71,7 @@ const FolderSelectorPopover: React.FC<FolderSelectorPopoverProps> = ({
   onSelectFolder,
   anchorRef,
   currentFolder = '',
+  description,
 }) => {
   const [recentFolders, setRecentFolders] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -223,7 +225,7 @@ const FolderSelectorPopover: React.FC<FolderSelectorPopoverProps> = ({
           {i18nService.t('workspacePickerTitle')}
         </h2>
         <p className="mt-1 text-xs leading-5 text-secondary">
-          {i18nService.t('workspacePickerDescription')}
+          {description ?? i18nService.t('workspacePickerDescription')}
         </p>
       </div>
 

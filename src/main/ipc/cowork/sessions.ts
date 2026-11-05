@@ -57,8 +57,10 @@ import {
   recoverFailedSessionBranch,
 } from './sessionBranching';
 import { deleteBoundNativeSession } from './sessionDeletion';
+import { registerSessionWorkspaceHandler } from './sessionWorkspace';
 
 interface SessionHandlerDependencies {
+  isAllowedWorkspaceSender?: (event: Electron.IpcMainInvokeEvent) => boolean;
   getStartupEngineNotReadyResponse?: () => { success: boolean; code: string; error: string } | undefined;
   workspaceAppSessions?: WorkspaceAppSessions;
   getSessionPlugins?: () => AppSessionParticipants;
@@ -134,6 +136,7 @@ const isRestartCheckpoint = (timing: SessionRunTiming | undefined): boolean =>
   timing.startedAt === timing.endedAt;
 
 export const registerCoworkSessionHandlers = ({
+  isAllowedWorkspaceSender,
   getStartupEngineNotReadyResponse,
   getCoworkStore,
   getCoworkEngineRouter,
@@ -156,6 +159,15 @@ export const registerCoworkSessionHandlers = ({
   });
   const unknownAdmissions = new Map<string, { id: string; runId: string; cancelled: boolean }>();
   const stoppingSessions = new Map<string, Promise<{ success: boolean; error?: string }>>();
+  registerSessionWorkspaceHandler({
+    getCoworkStore,
+    getCoworkEngineRouter,
+    isAllowedSender: event => isAllowedWorkspaceSender?.(event) === true,
+    isManaged: sessionId => getSessionPlugins?.().isManaged(sessionId) === true,
+    isBlocked: sessionId => stoppingSessions.has(sessionId) || unknownAdmissions.has(sessionId) ||
+      getSessionPlugins?.().isDeleting(sessionId) === true,
+    onSessionsChanged,
+  });
   const idleConfirmations = new Map<string, { count: number; observedAt: number }>();
   const revisions = new Map<string, number>();
   const terminalOutcomes = new Map<string, Exclude<SessionRunState, 'running' | 'completed'>>();
@@ -555,6 +567,7 @@ export const registerCoworkSessionHandlers = ({
       !input ||
       typeof input.sessionId !== 'string' ||
       typeof input.clientTurnId !== 'string' ||
+      (input.expectedWorkspaceRoot !== undefined && typeof input.expectedWorkspaceRoot !== 'string') ||
       (input.pluginPrompt !== undefined && typeof input.pluginPrompt !== 'string')
     )
       return { success: false, error: 'Invalid session run input.' };
@@ -646,6 +659,13 @@ export const registerCoworkSessionHandlers = ({
           await getSessionPlugins?.().cancel(input.sessionId, input.clientTurnId)
             .catch((): void => undefined);
         return startupBeforeAdmission;
+      }
+      if (input.expectedWorkspaceRoot !== undefined &&
+        store.getSession(input.sessionId)?.cwd !== input.expectedWorkspaceRoot) {
+        if (input.pluginPrompt)
+          await getSessionPlugins?.().cancel(input.sessionId, input.clientTurnId)
+            .catch((): void => undefined);
+        return { success: false, error: t('sessionWorkspaceChanged') };
       }
       idleConfirmations.delete(input.sessionId);
       terminalOutcomes.delete(input.sessionId);

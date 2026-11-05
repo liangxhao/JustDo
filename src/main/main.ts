@@ -1782,6 +1782,8 @@ if (agentBridgeArgv) {
   });
 
   registerCoworkSessionHandlers({
+    isAllowedWorkspaceSender: event => !!mainWindow && !mainWindow.isDestroyed() &&
+      event.sender === mainWindow.webContents && event.senderFrame === event.sender.mainFrame,
     getStartupEngineNotReadyResponse,
     onSessionsChanged: notifyCoworkSessionsChanged,
     workspaceAppSessions,

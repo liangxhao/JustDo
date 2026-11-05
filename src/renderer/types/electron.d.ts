@@ -31,6 +31,8 @@ type SessionRunUnknownInput = import('../../shared/cowork/sessionRun').SessionRu
 type BrowserRecordingLease = import('../../shared/browser/browserRecording').BrowserRecordingLease;
 type CoworkAttachmentPayload = import('../../shared/cowork/attachments').CoworkAttachmentPayload;
 type BeginSessionRunInput = import('../../shared/cowork/sessionRun').BeginSessionRunInput;
+type SetSessionWorkspaceInput = import('../../shared/cowork/sessionWorkspace').SetSessionWorkspaceInput;
+type SetSessionWorkspaceResult = import('../../shared/cowork/sessionWorkspace').SetSessionWorkspaceResult;
 type SessionRunBeginErrorCode = import('../../shared/cowork/sessionRun').SessionRunBeginErrorCode;
 type SessionRunTiming = import('../../shared/cowork/sessionRun').SessionRunTiming;
 type CoworkSessionSource = import('../../shared/cowork/sessionSource').CoworkSessionSource;
@@ -1081,6 +1083,7 @@ interface IElectronAPI {
       error?: string;
       engineStatus?: OpenClawEngineStatus;
     }>;
+    setSessionWorkspace: (input: SetSessionWorkspaceInput) => Promise<SetSessionWorkspaceResult>;
     getSession: (
       sessionId: string,
     ) => Promise<{ success: boolean; session?: CoworkSession; error?: string }>;

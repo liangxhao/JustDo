@@ -43,6 +43,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     localSpeechModelRangeInvalid: '模型服务返回的文件分段与请求不符，请联系管理员检查模型服务。',
     coworkBranchCreationPending:
       '该副本或分支尚未完成创建。请在会话列表中检查或删除，暂时无法继续发送。',
+    sessionWorkspaceChanged: '会话工作目录已发生变化，请核对后重新发送。草稿已保留。',
     ...appPluginTranslations.zh,
     computerOverlayActive: '正在操作电脑',
     computerOverlayWaiting: '电脑操作待续',
@@ -264,6 +265,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
       'The internal speech model server is not configured. Contact your administrator before installing models.',
     coworkBranchCreationPending:
       'This copy or branch is unfinished. Inspect or delete it in the session list before continuing.',
+    sessionWorkspaceChanged: 'The session’s working directory changed. Check it before sending again. Your draft was kept.',
     ...appPluginTranslations.en,
     computerOverlayActive: 'Operating your computer',
     computerOverlayWaiting: 'Between computer actions',

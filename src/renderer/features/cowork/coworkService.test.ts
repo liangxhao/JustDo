@@ -931,7 +931,7 @@ describe('cowork session permission selection', () => {
 
     resolveChange({ success: true });
     await expect(change).resolves.toEqual({ success: true });
-    await expect(reconcile).resolves.toEqual({ success: true });
+    await expect(reconcile).resolves.toEqual({ success: true, workspaceRoot: session.cwd });
 
     expect(setSessionPermissionMode).toHaveBeenNthCalledWith(2, {
       sessionId: session.id,
@@ -943,7 +943,7 @@ describe('cowork session permission selection', () => {
 
   test('prepares a sidebar member permission without selecting it or borrowing the source mode', async () => {
     const source = { id: 'source', permissionMode: 'full' } as CoworkSession;
-    const member = { id: 'peer', permissionMode: 'ask' } as CoworkSession;
+    const member = { id: 'peer', permissionMode: 'ask', cwd: '/peer-workspace' } as CoworkSession;
     store.dispatch(setCurrentSession(source));
     const getSession = vi.fn().mockResolvedValue({ success: true, session: member });
     const setSessionPermissionMode = vi.fn().mockResolvedValue({ success: true });
@@ -953,6 +953,7 @@ describe('cowork session permission selection', () => {
 
     await expect(coworkService.reconcileSessionPermissionMode('peer')).resolves.toEqual({
       success: true,
+      workspaceRoot: '/peer-workspace',
     });
 
     expect(getSession).toHaveBeenCalledExactlyOnceWith('peer');

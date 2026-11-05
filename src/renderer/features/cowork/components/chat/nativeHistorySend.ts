@@ -49,6 +49,7 @@ export async function sendNativeHistoryMessage(
     sessionId: target.productSessionId,
     clientTurnId,
     startedAt: Date.now(),
+    expectedWorkspaceRoot: permission.workspaceRoot,
   });
   let unknown = false;
   try {

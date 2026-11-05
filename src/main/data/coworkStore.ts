@@ -353,6 +353,14 @@ export class CoworkStore {
     return row ? mapSessionRun(row) : undefined;
   }
 
+  getActiveSessionRun(sessionId: string): SessionRunTiming | undefined {
+    const row = this.getOne<SessionRunRow>(
+      'SELECT * FROM cowork_session_runs WHERE session_id = ? AND ended_at IS NULL LIMIT 1',
+      [sessionId],
+    );
+    return row ? mapSessionRun(row) : undefined;
+  }
+
   copyTerminalSessionRuns(
     sourceSessionId: string,
     targetSessionId: string,

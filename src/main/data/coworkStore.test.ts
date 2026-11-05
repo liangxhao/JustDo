@@ -277,6 +277,17 @@ test('persists fork provenance, follows a live source title, and keeps a snapsho
   });
 });
 
+test('finds an unsettled receipt even when the clock puts it before an older completed run', () => {
+  const session = store.createSession('Workspace', '/tmp');
+  const completed = store.beginSessionRun({ sessionId: session.id, clientTurnId: 'completed-input', startedAt: 200 });
+  store.finishSessionRun(completed.id, 'completed', 300);
+  const active = store.beginSessionRun({ sessionId: session.id, clientTurnId: 'active-input', startedAt: 100 });
+  expect(store.getLatestSessionRun(session.id)?.id).toBe(completed.id);
+  expect(store.getActiveSessionRun(session.id)?.id).toBe(active.id);
+  store.finishSessionRun(active.id, 'failed', 400);
+  expect(store.getActiveSessionRun(session.id)).toBeUndefined();
+});
+
 test('copies terminal run metadata with stable transcript run ids', () => {
   const source = store.createSession('Source', '/tmp');
   const target = store.createSession('Target', '/tmp');

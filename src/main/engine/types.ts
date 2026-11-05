@@ -202,6 +202,8 @@ export interface CoworkRuntime {
   ): void;
   stopAllSessions(): Promise<void>;
   isSessionActive(sessionId: string): boolean;
+  isSessionPreparing?(sessionId: string): boolean;
+  hasUnconfirmedSessionPreparation?(sessionId: string): boolean;
   getSessionConfirmationMode(sessionId: string): 'modal' | 'text' | null;
   onSessionDeleted?(
     sessionId: string,

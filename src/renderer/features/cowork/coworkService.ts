@@ -8,6 +8,7 @@ import {
   type SessionRunTiming,
   type SessionRunUnknownInput,
 } from '@shared/cowork/sessionRun';
+import { SessionWorkspaceFailure, type SetSessionWorkspaceInput, type SetSessionWorkspaceResult } from '@shared/cowork/sessionWorkspace';
 import { isGatewayToolFailureNotice } from '@shared/cowork/toolFailureNotice';
 import { isInternalManagedSubagentHandoffError } from '@shared/openclaw/internalRunError';
 import type { OpenClawModelsListResult } from '@shared/openclaw/models';
@@ -40,6 +41,7 @@ import {
   setStreaming,
   touchSessionActivity,
   updateCurrentSessionPermissionMode,
+  updateCurrentSessionWorkspace,
   updateGroup,
   updateSessionPinned,
   updateSessionStatus,
@@ -1439,9 +1441,20 @@ export class CoworkService {
     }
   }
 
+  async setSessionWorkspace(input: SetSessionWorkspaceInput): Promise<SetSessionWorkspaceResult> {
+    try {
+      const result = await window.electron.cowork.setSessionWorkspace(input);
+      if (result.success)
+        store.dispatch(updateCurrentSessionWorkspace({ sessionId: input.sessionId, cwd: result.cwd }));
+      return result;
+    } catch {
+      return { success: false, reason: SessionWorkspaceFailure.Unavailable };
+    }
+  }
+
   async reconcileSessionPermissionMode(
     sessionId: string,
-  ): Promise<{ success: boolean; error?: string; engineStatus?: OpenClawEngineStatus }> {
+  ): Promise<{ success: boolean; error?: string; engineStatus?: OpenClawEngineStatus; workspaceRoot?: string }> {
     const pendingUpdate = this.sessionPermissionModeUpdates.get(sessionId);
     if (pendingUpdate) {
       const result = await pendingUpdate;
@@ -1455,7 +1468,9 @@ export class CoworkService {
       if (result?.success) session = result.session;
     }
     if (!session || session.id !== sessionId) return { success: false, error: 'Session not found' };
-    return this.setSessionPermissionMode(sessionId, session.permissionMode);
+    const workspaceRoot = session.cwd;
+    const result = await this.setSessionPermissionMode(sessionId, session.permissionMode);
+    return { ...result, ...(result.success ? { workspaceRoot } : {}) };
   }
 
   private async setSessionPermissionMode(
