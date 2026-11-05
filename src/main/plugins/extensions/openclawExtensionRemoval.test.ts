@@ -51,15 +51,17 @@ describe('extension removal receipts and package lifecycle', () => {
       realPolicy?: boolean;
       directoryOperations?: ManagedDirectoryOperationCoordinator;
       connectedOnly?: boolean;
+      nativePluginId?: string;
       packagePluginIds?: string[];
       pluginData?: ConstructorParameters<typeof OpenClawExtensionImportService>[0]['pluginData'];
     } = {},
   ) {
     const stateDir = path.join(fixtureRoot, 'state');
-    const installedDir = path.join(stateDir, 'extensions', 'network-plugin');
+    const nativePluginId = options.nativePluginId ?? 'network-plugin';
+    const installedDir = path.join(stateDir, 'extensions', nativePluginId);
     const configPath = path.join(stateDir, 'openclaw.json');
     fs.mkdirSync(installedDir, { recursive: true });
-    fs.writeFileSync(path.join(installedDir, 'openclaw.plugin.json'), '{"id":"network-plugin"}');
+    fs.writeFileSync(path.join(installedDir, 'openclaw.plugin.json'), JSON.stringify({ id: nativePluginId }));
     if (options.packagePluginIds) fs.writeFileSync(path.join(installedDir, 'package.json'), JSON.stringify({
       openclaw: { extensions: options.packagePluginIds.map(id => `./${id}.js`) },
     }));
@@ -80,7 +82,7 @@ describe('extension removal receipts and package lifecycle', () => {
     );
     fs.writeFileSync(
       configPath,
-      JSON.stringify({ plugins: { allow: ['network-plugin', 'other'] } }),
+      JSON.stringify({ plugins: { allow: [nativePluginId, 'other'] } }),
     );
     const state = { leased: false, running: true, connected: true, configMutation: false, generation: 1 };
     const manager = {
@@ -143,7 +145,7 @@ describe('extension removal receipts and package lifecycle', () => {
       directoryOperations: options.directoryOperations,
       pluginData: options.pluginData,
       ...(options.packagePluginIds ? { readPackageOwnership: async () => [{
-        ownerId: 'network-plugin', pluginIds: options.packagePluginIds!, installPath: installedDir,
+        ownerId: nativePluginId, pluginIds: options.packagePluginIds!, installPath: installedDir,
       }] } : {}),
     });
     return {
@@ -161,7 +163,9 @@ describe('extension removal receipts and package lifecycle', () => {
     };
   }
 
-  function dataFixture(options: { failCleanup?: boolean; packagePluginIds?: string[] } = {}) {
+  function dataFixture(options: {
+    failCleanup?: boolean; nativePluginId?: string; packagePluginIds?: string[];
+  } = {}) {
     const order: string[] = [];
     const snapshot = {} as PluginDataRemovalSnapshot;
     const pluginData = {
@@ -180,7 +184,7 @@ describe('extension removal receipts and package lifecycle', () => {
         if (options.failCleanup) throw new Error('Model file is locked');
       }),
     };
-    const f = fixture({ pluginData, packagePluginIds: options.packagePluginIds });
+    const f = fixture({ pluginData, nativePluginId: options.nativePluginId, packagePluginIds: options.packagePluginIds });
     const native = f.runCommand.getMockImplementation()!;
     f.runCommand.mockImplementation(async (...args) => {
       order.push('uninstall');
@@ -218,6 +222,50 @@ describe('extension removal receipts and package lifecycle', () => {
     await expect(f.service.delete('network-plugin')).resolves.toMatchObject({ success: true });
     expect(f.pluginData.prepareRemoval).not.toHaveBeenCalled();
     expect(f.pluginData.remove).not.toHaveBeenCalled();
+  });
+
+  it('reports an absent data directory without starting Gateway or creating it', async () => {
+    const f = fixture();
+
+    await expect(f.service.getDataInfo('network-plugin')).resolves.toEqual({
+      success: true, exists: false, bytes: 0, canDelete: true,
+    });
+    expect(fs.existsSync(path.join(fixtureRoot, 'state', 'plugin-data'))).toBe(false);
+    expect(f.requestGateway).not.toHaveBeenCalled();
+    expect(f.runCommand).not.toHaveBeenCalled();
+  });
+
+  it('does not treat a native-only ID as a managed data owner or authorize data removal', async () => {
+    const f = dataFixture({ nativePluginId: 'ExampleGenerator' });
+
+    await expect(f.service.getDataInfo('ExampleGenerator')).resolves.toEqual({
+      success: true, exists: false, bytes: 0, canDelete: true,
+    });
+    expect(f.pluginData.inspect).not.toHaveBeenCalled();
+    await expect(f.service.delete('ExampleGenerator', undefined, f.apply, { deleteData: true }))
+      .resolves.toMatchObject({ success: false });
+    expect(f.pluginData.prepareRemoval).not.toHaveBeenCalled();
+    expect(f.runCommand).not.toHaveBeenCalled();
+    expect(f.requestGateway).not.toHaveBeenCalled();
+  });
+
+  it('uses the same exact managed child owners for inspection and removal in a mixed package', async () => {
+    const f = dataFixture({
+      nativePluginId: 'ExampleGenerator', packagePluginIds: ['managed-child', 'second-child'],
+    });
+
+    await expect(f.service.getDataInfo('managed-child')).resolves.toMatchObject({
+      success: true, exists: true, canDelete: true,
+    });
+    expect(f.pluginData.inspect).toHaveBeenCalledExactlyOnceWith(
+      path.join(fixtureRoot, 'state'), ['managed-child', 'second-child'],
+    );
+    await expect(f.service.delete('managed-child', undefined, f.apply, { deleteData: true }))
+      .resolves.toEqual({ success: true });
+    expect(f.pluginData.prepareRemoval).toHaveBeenCalledExactlyOnceWith(
+      path.join(fixtureRoot, 'state'), ['managed-child', 'second-child'],
+    );
+    expect(f.order).toEqual(['snapshot', 'uninstall', 'cleanup', 'restore']);
   });
 
   it('reports retained execution records without presenting them as a read failure', async () => {

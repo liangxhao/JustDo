@@ -828,6 +828,7 @@ describe('ExtensionsManager extension toggle', () => {
 
   test('confirms deletion without relabeling the removed extension unavailable', async () => {
     let installed = true;
+    const dataInfo = vi.fn(async () => ({ success: true, exists: false, bytes: 0, canDelete: true }));
     const deleteExtension = vi.fn(async () => {
       installed = false;
       return { success: true };
@@ -837,6 +838,7 @@ describe('ExtensionsManager extension toggle', () => {
       value: {
         extensions: {
           list: vi.fn(async () => ({ success: true, extensions: installed ? [extension] : [] })),
+          dataInfo,
           delete: deleteExtension,
           onChanged: vi.fn(() => () => undefined),
         },
@@ -848,6 +850,9 @@ describe('ExtensionsManager extension toggle', () => {
       await screen.findByRole('button', { name: 'subtaskShowInfo: Sample Extension' }),
     );
     fireEvent.click(screen.getByRole('button', { name: 'extensionDelete' }));
+    await waitFor(() => expect(dataInfo).toHaveBeenCalledExactlyOnceWith({ extensionId: extension.id }));
+    expect(screen.queryByRole('checkbox', { name: 'extensionDeleteData' })).toBeNull();
+    expect(screen.queryByText('extensionDataPreserved')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'delete' }));
 
     await screen.findByText('Extension "Sample Extension" deleted');

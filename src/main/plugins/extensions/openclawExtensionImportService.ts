@@ -4,6 +4,7 @@ import os from 'os';
 import path from 'path';
 import * as tar from 'tar';
 
+import { assertPluginDataId } from '../../../../plugins/sdk/app-plugin-sdk/data';
 import { redactLogText } from '../../../shared/diagnostics/redaction';
 import {
   type ExtensionDataInfoResult,
@@ -1752,16 +1753,24 @@ export class OpenClawExtensionImportService {
     ])];
     if (nativePluginIds.some(id => managedIds.includes(id)))
       throw new Error('Managed extensions cannot be deleted.');
-    return { installed, owner, nativePluginIds };
+    // Native IDs have a broader syntax than managed data owners. Keep exact
+    // identities; never map a differently cased ID to another plugin's data.
+    const dataPluginIds = nativePluginIds.filter(id => {
+      try { assertPluginDataId(id); return true; }
+      catch { return false; }
+    });
+    return { installed, owner, nativePluginIds, dataPluginIds };
   }
 
   /** Read package-owned data without starting Gateway or executing plugin code. */
   async getDataInfo(extensionId: string): Promise<ExtensionDataInfoResult> {
     try {
-      const { installed, owner, nativePluginIds } = await this.resolveRemovalTarget(extensionId);
+      const { installed, owner, dataPluginIds } = await this.resolveRemovalTarget(extensionId);
       if (!installed && !owner) throw new Error(t('extensionPackageOwnershipUnconfirmed'));
+      if (!dataPluginIds.length)
+        return { success: true, exists: false, bytes: 0, canDelete: true };
       const info = await (this.deps.pluginData?.inspect ?? inspectPluginData)(
-        this.deps.getOpenClawEngineManager().getStateDir(), nativePluginIds,
+        this.deps.getOpenClawEngineManager().getStateDir(), dataPluginIds,
       );
       return {
         success: true, exists: info.exists, bytes: info.bytes, canDelete: info.canDelete,
@@ -1793,8 +1802,8 @@ export class OpenClawExtensionImportService {
       catch (error) {
         return { success: false, error: error instanceof Error ? error.message : String(error) };
       }
-      const { installed, owner, nativePluginIds } = target;
-      if (options.deleteData && (!applyPackageMutation || (!installed && !owner)))
+      const { installed, owner, nativePluginIds, dataPluginIds } = target;
+      if (options.deleteData && (!applyPackageMutation || (!installed && !owner) || !dataPluginIds.length))
         return { success: false, error: t('extensionDataRemovalUnavailable') };
       let mode: ExtensionPackageLifecycleMode = ExtensionPackageLifecycleMode.HOT;
       return removeExtensionPackage(
@@ -1805,7 +1814,7 @@ export class OpenClawExtensionImportService {
           // Unsafe or changed data prevents admission before uninstall is sent.
           const removal = options.deleteData
             ? await (this.deps.pluginData?.prepareRemoval ?? preparePluginDataRemoval)(
-                this.deps.getOpenClawEngineManager().getStateDir(), nativePluginIds,
+                this.deps.getOpenClawEngineManager().getStateDir(), dataPluginIds,
               )
             : undefined;
           const result = await this.deleteExclusive(

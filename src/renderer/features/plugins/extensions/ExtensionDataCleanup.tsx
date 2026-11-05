@@ -33,17 +33,15 @@ const ExtensionDataCleanup: React.FC<{
     return () => { current = false; };
   }, [extensionId, onChange]);
 
-  const available = info?.success === true && info.canDelete === true && info.exists === true &&
+  if (!info || (info.success && info.exists === false && info.canDelete === true)) return null;
+
+  const available = info.success === true && info.canDelete === true && info.exists === true &&
     typeof info.bytes === 'number' && Number.isSafeInteger(info.bytes) && info.bytes >= 0;
-  const status = !info
-    ? i18nService.t('extensionDataSizeLoading')
-    : info.success && info.retained
-      ? i18nService.t('extensionDataRetained')
-      : !info.success || !info.canDelete
+  const status = info.success && info.retained
+    ? i18nService.t('extensionDataRetained')
+    : !available
       ? i18nService.t('extensionDataCleanupUnavailable')
-      : !info.exists
-        ? i18nService.t('extensionDataNone')
-        : i18nService.t('extensionDataSize').replace('{size}', formatDataSize(info.bytes ?? 0));
+      : i18nService.t('extensionDataSize').replace('{size}', formatDataSize(info.bytes ?? 0));
 
   return (
     <div className="mt-4 rounded-lg border border-border p-3">

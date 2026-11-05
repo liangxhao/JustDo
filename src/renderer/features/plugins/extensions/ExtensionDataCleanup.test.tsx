@@ -30,6 +30,32 @@ test('keeps data by default and offers its estimated size for explicit selection
   expect(onChange).toHaveBeenLastCalledWith(true);
 });
 
+test('hides the entire data section while inspecting and when no directory exists', async () => {
+  let finish!: (result: ExtensionDataInfoResult) => void;
+  bridge(() => new Promise(resolve => { finish = resolve; }));
+  const onChange = vi.fn();
+  const { container } = render(
+    <ExtensionDataCleanup extensionId="sample" checked={false} disabled={false} onChange={onChange} />,
+  );
+  expect(container.innerHTML).toBe('');
+
+  await act(async () => finish({ success: true, exists: false, canDelete: true, bytes: 0 }));
+
+  expect(container.innerHTML).toBe('');
+  expect(onChange).not.toHaveBeenCalledWith(true);
+});
+
+test.each([
+  { success: false },
+  { success: true, exists: false, canDelete: false, bytes: 0 },
+])('does not mistake a failed inspection for an absent directory: %j', async result => {
+  bridge(async () => result);
+  render(<ExtensionDataCleanup extensionId="sample" checked={false} disabled={false} onChange={vi.fn()} />);
+
+  await screen.findByText('extensionDataCleanupUnavailable');
+  expect((screen.getByRole('checkbox') as HTMLInputElement).disabled).toBe(true);
+});
+
 test('unreadable data cannot be selected for deletion', async () => {
   bridge(async () => ({ success: true, exists: true, canDelete: false, bytes: 0 }));
   const onChange = vi.fn();
