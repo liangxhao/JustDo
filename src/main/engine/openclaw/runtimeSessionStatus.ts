@@ -17,7 +17,6 @@ import {
   type GatewaySubagent,
   listGatewaySubagentsWithMetadata,
   mergeGatewaySubagentSnapshots,
-  SUBAGENT_STATUSES,
 } from './subagentGateway';
 import { OPENCLAW_COMPACT_SESSION_ROW_MODE } from './wire/v2026_10_6';
 export interface RuntimeSessionStatusContext {
@@ -173,7 +172,12 @@ export async function getSessionRuntimeStatus(
   if (!sessionId) {
     return { known: true, mainRunning: false, subagentRunning: false, running: false };
   }
-  if (options?.targeted) return getTargetedSessionRuntimeStatus.call(this, sessionId, options);
+  if (options?.targeted) {
+    if (this.disconnectedSessionIds.has(sessionId) || this.disconnectedRecoveryPromises.has(sessionId)) {
+      await this.reconcileDisconnectedTurn(sessionId);
+    }
+    return getTargetedSessionRuntimeStatus.call(this, sessionId, options);
+  }
   const statuses = await this.getSessionRuntimeStatuses([sessionId], options);
   return (
     statuses[sessionId] ?? {
@@ -236,8 +240,13 @@ async function getTargetedSessionRuntimeStatus(
     return this.isSessionActive(sessionId) || this.compactionInFlightSessionIds.has(sessionId) ||
       phase === GoalExecutionPhase.Continuing || phase === GoalExecutionPhase.Retrying;
   };
+  const activity = (mainRunning: boolean, subagentRunning = false): SessionRuntimeStatus => {
+    const running = mainRunning || subagentRunning;
+    const rootRunId = running ? this.rootRunIdBySession.get(sessionId) : undefined;
+    return { known: true, mainRunning, subagentRunning, running, ...(rootRunId ? { rootRunId } : {}) };
+  };
   if (blocked()) return unknown(TargetedStatusReason.UnknownCustody);
-  if (local()) return { known: true, mainRunning: true, subagentRunning: false, running: true };
+  if (local()) return activity(true);
   try { await this.ensureGatewayClientReady(); } catch { return unknown(TargetedStatusReason.ConnectionUnavailable); }
   const client = this.gatewayClient;
   if (!client) return unknown(TargetedStatusReason.ConnectionUnavailable);
@@ -257,14 +266,14 @@ async function getTargetedSessionRuntimeStatus(
       if (!sourceCurrent()) return unknown(TargetedStatusReason.SourceChanged);
       if (!connectionCurrent()) return unknown(TargetedStatusReason.ConnectionChanged);
       if (blocked()) return unknown(TargetedStatusReason.UnknownCustody);
-      if (local()) return { known: true, mainRunning: true, subagentRunning: false, running: true };
+      if (local()) return activity(true);
       const described = await client.request<{ session?: Record<string, unknown> | null }>(
         'sessions.describe', { key, agentId: source.agentId },
       );
       if (!sourceCurrent()) return unknown(TargetedStatusReason.SourceChanged);
       if (!connectionCurrent()) return unknown(TargetedStatusReason.ConnectionChanged);
       if (blocked()) return unknown(TargetedStatusReason.UnknownCustody);
-      if (local()) return { known: true, mainRunning: true, subagentRunning: false, running: true };
+      if (local()) return activity(true);
       const row = described?.session;
       if (row === null) {
         if (!eventCurrent()) return unknown(TargetedStatusReason.RetryIdentityMissing);
@@ -303,7 +312,7 @@ async function getTargetedSessionRuntimeStatus(
       // Native omits hasActiveSubagentRun when its complete descendant projection is inactive.
       const mainRunning = row.hasActiveRun;
       const subagentRunning = options.includeSubagents === true && row.hasActiveSubagentRun === true;
-      return { known: true, mainRunning, subagentRunning, running: mainRunning || subagentRunning };
+      return activity(mainRunning, subagentRunning);
     } catch {
       return unknown(TargetedStatusReason.NativeReadFailed);
     } finally {
@@ -433,14 +442,6 @@ export async function getSessionRuntimeStatuses(
         }
         return false;
       });
-      const cachedSubagents = this.subagentStatusCache.get(sessionId);
-      if (cachedSubagents && cachedSubagents.expiresAt > Date.now()) {
-        subagentRunning ||= cachedSubagents.subagents.some(
-          subagent =>
-            subagent.status === SUBAGENT_STATUSES.PENDING ||
-            subagent.status === SUBAGENT_STATUSES.RUNNING,
-        );
-      }
     }
     const requestedStateIsCovered =
       mainRunning ||

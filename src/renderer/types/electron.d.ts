@@ -1052,6 +1052,7 @@ interface IElectronAPI {
       /** On failure, an existing target retained for inspection; it is not a successful copy. */
       session?: CoworkSession;
       planModeEnabled?: boolean;
+      errorCode?: import('../../shared/cowork/sessionCopy').SessionCopyErrorCode;
       error?: string;
     }>;
     forkSession: (

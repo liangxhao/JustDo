@@ -568,10 +568,15 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     initialGoalObjectiveRef.current = initialGoalObjective;
     const goalStateMatchesSession = goalStateSessionIdRef.current === sessionId;
     const hasSessionGoal = goalStateMatchesSession && Boolean(sessionGoal || pendingGoalObjective);
-    const { goalReadReady, goalSubmissionBlocked, readGoal } = useGoalReadiness(
-      sessionId,
-      isSideChat,
-    );
+    const {
+      goalReadReady,
+      goalReadPending,
+      goalReadFailed,
+      goalSubmissionBlocked,
+      readGoal,
+      invalidateGoalRead,
+    } = useGoalReadiness(sessionId, isSideChat);
+    const retryGoalReadRef = useRef<(() => Promise<void>) | null>(null);
     const summaryGoalObjective = goalStateMatchesSession
       ? (sessionGoal?.objective ?? pendingGoalObjective ?? undefined)
       : undefined;
@@ -2232,6 +2237,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           }
         }
       };
+      retryGoalReadRef.current = fetchGoal;
       void fetchGoal();
       const removeGoalListener = window.electron.cowork.onSessionGoalChanged(data => {
         if (data.sessionId === sessionId) void fetchGoal();
@@ -2244,6 +2250,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       });
       return () => {
         cancelled = true;
+        invalidateGoalRead();
+        if (retryGoalReadRef.current === fetchGoal) retryGoalReadRef.current = null;
         removeGoalListener();
         removeExecutionListener();
         retry.dispose();
@@ -2252,6 +2260,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       applyAcceptedGoalClear,
       cancelGoalClear,
       isSideChat,
+      invalidateGoalRead,
       readGoal,
       sessionId,
       updateCompletionFeedback,
@@ -3000,6 +3009,19 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           <p role="status" className="px-3 pb-2 text-xs text-secondary">
             {disabledMessage}
           </p>
+        )}
+        {goalSubmissionBlocked && goalReadFailed && (
+          <div role="status" className="flex items-center gap-2 px-3 pb-2 text-xs text-secondary">
+            <span>{i18nService.t('coworkSessionStateReadFailed')}</span>
+            <button
+              type="button"
+              className="shrink-0 underline disabled:cursor-wait disabled:opacity-50"
+              disabled={goalReadPending || disabled}
+              onClick={() => void retryGoalReadRef.current?.()}
+            >
+              {i18nService.t(goalReadPending ? 'coworkSessionStateChecking' : 'coworkSessionStateRetry')}
+            </button>
+          </div>
         )}
         {/* Context menu for textarea */}
         {contextMenuPos && (

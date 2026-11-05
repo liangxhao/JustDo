@@ -5,6 +5,7 @@ import { parsePlanModeState } from '../../../shared/cowork/interactions/planMode
 import {
   type CopyCoworkSessionInput,
   CoworkSessionCopyIpc,
+  SessionCopyErrorCode,
 } from '../../../shared/cowork/sessionCopy';
 import {
   SESSION_SUMMARY_BATCH_LIMIT,
@@ -935,15 +936,24 @@ export const registerCoworkSessionHandlers = ({
     const store = getCoworkStore();
     const router = getCoworkEngineRouter();
     const source = store.getSession(sourceSessionId);
-    if (!source) return { success: false, error: 'Source session not found.' };
-    if (source.branchCreationPending)
-      return { success: false, error: t('coworkBranchCreationPending') };
-    if (source.nativeSessionKey && !source.historyBinding)
-      return { success: false, error: t('worktreeCopyUnavailable') };
-    if (getSessionPlugins?.().isManaged(sourceSessionId))
-      return { success: false, error: 'collaborationCopyUnavailable' };
+    if (!source) {
+      return { success: false, errorCode: SessionCopyErrorCode.SourceUnavailable, error: 'Source session not found.' };
+    }
+    if (source.branchCreationPending) {
+      return { success: false, errorCode: SessionCopyErrorCode.SourceUnavailable, error: t('coworkBranchCreationPending') };
+    }
+    if (source.nativeSessionKey && !source.historyBinding) {
+      return { success: false, errorCode: SessionCopyErrorCode.SourceRestricted, error: t('worktreeCopyUnavailable') };
+    }
+    if (getSessionPlugins?.().isManaged(sourceSessionId)) {
+      return { success: false, errorCode: SessionCopyErrorCode.SourceRestricted, error: 'collaborationCopyUnavailable' };
+    }
     if (!requestGateway) {
-      return { success: false, error: 'OpenClaw Gateway session copy is unavailable.' };
+      return {
+        success: false,
+        errorCode: SessionCopyErrorCode.GatewayUnavailable,
+        error: 'OpenClaw Gateway session copy is unavailable.',
+      };
     }
 
     let copiedSession: ReturnType<CoworkStore['createSession']> | null = null;
@@ -954,16 +964,21 @@ export const registerCoworkSessionHandlers = ({
       const runtime = await router.getSessionRuntimeStatus(sourceSessionId, {
         includeSubagents: true,
         forceRefresh: true,
-        fullScan: true,
+        ...(source.external ? { fullScan: true } : { targeted: true }),
       });
       if (!runtime.known) {
         return {
           success: false,
+          errorCode: SessionCopyErrorCode.RuntimeUnknown,
           error: 'The current session activity could not be verified. Try again in a moment.',
         };
       }
       if (runtime.running) {
-        return { success: false, error: 'Wait for the current session to finish before copying.' };
+        return {
+          success: false,
+          errorCode: SessionCopyErrorCode.RuntimeActive,
+          error: 'Wait for the current session to finish before copying.',
+        };
       }
       if (source.historyBinding) {
         const prepared = await router.prepareSession(sourceSessionId);
@@ -1087,6 +1102,9 @@ export const registerCoworkSessionHandlers = ({
       return {
         success: false,
         ...(retainedSession ? { session: retainedSession } : {}),
+        errorCode: creationRequestIssued && !creationResponseReceived && !hasSessionBranchCreationResponse(error)
+          ? SessionCopyErrorCode.CreationUnconfirmed
+          : creationResponseReceived ? SessionCopyErrorCode.PreparationFailed : undefined,
         error: error instanceof Error ? error.message : 'Failed to copy session.',
       };
     }
@@ -1129,7 +1147,7 @@ export const registerCoworkSessionHandlers = ({
       const runtime = await router.getSessionRuntimeStatus(sourceSessionId, {
         includeSubagents: true,
         forceRefresh: true,
-        fullScan: true,
+        ...(source.external ? { fullScan: true } : { targeted: true }),
       });
       if (!runtime.known) {
         return {
@@ -1538,7 +1556,13 @@ export const registerCoworkSessionHandlers = ({
           success: true,
           ...(await reconcileRuntimeStatus(
             sessionId,
-            await getCoworkEngineRouter().getSessionRuntimeStatus(sessionId, options),
+            await getCoworkEngineRouter().getSessionRuntimeStatus(sessionId, {
+              includeSubagents: options?.includeSubagents === true,
+              forceRefresh: options?.forceRefresh === true,
+              ...(getCoworkStore().getSession?.(sessionId)?.external
+                ? { fullScan: options?.fullScan === true }
+                : { targeted: true }),
+            }),
           )),
         };
       } catch (error) {

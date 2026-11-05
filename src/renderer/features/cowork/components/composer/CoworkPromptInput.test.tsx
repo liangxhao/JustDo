@@ -273,6 +273,60 @@ test('the home composer keeps Apps out of the + menu', async () => {
   expect(screen.queryByRole('menuitem', { name: 'draw.io' })).toBeNull();
 });
 
+test('explains an unavailable session state and retries without submitting or changing the draft', async () => {
+  store.dispatch(setAvailableModels([{ id: 'state-retry-model', name: 'Model' }]));
+  const retry = deferredSessionState();
+  const getSessionGoal = vi.fn()
+    .mockResolvedValueOnce({ success: false })
+    .mockImplementationOnce(() => retry.promise);
+  const getGoalExecution = vi.fn().mockResolvedValue({ success: true });
+  vi.stubGlobal('electron', {
+    extensions: {
+      list: vi.fn().mockResolvedValue({ success: true, extensions: [] }),
+      onChanged: () => () => {},
+    },
+    cowork: {
+      getSessionGoal,
+      getGoalExecution,
+      onSessionGoalChanged: () => () => {},
+      onGoalExecutionChanged: () => () => {},
+    },
+    localAsr: { getStatus: vi.fn().mockResolvedValue({ available: false }) },
+    localSpeechModels: { onChanged: () => () => {} },
+  });
+  const onSubmit = vi.fn();
+  render(
+    <Provider store={store}>
+      <CoworkPromptInput sessionId="state-retry" onSubmit={onSubmit} />
+    </Provider>,
+  );
+  const input = screen.getByRole('textbox') as HTMLTextAreaElement;
+  fireEvent.change(input, { target: { value: 'Keep this draft during recovery' } });
+  const notice = await screen.findByText(i18nService.t('coworkSessionStateReadFailed'));
+  expect(notice).toBeTruthy();
+  const send = screen.getByRole('button', { name: i18nService.t('coworkSendMessage') }) as HTMLButtonElement;
+  expect(send.disabled).toBe(true);
+  fireEvent.click(screen.getByRole('button', { name: i18nService.t('coworkSessionStateRetry') }));
+  const checking = await screen.findByRole('button', { name: i18nService.t('coworkSessionStateChecking') }) as HTMLButtonElement;
+  expect(checking.disabled).toBe(true);
+  expect(send.disabled).toBe(true);
+  expect(input.value).toBe('Keep this draft during recovery');
+  expect(onSubmit).not.toHaveBeenCalled();
+  await act(async () => { retry.resolve({ success: true, goal: null }); });
+  await waitFor(() => expect(send.disabled).toBe(false));
+  expect(screen.queryByText(i18nService.t('coworkSessionStateReadFailed'))).toBeNull();
+  expect(getSessionGoal).toHaveBeenCalledTimes(2);
+  expect(getGoalExecution).toHaveBeenCalledTimes(2);
+  expect(onSubmit).not.toHaveBeenCalled();
+  expect(input.value).toBe('Keep this draft during recovery');
+});
+
+function deferredSessionState() {
+  let resolve!: (value: { success: boolean; goal: null }) => void;
+  const promise = new Promise<{ success: boolean; goal: null }>(done => { resolve = done; });
+  return { promise, resolve };
+}
+
 test('keeps a startup draft editable without submitting or discovering slash commands until explicitly sent', async () => {
   const models = [{ id: 'draft-model', name: 'Draft model', providerKey: 'draft-provider' }];
   store.dispatch(setAvailableModels(models));

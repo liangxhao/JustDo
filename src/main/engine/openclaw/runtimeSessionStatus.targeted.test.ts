@@ -30,6 +30,8 @@ function fixture() {
     gatewayClient: { request }, gatewayClientGeneration: 1,
     targetedSessionStatusChecks: new Map(), unknownSessionRuns: new Map(),
     disconnectedSessionIds: new Set(), disconnectedRecoveryPromises: new Map(),
+    reconcileDisconnectedTurn: vi.fn(async (): Promise<void> => {}),
+    rootRunIdBySession: new Map(),
     compactionInFlightSessionIds: new Set(), isSessionActive: () => state.active,
     goalContinuationCoordinator: { getSnapshot: () => ({ phase: state.goalPhase }) },
     getRuntimeSessionSnapshot: vi.fn(() => { throw new Error('Targeted reads must not scan the roster'); }),
@@ -259,6 +261,31 @@ describe('current conversation runtime activity', () => {
     expect(f.request).not.toHaveBeenCalled();
   });
 
+  it('reconciles a disconnected run before observing current activity without settling it from idle', async () => {
+    const f = fixture();
+    f.context.disconnectedSessionIds.add(productId);
+    f.context.reconcileDisconnectedTurn = vi.fn(async () => {
+      f.context.disconnectedSessionIds.delete(productId);
+    });
+
+    await expect(f.read()).resolves.toEqual(idle);
+
+    expect(f.context.reconcileDisconnectedTurn).toHaveBeenCalledExactlyOnceWith(productId);
+    expect(f.request).toHaveBeenCalledExactlyOnceWith('sessions.describe', { key, agentId: 'main' });
+  });
+
+  it('retains unknown admission when disconnected reconciliation cannot confirm its outcome', async () => {
+    const f = fixture();
+    f.context.disconnectedSessionIds.add(productId);
+    (f.context.unknownSessionRuns as Map<string, unknown>).set(productId, { runId: 'unconfirmed-run' });
+
+    await expect(f.read()).resolves.toEqual(unknown);
+
+    expect(f.context.reconcileDisconnectedTurn).toHaveBeenCalledExactlyOnceWith(productId);
+    expect(f.context.unknownSessionRuns.has(productId)).toBe(true);
+    expect(f.request).not.toHaveBeenCalled();
+  });
+
   it.each(['active', 'compaction', 'goal'])('retains local active admission: %s', async kind => {
     const f = fixture();
     if (kind === 'active') f.state.active = true;
@@ -266,6 +293,40 @@ describe('current conversation runtime activity', () => {
     if (kind === 'goal') f.state.goalPhase = GoalExecutionPhase.Continuing;
     await expect(f.read()).resolves.toMatchObject({ known: true, running: true });
     expect(f.request).not.toHaveBeenCalled();
+  });
+
+  it.each(['active', 'compaction', 'goal'])('preserves the bound root for local %s activity', async kind => {
+    const f = fixture();
+    f.context.rootRunIdBySession.set(productId, 'bound-root');
+    if (kind === 'active') f.state.active = true;
+    if (kind === 'compaction') f.context.compactionInFlightSessionIds.add(productId);
+    if (kind === 'goal') f.state.goalPhase = GoalExecutionPhase.Continuing;
+
+    await expect(f.read()).resolves.toEqual({
+      known: true, mainRunning: true, subagentRunning: false, running: true, rootRunId: 'bound-root',
+    });
+    expect(f.request).not.toHaveBeenCalled();
+  });
+
+  it.each(['main', 'descendant'])('preserves existing root metadata after observing native %s activity', async kind => {
+    const f = fixture();
+    f.context.rootRunIdBySession.set(productId, 'bound-root');
+    f.request.mockResolvedValue({ session: { ...f.native,
+      hasActiveRun: kind === 'main', hasActiveSubagentRun: kind === 'descendant',
+    } });
+
+    await expect(f.read()).resolves.toEqual({
+      known: true, mainRunning: kind === 'main', subagentRunning: kind === 'descendant',
+      running: true, rootRunId: 'bound-root',
+    });
+  });
+
+  it('does not attach a retained root to idle or unknown activity', async () => {
+    const f = fixture();
+    f.context.rootRunIdBySession.set(productId, 'previous-root');
+    await expect(f.read()).resolves.toEqual(idle);
+    (f.context.unknownSessionRuns as Map<string, unknown>).set(productId, { runId: 'unconfirmed-run' });
+    await expect(f.read()).resolves.toEqual(unknown);
   });
 
   it.each(['connection', 'generation', 'source', 'deleted'])('rejects a late result after %s changes', async kind => {

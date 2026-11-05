@@ -1,3 +1,4 @@
+import { SessionCopyErrorCode } from '@shared/cowork/sessionCopy';
 import { useEffect, useSyncExternalStore } from 'react';
 
 import { type JustDoChatWrapperRef } from '@/features/cowork/components/chat/JustDoChatWrapper';
@@ -9,6 +10,19 @@ import {
 } from '@/features/cowork/sessionListActions';
 import { appBrowserRegistry } from '@/features/plugins/app/runtime';
 import { i18nService } from '@/services/i18n';
+
+const copyFailureTranslation = (code: SessionCopyErrorCode | undefined): string => {
+  switch (code) {
+    case SessionCopyErrorCode.RuntimeActive: return 'coworkCopyWaitForCompletion';
+    case SessionCopyErrorCode.RuntimeUnknown: return 'coworkCopyRuntimeUnknown';
+    case SessionCopyErrorCode.SourceUnavailable: return 'coworkCopySourceUnavailable';
+    case SessionCopyErrorCode.SourceRestricted: return 'coworkCopySourceRestricted';
+    case SessionCopyErrorCode.GatewayUnavailable: return 'coworkCopyGatewayUnavailable';
+    case SessionCopyErrorCode.CreationUnconfirmed: return 'coworkCopyCreationUnconfirmed';
+    case SessionCopyErrorCode.PreparationFailed: return 'coworkCopyPreparationFailed';
+    default: return 'coworkCopySessionFailed';
+  }
+};
 
 /** Presentation can narrow a transcript action without changing native execution authority. */
 export function getSessionTranscriptActionError(
@@ -108,13 +122,14 @@ export function useCoworkSessionActions({
       setPendingSessionListAction(null);
       sessionTranscriptMutationRef.current = operation;
       setSessionTranscriptMutation(operation);
+      let failureCode: SessionCopyErrorCode | undefined;
       void coworkService
-        .copySession(currentSession)
+        .copySession(currentSession, code => { failureCode = code; })
         .then(copied => {
           window.dispatchEvent(
             new CustomEvent('app:showToast', {
               detail: i18nService.t(
-                copied ? 'coworkCopySessionSuccess' : 'coworkCopySessionFailed',
+                copied ? 'coworkCopySessionSuccess' : copyFailureTranslation(failureCode),
               ),
             }),
           );

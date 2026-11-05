@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
 import { appendBehaviorPluginPrompt, type BehaviorResourceParticipant, behaviorSessionParticipants, type BehaviorSubmissionParticipant } from '../../../../tests/plugin-host/mainBehaviorParticipants';
-import { CoworkSessionCopyIpc } from '../../../shared/cowork/sessionCopy';
+import { CoworkSessionCopyIpc, SessionCopyErrorCode } from '../../../shared/cowork/sessionCopy';
 import {
   SESSION_SUMMARY_BATCH_LIMIT,
   SessionDirectoryIpc,
@@ -12,6 +12,10 @@ import { SessionRunIpc } from '../../../shared/cowork/sessionRun';
 import { CoworkSessionSearchIpc } from '../../../shared/cowork/sessionSearch';
 import type { CoworkStore } from '../../data/coworkStore';
 import type { CoworkEngineRouter } from '../../engine';
+import {
+  getSessionRuntimeStatus as readRuntimeSessionStatus,
+  type RuntimeSessionStatusContext,
+} from '../../engine/openclaw/runtimeSessionStatus';
 
 const mocks = vi.hoisted(() => ({
   handle: vi.fn(),
@@ -45,6 +49,83 @@ const registerHandlers = (stopSession: ReturnType<typeof vi.fn>): IpcHandler => 
 
 beforeEach(() => {
   mocks.handle.mockReset();
+});
+
+test.each([false, true])('reads conversation activity without accepting renderer identity overrides (external=%s)', async external => {
+  const idle = { known: true, mainRunning: false, subagentRunning: false, running: false };
+  const getSessionRuntimeStatus = vi.fn().mockResolvedValue(idle);
+  const finishSessionRun = vi.fn();
+  registerCoworkSessionHandlers({
+    getCoworkStore: () => ({
+      getSession: () => ({ external: external ? {} : undefined }),
+      getLatestSessionRun: () => undefined,
+      finishSessionRun,
+    }) as unknown as CoworkStore,
+    getCoworkEngineRouter: () => ({ getSessionRuntimeStatus }) as unknown as CoworkEngineRouter,
+    setSessionPermissionMode: vi.fn(),
+  });
+  const read = mocks.handle.mock.calls.find(([name]) => name === 'cowork:session:runtimeStatus')![1] as IpcHandler;
+
+  await expect(read(null, 'selected', {
+    includeSubagents: true, forceRefresh: true, fullScan: true,
+    targeted: false, expectedSessionId: 'untrusted-native', expectedLifecycleRevision: 'untrusted-revision',
+  })).resolves.toMatchObject({ success: true, ...idle, revision: expect.any(Number) });
+
+  expect(getSessionRuntimeStatus).toHaveBeenCalledExactlyOnceWith('selected', {
+    includeSubagents: true, forceRefresh: true,
+    ...(external ? { fullScan: true } : { targeted: true }),
+  });
+  expect(finishSessionRun).not.toHaveBeenCalled();
+});
+
+test.each(['copy', 'fork'] as const)('%s retains native external activity checks without treating the source as a new send', async action => {
+  const source = { id: 'external-source', agentId: 'main', title: 'Source', external: {} };
+  const createSession = vi.fn();
+  const getSessionRuntimeStatus = vi.fn().mockResolvedValue({
+    known: true, mainRunning: true, subagentRunning: false, running: true,
+  });
+  const requestGateway = vi.fn();
+  registerCoworkSessionHandlers({
+    getCoworkStore: () => ({ getSession: () => source, createSession }) as unknown as CoworkStore,
+    getCoworkEngineRouter: () => ({ getSessionRuntimeStatus }) as unknown as CoworkEngineRouter,
+    requestGateway, setSessionPermissionMode: vi.fn(),
+  });
+  const channel = action === 'copy' ? CoworkSessionCopyIpc.Copy : CoworkSessionForkIpc.Fork;
+  const branch = mocks.handle.mock.calls.find(([name]) => name === channel)![1] as IpcHandler;
+
+  await expect(branch(null, { sessionId: source.id, title: 'Branch', entryId: 'entry' }))
+    .resolves.toMatchObject({ success: false });
+
+  expect(getSessionRuntimeStatus).toHaveBeenCalledExactlyOnceWith(source.id, {
+    includeSubagents: true, forceRefresh: true, fullScan: true,
+  });
+  expect(createSession).not.toHaveBeenCalled();
+  expect(requestGateway).not.toHaveBeenCalled();
+});
+
+test.each(['copy', 'fork'] as const)('%s verifies only the source conversation and preserves unknown custody', async action => {
+  const source = { id: 'source', agentId: 'main', title: 'Source' };
+  const createSession = vi.fn();
+  const getSessionRuntimeStatus = vi.fn().mockResolvedValue({
+    known: false, mainRunning: false, subagentRunning: false, running: false,
+  });
+  const requestGateway = vi.fn();
+  registerCoworkSessionHandlers({
+    getCoworkStore: () => ({ getSession: () => source, createSession }) as unknown as CoworkStore,
+    getCoworkEngineRouter: () => ({ getSessionRuntimeStatus }) as unknown as CoworkEngineRouter,
+    requestGateway, setSessionPermissionMode: vi.fn(),
+  });
+  const channel = action === 'copy' ? CoworkSessionCopyIpc.Copy : CoworkSessionForkIpc.Fork;
+  const branch = mocks.handle.mock.calls.find(([name]) => name === channel)![1] as IpcHandler;
+
+  await expect(branch(null, { sessionId: 'source', title: 'Branch', entryId: 'entry' }))
+    .resolves.toMatchObject({ success: false });
+
+  expect(getSessionRuntimeStatus).toHaveBeenCalledExactlyOnceWith('source', {
+    includeSubagents: true, forceRefresh: true, targeted: true,
+  });
+  expect(createSession).not.toHaveBeenCalled();
+  expect(requestGateway).not.toHaveBeenCalled();
 });
 
 test.each(['present', 'missing', 'removed-during-defaults', 'database-error'])(
@@ -405,6 +486,27 @@ test.each([CoworkSessionCopyIpc.Copy, CoworkSessionForkIpc.Fork])(
     expect(requestGateway).not.toHaveBeenCalled();
   },
 );
+
+test.each([
+  { known: false, running: false, code: SessionCopyErrorCode.RuntimeUnknown },
+  { known: true, running: true, code: SessionCopyErrorCode.RuntimeActive },
+])('reports $code before creating any copy', async ({ known, running, code }) => {
+  const createSession = vi.fn();
+  const requestGateway = vi.fn();
+  registerCoworkSessionHandlers({
+    getCoworkStore: () => ({ getSession: () => ({ id: 'source' }), createSession }) as unknown as CoworkStore,
+    getCoworkEngineRouter: () => ({
+      getSessionRuntimeStatus: vi.fn().mockResolvedValue({ known, running }),
+    }) as unknown as CoworkEngineRouter,
+    setSessionPermissionMode: vi.fn(),
+    requestGateway,
+  });
+  const handler = mocks.handle.mock.calls.find(([name]) => name === CoworkSessionCopyIpc.Copy)![1] as IpcHandler;
+  await expect(handler(null, { sessionId: 'source', title: 'Copy' }))
+    .resolves.toMatchObject({ success: false, errorCode: code });
+  expect(createSession).not.toHaveBeenCalled();
+  expect(requestGateway).not.toHaveBeenCalled();
+});
 
 test.each([CoworkSessionCopyIpc.Copy, CoworkSessionForkIpc.Fork])(
   'verifies an imported source identity before %s rather than treating its binding as a worktree',
@@ -1399,6 +1501,7 @@ test('retains the target identity when the copy creation response is lost', asyn
   await expect(handler({}, { sessionId: source.id, title: copied.title })).resolves.toEqual({
     success: false,
     error: 'fork failed',
+    errorCode: SessionCopyErrorCode.CreationUnconfirmed,
     session: { ...copied, status: 'error', branchCreationPending: true },
   });
   expect(store.deleteSession).not.toHaveBeenCalled();
@@ -1432,6 +1535,7 @@ test('refuses to copy when aggregate runtime activity cannot be verified', async
     handler({}, { sessionId: 'source-session', title: 'Source (copy)' }),
   ).resolves.toEqual({
     success: false,
+    errorCode: SessionCopyErrorCode.RuntimeUnknown,
     error: 'The current session activity could not be verified. Try again in a moment.',
   });
   expect(store.createSession).not.toHaveBeenCalled();
@@ -1485,6 +1589,7 @@ test('preserves the preparation failure when native recovery lookup is incomplet
   await expect(handler({}, { sessionId: source.id, title: copied.title })).resolves.toEqual({
     success: false,
     error: 'adoption failed',
+    errorCode: SessionCopyErrorCode.PreparationFailed,
     session: { ...copied, status: 'error', branchCreationPending: true },
   });
   expect(store.deleteSession).not.toHaveBeenCalled();
@@ -2327,6 +2432,48 @@ test('does not finalize a submitted run before Gateway acceptance is observed', 
     timing: submittedTiming,
   });
   expect(finishSessionRun).not.toHaveBeenCalled();
+});
+
+test('reopens the matching receipt through the real targeted activity and IPC boundary', async () => {
+  const completedTiming = {
+    id: 'existing-timing', sessionId: 'session-1', clientTurnId: 'client-turn-1',
+    rootRunId: 'bound-root', startedAt: 1_000, acceptedAt: 1_100, endedAt: 6_000,
+    state: 'completed' as const,
+  };
+  const reopenedTiming = { ...completedTiming, endedAt: undefined, state: 'running' as const };
+  const store = {
+    getSession: () => ({ id: 'session-1', agentId: 'main', status: 'running' }),
+    getLatestSessionRun: () => completedTiming,
+    reopenSessionRun: vi.fn().mockReturnValue(reopenedTiming),
+    beginSessionRun: vi.fn(),
+    bindSessionRunRootRun: vi.fn(),
+  } as unknown as CoworkStore;
+  const context = {
+    store,
+    disconnectedSessionIds: new Set(), disconnectedRecoveryPromises: new Map(), unknownSessionRuns: new Map(),
+    rootRunIdBySession: new Map([['session-1', completedTiming.rootRunId]]),
+    isSessionActive: () => true, compactionInFlightSessionIds: new Set(),
+    goalContinuationCoordinator: { getSnapshot: () => undefined },
+  } as unknown as RuntimeSessionStatusContext;
+  const getSessionRuntimeStatus = vi.fn((sessionId, options) =>
+    readRuntimeSessionStatus.call(context, sessionId, options));
+  registerCoworkSessionHandlers({
+    getCoworkStore: () => store,
+    getCoworkEngineRouter: () => ({ getSessionRuntimeStatus }) as unknown as CoworkEngineRouter,
+    setSessionPermissionMode: vi.fn(),
+  });
+  const read = mocks.handle.mock.calls.find(([name]) => name === 'cowork:session:runtimeStatus')![1] as IpcHandler;
+
+  await expect(read(null, 'session-1', { includeSubagents: true })).resolves.toMatchObject({
+    success: true, running: true, timing: reopenedTiming,
+  });
+
+  expect(getSessionRuntimeStatus).toHaveBeenCalledExactlyOnceWith('session-1', {
+    includeSubagents: true, forceRefresh: false, targeted: true,
+  });
+  expect(store.reopenSessionRun).toHaveBeenCalledExactlyOnceWith(completedTiming.id);
+  expect(store.beginSessionRun).not.toHaveBeenCalled();
+  expect(store.bindSessionRunRootRun).not.toHaveBeenCalled();
 });
 
 test('reopens a completed receipt only when the active root run matches', async () => {

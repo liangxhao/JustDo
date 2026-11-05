@@ -1,4 +1,5 @@
 import type { NativeSessionDispatchRequest } from '@shared/cowork/nativeSessionDispatch';
+import { SessionCopyErrorCode } from '@shared/cowork/sessionCopy';
 import type { SessionDetailStats } from '@shared/cowork/sessionDetails';
 import { SESSION_SUMMARY_BATCH_LIMIT } from '@shared/cowork/sessionDirectory';
 import {
@@ -1038,9 +1039,15 @@ export class CoworkService {
     }
   }
 
-  async copySession(session: CoworkSession): Promise<CoworkSession | null> {
+  async copySession(
+    session: CoworkSession,
+    onFailure?: (code: SessionCopyErrorCode | undefined) => void,
+  ): Promise<CoworkSession | null> {
     const cowork = window.electron?.cowork;
-    if (!cowork?.copySession) return null;
+    if (!cowork?.copySession) {
+      onFailure?.(SessionCopyErrorCode.GatewayUnavailable);
+      return null;
+    }
 
     const title = i18nService.t('coworkCopySessionTitle').replace('{title}', session.title);
     try {
@@ -1059,9 +1066,12 @@ export class CoworkService {
       }
       if (result.session) store.dispatch(addSession({ session: result.session, select: false }));
       console.error('Failed to copy session:', result.error);
+      onFailure?.(result.errorCode);
       return null;
     } catch (error) {
       console.error('Failed to copy session:', error);
+      // A lost IPC response cannot prove that the native creation did not commit.
+      onFailure?.(SessionCopyErrorCode.CreationUnconfirmed);
       return null;
     }
   }

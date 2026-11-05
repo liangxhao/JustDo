@@ -1,3 +1,4 @@
+import { SessionCopyErrorCode } from '@shared/cowork/sessionCopy';
 import { SessionRunBeginErrorCode } from '@shared/cowork/sessionRun';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
@@ -1524,6 +1525,31 @@ test('copies and selects a session returned by Main', async () => {
   store.dispatch(deleteSession(source.id));
   store.dispatch(clearCurrentSession());
   vi.unstubAllGlobals();
+});
+
+test.each([
+  { code: SessionCopyErrorCode.RuntimeUnknown, rejected: false },
+  { code: SessionCopyErrorCode.CreationUnconfirmed, rejected: true },
+])('preserves the copy failure category ($code) without changing selection', async ({ code, rejected }) => {
+  const source = { id: 'copy-failure-source', title: 'Source', status: 'idle' } as CoworkSession;
+  const copySession = rejected
+    ? vi.fn().mockRejectedValue(new Error('response lost'))
+    : vi.fn().mockResolvedValue({ success: false, errorCode: code, error: 'unverified activity' });
+  const failure = vi.fn();
+  vi.stubGlobal('window', { electron: { cowork: { copySession } } });
+  const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+  store.dispatch(setCurrentSession(source));
+  try {
+    await expect(coworkService.copySession(source, failure)).resolves.toBeNull();
+    expect(failure).toHaveBeenCalledExactlyOnceWith(code);
+    expect(store.getState().cowork.currentSession?.id).toBe(source.id);
+    expect(copySession).toHaveBeenCalledOnce();
+  } finally {
+    store.dispatch(deleteSession(source.id));
+    store.dispatch(clearCurrentSession());
+    error.mockRestore();
+    vi.unstubAllGlobals();
+  }
 });
 
 test('does not select a copied session after the user navigates away', async () => {

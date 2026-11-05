@@ -2,7 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   getRuntimeSessionSnapshot,
+  getSessionRuntimeStatuses,
   invalidateRuntimeSessionSnapshot,
+  isRuntimeSessionRowActive,
+  isRuntimeSessionRowMainActive,
   type RuntimeSessionStatusContext,
 } from './runtimeSessionStatus';
 
@@ -140,6 +143,33 @@ describe('compact runtime session snapshots', () => {
     await expect(first).resolves.toMatchObject({ known: false });
     await expect(fresh).resolves.toMatchObject({ known: true, sessions: [{ key: 'recovered' }] });
     expect(context.runtimeSessionSnapshotQueuedRefresh).toBeNull();
+  });
+});
+
+describe('runtime activity and subagent display caches', () => {
+  it.each([false, true])('does not grant runtime authority to cached running labels when hasMore=%s', async hasMore => {
+    const key = 'agent:main:session';
+    const context = {
+      disconnectedSessionIds: new Set(), disconnectedRecoveryPromises: new Map(),
+      goalContinuationCoordinator: { getSnapshot: () => undefined },
+      isSessionActive: () => false, compactionInFlightSessionIds: new Set(),
+      getSessionKeysForSession: () => [key], rootRunIdBySession: new Map(),
+      runtimeRowString: (value: unknown) => typeof value === 'string' ? value : '',
+      getRuntimeSessionSnapshot: vi.fn().mockResolvedValue({
+        known: true, sessions: [{ key, hasActiveRun: false, hasActiveSubagentRun: false }], hasMore,
+      }),
+      subagentStatusCache: new Map([['session', {
+        expiresAt: Date.now() + 8_000, subagents: [{ status: 'running' }],
+      }]]),
+    } as unknown as RuntimeSessionStatusContext;
+    context.isRuntimeSessionRowMainActive = isRuntimeSessionRowMainActive.bind(context);
+    context.isRuntimeSessionRowActive = isRuntimeSessionRowActive.bind(context);
+
+    const result = await getSessionRuntimeStatuses.call(context, ['session'], { includeSubagents: true });
+
+    expect(result.session).toEqual({
+      known: !hasMore, mainRunning: false, subagentRunning: false, running: false,
+    });
   });
 });
 

@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { SessionCopyErrorCode } from '@shared/cowork/sessionCopy';
 import { act, cleanup, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
@@ -84,6 +85,27 @@ it('rechecks current plugin copy restrictions after selecting an idle source', (
   expect(fixture.copy).not.toHaveBeenCalled();
   expect(props.setPendingSessionListAction).toHaveBeenCalledWith(null);
   expect(props.sessionTranscriptMutationRef.current).toBeNull();
+});
+
+it.each([
+  [SessionCopyErrorCode.RuntimeUnknown, 'coworkCopyRuntimeUnknown'],
+  [SessionCopyErrorCode.CreationUnconfirmed, 'coworkCopyCreationUnconfirmed'],
+])('shows the specific copy failure for %s and releases the action', async (code, message) => {
+  fixture.copy.mockImplementation(async (_session, onFailure) => {
+    onFailure(code);
+    return null;
+  });
+  const dispatch = vi.spyOn(window, 'dispatchEvent');
+  const { props } = options('copy');
+  await act(async () => {
+    renderHook(() => useCoworkSessionActions(props));
+  });
+  const toast = dispatch.mock.calls.map(([event]) => event as CustomEvent)
+    .find(event => event.type === 'app:showToast');
+  expect(toast?.detail).toBe(message);
+  expect(props.sessionTranscriptMutationRef.current).toBeNull();
+  expect(fixture.copy).toHaveBeenCalledOnce();
+  dispatch.mockRestore();
 });
 
 it('withdraws a waiting export when related plugin activity changes without changing source execution', () => {

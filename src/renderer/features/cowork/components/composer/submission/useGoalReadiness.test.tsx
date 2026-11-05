@@ -79,11 +79,13 @@ it.each(['rejected', 'unsuccessful'])(
       await read.catch(() => undefined);
     });
     expect(result.current.goalReadReady).toBe(false);
+    expect(result.current.goalReadFailed).toBe(true);
     expect(result.current.goalSubmissionBlocked).toBe(true);
     await act(async () => {
       await result.current.readGoal(() => Promise.resolve({ success: true }));
     });
     expect(result.current.goalReadReady).toBe(true);
+    expect(result.current.goalReadFailed).toBe(false);
   },
 );
 
@@ -113,6 +115,82 @@ it('does not reuse a previous session result or accept a late result after navig
     await result.current.readGoal(() => Promise.resolve({ success: true }));
   });
   expect(result.current.goalReadReady).toBe(true);
+});
+
+it('retains the failure explanation during a retry and clears it only after a current success', async () => {
+  const { result } = renderHook(() => useGoalReadiness('A'));
+  expect(result.current.goalReadFailed).toBe(false);
+  await act(async () => {
+    await result.current.readGoal(() => Promise.resolve({ success: false }));
+  });
+  const retry = deferredRead();
+  let reading!: Promise<{ success: boolean }>;
+  await act(async () => {
+    reading = result.current.readGoal(() => retry.promise);
+  });
+  expect(result.current.goalReadFailed).toBe(true);
+  expect(result.current.goalReadPending).toBe(true);
+  expect(result.current.goalSubmissionBlocked).toBe(true);
+  await act(async () => {
+    retry.resolve({ success: true });
+    await reading;
+  });
+  expect(result.current.goalReadFailed).toBe(false);
+  expect(result.current.goalReadPending).toBe(false);
+  expect(result.current.goalSubmissionBlocked).toBe(false);
+});
+
+it('rejects an older success after a newer read fails within the same session', async () => {
+  const { result } = renderHook(() => useGoalReadiness('A'));
+  const older = deferredRead();
+  let olderRead!: Promise<{ success: boolean }>;
+  await act(async () => {
+    olderRead = result.current.readGoal(() => older.promise);
+    await result.current.readGoal(() => Promise.resolve({ success: false }));
+  });
+  let olderOutcome!: { success: boolean };
+  await act(async () => {
+    older.resolve({ success: true });
+    olderOutcome = await olderRead;
+  });
+  expect(olderOutcome.success).toBe(false);
+  expect(result.current.goalReadFailed).toBe(true);
+  expect(result.current.goalSubmissionBlocked).toBe(true);
+});
+
+it('does not let an older rejection replace a newer successful read', async () => {
+  const { result } = renderHook(() => useGoalReadiness('A'));
+  let rejectOlder!: (error: Error) => void;
+  const older = new Promise<{ success: boolean }>((_resolve, reject) => { rejectOlder = reject; });
+  let olderRead!: Promise<{ success: boolean }>;
+  await act(async () => {
+    olderRead = result.current.readGoal(() => older);
+    await result.current.readGoal(() => Promise.resolve({ success: true }));
+  });
+  await act(async () => {
+    rejectOlder(new Error('old request failed'));
+    await olderRead.catch(() => undefined);
+  });
+  expect(result.current.goalReadReady).toBe(true);
+  expect(result.current.goalReadFailed).toBe(false);
+});
+
+it('revokes an in-flight read when its effect owner is disposed', async () => {
+  const { result } = renderHook(() => useGoalReadiness('A'));
+  const pending = deferredRead();
+  let reading!: Promise<{ success: boolean }>;
+  await act(async () => {
+    reading = result.current.readGoal(() => pending.promise);
+    result.current.invalidateGoalRead();
+  });
+  let outcome!: { success: boolean };
+  await act(async () => {
+    pending.resolve({ success: true });
+    outcome = await reading;
+  });
+  expect(outcome.success).toBe(false);
+  expect(result.current.goalReadReady).toBe(false);
+  expect(result.current.goalSubmissionBlocked).toBe(true);
 });
 
 it.each([
