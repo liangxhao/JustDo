@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { act, cleanup, renderHook } from '@testing-library/react';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 
 import { readGoalState } from './goalReadState';
 import { useGoalReadiness } from './useGoalReadiness';
@@ -190,6 +190,72 @@ it('revokes an in-flight read when its effect owner is disposed', async () => {
   });
   expect(outcome.success).toBe(false);
   expect(result.current.goalReadReady).toBe(false);
+  expect(result.current.goalSubmissionBlocked).toBe(true);
+});
+
+it('does not execute disabled or retired readers and requires a fresh read after engine readiness returns', async () => {
+  const { result, rerender } = renderHook(({ enabled }) => useGoalReadiness('A', false, enabled), {
+    initialProps: { enabled: false },
+  });
+  const read = vi.fn().mockResolvedValue({ success: true });
+  await act(async () => {
+    await expect(result.current.readGoal(read)).resolves.toEqual({ success: false });
+  });
+  expect(read).not.toHaveBeenCalled();
+  expect(result.current.goalSubmissionBlocked).toBe(true);
+
+  rerender({ enabled: true });
+  const oldReadGoal = result.current.readGoal;
+  await act(async () => { await result.current.readGoal(read); });
+  expect(result.current.goalReadReady).toBe(true);
+  rerender({ enabled: false });
+  expect(result.current.goalReadReady).toBe(false);
+  await act(async () => {
+    await expect(oldReadGoal(read)).resolves.toEqual({ success: false });
+  });
+  expect(read).toHaveBeenCalledOnce();
+
+  rerender({ enabled: true });
+  expect(result.current.goalReadReady).toBe(false);
+  await act(async () => { await result.current.readGoal(read); });
+  expect(result.current.goalReadReady).toBe(true);
+});
+
+it('retires a prior failure across engine restart without replaying it during the fresh read', async () => {
+  const { result, rerender } = renderHook(({ enabled }) => useGoalReadiness('A', false, enabled), {
+    initialProps: { enabled: true },
+  });
+  await act(async () => {
+    await result.current.readGoal(() => Promise.resolve({ success: false }));
+  });
+  expect(result.current.goalReadFailed).toBe(true);
+  rerender({ enabled: false });
+  expect(result.current.goalReadFailed).toBe(false);
+  rerender({ enabled: true });
+  const pending = deferredRead();
+  let reading!: Promise<{ success: boolean }>;
+  await act(async () => { reading = result.current.readGoal(() => pending.promise); });
+  expect(result.current.goalReadFailed).toBe(false);
+  expect(result.current.goalReadPending).toBe(true);
+  expect(result.current.goalSubmissionBlocked).toBe(true);
+  await act(async () => { pending.resolve({ success: true }); await reading; });
+  expect(result.current.goalReadReady).toBe(true);
+});
+
+it('does not authorize or expose late state from before an engine restart', async () => {
+  const { result, rerender } = renderHook(({ enabled }) => useGoalReadiness('A', false, enabled), {
+    initialProps: { enabled: true },
+  });
+  const pending = deferredRead();
+  let reading!: Promise<{ success: boolean }>;
+  await act(async () => { reading = result.current.readGoal(() => pending.promise); });
+  rerender({ enabled: false });
+  rerender({ enabled: true });
+  let outcome!: { success: boolean };
+  await act(async () => { pending.resolve({ success: true }); outcome = await reading; });
+  expect(outcome.success).toBe(false);
+  expect(result.current.goalReadReady).toBe(false);
+  expect(result.current.goalReadFailed).toBe(false);
   expect(result.current.goalSubmissionBlocked).toBe(true);
 });
 

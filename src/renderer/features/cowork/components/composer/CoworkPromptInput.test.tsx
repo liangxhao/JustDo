@@ -17,6 +17,7 @@ const desktop = vi.hoisted(() => ({
   modes: [] as AppMode[],
   views: [],
   listeners: new Set<() => void>(),
+  readiness: { ready: true, pending: false, failed: false },
 }));
 vi.mock('@/features/plugins/app/runtime', () => ({
   appBrowserRegistry: {
@@ -32,7 +33,8 @@ vi.mock('@/features/plugins/app/runtime', () => ({
 }));
 
 vi.mock('@/app/shell/startup/routing/useEngineReadiness', () => ({
-  getEngineReadinessSnapshot: () => ({ ready: true, pending: false, failed: false }),
+  useEngineReadiness: () => desktop.readiness,
+  getEngineReadinessSnapshot: () => desktop.readiness,
   subscribeEngineReadiness: () => () => {},
 }));
 
@@ -42,6 +44,7 @@ const originalSelectedModel = store.getState().model.selectedModel;
 afterEach(() => {
   cleanup();
   desktop.modes = [];
+  desktop.readiness = { ready: true, pending: false, failed: false };
   store.dispatch(setAvailableModels(originalModels));
   store.dispatch(setSelectedModel(originalSelectedModel));
   vi.restoreAllMocks();
@@ -326,6 +329,64 @@ function deferredSessionState() {
   const promise = new Promise<{ success: boolean; goal: null }>(done => { resolve = done; });
   return { promise, resolve };
 }
+
+test('waits for engine readiness and retires previous state failures while restarting', async () => {
+  store.dispatch(setAvailableModels([{ id: 'state-startup-model', name: 'Model' }]));
+  desktop.readiness = { ready: false, pending: true, failed: false };
+  const resumed = deferredSessionState();
+  const getSessionGoal = vi.fn()
+    .mockResolvedValueOnce({ success: false })
+    .mockImplementationOnce(() => resumed.promise);
+  const getGoalExecution = vi.fn().mockResolvedValue({ success: true });
+  vi.stubGlobal('electron', {
+    extensions: {
+      list: vi.fn().mockResolvedValue({ success: true, extensions: [] }),
+      onChanged: () => () => {},
+    },
+    cowork: {
+      getSessionGoal,
+      getGoalExecution,
+      onSessionGoalChanged: () => () => {},
+      onGoalExecutionChanged: () => () => {},
+    },
+    localAsr: { getStatus: vi.fn().mockResolvedValue({ available: false }) },
+    localSpeechModels: { onChanged: () => () => {} },
+  });
+  const onSubmit = vi.fn();
+  const composer = () => (
+    <Provider store={store}>
+      <CoworkPromptInput sessionId="state-startup" onSubmit={onSubmit} />
+    </Provider>
+  );
+  const view = render(composer());
+  const input = screen.getByRole('textbox') as HTMLTextAreaElement;
+  fireEvent.change(input, { target: { value: 'Keep this draft while starting' } });
+  const send = screen.getByRole('button', { name: i18nService.t('coworkSendMessage') }) as HTMLButtonElement;
+  expect(getSessionGoal).not.toHaveBeenCalled();
+  expect(getGoalExecution).not.toHaveBeenCalled();
+  expect(screen.queryByText(i18nService.t('coworkSessionStateReadFailed'))).toBeNull();
+  expect(send.disabled).toBe(true);
+
+  desktop.readiness = { ready: true, pending: false, failed: false };
+  view.rerender(composer());
+  await screen.findByText(i18nService.t('coworkSessionStateReadFailed'));
+  expect(getSessionGoal).toHaveBeenCalledOnce();
+  desktop.readiness = { ready: false, pending: true, failed: false };
+  view.rerender(composer());
+  expect(screen.queryByText(i18nService.t('coworkSessionStateReadFailed'))).toBeNull();
+  expect(getSessionGoal).toHaveBeenCalledOnce();
+  expect(send.disabled).toBe(true);
+
+  desktop.readiness = { ready: true, pending: false, failed: false };
+  view.rerender(composer());
+  await waitFor(() => expect(getSessionGoal).toHaveBeenCalledTimes(2));
+  expect(screen.queryByText(i18nService.t('coworkSessionStateReadFailed'))).toBeNull();
+  expect(send.disabled).toBe(true);
+  await act(async () => { resumed.resolve({ success: true, goal: null }); });
+  await waitFor(() => expect(send.disabled).toBe(false));
+  expect(input.value).toBe('Keep this draft while starting');
+  expect(onSubmit).not.toHaveBeenCalled();
+});
 
 test('keeps a startup draft editable without submitting or discovering slash commands until explicitly sent', async () => {
   const models = [{ id: 'draft-model', name: 'Draft model', providerKey: 'draft-provider' }];

@@ -14,10 +14,10 @@ type GoalReadState = {
 };
 
 /** Unknown Goal state must never authorize a queued input. */
-export function useGoalReadiness(sessionId: string | undefined, isSideChat = false) {
-  const scope = useRef({ sessionId, generation: 0, request: 0 });
-  if (scope.current.sessionId !== sessionId) {
-    scope.current = { sessionId, generation: scope.current.generation + 1, request: 0 };
+export function useGoalReadiness(sessionId: string | undefined, isSideChat = false, enabled = true) {
+  const scope = useRef({ sessionId, enabled, generation: 0, request: 0 });
+  if (scope.current.sessionId !== sessionId || scope.current.enabled !== enabled) {
+    scope.current = { sessionId, enabled, generation: scope.current.generation + 1, request: 0 };
   }
   const generation = scope.current.generation;
   const [readState, setReadState] = useState<GoalReadState | null>(null);
@@ -25,22 +25,21 @@ export function useGoalReadiness(sessionId: string | undefined, isSideChat = fal
     if (scope.current.generation === generation) scope.current.request += 1;
   }, [generation]);
   const readGoal = useCallback(
-    async <T extends { success: boolean }>(read: () => Promise<T>) => {
-      const request = scope.current.generation === generation ? ++scope.current.request : null;
-      const isCurrent = () => request !== null && scope.current.generation === generation &&
+    async <T extends { success: boolean }>(read: () => Promise<T>): Promise<T | { success: false }> => {
+      if (scope.current.generation !== generation || !scope.current.enabled) return { success: false };
+      const request = ++scope.current.request;
+      const isCurrent = () => scope.current.enabled && scope.current.generation === generation &&
         scope.current.request === request;
-      if (request !== null && isCurrent()) {
-        setReadState(previous => ({
-          generation,
-          request,
-          phase: GoalReadPhase.Pending,
-          failed: previous?.generation === generation && previous.failed,
-        }));
-      }
+      setReadState(previous => ({
+        generation,
+        request,
+        phase: GoalReadPhase.Pending,
+        failed: previous?.generation === generation && previous.failed,
+      }));
       try {
         const result = await read();
         const current = isCurrent();
-        if (request !== null && current) {
+        if (current) {
           setReadState({
             generation,
             request,
@@ -49,9 +48,9 @@ export function useGoalReadiness(sessionId: string | undefined, isSideChat = fal
           });
         }
         // Callers must not apply an obsolete success to the current composer.
-        return { ...result, success: current && result.success };
+        return current ? result : { success: false };
       } catch (error) {
-        if (request !== null && isCurrent()) {
+        if (isCurrent()) {
           setReadState({ generation, request, phase: GoalReadPhase.Failed, failed: true });
         }
         throw error;

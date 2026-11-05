@@ -996,6 +996,17 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
       if (engineReadiness.ready && controller) connectController(controller);
     }, [connectController, controller, engineReadiness.ready]);
 
+    useLayoutEffect(() => {
+      // Startup/restart owns availability feedback. Retire earlier connection
+      // errors and recheck failed history through the existing reader when ready.
+      setConnectionError(null);
+      if (!engineReadiness.ready) return;
+      const target = controllerRef.current;
+      if (target?.state.connected && target.state.historyReadFailed) {
+        void target.loadHistory(true);
+      }
+    }, [engineReadiness.ready]);
+
     useEffect(() => {
       const controller = controllerRef.current;
       if (
@@ -1057,7 +1068,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
       );
     }
 
-    if (connectionError) {
+    if (engineReadiness.ready && connectionError) {
       return (
         <div
           className={`${className ?? ''} flex items-center justify-center`}
@@ -1085,7 +1096,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
         data-review-session-id={currentSessionId}
         className={`${className ?? ''} flex min-h-0 flex-col`}
       >
-        {(historyStatus === 'error' || historyStatus === 'preparation-pending' ||
+        {engineReadiness.ready && (historyStatus === 'error' || historyStatus === 'preparation-pending' ||
           (historyStatus === 'loading' &&
             canonicalSessionKey &&
             loadingHistorySessionKey === canonicalSessionKey)) && (

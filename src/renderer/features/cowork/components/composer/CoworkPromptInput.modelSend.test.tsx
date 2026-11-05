@@ -11,6 +11,12 @@ import { store } from '@/store';
 import CoworkPromptInput from './CoworkPromptInput';
 import { captureHomeComposerModelRef } from './selection/homeModelSelection';
 
+vi.mock('@/app/shell/startup/routing/useEngineReadiness', () => ({
+  useEngineReadiness: () => ({ ready: true, pending: false, failed: false }),
+  getEngineReadinessSnapshot: () => ({ ready: true, pending: false, failed: false }),
+  subscribeEngineReadiness: () => () => {},
+}));
+
 const originalModels = store.getState().model.availableModels;
 const originalSelectedModel = store.getState().model.selectedModel;
 

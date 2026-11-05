@@ -52,9 +52,9 @@ export const sessionStorageTranslations = {
     storageError_busy: '已有操作正在进行，请稍后刷新。',
     storageError_unknown: '无法完成会话存储操作，请刷新核对状态。',
     storageHistoryLoading: '首次加载会话历史可能需要一些时间，请稍候',
-    storageHistoryFailed: '历史读取失败，请重试。恢复完成前不能发送或导出。',
+    storageHistoryFailed: '未能读取会话历史，请重试。',
     storageHistoryPreparing: '会话正在准备，完成后会自动加载历史。',
-    storageHistoryPreparationPending: '会话仍在准备，历史尚未读取。请稍后重试；读取完成前不能发送或导出。',
+    storageHistoryPreparationPending: '会话仍在准备，请稍后重试。',
     storageHistoryRetry: '重新读取历史',
     storageExportScope: '导出当前聊天快照，不包含全部会话、归档文件或附件文件，不能代替完整备份。',
   },
@@ -117,9 +117,9 @@ export const sessionStorageTranslations = {
       'Unable to complete the session storage operation. Refresh to verify its state.',
     storageHistoryLoading:
       'Loading conversation history for the first time may take a moment. Please wait',
-    storageHistoryFailed: 'History could not be read. Retry before sending or exporting.',
+    storageHistoryFailed: 'Could not load conversation history. Please retry.',
     storageHistoryPreparing: 'The session is preparing. History will load automatically when ready.',
-    storageHistoryPreparationPending: 'The session is still preparing and history is not confirmed. Retry later before sending or exporting.',
+    storageHistoryPreparationPending: 'The conversation is still preparing. Please retry shortly.',
     storageHistoryRetry: 'Reload history',
     storageExportScope:
       'Exports the current chat snapshot, not all sessions, archive files or attachment files. This is not a complete backup.',

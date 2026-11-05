@@ -10,6 +10,29 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+test('retires a transport history failure without clearing the conversation or confirming readiness', () => {
+  const controller = new ChatController();
+  controllers.push(controller);
+  const messages = [{ role: 'assistant', content: 'Retained history' }];
+  controller.state.chatMessages = messages;
+  controller.state.connected = true;
+  controller.state.initialHistoryReady = true;
+  controller.state.historyReadFailed = true;
+  controller.state.lastError = 'Previous read failure';
+  controller.state.chatSending = true;
+  controller.state.chatRunId = 'unsettled-run';
+
+  (controller as unknown as { handleClose(): void }).handleClose();
+
+  expect(controller.state.historyReadFailed).toBe(false);
+  expect(controller.state.initialHistoryReady).toBe(false);
+  expect(controller.state.connected).toBe(false);
+  expect(controller.state.chatMessages).toEqual(messages);
+  expect(controller.state.lastError).toBe('Previous read failure');
+  expect(controller.state.chatSending).toBe(true);
+  expect(controller.state.chatRunId).toBe('unsettled-run');
+});
+
 test.each(['failed', 'killed', 'done'])(
   'settles native %s without a visible reply or hasActiveRun',
   async status => {

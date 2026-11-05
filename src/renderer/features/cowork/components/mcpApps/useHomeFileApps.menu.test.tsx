@@ -72,6 +72,10 @@ vi.mock('@/libs/openclaw-chat/gateway/mcp-app/mcp-workspace-session', () => ({
   },
 }));
 
+vi.mock('../composer/speech/LocalSpeechInputButton', () => ({
+  LocalSpeechInputButton: () => null,
+}));
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (error: Error) => void;

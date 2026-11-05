@@ -116,6 +116,79 @@ it('keeps unopened history unavailable after startup failure and connects after 
   await waitFor(() => expect(connect).toHaveBeenCalledOnce());
 });
 
+it.each([false, true])('retires restart failures while preserving current read results (transport closed: %s)', async transportClosed => {
+  const messages = [{ role: 'assistant', content: 'Retained conversation' }];
+  const connect = vi.spyOn(ChatController.prototype, 'connect').mockImplementation(async function (
+    this: ChatController,
+  ) {
+    this.state.connected = true;
+    this.state.initialHistoryReady = true;
+    this.state.chatMessages = messages;
+  });
+  const send = vi.spyOn(ChatController.prototype, 'sendMessage').mockResolvedValue();
+  let finishReload!: () => void;
+  const pendingReload = new Promise<void>(resolve => { finishReload = resolve; });
+  const reload = vi.spyOn(ChatController.prototype, 'loadHistory').mockImplementation(async function (
+    this: ChatController,
+  ) {
+    this.state.chatLoading = true;
+    (this as unknown as { notify(): void }).notify();
+    await pendingReload;
+    this.state.chatLoading = false;
+    this.state.historyReadFailed = transportClosed;
+    (this as unknown as { notify(): void }).notify();
+    return !transportClosed;
+  });
+  const ref = createRef<JustDoChatWrapperRef>();
+  const view = render(<JustDoChatWrapper ref={ref} />);
+  await waitFor(() => expect(connect).toHaveBeenCalledOnce());
+  const controller = connect.mock.instances[0] as ChatController;
+  const failHistory = () => {
+    controller.state.historyReadFailed = true;
+    (controller as unknown as { notify(): void }).notify();
+  };
+  act(failHistory);
+  expect(screen.getByText('storageHistoryFailed')).toBeTruthy();
+
+  fixture.readiness = { ready: false, pending: true, failed: false };
+  view.rerender(<JustDoChatWrapper ref={ref} />);
+  if (transportClosed) {
+    act(() => (controller as unknown as { handleClose(): void }).handleClose());
+  } else {
+    act(failHistory);
+  }
+  expect(screen.queryByText('storageHistoryFailed')).toBeNull();
+  expect(screen.queryByText('storageHistoryRetry')).toBeNull();
+  expect(reload).not.toHaveBeenCalled();
+  await expect(ref.current?.sendMessage('wait for readiness')).rejects.toMatchObject({ requestSent: false });
+
+  fixture.readiness = { ready: true, pending: false, failed: false };
+  view.rerender(<JustDoChatWrapper ref={ref} />);
+  if (transportClosed) {
+    // The existing client owns the later hello and history subscription barrier.
+    expect(reload).not.toHaveBeenCalled();
+    expect(screen.queryByText('storageHistoryFailed')).toBeNull();
+    act(() => {
+      controller.state.connected = true;
+      (controller as unknown as { notify(): void }).notify();
+    });
+    expect(screen.queryByText('storageHistoryFailed')).toBeNull();
+    act(() => { void controller.loadHistory(true); });
+  }
+  expect(reload).toHaveBeenCalledExactlyOnceWith(true);
+  expect(screen.queryByText('storageHistoryFailed')).toBeNull();
+  await act(async () => { finishReload(); });
+  if (transportClosed) {
+    expect(screen.getByText('storageHistoryFailed')).toBeTruthy();
+    expect(screen.getByText('storageHistoryRetry')).toBeTruthy();
+  } else {
+    expect(screen.queryByText('storageHistoryFailed')).toBeNull();
+  }
+  expect(connect).toHaveBeenCalledOnce();
+  expect(controller.state.chatMessages).toEqual(messages);
+  expect(send).not.toHaveBeenCalled();
+});
+
 it('blocks export and sending while history is loading or failed, and retry only reloads history', async () => {
   let controller!: ChatController;
   const publish = () => (controller as unknown as { notify: () => void }).notify();

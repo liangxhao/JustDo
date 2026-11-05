@@ -37,6 +37,7 @@ import { isLocalAudioAttachment } from '@shared/speech/localAsr';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 
+import { useEngineReadiness } from '@/app/shell/startup/routing/useEngineReadiness';
 import BrowserAnnotationCard from '@/features/browser/annotation/BrowserAnnotationCard';
 import { BrowserRecordingDraftCard } from '@/features/browser/recording/BrowserRecordingDraftCard';
 import { recordingSubmissionIssue } from '@/features/browser/recording/browserRecordingSubmission';
@@ -288,6 +289,9 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       remoteManaged = false,
       mode = 'default',
     } = props;
+    const engineReadiness = useEngineReadiness();
+    const engineReadyRef = useRef(engineReadiness.ready);
+    engineReadyRef.current = engineReadiness.ready;
     const dispatch = useDispatch();
     const draftKey = draftKeyOverride || sessionId || '__home__';
     const extensionEnablement = useExtensionEnablement();
@@ -575,7 +579,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       goalSubmissionBlocked,
       readGoal,
       invalidateGoalRead,
-    } = useGoalReadiness(sessionId, isSideChat);
+    } = useGoalReadiness(sessionId, isSideChat, engineReadiness.ready);
     const retryGoalReadRef = useRef<(() => Promise<void>) | null>(null);
     const summaryGoalObjective = goalStateMatchesSession
       ? (sessionGoal?.objective ?? pendingGoalObjective ?? undefined)
@@ -2168,14 +2172,14 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     // OpenClaw owns Goal lifecycle state. Refresh from exact session events instead of polling
     // an idle active Goal, which cannot change without a Gateway event or a new run.
     useEffect(() => {
-      if (isSideChat || !sessionId || sessionId.startsWith('temp-')) return;
+      if (!engineReadiness.ready || isSideChat || !sessionId || sessionId.startsWith('temp-')) return;
       let cancelled = false;
       const retry = createGoalReadRetry(() => void fetchGoal());
       let executionRevision = 0;
       let requestInFlight = false;
       let refreshQueued = false;
       const fetchGoal = async () => {
-        if (cancelled) return;
+        if (cancelled || !engineReadyRef.current) return;
         if (requestInFlight) {
           refreshQueued = true;
           return;
@@ -2259,6 +2263,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     }, [
       applyAcceptedGoalClear,
       cancelGoalClear,
+      engineReadiness.ready,
       isSideChat,
       invalidateGoalRead,
       readGoal,
@@ -3010,7 +3015,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             {disabledMessage}
           </p>
         )}
-        {goalSubmissionBlocked && goalReadFailed && (
+        {engineReadiness.ready && goalSubmissionBlocked && goalReadFailed && (
           <div role="status" className="flex items-center gap-2 px-3 pb-2 text-xs text-secondary">
             <span>{i18nService.t('coworkSessionStateReadFailed')}</span>
             <button
