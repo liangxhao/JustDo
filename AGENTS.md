@@ -113,6 +113,10 @@ npm test
 - Main logs use module prefixes, e.g. `[CronJobService]`. Avoid production
   Renderer `console.log`. Never log/hardcode secrets, tokens, passwords,
   raw auth headers or credential objects.
+- Each log entry must occupy one physical line so `rg`/`grep` can match the
+  complete event. Serialize structured context as compact JSON in one string;
+  escape embedded CR/LF and stack traces. Do not pretty-print log JSON or pass
+  objects/errors as separate console arguments that can expand across lines.
 
 ## Branding and Paths
 

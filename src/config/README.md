@@ -45,6 +45,22 @@ Windows 路径为 `%APPDATA%/<productName>/<directoryName>/<userInfoFileName>`�
 每窗口至多一次 `sessions.usage` 查询最近 7 天的本机每日活跃原生会话数和已记录输入/输出/总 Token，不拆分账号、内置或自配模型，不读取聊天正文，不轮询等待缓存完成。原生缓存可能后台刷新；Gateway 不可用时不会启动它。快照通过 `metadata.usage` 上报；同步 `getMetadata` 只适合小对象扩展，异步统计使用可取消的 `collectMetadata`。
 新版客户端可先于活动服务部署；404 等接口或格式不支持响应至少冷却 24 小时且跨重启保留，不阻塞登录、启动或聊天。每个新窗口使用新事件 ID 和最新快照，不积压旧事件；退出只取消采集和请求。
 
+Main 日志搜索 `[UserActivity]`，每条为单行 JSON；开发终端同样可见。Windows 默认文件是 `%APPDATA%/<productName>/logs/main-YYYY-MM-DD.log`，文件名按 UTC 日期，隔离开发目录则在其 `logs/` 下。
+
+| event / reason | 含义 |
+| --- | --- |
+| `started`、`waiting / startup-delay` | 上报服务已启动；`nextCheckAt` 为启动等待结束后的检查时间 |
+| `waiting / not-idle` | 尚未满足空闲条件；`gatewayConnected`、`activeSessions`、`idleSeconds` 说明具体状态，系统须至少 60 秒无键鼠输入 |
+| `waiting / login-unavailable`、`jwt-unavailable`、`api-key-mode` | 缺少可用登录资料/JWT，或使用不参与上报的开发 API Key 模式 |
+| `waiting / minimum-interval`、`daily-limit`、`endpoint-cooldown` | 正在等待持久化间隔、日配额或接口冷却；可见当前次数、下次检查时间及已有的上次成功时间 |
+| `collecting`、`sending` | 已预留一个报告窗口，开始统计或发送；不代表成功 |
+| `succeeded` | 服务端返回 2xx 且正文明确 `ok:true`；HTTP 状态和本日窗口次数可见 |
+| `failed` | 失败；`reason`、`phase`、可用的 `httpStatus` 区分配置、配额保存、采集、网络、确认等阶段 |
+| `skipped / statistics-unavailable`、`unchanged` | 本窗口没有可用统计，或统计未变化；没有发送 HTTP |
+| `disabled`、`stopped` | 配置关闭/内置提供方关闭，或当前上报服务已停止 |
+
+同一等待/失败状态最多每 30 分钟重复一次；状态变化和真正的采集、发送结果会记录。`nextCheckAt`/`lastSuccessAt` 为 UTC ISO 时间，下次检查不保证一定发送。日志不包含账号、凭据、地址、快照正文或原始异常；日志故障不影响报告结果。`succeeded` 后若另有 `failed / state-write-failed` 且 `phase=success-persistence`，表示远端已确认，但本机成功状态未能保存。
+
 ## 模型认证
 
 `tokenExchangeUrl` 填写完整换证接口地址，空值禁用换证。

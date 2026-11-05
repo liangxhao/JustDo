@@ -511,4 +511,91 @@ describe('scheduled JWT user activity', () => {
     expect(buildActivityApiBaseUrl('https://model.test/proxy/v1/?secret=x#x'))
       .toBe('https://model.test/proxy');
   });
+
+  test('logs startup and rate-limited idle evidence without affecting eligibility', async () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    const idle = { gatewayConnected: true, activeSessions: false, idleSeconds: 2 };
+    const { service, request, isIdle } = setup({ getIdleStatus: () => idle });
+    isIdle.mockReturnValue(false);
+    service.start();
+    await service.sync();
+    expect(info.mock.calls.some(([line]) => String(line).includes('"reason":"startup-delay"'))).toBe(true);
+    await advance(service, WARMUP_MS);
+    const messages = () => info.mock.calls.map(([line]) => JSON.parse(String(line).replace('[UserActivity] ', '')));
+    expect(messages().filter(item => item.reason === 'not-idle')).toEqual([
+      expect.objectContaining({ event: 'waiting', gatewayConnected: true, activeSessions: false, idleSeconds: 2 }),
+    ]);
+    idle.idleSeconds = 9;
+    await advance(service, 25 * 60_000);
+    expect(messages().filter(item => item.reason === 'not-idle')).toHaveLength(1);
+    await advance(service, 5 * 60_000);
+    expect(messages().filter(item => item.reason === 'not-idle')).toHaveLength(2);
+    expect(request).not.toHaveBeenCalled();
+  });
+
+  test('logs server-confirmed success and useful HTTP failure without private payloads', async () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    const { service, request } = setup();
+    await startAndReport(service);
+    const messages = () => info.mock.calls.map(([line]) => JSON.parse(String(line).replace('[UserActivity] ', '')));
+    expect(messages()).toEqual(expect.arrayContaining([
+      expect.objectContaining({ event: 'collecting', attempt: 1, dailyLimit: 3 }),
+      expect.objectContaining({ event: 'sending', attempt: 1 }),
+      expect.objectContaining({ event: 'succeeded', httpStatus: 200 }),
+    ]));
+    request.mockResolvedValueOnce(new Response('{}', { status: 404 }));
+    await advance(service, DAY_MS);
+    expect(messages()).toEqual(expect.arrayContaining([
+      expect.objectContaining({ event: 'failed', reason: 'http-rejected', httpStatus: 404, nextCheckAt: expect.any(String) }),
+    ]));
+    const text = info.mock.calls.flat().join('\n');
+    for (const secret of ['alice', 'Alice', 'short-lived-token', 'must-not-send', 'localhost', 'totalTokens']) {
+      expect(text).not.toContain(secret);
+    }
+  });
+
+  test('does not call an unacknowledged response successful and logs unavailable statistics', async () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    const { service, request, collectMetadata } = setup();
+    request.mockResolvedValueOnce(new Response('{"ok":false}'));
+    await startAndReport(service);
+    expect(info.mock.calls.some(([line]) => String(line).includes('"reason":"response-not-acknowledged"'))).toBe(true);
+    expect(info.mock.calls.some(([line]) => String(line).includes('"event":"succeeded"'))).toBe(false);
+    collectMetadata.mockResolvedValueOnce(null);
+    await advance(service, DAY_MS);
+    expect(info.mock.calls.some(([line]) => String(line).includes('"reason":"statistics-unavailable"'))).toBe(true);
+    expect(request).toHaveBeenCalledOnce();
+  });
+
+  test('diagnostic failures do not change reporting or its window budget', async () => {
+    vi.spyOn(console, 'info').mockImplementation(() => { throw new Error('broken logger'); });
+    const { service, request, isIdle, stateStore } = setup({ getIdleStatus: () => { throw new Error('broken diagnostic getter'); } });
+    isIdle.mockReturnValue(false);
+    await startAndReport(service);
+    expect(stateStore.write).not.toHaveBeenCalled();
+    isIdle.mockReturnValue(true);
+    await advance(service, 5 * 60_000);
+    expect(request).toHaveBeenCalledOnce();
+    expect(stateStore.snapshot()?.attempts).toBe(1);
+    expect(stateStore.snapshot()?.lastSuccessAt).toBe(Date.now());
+  });
+
+  test('distinguishes failed local cooldown persistence from a network failure', async () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    const { service, request, stateStore } = setup();
+    const persist = stateStore.write.getMockImplementation()!;
+    stateStore.write.mockImplementationOnce(persist).mockImplementationOnce(() => {
+      throw new Error('private storage failure details');
+    });
+    request.mockResolvedValueOnce(new Response('{}', { status: 404 }));
+    await startAndReport(service);
+    const messages = info.mock.calls.map(([line]) => JSON.parse(String(line).replace('[UserActivity] ', '')));
+    expect(messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({ event: 'failed', reason: 'http-rejected', httpStatus: 404 }),
+      expect.objectContaining({ event: 'failed', reason: 'state-write-failed', phase: 'cooldown-persistence' }),
+    ]));
+    expect(info.mock.calls.flat().join('\n')).not.toContain('private storage failure details');
+    expect(stateStore.snapshot()?.attempts).toBe(1);
+    expect(request).toHaveBeenCalledOnce();
+  });
 });

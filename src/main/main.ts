@@ -78,7 +78,7 @@ import { isNsisInstalledApp } from './core/app/installedApp';
 import { createInstallerShutdownListener } from './core/app/installerShutdown';
 import { createTray, destroyTray, updateTrayMenu } from './core/app/trayManager';
 import { resolveAppUpdateResourceUrl } from './core/app/updateResourceUrl';
-import { USER_ACTIVITY_SCHEDULE_KEY, UserActivityService } from './core/app/userActivityService';
+import { logDisabledUserActivity, USER_ACTIVITY_SCHEDULE_KEY, UserActivityService } from './core/app/userActivityService';
 import { collectUserActivityUsage, USER_ACTIVITY_TIME_ZONE } from './core/app/userActivityUsage';
 import { APP_NAME, DEV_SERVER_URL_SWITCH, INSTALLER_QUIT_SWITCH } from './core/appConstants';
 import { resolveDevelopmentDataDirectory } from './core/development/developmentDataDirectory';
@@ -2682,12 +2682,22 @@ if (agentBridgeArgv) {
           return Boolean(runtime?.getGatewayClient() && !runtime.hasActiveSessions() &&
             powerMonitor.getSystemIdleTime() >= 60);
         },
+        getIdleStatus: () => {
+          const runtime = getOpenClawRuntimeAdapter();
+          return {
+            gatewayConnected: Boolean(runtime?.getGatewayClient()),
+            activeSessions: Boolean(runtime?.hasActiveSessions()),
+            idleSeconds: powerMonitor.getSystemIdleTime(),
+          };
+        },
         collectMetadata: async signal => {
           const usage = await collectUserActivityUsage(getOpenClawRuntimeAdapter()?.getGatewayClient() ?? null, { signal });
           return usage ? { usage: { ...usage, timeZone: USER_ACTIVITY_TIME_ZONE, collectedAt: Date.now() } } : null;
         },
       });
       userActivityService.start();
+    } else {
+      logDisabledUserActivity(ACTIVITY_REPORTING_CONFIG.enabled ? 'provider-disabled' : 'reporting-disabled');
     }
 
     createTray(() => mainWindow);

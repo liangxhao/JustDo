@@ -20,6 +20,28 @@ const MAX_BODY_BYTES = 8192;
 const DAILY_WINDOW_LIMIT = 3;
 const DEFERRED_HTTP_STATUSES = new Set([400, 404, 405, 413, 415, 422, 501]);
 const SNAPSHOT_TIME_FIELDS = new Set(['clientTime', 'collectedAt', 'updatedAt']);
+const DIAGNOSTIC_REPEAT_MS = 30 * 60 * 1000;
+const ActivityEvent = {
+  Started: 'started', Waiting: 'waiting', Collecting: 'collecting', Sending: 'sending',
+  Succeeded: 'succeeded', Failed: 'failed', Skipped: 'skipped', Stopped: 'stopped', Disabled: 'disabled',
+} as const;
+type ActivityEvent = (typeof ActivityEvent)[keyof typeof ActivityEvent];
+type ActivityLogFields = {
+  reason?: string;
+  phase?: string;
+  nextCheckAt?: string;
+  lastSuccessAt?: string;
+  attempt?: number;
+  dailyLimit?: number;
+  httpStatus?: number;
+  gatewayConnected?: boolean;
+  activeSessions?: boolean;
+  idleSeconds?: number;
+};
+
+export const logDisabledUserActivity = (reason: 'reporting-disabled' | 'provider-disabled'): void => {
+  try { console.info(`[UserActivity] ${JSON.stringify({ event: ActivityEvent.Disabled, reason })}`); } catch { /* Optional diagnostics. */ }
+};
 
 export const USER_ACTIVITY_SCHEDULE_KEY = 'activity.reportingSchedule';
 
@@ -117,6 +139,7 @@ type UserActivityServiceOptions = {
     write: (state: UserActivityScheduleState) => void;
   };
   isIdle: () => boolean;
+  getIdleStatus?: () => { gatewayConnected: boolean; activeSessions: boolean; idleSeconds: number };
   collectMetadata?: (signal: AbortSignal) => Promise<UserActivityMetadata | null>;
   getMetadata?: () => UserActivityMetadata;
   fetch?: typeof mainProcessFetch;
@@ -150,10 +173,7 @@ const readUserActivityPayload = async (
     const value: unknown = JSON.parse(await fs.promises.readFile(userInfoPath, 'utf8'));
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
     parsed = value as UserInfoFile;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-      console.info('[UserActivity] Activity deferred: login information is unavailable.');
-    }
+  } catch {
     return null;
   }
 
@@ -183,6 +203,7 @@ export class UserActivityService {
   private syncRequested = false;
   private requestController: AbortController | null = null;
   private reportedStatus: string | null = null;
+  private reportedAt = 0;
 
   constructor(private readonly options: UserActivityServiceOptions) {
     this.request = options.fetch ?? mainProcessFetch;
@@ -191,13 +212,19 @@ export class UserActivityService {
   }
 
   start(): void {
-    if (!ACTIVITY_REPORTING_CONFIG.enabled || this.running) return;
+    if (!ACTIVITY_REPORTING_CONFIG.enabled) {
+      this.note(ActivityEvent.Disabled, { reason: 'reporting-disabled' });
+      return;
+    }
+    if (this.running) return;
     this.running = true;
     this.generation += 1;
+    this.note(ActivityEvent.Started);
     void this.sync();
   }
 
   stop(): void {
+    if (this.running) this.note(ActivityEvent.Stopped);
     this.running = false;
     this.generation += 1;
     this.requestController?.abort();
@@ -228,7 +255,7 @@ export class UserActivityService {
       .catch(() => {
         // Optional reporting must never reject a caller's login/startup work.
         if (generation === this.generation) {
-          this.noteDeferred('unavailable');
+          this.note(ActivityEvent.Failed, { reason: 'unavailable', phase: 'scheduling' });
           this.schedule(generation, IDLE_RECHECK_MS);
         }
       })
@@ -244,10 +271,48 @@ export class UserActivityService {
     return pending;
   }
 
-  private noteDeferred(status: string): void {
-    if (this.reportedStatus === status) return;
-    this.reportedStatus = status;
-    console.info(`[UserActivity] Optional activity reporting deferred: ${status}.`);
+  private note(event: ActivityEvent, fields: ActivityLogFields = {}): void {
+    try {
+      // Variable timestamps/idle seconds do not defeat same-state rate limiting.
+      const status = `${event}:${fields.reason ?? ''}:${fields.phase ?? ''}:${fields.httpStatus ?? ''}:` +
+        `${fields.gatewayConnected ?? ''}:${fields.activeSessions ?? ''}`;
+      const now = this.now();
+      if (status === this.reportedStatus && now - this.reportedAt < DIAGNOSTIC_REPEAT_MS) return;
+      this.reportedStatus = status;
+      this.reportedAt = now;
+      console.info(`[UserActivity] ${JSON.stringify({ event, ...fields })}`);
+    } catch { /* Logging must not change scheduling, authentication or request results. */ }
+  }
+
+  private noteWaiting(reason: string, delay: number, state?: UserActivityScheduleState): void {
+    try {
+      const fields: ActivityLogFields = { reason, nextCheckAt: new Date(this.now() + delay).toISOString() };
+      if (state) {
+        fields.attempt = state.attempts;
+        fields.dailyLimit = DAILY_WINDOW_LIMIT;
+        if (state.lastSuccessAt > 0) fields.lastSuccessAt = new Date(state.lastSuccessAt).toISOString();
+      }
+      if (reason === 'not-idle') {
+        try {
+          const status = this.options.getIdleStatus?.();
+          if (status) {
+            if (typeof status.gatewayConnected === 'boolean') fields.gatewayConnected = status.gatewayConnected;
+            if (typeof status.activeSessions === 'boolean') fields.activeSessions = status.activeSessions;
+            if (Number.isFinite(status.idleSeconds) && status.idleSeconds >= 0) fields.idleSeconds = Math.floor(status.idleSeconds);
+          }
+        } catch { /* Idle diagnostics are independent of the eligibility check. */ }
+      }
+      this.note(ActivityEvent.Waiting, fields);
+    } catch { /* Optional diagnostics. */ }
+  }
+
+  private noteScheduleWait(state: UserActivityScheduleState, delay: number): void {
+    try {
+      const now = this.now();
+      const reason = state.cooldownUntil > now ? 'endpoint-cooldown' :
+        state.attempts >= DAILY_WINDOW_LIMIT ? 'daily-limit' : 'minimum-interval';
+      this.noteWaiting(reason, delay, state);
+    } catch { /* Optional diagnostics. */ }
   }
 
   private schedule(generation: number, delay: number): void {
@@ -278,36 +343,73 @@ export class UserActivityService {
   private async syncActivity(generation: number): Promise<number> {
     let controller: AbortController | null = null;
     let timeout: ReturnType<typeof setTimeout> | undefined;
+    let phase = 'schedule-read';
+    let timedOut = false;
     try {
       const startupDelay = this.startupReadyAt - this.now();
-      if (startupDelay > 0) return startupDelay;
+      if (startupDelay > 0) {
+        this.noteWaiting('startup-delay', startupDelay);
+        return startupDelay;
+      }
       let state = this.readState();
       const delay = this.nextDelay(state);
-      if (delay > 0) return delay;
-      if (!this.options.isIdle()) return IDLE_RECHECK_MS;
+      if (delay > 0) {
+        this.noteScheduleWait(state, delay);
+        return delay;
+      }
+      phase = 'idle-check';
+      if (!this.options.isIdle()) {
+        this.noteWaiting('not-idle', IDLE_RECHECK_MS, state);
+        return IDLE_RECHECK_MS;
+      }
+      phase = 'login-read';
       const payload = await readUserActivityPayload(
         this.options.userInfoPath, this.options.productName, this.options.version,
       );
-      if (!payload || !this.isCurrent(generation, payload.user_id)) return IDLE_RECHECK_MS;
+      if (generation !== this.generation || !this.running) return IDLE_RECHECK_MS;
+      if (!payload) {
+        this.noteWaiting('login-unavailable', IDLE_RECHECK_MS, state);
+        return IDLE_RECHECK_MS;
+      }
+      phase = 'credential-check';
+      if (!this.isCurrent(generation, payload.user_id)) {
+        const credential = this.options.getCredential();
+        this.noteWaiting(!credential ? 'jwt-unavailable' : credential.authType === 'api-key' ? 'api-key-mode' :
+          'identity-changed', IDLE_RECHECK_MS, state);
+        return IDLE_RECHECK_MS;
+      }
+      phase = 'configuration';
       const apiBaseUrl = buildActivityApiBaseUrl(this.options.baseUrl);
       const endpointPath = ACTIVITY_REPORTING_CONFIG.endpointPath;
       if (!/^\/(?!\/)[A-Za-z0-9._~/-]+$/.test(endpointPath) ||
           endpointPath.split('/').some(segment => segment === '.' || segment === '..')) {
-        this.noteDeferred('invalid endpoint configuration');
+        this.note(ActivityEvent.Failed, { reason: 'invalid-endpoint', phase,
+          nextCheckAt: new Date(this.now() + DAY_MS).toISOString() });
         return DAY_MS;
       }
       // Reserve before any native statistics work. Preparation failures and unchanged
       // snapshots consume a window too, bounding both collection and HTTP attempts.
+      phase = 'schedule-read';
       state = this.readState();
       const currentDelay = this.nextDelay(state);
-      if (currentDelay > 0) return currentDelay;
-      if (!this.options.isIdle()) return IDLE_RECHECK_MS;
+      if (currentDelay > 0) {
+        this.noteScheduleWait(state, currentDelay);
+        return currentDelay;
+      }
+      phase = 'idle-check';
+      if (!this.options.isIdle()) {
+        this.noteWaiting('not-idle', IDLE_RECHECK_MS, state);
+        return IDLE_RECHECK_MS;
+      }
       const reserved = { ...state, attempts: state.attempts + 1, lastAttemptAt: this.now() };
+      phase = 'window-reservation';
       this.options.stateStore.write(reserved);
+      this.note(ActivityEvent.Collecting, { attempt: reserved.attempts, dailyLimit: DAILY_WINDOW_LIMIT });
       controller = new AbortController();
       this.requestController = controller;
       const signal = controller.signal;
-      timeout = setTimeout(() => controller?.abort(), COLLECTION_TIMEOUT_MS);
+      phase = 'collection';
+      timeout = setTimeout(() => { timedOut = true; controller?.abort(); }, COLLECTION_TIMEOUT_MS);
       timeout.unref();
       const collected = this.options.collectMetadata
         ? await abortable(this.options.collectMetadata(signal), signal) : {};
@@ -315,8 +417,12 @@ export class UserActivityService {
       timeout = undefined;
       if (!this.isCurrent(generation, payload.user_id)) return MIN_INTERVAL_MS;
       if (signal.aborted || collected === null) {
+        this.note(ActivityEvent.Skipped, { reason: signal.aborted ? 'collection-cancelled' : 'statistics-unavailable',
+          nextCheckAt: new Date(this.now() + Math.max(IDLE_RECHECK_MS, this.nextDelay(reserved))).toISOString() });
+        phase = 'schedule-read';
         return Math.max(IDLE_RECHECK_MS, this.nextDelay(this.readState()));
       }
+      phase = 'payload';
       const metadata = { ...this.options.getMetadata?.(), ...collected, ...payload.metadata,
         clientTime: new Date(this.now()).toISOString() };
       const body = JSON.stringify({ event_id: randomUUID(), user_id: payload.user_id,
@@ -334,16 +440,31 @@ export class UserActivityService {
           return value;
         })).digest('hex');
       if (state.fingerprint === fingerprint && this.now() - state.lastSuccessAt < DAY_MS) {
+        this.note(ActivityEvent.Skipped, { reason: 'unchanged',
+          nextCheckAt: new Date(this.now() + Math.max(IDLE_RECHECK_MS, this.nextDelay(reserved))).toISOString() });
+        phase = 'schedule-read';
         return Math.max(IDLE_RECHECK_MS, this.nextDelay(this.readState()));
       }
       // Collection can outlive a login, token renewal or an idle interval.
-      if (!this.isCurrent(generation, payload.user_id) || !this.options.isIdle() ||
-          reserved.date !== reportDate(this.now())) return MIN_INTERVAL_MS;
-      const credential = this.options.getCredential();
-      if (!credential || credential.authType === 'api-key' || credential.userAccount !== payload.user_id) {
+      phase = 'credential-check';
+      if (!this.isCurrent(generation, payload.user_id)) {
+        if (generation === this.generation) this.note(ActivityEvent.Skipped, { reason: 'identity-changed' });
         return MIN_INTERVAL_MS;
       }
-      timeout = setTimeout(() => controller?.abort(), REQUEST_TIMEOUT_MS);
+      phase = 'idle-check';
+      if (!this.options.isIdle() || reserved.date !== reportDate(this.now())) {
+        this.note(ActivityEvent.Skipped, { reason: reserved.date !== reportDate(this.now()) ? 'day-changed' : 'no-longer-idle' });
+        return MIN_INTERVAL_MS;
+      }
+      phase = 'credential-check';
+      const credential = this.options.getCredential();
+      if (!credential || credential.authType === 'api-key' || credential.userAccount !== payload.user_id) {
+        this.note(ActivityEvent.Skipped, { reason: 'credential-changed' });
+        return MIN_INTERVAL_MS;
+      }
+      phase = 'request';
+      this.note(ActivityEvent.Sending, { attempt: reserved.attempts, dailyLimit: DAILY_WINDOW_LIMIT });
+      timeout = setTimeout(() => { timedOut = true; controller?.abort(); }, REQUEST_TIMEOUT_MS);
       timeout.unref();
       const response = await abortable(this.request(`${apiBaseUrl}${endpointPath}`, {
         method: 'POST',
@@ -362,25 +483,45 @@ export class UserActivityService {
       if (!response.ok) {
         void response.body?.cancel().catch((): void => undefined);
         if (!this.isCurrent(generation, payload.user_id)) return MIN_INTERVAL_MS;
-        this.noteDeferred(`HTTP ${response.status}`);
+        this.note(ActivityEvent.Failed, { reason: 'http-rejected', phase, httpStatus: response.status,
+          nextCheckAt: new Date(DEFERRED_HTTP_STATUSES.has(response.status) ? this.now() + DAY_MS :
+            this.now() + Math.max(IDLE_RECHECK_MS, this.nextDelay(reserved))).toISOString() });
         if (DEFERRED_HTTP_STATUSES.has(response.status)) {
-          this.options.stateStore.write({ ...this.readState(), cooldownUntil: this.now() + DAY_MS });
+          phase = 'schedule-read';
+          const latest = this.readState();
+          phase = 'cooldown-persistence';
+          this.options.stateStore.write({ ...latest, cooldownUntil: this.now() + DAY_MS });
         }
+        phase = 'schedule-read';
         return Math.max(IDLE_RECHECK_MS, this.nextDelay(this.readState()));
       }
+      phase = 'acknowledgement';
       const acknowledged = await acknowledgesActivity(response, signal);
       if (!this.isCurrent(generation, payload.user_id)) return MIN_INTERVAL_MS;
       if (!acknowledged) {
-        this.noteDeferred('response not acknowledged');
-        this.options.stateStore.write({ ...this.readState(), cooldownUntil: this.now() + DAY_MS });
+        this.note(ActivityEvent.Failed, { reason: 'response-not-acknowledged', phase, httpStatus: response.status,
+          nextCheckAt: new Date(this.now() + DAY_MS).toISOString() });
+        phase = 'schedule-read';
+        const latest = this.readState();
+        phase = 'cooldown-persistence';
+        this.options.stateStore.write({ ...latest, cooldownUntil: this.now() + DAY_MS });
         return DAY_MS;
       }
-      this.options.stateStore.write({ ...this.readState(), fingerprint, lastSuccessAt: this.now() });
-      this.reportedStatus = null;
+      this.note(ActivityEvent.Succeeded, { httpStatus: response.status, attempt: reserved.attempts,
+        dailyLimit: DAILY_WINDOW_LIMIT });
+      phase = 'schedule-read';
+      const latest = this.readState();
+      phase = 'success-persistence';
+      this.options.stateStore.write({ ...latest, fingerprint, lastSuccessAt: this.now() });
+      phase = 'schedule-read';
       return Math.max(IDLE_RECHECK_MS, this.nextDelay(this.readState()));
     } catch {
       if (generation !== this.generation) return MIN_INTERVAL_MS;
-      this.noteDeferred('unavailable');
+      const reason = timedOut ? 'timeout' : phase === 'configuration' ? 'invalid-configuration' :
+        phase === 'window-reservation' || phase === 'success-persistence' || phase === 'cooldown-persistence' ? 'state-write-failed' :
+          phase === 'schedule-read' ? 'state-read-failed' : phase === 'payload' ? 'payload-invalid' :
+            phase === 'request' ? 'network-error' : 'unavailable';
+      this.note(ActivityEvent.Failed, { reason, phase });
       try {
         return Math.max(IDLE_RECHECK_MS, this.nextDelay(this.readState()));
       } catch {
