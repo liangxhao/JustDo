@@ -66,7 +66,7 @@ test('explains conversation replies, permissions, and how to change advanced set
 
   expect(deliveryText()).toBe(i18nService.t('cronDetailsDeliveryCurrent'));
   expect(screen.getByText(i18nService.t('cronDetailsSessionCurrent'))).toBeTruthy();
-  expect(screen.getByText(i18nService.t('cronDetailsAdvancedHint'))).toBeTruthy();
+  expect(screen.getByText(i18nService.t('cronDetailsConversationHint'))).toBeTruthy();
   expect(screen.getByText(/所有工具（仍遵循权限设置）/)).toBeTruthy();
   expect(screen.getByText(/任务归属信息 · 遵循账户的工具权限设置 · 自动调整执行间隔/)).toBeTruthy();
   expect(screen.queryByText(i18nService.t('cronDialogDeliveryModeAnnounce'))).toBeNull();
@@ -96,6 +96,8 @@ test('preserves notification destinations without inferring a conversation reply
     `${i18nService.t('cronDetailsDeliveryAnnounce')} · feishu · report-group · assistant-bot · ${i18nService.t('cronDetailsBestEffort')}`,
   );
   expect(screen.queryByText(i18nService.t('cronDetailsDeliveryCurrent'))).toBeNull();
+  expect(screen.getByText(i18nService.t('cronDetailsAdvancedHint'))).toBeTruthy();
+  expect(screen.queryByText(i18nService.t('cronDetailsConversationHint'))).toBeNull();
 });
 
 test('shows webhook delivery separately from the linked conversation', () => {

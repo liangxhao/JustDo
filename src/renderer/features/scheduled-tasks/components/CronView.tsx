@@ -741,7 +741,13 @@ export function TaskDetailsDialog({ job, onClose }: TaskDetailsDialogProps) {
             </div>
             <p className="mt-2 text-xs leading-5 text-secondary">
               {systemPresentation?.managedHint ??
-                t(job.management === 'managed' ? 'cronCardManagedHint' : 'cronDetailsAdvancedHint')}
+                t(
+                  job.management === 'managed'
+                    ? 'cronCardManagedHint'
+                    : job.sessionTarget === 'current' && job.payload.kind === 'agentTurn'
+                      ? 'cronDetailsConversationHint'
+                      : 'cronDetailsAdvancedHint',
+                )}
             </p>
           </div>
 

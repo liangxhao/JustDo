@@ -173,6 +173,8 @@ export const scheduledTaskTranslations = {
     cronDialogSubtitle: '设置任务内容、执行计划和结果处理方式',
     cronDetailsTitle: '任务详情',
     cronDetailsDescription: '说明',
+    cronDetailsConversationHint:
+      '此定时任务通过会话发起。如需更新运行参数，请前往对应的会话界面修改。',
     cronDetailsAdvancedHint:
       '此任务的部分设置暂不支持在这里编辑。你可以启停、立即运行或删除任务；如需修改，请在对话中告诉助手任务名称和修改要求。',
     cronDetailsPayloadType: '任务类型',
@@ -553,6 +555,8 @@ export const scheduledTaskTranslations = {
     cronDialogSubtitle: 'Define the task, its schedule, and how results are handled',
     cronDetailsTitle: 'Task details',
     cronDetailsDescription: 'Description',
+    cronDetailsConversationHint:
+      'This scheduled task was started from a conversation. To update its run settings, return to that conversation.',
     cronDetailsAdvancedHint:
       'Some settings cannot be edited here yet. You can enable, pause, run, or delete the task. To make changes, tell the assistant the task name and what you want to change in chat.',
     cronDetailsPayloadType: 'Task type',
