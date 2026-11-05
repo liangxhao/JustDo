@@ -11,6 +11,9 @@ import {
 } from '@heroicons/react/24/outline';
 import {
   EXTERNAL_AGENT_CATALOG,
+  getExternalAgentCliCommand,
+} from '@shared/integrations/externalAgentCatalog';
+import {
   EXTERNAL_AGENT_OPERATION_TIMEOUT_OPTIONS,
   type ExternalAgentId,
   type ExternalAgentSettings,
@@ -407,6 +410,7 @@ const ExternalAgentsSettingsSection: React.FC<Props> = ({
 
         <div className="external-agent-catalog-grid grid gap-3 p-4">
           {EXTERNAL_AGENT_CATALOG.map(definition => {
+            const cliCommand = getExternalAgentCliCommand(definition);
             const enabled = settings.agents[definition.id].enabled;
             const testState = testStates[definition.id];
             const isCurrentTest = testingAgentId === definition.id;
@@ -443,9 +447,11 @@ const ExternalAgentsSettingsSection: React.FC<Props> = ({
                     <h3 className="truncate text-sm font-semibold text-foreground">
                       {definition.name}
                     </h3>
-                    <p className="mt-1 break-words text-[11px] leading-4 text-secondary">
-                      {i18nService.t(definition.descriptionKey)}
-                    </p>
+                    {cliCommand ? (
+                      <p className="mt-1 break-words text-[11px] leading-4 text-secondary">
+                        {i18nService.t('externalAgentsCliCommandLabel')} <code>{cliCommand}</code>
+                      </p>
+                    ) : null}
                   </div>
                   <div className="flex w-[92px] shrink-0 flex-col gap-1 rounded-xl border border-border/60 bg-surface-raised/55 p-1 shadow-inner">
                     <button

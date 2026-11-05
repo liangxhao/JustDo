@@ -18,15 +18,15 @@
 已有可用 ACP 命令时，按以下顺序完成接入：
 
 1. 确认命令能在目标平台非交互启动，凭据已准备，stdout 只输出 ACP 协议数据。
-2. 在 `EXTERNAL_AGENT_CATALOG` 增加稳定 ID、名称、翻译键和结构化 `adapter` 命令，默认停用。
-3. 补齐中英文描述、品牌图标和图标样式。
+2. 在 `EXTERNAL_AGENT_CATALOG` 增加稳定 ID、名称和结构化 `adapter` 命令，默认停用；包装器按需登记 `cliCommand`。
+3. 补齐品牌图标和图标样式；CLI 提示自动使用目录配置。
 4. 若使用内置 adapter，锁定依赖并补齐 runtime 同步、预编译和安装包必需文件检查。
 5. 重新构建应用与受影响的 runtime，先测试握手，再启用、保存并验证实际委派。
 
 | 修改点         | 实现入口                                                                                                                                                                                                                             | 新 Agent 的接入要求                                                  |
 | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------- |
 | 产品目录       | [externalAgentCatalog.ts](../../src/shared/integrations/externalAgentCatalog.ts)                                                                                                                                                     | 增加一项；类型、设置默认值和页面列表随目录派生                       |
-| 中英文说明     | [settingsTranslations.ts](../../src/renderer/services/i18n/settingsTranslations.ts)                                                                                                                                                  | 两种语言补齐同一个 `descriptionKey`                                  |
+| 中英文说明     | [settingsTranslations.ts](../../src/renderer/services/i18n/settingsTranslations.ts)                                                                                                                                                  | 复用通用 CLI 标签；无需逐 Agent 翻译命令名                            |
 | 图标与样式     | [ExternalAgentBrandIcon.tsx](../../src/renderer/features/settings/integrations/ExternalAgentBrandIcon.tsx)、[ExternalAgentsSettingsSection.tsx](../../src/renderer/features/settings/integrations/ExternalAgentsSettingsSection.tsx) | 增加图标分支和 `AGENT_ICON_STYLES` 项                                |
 | adapter 与依赖 | [ACPX 扩展](../../plugins/extensions/acpx/README.md)                                                                                                                                                                                 | 原生 CLI 可依赖部署方安装；内置 adapter 进入扩展源码或锁定的生产依赖 |
 | 构建与归档检查 | [runtime 资源同步](../../scripts/openclaw/sync-openclaw-runtime-resources.cjs)、[打包校验](../../scripts/packaging/electron-builder-hooks.cjs)                                                                                       | 内置方案增加入口和目标平台必需文件校验；预安装方案记录环境前提       |
@@ -206,7 +206,6 @@ ID 还会写入原生 `agents.entries`，应避免与 `main`、既有外部 Agen
 {
   id: 'example-agent',
   name: 'Example Agent',
-  descriptionKey: 'externalAgentsExampleDescription',
   defaultEnabled: false,
   adapter: {
     command: 'example-agent',
@@ -224,7 +223,7 @@ ID 还会写入原生 `agents.entries`，应避免与 `main`、既有外部 Agen
 {
   id: 'example-agent',
   name: 'Example Agent',
-  descriptionKey: 'externalAgentsExampleDescription',
+  cliCommand: 'example-agent',
   defaultEnabled: false,
   adapter: {
     command: ExternalAgentCommandToken.NodeExecutable,
@@ -273,27 +272,23 @@ adapter: {
 
 只有当内置 ACPX 扩展已经针对这个**完全相同的 ID**提供了离线安全的启动命令时，才可以
 省略 `adapter`。当前 Claude 和 Codex 属于这种情况。
+这类条目通过 `cliCommand` 登记用户需安装的 CLI 名称，供设置页显示。
 
 不能因为上游 ACPX “认识这个名字”就省略配置；上游默认命令可能使用 `npx` 或运行时下载，
 这不满足已安装应用的交付要求。
 
 ## 5. 增加中英文文案和实际图标
 
-### 5.1 文案
+### 5.1 CLI 提示与文案
 
-在 `src/renderer/services/i18n/settingsTranslations.ts` 的中文和英文对象中分别增加
-`descriptionKey` 对应的键。
+设置页从目录自动生成 CLI 提示，中英文共用 `externalAgentsCliCommandLabel` 标签，
+无需为每个 Agent 增加命令翻译。
 
-```ts
-// 中文
-externalAgentsExampleDescription: 'Example Agent。',
-
-// English
-externalAgentsExampleDescription: 'Example Agent.',
-```
-
-当前卡片为减少重复信息，不直接显示这段描述，但目录仍要求该字段，用于元数据完整性和其他
-展示入口。不要删除或复用一个与 Agent 无关的翻译键。
+- 原生 ACP CLI 直接使用 `adapter.command`；修改启动命令后，页面提示随配置更新。
+- 通过内置适配器或自定义 Node/Python 包装器调用独立安装的 CLI 时，使用 `cliCommand`
+  明确登记底层 CLI，例如 Claude 的 `claude`、Codex 的 `codex`。
+- 托管 Node 和路径 token 属于内部启动命令；未登记底层 CLI 时省略该提示，不从 Agent ID
+  猜测命令。完全内置或仅连接远程服务的适配器无需伪造用户安装命令。
 
 产品名可以直接放在目录的 `name` 中；其他用户可见说明必须进入中英文翻译表，不要在组件中
 硬编码。

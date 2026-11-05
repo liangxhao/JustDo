@@ -361,7 +361,7 @@ export const settingsTranslations = {
     integrationAppAccessTab: '应用接入',
     externalAgentsSectionTitle: '可用 Agent',
     externalAgentsSectionDescription:
-      '请安装所需 Agent，将 CLI 所在目录加入 PATH，确保终端可直接运行对应命令。\n修改 PATH 后，请完全退出并重启应用，再点击“测试”。',
+      '请安装所需 Agent，将 CLI 所在目录加入 PATH 环境变量，确保终端可直接运行对应命令。\n修改 PATH 后，请完全退出并重启应用，再点击“测试”。',
     externalAgentsRuntimeSettingsTitle: '委派运行设置',
     externalAgentsRuntimeSettingsDescription: '设置外部 Agent 的统一权限和运行行为。',
     externalAgentsPermissionMode: '默认权限',
@@ -391,11 +391,7 @@ export const settingsTranslations = {
       '共享已启用的 stdio MCP Server；当前不包含 HTTP 或 SSE Server。',
     externalAgentsFullAccessConfirm:
       '完全访问允许外部 Agent 修改文件并执行命令。仅在你信任该 Agent 及其适配器时启用。是否继续？',
-    externalAgentsClaudeDescription: 'CLI 入口：claude',
-    externalAgentsCodexDescription: 'CLI 入口：codex',
-    externalAgentsOpenCodeDescription: 'CLI 入口：opencode',
-    externalAgentsDeepSeekHarnessDescription: 'CLI 入口：dsh',
-    externalAgentsHermesDescription: 'CLI 入口：hermes',
+    externalAgentsCliCommandLabel: 'CLI 入口：',
     externalAgentsTest: '测试',
     externalAgentsTestAll: '测试全部',
     externalAgentsTesting: '测试中',
@@ -1354,7 +1350,7 @@ export const settingsTranslations = {
     integrationAppAccessTab: 'App access',
     externalAgentsSectionTitle: 'Available agents',
     externalAgentsSectionDescription:
-      'Install the agents you need, add their CLI directories to PATH, and confirm their commands run directly in a terminal.\nAfter changing PATH, fully quit and reopen the app, then click Test.',
+      'Install the agents you need, add their CLI directories to the PATH environment variable, and confirm their commands run directly in a terminal.\nAfter changing PATH, fully quit and reopen the app, then click Test.',
     externalAgentsRuntimeSettingsTitle: 'Delegation runtime settings',
     externalAgentsRuntimeSettingsDescription:
       'Configure shared permissions and runtime behavior for external agents.',
@@ -1386,11 +1382,7 @@ export const settingsTranslations = {
       'Share enabled stdio MCP servers; HTTP and SSE servers are not currently included.',
     externalAgentsFullAccessConfirm:
       'Full access lets external agents modify files and run commands. Enable it only when you trust the agent and its adapter. Continue?',
-    externalAgentsClaudeDescription: 'CLI command: claude',
-    externalAgentsCodexDescription: 'CLI command: codex',
-    externalAgentsOpenCodeDescription: 'CLI command: opencode',
-    externalAgentsDeepSeekHarnessDescription: 'CLI command: dsh',
-    externalAgentsHermesDescription: 'CLI command: hermes',
+    externalAgentsCliCommandLabel: 'CLI command:',
     externalAgentsTest: 'Test',
     externalAgentsTestAll: 'Test all',
     externalAgentsTesting: 'Testing',

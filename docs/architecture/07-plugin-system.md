@@ -702,6 +702,10 @@ ACPX 随包保留 ACP 协议适配器及其运行库，组装时移除 Codex/Cla
 最终打包再次检查不得混入。代理由用户独立安装维护；受管包装器启动时读取本机 PATH
 或显式 CLI 路径，缺少时连接测试报错，不下载、不回退到 SDK 内置代理。
 
+Agent 委派设置页从共享构建时目录生成 CLI 提示：原生 ACP 入口复用 `adapter.command`，
+包装器通过 `cliCommand` 标明需用户安装的底层 CLI；托管 Node 和路径 token 不作为 CLI 展示。
+中英文共用标签，命令名只在目录中维护；Renderer 沿用纯配置读取，无需新增文件访问或 IPC。
+
 日常 Chrome 沿用原生 existing-session driver 和随包 Chrome MCP，设置页通过 Gateway 请求原生 Tab 查询来触发浏览器授权。Windows 的应用配置选择 `chrome-mcp.cmd`，Main 生成的 UTF-8 启动器用锁定的独立 Node 启动服务器；`npm.cmd`、`npx.cmd` 和 `node.cmd` 同样位于应用 PATH 前端。
 
 启动器内的 Node／可信预加载文件引用使用绝对路径，避免真实 npm 包的 `.cmd` 嵌套调用裸 `node` 时将 `%~dp0` 解析到调用方工作目录。受管 MCP 的裸 `npm/npx` 命令由 Main 配置投影为锁定 Node 的直接启动参数，显式加载可信窗口隐藏模块；用户保存的命令、参数、环境和其它原生字段不被改写，绝对路径自定义命令保留原样。配置投影与启动器共享 npm 路径解析，安装包中指向同一冻结 `node-runtime/` 内的完整 npm 分发。

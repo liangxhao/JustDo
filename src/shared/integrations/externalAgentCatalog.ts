@@ -16,8 +16,8 @@ export interface ExternalAgentDefinition {
   id: string;
   /** Product name shown in settings. */
   name: string;
-  /** Translation key for the short user-facing description. */
-  descriptionKey: string;
+  /** User-installed CLI behind a wrapper; direct ACP entries use adapter.command. */
+  cliCommand?: string;
   /** New and newly added agents should normally remain opt-in. */
   defaultEnabled: boolean;
   /**
@@ -31,14 +31,25 @@ export interface ExternalAgentDefinition {
 
 const AGENT_ID_PATTERN = /^[a-z][a-z0-9-]{0,63}$/u;
 
+/** Resolve the user-facing CLI without exposing bundled launcher paths. */
+export const getExternalAgentCliCommand = (
+  definition: ExternalAgentDefinition,
+): string | undefined => {
+  const command = definition.cliCommand ?? definition.adapter?.command;
+  return command && !Object.values(ExternalAgentCommandToken).some(token => command.includes(token))
+    ? command
+    : undefined;
+};
+
 /**
  * Validates the build-time catalog and preserves literal ids for consumers.
  *
  * To ship another ACP agent, add one entry below. For an adapter implemented
  * as a bundled Node module, use NodeExecutable as the command and an
  * AcpxPluginRoot-relative entry file as the first argument. Then add the
- * package to plugins/extensions/acpx/package.json and its display strings to
- * both translation tables. See docs/developer-integration/external-agent-integration-guide.md.
+ * package to plugins/extensions/acpx/package.json. Set cliCommand when the
+ * adapter wraps a separately installed CLI. See
+ * docs/developer-integration/external-agent-integration-guide.md.
  */
 export const defineExternalAgentCatalog = <const T extends readonly ExternalAgentDefinition[]>(
   definitions: T,
@@ -51,20 +62,20 @@ export const defineExternalAgentCatalog = <const T extends readonly ExternalAgen
     if (ids.has(definition.id)) {
       throw new Error(`Duplicate external agent id: ${definition.id}`);
     }
-    if (
-      !definition.name.trim() ||
-      definition.name.includes('\0') ||
-      !definition.descriptionKey.trim()
-    ) {
+    if (!definition.name.trim() || definition.name.includes('\0')) {
       throw new Error(`External agent ${definition.id} requires display metadata.`);
+    }
+    if (
+      definition.cliCommand !== undefined &&
+      (!definition.cliCommand.trim() || definition.cliCommand.includes('\0'))
+    ) {
+      throw new Error(`External agent ${definition.id} requires a valid CLI command.`);
     }
     if (definition.adapter) {
       if (!definition.adapter.command.trim() || definition.adapter.command.includes('\0')) {
         throw new Error(`External agent ${definition.id} requires an adapter command.`);
       }
-      if (
-        definition.adapter.args?.some(argument => !argument.trim() || argument.includes('\0'))
-      ) {
+      if (definition.adapter.args?.some(argument => !argument.trim() || argument.includes('\0'))) {
         throw new Error(`External agent ${definition.id} has an invalid adapter argument.`);
       }
     }
@@ -77,19 +88,18 @@ export const EXTERNAL_AGENT_CATALOG = defineExternalAgentCatalog([
   {
     id: 'claude',
     name: 'Claude',
-    descriptionKey: 'externalAgentsClaudeDescription',
+    cliCommand: 'claude',
     defaultEnabled: false,
   },
   {
     id: 'codex',
     name: 'Codex',
-    descriptionKey: 'externalAgentsCodexDescription',
+    cliCommand: 'codex',
     defaultEnabled: false,
   },
   {
     id: 'opencode',
     name: 'OpenCode',
-    descriptionKey: 'externalAgentsOpenCodeDescription',
     defaultEnabled: false,
     adapter: {
       command: 'opencode',
@@ -99,7 +109,6 @@ export const EXTERNAL_AGENT_CATALOG = defineExternalAgentCatalog([
   {
     id: 'deepseek-harness',
     name: 'DeepSeek Harness',
-    descriptionKey: 'externalAgentsDeepSeekHarnessDescription',
     defaultEnabled: false,
     adapter: {
       command: 'dsh',
@@ -109,7 +118,6 @@ export const EXTERNAL_AGENT_CATALOG = defineExternalAgentCatalog([
   {
     id: 'hermes',
     name: 'Hermes',
-    descriptionKey: 'externalAgentsHermesDescription',
     defaultEnabled: false,
     adapter: {
       command: 'hermes',

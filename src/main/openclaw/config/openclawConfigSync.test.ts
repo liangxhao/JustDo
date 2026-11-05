@@ -732,7 +732,7 @@ describe('OpenClaw managed ACP config', () => {
         {
           id: 'claude',
           name: 'Claude',
-          descriptionKey: 'externalAgentsClaudeDescription',
+          cliCommand: 'claude',
           defaultEnabled: false,
           adapter: { command: '${NODE_EXECUTABLE}', args: ['adapter.mjs', '--stdio'] },
         },
