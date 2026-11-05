@@ -243,8 +243,8 @@ MCP Apps 使用原生认证 WS 接口，不使用生命周期补丁。关闭视�
 - [ ] 只有匹配整轮的 lifecycle terminal 且 `executionSettled:true` 建立执行结论。
       required-child join、工具 scope 清理、插件 custody/cleanup 各自核对；停止 ACK、
       idle、owner 更换或某 attempt 结束不能替代结算。
-- [ ] 完整应用重启与同一应用内 Gateway 重启分别验收。前者保留 app-start boundary
-      对上一宿主遗留主会话的保护，后者按原生 durable recovery 核对；不恢复已删除的
+- [ ] 完整应用重启与同一应用内 Gateway 重启分别验收，普通主会话均按原生 durable
+      recovery 核对自动续跑、精确身份与并发 owner，不加宿主启动时间退休策略；不恢复已删除的
       generic durable task registry 接线，也不连接后补发 abort 冒充恢复准入。
 - [ ] 覆盖权限应用失败、模型不可用、首事件前取消、断线后迟到接收、后台会话停止、
       自动重连和退出期间的排队重启。旧 generation 的通知不能更新新运行或重启已退出应用。
@@ -629,7 +629,7 @@ API Key/SecretRef 仍可用于用户显式选择的内网服务；删除的是�
 | 接缝（当前编号）                                   | 目标版本必须验证的重点                                                                                                                                                           |
 | -------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 环境/提示/请求（001/002/003/004/014）              | 真实 pip 安装后 import；最终 system prompt transform 不改用户/历史/工具参数；人类发起 metadata 经 queue 到执行正确归属；维护 purpose 与本轮 private untrusted input 隔离         |
-| 会话/恢复/显示（005/006/007/008/011/012/015/018）  | app-start 主会话恢复边界、paused Goal 显式继续、provider-safe replay、授权媒体、reset 显示历史、原子 fork 冲突、admin cwd 与 Windows canonical/SQLite 路径和身份                 |
+| 会话/恢复/显示（006/007/008/011/012/015/018）      | 原生主会话自动恢复（005 已移除）、paused Goal 显式继续、provider-safe replay、授权媒体、reset 显示历史、原子 fork 冲突、admin cwd 与 Windows canonical/SQLite 路径和身份         |
 | 离线插件（009/010）                                | 断网 catalog 与配置同步不偷偷安装/下载缺失插件，显式安装仍走原生流程；新 inventory/capture 生命周期不破坏保护                                                                    |
 | 沙盒/凭据/定时任务（013/016/017）                  | MXC external skills 只读物化及越界拒绝，cron 权限/工作区持久映射，Windows servicing launcher 的身份、ACL、凭据与清理                                                             |
 | owned execution（019）                             | native-support 注入与精确 bytes、SDK run timeout、registry actor/owner/incarnation、whole-run settlement、custody 与 managed-tool cleanup/recovery，不把 wait timeout 当执行超时 |

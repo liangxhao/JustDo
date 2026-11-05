@@ -171,6 +171,57 @@ function verifyNativeSessionStopContracts(runtimeDir) {
   );
 }
 
+// The host adopts native restart recovery across application processes. These
+// source checks complement the native lifecycle/dispatch behavior regression.
+function verifyNativeMainSessionRestartRecoveryContracts(runtimeDir) {
+  const files = walkJavaScriptFiles(path.join(runtimeDir, 'dist'));
+  const owners = files.filter(file => {
+    const source = readRuntimeTextFile(file);
+    return source.includes('async function recoverStore(') ||
+      source.includes('function hasOrphanedMainSessionWork(');
+  });
+  for (const owner of owners) {
+    const source = readRuntimeTextFile(owner);
+    if (source.includes('RUNTIME_APP_STARTUP_MAIN_RECOVERY_BOUNDARY') ||
+        source.includes('RUNTIME_APP_STARTUP_ORPHAN_RECOVERY_BOUNDARY') ||
+        source.includes('JUSTDO_APP_STARTED_AT_MS') ||
+        source.includes('isJustDoPriorAppMainSession')) {
+      throw new Error('Native main-session restart recovery contains the retired application-host boundary');
+    }
+  }
+  return uniqueEvidence(
+    findFileWithAll(files, [
+      'function deriveGatewaySessionLifecycleSnapshot(',
+      'if (phase === "start") return {',
+      'status: void 0',
+      'abortedLastRun: false',
+    ], 'native active lifecycle is not persisted as a running outcome'),
+    findFileWithAll(files, [
+      'case "mark_interrupted":',
+      'entry.abortedLastRun = true',
+      'entry.status = "interrupted"',
+      'recordLifecycleFence(entry, run)',
+      'case "prepare_attempt":',
+      'reason: "stale_revision"',
+    ], 'native restart marking preserves exact fences and bounded recovery reservations'),
+    findFileWithAll(files, [
+      'async function recoverStore(',
+      'hasCurrentProcessOwner(entry, sessionKey)',
+      'const observed = await commitMainSessionRecovery(',
+      'const resumeResult = await resumeMainSession(',
+      'if (reserved.transition.kind !== "reserved") return "skipped"',
+      'expectedExistingSessionId: params.entry.sessionId',
+      'params.gatewayRuntime.dispatchAgent(params.agentParams',
+    ], 'native interrupted main sessions resume through current identity and dispatch admission'),
+    findFileWithAll(files, [
+      'async function markStartupOrphanedMainSessionsForRecovery(',
+      'function hasOrphanedMainSessionWork(',
+      'kind: "mark_interrupted"',
+      'hasLiveAgentRunContext(runId)',
+    ], 'native startup orphan recovery retains live-owner protection'),
+  );
+}
+
 function listPatchFiles(repoRoot) {
   const patchDir = path.join(repoRoot, 'scripts', 'patches', `v${TARGET_VERSION}`);
   return fs
@@ -312,6 +363,7 @@ function verifyPristineOpenClawContracts(runtimeDir, options = {}) {
         ),
       ),
       'native-session-stop': verifyNativeSessionStopContracts(runtimeDir),
+      'native-main-session-restart-recovery': verifyNativeMainSessionRestartRecoveryContracts(runtimeDir),
       'persistent-approval-lifecycle': uniqueEvidence(
         findFileWithAll(
           files,
@@ -405,6 +457,7 @@ function verifyPristineOpenClawContracts(runtimeDir, options = {}) {
 module.exports = {
   verifyPristineOpenClawContracts,
   verifyNativeSessionStopContracts,
+  verifyNativeMainSessionRestartRecoveryContracts,
   verifyNativeProviderTransportContracts,
   resolveNativeProviderTransportArtifact,
 };

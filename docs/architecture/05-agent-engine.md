@@ -261,7 +261,7 @@ Gateway 运行期间不执行同步编译缓存序列化，缓存由 launcher �
 
 进程 generation 与连接 generation 用于淘汰旧退出通知、重连结果和事件。唤醒或断线后建立新连接，不允许旧 socket 的终态更新新运行。Manager 的进程就绪只代表 Gateway 服务可用，模型认证与 session 权限还有独立验证。
 
-新输入遇到同会话尚未结束的原生重启恢复时，先等待该恢复推进；这时输入可能已经由 Gateway 接收，但尚未发出模型请求。应用进程换代的恢复边界使用真实会话记录判断启动时间，并以精确物理 sessionId 退休原有 `running + abortedLastRun` 记录；同一应用进程内的 Gateway 重启继续走原生恢复。无法确认身份或状态时保留原记录，报告本次恢复尝试受阻，不把它当成整轮执行失败，也不无限返回 deferred 使新输入每五秒重复等待。已确认退休与未确认写入分别记录 `prior_app_interrupted` 和 `prior_app_settlement_unconfirmed`，不沿用默认的 `preparation_failed` 归因。
+新输入遇到同会话尚未结束的原生重启恢复时，先等待该恢复推进；这时输入可能已经由 Gateway 接收，但尚未发出模型请求。普通主会话在完整应用重启或单独 Gateway 重启后均采用 OpenClaw 原生自动恢复。宿主不按应用启动时间拦截、退休或重写原生恢复 claim，也不注入 app-start 环境边界。原生持久运行状态不包含 `running`；恢复必须保留其精确 session/run 身份、并发 owner 检查、状态竞争保护与失败边界，不能从展示状态推断执行已结束。
 
 ## 4. 配置发布与执行准入
 
@@ -569,13 +569,13 @@ Plan-mode 通过原生 session extension、turn hook、工具和 scoped RPC 实�
 
 这些设置控制原生批量委派容量，不等价于启用平级 agent-team Extension，也不会创建助手档案或协作房间。collector 结果聚合和原生分组执行仍属于 OpenClaw；专用 collector 进度面板及结构化结果展示不属于本次已实现范围。
 
-## 8. 重启的两种边界
+## 8. 重启与恢复
 
 Manager 将配置触发的重启排在正在进行的启动之后，不能先停止再复用旧启动 Promise。对外的 `startGateway` 等待已排队重启的最终结果，交互恢复与扩展读取不会收到中间的 stopped 状态；重启内部使用独立的单次启动操作，避免等待自身。等待期间的显式停止取消后续排队启动。
 
-同一 Electron 进程内重启 Gateway，保留稳定 app-start 身份，使用原生 durable recovery。完整应用重新启动，通用 app-start boundary 终止上一宿主实例遗留的活动 session/task，避免旧工作在用户不知情时自动继续。
+同一 Electron 进程内重启 Gateway 与完整应用重新启动，普通主会话都使用原生 durable recovery，允许未完成任务自动续跑。原生恢复决定是否继续、观察已有 owner 或报告受阻；Main 不另行重放输入，也不把恢复尝试失败当作整轮执行已终结。已撤除实现旧宿主退休策略的 005 补丁，生成运行时必须从锁定的 pristine 包重建。
 
-产品恢复再分别核对：session/runtime、run receipt、Goal、计划 awaitingReview、待答问题和协作投递。恢复待审核侧栏不意味着重放已批准工具；queued 正文不存在也不能从投递元数据伪造消息。
+产品恢复再分别核对：session/runtime、run receipt、Goal、计划 awaitingReview、待答问题和协作投递。Goal 的产品自动续轮仍保留本次应用激活边界，用户 Stop 与待答状态不能被普通会话原生恢复策略覆盖。恢复待审核侧栏不意味着重放已批准工具；queued 正文不存在也不能从投递元数据伪造消息。
 
 ## 9. 网络与日志
 

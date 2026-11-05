@@ -83,7 +83,7 @@ sequenceDiagram
 | 用户停止            | 原生取消与产品停止协调            | Stop ACK 不证明整轮已结算 |
 | 连接断开            | 当前代次重新认证并对账            | 不把超时当作未执行        |
 | 同进程 Gateway 重启 | 原生恢复及 adapter 绑定           | 不据旧 running 字段重发   |
-| 完整应用重启        | app-start boundary 与产品回执恢复 | 未知副作用继续保持未知    |
+| 完整应用重启        | 原生会话自动恢复与产品回执对账 | 未知副作用继续保持未知    |
 
 执行结果只由精确整轮终态 `executionSettled:true` 建立，聊天 final 和界面 idle 不替代该证据。
 

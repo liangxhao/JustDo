@@ -556,7 +556,7 @@ async function runBroker(runtime, directory, intermediates) {
   const support = require(path.join(intermediates, 'host-support.cjs'));
   const shutdownPreload = support.ensureGatewayShutdownPreload(intermediates);
   const gatewayEnvironment = support.buildGatewayLaunchEnvironment(process.env, {
-    appStartedAtMs: Date.now(),
+    stateDir: process.env.OPENCLAW_STATE_DIR,
   });
   if (process.env.PLUGIN_COPY_OBSERVER_PATH) {
     const observer = resolveRenameObserver(process.env.PLUGIN_COPY_OBSERVER_PATH);

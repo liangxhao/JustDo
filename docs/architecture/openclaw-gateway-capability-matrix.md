@@ -48,7 +48,7 @@ sessions.abort，不恢复已移除的结果重投递/忽略接口。
 
 ## 4. 持久数据与恢复
 
-原生 SQLite transcript 是消息权威，产品只保留索引与回执。完整应用重启与同进程 Gateway 重启通过 app-start 边界区分；计划审核恢复、Goal 恢复和协作未知状态分别处理，不自动重放副作用。
+原生 SQLite transcript 是消息权威，产品只保留索引与回执。普通主会话在完整应用重启与同进程 Gateway 重启后均采用原生自动恢复，不设 app-start 退休边界；计划审核恢复、Goal 自动续轮和协作未知状态分别处理，不由宿主自动重放副作用。
 
 升级读取历史要验证 reset 前后 display/model-context、分页 offset、超大行补取、工具输入和失败 detail。不能只检查新会话第一条回复。
 

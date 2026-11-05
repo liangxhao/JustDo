@@ -39,7 +39,7 @@ const { buildOpenClawCompileCacheEnvironment, GATEWAY_READY_MESSAGE } = require(
     ...process.env, OPENCLAW_HOME: state, OPENCLAW_STATE_DIR: state,
     OPENCLAW_CONFIG_PATH: configPath, OPENCLAW_NO_RESPAWN: '1',
     OPENCLAW_SKIP_CHANNELS: '1', OPENCLAW_DISABLE_BONJOUR: '1',
-    JUSTDO_APP_STARTED_AT_MS: String(Date.now()), NO_COLOR: '1', FORCE_COLOR: '0',
+    NO_COLOR: '1', FORCE_COLOR: '0',
   }, path.join(state, '.compile-cache'));
   // Native client identity storage must use the same isolated state as the child.
   for (const name of ['OPENCLAW_HOME', 'OPENCLAW_STATE_DIR', 'OPENCLAW_CONFIG_PATH']) {

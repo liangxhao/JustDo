@@ -41,14 +41,6 @@
       ]
     },
     {
-      "file": "005-app-startup-task-recovery-boundary.cjs",
-      "pristineRejected": true,
-      "sourceVerified": true,
-      "targets": [
-        "dist/main-session-restart-recovery-BePtcRv6.mjs"
-      ]
-    },
-    {
       "file": "006-goal-resume-after-pause.cjs",
       "pristineRejected": true,
       "sourceVerified": true,
@@ -465,10 +457,6 @@
     {
       "file": "dist/loader-runtime-load-CiKcVwTw.mjs",
       "sha256": "fb27353db121e74cb3acbbd4dbf17cf5511e1ce21e09963348ff4fe25fd15d79"
-    },
-    {
-      "file": "dist/main-session-restart-recovery-BePtcRv6.mjs",
-      "sha256": "72bed3776424ab6f1701a31ea8143f284d1a22f2308bc5852fd903da43b43296"
     },
     {
       "file": "dist/managed-handoff-runtime.mjs",

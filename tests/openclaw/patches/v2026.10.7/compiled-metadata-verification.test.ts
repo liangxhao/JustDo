@@ -157,22 +157,6 @@ function createModelExecAutoReviewer(params) {
   return async input => tracker.track(() => complete({ model: input.model, cfg, context: input.context }));
 }`,
 };
-const recoveryFixture = `async function recoverStore(params) {
-  const result = { started: 0, settled: 0, failed: 0, skipped: 0 };
-  for (const { sessionKey, entry: loadedEntry } of params.entries) {
-    let entry = loadedEntry;
-    let decision = { decision: "deferred", reason: "preparation_failed", nextOwner: "main-session-recovery" };
-    try {
-      if (stopped()) return result;
-      const dispatchTarget = { agentId: "main", sessionKey };
-      const resumeDedupeKey = JSON.stringify([dispatchTarget.agentId, sessionKey]);
-      if (params.handledSessionKeys.has(resumeDedupeKey)) continue;
-      const observed = await commitMainSessionRecovery({ entry });
-    } finally { mainSessionRecoveryLog.info(JSON.stringify(decision)); }
-  }
-  return result;
-}
-const recoveryBindings = [buildMainSessionRecoverySettlementPatch, resolveRestartRecoveryTerminalClientRunId];`;
 const goalFixture = `function isRestartSafeChatSession(params) {
   const entry = params.entry;
   return entry.abortedLastRun !== true && entry.archivedAt === undefined;
@@ -280,12 +264,6 @@ const targetCases = [
             .replace(/sessionId: await resolveJustDoReviewerSessionId\([^)]*\), requestPurpose: "exec_review", /, ''),
       },
     ],
-  },
-  {
-    name: '005-app-startup-task-recovery-boundary.cjs',
-    owners: { 'recovery.mjs': recoveryFixture },
-    dependencies: {},
-    corrupt: (source: string) => source.replace('const observed = await', 'const observed ='),
   },
   {
     name: '006-goal-resume-after-pause.cjs',

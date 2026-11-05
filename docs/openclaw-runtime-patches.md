@@ -239,7 +239,7 @@ Generated bundle 的变量名、顺序和文本随版本变化。Anchor 改变�
 
 ### Subagent
 
-核对 `maxConcurrent=1` 时多 child 均被接受、超额 child queued、父 agent 等待所有 required child，以及 Gateway restart 后的原生子任务恢复。应用进程重启另行验收：旧主会话运行由 [005 启动恢复边界](../scripts/patches/v2026.10.7/005-app-startup-task-recovery-boundary.cjs)退休，子任务按各自原生恢复结果核对。区分单独 Gateway 重启与应用进程换代。
+核对 `maxConcurrent=1` 时多 child 均被接受、超额 child queued、父 agent 等待所有 required child，以及 Gateway restart 后的原生子任务恢复。完整应用重启也允许普通主会话按原生规则自动恢复；已移除额外的 005 宿主退休策略。分别核对主会话与子任务的原生恢复结果，保留精确身份、并发 owner 与状态竞争保护。
 
 ### Approvals
 

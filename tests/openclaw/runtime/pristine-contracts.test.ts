@@ -4,9 +4,11 @@ import path from 'node:path';
 
 import { afterEach, describe, expect, test } from 'vitest';
 
-const { verifyPristineOpenClawContracts, verifyNativeSessionStopContracts, verifyNativeProviderTransportContracts, resolveNativeProviderTransportArtifact } =
+const { verifyPristineOpenClawContracts, verifyNativeSessionStopContracts, verifyNativeMainSessionRestartRecoveryContracts,
+  verifyNativeProviderTransportContracts, resolveNativeProviderTransportArtifact } =
   require('../../../scripts/openclaw/verify-openclaw-pristine-contracts.cjs') as {
     verifyNativeSessionStopContracts: (runtimeDir: string) => string[];
+    verifyNativeMainSessionRestartRecoveryContracts: (runtimeDir: string) => string[];
     verifyNativeProviderTransportContracts: (runtimeDir: string) => string[];
     resolveNativeProviderTransportArtifact: (
       runtimeDir: string,
@@ -62,7 +64,6 @@ const EXPECTED_PATCH_FILES = [
   '002-final-system-prompt-replacements.cjs',
   '003-agent-request-metadata.cjs',
   '004-request-purpose-metadata.cjs',
-  '005-app-startup-task-recovery-boundary.cjs',
   '006-goal-resume-after-pause.cjs',
   '007-assistant-display-block-replay.cjs',
   '008-trusted-local-file-media.cjs',
@@ -102,6 +103,7 @@ const UPSTREAM_CONTRACTS = [
   'native-decision-tool',
   'subagent-queue-and-wait',
   'native-session-stop',
+  'native-main-session-restart-recovery',
   'persistent-approval-lifecycle',
   'native-approval-timeouts',
   'compaction-and-context-budget',
@@ -134,6 +136,22 @@ const NATIVE_STOP_FIXTURES = {
     'function cancelUnboundRunApprovals() {} ' +
     'params.manager.forceDenyDetailed(pending.id, "run-aborted"); ' +
     'pending.request.runId === params.runId; registerAgentRunDelegatedAuthorityClosedHandler;',
+};
+
+const NATIVE_RECOVERY_FIXTURES = {
+  'native-lifecycle.js': 'function deriveGatewaySessionLifecycleSnapshot() { ' +
+    'if (phase === "start") return { status: void 0, abortedLastRun: false }; }',
+  'native-recovery-state.js': 'case "mark_interrupted": entry.abortedLastRun = true; ' +
+    'entry.status = "interrupted"; recordLifecycleFence(entry, run); ' +
+    'case "prepare_attempt": return {reason: "stale_revision"};',
+  'native-recovery.js': 'async function recoverStore(params) { ' +
+    'hasCurrentProcessOwner(entry, sessionKey); const observed = await commitMainSessionRecovery(); ' +
+    'const resumeResult = await resumeMainSession(); ' +
+    'if (reserved.transition.kind !== "reserved") return "skipped"; ' +
+    'expectedExistingSessionId: params.entry.sessionId; params.gatewayRuntime.dispatchAgent(params.agentParams); }',
+  'native-marking.js': 'function hasOrphanedMainSessionWork() { ' +
+    'kind: "mark_interrupted"; hasLiveAgentRunContext(runId); } ' +
+    'async function markStartupOrphanedMainSessionsForRecovery() {}',
 };
 
 function writeDistFile(root: string, name: string, content: string): void {
@@ -246,6 +264,9 @@ function createPristineFixture(): string {
   for (const [name, content] of Object.entries(NATIVE_STOP_FIXTURES)) {
     writeDistFile(root, name, content);
   }
+  for (const [name, content] of Object.entries(NATIVE_RECOVERY_FIXTURES)) {
+    writeDistFile(root, name, content);
+  }
   writeDistFile(root, 'canonical-key.js', 'function resolveDatabasePathKey(databasePath) { normalizeDatabasePath(path.join(realpathSync.native(ancestor), ...missing)); ancestor = missingAncestorParent(ancestor, missing, error); }');
   writeDistFile(root, 'validation-cache.js', 'function canonicalValidationReceipt(database) { validatedPaths.get(resolveDatabasePathKey(pathname)); validatedPaths.set(pathname, captured); for (const alias of aliases) validatedPaths.set(alias, captured); }');
   return root;
@@ -267,6 +288,18 @@ afterEach(() => {
 });
 
 describe('OpenClaw pristine artifact contracts', () => {
+  test('requires connected native recovery evidence and rejects the retired host boundary', () => {
+    const root = createPristineFixture();
+    expect(verifyNativeMainSessionRestartRecoveryContracts(root)).toEqual(Object.keys(NATIVE_RECOVERY_FIXTURES));
+    const file = path.join(root, 'dist/native-recovery.js');
+    const original = fs.readFileSync(file, 'utf8');
+    fs.writeFileSync(file, original.replace('const resumeResult = await resumeMainSession();', ''));
+    writeDistFile(root, 'disconnected-resume.js', 'const resumeResult = await resumeMainSession();');
+    expect(() => verifyNativeMainSessionRestartRecoveryContracts(root)).toThrow('current identity and dispatch admission');
+    fs.writeFileSync(file, original + '\n// RUNTIME_APP_STARTUP_MAIN_RECOVERY_BOUNDARY_V2026_10_7');
+    expect(() => verifyNativeMainSessionRestartRecoveryContracts(root)).toThrow('retired application-host boundary');
+  });
+
   test('binds the separately installed provider transport to its exact identity and connected source', () => {
     const { root, ai, metadata, packagePath, sourcePath, source } = createProviderTransportFixture();
     expect(verifyNativeProviderTransportContracts(root)).toEqual([PROVIDER_TRANSPORT_BASENAME]);

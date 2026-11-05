@@ -678,6 +678,8 @@ group-thread/context 实现无差异；实际10.7 pristine 与 B 对应 SDK/cont
 
 ## 补丁交叉审查
 
+以下是初次升级时的审查记录。后续产品改为允许完整应用重启后原生自动恢复普通主会话，已移除 005；当前能力与验证以[补丁总账](../../../scripts/patches/v2026.10.7/README.md)为准。
+
 原生接口 agent 与补丁 agent 独立比较 005/019/022/031 后交叉讨论，均保留：
 
 - 005：原生新增安全恢复/退休输入，但无应用host epoch。prior-app guard仍在原生恢复提交前；
