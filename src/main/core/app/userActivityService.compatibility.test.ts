@@ -6,7 +6,7 @@ import path from 'node:path';
 import ts from 'typescript';
 import { expect, test, vi } from 'vitest';
 
-import { UserActivityService } from './userActivityService';
+import { type UserActivityScheduleState, UserActivityService } from './userActivityService';
 
 test('a new client tolerates an old HTTP service and resumes reporting after its upgrade', async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'activity-rollout-'));
@@ -29,28 +29,51 @@ test('a new client tolerates an old HTTP service and resumes reporting after its
   if (!address || typeof address === 'string') throw new Error('Test HTTP listener unavailable');
   const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
   const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+  let now = Date.parse('2026-11-05T00:00:00+08:00');
+  let state: UserActivityScheduleState | undefined;
+  let tokens = 12;
   const service = new UserActivityService({
     getCredential: () => ({ userAccount: 'alice', accessToken: 'synthetic-jwt', expiresAt: Number.MAX_SAFE_INTEGER }),
     baseUrl: `http://127.0.0.1:${address.port}/v1`, productName: 'Example', version: '1', userInfoPath,
     fetch: globalThis.fetch,
+    stateStore: {
+      read: () => state,
+      write: next => { state = structuredClone(next); },
+    },
+    isIdle: () => true,
+    collectMetadata: async () => ({ usage: { daily: [{ date: '2026-11-05', totalTokens: tokens }] } }),
+    now: () => now,
   });
   try {
+    service.start();
+    await service.sync();
+    expect(reports).toHaveLength(0);
+    now += 15 * 60_000;
     for (const rejectedStatus of [404, 405, 400, 500]) {
       status = rejectedStatus;
       await expect(service.sync()).resolves.toBeUndefined();
+      const count = reports.length;
+      now += 21 * 60_000;
+      await service.sync();
+      expect(reports).toHaveLength(count);
+      now += 24 * 3_600_000 - 21 * 60_000;
     }
     status = 200;
     responseBody = '<html>unknown endpoint fallback</html>';
     await expect(service.sync()).resolves.toBeUndefined();
+    now += 24 * 3_600_000;
+    tokens = 34;
     responseBody = '{"ok":true}';
     await service.sync();
+    now += 6 * 3_600_000;
+    tokens = 56;
     await service.sync();
     expect(reports.map(report => report.path)).toEqual(Array(7).fill('/user/activity'));
-    const first = JSON.parse(reports[0].body);
-    for (const report of reports.slice(0, 6)) expect(report.body).toBe(reports[0].body);
+    expect(new Set(reports.map(report => JSON.parse(report.body).event_id)).size).toBe(7);
+    expect(JSON.parse(reports[5].body).metadata.usage.daily[0].totalTokens).toBe(34);
     const next = JSON.parse(reports[6].body);
-    expect(next.event_type).toBe('heartbeat');
-    expect(next.event_id).not.toBe(first.event_id);
+    expect(next.event_type).toBe('usage.snapshot');
+    expect(next.metadata.usage.daily[0].totalTokens).toBe(56);
     expect(warn).not.toHaveBeenCalled();
     expect(error).not.toHaveBeenCalled();
   } finally {

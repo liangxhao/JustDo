@@ -351,7 +351,7 @@ Invoke-RestMethod -Method Post -Uri http://127.0.0.1:9108/key/delete `
 {
   "event_id": "822f78cc-bd26-4e13-a42a-b45060a330da",
   "user_id": "h00658810",
-  "event_type": "startup",
+  "event_type": "usage.snapshot",
   "metadata": {
     "userName": "Example User",
     "loginTime": "2026-09-22T09:00:00Z",
@@ -362,8 +362,8 @@ Invoke-RestMethod -Method Post -Uri http://127.0.0.1:9108/key/delete `
 }
 ```
 
-首次成功后每 24 小时上报 heartbeat。网络、服务端临时错误及限流按 1、5、15 分钟有界补试，再等待 24 小时；400/404/405/413/415/422/501 等接口或格式不支持响应直接延后到正常周期，避免旧服务上的密集失败请求。
-重试复用事件 ID 和冻结的完整正文，发送时重新取得当前 JWT。只有有界读取到成功响应 `{"ok":true}` 才确认并推进事件；重定向禁止，错误正文不进入日志。服务端保留最近 256 个 ID 去重及最近 90 个有活动的 UTC 日期。重复事件刷新接收活动时间，但不倒退较新的 metadata 快照或事件类型。
+客户端启动就绪至少 15 分钟后择空闲采集：已有 Gateway 连接、没有已知活动运行且系统至少 60 秒无输入。每个客户端数据目录按北京时间每日最多 3 个报告窗口，间隔至少 6 小时；窗口在 Main KV 预留，准备失败、无变化与网络失败也消耗机会，重启/换账号不重置。每窗口至多一次原生统计查询和一次 HTTP 请求，无分钟级补试、无退出网络等待。400/404/405/413/415/422/501 或未确认的成功响应至少冷却 24 小时，其他失败等待下一合格窗口。
+每个新窗口使用新事件 ID 和最新累计快照，不排队补发过期快照；同一个 ID 的正文不变。发送前重新取得当前 JWT。只有有界读取到成功响应 `{"ok":true}` 才保存成功指纹；动态时间不参与变化判断，同一快照 24 小时内不重复发送。重定向禁止，错误正文不进入日志。服务端保留最近 256 个 ID 去重及最近 90 个有活动的 UTC 接收日期；原有 startup 接收计数不代表客户端真实启动次数。
 数据库时间用于活动统计，客户端 loginTime 仅为声明值。正文最多 8 KiB，不接收 Cookie 或登录凭据。
 开发环境 API Key 模式仅验证模型，不上报活动。
 
@@ -384,32 +384,40 @@ FROM public."LiteLLM_UserTable";
 ### 活动与模型用量的边界
 
 协议保持四个顶层字段 `event_id`（UUID）、`user_id`（匹配 JWT）、`event_type`、`metadata`，不接受其他顶层字段。
-`event_type` 接受 `[a-z][a-z0-9._-]{0,63}`，例如 `usage.snapshot`、`session.summary`。已有 startup、heartbeat、login 继续有效；客户端目前仍发送 startup/heartbeat，loginTime 是声明的登录资料。
+`event_type` 接受 `[a-z][a-z0-9._-]{0,63}`，例如 `usage.snapshot`、`session.summary`。已有 startup、heartbeat、login 继续有效；客户端发送 `usage.snapshot`，loginTime 是声明的登录资料。
 
 未来字段统一放在 `metadata` 中，不必为每个指标修改服务端白名单。它必须是 JSON 对象，支持嵌套对象、数组、字符串、布尔、null 和有限数值。
 整个请求最多 8 KiB；metadata 根深度为 0、最大深度 6、最多 256 个节点、128 个对象键，单键最多 128 字符、单字符串最多 2048 字符。
 任意层级的明确凭据字段（如 Cookie、Authorization、mtoken、api_key、accessToken、privateKey）会被拒绝，NaN/Infinity、无效 Unicode、JSONB 不支持的 U+0000 或超限结构返回受控 400/413。
 
-例如后续客户端可在 metadata 增加：
+客户端通过单次 `sessions.usage` 读取最近 7 个北京时间日期的本机每日活跃原生会话数与已记录输入/输出/总 Token，所有模型统一统计，不拆分本机登录账号。`costDaily` 和全部 creator 的日期 cohort 已由原生聚合，客户端只提取有界数字，不读正文或逐会话明细。原生缓存可能后台刷新；客户端不轮询等待完整，缺失统计跳过，有效空统计才报零。会话数包含子任务等原生实例，不是当天新建产品聊天数；同一实例同日只计一次，跨日分别计数。
+
+当前 metadata 中的用量形状如下（daily 最多 7 条）：
 
 ```json
 {
-  "usage": {"date": "2026-11-04", "source": "custom", "input_tokens": 400, "output_tokens": 200},
-  "sessions": {"active_count": 3},
-  "features": {"voice": true}
+  "usage": {
+    "timeZone": "Asia/Shanghai",
+    "collectedAt": 1793836800000,
+    "cacheStatus": "fresh",
+    "updatedAt": 1793836799000,
+    "daily": [
+      {"date": "2026-11-05", "sessionCount": 3, "inputTokens": 400, "outputTokens": 200, "totalTokens": 600}
+    ]
+  }
 }
 ```
 
 这些值仅作为客户端提供的最新快照，写入 `UserTable.metadata.user_activity.metadata`，事件类型记在 `latest_event_type`。
 自定义事件和数值不自动累计、不反写原生消费或权限；只有 startup/login 执行已有的专属聚合。
-此接口不是每日历史账本或多设备用量聚合服务，当前也没有新增真实 token/会话采集。内置服务消费仍可查询原生 DailyUserSpend；自定义模型需要未来由客户端通过 OpenClaw 用量 API 采集并明确归属、日期、多设备和去重口径。
+此接口不是长期每日历史账本或多设备用量聚合服务；保存最后一次客户端近 7 天快照。已记录 Token 不保证模型提供了所有调用用量，不估算缺失值，也不进入原生账单。内置服务消费仍可查询原生 DailyUserSpend。
 
 ### 分批升级与失败隔离
 
 活动接口是可选旁路。客户端的上报 Promise 不向调用者抛出错误，登录和启动不等待网络上报，也不因上报错误修改模型认证、Team 或 EndUser 归属。
 旧服务仍可能返回 HTTP 404、400 或其他错误状态，这是服务端未更新时的真实响应；新版客户端静默延后并仅记录受控信息，不弹出活动错误、不清除 JWT、不改用旧共享 Key。
-服务更新后，后续正常周期或应用重新启动会重新探测并恢复上报，无须再次发布客户端。
-未确认事件仅在当前进程内保留，不承诺跨重启或停服期间的事件完整补报。未来添加字段只需扩展 metadata；客户端服务的 `getMetadata` 本地同步回调可提供额外字段，抛错也不会影响主流程。
+服务更新后，后续合格窗口会重新探测并恢复上报，无须再次发布客户端；应用重启保留配额和冷却，不绕过等待。
+不持久排队未确认事件，不承诺跨重启或停服期间的完整历史补报。原生用量留在 OpenClaw，下个窗口重新采样；退出只取消请求。未来添加字段只需扩展 metadata；`getMetadata` 同步回调只提供小对象，异步统计使用可取消的 `collectMetadata`，失败均不影响主流程。
 
 ## 开发与验证
 

@@ -77,7 +77,8 @@ import { runApplicationCleanup, settleCleanupTasks } from './core/app/cleanupPha
 import { isNsisInstalledApp } from './core/app/installedApp';
 import { createTray, destroyTray, updateTrayMenu } from './core/app/trayManager';
 import { resolveAppUpdateResourceUrl } from './core/app/updateResourceUrl';
-import { UserActivityService } from './core/app/userActivityService';
+import { USER_ACTIVITY_SCHEDULE_KEY, UserActivityService } from './core/app/userActivityService';
+import { collectUserActivityUsage, USER_ACTIVITY_TIME_ZONE } from './core/app/userActivityUsage';
 import { APP_NAME, DEV_SERVER_URL_SWITCH, INSTALLER_QUIT_SWITCH } from './core/appConstants';
 import { resolveDevelopmentDataDirectory } from './core/development/developmentDataDirectory';
 import { getDevServerUrlFromCommandLine } from './core/development/devServerHandoff';
@@ -2641,6 +2642,19 @@ if (agentBridgeArgv) {
         productName: APP_NAME,
         version: app.getVersion(),
         userInfoPath: resolveOutboundHeaderUserInfoPath(),
+        stateStore: {
+          read: () => getStore().get(USER_ACTIVITY_SCHEDULE_KEY),
+          write: state => getStore().set(USER_ACTIVITY_SCHEDULE_KEY, state),
+        },
+        isIdle: () => {
+          const runtime = getOpenClawRuntimeAdapter();
+          return Boolean(runtime?.getGatewayClient() && !runtime.hasActiveSessions() &&
+            powerMonitor.getSystemIdleTime() >= 60);
+        },
+        collectMetadata: async signal => {
+          const usage = await collectUserActivityUsage(getOpenClawRuntimeAdapter()?.getGatewayClient() ?? null, { signal });
+          return usage ? { usage: { ...usage, timeZone: USER_ACTIVITY_TIME_ZONE, collectedAt: Date.now() } } : null;
+        },
       });
       userActivityService.start();
     }

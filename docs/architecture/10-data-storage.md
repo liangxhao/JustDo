@@ -540,6 +540,8 @@ browser-import.sqlite 独立保存导入历史、safeStorage 加密密码、下�
 
 LiteLLM 客户端活动通过 `POST /user/activity` 写入服务端 `LiteLLM_UserTable.metadata.user_activity`，不属于本地产品表。原生消费的 EndUser 归属继续保留，用于已有日志筛选；活动接口不创建或修改 EndUser。可扩展 metadata 仅在 user_activity 命名空间保存最新快照，不将客户端自报值计入原生账单；重复事件不倒退最新快照，接口不可用时不阻塞客户端主流程。客户端开关控制上报，JWT 负责身份校验；未收到活动不能证明用户没启动。服务端部署与字段保留见[认证专题](../features/integrations/authentication-builtin-model-lifecycle.md)。
 
+Main KV `activity.reportingSchedule` 只保存北京时间日期、已预留窗口数、上次窗口时间、接口冷却截止、上次成功时间及无凭据的快照指纹，不保存报告正文、JWT 或会话明细。每客户端数据目录每天最多 3 个采集/上报窗口、间隔至少 6 小时；启动就绪至少 15 分钟后择空闲运行，预留失败就不采集。准备失败和无变化也消耗窗口，重启/退出/换账号不清配额和冷却。每窗口通过现有 Gateway 取一次近 7 天本机每日原生会话数和已记录 Token，只投影有界数字；没有第二份 transcript 或完整统计账本。每个新窗口重新采样，退出不等待网络。
+
 ## 10. 插件持久化
 
 ### Workflow 独立流程库

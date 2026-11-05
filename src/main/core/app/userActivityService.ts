@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 
 import fs from 'fs';
 
@@ -9,27 +9,61 @@ import {
 } from '../../providers/builtinModelCredential';
 import { mainProcessFetch } from '../network/mainProcessFetch';
 
-const DEFAULT_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+const STARTUP_DELAY_MS = 15 * 60 * 1000;
+const MIN_INTERVAL_MS = 6 * 60 * 60 * 1000;
+const IDLE_RECHECK_MS = 5 * 60 * 1000;
+const COLLECTION_TIMEOUT_MS = 5_000;
 const REQUEST_TIMEOUT_MS = 15_000;
-const RETRY_DELAYS_MS = [60_000, 5 * 60_000, 15 * 60_000];
 const MAX_RESPONSE_BYTES = 4096;
+const MAX_BODY_BYTES = 8192;
+const DAILY_WINDOW_LIMIT = 3;
 const DEFERRED_HTTP_STATUSES = new Set([400, 404, 405, 413, 415, 422, 501]);
-const ReportOutcome = {
-  Acknowledged: 'acknowledged',
-  Deferred: 'deferred',
-  Retry: 'retry',
-  Retired: 'retired',
-} as const;
-type ReportOutcome = (typeof ReportOutcome)[keyof typeof ReportOutcome];
+const SNAPSHOT_TIME_FIELDS = new Set(['clientTime', 'collectedAt', 'updatedAt']);
+
+export const USER_ACTIVITY_SCHEDULE_KEY = 'activity.reportingSchedule';
+
+export type UserActivityScheduleState = {
+  date: string;
+  attempts: number;
+  lastAttemptAt: number;
+  cooldownUntil: number;
+  lastSuccessAt: number;
+  fingerprint: string | null;
+};
 
 export type UserActivityValue =
   | null | boolean | number | string | UserActivityValue[] | UserActivityMetadata;
 export type UserActivityMetadata = { [key: string]: UserActivityValue };
 
-type PendingActivityEvent = {
-  userId: string;
-  body: string;
+const reportDate = (now: number): string => new Date(now + 8 * 60 * 60 * 1000).toISOString().slice(0, 10);
+const nextReportDay = (now: number): number =>
+  Date.parse(`${reportDate(now)}T00:00:00+08:00`) + DAY_MS;
+
+const readScheduleState = (value: unknown, now: number): UserActivityScheduleState => {
+  const date = reportDate(now);
+  if (value === undefined) {
+    return { date, attempts: 0, lastAttemptAt: 0, cooldownUntil: 0, lastSuccessAt: 0, fingerprint: null };
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid activity schedule');
+  const state = value as UserActivityScheduleState;
+  if (typeof state.date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(state.date) ||
+      !Number.isInteger(state.attempts) || state.attempts < 0 || state.attempts > DAILY_WINDOW_LIMIT ||
+      ![state.lastAttemptAt, state.cooldownUntil, state.lastSuccessAt]
+        .every(time => Number.isSafeInteger(time) && time >= 0) ||
+      !(state.fingerprint === null || (typeof state.fingerprint === 'string' && /^[a-f0-9]{64}$/.test(state.fingerprint)))) {
+    throw new Error('Invalid activity schedule');
+  }
+  // Midnight resets only the day budget. It never removes spacing or endpoint cooldown.
+  return state.date < date ? { ...state, date, attempts: 0 } : { ...state };
 };
+
+const abortable = <T>(task: Promise<T>, signal: AbortSignal): Promise<T> => new Promise((resolve, reject) => {
+  const abort = (): void => reject(signal.reason ?? new Error('Activity stopped'));
+  if (signal.aborted) abort();
+  else signal.addEventListener('abort', abort, { once: true });
+  task.then(resolve, reject).finally(() => signal.removeEventListener('abort', abort));
+});
 
 const acknowledgesActivity = async (response: Response, signal: AbortSignal): Promise<boolean> => {
   const reader = response.body?.getReader();
@@ -78,9 +112,15 @@ type UserActivityServiceOptions = {
   productName: string;
   version: string;
   userInfoPath: string;
+  stateStore: {
+    read: () => unknown;
+    write: (state: UserActivityScheduleState) => void;
+  };
+  isIdle: () => boolean;
+  collectMetadata?: (signal: AbortSignal) => Promise<UserActivityMetadata | null>;
   getMetadata?: () => UserActivityMetadata;
   fetch?: typeof mainProcessFetch;
-  syncIntervalMs?: number;
+  now?: () => number;
 };
 
 type UserInfoFile = {
@@ -133,30 +173,27 @@ const readUserActivityPayload = async (
 
 export class UserActivityService {
   private readonly request: typeof mainProcessFetch;
-  private readonly syncIntervalMs: number;
+  private readonly now: () => number;
+  private readonly startupReadyAt: number;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private running = false;
   private generation = 0;
-  private retryAttempt = 0;
   private syncPromise: Promise<void> | null = null;
   private syncGeneration = 0;
   private syncRequested = false;
-  private activityStarted = false;
-  private activityUserId: string | null = null;
-  private pendingEvent: PendingActivityEvent | null = null;
   private requestController: AbortController | null = null;
   private reportedStatus: string | null = null;
 
   constructor(private readonly options: UserActivityServiceOptions) {
     this.request = options.fetch ?? mainProcessFetch;
-    this.syncIntervalMs = options.syncIntervalMs ?? DEFAULT_SYNC_INTERVAL_MS;
+    this.now = options.now ?? Date.now;
+    this.startupReadyAt = this.now() + STARTUP_DELAY_MS;
   }
 
   start(): void {
     if (!ACTIVITY_REPORTING_CONFIG.enabled || this.running) return;
     this.running = true;
     this.generation += 1;
-    this.retryAttempt = 0;
     void this.sync();
   }
 
@@ -167,9 +204,6 @@ export class UserActivityService {
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
     this.syncRequested = false;
-    this.pendingEvent = null;
-    this.activityStarted = false;
-    this.activityUserId = null;
   }
 
   sync(): Promise<void> {
@@ -177,6 +211,7 @@ export class UserActivityService {
       this.stop();
       return Promise.resolve();
     }
+    if (!this.running) return Promise.resolve();
     if (this.syncPromise) {
       if (this.syncGeneration !== this.generation) this.syncRequested = true;
       return this.syncPromise;
@@ -186,20 +221,16 @@ export class UserActivityService {
     const generation = this.generation;
     this.syncGeneration = generation;
     const pending = this.syncActivity(generation)
-      .then(outcome => {
+      .then(delay => {
         if (!this.running || generation !== this.generation) return;
-        let delay = this.syncIntervalMs;
-        if (outcome === ReportOutcome.Retry && this.retryAttempt < RETRY_DELAYS_MS.length) {
-          delay = RETRY_DELAYS_MS[this.retryAttempt++];
-        } else {
-          this.retryAttempt = 0;
-        }
-        this.timer = setTimeout(() => void this.sync(), delay);
-        this.timer.unref();
+        this.schedule(generation, delay);
       })
       .catch(() => {
         // Optional reporting must never reject a caller's login/startup work.
-        if (generation === this.generation) this.noteDeferred('unavailable');
+        if (generation === this.generation) {
+          this.noteDeferred('unavailable');
+          this.schedule(generation, IDLE_RECHECK_MS);
+        }
       })
       .finally(() => {
         if (this.syncPromise !== pending) return;
@@ -219,84 +250,144 @@ export class UserActivityService {
     console.info(`[UserActivity] Optional activity reporting deferred: ${status}.`);
   }
 
+  private schedule(generation: number, delay: number): void {
+    if (!this.running || generation !== this.generation) return;
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = setTimeout(() => void this.sync(), Math.min(DAY_MS, Math.max(1, delay)));
+    this.timer.unref();
+  }
+
+  private readState(): UserActivityScheduleState {
+    return readScheduleState(this.options.stateStore.read(), this.now());
+  }
+
+  private nextDelay(state: UserActivityScheduleState): number {
+    const now = this.now();
+    const due = Math.max(this.startupReadyAt, state.cooldownUntil,
+      state.lastAttemptAt ? state.lastAttemptAt + MIN_INTERVAL_MS : 0,
+      state.attempts >= DAILY_WINDOW_LIMIT || state.date > reportDate(now) ? nextReportDay(now) : 0);
+    return Math.max(0, due - now);
+  }
+
   private isCurrent(generation: number, userId: string): boolean {
-    if (generation !== this.generation) return false;
+    if (!this.running || generation !== this.generation) return false;
     const credential = this.options.getCredential();
     return Boolean(credential && credential.authType !== 'api-key' && credential.userAccount === userId);
   }
 
-  private async syncActivity(generation: number): Promise<ReportOutcome> {
+  private async syncActivity(generation: number): Promise<number> {
     let controller: AbortController | null = null;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
     try {
+      const startupDelay = this.startupReadyAt - this.now();
+      if (startupDelay > 0) return startupDelay;
+      let state = this.readState();
+      const delay = this.nextDelay(state);
+      if (delay > 0) return delay;
+      if (!this.options.isIdle()) return IDLE_RECHECK_MS;
       const payload = await readUserActivityPayload(
         this.options.userInfoPath, this.options.productName, this.options.version,
       );
-      if (generation !== this.generation) return ReportOutcome.Retired;
-      if (!payload) return ReportOutcome.Retry;
-      const credential = this.options.getCredential();
-      if (!credential || credential.authType === 'api-key' || credential.userAccount !== payload.user_id) {
-        return ReportOutcome.Retry;
-      }
+      if (!payload || !this.isCurrent(generation, payload.user_id)) return IDLE_RECHECK_MS;
       const apiBaseUrl = buildActivityApiBaseUrl(this.options.baseUrl);
       const endpointPath = ACTIVITY_REPORTING_CONFIG.endpointPath;
       if (!/^\/(?!\/)[A-Za-z0-9._~/-]+$/.test(endpointPath) ||
           endpointPath.split('/').some(segment => segment === '.' || segment === '..')) {
         this.noteDeferred('invalid endpoint configuration');
-        return ReportOutcome.Deferred;
+        return DAY_MS;
       }
-      if (this.activityUserId !== payload.user_id) {
-        this.activityUserId = payload.user_id;
-        this.pendingEvent = null;
-        this.activityStarted = false;
-      }
-      if (!this.pendingEvent) {
-        const metadata = this.options.getMetadata?.() ?? {};
-        const body = JSON.stringify({
-          event_id: randomUUID(),
-          user_id: payload.user_id,
-          event_type: this.activityStarted ? 'heartbeat' : 'startup',
-          metadata: { ...metadata, ...payload.metadata, clientTime: new Date().toISOString() },
-        }, (_key, value: unknown) => {
-          if (typeof value === 'number' && !Number.isFinite(value)) throw new Error('Invalid activity number');
-          return value;
-        });
-        this.pendingEvent = { userId: payload.user_id, body };
-      }
-      const event = this.pendingEvent;
+      // Reserve before any native statistics work. Preparation failures and unchanged
+      // snapshots consume a window too, bounding both collection and HTTP attempts.
+      state = this.readState();
+      const currentDelay = this.nextDelay(state);
+      if (currentDelay > 0) return currentDelay;
+      if (!this.options.isIdle()) return IDLE_RECHECK_MS;
+      const reserved = { ...state, attempts: state.attempts + 1, lastAttemptAt: this.now() };
+      this.options.stateStore.write(reserved);
       controller = new AbortController();
       this.requestController = controller;
-      const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(REQUEST_TIMEOUT_MS)]);
-      const response = await this.request(`${apiBaseUrl}${endpointPath}`, {
+      const signal = controller.signal;
+      timeout = setTimeout(() => controller?.abort(), COLLECTION_TIMEOUT_MS);
+      timeout.unref();
+      const collected = this.options.collectMetadata
+        ? await abortable(this.options.collectMetadata(signal), signal) : {};
+      clearTimeout(timeout);
+      timeout = undefined;
+      if (!this.isCurrent(generation, payload.user_id)) return MIN_INTERVAL_MS;
+      if (signal.aborted || collected === null) {
+        return Math.max(IDLE_RECHECK_MS, this.nextDelay(this.readState()));
+      }
+      const metadata = { ...this.options.getMetadata?.(), ...collected, ...payload.metadata,
+        clientTime: new Date(this.now()).toISOString() };
+      const body = JSON.stringify({ event_id: randomUUID(), user_id: payload.user_id,
+        event_type: 'usage.snapshot', metadata }, (_key, value: unknown) => {
+        if (typeof value === 'number' && !Number.isFinite(value)) throw new Error('Invalid activity number');
+        return value;
+      });
+      if (Buffer.byteLength(body, 'utf8') > MAX_BODY_BYTES) throw new Error('Activity body too large');
+      const fingerprint = createHash('sha256').update(JSON.stringify({ user_id: payload.user_id, metadata },
+        (key, value: unknown) => {
+          if (SNAPSHOT_TIME_FIELDS.has(key)) return undefined;
+          if (value && typeof value === 'object' && !Array.isArray(value)) {
+            return Object.fromEntries(Object.entries(value).sort(([left], [right]) => left.localeCompare(right)));
+          }
+          return value;
+        })).digest('hex');
+      if (state.fingerprint === fingerprint && this.now() - state.lastSuccessAt < DAY_MS) {
+        return Math.max(IDLE_RECHECK_MS, this.nextDelay(this.readState()));
+      }
+      // Collection can outlive a login, token renewal or an idle interval.
+      if (!this.isCurrent(generation, payload.user_id) || !this.options.isIdle() ||
+          reserved.date !== reportDate(this.now())) return MIN_INTERVAL_MS;
+      const credential = this.options.getCredential();
+      if (!credential || credential.authType === 'api-key' || credential.userAccount !== payload.user_id) {
+        return MIN_INTERVAL_MS;
+      }
+      timeout = setTimeout(() => controller?.abort(), REQUEST_TIMEOUT_MS);
+      timeout.unref();
+      const response = await abortable(this.request(`${apiBaseUrl}${endpointPath}`, {
         method: 'POST',
         headers: { ...buildBuiltinModelRequestHeaders(credential), 'Content-Type': 'application/json' },
-        body: event.body,
+        body,
         redirect: 'error',
         signal,
-      }, { maxResponseBytes: MAX_RESPONSE_BYTES });
-      if (!this.isCurrent(generation, event.userId)) {
-        await response.body?.cancel().catch((): void => undefined);
-        return ReportOutcome.Retired;
+      }, { maxResponseBytes: MAX_RESPONSE_BYTES }).then(value => {
+        if (signal.aborted) void value.body?.cancel().catch((): void => undefined);
+        return value;
+      }), signal);
+      if (!this.isCurrent(generation, payload.user_id)) {
+        void response.body?.cancel().catch((): void => undefined);
+        return MIN_INTERVAL_MS;
       }
       if (!response.ok) {
-        await response.body?.cancel().catch((): void => undefined);
+        void response.body?.cancel().catch((): void => undefined);
+        if (!this.isCurrent(generation, payload.user_id)) return MIN_INTERVAL_MS;
         this.noteDeferred(`HTTP ${response.status}`);
-        return DEFERRED_HTTP_STATUSES.has(response.status) ? ReportOutcome.Deferred : ReportOutcome.Retry;
+        if (DEFERRED_HTTP_STATUSES.has(response.status)) {
+          this.options.stateStore.write({ ...this.readState(), cooldownUntil: this.now() + DAY_MS });
+        }
+        return Math.max(IDLE_RECHECK_MS, this.nextDelay(this.readState()));
       }
       const acknowledged = await acknowledgesActivity(response, signal);
-      if (!this.isCurrent(generation, event.userId) || this.pendingEvent !== event) return ReportOutcome.Retired;
+      if (!this.isCurrent(generation, payload.user_id)) return MIN_INTERVAL_MS;
       if (!acknowledged) {
         this.noteDeferred('response not acknowledged');
-        return ReportOutcome.Deferred;
+        this.options.stateStore.write({ ...this.readState(), cooldownUntil: this.now() + DAY_MS });
+        return DAY_MS;
       }
-      this.activityStarted = true;
-      this.pendingEvent = null;
+      this.options.stateStore.write({ ...this.readState(), fingerprint, lastSuccessAt: this.now() });
       this.reportedStatus = null;
-      return ReportOutcome.Acknowledged;
+      return Math.max(IDLE_RECHECK_MS, this.nextDelay(this.readState()));
     } catch {
-      if (generation !== this.generation) return ReportOutcome.Retired;
+      if (generation !== this.generation) return MIN_INTERVAL_MS;
       this.noteDeferred('unavailable');
-      return ReportOutcome.Retry;
+      try {
+        return Math.max(IDLE_RECHECK_MS, this.nextDelay(this.readState()));
+      } catch {
+        return IDLE_RECHECK_MS;
+      }
     } finally {
+      if (timeout) clearTimeout(timeout);
       if (this.requestController === controller) this.requestController = null;
     }
   }
