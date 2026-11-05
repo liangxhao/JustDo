@@ -194,6 +194,12 @@ streaming path, while 2–8 requests a bounded parallel worker count. All packag
 source-proof and final-archive checks still run. See
 [Windows installer](../docs/windows-installer.md) for memory and validation scope.
 
+Gateway bundling reports companion verification and each patch application and
+verification stage with elapsed time. Native support checks reuse one complete
+declaration index for identical bundle content while independently validating
+each helper and owner; changed content is parsed again. Copying bundle assets
+does not finish the subsequent patch and syntax checks.
+
 Python preparation verifies a build-only package proof before reusing the locked
 dependencies. It reinstalls only when that proof, the preparation inputs or the
 installed files no longer match; import checks remain enabled. The proof is kept

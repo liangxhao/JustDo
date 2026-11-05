@@ -2,6 +2,7 @@
 const ts = require('typescript');
 const esbuild = require('esbuild');
 const acorn = require('acorn');
+let cachedSupportIndex = null;
 
 function nodes(root, predicate) {
   const found = [];
@@ -132,35 +133,52 @@ function editNativeSource(source, edits) {
 
 // Parse and discard one top-level statement at a time. A complete Gateway
 // bundle can exceed 70 MB; retaining its full AST is unnecessary for these
-// few declarations. Acorn owns statement, regex and template boundaries.
-function nativeSupportDeclarations(source, names, lazy) {
+// declarations. Acorn owns statement, regex and template boundaries; only
+// ranges and initializer summaries survive the parse.
+function summarizeInitializerBody(body) {
+  return {
+    start: body.start,
+    end: body.end,
+    statements: body.body.map(statement => {
+      const expression = statement.expression;
+      return {
+        directive: statement.directive,
+        assignment: statement.type === 'ExpressionStatement' && expression?.type === 'AssignmentExpression' &&
+          expression.operator === '=' && expression.left.type === 'Identifier'
+          ? { name: expression.left.name, start: expression.right.start, end: expression.right.end }
+          : null,
+        call: statement.type === 'ExpressionStatement' && expression?.type === 'CallExpression' && expression.callee.type === 'Identifier'
+          ? { name: expression.callee.name, argumentCount: expression.arguments.length }
+          : null,
+      };
+    }),
+  };
+}
+
+function buildNativeSupportIndex(source) {
   const declarations = new Map();
   const bindings = new Map();
-  const initializers = { module: [], owner: [] };
+  const initializers = [];
   const bind = name => bindings.set(name, (bindings.get(name) || 0) + 1);
   const record = (name, value) => {
-    if (!names.has(name)) return;
     const matches = declarations.get(name) || [];
     matches.push(value);
     declarations.set(name, matches);
   };
   const initializer = item => {
-    if (!lazy || item.init?.type !== 'CallExpression') return;
+    if (item.init?.type !== 'CallExpression') return;
     const call = item.init;
     const object = call.arguments[0];
     if (object?.type !== 'ObjectExpression') return;
     for (const property of object.properties) {
       if (property.key?.type !== 'Literal' || typeof property.key.value !== 'string') continue;
       const filename = property.key.value.replaceAll('\\', '/');
-      const kind = filename.endsWith('/dist/native-support/' + lazy.module) ? 'module' :
-        filename.endsWith('/dist/' + lazy.owner) ? 'owner' : null;
-      if (!kind) continue;
       const callback = property.value;
-      if (call.callee.type !== 'Identifier' || call.callee.name !== '__esm' || call.arguments.length !== 1 ||
-        object.properties.length !== 1 || property.type !== 'Property' || property.computed || !property.method ||
-        callback?.type !== 'FunctionExpression' || callback.async || callback.generator || callback.params.length !== 0)
-        throw new Error('Bundled support lazy initializer shape changed');
-      initializers[kind].push({ name: item.id.name, body: callback.body });
+      const valid = call.callee.type === 'Identifier' && call.callee.name === '__esm' && call.arguments.length === 1 &&
+        object.properties.length === 1 && property.type === 'Property' && !property.computed && property.method &&
+        callback?.type === 'FunctionExpression' && !callback.async && !callback.generator && callback.params.length === 0;
+      initializers.push({ filename, name: item.id.name, valid,
+        body: valid ? summarizeInitializerBody(callback.body) : null });
     }
   };
   class DeclarationParser extends acorn.Parser {
@@ -198,6 +216,31 @@ function nativeSupportDeclarations(source, names, lazy) {
   return { declarations, bindings, initializers };
 }
 
+function nativeSupportDeclarations(source, names, lazy) {
+  // Keep one exact source revision, with ranges and small initializer summaries
+  // rather than a bundle AST. Every helper/owner query shares the complete parse;
+  // changed bytes still require a new syntax and declaration check.
+  if (cachedSupportIndex?.source !== source) {
+    const index = buildNativeSupportIndex(source);
+    cachedSupportIndex = { source, index };
+  }
+  const index = cachedSupportIndex.index;
+  const declarations = new Map([...names].map(name => [name,
+    (index.declarations.get(name) || []).map(value => ({ ...value })),
+  ]));
+  const initializers = { module: [], owner: [] };
+  if (lazy) {
+    for (const initializer of index.initializers) {
+      const kind = initializer.filename.endsWith('/dist/native-support/' + lazy.module) ? 'module' :
+        initializer.filename.endsWith('/dist/' + lazy.owner) ? 'owner' : null;
+      if (!kind) continue;
+      if (!initializer.valid) throw new Error('Bundled support lazy initializer shape changed');
+      initializers[kind].push(initializer);
+    }
+  }
+  return { declarations, bindings: index.bindings, initializers };
+}
+
 function verifyLazySupportInitializer(source, expected, declarations, bindings, initializers) {
   const module = oneNativeNode(initializers.module, 'support module initializer');
   const owner = oneNativeNode(initializers.owner, 'support runner initializer');
@@ -205,26 +248,22 @@ function verifyLazySupportInitializer(source, expected, declarations, bindings, 
     throw new Error('Bundled support lazy initializer binding changed');
   const constants = expected.filter(item => item.type === 'constant');
   const withoutStrictDirective = body => body[0]?.directive === 'use strict' ? body.slice(1) : body;
-  const statements = withoutStrictDirective(module.body.body);
-  if (statements.length !== constants.length || statements.some((statement, index) => {
-    const expression = statement.expression;
-    return statement.type !== 'ExpressionStatement' || expression.type !== 'AssignmentExpression' ||
-      expression.operator !== '=' || expression.left.type !== 'Identifier' || expression.left.name !== constants[index].name;
-  })) throw new Error('Bundled support lazy initialization is partial or stale');
+  const statements = withoutStrictDirective(module.body.statements);
+  if (statements.length !== constants.length || statements.some((statement, index) =>
+    statement.assignment?.name !== constants[index].name))
+    throw new Error('Bundled support lazy initialization is partial or stale');
   const actual = 'function initialize()' + source.slice(module.body.start, module.body.end);
-  const strictDirective = statements === module.body.body ? '' : '"use strict";';
+  const strictDirective = statements === module.body.statements ? '' : '"use strict";';
   const required = `function initialize(){${strictDirective}${constants.map(item => `${item.name}=${item.body};`).join('')}}`;
   if (canonicalHelper(actual) !== canonicalHelper(required))
     throw new Error('Bundled support lazy initialization is partial or stale');
-  const ownerStatements = withoutStrictDirective(owner.body.body);
-  const calls = ownerStatements.filter(statement => statement.type === 'ExpressionStatement' &&
-    statement.expression.type === 'CallExpression' && statement.expression.callee.type === 'Identifier' &&
-    statement.expression.callee.name === module.name && statement.expression.arguments.length === 0);
+  const ownerStatements = withoutStrictDirective(owner.body.statements);
+  const calls = ownerStatements.filter(statement => statement.call?.name === module.name &&
+    statement.call.argumentCount === 0);
   const references = [...acorn.tokenizer(source.slice(owner.body.start, owner.body.end), { ecmaVersion: 'latest' })]
     .filter(token => token.type.label === 'name' && token.value === module.name);
-  const firstNonInit = ownerStatements.findIndex(statement => statement.type !== 'ExpressionStatement' ||
-    statement.expression.type !== 'CallExpression' || statement.expression.callee.type !== 'Identifier' ||
-    !/^init_[\w$]+$/.test(statement.expression.callee.name) || statement.expression.arguments.length !== 0);
+  const firstNonInit = ownerStatements.findIndex(statement => !statement.call ||
+    !/^init_[\w$]+$/.test(statement.call.name) || statement.call.argumentCount !== 0);
   const prefix = firstNonInit < 0 ? ownerStatements : ownerStatements.slice(0, firstNonInit);
   if (calls.length !== 1 || references.length !== 1 || !prefix.includes(calls[0]))
     throw new Error('Bundled support runner initialization is not unconditional and unique');
@@ -232,7 +271,7 @@ function verifyLazySupportInitializer(source, expected, declarations, bindings, 
     const matches = declarations.get(item.name) || [];
     if (matches.length !== 1 || matches[0].type !== 'constant' || matches[0].start !== undefined)
       throw new Error(`Bundled support constant binding changed: ${item.name}`);
-    const value = statements[index].expression.right;
+    const value = statements[index].assignment;
     matches[0] = { type: 'constant', start: value.start, end: value.end };
   }
 }

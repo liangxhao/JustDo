@@ -97,6 +97,10 @@ patch 只接入显式原生依赖。支持模块通过事务工具复制并校�
 
 当前 patch phase 使用原子快照建立文件/内容索引，同一文件只解码一次，搜索结果按写入增量更新。绕过 `writeIfChanged` 会让索引和实际文件分叉，因此禁止直接 `fs.writeFile` 修改 runtime JS。
 
+原生支持模块的 bundle 校验按完整源码内容复用最近一次顶层声明索引，仅保留声明范围、绑定次数和惰性初始化摘要，不保留整个 AST。不同 helper/owner 的查询仍分别验证完整语义、声明唯一性和初始化顺序；源码任一字节变化都重新解析，每次查询的声明记录独立，不能复用“校验通过”结论。Cron permission 的应用阶段每个 seam 只变换一次，仍先验证全部目标及混合状态再统一写入。
+
+Gateway bundle 构建会输出伴随文件检查、来源证明、快照、每个补丁的应用/校验、语法检查和 manifest 写入的阶段及耗时。`Copied bundle assets` 只表示资源复制完成，后续补丁校验仍属于构建流程。
+
 ## 7. Pristine 验证
 
 `verify-openclaw-pristine-contracts.cjs` 在任何写入前运行。它需要同时证明：

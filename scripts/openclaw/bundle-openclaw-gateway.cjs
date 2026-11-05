@@ -329,10 +329,14 @@ esbuild
     if (copiedAssets.length > 0) {
       console.log(`[bundle-openclaw-gateway] Copied bundle assets: ${copiedAssets.join(', ')}`);
     }
+    const companionsStarted = Date.now();
+    console.log('[bundle-openclaw-gateway] Verifying bundled runtime companions...');
     verifyBundledRuntimeCompanions(runtimeDir, bundleOutPath);
+    console.log(`[bundle-openclaw-gateway] Runtime companions verified in ${Date.now() - companionsStarted}ms.`);
     patchOpenClawRuntime(runtimeDir, {
       label: 'bundle-openclaw-gateway',
       freshBundlePass: true,
+      verbose: true,
     });
     ensureGatewayLauncher();
     const elapsed = Date.now() - t0;

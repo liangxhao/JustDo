@@ -341,15 +341,16 @@ function applyPatch(runtimeDir) {
   const states = [];
   const plans = [...targets(runtimeDir)].map(([file, applicable]) => {
     const original = fs.readFileSync(file, 'utf8');
+    let updated = original;
     for (const seam of applicable) {
       const marker = `/*${PREFIX}_${seam.name}*/`;
-      const next = transform(original, seam, file);
-      const current = next === original || next === `${original}\n${marker}\n`;
-      if (current && !isGatewayBundlePath(file) && !original.includes(marker))
+      const next = transform(updated, seam, file);
+      const current = next === updated || next === `${updated}\n${marker}\n`;
+      if (current && !isGatewayBundlePath(file) && !updated.includes(marker))
         throw new Error(`${file}: missing ${seam.name} marker`);
       states.push(current);
+      updated = next;
     }
-    const updated = applicable.reduce((text, seam) => transform(text, seam, file), original);
     return { file, original, updated };
   });
   if (states.some(Boolean) && !states.every(Boolean))

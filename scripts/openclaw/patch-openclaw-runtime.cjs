@@ -112,6 +112,13 @@ function patchOpenClawRuntime(runtimeDir, options = {}) {
   const version = (options.version || readOpenClawVersion(repoRoot)).replace(/^v?/, 'v');
   const patchDir = path.join(repoRoot, 'scripts', 'patches', version);
   const label = options.label || 'patch-openclaw-runtime';
+  const runStep = (description, work) => {
+    const started = Date.now();
+    if (options.verbose) console.log(`[${label}] ${description}...`);
+    const result = work();
+    if (options.verbose) console.log(`[${label}] ${description}: done in ${Date.now() - started}ms.`);
+    return result;
+  };
 
   if (!fs.existsSync(runtimeDir)) {
     throw new Error(`Runtime not found: ${runtimeDir}`);
@@ -131,7 +138,8 @@ function patchOpenClawRuntime(runtimeDir, options = {}) {
   // patch is allowed to inspect or modify it.
   if (options.pristineInstallPass !== true) {
     try {
-      buildOpenClawPatchManifest(runtimeDir, { repoRoot, version });
+      runStep('Verifying runtime source proof', () =>
+        buildOpenClawPatchManifest(runtimeDir, { repoRoot, version }));
     } catch (error) {
       throw new Error(
         `Refusing to patch an unknown or stale OpenClaw runtime: ${
@@ -141,7 +149,8 @@ function patchOpenClawRuntime(runtimeDir, options = {}) {
     }
     if (options.freshBundlePass !== true) {
       try {
-        verifyOpenClawPatchManifest(runtimeDir, { repoRoot, version });
+        runStep('Verifying existing patch manifest', () =>
+          verifyOpenClawPatchManifest(runtimeDir, { repoRoot, version }));
       } catch (error) {
         throw new Error(
           `Refusing to patch an unproven OpenClaw bundle: ${
@@ -153,7 +162,7 @@ function patchOpenClawRuntime(runtimeDir, options = {}) {
   }
 
   const patchFiles = listPatchFiles(repoRoot, version);
-  const snapshot = snapshotRuntimePatchTargets(runtimeDir);
+  const snapshot = runStep('Snapshotting runtime patch targets', () => snapshotRuntimePatchTargets(runtimeDir));
   const patchPhaseUtilities = loadPatchPhaseUtilities(patchDir);
   patchPhaseUtilities?.beginRuntimePatchPhase(runtimeDir, snapshot);
   try {
@@ -162,12 +171,15 @@ function patchOpenClawRuntime(runtimeDir, options = {}) {
     for (const patchFile of patchFiles) {
       const patchModule = loadPatchModule(patchFile);
       const patchLabel = `${label}:${path.basename(patchFile, '.cjs')}`;
-      const result = patchModule.applyPatch(runtimeDir, {
-        ...options,
-        label: patchLabel,
-        version,
-        repoRoot,
-      });
+      const result = runStep(
+        `Applying patch ${loadedPatches.length + 1}/${patchFiles.length} (${path.basename(patchFile)})`,
+        () => patchModule.applyPatch(runtimeDir, {
+          ...options,
+          label: patchLabel,
+          version,
+          repoRoot,
+        }),
+      );
       loadedPatches.push({ patchFile, patchLabel, patchModule });
       results.push({
         file: path.relative(repoRoot, patchFile),
@@ -186,33 +198,39 @@ function patchOpenClawRuntime(runtimeDir, options = {}) {
         .filter(filePath => fs.existsSync(filePath)),
       ...listRuntimePatchDependencyTargets(runtimeDir),
     ];
-    for (const filePath of syntaxTargets) {
-      execFileSync(process.execPath, ['--check', filePath], {
-        windowsHide: true, timeout: 60_000, stdio: 'pipe',
-        env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
-      });
-    }
-
-    const gatewayBundlePath = path.join(runtimeDir, 'gateway-bundle.mjs');
-    if (patchFiles.length > 0 && fs.existsSync(gatewayBundlePath)) {
-      for (const { patchLabel, patchModule } of loadedPatches) {
-        patchModule.verifyPatch(runtimeDir, {
-          ...options,
-          label: patchLabel,
-          version,
-          repoRoot,
-        });
-      }
-
-      // Validate transformed output before recording a successful artifact proof.
-      if (options.freshBundlePass === true) {
-        execFileSync(process.execPath, ['--check', gatewayBundlePath], {
+    runStep('Checking native worker and dependency syntax', () => {
+      for (const filePath of syntaxTargets) {
+        execFileSync(process.execPath, ['--check', filePath], {
           windowsHide: true, timeout: 60_000, stdio: 'pipe',
           env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
         });
       }
+    });
+
+    const gatewayBundlePath = path.join(runtimeDir, 'gateway-bundle.mjs');
+    if (patchFiles.length > 0 && fs.existsSync(gatewayBundlePath)) {
+      for (const [index, { patchFile, patchLabel, patchModule }] of loadedPatches.entries()) {
+        runStep(
+          `Verifying patch ${index + 1}/${patchFiles.length} (${path.basename(patchFile)})`,
+          () => patchModule.verifyPatch(runtimeDir, {
+            ...options,
+            label: patchLabel,
+            version,
+            repoRoot,
+          }),
+        );
+      }
+
+      // Validate transformed output before recording a successful artifact proof.
+      if (options.freshBundlePass === true) {
+        runStep('Checking gateway bundle syntax', () => execFileSync(process.execPath, ['--check', gatewayBundlePath], {
+          windowsHide: true, timeout: 60_000, stdio: 'pipe',
+          env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+        }));
+      }
       if (options.writeManifest !== false) {
-        const { manifestPath } = writeOpenClawPatchManifest(runtimeDir, { repoRoot, version });
+        const { manifestPath } = runStep('Writing verified patch manifest', () =>
+          writeOpenClawPatchManifest(runtimeDir, { repoRoot, version }));
         if (options.verbose) {
           console.log(`[${label}] Wrote patch manifest: ${path.relative(repoRoot, manifestPath)}`);
         }
