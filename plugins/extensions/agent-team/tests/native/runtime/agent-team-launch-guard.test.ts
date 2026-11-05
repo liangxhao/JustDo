@@ -1,10 +1,11 @@
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import vm from 'node:vm';
 
+import type { ExecutionAdmissionSnapshot } from '@runtime-services/sdk/admission';
 import { buildSync } from 'esbuild';
 import { afterAll, describe, expect, it, vi } from 'vitest';
 
@@ -20,7 +21,7 @@ const code = buildSync({
   platform: 'node',
   format: 'cjs',
   write: false,
-  external: ['openclaw/plugin-sdk/*', '@runtime-services/sdk/admission-client'],
+  external: ['openclaw/plugin-sdk/*', '@runtime-services/sdk/admission-client', '@runtime-services/sdk/native-client'],
 }).outputFiles[0].text;
 const key = 'agent:main:justdo:source';
 const prompt = 'The whole explicit user message\nSelected Agent Team mode.';
@@ -84,6 +85,12 @@ function fixture(persisted?: Record<string, unknown>, existingStateDir?: string)
   let mirrorFails = false;
   let loseAdmissionAcknowledgement = false;
   let admissionUnknown = false;
+  let admissionSnapshot: ExecutionAdmissionSnapshot | undefined;
+  let projectionCurrent = true;
+  const bindCapabilities = vi.fn(async () => projectionCurrent);
+  const readAdmission = () => admissionSnapshot ?? (admissionUnknown
+    ? { state: 'unknown' as const }
+    : { state: 'clear' as const, generation: 0 });
   const bindAdmission = vi.fn(async () => true);
   let service!: { start(): void; stop(): void };
   const registerService = vi.fn(value => { service = value; });
@@ -166,7 +173,11 @@ function fixture(persisted?: Record<string, unknown>, existingStateDir?: string)
     module: moduleBox,
     process: { argv: [] },
     require: (name: string) =>
-      name === '@runtime-services/sdk/admission-client' ? { createExecutionAdmissionClient: () => ({ bind: bindAdmission, inspect: async () => admissionUnknown ? ({ state: 'unknown' }) : ({ state: 'clear', generation: 0 }), reserve: reserveAdmission, update: async () => ({}), dispose() {} }) } : name === 'openclaw/plugin-sdk/session-store-runtime'
+      name === '@runtime-services/sdk/native-client' ? { createRuntimeServicesClient: () => ({
+        bind: bindCapabilities,
+        captureExecutionAdmission: () => projectionCurrent ? { readExecutionAdmission: readAdmission } : undefined,
+        dispose: () => { projectionCurrent = false; },
+      }) } : name === '@runtime-services/sdk/admission-client' ? { createExecutionAdmissionClient: () => ({ bind: bindAdmission, inspect: async () => readAdmission(), reserve: reserveAdmission, update: async () => ({}), dispose() {} }) } : name === 'openclaw/plugin-sdk/session-store-runtime'
         ? {
             getSessionEntry: () => {
               if (entryReadFails) throw new Error('Native identity unavailable');
@@ -226,6 +237,7 @@ function fixture(persisted?: Record<string, unknown>, existingStateDir?: string)
   const verify = () => hooks.get('before_prompt_build')!({}, ctx);
   return {
     bindAdmission,
+    bindCapabilities,
     service,
     entry,
     stateDir,
@@ -248,6 +260,8 @@ function fixture(persisted?: Record<string, unknown>, existingStateDir?: string)
     api,
     listeners,
     reserveAdmission,
+    set admissionSnapshot(value: ExecutionAdmissionSnapshot) { admissionSnapshot = value; },
+    set projectionCurrent(value: boolean) { projectionCurrent = value; },
     set loseAdmissionAcknowledgement(value: boolean) { loseAdmissionAcknowledgement = value; },
     set history(value: Record<string, unknown>) {
       history = value;
@@ -294,7 +308,95 @@ const request = {
   clientTurnId: 'explicit-input',
 };
 
+function releasedAdmission(): ExecutionAdmissionSnapshot & { state: 'clear'; receipt: object } {
+  return {
+    state: 'clear', generation: 1,
+    receipt: {
+      version: 2, id: 'admission-fixture', generation: 1,
+      sessionKey: key, sessionId: ctx.sessionId, lifecycleRevision: intent.lifecycleRevision,
+      runId: ctx.runId,
+      owner: { pluginId: 'agent-team', registrationId: 'registration', providerScope: 'provider' },
+      state: 'released', verified: true, effectIssued: false,
+      sourceTerminal: { runId: ctx.runId, sessionId: ctx.sessionId, phase: 'end', seq: 3, executionSettled: true },
+      cleanupReceipt: { id: 'dispatcher-cleanup', registrationId: 'registration', source: 'backend-reconciliation' },
+    },
+  };
+}
+
+const ordinaryTeamCalls: Array<[string, Record<string, unknown>]> = [
+  ['tool_search', { query: 'assistants_create team_discussion task_assistants' }],
+  ['tool_describe', { name: 'assistants_create' }],
+  ['tool_call', { name: 'assistants_create', arguments: { name: 'Review', description: 'Review work', instructions: 'Review changes.' } }],
+  ['assistants_create', { name: 'Review', description: 'Review work', instructions: 'Review changes.' }],
+  ['team_discussion', { action: 'create', title: 'Review', agentIds: ['reviewer', 'researcher'], message: 'Review this task.' }],
+  ['task_assistants', { agentId: 'reviewer' }],
+  ['sessions_send', { sessionKey: 'agent:reviewer:justdo:peer', message: 'Review this task.' }],
+  ['swarm_workflow_start', { goal: 'Inspect the project.', mode: 'auto' }],
+];
+
 describe('Agent Team finalize run admission', () => {
+  it('allows ordinary assistant creation, group discussion and collaboration without selecting a Team mode', async () => {
+    const f = fixture();
+    f.projectionCurrent = false;
+    const ordinary = { ...ctx, runId: 'ordinary-create-assistant' };
+    for (const [tool, params] of ordinaryTeamCalls)
+      expect(await f.policy(tool, params, ordinary)).toBeUndefined();
+    expect(f.finalizeApplies(ordinary)).toBe(false);
+    expect(f.reserveAdmission).not.toHaveBeenCalled();
+    expect(f.bindCapabilities).not.toHaveBeenCalled();
+  });
+
+  it('allows ordinary creation after backend cleanup releases an unlaunched Team turn', async () => {
+    const f = fixture();
+    await f.call('register', intent);
+    await f.verify();
+    f.listeners[0]({
+      sessionKey: key, sessionId: ctx.sessionId, runId: ctx.runId,
+      stream: 'lifecycle', data: { phase: 'end', executionSettled: true }, seq: 3,
+    });
+    await vi.waitFor(() => expect(f.state().wholeSettled?.runId).toBe(ctx.runId));
+    const ordinary = { ...ctx, runId: 'ordinary-create-assistant' };
+    expect(await f.policy('assistants_create', {}, ordinary)).toMatchObject({ allow: false });
+    f.admissionSnapshot = releasedAdmission();
+    for (const [tool, params] of ordinaryTeamCalls)
+      expect(await f.policy(tool, params, ordinary)).toBeUndefined();
+    expect(f.finalizeApplies(ordinary)).toBe(false);
+    expect(f.state().state).toBe('released');
+    expect(JSON.parse(readFileSync(f.ledgerFile, 'utf8')).state).toBe('released');
+    // The lane keeps only its latest generation. Losing the old generic receipt
+    // must not resurrect the Team intent, including after a process restart.
+    f.admissionSnapshot = { state: 'unknown' };
+    expect(await f.policy('team_discussion', { action: 'create' }, ordinary)).toBeUndefined();
+    const restarted = fixture(f.entry, f.stateDir);
+    restarted.admissionSnapshot = { state: 'unknown' };
+    expect(await restarted.policy('assistants_create', {}, ordinary)).toBeUndefined();
+    f.admissionSnapshot = { state: 'clear', generation: 2 };
+    expect((await f.call('register', {
+      ...intent, expectedGeneration: 1, clientTurnId: ordinary.runId,
+    })).payload).toMatchObject({ state: 'pending', generation: 2 });
+  });
+
+  it.each(['unknown', 'missing', 'id', 'generation', 'session', 'revision', 'run', 'owner', 'retired'])(
+    'keeps the stale launch guarded with %s release evidence', async mismatch => {
+      const f = fixture();
+      await f.call('register', intent);
+      await f.verify();
+      const snapshot = releasedAdmission();
+      if (mismatch === 'id') snapshot.receipt.id = 'other-admission';
+      if (mismatch === 'generation') snapshot.receipt.generation++;
+      if (mismatch === 'session') snapshot.receipt.sessionId = 'other-native';
+      if (mismatch === 'revision') snapshot.receipt.lifecycleRevision = 'other-revision';
+      if (mismatch === 'run') snapshot.receipt.runId = 'other-run';
+      if (mismatch === 'owner') snapshot.receipt.owner.pluginId = 'other-plugin';
+      f.admissionSnapshot = mismatch === 'unknown' ? { state: 'unknown' }
+        : mismatch === 'missing' ? { state: 'clear', generation: 1 } : snapshot;
+      if (mismatch === 'retired') f.projectionCurrent = false;
+      const ordinary = { ...ctx, runId: 'ordinary-create-assistant' };
+      expect(await f.policy('assistants_create', {}, ordinary)).toMatchObject({ allow: false });
+      expect(f.finalizeApplies(ordinary)).toBe(true);
+    },
+  );
+
   it('does not repeat generic reservation after its acknowledgement is lost', async () => {
     const f = fixture(); f.loseAdmissionAcknowledgement = true;
     expect((await f.call('register', intent)).ok).toBe(false);

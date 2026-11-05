@@ -3,12 +3,14 @@ import { createHash } from 'node:crypto';
 
 import { nativePlanningConstraint, PlanningConstraint } from '@app-plugin/sdk/planning';
 import { createExecutionAdmissionClient } from '@runtime-services/sdk/admission-client';
+import { createRuntimeServicesClient } from '@runtime-services/sdk/native-client';
 import { withCodexSessionTranscriptMirrorWriteLock } from 'openclaw/plugin-sdk/codex-session-transcript-runtime';
 import type { OpenClawPluginApi } from 'openclaw/plugin-sdk/core';
 
 import { AgentTeamLaunchLedger } from './agent-team-launch-ledger';
 import {
   assertNativeIdentity,
+  hasReleasedTeamLaunchAdmission,
   type Identity,
   type Launch,
   type LaunchState,
@@ -90,6 +92,14 @@ export function registerAgentTeamLaunchGuard(api: OpenClawPluginApi): void {
   let stopped = true;
   let serviceRevision = 0;
   const admission = createExecutionAdmissionClient(api);
+  const runtimeServices = createRuntimeServicesClient(api);
+  let capabilityPreparation: Promise<boolean> | undefined;
+  const prepareRuntimeServices = () => {
+    if (runtimeServices.captureExecutionAdmission()) return Promise.resolve(true);
+    return capabilityPreparation ??= runtimeServices.bind().finally(() => {
+      capabilityPreparation = undefined;
+    });
+  };
   // Hot replacement starts candidate services before publishing their proof RPC.
   // Published control requests bind the owner below, before any business write.
   api.registerService({
@@ -115,10 +125,21 @@ export function registerAgentTeamLaunchGuard(api: OpenClawPluginApi): void {
     await admission.update({ sessionKey: launch.sessionKey, ...reference }, operation, evidence);
   };
   const operationKey = (sessionKey: string) => `${ledger.directory}:${sessionKey}`;
-  const read = (sessionKey: string) =>
+  const readStored = (sessionKey: string) =>
     OPERATIONS.uncertain.has(operationKey(sessionKey))
       ? { raw: { unconfirmedWrite: true }, launch: undefined }
       : readLaunch(sessionKey, ledger);
+  const releasedAdmission = (launch: Launch) => !retired && !stopped &&
+    hasReleasedTeamLaunchAdmission(launch,
+      runtimeServices.captureExecutionAdmission()?.readExecutionAdmission({
+        sessionKey: launch.sessionKey, sessionId: launch.nativeSessionId,
+      }));
+  const read = (sessionKey: string) => {
+    const state = readStored(sessionKey);
+    return state.launch && state.launch.state !== 'released' && releasedAdmission(state.launch)
+      ? { ...state, launch: { ...state.launch, state: 'released' as const } }
+      : state;
+  };
   api.session.state.registerSessionExtension({
     namespace: NAMESPACE,
     description: 'Content-free verification and correction state for an explicit Team launch.',
@@ -128,6 +149,7 @@ export function registerAgentTeamLaunchGuard(api: OpenClawPluginApi): void {
       if (!ctx.sessionKey && ['disable', 'restart'].includes(ctx.reason)) {
         retired = true;
         admission.dispose();
+        runtimeServices.dispose();
       }
     },
   });
@@ -166,6 +188,26 @@ export function registerAgentTeamLaunchGuard(api: OpenClawPluginApi): void {
     if (retired) throw new Error('Agent Team launch guard registration was retired.');
     writeAuthority.getStore()?.();
     if (result.ok !== true) throw new Error('Agent Team launch state could not be committed.');
+  };
+  const reconcileReleased = async (sessionKey: string): Promise<void> => {
+    const state = readStored(sessionKey);
+    const launch = state.launch;
+    if (!launch || launch.state === 'released' || !releasedAdmission(launch)) return;
+    // Persist before later tools can replace the lane's latest receipt. Otherwise
+    // an unrelated new generation could make the old Team guard reappear.
+    const revision = serviceRevision;
+    const authority = writeAuthority.getStore();
+    await writeAuthority.run(() => {
+      authority?.();
+      if (retired || stopped || serviceRevision !== revision)
+        throw new Error('Agent Team launch reconciliation was retired.');
+    }, () => save({ ...launch, state: 'released' }));
+  };
+  const reconcileBeforeUse = async (sessionKey: string): Promise<void> => {
+    const state = readStored(sessionKey);
+    if (!state.launch || state.launch.state === 'released') return;
+    await prepareRuntimeServices();
+    await serial(sessionKey, () => reconcileReleased(sessionKey));
   };
   const assertLive = (launch: Launch): void => {
     const current = read(launch.sessionKey).launch;
@@ -258,6 +300,9 @@ export function registerAgentTeamLaunchGuard(api: OpenClawPluginApi): void {
           const value = await serial(params.sessionKey, () =>
             writeAuthority.run(assertAuthority, async () => {
               assertAuthority();
+              await prepareRuntimeServices();
+              assertAuthority();
+              await reconcileReleased(params.sessionKey as string);
               const result = await handler(params);
               assertAuthority();
               return result;
@@ -315,14 +360,14 @@ export function registerAgentTeamLaunchGuard(api: OpenClawPluginApi): void {
   api.lifecycle.onDispose?.(() => {
     retired = true;
     admission.dispose();
+    runtimeServices.dispose();
     stopEvents();
   });
   method('inspect', async params => {
     let state = read(String(params.sessionKey));
     if (state.launch?.executionAdmission) {
       const snapshot = await admission.inspect({ sessionKey: state.launch.sessionKey, sessionId: state.launch.nativeSessionId });
-      if (snapshot.state === 'clear' && snapshot.receipt?.id === state.launch.executionAdmission.id &&
-          snapshot.receipt.generation === state.launch.executionAdmission.generation && snapshot.receipt.state === 'released') {
+      if (hasReleasedTeamLaunchAdmission(state.launch, snapshot)) {
         await save({ ...state.launch, state: 'released' });
         state = read(String(params.sessionKey));
       }
@@ -635,6 +680,12 @@ export function registerAgentTeamLaunchGuard(api: OpenClawPluginApi): void {
     ctx: Identity & { inputProvenance?: unknown; hookInvocation?: { assertActive(): void } },
   ) => {
     if (!managed(ctx.sessionKey) || ctx.inputProvenance != null) return;
+    try {
+      await reconcileBeforeUse(ctx.sessionKey);
+    } catch {
+      // A failed durable write stays restrictive; no input is retried.
+      return;
+    }
     const launch = read(ctx.sessionKey).launch;
     if (
       !launch ||
@@ -667,6 +718,11 @@ export function registerAgentTeamLaunchGuard(api: OpenClawPluginApi): void {
     description: 'Fail-closed explicit Team launch protection, including Code Mode inner tools.',
     async evaluate(event, ctx) {
       if (!managed(ctx.sessionKey)) return;
+      try {
+        await reconcileBeforeUse(ctx.sessionKey);
+      } catch {
+        return { allow: false, reason: 'Agent Team launch reconciliation is unconfirmed.' };
+      }
       const state = read(ctx.sessionKey);
       if (state.raw === undefined || state.launch?.state === 'released') return;
       const launch = state.launch;

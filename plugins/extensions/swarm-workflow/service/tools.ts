@@ -4,11 +4,12 @@ import {
   captureFilesystemAdmission,
   type FilesystemAdmission,
 } from '@runtime-services/sdk/filesystem';
+
 import { registerBatchApi, RESULT_TOOL } from '../batch/api';
 import { candidateItemResult } from '../batch/snapshot';
 import { FLOW_LIMITS, FLOW_MANAGEMENT_TOOLS, FLOW_RPC, FLOW_TOOLS } from '../contracts/flow';
-import { SUBMISSION_LIMITS, validateSubmission } from '../execution/submission';
 import { parentPolicy } from '../execution/policy';
+import { SUBMISSION_LIMITS, validateSubmission } from '../execution/submission';
 import { createManagementTools } from '../management/tools';
 import { parseSwarmWorkflowRequest } from '../prompt/request';
 import type { WorkflowContext } from './context';
@@ -234,7 +235,7 @@ export function registerWorkflowStartTool(context: WorkflowContext): void {
           name: 'swarm_workflow_start',
           label: 'Start Swarm Workflow task flow',
           description:
-            'Start a durable task flow ONLY when the user requests Swarm Workflow/task-flow execution. Supply a self-contained goal resolving conversation references and attachment content; workers do not inherit chat history or images. Preserve exact user agent assignments and constraints. The service independently plans, executes, verifies and delivers here. After acceptance end the turn without duplicating work. One unfinished flow per conversation. No Workboard dependency.',
+            'Start a durable task flow ONLY when the user requests Swarm Workflow/task-flow execution. An explicit request in an ordinary user message is sufficient; no composer mode selection or request marker is required. Supply a self-contained goal resolving conversation references and attachment content; workers do not inherit chat history or images. Preserve exact user agent assignments and constraints. The service independently plans, executes, verifies and delivers here. After acceptance end the turn without duplicating work. One unfinished flow per conversation. No Workboard dependency.',
           parameters: {
             type: 'object',
             additionalProperties: false,

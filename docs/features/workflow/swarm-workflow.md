@@ -20,6 +20,8 @@ Swarm Workflow 是本产品的独立任务流插件，与 OpenClaw 原生 collec
 
 需要启用 Swarm Workflow 扩展，无需开启 Workboard、agent-team 或 Code Mode。Workboard 和 Swarm Workflow 对未设置过的用户默认关闭，保留用户已有的明确启停选择。助手名单同步只更新插件配置，不改变启停状态。现有运行时设置的 tools.swarm 控制原生批量委派，不控制本插件。
 
+普通主会话中明确要求使用 Swarm Workflow 或工作流执行，同样可以直接调用启动工具；输入框标签是快捷入口，不是启动前提。未接纳的旧发起记录按原生 sessionKey/runId 隔离，不限制后来不同 run 的普通消息。来源通用执行回执释放后可重新发现并调用启动工具，不能因之前选择过 Team 或 Swarm 模式而继续误拦；实际运行仍遵守原生权限、精确调用身份和未完成流程限制。
+
 ## 执行边界
 
 ```mermaid

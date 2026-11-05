@@ -1127,6 +1127,73 @@ it.each(['expired', 'project', 'permissions', 'policy', 'mode', 'request'])(
     expect(f.run).not.toHaveBeenCalled();
   },
 );
+it('starts from an ordinary message even while an older unaccepted Swarm turn remains registered', async () => {
+  const f = await fixture();
+  const selected = 'Inspect the old task\n\n' + buildSwarmWorkflowInstruction({ mode: 'auto', verify: true });
+  const previous = { sessionKey: f.parentKey, sessionId: f.parent.sessionId, runId: 'old-launch' };
+  f.messages.push({ role: 'user', content: selected, idempotencyKey: 'old-launch:user' });
+  await f.hook({ prompt: selected }, previous);
+  const before = f.hooks.get('before_tool_call');
+  const competing = { toolName: 'team_discussion', params: { action: 'create' } };
+  expect(before(competing, previous)).toMatchObject({ block: true });
+
+  const plain = 'Use Swarm Workflow to inspect the new task.';
+  const ordinary = { ...previous, runId: 'ordinary-launch' };
+  f.messages.push({ role: 'user', content: plain, idempotencyKey: 'ordinary-launch:user' });
+  expect(await f.hook({ prompt: plain }, ordinary)).toBeUndefined();
+  for (const event of [
+    competing,
+    { toolName: 'assistants_create', params: { name: 'Reviewer', description: 'Review', instructions: 'Review work.' } },
+    { toolName: 'task_assistants', params: { agentId: 'reviewer' } },
+    { toolName: 'sessions_send', params: { sessionKey: 'agent:reviewer:justdo:peer', message: 'Review.' } },
+    { toolName: 'swarm_workflow_start', params: { goal: 'Inspect the new task.', mode: 'auto' } },
+  ]) expect(before(event, ordinary)).toBeUndefined();
+  expect(f.hookOptions.get('before_agent_finalize').appliesToAgentRun(ordinary)).toBe(false);
+  expect(f.tool.description).toContain('no composer mode selection or request marker is required');
+
+  const accepted = await f.tool.execute('ordinary-start', { goal: 'Inspect the new task.', mode: 'auto' });
+  const store = new FlowStore(path.join(f.root, 'plugin-data', 'swarm-workflow'));
+  try {
+    expect(store.all()).toHaveLength(1);
+    expect(store.get(accepted.details.flow.id)).toMatchObject({
+      requestId: 'ordinary-launch:user', assignmentRequest: plain, goal: 'Inspect the new task.',
+    });
+  } finally {
+    store.close();
+  }
+  // The old run's protection remains scoped to that run, even after the new flow is accepted.
+  expect(before(competing, previous)).toMatchObject({ block: true });
+  expect(before(competing, ordinary)).toBeUndefined();
+});
+it('starts an ordinary workflow after the preceding Team execution admission is released', async () => {
+  const f = await fixture();
+  const startFactory = f.toolFactories.at(-1);
+  const ctx = {
+    sessionKey: f.parentKey, sessionId: f.parent.sessionId, assertInvocationCurrent: vi.fn(),
+  };
+  f.setExecutionAdmission({ state: 'unknown', generation: 1 });
+  expect(startFactory.create(ctx)).toBeNull();
+  await expect(f.tool.execute('held-start', { goal: 'Inspect', mode: 'auto' })).rejects.toThrow('execution admission');
+  f.setExecutionAdmission({
+    state: 'clear', generation: 1,
+    receipt: {
+      version: 2, id: 'previous-team-admission', generation: 1,
+      sessionKey: f.parentKey, sessionId: f.parent.sessionId, lifecycleRevision: null,
+      runId: 'previous-team-run', state: 'released', verified: true, effectIssued: false,
+      owner: { pluginId: 'agent-team', registrationId: 'team-registration', providerScope: 'provider' },
+      sourceTerminal: { runId: 'previous-team-run', sessionId: f.parent.sessionId, phase: 'end', seq: 3, executionSettled: true },
+      cleanupReceipt: { id: 'cleanup', registrationId: 'team-registration', source: 'backend-reconciliation' },
+    },
+  });
+  const tool = startFactory.create(ctx);
+  expect(tool.name).toBe('swarm_workflow_start');
+  f.messages.push({ role: 'user', content: 'Use Swarm Workflow to inspect.', idempotencyKey: 'ordinary:user' });
+  const accepted = await tool.execute('released-start', { goal: 'Inspect', mode: 'auto' });
+  expect(accepted.details.flow).toMatchObject({ goal: 'Inspect', mode: 'auto', status: 'running' });
+  const listed = await f.request('swarmWorkflow.list', { parentKeys: [f.parentKey] }) as any;
+  expect(listed.flows).toHaveLength(1);
+  expect(listed.flows[0].id).toBe(accepted.details.flow.id);
+});
 it('hides a Swarm start while the generic source lane is unavailable and rejects a retained definition', async () => {
   const f = await fixture();
   const startFactory = f.toolFactories.at(-1);

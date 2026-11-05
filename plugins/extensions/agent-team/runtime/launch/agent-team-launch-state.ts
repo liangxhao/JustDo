@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto';
 
+import type { ExecutionAdmissionSnapshot } from '@runtime-services/sdk/admission';
 import { getSessionEntry } from 'openclaw/plugin-sdk/session-store-runtime';
 
 import { AgentTeamLaunchLedger } from './agent-team-launch-ledger';
-import type { ExecutionAdmissionSnapshot } from '@runtime-services/sdk/admission';
 
 export const NAMESPACE = 'agent-team-launch';
 const OWNER_KEY = Symbol.for('agent-team.launch.owner');
@@ -55,6 +55,24 @@ export type Launch = {
   };
 };
 export type Identity = { sessionKey?: string; sessionId?: string; runId?: string };
+
+/** A cleared lane alone never closes a Team intent; require its exact released receipt. */
+export function hasReleasedTeamLaunchAdmission(
+  launch: Launch,
+  snapshot: ExecutionAdmissionSnapshot | undefined,
+): boolean {
+  if (snapshot?.state !== 'clear' || !launch.executionAdmission) return false;
+  const receipt = snapshot.receipt;
+  return receipt?.state === 'released' &&
+    receipt.id === launch.executionAdmission.id &&
+    receipt.generation === launch.executionAdmission.generation &&
+    snapshot.generation === receipt.generation &&
+    receipt.owner.pluginId === 'agent-team' &&
+    receipt.sessionKey === launch.sessionKey &&
+    receipt.sessionId === launch.nativeSessionId &&
+    receipt.lifecycleRevision === launch.lifecycleRevision &&
+    receipt.runId === launch.clientTurnId;
+}
 
 export function parseLaunch(value: unknown): Launch | undefined {
   if (
@@ -187,8 +205,7 @@ export function readTeamLaunchCatalogMode(
     if (state.raw === undefined || state.launch?.state === 'released') return;
     const launch = state.launch;
     if (launch?.executionAdmission && admission !== undefined) {
-      if (admission?.state === 'clear' && admission.receipt?.id === launch.executionAdmission.id &&
-          admission.receipt.generation === launch.executionAdmission.generation && admission.receipt.state === 'released') return;
+      if (hasReleasedTeamLaunchAdmission(launch, admission)) return;
       if (admission?.state !== 'held' || admission.receipt.id !== launch.executionAdmission.id ||
           admission.receipt.generation !== launch.executionAdmission.generation) return 'blocked';
     }
