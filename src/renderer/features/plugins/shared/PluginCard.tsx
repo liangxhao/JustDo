@@ -68,7 +68,7 @@ const PluginCard = ({
       </div>
     )}
     {footer && (
-      <div className="relative mt-auto flex min-h-10 items-center justify-between gap-3 pt-3 text-[10px] text-secondary">
+      <div className="relative mt-1.5 flex min-w-0 items-center justify-between gap-3 text-[10px] text-secondary">
         {footer}
       </div>
     )}

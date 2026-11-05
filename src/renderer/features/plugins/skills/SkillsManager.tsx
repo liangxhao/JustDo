@@ -660,7 +660,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
                           {i18nService.t('noSkillsAvailable')}
                         </p>
                       ) : (
-                        <div className="grid min-w-0 auto-rows-fr grid-cols-[repeat(auto-fill,minmax(min(100%,20rem),1fr))] gap-4">
+                        <div className="grid min-w-0 grid-cols-[repeat(auto-fill,minmax(min(100%,20rem),1fr))] gap-x-4 gap-y-1">
                           {group.skills.map(renderInstalledCard)}
                         </div>
                       )}
