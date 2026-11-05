@@ -31,6 +31,7 @@ export default function AuthEntry({ compact = false }: { compact?: boolean }) {
   const [menuPosition, setMenuPosition] = useState({ left: 0, top: 0 });
   const busy = loading || state.operation !== AuthOperation.Idle;
   const hasAccount = state.status !== AuthStatus.SignedOut;
+  const showLoginText = compact && !hasAccount;
   const EntryIcon = hasAccount ? UserIcon : ArrowRightEndOnRectangleIcon;
   const accountName = state.profile?.displayName.trim() || state.profile?.account.trim() || '';
   const label = accountName || i18nService.t('authLogin');
@@ -187,15 +188,18 @@ export default function AuthEntry({ compact = false }: { compact?: boolean }) {
           >
             {initial}
           </span>
-        ) : (
+        ) : !showLoginText ? (
           <EntryIcon aria-hidden="true" className={`${compact ? 'h-5 w-5' : 'h-7 w-7'} shrink-0`} />
-        )}
-        <span className={compact ? 'sr-only' : 'min-w-0'}>
-          <span className="block truncate text-sm font-medium" title={label}>
+        ) : null}
+        <span className={compact && hasAccount ? 'sr-only' : 'min-w-0'}>
+          <span
+            className={`block truncate ${showLoginText ? 'text-xs font-normal leading-4' : 'text-sm font-medium'}`}
+            title={label}
+          >
             {label}
           </span>
           {(hasAccount || busy) && (
-            <span className="block truncate text-xs text-secondary">
+            <span className={compact ? 'sr-only' : 'block truncate text-xs text-secondary'}>
               {loading ? i18nService.t('authLoading') : i18nService.t(subtitle)}
             </span>
           )}
