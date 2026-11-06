@@ -1,7 +1,7 @@
 # Chrome Native Messaging 实例发现协议
 
 此发现协议只服务于 Chrome 扩展入口，不用于通用 Bearer WebSocket 或 CLI stdio。
-通用客户端使用[独立连接配置](../external-clients.md#连接)。
+通用客户端使用[独立连接配置](../../../app-server-api/external-clients.md#连接)。
 
 Native Host 只负责发现已经运行的桌面 app-server，不启动或重启应用，也不承载对话内容。Chrome 扩展通过
 `chrome.runtime.connectNative('com.justdo.browserextension')` 按需启动 helper 并建立一次发现连接。
@@ -97,7 +97,7 @@ Helper 自己读写 Native Messaging framing，不经过 Electron GUI 进程，�
     "constraints": {
       "manifestSchemaVersion": 2,
       "nativeHostName": "com.justdo.browserextension",
-      "requiredAppServerProtocolVersion": 2,
+      "requiredAppServerProtocolVersion": 3,
       "requiredNativeHostProtocolVersion": 2
     }
   }
@@ -115,7 +115,7 @@ Helper 自己读写 Native Messaging framing，不经过 Electron GUI 进程，�
   "result": {
     "manifestSchemaVersion": 2,
     "nativeHostProtocolVersion": 2,
-    "supportedProtocolVersions": [2]
+    "supportedProtocolVersions": [3]
   }
 }
 ```
@@ -140,7 +140,7 @@ Helper 自己读写 Native Messaging framing，不经过 Electron GUI 进程，�
     "constraints": {
       "manifestSchemaVersion": 2,
       "nativeHostName": "com.justdo.browserextension",
-      "requiredAppServerProtocolVersion": 2,
+      "requiredAppServerProtocolVersion": 3,
       "requiredNativeHostProtocolVersion": 2
     }
   }
@@ -158,7 +158,7 @@ Helper 自己读写 Native Messaging framing，不经过 Electron GUI 进程，�
   "result": {
     "localAppServerUrl": "ws://127.0.0.1:43128/app-server?token=<64 hex chars>",
     "runtimeConfig": {
-      "protocolVersion": 2
+      "protocolVersion": 3
     }
   }
 }
@@ -202,7 +202,7 @@ Main 对旧的 `--justdo-browser-extension-restart-app-server` 第二实例参�
 {
   "localAppServerUrl": "ws://127.0.0.1:43128/app-server?token=<64 hex chars>",
   "pid": 12345,
-  "protocolVersion": 2
+  "protocolVersion": 3
 }
 ```
 

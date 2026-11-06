@@ -3,6 +3,7 @@
 const fs = require('fs');
 const crypto = require('crypto');
 const path = require('path');
+const esbuild = require('esbuild');
 
 const ICON_SIZES = [16, 32, 48, 128];
 const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
@@ -12,35 +13,41 @@ const BROWSER_EXTENSION_PUBLIC_KEY =
   'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAskQFUZFtJ36I7FXfGPJj+twgXrJgQDKju1ZFrXBQo+UgapYI3c+kcVgBbq+nNbivgYHHV30B/5iI7AxJcJSa1xxa5h34AzKrmg5CoFjdykj3qWZUyDLtueEiJVIKSKLZTdpphy6yqE8IIu7b5l5ZhRwFBio17S+Fo+M/oRzearW+qxYWioIrdF4qRu7KSdKYSHE1grVLI1PCl0g04rY22ITyuBLup13NlJM8w2I20O+Alk4Pe/uO2nxBnaKwB+LrDgQ7U8P6/AO5D/hN+xNVQLgS/gMhEf+W7WpQXjpCadi8xOdpb5YlKXfQtcg9jvDzbSvqNaWIqKlPup54R8hR0wIDAQAB';
 // OpenClaw v2026.10.6 / fe06181dc5ecc01cf8904abbfc26925925efefbc.
 const LOCKED_OPENCLAW_FILES = {
-  "THIRD_PARTY_NOTICES.txt": "5463e636f0e9c20e5701af3b2cce03cc6bdce19e6e5bb831762a85072e907ff0",
-  "background.js": "ddf3d12151de0a9911b8ec094a73d59c54ce8aef3e1d54dfd02c0937ccdfc96a",
-  "icons/icon128.png": "a745c50e0ecc40e1b0ef9c0e841ed7c968078c218a5ef15818ba661c7310a04d",
-  "icons/icon16.png": "f374c44036f3ac0a30b9e5f99d6e902548616f7b11886bef18d20b8b8ce084a0",
-  "icons/icon32.png": "092aea24a5edfc1907cf7964a5aaef7dbc5ae3b6c1fc581a7b4987f74a068268",
-  "icons/icon48.png": "02619a3803614f185ccee73b7860dc8123d7074ce81f929125bc63bd3737d6d4",
-  "manifest.json": "dcdea285b73e8541b88ad313b402a8a1752de3859a67531789073324d735c1da",
-  "modules/native-bootstrap.js": "23604ad0d6cf8d3fb3f037713bd3b9d5ee11b2ed6cea9bd0731ccf7819989330",
-  "modules/popup-background.js": "92b46daaf3cd66cfbaa57a77a40fb69e6a313ef13c35080c953a97e2f4147aab",
-  "modules/relay-auth-v2-crypto.js": "105b8345c06a0cfa590e3b15eda7fa24bd57548940e20918c9f2b557d1e24d07",
-  "modules/relay-auth-v2.js": "1f227e39840d01f280cb8dea84a3053ccfbc96b9282d585ef6cd1b226d91a534",
-  "modules/relay-command-handler.js": "cbc0ccef42e8aa2954fe2bc7210bed222a24a126c8ca054b5595ec66cfbbcb92",
-  "modules/relay-connection.js": "2b561d2d0381a294ef424513aad040f08225bdea455b7cb9a85e5bb9d1e5795e",
-  "modules/relay-core.js": "57156fda4877f9828d749fc62e05138e2a548e752f6baa31135dbdf24f267841",
-  "modules/relay-debugger.js": "a1f1c5637901e48637926bba4ccd9d8337511ca05e070c84d70b058c096a8cdf",
-  "modules/relay-tab-groups.js": "99765b42aca26dc403321f9e19ffcf32e1e8f5d9946f5e54a57fa15f31052e89",
-  "modules/relay-url.js": "2979538f35e2ee028f2bf7502c6b8c702706f208ef53cfd81a09537bb282d55a",
-  "modules/serial-queue.js": "889b1e79b5cdb85c7961a2a87f92b4c1dcf732cb8c000a84d8a5ade8774e0695",
-  "modules/strict-json.js": "7efe5799f9650d7e32273e28d2e3acccd062ede3f05741821474aac86ac197a7",
-  "modules/tab-access-command-scope.js": "e92c4b80f461deb9836f850e2d0c9d33afe80926bc9b79651603a665ac08b9a7",
-  "modules/tab-access-events.js": "b0e572d8c2731753bcd21654741d2bff3d0eaafa98450252e3bd3d74a9d939c4",
-  "modules/tab-access.js": "36a50ae14732fd27482e9dc4bdb7db2682477a77be86655af4787ced4daf104a",
-  "modules/tab-document-provenance.js": "ef9b98cae4d8ab536a565def6bf315774ee43806f07582f187ca9cad7a40bb12",
-  "modules/tab-eligibility.js": "dae0c6ed52e639ec8cec82362d39b78c76244a065fb27a606917f472e7db40bf",
-  "modules/tab-group-revocations.js": "341b9489b8188d734fd19e622b7fb1f1844e4ffc6dcf119fbc34107bdc978936",
-  "options.html": "39a2f3e94151c0eeca125412e0b2dee951edd37ab39a931242ce439967037ca5",
-  "options.js": "80770f948d40eabd3b112e402675549e497ebf28bb304db4de8de412b0157aac",
-  "popup.html": "aeece4f271f407d4604cb8b0b0ea8223decb4a829f2cb74291f3357ed7fea321",
-  "popup.js": "93013bcd39aa821a7a7e2b878688ff73669adfb085cb9cd1ff1caa08dfa4ad08"
+  'THIRD_PARTY_NOTICES.txt': '5463e636f0e9c20e5701af3b2cce03cc6bdce19e6e5bb831762a85072e907ff0',
+  'background.js': 'ddf3d12151de0a9911b8ec094a73d59c54ce8aef3e1d54dfd02c0937ccdfc96a',
+  'icons/icon128.png': 'a745c50e0ecc40e1b0ef9c0e841ed7c968078c218a5ef15818ba661c7310a04d',
+  'icons/icon16.png': 'f374c44036f3ac0a30b9e5f99d6e902548616f7b11886bef18d20b8b8ce084a0',
+  'icons/icon32.png': '092aea24a5edfc1907cf7964a5aaef7dbc5ae3b6c1fc581a7b4987f74a068268',
+  'icons/icon48.png': '02619a3803614f185ccee73b7860dc8123d7074ce81f929125bc63bd3737d6d4',
+  'manifest.json': 'dcdea285b73e8541b88ad313b402a8a1752de3859a67531789073324d735c1da',
+  'modules/native-bootstrap.js': '23604ad0d6cf8d3fb3f037713bd3b9d5ee11b2ed6cea9bd0731ccf7819989330',
+  'modules/popup-background.js': '92b46daaf3cd66cfbaa57a77a40fb69e6a313ef13c35080c953a97e2f4147aab',
+  'modules/relay-auth-v2-crypto.js':
+    '105b8345c06a0cfa590e3b15eda7fa24bd57548940e20918c9f2b557d1e24d07',
+  'modules/relay-auth-v2.js': '1f227e39840d01f280cb8dea84a3053ccfbc96b9282d585ef6cd1b226d91a534',
+  'modules/relay-command-handler.js':
+    'cbc0ccef42e8aa2954fe2bc7210bed222a24a126c8ca054b5595ec66cfbbcb92',
+  'modules/relay-connection.js': '2b561d2d0381a294ef424513aad040f08225bdea455b7cb9a85e5bb9d1e5795e',
+  'modules/relay-core.js': '57156fda4877f9828d749fc62e05138e2a548e752f6baa31135dbdf24f267841',
+  'modules/relay-debugger.js': 'a1f1c5637901e48637926bba4ccd9d8337511ca05e070c84d70b058c096a8cdf',
+  'modules/relay-tab-groups.js': '99765b42aca26dc403321f9e19ffcf32e1e8f5d9946f5e54a57fa15f31052e89',
+  'modules/relay-url.js': '2979538f35e2ee028f2bf7502c6b8c702706f208ef53cfd81a09537bb282d55a',
+  'modules/serial-queue.js': '889b1e79b5cdb85c7961a2a87f92b4c1dcf732cb8c000a84d8a5ade8774e0695',
+  'modules/strict-json.js': '7efe5799f9650d7e32273e28d2e3acccd062ede3f05741821474aac86ac197a7',
+  'modules/tab-access-command-scope.js':
+    'e92c4b80f461deb9836f850e2d0c9d33afe80926bc9b79651603a665ac08b9a7',
+  'modules/tab-access-events.js':
+    'b0e572d8c2731753bcd21654741d2bff3d0eaafa98450252e3bd3d74a9d939c4',
+  'modules/tab-access.js': '36a50ae14732fd27482e9dc4bdb7db2682477a77be86655af4787ced4daf104a',
+  'modules/tab-document-provenance.js':
+    'ef9b98cae4d8ab536a565def6bf315774ee43806f07582f187ca9cad7a40bb12',
+  'modules/tab-eligibility.js': 'dae0c6ed52e639ec8cec82362d39b78c76244a065fb27a606917f472e7db40bf',
+  'modules/tab-group-revocations.js':
+    '341b9489b8188d734fd19e622b7fb1f1844e4ffc6dcf119fbc34107bdc978936',
+  'options.html': '39a2f3e94151c0eeca125412e0b2dee951edd37ab39a931242ce439967037ca5',
+  'options.js': '80770f948d40eabd3b112e402675549e497ebf28bb304db4de8de412b0157aac',
+  'popup.html': 'aeece4f271f407d4604cb8b0b0ea8223decb4a829f2cb74291f3357ed7fea321',
+  'popup.js': '93013bcd39aa821a7a7e2b878688ff73669adfb085cb9cd1ff1caa08dfa4ad08',
 };
 const CONVERSATION_OVERLAY_FILES = [
   'THIRD_PARTY_NOTICES.append.txt',
@@ -51,6 +58,14 @@ const CONVERSATION_OVERLAY_FILES = [
   'modules/app-server-background.js',
   'modules/relay-bootstrap.js',
   'modules/conversation-client.js',
+  'modules/web-launch-security.js',
+  'modules/web-launch-background.js',
+  'modules/web-launch-content.js',
+  'modules/web-launch-sdk.js',
+  'modules/web-launch-panel.js',
+  'modules/web-launch-options.js',
+  'web-launch-content.js',
+  'browser-assistant.js',
   'modules/sidepanel-markdown.js',
   'modules/sidepanel-rich-content.js',
   'modules/sidepanel-rich-content.css',
@@ -58,6 +73,8 @@ const CONVERSATION_OVERLAY_FILES = [
   'modules/sidepanel-i18n.js',
   'modules/sidepanel-messages.js',
   'modules/sidepanel-activity.js',
+  'modules/sidepanel-approvals.js',
+  'modules/sidepanel-approvals.css',
   'modules/sidepanel-stream.js',
   'options.css',
   'options.html',
@@ -130,7 +147,10 @@ function applyBackgroundOverlay(value) {
     'import { createPopupMessageHandler } from "./modules/popup-background.js";',
     'import { createPopupMessageHandler } from "./modules/popup-background.js";\n' +
       'import { handleAppServerMessage } from "./modules/app-server-background.js";\n' +
-      'import { requestLocalBootstrap } from "./modules/relay-bootstrap.js";',
+      'import { requestLocalBootstrap } from "./modules/relay-bootstrap.js";\n' +
+      'import { createWebLaunchBackground } from "./modules/web-launch-background.js";\n' +
+      'import { trustedExtensionPage } from "./modules/web-launch-security.js";\n' +
+      'const webLaunchBackground = createWebLaunchBackground();',
     'background import',
   );
   result = replaceIntegrationAnchor(
@@ -162,8 +182,12 @@ function applyBackgroundOverlay(value) {
     result,
     'chrome.runtime.onMessage.addListener((msg, _sender, reply) => handlePopupMessage(msg, reply));',
     'chrome.runtime.onMessage.addListener(\n' +
-      '  (msg, _sender, reply) =>\n' +
-      '    handleAppServerMessage(msg, reply) || handlePopupMessage(msg, reply),\n' +
+      '  (msg, sender, reply) => {\n' +
+      '    if (msg?.type === "web-launch:panel:event") return false;\n' +
+      '    if (webLaunchBackground.handleMessage(msg, sender, reply)) return true;\n' +
+      '    if (!trustedExtensionPage(sender)) { reply({ ok: false, code: "FORBIDDEN" }); return false; }\n' +
+      '    return handleAppServerMessage(msg, reply) || handlePopupMessage(msg, reply);\n' +
+      '  },\n' +
       ');',
     'runtime message dispatch',
   );
@@ -206,6 +230,48 @@ function buildExpectedExtensionFiles(repoRoot, productName) {
     if (relativePath === 'THIRD_PARTY_NOTICES.append.txt') continue;
     const content = normalizedFileContent(path.join(overlayDir, relativePath), relativePath);
     files.set(relativePath, content);
+  }
+  const contractPath = path.join(sourceRoot, 'contracts', 'webLaunch.ts');
+  files.set(
+    'modules/web-launch-contract.js',
+    Buffer.from(
+      esbuild.buildSync({
+        entryPoints: [contractPath],
+        absWorkingDir: repoRoot,
+        bundle: true,
+        format: 'esm',
+        platform: 'browser',
+        target: 'chrome125',
+        write: false,
+      }).outputFiles[0].text,
+    ),
+  );
+  for (const entry of ['web-launch-content.js', 'browser-assistant.js']) {
+    files.set(
+      entry,
+      Buffer.from(
+        esbuild.buildSync({
+          entryPoints: [path.join(overlayDir, entry)],
+          absWorkingDir: repoRoot,
+          bundle: true,
+          format: 'iife',
+          platform: 'browser',
+          target: 'chrome125',
+          write: false,
+        }).outputFiles[0].text,
+      ),
+    );
+  }
+  for (const [name, content] of files) {
+    if (name.startsWith('modules/') && name.endsWith('.js'))
+      files.set(
+        name,
+        Buffer.from(
+          content
+            .toString('utf8')
+            .replaceAll('../../contracts/webLaunch.ts', './web-launch-contract.js'),
+        ),
+      );
   }
 
   const noticesAppend = fs
@@ -314,7 +380,9 @@ function verifyBrowserExtension(extensionDir, options = {}) {
     }
   }
   if (JSON.stringify(manifest.host_permissions) !== JSON.stringify(['http://127.0.0.1/*'])) {
-    throw new Error('Browser extension loopback permission must be explicit and limited to 127.0.0.1.');
+    throw new Error(
+      'Browser extension loopback permission must be explicit and limited to 127.0.0.1.',
+    );
   }
   if (manifest.side_panel?.default_path !== 'sidepanel.html') {
     throw new Error('Browser extension side chat entry is missing.');

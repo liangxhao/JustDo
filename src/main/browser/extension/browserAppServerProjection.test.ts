@@ -15,6 +15,9 @@ test('retains structured question results for paired and result-only side chat h
   const result: BrowserExtensionMessage = { role: 'tool_result', text: 'User selected: React', toolUseId: 'call-1', toolName: 'ask_user_question', questionResult };
   for (const messages of [[call, result], [result]]) {
     const projected = toAppServerThread({ id: 'one', title: 'Question', status: 'idle', createdAt: 1, updatedAt: 1, cwd: '', permissionMode: PermissionMode.Full }, messages);
-    expect(projected).toMatchObject({ turns: [{ items: [{ type: 'toolCall', status: 'completed', questionResult }] }] });
+    expect(projected).toMatchObject({ turns: [], browser: { display: { turns: [{ items: [{ type: 'toolCall', status: 'completed', questionResult }] }] } } });
+    const display = (projected.browser as { display: { turns: Array<Record<string, unknown>> } }).display;
+    expect(display.turns[0]).not.toHaveProperty('status');
+    expect(display.turns[0]).not.toHaveProperty('completedAt');
   }
 });

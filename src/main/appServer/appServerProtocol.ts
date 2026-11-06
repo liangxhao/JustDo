@@ -12,9 +12,6 @@ export const AppServerMethod = {
   ThreadResume: 'thread/resume',
   ThreadNameSet: 'thread/name/set',
   ThreadUnsubscribe: 'thread/unsubscribe',
-  ThreadImage: 'thread/image',
-  ComposerOptions: 'composer/options',
-  BrowserPair: 'browser/extension/pair',
   TurnStart: 'turn/start',
   TurnInterrupt: 'turn/interrupt',
 } as const;
@@ -25,8 +22,6 @@ export const AppServerNotificationMethod = {
   ThreadStatusChanged: 'thread/status/changed',
   ThreadClosed: 'thread/closed',
   ServerRequestResolved: 'serverRequest/resolved',
-  ThreadUpdated: 'thread/updated',
-  ThreadStream: 'thread/stream',
   TurnStarted: 'turn/started',
   TurnCompleted: 'turn/completed',
   ItemStarted: 'item/started',
@@ -48,7 +43,7 @@ export type AppServerRequestMethod =
 export type AppServerParams = Record<string, unknown>;
 export type AppServerResult = Record<string, unknown>;
 export type AppServerNotify = (
-  method: AppServerNotificationMethod,
+  method: string,
   params: AppServerParams,
 ) => void;
 export type AppServerOperation = (
@@ -71,9 +66,9 @@ export const AppServerErrorCode = {
   Console: -32000,
 } as const;
 
-/** Explicit protocol failures; only the Codex policy exposes their error codes. */
+/** Explicit public failures; the binding owns sanitizing its domain's data. */
 export class AppServerRpcError extends Error {
-  constructor(readonly code: number, message: string) {
+  constructor(readonly code: number, message: string, readonly data?: AppServerParams) {
     super(message);
     this.name = 'AppServerRpcError';
   }
@@ -100,9 +95,8 @@ export interface AppServerBinding {
   };
   turns: { start: AppServerOperation; interrupt: AppServerOperation };
   models?: { list: AppServerOperation };
-  composer?: { options: AppServerOperation };
-  images?: { read: AppServerOperation };
-  browserPairing?: { create: AppServerOperation };
+  /** Exact server-owned routes; extensions require request IDs and cannot replace core methods. */
+  extensions?: Readonly<Record<string, AppServerOperation>>;
   onDisconnect: (reason?: Error) => void | Promise<void>;
 }
 

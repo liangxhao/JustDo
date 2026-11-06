@@ -76,6 +76,30 @@ function fixture(options: CliAppServerOptions = {}) {
 }
 
 describe('Codex app-server session', () => {
+  it('sends actual image-only input and canonical content while denying images for a text-only selected model', async () => {
+    const h = fixture();
+    await h.request('initialize');
+    await h.request('thread/start');
+    const url = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aLFsAAAAASUVORK5CYII=';
+    await h.request('turn/start', { threadId: 'thread', input: [{ type: 'image', url }] });
+    expect(h.output.at(-1)).toMatchObject({ error: { code: -32602 } });
+    expect(h.backend.run).not.toHaveBeenCalled();
+    h.backend.models = () => [{ id: 'provider/model', name: 'Vision', isDefault: true, inputModalities: ['text', 'image'] }];
+    h.backend.run = vi.fn(async (_thread, _run, text, notify, _signal, hooks) => {
+      expect(text).toBe('');
+      expect(hooks?.attachments).toEqual([{ name: 'image-1.png', mimeType: 'image/png', base64Data: url.split(',')[1] }]);
+      notify(event({ phase: 'start' }, 'lifecycle'));
+      return 'Image answer';
+    });
+    await h.request('turn/start', { threadId: 'thread', input: [{ type: 'image', url }] });
+    await tick();
+    expect(h.backend.run).toHaveBeenCalledTimes(1);
+    const userItems = h.output.filter(frame => frame.method === 'item/completed' &&
+      (frame.params as { item?: { type?: string } })?.item?.type === 'userMessage');
+    expect(userItems).toHaveLength(1);
+    expect(userItems[0]).toMatchObject({ params: { item: { content: [{ type: 'image', url }] } } });
+    await h.session.close();
+  });
   it('requires the complete official handshake before admitting work', async () => {
     const { session, backend, output } = fixture();
     await session.receive({ id: 1, method: 'initialize', params: { clientInfo: { name: 'client', version: '1' } } });

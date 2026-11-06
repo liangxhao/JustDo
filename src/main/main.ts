@@ -65,6 +65,7 @@ import {
   registerBrowserExtensionNativeHost,
 } from './browser/extension/browserExtensionNativeMessaging';
 import { readAutomaticBrowserExtensionPairing } from './browser/extension/browserExtensionPairing';
+import { BrowserWebLaunchService } from './browser/extension/browserWebLaunchService';
 import { captureWebpageEmbedConnection } from './chat/embed/webpageEmbedConnection';
 import { AppInitialization } from './core/app/appInitialization';
 import { registerAppShutdown } from './core/app/appShutdown';
@@ -2374,25 +2375,39 @@ if (agentBridgeArgv) {
     initialization.reportActivity(AppInitializationActivity.LocalServices);
     const startBrowserExtensionIngress = async (): Promise<boolean> => {
       const browserExtensionChatToken = randomBytes(32).toString('hex');
-      const extensionChatServer = new BrowserExtensionChatServer(
-        new BrowserExtensionChatController({
-          ensureEngineRunning: ensureOpenClawRunningForCowork,
+      const extensionChatController = new BrowserExtensionChatController({
+        onSessionsChanged: notifyCoworkSessionsChanged,
+        ensureEngineRunning: ensureOpenClawRunningForCowork,
+        getStore: getCoworkStore,
+        getRouter: getCoworkEngineRouter,
+        getRuntime: getOpenClawRuntimeAdapter,
+        getDefaultModelRef: resolveDefaultAgentModelRef,
+        readAssistantMedia: request =>
+          readOpenClawAssistantMedia(getOpenClawEngineManager(), request),
+      });
+      let extensionChatServer: BrowserExtensionChatServer | undefined;
+      try {
+        const webLaunchService = new BrowserWebLaunchService({
+          getDatabase: () => getStore().getDatabase(),
           getStore: getCoworkStore,
-          getRouter: getCoworkEngineRouter,
+          chat: extensionChatController,
           getRuntime: getOpenClawRuntimeAdapter,
           getDefaultModelRef: resolveDefaultAgentModelRef,
-          readAssistantMedia: request =>
-            readOpenClawAssistantMedia(getOpenClawEngineManager(), request),
-        }),
-        browserExtensionChatToken,
-        packageJson.version,
-        0,
-        () =>
-          readAutomaticBrowserExtensionPairing(ensureOpenClawRunningForCowork, () =>
-            getOpenClawEngineManager().buildCliEnvironment(),
-          ),
-      );
-      try {
+          onChanged: () => extensionChatServer?.notifyWebLaunchChanged(),
+          onThreadCreated: notifyCoworkSessionsChanged,
+        });
+        extensionChatServer = new BrowserExtensionChatServer(
+          extensionChatController,
+          browserExtensionChatToken,
+          packageJson.version,
+          0,
+          () =>
+            readAutomaticBrowserExtensionPairing(ensureOpenClawRunningForCowork, () =>
+              getOpenClawEngineManager().buildCliEnvironment(),
+            ),
+          webLaunchService,
+          path.join(app.getPath('userData'), 'app-server'),
+        );
         await extensionChatServer.start();
         if (appShutdown.isQuitting()) {
           await extensionChatServer.stop();
@@ -2404,11 +2419,8 @@ if (agentBridgeArgv) {
           extensionChatServer.getCapability(),
         );
         if (appShutdown.isQuitting()) {
-          await clearBrowserExtensionAppServer(app.getPath('userData')).catch(error => {
-            console.warn(
-              '[BrowserExtensionChat] Failed to clear startup rendezvous during shutdown:',
-              error,
-            );
+          await clearBrowserExtensionAppServer(app.getPath('userData')).catch(() => {
+            console.warn(`[BrowserExtensionChat] ${JSON.stringify({ event: 'rendezvous-clear-failed', code: 'UNAVAILABLE' })}`);
           });
           return false;
         }
@@ -2425,8 +2437,10 @@ if (agentBridgeArgv) {
         }
         console.info('[BrowserExtensionChat] WebSocket app-server is listening on loopback.');
         return true;
-      } catch (error) {
-        console.error('[BrowserExtensionChat] Failed to start loopback service:', error);
+      } catch {
+        await extensionChatServer?.stop().catch((): void => undefined);
+        if (browserExtensionChatServer === extensionChatServer) browserExtensionChatServer = null;
+        console.error(`[BrowserExtensionChat] ${JSON.stringify({ event: 'startup-failed', code: 'UNAVAILABLE' })}`);
         return false;
       }
     };

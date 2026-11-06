@@ -67,6 +67,28 @@ const TOOL_TITLES = {
   write: 'Write',
 };
 
+/** Rich presentation is an optional browser view, never the core execution history. */
+export function browserDisplayThread(thread) {
+  const display = thread?.browser?.display;
+  return {
+    id: thread.id,
+    status: thread.status,
+    turns: display?.id === thread.id && Array.isArray(display.turns) ? display.turns : [],
+  };
+}
+
+export function isSettledTurnNotification(params) {
+  const turn = params?.turn;
+  return (
+    typeof params?.threadId === 'string' &&
+    typeof turn?.id === 'string' &&
+    (!params.turnId || params.turnId === turn.id) &&
+    ['completed', 'failed', 'interrupted'].includes(turn.status) &&
+    turn.executionSettled !== false &&
+    !turn.error?.message?.startsWith('EXECUTION_UNKNOWN:')
+  );
+}
+
 export function isCurrentThreadRunning(activeThreadId, selectedThreadId) {
   return Boolean(activeThreadId) && activeThreadId === selectedThreadId;
 }

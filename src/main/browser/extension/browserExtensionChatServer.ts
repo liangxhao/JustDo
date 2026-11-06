@@ -8,6 +8,7 @@ import {
   type BrowserExtensionAppServerCapability,
   type BrowserExtensionChatApi,
 } from './browserAppServerTypes';
+import type { BrowserWebLaunchService } from './browserWebLaunchService';
 
 export * from './browserAppServerTypes';
 
@@ -38,8 +39,10 @@ export class BrowserExtensionChatServer {
     appVersion: string,
     port = 0,
     createBrowserPairing?: () => Promise<{ pairingString: string }>,
+    webLaunch?: BrowserWebLaunchService,
+    home = process.cwd(),
   ) {
-    this.hub = new BrowserAppServerHub(api, appVersion, createBrowserPairing);
+    this.hub = new BrowserAppServerHub(api, appVersion, createBrowserPairing, webLaunch, home);
     this.transport = new AppServerWebSocketServer({
       port,
       maxOutputFrameBytes: MAX_OUTPUT_FRAME_BYTES,
@@ -54,6 +57,8 @@ export class BrowserExtensionChatServer {
   getCapability(): BrowserExtensionAppServerCapability {
     return { localAppServerUrl: this.transport.getUrl() + '?token=' + this.token };
   }
+
+  notifyWebLaunchChanged(): void { this.hub.notifyWebLaunchChanged(); }
 
   start(): Promise<void> {
     const generation = this.generation;

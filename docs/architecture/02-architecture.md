@@ -156,6 +156,14 @@ flowchart LR
 
 Chrome、通用本机 WebSocket 与 CLI stdio 的 app-server 共用 `main/appServer/` 中唯一的协议连接实现，统一解析、握手、方法路由及响应/通知；两类 WebSocket 入口也复用同一传输实现。连接由 Main 注入浏览器或外部线程的显式能力；浏览器仅访问扩展创建的会话，通用 WebSocket 与 stdio 使用相同的外部线程 binding。
 
+`main/appServer/` 不包含浏览器协议、业务分支或跨浏览器集成测试。浏览器附加方法、通知和
+网页关联错误映射由 `main/browser/extension/` 拥有，只通过通用 `extensions` 注册契约接入；
+标准路由不可覆盖。浏览器依赖通用协议，通用协议及其生产运行时传递依赖不得引用浏览器领域。
+
+标准输入、wire 元数据、历史投影／分页和审批 presenter 也由通用模块提供；浏览器只组合这些能力与自身来源、页面上下文和发送 owner。共享输入把文本合并并保留图片相对顺序后交给原生附件通道，不承诺保留文本与图片的任意交错。图片必须由真实模型目录明确声明支持；Chrome 还在原生发送前固定并回读实际模型，普通文档附件不因此要求视觉模型。准入与原生 RPC 的不同原子性见[执行引擎](05-agent-engine.md#13-外部客户端执行)。
+
+共享审批路由持有原生身份和期限，客户端只提交已提供的选择；连接内命令授权与原生 App 持久授权有不同的存储和撤销边界。恢复观察不能取得另一发送方的审批权，关闭 Chrome viewer 也不取消借用执行。完整授权关系见[会话权限](../features/chat/openclaw-permission-management.md#app-server-客户端审批)。
+
 通用服务随应用启动，独立 Bearer 凭据仅由主 frame 的复制配置 IPC 按需读取，不进入状态查询或 CLI 输出。各入口保留独立鉴权和断连权限。见[统一 app-server](../features/integrations/app-server.md)。
 
 Agent CLI、ACP 与已实现的 Codex app-server 协议共用受认证本机桥和发现文件，随桌面后台启动即提供服务，没有客户端专用总开关或环境鉴权。

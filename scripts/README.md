@@ -238,6 +238,26 @@ and UI unit tests in `plugins/browser-extensions/browser-assistant/`. The stable
 `browser/` retains adapters that reuse application chat rendering, translations
 and streaming, together with the desktop Native Messaging helper and registration.
 
+Two opt-in probes support the proposed webpage conversation entry. Run
+`plugins/browser-extensions/browser-assistant/scripts/verify-webpage-launch.cjs`
+with `--chrome <existing-Chrome-for-Testing-executable>` to create an isolated
+headed browser and loopback fixture. It waits for two real operator clicks;
+DevTools only observes/stops the fixture worker and never supplies UI input.
+The second operator click may start a new worker after normal retirement;
+reusing the original worker is not required. Its `--review-report <report.json>`
+mode checks preserved fixture hashes, click/open identities and cleanup, and
+writes a separate `assessment.json`. It keeps the original status and error and
+explicitly distinguishes event review from a fresh full browser run.
+Run `test/verify-browser-web-result.cjs --runtime-dir <prepared-runtime>` with
+that runtime's bundled Node to exercise authenticated run/result reads against
+a disposable Gateway and deterministic loopback model. Neither probe uses an
+existing user profile, user Gateway, real company model or transcript-file reads.
+They are explicit commands outside ordinary test discovery, and save reports in
+`.agent-tasks/browser-artifacts/` with private fixture state under `build/`.
+These are capability probes, not production website/extension integration tests;
+current findings and limits are recorded in the
+[webpage entry contract and validation limits](../docs/features/browser/webpage-conversation-entry.md).
+
 ### Inspect one native session's stored content
 
 For explicitly requested storage forensics, `openclaw/inspect-session-storage.cjs`

@@ -1,5 +1,25 @@
 const translations = {
   zh: {
+    webLaunchSitesTitle: '网页发起对话',
+    webLaunchSitesHint: '允许指定业务网站打开独立对话，桌面应用需已启动。',
+    webLaunchOrigin: '精确网站来源',
+    webLaunchAllowSend: '允许直接发送',
+    webLaunchAllowResult: '允许回传本次请求结果',
+    webLaunchAddSite: '添加网站并授权 Chrome 访问',
+    webLaunchRefresh: '刷新网站权限',
+    webLaunchRevoke: '撤销网站访问权限',
+    webLaunchNoSites: '尚未授权任何网站。',
+    webLaunchSaved: '网站权限已保存。',
+    webLaunchReloadPage: '网站已授权，请刷新已打开的网页后使用对话按钮。',
+    webLaunchInvalidOrigin: '请输入不带路径、凭据、查询参数或片段的 HTTP(S) 来源。',
+    webLaunchPermissionDenied: '未授予 Chrome 访问权限，未保存网站授权。',
+    webLaunchSettingsFailed: '无法确认网站设置，请检查桌面应用是否已启动后刷新。',
+    webLaunchConflict: '编辑期间设置已改变，请核对最新值后重试。',
+    webLaunchObservations: '执行状态未知的请求',
+    webLaunchUnknownSource: '网页请求',
+    webLaunchAbandon: '解除关联并放弃观察',
+    webLaunchAbandonConfirm:
+      '解除此请求关联并放弃观察？任务可能仍在执行，此操作不会停止或重复任务。',
     title: '__PRODUCT_NAME__ 浏览器设置',
     subtitle: '管理浏览器连接、标签页授权和对话背景。',
     sharedConnection: '两种方式管理同一个连接，关闭后停止自动重连。',
@@ -38,6 +58,31 @@ const translations = {
     statusFailed: '无法读取连接状态，请重新打开设置页。',
   },
   en: {
+    webLaunchSitesTitle: 'Website conversations',
+    webLaunchSitesHint:
+      'Allow specific business websites to open a separate conversation. The desktop app must be running.',
+    webLaunchOrigin: 'Exact website origin',
+    webLaunchAllowSend: 'Allow direct sending',
+    webLaunchAllowResult: 'Allow returning this request’s result',
+    webLaunchAddSite: 'Add website and authorize Chrome access',
+    webLaunchRefresh: 'Refresh website permissions',
+    webLaunchRevoke: 'Revoke website access',
+    webLaunchNoSites: 'No websites have access.',
+    webLaunchSaved: 'Website permissions saved.',
+    webLaunchReloadPage:
+      'Website authorized. Refresh its open page before using the conversation button.',
+    webLaunchInvalidOrigin:
+      'Enter an HTTP(S) origin without a path, credentials, query or fragment.',
+    webLaunchPermissionDenied: 'Chrome access was not granted. No website permission was saved.',
+    webLaunchSettingsFailed:
+      'Could not confirm website settings. Check that the desktop application is running, then refresh.',
+    webLaunchConflict:
+      'Settings changed while you were editing. Check the current values and try again.',
+    webLaunchObservations: 'Requests with unknown execution status',
+    webLaunchUnknownSource: 'Website request',
+    webLaunchAbandon: 'Unlink and stop observing',
+    webLaunchAbandonConfirm:
+      'Unlink this request and stop observing it? Its execution may still be running. This does not stop or repeat the task.',
     title: '__PRODUCT_NAME__ Browser Settings',
     subtitle: 'Manage browser connections, tab access, and chat backgrounds.',
     sharedConnection: 'Automatic local setup or manual pairing.',

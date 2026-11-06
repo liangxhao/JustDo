@@ -13,6 +13,7 @@ import {
 } from './browserExtensionChatServer';
 
 const token = 'a'.repeat(64);
+const fixtureTurnId = 'd28c0cb6-9ddc-4118-885b-4420a16f7a9a';
 let server: BrowserExtensionChatServer | null = null;
 
 const createApi = (): BrowserExtensionChatApi => ({
@@ -23,11 +24,14 @@ const createApi = (): BrowserExtensionChatApi => ({
       cwd: 'C:\\workspace',
       id: 'one',
       permissionMode: 'full',
+      modelRef: 'provider/model',
       status: 'idle',
       title: 'One',
       updatedAt: 2_000,
     },
   ]),
+  getModels: vi.fn(async () => [{ id: 'provider/model', name: 'Model', isDefault: true }]),
+  getHistory: vi.fn(async id => ({ threadId: id, messages: [], runs: [] })),
   getMessages: vi.fn(async () => [{ role: 'assistant', text: 'Hello' }]),
   getComposerOptions: vi.fn(async () => ({
     modelRef: 'provider/model',
@@ -39,11 +43,12 @@ const createApi = (): BrowserExtensionChatApi => ({
     createdAt: 1_000,
     cwd: 'C:\\workspace',
     permissionMode: 'full',
+    modelRef: 'provider/model',
     status: 'idle',
     title: title ?? 'New',
     updatedAt: 2,
   })),
-  sendMessage: vi.fn(async () => ({ sessionId: 'one', runId: 'run-1' })),
+  sendMessage: vi.fn(async request => ({ sessionId: request.sessionId!, runId: request.clientTurnId! })),
   getThreadRuntimeStatus: vi.fn(async () => ({ known: true, running: false })),
   consumeTurnError: vi.fn(() => undefined),
   getTurnState: vi.fn(async (_sessionId, turnId) =>
@@ -73,7 +78,12 @@ const request = async (socket: WebSocket, id: string, method: string, params = {
     };
     socket.on('message', onMessage);
   });
-  socket.send(JSON.stringify({ id, method, params }));
+  const payload = method === 'initialize'
+    ? { clientInfo: { name: 'browser-transport-test', version: '1' }, ...params }
+    : method === 'turn/start'
+      ? { ...params, browser: { clientTurnId: fixtureTurnId, ...('browser' in params ? params.browser as object : {}) } }
+      : params;
+  socket.send(JSON.stringify({ id, method, params: payload }));
   return response;
 };
 
@@ -124,7 +134,7 @@ describe('BrowserExtensionChatServer', () => {
     async (kind, mode) => {
       const api = createApi();
       const gate = Promise.withResolvers<never>();
-      const turn = { id: 'late-run', status: 'unknown' as const, executionSettled: false };
+      const turn = { id: fixtureTurnId, status: 'unknown' as const, executionSettled: false };
       const dispose = vi.fn();
       vi.mocked(api.subscribeThreadEvents).mockResolvedValue(dispose);
       vi.mocked(api.getThreadRuntimeStatus).mockResolvedValue({ known: true, running: true });
@@ -145,8 +155,9 @@ describe('BrowserExtensionChatServer', () => {
         socket.send(
           JSON.stringify({
             id: 'pending',
-            method: kind === 'start' ? 'turn/start' : 'thread/read',
-            params: { threadId: 'one', message: 'Question', turnId: turn.id },
+            method: kind === 'start' ? 'turn/start' : 'thread/resume',
+            params: { threadId: 'one', input: [{ type: 'text', text: 'Question' }],
+              excludeTurns: true, browser: { clientTurnId: fixtureTurnId, turnId: turn.id } },
           }),
         );
         await vi.waitFor(() =>
@@ -163,14 +174,14 @@ describe('BrowserExtensionChatServer', () => {
         await lifecycle;
         if (mode === 'full stop') await server.start();
         release();
-        if (mode === 'restart') {
+        if (mode === 'restart' && kind === 'start') {
           await vi.waitFor(() => expect(api.getMessages).toHaveBeenCalledTimes(historyReads + 1));
         } else {
           await new Promise(resolve => setTimeout(resolve, 550));
           expect(api.getMessages).toHaveBeenCalledTimes(historyReads);
         }
-        expect(api.subscribeThreadEvents).toHaveBeenCalledOnce();
-        expect(dispose).toHaveBeenCalledOnce();
+        expect(api.subscribeThreadEvents).toHaveBeenCalledTimes(kind === 'start' ? 1 : 0);
+        expect(dispose).toHaveBeenCalledTimes(kind === 'start' ? 1 : 0);
         expect(api.interruptThread).not.toHaveBeenCalled();
         expect(oldMessages).toEqual([]);
       } finally {
@@ -187,7 +198,8 @@ describe('BrowserExtensionChatServer', () => {
       { id: 'desktop', source: 'desktop' },
       { id: 'cli', external: { origin: 'cli' } },
       { id: 'missing' },
-    ];
+    ].map(row => ({ ...row, title: row.id, cwd: 'C:\\workspace', status: 'idle',
+      createdAt: 1000, updatedAt: 2000, permissionMode: 'auto' }));
     const native = vi.fn();
     const controller = new BrowserExtensionChatController({
       getStore: () =>
@@ -213,8 +225,8 @@ describe('BrowserExtensionChatServer', () => {
       for (const threadId of ['desktop', 'cli', 'missing']) {
         for (const method of [
           'thread/read',
-          'thread/image',
-          'composer/options',
+          'browser/thread/image',
+          'browser/composer/options',
           'turn/start',
           'turn/interrupt',
         ]) {
@@ -222,7 +234,7 @@ describe('BrowserExtensionChatServer', () => {
             threadId,
             turnId: 'turn',
             source: 'media://private',
-            message: 'Do not send',
+            input: [{ type: 'text', text: 'Do not send' }],
           });
           expect(response).toHaveProperty('error');
           expect(response).not.toHaveProperty('result');
@@ -284,21 +296,23 @@ describe('BrowserExtensionChatServer', () => {
       socket.send(JSON.stringify({ method: 'initialized' }));
       const response = await request(socket, 'read', 'thread/read', {
         threadId: 'one',
-        includeTurns: true,
+        includeTurns: false, browser: { includeDisplay: true },
       });
       const thread = (
-        response.result as { thread: { turns: Array<{ items: Array<Record<string, unknown>> }> } }
+        response.result as { thread: { turns: unknown[];
+          browser: { display: { turns: Array<{ items: Array<Record<string, unknown>> }> } } } }
       ).thread;
-      const tool = thread.turns[0].items.find(item => item.type === 'toolCall');
+      expect(thread.turns).toEqual([]);
+      const tool = thread.browser.display.turns[0].items.find(item => item.type === 'toolCall');
       expect(tool).toMatchObject({
         toolUseId: 'inspect-1',
         status: 'completed',
         display: { keepVisible: true },
       });
       expect(tool?.display).not.toHaveProperty('nativeFailure');
-      const { messagesFromThread } =
+      const { browserDisplayThread, messagesFromThread } =
         await import('../../../../plugins/browser-extensions/browser-assistant/conversation-overlay/modules/sidepanel-state.js');
-      const projected = messagesFromThread(thread);
+      const projected = messagesFromThread(browserDisplayThread(thread));
       expect(
         projected.some(
           (entry: { role: string; item?: { id: string } }) =>
@@ -342,31 +356,28 @@ describe('BrowserExtensionChatServer', () => {
       socket.send(JSON.stringify({ method: 'initialized' }));
       const response = await request(socket, 'read', 'thread/read', {
         threadId: 'one',
-        includeTurns: true,
+        includeTurns: false, browser: { includeDisplay: true },
       });
-      expect(response).toMatchObject({
-        result: {
-          thread: {
-            turns: [
+      const thread = (response.result as { thread: { browser: { display: unknown } } }).thread;
+      expect(thread.browser.display).toMatchObject({
+        turns: [
+          {
+            items: [
               {
-                items: [
-                  {
-                    type: 'agentMessage',
-                    text: 'Partial reply',
-                    display: { stopReason: 'error', sourceId: 'native-reply' },
-                  },
-                  {
-                    type: 'systemMessage',
-                    text: '',
-                    rawMessage,
-                    display: { kind: 'compaction-status' },
-                  },
-                  { type: 'phaseBoundary', display: { kind: 'phase-boundary' } },
-                ],
+                type: 'agentMessage',
+                text: 'Partial reply',
+                display: { stopReason: 'error', sourceId: 'native-reply' },
               },
+              {
+                type: 'systemMessage',
+                text: '',
+                rawMessage,
+                display: { kind: 'compaction-status' },
+              },
+              { type: 'phaseBoundary', display: { kind: 'phase-boundary' } },
             ],
           },
-        },
+        ],
       });
       expect(api.sendMessage).not.toHaveBeenCalled();
       expect(api.interruptThread).not.toHaveBeenCalled();
@@ -464,7 +475,7 @@ describe('BrowserExtensionChatServer', () => {
         await request(socket, 'init', 'initialize', { clientInfo: { name: 'test', version: '1' } });
         socket.send(JSON.stringify({ method: 'initialized' }));
         expect(
-          await request(socket, 'image', 'thread/image', { threadId: 'one', source }),
+          await request(socket, 'image', 'browser/thread/image', { threadId: 'one', source }),
         ).toMatchObject({ result: { dataUrl: 'data:image/jpeg;base64,aW1hZ2U=' } });
         expect(api.readManagedImage).toHaveBeenCalledWith('one', source);
         expect(api.getMessages).not.toHaveBeenCalled();
@@ -484,7 +495,7 @@ describe('BrowserExtensionChatServer', () => {
     try {
       await request(socket, 'init', 'initialize');
       socket.send(JSON.stringify({ method: 'initialized' }));
-      const result = await request(socket, 'large-image', 'thread/image', {
+      const result = await request(socket, 'large-image', 'browser/thread/image', {
         threadId: 'one',
         source: 'media://outbound/large.png',
       });
@@ -515,21 +526,23 @@ describe('BrowserExtensionChatServer', () => {
     const socket = await connect(capability.localAppServerUrl);
     try {
       expect(
-        await request(socket, 'early', 'thread/image', { threadId: 'one', source: 'secret.png' }),
+        await request(socket, 'early', 'browser/thread/image', { threadId: 'one', source: 'secret.png' }),
       ).toHaveProperty('error');
       await request(socket, 'init', 'initialize', { clientInfo: { name: 'test', version: '1' } });
       socket.send(JSON.stringify({ method: 'initialized' }));
       const result = await request(socket, 'read', 'thread/read', {
         threadId: 'one',
-        includeTurns: true,
+        includeTurns: false, browser: { includeDisplay: true },
       });
       expect(result).toMatchObject({
         result: {
-          thread: { turns: [{ items: [{ type: 'agentMessage', text: '', rawMessage }] }] },
+          thread: { turns: [], browser: { display: {
+            turns: [{ items: [{ type: 'agentMessage', text: '', rawMessage }] }],
+          } } },
         },
       });
       expect(
-        await request(socket, 'image', 'thread/image', { threadId: 'other', source: 'secret.png' }),
+        await request(socket, 'image', 'browser/thread/image', { threadId: 'other', source: 'secret.png' }),
       ).toHaveProperty('error');
     } finally {
       socket.close();
@@ -554,7 +567,7 @@ describe('BrowserExtensionChatServer', () => {
         event: {
           sessionKey: 'agent:main:justdo:one',
           sessionId: null,
-          runId: 'run-1',
+          runId: fixtureTurnId,
           agentSeq: 1,
           frameSeq: 1,
           lifecycleGeneration: null,
@@ -566,7 +579,7 @@ describe('BrowserExtensionChatServer', () => {
           data: { text: 'First words' },
         },
       });
-      return { sessionId: 'one', runId: 'run-1', nativeRunId: 'run-1' };
+      return { sessionId: 'one', runId: fixtureTurnId, nativeRunId: fixtureTurnId };
     });
     server = new BrowserExtensionChatServer(api, token, '1.0.0');
     await server.start();
@@ -579,13 +592,14 @@ describe('BrowserExtensionChatServer', () => {
     socket.on('message', data => {
       const value = JSON.parse(data.toString());
       received.push(value.method ?? value.id);
-      if (value.method === 'thread/stream') view.accept(value.params);
-      if (value.method === 'turn/started') view.bindRun(value.params.turn.nativeRunId);
-      if (value.method === 'thread/updated') view.setHistory(value.params.thread);
+      if (value.method === 'browser/thread/stream') view.accept(value.params);
+      if (value.id === 'send') view.bindRun(value.result.browser.activeTurn.nativeRunId);
+      if (value.method === 'browser/thread/updated') view.setHistory(value.params.display);
     });
-    await request(socket, 'send', 'turn/start', { threadId: 'one', message: 'Question' });
-    expect(received.indexOf('thread/stream')).toBeLessThan(received.indexOf('send'));
-    expect(received.indexOf('turn/started')).toBeLessThan(received.indexOf('send'));
+    await request(socket, 'send', 'turn/start', { threadId: 'one', input: [{ type: 'text', text: 'Question' }] });
+    expect(received.indexOf('browser/thread/stream')).toBeLessThan(received.indexOf('send'));
+    await vi.waitFor(() => expect(received).toContain('turn/started'));
+    expect(received.indexOf('turn/started')).toBeGreaterThan(received.indexOf('send'));
     expect(view.project().turns[0].items).toMatchObject([
       { type: 'userMessage' },
       { type: 'agentMessage', text: 'First words' },
@@ -606,7 +620,7 @@ describe('BrowserExtensionChatServer', () => {
     for (const socket of [a, b]) {
       await request(socket, 'init', 'initialize');
       socket.send(JSON.stringify({ method: 'initialized' }));
-      await request(socket, 'read', 'thread/read', { threadId: 'one', includeTurns: true });
+      await request(socket, 'resume', 'thread/resume', { threadId: 'one', excludeTurns: true, browser: { includeDisplay: true } });
     }
     expect(api.subscribeThreadEvents).toHaveBeenCalledTimes(1);
     await request(a, 'leave', 'thread/unsubscribe', { threadId: 'one' });
@@ -628,7 +642,7 @@ describe('BrowserExtensionChatServer', () => {
     const socket = await connect(server.getCapability().localAppServerUrl);
     await request(socket, 'init', 'initialize');
     socket.send(JSON.stringify({ method: 'initialized' }));
-    socket.send(JSON.stringify({ id: 'read', method: 'thread/read', params: { threadId: 'one' } }));
+    socket.send(JSON.stringify({ id: 'read', method: 'thread/resume', params: { threadId: 'one', excludeTurns: true } }));
     await vi.waitFor(() => expect(api.subscribeThreadEvents).toHaveBeenCalledTimes(1));
     const closed = new Promise<void>(resolve => socket.once('close', () => resolve()));
     socket.close();
@@ -653,7 +667,7 @@ describe('BrowserExtensionChatServer', () => {
     const a = await connect(url);
     await request(a, 'init', 'initialize');
     a.send(JSON.stringify({ method: 'initialized' }));
-    a.send(JSON.stringify({ id: 'read', method: 'thread/read', params: { threadId: 'one' } }));
+    a.send(JSON.stringify({ id: 'read', method: 'thread/resume', params: { threadId: 'one', excludeTurns: true } }));
     await vi.waitFor(() => expect(api.subscribeThreadEvents).toHaveBeenCalledTimes(1));
     const closed = new Promise<void>(resolve => a.once('close', () => resolve()));
     a.close();
@@ -661,8 +675,8 @@ describe('BrowserExtensionChatServer', () => {
     const b = await connect(url);
     await request(b, 'init', 'initialize');
     b.send(JSON.stringify({ method: 'initialized' }));
-    const read = request(b, 'read', 'thread/read', { threadId: 'one', includeTurns: true });
-    await vi.waitFor(() => expect(api.listSessions).toHaveBeenCalledTimes(2));
+    const read = request(b, 'resume', 'thread/resume', { threadId: 'one', excludeTurns: true, browser: { includeDisplay: true } });
+    await vi.waitFor(() => expect(api.getTurnState).toHaveBeenCalledTimes(2));
     resolveSubscription(dispose);
     await expect(read).resolves.toMatchObject({ result: { thread: { id: 'one' } } });
     expect(api.subscribeThreadEvents).toHaveBeenCalledTimes(1);
@@ -692,24 +706,26 @@ describe('BrowserExtensionChatServer', () => {
 
     await expect(request(socket, '1', 'initialize')).resolves.toMatchObject({
       id: '1',
-      result: { platformFamily: expect.any(String), userAgent: 'JustDo/1.0.0' },
+      result: { platformFamily: expect.any(String), userAgent: expect.stringContaining('/codex-compatible'),
+        codexHome: expect.any(String) },
     });
     socket.send(JSON.stringify({ method: 'initialized' }));
     await expect(request(socket, '2', 'thread/list')).resolves.toMatchObject({
-      result: { data: [{ id: 'one', status: { type: 'idle' } }], nextCursor: null },
+      result: { data: [{ id: 'one', status: { type: 'notLoaded' } }], nextCursor: null },
     });
     await expect(
-      request(socket, '3', 'thread/read', { includeTurns: true, threadId: 'one' }),
+      request(socket, '3', 'thread/read', { includeTurns: false, browser: { includeDisplay: true }, threadId: 'one' }),
     ).resolves.toMatchObject({
       result: {
         thread: {
           id: 'one',
-          turns: [{ items: [{ text: 'Hello', type: 'agentMessage' }], status: 'completed' }],
+          turns: [],
+          browser: { display: { turns: [{ items: [{ text: 'Hello', type: 'agentMessage', phase: null }] }] } },
         },
       },
     });
     await expect(
-      request(socket, 'options', 'composer/options', { threadId: 'one' }),
+      request(socket, 'options', 'browser/composer/options', { threadId: 'one' }),
     ).resolves.toMatchObject({
       result: {
         modelRef: 'provider/model',
@@ -719,34 +735,35 @@ describe('BrowserExtensionChatServer', () => {
     });
     await expect(
       request(socket, '4', 'turn/start', {
-        attachments: [{ base64Data: 'aGVsbG8=', mimeType: 'text/plain', name: 'note.txt' }],
         input: [{ text: 'Question', type: 'text' }],
-        modelRef: 'provider/model',
-        permissionMode: 'auto',
+        model: 'provider/model',
+        browser: { attachments: [{ base64Data: 'aGVsbG8=', mimeType: 'text/plain', name: 'note.txt' }],
+          permissionMode: 'auto' },
         threadId: 'one',
       }),
     ).resolves.toMatchObject({
-      result: { turn: { error: null, id: 'run-1', items: [], status: 'inProgress' } },
+      result: { turn: { error: null, id: fixtureTurnId, items: [], status: 'inProgress' } },
     });
     expect(api.sendMessage).toHaveBeenCalledWith({
+      clientTurnId: fixtureTurnId,
       attachments: [{ base64Data: 'aGVsbG8=', mimeType: 'text/plain', name: 'note.txt' }],
       message: 'Question',
       modelRef: 'provider/model',
       pageContext: undefined,
       permissionMode: 'auto',
       sessionId: 'one',
-    });
+    }, expect.objectContaining({ assertCurrent: expect.any(Function) }));
     await expect(
       request(socket, '5', 'turn/start', {
         input: [{ text: 'Question', type: 'text' }],
-        permissionMode: 'unexpected',
+        browser: { permissionMode: 'unexpected' },
         threadId: 'one',
       }),
     ).resolves.toMatchObject({ error: { message: 'Invalid permission mode.' } });
     socket.close();
   });
 
-  it('restores a thread notification subscription when the client reads it', async () => {
+  it('restores a thread notification subscription when the client resumes it', async () => {
     const api = createApi();
     server = new BrowserExtensionChatServer(api, token, '1.0.0');
     await server.start();
@@ -757,7 +774,7 @@ describe('BrowserExtensionChatServer', () => {
     reader.send(JSON.stringify({ method: 'initialized' }));
     await request(sender, 'sender-init', 'initialize');
     sender.send(JSON.stringify({ method: 'initialized' }));
-    await request(reader, 'read', 'thread/read', { includeTurns: true, threadId: 'one' });
+    await request(reader, 'resume', 'thread/resume', { excludeTurns: true, browser: { includeDisplay: true }, threadId: 'one' });
 
     const notification = new Promise<Record<string, unknown>>((resolve, reject) => {
       const timeout = setTimeout(
@@ -826,7 +843,7 @@ describe('BrowserExtensionChatServer', () => {
       };
       reconnected.on('message', onMessage);
     });
-    await request(reconnected, 'read', 'thread/read', { includeTurns: true, threadId: 'one' });
+    await request(reconnected, 'resume', 'thread/resume', { excludeTurns: true, browser: { includeDisplay: true }, threadId: 'one' });
 
     await expect(completion).resolves.toMatchObject({
       method: 'turn/completed',
@@ -866,12 +883,12 @@ describe('BrowserExtensionChatServer', () => {
       const onMessage = (data: WebSocket.RawData) => {
         const message = JSON.parse(data.toString()) as {
           method?: string;
-          params?: { thread?: { turns?: Array<{ items?: Array<{ text?: string }> }> } };
+          params?: { display?: { turns?: Array<{ items?: Array<{ text?: string }> }> } };
         };
-        const hasAnswer = message.params?.thread?.turns?.some(turn =>
+        const hasAnswer = message.params?.display?.turns?.some(turn =>
           turn.items?.some(item => item.text === 'Delayed answer'),
         );
-        if (message.method !== 'thread/updated' || !hasAnswer) return;
+        if (message.method !== 'browser/thread/updated' || !hasAnswer) return;
         clearTimeout(timeout);
         socket.off('message', onMessage);
         resolve(message as Record<string, unknown>);
@@ -884,7 +901,7 @@ describe('BrowserExtensionChatServer', () => {
       threadId: 'one',
     });
 
-    await expect(finalHistory).resolves.toMatchObject({ method: 'thread/updated' });
+    await expect(finalHistory).resolves.toMatchObject({ method: 'browser/thread/updated' });
     expect(historyReads).toBeGreaterThanOrEqual(6);
     socket.close();
   });
@@ -904,7 +921,7 @@ describe('BrowserExtensionChatServer', () => {
     ]);
     vi.mocked(api.consumeTurnError).mockReturnValue('Provider quota exceeded.');
     vi.mocked(api.getTurnState).mockResolvedValue({
-      id: 'run-1',
+      id: fixtureTurnId,
       status: 'failed',
       executionSettled: true,
     });
@@ -941,14 +958,14 @@ describe('BrowserExtensionChatServer', () => {
         },
       },
     });
-    expect(api.consumeTurnError).toHaveBeenCalledWith('one', 'run-1');
+    expect(api.consumeTurnError).toHaveBeenCalledWith('one', fixtureTurnId);
     socket.close();
   });
 
   it('does not use an old assistant reply to complete a newly interrupted pending input', async () => {
     const api = createApi();
     vi.mocked(api.getTurnState).mockResolvedValue({
-      id: 'run-1',
+      id: fixtureTurnId,
       status: 'failed',
       executionSettled: true,
     });
@@ -1006,7 +1023,7 @@ describe('BrowserExtensionChatServer', () => {
         },
       },
     });
-    expect(api.consumeTurnError).toHaveBeenCalledWith('one', 'run-1');
+    expect(api.consumeTurnError).toHaveBeenCalledWith('one', fixtureTurnId);
     socket.close();
   }, 12_000);
 
@@ -1029,7 +1046,7 @@ describe('BrowserExtensionChatServer', () => {
       return { known: true, running: runtimeReads < 4 };
     });
     vi.mocked(api.getTurnState).mockImplementation(async () => ({
-      id: 'run-1',
+      id: fixtureTurnId,
       status: runtimeReads < 4 ? 'inProgress' : 'completed',
       executionSettled: runtimeReads >= 4,
     }));
@@ -1100,29 +1117,28 @@ describe('BrowserExtensionChatServer', () => {
     await request(socket, '1', 'initialize');
     socket.send(JSON.stringify({ method: 'initialized' }));
 
-    await expect(
-      request(socket, '2', 'thread/read', { includeTurns: true, threadId: 'one' }),
-    ).resolves.toMatchObject({
-      result: {
-        thread: {
-          turns: [
+    const response = await request(socket, '2', 'thread/read', {
+      includeTurns: false, browser: { includeDisplay: true }, threadId: 'one',
+    });
+    const thread = (response.result as { thread: { turns: unknown[]; browser: { display: unknown } } }).thread;
+    expect(thread.turns).toEqual([]);
+    expect(thread.browser.display).toMatchObject({
+      turns: [
+        {
+          items: [
+            { type: 'userMessage' },
+            { content: ['I should read the file.'], type: 'reasoning' },
             {
-              items: [
-                { type: 'userMessage' },
-                { content: ['I should read the file.'], type: 'reasoning' },
-                {
-                  input: { path: 'notes.txt' },
-                  output: 'hello',
-                  status: 'completed',
-                  toolName: 'read',
-                  type: 'toolCall',
-                },
-                { text: 'Done', type: 'agentMessage' },
-              ],
+              input: { path: 'notes.txt' },
+              output: 'hello',
+              status: 'completed',
+              toolName: 'read',
+              type: 'toolCall',
             },
+            { text: 'Done', type: 'agentMessage' },
           ],
         },
-      },
+      ],
     });
     socket.close();
   });
@@ -1149,7 +1165,7 @@ describe('BrowserExtensionChatServer', () => {
       const timeout = setTimeout(() => reject(new Error('Timed out waiting for recovery.')), 4_000);
       socket.on('message', data => {
         const message = JSON.parse(data.toString()) as Record<string, unknown>;
-        if (message.method !== 'thread/updated') return;
+        if (message.method !== 'browser/thread/updated') return;
         updates.push(message);
         if (JSON.stringify(message).includes('Recovered answer')) {
           clearTimeout(timeout);
@@ -1172,7 +1188,7 @@ describe('BrowserExtensionChatServer', () => {
   it('uses delta reads during a running turn instead of rebuilding every poll', async () => {
     const api = createApi();
     vi.mocked(api.getTurnState).mockResolvedValue({
-      id: 'run-1',
+      id: fixtureTurnId,
       status: 'inProgress',
       executionSettled: false,
     });
@@ -1232,19 +1248,19 @@ describe('BrowserExtensionChatServer', () => {
     socket.on('message', data => notifications.push(JSON.parse(data.toString())));
     const started = await request(socket, 'start', 'turn/start', {
       threadId: 'one',
-      clientTurnId,
-      message: 'Question',
+      browser: { clientTurnId },
+      input: [{ type: 'text', text: 'Question' }],
     });
     expect(started).toMatchObject({
       result: {
         turn: {
           id: clientTurnId,
-          nativeRunId: 'native-run',
-          executionSettled: false,
         },
+        browser: { activeTurn: { id: clientTurnId, nativeRunId: 'native-run', executionSettled: false } },
       },
     });
-    expect(api.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ clientTurnId }));
+    expect(api.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ clientTurnId }),
+      expect.objectContaining({ assertCurrent: expect.any(Function) }));
     expect(
       await request(socket, 'stale-stop', 'turn/interrupt', {
         threadId: 'one',
@@ -1254,14 +1270,14 @@ describe('BrowserExtensionChatServer', () => {
     expect(api.interruptThread).not.toHaveBeenCalled();
     expect(
       await request(socket, 'stop', 'turn/interrupt', { threadId: 'one', turnId: clientTurnId }),
-    ).toMatchObject({ result: { status: 'requested', executionSettled: false } });
+    ).toMatchObject({ result: {} });
     expect(api.interruptThread).toHaveBeenCalledWith('one', clientTurnId);
     await new Promise(resolve => setTimeout(resolve, 1_650));
     expect(notifications.some(message => message.method === 'turn/completed')).toBe(false);
     expect(
-      await request(socket, 'read', 'thread/read', { threadId: 'one', turnId: clientTurnId }),
+      await request(socket, 'read', 'thread/read', { threadId: 'one', browser: { turnId: clientTurnId } }),
     ).toMatchObject({
-      result: { activeTurn: { id: clientTurnId, status: 'unknown', executionSettled: false } },
+      result: { thread: { browser: { activeTurn: { id: clientTurnId, status: 'unknown', executionSettled: false } } } },
     });
     socket.close();
   });
@@ -1276,8 +1292,8 @@ describe('BrowserExtensionChatServer', () => {
     expect(
       await request(socket, 'invalid', 'turn/start', {
         threadId: 'one',
-        clientTurnId: 'not-a-uuid',
-        message: 'Question',
+        browser: { clientTurnId: 'not-a-uuid' },
+        input: [{ type: 'text', text: 'Question' }],
       }),
     ).toMatchObject({ error: { data: { requestSent: false } } });
     expect(api.sendMessage).not.toHaveBeenCalled();

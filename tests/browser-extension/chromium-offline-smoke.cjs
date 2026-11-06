@@ -2,9 +2,9 @@
 // Uses a temporary generated extension, loopback HTTP/WebSocket fixtures and an
 // isolated Chromium context. No native host registration or real account access.
 const assert = require('node:assert/strict');
+const { randomUUID } = require('node:crypto');
 const fs = require('node:fs');
 const http = require('node:http');
-const os = require('node:os');
 const path = require('node:path');
 const { WebSocketServer } = require('ws');
 const {
@@ -16,8 +16,10 @@ async function main() {
   if (!playwrightPath)
     throw new Error('Pass an installed playwright-core path; no download is performed.');
   const { chromium } = require(path.resolve(playwrightPath));
-  const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'browser-host-'));
   const repoRoot = path.resolve(__dirname, '../..');
+  const fixtureRoot = path.join(repoRoot, 'build/browser-extension/offline-smoke');
+  fs.mkdirSync(fixtureRoot, { recursive: true });
+  const fixture = fs.mkdtempSync(path.join(fixtureRoot, 'browser-host-'));
   const extension = path.join(fixture, 'build/browser-extension/chrome-extension');
   fs.cpSync(
     path.join(repoRoot, 'plugins/browser-extensions/browser-assistant'),
@@ -29,9 +31,13 @@ async function main() {
     recursive: true,
   });
   const requests = [];
+  const serverResponses = [];
   const sockets = new Set();
   let running = false;
   let activeTurnId = '';
+  let activeNativeRunId = '';
+  let startedAt = 0;
+  let completedAt;
   let stopRequested = false;
   let historyTurns = [
     {
@@ -121,10 +127,51 @@ async function main() {
       ],
     },
   ];
-  const fixtureThread = () => ({
+  const fixtureDisplay = () => ({ id: 'one', turns: historyTurns.map(({ id, items }) => ({ id, items })) });
+  const fixtureActiveTurn = () => activeTurnId ? ({
+    id: activeTurnId,
+    nativeRunId: activeNativeRunId,
+    status: running ? 'inProgress' : 'interrupted',
+    executionSettled: !running,
+    startedAt,
+    ...(completedAt === undefined ? {} : { completedAt }),
+  }) : null;
+  const fixtureTurn = status => ({
+    id: activeTurnId, items: [], itemsView: 'notLoaded', status, error: null,
+    startedAt: Math.floor(startedAt / 1000),
+    completedAt: completedAt === undefined ? null : Math.floor(completedAt / 1000),
+    durationMs: completedAt === undefined ? null : completedAt - startedAt,
+  });
+  const fixtureThread = (includeBrowser = false) => ({
     id: 'one',
-    status: { type: running ? 'active' : 'idle' },
-    turns: historyTurns,
+    sessionId: 'one',
+    forkedFromId: null,
+    parentThreadId: null,
+    preview: '',
+    ephemeral: false,
+    section: null,
+    sectionEnteredAt: null,
+    projectId: null,
+    historyMode: 'legacy',
+    modelProvider: 'fixture',
+    model: 'fixture/model',
+    reasoningEffort: null,
+    createdAt: 1,
+    updatedAt: 2,
+    recencyAt: 2,
+    status: running ? { type: 'active', activeFlags: [] } : { type: 'idle' },
+    path: null,
+    cwd: fixture,
+    cliVersion: '0.0.0',
+    originator: null,
+    source: 'appServer',
+    threadSource: null,
+    agentNickname: null,
+    agentRole: null,
+    gitInfo: null,
+    name: 'Offline verification',
+    turns: [],
+    ...(includeBrowser ? { browser: { display: fixtureDisplay(), activeTurn: fixtureActiveTurn() } } : {}),
   });
   let browser;
   const server = http.createServer((req, res) => {
@@ -160,60 +207,79 @@ async function main() {
     socket.on('message', raw => {
       const request = JSON.parse(String(raw));
       if (request.id === undefined) return;
+      if (typeof request.method !== 'string') {
+        serverResponses.push(request);
+        socket.send(JSON.stringify({ method: 'serverRequest/resolved',
+          params: { requestId: request.id, threadId: 'one' } }));
+        return;
+      }
       requests.push(request);
       let result = {};
+      if (request.method === 'initialize')
+        result = {
+          userAgent: 'OfflineFixture/codex-compatible', codexHome: fixture,
+          platformFamily: process.platform === 'win32' ? 'windows' : 'unix',
+          platformOs: process.platform === 'win32' ? 'windows' : process.platform === 'darwin' ? 'macos' : process.platform,
+        };
       if (request.method === 'thread/list')
         result = {
-          data: [
-            {
-              id: 'one',
-              name: 'Offline verification',
-              status: { type: running ? 'active' : 'idle' },
-            },
-          ],
+          data: [fixtureThread()], nextCursor: null, backwardsCursor: null,
         };
-      if (request.method === 'thread/read')
+      if (request.method === 'thread/resume')
         result = {
-          thread: fixtureThread(),
-          activeTurn: running
-            ? {
-                id: activeTurnId,
-                nativeRunId: activeTurnId,
-                status: 'inProgress',
-                executionSettled: false,
-              }
-            : null,
+          thread: fixtureThread(request.params.browser?.includeDisplay === true),
+          model: 'fixture/model', modelProvider: 'fixture', cwd: fixture, serviceTier: null,
+          approvalPolicy: 'on-request', approvalsReviewer: 'user',
+          sandbox: { type: 'externalSandbox', networkAccess: 'enabled' },
+          permissionMode: 'ask', reasoningEffort: null,
         };
-      if (request.method === 'composer/options')
+      if (request.method === 'model/list')
         result = {
-          models: [{ id: 'fixture/model', name: 'Offline model' }],
+          data: [{ id: 'fixture/model', model: 'fixture/model', displayName: 'Offline model',
+            description: '', hidden: false, isDefault: true, supportedReasoningEfforts: [],
+            defaultReasoningEffort: 'default', inputModalities: ['text', 'image'], supportsPersonality: false,
+            upgrade: null, upgradeInfo: null, availabilityNux: null, modelSpecialty: null,
+            multiAgentVersion: null, additionalSpeedTiers: [], serviceTiers: [],
+            defaultServiceTier: null, availableAccessPrograms: null }],
+          nextCursor: null,
+        };
+      if (request.method === 'browser/composer/options')
+        result = {
           modelRef: 'fixture/model',
           permissionMode: 'ask',
         };
+      if (request.method === 'thread/unsubscribe') result = { status: 'unsubscribed' };
       if (request.method === 'turn/start') {
         running = true;
-        activeTurnId = request.params.clientTurnId || 'run-1';
+        activeTurnId = request.params.browser.clientTurnId;
+        activeNativeRunId = randomUUID();
+        startedAt = Date.now();
+        completedAt = undefined;
         historyTurns.push({
           id: 'current-history',
           items: [
             {
               id: 'current-user',
               type: 'userMessage',
-              content: [{ type: 'text', text: request.params.input[0].text }],
+              content: request.params.input,
+              rawMessage: { role: 'user', content: request.params.input },
             },
           ],
         });
         result = {
-          turn: {
-            id: activeTurnId,
-            nativeRunId: activeTurnId,
-            status: 'inProgress',
-            executionSettled: false,
-          },
+          turn: fixtureTurn('inProgress'),
+          browser: { activeTurn: fixtureActiveTurn() },
         };
       }
       if (request.method === 'turn/interrupt') stopRequested = true;
       socket.send(JSON.stringify({ id: request.id, result }));
+      if (request.method === 'turn/start')
+        setImmediate(() => {
+          if (socket.readyState === 1) socket.send(JSON.stringify({
+            method: 'turn/started',
+            params: { threadId: 'one', turnId: activeTurnId, turn: fixtureTurn('inProgress') },
+          }));
+        });
     });
   });
   try {
@@ -324,7 +390,7 @@ async function main() {
         globalThis.chrome = {
           windows: { getCurrent: async () => ({ id: 1 }) },
           runtime: {
-            sendMessage: async () => ({ ok: true, localAppServerUrl: url }),
+            sendMessage: async () => ({ ok: true, localAppServerUrl: url, runtimeConfig: { protocolVersion: 3 } }),
             getManifest: () => ({ version: '0.0.0' }),
             openOptionsPage() {},
           },
@@ -332,7 +398,7 @@ async function main() {
           permissions: { request: async () => false },
         };
       },
-      origin.replace('http:', 'ws:'),
+      `${origin.replace('http:', 'ws:')}/app-server?token=${'a'.repeat(64)}`,
     );
     await page.goto(`${origin}/sidepanel.html`);
     await page
@@ -485,10 +551,11 @@ async function main() {
     for (const socket of sockets)
       socket.send(
         JSON.stringify({
-          method: 'thread/updated',
+          method: 'browser/thread/updated',
           params: {
             threadId: 'one',
-            thread: fixtureThread(),
+            display: fixtureDisplay(),
+            activeTurn: fixtureActiveTurn(),
           },
         }),
       );
@@ -496,18 +563,81 @@ async function main() {
       .getByText('Retained cancelled input', { exact: true })
       .waitFor({ state: 'detached' });
     await page.fill('#prompt', 'Offline test request');
+    const imageBytes = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aP9sAAAAASUVORK5CYII=', 'base64');
+    await page.locator('#fileInput').setInputFiles([
+      { name: 'offline.png', mimeType: 'image/png', buffer: imageBytes },
+      { name: 'offline.txt', mimeType: 'text/plain', buffer: Buffer.from('Offline document') },
+    ]);
+    await page.locator('.attachment-chip').nth(1).waitFor();
     await page.click('#send');
     await page.waitForFunction(
       () => globalThis.document.querySelector('#send')?.getAttribute('aria-label') === 'Stop',
     );
+    await page.locator('#messages .message.user img').waitFor();
+    assert.equal(await page.locator('#messages .message.user img').count(), 1);
+    const ask = (id, method, params) => {
+      for (const socket of sockets) socket.send(JSON.stringify({ id, method, params: {
+        threadId: 'one', turnId: activeTurnId, itemId: 'approval-item', ...params,
+      } }));
+    };
+    ask('offline-command', 'item/commandExecution/requestApproval', {
+      command: 'read report.md', cwd: fixture, reason: 'Inspect the selected report',
+      availableDecisions: ['accept', 'acceptForSession', 'decline', 'cancel'],
+    });
+    await page.locator('#approvals').getByText('read report.md', { exact: true }).waitFor();
+    assert.equal(serverResponses.some(response => response.id === 'offline-command'), false);
+    assert.match(await page.locator('#approvals').innerText(), /Inspect the selected report/);
+    await page.locator('#approvals [data-decision="accept"]').evaluate(button => {
+      button.click();
+      button.click();
+    });
+    await page.waitForFunction(() => document.getElementById('approvals')?.classList.contains('hidden'));
+    await page.waitForTimeout(50);
+    assert.deepEqual(serverResponses.filter(response => response.id === 'offline-command'),
+      [{ id: 'offline-command', result: { decision: 'accept' } }]);
+    ask('offline-input', 'item/tool/requestUserInput', { isBlocking: true, questions: [
+      { id: 'permission', header: 'App permissions', question: 'Allow this App to inspect the selected report?', isOther: false, isSecret: false,
+        options: [{ label: 'Allow once', description: 'This request only' },
+          { label: 'Always allow this App', description: 'Persist these permissions; manage them in App settings.' },
+          { label: 'Deny', description: 'Reject this request' }] },
+      { id: 'private', header: 'Private value', question: 'Enter the requested private value', isSecret: true, options: null },
+    ] });
+    await page.locator('#approvals input[type="password"]').waitFor();
+    assert.equal(await page.locator('#approvals button[type="submit"]').isDisabled(), true);
+    assert.equal(await page.locator('#approvals input:checked').count(), 0);
+    assert.match(await page.locator('#approvals').innerText(), /manage them in App settings/);
+    await page.locator('#approvals input[type="radio"]').nth(1).check();
+    assert.equal(await page.locator('#approvals button[type="submit"]').isDisabled(), true);
+    await page.locator('#approvals input[type="password"]').fill('offline-private-value');
+    assert.doesNotMatch(await page.locator('#approvals').innerText(), /offline-private-value/);
+    await page.screenshot({ path: path.join(evidenceDirectory, 'sidepanel-approval.png'), fullPage: true });
+    await page.locator('#approvals button[type="submit"]').click();
+    await page.waitForFunction(() => document.getElementById('approvals')?.classList.contains('hidden'));
+    await page.waitForTimeout(50);
+    assert.deepEqual(serverResponses.find(response => response.id === 'offline-input'), { id: 'offline-input', result: {
+      answers: { permission: { answers: ['Always allow this App'] }, private: { answers: ['offline-private-value'] } },
+    } });
+    assert.doesNotMatch(await page.locator('#approvals').innerHTML(), /offline-private-value/);
+    ask('offline-withdrawn', 'item/commandExecution/requestApproval', { command: 'withdrawn command' });
+    const withdrawn = page.locator('#approvals [data-decision="accept"]');
+    await withdrawn.waitFor();
+    const staleButton = await withdrawn.elementHandle();
+    for (const socket of sockets) socket.send(JSON.stringify({ method: 'serverRequest/resolved',
+      params: { requestId: 'offline-withdrawn', threadId: 'one' } }));
+    await page.waitForFunction(() => document.getElementById('approvals')?.classList.contains('hidden'));
+    await staleButton.evaluate(button => button.click());
+    await page.waitForTimeout(50);
+    assert.equal(serverResponses.some(response => response.id === 'offline-withdrawn'), false);
     const emit = (seq, stream, data) => {
       const frame = {
-        method: 'thread/stream',
+        method: 'browser/thread/stream',
         params: {
           threadId: 'one',
+          turnId: activeTurnId,
+          startedAt,
           kind: 'agent',
           event: {
-            runId: activeTurnId,
+            runId: activeNativeRunId,
             sessionKey: 'agent:main:justdo:one',
             sessionId: null,
             lifecycleGeneration: null,
@@ -718,12 +848,24 @@ async function main() {
     const finalText =
       '## Findings\n\nThe offline report is ready.\n\n- Connection checked\n- Process details preserved\n\n```ts\nconst connected = true;\n```';
     emit(10, 'assistant', { text: finalText });
+    // The shared core lane is available to standard clients, while the rich
+    // side panel must not append a second copy of this same native answer.
+    const coreItem = { id: 'standard-final-item', type: 'agentMessage', text: '', phase: 'commentary',
+      memoryCitation: null, delivery: null, questions: null };
+    for (const socket of sockets) {
+      const base = { threadId: 'one', turnId: activeTurnId };
+      socket.send(JSON.stringify({ method: 'item/started', params: { ...base, item: coreItem, startedAtMs: Date.now() } }));
+      socket.send(JSON.stringify({ method: 'item/agentMessage/delta', params: { ...base, itemId: coreItem.id, delta: finalText } }));
+      socket.send(JSON.stringify({ method: 'item/completed', params: { ...base, item: { ...coreItem, text: finalText, phase: 'final_answer' }, completedAtMs: Date.now() } }));
+    }
     await page.getByText('The offline report is ready.').waitFor();
+    assert.equal(await page.getByText('The offline report is ready.').count(), 1);
     await page.click('#send');
     await page.waitForTimeout(150);
     assert.equal(stopRequested, true);
     assert.equal(await page.locator('#send').getAttribute('aria-label'), 'Stop');
     running = false;
+    completedAt = Date.now();
     historyTurns[1].items.push(
       {
         id: 'thinking',
@@ -749,7 +891,8 @@ async function main() {
           method: 'turn/completed',
           params: {
             threadId: 'one',
-            turn: { id: activeTurnId, status: 'interrupted', executionSettled: true },
+            turnId: activeTurnId,
+            turn: fixtureTurn('interrupted'),
           },
         }),
       );
@@ -758,13 +901,31 @@ async function main() {
     );
     assert.equal(requests.filter(request => request.method === 'turn/start').length, 1);
     assert.equal(requests.filter(request => request.method === 'turn/interrupt').length, 1);
+    assert.deepEqual(requests.find(request => request.method === 'turn/interrupt').params,
+      { threadId: 'one', turnId: activeTurnId });
     assert.equal(
       requests.find(request => request.method === 'turn/start').params.input[0].text,
       'Offline test request',
     );
+    const submitted = requests.find(request => request.method === 'turn/start').params;
+    assert.equal(submitted.model, 'fixture/model');
+    assert.equal(submitted.browser.clientTurnId, activeTurnId);
+    assert.equal(submitted.browser.permissionMode, 'ask');
+    assert.deepEqual(submitted.input[1], { type: 'image', url: `data:image/png;base64,${imageBytes.toString('base64')}` });
+    assert.deepEqual(submitted.browser.attachments, [{ name: 'offline.txt', mimeType: 'text/plain',
+      base64Data: Buffer.from('Offline document').toString('base64') }]);
+    assert.notEqual(activeNativeRunId, activeTurnId, 'Native identity must be explicitly bound, not inferred from the logical turn');
+    for (const key of ['clientTurnId', 'modelRef', 'permissionMode', 'attachments', 'pageContext'])
+      assert.equal(Object.hasOwn(submitted, key), false, `${key} must remain in the browser namespace`);
+    assert.ok(requests.some(request => request.method === 'model/list'));
+    assert.ok(requests.some(request => request.method === 'thread/resume' &&
+      request.params.excludeTurns === true && request.params.browser.includeDisplay === true));
+    for (const method of ['composer/options', 'thread/read', 'thread/image'])
+      assert.equal(requests.some(request => request.method === method), false, `Unexpected legacy/implicit subscription method ${method}`);
     assert.deepEqual(errors, []);
     await page.getByText('The offline report is ready.').waitFor();
     assert.equal(await page.getByText('Offline test request', { exact: true }).count(), 1);
+    assert.equal(await page.locator('#messages .message.user img').count(), 1);
     assert.equal(await page.getByText('Retained cancelled input', { exact: true }).count(), 0);
     await page.waitForTimeout(300);
     await page.screenshot({
@@ -778,6 +939,11 @@ async function main() {
         auth,
         overlay: {
           history: true,
+          canonicalProtocolAndBrowserView: true,
+          explicitApprovalAndSecretInput: true,
+          resolvedApprovalCannotReply: true,
+          standardImageAndDocumentExtension: true,
+          explicitLogicalNativeBinding: true,
           pendingInputRecoveryAndRemoval: true,
           send: true,
           realLoopbackWebSocket: true,
@@ -808,6 +974,8 @@ async function main() {
     for (const socket of sockets) socket.terminate();
     await new Promise(resolve => ws.close(resolve));
     await new Promise(resolve => server.close(resolve));
+    assert.equal(path.dirname(path.resolve(fixture)), path.resolve(fixtureRoot));
+    assert.ok(path.basename(fixture).startsWith('browser-host-'));
     fs.rmSync(fixture, { recursive: true, force: true });
   }
 }

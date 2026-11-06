@@ -1,3 +1,4 @@
+import { webcrypto } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -263,7 +264,8 @@ describe('browser extension preparation', () => {
       expect(optionsHtml).toContain('id="manualConnection"');
       expect(optionsHtml).toContain('id="tabAccess"');
       expect(optionsHtml).toContain('id="appearance"');
-      expect(optionsHtml.match(/<section\b/g)).toHaveLength(4);
+      expect(optionsHtml).toContain('id="webLaunchSites"');
+      expect(optionsHtml.match(/<section\b/g)).toHaveLength(5);
       expect(optionsHtml).not.toMatch(/openclaw|Diagnostics/i);
       expect(optionsHtml).toContain('icons/icon128.png');
       for (const size of [16, 32, 48, 128]) {
@@ -283,6 +285,45 @@ describe('browser extension preparation', () => {
       ).toBe(true);
       expect(fs.existsSync(path.join(second.outputDir, 'manifest.template.json'))).toBe(false);
       expect(() => verifyBrowserExtension(second.outputDir, { repoRoot })).not.toThrow();
+    } finally {
+      fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  test('loads the standalone website bundle on an HTTP site without secure-context crypto APIs', async () => {
+    const repoRoot = createFixture();
+    try {
+      const { outputDir } = prepareBrowserExtension({ repoRoot });
+      const document = {};
+      let receive: (event: unknown) => void = () => {};
+      const view: Record<string, any> = {
+        location: { origin: 'http://business.internal' },
+        addEventListener: (kind: string, listener: typeof receive) => { if (kind === 'message') receive = listener; },
+        setTimeout, clearTimeout,
+        postMessage: (message: Record<string, unknown>, target: string) => {
+          expect(target).toBe('http://business.internal');
+          receive({ source: view, origin: target, data: { ...message, direction: 'extension', kind: 'reply', ok: true } });
+        },
+      };
+      view.top = view;
+      vm.runInNewContext(fs.readFileSync(path.join(outputDir, 'browser-assistant.js'), 'utf8'), {
+        window: view, document, TextEncoder,
+        crypto: { getRandomValues: webcrypto.getRandomValues.bind(webcrypto) },
+      });
+      const attributes = new Map();
+      const button = {
+        ownerDocument: document, tagName: 'BUTTON', type: 'button', isConnected: true,
+        getRootNode: () => document,
+        setAttribute: (key: string, value: string) => attributes.set(key, value),
+        getAttribute: (key: string) => attributes.get(key),
+        removeAttribute: (key: string) => attributes.delete(key),
+      };
+      const binding = await view.browserAssistant.bind(button, { prompt: 'Summarize' });
+      expect(typeof binding.update).toBe('function');
+      await binding.unbind();
+      const content = fs.readFileSync(path.join(outputDir, 'web-launch-content.js'), 'utf8');
+      expect(content).not.toMatch(/^\s*(?:import|export)\s/m);
+      expect(() => verifyBrowserExtension(outputDir, { repoRoot })).not.toThrow();
     } finally {
       fs.rmSync(repoRoot, { recursive: true, force: true });
     }

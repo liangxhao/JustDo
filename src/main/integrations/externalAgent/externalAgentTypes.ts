@@ -1,3 +1,4 @@
+import type { CoworkAttachmentPayload } from '../../../shared/cowork/attachments';
 import type { SessionRunTiming } from '../../../shared/cowork/sessionRun';
 import type { ExternalSessionStatus } from '../../../shared/integrations/externalSession';
 import type { NormalizedAgentEvent } from '../../../shared/openclaw/agentEvent';
@@ -9,6 +10,7 @@ export interface ExternalAgentModel {
   id: string;
   name: string;
   isDefault: boolean;
+  inputModalities?: readonly ('text' | 'image')[];
 }
 
 export interface ExternalAgentThread {
@@ -57,9 +59,13 @@ export interface ExternalAgentNativeBinding {
   sessionId: string;
   lifecycleRevision: string;
   client: GatewayClientLike;
+  /** Media-only native admission binds approvals only after its verified ACK. */
+  runIdReady?: Promise<string | undefined>;
 }
 
 export interface ExternalAgentRunHooks {
+  /** Validated host media; text-only transports leave this absent. */
+  attachments?: readonly CoworkAttachmentPayload[];
   /** Main-only declaration of an interactive approval presenter installed by onPrepared. */
   interactiveApprovals?: true;
   /** Installs session-scoped tools and approval ownership before native admission. */
@@ -105,6 +111,7 @@ export type ExternalAgentExecution = (input: {
   sessionId: string;
   runId: string;
   message: string;
+  attachments?: readonly CoworkAttachmentPayload[];
   modelRef?: string;
   onEvent: (event: NormalizedAgentEvent) => void;
   signal: AbortSignal;

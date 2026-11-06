@@ -64,7 +64,7 @@ describe.skipIf(process.platform !== 'win32' || !compilerPath)(
       const rendezvous = {
         localAppServerUrl: `ws://127.0.0.1:41235/app-server?token=${'b'.repeat(64)}`,
         pid,
-        protocolVersion: 2,
+        protocolVersion: 3,
       };
       fs.writeFileSync(rendezvousPath, JSON.stringify(rendezvous));
       return rendezvous;
@@ -123,14 +123,14 @@ describe.skipIf(process.platform !== 'win32' || !compilerPath)(
       expect(responses[0]).toMatchObject({
         jsonrpc: '2.0',
         id: 0,
-        result: { manifestSchemaVersion: 2, nativeHostProtocolVersion: 2 },
+        result: { manifestSchemaVersion: 2, nativeHostProtocolVersion: 2, supportedProtocolVersions: [3] },
       });
       expect(responses[1]).toMatchObject({
         jsonrpc: '2.0',
         id: 1,
         result: {
           localAppServerUrl: rendezvous.localAppServerUrl,
-          runtimeConfig: { protocolVersion: 2 },
+          runtimeConfig: { protocolVersion: 3 },
         },
       });
       expect(fs.existsSync(receiptPath)).toBe(false);

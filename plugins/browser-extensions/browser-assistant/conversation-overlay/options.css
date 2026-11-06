@@ -186,3 +186,33 @@ textarea:disabled {
     padding: 18px;
   }
 }
+
+#webLaunchOrigin {
+  width: 100%;
+  padding: 10px 12px;
+  font: inherit;
+  color: var(--chat-text);
+  background: var(--chat-bg);
+  border: 1px solid var(--chat-border);
+  border-radius: 9px;
+}
+.web-launch-choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-weight: 400;
+  margin: 9px 0;
+}
+.web-launch-choice input {
+  flex: none;
+  margin-top: 5px;
+}
+.web-launch-site {
+  border-top: 1px solid var(--chat-border);
+  padding-top: 14px;
+  margin-top: 18px;
+  overflow-wrap: anywhere;
+}
+#webLaunchSites [data-error='true'] {
+  color: var(--chat-error);
+}

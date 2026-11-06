@@ -43,8 +43,8 @@ function fixture(timing?: Parameters<typeof createExternalAgentExecution>[1]) {
       _params?: unknown,
       _options?: Parameters<GatewayClientLike['request']>[2],
     ): Promise<unknown> => {
-      if (method === 'sessions.describe') return Promise.resolve({ session: { ...identity } });
-      if (method === 'agent')
+      if (method === 'sessions.describe') return Promise.resolve({ session: { key: 'native-key', ...identity } });
+      if (method === 'agent' || method === 'chat.send')
         return new Promise(resolve => {
           finishAgent = resolve;
         });
@@ -61,11 +61,18 @@ function fixture(timing?: Parameters<typeof createExternalAgentExecution>[1]) {
     return { ok: true, modelRef: model };
   });
   const registerUnknownSessionRun = vi.fn();
+  const fetchSessionHistoryByKey = vi.fn(async () => ({ sessionKey: 'native-key', messages: [] as unknown[] }));
   Object.assign(runtime, {
     ensureReady: async () => {},
     getGatewayClient: () => current,
+    getGatewayClientGeneration: () => 1,
+    captureGatewayResponseContext: () => {
+      const source = current;
+      return { isCurrent: () => current === source, isResponseError: () => false };
+    },
     patchSessionModel,
     registerUnknownSessionRun,
+    fetchSessionHistoryByKey,
   });
   const router = {
     isSessionActive: () => false,
@@ -116,6 +123,7 @@ function fixture(timing?: Parameters<typeof createExternalAgentExecution>[1]) {
     cleanup,
     onPrepared,
     registerUnknownSessionRun,
+    fetchSessionHistoryByKey,
     finishAgent: (value: unknown) => finishAgent(value),
     finishReceipt: (value: unknown) => finishReceipt(value),
     replaceClient: (replacement: GatewayClientLike) => {
@@ -162,6 +170,98 @@ const emitTerminal = (f: ReturnType<typeof fixture>, text = cappedReply, seq = 1
   });
 
 describe('external execution ownership', () => {
+  it('passes real image bytes through the native agent RPC while retaining its revision CAS', async () => {
+    const f = fixture();
+    const attachments = [{ name: 'photo.png', mimeType: 'image/png', base64Data: 'aW1hZ2U=' }];
+    const task = f.execute({ ...f.input, attachments });
+    await vi.waitFor(() => expect(f.request).toHaveBeenCalledWith('agent', expect.objectContaining({
+      message: 'task', attachments: [{ type: 'image', mimeType: 'image/png', fileName: 'photo.png', content: 'aW1hZ2U=' }],
+      expectedExistingSessionId: 'native-id', expectedExistingSessionLifecycleRevision: 'revision-1',
+    }), expect.anything()));
+    f.finishAgent(final);
+    await vi.waitFor(() => expect(f.request).toHaveBeenCalledWith('agent.wait', expect.anything()));
+    f.finishReceipt(receipt);
+    await expect(task).resolves.toBe('Confirmed answer');
+    expect(f.request.mock.calls.filter(([method]) => method === 'chat.send')).toHaveLength(0);
+  });
+
+  it('admits image-only input through chat.send without placeholder text and activates prepared approval ownership after ACK', async () => {
+    const f = fixture();
+    const task = f.execute({ ...f.input, message: '', attachments: [{ name: 'photo.png', mimeType: 'image/png', base64Data: 'aW1hZ2U=' }] });
+    await vi.waitFor(() => expect(f.request).toHaveBeenCalledWith('chat.send', expect.objectContaining({
+      message: '', sessionKey: 'native-key', sessionId: 'native-id', idempotencyKey: 'run',
+      deliver: false, attachments: [{ type: 'image', mimeType: 'image/png', fileName: 'photo.png', content: 'aW1hZ2U=' }],
+    }), expect.anything()));
+    const binding = f.onPrepared.mock.calls[0][0] as unknown as { runIdReady: Promise<string | undefined> };
+    let ready = false;
+    void binding.runIdReady.then(() => { ready = true; });
+    await Promise.resolve();
+    expect(ready).toBe(false);
+    f.finishAgent({ status: 'started', runId: 'run' });
+    await expect(binding.runIdReady).resolves.toBe('run');
+    await vi.waitFor(() => expect(f.request).toHaveBeenCalledWith('agent.wait', expect.anything()));
+    f.finishReceipt(receipt);
+    await expect(task).resolves.toBe('Confirmed answer');
+    expect(f.request.mock.calls.filter(([method]) => method === 'agent')).toHaveLength(0);
+  });
+
+  it.each(['revision', 'runId'])('retains an uncertain media admission after a changed %s without retry or approval activation', async kind => {
+    const f = fixture();
+    const task = f.execute({ ...f.input, message: '', attachments: [{ name: 'photo.png', mimeType: 'image/png', base64Data: 'aW1hZ2U=' }] });
+    const failed = expect(task).rejects.toBeInstanceOf(ExternalAgentOutcomeUnknownError);
+    await vi.waitFor(() => expect(f.request.mock.calls.some(([method]) => method === 'chat.send')).toBe(true));
+    const binding = f.onPrepared.mock.calls[0][0] as unknown as { runIdReady: Promise<string | undefined> };
+    if (kind === 'revision') f.identity.lifecycleRevision = 'replacement';
+    f.finishAgent({ status: 'started', runId: kind === 'runId' ? 'foreign-run' : 'run' });
+    await failed;
+    await expect(binding.runIdReady).resolves.toBeUndefined();
+    expect(f.cleanup).not.toHaveBeenCalled();
+    expect(f.registerUnknownSessionRun).toHaveBeenCalledWith('local', 'run', expect.anything());
+    expect(f.request.mock.calls.filter(([method]) => method === 'chat.send')).toHaveLength(1);
+    expect(f.request.mock.calls.filter(([method]) => method === 'agent.wait')).toHaveLength(0);
+  });
+
+  it('recovers a long media-only reply solely from one exact native final message and all of its text blocks', async () => {
+    const f = fixture();
+    const completeText = fullReply + '\nFinal second block';
+    f.fetchSessionHistoryByKey.mockResolvedValue({ sessionKey: 'native-key', messages: [
+      { role: 'assistant', phase: 'final_answer', content: [{ type: 'text', text: 'Foreign reply' }], __openclaw: { runId: 'foreign-run' } },
+      { role: 'assistant', phase: 'commentary', content: 'Working', __openclaw: { runId: 'run' } },
+      { role: 'assistant', phase: 'final_answer', content: [{ type: 'text', text: fullReply }, { type: 'text', text: 'Final second block' }], __openclaw: { runId: 'run' } },
+    ] });
+    const task = f.execute({ ...f.input, message: '', attachments: [{ name: 'photo.png', mimeType: 'image/png', base64Data: 'aW1hZ2U=' }] });
+    await vi.waitFor(() => expect(f.request.mock.calls.some(([method]) => method === 'chat.send')).toBe(true));
+    f.finishAgent({ status: 'started', runId: 'run' });
+    await vi.waitFor(() => expect(f.request).toHaveBeenCalledWith('agent.wait', expect.anything()));
+    f.finishReceipt(cappedReceipt);
+    await expect(task).resolves.toBe(completeText);
+    expect(f.fetchSessionHistoryByKey).toHaveBeenCalledWith('native-key', undefined, expect.objectContaining({ forceFullSnapshot: true, signal: expect.any(AbortSignal) }));
+    expect(f.onSettled).toHaveBeenCalledWith('completed');
+  });
+
+  it.each(['foreign-run', 'identity-change', 'commentary', 'ambiguous-final', 'mismatched-snapshot', 'conflicting-stamps'])
+  ('does not fill a capped media reply from unsafe history: %s', async reason => {
+    const f = fixture();
+    f.fetchSessionHistoryByKey.mockImplementation(async () => {
+      if (reason === 'identity-change') f.identity.lifecycleRevision = 'replacement';
+      const message = { role: 'assistant', phase: reason === 'commentary' ? 'commentary' : 'final_answer',
+        content: reason === 'mismatched-snapshot' ? 'Other prefix' + fullReply : fullReply,
+        ...(reason === 'conflicting-stamps' ? { runId: 'foreign-run' } : {}),
+        __openclaw: { runId: reason === 'foreign-run' ? 'foreign-run' : 'run' } };
+      return { sessionKey: 'native-key', messages: reason === 'ambiguous-final' ? [message, message] : [message] };
+    });
+    const task = f.execute({ ...f.input, message: '', attachments: [{ name: 'photo.png', mimeType: 'image/png', base64Data: 'aW1hZ2U=' }] });
+    const failed = expect(task).rejects.toBeInstanceOf(ExternalAgentStreamError);
+    await vi.waitFor(() => expect(f.request.mock.calls.some(([method]) => method === 'chat.send')).toBe(true));
+    f.finishAgent({ status: 'started', runId: 'run' });
+    await vi.waitFor(() => expect(f.request).toHaveBeenCalledWith('agent.wait', expect.anything()));
+    f.finishReceipt(cappedReceipt);
+    await failed;
+    expect(f.onSettled).toHaveBeenCalledWith('completed');
+    expect(f.store.finishSessionRun).toHaveBeenCalledExactlyOnceWith('timing', 'completed', expect.any(Number));
+    expect(f.cleanup).toHaveBeenCalledOnce();
+    expect(f.request.mock.calls.filter(([method]) => method === 'chat.send')).toHaveLength(1);
+  });
   it.each([false, true])(
     'declares an interactive approval surface only with an explicit flag (%s) after preparation',
     async interactive => {

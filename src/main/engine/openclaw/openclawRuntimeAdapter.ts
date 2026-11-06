@@ -129,6 +129,7 @@ import {
   pinPreparedManagedSessionModel,
   reconcilePreparedManagedSessionModel,
 } from '../gateway/managedSessionModels';
+import { admitNativeSend, notifyNativeAccepted, prepareNativeSendBinding } from '../gateway/nativeSendAdmission';
 import { enqueueSessionModelOperation } from '../gateway/sessionModelOperations';
 import { SessionRpc } from '../gateway/sessionRpc';
 import { waitForSessionStorageReadiness } from '../gateway/sessionStoragePreparation';
@@ -142,6 +143,7 @@ import type {
 } from '../gateway/types';
 import type {
   CoworkGenerateTitleOptions,
+  CoworkNativeSendBinding,
   CoworkPreparedSession,
   CoworkPrepareSessionOptions,
   CoworkRuntime,
@@ -403,6 +405,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       workspaceRoot: options.workspaceRoot,
       clientTurnId: options.clientTurnId,
       beforeNativeSend: options.beforeNativeSend,
+      finalSyncAdmission: options.finalSyncAdmission,
+      onNativeAccepted: options.onNativeAccepted,
       onNativeSendAbandoned: options.onNativeSendAbandoned,
       planMode: options.planMode,
       untrustedContext: options.untrustedContext,
@@ -1142,6 +1146,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       workspaceRoot?: string;
       clientTurnId?: string;
       beforeNativeSend?: () => Promise<void>;
+      finalSyncAdmission?: CoworkStartOptions['finalSyncAdmission'];
+      onNativeAccepted?: CoworkStartOptions['onNativeAccepted'];
       onNativeSendAbandoned?: () => Promise<void>;
       planMode?: boolean;
       untrustedContext?: string;
@@ -1152,6 +1158,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   ): Promise<void> {
     if (!hasMessageInput({ prompt, attachments: options.attachments })) {
       throw Object.assign(new Error('Prompt is required.'), { requestSent: false });
+    }
+    if (options.finalSyncAdmission && options.dispatchChatSend) {
+      throw Object.assign(new Error('Final native admission requires direct native dispatch.'), { requestSent: false });
     }
     if (this.stopSessionPromises.has(sessionId)) {
       throw Object.assign(new Error('The session is still stopping. Retry after it has stopped.'), {
@@ -1293,7 +1302,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
           ? options.attachments.map(toGatewayAttachment)
           : undefined;
         const commandSessionId =
-          options.initialModelRef ||
+          options.initialModelRef || options.finalSyncAdmission || options.onNativeAccepted ||
           goalStartObjective !== null ||
           hasSlashCommandBeforeSendHook(
             commandPrompt,
@@ -1329,6 +1338,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
           idempotencyKey: runId,
           ...(attachments ? { attachments } : {}),
         };
+        let nativeSendBinding: CoworkNativeSendBinding | undefined;
+        const isNativeSendCurrent = () => !isStartCancelled() && this.gatewayClient === client &&
+          this.gatewayClientGeneration === replayClientGeneration &&
+          replaySourceIdentity() === replayCapturedIdentity;
         const send = async () => {
           if (options.initialModelRef) {
             const assertCurrent = () => {
@@ -1356,6 +1369,18 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
               !matchesModelSelectionIdentity(options.initialModelRef, selectedRef)) {
               throw Object.assign(new Error(t('sessionModelPreparationUnconfirmed')), { requestSent: false });
             }
+          }
+          if (options.finalSyncAdmission || options.onNativeAccepted) {
+            nativeSendBinding = await prepareNativeSendBinding({
+              client, isCurrent: isNativeSendCurrent, sessionKey,
+              nativeSessionId: preparedSession.gatewaySessionId,
+              clientGeneration: replayClientGeneration,
+            });
+            if (!isNativeSendCurrent())
+              throw Object.assign(new Error('The prepared native owner changed.'), { requestSent: false });
+            admitNativeSend(nativeSendBinding, options.finalSyncAdmission);
+            if (!isNativeSendCurrent())
+              throw Object.assign(new Error('The native owner changed during admission.'), { requestSent: false });
           }
           pendingStart.phase = 'sending';
           nativeSendIssued = true;
@@ -1394,6 +1419,17 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
             (receipt.goal !== undefined && receiptGoal?.id !== receipt.goalId)
           ) {
             throw new Error('Gateway returned a mismatched Goal start receipt');
+          }
+        }
+        if (nativeSendBinding && options.onNativeAccepted) {
+          try {
+            notifyNativeAccepted({
+              binding: nativeSendBinding, receipt: result, clientTurnId: runId,
+              isCurrent: isNativeSendCurrent, onAccepted: options.onNativeAccepted,
+            });
+          } catch {
+            // The input is already accepted. An observer cannot undo its outcome.
+            console.warn(`[NativeInputAdmission] ${JSON.stringify({ code: 'ACK_OBSERVER_FAILED', sessionId })}`);
           }
         }
         options.onAccepted?.();

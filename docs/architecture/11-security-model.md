@@ -76,15 +76,15 @@ Extension 导入由用户选择安装包后直接执行，Main 在停止 Gateway
 
 ## 7. 凭据与认证
 
-| 载体                         | 当前保护与限制                                                 |
-| ---------------------------- | -------------------------------------------------------------- |
-| Gateway token                | 本地认证能力，只交集中式聊天 client；不进入日志/Redux          |
-| Chrome app-server capability | 每进程随机，连同 path/Origin 验证；与 relay/Gateway token 分离 |
+| 载体                         | 当前保护与限制                                                      |
+| ---------------------------- | ------------------------------------------------------------------- |
+| Gateway token                | 本地认证能力，只交集中式聊天 client；不进入日志/Redux               |
+| Chrome app-server capability | 每进程随机，连同 path/Origin 验证；与 relay/Gateway token 分离      |
 | 本机 app-server Bearer       | 独立持久随机令牌；受限权限文件，复制仅限主窗口主 frame；拒绝 Origin |
-| Agent CLI bridge token       | 当前用户受限发现文件与认证管道                                 |
-| 内置模型 JWT                 | 短期、账号绑定、派生快照与 exec SecretRef；退出/到期清理       |
-| 自定义模型秘密               | 产品配置来源及受限权限派生 file SecretRef；不宣称全部 OS 加密  |
-| 导入浏览器密码               | browser-import.sqlite 内 safeStorage 密文，Renderer 不读取     |
+| Agent CLI bridge token       | 当前用户受限发现文件与认证管道                                      |
+| 内置模型 JWT                 | 短期、账号绑定、派生快照与 exec SecretRef；退出/到期清理            |
+| 自定义模型秘密               | 产品配置来源及受限权限派生 file SecretRef；不宣称全部 OS 加密       |
+| 导入浏览器密码               | browser-import.sqlite 内 safeStorage 密文，Renderer 不读取          |
 
 appConfigCredentials 当前兼容读取早期 OS 加密记录并清空旧 builtin 引用，不统一加密新的自定义 key。数据库整体也没有全库加密。二进制 JWT 包装不能防同用户逆向，bearer token 在有效期内仍有重放风险。
 
@@ -99,6 +99,13 @@ Electron session、Main fetch 和 Gateway 子进程是三个作用域。代理�
 Extension sidecar 显式声明 HTTP 或 HTTPS 目标、Header 名称和受管 user-info 引用，不包含值，不写永久手工配置。安装后 canonical readback 决定有效声明；代理按协议、主机、端口和路径边界选择性注入，不把凭据下发 UI。声明仍禁止嵌入账号信息、query、fragment、localhost、loopback、link-local 和 unspecified 地址。此机制是合作式配置，不是阻止恶意 Gateway 插件读取环境的沙盒。
 
 远程 URL、redirect、loopback 及内网访问按具体服务校验，不因 CSP 通配而免除 SSRF 防线。原生网络工具与浏览器网页内容仍作为不可信模型输入。
+
+app-server 标准图片下载是 Main 的独立受限调用，不继承客户端 Bearer、Gateway token、模型凭据或
+业务 Header 注入策略。当前只接受显式 RFC1918 IPv4／ULA IPv6 的 HTTP(S) 地址，拒绝主机名、
+loopback、link-local、URL 凭据、fragment 和重定向，下载有超时及流量上限；浏览器连接只允许内联
+data URL。`localImage` 仅开放给本机外部 binding，真实路径必须位于绑定 cwd，读取前后核对真实路径
+及文件句柄身份。完整输入规则见[app-server 规范](../app-server-api/external-clients.md#turnstart)。
+这些限制不把模型或附件内容视为可信指令，也不改变原生工具授权。
 
 ### 受信模型的内网访问
 

@@ -20,9 +20,10 @@ Cowork 将桌面产品会话映射到 OpenClaw 原生执行。本文以当前 se
 Redux cowork 管理列表、草稿、交互和产品状态；Lit 控制器维护当前历史窗口及实时投影。Thinking、Tool、Content 的唯一持久来源是 Gateway，不能写回 Main 或 Redux transcript cache。
 
 Chrome 扩展新建会话的创建入口保存在产品 `source` 字段，完整会话与列表摘要都携带此元数据。
-侧边栏将 `source: browser-extension` 与通用 CLI／历史外部映射分别投影为默认收起的来源分组，
-不混入最近会话或用户分组，选中对应会话时自动展开。从扩展继续桌面会话不会更改创建来源；
-来源分组不改变会话权限或原生历史所有权。
+侧边栏将 `source: browser-extension` 与 `external.origin: cli` 分别投影为默认收起的 `Chrome`／`Clients` 来源分组，
+不混入最近会话或用户分组，选中对应会话时自动展开。旧历史外部映射保留原来源，按常规目录展示，
+不自动归入 Clients 或新增专用分组。桌面继续扩展会话不改创建来源；扩展不接管桌面或 CLI 创建的会话。
+来源分组不改变会话权限或原生历史所有权，列表规则见[导航与会话列表](../features/app/navigation-and-session-list.md#自动来源组与手动组)。
 
 ## 3. 首轮发送与准入前取消
 
@@ -155,6 +156,8 @@ present_plan 将规范化计划作为工作区内受控文件持久化，并保�
 也不检测保持同一 sessionId 的其他 reset；原生 reset 的并发准入仍由 Gateway 负责。
 
 审批与计划确认分开。exec/plugin approval 使用原生期限和决策集合；Main 校验请求仍有效，不能把关闭窗口、断线或默认选择视作允许。
+
+app-server 客户端审批复用原生 owner，并区分逻辑 turn 与 ACK 确认的原生 run。只有实际发送连接能呈现；恢复观察不能接管。连接内相同命令授权与原生 App 持久授权是不同范围，审批关闭也不是执行完成。当前选择、等待与撤回规则见[会话权限](../features/chat/openclaw-permission-management.md#app-server-客户端审批)。
 
 ## 8. 子任务与平级助手
 

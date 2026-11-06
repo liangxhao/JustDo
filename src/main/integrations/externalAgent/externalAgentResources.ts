@@ -9,6 +9,7 @@ import {
 } from '../../../../plugins/extensions/runtime-services/contracts/external-mcp';
 import type { OpenClawRuntimeAdapter } from '../../engine/openclaw/openclawRuntimeAdapter';
 import type { ExternalPermissionPresenter } from '../../openclaw/permissions/externalApprovalRouting';
+import type { ExternalApprovalSessionScope } from '../../openclaw/permissions/externalApprovalSessionScope';
 import type { AcpSessionResources } from './acpSession';
 import type { ExternalAgentNativeBinding, ExternalAgentThread } from './externalAgentTypes';
 import { ExternalAgentOutcomeUnknownError } from './externalAgentTypes';
@@ -23,6 +24,8 @@ interface Lease {
 interface ApprovalOwner {
   release: () => void;
   controller: AbortController;
+  scope?: ExternalApprovalSessionScope;
+  sessionKey: string;
 }
 
 /** Product-owned leases; native Runtime Services owns MCP processes and tools. */
@@ -39,6 +42,7 @@ export class ExternalAgentResources implements AcpSessionResources {
     binding: ExternalAgentNativeBinding,
     present: ExternalPermissionPresenter,
     signal?: AbortSignal,
+    approvalScope?: ExternalApprovalSessionScope,
   ): Promise<() => void> {
     if (this.closed.has(thread.id)) throw new Error('The external session is closed.');
     const runtime = this.getRuntime();
@@ -100,9 +104,19 @@ export class ExternalAgentResources implements AcpSessionResources {
     }
     const controller = new AbortController();
     const authority = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
+    const generation = runtime.getGatewayClientGeneration?.();
+    const { runId, runIdReady, ...approvalIdentity } = binding;
+    const ownerIdentity = { ...approvalIdentity, approvalScope, clientGeneration: generation,
+      isCurrent: () => this.getRuntime() === runtime && runtime.getGatewayClient() === binding.client &&
+        runtime.getGatewayClientGeneration?.() === generation,
+    };
     const owner = {
       controller,
-      release: runtime.claimExternalApprovalOwner(binding, present, authority),
+      scope: approvalScope,
+      sessionKey: binding.sessionKey,
+      release: runIdReady
+        ? runtime.claimExternalApprovalOwner({ ...ownerIdentity, runIdReady }, present, authority)
+        : runtime.claimExternalApprovalOwner({ ...ownerIdentity, runId }, present, authority),
     };
     this.owners.set(thread.id, owner);
     return () => {
@@ -118,6 +132,8 @@ export class ExternalAgentResources implements AcpSessionResources {
     // Retire presentation immediately, but keep routing later approvals to deny
     // until exact native settlement invokes the prepared turn's cleanup.
     this.owners.get(sessionId)?.controller.abort();
+    const owner = this.owners.get(sessionId);
+    if (owner) owner.scope?.clearSession(owner.sessionKey);
     const lease = this.leases.get(sessionId);
     if (lease) await this.releaseLease(sessionId, lease);
   }

@@ -470,7 +470,9 @@ MCP Apps 使用原生认证 WS 接口，不使用生命周期补丁。关闭视�
       capability、loopback 发现、初始化、会话列表/历史、流、附件、权限/模型和 stop
       正常；不把 Gateway token/relay key 暴露给 Side Panel，断线不自动重发消息。
 - [ ] 扩展侧栏同步验证 Thinking/Tool/Content 折叠、pending 输入、乐观去重、历史
-      全量/增量身份和无 transcript 空页；桌面成功不能替代扩展客户端回归。
+      全量/增量身份和无 transcript 空页；标准图片及纯图片、无视觉模型拒绝、审批选项和撤回、
+      Secret 字段与会话／App 授权范围分别验证，详见[宿主发布检查](host-and-release.md#cliacp-与-chrome)。
+      桌面成功不能替代扩展客户端回归。
 - [ ] 网页上下文仅在用户明确授权后采集，作为本轮 private untrusted context，不能
       当用户指令或持久用户正文；切会话/页面后不使用过时上下文或误发旧附件。
 - [ ] 内置 guest 逐动作检查 task/profile/target/webContents、lease、文档和 frame。
@@ -600,7 +602,7 @@ MIT LICENSE。`upstream-source.json` 记录原始 tag、commit 和源文件 SHA-
 | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 无官网账号引导      | `provider-contract-api.ts`、`setup-api.ts`、`openclaw.plugin.json` 的 auth、wizard、CLI flags、credential import、usage/env 声明。注册与 setup 均无浏览器登录、device code、SIWC 或官网 API Key 向导。                                                                                                     |
 | 显式内网模型        | `openai-provider.ts`、`provider-policy-api.ts`、`model-auth-policy.ts`、`shared.ts`。保留原生 stream/replay/tool 语义；模型与地址由设置提供，无官网 catalog/自动发现/默认地址。检查模型级 API/baseUrl 优先于 provider 配置，未知模型不能被厂商 preset 重写。                                               |
-| 图像隔离            | `image-generation-provider.ts`、`intranet-config.ts`、`contracts/media-config.ts`。只使用 `models.providers.image-openai` 的地址/凭据；不借聊天 openai 或环境 Key。覆盖 generations、multipart edits、响应上限、私网显式允许和拒绝越界。                                                            |
+| 图像隔离            | `image-generation-provider.ts`、`intranet-config.ts`、`contracts/media-config.ts`。只使用 `models.providers.image-openai` 的地址/凭据；不借聊天 openai 或环境 Key。覆盖 generations、multipart edits、响应上限、私网显式允许和拒绝越界。                                                                   |
 | TTS                 | `speech-provider.ts`、`tts.ts`。显式地址、模型、音色、响应格式与能力专属凭据；无环境 Key/公网地址回退。覆盖内网任意模型/音色、额外参数、匿名服务、响应上限和释放。                                                                                                                                         |
 | 实时 STT            | `realtime-transcription-provider-factory.ts`。接受 HTTP(S) 与直接 WS(S) baseUrl，派生 `/realtime?intent=transcription` 时保留直接 WebSocket 协议，transport 与 header policy 使用同一地址。覆盖四种协议、并发端点、按 committed 链顺序输出、重连重置、最后 commit、溢出关闭；不借官网 profile 或环境 Key。 |
 | 文件 STT            | `audio-transcription.ts`、`media-understanding-provider.ts`。原生 multipart `/audio/transcriptions`、模型、文件名/MIME、响应与释放；使用配置域凭据，显式账号 profile 在上传前拒绝；配置缺失在上传前拒绝，上传开始后的失败不能改服务重试。                                                                  |

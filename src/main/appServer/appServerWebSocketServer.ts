@@ -304,7 +304,7 @@ export class AppServerWebSocketServer {
         () => {},
       )
       .finally(() => {
-        // A browser detach must not await ordinary late RPC results. Retain
+        // Closing a peer must not await ordinary late RPC results. Retain
         // their quota separately so reconnects cannot accumulate hung handlers.
         peer.drained = true;
         this.releasePeer(peer);

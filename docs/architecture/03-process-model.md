@@ -117,19 +117,25 @@ Renderer 仅接收含 revision 的显示资料、闭合错误码和独立账号/
 
 Gateway 的 Ed25519 连接身份通过既有 preload Store 读写 Main SQLite `kv` 的 `openclaw.gateway-renderer-device-identity.v1`，避免随机 HTTP 端口造成 `localStorage` 身份丢失。读取时核验已保存身份；无有效记录时生成并保存，存储失败时只维持当前 Renderer 的内存身份。该记录不是 transcript 缓存，也不交给 Widget iframe 或外部 guest。
 
-Thinking/Tool/Content 不经过 Main 复制给 UI。Main 只消费生命周期、身份、审批和 Goal 等产品所需事件。聊天 wire 校验与 Renderer timeline 的职责见[聊天渲染](15-chat-rendering.md)。
+桌面主聊天的 Thinking/Tool/Content 由集中式聊天 client 直接消费，Main 只处理该链路的生命周期、身份、审批和 Goal 等产品所需事件。Chrome 与外部 app-server 是独立入口：所属 Main adapter 可将认证原生流和按需历史投影成协议消息，但不建立持久正文或 Redux transcript 缓存。聊天 wire 校验与 Renderer timeline 的职责见[聊天渲染](15-chat-rendering.md)。
 
 ### 扩展与外部客户端
 
-Chrome Side Panel 不取得 Gateway token。Native host 在开发版和安装版均只发现已运行的桌面进程，返回动态 app-server URL；实例未运行时提示手动启动，扩展不能启动或重启应用。Main 校验 capability、精确 Origin、path 和消息大小。初始化完成后只接受实现的 thread/composer/turn 方法及独立的 `browser/extension/pair` 自动化配对方法。
+Chrome Side Panel 不取得 Gateway token。Native host 在开发版和安装版均只发现已运行的桌面进程，返回动态 app-server URL；实例未运行时提示手动启动，扩展不能启动或重启应用。Main 校验 capability、精确 Origin、path 和消息大小。初始化完成后只接受已实现的标准模型、线程、历史和轮次方法，以及浏览器模块明确注册的 `browser/*` 扩展方法，不提供通配 Gateway RPC。
 
-自动配对确认 Gateway 已运行后调用锁定 CLI 的本地 Gateway 唤醒入口，仅向扩展后台返回 relay pairing；不经过聊天 Controller，不将凭据交给桌面 Renderer 或写入发现文件／日志。协议详见[Chrome 接口](../app-server-api/browser/README.md)。
+自动配对确认 Gateway 已运行后调用锁定 CLI 的本地 Gateway 唤醒入口，仅向扩展后台返回 relay pairing；不经过聊天 Controller，不将凭据交给桌面 Renderer 或写入发现文件／日志。协议详见[Chrome 接口](../features/browser/extension-protocol/README.md)。
 
 Agent CLI launcher 通过当前用户管道提交白名单命令。Main 验证 token、frame、cwd、argv 与生命周期后，按 CLI、ACP 或 Codex app-server 协议进入同一会话与执行后端。只有 app-server 可传入可选 CODEX_HOME 标记目录；其他环境变量不转发。外部 CLI stdout 只返回约定可见结果，不透出运行凭据。它不复用 Chrome 的 URL capability。
 
 stdio、通用本机 WebSocket 和 Chrome 入口共用每连接一实例的 `AppServerConnection`，不再分别实现 RPC dispatcher；两类 WebSocket 复用 `AppServerWebSocketServer` 的连接、帧和背压处理。Main 在完成传输认证后注入固定能力 binding；客户端握手不能提升能力。
 
-Chrome binding 仅访问扩展来源会话，断开只释放订阅；stdio 与通用 WebSocket 复用 CLI binding，限制外部线程归属，断开请求精确取消。通用服务固定监听 loopback，要求独立 Bearer 凭据且不接受网页 Origin；主 frame 可只读查询无凭据状态，复制时按需取当前配置，重启后旧配置失效。公共协议关闭后丢弃迟到响应与通知，领域服务继续核对原生身份和整轮结算，不从连接状态推断结果。
+通用协议目录只处理标准方法和领域无关的扩展注册。浏览器的额外方法／通知、配对和网页关联
+错误脱敏全部位于浏览器模块，注册的扩展方法必须带 ID，不能覆盖标准方法。
+通用引擎只传递适配器明确构造的公开 RPC 错误数据，不识别网页关联的错误码或文案键。
+
+Chrome binding 仅访问扩展来源会话，断开撤销该 viewer 的订阅与审批交互，不取消其已发送或借用观察的原生执行；未结算 owner 保留以拒绝迟到授权。stdio 与通用 WebSocket 复用 CLI binding，限制外部线程归属，断开请求精确取消。通用服务固定监听 loopback，要求独立 Bearer 凭据且不接受网页 Origin；主 frame 可只读查询无凭据状态，复制时按需取当前生效配置。自动分配的端口可能随重启变化，显式端口或令牌变更生效后需重新复制；固定端口和持久令牌未变时，不能笼统认定重启使旧配置失效。公共协议关闭后丢弃迟到响应与通知，领域服务继续核对原生身份和整轮结算，不从连接状态推断结果。
+
+双向审批请求属于当前连接，使用独立请求 ID，与客户端 RPC 响应分开匹配。原生 resolved、到期、撤回和断线都会终止等待；关闭先使响应失效，再进行所属领域清理，不等待用户交互阻塞连接结束。Chrome 发送前的短期 metadata token 只串行化本会话的准备，不能替代原生运行身份或结算。原生 ACK 前的 prepared approval owner 有界等待实际 run 身份，不能按审批内容或最新消息认领；详细选择和 scope 生命周期见[会话权限](../features/chat/openclaw-permission-management.md#app-server-客户端审批)。
 
 见[能力与生命周期矩阵](../features/integrations/app-server.md)。
 
@@ -501,15 +507,15 @@ Team/Workflow 的 Browser 通过通用 App SDK 调用所属 Main 命令，Main �
 
 ## 11. 错误要保留可操作的区别
 
-| 错误             | 通信层结果           | 消费方处理                   |
-| ---------------- | -------------------- | ---------------------------- |
-| payload 不合法   | 拒绝，领域操作不开始 | 修正输入，不重试原样请求     |
-| 引擎未就绪       | 状态/错误随响应返回  | 展示配置或启动问题           |
-| 明确原生拒绝     | failed               | 展示拒绝原因                 |
-| 超时且可能已接收 | unknown 或查询结果   | 不盲目再次发送               |
-| 旧请求结果       | 丢弃 UI 更新         | 不覆盖当前会话               |
-| 审批过期/已解决  | 原生终态             | 关闭过期交互，不提交默认允许 |
-| 窗口销毁         | 释放 owner 资源      | 后台执行按其任务生命周期处理 |
+| 错误             | 通信层结果           | 消费方处理                             |
+| ---------------- | -------------------- | -------------------------------------- |
+| payload 不合法   | 拒绝，领域操作不开始 | 修正输入，不重试原样请求               |
+| 引擎未就绪       | 状态/错误随响应返回  | 展示配置或启动问题                     |
+| 明确原生拒绝     | failed               | 展示拒绝原因                           |
+| 超时且可能已接收 | unknown 或查询结果   | 不盲目再次发送                         |
+| 旧请求结果       | 丢弃 UI 更新         | 不覆盖当前会话                         |
+| 审批过期/已解决  | 审批交互结束         | 关闭交互，不推断执行终态或提交默认允许 |
+| 窗口销毁         | 撤销该窗口交互与资源 | 后台执行按其任务生命周期处理           |
 
 ## 12. 新增能力如何检查
 

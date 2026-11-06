@@ -30,6 +30,7 @@ export function buildExternalAgentModelCatalog(
           id,
           name: `${model.name?.trim() || model.id} (${provider.displayName || selection.providerId})`,
           isDefault: id === defaultModelRef,
+          inputModalities: model.supportsImage === true ? ['text', 'image'] : ['text'],
         });
     }
   }

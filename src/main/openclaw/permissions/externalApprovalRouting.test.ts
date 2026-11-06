@@ -3,6 +3,7 @@ import { expect, test, vi } from 'vitest';
 import { ApprovalKind, type ApprovalRequest } from '../../../shared/security/approvals';
 import type { GatewayClientLike } from '../../engine/gateway/types';
 import { ExternalApprovalRouting } from './externalApprovalRouting';
+import { ExternalApprovalSessionScope } from './externalApprovalSessionScope';
 
 function setup() {
   const row = { key: 'native-key', sessionId: 'native-id', lifecycleRevision: '1' };
@@ -153,5 +154,118 @@ test('replacing a connection never replays permission on its successor', async (
   decide('allow-once');
   await vi.waitFor(() => expect(h.routing.ownsRequest(ApprovalKind.Exec, 'approval')).toBe(false));
   expect(h.request.mock.calls.some(([method]) => method === 'exec.approval.resolve')).toBe(false);
+  release();
+});
+
+test('holds a prepared owner until the native ACK identifies the exact run', async () => {
+  const h = setup();
+  let accept!: (runId: string | undefined) => void;
+  const runIdReady = new Promise<string | undefined>(resolve => { accept = resolve; });
+  const { runId: _runId, ...identity } = h.binding;
+  const present = vi.fn(async () => 'allow-once' as const);
+  const release = h.routing.claim({ ...identity, runIdReady }, present);
+  const actual = { ...h.approval, request: { ...h.approval.request, runId: 'ack-native-root' } };
+  expect(h.routing.route(actual)).toBe(true);
+  await Promise.resolve();
+  expect(present).not.toHaveBeenCalled();
+  expect(h.request).not.toHaveBeenCalled();
+
+  accept('ack-native-root');
+  await vi.waitFor(() => expect(h.request).toHaveBeenCalledWith('exec.approval.resolve', { id: actual.id, decision: 'allow-once' }));
+  expect(present).toHaveBeenCalledOnce();
+  const foreign = { ...actual, id: 'foreign', request: { ...actual.request, runId: 'not-the-ack' } };
+  expect(h.routing.route(foreign)).toBe(true);
+  await vi.waitFor(() => expect(h.request).toHaveBeenCalledWith('exec.approval.resolve', { id: foreign.id, decision: 'deny' }));
+  expect(present).toHaveBeenCalledOnce();
+  release();
+});
+
+test('withdraws an ACK-pending presenter without releasing its approval owner', async () => {
+  const h = setup();
+  const { runId: _runId, ...identity } = h.binding;
+  const cancelled = new AbortController();
+  const present = vi.fn(async () => 'allow-once' as const);
+  const release = h.routing.claim({ ...identity, runIdReady: new Promise(() => {}) }, present, cancelled.signal);
+  expect(h.routing.route(h.approval)).toBe(true);
+  cancelled.abort();
+  await vi.waitFor(() => expect(h.request).toHaveBeenCalledWith('exec.approval.resolve', { id: h.approval.id, decision: 'deny' }));
+  expect(present).not.toHaveBeenCalled();
+  expect(h.routing.owns(h.approval)).toBe(true);
+  release();
+});
+
+test('expires an approval awaiting its native ACK without fabricating run ownership', async () => {
+  const h = setup();
+  const { runId: _runId, ...identity } = h.binding;
+  const present = vi.fn(async () => 'allow-once' as const);
+  const release = h.routing.claim({ ...identity, runIdReady: new Promise(() => {}) }, present);
+  const expiring = { ...h.approval, expiresAtMs: Date.now() + 20 };
+  expect(h.routing.route(expiring)).toBe(true);
+  await vi.waitFor(() => expect(h.request).toHaveBeenCalledWith('exec.approval.resolve', { id: expiring.id, decision: 'deny' }));
+  expect(present).not.toHaveBeenCalled();
+  release();
+});
+
+test('a session grant commits only native allow-once and reuses the exact fingerprint across settled runs', async () => {
+  const h = setup();
+  const scope = new ExternalApprovalSessionScope();
+  const binding = { ...h.binding, clientGeneration: 1, isCurrent: () => true, approvalScope: scope };
+  const present = vi.fn(async () => 'allow-session' as const);
+  h.request.mockImplementation(async (method, input) => {
+    if (method === 'sessions.describe') return { session: h.row };
+    if (method === 'exec.approval.resolve') h.routing.resolved(ApprovalKind.Exec, (input as { id: string }).id);
+    return {};
+  });
+  const first = h.routing.claim(binding, present);
+  h.routing.route(h.approval);
+  await vi.waitFor(() => expect(scope.matches(binding, h.approval)).toBe(true));
+  first();
+  const next = { ...h.approval, id: 'second', request: { ...h.approval.request, runId: 'run-b' } };
+  const second = h.routing.claim({ ...binding, runId: 'run-b' }, present);
+  h.routing.route(next);
+  await vi.waitFor(() => expect(h.request).toHaveBeenCalledWith('exec.approval.resolve', { id: next.id, decision: 'allow-once' }));
+  expect(present).toHaveBeenCalledOnce();
+  expect(h.request.mock.calls.some(([, input]) => (input as { decision?: string })?.decision === 'allow-always')).toBe(false);
+  second();
+  scope.close();
+});
+
+test('an uncertain native allow-once response never installs a session grant', async () => {
+  const h = setup();
+  const scope = new ExternalApprovalSessionScope();
+  const binding = { ...h.binding, clientGeneration: 1, isCurrent: () => true, approvalScope: scope };
+  h.request.mockImplementation(async method => {
+    if (method === 'sessions.describe') return { session: h.row };
+    throw new Error('The native response was lost.');
+  });
+  const release = h.routing.claim(binding, async () => 'allow-session');
+  h.routing.route(h.approval);
+  await vi.waitFor(() => expect(h.routing.ownsRequest(ApprovalKind.Exec, h.approval.id)).toBe(false));
+  expect(scope.matches(binding, h.approval)).toBe(false);
+  expect(h.request.mock.calls.filter(([method]) => method === 'exec.approval.resolve')).toHaveLength(1);
+  release();
+  scope.close();
+});
+
+test('routes a genuine persistent App grant while rejecting a forged or withdrawn native action', async () => {
+  const h = setup();
+  const request: ApprovalRequest = { ...h.approval, kind: ApprovalKind.Plugin, request: {
+    sessionKey: h.binding.sessionKey, runId: h.binding.runId, pluginId: 'bundle-mcp', title: 'App', description: 'Requested App permissions',
+    allowedDecisions: ['allow-always', 'deny'],
+    actions: [{ kind: 'decision', decision: 'allow-always', command: 'allow-always', label: 'Native action' }],
+  } };
+  let answer!: (decision: 'allow-always') => void;
+  const present = vi.fn(() => new Promise<'allow-always'>(resolve => { answer = resolve; }));
+  const release = h.routing.claim(h.binding, present);
+  h.routing.route(request);
+  await vi.waitFor(() => expect(present).toHaveBeenCalledTimes(1));
+  answer('allow-always');
+  await vi.waitFor(() => expect(h.request).toHaveBeenCalledWith('plugin.approval.resolve', { id: request.id, decision: 'allow-always' }));
+  const withdrawn = { ...request, id: 'withdrawn', request: { ...request.request, actions: [...request.request.actions!] } };
+  h.routing.route(withdrawn);
+  await vi.waitFor(() => expect(present).toHaveBeenCalledTimes(2));
+  withdrawn.request.actions = [];
+  answer('allow-always');
+  await vi.waitFor(() => expect(h.request).toHaveBeenCalledWith('plugin.approval.resolve', { id: withdrawn.id, decision: 'deny' }));
   release();
 });

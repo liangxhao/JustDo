@@ -316,7 +316,12 @@ Agent 的 `act` 在真实 guest 操作 lease 内先开启原生选择器拦截�
 
 ### 聊天发现与自动化配对
 
-侧栏聊天通过固定扩展 ID 的 Native Messaging 发现 Main app-server，不依赖手工 relay 配对，也不取得 Gateway token。详见[扩展侧聊](browser-extension-side-chat.md)和[Chrome 接口](../../app-server-api/browser/README.md)。
+侧栏聊天通过固定扩展 ID 的 Native Messaging 发现 Main app-server，不依赖手工 relay 配对，也不取得 Gateway token。详见[扩展侧聊](browser-extension-side-chat.md)和[Chrome 接口](extension-protocol/README.md)。
+
+聊天当前使用标准模型目录、文本／图片输入和独立审批面板；原生模型没有声明视觉能力时拒绝图片，
+不以已保存模型或自动化配对成功代替模型能力。工具审批、命令会话授权及原生 App 持久授权
+与 relay 的 Tab 授权分别管理。具体用户行为见[侧栏模型、权限与附件](browser-extension-side-chat.md#5-模型权限与附件)，
+字段和输入限制以[通用规范](../../app-server-api/external-clients.md#turnstart)为准。
 
 Automatic connection 点击后立即显示连接进度，失败提示允许重试。设置页状态轮询只读取原生控制器状态，不能隐式启动配对；自动重试仍由原生 watchdog 负责。Main 合并进行中的配对请求，完成或失败即释放，不缓存配对凭据；Gateway 配置与权限检查保持执行。
 

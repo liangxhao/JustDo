@@ -10,7 +10,7 @@ import {
 } from './browserExtensionChatServer';
 
 const execFileAsync = promisify(execFile);
-const APP_SERVER_PROTOCOL_VERSION = 2;
+const APP_SERVER_PROTOCOL_VERSION = 3;
 export const BROWSER_EXTENSION_RESTART_SWITCH = '--justdo-browser-extension-restart-app-server';
 
 type Rendezvous = BrowserExtensionAppServerCapability & {

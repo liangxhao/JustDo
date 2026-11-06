@@ -129,6 +129,19 @@ export interface CoworkRuntimeEvents {
 
 import type { CoworkAttachmentPayload } from '../../shared/cowork/attachments';
 
+/** Main-owned identity captured after all asynchronous preparation. */
+export interface CoworkNativeSendBinding {
+  sessionKey: string;
+  nativeSessionId: string;
+  lifecycleRevision: string;
+  clientGeneration: number;
+}
+
+export interface CoworkNativeAcceptedBinding extends CoworkNativeSendBinding {
+  nativeRunId: string;
+  clientTurnId: string;
+}
+
 export type CoworkStartOptions = {
   /** Main-validated composer selection for the initial native admission. */
   initialModelRef?: string;
@@ -136,6 +149,10 @@ export type CoworkStartOptions = {
   expectedInitialSessionId?: string;
   /** Main-owned preparation at the actual native send boundary. */
   beforeNativeSend?: () => Promise<void>;
+  /** Synchronous Main-only wire admission; incompatible with dispatchChatSend. */
+  finalSyncAdmission?: (binding: CoworkNativeSendBinding) => void;
+  /** Observes an explicit raw native ACK; never a locally inferred run identity. */
+  onNativeAccepted?: (binding: CoworkNativeAcceptedBinding) => void;
   /** Called only once the owning sender has closed without issuing native chat.send. */
   onNativeSendAbandoned?: () => Promise<void>;
   skillIds?: string[];

@@ -80,7 +80,7 @@ function validateAppServer(value) {
       url.hash ||
       [...url.searchParams.keys()].join(',') !== 'token' ||
       !/^[0-9a-f]{64}$/u.test(url.searchParams.get('token') ?? '') ||
-      value.runtimeConfig?.protocolVersion !== 2
+      value.runtimeConfig?.protocolVersion !== 3
     ) {
       return null;
     }
@@ -96,7 +96,7 @@ export async function ensureAppServer(clientId) {
     const constraints = {
       manifestSchemaVersion: 2,
       nativeHostName: NATIVE_HOST,
-      requiredAppServerProtocolVersion: 2,
+      requiredAppServerProtocolVersion: 3,
       requiredNativeHostProtocolVersion: 2,
     };
     const hello = await connection.request('codexRuntime/hello', { constraints });
@@ -104,7 +104,7 @@ export async function ensureAppServer(clientId) {
       hello?.manifestSchemaVersion !== 2 ||
       hello?.nativeHostProtocolVersion !== 2 ||
       !Array.isArray(hello?.supportedProtocolVersions) ||
-      !hello?.supportedProtocolVersions?.includes(2)
+      !hello?.supportedProtocolVersions?.includes(3)
     ) {
       throw nativeError(
         'The extension and desktop app versions are incompatible.',

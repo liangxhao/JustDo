@@ -70,7 +70,7 @@ describe('browser extension native messaging rendezvous', () => {
 
     const rendezvousPath = browserExtensionRendezvousPath(userDataPath);
     await expect(fs.promises.readFile(rendezvousPath, 'utf8')).resolves.toBe(
-      JSON.stringify({ localAppServerUrl, pid: process.pid, protocolVersion: 2 }),
+      JSON.stringify({ localAppServerUrl, pid: process.pid, protocolVersion: 3 }),
     );
 
     await clearBrowserExtensionAppServer(userDataPath);
@@ -87,7 +87,7 @@ describe('browser extension native messaging rendezvous', () => {
       JSON.stringify({
         localAppServerUrl: `ws://127.0.0.1:41234/app-server?token=${'b'.repeat(64)}`,
         pid: 2_147_483_647,
-        protocolVersion: 2,
+        protocolVersion: 3,
       }),
       'utf8',
     );

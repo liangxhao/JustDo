@@ -1,7 +1,10 @@
 import { initializeAppearance } from './modules/appearance.js';
 import { AppServerClient } from './modules/conversation-client.js';
+import { createWebLaunchPanel } from './modules/web-launch-panel.js';
 import {
+  browserDisplayThread,
   isCurrentThreadRunning,
+  isSettledTurnNotification,
   mergePendingUserMessage,
   messagesFromThread,
   shouldShowTurnError,
@@ -9,6 +12,7 @@ import {
 import { BrowserExtensionStream } from './modules/sidepanel-stream.js';
 import { createMessageRenderer } from './modules/sidepanel-messages.js';
 import { createRunActivityView } from './modules/sidepanel-activity.js';
+import { createApprovalPanel } from './modules/sidepanel-approvals.js';
 import {
   localizeSidePanel,
   sidePanelConnectionError,
@@ -36,11 +40,13 @@ const messageRenderer = createMessageRenderer(messages, {
   latestButton: document.getElementById('latest'),
   processDetailsButton: document.getElementById('processDetails'),
   readImage: async (threadId, source) =>
-    (await client.request('thread/image', { threadId, source })).dataUrl,
+    (await client.request('browser/thread/image', { threadId, source })).dataUrl,
 });
+let webLaunchPanel;
 let sending = false;
 let transportReady = false;
 let sendingStartedAt = 0;
+let submissionScopeThreadId = '';
 let stoppingThreadId = '';
 const pendingSubmissions = new Map();
 const knownTurns = new Map();
@@ -87,6 +93,12 @@ function projectThreadMessages(thread, threadId = thread.id) {
 }
 
 function renderHistory(thread) {
+  renderDisplayHistory(browserDisplayThread(thread));
+}
+
+function renderDisplayHistory(display) {
+  if (!display || typeof display.id !== 'string' || !Array.isArray(display.turns)) return;
+  const thread = display;
   const view = streamView(thread.id);
   view.setHistory(thread);
   renderThreadMessages(projectThreadMessages(view.project()), thread.id);
@@ -95,9 +107,25 @@ function renderHistory(thread) {
 
 const MAX_ATTACHMENT_COUNT = 5;
 const MAX_ATTACHMENT_BYTES = 4 * 1024 * 1024;
+const MAX_MODEL_PAGES = 32;
+const approvals = createApprovalPanel(document.getElementById('approvals'), {
+  isCurrent: request => {
+    const { threadId, turnId } = request.params ?? {};
+    const pending = pendingSubmissions.get(threadId);
+    const known = knownTurns.get(threadId);
+    return (threadId === sessionSelect.value || (sending && threadId === submissionScopeThreadId)) &&
+      stoppingThreadId !== threadId &&
+      !pending?.uncertain && !known?.uncertain &&
+      (pending?.clientTurnId || known?.id) === turnId &&
+      !settledTurns.has(`${threadId}/${turnId}`);
+  },
+});
 
 const client = new AppServerClient((method, params) => {
-  if (method === 'thread/stream') {
+  // Standard item notifications serve the protocol's core history. This rich
+  // viewer consumes its explicit browser lane once, without appending both.
+  if (method === 'browser/thread/stream') {
+    if (typeof params?.threadId !== 'string' || !params.threadId) return;
     if (!streamView(params.threadId).accept(params)) return;
     if (params.threadId !== sessionSelect.value) return;
     if (streamRenderTimer === null) {
@@ -110,6 +138,7 @@ const client = new AppServerClient((method, params) => {
     }
   }
   if (method === 'connection/closed') {
+    approvals.cancelAll();
     refreshGeneration += 1;
     transportReady = false;
     setComposerReady(false);
@@ -118,6 +147,7 @@ const client = new AppServerClient((method, params) => {
     updateActivity();
   }
   if (method === 'connection/failed') {
+    approvals.cancelAll();
     transportReady = false;
     setComposerReady(false);
     errorLine.textContent = sidePanelConnectionError(params?.code);
@@ -137,17 +167,21 @@ const client = new AppServerClient((method, params) => {
       pendingSubmissions.delete(params.threadId);
       clearAttachments();
     }
-    setRunningTurn(params.threadId, params?.turn?.id, params?.turn?.nativeRunId, true);
+    setRunningTurn(params.threadId, params?.turn?.id, undefined, true);
   }
-  if (method === 'thread/updated' && params?.threadId === sessionSelect.value) {
-    renderHistory(params.thread);
+  if (method === 'browser/thread/updated' && params?.threadId === sessionSelect.value) {
+    const expectedTurnId =
+      pendingSubmissions.get(params.threadId)?.clientTurnId || knownTurns.get(params.threadId)?.id;
+    const settled = applyTurnObservation(params.threadId, params.activeTurn, expectedTurnId);
+    if (params.display?.id === params.threadId) renderDisplayHistory(params.display);
+    if (settled) void refreshAll(params.threadId);
   }
   if (method === 'turn/completed' && params?.threadId !== sessionSelect.value) {
-    if (params?.turn?.executionSettled !== true || !params.turn.id) return;
+    if (!isSettledTurnNotification(params)) return;
+    approvals.cancelTurn(params.threadId, params.turn.id);
     const expectedId =
       knownTurns.get(params.threadId)?.id ||
-      pendingSubmissions.get(params.threadId)?.clientTurnId ||
-      streamViews.get(params.threadId)?.project().activity?.runId;
+      pendingSubmissions.get(params.threadId)?.clientTurnId;
     if (!expectedId || expectedId !== params.turn.id) return;
     pendingSubmissions.delete(params.threadId);
     knownTurns.delete(params.threadId);
@@ -156,12 +190,12 @@ const client = new AppServerClient((method, params) => {
     streamViews.get(params?.threadId)?.finish(true);
   }
   if (method === 'turn/completed' && params?.threadId === sessionSelect.value) {
-    if (params?.turn?.executionSettled !== true || !params.turn.id) return;
+    if (!isSettledTurnNotification(params)) return;
+    approvals.cancelTurn(params.threadId, params.turn.id);
     const pending = pendingSubmissions.get(params.threadId);
     const expectedId =
       knownTurns.get(params.threadId)?.id ||
-      pending?.clientTurnId ||
-      streamViews.get(params.threadId)?.project().activity?.runId;
+      pending?.clientTurnId;
     if (!expectedId || params.turn.id !== expectedId) return;
     const completedThreadId = params.threadId;
     pendingSubmissions.delete(completedThreadId);
@@ -172,7 +206,7 @@ const client = new AppServerClient((method, params) => {
     setRunningTurn('', '');
     void refreshAll(completedThreadId);
   }
-});
+}, { requestHandler: (request, options) => approvals.request(request, options) });
 
 function rememberSettledTurn(threadId, turnId) {
   settledTurns.add(`${threadId}/${turnId}`);
@@ -228,9 +262,10 @@ function updateComposerDisabledState() {
     pendingSubmissions.get(sessionSelect.value)?.uncertain === true ||
     knownTurns.get(sessionSelect.value)?.uncertain === true;
   sessionSelect.disabled = sending;
-  attachButton.disabled = sending || pending || attachmentReadsInFlight > 0;
-  fileInput.disabled = sending || pending || attachmentReadsInFlight > 0;
-  includePage.disabled = sending || pending;
+  const externalInput = webLaunchPanel?.inputAssociated() === true;
+  attachButton.disabled = externalInput || sending || pending || attachmentReadsInFlight > 0;
+  fileInput.disabled = externalInput || sending || pending || attachmentReadsInFlight > 0;
+  includePage.disabled = externalInput || sending || pending;
   permissionSelect.disabled = !composerReady || sending || pending;
   modelSelect.disabled = !composerReady || sending || pending;
   send.disabled =
@@ -240,12 +275,15 @@ function updateComposerDisabledState() {
     (currentThreadRunning && !activeTurnId) ||
     (stoppingThreadId === sessionSelect.value && Boolean(stoppingThreadId)) ||
     attachmentReadsInFlight > 0 ||
-    (!currentThreadRunning && (!composerReady || !prompt.value.trim()));
+    (!currentThreadRunning && (!composerReady || (!prompt.value.trim() && pendingAttachments.length === 0))) ||
+    (externalInput && webLaunchPanel.blocked());
+  void webLaunchPanel?.publishState();
 }
 
 function setComposerReady(ready) {
   composerReady = ready;
   updateComposerDisabledState();
+  webLaunchPanel?.ready();
 }
 
 function showError(error) {
@@ -288,6 +326,7 @@ function clearPendingUserMessage() {
 }
 
 async function refreshSessions(preferredSessionId, generation) {
+  const previousSelection = sessionSelect.value;
   const current = preferredSessionId ?? sessionSelect.value;
   const result = await client.request('thread/list');
   if (generation !== refreshGeneration) return false;
@@ -306,6 +345,7 @@ async function refreshSessions(preferredSessionId, generation) {
   if ([...sessionSelect.options].some(option => option.value === current)) {
     sessionSelect.value = current;
   }
+  if (previousSelection !== sessionSelect.value) approvals.cancelAll();
   const selectedThread = (result.data ?? []).find(entry => entry.id === sessionSelect.value);
   if (selectedThread?.status?.type === 'active') {
     setRunningTurn(
@@ -323,15 +363,38 @@ async function refreshSessions(preferredSessionId, generation) {
   return true;
 }
 
+async function readModelCatalog(generation) {
+  const entries = [];
+  const cursors = new Set();
+  let cursor;
+  for (let page = 0; page < MAX_MODEL_PAGES; page += 1) {
+    const result = await client.request('model/list', { limit: 200, ...(cursor ? { cursor } : {}) });
+    if (generation !== refreshGeneration) return [];
+    if (!Array.isArray(result.data) || result.data.length > 200)
+      throw new Error(t('modelCatalogUnavailable'));
+    entries.push(...result.data);
+    if (result.nextCursor == null) return entries;
+    if (typeof result.nextCursor !== 'string' || !result.nextCursor || cursors.has(result.nextCursor))
+      throw new Error(t('modelCatalogUnavailable'));
+    cursor = result.nextCursor;
+    cursors.add(cursor);
+  }
+  throw new Error(t('modelCatalogUnavailable'));
+}
+
 async function refreshComposerOptions(threadId, generation) {
-  const result = await client.request('composer/options', {
-    ...(threadId ? { threadId } : {}),
-  });
+  // The browser capability completes the existing host preparation before the
+  // standard catalog performs its read-only access to the connected runtime.
+  const result = await client.request('browser/composer/options', { ...(threadId ? { threadId } : {}) });
   if (generation !== refreshGeneration || sessionSelect.value !== threadId) return;
-  permissionSelect.value = result.permissionMode ?? 'full';
+  const models = await readModelCatalog(generation);
+  if (generation !== refreshGeneration || sessionSelect.value !== threadId) return;
+  permissionSelect.value = webLaunchPanel?.inputAssociated()
+    ? permissionSelect.value || 'ask'
+    : (result.permissionMode ?? 'full');
   lastPermissionMode = permissionSelect.value;
+  const localModel = webLaunchPanel?.inputAssociated() ? modelSelect.value : '';
   modelSelect.replaceChildren();
-  const models = Array.isArray(result.models) ? result.models : [];
   if (!result.modelRef) {
     const placeholder = document.createElement('option');
     placeholder.value = '';
@@ -342,11 +405,14 @@ async function refreshComposerOptions(threadId, generation) {
   for (const entry of models) {
     const option = document.createElement('option');
     option.value = entry.id;
-    option.textContent = entry.name || entry.id;
+    option.textContent = entry.displayName || entry.id;
     option.title = entry.id;
     modelSelect.append(option);
   }
-  modelSelect.value = result.modelRef ?? '';
+  modelSelect.value =
+    localModel && models.some(entry => entry.id === localModel)
+      ? localModel
+      : (result.modelRef ?? '');
   modelSelect.title = modelSelect.selectedOptions[0]?.textContent || '';
 }
 
@@ -366,10 +432,10 @@ async function refreshMessages(threadId, generation) {
     pendingSubmissions.get(threadId)?.clientTurnId ||
     knownTurns.get(threadId)?.id ||
     (activeThreadId === threadId ? activeTurnId : '');
-  const result = await client.request('thread/read', {
-    includeTurns: true,
+  const result = await client.request('thread/resume', {
+    excludeTurns: true,
     threadId,
-    ...(expectedTurnId ? { turnId: expectedTurnId } : {}),
+    browser: { includeDisplay: true, ...(expectedTurnId ? { turnId: expectedTurnId } : {}) },
   });
   if (generation !== refreshGeneration || sessionSelect.value !== threadId) {
     if (sessionSelect.value !== threadId && subscribedThreadId !== threadId) {
@@ -382,15 +448,35 @@ async function refreshMessages(threadId, generation) {
   if (previousThreadId && previousThreadId !== threadId) {
     void client.request('thread/unsubscribe', { threadId: previousThreadId }).catch(() => {});
   }
-  const observation = result.activeTurn ?? result.thread?.activeTurn;
+  const observation = result.thread?.browser?.activeTurn;
+  applyTurnObservation(threadId, observation, expectedTurnId);
+  const completed = pendingCompletions.get(threadId);
+  if (completed) {
+    const view = streamView(threadId);
+    view.setHistory(browserDisplayThread(result.thread), true);
+    view.finish(completed.status === 'interrupted');
+    pendingCompletions.delete(threadId);
+    renderThreadMessages(projectThreadMessages(view.project()), threadId);
+    if (completed.error?.message && shouldShowTurnError(threadId, sessionSelect.value, true)) {
+      showError(completed.error.message);
+    }
+  } else {
+    renderHistory(result.thread);
+  }
+}
+
+function applyTurnObservation(threadId, observation, expectedTurnId) {
   if (observation?.id && (!expectedTurnId || observation.id === expectedTurnId)) {
     if (observation.executionSettled === true) {
+      approvals.cancelTurn(threadId, observation.id);
+      if (settledTurns.has(`${threadId}/${observation.id}`)) return false;
       pendingSubmissions.delete(threadId);
       knownTurns.delete(threadId);
       rememberSettledTurn(threadId, observation.id);
       if (stoppingThreadId === threadId) stoppingThreadId = '';
       setRunningTurn('', '');
       pendingCompletions.set(threadId, observation);
+      return true;
     } else if (observation.status === 'inProgress') {
       if (pendingSubmissions.has(threadId)) clearAttachments();
       pendingSubmissions.delete(threadId);
@@ -407,19 +493,7 @@ async function refreshMessages(threadId, generation) {
       updateActivity();
     }
   }
-  const completed = pendingCompletions.get(threadId);
-  if (completed) {
-    const view = streamView(threadId);
-    view.setHistory(result.thread, true);
-    view.finish(completed.status === 'interrupted');
-    pendingCompletions.delete(threadId);
-    renderThreadMessages(projectThreadMessages(view.project()), threadId);
-    if (completed.error?.message && shouldShowTurnError(threadId, sessionSelect.value, true)) {
-      showError(completed.error.message);
-    }
-  } else {
-    renderHistory(result.thread);
-  }
+  return false;
 }
 
 async function refreshAll(preferredSessionId) {
@@ -488,6 +562,7 @@ function bytesToBase64(buffer) {
 }
 
 async function addAttachments(files) {
+  if (webLaunchPanel?.inputAssociated()) return;
   clearError();
   const draftGeneration = attachmentDraftGeneration;
   const selected = [...files];
@@ -566,9 +641,13 @@ async function collectPageContext() {
 }
 
 async function submit() {
+  if (webLaunchPanel?.inputAssociated()) {
+    await webLaunchPanel.submit('confirmed');
+    return;
+  }
   const message = prompt.value.trim();
   if (
-    !message ||
+    (!message && pendingAttachments.length === 0) ||
     sending ||
     !composerReady ||
     !transportReady ||
@@ -600,11 +679,19 @@ async function submit() {
     const pageContext = includePageContext ? await collectPageContext() : undefined;
     let threadId = sessionSelect.value;
     if (!threadId) {
-      const started = await client.request('thread/start', { title: message.split(/\r?\n/u)[0] });
+      const started = await client.request('thread/start', {
+        browser: { title: message.split(/\r?\n/u)[0] || attachments[0]?.name || t('untitled') },
+      });
       threadId = started.thread.id;
       createdThreadId = threadId;
+      const option = document.createElement('option');
+      option.value = threadId;
+      option.textContent = started.thread.name || message.split(/\r?\n/u)[0] || t('untitled');
+      sessionSelect.append(option);
+      sessionSelect.value = threadId;
     }
     preparedThreadId = threadId;
+    submissionScopeThreadId = threadId;
     streamView(threadId).start(message, {
       role: 'user',
       content: [
@@ -625,12 +712,19 @@ async function submit() {
     renderThreadMessages(projectThreadMessages(streamView(threadId).project()), threadId);
     const turnRequest = {
       threadId,
-      clientTurnId,
-      input: [{ type: 'text', text: message }],
-      ...(attachments.length ? { attachments } : {}),
-      ...(modelRef ? { modelRef } : {}),
-      permissionMode,
-      ...(pageContext ? { pageContext } : {}),
+      input: [
+        ...(message ? [{ type: 'text', text: message }] : []),
+        ...attachments.filter(attachment => attachment.mimeType.startsWith('image/'))
+          .map(attachment => ({ type: 'image', url: `data:${attachment.mimeType};base64,${attachment.base64Data}` })),
+      ],
+      ...(modelRef ? { model: modelRef } : {}),
+      browser: {
+        clientTurnId,
+        ...(attachments.some(attachment => !attachment.mimeType.startsWith('image/'))
+          ? { attachments: attachments.filter(attachment => !attachment.mimeType.startsWith('image/')) } : {}),
+        permissionMode,
+        ...(pageContext ? { pageContext } : {}),
+      },
     };
     pendingSubmissions.set(threadId, {
       clientTurnId,
@@ -642,13 +736,15 @@ async function submit() {
     const startedTurn = await client.request('turn/start', turnRequest);
     pendingSubmissions.delete(threadId);
     if (!settledTurns.has(`${threadId}/${startedTurn?.turn?.id}`)) {
-      setRunningTurn(threadId, startedTurn?.turn?.id, startedTurn?.turn?.nativeRunId, true);
+      setRunningTurn(threadId, startedTurn?.turn?.id, undefined, true);
+      applyTurnObservation(threadId, startedTurn?.browser?.activeTurn, startedTurn?.turn?.id);
     }
     clearAttachments();
     await refreshAll(threadId);
   } catch (error) {
     const threadId = preparedThreadId || createdThreadId || sessionSelect.value;
     if (turnRequestStarted && error?.requestSent !== false) {
+      approvals.cancelTurn(threadId, clientTurnId);
       const pending = pendingSubmissions.get(threadId);
       // Native acceptance can race the transport failure. Keep that exact run
       // available for Stop; otherwise freeze the original submission to read it.
@@ -670,13 +766,20 @@ async function submit() {
     }
   } finally {
     sending = false;
+    submissionScopeThreadId = '';
     updateComposerDisabledState();
     updateActivity();
-    prompt.focus();
+    // A server request can arrive before admission returns. Keep subsequent
+    // typing inside its answer field, especially when the answer is secret.
+    if (!document.getElementById('approvals').contains(document.activeElement)) prompt.focus();
   }
 }
 
 async function stopCurrentTurn() {
+  if (webLaunchPanel?.ownsThread(sessionSelect.value)) {
+    await webLaunchPanel.stop();
+    return;
+  }
   if (
     !activeThreadId ||
     !activeTurnId ||
@@ -686,6 +789,7 @@ async function stopCurrentTurn() {
   )
     return;
   const threadId = activeThreadId;
+  approvals.cancelTurn(threadId, activeTurnId);
   stoppingThreadId = threadId;
   sending = true;
   updateComposerDisabledState();
@@ -708,8 +812,18 @@ async function stopCurrentTurn() {
 }
 
 sessionSelect.addEventListener('change', () => {
-  clearAttachments();
-  void refreshAll(sessionSelect.value);
+  approvals.cancelAll();
+  const nextThread = sessionSelect.value;
+  if (!webLaunchPanel.inputAssociated()) {
+    clearAttachments();
+    void refreshAll(nextThread);
+    return;
+  }
+  void (async () => {
+    if (!(await webLaunchPanel.beforeSwitch(nextThread))) return;
+    clearAttachments();
+    await refreshAll(nextThread);
+  })();
 });
 permissionSelect.addEventListener('change', () => {
   if (
@@ -721,9 +835,11 @@ permissionSelect.addEventListener('change', () => {
     return;
   }
   lastPermissionMode = permissionSelect.value;
+  webLaunchPanel?.edit();
 });
 modelSelect.addEventListener('change', () => {
   modelSelect.title = modelSelect.selectedOptions[0]?.textContent || '';
+  webLaunchPanel?.edit('model');
 });
 attachButton.addEventListener('click', () => fileInput.click());
 fileInput.addEventListener('change', () => {
@@ -734,7 +850,8 @@ fileInput.addEventListener('change', () => {
     });
 });
 send.addEventListener('click', () => {
-  if (isCurrentThreadRunning(activeThreadId, sessionSelect.value)) void stopCurrentTurn();
+  if (webLaunchPanel?.inputAssociated()) void webLaunchPanel.submit('confirmed');
+  else if (isCurrentThreadRunning(activeThreadId, sessionSelect.value)) void stopCurrentTurn();
   else void submit();
 });
 prompt.addEventListener('keydown', event => {
@@ -746,6 +863,7 @@ prompt.addEventListener('keydown', event => {
   }
 });
 prompt.addEventListener('input', () => {
+  webLaunchPanel?.edit();
   prompt.style.height = 'auto';
   prompt.style.height = `${Math.min(prompt.scrollHeight, 180)}px`;
   updateComposerDisabledState();
@@ -756,10 +874,82 @@ document.addEventListener('visibilitychange', () => {
   if (!document.hidden) void refreshAll();
 });
 window.addEventListener('unload', () => {
+  approvals.dispose();
+  webLaunchPanel?.dispose();
   client.disconnect();
   activityView.dispose();
   messageRenderer.dispose();
   if (streamRenderTimer !== null) clearTimeout(streamRenderTimer);
 });
 
+webLaunchPanel = createWebLaunchPanel({
+  document,
+  readComposer: () => ({
+    prompt: prompt.value,
+    threadId: sessionSelect.value,
+    modelRef: modelSelect.value,
+    permissionMode: permissionSelect.value,
+    attachments: pendingAttachments.length,
+    attachmentReads: attachmentReadsInFlight,
+    ready: composerReady && transportReady,
+  }),
+  installComposer: input => {
+    if (input.threadId !== undefined && input.threadId !== sessionSelect.value) approvals.cancelAll();
+    if (input.clearPrompt) prompt.value = '';
+    if (typeof input.prompt === 'string') prompt.value = input.prompt;
+    if (input.permissionMode) {
+      permissionSelect.value = input.permissionMode;
+      lastPermissionMode = input.permissionMode;
+      modelSelect.value = '';
+    }
+    if (input.includePage !== undefined) includePage.checked = input.includePage;
+    if (
+      input.threadId &&
+      ![...sessionSelect.options].some(option => option.value === input.threadId)
+    ) {
+      const option = document.createElement('option');
+      option.value = input.threadId;
+      option.textContent = t('webLaunchTitle');
+      sessionSelect.append(option);
+    }
+    if (input.threadId !== undefined) sessionSelect.value = input.threadId;
+    prompt.style.height = 'auto';
+    prompt.style.height = `${Math.min(prompt.scrollHeight, 180)}px`;
+  },
+  refreshThread: threadId => refreshAll(threadId),
+  onReceipt: response => {
+    const threadId = response.threadId;
+    const turnId = response.internal?.clientTurnId;
+    const execution = response.receipt?.execution;
+    if (
+      threadId &&
+      turnId &&
+      execution?.status === 'running' &&
+      (!knownTurns.has(threadId) || knownTurns.get(threadId).id === turnId)
+    ) {
+      if (threadId === sessionSelect.value)
+        setRunningTurn(threadId, turnId, response.internal?.nativeRunId, true);
+      else
+        knownTurns.set(threadId, {
+          id: turnId,
+          nativeRunId: response.internal?.nativeRunId,
+          uncertain: false,
+          startedAt: knownTurns.get(threadId)?.startedAt || Date.now(),
+        });
+    }
+    if (
+      threadId &&
+      turnId &&
+      execution?.executionSettled &&
+      threadId === sessionSelect.value &&
+      knownTurns.get(threadId)?.id === turnId
+    ) {
+      if (turnId) rememberSettledTurn(threadId, turnId);
+      knownTurns.delete(threadId);
+      pendingSubmissions.delete(threadId);
+      setRunningTurn('', '');
+    }
+  },
+  onChange: updateComposerDisabledState,
+});
 void refreshAll();

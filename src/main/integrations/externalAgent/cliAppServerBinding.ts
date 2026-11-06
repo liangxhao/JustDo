@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { ExternalSessionStatus } from '../../../shared/integrations/externalSession';
+import { prepareAppServerInput } from '../../appServer/appServerInput';
 import {
   type AppServerBinding,
   type AppServerConnectionContext,
@@ -13,6 +14,8 @@ import {
   AppServerRpcError,
   isAppServerRecord,
 } from '../../appServer/appServerProtocol';
+import { fetchInputImage } from '../../core/network/fetchInputImage';
+import { ExternalApprovalSessionScope } from '../../openclaw/permissions/externalApprovalSessionScope';
 import type { AcpSessionResources } from './acpSession';
 import { createCodexApprovalPresenter } from './codexAppServerApprovals';
 import type { CodexAppServerBackend } from './codexAppServerBackend';
@@ -51,10 +54,6 @@ interface ThreadState {
   subscriptionGeneration: number;
   unsubscribe?: () => void;
 }
-
-const record = (value: unknown): AppServerParams => isAppServerRecord(value) ? value : {};
-const string = (value: unknown): string | undefined =>
-  typeof value === 'string' ? value : undefined;
 
 const rejectOverrides = (params: AppServerParams, keys: readonly string[]): void => {
   if (keys.some(key => params[key] != null))
@@ -162,6 +161,8 @@ export class CliAppServerBinding implements AppServerBinding {
   private opening = 0;
   private closed = false;
   private disconnecting?: Promise<void>;
+  private readonly peerController = new AbortController();
+  private readonly approvalScope = new ExternalApprovalSessionScope(this.peerController.signal);
 
   constructor(
     private readonly backend: CodexAppServerBackend,
@@ -228,7 +229,7 @@ export class CliAppServerBinding implements AppServerBinding {
     return projected;
   }
 
-  private deliver(method: AppServerNotificationMethod, params: AppServerParams): void {
+  private deliver(method: string, params: AppServerParams): void {
     if (this.closed || this.context.isClosed()) return;
     try {
       this.context.notify(method, params);
@@ -300,6 +301,8 @@ export class CliAppServerBinding implements AppServerBinding {
   readonly onDisconnect = (reason?: Error): Promise<void> => {
     if (this.disconnecting) return this.disconnecting;
     this.closed = true;
+    this.peerController.abort();
+    this.approvalScope.close();
     const failure = reason instanceof ExternalAgentStreamError || !reason
       ? reason : new ExternalAgentStreamError(reason.message);
     const states = [...this.states.values()];
@@ -343,6 +346,7 @@ export class CliAppServerBinding implements AppServerBinding {
     if (!existing && this.states.size + this.opening >= MAX_LOADED_THREADS)
       invalidParams(`This connection can load at most ${MAX_LOADED_THREADS} threads.`);
     rejectOverrides(params, [
+      'browser',
       'serviceTier',
       'approvalPolicy',
       'sandbox',
@@ -416,7 +420,7 @@ export class CliAppServerBinding implements AppServerBinding {
     }
   }
 
-  private startTurn(params: AppServerParams): AppServerResult {
+  private async startTurn(params: AppServerParams): Promise<AppServerResult> {
     const state = this.requireThread(params.threadId);
     if (state.active || state.unknown || state.changing)
       throw new Error('This thread has an active or unconfirmed turn.');
@@ -424,6 +428,7 @@ export class CliAppServerBinding implements AppServerBinding {
     if (metadata.status === ExternalSessionStatus.Running || metadata.executionState === ExternalExecutionState.Unknown)
       throw new ExternalAgentBusyError('This thread has an active or unconfirmed turn.');
     rejectOverrides(params, [
+      'browser',
       'effort',
       'serviceTier',
       'cwd',
@@ -442,19 +447,27 @@ export class CliAppServerBinding implements AppServerBinding {
       'turnTrigger',
       'summary',
     ]);
-    if (
-      !Array.isArray(params.input) ||
-      params.input.some(
-        item => record(item).type !== 'text' || typeof record(item).text !== 'string',
-      )
-    )
-      invalidParams('Only text input is supported by this runtime.');
-    const text = params.input.map(item => string(record(item).text) ?? '').join('\n');
-    if (!text.trim() || Buffer.byteLength(text) > 8 * 1024 * 1024)
-      invalidParams('Invalid turn input.');
     const model = optionalString(params, 'model');
     if (model !== undefined && !this.backend.models().some(candidate => candidate.id === model))
       invalidParams('The selected model is unavailable. Refresh the runtime model catalog.');
+    state.changing = true;
+    let prepared: Awaited<ReturnType<typeof prepareAppServerInput>>;
+    try {
+      prepared = await prepareAppServerInput(params.input, {
+        cwd: state.thread.cwd, allowLocalImages: true,
+        signal: this.peerController.signal, fetchImage: fetchInputImage,
+      });
+      this.assertOpen();
+      const selected = this.backend.models().find(candidate => candidate.id === (model ?? state.thread.modelRef ?? metadata.modelRef));
+      if (prepared.attachments.length && !selected?.inputModalities?.includes('image'))
+        invalidParams('The selected model does not advertise image input.');
+      const current = this.describe(state.thread.id);
+      if (current.status === ExternalSessionStatus.Running || current.executionState === ExternalExecutionState.Unknown)
+        throw new ExternalAgentBusyError('This thread has an active or unconfirmed turn.');
+    } finally {
+      state.changing = false;
+    }
+    const text = prepared.message;
     if (this.interactiveApprovals && !this.resourceThreadIds.has(state.thread.id)) {
       if (this.resourceThreadIds.size >= MAX_RESOURCE_THREADS)
         invalidParams('This connection prepared too many threads; reconnect before starting another thread.');
@@ -476,7 +489,7 @@ export class CliAppServerBinding implements AppServerBinding {
         streamError ??= new ExternalAgentStreamError(message);
         controller.abort(streamError);
       };
-      const publish = (method: AppServerNotificationMethod, params: AppServerParams, terminal = false): void => {
+      const publish = (method: string, params: AppServerParams, terminal = false): void => {
         if (state.active !== active && state.unknown?.id !== id) return;
         if ((this.closed || this.context.isClosed()) && !terminal) return;
         const envelope = { ...base, ...params };
@@ -490,7 +503,7 @@ export class CliAppServerBinding implements AppServerBinding {
       };
       const notify: AppServerNotify = (method, params) => publish(method, params);
       const terminal: AppServerNotify = (method, params) => publish(method, params, true);
-      const progress = new CodexAppServerProgress(text, notify, failStream);
+      const progress = new CodexAppServerProgress(prepared.content, notify, failStream);
       const tools = new CodexAppServerToolProgress(notify, failStream, () => progress.beforeTool());
       try {
         if (this.closed || this.context.isClosed()) return;
@@ -499,18 +512,27 @@ export class CliAppServerBinding implements AppServerBinding {
         if (streamError) throw streamError;
         if (this.closed || this.context.isClosed())
           throw active.failure ?? new ExternalAgentCancelledError('The connection closed before native admission.');
-        const hooks: ExternalAgentRunHooks | undefined = this.interactiveApprovals ? {
+        const hooks: ExternalAgentRunHooks = {
+          ...(prepared.attachments.length ? { attachments: prepared.attachments } : {}),
+          ...(this.interactiveApprovals ? {
           interactiveApprovals: true,
           onPrepared: binding => {
             if (this.closed || this.context.isClosed() || controller.signal.aborted)
               throw new ExternalAgentCancelledError('The connection closed before native admission.');
+            let nativeRunId = binding.runIdReady ? undefined : binding.runId;
+            void binding.runIdReady?.then(value => { nativeRunId = value; }, () => {});
             return this.options.resources!.prepare(
               thread, [], binding,
-              createCodexApprovalPresenter(this.context, thread.id, id, controller.signal, () => controller.abort()),
+              createCodexApprovalPresenter(this.context, thread.id, id, controller.signal, () => {
+                this.approvalScope.clearSession(binding.sessionKey);
+                controller.abort();
+              }, { nativeRunId: () => nativeRunId, allowSession: true }),
               controller.signal,
+              this.approvalScope,
             );
           },
-        } : undefined;
+          } : {}),
+        };
         const finalText = await this.backend.run(
           thread,
           id,

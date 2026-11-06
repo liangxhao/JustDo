@@ -243,7 +243,10 @@ describe('AgentBridgeServer', () => {
   it('relays both native admission items for a large escaped input without cancelling the turn', async () => {
     const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'external-agent-bridge-'));
     temporaryDirectories.push(userDataPath);
-    const text = '"'.repeat(7 * 1024 * 1024) + '任务🌍';
+    // Exercise both large escaped admission items at the current standard input
+    // limit; oversized semantic input is rejected before native execution.
+    const suffix = '任务🌍';
+    const text = '"'.repeat(2 * 1024 * 1024 - Buffer.byteLength(suffix)) + suffix;
     const thread = { id: 'thread', cwd: userDataPath, agentId: 'main', modelRef: 'provider/model' };
     const run = vi.fn<CodexAppServerBackend['run']>(async (_thread, _runId, input, onEvent) => {
       expect(input).toBe(text);

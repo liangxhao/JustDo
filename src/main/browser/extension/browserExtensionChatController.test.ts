@@ -176,6 +176,18 @@ describe('browser exact wait receipt recovery', () => {
       status: 'unknown', executionSettled: false,
     });
   });
+
+  it('does not reuse a retained wait proof after its native lifecycle revision changes', async () => {
+    const f = waitStateFixture();
+    await expect(f.controller.getTurnState('one', 'client-1')).resolves.toMatchObject({ executionSettled: true });
+    f.timing.state = 'completed';
+    f.description.session.lifecycleRevision = 'replacement-revision';
+
+    await expect(f.controller.getTurnState('one', 'client-1')).resolves.toMatchObject({
+      status: 'unknown', executionSettled: false,
+    });
+    expect(f.request.mock.calls.filter(([method]) => method === 'agent.wait')).toHaveLength(1);
+  });
 });
 
 describe('browser turn execution receipts', () => {
@@ -1598,6 +1610,7 @@ it('marks newly created extension threads while inheriting the application model
       ({
         getConfig: () => ({ workingDirectory: process.cwd(), permissionMode: 'auto' }),
         getAgent: () => ({ id: 'main', model: 'provider/legacy' }),
+        getSession: () => ({ id: 'new-thread', source: CoworkSessionSource.BrowserExtension }),
         createSession,
       }) as never,
   });

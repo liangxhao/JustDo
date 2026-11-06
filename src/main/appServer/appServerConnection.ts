@@ -19,6 +19,7 @@ import { validateCodexInitialize } from './appServerValidation';
 const MAX_SERVER_REQUESTS = 64;
 const DEFAULT_SERVER_REQUEST_TIMEOUT_MS = 60_000;
 const MAX_SERVER_REQUEST_TIMEOUT_MS = 2_147_483_647;
+const STANDARD_METHODS = new Set<string>(Object.values(AppServerMethod));
 
 interface PendingServerRequest {
   resolve: (value: unknown) => void;
@@ -106,9 +107,8 @@ export class AppServerConnection {
       if (this.initializeRequested) this.initialized = true;
       return;
     }
-    // Console notifications have never dispatched work. In particular, a
-    // notification cannot open a thread or start a task without a response.
-    if (id === undefined && !policy.executeNotifications) return;
+    // Extensions always require RPC admission, independently of legacy core notification policy.
+    if (id === undefined && (!policy.executeNotifications || !STANDARD_METHODS.has(method))) return;
     const params = isAppServerRecord(raw.params) ? raw.params : {};
     if (method === AppServerMethod.Initialize) {
       if (this.initializeRequested) {
@@ -159,15 +159,16 @@ export class AppServerConnection {
         const requestSent = error instanceof Error
           ? (error as Error & { requestSent?: boolean }).requestSent
           : undefined;
+        const publicData = error instanceof AppServerRpcError ? error.data : undefined;
         this.respondError(
           id,
           codex
             ? error instanceof AppServerRpcError ? error.code : ErrorCode.Console
             : ErrorCode.Internal,
           error instanceof Error ? error.message : 'Internal error.',
-          method === AppServerMethod.TurnStart && policy.errorStyle === AppServerErrorStyle.Standard
-            ? { requestSent: requestSent !== false }
-            : undefined,
+          method === AppServerMethod.TurnStart && typeof requestSent === 'boolean'
+            ? { ...publicData, requestSent }
+            : publicData,
         );
       }
       return;
@@ -180,8 +181,8 @@ export class AppServerConnection {
     this.closed = true;
     for (const id of this.pendingServerRequests.keys())
       this.finishServerRequest(id, undefined, reason ?? new Error('App-server connection closed.'));
-    // The binding owns disconnect semantics: Chrome detaches; console cancels
-    // its exact active or unknown run. A shared protocol never infers outcome.
+    // The binding owns disconnect semantics and its exact active or unknown runs.
+    // The shared protocol never infers an execution outcome.
     this.disconnecting = Promise.resolve().then(() => this.binding.onDisconnect(reason));
     return this.disconnecting;
   }
@@ -289,7 +290,7 @@ export class AppServerConnection {
   }
 
   private operation(method: string): AppServerOperation | undefined {
-    const { threads, turns, models, composer, images, browserPairing } = this.binding;
+    const { threads, turns, models, extensions } = this.binding;
     switch (method) {
       case AppServerMethod.ModelList: return models?.list;
       case AppServerMethod.ThreadList: return threads.list;
@@ -301,12 +302,13 @@ export class AppServerConnection {
       case AppServerMethod.ThreadResume: return threads.resume;
       case AppServerMethod.ThreadNameSet: return threads.setName;
       case AppServerMethod.ThreadUnsubscribe: return threads.unsubscribe;
-      case AppServerMethod.ThreadImage: return images?.read;
-      case AppServerMethod.ComposerOptions: return composer?.options;
-      case AppServerMethod.BrowserPair: return browserPairing?.create;
       case AppServerMethod.TurnStart: return turns.start;
       case AppServerMethod.TurnInterrupt: return turns.interrupt;
-      default: return undefined;
+      default: {
+        if (STANDARD_METHODS.has(method) || !extensions || !Object.hasOwn(extensions, method)) return undefined;
+        const operation = extensions[method];
+        return typeof operation === 'function' ? operation : undefined;
+      }
     }
   }
 }

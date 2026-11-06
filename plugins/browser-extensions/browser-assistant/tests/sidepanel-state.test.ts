@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 
 import { sidePanelText as t } from '../conversation-overlay/modules/sidepanel-i18n.js';
 import {
+  browserDisplayThread,
   isCurrentThreadRunning,
+  isSettledTurnNotification,
   mergePendingUserMessage,
   messagesFromThread,
   shouldShowTurnError,
@@ -12,6 +14,20 @@ import {
 import { BrowserExtensionStream } from '../conversation-overlay/modules/sidepanel-stream.js';
 
 describe('browser extension side panel state', () => {
+  it('reads rich presentation only from its explicit browser view without treating it as core history', () => {
+    const display = { id: 'one', turns: [{ id: 'display-group', items: [{ type: 'systemMessage', text: 'A visible notice' }] }] };
+    const core = { id: 'one', status: { type: 'active' }, turns: [{ id: 'core-run', status: 'failed', items: [] }], browser: { display } };
+    expect(browserDisplayThread(core)).toEqual({ id: 'one', status: core.status, turns: display.turns });
+    expect(browserDisplayThread({ ...core, browser: undefined }).turns).toEqual([]);
+    expect(browserDisplayThread({ ...core, browser: { display: { ...display, id: 'other' } } }).turns).toEqual([]);
+  });
+
+  it('requires an exact standard terminal and never treats an unknown outcome or a history group as settlement', () => {
+    expect(isSettledTurnNotification({ threadId: 'one', turnId: 'run', turn: { id: 'run', status: 'completed' } })).toBe(true);
+    expect(isSettledTurnNotification({ threadId: 'one', turnId: 'other', turn: { id: 'run', status: 'completed' } })).toBe(false);
+    expect(isSettledTurnNotification({ threadId: 'one', turn: { id: 'run', status: 'inProgress' } })).toBe(false);
+    expect(isSettledTurnNotification({ threadId: 'one', turn: { id: 'run', status: 'failed', error: { message: 'EXECUTION_UNKNOWN: no receipt' } } })).toBe(false);
+  });
   it('folds pending and answered question history while retaining its structured values', () => {
     const questions = [{ id: 'stack', question: 'Which stack?', options: [{ id: 'react', label: 'React' }, { id: 'vue', label: 'Vue' }] }];
     const questionResult = { version: 1, questions, response: { status: 'answered', answers: { stack: { selected: ['react'] } } } };

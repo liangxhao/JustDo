@@ -12,7 +12,7 @@ it('uses native custom-provider identity, qualified model IDs, names and default
       apiKey: 'test-key',
       apiType: 'openai',
       models: [
-        { id: 'vendor/model', name: 'Model One', enabled: true },
+        { id: 'vendor/model', name: 'Model One', enabled: true, supportsImage: true },
         { id: 'disabled', name: 'Disabled', enabled: false },
         { id: 'vendor/model', name: 'Duplicate', enabled: true },
       ],
@@ -24,6 +24,7 @@ it('uses native custom-provider identity, qualified model IDs, names and default
       id: 'acmeproxy/vendor/model',
       name: 'Model One (AcmeProxy)',
       isDefault: true,
+      inputModalities: ['text', 'image'],
     },
   ]);
 });
@@ -43,6 +44,7 @@ it('keeps identically named models from different providers distinct and exposes
   );
   expect(models.map(model => model.id)).toEqual(['openai/same', 'opencode/same']);
   expect(models.map(model => model.isDefault)).toEqual([false, true]);
+  expect(models.map(model => model.inputModalities)).toEqual([['text'], ['text']]);
   expect(JSON.stringify(models)).not.toContain('private-test-key');
   expect(JSON.stringify(models)).not.toContain('example.invalid');
 });

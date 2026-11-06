@@ -20,6 +20,7 @@ const receipt = (index: number): SessionRunTiming => ({
   endedAt: index * 1_000 + 900,
   state: 'completed',
 });
+const imageBase64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aLFsAAAAASUVORK5CYII=';
 const message = (index: string, role: string, content: unknown, runId?: string) => ({
   role,
   content,
@@ -48,6 +49,31 @@ const history = (): ExternalAgentThreadHistory => ({
 });
 
 describe('authenticated native history projection', () => {
+  it('retains authenticated native managed images in order without opening their paths or losing image-only history', () => {
+    const input = history();
+    input.messages = [{
+      role: 'user', content: '', __openclaw: {
+        id: 'real-media', runId: 'native-run-1', media: [
+          { path: '/native/media/first.png', contentType: 'image/png' },
+          { path: '/native/media/second.png', url: '/api/media/authenticated-private-route', contentType: 'image/png' },
+          { url: `data:image/png;base64,${imageBase64}`, contentType: 'image/png' },
+        ],
+      },
+    }];
+    expect(projectCodexHistory(input).turns[0].items[0].content).toEqual([
+      { type: 'localImage', path: '/native/media/first.png' },
+      { type: 'localImage', path: '/native/media/second.png' },
+      { type: 'image', url: `data:image/png;base64,${imageBase64}` },
+    ]);
+  });
+
+  it('rejects unavailable or unsupported visible native media instead of returning a text-only history', () => {
+    const input = history();
+    input.messages = [{ role: 'user', content: 'Attached media', __openclaw: { media: [{ contentType: 'audio/wav', path: '/native/media/audio.wav' }] } }];
+    expect(() => projectCodexHistory(input)).toThrow('visible media');
+    input.messages = [{ role: 'user', content: [{ type: 'image', source: { mediaType: 'image/png', data: 'YWJj' } }] }];
+    expect(() => projectCodexHistory(input)).toThrow('visible image');
+  });
   it('projects native stamped text, reasoning and tool result records using exact run receipts', () => {
     const input = history();
     input.messages.push(
@@ -250,7 +276,7 @@ describe('authenticated native history projection', () => {
           runId: 'native-run-1', messageId: 'native-user',
           message: { role: 'user', content: [
             { type: 'text', text: 'Describe this image.' },
-            { type: 'image', source: { mediaType: 'image/png', data: 'YWJj' } },
+            { type: 'image', source: { mediaType: 'image/png', data: imageBase64 } },
           ] },
         },
         {
@@ -268,7 +294,7 @@ describe('authenticated native history projection', () => {
     expect(snapshot.turns[0].items[0]).toMatchObject({
       type: 'userMessage', content: [
         { type: 'text', text: 'Describe this image.', text_elements: [] },
-        { type: 'image', url: 'data:image/png;base64,YWJj' },
+        { type: 'image', url: `data:image/png;base64,${imageBase64}` },
       ],
     });
     expect(snapshot.turns[0].items[1]).toMatchObject({

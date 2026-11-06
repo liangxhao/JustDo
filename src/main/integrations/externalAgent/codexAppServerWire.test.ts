@@ -27,6 +27,11 @@ const metadata = (): ExternalAgentThreadMetadata => ({
 });
 
 describe('Codex app-server wire projections', () => {
+  it('advertises only image support supplied by the configured model catalog', () => {
+    expect(codexModel({ id: 'provider/text', name: 'Text', isDefault: false }).inputModalities).toEqual(['text']);
+    expect(codexModel({ id: 'provider/vision', name: 'Vision', isDefault: true, inputModalities: ['text', 'image'] }).inputModalities)
+      .toEqual(['text', 'image']);
+  });
   it('reports the owning home and uses the official Windows platform names', () => {
     const platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
     try {

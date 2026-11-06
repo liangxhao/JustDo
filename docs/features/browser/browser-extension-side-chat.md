@@ -1,16 +1,21 @@
 # Chrome 扩展侧栏对话
 
-侧栏对话已接入产品会话、模型/权限选择、附件、页面上下文和停止。本文说明产品会话接入与权限边界。逐字段规范见[Chrome 接口](../../app-server-api/browser/README.md)。
+侧栏对话已接入产品会话、模型/权限选择、附件、页面上下文和停止。本文说明产品会话接入与权限边界。逐字段规范见[Chrome 接口](extension-protocol/README.md)。
 
 ## 1. 用户入口与范围
 
 工具栏按钮打开 Side Panel，对话区可新建或继续扩展创建的会话。输入区提供文字、附件、权限、模型和发送/停止；设置入口打开扩展 options，那里继续管理 OpenClaw relay 配对与 Tab 授权。侧栏不列出或接管由桌面、CLI 等其他入口创建的会话。
+
+已授权业务网页也可用本地 SDK 的真实按钮点击打开侧栏，准备独立草稿或经授权发送，并可选择分享精确首轮最终文本。站点设置、独立输入和取消/停止边界见[网页入口](webpage-conversation-entry.md)。
 
 扩展图标复用应用图标。设置页独立于上游 relay 基线，固定使用英文，分为 Automatic connection、Manual connection、Tab Access 和 Background color；界面品牌由产品元数据注入。颜色选择自动保存并同步到设置页和已打开的侧栏。
 
 两条连接独立：自动化 relay 控制已授权网页，聊天 app-server 管理产品会话。自动发现聊天服务不等于已配对自动化；重新配对 relay 也不能修复 Native host 发现失败。
 
 聊天与 CLI、通用本机 WebSocket app-server 共用 `main/appServer/AppServerConnection` 的请求解析、握手、方法路由、错误与通知出口。Chrome 与通用入口也复用 `AppServerWebSocketServer` 传输实现，保留独立的凭据和能力 binding；Chrome 仍用自动发现及固定扩展 Origin，通用原生客户端使用设置页复制的 Bearer 配置。浏览器服务只拥有鉴权和生命周期；历史投影、订阅共享与运行校准由浏览器能力 binding 提供。客户端请求不能改变绑定的能力或会话范围。分层及能力矩阵见[统一 app-server](../integrations/app-server.md)。
+
+浏览器专属方法／通知常量和网页关联错误映射归 `main/browser/extension/browserAppServerProtocol.ts`，
+由浏览器 binding 使用固定白名单注册通用 extensions；公共 app-server 目录不引用浏览器模块。
 
 Automatic connection 通过同一个产品 Native host 发现 app-server，再经独立的 `browser/extension/pair` 方法取得锁定运行时生成的本地 Gateway 配对信息。它复用发现与鉴权，不调用聊天 Controller，也不新建线程或发送消息。配对仍由上游原生状态机应用，Disconnect 可撤销迟到结果，手动配对不能被自动结果覆盖。
 
@@ -30,10 +35,10 @@ sequenceDiagram
   BG->>Host: disconnect（关闭 stdin，helper 退出）
   BG-->>Panel: localAppServerUrl
   Panel->>Main: WS initialize / initialized
-  Panel->>Main: thread/read 或 turn/start
+  Panel->>Main: thread/resume 或 turn/start
   Main->>G: 产品准备与原生执行
   G-->>Main: 流事件 / 原生历史
-  Main-->>Panel: thread/stream / turn/completed
+  Main-->>Panel: browser/thread/stream / turn/completed
 ```
 
 Native helper 只负责 framing 和实例发现，Electron GUI 不直接承担 Chrome stdin/stdout。app-server 每次启动随机 loopback 端口和 capability；退出清理发现信息，客户端重连重新取得地址，不能长期缓存旧 URL。
@@ -58,11 +63,11 @@ helper 文件名为 `<productName>-browser-extension-native-host.exe`，保留�
 
 ## 3. 当前协议子集
 
-初始化后支持 thread/list/read/start/unsubscribe、composer/options、turn/start/interrupt；通知包括 thread/started/updated/stream 与 turn/started/completed。采用 request/result/error 和 notification 形态，但不宣称实现其他产品全部私有 API。
+初始化、model/list、thread/start/resume/list/read/loaded/list/name/set、历史 Turn/Item 分页、退订、turn/start/interrupt 与标准 Item 通知均使用共享协议。浏览器特有输入位于 params.browser，当前选项和授权图片分别使用 browser/composer/options、browser/thread/image；富历史与原生增强流另由 browser/thread/updated、browser/thread/stream 提供。不宣称实现官方的全部能力。
 
 Main 复用 Cowork 身份、权限、模型和原生历史。流直接转发原生生成事件，历史轮询只用于快照校准和终态确认；扩展本身不建立另一份持久 transcript。
 
-扩展通过 thread/start 或首条 turn/start 新建的产品会话保存 `source: browser-extension`。
+扩展通过 thread/start 新建的产品会话保存 `source: browser-extension`。
 桌面会话列表按此来源自动归入“Chrome”分组，默认收起、显示会话数量，
 选中其中的会话时自动展开；组内按最近活动排序，置顶仍保留在来源分组内。
 该分组由列表投影生成，不写入用户分组表，也不提供改名、删除或移出操作。
@@ -87,9 +92,28 @@ Main 将上下文放入仅限认证本地客户端的 justdoUntrustedContext，�
 
 ## 5. 模型、权限与附件
 
-composer/options 读取真实配置模型目录，已保存会话/助手模型仅作为启动重连期间兜底，不能把已分配助手的模型当完整目录。选项未就绪时禁用操作，提升 Full access 使用产品确认。
+browser/composer/options 完成宿主准备并返回当前模型和权限；随后标准 model/list 分页读取真实可用模型目录，不将已保存会话／助手引用当作可用目录兜底。选项未就绪时禁用操作，准备完成只恢复原草稿，不自动发送；提升 Full access 使用产品确认。
 
 附件和文本有大小/数量限制，当前附件最多 5 个、原始总量 4 MiB，入站 WS 最大 8 MiB。Main 再次验证，不能只依靠浏览器表单。发送成功是原生接收，完成另由运行事件确认。
+
+图片通过标准 image/data URL 输入，文档保留 browser.attachments，支持纯图片或纯文档而不造文字。
+模型目录仅声明原生真实提供的输入模态；缺少视觉能力的模型不会被统一标成支持图片。
+
+### 侧栏审批
+
+命令和实验插件审批在侧栏独立面板显示，包含真实命令、工作目录、原因和明确选项。
+实际发送连接在 Main 捕获原生身份后拥有审批，观察者不接管；早于 ACK 的审批等精确 ACK 确认后才呈现。
+命令可允许本次、拒绝、取消；安全条件满足且服务端明确提供时，可授权同连接同会话的相同命令。
+该选项要求实验能力协商，并按命令／环境／执行计划指纹匹配；每次仍向原生回传 allow-once，
+不写永久命令规则，身份、连接或退订范围变化立即撤销。
+原生 bundle-mcp 明确提供 App 持久 action 时，插件确认才出现“始终允许此 App”及其实际范围说明。
+
+审批不默认选首项；标准问答 UI 的 Secret 使用密码输入，侧栏不把答案写入草稿、日志或本地存储。
+Secret 是客户端展示能力，当前原生插件确认不发送 Secret 问题；复杂原生问答桥不因此视为已接入。
+审批早于发送响应时，响应返回不会将焦点从答案输入框切回普通草稿；表单撤回时清空密码值。
+切换会话、断线、过期、停止或 serverRequest/resolved 立即撤回交互，迟到选择不能授权。
+Cancel 先拒绝本审批，再停止精确所属运行；普通退订／断线仍只撤观察和交互，不自动停止工作。
+普通复杂 ask_user_question、计划审核和独立文件变更审批仍沿各自契约，不伪造成命令审批。
 
 ## 6. 展示和中止
 
@@ -101,7 +125,9 @@ composer/options 读取真实配置模型目录，已保存会话/助手模型�
 提交等待期间最多暂存 64 个流事件、100 万 UTF-16 字符，取得显式 `nativeRunId` 后才通过原 reducer
 投影该运行的帧；同会话迟到的旧运行不能抢占新输入。超限丢弃整条临时缓冲，本轮余下展示只读取权威历史校准，
 不显示缺前缀的 delta；被动查看已有会话仍沿原生历史和流准入，不为此建立发送绑定。
-未知提交保留原消息投影与身份，冻结该会话的再次发送，恢复连接后仅通过 `thread/read(turnId)` 核对。
+未知提交保留原消息投影与身份，冻结该会话的再次发送；恢复连接后通过
+`thread/resume({threadId,excludeTurns:true,browser:{includeDisplay:true,turnId}})` 重建观察并核对。
+单独 `thread/read` 仍可核对，但不建立订阅。
 只有明确 `requestSent:false` 才撤回乐观输入并恢复可编辑草稿；不自动重发请求。
 
 运行层确认该输入的发送 owner 已关闭且未发出原生消息时，准备失败或取消也归入明确未发送，
@@ -111,7 +137,7 @@ composer/options 读取真实配置模型目录，已保存会话/助手模型�
 
 停止绑定当前 turn 与确切原生运行，不因面板切换取消另一会话。Stop ACK 只进入停止等待；
 idle、Chat final、读取失败和轮询超时均不结束运行。只有同一执行的原生 whole-run 结算证据
-才能产生 `executionSettled:true` 完成通知。断线保留已知身份并暂停操作，重新发现、初始化与读取原生历史后核对。
+才能产生标准 `turn/completed`；增强 `browser.activeTurn` 另带 `executionSettled:true`。断线保留已知身份并暂停操作，重新发现、初始化与读取原生历史后核对。
 
 公共原生事件有意省略内部 `lifecycleGeneration`，不能把该字段设为收到整轮回执的前提；
 同一原生 run、物理 session、原生序列和 Main 连接代次仍须精确匹配，出现显式代次时继续拒绝冲突。
@@ -186,7 +212,8 @@ Main 仅透传经过白名单筛选的 `display` 信息，保留原生失败、�
 `progress_card` 回执复用桌面的轻量文案投影。实时压缩只有在原生提供实际 marker/message
 时才显示对应记录；没有正文的压缩占位继续由执行活动条反馈，不制造摘要或完成状态。
 纯未支持的交互内容只保留“此内容请在桌面应用中查看”的可见边界，不加载未知 HTML，
-不为 Widget、MCP App 或审批伪造准入和交互能力。
+不为 Widget、MCP App 展示或未适配的审批类型伪造准入；已支持的命令／插件审批使用独立标准请求面板，
+不会从历史工具卡片恢复审批或借用过期选择。
 
 #### 动画、活动条与阅读位置
 
@@ -220,6 +247,8 @@ Native manifest 只允许固定公钥派生的扩展 ID。app-server 校验 capa
 产品组装保留锁定上游的 `manifest.version`，不将应用发布版本注入扩展 `version_name`。桌面“扩展版本”仅读取实际组装产物的 `manifest.version`，用户可在 Chrome 扩展管理页 → 详情 → 版本查看已安装版本并核对。应用版本与扩展版本分别维护；版本号不参与协议兼容判定，版本相同也不能代替连接验证，桌面不据此推断已安装扩展版本。
 
 日常 UI 修改在 conversation-overlay，relay 基线由锁定 OpenClaw 版本更新，构建接缝单独审查。回归包括 Native host 未安装、实例未运行、禁止启动与重启、旧 rendezvous、非法 Origin/token、初始化前调用、流与历史重合、停止、超限附件和页面上下文分离。
+标准图片、审批面板和失效选择也纳入回归；单元／隔离浏览器夹具与真实原生链路的验证范围统一见
+[兼容性与测试](extension-protocol/compatibility.md)，不以表单测试代替 Native 权限生效或模型视觉验收。
 
 安装连接验收分开验证实际编译的 Native host framing/发现链和隔离 Chrome 的 loopback
 WebSocket/侧栏流程；中文和空格路径、无公网依赖、冷连接失败后恢复也必须覆盖。
@@ -227,12 +256,13 @@ fixture 和本开发机通过不代表已复现用户安装现场；真正安装
 
 共享聊天解析或 stream reducer 变化时，先运行 `browser-extension:build-markdown` 与 `browser-extension:build-stream`，提交对应生成物，再执行 `browser-extension:prepare`。后者只组装已有模块，不替代前两项生成；侧栏 DOM 回归直接加载提交的模块，必须验证参数流不会提前显示 Tool 卡片。
 
-当前不能将手动 Chrome 加载验证扩展为所有 Chromium 浏览器/商店发布承诺。右键提问、YouTube transcript、tab mention 等未接通能力不列作现有功能；新增时需同步[兼容规范](../../app-server-api/browser/compatibility.md)。
+当前不能将手动 Chrome 加载验证扩展为所有 Chromium 浏览器/商店发布承诺。右键提问、YouTube transcript、tab mention 等未接通能力不列作现有功能；新增时需同步[兼容规范](extension-protocol/compatibility.md)。
 
 折叠的分组和主要操作复用桌面规则，仍有协议能力差异：当前没有完整的原生物理会话／
 历史 generation 显示作用域，不能承诺所有无可靠来源 ID 的历史更换都保留节点和选择；
 明确 reset 会隔开过程，但尚未复用桌面在非计划 reset 时清除旧显示前缀的完整投影。
-侧栏也不提供桌面 Widget、MCP App、计划审批、Monaco 工具差异和完整历史定位能力。
+侧栏也不提供桌面 Widget／MCP App 的完整展示与工具交互、计划审批、Monaco 工具差异和完整历史定位能力。
+原生明确提供的 App 权限确认已可通过标准审批面板处理，不等于支持 MCP App 的完整 UI。
 
 ## 上游来源与验证范围
 

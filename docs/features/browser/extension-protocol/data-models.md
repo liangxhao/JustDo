@@ -1,93 +1,66 @@
 # Chrome 扩展数据模型
 
-本文仅列出 Chrome 扩展入口实际产生或接受的字段，不能用于 CLI stdio 或通用本机
-WebSocket；后者的数据模型见[通用客户端](../external-clients.md)。客户端必须忽略未知字段，
-并允许标记为 nullable 的字段为 `null`。
+Chrome 的基础 Thread／Turn／Item 与 CLI stdio、通用本机 WebSocket 共用
+[通用数据模型](../../../app-server-api/external-clients.md)。本文补充显式 `browser` 字段和富显示项。
+客户端必须忽略未知字段，并允许标记为 nullable 的字段为 `null`。
 
 ## Thread
 
 ```ts
-type Thread = {
-  id: string;
-  sessionId: string;
-  name: string;
-  preview: string;
-  status: { type: 'active'; activeFlags: string[] } | { type: 'idle' } | { type: 'systemError' };
-  turns: Turn[];
-  createdAt: number;
-  updatedAt: number;
-  recencyAt: number;
-  cwd: string;
-  model: string | null;
-  modelProvider: string;
-  permissionMode: 'ask' | 'auto' | 'full';
-  canAcceptDirectInput: true;
-  cliVersion: string; // package.json.productName 的运行时值
-  ephemeral: false;
-  historyMode: 'legacy';
-  isPinned: false;
-  originator: 'justdo-chrome-extension';
-  source: 'appServer';
-  threadSource: 'user';
-  agentNickname: null;
-  agentRole: null;
-  daybreakEnabled: null;
-  environments: null;
-  extra: null;
-  forkedFromId: null;
-  gitInfo: null;
-  parentThreadId: null;
-  path: null;
-  projectId: null;
-  reasoningEffort: null;
-  section: null;
-  sectionEnteredAt: null;
+type BrowserThreadFields = {
+  display?: {
+    id: string;
+    turns: Array<{ id: string; items: BrowserDisplayItem[] }>;
+  };
+  activeTurn: BrowserActiveTurn | null;
 };
+// StandardThread & { browser: BrowserThreadFields }
 ```
 
-时间字段为 Unix 秒。JustDo SQLite 内部使用毫秒，协议适配层向下取整转换。
+`thread.turns` 是标准历史；`thread.browser.display` 是按需请求的浏览器富视图。
+标准 Thread／Turn 的 `createdAt`、`startedAt`、`completedAt` 等时间戳为 Unix 秒；
+Item 的 `startedAtMs`／`completedAtMs`、`durationMs`，以及原生增强事件和
+`browser.activeTurn` 的时间保持毫秒。
+产品持久来源保持 `browser-extension`；标准 Thread.source 映射为合法的 `appServer`，不改写成 CLI 来源。
 
 ### 状态映射
 
 | JustDo session status | app-server Thread.status                  |
 | --------------------- | ----------------------------------------- |
-| `running`             | `{ "type": "active", "activeFlags": [] }` |
-| `error`               | `{ "type": "systemError" }`               |
-| 其他                  | `{ "type": "idle" }`                      |
+| 未加载                | `{ "type": "notLoaded" }`                 |
+| 已加载且 `running`    | `{ "type": "active", "activeFlags": [] }` |
+| 已加载的其他状态      | `{ "type": "idle" }`                      |
 
-`modelProvider` 当前取 `modelRef` 的第一个 `/` 之前部分；无 modelRef 时为 `justdo`。
+`modelProvider` 采用公共 wire 投影，不使用产品品牌补造供应商身份。
+上述表是元数据投影；`thread/status/changed` 另核对当前精确 logical turn 和原生运行观察。
+未核实执行可报告 systemError，不用 idle 暗示它已结束；有后继运行时旧轮次不覆盖新状态。
 
 ## Turn
 
 ```ts
-type Turn = {
+type BrowserActiveTurn = {
   id: string;
   nativeRunId?: string;
-  status: 'inProgress' | 'completed' | 'failed' | 'interrupted';
-  items: Item[];
-  itemsView: 'full';
-  error: { message: string } | null;
-  startedAt: number | null;
-  completedAt: number | null;
-  durationMs: number | null;
-  executionSettled?: boolean;
+  status: 'inProgress' | 'unknown' | 'completed' | 'failed' | 'interrupted';
+  executionSettled: boolean;
+  startedAt?: number;
+  completedAt?: number;
+  error?: { message: string };
 };
 ```
 
-实时 turn 的 `id` 是该次提交的运行关联 ID。历史按显示消息分组，适配层生成
-`<threadId>-history-<ordinal>`，只能用于当前读取结果中的展示，客户端不应持久化或拿它调用
-控制方法。历史 Turn 当前统一输出 `status:'completed'` 且 timing 为 null，只表示
-这份历史分组已生成，不是原生执行结论；真实运行状态来自实时 turn 与原生生命周期。
+标准 Turn 的必需字段、时间和 `itemsView` 与通用入口一致，不再把显示分组标为 completed。
+缺少精确原生结算证据的历史以 `EXECUTION_UNKNOWN:` 保留未知，产品计时行不能单独证明完成。
 
-`thread/read` 的独立 `activeTurn` 字段为
-`{ id, nativeRunId?, status: 'inProgress' | 'unknown' | 'completed' | 'failed' | 'interrupted', executionSettled, error? } | null`。
-`unknown` 表示这次提交的接收或执行结算尚未核实，不能据此重发；历史 Turn 分组不替代此状态。
+`thread.browser.activeTurn` 以及 `turn/start.result.browser.activeTurn` 保留精确状态。
+`unknown` 表示这次提交的接收或执行结算尚未核实，不能据此重发；富显示分组不替代此状态。
 `id` 是提交的 `clientTurnId`，用于查询和停止；`nativeRunId` 来自已记录的原生 root run 绑定，
 仅用于原生流准入。两者可能不同，客户端不得根据字符串形状猜映射，缺少原生绑定时不得自行替代。
 
-## Item
+## BrowserDisplayItem
 
-当前历史输出以下 item。Side Panel 复用桌面历史收拢规则，将最后正文前的已结束思考、
+以下 item 只属于 `browser.display`，不是对标准 ThreadItem 的扩充或替代。
+Side Panel 复用桌面历史收拢规则，将最后正文前的已结束思考、
 工具、中间正文、压缩标记和进度回执放入“展开处理过程”区域，最终正文保留在外。
 内部连续 reasoning/toolCall 形成摘要，默认单开，批量展开后允许多个摘要和逐项例外；
 Thinking 正文随摘要直接可见，原始工具输入输出保持独立。活动过程、未知工具状态、
@@ -154,11 +127,14 @@ System 消息：
 { "id": "<threadId>-item-4", "type": "systemMessage", "text": "Notice" }
 ```
 
-一个新的 `userMessage` 会开启新的历史 Turn；后续 Thinking、工具活动及非用户消息归入该
-Turn。若历史以非用户消息开头，也会形成一个独立 Turn。上述 item 是 `thread/read` /
-`thread/updated` 的完整显示投影；实时 Thinking、正文与工具增量通过产品
-`thread/stream` 通知，尚未实现官方逐 item 增量 API。命令执行和文件变更如果由
-OpenClaw 表示为普通工具调用，会以 `toolCall` 展示，审批仍由桌面端负责。
+一个新的 `userMessage` 会开启新的显示分组；后续 Thinking、工具活动及非用户消息归入该
+分组。若历史以非用户消息开头，也形成独立分组。分组 ID 只用于当前展示，不可用于执行控制。
+上述 item 是 `thread.browser.display`／`browser/thread/updated` 的完整显示投影；
+实时 Thinking、正文与工具增强流通过 `browser/thread/stream` 通知。标准 `item/*` 通知也已实现，
+侧栏只采用增强显示一路更新正文，避免重复追加。命令执行和文件变更如果由
+OpenClaw 表示为普通工具调用，会以 `toolCall` 展示；工具卡片本身不授予执行权限。
+本轮实际发送连接另通过标准服务端请求呈现已支持的命令／插件审批，观察连接不取得审批权。
+独立文件变更审批和复杂原生问答尚未适配，不能从 `toolCall` 的名称推导其交互能力。
 
 用户/助手 item 可带 `rawMessage`，仅供共享展示解析器读取原生 content/媒体；
 压缩 `systemMessage` 也可携带经过白名单筛选的 `rawMessage.__openclaw`，包括
@@ -209,11 +185,11 @@ type PendingInput = {
 
 ## 实时流通知
 
-`thread/stream.params` 是 `{threadId,kind,event}`，kind 为 `agent` 或 `chat`，
+`browser/thread/stream.params` 是 `{threadId,kind,event,turnId?,startedAt?}`，kind 为 `agent` 或 `chat`，
 event 使用 `src/shared/openclaw/agentEvent.ts` 的 NormalizedAgentEvent /
 NormalizedChatEvent。具体字段随共享契约维护，不复制第二份原生事件 schema。
 显示控制器校验会话/run/序号，历史接管不会再次追加已显示的消息；重连重新读取
-权威历史，不重放不确定输入。外形见[通知协议](app-server.md#通知)。
+权威历史，不重放不确定输入。外形见[浏览器方法与通知](app-server.md#浏览器方法与通知)。
 
 浏览器构建适配器在已准入的流上增加本地 `activity` 投影，复用桌面聊天的阶段与进度纯函数。
 它包括 runId、stage、观察起点、最近活动时间，以及原生提供的工具/模型字符数、工具说明或重试计数。
@@ -222,7 +198,7 @@ NormalizedChatEvent。具体字段随共享契约维护，不复制第二份原�
 
 ## PageContext
 
-`pageContext` 是 JustDo 对 `turn/start.params` 的扩展字段：
+`pageContext` 位于 `turn/start.params.browser.pageContext`：
 
 ```ts
 type PageContext = {
@@ -278,5 +254,11 @@ type Attachment = {
 };
 ```
 
-扩展使用浏览器 `File` API 在本地读取附件，不把本地路径暴露给 Main。Side Panel 最多选择
-5 个文件、原始文件合计最多 4 MiB；WebSocket 请求只携带 MIME、文件名和 base64 内容。
+侧栏通过浏览器 `File` API 读取文件，不把客户端本地路径交给 Main。图片转成标准
+`input[].type: image` 的 data URL；文档使用 `turn/start.params.browser.attachments`，携带上述
+MIME、文件名和 base64 内容。两类合并计算侧栏文件数量及字节上限，支持无文字发送，不生成描述占位。
+
+标准输入类型、图片校验、原生文本／图片归一化及历史图片引用以
+[通用输入规范](../../../app-server-api/external-clients.md#turnstart)为主定义。
+浏览器只开放 data URL 图片，不开放通用本机入口的 localImage／HTTP(S) 图片能力。
+富显示项通过 `rawMessage` 展示认证原生媒体；其显示路径、分组 ID 和输入字段都不提供额外文件或执行权限。

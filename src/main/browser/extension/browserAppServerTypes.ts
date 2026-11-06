@@ -3,11 +3,15 @@ import type { BrowserExtensionMessageDisplay } from '../../../shared/browser/bro
 import type { BrowserExtensionStreamEvent } from '../../../shared/browser/browserExtensionStream';
 import type { CoworkAttachmentPayload } from '../../../shared/cowork/attachments';
 import type { PermissionMode } from '../../../shared/security/approvals';
-import { AppServerMethod } from '../../appServer/appServerProtocol';
+import type { AppServerConnectionContext } from '../../appServer/appServerProtocol';
+import type { AppServerModel, AppServerThreadHistory } from '../../appServer/appServerTypes';
+import type { CoworkStartOptions } from '../../engine/types';
+import type { ExternalApprovalSessionScope } from '../../openclaw/permissions/externalApprovalSessionScope';
+import { BrowserAppServerMethod } from './browserAppServerProtocol';
 
 export const BROWSER_EXTENSION_ID = 'jboajogplelmaahjbomgflnfngpolgcb';
 export const BROWSER_EXTENSION_NATIVE_HOST = 'com.justdo.browserextension';
-export const BROWSER_EXTENSION_PAIR_METHOD = AppServerMethod.BrowserPair;
+export const BROWSER_EXTENSION_PAIR_METHOD = BrowserAppServerMethod.BrowserPair;
 
 export interface BrowserExtensionPageContext {
   title?: string;
@@ -24,6 +28,17 @@ export interface BrowserExtensionChatRequest {
   permissionMode?: PermissionMode;
   sessionId?: string;
   pageContext?: BrowserExtensionPageContext;
+}
+
+/** Application-owned callbacks; never constructed from wire request properties. */
+export interface BrowserExtensionTrustedSendHooks {
+  assertCurrent: () => void;
+  untrustedContext?: string;
+  finalSyncAdmission?: CoworkStartOptions['finalSyncAdmission'];
+  onNativeAccepted?: CoworkStartOptions['onNativeAccepted'];
+  onNativeSendAbandoned?: () => Promise<void>;
+  /** Main-only presenter belonging to this sending peer, never browser input. */
+  approvals?: { context: AppServerConnectionContext; signal: AbortSignal; scope?: ExternalApprovalSessionScope };
 }
 
 export interface BrowserExtensionThread {
@@ -63,23 +78,36 @@ export interface BrowserExtensionTurnState {
   nativeRunId?: string;
   status: 'inProgress' | 'unknown' | 'completed' | 'failed' | 'interrupted';
   executionSettled: boolean;
+  startedAt?: number;
+  completedAt?: number;
   error?: { message: string };
 }
 
+/** Exact logical execution attribution is supplied by Main, never by browser input. */
+export type BrowserExtensionAppServerStreamEvent = BrowserExtensionStreamEvent & {
+  turnId?: string;
+  startedAt?: number;
+};
+
 export interface BrowserExtensionChatApi {
+  readonly supportsClientApprovals?: true;
   subscribeThreadEvents: (
     sessionId: string,
-    listener: (event: BrowserExtensionStreamEvent) => void,
+    listener: (event: BrowserExtensionAppServerStreamEvent) => void,
   ) => Promise<() => void>;
   listSessions: () => Promise<BrowserExtensionThread[]> | BrowserExtensionThread[];
+  getThread?: (sessionId: string) => BrowserExtensionThread;
+  setThreadName?: (sessionId: string, name: string) => BrowserExtensionThread;
+  getHistory?: (sessionId: string) => Promise<AppServerThreadHistory>;
+  getModels?: () => Promise<AppServerModel[]>;
   getMessages: (
     sessionId: string,
     options?: { forceFullSnapshot?: boolean },
   ) => Promise<BrowserExtensionMessage[]>;
   readManagedImage?: (sessionId: string, source: string) => Promise<string>;
-  startThread: (title?: string) => Promise<BrowserExtensionThread>;
+  startThread: (title?: string, options?: { cwd?: string; model?: string }) => Promise<BrowserExtensionThread>;
   getComposerOptions: (sessionId?: string) => Promise<BrowserExtensionComposerOptions>;
-  sendMessage: (request: BrowserExtensionChatRequest) => Promise<BrowserExtensionTurnResult>;
+  sendMessage: (request: BrowserExtensionChatRequest, trusted?: BrowserExtensionTrustedSendHooks) => Promise<BrowserExtensionTurnResult>;
   getThreadRuntimeStatus: (
     sessionId: string,
     options?: { forceRefresh?: boolean },

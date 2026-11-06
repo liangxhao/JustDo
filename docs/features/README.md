@@ -51,14 +51,16 @@ Swarm 主会话管理已并入主说明；批次是独立的扩展契约。Workb
 
 ## 浏览器
 
-| 文档                                                   | 分工                                                                                   |
-| ------------------------------------------------------ | -------------------------------------------------------------------------------------- |
-| [浏览器模式与设置](browser/browser-settings-design.md) | 四种工具模式、真实 guest、代理、文件与配对边界                                         |
-| [人工介入](browser/browser-intervention.md)            | 停止确认、页面保护、人工操作与明确继续                                                 |
-| [操作演示](browser/browser-operation-recording.md)     | 人工录制、步骤编辑、截图与普通消息发送                                                 |
-| [扩展侧栏聊天](browser/browser-extension-side-chat.md) | 用户路径与产品会话集成；逐字段规范见[Chrome 接口](../app-server-api/browser/README.md) |
+| 文档                                                      | 分工                                                   |
+| --------------------------------------------------------- | ------------------------------------------------------ |
+| [浏览器模式与设置](browser/browser-settings-design.md)    | 四种工具模式、真实 guest、代理、文件与配对边界         |
+| [人工介入](browser/browser-intervention.md)               | 停止确认、页面保护、人工操作与明确继续                 |
+| [操作演示](browser/browser-operation-recording.md)        | 人工录制、步骤编辑、截图与普通消息发送                 |
+| [扩展侧栏聊天](browser/browser-extension-side-chat.md)    | 侧栏用户路径、产品会话集成与权限边界                   |
+| [扩展内部协议](browser/extension-protocol/README.md)      | Native Messaging、私有 WebSocket、网页桥及生命周期契约 |
+| [网页发起扩展对话](browser/webpage-conversation-entry.md) | 按钮绑定、草稿/直接发送、站点权限与精确首轮结果分享    |
 
-这四篇共享浏览器基础，但分别负责模式配置、执行控制、演示材料和扩展客户端，不混合各自的授权与取消规则。
+这些文档共享浏览器基础，各自维护模式配置、执行控制、演示材料、扩展客户端及网页入口的授权和取消规则。
 
 ## 模型、插件与集成
 
@@ -75,7 +77,7 @@ Swarm 主会话管理已并入主说明；批次是独立的扩展契约。Workb
 | 账号       | [内置模型认证](integrations/authentication-builtin-model-lifecycle.md) | mtoken/JWT、模型发现、轮换与退出清理                     |
 | 网络       | [出站请求头](integrations/outbound-headers.md)                         | 手工与 Extension 策略、Main 注入、Gateway 代理的统一契约 |
 | 外部客户端 | [通用 CLI / ACP](integrations/agent-cli.md)                            | 默认可用命令行、ACP、app-server 子集与客户端接入示例     |
-| app-server | [统一 app-server](integrations/app-server.md)                          | Chrome 与 CLI 共用协议引擎，保留能力和生命周期边界       |
+| app-server | [统一 app-server](integrations/app-server.md)                          | 共用协议、标准图片与客户端审批；连接、能力和生命周期边界 |
 
 账号 UI/SDK、模型换证与开发调用步骤的所有者不同：先从上表阅读相应实现，再从[开发接入索引](../developer-integration/README.md)查接口和示例。内网模型、企业网页及冷历史恢复的验证边界分别维护在插件、浏览器和数据存储说明中。
 

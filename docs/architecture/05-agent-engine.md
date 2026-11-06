@@ -458,7 +458,7 @@ Goal 重放核对、会话用量和标题身份也使用同一目标的 `session
 
 Worktree 设置页同时接入 Gateway 全局 `worktreeRoot` / `worktreeAcceleration`。Main 通过原生 `config.get` 读取并仅投影目录、加速、配置版本和应用状态；保存通过与应用配置同步共享的排他队列及带 `baseHash` 的 `config.patch`，回读核对结果。超时/断线不重试写入，配置版本冲突要求重新读取。完整、无模型与认证配置同步保留这两项原生设置。目录变更和加速开关只影响新分配，已登记目录、快照和恢复路径保持原生所有权；页面显示默认目录与固定 `openclaw/<名称>` 分支规则，不将全局目录解释为项目同级布局。
 
-原生 WS 中的文本流由 Renderer 消费；Adapter 只将运行状态、交互、审批、Goal 和会话变化映射为产品事件。wire validator 当前目标为 v2026.10.7，保留 `v2026_10_6.ts` 既有入口以复用两版未变的协议；未知或不合法字段不能在各调用方随意猜测。
+桌面主聊天的原生 WS 文本流由 Renderer 消费；Adapter 将该链路的运行状态、交互、审批、Goal 和会话变化映射为产品事件。Chrome 与外部 app-server adapter 另行消费认证流与原生历史，生成请求／连接内的协议投影，不建立第二份 transcript。wire validator 当前目标为 v2026.10.7，保留 `v2026_10_6.ts` 既有入口以复用两版未变的协议；未知或不合法字段不能在各调用方随意猜测。
 
 网络超时可能发生在原生接收之后。run receipt 需要保留未知状态并查询原生事实；无条件重发将造成重复工具副作用。工具错误不必然是运行终态，late terminal 也不能结束新的 generation。
 
@@ -694,11 +694,31 @@ embedding 服务实时健康。原生诊断经过脱敏后展示，操作建议�
 
 CLI `exec`、入站 ACP 和已实现的 app-server 子集共用 Main 原生准备/模型队列、执行预约及会话后端。Windows 控制台启动器只拥有 stdio，直接连接认证命名管道；POSIX 使用应用隔离桥。无需客户端专用开关或 task-token，`CODEX_HOME` 标记只用于身份，不能授权恢复。
 
-准入前先安装会话 MCP 租约和独占运行审批 owner，并固定原生 SID/incarnation。只有准备好的 ACP 审批 owner 声明交互式 `webchat`（`deliver:false`）；普通 CLI 保持非交互审批。新协议使用 `source='cli'` 精确映射，旧来源仅作只读历史定位。
+按连接实际能力，在准入前安装会话 MCP 租约和独占运行审批 owner，并固定原生 SID/incarnation。ACP 和启用客户端审批的 app-server 在 `agent` 调用中声明交互式 `webchat`（`deliver:false`）；普通 CLI 保持非交互审批。新协议使用 `source='cli'` 精确映射，旧来源仅作只读历史定位。Chrome 不使用这份外部映射，继续由 `source='browser-extension'` 的产品会话和专属 Controller 管理发送。
+
+### 输入、模型与原生发送边界
+
+标准输入读取真实图片字节，校验类型及大小后交给原生附件通道。文本合并成单个 message，图片保持彼此顺序；live 用户 Item 与历史按这个原生归一化形状呈现，不承诺文本与图片的任意交错。客户端可使用的 data URL、受限远程地址和工作区 localImage 由所属入口的显式能力决定：通用本机客户端可读取真实工作区内的文件，Chrome 不接纳客户端本地路径。音频、文件 ID 和未配置的远程抓取能力明确拒绝，不插入描述图片的占位文字代替媒体。入口参数与资源限制见[统一 app-server](../features/integrations/app-server.md)。
+
+图片要求最终模型在真实目录中声明 image 输入；Chrome 对标准和既有 image 附件统一核验 requested／会话保存值／配置默认值。异步读取前后核对来源、原模型、目录、默认选择、客户端与连接代次，拒绝期间发生的替换；原生准备后再次核对，并在实际发送时固定模型与回读结果。能力缺失在模型、权限或运行计时变更前明确返回未发送；普通文档附件不要求视觉模型。发送前同会话的短期准备 token 防止两次并发提交互相覆盖 owner，它不授予原生执行权。
+
+通用外部客户端的非空文本（可带图片）沿用 `agent`，提交 `expectedExistingSessionId` 和 `expectedExistingSessionLifecycleRevision`；纯图片没有伪造文本，使用允许空 message 的 `chat.send`。Chrome 聊天本来就使用 `chat.send`。后者提供显式 sessionId／权限检查，但没有 `agent` 的 lifecycle-revision 原子比较能力；宿主通过提交前后精确 key、物理 SID、revision、原生客户端／连接代次和当前 owner 检查保护边界，不能宣称两条路径具有相同的原子性。身份或 ACK 结果不确定时保留 unknown，不重发。外部纯图 ACK 的 run ID 与预期不符仍为 unknown；Chrome 只通过已验证 ACK 将实际原生 run 绑定到逻辑客户端 turn。
+
+### 审批 owner 与撤回
+
+已知原生 run 可直接安装精确 owner；原生实际 run 尚未确认时使用 prepared owner，审批先有界等待 ACK。只有 ACK 的实际 run、key、SID、revision、客户端与代次全部匹配时才展示，审批本身的 runId 不能成为认领证据。不匹配、到期或撤回均拒绝，原 owner 在精确结算前保留，避免转交桌面或另一连接批准。
+
+命令一次授权、连接内精确指纹的 `acceptForSession` 与原生 bundle-mcp App 持久授权分别处理，不互相改名或放宽范围。只有原生 resolve 明确成功且身份仍当前时才登记会话指纹；结果未知不重试另一决定。Chrome 关闭或退订只撤回交互与 scope，不自动停止原生任务；显式 Cancel 先拒绝，再对本次发送方的精确 run 异步请求停止。选择矩阵和撤销范围维护在[会话权限](../features/chat/openclaw-permission-management.md#app-server-客户端审批)。
 
 未盖章的非 lifecycle 进度通过有界 FIFO 等待，同连接的精确 session/incarnation 与 active-run 或 owning lifecycle-start 证明后才采用。匹配的整轮终态可界定更早进度，但执行结算不等待进度读取。
 
-结果未知时持久预约继续保留。可见 final、Stop ACK 和连接替换均不证明执行结束；缺少可信 continuation 或带 scope 资源的替换连接不触发重放。只有原生取消确认才能返回 interrupted 协议结果。完整客户端流程见[CLI / ACP](../features/integrations/agent-cli.md)，通用协议见[app-server](../features/integrations/app-server.md)。
+结果未知时持久预约继续保留。可见 final、Stop ACK 和连接替换均不证明执行结束；缺少可信 continuation 或带 scope 资源的替换连接不触发重放。只有经过身份复核的原生整轮中断终态才能返回 interrupted 协议结果，取消请求被接收本身不够。完整客户端流程见[CLI / ACP](../features/integrations/agent-cli.md)，通用协议见[app-server](../features/integrations/app-server.md)。
+
+### 已结算执行的长回复恢复
+
+原生整轮终态可先携带有界的最终正文快照。只有该 producer 快照表明可能被截断时，才尝试补齐：普通 `agent` 路径读取同一 final RPC；纯图 `chat.send` 路径通过当前认证 Gateway 的完整历史读取补齐，不直接打开 transcript。读取前后保持原运行、key、SID、revision、客户端与代次一致，只接受唯一精确 run stamp 的真实 `final_answer`，同一消息多个文本 block 合并，且按同一原生裁剪规则投影后必须与终态快照完全一致。
+
+不选取“最新回复”，不使用 commentary 或混合 run stamp，不保留 Main 正文缓存。缺少唯一完整最终消息、身份变化、读失败或不匹配时只报告输出无法完整恢复；已经证明的执行结算仍保留，不改写成执行失败，也不再次发送模型请求。
 
 ### 原生 registry 发布边界
 

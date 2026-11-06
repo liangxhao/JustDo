@@ -1,6 +1,8 @@
 import { localizeOptions, t } from './modules/options-i18n.js';
+import { createWebLaunchOptions } from './modules/web-launch-options.js';
 
 localizeOptions();
+const webLaunchOptions = createWebLaunchOptions({ document });
 const connectionStatus = document.getElementById('connectionStatus');
 const bootstrapStatus = document.getElementById('bootstrapStatus');
 const accessMode = document.getElementById('accessMode');
@@ -154,6 +156,7 @@ window.addEventListener(
   'pagehide',
   () => {
     disposed = true;
+    webLaunchOptions.dispose();
     refreshSequence += 1;
     clearInterval(statusRefreshTimer);
   },

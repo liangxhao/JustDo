@@ -14,6 +14,7 @@ import {
   ExternalAgentStreamError,
 } from '../integrations/externalAgent/externalAgentTypes';
 import { AppServerIntegrationService } from './appServerIntegrationService';
+import { AppServerNotificationMethod } from './appServerProtocol';
 import type { AppServerWebSocketServerOptions } from './appServerWebSocketServer';
 
 const services: AppServerIntegrationService[] = [];
@@ -92,8 +93,8 @@ async function open(service: AppServerIntegrationService) {
     return messages.find(message => message.id === id)!;
   };
   await request('initialize', {
-    clientInfo: { name: 'chrome-extension', version: 'untrusted' },
-    capabilities: { browser: true },
+    clientInfo: { name: 'privileged-client', version: 'untrusted' },
+    capabilities: { unregisteredTools: true },
   });
   socket.send(JSON.stringify({ method: 'initialized' }));
   return { socket, messages, request };
@@ -129,7 +130,7 @@ describe('native-client WebSocket app-server', () => {
       { Authorization: 'Bearer wrong' },
       { Authorization: `Bearer ${'é'.repeat(64)}` },
       { Authorization: `Bearer ${'é'.repeat(32)}` },
-      { ...config.headers, Origin: 'chrome-extension://untrusted' },
+      { ...config.headers, Origin: 'custom-extension://untrusted' },
       { ...config.headers, Origin: 'https://untrusted.example' },
       { ...config.headers, Origin: '' },
     ]) expect(await rejectedHandshake(config.url, headers)).toBe(401);
@@ -151,7 +152,7 @@ describe('native-client WebSocket app-server', () => {
     const threadId = ((created.result as { thread: { id: string } }).thread).id;
     expect(f.backends[0].start).toHaveBeenCalledWith({ cwd: process.cwd(), model: undefined });
     expect(await first.request('thread/read', { threadId })).toHaveProperty('result.thread.id', threadId);
-    for (const method of ['thread/list', 'thread/image', 'composer/options', 'browser/extension/pair']) {
+    for (const method of ['thread/list', 'extension/privateAction']) {
       expect(await first.request(method, { threadId })).toHaveProperty('error');
     }
     expect(await first.request('turn/start', { threadId, input: [{ type: 'text', text: 'Question' }] }))
@@ -161,7 +162,9 @@ describe('native-client WebSocket app-server', () => {
     })));
     expect(first.messages).toContainEqual(expect.objectContaining({ method: 'item/agentMessage/delta' }));
     expect(first.messages).toContainEqual(expect.objectContaining({ method: 'item/completed' }));
-    expect(first.messages.some(message => message.method === 'thread/stream')).toBe(false);
+    const standardNotifications = new Set<string>(Object.values(AppServerNotificationMethod));
+    expect(first.messages.filter(message => typeof message.method === 'string')
+      .every(message => standardNotifications.has(message.method as string))).toBe(true);
 
     const second = await open(f.service);
     const storedId = randomUUID();

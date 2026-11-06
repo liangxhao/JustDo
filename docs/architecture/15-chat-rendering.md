@@ -498,6 +498,10 @@ Chrome 侧栏的浏览器构建适配器复用同一 transcript reducer 与 `run
 未知提交保留原 clientTurnId，Stop 绑定确切运行；只有原生结算证据可退役活动，
 连接失败或停止 ACK 不触发显示完成。详见[扩展侧聊](../features/browser/browser-extension-side-chat.md)。
 
+标准 app-server Item 与富侧栏显示使用不同的消费通道，不能把同一原生内容追加两遍。文本和图片按原生实际接收的归一化输入呈现；真实图片从原生 content 或媒体引用恢复，不插入替代图片的合成提示词。Main 的请求内投影不成为正文缓存，详见[外部客户端执行](05-agent-engine.md#输入模型与原生发送边界)。
+
+Chrome 独立审批表单消费当前连接、线程和逻辑 turn 的标准服务端请求，原生 resolved、超时或会话切换撤回旧表单。命令会话授权只按服务端明确提供的选项显示，插件长期授权保留独立说明；秘密答案清空后不写入普通草稿，发送响应也不夺走其焦点。通用多题表单不表示原生所有复杂问答已接入，授权范围见[会话权限](../features/chat/openclaw-permission-management.md#app-server-客户端审批)。
+
 #### 未知提交与精确撤回
 
 已取消／中断输入使用所属用户消息页脚中的简短状态。

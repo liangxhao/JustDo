@@ -39,7 +39,13 @@
       不另开产品数据库或 Gateway；安装版无外部 Node/首启下载依赖，中文/空格路径可用。
 - [ ] 共享 app-server 路由保留端点能力隔离：Chrome 仅访问 browser-extension 来源，
       外部连接仅拥有其 external thread，客户端请求名称不能升级权限。
-      CLI/app-server 支持子集不能被误写成拥有 ACP session MCP 或交互审批能力。
+      公共 app-server 目录不定义或依赖浏览器代码；ACP session MCP 不因共享执行后端而开放给 app-server。
+- [ ] 支持双向 RPC 的 app-server 只呈现实际发送 owner 的原生命令／插件审批；ACK 前暂扣的审批
+      必须经实际 run 绑定后才展示。命令会话授权要求实验协商与明确选项，每次仍原生 allow-once；
+      App 持久授权只接受原生明确 action。取消／断线／身份变化后旧回复不能授权，观察者不接管。
+- [ ] 标准图片、图文及纯图片按真实字节和模型模态校验；localImage 限绑定 cwd，远程图片沿
+      专属网络限制。纯图片 chat.send 没有 revision CAS，保留发送前后身份校验与未知提交预留，
+      不用协议 Schema 通过替代真实视觉模型和原生审批验收。
 - [ ] 浏览器断线退订与 console、native-client WebSocket 断连及服务关闭的精确取消/drain
       按各自所有权验证；未知执行返回
       `EXECUTION_UNKNOWN` 并保留 run/session identity，不把断线/无 stdout 当成功或重试许可。

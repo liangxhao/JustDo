@@ -7,7 +7,7 @@
 
 ## 1. 一个协议引擎，三种连接入口
 
-每条认证连接拥有一个 `AppServerConnection`。它统一处理请求解析、ID、初始化、方法路由、
+每条认证连接拥有一个 `AppServerConnection`。各入口采用相同 Codex 协议策略，统一处理请求解析、ID、初始化、方法路由、
 响应/错误、通知过滤和断连后的输出撤销。两种 WebSocket 监听器还共用
 `AppServerWebSocketServer`，各入口不另建 RPC 分发器。
 
@@ -31,46 +31,89 @@ flowchart LR
 Main 在创建连接时传入类型化能力绑定。客户端名称、请求的 capabilities 或通知偏好不能增加
 操作权限；绑定中没有的方法返回 method-not-found，不回退到其他入口的后端。
 
-| 能力                            | Chrome 扩展连接                                  | stdio / 原生客户端 WebSocket     |
-| ------------------------------- | ------------------------------------------------ | -------------------------------- |
-| 连接范围                        | 扩展创建的会话                                   | 每连接最多绑定 32 个外部线程     |
-| 创建与继续                      | 扩展会话                                         | 新建或明确恢复外部线程           |
-| 列表、历史、图片与输入选项      | 扩展会话内提供                                   | 元数据与原生 Turn/Item 历史分页  |
-| 模型发现                        | composer options                                 | `model/list`                     |
-| 文本与取消                      | 支持                                             | 支持                             |
-| 附件、页面上下文、每轮模型/权限 | 按现有校验支持                                   | 仅支持每轮模型选择               |
-| 进度                            | 原生 `thread/stream` 与校准后的 `thread/updated` | 标准 item、正文与 reasoning 通知 |
-| 自动化配对                      | 浏览器专用认证操作                               | 不提供                           |
+`src/main/appServer/` 只包含标准协议、通用输入与审批呈现、投影、分页和传输，不定义或导入浏览器方法、
+通知、网页关联错误策略，也不包含浏览器集成测试。浏览器专属常量和安全错误映射归
+`src/main/browser/extension/browserAppServerProtocol.ts`，由同域 binding 通过通用
+`extensions` 精确注册。扩展一律需要请求 ID，不能覆盖标准方法；握手声明不能注册方法。
+依赖方向是浏览器适配器引用通用层，通用层不反向依赖浏览器模块。
+结构回归检查同时约束核心声明、测试和生产运行时的传递依赖。
+
+| 能力                                | Chrome 扩展连接                                        | stdio / 原生客户端 WebSocket                 |
+| ----------------------------------- | ------------------------------------------------------ | -------------------------------------------- |
+| 连接范围                            | 扩展创建的会话                                         | 每连接最多绑定 32 个外部线程                 |
+| 创建与继续                          | 扩展会话                                               | 新建或明确恢复外部线程                       |
+| 列表、历史、图片与输入选项          | 扩展会话内提供                                         | 元数据与原生 Turn/Item 历史分页              |
+| 模型发现                            | `model/list`；另有 `browser/composer/options` 当前选项 | `model/list`                                 |
+| 文本与取消                          | 支持                                                   | 支持                                         |
+| 标准图片                            | data URL 图片及纯图片；按真实模型视觉模态校验          | data URL、cwd 内 localImage、受限私网 IP URL |
+| 客户端审批                          | 发送 peer 的原生命令／插件审批，侧栏显示               | 同一双向 RPC，由客户端实现界面或交互         |
+| 其他附件、页面上下文、每轮模型/权限 | 仍由浏览器领域校验                                     | 每轮模型选择；不开放浏览器附加字段           |
+| 进度                                | 标准 Item 通知；另有 `browser/thread/stream` 与富快照  | 标准 Item、正文与 reasoning 通知             |
+| 自动化配对                          | 浏览器专用认证操作                                     | 不提供                                       |
 
 浏览器领域按 `source: browser-extension` 校验列表、读取、订阅、媒体、输入选项、发送和停止。
 传入桌面或 CLI 会话 ID 不会获得访问权；桌面仍可查看和继续扩展会话，无需改写历史来源。
 
-两类绑定只提供领域能力，不解析 RPC 包、不选错误码，也不自行分发方法：
+两类绑定提供领域能力并将领域错误映射为明确可公开的 RPC 错误；不解析 RPC 包或编码响应。
+公共引擎统一封装响应与错误：
 
-- 浏览器绑定保留产品历史投影、共享原生流订阅和终态核对。
+- 两类绑定共用 `appServerWire`、`appServerPagination`、`appServerHistory`、
+  `appServerHistoryReader`、`appServerProgress`、`appServerToolProgress`、
+  `appServerInput` 与 `appServerApprovals`。
+- 浏览器绑定另提供 `thread.browser.display`、`browser.activeTurn`、共享原生流订阅和终态核对。
 - 外部绑定保留不透明线程映射、cwd/模型校验、可选身份标记和执行预留。
+
+标准 `thread/read` 仅查询，不再隐式订阅；`thread/resume` 明确加载并观察。
+浏览器富显示分组只含 id/items，不冒充已完成的标准 Turn；普通产品计时行缺少
+精确原生证据时，标准历史继续标为结果未知。浏览器特有输入统一位于 `params.browser`，
+特有方法和通知使用 `browser/` 前缀，不再覆盖核心 Thread／Turn／Item 外形。
 
 ## 2. 初始化、请求与输出顺序
 
-| 行为         | Chrome                                     | stdio / 原生客户端          |
-| ------------ | ------------------------------------------ | --------------------------- |
-| 初始化       | `initialize` 响应后还需 `initialized` 通知 | 同左；通用入口校验客户端字段类型 |
-| 客户端通知   | 执行已实现通知，不回复                     | 忽略可能产生工作的通知      |
-| 开始执行     | 原生进度可能早于发送 ACK                   | start 响应先于延后执行      |
-| 通知退出订阅 | 按完整方法名精确匹配                       | 同左                        |
+| 行为         | Chrome                                              | stdio / 原生客户端     |
+| ------------ | --------------------------------------------------- | ---------------------- |
+| 初始化       | 校验客户端字段；响应后需 `initialized` 通知         | 同左                   |
+| 客户端通知   | 忽略可能产生工作的通知                              | 同左                   |
+| 开始执行     | 标准 turn/item 通知在响应后；增强原生流可能早于 ACK | start 响应先于延后执行 |
+| 通知退出订阅 | 按完整方法名精确匹配                                | 同左                   |
 
 请求处理只等待操作准入，不阻塞到执行完成；尚未返回的 start 不能阻塞 interrupt。
-错误分类由共用引擎维护，保留各入口既有错误形态，尤其 Chrome 的
-`turn/start.error.data.requestSent` 保守语义。连接关闭后不再发布旧输出。
-通用入口按 Codex 策略区分非法请求、参数和未实现方法；初始化校验失败不会锁死握手。
+错误分类由共用引擎维护，各入口采用相同非法请求、参数、未实现方法和业务错误码。
+`turn/start.error.data.requestSent` 只透传明确的布尔证据，不从错误码推断原生准入；
+Chrome 在实际调用发送前的拒绝明确为 false。连接关闭后不再发布旧输出。
+初始化校验失败不会锁死握手。
 创建／改名通知在对应响应后发送，通知输出失败会同步撤销共享连接与 binding，阻止新任务准入。
 
-通用入口支持双向 RPC：服务端请求使用连接内唯一字符串 ID，最多 64 个待回复项。
+共享连接支持双向 RPC：服务端请求使用连接内唯一字符串 ID，最多 64 个待回复项。
 客户端 response 与普通 request 分向匹配，迟到、重复、其他连接的回复不能解决原请求。
 close 在等待执行清理前同步撤销所有 pending request，避免审批与断连互相等待。
-精确 run 的审批由原有 ExternalAgentResources 和原生 approval owner 管理；
-命令请求只映射一次性 accept/decline/cancel，不支持持久授权或策略修订。
+精确 run 的审批由领域资源管理器和原生 approval owner 管理；
+命令支持 accept/decline/cancel；实验性握手且有安全授权范围时，明确提供 acceptForSession，
+仅按精确指纹逐次原生 allow-once。永久命令规则和策略修订仍不支持。
 插件确认仅在成功握手声明 experimentalApi 后使用标准 user-input 请求。
+Chrome 侧栏通过同一服务端请求呈现原生命令和插件审批，只有实际发送 peer 的
+trusted hooks 能建立本轮 owner，观察者不继承。ACK 前的请求暂扣，ACK 确认 actual run 后才呈现；
+断线只撤回交互，未结算 owner 继续拒绝后续请求，不回退到桌面替用户批准。
+会话命令授权按精确环境指纹逐次原生 allow-once；原生明确提供的持久 App action 另行映射，
+不冒充持久命令规则或文件变更审批。
+
+### 输入处理与模型能力
+
+标准文本与图片统一经 `appServerInput` 处理。图片使用真实字节校验并转换为规范内容及原生附件，
+支持图文和纯图片，不生成占位提示词。原生输入会合并文本并保持图片相对顺序，实时用户 Item
+采用相同的归一化形状，不承诺保留原始文本／图片交错排版。模型图片能力来自真实目录，未知时
+仅声明文本；浏览器在改变模型、权限或原生准备前拒绝不支持的图片发送。
+
+本机客户端可使用 cwd 范围内的 `localImage`，或明确允许的私网 IP HTTP(S) 图片地址；
+浏览器标准图片只接收 data URL，文档附件仍由浏览器独立字段提供。通用文本上限为 2 MiB UTF-8，
+浏览器另保留 32,000 个 UTF-16 code units 的文本上限；图片数量、大小及路径／网络规则以
+[外部输入规范](../../app-server-api/external-clients.md#turnstart)和[浏览器输入规范](../browser/extension-protocol/app-server.md)为准。
+音频、fileId 和未支持的图片 detail 覆盖会明确拒绝。
+
+外部文本／图文沿原生 `agent` 的 SID／revision 原子准入。纯图片改用可接收空文本的原生
+`chat.send`，它没有 revision CAS；宿主前后核对身份、连接代次与精确 ACK，未知提交保留预留。
+浏览器沿其既有 prepared `chat.send` 路径执行，不借协议统一宣称新增原生原子保证。
+历史仍从认证 Gateway 按请求投影，图片引用不赋予读取任意宿主文件的权限。
 
 ## 3. 断连、重启与执行结算
 
@@ -81,6 +124,11 @@ close 在等待执行清理前同步撤销所有 pending request，避免审批�
 旧代次的 start/read/interrupt 即使迟到，也不能重建订阅、轮询或输出。
 
 观察者退役不改变已接纳执行的产品/原生身份。服务再次启动也不能接纳旧代次的输出。
+
+浏览器已加载集合包含当前订阅和仍在准入／观测的线程。逐轮观测使用精确 thread/turn 组合，
+新运行不覆盖旧运行尚未送达的完成通知；旧运行的 idle 也不能覆盖新的当前运行。
+标准状态与关闭通知沿公共 wire 输出，但只在全局已卸载时通知实际退订连接；
+后台观测结束不保留并追发给旧观察者，断连仍不取消原生工作。
 
 ### 外部线程：取消精确运行，等待所属资源清理
 
@@ -179,7 +227,7 @@ ACP 与普通 CLI 是独立的协议/命令适配器，复用外部执行后端�
 
 - [外部客户端规范](../../app-server-api/external-clients.md)：stdio 与原生 WebSocket 字段。
 - [官方兼容性对照](../../app-server-api/compatibility.md)：校验基线、已实现接口和剩余宿主边界。
-- [Chrome 规范](../../app-server-api/browser/README.md)：浏览器专属字段和通知。
+- [Chrome 规范](../browser/extension-protocol/README.md)：浏览器专属字段和通知。
 - [Chrome 侧栏](../browser/browser-extension-side-chat.md)：用户流程和产品集成。
 - [上游协议参考](https://learn.chatgpt.com/docs/app-server#protocol)：本产品仅实现上述明确子集。
 

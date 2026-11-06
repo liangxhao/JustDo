@@ -32,6 +32,16 @@ function fixture() {
 const agentFields = { memoryCitation: null, delivery: null, questions: null };
 
 describe('Codex app-server progress', () => {
+  it('publishes the real ordered media input once, including image-only native starts', () => {
+    const content = [{ type: 'image', url: 'data:image/png;base64,aW1hZ2U=' }];
+    const notify = vi.fn<AppServerNotify>();
+    const progress = new CodexAppServerProgress(content, notify, vi.fn());
+    progress.accept(event('lifecycle', { phase: 'start' }));
+    progress.accept(event('lifecycle', { phase: 'start' }));
+    expect(notify.mock.calls).toHaveLength(2);
+    expect(notify.mock.calls[0][1].item).toMatchObject({ type: 'userMessage', content });
+    expect(notify.mock.calls[1][1].item).toEqual(notify.mock.calls[0][1].item);
+  });
   it('admits the actual user item once at native start while the model is silent', () => {
     const { progress, notify } = fixture();
     progress.accept(event('lifecycle', { phase: 'model' }));

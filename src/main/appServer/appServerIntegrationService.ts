@@ -36,7 +36,7 @@ interface Lease {
 const unavailable = (): Error => new Error('Application WebSocket service is not running.');
 
 const isAuthorized = (request: IncomingMessage, token: string): boolean => {
-  // This endpoint is for native clients. Chrome uses its own authenticated binding.
+  // This endpoint accepts native-client credentials without an Origin.
   if (request.headers.origin !== undefined) return false;
   const authorization = request.headers.authorization;
   if (typeof authorization !== 'string') return false;
@@ -49,7 +49,7 @@ const isAuthorized = (request: IncomingMessage, token: string): boolean => {
   );
 };
 
-/** Owns a native-client credential; it never grants Chrome-specific capabilities. */
+/** Owns a native-client credential and its fixed server-admitted capabilities. */
 export class AppServerIntegrationService {
   private generation = 0;
   private lease: Lease | undefined;

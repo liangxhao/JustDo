@@ -11,16 +11,16 @@
 
 ## 目录与阅读顺序
 
-| 目录                                                      | 内容                                             | 使用方式                         |
-| --------------------------------------------------------- | ------------------------------------------------ | -------------------------------- |
-| [architecture/](architecture/README.md)                   | 持续维护的所有权、状态、数据与进程契约           | 修改架构和判断实现边界时阅读     |
-| [features/](features/README.md)                           | 按领域组织的现行功能说明                         | 查用户路径、实现契约和已知限制   |
-| [developer-integration/](developer-integration/README.md) | 登录、外部 Agent、请求头等开发接入接口及分发示例 | 增加集成模块时阅读               |
-| [app-server-api/](app-server-api/README.md)               | 通用 stdio、WebSocket 与 Chrome 扩展协议规范     | 外部客户端对接时阅读             |
-| [plans/](plans/README.md)                                 | 具体未实施需求                                   | 先核对现行能力，再推进真实差异   |
-| [openclaw-upgrades/](openclaw-upgrades/README.md)         | 按目标版本组织的升级记录                         | 从版本索引查差异、复核与验收演进 |
-| [releases/](releases/README.md)                           | 已发布应用版本说明                               | 保留发布时事实，不按当前源码改写 |
-| `assets/`                                                 | 文档引用的资源                                   | 不存放方案或独立功能说明         |
+| 目录                                                      | 内容                                         | 使用方式                                 |
+| --------------------------------------------------------- | -------------------------------------------- | ---------------------------------------- |
+| [architecture/](architecture/README.md)                   | 持续维护的所有权、状态、数据与进程契约       | 修改架构和判断实现边界时阅读             |
+| [features/](features/README.md)                           | 按领域组织的现行功能说明                     | 查用户路径、实现契约和已知限制           |
+| [developer-integration/](developer-integration/README.md) | 网页 SDK、登录、外部 Agent、请求头等接入指南 | 第三方业务接入或增加集成时阅读           |
+| [app-server-api/](app-server-api/README.md)               | stdio／本机 WebSocket、审批、标准图片与示例  | 外部客户端接入；浏览器扩展链接到独立规范 |
+| [plans/](plans/README.md)                                 | 具体未实施需求                               | 先核对现行能力，再推进真实差异           |
+| [openclaw-upgrades/](openclaw-upgrades/README.md)         | 按目标版本组织的升级记录                     | 从版本索引查差异、复核与验收演进         |
+| [releases/](releases/README.md)                           | 已发布应用版本说明                           | 保留发布时事实，不按当前源码改写         |
+| `assets/`                                                 | 文档引用的资源                               | 不存放方案或独立功能说明                 |
 
 开发操作指南入口：[开发与排障](development.md)、[升级检查清单](upgrade-checklist/README.md)、[运行时补丁](openclaw-runtime-patches.md)、[Windows 安装器](windows-installer.md)及[离线下载](offline-downloads.md)。升级先按功能域核对原生契约与真实验收，不只检查补丁是否能应用。离线下载指南仅列开发启动或 EXE 打包前需手动下载到仓库 `cache/` 的文件及地址；构建、依赖安装与维护命令放在各自所属指南。
 

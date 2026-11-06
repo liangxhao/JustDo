@@ -14,6 +14,7 @@ internal static class BrowserExtensionNativeHost
     private const string HostName = "com.justdo.browserextension";
     private const int MaxMessageBytes = 1024 * 1024;
     private const int ProtocolVersion = 2;
+    private const int AppServerProtocolVersion = 3;
     private const string AppNotRunningCode = "APP_NOT_RUNNING";
     private static readonly JavaScriptSerializer Json = new JavaScriptSerializer();
 
@@ -80,7 +81,7 @@ internal static class BrowserExtensionNativeHost
             if (!Uri.TryCreate(urlValue, UriKind.Absolute, out url) ||
                 url.Scheme != "ws" || url.Host != "127.0.0.1" || url.AbsolutePath != "/app-server" ||
                 !Regex.IsMatch(url.Query, @"(?:^|[?&])token=[0-9a-f]{64}(?:&|$)") ||
-                protocolVersion != ProtocolVersion)
+                protocolVersion != AppServerProtocolVersion)
                 return null;
             Process process = Process.GetProcessById(pid);
             if (process.HasExited) return null;
@@ -138,7 +139,7 @@ internal static class BrowserExtensionNativeHost
                     {
                         manifestSchemaVersion = 2,
                         nativeHostProtocolVersion = ProtocolVersion,
-                        supportedProtocolVersions = new[] { ProtocolVersion },
+                        supportedProtocolVersions = new[] { AppServerProtocolVersion },
                     },
                 };
             if (method == "codexRuntime/ensure" || method == "codexRuntime/restart")
@@ -151,7 +152,7 @@ internal static class BrowserExtensionNativeHost
                     result = new
                     {
                         localAppServerUrl = rendezvous["localAppServerUrl"],
-                        runtimeConfig = new { protocolVersion = ProtocolVersion },
+                        runtimeConfig = new { protocolVersion = AppServerProtocolVersion },
                     },
                 };
             }

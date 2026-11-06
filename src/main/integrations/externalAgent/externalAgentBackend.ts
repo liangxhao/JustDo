@@ -269,7 +269,7 @@ export class ExternalAgentBackendFactory {
         if (!SESSION_ID.test(runId)) throw new Error('Invalid execution identity.');
         if (external.executionRunId === runId || store().getSessionRunByClientTurnId(runId))
           throw new Error('This execution identity has already been used.');
-        if (typeof message !== 'string' || !message.trim() || message.length > 2 * 1024 * 1024)
+        if (typeof message !== 'string' || (!message.trim() && !hooks?.attachments?.length) || message.length > 2 * 1024 * 1024)
           throw new Error('The task must contain bounded text.');
         if (signal.aborted)
           throw new ExternalAgentCancelledError('Task cancelled before native submission.');
@@ -299,6 +299,7 @@ export class ExternalAgentBackendFactory {
             sessionId: external.coworkSessionId,
             runId,
             message,
+            ...(hooks?.attachments?.length ? { attachments: hooks.attachments } : {}),
             modelRef,
             onEvent,
             signal,

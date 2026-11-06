@@ -71,7 +71,7 @@ describe('browser extension discovers existing app instances', () => {
     vi.resetModules();
     vi.useFakeTimers();
     available = true;
-    discoveryResult = { localAppServerUrl, runtimeConfig: { protocolVersion: 2 } };
+    discoveryResult = { localAppServerUrl, runtimeConfig: { protocolVersion: 3 } };
     FixtureSocket.behavior = 'open';
     FixtureSocket.failSend = false;
     FixtureSocket.instances = [];
@@ -100,7 +100,7 @@ describe('browser extension discovers existing app instances', () => {
                   result: {
                     manifestSchemaVersion: 2,
                     nativeHostProtocolVersion: 2,
-                    supportedProtocolVersions: [2],
+                    supportedProtocolVersions: [3],
                   },
                 }
               : available
@@ -482,6 +482,115 @@ describe('browser extension discovers existing app instances', () => {
     },
   );
 
+  it('declines server requests independently of an RPC with the same id', async () => {
+    const notify = vi.fn();
+    sendMessage.mockResolvedValue({ ok: true, localAppServerUrl });
+    client = new AppServerClient(notify);
+    await client.connect();
+    const socket = FixtureSocket.instances[0];
+    const result = client.request('turn/start', { threadId: 'one', input: [] });
+    await vi.advanceTimersByTimeAsync(0);
+    const request = socket.sent.find(value => value.method === 'turn/start')!;
+
+    socket.emit('message', { id: request.id, method: 'item/commandExecution/requestApproval', params: { threadId: 'one', turnId: 'turn' } });
+    socket.emit('message', { id: 'question', method: 'item/tool/requestUserInput', params: {} });
+    socket.emit('message', { id: 'unsupported', method: 'item/fileChange/requestApproval', params: {} });
+    expect(socket.sent).toEqual(expect.arrayContaining([
+      { id: request.id, result: { decision: 'decline' } },
+      { id: 'question', result: { answers: {} } },
+      { id: 'unsupported', error: expect.objectContaining({ code: -32601 }) },
+    ]));
+    expect(notify).not.toHaveBeenCalled();
+    socket.emit('message', { id: request.id, result: { turn: { id: 'turn' } } });
+    await expect(result).resolves.toEqual({ turn: { id: 'turn' } });
+  });
+
+  it('awaits an explicit handler once, independently of a client RPC with the same ID', async () => {
+    sendMessage.mockResolvedValue({ ok: true, localAppServerUrl });
+    let decide!: (value: unknown) => void;
+    const handler = vi.fn(() => new Promise(resolve => { decide = resolve; }));
+    client = new AppServerClient(vi.fn(), { requestHandler: handler });
+    await client.connect();
+    const socket = FixtureSocket.instances[0];
+    const result = client.request('turn/start', {});
+    await vi.advanceTimersByTimeAsync(0);
+    const outgoing = socket.sent.find(value => value.method === 'turn/start')!;
+    const request = { id: outgoing.id, method: 'item/commandExecution/requestApproval',
+      params: { threadId: 'one', turnId: 'turn', itemId: 'item', command: 'echo hello' } };
+    socket.emit('message', request);
+    socket.emit('message', request);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(handler).toHaveBeenCalledOnce();
+    expect(socket.sent.filter(value => value.id === outgoing.id)).toHaveLength(1);
+    decide({ decision: 'accept' });
+    await vi.advanceTimersByTimeAsync(0);
+    socket.emit('message', request);
+    expect(socket.sent.filter(value => value.id === outgoing.id)).toHaveLength(2);
+    socket.emit('message', { id: outgoing.id, result: { turn: { id: 'turn' } } });
+    await expect(result).resolves.toEqual({ turn: { id: 'turn' } });
+  });
+
+  it('withdraws exact resolved requests without replying or accepting a late choice', async () => {
+    sendMessage.mockResolvedValue({ ok: true, localAppServerUrl });
+    let decide!: (value: unknown) => void;
+    let signal!: AbortSignal;
+    client = new AppServerClient(vi.fn(), { requestHandler: (_request, options) => {
+      signal = options.signal;
+      return new Promise(resolve => { decide = resolve; });
+    } });
+    await client.connect();
+    const socket = FixtureSocket.instances[0];
+    socket.emit('message', { id: 'approval', method: 'item/commandExecution/requestApproval', params: { threadId: 'one' } });
+    await vi.advanceTimersByTimeAsync(0);
+    socket.emit('message', { method: 'serverRequest/resolved', params: { requestId: 'approval', threadId: 'other' } });
+    expect(signal.aborted).toBe(false);
+    socket.emit('message', { method: 'serverRequest/resolved', params: { requestId: 'approval', threadId: 'one' } });
+    expect(signal.aborted).toBe(true);
+    decide({ decision: 'accept' });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(socket.sent.some(value => value.id === 'approval')).toBe(false);
+  });
+
+  it('denies on local timeout and ignores late decisions after socket replacement', async () => {
+    sendMessage.mockResolvedValue({ ok: true, localAppServerUrl });
+    const decisions: Array<(value: unknown) => void> = [];
+    const signals: AbortSignal[] = [];
+    client = new AppServerClient(vi.fn(), { serverRequestTimeoutMs: 100, requestHandler: (_request, options) => {
+      signals.push(options.signal);
+      return new Promise(resolve => decisions.push(resolve));
+    } });
+    await client.connect();
+    const first = FixtureSocket.instances[0];
+    first.emit('message', { id: 'timed', method: 'item/commandExecution/requestApproval', params: {} });
+    await vi.advanceTimersByTimeAsync(100);
+    expect(first.sent).toContainEqual({ id: 'timed', result: { decision: 'decline' } });
+    expect(signals[0].aborted).toBe(true);
+    decisions[0]({ decision: 'accept' });
+    first.emit('message', { id: 'retired', method: 'item/commandExecution/requestApproval', params: {} });
+    await vi.advanceTimersByTimeAsync(0);
+    first.close();
+    await vi.advanceTimersByTimeAsync(1000);
+    const replacement = FixtureSocket.instances[1];
+    expect(signals[1].aborted).toBe(true);
+    decisions[1]({ decision: 'accept' });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(first.sent.filter(value => value.id === 'timed')).toHaveLength(1);
+    expect(first.sent.some(value => value.id === 'retired')).toBe(false);
+    expect(replacement.sent.some(value => value.id === 'retired')).toBe(false);
+  });
+
+  it.each([false, true])('accepts session approval only when explicitly offered: %s', async offered => {
+    sendMessage.mockResolvedValue({ ok: true, localAppServerUrl });
+    client = new AppServerClient(vi.fn(), { requestHandler: () => ({ decision: 'acceptForSession' }) });
+    await client.connect();
+    const socket = FixtureSocket.instances[0];
+    socket.emit('message', { id: 'session-choice', method: 'item/commandExecution/requestApproval', params: {
+      ...(offered ? { availableDecisions: ['accept', 'acceptForSession', 'decline', 'cancel'] } : {}),
+    } });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(socket.sent).toContainEqual({ id: 'session-choice', result: { decision: offered ? 'acceptForSession' : 'decline' } });
+  });
+
   it('forwards a structured missing-app discovery code without exposing the URL', async () => {
     const { handleAppServerMessage } =
       await import('../conversation-overlay/modules/app-server-background.js');
@@ -500,6 +609,7 @@ describe('browser extension discovers existing app instances', () => {
     { localAppServerUrl: `${localAppServerUrl}&token=${'b'.repeat(64)}` },
     { localAppServerUrl: `${localAppServerUrl}#fragment` },
     { runtimeConfig: { protocolVersion: 1 } },
+    { runtimeConfig: { protocolVersion: 2 } },
   ])('rejects malformed discovery without returning its capability', async override => {
     const { handleAppServerMessage } =
       await import('../conversation-overlay/modules/app-server-background.js');
@@ -563,7 +673,7 @@ describe('browser extension discovers existing app instances', () => {
                 ? {
                     manifestSchemaVersion: 2,
                     nativeHostProtocolVersion: 2,
-                    supportedProtocolVersions: [2],
+                    supportedProtocolVersions: [3],
                   }
                 : discoveryResult,
           });

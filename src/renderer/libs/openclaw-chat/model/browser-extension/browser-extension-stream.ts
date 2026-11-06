@@ -18,7 +18,8 @@ type Item = Record<string, unknown> & {
   displayKey?: string;
   display?: BrowserExtensionMessageDisplay;
 };
-type Thread = { id: string; turns: Array<{ id: string; items: Item[] }> };
+/** Optional browser presentation groups; not the app-server's canonical Thread/Turn. */
+type BrowserDisplayView = { id: string; turns: Array<{ id: string; items: Item[] }> };
 const MAX_PENDING_STREAM_EVENTS = 64;
 const MAX_PENDING_STREAM_CHARS = 1_000_000;
 const MAX_DISPLAY_ITEM_KEYS = 2048;
@@ -147,7 +148,7 @@ function reconcileItems(history: Item[], live: Item[]): { items: Item[]; matches
 
 /** Browser-only projection. Durable history remains owned by Gateway. */
 export class BrowserExtensionStream {
-  private history: Thread;
+  private history: BrowserDisplayView;
   private state = createChatTranscriptState();
   private nextId = 0;
   private agentTextRun: string | null = null;
@@ -159,7 +160,7 @@ export class BrowserExtensionStream {
   private anchor: number | null = null;
   private completedRuns = new Set<string>();
   private settled = false;
-  private beforeStart: Thread | null = null;
+  private beforeStart: BrowserDisplayView | null = null;
   private readonly displayTurnIds = new Map<number, string>();
   private readonly displayItemKeys = new Map<string, string>();
   private readonly dependencies = {
@@ -172,7 +173,7 @@ export class BrowserExtensionStream {
   }
 
   /** Retain only IDs for uniquely identified rows already joined by display reconciliation. */
-  private retainDisplayKeys(turn: Thread['turns'][number]): Thread['turns'][number] {
+  private retainDisplayKeys(turn: BrowserDisplayView['turns'][number]): BrowserDisplayView['turns'][number] {
     const sources = turn.items.map(item => {
       const display = item.display;
       if (!display?.sourceId || !Number.isSafeInteger(display.sourceIndex)) return null;
@@ -254,7 +255,7 @@ export class BrowserExtensionStream {
     };
   }
 
-  setHistory(thread: Thread, authoritative = false): void {
+  setHistory(thread: BrowserDisplayView, authoritative = false): void {
     if (thread.id !== this.threadId) return;
     // A pre-send snapshot must not remove the optimistic user/streaming turn.
     if (this.anchor !== null && thread.turns.length <= this.anchor) {
@@ -352,7 +353,7 @@ export class BrowserExtensionStream {
     return true;
   }
 
-  project(): Thread & { activity?: RunActivity } {
+  project(): BrowserDisplayView & { activity?: RunActivity } {
     const history = {
       ...this.history,
       ...(this.activity ? { activity: this.activity } : {}),

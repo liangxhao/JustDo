@@ -740,3 +740,87 @@ it('rejects a replaced App incarnation before recreating or sending anything', a
   await expect(s.adapter.prepareSession(sessionId, { expectedSessionId: gatewaySessionId })).rejects.toThrow('identity changed');
   expect(s.request).toHaveBeenCalledOnce();
 });
+
+describe('web launch final native admission', () => {
+  it('rejects a dispatcher that could defer the wire call past synchronous admission', async () => {
+    const s = setup();
+    const dispatcher = vi.fn();
+    const admission = vi.fn();
+    await expect(s.adapter.startSession(sessionId, 'One web operation', {
+      clientTurnId, finalSyncAdmission: admission, dispatchChatSend: dispatcher,
+    })).rejects.toMatchObject({ requestSent: false });
+    expect(admission).not.toHaveBeenCalled();
+    expect(dispatcher).not.toHaveBeenCalled();
+    expect(s.request.mock.calls.some(([method]) => method === 'chat.send')).toBe(false);
+  });
+
+  it('checks the final owner after a model queue wait and proves a revoked input was not sent', async () => {
+    const s = setup();
+    useInitialSelection(s);
+    const original = s.request.getMockImplementation()!;
+    s.request.mockImplementation(async (method, params) => {
+      const result = await original(method, params);
+      if (method === 'sessions.describe' && result.session)
+        result.session.lifecycleRevision = 'native-revision-final';
+      return result;
+    });
+    let releaseQueue!: () => void;
+    const queueGate = new Promise<void>(resolve => { releaseQueue = resolve; });
+    let queued: Promise<unknown> | undefined;
+    let allowed = true;
+    const beforeNativeSend = vi.fn(async () => {
+      queued = enqueueSessionModelOperation(sessionKey, () => queueGate);
+    });
+    const finalSyncAdmission = vi.fn(() => {
+      if (!allowed) throw Object.assign(new Error('Web input changed during preparation'), { requestSent: false });
+    });
+    const abandoned = vi.fn().mockResolvedValue(undefined);
+    const running = s.adapter.startSession(sessionId, 'Frozen web input', {
+      clientTurnId, initialModelRef: 'fixture/new', beforeNativeSend,
+      finalSyncAdmission, onNativeSendAbandoned: abandoned,
+    });
+    const rejected = expect(running).rejects.toThrow('Web input changed during preparation');
+    await vi.waitFor(() => expect(beforeNativeSend).toHaveBeenCalledOnce());
+    expect(finalSyncAdmission).not.toHaveBeenCalled();
+    allowed = false;
+    releaseQueue();
+    await queued;
+    await rejected;
+    expect(finalSyncAdmission).toHaveBeenCalledExactlyOnceWith({
+      sessionKey, nativeSessionId: gatewaySessionId, lifecycleRevision: 'native-revision-final',
+      clientGeneration: s.internals.gatewayClientGeneration,
+    });
+    expect(s.request.mock.calls.some(([method]) => method === 'chat.send')).toBe(false);
+    expect(abandoned).toHaveBeenCalledOnce();
+  });
+
+  it('binds the physical session and reports only the explicit raw native ACK after one send', async () => {
+    const s = setup({ runId: 'native-explicit-root', status: 'started' });
+    const original = s.request.getMockImplementation()!;
+    let created = false;
+    const order: string[] = [];
+    s.request.mockImplementation(async (method, params) => {
+      if (method === 'sessions.create') created = true;
+      if (method === 'sessions.describe' && created)
+        return { session: { key: sessionKey, sessionId: gatewaySessionId, lifecycleRevision: 'native-revision' } };
+      if (method === 'chat.send') order.push('wire');
+      return original(method, params);
+    });
+    const nativeAccepted = vi.fn(() => { order.push('ack'); });
+    const running = s.adapter.startSession(sessionId, 'One web operation', {
+      clientTurnId,
+      finalSyncAdmission: () => { order.push('guard'); },
+      onNativeAccepted: nativeAccepted,
+    });
+    await vi.waitFor(() => expect(nativeAccepted).toHaveBeenCalledOnce());
+    expect(order).toEqual(['guard', 'wire', 'ack']);
+    expect(nativeAccepted).toHaveBeenCalledExactlyOnceWith({
+      sessionKey, nativeSessionId: gatewaySessionId, lifecycleRevision: 'native-revision',
+      clientGeneration: s.internals.gatewayClientGeneration,
+      nativeRunId: 'native-explicit-root', clientTurnId,
+    });
+    expect(s.request.mock.calls.filter(([method]) => method === 'chat.send')).toHaveLength(1);
+    expect(s.request).toHaveBeenCalledWith('chat.send', expect.objectContaining({ sessionId: gatewaySessionId }));
+    await s.finish(running);
+  });
+});

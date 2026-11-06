@@ -1,5 +1,11 @@
 # 数据存储：权威、约束与恢复
 
+## 网页关联对话元数据
+
+浏览器领域通过现有 SQLite KV 的 `browser.web-launch.v1` 保存精确站点策略、文档租约与消费序号高水位、无正文 launch 回执、发送 owner/原生 ACK 绑定及结果消息引用/摘要。`prepare` 复用同一数据库连接的同步事务创建 `source: browser-extension`、`ask` 权限的新产品会话并消费序号；回滚不发布会话或 KV 通知，提交后才通知当前扩展连接。领域事务不调用会立即发出变更的通用 KV setter。
+
+不新增数据库、消息表或 transcript 缓存；prompt、页面上下文、最终正文、凭据和 URL/title 不进入此 KV。旧回执淘汰或用户放弃 unknown 观察后，文档高水位仍拒绝旧操作；容量不足拒绝新准入，不以 TTL 将未知执行结算或放行重发。Main 重启不重发持久请求，缺失精确原生证据的派发仍为 unknown。当前契约及验证限制见[网页入口](../features/browser/webpage-conversation-entry.md)。
+
 桌面可选业务使用独立 Native/Main/Browser 插件包；通用 SDK、可信代码审核、冷包变更和历史清理所有权见 [应用插件宿主](17-app-plugin-host.md)。
 
 本文按 Core 的 SqliteStore、CoworkStore、ScheduledTaskResultStore，以及所属插件的领域 Store 组织。产品数据、原生 transcript、浏览器数据与服务端统计分别拥有独立生命周期，不能用“SQLite 中有数据”概括所有持久状态。
@@ -317,6 +323,37 @@ Turn／Item 是请求内投影，不落库、不新增 Main 正文缓存。历�
 通用计时记录不自动生成空 Turn；无消息的轮次只能由外部映射的精确执行指针明确保留。
 桌面单个／批量运行状态查询只观察这些外部会话，不创建、重开、绑定或结算其回执，
 防止迟到状态被记成新的恢复执行；不通过此前生成的恢复行推断外部任务结果。
+
+Chrome 与通用 app-server 共用上述历史读取、Turn／Item 投影及快照分页实现，
+但浏览器普通产品计时回执不具备外部执行账本的独立结算权威。缺少本进程持有并重新核验的
+精确原生整轮证据时，即使计时行记录 completed／ended_at，标准历史仍保留结果未知，
+不补写数据库回执。另供富侧栏使用的 `thread.browser.display` 只包含本地分组及显示项，
+不包含合成的 completed 状态，不建立第二份 Main 正文缓存或持久执行账本。
+
+标准 app-server 图片在准入时校验真实字节，交由原生附件通道持久化。
+历史直接投影原生 content 或 `__openclaw.media` 的真实图片引用；只有内部受管路径时使用
+标准 localImage.path，不读取媒体／transcript 文件补正文，也不把图片路径升级成执行身份。
+文本与图片按原生实际接收的归一化形状呈现，不另存原始交错输入。原生返回多个无法精确关联的
+图片载体时明确报错，不静默丢弃或重复图像；回传媒体引用不代表宿主已经读取该媒体文件。
+
+命令会话授权是绑定连接 scope、原生 key、物理 SID、revision、客户端／连接代次与命令／环境
+指纹的有界内存元数据，不进入产品 SQLite，不跨冷重启或新连接恢复。向原生提交 allow-once
+明确成功、再次核验仍属于当前 owner 后才登记，未知 resolve 不落入缓存，也不重试决定。
+同一 scope 可跨已结算 run 复用；关闭连接、审批 Cancel、scope 撤回或身份变化使旧缓存失效。
+Chrome 退订关闭对应 scope，通用客户端空闲退订仅卸载观察，不清除仍属于该连接的 scope。
+原生明确提供并由用户选择的 App 持久授权另由原生存储拥有，不复制到本缓存或产品表，
+也不因连接结束自动回滚。
+
+app-server 不将审批请求、客户端答案或秘密表单输入另存到产品 SQLite；原生审批回执和 App
+持久授权仍由原生管理，不承诺原生层完全不持久化。prepared owner、ACK 等待、标准 live Item 和
+响应前的图片事件缓冲只存在于有界内存；原生终态和交互 resolved 分别处理。纯图调用的
+chat.send 没有 agent 的原生 revision CAS，前后身份围栏及 unknown 保留规则见
+[执行引擎](05-agent-engine.md#输入模型与原生发送边界)，不能以产品计时行补足该原子性。
+
+长最终正文补齐只在原生已确认结算后进行，普通 agent 读取同一 final RPC，纯图路径读取当前
+认证 Gateway 的完整历史，并核对唯一精确 run、真实 final_answer 和 producer 截断快照。
+结果是本次响应内的输出，不写回正文或替代历史。恢复失败保留原执行结论，不将执行改成失败
+或解除未知执行占用。
 
 CLI 执行在同一映射行增加可空的 `execution_run_id`、`native_session_id`、
 `lifecycle_revision` 和 `execution_state`。旧库通过增列保持原映射及数据；没有正文、

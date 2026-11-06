@@ -1,30 +1,42 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 
 import type { CoworkAttachmentPayload } from '../../../shared/cowork/attachments';
-import { PRODUCT_NAME } from '../../../shared/productMetadata';
 import type { PermissionMode } from '../../../shared/security/approvals';
+import { assertCodexHistoryFullSize, paginateCodexHistoryItems, paginateCodexHistoryTurns, projectCodexHistory } from '../../appServer/appServerHistory';
+import { prepareAppServerInput } from '../../appServer/appServerInput';
+import { invalidParams, optionalBoolean, optionalString, paginateIds, paginateThreads } from '../../appServer/appServerPagination';
 import {
   type AppServerBinding,
   type AppServerConnectionContext,
+  AppServerErrorCode,
   AppServerErrorStyle,
   AppServerNotificationMethod,
-  type AppServerNotificationMethod as NotificationMethod,
   type AppServerOperation,
   type AppServerParams,
   type AppServerResult,
+  AppServerRpcError,
 } from '../../appServer/appServerProtocol';
-import { toAppServerThread } from './browserAppServerProjection';
+import { codexInitializeResult, codexModel, codexThread, codexThreadOpen, codexTurn, CodexTurnStatus } from '../../appServer/appServerWire';
+import { ExternalApprovalSessionScope } from '../../openclaw/permissions/externalApprovalSessionScope';
+import { BrowserAppServerLiveProjection } from './browserAppServerLiveProjection';
+import { toAppServerMetadata, toAppServerThread, toBrowserDisplay } from './browserAppServerProjection';
+import { BrowserAppServerMethod, BrowserAppServerNotificationMethod, browserWebLaunchMethods, wrapBrowserWebLaunchOperation } from './browserAppServerProtocol';
 import type {
   BrowserExtensionChatApi,
   BrowserExtensionMessage,
   BrowserExtensionPageContext,
+  BrowserExtensionThread,
+  BrowserExtensionTurnState,
 } from './browserAppServerTypes';
 import { readThreadImage } from './browserExtensionImage';
+import type { BrowserWebLaunchService } from './browserWebLaunchService';
 
 const POLL_INTERVAL_MS = 500;
 const FULL_SNAPSHOT_POLL_INTERVAL = 20;
 const TERMINAL_SETTLE_POLLS = 3;
 const TERMINAL_MAX_POLLS = 20;
+const MAX_LOADED_THREADS = 32;
+const MAX_OBSERVED_TURNS = 256;
 const HubPhase = { Active: 'active', Paused: 'paused', Stopped: 'stopped' } as const;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -42,21 +54,16 @@ const hasFinalAssistantAfterLastUser = (messages: BrowserExtensionMessage[]): bo
     .some(message => message.role === 'assistant' && Boolean(message.text));
 };
 
-const extractTurnText = (params: Record<string, unknown>): string => {
-  if (typeof params.message === 'string') return params.message;
-  if (!Array.isArray(params.input)) return '';
-  return params.input
-    .filter(isRecord)
-    .filter(item => item.type === 'text' || item.type === 'input_text')
-    .map(item => (typeof item.text === 'string' ? item.text : ''))
-    .filter(Boolean)
-    .join('\n');
-};
-
 interface BrowserPeer {
   context: AppServerConnectionContext;
+  controller: AbortController;
   subscriptions: Set<string>;
   generation: number;
+  models: Map<string, string>;
+  subscriptionTokens: Map<string, symbol>;
+  unloadTokens: Map<string, symbol>;
+  approvals: Map<string, { controller: AbortController; scope: ExternalApprovalSessionScope }>;
+  opening: number;
 }
 
 /** Chrome domain observations outlive a socket; disconnect only detaches that viewer. */
@@ -68,9 +75,14 @@ export class BrowserAppServerHub {
   private browserPairingPromise: Promise<{ pairingString: string }> | null = null;
   private readonly peers = new Set<BrowserPeer>();
   private readonly streamSubscriptions = new Map<string, Promise<() => void>>();
+  private readonly projections = new Map<string, BrowserAppServerLiveProjection>();
+  private readonly pendingTurns = new Map<string, { threadId: string; leases: Set<symbol> }>();
+  private readonly pendingStartResponses = new Map<string, symbol>();
+  private readonly observedStatuses = new Map<string, string>();
   private readonly pollStates = new Map<
     string,
     {
+      threadId: string;
       errors: number;
       baselineFingerprint: string;
       missing: number;
@@ -86,13 +98,20 @@ export class BrowserAppServerHub {
 
   constructor(
     private readonly api: BrowserExtensionChatApi,
-    private readonly appVersion: string,
+    _appVersion: string,
     private readonly createBrowserPairing?: () => Promise<{ pairingString: string }>,
+    private readonly webLaunch?: BrowserWebLaunchService,
+    private readonly home = process.cwd(),
   ) {}
 
   connect(context: AppServerConnectionContext): AppServerBinding {
     if (this.phase !== HubPhase.Active) throw new Error('Browser app-server is not active.');
-    const peer: BrowserPeer = { context, subscriptions: new Set(), generation: this.generation };
+    const peer: BrowserPeer = {
+      context, controller: new AbortController(), subscriptions: new Set(), generation: this.generation,
+      models: new Map(), subscriptionTokens: new Map(),
+      unloadTokens: new Map(), approvals: new Map(),
+      opening: 0,
+    };
     this.peers.add(peer);
     const operation =
       (run: AppServerOperation): AppServerOperation =>
@@ -100,35 +119,39 @@ export class BrowserAppServerHub {
         this.assertPeerActive(peer);
         return run(params);
       };
+    const webLaunchOperations = this.webLaunch?.getOperations();
     return {
       initialization: {
-        result: {
-          platformFamily:
-            process.platform === 'win32'
-              ? 'windows'
-              : process.platform === 'darwin'
-                ? 'macos'
-                : 'linux',
-          userAgent: PRODUCT_NAME + '/' + this.appVersion,
-          platformOs: process.platform,
-        },
+        result: codexInitializeResult(this.home),
         requireInitializedNotification: true,
-        executeNotifications: true,
-        errorStyle: AppServerErrorStyle.Standard,
+        executeNotifications: false,
+        errorStyle: AppServerErrorStyle.Codex,
       },
       threads: {
-        start: operation(params => this.startThread(peer, params)),
+        start: operation(params => this.withOpening(peer, undefined, () => this.startThread(peer, params))),
+        resume: operation(params => this.withOpening(peer, this.threadId(params), () => this.resumeThread(peer, params))),
         list: operation(params => this.listThreads(peer, params)),
         read: operation(params => this.readThread(peer, params)),
         unsubscribe: operation(params => this.unsubscribeThread(peer, params)),
+        loadedList: operation(params => paginateIds(this.loadedIds(), params, 'browser-loaded', id => id)),
+        turnsList: operation(async params => paginateCodexHistoryTurns(await this.history(this.threadId(params)), params)),
+        itemsList: operation(async params => paginateCodexHistoryItems(await this.history(this.threadId(params)), params)),
+        setName: operation(params => this.setName(peer, params)),
       },
+      models: { list: operation(params => this.listModels(peer, params)) },
       turns: {
         start: operation(params => this.startTurn(peer, params)),
         interrupt: operation(params => this.interruptTurn(peer, params)),
       },
-      composer: { options: operation(params => this.composerOptions(peer, params)) },
-      images: { read: operation(params => this.readImage(peer, params)) },
-      browserPairing: { create: operation(params => this.pairBrowser(peer, params)) },
+      extensions: {
+        [BrowserAppServerMethod.ComposerOptions]: operation(params => this.composerOptions(peer, params)),
+        [BrowserAppServerMethod.ThreadImage]: operation(params => this.readImage(peer, params)),
+        [BrowserAppServerMethod.BrowserPair]: operation(params => this.pairBrowser(peer, params)),
+        ...Object.fromEntries(browserWebLaunchMethods.flatMap(method => {
+          const run = webLaunchOperations?.[method];
+          return run ? [[method, wrapBrowserWebLaunchOperation(operation(run))]] : [];
+        })),
+      },
       onDisconnect: () => this.detach(peer),
     };
   }
@@ -148,10 +171,187 @@ export class BrowserAppServerHub {
       throw new Error('Connection closed.');
   }
 
+  private threadId(params: AppServerParams): string {
+    const id = optionalString(params, 'threadId');
+    if (!id) invalidParams('threadId is required.');
+    return id;
+  }
+
+  private browserParams(params: AppServerParams): AppServerParams {
+    if (params.browser == null) return {};
+    if (!isRecord(params.browser)) invalidParams('browser must be an object.');
+    return params.browser;
+  }
+
+  private rejectOverrides(params: AppServerParams, keys: readonly string[]): void {
+    if (keys.some(key => params[key] != null)) invalidParams('Execution settings are managed in the desktop app.');
+  }
+
+  private validateThreadSettings(params: AppServerParams): void {
+    this.rejectOverrides(params, ['serviceTier', 'approvalPolicy', 'sandbox', 'modelProvider', 'profile',
+      'baseInstructions', 'developerInstructions', 'compactPrompt', 'includeApplyPatchTool', 'dynamicTools',
+      'personality', 'collaborationMode', 'approvalsReviewer', 'serviceName', 'sessionStartSource', 'threadSource', 'title']);
+    if (optionalBoolean(params, 'ephemeral')) invalidParams('Ephemeral threads are unavailable.');
+    if (params.historyMode != null && params.historyMode !== 'legacy') invalidParams('Unsupported historyMode.');
+    if (params.config != null && (!isRecord(params.config) || Object.keys(params.config).length))
+      invalidParams('Execution settings are managed in the desktop app.');
+  }
+
+  private unsupported(method: string): never {
+    throw new AppServerRpcError(AppServerErrorCode.MethodNotFound, `${method} is unavailable.`);
+  }
+
+  private loadedIds(): string[] {
+    return [...new Set([
+      ...[...this.peers].flatMap(peer => peer.context.isClosed() ? [] : [...peer.subscriptions]),
+      ...[...this.pollStates.values()].map(state => state.threadId),
+      ...[...this.pendingTurns.values()].map(state => state.threadId),
+    ])].sort();
+  }
+
+  private pollKey(threadId: string, turnId: string): string {
+    return JSON.stringify([threadId, turnId]);
+  }
+
+  private reservePollSlot(threadId: string, turnId: string): () => void {
+    const key = this.pollKey(threadId, turnId);
+    if (this.pollStates.has(key)) return () => {};
+    let pending = this.pendingTurns.get(key);
+    if (!pending) {
+      if (this.pollStates.size + this.pendingTurns.size >= MAX_OBSERVED_TURNS)
+        invalidParams('Too many browser turns are still under observation.');
+      pending = { threadId, leases: new Set() };
+      this.pendingTurns.set(key, pending);
+    }
+    const lease = Symbol();
+    pending.leases.add(lease);
+    return () => {
+      if (this.pendingTurns.get(key) !== pending) return;
+      pending.leases.delete(lease);
+      if (!pending.leases.size) this.pendingTurns.delete(key);
+    };
+  }
+
+  private publishStatus(threadId: string, status: AppServerResult, generation: number): void {
+    const fingerprint = JSON.stringify(status);
+    if (this.observedStatuses.get(threadId) === fingerprint) return;
+    this.observedStatuses.set(threadId, fingerprint);
+    this.broadcast(AppServerNotificationMethod.ThreadStatusChanged, { threadId, status }, threadId, generation);
+  }
+
+  /** A thread observation is never evidence that an execution has settled. */
+  private async publishObservedStatus(threadId: string, generation: number, valid: () => boolean, expectedTurnId?: string): Promise<void> {
+    const current = await this.api.getTurnState(threadId);
+    if (!valid() || (expectedTurnId && current && current.id !== expectedTurnId)) return;
+    if (current && !current.executionSettled) {
+      this.publishStatus(threadId, current.status === 'inProgress'
+        ? { type: 'active', activeFlags: [] } : { type: 'systemError' }, generation);
+      return;
+    }
+    const runtime = await this.api.getThreadRuntimeStatus(threadId);
+    if (!valid()) return;
+    const after = await this.api.getTurnState(threadId);
+    if (!valid() || (expectedTurnId && after && after.id !== expectedTurnId)) return;
+    if (after && !after.executionSettled) {
+      this.publishStatus(threadId, after.status === 'inProgress'
+        ? { type: 'active', activeFlags: [] } : { type: 'systemError' }, generation);
+    } else if (runtime.known) {
+      this.publishStatus(threadId, runtime.running ? { type: 'active', activeFlags: [] } : { type: 'idle' }, generation);
+    }
+  }
+
+  private selectedThread(peer: BrowserPeer, thread: BrowserExtensionThread): BrowserExtensionThread {
+    const modelRef = peer.models.get(thread.id);
+    return modelRef ? { ...thread, modelRef } : thread;
+  }
+
+  private async withOpening(peer: BrowserPeer, threadId: string | undefined, run: () => Promise<AppServerResult>): Promise<AppServerResult> {
+    const reserved = !threadId || !peer.subscriptions.has(threadId);
+    if (reserved && peer.subscriptions.size + peer.opening >= MAX_LOADED_THREADS)
+      invalidParams(`This connection can load at most ${MAX_LOADED_THREADS} threads.`);
+    if (reserved) peer.opening += 1;
+    try { return await run(); }
+    finally { if (reserved) peer.opening -= 1; }
+  }
+
+  private deliver(peer: BrowserPeer, method: string, params: AppServerParams): void {
+    try {
+      peer.context.notify(method, params);
+    } catch {
+      this.detach(peer);
+      try { peer.context.fail?.(new Error('Browser app-server output failed.')); } catch { /* retired */ }
+    }
+  }
+
+  private afterResponse(run: () => void, generation = this.generation): void {
+    setImmediate(() => {
+      if (this.canObserve(generation)) run();
+    });
+  }
+
+  private projection(threadId: string): BrowserAppServerLiveProjection {
+    let projection = this.projections.get(threadId);
+    if (!projection) {
+      const generation = this.generation;
+      projection = new BrowserAppServerLiveProjection(threadId,
+        (method, params) => this.broadcast(method, params, threadId, generation),
+        error => {
+          for (const peer of [...this.peers]) if (peer.subscriptions.has(threadId)) {
+            this.detach(peer);
+            try { peer.context.fail?.(error); } catch { /* retired */ }
+          }
+        });
+      this.projections.set(threadId, projection);
+    }
+    return projection;
+  }
+
+  private async history(threadId: string) {
+    await this.requireThread(threadId);
+    if (!this.api.getHistory) return this.unsupported('thread/turns/list');
+    const history = await this.api.getHistory(threadId);
+    if (history.threadId !== threadId) throw new Error('The history thread identity changed.');
+    await this.requireThread(threadId);
+    return projectCodexHistory(history);
+  }
+
+  private async listModels(peer: BrowserPeer, params: AppServerParams): Promise<AppServerResult> {
+    optionalBoolean(params, 'includeHidden');
+    if (!this.api.getModels) return this.unsupported('model/list');
+    const models = await this.api.getModels();
+    this.assertPeerActive(peer);
+    const page = paginateIds(models, params, 'browser-models', model => model.id);
+    return { ...page, data: page.data.map(codexModel) };
+  }
+
+  private async setName(peer: BrowserPeer, params: AppServerParams): Promise<AppServerResult> {
+    const threadId = this.threadId(params);
+    const name = optionalString(params, 'name');
+    if (!name?.trim() || name.trim().length > 500) invalidParams('name must contain 1 to 500 characters.');
+    if (!this.api.setThreadName) return this.unsupported('thread/name/set');
+    const thread = this.api.setThreadName(threadId, name);
+    this.afterResponse(() => {
+      this.broadcast(AppServerNotificationMethod.ThreadNameUpdated,
+        { threadId, threadName: thread.title }, threadId, peer.generation);
+      if (this.peers.has(peer) && !peer.subscriptions.has(threadId))
+        this.deliver(peer, AppServerNotificationMethod.ThreadNameUpdated, { threadId, threadName: thread.title });
+    }, peer.generation);
+    return {};
+  }
+
   private detach(peer: BrowserPeer): void {
     this.peers.delete(peer);
+    peer.controller.abort();
+    for (const approval of peer.approvals.values()) {
+      approval.controller.abort();
+      approval.scope.close();
+    }
+    peer.approvals.clear();
     const threads = [...peer.subscriptions];
     peer.subscriptions.clear();
+    peer.subscriptionTokens.clear();
+    peer.unloadTokens.clear();
+    peer.models.clear();
     for (const threadId of threads) this.releaseStream(threadId);
   }
 
@@ -168,7 +368,15 @@ export class BrowserAppServerHub {
       state.timer = null;
       state.paused = true;
     }
-    if (!preserve) this.pollStates.clear();
+    if (!preserve) {
+      this.pollStates.clear();
+      this.pendingTurns.clear();
+      this.pendingStartResponses.clear();
+      this.observedStatuses.clear();
+      for (const projection of this.projections.values()) projection.clear();
+      this.projections.clear();
+    }
+    if (!preserve) this.webLaunch?.close();
     await Promise.all(
       streams.map(stream =>
         stream.then(
@@ -188,8 +396,15 @@ export class BrowserAppServerHub {
     }
   }
 
+  notifyWebLaunchChanged(): void {
+    if (this.phase !== HubPhase.Active) return;
+    for (const peer of this.peers) if (peer.generation === this.generation && !peer.context.isClosed()) {
+      this.deliver(peer, BrowserAppServerNotificationMethod.WebLaunchChanged, {});
+    }
+  }
+
   private broadcast(
-    method: NotificationMethod,
+    method: string,
     params: AppServerParams,
     threadId: string,
     generation: number,
@@ -201,7 +416,7 @@ export class BrowserAppServerHub {
         !peer.context.isClosed() &&
         peer.subscriptions.has(threadId)
       )
-        peer.context.notify(method, params);
+        this.deliver(peer, method, params);
     }
   }
 
@@ -209,18 +424,25 @@ export class BrowserAppServerHub {
     this.assertPeerActive(peer);
     const epoch = this.observationEpoch;
     const subscriptions = peer.subscriptions;
+    if (!subscriptions.has(threadId) && subscriptions.size >= MAX_LOADED_THREADS)
+      invalidParams(`This connection can load at most ${MAX_LOADED_THREADS} threads.`);
+    const token = peer.subscriptionTokens.get(threadId) ?? Symbol();
+    peer.subscriptionTokens.set(threadId, token);
+    peer.unloadTokens.delete(threadId);
     subscriptions.add(threadId);
 
     let stream = this.streamSubscriptions.get(threadId);
     if (!stream) {
       stream = this.api.subscribeThreadEvents(threadId, event => {
-        if (epoch === this.observationEpoch)
+        if (epoch === this.observationEpoch) {
           this.broadcast(
-            AppServerNotificationMethod.ThreadStream,
+            BrowserAppServerNotificationMethod.ThreadStream,
             { threadId, ...event },
             threadId,
             peer.generation,
           );
+          this.projection(threadId).accept(event);
+        }
       });
       this.streamSubscriptions.set(threadId, stream);
     }
@@ -229,16 +451,23 @@ export class BrowserAppServerHub {
     } catch (error) {
       if (this.streamSubscriptions.get(threadId) === stream)
         this.streamSubscriptions.delete(threadId);
-      subscriptions.delete(threadId);
+      if (peer.subscriptionTokens.get(threadId) === token) {
+        subscriptions.delete(threadId);
+        peer.subscriptionTokens.delete(threadId);
+      }
       throw error;
     }
     if (
       peer.context.isClosed() ||
       !this.peers.has(peer) ||
       !this.canObserve(peer.generation) ||
-      epoch !== this.observationEpoch
+      epoch !== this.observationEpoch ||
+      peer.subscriptionTokens.get(threadId) !== token || !subscriptions.has(threadId)
     ) {
-      subscriptions.delete(threadId);
+      if (peer.subscriptionTokens.get(threadId) === token) {
+        subscriptions.delete(threadId);
+        peer.subscriptionTokens.delete(threadId);
+      }
       this.releaseStream(threadId);
       throw new Error('Connection closed.');
     }
@@ -262,6 +491,7 @@ export class BrowserAppServerHub {
   }
 
   private async requireThread(threadId: string) {
+    if (this.api.getThread) return this.api.getThread(threadId);
     const thread = (await this.api.listSessions()).find(candidate => candidate.id === threadId);
     if (!thread) throw new Error('Thread not found.');
     return thread;
@@ -288,15 +518,9 @@ export class BrowserAppServerHub {
 
   private async listThreads(_peer: BrowserPeer, params: AppServerParams): Promise<AppServerResult> {
     const threads = await this.api.listSessions();
-    const cursor = typeof params.cursor === 'string' ? Number.parseInt(params.cursor, 10) : 0;
-    const offset = Number.isSafeInteger(cursor) && cursor >= 0 ? cursor : 0;
-    const requestedLimit = typeof params.limit === 'number' ? Math.floor(params.limit) : 50;
-    const limit = Math.max(1, Math.min(requestedLimit, 100));
-    const page = threads.slice(offset, offset + limit);
-    return {
-      data: page.map(thread => toAppServerThread(thread)),
-      nextCursor: offset + page.length < threads.length ? String(offset + page.length) : null,
-    };
+    this.assertPeerActive(_peer);
+    const page = paginateThreads(threads.map(thread => toAppServerMetadata(this.selectedThread(_peer, thread))), params);
+    return { ...page, data: page.data.map(metadata => codexThread(metadata, this.loadedIds().includes(metadata.id))) };
   }
 
   private async readImage(_peer: BrowserPeer, params: AppServerParams): Promise<AppServerResult> {
@@ -316,43 +540,111 @@ export class BrowserAppServerHub {
   }
 
   private async readThread(peer: BrowserPeer, params: AppServerParams): Promise<AppServerResult> {
-    const threadId = typeof params.threadId === 'string' ? params.threadId : '';
-    if (!threadId) throw new Error('threadId is required.');
-    const thread = (await this.api.listSessions()).find(candidate => candidate.id === threadId);
-    if (!thread) throw new Error('Thread not found.');
-    await this.subscribeStream(peer, threadId);
+    const threadId = this.threadId(params);
+    const thread = this.selectedThread(peer, await this.requireThread(threadId));
+    this.assertPeerActive(peer);
+    const includeTurns = optionalBoolean(params, 'includeTurns') ?? false;
+    const browser = this.browserParams(params);
     const messages =
-      params.includeTurns === true
+      optionalBoolean(browser, 'includeDisplay') === true
         ? await this.api.getMessages(threadId, { forceFullSnapshot: true })
         : undefined;
-    const turnId = typeof params.turnId === 'string' ? params.turnId : undefined;
+    this.assertPeerActive(peer);
+    const turnId = optionalString(browser, 'turnId');
     const activeTurn = await this.api.getTurnState(threadId, turnId);
-    if (this.canObserve(peer.generation)) {
-      await this.requireThread(threadId);
-      if (activeTurn && !activeTurn.executionSettled && !this.pollStates.has(threadId)) {
-        this.startPollingTurn(
-          threadId,
-          activeTurn.id,
-          messageFingerprint(messages ?? []),
-          peer.generation,
-        );
-      }
+    this.assertPeerActive(peer);
+    const projected = toAppServerThread(thread, messages, activeTurn, this.loadedIds().includes(threadId));
+    if (includeTurns) {
+      const history = await this.history(threadId);
+      this.assertPeerActive(peer);
+      assertCodexHistoryFullSize(history.turns);
+      projected.turns = history.turns;
     }
-    return { thread: toAppServerThread(thread, messages), activeTurn };
+    return { thread: projected };
   }
 
   private async startThread(peer: BrowserPeer, params: AppServerParams): Promise<AppServerResult> {
-    const title = typeof params.title === 'string' ? params.title : undefined;
-    const thread = await this.api.startThread(title);
-    const appServerThread = toAppServerThread(thread);
+    this.validateThreadSettings(params);
+    if (peer.subscriptions.size >= MAX_LOADED_THREADS)
+      invalidParams(`This connection can load at most ${MAX_LOADED_THREADS} threads.`);
+    const browser = this.browserParams(params);
+    const title = optionalString(browser, 'title');
+    const model = optionalString(params, 'model');
+    const cwd = optionalString(params, 'cwd');
+    const thread = await this.api.startThread(title, { model, cwd });
+    this.assertPeerActive(peer);
+    const result = await this.openResult(peer, thread);
     await this.subscribeStream(peer, thread.id);
-    this.broadcast(
-      AppServerNotificationMethod.ThreadStarted,
-      { thread: appServerThread },
-      thread.id,
-      peer.generation,
-    );
-    return { instructionSources: [], thread: appServerThread };
+    this.afterResponse(() => this.broadcast(AppServerNotificationMethod.ThreadStarted,
+      { thread: result.thread }, thread.id, peer.generation), peer.generation);
+    const token = peer.subscriptionTokens.get(thread.id);
+    this.afterResponse(() => {
+      void this.publishObservedStatus(thread.id, peer.generation, () => this.canObserve(peer.generation) &&
+        this.peers.has(peer) && peer.subscriptionTokens.get(thread.id) === token).catch(() => {});
+    }, peer.generation);
+    return result;
+  }
+
+  private async openResult(peer: BrowserPeer, thread: BrowserExtensionThread): Promise<AppServerResult> {
+    let selected = this.selectedThread(peer, thread);
+    if (!selected.modelRef) {
+      if (!this.api.getModels) return this.unsupported('model/list');
+      const model = (await this.api.getModels()).find(candidate => candidate.isDefault);
+      this.assertPeerActive(peer);
+      if (!model) throw new Error('The selected model is unavailable.');
+      selected = { ...selected, modelRef: model.id };
+    }
+    return {
+      ...codexThreadOpen(toAppServerMetadata(selected), toAppServerMetadata(selected),
+        this.api.supportsClientApprovals === true && Boolean(peer.context.request)),
+      thread: toAppServerThread(selected, undefined, null, true),
+    };
+  }
+
+  private async resumeThread(peer: BrowserPeer, params: AppServerParams): Promise<AppServerResult> {
+    this.validateThreadSettings(params);
+    const threadId = this.threadId(params);
+    const thread = await this.requireThread(threadId);
+    this.assertPeerActive(peer);
+    const cwd = optionalString(params, 'cwd');
+    if (cwd !== undefined && (process.platform === 'win32' ? cwd.toLowerCase() !== thread.cwd.toLowerCase() : cwd !== thread.cwd))
+      invalidParams('A resumed conversation cannot change its task directory.');
+    const model = optionalString(params, 'model');
+    if (model !== undefined) {
+      const active = await this.api.getTurnState(threadId);
+      this.assertPeerActive(peer);
+      if (model !== thread.modelRef && active && !active.executionSettled)
+        invalidParams('An active or unconfirmed thread cannot change its model.');
+      if (!this.api.getModels || !(await this.api.getModels()).some(candidate => candidate.id === model))
+        invalidParams('The selected model is unavailable.');
+      this.assertPeerActive(peer);
+      peer.models.set(threadId, model);
+    }
+    const result = await this.openResult(peer, thread);
+    const read = await this.readThread(peer, {
+      threadId, includeTurns: !(optionalBoolean(params, 'excludeTurns') ?? false), browser: this.browserParams(params),
+    });
+    result.thread = read.thread;
+    const activeTurn = ((read.thread as AppServerResult).browser as { activeTurn?: BrowserExtensionTurnState }).activeTurn;
+    const needsPoll = activeTurn && !activeTurn.executionSettled;
+    const release = needsPoll ? this.reservePollSlot(threadId, activeTurn.id) : () => {};
+    try {
+      await this.subscribeStream(peer, threadId);
+      const currentThread = await this.requireThread(threadId);
+      this.assertPeerActive(peer);
+      (result.thread as AppServerResult).status = codexThread(toAppServerMetadata(currentThread), true).status;
+      if (needsPoll)
+        this.afterResponse(() => this.startPollingTurn(threadId, activeTurn.id, '', peer.generation), peer.generation);
+      const token = peer.subscriptionTokens.get(threadId);
+      this.afterResponse(() => {
+        void this.publishObservedStatus(threadId, peer.generation, () => this.canObserve(peer.generation) &&
+          this.peers.has(peer) && peer.subscriptionTokens.get(threadId) === token).catch(() => {});
+      }, peer.generation);
+      return result;
+    } catch (error) {
+      release();
+      throw error;
+    }
   }
 
   private async composerOptions(
@@ -367,108 +659,192 @@ export class BrowserAppServerHub {
     peer: BrowserPeer,
     params: AppServerParams,
   ): Promise<AppServerResult> {
-    const threadId = typeof params.threadId === 'string' ? params.threadId : '';
+    const threadId = this.threadId(params);
     const subscriptions = peer.subscriptions;
+    peer.subscriptionTokens.delete(threadId);
+    peer.models.delete(threadId);
+    const approval = peer.approvals.get(threadId);
+    approval?.controller.abort();
+    approval?.scope.close();
+    peer.approvals.delete(threadId);
     const removed = threadId ? subscriptions?.delete(threadId) === true : false;
     if (threadId) this.releaseStream(threadId);
-    return { status: removed ? 'unsubscribed' : 'notSubscribed' };
+    if (removed) {
+      const token = Symbol();
+      peer.unloadTokens.set(threadId, token);
+      this.afterResponse(() => {
+        if (peer.unloadTokens.get(threadId) !== token) return;
+        peer.unloadTokens.delete(threadId);
+        const unloaded = () => this.peers.has(peer) && !peer.context.isClosed() &&
+          !peer.subscriptions.has(threadId) && !this.loadedIds().includes(threadId);
+        if (!unloaded()) return;
+        this.observedStatuses.delete(threadId);
+        this.deliver(peer, AppServerNotificationMethod.ThreadStatusChanged, { threadId, status: { type: 'notLoaded' } });
+        if (unloaded()) this.deliver(peer, AppServerNotificationMethod.ThreadClosed, { threadId });
+      }, peer.generation);
+    }
+    return { status: removed ? 'unsubscribed' : this.loadedIds().includes(threadId) ? 'notSubscribed' : 'notLoaded' };
   }
 
   private async startTurn(peer: BrowserPeer, params: AppServerParams): Promise<AppServerResult> {
+    const admission = { dispatchStarted: false };
+    try {
+      return await this.prepareAndStartTurn(peer, params, admission);
+    } catch (error) {
+      const failure = error instanceof Error ? error : new Error('Unable to prepare the browser turn.');
+      if (!admission.dispatchStarted) Object.assign(failure, { requestSent: false });
+      throw failure;
+    }
+  }
+
+  private async prepareAndStartTurn(
+    peer: BrowserPeer,
+    params: AppServerParams,
+    admission: { dispatchStarted: boolean },
+  ): Promise<AppServerResult> {
     const invalidInput = (message: string): never => {
-      throw Object.assign(new Error(message), { requestSent: false });
+      throw Object.assign(new AppServerRpcError(AppServerErrorCode.InvalidParams, message), { requestSent: false });
     };
+    const browser = this.browserParams(params);
+    this.rejectOverrides(params, ['effort', 'serviceTier', 'cwd', 'approvalPolicy', 'sandboxPolicy',
+      'outputSchema', 'collaborationMode', 'personality', 'approvalsReviewer', 'toolOutput', 'disabledPluginIds',
+      'serviceTierForTurn', 'parentTurnId', 'rootTurnId', 'clientUserMessageId', 'turnTrigger', 'summary',
+      'message', 'modelRef', 'clientTurnId', 'attachments', 'pageContext', 'permissionMode']);
     if (
-      params.clientTurnId !== undefined &&
-      (typeof params.clientTurnId !== 'string' ||
+      browser.clientTurnId !== undefined &&
+      (typeof browser.clientTurnId !== 'string' ||
         !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(
-          params.clientTurnId,
+          browser.clientTurnId,
         ))
     ) {
       invalidInput('Invalid client turn identity.');
     }
-    let threadId = typeof params.threadId === 'string' ? params.threadId : undefined;
-    const message = extractTurnText(params);
-    const pageContext = isRecord(params.pageContext)
-      ? (params.pageContext as BrowserExtensionPageContext)
+    const threadId = this.threadId(params);
+    const pageContext = isRecord(browser.pageContext)
+      ? (browser.pageContext as BrowserExtensionPageContext)
       : undefined;
-    if (params.attachments !== undefined && !Array.isArray(params.attachments)) {
+    if (browser.pageContext != null && !isRecord(browser.pageContext)) invalidInput('Invalid page context.');
+    if (browser.attachments !== undefined && !Array.isArray(browser.attachments)) {
       invalidInput('Invalid attachment payload.');
     }
-    const attachments = params.attachments as CoworkAttachmentPayload[] | undefined;
+    const extraAttachments = browser.attachments as CoworkAttachmentPayload[] | undefined;
     if (
-      params.permissionMode !== undefined &&
-      params.permissionMode !== 'ask' &&
-      params.permissionMode !== 'auto' &&
-      params.permissionMode !== 'full'
+      browser.permissionMode !== undefined &&
+      browser.permissionMode !== 'ask' &&
+      browser.permissionMode !== 'auto' &&
+      browser.permissionMode !== 'full'
     ) {
       invalidInput('Invalid permission mode.');
     }
-    const permissionMode = params.permissionMode as PermissionMode | undefined;
-    const modelRef = typeof params.modelRef === 'string' ? params.modelRef : undefined;
-    if (!message.trim()) invalidInput('Turn input is required.');
+    const permissionMode = browser.permissionMode as PermissionMode | undefined;
+    const modelRef = optionalString(params, 'model') ?? peer.models.get(threadId);
+    const clientTurnId = typeof browser.clientTurnId === 'string' ? browser.clientTurnId : randomUUID();
+    const sourceThread = await this.requireThread(threadId);
+    this.assertPeerActive(peer);
+    const preparedInput = await prepareAppServerInput(params.input, {
+      cwd: sourceThread.cwd,
+      allowEmptyForAttachments: Boolean(extraAttachments?.length),
+      signal: peer.controller.signal,
+    });
+    this.assertPeerActive(peer);
+    const currentThread = await this.requireThread(threadId);
+    this.assertPeerActive(peer);
+    if (currentThread.cwd !== sourceThread.cwd)
+      invalidInput('The conversation directory changed while preparing its input.');
+    const message = preparedInput.message;
+    if (message.length > 32_000) invalidInput('Turn text must contain at most 32000 characters.');
+    const attachments = [...preparedInput.attachments, ...(extraAttachments ?? [])];
     let baselineMessages: BrowserExtensionMessage[];
     try {
-      if (!threadId) threadId = (await this.api.startThread(message.slice(0, 50))).id;
+      await this.requireThread(threadId);
       await this.subscribeStream(peer, threadId);
       baselineMessages = await this.api.getMessages(threadId);
-      if (!this.canObserve(peer.generation)) throw new Error('Connection closed.');
+      this.assertPeerActive(peer);
     } catch (error) {
       throw Object.assign(error instanceof Error ? error : new Error(String(error)), {
         requestSent: false,
       });
     }
-    const turn = await this.api.sendMessage({
-      ...(typeof params.clientTurnId === 'string' ? { clientTurnId: params.clientTurnId } : {}),
-      attachments,
-      message,
-      modelRef,
-      pageContext,
-      permissionMode,
-      sessionId: threadId,
-    });
-    const turnPayload: Record<string, unknown> = {
-      completedAt: null,
-      durationMs: null,
-      error: null,
-      id: turn.runId,
-      ...(turn.nativeRunId ? { nativeRunId: turn.nativeRunId } : {}),
-      items: [],
-      itemsView: 'full',
-      startedAt: Math.floor(Date.now() / 1000),
-      status: 'inProgress',
-      executionSettled: false,
+    const startedAt = Date.now();
+    const release = this.reservePollSlot(threadId, clientTurnId);
+    const key = this.pollKey(threadId, clientTurnId);
+    if (this.pendingStartResponses.has(key)) {
+      release();
+      invalidInput('This browser turn is already awaiting admission.');
+    }
+    const responseToken = Symbol();
+    this.pendingStartResponses.set(key, responseToken);
+    const releaseResponse = () => {
+      if (this.pendingStartResponses.get(key) === responseToken) this.pendingStartResponses.delete(key);
     };
-    if (!this.canObserve(peer.generation)) return { turn: turnPayload };
-    if (this.peers.has(peer) && !peer.context.isClosed()) peer.subscriptions.add(turn.sessionId);
-    this.broadcast(
-      AppServerNotificationMethod.TurnStarted,
-      { threadId: turn.sessionId, turn: turnPayload },
-      turn.sessionId,
-      peer.generation,
-    );
-    this.startPollingTurn(
-      turn.sessionId,
-      turn.runId,
-      messageFingerprint(baselineMessages.filter(message => !message.pendingInput)),
-      peer.generation,
-    );
-    return { turn: turnPayload };
+    const projection = this.projection(threadId);
+    projection.prepareTurn(clientTurnId, preparedInput.content, startedAt);
+    let approval = peer.approvals.get(threadId);
+    if (!approval) {
+      const controller = new AbortController();
+      approval = { controller, scope: new ExternalApprovalSessionScope(controller.signal) };
+      peer.approvals.set(threadId, approval);
+    }
+    const subscriptionToken = peer.subscriptionTokens.get(threadId);
+    const assertCurrent = () => {
+      this.assertPeerActive(peer);
+      if (approval.controller.signal.aborted || !peer.subscriptions.has(threadId) ||
+        peer.subscriptionTokens.get(threadId) !== subscriptionToken)
+        throw Object.assign(new Error('Browser send ownership changed before admission.'), { requestSent: false });
+    };
+    let turn;
+    try {
+      admission.dispatchStarted = true;
+      turn = await this.api.sendMessage({
+        clientTurnId, attachments, message, modelRef, pageContext, permissionMode, sessionId: threadId,
+      }, { assertCurrent, ...(this.api.supportsClientApprovals === true && peer.context.request ? {
+        approvals: { context: peer.context, signal: approval.controller.signal, scope: approval.scope },
+      } : {}) });
+      if (turn.sessionId !== threadId || turn.runId !== clientTurnId)
+        throw new Error('The accepted turn identity changed.');
+    } catch (error) {
+      projection.discardTurn(clientTurnId);
+      releaseResponse();
+      if (!(error instanceof Error) || (error as Error & { requestSent?: boolean }).requestSent !== false)
+        this.afterResponse(() => this.startPollingTurn(threadId, clientTurnId, '', peer.generation), peer.generation);
+      else release();
+      throw error;
+    }
+    if (modelRef !== undefined) peer.models.set(threadId, modelRef);
+    const turnPayload = codexTurn(turn.runId, CodexTurnStatus.InProgress, { startedAt });
+    const activeTurn: BrowserExtensionTurnState = {
+      id: turn.runId, ...(turn.nativeRunId ? { nativeRunId: turn.nativeRunId } : {}),
+      status: 'inProgress', executionSettled: false, startedAt,
+    };
+    this.afterResponse(() => {
+      this.broadcast(AppServerNotificationMethod.TurnStarted,
+        { threadId, turnId: turn.runId, turn: turnPayload }, threadId, peer.generation);
+      projection.admitTurn(turn.runId);
+      releaseResponse();
+      this.startPollingTurn(threadId, turn.runId,
+        messageFingerprint(baselineMessages.filter(message => !message.pendingInput)), peer.generation);
+    }, peer.generation);
+    return { turn: turnPayload, browser: { activeTurn } };
   }
 
   private async interruptTurn(
     peer: BrowserPeer,
     params: AppServerParams,
   ): Promise<AppServerResult> {
-    const threadId = typeof params.threadId === 'string' ? params.threadId : '';
-    if (!threadId) throw new Error('threadId is required.');
-    const turnId = typeof params.turnId === 'string' ? params.turnId : '';
-    if (!turnId) throw new Error('turnId is required.');
-    const state = this.pollStates.get(threadId);
-    if (state && state.turnId !== turnId) throw new Error('The active turn has changed.');
-    await this.api.interruptThread(threadId, turnId);
-    if (!state) this.startPollingTurn(threadId, turnId, '', peer.generation);
-    return { status: 'requested', executionSettled: false };
+    const threadId = this.threadId(params);
+    const turnId = optionalString(params, 'turnId');
+    if (!turnId) invalidParams('turnId is required.');
+    await this.requireThread(threadId);
+    const current = await this.api.getTurnState(threadId);
+    this.assertPeerActive(peer);
+    if (!current || current.id !== turnId || current.executionSettled)
+      throw new Error('The active turn has changed or is already settled.');
+    const state = this.pollStates.get(this.pollKey(threadId, turnId));
+    const release = this.reservePollSlot(threadId, turnId);
+    try { await this.api.interruptThread(threadId, turnId); }
+    catch (error) { release(); throw error; }
+    if (!state) this.afterResponse(() => this.startPollingTurn(threadId, turnId, '', peer.generation), peer.generation);
+    return {};
   }
 
   private startPollingTurn(
@@ -478,9 +854,13 @@ export class BrowserAppServerHub {
     generation: number,
   ): void {
     if (!this.canObserve(generation)) return;
-    const previousState = this.pollStates.get(threadId);
-    if (previousState?.timer) clearTimeout(previousState.timer);
+    const key = this.pollKey(threadId, turnId);
+    this.pendingTurns.delete(key);
+    if (this.pollStates.has(key)) return;
+    // All callers reserve a unique pair before their asynchronous admission.
+    // Moving that reservation into this map cannot exceed the shared bound.
     const state = {
+      threadId,
       errors: 0,
       baselineFingerprint,
       missing: 0,
@@ -492,7 +872,7 @@ export class BrowserAppServerHub {
       timer: null as NodeJS.Timeout | null,
       turnId,
     };
-    this.pollStates.set(threadId, state);
+    this.pollStates.set(key, state);
     let previousMessages = '';
     const poll = async () => {
       const epoch = this.observationEpoch;
@@ -501,7 +881,7 @@ export class BrowserAppServerHub {
         this.phase === HubPhase.Active &&
         generation === this.generation &&
         epoch === this.observationEpoch &&
-        this.pollStates.get(threadId) === state;
+        this.pollStates.get(key) === state;
       if (!current()) return;
       state.timer = null;
       try {
@@ -510,7 +890,7 @@ export class BrowserAppServerHub {
         const thread = threads.find(candidate => candidate.id === threadId);
         state.missing = thread ? 0 : state.missing + 1;
         if (state.missing >= 3) {
-          this.pollStates.delete(threadId);
+          this.pollStates.delete(key);
           return;
         }
         if (!thread) {
@@ -523,6 +903,10 @@ export class BrowserAppServerHub {
         if (!current()) return;
         const turnState = await this.api.getTurnState(threadId, turnId);
         if (!current()) return;
+        if (turnState && !turnState.executionSettled) {
+          await this.publishObservedStatus(threadId, generation, current, turnId);
+          if (!current()) return;
+        }
         const executionSettled =
           turnState?.id === turnId &&
           turnState.executionSettled === true &&
@@ -537,14 +921,14 @@ export class BrowserAppServerHub {
         const messages = await this.api.getMessages(threadId, { forceFullSnapshot });
         if (!current()) return;
         state.errors = 0;
-        const fingerprint = messageFingerprint(messages);
+        const fingerprint = createHash('sha256').update(JSON.stringify([messages, turnState])).digest('hex');
         const historyChanged = fingerprint !== previousMessages;
         if (historyChanged) {
           previousMessages = fingerprint;
           state.terminal = 0;
           this.broadcast(
-            AppServerNotificationMethod.ThreadUpdated,
-            { thread: toAppServerThread(thread, messages), threadId },
+            BrowserAppServerNotificationMethod.ThreadUpdated,
+            { threadId, display: toBrowserDisplay(threadId, messages), activeTurn: turnState },
             threadId,
             generation,
           );
@@ -574,32 +958,44 @@ export class BrowserAppServerHub {
           hasFinalAssistant;
         if (
           executionSettled &&
+          !this.pendingStartResponses.has(key) &&
           state.terminal >= TERMINAL_SETTLE_POLLS &&
           (terminalHistoryReady || state.terminal >= TERMINAL_MAX_POLLS)
         ) {
           const failed = turnState.status === 'failed';
-          this.pollStates.delete(threadId);
+          let finalText: string | undefined;
+          if (this.api.getHistory) {
+            try {
+              const history = await this.history(threadId);
+              if (!current()) return;
+              const items = history.turns.find(turn => turn.id === turnId)?.items ?? [];
+              const final = [...items].reverse().find(item => item.type === 'agentMessage' &&
+                item.phase === 'final_answer' && typeof item.text === 'string');
+              if (typeof final?.text === 'string') finalText = final.text;
+            } catch {
+              // The exact terminal remains valid even when rich native history
+              // cannot be projected as standard items. Do not invent final text.
+            }
+          }
+          if (!current()) return;
+          this.projection(threadId).finishTurn(turnId, finalText);
           this.broadcast(
             AppServerNotificationMethod.TurnCompleted,
             {
               threadId,
-              turn: {
-                completedAt: Math.floor(Date.now() / 1000),
-                durationMs: null,
-                error: failed && recordedError
-                  ? { message: recordedError }
-                  : null,
-                id: turnId,
-                items: [],
-                itemsView: 'full',
-                startedAt: null,
-                status: turnState.status,
-                executionSettled: true,
-              },
+              turnId,
+              turn: codexTurn(turnId, turnState.status === 'interrupted'
+                ? CodexTurnStatus.Interrupted : failed ? CodexTurnStatus.Failed : CodexTurnStatus.Completed, {
+                startedAt: turnState.startedAt, completedAt: turnState.completedAt,
+                ...(failed && recordedError ? { error: recordedError } : {}),
+              }),
             },
             threadId,
             generation,
           );
+          try { await this.publishObservedStatus(threadId, generation, current, turnId); }
+          catch { /* The exact terminal remains valid when the live status is unavailable. */ }
+          if (this.pollStates.get(key) === state) this.pollStates.delete(key);
           return;
         }
       } catch {

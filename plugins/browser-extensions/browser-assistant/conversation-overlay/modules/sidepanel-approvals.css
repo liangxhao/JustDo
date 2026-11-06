@@ -1,0 +1,113 @@
+.approval-panel {
+  flex: 0 1 auto;
+  max-height: min(55vh, 520px);
+  overflow: auto;
+  margin: 6px 12px;
+  padding: 14px;
+  border: 1px solid var(--chat-accent);
+  border-radius: 12px;
+  background: var(--chat-surface);
+}
+.approval-heading,
+.approval-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.approval-heading {
+  justify-content: space-between;
+}
+.approval-heading h2 {
+  margin: 0;
+  font-size: 15px;
+}
+.approval-hint,
+.approval-count,
+.approval-context dt,
+.approval-choice-copy > span {
+  color: var(--chat-muted);
+  font-size: 12px;
+}
+.approval-hint {
+  margin: 5px 0 12px;
+}
+.approval-context {
+  margin: 0;
+}
+.approval-context dt {
+  margin-top: 9px;
+}
+.approval-context dd {
+  margin: 3px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.approval-context dd:first-of-type {
+  font-family: ui-monospace, Consolas, monospace;
+}
+.approval-actions {
+  margin-top: 14px;
+}
+.approval-actions button {
+  min-height: 34px;
+  padding: 6px 11px;
+  border: 1px solid var(--chat-muted);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--chat-text);
+}
+.approval-actions .approval-primary {
+  border-color: var(--chat-accent);
+  background: var(--chat-accent);
+  color: var(--chat-bg);
+}
+.approval-actions button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+.approval-question {
+  min-width: 0;
+  padding: 0;
+  margin: 12px 0;
+  border: 0;
+}
+.approval-question legend {
+  padding: 0;
+  font-weight: 600;
+}
+.approval-question-text {
+  margin: 5px 0 8px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.approval-choice,
+.approval-free {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 7px;
+}
+.approval-choice-copy {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.approval-choice-copy > span {
+  display: block;
+  white-space: pre-wrap;
+}
+.approval-text {
+  width: 100%;
+  margin-top: 6px;
+  padding: 8px;
+  border: 1px solid var(--chat-muted);
+  border-radius: 7px;
+  background: var(--chat-bg);
+  color: var(--chat-text);
+  font: inherit;
+}
+.approval-panel :focus-visible {
+  outline: 2px solid var(--chat-link);
+  outline-offset: 2px;
+}

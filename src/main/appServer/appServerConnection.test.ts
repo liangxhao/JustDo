@@ -6,6 +6,7 @@ import {
   type AppServerConnectionContext,
   AppServerErrorCode,
   AppServerErrorStyle,
+  AppServerMethod,
   AppServerNotificationMethod,
   AppServerRequestMethod,
   AppServerRpcError,
@@ -67,11 +68,10 @@ describe.each([true, false])('shared app-server connection (strict handshake: %s
   it('uses the configured capabilities without trusting clientInfo or requested capabilities', async () => {
     const h = fixture(strict);
     await h.initialize({
-      clientInfo: { name: 'browser-extension', title: 'privileged client' },
-      capabilities: { experimentalApi: true, browserPairing: true, threadList: true },
+      clientInfo: { name: 'caller', title: 'privileged client' },
+      capabilities: { experimentalApi: true, extraRoutes: true, threadList: true },
     });
-    for (const method of ['thread/list', 'thread/read', 'thread/image', 'composer/options',
-      'browser/extension/pair', 'thread/resume', 'model/list', 'thread/unsubscribe', 'thread/name/set']) {
+    for (const method of ['thread/list', 'thread/read', 'extension/read', 'thread/resume', 'model/list', 'thread/unsubscribe', 'thread/name/set']) {
       await h.request(method);
       expect(h.output.pop()).toMatchObject({ error: { code: strict ? -32601 : -32000 } });
     }
@@ -129,7 +129,113 @@ describe.each([true, false])('shared app-server connection (strict handshake: %s
   });
 });
 
-it('requires Chrome initialized notification and rejects duplicate initialize', async () => {
+describe('server-owned extension routes', () => {
+  it('routes only exact own function entries after the standard handshake', async () => {
+    const h = fixture(true, AppServerErrorStyle.Codex);
+    const read = vi.fn(() => ({ value: 'owned' }));
+    const inherited = vi.fn(() => ({ value: 'inherited' }));
+    const extensions = Object.create({ 'extension/inherited': inherited }) as Record<string, unknown>;
+    extensions['extension/read'] = read;
+    extensions['extension/invalid'] = { value: 'not an operation' };
+    h.binding.extensions = extensions as AppServerBinding['extensions'];
+    await h.request('extension/read');
+    expect(h.output.at(-1)).toMatchObject({ error: { code: -32600 } });
+    expect(read).not.toHaveBeenCalled();
+    await h.initialize();
+    await h.request('extension/read', { key: 'entry' });
+    expect(read).toHaveBeenCalledExactlyOnceWith({ key: 'entry' });
+    expect(h.output.at(-1)).toMatchObject({ result: { value: 'owned' } });
+    for (const method of ['extension/read/extra', 'extension/inherited', 'extension/invalid', 'toString']) {
+      await h.request(method);
+      expect(h.output.at(-1)).toMatchObject({ error: { code: -32601 } });
+    }
+    expect(inherited).not.toHaveBeenCalled();
+  });
+
+  it('cannot install extensions through client declarations or replace standard routes', async () => {
+    const h = fixture(true, AppServerErrorStyle.Codex);
+    const override = vi.fn(() => ({ replaced: true }));
+    h.binding.extensions = Object.fromEntries(Object.values(AppServerMethod).map(method => [method, override]));
+    await h.initialize({ clientInfo: { name: 'privileged caller', version: '1' },
+      capabilities: { experimentalApi: true, extensions: { 'extension/read': true } } });
+    expect(h.output.at(-1)).toHaveProperty('result.userAgent', 'configured endpoint');
+    await h.request('thread/start');
+    expect(h.binding.threads.start).toHaveBeenCalledOnce();
+    for (const method of ['model/list', 'thread/read', 'thread/loaded/list', 'initialized', 'extension/read']) {
+      await h.request(method);
+      expect(h.output.at(-1)).toMatchObject({ error: { code: -32601 } });
+    }
+    await h.request('initialize');
+    expect(h.output.at(-1)).toMatchObject({ error: { code: -32600 } });
+    expect(override).not.toHaveBeenCalled();
+  });
+
+  it.each([AppServerErrorStyle.Standard, AppServerErrorStyle.Console, AppServerErrorStyle.Codex])(
+    'requires a request ID independently of the configured core notification policy: %s', async style => {
+      const h = fixture(true, style);
+      const execute = vi.fn(() => ({ accepted: true }));
+      h.binding.extensions = { 'extension/execute': execute };
+      await h.initialize();
+      const before = h.output.length;
+      await h.session.receive({ method: 'extension/execute', params: {} });
+      expect(execute).not.toHaveBeenCalled();
+      expect(h.output).toHaveLength(before);
+      await h.request('extension/execute', { value: 1 });
+      expect(execute).toHaveBeenCalledExactlyOnceWith({ value: 1 });
+      expect(h.output.at(-1)).toHaveProperty('result.accepted', true);
+    },
+  );
+
+  it('filters extension notifications by exact name while keeping request responses independent', async () => {
+    const h = fixture(true, AppServerErrorStyle.Codex);
+    h.binding.extensions = { 'extension/refresh': () => ({ value: 'current' }) };
+    await h.initialize({ clientInfo: { name: 'client', version: '1' },
+      capabilities: { optOutNotificationMethods: ['extension/changed', 'extension/refresh', 'extension/*'] } });
+    const before = h.output.length;
+    h.context.notify('extension/changed', { value: 'hidden' });
+    expect(h.output).toHaveLength(before);
+    h.context.notify('extension/changed/detail', { value: 'visible' });
+    expect(h.output.at(-1)).toEqual({ method: 'extension/changed/detail', params: { value: 'visible' } });
+    await h.request('extension/refresh');
+    expect(h.output.at(-1)).toHaveProperty('result.value', 'current');
+  });
+
+  it('publishes only explicit typed public error data', async () => {
+    const h = fixture(true, AppServerErrorStyle.Codex);
+    h.binding.extensions = { 'extension/read': () => {
+      throw new AppServerRpcError(AppServerErrorCode.Internal, 'UNAVAILABLE', {
+        code: 'UNAVAILABLE', messageKey: 'extensionUnavailable',
+      });
+    } };
+    await h.initialize();
+    await h.request('extension/read');
+    expect(h.output.at(-1)).toMatchObject({ error: { code: -32603, message: 'UNAVAILABLE',
+      data: { code: 'UNAVAILABLE', messageKey: 'extensionUnavailable' } } });
+    h.binding.extensions = { 'extension/read': () => {
+      throw Object.assign(new Error('Service failed.'), {
+        data: { privateContext: 'must stay internal' }, publicError: { privateContext: 'must stay internal' },
+      });
+    } };
+    await h.request('extension/read');
+    expect(h.output.at(-1)).toMatchObject({ error: { code: -32000, message: 'Service failed.' } });
+    expect(h.output.at(-1)).not.toHaveProperty('error.data');
+  });
+
+  it('preserves typed data and gives an explicit turn-send flag precedence over conflicting metadata', async () => {
+    const h = fixture(true, AppServerErrorStyle.Codex);
+    h.binding.turns.start = () => {
+      throw Object.assign(new AppServerRpcError(AppServerErrorCode.InvalidParams, 'Invalid input.', {
+        code: 'INVALID_INPUT', requestSent: false,
+      }), { requestSent: true });
+    };
+    await h.initialize();
+    await h.request('turn/start');
+    expect(h.output.at(-1)).toMatchObject({ error: { code: -32602,
+      data: { code: 'INVALID_INPUT', requestSent: true } } });
+  });
+});
+
+it('requires the configured initialized notification and rejects duplicate initialize', async () => {
   const h = fixture();
   await h.session.receive({ method: 'initialized' });
   await h.request('thread/start');
@@ -145,20 +251,36 @@ it('requires Chrome initialized notification and rejects duplicate initialize', 
   expect(h.binding.threads.start).toHaveBeenCalledOnce();
 });
 
-it('preserves explicitly unsent versus uncertain Chrome turn errors', async () => {
-  const h = fixture();
-  await h.initialize();
-  for (const [error, requestSent] of [
-    [Object.assign(new Error('Rejected before dispatch'), { requestSent: false }), false],
-    [new Error('Acceptance unknown'), true],
-  ] as const) {
-    h.binding.turns.start = vi.fn(() => { throw error; });
-    await h.request('turn/start');
-    expect(h.output.pop()).toMatchObject({ error: { code: -32603, data: { requestSent } } });
-  }
-});
+it.each([AppServerErrorStyle.Standard, AppServerErrorStyle.Console, AppServerErrorStyle.Codex])(
+  'preserves only explicit turn send certainty independently of error policy: %s', async style => {
+    const h = fixture(true, style);
+    await h.initialize();
+    for (const [error, requestSent] of [
+      [Object.assign(new Error('Rejected before dispatch'), { requestSent: false }), false],
+      [Object.assign(new Error('Accepted before output failure'), { requestSent: true }), true],
+    ] as const) {
+      h.binding.turns.start = vi.fn(() => { throw error; });
+      await h.request('turn/start');
+      expect(h.output.pop()).toMatchObject({
+        error: { code: style === AppServerErrorStyle.Standard ? -32603 : -32000, data: { requestSent } },
+      });
+    }
+    for (const error of [new Error('Acceptance unknown'),
+      new AppServerRpcError(AppServerErrorCode.InvalidParams, 'Invalid input.'),
+      Object.assign(new Error('Invalid certainty flag'), { requestSent: 'false' })]) {
+      h.binding.turns.start = vi.fn(() => { throw error; });
+      await h.request('turn/start');
+      expect(h.output.pop()).not.toHaveProperty('error.data');
+    }
+    h.binding.threads.start = vi.fn(() => {
+      throw Object.assign(new Error('Not a turn send'), { requestSent: false });
+    });
+    await h.request('thread/start');
+    expect(h.output.pop()).not.toHaveProperty('error.data');
+  },
+);
 
-it('executes Chrome notifications without responses and keeps console notifications side effect free', async () => {
+it('preserves legacy notification policies independently of the Codex policy', async () => {
   for (const strict of [true, false]) {
     const h = fixture(strict);
     await h.initialize();
@@ -321,19 +443,21 @@ describe('Codex client policy', () => {
   });
 });
 
-it('preserves Chrome params coercion, numeric IDs and turn error semantics', async () => {
+it('preserves legacy Standard params coercion and numeric IDs', async () => {
   const h = fixture();
   await h.initialize();
   await h.session.receive({ id: 1.5, method: 'thread/start', params: [] });
   expect(h.binding.threads.start).toHaveBeenCalledExactlyOnceWith({});
   expect(h.output.at(-1)).toMatchObject({ id: 1.5, result: { thread: { id: 'owned' } } });
   h.binding.turns.start = vi.fn(() => {
-    throw new AppServerRpcError(AppServerErrorCode.InvalidParams, 'Invalid browser input.');
+    throw new AppServerRpcError(AppServerErrorCode.InvalidParams, 'Invalid input.');
   });
   await h.request('turn/start');
-  expect(h.output.pop()).toMatchObject({
-    error: { code: -32603, data: { requestSent: true } },
+  const response = h.output.pop();
+  expect(response).toMatchObject({
+    error: { code: -32603 },
   });
+  expect(response).not.toHaveProperty('error.data');
 });
 
 it('retires protocol admission synchronously when detached output fails', async () => {
@@ -527,7 +651,7 @@ describe('Codex server requests', () => {
     expect(h.binding.onDisconnect).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ message: 'App-server request output failed.' }));
   });
 
-  it('keeps Chrome response handling unchanged and does not enable server requests', async () => {
+  it('keeps legacy Standard response handling unchanged and does not enable server requests', async () => {
     const h = fixture();
     await h.initialize({ capabilities: { experimentalApi: true } });
     await h.session.receive({ id: 'unrequested', result: {} });

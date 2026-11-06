@@ -1,6 +1,11 @@
+import { toGatewayAttachment } from '../../../shared/cowork/attachments';
 import { normalizeAgentEvent } from '../../../shared/openclaw/agentEvent';
+import { toOpenClawSessionPermissionMode } from '../../../shared/security/approvals';
+import { appServerNativeMessageRunIds, projectCodexHistory } from '../../appServer/appServerHistory';
+import { createAppServerHistoryReader } from '../../appServer/appServerHistoryReader';
 import type { CoworkStore } from '../../data/coworkStore';
 import type { CoworkEngineRouter } from '../../engine/cowork/coworkEngineRouter';
+import { prepareNativeSendBinding } from '../../engine/gateway/nativeSendAdmission';
 import type { GatewayClientLike, GatewayEventFrame } from '../../engine/gateway/types';
 import type { OpenClawRuntimeAdapter } from '../../engine/openclaw/openclawRuntimeAdapter';
 import type { OpenClawEngineStatus } from '../../openclaw/runtime/openclawEngineManager';
@@ -103,6 +108,7 @@ export function createExternalAgentExecution(
     sessionId,
     runId,
     message,
+    attachments,
     modelRef,
     onEvent,
     signal,
@@ -141,9 +147,19 @@ export function createExternalAgentExecution(
     if (!initialClient || !key || !prepared.gatewaySessionId)
       throw new Error('The native conversation identity is unavailable.');
     let client: GatewayClientLike = initialClient;
+    const mediaOnly = !message.trim() && Boolean(attachments?.length);
+    // The media-only native RPC has no lifecycle-revision CAS. Pin its complete
+    // transport generation and verify the session incarnation on both sides.
+    const mediaConnection = mediaOnly ? runtime.captureGatewayResponseContext() : null;
+    const mediaClientGeneration = mediaOnly ? runtime.getGatewayClientGeneration() : undefined;
+    if (mediaOnly && !mediaConnection?.isCurrent())
+      throw new Error('The native media connection could not be pinned.');
+    let resolveMediaRun: ((value: string | undefined) => void) | undefined;
+    const mediaRunReady = mediaOnly ? new Promise<string | undefined>(resolve => { resolveMediaRun = resolve; }) : undefined;
     const describe = async (current: GatewayClientLike): Promise<NativeSessionIdentity> => {
       const result = await current.request<{
         session?: {
+          key?: string;
           sessionId?: string;
           lifecycleRevision?: string;
           activeRunIds?: unknown;
@@ -152,6 +168,7 @@ export function createExternalAgentExecution(
       const described = result.session;
       if (
         runtime.getGatewayClient() !== current ||
+        (mediaOnly && (deps.getRuntime() !== runtime || described?.key !== key || !mediaConnection?.isCurrent())) ||
         described?.sessionId !== prepared.gatewaySessionId ||
         typeof described.lifecycleRevision !== 'string' ||
         !described.lifecycleRevision
@@ -182,6 +199,7 @@ export function createExternalAgentExecution(
       sessionKey: key,
       ...identity,
       client,
+      ...(mediaRunReady ? { runIdReady: mediaRunReady } : {}),
     };
     const assertIdentity = async (current: GatewayClientLike): Promise<NativeSessionIdentity> => {
       const next = await describe(current);
@@ -521,6 +539,29 @@ export function createExternalAgentExecution(
       // whitespace/surrogate boundaries, so a truncated snapshot may be shorter
       // than 4096. An ellipsis alone cannot prove the final reply is complete.
       if (!snapshot?.endsWith('…')) return outcome;
+      if (mediaOnly) {
+        try {
+          await assertIdentity(client);
+          const read = createAppServerHistoryReader(() => deps.getRuntime() === runtime ? runtime : null, outputRecoveryTimeoutMs);
+          const history = await read({ sessionKey: key, nativeSessionId: identity.sessionId, lifecycleRevision: identity.lifecycleRevision });
+          await assertIdentity(client);
+          const exact = history.messages.filter(raw => {
+            const stamps = appServerNativeMessageRunIds(raw);
+            if (stamps.includes(runId) && stamps.length !== 1) throw new Error('Native final message has conflicting run stamps.');
+            return stamps.length === 1 && stamps[0] === runId;
+          });
+          const finals = exact.map(raw => projectCodexHistory({ threadId: sessionId, messages: [raw], runs: [] }).items
+            .flatMap(({ item }) => item.type === 'agentMessage' && item.phase === 'final_answer' && typeof item.text === 'string'
+              ? [item.text] : []).filter(Boolean).join('\n')).filter(Boolean);
+          // Do not select the latest of several final messages, or mistake the
+          // first block of a multi-block final for its complete producer reply.
+          if (finals.length === 1 && finals[0].length <= MAX_OUTPUT_CHARS && projectTerminalReplyText(finals[0]) === snapshot)
+            return { ...outcome, result: { payloads: [{ text: finals[0] }] }, outputRecovered: true };
+        } catch {
+          // A changed authority or incomplete exact-run history never restores a reply.
+        }
+        return { ...outcome, result: undefined, outputRecovered: false };
+      }
       let timer: ReturnType<typeof setTimeout> | undefined;
       try {
         const full = await Promise.race([
@@ -562,6 +603,15 @@ export function createExternalAgentExecution(
       await assertIdentity(client);
       await subscribe(client);
       checkCancelled();
+      if (mediaOnly) {
+        const mediaBinding = await prepareNativeSendBinding({
+          client, sessionKey: key, nativeSessionId: identity.sessionId,
+          clientGeneration: mediaClientGeneration!, isCurrent: () => deps.getRuntime() === runtime && mediaConnection!.isCurrent(),
+        });
+        if (mediaBinding.lifecycleRevision !== identity.lifecycleRevision)
+          throw new Error('The native media session changed before submission.');
+        checkCancelled();
+      }
       timingId = store.beginSessionRun({
         sessionId,
         clientTurnId: runId,
@@ -578,14 +628,23 @@ export function createExternalAgentExecution(
         finalResponsePending = true;
         finalResponse = client
           .request<NativeResult>(
-            'agent',
-            {
+            mediaOnly ? 'chat.send' : 'agent',
+            mediaOnly ? {
+              sessionKey: key,
+              sessionId: identity.sessionId,
+              message,
+              idempotencyKey: runId,
+              deliver: false,
+              expectedPermissionMode: toOpenClawSessionPermissionMode(session.permissionMode),
+              attachments: attachments!.map(toGatewayAttachment),
+            } : {
               sessionKey: key,
               agentId: session.agentId,
               message,
               idempotencyKey: runId,
               expectedExistingSessionId: identity.sessionId,
               expectedExistingSessionLifecycleRevision: identity.lifecycleRevision,
+              ...(attachments?.length ? { attachments: attachments.map(toGatewayAttachment) } : {}),
               ...(hooks?.interactiveApprovals === true
                 ? { channel: 'webchat', deliver: false }
                 : {}),
@@ -595,8 +654,16 @@ export function createExternalAgentExecution(
             { expectFinal: true, signal: AbortSignal.any([signal, finalWaitController.signal]) },
           )
           .then(
-            response => {
+            async response => {
               finalResponsePending = false;
+              if (mediaOnly) {
+                if (response.runId !== runId ||
+                  (response as NativeResult & { sessionId?: unknown }).sessionId !== undefined &&
+                  (response as NativeResult & { sessionId?: unknown }).sessionId !== identity.sessionId)
+                  throw new ExternalAgentOutcomeUnknownError('Native media admission returned a different execution identity.');
+                await assertIdentity(client);
+                resolveMediaRun?.(runId);
+              }
               return response;
             },
             error => {
@@ -617,6 +684,8 @@ export function createExternalAgentExecution(
           submitted = false;
           throw error;
         }
+        if (error instanceof ExternalAgentOutcomeUnknownError || error instanceof NativeIdentityChangedError)
+          throw error;
         onUnconfirmed?.();
         runtime.registerUnknownSessionRun(sessionId, runId, { cancelled: signal.aborted });
       }
@@ -684,6 +753,7 @@ export function createExternalAgentExecution(
         store.updateSession(sessionId, { status: cancelled ? 'idle' : 'error' });
       throw error;
     } finally {
+      resolveMediaRun?.(undefined);
       progress.close();
       // Retire an orphaned final-RPC waiter after the bounded output recovery.
       // This does not issue a native Stop or change an established outcome.

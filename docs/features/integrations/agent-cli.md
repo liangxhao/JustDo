@@ -94,8 +94,10 @@ CLI、ACP、app-server 共用 `ExternalAgentBackendFactory`、`createExternalAge
 新协议不会推测旧 scope、扫描 marker 获取授权或用裸 UUID 认领旧记录。
 
 恢复必须核对来源、仍存在的产品会话、助手、真实 cwd 和已固定的原生会话身份。
-外部 UUID 不能替换成任意 Gateway key。原生准入还接收预期 SID 和 lifecycle revision，
-准备与派发之间发生 reset 时拒绝发送。所有协议按产品会话 ID 共用执行预留。
+外部 UUID 不能替换成任意 Gateway key。普通文本及图文的原生 `agent` 准入接收预期 SID 和
+lifecycle revision，准备与派发之间发生 reset 时拒绝发送。app-server 纯图片使用支持空文本的
+原生 `chat.send`；该方法没有原子 revision CAS，宿主在派发前后核对精确身份、连接代次与 ACK，
+无法确认时保留 unknown，不重发。所有协议按产品会话 ID 共用执行预留。
 
 ## 3. app-server 子集与客户端配置
 
@@ -108,8 +110,11 @@ ACP 客户端使用复制出的 command 和 `args: ["acp"]`。app-server 是另�
 恢复默认回放原生历史，`excludeTurns: true` 可跳过；`thread/read(includeTurns: true)` 可显式读取。
 历史要求已有认证 Gateway，读取前后核对身份和回执，不启动运行时或存储正文副本。
 改名会真实保存到产品元数据，元数据读取不启动 Gateway。
-只接受文本；不支持的 execution override、额外输入、reasoning/service tier 和客户端专用 MCP
-配置会明确失败；支持原生命令一次性审批和实验插件确认，仍不提供客户端会话 MCP 配置。
+支持标准文本、`image` 和 `localImage`，可发送图文或纯图片；发送图片时，所选模型必须在真实目录中声明图片能力。
+图片格式、大小、cwd 路径及受限网络地址规则见[输入规范](../../app-server-api/external-clients.md#turnstart)。
+不支持的 execution override、音频、其他输入类型、reasoning/service tier 和客户端专用 MCP
+配置会明确失败。支持原生命令允许／拒绝／取消；实验握手下可明确提供精确命令会话授权，
+以及插件确认和原生明确提供的 App 持久授权，详见下文审批归属。
 逐字段对照、官方 schema 校验基线和剩余兼容范围见[兼容性说明](../../app-server-api/compatibility.md)。
 
 Multica 的配置示例选择基础协议 **codex**，使用同一 command，不添加额外参数；其
@@ -189,8 +194,17 @@ ACP 与支持双向 RPC 的 app-server 在 prepared turn 安装精确 approval o
 普通 `exec` 保留原生非交互审批行为。
 
 交互客户端独占本轮精确 native run 的 exec/plugin 审批展示；桌面列表排除已路由给该 owner 的请求。
-客户端只能选择原生支持的一次性允许/拒绝，Main 在解决前复核 run、session、incarnation、
-连接、到期和 option ID。迟到、已取消、断连回复不允许操作；未知审批发送不在新连接重放。
+ACP 保持原生支持的一次性允许／拒绝。app-server 命令审批另支持取消；只有实验握手和服务端
+明确提供的 `availableDecisions` 才能启用 `acceptForSession`。该授权按连接、原生身份及命令／环境
+精确指纹复用，每次仍提交原生 allow-once，不创建永久命令规则。它可跨同连接已结算轮次保留，
+取消、身份变化或连接撤回按各入口生命周期清理；普通退订是否清理见[外部客户端规范](../../app-server-api/external-clients.md)。
+插件确认通过实验性 user-input 请求展示；只有原生 bundle-mcp 明确提供持久 App action 时才显示该选项，
+与命令会话授权及 ACP 会话 MCP 的一次性许可不同。
+
+Main 在解决前复核 run、session、incarnation、连接、到期及实际允许的决定／action。
+迟到、已取消、断连回复不允许操作；未知审批发送不在新连接重放。
+纯图片路径在提交前安装 prepared owner，ACK 前暂扣请求；只有确认实际 native root 后才交给客户端，
+不因提交未知而把展示权转移给观察者或桌面。字段和双向 RPC 示例见[审批规范](../../app-server-api/external-clients.md#服务端请求与审批)。
 
 取消立即撤回本轮审批权限，包含正等待身份读取的回复；展示归属保留至结算，Stop 未确认时
 不能让后续审批回退到桌面。
@@ -210,8 +224,11 @@ yielded 后续执行若无法经公开 API 精确归属，保持 unknown 和预�
 
 ### 最终输出的补全
 
-原生终态正文快照最多 4096 UTF-16 units。确认完成后，只有同 run 的 final RPC、匹配 producer
-metadata 与 snapshot projection，才可在五秒内恢复可能截断的全文。
+原生终态正文快照最多 4096 UTF-16 units。确认完成后，普通文本及图文只有同 run 的 final RPC、
+匹配 producer metadata 与 snapshot projection，才可在五秒内恢复可能截断的全文。
+app-server 纯图片的 `chat.send` 仅返回准入 ACK，因此改用当前认证 Gateway 的完整历史快照：
+只接受唯一精确 run 的可见 final_answer，前后复核来源、身份和连接代次，并要求全文投影与终态快照一致。
+不读取 transcript 文件、另存正文缓存或用“最新回复”补全。
 无法核验或缺少全文时返回输出错误，保留已确认的执行结论；不重发提示词，也不把截断快照
 追加到已流出的 ACP 正文。
 

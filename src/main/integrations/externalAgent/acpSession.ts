@@ -23,6 +23,7 @@ import {
 import { PRODUCT_NAME } from '../../../shared/productMetadata';
 import { t } from '../../core/i18n';
 import type { ExternalPermissionPresenter } from '../../openclaw/permissions/externalApprovalRouting';
+import type { ExternalApprovalSessionScope } from '../../openclaw/permissions/externalApprovalSessionScope';
 import { AcpProgress } from './acpProgress';
 import type { ExternalAgentBackend, ExternalAgentThread } from './externalAgentBackend';
 import {
@@ -39,6 +40,7 @@ export interface AcpSessionResources {
     binding: Parameters<NonNullable<ExternalAgentRunHooks['onPrepared']>>[0],
     present: ExternalPermissionPresenter,
     signal?: AbortSignal,
+    approvalScope?: ExternalApprovalSessionScope,
   ): Promise<() => void | Promise<void>>;
   close(sessionId: string): Promise<void>;
 }

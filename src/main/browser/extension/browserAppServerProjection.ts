@@ -1,45 +1,25 @@
-import { PRODUCT_NAME } from '../../../shared/productMetadata';
-import type { BrowserExtensionMessage, BrowserExtensionThread } from './browserAppServerTypes';
+import type { AppServerThreadMetadata } from '../../appServer/appServerTypes';
+import { codexThread } from '../../appServer/appServerWire';
+import type { BrowserExtensionMessage, BrowserExtensionThread, BrowserExtensionTurnState } from './browserAppServerTypes';
 
-type AppServerThreadStatus =
-  { type: 'active'; activeFlags: string[] } | { type: 'idle' | 'systemError' };
-
-type AppServerTurn = {
+type BrowserDisplayTurn = {
   id: string;
-  status: 'completed';
   items: Array<Record<string, unknown>>;
-  error: { message: string } | null;
-  itemsView: 'full';
-  startedAt: null;
-  completedAt: null;
-  durationMs: null;
 };
 
-const toAppServerStatus = (status: string): AppServerThreadStatus => {
-  if (status === 'running') return { type: 'active', activeFlags: [] };
-  if (status === 'error') return { type: 'systemError' };
-  return { type: 'idle' };
-};
-
-const toAppServerTurns = (
+export const toBrowserDisplay = (
   threadId: string,
   messages: BrowserExtensionMessage[],
-): AppServerTurn[] => {
-  const turns: AppServerTurn[] = [];
+): { id: string; turns: BrowserDisplayTurn[] } => {
+  const turns: BrowserDisplayTurn[] = [];
   let items: Array<Record<string, unknown>> = [];
   let itemOrdinal = 0;
   const nextItemId = () => `${threadId}-item-${++itemOrdinal}`;
   const flush = () => {
     if (!items.length) return;
     turns.push({
-      error: null,
-      completedAt: null,
-      durationMs: null,
       id: `${threadId}-history-${turns.length + 1}`,
       items,
-      itemsView: 'full',
-      startedAt: null,
-      status: 'completed',
     });
     items = [];
   };
@@ -73,7 +53,8 @@ const toAppServerTurns = (
         items.push({
           ...(message.rawMessage ? { rawMessage: message.rawMessage } : {}),
           id: nextItemId(),
-          phase: 'final_answer',
+          phase: message.rawMessage?.phase === 'final_answer' || message.rawMessage?.phase === 'commentary'
+            ? message.rawMessage.phase : null,
           text: message.text,
           type: 'agentMessage',
           ...(message.display ? { display: message.display } : {}),
@@ -135,45 +116,25 @@ const toAppServerTurns = (
     }
   });
   flush();
-  return turns;
+  return { id: threadId, turns };
 };
+
+export const toAppServerMetadata = (thread: BrowserExtensionThread): AppServerThreadMetadata => ({
+  id: thread.id, cwd: thread.cwd, name: thread.title, status: thread.status,
+  createdAt: thread.createdAt, updatedAt: thread.updatedAt,
+  permissionMode: thread.permissionMode, source: 'appServer',
+  ...(thread.modelRef ? { modelRef: thread.modelRef } : {}),
+});
 
 export const toAppServerThread = (
   thread: BrowserExtensionThread,
   messages?: BrowserExtensionMessage[],
+  activeTurn: BrowserExtensionTurnState | null = null,
+  loaded = true,
 ): Record<string, unknown> => ({
-  agentNickname: null,
-  agentRole: null,
-  canAcceptDirectInput: true,
-  cliVersion: PRODUCT_NAME,
-  createdAt: Math.floor(thread.createdAt / 1000),
-  cwd: thread.cwd,
-  daybreakEnabled: null,
-  ephemeral: false,
-  environments: null,
-  extra: null,
-  forkedFromId: null,
-  gitInfo: null,
-  historyMode: 'legacy',
-  id: thread.id,
-  isPinned: false,
-  model: thread.modelRef ?? null,
-  modelProvider: thread.modelRef?.split('/')[0] || 'justdo',
-  permissionMode: thread.permissionMode,
-  name: thread.title,
-  originator: 'justdo-chrome-extension',
-  parentThreadId: null,
-  path: null,
-  preview: thread.title,
-  projectId: null,
-  reasoningEffort: null,
-  recencyAt: Math.floor(thread.updatedAt / 1000),
-  section: null,
-  sectionEnteredAt: null,
-  sessionId: thread.id,
-  source: 'appServer',
-  status: toAppServerStatus(thread.status),
-  threadSource: 'user',
-  turns: messages ? toAppServerTurns(thread.id, messages) : [],
-  updatedAt: Math.floor(thread.updatedAt / 1000),
+  ...codexThread(toAppServerMetadata(thread), loaded),
+  browser: {
+    ...(messages ? { display: toBrowserDisplay(thread.id, messages) } : {}),
+    activeTurn,
+  },
 });

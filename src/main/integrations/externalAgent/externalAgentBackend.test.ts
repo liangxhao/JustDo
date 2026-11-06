@@ -77,6 +77,17 @@ it('uses per-session directories and opaque IDs without client credentials or ro
   expect(second.modelRef).toBe('other/selected');
 });
 
+it('passes real image-only attachments to execution without inventing prompt text or changing text-only callers', async () => {
+  const f = fixture();
+  const thread = await f.backend.start({ cwd: f.cwd });
+  const attachments = [{ name: 'image.png', mimeType: 'image/png', base64Data: 'aW1hZ2U=' }];
+  await expect(f.backend.run(thread, randomUUID(), '', vi.fn(), new AbortController().signal, { attachments }))
+    .resolves.toBe('Answer');
+  expect(f.execute).toHaveBeenCalledWith(expect.objectContaining({ message: '', attachments }));
+  await expect(f.backend.run(thread, randomUUID(), '', vi.fn(), new AbortController().signal))
+    .rejects.toThrow('bounded text');
+});
+
 it('retains a selected assistant and confirmed model route while rejecting unavailable identities', async () => {
   const f = fixture();
   const agent = f.store.saveAgentProfile({
