@@ -58,6 +58,14 @@ test('logs each previous-version removal before invoking the uninstaller', () =>
   }
 });
 
+test('validates the sandbox permission target before any previous-version removal', () => {
+  const script = createWindowsInstallerScript(templates);
+  const admission = script.indexOf('!insertmacro InstallerRequireSandboxTarget "$JustDoCurrentUserAppData" "$JustDoCurrentUserLocalAppData"');
+  expect(admission).toBeGreaterThan(-1);
+  expect(admission).toBeLessThan(script.indexOf('!insertmacro uninstallOldVersion SHELL_CONTEXT'));
+  expect(admission).toBeLessThan(script.indexOf('!insertmacro uninstallOldVersion HKEY_CURRENT_USER'));
+});
+
 test('uses one verified target for previous uninstall and skips missing product entries without reviving stale paths', () => {
   const script = createWindowsInstallerScript(templates);
   expect(script).toContain('Call InstallerResolveRegisteredDirectory');

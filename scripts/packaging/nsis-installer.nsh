@@ -260,6 +260,8 @@ FunctionEnd
   Call JustDoWriteInstallEvent
 !macroend
 
+!include "${PROJECT_DIR}\scripts\packaging\nsis-sandbox-permissions.nsh"
+
 Function JustDoInstallerUserAbort
   ${If} $InstallerPresentationStage == "${INSTALLER_STAGE_COMPLETE}"
     StrCpy $InstallerOpenOnFinish "0"
@@ -1032,6 +1034,8 @@ FunctionEnd
     Abort "Core application extraction failed: required payload missing."
   ${EndIf}
   !insertmacro JustDoLogInstallEvent "phase=electron-builder-core-validation-complete result=passed"
+
+  !insertmacro InstallerRequireSandboxReadAccess
 
   ; Re-probe both logs together before the long resource phase. If either path
   ; became unavailable, try relocating the pair. Diagnostics remain best-effort.

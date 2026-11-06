@@ -96,6 +96,9 @@ function createWindowsInstallerScript(templatesDir) {
       throw new Error('The upstream NSIS previous-version removal seam changed; review the template.');
     }
     section = section.replace(removal, [
+      ...(root === 'SHELL_CONTEXT' ? [
+        '!insertmacro InstallerRequireSandboxTarget "$JustDoCurrentUserAppData" "$JustDoCurrentUserLocalAppData"',
+      ] : []),
       `!insertmacro JustDoLogInstallEvent "phase=previous-installation-removal-start root=${root}"`,
       removal,
     ].join('\n'));

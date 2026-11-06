@@ -321,6 +321,40 @@ that every historical installer prevents copying an older executable. Historical
 builds without the rule cannot be protected retroactively. Per-machine setup and
 automatic-update version selection do not substitute for per-profile data checks.
 
+### Chromium sandbox access to installed files
+
+After validating the extracted Electron shell and before expanding bundled
+resources, setup grants `S-1-15-2-2` (ALL RESTRICTED APPLICATION PACKAGES)
+inheritable read/execute access to the selected installation directory. This
+step runs in the same install worker for fresh installations, repairs and
+interactive or silent upgrades, including all-users elevation. It addresses
+Windows environments where inherited application-container ACL entries otherwise
+cause GPU and renderer processes to terminate with `0x80000003` before first paint.
+The field failure was confirmed by restoring normal startup with this exact grant;
+see the [Electron report](https://github.com/electron/electron/issues/51761) and
+[installer permission requirement](https://github.com/electron/electron/issues/49143).
+
+`nsis-sandbox-permissions.nsh` invokes the system `icacls.exe` directly with an
+additive `(OI)(CI)(RX)` grant and `/L`, without a command shell or recursive `/T`.
+It rejects volume/share roots, the current profile/AppData roots, and reparse
+points in the selected directory's ancestor chain. Read-only target validation
+runs before old-version removal, allowing a fresh target that does not yet exist,
+and repeats before the grant. A rejected path therefore preserves the existing
+installation. Existing ACL entries and ownership remain intact. Windows applies
+normal inheritance to existing descendants; protected descendants keep their
+inheritance boundary, and new resources inherit the grant. Setup does not change
+profile or parent-directory ACLs, remove existing SIDs, or disable the Chromium
+sandbox. It records `sandbox-permissions-start` and `sandbox-permissions-result`
+in the installation log. Invalid targets, command launch errors, timeouts and
+nonzero exits stop installation before completion or application launch.
+
+Focused native fixtures verify inherited access for both existing shell files
+and subsequently created resources, preservation of existing permissions,
+repeatable repair, path rejection and command failures. A separate Windows
+inheritance probe confirmed that a child junction's external target ACL remains
+unchanged with this non-recursive `/L` grant. The normal two-pass compilation
+check covers both installer and uninstaller templates.
+
 ### Native Windows architecture
 
 The installed Electron application and its production runtime remain x64. The
