@@ -9,6 +9,8 @@ import { build, buildSync } from 'esbuild';
 import ts from 'typescript';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
+import { TOOL_CALL_RECOVERY_LIMIT } from '../../../../plugins/extensions/runtime-services/tool-call-recovery/policy.mjs';
+
 const {
   __testing: support,
 } = require('../../../../scripts/patches/v2026.10.6/029-tool-call-format-recovery.cjs');
@@ -16,6 +18,9 @@ const { extractFunction } = support;
 function nativeInput(input: any) { return { ...input, activeErrorContext: input.activeErrorContext ?? {provider: 'fixture', model: 'fixture'}, prepared: { ...input, ...input.prepared } }; }
 const root = path.resolve(__dirname, '../../../..');
 const supportDirectory = path.join(root, 'plugins/extensions/runtime-services/tool-call-recovery');
+// These binding fixtures bundle current shared support, independently of historical runtime behavior.
+const recoveryLimitAssignment = `TOOL_CALL_RECOVERY_LIMIT = ${TOOL_CALL_RECOVERY_LIMIT};`;
+const changedRecoveryLimitAssignment = `TOOL_CALL_RECOVERY_LIMIT = ${TOOL_CALL_RECOVERY_LIMIT + 1};`;
 const bundle = buildSync({
   stdin: {
     contents: `export * from ${JSON.stringify(path.join(supportDirectory, 'policy.mjs'))};
@@ -92,8 +97,8 @@ describe('format recovery support binding', () => {
 
   it('rejects a changed bundled opportunity limit', () => {
     const changed = bundle.replace(
-      /\bTOOL_CALL_RECOVERY_LIMIT\s*=\s*2\b/,
-      'TOOL_CALL_RECOVERY_LIMIT = 3',
+      new RegExp(String.raw`\bTOOL_CALL_RECOVERY_LIMIT\s*=\s*${TOOL_CALL_RECOVERY_LIMIT}\b`),
+      changedRecoveryLimitAssignment.slice(0, -1),
     );
 
     expect(changed).not.toBe(bundle);
@@ -257,17 +262,17 @@ describe('dynamic-import recovery support initializers', () => {
 
   it.each(['"use unknown";', '"use strict"; "use strict";', '("use strict");', 'sideEffect(); "use strict";'])(
     'rejects extra or non-directive initializer prefixes: %s', prefix => {
-      const changed = lazyBundle.replace('TOOL_CALL_RECOVERY_LIMIT = 2;', prefix + ' TOOL_CALL_RECOVERY_LIMIT = 2;');
+      const changed = lazyBundle.replace(recoveryLimitAssignment, prefix + ' ' + recoveryLimitAssignment);
       expect(changed).not.toBe(lazyBundle);
       expect(() => support.verifyBundledSupport(changed, root)).toThrow();
     },
   );
 
   it.each([
-    ['changed value', 'TOOL_CALL_RECOVERY_LIMIT = 2;', 'TOOL_CALL_RECOVERY_LIMIT = 3;'],
-    ['conditional assignment', 'TOOL_CALL_RECOVERY_LIMIT = 2;', 'if (true) { TOOL_CALL_RECOVERY_LIMIT = 2; }'],
-    ['duplicate assignment', 'TOOL_CALL_RECOVERY_LIMIT = 2;', 'TOOL_CALL_RECOVERY_LIMIT = 2; TOOL_CALL_RECOVERY_LIMIT = 2;'],
-    ['extra effect', 'TOOL_CALL_RECOVERY_LIMIT = 2;', 'sideEffect(); TOOL_CALL_RECOVERY_LIMIT = 2;'],
+    ['changed value', recoveryLimitAssignment, changedRecoveryLimitAssignment],
+    ['conditional assignment', recoveryLimitAssignment, `if (true) { ${recoveryLimitAssignment} }`],
+    ['duplicate assignment', recoveryLimitAssignment, `${recoveryLimitAssignment} ${recoveryLimitAssignment}`],
+    ['extra effect', recoveryLimitAssignment, `sideEffect(); ${recoveryLimitAssignment}`],
     ['missing initialization', 'init_tool_call_recovery_policy();', ''],
     ['conditional initialization', 'init_tool_call_recovery_policy();', 'if (false) init_tool_call_recovery_policy();'],
     ['nested initialization', 'init_tool_call_recovery_policy();', '(() => init_tool_call_recovery_policy())();'],

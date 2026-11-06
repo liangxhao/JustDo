@@ -200,8 +200,8 @@ describe('active turn timeline', () => {
   });
 
   test.each([
-    ['zh', '工具调用格式异常，正在重新生成（1/2）'],
-    ['en', 'Tool call format error. Regenerating (1/2)…'],
+    ['zh', '工具调用格式异常，正在重新生成（3/3）'],
+    ['en', 'Tool call format error. Regenerating (3/3)…'],
   ] as const)('renders format recovery counts in %s for both waiting layouts', (language, copy) => {
     const previousLanguage = i18nService.getLanguage();
     i18nService.setLanguage(language, { persist: false });
@@ -210,8 +210,8 @@ describe('active turn timeline', () => {
         kind: 'retry-tool-call-format' as const,
         tone: 'neutral' as const,
         quietMs: 0,
-        retryAttempt: 1,
-        maxRetries: 2,
+        retryAttempt: 3,
+        maxRetries: 3,
       };
       const waiting = flatten(
         renderTimelineItem({ kind: 'waiting', key: 'waiting:format', notice: status }),

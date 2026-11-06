@@ -622,11 +622,14 @@ test('projects native format recovery progress and clears it when model content 
       phase: 'progress',
       stage: 'retrying',
       reason: 'tool_call_format',
-      retryAttempt: 2,
-      maxRetries: 2,
+      retryAttempt: 3,
+      maxRetries: 3,
     }),
   );
-  expect(controller.state.runActivity).toMatchObject({ retryAttempt: 2, maxRetries: 2 });
+  expect(controller.state.runActivity).toMatchObject({ retryAttempt: 3, maxRetries: 3 });
+  expect(
+    projectWaitingStatus({ activity: controller.state.runActivity, transportStatus: 'connected' }),
+  ).toMatchObject({ kind: 'retry-tool-call-format', retryAttempt: 3, maxRetries: 3 });
   handleEvent(
     event(4, 'lifecycle', { phase: 'progress', stage: 'retrying', reason: 'rate_limit' }),
   );
@@ -641,7 +644,7 @@ test.each([
   [0, 2],
   [3, 2],
   [1.5, 2],
-  [1, 3],
+  [1, 4],
   [1, undefined],
 ])('does not retain malformed native format counters %s/%s', (retryAttempt, maxRetries) => {
   vi.useFakeTimers();

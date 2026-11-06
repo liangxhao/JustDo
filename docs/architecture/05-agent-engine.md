@@ -467,7 +467,7 @@ Worktree 设置页同时接入 Gateway 全局 `worktreeRoot` / `worktreeAccelera
 OpenClaw 先在 Completions producer 校验完整参数 JSON，再在 Agent 工具层校验 schema。
 原生 schema 参数拒绝生成工具错误结果，并在同一 Agent loop 中交给模型纠正；JSON
 解析或对象形状拒绝原本移除整批调用并返回 provider error，因此不会进入该循环。
-029 扩展这条原生循环：只对初始候选、完整响应、整批零派发的格式拒绝提供最多两次
+029 扩展这条原生循环：只对初始候选、完整响应、整批零派发的格式拒绝提供最多三次
 附加生成。schema、未知工具及执行异常继续使用各自原生处理，不重放用户输入或工具。
 
 Runtime Services 的 facts/policy 维护内容无关的诊断和纯策略；loop 模块维护精确 Agent
@@ -492,7 +492,7 @@ runLoop 先执行原生 prepareNextTurn、shouldStopAfterTurn、steering 与取�
 
 #### 纠正预算和禁止重放
 
-两次格式预算只计 JSON/对象格式纠正，schema 失败仍由原生工具循环检测处理。该预算
+三次格式预算只计 JSON/对象格式纠正，含首次生成最多四次请求；schema 失败仍由原生工具循环检测处理。该预算
 跨 loop/compaction/attempt 共享，并消费原有总 run budget；成功调用工具不清零。接管后删除旧的 outer-attempt 格式重试，不允许 empty-error、模型 fallback
 或 text-only 补全另给一组机会。后续断连、503、超时与取消沿真实原生失败及结算通道
 结束；主聊天与 subagent 共用接线，Swarm 不新增节点重试。
@@ -501,6 +501,13 @@ runLoop 先执行原生 prepareNextTurn、shouldStopAfterTurn、steering 与取�
 保留已有原因和精确 executionSettled 终态。答案仍受 before_agent_finalize 约束；
 撤回草稿不得重新交付或再请求补全。无正文/thinking-only 不要求 text phase；有正文
 则仍须逐块确认为 commentary，已显示过程说明按原生身份保留一份。
+
+普通 managed Completions 即使没有结构化 reasoning 字段，也保留原生在工具前已创建的
+临时 commentary 签名，前提是当前响应具有唯一、完整、整批零派发的格式拒绝回执。
+该保留发生在 producer 原有清理边界，不给其它文字补签名；工具后的未标记文字、显式
+最终正文、断流及其它诊断仍沿原有检查结束。direct provider 的外层错误清理保持原样。
+这组私有签名在公开插件观察点前已被清理，宿主及 Runtime Services 的公开 API 无法
+恢复其原始归属，因此由现有 029 精确接入，不扩大策略授权或添加新的恢复入口。
 
 同一条原生拒绝 diagnostic 携带有界格式反馈；Runtime Services 只从当前 completed
 observation 的唯一拒绝记录读取版本 1 白名单。反馈包含同批调用总数、失败调用序号、
@@ -520,7 +527,7 @@ subagent 共用这条接线，不增加 Swarm 节点重试。尚无目标内网�
 投影只修改失败 summary，不改变状态、结算、历史、dedupe 顺序和执行次数。
 
 实际安排纠正后由原生发布 lifecycle progress：`stage: retrying`、
-`reason: tool_call_format`、`retryAttempt: 1..2`、`maxRetries: 2`。
+`reason: tool_call_format`、`retryAttempt: 1..3`、`maxRetries: 3`。
 聊天仅作有界投影，阶段变化清理旧次数；整轮结果仍须精确匹配的
 `executionSettled: true` 终态。历史冻结记录由 Git 追溯；真实模型的 schema→坏 JSON
 混合路径、重连和远端安装版尚未完成验收，局部模拟测试不代表整套能力已验收。

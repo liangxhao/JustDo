@@ -23,7 +23,8 @@ const feedbackCases = {
   escape: { raw: '{"command":"private-parameter\\q"}', hint: 'invalid JSON (invalid JSON escape)' },
   array: { raw: '["private-parameter"]', hint: 'arguments must be a JSON object' },
   oversized: { raw: '<private-parameter>' + '😀'.repeat(10000), hint: 'Some diagnostics were omitted.' },
-  persistent: { raw: '<private-parameter>', hint: 'invalid JSON (XML-like input; use a JSON object)' },
+  ordinary: { raw: '{"command": private-parameter"}', hint: 'invalid JSON (unexpected JSON token or missing delimiter)', commentary: true },
+  persistent: { raw: '<private-parameter>', hint: 'invalid JSON (XML-like input; use a JSON object)', commentary: true },
 };
 if (!Object.hasOwn(feedbackCases, feedbackCase) || !['main', 'sub'].includes(feedbackOwner) ||
     (feedbackFailureProbe && !['disconnect', 'http', 'http-long'].includes(feedbackFailureProbe)) ||
@@ -99,9 +100,10 @@ const provider = http.createServer((req, res) => {
         const stage = feedbackStages.get(owner) ?? 0;
         const file = path.join(project, 'feedback-' + owner + '.txt');
         if (stage > 0) assert.equal(fs.readFileSync(file, 'utf8'), stage === 3 && !feedbackExhausted ? 'AB' : 'A');
-        if (stage === 2 || (feedbackExhausted && stage === 3)) {
+        if (stage === 2 || (feedbackExhausted && stage >= 3)) {
           assert.ok(content.includes(feedbackCases[feedbackCase].hint));
           assert.ok(content.includes('all 2 calls were withheld, including valid siblings'));
+          if (feedbackCases[feedbackCase].commentary) assert.ok(content.includes('Previously displayed commentary is preserved'));
           assert.ok((input.messages || []).some(message => message.role === 'tool'));
           assert.ok(!content.includes('private-parameter'));
           const correction = (input.messages || []).map(message => typeof message.content === 'string' ? message.content : JSON.stringify(message.content))
@@ -121,10 +123,12 @@ const provider = http.createServer((req, res) => {
         }
         const argumentsText = JSON.stringify({ command: `node -e "require('fs').appendFileSync('feedback-${owner}.txt','${stage === 0 ? 'A' : 'B'}')"`, workdir: project });
         const toolCalls = stage === 3 && !feedbackExhausted ? [] : [{ id: 'feedback-' + owner + '-' + stage, type: 'function', function: { name: 'exec', arguments: argumentsText } }];
-        if (stage === 1 || (feedbackExhausted && stage >= 2)) toolCalls.push({ id: 'feedback-invalid-' + owner + '-' + stage, type: 'function', function: { name: 'exec', arguments: feedbackCases[feedbackCase].raw } });
+        const rejecting = stage === 1 || (feedbackExhausted && stage >= 2);
+        if (rejecting) toolCalls.push({ id: 'feedback-invalid-' + owner + '-' + stage, type: 'function', function: { name: 'exec', arguments: feedbackCases[feedbackCase].raw } });
         feedbackStages.set(owner, stage + 1);
-        assert.ok(stage < 4, 'Unexpected extra model request');
+        assert.ok(stage < (feedbackExhausted ? 5 : 4), 'Unexpected extra model request');
         res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+        if (rejecting && feedbackCases[feedbackCase].commentary) res.write('data: ' + JSON.stringify({ id: 'feedback-' + modelCalls, object: 'chat.completion.chunk', model: 'fixture', choices: [{ index: 0, delta: { role: 'assistant', content: 'Checking the unfinished operation before continuing.' }, finish_reason: null }] }) + '\n\n');
         res.write('data: ' + JSON.stringify({ id: 'feedback-' + modelCalls, object: 'chat.completion.chunk', model: 'fixture', choices: [{ index: 0, delta: toolCalls.length ? { role: 'assistant', tool_calls: toolCalls.map((tool, index) => ({ index, ...tool })) } : { role: 'assistant', content: 'Feedback probe complete.' }, finish_reason: null }] }) + '\n\n');
         res.end('data: ' + JSON.stringify({ id: 'feedback-' + modelCalls, object: 'chat.completion.chunk', model: 'fixture', choices: [{ index: 0, delta: {}, finish_reason: toolCalls.length ? 'tool_calls' : 'stop' }], usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 } }) + '\n\ndata: [DONE]\n\n');
         return;
@@ -359,10 +363,10 @@ async function stop() {
           assert.ok(Buffer.byteLength(serialized) < 3072);
           assert.ok(!serialized.includes('synthetic-private-provider-token'));
         }
-        assert.equal(feedbackStages.get(feedbackOwner), feedbackExhausted ? 4 : 2);
+        assert.equal(feedbackStages.get(feedbackOwner), feedbackExhausted ? 5 : 2);
         assert.equal(fs.readFileSync(path.join(project, 'feedback-' + feedbackOwner + '.txt'), 'utf8'), 'A');
         const retries = feedbackLifecycle.filter(event => event.runId === main.runId && event.sessionKey === key && event.data?.reason === 'tool_call_format');
-        assert.deepEqual(retries.map(event => event.data.retryAttempt), feedbackExhausted ? [1, 2] : [1]);
+        assert.deepEqual(retries.map(event => event.data.retryAttempt), feedbackExhausted ? [1, 2, 3] : [1]);
         let ownedResult;
         if (feedbackOwner === 'sub') {
           ownedResult = await until(rpc, main.runId, state => state.state === 'settled');

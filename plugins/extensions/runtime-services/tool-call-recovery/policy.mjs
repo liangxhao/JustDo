@@ -1,4 +1,4 @@
-export const TOOL_CALL_RECOVERY_LIMIT = 2;
+export const TOOL_CALL_RECOVERY_LIMIT = 3;
 export const TOOL_CALL_RECOVERY_REASON = 'tool_call_format';
 
 /** Project only the exact native owner's already-redacted terminal diagnostic. */

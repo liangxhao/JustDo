@@ -327,17 +327,18 @@ describe.skipIf(!nativeFile)('format recovery through the locked native runner',
     ).toThrow(/partial/);
   });
 
-  it('adds exactly two requests and bypasses other retry families on exhaustion', async () => {
-    const h = harness([attempt(), attempt(), attempt(), attempt()]);
+  it('enforces the injected live support policy budget and bypasses other retry families on exhaustion', async () => {
+    const limit = policy.TOOL_CALL_RECOVERY_LIMIT;
+    const h = harness(Array.from({ length: limit + 1 }, () => attempt()));
     const result = await h.run();
     expect(h.dispatch).toHaveBeenCalledTimes(1);
-    expect(h.prompts).toHaveLength(2);
+    expect(h.prompts).toHaveLength(limit);
     expect(h.decisions.mock.calls.map(([value]) => value.attributes.detail)).toEqual([
-      'retry',
-      'retry',
-      'budget_exhausted',
+      ...Array.from({ length: limit }, () => 'retry'), 'budget_exhausted',
     ]);
-    expect(h.event.mock.calls.map(([value]) => value.data.retryAttempt)).toEqual([1, 2]);
+    expect(h.event.mock.calls.map(([value]) => value.data.retryAttempt)).toEqual(
+      Array.from({ length: limit }, (_, index) => index + 1),
+    );
     expect(h.recover).not.toHaveBeenCalled();
     expect(h.assistantFailure).not.toHaveBeenCalled();
     expect(h.refresh.continueAfterAttempt).not.toHaveBeenCalled();
@@ -428,7 +429,7 @@ describe.skipIf(!nativeFile)('format recovery through the locked native runner',
 
   it('transfers the native pre-reply generation once before format continuations', async () => {
     const generation = { assertCurrent: vi.fn(), release: vi.fn() };
-    const h = harness([attempt(), attempt(), attempt()], 'initial', {
+    const h = harness(Array.from({ length: policy.TOOL_CALL_RECOVERY_LIMIT + 1 }, () => attempt()), 'initial', {
       preReplyGeneration: generation,
     });
     await h.run();
@@ -535,16 +536,19 @@ describe.skipIf(!nativeFile)('format recovery through the locked native runner',
     expect(h.recover).toHaveBeenCalledTimes(1);
   });
 
-  it('keeps the two-request format budget across native compaction continuations', async () => {
+  it('keeps the injected live support policy budget across native compaction continuations', async () => {
     const progress = () =>
       attempt({ role: 'assistant', stopReason: 'stop', content: [] } as any, {
         normalizedAction: 'retry',
       });
-    const h = harness([attempt(), progress(), attempt(), progress(), attempt()]);
+    const limit = policy.TOOL_CALL_RECOVERY_LIMIT;
+    const h = harness([...Array.from({ length: limit }, () => [attempt(), progress()]).flat(), attempt()]);
     await h.run();
-    expect(h.dispatch).toHaveBeenCalledTimes(3);
-    expect(h.prompts).toHaveLength(2);
-    expect(h.event.mock.calls.map(([value]) => value.data.retryAttempt)).toEqual([1, 2]);
+    expect(h.dispatch).toHaveBeenCalledTimes(limit + 1);
+    expect(h.prompts).toHaveLength(limit);
+    expect(h.event.mock.calls.map(([value]) => value.data.retryAttempt)).toEqual(
+      Array.from({ length: limit }, (_, index) => index + 1),
+    );
     expect(h.assistantFailure).not.toHaveBeenCalled();
   });
 

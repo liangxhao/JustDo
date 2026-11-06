@@ -22,18 +22,26 @@ const owner = () => ({ state: { attempts: 0, claimed: false }, observe: observeT
   onDecision: vi.fn(), onRetry: vi.fn() });
 
 describe('native validation continuation owner', () => {
-  it('shares two corrections across new loops and never adds an outer attempt', async () => {
+  it('shares three corrections across new loops and never adds an outer attempt', async () => {
     const run = owner();
     const first = createToolCallValidationRecovery(run);
     const second = createToolCallValidationRecovery(run);
-    expect(await first(message(), facts())).toMatchObject({ role: 'custom', customType: 'runtime-services.tool-call-validation',
-      display: false });
-    expect(await second(message(), facts())).toBeDefined();
+    for (const [index, recover] of [first, second, first].entries()) {
+      const response = message();
+      Object.assign(response.diagnostics[0].details, { feedback: {
+        version: 1, batchCallCount: 3, omitted: false, localization: 'located',
+        issues: [{ callIndex: index, kind: 'invalid_json', argumentChars: index + 1 }],
+      } });
+      const correction = await recover(response, facts());
+      expect(correction).toMatchObject({ role: 'custom', customType: 'runtime-services.tool-call-validation',
+        display: false });
+      expect(correction.content).toContain(`Call ${index + 1}: invalid JSON; argument length ${index + 1} UTF-16 units.`);
+    }
     expect(await first(message(), facts())).toBeUndefined();
-    expect(run.state).toEqual({ attempts: 2, claimed: true });
-    expect(run.consumeBudget).toHaveBeenCalledTimes(2);
-    expect(run.onRetry).toHaveBeenCalledTimes(2);
-    expect(run.onDecision.mock.calls.map(([decision]) => decision.reason)).toEqual(['retry', 'retry', 'budget_exhausted']);
+    expect(run.state).toEqual({ attempts: 3, claimed: true });
+    expect(run.consumeBudget).toHaveBeenCalledTimes(3);
+    expect(run.onRetry).toHaveBeenCalledTimes(3);
+    expect(run.onDecision.mock.calls.map(([decision]) => decision.reason)).toEqual(['retry', 'retry', 'retry', 'budget_exhausted']);
   });
 
   it.each(['executedCount', 'committedCount', 'batchCount'])(

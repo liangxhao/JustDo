@@ -2,7 +2,7 @@
 
 // Capability: bounded continuation after an atomic, completed pre-dispatch rejection.
 // Target: locked openclaw@2026.10.7 Completions producer, native loop and run owners.
-// Scope: initial native model candidate, current transcript, two added requests.
+// Scope: initial native model candidate, current transcript, three added requests.
 // Safety: whole-batch zero dispatch, same native loop, existing writer and abort fences.
 // Remove when: upstream provides the same producer proof and exclusive continuation.
 const fs = require('node:fs');
@@ -124,8 +124,47 @@ function streamPlan({ fn, ast, body }) {
   ).left.getText(ast);
   const options = fn.parameters[4]?.name.getText(ast);
   if (!options || !body.includes('Stream ended without finish_reason')) throw new Error('Complete-stream boundary changed');
+  const output = fn.parameters[1]?.name.getText(ast);
+  const cleanupCall = one(nodes(fn, node => ts.isCallExpression(node) &&
+    /^clearPendingCommentaryText(?:\$\d+|\d+)?$/.test(node.expression.getText(ast))), 'provisional commentary cleanup');
+  const cleanup = cleanupCall.parent.parent;
+  const tags = one(cleanupCall.arguments, 'provisional commentary map');
+  const map = one(nodes(fn, node => ts.isVariableDeclaration(node) &&
+    node.name.getText(ast) === tags.getText(ast)), 'provisional commentary map owner');
+  const rememberedTags = nodes(fn, node => ts.isCallExpression(node) &&
+    /^rememberPendingCommentaryTags(?:\$\d+|\d+)?$/.test(node.expression.getText(ast)));
+  const retagCall = one(nodes(fn, node => ts.isCallExpression(node) &&
+    /^tagUnresolvedTextAsCommentary(?:\$\d+|\d+)?$/.test(node.expression.getText(ast))), 'unresolved commentary tagging');
+  const retag = retagCall.parent.parent;
+  if (!output || !ts.isIdentifier(tags) || !map.initializer ||
+      map.parent.parent.parent !== fn.body || !(map.parent.flags & ts.NodeFlags.Const) ||
+      nodes(map.initializer, node => ts.isNewExpression(node) && node.expression.getText(ast) === 'Map').length !== 1 ||
+      !rememberedTags.length || rememberedTags.some(call => call.arguments.length !== 2 ||
+        call.arguments[0].getText(ast) !== tags.getText(ast)) ||
+      !ts.isExpressionStatement(cleanupCall.parent) || !ts.isIfStatement(cleanup) ||
+      cleanup.thenStatement !== cleanupCall.parent || cleanup.elseStatement || cleanup.parent !== fn.body ||
+      !ts.isExpressionStatement(retagCall.parent) || !ts.isIfStatement(retag) ||
+      retag.thenStatement !== retagCall.parent || retag.elseStatement || retag.parent !== fn.body ||
+      retagCall.arguments.length !== 1 || retagCall.arguments[0].getText(ast) !== output ||
+      invoke.parent.parent !== fn.body || invoke.end >= cleanup.getStart(ast) ||
+      fn.body.statements.indexOf(retag) !== fn.body.statements.indexOf(cleanup) + 1)
+    throw new Error('Provisional commentary cleanup custody changed');
+  equivalent(retag.expression.getText(ast), `${output}.stopReason === "error" || ${output}.stopReason === "aborted"`,
+    [output], 'unresolved commentary boundary');
+  const observers = nodes(cleanup.expression, node => ts.isCallExpression(node) &&
+    /^observeToolCallRecoveryResponse(?:\$\d+|\d+)?$/.test(node.expression.getText(ast)));
+  const observer = observers.length ? one(observers, 'commentary rejection observer').expression.getText(ast)
+    : 'observeToolCallRecoveryResponse';
+  // Retain only signatures already created by native pre-tool tagging. Untagged
+  // trailing text and explicit final phases still fail the unchanged policy.
+  const originalCleanup = `${output}.stopReason !== "toolUse"`;
+  const guardedCleanup = `${originalCleanup} && !${observer}(${output}).rejected`;
+  equivalent(cleanup.expression.getText(ast), observers.length ? guardedCleanup : originalCleanup,
+    [output], 'provisional commentary preservation');
   const expected = `(typeof ${finish} === "string" && ${finish}.length > 0) || ${options}?.sawStreamDONE?.() === true`;
   const existing = properties(object, 'terminalStreamComplete');
+  if (Boolean(existing.length) !== Boolean(observers.length))
+    throw new Error('Historical or partial commentary preservation; rebuild pristine runtime');
   if (existing.length) {
     const current = one(existing, 'complete-stream evidence');
     if (!ts.isPropertyAssignment(current)) throw new Error('Complete-stream evidence must be explicit');
@@ -133,7 +172,10 @@ function streamPlan({ fn, ast, body }) {
     return { current: true };
   }
   if (body.includes('terminalStreamComplete')) throw new Error('Partial complete-stream evidence');
-  return { current: false, at: object.properties.pos, text: `terminalStreamComplete:${expected},` };
+  return { current: false, changes: [
+    { start: object.properties.pos, end: object.properties.pos, text: `terminalStreamComplete:${expected},` },
+    { start: cleanup.expression.getStart(ast), end: cleanup.expression.end, text: guardedCleanup },
+  ] };
 }
 function validateCandidateFlow({ fn }) {
   const input = one(fn.parameters, 'native fallback input').name.getText();
@@ -199,7 +241,9 @@ function transformParts(source, file, names, plan, options) {
   if (options.verifyOnly) throw new Error(`${file}: recovery producer is not applied`);
   return edit(
     source,
-    parts.map((part, index) => ({ start: part.start + plans[index].at, end: part.start + plans[index].at, text: plans[index].text })),
+    parts.flatMap((part, index) => (plans[index].changes ??
+      [{ start: plans[index].at, end: plans[index].at, text: plans[index].text }])
+      .map(change => ({ ...change, start: part.start + change.start, end: part.start + change.end }))),
   );
 }
 const transformProducer = (source, file, options = {}) => transformParts(source, file,

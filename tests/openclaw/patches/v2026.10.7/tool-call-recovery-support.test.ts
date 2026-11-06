@@ -91,8 +91,8 @@ describe('format recovery support binding', () => {
 
   it('rejects a changed bundled opportunity limit', () => {
     const changed = bundle.replace(
-      /\bTOOL_CALL_RECOVERY_LIMIT\s*=\s*2\b/,
-      'TOOL_CALL_RECOVERY_LIMIT = 3',
+      /\bTOOL_CALL_RECOVERY_LIMIT\s*=\s*3\b/,
+      'TOOL_CALL_RECOVERY_LIMIT = 4',
     );
 
     expect(changed).not.toBe(bundle);
@@ -256,17 +256,17 @@ describe('dynamic-import recovery support initializers', () => {
 
   it.each(['"use unknown";', '"use strict"; "use strict";', '("use strict");', 'sideEffect(); "use strict";'])(
     'rejects extra or non-directive initializer prefixes: %s', prefix => {
-      const changed = lazyBundle.replace('TOOL_CALL_RECOVERY_LIMIT = 2;', prefix + ' TOOL_CALL_RECOVERY_LIMIT = 2;');
+      const changed = lazyBundle.replace('TOOL_CALL_RECOVERY_LIMIT = 3;', prefix + ' TOOL_CALL_RECOVERY_LIMIT = 3;');
       expect(changed).not.toBe(lazyBundle);
       expect(() => support.verifyBundledSupport(changed, root)).toThrow();
     },
   );
 
   it.each([
-    ['changed value', 'TOOL_CALL_RECOVERY_LIMIT = 2;', 'TOOL_CALL_RECOVERY_LIMIT = 3;'],
-    ['conditional assignment', 'TOOL_CALL_RECOVERY_LIMIT = 2;', 'if (true) { TOOL_CALL_RECOVERY_LIMIT = 2; }'],
-    ['duplicate assignment', 'TOOL_CALL_RECOVERY_LIMIT = 2;', 'TOOL_CALL_RECOVERY_LIMIT = 2; TOOL_CALL_RECOVERY_LIMIT = 2;'],
-    ['extra effect', 'TOOL_CALL_RECOVERY_LIMIT = 2;', 'sideEffect(); TOOL_CALL_RECOVERY_LIMIT = 2;'],
+    ['changed value', 'TOOL_CALL_RECOVERY_LIMIT = 3;', 'TOOL_CALL_RECOVERY_LIMIT = 4;'],
+    ['conditional assignment', 'TOOL_CALL_RECOVERY_LIMIT = 3;', 'if (true) { TOOL_CALL_RECOVERY_LIMIT = 3; }'],
+    ['duplicate assignment', 'TOOL_CALL_RECOVERY_LIMIT = 3;', 'TOOL_CALL_RECOVERY_LIMIT = 3; TOOL_CALL_RECOVERY_LIMIT = 3;'],
+    ['extra effect', 'TOOL_CALL_RECOVERY_LIMIT = 3;', 'sideEffect(); TOOL_CALL_RECOVERY_LIMIT = 3;'],
     ['missing initialization', 'init_tool_call_recovery_policy();', ''],
     ['conditional initialization', 'init_tool_call_recovery_policy();', 'if (false) init_tool_call_recovery_policy();'],
     ['nested initialization', 'init_tool_call_recovery_policy();', '(() => init_tool_call_recovery_policy())();'],

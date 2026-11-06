@@ -156,6 +156,9 @@ flowchart LR
 耗尽均不替代带 `executionSettled: true` 的整轮终态。
 
 同一响应的 commentary 可以按原消息/分段身份保留，恢复成功或历史接管不重播正文。
+普通 managed Completions 的工具前临时 commentary 只在完整、整批零派发拒绝时保留；
+工具后的未标记正文仍会阻止纠正。每次纠正向既有上下文追加当前拒绝的隐藏反馈，
+最多追加三次生成（含首次最多四次请求），并继续使用原有总 run budget。
 只有当前原生生产者的完整流/整批拒绝事实能够授予恢复，历史错误文案、工具块被移除、
 provider response ID 或服务器汇总的 finish_reason 都不能单独证明该事实。
 导出继续使用有界闭合原因和次数，不新增原始参数、命令、thinking 或认证材料。

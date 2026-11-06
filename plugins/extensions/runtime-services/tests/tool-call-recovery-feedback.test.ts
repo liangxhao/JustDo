@@ -183,7 +183,7 @@ describe('bounded tool-call failure feedback', () => {
   it('does not allow feedback to bypass any recovery guard or exhaust another budget', () => {
     const feedback = project([call('<x>')]);
     for (const override of [{ aborted: true }, { initialCandidate: false }, { excluded: true },
-      { allToolsSettled: false }, { dispatchCount: 1 }, { streamComplete: false }, { attempts: 2 }]) {
+      { allToolsSettled: false }, { dispatchCount: 1 }, { streamComplete: false }, { attempts: 3 }]) {
       expect(resolveToolCallRecovery({ ...policyFacts, ...override, feedback }).action).toBe('finalize');
     }
     expect(resolveToolCallRecovery({ ...policyFacts, rejected: false, feedback }).action).toBe('not_applicable');

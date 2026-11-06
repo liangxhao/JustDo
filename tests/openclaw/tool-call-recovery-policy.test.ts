@@ -20,7 +20,7 @@ const eligibleFacts = () => ({
 });
 
 describe('tool-call format recovery policy', () => {
-  it.each([0, 1])('permits correction after %i consumed opportunities', attempts => {
+  it.each([0, 1, 2])('permits correction after %i consumed opportunities', attempts => {
     const decision = resolveToolCallRecovery({ ...eligibleFacts(), attempts });
 
     expect(decision).toMatchObject({ action: 'retry', reason: 'retry' });
@@ -73,13 +73,13 @@ describe('tool-call format recovery policy', () => {
     expect(decision).toEqual({ action: 'finalize', reason: 'excluded' });
   });
 
-  it.each([2, 3, Number.MAX_SAFE_INTEGER])(
+  it.each([3, 4, Number.MAX_SAFE_INTEGER])(
     'ends correction after %i consumed opportunities',
     attempts => {
       const decision = resolveToolCallRecovery({ ...eligibleFacts(), attempts });
 
       expect(decision).toEqual({ action: 'finalize', reason: 'budget_exhausted' });
-      expect(TOOL_CALL_RECOVERY_LIMIT).toBe(2);
+      expect(TOOL_CALL_RECOVERY_LIMIT).toBe(3);
       expect(TOOL_CALL_RECOVERY_REASON).toBe('tool_call_format');
     },
   );

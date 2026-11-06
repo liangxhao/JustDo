@@ -1,13 +1,13 @@
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
-import { createHash } from 'node:crypto';
 
 import { transformSync } from 'esbuild';
 import ts from 'typescript';
 import { describe, expect, it, vi } from 'vitest';
 
-import { projectToolCallRecoveryRejectionFeedback } from '../../../../plugins/extensions/runtime-services/tool-call-recovery/facts.mjs';
+import { observeToolCallRecoveryResponse, projectToolCallRecoveryRejectionFeedback } from '../../../../plugins/extensions/runtime-services/tool-call-recovery/facts.mjs';
 
 const { __testing: { transformProducer, transformCandidate, extractFunction, transformResultTypes } } =
   require('../../../../scripts/patches/v2026.10.7/029-tool-call-format-recovery.cjs');
@@ -46,6 +46,8 @@ const finalizer = `function finalizeOpenAICompletionsToolCalls(output, options =
   }
 }`;
 const stream = `async function processCompletionsStream(response, output, model, target, options) {
+  const provisionalCommentaryTags = new Map();
+  rememberPendingCommentaryTags(provisionalCommentaryTags, new Map());
   let finishReason;
   for await (const chunk of response) {
     if (chunk.finishReason) finishReason = chunk.finishReason;
@@ -56,6 +58,8 @@ const stream = `async function processCompletionsStream(response, output, model,
     allowSilentToolCallPromotion: finishReason === 'stop' || options?.sawStreamDONE?.() === true,
     onConfirmedToolCall(block) { target.push(block); }
   });
+  if (output.stopReason !== 'toolUse') clearPendingCommentaryText(provisionalCommentaryTags);
+  if (output.stopReason === 'error' || output.stopReason === 'aborted') tagUnresolvedTextAsCommentary(output);
 }`;
 const producer = `${finalizer}\n${stream}`;
 const streamingPatch = require('../../../../scripts/patches/v2026.10.7/028-reasoning-completions-streaming.cjs');
@@ -71,6 +75,10 @@ function runFixture(source = producer) {
   const confirmed = vi.fn();
   const context = vm.createContext({
     projectToolCallRecoveryRejectionFeedback,
+    observeToolCallRecoveryResponse,
+    rememberPendingCommentaryTags: vi.fn(),
+    clearPendingCommentaryText: vi.fn(),
+    tagUnresolvedTextAsCommentary: vi.fn(),
     finalizeTerminalToolCallArguments(calls: ToolBlock[], read: (call: ToolBlock) => string) {
       const parsed = calls.map(call => {
         try {
@@ -100,7 +108,7 @@ describe('tool-call recovery producer', () => {
     }
   });
 
-  it.each([producer, transformSync(producer, { minify: true }).code])('preserves complete-batch rejection in source and worker syntax', source => {
+  it.each([producer, transformSync(finalizer, { minify: true }).code + '\n' + stream])('preserves complete-batch rejection in source and worker syntax', source => {
     const { api, confirmed } = runFixture(source);
     const output: FixtureOutput = { stopReason: 'toolUse', content: [malformed('read', '{}'), malformed()] };
     api.finalizeOpenAICompletionsToolCalls(output, { terminalStreamComplete: true, onConfirmedToolCall: confirmed });
@@ -180,7 +188,9 @@ describe('tool-call recovery producer', () => {
   it('accepts current source/bundle renaming and rejects pristine, partial, and weakened proof', () => {
     const patched = transformProducer(producer, 'native.mjs');
     expect(transformProducer(patched, 'native.mjs', { verifyOnly: true })).toBe(patched);
-    const bundled = transformSync(patched.replaceAll('finalizeOpenAICompletionsToolCalls', 'finalizeOpenAICompletionsToolCalls$2'), { minify: true }).code;
+    const bundled = transformSync(patched.replaceAll('finalizeOpenAICompletionsToolCalls', 'finalizeOpenAICompletionsToolCalls$2'), {
+      minifyIdentifiers: true, minifyWhitespace: true,
+    }).code;
     expect(transformProducer(bundled, 'gateway-bundle.mjs', { verifyOnly: true })).toBe(bundled);
     expect(() => transformProducer(producer, 'native.mjs', { verifyOnly: true })).toThrow('not applied');
     for (const [pattern, replacement] of [
@@ -195,6 +205,26 @@ describe('tool-call recovery producer', () => {
     const historical = patched.replace(/,\s*feedback:projectToolCallRecoveryRejectionFeedback\(toolCalls,\s*finalizeTerminalToolCallArguments\)/, '');
     expect(historical).not.toBe(patched);
     expect(() => transformProducer(historical, 'native.mjs')).toThrow('partial');
+  });
+
+  it('rejects the historical cleanup and weakened or misplaced commentary preservation without repairing it', () => {
+    const patched = transformProducer(producer, 'native.mjs');
+    const guard = ' && !observeToolCallRecoveryResponse(output).rejected';
+    for (const changed of [
+      patched.replace(guard, ''),
+      patched.replace(guard, ' && output.errorCode !== "malformed_tool_call_arguments"'),
+      patched.replace('observeToolCallRecoveryResponse(output).rejected', 'observeToolCallRecoveryResponse({}).rejected'),
+      patched.replace('clearPendingCommentaryText(provisionalCommentaryTags)', 'clearPendingCommentaryText(new Map())'),
+      patched.replace('const provisionalCommentaryTags = new Map();',
+        'const provisionalCommentaryTags = new Map(); const unrelatedTags = new Map();')
+        .replace('clearPendingCommentaryText(provisionalCommentaryTags)', 'clearPendingCommentaryText(unrelatedTags)'),
+      patched.replace('clearPendingCommentaryText(provisionalCommentaryTags);', 'clearPendingCommentaryText(provisionalCommentaryTags); unrelated();'),
+      patched.replace('terminalStreamComplete:', 'partialStreamComplete:'),
+    ]) {
+      expect(changed).not.toBe(patched);
+      expect(() => transformProducer(changed, 'native.mjs')).toThrow();
+      expect(() => transformProducer(changed, 'native.mjs', { verifyOnly: true })).toThrow();
+    }
   });
 });
 

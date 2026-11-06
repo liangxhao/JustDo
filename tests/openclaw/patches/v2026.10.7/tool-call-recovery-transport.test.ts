@@ -5,6 +5,7 @@ import { pathToFileURL } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { observeToolCallRecoveryResponse } from '../../../../plugins/extensions/runtime-services/tool-call-recovery/facts.mjs';
+import { createToolCallValidationRecovery } from '../../../../plugins/extensions/runtime-services/tool-call-recovery/loop.mjs';
 import { resolveToolCallRecovery } from '../../../../plugins/extensions/runtime-services/tool-call-recovery/policy.mjs';
 
 type Content = { type: string; text?: string; textSignature?: string; name?: string };
@@ -48,6 +49,16 @@ function event(delta: object, finishReason: string | null = null) {
 
 function tool(index: number, name: string, args: string) {
   return event({ tool_calls: [{ index, id: `fixture-call-${index}`, type: 'function', function: { name, arguments: args } }] });
+}
+
+const ordinaryCommentary = 'Checking the requested operation. 随后继续检查未完成步骤。';
+function ordinaryMalformedResponse(fragments: string[], trailingText = '', complete = true) {
+  return event({ role: 'assistant', content: 'Checking the requested operation. ' }) +
+    event({ content: '随后继续检查未完成步骤。' }) + tool(0, 'tool_describe', '{"id":"read"}') +
+    fragments.map((args, index) => index === 0 ? tool(1, 'exec', args) : event({
+      tool_calls: [{ index: 1, function: { arguments: args } }],
+    })).join('') + (trailingText ? event({ content: trailingText }) : '') +
+    (complete ? event({}, 'tool_calls') + 'data: [DONE]\n\n' : '');
 }
 
 function receipt(message: Assistant) {
@@ -139,6 +150,90 @@ describe.skipIf(!hasRuntime)('actual installed AI SDK SSE transport (requires OP
     expect(texts.map(block => block.text).join('')).toBe(commentary);
     expect(texts.every(block => JSON.parse(block.textSignature ?? '{}').phase === 'commentary')).toBe(true);
     expectNativeRecoveryAdmission(message, true);
+  });
+
+  it.each([
+    { label: 'unquoted value', fragments: ['{"command":', ' unquoted', ' value"}'] },
+    { label: 'unterminated string', fragments: ['{"command":"', 'synthetic ', 'unfinished'] },
+  ])('preserves ordinary pre-tool commentary after a completed rejection with $label', async ({ fragments }) => {
+    const { message, events } = await consume(ordinaryMalformedResponse(fragments));
+    expect(message.stopReason).toBe('error');
+    expect(message.errorCode).toBe('malformed_tool_call_arguments');
+    expect(receipt(message)).toHaveLength(1);
+    expect(receipt(message)[0]?.details).toMatchObject({ batchRejected: true, streamComplete: true, dispatchCount: 0,
+      feedback: { batchCallCount: 2, issues: [{ callIndex: 1, kind: 'invalid_json' }] } });
+    expect(message.content.some(block => block.type === 'toolCall' || block.type === 'thinking')).toBe(false);
+    expect(events.filter(entry => entry.type === 'toolcall_end')).toEqual([]);
+    const texts = message.content.filter(block => block.type === 'text');
+    expect(texts.map(block => block.text).join('')).toBe(ordinaryCommentary);
+    expect(texts.every(block => JSON.parse(block.textSignature ?? '{}').phase === 'commentary')).toBe(true);
+    expectNativeRecoveryAdmission(message, true);
+  });
+
+  it('keeps untagged post-tool text outside commentary recovery after rejecting malformed arguments', async () => {
+    const trailingText = 'A separate visible answer after the provisional calls.';
+    const { message, events } = await consume(ordinaryMalformedResponse(['{"command": unquoted}'], trailingText));
+    expect(receipt(message)[0]?.details).toMatchObject({ streamComplete: true, dispatchCount: 0 });
+    expect(events.filter(entry => entry.type === 'toolcall_end')).toEqual([]);
+    const texts = message.content.filter(block => block.type === 'text');
+    expect(texts.map(block => block.text).join('')).toBe(ordinaryCommentary + trailingText);
+    expect(JSON.parse(texts[0]?.textSignature ?? '{}').phase).toBe('commentary');
+    expect(texts.at(-1)?.textSignature).toBeUndefined();
+    const facts = observeToolCallRecoveryResponse(message);
+    expect(facts).toMatchObject({ rejected: true, hasVisibleText: true, commentaryOnly: false });
+    expect(resolveToolCallRecovery({ ...facts, allToolsSettled: true, excluded: false,
+      initialCandidate: true, aborted: false, attempts: 0,
+    })).toEqual({ action: 'finalize', reason: 'visible_final_output' });
+  });
+
+  it('does not admit ordinary-text recovery when the stream ends without terminal proof', async () => {
+    const { message, events } = await consume(ordinaryMalformedResponse(['{"command":"unfinished'], '', false));
+    expect(message.stopReason).toBe('error');
+    expect(receipt(message)).toEqual([]);
+    expect(events.filter(entry => entry.type === 'toolcall_end')).toEqual([]);
+    expect(message.content.some(block => block.type === 'toolCall')).toBe(false);
+    const texts = message.content.filter(block => block.type === 'text');
+    expect(texts.map(block => block.text).join('')).toBe(ordinaryCommentary);
+    expect(observeToolCallRecoveryResponse(message).rejected).toBe(false);
+    const resolve = vi.fn(resolveToolCallRecovery);
+    const state = { attempts: 0, claimed: false };
+    const recover = createToolCallValidationRecovery({
+      state, observe: observeToolCallRecoveryResponse, resolve,
+      isInitialModel: () => true, isAborted: () => false, hasBudget: () => true,
+      assertActive: vi.fn(), consumeBudget: vi.fn(), onRetry: vi.fn(), onDecision: vi.fn(),
+    });
+    expect(await recover(message, { model, executedCount: 0, committedCount: 0, batchCount: 0, aborted: false })).toBeUndefined();
+    expect(resolve).not.toHaveBeenCalled();
+    expect(state).toEqual({ attempts: 0, claimed: false });
+  });
+
+  it('admits exactly three corrections across four actual malformed transport responses', async () => {
+    const state = { attempts: 0, claimed: false };
+    const consumeBudget = vi.fn();
+    const onRetry = vi.fn();
+    const onDecision = vi.fn();
+    const recover = createToolCallValidationRecovery({
+      state, observe: observeToolCallRecoveryResponse, resolve: resolveToolCallRecovery,
+      isInitialModel: (current: typeof model) => current === model,
+      isAborted: () => false, hasBudget: () => true, assertActive: vi.fn(),
+      consumeBudget, onRetry, onDecision,
+    });
+    const corrections = [];
+    for (let index = 0; index < 4; index += 1) {
+      const { message, events } = await consume(ordinaryMalformedResponse(['{"command":', ' invalid}']));
+      expect(events.filter(entry => entry.type === 'toolcall_end')).toEqual([]);
+      expect(message.content.some(block => block.type === 'toolCall')).toBe(false);
+      corrections.push(await recover(message, { model, executedCount: 0, committedCount: 0, batchCount: 0, aborted: false }));
+    }
+    expect(corrections.slice(0, 3)).toEqual([expect.objectContaining({ role: 'custom', display: false,
+      customType: 'runtime-services.tool-call-validation', content: expect.stringContaining('Previously displayed commentary is preserved'),
+    }), ...Array.from({ length: 2 }, () => expect.objectContaining({ role: 'custom', display: false,
+      customType: 'runtime-services.tool-call-validation' }))]);
+    expect(corrections[3]).toBeUndefined();
+    expect(state).toEqual({ attempts: 3, claimed: true });
+    expect(consumeBudget).toHaveBeenCalledTimes(3);
+    expect(onRetry).toHaveBeenCalledTimes(3);
+    expect(onDecision.mock.calls.map(([decision]) => decision.reason)).toEqual(['retry', 'retry', 'retry', 'budget_exhausted']);
   });
 
   it('preserves the native stop-plus-text conflict without granting a recovery receipt', async () => {

@@ -110,14 +110,14 @@ describe('projectWaitingStatus', () => {
     ).toMatchObject({ kind: 'rate-limited' });
   });
 
-  it.each([1, 2])('projects the admitted format recovery attempt %i', retryAttempt => {
+  it.each([[1, 3], [2, 3], [3, 3], [1, 2], [2, 2]])('projects the admitted format recovery attempt %i/%i', (retryAttempt, maxRetries) => {
     expect(
       projectWaitingStatus({
         activity: activity({
           stage: 'retrying',
           retryReason: 'tool_call_format',
           retryAttempt,
-          maxRetries: 2,
+          maxRetries,
         }),
         transportStatus: 'connected',
         now: 2_000,
@@ -127,7 +127,7 @@ describe('projectWaitingStatus', () => {
       tone: 'neutral',
       quietMs: 1_000,
       retryAttempt,
-      maxRetries: 2,
+      maxRetries,
     });
   });
 
@@ -136,7 +136,9 @@ describe('projectWaitingStatus', () => {
     [3, 2],
     [1.5, 2],
     [Number.NaN, 2],
-    [1, 3],
+    [4, 3],
+    [1, 4],
+    ['3', 3],
     [1, undefined],
   ])('omits unsupported format recovery progress %s/%s', (retryAttempt, maxRetries) => {
     expect(

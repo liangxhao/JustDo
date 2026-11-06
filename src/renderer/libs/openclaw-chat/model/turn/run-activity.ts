@@ -135,8 +135,11 @@ export function normalizeRunRetryProgress(
 ): { retryAttempt: number; maxRetries: number } | undefined {
   if (
     reason === 'tool_call_format' &&
-    (retryAttempt === 1 || retryAttempt === 2) &&
-    maxRetries === 2
+    typeof retryAttempt === 'number' &&
+    Number.isSafeInteger(retryAttempt) &&
+    (maxRetries === 2 || maxRetries === 3) &&
+    retryAttempt >= 1 &&
+    retryAttempt <= maxRetries
   ) {
     return { retryAttempt, maxRetries };
   }

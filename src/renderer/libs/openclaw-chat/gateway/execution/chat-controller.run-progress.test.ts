@@ -569,8 +569,8 @@ describe('native run progress through the chat controller', () => {
       phase: 'progress',
       stage: 'retrying',
       reason: 'tool_call_format',
-      retryAttempt: 1,
-      maxRetries: 2,
+      retryAttempt: 3,
+      maxRetries: 3,
       at: Date.now(),
     });
     const returned = controller.switchSession(sessionKey);
@@ -580,8 +580,8 @@ describe('native run progress through the chat controller', () => {
     expect(controller.state.runActivity).toMatchObject({
       stage: 'retrying',
       retryReason: 'tool_call_format',
-      retryAttempt: 1,
-      maxRetries: 2,
+      retryAttempt: 3,
+      maxRetries: 3,
     });
     expect(controller.state.runActivity).not.toHaveProperty('progress');
   });
