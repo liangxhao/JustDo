@@ -1,7 +1,7 @@
 import type { WebContents } from 'electron';
 
 import { captureStartupFailure, type StartupFailure, StartupFailureSource } from '../../../shared/app/startupFailure';
-import { redactLogText } from '../logRedaction';
+import { redactLogText } from '../logging/logRedaction';
 
 /** Observe real window failures in both the normal and in-memory startup shell. */
 export function registerWindowDiagnostics(webContents: WebContents, label: string, onFailure?: (failure: StartupFailure) => void): void {

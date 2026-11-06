@@ -5,8 +5,8 @@ import {
   SessionTitleIpc,
 } from '../../../shared/cowork/sessionTitle';
 import { type CoworkApiConfig, saveCoworkApiConfig } from '../../cowork/coworkConfigStore';
-import { probeCoworkModelReadiness } from '../../cowork/coworkModelReadiness';
 import type { CoworkGenerateTitleOptions } from '../../engine/types';
+import { probeCoworkModelReadiness } from '../../providers/modelReadiness';
 import { resolveRendererApiConfig } from '../../providers/providerApiConfig';
 
 interface TitleGenerator {

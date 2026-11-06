@@ -7,7 +7,7 @@ import { afterEach, expect, test } from 'vitest';
 const {
   syncBundledSkills,
   readBundledSkillConfig,
-} = require('../../scripts/runtime/sync-bundled-skills.cjs');
+} = require('../../scripts/plugins/sync-bundled-skills.cjs');
 const roots: string[] = [];
 afterEach(() => {
   for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });

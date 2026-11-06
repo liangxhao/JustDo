@@ -128,7 +128,7 @@ test.skipIf(process.platform !== 'win32' || !stdioModule || !fs.existsSync(elect
   () => {
     const output = execFileSync(
       process.execPath,
-      [path.resolve('scripts/test/prepare-npx-mcp-smoke.cjs')],
+      [path.resolve('scripts/test/openclaw/prepare-npx-mcp-smoke.cjs')],
       {
         env: {
           ...process.env,

@@ -3,7 +3,7 @@ import React from 'react';
 import { type AppearanceConfig } from '@/app/appearance';
 import AppearanceSettingsTab from '@/features/settings/preferences/AppearanceSettingsTab';
 import { i18nService } from '@/services/i18n';
-import { themeService } from '@/services/theme';
+import { themeService } from '@/theme/themeService';
 
 const APPEARANCE_PREVIEW_CARD_CLASS_NAME =
   'flex flex-col items-center rounded-xl border-2 p-2 transition-colors cursor-pointer';

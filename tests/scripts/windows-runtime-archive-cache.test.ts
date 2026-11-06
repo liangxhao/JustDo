@@ -17,7 +17,7 @@ const { prepareCachedRuntimeArchive } = require('../../scripts/packaging/windows
     options?: Record<string, unknown>,
   ) => Promise<{ reused: boolean }>;
 };
-const { packMultipleSources, compressTarArchive } = require('../../scripts/openclaw/pack-openclaw-tar.cjs');
+const { packMultipleSources, compressTarArchive } = require('../../scripts/packaging/pack-runtime-resources.cjs');
 const roots: string[] = [];
 
 afterEach(() => {

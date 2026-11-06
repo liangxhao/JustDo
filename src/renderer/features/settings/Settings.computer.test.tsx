@@ -19,7 +19,7 @@ vi.mock('@/services/config', async () => {
   const { defaultConfig } = await import('@/app/config');
   return { configService: { getConfig: () => structuredClone(defaultConfig) } };
 });
-vi.mock('@/services/theme', () => ({
+vi.mock('@/theme/themeService', () => ({
   themeService: {
     getTheme: () => 'light',
     getThemeId: () => 'classic-light',

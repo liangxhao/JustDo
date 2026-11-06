@@ -1,12 +1,12 @@
-import { buildOpenAIJsonRequestHeaders } from '../../shared/cowork/modelRequestHeaders';
 import { ProviderName } from '../../shared/providers';
 import { mergeModelProviderHeaders } from '../../shared/providers/modelProviderHeaders';
+import { buildOpenAIJsonRequestHeaders } from '../../shared/providers/modelRequestHeaders';
 import { getBuiltinModelRequestHeaders } from '../providers/builtinModelCredential';
 import {
   buildOpenAIChatCompletionsUrl,
   extractApiErrorSnippet,
   extractTextFromOpenAIResponse,
-} from './coworkModelApi';
+} from '../providers/modelApi';
 
 const SESSION_TITLE_MAX_CHARS = 50;
 const SESSION_TITLE_SOURCE_MAX_CHARS = 2_000;

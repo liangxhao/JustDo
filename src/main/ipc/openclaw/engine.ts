@@ -19,7 +19,7 @@ import {
 import { PRODUCT_NAME } from '../../../shared/productMetadata';
 import { SystemPromptReplacementIpc } from '../../../shared/prompts/systemPromptReplacements';
 import { t } from '../../core/i18n';
-import { redactLogText } from '../../core/logRedaction';
+import { redactLogText } from '../../core/logging/logRedaction';
 import { JUSTDO_MANAGED_PYTHON_USER_BASE_ENV } from '../../core/runtime/pythonRuntime';
 import type { CoworkStore } from '../../data/coworkStore';
 import { isWorkspacePathWithin } from '../../engine/openclaw/runtimeAdapterSupport';

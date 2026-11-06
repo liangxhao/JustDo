@@ -214,6 +214,6 @@ skills.workshop.autonomous.mode。该设置属于原生技能自动学习能力�
 
 回归需覆盖 schedule 与时区、原生 owner 保留、默认 delivery、基线不泛滥未读、超过一页的追赶、中断重启、readAt 保留、删除和 reconcile 竞争、tombstone 幂等及原生历史缺失。测试应验证用户看到的结果，不只比对请求对象字段。
 
-内置无头浏览器另由 `scripts/test/verify-browser-cron.cjs` 验证真实 at timer 自动触发：使用隔离 Gateway 和本地合成模型，经认证插件事件、实际 job 查询与 Main/Electron 执行 browser open/text/screenshot，等待精确 whole-run 终态及同 job/session 的原生成功运行记录，检查页面回收和进程正常退出。
+内置无头浏览器另由 `scripts/test/browser/verify-browser-cron.cjs` 验证真实 at timer 自动触发：使用隔离 Gateway 和本地合成模型，经认证插件事件、实际 job 查询与 Main/Electron 执行 browser open/text/screenshot，等待精确 whole-run 终态及同 job/session 的原生成功运行记录，检查页面回收和进程正常退出。
 
 已在 Windows 冻结 v2026.10.7 原生产物配合当前 Main/插件源码通过；不调用 cron.run，不证明业务模型/SSO 或当前完整安装包已验收，详见[验证边界](../features/browser/browser-settings-design.md#内置浏览器的前台与后台执行)。

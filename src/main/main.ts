@@ -127,8 +127,8 @@ import {
   getRecentMainLogEntries,
   initLogger,
   stopLogMaintenance,
-} from './core/logger';
-import { getRetainedLogPaths, LogKind } from './core/logMaintenance';
+} from './core/logging/logger';
+import { getRetainedLogPaths, LogKind } from './core/logging/logMaintenance';
 import { mainProcessFetch, mainProcessTitleFetch } from './core/network/mainProcessFetch';
 import {
   resolveOutboundHeaderUserInfoPath,
@@ -174,7 +174,6 @@ import { SqliteStore } from './data/sqliteStore';
 import { CoworkEngineService } from './engine';
 import { bindCoworkRuntimeForwarder } from './engine/cowork/coworkRuntimeForwarder';
 import type { GatewayRequestOptions } from './engine/types';
-import { registerAgentCliIntegrationHandlers } from './ipc/agentCli';
 import {
   applyBrowserModeChange,
   registerAppHandlers,
@@ -195,7 +194,8 @@ import {
   registerWorkspaceWindowHandlers,
 } from './ipc/app';
 import { registerAppInitializationHandlers } from './ipc/app/initialization';
-import { registerAppServerIntegrationHandlers } from './ipc/appServer';
+import { registerAgentCliIntegrationHandlers } from './ipc/clients/agentCli';
+import { registerAppServerIntegrationHandlers } from './ipc/clients/appServer';
 import {
   registerAgentHandlers,
   registerCoworkConfigHandlers,

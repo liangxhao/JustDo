@@ -16,7 +16,7 @@ import {
   AppUpdateIpc,
   DEFAULT_APP_UPDATE_CHECK_FREQUENCY,
 } from '../../../shared/app/appUpdate';
-import { log } from '../logger';
+import { log } from '../logging/logger';
 
 const MISSED_CHECK_DELAY_MS = 10_000;
 const SCHEDULED_CHECK_HOUR = 10;

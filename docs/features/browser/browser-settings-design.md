@@ -144,17 +144,17 @@ Main 将普通会话的 canonical key 映射到产品会话时，先查询显式
 
 #### 当前限制与分层验证
 
-当前通过截图、工具结果和文件观察后台过程，不支持同一后台原页面挂回侧栏、直接人工接管或原地切换前后台。运行 `node scripts/test/verify-background-browser.cjs` 可使用独立数据目录和 localhost 合成页面复验；验证包括实际 webview 与后台并发共享 Cookie/localStorage/IndexedDB、登录状态变更、profile 隔离及任务释放不影响侧栏 worker/连接。保留输入、截图、工作区上传/PDF/下载和实际 Main 执行链检查；该入口的身份、会话/job 查询、前台 UI 回调及 resolve 传输使用合成边界。
+当前通过截图、工具结果和文件观察后台过程，不支持同一后台原页面挂回侧栏、直接人工接管或原地切换前后台。运行 `node scripts/test/browser/verify-background-browser.cjs` 可使用独立数据目录和 localhost 合成页面复验；验证包括实际 webview 与后台并发共享 Cookie/localStorage/IndexedDB、登录状态变更、profile 隔离及任务释放不影响侧栏 worker/连接。保留输入、截图、工作区上传/PDF/下载和实际 Main 执行链检查；该入口的身份、会话/job 查询、前台 UI 回调及 resolve 传输使用合成边界。
 
 共享 profile 不再采用此前独立 partition 的“清所有 worker、无迟到 POST”验收标准，页面销毁不能证明共享站点活动已排空。
 
-另有真实原生定时入口 `scripts/test/verify-browser-cron.cjs`，使用选定运行时的随包 Node 并传入 `--runtime-dir <runtime>`。Windows 隔离验证已通过冻结的 v2026.10.7 Gateway、当前源码的插件和 Main/Electron：只创建一次 at job，等待原生 timer 自动触发，通过认证 SDK 接收原始插件事件、实际 cron.get 和产品 mapper 准入；模型省略 headless，连续打开、读取网页和截图均实际执行，图像返回本地合成模型。
+另有真实原生定时入口 `scripts/test/browser/verify-browser-cron.cjs`，使用选定运行时的随包 Node 并传入 `--runtime-dir <runtime>`。Windows 隔离验证已通过冻结的 v2026.10.7 Gateway、当前源码的插件和 Main/Electron：只创建一次 at job，等待原生 timer 自动触发，通过认证 SDK 接收原始插件事件、实际 cron.get 和产品 mapper 准入；模型省略 headless，连续打开、读取网页和截图均实际执行，图像返回本地合成模型。
 
 核对同一原生运行的精确成功 executionSettled 终态、后续 settled release、cron.runs 成功记录、自有页面回收和两个进程正常退出，不调用 cron.run 冒充定时触发。测试关闭隔离目录的可选 Node 编译缓存，避免其退出时序列化拖延，不改变任务或工具授权。
 
 两种入口及边界见[隔离验证说明](../../../tests/browser-background-electron/README.md)。真实定时验证使用已校验完整性的冻结原生产物，报告明确 `strictCurrentSourceProof:false`：它不验证按当前完整源码重新组装的安装包。公司实际模型、业务站点/SSO、锁屏/睡眠和 macOS/Linux 尚未验收。
 
-模型重试另有 `scripts/test/verify-browser-retry.cjs --runtime-dir <runtime>` 入口，使用选定运行时的随包 Node。冻结 Gateway、当前浏览器插件与真实 Main 事件桥连接本地合成模型，验证 open 成功后一次 HTTP 503 触发原生重试，随后同一原生运行的 status 重新准入并成功返回。旧代码对照稳定返回缺少执行授权，修复后通过；旧效果撤销和精确成功终态分别核验。该入口只模拟 Main 的网页执行结果，不启动 Electron 或访问公司服务，不代表完整安装包、真实页面或 SSO 验收，详见上述隔离验证说明。
+模型重试另有 `scripts/test/browser/verify-browser-retry.cjs --runtime-dir <runtime>` 入口，使用选定运行时的随包 Node。冻结 Gateway、当前浏览器插件与真实 Main 事件桥连接本地合成模型，验证 open 成功后一次 HTTP 503 触发原生重试，随后同一原生运行的 status 重新准入并成功返回。旧代码对照稳定返回缺少执行授权，修复后通过；旧效果撤销和精确成功终态分别核验。该入口只模拟 Main 的网页执行结果，不启动 Electron 或访问公司服务，不代表完整安装包、真实页面或 SSO 验收，详见上述隔离验证说明。
 
 ## 3. 工具动作与观察
 

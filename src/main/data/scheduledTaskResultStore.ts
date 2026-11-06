@@ -6,13 +6,13 @@ import {
   OPENCLAW_HEARTBEAT_SKIPPED_PREFIX,
   OPENCLAW_SILENT_REPLY_MARKER,
 } from '../../shared/scheduledTask/resultPresentation';
-import { normalizeScheduledTaskRunMetadata } from '../../shared/scheduledTask/runMetadata';
 import type {
   ScheduledTaskResult,
   ScheduledTaskResultPage,
   ScheduledTaskResultQuery,
   ScheduledTaskRun,
 } from '../../shared/scheduledTask/types';
+import { normalizeScheduledTaskRunMetadata } from '../scheduler/runMetadata';
 
 const BASELINE_KEY = 'scheduled_task_results_baseline_v1';
 const BASELINE_TASK_KEY_PREFIX = 'scheduled_task_results_baseline_task_v1:';

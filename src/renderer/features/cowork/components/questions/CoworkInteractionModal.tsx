@@ -17,7 +17,7 @@ import type {
 } from '@/features/cowork/coworkTypes';
 import { i18nService } from '@/services/i18n';
 
-import { useDialogFocusTrap } from '../shared/useDialogFocusTrap';
+import { useDialogFocusTrap } from '../../../../shared/hooks/useDialogFocusTrap';
 import {
   getQuestionDialogTitle,
   isQuestionAnswerComplete,

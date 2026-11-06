@@ -19940,7 +19940,7 @@ function prepareChromeExtensionStreamEvent(value) {
   };
 }
 
-// src/shared/cowork/interactions/planPreview.ts
+// src/renderer/libs/openclaw-chat/model/turn/plan-preview.ts
 function isPresentPlanToolName(toolName) {
   return toolName.trim().toLowerCase() === OpenClawToolName.PRESENT_PLAN.toLowerCase();
 }

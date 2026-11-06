@@ -81,8 +81,8 @@ import { useWorkboardAvailability } from '@/features/workboard/useWorkboardAvail
 import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';
 import { matchesShortcut } from '@/services/shortcuts';
-import { themeService } from '@/services/theme';
 import { isDomHTMLElement } from '@/shared/dom/ownerDocument';
+import { themeService } from '@/theme/themeService';
 
 const InitializedApp: React.FC = () => {
   useEffect(() => {

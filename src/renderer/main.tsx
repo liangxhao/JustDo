@@ -26,7 +26,7 @@ async function startRenderer(): Promise<void> {
   if (window.startupDiagnostics?.failure) return;
   const Application = React.lazy(async () => {
     // Configure the offline editor before importing any of its consumers.
-    await import('@/app/monacoConfig');
+    await import('@/shared/editor/monaco');
     const { appBrowserRegistry } = await import('./features/plugins/app/runtime');
     await appBrowserRegistry.start();
     const [{ default: App }, { store }, { Provider }] = await Promise.all([

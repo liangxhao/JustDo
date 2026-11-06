@@ -52,7 +52,7 @@ const { verifyPackagedOpenClawRuntime, isDeclaredBundledDependencyArchiveEntry }
     }, options?: { repoRoot: string; includeDrawioAssets?: boolean }) => Promise<void>;
     isDeclaredBundledDependencyArchiveEntry: (entryPath: string, entryType: string, directories: string[]) => boolean;
   };
-const { compressTarArchive } = require('../../../scripts/openclaw/pack-openclaw-tar.cjs') as {
+const { compressTarArchive } = require('../../../scripts/packaging/pack-runtime-resources.cjs') as {
   compressTarArchive: (sourceTar: string, outputArchive: string) => Promise<void>;
 };
 const { ensureOpenClawRuntimePatches, patchOpenClawRuntime } =
@@ -279,12 +279,14 @@ function createFixture(version = 'v2026.6.11') {
     'sync-openclaw-runtime-resources.cjs',
     'precompile-openclaw-extensions.cjs',
     'prune-openclaw-runtime.cjs',
-    'pack-openclaw-tar.cjs',
+    'pack-runtime-resources.cjs',
   ]) {
     const scriptDir = path.join(
       repoRoot,
       'scripts',
-      scriptName.startsWith('electron-builder-') ? 'packaging' : 'openclaw',
+      scriptName.startsWith('electron-builder-') || scriptName === 'pack-runtime-resources.cjs'
+        ? 'packaging'
+        : 'openclaw',
     );
     fs.mkdirSync(scriptDir, { recursive: true });
     fs.writeFileSync(path.join(scriptDir, scriptName), `// ${scriptName}\n`);
@@ -308,9 +310,9 @@ function createFixture(version = 'v2026.6.11') {
     path.join(repoRoot, 'src', 'shared', 'security', 'mxcNativeBinaries.json'),
     '{}\n',
   );
-  fs.mkdirSync(path.join(repoRoot, 'scripts', 'runtime'), { recursive: true });
+  fs.mkdirSync(path.join(repoRoot, 'scripts', 'plugins'), { recursive: true });
   fs.writeFileSync(
-    path.join(repoRoot, 'scripts', 'runtime', 'sync-bundled-skills.cjs'),
+    path.join(repoRoot, 'scripts', 'plugins', 'sync-bundled-skills.cjs'),
     '// fixture\n',
   );
   fs.mkdirSync(path.join(repoRoot, 'plugins', 'extensions'), { recursive: true });
@@ -1134,7 +1136,7 @@ module.exports = { applyPatch, verifyPatch };
       'scripts/packaging/prepare-windows-build.cjs',
       'scripts/packaging/application-license-assets.cjs',
       'vite.config.mts',
-      'scripts/openclaw/pack-openclaw-tar.cjs',
+      'scripts/packaging/pack-runtime-resources.cjs',
       'plugins/extensions/drawio/scripts/verify-packaged.cjs',
     ]) {
       const file = path.join(repoRoot, source);

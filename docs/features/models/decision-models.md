@@ -61,8 +61,8 @@ flowchart LR
 宿主测试覆盖凭据隔离与轮换、内置凭据编辑、默认关闭、受管配置释放／接管、生命周期同步及原生工具准入。适配器与原生状态单例的仓库验证入口为：
 
 ```sh
-npx vitest run --config scripts/openclaw/typesafe.vitest.config.mts
-node scripts/test/verify-decision-secret-runtime.cjs vendor/openclaw-runtime/current
+npx vitest run --config scripts/test/openclaw/typesafe.vitest.config.mts
+node scripts/test/openclaw/verify-decision-secret-runtime.cjs vendor/openclaw-runtime/current
 ```
 
 `OPENCLAW_RUNTIME` 可选择其他已准备 SDK 目录。第二个入口启动隔离的打包 Gateway 和本地合成 System One 服务，经真实 `/tools/invoke` 验证凭据轮换、不可用 owner 拒绝及恢复；测试 key 刻意与模型名重叠。另检查 scope、错误类和传递依赖单例，不修改原生源码字节，不调用真实对话模型、不读取用户凭据。真实托管验收必须另获操作者授权和真实 key，合成 key 不得发往公共端点。

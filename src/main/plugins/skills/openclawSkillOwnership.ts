@@ -2,9 +2,9 @@ import fs from 'fs';
 import path from 'path';
 
 import { PluginHubScope, type PluginHubScope as PluginHubScopeValue } from '../../../shared/plugins/management';
-import { getSkillScope } from '../../../shared/plugins/skillManagement';
 import type { GatewaySkillEntry } from '../../engine/types';
 import type { OpenClawEngineManager } from '../../openclaw/runtime/openclawEngineManager';
+import { getSkillScope } from './skillManagement';
 
 const isPathWithinDirectory = (rootDirectory: string, candidatePath: string): boolean => {
   const relativePath = path.relative(path.resolve(rootDirectory), path.resolve(candidatePath));

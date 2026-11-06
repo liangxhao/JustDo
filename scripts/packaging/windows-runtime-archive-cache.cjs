@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { createHash } = require('node:crypto');
 const tar = require('tar');
-const { collectArchiveSources, compressTarArchive, resolveCompressionWorkers } = require('../openclaw/pack-openclaw-tar.cjs');
+const { collectArchiveSources, compressTarArchive, resolveCompressionWorkers } = require('./pack-runtime-resources.cjs');
 
 const OUTPUT_NAMES = ['win-resources.tar.zst', 'win-resources-metadata.json', 'win-resources-proof.json'];
 const PROOF_FORMAT = 1;
@@ -37,7 +37,7 @@ function prepareArchiveInputs(sources, recipeFiles = []) {
     node: process.versions.node, zstd: process.versions.zstd, tar: require('tar/package.json').version,
     requestedWorkers: process.env.RUNTIME_COMPRESSION_WORKERS ?? null,
     recipe: [
-      __filename, require.resolve('../openclaw/pack-openclaw-tar.cjs'),
+      __filename, require.resolve('./pack-runtime-resources.cjs'),
       require.resolve('../openclaw/prune-openclaw-runtime.cjs'), ...recipeFiles,
     ].map(hashFile),
   }));

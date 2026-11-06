@@ -2,7 +2,7 @@
 
 import { configureStore } from '@reduxjs/toolkit';
 import type { ExtensionChangedEvent } from '@shared/plugins/extensions';
-import { getSkillManagementCapabilities } from '@shared/plugins/skillManagement';
+import { PluginActionReason } from '@shared/plugins/management';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { Provider } from 'react-redux';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
@@ -98,12 +98,13 @@ const skill: Skill = {
   missing: { bins: [], env: [], config: ['skills.entries.coding-agent.enabled'], os: [] },
   scope: 'system',
   ownershipScope: 'system',
-  management: getSkillManagementCapabilities({
-    source: 'openclaw-bundled',
-    bundled: true,
-    eligible: false,
-    hasPath: true,
-  }),
+  management: {
+    enable: { allowed: true },
+    disable: { allowed: true },
+    remove: { allowed: false, reason: PluginActionReason.MANAGED_BY_SYSTEM },
+    configure: { allowed: false, reason: PluginActionReason.UNSUPPORTED },
+    revealInFolder: { allowed: true },
+  },
 };
 
 const extensionEvents = {
@@ -360,13 +361,13 @@ test('switches an extension skill from its card while keeping details free of sw
     source: 'openclaw-extra' as const,
     scope: 'extension' as const,
     skillPath: 'C:/state/plugin-skills/coding-agent/SKILL.md',
-    management: getSkillManagementCapabilities({
-      source: 'openclaw-extra',
-      bundled: false,
-      eligible: false,
-      hasPath: true,
-      filePath: 'C:/state/plugin-skills/coding-agent/SKILL.md',
-    }),
+    management: {
+      enable: { allowed: true },
+      disable: { allowed: true },
+      remove: { allowed: false, reason: PluginActionReason.MANAGED_BY_EXTENSION },
+      configure: { allowed: false, reason: PluginActionReason.MANAGED_BY_EXTENSION },
+      revealInFolder: { allowed: true },
+    } satisfies Skill['management'],
   };
   vi.mocked(skillService.loadSkills).mockResolvedValue([extensionSkill]);
   vi.mocked(skillService.setSkillEnabled).mockResolvedValue([{ ...extensionSkill, enabled: true }]);
@@ -415,12 +416,13 @@ const importedSkill: Skill = {
   missing: { bins: [], env: [], config: [], os: [] },
   scope: 'personal',
   ownershipScope: 'personal',
-  management: getSkillManagementCapabilities({
-    source: 'openclaw-managed',
-    bundled: false,
-    eligible: true,
-    hasPath: true,
-  }),
+  management: {
+    enable: { allowed: true },
+    disable: { allowed: true },
+    remove: { allowed: true },
+    configure: { allowed: false, reason: PluginActionReason.UNSUPPORTED },
+    revealInFolder: { allowed: true },
+  },
 };
 
 test.each([true, false])(

@@ -7,7 +7,7 @@ using `node server.mjs` or a mocked npm CLI.
 On Windows, run from the repository worktree:
 
 ```powershell
-node scripts/test/prepare-npx-mcp-smoke.cjs
+node scripts/test/openclaw/prepare-npx-mcp-smoke.cjs
 ```
 
 The preparation script packs the package, primes an isolated offline npm cache,

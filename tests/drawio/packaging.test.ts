@@ -4,7 +4,7 @@ import path from 'node:path';
 import { list } from 'tar';
 import { expect, it } from 'vitest';
 
-const { packMultipleSources } = require('../../scripts/openclaw/pack-openclaw-tar.cjs');
+const { packMultipleSources } = require('../../scripts/packaging/pack-runtime-resources.cjs');
 it('keeps the closed draw.io asset set while generic package pruning remains active', () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'diagram-tar-'));
   const runtime = path.join(directory, 'runtime');

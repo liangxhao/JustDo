@@ -42,7 +42,7 @@ jobs:
               - 'plugins/chrome-extensions/**'
               - 'src/common/**'
               - 'electron-tsconfig.json'
-              - 'src/main/preload.ts'
+              - 'src/main/preload/**'
             skills:
               - 'plugins/skills/**'
             scripts:

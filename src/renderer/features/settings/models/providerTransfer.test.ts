@@ -9,7 +9,7 @@ import {
   parseModelProvidersImportPayload,
   PROVIDERS_EXPORT_VERSION,
 } from '@/features/settings/models/providerTransfer';
-import { decryptWithPassword, encryptWithPassword } from '@/services/encryption';
+import { decryptWithPassword, encryptWithPassword } from '@/features/settings/models/providerTransferCrypto';
 
 const encryptedApiKey = {
   encrypted: 'encrypted',

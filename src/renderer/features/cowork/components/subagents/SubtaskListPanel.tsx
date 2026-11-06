@@ -14,7 +14,7 @@ import { i18nService } from '@/services/i18n';
 import Modal from '@/shared/components/ui/Modal';
 import { isDomNode, OwnerDocumentContext, useOwnerDocument } from '@/shared/dom/ownerDocument';
 
-import { useDraggableModal } from '../shared/useDraggableModal';
+import { useDraggableModal } from '../../../../shared/hooks/useDraggableModal';
 import SubagentIcon from './SubagentIcon';
 import { reconcileSubagentLabel, type SubagentLabelSource } from './subagentLabel';
 import { resolveSubagentPollInterval } from './subagentPolling';

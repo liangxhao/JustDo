@@ -57,7 +57,7 @@ node node_modules/vitest/vitest.mjs run src/renderer/features/workboard src/shar
 $env:OPENCLAW_SOURCE = (Resolve-Path ../openclaw).Path
 # 可选：源码 node_modules 不完整时，使用同版本已准备运行时的 SDK/第三方依赖。
 $env:OPENCLAW_RUNTIME = (Resolve-Path vendor/openclaw-runtime/win-x64).Path
-node node_modules/vitest/vitest.mjs run --config scripts/workboard-upstream.vitest.config.mts
+node node_modules/vitest/vitest.mjs run --config scripts/test/openclaw/workboard-upstream.vitest.config.mts
 ```
 
 源码和 SDK 运行时的版本必须一致。测试覆盖创建、修改、备注、手动启动、停止、历史会话重做、

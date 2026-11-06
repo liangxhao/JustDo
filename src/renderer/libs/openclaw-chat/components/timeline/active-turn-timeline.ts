@@ -3,16 +3,16 @@ import '../native-widget/anchor';
 import '../mcp-app/view';
 import './terminal-error-message';
 
-import {
-  COWORK_PLAN_PREVIEW_EVENT,
-  extractPresentPlanPreview,
-} from '@shared/cowork/interactions/planPreview';
 import { REVIEW_OPEN_EVENT } from '@shared/cowork/sessionReview';
 import { PRODUCT_NAME } from '@shared/productMetadata';
 import { html, nothing, type TemplateResult } from 'lit';
 import { repeat } from 'lit/directives/repeat.js';
 
 import type { OpenMessageFileLink } from '@/features/cowork/components/preview/messageFileLinks';
+import {
+  COWORK_PLAN_PREVIEW_EVENT,
+  extractPresentPlanPreview,
+} from '@/libs/openclaw-chat/model/turn/plan-preview';
 import { i18nService } from '@/services/i18n';
 
 import {

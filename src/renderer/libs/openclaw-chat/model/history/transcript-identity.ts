@@ -1,5 +1,3 @@
-import { isPresentPlanToolName } from '@shared/cowork/interactions/planPreview';
-
 import {
   asToolRecord,
   attachedToolMessages,
@@ -7,6 +5,7 @@ import {
   unwrapToolMessage,
 } from '@/libs/openclaw-chat/model/tools/tool-message-adapter';
 import { FAILED_RUN_MESSAGE_ID } from '@/libs/openclaw-chat/model/turn/failed-run-message';
+import { isPresentPlanToolName } from '@/libs/openclaw-chat/model/turn/plan-preview';
 
 export interface TranscriptIdentity {
   kind: 'openclaw-id' | 'openclaw-seq' | 'durable-id';

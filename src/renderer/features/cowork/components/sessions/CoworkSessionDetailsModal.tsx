@@ -22,8 +22,8 @@ import { appBrowserRegistry } from '@/features/plugins/app/runtime';
 import { i18nService } from '@/services/i18n';
 import Modal from '@/shared/components/ui/Modal';
 
+import { useDraggableModal } from '../../../../shared/hooks/useDraggableModal';
 import QueryingIndicator from '../shared/QueryingIndicator';
-import { useDraggableModal } from '../shared/useDraggableModal';
 import SessionTotalTokenUsageModal from '../status/SessionTotalTokenUsageModal';
 
 interface CoworkSessionDetailsModalProps {

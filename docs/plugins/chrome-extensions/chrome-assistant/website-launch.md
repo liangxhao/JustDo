@@ -113,6 +113,27 @@ Live 候选只在内存保留最多 15 分钟；最多 10 次历史就绪查询�
 
 自动化验证分为 SDK/content script/后台来源和真实点击限制、侧栏/设置交互、实际 SQLite 原子回执、发送 owner 竞争、原生 adapter 最终围栏与显式 ACK、精确最终结果投影。包内 `tests/web-launch-*.test.ts` 验证客户端；SQLite、发送 owner 与原生准入测试由集成宿主提供，不能替代完整 GUI 验收。
 
+### 显式浏览器探针
+
+以下命令从集成宿主仓库根目录执行，不纳入普通测试发现：
+
+```text
+node plugins/chrome-extensions/chrome-assistant/scripts/verify-webpage-launch.cjs --chrome <existing-Chrome-for-Testing-executable>
+node plugins/chrome-extensions/chrome-assistant/scripts/verify-webpage-launch.cjs --review-report <report.json>
+```
+
+`--chrome` 使用已存在的 Chrome for Testing 程序，创建隔离的有界面浏览器与 loopback fixture，
+等待两次真实操作者点击。DevTools 只观察或停止 fixture worker，不提供 UI 输入。
+原 worker 正常回收后，第二次点击可以启动新 worker，不要求复用原 worker。
+
+`--review-report` 只复核已保存的 fixture 哈希、点击/open 身份和清理记录，并另写
+`assessment.json`；原 report 的状态和错误保留，事件复核与全新的完整浏览器运行分别表达。
+探针不使用已有用户 profile、用户 Gateway、真实公司模型或 transcript 文件读取。
+报告保存在 `.agent-tasks/browser-artifacts/`，私有 fixture 状态位于 `build/`。
+这是能力探针，不能作为生产网站/扩展集成测试的通过证据。
+
+### 历史证据与剩余验收
+
 2026-11-05 隔离 POC 使用完整性校验的锁定 `v2026.10.7 / win-x64` 随包 Node 24.22.1，验证整轮 terminalReply、工具前正文排除、后继轮隔离和消息重读。`NO_REPLY` 的 failed/silent 不能证明成功空结果。此历史探针由集成宿主提供，不在本包中，不能作为独立包的执行命令。重试、压缩、媒体和跨进程恢复没有完整生产端到端验收，证据不足时保守返回 unavailable。
 
 历史宿主报告保留 strictCurrentSourceProof:false，只证明所选冻结运行时，不是当前完整源码重建证明。

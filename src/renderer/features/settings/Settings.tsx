@@ -119,7 +119,7 @@ import AppUpdateSection from '@/features/settings/updates/AppUpdateSection';
 import UsageAndStorageSettings from '@/features/settings/usage/UsageAndStorageSettings';
 import { configService } from '@/services/config';
 import { i18nService, LanguageType } from '@/services/i18n';
-import { themeService } from '@/services/theme';
+import { themeService } from '@/theme/themeService';
 
 import appLogoUrl from '../../../../resources/icons/logo.png';
 import { createModelConnectionTestActions } from './models/modelConnectionTestActions';

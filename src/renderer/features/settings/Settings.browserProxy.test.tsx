@@ -29,7 +29,7 @@ vi.mock('./preferences/GeneralSettingsPage', () => ({
   </>,
 }));
 vi.mock('@/services/config', () => ({ configService: mocks }));
-vi.mock('@/services/theme', () => ({
+vi.mock('@/theme/themeService', () => ({
   themeService: {
     getTheme: () => 'light',
     getThemeId: () => 'classic-light',

@@ -9,9 +9,9 @@ import type {
   EngineLogIssue,
   EngineLogSource,
 } from '../../../shared/openclaw/engineDiagnostics';
-import { getLogFilePath, getRecentMainLogEntries } from '../../core/logger';
-import { getRetainedLogPaths, LogKind } from '../../core/logMaintenance';
-import { redactLogText } from '../../core/logRedaction';
+import { getLogFilePath, getRecentMainLogEntries } from '../../core/logging/logger';
+import { getRetainedLogPaths, LogKind } from '../../core/logging/logMaintenance';
+import { redactLogText } from '../../core/logging/logRedaction';
 import {
   discoverNativeDiagnosticLogs,
   scanDiagnosticLog,

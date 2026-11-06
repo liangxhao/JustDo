@@ -254,7 +254,7 @@ DOMPurify 继续拦截直接 `file:` 导航。仅由识别器生成受限文件 
 | `preview/`、`display/tabs/useCoworkBrowserPanels.ts`                 | 暴露窄的所属工作区打开动作，复用图片、预览、App 和 HTML 行为     |
 | `src/shared/preview/`                                                | Main/Renderer 共用准备契约、来源/错误常量和 IPC 名称             |
 | `src/main/ipc/app/shell.ts` 及 owning helper                         | 无副作用的文件准备与权威目录核对；handler 保持薄                 |
-| `src/main/preload.ts`、`src/renderer/types/electron.d.ts`            | 最小 typed bridge                                                |
+| `src/main/preload/index.ts`、`src/renderer/types/electron.d.ts`      | 最小 typed bridge                                                |
 | 所属 i18n 字典                                                       | 成对 zh/en 错误与未选择工程提示，复用已有提示优先                |
 | `resources/openclaw/docs/reference/templates/AGENTS.md`              | 在交付约定中增加本地文件地址必须使用 Markdown 链接的模型输出要求 |
 

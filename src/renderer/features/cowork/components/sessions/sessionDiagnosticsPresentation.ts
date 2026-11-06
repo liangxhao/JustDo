@@ -3,7 +3,6 @@ import {
   buildDiagnosticFindings,
   type DiagnosticFinding,
 } from '@shared/cowork/diagnostics/diagnosticFindings';
-import { diagnoseHistoryFailure } from '@shared/cowork/diagnostics/diagnosticHistoryFindings';
 import { DiagnosticRuntimeFailure } from '@shared/cowork/diagnostics/diagnosticRuntimeFailure';
 import { assessDiagnosticStop } from '@shared/cowork/diagnostics/diagnosticStop';
 import type {
@@ -13,6 +12,7 @@ import type {
   DiagnosticReport,
 } from '@shared/cowork/diagnostics/sessionDiagnostics';
 
+import { diagnoseHistoryFailure } from '@/features/cowork/components/sessions/diagnosticHistoryFindings';
 import { i18nService } from '@/services/i18n';
 
 const t = (key: string) => i18nService.t(key);

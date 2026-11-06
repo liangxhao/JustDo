@@ -5,7 +5,7 @@ import path from 'node:path';
 
 import { expect, test, vi } from 'vitest';
 
-import { LogKind, LogMaintenance, managedLogs } from '../../core/logMaintenance';
+import { LogKind, LogMaintenance, managedLogs } from '../../core/logging/logMaintenance';
 import { OpenClawEngineManager } from './openclawEngineManager';
 
 test('serializes interleaved Gateway streams across rotation and masks persisted credentials', () => {

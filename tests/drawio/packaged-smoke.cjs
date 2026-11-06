@@ -7,7 +7,7 @@ const output = path.join(root, '.agent-tasks/drawio/packaged');
 const {
   packMultipleSources,
   compressTarArchive,
-} = require('../../scripts/openclaw/pack-openclaw-tar.cjs');
+} = require('../../scripts/packaging/pack-runtime-resources.cjs');
 const { verifyPackagedDrawioAssets } = require('../../plugins/extensions/drawio/scripts/verify-packaged.cjs');
 fs.mkdirSync(output, { recursive: true });
 (async () => {

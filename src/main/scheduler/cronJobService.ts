@@ -18,10 +18,6 @@ import {
   applyScheduledTaskPermission,
   ScheduledTaskPermission,
 } from '../../shared/scheduledTask/permissions';
-import {
-  normalizeScheduledTaskDiagnostics,
-  normalizeScheduledTaskRunMetadata,
-} from '../../shared/scheduledTask/runMetadata';
 import type {
   EditableScheduledTaskPayload,
   EditableScheduledTaskPayloadPatch,
@@ -41,6 +37,10 @@ import type {
   SchedulerSettingsUpdate,
   TaskState,
 } from '../../shared/scheduledTask/types';
+import {
+  normalizeScheduledTaskDiagnostics,
+  normalizeScheduledTaskRunMetadata,
+} from './runMetadata';
 import { stringifyScheduledTaskLog } from './scheduledTaskLog';
 import { buildSchedulerSettingsPatch, readSchedulerSettings } from './schedulerSettings';
 import { buildSystemTaskSettingsPatch, readSystemTaskSettings } from './systemTaskSettings';

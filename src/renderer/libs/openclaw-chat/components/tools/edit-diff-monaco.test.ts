@@ -10,7 +10,7 @@ const editors = vi.hoisted(() => ({
 }));
 
 vi.mock('@/shared/dom/observeEditorLayout', () => ({ observeEditorLayout: () => () => {} }));
-vi.mock('@/app/monacoConfig', () => ({
+vi.mock('@/shared/editor/monaco', () => ({
   monaco: {
     Uri: { parse: (value: string) => value },
     editor: {

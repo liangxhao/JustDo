@@ -17,7 +17,7 @@ import type { CoworkSessionSummary, SessionGroup } from '@/features/cowork/cowor
 import { i18nService } from '@/services/i18n';
 import Modal from '@/shared/components/ui/Modal';
 
-import { useDialogFocusTrap } from '../shared/useDialogFocusTrap';
+import { useDialogFocusTrap } from '../../../../shared/hooks/useDialogFocusTrap';
 
 const normalizeSearchText = (value: string): string =>
   value.trim().replace(/\s+/gu, ' ').toLocaleLowerCase();

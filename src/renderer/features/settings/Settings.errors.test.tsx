@@ -31,7 +31,7 @@ vi.mock('@/services/config', async () => {
     },
   };
 });
-vi.mock('@/services/theme', () => ({
+vi.mock('@/theme/themeService', () => ({
   themeService: {
     getTheme: () => 'light',
     getThemeId: () => 'classic-light',

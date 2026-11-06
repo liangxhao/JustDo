@@ -2,7 +2,7 @@ import type {
   DiagnosticLogRecord,
   DiagnosticLogSource,
 } from '../../../shared/cowork/diagnostics/sessionDiagnostics';
-import { redactLogText as redactDiagnosticLog } from '../../core/logRedaction';
+import { redactLogText as redactDiagnosticLog } from '../../core/logging/logRedaction';
 import type { DiagnosticLogExportMetadata } from './logCollector';
 
 export { redactDiagnosticLog };

@@ -23,6 +23,21 @@ Main 处理器按能力归入 `ipc/app`、`cowork`、`openclaw`、`plugins`、`s
 
 主 Renderer、图片预览与工作区 HTML 分别由 `src/renderer/index.html`、`image-preview.html` 和 `workspace.html` 构建。开发由 Vite 提供，安装版由 Main 的本机只读静态宿主提供打包 `dist` 资源。外部 guest 始终是另一权限域，即使视觉上位于同一侧栏。
 
+### Preload 源码与独立入口
+
+所有应用 preload 源码、桥接辅助模块及单元测试集中在 `src/main/preload/`。`index.ts` 是主应用入口，不是导入其余桥的聚合模块。
+
+| 源码入口                  | 使用范围                                 |
+| ------------------------- | ---------------------------------------- |
+| `index.ts`                | 主 Renderer 与受控初始化窗口的应用桥     |
+| `imagePreviewPreload.ts`  | 图片预览窗口的最小图片操作桥             |
+| `mediaPlaybackPreload.ts` | 已授权工作区的媒体 prepare/release       |
+| `browserGuestPreload.ts`  | 内置网页的受控检查、录制、凭据及缩放交互 |
+| `widgetViewerPreload.ts`  | 固定 Widget 外壳的 viewer 桥             |
+| `webpageEmbedPreload.ts`  | 固定托管网页外壳的 viewer 桥             |
+
+六个入口分别构建为独立单文件；主入口在 Vite 中以 `preload` 显式命名，产物仍为 `dist-electron/preload.js`，其余保留各自基名及许可证 scope。Main 的窗口加载路径使用这些 Vite 产物，不加载 TypeScript 分模块输出。辅助模块与入口同目录，不改变各窗口的 context isolation、sandbox、CSP、会话或 frame 准入；普通外部网页和内部原生 sandbox 不继承应用桥。
+
 ### 安装版页面的本机静态宿主
 
 页面宿主、生产加载生命周期和页面 CSP 由 `src/main/core/window/renderer/` 共同负责。

@@ -15,7 +15,7 @@ vi.mock('electron', () => ({
   clipboard: { writeText: mocks.copy },
   dialog: { showMessageBox: mocks.dialog },
 }));
-vi.mock('../logger', () => ({ getLogFilePath: () => 'C:\\用户 数据\\logs\\main.log' }));
+vi.mock('../logging/logger', () => ({ getLogFilePath: () => 'C:\\用户 数据\\logs\\main.log' }));
 
 import { registerAppWindowDiagnostics } from './appWindowFailure';
 

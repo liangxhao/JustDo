@@ -1,0 +1,1439 @@
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
+
+import {
+  type AppPluginEvent,
+  type AppPluginInvocation,
+  AppPluginIpc,
+  type AppPluginSnapshot,
+} from '../../../plugins/sdk/app-plugin-sdk/contracts';
+import {
+  type AgentRuntimeSettings,
+  AgentRuntimeSettingsIpc,
+} from '../../shared/agents/agentRuntimeSettings';
+import {
+  type AgentFileName,
+  type AgentFileSnapshot,
+  AgentIpc,
+  type AgentProfileInput,
+} from '../../shared/agents/agents';
+import { AppConfigIpc, type AppConfigPatch } from '../../shared/app/appConfig';
+import {
+  type AppReleaseHistoryResult,
+  type AppUpdateCheckFrequency,
+  AppUpdateIpc,
+  type AppUpdatePreferences,
+  type AppUpdateState,
+} from '../../shared/app/appUpdate';
+import { AuthIpc, type AuthState } from '../../shared/app/auth';
+import { DialogIpc, type SaveTextFileOptions } from '../../shared/app/dialogIpc';
+import {
+  AppInitializationIpc,
+  type AppInitializationState,
+  FIRST_LAUNCH_WINDOW_ARGUMENT,
+  INITIALIZATION_WINDOW_ARGUMENT,
+} from '../../shared/app/initialization';
+import { LogIpc } from '../../shared/app/logIpc';
+import { MediaCaptureIpc, MediaCaptureSurface } from '../../shared/app/mediaCapture';
+import {
+  HistoryRecoveryIpc,
+  type HistoryWorkspaceResult,
+  type StartupSupportAction,
+  StartupSupportIpc,
+  type StartupSupportResult,
+} from '../../shared/app/startup/history';
+import {
+  STARTUP_CLOCK_ARGUMENT,
+  STARTUP_ROUTE_ARGUMENT,
+  StartupRoute,
+} from '../../shared/app/startup/routing';
+import {
+  type TerminalActionResult,
+  type TerminalCreateRequest,
+  type TerminalCreateResult,
+  type TerminalDataEvent,
+  type TerminalExitEvent,
+  TerminalIpc,
+  type TerminalResizeRequest,
+  type TerminalStatusEvent,
+  type TerminalWriteRequest,
+} from '../../shared/app/terminal';
+import { readWindowAppearance, WindowAppearanceIpc } from '../../shared/app/windowAppearance';
+import {
+  type BrowserActionResult,
+  type BrowserAgentInteractionReady,
+  type BrowserAgentInteractionState,
+  type BrowserAgentSessionEvent,
+  type BrowserAgentTabReference,
+  type BrowserAgentTabRegistration,
+  type BrowserClearDataRange,
+  type BrowserClearDataRequest,
+  type BrowserClearDataResult,
+  type BrowserClearDataSummaryResult,
+  type BrowserConnectionTestResult,
+  type BrowserDownloadListResult,
+  type BrowserHistoryFaviconResult,
+  type BrowserHistoryListResult,
+  type BrowserImportRequest,
+  type BrowserImportResult,
+  type BrowserImportSourcesResult,
+  BrowserIpc,
+  type BrowserLocalHtmlPreviewResult,
+  type BrowserMode,
+  type BrowserModeSwitchAvailabilityResult,
+  type BrowserModeUpdateResult,
+  type BrowserPanelFaviconUpdatedEvent,
+  type BrowserPanelHttpAuthDismissed,
+  type BrowserPanelHttpAuthRequest,
+  type BrowserPanelHttpAuthResponse,
+  type BrowserPanelOpenTabEvent,
+  type BrowserPanelPdfDetectedEvent,
+  type BrowserPanelShortcutAction,
+  type BrowserPanelShortcutSettings,
+  type BrowserStatusResult,
+  normalizeBrowserPanelFaviconUpdatedEvent,
+  normalizeBrowserPanelHttpAuthRequest,
+  normalizeBrowserPanelHttpAuthResponse,
+  normalizeBrowserPanelOpenTabEvent,
+  normalizeBrowserPanelPdfDetectedEvent,
+} from '../../shared/browser/browser';
+import {
+  BrowserInterventionIpc,
+  type BrowserInterventionRequest,
+} from '../../shared/browser/browserIntervention';
+import {
+  BrowserRecordingChannel,
+  type BrowserRecordingLease,
+} from '../../shared/browser/browserRecording';
+import { ChromeIpc } from '../../shared/chrome/chrome';
+import type { CoworkAttachmentPayload } from '../../shared/cowork/attachments';
+import {
+  type DiagnosticHistoryUpdate,
+  type DiagnosticQuery,
+  type DiagnosticScanProgress,
+  SessionDiagnosticsIpc,
+} from '../../shared/cowork/diagnostics/sessionDiagnostics';
+import { CoworkInteractionIpc } from '../../shared/cowork/interactions/interactions';
+import {
+  NativeSessionDispatchIpc,
+  type NativeSessionDispatchRequest,
+  type NativeSessionDispatchResponse,
+} from '../../shared/cowork/nativeSessionDispatch';
+import { type CopyCoworkSessionInput, CoworkSessionCopyIpc } from '../../shared/cowork/sessionCopy';
+import { CoworkSessionDetailsIpc } from '../../shared/cowork/sessionDetails';
+import { SessionDirectoryIpc } from '../../shared/cowork/sessionDirectory';
+import { CoworkSessionForkIpc, type ForkCoworkSessionInput } from '../../shared/cowork/sessionFork';
+import {
+  GoalExecutionIpc,
+  type GoalExecutionSnapshot,
+  SessionGoalIpc,
+  type SessionGoalMutationRequest,
+} from '../../shared/cowork/sessionGoal';
+import {
+  type SessionReviewFileAction,
+  SessionReviewIpc,
+  type SessionReviewQuery,
+} from '../../shared/cowork/sessionReview';
+import { SessionRunIpc, type SessionRunUnknownInput } from '../../shared/cowork/sessionRun';
+import {
+  CoworkSessionSearchIpc,
+  type CoworkSessionSearchOptions,
+} from '../../shared/cowork/sessionSearch';
+import { type CancelSessionStartInput, SessionStartIpc } from '../../shared/cowork/sessionStart';
+import { type GenerateSessionTitleRequest, SessionTitleIpc } from '../../shared/cowork/sessionTitle';
+import {
+  SessionWorkspaceIpc,
+  type SetSessionWorkspaceInput,
+} from '../../shared/cowork/sessionWorkspace';
+import { SlashCommandIpc } from '../../shared/cowork/slashCommands';
+import {
+  type CoworkSubagentAction,
+  CoworkSubagentDetailsIpc,
+  type CoworkSubtaskChangedEvent,
+} from '../../shared/cowork/subagentDetails';
+import { SwarmIpc } from '../../shared/cowork/swarm';
+import {
+  type WorkspaceSurfaceInvalidated,
+  type WorkspaceSurfaceUpdate,
+  type WorkspaceWindowControl,
+  WorkspaceWindowIpc,
+  type WorkspaceWindowState,
+  type WorkspaceWindowUpdate,
+} from '../../shared/cowork/workspaceWindow';
+import {
+  AgentCliIntegrationIpc,
+  type AgentCliIntegrationStatus,
+} from '../../shared/integrations/agentCliIntegration';
+import {
+  type AppServerConnectionConfig,
+  AppServerIntegrationIpc,
+  type AppServerIntegrationStatus,
+} from '../../shared/integrations/appServerIntegration';
+import {
+  type ExternalAgentId,
+  ExternalAgentIpc,
+  type ExternalAgentSettings,
+  type ExternalAgentTestResult,
+} from '../../shared/integrations/externalAgents';
+import { type ApiFetchOptions, NetworkIpc } from '../../shared/network/network';
+import {
+  OpenClawAssistantMediaIpc,
+  type OpenClawAssistantMediaPlaybackRequest,
+  type OpenClawAssistantMediaReleaseRequest,
+  type OpenClawAssistantMediaRequest,
+} from '../../shared/openclaw/assistantMedia';
+import {
+  EngineDiagnosticsIpc,
+  type EngineDiagnosticsQuery,
+} from '../../shared/openclaw/engineDiagnostics';
+import { EngineIpc } from '../../shared/openclaw/engineStatus';
+import { OpenClawHistoryIpc } from '../../shared/openclaw/historyIpc';
+import { MemoryIpc } from '../../shared/openclaw/memory';
+import { OpenClawModelsIpc } from '../../shared/openclaw/models';
+import {
+  SessionStorageIpc,
+  type SessionStoragePolicyInput,
+} from '../../shared/openclaw/sessionStorage';
+import { UsageStatsIpc, type UsageStatsOptions } from '../../shared/openclaw/usage';
+import {
+  type WorkboardCardInput,
+  type WorkboardCardPatch,
+  type WorkboardChangedEvent,
+  WorkboardIpc,
+  type WorkboardStopIdentity,
+} from '../../shared/openclaw/workboard';
+import { WorktreeIpc } from '../../shared/openclaw/worktrees';
+import {
+  type ExtensionDeleteRequest,
+  type ExtensionImportRequest,
+  ExtensionIpc,
+  type ExtensionSetEnabledRequest,
+  type ExtensionUpdateConfigurationRequest,
+} from '../../shared/plugins/extensions';
+import { HookIpc } from '../../shared/plugins/hooks';
+import {
+  type MarketplaceCategoryRequest,
+  type MarketplaceDetailRequest,
+  type MarketplaceInstallRequest,
+  MarketplaceIpc,
+  type MarketplacePluginKind,
+  type MarketplaceQuery,
+  type MarketplaceResolveRequest,
+  type MarketplaceUpdateCheckRequest,
+} from '../../shared/plugins/marketplace';
+import { type ExtensionMcpEnabledInput, ExtensionMcpIpc } from '../../shared/plugins/mcp';
+import type { PluginOperationContext } from '../../shared/plugins/pluginOperation';
+import type { OpenClawSkillSource } from '../../shared/plugins/skills';
+import {
+  type SkillWorkshopArchiveInput,
+  type SkillWorkshopChangesInput,
+  SkillWorkshopIpc,
+  type SkillWorkshopReadInput,
+  type SkillWorkshopRestoreInput,
+} from '../../shared/plugins/skillWorkshop';
+import {
+  type FilePreviewEditAuthorizationRequest,
+  type FilePreviewEditAuthorizationResult,
+  FilePreviewIpc,
+  type FilePreviewWriteRequest,
+  type FilePreviewWriteResult,
+} from '../../shared/preview/filePreview';
+import {
+  ImagePreviewIpc,
+  type ImagePreviewOpenRequest,
+  type ImagePreviewOpenResult,
+} from '../../shared/preview/imagePreview';
+import type {
+  PrepareMessageFileLinkRequest,
+  PrepareMessageFileLinkResult,
+} from '../../shared/preview/messageFileLink';
+import {
+  type WorkspaceFileClipboardWriteRequest,
+  type WorkspaceFileMutationRequest,
+  type WorkspaceFileMutationTarget,
+  type WorkspaceFilePasteRequest,
+  type WorkspaceFilePasteTarget,
+  WorkspaceFilesIpc,
+} from '../../shared/preview/workspaceFiles';
+import {
+  SystemPromptReplacementIpc,
+  type SystemPromptReplacementRule,
+} from '../../shared/prompts/systemPromptReplacements';
+import {
+  type MediaGenerationModelConfiguration,
+  type MediaGenerationModelKind,
+  MediaGenerationModelsIpc,
+} from '../../shared/providers/mediaGenerationModels';
+import { IpcChannel as ScheduledTaskIpc } from '../../shared/scheduledTask/constants';
+import type {
+  ScheduledTaskInput,
+  ScheduledTaskResultQuery,
+  ScheduledTaskResultUpsertedEvent,
+  ScheduledTaskRunEvent,
+  ScheduledTaskStatusEvent,
+  ScheduledTaskUnreadCountEvent,
+  ScheduledTaskUpdateInput,
+} from '../../shared/scheduledTask/types';
+import {
+  type ApprovalDecision,
+  type ApprovalKind,
+  type ApprovalRequest,
+  type ApprovalResolved,
+  OpenClawApprovalIpc,
+} from '../../shared/security/approvals';
+import { ComputerControlIpc } from '../../shared/security/computerControl';
+import {
+  WindowsSandboxIpc,
+  type WindowsSandboxOperationResult,
+  type WindowsSandboxStatus,
+} from '../../shared/security/windowsSandbox';
+import {
+  LocalAsrIpc,
+  type LocalAsrModelId,
+  type LocalAsrTranscribeOptions,
+} from '../../shared/speech/localAsr';
+import {
+  LocalSpeechModelIpc,
+  type LocalSpeechModelKind,
+  type LocalSpeechModelStatus,
+} from '../../shared/speech/localSpeechModels';
+import { LocalTtsIpc, type LocalTtsModelId } from '../../shared/speech/localTts';
+import {
+  type OnlineAsrConfigurationUpdate,
+  type OnlineAsrEvent,
+  OnlineAsrIpc,
+  type OnlineAsrStartOptions,
+} from '../../shared/speech/onlineAsr';
+import { type OnlineTtsConfigurationUpdate, OnlineTtsIpc } from '../../shared/speech/onlineTts';
+import {
+  type BuiltinSpeechPreviewRequest,
+  SpeechSynthesisIpc,
+} from '../../shared/speech/speechSynthesis';
+import { createExtensionChangedSubscription } from './extensions';
+import { createMcpAppPreloadApi } from './mcpApps';
+import { createPluginOperationSubscription } from './pluginOperations';
+import { createWebpageEmbedApi } from './webpageEmbed';
+
+// 暴露安全的 API 到渲染进程
+contextBridge.exposeInMainWorld('electron', {
+  webpageEmbed: createWebpageEmbedApi(),
+  mcpApps: createMcpAppPreloadApi(),
+  platform: process.platform,
+  arch: process.arch,
+  agentCli: {
+    getStatus: (): Promise<AgentCliIntegrationStatus> =>
+      ipcRenderer.invoke(AgentCliIntegrationIpc.GetStatus),
+  },
+  appServer: {
+    getStatus: (): Promise<AppServerIntegrationStatus> =>
+      ipcRenderer.invoke(AppServerIntegrationIpc.GetStatus),
+    getConnectionConfig: (): Promise<AppServerConnectionConfig> =>
+      ipcRenderer.invoke(AppServerIntegrationIpc.GetConnectionConfig),
+    setPort: (port: number): Promise<AppServerIntegrationStatus> =>
+      ipcRenderer.invoke(AppServerIntegrationIpc.SetPort, port),
+    regenerateToken: (): Promise<AppServerIntegrationStatus> =>
+      ipcRenderer.invoke(AppServerIntegrationIpc.RegenerateToken),
+  },
+  store: {
+    get: (key: string) => ipcRenderer.invoke('store:get', key),
+    set: (key: string, value: unknown) => ipcRenderer.invoke('store:set', key, value),
+    patchAppConfig: (patch: AppConfigPatch) => ipcRenderer.invoke(AppConfigIpc.Patch, patch),
+    remove: (key: string) => ipcRenderer.invoke('store:remove', key),
+  },
+  plugins: {
+    onOperationProgress: createPluginOperationSubscription(),
+  },
+  marketplace: {
+    resolveInstalled: (request: MarketplaceResolveRequest) =>
+      ipcRenderer.invoke(MarketplaceIpc.ResolveInstalled, request),
+    listSources: (kind?: MarketplacePluginKind) =>
+      ipcRenderer.invoke(MarketplaceIpc.ListSources, kind),
+    listCategories: (request: MarketplaceCategoryRequest) =>
+      ipcRenderer.invoke(MarketplaceIpc.ListCategories, request),
+    search: (query: MarketplaceQuery) => ipcRenderer.invoke(MarketplaceIpc.Search, query),
+    checkUpdates: (request: MarketplaceUpdateCheckRequest) =>
+      ipcRenderer.invoke(MarketplaceIpc.CheckUpdates, request),
+    detail: (request: MarketplaceDetailRequest) =>
+      ipcRenderer.invoke(MarketplaceIpc.Detail, request),
+    install: (request: MarketplaceInstallRequest, context?: PluginOperationContext) =>
+      ipcRenderer.invoke(MarketplaceIpc.Install, request, context),
+  },
+  skillWorkshop: {
+    list: (agentId: string) => ipcRenderer.invoke(SkillWorkshopIpc.List, agentId),
+    changes: (input: SkillWorkshopChangesInput) =>
+      ipcRenderer.invoke(SkillWorkshopIpc.Changes, input),
+    read: (input: SkillWorkshopReadInput) => ipcRenderer.invoke(SkillWorkshopIpc.Read, input),
+    archive: (input: SkillWorkshopArchiveInput) =>
+      ipcRenderer.invoke(SkillWorkshopIpc.Archive, input),
+    restore: (input: SkillWorkshopRestoreInput) =>
+      ipcRenderer.invoke(SkillWorkshopIpc.Restore, input),
+  },
+  skills: {
+    list: () => ipcRenderer.invoke('skills:list'),
+    setEnabled: (options: { id: string; enabled: boolean }, context?: PluginOperationContext) =>
+      ipcRenderer.invoke('skills:setEnabled', options, context),
+    // Offline import from a local folder or archive
+    importPath: (sourcePath: string, context?: PluginOperationContext) =>
+      ipcRenderer.invoke('skills:import', sourcePath, context),
+    delete: (
+      options: { id: string; source?: OpenClawSkillSource },
+      context?: PluginOperationContext,
+    ) => ipcRenderer.invoke('skills:delete', options, context),
+  },
+  extensions: {
+    list: () => ipcRenderer.invoke(ExtensionIpc.List),
+    dataInfo: (request: { extensionId: string }) =>
+      ipcRenderer.invoke(ExtensionIpc.DataInfo, request),
+    delete: (request: ExtensionDeleteRequest, context?: PluginOperationContext) =>
+      ipcRenderer.invoke(ExtensionIpc.Delete, request, context),
+    setEnabled: (request: ExtensionSetEnabledRequest, context?: PluginOperationContext) =>
+      ipcRenderer.invoke(ExtensionIpc.SetEnabled, request, context),
+    updateConfiguration: (
+      request: ExtensionUpdateConfigurationRequest,
+      context?: PluginOperationContext,
+    ) => ipcRenderer.invoke(ExtensionIpc.UpdateConfiguration, request, context),
+    // Import a native OpenClaw extension from a local folder or archive.
+    importPath: (request: ExtensionImportRequest, context?: PluginOperationContext) =>
+      ipcRenderer.invoke(ExtensionIpc.Import, request, context),
+    onChanged: createExtensionChangedSubscription(),
+  },
+  hooks: {
+    list: () => ipcRenderer.invoke(HookIpc.List),
+    importPath: (sourcePath: string, context?: PluginOperationContext) =>
+      ipcRenderer.invoke(HookIpc.Import, sourcePath, context),
+    delete: (hookId: string, context?: PluginOperationContext) =>
+      ipcRenderer.invoke(HookIpc.Delete, hookId, context),
+    setEnabled: (options: { id: string; enabled: boolean }, context?: PluginOperationContext) =>
+      ipcRenderer.invoke(HookIpc.SetEnabled, options, context),
+  },
+  slashCommands: {
+    list: (options?: { agentId?: string | null }) =>
+      ipcRenderer.invoke(SlashCommandIpc.List, options || {}),
+  },
+  mcp: {
+    list: () => ipcRenderer.invoke('mcp:list'),
+    listExtensionServers: () => ipcRenderer.invoke('mcp:listExtensionServers'),
+    setExtensionEnabled: (input: ExtensionMcpEnabledInput, context?: PluginOperationContext) =>
+      ipcRenderer.invoke(ExtensionMcpIpc.SetEnabled, input, context),
+    readExtensionSettings: (id: string) => ipcRenderer.invoke(ExtensionMcpIpc.ReadSettings, id),
+    create: (data: unknown, context?: PluginOperationContext) =>
+      ipcRenderer.invoke('mcp:create', data, context),
+    update: (id: string, data: unknown, context?: PluginOperationContext) =>
+      ipcRenderer.invoke('mcp:update', id, data, context),
+    delete: (id: string, context?: PluginOperationContext) =>
+      ipcRenderer.invoke('mcp:delete', id, context),
+    setEnabled: (options: { id: string; enabled: boolean }, context?: PluginOperationContext) =>
+      ipcRenderer.invoke('mcp:setEnabled', options, context),
+    syncConfig: (context?: PluginOperationContext) => ipcRenderer.invoke('mcp:syncConfig', context),
+    probe: (id: string) => ipcRenderer.invoke('mcp:probe', id),
+    readResource: (options: { id: string; uri: string }) =>
+      ipcRenderer.invoke('mcp:readResource', options),
+    onConfigSyncStart: (callback: (data?: { requestId?: string }) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data?: { requestId?: string }) =>
+        callback(data);
+      ipcRenderer.on('mcp:config:syncStart', handler);
+      return () => ipcRenderer.removeListener('mcp:config:syncStart', handler);
+    },
+    onConfigSyncDone: (
+      callback: (data: { tools: number; error?: string; requestId?: string }) => void,
+    ) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        data: { tools: number; error?: string; requestId?: string },
+      ) => callback(data);
+      ipcRenderer.on('mcp:config:syncDone', handler);
+      return () => ipcRenderer.removeListener('mcp:config:syncDone', handler);
+    },
+  },
+  permissions: {
+    checkCalendar: () => ipcRenderer.invoke('permissions:checkCalendar'),
+    requestCalendar: () => ipcRenderer.invoke('permissions:requestCalendar'),
+  },
+  chrome: {
+    openUrl: (url: string): Promise<BrowserActionResult> =>
+      ipcRenderer.invoke(ChromeIpc.OpenUrl, url),
+    openRemoteDebugging: (): Promise<BrowserActionResult> =>
+      ipcRenderer.invoke(ChromeIpc.OpenRemoteDebugging),
+    openExtensionManagement: (): Promise<BrowserActionResult> =>
+      ipcRenderer.invoke(ChromeIpc.OpenExtensionManagement),
+    revealExtension: (): Promise<BrowserActionResult> =>
+      ipcRenderer.invoke(ChromeIpc.RevealExtension),
+    copyExtensionPairing: (): Promise<BrowserActionResult> =>
+      ipcRenderer.invoke(ChromeIpc.CopyExtensionPairing),
+    testExtensionConnection: (): Promise<BrowserConnectionTestResult> =>
+      ipcRenderer.invoke(ChromeIpc.TestExtensionConnection),
+  },
+  browser: {
+    createLocalHtmlPreview: (
+      filePath: string,
+      workingDirectory?: string,
+    ): Promise<BrowserLocalHtmlPreviewResult> =>
+      ipcRenderer.invoke(BrowserIpc.CreateLocalHtmlPreview, filePath, workingDirectory),
+    getStatus: (): Promise<BrowserStatusResult> => ipcRenderer.invoke(BrowserIpc.GetStatus),
+    canSetMode: (): Promise<BrowserModeSwitchAvailabilityResult> =>
+      ipcRenderer.invoke(BrowserIpc.CanSetMode),
+    setMode: (mode: BrowserMode): Promise<BrowserModeUpdateResult> =>
+      ipcRenderer.invoke(BrowserIpc.SetMode, mode),
+    testConnection: (): Promise<BrowserConnectionTestResult> =>
+      ipcRenderer.invoke(BrowserIpc.TestConnection),
+    onPanelOpenTab: (callback: (event: BrowserPanelOpenTabEvent) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: unknown) => {
+        const normalized = normalizeBrowserPanelOpenTabEvent(data);
+        if (normalized) callback(normalized);
+      };
+      ipcRenderer.on(BrowserIpc.PanelOpenTab, handler);
+      return () => ipcRenderer.removeListener(BrowserIpc.PanelOpenTab, handler);
+    },
+    onPanelHttpAuthRequest: (callback: (request: BrowserPanelHttpAuthRequest) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: unknown) => {
+        const normalized = normalizeBrowserPanelHttpAuthRequest(data);
+        if (normalized) callback(normalized);
+      };
+      ipcRenderer.on(BrowserIpc.PanelHttpAuthRequest, handler);
+      return () => ipcRenderer.removeListener(BrowserIpc.PanelHttpAuthRequest, handler);
+    },
+    respondToPanelHttpAuth: (response: BrowserPanelHttpAuthResponse) =>
+      ipcRenderer.send(BrowserIpc.PanelHttpAuthResponse, response),
+    onPanelHttpAuthDismissed: (callback: (event: BrowserPanelHttpAuthDismissed) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: unknown) => {
+        const normalized = normalizeBrowserPanelHttpAuthResponse(data);
+        if (normalized) callback({ id: normalized.id, guestId: normalized.guestId });
+      };
+      ipcRenderer.on(BrowserIpc.PanelHttpAuthDismissed, handler);
+      return () => ipcRenderer.removeListener(BrowserIpc.PanelHttpAuthDismissed, handler);
+    },
+    onPanelPdfDetected: (callback: (event: BrowserPanelPdfDetectedEvent) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: unknown) => {
+        const normalized = normalizeBrowserPanelPdfDetectedEvent(data);
+        if (normalized) callback(normalized);
+      };
+      ipcRenderer.on(BrowserIpc.PanelPdfDetected, handler);
+      return () => ipcRenderer.removeListener(BrowserIpc.PanelPdfDetected, handler);
+    },
+    onPanelFaviconUpdated: (callback: (event: BrowserPanelFaviconUpdatedEvent) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: unknown) => {
+        const normalized = normalizeBrowserPanelFaviconUpdatedEvent(data);
+        if (normalized) callback(normalized);
+      };
+      ipcRenderer.on(BrowserIpc.PanelFaviconUpdated, handler);
+      return () => ipcRenderer.removeListener(BrowserIpc.PanelFaviconUpdated, handler);
+    },
+    setPanelShortcuts: (shortcuts: BrowserPanelShortcutSettings) =>
+      ipcRenderer.send(BrowserIpc.PanelSetShortcuts, shortcuts),
+    onPanelShortcutAction: (callback: (action: BrowserPanelShortcutAction) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, action: unknown) => {
+        if (action === 'terminal' || action === 'browser') callback(action);
+      };
+      ipcRenderer.on(BrowserIpc.PanelShortcutAction, handler);
+      return () => ipcRenderer.removeListener(BrowserIpc.PanelShortcutAction, handler);
+    },
+    registerAgentTab: (registration: BrowserAgentTabRegistration) =>
+      ipcRenderer.send(BrowserIpc.AgentRegisterTab, registration),
+    unregisterAgentTab: (reference: BrowserAgentTabReference) =>
+      ipcRenderer.send(BrowserIpc.AgentUnregisterTab, reference),
+    setAgentActiveTab: (reference: BrowserAgentTabReference) =>
+      ipcRenderer.send(BrowserIpc.AgentSetActiveTab, reference),
+    setUserInteractionState: (state: BrowserAgentInteractionState) =>
+      ipcRenderer.send(BrowserIpc.UserInteractionState, state),
+    setRecordingLease: (state: BrowserRecordingLease): Promise<boolean> =>
+      ipcRenderer.invoke(BrowserRecordingChannel.Lease, state),
+    acknowledgeAgentInteraction: (state: BrowserAgentInteractionReady) =>
+      ipcRenderer.send(BrowserIpc.AgentInteractionReady, state),
+    intervention: (input: BrowserInterventionRequest) =>
+      ipcRenderer.invoke(BrowserInterventionIpc, input),
+    onAgentEnsureTab: (callback: (event: BrowserAgentSessionEvent) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: BrowserAgentSessionEvent) =>
+        callback(data);
+      ipcRenderer.on(BrowserIpc.AgentEnsureTab, handler);
+      return () => ipcRenderer.removeListener(BrowserIpc.AgentEnsureTab, handler);
+    },
+    onAgentFocusTab: (callback: (event: BrowserAgentTabReference) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: BrowserAgentTabReference) =>
+        callback(data);
+      ipcRenderer.on(BrowserIpc.AgentFocusTab, handler);
+      return () => ipcRenderer.removeListener(BrowserIpc.AgentFocusTab, handler);
+    },
+    onAgentCloseTab: (callback: (event: BrowserAgentTabReference) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: BrowserAgentTabReference) =>
+        callback(data);
+      ipcRenderer.on(BrowserIpc.AgentCloseTab, handler);
+      return () => ipcRenderer.removeListener(BrowserIpc.AgentCloseTab, handler);
+    },
+    onAgentInteractionState: (callback: (event: BrowserAgentInteractionState) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: BrowserAgentInteractionState) =>
+        callback(data);
+      ipcRenderer.on(BrowserIpc.AgentInteractionState, handler);
+      return () => ipcRenderer.removeListener(BrowserIpc.AgentInteractionState, handler);
+    },
+    listImportSources: (): Promise<BrowserImportSourcesResult> =>
+      ipcRenderer.invoke(BrowserIpc.ListImportSources),
+    importData: (request: BrowserImportRequest): Promise<BrowserImportResult> =>
+      ipcRenderer.invoke(BrowserIpc.ImportData, request),
+    listHistory: (query = ''): Promise<BrowserHistoryListResult> =>
+      ipcRenderer.invoke(BrowserIpc.ListHistory, query),
+    loadHistoryFavicon: (url: string, retry = false): Promise<BrowserHistoryFaviconResult> =>
+      ipcRenderer.invoke(BrowserIpc.LoadHistoryFavicon, url, retry),
+    deleteHistory: (urls: string[]): Promise<BrowserActionResult> =>
+      ipcRenderer.invoke(BrowserIpc.DeleteHistory, urls),
+    clearHistory: (): Promise<BrowserActionResult> => ipcRenderer.invoke(BrowserIpc.ClearHistory),
+    listDownloads: (query = ''): Promise<BrowserDownloadListResult> =>
+      ipcRenderer.invoke(BrowserIpc.ListDownloads, query),
+    deleteDownloads: (ids: string[]): Promise<BrowserActionResult> =>
+      ipcRenderer.invoke(BrowserIpc.DeleteDownloads, ids),
+    clearDownloads: (): Promise<BrowserActionResult> =>
+      ipcRenderer.invoke(BrowserIpc.ClearDownloads),
+    openDownload: (id: string): Promise<BrowserActionResult> =>
+      ipcRenderer.invoke(BrowserIpc.OpenDownload, id),
+    revealDownload: (id: string): Promise<BrowserActionResult> =>
+      ipcRenderer.invoke(BrowserIpc.RevealDownload, id),
+    getClearDataSummary: (range: BrowserClearDataRange): Promise<BrowserClearDataSummaryResult> =>
+      ipcRenderer.invoke(BrowserIpc.GetClearDataSummary, range),
+    clearBrowsingData: (request: BrowserClearDataRequest): Promise<BrowserClearDataResult> =>
+      ipcRenderer.invoke(BrowserIpc.ClearBrowsingData, request),
+  },
+  terminal: {
+    create: (request: TerminalCreateRequest): Promise<TerminalCreateResult> =>
+      ipcRenderer.invoke(TerminalIpc.Create, request),
+    write: (request: TerminalWriteRequest): Promise<TerminalActionResult> =>
+      ipcRenderer.invoke(TerminalIpc.Write, request),
+    resize: (request: TerminalResizeRequest): Promise<TerminalActionResult> =>
+      ipcRenderer.invoke(TerminalIpc.Resize, request),
+    close: (id: string): Promise<TerminalActionResult> => ipcRenderer.invoke(TerminalIpc.Close, id),
+    onStatus: (callback: (event: TerminalStatusEvent) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: TerminalStatusEvent) =>
+        callback(data);
+      ipcRenderer.on(TerminalIpc.Status, handler);
+      return () => ipcRenderer.removeListener(TerminalIpc.Status, handler);
+    },
+    onData: (callback: (event: TerminalDataEvent) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: TerminalDataEvent) =>
+        callback(data);
+      ipcRenderer.on(TerminalIpc.Data, handler);
+      return () => ipcRenderer.removeListener(TerminalIpc.Data, handler);
+    },
+    onExit: (callback: (event: TerminalExitEvent) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: TerminalExitEvent) =>
+        callback(data);
+      ipcRenderer.on(TerminalIpc.Exit, handler);
+      return () => ipcRenderer.removeListener(TerminalIpc.Exit, handler);
+    },
+  },
+  api: {
+    // 普通 API 请求（非流式）
+    fetch: (options: ApiFetchOptions) => ipcRenderer.invoke(NetworkIpc.Fetch, options),
+    cancelFetch: (requestId: string): Promise<void> =>
+      ipcRenderer.invoke(NetworkIpc.CancelFetch, requestId),
+  },
+  ipcRenderer: {
+    send: (channel: string, ...args: unknown[]) => {
+      ipcRenderer.send(channel, ...args);
+    },
+    on: (channel: string, func: (...args: unknown[]) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, ...args: unknown[]) => func(...args);
+      ipcRenderer.on(channel, handler);
+      return () => ipcRenderer.removeListener(channel, handler);
+    },
+  },
+  window: {
+    minimize: () => ipcRenderer.send('window-minimize'),
+    toggleMaximize: () => ipcRenderer.send('window-maximize'),
+    close: () => ipcRenderer.send('window-close'),
+    isMaximized: () => ipcRenderer.invoke('window:isMaximized'),
+    showSystemMenu: (position: { x: number; y: number }) =>
+      ipcRenderer.send('window:showSystemMenu', position),
+    onStateChanged: (
+      callback: (state: {
+        isMaximized: boolean;
+        isFullscreen: boolean;
+        isFocused: boolean;
+      }) => void,
+    ) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        state: { isMaximized: boolean; isFullscreen: boolean; isFocused: boolean },
+      ) => callback(state);
+      ipcRenderer.on('window:state-changed', handler);
+      return () => ipcRenderer.removeListener('window:state-changed', handler);
+    },
+  },
+  workspaceWindow: {
+    prepareSurface: () => ipcRenderer.invoke(WorkspaceWindowIpc.PrepareSurface),
+    updateSurface: (update: WorkspaceSurfaceUpdate) =>
+      ipcRenderer.send(WorkspaceWindowIpc.UpdateSurface, update),
+    closeSurface: (id: string) => ipcRenderer.send(WorkspaceWindowIpc.CloseSurface, id),
+    onSurfaceInvalidated: (callback: (state: WorkspaceSurfaceInvalidated) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, state: WorkspaceSurfaceInvalidated) =>
+        callback(state);
+      ipcRenderer.on(WorkspaceWindowIpc.SurfaceInvalidated, listener);
+      return () => ipcRenderer.removeListener(WorkspaceWindowIpc.SurfaceInvalidated, listener);
+    },
+    prepare: () => ipcRenderer.invoke(WorkspaceWindowIpc.Prepare),
+    update: (update: WorkspaceWindowUpdate) => ipcRenderer.send(WorkspaceWindowIpc.Update, update),
+    setDetached: (generation: string, detached: boolean) =>
+      ipcRenderer.invoke(WorkspaceWindowIpc.SetDetached, generation, detached),
+    focusMain: () => ipcRenderer.send(WorkspaceWindowIpc.FocusMain),
+    focus: () => ipcRenderer.send(WorkspaceWindowIpc.Focus),
+    getWindowState: (generation: string) =>
+      ipcRenderer.invoke(WorkspaceWindowIpc.GetWindowState, generation),
+    control: (
+      generation: string,
+      action: WorkspaceWindowControl,
+      position?: { x: number; y: number },
+    ) => ipcRenderer.send(WorkspaceWindowIpc.Control, generation, action, position),
+    onInvalidated: (callback: (state: WorkspaceWindowState) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, state: WorkspaceWindowState) =>
+        callback(state);
+      ipcRenderer.on(WorkspaceWindowIpc.Invalidated, listener);
+      return () => ipcRenderer.removeListener(WorkspaceWindowIpc.Invalidated, listener);
+    },
+    onStateChanged: (callback: (state: WorkspaceWindowState) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, state: WorkspaceWindowState) =>
+        callback(state);
+      ipcRenderer.on(WorkspaceWindowIpc.StateChanged, listener);
+      return () => ipcRenderer.removeListener(WorkspaceWindowIpc.StateChanged, listener);
+    },
+  },
+  getApiConfig: () => ipcRenderer.invoke('get-api-config'),
+  checkApiConfig: (options?: { probeModel?: boolean }) =>
+    ipcRenderer.invoke('check-api-config', options),
+  saveApiConfig: (config: {
+    apiKey: string;
+    baseURL: string;
+    model: string;
+    headers?: Record<string, string>;
+    apiType?: 'openai';
+  }) => ipcRenderer.invoke('save-api-config', config),
+  generateSessionTitle: (request: GenerateSessionTitleRequest) =>
+    ipcRenderer.invoke(SessionTitleIpc.Generate, request),
+  getRecentCwds: (limit?: number) => ipcRenderer.invoke('get-recent-cwds', limit),
+  openclaw: {
+    externalAgents: {
+      getSettings: () => ipcRenderer.invoke(ExternalAgentIpc.GET_SETTINGS),
+      setSettings: (settings: ExternalAgentSettings) =>
+        ipcRenderer.invoke(ExternalAgentIpc.SET_SETTINGS, settings),
+      test: (agentId: ExternalAgentId): Promise<ExternalAgentTestResult> =>
+        ipcRenderer.invoke(ExternalAgentIpc.TEST, agentId),
+    },
+    approvals: {
+      list: () => ipcRenderer.invoke(OpenClawApprovalIpc.List),
+      resolve: (id: string, decision: ApprovalDecision, kind: ApprovalKind) =>
+        ipcRenderer.invoke(OpenClawApprovalIpc.Resolve, { id, decision, kind }),
+      onRequested: (callback: (request: ApprovalRequest) => void) => {
+        const handler = (_event: Electron.IpcRendererEvent, request: ApprovalRequest) =>
+          callback(request);
+        ipcRenderer.on(OpenClawApprovalIpc.Requested, handler);
+        return () => ipcRenderer.removeListener(OpenClawApprovalIpc.Requested, handler);
+      },
+      onResolved: (callback: (resolved: ApprovalResolved) => void) => {
+        const handler = (_event: Electron.IpcRendererEvent, resolved: ApprovalResolved) =>
+          callback(resolved);
+        ipcRenderer.on(OpenClawApprovalIpc.Resolved, handler);
+        return () => ipcRenderer.removeListener(OpenClawApprovalIpc.Resolved, handler);
+      },
+      onSnapshot: (callback: (requests: ApprovalRequest[]) => void) => {
+        const handler = (_event: Electron.IpcRendererEvent, requests: ApprovalRequest[]) =>
+          callback(requests);
+        ipcRenderer.on(OpenClawApprovalIpc.Snapshot, handler);
+        return () => ipcRenderer.removeListener(OpenClawApprovalIpc.Snapshot, handler);
+      },
+    },
+    engine: {
+      getStatus: () => ipcRenderer.invoke('openclaw:engine:getStatus'),
+      startGateway: () => ipcRenderer.invoke(EngineIpc.StartGateway),
+      collectDiagnostics: (query: EngineDiagnosticsQuery) =>
+        ipcRenderer.invoke(EngineDiagnosticsIpc.Collect, query),
+      cancelDiagnostics: (query: EngineDiagnosticsQuery) =>
+        ipcRenderer.invoke(EngineDiagnosticsIpc.Cancel, query),
+      restartGateway: () => ipcRenderer.invoke('openclaw:engine:restartGateway'),
+      getPort: () => ipcRenderer.invoke('openclaw:engine:getPort'),
+      getToken: () => ipcRenderer.invoke('openclaw:engine:getToken'),
+      readAssistantMediaDataUrl: (request: OpenClawAssistantMediaRequest) =>
+        ipcRenderer.invoke(OpenClawAssistantMediaIpc.ReadDataUrl, request),
+      prepareAssistantMediaPlayback: (request: OpenClawAssistantMediaPlaybackRequest) =>
+        ipcRenderer.invoke(OpenClawAssistantMediaIpc.PreparePlayback, request),
+      releaseAssistantMediaPlayback: (request: OpenClawAssistantMediaReleaseRequest) =>
+        ipcRenderer.invoke(OpenClawAssistantMediaIpc.ReleasePlayback, request),
+      setPort: (port: number) => ipcRenderer.invoke('openclaw:engine:setPort', port),
+      getSystemPromptReplacementRules: () =>
+        ipcRenderer.invoke(SystemPromptReplacementIpc.GetRules),
+      setSystemPromptReplacementRules: (rules: SystemPromptReplacementRule[]) =>
+        ipcRenderer.invoke(SystemPromptReplacementIpc.SetRules, rules),
+      openTerminal: (cwd?: string) => ipcRenderer.invoke('openclaw:engine:openTerminal', cwd),
+      onProgress: (callback: (status: unknown) => void) => {
+        const handler = (_event: Electron.IpcRendererEvent, status: unknown) => callback(status);
+        ipcRenderer.on('openclaw:engine:onProgress', handler);
+        return () => ipcRenderer.removeListener('openclaw:engine:onProgress', handler);
+      },
+    },
+    worktrees: {
+      getSettings: () => ipcRenderer.invoke(WorktreeIpc.Settings),
+      saveSettings: (input: import('../../shared/openclaw/worktrees').WorktreeSettingsUpdate) =>
+        ipcRenderer.invoke(WorktreeIpc.SaveSettings, input),
+      list: () => ipcRenderer.invoke(WorktreeIpc.List),
+      restore: (id: string) => ipcRenderer.invoke(WorktreeIpc.Restore, id),
+      remove: (id: string) => ipcRenderer.invoke(WorktreeIpc.Remove, id),
+      clean: () => ipcRenderer.invoke(WorktreeIpc.Clean),
+    },
+    computerControl: {
+      get: () => ipcRenderer.invoke(ComputerControlIpc.Get),
+      setEnabled: (enabled: boolean) => ipcRenderer.invoke(ComputerControlIpc.SetEnabled, enabled),
+    },
+    history: {
+      getToolInputs: (params: { sessionKey: string; toolCallIds: string[] }) =>
+        ipcRenderer.invoke(OpenClawHistoryIpc.GetToolInputs, params),
+      getCompactionDetails: (params: { sessionKey: string; entryIds: string[] }) =>
+        ipcRenderer.invoke(OpenClawHistoryIpc.GetCompactionDetails, params),
+    },
+    models: {
+      list: (options?: { agentId?: string }) => ipcRenderer.invoke(OpenClawModelsIpc.List, options),
+    },
+    memory: {
+      getOverview: (agentId?: string) => ipcRenderer.invoke(MemoryIpc.GetOverview, agentId),
+      getIndexStatus: (agentId?: string) => ipcRenderer.invoke(MemoryIpc.GetIndexStatus, agentId),
+      getDocument: (relativePath: string, agentId?: string) =>
+        ipcRenderer.invoke(MemoryIpc.GetDocument, relativePath, agentId),
+      search: (query: string, agentId?: string) =>
+        ipcRenderer.invoke(MemoryIpc.Search, query, agentId),
+      rebuildIndex: (agentId?: string) => ipcRenderer.invoke(MemoryIpc.RebuildIndex, agentId),
+    },
+    usage: {
+      getDaily: (options: UsageStatsOptions) => ipcRenderer.invoke(UsageStatsIpc.GetDaily, options),
+    },
+  },
+  appPlugins: {
+    onEvent: (listener: (event: AppPluginEvent) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, value: AppPluginEvent) => listener(value);
+      ipcRenderer.on(AppPluginIpc.Event, handler);
+      return () => ipcRenderer.removeListener(AppPluginIpc.Event, handler);
+    },
+    snapshot: () => ipcRenderer.invoke(AppPluginIpc.Snapshot),
+    review: (id: string) => ipcRenderer.invoke(AppPluginIpc.Review, id),
+    approve: (input: { id: string; hash: string; token: string }) =>
+      ipcRenderer.invoke(AppPluginIpc.Approve, input),
+    invoke: (input: AppPluginInvocation) => ipcRenderer.invoke(AppPluginIpc.Invoke, input),
+    onChanged: (listener: (snapshot: AppPluginSnapshot[]) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, snapshot: AppPluginSnapshot[]) =>
+        listener(snapshot);
+      ipcRenderer.on(AppPluginIpc.Changed, handler);
+      return () => ipcRenderer.removeListener(AppPluginIpc.Changed, handler);
+    },
+  },
+  agents: {
+    delete: (agentId: string) => ipcRenderer.invoke(AgentIpc.Delete, agentId),
+    save: (input: AgentProfileInput) => ipcRenderer.invoke(AgentIpc.Save, input),
+    readFile: (agentId: string, name: AgentFileName) =>
+      ipcRenderer.invoke(AgentIpc.ReadFile, { agentId, name }),
+    writeFile: (
+      agentId: string,
+      name: AgentFileName,
+      content: string,
+      expected: AgentFileSnapshot,
+    ) => ipcRenderer.invoke(AgentIpc.WriteFile, { agentId, name, content, expected }),
+    list: async () => {
+      const result = await ipcRenderer.invoke(AgentIpc.List);
+      return result?.success ? result.agents : [];
+    },
+  },
+  cowork: {
+    diagnostics: {
+      list: (query: { sessionId: string; cursor?: string }) =>
+        ipcRenderer.invoke(SessionDiagnosticsIpc.List, query),
+      read: (query: DiagnosticQuery) => ipcRenderer.invoke(SessionDiagnosticsIpc.Read, query),
+      refresh: (query: DiagnosticQuery & { snapshotId: string }) =>
+        ipcRenderer.invoke(SessionDiagnosticsIpc.Refresh, query),
+      collect: (query: DiagnosticQuery & { snapshotId: string }) =>
+        ipcRenderer.invoke(SessionDiagnosticsIpc.Collect, query),
+      export: (query: DiagnosticQuery & { snapshotId: string }) =>
+        ipcRenderer.invoke(SessionDiagnosticsIpc.Export, query),
+      cancel: (query: DiagnosticQuery & { snapshotId: string }) =>
+        ipcRenderer.invoke(SessionDiagnosticsIpc.Cancel, query),
+      onProgress: (callback: (progress: DiagnosticScanProgress) => void) => {
+        const listener = (_event: Electron.IpcRendererEvent, progress: DiagnosticScanProgress) =>
+          callback(progress);
+        ipcRenderer.on(SessionDiagnosticsIpc.Progress, listener);
+        return () => ipcRenderer.removeListener(SessionDiagnosticsIpc.Progress, listener);
+      },
+      onHistory: (callback: (update: DiagnosticHistoryUpdate) => void) => {
+        const listener = (_event: Electron.IpcRendererEvent, update: DiagnosticHistoryUpdate) =>
+          callback(update);
+        ipcRenderer.on(SessionDiagnosticsIpc.History, listener);
+        return () => ipcRenderer.removeListener(SessionDiagnosticsIpc.History, listener);
+      },
+    },
+    review: {
+      load: (query: SessionReviewQuery) => ipcRenderer.invoke(SessionReviewIpc.Load, query),
+      file: (query: SessionReviewQuery, relative: string, action: SessionReviewFileAction) =>
+        ipcRenderer.invoke(SessionReviewIpc.File, query, relative, action),
+    },
+    // Session management
+    startSession: (options: {
+      modelRef?: string;
+      rendererDispatch?: boolean;
+      prompt: string;
+      gatewayPrompt?: string;
+      cwd?: string;
+      title?: string;
+      activeSkillIds?: string[];
+      agentId?: string;
+      attachments?: CoworkAttachmentPayload[];
+      clientTurnId?: string;
+      startedAt?: number;
+      planMode?: boolean;
+      worktree?: boolean;
+    }) => ipcRenderer.invoke('cowork:session:start', options),
+    onNativeSessionDispatch: (callback: (request: NativeSessionDispatchRequest) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, request: NativeSessionDispatchRequest) =>
+        callback(request);
+      ipcRenderer.on(NativeSessionDispatchIpc.Request, listener);
+      return () => ipcRenderer.removeListener(NativeSessionDispatchIpc.Request, listener);
+    },
+    respondNativeSessionDispatch: (response: NativeSessionDispatchResponse) =>
+      ipcRenderer.invoke(NativeSessionDispatchIpc.Respond, response),
+    cancelSessionStart: (input: CancelSessionStartInput) =>
+      ipcRenderer.invoke(SessionStartIpc.Cancel, input),
+    stopSession: (sessionId: string) => ipcRenderer.invoke('cowork:session:stop', sessionId),
+    deleteSession: (sessionId: string) => ipcRenderer.invoke('cowork:session:delete', sessionId),
+    copySession: (input: CopyCoworkSessionInput) =>
+      ipcRenderer.invoke(CoworkSessionCopyIpc.Copy, input),
+    forkSession: (input: ForkCoworkSessionInput) =>
+      ipcRenderer.invoke(CoworkSessionForkIpc.Fork, input),
+    deleteSessions: (sessionIds: string[]) =>
+      ipcRenderer.invoke('cowork:session:deleteBatch', sessionIds),
+    setSessionPinned: (options: { sessionId: string; pinned: boolean }) =>
+      ipcRenderer.invoke('cowork:session:pin', options),
+    renameSession: (options: { sessionId: string; title: string }) =>
+      ipcRenderer.invoke('cowork:session:rename', options),
+    setSessionWorkspace: (input: SetSessionWorkspaceInput) =>
+      ipcRenderer.invoke(SessionWorkspaceIpc.Set, input),
+    setSessionPermissionMode: (options: {
+      sessionId: string;
+      permissionMode: 'ask' | 'auto' | 'full';
+      deferIfActive?: boolean;
+    }) => ipcRenderer.invoke('cowork:session:setPermissionMode', options),
+    getSession: (sessionId: string) => ipcRenderer.invoke('cowork:session:get', sessionId),
+    getSessionDetails: (sessionId: string) =>
+      ipcRenderer.invoke(CoworkSessionDetailsIpc.Get, sessionId),
+    getGatewaySessionId: (sessionId: string) =>
+      ipcRenderer.invoke('cowork:session:gatewaySessionId', sessionId),
+    remoteManaged: (sessionId: string) =>
+      ipcRenderer.invoke('cowork:session:remoteManaged', sessionId),
+    getSessionRuntimeStatus: (
+      sessionId: string,
+      options?: { includeSubagents?: boolean; forceRefresh?: boolean; fullScan?: boolean },
+    ) => ipcRenderer.invoke('cowork:session:runtimeStatus', sessionId, options),
+    getSessionRuntimeStatuses: (
+      sessionIds: string[],
+      options?: { includeSubagents?: boolean; forceRefresh?: boolean; fullScan?: boolean },
+    ) => ipcRenderer.invoke('cowork:sessions:runtimeStatus', sessionIds, options),
+    beginSessionRun: (input: {
+      sessionId: string;
+      clientTurnId: string;
+      startedAt: number;
+      modelRef?: string;
+      pluginPrompt?: string;
+      expectedWorkspaceRoot?: string;
+    }) => ipcRenderer.invoke('cowork:session:run:begin', input),
+    markPluginSubmissionStarted: (input: { sessionId: string; clientTurnId: string }) =>
+      ipcRenderer.invoke(SessionRunIpc.PluginSubmissionStarted, input),
+    abortPluginSubmissionBeforeSend: (input: { sessionId: string; clientTurnId: string }) =>
+      ipcRenderer.invoke(SessionRunIpc.PluginSubmissionAbortedBeforeSend, input),
+    bindSessionRun: (input: { id: string; rootRunId: string }) =>
+      ipcRenderer.invoke('cowork:session:run:bind', input),
+    listSessionRuns: (sessionId: string) =>
+      ipcRenderer.invoke('cowork:session:run:list', sessionId),
+    markSessionRunUnknown: (input: SessionRunUnknownInput) =>
+      ipcRenderer.invoke(SessionRunIpc.Unknown, input),
+    failSessionRun: (input: { sessionId: string; id: string; endedAt: number }) =>
+      ipcRenderer.invoke('cowork:session:run:fail', input),
+    patchSessionModel: (options: { sessionId: string; model: string; agentId?: string }) =>
+      ipcRenderer.invoke('cowork:session:patchModel', options),
+    getSessionModel: (options: { sessionId: string; agentId?: string }) =>
+      ipcRenderer.invoke('cowork:session:model', options),
+    listSessions: (agentId?: string) => ipcRenderer.invoke('cowork:session:list', agentId),
+    listSessionDirectory: (agentId?: string) =>
+      ipcRenderer.invoke(SessionDirectoryIpc.List, agentId),
+    readSessionSummaries: (sessionIds: string[]) =>
+      ipcRenderer.invoke(SessionDirectoryIpc.ReadSummaries, sessionIds),
+    listSessionSearchSummaries: () => ipcRenderer.invoke(SessionDirectoryIpc.SearchSummaries),
+    searchSessionMessages: (query: string, options?: CoworkSessionSearchOptions) =>
+      ipcRenderer.invoke(CoworkSessionSearchIpc.SearchMessages, query, options),
+    getSessionGoal: (sessionId: string) => ipcRenderer.invoke('cowork:session:goal', sessionId),
+    getPlanMode: (sessionId: string) =>
+      ipcRenderer.invoke('cowork:session:planMode:get', sessionId),
+    setPlanMode: (sessionId: string, enabled: boolean) =>
+      ipcRenderer.invoke('cowork:session:planMode:set', { sessionId, enabled }),
+    mutateSessionGoal: (sessionId: string, request: SessionGoalMutationRequest) =>
+      ipcRenderer.invoke(SessionGoalIpc.Mutate, sessionId, request),
+    getGoalExecution: (sessionId: string) => ipcRenderer.invoke(GoalExecutionIpc.Get, sessionId),
+    continueGoal: (sessionId: string) => ipcRenderer.invoke(GoalExecutionIpc.Continue, sessionId),
+    restartCompletedGoalForFeedback: (sessionId: string, goalId: string, objective?: string) =>
+      ipcRenderer.invoke(GoalExecutionIpc.RestartCompletedForFeedback, {
+        sessionId,
+        goalId,
+        objective,
+      }),
+    // Extension interaction handling
+    respondToInteraction: (options: { requestId: string; result: unknown }) =>
+      ipcRenderer.invoke(CoworkInteractionIpc.Respond, options),
+    replayPendingInteractions: () => ipcRenderer.invoke(CoworkInteractionIpc.Replay),
+
+    // Configuration
+    getConfig: () => ipcRenderer.invoke('cowork:config:get'),
+    setConfig: (config: {
+      workingDirectory?: string;
+      executionMode?: 'local' | 'sandbox';
+      sandboxNetworkEnabled?: boolean;
+      agentEngine?: 'openclaw';
+      permissionMode?: 'ask' | 'auto' | 'full';
+      maxGoalContinuationTurns?: number;
+      maxRetainedDisplayTabs?: number;
+    }) => ipcRenderer.invoke('cowork:config:set', config),
+    sessionStorage: {
+      getStatus: () => ipcRenderer.invoke(SessionStorageIpc.Status),
+      getPolicy: () => ipcRenderer.invoke(SessionStorageIpc.Policy),
+      savePolicy: (policy: SessionStoragePolicyInput) =>
+        ipcRenderer.invoke(SessionStorageIpc.Save, policy),
+      run: () => ipcRenderer.invoke(SessionStorageIpc.Run),
+    },
+    getAgentRuntimeSettings: () => ipcRenderer.invoke(AgentRuntimeSettingsIpc.Get),
+    setAgentRuntimeSettings: (settings: AgentRuntimeSettings) =>
+      ipcRenderer.invoke(AgentRuntimeSettingsIpc.Set, settings),
+    getWindowsSandboxStatus: (): Promise<WindowsSandboxStatus> =>
+      ipcRenderer.invoke(WindowsSandboxIpc.GetStatus),
+    initializeWindowsSandbox: (): Promise<WindowsSandboxOperationResult> =>
+      ipcRenderer.invoke(WindowsSandboxIpc.Initialize),
+    repairWindowsSandbox: (): Promise<WindowsSandboxOperationResult> =>
+      ipcRenderer.invoke(WindowsSandboxIpc.Repair),
+    openWindowsSandboxDiagnostics: () => ipcRenderer.invoke(WindowsSandboxIpc.OpenDiagnostics),
+    setDefaultModel: (options: {
+      modelId: string;
+      providerKey?: string;
+      modelRef?: string;
+      agentId?: string;
+    }) => ipcRenderer.invoke('config:setDefaultModel', options),
+    // Stream event listeners
+    onSessionActivity: (
+      callback: (data: { sessionId: string; kind: 'user' | 'other'; timestamp: number }) => void,
+    ) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        data: { sessionId: string; kind: 'user' | 'other'; timestamp: number },
+      ) => callback(data);
+      ipcRenderer.on('cowork:session:activity', handler);
+      return () => ipcRenderer.removeListener('cowork:session:activity', handler);
+    },
+    onStreamInteraction: (callback: (data: { sessionId: string; request: unknown }) => void) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        data: { sessionId: string; request: unknown },
+      ) => callback(data);
+      ipcRenderer.on(CoworkInteractionIpc.Stream, handler);
+      return () => ipcRenderer.removeListener(CoworkInteractionIpc.Stream, handler);
+    },
+    onStreamInteractionDismiss: (callback: (data: { requestId: string }) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: { requestId: string }) =>
+        callback(data);
+      ipcRenderer.on(CoworkInteractionIpc.Dismiss, handler);
+      return () => ipcRenderer.removeListener(CoworkInteractionIpc.Dismiss, handler);
+    },
+    onStreamComplete: (
+      callback: (data: {
+        sessionId: string;
+        finalStatus: 'idle' | 'running' | 'completed' | 'error';
+      }) => void,
+    ) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        data: {
+          sessionId: string;
+          finalStatus: 'idle' | 'running' | 'completed' | 'error';
+        },
+      ) => callback(data);
+      ipcRenderer.on('cowork:stream:complete', handler);
+      return () => ipcRenderer.removeListener('cowork:stream:complete', handler);
+    },
+    onStreamError: (callback: (data: { sessionId: string; error: string }) => void) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        data: { sessionId: string; error: string },
+      ) => callback(data);
+      ipcRenderer.on('cowork:stream:error', handler);
+      return () => ipcRenderer.removeListener('cowork:stream:error', handler);
+    },
+    onSessionsChanged: (callback: () => void) => {
+      const handler = () => callback();
+      ipcRenderer.on('cowork:sessions:changed', handler);
+      return () => ipcRenderer.removeListener('cowork:sessions:changed', handler);
+    },
+    onGoalExecutionChanged: (callback: (snapshot: GoalExecutionSnapshot) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, snapshot: GoalExecutionSnapshot) =>
+        callback(snapshot);
+      ipcRenderer.on(GoalExecutionIpc.Changed, handler);
+      return () => ipcRenderer.removeListener(GoalExecutionIpc.Changed, handler);
+    },
+    onSessionGoalChanged: (callback: (data: { sessionId: string }) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: { sessionId: string }) =>
+        callback(data);
+      ipcRenderer.on(SessionGoalIpc.Changed, handler);
+      return () => ipcRenderer.removeListener(SessionGoalIpc.Changed, handler);
+    },
+    getSubTaskStatus: (sessionId?: string, forceRefresh?: boolean) =>
+      ipcRenderer.invoke(CoworkSubagentDetailsIpc.Status, sessionId, forceRefresh),
+    getSwarmSnapshot: (sessionId: string) => ipcRenderer.invoke(SwarmIpc.Snapshot, sessionId),
+    getSubTaskDetails: (sessionKey: string, taskId?: string) =>
+      ipcRenderer.invoke(CoworkSubagentDetailsIpc.Get, sessionKey, taskId),
+    listSubTaskDescendants: (sessionId: string) =>
+      ipcRenderer.invoke(CoworkSubagentDetailsIpc.ListDescendants, sessionId),
+    listSubTaskChildren: (sessionId: string, parentTaskId?: string, cursor?: string) =>
+      ipcRenderer.invoke(CoworkSubagentDetailsIpc.ListChildren, sessionId, parentTaskId, cursor),
+    controlSubTask: (sessionId: string, taskId: string, action: CoworkSubagentAction) =>
+      ipcRenderer.invoke(CoworkSubagentDetailsIpc.Control, sessionId, taskId, action),
+    onSubtasksChanged: (callback: (event: CoworkSubtaskChangedEvent) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, event: CoworkSubtaskChangedEvent) =>
+        callback(event);
+      ipcRenderer.on(CoworkSubagentDetailsIpc.Changed, handler);
+      return () => ipcRenderer.removeListener(CoworkSubagentDetailsIpc.Changed, handler);
+    },
+  },
+  localTts: {
+    getStatus: (modelId: LocalTtsModelId) => ipcRenderer.invoke(LocalTtsIpc.GetStatus, modelId),
+  },
+  localAsr: {
+    stageAttachment: (source: string, workspace: string) =>
+      ipcRenderer.invoke(LocalAsrIpc.StageAttachment, source, workspace),
+    getStatus: (modelId: LocalAsrModelId) => ipcRenderer.invoke(LocalAsrIpc.GetStatus, modelId),
+    transcribe: (audio: Uint8Array, options: LocalAsrTranscribeOptions) =>
+      ipcRenderer.invoke(LocalAsrIpc.Transcribe, audio, options),
+  },
+  onlineAsr: {
+    getStatus: () => ipcRenderer.invoke(OnlineAsrIpc.GetStatus),
+    getConfiguration: () => ipcRenderer.invoke(OnlineAsrIpc.GetConfiguration),
+    saveConfiguration: (update: OnlineAsrConfigurationUpdate) =>
+      ipcRenderer.invoke(OnlineAsrIpc.SaveConfiguration, update),
+    clearConfiguration: () => ipcRenderer.invoke(OnlineAsrIpc.ClearConfiguration),
+    start: (options: OnlineAsrStartOptions) => ipcRenderer.invoke(OnlineAsrIpc.Start, options),
+    appendAudio: (sessionId: string, audioBase64: string) =>
+      ipcRenderer.invoke(OnlineAsrIpc.AppendAudio, sessionId, audioBase64),
+    close: (sessionId: string) => ipcRenderer.invoke(OnlineAsrIpc.Close, sessionId),
+    onEvent: (callback: (event: OnlineAsrEvent) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, event: OnlineAsrEvent) => callback(event);
+      ipcRenderer.on(OnlineAsrIpc.Event, handler);
+      return () => ipcRenderer.removeListener(OnlineAsrIpc.Event, handler);
+    },
+  },
+  onlineTts: {
+    getStatus: () => ipcRenderer.invoke(OnlineTtsIpc.GetStatus),
+    getConfiguration: () => ipcRenderer.invoke(OnlineTtsIpc.GetConfiguration),
+    saveConfiguration: (update: OnlineTtsConfigurationUpdate) =>
+      ipcRenderer.invoke(OnlineTtsIpc.SaveConfiguration, update),
+    clearConfiguration: () => ipcRenderer.invoke(OnlineTtsIpc.ClearConfiguration),
+  },
+  speechSynthesis: {
+    speak: (text: string) => ipcRenderer.invoke(SpeechSynthesisIpc.Speak, text),
+    previewBuiltin: (request: BuiltinSpeechPreviewRequest) =>
+      ipcRenderer.invoke(SpeechSynthesisIpc.PreviewBuiltin, request),
+    cancelBuiltinPreview: (requestId: string) =>
+      ipcRenderer.invoke(SpeechSynthesisIpc.CancelBuiltinPreview, requestId),
+  },
+  mediaGenerationModels: {
+    getConfiguration: (kind: MediaGenerationModelKind) =>
+      ipcRenderer.invoke(MediaGenerationModelsIpc.GetConfiguration, kind),
+    saveConfiguration: (
+      kind: MediaGenerationModelKind,
+      configuration: MediaGenerationModelConfiguration,
+    ) => ipcRenderer.invoke(MediaGenerationModelsIpc.SaveConfiguration, kind, configuration),
+  },
+  mediaCapture: {
+    armSystemAudio: (surface: MediaCaptureSurface = MediaCaptureSurface.Main) =>
+      ipcRenderer.invoke(MediaCaptureIpc.ArmSystemAudio, surface),
+  },
+  localSpeechModels: {
+    list: () => ipcRenderer.invoke(LocalSpeechModelIpc.List),
+    install: (kind: LocalSpeechModelKind, id: string) =>
+      ipcRenderer.invoke(LocalSpeechModelIpc.Install, kind, id),
+    remove: (kind: LocalSpeechModelKind, id: string) =>
+      ipcRenderer.invoke(LocalSpeechModelIpc.Remove, kind, id),
+    onChanged: (callback: (status: LocalSpeechModelStatus) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, status: LocalSpeechModelStatus) =>
+        callback(status);
+      ipcRenderer.on(LocalSpeechModelIpc.Changed, handler);
+      return () => ipcRenderer.removeListener(LocalSpeechModelIpc.Changed, handler);
+    },
+  },
+  sessionGroup: {
+    list: () => ipcRenderer.invoke('sessionGroup:list'),
+    create: (input: { name: string; color?: string }) =>
+      ipcRenderer.invoke('sessionGroup:create', input),
+    update: (id: string, input: { name?: string; color?: string; sortOrder?: number }) =>
+      ipcRenderer.invoke('sessionGroup:update', id, input),
+    delete: (id: string) => ipcRenderer.invoke('sessionGroup:delete', id),
+    moveSession: (sessionId: string, groupId: string | null) =>
+      ipcRenderer.invoke('sessionGroup:moveSession', sessionId, groupId),
+    reorder: (groupIds: string[]) => ipcRenderer.invoke('sessionGroup:reorder', groupIds),
+  },
+  dialog: {
+    getPathForFile: (file: File) => webUtils.getPathForFile(file),
+    saveTextFile: (options: SaveTextFileOptions) =>
+      ipcRenderer.invoke(DialogIpc.SaveTextFile, options),
+    selectDirectory: () => ipcRenderer.invoke('dialog:selectDirectory'),
+    selectFile: (options?: {
+      title?: string;
+      filters?: { name: string; extensions: string[] }[];
+    }) => ipcRenderer.invoke('dialog:selectFile', options),
+    selectFiles: (options?: {
+      title?: string;
+      filters?: { name: string; extensions: string[] }[];
+    }) => ipcRenderer.invoke('dialog:selectFiles', options),
+    selectFolders: (options?: { title?: string }) =>
+      ipcRenderer.invoke('dialog:selectFolders', options),
+    saveInlineFile: (options: {
+      dataBase64: string;
+      fileName?: string;
+      mimeType?: string;
+      cwd?: string;
+    }) => ipcRenderer.invoke('dialog:saveInlineFile', options),
+    readFileAsDataUrl: (filePath: string) =>
+      ipcRenderer.invoke('dialog:readFileAsDataUrl', filePath),
+  },
+  shell: {
+    showAttachmentContextMenu: () => ipcRenderer.invoke('shell:showAttachmentContextMenu'),
+    showImageContextMenu: (imageUrl: string) =>
+      ipcRenderer.invoke('shell:showImageContextMenu', imageUrl),
+    openPath: (filePath: string, workingDirectory?: string) =>
+      ipcRenderer.invoke('shell:openPath', filePath, workingDirectory),
+    openPathWith: (filePath: string) => ipcRenderer.invoke(FilePreviewIpc.OpenWith, filePath),
+    listWorkspaceDirectory: (sessionId: string, relativeDirectory?: string) =>
+      ipcRenderer.invoke(FilePreviewIpc.ListDirectory, sessionId, relativeDirectory),
+    readWorkspaceFileClipboard: () => ipcRenderer.invoke(WorkspaceFilesIpc.ReadClipboard),
+    writeWorkspaceFileClipboard: (request: WorkspaceFileClipboardWriteRequest) =>
+      ipcRenderer.invoke(WorkspaceFilesIpc.WriteClipboard, request),
+    prepareWorkspaceFilePaste: (request: WorkspaceFilePasteTarget) =>
+      ipcRenderer.invoke(WorkspaceFilesIpc.PreparePaste, request),
+    pasteWorkspaceFiles: (request: WorkspaceFilePasteRequest) =>
+      ipcRenderer.invoke(WorkspaceFilesIpc.Paste, request),
+    prepareWorkspaceFileMutation: (request: WorkspaceFileMutationTarget) =>
+      ipcRenderer.invoke(WorkspaceFilesIpc.PrepareMutation, request),
+    mutateWorkspaceFile: (request: WorkspaceFileMutationRequest) =>
+      ipcRenderer.invoke(WorkspaceFilesIpc.Mutate, request),
+    prepareMessageFileLink: (
+      request: PrepareMessageFileLinkRequest,
+    ): Promise<PrepareMessageFileLinkResult> =>
+      ipcRenderer.invoke(FilePreviewIpc.PrepareMessageLink, request),
+    readPreviewFile: (filePath: string, workingDirectory?: string) =>
+      ipcRenderer.invoke(FilePreviewIpc.Read, filePath, workingDirectory),
+    authorizePreviewFileEdit: (
+      request: FilePreviewEditAuthorizationRequest,
+    ): Promise<FilePreviewEditAuthorizationResult> =>
+      ipcRenderer.invoke(FilePreviewIpc.AuthorizeEdit, request),
+    revokePreviewFileEdit: (editToken: string): Promise<void> =>
+      ipcRenderer.invoke(FilePreviewIpc.RevokeEdit, editToken),
+    writePreviewFile: (request: FilePreviewWriteRequest): Promise<FilePreviewWriteResult> =>
+      ipcRenderer.invoke(FilePreviewIpc.Write, request),
+    showItemInFolder: (filePath: string, workingDirectory?: string) =>
+      ipcRenderer.invoke('shell:showItemInFolder', filePath, workingDirectory),
+    openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
+    openLocalHtmlExternal: (previewUrl: string) =>
+      ipcRenderer.invoke('shell:openLocalHtmlExternal', previewUrl),
+  },
+  imagePreview: {
+    open: (request: ImagePreviewOpenRequest): Promise<ImagePreviewOpenResult> =>
+      ipcRenderer.invoke(ImagePreviewIpc.Open, request),
+  },
+  autoLaunch: {
+    get: () => ipcRenderer.invoke('app:getAutoLaunch'),
+    set: (enabled: boolean) => ipcRenderer.invoke('app:setAutoLaunch', enabled),
+  },
+  preventSleep: {
+    get: () => ipcRenderer.invoke('app:getPreventSleep'),
+    set: (enabled: boolean) => ipcRenderer.invoke('app:setPreventSleep', enabled),
+  },
+  initialization: {
+    openSupport: (action: StartupSupportAction): Promise<StartupSupportResult> =>
+      ipcRenderer.invoke(StartupSupportIpc.Open, { action }),
+    selectHistoryWorkspace: (input: { sessionId: string }): Promise<HistoryWorkspaceResult> =>
+      ipcRenderer.invoke(HistoryRecoveryIpc.SelectWorkspace, input),
+    isTransientWindow: process.argv.includes(INITIALIZATION_WINDOW_ARGUMENT),
+    firstLaunch: process.argv.includes(FIRST_LAUNCH_WINDOW_ARGUMENT),
+    route: Object.values(StartupRoute).find(route =>
+      process.argv.includes(`${STARTUP_ROUTE_ARGUMENT}${route}`),
+    ),
+    entryStartedAt: (() => {
+      const fallback =
+        Number(
+          process.argv
+            .find(argument => argument.startsWith(STARTUP_CLOCK_ARGUMENT))
+            ?.slice(STARTUP_CLOCK_ARGUMENT.length),
+        ) || undefined;
+      if (!process.argv.some(argument => argument.startsWith(STARTUP_ROUTE_ARGUMENT)))
+        return fallback;
+      try {
+        const startedAt: unknown = ipcRenderer.sendSync(AppInitializationIpc.GetEntryClock);
+        return typeof startedAt === 'number' && Number.isFinite(startedAt) && startedAt > 0
+          ? startedAt
+          : (fallback ?? Date.now());
+      } catch {
+        return fallback ?? Date.now();
+      }
+    })(),
+    appearance: readWindowAppearance(
+      () => ipcRenderer.sendSync(WindowAppearanceIpc.Get),
+      process.argv.includes(INITIALIZATION_WINDOW_ARGUMENT),
+    ),
+    getState: (): Promise<AppInitializationState> =>
+      ipcRenderer.invoke(AppInitializationIpc.GetState),
+    confirmDowngrade: (input: { requestId: string }): Promise<{ confirmed: boolean }> =>
+      ipcRenderer.invoke(AppInitializationIpc.ConfirmDowngrade, input),
+    relaunch: () => ipcRenderer.invoke(AppInitializationIpc.Relaunch),
+    onChanged: (callback: (state: AppInitializationState) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, state: AppInitializationState) =>
+        callback(state);
+      ipcRenderer.on(AppInitializationIpc.Changed, handler);
+      return () => ipcRenderer.removeListener(AppInitializationIpc.Changed, handler);
+    },
+  },
+  appInfo: {
+    getVersion: () => ipcRenderer.invoke('app:getVersion'),
+    getOpenclawVersion: () => ipcRenderer.invoke('app:getOpenclawVersion'),
+    getSystemLocale: () => ipcRenderer.invoke('app:getSystemLocale'),
+  },
+  appUpdate: {
+    getState: (): Promise<AppUpdateState> => ipcRenderer.invoke(AppUpdateIpc.GetState),
+    check: (): Promise<AppUpdateState> => ipcRenderer.invoke(AppUpdateIpc.Check),
+    download: () => ipcRenderer.invoke(AppUpdateIpc.Download),
+    quitAndInstall: () => ipcRenderer.invoke(AppUpdateIpc.QuitAndInstall),
+    getPreferences: (): Promise<AppUpdatePreferences> =>
+      ipcRenderer.invoke(AppUpdateIpc.GetPreferences),
+    setCheckFrequency: (frequency: AppUpdateCheckFrequency): Promise<AppUpdatePreferences> =>
+      ipcRenderer.invoke(AppUpdateIpc.SetCheckFrequency, frequency),
+    getReleaseHistory: (): Promise<AppReleaseHistoryResult> =>
+      ipcRenderer.invoke(AppUpdateIpc.GetReleaseHistory),
+    onStateChanged: (callback: (state: AppUpdateState) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, state: AppUpdateState) => callback(state);
+      ipcRenderer.on(AppUpdateIpc.StateChanged, handler);
+      return () => ipcRenderer.removeListener(AppUpdateIpc.StateChanged, handler);
+    },
+  },
+  auth: {
+    getState: () => ipcRenderer.invoke(AuthIpc.GetState),
+    login: () => ipcRenderer.invoke(AuthIpc.Login),
+    logout: () => ipcRenderer.invoke(AuthIpc.Logout),
+    retrySync: () => ipcRenderer.invoke(AuthIpc.RetrySync),
+    onStateChanged: (callback: (state: AuthState) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, state: AuthState) => callback(state);
+      ipcRenderer.on(AuthIpc.StateChanged, handler);
+      return () => ipcRenderer.removeListener(AuthIpc.StateChanged, handler);
+    },
+  },
+  builtinModels: {
+    refresh: () => ipcRenderer.invoke('builtinModels:refresh'),
+  },
+  log: {
+    getPath: () => ipcRenderer.invoke('log:getPath'),
+    openFolder: () => ipcRenderer.invoke('log:openFolder'),
+    exportZip: () => ipcRenderer.invoke('log:exportZip'),
+    debug: (message: string, details?: Record<string, unknown>) =>
+      ipcRenderer.send(LogIpc.WriteDebug, message, details),
+  },
+  scheduledTasks: {
+    getSchedulerSettings: () => ipcRenderer.invoke(ScheduledTaskIpc.GetSchedulerSettings),
+    updateSchedulerSettings: (
+      input: import('../../shared/scheduledTask/types').SchedulerSettingsUpdate,
+    ) => ipcRenderer.invoke(ScheduledTaskIpc.UpdateSchedulerSettings, input),
+    getSystemSettings: () => ipcRenderer.invoke(ScheduledTaskIpc.GetSystemSettings),
+    updateSystemSettings: (
+      input: import('../../shared/scheduledTask/types').SystemTaskSettingsPatch,
+    ) => ipcRenderer.invoke(ScheduledTaskIpc.UpdateSystemSettings, input),
+    // Task CRUD
+    list: () => ipcRenderer.invoke(ScheduledTaskIpc.List),
+    get: (id: string) => ipcRenderer.invoke(ScheduledTaskIpc.Get, id),
+    create: (input: ScheduledTaskInput) => ipcRenderer.invoke(ScheduledTaskIpc.Create, input),
+    update: (id: string, input: ScheduledTaskUpdateInput) =>
+      ipcRenderer.invoke(ScheduledTaskIpc.Update, id, input),
+    delete: (id: string) => ipcRenderer.invoke(ScheduledTaskIpc.Delete, id),
+    toggle: (id: string, enabled: boolean) =>
+      ipcRenderer.invoke(ScheduledTaskIpc.Toggle, id, enabled),
+
+    // Execution
+    runManually: (id: string, expectedConfigRevision?: string) =>
+      ipcRenderer.invoke(ScheduledTaskIpc.RunManually, id, expectedConfigRevision),
+
+    // Run history
+    listRuns: (taskId: string, limit?: number, offset?: number) =>
+      ipcRenderer.invoke(ScheduledTaskIpc.ListRuns, taskId, limit, offset),
+    resolveSession: (
+      sessionKey: string,
+      context?: import('../../shared/scheduledTask/types').ScheduledTaskSessionResolveContext,
+    ) => ipcRenderer.invoke(ScheduledTaskIpc.ResolveSession, sessionKey, context),
+
+    // Delivery channels
+    listChannels: () => ipcRenderer.invoke(ScheduledTaskIpc.ListChannels),
+
+    onStatusUpdate: (callback: (data: ScheduledTaskStatusEvent) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: ScheduledTaskStatusEvent) =>
+        callback(data);
+      ipcRenderer.on(ScheduledTaskIpc.StatusUpdate, handler);
+      return () => ipcRenderer.removeListener(ScheduledTaskIpc.StatusUpdate, handler);
+    },
+    onRunUpdate: (callback: (data: ScheduledTaskRunEvent) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: ScheduledTaskRunEvent) =>
+        callback(data);
+      ipcRenderer.on(ScheduledTaskIpc.RunUpdate, handler);
+      return () => ipcRenderer.removeListener(ScheduledTaskIpc.RunUpdate, handler);
+    },
+    listResults: (query?: ScheduledTaskResultQuery) =>
+      ipcRenderer.invoke(ScheduledTaskIpc.ListResults, query),
+    markResultRead: (runId: string) => ipcRenderer.invoke(ScheduledTaskIpc.MarkResultRead, runId),
+    markAllResultsRead: (taskId?: string) =>
+      ipcRenderer.invoke(ScheduledTaskIpc.MarkAllResultsRead, taskId),
+    deleteResult: (runId: string) => ipcRenderer.invoke(ScheduledTaskIpc.DeleteResult, runId),
+    reconcileResults: () => ipcRenderer.invoke(ScheduledTaskIpc.ReconcileResults),
+    onResultUpserted: (callback: (data: ScheduledTaskResultUpsertedEvent) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: ScheduledTaskResultUpsertedEvent) =>
+        callback(data);
+      ipcRenderer.on(ScheduledTaskIpc.ResultUpserted, handler);
+      return () => ipcRenderer.removeListener(ScheduledTaskIpc.ResultUpserted, handler);
+    },
+    onUnreadCountChanged: (callback: (data: ScheduledTaskUnreadCountEvent) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: ScheduledTaskUnreadCountEvent) =>
+        callback(data);
+      ipcRenderer.on(ScheduledTaskIpc.UnreadCountChanged, handler);
+      return () => ipcRenderer.removeListener(ScheduledTaskIpc.UnreadCountChanged, handler);
+    },
+    onRefresh: (callback: () => void) => {
+      const handler = () => callback();
+      ipcRenderer.on(ScheduledTaskIpc.Refresh, handler);
+      return () => ipcRenderer.removeListener(ScheduledTaskIpc.Refresh, handler);
+    },
+  },
+  workboard: {
+    getSnapshot: () => ipcRenderer.invoke(WorkboardIpc.GetSnapshot),
+    createCard: (input: WorkboardCardInput) => ipcRenderer.invoke(WorkboardIpc.CreateCard, input),
+    updateCard: (id: string, patch: WorkboardCardPatch, expectedUpdatedAt: number) =>
+      ipcRenderer.invoke(WorkboardIpc.UpdateCard, id, patch, expectedUpdatedAt),
+    moveCard: (
+      id: string,
+      status: WorkboardCardInput['status'],
+      position: number,
+      expectedUpdatedAt: number,
+    ) => ipcRenderer.invoke(WorkboardIpc.MoveCard, id, status, position, expectedUpdatedAt),
+    deleteCard: (id: string) => ipcRenderer.invoke(WorkboardIpc.DeleteCard, id),
+    archiveCard: (id: string, archived: boolean) =>
+      ipcRenderer.invoke(WorkboardIpc.ArchiveCard, id, archived),
+    commentCard: (id: string, body: string) =>
+      ipcRenderer.invoke(WorkboardIpc.CommentCard, id, body),
+    startCard: (id: string) => ipcRenderer.invoke(WorkboardIpc.StartCard, id),
+    stopCard: (id: string, expectedExecution?: WorkboardStopIdentity) =>
+      ipcRenderer.invoke(WorkboardIpc.StopCard, id, expectedExecution),
+    resolveSession: (sessionKey: string) =>
+      ipcRenderer.invoke(WorkboardIpc.ResolveSession, sessionKey),
+    dispatch: (boardId?: string) => ipcRenderer.invoke(WorkboardIpc.Dispatch, boardId),
+    onChanged: (callback: (event: WorkboardChangedEvent) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: WorkboardChangedEvent) =>
+        callback(data);
+      ipcRenderer.on(WorkboardIpc.Changed, handler);
+      return () => ipcRenderer.removeListener(WorkboardIpc.Changed, handler);
+    },
+  },
+  networkStatus: {
+    send: (status: 'online' | 'offline') => ipcRenderer.send('network:status-change', status),
+  },
+});

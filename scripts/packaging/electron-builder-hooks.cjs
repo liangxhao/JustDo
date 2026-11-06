@@ -41,14 +41,14 @@ const {
   verifyAcpxTargetDependencies,
 } = require('../openclaw/sync-openclaw-runtime-resources.cjs');
 const { precompileOpenClawExtensions } = require('../openclaw/precompile-openclaw-extensions.cjs');
-const { readBundledSkillConfig, syncBundledSkills } = require('../runtime/sync-bundled-skills.cjs');
+const { readBundledSkillConfig, syncBundledSkills } = require('../plugins/sync-bundled-skills.cjs');
 const {
   PACKAGED_RUNTIME_EXCLUDES,
   packMultipleSources,
   verifyRuntimeKnowledgeEntries,
   verifyRuntimeWorkerEntries,
   verifyLegalMetadataEntries,
-} = require('../openclaw/pack-openclaw-tar.cjs');
+} = require('./pack-runtime-resources.cjs');
 const { isLegalMetadataFile } = require('../openclaw/prune-openclaw-runtime.cjs');
 const { readWindowsUpdateConfig } = require('./windows-update-config.cjs');
 const { normalizeStableVersion, validatePackageVersions } = require('./electron-builder-product-metadata.cjs');

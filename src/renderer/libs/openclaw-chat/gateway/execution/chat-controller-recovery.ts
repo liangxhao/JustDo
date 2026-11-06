@@ -1,4 +1,3 @@
-import { isPresentPlanToolName } from '@shared/cowork/interactions/planPreview';
 import {
   normalizeAgentEvent,
   normalizeChatEvent,
@@ -34,6 +33,7 @@ import {
   reduceAgentEvent,
   reduceChatEvent,
 } from '@/libs/openclaw-chat/model/turn/agent-event-reducer';
+import { isPresentPlanToolName } from '@/libs/openclaw-chat/model/turn/plan-preview';
 import {
   type RunActivityOptions,
   type RunProgressStage,

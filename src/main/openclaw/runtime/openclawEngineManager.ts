@@ -23,8 +23,8 @@ import {
 import { PRODUCT_NAME_LOWERCASE } from '../../../shared/productMetadata';
 import type { SystemPromptReplacementRule } from '../../../shared/prompts/systemPromptReplacements';
 import { t } from '../../core/i18n';
-import { LogKind, managedLogs } from '../../core/logMaintenance';
-import { redactLogText } from '../../core/logRedaction';
+import { LogKind, managedLogs } from '../../core/logging/logMaintenance';
+import { redactLogText } from '../../core/logging/logRedaction';
 import {
   applyTrustedCertificateEnv,
   buildTrustedCaBundle,

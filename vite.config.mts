@@ -90,7 +90,8 @@ export default defineConfig({
       },
       {
         // 预加载脚本入口文件
-        entry: 'src/main/preload.ts',
+        // Keep the runtime filename stable while grouping preload sources.
+        entry: { preload: 'src/main/preload/index.ts' },
         vite: {
           root: projectRoot,
           plugins: [createApplicationLicensePlugin({ repoRoot: projectRoot, scope: 'preload' })],
@@ -109,7 +110,7 @@ export default defineConfig({
       },
       {
         // 独立图片查看窗口的最小权限预加载脚本
-        entry: 'src/main/imagePreviewPreload.ts',
+        entry: 'src/main/preload/imagePreviewPreload.ts',
         vite: {
           root: projectRoot,
           plugins: [createApplicationLicensePlugin({ repoRoot: projectRoot, scope: 'imagePreviewPreload' })],
@@ -128,7 +129,7 @@ export default defineConfig({
       },
       {
         // 外部网页 guest 的固定检查桥；不向页面暴露 Node 或 Electron API。
-        entry: 'src/main/browserGuestPreload.ts',
+        entry: 'src/main/preload/browserGuestPreload.ts',
         vite: {
           root: projectRoot,
           plugins: [createApplicationLicensePlugin({ repoRoot: projectRoot, scope: 'browserGuestPreload' })],
@@ -142,7 +143,7 @@ export default defineConfig({
         onstart() {},
       },
       {
-        entry: 'src/main/mediaPlaybackPreload.ts',
+        entry: 'src/main/preload/mediaPlaybackPreload.ts',
         vite: {
           root: projectRoot,
           plugins: [createApplicationLicensePlugin({ repoRoot: projectRoot, scope: 'mediaPlaybackPreload' })],
@@ -156,7 +157,7 @@ export default defineConfig({
         onstart() {},
       },
       {
-        entry: 'src/main/webpageEmbedPreload.ts',
+        entry: 'src/main/preload/webpageEmbedPreload.ts',
         vite: {
           root: projectRoot,
           plugins: [createApplicationLicensePlugin({ repoRoot: projectRoot, scope: 'webpageEmbedPreload' })],
@@ -170,7 +171,7 @@ export default defineConfig({
         onstart() {},
       },
       {
-        entry: 'src/main/widgetViewerPreload.ts',
+        entry: 'src/main/preload/widgetViewerPreload.ts',
         vite: {
           root: projectRoot,
           plugins: [createApplicationLicensePlugin({ repoRoot: projectRoot, scope: 'widgetViewerPreload' })],

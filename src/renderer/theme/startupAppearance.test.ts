@@ -86,7 +86,7 @@ test.each(scenarios)(
     vi.doMock('@/services/config', () => ({
       configService: { getConfig: () => ({ theme: appearance?.mode ?? 'light' }) },
     }));
-    const service = (await import('@/services/theme')).themeService;
+    const service = (await import('@/theme/themeService')).themeService;
     // Loading the regular stylesheet and applying the full service must not recolor startup.
     const stylesheet = document.createElement('style');
     stylesheet.textContent = fs.readFileSync(

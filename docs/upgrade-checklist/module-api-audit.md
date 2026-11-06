@@ -43,7 +43,7 @@
       虚拟目录行为、物理归档类型/整包 hash、实际归档内部模块与损坏负控，不能用
       `ELECTRON_RUN_AS_NODE` 或浏览器启动演练替代。
 - [ ] 升级验收/CI 必须执行上游敏感测试 gate，传入目标冻结产物与源码：
-      `node scripts/test/run-openclaw-module-contracts.cjs --runtime-dir <产物绝对目录> --source-root <目标源码绝对目录>`。
+      `node scripts/test/openclaw/run-openclaw-module-contracts.cjs --runtime-dir <产物绝对目录> --source-root <目标源码绝对目录>`。
       当前 gate 包含原生请求、13 个本地扩展实际 SDK 注册、maintenance receipt、STT WebSocket、Workshop 文件/版本/SQLite owner、
       管理 source/退役 handler、完整配置 schema/legacy 双检、正常升级的真实原生维护与负控，
       Workboard 实际 handler/SQLite adapter，以及真实 Electron Main 的 ASAR/省略 ASAR 准入；

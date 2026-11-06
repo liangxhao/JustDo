@@ -20,7 +20,6 @@ import {
 } from '@heroicons/react/24/outline';
 import { diagnosticSourceHasGaps } from '@shared/cowork/diagnostics/diagnosticEvidenceCoverage';
 import { type DiagnosticFinding } from '@shared/cowork/diagnostics/diagnosticFindings';
-import { diagnoseHistoryFailure } from '@shared/cowork/diagnostics/diagnosticHistoryFindings';
 import type {
   DiagnosticEvent,
   DiagnosticLogCoverage,
@@ -28,6 +27,7 @@ import type {
 } from '@shared/cowork/diagnostics/sessionDiagnostics';
 import { useState } from 'react';
 
+import { diagnoseHistoryFailure } from '@/features/cowork/components/sessions/diagnosticHistoryFindings';
 import { i18nService } from '@/services/i18n';
 
 import {

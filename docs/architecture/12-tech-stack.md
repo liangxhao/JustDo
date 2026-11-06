@@ -28,6 +28,8 @@ Renderer 使用 React、Redux Toolkit、Lit、Tailwind、自有主题、Markdown
 
 Shared 同时参与两套编译，不能靠某个 tsconfig 恰好提供的全局隐藏跨进程依赖。主题生成脚本在 scripts/theme，浏览器主题数据与运行时留在 Renderer。
 
+仓库脚本按准备、打包、诊断和验证职责组织，入口及前置条件集中在 [脚本索引](../../scripts/README.md)。`scripts/openclaw/` 拥有原生运行包组装，`runtime/` 准备工具依赖，`plugins/` 组装宿主插件和技能；多资源归档归 `packaging/`，只读会话取证归 `diagnostics/`。显式验证入口按 `test/browser/`、`test/openclaw/`、`test/plugin-management/` 和 `test/plugin-host/` 分类。版本补丁目录保留来源及锁定关系，可选插件业务验证继续随插件维护，Core 模块检查不依赖可选插件的发送验收。
+
 ## 3. 构建产物不是一个目录
 
 ```mermaid

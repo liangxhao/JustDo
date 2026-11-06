@@ -51,7 +51,7 @@ if (!process.versions.electron) {
     platform: 'node',
     format: 'cjs',
     external: ['electron'],
-    entryPoints: [path.join(root, 'src/main/widgetViewerPreload.ts')],
+    entryPoints: [path.join(root, 'src/main/preload/widgetViewerPreload.ts')],
     outfile: path.join(output, 'widget-preload.cjs'),
   });
   buildSync({

@@ -1,6 +1,6 @@
 # Isolated shared-profile background browser verification
 
-Run `node scripts/test/verify-background-browser.cjs` from the repository root.
+Run `node scripts/test/browser/verify-background-browser.cjs` from the repository root.
 An explicit `--dependencies-root <checkout>` can reuse another checkout's already
 installed Electron (matching `package.json`) and esbuild without installing or
 rebuilding it.
@@ -110,7 +110,7 @@ This is separate from the Main fixture above. Run the following with an
 explicit prepared runtime and its own bundled Node executable:
 
 ```powershell
-& '<runtime>/node-runtime/node.exe' scripts/test/verify-browser-cron.cjs --runtime-dir '<runtime>'
+& '<runtime>/node-runtime/node.exe' scripts/test/browser/verify-browser-cron.cjs --runtime-dir '<runtime>'
 ```
 
 It validates the frozen runtime's expected version/target, complete prepared
@@ -166,7 +166,7 @@ or weaker cleanup assertions.
 Run the opt-in retry probe with a prepared runtime and its bundled Node:
 
 ```powershell
-& '<runtime>/node-runtime/node.exe' scripts/test/verify-browser-retry.cjs --runtime-dir '<runtime>'
+& '<runtime>/node-runtime/node.exe' scripts/test/browser/verify-browser-retry.cjs --runtime-dir '<runtime>'
 ```
 
 The probe verifies the selected frozen runtime and creates a fresh `build/brp-*`

@@ -1,6 +1,7 @@
-import { isPresentPlanToolName } from '@shared/cowork/interactions/planPreview';
 import type { McpAppContentReference } from '@shared/plugins/mcpAppReferences';
 import type { McpAppPreview } from '@shared/plugins/mcpApps';
+
+import { isPresentPlanToolName } from '@/libs/openclaw-chat/model/turn/plan-preview';
 
 import {
   ASK_USER_QUESTION_TOOL_NAME,

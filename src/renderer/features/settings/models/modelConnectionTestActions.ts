@@ -1,6 +1,6 @@
-import { buildOpenAIJsonRequestHeaders } from '@shared/cowork/modelRequestHeaders';
 import { NetworkFetchPurpose } from '@shared/network/network';
 import { mergeModelProviderHeaders } from '@shared/providers/modelProviderHeaders';
+import { buildOpenAIJsonRequestHeaders } from '@shared/providers/modelRequestHeaders';
 import React from 'react';
 
 import { getProviderDisplayName, isBuiltinModelsProvider } from '@/app/config';

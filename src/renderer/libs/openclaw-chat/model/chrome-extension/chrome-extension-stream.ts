@@ -9,7 +9,7 @@ import { projectChromeExtensionActivity } from './chrome-extension-activity';
 import { prepareChromeExtensionStreamEvent } from './chrome-extension-display';
 
 export { foldChromeExtensionEntries, isChromeQuestionTool } from './chrome-extension-timeline';
-export { isPresentPlanToolName } from '@shared/cowork/interactions/planPreview';
+export { isPresentPlanToolName } from '@/libs/openclaw-chat/model/turn/plan-preview';
 
 type Item = Record<string, unknown> & {
   type: string;

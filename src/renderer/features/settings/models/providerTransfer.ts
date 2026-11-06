@@ -14,7 +14,7 @@ import {
 } from '@/app/config';
 import { EXPORT_FORMAT_TYPE } from '@/app/constants';
 import type { NonLanguageModelKind } from '@/features/settings/models/nonLanguageModelUrls';
-import type { PasswordEncryptedPayload } from '@/services/encryption';
+import type { PasswordEncryptedPayload } from '@/features/settings/models/providerTransferCrypto';
 
 type ProvidersConfig = NonNullable<AppConfig['providers']>;
 type ProviderConfig = ProvidersConfig[string];

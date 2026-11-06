@@ -1,4 +1,3 @@
-import { OPENAI_REQUEST_USER_AGENT } from '../../../../shared/cowork/modelRequestHeaders';
 import { OpenClawExtensionId } from '../../../../shared/plugins/nativeIds';
 import {
   getEffectiveCustomProviderDisplayName,
@@ -8,6 +7,7 @@ import {
   OpenClawProviderId,
   ProviderName,
 } from '../../../../shared/providers';
+import { OPENAI_REQUEST_USER_AGENT } from '../../../../shared/providers/modelRequestHeaders';
 import {
   BUILTIN_MODEL_JWT_FIELD,
   isActiveBuiltinModelDevelopmentApiKey,

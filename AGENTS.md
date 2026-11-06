@@ -88,7 +88,10 @@ npm test
   references together. Do not duplicate its business rules in application docs.
 - OpenClaw runtime documentation and role templates belong under
   `resources/openclaw/docs/`; repository design documentation stays in `docs/`.
-- Keep `main.ts`, `preload.ts` and plugin registration entries thin.
+- Keep preload entries, helpers and their unit tests under `src/main/preload/`.
+  The application entry is `preload/index.ts`; restricted windows retain separate
+  entries and capability boundaries. Do not aggregate all bridges through it.
+- Keep `main.ts`, `preload/index.ts` and plugin registration entries thin.
   Controllers retain lifecycle/state ownership and delegate through explicit
   typed contexts. Use live `shared/app/propertyContext.ts` accessors rather
   than copied state or passing the whole controller.
@@ -103,6 +106,11 @@ npm test
 - Organize by feature/domain and preserve existing entry points. Co-locate
   helpers, styles and tests with their consumers; `shared/` is for actual reuse.
   Do not split/merge directories merely to equalize file counts.
+- Group repository scripts by responsibility: runtime preparation in
+  `scripts/openclaw/` and `scripts/runtime/`, archives/installers in
+  `scripts/packaging/`, read-only evidence in `scripts/diagnostics/`, and host
+  plugin/skill assembly in `scripts/plugins/`. Keep opt-in probes under the
+  matching `scripts/test/` capability; plugin business probes stay with plugins.
 - Main services, IPC and shared contracts belong to their owning domain.
   Provider credentials/authentication belong to `main/providers/`; native
   config projection belongs to `main/openclaw/config/`.
@@ -115,8 +123,12 @@ npm test
   collaboration/discussions and Swarm Workflow UI in their separate domains.
 - Renderer UI primitives live in `shared/components/ui/`, startup presentation
   in `app/shell/`, plugin feedback in `features/plugins/shared/`.
+  Reused browser-only hooks and editor setup live in Renderer `shared/hooks/`
+  and `shared/editor/`; feature-specific helpers stay with their consumers.
   Theme build tooling stays in `scripts/theme/`; browser theme code stays in
   `src/renderer/theme/`.
+- Main logger lifecycle, rotation and redaction entry points live in
+  `core/logging/`. Preserve the startup initialization order and singleton.
 - Use i18n for user-visible strings and add matching `zh`/`en` entries.
   Dictionaries are grouped by domain; `translations.ts` only composes them.
 - UI animation features must remain active when Windows disables animations,

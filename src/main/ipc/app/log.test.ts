@@ -27,7 +27,7 @@ vi.mock('electron', () => ({
   shell: { showItemInFolder: vi.fn() },
 }));
 
-vi.mock('../../core/logger', () => ({
+vi.mock('../../core/logging/logger', () => ({
   getLogFilePath: () => path.join(state.directory, 'logs', 'main-2026-10-29.log'),
   getRecentMainLogEntries: () => [{
     archiveName: 'main-2026-10-29.log',

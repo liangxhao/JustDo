@@ -8,7 +8,7 @@ import { zstdCompressSync } from 'node:zlib';
 import { afterEach, expect, test } from 'vitest';
 
 // Allow CLI cold starts and up to two independently bounded 10-second child runs.
-const script = path.resolve('scripts/openclaw/inspect-session-storage.cjs');
+const script = path.resolve('scripts/diagnostics/inspect-session-storage.cjs');
 const fixtureRoot = path.resolve('.agent-tasks/session-storage-tests');
 const fixtures: Array<{ directory: string; database: DatabaseSync }> = [];
 

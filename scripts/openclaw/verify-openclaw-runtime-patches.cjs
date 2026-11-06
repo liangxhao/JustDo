@@ -107,7 +107,7 @@ const BUILD_RECIPE_FILES = [
   'src/shared/security/mxcNativeBinaries.json',
   'plugins/extensions/prune-policy.json',
   'plugins/skills/builtin-skills.json',
-  'scripts/runtime/sync-bundled-skills.cjs',
+  'scripts/plugins/sync-bundled-skills.cjs',
   'plugins/extensions/drawio/scripts/prepare.cjs',
   'plugins/extensions/drawio/package.json',
   'plugins/extensions/drawio/openclaw.plugin.json',

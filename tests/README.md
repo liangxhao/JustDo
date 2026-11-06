@@ -22,8 +22,8 @@ Existing extension import packages can also be reused without regenerating or
 changing their inputs:
 
 ```powershell
-node scripts/test/extension-import-fixtures-probe.cjs --fixtures <existing-fixture-root> --runtime <worktree-runtime-snapshot>
-node scripts/test/extension-import-ui-probe.cjs --fixtures <existing-fixture-root> --runtime <worktree-runtime-snapshot>
+node scripts/test/plugin-management/extension-import-fixtures-probe.cjs --fixtures <existing-fixture-root> --runtime <worktree-runtime-snapshot>
+node scripts/test/plugin-management/extension-import-ui-probe.cjs --fixtures <existing-fixture-root> --runtime <worktree-runtime-snapshot>
 ```
 
 The fixture root must contain the existing `catalog.json`, `SHA256SUMS.txt`,
@@ -63,8 +63,8 @@ or repeating a failed installation. The report identifies instrumented runs.
 Windows publication recovery also has an opt-in real sharing-lock regression:
 
 ```powershell
-node scripts/test/extension-publication-lock-probe.cjs --fixtures <existing-fixture-root> --runtime <verified-runtime-snapshot> --expect recovered
-node scripts/test/extension-publication-lock-probe.cjs --fixtures <existing-fixture-root> --runtime <verified-runtime-snapshot> --expect bounded
+node scripts/test/plugin-management/extension-publication-lock-probe.cjs --fixtures <existing-fixture-root> --runtime <verified-runtime-snapshot> --expect recovered
+node scripts/test/plugin-management/extension-publication-lock-probe.cjs --fixtures <existing-fixture-root> --runtime <verified-runtime-snapshot> --expect bounded
 ```
 
 It uses the same original v1/v2 packages and actual import UI. A test-only helper

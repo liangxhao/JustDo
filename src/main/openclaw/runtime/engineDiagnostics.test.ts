@@ -13,7 +13,7 @@ import {
   type EngineDiagnosticsDependencies,
 } from './engineDiagnostics';
 
-vi.mock('../../core/logger', () => ({ getLogFilePath: vi.fn(), getRecentMainLogEntries: vi.fn() }));
+vi.mock('../../core/logging/logger', () => ({ getLogFilePath: vi.fn(), getRecentMainLogEntries: vi.fn() }));
 
 describe('engine failure diagnostics', () => {
   let directory: string;

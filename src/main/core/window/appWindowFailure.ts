@@ -8,7 +8,7 @@ import {
 } from '../../../shared/app/startupFailure';
 import { PRODUCT_NAME } from '../../../shared/productMetadata';
 import { t } from '../i18n';
-import { getLogFilePath } from '../logger';
+import { getLogFilePath } from '../logging/logger';
 import { registerWindowDiagnostics } from './windowDiagnostics';
 
 /** Native fallback remains usable when preload or the entire renderer cannot run. */

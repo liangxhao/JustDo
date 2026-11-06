@@ -107,7 +107,7 @@ let monacoThemeDefined = false;
 let modelSequence = 0;
 
 function loadMonaco(): Promise<MonacoApi> {
-  monacoPromise ??= import('@/app/monacoConfig').then(({ monaco }) => monaco);
+  monacoPromise ??= import('@/shared/editor/monaco').then(({ monaco }) => monaco);
   return monacoPromise;
 }
 

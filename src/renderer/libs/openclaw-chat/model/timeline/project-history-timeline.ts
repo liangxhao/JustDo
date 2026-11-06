@@ -1,4 +1,3 @@
-import { isPresentPlanToolName } from '@shared/cowork/interactions/planPreview';
 import type { SessionRunTiming } from '@shared/cowork/sessionRun';
 import { normalizeToolTerminalStatus } from '@shared/openclaw/messageDomain';
 import { isHiddenNativeMessage } from '@shared/openclaw/messageVisibility';
@@ -6,6 +5,7 @@ import type { McpAppDescriptor } from '@shared/plugins/mcpApps';
 import { isGatewayInjectedModelRef } from '@shared/providers/modelRef';
 
 import { getTranscriptMedia } from '@/libs/openclaw-chat/attachments';
+import { isPresentPlanToolName } from '@/libs/openclaw-chat/model/turn/plan-preview';
 import { stripEmbedShortcodesFromTextParts } from '@/libs/openclaw-chat/pipeline/embed-shortcodes';
 import { collapseRepeatedFailures } from '@/libs/openclaw-chat/pipeline/history-display-normalizer';
 import {

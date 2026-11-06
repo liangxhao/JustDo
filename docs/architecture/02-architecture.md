@@ -85,7 +85,9 @@ Chrome 适配继续在 `src/main/chrome/`，只复用 `appServer/protocol/`；�
 
 ### Main 领域和原生配置投影
 
-Main 的 `core/` 分为 app、window、network、runtime、filesystem、development。浏览器、语音、外部集成和 Windows 沙盒有自己的领域，不塞入通用工具文件。`providers/` 管理产品模型配置与认证；`openclaw/config/` 管理它们向原生配置的投影。
+Main 的 `core/` 分为 app、window、network、runtime、filesystem、development、logging。日志写入、轮转、维护和脱敏入口集中在 `core/logging/`，保留启动时的同一个日志实例与初始化顺序。浏览器、语音、外部集成和 Windows 沙盒有自己的领域，不塞入通用工具文件。
+
+`providers/` 管理产品模型配置、认证、凭据清理政策及通用 API 解析和可用性探测；`modelApi.ts`、`modelReadiness.ts` 不属于 Cowork 会话状态。数据层通过直接导入 `appConfigCredentials.ts` 应用凭据清理政策，继续拥有原有 SQLite 连接、读写和事务。会话标题生成等会话业务仍归 `cowork/`；`openclaw/config/` 管理产品配置向原生配置的投影。
 
 应用启动在 Main 的 `startup/` 下分为 `routing`、`history`、`upgrade`、`initialization`：分别拥有四路判定、历史迁移、正常升级的原生数据库维护和应用初始化。Renderer 的 `app/shell/startup/` 保留路由、历史结果和初始化展示，窗口与 preload 保留安全创建和窄桥接职责。流程见[启动与历史升级](../features/app/startup-and-history-upgrade.md)。
 
@@ -101,9 +103,13 @@ composer 的 attachments、draft、selection、speech、submission 分别管理�
 
 display 管理标签组合与选择：tabs 组织标签状态、菜单和浏览器/MCP Apps 等标签适配，summary 组织会话摘要与插件贡献导航，workspace 组织稳定文档 portal、遮挡和窗口控制。业务组合界面由独立插件通过 SDK 插槽注册，Core 不持有插件业务组件。preview 管理文件展示和工作区浏览，terminal 管理终端界面，review 管理工作区变更审核，计划审核归 approvals。原生子任务图归 subagents，业务界面归所属插件，复用样式与连接辅助放在 shared，不增加执行状态所有者。
 
+跨功能复用的弹窗焦点与拖动 hooks 位于 `renderer/shared/hooks/`，按所属 OwnerDocument 工作；各功能直接消费它们，避免通过 Cowork 反向引用通用 UI 能力。离线 Monaco 初始化集中在 `renderer/shared/editor/monaco.ts`，主启动继续在原位置等待初始化，差异视图继续按需加载同一模块。子任务图样式随 `subagents/` 维护。模型导入导出的密码加密只服务设置中的 provider 转移流程，归 `settings/models/providerTransferCrypto.ts`，数据格式和加密参数保持原契约。
+
 ### 国际化和浏览器边界
 
 Renderer 国际化入口保留在 `services/i18n.ts`，`services/i18n/translations.ts` 只组合领域字典。`appTranslations` 管理外壳与通用操作；助手、协作、记忆、浏览器和 Workboard 分别使用独立字典。
+
+主题生命周期服务位于 `renderer/theme/themeService.ts`，与主题定义、解析和 CSS 引擎同域。入口直接导入该模块，不经主题聚合入口反向导出；`rendererPreferences` 完成水合后再加载 App 和主题消费者，保持每个 Renderer 的单例与原有初始化时序。
 
 定时任务字典仅包含调度、任务表单和结果收件箱，插件管理文案归 `pluginsTranslations`；文件树与文件编辑归 `filePreviewTranslations`，侧栏与标签组合归 `workspaceDisplayTranslations`，终端归 `terminalTranslations`。聊天、侧聊和审批文案归 `chatTranslations`，通用设置、执行配置、沙箱与引擎端口归 `settingsTranslations`。
 
@@ -115,13 +121,17 @@ Renderer 国际化入口保留在 `services/i18n.ts`，`services/i18n/translatio
 
 IPC 同样按产品能力组织：插件管理归 plugins，语音归 speech，权限和桌面控制准入归 security，媒体模型配置归 providers；原生引擎、历史、模型查询、记忆和命令入口继续归 openclaw。main.ts 从各领域直接注册处理器，原有 IPC 常量、注册顺序和校验语义保持一致。公共 UI 基础组件统一放在 Renderer shared/components/ui；启动展示属于应用外壳，插件操作结果属于插件公共界面。仅服务 Cowork 或 Markdown 的路径辅助与实际消费领域相邻，不建立通用 utils 汇集目录。
 
+入站客户端的设置桥集中在 `main/ipc/clients/`：CLI 状态和 app-server 设置各自是窄处理器，业务实现仍在 `main/clients/`。移动处理器不改变 IPC 字符串、主窗口 frame 校验、退出围栏或服务的惰性获取方式。
+
 设置目录按页面领域组织；`settingsCatalog.ts` 声明页面和检索信息，`Settings.tsx` 持有统一草稿、离开保护和保存流程。领域页面保留各自即时保存或统一保存语义，页面重排不能改变 Main/IPC 的持久化边界。
 
 Shared 只放可序列化合约、常量、校验和纯函数。不能依赖 Node、Electron、DOM 或进程环境。主题运行时在 Renderer，离线生成和 Tailwind 插件在 `scripts/theme/`。
 
 Shared 按契约所属领域组织，不能因为实现经由 OpenClaw 就把所有契约放入 `openclaw/`。助手身份与执行设置由 `agents/` 共享，模型引用和选择身份由 `providers/` 共享，外部 Agent 目录与设置属于 `integrations/`，权限审批和桌面控制准入属于 `security/`，提示词替换规则属于 `prompts/`。插件标识、扩展管理、MCP、Hooks 和出站 Header 策略由 `plugins/` 提供；内置浏览器的插件事件契约仍归浏览器领域。`openclaw/` 保留原生 Gateway 事件、消息准入、待发送输入、历史、连接、原生能力和运行时清单等契约。
 
-`cowork/interactions/` 共享结构化问题、计划审核、计划预览和交接契约，公共交互模块通过仅类型引用组合问题与计划的 envelope，不形成运行时依赖环。`cowork/diagnostics/` 共享诊断报告、错误分类和投影纯函数；采集、扫描和导出仍由 Main 拥有。这些模块拆分不增加交互或诊断状态权威，测试继续与所属模块相邻。
+`cowork/interactions/` 共享结构化问题、计划审核和交接契约，公共交互模块通过仅类型引用组合问题与计划的 envelope，不形成运行时依赖环。计划工具结果的展示投影和预览事件归 Renderer 聊天库的 `model/turn/plan-preview.ts`，主界面和 Chrome 侧聊复用同一实现；原生工具标识及审批合约继续留在 Shared。`cowork/diagnostics/` 共享诊断报告、错误分类和证据投影；采集、扫描和导出由 Main 拥有，建议文案与界面操作投影归 Renderer 会话诊断组件。
+
+技能启用、删除和配置的授权政策归 `main/plugins/skills/skillManagement.ts`，Renderer 只消费管理能力 DTO；定时任务运行元数据的入库筛选与大小限制归 `main/scheduler/runMetadata.ts`，共享结果结构保持在 `shared/scheduledTask/`。跨进程复用的模型请求头归 `shared/providers/modelRequestHeaders.ts`。这些归属依据职责而定，不能仅因消费者数量少就移动原生协议或共享 DTO，也不增加交互、诊断或执行状态权威。测试继续与所属模块相邻。
 
 ### 控制器状态与模块上下文
 

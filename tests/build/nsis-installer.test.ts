@@ -60,7 +60,7 @@ const processHelper = readFileSync(processHelperPath, 'utf8').replaceAll('\r\n',
 const userDataHelperPath = path.resolve(__dirname, '../../scripts/packaging/nsis-user-data-helper.ps1');
 const userDataHelper = readFileSync(userDataHelperPath, 'utf8').replaceAll('\r\n', '\n');
 const tempDirs: string[] = [];
-const { compressTarArchive } = require('../../scripts/openclaw/pack-openclaw-tar.cjs') as {
+const { compressTarArchive } = require('../../scripts/packaging/pack-runtime-resources.cjs') as {
   compressTarArchive: (sourceTar: string, outputArchive: string) => Promise<void>;
 };
 

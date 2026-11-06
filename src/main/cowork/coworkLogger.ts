@@ -1,8 +1,8 @@
 import { app } from 'electron';
 import path from 'path';
 
-import { LogKind, managedLogs } from '../core/logMaintenance';
-import { redactLogText } from '../core/logRedaction';
+import { LogKind, managedLogs } from '../core/logging/logMaintenance';
+import { redactLogText } from '../core/logging/logRedaction';
 
 let logFilePath: string | null = null;
 

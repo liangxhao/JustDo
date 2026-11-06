@@ -23,11 +23,11 @@ import { type MutableRefObject, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useSelector } from 'react-redux';
 
-import { useDialogFocusTrap } from '@/features/cowork/components/shared/useDialogFocusTrap';
 import { coworkService } from '@/features/cowork/coworkService';
 import { toOpenClawModelRef } from '@/features/models/openclawModelRef';
 import { i18nService } from '@/services/i18n';
 import Modal from '@/shared/components/ui/Modal';
+import { useDialogFocusTrap } from '@/shared/hooks/useDialogFocusTrap';
 import type { RootState } from '@/store';
 
 import { agentService } from './agentService';

@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 
-import { COWORK_PLAN_PREVIEW_EVENT } from '@shared/cowork/interactions/planPreview';
 import { render } from 'lit';
 import { afterEach, describe, expect, test, vi } from 'vitest';
+
+import { COWORK_PLAN_PREVIEW_EVENT } from '@/libs/openclaw-chat/model/turn/plan-preview';
 
 import { renderTimelineItem } from './active-turn-timeline';
 

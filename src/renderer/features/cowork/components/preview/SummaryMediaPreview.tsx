@@ -7,7 +7,7 @@ import type { MessageMedia } from '@/libs/openclaw-chat/components/message/messa
 import { i18nService } from '@/services/i18n';
 import Modal from '@/shared/components/ui/Modal';
 
-import { useDialogFocusTrap } from '../shared/useDialogFocusTrap';
+import { useDialogFocusTrap } from '../../../../shared/hooks/useDialogFocusTrap';
 
 export interface SummaryMediaPreviewSource {
   url: string;

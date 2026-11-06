@@ -12,12 +12,12 @@ import { WorkspaceNotifications } from '@/app/shell/WorkspaceNotifications';
 import { MessageBrowserEvent } from '@/features/browser/messageBrowserLinks';
 import CoworkDisplayPanel from '@/features/cowork/components/display/CoworkDisplayPanel';
 import DisplayTabContextMenu from '@/features/cowork/components/display/tabs/DisplayTabContextMenu';
-import { useDraggableModal } from '@/features/cowork/components/shared/useDraggableModal';
 import { CoworkPet } from '@/features/cowork/components/status/CoworkPet';
 import TerminalPanel from '@/features/cowork/components/terminal/TerminalPanel';
 import { ChatScrollController } from '@/libs/openclaw-chat/controllers/chat-scroll-controller';
 import { observeEditorLayout } from '@/shared/dom/observeEditorLayout';
 import { useOwnerDocument } from '@/shared/dom/ownerDocument';
+import { useDraggableModal } from '@/shared/hooks/useDraggableModal';
 
 window.addEventListener('error', event => {
   if (event.error?.stack) console.error(event.error.stack);

@@ -10,7 +10,7 @@ import {
   parseModelProvidersImportPayload,
   TRANSFERRED_NON_LANGUAGE_MODEL_KINDS,
 } from '@/features/settings/models/providerTransfer';
-import { decryptWithPassword, encryptWithPassword } from '@/services/encryption';
+import { decryptWithPassword, encryptWithPassword } from '@/features/settings/models/providerTransferCrypto';
 import { i18nService } from '@/services/i18n';
 
 import LanguageModelSettings, { type LanguageModelSettingsProps } from './LanguageModelSettings';

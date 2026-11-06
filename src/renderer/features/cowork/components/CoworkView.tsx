@@ -25,10 +25,6 @@ import { BrowserLinkTarget, isWebBrowserLink } from '@shared/browser/browserLink
 import { recordingImagesInStepOrder } from '@shared/browser/browserRecording';
 import { DEFAULT_MAX_RETAINED_DISPLAY_TABS } from '@shared/cowork/displayTabRetention';
 import { CoworkInteractionKind } from '@shared/cowork/interactions/interactions';
-import {
-  COWORK_PLAN_PREVIEW_EVENT,
-  isCoworkPlanPreview,
-} from '@shared/cowork/interactions/planPreview';
 import { getMessageTitleInput } from '@shared/cowork/messageInput';
 import { REVIEW_OPEN_EVENT, REVIEW_TAB_ID } from '@shared/cowork/sessionReview';
 import type { SessionRunTiming } from '@shared/cowork/sessionRun';
@@ -211,6 +207,10 @@ import type {
   SummaryResource,
 } from '@/libs/openclaw-chat/model/timeline/session-summary-resources';
 import { OPEN_SPAWNED_AGENT_EVENT } from '@/libs/openclaw-chat/model/tools/spawn-tool-target';
+import {
+  COWORK_PLAN_PREVIEW_EVENT,
+  isCoworkPlanPreview,
+} from '@/libs/openclaw-chat/model/turn/plan-preview';
 import { i18nService } from '@/services/i18n';
 import { getGreetingPeriod, pickHomeGreeting } from '@/services/i18n/homeGreetings';
 import BrainIcon from '@/shared/components/icons/BrainIcon';

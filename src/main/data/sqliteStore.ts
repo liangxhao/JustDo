@@ -4,7 +4,7 @@ import { EventEmitter } from 'events';
 import path from 'path';
 
 import { DB_FILENAME } from '../core/appConstants';
-import { transformAppConfigCredentials } from './appConfigCredentials';
+import { transformAppConfigCredentials } from '../providers/appConfigCredentials';
 import { initializeSessionDiagnosticsTables } from './sessionDiagnosticsStore';
 
 type ChangePayload<T = unknown> = {

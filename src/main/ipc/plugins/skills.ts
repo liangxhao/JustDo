@@ -9,10 +9,6 @@ import {
   PluginOperationStage,
   toPluginOperationStage,
 } from '../../../shared/plugins/pluginOperation';
-import {
-  getSkillManagementCapabilities,
-  getSkillScope,
-} from '../../../shared/plugins/skillManagement';
 import { isUserOwnedSkillSource } from '../../../shared/plugins/skills';
 import type { GatewaySkillEntry } from '../../engine/types';
 import type { OpenClawEngineManager } from '../../openclaw/runtime/openclawEngineManager';
@@ -24,6 +20,10 @@ import {
   isGatewaySkillEnabled,
   SkillStateConfirmationError,
 } from '../../plugins/skills/openclawSkillService';
+import {
+  getSkillManagementCapabilities,
+  getSkillScope,
+} from '../../plugins/skills/skillManagement';
 import {
   createPluginOperationReporter,
   type PluginOperationReporter,

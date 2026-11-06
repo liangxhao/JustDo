@@ -32,6 +32,33 @@ Node、OpenClaw、SDK 与 React 兼容范围以[package.json](../../../../plugin
 热启用探针还核对配套 Workflow 产物和 Required 服务。这些探针随包维护，但不是只安装本包即可独立运行的测试。
 不得读取用户资料或把跳过、来源 proof 失效、未运行的用例计为通过。
 
+### 专项探针命令
+
+以下命令从本包根目录运行，仍须先设置 `APP_PLUGIN_HOST_ROOT` 并准备相符的宿主与运行时。
+脚本从自身位置解析本插件源码，不搜索兄弟插件仓库，也不通过固定相对路径定位宿主源码。
+这些入口保留各自的独立状态和精确身份检查；命令存在不表示本次已执行或已经通过。
+
+| 命令                                                                         | 核对内容与限制                                                                                                                                                                                                                                                                                                                              |
+| ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `node scripts/openclaw/probe-agent-team-routing.mjs <runtime-directory>`     | 比较普通群广播与保留组织者来源会话的公开 `runGroupThread` 回调。使用临时状态和确定性 dispatcher，不启动 Gateway 或 provider；只断言会话、投递身份与 `toolsAllow` 转发，不证明权限执行、忙会话排队或持久完成投递。                                                                                                                           |
+| `node scripts/openclaw/probe-agent-team-source.mjs <runtime-directory>`      | 使用隔离 Gateway 和本地 fixture 模型核对来源会话工具限制、排队、取消与投递身份。原 channel 路径是负对照，顶层 `routePreserved=false` 符合预期；internal participation 与 standalone summary 变体必须保留投递与身份。不使用真实 provider 凭据或用户会话。                                                                                    |
+| `node scripts/openclaw/probe-agent-team-peer-return.mjs <runtime-directory>` | 使用本地 fixture 模型、隔离 Gateway 和限定精确会话的 send grant，核对重复 writer 结果会启动真实 organizer 执行，并在并发 history/list 读取下收到 whole-run 终态。调查打包行为时使用目标运行时随附的独立 Node。                                                                                                                              |
+| `node scripts/openclaw/probe-agent-team-gateway.mjs <runtime-directory>`     | 使用生产 Team 扩展和 Main coordinators，核对模型创建房间、自动汇总、来源参与/mentions、删除来源后公开原生历史保留、关闭后拒绝历史与重新启用后恢复，以及设置资源限制。追加 `--history-toggle-only` 可只检查历史 RPC 注册、关闭时回执对账和重新启用后的原生历史恢复。并发指标来自公开原生 lifecycle；排队取消和来源参与共用生产 permit pool。 |
+| `node scripts/openclaw/probe-agent-team-settings.mjs <runtime-directory>`    | 使用有界延迟 fixture dispatcher 核对公开 group SDK 的逐请求策略、turn budget、mention 与取消。测量的是 dispatcher 并发，不是真实模型执行或 whole-run 结果。                                                                                                                                                                                 |
+| `node scripts/test/verify-group-discussion-runtime.mjs [runtime-directory]`  | 使用独立状态、loopback 模型及随包 group/summary RPC，核对广播、原生 `NO_REPLY` 不重试空回答、静默轮提前完成、精确 mentions、借用来源身份、来源汇总、整组取消与 provider 失败。产物位于宿主的 `.agent-tasks/runtime/group-mode-native-*/`，不访问用户配置、凭据或历史；只验证原生执行契约，不证明真实模型讨论质量或完整 Main/Renderer 流程。 |
+
+`node scripts/test/probe-agent-team-ui.cjs` 委托独立构建 Browser 产物探针，使用真实共享 React、
+已注册的 Team/Workflow 视图与模式，以及 fixture application/Gateway 端口；不再导入已移除的应用 feature 组件。
+Team 原生 send 验证入口是：
+
+```text
+node scripts/test/run-send-contracts.cjs --runtime-dir <runtime> --source-root <target-source>
+```
+
+历史 Team/Workflow 配对行为和 UI 基线检查位于 `scripts/test/verify-paired-*.mjs`。
+这类显式集成场景还要求 `APP_PLUGIN_PROBE_SOURCE_ROOT` 包含两个被测插件，独立于默认 Core 验证命令。
+插件源码与这些专项探针都不是构建、启动或测试 Core 应用的必要输入。
+
 ## 未完成的生产验收
 
 完整生产群 FIFO、首条消息 viewer 委托、真实 UI/语音、多窗口和权限竞争尚未完成端到端验收。
