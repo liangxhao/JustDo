@@ -28,7 +28,7 @@ class DeploymentLayoutTests(unittest.TestCase):
         for name in ('hooks', 'requirements.txt', 'start.py register.py', 'logging.json'):
             self.assertIn('COPY ' + name, dockerfile)
         self.assertIn('"--log-config", "/opt/litellm-hooks/logging.json"', dockerfile)
-        self.assertIn('"--no-access-log"', dockerfile)
+        self.assertNotIn('"--no-access-log"', dockerfile)
         self.assertIn('!logging.json', (root / 'docker/Dockerfile.dockerignore').read_text())
 
         for directory in ('native', 'docker'):

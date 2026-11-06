@@ -57,7 +57,7 @@ def build_launch(mode, inherited=None):
     environment["DISABLE_SCHEMA_UPDATE"] = "true"
     command = [sys.executable, "-m", "uvicorn", "start:create_app", "--factory",
                "--app-dir", str(ROOT.parent), "--log-config", str(ROOT.parent / 'logging.json'),
-               "--no-access-log", "--host", host, "--port", port, "--workers", workers]
+               "--host", host, "--port", port, "--workers", workers]
     return command, environment
 
 

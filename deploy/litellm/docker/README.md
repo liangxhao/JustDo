@@ -27,7 +27,7 @@ Compose 等待数据库健康后执行 `init`，成功后才启动 LiteLLM；`in
 禁止使用 `prisma db push --accept-data-loss`。镜像固定为 LiteLLM 1.99.1。
 
 修改 Python Hook 后重新构建镜像；修改环境后执行 `docker compose up -d --force-recreate`。
-所有容器日志均按单文件 10 MB、最多 3 个文件轮转；默认关闭逐请求访问日志。
+所有容器日志均按单文件 10 MB、最多 3 个文件轮转；默认开启逐请求访问日志和 INFO 运行日志。
 已有容器应用日志策略需重新创建，执行 `docker compose up -d --build --force-recreate`；
 仅重启旧容器不会更新轮转配置。
 原生表结构已就绪、只需检查 User metadata 或准备默认组时，可用镜像内的 `upgrade.py` 检查与更新，

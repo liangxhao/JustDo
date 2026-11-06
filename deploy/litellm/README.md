@@ -251,8 +251,11 @@ general_settings:
 LiteLLM 原生日志由 `litellm_settings.json_logs: true` 配置为 JSON，
 `litellm_settings.set_verbose: false` 关闭详细调试输出。
 
-为控制长期运行的输出量，默认关闭 Uvicorn 逐请求访问日志，保留校验拒绝和运行异常。
-每个 worker 仅补充一条 Hook 与数据库池配置摘要；显式初始化记录迁移及 Hook 初始化阶段。
+默认开启 Uvicorn 逐请求访问日志，记录请求方法、路径和 HTTP 状态；root 与自定义 Hook
+的日志级别均为 INFO，保留正常运行信息、校验告警和运行异常，默认不输出 DEBUG。
+LiteLLM 原生日志名为 `LiteLLM`、`LiteLLM Router`、`LiteLLM Proxy`，默认继承 root 的
+INFO 级别；小写 `litellm` 配置用于自定义 Hook，不控制这些原生日志。
+每个 worker 还会记录一条 Hook 与数据库池配置摘要；显式初始化记录迁移及 Hook 初始化阶段。
 自定义诊断不输出连接串、凭据或请求正文，按错误码和请求 ID 定位，见[统一错误码](hooks/ERRORS.md)。
 
 | 运行方式 | 日志去向 | 保留与轮转 |

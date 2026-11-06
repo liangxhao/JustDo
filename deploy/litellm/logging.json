@@ -27,7 +27,7 @@
     },
     "litellm": {
       "handlers": ["console"],
-      "level": "WARNING",
+      "level": "INFO",
       "propagate": false
     },
     "litellm.deployment": {
@@ -36,6 +36,6 @@
   },
   "root": {
     "handlers": ["console"],
-    "level": "WARNING"
+    "level": "INFO"
   }
 }
