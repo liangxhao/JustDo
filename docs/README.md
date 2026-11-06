@@ -11,22 +11,23 @@
 
 ## 目录与阅读顺序
 
-| 目录                                                      | 内容                                         | 使用方式                                 |
-| --------------------------------------------------------- | -------------------------------------------- | ---------------------------------------- |
-| [architecture/](architecture/README.md)                   | 持续维护的所有权、状态、数据与进程契约       | 修改架构和判断实现边界时阅读             |
-| [features/](features/README.md)                           | 按领域组织的现行功能说明                     | 查用户路径、实现契约和已知限制           |
-| [developer-integration/](developer-integration/README.md) | 网页 SDK、登录、外部 Agent、请求头等接入指南 | 第三方业务接入或增加集成时阅读           |
-| [app-server-api/](app-server-api/README.md)               | stdio／本机 WebSocket、审批、标准图片与示例  | 外部客户端接入；浏览器扩展链接到独立规范 |
-| [plans/](plans/README.md)                                 | 具体未实施需求                               | 先核对现行能力，再推进真实差异           |
-| [openclaw-upgrades/](openclaw-upgrades/README.md)         | 按目标版本组织的升级记录                     | 从版本索引查差异、复核与验收演进         |
-| [releases/](releases/README.md)                           | 已发布应用版本说明                           | 保留发布时事实，不按当前源码改写         |
-| `assets/`                                                 | 文档引用的资源                               | 不存放方案或独立功能说明                 |
+| 目录                                                      | 内容                                         | 使用方式                           |
+| --------------------------------------------------------- | -------------------------------------------- | ---------------------------------- |
+| [architecture/](architecture/README.md)                   | 持续维护的所有权、状态、数据与进程契约       | 修改架构和判断实现边界时阅读       |
+| [features/](features/README.md)                           | 按领域组织的现行功能说明                     | 查用户路径、实现契约和已知限制     |
+| [developer-integration/](developer-integration/README.md) | 网页 SDK、登录、外部 Agent、请求头等接入指南 | 第三方业务接入或增加集成时阅读     |
+| [app-server-api/](app-server-api/README.md)               | stdio／本机 WebSocket、审批、标准图片与示例  | 脚本或原生客户端对接时阅读         |
+| [plugins/](plugins/README.md)                             | 按主题和插件归类的详细说明                   | 查插件管理、开发、业务、协议与验证 |
+| [plans/](plans/README.md)                                 | 具体未实施需求                               | 先核对现行能力，再推进真实差异     |
+| [openclaw-upgrades/](openclaw-upgrades/README.md)         | 按目标版本组织的升级记录                     | 从版本索引查差异、复核与验收演进   |
+| [releases/](releases/README.md)                           | 已发布应用版本说明                           | 保留发布时事实，不按当前源码改写   |
+| `assets/`                                                 | 文档引用的资源                               | 不存放方案或独立功能说明           |
 
 开发操作指南入口：[开发与排障](development.md)、[升级检查清单](upgrade-checklist/README.md)、[运行时补丁](openclaw-runtime-patches.md)、[Windows 安装器](windows-installer.md)及[离线下载](offline-downloads.md)。升级先按功能域核对原生契约与真实验收，不只检查补丁是否能应用。离线下载指南仅列开发启动或 EXE 打包前需手动下载到仓库 `cache/` 的文件及地址；构建、依赖安装与维护命令放在各自所属指南。
 
-## 架构与功能的分工
+## 架构、功能与插件的分工
 
-[架构索引](architecture/README.md)按进程、执行、数据、安全、插件和呈现查找跨域契约；[功能索引](features/README.md)按用户任务查找现行流程和限制。这里不再复制两份专题目录。
+[架构索引](architecture/README.md)按进程、执行、数据、安全、插件和呈现查找跨域契约；[功能索引](features/README.md)按用户任务查找现行流程和限制。插件业务、协议、schema 和验证统一在[插件文档](plugins/README.md)维护，迁仓时与源码一并带走；应用文档不保留其第二份主定义。
 
 判断一个需求是否已经实现，先读对应现行文档并核对注册与消费链路，再读[未实施需求](plans/README.md)。计划中的目标接口、候选架构和历史测量不能替代当前契约；已完成方案应将必要规则整合进现行文档后删除，历史由 Git 追溯。
 

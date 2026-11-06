@@ -185,7 +185,7 @@ Renderer 再次核对同一消息 ID、runId 和当前历史世代，以一份�
 不能依赖已被展示投影移除的原始工具执行字段。回复前失败读取原生
 `run-failed-before-reply` 公开回执。只将有界脱敏节选与闭合诊断字段交给 Renderer，
 不建立消息缓存；步骤证据和全局 stability 背景都不能替代整轮 lifecycle 结论。
-扫描缺口与建议的具体规则见 [会话诊断](../features/chat/session-diagnostics.md)。
+扫描缺口与建议的具体规则见 [会话诊断](../features/execution/session-diagnostics.md)。
 
 ## 3. 工具：身份、嵌套和输出阅读
 
@@ -384,4 +384,4 @@ Apply Patch 按文件呈现输入补丁，明确新增、修改、删除和移�
 
 ## 6. 验证入口与限制
 
-回归分别验证模型活动、真实 Tool start、错误详情和历史接管，不能用一种信号代替另一种。媒体验证应包含换源、隐藏、窗口销毁及 Gateway 换代；富内容验证包含非法/超大输入、用户展开状态和实际 ownerDocument。当前真实模型、代理及安装版限制随[会话诊断](../features/chat/session-diagnostics.md)、[文件链接](../features/chat/message-file-links.md)及相应功能文档维护。
+回归分别验证模型活动、真实 Tool start、错误详情和历史接管，不能用一种信号代替另一种。媒体验证应包含换源、隐藏、窗口销毁及 Gateway 换代；富内容验证包含非法/超大输入、用户展开状态和实际 ownerDocument。当前真实模型、代理及安装版限制随[会话诊断](../features/execution/session-diagnostics.md)、[文件链接](../features/chat/message-file-links.md)及相应功能文档维护。

@@ -2,6 +2,8 @@
 
 MCP Apps 显示 MCP 服务提供的 `ui://` 界面，并允许界面通过标准 AppBridge 调用当前原生会话授权的工具、读取资源和更新上下文。它与 `show_widget` 生成的交互式回答并存，准入和运行时均不混用。
 
+按入口阅读：[对话与侧栏首页](#用户流程)、[文件打开与保存](#文件-app-打开与保存)、[固定到侧栏](#消息应用的侧栏引用)、[工具权限与文件下载](#权限和数据流)、[提问、关闭和恢复](#提问生命周期和恢复)。第三方 App 的稳定内容引用接入见[接入边界](../../plugins/mcp-servers/references.md)，draw.io 的编辑协议保留在其[独立说明](../../plugins/extensions/drawio/current-canvas.md)。
+
 ## 用户流程
 
 | 入口                | 是否请求模型   | 打开位置                               |
@@ -16,9 +18,9 @@ MCP Apps 显示 MCP 服务提供的 `ui://` 界面，并允许界面通过标准
 
 在执行设置的 MCP 区域选择应用界面的“启用”或“关闭”，默认启用，以支持内置 draw.io。不提供“沿用原生设置”选项；无有效当前运行配置时采用整份默认配置，其中应用界面启用。有效配置中的明确关闭保留，缺字段或 null 不作逐字段迁移。完整、最小、登录和退出配置同步将这一选择投影到原生 `mcp.apps.enabled`，并保留其他原生 Apps 参数及无关 MCP 权限。
 
-内置 [draw.io 离线绘图](drawio-offline.md) 默认启用。用户在对话中要求绘图，模型调用工具后显示编辑器；无需配置服务器、账号或公网服务。
+内置 [draw.io 离线绘图](../../plugins/extensions/drawio/offline-editor.md) 默认启用。用户在对话中要求绘图，模型调用工具后显示编辑器；无需配置服务器、账号或公网服务。
 
-draw.io 的[连续编辑](drawio-current-canvas.md)在插件内实现：标准 AppBridge 取得当前画布，认证插件 RPC 将准备绑定到确切原生 run，独立插件工具在实际应用回执后返回成功。修改结果投影成可定位当前画布的紧凑引用，不伪造 MCP descriptor，也不扩大通用预览隐藏规则。
+draw.io 的[连续编辑](../../plugins/extensions/drawio/current-canvas.md)在插件内实现：标准 AppBridge 取得当前画布，认证插件 RPC 将准备绑定到确切原生 run，独立插件工具在实际应用回执后返回成功。修改结果投影成可定位当前画布的紧凑引用，不伪造 MCP descriptor，也不扩大通用预览隐藏规则。
 
 保留唯一承载未保存输入的 iframe；活动侧栏目标优先，切换会话暂停界面交互，draw.io 已发送运行仍可经原绑定完成画布操作。未完成的新发送准备仍失效，首发取消在准备结束后仍可阻止真正发送。此路径不增加生命周期补丁、正文缓存或旧工具授权；原生会话目录缺口由下述 030 独立修复。
 
@@ -78,7 +80,7 @@ sessionId 与创建时 lifecycleRevision 精确匹配的原生预览会话。原
 draw.io 在 iframe 初次挂载前核对原生来源，后续通过独立认证的当前画布通道准备快照，
 不依赖旧原生视图的模型上下文授权。用户可自由切换模型，保持同一编辑器、修改和撤销栈；
 首发固定模型及后续切换不重放 App 启动或恢复旧 MCP 工具权限。静态资源由插件服务持有，
-不随旧模型的 MCP runtime 退出。来源准入、暂停与关闭规则见[当前画布连续编辑](drawio-current-canvas.md)。
+不随旧模型的 MCP runtime 退出。来源准入、暂停与关闭规则见[当前画布连续编辑](../../plugins/extensions/drawio/current-canvas.md)。
 
 ### 首页提问的当前限制
 
@@ -302,7 +304,7 @@ Main 的通用原生 View 组拥有工作区 WebContentsView 和固定卡片的�
 ### 内容关联与历史回执
 
 基础展示只复用同一原生视图。跨消息的稳定内容关联、成功回执和只读恢复是可选插件增强，
-接入要求见[插件引用接入](../plugins/mcp-app-references.md)。宿主不推测业务 ID，
+接入要求见[插件引用接入](../../plugins/mcp-servers/references.md)。宿主不推测业务 ID，
 不要求普通查看器实现快照、撤销、AI 修改或版本数据库。
 
 原生 App descriptor 准入与正常预览规则保持原路径。可选回执仅在真实工具、精确调用、
@@ -332,7 +334,7 @@ Gateway 保持 MCP transport、catalog、会话、工具许可、原生历史、
 
 原生分支创建结果待确认时，保留历史只读查看，MCP Apps 的准备、启动、工具交互、安装引导及问题操作沿用现有会话门禁；Main 和 Renderer 均校验当前状态，旧回调不能绕过后来生效的限制。
 
-共享契约在 `src/shared/plugins/mcpApps.ts`。数据面在 `libs/openclaw-chat/gateway/mcp-app/mcp-app-session.ts`，标准 SDK 桥和视图在 `components/mcp-app/`，产品入口在 Cowork 的 `mcpApps/` 与 `display/tabs/useMcpAppTabs.tsx`。Main 提问处理在 `ipc/plugins/mcpApps.ts`，preload 仅公开对应方法。
+共享契约在 `src/shared/plugins/mcpApps.ts`。数据面在 `src/renderer/libs/openclaw-chat/gateway/mcp-app/mcp-app-session.ts`，标准 SDK 桥和视图在同一聊天库的 `components/mcp-app/`。产品入口在 `src/renderer/features/cowork/components/` 下的 `mcpApps/` 与 `display/tabs/useMcpAppTabs.tsx`。Main 提问处理在 `src/main/ipc/plugins/mcpApps.ts`，preload 仅公开对应方法。
 
 模型 App 只从完成的原生 MCP 工具事件、原生工具角色历史或 ToolSearch 的实际 MCP 结果准入；不递归搜索文本、代码围栏、HTML 属性或 assistant JSON。手动启动和问题预览分别来自认证 RPC 与专用 Main 桥。模型与手动入口在准入时核对服务、工具、资源与工具调用身份。
 
@@ -372,7 +374,7 @@ Chromium 将已运行 iframe 跨 Document 移动会重载。消息 App 因此在
 
 标准 `ui/download-file` 仅接收一个内嵌 text/blob 资源，不按资源链接下载网络内容。当前可见视图通过专用 preload 请求 Main；Main 再次校验 MIME、文件名、Base64 和 25 MiB 上限，并使用所属窗口的原生保存对话框选择路径。
 
-App 无法指定写入路径，取消不写入文件。允许的数据格式由 `shared/plugins/mcpAppDownload.ts` 声明，沙箱不开放直接下载权限。
+App 无法指定写入路径，取消不写入文件。允许的数据格式由 `src/shared/plugins/mcpAppDownload.ts` 声明，沙箱不开放直接下载权限。
 其中 XLSX 导出须使用标准 spreadsheetml MIME 和 `.xlsx` 后缀，保留二进制原样；
 该许可不包含 `.xlsm`、可执行文件或不匹配的 MIME/后缀组合，也不绕过保存位置选择。
 
@@ -382,7 +384,9 @@ App 无法指定写入路径，取消不写入文件。允许的数据格式由 
 
 原生 `question.requested/resolved` 在 Main 仅广播无正文的刷新提示。Renderer 按产品会话读取未过期问题。Main 检查发送者为主 frame、产品会话可写、原生 sessionKey/agent 匹配、问题仍 pending；回答只接受问题自身字段，secretStore 主机策略取自原生记录。表单处理选择、默认值、多选、逐行文本、其他回答、秘密输入、URL 入口和拒绝。
 
-文件/目录由 Main 原生选择框获取；不接受 Renderer/App 提供的上传本机路径。上传检查目录边界、符号链接、打开文件身份、大小和读前后变化，限制 64 个文件、8 层目录、5 MiB，再由原生 formResource 校验类型、问题归属和上传权限。预览通过同一原生问题身份读取，可展示文本、受限栅格图像或原生 App；问题结束后清空表单，不保存秘密答案。
+文件/目录由 Main 原生选择框获取；不接受 Renderer/App 提供的上传本机路径。上传检查目录边界、符号链接、打开文件身份、大小和读前后变化，限制 64 个文件、8 层目录、5 MiB，再由原生 formResource 校验类型、问题归属和上传权限。预览通过同一原生问题身份读取，可展示文本、受限栅格图像或原生 App；问题结束后清空界面表单，不另存桌面答案缓存。
+
+声明 `secretStore` 的问题与普通秘密输入不同：表单展示原生给出的名称、原因和允许主机，提交后可由原生写入 Secret Store。Main 只从当前问题记录转发主机策略，不接受客户端自行扩大范围。原生秘密存储、加载和撤销由 OpenClaw 管理；界面清空不表示原生从未持久化该秘密。
 
 连接、原生 incarnation、会话、呈现代次任一失效都会使旧接口失效。消息内 App 沿原有
 卸载规则；已加载完成的工作区 App 切换会话时暂停原生接口，保留同一个 iframe 和 SDK bridge，
@@ -408,7 +412,7 @@ MCP Apps 使用原生生命周期，不保留旧的请求取消/展示回收补�
 
 ### 手动入口与模型执行使用同一目录
 
-手动 App 与后续模型执行必须使用相同的原生会话工作目录。锁定运行时的 pristine 手动准备遗漏 `spawnedCwd`，会在角色 home 与项目目录不同时替换 MCP runtime，撤销仍显示中的旧视图交互并关闭其资源服务。`030-mcp-app-session-workspace.cjs` 仅将手动准备接至模型已有的 ingress workspace resolver，并把持久工作目录事实纳入准备 fingerprint；不改变授权、租约、取消或释放语义。宿主不能通过 App 参数自选目录或替换会话 owner。复现和验收见 [draw.io 当前画布](drawio-current-canvas.md#6-必须通过的验证)；较早版本的通过记录不替代[本版验证](../../openclaw-upgrades/v2026.10.7/validation.md)。
+手动 App 与后续模型执行必须使用相同的原生会话工作目录。锁定运行时的 pristine 手动准备遗漏 `spawnedCwd`，会在角色 home 与项目目录不同时替换 MCP runtime，撤销仍显示中的旧视图交互并关闭其资源服务。`030-mcp-app-session-workspace.cjs` 仅将手动准备接至模型已有的 ingress workspace resolver，并把持久工作目录事实纳入准备 fingerprint；不改变授权、租约、取消或释放语义。宿主不能通过 App 参数自选目录或替换会话 owner。复现和验收见 [draw.io 当前画布](../../plugins/extensions/drawio/current-canvas.md#6-必须通过的验证)；较早版本的通过记录不替代[本版验证](../../openclaw-upgrades/v2026.10.7/validation.md)。
 
 断线和未知结果不自动重试启动、工具调用、设置写入或文件写入。重新读取界面优先读取 `mcp.app.view`；仅下述已核验的插件恢复适配可在明确过期后读取原始结果。原生历史重建的只读视图不恢复工具授权。对于提交工单等写入操作，须核对实际结果，不能因界面关闭而重复提交。
 

@@ -206,7 +206,7 @@ skills.workshop.autonomous.mode。该设置属于原生技能自动学习能力�
 定时任务系统设置只管理原有记忆整理能力，不再接受旧 skillMode 写入。
 手动学习继续使用当前聊天的原生 `/learn`，不另建学习启动器。
 
-技能页的工坊弹窗管理 main 的当前技能、保存版本与已生效变更；现行流程见[插件系统](07-plugin-system.md)，真实内网验收见[现行说明与验证边界](07-plugin-system.md)。
+技能页的工坊弹窗管理 main 的当前技能、保存版本与已生效变更；现行流程见[插件系统](../plugins/management/plugin-system.md)，真实内网验收见[现行说明与验证边界](../plugins/management/plugin-system.md)。
 
 ### 实现与回归
 

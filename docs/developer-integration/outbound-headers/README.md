@@ -1,6 +1,6 @@
 # 出站请求头配置与 Extension 接入指南
 
-这是一份可以独立分发的使用说明。适用于以下两类人：
+本页同时说明用户配置和仓库中的 Extension 接入步骤，适用于以下两类人：
 
 - 普通用户或运维人员：临时为指定服务器添加认证请求头；
 - Extension 开发者：让用户安装并启用 Extension 后，自动获得所需的 URL 与请求头映射。
@@ -33,9 +33,9 @@ Windows 上的路径格式是：
 
 其他平台的对应位置是：
 
-| 平台  | `config.json`                                                                                                                  | `user_info.json`                                                                                       |
-| ----- | ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------ |
-| macOS | `~/Library/Application Support/<productName>/outbound-header-proxy/config.json`                                                       | `~/Library/Application Support/<productName>/<directoryName>/<userInfoFileName>`                                           |
+| 平台  | `config.json`                                                                                                                                | `user_info.json`                                                                                                                               |
+| ----- | -------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| macOS | `~/Library/Application Support/<productName>/outbound-header-proxy/config.json`                                                              | `~/Library/Application Support/<productName>/<directoryName>/<userInfoFileName>`                                                               |
 | Linux | `$XDG_CONFIG_HOME/<productName>/outbound-header-proxy/config.json`；未设置时使用 `~/.config/<productName>/outbound-header-proxy/config.json` | `$XDG_CONFIG_HOME/<productName>/<directoryName>/<userInfoFileName>`；未设置时使用 `~/.config/<productName>/<directoryName>/<userInfoFileName>` |
 
 `productName` 来自 `package.json.productName`；`directoryName` 和 `userInfoFileName` 分别来自
@@ -44,14 +44,19 @@ Windows 上的路径格式是：
 ### 2.2 配置步骤
 
 1. 完全退出应用。
-2. 复制 [`examples/manual/config.json`](examples/manual/config.json) 到上述 `config.json` 路径。
+2. 文件尚不存在时，可复制 [`examples/manual/config.json`](examples/manual/config.json) 到上述 `config.json` 路径；
+   已有文件只合并需要的 group，保留其他现行映射和全局开关。
 3. 按实际服务器地址修改 `baseUrlWhitelist`，按实际请求头名称修改 `headerNames`。
-4. 复制 [`examples/manual/user_info.json`](examples/manual/user_info.json) 到上述
-   `user_info.json` 路径，并把示例值替换为真实值。
+4. 参考 [`examples/manual/user_info.json`](examples/manual/user_info.json) 合并所需请求头属性，并把示例值替换为同一账号的实际值。
+   已有登录文件不得用示例整份覆盖：这会丢失 mtoken、登录资料和其他 Header。账号字段由可信登录流程管理，
+   不要为了调试一个 Header 改成另一账号；没有文件时，也不能用 Header 示例代替真正登录。
 5. 重新启动应用。
 6. 通过服务器日志或对应功能的连接测试确认 Header 已收到。
 
 请求头配置没有实时监听。手工修改后，完整退出并重新启动应用即可生效；其他刷新时机见第 7 节。
+尚无文件时可按部署方要求创建仅含所需 Header 的 JSON 对象，但这只提供请求头值，不建立应用账号或模型登录授权。
+SDK 续期接入使用[账号租约与值刷新接口](../outbound-header-user-info-refresh-api.md)，
+不要把旧账号的异步续期结果直接写回当前登录文件。
 
 ### 2.3 `config.json` 字段
 
@@ -119,6 +124,7 @@ your-extension/
 参考文件：[`examples/extension/outbound-header-policy.json`](examples/extension/outbound-header-policy.json)。
 建议同时参考 [`examples/extension/USER_SETUP.md`](examples/extension/USER_SETUP.md)，在 Extension 的
 README 或用户说明中写清楚需要配置的 `user_info.json` 属性。`USER_SETUP.md` 只用于说明，不由应用读取。
+复制给最终用户前，应按发行版填写实际产品目录和文件名；不要让用户依赖仓库源码或未替换的占位符判断路径。
 
 不需要增加 Hook，不需要编写代码修改 `config.json`，也不需要声明 outbound-header 专属权限或
 审批 token。用户安装并启用 Extension 后，应用会自动读取该文件；禁用或卸载 Extension 后，

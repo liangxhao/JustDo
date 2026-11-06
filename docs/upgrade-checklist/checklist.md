@@ -56,8 +56,9 @@
       显示具体错误并保留数据，相同 schema 数字或用户点击确认不能代替实际兼容性。
 
 工程流程见[补丁操作指南](../openclaw-runtime-patches.md)和
-[构建脚本说明](../../scripts/README.md)。离线资源地址、文件名和准备命令统一维护在
-[离线下载文档](../offline-downloads.md)，不要在本文复制另一份下载清单。
+[构建脚本说明](../../scripts/README.md)。手动下载资源的地址、完整文件名和缓存位置统一维护在
+[离线下载文档](../offline-downloads.md)；准备与打包命令见[开发指南](../development.md)和
+[构建脚本说明](../../scripts/README.md)，不要在本文复制另一份下载清单。
 
 ## 2. Gateway、SDK 与跨进程契约
 
@@ -292,9 +293,9 @@ MCP Apps 使用原生认证 WS 接口，不使用生命周期补丁。关闭视�
       面向展示的聊天历史；Main/Redux 不复制中间结果，也不新增 VM 或等待快照缓存。
       使用精确整轮 `executionSettled:true` 终态核对，重启前确认关闭结果，不重发未知执行。
 
-参考：[权限管理](../features/chat/openclaw-permission-management.md)、
-[运行参数](../features/chat/agent-runtime-settings.md)、
-[助手](../features/assistants/assistants-and-collaboration.md)、[执行引擎](../architecture/05-agent-engine.md)。
+参考：[权限管理](../features/execution/openclaw-permission-management.md)、
+[运行参数](../features/execution/agent-runtime-settings.md)、
+[助手](../features/assistants/profiles-and-subagents.md)、[执行引擎](../architecture/05-agent-engine.md)。
 
 ## 7. 工程、Worktree、共享终端与记忆
 
@@ -362,11 +363,13 @@ MCP Apps 使用原生认证 WS 接口，不使用生命周期补丁。关闭视�
 - [ ] 分开验证 `plugins.list` 的期望开关与实际 `runtime` 健康状态：注册/服务失败
       显示错误，`unloaded` 不推断失败；`needs-setup` 即使没有缺失环境变量也显示
       配置警告。清单成功后能清除旧错误，不为展示错误修改开关或管理权限。
-- [ ] 测试本地目录/压缩包导入、能力审查与 reviewToken、换包/文件变化、取消和部分
-      安装失败。未知格式拒绝，不把上游 bundle 识别能力当作产品已实现转换。
-- [ ] 人工确认的能力令牌必须由最终原生 staging 再核验；审查后增加能力使旧令牌
-      失效，不能用 CLI 无条件接受标志代替确认。安装等待覆盖依赖准备与运行时应用，
-      普通 RPC 超时不证明安装未提交，不能自动改走另一条安装路径。
+- [ ] 测试本地目录/压缩包导入、换包/文件变化、取消和部分安装失败。产品导入固定
+      `autoAcceptCapabilities`，选择安装包后直接提交；原生仍校验声明、来源、包身份和
+      staging。未知格式拒绝，不把上游 bundle 识别能力当作产品已实现转换。
+- [ ] 已安装扩展启用时若原生要求能力确认，核对 reviewToken 与 operator grants，
+      声明变化使旧令牌失效；该流程与直接导入的自动接受策略分开。App 代码 hash 信任
+      仍由独立包生命周期核验。安装等待覆盖依赖准备与运行时应用，普通 RPC 超时不证明
+      安装未提交，不能自动改走另一条安装路径。
 - [ ] 多入口包分别核对 manifest owner、原生子条目 ID、精确安装路径和市场身份。
       以原生 metadata/ownership 为准，不按 ID 前缀猜归属；CLI 最终回执匹配实际
       子条目，列表、配置、更新和卸载使用同一已核验目录。验证无预授权子条目的新安装，
@@ -445,10 +448,10 @@ MCP Apps 使用原生认证 WS 接口，不使用生命周期补丁。关闭视�
       在“可更新”筛选下仍可看到待处理反馈。页内切换、离页再返回、多窗口及交错读取
       不释放在途安装锁、不覆盖较新清单，不依靠重复安装修复刷新失败。
 
-参考：[插件系统](../architecture/07-plugin-system.md)、[Plugin Hub](../features/plugins/plugin-hub-experience.md)、
-[市场适配](../architecture/16-skill-marketplace-adapter.md)、
-[Agent Team](../features/assistants/agent-team.md)、[Workflow](../features/workflow/swarm-workflow.md)、
-[批次](../features/workflow/swarm-workflow-batches.md)、[Workboard](../features/workflow/workboard.md)、
+参考：[插件系统](../plugins/management/plugin-system.md)、[Plugin Hub](../plugins/management/plugin-hub.md)、
+[市场适配](../plugins/marketplace/adapter.md)、
+[Agent Team](../plugins/extensions/agent-team/guide.md)、[Workflow](../plugins/extensions/swarm-workflow/workflows.md)、
+[批次](../plugins/extensions/swarm-workflow/batches.md)、[Workboard](../plugins/extensions/workboard/integration.md)、
 [交互式回答](../features/chat/interactive-answers.md)。
 
 ## 10. 浏览器模式、Chrome 扩展与人工介入
@@ -490,7 +493,7 @@ MCP Apps 使用原生认证 WS 接口，不使用生命周期补丁。关闭视�
       旧异步请求不在清理后复活记录，清除记录不误删下载文件或其他 profile 数据。
 
 参考：[浏览器设置](../features/browser/browser-settings-design.md)、
-[扩展侧聊](../features/browser/browser-extension-side-chat.md)、[app-server 协议](../app-server-api/README.md)、
+[扩展侧聊](../plugins/browser-extensions/browser-assistant/side-panel.md)、[app-server 协议](../app-server-api/README.md)、
 [人工介入](../features/browser/browser-intervention.md)、[操作录制](../features/browser/browser-operation-recording.md)。
 
 ## 11. 设置项、配置投影与认证切换
@@ -540,10 +543,10 @@ MCP Apps 使用原生认证 WS 接口，不使用生命周期补丁。关闭视�
 - [ ] 品牌从 `productMetadata`/构建 metadata 读取，兼容标识保持稳定；新内部字段、
       KV/IPC/plugin state/source symbol 使用领域名称，不从产品名派生。
 
-参考：[模型管理](../features/models/model-management.md)、[语音](../features/models/local-tts.md)、
-[决策模型](../features/models/jev-integration.md)、[登录](../features/integrations/login-sdk-template.md)、
-[模型认证](../features/integrations/authentication-builtin-model-lifecycle.md)、
-[出站请求头](../features/integrations/outbound-headers.md)、[CLI / ACP / app-server](../features/integrations/agent-cli.md)。
+参考：[模型管理](../features/models/model-management.md)、[语音](../features/speech/voice-and-transcription.md)、
+[决策模型](../plugins/extensions/typesafe/decision-evaluation.md)、[登录](../features/account/login-sdk-template.md)、
+[模型认证](../features/account/authentication-builtin-model-lifecycle.md)、
+[出站请求头](../features/network/outbound-headers.md)、[CLI / ACP / app-server](../features/external-clients/agent-cli.md)。
 
 ## 12. 左侧导航、会话列表与右侧工作区
 
@@ -764,7 +767,7 @@ fixture、合成输入和本机测试服务不替代真实模型、设备或企�
 指向的完整原生 JSON 日志及认证原生事件。简化日志缺行、控制台没有输出或 UI 已空闲
 均不构成结算证据。会话诊断只用已有连接及受限历史/日志接口，不为诊断启动 Gateway，
 不直接读取 transcript 文件；提交记录仅保存脱敏证据。见
-[开发排障](../development.md)与[会话诊断](../features/chat/session-diagnostics.md)。
+[开发排障](../development.md)与[会话诊断](../features/execution/session-diagnostics.md)。
 
 升级记录至少包含：
 

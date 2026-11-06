@@ -3,7 +3,7 @@
 登录模块完成账号状态持久化后，只需在 Main 中调用一个对应入口。模型凭据换取、目录刷新、
 默认模型恢复、Gateway 同步、Renderer 通知及请求头值缓存刷新由入口内部负责。
 
-产品已提供 [登录 SDK 接入模板](../features/integrations/login-sdk-template.md)：首页账号入口、
+产品已提供 [登录 SDK 接入模板](../features/account/login-sdk-template.md)：首页账号入口、
 `LoginService`、凭据文件写入和显式账号 IPC 均已实现。后续 SDK 应通过
 `src/main/core/app/auth/loginSdkAdapter.ts` 接入，复用模板的提交顺序、重试和账号隔离。
 默认 SDK 适配器不可用，手工导入登录文件的原有启动恢复流程仍可使用。
@@ -25,28 +25,30 @@ export declare const refreshAfterLogout: () => Promise<void>;
 | `await refreshAfterLogout()` | Main 已清理本地登录凭据后           | 停止活动上报，刷新请求头缓存，中止旧换证并清除活动模型凭据，移除内置提供商及受管认证配置，同步 Gateway，通知界面 |
 
 这是 **Main 内部函数接口**，不是 HTTP、Gateway RPC 或现有 Renderer IPC。接口不接收 token，
-不返回模型列表。未来登录 UI 应走登录模块自己的显式 preload/IPC，由 Main 校验并提交登录状态，
-再调用本接口。不要向 Renderer 暴露可任意启用内置模型的无条件回调。
+不返回模型列表。现有登录 UI 使用 `window.electron.auth` 的 `login()`、`logout()`、`retrySync()`、
+`getState()` 和 `onStateChanged()`，对应 `src/shared/app/auth.ts` 中的 `AuthApi`。
+Main 的 `LoginService` 校验并提交登录状态后调用本接口；不要向 Renderer 暴露可任意启用内置模型的无条件回调。
 
-`main.ts` 是应用启动入口；独立登录模块应由 Main 注入这两个回调，避免反向导入入口造成启动副作用
-或循环依赖。下例是未来模块的接入示意，`registerLoginHandlers`、`commitLogin`、`clearLogin` 由登录模块实现，
-并非当前已有 API：
+`main.ts` 是应用启动入口，已经通过 `getLoginService()` 装配下列依赖。
+SDK 接入应替换 `createLoginSdkAdapter()` 的认证提供方实现，保留现有 Store 和回调；
+不要从 adapter 反向导入 `main.ts` 或新增重复服务。以下省略导入与 UI 通知函数，只展示现有 Main 装配形状：
 
 ```ts
-// 在 main.ts 中初始化未来登录模块；此时产品 Store 与运行时服务已经初始化。
-registerLoginHandlers({
+new LoginService({
+  store: new LoginUserInfoStore(resolveOutboundHeaderUserInfoPath()),
+  adapter: createLoginSdkAdapter({ getParentWindow: () => mainWindow }),
   onLoginCommitted: refreshAfterLogin,
   onLogoutCommitted: refreshAfterLogout,
+  onHeadersCommitted: () => {
+    updateOutboundHeaderUserInfoCache();
+  },
+  onStateChanged: notifyAccountView,
 });
-
-// 登录模块内部的顺序：
-await commitLogin(); // 完成身份校验，并等待 user_info.json 原子写入完成
-await dependencies.onLoginCommitted();
-
-// 退出登录模块内部的顺序：
-await clearLogin(); // 删除登录文件，或清除其中的认证/Cookie 字段
-await dependencies.onLogoutCommitted();
 ```
+
+`notifyAccountView` 是上例对现有 `AuthIpc.StateChanged` 通知的命名占位，不是另一个仓库 API。
+`LoginService` 已负责成功认证后的原子写入、账号切换先退出旧绑定、再 await 登录回调，以及退出时先清文件。
+真实 SDK 返回经验证的身份／凭据，不应自行写第二份登录文件或再触发一次生命周期回调。
 
 不要直接调用底层 `BuiltinModelLifecycle.refreshAfterLogin()` 或只修改 `builtin_models.enabled`：
 这会绕过换证、退出挂起保护和请求头缓存更新。无需额外调用 `updateOutboundHeaderUserInfoCache()`。
@@ -83,7 +85,7 @@ await dependencies.onLogoutCommitted();
 换证请求为 `POST` JSON `{ mtoken, deviceId }`；`deviceId` 只使用当前有效网卡 MAC（去冒号、转大写）。Main 公共模块 [`src/main/core/network/macAddress.ts`](../../src/main/core/network/macAddress.ts) 导出 `getMacAddress(): string`，登录模块与模型换证应共同调用，不能在 Renderer 或 `src/shared` 中直接读取系统网卡。无有效 MAC 或查询失败时函数抛错，调用方应处理失败；不回退 UUID，不保存设备 ID 文件。
 响应包含 `access_token`、`token_type: "Bearer"`、整数 `expires_in`，可选 `uid` 必须匹配登录账号。
 JWT 的 `aud` 必须为字符串 `justdo-litellm`，kid 可选。模型请求使用真实 JWT Bearer；换证日志提供脱敏的失败阶段、原因和 HTTP 状态。
-JWT claims、期限和部署约定见[认证设计](../features/integrations/authentication-builtin-model-lifecycle.md)
+JWT claims、期限和部署约定见[认证设计](../features/account/authentication-builtin-model-lifecycle.md)
 及[客户端部署](../../deploy/client/README.md)。修改编入 Main 的配置后需要重启开发进程或重新打包。
 
 ## 3. 调用顺序与账号切换
@@ -97,8 +99,9 @@ JWT claims、期限和部署约定见[认证设计](../features/integrations/aut
 显式退出不能仅清 Redux、关闭登录窗口或通知界面。必须清理文件，否则重启后仍可能重新读取旧登录状态。
 账号切换必须先完成退出清理，以免把上一账号的缓存目录带到新账号。文件持久化失败时不调用登录入口。
 
-登录模块应串行提交这些账号操作。底层 generation/abort 会拦截迟到的模型请求，但不会替登录模块
-序列化其文件写入。接口应当 `await`；不要以未处理的异步调用结束登录/退出流程。
+现有 `LoginService` 串行提交账号变更，并用 generation/abort 拦截过期 SDK 结果；
+模型凭据协调器另外处理换证代次。上述 Main 回调本身不替独立调用方序列化任意文件写入，
+绕过服务直接调用时仍需自己保证提交顺序。接口应当 `await`，不要留下未处理的登录／退出异步任务。
 
 ## 4. 刷新与模型回退规则
 
@@ -117,7 +120,9 @@ JWT claims、期限和部署约定见[认证设计](../features/integrations/aut
 - 退出登录：内置模型入口和凭据被清理；不承诺强制终止已经发出的远端推理请求。
 
 Cookie 单独续期且模型登录身份未变化时，可只调用
-[请求头值刷新接口](outbound-header-user-info-refresh-api.md)，无需触发完整登录流程。
+[受账号租约保护的凭据提交入口](outbound-header-user-info-refresh-api.md#sdk-续期应使用现有账号租约)，无需触发完整登录流程。
+`LoginService.updateCredentials()` 会按是否改变 mtoken 选择模型认证刷新或仅刷新请求头；
+底层缓存刷新函数不负责验证账号、写文件或安排续期。
 
 ## 5. 返回、失败与重试
 

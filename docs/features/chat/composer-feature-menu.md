@@ -28,7 +28,7 @@ flowchart LR
 
 `useAppComposer` 将模式转为通用 `ComposerFeatureItem`，再与附件和计划模式组装。
 无需在 `CoworkPromptInput` 增加插件业务 import。旧版业务适配器及独立启用快照已由
-Browser Registry 替代，Native/Main/Browser 准入流程见[应用插件宿主](../../architecture/17-app-plugin-host.md)。
+Browser Registry 替代，Native/Main/Browser 准入流程见[应用插件宿主](../../plugins/management/app-plugin-runtime.md)。
 
 展示顺序保留原版：Swarm Workflow、Agent Team；Team 二级项为群组讨论、任务协作。
 父级按任一子项选中而高亮，子菜单不重复显示“插件”分组标题，返回文案由插件提供。

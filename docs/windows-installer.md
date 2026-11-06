@@ -750,7 +750,7 @@ and TypeScript precompile paths both include the MCP SDK and its schema validato
 without adding a separate runtime npm installation. Validate the installed console
 under Chinese and space-containing paths without system Node, public network or
 warmed caches. The command and protocol contract is in
-[Agent CLI / ACP](features/integrations/agent-cli.md).
+[Agent CLI / ACP](features/external-clients/agent-cli.md).
 
 ### Startup diagnostics and review coverage
 

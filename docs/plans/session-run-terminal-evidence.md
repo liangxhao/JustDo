@@ -6,11 +6,15 @@
 
 `src/main/ipc/cowork/sessions.ts` 的 `reconcileRuntimeStatus` 仍包含以下后备结算：
 
-| 分支                      | 当前行为                                                                              | 缺少的证据                                              |
-| ------------------------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------- |
-| 已接纳的计时              | 两次 known-idle 或 root 改变时，可按产品状态结束为 completed/failed                   | 原执行的精确整轮终态                                    |
-| Stop / yield 后变空闲     | 可能参与上述状态收敛                                                                  | Stop ACK / 空闲均不证明执行已结算                       |
-| 未知准入或缺 `acceptedAt` | 允许 `agent.wait` 省略 `runId`，以 `ok/error` 或带 `endedAt` 的 `timeout` 判 terminal | 精确 run 与 `executionSettled:true`，并排除普通观察超时 |
+| 分支                         | 当前行为                                                                                                              | 缺少的证据                                              |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| 已接纳的计时                 | 两次 known-idle 或 root 改变时，可按产品状态结束为 completed/failed                                                   | 原执行的精确整轮终态                                    |
+| Stop / yield 后变空闲        | 可能参与上述状态收敛                                                                                                  | Stop ACK / 空闲均不证明执行已结算                       |
+| 未知准入的 wait 后备         | 请求携带 `unknownAdmission.runId`，但允许响应省略 `runId`；在刷新得到已知空闲后，以相同的 `ok/error/timeout` 规则结算 | 精确 run 与 `executionSettled:true`，并排除普通观察超时 |
+| 缺 `acceptedAt` 的 wait 后备 | 请求携带 `rootRunId ?? clientTurnId`，但允许响应省略 `runId`，以 `ok/error` 或带 `endedAt` 的 `timeout` 判 terminal   | 精确 run 与 `executionSettled:true`，并排除普通观察超时 |
+
+缺少 `acceptedAt`、运行快照为空闲且已有 aborted 标记时，还会直接结束为 aborted。
+这里需要区分明确未派发的取消与仅收到 Stop ACK 的未知发送；缺少接纳时间本身不能证明未派发。
 
 `sessions.test.ts` 明确覆盖其中的旧规则；它们不是定点查询或 Goal 重放引入的新行为。
 只移除两次 idle 分支不足以满足目标契约，wait 后备与 root 替换也必须同时收敛。

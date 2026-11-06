@@ -24,7 +24,7 @@ Shared 只承载跨进程合约和纯逻辑，不是第四个业务 owner。Main
 | Goal 内容和预算、会话 mode/root            | 续跑阶段、产品期望与串行准备/回读    |
 | Skill 赢家、角色文件、peer send、cron      | 文件事务、档案、成员准入、结果收件箱 |
 
-App 插件的 Main/Browser 业务留在插件内，通过[通用宿主](17-app-plugin-host.md)提供的窄端口组合；不能以 SDK 接入为由把业务重新放回 Core。
+App 插件的 Main/Browser 业务留在插件内，通过[通用宿主](../plugins/management/app-plugin-runtime.md)提供的窄端口组合；不能以 SDK 接入为由把业务重新放回 Core。
 
 ## 2. 再定义产品投影
 
@@ -47,12 +47,12 @@ ConfigSync 管理产品声明拥有的字段，保留无关设置及可选 Exten
 
 ## 4. 写操作必须能解释部分成功
 
-| 操作           | 本地原子部分           | 外部部分                    | 失败后的识别依据               |
-| -------------- | ---------------------- | --------------------------- | ------------------------------ |
-| Plan 批准      | handoff expected-state | 文件、reset、chat admission | 文件摘要及 admitted 回执       |
-| Extension 安装 | 安装身份               | 暂存、CLI、inventory        | reviewToken、清理及读回        |
-| 结果删除       | receipt/tombstone      | 原生 artifact 清理          | durable cleanup 与同步 barrier |
-| 协作任务删除   | room freeze 与进度     | 多个原生 session 停止/删除  | 精确成员和部分删除进度         |
+| 操作           | 本地原子部分           | 外部部分                      | 失败后的识别依据               |
+| -------------- | ---------------------- | ----------------------------- | ------------------------------ |
+| Plan 批准      | handoff expected-state | 文件、reset、chat admission   | 文件摘要及 admitted 回执       |
+| Extension 安装 | 安装身份               | 暂存、原生 RPC/CLI、inventory | 提交回执、来源占用与身份读回   |
+| 结果删除       | receipt/tombstone      | 原生 artifact 清理            | durable cleanup 与同步 barrier |
+| 协作任务删除   | room freeze 与进度     | 多个原生 session 停止/删除    | 精确成员和部分删除进度         |
 
 外部调用不能包进同步 SQLite transaction 来声称全链路原子。尤其要说明“外部已执行、本地尚未确认”如何识别；超时不能直接重复执行。
 

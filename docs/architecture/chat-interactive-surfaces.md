@@ -103,7 +103,7 @@ client/generation、agent 和视图筛选；保留的旧聊天画布不会成为
 紧凑当前图引用，唯一原编辑器保留。切换会话退休待应用资格，迟到准备不能重建绑定。
 
 恢复使用原生可见的成功结果，没有 Main/Redux 图表正文存储或历史版本库。详细契约见
-[当前画布连续编辑](../features/chat/drawio-current-canvas.md)。
+[当前画布连续编辑](../plugins/extensions/drawio/current-canvas.md)。
 
 draw.io 首次视图读取在 iframe 创建前验证原视图及同连接的插件签发记录，建立只含来源的
 有界准入证明；后续模型切换不改变图表来源，发送重新核对精确会话/连接和插件寿命后准备

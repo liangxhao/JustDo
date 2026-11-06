@@ -1,6 +1,6 @@
 # 进程模型、通信与请求生命周期
 
-桌面可选业务使用独立 Native/Main/Browser 插件包；通用 SDK、可信代码审核、冷包变更和历史清理所有权见 [应用插件宿主](17-app-plugin-host.md)。
+桌面可选业务使用独立 Native/Main/Browser 插件包；通用 SDK、可信代码审核、冷包变更和历史清理所有权见 [应用插件宿主](../plugins/management/app-plugin-runtime.md)。
 
 本页按当前 preload、Main 注册入口和共享合约描述通信机制。接口常量及 payload 以 `src/shared/` 为准；这里解释为什么不同通道分开、请求如何结束、旧响应如何失效。
 
@@ -109,7 +109,7 @@ Renderer 仅接收含 revision 的显示资料、闭合错误码和独立账号/
 不接收 token、Cookie 或 SDK 原始结果。
 
 文件导入只恢复 local-credentials 显示，不门禁原有
-模型启动；SDK 确认后才显示 signed-in。见[登录模板](../features/integrations/login-sdk-template.md)。
+模型启动；SDK 确认后才显示 signed-in。见[登录模板](../features/account/login-sdk-template.md)。
 
 ### 聊天数据
 
@@ -123,7 +123,7 @@ Gateway 的 Ed25519 连接身份通过既有 preload Store 读写 Main SQLite `k
 
 Chrome Side Panel 不取得 Gateway token。Native host 在开发版和安装版均只发现已运行的桌面进程，返回动态 app-server URL；实例未运行时提示手动启动，扩展不能启动或重启应用。Main 校验 capability、精确 Origin、path 和消息大小。初始化完成后只接受已实现的标准模型、线程、历史和轮次方法，以及浏览器模块明确注册的 `browser/*` 扩展方法，不提供通配 Gateway RPC。
 
-自动配对确认 Gateway 已运行后调用锁定 CLI 的本地 Gateway 唤醒入口，仅向扩展后台返回 relay pairing；不经过聊天 Controller，不将凭据交给桌面 Renderer 或写入发现文件／日志。协议详见[Chrome 接口](../features/browser/extension-protocol/README.md)。
+自动配对确认 Gateway 已运行后调用锁定 CLI 的本地 Gateway 唤醒入口，仅向扩展后台返回 relay pairing；不经过聊天 Controller，不将凭据交给桌面 Renderer 或写入发现文件／日志。协议详见[Chrome 接口](../plugins/browser-extensions/browser-assistant/protocol/README.md)。
 
 Agent CLI launcher 通过当前用户管道提交白名单命令。Main 验证 token、frame、cwd、argv 与生命周期后，按 CLI、ACP 或 Codex app-server 协议进入同一会话与执行后端。只有 app-server 可传入可选 CODEX_HOME 标记目录；其他环境变量不转发。外部 CLI stdout 只返回约定可见结果，不透出运行凭据。它不复用 Chrome 的 URL capability。
 
@@ -135,9 +135,9 @@ stdio、通用本机 WebSocket 和 Chrome 入口共用每连接一实例的 `App
 
 Chrome binding 仅访问扩展来源会话，断开撤销该 viewer 的订阅与审批交互，不取消其已发送或借用观察的原生执行；未结算 owner 保留以拒绝迟到授权。stdio 与通用 WebSocket 复用 CLI binding，限制外部线程归属，断开请求精确取消。通用服务固定监听 loopback，要求独立 Bearer 凭据且不接受网页 Origin；主 frame 可只读查询无凭据状态，复制时按需取当前生效配置。自动分配的端口可能随重启变化，显式端口或令牌变更生效后需重新复制；固定端口和持久令牌未变时，不能笼统认定重启使旧配置失效。公共协议关闭后丢弃迟到响应与通知，领域服务继续核对原生身份和整轮结算，不从连接状态推断结果。
 
-双向审批请求属于当前连接，使用独立请求 ID，与客户端 RPC 响应分开匹配。原生 resolved、到期、撤回和断线都会终止等待；关闭先使响应失效，再进行所属领域清理，不等待用户交互阻塞连接结束。Chrome 发送前的短期 metadata token 只串行化本会话的准备，不能替代原生运行身份或结算。原生 ACK 前的 prepared approval owner 有界等待实际 run 身份，不能按审批内容或最新消息认领；详细选择和 scope 生命周期见[会话权限](../features/chat/openclaw-permission-management.md#app-server-客户端审批)。
+双向审批请求属于当前连接，使用独立请求 ID，与客户端 RPC 响应分开匹配。原生 resolved、到期、撤回和断线都会终止等待；关闭先使响应失效，再进行所属领域清理，不等待用户交互阻塞连接结束。Chrome 发送前的短期 metadata token 只串行化本会话的准备，不能替代原生运行身份或结算。原生 ACK 前的 prepared approval owner 有界等待实际 run 身份，不能按审批内容或最新消息认领；详细选择和 scope 生命周期见[会话权限](../features/execution/openclaw-permission-management.md#app-server-客户端审批)。
 
-见[能力与生命周期矩阵](../features/integrations/app-server.md)。
+见[能力与生命周期矩阵](../features/external-clients/app-server.md)。
 
 ## 3. 一次 IPC 请求必须有完整生命期
 
@@ -503,7 +503,7 @@ PTY。附着失败会提示终端不可用，需要用户新开标签，不会�
 
 ## 10. 插件业务的进程边界
 
-Team/Workflow 的 Browser 通过通用 App SDK 调用所属 Main 命令，Main 再经绑定当前 Native 注册收据的请求桥调用原生业务方法。Core preload 不提供专属 `teamDiscussion` 或 Workflow API。宿主校验产物、epoch、窗口及调用权限；业务身份、队列和数据事务由插件核验。Renderer 卸载撤销视图与订阅，不能推断后台执行结束。详见[应用插件宿主](17-app-plugin-host.md)与[Agent Team](../features/assistants/agent-team.md)。
+Team/Workflow 的 Browser 通过通用 App SDK 调用所属 Main 命令，Main 再经绑定当前 Native 注册收据的请求桥调用原生业务方法。Core preload 不提供专属 `teamDiscussion` 或 Workflow API。宿主校验产物、epoch、窗口及调用权限；业务身份、队列和数据事务由插件核验。Renderer 卸载撤销视图与订阅，不能推断后台执行结束。详见[应用插件宿主](../plugins/management/app-plugin-runtime.md)与[Agent Team](../plugins/extensions/agent-team/guide.md)。
 
 ## 11. 错误要保留可操作的区别
 

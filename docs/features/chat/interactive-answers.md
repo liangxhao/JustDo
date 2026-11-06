@@ -50,7 +50,7 @@ Intelligent UI 的呈现方式，使用本地 OpenClaw 合约，不接入 ChatGP
 `interactive-answer` 接收经过校验的 JSON。静态图解不要求按钮；本地交互与向会话
 准备建议分别按需添加。固定组件 schema 只在选用该类型时读取。视觉风格仍由任务和
 设计指导决定，skill 不规定字体、间距或布局模板。完整 schema 与调用在
-[插件说明](../../../plugins/extensions/smart-canvas/README.md)和按需参考中维护。
+[插件说明](../../plugins/extensions/smart-canvas/overview.md)和按需参考中维护。
 
 ### 资源与保存的卡片
 
@@ -279,7 +279,7 @@ client/session/generation/docId、可见 webview 与文本限制，保留“加�
 
 跨进程和窗口生命周期见 [进程模型](../../architecture/03-process-model.md)，
 认证投影、私有桥和卸载约束见 [聊天渲染](../../architecture/15-chat-rendering.md)，
-类型注册和启用管理见 [插件系统](../../architecture/07-plugin-system.md)。
+类型注册和启用管理见 [插件系统](../../plugins/management/plugin-system.md)。
 这三篇维护架构契约，本页维护用户行为与限制；旧原型和阶段审查不作为独立现行入口。
 
 ## 当前验证边界

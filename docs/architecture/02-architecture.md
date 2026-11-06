@@ -1,6 +1,6 @@
 # 系统架构：产品宿主与执行运行时
 
-桌面可选业务使用独立 Native/Main/Browser 插件包；通用 SDK、可信代码审核、冷包变更和历史清理所有权见 [应用插件宿主](17-app-plugin-host.md)。
+桌面可选业务使用独立 Native/Main/Browser 插件包；通用 SDK、可信代码审核、冷包变更和历史清理所有权见 [应用插件宿主](../plugins/management/app-plugin-runtime.md)。
 
 本文描述产品宿主与运行时的组合、依赖和生命周期。产品概念见[总览](01-overview.md)，具体跨进程接口见[进程模型](03-process-model.md)。这里的核心问题是：一次产品操作如何跨组件完成，以及组件失败后谁负责恢复。
 
@@ -44,16 +44,16 @@ flowchart TB
 
 `src/main/main.ts` 负责创建服务、注入依赖、注册 handler、绑定运行事件和关闭资源。数据库及重型服务通过 getter 延迟访问，避免模块加载期间使用未就绪的 app 路径或 SQLite。领域逻辑留在所属模块，不能把所有恢复与业务分支放回 main.ts。
 
-| 组件                         | 输入与职责                                    | 不负责的事实                     |
-| ---------------------------- | --------------------------------------------- | -------------------------------- |
-| SqliteStore / 领域 Store     | schema、同步事务、产品查询                    | 原生消息与执行结论               |
-| CoworkEngineService / Router | 产品 session 到原生运行的路由和生命周期       | UI timeline                      |
-| OpenClawEngineManager        | runtime 资源、端口、token、进程、readiness    | 单条工具的业务结果               |
-| ConfigSyncService            | 受管配置投影、串行写入、reload/restart 与验证 | 会话级权限的即时修改             |
-| Permission coordinator       | session 权限/root 写入和回读                  | 扩大其他会话权限                 |
-| Goal coordinator             | 根据原生 Goal 决定续跑、等待和重试            | 原生目标内容与预算               |
-| AppPluginManager / Registry  | 按清单加载插件、校验产物和注册寿命、撤回贡献  | Team/Workflow 业务协调与消息正文 |
-| Cron/result sync             | 原生任务映射与本地结果收件箱                  | 第二套时钟或 cron 引擎           |
+| 组件                         | 输入与职责                                    | 不负责的事实           |
+| ---------------------------- | --------------------------------------------- | ---------------------- |
+| SqliteStore / 领域 Store     | schema、同步事务、产品查询                    | 原生消息与执行结论     |
+| CoworkEngineService / Router | 产品 session 到原生运行的路由和生命周期       | UI timeline            |
+| OpenClawEngineManager        | runtime 资源、端口、token、进程、readiness    | 单条工具的业务结果     |
+| ConfigSyncService            | 受管配置投影、串行写入、reload/restart 与验证 | 会话级权限的即时修改   |
+| Permission coordinator       | session 权限/root 写入和回读                  | 扩大其他会话权限       |
+| Goal coordinator             | 根据原生 Goal 决定续跑、等待和重试            | 原生目标内容与预算     |
+| AppPluginManager / Registry  | 按清单加载插件、校验产物和注册寿命、撤回贡献  | 插件业务协调与消息正文 |
+| Cron/result sync             | 原生任务映射与本地结果收件箱                  | 第二套时钟或 cron 引擎 |
 
 协调器不是通用事件总线。它们各自保留必要状态，并通过窄接口协作；同一产品状态不能被多个模块独立判定和反复写回。
 
@@ -61,7 +61,7 @@ flowchart TB
 
 ### 资源、构建和运行时目录
 
-应用资源按用途组织：`resources/icons/` 聚合标志、平台图标和托盘素材，`pages/` 保存开发错误页与偏好恢复空白页，`python/` 保存受管依赖清单和路径初始化源码，离线下载统一放在仓库根目录下忽略提交的 `cache/<capability>/`，构建中间产物统一放在根目录的 `build/`，其中 `runtimes/`、`tar/`、`speech-models/v1/`、`browser-extension/` 分别承载准备好的运行时、Windows 运行时归档、模型发布包和浏览器扩展组装产物。
+应用资源按用途组织：`resources/icons/` 聚合标志、平台图标和托盘素材，`pages/` 保存开发错误页与偏好恢复空白页，`python/` 保存受管依赖清单和路径初始化源码。离线下载放在仓库根目录下忽略提交的 `cache/<capability>/`；工具运行时准备和打包中间产物使用根目录的 `build/`，其中 `runtimes/`、`tar/`、`speech-models/v1/`、`browser-extension/` 分别承载工具运行时、Windows 运行时归档、模型发布包和浏览器扩展组装产物。OpenClaw 冻结运行包目前仍由安装脚本写入 `vendor/openclaw-runtime/<target>/` 并同步 `current/`，不能把目录规范当作这条既有构建链已迁入 `build/` 的事实；消费与打包映射见[工程构建](12-tech-stack.md#5-openclaw-供应链)。
 
 开发环境和打包从 `build/runtimes/{mingit,python-win,local-tts}/` 读取准备产物；安装资源沿用各运行时的既有名称，托盘映射到安装资源的 `tray/`。macOS 签名权限、安装器许可证及宠物素材分别由 `mac/`、`licenses/`、`pets/` 管理。完整归属见[资源说明](../../resources/README.md)。
 
@@ -71,9 +71,9 @@ flowchart TB
 
 内置插件集中在仓库根目录 `plugins/`，按 `extensions/`、`skills/`、`mcp-servers/`、`hooks/`、`browser-extensions/` 分类。OpenClaw 扩展和独立技能分别由前两类承载，`mcp-servers/` 与 `hooks/` 预留；Chrome 加载的 Browser Assistant 位于 `plugins/browser-extensions/browser-assistant/`，独立于 Gateway 插件加载流程。
 
-扩展自带技能保留在扩展内部，宿主管理代码仍在 `src/main/plugins/`、`src/renderer/features/plugins/` 和 `src/shared/plugins/`，OpenClaw 构建产物沿用原生目录。具体约定见[插件系统](07-plugin-system.md)。
+扩展自带技能保留在扩展内部，宿主管理代码仍在 `src/main/plugins/`、`src/renderer/features/plugins/` 和 `src/shared/plugins/`，OpenClaw 构建产物沿用原生目录。具体约定见[插件系统](../plugins/management/plugin-system.md)。
 
-公开 App SDK 与配套构建工具源码位于 `plugins/sdk/`，由根 npm workspace 和独立制品发布流程管理；运行时扩展发现继续读取 `plugins/extensions/`。SDK 契约与编写方式见[应用插件宿主](17-app-plugin-host.md)。
+公开 App SDK 与配套构建工具源码位于 `plugins/sdk/`，由根 npm workspace 和独立制品发布流程管理；运行时扩展发现继续读取 `plugins/extensions/`。SDK 契约与编写方式见[应用插件宿主](../plugins/management/app-plugin-runtime.md)。
 
 ### Main 领域和原生配置投影
 
@@ -91,7 +91,7 @@ Renderer 的 feature 负责页面行为，settings 内按 models/browser/speech/
 
 composer 的 attachments、draft、selection、speech、submission 分别管理附件、草稿与媒体指令、模型及运行选项选择、语音输入、提交与停止辅助。输入框入口继续组合这些能力并持有界面状态；模型切换模块保留跨输入框挂载的同一串行队列，Redux 继续拥有已确认选择与待确认状态，发送和停止的生命周期不另建状态所有者。斜杠菜单只消费输入框传入的状态和回调。
 
-display 管理标签组合与选择：tabs 组织标签状态、菜单和浏览器/MCP Apps 等标签适配，summary 组织会话摘要与团队记录导航，workspace 组织稳定文档 portal、遮挡和窗口控制。团队组合界面由独立插件通过 SDK 插槽注册，Core 不持有 collaboration/discussions 业务组件。preview 管理文件展示和工作区浏览，terminal 管理终端界面，review 管理工作区变更审核，计划审核归 approvals。原生子任务图归 subagents，Workflow 界面归所属插件，复用样式与连接辅助放在 shared，不增加执行状态所有者。
+display 管理标签组合与选择：tabs 组织标签状态、菜单和浏览器/MCP Apps 等标签适配，summary 组织会话摘要与插件贡献导航，workspace 组织稳定文档 portal、遮挡和窗口控制。业务组合界面由独立插件通过 SDK 插槽注册，Core 不持有插件业务组件。preview 管理文件展示和工作区浏览，terminal 管理终端界面，review 管理工作区变更审核，计划审核归 approvals。原生子任务图归 subagents，业务界面归所属插件，复用样式与连接辅助放在 shared，不增加执行状态所有者。
 
 ### 国际化和浏览器边界
 
@@ -162,14 +162,14 @@ Chrome、通用本机 WebSocket 与 CLI stdio 的 app-server 共用 `main/appSer
 
 标准输入、wire 元数据、历史投影／分页和审批 presenter 也由通用模块提供；浏览器只组合这些能力与自身来源、页面上下文和发送 owner。共享输入把文本合并并保留图片相对顺序后交给原生附件通道，不承诺保留文本与图片的任意交错。图片必须由真实模型目录明确声明支持；Chrome 还在原生发送前固定并回读实际模型，普通文档附件不因此要求视觉模型。准入与原生 RPC 的不同原子性见[执行引擎](05-agent-engine.md#13-外部客户端执行)。
 
-共享审批路由持有原生身份和期限，客户端只提交已提供的选择；连接内命令授权与原生 App 持久授权有不同的存储和撤销边界。恢复观察不能取得另一发送方的审批权，关闭 Chrome viewer 也不取消借用执行。完整授权关系见[会话权限](../features/chat/openclaw-permission-management.md#app-server-客户端审批)。
+共享审批路由持有原生身份和期限，客户端只提交已提供的选择；连接内命令授权与原生 App 持久授权有不同的存储和撤销边界。恢复观察不能取得另一发送方的审批权，关闭 Chrome viewer 也不取消借用执行。完整授权关系见[会话权限](../features/execution/openclaw-permission-management.md#app-server-客户端审批)。
 
-通用服务随应用启动，独立 Bearer 凭据仅由主 frame 的复制配置 IPC 按需读取，不进入状态查询或 CLI 输出。各入口保留独立鉴权和断连权限。见[统一 app-server](../features/integrations/app-server.md)。
+通用服务随应用启动，独立 Bearer 凭据仅由主 frame 的复制配置 IPC 按需读取，不进入状态查询或 CLI 输出。各入口保留独立鉴权和断连权限。见[统一 app-server](../features/external-clients/app-server.md)。
 
 Agent CLI、ACP 与已实现的 Codex app-server 协议共用受认证本机桥和发现文件，随桌面后台启动即提供服务，没有客户端专用总开关或环境鉴权。
 控制台进程只拥有 stdio，Main 外部会话服务负责映射、模型与权限准备，OpenClaw 继续拥有执行和历史。
 ACP 会话 MCP 由 Runtime Services 通过公开工具与审批接口按原生身份租约提供，不改全局配置。
-详见[通用 CLI / ACP](../features/integrations/agent-cli.md)。
+详见[通用 CLI / ACP](../features/external-clients/agent-cli.md)。
 
 ### Renderer 身份与启动交接
 

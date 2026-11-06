@@ -107,4 +107,4 @@ Main 执行前重新核对剪贴板、工作区根与目标身份，原生执行
 
 内置 draw.io 通过同一文件 App 发现流程声明 `.drawio` 入口，打开当前会话工作区内
 的已有图表（UTF-8 XML，最多 1 MiB），在编辑器中渲染原文件内容。打开与编辑不
-自动覆盖原文件，保存沿用现有文件对话框；详见 [draw.io 离线绘图](../chat/drawio-offline.md)。
+自动覆盖原文件，保存沿用现有文件对话框；详见 [draw.io 离线绘图](../../plugins/extensions/drawio/offline-editor.md)。

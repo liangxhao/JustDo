@@ -1,0 +1,302 @@
+# 内置模型认证与账号生命周期
+
+内置 provider 的稳定 ID 为 `builtin_models`。认证主线是：登录 mtoken → 短期 JWT → 服务端 Team 授权 → OpenClaw SecretRef 解析。Main 管理换证与撤销，服务端负责验签和授权，正在执行的任务在每次模型请求前核验当前登录会话。
+
+部署先读[配置](#1-部署前必须确定的配置)与[凭据去向](#2-凭据的去向)；排查“续签成功但请求仍失败”时，按[三个确认阶段](#三个确认阶段快照配置凭据加载)分别检查快照发布、原生加载，再核对[请求级凭据](#长任务的请求级凭据)。退出与目录发现失败的处理见[失效与发现失败](#6-退出失效与发现失败)。
+
+登录模块实际接线、调用顺序和失败语义见[登录与模型生命周期接口](../../developer-integration/login-model-lifecycle-api.md)。
+
+## 1. 部署前必须确定的配置
+
+`src/config/builtinModelAuth.ts` 编入 Main，包含完整 tokenExchangeUrl、maxJwtLifetimeSeconds 和仅开发模式使用的认证选择。仓库换证地址、模型 base URL 和出站请求头白名单留空，部署时填写；JWT 上限保留 10800 秒。空换证地址禁用换证，不从模型 base URL 推断，也不发送 mtoken。
+
+组织接口若签发更长 token，客户端与服务端必须显式配置一致上限，支持范围 30–10800 秒，不能根据返回值自动放宽。修改配置需重启开发 Main 或重新打包，用户目录不存在另一套自动生成的换证配置。
+
+未打包开发可临时使用 api-key 模式，正式包忽略该模式，打包钩子要求恢复 jwt 并清空调试 key。配置说明见 [部署客户端](../../../deploy/client/README.md)。
+
+## 2. 凭据的去向
+
+| 数据           | 来源             | 允许到达                                     |
+| -------------- | ---------------- | -------------------------------------------- |
+| mtoken         | 登录凭据文件     | Main → 明确配置的换证服务                    |
+| X-User-Account | 同一登录身份     | Main 校验与直发请求、既有出站代理注入        |
+| deviceId       | 本机有效网卡 MAC | 换证请求；不代表设备密钥绑定                 |
+| JWT            | 换证服务         | Main、私有派生快照、Gateway 内存、模型数据面 |
+| X-Cookie       | 既有登录/工具链  | 不作为 JWT 或模型独立授权                    |
+| Team 权限      | 服务端数据库     | 模型目录、预算、blocked、限流                |
+
+### 登录文件与产品 profile
+
+登录文件由 `resolveOutboundHeaderUserInfoPath()` 定位到
+`<app.getPath('appData')>/<productName>/<directoryName>/<userInfoFileName>`，目录名与文件名由
+`src/config/loginStorage.ts` 的 `LOGIN_STORAGE_CONFIG` 分别配置，实际名称以构建配置为准。
+Windows 路径为 `%APPDATA%/<productName>/<directoryName>/<userInfoFileName>`。
+历史迁移及中断恢复不归档 `directoryName` 配置的登录目录，登录信息和同目录其他业务文件均保留原位。
+更改名称不自动迁移或回退读取旧文件；配置修改方式见[部署配置](../../../src/config/README.md#登录信息目录)。
+隔离开发 profile 仍读取这个固定产品路径，
+不能用该 profile 的 `userData` 推导登录文件。JWT 不回写登录文件，mtoken 不进入 Gateway 或产品数据库。
+
+### deviceId 与 MAC 的共同约定
+
+deviceId 通过 Main 公共模块 `src/main/core/network/macAddress.ts` 的 `getMacAddress(): string` 获取。按系统网卡枚举顺序选择第一个非 internal、非全零且格式有效的 MAC，去掉冒号并转为 12 位大写十六进制；不额外按网卡名称猜测物理、虚拟或连接状态。登录模块应复用同一函数。没有可用 MAC 或网卡查询失败时抛错，不生成替代标识；换证在发送请求前失败。
+
+MAC 按调用时的网卡信息获取，不缓存或写入设备标识文件，也不读取已有 model-device.json。换证服务只接受规范化后的 MAC；网卡选择或随机 MAC 变化可能改变 deviceId，登录与换证须遵循同一设备绑定约定。服务端不能通过自身网卡重新计算客户端 MAC。
+
+## 3. 换证、发现与原生接入
+
+```mermaid
+sequenceDiagram
+  participant F as 登录文件
+  participant M as Main
+  participant I as 换证服务
+  participant L as LiteLLM
+  participant G as Gateway
+  participant N as 随包 Node 凭据读取器
+  M->>F: 读取 mtoken 与账号
+  M->>I: POST mtoken + deviceId
+  I-->>M: Bearer token / expires_in / 可选 uid
+  M->>M: 校验 claims、账号、期限
+  M->>L: /models 与可选 /model/info
+  L->>L: 验签与 Team 授权
+  L-->>M: 授权模型目录
+  M->>M: 保存无凭据 provider 投影
+  M->>M: 原子发布私有 JWT 快照
+  M->>G: 配置 exec SecretRef / secrets.reload
+  G->>N: 本地限量凭据读取协议
+  N->>N: 读取 JSON、解密、校验会话与有效期
+  N-->>G: JWT（仅原生管道）
+```
+
+### 换证响应校验
+
+换证拒绝 redirect，timeout 15 秒，响应最大 32 KiB。Main 在使用结果前检查：
+
+- 返回类型为 Bearer，uid/sub 与登录账号一致；
+- JWT 期限满足本地上限和 `expires_in`；
+- 非对称算法、非空 iss/jti、整数 iat/exp，以及字符串 `aud: 'justdo-litellm'`；
+- kid 可选，兼容内网 `RS256`、无 kid 的签发形态。
+
+JWT 的签发时长 `exp - iat` 仍严格受配置上限约束。Main 对 `iat` 的未来时间和 `exp`
+的未来上界统一允许 30 秒时钟偏差：`iat <= 本机时间 + 30`、
+`exp <= 本机时间 + maxJwtLifetimeSeconds + 30`。响应 `expires_in` 以客户端收到并读取
+响应后的时间为基准检查，允许同样的 30 秒偏差，避免请求耗时占用容差。该容差不延长
+token 的实际有效期；Main 仍在剩余不足 15 秒时拒绝使用。LiteLLM Hook 对两个未来上界
+使用其配置的 `LITELLM_JWT_CLOCK_SKEW_SECONDS`（默认 30 秒），仍严格拒绝已到期 token，
+并保留签名、issuer、audience、账号与签发时长检查。客户端、签发服务与模型服务仍须同步系统时间。
+
+这些是结构、账号、audience 与时间预检。签名、可信 issuer、audience 和 Team 授权仍由服务端验证。
+
+### 模型发现与原生凭据解析
+
+模型发现 `/models` 必需，`/model/info` 可选增强；区分 chat/embedding 并规范化能力。Main 直发请求使用 `Authorization: Bearer <真实JWT>`，同时保留 `X-ACCESS-JWT` 和 `X-User-Account`；api-key 开发模式只发送 Bearer key。provider 配置中的非秘密占位符仅用于应用内配置投影，不能作为网络请求凭据。Gateway 和 memory search 通过同一 JWT SecretRef 解析真实 JWT 并发送 Bearer 认证。
+
+模型服务同时校验用户所属的唯一受管 Team，以及该 Team 成员名单中的 `user_id`。
+`LiteLLM_TeamMembership` 保存可选个人策略，由原生预算、模型权限和限流检查执行；
+策略读取或缓存同步失败返回 503。服务端错误码见[校验与授权错误码](../../../deploy/litellm/hooks/ERRORS.md)。
+
+Main 将派生凭据原子写入 `stateDir/credentials/credentials.json`。
+文件是普通 JSON，仅包含 `version`、`iv`、`tag`、`data`，使用随机 IV 的 AES-GCM
+遮蔽 JWT、账号、有效期、登录会话和认证类型。固定公开材料只用于避免直接打开文件
+看到凭据，不是独立的密钥保险库；实际边界仍是私有文件 ACL、会话／期限校验和服务端验签。
+读取限 64 KiB，检查版本、base64、IV／tag 长度与完整性；解析器只接受指定的凭据 ID，
+并验证 token 基本格式、当前登录会话、认证类型及原有 15 秒到期拒绝窗口。
+JWT 不进入原生命令行、环境变量、配置或日志。
+
+Windows 的 exec 命令直接执行随包 Node 的私有副本，参数仅是 `read-builtin.cjs`。
+Main 以已校验的随包可执行文件及 SHA-256 身份，在
+`stateDir/credentials/runtime/<Node SHA-256>/node.exe` 准备普通文件副本：先建立私有
+目录和临时文件 ACL，再限量缓冲复制、校验哈希并原子发布。按内容哈希复用，
+不在续签／模型请求时反复复制，也不修改原安装目录、开发目录或源 Node 的权限。
+已有副本损坏或身份异常时拒绝发布；旧哈希目录保留，避免覆盖或删除仍被旧进程使用的文件。
+这移除了凭据传输的 PowerShell 管道，不放宽原生 exec 权限检查；原生 ACL 检查自身仍可能
+调用系统安全工具。企业若禁止从该用户数据路径执行程序，会明确失败，不回退 shell。
+macOS/Linux 保留既有用户所有的私有启动脚本，以满足原生 command 所有者检查。
+
+旧 `credentials.bin` 是可重新生成的短期派生数据，不做格式回读或迁移。
+发布新 JSON 后清理旧文件；退出会尝试撤销两种已知文件，即使其中一种删除失败也继续
+尝试另一种，并由既有撤权失败保护处理。退出后的原生已加载凭据仍通过既有重载／停止流程撤销。
+
+### 受控诊断
+
+诊断只记录受控阶段、固定原因、可选 HTTP 状态，并单独区分超时。阶段包括 URL、MAC、网络请求、响应、JWT 与身份复核；阶段名不包含对应原始值。
+
+| 诊断字段         | 允许内容                                                                  | 不代表什么                               |
+| ---------------- | ------------------------------------------------------------------------- | ---------------------------------------- |
+| `networkCode`    | 固定白名单中的 DNS、连接、TLS 错误码；有界读取 Error/cause 和聚合连接异常 | 不允许记录原异常或未知错误码             |
+| `credentialCode` | 编码、必需字段、账号、audience、算法、时间、期限上限、`expires_in` 不一致 | 不输出 claims 的值，也不表示客户端已验签 |
+
+URL、请求/响应体、mtoken、JWT、Cookie、MAC 和原始异常均不写日志。对外仍返回统一失败错误，诊断字段不放宽凭据校验。
+
+认证链路日志使用 `[BuiltinModelAuth]` 前缀与紧凑 JSON，每条记录只有一行，
+不传递 Error、stack 或凭据对象。保留实际换证成功、快照发布／撤销、原生重载 ACK，
+以及认证、配置应用、重载、重试和模型发现的失败原因。失败字段限于固定阶段、JWT 原因码、
+白名单 HTTP／网络／文件错误码和必要的耗时／重试信息；模型发现成功保留模型数量。
+不记录监控启停、开始、排队、被替代、缓存读取或每次成功模型请求。
+可选模型元数据请求被拒绝仍沿用原有降级行为，错误响应正文不进入日志。
+
+`reload.acknowledged` 记录 RPC 接纳及可用的 `warningCount`；
+即使接纳，仍可能存在不可用的原生 owner，不能把该日志当作内置模型已经恢复。
+日志增强不改变现有 ACK 判定、重试、执行准入或停止行为。
+
+需要回传少量证据时，使用[日志提取工具](../../development.md#日志与排障)读取选定日志，
+只保留受控字段。诊断不自动读取或解密凭据快照，不启动额外凭据探测进程。
+
+Runtime Services 在模型请求前被拒绝时记录独立的单行原因，包括捕获配置、会话环境、
+认证类型、请求路由、原生解析器失败和凭据格式；取消不记成认证失败。
+服务端 JWT／Team 拒绝继续使用 LiteLLM 的 `litellm.validation` 单行
+`code/reason/request_id` 日志；客户端的本地解析错误不能替代服务端验签证据。
+
+## 4. 轮换与并发
+
+### 续签调度与账号切换
+
+Main 监听登录文件，通常在剩余 60 秒续签；短生命周期 token 按有效期一半安排并预留安全窗口，避免高频循环换证。并发 refresh 合并，generation 和 AbortController 使账号切换后的旧结果失效。
+
+后台监控只等待本轮换证与私有快照原子发布，随后立即按新 JWT 安排下一次续签，
+不等待模型目录、配置队列或 Gateway 的确认。后台配置应用独立串行处理，最多保留一个
+正在执行的同步和一个最新待处理结果；配置确认变慢不能阻止同一登录继续续签。
+应用失败仍由监控器安排重试。显式登录、目录刷新和退出继续等待各自的服务同步。
+同一登录的前台目录刷新尚未完成时，后台只续签并发布快照，配置应用等待前台完成；
+后台轮换不能取消目录发现，前台完成也不能提前确认其间更新的 JWT 已加载。
+临时到期后的清理若遇到同一登录已恢复，必须在写入配置前放弃；若已写入，后续
+确认与失败停止也须保留原进程、生命周期和无有效凭据状态的归属，不能删除新快照
+或停止已恢复的登录。显式退出仍先同步撤销凭据，再执行完整清理。
+
+短暂网络错误可继续使用尚有效 token，到期前 15 秒失效；400/401/403 立即清除。显式退出后旧 mtoken 即使尚留文件也不能被后台重试重新启用。重新换证成功还需复核当前身份，不能把 A 账号结果写给 B。
+
+### 三个确认阶段：快照、配置、凭据加载
+
+同一已确认登录的正常轮换按以下顺序确认：
+
+1. 发布最新私有派生快照，不先等待模型目录发现。
+2. 若配置也变化，先等待对应配置应用，核对原生 `configRevisionHash` 与 `appliedConfigHash`，再执行 `secrets.reload`。
+3. 核对 ACK 属于同一认证会话、Gateway 进程及生命周期，并完成权限检查，才能确认凭据已应用。
+
+`secrets.reload` 使用已加载的 source config：单独成功的 ACK 不能证明新 SecretRef 已加载。
+文件已写、后续文件字节未变、延后配置重启，都不能结清未确认状态。
+后台提前发布快照后，认证同步即使发现文件字节未变，也必须执行当前认证会话的
+`secrets.reload` 与后续确认；不得把请求级读取已可用当作原生凭据快照已加载。
+
+| 场景                                                      | 与正常轮换的区别                                            |
+| --------------------------------------------------------- | ----------------------------------------------------------- |
+| 首次登录、显式刷新目录、替换认证会话、provider 清理后恢复 | 执行完整目录同步；即使 token 相同，新登录也不复用旧会话确认 |
+| 同一登录中的目录发现尚未完成                              | 轮换不撤销它；完成后仍投影最新目录                          |
+| 退出或新登录                                              | 撤销旧会话工作，旧结果不得应用                              |
+| 原生已接纳重启或重启请求结果未知                          | 继续等待其 ready，后续环境变更不竞争发起宿主重启            |
+| 同一进程已 ready，但启动环境仍待更新                      | ready 不代替所需的完整重启                                  |
+
+### 幂等重载的有界重试
+
+凭据重载对 `UNAVAILABLE`、客户端超时及明确的传输断连最多尝试三次，间隔 500/1500 毫秒。
+它是同一实例的幂等快照刷新，不重发聊天、模型请求或工具；原生权限、协议拒绝及非法 ACK 不按临时故障重试。
+每次请求前、重连后、ACK 后和最终停止前核对所属实例及认证会话，迟到结果不能确认替代登录或停止替代进程。
+Windows 解析预算仍为 60 秒，凭据重载 RPC 为 90 秒，覆盖原生命令权限检查及快照发布；其他平台为 5/35 秒。
+凭据读取已直接使用 Node，保留该预算是因为原生 Windows ACL 检查仍可能调用冷启动的系统工具。
+
+### 重载失败与受控恢复
+
+连续失败仍拒绝应用并停止 Gateway。后续后台同步只允许对这次刷新导致的确切失败实例尝试一次受控启动恢复，
+重新加载当前配置并初始化权限；再次失败继续保持未确认，不循环重启，也不自动启动用户主动停止的实例。
+恢复后仍完成当前同步所需的模型引用修复和已移除 provider 的凭据清理；恢复启动本身不能替代整次同步确认。
+显式退出先撤销旧刷新及恢复债务，退出同步不能借其重新启动 Gateway。
+正常轮换不重启活跃 Gateway。配置本身变化仍走原生配置 watcher 与受管同步。
+
+### 登录与退出的热更新
+
+正常登录启用、退出关闭内置模型同样使用热更新：增删 Provider、更新默认模型引用和 SecretRef，
+不会改变 Gateway 启动环境或监听配置。默认启用的 `memory-core` 为 `memory.search` 声明热更新归属，
+其索引服务可以重新加载，不代表整个 AI 引擎重启。显式禁用该插件或更换 memory slot 后，
+不能沿用这项服务归属假设。登录遇到正在启动的 Gateway 会先等待原启动完成再发布配置。
+登录的配置热更新未确认时仍允许恢复性重启；退出的撤权热更新未确认时停止 Gateway，不能自动恢复旧登录。
+
+### 长任务的请求级凭据
+
+原生运行会捕获 `resolvedApiKey` 和模型请求头；`secrets.reload` 更新后续准入使用的快照，
+不能改写已经运行的任务闭包。只做后台换证会使长任务在旧 JWT 到期后，下一次模型请求仍携带旧值。
+
+必需的 Runtime Services 通过公开 Provider API 为 `builtin_models` 注册 `wrapStreamFn`
+和 `wrapSimpleCompletionStreamFn`。每次模型请求通过原生 `resolveSecretRefValues` 无缓存解析
+同一受管 exec SecretRef，复用其路径、权限、输出大小和超时校验；保留原生模型传输、
+工具结果、取消和执行结算。仅克隆本次请求的模型和 options，同步替换 `apiKey`、
+`Authorization` 和大小写不敏感的 `X-ACCESS-JWT`，不修改运行快照或重放任务。
+开发 API key 模式仅使用 Bearer，不新增 JWT 头；自定义 provider 不进入此包装。
+
+Main 为每次模型登录生成随机 `authSessionId`。JWT 正常续签和临时到期后的同身份恢复保持此标识；
+显式退出、mtoken/账号/换证配置变化、认证拒绝和应用重启都会撤销旧标识。
+派生快照记录该标识，受管 exec 配置的 `MODEL_AUTH_SESSION_ID`、`MODEL_AUTH_TYPE`
+仅携带非秘密会话标识与认证类型。任务保留其原 exec 环境，解析器每次核对当前快照的
+会话与认证类型，因此同账号重新登录也不能让旧任务借用新登录的 JWT。
+凭据失效时 Main 在等待目录或配置清理前同步删除派生快照。
+同步删除若因文件占用或权限失败，退出协调器仍等待原有 provider/config 清理；
+后续清理失败继续走既有 Gateway 停止保护，不能因撤销异常跳过清理。应用退出同样保留运行时关闭流程。
+
+缺失、到期、会话不符、解析失败或请求路由不匹配均拒绝发送，不回退捕获的旧 JWT；
+已取消的请求不再进入模型传输。该机制不依赖新增本地 HTTP 服务、公网服务或 runtime patch，
+也不能撤回已经发出的远端请求。
+
+## 5. 本地持久化边界
+
+### 产品投影与 SecretRef
+
+builtin provider 在 SQLite/Renderer 中 apiKey 为空，只保存 base URL、模型与产品标记。openclaw.json 中的 apiKey 和 X-ACCESS-JWT 使用 justdo_login exec SecretRef；launch env 不放 JWT。内置 provider 不再投影 X-User-Account 请求头，也不把它包装成 SecretRef；exec 解析器只返回 JWT 并拒绝请求账号，避免账号进入原生精确值脱敏名单或模型缓存。私有快照仍保存已验证的 JWT、账号和到期时间，不复制 X-Cookie。
+
+该调整不改变 Main 的 JWT sub/账号校验、Main 直发请求、服务端账号一致性校验或出站代理注入。Gateway 请求所需的 X-User-Account 继续由既有代理按 URL 白名单注入，同名头替换保持既有规则；依赖该身份头的服务必须匹配正确的代理策略。已经进入旧 Gateway 进程的账号脱敏记录不会因配置更新自动清除，需要在更新后重启应用；已有历史中已保存的星号不会据此恢复。
+
+### 快照保护的有效范围
+
+快照采用私有权限及 AES-GCM 包装，但材料可由客户端推导，不抵御同用户逆向；安全依赖短期凭据和服务端验证。解析器只接受已知 secret id，复核期限，通过受限管道返回，不新增长期本地 token 转发服务。
+
+自定义 provider 保持自己的 file SecretRef 路径和配置，不因 builtin logout 被清理。产品 appConfigCredentials 也不能被描述成统一加密所有自定义 key，见[存储](../../architecture/10-data-storage.md)。
+
+### 内网模型请求的网络策略
+
+内置语言模型与自定义语言模型统一投影 `models.providers.<id>.request.allowPrivateNetwork: true`，用于模型 HTTP 传输访问企业内网或代理 Fake-IP；授权也覆盖原生重定向。该字段随登录生成、凭据解析和轮换保留，退出时随内置 Provider 一起删除，不改变 JWT、开发 API Key、账号绑定或 SecretRef 验证。换证、目录发现及记忆检索沿用各自网络策略，不从这个模型请求字段继承授权。
+
+## 6. 退出、失效与发现失败
+
+凭据缺失/失效时清内存、中止旧发现，移除 builtin provider、相关 memory search 引用与受管 SecretRef，同步 Gateway 并通知 Renderer；不继续请求模型服务。
+
+发现失败但凭据有效且 generation 仍最新时，保留最近成功目录及最新模型启用状态，避免把暂时网络失败误判为模型下架。账号切换必须先完成退出清理，再写入新账号并调用登录入口，避免继承上一账号缓存。成功返回空目录则真实清空，已失效默认模型按可用列表回退。当前可选 `/model/info` 返回非成功 HTTP 状态时降级为无增强元数据；网络异常或 JSON 解析失败仍按整次目录刷新失败处理并保留缓存。
+
+## 7. 服务端长期授权
+
+仓库内参考 LiteLLM JWT Hook 验证非对称签名、kid、issuer/audience、时间与账号，解析 internal user 和唯一非 legacy jwt_managed Team，再进入公共模型、blocked、预算和 RPM/TPM 检查。该 Hook 的 kid 策略与当前内网签发形态不同；内网服务应使用其实际配置的可信验签密钥，客户端允许缺少 kid 不会替代服务端验签。JWT 轮换不会重新创建 Team 或每用户 Virtual Key。
+
+认证 dispatch 将 JWT 与普通 Key/管理会话分开，JWT 失败不得回退到旧 Key。多 worker 用量协调与权限缓存传播属于部署范围，不能承诺权限变更瞬时生效。
+
+旧客户端限时 legacy Key 是独立服务端兼容机制，不是新版客户端凭据。部署前若旧值仍为 master key，先旋转 master；兼容期限不自动延长。操作步骤见 [LiteLLM 部署](../../../deploy/litellm/README.md)。
+
+## 8. 活动上报不是认证
+
+ACTIVITY_REPORTING_CONFIG 默认开启，控制可选的本机每日用量快照。关闭不影响 JWT 或模型调用，不清除服务端历史。客户端使用 `POST /user/activity` 和 `usage.snapshot` 事件；正文账号仍须与 JWT 一致，统计本身不拆分本机登录账号。服务端锁定已有 User 行并合并 `metadata.user_activity`，保留其他 metadata。活动存储不开户、不修改 Team 或角色，原生 User/Team 认证和 EndUser 消费映射保持现有行为。旧 `/customer/activity` 不再支持。clientTime/loginTime、采集时间与数据库接收时间分开；未收到报告不能证明未启动。
+
+客户端在启动就绪至少 15 分钟后择空闲采集：只读当前 Gateway 连接、已知运行状态和系统空闲秒数，不扫描全局会话来证明绝对空闲，也不启动 Gateway。每个客户端数据目录按北京时间自然日最多 3 个报告窗口，至少相隔 6 小时；发送前先在 Main KV `activity.reportingSchedule` 预留窗口，采集失败、无变化和网络失败均消耗机会，保存失败就跳过。本地空闲重查不采集、不请求网络。午夜只重置日配额，重启/账号切换不清除间隔或接口冷却。
+
+每窗口最多一次可取消、5 秒截止的 `sessions.usage` 请求，固定最近 7 个北京时间日期、全部 Agent、物理会话口径。`costDaily` 提供每日输入/输出/总 Token；全部 creator 的日期 cohort 求和得到每日有原生活动记录的会话实例数，同一天同实例只计一次，跨日分别计数，不等于当天新建产品聊天。内置和用户自配模型统一统计；不输出 creator、会话 ID、模型排名或正文，不新增消息计数器和 transcript 缓存。用量称为“已记录 Token”，不估算缺失值；原生缓存可以后台刷新，不轮询等待完整。缺少必要统计则跳过，有效空聚合才能报零。
+
+`metadata.usage` 固定保留最多 7 个 `date/sessionCount/inputTokens/outputTokens/totalTokens` 小记录，以及统计时区、采集时间和可用的缓存状态/原生更新时间。动态时间不参与快照变化判断，相同统计 24 小时内不重复发送。整体正文仍限 8 KiB；服务端的 90 个 UTC 接收活动日和 256 个去重 ID 不属于客户端每日报表。快照仅替换最新值，不累计或反写原生账单，不提供跨设备归并和长期日报。原生 startup 接收数不代表真实启动次数。
+
+允许客户端先升级、服务端后升级。404 等接口或格式不支持、未确认的成功响应至少冷却 24 小时；其他失败等待下一个合格窗口，不做分钟级重试。HTTP 最多等待 15 秒且确认读取有界，上报独立于主流程，sync 不向登录/启动抛错，禁止重定向和旧 Key/旧接口回退。采集后重新核对当前身份、凭据和空闲；stop/账号切换后的迟到采集与响应不能修改新代际状态。每个新窗口使用新 UUID 与最新累计快照，不持久排队旧事件；退出取消即可，原生用量仍由 OpenClaw 保存，不承诺完整历史补报。
+
+Main 的 `[UserActivity]` 单行 JSON 日志记录启动、等待原因、采集/发送、受控失败和成功确认。只有远端 2xx 且 `ok:true` 才记录 `succeeded`；本地成功状态保存失败另记 `phase=success-persistence`。等待记录带下一检查时间、已有成功时间及可用的 Gateway/运行/系统空闲状态，相同状态 30 分钟内去重，不改变任何采集资格或次数。字段仅包含固定原因、阶段、时间、状态码和数值/布尔信息，不含账号、凭据、URL、快照正文或原始异常。日志写入与诊断 getter 失败被隔离；查看示例见[配置说明](../../../src/config/README.md#活动上报)。
+
+## 9. 验证与限制
+
+隔离回归通过实际配置投影与锁定运行时的原生重载计划，覆盖无自定义供应商和保留自定义供应商时的
+启动、登录、退出及再次登录；同时检查监听配置、启动环境、内置 embedding 与默认模型引用。
+测试只收集原生记忆插件的服务声明，不启动 Gateway、索引服务或真实登录流程，不代表远端服务可达性验收。
+
+测试覆盖 claims、期限、跨账号迟到响应、退出后重试、必需/可选发现、SecretRef 轮换和敏感值不外泄。
+`plugins/extensions/runtime-services/tests/model-auth.test.ts` 覆盖请求级凭据替换、路由隔离、失败拒绝与取消；
+`tests/openclaw/runtime/builtin-model-auth.test.ts` 使用当前安装的原生凭据解析器、运行凭据包装和
+真实 Completions 传输，在内存 HTTP 宿主中模拟同一任务跨过 30 分钟 JWT 到期点，
+验证后续请求的两个认证头均使用新 JWT，以及退出、同账号重新登录后的旧任务拒绝。
+测试不访问真实模型或 JWT 服务。真实部署另验签发方/JWKS、Team 白名单、预算限流、管理路由拒绝与并发。
+
+`builtin-model-auth-lifecycle.test.ts` 组合真实换证协调器、监控器、私有快照发布、
+原生 SecretRef 解析和 Completions 传输，以统一的 Main／子进程测试时钟跨过多个
+JWT 生命周期。延迟配置确认期间，同一任务继续使用自动续签的新凭据；退出后，
+迟到确认不能恢复凭据或允许旧任务发送。该隔离测试使用假签发响应和假模型，
+不代表真实 Gateway 配置热更新或生产账号故障已完成验收。
+
+JWT 是 bearer token，在剩余有效期内可重放；MAC deviceId 不是设备签名。若需要防重放，必须由身份系统提供设备密钥绑定等额外协议，客户端不能自行宣称已实现。

@@ -128,9 +128,9 @@ stateDiagram-v2
 
 该图是产品处理阶段，不是新增数据库 enum。实际 run 状态、Goal 阶段和交互状态各自有共享契约；Stop ACK 或 chat final 可收敛请求/显示，不能单独建立整轮执行结论。只有匹配 run 的 whole-run `executionSettled:true` 终态才结算；受管理工具 cleanup 另行核对。
 
-停止交给原生取消语义，包含队列、后代和审批清理，Main 保留产品 stop latch 与回执。协作任务还冻结用户轮次并停止成员，防止迟到 peer send 重启旧工作。错误事件只有匹配运行及终态语义才结算，不能将任意工具错误视作整个会话结束。
+停止交给原生取消语义，包含队列、后代和审批清理，Main 保留产品 stop latch 与回执。插件负责自己的业务准入冻结，防止迟到请求重新启动旧工作。错误事件只有匹配运行及终态语义才结算，不能将任意工具错误视作整个会话结束。
 
-协作流程标题栏可直接停止全队，来源已空闲时也保留入口；并发全队停止共享成员取消请求，并等待全部请求返回后报告部分失败。成员实时工作详情另有单执行停止入口，通过显式 通用 appPlugins invoke 的 `collaboration.stop-member` 命令 IPC 核对房间、成员、原生 SID 和当前 run，再发原生 `sessions.abort({key,runId})`。该路径不调用产品会话停止，也不触发全队级联，不清空后续输入或关闭协作轮次；停止 ACK 与执行结算保持分离，旧身份不能取消替换后的运行。
+插件的批量停止、成员停止和界面入口由其自身文档维护；Core 只调用注册参与者建立本地围栏并请求原生停止，不从 ACK 推断执行结算。
 
 ## 6. Goal 自动续跑
 
@@ -157,13 +157,13 @@ present_plan 将规范化计划作为工作区内受控文件持久化，并保�
 
 审批与计划确认分开。exec/plugin approval 使用原生期限和决策集合；Main 校验请求仍有效，不能把关闭窗口、断线或默认选择视作允许。
 
-app-server 客户端审批复用原生 owner，并区分逻辑 turn 与 ACK 确认的原生 run。只有实际发送连接能呈现；恢复观察不能接管。连接内相同命令授权与原生 App 持久授权是不同范围，审批关闭也不是执行完成。当前选择、等待与撤回规则见[会话权限](../features/chat/openclaw-permission-management.md#app-server-客户端审批)。
+app-server 客户端审批复用原生 owner，并区分逻辑 turn 与 ACK 确认的原生 run。只有实际发送连接能呈现；恢复观察不能接管。连接内相同命令授权与原生 App 持久授权是不同范围，审批关闭也不是执行完成。当前选择、等待与撤回规则见[会话权限](../features/execution/openclaw-permission-management.md#app-server-客户端审批)。
 
 ## 8. 子任务与平级助手
 
 子任务以 `sessions.list/describe` 的原生会话投影与 `sessions.changed` 为权威。Subagent 与 ACP 都保留原生 session key 作为产品 ID，状态、运行 ID、耗时和 usage 直接取当前原生快照；不再组合已经移除的 task ledger。查询失败保留不完整语义，详情不接受返回身份与请求 key 不一致的记录。完整读取立即替换成员集合，临时失败才保留上次已核验状态。
 
-平级协作由默认关闭的 agent-team 扩展提供。模型准备成员后使用原生 sessions_send，侧栏只显示锚点任务，详情按成员读取原生历史。任务成员不是 Subagent 树节点，accepted 投递也不是任务完成。完整预算与删除协议见[协作机制](../features/assistants/assistants-and-collaboration.md)。
+可选插件通过公开会话及执行接口组合业务流程，Core 不维护其成员、预算和调度状态。具体规则随[插件包](../plugins/README.md)分发。
 
 ## 9. 历史、分支、复制与删除
 
@@ -202,15 +202,15 @@ app-server 客户端审批复用原生 owner，并区分逻辑 turn 与 ACK 确�
 
 ## 11. 可选业务的接入边界
 
-Agent Team 的房间、协作批次、群组讨论、成员输入和历史均由插件拥有，Core 通过通用提交、导航、资源删除及后台清理参与者组合产品流程。关闭插件撤销业务贡献，不能把关闭、来源 Stop 或页面卸载当作原生执行终态，也不能重放未知输入。来源主聊天与独立 Workflow 的控制分别归其 owner。
+插件业务记录、界面和控制协议归包内；Core 通过通用提交、导航、删除和清理参与者组合产品流程。撤回贡献不证明原生执行结算，也不能重放未知输入。
 
-角色文件与执行目录仍分开：助手角色位于 `stateDir/agent-workspaces/<agentId>`，每个原生会话的 `cwd` 决定执行目录。切换助手创建新对话，不移动历史或重写工程规则。完整业务契约见[长期助手](../features/assistants/assistants-and-collaboration.md)、[Agent Team](../features/assistants/agent-team.md)和[Swarm Workflow](../features/workflow/swarm-workflow.md)，通用接入见[应用插件宿主](17-app-plugin-host.md)。
+角色文件与执行目录仍分开：助手角色位于 `stateDir/agent-workspaces/<agentId>`，每个原生会话的 `cwd` 决定执行目录。切换助手创建新对话，不移动历史或重写工程规则。完整业务契约见[长期助手](../features/assistants/profiles-and-subagents.md)、[Agent Team](../plugins/extensions/agent-team/guide.md)和[Swarm Workflow](../plugins/extensions/swarm-workflow/workflows.md)，通用接入见[应用插件宿主](../plugins/management/app-plugin-runtime.md)。
 
 ## 12. 实现与回归入口
 
 ### 只读诊断
 
-会话右键「诊断」通过独立 IPC 读取有界运行元数据，不切换聊天或触发恢复协调。Main 用精确运行身份和原生外层终态生成确定性结论；历史 start 不作为当前运行的证明。在线环境查询与本地报告分开，Gateway 离线仍可查看已有记录。正文始终由 OpenClaw 管理，诊断没有 transcript cache。见[会话诊断](../features/chat/session-diagnostics.md)。
+会话右键「诊断」通过独立 IPC 读取有界运行元数据，不切换聊天或触发恢复协调。Main 用精确运行身份和原生外层终态生成确定性结论；历史 start 不作为当前运行的证明。在线环境查询与本地报告分开，Gateway 离线仍可查看已有记录。正文始终由 OpenClaw 管理，诊断没有 transcript cache。见[会话诊断](../features/execution/session-diagnostics.md)。
 
 ### 过程问题与整轮结论
 
@@ -220,6 +220,6 @@ Main 从 `ipc/cowork/sessionExecution.ts`、`sessions.ts`、`sessionRuntime.ts`�
 
 Cowork 界面保持单层领域结构：`display` 组合标签、选择和会话面板状态，`preview` 渲染文件并浏览工作区，`terminal` 承载 Gateway 终端，`review` 展示工作区差异，`approvals` 处理执行与计划审核。`subagents` 展示原生子任务和 collector 分组；独立插件的工作流图、节点历史及介入界面归 `swarm-workflow`。跨领域的文件图标、文档样式、图形样式和连接辅助归 `shared`；这些公共模块不持有新的运行或 transcript 状态。
 
-Swarm Workflow 的产品协调、配置投影、资源 preflight 和 UI 均由独立插件的 `host/`、`app/browser/` 通过通用 Desktop SDK 注册；Core 保留普通产品会话和基础能力，移除专属 IPC/preload 及 shared 门面。关闭撤销贡献和旧 epoch，重新启用读取保留 DAG，不重放未知 launch。通用执行/文件系统底座归 Runtime Services。见 [应用插件宿主](17-app-plugin-host.md)。
+可选业务通过公开 SDK 注册配置、资源与 UI。Core 保留普通产品会话及基础能力，撤回旧 epoch 后由插件自行读取保留业务状态；通用机制见[应用插件宿主](../plugins/management/app-plugin-runtime.md)。
 
 回归应覆盖准入前取消、重复 clientTurn、原生先完成后响应、停止失败、会话切换迟到事件、Plan reset、Goal fence、协作删除部分成功和历史恢复。对应 handler、Store、Adapter 与 controller 都有领域测试；一次正常发送不能替代这些边界验证。

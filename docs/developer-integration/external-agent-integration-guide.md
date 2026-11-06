@@ -10,7 +10,12 @@
 只有 HTTP/API 接口时，也可以通过本地 ACP adapter 接入。本文说明接入步骤和验收要求，
 不涉及“设置 → 助手”中的角色档案，也不把模型 Provider 或 MCP Server 当作外部 Agent。
 
-本文可以单独分发；在仓库内阅读时，可从[开发接入接口索引](README.md)进入。
+这里的调用方向是“本应用 → 外部 Agent”，由主 Agent 委派外部执行。
+如果目标是“外部脚本／自有客户端 → 本应用”，应使用[app-server API](../app-server-api/README.md)，
+不需要在外部 Agent 目录登记条目，也不使用本文的 ACPX 委派配置。
+
+本文是仓库开发指南，可从[开发接入接口索引](README.md)进入。面向最终部署者的命令、认证和运行前提，
+应随新适配器提供无需本仓库源码即可阅读的说明。
 示例中的 `example-agent`、包名和入口文件均为占位值，接入时应替换为实际产物。
 
 ## 最短接入路径
@@ -26,9 +31,9 @@
 | 修改点         | 实现入口                                                                                                                                                                                                                             | 新 Agent 的接入要求                                                  |
 | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------- |
 | 产品目录       | [externalAgentCatalog.ts](../../src/shared/integrations/externalAgentCatalog.ts)                                                                                                                                                     | 增加一项；类型、设置默认值和页面列表随目录派生                       |
-| 中英文说明     | [settingsTranslations.ts](../../src/renderer/services/i18n/settingsTranslations.ts)                                                                                                                                                  | 复用通用 CLI 标签；无需逐 Agent 翻译命令名                            |
+| 中英文说明     | [settingsTranslations.ts](../../src/renderer/services/i18n/settingsTranslations.ts)                                                                                                                                                  | 复用通用 CLI 标签；无需逐 Agent 翻译命令名                           |
 | 图标与样式     | [ExternalAgentBrandIcon.tsx](../../src/renderer/features/settings/integrations/ExternalAgentBrandIcon.tsx)、[ExternalAgentsSettingsSection.tsx](../../src/renderer/features/settings/integrations/ExternalAgentsSettingsSection.tsx) | 增加图标分支和 `AGENT_ICON_STYLES` 项                                |
-| adapter 与依赖 | [ACPX 扩展](../../plugins/extensions/acpx/README.md)                                                                                                                                                                                 | 原生 CLI 可依赖部署方安装；内置 adapter 进入扩展源码或锁定的生产依赖 |
+| adapter 与依赖 | [ACPX 扩展](../plugins/extensions/acpx/overview.md)                                                                                                                                                                                  | 原生 CLI 可依赖部署方安装；内置 adapter 进入扩展源码或锁定的生产依赖 |
 | 构建与归档检查 | [runtime 资源同步](../../scripts/openclaw/sync-openclaw-runtime-resources.cjs)、[打包校验](../../scripts/packaging/electron-builder-hooks.cjs)                                                                                       | 内置方案增加入口和目标平台必需文件校验；预安装方案记录环境前提       |
 
 仅增加目录项通常不需要新增 IPC、Redux slice、数据库表或手工追加 Agent 白名单。
@@ -309,87 +314,15 @@ TypeScript 构建会失败，这是一项有意保留的完整性检查。
 
 ## 6. 实现 ACP adapter
 
-无论 adapter 来自上游还是自行开发，至少应满足以下合同。
-协议版本、字段和可选能力以锁定依赖对应的 ACP SDK/类型及实际握手为准，不在本指南中
-另定义一套私有请求格式。自行开发时优先复用 ACP SDK，并把新增 SDK 作为精确版本的生产依赖。
+adapter 的协议、会话／模型、权限、认证及进程生命周期合同由 [ACPX 插件](../plugins/extensions/acpx/adapters.md)维护。开发者应先核对其锁定 ACP SDK 和真实能力，再把新入口接入本指南的产品目录及构建校验；不要在宿主再定义一套 ACP 私有协议。
 
-### 6.1 协议和输出
-
-- 通过 stdin/stdout 传输 ACP；
-- stdout 只能包含协议数据，日志、调试信息和诊断必须写到 stderr；
-- 支持初始化、创建会话、执行提示词、取消和连接关闭；恢复能力按真实支持情况声明并测试；
-- 启动失败时在 stderr 给出可诊断错误，并以非零退出码结束；
-- 正确处理不完整输入、异常断开、超时和重复取消；
-- 路径中包含空格或中文时仍可工作。
-
-### 6.2 会话和模型
-
-Agent 应为每个 ACP 会话维护清晰的会话身份，不要把不同任务合并到同一个全局会话。
-
-如果 Agent 支持模型选择，应通过 ACP 能力与模型列表对外声明；如果不支持，就使用 Agent 自己
-的默认模型。不要把主 Agent 当前使用的模型名称直接传给外部 Agent，因为两者的模型命名空间
-通常不同。
-
-### 6.3 权限
-
-adapter 必须通过 ACP 权限请求上报受控操作，不能绕过运行时策略直接执行。应用提供三种统一
-权限模式，投影关系如下：
-
-| 页面选择             | 设置值                    | ACPX `permissionMode` | `nonInteractivePermissions` |
-| -------------------- | ------------------------- | --------------------- | --------------------------- |
-| 禁止受控操作         | `deny-all`                | `deny-all`            | `deny`                      |
-| 只读，拒绝操作后继续 | `read-only` + `continue`  | `approve-reads`       | `deny`                      |
-| 只读，立即终止任务   | `read-only` + `fail-task` | `approve-reads`       | `fail`                      |
-| 完全访问             | `full-access`             | `approve-all`         | `fail`                      |
-
-只读模式还可以选择“拒绝越权操作后继续任务”或“立即终止任务”。只有被 Agent/adapter 正确
-上报为权限请求的操作才能被该策略控制；因此权限适配是正式接入的必要项，不应只验证聊天回复。
-
-### 6.4 认证
-
-认证应继续使用 Agent 官方支持的凭据存储或由部署方明确提供的进程环境。禁止把 token、密码、
-cookie、认证文件内容写入：
-
-- Agent 目录；
-- 启动参数；
-- 源码和提交记录；
-- 日志与测试快照；
-- 安装包中的公共配置。
-
-如果应用启动 Agent 时使用隔离状态目录，而 Agent 默认只会从用户目录读取登录状态，需要在
-adapter 内实现最小化的认证衔接，并验证文件权限、刷新流程和退出清理。不要实现“复制整个用户
-配置目录”的通用逻辑。
-
-测试时至少覆盖“未登录”“凭据过期”“凭据格式损坏”和“登录状态有效”四种情况。
-
-### 6.5 进程生命周期
-
-取消当前回合与关闭会话是两件事：取消应停止当前工作，会话是否保留由原生生命周期决定；
-不要把可恢复会话中的存活进程直接判为孤儿进程。会话关闭、父进程退出、协议 stdin 关闭或
-应用关闭后，应清理该任务所属的 Agent 与辅助进程。Windows 上要验证进程树清理，
-且只能按已核验的启动路径和进程归属清理，不能按 `codex` 等名称杀掉用户的其他进程。
+产品默认只读，设置页的三种权限和两种只读越权处理必须按插件合同投影并验收。实际执行只有通过 Agent／adapter 上报的受控请求才能被政策约束；不能仅通过设置保存或聊天回复证明权限有效。
 
 ## 7. MCP 工具和 Skills
 
-设置页可以选择向外部 Agent 提供：
+设置页分别控制已启用插件工具、明确开放的内置工具和用户配置的本地 stdio MCP Server，三项默认关闭。宿主过滤 HTTP／SSE、禁用／无命令项以及保留工具桥名称后，才按保存设置发布；字段和 Agent 消费责任见 [ACPX 的 MCP 合同](../plugins/extensions/acpx/adapters.md#mcp-工具与-skills)。
 
-- 已启用插件注册的工具；
-- 本应用明确开放的内置工具；
-- 用户已配置并启用的本地 stdio MCP Server。
-
-这三项默认关闭。当前 ACPX 仅接受 stdio MCP 启动项；HTTP 和 SSE Server 不会被投影给外部
-Agent。Agent/adapter 必须正确消费 ACP 会话中传入的 MCP Server 信息，才能真正调用这些工具。
-
-用户配置的 MCP Server 当前只投影 `command`、`args`、`env`，不会透传 OpenClaw 专用的
-`cwd`、请求超时、远程传输或 headers。自研 Agent 应明确声明并验证自己能消费的能力；
-仅启动 ACP 握手不会证明 MCP 已可用。
-
-应用内 Skills **不会自动复制给外部 Agent**。主 Agent 可以先使用 Skill，再把合适的子任务和
-上下文委派出去；外部 Agent 也可以加载它自身支持的 Skills。若希望某个 Agent 直接消费应用内
-Skill，需要单独设计显式的、安全的适配流程，不能把“已打开 MCP 工具”当成“已共享 Skills”。
-
-工具桥接开启后，必须补测工具枚举、一次成功调用、权限拒绝、超时、Agent 取消和 Server 异常
-退出。不得把凭据通过 MCP Server 名称、参数或错误详情泄露到界面。
+应用 Skills 不自动复制给外部 Agent，工具共享也不代表技能共享。若增加新的共享方式，须先设计显式安全合同，再修改设置、配置投影和集成测试。
 
 ## 8. 依赖和离线打包
 
@@ -409,8 +342,9 @@ Skill，需要单独设计显式的、安全的适配流程，不能把“已打
 构建每个目标平台时，都应在该目标的全新 runtime 目录中安装依赖。不要把 Windows 的
 `node_modules` 复制到 macOS/Linux，也不要把 x64 产物复用到 arm64。
 
-版本、下载地址、文件名、存放目录和离线准备命令统一维护在
-[离线下载指南](../offline-downloads.md)，本篇只说明交付合同。这里的“离线”指不在已安装应用中
+必须人工下载到仓库 `cache/` 的资源，其下载地址、完整文件名与缓存目标统一维护在
+[离线下载指南](../offline-downloads.md)；依赖安装、runtime 同步、预编译和打包命令见
+[脚本说明](../../scripts/README.md)及所属扩展说明，不混入人工下载清单。这里的“离线”指不在已安装应用中
 下载运行依赖；模型、认证或远端 Agent 服务所需的网络连接仍应单独说明。
 
 ### 8.2 仓库自带 adapter
@@ -433,7 +367,8 @@ Skill，需要单独设计显式的、安全的适配流程，不能把“已打
 - 可执行文件查找不经过 shell；
 - 发布验收环境与最终使用环境一致。
 
-如果无法保证这些条件，应把 CLI 或 adapter 随应用打包。
+无法保证这些条件时，应先缩小支持范围，或为允许再分发的新 Agent 实现完整包内方案。
+Claude／Codex 当前明确只分发 ACP adapter、要求用户另装 CLI，不能以此段建议绕过其平台二进制排除检查。
 
 移除一个已交付的 Agent 时，需同时清理产品目录、adapter 包及锁文件、第三方声明、目标平台产物检查和聚焦测试。只在设置中停用会阻止调度，但不会从安装包移除文件。
 
@@ -446,7 +381,7 @@ Skill，需要单独设计显式的、安全的适配流程，不能把“已打
 不使用上游 registry 的默认下载命令。准备诊断命令不会把该 Agent 加入任务准入集合。
 ACPX 封装与当前锁定的 OpenClaw 源码基线对齐，上游版本及本地定制见
 [ACPX 来源记录](../../plugins/extensions/acpx/UPSTREAM.md)。独立运行库及适配器依赖以扩展的
-`package.json` 和 `package-lock.json` 为准，安装步骤见[ACPX 扩展](../../plugins/extensions/acpx/README.md)。
+`package.json` 和 `package-lock.json` 为准，安装步骤见[ACPX 扩展](../plugins/extensions/acpx/overview.md)。
 
 测试具备以下特性：
 
@@ -537,8 +472,10 @@ npm run compile:electron
 npm test
 ```
 
-开发时按改动选择上述专项；提交接入实现前再执行完整检查。`npm test` 会切换
-better-sqlite3 的 Node ABI 并在结束后恢复 Electron ABI，不要与依赖该模块的开发会话并行运行。
+开发时按改动选择上述专项；提交接入实现前再执行完整检查。`npm test` 在
+`build/test-dependencies/` 下准备私有 Node better-sqlite3，通过环境变量供测试使用，
+结束后清理本次私有目录，不替换应用的 Electron 原生二进制。应用依赖需要修复时使用
+`npm run rebuild:electron-native`，不要与依赖 SQLite 的桌面会话并行执行该修复。
 若只修改本文，检查格式、链接和 `git diff --check` 即可。
 
 按发布平台重新生成 runtime，例如 Windows x64：

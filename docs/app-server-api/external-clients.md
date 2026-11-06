@@ -1,8 +1,7 @@
 # 通用客户端：stdio 与本机 WebSocket
 
 本文描述 CLI stdio 和本机 Bearer WebSocket 共用的 `CliAppServerBinding`。
-两种传输使用相同的方法、数据模型与会话所有权；Chrome 的发现、历史、附件和订阅规范见
-[Chrome 扩展](../features/browser/extension-protocol/README.md)。公共消息外形和入口差异见[总览](README.md)。
+两种传输使用相同的方法、数据模型与会话所有权。公共消息外形见[总览](README.md)。
 
 ## 连接
 
@@ -19,7 +18,7 @@
 此命令不启动 WebSocket listener。调用时桌面应用须已运行或驻留托盘。
 
 stdin EOF 或连接断开会取消本连接拥有的活动／未知运行，并等待原生清理；
-关闭进程不能作为执行已停止的证明。更多启动与安装约束见 [CLI 与 ACP](../features/integrations/agent-cli.md)。
+关闭进程不能作为执行已停止的证明。更多启动与安装约束见 [CLI 与 ACP](../features/external-clients/agent-cli.md)。
 
 ### 本机 WebSocket
 
@@ -42,8 +41,7 @@ stdin EOF 或连接断开会取消本连接拥有的活动／未知运行，并�
 自动端口模式下每次重启仍可能换地址。固定端口被占用时服务不可用，不自动换端口。
 不要猜测端口或将令牌写入日志。
 HTTP Upgrade 必须携带正确的 `Authorization`，且不能带 `Origin`。
-此入口面向可设置 Upgrade 请求头的本机客户端，不能由普通网页直接连接；
-Chrome 扩展使用独立的 Origin／capability 入口。
+此入口面向可设置 Upgrade 请求头的本机客户端。
 
 可直接运行的 [Python WebSocket 示例](examples/python/README.md)演示读取复制配置、
 查询模型、创建／恢复会话、文本／图片发送、历史分页、独立观察和手动审批。
@@ -52,7 +50,7 @@ Chrome 扩展使用独立的 Origin／capability 入口。
 通用入口的出站单条 JSON 消息同样最多 8 MiB，待发输出缓冲总量为 16 MiB；
 缓冲额度不是单条消息额度，超限会退役连接而不静默丢弃通知。
 WebSocket 断开采用与 stdio EOF 相同的精确运行取消策略。
-资源与背压上限由[统一 app-server](../features/integrations/app-server.md)维护。
+资源与背压上限由[统一 app-server](../features/external-clients/app-server.md)维护。
 
 ## 最小调用顺序
 
@@ -187,7 +185,7 @@ session key 或执行回执。当前各外部入口共用 `source: 'cli'` 命名
 该英文名称，不按调用方应用名称细分。
 
 桌面应用管理执行配置。以下非 `null` 覆盖项会被拒绝：
-`browser`、`serviceTier`、`approvalPolicy`、`sandbox`、`modelProvider`、`profile`、
+`serviceTier`、`approvalPolicy`、`sandbox`、`modelProvider`、`profile`、
 `baseInstructions`、`developerInstructions`、`compactPrompt`、`includeApplyPatchTool`。
 `config` 只允许省略、`null` 或空对象；未知字段不保证生效，不能据此假设能力已支持。
 非 `null` 的 `serviceName`、`sessionStartSource`、`threadSource`、`dynamicTools`、`personality`、
@@ -198,7 +196,7 @@ session key 或执行回执。当前各外部入口共用 `source: 'cli'` 命名
 ### `thread/list` / `thread/read` / `thread/loaded/list`
 
 `thread/list` 返回 `{ data: Thread[], nextCursor, backwardsCursor: null }`。
-只列同一 profile 的可用 CLI 来源映射，不混入 Chrome、普通桌面会话、旧客户端命名空间或已删除记录。
+只列同一 profile 的可用 CLI 来源映射，不纳入其他来源、旧客户端命名空间或已删除记录。
 目录、助手或产品映射已失效的条目不会伪装成可恢复会话；数据库故障仍报错。
 
 列表支持 `cursor`、`limit`、`sortKey`（`created_at`／`updated_at`／`recency_at`）、
@@ -270,14 +268,13 @@ PNG／JPEG／GIF／WebP 原始图片合计最多 4 MiB，UTF-8 文本最多 2 Mi
 不承诺交错 text/image 在模型端保持逐项位置。标准实时 userMessage 和历史采用相同的原生归一化含义。
 文字按换行拼接后计入字节限额；没有非空文字时，userMessage 不新增空白文字占位项。
 所选模型必须在真实目录中声明 `image` 模态，不能靠客户端参数使文本模型获得视觉能力。
-Chrome 复用该图片校验，但文字另限 32000 字符，且不开放通用入口的宿主路径／远程图片读取能力。
 
 `image.url` 支持 base64 data URL；通用本机入口另支持 RFC1918 IPv4／ULA IPv6 字面地址的
 HTTP(S) 图片，不带应用、模型凭据或 Cookie，不跟随重定向。当前不解析图片域名；
 不允许 loopback、链路本地地址、URL 内用户名／密码或 fragment；每次读取上限 15 秒，
 并使用宿主已有的代理设置。域名资源可由客户端取回后使用 data URL。
 `localImage.path` 可为绝对路径或相对线程 cwd 的路径，必须真实位于已绑定 cwd 内，
-检查符号链接／目录联接解析、打开句柄及读取期间身份，拒绝越界或变动；浏览器入口不开放此能力。
+检查符号链接／目录联接解析、打开句柄及读取期间身份，拒绝越界或变动。
 图片只读取一次，转成真实原生附件。audio／localAudio、fileId、非 auto 的 detail、
 非空 text_elements、`input_text` 别名和其他未适配输入明确拒绝。
 
@@ -307,7 +304,7 @@ HTTP(S) 图片，不带应用、模型凭据或 Cookie，不跟随重定向。�
 并与原生截断摘要核对。无法恢复正文会报告输出错误，不改写已经确认的原生结算结果。
 `threadId` 必须是当前连接拥有的会话；活动或结果未知的 turn 尚未解除前拒绝新输入。
 
-以下非 `null` 的逐轮覆盖项会被拒绝：`browser`、`effort`、`serviceTier`、`cwd`、
+以下非 `null` 的逐轮覆盖项会被拒绝：`effort`、`serviceTier`、`cwd`、
 `approvalPolicy`、`sandboxPolicy`、`outputSchema`。模型也可逐轮选择，原生后端在准入前真实应用；
 权限和其他执行配置沿用桌面应用设置，不提供客户端 MCP 配置 API。
 非 `null` 的 `toolOutput`、`disabledPluginIds`、`serviceTierForTurn`、`summary`、`personality`、
@@ -333,7 +330,7 @@ HTTP(S) 图片，不带应用、模型凭据或 Cookie，不跟随重定向。�
 ```
 
 该响应与 `turn/started` 只确认本地任务准入，不证明原生执行已接纳或结算。
-本入口不支持 Chrome 的 `clientTurnId` 幂等查询流程。
+客户端使用响应中的服务端 turn ID 匹配后续通知和停止请求，不能自行生成替代 ID。
 
 ### `turn/interrupt`
 
@@ -412,7 +409,7 @@ HTTP(S) 图片，不带应用、模型凭据或 Cookie，不跟随重定向。�
 每次仍向原生发送 allow-once，首次成功后才记入有界内存授权；不写全局永久规则。
 已结算的轮次不会自动清除该连接范围；通用入口的空闲 `thread/unsubscribe` 也不清除，
 同连接恢复相同原生会话时仍可匹配。选择 `cancel`、关闭连接或身份／代次变化会撤回授权；
-Chrome 的退订还会撤回对应审批范围。缓存最多保留 256 个原生会话、每会话 256 个命令指纹，
+缓存最多保留 256 个原生会话、每会话 256 个命令指纹，
 被回收的许可需再次明确审批。策略和网络修订仍明确不支持。
 许可解决由原生路由复核运行身份、
 incarnation、当前连接、到期和 allowedDecisions；客户端不能绕过桌面权限规则。
@@ -423,7 +420,7 @@ incarnation、当前连接、到期和 allowedDecisions；客户端不能绕过�
 自由文本、额外答案及其他形状均拒绝。仅当原生 bundle-mcp 请求同时明确提供 pluginId、
 allowedDecisions 与 allow-always action 时，显示“始终允许此 App”并回传真实原生持久 App 授权；
 该选择不是 acceptForSession，不适用于其他插件。不支持原生未提供的独立文件变更审批、
-策略修订、通用 elicitation 或动态工具注册。普通复杂 ask_user_question 仍走原有交互桥。
+策略修订、通用 elicitation 或动态工具注册。
 入门 Python 示例默认拒绝审批；[进阶审批示例](examples/python/approvals.py)
 逐次展示请求并收集用户选择，其他进阶示例仍默认拒绝。
 
@@ -503,8 +500,6 @@ userMessage.content 也保留真实 image／localImage。原生历史只有受�
 对应 localImage.path；这是该会话的图片引用，不是 transcript 路径，不会为投影读取文件或授予文件权限。
 工具状态为 `inProgress`、`completed` 或 `failed`，错误可包含 `{ message }`。
 `mcpToolCall` 只是原生工具进度的协议投影，不表示提供了客户端 MCP 管理能力。
-Chrome 也使用这些标准 Item；其 `browser.display` 另保留 `toolCall`、`systemMessage` 等富显示项，
-并通过 `browser/thread/stream` 提供原生增强流。
 工具投影保留开始时的名称／参数和真实输出，MCP `content`／`structuredContent` 按原值返回；
 原生 `content`／`details` 结果将 `details` 投影为结构化内容。已明确隐藏的工具与
 尚未通过原生 guard 提交的正文不会输出。工具元数据和去重 ID 均有容量上限，完成结果不另存历史缓存。
@@ -520,22 +515,21 @@ Chrome 也使用这些标准 Item；其 `browser.display` 另保留 `toolCall`�
 | `failed`      | 执行、输出或结果核对发生错误；`error: { message }` |
 
 未知结果也使用 `failed`，但 `error.message` 带 `EXECUTION_UNKNOWN: ` 前缀，
-并保留未知运行的占用。标准通知不含 `executionSettled` 字段，Chrome 精确状态另在 `browser.activeTurn` 中表达，
-也不能把所有 `failed` 解释为原生执行已失败。输出通道错误同样不证明原生已经停止。
+并保留未知运行的占用。不能把所有 `failed` 解释为原生执行已失败。
+输出通道错误同样不证明原生已经停止。
 
 新连接可查询历史，并通过 `thread/resume` 订阅后续事件；不会重放错过的实时通知。
 稳定 URL 和令牌只简化连接参数管理；每条新连接仍需重新 `initialize` 并明确创建或恢复会话。
 断线、超时或未知结果后不能自动重新提交原输入；恢复会话仍须通过服务端的身份和占用校验。
-取消与回收依赖精确原生运行身份及终态证据，详见[执行生命周期](../features/integrations/app-server.md)。
+取消与回收依赖精确原生运行身份及终态证据，详见[执行生命周期](../features/external-clients/app-server.md)。
 
 ## 错误
 
 未初始化、无效请求或重复初始化返回 `-32600`；明确的参数校验失败／不支持的参数为 `-32602`，
 未实现方法为 `-32601`，其他业务错误为 `-32000`。WebSocket 非法 JSON 返回 `-32700`；stdio 非法 JSON 关闭连接。
-通用入口不支持的方法包括 `browser/thread/image`、`browser/composer/options`、
-`browser/extension/pair`、`turn/steer`、账户、配置和文件变更审批 API。
-基础错误码与 Chrome 相同；`turn/start.error.data.requestSent` 仅在存在明确布尔证据时返回，
-缺省时不能据错误码推断原生是否接收。断连和执行归属策略仍按入口分别确定。
+未实现的方法包括 `turn/steer`、账户、配置和文件变更审批 API。
+`turn/start.error.data.requestSent` 仅在存在明确布尔证据时返回，
+缺省时不能据错误码推断原生是否接收。
 
 权威实现为 `src/main/integrations/externalAgent/cliAppServerBinding.ts`、
 `codexAppServerProgress.ts` 与 `src/main/appServer/appServerIntegrationService.ts`。

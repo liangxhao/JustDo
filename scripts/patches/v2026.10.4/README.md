@@ -178,8 +178,8 @@ acceptance publication. The private terminal record is written only from an exac
 Yield is evidence about that run, while current native work owners determine whether its successor is allowed.
 Persisted settlement retains exact Goal/session/revision identity across Gateway restart. No RPC family,
 transcript cache, collector-consumption ledger, Code Mode VM transfer or tool waiting-policy change is added.
-The current contract and remaining acceptance are recorded in [Goal mode](../../../docs/features/chat/goal-mode.md)
-and [Goal validation limits](../../../docs/features/chat/goal-mode.md#当前验证边界).
+The current contract and remaining acceptance are recorded in [Goal mode](../../../docs/features/execution/goal-mode.md)
+and [Goal validation limits](../../../docs/features/execution/goal-mode.md#当前验证边界).
 
 ## Validation
 

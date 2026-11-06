@@ -15,7 +15,7 @@ The opt-in plugin marketplace probe lives in `electron/plugin-marketplace/` and
 runs with `npm run test:plugins:marketplace -- --runtime <prepared-runtime-root>`.
 It uses real Electron IPC, production installers and a disposable native Gateway,
 with generated packages served by a loopback-only HTTP market. See the
-[marketplace integration guide](../docs/developer-integration/plugin-marketplace-integration.md#本地市场联调探针)
+[marketplace integration guide](../docs/plugins/marketplace/integration.md#本地市场联调探针)
 for prerequisites, isolation, outputs and the boundary with enterprise SDK testing.
 
 Existing extension import packages can also be reused without regenerating or

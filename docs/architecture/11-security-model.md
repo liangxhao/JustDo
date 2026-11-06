@@ -70,7 +70,7 @@ ask/auto/full 映射原生 guarded/workspace/full。权限期望先保存产品�
 
 解包拒绝 traversal、绝对/别名路径、symlink、特殊文件、重复项和过大展开。目标必须位于精确受管根；删除系统或父 Extension 托管项不能由 UI 任意构造 path 完成。
 
-Extension 导入由用户选择安装包后直接执行，Main 在停止 Gateway 的包变更保护内通过原生 CLI 自动接受能力声明，不再要求安装审核确认或携带 reviewToken 再次提交。格式、来源、声明、staging 与提交校验仍由原生负责，operator grants 和 App 代码 hash 信任边界保持独立。已安装 inventory 才是运行态事实。
+Extension 导入由用户选择安装包后直接执行，Main 固定自动接受该包的原生能力声明：普通原生扩展优先使用当前 Gateway 的 `plugins.install`，涉及 App 伴随代码或引擎原本离线时，在停止租约内使用原生 CLI，不再要求安装审核确认或携带 reviewToken 再次提交。格式、来源、声明、staging 与提交校验仍由原生负责，operator grants 和 App 代码 hash 信任边界保持独立。已安装 inventory 才是运行态事实。
 
 这些检查减少安装错误和未授权能力，不把 Node Extension 变成恶意代码沙盒。它可能读取 Gateway 进程环境；安装可信代码仍是重要信任决定。
 

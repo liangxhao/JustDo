@@ -106,7 +106,7 @@ npm test
 | 日志                    | Windows 默认位置                                    |
 | ----------------------- | --------------------------------------------------- |
 | Main                    | `%APPDATA%/<productName>/logs/main-YYYY-MM-DD.log`  |
-| Cowork                  | `%APPDATA%/<productName>/logs/cowork.log`          |
+| Cowork                  | `%APPDATA%/<productName>/logs/cowork.log`           |
 | Gateway 摘要            | `%APPDATA%/<productName>/openclaw/logs/gateway.log` |
 | OpenClaw 完整 JSON 日志 | 以 `[gateway] log file:` 输出的路径为准             |
 
@@ -150,7 +150,7 @@ Main 统一维护应用写入的 Main、Cowork 和 Gateway 摘要日志。单文
 达到保留期或容量预算后删除的历史不能恢复。上述 500 MiB 预算仅覆盖应用受管
 日志，OpenClaw 完整 JSON 日志的写入与保留仍由 OpenClaw 负责。
 
-启动失败先查 Main 初始化、原生模块和 runtime；聊天执行异常再对照 Gateway 日志与[会话诊断](features/chat/session-diagnostics.md)。分享日志前脱敏，不提交原始日志、数据库或完整配置。
+启动失败先查 Main 初始化、原生模块和 runtime；聊天执行异常再对照 Gateway 日志与[会话诊断](features/execution/session-diagnostics.md)。分享日志前脱敏，不提交原始日志、数据库或完整配置。
 
 侧边栏网页加载失败时，在 Main 日志按 `[BrowserNetworkDiagnostics]` 筛选即可提取单行 JSON
 证据；`load-failed` 和 `proxy-check` 通过 `diagnosticId` 关联。普通“导出日志”已包含这些记录。

@@ -16,7 +16,7 @@ use `build/runtimes/`, Windows runtime archives use `build/tar/`, local speech m
 The build and cache directories are ignored by Git.
 
 Local speech model preparation, packaging and upload to the internal download
-service are documented in [speech model releases](../docs/features/models/local-speech-model-release.md).
+service are documented in [speech model releases](../docs/features/speech/local-speech-model-release.md).
 
 `packaging/installer-animation-assets.cjs` renders the existing application icon
 into native installer AVI/bitmap assets under `build/installer/<fingerprint>/`.
@@ -93,22 +93,22 @@ publishes its complete staged tree by rename. On Windows, transient `EPERM`,
 attempt. A persistent failure still blocks the build and removes the unpublished
 staging tree.
 
-| Directory    | Responsibility                                                           |
-| ------------ | ------------------------------------------------------------------------ |
-| `assets/`    | Application and tray icon generation, macOS icon repair                  |
-| `browser/`   | Host adapters for browser content bundles and Native Messaging           |
-| `build/`     | Vite build integration                                                   |
-| `diagnostics/` | Read-only extraction of small, sanitized support evidence               |
-| `electron/`  | Electron development startup, ports and native module rebuilds           |
-| `startup/`   | Browser-only rehearsal of the four startup presentations                |
+| Directory         | Responsibility                                                        |
+| ----------------- | --------------------------------------------------------------------- |
+| `assets/`         | Application and tray icon generation, macOS icon repair               |
+| `browser/`        | Host adapters for browser content bundles and Native Messaging        |
+| `build/`          | Vite build integration                                                |
+| `diagnostics/`    | Read-only extraction of small, sanitized support evidence             |
+| `electron/`       | Electron development startup, ports and native module rebuilds        |
+| `startup/`        | Browser-only rehearsal of the four startup presentations              |
 | `external-agent/` | Shared console CLI generation and profile-bound development launchers |
-| `openclaw/`  | OpenClaw runtime installation, patching, verification and bundling       |
-| `packaging/` | Electron Builder hooks, installers, signing and update validation        |
-| `runtime/`   | Bundled Git, Python, speech and skill preparation, dependency fixes      |
-| `test/`      | Test runner and browser smoke checks                                     |
-| `fixtures/`  | Shared script verification fixtures                                      |
-| `patches/`   | Versioned OpenClaw capability patches and their inventories              |
-| `theme/`     | Offline theme CSS generation and Tailwind integration                    |
+| `openclaw/`       | OpenClaw runtime installation, patching, verification and bundling    |
+| `packaging/`      | Electron Builder hooks, installers, signing and update validation     |
+| `runtime/`        | Bundled Git, Python, speech and skill preparation, dependency fixes   |
+| `test/`           | Test runner and browser smoke checks                                  |
+| `fixtures/`       | Shared script verification fixtures                                   |
+| `patches/`        | Versioned OpenClaw capability patches and their inventories           |
+| `theme/`          | Offline theme CSS generation and Tailwind integration                 |
 
 Keep script-specific helpers beside their entry points and import cross-domain
 helpers explicitly. Resolve repository paths relative to the script location;
@@ -157,18 +157,17 @@ database maintenance or Gateway. It cannot replace native upgrade validation.
 The console executable provides CLI, ACP and the supported Codex app-server entry.
 Generation scripts live under `external-agent/`; development launchers are prepared
 under `.agent-tasks/external-agent/development/`. See
-[Agent CLI / ACP](../docs/features/integrations/agent-cli.md).
+[Agent CLI / ACP](../docs/features/external-clients/agent-cli.md).
 
 `openclaw/sync-openclaw-runtime-resources.cjs` reads role templates and channel
 documentation from `resources/openclaw/docs/` and assembles them at the native
 runtime's `docs/` paths. These are runtime assets; repository design and feature
 documentation live in the root `docs/` directory.
 
-
 Smart Canvas generates its fixed-component renderer from plugin source, with no
 production dependencies or generated asset directory. Full interactive HTML pages
 use the existing hosted Canvas embed path. Ordinary widgets retain the native
-resource policy and browser proxy; see the [plugin checks](../plugins/extensions/smart-canvas/README.md#checks).
+resource policy and browser proxy; see the [content delivery contract](../docs/plugins/extensions/smart-canvas/content-delivery.md).
 
 `openclaw/prune-openclaw-runtime.cjs` reads `plugins/extensions/prune-policy.json`
 to select the upstream OpenClaw extensions retained in the runtime. The policy is
@@ -256,7 +255,7 @@ They are explicit commands outside ordinary test discovery, and save reports in
 `.agent-tasks/browser-artifacts/` with private fixture state under `build/`.
 These are capability probes, not production website/extension integration tests;
 current findings and limits are recorded in the
-[webpage entry contract and validation limits](../docs/features/browser/webpage-conversation-entry.md).
+[webpage entry contract and validation limits](../docs/plugins/browser-extensions/browser-assistant/website-launch.md).
 
 ### Inspect one native session's stored content
 
@@ -477,7 +476,7 @@ It no longer imports removed application feature components.
 the public group SDK's per-request strategy, turn budget, mention and cancellation
 behavior with a bounded delayed fixture dispatcher. It measures dispatcher
 concurrency, not real model execution or whole-run outcomes; see
-`docs/features/assistants/agent-team.md` for production acceptance gates.
+`docs/plugins/extensions/agent-team/guide.md` for production acceptance gates.
 
 `node plugins/extensions/agent-team/scripts/test/verify-group-discussion-runtime.mjs [runtime-directory]`
 uses disposable state and a loopback model with the bundled group and summary RPCs.
@@ -494,14 +493,14 @@ business imports are permitted in these artifacts. `plugins:app:verify` runs por
 SDK and actual built Main/Chromium smoke probes. Additional isolated negative controls in
 `scripts/test/plugin-host/` cover authorization lifetimes, retained cleanup, cold process
 stop, native execution receipts, resource veto and structured input. See
-`docs/architecture/17-app-plugin-host.md` for supported scope and remaining acceptance.
+`docs/plugins/management/app-plugin-runtime.md` for supported scope and remaining acceptance.
 
 The implementation lives in `plugins/sdk/app-plugin-build/`, distributed as
 `@app-plugin/build`; the public App SDK source is `plugins/sdk/app-plugin-sdk/`. It resolves
 installed SDK exports and the public theme preset, without ancestor tsconfig source
 aliases. `plugins:runtime:sdk` emits the separate Runtime Services library into
 `build/runtime-services-sdk`; preparation and pack commands are in the
-[SDK development guide](../plugins/sdk/README.md#distribution). Each app plugin declares its dependencies and has its own
+[SDK development guide](../docs/plugins/sdk/development-and-distribution.md#distribution). Each app plugin declares its dependencies and has its own
 Vitest configuration. Default `npm test` discovers those suites and runs them after
 Core tests; explicit `tests/host/` boundaries remain in the Core integration profile.
 

@@ -7,4 +7,4 @@
 
 文件职责与维护要求见[目录约定](../README.md#目录结构要求)。当前能力以现行架构、功能文档及对应版本补丁总账为准。
 
-应用插件在本版本的历史接入与验证见[独立伴随包记录](app-plugin-companions.md)；当前契约及验证限制见[应用插件宿主](../../architecture/17-app-plugin-host.md)。
+应用插件在本版本的历史接入与验证见[独立伴随包记录](app-plugin-companions.md)；当前契约及验证限制见[应用插件宿主](../../plugins/management/app-plugin-runtime.md)。

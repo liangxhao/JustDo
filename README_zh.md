@@ -207,16 +207,16 @@ Agent Team 与 Swarm Workflow 均为可选插件，默认关闭。可以先从�
 
 ## 进一步了解
 
-| 想了解的内容         | 文档入口                                                                                                                          |
-| -------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| 产品能力与使用边界   | [产品与系统总览](docs/architecture/01-overview.md)                                                                                |
-| 全部功能导航         | [功能文档](docs/features/README.md)                                                                                               |
-| 专属助手与团队协作   | [助手档案](docs/features/assistants/assistants-and-collaboration.md) · [Agent Team](docs/features/assistants/agent-team.md)       |
-| 分阶段工作与批量执行 | [Swarm Workflow](docs/features/workflow/swarm-workflow.md) · [批量执行](docs/features/workflow/swarm-workflow-batches.md)         |
-| 浏览器任务与操作演示 | [浏览器模式](docs/features/browser/browser-settings-design.md) · [操作录制](docs/features/browser/browser-operation-recording.md) |
-| 可视化回答与图表     | [交互式回答](docs/features/chat/interactive-answers.md) · [draw.io](docs/features/chat/drawio-offline.md)                         |
-| 模型与能力扩展       | [模型设置](docs/features/models/model-management.md) · [Plugin Hub](docs/features/plugins/plugin-hub-experience.md)               |
-| 开发与问题排查       | [开发指南](docs/development.md) · [完整文档](docs/README.md)                                                                      |
+| 想了解的内容         | 文档入口                                                                                                                              |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| 产品能力与使用边界   | [产品与系统总览](docs/architecture/01-overview.md)                                                                                    |
+| 全部功能导航         | [功能文档](docs/features/README.md)                                                                                                   |
+| 专属助手与团队协作   | [助手档案](docs/features/assistants/profiles-and-subagents.md) · [Agent Team](docs/plugins/extensions/agent-team/guide.md)            |
+| 分阶段工作与批量执行 | [Swarm Workflow](docs/plugins/extensions/swarm-workflow/workflows.md) · [批量执行](docs/plugins/extensions/swarm-workflow/batches.md) |
+| 浏览器任务与操作演示 | [浏览器模式](docs/features/browser/browser-settings-design.md) · [操作录制](docs/features/browser/browser-operation-recording.md)     |
+| 可视化回答与图表     | [交互式回答](docs/features/chat/interactive-answers.md) · [draw.io](docs/plugins/extensions/drawio/offline-editor.md)                 |
+| 模型与能力扩展       | [模型设置](docs/features/models/model-management.md) · [Plugin Hub](docs/plugins/management/plugin-hub.md)                            |
+| 开发与问题排查       | [开发指南](docs/development.md) · [完整文档](docs/README.md)                                                                          |
 
 ## 参与共建
 

@@ -8,6 +8,20 @@ Agent 实时事件使用原生 payload 的 `seq`。Main、Renderer 与浏览器�
 Main complete 通知携带明确状态，运行快照携带正 revision；字段缺失时 Renderer 保持未知，
 不会按旧 preload 的缺省值推断完成或空闲。
 
+## 按问题定位
+
+| 要核对的问题                              | 维护位置                                                                                                       |
+| ----------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| Router、Adapter、Manager 各拥有什么       | [三层控制](#1-三层控制各管什么)                                                                                |
+| 运行包如何准备，历史如何读取              | [运行时准备](#2-从源码到可启动运行时)                                                                          |
+| 引擎何时可用，重启和诊断由谁处理          | [启动与重启](#3-启动与重启状态)                                                                                |
+| 配置保存何时真正应用到执行                | [配置发布与准入](#4-配置发布与执行准入)                                                                        |
+| 发送、停止、工具错误和原生终态如何区分    | [事件与回执](#6-发送原生事件与产品回执)                                                                        |
+| Goal、Plan、子任务与重启如何恢复          | [产品协调](#7-goalplan-与子任务不重造执行器)、[重启恢复](#8-重启与恢复)                                        |
+| Code Mode、提示词和记忆如何接入           | [Code Mode](#10-code-mode-工具编排)、[提示词替换](#11-最终-system-prompt-替换)、[记忆](#12-记忆浏览与索引诊断) |
+| 外部客户端的媒体、审批和 unknown 有何边界 | [外部执行](#13-外部客户端执行)                                                                                 |
+| 可选插件与实际验证如何划分                | [插件执行](#14-可选插件执行)、[验证入口](#15-分层定位与验证)                                                   |
+
 ## 1. 三层控制各管什么
 
 | 层                           | 所有状态                                               | 主要入口                     |
@@ -97,7 +111,7 @@ Main 不接管 transcript 或重试转发。
 适用、未知或尚未冻结的轮末修订仍保留原生交付等待。原生事件回调和 transcript-start
 发布行为不变，补丁验收必须经过真实订阅入口，不能只测试复制之前的参数。
 
-Runtime Services 的 Team 发起保护及可选 Workflow 分别按原生当前 SID 和自身持久归属
+必需运行服务和可选插件分别按原生当前 SID 和自身持久归属
 声明适用范围，普通非所属会话可直接流式交付。此准入只控制交付等待，不授予工具、
 发起或修订权限，也不构成整轮结算；原生 reasoning 延迟规则和执行终态证据保持原样。
 
@@ -228,7 +242,7 @@ Main 为完整重启的停止/准备阶段及崩溃恢复退避阶段连续发�
 | Gateway 断线、心跳恢复、审批桥重连                           | running 时直接重新进行认证握手，不调用启动健康检查；starting 时加入已有启动，真实退出由 Manager 恢复                                           |
 | 输入框语言模型选择及默认值回滚                               | 原生会话选择与模型字段热更新；默认确认不占用发送准入队列，未确认不触发停止或重启                                                               |
 | 普通设置、模型目录、MCP、Hook、技能变更                      | 原生配置热更新；仅凭据值变化使用 `secrets.reload`；热更新未完成才请求原生协调重启                                                              |
-| Agent Team / Swarm 等扩展启停                                | 原生插件运行时回执；Team 仍单独 `skills.update`，不再保留 9.8 技能发现的强制重启；仅原生要求或网络策略变化才重启                               |
+| 可选扩展启停                                                 | 原生插件运行时回执；技能变更按原生独立更新回执确认；仅原生要求或网络策略变化才重启                                                             |
 | 扩展安装、卸载及离线 CLI 回退                                | 优先使用原生运行时回执、`plugins.reload` / `plugins.refresh`；Windows 真实目录锁恢复仍保留暂停、停止、重试、恢复流程                           |
 | 扩展普通配置或 SecretRef 凭据轮换                            | 优先配置 reload ACK；无环境变量变更时可刷新 native secrets 后定向 `plugins.reload`，只有原生不能热应用才重启；凭据刷新失败保留待刷新并报告错误 |
 | 非浏览器代理偏好切换                                         | 核对当前真实子进程的代理 URL/capability、CA、NO_PROXY 环境与活动本地代理一致后，使用动态上游，无需重启；未使用该路由时仍需完整重启刷新继承环境 |
@@ -273,7 +287,7 @@ Gateway 运行期间不执行同步编译缓存序列化，缓存由 launcher �
 `replay_admission_rejected`，保留已有运行身份和公开终态字段并记录元数据 warning。
 该观察不区分原生三个 replay 拒绝点，不提供私有快照，也不改变准入、发送或重试。
 诊断失败不影响执行，整轮结果仍只由精确 lifecycle `executionSettled: true` 终态建立。
-字段与日志缺口见[会话诊断](../features/chat/session-diagnostics.md#已保存用户轮次的准入错误)。
+字段与日志缺口见[会话诊断](../features/execution/session-diagnostics.md#已保存用户轮次的准入错误)。
 
 配置投影由启动及设置变更流程负责；聊天发送等待已有配置 mutation 完成，复用运行中的 Gateway，不再以 `ensureRunning` 为由重新执行全量配置同步。运行中的执行准入仅并行读取 `config.get` 与 `exec.approvals.get`，验证当前宿主执行/文件边界和审批底线；不启动扩展 MCP 发现、不扫描历史会话模型、不清理凭据，也不修复审批配置。冷启动在同一配置队列中等待进程就绪，并通过原生审批 RPC 初始化必要的底线，再回读验证；不重复配置投影。权限不符仍拒绝准入，进程代次变化时旧校验不能放行、修改或停止新进程。原生会话自身的 mode/root 与身份准备继续保留。
 
@@ -399,7 +413,7 @@ sequenceDiagram
   Sync-->>Product: success / changed / error
 ```
 
-不能将“文件已写”当成“配置已生效”。可选 agent-team、stt-local-cli 的用户显式 disable 保留；受保护运行时服务不能被普通开关移除。非 MCP mutation 可发现原生新增 MCP，但产品删除或改名后的同步不能重新导入尚未改写的旧配置。
+不能将“文件已写”当成“配置已生效”。可选插件的用户显式 disable 保留；受保护运行时服务不能被普通开关移除。非 MCP mutation 可发现原生新增 MCP，但产品删除或改名后的同步不能重新导入尚未改写的旧配置。
 
 配置重载分别等待变更检测和应用完成，默认各有最多 30 秒预算，完成即返回。检测到变更后只启动一次完成计时，避免 Windows 凭据解析或插件加载消耗检测预算后，尚在正常执行的热重载被误判为失败并触发多余重启；失败事件仍立即返回，原生接受重启后使用独立的重启完成预算。安全设置切换仍等待主进程同步并验证权限成功，成功后直接更新选项，不再额外运行一次沙盒自检。
 
@@ -417,7 +431,7 @@ Windows 沙盒准入先验证锁定的 MXC 二进制，再运行执行器 `--pro
 同实例临时失败先限次重试 `secrets.reload`，明确拒绝仍失败关闭。后台只可对该凭据失败停止的确切实例进行一次启动恢复，
 并重新初始化权限；用户停止、认证会话或进程/生命周期替换会阻断旧操作。具体超时、退避和确认规则见认证专题。
 
-凭据解析成功与服务端 Team 授权成功也不同。模型发现、连接测试和真正请求的错误需分别报告。二进制包装不等于抵御同用户逆向的密钥保险库，详细链路见[认证专题](../features/integrations/authentication-builtin-model-lifecycle.md)。
+凭据解析成功与服务端 Team 授权成功也不同。模型发现、连接测试和真正请求的错误需分别报告。二进制包装不等于抵御同用户逆向的密钥保险库，详细链路见[认证专题](../features/account/authentication-builtin-model-lifecycle.md)。
 
 ## 6. 发送、原生事件与产品回执
 
@@ -545,7 +559,7 @@ Goal coordinator 在原生目标仍 active 时协调续跑，保存产品 phase 
 Goal 事件独立核对原生会话、run 与原生序列，连接回调核对当前 client 和 Main 连接代次，
 并保留 chat final 后的合法迟到事件；不要求原生刻意省略的内部 lifecycleGeneration。
 结构化操作的回执异常与过期不能当作未提交；完整契约及保留的暂停恢复补丁见
-[Goal 模式](../features/chat/goal-mode.md)。
+[Goal 模式](../features/execution/goal-mode.md)。
 
 自动后继成功完成 Goal 后，Runtime Services 的公开工具结果中间件通过本注册绑定的
 Gateway 只读核对 `sessions.describe.goalContinuation.lastAccepted` 与当前精确会话、
@@ -574,11 +588,13 @@ Plan-mode 通过原生 session extension、turn hook、工具和 scoped RPC 实�
 
 嵌套浏览按需请求单层，每页 50 条；多层导航保留稳定原生 session key，游标绑定父层 keys 与 offset。根任务 `getSubTaskStatus` 轮询仍分页遍历全部直接子会话；原生单次投影已包含状态与用量，无需逐条 tasks.get 或二次生命周期拼接。大型历史根列表仍有完整扫描成本。子树浏览和精确操作不创建第二套调度器。
 
-### Swarm 容量配置
+插件的独立调度、容量及执行规则由包内文档维护，宿主只提供通用准入与原生执行接口。见[插件索引](../plugins/README.md)。
+
+### 原生批量子任务容量
 
 运行时设置将 Swarm 与普通 SubAgent 容量分开保存，并通过 ConfigSync 投影到原生 `tools.swarm`。当前受管项是 `enabled`、`maxConcurrent`、`maxChildrenPerGroup`、`maxTotalPerGroup`；缺少新字段的旧设置采用默认值 true、8、50、200。应用校验范围分别为组并发 1–64、组内存活子任务 1–200、组内累计子任务 1–1000；这些是应用设置的可选范围，不是原生硬上限。配置合并保留未受管的原生 Swarm 字段，常规保存、最小配置与认证切换使用一致投影。
 
-这些设置控制原生批量委派容量，不等价于启用平级 agent-team Extension，也不会创建助手档案或协作房间。collector 结果聚合和原生分组执行仍属于 OpenClaw；专用 collector 进度面板及结构化结果展示不属于本次已实现范围。
+这些设置控制原生批量委派容量，不属于插件工作流调度，也不创建助手档案或协作房间。collector 聚合仍由原生执行系统拥有。
 
 ## 8. 重启与恢复
 
@@ -705,7 +721,7 @@ CLI `exec`、入站 ACP 和已实现的 app-server 子集共用 Main 原生准�
 
 ### 输入、模型与原生发送边界
 
-标准输入读取真实图片字节，校验类型及大小后交给原生附件通道。文本合并成单个 message，图片保持彼此顺序；live 用户 Item 与历史按这个原生归一化形状呈现，不承诺文本与图片的任意交错。客户端可使用的 data URL、受限远程地址和工作区 localImage 由所属入口的显式能力决定：通用本机客户端可读取真实工作区内的文件，Chrome 不接纳客户端本地路径。音频、文件 ID 和未配置的远程抓取能力明确拒绝，不插入描述图片的占位文字代替媒体。入口参数与资源限制见[统一 app-server](../features/integrations/app-server.md)。
+标准输入读取真实图片字节，校验类型及大小后交给原生附件通道。文本合并成单个 message，图片保持彼此顺序；live 用户 Item 与历史按这个原生归一化形状呈现，不承诺文本与图片的任意交错。客户端可使用的 data URL、受限远程地址和工作区 localImage 由所属入口的显式能力决定：通用本机客户端可读取真实工作区内的文件，Chrome 不接纳客户端本地路径。音频、文件 ID 和未配置的远程抓取能力明确拒绝，不插入描述图片的占位文字代替媒体。入口参数与资源限制见[统一 app-server](../features/external-clients/app-server.md)。
 
 图片要求最终模型在真实目录中声明 image 输入；Chrome 对标准和既有 image 附件统一核验 requested／会话保存值／配置默认值。异步读取前后核对来源、原模型、目录、默认选择、客户端与连接代次，拒绝期间发生的替换；原生准备后再次核对，并在实际发送时固定模型与回读结果。能力缺失在模型、权限或运行计时变更前明确返回未发送；普通文档附件不要求视觉模型。发送前同会话的短期准备 token 防止两次并发提交互相覆盖 owner，它不授予原生执行权。
 
@@ -715,11 +731,11 @@ CLI `exec`、入站 ACP 和已实现的 app-server 子集共用 Main 原生准�
 
 已知原生 run 可直接安装精确 owner；原生实际 run 尚未确认时使用 prepared owner，审批先有界等待 ACK。只有 ACK 的实际 run、key、SID、revision、客户端与代次全部匹配时才展示，审批本身的 runId 不能成为认领证据。不匹配、到期或撤回均拒绝，原 owner 在精确结算前保留，避免转交桌面或另一连接批准。
 
-命令一次授权、连接内精确指纹的 `acceptForSession` 与原生 bundle-mcp App 持久授权分别处理，不互相改名或放宽范围。只有原生 resolve 明确成功且身份仍当前时才登记会话指纹；结果未知不重试另一决定。Chrome 关闭或退订只撤回交互与 scope，不自动停止原生任务；显式 Cancel 先拒绝，再对本次发送方的精确 run 异步请求停止。选择矩阵和撤销范围维护在[会话权限](../features/chat/openclaw-permission-management.md#app-server-客户端审批)。
+命令一次授权、连接内精确指纹的 `acceptForSession` 与原生 bundle-mcp App 持久授权分别处理，不互相改名或放宽范围。只有原生 resolve 明确成功且身份仍当前时才登记会话指纹；结果未知不重试另一决定。Chrome 关闭或退订只撤回交互与 scope，不自动停止原生任务；显式 Cancel 先拒绝，再对本次发送方的精确 run 异步请求停止。选择矩阵和撤销范围维护在[会话权限](../features/execution/openclaw-permission-management.md#app-server-客户端审批)。
 
 未盖章的非 lifecycle 进度通过有界 FIFO 等待，同连接的精确 session/incarnation 与 active-run 或 owning lifecycle-start 证明后才采用。匹配的整轮终态可界定更早进度，但执行结算不等待进度读取。
 
-结果未知时持久预约继续保留。可见 final、Stop ACK 和连接替换均不证明执行结束；缺少可信 continuation 或带 scope 资源的替换连接不触发重放。只有经过身份复核的原生整轮中断终态才能返回 interrupted 协议结果，取消请求被接收本身不够。完整客户端流程见[CLI / ACP](../features/integrations/agent-cli.md)，通用协议见[app-server](../features/integrations/app-server.md)。
+结果未知时持久预约继续保留。可见 final、Stop ACK 和连接替换均不证明执行结束；缺少可信 continuation 或带 scope 资源的替换连接不触发重放。只有经过身份复核的原生整轮中断终态才能返回 interrupted 协议结果，取消请求被接收本身不够。完整客户端流程见[CLI / ACP](../features/external-clients/agent-cli.md)，通用协议见[app-server](../features/external-clients/app-server.md)。
 
 ### 已结算执行的长回复恢复
 
@@ -733,7 +749,7 @@ CLI `exec`、入站 ACP 和已实现的 app-server 子集共用 Main 原生准�
 
 ## 14. 可选插件执行
 
-Team 和 Workflow 通过原生公开 API 管理其执行，产品宿主只持有通用准入、Native 注册关联及清理围栏。业务的来源参与、自动汇总与控制协议分别见[Agent Team](../features/assistants/agent-team.md)和[Workflow](../features/workflow/swarm-workflow.md)，不能在 Core 重建调度器。
+插件通过原生公开 API 管理业务执行；产品宿主只持有通用准入、Native 注册关联和清理围栏。业务协议见[插件索引](../plugins/README.md)，Core 不重建插件调度器。
 
 ## 15. 分层定位与验证
 

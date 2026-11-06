@@ -41,22 +41,22 @@ STT、TTS 扩展齿轮与语音页共用在线模型目录；TTS 同时引用该
 
 内置语音模型是固定目录视图，不写入在线供应商配置、默认选择或导入导出数据。下载不修改语音模型选择、扩展模型选择及其启停状态；语音页与扩展页继续分别保存原有选择。插件齿轮跳转期间隐藏对话框，返回后保留未保存的选择；语音页在同一个设置实例中切换页面，保留设置草稿。下载继续由 Main 持有，离开列表不会取消下载，回到任意消费页面时通过现有状态查询和事件更新就绪状态。
 
-内置模型列表采用两行排版：第一行短名称与量化标记，第二行语言、完整音色数及下载大小。列表不重复显示就绪说明或完整模型 ID；下载、重试、删除使用带提示及无障碍名称的图标，下载时显示实际进度。点击名称打开详情，展示模型 ID、语言、运行引擎、大小及完整音色列表。完整音色目录、源编号与有依据的语言/性别/口音由[语音功能](local-tts.md#3-离线模型与安装事务)维护，模型详情、语音页和扩展齿轮共用，不推测缺失资料。详情提供名称/原名/原生编号搜索、按实际可用类别筛选及逐行试听；筛选保留原始顺序与原生编号。详情不保存模型或音色选择。
+内置模型列表采用两行排版：第一行短名称与量化标记，第二行语言、完整音色数及下载大小。列表不重复显示就绪说明或完整模型 ID；下载、重试、删除使用带提示及无障碍名称的图标，下载时显示实际进度。点击名称打开详情，展示模型 ID、语言、运行引擎、大小及完整音色列表。完整音色目录、源编号与有依据的语言/性别/口音由[语音功能](../speech/voice-and-transcription.md#3-离线模型与安装事务)维护，模型详情、语音页和扩展齿轮共用，不推测缺失资料。详情提供名称/原名/原生编号搜索、按实际可用类别筛选及逐行试听；筛选保留原始顺序与原生编号。详情不保存模型或音色选择。
 
 内置音色试听仅在模型和本地运行时就绪时可用，使用对应语言的固定短样句，不依赖回复朗读或插件启用开关。关闭详情、改变筛选、切换音色或模型失效时停止播放并取消未完成的本地合成；模型仍在下载时可以浏览完整音色资料。
 
 ## 3. 原生配置落点
 
-| 能力     | 原生入口/位置                                     | 隔离要求                                                             |
-| -------- | ------------------------------------------------- | -------------------------------------------------------------------- |
-| 语言     | models providers 与会话模型                       | builtin 与用户 provider 分开                                         |
-| 决策     | agents.defaults.decisionModel                     | TypeSafe serviceUrl 与凭据独立于聊天；详见 [Jev](jev-integration.md) |
-| 在线识别 | talk.catalog、config API                          | transcription-only Talk，不触发对话脑                                |
-| 工具合成 | tts.providers.tts-local-cli、受管 persona         | 本地/在线模式及 voice 由插件齿轮独立选择                             |
-| 在线朗读 | runtime-services.config.replySpeech、受管合成 RPC | voice 属于具体模型，请求内配置不覆盖工具                             |
-| 图像生成 | agents.defaults.mediaModels.image                 | image-openai 配置域                                                  |
-| 视频生成 | agents.defaults.mediaModels.video                 | video-openai 独立配置域，由 openai 插件提供                          |
-| 图像理解 | agents.defaults.imageModel                        | 不等同图像生成                                                       |
+| 能力     | 原生入口/位置                                     | 隔离要求                                                                                                   |
+| -------- | ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| 语言     | models providers 与会话模型                       | builtin 与用户 provider 分开                                                                               |
+| 决策     | agents.defaults.decisionModel                     | TypeSafe serviceUrl 与凭据独立于聊天；详见 [Jev](../../plugins/extensions/typesafe/decision-evaluation.md) |
+| 在线识别 | talk.catalog、config API                          | transcription-only Talk，不触发对话脑                                                                      |
+| 工具合成 | tts.providers.tts-local-cli、受管 persona         | 本地/在线模式及 voice 由插件齿轮独立选择                                                                   |
+| 在线朗读 | runtime-services.config.replySpeech、受管合成 RPC | voice 属于具体模型，请求内配置不覆盖工具                                                                   |
+| 图像生成 | agents.defaults.mediaModels.image                 | image-openai 配置域                                                                                        |
+| 视频生成 | agents.defaults.mediaModels.video                 | video-openai 独立配置域，由 openai 插件提供                                                                |
+| 图像理解 | agents.defaults.imageModel                        | 不等同图像生成                                                                                             |
 
 原生 image 使用能力限定的配置视图，保留 manifest 的 canonical provider ID，不改写语言模型的 models.providers.openai。多个能力同用一种协议也不能互相覆盖 endpoint/key。
 
@@ -76,7 +76,7 @@ STT、TTS 扩展齿轮与语音页共用在线模型目录；TTS 同时引用该
 
 ## 5. 协议支持边界
 
-在线识别需要匹配原生 Realtime transcription WebSocket 与音频格式，普通 REST transcription URL 不能冒充等价。TTS 和 Images 也需实现对应请求与下载协议，不是任意同名 HTTP 服务都可用。
+实时麦克风识别通过原生 Talk 会话，需要匹配 Realtime transcription WebSocket 与音频格式；普通 REST transcription URL 不能替代实时会话。附件和文件的在线转录则由 STT 扩展使用 HTTP(S) `POST <baseUrl>/audio/transcriptions` multipart 接口，不要求服务提供实时 WebSocket。两条链路分别校验协议和所选模型，不能仅凭模型目录存在认定都可用。TTS 和 Images 也需实现对应请求与下载协议，不是任意同名 HTTP 服务都可用。
 
 TTS voice 最佳努力查询 audio/voices、voices、服务根 api/voices，并支持手填。语音页展示所有端点有效的 HTTP(S) 合成模型；尚未配置音色的模型仍可选择和保留，界面提示到“管理模型”编辑并添加服务支持的音色 ID。缺少有效音色时不开放朗读或试听，也不自动补充任意默认音色；执行配置仍要求模型和音色均有效。
 

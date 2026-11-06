@@ -1,8 +1,10 @@
 # AGENTS.md
 
 Guidance for coding agents in this repository. Keep global rules here; read the
-relevant documents below before changing a domain. Detailed design belongs in
-`docs/architecture/` and `docs/features/`, not in this file.
+relevant documents below before changing a domain. Application design belongs in
+`docs/architecture/` and `docs/features/`, not in this file. Detailed plugin
+documentation belongs in `docs/plugins/`, grouped by category and plugin name. Keep plugin
+source directories limited to concise README introductions and source assets.
 
 ## Project and Commands
 
@@ -76,6 +78,14 @@ npm test
 - Browser extension sources, assembly scripts and unit tests live under
   `plugins/browser-extensions/<plugin-id>/`. Main owns Native Messaging and
   app-server integration; host build adapters may reuse application chat code.
+- Plugin business, protocols, schemas, UI rules and validation documentation
+  live in `docs/plugins/<category>/<plugin-id>/`; generic plugin documentation is grouped by topic
+  under `docs/plugins/`. Do not add `plugins/docs/` or plugin-local `docs/` folders.
+  Distributed plugin READMEs stay concise and self-contained, with no paths or
+  links outside the distributed plugin directory. They must not link back to
+  application development documentation. When moving
+  a plugin to another repository, move its corresponding documentation and repair
+  references together. Do not duplicate its business rules in application docs.
 - OpenClaw runtime documentation and role templates belong under
   `resources/openclaw/docs/`; repository design documentation stays in `docs/`.
 - Keep `main.ts`, `preload.ts` and plugin registration entries thin.
@@ -212,26 +222,26 @@ Read the matching contract before editing; use [feature index](docs/features/REA
 for other areas. Current validation limits belong in the owning feature or architecture document.
 
 App plugin Main/UI loading, SDK contributions, independent packaging and lifecycle
-follow [App plugin host](docs/architecture/17-app-plugin-host.md) and
-[SDK authoring](plugins/sdk/app-plugin-sdk/README.md). Team and Workflow application
+follow [App plugin host](docs/plugins/management/app-plugin-runtime.md) and
+[SDK authoring](docs/plugins/sdk/app-plugin-sdk.md). Team and Workflow application
 business stays inside its plugin; Core composes only generic capabilities.
 
-| Task                                                       | Required documents                                                                                                                                                              |
-| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Architecture, directories, process/IPC boundaries          | [Architecture](docs/architecture/02-architecture.md), [process model](docs/architecture/03-process-model.md)                                                                    |
-| Execution, permissions, terminals                          | [Engine](docs/architecture/05-agent-engine.md), [permissions](docs/features/chat/openclaw-permission-management.md)                                                             |
-| Persistence and native storage                             | [Data storage](docs/architecture/10-data-storage.md)                                                                                                                            |
-| Chat rendering, widgets                                    | [Chat rendering](docs/architecture/15-chat-rendering.md), [interactive answers](docs/features/chat/interactive-answers.md)                                                      |
-| Assistant profiles, Team collaboration/discussions/holding | [Assistants](docs/features/assistants/assistants-and-collaboration.md), [Agent Team](docs/features/assistants/agent-team.md) |
-| Swarm DAG, batches, host/browser ownership                 | [Workflow](docs/features/workflow/swarm-workflow.md), [batches](docs/features/workflow/swarm-workflow-batches.md)                                                               |
-| Plugins, skills, managed adapters, computer control        | [Plugin system](docs/architecture/07-plugin-system.md), [Plugin Hub](docs/features/plugins/plugin-hub-experience.md)                                                            |
-| Browser pairing/relay and extension chat                   | [Browser settings](docs/features/browser/browser-settings-design.md), [side chat](docs/features/browser/browser-extension-side-chat.md)                                         |
-| Models, speech, video, decision providers                  | [Model management](docs/features/models/model-management.md), [local speech](docs/features/models/local-tts.md), [Jev/TypeSafe](docs/features/models/jev-integration.md)        |
-| Login SDK and model authentication                         | [Login integration](docs/features/integrations/login-sdk-template.md), [model authentication](docs/features/integrations/authentication-builtin-model-lifecycle.md)             |
-| Scheduled tasks                                            | [Scheduled tasks](docs/architecture/08-scheduled-tasks.md)                                                                                                                      |
-| Runtime patches                                            | [Patch guide](docs/openclaw-runtime-patches.md), [current capability inventory](scripts/patches/v2026.10.7/README.md)                                                            |
-| Windows installation, bundled runtimes                     | [Windows installer](docs/windows-installer.md), [offline downloads](docs/offline-downloads.md)                                                                                  |
-| Logs and session diagnostics                               | [Development](docs/development.md), [diagnostics](docs/features/chat/session-diagnostics.md)                                                                                    |
+| Task                                                       | Required documents                                                                                                                                                                                     |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Architecture, directories, process/IPC boundaries          | [Architecture](docs/architecture/02-architecture.md), [process model](docs/architecture/03-process-model.md)                                                                                           |
+| Execution, permissions, terminals                          | [Engine](docs/architecture/05-agent-engine.md), [permissions](docs/features/execution/openclaw-permission-management.md)                                                                               |
+| Persistence and native storage                             | [Data storage](docs/architecture/10-data-storage.md)                                                                                                                                                   |
+| Chat rendering, widgets                                    | [Chat rendering](docs/architecture/15-chat-rendering.md), [interactive answers](docs/features/chat/interactive-answers.md)                                                                             |
+| Assistant profiles, Team collaboration/discussions/holding | [Assistants](docs/features/assistants/profiles-and-subagents.md), [Agent Team](docs/plugins/extensions/agent-team/guide.md)                                                                            |
+| Swarm DAG, batches, host/browser ownership                 | [Workflow](docs/plugins/extensions/swarm-workflow/workflows.md), [batches](docs/plugins/extensions/swarm-workflow/batches.md)                                                                          |
+| Plugins, skills, managed adapters, computer control        | [Plugin system](docs/plugins/management/plugin-system.md), [Plugin Hub](docs/plugins/management/plugin-hub.md)                                                                                         |
+| Browser pairing/relay and extension chat                   | [Browser settings](docs/features/browser/browser-settings-design.md), [side chat](docs/plugins/browser-extensions/browser-assistant/side-panel.md)                                                     |
+| Models, speech, video, decision providers                  | [Model management](docs/features/models/model-management.md), [local speech](docs/features/speech/voice-and-transcription.md), [Jev/TypeSafe](docs/plugins/extensions/typesafe/decision-evaluation.md) |
+| Login SDK and model authentication                         | [Login integration](docs/features/account/login-sdk-template.md), [model authentication](docs/features/account/authentication-builtin-model-lifecycle.md)                                              |
+| Scheduled tasks                                            | [Scheduled tasks](docs/architecture/08-scheduled-tasks.md)                                                                                                                                             |
+| Runtime patches                                            | [Patch guide](docs/openclaw-runtime-patches.md), [current capability inventory](scripts/patches/v2026.10.7/README.md)                                                                                  |
+| Windows installation, bundled runtimes                     | [Windows installer](docs/windows-installer.md), [offline downloads](docs/offline-downloads.md)                                                                                                         |
+| Logs and session diagnostics                               | [Development](docs/development.md), [diagnostics](docs/features/execution/session-diagnostics.md)                                                                                                      |
 
 ## Logs, Docs and Git
 
@@ -256,10 +266,13 @@ business stays inside its plugin; Core composes only generic capabilities.
   Each entry needs its download URL, complete filename and cache destination.
   Keep generated artifacts, bundled files, dependency installation, test setup
   and maintenance/build commands in their owning documentation, not this list.
-- READMEs distributed with a plugin or SDK package must stand on their own.
-  Refer only to documents within that package. Keep repository-only preparation,
-  packaging and integration-test instructions in repository documentation.
-  Describe bundled assets directly rather than assuming the user's network state.
+- Plugin READMEs describe purpose, prerequisites and bundled assets briefly,
+  without referring outside the distributed plugin directory. Detailed developer
+  documentation is maintained separately in `docs/plugins/`. When independently
+  distributing a package, include its corresponding documentation and adjust
+  references. Public SDK README contracts remain self-contained. Keep application
+  packaging and integration-test requirements explicit rather than assuming a
+  particular repository layout or network state.
 - Use English Conventional Commits: `type(scope): imperative summary`.
   Before PRs, review full branch history and the appropriate release-base diff,
   use `.github/PULL_REQUEST_TEMPLATE.md`, and push new branches with `-u`.

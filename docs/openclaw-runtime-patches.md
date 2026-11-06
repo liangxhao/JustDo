@@ -4,17 +4,8 @@
 
 JustDo 是 OpenClaw 的桌面前端和运行时宿主，不维护 OpenClaw 核心的长期 fork。内网 OpenAI provider 使用版本锁定的本地源码替换，单独记录上游基线及升级差异。Runtime patch 只用于当前锁定 npm 版本缺失、且无法在 JustDo Adapter/UI/config 层正确补齐的兼容能力。每个 patch 必须可审计、原子、可验证并有明确删除条件。幂等只适用于当前精确补丁形态；遇到历史或部分应用标记必须失败，从锁定 pristine 包重建，不能添加就地升级兼容逻辑。
 
-当前版本来自 `package.json.openclaw.version`：
-
-```text
-v2026.10.7
-```
-
-当前 patch 目录：
-
-```text
-scripts/patches/v2026.10.7/
-```
+锁定版本以 [`package.json`](../package.json) 的 `openclaw.version` 为准；对应补丁位于
+`scripts/patches/<version>/`。当前能力总账见 [补丁目录 README](../scripts/patches/v2026.10.7/README.md)。
 
 升级前必须先读[OpenClaw 升级检查清单](upgrade-checklist/checklist.md)，包括补丁、SDK 共享、本地 OpenAI 源码替换与产物验收。
 
@@ -24,7 +15,10 @@ Main 原生配置投影拆分后，构建 recipe 同时覆盖 `openclawConfigBui
 
 ## 2. 当前锁定供应链
 
-目标是未经修改的 `openclaw@2026.10.7` npm 产物。`source-lock.json` 记录精确 npm integrity 与 tarball SHA-256。项目 Node 支持范围为 `>=24.22.1 <25`。
+目标是 `package.json.openclaw.version` 锁定的未经修改 npm 产物。目标补丁目录的
+`source-lock.json` 记录精确 npm integrity 与 tarball SHA-256。开发 Node 版本由
+[`.nvmrc`](../.nvmrc) 和 [`package.json`](../package.json) 的 `engines.node` 定义；
+打包运行时的独立 Node 来源按 runtime 构建配置核对。
 
 Patch 工具拒绝：
 
@@ -34,7 +28,7 @@ Patch 工具拒绝：
 - 已经部分应用、但没有完整证明的 runtime；
 - patch 顺序、helper、source lock 或 build recipe 改变后的陈旧 manifest。
 
-历史 `v2026.6.9`、`v2026.6.11`、`v2026.7.1-2`、`v2026.8.1` 与 `v2026.8.2` 目录仅供追溯。不能从旧编号推断当前依赖，也不能复制旧 anchor 伪装成升级。
+非锁定版本的补丁目录仅供历史追溯。不能从旧编号推断当前依赖，也不能复制旧 anchor 伪装成升级。
 
 ## 3. 当前补丁清单
 

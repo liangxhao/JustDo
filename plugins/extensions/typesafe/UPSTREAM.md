@@ -55,7 +55,7 @@ Packaging-only changes:
 The application defaults this extension off, admits the native core decision_evaluate tool
 when enabled, and writes a file SecretRef for the credential. Settings → Models additionally selects the native default
 `decisionModel` and manages activation while a default is selected. Clearing it returns
-manual control without disabling or clearing the plugin. See `docs/features/models/jev-integration.md` in the app repo.
+manual control without disabling or clearing the plugin. The integrating application owns that settings policy; the plugin retains its declared native evaluation contract.
 
 Refresh from a reviewed upstream revision, retaining native SDK ownership. The upstream plugin no longer ships a separate tool or skill; the host-selected decisionModel owns evaluation model choice. Do
 not copy a developer's configured plugin directory or credentials into this tree.

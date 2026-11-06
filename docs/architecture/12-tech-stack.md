@@ -6,14 +6,14 @@
 
 | 项目         | 维护入口                                                                                                | 解释                                                      |
 | ------------ | ------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
-| 应用         | [`package.json.version`](../../package.json) 与 [`package-lock.json`](../../package-lock.json) 根版本   | 应用发布身份                                              |
+| 应用         | [`package.json.version`](../../package.json)                                                            | 应用发布身份                                              |
 | 开发 Node    | [`.nvmrc`](../../.nvmrc) 与 `package.json.engines.node`                                                 | 开发工具与原生构建环境                                    |
 | Gateway Node | [`nodeRuntime.json`](../../src/shared/openclaw/nodeRuntime.json)                                        | 随运行时交付的完整 Node/npm/npx，按目标平台锁定归档与哈希 |
-| Electron     | `package.json.devDependencies.electron` 与锁文件                                                        | 桌面运行时与 Electron ABI                                 |
+| Electron     | `package.json.devDependencies.electron` 与实际安装解析结果                                              | 桌面运行时与 Electron ABI                                 |
 | OpenClaw     | `package.json.openclaw.version` 与[当前 source lock](../../scripts/patches/v2026.10.7/source-lock.json) | 独立锁定的 pristine runtime                               |
-| 包管理       | npm 与根 `package-lock.json`                                                                            | 应用依赖解析；插件独立依赖以其所属锁文件为准              |
+| 包管理       | npm、根依赖声明及本地生成的 `package-lock.json`                                                         | 根 lock 未纳入版本控制；插件独立锁文件按所属包维护        |
 
-package.json 范围、lockfile 实际版本与最终 bundle manifest 不能混为一谈。运行时还有自己的依赖树；主应用 dependencies 列表不是全部随包工具清单。
+根 `package-lock.json` 被 `.gitignore` 忽略，是本机 npm 安装产生的解析快照，不能作为仓库已交付的依赖锁定承诺，也不是应用发布版本的权威。部分原生扩展的独立锁文件由仓库显式跟踪，不能与根 lock 混同。排障和构建记录须区分 `package.json` 的范围、实际安装版本、原生 source lock 及最终 bundle manifest。运行时还有自己的依赖树；主应用 dependencies 列表不是全部随包工具清单。
 
 ## 2. 编译边界
 
@@ -45,13 +45,13 @@ flowchart LR
   Package --> Release[平台安装包 / 更新元数据]
 ```
 
-app.asar 不能包含需要直接加载的所有 native 二进制；better-sqlite3 和 node-pty 使用 asarUnpack。Gateway bundle、扩展、运行时工具和本地语音资源通过额外资源规则进入目标包，不能仅检查 dist 存在。
+需要直接加载的 native 二进制必须位于可访问的文件系统位置；应用的 better-sqlite3 使用 `asarUnpack`，Gateway 的 node-pty 随独立运行时资源组装。Gateway bundle、扩展、运行时工具和本地语音资源通过额外资源规则进入目标包，不能仅检查 dist 存在。
 
 ## 4. 开发路径与原生 ABI
 
 `dev` 仅启动 Vite；`electron:dev` 编译并启动桌面；`electron:dev:openclaw` 先准备 host runtime。隔离预览用独立 userData，不自动导入真实模型凭据。
 
-better-sqlite3 必须对应执行它的 Node/Electron ABI。npm test 的包装脚本先 npm rebuild 到 Node，运行 Vitest，finally 恢复 Electron native；失败也执行恢复。不要并行跑测试与依赖 SQLite 的桌面预览或 native rebuild。
+better-sqlite3 必须对应执行它的 Node/Electron ABI。`npm test` 在 `build/test-dependencies/` 下为 Node 准备私有模块，通过测试环境变量注入主应用和插件测试，结束时清理私有目录，不替换应用的 Electron 二进制。已有 `SQLITE_TEST_MODULE` 时先验证其 Node 兼容性再复用；应用原生依赖需要修复时使用 `npm run rebuild:electron-native`。不要同时对应用依赖执行 native rebuild 和依赖 SQLite 的桌面预览。
 
 Builder 显式 npmRebuild=false，是因为项目自己准备 SQLite，node-pty 使用预构建；它不表示无需原生二进制，也不能拿 host 架构产物跨平台打包。
 
@@ -65,6 +65,8 @@ Builder 显式 npmRebuild=false，是因为项目自己准备 SQLite，node-pty 
 2. 构建 Gateway bundle，组装官方插件和产品资源。
 3. 预编译扩展并按目标平台裁剪。
 4. 对最终运行时及配套资源重新验证。
+
+现行安装脚本将各平台冻结包写入 `vendor/openclaw-runtime/<target>/`，再同步开发及打包消费的 `current/`；EngineManager 在开发环境从该 `current/` 定位运行包，安装版从安装资源的既有 `cfmind/` 目录读取。`build/runtimes/` 承载 MinGit、Python、本地语音等准备产物，不表示 OpenClaw 的既有供应链已迁移到该目录。应按安装脚本、打包 hook 和 Manager 的实际映射核验最终包。
 
 安装阶段同时准备并复制目标平台的完整 Node 分发包到 runtime 的 `node-runtime/`，不借用目标机器的系统 Node，也不在首次启动下载。必须对最终 bundle 验证能力，不能只验证邻近源码仓库。当前补丁职责、依赖和上游删除条件只维护在[版本目录](../../scripts/patches/v2026.10.7/README.md)。
 
@@ -95,17 +97,17 @@ Windows 更新使用 generic feed，发布元数据和 artifact hash 由专用�
 
 ## 8. 命令和验证的实际范围
 
-| 命令                            | 证明范围                              |
-| ------------------------------- | ------------------------------------- |
-| validate:product-metadata       | 品牌声明、派生规则与应用/原生发布版本格式 |
-| lint                            | 配置范围内的静态规则                  |
-| build                           | Renderer 类型与 Vite 产物             |
-| compile:electron                | Main/shared/config 编译及 native 前置 |
-| test                            | Vitest 行为回归，执行前后切换 ABI     |
-| openclaw:patches:verify         | 锁定运行时补丁/契约验证               |
-| pack                            | 当前资源组成的目录包                  |
-| dist:win/mac/linux              | 平台预备流程和安装包构建              |
-| verify:windows-update-artifacts | Windows 更新产物的一致性              |
+| 命令                            | 证明范围                                        |
+| ------------------------------- | ----------------------------------------------- |
+| validate:product-metadata       | 品牌声明、派生规则与应用/原生发布版本格式       |
+| lint                            | 配置范围内的静态规则                            |
+| build                           | Renderer 类型与 Vite 产物                       |
+| compile:electron                | Main/shared/config 编译及 native 前置           |
+| test                            | Vitest 及独立插件行为回归，使用私有 Node SQLite |
+| openclaw:patches:verify         | 锁定运行时补丁/契约验证                         |
+| pack                            | 当前资源组成的目录包                            |
+| dist:win/mac/linux              | 平台预备流程和安装包构建                        |
+| verify:windows-update-artifacts | Windows 更新产物的一致性                        |
 
 通用 pack/dist 不自动等价于所有平台的资源预备。macOS 架构目标、签名配置与 Windows native 资源需按对应 script/hook 检查。一次 build 成功不能写成全平台发布通过。
 

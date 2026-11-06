@@ -18,7 +18,7 @@
 | Skill         | 解析赢家、资格与启停                     | 文件事务、来源提示       | 同名 fallback、extension scope                                   |
 | Workshop      | 当前技能、版本、变更与归档/恢复          | 读取、选定版本和显式确认 | 10.6 提案 API 已退役；未知写不重放、恢复回执是变更前快照         |
 | Worktree GC   | 异步任务、实际目录与快照回收             | 同任务观察与状态展示     | jobId/state、同 Gateway 代、queued 非完成、未知提交不重提        |
-| Extension     | inventory、启停、卸载与能力审查          | 导入入口、保护和 UI      | installed-index、reviewToken                                     |
+| Extension     | inventory、启停、卸载与能力审查          | 导入入口、保护和 UI      | installed-index、导入自动接受声明、启用时 reviewToken            |
 | peer send     | 原生 sessions_send                       | 成员/轮次准入、回执      | 精确目标、可信 provenance、未知接收                              |
 | Agent files   | 原生角色文件                             | 档案管理与冲突检测       | 工作区/文件身份，删除保留历史                                    |
 | browser       | 原生协议与工具语义                       | 模式、guest bridge、配对 | action 对齐、profile、取消与导航                                 |

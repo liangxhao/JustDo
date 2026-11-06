@@ -1,8 +1,7 @@
 # Codex app-server 兼容性与验证边界
 
-本产品复用 app-server 消息形状，执行、配置与历史仍由桌面宿主和原生运行时拥有。
-Chrome、CLI 和本机 WebSocket 现在共用基础协议、核心数据投影及分页实现；
-浏览器附加信息使用显式 browser 命名空间，入口凭据、来源范围和执行归属保持独立。
+本页维护通用 CLI stdio 与本机 WebSocket 的官方协议对照、宿主边界和验证范围。
+两种传输共用 app-server 消息形状和通用客户端能力；执行、配置与历史仍由桌面宿主和原生运行时拥有。
 
 ## 对照依据
 
@@ -18,7 +17,7 @@ codex app-server generate-json-schema --out build/test-dependencies/app-server-o
 
 该命令只生成定义，不启动模型任务。产物放在忽略的 `build/`，不作为应用运行时依赖。
 上述 CLI 是一个具体 alpha 版本；生成命令未增加实验开关，文中“兼容”只指已核对的 wire 子集，
-不表示完整实现该版本全部接口，也不表示追随官方网页后续更新。
+不表示完整实现该版本全部接口，也不表示追随官方文档后续更新。
 这是一份具体版本的开发验证记录，不承诺后续官方版本的所有新增接口自动可用。
 
 ## 已实现的兼容接口
@@ -65,17 +64,16 @@ codex app-server generate-json-schema --out build/test-dependencies/app-server-o
   独立文件变更审批、额外策略和未提供的持久许可不伪造实现。
 - **模型目录不虚构能力。** 文本／图片模态来自真实目录，未知时仅声明文本。`defaultReasoningEffort: default`
   表示桌面管理的原生默认值；不宣称禁用 reasoning，也不支持逐轮 effort 覆盖。
-- **来源不改写。** CLI、ACP 和通用 app-server 的外部映射继续共用 `source: cli`；
-  Chrome 的产品来源仍为 `browser-extension`，wire 使用标准合法值 `appServer`。
+- **来源不改写。** 通用客户端的外部映射保持 `source: cli`。
   元数据 `sessionId` 使用外部身份，不暴露原生 SID、key、凭据或历史文件路径。
 - **退出仍清理所属执行。** stdio EOF、WebSocket 关闭仍请求精确取消并等待资源清理，
   与官方可分离订阅的持久多线程宿主存在区别。ACK、正文结束、断线和 idle 均不证明原生结算。
 - **未知结果不重发。** `failed` 加 `EXECUTION_UNKNOWN:` 保留既有未知占用，不能将其
   解释为原生已失败、已停止或可以重新提交。错误对象不伪造官方错误原因分类。
 - **媒体输入采用真实原生能力。** 文本合并、图片相对顺序保留，实时输出与历史采用同一归一化含义。
-  通用入口的 localImage 限于绑定 cwd，受限 HTTP(S) 图片只接受私网 IP 字面地址；Chrome 只开放标准 data URL。
-  通用 CLI／本机 WebSocket 的带文字图片保留 agent 的原生 revision CAS；其纯图片和 Chrome 聊天均使用
-  chat.send 的精确 SID 与发送前后身份围栏，不具备原生原子 revision CAS。
+  localImage 限于绑定 cwd，受限 HTTP(S) 图片只接受私网 IP 字面地址。
+  带文字图片保留 agent 的原生 revision CAS；纯图片使用 chat.send 的精确 SID 与发送前后身份围栏，
+  不具备原生原子 revision CAS。
   身份／ACK 不匹配保持 unknown，不重发。通用入口纯图片长输出仅按认证历史的
   唯一精确运行 final_answer 和原生截断摘要匹配恢复，无法恢复时报告输出错误，不改写已证明的执行结果。
 
@@ -94,39 +92,17 @@ codex app-server generate-json-schema --out build/test-dependencies/app-server-o
 这些方法涉及新的权限、会话生命周期或原生历史映射，不应通过伪造 Codex 目录／日志、
 绕过宿主权限或新增 transcript 缓存来凑齐。`experimentalApi` 声明也不会开启未实现能力。
 
-## 统一范围与保留差异
+## 共享实现
 
-基础握手、参数／ID 校验、错误码、模型／线程字段、创建／恢复／读取／加载／改名、
-历史分页和标准 Item 通知已经统一。两种 binding 共用 `main/appServer/` 中的 wire、
-pagination、history、historyReader、progress 和 toolProgress，不再各造一套核心结果。
-Chrome read 也不再隐式订阅；客户端以 thread/resume 明确观察。
-
-浏览器专属常量、附加路由及网页关联错误映射只位于 `main/browser/extension/`。
-公共 `main/appServer/` 不包含浏览器代码、依赖或相关集成测试，只接收服务端构造的通用
-扩展注册表；扩展不能覆盖标准方法，无 ID 的扩展调用不执行。
-
-| 差异                                           | 为什么保留                                                                |
-| ---------------------------------------------- | ------------------------------------------------------------------------- |
-| Origin／临时 capability 与无 Origin／Bearer    | 不同接入权限边界，不能把 Native Messaging 凭据或通用令牌互相开放          |
-| browser-extension 与 CLI 外部会话范围          | 协议统一不授予跨来源读写、停止或审批权限                                  |
-| Chrome 断线退订、原生 owner 断线取消           | 可丢弃观察者和拥有执行的连接职责不同，仍由服务端策略决定                  |
-| browser.display／browser.activeTurn 与增强事件 | 组件、待处理输入、问答、压缩、原生身份与稀疏片段不能无损塞进当前标准 Item |
-| 页面、附件、授权图片、配对和网页关联           | 需要浏览器／文档专属能力与校验，作为可选扩展保留                          |
-
-Chrome 的专属方法及通知为 `browser/composer/options`、`browser/thread/image`、
-`browser/thread/stream`、`browser/thread/updated` 和既有 `browser/extension/pair`／
-`browser/webLaunch/*`。标准参数之外的信息位于 params.browser，富显示位于 thread.browser。
-旧的无 browser 前缀私有方法不再支持；Chrome app-server 发现版本为 3，Native Host 仍为 2。
-
-当前原生命令和插件审批已接入客户端界面，标准文本／图片已接入共享输入处理。
-独立文件变更审批、音频及账户／配置等仍未完成，不描述成浏览器永久做不到。
-无对应原生证据的历史状态继续未知，
-不以通用数据库计时、最终正文或富展示分组宣称执行完成。
+stdio 与本机 WebSocket 通过同一 `CliAppServerBinding` 使用共享协议、模型、线程、历史、
+分页、进度、标准输入和审批呈现。传输不改变会话范围、执行预留或原生权限规则。
+`thread/read` 仅查询，客户端通过 `thread/resume` 明确订阅；不因元数据读取取得执行或审批所有权。
+各接口字段和调用顺序见[通用客户端规范](external-clients.md)。
 
 ## 已验证与未验证
 
 验证覆盖共享协议与真实 WebSocket／本机桥 framing、有效 SQLite 元数据和改名持久化、
-Chrome 能力隔离、精确取消和 unknown 占用、分页稳定性、隐藏工具／正文 guard、输出失败退役。
+外部会话范围、精确取消和 unknown 占用、分页稳定性、隐藏工具／正文 guard、输出失败退役。
 新增覆盖多线程并发、跨客户端订阅、审批回传后原生复核，以及历史取消后不再分页／写缓存。
 响应 helper 已使用上述导出 JSON Schema 校验初始化、模型、线程、Turn／Item 历史及分页、
 退订／状态通知。服务端命令和插件审批的字段、可选范围、回传与撤销另有定向测试。
@@ -134,18 +110,14 @@ Chrome 能力隔离、精确取消和 unknown 占用、分页稳定性、隐藏�
 Python 的真实本机 WebSocket 测试覆盖 11 个场景，
 使用替身执行后端，不表示这些场景已通过正在运行的桌面 Main。
 
-协议统一及本轮审批／图片适配后，两种 binding 的实际响应及通知有 53 项官方 Schema 校验断言通过，
-包括 loaded／卸载状态、图文归一化、真实图片字节传递及历史受管图片 localImage 引用。
-隔离 Chromium 离线验证使用组装后的侧栏和本机 HTTP／WebSocket 夹具，覆盖模型目录、
-显式恢复、增强流与标准 Item 并存不重复正文、精确停止以及动画／阅读状态；页面错误为 0。
-本轮隔离浏览器还验证命令及 App 授权选项、Secret 字段、撤回后旧按钮不可回复，以及标准图片发送与历史接管不重复。
-审批原生身份、会话指纹、App action 和实际 resolve 选择由定向后端测试验证；浏览器夹具不代表真实原生持久授权整链。
-此浏览器验证不经过 Native Host；Native Host 的真实 C# 编译、Unicode framing 与版本协商另有定向测试。
-新协议须重启应用并重新加载匹配扩展才生效，尚未对用户正在运行的桌面进程或最终安装包完成整链验收。
+图片测试覆盖图文归一化、真实字节传递、模型能力拒绝及历史受管图片 localImage 引用。
+审批测试覆盖原生身份、会话指纹、App action、实际 resolve 选择、撤回及迟到回复，
+不能代替真实原生持久授权和视觉模型输入的整链验收。
+最新协议、审批与图片适配仍需在重启后的桌面应用及最终安装包中完成真实 Gateway／模型验收。
 
 以下为统一前的真实联调记录，不表示本轮新适配已完成桌面端验收。2026-11-06 的开发应用使用真实 Gateway／模型：Python 示例完成一轮，
 同连接两个线程再各完成一轮；验证历史读取／分页／恢复、跨客户端通知、改名、退订、
-忙碌拒绝、其他客户端不能停止运行，以及错误 Bearer／网页 Origin 拒绝。
+忙碌拒绝、其他客户端不能停止运行，以及错误 Bearer／带 Origin 请求的拒绝。
 该次联调发现的只读状态记账和用户输入关联问题已修复，并以定向测试核验；
 历史投影也使用同一认证 Gateway 的真实快照单独验证。旧联调记录不能代替新协议的整链验证。
 完整官方客户端的账户／审批／文件界面、真实客户端审批往返与最终安装包端到端验收

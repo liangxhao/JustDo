@@ -25,7 +25,7 @@
       reconnect 按 keyed owner 恢复，超大正文保留身份事实，不恢复 run 累计正文副本。
 
 依据：[聊天渲染](../architecture/15-chat-rendering.md)、
-[028 审计](../features/chat/session-diagnostics.md)、[补丁总账](../../scripts/patches/v2026.10.7/README.md)。
+[028 审计](../features/execution/session-diagnostics.md)、[补丁总账](../../scripts/patches/v2026.10.7/README.md)。
 
 ## 长参数与真实活动
 
@@ -80,7 +80,7 @@ SDK 用例另行验证 `tool_call → show_widget` 的 70 KiB HTML 参数缓冲�
       当前轮继续。点击单题/多题弹窗的 × 取消时，开启和关闭超时两种设置都立即解除提问，清除计时器，
       不提交答案、不触发 Stop/Goal 暂停；问答结束本身不提前创建 Goal 后继轮。
 
-依据：[Goal](../features/chat/goal-mode.md)、[交互回答](../features/chat/interactive-answers.md)、
+依据：[Goal](../features/execution/goal-mode.md)、[交互回答](../features/chat/interactive-answers.md)、
 [工具格式纠正](../architecture/05-agent-engine.md#工具调用格式纠正)及补丁总账。
 
 ## 重放拒绝与诊断
@@ -92,4 +92,4 @@ SDK 用例另行验证 `tool_call → show_widget` 的 70 KiB HTML 参数缓冲�
       取消、切会话和窗口关闭后迟到结果不覆盖新报告。不因缺少 hook 日志断言阶段未发生，
       不新增私有 loop-exit 补丁或直接扫描 transcript。
 
-依据：[会话诊断](../features/chat/session-diagnostics.md)。
+依据：[会话诊断](../features/execution/session-diagnostics.md)。

@@ -1,27 +1,5 @@
-# TypeSafe AI for OpenClaw
+# TypeSafe
 
-Official external plugin for typed decisions with hosted TypeSafe AI Jev models
-or a local Kev System One server.
-It provides Choice, Score, and Boolean judgments through OpenClaw's shared
-decision-model API. Core supplies the provider-neutral `decision_evaluate` agent
-tool when the agent has an effective `decisionModel` selection, subject to normal
-tool policy and harness capabilities. No separate tool enablement is required.
+提供类型化决策评估，包括分类、量表评分和布尔概率。它不生成普通聊天回复，也不自动执行后续业务动作。
 
-Requires OpenClaw and plugin API **2026.9.6 or later**. Released OpenClaw
-2026.9.5 does not include the decision API.
-
-```sh
-openclaw plugins install @openclaw/typesafe
-```
-
-The ClawHub install spec is `clawhub:@openclaw/typesafe`. First publication is
-pending a supporting release. Enable the plugin, configure a protected TypeSafe credential, and select
-`typesafe/jev-latest` as your agent's `decisionModel`. With that selection,
-`decision_evaluate` sends supplied evidence to TypeSafe AI and incurs its normal
-usage charges. Other providers route evidence according to their own configuration.
-
-For local Kev, configure `plugins.entries.typesafe.config.baseUrl` with the
-server's loopback origin, such as `http://127.0.0.1:8009`, omit `apiKey`, and select
-`typesafe/kev-latest`. The plugin calls `/v1/systemone` without a hosted credential.
-Start the server separately with your chosen checkpoint; the decision-model
-selection labels requests and does not download or load a model.
+使用前需配置可用的决策服务及模型。服务地址、认证和工具访问权限由实际部署配置决定。原始来源说明见本目录中的 UPSTREAM.md。

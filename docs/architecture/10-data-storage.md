@@ -1,14 +1,21 @@
 # 数据存储：权威、约束与恢复
 
-## 网页关联对话元数据
-
-浏览器领域通过现有 SQLite KV 的 `browser.web-launch.v1` 保存精确站点策略、文档租约与消费序号高水位、无正文 launch 回执、发送 owner/原生 ACK 绑定及结果消息引用/摘要。`prepare` 复用同一数据库连接的同步事务创建 `source: browser-extension`、`ask` 权限的新产品会话并消费序号；回滚不发布会话或 KV 通知，提交后才通知当前扩展连接。领域事务不调用会立即发出变更的通用 KV setter。
-
-不新增数据库、消息表或 transcript 缓存；prompt、页面上下文、最终正文、凭据和 URL/title 不进入此 KV。旧回执淘汰或用户放弃 unknown 观察后，文档高水位仍拒绝旧操作；容量不足拒绝新准入，不以 TTL 将未知执行结算或放行重发。Main 重启不重发持久请求，缺失精确原生证据的派发仍为 unknown。当前契约及验证限制见[网页入口](../features/browser/webpage-conversation-entry.md)。
-
-桌面可选业务使用独立 Native/Main/Browser 插件包；通用 SDK、可信代码审核、冷包变更和历史清理所有权见 [应用插件宿主](17-app-plugin-host.md)。
+桌面可选业务使用独立 Native/Main/Browser 插件包；通用 SDK、可信代码审核、冷包变更和历史清理所有权见 [应用插件宿主](../plugins/management/app-plugin-runtime.md)。
 
 本文按 Core 的 SqliteStore、CoworkStore、ScheduledTaskResultStore，以及所属插件的领域 Store 组织。产品数据、原生 transcript、浏览器数据与服务端统计分别拥有独立生命周期，不能用“SQLite 中有数据”概括所有持久状态。
+
+## 按问题定位
+
+| 要核对的问题                                  | 维护位置                                                                     |
+| --------------------------------------------- | ---------------------------------------------------------------------------- |
+| 原生、产品、插件及浏览器各保存什么            | [存储边界](#1-存储边界)                                                      |
+| 新库、历史导入、升级、WAL 和凭据文件如何处理  | [初始化与兼容](#2-初始化与兼容规则)                                          |
+| 产品表、会话身份、运行回执和诊断在哪里        | [表清单](#3-核心产品表全表清单)、[会话与回执](#4-会话与运行回执)             |
+| Plan、Goal、配置及助手信息由谁持久化          | [Plan / Goal](#5-plan-与-goal)、[配置](#6-配置与凭据)、[助手](#7-助手与协作) |
+| 删除失败和结果收件箱如何恢复                  | [删除补偿](#8-删除补偿与结果收件箱)                                          |
+| 网页回执、profile、浏览器索引和远端数据在哪里 | [浏览器与服务端数据](#9-浏览器与服务端数据)                                  |
+| 插件 schema、事务和通用资源如何保存           | [插件持久化](#10-插件持久化)                                                 |
+| 备份、冷归档和 schema 变更应验证什么          | [备份与修复](#11-备份修复与变更验收)、[验证边界](#12-当前验证边界)           |
 
 ## 1. 存储边界
 
@@ -32,7 +39,7 @@ flowchart LR
 
 产品数据库位于 app.getPath('userData') 下，默认 `<appData>/<productName>/justdo.sqlite`。内部文件名稳定，productName 改变时不自动迁移旧品牌目录。Gateway state 和项目目录不是该数据库的子表，备份和删除时需要分别处理。
 
-声明受管数据目录的 App 插件通过公开 SDK 访问 `<state>/plugin-data/<plugin-id>/`。默认可清理目录用于模型、私有组件及缓存，更新和停用保留，卸载可选择清理；执行恢复账本可声明保留策略，卸载也不清理。目录归属、策略及安全清理见[应用插件宿主](17-app-plugin-host.md)。既有业务库和原生历史沿用各自的存储与删除规则。
+声明受管数据目录的 App 插件通过公开 SDK 访问 `<state>/plugin-data/<plugin-id>/`。默认可清理目录用于模型、私有组件及缓存，更新和停用保留，卸载可选择清理；执行恢复账本可声明保留策略，卸载也不清理。目录归属、策略及安全清理见[应用插件宿主](../plugins/management/app-plugin-runtime.md)。既有业务库和原生历史沿用各自的存储与删除规则。
 
 ## 2. 初始化与兼容规则
 
@@ -114,7 +121,7 @@ SDK 派生 JWT 不回写，继续由原有私有凭据快照与 SecretRef 管理
 同步落盘并原子替换；只有文件确实不存在才初始化，损坏、读写或权限错误不自动重置。
 保存与重新生成令牌只更新下次 listener 启动配置，普通状态不返回秘密。
 此文件使用权限保护，不宣称 OS 加密；连接及待生效语义见
-[通用 app-server](../features/integrations/app-server.md)。
+[通用 app-server](../features/external-clients/app-server.md)。
 
 产品设置只从当前 SQLite KV 读取，不再从根目录 `config.json` 导入旧 electron-store 数据。
 新建、迁移和重开数据库均不读取该文件；已有 KV 设置保持原样，不增加导入开关或跳过标记。
@@ -279,25 +286,8 @@ Plan 的 segments 表，也不探测并销毁旧 handoff 表。旧环境由启�
 | `scheduled_task_run_receipts`        | 原生 run 对应的结果索引与 readAt                         |
 | `scheduled_task_result_cleanup`      | 原生结果 artifact 清理进度                               |
 | `scheduled_task_result_tombstones`   | 删除完成的 run 防同步复活                                |
-| `collaboration_rooms`                | 唯一 anchorSessionId                                     |
-| `collaboration_members`              | room 内唯一 agent；session/key 全局唯一                  |
-| `collaboration_rounds`               | 用户轮次及 stopped_at                                    |
-| `collaboration_deliveries`           | 路由、摘要哈希、原生接收和状态                           |
-| `collaboration_execution_receipts`   | 精确 sessionKey/runId 的 whole-run 终态                  |
-| `collaboration_reviews`              | 原生验收执行、封闭结论及对应批次                         |
-| `collaboration_review_deliveries`    | 验收报告到具体工作回执的关联                             |
-| `collaboration_deletions`            | 删除冻结记录                                             |
-| `collaboration_deleted_members`      | 已确认原生删除的成员                                     |
 | `cowork_run_diagnostic_coverage`     | 诊断采集起点、覆盖及裁剪计数                             |
 | `cowork_run_diagnostic_events`       | 有界、闭合值的运行诊断元数据                             |
-| `team_discussion_rooms`              | 固定成员、来源身份及房间状态                             |
-| `team_discussion_runs`               | 请求指纹、批次身份与汇总抑制                             |
-| `team_discussion_executions`         | 成员精确原生执行、结算和清理证据                         |
-| `team_discussion_summaries`          | 来源汇总的 outbox 与执行回执                             |
-| `team_discussion_task_links`         | 获准读取群历史的关联产品任务                             |
-| `team_discussion_deleted_rooms`      | 已删除房间的持久墓碑                                     |
-| `team_discussion_queue_control`      | 每群待发控制 generation                                  |
-| `team_discussion_pending_inputs`     | holding 引用、请求指纹与 FIFO 状态                       |
 
 ## 4. 会话与运行回执
 
@@ -387,7 +377,7 @@ cowork_sessions 保存 title、status、pinned、cwd、execution_mode、permissi
 普通已有会话更改工作目录复用 `cwd` 字段，不新增表或复制历史；原生确认空闲及
 产品身份复核后保存期望值，后续消息／新终端的准备负责应用原生权限根。修改目录
 不刷新活动时间，不迁移文件或助手角色目录。Worktree、外部来源、插件托管及未处理
-计划等限制与并发准入见[会话权限](../features/chat/openclaw-permission-management.md#3-工作目录是权限的一部分)。
+计划等限制与并发准入见[会话权限](../features/execution/openclaw-permission-management.md#3-工作目录是权限的一部分)。
 
 `updated_at` 表示最近对话活动时间。Main 在广播运行时活动事件前将时间单调写入会话索引，
 确保继续历史会话后刷新列表或重启仍保留新时间。重命名、状态、模型、权限与分组等元数据
@@ -454,7 +444,7 @@ Renderer 持有完整目录和一个按需摘要实体集合。目录刷新才�
 
 Renderer 无持久诊断缓存，Main 仅保留最多 8 份、5 分钟的诊断快照。按需通过 `chat.history` 读取原生会话数据库，快照可以包含最多 40 条脱敏失败节选及工具名，每条正文最多 1600 字符，以及最后回复的内容种类布尔值和结束原因（用于识别 thinking-only/空响应）；不保存完整历史、不将节选或回复形状写入 SQLite。诊断不是 OpenClaw transcript 的第二份权威。
 
-见[会话诊断](../features/chat/session-diagnostics.md)。
+见[会话诊断](../features/execution/session-diagnostics.md)。
 
 工具事件可额外保留闭合 `operation` 操作类别及 `toolValidationFailed` 布尔标记；后者只从上游固定参数校验摘要精确匹配生成，摘要原文不入库。新增可选字段沿用有界事件 JSON，不新增表或迁移。
 
@@ -468,7 +458,7 @@ Renderer 无持久诊断缓存，Main 仅保留最多 8 份、5 分钟的诊断�
 本次采集的私有输入，不回填事件或增加数据库字段。会话绑定或回执在采集期间变化
 时撤回归属证据，显式导出不发布旧结果。40 条失败节选采用关联强度及末端故障优先
 的有界保留；正文日志仅在本地导出内存与 ZIP 中存在，页面只收到导出数量、来源缺口
-和采集时间。详见[会话诊断](../features/chat/session-diagnostics.md)。
+和采集时间。详见[会话诊断](../features/execution/session-diagnostics.md)。
 
 ### 首页预览会话的采用与清理
 
@@ -525,7 +515,7 @@ builtin provider 的 apiKey，以及选中 builtin 时或与 builtin key 相同�
 
 因此不能宣称数据库已全库加密，也不能宣称所有自定义 key 都使用 safeStorage。内置模型的新访问凭据不保存在 SQLite，而是短期 JWT 的受限派生快照，原生使用 exec SecretRef；X-User-Account 不再投影到内置 provider 配置或 SecretRef 解析输出，Gateway 请求继续通过既有出站代理取得该身份头。私有快照仍保留已验证账号和到期时间。自定义 provider secret file 由产品配置派生，采用文件权限保护。
 
-详情见[认证](../features/integrations/authentication-builtin-model-lifecycle.md)和[安全模型](11-security-model.md)。
+详情见[认证](../features/account/authentication-builtin-model-lifecycle.md)和[安全模型](11-security-model.md)。
 
 内置模型换证的 deviceId 由 Main 公共网卡模块按调用时状态读取，使用去冒号的大写 MAC，不进入产品 SQLite，也不保存或读取 model-device.json。登录接入复用同一模块；没有可用 MAC 时明确失败，不生成 UUID 或其他替代标识。MAC 不是凭据或设备持有证明。
 
@@ -541,13 +531,11 @@ agents 的 model 为空表示继承；main 不以遗留档案 model 作为用户
 
 模型创建的 `assistantCreation:<agentId>` KV 只保存参数摘要与 preparing/ready 阶段；准备档案先停用，原生配置和角色文件读回后启用。中断不自动派发任务。
 
-协作 delivery 唯一键为 room、发送人、sourceRunId、toolCallId，input_digest 检查重试参数冲突；表中没有正文。round 的 stopped_at 持久冻结旧轮次，预算包括失败尝试。重启恢复将 queued 转 failed、dispatching 转 unknown，不从元数据重造载荷。
-
-`beginRound` 必须携带可信调用的实际来源会话，写入前按 `collaboration_rooms.anchor_session_id` 核验组织者身份。Main 只把组织者当前精确 running 用户运行用于新批次，成员发送只能继承匹配自身精确原生 run 的既有 delivery 轮次。成员独立对话不能新建或借用轮次，不根据最近消息、引用或未封闭批次补造授权。停止操作仅冻结已有轮次并围栏运行 ID，不因扫描来源或成员运行记录插入新轮次。此规则不更改历史批次、预算快照或原生回执。
+可选插件的业务 schema、预算、派发及删除规则随插件维护；宿主仅提供同库事务与通用资源删除参与者。插件数据入口见[插件文档索引](../plugins/README.md)。
 
 ## 8. 删除补偿与结果收件箱
 
-协作整任务删除先写 freeze，停止全部成员，确认原生状态，再逐个删除原生 session 并保存进度，最后事务删除产品会话。外键级联不能代替前面的原生清理。
+插件资源删除必须通过已注册参与者的预检与清理，外键级联不能代替原生资源清理。
 
 结果收件箱以 run_id 为主键，保存摘要、状态、原生 session、投递结果和 read_at。按 started_at/run_id 分页，按 task_id 查询，未读有部分索引。upsert 保留 read_at；baseline 与追赶水位不放在 Renderer 内存中充当持久事实。
 
@@ -562,6 +550,12 @@ Renderer。例行结果 SQL 过滤与共享规则一致：完成失败／未知�
 删除结果先抑制并发同步写回，清理原生 artifact，再移除 receipt 并写 tombstone。清理表记录已处理路径；失败保留可重试条目。两种删除都不是一个跨网络 SQLite transaction。
 
 ## 9. 浏览器与服务端数据
+
+### 网页关联对话元数据
+
+浏览器领域通过现有 SQLite KV 的 `browser.web-launch.v1` 保存精确站点策略、文档租约与消费序号高水位、无正文 launch 回执、发送 owner/原生 ACK 绑定及结果消息引用/摘要。`prepare` 复用同一数据库连接的同步事务创建 `source: browser-extension`、`ask` 权限的新产品会话并消费序号；回滚不发布会话或 KV 通知，提交后才通知当前扩展连接。领域事务不调用会立即发出变更的通用 KV setter。
+
+不新增数据库、消息表或 transcript 缓存；prompt、页面上下文、最终正文、凭据和 URL/title 不进入此 KV。旧回执淘汰或用户放弃 unknown 观察后，文档高水位仍拒绝旧操作；容量不足拒绝新准入，不以 TTL 将未知执行结算或放行重发。Main 重启不重发持久请求，缺失精确原生证据的派发仍为 unknown。当前契约及验证限制见[网页入口](../plugins/browser-extensions/browser-assistant/website-launch.md)。
 
 ### Profile 共享和清理边界
 
@@ -602,138 +596,16 @@ browser-import.sqlite 独立保存导入历史、safeStorage 加密密码、下�
 
 ### 远端活动记录
 
-LiteLLM 客户端活动通过 `POST /user/activity` 写入服务端 `LiteLLM_UserTable.metadata.user_activity`，不属于本地产品表。原生消费的 EndUser 归属继续保留，用于已有日志筛选；活动接口不创建或修改 EndUser。可扩展 metadata 仅在 user_activity 命名空间保存最新快照，不将客户端自报值计入原生账单；重复事件不倒退最新快照，接口不可用时不阻塞客户端主流程。客户端开关控制上报，JWT 负责身份校验；未收到活动不能证明用户没启动。服务端部署与字段保留见[认证专题](../features/integrations/authentication-builtin-model-lifecycle.md)。
+LiteLLM 客户端活动通过 `POST /user/activity` 写入服务端 `LiteLLM_UserTable.metadata.user_activity`，不属于本地产品表。原生消费的 EndUser 归属继续保留，用于已有日志筛选；活动接口不创建或修改 EndUser。可扩展 metadata 仅在 user_activity 命名空间保存最新快照，不将客户端自报值计入原生账单；重复事件不倒退最新快照，接口不可用时不阻塞客户端主流程。客户端开关控制上报，JWT 负责身份校验；未收到活动不能证明用户没启动。服务端部署与字段保留见[认证专题](../features/account/authentication-builtin-model-lifecycle.md)。
 
 Main KV `activity.reportingSchedule` 只保存北京时间日期、已预留窗口数、上次窗口时间、接口冷却截止、上次成功时间及无凭据的快照指纹，不保存报告正文、JWT 或会话明细。每客户端数据目录每天最多 3 个采集/上报窗口、间隔至少 6 小时；启动就绪至少 15 分钟后择空闲运行，预留失败就不采集。准备失败和无变化也消耗窗口，重启/退出/换账号不清配额和冷却。每窗口通过现有 Gateway 取一次近 7 天本机每日原生会话数和已记录 Token，只投影有界数字；没有第二份 transcript 或完整统计账本。每个新窗口重新采样，退出不等待网络。
 
 ## 10. 插件持久化
 
-### Workflow 独立流程库
+插件负责业务表、私有数据文件、持久回执及其恢复规则。宿主不在此重复维护插件表清单或业务状态机；它只负责提供同库事务、schema 初始化与通用资源保护。包被移走后，其业务存储说明应随包保留。
 
-独立 `swarm-workflow` 扩展在 Gateway `stateDir/swarm-workflow/flows.sqlite` 保存流程目标、
-已校验 DAG、阶段结果、修订号、启动意图和原生运行引用。它是插件调度状态，
-不属于产品 SQLite 的消息表，也不复制原生 transcript。执行会话由插件拥有，
-流程与主会话的关联是插件元数据，不写入主会话原生 ownership 或伪造 spawnedBy。
-未知提交和未知最终投递不自动重试；恢复先核对已有运行。
-
-主会话被删除后身份检查阻止下一次派发，原生工作历史与插件记录不会自动级联清除。
-参见 [Swarm Workflow](../features/workflow/swarm-workflow.md)。
-
-节点派发在既有插件 JSON 元数据中记录本次覆盖的补充条数，用于续跑及提交修正时保持同一输入快照，执行中新增的补充留待下一次任务尝试。只保存的补充说明由既有插件记录提供，每轮续跑重新装配系统上下文，不将临时系统提示当作已写入原生历史的证明。继续消息正文保留本次用户原文，原任务与会话历史仍由原生 transcript 提供；不新增表或消息缓存。
-
-侧栏活动与摘要数量通过插件的 `activity` / `summary` 只读接口从既有 `flows`、`batch_items` 聚合，不 hydrate 完整流程或读取批次结果，不新增表或持久缓存。活动分页携带本次 Store 实例的随机代次和已提交变更版本；跨实例或版本不一致的页不拼接为空闲结论，Main 继续核对原生父 key 的精确产品归属。
-
-### Swarm 节点提交记录
-
-流程可选 `operations` 保存最多 512 个主会话控制操作的身份/动作，与状态在同一
-revision 写入中提交，用于回复丢失及重启后重放去重；身份由原生
-sessionKey/runId/toolCallId 与规范化动作派生，不保存主聊天消息。同一原生调用
-重放返回已有回执；新的 toolCallId 为新请求，必须携带新的有效 revision。
-节点补充沿用 `interventions` 去重。
-
-可选 `notices` 保存
-最多 64 个阻塞指纹及 sending/sent/unconfirmed 投递状态，不存通知正文。发送前
-保存意图，异步 ACK 在最新流程上合并；原生 `chat.inject` 没有持久幂等参数，
-已保存意图不盲目重发。通知覆盖流程已 blocked、节点仍为 running 且带错误的
-超时等待，以及父策略变化造成的执行拒绝。最终交付失败或未确认后停止流程保留结果与投递意图，
-不重发结果。旧 payload 缺省为空，无新增表或历史数据迁移。
-
-节点可选 `interventions` 保存显式用户输入（操作 ID、动作、文字、时间），每节点最多 30 条、每条最多 4000 字符。它们是工作流输入而非聊天历史副本；只通过归属验证后的详情读取，不进入图列表、Main 或 Redux 缓存。人工继续保留 sessionKey，新建 run ID 并归档旧执行身份/提交，重新执行使用新 sessionKey；两者共享三次执行上限。操作 ID 持久保留用于重发去重；节点的可选 `continuation` 标记与待派发状态一起保存，进程重启不会丢失已接受的继续意图。旧 payload 不需改写，不新增产品数据库表。
-
-独立 `swarm-workflow` 插件的 `flows.sqlite` 保存有界阶段 JSON。节点包含本次提交记录（runId、总结、证据、验收结论、时间）及最多三次执行的身份/失败元数据。它们用于派发、验收和显式重试，不复制原生工具/Thinking/Content 聊天历史；原生会话键负责查看每次执行记录。不新增产品数据库表，不迁移或重写已保存节点；新节点依赖工具提交，旧节点按已派发的协议收敛。
-
-批量执行在同一插件库中增加 `batch_items`、`execution_runs`、`execution_leases`、`scheduler_state`、`interventions`。输入清单、每次尝试和产物索引仍是业务元数据；输入快照与各尝试目录统一位于父项目 `.agent-tasks/swarm-workflow/<flow>/<batch>/`，不进入聊天存储。浏览器默认产物使用同一根目录下的 `browser-artifacts/`；最近工作目录识别将该根目录内的路径归回所属项目。
-
-重试仍使用同一批次目录，不提供旧 Swarm 目录的兼容或迁移。阶段快照不内联执行项或产物全文；调度读取有界活动工作集，项目列表每页 50 项，汇总索引每页最多 20 项且最多 32 KiB。stage/batch item/预约更新与流程 revision CAS 同事务；runId 全局精确唯一，历史 sessionKey 不做全表 UNIQUE，操作身份在全部项之间去重。重启先重建预约并核对原生执行，不因缓存消失释放未知槽位。
-
-节点的私有 `submissionRepair` 保存当前修正 run ID、最多三轮的计数、有界修正指令、待派发标记及已结束 run 的身份/时间。服务先确认原生成功终态，再保存新 run 的启动意图，随后在原会话追加提交修正；启动结果未知时仍按原有规则核对，不能自动重放。重启后保留工具限制及预算；显式任务重试归档已结束的修正 run 身份并清除当前修正状态。列表投影不暴露该内部字段，原始连线派发消息不改写。
-
-具体错误从结束前钩子的原生投影即时提取；钩子被原生隔离结束路径跳过时，服务通过 `subagent.getSessionMessages` 按需读取本节点最后最多 64 条记录，仅形成最多 2000 字符的错误提示。读取前后重新校验归属与权限；返回的消息只在本次调用中存在，不保存原生消息、工具结果或 Thinking 历史副本。
-
-### 群组讨论元数据
-
-Agent Team schema 定义 team_discussion_rooms（固定成员映射、cwd、只读/权限、revision、generation、状态及来源任务）、team_discussion_runs（requestId / fingerprint / active slot / 状态）、team_discussion_executions（discussionId、成员、精确 sessionKey / sessionId / lifecycleRevision / runId / outcome）、team_discussion_task_links 和 team_discussion_deleted_rooms。
-
-只有房间元数据，不存正文。部分删除记录在成员元数据，compare-and-delete 成功后逐一标记；删除墓碑阻止复用旧 roomId。原生扩展 stateDir 的 discussion-receipts 保存无正文 admission / close receipt；消息与公开 channel-final mirror 均属于 OpenClaw native transcript。
-
-详见 [Agent Team 现行契约](../features/assistants/agent-team.md)。
-
-team_discussion_runs 的可空 initiator_agent_id 标识主助手通过工具发起的消息；正文仍从原生 transcript 读取。该列由当前完整建表定义声明，不再通过缺列检测补充旧表；用户请求指纹继续按当前幂等规则核对。详见[主会话组织团队](../features/assistants/agent-team.md)。
-
-Swarm 节点派发前将实际发送的任务信封（message、createdAt）与运行意图一起保存到独立插件流程库，列表投影不携带信封，详情按会话归属及依赖边验证后按需读取。它是工作流执行输入，不是原生消息历史的镜像。节点详情复用 ChatMessageDisplay，通过独立 ChatController 直接读取 Gateway 原生历史与实时事件，不增加 Main 或 Redux transcript 缓存。连线只展示已保存的输入；缺失历史输入不重新生成。
-
-### 团队结果与执行回执
-
-`team_discussion_rooms.summary_source_json` 固定来源 agentId/sessionKey/sessionId/lifecycleRevision；borrowed-source 成员存在 members_json，只借用身份，群删除不删除来源。`team_discussion_runs.summary_suppressed` 持久阻止用户停止后的迟到汇总。
-
-新表 `team_discussion_summaries` 以 discussion_id 为主键，外键关联批次/房间，保存 pending/running/stopping/delivered/failed/cancelled/unknown、run_id、updated_at，并按状态/更新时间索引。终态与 outbox 插入同一事务；网络提交在事务外。每轮最多轮询 16 条未终态汇总，每次尝试（包括传输失败）都推进 updated_at，使旧异常记录不会长期占满窗口；推进时间不覆盖并发停止或终态。
-
-附件准备等发生在原生提交前的失败只记录批次失败，不创建汇总 outbox；已提交但响应丢失仍保持未知状态，待原生回执确定终态后再汇总，不自动重发。
-
-`collaboration_rounds.closing_run_id` 记录显式 seal；seal 与新 delivery 注册事务互斥。`collaboration_execution_receipts` 按 `(room_id, session_key, run_id)` 保存 completed/failed/cancelled，房间删除级联；延迟接受回执可关联早到的 whole-run 证据。其数据不包含正文，不把接收状态改写为执行结果。
-
-房间停止操作在同一事务内依据批次派生状态，只为 open/closing 批次写入 `stopped_at`。已经 settled/failed 的历史批次保持原终态与验收状态；重复停止及后续迟到回执不把旧历史改成停止，也不重新开放已 seal 的批次。
-
-Gateway stateDir 中 summary-receipts 保存指纹、执行与可见输出 entryId；discussion-receipts 增加公开输出引用。群公开正文和最终总结始终在原生 transcript，Main 不存消息副本。上述产品字段由当前完整 schema 声明，不再为旧中间房间补列；原有独立 main 会话不迁移。停止和 unknown 恢复边界见[Agent Team 契约](../features/assistants/agent-team.md)。
-
-### 精确执行的独立验收
-
-当前产品 schema 包含 `collaboration_reviews` 和 `collaboration_review_deliveries`，重复初始化不改写已有记录；这与已撤回的历史运行时迁移无关。报告以房间、验收助手及原生 runId 唯一，保存批次、验收投递回执、`passed / changes_requested / unverified` 和时间；关联表以 `(review_id, delivery_id)` 唯一绑定 1–16 个工作回执。报告/回执/房间删除级联，`(room_id, round_id, created_at)` 索引服务当前批次显示。
-
-写入在同步事务中验证：验收 run 是组织者向独立成员已登记的真实入站；待验工作在同房间同批次、已原生接受且具有成功 whole-run 回执；不能验自己或组织者。重复相同报告返回原记录，更改结论或范围必须使用新验收执行。报告状态通过验收 admission、确切 whole-run 终态和 stopped_at 派生；工具报告成功先是 pending，原生接受且整次验收成功才 confirmed，失败、取消和 unknown 不显示通过。
-
-数据库不保存检查标准、交付物、证据、结论正文或文件版本；这些留在原生任务/验收历史。confirmed 是该助手对列出的确切执行报告完成，不是文件散列证明、全任务质量门禁或对后来返工的自动认可。丢失 whole-run 证据时保留待确认，不靠 chat final、空闲或重启猜测通过。
-
-Agent Team 的表初始化、房间/投递/验收/待发输入及资源偏好事务由 `plugins/extensions/agent-team/host/data/` 持有实现，通用桌面宿主按清单加载 schemas 与 Main 入口，不保留 Team 稳定门面。实际 SQLite 连接及通用产品表仍由宿主提供；同一连接内的成员会话创建与团队记录写入保持原子事务。此归属调整不移动数据库或变更表、外键、持久化路径和恢复契约，也不创建插件 transcript 缓存。
-
-### Agent Team 参数元数据
-
-全局默认存储于 `kv` 键 `agentTeam.settings`，含 version、revision 和严格限定的数值/布尔值。`collaboration_rooms.settings_json` 与 `team_discussion_rooms.settings_json` 保存独立 revision 的团队覆盖；不改变 roster 的 revision。删除团队时随房间行清理。
-
-`collaboration_rounds.message_budget` 在开始用户轮次时固定，当前列默认 16；所有已登记投递（包括 failed/unknown、回复与验收）计数，幂等重放先查同一摘要，不重复扣额度。`team_discussion_runs.resources_json` 保存 settingsRevision/maxRounds/maxTurns/maxConcurrent，`requested_rounds` 保存数值以处理模型省略参数的重放；原输入摘要继续区分请求。没有资源快照的批次仍使用已保留的默认语义，不按新的全局设置重算已接受请求。
-
-这些列与房间 `settings_json`、`summary_source_json`、批次 `summary_suppressed`、
-协作轮次 `stopped_at` / `closing_run_id` 一起由 Agent Team 的完整 `CREATE TABLE`
-定义声明，不再使用缺列探测和 `ALTER TABLE`。它们是当前产品 schema，不是已移除的
-OpenClaw 9.6→9.8 存储迁移。没有 prompt、消息正文、工具结果或新的 transcript 缓存。
-
-精确原生 unknown 回执使用既有 interrupted 产品状态投影，保留 active_discussion_id 和 generation，占用不释放也不创建 summary。确认 running 可恢复显示，不能覆盖 stopping；已有记录 requested_rounds 为空时，同模型请求仍沿用旧 room.rounds 默认语义。
-
-### Agent Team 结算证据与删除门禁
-
-扩展的 identity-only receipt 增加 `settledRunIds` 和 `cleanupComplete`，只有全部已接纳 run 的精确 native whole-run 终态和 dispatcher 清理均确认后才写终态。owner 换代不推断 failed；旧 failed/completed/cancelled 无证据仍投影 unknown，`cancelled-before-admission` 的空执行 tombstone 单独保留。Main 不读取原生文件、不复制正文，也不对缺失证据做原生迁移。
-
-`team_discussion_summaries(room_id,state)` 增加索引，准入和删除按全房间 pending/running/stopping/unknown 查询，独立于 worker 的 LIMIT 16。同请求幂等读原回执不受新准入阻断；新发送、成员参与变更、团队删除以及单个/批量来源删除均等待结算。普通 Stop 可以返回仍待核实，删除专用路径必须拒绝，borrowed source 永不作为群成员删除。
-
-来源删除使用进程内计数 lease，在第一次异步操作之前冻结来源及团队成员准入，并关闭现有来源 run 的建立团队窗口。单删和批删的外层 lease 覆盖 standalone fallback；内层团队删除可嵌套，不提前解锁。停止后重读全部相关群聊，不仅依赖最初快照；异步准备、发送和成员变更提交前重新核对。lease 不写正文或新增数据库，删除失败后释放操作 lease，但不会复活已经关闭的旧 run。
-
-### Agent Team 待发输入元数据
-
-`team_discussion_queue_control` 按 room_id 保存独立 queue generation；它与房间执行 generation 分离，正常重启不取消已经保存的输入。`team_discussion_pending_inputs` 以 room_id/request_id 为主键，保存 generation、原请求及原生规范化指纹、附件内容摘要、房间/权限快照摘要、轮次/通知对象/资源快照、状态、native identity 和 entry_id。
-
-没有正文、文件名、附件路径或 transcript 内容。接收容量与 request 指纹检查在 SQLite 事务中完成；同群最多 3 条活动待发输入，unknown 和 blocked 不释放名额，也不允许后续输入绕过队头。
-
-正文只进入常驻 Runtime Services 拥有的通用 `inert-custody` 原生会话，使用 custom-role/customType、`display:false` 与 `excludeFromContext:true`；native owner 标记在 `pluginExtensions.runtime-services.custody`。
-
-`stateDir/runtime-custody/` 只保存 opaque resourceId、epoch、owner、摘要、接收和取消元数据，不识别 Team 房间或轮次；Team 自己序列化业务内容并保存映射。原生稳定 idempotencyKey 与精确 raw delta 读回用于确认 saved。保存/读取需要当前写租约，关闭后的维护只能处理既有资源。ACK 丢失变为 unknown，重启仅核对原生条目，不再 append；无法核对则保留未知。
-
-Renderer 按需读取当前面板投影，不建立 Redux 或 Main 正文缓存。
-
-逐项取消写持久 tombstone，全量 Stop/明确禁用推进 queue generation。已经开始原生派发而未取得结算证据的输入保持 unknown，不能因取消请求推断未执行。Main disable lease 在改扩展开关前同步关闭接收/建群/派发并持久取消，离线原生清理失败也不使产品输入恢复；快速重新启用在同一配置 lane 排队。正常 runtime shutdown 保留 saved，不能等同于明确禁用。
-
-附件复制为项目 `.agent-tasks/team-discussions/` 产物，原生 holding 条目保存稳定路径，产品只保存 SHA-256 摘要。启动前重新核对内容及当前权限；未知执行仍可能引用产物，取消 ACK 不授权删除。
-
-房间删除先关闭原生 holding admission，Main 按 exact sessionId/lifecycleRevision 归档，owning SDK 确认归档后解除锁，再由 Main `archivedOnly:true` 精确删除；确认全部 holding 身份缺失才清理产品待发行。
-
-已解锁后正常退出可能清除 native marker；只有持久 closed slot 的精确 key/SID/revision/harness/root 与 archived/unlocked 原生条目一致且没有冲突 marker，才允许补完删除，不放宽正文接收/读取。中途未知保留任务，不删除同 key 的替代 incarnation。详见[本轮实现及验证](../features/assistants/agent-team.md)。
-
-### Agent Team 发起守卫元数据
-
-Main KV 记录产品候选与提交边界；Team 自己的发起账本保留既有 `stateDir/runtime-services/agent-team-launch/` 路径，保存 generation、来源 incarnation、clientTurnId、prompt SHA-256、owner、业务状态及精确 whole-run 元数据。
-
-Required 服务的通用 `stateDir/runtime-services/execution-admissions/` 只保存精确 run、owner 租约、generation、接纳、终态和 cleanup attestation，不读取 Team schema。两者均不保存正文。持久写入使用 fsync 和原子替换；读取失败、损坏和写入未知不能转为空状态。原生 namespace 不作为跨重启唯一权威，退休 owner 不自动重放。已有文件保留，不增加旧协议回退、旧目录扫描或迁移桥。
-
-released tombstone 的历史身份在合法 reset/revision 后仍可核对，原 SID 或当前精确 SID 可读取前代 generation；身份变化后旧 whole-run proof 不转移到当前 incarnation。新候选必须绑定当前 SID/revision 且 CAS 下一代，不能复用旧 clientTurnId。未 released 的身份变化不作历史完成推断。
+- [协作插件存储](../plugins/extensions/agent-team/persistence.md)。
+- [工作流插件存储](../plugins/extensions/swarm-workflow/persistence.md)。
 
 ### 通用插件资源保护账本
 

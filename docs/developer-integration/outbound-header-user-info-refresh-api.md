@@ -5,6 +5,29 @@
 完整登录/退出应优先使用[登录与模型生命周期入口](login-model-lifecycle-api.md)，它已包含本页的缓存刷新；
 只有独立 Cookie 更新等场景需要直接调用本页接口。
 
+## SDK 续期应使用现有账号租约
+
+已有 `LoginService` 接入的 SDK 不应先自行改登录文件、再调用缓存函数。
+应在开始异步续期之前捕获 `captureCredentialLease()`，取得结果后交给
+`updateCredentials(lease, update)`。服务会重新核对账号身份、操作代次和文件凭据版本，
+原子提交到现有文件，再按需刷新模型认证或请求头缓存。
+
+```ts
+// Main 中续期协调器的接入示意；loginService、sdkAdapter 和 signal 由现有装配层持有。
+if (!sdkAdapter.available || !sdkAdapter.refreshCredentials) return;
+const lease = loginService.captureCredentialLease();
+if (!lease) return;
+const update = await sdkAdapter.refreshCredentials({ signal });
+const result = await loginService.updateCredentials(lease, update);
+// 根据 result.success / errorCode 展示或记录安全状态，不记录 update 中的凭据。
+```
+
+只有 SDK 已确认该租约对应的登录会话失效时，才调用 `expireSession(lease)`；
+旧账号的迟到失效事件不能清除新账号。单次网络错误不等于身份失效。
+`mtoken` 轮换会重新进入模型认证；仅 Cookie 更新保留 mtoken，不重新执行完整登录。
+真实 SDK 及其续期调度仍待部署方接入，以上现有方法不是自动定时续期服务。
+实现位于 `src/main/core/app/auth/loginService.ts`，适配器类型见同目录 `loginSdkAdapter.ts`。
+
 ## 接口
 
 Main 进程从 `src/main/core/network/outboundHeaderPolicyConfig.ts` 导入：
@@ -25,12 +48,15 @@ updateOutboundHeaderUserInfoCache();
 
 ## 调用时机
 
-登录模块在**完成** `user_info.json` 的写入或替换后调用该函数。定时更新 Cookie 时也
-按同样顺序调用：
+对不经过 `LoginService` 的可信 Main 调用方，只有在确认仍属同一账号、并且**完成**登录文件
+写入或替换后才能调用该函数。独立更新 Cookie 时的底层顺序为：
 
 ```text
 获取新 Cookie → 写入 user_info.json → updateOutboundHeaderUserInfoCache()
 ```
+
+这个底层顺序不提供账号租约保护；SDK 的异步续期必须使用前述服务入口，
+不能在退出／切换账号后把旧 Cookie 再写回文件。已有文件应保留同账号的 mtoken 和其他字段，不能用仅含 Cookie 的示例覆盖。
 
 退出登录时，先删除或清空文件中的相关值，再调用该函数。它只更新 Main 进程内的请求头值
 缓存；调用返回后，后续匹配活动策略的请求使用新值。现有调用示例见 `src/main/main.ts`

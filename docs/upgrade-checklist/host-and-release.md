@@ -15,7 +15,7 @@
       受控恢复，用户主动停止/退出及替代实例不被自动启动或停止。验证冷 PowerShell
       凭据解析预算、配置延迟重启及迟到 ACK，刷新失败需保留受控原因。
 
-依据：[认证生命周期](../features/integrations/authentication-builtin-model-lifecycle.md)。
+依据：[认证生命周期](../features/account/authentication-builtin-model-lifecycle.md)。
 
 ## Apps、Widget 与跨轮资源
 
@@ -55,8 +55,8 @@
 - [ ] 安装版真实 Chrome Native Messaging 发现、鉴权、配对、连接/重连和流式进度单独验收。
       组件测试或开发环境连接通过，不证明 exe 安装后的注册和路径正确。
 
-依据：[Agent CLI](../features/integrations/agent-cli.md)、[共享 app-server](../features/integrations/app-server.md)、
-[侧聊](../features/browser/browser-extension-side-chat.md)。
+依据：[Agent CLI](../features/external-clients/agent-cli.md)、[共享 app-server](../features/external-clients/app-server.md)、
+[侧聊](../plugins/browser-extensions/browser-assistant/side-panel.md)。
 
 ## 插件发布、技能与离线资产
 
@@ -75,7 +75,7 @@
 - [ ] Windows Gateway/worker 保留 `CHOKIDAR_USEPOLLING=true`，移除继承的统一 polling
       interval，使用原生按用途的频率；不把 Gateway 环境策略扩散到应用/CLI 基础环境。
 
-依据：[插件系统](../architecture/07-plugin-system.md)、[Plugin Hub](../features/plugins/plugin-hub-experience.md)、
+依据：[插件系统](../plugins/management/plugin-system.md)、[Plugin Hub](../plugins/management/plugin-hub.md)、
 [补丁总账](../../scripts/patches/v2026.10.7/README.md)、[离线准备](../offline-downloads.md)。
 
 ## 旧版聊天记录迁移与首次启动引导

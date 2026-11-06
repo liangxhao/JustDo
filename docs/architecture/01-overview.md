@@ -12,13 +12,15 @@
 
 ### 能力入口
 
-已接入的主要流程包括对话与计划审核、持续目标、定时任务、插件管理、四种浏览器模式、模型与认证、语音及外部 Agent。相应行为与限制见 [Cowork](04-cowork-system.md)、[定时任务](08-scheduled-tasks.md)、[插件系统](07-plugin-system.md)、[浏览器设计](../features/browser/browser-settings-design.md)、[模型管理](../features/models/model-management.md)、[语音](../features/models/local-tts.md)和[外部 Agent 接入](../developer-integration/external-agent-integration-guide.md)。
+已接入的主要流程包括对话与计划审核、持续目标、定时任务、插件管理、四种浏览器模式、模型与认证及语音。相应行为与限制见 [Cowork](04-cowork-system.md)、[定时任务](08-scheduled-tasks.md)、[插件系统](../plugins/management/plugin-system.md)、[浏览器设计](../features/browser/browser-settings-design.md)、[模型管理](../features/models/model-management.md)和[语音](../features/speech/voice-and-transcription.md)。
+
+外部 Agent 有两个调用方向：应用向其他 Agent 委派任务，见[外部 Agent 接入](../developer-integration/external-agent-integration-guide.md)；外部程序调用本应用的会话和执行能力，见[CLI / ACP](../features/external-clients/agent-cli.md)及[app-server API](../app-server-api/README.md)。两者不共用客户端身份或执行所有权。
 
 Memory 经 Gateway 搜索及受限文件接口读取；Usage 展示 Gateway 用量投影，二者都不另建消息或执行权威。
 
 ### 三类助手关系
 
-长期助手、任务内协作成员和原生 Subagent 是不同身份。可选协作扩展默认关闭；成员数与每轮投递受当前资源设置和协议上限约束。原生接收回执不代表业务完成，成员共享项目文件时也没有自动 worktree 或写冲突隔离。详见[长期助手与任务内协作](../features/assistants/assistants-and-collaboration.md)。
+长期助手、任务内协作成员和原生 Subagent 是不同身份。可选协作扩展默认关闭；成员数与每轮投递受当前资源设置和协议上限约束。原生接收回执不代表业务完成，成员共享项目文件时也没有自动 worktree 或写冲突隔离。详见[长期助手与任务内协作](../features/assistants/profiles-and-subagents.md)。
 
 ## 2. 进程与通信
 
@@ -78,11 +80,11 @@ sequenceDiagram
 
 ### 中断后的恢复边界
 
-| 情况                | 恢复责任                          | 保留的限制                |
-| ------------------- | --------------------------------- | ------------------------- |
-| 用户停止            | 原生取消与产品停止协调            | Stop ACK 不证明整轮已结算 |
-| 连接断开            | 当前代次重新认证并对账            | 不把超时当作未执行        |
-| 同进程 Gateway 重启 | 原生恢复及 adapter 绑定           | 不据旧 running 字段重发   |
+| 情况                | 恢复责任                       | 保留的限制                |
+| ------------------- | ------------------------------ | ------------------------- |
+| 用户停止            | 原生取消与产品停止协调         | Stop ACK 不证明整轮已结算 |
+| 连接断开            | 当前代次重新认证并对账         | 不把超时当作未执行        |
+| 同进程 Gateway 重启 | 原生恢复及 adapter 绑定        | 不据旧 running 字段重发   |
 | 完整应用重启        | 原生会话自动恢复与产品回执对账 | 未知副作用继续保持未知    |
 
 执行结果只由精确整轮终态 `executionSettled:true` 建立，聊天 final 和界面 idle 不替代该证据。
@@ -93,7 +95,7 @@ sequenceDiagram
 
 浏览器扩展分为 OpenClaw 配对/relay 基线与独立 conversation-overlay，前者升级不能覆盖后者的聊天功能。嵌入式页面、操作演示、侧栏对话的权限和生命周期见[浏览器设计](../features/browser/browser-settings-design.md)。
 
-本地语音模型按需安装；附件转录与麦克风开关独立。Windows 命令沙盒约束工具进程，不能代替 Electron Renderer 的隔离。详见[插件系统](07-plugin-system.md)和[安全模型](11-security-model.md)。
+本地语音模型按需安装；附件转录与麦克风开关独立。Windows 命令沙盒约束工具进程，不能代替 Electron Renderer 的隔离。详见[插件系统](../plugins/management/plugin-system.md)和[安全模型](11-security-model.md)。
 
 ## 6. 产品标识与文件位置
 
