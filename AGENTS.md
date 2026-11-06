@@ -69,14 +69,14 @@ npm test
   `host/` or `browser/`; shared facades import only pure contracts/prompts,
   and browser modules never import Main.
 - Built-in plugins live under `plugins/`: `extensions/`, `skills/`, `mcp-servers/`,
-  `hooks/` and `browser-extensions/`. Keep sources and assets in their owning category.
+  `hooks/` and `chrome-extensions/`. Keep sources and assets in their owning category.
 - Public app plugin SDK and build-tool sources live under `plugins/sdk/`;
   runnable extension discovery remains under `plugins/extensions/`.
 - Keep OpenClaw extension-owned tools, UI, assets, scripts and unit tests
   under `plugins/extensions/<plugin-id>/`. The host retains generic capabilities,
   integration adapters and tests that exercise host/plugin boundaries.
 - Browser extension sources, assembly scripts and unit tests live under
-  `plugins/browser-extensions/<plugin-id>/`. Main owns Native Messaging and
+  `plugins/chrome-extensions/<plugin-id>/`. Main owns Native Messaging and
   app-server integration; host build adapters may reuse application chat code.
 - Plugin business, protocols, schemas, UI rules and validation documentation
   live in `docs/plugins/<category>/<plugin-id>/`; generic plugin documentation is grouped by topic
@@ -235,7 +235,7 @@ business stays inside its plugin; Core composes only generic capabilities.
 | Assistant profiles, Team collaboration/discussions/holding | [Assistants](docs/features/assistants/profiles-and-subagents.md), [Agent Team](docs/plugins/extensions/agent-team/guide.md)                                                                            |
 | Swarm DAG, batches, host/browser ownership                 | [Workflow](docs/plugins/extensions/swarm-workflow/workflows.md), [batches](docs/plugins/extensions/swarm-workflow/batches.md)                                                                          |
 | Plugins, skills, managed adapters, computer control        | [Plugin system](docs/plugins/management/plugin-system.md), [Plugin Hub](docs/plugins/management/plugin-hub.md)                                                                                         |
-| Browser pairing/relay and extension chat                   | [Browser settings](docs/features/browser/browser-settings-design.md), [side chat](docs/plugins/browser-extensions/browser-assistant/side-panel.md)                                                     |
+| Browser pairing/relay and extension chat                   | [Browser settings](docs/features/browser/browser-settings-design.md), [side chat](docs/plugins/chrome-extensions/chrome-assistant/side-panel.md)                                                       |
 | Models, speech, video, decision providers                  | [Model management](docs/features/models/model-management.md), [local speech](docs/features/speech/voice-and-transcription.md), [Jev/TypeSafe](docs/plugins/extensions/typesafe/decision-evaluation.md) |
 | Login SDK and model authentication                         | [Login integration](docs/features/account/login-sdk-template.md), [model authentication](docs/features/account/authentication-builtin-model-lifecycle.md)                                              |
 | Scheduled tasks                                            | [Scheduled tasks](docs/architecture/08-scheduled-tasks.md)                                                                                                                                             |

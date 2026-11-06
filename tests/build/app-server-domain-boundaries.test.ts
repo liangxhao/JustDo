@@ -8,7 +8,7 @@ import { expect, test } from 'vitest';
 const projectRoot = path.resolve(import.meta.dirname, '../..');
 const coreRoot = path.join(projectRoot, 'src/main/appServer');
 const domainToken = /browser|chrome|weblaunch/iu;
-const domainPath = /(?:^|\/)(?:browser|browser-extension|browser-extensions|browser-assistant)(?:\/|$)/iu;
+const domainPath = /(?:^|\/)(?:browser|chrome|chrome-extension|chrome-extensions|chrome-assistant)(?:\/|$)/iu;
 
 async function sourceFiles(directory = coreRoot): Promise<string[]> {
   const entries = await readdir(directory, { withFileTypes: true });

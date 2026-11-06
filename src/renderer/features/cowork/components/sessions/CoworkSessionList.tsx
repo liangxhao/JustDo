@@ -270,21 +270,21 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
   const expandedGroupIds = useSelector(selectExpandedGroupIds);
   const {
     cli: cliSessions,
-    browserExtension: browserExtensionSessions,
+    chromeExtension: chromeExtensionSessions,
     regular: regularSessions,
   } = useMemo(() => partitionSidebarSessions(directory), [directory]);
   const [expandedSourceGroupIds, setExpandedSourceGroupIds] = useState<Set<string>>(new Set());
   const currentSourceGroupId = cliSessions.some(session => session.id === currentSessionId)
     ? 'cli'
-    : browserExtensionSessions.some(session => session.id === currentSessionId)
-      ? 'browserExtension'
+    : chromeExtensionSessions.some(session => session.id === currentSessionId)
+      ? 'chromeExtension'
       : null;
   const sourceGroups = [
     { id: 'cli', sessions: cliSessions, label: 'agentCliSessionGroup', color: '#478f94' },
     {
-      id: 'browserExtension',
-      sessions: browserExtensionSessions,
-      label: 'browserExtensionSessionGroup',
+      id: 'chromeExtension',
+      sessions: chromeExtensionSessions,
+      label: 'chromeExtensionSessionGroup',
       color: '#359daf',
     },
   ];

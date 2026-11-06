@@ -6,6 +6,6 @@
 - [人工介入](browser-intervention.md)
 - [操作演示](browser-operation-recording.md)
 
-扩展文档见 [Browser Assistant](../../plugins/browser-extensions/browser-assistant/README.md)。
+扩展文档见 [Chrome Assistant](../../plugins/chrome-extensions/chrome-assistant/README.md)。
 
 [返回功能文档索引](../README.md)

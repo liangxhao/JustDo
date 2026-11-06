@@ -67,7 +67,7 @@ export default defineConfig({
       ...pluginTests,
       'plugins/extensions/*/sdk/**/*.test.ts',
       'plugins/sdk/*/tests/**/*.test.{ts,tsx}',
-      'plugins/browser-extensions/*/tests/**/*.test.ts',
+      'plugins/chrome-extensions/*/tests/**/*.test.ts',
     ],
     setupFiles: [
       path.resolve(__dirname, 'tests/plugin-host/messagePresentationFixtures.ts'),

@@ -12,7 +12,7 @@ consume directly. Installed runtime directory names remain unchanged.
 
 Generated build artifacts share the repository-root `build/`: prepared runtimes
 use `build/runtimes/`, Windows runtime archives use `build/tar/`, local speech model artifacts use
-`build/speech-models/v1/`, and the browser package uses `build/browser-extension/`.
+`build/speech-models/v1/`, and the browser package uses `build/chrome-extension/`.
 The build and cache directories are ignored by Git.
 
 Local speech model preparation, packaging and upload to the internal download
@@ -231,14 +231,14 @@ Plugin-specific preparation and verification scripts belong to
 delegate there; for example, draw.io owns its asset builder and packaged-asset
 verifier under `plugins/extensions/drawio/`.
 
-Browser Assistant owns its source snapshots, assembly script, Markdown renderer
-and UI unit tests in `plugins/browser-extensions/browser-assistant/`. The stable
-`browser-extension:prepare` command delegates to its `scripts/prepare.cjs`.
+Chrome Assistant owns its source snapshots, assembly script, Markdown renderer
+and UI unit tests in `plugins/chrome-extensions/chrome-assistant/`. The stable
+`chrome-extension:prepare` command delegates to its `scripts/prepare.cjs`.
 `browser/` retains adapters that reuse application chat rendering, translations
 and streaming, together with the desktop Native Messaging helper and registration.
 
 Two opt-in probes support the proposed webpage conversation entry. Run
-`plugins/browser-extensions/browser-assistant/scripts/verify-webpage-launch.cjs`
+`plugins/chrome-extensions/chrome-assistant/scripts/verify-webpage-launch.cjs`
 with `--chrome <existing-Chrome-for-Testing-executable>` to create an isolated
 headed browser and loopback fixture. It waits for two real operator clicks;
 DevTools only observes/stops the fixture worker and never supplies UI input.
@@ -255,7 +255,7 @@ They are explicit commands outside ordinary test discovery, and save reports in
 `.agent-tasks/browser-artifacts/` with private fixture state under `build/`.
 These are capability probes, not production website/extension integration tests;
 current findings and limits are recorded in the
-[webpage entry contract and validation limits](../docs/plugins/browser-extensions/browser-assistant/website-launch.md).
+[webpage entry contract and validation limits](../docs/plugins/chrome-extensions/chrome-assistant/website-launch.md).
 
 ### Inspect one native session's stored content
 

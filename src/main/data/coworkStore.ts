@@ -35,7 +35,7 @@ import type {
   SessionRunState,
   SessionRunTiming,
 } from '../../shared/cowork/sessionRun';
-import { CoworkSessionSource } from '../../shared/cowork/sessionSource';
+import { CoworkSessionSource, isSupportedSessionSource } from '../../shared/cowork/sessionSource';
 import { TASK_WORKSPACE_DIRECTORY } from '../../shared/cowork/taskWorkspace';
 import {
   type ExternalAgentSettings,
@@ -761,7 +761,7 @@ export class CoworkStore {
       [id],
     );
 
-    if (!row) return null;
+    if (!row || !isSupportedSessionSource(row.source)) return null;
 
     let activeSkillIds: string[] = [];
     if (row.active_skill_ids) {
@@ -814,24 +814,34 @@ export class CoworkStore {
           }
         : {}),
       ...(external ? { external } : {}),
-      ...(row.source === CoworkSessionSource.BrowserExtension ? { source: row.source } : {}),
+      ...(row.source === CoworkSessionSource.ChromeExtension ? { source: row.source } : {}),
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     };
   }
 
   getSessionByNativeKey(sessionKey: string): CoworkSession | null {
+    const readMappedSession = (id: string): CoworkSession | null => {
+      const source = this.getOne<{ source?: string | null }>(
+        'SELECT source FROM cowork_sessions WHERE id = ?',
+        [id],
+      );
+      if (source && !isSupportedSessionSource(source.source)) {
+        throw new Error('Unsupported session source.');
+      }
+      return this.getSession(id);
+    };
     const row = this.getOne<{ id: string }>(
       'SELECT id FROM cowork_sessions WHERE native_session_key = ?',
       [sessionKey],
     );
-    if (row) return this.getSession(row.id);
+    if (row) return readMappedSession(row.id);
     try {
       const imported = this.getOne<{ session_id: string }>(
         'SELECT session_id FROM history_session_bindings WHERE session_key = ?',
         [sessionKey],
       );
-      return imported ? this.getSession(imported.session_id) : null;
+      return imported ? readMappedSession(imported.session_id) : null;
     } catch (error) {
       if (error instanceof Error && error.message.includes('no such table')) return null;
       throw error;
@@ -846,8 +856,7 @@ export class CoworkStore {
   }
 
   bindNativeSession(sessionId: string, sessionKey: string, parentSessionId: string | null): void {
-    if (isCustodySessionKey(sessionKey))
-      throw new Error('coworkReservedSession');
+    if (isCustodySessionKey(sessionKey)) throw new Error('coworkReservedSession');
     this.db
       .prepare(
         'UPDATE cowork_sessions SET native_session_key = ?, native_parent_session_id = ? WHERE id = ?',
@@ -862,8 +871,7 @@ export class CoworkStore {
     cwd: string,
     permissionMode: PermissionMode = parent.permissionMode,
   ): CoworkSession {
-    if (isCustodySessionKey(sessionKey))
-      throw new Error('coworkReservedSession');
+    if (isCustodySessionKey(sessionKey)) throw new Error('coworkReservedSession');
     return this.db.transaction(() => {
       const existing = this.getSessionByNativeKey(sessionKey);
       if (existing) return existing;

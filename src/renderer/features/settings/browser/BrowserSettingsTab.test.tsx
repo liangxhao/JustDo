@@ -81,7 +81,29 @@ const installElectronBrowserMock = (overrides: Record<string, unknown> = {}) => 
   Object.defineProperty(window, 'electron', {
     configurable: true,
     value: {
-      browser,
+      browser: Object.fromEntries(
+        Object.entries(browser).filter(
+          ([key]) =>
+            ![
+              'openRemoteDebugging',
+              'openExtensionManagement',
+              'revealExtension',
+              'copyExtensionPairing',
+              'testExtensionConnection',
+            ].includes(key),
+        ),
+      ),
+      chrome: Object.fromEntries(
+        Object.entries(browser).filter(([key]) =>
+          [
+            'openRemoteDebugging',
+            'openExtensionManagement',
+            'revealExtension',
+            'copyExtensionPairing',
+            'testExtensionConnection',
+          ].includes(key),
+        ),
+      ),
       dialog: {
         selectDirectory: vi.fn().mockResolvedValue({ success: true, path: null }),
       },
@@ -102,8 +124,8 @@ const installElectronBrowserMock = (overrides: Record<string, unknown> = {}) => 
 
 describe('extension connection error messages', () => {
   test.each([
-    ['gateway-unavailable', 'browserExtensionRelayUnavailable'],
-    ['extension-not-connected', 'browserExtensionNotConnected'],
+    ['gateway-unavailable', 'chromeExtensionRelayUnavailable'],
+    ['extension-not-connected', 'chromeExtensionNotConnected'],
     ['permission-timeout', 'browserPermissionTimeout'],
     ['browser-not-running', 'browserConnectionFailed'],
     ['connection-failed', 'browserConnectionFailed'],
@@ -135,16 +157,13 @@ describe('BrowserSettingsTab extension connection checks', () => {
     });
     render(<BrowserSettingsTab />);
 
-    expect(await screen.findByText('browserExtensionBundledVersion 2.3.0')).toBeTruthy();
-    expect(screen.getByTitle('browserExtensionVersionHint').textContent).toContain('2.3.0');
+    expect(await screen.findByText('chromeExtensionBundledVersion 2.3.0')).toBeTruthy();
+    expect(screen.getByTitle('chromeExtensionVersionHint').textContent).toContain('2.3.0');
     expect(screen.getByText('browserStatusFailed')).toBeTruthy();
-    expect(screen.getByText('browserExtensionUpdateHint').closest('details')).toBeNull();
+    expect(screen.getByText('chromeExtensionUpdateHint').closest('details')).toBeNull();
     expect(
-      (
-        screen
-          .getByText('browserExtensionStepInstallTitle')
-          .closest('details') as HTMLDetailsElement
-      ).open,
+      (screen.getByText('chromeExtensionStepInstallTitle').closest('details') as HTMLDetailsElement)
+        .open,
     ).toBe(false);
   });
 
@@ -154,10 +173,10 @@ describe('BrowserSettingsTab extension connection checks', () => {
     render(<BrowserSettingsTab />);
 
     await waitFor(() => expect(browser.getStatus).toHaveBeenCalled());
-    expect(screen.getByText(/browserExtensionVersionUnavailable/)).toBeTruthy();
-    expect(screen.getByText('browserExtensionUpdateHint')).toBeTruthy();
+    expect(screen.getByText(/chromeExtensionVersionUnavailable/)).toBeTruthy();
+    expect(screen.getByText('chromeExtensionUpdateHint')).toBeTruthy();
     expect(
-      (screen.getByRole('button', { name: 'browserExtensionRevealFolder' }) as HTMLButtonElement)
+      (screen.getByRole('button', { name: 'chromeExtensionRevealFolder' }) as HTMLButtonElement)
         .disabled,
     ).toBe(false);
   });
@@ -259,7 +278,7 @@ describe('BrowserSettingsTab extension connection checks', () => {
     }) as HTMLSelectElement;
     expect(browserSelect.options.length).toBe(2);
     expect(browserSelect.value).toBe(BrowserMode.User);
-    expect(screen.getByText('browserExtensionStepInstallTitle')).toBeTruthy();
+    expect(screen.getByText('chromeExtensionStepInstallTitle')).toBeTruthy();
     expect(screen.getByText('browserEmbeddedSettingsTitle')).toBeTruthy();
 
     fireEvent.change(browserSelect, { target: { value: BrowserMode.Embedded } });
@@ -267,8 +286,8 @@ describe('BrowserSettingsTab extension connection checks', () => {
     expect(screen.getByText('browserModeEmbeddedActive')).toBeTruthy();
     expect(browserSelect.value).toBe(BrowserMode.Embedded);
     expect(screen.queryByRole('radiogroup')).toBeNull();
-    expect(screen.getByText('browserExtensionStepInstallTitle')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'browserExtensionRevealFolder' })).toBeTruthy();
+    expect(screen.getByText('chromeExtensionStepInstallTitle')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'chromeExtensionRevealFolder' })).toBeTruthy();
     expect(screen.queryByText('browserStepDebuggingTitle')).toBeNull();
     const embeddedSettings = screen.getByText('browserEmbeddedSettingsTitle').closest('section');
     expect(embeddedSettings?.textContent).toContain('browserSearchEngineTitle');
@@ -388,7 +407,7 @@ describe('BrowserSettingsTab extension connection checks', () => {
     expect(
       (
         screen.getByRole('button', {
-          name: 'browserExtensionTestConnection',
+          name: 'chromeExtensionTestConnection',
         }) as HTMLButtonElement
       ).disabled,
     ).toBe(true);
@@ -399,14 +418,14 @@ describe('BrowserSettingsTab extension connection checks', () => {
     expect(
       (
         screen.getByRole('button', {
-          name: 'browserExtensionRevealFolder',
+          name: 'chromeExtensionRevealFolder',
         }) as HTMLButtonElement
       ).disabled,
     ).toBe(false);
     expect(
       (
         screen.getByRole('button', {
-          name: 'browserExtensionCopyPairing',
+          name: 'chromeExtensionCopyPairing',
         }) as HTMLButtonElement
       ).disabled,
     ).toBe(false);
@@ -419,7 +438,7 @@ describe('BrowserSettingsTab extension connection checks', () => {
     expect(
       (
         screen.getByRole('button', {
-          name: 'browserExtensionOpenPage',
+          name: 'chromeExtensionOpenPage',
         }) as HTMLButtonElement
       ).disabled,
     ).toBe(false);
@@ -439,24 +458,21 @@ describe('BrowserSettingsTab extension connection checks', () => {
 
     render(<BrowserSettingsTab />);
     await waitFor(() => expect(testExtensionConnection).toHaveBeenCalledTimes(1));
-    expect(screen.getByText('browserExtensionSectionTitle')).toBeTruthy();
-    expect(screen.getByText('browserExtensionSectionDescription')).toBeTruthy();
-    expect(screen.getByText('browserExtensionStepInstallTitle')).toBeTruthy();
-    expect(screen.getByText('browserExtensionStepPairTitle')).toBeTruthy();
+    expect(screen.getByText('chromeExtensionSectionTitle')).toBeTruthy();
+    expect(screen.getByText('chromeExtensionSectionDescription')).toBeTruthy();
+    expect(screen.getByText('chromeExtensionStepInstallTitle')).toBeTruthy();
+    expect(screen.getByText('chromeExtensionStepPairTitle')).toBeTruthy();
     expect(
-      (
-        screen
-          .getByText('browserExtensionStepInstallTitle')
-          .closest('details') as HTMLDetailsElement
-      ).open,
+      (screen.getByText('chromeExtensionStepInstallTitle').closest('details') as HTMLDetailsElement)
+        .open,
     ).toBe(false);
-    const manualPairing = screen.getByText('browserExtensionManualPairTitle');
+    const manualPairing = screen.getByText('chromeExtensionManualPairTitle');
     expect((manualPairing.closest('details') as HTMLDetailsElement).open).toBe(false);
     fireEvent.click(manualPairing);
     expect((manualPairing.closest('details') as HTMLDetailsElement).open).toBe(true);
-    fireEvent.click(screen.getByRole('button', { name: 'browserExtensionCopyPairing' }));
+    fireEvent.click(screen.getByRole('button', { name: 'chromeExtensionCopyPairing' }));
     await waitFor(() => expect(browser.copyExtensionPairing).toHaveBeenCalledOnce());
-    expect(screen.getByText('browserExtensionPairingCopied')).toBeTruthy();
+    expect(screen.getByText('chromeExtensionPairingCopied')).toBeTruthy();
     expect(screen.queryByText('browserConnectionVerified')).toBeNull();
     const browserSelect = screen.getByRole('combobox', { name: 'browserModeTitle' });
     expect(
@@ -468,16 +484,16 @@ describe('BrowserSettingsTab extension connection checks', () => {
 
     fireEvent.click(screen.getByRole('radio', { name: /browserModeIsolatedTitle/ }));
     await waitFor(() => expect(screen.getByText('browserModeIsolatedActive')).toBeTruthy());
-    expect(screen.getByText('browserExtensionSectionDescription')).toBeTruthy();
-    expect(screen.getByText('browserExtensionStepInstallTitle')).toBeTruthy();
-    expect(screen.queryByText('browserExtensionStepPairTitle')).toBeNull();
+    expect(screen.getByText('chromeExtensionSectionDescription')).toBeTruthy();
+    expect(screen.getByText('chromeExtensionStepInstallTitle')).toBeTruthy();
+    expect(screen.queryByText('chromeExtensionStepPairTitle')).toBeNull();
 
     await act(async () => first.resolve({ success: true }));
     expect(screen.queryByText('browserConnectionVerified')).toBeNull();
 
     fireEvent.click(screen.getByRole('radio', { name: /browserModeExtensionTitle/ }));
     await waitFor(() => expect(testExtensionConnection).toHaveBeenCalledTimes(2));
-    expect(screen.getByText('browserExtensionStepPairTitle')).toBeTruthy();
+    expect(screen.getByText('chromeExtensionStepPairTitle')).toBeTruthy();
     expect(browser.setMode).toHaveBeenNthCalledWith(1, BrowserMode.Isolated);
     expect(browser.setMode).toHaveBeenNthCalledWith(2, BrowserMode.Extension);
   });
@@ -642,7 +658,7 @@ describe('BrowserSettingsTab extension connection checks', () => {
     expect(screen.queryByText('browserConnectionVerified')).toBeNull();
     expect(
       screen
-        .getByRole('button', { name: 'browserExtensionTestConnection' })
+        .getByRole('button', { name: 'chromeExtensionTestConnection' })
         .parentElement?.classList.contains('justify-end'),
     ).toBe(true);
   });
@@ -663,7 +679,7 @@ describe('BrowserSettingsTab extension connection checks', () => {
     await act(async () => {});
 
     const testButton = screen.getByRole('button', {
-      name: 'browserExtensionTestConnection',
+      name: 'chromeExtensionTestConnection',
     }) as HTMLButtonElement;
     expect(testButton.disabled).toBe(false);
 
@@ -697,7 +713,7 @@ describe('BrowserSettingsTab extension connection checks', () => {
     await act(async () => {});
     expect(screen.getByText('browserConnectionVerified')).toBeTruthy();
 
-    fireEvent.click(screen.getByRole('button', { name: 'browserExtensionTestConnection' }));
+    fireEvent.click(screen.getByRole('button', { name: 'chromeExtensionTestConnection' }));
     await act(async () => {});
 
     expect(testExtensionConnection).toHaveBeenCalledTimes(2);

@@ -152,7 +152,7 @@ describe('session list pages', () => {
     }));
     const browser = Array.from({ length: 25 }, (_, index) => ({
       ...summary(`Browser ${index + 1}`, 100 - index),
-      source: CoworkSessionSource.BrowserExtension,
+      source: CoworkSessionSource.ChromeExtension,
     }));
     render(
       <Provider store={store}>
@@ -247,10 +247,10 @@ const summary = (id: string, updatedAt: number): CoworkSessionSummary => ({
   updatedAt,
 });
 const browserSessions: CoworkSessionSummary[] = [
-  { ...summary('Browser older', 1), source: CoworkSessionSource.BrowserExtension },
+  { ...summary('Browser older', 1), source: CoworkSessionSource.ChromeExtension },
   {
     ...summary('Browser newer', 2),
-    source: CoworkSessionSource.BrowserExtension,
+    source: CoworkSessionSource.ChromeExtension,
     pinned: true,
     groupId: 'work',
   },
@@ -298,7 +298,7 @@ describe('fixed source group membership', () => {
   };
 
   it.each([
-    { source: CoworkSessionSource.BrowserExtension },
+    { source: CoworkSessionSource.ChromeExtension },
     {
       external: {
         origin: ExternalSessionSource.Cli,
@@ -317,7 +317,7 @@ describe('fixed source group membership', () => {
     },
   );
 
-  it.each(['cli', 'browserExtension', 'missing'])(
+  it.each(['cli', 'chromeExtension', 'missing'])(
     'rejects moving a regular conversation into a nonmanual target %s',
     async targetId => {
       const store = renderWithManualGroup(summary('Regular chat', 1));

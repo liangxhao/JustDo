@@ -100,7 +100,7 @@ function fixture(route: StartupRoute, configReady = true, delayServices = false)
     ensureOpenClawRunningForCowork: () => { calls.push('gateway'); return engine; },
     getOpenClawEngineManager: () => ({ getGatewayProcessGeneration: () => 7 }),
     getCronJobService: () => ({ startPolling: () => { calls.push('poll'); } }),
-    startBrowserExtensionIngress: async () => { calls.push('browser'); return delayServices ? ingress : true; },
+    startChromeExtensionIngress: async () => { calls.push('browser'); return delayServices ? ingress : true; },
     getAgentCliIntegrationService: () => ({ prepare: () => { calls.push('cli'); } }),
     ensureAgentBridgeRunning: async () => { calls.push('bridge'); },
     getAppServerIntegrationService: () => ({ start: async () => { calls.push('server'); } }),
@@ -160,7 +160,7 @@ test('ordinary startup does not launch an engine using failed configuration', as
 
 test('an unexpected ordinary integration failure does not invalidate the usable shell', async () => {
   const f = fixture(StartupRoute.Normal);
-  f.context.startBrowserExtensionIngress = async () => { throw new Error('integration initialization failed'); };
+  f.context.startChromeExtensionIngress = async () => { throw new Error('integration initialization failed'); };
   const error = vi.spyOn(console, 'error').mockImplementation(() => {});
   try {
     const owner = await f.run();

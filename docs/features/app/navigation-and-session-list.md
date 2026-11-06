@@ -15,11 +15,11 @@
 ### 自动来源组与手动组
 
 自动来源分组为 `Chrome` 和 `Clients`，中英文界面统一使用这两个英文名称。`Chrome` 对应
-`source: browser-extension`，`Clients` 汇总 `external.origin: cli` 的 CLI、ACP 和通用 app-server 会话。
+`source: chrome-extension`，`Clients` 汇总 `external.origin: cli` 的 CLI、ACP 和通用 app-server 会话。
 历史外部映射保留原来源，按常规目录展示，不自动归入 Clients 或新增专用来源组。
 内部来源标识不随显示名改变，会话标题旁不再重复显示外部来源小标签。
 
-两组都不属于可编辑的手动分组：会话项不提供移动菜单和拖拽，来源组不接收拖放。Main 按持久化来源拒绝这些会话的手动归组请求，并且仅允许普通会话移入真实存在的手动组或移出至未分组。普通用户组即使名为 Chrome 或 Clients 也保持可编辑；移动失败时界面不得改变归属。不提供历史客户端专用分组或来源转换；接入边界见[CLI / ACP](../external-clients/agent-cli.md)与[扩展侧栏](../../plugins/browser-extensions/browser-assistant/side-panel.md)。
+两组都不属于可编辑的手动分组：会话项不提供移动菜单和拖拽，来源组不接收拖放。Main 按持久化来源拒绝这些会话的手动归组请求，并且仅允许普通会话移入真实存在的手动组或移出至未分组。普通用户组即使名为 Chrome 或 Clients 也保持可编辑；移动失败时界面不得改变归属。不提供历史客户端专用分组或来源转换；接入边界见[CLI / ACP](../external-clients/agent-cli.md)与[扩展侧栏](../../plugins/chrome-extensions/chrome-assistant/side-panel.md)。
 
 ### 搜索与后台存在性
 

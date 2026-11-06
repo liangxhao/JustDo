@@ -1,8 +1,7 @@
-import { execFile, spawn } from 'child_process';
-import { app, clipboard, ipcMain, session, shell } from 'electron';
+import { execFile } from 'child_process';
+import { ipcMain, session, shell } from 'electron';
 import fs from 'fs';
 import net from 'net';
-import os from 'os';
 import path from 'path';
 import { promisify } from 'util';
 
@@ -33,7 +32,6 @@ import {
   normalizeBrowserMode,
   parseDevToolsActivePort,
 } from '../../../shared/browser/browser';
-import { isWebBrowserLink } from '../../../shared/browser/browserLinkOpening';
 import {
   clearBrowserData,
   getBrowserClearDataSummary,
@@ -51,17 +49,16 @@ import {
   listBrowserHistory,
   listChromeImportSources,
 } from '../../browser/data/browserDataImportService';
-import { readBrowserExtensionPairing } from '../../browser/extension/browserExtensionPairing';
 import { loadBrowserHistoryFavicon } from '../../browser/history/browserHistoryFavicon';
+import { createLocalHtmlPreview } from '../../browser/preview/localHtmlPreviewServer';
 import {
-  createLocalHtmlPreview,
-  resolveLocalHtmlPreviewFilePath,
-} from '../../browser/preview/localHtmlPreviewServer';
+  focusRunningChrome,
+  readBundledChromeExtensionVersion,
+  resolveChromeExecutable,
+  resolveChromeUserDataDir,
+} from '../../chrome/chromeSettings';
 import type { GatewayClientLike } from '../../engine/gateway/types';
-import type { OpenClawCliEnvironment } from '../../openclaw/runtime/openclawEngineManager';
 
-const REMOTE_DEBUGGING_URL = 'chrome://inspect/#remote-debugging';
-const EXTENSION_MANAGEMENT_URL = 'chrome://extensions';
 const execFileAsync = promisify(execFile);
 
 type PortOwnerLookup = {
@@ -162,194 +159,6 @@ const resolvePortOwner = async (port: number): Promise<PortOwnerLookup> => {
   }
 };
 
-const resolveChromeUserDataDir = (): string | null => {
-  if (process.platform === 'win32') {
-    const localAppData = process.env.LOCALAPPDATA?.trim();
-    return localAppData ? path.join(localAppData, 'Google', 'Chrome', 'User Data') : null;
-  }
-  if (process.platform === 'darwin') {
-    return path.join(os.homedir(), 'Library', 'Application Support', 'Google', 'Chrome');
-  }
-  if (process.platform === 'linux') {
-    return path.join(os.homedir(), '.config', 'google-chrome');
-  }
-  return null;
-};
-
-const resolveChromeExecutable = (): string | null => {
-  const candidates =
-    process.platform === 'win32'
-      ? [
-          process.env.PROGRAMFILES
-            ? path.join(process.env.PROGRAMFILES, 'Google', 'Chrome', 'Application', 'chrome.exe')
-            : '',
-          process.env['PROGRAMFILES(X86)']
-            ? path.join(
-                process.env['PROGRAMFILES(X86)'],
-                'Google',
-                'Chrome',
-                'Application',
-                'chrome.exe',
-              )
-            : '',
-          process.env.LOCALAPPDATA
-            ? path.join(process.env.LOCALAPPDATA, 'Google', 'Chrome', 'Application', 'chrome.exe')
-            : '',
-        ]
-      : process.platform === 'darwin'
-        ? ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome']
-        : ['/usr/bin/google-chrome', '/usr/bin/google-chrome-stable'];
-  return candidates.find(candidate => candidate && fs.existsSync(candidate)) ?? null;
-};
-
-const launchOrFocusChrome = async (url?: string): Promise<BrowserActionResult> => {
-  const executable = resolveChromeExecutable();
-  if (!executable) return { success: false, error: 'Google Chrome was not found.' };
-  try {
-    return await new Promise<BrowserActionResult>(resolve => {
-      const child = spawn(executable, url ? [url] : [], {
-        detached: true,
-        stdio: 'ignore',
-        windowsHide: true,
-      });
-      child.once('error', () =>
-        resolve({ success: false, error: 'Google Chrome could not be opened.' }),
-      );
-      child.once('spawn', () => resolve({ success: true }));
-      child.unref();
-    });
-  } catch (error) {
-    return { success: false, error: error instanceof Error ? error.message : String(error) };
-  }
-};
-
-export const openBrowserUrlInChrome = async (
-  url: unknown,
-  launch: (url: string) => Promise<BrowserActionResult> = launchOrFocusChrome,
-): Promise<BrowserActionResult> => {
-  if (
-    typeof url !== 'string' ||
-    (!isWebBrowserLink(url) && !(await resolveLocalHtmlPreviewFilePath(url)))
-  ) {
-    return { success: false, error: 'Invalid browser URL.' };
-  }
-  return launch(url);
-};
-
-const focusRunningChrome = (): void => {
-  if (process.platform === 'win32') {
-    const systemRoot = process.env.SYSTEMROOT?.trim();
-    const powershell = systemRoot
-      ? path.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
-      : 'powershell.exe';
-    const script = [
-      'Add-Type -TypeDefinition \'using System; using System.Runtime.InteropServices; public static class NativeWindow { [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd); [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow); }\'',
-      '$chrome = Get-Process chrome -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1',
-      'if ($chrome) { [NativeWindow]::ShowWindowAsync($chrome.MainWindowHandle, 9) | Out-Null; [NativeWindow]::SetForegroundWindow($chrome.MainWindowHandle) | Out-Null }',
-    ].join('; ');
-    const child = spawn(
-      powershell,
-      [
-        '-NoProfile',
-        '-NonInteractive',
-        '-WindowStyle',
-        'Hidden',
-        '-EncodedCommand',
-        Buffer.from(script, 'utf16le').toString('base64'),
-      ],
-      {
-        detached: true,
-        stdio: 'ignore',
-        windowsHide: true,
-      },
-    );
-    child.once('error', () => {});
-    child.unref();
-    return;
-  }
-
-  if (process.platform === 'darwin') {
-    const child = spawn('open', ['-a', 'Google Chrome'], {
-      detached: true,
-      stdio: 'ignore',
-    });
-    child.once('error', () => {});
-    child.unref();
-  }
-};
-
-export const findBundledBrowserExtensionPath = (
-  environment: { isPackaged: boolean; resourcesPath: string; appPath: string },
-  pathExists: (candidate: string) => boolean = fs.existsSync,
-): string | null => {
-  const candidates = environment.isPackaged
-    ? [path.join(environment.resourcesPath, 'browser-extension')]
-    : [
-        path.join(environment.appPath, 'build', 'browser-extension'),
-        path.join(process.cwd(), 'build', 'browser-extension'),
-      ];
-  return (
-    candidates.find(candidate =>
-      pathExists(path.join(candidate, 'chrome-extension', 'manifest.json')),
-    ) ?? null
-  );
-};
-
-const resolveBrowserExtensionPath = (): string => {
-  const extensionPath = findBundledBrowserExtensionPath({
-    isPackaged: app.isPackaged,
-    resourcesPath: process.resourcesPath,
-    appPath: app.getAppPath(),
-  });
-  if (!extensionPath) throw new Error('The bundled browser extension is missing.');
-  return extensionPath;
-};
-
-export const readBundledBrowserExtensionVersion = (extensionPath?: string): string | null => {
-  try {
-    const manifest = JSON.parse(
-      fs.readFileSync(
-        path.join(
-          extensionPath ?? resolveBrowserExtensionPath(),
-          'chrome-extension',
-          'manifest.json',
-        ),
-        'utf8',
-      ),
-    );
-    if (typeof manifest.version === 'string' && manifest.version.trim()) {
-      return manifest.version.trim();
-    }
-  } catch {
-    // Missing or unreadable extension metadata must not block browser settings.
-  }
-  return null;
-};
-
-export {
-  buildBrowserExtensionPairingCommandArgs,
-  buildBrowserPairingCommandEnvironment,
-} from '../../browser/extension/browserExtensionPairing';
-
-export const copyBrowserExtensionPairing = async (
-  buildCliEnvironment: () => Promise<OpenClawCliEnvironment>,
-  runPairCommand?: (cli: OpenClawCliEnvironment) => Promise<string>,
-): Promise<void> => {
-  const result = await readBrowserExtensionPairing(buildCliEnvironment, 'relay', runPairCommand);
-  clipboard.writeText(result.pairingString);
-  console.log(
-    `[BrowserSettings] Browser extension pairing copied (relayPort=${result.relayPort}).`,
-  );
-};
-
-export const openBrowserExtensionFolder = async (
-  extensionPath: string,
-  openPath: (targetPath: string) => Promise<string> = shell.openPath,
-): Promise<void> => {
-  const error = await openPath(extensionPath);
-  if (error) throw new Error(error);
-};
-
 const readRemoteDebuggingEnabled = (userDataDir: string): boolean => {
   try {
     const localState = JSON.parse(
@@ -428,7 +237,6 @@ export const getBrowserConnectionStatus = async (): Promise<BrowserConnectionSta
 
 type BrowserHandlerDependencies = {
   getGatewayClient: () => GatewayClientLike | null;
-  buildCliEnvironment: () => Promise<OpenClawCliEnvironment>;
   hasActiveSessions: () => boolean;
   setBrowserMode: (mode: BrowserModeValue) => Promise<BrowserModeUpdateResult>;
 };
@@ -534,16 +342,9 @@ export const getBrowserModeSwitchAvailability = (
 
 export const registerBrowserHandlers = ({
   getGatewayClient,
-  buildCliEnvironment,
   hasActiveSessions,
   setBrowserMode,
 }: BrowserHandlerDependencies): void => {
-  ipcMain.handle(BrowserIpc.OpenInChrome, (event, url: unknown) => {
-    if (event.sender.getType() !== 'window' || event.senderFrame !== event.sender.mainFrame) {
-      return { success: false, error: 'Access denied' } satisfies BrowserActionResult;
-    }
-    return openBrowserUrlInChrome(url);
-  });
   ipcMain.handle(
     BrowserIpc.CreateLocalHtmlPreview,
     (event, filePath: unknown, workingDirectory?: unknown) => {
@@ -579,7 +380,7 @@ export const registerBrowserHandlers = ({
     }
   });
   ipcMain.handle(BrowserIpc.GetStatus, async () => {
-    const bundledExtensionVersion = readBundledBrowserExtensionVersion();
+    const bundledExtensionVersion = readBundledChromeExtensionVersion();
     try {
       return { success: true, status: await getBrowserConnectionStatus(), bundledExtensionVersion };
     } catch (error) {
@@ -606,41 +407,6 @@ export const registerBrowserHandlers = ({
       } satisfies BrowserModeUpdateResult;
     }
     return setBrowserMode(mode);
-  });
-
-  ipcMain.handle(BrowserIpc.OpenRemoteDebugging, () => {
-    // Chrome may intentionally discard externally supplied chrome:// URLs.
-    // Copy the internal URL and focus Chrome so the user can paste it into
-    // the address bar, which works consistently across supported versions.
-    clipboard.writeText(REMOTE_DEBUGGING_URL);
-    return launchOrFocusChrome();
-  });
-
-  ipcMain.handle(BrowserIpc.OpenExtensionManagement, () => {
-    clipboard.writeText(EXTENSION_MANAGEMENT_URL);
-    return launchOrFocusChrome();
-  });
-
-  ipcMain.handle(BrowserIpc.RevealExtension, async (): Promise<BrowserActionResult> => {
-    try {
-      const extensionPath = resolveBrowserExtensionPath();
-      console.log(`[BrowserSettings] Opening browser extension folder: ${extensionPath}`);
-      await openBrowserExtensionFolder(extensionPath);
-      return { success: true };
-    } catch (error) {
-      console.error('[BrowserSettings] Failed to open browser extension folder:', error);
-      return { success: false, error: error instanceof Error ? error.message : String(error) };
-    }
-  });
-
-  ipcMain.handle(BrowserIpc.CopyExtensionPairing, async (): Promise<BrowserActionResult> => {
-    try {
-      await copyBrowserExtensionPairing(buildCliEnvironment);
-      return { success: true };
-    } catch (error) {
-      console.error('[BrowserSettings] Failed to copy browser extension pairing:', error);
-      return { success: false, error: error instanceof Error ? error.message : String(error) };
-    }
   });
 
   ipcMain.handle(BrowserIpc.TestConnection, async (): Promise<BrowserConnectionTestResult> => {
@@ -793,13 +559,6 @@ export const registerBrowserHandlers = ({
         return { success: false, errorCode: 'invalid-request' };
       }
       return clearBrowserData(request);
-    },
-  );
-
-  ipcMain.handle(
-    BrowserIpc.TestExtensionConnection,
-    async (): Promise<BrowserConnectionTestResult> => {
-      return testBrowserConnection(getGatewayClient(), 'chrome');
     },
   );
 };

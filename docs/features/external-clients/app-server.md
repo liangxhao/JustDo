@@ -33,25 +33,25 @@ Main 在创建连接时传入类型化能力绑定。客户端名称、请求的
 
 `src/main/appServer/` 只包含标准协议、通用输入与审批呈现、投影、分页和传输，不定义或导入浏览器方法、
 通知、网页关联错误策略，也不包含浏览器集成测试。浏览器专属常量和安全错误映射归
-`src/main/browser/extension/browserAppServerProtocol.ts`，由同域 binding 通过通用
+`src/main/chrome/chromeAppServerProtocol.ts`，由同域 binding 通过通用
 `extensions` 精确注册。扩展一律需要请求 ID，不能覆盖标准方法；握手声明不能注册方法。
 依赖方向是浏览器适配器引用通用层，通用层不反向依赖浏览器模块。
 结构回归检查同时约束核心声明、测试和生产运行时的传递依赖。
 
-| 能力                                | Chrome 扩展连接                                        | stdio / 原生客户端 WebSocket                 |
-| ----------------------------------- | ------------------------------------------------------ | -------------------------------------------- |
-| 连接范围                            | 扩展创建的会话                                         | 每连接最多绑定 32 个外部线程                 |
-| 创建与继续                          | 扩展会话                                               | 新建或明确恢复外部线程                       |
-| 列表、历史、图片与输入选项          | 扩展会话内提供                                         | 元数据与原生 Turn/Item 历史分页              |
-| 模型发现                            | `model/list`；另有 `browser/composer/options` 当前选项 | `model/list`                                 |
-| 文本与取消                          | 支持                                                   | 支持                                         |
-| 标准图片                            | data URL 图片及纯图片；按真实模型视觉模态校验          | data URL、cwd 内 localImage、受限私网 IP URL |
-| 客户端审批                          | 发送 peer 的原生命令／插件审批，侧栏显示               | 同一双向 RPC，由客户端实现界面或交互         |
-| 其他附件、页面上下文、每轮模型/权限 | 仍由浏览器领域校验                                     | 每轮模型选择；不开放浏览器附加字段           |
-| 进度                                | 标准 Item 通知；另有 `browser/thread/stream` 与富快照  | 标准 Item、正文与 reasoning 通知             |
-| 自动化配对                          | 浏览器专用认证操作                                     | 不提供                                       |
+| 能力                                | Chrome 扩展连接                                       | stdio / 原生客户端 WebSocket                 |
+| ----------------------------------- | ----------------------------------------------------- | -------------------------------------------- |
+| 连接范围                            | 扩展创建的会话                                        | 每连接最多绑定 32 个外部线程                 |
+| 创建与继续                          | 扩展会话                                              | 新建或明确恢复外部线程                       |
+| 列表、历史、图片与输入选项          | 扩展会话内提供                                        | 元数据与原生 Turn/Item 历史分页              |
+| 模型发现                            | `model/list`；另有 `chrome/composer/options` 当前选项 | `model/list`                                 |
+| 文本与取消                          | 支持                                                  | 支持                                         |
+| 标准图片                            | data URL 图片及纯图片；按真实模型视觉模态校验         | data URL、cwd 内 localImage、受限私网 IP URL |
+| 客户端审批                          | 发送 peer 的原生命令／插件审批，侧栏显示              | 同一双向 RPC，由客户端实现界面或交互         |
+| 其他附件、页面上下文、每轮模型/权限 | 仍由浏览器领域校验                                    | 每轮模型选择；不开放浏览器附加字段           |
+| 进度                                | 标准 Item 通知；另有 `chrome/thread/stream` 与富快照  | 标准 Item、正文与 reasoning 通知             |
+| 自动化配对                          | 浏览器专用认证操作                                    | 不提供                                       |
 
-浏览器领域按 `source: browser-extension` 校验列表、读取、订阅、媒体、输入选项、发送和停止。
+浏览器领域按 `source: chrome-extension` 校验列表、读取、订阅、媒体、输入选项、发送和停止。
 传入桌面或 CLI 会话 ID 不会获得访问权；桌面仍可查看和继续扩展会话，无需改写历史来源。
 
 两类绑定提供领域能力并将领域错误映射为明确可公开的 RPC 错误；不解析 RPC 包或编码响应。
@@ -60,12 +60,12 @@ Main 在创建连接时传入类型化能力绑定。客户端名称、请求的
 - 两类绑定共用 `appServerWire`、`appServerPagination`、`appServerHistory`、
   `appServerHistoryReader`、`appServerProgress`、`appServerToolProgress`、
   `appServerInput` 与 `appServerApprovals`。
-- 浏览器绑定另提供 `thread.browser.display`、`browser.activeTurn`、共享原生流订阅和终态核对。
+- 浏览器绑定另提供 `thread.chrome.display`、`chrome.activeTurn`、共享原生流订阅和终态核对。
 - 外部绑定保留不透明线程映射、cwd/模型校验、可选身份标记和执行预留。
 
 标准 `thread/read` 仅查询，不再隐式订阅；`thread/resume` 明确加载并观察。
 浏览器富显示分组只含 id/items，不冒充已完成的标准 Turn；普通产品计时行缺少
-精确原生证据时，标准历史继续标为结果未知。浏览器特有输入统一位于 `params.browser`，
+精确原生证据时，标准历史继续标为结果未知。浏览器特有输入统一位于 `params.chrome`，
 特有方法和通知使用 `browser/` 前缀，不再覆盖核心 Thread／Turn／Item 外形。
 
 ## 2. 初始化、请求与输出顺序
@@ -107,7 +107,7 @@ trusted hooks 能建立本轮 owner，观察者不继承。ACK 前的请求暂�
 本机客户端可使用 cwd 范围内的 `localImage`，或明确允许的私网 IP HTTP(S) 图片地址；
 浏览器标准图片只接收 data URL，文档附件仍由浏览器独立字段提供。通用文本上限为 2 MiB UTF-8，
 浏览器另保留 32,000 个 UTF-16 code units 的文本上限；图片数量、大小及路径／网络规则以
-[外部输入规范](../../app-server-api/external-clients.md#turnstart)和[浏览器输入规范](../../plugins/browser-extensions/browser-assistant/protocol/app-server.md)为准。
+[外部输入规范](../../app-server-api/external-clients.md#turnstart)和[浏览器输入规范](../../plugins/chrome-extensions/chrome-assistant/protocol/app-server.md)为准。
 音频、fileId 和未支持的图片 detail 覆盖会明确拒绝。
 
 外部文本／图文沿原生 `agent` 的 SID／revision 原子准入。纯图片改用可接收空文本的原生
@@ -227,8 +227,8 @@ ACP 与普通 CLI 是独立的协议/命令适配器，复用外部执行后端�
 
 - [外部客户端规范](../../app-server-api/external-clients.md)：stdio 与原生 WebSocket 字段。
 - [官方兼容性对照](../../app-server-api/compatibility.md)：校验基线、已实现接口和剩余宿主边界。
-- [Chrome 规范](../../plugins/browser-extensions/browser-assistant/protocol/README.md)：浏览器专属字段和通知。
-- [Chrome 侧栏](../../plugins/browser-extensions/browser-assistant/side-panel.md)：用户流程和产品集成。
+- [Chrome 规范](../../plugins/chrome-extensions/chrome-assistant/protocol/README.md)：浏览器专属字段和通知。
+- [Chrome 侧栏](../../plugins/chrome-extensions/chrome-assistant/side-panel.md)：用户流程和产品集成。
 - [上游协议参考](https://learn.chatgpt.com/docs/app-server#protocol)：本产品仅实现上述明确子集。
 
 Chrome 专属方法和事件作为显式扩展维护，不宣称是标准 API。真实客户端与安装包的验收范围随

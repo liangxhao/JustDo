@@ -3,7 +3,7 @@
 本目录包含随应用提供的插件、浏览器扩展、技能和公共开发组件。
 
 - extensions：任务协作、工作流、图表编辑、语音等原生扩展。
-- browser-extensions：浏览器侧栏聊天、网页接入与自动化扩展。
+- chrome-extensions：Chrome 侧栏聊天、网页接入与自动化扩展。
 - skills：内置技能与筛选清单。
 - sdk：公共插件接口及构建工具。
 - mcp-servers、hooks：预留分类。

@@ -47,15 +47,15 @@ const createSession = (id: string, modelRef?: string) => ({
 
 describe('cowork session admission', () => {
   test('preserves browser creation source when admitting, selecting and refreshing sessions', () => {
-    const session = { ...createSession('browser'), source: CoworkSessionSource.BrowserExtension };
+    const session = { ...createSession('browser'), source: CoworkSessionSource.ChromeExtension };
     const admitted = coworkReducer(undefined, addSession({ session, select: false }));
     const selected = coworkReducer(admitted, setCurrentSession(session));
     const refreshed = coworkReducer(selected, setSessions([{ ...session, updatedAt: 3 }]));
 
     for (const state of [admitted, selected, refreshed]) {
-      expect(state.sessions[0].source).toBe(CoworkSessionSource.BrowserExtension);
+      expect(state.sessions[0].source).toBe(CoworkSessionSource.ChromeExtension);
     }
-    expect(refreshed.currentSession?.source).toBe(CoworkSessionSource.BrowserExtension);
+    expect(refreshed.currentSession?.source).toBe(CoworkSessionSource.ChromeExtension);
   });
   test('upserts a session already discovered by a racing sessions.changed refresh', () => {
     const discovered = {

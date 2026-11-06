@@ -65,9 +65,9 @@ test('retains extension creation source across updates and database reopen witho
     'auto',
     undefined,
     undefined,
-    CoworkSessionSource.BrowserExtension,
+    CoworkSessionSource.ChromeExtension,
   );
-  expect(extension.source).toBe(CoworkSessionSource.BrowserExtension);
+  expect(extension.source).toBe(CoworkSessionSource.ChromeExtension);
   cowork.updateSession(extension.id, { title: 'Renamed browser conversation' });
   cowork.setSessionPinned(extension.id, true);
   initial.close();
@@ -76,13 +76,13 @@ test('retains extension creation source across updates and database reopen witho
   try {
     const loaded = new CoworkStore(reopened.getDatabase());
     expect(loaded.getSession(extension.id)).toMatchObject({
-      source: CoworkSessionSource.BrowserExtension,
+      source: CoworkSessionSource.ChromeExtension,
       title: 'Renamed browser conversation',
       pinned: true,
     });
     for (const sessions of [loaded.listSessions(), loaded.listSessions('main')]) {
       expect(sessions.find(session => session.id === extension.id)?.source).toBe(
-        CoworkSessionSource.BrowserExtension,
+        CoworkSessionSource.ChromeExtension,
       );
       expect(sessions.find(session => session.id === desktop.id)?.source).toBeUndefined();
     }

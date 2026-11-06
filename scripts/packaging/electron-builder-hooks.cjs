@@ -120,12 +120,12 @@ const {
 const { APP_UPDATE_CONFIG } = require('../../src/config/appUpdate.ts');
 const releaseHistoryLimits = APP_UPDATE_CONFIG.releaseHistory;
 const {
-  prepareBrowserExtension,
-  verifyBrowserExtension,
-} = require('../../plugins/browser-extensions/browser-assistant/scripts/prepare.cjs');
+  prepareChromeExtension,
+  verifyChromeExtension,
+} = require('../../plugins/chrome-extensions/chrome-assistant/scripts/prepare.cjs');
 const {
-  compileBrowserExtensionNativeHost,
-} = require('../browser/prepare-browser-extension-dev-host.cjs');
+  compileChromeExtensionNativeHost,
+} = require('../chrome/prepare-chrome-extension-dev-host.cjs');
 const {
   PATCH_MANIFEST_FILENAME,
   readOpenClawSourceLock,
@@ -854,8 +854,8 @@ async function beforePack(context) {
   await verifyApplicationLicenseAssets({ repoRoot: context.appDir || path.join(__dirname, '../..') });
   require('../../plugins/extensions/drawio/scripts/prepare.cjs').verifyDrawioAssets();
   verifyPackagedBuiltinModelAuthConfig(context.appDir || path.join(__dirname, '../..'));
-  prepareBrowserExtension();
-  if (isWindowsTarget(context)) compileBrowserExtensionNativeHost();
+  prepareChromeExtension();
+  if (isWindowsTarget(context)) compileChromeExtensionNativeHost();
   rebuildElectronNativeModules(context);
   // Install skill dependencies first (for all platforms)
   installSkillDependencies();
@@ -1103,7 +1103,7 @@ async function afterPack(context) {
       false,
     );
   }
-  verifyPackagedBrowserExtension(context);
+  verifyPackagedChromeExtension(context);
 
   if (isWindowsTarget(context)) {
     verifyPackagedWindowsNativeModules(context);
@@ -1262,7 +1262,7 @@ async function verifyPackagedApplicationLegalMetadata(
   return count;
 }
 
-function verifyPackagedBrowserExtension(context) {
+function verifyPackagedChromeExtension(context) {
   const resourcesRoot = isMacTarget(context)
     ? path.join(
         context.appOutDir,
@@ -1271,16 +1271,16 @@ function verifyPackagedBrowserExtension(context) {
         'Resources',
       )
     : path.join(context.appOutDir, 'resources');
-  const extensionDir = path.join(resourcesRoot, 'browser-extension', 'chrome-extension');
-  const result = verifyBrowserExtension(extensionDir);
+  const extensionDir = path.join(resourcesRoot, 'chrome-extension', 'chrome-extension');
+  const result = verifyChromeExtension(extensionDir);
   if (
     isWindowsTarget(context) &&
     !existsSync(
       path.join(
         resourcesRoot,
-        'browser-extension',
+        'chrome-extension',
         'native-host',
-        `${context.packager.appInfo.productName}-browser-extension-native-host.exe`,
+        `${context.packager.appInfo.productName}-chrome-extension-native-host.exe`,
       ),
     )
   ) {
@@ -1883,5 +1883,5 @@ module.exports = {
   isDeclaredBundledDependencyArchiveEntry,
   verifyAcpxArtifactEntryPaths,
   verifyMxcArtifactEntryPaths,
-  verifyPackagedBrowserExtension,
+  verifyPackagedChromeExtension,
 };

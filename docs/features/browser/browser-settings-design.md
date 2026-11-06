@@ -2,7 +2,7 @@
 
 浏览器设置选择 Agent 使用哪个 browser Tool；右侧工作区提供用户可操作的真实网页。前台继续使用 Electron webview guest，内置后台页面由 Main 的隐藏离屏 BrowserWindow 承载。统一 WebContentsView 与同页前后台接管仍是后续迁移候选。
 
-源码保持两侧各自的生命周期入口：Main 的 `browser/browserAgentBridge.ts` 持有 guest、连接和操作上下文，辅助能力归 `agent`、`downloads`、`extension`、`history`、`data`、`recording`、`pdf` 和 `preview`；Renderer 的 `features/browser/BrowserPanel.tsx` 持有网页面板，标注、录制、人工介入、数据对话框与 PDF 分别归对应领域目录。测试与实现相邻。目录归位不改变进程边界、原生 browser Tool 语义、下载策略或扩展配对协议。
+源码保持两侧各自的生命周期入口：Main 的 `browser/browserAgentBridge.ts` 持有内置 guest、连接和操作上下文，辅助能力归 `agent`、`downloads`、`history`、`data`、`recording`、`pdf` 和 `preview`；Renderer 的 `features/browser/BrowserPanel.tsx` 持有网页面板，标注、录制、人工介入、数据对话框与 PDF 分别归对应领域目录。Chrome 扩展接入、Native Messaging 和设置动作由独立的 `src/main/chrome/` 维护，专属共享合同位于 `src/shared/chrome/`。测试与实现相邻；原生 OpenClaw 的 browser Tool、配对接口及通用页面标注/录制格式保留原生名称。
 
 ## 1. 模式和提供方
 
@@ -312,15 +312,17 @@ Agent 的 `act` 在真实 guest 操作 lease 内先开启原生选择器拦截�
 
 ## 8. Chrome 配对与侧栏聊天是两条链
 
-手动自动化配对由锁定 OpenClaw CLI 生成 relay pairing，只写剪贴板，不返回 Renderer 或日志。Automatic connection 复用产品 Native Messaging host 发现本机 app-server，初始化并鉴权后调用 `browser/extension/pair`；Main 准备 Gateway，再通过同一锁定 CLI 的 `--local-gateway` 生成原生 `/browser/extension` 唤醒入口。配对信息仅返回扩展后台，不进入桌面 Renderer、发现文件或日志，不安装或调用另一套上游 Native host。原生 relay 仍负责授权 Tab 和自动化。
+Chrome 专属桌面操作通过 `window.electron.chrome` 调用：`openUrl`、`openRemoteDebugging`、`openExtensionManagement`、`revealExtension`、`copyExtensionPairing` 和 `testExtensionConnection`。它们使用独立的 `chrome:*` IPC，由 Main 的 Chrome handler 校验调用来自应用主框架；不保留 `window.electron.browser` 下的旧入口。内置浏览器模式、guest、文件预览、历史和录制仍使用 browser 能力，原生 `browser.request` 与 profile 合同不改。
+
+手动自动化配对由锁定 OpenClaw CLI 生成 relay pairing，只写剪贴板，不返回 Renderer 或日志。Automatic connection 复用产品 Native Messaging host 发现本机 app-server，初始化并鉴权后调用 `chrome/extension/pair`；Main 准备 Gateway，再通过同一锁定 CLI 的 `--local-gateway` 生成原生 `/browser/extension` 唤醒入口。配对信息仅返回扩展后台，不进入桌面 Renderer、发现文件或日志，不安装或调用另一套上游 Native host。原生 relay 仍负责授权 Tab 和自动化。
 
 ### 聊天发现与自动化配对
 
-侧栏聊天通过固定扩展 ID 的 Native Messaging 发现 Main app-server，不依赖手工 relay 配对，也不取得 Gateway token。详见[扩展侧聊](../../plugins/browser-extensions/browser-assistant/side-panel.md)和[Chrome 接口](../../plugins/browser-extensions/browser-assistant/protocol/README.md)。
+侧栏聊天通过固定扩展 ID 的 Native Messaging 发现 Main app-server，不依赖手工 relay 配对，也不取得 Gateway token。详见[扩展侧聊](../../plugins/chrome-extensions/chrome-assistant/side-panel.md)和[Chrome 接口](../../plugins/chrome-extensions/chrome-assistant/protocol/README.md)。
 
 聊天当前使用标准模型目录、文本／图片输入和独立审批面板；原生模型没有声明视觉能力时拒绝图片，
 不以已保存模型或自动化配对成功代替模型能力。工具审批、命令会话授权及原生 App 持久授权
-与 relay 的 Tab 授权分别管理。具体用户行为见[侧栏模型、权限与附件](../../plugins/browser-extensions/browser-assistant/side-panel.md#5-模型权限与附件)，
+与 relay 的 Tab 授权分别管理。具体用户行为见[侧栏模型、权限与附件](../../plugins/chrome-extensions/chrome-assistant/side-panel.md#5-模型权限与附件)，
 字段和输入限制以[通用规范](../../app-server-api/external-clients.md#turnstart)为准。
 
 Automatic connection 点击后立即显示连接进度，失败提示允许重试。设置页状态轮询只读取原生控制器状态，不能隐式启动配对；自动重试仍由原生 watchdog 负责。Main 合并进行中的配对请求，完成或失败即释放，不缓存配对凭据；Gateway 配置与权限检查保持执行。
@@ -331,7 +333,7 @@ Automatic connection 点击后立即显示连接进度，失败提示允许重�
 
 配对使用公共 CLI 入口，不使用 Gateway bundle 代替。`src/shared/openclaw/cliRuntimeFiles.json` 记录锁定版本的完整根目录启动依赖；安装时验证并打入 gateway.asar，开发提取和各平台最终打包均核验完整清单。Main 仅选择依赖齐全的 CLI 根目录。Gateway 可启动不能证明 CLI 可用；修改打包后须通过桌面实际入口验证自动和手动配对。缺失依赖的开发运行时从锁定 pristine 包整体重建，不补写自制 helper。
 
-资源分别位于 browser-extension/openclaw 基线与 conversation-overlay。升级先整体更新对应版本的 pristine relay 基线，再审查 manifest/background/options 显式接缝，最后组合 overlay；不能从 build 混合产物反向覆盖源码。
+资源分别位于 chrome-extension/openclaw 基线与 conversation-overlay。升级先整体更新对应版本的 pristine relay 基线，再审查 manifest/background/options 显式接缝，最后组合 overlay；不能从 build 混合产物反向覆盖源码。
 
 自动配对的构建接缝仅为原生 bootstrap controller 增加可注入请求函数，并由 background 注入产品发现／配对传输。默认上游传输、原生去重、手动配对优先、Disconnect 的迟到响应撤销与旧任务保护保持不变；产品桥不读取或控制 Tab，也不创建聊天会话。失败仍由原生状态机决定重试或提示手动连接，不能将请求已发出显示成配对成功。
 
@@ -443,7 +445,7 @@ TCP 成功只证明 Main 进程到代理的传输层可达，不能证明 Chromi
 ## 上游基线与验证边界
 
 浏览器扩展 pristine 基线、锁定校验和与产品 overlay 分开维护；升级时整体核对
-`plugins/browser-extensions/browser-assistant/` 中的来源记录和组装测试，不能以旧版人工
+`plugins/chrome-extensions/chrome-assistant/` 中的来源记录和组装测试，不能以旧版人工
 通过推定当前运行时仍然通过。当前产物的实际重验范围和未验收项见
 [锁定版本验证记录](../../openclaw-upgrades/v2026.10.7/validation.md)。
 

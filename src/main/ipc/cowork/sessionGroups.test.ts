@@ -12,7 +12,7 @@ beforeEach(() => {
 });
 
 test.each([
-  { source: 'browser-extension' },
+  { source: 'chrome-extension' },
   { external: { origin: 'cli' } },
   { external: { origin: 'multica' } },
 ])('rejects manual source group changes for $source $external', async metadata => {
@@ -49,7 +49,7 @@ test('allows removing an application conversation from a manual group', async ()
   expect(moveSessionToGroup).toHaveBeenCalledExactlyOnceWith('one', null);
 });
 
-test.each(['cli', 'browserExtension', 'historicalAppServer', 'deleted-group'])(
+test.each(['cli', 'chromeExtension', 'historicalAppServer', 'deleted-group'])(
   'rejects source or missing group target %s',
   async groupId => {
     const moveSessionToGroup = vi.fn();

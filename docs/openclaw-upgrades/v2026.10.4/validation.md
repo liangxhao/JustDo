@@ -581,7 +581,7 @@ inside the generated Lit template literals. The native reasoning semantic assert
 now requires an actual preamble, so a progress status cannot satisfy it accidentally.
 
 The merged tree passed `npm run lint`, `npm run build`, `npm run compile:electron`, both
-browser extension generators and `browser-extension:prepare`. The offline Chromium
+browser extension generators and `chrome-extension:prepare`. The offline Chromium
 smoke passed authentication rejection, real loopback WebSocket streaming, history,
 Thinking, manual collapse, answer and Stop checks with zero page errors. It did not
 exercise Native Messaging or a customer history upgrade.

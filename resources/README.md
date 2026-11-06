@@ -3,21 +3,21 @@
 Resources are grouped by their consumer. Built-in plugin sources and their own
 assets belong in `plugins/`; repository design documentation belongs in `docs/`.
 
-| Path | Purpose |
-| --- | --- |
-| `icons/logo.png` | Source logo used by the Renderer and icon generation |
-| `icons/png/` | Linux application icons, named by pixel dimensions |
-| `icons/win/` | Windows application icon |
-| `icons/mac/` | macOS application icon and unique source PNGs in `png/` |
-| `icons/tray/` | Platform-specific tray and window icons |
-| `pages/` | Development connection-error page and inert preference-import page |
-| `python/` | Locked package requirements and embedded-Python `sitecustomize.py` |
-| `mac/` | macOS signing entitlements |
-| `licenses/` | Legal notices embedded in the Windows installer |
+| Path                       | Purpose                                                              |
+| -------------------------- | -------------------------------------------------------------------- |
+| `icons/logo.png`           | Source logo used by the Renderer and icon generation                 |
+| `icons/png/`               | Linux application icons, named by pixel dimensions                   |
+| `icons/win/`               | Windows application icon                                             |
+| `icons/mac/`               | macOS application icon and unique source PNGs in `png/`              |
+| `icons/tray/`              | Platform-specific tray and window icons                              |
+| `pages/`                   | Development connection-error page and inert preference-import page   |
+| `python/`                  | Locked package requirements and embedded-Python `sitecustomize.py`   |
+| `mac/`                     | macOS signing entitlements                                           |
+| `licenses/`                | Legal notices embedded in the Windows installer                      |
 | `installer-clock/win-x86/` | Precompiled native NSIS clock and source-bound verification manifest |
-| `pets/` | Pet sprites and animation metadata |
-| `openclaw/docs/` | OpenClaw runtime documentation and role templates |
-| `package-manager-config/` | Optional environment-specific npm and pip configuration |
+| `pets/`                    | Pet sprites and animation metadata                                   |
+| `openclaw/docs/`           | OpenClaw runtime documentation and role templates                    |
+| `package-manager-config/`  | Optional environment-specific npm and pip configuration              |
 
 Download destinations and preparation commands are maintained in
 [offline downloads](../docs/offline-downloads.md). Retain the caches on offline
@@ -28,7 +28,7 @@ the repository-root `cache/`, grouped as `mingit/`, `python/`, `local-speech/` a
 
 Generated build artifacts are grouped under the repository-root `build/`:
 `runtimes/` contains prepared runtimes, `tar/` contains Windows runtime archives,
-`speech-models/v1/` contains published model artifacts, and `browser-extension/`
+`speech-models/v1/` contains published model artifacts, and `chrome-extension/`
 contains the assembled browser package and Native Messaging helper. Both
 `build/` and `cache/` are ignored by Git.
 

@@ -9,6 +9,7 @@ import { assistantTranslations } from './assistantTranslations';
 import { authTranslations } from './authTranslations';
 import { browserTranslations } from './browserTranslations';
 import { chatTranslations } from './chatTranslations';
+import { chromeTranslations } from './chromeTranslations';
 import { filePreviewTranslations } from './filePreviewTranslations';
 import { getHomeGreetingTranslations } from './homeGreetings';
 import { initializationTranslations } from './initializationTranslations.mts';
@@ -38,6 +39,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     ...browserInterventionTranslations.zh,
     ...browserRecordingTranslations.zh,
     ...chatTranslations.zh,
+    ...chromeTranslations.zh,
     ...filePreviewTranslations.zh,
     ...getHomeGreetingTranslations('zh'),
     ...initializationTranslations.zh,
@@ -66,6 +68,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     ...browserInterventionTranslations.en,
     ...browserRecordingTranslations.en,
     ...chatTranslations.en,
+    ...chromeTranslations.en,
     ...filePreviewTranslations.en,
     ...getHomeGreetingTranslations('en'),
     ...initializationTranslations.en,

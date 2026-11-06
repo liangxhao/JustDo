@@ -28,7 +28,11 @@ import {
 } from '../shared/app/initialization';
 import { SHUTDOWN_BUDGET_MS } from '../shared/app/shutdownPolicy';
 import { StartupRoute } from '../shared/app/startup/routing';
-import { BrowserMode, normalizeBrowserDownloadSettings, normalizeBrowserMode } from '../shared/browser/browser';
+import {
+  BrowserMode,
+  normalizeBrowserDownloadSettings,
+  normalizeBrowserMode,
+} from '../shared/browser/browser';
 import { EmbeddedBrowserGateway } from '../shared/browser/embeddedBrowser';
 import { buildCoworkSessionKey } from '../shared/cowork/sessionKey';
 import { CoworkSubagentDetailsIpc } from '../shared/cowork/subagentDetails';
@@ -56,17 +60,17 @@ import { waitForAppServerShutdown } from './appServer/appServerShutdown';
 import { BrowserAgentBridge } from './browser/browserAgentBridge';
 import { resolveBrowserDesktopSession } from './browser/browserDesktopSession';
 import { EmbeddedBrowserGatewayBridge } from './browser/embeddedBrowserGatewayBridge';
-import { BrowserExtensionChatController } from './browser/extension/browserExtensionChatController';
-import { BrowserExtensionChatServer } from './browser/extension/browserExtensionChatServer';
-import {
-  BROWSER_EXTENSION_RESTART_SWITCH,
-  clearBrowserExtensionAppServer,
-  publishBrowserExtensionAppServer,
-  registerBrowserExtensionNativeHost,
-} from './browser/extension/browserExtensionNativeMessaging';
-import { readAutomaticBrowserExtensionPairing } from './browser/extension/browserExtensionPairing';
-import { BrowserWebLaunchService } from './browser/extension/browserWebLaunchService';
 import { captureWebpageEmbedConnection } from './chat/embed/webpageEmbedConnection';
+import { ChromeExtensionChatController } from './chrome/chromeExtensionChatController';
+import { ChromeExtensionChatServer } from './chrome/chromeExtensionChatServer';
+import {
+  CHROME_EXTENSION_RESTART_SWITCH,
+  clearChromeExtensionAppServer,
+  publishChromeExtensionAppServer,
+  registerChromeExtensionNativeHost,
+} from './chrome/chromeExtensionNativeMessaging';
+import { readAutomaticChromeExtensionPairing } from './chrome/chromeExtensionPairing';
+import { ChromeWebLaunchService } from './chrome/chromeWebLaunchService';
 import { AppInitialization } from './core/app/appInitialization';
 import { registerAppShutdown } from './core/app/appShutdown';
 import { createLoginSdkAdapter } from './core/app/auth/loginSdkAdapter';
@@ -79,7 +83,11 @@ import { isNsisInstalledApp } from './core/app/installedApp';
 import { createInstallerShutdownListener } from './core/app/installerShutdown';
 import { createTray, destroyTray, updateTrayMenu } from './core/app/trayManager';
 import { resolveAppUpdateResourceUrl } from './core/app/updateResourceUrl';
-import { logDisabledUserActivity, USER_ACTIVITY_SCHEDULE_KEY, UserActivityService } from './core/app/userActivityService';
+import {
+  logDisabledUserActivity,
+  USER_ACTIVITY_SCHEDULE_KEY,
+  UserActivityService,
+} from './core/app/userActivityService';
 import { collectUserActivityUsage, USER_ACTIVITY_TIME_ZONE } from './core/app/userActivityUsage';
 import { APP_NAME, DEV_SERVER_URL_SWITCH, INSTALLER_QUIT_SWITCH } from './core/appConstants';
 import { resolveDevelopmentDataDirectory } from './core/development/developmentDataDirectory';
@@ -90,7 +98,12 @@ import {
 } from './core/development/devSessionLifecycle';
 import { ManagedDirectoryOperationCoordinator } from './core/filesystem/managedDirectoryOperations';
 import { setLanguage, t } from './core/i18n';
-import { getLogFilePath, getRecentMainLogEntries, initLogger, stopLogMaintenance } from './core/logger';
+import {
+  getLogFilePath,
+  getRecentMainLogEntries,
+  initLogger,
+  stopLogMaintenance,
+} from './core/logger';
 import { getRetainedLogPaths, LogKind } from './core/logMaintenance';
 import { mainProcessFetch, mainProcessTitleFetch } from './core/network/mainProcessFetch';
 import {
@@ -168,6 +181,7 @@ import {
   registerAutoUpdateHandlers,
   registerBrowserHandlers,
   registerCalendarPermissionHandlers,
+  registerChromeHandlers,
   registerDialogHandlers,
   registerImagePreviewHandlers,
   registerLocalFileHandlers,
@@ -242,7 +256,10 @@ import {
 import { removeLegacyWorkspaceSetupFile } from './openclaw/config/agents/legacyWorkspaceSetupCleanup';
 import { NativeAssistantCreation } from './openclaw/config/agents/nativeAssistantCreation';
 import { getOpenClawAppConfigSignature } from './openclaw/config/appConfigSignature';
-import { publishBuiltinCredentialFile, revokeBuiltinCredentialFile } from './openclaw/config/models/builtinCredentialFile';
+import {
+  publishBuiltinCredentialFile,
+  revokeBuiltinCredentialFile,
+} from './openclaw/config/models/builtinCredentialFile';
 import { isDecisionModelManaged } from './openclaw/config/models/decisionModelConfig';
 import { resolveNativeVideoSelection } from './openclaw/config/models/nativeVideoModelConfig';
 import {
@@ -391,7 +408,9 @@ let releasedStartupWorkingDirectory: string | undefined;
 try {
   configureUserDataPath(agentBridgeArgv ? resolveAgentBridgeProfile(process.argv) : undefined);
   if (!agentBridgeArgv)
-    releasedStartupWorkingDirectory = releaseStartupProfileWorkingDirectory(app.getPath('userData'));
+    releasedStartupWorkingDirectory = releaseStartupProfileWorkingDirectory(
+      app.getPath('userData'),
+    );
 } catch (error) {
   if (agentBridgeArgv) throw error;
   startupPreparationError = error;
@@ -400,8 +419,10 @@ if (!agentBridgeArgv) {
   try {
     initLogger();
     if (releasedStartupWorkingDirectory)
-      console.info('[StartupCoordinator] Released inherited profile working directory before startup:',
-        releasedStartupWorkingDirectory);
+      console.info(
+        '[StartupCoordinator] Released inherited profile working directory before startup:',
+        releasedStartupWorkingDirectory,
+      );
   } catch (error) {
     console.warn('[AppInitialization] Logging is unavailable; continuing startup:', error);
   }
@@ -526,7 +547,7 @@ let builtinModelCredentialMonitor: BuiltinModelCredentialMonitor | null = null;
 let builtinModelTokenExchange: BuiltinModelTokenExchange | null = null;
 let builtinModelAuthCoordinator: BuiltinModelAuthCoordinator | null = null;
 let windowsSandboxService: WindowsSandboxService | null = null;
-let browserExtensionChatServer: BrowserExtensionChatServer | null = null;
+let chromeExtensionChatServer: ChromeExtensionChatServer | null = null;
 let storeInitPromise: Promise<SqliteStore> | null = null;
 let openClawEngineManager: OpenClawEngineManager | null = null;
 let startupHistoryAdmissionReady = false;
@@ -804,9 +825,7 @@ const getEngineNotReadyResponse = (status: OpenClawEngineStatus) => {
   };
 };
 
-const prepareOpenClawExecution = async (
-  options: { prepareComputerForSend?: boolean } = {},
-) => {
+const prepareOpenClawExecution = async (options: { prepareComputerForSend?: boolean } = {}) => {
   bindOpenClawGatewayPortProxyBypass();
   return ensureExecutionReady({
     manager: getOpenClawEngineManager(),
@@ -819,14 +838,17 @@ const prepareOpenClawExecution = async (
 
 const ensureOpenClawRunningForCowork = (
   options: { prepareComputerForSend?: boolean } = {},
-): Promise<OpenClawEngineStatus> => startupEnginePreparationController
-  ? startupEnginePreparationController.run(() => prepareOpenClawExecution(options))
-  : prepareOpenClawExecution(options);
+): Promise<OpenClawEngineStatus> =>
+  startupEnginePreparationController
+    ? startupEnginePreparationController.run(() => prepareOpenClawExecution(options))
+    : prepareOpenClawExecution(options);
 
 const getStartupEngineNotReadyResponse = () =>
   startupEnginePreparationController && !startupEnginePreparationController.isReady()
-    ? getEngineNotReadyResponse({ ...getOpenClawEngineManager().getStatus(),
-      message: t('enginePreparationPending') })
+    ? getEngineNotReadyResponse({
+        ...getOpenClawEngineManager().getStatus(),
+        message: t('enginePreparationPending'),
+      })
     : undefined;
 
 const getCoworkStore = () => {
@@ -999,7 +1021,11 @@ const getBuiltinModelAuthCoordinator = (): BuiltinModelAuthCoordinator => {
     getActive: getActiveBuiltinModelCredential,
     getAuthSessionId: getActiveBuiltinModelCredentialSessionId,
     publishCredential: (credential, authSessionId) => {
-      publishBuiltinCredentialFile(getOpenClawEngineManager().getStateDir(), credential, authSessionId);
+      publishBuiltinCredentialFile(
+        getOpenClawEngineManager().getStateDir(),
+        credential,
+        authSessionId,
+      );
     },
     onBackgroundError: error => builtinModelCredentialMonitor?.retryAfterError(error),
     login: () => getBuiltinModelLifecycle().refreshAfterLogin(),
@@ -1100,8 +1126,7 @@ const getSessionDiagnosticsService = (): SessionDiagnosticsService => {
       readDiagnosticRuntimeArtifact(openClawEngineManager?.getRuntimeRoot() ?? null, signal),
     logSources: {
       main: report => orderDiagnosticMainLogs(getRecentMainLogEntries(true), report),
-      cowork: () =>
-        getRetainedLogPaths(path.join(app.getPath('userData'), 'logs'), LogKind.Cowork),
+      cowork: () => getRetainedLogPaths(path.join(app.getPath('userData'), 'logs'), LogKind.Cowork),
       gateway: () =>
         getRetainedLogPaths(
           path.join(app.getPath('userData'), 'openclaw', 'logs'),
@@ -1307,13 +1332,18 @@ const bindEmbeddedBrowserGateway = (): void => {
     throw new Error('OpenClaw runtime adapter was not initialized with the Cowork router.');
   }
   const bridge = new EmbeddedBrowserGatewayBridge({
-    isEnabled: () => normalizeBrowserMode(getStore().get<AppConfigSettings>('app_config')?.browserMode) === BrowserMode.Embedded,
+    isEnabled: () =>
+      normalizeBrowserMode(getStore().get<AppConfigSettings>('app_config')?.browserMode) ===
+      BrowserMode.Embedded,
     getDesktopSession: sessionKey => resolveBrowserDesktopSession(getCoworkStore(), sessionKey),
     getScheduledTask: jobId => getCronJobService().getJob(jobId),
-    execute: (sessionKey, command, signal, scope) => browserAgentBridge.executeCommand(sessionKey, command, signal, scope),
-    releaseScope: (sessionId, closePages) => browserAgentBridge.releaseExecutionScope(sessionId, closePages),
+    execute: (sessionKey, command, signal, scope) =>
+      browserAgentBridge.executeCommand(sessionKey, command, signal, scope),
+    releaseScope: (sessionId, closePages) =>
+      browserAgentBridge.releaseExecutionScope(sessionId, closePages),
     revokeAll: () => browserAgentBridge.revokeBackgroundPages(),
-    resolve: (requestId, response) => runtimeAdapter.requestGateway(EmbeddedBrowserGateway.RESOLVE, { requestId, ...response }),
+    resolve: (requestId, response) =>
+      runtimeAdapter.requestGateway(EmbeddedBrowserGateway.RESOLVE, { requestId, ...response }),
   });
   runtimeAdapter.on('gatewayEvent', event => bridge.handleEvent(event));
   runtimeAdapter.on('gatewayDisconnected', () => bridge.revoke());
@@ -1340,7 +1370,12 @@ type AppConfigSettings = {
   proxy?: Partial<ProxySettings>;
   browserProxy?: Partial<ProxySettings>;
   providers?: unknown;
-  onlineModelProviders?: { decision?: unknown; video?: unknown; 'speech-recognition'?: unknown; 'speech-synthesis'?: unknown };
+  onlineModelProviders?: {
+    decision?: unknown;
+    video?: unknown;
+    'speech-recognition'?: unknown;
+    'speech-synthesis'?: unknown;
+  };
   voice?: unknown;
   localSpeechExtensions?: unknown;
 };
@@ -1513,7 +1548,6 @@ if (agentBridgeArgv) {
   });
   registerBrowserHandlers({
     getGatewayClient: () => getOpenClawRuntimeAdapter()?.getGatewayClient() ?? null,
-    buildCliEnvironment: () => getOpenClawEngineManager().buildCliEnvironment(),
     hasActiveSessions: () => getCoworkEngineService().hasActiveSessions(),
     setBrowserMode: mode => {
       const store = getStore();
@@ -1525,6 +1559,10 @@ if (agentBridgeArgv) {
         logError: (message, error) => console.error(`[BrowserSettings] ${message}`, error ?? ''),
       });
     },
+  });
+  registerChromeHandlers({
+    getGatewayClient: () => getOpenClawRuntimeAdapter()?.getGatewayClient() ?? null,
+    buildCliEnvironment: () => getOpenClawEngineManager().buildCliEnvironment(),
   });
   browserAgentBridge.registerIpc();
 
@@ -1576,7 +1614,8 @@ if (agentBridgeArgv) {
   registerOpenClawModelHandlers({ getRuntime: getOpenClawRuntimeAdapter });
   registerOnlineAsrHandlers({
     getRuntime: getOpenClawRuntimeAdapter,
-    getModelCategory: () => getStore().get<AppConfigSettings>('app_config')?.onlineModelProviders?.['speech-recognition'],
+    getModelCategory: () =>
+      getStore().get<AppConfigSettings>('app_config')?.onlineModelProviders?.['speech-recognition'],
     getStateDir: () => getOpenClawEngineManager().getStateDir(),
     requestGateway: <T>(method: string, params?: unknown) =>
       getCoworkEngineService().requestGateway<T>(method, params),
@@ -1585,7 +1624,8 @@ if (agentBridgeArgv) {
   });
   registerOnlineTtsHandlers({
     getRuntime: getOpenClawRuntimeAdapter,
-    getModelCategory: () => getStore().get<AppConfigSettings>('app_config')?.onlineModelProviders?.['speech-synthesis'],
+    getModelCategory: () =>
+      getStore().get<AppConfigSettings>('app_config')?.onlineModelProviders?.['speech-synthesis'],
     getStateDir: () => getOpenClawEngineManager().getStateDir(),
     requestGateway: <T>(method: string, params?: unknown) =>
       getCoworkEngineService().requestGateway<T>(method, params),
@@ -1626,7 +1666,8 @@ if (agentBridgeArgv) {
   registerExtensionHandlers({
     mutateAppPlugin: (id, enabled, operation) => getAppPlugins().mutate(id, enabled, operation),
     mutateAppPackage: operation => getAppPlugins().mutatePackage(operation),
-    withExtensionPackageMutation: operation => getAppPlugins().withExtensionPackageMutation(operation),
+    withExtensionPackageMutation: operation =>
+      getAppPlugins().withExtensionPackageMutation(operation),
     approveInstalledAppPackage: input => getAppPlugins().approveInstalledPackage(input),
     extensionImportService: getOpenClawExtensionImportService(),
     installationService: pluginInstallationService,
@@ -1771,9 +1812,13 @@ if (agentBridgeArgv) {
       if (!context || !adapter || !router || !manager) return null;
       return {
         isResponseError: context.isResponseError,
-        isCurrent: () => !appShutdown.isQuitting() && coworkEngineService === service &&
-          openClawEngineManager === manager && service.getCurrentRouter() === router &&
-          service.getRuntimeAdapter() === adapter && context.isCurrent(),
+        isCurrent: () =>
+          !appShutdown.isQuitting() &&
+          coworkEngineService === service &&
+          openClawEngineManager === manager &&
+          service.getCurrentRouter() === router &&
+          service.getRuntimeAdapter() === adapter &&
+          context.isCurrent(),
       };
     },
   });
@@ -1792,8 +1837,11 @@ if (agentBridgeArgv) {
   });
 
   registerCoworkSessionHandlers({
-    isAllowedWorkspaceSender: event => !!mainWindow && !mainWindow.isDestroyed() &&
-      event.sender === mainWindow.webContents && event.senderFrame === event.sender.mainFrame,
+    isAllowedWorkspaceSender: event =>
+      !!mainWindow &&
+      !mainWindow.isDestroyed() &&
+      event.sender === mainWindow.webContents &&
+      event.senderFrame === event.sender.mainFrame,
     getStartupEngineNotReadyResponse,
     onSessionsChanged: notifyCoworkSessionsChanged,
     workspaceAppSessions,
@@ -1956,8 +2004,10 @@ if (agentBridgeArgv) {
       mediaPlaybackPreloadPath: MEDIA_PLAYBACK_PRELOAD_PATH,
       widgetViewerPreloadPath: WIDGET_VIEWER_PRELOAD_PATH,
       webpageEmbedPreloadPath: WEBPAGE_EMBED_PRELOAD_PATH,
-      getWebpageEmbedConnection: () => captureWebpageEmbedConnection(getOpenClawRuntimeAdapter, getOpenClawEngineManager()),
-      runConfigMutationExclusive: operation => getOpenClawConfigSyncService().runConfigMutationExclusive(operation),
+      getWebpageEmbedConnection: () =>
+        captureWebpageEmbedConnection(getOpenClawRuntimeAdapter, getOpenClawEngineManager()),
+      runConfigMutationExclusive: operation =>
+        getOpenClawConfigSyncService().runConfigMutationExclusive(operation),
       getBrowserDownloadSettings: () => {
         const config = getStore().get<AppConfigSettings>('app_config');
         return normalizeBrowserDownloadSettings({
@@ -2032,55 +2082,76 @@ if (agentBridgeArgv) {
       () => openClawEngineManager?.beginApplicationShutdown(),
       () => startupCoordinator?.stop(),
     ]) {
-      try { revokeAdmission(); } catch (error) { admissionErrors.push(error); }
+      try {
+        revokeAdmission();
+      } catch (error) {
+        admissionErrors.push(error);
+      }
     }
     const appServerStopped = Promise.resolve().then(() => appServerIntegrationService?.stop());
     // Observe immediately while startup owners join; preserve the original rejection.
-    void appServerStopped.catch(error => console.error('[AppServer] Failed to stop local WebSocket service:', error));
+    void appServerStopped.catch(error =>
+      console.error('[AppServer] Failed to stop local WebSocket service:', error),
+    );
     await runApplicationCleanup({
-      retireStartup: () => settleCleanupTasks([
-        () => startupHistoryRuntime.stop(), () => startupDatabaseRuntime.stop(),
-        () => startupCoordinator?.settleProfileIsolation(),
-        () => startupIntegrationPreparation,
-        () => { if (admissionErrors.length) throw new AggregateError(admissionErrors, 'Startup admission revocation failed.'); },
-      ]),
-      retireServices: () => settleCleanupTasks([
-        () => { disposeComputerOverlay?.(); disposeComputerOverlay = undefined; },
-        () => devSessionLifecycle?.stop(),
-        () => detachDevelopmentParent?.(),
-        () => appPlugins?.dispose(),
-        () => stopAppDevelopmentAssets?.(),
-        () => builtinModelCredentialMonitor?.stop(),
-        () => loginService?.dispose(),
-        () => userActivityService?.stop(),
-        () => builtinModelTokenExchange?.invalidate(),
-        () => builtinModelAuthCoordinator?.initialize(null),
-        () => clearActiveBuiltinModelCredential(),
-        () => clearBrowserExtensionAppServer(app.getPath('userData')),
-        async () => {
-          const server = browserExtensionChatServer;
-          await server?.stop();
-          if (browserExtensionChatServer === server) browserExtensionChatServer = null;
-        },
-        () => appServerStopped,
-        () => destroyTray(),
-        async () => {
-          const server = agentBridgeServer;
-          await server?.stop();
-          if (agentBridgeServer === server) agentBridgeServer = null;
-        },
-        async () => {
-          // Prevent scheduled work while the native runtime drains existing work.
-          try { getCronJobService().stopPolling(); } catch { /* Not initialized. */ }
-          await coworkEngineService?.getCurrentRouter()?.stopAllSessions();
-        },
-      ]),
+      retireStartup: () =>
+        settleCleanupTasks([
+          () => startupHistoryRuntime.stop(),
+          () => startupDatabaseRuntime.stop(),
+          () => startupCoordinator?.settleProfileIsolation(),
+          () => startupIntegrationPreparation,
+          () => {
+            if (admissionErrors.length)
+              throw new AggregateError(admissionErrors, 'Startup admission revocation failed.');
+          },
+        ]),
+      retireServices: () =>
+        settleCleanupTasks([
+          () => {
+            disposeComputerOverlay?.();
+            disposeComputerOverlay = undefined;
+          },
+          () => devSessionLifecycle?.stop(),
+          () => detachDevelopmentParent?.(),
+          () => appPlugins?.dispose(),
+          () => stopAppDevelopmentAssets?.(),
+          () => builtinModelCredentialMonitor?.stop(),
+          () => loginService?.dispose(),
+          () => userActivityService?.stop(),
+          () => builtinModelTokenExchange?.invalidate(),
+          () => builtinModelAuthCoordinator?.initialize(null),
+          () => clearActiveBuiltinModelCredential(),
+          () => clearChromeExtensionAppServer(app.getPath('userData')),
+          async () => {
+            const server = chromeExtensionChatServer;
+            await server?.stop();
+            if (chromeExtensionChatServer === server) chromeExtensionChatServer = null;
+          },
+          () => appServerStopped,
+          () => destroyTray(),
+          async () => {
+            const server = agentBridgeServer;
+            await server?.stop();
+            if (agentBridgeServer === server) agentBridgeServer = null;
+          },
+          async () => {
+            // Prevent scheduled work while the native runtime drains existing work.
+            try {
+              getCronJobService().stopPolling();
+            } catch {
+              /* Not initialized. */
+            }
+            await coworkEngineService?.getCurrentRouter()?.stopAllSessions();
+          },
+        ]),
       retireGateway: () => openClawEngineManager?.stopGateway(),
-      retireRemainingServices: () => settleCleanupTasks([
-        () => startupEnginePreparationController?.settle(),
-        () => embeddedBrowserGatewayBridge?.revoke(),
-        () => browserAgentBridge.stop(), () => outboundHeaderProxy?.stop(),
-      ]),
+      retireRemainingServices: () =>
+        settleCleanupTasks([
+          () => startupEnginePreparationController?.settle(),
+          () => embeddedBrowserGatewayBridge?.revoke(),
+          () => browserAgentBridge.stop(),
+          () => outboundHeaderProxy?.stop(),
+        ]),
       // Never initialize a Store during shutdown, or close it underneath an unjoined owner.
       closeStore: () => store?.close(),
     });
@@ -2133,9 +2204,9 @@ if (agentBridgeArgv) {
       app.quit();
       return;
     }
-    if (commandLine.includes(BROWSER_EXTENSION_RESTART_SWITCH)) {
+    if (commandLine.includes(CHROME_EXTENSION_RESTART_SWITCH)) {
       console.warn(
-        '[BrowserExtensionChat] Ignored extension restart request; restart the app manually.',
+        '[ChromeExtensionChat] Ignored extension restart request; restart the app manually.',
       );
       return;
     }
@@ -2190,14 +2261,18 @@ if (agentBridgeArgv) {
   const startupStartedAt = Date.now();
   const startupNativeStateDir = path.join(app.getPath('userData'), 'openclaw', 'state');
   const startupDatabaseRuntime = new NativeDatabaseUpgradeRuntime({
-    getRuntimeRoot: () => (app.isPackaged
-      ? [path.join(process.resourcesPath, 'cfmind')]
-      : [path.join(app.getAppPath(), 'vendor', 'openclaw-runtime', 'current'),
-        path.join(process.cwd(), 'vendor', 'openclaw-runtime', 'current')])
-      .find(candidate => fs.existsSync(candidate)) ?? null,
+    getRuntimeRoot: () =>
+      (app.isPackaged
+        ? [path.join(process.resourcesPath, 'cfmind')]
+        : [
+            path.join(app.getAppPath(), 'vendor', 'openclaw-runtime', 'current'),
+            path.join(process.cwd(), 'vendor', 'openclaw-runtime', 'current'),
+          ]
+      ).find(candidate => fs.existsSync(candidate)) ?? null,
     stateDir: startupNativeStateDir,
     configPath: path.join(startupNativeStateDir, 'openclaw.json'),
-    gatewayStopped: () => !openClawEngineManager ||
+    gatewayStopped: () =>
+      !openClawEngineManager ||
       (!openClawEngineManager.getGatewayProcessId() &&
         !['running', 'starting'].includes(openClawEngineManager.getStatus().phase)),
   });
@@ -2223,7 +2298,10 @@ if (agentBridgeArgv) {
           try {
             mainWindow.webContents.send(AppInitializationIpc.Changed, state);
           } catch (error) {
-            console.warn('[AppInitialization] Failed to publish progress; startup continues:', error);
+            console.warn(
+              '[AppInitialization] Failed to publish progress; startup continues:',
+              error,
+            );
           }
         }
       },
@@ -2245,7 +2323,8 @@ if (agentBridgeArgv) {
     registerHistoryRecoveryHandlers({
       getWindow: () => mainWindow,
       isReady: () =>
-        !appShutdown.isQuitting() && initialization.getState().phase === AppInitializationPhase.Ready,
+        !appShutdown.isQuitting() &&
+        initialization.getState().phase === AppInitializationPhase.Ready,
       getStore,
       getCoworkStore,
     });
@@ -2287,14 +2366,23 @@ if (agentBridgeArgv) {
   let startupIntegrationPreparation: Promise<void> | undefined;
   let startupExecutionGeneration: number | undefined;
   const completeEnginePreparation = () => {
-    if (appShutdown.isQuitting() || initialization.getState().phase === AppInitializationPhase.Failed)
+    if (
+      appShutdown.isQuitting() ||
+      initialization.getState().phase === AppInitializationPhase.Failed
+    )
       return;
     const manager = getOpenClawEngineManager();
     const phase = manager.getStatus().phase;
-    if (phase !== EnginePhase.Error && (startupExecutionGeneration === undefined ||
-        startupExecutionGeneration !== manager.getGatewayProcessGeneration() || phase !== EnginePhase.Running))
+    if (
+      phase !== EnginePhase.Error &&
+      (startupExecutionGeneration === undefined ||
+        startupExecutionGeneration !== manager.getGatewayProcessGeneration() ||
+        phase !== EnginePhase.Running)
+    )
       throw new Error(t('runtimeNodeUnavailable'), {
-        cause: new Error('Startup execution readiness was not confirmed for the current Gateway process.'),
+        cause: new Error(
+          'Startup execution readiness was not confirmed for the current Gateway process.',
+        ),
       });
     initialization.setEnginePreparationPending(false);
   };
@@ -2325,7 +2413,10 @@ if (agentBridgeArgv) {
     if (startup) await startup.loaded;
     if (appShutdown.isQuitting()) return;
     if (startupPreparationError) throw startupPreparationError;
-    initialization.setTaskStatus(AppInitializationTask.UserData, AppInitializationTaskStatus.Running);
+    initialization.setTaskStatus(
+      AppInitializationTask.UserData,
+      AppInitializationTaskStatus.Running,
+    );
     await startupCoordinator.prepareBeforeStore(initialization);
     await initialization.prepareUserData();
     if (appShutdown.isQuitting()) return;
@@ -2345,7 +2436,10 @@ if (agentBridgeArgv) {
         prepare: prepareOpenClawExecution,
       });
     }
-    initialization.setTaskStatus(AppInitializationTask.UserData, AppInitializationTaskStatus.Complete);
+    initialization.setTaskStatus(
+      AppInitializationTask.UserData,
+      AppInitializationTaskStatus.Complete,
+    );
     if (isDev && !app.isPackaged)
       stopAppDevelopmentAssets = await startAppDevelopmentAssets(
         path.join(app.getAppPath(), 'build/app-plugins/development-assets.json'),
@@ -2371,11 +2465,14 @@ if (agentBridgeArgv) {
     }
     if (appShutdown.isQuitting()) return;
     initialization.advance(AppInitializationStep.Configuration, 2);
-    initialization.setTaskStatus(AppInitializationTask.Configuration, AppInitializationTaskStatus.Running);
+    initialization.setTaskStatus(
+      AppInitializationTask.Configuration,
+      AppInitializationTaskStatus.Running,
+    );
     initialization.reportActivity(AppInitializationActivity.LocalServices);
-    const startBrowserExtensionIngress = async (): Promise<boolean> => {
-      const browserExtensionChatToken = randomBytes(32).toString('hex');
-      const extensionChatController = new BrowserExtensionChatController({
+    const startChromeExtensionIngress = async (): Promise<boolean> => {
+      const chromeExtensionChatToken = randomBytes(32).toString('hex');
+      const extensionChatController = new ChromeExtensionChatController({
         onSessionsChanged: notifyCoworkSessionsChanged,
         ensureEngineRunning: ensureOpenClawRunningForCowork,
         getStore: getCoworkStore,
@@ -2385,9 +2482,9 @@ if (agentBridgeArgv) {
         readAssistantMedia: request =>
           readOpenClawAssistantMedia(getOpenClawEngineManager(), request),
       });
-      let extensionChatServer: BrowserExtensionChatServer | undefined;
+      let extensionChatServer: ChromeExtensionChatServer | undefined;
       try {
-        const webLaunchService = new BrowserWebLaunchService({
+        const webLaunchService = new ChromeWebLaunchService({
           getDatabase: () => getStore().getDatabase(),
           getStore: getCoworkStore,
           chat: extensionChatController,
@@ -2396,13 +2493,13 @@ if (agentBridgeArgv) {
           onChanged: () => extensionChatServer?.notifyWebLaunchChanged(),
           onThreadCreated: notifyCoworkSessionsChanged,
         });
-        extensionChatServer = new BrowserExtensionChatServer(
+        extensionChatServer = new ChromeExtensionChatServer(
           extensionChatController,
-          browserExtensionChatToken,
+          chromeExtensionChatToken,
           packageJson.version,
           0,
           () =>
-            readAutomaticBrowserExtensionPairing(ensureOpenClawRunningForCowork, () =>
+            readAutomaticChromeExtensionPairing(ensureOpenClawRunningForCowork, () =>
               getOpenClawEngineManager().buildCliEnvironment(),
             ),
           webLaunchService,
@@ -2413,34 +2510,38 @@ if (agentBridgeArgv) {
           await extensionChatServer.stop();
           return false;
         }
-        browserExtensionChatServer = extensionChatServer;
-        await publishBrowserExtensionAppServer(
+        chromeExtensionChatServer = extensionChatServer;
+        await publishChromeExtensionAppServer(
           app.getPath('userData'),
           extensionChatServer.getCapability(),
         );
         if (appShutdown.isQuitting()) {
-          await clearBrowserExtensionAppServer(app.getPath('userData')).catch(() => {
-            console.warn(`[BrowserExtensionChat] ${JSON.stringify({ event: 'rendezvous-clear-failed', code: 'UNAVAILABLE' })}`);
+          await clearChromeExtensionAppServer(app.getPath('userData')).catch(() => {
+            console.warn(
+              `[ChromeExtensionChat] ${JSON.stringify({ event: 'rendezvous-clear-failed', code: 'UNAVAILABLE' })}`,
+            );
           });
           return false;
         }
         if (app.isPackaged) {
-          await registerBrowserExtensionNativeHost(
+          await registerChromeExtensionNativeHost(
             app.getPath('userData'),
             path.join(
               process.resourcesPath,
-              'browser-extension',
+              'chrome-extension',
               'native-host',
-              `${APP_NAME}-browser-extension-native-host.exe`,
+              `${APP_NAME}-chrome-extension-native-host.exe`,
             ),
           );
         }
-        console.info('[BrowserExtensionChat] WebSocket app-server is listening on loopback.');
+        console.info('[ChromeExtensionChat] WebSocket app-server is listening on loopback.');
         return true;
       } catch {
         await extensionChatServer?.stop().catch((): void => undefined);
-        if (browserExtensionChatServer === extensionChatServer) browserExtensionChatServer = null;
-        console.error(`[BrowserExtensionChat] ${JSON.stringify({ event: 'startup-failed', code: 'UNAVAILABLE' })}`);
+        if (chromeExtensionChatServer === extensionChatServer) chromeExtensionChatServer = null;
+        console.error(
+          `[ChromeExtensionChat] ${JSON.stringify({ event: 'startup-failed', code: 'UNAVAILABLE' })}`,
+        );
         return false;
       }
     };
@@ -2503,7 +2604,8 @@ if (agentBridgeArgv) {
       builtinModelCredential = await getBuiltinModelTokenExchange().refresh();
     } catch (error) {
       writeBuiltinModelAuthDiagnostic('warn', BuiltinModelAuthDiagnosticEvent.StartupFailed, {
-        errorCode: getBuiltinModelAuthErrorCode(error), willRetry: true,
+        errorCode: getBuiltinModelAuthErrorCode(error),
+        willRetry: true,
       });
     }
     if (appShutdown.isQuitting()) return;
@@ -2592,27 +2694,41 @@ if (agentBridgeArgv) {
       if (!result.success)
         throw new Error(`Historical assistant identities could not be prepared: ${result.error}`);
     }
-    initialization.setTaskStatus(AppInitializationTask.Configuration, startupSync?.success
-      ? AppInitializationTaskStatus.Complete : AppInitializationTaskStatus.Failed);
+    initialization.setTaskStatus(
+      AppInitializationTask.Configuration,
+      startupSync?.success
+        ? AppInitializationTaskStatus.Complete
+        : AppInitializationTaskStatus.Failed,
+    );
     initialization.advance(AppInitializationStep.Engine, 3);
-    startupHistoryAdmissionReady = await startupCoordinator.verifyNativeReady(activity => initialization.reportActivity(activity));
+    startupHistoryAdmissionReady = await startupCoordinator.verifyNativeReady(activity =>
+      initialization.reportActivity(activity),
+    );
     if (appShutdown.isQuitting()) return;
     const normalStartup = startupCoordinator.route === StartupRoute.Normal;
     const startStartupEngine = async (): Promise<void> => {
       if (appShutdown.isQuitting()) return;
       if (!startupSync?.success || !startupHistoryAdmissionReady) {
-        if (normalStartup) initialization.failEnginePreparation(
-          new Error(startupSync?.error || t('enginePreparationFailed')));
+        if (normalStartup)
+          initialization.failEnginePreparation(
+            new Error(startupSync?.error || t('enginePreparationFailed')),
+          );
         return;
       }
       initialization.reportActivity(AppInitializationActivity.EngineStart);
       const startEngine = initialization.runOptionalTask('start assistant engine', async () => {
         const status = await ensureOpenClawRunningForCowork();
         if (status.phase !== 'running') {
-          console.error('[OpenClaw] Startup engine unavailable; settings remain accessible:', status);
+          console.error(
+            '[OpenClaw] Startup engine unavailable; settings remain accessible:',
+            status,
+          );
           return;
         }
-        if (appShutdown.isQuitting() || initialization.getState().phase === AppInitializationPhase.Failed)
+        if (
+          appShutdown.isQuitting() ||
+          initialization.getState().phase === AppInitializationPhase.Failed
+        )
           return;
         startupExecutionGeneration = getOpenClawEngineManager().getGatewayProcessGeneration();
         getCronJobService().startPolling();
@@ -2627,14 +2743,20 @@ if (agentBridgeArgv) {
     const prepareStartupIntegrations = async (): Promise<void> => {
       if (appShutdown.isQuitting()) return;
       initialization.reportActivity(AppInitializationActivity.Integrations);
-      initialization.setTaskStatus(AppInitializationTask.Integrations, AppInitializationTaskStatus.Running);
-      let integrationsSucceeded = await startBrowserExtensionIngress();
+      initialization.setTaskStatus(
+        AppInitializationTask.Integrations,
+        AppInitializationTaskStatus.Running,
+      );
+      let integrationsSucceeded = await startChromeExtensionIngress();
       if (appShutdown.isQuitting()) return;
       try {
         getAgentCliIntegrationService().prepare();
       } catch (error) {
         integrationsSucceeded = false;
-        console.warn('[AgentCli] Launcher preparation failed:', error instanceof Error ? error.message : String(error));
+        console.warn(
+          '[AgentCli] Launcher preparation failed:',
+          error instanceof Error ? error.message : String(error),
+        );
       }
       await ensureAgentBridgeRunning().catch(error => {
         integrationsSucceeded = false;
@@ -2642,21 +2764,29 @@ if (agentBridgeArgv) {
         agentBridgeServer = null;
       });
       if (!appShutdown.isQuitting()) {
-        await getAppServerIntegrationService().start().catch(() => {
-          integrationsSucceeded = false;
-          console.error('[AppServer] Failed to start local WebSocket service.');
-        });
+        await getAppServerIntegrationService()
+          .start()
+          .catch(() => {
+            integrationsSucceeded = false;
+            console.error('[AppServer] Failed to start local WebSocket service.');
+          });
       }
       if (appShutdown.isQuitting()) {
-        await waitForAppServerShutdown(appServerIntegrationService?.stop().catch(() => {
-          console.error('[AppServer] Failed to stop local WebSocket service.');
-        }));
+        await waitForAppServerShutdown(
+          appServerIntegrationService?.stop().catch(() => {
+            console.error('[AppServer] Failed to stop local WebSocket service.');
+          }),
+        );
         await agentBridgeServer?.stop();
         agentBridgeServer = null;
         return;
       }
-      initialization.setTaskStatus(AppInitializationTask.Integrations, integrationsSucceeded
-        ? AppInitializationTaskStatus.Complete : AppInitializationTaskStatus.Failed);
+      initialization.setTaskStatus(
+        AppInitializationTask.Integrations,
+        integrationsSucceeded
+          ? AppInitializationTaskStatus.Complete
+          : AppInitializationTaskStatus.Failed,
+      );
     };
     startupIntegrationPreparation = prepareStartupIntegrations();
     // Keep one cleanup owner and observe failures even while the core shell and
@@ -2664,7 +2794,10 @@ if (agentBridgeArgv) {
     void startupIntegrationPreparation.catch(error => {
       console.error('[AppInitialization] Local integration preparation failed:', error);
       if (!appShutdown.isQuitting()) {
-        initialization.setTaskStatus(AppInitializationTask.Integrations, AppInitializationTaskStatus.Failed);
+        initialization.setTaskStatus(
+          AppInitializationTask.Integrations,
+          AppInitializationTaskStatus.Failed,
+        );
         if (!normalStartup) initialization.fail(error);
       }
     });
@@ -2696,8 +2829,11 @@ if (agentBridgeArgv) {
         },
         isIdle: () => {
           const runtime = getOpenClawRuntimeAdapter();
-          return Boolean(runtime?.getGatewayClient() && !runtime.hasActiveSessions() &&
-            powerMonitor.getSystemIdleTime() >= 60);
+          return Boolean(
+            runtime?.getGatewayClient() &&
+            !runtime.hasActiveSessions() &&
+            powerMonitor.getSystemIdleTime() >= 60,
+          );
         },
         getIdleStatus: () => {
           const runtime = getOpenClawRuntimeAdapter();
@@ -2708,13 +2844,20 @@ if (agentBridgeArgv) {
           };
         },
         collectMetadata: async signal => {
-          const usage = await collectUserActivityUsage(getOpenClawRuntimeAdapter()?.getGatewayClient() ?? null, { signal });
-          return usage ? { usage: { ...usage, timeZone: USER_ACTIVITY_TIME_ZONE, collectedAt: Date.now() } } : null;
+          const usage = await collectUserActivityUsage(
+            getOpenClawRuntimeAdapter()?.getGatewayClient() ?? null,
+            { signal },
+          );
+          return usage
+            ? { usage: { ...usage, timeZone: USER_ACTIVITY_TIME_ZONE, collectedAt: Date.now() } }
+            : null;
         },
       });
       userActivityService.start();
     } else {
-      logDisabledUserActivity(ACTIVITY_REPORTING_CONFIG.enabled ? 'provider-disabled' : 'reporting-disabled');
+      logDisabledUserActivity(
+        ACTIVITY_REPORTING_CONFIG.enabled ? 'provider-disabled' : 'reporting-disabled',
+      );
     }
 
     createTray(() => mainWindow);
@@ -2820,7 +2963,10 @@ if (agentBridgeArgv) {
   // 启动应用
   void initApp()
     .then(async () => {
-      if (!appShutdown.isQuitting() && initialization.getState().phase !== AppInitializationPhase.Failed) {
+      if (
+        !appShutdown.isQuitting() &&
+        initialization.getState().phase !== AppInitializationPhase.Failed
+      ) {
         if (startupEnginePreparation && initialization.getState().firstLaunch)
           completeEnginePreparation();
         startupCoordinator.complete();

@@ -23,7 +23,7 @@ export async function openMessageWebLink(url: string): Promise<void> {
     return;
   }
   try {
-    const result = await window.electron.browser.openInChrome(url);
+    const result = await window.electron.chrome.openUrl(url);
     if (result.success) return;
   } catch {
     // Report the same user-facing failure for a rejected IPC or a failed launch.

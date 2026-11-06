@@ -78,7 +78,7 @@ afterEach(cleanup);
 
 describe('CoworkSessionItem context menu session actions', () => {
   it.each([
-    { source: CoworkSessionSource.BrowserExtension },
+    { source: CoworkSessionSource.ChromeExtension },
     ...Object.values(ExternalSessionSource).map(origin => ({
       external: {
         origin,

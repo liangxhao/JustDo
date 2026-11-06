@@ -17,7 +17,7 @@ export interface SessionDateGroup<T extends SidebarSession = CoworkSessionSummar
 
 export interface SidebarSessionBuckets<T extends SidebarSession = CoworkSessionSummary> {
   cli: T[];
-  browserExtension: T[];
+  chromeExtension: T[];
   regular: T[];
 }
 
@@ -45,14 +45,14 @@ export const partitionSidebarSessions = <T extends SidebarSession>(
   sessions: T[],
 ): SidebarSessionBuckets<T> => {
   const cli: T[] = [];
-  const browserExtension: T[] = [];
+  const chromeExtension: T[] = [];
   const regular: T[] = [];
 
   for (const session of sessions) {
     if (session.external?.origin === ExternalSessionSource.Cli) {
       cli.push(session);
-    } else if (session.source === CoworkSessionSource.BrowserExtension) {
-      browserExtension.push(session);
+    } else if (session.source === CoworkSessionSource.ChromeExtension) {
+      chromeExtension.push(session);
     } else {
       regular.push(session);
     }
@@ -60,7 +60,7 @@ export const partitionSidebarSessions = <T extends SidebarSession>(
 
   return {
     cli: cli.sort(sortByRecentActivity),
-    browserExtension: browserExtension.sort(sortByRecentActivity),
+    chromeExtension: chromeExtension.sort(sortByRecentActivity),
     regular,
   };
 };

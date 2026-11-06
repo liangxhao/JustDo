@@ -2813,7 +2813,7 @@ test('allows a new run after a restart checkpoint is confirmed idle', async () =
   expect(beginSessionRun).toHaveBeenCalledWith(input);
 });
 
-test.each([undefined, CoworkSessionSource.BrowserExtension])('starts a separate recovery clock for an unrelated active root run (source=%s)', async source => {
+test.each([undefined, CoworkSessionSource.ChromeExtension])('starts a separate recovery clock for an unrelated active root run (source=%s)', async source => {
   const completedTiming = {
     id: 'timing-1',
     sessionId: 'session-1',

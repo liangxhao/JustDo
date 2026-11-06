@@ -717,7 +717,7 @@ embedding 服务实时健康。原生诊断经过脱敏后展示，操作建议�
 
 CLI `exec`、入站 ACP 和已实现的 app-server 子集共用 Main 原生准备/模型队列、执行预约及会话后端。Windows 控制台启动器只拥有 stdio，直接连接认证命名管道；POSIX 使用应用隔离桥。无需客户端专用开关或 task-token，`CODEX_HOME` 标记只用于身份，不能授权恢复。
 
-按连接实际能力，在准入前安装会话 MCP 租约和独占运行审批 owner，并固定原生 SID/incarnation。ACP 和启用客户端审批的 app-server 在 `agent` 调用中声明交互式 `webchat`（`deliver:false`）；普通 CLI 保持非交互审批。新协议使用 `source='cli'` 精确映射，旧来源仅作只读历史定位。Chrome 不使用这份外部映射，继续由 `source='browser-extension'` 的产品会话和专属 Controller 管理发送。
+按连接实际能力，在准入前安装会话 MCP 租约和独占运行审批 owner，并固定原生 SID/incarnation。ACP 和启用客户端审批的 app-server 在 `agent` 调用中声明交互式 `webchat`（`deliver:false`）；普通 CLI 保持非交互审批。新协议使用 `source='cli'` 精确映射，旧来源仅作只读历史定位。Chrome 不使用这份外部映射，继续由 `source='chrome-extension'` 的产品会话和专属 Controller 管理发送。
 
 ### 输入、模型与原生发送边界
 

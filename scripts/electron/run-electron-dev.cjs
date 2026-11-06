@@ -5,8 +5,8 @@ const {
 } = require('../../package.json');
 const { findFreePort } = require('./find-free-port.cjs');
 const {
-  prepareBrowserExtensionDevHost,
-} = require('../browser/prepare-browser-extension-dev-host.cjs');
+  prepareChromeExtensionDevHost,
+} = require('../chrome/prepare-chrome-extension-dev-host.cjs');
 const { prepareDevelopmentLauncher } = require('../external-agent/prepare-development-launcher.cjs');
 const { launchElectron } = require('./launch-electron.cjs');
 const { stopElectron } = require('./electron-shutdown.cjs');
@@ -20,7 +20,7 @@ const start = async () => {
   }
   const devServerPort = await findFreePort(port);
   const devServerUrl = `http://localhost:${devServerPort}`;
-  const nativeHost = prepareBrowserExtensionDevHost();
+  const nativeHost = prepareChromeExtensionDevHost();
   if (nativeHost) {
     console.log(`[Electron Dev] Registered browser native host: ${nativeHost.manifestPath}`);
     console.log(

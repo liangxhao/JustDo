@@ -317,7 +317,7 @@ Turn／Item 是请求内投影，不落库、不新增 Main 正文缓存。历�
 Chrome 与通用 app-server 共用上述历史读取、Turn／Item 投影及快照分页实现，
 但浏览器普通产品计时回执不具备外部执行账本的独立结算权威。缺少本进程持有并重新核验的
 精确原生整轮证据时，即使计时行记录 completed／ended_at，标准历史仍保留结果未知，
-不补写数据库回执。另供富侧栏使用的 `thread.browser.display` 只包含本地分组及显示项，
+不补写数据库回执。另供富侧栏使用的 `thread.chrome.display` 只包含本地分组及显示项，
 不包含合成的 completed 状态，不建立第二份 Main 正文缓存或持久执行账本。
 
 标准 app-server 图片在准入时校验真实字节，交由原生附件通道持久化。
@@ -386,10 +386,12 @@ cowork_sessions 保存 title、status、pinned、cwd、execution_mode、permissi
 Main 也按事件时间更新活动。该投影先通过 `sessions.describe` 核对同一原生会话，异步返回时
 再次检查连接世代、产品绑定及重置/删除边界；失败或过期的核验不更新时间，不创建运行回执。
 
-可空 `source` 列记录创建入口，当前显式值为 `browser-extension`。Chrome 扩展新建会话时随会话插入，
+可空 `source` 列记录创建入口，当前显式值为 `chrome-extension`。Chrome 扩展新建会话时随会话插入，
 完整会话和摘要读回此值，Renderer 据此生成专用来源分组；不在 `session_groups` 创建记录。
 此列由当前完整表定义声明；未显式记录来源的会话保持 NULL 和原列表归属，不读取原生正文来推断来源。
 继续会话、重命名、置顶和用户分组变更均不修改创建入口。
+
+读取只接受 NULL／缺省的桌面来源和当前声明的 Chrome 来源。其他非空或空字符串来源不降级为桌面会话：按 ID 读取返回不可用，目录、摘要及搜索统一过滤；按原生 key 命中此类既有映射时明确拒绝，避免原生采用流程据此重建普通会话。此边界不提供旧来源别名、不迁移或删除原行及执行回执，也不改变外部客户端另表保存的 origin。
 
 原生可见 worktree 子会话被发现后，产品在 `cowork_sessions` 中增加一条导航记录。`native_session_key` 唯一绑定原生会话，`native_parent_session_id` 保留产品父会话关系；`cwd` 是原生实际执行目录。两列和原生 key 唯一索引由当前完整 schema 声明。发现和绑定在一个 SQLite 事务中完成，重启后按原生 key 去重。产品不复制 transcript 或 worktree 快照；OpenClaw 仍是会话内容与检出目录的权威。父会话存在产品侧原生子会话时，不允许先删除父会话。
 
@@ -553,9 +555,9 @@ Renderer。例行结果 SQL 过滤与共享规则一致：完成失败／未知�
 
 ### 网页关联对话元数据
 
-浏览器领域通过现有 SQLite KV 的 `browser.web-launch.v1` 保存精确站点策略、文档租约与消费序号高水位、无正文 launch 回执、发送 owner/原生 ACK 绑定及结果消息引用/摘要。`prepare` 复用同一数据库连接的同步事务创建 `source: browser-extension`、`ask` 权限的新产品会话并消费序号；回滚不发布会话或 KV 通知，提交后才通知当前扩展连接。领域事务不调用会立即发出变更的通用 KV setter。
+浏览器领域通过现有 SQLite KV 的 `chrome.web-launch.v1` 保存精确站点策略、文档租约与消费序号高水位、无正文 launch 回执、发送 owner/原生 ACK 绑定及结果消息引用/摘要。`prepare` 复用同一数据库连接的同步事务创建 `source: chrome-extension`、`ask` 权限的新产品会话并消费序号；回滚不发布会话或 KV 通知，提交后才通知当前扩展连接。领域事务不调用会立即发出变更的通用 KV setter。
 
-不新增数据库、消息表或 transcript 缓存；prompt、页面上下文、最终正文、凭据和 URL/title 不进入此 KV。旧回执淘汰或用户放弃 unknown 观察后，文档高水位仍拒绝旧操作；容量不足拒绝新准入，不以 TTL 将未知执行结算或放行重发。Main 重启不重发持久请求，缺失精确原生证据的派发仍为 unknown。当前契约及验证限制见[网页入口](../plugins/browser-extensions/browser-assistant/website-launch.md)。
+不新增数据库、消息表或 transcript 缓存；prompt、页面上下文、最终正文、凭据和 URL/title 不进入此 KV。旧回执淘汰或用户放弃 unknown 观察后，文档高水位仍拒绝旧操作；容量不足拒绝新准入，不以 TTL 将未知执行结算或放行重发。Main 重启不重发持久请求，缺失精确原生证据的派发仍为 unknown。当前契约及验证限制见[网页入口](../plugins/chrome-extensions/chrome-assistant/website-launch.md)。
 
 ### Profile 共享和清理边界
 

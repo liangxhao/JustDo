@@ -104,6 +104,7 @@ import {
   BrowserRecordingChannel,
   type BrowserRecordingLease,
 } from '../shared/browser/browserRecording';
+import { ChromeIpc } from '../shared/chrome/chrome';
 import type { CoworkAttachmentPayload } from '../shared/cowork/attachments';
 import {
   type DiagnosticHistoryUpdate,
@@ -139,7 +140,10 @@ import {
 } from '../shared/cowork/sessionSearch';
 import { type CancelSessionStartInput, SessionStartIpc } from '../shared/cowork/sessionStart';
 import { type GenerateSessionTitleRequest, SessionTitleIpc } from '../shared/cowork/sessionTitle';
-import { SessionWorkspaceIpc, type SetSessionWorkspaceInput } from '../shared/cowork/sessionWorkspace';
+import {
+  SessionWorkspaceIpc,
+  type SetSessionWorkspaceInput,
+} from '../shared/cowork/sessionWorkspace';
 import { SlashCommandIpc } from '../shared/cowork/slashCommands';
 import {
   type CoworkSubagentAction,
@@ -355,10 +359,13 @@ contextBridge.exposeInMainWorld('electron', {
   },
   skillWorkshop: {
     list: (agentId: string) => ipcRenderer.invoke(SkillWorkshopIpc.List, agentId),
-    changes: (input: SkillWorkshopChangesInput) => ipcRenderer.invoke(SkillWorkshopIpc.Changes, input),
+    changes: (input: SkillWorkshopChangesInput) =>
+      ipcRenderer.invoke(SkillWorkshopIpc.Changes, input),
     read: (input: SkillWorkshopReadInput) => ipcRenderer.invoke(SkillWorkshopIpc.Read, input),
-    archive: (input: SkillWorkshopArchiveInput) => ipcRenderer.invoke(SkillWorkshopIpc.Archive, input),
-    restore: (input: SkillWorkshopRestoreInput) => ipcRenderer.invoke(SkillWorkshopIpc.Restore, input),
+    archive: (input: SkillWorkshopArchiveInput) =>
+      ipcRenderer.invoke(SkillWorkshopIpc.Archive, input),
+    restore: (input: SkillWorkshopRestoreInput) =>
+      ipcRenderer.invoke(SkillWorkshopIpc.Restore, input),
   },
   skills: {
     list: () => ipcRenderer.invoke('skills:list'),
@@ -374,7 +381,8 @@ contextBridge.exposeInMainWorld('electron', {
   },
   extensions: {
     list: () => ipcRenderer.invoke(ExtensionIpc.List),
-    dataInfo: (request: { extensionId: string }) => ipcRenderer.invoke(ExtensionIpc.DataInfo, request),
+    dataInfo: (request: { extensionId: string }) =>
+      ipcRenderer.invoke(ExtensionIpc.DataInfo, request),
     delete: (request: ExtensionDeleteRequest, context?: PluginOperationContext) =>
       ipcRenderer.invoke(ExtensionIpc.Delete, request, context),
     setEnabled: (request: ExtensionSetEnabledRequest, context?: PluginOperationContext) =>
@@ -440,9 +448,21 @@ contextBridge.exposeInMainWorld('electron', {
     checkCalendar: () => ipcRenderer.invoke('permissions:checkCalendar'),
     requestCalendar: () => ipcRenderer.invoke('permissions:requestCalendar'),
   },
+  chrome: {
+    openUrl: (url: string): Promise<BrowserActionResult> =>
+      ipcRenderer.invoke(ChromeIpc.OpenUrl, url),
+    openRemoteDebugging: (): Promise<BrowserActionResult> =>
+      ipcRenderer.invoke(ChromeIpc.OpenRemoteDebugging),
+    openExtensionManagement: (): Promise<BrowserActionResult> =>
+      ipcRenderer.invoke(ChromeIpc.OpenExtensionManagement),
+    revealExtension: (): Promise<BrowserActionResult> =>
+      ipcRenderer.invoke(ChromeIpc.RevealExtension),
+    copyExtensionPairing: (): Promise<BrowserActionResult> =>
+      ipcRenderer.invoke(ChromeIpc.CopyExtensionPairing),
+    testExtensionConnection: (): Promise<BrowserConnectionTestResult> =>
+      ipcRenderer.invoke(ChromeIpc.TestExtensionConnection),
+  },
   browser: {
-    openInChrome: (url: string): Promise<BrowserActionResult> =>
-      ipcRenderer.invoke(BrowserIpc.OpenInChrome, url),
     createLocalHtmlPreview: (
       filePath: string,
       workingDirectory?: string,
@@ -453,18 +473,8 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke(BrowserIpc.CanSetMode),
     setMode: (mode: BrowserMode): Promise<BrowserModeUpdateResult> =>
       ipcRenderer.invoke(BrowserIpc.SetMode, mode),
-    openRemoteDebugging: (): Promise<BrowserActionResult> =>
-      ipcRenderer.invoke(BrowserIpc.OpenRemoteDebugging),
     testConnection: (): Promise<BrowserConnectionTestResult> =>
       ipcRenderer.invoke(BrowserIpc.TestConnection),
-    openExtensionManagement: (): Promise<BrowserActionResult> =>
-      ipcRenderer.invoke(BrowserIpc.OpenExtensionManagement),
-    revealExtension: (): Promise<BrowserActionResult> =>
-      ipcRenderer.invoke(BrowserIpc.RevealExtension),
-    copyExtensionPairing: (): Promise<BrowserActionResult> =>
-      ipcRenderer.invoke(BrowserIpc.CopyExtensionPairing),
-    testExtensionConnection: (): Promise<BrowserConnectionTestResult> =>
-      ipcRenderer.invoke(BrowserIpc.TestExtensionConnection),
     onPanelOpenTab: (callback: (event: BrowserPanelOpenTabEvent) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, data: unknown) => {
         const normalized = normalizeBrowserPanelOpenTabEvent(data);
@@ -1247,16 +1257,19 @@ contextBridge.exposeInMainWorld('electron', {
       process.argv.includes(`${STARTUP_ROUTE_ARGUMENT}${route}`),
     ),
     entryStartedAt: (() => {
-      const fallback = Number(
-        process.argv
-          .find(argument => argument.startsWith(STARTUP_CLOCK_ARGUMENT))
-          ?.slice(STARTUP_CLOCK_ARGUMENT.length),
-      ) || undefined;
-      if (!process.argv.some(argument => argument.startsWith(STARTUP_ROUTE_ARGUMENT))) return fallback;
+      const fallback =
+        Number(
+          process.argv
+            .find(argument => argument.startsWith(STARTUP_CLOCK_ARGUMENT))
+            ?.slice(STARTUP_CLOCK_ARGUMENT.length),
+        ) || undefined;
+      if (!process.argv.some(argument => argument.startsWith(STARTUP_ROUTE_ARGUMENT)))
+        return fallback;
       try {
         const startedAt: unknown = ipcRenderer.sendSync(AppInitializationIpc.GetEntryClock);
         return typeof startedAt === 'number' && Number.isFinite(startedAt) && startedAt > 0
-          ? startedAt : fallback ?? Date.now();
+          ? startedAt
+          : (fallback ?? Date.now());
       } catch {
         return fallback ?? Date.now();
       }

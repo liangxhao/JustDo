@@ -493,7 +493,7 @@ MCP Apps 使用原生认证 WS 接口，不使用生命周期补丁。关闭视�
       旧异步请求不在清理后复活记录，清除记录不误删下载文件或其他 profile 数据。
 
 参考：[浏览器设置](../features/browser/browser-settings-design.md)、
-[扩展侧聊](../plugins/browser-extensions/browser-assistant/side-panel.md)、[app-server 协议](../app-server-api/README.md)、
+[扩展侧聊](../plugins/chrome-extensions/chrome-assistant/side-panel.md)、[app-server 协议](../app-server-api/README.md)、
 [人工介入](../features/browser/browser-intervention.md)、[操作录制](../features/browser/browser-operation-recording.md)。
 
 ## 11. 设置项、配置投影与认证切换
@@ -713,7 +713,7 @@ git diff --check
 | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 来源替换/预编译/裁剪 | `tests/scripts/{native-extension-replacement,precompile-openclaw-extensions,sync-openclaw-runtime-resources,prune-openclaw-runtime}.test.ts`                                                                                                                                       |
 | SDK 与本地 OpenAI    | `tests/openclaw/runtime/shared-sdk-modules.test.ts`、`tests/openclaw/plugins/{openai-native-composition,openai-intranet-config}.test.ts`                                                                                                                                           |
-| 流/历史/过程         | chat `agent-event-reducer*`、`history-reconciler`、`chat-history-protocol`、`chunked-message-history`、`process-summary-takeover`、`browser-extension-stream` 与 components streaming tests                                                                                        |
+| 流/历史/过程         | chat `agent-event-reducer*`、`history-reconciler`、`chat-history-protocol`、`chunked-message-history`、`process-summary-takeover`、`chrome-extension-stream` 与 components streaming tests                                                                                         |
 | 压缩/摘要            | chat `chat-controller.compaction*`、`chat-summary-resources`、`session-summary-resources`、`SessionSummaryPanel` / 资源列表 / `openSummaryResource`，当前补丁 `native-compaction-lifecycle`                                                                                        |
 | 配置/执行/身份       | Main adapter、wire validator、permissions、Goal/Plan、config sync/logout、worktree/sandbox 领域测试及当前版本补丁测试                                                                                                                                                              |
 | 技能发现/Code Mode   | `node scripts/test/verify-native-skill-state-runtime.mjs <runtime-directory>` 验证真实隔离 Gateway 的技能发现、读取权限与 JSON 跨轮/重启保存；`node scripts/test/verify-code-mode-runtime.mjs <runtime-directory>` 验证 QuickJS 资产及执行/等待/取消；开发 Node/随包 Node 分别运行 |

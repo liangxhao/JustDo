@@ -480,7 +480,7 @@ export function useCoworkBrowserPanels({
           url = previewUrl.href;
         }
         if (target === BrowserLinkTarget.Chrome) {
-          const opened = await window.electron.browser.openInChrome(url);
+          const opened = await window.electron.chrome.openUrl(url);
           if (!opened.success && requestIsCurrent()) {
             window.dispatchEvent(
               new CustomEvent('app:showToast', { detail: i18nService.t('browserLinkOpenFailed') }),

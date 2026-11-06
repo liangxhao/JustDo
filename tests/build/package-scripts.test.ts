@@ -123,7 +123,7 @@ test('builds App companions and prepares browser and speech runtimes before Elec
   ) as { scripts: Record<string, string> };
 
   expect(packageJson.scripts['preelectron:dev']).toBe(
-    'npm run plugins:app:build && node scripts/plugins/prepare-development-app-plugins.mjs && npm run browser-extension:prepare && npm run setup:local-tts',
+    'npm run plugins:app:build && node scripts/plugins/prepare-development-app-plugins.mjs && npm run chrome-extension:prepare && npm run setup:local-tts',
   );
 });
 
@@ -255,7 +255,7 @@ test('uses a target-aware and runtime-verified Electron-native rebuild', () => {
   expect(packageJson.scripts.postinstall).not.toContain('electron-builder install-app-deps');
   expect(packageJson.scripts['precompile:electron']).toBe('npm run rebuild:electron-native');
   expect(packageJson.scripts['prestart:electron']).toBe(
-    'npm run plugins:app:build && node scripts/plugins/prepare-development-app-plugins.mjs && npm run rebuild:electron-native && npm run browser-extension:prepare',
+    'npm run plugins:app:build && node scripts/plugins/prepare-development-app-plugins.mjs && npm run rebuild:electron-native && npm run chrome-extension:prepare',
   );
   expect(rebuildScript).toContain("'--platform'");
   expect(rebuildScript).toContain("'--arch'");

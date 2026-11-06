@@ -121,9 +121,9 @@ Gateway 的 Ed25519 连接身份通过既有 preload Store 读写 Main SQLite `k
 
 ### 扩展与外部客户端
 
-Chrome Side Panel 不取得 Gateway token。Native host 在开发版和安装版均只发现已运行的桌面进程，返回动态 app-server URL；实例未运行时提示手动启动，扩展不能启动或重启应用。Main 校验 capability、精确 Origin、path 和消息大小。初始化完成后只接受已实现的标准模型、线程、历史和轮次方法，以及浏览器模块明确注册的 `browser/*` 扩展方法，不提供通配 Gateway RPC。
+Chrome Side Panel 不取得 Gateway token。Native host 在开发版和安装版均只发现已运行的桌面进程，返回动态 app-server URL；实例未运行时提示手动启动，扩展不能启动或重启应用。Main 校验 capability、精确 Origin、path 和消息大小。初始化完成后只接受已实现的标准模型、线程、历史和轮次方法，以及浏览器模块明确注册的 `chrome/*` 扩展方法，不提供通配 Gateway RPC。
 
-自动配对确认 Gateway 已运行后调用锁定 CLI 的本地 Gateway 唤醒入口，仅向扩展后台返回 relay pairing；不经过聊天 Controller，不将凭据交给桌面 Renderer 或写入发现文件／日志。协议详见[Chrome 接口](../plugins/browser-extensions/browser-assistant/protocol/README.md)。
+自动配对确认 Gateway 已运行后调用锁定 CLI 的本地 Gateway 唤醒入口，仅向扩展后台返回 relay pairing；不经过聊天 Controller，不将凭据交给桌面 Renderer 或写入发现文件／日志。协议详见[Chrome 接口](../plugins/chrome-extensions/chrome-assistant/protocol/README.md)。
 
 Agent CLI launcher 通过当前用户管道提交白名单命令。Main 验证 token、frame、cwd、argv 与生命周期后，按 CLI、ACP 或 Codex app-server 协议进入同一会话与执行后端。只有 app-server 可传入可选 CODEX_HOME 标记目录；其他环境变量不转发。外部 CLI stdout 只返回约定可见结果，不透出运行凭据。它不复用 Chrome 的 URL capability。
 

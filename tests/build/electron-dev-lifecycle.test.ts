@@ -171,7 +171,7 @@ function startRunner() {
     child_process: { spawn: vi.fn(() => vite) }, path,
     '../../package.json': { devServer: { port: 43127 } },
     './find-free-port.cjs': { findFreePort: async () => 43127 },
-    '../browser/prepare-browser-extension-dev-host.cjs': { prepareBrowserExtensionDevHost: () => null },
+    '../browser/prepare-chrome-extension-dev-host.cjs': { prepareChromeExtensionDevHost: () => null },
     '../external-agent/prepare-development-launcher.cjs': { prepareDevelopmentLauncher: () => undefined },
     './launch-electron.cjs': { launchElectron },
     './electron-shutdown.cjs': { stopElectron }, 'wait-on': waitOn,

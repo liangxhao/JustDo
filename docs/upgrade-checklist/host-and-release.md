@@ -37,7 +37,7 @@
 
 - [ ] 普通 CLI、ACP、stdio app-server 及本地 WebSocket 只连接已有桌面实例，
       不另开产品数据库或 Gateway；安装版无外部 Node/首启下载依赖，中文/空格路径可用。
-- [ ] 共享 app-server 路由保留端点能力隔离：Chrome 仅访问 browser-extension 来源，
+- [ ] 共享 app-server 路由保留端点能力隔离：Chrome 仅访问 chrome-extension 来源，
       外部连接仅拥有其 external thread，客户端请求名称不能升级权限。
       公共 app-server 目录不定义或依赖浏览器代码；ACP session MCP 不因共享执行后端而开放给 app-server。
 - [ ] 支持双向 RPC 的 app-server 只呈现实际发送 owner 的原生命令／插件审批；ACK 前暂扣的审批
@@ -56,7 +56,7 @@
       组件测试或开发环境连接通过，不证明 exe 安装后的注册和路径正确。
 
 依据：[Agent CLI](../features/external-clients/agent-cli.md)、[共享 app-server](../features/external-clients/app-server.md)、
-[侧聊](../plugins/browser-extensions/browser-assistant/side-panel.md)。
+[侧聊](../plugins/chrome-extensions/chrome-assistant/side-panel.md)。
 
 ## 插件发布、技能与离线资产
 

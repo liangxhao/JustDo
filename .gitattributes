@@ -5,9 +5,9 @@
 # stable so Windows autocrlf settings cannot change generated runtime artifacts.
 scripts/patches/** text eol=lf
 
-# Browser Assistant includes a checksummed upstream baseline and local overlays.
-plugins/browser-extensions/browser-assistant/** text eol=lf
-plugins/browser-extensions/browser-assistant/**/*.png binary
+# Chrome Assistant includes a checksummed upstream baseline and local overlays.
+plugins/chrome-extensions/chrome-assistant/** text eol=lf
+plugins/chrome-extensions/chrome-assistant/**/*.png binary
 
 # Lit's generated template literals contain meaningful trailing whitespace.
-plugins/browser-extensions/browser-assistant/conversation-overlay/modules/sidepanel-rich-content.js whitespace=-blank-at-eol
+plugins/chrome-extensions/chrome-assistant/conversation-overlay/modules/sidepanel-rich-content.js whitespace=-blank-at-eol

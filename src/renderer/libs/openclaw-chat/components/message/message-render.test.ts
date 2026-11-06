@@ -94,12 +94,16 @@ describe('independent webpage presentation', () => {
 describe('shouldRenderGroupFooter', () => {
   test('keeps a pending status visible when ordinary footer metadata is hidden or absent', () => {
     const group = { ...createGroup('user'), timestamp: 0 };
-    const output = stringifyTemplate(renderMessageBlock(group, {
-      showFooter: false,
-      userMessageStatus: {
-        state: 'cancelled', label: 'Cancelled', description: 'Input cancelled before submission',
-      },
-    }));
+    const output = stringifyTemplate(
+      renderMessageBlock(group, {
+        showFooter: false,
+        userMessageStatus: {
+          state: 'cancelled',
+          label: 'Cancelled',
+          description: 'Input cancelled before submission',
+        },
+      }),
+    );
     expect(output).toContain('chat-group__footer');
     expect(output).toContain('data-pending-input-state=cancelled');
     expect(output).toContain('>Cancelled</span>');
@@ -1021,7 +1025,7 @@ describe('renderMessageBlock', () => {
       const openPath = vi.fn();
       const dispatchEvent = vi.fn();
       vi.stubGlobal('window', {
-        electron: { shell: { openExternal, openPath }, browser: { openInChrome } },
+        electron: { shell: { openExternal, openPath }, chrome: { openUrl: openInChrome } },
         dispatchEvent,
         setTimeout,
       });

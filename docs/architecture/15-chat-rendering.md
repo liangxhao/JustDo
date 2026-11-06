@@ -510,7 +510,7 @@ Chrome 侧栏的浏览器构建适配器复用同一 transcript reducer 与 `run
 过程 DOM、独立 Thinking/Tool 披露、阅读锚点和中英文案，不反向导入应用源码。
 
 未知提交保留原 clientTurnId，Stop 绑定确切运行；只有原生结算证据可退役活动，
-连接失败或停止 ACK 不触发显示完成。详见[扩展侧聊](../plugins/browser-extensions/browser-assistant/side-panel.md)。
+连接失败或停止 ACK 不触发显示完成。详见[扩展侧聊](../plugins/chrome-extensions/chrome-assistant/side-panel.md)。
 
 标准 app-server Item 与富侧栏显示使用不同的消费通道，不能把同一原生内容追加两遍。文本和图片按原生实际接收的归一化输入呈现；真实图片从原生 content 或媒体引用恢复，不插入替代图片的合成提示词。Main 的请求内投影不成为正文缓存，详见[外部客户端执行](05-agent-engine.md#输入模型与原生发送边界)。
 
@@ -1003,16 +1003,16 @@ contains 判定替代文本归属。Shadow DOM 优先使用 getComposedRanges，
 `chat-transcript-state.ts` 状态契约及 `chat-timeline-trace.ts` 诊断入口；各分组继续由
 现有 ChatController 持有生命周期，不新增状态所有者或消息缓存。
 
-| 分组                 | 职责与主要入口                                                                                                                                                             |
-| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `turn/`              | 原生事件归约、正文作用域、压缩与运行状态：agent-event-reducer、assistant-text-scope、compaction-item、run-activity、failed-run-message                                     |
-| `history/`           | 历史身份、分块与窗口、乐观尾部和消息同步：transcript-identity、chunked-message-history、history-window、history-reconciler、optimistic-history-tail、session-message-apply |
-| `timeline/`          | 实时与历史时间线投影、过程折叠、展示缓存、页脚、minimap 及摘要资源                                                                                                         |
-| `tools/`             | 工具消息适配、生命周期与展示、文件差异及子任务跳转                                                                                                                         |
-| `input/`             | 草稿恢复、待发送用户消息匹配及提示标记的显示投影                                                                                                                           |
-| `browser-extension/` | 浏览器扩展流的归约与显示适配，构建入口直接指向该分组                                                                                                                       |
+| 分组                | 职责与主要入口                                                                                                                                                             |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `turn/`             | 原生事件归约、正文作用域、压缩与运行状态：agent-event-reducer、assistant-text-scope、compaction-item、run-activity、failed-run-message                                     |
+| `history/`          | 历史身份、分块与窗口、乐观尾部和消息同步：transcript-identity、chunked-message-history、history-window、history-reconciler、optimistic-history-tail、session-message-apply |
+| `timeline/`         | 实时与历史时间线投影、过程折叠、展示缓存、页脚、minimap 及摘要资源                                                                                                         |
+| `tools/`            | 工具消息适配、生命周期与展示、文件差异及子任务跳转                                                                                                                         |
+| `input/`            | 草稿恢复、待发送用户消息匹配及提示标记的显示投影                                                                                                                           |
+| `chrome-extension/` | 浏览器扩展流的归约与显示适配，构建入口直接指向该分组                                                                                                                       |
 
-扩展的 `browser-extension-timeline` 将经过认证的历史和实时显示项适配为同类时间线行，
+扩展的 `chrome-extension-timeline` 将经过认证的历史和实时显示项适配为同类时间线行，
 复用 `foldCompletedProcessRows`，再保留原始侧栏条目及顺序返回插件。其可选
 `keepVisibleKeys` 只增加显示边界，不伪造原生停止原因、run state 或执行回执；
 它不切分受保护的末尾轮次。Main 透传的最小 `display` 白名单保留错误、压缩、
@@ -1021,7 +1021,7 @@ contains 判定替代文本归属。Shadow DOM 优先使用 getComposedRanges，
 宿主构建适配复用桌面的
 压缩展示器、样式和进度回执文案；插件不 import 应用 `src`。桌面与 Main 共用
 `shared/openclaw/runFailureDisplay` 的原生失败识别及公共文本选择，私有错误报告不进入侧栏。
-批量／单项折叠、活动保护及仍存在的物理历史作用域差异见[扩展侧栏](../plugins/browser-extensions/browser-assistant/side-panel.md)。
+批量／单项折叠、活动保护及仍存在的物理历史作用域差异见[扩展侧栏](../plugins/chrome-extensions/chrome-assistant/side-panel.md)。
 
 `libs/openclaw-chat/gateway/` 根层保留 `chat-controller.ts`、`client.ts` 及对应入口测试，
 `chat-controller-support.ts` 继续提供控制器共享类型和辅助。领域模块按下表组织，

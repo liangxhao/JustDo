@@ -123,7 +123,7 @@ presentation lease 均为未来目标，不能据此推断已完成。
 
 G1/G2 失败的备选顺序：隐藏 BrowserWindow 对照→在显式受限能力下继续研究 Electron→独立受管 Chromium headless 另案。最后一项会增加安装包、profile、可视接管和升级成本，不属于本方案暗含 fallback。纯 offscreen 与零渲染都不能当作已解决替代方案。
 
-实施完成后，把当前合约分别合入 [浏览器设置](../features/browser/browser-settings-design.md)、[扩展侧聊](../plugins/browser-extensions/browser-assistant/side-panel.md)、[人工介入](../features/browser/browser-intervention.md)、[分离侧栏](../features/workspace/detached-workspace.md)、[执行引擎](../architecture/05-agent-engine.md)、[定时任务](../architecture/08-scheduled-tasks.md)、[进程模型](../architecture/03-process-model.md)、[插件系统](../plugins/management/plugin-system.md) 和 [数据存储](../architecture/10-data-storage.md)。确认没有未实施要求后删除本计划；若仍有阻塞，只保留确切剩余需求。
+实施完成后，把当前合约分别合入 [浏览器设置](../features/browser/browser-settings-design.md)、[扩展侧聊](../plugins/chrome-extensions/chrome-assistant/side-panel.md)、[人工介入](../features/browser/browser-intervention.md)、[分离侧栏](../features/workspace/detached-workspace.md)、[执行引擎](../architecture/05-agent-engine.md)、[定时任务](../architecture/08-scheduled-tasks.md)、[进程模型](../architecture/03-process-model.md)、[插件系统](../plugins/management/plugin-system.md) 和 [数据存储](../architecture/10-data-storage.md)。确认没有未实施要求后删除本计划；若仍有阻塞，只保留确切剩余需求。
 
 ## 离线交付、日志与资源
 

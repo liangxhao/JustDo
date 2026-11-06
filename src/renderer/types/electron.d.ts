@@ -31,8 +31,10 @@ type SessionRunUnknownInput = import('../../shared/cowork/sessionRun').SessionRu
 type BrowserRecordingLease = import('../../shared/browser/browserRecording').BrowserRecordingLease;
 type CoworkAttachmentPayload = import('../../shared/cowork/attachments').CoworkAttachmentPayload;
 type BeginSessionRunInput = import('../../shared/cowork/sessionRun').BeginSessionRunInput;
-type SetSessionWorkspaceInput = import('../../shared/cowork/sessionWorkspace').SetSessionWorkspaceInput;
-type SetSessionWorkspaceResult = import('../../shared/cowork/sessionWorkspace').SetSessionWorkspaceResult;
+type SetSessionWorkspaceInput =
+  import('../../shared/cowork/sessionWorkspace').SetSessionWorkspaceInput;
+type SetSessionWorkspaceResult =
+  import('../../shared/cowork/sessionWorkspace').SetSessionWorkspaceResult;
 type SessionRunBeginErrorCode = import('../../shared/cowork/sessionRun').SessionRunBeginErrorCode;
 type SessionRunTiming = import('../../shared/cowork/sessionRun').SessionRunTiming;
 type CoworkSessionSource = import('../../shared/cowork/sessionSource').CoworkSessionSource;
@@ -476,7 +478,9 @@ interface IElectronAPI {
     getConnectionConfig: () => Promise<
       import('../../shared/integrations/appServerIntegration').AppServerConnectionConfig
     >;
-    setPort: (port: number) => Promise<
+    setPort: (
+      port: number,
+    ) => Promise<
       import('../../shared/integrations/appServerIntegration').AppServerIntegrationStatus
     >;
     regenerateToken: () => Promise<
@@ -488,8 +492,15 @@ interface IElectronAPI {
       import('../../shared/integrations/agentCliIntegration').AgentCliIntegrationStatus
     >;
   };
+  chrome: {
+    openUrl: (url: string) => Promise<BrowserActionResult>;
+    openRemoteDebugging: () => Promise<BrowserActionResult>;
+    openExtensionManagement: () => Promise<BrowserActionResult>;
+    revealExtension: () => Promise<BrowserActionResult>;
+    copyExtensionPairing: () => Promise<BrowserActionResult>;
+    testExtensionConnection: () => Promise<BrowserConnectionTestResult>;
+  };
   browser: {
-    openInChrome: (url: string) => Promise<BrowserActionResult>;
     createLocalHtmlPreview: (
       filePath: string,
       workingDirectory?: string,
@@ -497,12 +508,7 @@ interface IElectronAPI {
     getStatus: () => Promise<BrowserStatusResult>;
     canSetMode: () => Promise<BrowserModeSwitchAvailabilityResult>;
     setMode: (mode: BrowserMode) => Promise<BrowserModeUpdateResult>;
-    openRemoteDebugging: () => Promise<BrowserActionResult>;
     testConnection: () => Promise<BrowserConnectionTestResult>;
-    openExtensionManagement: () => Promise<BrowserActionResult>;
-    revealExtension: () => Promise<BrowserActionResult>;
-    copyExtensionPairing: () => Promise<BrowserActionResult>;
-    testExtensionConnection: () => Promise<BrowserConnectionTestResult>;
     onPanelOpenTab: (callback: (event: BrowserPanelOpenTabEvent) => void) => () => void;
     onPanelHttpAuthRequest: (
       callback: (request: BrowserPanelHttpAuthRequest) => void,
@@ -628,8 +634,9 @@ interface IElectronAPI {
     ) => Promise<PluginOperationFeedback & { success: boolean; skills?: Skill[]; error?: string }>;
   };
   extensions: {
-    dataInfo: (request: import('../../shared/plugins/extensions').ExtensionDataInfoRequest) =>
-      Promise<import('../../shared/plugins/extensions').ExtensionDataInfoResult>;
+    dataInfo: (
+      request: import('../../shared/plugins/extensions').ExtensionDataInfoRequest,
+    ) => Promise<import('../../shared/plugins/extensions').ExtensionDataInfoResult>;
     list: () => Promise<{
       success: boolean;
       extensions: InstalledOpenClawExtension[];
@@ -882,10 +889,14 @@ interface IElectronAPI {
       ) => Promise<import('../../shared/openclaw/assistantMedia').OpenClawAssistantMediaResult>;
       prepareAssistantMediaPlayback: (
         request: import('../../shared/openclaw/assistantMedia').OpenClawAssistantMediaPlaybackRequest,
-      ) => Promise<import('../../shared/openclaw/assistantMedia').OpenClawAssistantMediaPlaybackResult>;
+      ) => Promise<
+        import('../../shared/openclaw/assistantMedia').OpenClawAssistantMediaPlaybackResult
+      >;
       releaseAssistantMediaPlayback: (
         request: import('../../shared/openclaw/assistantMedia').OpenClawAssistantMediaReleaseRequest,
-      ) => Promise<import('../../shared/openclaw/assistantMedia').OpenClawAssistantMediaReleaseResult>;
+      ) => Promise<
+        import('../../shared/openclaw/assistantMedia').OpenClawAssistantMediaReleaseResult
+      >;
       setPort: (port: number) => Promise<{
         success: boolean;
         error?: string;

@@ -2,7 +2,7 @@ import type Database from 'better-sqlite3';
 
 import type { HistorySessionBinding } from '../../shared/app/startup/history';
 import type { SessionDirectoryEntry } from '../../shared/cowork/sessionDirectory';
-import { CoworkSessionSource } from '../../shared/cowork/sessionSource';
+import { CoworkSessionSource, isSupportedSessionSource } from '../../shared/cowork/sessionSource';
 import {
   type ExternalSessionMetadata,
   ExternalSessionSource,
@@ -100,6 +100,7 @@ const readProjection = (
 };
 
 const isVisible = (row: SessionProjectionRow): boolean =>
+  isSupportedSessionSource(row.source) &&
   ![row.native_session_key, row.history_session_key, row.external_session_key].some(
     isCustodySessionKey,
   );
@@ -112,7 +113,7 @@ const mapDirectoryEntry = (row: SessionProjectionRow): SessionDirectoryEntry => 
     pinned: Boolean(row.pinned),
     agentId: row.agent_id || 'main',
     groupId: row.group_id,
-    ...(row.source === CoworkSessionSource.BrowserExtension ? { source: row.source } : {}),
+    ...(row.source === CoworkSessionSource.ChromeExtension ? { source: row.source } : {}),
     ...(nativeSessionKey ? { nativeSessionKey } : {}),
     ...(row.external_source && row.external_status
       ? {

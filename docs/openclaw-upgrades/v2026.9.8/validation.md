@@ -46,6 +46,6 @@ Worktree 与内网专项未完成验收继续见[现行说明与验证边界](..
 
 - [Gateway 启动](../../../tests/openclaw/runtime/gateway-smoke.cjs)与[聊天流](../../../tests/openclaw/runtime/chat-stream-smoke.cjs)。
 - [待处理输入](../../../tests/openclaw/runtime/pending-input-smoke.cjs)、[任务/记忆/模型](../../../tests/openclaw/runtime/tasks-memory-models-smoke.cjs)与[生命周期](../../../tests/openclaw/runtime/gateway-lifecycle-smoke.cjs)。
-- [决策凭据](../../../scripts/test/verify-decision-secret-runtime.cjs)、[Chromium 扩展离线检查](../../../tests/browser-extension/chromium-offline-smoke.cjs)与[隔离 Electron 窗口](../../../tests/openclaw/runtime/electron-isolated-ui-smoke.cjs)。
+- [决策凭据](../../../scripts/test/verify-decision-secret-runtime.cjs)、[Chromium 扩展离线检查](../../../tests/chrome-extension/chromium-offline-smoke.cjs)与[隔离 Electron 窗口](../../../tests/openclaw/runtime/electron-isolated-ui-smoke.cjs)。
 
 具体参数和设备前置条件以脚本与当前开发指南为准。记录受测版本、平台、实际完成范围与剩余限制；不再追加重复的逐轮报告。

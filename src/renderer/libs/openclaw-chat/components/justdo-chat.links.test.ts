@@ -129,7 +129,7 @@ test.each([BrowserLinkTarget.Embedded, BrowserLinkTarget.Chrome])(
     const openInChrome = vi.fn().mockResolvedValue({ success: true });
     Object.defineProperty(window, 'electron', {
       configurable: true,
-      value: { browser: { openInChrome } },
+      value: { chrome: { openUrl: openInChrome } },
     });
     const dispatch = vi.spyOn(window, 'dispatchEvent');
     const frame = document.createElement('iframe');
@@ -178,7 +178,7 @@ test('shows a failed Chrome launch without opening a built-in tab', async () => 
   const openInChrome = vi.fn().mockResolvedValue({ success: false });
   Object.defineProperty(window, 'electron', {
     configurable: true,
-    value: { browser: { openInChrome } },
+    value: { chrome: { openUrl: openInChrome } },
   });
   const dispatch = vi.spyOn(window, 'dispatchEvent');
   await openMessageWebLink('https://example.com');
@@ -198,7 +198,7 @@ test.each([BrowserLinkTarget.Embedded, BrowserLinkTarget.Chrome])(
     const openInChrome = vi.fn().mockResolvedValue({ success: true });
     Object.defineProperty(window, 'electron', {
       configurable: true,
-      value: { browser: { openInChrome } },
+      value: { chrome: { openUrl: openInChrome } },
     });
     const dispatch = vi.spyOn(window, 'dispatchEvent');
     const chat = document.createElement('justdo-chat') as JustDoChatElement;

@@ -1,6 +1,6 @@
 import { expect, it, vi } from 'vitest';
 
-import { prepareWorkflowComposerSubmission } from '../../browser/composer';
+import { prepareWorkflowComposerSubmission } from '../../chrome/composer';
 
 function fixture() {
   return {

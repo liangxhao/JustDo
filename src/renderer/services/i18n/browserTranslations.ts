@@ -87,37 +87,6 @@ export const browserTranslations = {
       'Chrome 授权握手超时。请关闭 Remote Debugging 后重新开启，确认没有其他 MCP 正在连接，然后立即重试。Chrome 150/151 存在相关已知问题。',
     browserGatewayUnavailable: 'AI 引擎尚未连接，请稍后重试。',
     browserConnectionFailed: 'Chrome 连接测试失败',
-    browserExtensionSectionTitle: 'Chrome 扩展',
-    browserExtensionBundledVersion: '扩展版本',
-    browserExtensionVersionHint:
-      '当前扩展包的版本。已安装版本可在 Chrome 扩展管理页 → 详情 → 版本中查看。',
-    browserExtensionVersionUnavailable: '暂不可用',
-    browserExtensionUpdateHint:
-      '本软件升级后，如果连不上，请重装该扩展。Chrome 扩展管理页可核对已安装扩展的版本号。',
-    browserExtensionSectionDescription:
-      '支持侧栏对话、授权本软件操作 Chrome。',
-    browserExtensionStepInstallTitle: '安装或更新 Chrome 扩展',
-    browserExtensionStepInstallDescription:
-      '首次安装：\n（1）点击“打开扩展管理页”，将复制的地址粘贴到 Chrome 地址栏并打开，再开启“开发者模式”。\n（2）点击“打开扩展文件夹”，将其中的“chrome-extension”文件夹拖入 Chrome 扩展管理页。\n（3）点击 Chrome 右上角的 {extensionsButton} 找到此扩展；可点击图钉将它固定到工具栏。\n\n核对版本与更新：\n在扩展管理页找到此扩展，点击“详情”查看“版本”，与本页的扩展版本核对。升级后若无法连接，先重新加载扩展；仍无法连接时，移除旧扩展，再按上述步骤从当前扩展文件夹安装。',
-    browserExtensionOpenPage: '打开扩展管理页',
-    browserExtensionRevealFolder: '打开扩展文件夹',
-    browserExtensionPageCopied: '管理页地址已复制，请粘贴到 Chrome 地址栏并回车：',
-    browserExtensionOpenPageFailed: '无法打开 Chrome 扩展管理页',
-    browserExtensionRevealFailed: '无法找到或打开内置浏览器扩展',
-    browserExtensionStepPairTitle: '自动配对',
-    browserExtensionStepPairDescription:
-      '保持桌面应用与 Chrome 运行，扩展会自动配对。\n在扩展 Tab Access 中选择共享范围。',
-    browserExtensionManualPairTitle: '手动配对（备用）',
-    browserExtensionManualPairDescription:
-      '自动配对不可用时，点击“复制配对信息”。\n在扩展 Settings → Manual connection 中粘贴，再点击 Pair manually。',
-    browserExtensionToolbarExtensions: '“扩展程序”',
-    browserExtensionCopyPairing: '复制配对信息',
-    browserExtensionPairingCopied: '已复制，请粘贴到扩展中',
-    browserExtensionPairingFailed: '无法生成扩展配对信息',
-    browserExtensionTestConnection: '测试扩展连接',
-    browserExtensionRelayUnavailable:
-      '本地连接服务未响应。请重启应用；仍无法连接时，请检查安全软件是否阻止本地连接。',
-    browserExtensionNotConnected: 'Chrome 扩展尚未连接，请确认扩展已启用或重新配对。',
     browserPanelTitle: '浏览器',
     browserPanelAgentControlling: 'Agent 正在操作浏览器',
     browserPanelClose: '关闭浏览器面板',
@@ -433,38 +402,6 @@ export const browserTranslations = {
       'Chrome authorization timed out. Turn Remote Debugging off and on again, make sure no other MCP client is connecting, then retry immediately. Chrome 150/151 has a related known issue.',
     browserGatewayUnavailable: 'The AI engine is not connected. Try again shortly.',
     browserConnectionFailed: 'Chrome connection test failed',
-    browserExtensionSectionTitle: 'Chrome extension',
-    browserExtensionBundledVersion: 'Extension version',
-    browserExtensionVersionHint:
-      'Version of the provided extension package. Check the installed version in Chrome’s extensions page → Details → Version.',
-    browserExtensionVersionUnavailable: 'Unavailable',
-    browserExtensionUpdateHint:
-      'If it cannot connect after an app upgrade, reinstall the extension. Check the installed extension’s version on Chrome’s extensions page.',
-    browserExtensionSectionDescription:
-      'Chat in the side panel and authorize this app to control Chrome.',
-    browserExtensionStepInstallTitle: 'Install or update the Chrome extension',
-    browserExtensionStepInstallDescription:
-      'First-time installation:\n(1) Select Open extensions page, paste the copied address into Chrome’s address bar and open it, then enable Developer mode.\n(2) Select Open extension folder, then drag the chrome-extension folder onto Chrome’s extension management page.\n(3) Select {extensionsButton} at the top right of Chrome to find this extension; use the pin icon to keep it in the toolbar.\n\nChecking the version and updating:\nFind this extension on the extensions page and select Details → Version to compare it with the extension version shown here. If it cannot connect after an app upgrade, reload it first. If it still cannot connect, remove it, then follow the installation steps above using the current extension folder.',
-    browserExtensionOpenPage: 'Open extensions page',
-    browserExtensionRevealFolder: 'Open extension folder',
-    browserExtensionPageCopied:
-      'Management address copied. Paste it into the Chrome address bar and press Enter:',
-    browserExtensionOpenPageFailed: 'Unable to open Chrome extension management',
-    browserExtensionRevealFailed: 'Unable to find or open the bundled browser extension',
-    browserExtensionStepPairTitle: 'Automatic pairing',
-    browserExtensionStepPairDescription:
-      'Keep the desktop app and Chrome running for automatic pairing.\nChoose which tabs to share under Tab Access in extension settings.',
-    browserExtensionManualPairTitle: 'Manual pairing (fallback)',
-    browserExtensionManualPairDescription:
-      'If automatic pairing is unavailable, select Copy pairing information.\nPaste it under Settings → Manual connection in the extension, then select Pair manually.',
-    browserExtensionToolbarExtensions: '“Extensions”',
-    browserExtensionCopyPairing: 'Copy pairing information',
-    browserExtensionPairingCopied: 'Copied; paste it into the extension',
-    browserExtensionPairingFailed: 'Unable to generate extension pairing information',
-    browserExtensionTestConnection: 'Test extension connection',
-    browserExtensionRelayUnavailable:
-      'The local connection service is not responding. Restart the app; if it still cannot connect, check whether security software blocks local connections.',
-    browserExtensionNotConnected: 'The Chrome extension is not connected. Enable it or pair again.',
     browserPanelTitle: 'Browser',
     browserPanelAgentControlling: 'Agent is controlling the browser',
     browserPanelClose: 'Close browser panel',

@@ -163,7 +163,7 @@ test('projects external origins and historical identities and hides holding sess
   insertSession('holding', 2);
   insertSession('other-agent', 1);
   db.prepare('UPDATE cowork_sessions SET source = ? WHERE id = ?').run(
-    'browser-extension',
+    'chrome-extension',
     'chrome',
   );
   db.prepare('UPDATE cowork_sessions SET agent_id = ? WHERE id = ?').run(
@@ -190,7 +190,7 @@ test('projects external origins and historical identities and hides holding sess
     readOnly: true,
     sessionKey: 'agent:main:cli:one',
   });
-  expect(directory[1]).toMatchObject({ source: 'browser-extension' });
+  expect(directory[1]).toMatchObject({ source: 'chrome-extension' });
   expect(directory[2]).toMatchObject({ nativeSessionKey: 'agent:main:historical' });
   expect(summaries).toEqual([
     expect.objectContaining({
@@ -210,6 +210,45 @@ test('preserves manual group metadata when a full conversation is opened', () =>
   insertSession('grouped');
   db.prepare('UPDATE cowork_sessions SET group_id = ? WHERE id = ?').run('manual', 'grouped');
   expect(store.getSession('grouped')).toMatchObject({ groupId: 'manual' });
+});
+
+test('keeps unsupported session sources out of desktop detail and navigation reads without changing rows', () => {
+  const sources = [null, 'chrome-extension', 'retired-client', 'unknown-origin', ''];
+  const update = db.prepare(
+    'UPDATE cowork_sessions SET source = ?, native_session_key = ? WHERE id = ?',
+  );
+  sources.forEach((source, index) => {
+    const id = `source-${index}`;
+    insertSession(id, index);
+    update.run(source, `agent:main:source-${index}`, id);
+  });
+
+  expect(store.getSession('source-0')).not.toHaveProperty('source');
+  expect(store.getSession('source-1')).toMatchObject({ source: 'chrome-extension' });
+  for (let index = 2; index < sources.length; index += 1) {
+    expect(store.getSession(`source-${index}`)).toBeNull();
+    expect(() => store.getSessionByNativeKey(`agent:main:source-${index}`)).toThrow(
+      'Unsupported session source.',
+    );
+  }
+  expect(() =>
+    store.adoptNativeSession(
+      'agent:main:source-2',
+      store.getSession('source-0')!,
+      'adopted',
+      '/tmp',
+    ),
+  ).toThrow('Unsupported session source.');
+  const ids = ['source-1', 'source-0'];
+  expect(store.listSessionDirectory().map(entry => entry.id)).toEqual(ids);
+  expect(store.listSessions().map(entry => entry.id)).toEqual(ids);
+  expect(store.listSessionSearchSummaries().map(entry => entry.id)).toEqual(ids);
+  expect(
+    store.readSessionSummaries(sources.map((_, index) => `source-${index}`)).map(entry => entry.id),
+  ).toEqual(ids);
+  expect(db.prepare('SELECT source FROM cowork_sessions ORDER BY created_at').all()).toEqual(
+    sources.map(source => ({ source })),
+  );
 });
 
 test('sessions do not expose a local transcript cache', () => {
@@ -279,9 +318,17 @@ test('persists fork provenance, follows a live source title, and keeps a snapsho
 
 test('finds an unsettled receipt even when the clock puts it before an older completed run', () => {
   const session = store.createSession('Workspace', '/tmp');
-  const completed = store.beginSessionRun({ sessionId: session.id, clientTurnId: 'completed-input', startedAt: 200 });
+  const completed = store.beginSessionRun({
+    sessionId: session.id,
+    clientTurnId: 'completed-input',
+    startedAt: 200,
+  });
   store.finishSessionRun(completed.id, 'completed', 300);
-  const active = store.beginSessionRun({ sessionId: session.id, clientTurnId: 'active-input', startedAt: 100 });
+  const active = store.beginSessionRun({
+    sessionId: session.id,
+    clientTurnId: 'active-input',
+    startedAt: 100,
+  });
   expect(store.getLatestSessionRun(session.id)?.id).toBe(completed.id);
   expect(store.getActiveSessionRun(session.id)?.id).toBe(active.id);
   store.finishSessionRun(active.id, 'failed', 400);

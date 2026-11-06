@@ -3,7 +3,7 @@
 后续开发新模块时，从这里查阅需要衔接的现有接口。每份说明应写清调用方、触发时机、
 调用顺序、运行进程、失败行为和验证方式，避免遗漏已有功能的状态更新。
 
-第三方业务网页调用 Chrome 扩展，从[网页 SDK 接入指南](../plugins/browser-extensions/browser-assistant/website-sdk.md)开始：完成站点授权、部署本地 SDK、绑定真实按钮，再按请求句柄处理状态与最终结果。扩展和桌面的内部协议见[扩展内部接口](../plugins/browser-extensions/browser-assistant/protocol/README.md)。
+第三方业务网页调用 Chrome 扩展，从[网页 SDK 接入指南](../plugins/chrome-extensions/chrome-assistant/website-sdk.md)开始：完成站点授权、部署本地 SDK、绑定真实按钮，再按请求句柄处理状态与最终结果。扩展和桌面的内部协议见[扩展内部接口](../plugins/chrome-extensions/chrome-assistant/protocol/README.md)。
 
 **让本应用调用另一个 Agent（出站委派）**：从[自定义外部 Agent 接入指南](external-agent-integration-guide.md)
 开始：先选择原生 ACP 命令或 adapter，再完成产品登记、认证、运行依赖和发布验收。
@@ -20,16 +20,16 @@
 模型生命周期与请求头接口。Main 的 `LoginService`、`AuthApi` 和凭据原子提交已实现，
 真实认证提供方 SDK 仍须接入现有 adapter；不要另写一套账号提交流程。
 
-| 接入场景               | 需要接入的接口                                                             | 接入要求                                                           | 详细说明                                                                              |
-| ---------------------- | -------------------------------------------------------------------------- | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------- |
-| 登录 / 退出登录        | `refreshAfterLogin()` / `refreshAfterLogout()`                             | Main 完成登录凭据写入 / 清理后 await；内部处理内置模型与请求头缓存 | [登录与模型生命周期](login-model-lifecycle-api.md)                                    |
-| 登录模块与 Cookie 续期 | `LoginService.updateCredentials()` / `updateOutboundHeaderUserInfoCache()` | SDK 续期先捕获账号租约；可信文件提交后再刷新请求头缓存             | [请求头值刷新](outbound-header-user-info-refresh-api.md)                              |
-| 自定义外部 Agent       | ACP 协议与 ACPX 运行层                                                     | 选择 CLI/adapter、登记目录、适配认证与权限、校验交付产物           | [自定义外部 Agent 接入](external-agent-integration-guide.md)                          |
-| 外部客户端调用桌面助手 | stdio／本机 WebSocket app-server                                           | 独立连接凭据、初始化、线程／执行生命周期、服务端审批与输入能力校验 | [app-server API](../app-server-api/README.md)                                         |
-| 插件市场 SDK           | `PluginMarketplaceProvider` / `createPluginMarketplaceService`             | 注入单一市场，映射目录、下载、更新候选与原生安装身份；不包含 Hook  | [插件市场接入](../plugins/marketplace/integration.md)                                 |
-| 应用插件开发           | `@app-plugin/sdk` / `@app-plugin/build` / `@runtime-services/sdk`          | 通过公开包开发、构建和安装完整插件；按实际能力与权限准入           | [插件 SDK](../plugins/sdk/README.md)                                                  |
-| 第三方业务网页调用扩展 | `window.browserAssistant.bind()`                                           | 精确站点授权、真实点击、独立输入、按请求处理状态与结果分享         | [Chrome 扩展网页接入](../plugins/browser-extensions/browser-assistant/website-sdk.md) |
-| Extension 请求头声明   | `outbound-header-policy.json`                                              | 声明 URL 与请求头名称，实际凭据由本机配置提供                      | [请求头配置与示例](outbound-headers/README.md)                                        |
+| 接入场景               | 需要接入的接口                                                             | 接入要求                                                           | 详细说明                                                                            |
+| ---------------------- | -------------------------------------------------------------------------- | ------------------------------------------------------------------ | ----------------------------------------------------------------------------------- |
+| 登录 / 退出登录        | `refreshAfterLogin()` / `refreshAfterLogout()`                             | Main 完成登录凭据写入 / 清理后 await；内部处理内置模型与请求头缓存 | [登录与模型生命周期](login-model-lifecycle-api.md)                                  |
+| 登录模块与 Cookie 续期 | `LoginService.updateCredentials()` / `updateOutboundHeaderUserInfoCache()` | SDK 续期先捕获账号租约；可信文件提交后再刷新请求头缓存             | [请求头值刷新](outbound-header-user-info-refresh-api.md)                            |
+| 自定义外部 Agent       | ACP 协议与 ACPX 运行层                                                     | 选择 CLI/adapter、登记目录、适配认证与权限、校验交付产物           | [自定义外部 Agent 接入](external-agent-integration-guide.md)                        |
+| 外部客户端调用桌面助手 | stdio／本机 WebSocket app-server                                           | 独立连接凭据、初始化、线程／执行生命周期、服务端审批与输入能力校验 | [app-server API](../app-server-api/README.md)                                       |
+| 插件市场 SDK           | `PluginMarketplaceProvider` / `createPluginMarketplaceService`             | 注入单一市场，映射目录、下载、更新候选与原生安装身份；不包含 Hook  | [插件市场接入](../plugins/marketplace/integration.md)                               |
+| 应用插件开发           | `@app-plugin/sdk` / `@app-plugin/build` / `@runtime-services/sdk`          | 通过公开包开发、构建和安装完整插件；按实际能力与权限准入           | [插件 SDK](../plugins/sdk/README.md)                                                |
+| 第三方业务网页调用扩展 | `window.chromeAssistant.bind()`                                            | 精确站点授权、真实点击、独立输入、按请求处理状态与结果分享         | [Chrome 扩展网页接入](../plugins/chrome-extensions/chrome-assistant/website-sdk.md) |
+| Extension 请求头声明   | `outbound-header-policy.json`                                              | 声明 URL 与请求头名称，实际凭据由本机配置提供                      | [请求头配置与示例](outbound-headers/README.md)                                      |
 
 本索引记录已确认的接入要求，不代表所有模块接口的完整清单。新增接入项时，在本目录增加
 对应说明，并更新上表。接口实现或调用时机变化时，同步维护说明。

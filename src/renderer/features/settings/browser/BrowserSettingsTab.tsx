@@ -78,9 +78,9 @@ const isTransientExtensionTestFailure = (result: BrowserConnectionTestResult): b
 export const extensionConnectionErrorMessage = (result: BrowserConnectionTestResult): string => {
   const key =
     result.errorCode === 'gateway-unavailable'
-      ? 'browserExtensionRelayUnavailable'
+      ? 'chromeExtensionRelayUnavailable'
       : result.errorCode === 'extension-not-connected'
-        ? 'browserExtensionNotConnected'
+        ? 'chromeExtensionNotConnected'
         : result.errorCode === 'permission-timeout'
           ? 'browserPermissionTimeout'
           : 'browserConnectionFailed';
@@ -135,13 +135,13 @@ const SetupStep: React.FC<StepProps> = ({
 const EXTENSIONS_BUTTON_PLACEHOLDER = '{extensionsButton}';
 
 const ExtensionInstallDescription: React.FC = () => {
-  const description = i18nService.t('browserExtensionStepInstallDescription');
+  const description = i18nService.t('chromeExtensionStepInstallDescription');
   const placeholderIndex = description.indexOf(EXTENSIONS_BUTTON_PLACEHOLDER);
   if (placeholderIndex < 0) return description;
 
   const before = description.slice(0, placeholderIndex);
   const after = description.slice(placeholderIndex + EXTENSIONS_BUTTON_PLACEHOLDER.length);
-  const label = i18nService.t('browserExtensionToolbarExtensions');
+  const label = i18nService.t('chromeExtensionToolbarExtensions');
   return (
     <>
       {before}
@@ -461,7 +461,7 @@ const BrowserSettingsTab: React.FC<BrowserSettingsTabProps> = ({
     setError(null);
     setUserConnectionTestError(null);
     try {
-      const result = await window.electron.browser.openRemoteDebugging();
+      const result = await window.electron.chrome.openRemoteDebugging();
       if (!result.success) throw new Error(i18nService.t('browserOpenSetupFailed'));
       setRemoteDebuggingUrlCopied(true);
     } catch {
@@ -500,11 +500,11 @@ const BrowserSettingsTab: React.FC<BrowserSettingsTabProps> = ({
     setBusyAction('extension-page');
     setError(null);
     try {
-      const result = await window.electron.browser.openExtensionManagement();
-      if (!result.success) throw new Error(i18nService.t('browserExtensionOpenPageFailed'));
+      const result = await window.electron.chrome.openExtensionManagement();
+      if (!result.success) throw new Error(i18nService.t('chromeExtensionOpenPageFailed'));
       setExtensionPageUrlCopied(true);
     } catch {
-      setError(i18nService.t('browserExtensionOpenPageFailed'));
+      setError(i18nService.t('chromeExtensionOpenPageFailed'));
     } finally {
       setBusyAction(null);
     }
@@ -514,10 +514,10 @@ const BrowserSettingsTab: React.FC<BrowserSettingsTabProps> = ({
     setBusyAction('extension-folder');
     setError(null);
     try {
-      const result = await window.electron.browser.revealExtension();
-      if (!result.success) throw new Error(i18nService.t('browserExtensionRevealFailed'));
+      const result = await window.electron.chrome.revealExtension();
+      if (!result.success) throw new Error(i18nService.t('chromeExtensionRevealFailed'));
     } catch {
-      setError(i18nService.t('browserExtensionRevealFailed'));
+      setError(i18nService.t('chromeExtensionRevealFailed'));
     } finally {
       setBusyAction(null);
     }
@@ -527,11 +527,11 @@ const BrowserSettingsTab: React.FC<BrowserSettingsTabProps> = ({
     setBusyAction('pair');
     setError(null);
     try {
-      const result = await window.electron.browser.copyExtensionPairing();
-      if (!result.success) throw new Error(i18nService.t('browserExtensionPairingFailed'));
+      const result = await window.electron.chrome.copyExtensionPairing();
+      if (!result.success) throw new Error(i18nService.t('chromeExtensionPairingFailed'));
       setExtensionPairingCopied(true);
     } catch {
-      setError(i18nService.t('browserExtensionPairingFailed'));
+      setError(i18nService.t('chromeExtensionPairingFailed'));
     } finally {
       setBusyAction(null);
     }
@@ -553,7 +553,7 @@ const BrowserSettingsTab: React.FC<BrowserSettingsTabProps> = ({
         setExtensionProbeInFlight(true);
         let result: BrowserConnectionTestResult;
         try {
-          result = await window.electron.browser.testExtensionConnection();
+          result = await window.electron.chrome.testExtensionConnection();
         } finally {
           if (requestId === extensionTestRequestIdRef.current) {
             setExtensionProbeInFlight(false);
@@ -573,7 +573,7 @@ const BrowserSettingsTab: React.FC<BrowserSettingsTabProps> = ({
       }
     } catch {
       if (requestId !== extensionTestRequestIdRef.current) return;
-      setExtensionConnectionTestError(i18nService.t('browserExtensionRelayUnavailable'));
+      setExtensionConnectionTestError(i18nService.t('chromeExtensionRelayUnavailable'));
     } finally {
       if (requestId === extensionTestRequestIdRef.current) {
         setExtensionTestKind(null);
@@ -633,24 +633,24 @@ const BrowserSettingsTab: React.FC<BrowserSettingsTabProps> = ({
       ) : null}
 
       <section
-        aria-labelledby="browser-extension-title"
+        aria-labelledby="chrome-extension-title"
         className="overflow-hidden rounded-xl border border-border bg-surface"
       >
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border bg-surface-raised px-4 py-3">
           <div className="flex flex-wrap items-center gap-2">
             <h3
-              id="browser-extension-title"
+              id="chrome-extension-title"
               className="flex items-center gap-2 text-sm font-semibold text-foreground"
             >
               <PuzzlePieceIcon className="h-4 w-4 text-secondary" aria-hidden="true" />
-              {i18nService.t('browserExtensionSectionTitle')}
+              {i18nService.t('chromeExtensionSectionTitle')}
             </h3>
             <span
-              title={i18nService.t('browserExtensionVersionHint')}
+              title={i18nService.t('chromeExtensionVersionHint')}
               className="rounded-md border border-border bg-surface px-2 py-0.5 text-[11px] font-medium text-secondary"
             >
-              {i18nService.t('browserExtensionBundledVersion')}{' '}
-              {bundledExtensionVersion ?? i18nService.t('browserExtensionVersionUnavailable')}
+              {i18nService.t('chromeExtensionBundledVersion')}{' '}
+              {bundledExtensionVersion ?? i18nService.t('chromeExtensionVersionUnavailable')}
             </span>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -661,7 +661,7 @@ const BrowserSettingsTab: React.FC<BrowserSettingsTabProps> = ({
               className={actionButtonClassName}
             >
               <ArrowTopRightOnSquareIcon className="h-3.5 w-3.5" />
-              {i18nService.t('browserExtensionOpenPage')}
+              {i18nService.t('chromeExtensionOpenPage')}
             </button>
             <button
               type="button"
@@ -670,16 +670,16 @@ const BrowserSettingsTab: React.FC<BrowserSettingsTabProps> = ({
               className={actionButtonClassName}
             >
               <FolderOpenIcon className="h-3.5 w-3.5" />
-              {i18nService.t('browserExtensionRevealFolder')}
+              {i18nService.t('chromeExtensionRevealFolder')}
             </button>
           </div>
         </div>
         <div className="px-4 py-3">
           <p className="text-xs leading-5 text-secondary">
-            {i18nService.t('browserExtensionSectionDescription')}
+            {i18nService.t('chromeExtensionSectionDescription')}
           </p>
           <p className="mt-2 text-xs leading-5 text-secondary">
-            {i18nService.t('browserExtensionUpdateHint')}
+            {i18nService.t('chromeExtensionUpdateHint')}
           </p>
           <details className="group/install mt-2 text-xs text-secondary">
             <summary className="flex w-fit cursor-pointer list-none items-center gap-1.5 rounded py-1 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/25 [&::-webkit-details-marker]:hidden">
@@ -687,7 +687,7 @@ const BrowserSettingsTab: React.FC<BrowserSettingsTabProps> = ({
                 className="h-3.5 w-3.5 -rotate-90 transition-transform group-open/install:rotate-0"
                 aria-hidden="true"
               />
-              {i18nService.t('browserExtensionStepInstallTitle')}
+              {i18nService.t('chromeExtensionStepInstallTitle')}
             </summary>
             <p className="mt-2 whitespace-pre-line pl-5 text-xs leading-5">
               <ExtensionInstallDescription />
@@ -695,7 +695,7 @@ const BrowserSettingsTab: React.FC<BrowserSettingsTabProps> = ({
           </details>
           {extensionPageUrlCopied ? (
             <p className="mt-2 text-xs leading-5 text-secondary">
-              {i18nService.t('browserExtensionPageCopied')}{' '}
+              {i18nService.t('chromeExtensionPageCopied')}{' '}
               <code className="select-all rounded bg-surface-raised px-1.5 py-0.5">
                 chrome://extensions
               </code>
@@ -974,10 +974,10 @@ const BrowserSettingsTab: React.FC<BrowserSettingsTabProps> = ({
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div className="min-w-0">
                   <h4 className="text-[13px] font-semibold text-foreground">
-                    {i18nService.t('browserExtensionStepPairTitle')}
+                    {i18nService.t('chromeExtensionStepPairTitle')}
                   </h4>
                   <p className="mt-1 whitespace-pre-line text-xs leading-5 text-secondary">
-                    {i18nService.t('browserExtensionStepPairDescription')}
+                    {i18nService.t('chromeExtensionStepPairDescription')}
                   </p>
                 </div>
                 <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
@@ -1001,7 +1001,7 @@ const BrowserSettingsTab: React.FC<BrowserSettingsTabProps> = ({
                     <ArrowPathIcon
                       className={'h-3.5 w-3.5 ' + (extensionTestKind ? 'animate-spin' : '')}
                     />
-                    {i18nService.t('browserExtensionTestConnection')}
+                    {i18nService.t('chromeExtensionTestConnection')}
                   </button>
                 </div>
               </div>
@@ -1020,11 +1020,11 @@ const BrowserSettingsTab: React.FC<BrowserSettingsTabProps> = ({
                     className="h-3.5 w-3.5 -rotate-90 transition-transform group-open/manual:rotate-0"
                     aria-hidden="true"
                   />
-                  {i18nService.t('browserExtensionManualPairTitle')}
+                  {i18nService.t('chromeExtensionManualPairTitle')}
                 </summary>
                 <div className="mt-2 flex flex-col gap-3 pl-5 sm:flex-row sm:items-center sm:justify-between">
                   <p className="whitespace-pre-line text-xs leading-5 text-secondary">
-                    {i18nService.t('browserExtensionManualPairDescription')}
+                    {i18nService.t('chromeExtensionManualPairDescription')}
                   </p>
                   <div className="flex shrink-0 flex-wrap items-center gap-2">
                     <button
@@ -1034,12 +1034,12 @@ const BrowserSettingsTab: React.FC<BrowserSettingsTabProps> = ({
                       className={actionButtonClassName}
                     >
                       <ClipboardDocumentIcon className="h-3.5 w-3.5" />
-                      {i18nService.t('browserExtensionCopyPairing')}
+                      {i18nService.t('chromeExtensionCopyPairing')}
                     </button>
                     {extensionPairingCopied ? (
                       <span className="inline-flex items-center gap-1.5 text-xs text-primary">
                         <CheckCircleIcon className="h-4 w-4" aria-hidden="true" />
-                        {i18nService.t('browserExtensionPairingCopied')}
+                        {i18nService.t('chromeExtensionPairingCopied')}
                       </span>
                     ) : null}
                   </div>

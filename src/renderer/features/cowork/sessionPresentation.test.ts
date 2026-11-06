@@ -112,7 +112,7 @@ describe('sidebar source grouping', () => {
 
     expect(partitionSidebarSessions([olderExternal, local, newerExternal])).toEqual({
       cli: [newerExternal, olderExternal],
-      browserExtension: [],
+      chromeExtension: [],
       regular: [local],
     });
     expect(olderExternal.external).toMatchObject({ origin: 'cli', readOnly: true });
@@ -121,10 +121,10 @@ describe('sidebar source grouping', () => {
 
   it('keeps extension sessions out of recent and user groups regardless of title or pin', () => {
     const local = { ...summary('local', 4), title: 'Chrome extension sessions' };
-    const older = { ...summary('browser-old', 1), source: CoworkSessionSource.BrowserExtension };
+    const older = { ...summary('browser-old', 1), source: CoworkSessionSource.ChromeExtension };
     const newer = {
       ...summary('browser-new', 2, true),
-      source: CoworkSessionSource.BrowserExtension,
+      source: CoworkSessionSource.ChromeExtension,
       groupId: 'user-group',
     };
     const sameActivity = { ...older, id: 'browser-tie', createdAt: 3 };
@@ -132,7 +132,7 @@ describe('sidebar source grouping', () => {
 
     expect(partitionSidebarSessions(input)).toEqual({
       cli: [],
-      browserExtension: [newer, sameActivity, older],
+      chromeExtension: [newer, sameActivity, older],
       regular: [local],
     });
     expect(input).toEqual([older, local, sameActivity, newer]);

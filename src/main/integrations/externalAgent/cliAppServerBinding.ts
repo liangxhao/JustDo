@@ -346,7 +346,7 @@ export class CliAppServerBinding implements AppServerBinding {
     if (!existing && this.states.size + this.opening >= MAX_LOADED_THREADS)
       invalidParams(`This connection can load at most ${MAX_LOADED_THREADS} threads.`);
     rejectOverrides(params, [
-      'browser',
+      'chrome',
       'serviceTier',
       'approvalPolicy',
       'sandbox',
@@ -428,7 +428,7 @@ export class CliAppServerBinding implements AppServerBinding {
     if (metadata.status === ExternalSessionStatus.Running || metadata.executionState === ExternalExecutionState.Unknown)
       throw new ExternalAgentBusyError('This thread has an active or unconfirmed turn.');
     rejectOverrides(params, [
-      'browser',
+      'chrome',
       'effort',
       'serviceTier',
       'cwd',
