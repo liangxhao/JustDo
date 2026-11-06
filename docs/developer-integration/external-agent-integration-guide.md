@@ -452,12 +452,12 @@ ACPX 封装与当前锁定的 OpenClaw 源码基线对齐，上游版本及本�
 - `src/main/ipc/cowork/config.test.ts`
 - `src/renderer/features/settings/integrations/ExternalAgentsSettingsSection.test.tsx`
 - `tests/openclaw/runtime/acpx-plugin-contract.test.ts`
-- `tests/openclaw/runtime/acpx-command-tokens.test.ts`
-- `tests/openclaw/runtime/acpx-dynamic-mcp.test.ts`
-- `tests/openclaw/runtime/acpx-process-reaper.test.ts`
-- `tests/openclaw/acpx/adapter-wrapper.test.ts`
-- `tests/scripts/sync-openclaw-runtime-resources.test.ts`
-- `tests/scripts/electron-builder-hooks-acpx.test.ts`
+- `plugins/extensions/acpx/tests/acpx-command-tokens.test.ts`
+- `plugins/extensions/acpx/tests/acpx-dynamic-mcp.test.ts`
+- `plugins/extensions/acpx/tests/acpx-process-reaper.test.ts`
+- `plugins/extensions/acpx/tests/adapter-wrapper.test.ts`
+- `tests/openclaw/runtime/sync-openclaw-runtime-resources.test.ts`
+- `tests/packaging/electron-builder-hooks-acpx.test.ts`
 
 ## 11. 本地验证和发布验收
 

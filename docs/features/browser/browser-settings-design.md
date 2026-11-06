@@ -152,7 +152,7 @@ Main 将普通会话的 canonical key 映射到产品会话时，先查询显式
 
 核对同一原生运行的精确成功 executionSettled 终态、后续 settled release、cron.runs 成功记录、自有页面回收和两个进程正常退出，不调用 cron.run 冒充定时触发。测试关闭隔离目录的可选 Node 编译缓存，避免其退出时序列化拖延，不改变任务或工具授权。
 
-两种入口及边界见[隔离验证说明](../../../tests/browser-background-electron/README.md)。真实定时验证使用已校验完整性的冻结原生产物，报告明确 `strictCurrentSourceProof:false`：它不验证按当前完整源码重新组装的安装包。公司实际模型、业务站点/SSO、锁屏/睡眠和 macOS/Linux 尚未验收。
+两种入口及边界见[隔离验证说明](../../../tests/browser/background/README.md)。真实定时验证使用已校验完整性的冻结原生产物，报告明确 `strictCurrentSourceProof:false`：它不验证按当前完整源码重新组装的安装包。公司实际模型、业务站点/SSO、锁屏/睡眠和 macOS/Linux 尚未验收。
 
 模型重试另有 `scripts/test/browser/verify-browser-retry.cjs --runtime-dir <runtime>` 入口，使用选定运行时的随包 Node。冻结 Gateway、当前浏览器插件与真实 Main 事件桥连接本地合成模型，验证 open 成功后一次 HTTP 503 触发原生重试，随后同一原生运行的 status 重新准入并成功返回。旧代码对照稳定返回缺少执行授权，修复后通过；旧效果撤销和精确成功终态分别核验。该入口只模拟 Main 的网页执行结果，不启动 Electron 或访问公司服务，不代表完整安装包、真实页面或 SSO 验收，详见上述隔离验证说明。
 

@@ -105,7 +105,7 @@ async function main() {
   const stderr = fs.createWriteStream(path.join(runRoot, 'stderr.log'));
   const child = spawn(
     electron,
-    [path.join(root, 'tests/browser-background-electron/main.cjs'), output, runRoot, runtimeRoot],
+    [path.join(root, 'tests/browser/background/main.cjs'), output, runRoot, runtimeRoot],
     {
       cwd: root,
       env,

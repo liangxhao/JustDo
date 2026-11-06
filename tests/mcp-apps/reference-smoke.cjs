@@ -84,7 +84,7 @@ if (!process.versions.electron) {
       '</script>',
   );
   fs.copyFileSync(
-    path.join(root, 'tests/electron/workspace-window/preload.cjs'),
+    path.join(root, 'tests/workspace-window/preload.cjs'),
     path.join(output, 'preload.cjs'),
   );
   require('postcss')([require('tailwindcss')({ config: path.join(root, 'tailwind.config.js') })])

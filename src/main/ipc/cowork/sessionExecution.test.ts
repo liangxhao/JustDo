@@ -5,7 +5,7 @@ import os from 'os';
 import path from 'path';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
-import { appendBehaviorPluginPrompt, behaviorSessionParticipants, type BehaviorSubmissionParticipant } from '../../../../tests/plugin-host/mainBehaviorParticipants';
+import { appendBehaviorPluginPrompt, behaviorSessionParticipants, type BehaviorSubmissionParticipant } from '../../../../tests/plugins/host/mainBehaviorParticipants';
 import { SessionStartIpc } from '../../../shared/cowork/sessionStart';
 import type { CoworkSession, CoworkStore } from '../../data/coworkStore';
 import type { CoworkEngineRouter } from '../../engine';

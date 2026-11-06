@@ -1,6 +1,6 @@
 import { beforeEach, expect, test, vi } from 'vitest';
 
-import { behaviorSessionParticipants, type BehaviorSubmissionParticipant } from '../../../../tests/plugin-host/mainBehaviorParticipants';
+import { behaviorSessionParticipants, type BehaviorSubmissionParticipant } from '../../../../tests/plugins/host/mainBehaviorParticipants';
 import { SessionRunBeginErrorCode } from '../../../shared/cowork/sessionRun';
 import type { CoworkStore } from '../../data/coworkStore';
 import type { CoworkEngineRouter } from '../../engine';
@@ -47,6 +47,7 @@ function fixture(
     get gatewayClientGeneration() { return state.generation; },
     targetedSessionStatusChecks: new Map(), unknownSessionRuns: unknownRuns,
     disconnectedSessionIds: new Set(), disconnectedRecoveryPromises: new Map(),
+    reconcileDisconnectedTurn: vi.fn(async () => {}),
     compactionInFlightSessionIds: new Set(), isSessionActive: () => state.active,
     goalContinuationCoordinator: { getSnapshot: () => undefined },
     // An unrelated publication can invalidate a full roster during pagination.
@@ -188,14 +189,19 @@ test.each(['absent', 'unbound-absent', 'foreign', 'error', 'target-changed', 'an
   },
 );
 
-test.each(['unknown', 'disconnected', 'local-active'])('retains existing %s custody before a native read', async kind => {
+test.each(['unknown', 'disconnected', 'recovery-pending', 'local-active'])('retains existing %s custody before a native read', async kind => {
   const f = fixture();
   const sessionId = f.native.key.split(':').at(-1)!;
   if (kind === 'unknown') f.unknownRuns.set(sessionId, {});
   if (kind === 'disconnected') f.context.disconnectedSessionIds.add(sessionId);
+  if (kind === 'recovery-pending') f.context.disconnectedRecoveryPromises.set(sessionId, Promise.resolve());
   if (kind === 'local-active') f.state.active = true;
   await expect(f.send()).resolves.toMatchObject({ success: false,
     errorCode: kind === 'local-active' ? SessionRunBeginErrorCode.RuntimeActive : SessionRunBeginErrorCode.RuntimeUnknown });
   expect(f.request).not.toHaveBeenCalled();
+  expect(f.context.reconcileDisconnectedTurn).not.toHaveBeenCalled();
   expect(f.beginSessionRun).not.toHaveBeenCalled();
+  if (kind === 'unknown') expect(f.unknownRuns.has(sessionId)).toBe(true);
+  if (kind === 'disconnected') expect(f.context.disconnectedSessionIds.has(sessionId)).toBe(true);
+  if (kind === 'recovery-pending') expect(f.context.disconnectedRecoveryPromises.has(sessionId)).toBe(true);
 });

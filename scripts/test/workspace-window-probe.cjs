@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const { spawn } = require('node:child_process');
 const { build } = require('esbuild');
 const root = path.resolve(__dirname, '../..');
-const fixture = path.join(root, 'tests/electron/workspace-window');
+const fixture = path.join(root, 'tests/workspace-window');
 const artifacts = path.join(root, '.agent-tasks/browser/workspace-window');
 fs.mkdirSync(artifacts, { recursive: true });
 const output = fs.mkdtempSync(path.join(artifacts, 'integration-'));

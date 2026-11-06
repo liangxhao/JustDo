@@ -1577,7 +1577,7 @@ export const registerCoworkSessionHandlers = ({
               forceRefresh: options?.forceRefresh === true,
               ...(getCoworkStore().getSession?.(sessionId)?.external
                 ? { fullScan: options?.fullScan === true }
-                : { targeted: true }),
+                : { targeted: true, reconcileDisconnected: true }),
             }),
           )),
         };

@@ -161,7 +161,7 @@ RPC 的 `mcp.app.view` 只证明真实视图和会话，不独立证明 serverNa
 
 包内 `tests/canvas-state.test.ts`、`tests/editing.test.ts`、`tests/current-canvas.test.ts`、`tests/update-result.test.ts` 覆盖授权、幂等、冲突与恢复选择。`tests/app.test.ts` 覆盖重复快照标记稳定、XML／代次变化和结果重载后的标记失效；编辑测试还覆盖旧标记零派发拒绝、重新读取本轮快照后生成新候选及精确 ACK。
 
-宿主集成测试应补充以下真实边界；执行入口由集成仓库提供，本包不依赖其文件布局：
+宿主集成测试应补充以下真实边界；包内显式原生探针的宿主前置条件与命令见[分层验证入口](offline-editor.md#分层验证入口)，其余真实 UI 入口由集成仓库提供：
 
 - 联合真实会话适配与插件 RPC，验证本地请求已取消但后台继续准备、普通／首发取消、旧绑定失效和切换后的迟到结果。
 - 使用冻结 Gateway、隔离状态及合成模型，验证同一画布在模型 A→B→A 下读取新快照、原地更新、精确 ACK、真实原生成功结果和整轮终态；暂停后仍可准备，原插件服务资源 URL 持续可读。合成 ACK 不能代替实际 iframe 验证。

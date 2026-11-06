@@ -25,8 +25,7 @@ export default defineConfig({
   test: {
     include: [
       'plugins/extensions/acpx/**/*.test.ts',
-      'tests/openclaw/acpx/**/*.test.ts',
-      'tests/openclaw/runtime/acpx-*.test.ts',
+      'tests/openclaw/runtime/acpx-plugin-contract.test.ts',
     ],
     environment: 'node',
     maxWorkers: 1,

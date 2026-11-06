@@ -259,6 +259,8 @@ describe('current conversation runtime activity', () => {
     if (kind === 'recovery') f.context.disconnectedRecoveryPromises.set(productId, Promise.resolve());
     await expect(f.read()).resolves.toEqual(unknown);
     expect(f.request).not.toHaveBeenCalled();
+    expect(f.context.reconcileDisconnectedTurn).not.toHaveBeenCalled();
+    expect(f.context.ensureGatewayClientReady).not.toHaveBeenCalled();
   });
 
   it('reconciles a disconnected run before observing current activity without settling it from idle', async () => {
@@ -268,7 +270,9 @@ describe('current conversation runtime activity', () => {
       f.context.disconnectedSessionIds.delete(productId);
     });
 
-    await expect(f.read()).resolves.toEqual(idle);
+    await expect(getSessionRuntimeStatus.call(f.context, productId, {
+      targeted: true, includeSubagents: true, reconcileDisconnected: true,
+    })).resolves.toEqual(idle);
 
     expect(f.context.reconcileDisconnectedTurn).toHaveBeenCalledExactlyOnceWith(productId);
     expect(f.request).toHaveBeenCalledExactlyOnceWith('sessions.describe', { key, agentId: 'main' });
@@ -279,7 +283,9 @@ describe('current conversation runtime activity', () => {
     f.context.disconnectedSessionIds.add(productId);
     (f.context.unknownSessionRuns as Map<string, unknown>).set(productId, { runId: 'unconfirmed-run' });
 
-    await expect(f.read()).resolves.toEqual(unknown);
+    await expect(getSessionRuntimeStatus.call(f.context, productId, {
+      targeted: true, includeSubagents: true, reconcileDisconnected: true,
+    })).resolves.toEqual(unknown);
 
     expect(f.context.reconcileDisconnectedTurn).toHaveBeenCalledExactlyOnceWith(productId);
     expect(f.context.unknownSessionRuns.has(productId)).toBe(true);

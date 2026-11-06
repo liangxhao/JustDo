@@ -38,7 +38,7 @@ export default defineConfig({
           (source === './browser-runtime' &&
             importer.replace(/\\/g, '/').includes('/plugins/sdk/app-plugin-sdk/'))
         ) {
-          return path.resolve(__dirname, 'tests/plugin-host/browserRuntime.ts');
+          return path.resolve(__dirname, 'tests/plugins/host/browserRuntime.ts');
         }
       },
     },
@@ -70,7 +70,7 @@ export default defineConfig({
       'plugins/chrome-extensions/*/tests/**/*.test.ts',
     ],
     setupFiles: [
-      path.resolve(__dirname, 'tests/plugin-host/messagePresentationFixtures.ts'),
+      path.resolve(__dirname, 'tests/plugins/host/messagePresentationFixtures.ts'),
       ...pluginSetups,
     ],
     env: { APP_PLUGIN_HOST_ROOT: path.resolve(__dirname) },

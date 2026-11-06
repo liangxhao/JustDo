@@ -56,7 +56,7 @@ export default defineConfig({
     ],
   },
   test: {
-    include: ['tests/workboard-upstream.contract.test.mts'],
+    include: ['tests/openclaw/runtime/workboard-upstream.contract.test.mts'],
     environment: 'node',
     server: { deps: { inline: [/upstream-workboard/, /openclaw/] } },
   },

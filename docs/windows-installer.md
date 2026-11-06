@@ -254,7 +254,7 @@ pixels, elapsed time during a synchronous worker pause without presentation
 polling, details below the explanation, completion, failure and silent UI absence without
 installing the application. A visible desktop is required: Windows can throttle
 fully occluded/offscreen animation even when its player reports playing. Run
-`INSTALLER_PRESENTATION_NATIVE_UI=1` with the `tests/build/nsis-presentation.test.ts`
+`INSTALLER_PRESENTATION_NATIVE_UI=1` with the `tests/packaging/nsis-presentation.test.ts`
 Vitest case for this check; its visible fixture windows close automatically.
 The fixture also exercises a constrained work area with simulated 300% layout
 scaling; it does not change Windows display settings. These checks do not replace
@@ -272,7 +272,7 @@ The fixture also reads back native opacity, position, dimensions and styles for
 intermediate entrance/exit frames, checks restoration and one-time exit, and
 rejects a close while file writing is marked active. It does not infer a visible
 transition merely from the elapsed time or the requested animation values.
-The separate `tests/build/nsis-setup-presentation.test.ts` opt-in native fixture
+The separate `tests/packaging/nsis-setup-presentation.test.ts` opt-in native fixture
 exercises one combined setup page, per-scope drafts, invalid input, native Browse,
 upgrade locking, forced scope and accepted/cancelled elevation handoff. It checks
 direct entry into writing, decoration cleanup, skipped setup and silent UI

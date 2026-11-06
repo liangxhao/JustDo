@@ -206,11 +206,11 @@ The presentation does not start Electron or initialize a user profile. See
 [Windows installer](../docs/windows-installer.md#installation-presentation-and-measured-progress)
 for progress boundaries, fallback behavior and validation limits.
 
-The opt-in `tests/build/nsis-presentation.test.ts` opens presentation-only native
+The opt-in `tests/packaging/nsis-presentation.test.ts` opens presentation-only native
 fixture windows, verifies changing pixels and terminal states, and closes them
 automatically. Run it on a visible Windows desktop with
 `$env:INSTALLER_PRESENTATION_NATIVE_UI='1'` and
-`node node_modules/vitest/vitest.mjs run tests/build/nsis-presentation.test.ts`.
+`node node_modules/vitest/vitest.mjs run tests/packaging/nsis-presentation.test.ts`.
 It installs no application and saves a sample screenshot at
 `build/installer-presentation-preview.png`. Default automated checks skip this
 visible-window test; full NSIS compilation and extraction checks remain enabled
@@ -225,7 +225,7 @@ The same fixture verifies elapsed time with worker polling deliberately paused,
 freezes the clock at terminal states, and checks the lower details-list bounds.
 Upgrade directory policy fixtures use isolated registry keys and real NSIS callbacks;
 they never install the application or modify its registration.
-The separate opt-in `tests/build/nsis-setup-presentation.test.ts` checks
+The separate opt-in `tests/packaging/nsis-setup-presentation.test.ts` checks
 the native combined setup page with isolated elevation ports and saves
 `build/installer-combined-setup.png`.
 It checks the visible mark's proportions, the painted caption separator, and
@@ -449,7 +449,7 @@ sidebar view hides during expansion and returns with the same document on collap
 or unmount. Public network access is blocked; test artifacts stay under
 `.agent-tasks/browser/widget-viewport-*/`.
 
-The other `test/browser/` commands cover embedded-browser recording, intervention, PDF/sidebar display, background lifetimes, retries and cron. `test/workspace-window-probe.cjs` exercises workspace windows and uses the fixtures under `tests/electron/workspace-window/`. Their names refer to the embedded browser; Chrome extension verification belongs to its plugin.
+The other `test/browser/` commands cover embedded-browser recording, intervention, PDF/sidebar display, background lifetimes, retries and cron. `test/workspace-window-probe.cjs` exercises workspace windows and uses the fixtures under `tests/workspace-window/`. Their names refer to the embedded browser; Chrome extension verification belongs to its plugin.
 
 ### Plugin host and management
 

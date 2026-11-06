@@ -126,6 +126,22 @@ HTML 资源保持在原生 2 MiB 上限内，绘图脚本不塞入工具结果�
 - `tests/assets.test.ts` 覆盖资源损坏与缺失；`tests/source-extraction.test.ts` 覆盖无系统 tar 的中文空格路径解包、精确子树筛选和链接／路径越界拒绝。
 - 连续编辑状态、冲突与恢复覆盖见[当前画布验证](current-canvas.md#6-必须通过的验证)。
 
+包内原生探针位于 `plugins/extensions/drawio/scripts/test/`，仅显式执行。
+先将 `APP_PLUGIN_HOST_ROOT` 设置为集成宿主仓库的绝对路径；缺失或无效路径会在创建隔离状态前失败。
+插件源码、资源及 XML 样例从探针所属插件读取，证据仍写入所选宿主的 `.agent-tasks/drawio/`。
+宿主须已经安装构建依赖并准备完整运行时，探针不安装依赖或重建运行时。
+
+```powershell
+$env:APP_PLUGIN_HOST_ROOT = '<host-repository>'
+node plugins/extensions/drawio/scripts/test/native-smoke.mjs
+& '<prepared-runtime>/node-runtime/node.exe' plugins/extensions/drawio/scripts/test/home-model.native-smoke.mjs '<prepared-runtime>'
+```
+
+`native-smoke.mjs` 检查所选宿主 `vendor/openclaw-runtime/current` 中的捆绑插件发现、工具物化与原生 App 准入，不请求模型。
+`home-model.native-smoke.mjs` 从显式宿主提供的 `tests/openclaw/runtime/native-smoke-target.mjs` 读取冻结产物校验规则，
+并使用该宿主已安装的 esbuild；必须用所选运行时自带的 Node 执行，可继续通过参数或 `OPENCLAW_TEST_NATIVE_RUNTIME_DIR` 指定运行时。
+该探针使用隔离 Gateway、合成模型及编辑器 ACK，验证模型切换后的同一画布与精确终态；不能代替真实 iframe 或企业模型验收。
+
 宿主集成验收需要另行提供真实 Gateway、MCP Apps 宿主、原生保存接口及受支持的浏览器。应按下列层次记录环境与替代边界，而不把包内单测当作完整宿主验收：
 
 | 层次             | 必须覆盖                                                                                                                                                     | 不能替代的事实                                                              |

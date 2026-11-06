@@ -15,6 +15,8 @@ export type CoworkRuntimeStatusOptions = {
   fullScan?: boolean;
   /** Read native activity for this exact conversation without a global roster scan. */
   targeted?: boolean;
+  /** Main-owned status refresh may reconcile exact disconnected runs; admission stays read-only. */
+  reconcileDisconnected?: boolean;
   expectedSessionId?: string;
   expectedLifecycleRevision?: string | null;
 };

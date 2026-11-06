@@ -44,9 +44,9 @@ test('actual fs-safe 0.25 plugin install recovers one Windows no-DELETE publicat
     }));
     assert.equal(JSON.parse(fs.readFileSync(path.join(runtimeRoot,
       'node_modules/@openclaw/fs-safe/package.json'), 'utf8')).version, '0.25.0');
-    const preload = path.join(repository, 'tests/electron/plugin-marketplace/publication-lock-preload.cjs');
+    const preload = path.join(repository, 'tests/plugins/management/marketplace/publication-lock-preload.cjs');
     require(preload).install({
-      helperScript: path.join(repository, 'tests/electron/plugin-marketplace/hold-publication-file.ps1'),
+      helperScript: path.join(repository, 'tests/plugins/management/marketplace/hold-publication-file.ps1'),
       holdMs: 800, scenario: 'recovered',
     });
     const dist = path.join(runtimeRoot, 'dist');

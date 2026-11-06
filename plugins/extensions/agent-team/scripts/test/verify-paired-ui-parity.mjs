@@ -65,9 +65,9 @@ for (const id of ['agent-team', 'swarm-workflow']) {
 }
 // The previous compiler emitted this one-layer value instead of the host's full shadow.
 const shadowRule = '.shadow-elevated { --tw-shadow: 0 4px 12px rgba(0,0,0,0.1); }';
-const runtime = path.join(repo, 'tests/plugin-host/ui-parity/runtime.tsx');
+const runtime = path.join(repo, 'tests/plugins/host/ui-parity/runtime.tsx');
 const harness = await build({
-  entryPoints: [path.join(repo, 'tests/plugin-host/ui-parity/surface.tsx')],
+  entryPoints: [path.join(repo, 'tests/plugins/host/ui-parity/surface.tsx')],
   outfile: path.join(output, 'surface.js'),
   bundle: true,
   format: 'iife',
@@ -110,7 +110,7 @@ const css = await postcss([
     ...config,
     content: [
       path.join(repo, 'src/**/*.{ts,tsx,html}'),
-      path.join(repo, 'tests/plugin-host/ui-parity/*.tsx'),
+      path.join(repo, 'tests/plugins/host/ui-parity/*.tsx'),
     ],
   }),
 ]).process(await readFile(path.join(repo, 'src/renderer/index.css'), 'utf8'), {

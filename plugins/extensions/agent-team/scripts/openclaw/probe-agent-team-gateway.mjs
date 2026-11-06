@@ -32,6 +32,17 @@ const runtimeSource = path.resolve(
   process.argv.slice(2).find(value => !value.startsWith('--')) ??
     path.join(repoRoot, 'vendor/openclaw-runtime/current'),
 );
+const { verifyFrozenOpenClawRuntime } = hostRequire(
+  path.join(hostRoot, 'scripts/openclaw/verify-openclaw-runtime-patches.cjs'),
+);
+const { manifest: runtimeManifest } = verifyFrozenOpenClawRuntime(runtimeSource, {
+  expectedVersion: hostRequire(path.join(hostRoot, 'package.json')).openclaw.version,
+  requireBundle: true,
+});
+console.log(JSON.stringify({ check: 'frozen-runtime-artifact',
+  runtimeRoot: runtimeSource, openclawVersion: runtimeManifest.openclawVersion,
+  gatewayBundleSha256: runtimeManifest.gatewayBundle.sha256,
+  currentSourceBuildVerified: false }));
 // Narrow launch regressions can omit the already independent capacity matrix.
 const skipConcurrencyMatrix = process.argv.includes('--skip-concurrency-matrix');
 const historyToggleOnly = process.argv.includes('--history-toggle-only');
@@ -302,7 +313,7 @@ const runtimeServicesPath = path.join(bundledPath, 'runtime-services');
 mkdirSync(runtimeServicesPath);
 buildSync({
   absWorkingDir: repoRoot,
-  entryPoints: ['tests/openclaw/fixtures/team-runtime-services-probe.ts'],
+  entryPoints: [path.join(hostRoot, 'plugins/extensions/runtime-services/index.ts')],
   outfile: path.join(runtimeServicesPath, 'index.mjs'),
   bundle: true,
   platform: 'node',
@@ -317,14 +328,14 @@ writeFileSync(
     openclaw: { extensions: ['./index.mjs'] },
   }),
 );
-writeFileSync(
+copyFileSync(
+  path.join(hostRoot, 'plugins/extensions/runtime-services/openclaw.plugin.json'),
   path.join(runtimeServicesPath, 'openclaw.plugin.json'),
-  JSON.stringify({
-    id: 'runtime-services',
-    name: 'Independent runtime services fixture',
-    activation: { onStartup: true },
-    configSchema: { type: 'object', additionalProperties: false, properties: {} },
-  }),
+);
+mkdirSync(path.join(runtimeServicesPath, 'execution'));
+copyFileSync(
+  path.join(runtimeSource, 'dist/extensions/runtime-services/execution/runtime-profile.json'),
+  path.join(runtimeServicesPath, 'execution/runtime-profile.json'),
 );
 const planPath = path.join(bundledPath, 'plan-mode');
 mkdirSync(planPath);
@@ -416,6 +427,12 @@ buildSync({
       from './src/main/engine/gateway/pluginRequestBinding';
       export { isAppNativeHandshake } from './plugins/sdk/app-plugin-sdk/native-contract';
       export { readConversationSenders } from ${JSON.stringify(path.join(pluginRoot, "tests/fixtures/agent-team-model-context.ts"))};
+      export { discussionOperationId } from ${JSON.stringify(path.join(pluginRoot, "runtime/discussion/receipt.ts"))};
+      export { discussionMemberSessionKey } from ${JSON.stringify(path.join(pluginRoot, "contracts/teamDiscussion.ts"))};
+      export { CUSTODY_RPC } from '@runtime-services/sdk/custody';
+      export { preparePluginDataDirectory } from './src/main/plugins/data/pluginDataService';
+      export { ensureGatewayShutdownPreload, OPENCLAW_GATEWAY_SHUTDOWN_MESSAGE }
+      from './src/main/openclaw/runtime/launch/openclawLauncher';
       export { buildGatewayLaunchEnvironment } from './src/main/openclaw/runtime/launch/gatewayLaunchArgs';`,
     resolveDir: repoRoot,
     loader: 'ts',
@@ -426,6 +443,8 @@ buildSync({
   format: 'esm',
 });
 const mainBinding = await import(pathToFileURL(mainBindingPath));
+const teamManifest = JSON.parse(readFileSync(path.join(pluginRoot, 'app.plugin.json'), 'utf8'));
+await mainBinding.preparePluginDataDirectory(state, teamManifest.nativePluginId, teamManifest.data);
 // Exercise the desktop launch policy, including its Windows filesystem watcher
 // configuration, rather than an independently maintained environment.
 const env = {
@@ -445,9 +464,17 @@ const env = {
   OPENCLAW_DEBUG: '1',
 };
 Object.assign(process.env, env);
+// The production Windows environment selects polling and leaves its cadence
+// to Native. The selected runtime scans skill trees every 30s, not every 5s.
+const skillObservation = {
+  mode: process.platform === 'win32' ? 'poll' : 'native-default',
+  ...(process.platform === 'win32' ? { pollIntervalMs: 30000, schedulingAllowanceMs: 10000 } : {}),
+  maxWaitMs: process.platform === 'win32' ? 40000 : 5000,
+};
 const child = spawn(
   process.execPath,
   [
+    '--require', mainBinding.ensureGatewayShutdownPreload(state),
     path.join(
       runtime,
       existsSync(path.join(runtime, 'gateway-launcher.cjs'))
@@ -462,7 +489,7 @@ const child = spawn(
   ],
   { env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] },
 );
-const childClosed = new Promise(resolve => child.once('close', resolve));
+const childClosed = new Promise(resolve => child.once('close', (code, signal) => resolve({ code, signal })));
 let output = '';
 child.stdout.on('data', chunk => {
   output += chunk;
@@ -535,13 +562,13 @@ async function verifySkillDiscovery() {
       );
       if (found) break;
       await new Promise(resolve => setTimeout(resolve, 500));
-    } while (performance.now() - startedAt < 5000);
+    } while (performance.now() - startedAt < skillObservation.maxWaitMs);
     const elapsedMs = Math.round(performance.now() - startedAt);
     assert.ok(
-      found && elapsedMs < 5000,
-      'skill file changes must remain discoverable within the UI refresh window',
+      found && elapsedMs < skillObservation.maxWaitMs,
+      'skill file changes must remain discoverable within the native observation budget',
     );
-    console.log(JSON.stringify({ check: 'native-skill-file-discovery', revision, elapsedMs }));
+    console.log(JSON.stringify({ check: 'native-skill-file-discovery', revision, elapsedMs, skillObservation }));
   }
   const retiredPath = path.join(state, 'retired-polling-probe');
   renameSync(skillPath, retiredPath);
@@ -552,19 +579,81 @@ async function verifySkillDiscovery() {
     removed = !report.skills.some(skill => skill.name === 'polling-probe');
     if (removed) break;
     await new Promise(resolve => setTimeout(resolve, 200));
-  } while (performance.now() - deletedAt < 5000);
+  } while (performance.now() - deletedAt < skillObservation.maxWaitMs);
   assert.ok(
-    removed && performance.now() - deletedAt < 5000,
+    removed && performance.now() - deletedAt < skillObservation.maxWaitMs,
     'atomic skill removal must remain available while Gateway watches the directory',
   );
   console.log(
     JSON.stringify({
       check: 'native-skill-atomic-removal',
       elapsedMs: Math.round(performance.now() - deletedAt),
+      skillObservation,
     }),
   );
 }
-async function verifyHistoryToggle(serviceInput, members) {
+async function waitForAppliedConfig() {
+  const deadline = Date.now() + 25000;
+  let previous;
+  let stableSince = Date.now();
+  while (Date.now() < deadline) {
+    const config = await client.request('config.get', {});
+    const revision = config.configRevisionHash;
+    if (typeof revision !== 'string' || revision !== config.appliedConfigHash || revision !== previous) {
+      previous = revision;
+      stableSince = Date.now();
+    } else if (Date.now() - stableSince >= 1500) return;
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  throw new Error('The native configuration revision must be applied before a plugin mutation');
+}
+async function setTeamEnabled(enabled) {
+  await waitForAppliedConfig();
+  const result = await client.request('plugins.setEnabled', {
+    pluginId: 'agent-team', enabled, allowlistPolicy: 'preserve',
+  });
+  assert.equal(result.ok, true);
+  assert.notEqual(result.restartRequired, true, 'A same-package toggle must apply in the existing Gateway');
+  await client.request('skills.update', { skillKey: 'agent-team', enabled });
+  const inventory = await client.request('plugins.list', {});
+  const plugin = inventory.plugins.find(item => item.id === 'agent-team');
+  assert.equal(plugin?.enabled, enabled);
+  assert.equal(plugin?.runtime?.state, enabled ? 'active' : 'unloaded');
+  await waitForAppliedConfig();
+}
+async function readSettledExecutionReceipt(serviceInput, executions) {
+  const operationId = mainBinding.discussionOperationId('discussion', serviceInput.discussionId);
+  const { receipt } = await client.request(mainBinding.CUSTODY_RPC.receiptInspect, {
+    ownerId: 'agent-team', operationId,
+  });
+  assert.ok(receipt, 'The actual Required service must retain the enrolled execution receipt');
+  assert.equal(receipt.ownerId, 'agent-team');
+  assert.equal(receipt.operationId, operationId);
+  assert.match(receipt.writerRegistrationId, /^[a-f0-9-]{36}$/u);
+  assert.match(receipt.inputSha256, /^[a-f0-9]{64}$/u);
+  assert.equal(receipt.state, 'settled');
+  assert.equal(receipt.cleanupComplete, true);
+  assert.equal(receipt.cancelRequested, false);
+  assert.equal(receipt.subjects.length, executions.length);
+  assert.ok(receipt.subjects.length > 0);
+  const expectedRuns = executions.map(execution => execution.runId).toSorted();
+  assert.equal(new Set(expectedRuns).size, expectedRuns.length);
+  assert.deepEqual(receipt.subjects.map(subject => subject.runId).toSorted(), expectedRuns);
+  assert.deepEqual(receipt.settledRunIds.toSorted(), expectedRuns);
+  for (const subject of receipt.subjects) {
+    const expected = executions.find(execution => execution.runId === subject.runId);
+    assert.ok(expected, 'Every custody subject must identify an accepted Team execution');
+    const { agentId, sessionKey, sessionId, lifecycleRevision, runId } = expected;
+    assert.deepEqual(subject, { agentId, sessionKey, sessionId, lifecycleRevision, runId, outcome: 'completed' });
+    assert.ok(lifecycleObservations.some(event => event.stream === 'lifecycle' &&
+      Number.isSafeInteger(event.seq) && event.seq >= 0 && event.runId === runId &&
+      event.sessionKey === sessionKey && event.sessionId === sessionId &&
+      event.data.executionSettled === true && event.data.phase === 'end' && event.data.aborted !== true),
+    'Each completed subject must have matching authenticated native whole-run evidence');
+  }
+  return receipt;
+}
+async function verifyHistoryToggle(serviceInput, members, executions) {
   const historyInput = {
     roomId: 'service',
     discussionIds: ['service-discussion'],
@@ -588,58 +677,29 @@ async function verifyHistoryToggle(serviceInput, members) {
     await requestTeam('collaboration.messages', collaborationHistoryInput),
     missingReceipt,
   );
-  const config = await client.request('config.get', {});
-  await client.request('config.patch', {
-    baseHash: config.hash,
-    raw: JSON.stringify({ plugins: { entries: { 'agent-team': { enabled: false } } } }),
-    restartDelayMs: 0,
-  });
-  let offlineReceipt;
-  const disabledDeadline = Date.now() + 25000;
-  while (Date.now() < disabledDeadline) {
-    try {
-      offlineReceipt = await client.request(
-        'teamDiscussion.offlineControl',
-        { operation: 'status', roomId: 'service', discussionId: 'service-discussion' },
-        { timeoutMs: 2000 },
-      );
-      break;
-    } catch {
-      // Wait for the independent receipt service after plugin replacement.
-    }
-    await new Promise(resolve => setTimeout(resolve, 300));
-  }
-  assert.equal(
-    offlineReceipt?.state,
-    'completed',
-    'independent runtime services must reconcile receipts when Agent Team is disabled',
-  );
+  const settledReceipt = await readSettledExecutionReceipt(serviceInput, executions);
+  const originalBinding = appBinding;
+  const connectionsBeforeToggle = gatewayConnections;
+  const gatewayPid = child.pid;
+  await setTeamEnabled(false);
+  assert.deepEqual(await readSettledExecutionReceipt(serviceInput, executions), settledReceipt,
+    'The Required service must preserve the exact settled receipt while Team is disabled');
   await assert.rejects(() => requestTeam('teamDiscussion.history', historyInput));
   await assert.rejects(() => requestTeam('collaboration.messages', collaborationHistoryInput));
   await assert.rejects(() => requestTeam('teamDiscussion.start', serviceInput));
-  // Retain a disabled discovery source, then follow the application toggle's
-  // native write -> skill sync -> safe restart ordering. Old discovery inputs
+  // Follow the application's same-process native toggle and skill-sync ordering. Old discovery inputs
   // must not remove the enabled skill when another file watch refreshes later.
   const publishedSkill = path.join(state, 'plugin-skills/agent-team/SKILL.md');
   await client.request('skills.status', { agentId: 'alice' });
   assert.equal(existsSync(publishedSkill), false);
-  const enableConfig = await client.request('config.get', {});
-  await client.request('config.patch', {
-    baseHash: enableConfig.hash,
-    raw: JSON.stringify({ plugins: { entries: { 'agent-team': { enabled: true } } } }),
-    restartDelayMs: 0,
-  });
-  await client.request('skills.update', { skillKey: 'agent-team', enabled: true });
-  const connectionsBeforeRestart = gatewayConnections;
-  await client.request('gateway.restart.request', {
-    reason: 'extension-status-change',
-    skipDeferral: false,
-  });
-  const restartDeadline = Date.now() + 45000;
-  while (gatewayConnections === connectionsBeforeRestart && Date.now() < restartDeadline)
-    await new Promise(resolve => setTimeout(resolve, 100));
-  assert.ok(gatewayConnections > connectionsBeforeRestart, 'safe native restart must reconnect');
+  await setTeamEnabled(true);
   await awaitAppNativeRegistration();
+  assert.notEqual(appBinding.registrationId, originalBinding.registrationId);
+  await assert.rejects(() => mainBinding.runWithPluginRequestBinding(originalBinding, () => {},
+    () => appClient.request('teamDiscussion.history', historyInput)));
+  assert.equal(gatewayConnections, connectionsBeforeToggle, 'Hot toggles must retain the authenticated connection');
+  assert.equal(child.pid, gatewayPid);
+  assert.equal(child.exitCode, null);
   const restoredHistory = await requestTeam('teamDiscussion.history', historyInput);
   assert.equal(restoredHistory.messages.filter(message => message.role === 'assistant').length, 2);
   assert.deepEqual(restoredHistory.messages, originalHistory.messages);
@@ -647,9 +707,15 @@ async function verifyHistoryToggle(serviceInput, members) {
     await requestTeam('collaboration.messages', collaborationHistoryInput),
     missingReceipt,
   );
-  await client.request('skills.status', { agentId: 'alice' });
+  const workspaceStatus = await client.request('skills.status', { agentId: 'alice' });
   assert.equal(existsSync(publishedSkill), true);
-  const watchSkill = path.join(workspace, 'alice', 'skills/publication-probe');
+  assert.equal(workspaceStatus.agentId, 'alice');
+  const agentWorkspace = path.resolve(workspaceStatus.workspaceDir);
+  const relativeWorkspace = path.relative(fixtureRoot, agentWorkspace);
+  assert.ok(relativeWorkspace && !relativeWorkspace.startsWith('..') && !path.isAbsolute(relativeWorkspace),
+    'The authoritative skill workspace must remain inside this isolated fixture');
+  assert.equal(agentWorkspace, path.resolve(cfg.agents.entries.alice.workspace));
+  const watchSkill = path.join(agentWorkspace, 'skills/publication-probe');
   mkdirSync(watchSkill, { recursive: true });
   for (let revision = 0; revision < 3; revision++) {
     const description = `Synthetic publication regression ${revision}.`;
@@ -657,7 +723,8 @@ async function verifyHistoryToggle(serviceInput, members) {
       path.join(watchSkill, 'SKILL.md'),
       `---\nname: publication-probe\ndescription: ${description}\n---\n# Revision ${revision}\n`,
     );
-    const refreshDeadline = Date.now() + 5000;
+    const refreshStartedAt = performance.now();
+    const refreshDeadline = Date.now() + skillObservation.maxWaitMs;
     let refreshed = false;
     do {
       const report = await client.request('skills.status', { agentId: 'alice' });
@@ -667,9 +734,25 @@ async function verifyHistoryToggle(serviceInput, members) {
       if (refreshed) break;
       await new Promise(resolve => setTimeout(resolve, 200));
     } while (Date.now() < refreshDeadline);
-    assert.ok(refreshed, 'native workspace watch must observe the exact skill revision');
+    const observedMs = performance.now() - refreshStartedAt;
+    assert.ok(refreshed && observedMs < skillObservation.maxWaitMs,
+      'native workspace watch must observe the exact skill revision within its budget');
     await client.request('skills.update', { skillKey: 'agent-team', enabled: true });
     assert.equal(existsSync(publishedSkill), true, 'refresh must retain the enabled native skill');
+    console.log(JSON.stringify({ check: 'native-team-skill-publication', revision,
+      elapsedMs: Math.round(observedMs), skillObservation }));
+  }
+}
+let successReport;
+async function observeCleanup(promise, timeoutMs) {
+  let timer;
+  try {
+    return await Promise.race([
+      promise.then(value => ({ settled: true, value })),
+      new Promise(resolve => { timer = setTimeout(() => resolve({ settled: false }), timeoutMs); }),
+    ]);
+  } finally {
+    clearTimeout(timer);
   }
 }
 async function runChecks() {
@@ -710,8 +793,8 @@ async function runChecks() {
       sharedStateMode: 'read-only',
       onEvent: event => {
         if (event.event === 'agent' && event.payload.stream === 'lifecycle') {
-          const { runId, sessionKey, sessionId, data } = event.payload;
-          lifecycleObservations.push({ runId, sessionKey, sessionId, data });
+          const { runId, sessionKey, sessionId, stream, seq, data } = event.payload;
+          lifecycleObservations.push({ runId, sessionKey, sessionId, stream, seq, data });
         }
         if (event.event === 'agent') hostLifecycleObserver?.(event.payload);
         if (event.event === 'plugin.agent-team.requested' && hostHandler) {
@@ -819,7 +902,12 @@ async function runChecks() {
     );
     // The cold-only proof ends at native tool execution and history delivery.
     // Workspace skill watching is a separate matrix with its own refresh contract.
-    if (coldStartOnly) return;
+    if (coldStartOnly) {
+      successReport = { ok: true, projectReadVerified: true, commandsRejected: true,
+        historyVerified: true, executions: result.executions.length, references: result.references.length,
+        scope: 'isolated native cold tool execution, project directory and history delivery' };
+      return;
+    }
     await verifySkillDiscovery();
   }
   const prepared = await requestTeam('teamDiscussion.prepare', {
@@ -854,6 +942,15 @@ async function runChecks() {
     discussionId: 'service-discussion',
     members: prepared.members,
   };
+  // Channel-dispatched executions are not owned by this backend connection.
+  // Observe their exact prepared sessions before starting the first run.
+  for (const member of prepared.members) {
+    const key = mainBinding.discussionMemberSessionKey(serviceRoom, member.agentId);
+    const subscribed = await client.request('sessions.messages.subscribe', { key, agentId: member.agentId });
+    assert.equal(subscribed.subscribed, true);
+    assert.equal(subscribed.key, key);
+    assert.equal(subscribed.agentId, member.agentId);
+  }
   const admittedAt = Date.now();
   await requestTeam('teamDiscussion.start', serviceInput);
   if (historyToggleOnly)
@@ -879,20 +976,21 @@ async function runChecks() {
     assert.equal(execution.lifecycleRevision, member.lifecycleRevision);
     assert.equal(execution.outcome, 'completed');
   }
+  const serviceExecutions = structuredClone(receipt.executions);
   const afterService = modelRequests;
   await requestTeam('teamDiscussion.start', serviceInput);
   assert.equal(modelRequests, afterService, 'replaying admission must not call models');
   if (historyToggleOnly) {
-    await verifyHistoryToggle(serviceInput, prepared.members);
-    console.log(
-      JSON.stringify({
-        ok: true,
-        disabledHistoryUnavailableVerified: true,
-        reenabledHistoryPreservedVerified: true,
-        disabledReceiptReconciliationVerified: true,
-        scope: 'isolated Gateway history registration and toggle checks',
-      }),
-    );
+    await verifyHistoryToggle(serviceInput, prepared.members, serviceExecutions);
+    successReport = {
+      ok: true,
+      disabledHistoryUnavailableVerified: true,
+      reenabledHistoryPreservedVerified: true,
+      disabledSettledReceiptPreservedVerified: true,
+      sameGatewayHotToggleVerified: true,
+      skillObservation,
+      scope: 'isolated Gateway history registration and toggle checks',
+    };
     return;
   }
   const cancelled = await requestTeam('teamDiscussion.stop', {
@@ -1566,41 +1664,38 @@ async function runChecks() {
   );
   hostHandler = undefined;
   hostDb.close();
-  await verifyHistoryToggle(serviceInput, prepared.members);
-  console.log(
-    JSON.stringify(
-      {
-        ok: true,
-        stateDirectory: state,
-        modelRequests,
-        executions: coldResult.executions.length,
-        references: coldResult.references.length,
-        projectReadVerified: true,
-        commandsRejected: true,
-        historyVerified: true,
-        nativeCancellationVerified: true,
-        productionServiceVerified: true,
-        admissionReplayVerified: true,
-        messageToolVerified: true,
-        disabledHistoryUnavailableVerified: true,
-        reenabledHistoryPreservedVerified: true,
-        modelOrganizedTeamVerified: true,
-        nativeSkillPublicationAfterToggleVerified: true,
-        organizerNativeContextsVerified: true,
-        automaticSummaryVerified: true,
-        sourceParticipationVerified: true,
-        sourcePublicHistoryPreserved: true,
-        organizerBotFlagProjected: organizerContextChecks.every(check => check.bot),
-        restrictedSourceGuardVerified: true,
-        nativePlanSlotGuardVerified: true,
-        independentReviewIdentityVerified: true,
-        pendingUntilNativeReviewTerminalVerified: true,
-        scope: 'packaged Gateway with fixture model; not complete G1-G6 acceptance',
-      },
-      null,
-      2,
-    ),
-  );
+  await verifyHistoryToggle(serviceInput, prepared.members, serviceExecutions);
+  successReport = {
+    ok: true,
+    stateDirectory: state,
+    modelRequests,
+    executions: coldResult.executions.length,
+    references: coldResult.references.length,
+    projectReadVerified: true,
+    commandsRejected: true,
+    historyVerified: true,
+    nativeCancellationVerified: true,
+    productionServiceVerified: true,
+    admissionReplayVerified: true,
+    messageToolVerified: true,
+    disabledHistoryUnavailableVerified: true,
+    reenabledHistoryPreservedVerified: true,
+    disabledSettledReceiptPreservedVerified: true,
+    sameGatewayHotToggleVerified: true,
+    skillObservation,
+    modelOrganizedTeamVerified: true,
+    nativeSkillPublicationAfterToggleVerified: true,
+    organizerNativeContextsVerified: true,
+    automaticSummaryVerified: true,
+    sourceParticipationVerified: true,
+    sourcePublicHistoryPreserved: true,
+    organizerBotFlagProjected: organizerContextChecks.every(check => check.bot),
+    restrictedSourceGuardVerified: true,
+    nativePlanSlotGuardVerified: true,
+    independentReviewIdentityVerified: true,
+    pendingUntilNativeReviewTerminalVerified: true,
+    scope: 'packaged Gateway with fixture model; not complete G1-G6 acceptance',
+  };
 }
 try {
   await runChecks();
@@ -1633,17 +1728,52 @@ try {
     ]);
     clearTimeout(stopTimeout);
   }
-  if (child.exitCode === null) {
-    const exited = new Promise(resolve => child.once('exit', resolve));
-    if (child.connected) child.send('stop');
-    else child.kill();
-    const forceStop = setTimeout(() => child.kill(), 3000);
-    await exited;
-    clearTimeout(forceStop);
+  if (child.exitCode === null && child.signalCode === null) {
+    try {
+      if (child.connected) child.send(mainBinding.OPENCLAW_GATEWAY_SHUTDOWN_MESSAGE, error => {
+        if (error) {
+          console.error(JSON.stringify({ check: 'owned-gateway-shutdown-request', error: String(error) }));
+          process.exitCode = 1;
+        }
+      });
+      else child.kill('SIGTERM');
+    } catch (error) {
+      console.error(JSON.stringify({ check: 'owned-gateway-shutdown-request', error: String(error) }));
+      process.exitCode = 1;
+    }
   }
-  await childClosed;
+  const observed = await observeCleanup(childClosed, 45000);
+  const shutdown = observed.settled ? observed.value : { code: null, signal: 'forced-timeout' };
+  if (!observed.settled) {
+    process.exitCode = 1;
+    try {
+      // An exited PID can be reused while inherited stdio remains open.
+      // Only signal this still-live owned child, never a retired PID or tree.
+      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+    } catch (error) {
+      console.error(JSON.stringify({ check: 'owned-gateway-force-stop', error: String(error) }));
+    }
+    if (!(await observeCleanup(childClosed, 3000)).settled) {
+      console.error(JSON.stringify({ check: 'owned-gateway-retirement', state: 'unconfirmed' }));
+      child.stdout?.destroy();
+      child.stderr?.destroy();
+      try { if (child.connected) child.disconnect(); } catch { /* Already retired IPC. */ }
+      child.unref();
+    }
+  }
   model.closeAllConnections();
-  await new Promise(resolve => model.close(resolve));
+  const modelClosed = await observeCleanup(new Promise(resolve => model.close(error => resolve(!error))), 3000);
+  if (!modelClosed.settled || !modelClosed.value) {
+    console.error(JSON.stringify({ check: 'fixture-model-shutdown', state: 'unconfirmed' }));
+    process.exitCode = 1;
+    model.unref();
+  }
   writeFileSync(path.join(state, 'probe.log'), output.replaceAll(token, '<fixture-token>'));
   console.log(`Fixture log: ${path.join(state, 'probe.log')}`);
+  if (shutdown.code !== 0 || shutdown.signal) {
+    console.error(JSON.stringify({ check: 'owned-gateway-shutdown', ...shutdown }));
+    process.exitCode = 1;
+  }
+  if (!process.exitCode && successReport)
+    console.log(JSON.stringify({ ...successReport, gatewayShutdownVerified: true }));
 }

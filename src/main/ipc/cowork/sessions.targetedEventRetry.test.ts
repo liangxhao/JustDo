@@ -6,7 +6,7 @@ import { DatabaseSync } from 'node:sqlite';
 import type Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { appendBehaviorPluginPrompt, behaviorSessionParticipants } from '../../../../tests/plugin-host/mainBehaviorParticipants';
+import { appendBehaviorPluginPrompt, behaviorSessionParticipants } from '../../../../tests/plugins/host/mainBehaviorParticipants';
 import { CoworkStore } from '../../data/coworkStore';
 import { CoworkEngineRouter } from '../../engine/cowork/coworkEngineRouter';
 import type { GatewayClientLike, GatewayEventFrame } from '../../engine/gateway/types';
@@ -278,9 +278,9 @@ describe('late native publication through actual Main admission layers', () => {
     f.assertNoExecution();
   });
 
-  it('preserves actual adapter unknown-send custody without dispatching any read or mutation', async () => {
+  it.each([false, true])('preserves actual adapter unknown-send custody without dispatching any read or mutation (cancelled: %s)', async cancelled => {
     const f = fixture();
-    f.adapter.registerUnknownSessionRun(f.product.id, 'unconfirmed-native-run');
+    f.adapter.registerUnknownSessionRun(f.product.id, 'unconfirmed-native-run', { cancelled });
     await expect(f.send()).resolves.toMatchObject({ success: false });
     expect(f.methods).toEqual([]);
     expect(f.reads()).toBe(0);

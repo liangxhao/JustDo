@@ -210,7 +210,7 @@ Extension 更新传递原生 `--no-enable`，保留已有启停、允许/拒绝�
 
 ### 本地市场联调探针
 
-`tests/electron/plugin-marketplace/` 提供仅测试使用的本地市场。它从实际 HTTP 响应读取目录和安装包，下载到本次临时目录并解包，再通过生产市场服务、领域安装器和真实原生 Gateway 执行安装。Renderer 复用 `usePluginMarketplace`、市场结果卡片、进度卡片和错误弹窗，使用隔离 preload 与真实 IPC，不注入预设安装结果。这个 Provider 不注册到产品启动流程，也不是离线市场或业务服务的回退来源。
+`tests/plugins/management/marketplace/` 提供仅测试使用的本地市场。它从实际 HTTP 响应读取目录和安装包，下载到本次临时目录并解包，再通过生产市场服务、领域安装器和真实原生 Gateway 执行安装。Renderer 复用 `usePluginMarketplace`、市场结果卡片、进度卡片和错误弹窗，使用隔离 preload 与真实 IPC，不注入预设安装结果。这个 Provider 不注册到产品启动流程，也不是离线市场或业务服务的回退来源。
 
 先准备仓库锁定版本的完整原生运行时，并确保 `better-sqlite3` 已恢复 Electron ABI。需要本地已安装的 Playwright；未安装在本仓库时，可通过 `PLAYWRIGHT_MODULE` 指向现有包目录。运行：
 
@@ -232,7 +232,101 @@ Windows 扩展发布的占用回归另有显式 `extension-publication-lock-prob
 原始 v1/v2 包和实际导入页面，在已复制临时目录的入口文件上持有真实的不允许
 DELETE 共享句柄，分别验证短暂占用后的同目录发布、持续占用后的有界失败与
 完整旧版恢复。它与无故障注入的完整包回归分开执行；命令与证明边界见
-[测试说明](../../../tests/README.md)。测试快照在使用时还核对 manifest 声明的
+[固定夹具与发布锁验证](#固定夹具与发布锁验证)。测试快照在使用时还核对 manifest 声明的
 依赖和支持模块哈希，不能仅凭旧 bundle 或 ready 标记信任已被修改的依赖。
 
 架构与状态归属见 [插件市场适配架构](adapter.md)。
+
+### 固定夹具与发布锁验证
+
+以下命令从宿主仓库根目录执行。历史验证日期、版本和数量保留其原始范围，不代表本次目录整理重新执行了这些原生验收。
+
+Existing extension import packages can also be reused without regenerating or
+changing their inputs:
+
+```powershell
+node scripts/test/plugin-management/extension-import-fixtures-probe.cjs --fixtures <existing-fixture-root> --runtime <worktree-runtime-snapshot>
+node scripts/test/plugin-management/extension-import-ui-probe.cjs --fixtures <existing-fixture-root> --runtime <worktree-runtime-snapshot>
+```
+
+The fixture root must contain the existing `catalog.json`, `SHA256SUMS.txt`,
+`verify.cjs`, `sources/`, `packages/`, `formats/` and `negative/` suite. The cold
+probe retains its 68 checks, verifies the original archive hashes and checks that
+the inputs stay unchanged. Use the complete locked runtime snapshot already
+verified under this worktree's `build/`; neither probe downloads dependencies or
+uses the original suite's saved runtime state. Generated bundles stay in `build/`
+and each run keeps separate state and evidence under `.agent-tasks/`.
+
+The UI probe uses the production `ExtensionsManager`, preload channels, Main
+handlers and a disposable real Gateway. Only the file picker selection is supplied
+by the driver. The Gateway reuses the production launch environment, including
+Windows polling and native watcher intervals; a different watcher mode can hold
+directory handles and invalidate update results. After a successful mutation,
+read-only inventory confirmation allows up to 45 seconds for native discovery,
+with at least two seconds between completed reads. The report retains each
+snapshot and mismatch; a failed mutation is never repeated by this confirmation.
+It supplements the cold checks with capability review, actual progress and error
+dialogs, parent/child inventory, and lifecycle controls. It
+needs the same local Playwright and Electron native ABI prerequisites as the
+marketplace probe. Neither suite demonstrates model-driven Skill execution;
+the cold Hook checks dispatch synthetic events through registered handlers.
+
+Cold `--f01-only` and `--update-only` runs isolate repeated import and version
+replacement. UI `--suite negative`, `--suite update` and `--suite uninstall`
+isolate the corresponding workflows. Every invocation creates fresh state; a
+failed native mutation is recorded and never replayed automatically. Focused
+checks overlap the full suite and must not be added together as unique coverage.
+
+For a filesystem investigation, the UI probe accepts an explicit
+`--rename-observer <build-only-preload.cjs>`. Its real path must stay inside this
+worktree's `build/`. This diagnostic preload is absent from normal runs and the
+product; it observes rejected filesystem calls without editing the locked runtime
+or repeating a failed installation. The report identifies instrumented runs.
+
+Windows publication recovery also has an opt-in real sharing-lock regression:
+
+```powershell
+node scripts/test/plugin-management/extension-publication-lock-probe.cjs --fixtures <existing-fixture-root> --runtime <verified-runtime-snapshot> --expect recovered
+node scripts/test/plugin-management/extension-publication-lock-probe.cjs --fixtures <existing-fixture-root> --runtime <verified-runtime-snapshot> --expect bounded
+```
+
+It uses the same original v1/v2 packages and actual import UI. A test-only helper
+holds the copied v2 entry file without DELETE sharing for 800 ms or 8 seconds;
+every observed rename is the actual syscall, never a fabricated rejection. The
+short case requires publication of the same copied inode and one v2 install
+request. The long case requires a bounded failure, the production error dialog,
+intact v1 files and capabilities, and clean process/temporary-directory shutdown.
+The raw UI result remains false for expected failures; separate assertion and
+wrapper reports record whether the expected failure behavior passed. The helper
+and generated preload do not enter the product. `--expect baseline` can verify
+the same refusal against a separately verified runtime without recovery; an
+invalid or changed runtime is rejected before starting Native.
+
+Acceptance on Windows, 2026-10-23, used a freshly prepared OpenClaw 2026.10.4
+runtime with all 33 patches and the original 32 unchanged archives. The complete
+cold suite passed 68/68 checks, the import UI passed all eight workflow groups,
+and the loopback marketplace passed all nine groups. The real short lock lasted
+805 ms: the second rename published the same copied inode 1,430 ms after the
+first refusal. The 8,002 ms lock produced 11 actual `EPERM` refusals, stopped
+publication attempts after 4,874 ms, displayed the production failure dialog,
+and restored every v1 source byte and its Skill/MCP/Hook inventory. Each lock
+scenario sent exactly one v1 and one v2 install RPC; the failed raw UI report
+remained false. Process shutdown, runtime hashes and temporary-directory cleanup
+were verified. The four focused patch/runtime suites passed 130/130 tests.
+The publication patch was numbered 033 for this run and became 034 when rebased
+onto dev, which already contained the independent run-progress patch 033.
+This demonstrates the blocking-handle mechanism and bounded recovery; the owner
+of the earlier intermittent, uncontrolled refusal remains unconfirmed.
+
+The source runtime must have completed its original package lifecycle before
+patching and bundling. Build/frozen proofs and fixture snapshots reject pending,
+legacy-install or lifecycle-lock markers; copying only dependencies from an older
+runtime does not complete the new package's preinstall/postinstall. Complete that
+work through the upstream owned lifecycle API in fresh staging, never by deleting
+markers or running postinstall over already patched `dist` files.
+
+The focused 034 tests additionally accept `PLUGIN_PUBLICATION_PRISTINE`, pointing
+to a read-only directory containing the four exact pristine target files and
+fs-safe metadata. This enables actual source transformation, idempotence,
+syscall-boundary and final-bundle behavior checks; ordinary runs still execute
+the platform-independent recovery guard tests without cached native packages.

@@ -1,7 +1,7 @@
 import path from 'path';
 import { describe, expect, test } from 'vitest';
 
-import { appNativePolicies } from '../../../../tests/plugin-host/nativePolicies';
+import { appNativePolicies } from '../../../../tests/plugins/host/nativePolicies';
 import {
   AgentRuntimeDelegationMode,
   AgentRuntimeSessionVisibility,

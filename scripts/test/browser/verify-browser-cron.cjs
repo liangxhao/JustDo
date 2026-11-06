@@ -581,7 +581,7 @@ async function main() {
   const electronPath = require('electron');
   electron = spawn(
     electronPath,
-    [path.join(root, 'tests/browser-background-electron/native-cron.cjs'), fixture, artifactRoot],
+    [path.join(root, 'tests/browser/background/native-cron.cjs'), fixture, artifactRoot],
     {
       cwd: root,
       env: { ...env, NODE_PATH: path.join(root, 'node_modules') },

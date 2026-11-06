@@ -5,7 +5,7 @@ import os from 'os';
 import path from 'path';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
-import { appNativePolicies } from '../../../../tests/plugin-host/nativePolicies';
+import { appNativePolicies } from '../../../../tests/plugins/host/nativePolicies';
 import {
   AgentRuntimeCodeMode,
   createDefaultAgentRuntimeSettings,

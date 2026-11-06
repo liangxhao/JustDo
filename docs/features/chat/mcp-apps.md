@@ -486,7 +486,7 @@ MCP Apps 不保留精确取消/展示回收的生命周期补丁；当前编号 
 锁定原生 sandbox 和不包含 draw.io 字段的标准 App。验证同一 iframe／内部文档、输入及选择保留，
 普通 workspace App 不重挂，多锚点去重、历史移除／返回、取消固定、会话暂停／精确恢复，
 以及 SDK 全屏、Modal／菜单阻塞和跨 Document 标签焦点；不增加业务调用或原生视图读取。
-`node tests/drawio/offline-smoke.cjs --editing --reference` 另验证真实编辑器的未提交节点文字、
+`node tests/plugins/drawio/offline-smoke.cjs --editing --reference` 另验证真实编辑器的未提交节点文字、
 往返固定、连续修改和多页撤销。`editing-native-smoke.cjs` 对实际原生历史做紧凑回执投影验证。
 
 这些隔离探针不替代安装版、企业服务或分离窗口复杂桌面环境的人工验收。

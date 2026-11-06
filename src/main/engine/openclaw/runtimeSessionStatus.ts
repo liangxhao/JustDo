@@ -173,7 +173,8 @@ export async function getSessionRuntimeStatus(
     return { known: true, mainRunning: false, subagentRunning: false, running: false };
   }
   if (options?.targeted) {
-    if (this.disconnectedSessionIds.has(sessionId) || this.disconnectedRecoveryPromises.has(sessionId)) {
+    if (options.reconcileDisconnected === true &&
+      (this.disconnectedSessionIds.has(sessionId) || this.disconnectedRecoveryPromises.has(sessionId))) {
       await this.reconcileDisconnectedTurn(sessionId);
     }
     return getTargetedSessionRuntimeStatus.call(this, sessionId, options);

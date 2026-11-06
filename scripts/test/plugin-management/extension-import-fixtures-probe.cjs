@@ -119,7 +119,7 @@ function verifyArchives() {
 }
 
 function verifyRuntime() {
-  require('../../../tests/electron/plugin-marketplace/native-runtime.cjs')
+  require('../../../tests/plugins/management/marketplace/native-runtime.cjs')
     .verifySnapshotPatchArtifacts(runtimeRoot);
   const marker = JSON.parse(
     fs.readFileSync(path.join(runtimeRoot, 'fixture-runtime-ready.json'), 'utf8'),

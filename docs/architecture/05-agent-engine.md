@@ -442,6 +442,13 @@ Adapter 接收产品会话身份，准备原生 session、模型和权限，再�
 身份或连接代次变化仍拒绝新输入；本地未确认执行、停止和恢复边界保持。该只读准入不能
 生成上一轮终态，原有未知运行恢复与整轮结算仍走各自的精确证据及目录复核流程。
 
+定点读取默认只做准入观察：发现本地 unknown、disconnected 或进行中的恢复时立即返回未知，
+不启动或等待断连对账，不发送 `agent.wait` 或取消请求，不清除原围栏。发送、复制、fork、
+工作目录变更及插件注册均使用这个默认行为。单项界面状态刷新由 Main 显式设置内部的
+`reconcileDisconnected: true`，允许先按原 run 身份执行断连恢复，再重新核对当前活动；
+Renderer 参数不能覆盖这个内部选择。恢复未取得精确结算证据时仍保留未知，恢复成功后由
+后续操作重新准入，不自动重放先前失败的输入。批量／非定点状态查询沿用既有恢复流程。
+
 原生 `sessions.create` 的成功响应先于异步 `sessions.changed` 通知。准备后的定点读取
 可能与这条迟到通知交错；不能将第一次读到的空闲结果直接用于准入。仅当产品身份、
 客户端及连接代次均未变化、没有本地未知执行/恢复/压缩时，允许丢弃被通知淘汰的
@@ -771,3 +778,9 @@ CLI `exec`、入站 ACP 和已实现的 app-server 子集共用 Main 原生准�
 | 显示 | 原生有事件但 UI 缺失                | controller generation、history reconcile |
 
 回归入口为 Manager/ConfigSyncService 测试、Adapter 各领域测试、wire validator 测试及 `tests/openclaw/runtime/`。版本升级必须验证 pristine contracts 与最终打包产物，不能用旁边的 OpenClaw 开发副本代替。
+
+定点准入与状态恢复分别由 `runtimeSessionStatus.targeted.test.ts`、
+`sessions.sendAdmission.test.ts`、`sessions.targetedEventRetry.test.ts` 和 `sessions.test.ts`
+验证，覆盖默认零对账／零原生请求、进行中恢复围栏、取消的未知发送、Main 独占恢复选项，
+以及显式状态刷新仍能恢复但不凭空闲结算。真实断连整轮回执与 Goal 恢复继续由 Adapter
+connection/goals 测试覆盖；这些模拟回归不替代原生产环境端到端验收。

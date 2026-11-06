@@ -133,7 +133,7 @@ jobs:
           restore-keys: npm-${{ runner.os }}-
       - run: npm install
       - name: Verify bundled skill sources and synchronization
-        run: node node_modules/vitest/vitest.mjs run tests/scripts/sync-bundled-skills.test.ts
+        run: node node_modules/vitest/vitest.mjs run tests/plugins/host/sync-bundled-skills.test.ts
 
   # ========== Stage 6: 测试 (Node.js 内置) ==========
   test:

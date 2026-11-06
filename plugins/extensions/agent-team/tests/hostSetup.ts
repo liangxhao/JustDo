@@ -42,7 +42,7 @@ const hostRoot = process.env.APP_PLUGIN_HOST_ROOT;
 if (hostRoot) {
   const { installBrowserBehaviorPorts } = await import(
     /* @vite-ignore */
-    pathToFileURL(path.join(hostRoot, 'tests/plugin-host/legacyBehaviorPorts.ts')).href
+    pathToFileURL(path.join(hostRoot, 'tests/plugins/host/legacyBehaviorPorts.ts')).href
   );
   installBrowserBehaviorPorts({
     pluginRoot: path.resolve(import.meta.dirname, '..'),

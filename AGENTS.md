@@ -186,8 +186,13 @@ npm test
 - **Scheduled tasks:** keep `main/scheduler/`, `main/ipc/scheduledTask/` and
   `shared/scheduledTask/` consistent. Test parsing, persistence, manual runs,
   runtime mapping and IPC.
-- Tests use Vitest, with co-located `src/**/*.test.ts` and integration/snapshot
-  `tests/**/*.test.mjs`. Test behavior with Arrange → Act → Assert.
+- Tests use Vitest, with co-located `src/**/*.test.ts` and repository
+  `tests/**/*.test.ts` / `*.test.tsx`. Keep explicit native and Node `.mjs`
+  probes separate from default discovery. Test behavior with Arrange → Act → Assert.
+- Keep repository tests in the owning domain (`packaging`, `runtime`, `tooling`,
+  `plugins`, `browser`, `openclaw`); `tests/build/` covers build entry contracts.
+  Pure plugin tests and native business probes travel with their plugin. Preserve
+  default test discovery and explicit native/Electron probe entry points when moving files.
 
 ## Runtime and Configuration Guardrails
 

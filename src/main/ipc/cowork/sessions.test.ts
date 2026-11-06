@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
-import { appendBehaviorPluginPrompt, type BehaviorResourceParticipant, behaviorSessionParticipants, type BehaviorSubmissionParticipant } from '../../../../tests/plugin-host/mainBehaviorParticipants';
+import { appendBehaviorPluginPrompt, type BehaviorResourceParticipant, behaviorSessionParticipants, type BehaviorSubmissionParticipant } from '../../../../tests/plugins/host/mainBehaviorParticipants';
 import { CoworkSessionCopyIpc, SessionCopyErrorCode } from '../../../shared/cowork/sessionCopy';
 import {
   SESSION_SUMMARY_BATCH_LIMIT,
@@ -70,12 +70,13 @@ test.each([false, true])('reads conversation activity without accepting renderer
 
   await expect(read(null, 'selected', {
     includeSubagents: true, forceRefresh: true, fullScan: true,
-    targeted: false, expectedSessionId: 'untrusted-native', expectedLifecycleRevision: 'untrusted-revision',
+    targeted: false, reconcileDisconnected: false,
+    expectedSessionId: 'untrusted-native', expectedLifecycleRevision: 'untrusted-revision',
   })).resolves.toMatchObject({ success: true, ...idle, revision: expect.any(Number) });
 
   expect(getSessionRuntimeStatus).toHaveBeenCalledExactlyOnceWith('selected', {
     includeSubagents: true, forceRefresh: true,
-    ...(external ? { fullScan: true } : { targeted: true }),
+    ...(external ? { fullScan: true } : { targeted: true, reconcileDisconnected: true }),
   });
   expect(finishSessionRun).not.toHaveBeenCalled();
 });
@@ -2547,7 +2548,7 @@ test('reopens the matching receipt through the real targeted activity and IPC bo
   });
 
   expect(getSessionRuntimeStatus).toHaveBeenCalledExactlyOnceWith('session-1', {
-    includeSubagents: true, forceRefresh: false, targeted: true,
+    includeSubagents: true, forceRefresh: false, targeted: true, reconcileDisconnected: true,
   });
   expect(store.reopenSessionRun).toHaveBeenCalledExactlyOnceWith(completedTiming.id);
   expect(store.beginSessionRun).not.toHaveBeenCalled();

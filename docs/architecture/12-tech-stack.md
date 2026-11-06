@@ -115,9 +115,11 @@ Windows 更新使用 generic feed，发布元数据和 artifact hash 由专用�
 
 ## 9. CI 与发布验证
 
-[CI 配置](../../.github/workflows/ci.yml)按路径过滤 renderer/main/skills/scripts/docs，并使用 `.nvmrc`。技能任务直接运行 `tests/scripts/sync-bundled-skills.test.ts`，验证内置技能源文件与同步，不再调用 `build:skills`。现有 workflow 仍使用 `npm install`，npm cache key 只 hash `package.json`。
+[CI 配置](../../.github/workflows/ci.yml)按路径过滤 renderer/main/skills/scripts/docs，并使用 `.nvmrc`。技能任务直接运行 `tests/plugins/host/sync-bundled-skills.test.ts`，验证内置技能源文件与同步，不再调用 `build:skills`。现有 workflow 仍使用 `npm install`，npm cache key 只 hash `package.json`。
 
 CI 中的应用构建和单元测试不能替代目标平台的打包与真实安装验收。依赖升级需核对原生 ABI、目标架构、runtime freeze、插件预编译、license、安装器和更新产物，而不是只更新一个版本字符串。
+
+仓库级测试按生产职责归入 `tests/packaging/`、`runtime/`、`tooling/`、`plugins/`、`browser/` 和 `openclaw/`；`build/` 只维护 Vite 与 npm 入口契约，跨源码依赖边界归 `architecture/`。应用单元测试与源码同行，纯插件测试和业务原生探针随插件分发，真实宿主边界仍在仓库测试域。默认 Vitest 发现、专用 SDK/源码 profile 和显式 Electron/Gateway 探针保持分离，目录归属及运行前置条件见 [测试索引](../../tests/README.md)。
 
 ## 10. 发布排障
 

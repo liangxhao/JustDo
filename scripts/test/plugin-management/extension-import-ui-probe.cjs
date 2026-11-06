@@ -12,7 +12,7 @@ const path = require('node:path');
 const { build } = require('esbuild');
 
 const root = path.resolve(__dirname, '../../..');
-const fixture = path.join(root, 'tests/electron/plugin-marketplace');
+const fixture = path.join(root, 'tests/plugins/management/marketplace');
 const flags = new Map();
 const args = process.argv.slice(2);
 for (let index = 0; index < args.length; index += 2) {
