@@ -3,8 +3,8 @@ import type { ChromeExtensionMessageDisplay } from '../../shared/chrome/chromeEx
 import type { ChromeExtensionStreamEvent } from '../../shared/chrome/chromeExtensionStream';
 import type { CoworkAttachmentPayload } from '../../shared/cowork/attachments';
 import type { PermissionMode } from '../../shared/security/approvals';
-import type { AppServerConnectionContext } from '../appServer/appServerProtocol';
-import type { AppServerModel, AppServerThreadHistory } from '../appServer/appServerTypes';
+import type { AppServerConnectionContext } from '../clients/appServer/protocol/appServerProtocol';
+import type { AppServerModel, AppServerThreadHistory } from '../clients/appServer/protocol/appServerTypes';
 import type { CoworkStartOptions } from '../engine/types';
 import type { ExternalApprovalSessionScope } from '../openclaw/permissions/externalApprovalSessionScope';
 import { ChromeAppServerMethod } from './chromeAppServerProtocol';

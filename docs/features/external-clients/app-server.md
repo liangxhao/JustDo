@@ -1,7 +1,7 @@
 # 通用 app-server：连接、能力与生命周期
 
 桌面原生客户端 WebSocket、Chrome 侧栏聊天与 CLI 的
-`app-server --listen stdio://` 共用 `src/main/appServer/` 中的协议引擎。
+`app-server --listen stdio://` 共用 `src/main/clients/appServer/protocol/` 中的协议引擎。
 本页维护共享协议和连接边界；命令行与 ACP 的使用、执行和资源管理见
 [CLI / ACP](agent-cli.md)，逐字段规范见 [app-server API](../../app-server-api/README.md)。
 
@@ -31,7 +31,7 @@ flowchart LR
 Main 在创建连接时传入类型化能力绑定。客户端名称、请求的 capabilities 或通知偏好不能增加
 操作权限；绑定中没有的方法返回 method-not-found，不回退到其他入口的后端。
 
-`src/main/appServer/` 只包含标准协议、通用输入与审批呈现、投影、分页和传输，不定义或导入浏览器方法、
+`src/main/clients/appServer/protocol/` 只包含标准协议、通用输入与审批呈现、投影、分页和传输，不定义或导入浏览器方法、
 通知、网页关联错误策略，也不包含浏览器集成测试。浏览器专属常量和安全错误映射归
 `src/main/chrome/chromeAppServerProtocol.ts`，由同域 binding 通过通用
 `extensions` 精确注册。扩展一律需要请求 ID，不能覆盖标准方法；握手声明不能注册方法。
@@ -163,7 +163,7 @@ Bearer token；令牌首次生成后持久保存，正常重启保持有效。�
 浏览器使用自己的扩展入口。客户端名称或扩展凭据不能改变能力绑定。
 
 每连接通过 `AgentCommandService.connectAppServer` 使用与 stdio 相同的
-`CliAppServerBinding`、外部会话命名空间、预留和 `Clients` 来源分组。WebSocket 不读取客户端
+`ExternalAppServerBinding`、外部会话命名空间、预留和 `Clients` 来源分组。WebSocket 不读取客户端
 `CODEX_HOME` 或环境变量。认证时捕获应用配置的默认工作目录；`thread/start.cwd` 可以明确覆盖，
 resume 未传 cwd 时保留已存目录。
 

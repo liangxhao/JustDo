@@ -2,9 +2,9 @@ import { createHash, randomUUID } from 'node:crypto';
 
 import type { CoworkAttachmentPayload } from '../../shared/cowork/attachments';
 import type { PermissionMode } from '../../shared/security/approvals';
-import { assertCodexHistoryFullSize, paginateCodexHistoryItems, paginateCodexHistoryTurns, projectCodexHistory } from '../appServer/appServerHistory';
-import { prepareAppServerInput } from '../appServer/appServerInput';
-import { invalidParams, optionalBoolean, optionalString, paginateIds, paginateThreads } from '../appServer/appServerPagination';
+import { assertCodexHistoryFullSize, paginateCodexHistoryItems, paginateCodexHistoryTurns, projectCodexHistory } from '../clients/appServer/protocol/appServerHistory';
+import { prepareAppServerInput } from '../clients/appServer/protocol/appServerInput';
+import { invalidParams, optionalBoolean, optionalString, paginateIds, paginateThreads } from '../clients/appServer/protocol/appServerPagination';
 import {
   type AppServerBinding,
   type AppServerConnectionContext,
@@ -15,8 +15,8 @@ import {
   type AppServerParams,
   type AppServerResult,
   AppServerRpcError,
-} from '../appServer/appServerProtocol';
-import { codexInitializeResult, codexModel, codexThread, codexThreadOpen, codexTurn, CodexTurnStatus } from '../appServer/appServerWire';
+} from '../clients/appServer/protocol/appServerProtocol';
+import { codexInitializeResult, codexModel, codexThread, codexThreadOpen, codexTurn, CodexTurnStatus } from '../clients/appServer/protocol/appServerWire';
 import { ExternalApprovalSessionScope } from '../openclaw/permissions/externalApprovalSessionScope';
 import { ChromeAppServerLiveProjection } from './chromeAppServerLiveProjection';
 import { toAppServerMetadata, toAppServerThread, toChromeDisplay } from './chromeAppServerProjection';

@@ -1,10 +1,10 @@
-import { CodexAppServerProgress } from '../appServer/appServerProgress';
+import { CodexAppServerProgress } from '../clients/appServer/protocol/appServerProgress';
 import {
   type AppServerNotify,
   type AppServerParams,
   type AppServerResult,
-} from '../appServer/appServerProtocol';
-import { CodexAppServerToolProgress } from '../appServer/appServerToolProgress';
+} from '../clients/appServer/protocol/appServerProtocol';
+import { CodexAppServerToolProgress } from '../clients/appServer/protocol/appServerToolProgress';
 import type { ChromeExtensionAppServerStreamEvent } from './chromeAppServerTypes';
 
 const MAX_ACTIVE_TURNS = 64;

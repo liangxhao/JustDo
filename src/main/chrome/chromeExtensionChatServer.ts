@@ -1,7 +1,7 @@
 import { timingSafeEqual } from 'node:crypto';
 
-import { AppServerConnection } from '../appServer/appServerConnection';
-import { AppServerWebSocketServer } from '../appServer/appServerWebSocketServer';
+import { AppServerConnection } from '../clients/appServer/protocol/appServerConnection';
+import { AppServerWebSocketServer } from '../clients/appServer/protocol/appServerWebSocketServer';
 import { ChromeAppServerHub } from './chromeAppServerBinding';
 import {
   CHROME_EXTENSION_ID,

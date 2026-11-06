@@ -1,5 +1,5 @@
-import type { AppServerThreadMetadata } from '../appServer/appServerTypes';
-import { codexThread } from '../appServer/appServerWire';
+import type { AppServerThreadMetadata } from '../clients/appServer/protocol/appServerTypes';
+import { codexThread } from '../clients/appServer/protocol/appServerWire';
 import type { ChromeExtensionMessage, ChromeExtensionThread, ChromeExtensionTurnState } from './chromeAppServerTypes';
 
 type ChromeDisplayTurn = {

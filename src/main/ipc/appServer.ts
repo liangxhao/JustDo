@@ -1,7 +1,7 @@
 import { type BrowserWindow, ipcMain, type IpcMainInvokeEvent } from 'electron';
 
 import { AppServerIntegrationIpc, isAppServerPort } from '../../shared/integrations/appServerIntegration';
-import type { AppServerIntegrationService } from '../appServer/appServerIntegrationService';
+import type { AppServerIntegrationService } from '../clients/appServer/appServerIntegrationService';
 
 export function registerAppServerIntegrationHandlers(options: {
   getService: () => AppServerIntegrationService;

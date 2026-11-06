@@ -2,7 +2,7 @@ import type { BrowserWindow, IpcMainInvokeEvent } from 'electron';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { AppServerIntegrationIpc } from '../../shared/integrations/appServerIntegration';
-import type { AppServerIntegrationService } from '../appServer/appServerIntegrationService';
+import type { AppServerIntegrationService } from '../clients/appServer/appServerIntegrationService';
 import { registerAppServerIntegrationHandlers } from './appServer';
 
 const { handlers } = vi.hoisted(() => ({

@@ -1,7 +1,7 @@
 import { type BrowserWindow, ipcMain, type IpcMainInvokeEvent } from 'electron';
 
 import { AgentCliIntegrationIpc } from '../../shared/integrations/agentCliIntegration';
-import type { AgentCliIntegrationService } from '../integrations/externalAgent/agentCliIntegrationService';
+import type { AgentCliIntegrationService } from '../clients/cli/agentCliIntegrationService';
 
 export function registerAgentCliIntegrationHandlers(options: {
   getService: () => AgentCliIntegrationService;

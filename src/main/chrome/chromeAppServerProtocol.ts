@@ -1,5 +1,5 @@
 import { WebLaunchErrorCode, WebLaunchMethod } from '../../../plugins/chrome-extensions/chrome-assistant/contracts/webLaunch';
-import { AppServerErrorCode, type AppServerOperation,AppServerRpcError, isAppServerRecord } from '../appServer/appServerProtocol';
+import { AppServerErrorCode, type AppServerOperation,AppServerRpcError, isAppServerRecord } from '../clients/appServer/protocol/appServerProtocol';
 
 /** Chrome-owned extensions to the shared app-server protocol. */
 export const ChromeAppServerMethod = {

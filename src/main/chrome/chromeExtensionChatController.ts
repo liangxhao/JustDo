@@ -23,9 +23,9 @@ import {
 import { PRODUCT_NAME } from '../../shared/productMetadata';
 import { matchesModelSelectionIdentity } from '../../shared/providers/modelSelectionIdentity';
 import { isPermissionMode, resolvePermissionMode } from '../../shared/security/approvals';
-import { createAppServerHistoryReader } from '../appServer/appServerHistoryReader';
-import { AppServerErrorCode, AppServerRpcError } from '../appServer/appServerProtocol';
-import type { AppServerThreadHistory } from '../appServer/appServerTypes';
+import { createAppServerHistoryReader } from '../clients/appServer/protocol/appServerHistoryReader';
+import { AppServerErrorCode, AppServerRpcError } from '../clients/appServer/protocol/appServerProtocol';
+import type { AppServerThreadHistory } from '../clients/appServer/protocol/appServerTypes';
 import { resolveTaskWorkingDirectory } from '../core/filesystem/taskWorkspace';
 import { t } from '../core/i18n';
 import type { CoworkSession, CoworkStore } from '../data/coworkStore';

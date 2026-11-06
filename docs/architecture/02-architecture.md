@@ -59,6 +59,14 @@ flowchart TB
 
 ## 3. 源码按责任组织
 
+### 外部客户端接入
+
+入站 CLI、ACP 和 app-server 统一归 `src/main/clients/`。`cli/` 拥有启动器、认证本地桥、命令和 ACP；`appServer/` 拥有本机 WebSocket 入口，并以 `protocol/` 维护不含客户端业务的标准协议，以 `client/` 维护外部线程能力与连接会话管理。实际跨入口复用的会话映射、模型、原生执行和资源契约放在 `shared/`，不在两个入口各维护一份。
+
+Main 只创建一个 app-server 会话管理器，再注入 CLI stdio 与本机 WebSocket。连接集合、加载线程集合和事件订阅由该管理器统一持有；单个传输退出仍沿原有逐连接关闭与 drain 完成，不能顺便关闭其他入口的会话。共享执行层可以复用纯协议历史投影，协议层不能反向加载客户端执行或连接管理。
+
+Chrome 适配继续在 `src/main/chrome/`，只复用 `appServer/protocol/`；出站 Agent 委派配置及 ACPX 插件保留原有归属。入口细节见[外部客户端](../features/external-clients/README.md)。
+
 ### 资源、构建和运行时目录
 
 应用资源按用途组织：`resources/icons/` 聚合标志、平台图标和托盘素材，`pages/` 保存开发错误页与偏好恢复空白页，`python/` 保存受管依赖清单和路径初始化源码。离线下载放在仓库根目录下忽略提交的 `cache/<capability>/`；工具运行时准备和打包中间产物使用根目录的 `build/`，其中 `runtimes/`、`tar/`、`speech-models/v1/`、`chrome-extension/` 分别承载工具运行时、Windows 运行时归档、模型发布包和浏览器扩展组装产物。OpenClaw 冻结运行包目前仍由安装脚本写入 `vendor/openclaw-runtime/<target>/` 并同步 `current/`，不能把目录规范当作这条既有构建链已迁入 `build/` 的事实；消费与打包映射见[工程构建](12-tech-stack.md#5-openclaw-供应链)。
@@ -154,10 +162,10 @@ flowchart LR
 
 ### 本机集成和独立凭据
 
-Chrome、通用本机 WebSocket 与 CLI stdio 的 app-server 共用 `main/appServer/` 中唯一的协议连接实现，统一解析、握手、方法路由及响应/通知；两类 WebSocket 入口也复用同一传输实现。连接由 Main 注入浏览器或外部线程的显式能力；浏览器仅访问扩展创建的会话，通用 WebSocket 与 stdio 使用相同的外部线程 binding。
+Chrome、通用本机 WebSocket 与 CLI stdio 的 app-server 共用 `main/clients/appServer/protocol/` 中唯一的协议连接实现，统一解析、握手、方法路由及响应/通知；两类 WebSocket 入口也复用同一传输实现。连接由 Main 注入浏览器或外部线程的显式能力；浏览器仅访问扩展创建的会话，通用 WebSocket 与 stdio 使用相同的外部线程 binding。
 
-`main/appServer/` 不包含浏览器协议、业务分支或跨浏览器集成测试。浏览器附加方法、通知和
-网页关联错误映射由 `main/chrome/extension/` 拥有，只通过通用 `extensions` 注册契约接入；
+`main/clients/appServer/protocol/` 不包含浏览器协议、业务分支或跨浏览器集成测试。浏览器附加方法、通知和
+网页关联错误映射由 `main/chrome/` 拥有，只通过通用 `extensions` 注册契约接入；
 标准路由不可覆盖。浏览器依赖通用协议，通用协议及其生产运行时传递依赖不得引用浏览器领域。
 
 标准输入、wire 元数据、历史投影／分页和审批 presenter 也由通用模块提供；浏览器只组合这些能力与自身来源、页面上下文和发送 owner。共享输入把文本合并并保留图片相对顺序后交给原生附件通道，不承诺保留文本与图片的任意交错。图片必须由真实模型目录明确声明支持；Chrome 还在原生发送前固定并回读实际模型，普通文档附件不因此要求视觉模型。准入与原生 RPC 的不同原子性见[执行引擎](05-agent-engine.md#13-外部客户端执行)。

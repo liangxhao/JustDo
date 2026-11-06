@@ -13,7 +13,7 @@ import {
 } from '../../../plugins/chrome-extensions/chrome-assistant/contracts/webLaunch';
 import { CoworkSessionSource } from '../../shared/cowork/sessionSource';
 import { normalizeAgentEvent } from '../../shared/openclaw/agentEvent';
-import type { AppServerOperation, AppServerResult } from '../appServer/appServerProtocol';
+import type { AppServerOperation, AppServerResult } from '../clients/appServer/protocol/appServerProtocol';
 import { resolveTaskWorkingDirectory } from '../core/filesystem/taskWorkspace';
 import type { CoworkStore } from '../data/coworkStore';
 import type { GatewayClientLike } from '../engine/gateway/types';

@@ -4,8 +4,8 @@ import type { ChromeExtensionStreamEvent } from '../../shared/chrome/chromeExten
 import type {
   AppServerBinding,
   AppServerConnectionContext,
-} from '../appServer/appServerProtocol';
-import { AppServerNotificationMethod } from '../appServer/appServerProtocol';
+} from '../clients/appServer/protocol/appServerProtocol';
+import { AppServerNotificationMethod } from '../clients/appServer/protocol/appServerProtocol';
 import { ChromeAppServerHub } from './chromeAppServerBinding';
 import { ChromeAppServerNotificationMethod } from './chromeAppServerProtocol';
 import type { ChromeExtensionChatApi, ChromeExtensionTurnState } from './chromeAppServerTypes';

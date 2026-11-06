@@ -1,6 +1,6 @@
 # 通用客户端：stdio 与本机 WebSocket
 
-本文描述 CLI stdio 和本机 Bearer WebSocket 共用的 `CliAppServerBinding`。
+本文描述 CLI stdio 和本机 Bearer WebSocket 共用的 `ExternalAppServerBinding`。
 两种传输使用相同的方法、数据模型与会话所有权。公共消息外形见[总览](README.md)。
 
 ## 连接
@@ -531,5 +531,5 @@ userMessage.content 也保留真实 image／localImage。原生历史只有受�
 `turn/start.error.data.requestSent` 仅在存在明确布尔证据时返回，
 缺省时不能据错误码推断原生是否接收。
 
-权威实现为 `src/main/integrations/externalAgent/cliAppServerBinding.ts`、
-`codexAppServerProgress.ts` 与 `src/main/appServer/appServerIntegrationService.ts`。
+权威实现为 `src/main/clients/appServer/client/externalAppServerBinding.ts`、
+`codexAppServerProgress.ts` 与 `src/main/clients/appServer/appServerIntegrationService.ts`。

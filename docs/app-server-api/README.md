@@ -118,11 +118,11 @@ WebSocket 非法 JSON 返回 `-32700`。stdio 非法 JSON 会关闭协议连接�
 
 ## 实现入口
 
-- 公共协议与路由：`src/main/appServer/appServerConnection.ts`、`appServerProtocol.ts`。
+- 公共协议与路由：`src/main/clients/appServer/protocol/appServerConnection.ts`、`appServerProtocol.ts`。
 - 公共投影与历史：同目录的 `appServerWire`、`appServerPagination`、`appServerHistory`、
   `appServerHistoryReader`、`appServerProgress`、`appServerToolProgress`。
 - 公共输入与审批：同目录的 `appServerInput`、`appServerApprovals`；原生审批归属仍由宿主权限路由拥有。
-- 通用本机 WebSocket：`src/main/appServer/appServerIntegrationService.ts`。
-- 通用客户端能力：`src/main/integrations/externalAgent/cliAppServerBinding.ts`。
+- 通用本机 WebSocket：`src/main/clients/appServer/appServerIntegrationService.ts`。
+- 通用客户端能力：`src/main/clients/appServer/client/externalAppServerBinding.ts`。
 
 两种传输共用原生执行与历史权威，不建立独立的 transcript 缓存。

@@ -2,7 +2,7 @@ import type { BrowserWindow, IpcMainInvokeEvent } from 'electron';
 import { afterEach, expect, test, vi } from 'vitest';
 
 import { AgentCliIntegrationIpc } from '../../shared/integrations/agentCliIntegration';
-import type { AgentCliIntegrationService } from '../integrations/externalAgent/agentCliIntegrationService';
+import type { AgentCliIntegrationService } from '../clients/cli/agentCliIntegrationService';
 import { registerAgentCliIntegrationHandlers } from './agentCli';
 
 const { handlers } = vi.hoisted(() => ({

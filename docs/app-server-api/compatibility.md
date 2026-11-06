@@ -94,7 +94,7 @@ codex app-server generate-json-schema --out build/test-dependencies/app-server-o
 
 ## 共享实现
 
-stdio 与本机 WebSocket 通过同一 `CliAppServerBinding` 使用共享协议、模型、线程、历史、
+stdio 与本机 WebSocket 通过同一 `ExternalAppServerBinding` 使用共享协议、模型、线程、历史、
 分页、进度、标准输入和审批呈现。传输不改变会话范围、执行预留或原生权限规则。
 `thread/read` 仅查询，客户端通过 `thread/resume` 明确订阅；不因元数据读取取得执行或审批所有权。
 各接口字段和调用顺序见[通用客户端规范](external-clients.md)。

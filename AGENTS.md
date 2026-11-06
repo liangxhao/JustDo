@@ -106,6 +106,10 @@ npm test
 - Main services, IPC and shared contracts belong to their owning domain.
   Provider credentials/authentication belong to `main/providers/`; native
   config projection belongs to `main/openclaw/config/`.
+- Inbound CLI, ACP and app-server code belongs in `src/main/clients/`:
+  `cli/` and `appServer/` own their entry points; `shared/` owns reused execution
+  and session services. Keep app-server protocol independent of client runtime
+  implementations, and keep Chrome-specific adapters in `main/chrome/`.
 - Cowork `display/` owns tab composition; `preview/` owns file browsing;
   `approvals/` owns plan review. Keep native subtask graphs, Agent Team
   collaboration/discussions and Swarm Workflow UI in their separate domains.

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { NormalizedAgentEvent } from '../../shared/openclaw/agentEvent';
-import { AppServerNotificationMethod } from '../appServer/appServerProtocol';
+import { AppServerNotificationMethod } from '../clients/appServer/protocol/appServerProtocol';
 import { ChromeAppServerLiveProjection } from './chromeAppServerLiveProjection';
 
 const event = (agentSeq: number, stream: string, data: Record<string, unknown>, sessionId = 'physical-session') => ({

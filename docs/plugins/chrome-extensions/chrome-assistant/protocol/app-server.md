@@ -4,7 +4,7 @@ Chrome 使用与 CLI／本机 WebSocket 相同的基础 app-server 方法、参�
 错误分类及标准通知。基础字段以[宿主接入要求](../protocol-contract.md)为准；
 本页只维护入口鉴权、浏览器附加能力和服务端会话策略。
 
-附加能力由 `main/chrome/extension/` 自己定义和注册；公共 `main/appServer/` 不包含浏览器
+附加能力由 `main/chrome/` 自己定义和注册；公共 `main/clients/appServer/protocol/` 不包含浏览器
 协议常量、业务错误分支或反向依赖。共享引擎只提供精确的通用 extensions 注册，
 所有扩展调用需要请求 ID，不能替换标准方法，也不能由客户端握手声明开启。
 

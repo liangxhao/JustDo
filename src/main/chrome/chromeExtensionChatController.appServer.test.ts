@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { SessionRunTiming } from '../../shared/cowork/sessionRun';
 import { CoworkSessionSource } from '../../shared/cowork/sessionSource';
-import { projectCodexHistory } from '../appServer/appServerHistory';
+import { projectCodexHistory } from '../clients/appServer/protocol/appServerHistory';
 import { ChromeExtensionChatController } from './chromeExtensionChatController';
 
 const deferred = <T>() => {

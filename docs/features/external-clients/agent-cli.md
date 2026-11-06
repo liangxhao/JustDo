@@ -74,7 +74,7 @@ flowchart LR
 
 传输保留 v4 有界帧、UTF-8、FIFO、队列上限和慢消费者背压。Main 只发布
 `external-agent/bridge.json` 供所有命令发现当前 pipe token。端点和 launcher/model/session
-服务归通用 `externalAgent` 领域，不探测或认证指定第三方应用。
+服务归入站客户端 `clients` 领域，不探测或认证指定第三方应用。
 
 命令仅允许为 app-server 身份标记转发可选 `CODEX_HOME`；不转发其他任务环境、客户端 token
 或 server/workspace ID。Gateway 凭据不进入命令参数或协议输出。

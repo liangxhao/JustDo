@@ -12,7 +12,7 @@
 
 两条连接独立：自动化 relay 控制已授权网页，聊天 app-server 管理产品会话。自动发现聊天服务不等于已配对自动化；重新配对 relay 也不能修复 Native host 发现失败。
 
-聊天与 CLI、通用本机 WebSocket app-server 共用 `main/appServer/AppServerConnection` 的请求解析、握手、方法路由、错误与通知出口。Chrome 与通用入口也复用 `AppServerWebSocketServer` 传输实现，保留独立的凭据和能力 binding；Chrome 仍用自动发现及固定扩展 Origin，通用原生客户端使用设置页复制的 Bearer 配置。浏览器服务只拥有鉴权和生命周期；历史投影、订阅共享与运行校准由浏览器能力 binding 提供。客户端请求不能改变绑定的能力或会话范围。客户端依赖及执行围栏见[宿主接入要求](protocol-contract.md)。
+聊天与 CLI、通用本机 WebSocket app-server 共用 `main/clients/appServer/protocol/AppServerConnection` 的请求解析、握手、方法路由、错误与通知出口。Chrome 与通用入口也复用 `AppServerWebSocketServer` 传输实现，保留独立的凭据和能力 binding；Chrome 仍用自动发现及固定扩展 Origin，通用原生客户端使用设置页复制的 Bearer 配置。浏览器服务只拥有鉴权和生命周期；历史投影、订阅共享与运行校准由浏览器能力 binding 提供。客户端请求不能改变绑定的能力或会话范围。客户端依赖及执行围栏见[宿主接入要求](protocol-contract.md)。
 
 浏览器专属方法／通知常量和网页关联错误映射归 `main/chrome/extension/chromeAppServerProtocol.ts`，
 由浏览器 binding 使用固定白名单注册通用 extensions；公共 app-server 目录不引用浏览器模块。

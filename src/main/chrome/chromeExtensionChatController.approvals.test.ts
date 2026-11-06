@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { CoworkSessionSource } from '../../shared/cowork/sessionSource';
 import { ApprovalKind, type ApprovalRequest } from '../../shared/security/approvals';
-import type { AppServerConnectionContext } from '../appServer/appServerProtocol';
+import type { AppServerConnectionContext } from '../clients/appServer/protocol/appServerProtocol';
 import type { GatewayClientLike } from '../engine/gateway/types';
 import type { CoworkStartOptions } from '../engine/types';
 import { ExternalApprovalRouting } from '../openclaw/permissions/externalApprovalRouting';

@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { WebLaunchMethod } from '../../../plugins/chrome-extensions/chrome-assistant/contracts/webLaunch';
-import { AppServerConnection } from '../appServer/appServerConnection';
-import type { AppServerConnectionContext, AppServerOperation } from '../appServer/appServerProtocol';
+import { AppServerConnection } from '../clients/appServer/protocol/appServerConnection';
+import type { AppServerConnectionContext, AppServerOperation } from '../clients/appServer/protocol/appServerProtocol';
 import { ChromeAppServerHub } from './chromeAppServerBinding';
 import { ChromeAppServerMethod, ChromeAppServerNotificationMethod, chromeWebLaunchMethods } from './chromeAppServerProtocol';
 import type { ChromeExtensionChatApi } from './chromeAppServerTypes';

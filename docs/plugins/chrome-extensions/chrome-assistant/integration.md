@@ -8,7 +8,7 @@ Main 的浏览器领域提供 Native Messaging 注册和实例发现、独立 lo
 来源校验、产品会话准备、审批 owner、原生历史读取与执行回执核对。
 相关入口为 `src/main/chrome/`；Native Host 的应用侧构建入口为
 `scripts/chrome/chrome-extension-native-host.cs`。
-共享标准协议和传输由 `src/main/appServer/` 提供，不反向依赖浏览器业务。
+共享标准协议和传输由 `src/main/clients/appServer/protocol/` 提供，不反向依赖浏览器业务。
 
 客户端更新必须与宿主协议版本匹配。具体帧、版本、字段、方法与能力限制仅在
 [包内宿主契约](protocol-contract.md)

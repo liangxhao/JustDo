@@ -6,7 +6,7 @@ import ts from 'typescript';
 import { expect, test } from 'vitest';
 
 const projectRoot = path.resolve(import.meta.dirname, '../..');
-const coreRoot = path.join(projectRoot, 'src/main/appServer');
+const coreRoot = path.join(projectRoot, 'src/main/clients/appServer/protocol');
 const domainToken = /browser|chrome|weblaunch/iu;
 const domainPath = /(?:^|\/)(?:browser|chrome|chrome-extension|chrome-extensions|chrome-assistant)(?:\/|$)/iu;
 
@@ -56,10 +56,13 @@ async function runtimeDependencies(input: Pick<BuildOptions, 'entryPoints' | 'st
     path.relative(projectRoot, path.resolve(projectRoot, file)).replace(/\\/gu, '/'));
 }
 
-test('app-server production entry points have no transitive browser runtime dependencies', async () => {
+test('app-server protocol has no transitive client or browser runtime dependencies', async () => {
   const files = (await sourceFiles()).filter(file => !/\.(?:test|spec)\.[cm]?[jt]sx?$/u.test(file));
   const dependencies = await runtimeDependencies({ entryPoints: files });
   expect(dependencies.filter(file => domainPath.test(file))).toEqual([]);
+  expect(dependencies.filter(file =>
+    file.startsWith('src/main/clients/') &&
+    !file.startsWith('src/main/clients/appServer/protocol/'))).toEqual([]);
 });
 
 test('the runtime dependency boundary resolves Main path aliases before classifying modules', async () => {

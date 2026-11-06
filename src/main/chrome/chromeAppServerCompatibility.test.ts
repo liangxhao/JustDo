@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { AppServerConnection } from '../appServer/appServerConnection';
-import { CliAppServerBinding } from '../integrations/externalAgent/cliAppServerBinding';
-import type { CodexAppServerBackend } from '../integrations/externalAgent/codexAppServerBackend';
-import { ExternalAgentCancelledError } from '../integrations/externalAgent/externalAgentTypes';
+import type { CodexAppServerBackend } from '../clients/appServer/client/codexAppServerBackend';
+import { ExternalAppServerBinding } from '../clients/appServer/client/externalAppServerBinding';
+import { AppServerConnection } from '../clients/appServer/protocol/appServerConnection';
+import { ExternalAgentCancelledError } from '../clients/shared/externalAgentTypes';
 import { ChromeAppServerHub } from './chromeAppServerBinding';
 import type { ChromeExtensionChatApi } from './chromeAppServerTypes';
 
@@ -57,7 +57,7 @@ function fixture() {
   const connect = (chrome: boolean) => {
     const output: Array<Record<string, unknown>> = [];
     const connection = new AppServerConnection(
-      context => chrome ? hub.connect(context) : new CliAppServerBinding(backend, context),
+      context => chrome ? hub.connect(context) : new ExternalAppServerBinding(backend, context),
       value => output.push(value as Record<string, unknown>),
     );
     cleanup.push(() => connection.close());

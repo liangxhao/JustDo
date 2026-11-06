@@ -54,9 +54,6 @@ import {
 import { BuiltinModelIpc, BuiltinModelSyncReason } from '../shared/providers/builtinModels';
 import { LocalSpeechModelIpc } from '../shared/speech/localSpeechModels';
 import { normalizeLocalSpeechSettings } from '../shared/speech/localSpeechSettings';
-import { AppServerIntegrationService } from './appServer/appServerIntegrationService';
-import { AppServerSettingsStore } from './appServer/appServerSettingsStore';
-import { waitForAppServerShutdown } from './appServer/appServerShutdown';
 import { BrowserAgentBridge } from './browser/browserAgentBridge';
 import { resolveBrowserDesktopSession } from './browser/browserDesktopSession';
 import { EmbeddedBrowserGatewayBridge } from './browser/embeddedBrowserGatewayBridge';
@@ -71,6 +68,33 @@ import {
 } from './chrome/chromeExtensionNativeMessaging';
 import { readAutomaticChromeExtensionPairing } from './chrome/chromeExtensionPairing';
 import { ChromeWebLaunchService } from './chrome/chromeWebLaunchService';
+import { AppServerIntegrationService } from './clients/appServer/appServerIntegrationService';
+import { AppServerSettingsStore } from './clients/appServer/appServerSettingsStore';
+import { waitForAppServerShutdown } from './clients/appServer/appServerShutdown';
+import { AppServerSessionManager } from './clients/appServer/client/appServerSessionManager';
+import {
+  resolveDevelopmentAgentCliExecutable,
+  resolvePackagedAgentCliExecutable,
+} from './clients/cli/agentCliDevLauncher';
+import { AgentCliIntegrationService } from './clients/cli/agentCliIntegrationService';
+import {
+  buildAgentCliBridgeArguments,
+  ensureAgentCliCommandLauncher,
+  resolvePackagedAgentCliTargetPath,
+} from './clients/cli/agentCliLauncher';
+import { AgentCommandService } from './clients/cli/agentCommandService';
+import { runAgentBridgeClient } from './clients/cli/transport/agentBridgeClient';
+import {
+  parseAgentBridgeArgv,
+  resolveAgentBridgeProfile,
+} from './clients/cli/transport/agentBridgeProtocol';
+import { AgentBridgeServer } from './clients/cli/transport/agentBridgeServer';
+import { ExternalAgentBackendFactory } from './clients/shared/externalAgentBackend';
+import { createExternalAgentExecution } from './clients/shared/externalAgentExecution';
+import { createExternalAgentHistoryReader } from './clients/shared/externalAgentHistoryReader';
+import { getExternalAgentModelCatalog } from './clients/shared/externalAgentModelCatalog';
+import { ExternalAgentResources } from './clients/shared/externalAgentResources';
+import { ExternalSessionStore } from './clients/shared/externalSessionStore';
 import { AppInitialization } from './core/app/appInitialization';
 import { registerAppShutdown } from './core/app/appShutdown';
 import { createLoginSdkAdapter } from './core/app/auth/loginSdkAdapter';
@@ -150,29 +174,6 @@ import { SqliteStore } from './data/sqliteStore';
 import { CoworkEngineService } from './engine';
 import { bindCoworkRuntimeForwarder } from './engine/cowork/coworkRuntimeForwarder';
 import type { GatewayRequestOptions } from './engine/types';
-import {
-  resolveDevelopmentAgentCliExecutable,
-  resolvePackagedAgentCliExecutable,
-} from './integrations/externalAgent/agentCliDevLauncher';
-import { AgentCliIntegrationService } from './integrations/externalAgent/agentCliIntegrationService';
-import {
-  buildAgentCliBridgeArguments,
-  ensureAgentCliCommandLauncher,
-  resolvePackagedAgentCliTargetPath,
-} from './integrations/externalAgent/agentCliLauncher';
-import { AgentCommandService } from './integrations/externalAgent/agentCommandService';
-import { ExternalAgentBackendFactory } from './integrations/externalAgent/externalAgentBackend';
-import { createExternalAgentExecution } from './integrations/externalAgent/externalAgentExecution';
-import { createExternalAgentHistoryReader } from './integrations/externalAgent/externalAgentHistoryReader';
-import { getExternalAgentModelCatalog } from './integrations/externalAgent/externalAgentModelCatalog';
-import { ExternalAgentResources } from './integrations/externalAgent/externalAgentResources';
-import { ExternalSessionStore } from './integrations/externalAgent/externalSessionStore';
-import { runAgentBridgeClient } from './integrations/externalAgent/transport/agentBridgeClient';
-import {
-  parseAgentBridgeArgv,
-  resolveAgentBridgeProfile,
-} from './integrations/externalAgent/transport/agentBridgeProtocol';
-import { AgentBridgeServer } from './integrations/externalAgent/transport/agentBridgeServer';
 import { registerAgentCliIntegrationHandlers } from './ipc/agentCli';
 import {
   applyBrowserModeChange,
@@ -564,6 +565,8 @@ let agentBridgeStartPromise: Promise<void> | null = null;
 let agentCliIntegrationService: AgentCliIntegrationService | null = null;
 let appServerIntegrationService: AppServerIntegrationService | null = null;
 let agentCommandService: AgentCommandService | null = null;
+let externalClientBackend: ExternalAgentBackendFactory | null = null;
+let appServerSessionManager: AppServerSessionManager | null = null;
 let cliExternalSessionStore: ExternalSessionStore | null = null;
 let appPlugins: AppPluginManager | undefined;
 let stopAppDevelopmentAssets: (() => Promise<void>) | undefined;
@@ -1190,34 +1193,48 @@ const getAgentCliIntegrationService = (): AgentCliIntegrationService => {
   return agentCliIntegrationService;
 };
 
+const getExternalClientBackend = (): ExternalAgentBackendFactory => {
+  externalClientBackend ??= new ExternalAgentBackendFactory({
+    getCoworkStore,
+    getExternalSessionStore: () => {
+      cliExternalSessionStore ??= new ExternalSessionStore(getStore().getDatabase());
+      return cliExternalSessionStore;
+    },
+    getModels: () => getExternalAgentModelCatalog(resolveDefaultAgentModelRef()),
+    onSessionsChanged: notifyCoworkSessionsChanged,
+    readHistory: createExternalAgentHistoryReader(getOpenClawRuntimeAdapter),
+    execute: createExternalAgentExecution({
+      getStore: getCoworkStore,
+      getRouter: getCoworkEngineRouter,
+      getRuntime: getOpenClawRuntimeAdapter,
+      ensureReady: ensureOpenClawRunningForCowork,
+    }),
+  });
+  return externalClientBackend;
+};
+
+const getAppServerSessionManager = (): AppServerSessionManager => {
+  appServerSessionManager ??= new AppServerSessionManager({
+    backend: getExternalClientBackend(),
+    createResources: () => new ExternalAgentResources(getOpenClawRuntimeAdapter),
+    getHome: () => path.join(app.getPath('userData'), 'app-server'),
+  });
+  return appServerSessionManager;
+};
+
 const getAgentCommandService = (): AgentCommandService => {
   agentCommandService ??= new AgentCommandService({
-    backend: new ExternalAgentBackendFactory({
-      getCoworkStore,
-      getExternalSessionStore: () => {
-        cliExternalSessionStore ??= new ExternalSessionStore(getStore().getDatabase());
-        return cliExternalSessionStore;
-      },
-      getModels: () => getExternalAgentModelCatalog(resolveDefaultAgentModelRef()),
-      onSessionsChanged: notifyCoworkSessionsChanged,
-      readHistory: createExternalAgentHistoryReader(getOpenClawRuntimeAdapter),
-      execute: createExternalAgentExecution({
-        getStore: getCoworkStore,
-        getRouter: getCoworkEngineRouter,
-        getRuntime: getOpenClawRuntimeAdapter,
-        ensureReady: ensureOpenClawRunningForCowork,
-      }),
-    }),
+    backend: getExternalClientBackend(),
     createResources: () => new ExternalAgentResources(getOpenClawRuntimeAdapter),
     getStatus: () => getAgentCliIntegrationService().getStatus(),
-    getAppServerHome: () => path.join(app.getPath('userData'), 'app-server'),
+    appServerSessions: getAppServerSessionManager(),
   });
   return agentCommandService;
 };
 
 const getAppServerIntegrationService = (): AppServerIntegrationService => {
   appServerIntegrationService ??= new AppServerIntegrationService({
-    commandService: getAgentCommandService(),
+    sessionManager: getAppServerSessionManager(),
     getDefaultCwd: () => getCoworkStore().getConfig().workingDirectory,
     settings: new AppServerSettingsStore(app.getPath('userData')),
   });

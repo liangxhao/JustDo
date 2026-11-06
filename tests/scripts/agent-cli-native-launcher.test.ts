@@ -9,7 +9,7 @@ import { promisify } from 'node:util';
 
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
-import { AgentBridgeServer } from '../../src/main/integrations/externalAgent/transport/agentBridgeServer';
+import { AgentBridgeServer } from '../../src/main/clients/cli/transport/agentBridgeServer';
 
 const require = createRequire(import.meta.url);
 const {

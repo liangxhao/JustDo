@@ -1,5 +1,5 @@
-import { createAppServerApprovalPresenter } from '../appServer/appServerApprovals';
-import type { AppServerConnectionContext } from '../appServer/appServerProtocol';
+import { createAppServerApprovalPresenter } from '../clients/appServer/protocol/appServerApprovals';
+import type { AppServerConnectionContext } from '../clients/appServer/protocol/appServerProtocol';
 import type { GatewayClientLike } from '../engine/gateway/types';
 import type { OpenClawRuntimeAdapter } from '../engine/openclaw/openclawRuntimeAdapter';
 import type { CoworkNativeAcceptedBinding, CoworkNativeSendBinding } from '../engine/types';
