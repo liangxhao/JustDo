@@ -1644,6 +1644,122 @@ test('persists an ordinary chat error before the history refresh replaces live s
   ]);
 });
 
+test.each(['ready', 'failed', 'in-flight'] as const)(
+  'hydrates a directly appended terminal failure after chat.error (history: %s)',
+  async historyReadState => {
+    const values = new Map<string, string>();
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => values.set(key, value),
+    });
+    const sessionKey = 'agent:main:chat:error-history';
+    const sessionId = 'physical-error-history';
+    const runId = 'run-error-history';
+    const error = 'OpenClaw stopped this turn after 3 consecutive identical tool failures. '
+      + 'Check the tool arguments or switch to a model with native tool calling before retrying.';
+    const prompt = {
+      role: 'user', content: 'Continue', timestamp: 500,
+      __openclaw: { id: 'prompt', seq: 1, runId },
+    };
+    const failure = {
+      role: 'assistant', stopReason: 'error',
+      content: [{ type: 'text', text: error }], timestamp: 600,
+      __openclaw: { id: 'failure', seq: 2, runId },
+    };
+    let resolveEarlierHistory: ((value: unknown) => void) | undefined;
+    let historyRequests = 0;
+    const request = vi.fn(async (method: string) => {
+      if (method === 'chat.history') {
+        historyRequests += 1;
+        if (historyReadState === 'failed') throw new Error('History unavailable');
+        if (historyReadState === 'in-flight' && historyRequests === 1) {
+          return new Promise(resolve => { resolveEarlierHistory = resolve; });
+        }
+        return { messages: [prompt, failure], sessionId };
+      }
+      if (method === 'runtimeServices.historyDetails') {
+        return { failureDetails: { failure: { errorMessage: error, emptyContent: true } } };
+      }
+      return {};
+    });
+    const controller = new ChatController();
+    controller.state.client = { request, generation: 1 } as never;
+    controller.state.connected = true;
+    controller.state.sessionKey = sessionKey;
+    controller.state.currentSessionId = sessionId;
+    controller.state.chatMessages = [prompt];
+    controller.state.transcript.sessionKey = sessionKey;
+    controller.state.transcript.sessionId = sessionId;
+    controller.state.transcript.persistedMessages = [prompt];
+    const internal = controller as unknown as {
+      handleEvent(event: { event: string; payload: unknown }): void;
+      pendingHistoryReload: boolean;
+    };
+    const earlierHistory = historyReadState === 'in-flight' ? controller.loadHistory() : null;
+    internal.handleEvent({
+      event: 'agent',
+      payload: {
+        sessionKey, sessionId, runId, seq: 1, stream: 'assistant',
+        data: { itemId: 'error-content', text: error },
+      },
+    });
+    internal.handleEvent({
+      event: 'session.message',
+      payload: {
+        sessionKey, sessionId, runId, messageSeq: 2,
+        hasActiveRun: true, activeRunIds: [runId], message: failure,
+      },
+    });
+    expect(controller.state.chatMessages).toHaveLength(2);
+    expect(internal.pendingHistoryReload).toBe(false);
+    expect(historyRequests).toBe(historyReadState === 'in-flight' ? 1 : 0);
+    const logError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    try {
+      internal.handleEvent({
+        event: 'chat',
+        payload: { sessionKey, sessionId, runId, state: 'error', errorMessage: error },
+      });
+      resolveEarlierHistory?.({ messages: [prompt], sessionId });
+      await earlierHistory;
+      if (historyReadState !== 'failed') {
+        await vi.waitFor(() => expect(request).toHaveBeenCalledWith('runtimeServices.historyDetails', {
+          sessionKey, failureMessageIds: ['failure'], includeFailurePartialContent: true,
+        }));
+      }
+      await vi.waitFor(() => expect(controller.state.chatLoading).toBe(false));
+
+      expect(request).toHaveBeenCalledWith(
+        'chat.history', expect.objectContaining({ sessionKey }), expect.anything(),
+      );
+      expect(historyRequests).toBe(historyReadState === 'in-flight' ? 2 : 1);
+      expect(controller.state.chatSending).toBe(false);
+      if (historyReadState === 'failed') {
+        expect(controller.state.transcript.activeTurn).toMatchObject({
+          runId, status: 'error', items: expect.arrayContaining([
+            expect.objectContaining({ type: 'terminal', message: error }),
+          ]),
+        });
+        expect(controller.state.historyReadFailed).toBe(true);
+        expect(controller.state.lastError).toBe('History unavailable');
+        expect(request).not.toHaveBeenCalledWith('runtimeServices.historyDetails', expect.anything());
+      } else {
+        expect(controller.state.lastError).toBe(error);
+        expect(request).toHaveBeenCalledWith('runtimeServices.historyDetails', {
+          sessionKey, failureMessageIds: ['failure'], includeFailurePartialContent: true,
+        });
+        expect(controller.state.transcript.activeTurn).toBeNull();
+        expect(controller.state.chatMessages).toEqual([
+          prompt,
+          expect.objectContaining({ role: 'system', content: error, isError: true }),
+        ]);
+      }
+    } finally {
+      logError.mockRestore();
+    }
+  },
+);
+
 test('does not persist a stale chat error rejected by the transcript reducer', () => {
   const values = new Map<string, string>();
   vi.stubGlobal('localStorage', {

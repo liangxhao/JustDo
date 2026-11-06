@@ -12,6 +12,7 @@ import {
   beginAssistantTurn,
   createChatTranscriptState,
 } from '@/libs/openclaw-chat/model/chat-transcript-state';
+import { reconcileHistory } from '@/libs/openclaw-chat/model/history/history-reconciler';
 import { FAILED_RUN_MESSAGE_FLAG } from '@/libs/openclaw-chat/model/turn/failed-run-message';
 import { normalizeGatewayHistoryForDisplay } from '@/libs/openclaw-chat/pipeline/history-display-normalizer';
 import type { GatewayMessage } from '@/libs/openclaw-chat/types';
@@ -26,6 +27,67 @@ afterEach(() => {
 });
 
 describe('justdo-chat failed runs', () => {
+  test('hands a repeated-tool failure to one historical error row and preserves earlier output', async () => {
+    const error = 'OpenClaw stopped this turn after 3 consecutive identical tool failures. ' +
+      'Check the tool arguments or switch to a model with native tool calling before retrying.';
+    const body = 'Checking the environment first.';
+    const state = createChatTranscriptState('session-1', 'sid-1');
+    const turn = beginAssistantTurn(state, { runId: 'run-1' }, {
+      now: () => 1,
+      createId: prefix => `${prefix}-1`,
+    });
+    turn.status = 'error';
+    const base = { runId: turn.runId, firstSeq: 1, lastSeq: 1, startedAt: 1, updatedAt: 2 };
+    turn.items.push(
+      { ...base, id: 'reply', type: 'content', status: 'completed', text: body, sourceMode: 'snapshot' },
+      { ...base, id: 'notice', type: 'content', status: 'completed', text: error, sourceMode: 'snapshot' },
+      { ...base, id: 'terminal', type: 'terminal', status: 'error', message: error },
+    );
+    const nativeMessages = [
+      {
+        role: 'assistant', content: [{ type: 'text', text: body }], stopReason: 'toolUse',
+        __openclaw: { id: 'reply-1', runId: turn.runId },
+      },
+      {
+        role: 'assistant', content: [{ type: 'text', text: error }], stopReason: 'error',
+        __openclaw: { id: 'failure-1', runId: turn.runId },
+      },
+    ];
+    const original = structuredClone(nativeMessages);
+    const hydrated = await hydrateTruncatedHistoryMessages({
+      request: vi.fn().mockResolvedValue({
+        failureDetails: { 'failure-1': { errorMessage: error, emptyContent: true } },
+      }),
+    } as unknown as GatewayClient, nativeMessages, 'session-1');
+    const messages = await normalizeGatewayHistoryForDisplay(hydrated, {
+      sessionKey: 'session-1', sessionId: 'sid-1', includeFailedRunOverlays: false,
+    });
+    const result = reconcileHistory(state, {
+      request: { sessionKey: 'session-1', sessionId: 'sid-1', historyGeneration: state.historyGeneration },
+      source: 'gateway', messages,
+    });
+    expect(result.activeTurnTakeover).toBe('retired');
+    expect(state.activeTurn).toBeNull();
+    expect(nativeMessages).toEqual(original);
+    expect(turn.items[1]).toMatchObject({ text: error });
+
+    for (let mount = 0; mount < 2; mount += 1) {
+      const chat = document.createElement('justdo-chat') as JustDoChatElement;
+      chat.messages = result.messages as GatewayMessage[];
+      chat.activeTurn = state.activeTurn;
+      document.body.append(chat);
+      await chat.updateComplete;
+      await chat.shadowRoot!.querySelector<TerminalErrorMessage>('chat-terminal-error')!.updateComplete;
+      const displayedError = error.replace('OpenClaw', PRODUCT_NAME);
+      expect(chat.shadowRoot!.querySelectorAll('.chat-avatar.error')).toHaveLength(1);
+      expect(chat.shadowRoot!.querySelectorAll('.process-terminal--error')).toHaveLength(1);
+      expect(chat.shadowRoot!.querySelector('.process-terminal__error-text')?.textContent).toBe(displayedError);
+      expect(chat.shadowRoot!.textContent?.split('3 consecutive identical tool failures')).toHaveLength(2);
+      expect(chat.shadowRoot!.textContent?.split(body)).toHaveLength(2);
+      chat.remove();
+    }
+  });
+
   test('keeps one summary and model diagnostic before and after a session remount', async () => {
     const state = createChatTranscriptState('session-1', 'sid-1');
     const turn = beginAssistantTurn(state, { runId: 'run-1' }, {

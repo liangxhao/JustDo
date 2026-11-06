@@ -21,6 +21,41 @@ const CONTROL_REPLY_PATTERNS = CONTROL_REPLY_TOKENS.map(token => ({
 }));
 // Locked native stream-message-shared fallback, not an assistant partial reply.
 const STREAM_ERROR_FALLBACK_TEXT = '[assistant turn failed before producing content]';
+const REPEATED_TOOL_ERROR_CODE = 'openclaw_repeated_tool_error';
+
+/** The native loop writes this terminal diagnostic as text, not a partial reply. */
+function isSyntheticToolFailureContent(message: RecordValue): boolean {
+  const delivery = isRecord(message.openclawDelivery) ? message.openclawDelivery : null;
+  const metadata = isRecord(message.__openclaw) ? message.__openclaw : null;
+  if (
+    message.role !== 'assistant' ||
+    message.stopReason !== 'error' ||
+    message.errorCode !== REPEATED_TOOL_ERROR_CODE ||
+    typeof message.errorMessage !== 'string' ||
+    !message.errorMessage.trim() ||
+    message.openclawDisplayContent !== undefined ||
+    (typeof message.text === 'string' && message.text.trim()) ||
+    [
+      message.activity,
+      message.__justdoAttachedToolMessages,
+      delivery?.mediaUrls,
+      metadata?.media,
+    ].some(value => Array.isArray(value) && value.length > 0)
+  )
+    return false;
+  const content = message.content;
+  if (typeof content === 'string') return content.trim() === message.errorMessage.trim();
+  return (
+    Array.isArray(content) &&
+    content.every(
+      block => isRecord(block) && block.type === 'text' && typeof block.text === 'string',
+    ) &&
+    content
+      .map(block => block.text)
+      .join('\n')
+      .trim() === message.errorMessage.trim()
+  );
+}
 
 function withoutStreamErrorPrefix(value: string): string {
   return value.startsWith(STREAM_ERROR_FALLBACK_TEXT)
@@ -54,6 +89,7 @@ function stripControlReplies(value: string): string {
 }
 
 export function isEmptyFailureSourceContent(message: RecordValue): boolean {
+  if (isSyntheticToolFailureContent(message)) return true;
   const isEmpty = (content: unknown): boolean => {
     if (content == null) return true;
     if (typeof content === 'string')
@@ -111,6 +147,7 @@ export function projectFailurePartialContent(
     message.role !== 'assistant' ||
     message.stopReason !== 'error' ||
     message.display === false ||
+    isSyntheticToolFailureContent(message) ||
     message.openclawDisplayContent !== undefined ||
     typeof runId !== 'string' ||
     !runId.trim() ||

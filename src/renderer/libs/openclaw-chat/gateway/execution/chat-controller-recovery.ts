@@ -1825,7 +1825,11 @@ export function handleError(
   this.suspendedRunId = null;
   this.terminalLifecycleSeen = false;
   this.resetAssistantSnapshotSource();
-  this.flushPendingHistoryReload();
+  // A direct session.message append can bypass failure-detail hydration. The
+  // durable source distinguishes synthetic error text from a partial reply;
+  // queue behind any older read that may not contain this terminal message.
+  this.pendingHistoryReload = false;
+  void this.loadHistory(true);
   this.notify();
 }
 

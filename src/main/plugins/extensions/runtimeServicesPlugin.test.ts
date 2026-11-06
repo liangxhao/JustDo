@@ -162,6 +162,7 @@ function registerPlugin() {
       registerRuntimeLifecycle,
     },
     registerTrustedToolPolicy,
+    registerAgentToolResultMiddleware: vi.fn(),
     registerTool,
     registerProvider: vi.fn(),
     registerAgentHarness: vi.fn(),
@@ -550,6 +551,56 @@ test('bounds failure lookup batches and returned error text', async () => {
   expect(sdk.readVisibleSessionTranscriptMessageEntries).not.toHaveBeenCalled();
   await handler({ params: { sessionKey: 'session-1', failureMessageIds: ['failure'] }, respond });
   expect(respond.mock.calls[1][1].failureDetails.failure.errorMessage).toHaveLength(2000);
+});
+
+test('reports a native repeated-tool stop as a diagnostic without recovering it as a reply', async () => {
+  const errorMessage =
+    'OpenClaw stopped this turn after 3 consecutive identical tool failures. Check the tool arguments or switch to a model with native tool calling before retrying.';
+  const message = {
+    role: 'assistant',
+    stopReason: 'error',
+    errorCode: 'openclaw_repeated_tool_error',
+    errorMessage,
+    content: [{ type: 'text', text: errorMessage }],
+    __openclaw: { runId: 'run-1' },
+  };
+  const original = structuredClone(message);
+  const withMedia = {
+    ...message,
+    openclawDelivery: { mediaUrls: ['output/report.pdf'] },
+  };
+  const originalWithMedia = structuredClone(withMedia);
+  sdk.getSessionEntry.mockReturnValue({ sessionId: 'native-session-1' });
+  sdk.readVisibleSessionTranscriptMessageEntries.mockResolvedValue([
+    { entryId: 'failure', message },
+    { entryId: 'failure-with-media', message: withMedia },
+  ]);
+  const { registerGatewayMethod } = registerPlugin();
+  const handler = registerGatewayMethod.mock.calls.find(
+    ([method]) => method === 'runtimeServices.historyDetails',
+  )![1] as HistoryHandler;
+  const respond = vi.fn();
+
+  await handler({
+    params: {
+      sessionKey: 'session-1',
+      failureMessageIds: ['failure', 'failure-with-media'],
+      includeFailurePartialContent: true,
+    },
+    respond,
+  });
+
+  expect(respond.mock.calls[0][1].failureDetails).toEqual({
+    failure: { errorMessage, emptyContent: true },
+    'failure-with-media': {
+      errorMessage,
+      emptyContent: false,
+      partialContent: { runId: 'run-1', content: message.content, truncated: false },
+    },
+  });
+  expect(sdk.loadTranscriptEventsSync).not.toHaveBeenCalled();
+  expect(message).toEqual(original);
+  expect(withMedia).toEqual(originalWithMedia);
 });
 
 test('optionally projects exact failed reasoning and commentary with redaction and no private metadata', async () => {
