@@ -103,6 +103,7 @@ const registerGuest = (
     };
   }
   if (guest && !guest.focus) guest.focus = vi.fn();
+  if (guest && !guest.isLoadingMainFrame) guest.isLoadingMainFrame = () => false;
   electron.handlers.get(BrowserIpc.AgentRegisterTab)?.(trustedEvent(), {
     sessionId: resourceSessionId,
     targetId,

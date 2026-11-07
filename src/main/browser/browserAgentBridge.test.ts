@@ -1,3 +1,4 @@
+import { EventEmitter } from 'events';
 import fs from 'fs';
 import { JSDOM } from 'jsdom';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
@@ -92,6 +93,7 @@ const registerGuest = (
     };
   }
   if (guest && !guest.focus) guest.focus = vi.fn();
+  if (guest && !guest.isLoadingMainFrame) guest.isLoadingMainFrame = () => false;
   electron.handlers.get(BrowserIpc.AgentRegisterTab)?.(trustedEvent(), {
     sessionId: 'session-1',
     targetId,
@@ -234,6 +236,95 @@ test('opens, labels, resolves, and closes a distinct internal tab', async () => 
   });
 });
 
+test.each([
+  { action: 'open', urlField: 'url', outcome: 'loaded' },
+  { action: 'open', urlField: 'targetUrl', outcome: 'loaded' },
+  { action: 'navigate', urlField: 'url', outcome: 'loaded' },
+  { action: 'open', urlField: 'url', outcome: 'withdrawn' },
+  { action: 'open', urlField: 'url', outcome: 'replaced' },
+  { action: 'open', urlField: 'url', outcome: 'cancelled' },
+])(
+  'keeps first $action $outcome with $urlField during guest initialization',
+  async ({ action, urlField, outcome }) => {
+    const sendToRenderer = vi.fn();
+    bridge = new BrowserAgentBridge(sendToRenderer, () => true);
+    bridge.registerIpc();
+    const requestedUrl = 'https://example.com/report';
+    const controller = new AbortController();
+    const pending = bridge.executeCommand(
+      'justdo:session-1',
+      { action, [urlField]: requestedUrl },
+      controller.signal,
+    );
+    await vi.waitFor(() =>
+      expect(sendToRenderer).toHaveBeenCalledWith(
+        BrowserIpc.AgentEnsureTab,
+        expect.objectContaining({ targetId: expect.any(String) }),
+      ),
+    );
+    const targetId = sendToRenderer.mock.calls.find(
+      ([channel]) => channel === BrowserIpc.AgentEnsureTab,
+    )![1].targetId;
+    let url = 'about:blank';
+    let loading = true;
+    const guest = Object.assign(new EventEmitter(), {
+      id: 7,
+      getType: () => 'webview',
+      isDestroyed: () => false,
+      isLoadingMainFrame: () => loading,
+      session: electron.partition,
+      hostWebContents: { id: 10 },
+      getTitle: () => (url === requestedUrl ? 'Report' : 'about:blank'),
+      getURL: () => url,
+      loadURL: vi.fn(async (value: string) => {
+        url = value;
+      }),
+      executeJavaScriptInIsolatedWorld: vi.fn(async () => ({
+        title: 'Report', url, text: '', elements: [],
+      })),
+    });
+    electron.guests.set(7, guest);
+    registerGuest(7, targetId);
+    await vi.waitFor(() => expect(guest.listenerCount('did-stop-loading')).toBeGreaterThan(0));
+    guest.emit('did-finish-load');
+    expect(guest.loadURL).not.toHaveBeenCalled();
+    if (outcome === 'cancelled') {
+      const failure = expect(pending).rejects.toThrow('cancelled');
+      controller.abort();
+      await failure;
+      expect(guest.loadURL).not.toHaveBeenCalled();
+      return;
+    }
+    if (outcome === 'withdrawn') {
+      electron.handlers.get(BrowserIpc.AgentUnregisterTab)!(trustedEvent(), {
+        sessionId: 'session-1',
+        targetId,
+      });
+    } else if (outcome === 'replaced') {
+      electron.guests.set(8, { ...guest, id: 8 });
+      registerGuest(8, targetId);
+    }
+    loading = false;
+    guest.emit('did-stop-loading');
+    if (outcome === 'withdrawn' || outcome === 'replaced') {
+      await expect(pending).rejects.toThrow('no longer available');
+      expect(guest.loadURL).not.toHaveBeenCalled();
+      return;
+    }
+    const result = await pending;
+    expect(action === 'navigate' ? (result as { details: unknown }).details : result).toMatchObject({
+      ok: true,
+      targetId,
+      url: requestedUrl,
+      title: 'Report',
+    });
+    expect(guest.loadURL).toHaveBeenCalledExactlyOnceWith(requestedUrl);
+    expect(
+      sendToRenderer.mock.calls.filter(([channel]) => channel === BrowserIpc.AgentEnsureTab),
+    ).toHaveLength(1);
+  },
+);
+
 test('reads the current configured tab limit for agent creation and preserves existing tabs when lowered', async () => {
   let limit = 10;
   const sendToRenderer = vi.fn((channel, payload) => {
@@ -246,7 +337,7 @@ test('reads the current configured tab limit for agent creation and preserves ex
       session: electron.partition,
       hostWebContents: { id: 10 },
       getTitle: () => 'Page',
-      getURL: () => payload.url,
+      getURL: () => payload.url ?? 'about:blank',
       loadURL: vi.fn().mockResolvedValue(undefined),
     });
     registerGuest(id, payload.targetId);
@@ -370,7 +461,7 @@ test('guides capacity recovery across profiles without closing pages until expli
   const sendToRenderer = vi.fn((channel, payload) => {
     if (channel !== BrowserIpc.AgentEnsureTab) return;
     const id = electron.guests.size + 100;
-    let url = payload.url;
+    let url = payload.url ?? 'about:blank';
     electron.guests.set(id, {
       id,
       getType: () => 'webview',

@@ -19,6 +19,12 @@ selecting B and then operating, focusing, right-clicking and
 closing C must preserve B. Native key and context-menu callbacks must retain the
 exact guest's automation lease. Sidebar tools must not send CDP Input commands.
 
+New guests register on `did-attach` and `did-start-loading` as well as `dom-ready`,
+matching the production panel's early registration. Each initial `open` must return
+the requested loopback page, rather than prematurely returning `about:blank` when
+the bootstrap document finishes. This exercises two concurrent creations through
+the production Main readiness barrier without a second navigation tool call.
+
 Native input dispatch does not acknowledge completion of the page's DOM event
 handler. The hover check observes the effect of its single dispatch with the
 existing bounded read-only wait; `hoverDelivery` records immediate and observed

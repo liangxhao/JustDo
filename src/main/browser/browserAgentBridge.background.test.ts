@@ -75,6 +75,7 @@ const guest = (background: boolean) => {
     session: state.partition,
     hostWebContents: { id: 1 },
     isDestroyed: () => destroyed,
+    isLoadingMainFrame: () => false,
     getType: () => (background ? 'window' : 'webview'),
     getURL: () => url,
     getTitle: () => 'Synthetic page',

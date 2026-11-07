@@ -175,9 +175,10 @@ exports.run = async ({ implementation, output, runRoot, url, report, checked, bo
         for(const name of ['did-focus','did-blur','focus','blur'])view.addEventListener(name,()=>{
           state.focusEvents.push({name,target:tab.targetId,active:document.activeElement?.id});
         });
-        view.addEventListener('dom-ready',()=>{
+        const register=()=>{
           tab.webContentsId=view.getWebContentsId();window.sidebarProbe.send(ipc.AgentRegisterTab,tab);
-        });
+        };
+        for(const name of ['did-attach','did-start-loading','dom-ready'])view.addEventListener(name,register);
         state.tabs.push(tab);view.src=value.url||'about:blank';panel.append(view);
       }else if(channel===ipc.AgentFocusTab){state.focusRequests++;show(value.targetId);}
       else if(channel===ipc.AgentCloseTab){
@@ -234,6 +235,10 @@ exports.run = async ({ implementation, output, runRoot, url, report, checked, bo
         `sidebar ${agent} ${value.action} ${value.request?.kind ?? ''}`,
         12000,
       );
+      if (value.action === 'open') {
+        (observations.openResults ??= []).push({ requested: value.url ?? value.targetUrl, url: result.url });
+        assert.equal(result.url, value.url ?? value.targetUrl, 'Open returned before the requested page loaded');
+      }
       const focusRecord = {
         agent,
         action: value.action,

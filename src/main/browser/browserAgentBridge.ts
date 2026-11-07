@@ -64,6 +64,7 @@ import {
   TabWaiter,
   USER_LOCK_READ_ACTIONS,
 } from './agent/browserAgentProtocol';
+import { waitForBrowserGuestReady } from './agent/browserAgentReadiness';
 import * as browserAgentSnapshots from './agent/browserAgentSnapshots';
 import { type BrowserAgentSnapshotsContext } from './agent/browserAgentSnapshots';
 import { BrowserFileChooser } from './agent/browserFileChooser';
@@ -1085,7 +1086,7 @@ export class BrowserAgentBridge {
       }
     }
 
-    return new Promise<RegisteredTab>((resolve, reject) => {
+    const tab = await new Promise<RegisteredTab>((resolve, reject) => {
       const existingWaiters = this.tabWaiters.get(scopeId);
       const waiters = existingWaiters ?? new Set();
       const shouldRequestTab = ![...waiters].some(waiter => waiter.targetId === requestedTargetId);
@@ -1155,6 +1156,19 @@ export class BrowserAgentBridge {
         });
       }
     });
+    const guest = this.resolveRegisteredGuest(tab);
+    await waitForBrowserGuestReady(guest, signal);
+    signal?.throwIfAborted();
+    options.assertCurrent?.();
+    const currentTab = this.tabsBySession.get(scopeId)?.get(tab.targetId);
+    if (
+      !currentTab ||
+      currentTab.webContentsId !== tab.webContentsId ||
+      currentTab.ownerId !== tab.ownerId ||
+      this.resolveRegisteredGuest(currentTab) !== guest
+    )
+      throw new Error('The browser page is no longer available.');
+    return currentTab;
   }
 
   private async execute(
