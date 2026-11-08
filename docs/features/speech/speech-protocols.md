@@ -8,7 +8,7 @@
 
 | 协议标识 | 当前请求与结果合同 | 消费入口 | 参考协议 |
 | --- | --- | --- | --- |
-| `openai-transcription-http` | `POST <baseUrl>/audio/transcriptions`，multipart 含 WAV 文件、model 和可选 language；完整 JSON 响应的 `text` 字段 | 输入框录完转写、在线会议片段、STT 附件工具 | [Transcriptions](https://developers.openai.com/api/reference/resources/audio/subresources/transcriptions/methods/create) |
+| `openai-transcription-http` | `POST <baseUrl>/audio/transcriptions`，multipart 含 WAV 文件、model 和可选 language；完整 JSON 响应的 `text` 字段 | 输入框录完转写、音视频文件导入、STT 附件工具 | [Transcriptions](https://developers.openai.com/api/reference/resources/audio/subresources/transcriptions/methods/create) |
 | `openai-speech-http` | `POST <baseUrl>/audio/speech`，JSON 含 input/model/voice 及受支持参数；完整音频字节 | 回复朗读、试听、TTS 工具 | [Speech](https://developers.openai.com/api/docs/guides/text-to-speech) |
 | `openai-transcription-realtime` | Realtime 兼容 WebSocket 转录会话、音频和配置事件；增量/最终文字，停止采集后有界等待 final | 输入框实时听写 | [Realtime transcription](https://developers.openai.com/api/docs/guides/realtime-transcription) |
 | `openai-voice-realtime` | Realtime 兼容 WebSocket 双向音频与字幕；VAD 自动轮次、打断、受控原生助手委托 | 独立实时语音入口 | [Realtime conversation](https://developers.openai.com/api/docs/guides/realtime-conversations) |
@@ -31,13 +31,15 @@ HTTP 识别与合成当前都完整缓冲响应后校验；没有 ASR SSE、TTS 
 | --- | --- | --- |
 | 语音识别 | 录音 HTTP、Realtime 转录 | SenseVoice、Whisper |
 | 语音合成 | Speech HTTP | Kokoro、AISHELL3 VITS、Piper |
-| 实时语音 | Realtime 双向语音对话 | 不将离线 ASR/TTS 自动组合成对话 |
+| 语音对话 | Realtime 双向语音对话 | 不将离线 ASR/TTS 自动组合成对话 |
 
-实时转录仍归语音识别；只有完整双向对话新增“实时语音”标签。五种既有离线模型保留资源身份、安装布局和数字音色 sid，继续使用本地 Sherpa 运行时，不要求包装成网络服务。
+实时转录仍归语音识别；完整双向会话使用“语音对话”标签。五种既有离线模型保留资源身份、安装布局和数字音色 sid，继续使用本地 Sherpa 运行时，不要求包装成网络服务。
 
 一条供应商配置代表一个接口连接，保存名称、`protocolId`、基础地址和凭据；其下所有模型共用这一协议。同一服务提供不同接口时分别添加连接，各连接下面可以添加多个模型。连接卡先选择协议，再填写地址与密钥，并展示所选协议的实际端点。模型只保存用户填写的 ID、名称、音色目录及实时对话需要的 `inputTranscriptionModel`，不按供应商、域名或模型名称执行特殊逻辑。
 
 输入框识别、回复朗读、实时对话、STT 工具、TTS 工具仍独立选择模型和必要音色，继承所选模型所属连接的协议。所有消费页面均不提供接口下拉框；有效选择显示只读协议，未选择模型时不显示接口行，旧接口待配置时引导到模型设置。内部仍以派生的 `provider` binding 复用现有执行合同，已有合法旧选择继续读取，不自动猜测或改写失效 ID。语音设置统一编辑草稿，保存成功后才应用，取消保留原有效选择。STT/TTS 各自齿轮只编辑自己的用途设置；关闭工具插件不关闭输入框或回复朗读，保存目录也不自动启用工具。
+
+设置将转文字与语音对话放在同一“语音输入”区域，共用麦克风，但保持两个启用开关和独立模型。两个编辑标签不构成互斥的协议选择；录音 HTTP 与 Realtime 转录都属于“语音转文字”，只有完整双向会话属于“语音对话”。系统声音与混合音源只用于转文字，对话始终使用明确选择的麦克风。会议分段功能已经移除，不影响四份接口合同。
 
 模型发现只补充实际返回的模型元数据。已选择协议的连接中新模型继承同一协议；未明确协议的旧连接仍不猜出可执行接口。显式未知协议、废弃字段和失效选择不能执行，不试探其它协议。
 

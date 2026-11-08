@@ -6,19 +6,21 @@ import {
   type LocalSpeechSettings,
 } from '@shared/speech/localSpeechSettings';
 import { LOCAL_TTS_MODEL_ID, type LocalTtsModelId } from '@shared/speech/localTts';
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { i18nService } from '@/services/i18n';
 
 import VoiceSettingsTab from './VoiceSettingsTab';
 
-const { mockConfig } = vi.hoisted(() => ({
+const { mockConfig, recordedAudioToWav } = vi.hoisted(() => ({
+  recordedAudioToWav: vi.fn().mockResolvedValue(new Uint8Array([1, 2, 3])),
   mockConfig: { onlineModelProviders: {} } as {
     onlineModelProviders: Record<string, unknown>;
     voice?: LocalSpeechSettings;
   },
 }));
+vi.mock('@/shared/audio/localAudioCapture', () => ({ recordedAudioToWav }));
 
 vi.mock('@/services/config', () => ({
   configService: {
@@ -29,12 +31,19 @@ vi.mock('@/services/config', () => ({
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe('VoiceSettingsTab', () => {
   beforeEach(() => {
     mockConfig.onlineModelProviders = {};
     mockConfig.voice = defaultLocalSpeechSettings;
+    recordedAudioToWav.mockClear();
+    Object.defineProperty(document, 'hidden', { configurable: true, value: false });
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: { getUserMedia: vi.fn() },
+    });
     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
       bottom: 132,
       height: 36,
@@ -47,6 +56,18 @@ describe('VoiceSettingsTab', () => {
       toJSON: () => ({}),
     });
   });
+
+  const selectInputTab = (tab: 'transcription' | 'conversation') => {
+    fireEvent.click(
+      screen.getByRole('tab', {
+        name: new RegExp(
+          i18nService.t(
+            tab === 'transcription' ? 'voiceTranscriptionTitle' : 'voiceConversationTitle',
+          ),
+        ),
+      }),
+    );
+  };
 
   const installOnlineBridges = () => {
     Object.defineProperty(window, 'electron', {
@@ -61,6 +82,277 @@ describe('VoiceSettingsTab', () => {
       },
     });
   };
+
+  it('shares the microphone selector with conversation even when transcription is disabled and its source is system audio', async () => {
+    installOnlineBridges();
+    const getUserMedia = vi.fn();
+    const enumerateDevices = vi.fn().mockResolvedValue([
+      { kind: 'audioinput', deviceId: 'default', label: 'Default alias' },
+      { kind: 'audioinput', deviceId: 'one', label: 'Desk microphone' },
+      { kind: 'audioinput', deviceId: 'two', label: 'Headset microphone' },
+    ]);
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: {
+        getUserMedia,
+        enumerateDevices,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      },
+    });
+    const value: LocalSpeechSettings = {
+      ...defaultLocalSpeechSettings,
+      inputEnabled: false,
+      realtimeEnabled: true,
+      inputSource: 'system',
+      inputDeviceId: 'one',
+    };
+    const onChange = vi.fn();
+    render(<VoiceSettingsTab value={value} onChange={onChange} />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    selectInputTab('conversation');
+    const microphone = screen.getByRole('combobox', { name: i18nService.t('voiceInputDevice') });
+    expect(microphone).toHaveProperty('disabled', false);
+    expect(microphone.textContent).toContain('Desk microphone');
+    expect(screen.queryByRole('combobox', { name: i18nService.t('voiceInputSource') })).toBeNull();
+    expect(screen.queryByLabelText(i18nService.t('voiceMaxRecording'))).toBeNull();
+    expect(
+      screen.getByRole('button', { name: i18nService.t('voiceMicrophoneCheckStart') }),
+    ).toHaveProperty('disabled', false);
+    fireEvent.click(microphone);
+    fireEvent.click(screen.getByRole('option', { name: 'Headset microphone' }));
+    expect(onChange).toHaveBeenCalledExactlyOnceWith({ ...value, inputDeviceId: 'two' });
+    expect(mockConfig.voice?.inputDeviceId).toBe('');
+    expect(getUserMedia).not.toHaveBeenCalled();
+  });
+
+  it('lets both features stay enabled while tabs and keyboard navigation only edit their own settings', async () => {
+    installOnlineBridges();
+    const value = {
+      ...defaultLocalSpeechSettings,
+      inputEnabled: true,
+      realtimeEnabled: true,
+      inputLanguage: 'ja' as const,
+      inputSource: 'microphone-system' as const,
+    };
+    const onChange = vi.fn();
+    render(<VoiceSettingsTab value={value} onChange={onChange} />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    const tabs = screen.getAllByRole('tab');
+    tabs.forEach(tab =>
+      expect(within(tab).getByText(i18nService.t('voiceFeatureEnabled'))).toBeTruthy(),
+    );
+    fireEvent.keyDown(tabs[0], { key: 'ArrowRight' });
+    expect(tabs[1].getAttribute('aria-selected')).toBe('true');
+    expect(
+      screen
+        .getByRole('switch', { name: i18nService.t('realtimeVoiceEnable') })
+        .getAttribute('aria-checked'),
+    ).toBe('true');
+    expect(document.getElementById('voice-input-source')).toBeNull();
+    fireEvent.keyDown(tabs[1], { key: 'Home' });
+    expect(
+      screen.getByRole('combobox', { name: i18nService.t('voiceInputSource') }).textContent,
+    ).toBe(i18nService.t('voiceInputSourceMixed'));
+    expect(
+      screen.getByRole('combobox', { name: i18nService.t('voiceRecognitionLanguage') }).textContent,
+    ).toBe(i18nService.t('japanese'));
+    expect(screen.queryByText(/会议记录|会议转写/)).toBeNull();
+    expect(document.getElementById('voice-meeting-segment')).toBeNull();
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('retains a disconnected saved microphone without replacing it with the system default', async () => {
+    installOnlineBridges();
+    const enumerateDevices = vi
+      .fn()
+      .mockResolvedValue([
+        { kind: 'audioinput', deviceId: 'saved-device', label: 'Saved microphone' },
+      ]);
+    let changed!: () => void;
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: {
+        enumerateDevices,
+        getUserMedia: vi.fn(),
+        addEventListener: (_name: string, callback: () => void) => {
+          changed = callback;
+        },
+        removeEventListener: vi.fn(),
+      },
+    });
+    const onChange = vi.fn();
+    render(
+      <VoiceSettingsTab
+        value={{ ...defaultLocalSpeechSettings, inputDeviceId: 'saved-device' }}
+        onChange={onChange}
+      />,
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(
+      screen.getByRole('combobox', { name: i18nService.t('voiceInputDevice') }).textContent,
+    ).toContain('Saved microphone');
+    enumerateDevices.mockResolvedValue([]);
+    await act(async () => {
+      changed();
+      await Promise.resolve();
+    });
+    expect(
+      screen.getByRole('combobox', { name: i18nService.t('voiceInputDevice') }).textContent,
+    ).toBe(i18nService.t('voiceInputDeviceDisconnected'));
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('reuses one completed microphone sample across tabs for manual local recognition', async () => {
+    const getUserMedia = vi.fn().mockResolvedValue({ getTracks: () => [{ stop: vi.fn() }] });
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: { getUserMedia },
+    });
+    vi.stubGlobal(
+      'MediaRecorder',
+      class {
+        state = 'inactive';
+        mimeType = 'audio/webm';
+        ondataavailable?: (event: BlobEvent) => void;
+        onstop?: () => void;
+        start() {
+          this.state = 'recording';
+        }
+        stop() {
+          this.state = 'inactive';
+          this.ondataavailable?.({ data: new Blob(['shared sample']) } as BlobEvent);
+          this.onstop?.();
+        }
+      },
+    );
+    vi.stubGlobal(
+      'AudioContext',
+      class {
+        state = 'running';
+        createAnalyser() {
+          return {
+            fftSize: 2048,
+            getFloatTimeDomainData: (samples: Float32Array) => samples.fill(0.1),
+          };
+        }
+        createMediaStreamSource() {
+          return { connect: vi.fn() };
+        }
+        close = vi.fn(async () => {});
+      },
+    );
+    Object.defineProperty(URL, 'createObjectURL', {
+      configurable: true,
+      value: vi.fn(() => 'blob:shared-sample'),
+    });
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: vi.fn() });
+    vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
+    const transcribe = vi.fn().mockResolvedValue({ success: true, text: 'shared sample result' });
+    Object.defineProperty(window, 'electron', {
+      configurable: true,
+      value: {
+        localAsr: { transcribe },
+        localSpeechModels: {
+          list: vi.fn().mockResolvedValue({
+            supported: true,
+            models: [
+              {
+                id: defaultLocalSpeechSettings.asrModelId,
+                kind: 'asr',
+                phase: 'ready',
+                installed: true,
+              },
+            ],
+          }),
+          onChanged: vi.fn(() => () => {}),
+        },
+      },
+    });
+    const onChange = vi.fn();
+    render(
+      <VoiceSettingsTab
+        value={{
+          ...defaultLocalSpeechSettings,
+          inputEnabled: true,
+          realtimeEnabled: true,
+          inputDeviceId: 'shared-device',
+        }}
+        onChange={onChange}
+      />,
+    );
+    selectInputTab('conversation');
+    fireEvent.click(
+      screen.getByRole('button', { name: i18nService.t('voiceMicrophoneCheckStart') }),
+    );
+    fireEvent.click(
+      await screen.findByRole('button', { name: i18nService.t('voiceMicrophoneCheckStop') }),
+    );
+    const sharedBlob = vi.mocked(URL.createObjectURL).mock.calls[0][0];
+    expect(transcribe).not.toHaveBeenCalled();
+    selectInputTab('transcription');
+    expect(screen.getByLabelText(i18nService.t('voiceDiagnosticPlayback'))).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: i18nService.t('voiceDiagnosticStart') }));
+    expect(await screen.findByText('shared sample result')).toBeTruthy();
+    expect(recordedAudioToWav).toHaveBeenCalledExactlyOnceWith(sharedBlob);
+    expect(getUserMedia).toHaveBeenCalledOnce();
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('keeps conversation voice and ordinary response reading independent', async () => {
+    installOnlineBridges();
+    mockConfig.onlineModelProviders = {
+      'realtime-voice': {
+        providers: {
+          office: {
+            displayName: 'Office',
+            baseUrl: 'http://speech.lan/v1',
+            apiKey: '',
+            protocolId: 'openai-voice-realtime',
+            models: [
+              {
+                id: 'dialogue',
+                name: 'Dialogue',
+                inputTranscriptionModel: 'custom/caption',
+                voices: [
+                  { id: 'calm', name: 'Calm' },
+                  { id: 'bright', name: 'Bright' },
+                ],
+              },
+            ],
+          },
+        },
+      },
+    };
+    const value: LocalSpeechSettings = {
+      ...defaultLocalSpeechSettings,
+      realtimeEnabled: true,
+      realtimeModelRef: 'office/dialogue',
+      realtimeBindingId: 'provider',
+      realtimeVoiceSelection: { kind: 'preset', voiceId: 'calm' },
+      outputEnabled: false,
+    };
+    const onChange = vi.fn();
+    render(<VoiceSettingsTab value={value} onChange={onChange} />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    selectInputTab('conversation');
+    fireEvent.click(screen.getByRole('combobox', { name: i18nService.t('realtimeVoiceSpeaker') }));
+    fireEvent.click(screen.getByRole('option', { name: 'Bright' }));
+    expect(onChange).toHaveBeenLastCalledWith({
+      ...value,
+      realtimeVoiceSelection: { kind: 'preset', voiceId: 'bright' },
+    });
+    fireEvent.click(screen.getByRole('switch', { name: i18nService.t('voiceOutputEnabled') }));
+    expect(onChange).toHaveBeenLastCalledWith({ ...value, outputEnabled: true });
+  });
 
   it('shows no interface row or selector before a model is selected, including realtime voice', async () => {
     installOnlineBridges();
@@ -152,16 +444,19 @@ describe('VoiceSettingsTab', () => {
       'speechProtocolRealtimeTranscription',
       'speechProtocolSynthesis',
       'speechProtocolRealtimeVoice',
-    ])
+    ]) {
+      selectInputTab(key === 'speechProtocolRealtimeVoice' ? 'conversation' : 'transcription');
       expect(
         screen.getByText(
           i18nService.t('speechCurrentProtocol').replace('{protocol}', i18nService.t(key)),
         ),
       ).toBeTruthy();
+    }
     expect(
       screen.queryByRole('combobox', { name: i18nService.t('speechProtocolType') }),
     ).toBeNull();
     for (const key of ['voiceRecognitionModel', 'voiceSynthesisModel', 'realtimeVoiceModel']) {
+      selectInputTab(key === 'realtimeVoiceModel' ? 'conversation' : 'transcription');
       fireEvent.click(screen.getByRole('combobox', { name: i18nService.t(key) }));
       fireEvent.click(screen.getByRole('option', { name: 'Office / one' }));
     }
@@ -213,8 +508,9 @@ describe('VoiceSettingsTab', () => {
     await act(async () => {
       await Promise.resolve();
     });
-    expect(screen.getAllByText(i18nService.t('speechConfigureInterfaceInModels'))).toHaveLength(3);
+    expect(screen.getAllByText(i18nService.t('speechConfigureInterfaceInModels'))).toHaveLength(2);
     for (const key of ['voiceRecognitionModel', 'voiceSynthesisModel', 'realtimeVoiceModel']) {
+      selectInputTab(key === 'realtimeVoiceModel' ? 'conversation' : 'transcription');
       fireEvent.click(screen.getByRole('combobox', { name: i18nService.t(key) }));
       fireEvent.click(screen.getByRole('option', { name: 'Office / one' }));
     }
@@ -322,17 +618,20 @@ describe('VoiceSettingsTab', () => {
       'speechProtocolRecorded',
       'speechProtocolSynthesis',
       'speechProtocolRealtimeVoice',
-    ])
+    ]) {
+      selectInputTab(key === 'speechProtocolRealtimeVoice' ? 'conversation' : 'transcription');
       expect(
         screen.getByText(
           i18nService.t('speechCurrentProtocol').replace('{protocol}', i18nService.t(key)),
         ),
       ).toBeTruthy();
+    }
     for (const [label, modelKey, bindingKey] of [
       ['voiceRecognitionModel', 'onlineAsrModelRef', 'onlineAsrBindingId'],
       ['voiceSynthesisModel', 'onlineTtsModelRef', 'onlineTtsBindingId'],
       ['realtimeVoiceModel', 'realtimeModelRef', 'realtimeBindingId'],
     ]) {
+      selectInputTab(label === 'realtimeVoiceModel' ? 'conversation' : 'transcription');
       fireEvent.click(screen.getByRole('combobox', { name: i18nService.t(label) }));
       fireEvent.click(screen.getByRole('option', { name: 'Office / two' }));
       expect(onChange).toHaveBeenLastCalledWith(
@@ -557,6 +856,7 @@ describe('VoiceSettingsTab', () => {
     await act(async () => {
       await Promise.resolve();
     });
+    selectInputTab('conversation');
     expect(
       screen.getByRole('combobox', { name: i18nService.t('realtimeVoiceSpeaker') }).textContent,
     ).toBe(i18nService.t('speechOnlineVoiceUnavailable'));

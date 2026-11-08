@@ -25,14 +25,13 @@ import {
 import { requestSpeechSettings } from '@/features/speech/speechSettingsNavigation';
 import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';
-import { recordedAudioToWav, recordedAudioToWavSegments } from '@/shared/audio/localAudioCapture';
+import { recordedAudioToWav, recordedAudioToWavChunks } from '@/shared/audio/localAudioCapture';
 import { useOwnerDocument, useOwnerWindow } from '@/shared/dom/ownerDocument';
 
-type RecordingState = 'idle' | 'requesting' | 'recording' | 'transcribing';
+type RecordingState = 'idle' | 'requesting' | 'recording' | 'transcribing' | 'finishing';
 type CaptureTrack = { source: 'microphone' | 'system'; stream: MediaStream };
 
 const MAX_IMPORTED_MEDIA_BYTES = 256 * 1024 * 1024;
-const MAX_PENDING_MEETING_SEGMENTS = 8;
 const MAX_PENDING_ONLINE_AUDIO_CHUNKS = 16;
 const MAX_PENDING_ONLINE_STARTUP_SAMPLES = 80_000;
 
@@ -56,8 +55,6 @@ const getCaptureSettingsKey = (settings: LocalSpeechSettings): string => {
     settings.recognitionThreads,
     settings.inputDeviceId,
     settings.inputSource,
-    settings.meetingMode,
-    settings.meetingSegmentSeconds,
     settings.maxRecordingSeconds,
     selection?.binding,
     selection?.provider.baseUrl,
@@ -68,6 +65,9 @@ const getCaptureSettingsKey = (settings: LocalSpeechSettings): string => {
 interface LocalSpeechInputButtonProps {
   disabled: boolean;
   onTranscript: (text: string) => void;
+  onBusyChange?: (busy: boolean, owner: object) => void;
+  startBlocked?: boolean;
+  isStartBlocked?: () => boolean;
 }
 
 const showToast = (message: string): void => {
@@ -84,11 +84,6 @@ const describeCaptureError = (error: unknown): Record<string, unknown> => {
     errorName: typeof candidate?.name === 'string' ? candidate.name : typeof error,
     errorMessage: typeof candidate?.message === 'string' ? candidate.message : String(error),
   };
-};
-
-const formatElapsed = (milliseconds: number): string => {
-  const seconds = Math.max(0, Math.floor(milliseconds / 1_000));
-  return `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
 };
 
 const getMicrophoneStream = (deviceId: string, captureWindow: Window): Promise<MediaStream> =>
@@ -122,29 +117,33 @@ const openCaptureTracks = async (
   source: LocalSpeechInputSource,
   deviceId: string,
   captureWindow: Window,
+  onAcquired: (track: CaptureTrack) => boolean,
 ): Promise<CaptureTrack[]> => {
+  const acquired = (source: CaptureTrack['source'], stream: MediaStream): CaptureTrack => {
+    const track = { source, stream };
+    if (!onAcquired(track)) {
+      stream.getTracks().forEach(audioTrack => audioTrack.stop());
+      throw new DOMException('Audio capture was cancelled.', 'AbortError');
+    }
+    return track;
+  };
   if (source === 'microphone') {
-    return [{ source: 'microphone', stream: await getMicrophoneStream(deviceId, captureWindow) }];
+    return [acquired('microphone', await getMicrophoneStream(deviceId, captureWindow))];
   }
-  if (source === 'system')
-    return [{ source: 'system', stream: await getSystemStream(captureWindow) }];
+  if (source === 'system') return [acquired('system', await getSystemStream(captureWindow))];
   if (source !== 'microphone-system') return [];
   // Request loopback first so Chromium still sees the original button-click gesture.
-  const system = await getSystemStream(captureWindow);
-  try {
-    return [
-      { source: 'microphone', stream: await getMicrophoneStream(deviceId, captureWindow) },
-      { source: 'system', stream: system },
-    ];
-  } catch (error) {
-    system.getTracks().forEach(track => track.stop());
-    throw error;
-  }
+  const system = acquired('system', await getSystemStream(captureWindow));
+  const microphone = acquired('microphone', await getMicrophoneStream(deviceId, captureWindow));
+  return [microphone, system];
 };
 
 export function LocalSpeechInputButton({
   disabled,
   onTranscript,
+  onBusyChange,
+  startBlocked = false,
+  isStartBlocked,
 }: LocalSpeechInputButtonProps): React.ReactElement | null {
   const ownerDocument = useOwnerDocument();
   const ownerWindow = useOwnerWindow();
@@ -160,12 +159,17 @@ export function LocalSpeechInputButton({
   const [onlinePartial, setOnlinePartial] = useState('');
   const tracksRef = useRef<CaptureTrack[]>([]);
   const recordersRef = useRef<MediaRecorder[]>([]);
-  const recorderStopsRef = useRef(new Map<MediaRecorder, Promise<void>>());
+  const recorderStopsRef = useRef(
+    new Map<
+      MediaRecorder,
+      {
+        stopped: Promise<Blob | null>;
+        cancel: () => void;
+      }
+    >(),
+  );
   const timersRef = useRef<Array<ReturnType<typeof setTimeout>>>([]);
   const activeRef = useRef(false);
-  const startedAtRef = useRef(0);
-  const transcriptQueueRef = useRef<Promise<void>>(Promise.resolve());
-  const pendingTranscriptionsRef = useRef(0);
   const captureRequestRef = useRef(0);
   const activeCaptureSettingsKeyRef = useRef('');
   const statusRequestRef = useRef(0);
@@ -184,9 +188,46 @@ export function LocalSpeechInputButton({
   const mountedRef = useRef(true);
   const recordedRequestsRef = useRef(new Set<string>());
   const onlineInputModeRef = useRef(onlineInputMode);
+  const desiredStateRef = useRef<RecordingState>('idle');
+  const pendingOperationsRef = useRef(0);
+  const busyRef = useRef(false);
+  const activityOwnerRef = useRef({});
+  const onBusyChangeRef = useRef(onBusyChange);
+  onBusyChangeRef.current = onBusyChange;
   onlineInputModeRef.current = onlineInputMode;
   settingsRef.current = settings;
   onTranscriptRef.current = onTranscript;
+
+  const publishCaptureState = useCallback(() => {
+    const next =
+      desiredStateRef.current === 'idle' && pendingOperationsRef.current > 0
+        ? 'finishing'
+        : desiredStateRef.current;
+    if (mountedRef.current) setState(next);
+    const busy = next !== 'idle';
+    if (busyRef.current !== busy) {
+      busyRef.current = busy;
+      onBusyChangeRef.current?.(busy, activityOwnerRef.current);
+    }
+  }, []);
+  const setCaptureState = useCallback(
+    (next: RecordingState) => {
+      desiredStateRef.current = next;
+      publishCaptureState();
+    },
+    [publishCaptureState],
+  );
+  const beginOperation = useCallback(() => {
+    pendingOperationsRef.current += 1;
+    publishCaptureState();
+    let finished = false;
+    return () => {
+      if (finished) return;
+      finished = true;
+      pendingOperationsRef.current -= 1;
+      publishCaptureState();
+    };
+  }, [publishCaptureState]);
 
   const releaseCapture = useCallback(() => {
     timersRef.current.forEach(timer => clearTimeout(timer));
@@ -202,11 +243,16 @@ export function LocalSpeechInputButton({
     activeRef.current = false;
     captureRequestRef.current += 1;
     transcriptionGenerationRef.current += 1;
-    transcriptQueueRef.current = Promise.resolve();
-    pendingTranscriptionsRef.current = 0;
     activeCaptureSettingsKeyRef.current = '';
-    for (const requestId of recordedRequestsRef.current)
-      void window.electron.onlineAsr.cancelTranscription?.(requestId).catch(() => {});
+    for (const requestId of recordedRequestsRef.current) {
+      const cancel = window.electron.onlineAsr.cancelTranscription;
+      if (cancel) {
+        const finish = beginOperation();
+        void cancel(requestId)
+          .catch(() => {})
+          .finally(finish);
+      }
+    }
     recordedRequestsRef.current.clear();
     const onlineSession = onlineSessionRef.current;
     onlineSessionRef.current = null;
@@ -215,20 +261,24 @@ export function LocalSpeechInputButton({
     onlineStartupSampleCountRef.current = 0;
     onlineCloseWaiterRef.current?.resolve();
     onlineCloseWaiterRef.current = null;
-    if (onlineSession)
-      void window.electron.onlineAsr.close(onlineSession.sessionId).catch(() => {});
+    if (onlineSession) {
+      const finish = beginOperation();
+      void window.electron.onlineAsr
+        .close(onlineSession.sessionId)
+        .catch(() => {})
+        .finally(finish);
+    }
     recordersRef.current.forEach(recorder => {
       recorder.ondataavailable = null;
       recorder.onstop = null;
       recorder.onerror = null;
+      recorderStopsRef.current.get(recorder)?.cancel();
       if (recorder.state !== 'inactive') recorder.stop();
     });
     releaseCapture();
-    if (mountedRef.current) {
-      setOnlinePartial('');
-      setState('idle');
-    }
-  }, [releaseCapture]);
+    if (mountedRef.current) setOnlinePartial('');
+    setCaptureState('idle');
+  }, [beginOperation, releaseCapture, setCaptureState]);
 
   const showTranscriptionFailure = useCallback((error: unknown) => {
     logCaptureDiagnostic('Transcription failed.', describeCaptureError(error));
@@ -322,12 +372,7 @@ export function LocalSpeechInputButton({
   }, [abortCapture]);
 
   const transcribeWav = useCallback(
-    async (
-      wav: Uint8Array,
-      source?: CaptureTrack['source'],
-      elapsed = 0,
-      generation = transcriptionGenerationRef.current,
-    ) => {
+    async (wav: Uint8Array, generation = transcriptionGenerationRef.current) => {
       if (!mountedRef.current || generation !== transcriptionGenerationRef.current) return;
       let text: string;
       if (settings.recognitionMode === 'online') {
@@ -363,44 +408,9 @@ export function LocalSpeechInputButton({
       if (!text.trim()) throw new Error('No speech was recognized.');
       if (!mountedRef.current || generation !== transcriptionGenerationRef.current) return;
       text = text.trim();
-      if (!settings.meetingMode || !source) {
-        onTranscript(text);
-        return;
-      }
-      const sourceLabel = i18nService.t(
-        source === 'microphone' ? 'localAsrSourceMicrophoneShort' : 'localAsrSourceSystemShort',
-      );
-      onTranscript(`[${formatElapsed(elapsed)}] ${sourceLabel}: ${text}`);
+      onTranscript(text);
     },
     [onTranscript, settings],
-  );
-
-  const enqueueTranscription = useCallback(
-    (blob: Blob, source: CaptureTrack['source'], elapsed: number) => {
-      if (pendingTranscriptionsRef.current >= MAX_PENDING_MEETING_SEGMENTS) {
-        logCaptureDiagnostic('Meeting transcription queue is full.', {
-          pendingSegments: pendingTranscriptionsRef.current,
-        });
-        showToast(i18nService.t('localAsrQueueFull'));
-        return;
-      }
-      const generation = transcriptionGenerationRef.current;
-      pendingTranscriptionsRef.current += 1;
-      transcriptQueueRef.current = transcriptQueueRef.current
-        .then(async () => {
-          if (generation !== transcriptionGenerationRef.current) return;
-          await transcribeWav(await recordedAudioToWav(blob), source, elapsed, generation);
-        })
-        .catch(error => {
-          if (mountedRef.current && generation === transcriptionGenerationRef.current)
-            showTranscriptionFailure(error);
-        })
-        .finally(() => {
-          if (generation === transcriptionGenerationRef.current)
-            pendingTranscriptionsRef.current = Math.max(0, pendingTranscriptionsRef.current - 1);
-        });
-    },
-    [showTranscriptionFailure, transcribeWav],
   );
 
   const startRecorder = useCallback(
@@ -416,12 +426,11 @@ export function LocalSpeechInputButton({
       const captureRequest = captureRequestRef.current;
       const generation = transcriptionGenerationRef.current;
       const chunks: Blob[] = [];
-      const segmentStartedAt = Date.now() - startedAtRef.current;
-      let markStopped: () => void = () => undefined;
-      const stopped = new Promise<void>(resolve => {
+      let markStopped: (blob: Blob | null) => void = () => undefined;
+      const stopped = new Promise<Blob | null>(resolve => {
         markStopped = resolve;
       });
-      recorderStopsRef.current.set(recorder, stopped);
+      recorderStopsRef.current.set(recorder, { stopped, cancel: () => markStopped(null) });
       recorder.ondataavailable = event => {
         if (event.data.size > 0) chunks.push(event.data);
       };
@@ -429,21 +438,7 @@ export function LocalSpeechInputButton({
         const current =
           captureRequest === captureRequestRef.current &&
           generation === transcriptionGenerationRef.current;
-        if (current && chunks.length > 0) {
-          enqueueTranscription(new Blob(chunks), track.source, segmentStartedAt);
-        }
-        recordersRef.current = recordersRef.current.filter(candidate => candidate !== recorder);
-        recorderStopsRef.current.delete(recorder);
-        markStopped();
-        if (
-          current &&
-          activeRef.current &&
-          settings.meetingMode &&
-          track.stream.active &&
-          track.stream.getAudioTracks().some(audioTrack => audioTrack.readyState === 'live')
-        ) {
-          startRecorder(track);
-        }
+        markStopped(current && chunks.length > 0 ? new Blob(chunks) : null);
       };
       recorder.onerror = event => {
         if (
@@ -457,24 +452,8 @@ export function LocalSpeechInputButton({
       };
       recordersRef.current.push(recorder);
       recorder.start();
-      const seconds = settings.meetingMode
-        ? settings.meetingSegmentSeconds
-        : settings.maxRecordingSeconds;
-      if (settings.meetingMode) {
-        const timer = setTimeout(() => {
-          timersRef.current = timersRef.current.filter(candidate => candidate !== timer);
-          if (recorder.state === 'recording') recorder.stop();
-        }, seconds * 1_000);
-        timersRef.current.push(timer);
-      }
     },
-    [
-      enqueueTranscription,
-      settings.maxRecordingSeconds,
-      settings.meetingMode,
-      settings.meetingSegmentSeconds,
-      abortCapture,
-    ],
+    [abortCapture],
   );
 
   const appendOnlineSamples = useCallback(
@@ -522,6 +501,7 @@ export function LocalSpeechInputButton({
   const stopOnlineRecording = useCallback(() => {
     const session = onlineSessionRef.current;
     if (!session) return false;
+    const finish = beginOperation();
     const generation = transcriptionGenerationRef.current;
     activeRef.current = false;
     timersRef.current.forEach(timer => clearTimeout(timer));
@@ -529,7 +509,7 @@ export function LocalSpeechInputButton({
     onlinePumpRef.current.stop();
     tracksRef.current.forEach(({ stream }) => stream.getTracks().forEach(track => track.stop()));
     tracksRef.current = [];
-    setState('transcribing');
+    setCaptureState('transcribing');
     const closeEvent = new Promise<void>(resolve => {
       const timer = setTimeout(resolve, 10_000);
       onlineCloseWaiterRef.current = {
@@ -574,14 +554,17 @@ export function LocalSpeechInputButton({
           if (completedCurrentSession && onlineFinalCountRef.current === 0) {
             showToast(i18nService.t('localAsrNoSpeech'));
           }
-          setState('idle');
+          setCaptureState('idle');
         }
+        finish();
       });
     return true;
-  }, []);
+  }, [beginOperation, setCaptureState]);
 
   const stopRecording = useCallback(() => {
     if (stopOnlineRecording()) return;
+    if (!activeRef.current) return;
+    const finish = beginOperation();
     const captureRequest = captureRequestRef.current;
     const generation = transcriptionGenerationRef.current;
     activeRef.current = false;
@@ -589,29 +572,42 @@ export function LocalSpeechInputButton({
     timersRef.current = [];
     const recorders = [...recordersRef.current];
     const stopped = recorders.map(
-      recorder => recorderStopsRef.current.get(recorder) ?? Promise.resolve(),
+      recorder => recorderStopsRef.current.get(recorder)?.stopped ?? Promise.resolve(null),
     );
     recorders.forEach(recorder => {
       if (recorder.state === 'recording') recorder.stop();
     });
-    setState('transcribing');
-    void Promise.all(stopped).then(() => {
-      if (
-        captureRequest !== captureRequestRef.current ||
-        generation !== transcriptionGenerationRef.current
-      )
-        return;
-      return transcriptQueueRef.current.finally(() => {
-        if (
-          captureRequest !== captureRequestRef.current ||
-          generation !== transcriptionGenerationRef.current
-        )
-          return;
-        releaseCapture();
-        if (mountedRef.current) setState('idle');
-      });
-    });
-  }, [releaseCapture, stopOnlineRecording]);
+    setCaptureState('transcribing');
+    const isCurrent = () =>
+      mountedRef.current &&
+      captureRequest === captureRequestRef.current &&
+      generation === transcriptionGenerationRef.current;
+    void (async () => {
+      try {
+        const recordings = await Promise.all(stopped);
+        if (isCurrent()) releaseCapture();
+        for (const blob of recordings) {
+          if (!isCurrent()) break;
+          if (blob) await transcribeWav(await recordedAudioToWav(blob), generation);
+        }
+      } catch (error) {
+        if (isCurrent()) showTranscriptionFailure(error);
+      } finally {
+        if (isCurrent()) {
+          releaseCapture();
+          setCaptureState('idle');
+        }
+        finish();
+      }
+    })();
+  }, [
+    beginOperation,
+    releaseCapture,
+    setCaptureState,
+    showTranscriptionFailure,
+    stopOnlineRecording,
+    transcribeWav,
+  ]);
 
   useEffect(() => {
     const api = window.electron.onlineAsr;
@@ -627,12 +623,7 @@ export function LocalSpeechInputButton({
         const text = event.text.trim();
         onlineFinalCountRef.current += 1;
         setOnlinePartial('');
-        const currentSettings = settingsRef.current;
-        onTranscriptRef.current(
-          currentSettings.meetingMode
-            ? `[${formatElapsed(Date.now() - startedAtRef.current)}] ${i18nService.t('onlineAsrSourceShort')}: ${text}`
-            : text,
-        );
+        onTranscriptRef.current(text);
         return;
       }
       if (event.type === 'error') {
@@ -657,10 +648,20 @@ export function LocalSpeechInputButton({
   }, [abortCapture]);
 
   const startRecording = useCallback(async () => {
+    if (
+      busyRef.current ||
+      startBlocked ||
+      isStartBlocked?.() ||
+      disabled ||
+      !settings.inputEnabled ||
+      !available
+    )
+      return;
+    const finish = beginOperation();
     const requestId = captureRequestRef.current + 1;
     captureRequestRef.current = requestId;
     activeCaptureSettingsKeyRef.current = getCaptureSettingsKey(settings);
-    setState('requesting');
+    setCaptureState('requesting');
     try {
       const realtime = settings.recognitionMode === 'online' && onlineInputMode === 'realtime';
       if (realtime) onlinePumpRef.current.prepare();
@@ -668,13 +669,17 @@ export function LocalSpeechInputButton({
         settings.inputSource,
         settings.inputDeviceId,
         ownerWindow,
+        track => {
+          if (!mountedRef.current || captureRequestRef.current !== requestId) return false;
+          tracksRef.current.push(track);
+          return true;
+        },
       );
       if (!mountedRef.current || captureRequestRef.current !== requestId) {
         tracks.forEach(({ stream }) => stream.getTracks().forEach(track => track.stop()));
         return;
       }
       tracksRef.current = tracks;
-      startedAtRef.current = Date.now();
       if (realtime) {
         activeRef.current = true;
         onlineStartupSamplesRef.current = [];
@@ -693,7 +698,7 @@ export function LocalSpeechInputButton({
         });
         if (!mountedRef.current || captureRequestRef.current !== requestId) {
           tracks.forEach(({ stream }) => stream.getTracks().forEach(track => track.stop()));
-          void window.electron.onlineAsr.close(session.sessionId).catch(() => {});
+          await window.electron.onlineAsr.close(session.sessionId).catch(() => {});
           return;
         }
         onlineSessionRef.current = session;
@@ -721,11 +726,9 @@ export function LocalSpeechInputButton({
           );
         });
       });
-      setState('recording');
+      setCaptureState('recording');
       if (!realtime) tracks.forEach(startRecorder);
-      if (!settings.meetingMode) {
-        timersRef.current.push(setTimeout(stopRecording, settings.maxRecordingSeconds * 1_000));
-      }
+      timersRef.current.push(setTimeout(stopRecording, settings.maxRecordingSeconds * 1_000));
     } catch (error) {
       if (!mountedRef.current || captureRequestRef.current !== requestId) return;
       activeRef.current = false;
@@ -748,6 +751,8 @@ export function LocalSpeechInputButton({
                   : 'localAsrFailed';
       showToast(i18nService.t(messageKey));
       abortCapture();
+    } finally {
+      finish();
     }
   }, [
     abortCapture,
@@ -757,36 +762,58 @@ export function LocalSpeechInputButton({
     startRecorder,
     stopRecording,
     ownerWindow,
+    beginOperation,
+    setCaptureState,
+    available,
+    disabled,
+    startBlocked,
+    isStartBlocked,
   ]);
 
   const transcribeFile = useCallback(
     async (file: File) => {
+      if (
+        busyRef.current ||
+        startBlocked ||
+        isStartBlocked?.() ||
+        disabled ||
+        !settings.inputEnabled ||
+        !available
+      )
+        return;
+      const finish = beginOperation();
       const generation = transcriptionGenerationRef.current;
       const isCurrent = () =>
         mountedRef.current && generation === transcriptionGenerationRef.current;
-      setState('transcribing');
+      setCaptureState('transcribing');
       activeCaptureSettingsKeyRef.current = getCaptureSettingsKey(settings);
       try {
         if (file.size > MAX_IMPORTED_MEDIA_BYTES) {
           throw new Error('Imported media exceeds the local size limit.');
         }
-        const segments = await recordedAudioToWavSegments(file, settings.meetingSegmentSeconds);
-        for (let index = 0; index < segments.length; index += 1) {
+        const chunks = await recordedAudioToWavChunks(file);
+        for (const chunk of chunks) {
           if (!isCurrent()) break;
-          await transcribeWav(
-            segments[index],
-            'system',
-            index * settings.meetingSegmentSeconds * 1_000,
-            generation,
-          );
+          await transcribeWav(chunk, generation);
         }
       } catch (error) {
         if (isCurrent()) showTranscriptionFailure(error);
       } finally {
-        if (isCurrent()) setState('idle');
+        if (isCurrent()) setCaptureState('idle');
+        finish();
       }
     },
-    [settings, showTranscriptionFailure, transcribeWav],
+    [
+      available,
+      beginOperation,
+      disabled,
+      isStartBlocked,
+      startBlocked,
+      setCaptureState,
+      settings,
+      showTranscriptionFailure,
+      transcribeWav,
+    ],
   );
 
   useEffect(() => {
@@ -839,12 +866,12 @@ export function LocalSpeechInputButton({
     !available && state === 'idle'
       ? i18nService.t('voiceInputUnavailable')
       : i18nService.t(
-          state === 'transcribing' || state === 'requesting'
-            ? 'localAsrCancel'
-            : recording
-              ? 'localAsrStop'
-              : settings.meetingMode
-                ? 'localAsrStartMeeting'
+          state === 'finishing'
+            ? 'voiceInputFinishing'
+            : state === 'transcribing' || state === 'requesting'
+              ? 'localAsrCancel'
+              : recording
+                ? 'localAsrStop'
                 : 'localAsrStart',
         );
   return (
@@ -900,10 +927,12 @@ export function LocalSpeechInputButton({
           title={title}
           aria-label={title}
           aria-pressed={recording}
-          aria-busy={state === 'transcribing' || state === 'requesting'}
-          disabled={disabled || (!available && state === 'idle')}
+          aria-busy={state === 'transcribing' || state === 'requesting' || state === 'finishing'}
+          disabled={
+            disabled || state === 'finishing' || ((!available || startBlocked) && state === 'idle')
+          }
         >
-          {state === 'transcribing' || state === 'requesting' ? (
+          {state === 'transcribing' || state === 'requesting' || state === 'finishing' ? (
             <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent" />
           ) : recording ? (
             <StopIcon className="h-4 w-4" />

@@ -17,8 +17,6 @@ import {
 
 export const LOCAL_SPEECH_MIN_RECORDING_SECONDS = 5;
 export const LOCAL_SPEECH_MAX_RECORDING_SECONDS = 120;
-export const LOCAL_SPEECH_MIN_MEETING_SEGMENT_SECONDS = 15;
-export const LOCAL_SPEECH_MAX_MEETING_SEGMENT_SECONDS = 60;
 export const LOCAL_SPEECH_MIN_THREADS = 1;
 export const LOCAL_SPEECH_MAX_THREADS = 8;
 export const LOCAL_SPEECH_MIN_RATE = 0.5;
@@ -39,8 +37,6 @@ export interface LocalSpeechSettings {
   inputDeviceId: string;
   inputLanguage: LocalSpeechInputLanguage;
   maxRecordingSeconds: number;
-  meetingMode: boolean;
-  meetingSegmentSeconds: number;
   recognitionThreads: number;
   outputEnabled: boolean;
   synthesisMode: SpeechSynthesisMode;
@@ -68,8 +64,6 @@ export const defaultLocalSpeechSettings: LocalSpeechSettings = {
   inputDeviceId: '',
   inputLanguage: 'app',
   maxRecordingSeconds: 60,
-  meetingMode: false,
-  meetingSegmentSeconds: 30,
   recognitionThreads: 2,
   outputEnabled: false,
   synthesisMode: 'local',
@@ -152,16 +146,6 @@ export const normalizeLocalSpeechSettings = (value: unknown): LocalSpeechSetting
       defaultLocalSpeechSettings.maxRecordingSeconds,
       LOCAL_SPEECH_MIN_RECORDING_SECONDS,
       LOCAL_SPEECH_MAX_RECORDING_SECONDS,
-    ),
-    meetingMode:
-      typeof candidate.meetingMode === 'boolean'
-        ? candidate.meetingMode
-        : defaultLocalSpeechSettings.meetingMode,
-    meetingSegmentSeconds: clampInteger(
-      candidate.meetingSegmentSeconds,
-      defaultLocalSpeechSettings.meetingSegmentSeconds,
-      LOCAL_SPEECH_MIN_MEETING_SEGMENT_SECONDS,
-      LOCAL_SPEECH_MAX_MEETING_SEGMENT_SECONDS,
     ),
     recognitionThreads: clampInteger(
       candidate.recognitionThreads,

@@ -37,11 +37,11 @@ export default function RealtimeVoiceSettings({
   const selectedVoice = getSpeechVoiceOptionValue(voices, value.realtimeVoiceSelection);
   const voiceUnavailable = Boolean(value.realtimeVoiceSelection && !selectedVoice);
   return (
-    <section className="space-y-5 rounded-xl border border-border bg-surface p-5">
+    <div className="space-y-5">
       <div className="flex items-start justify-between gap-6">
         <div>
           <h3 className="text-sm font-medium text-foreground">
-            {i18nService.t('modelTypeRealtimeVoice')}
+            {i18nService.t('voiceConversationTitle')}
           </h3>
           <p className="mt-1 text-xs leading-5 text-secondary">
             {i18nService.t('realtimeVoiceSettingsDescription')}
@@ -151,6 +151,6 @@ export default function RealtimeVoiceSettings({
       <p className="text-xs leading-5 text-secondary">
         {i18nService.t('realtimeVoiceSettingsSaveHint')}
       </p>
-    </section>
+    </div>
   );
 }

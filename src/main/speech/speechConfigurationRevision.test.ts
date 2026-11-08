@@ -8,6 +8,29 @@ import {
 } from './speechConfigurationRevision';
 
 describe('speech configuration revisions', () => {
+  it('ignores retired meeting fields while a shared microphone change revokes both inputs', () => {
+    const a = {
+      voice: {
+        ...defaultLocalSpeechSettings,
+        inputEnabled: true,
+        realtimeEnabled: true,
+        inputDeviceId: 'first',
+      },
+    };
+    const scopes = ['input', 'output', 'realtime'] as const;
+    const before = scopes.map(getSpeechConfigurationRevision);
+    advanceSpeechConfigurationRevision(
+      { voice: { ...a.voice, meetingMode: true, meetingSegmentSeconds: 15 } },
+      a,
+    );
+    expect(scopes.map(getSpeechConfigurationRevision)).toEqual(before);
+    advanceSpeechConfigurationRevision({ voice: { ...a.voice, inputDeviceId: 'second' } }, a);
+    expect(scopes.map(getSpeechConfigurationRevision)).toEqual([
+      before[0] + 1,
+      before[1],
+      before[2] + 1,
+    ]);
+  });
   it('invalidates active requests when an inherited provider protocol changes', () => {
     const makeProvider = (protocolId: string, inputTranscriptionModel?: string) => ({
       providers: {

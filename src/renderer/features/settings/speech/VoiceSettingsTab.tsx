@@ -10,11 +10,9 @@ import {
 import { LocalSpeechModelKind } from '@shared/speech/localSpeechModels';
 import {
   getSpeechSynthesisSettingsKey,
-  LOCAL_SPEECH_MAX_MEETING_SEGMENT_SECONDS,
   LOCAL_SPEECH_MAX_RATE,
   LOCAL_SPEECH_MAX_RECORDING_SECONDS,
   LOCAL_SPEECH_MAX_THREADS,
-  LOCAL_SPEECH_MIN_MEETING_SEGMENT_SECONDS,
   LOCAL_SPEECH_MIN_RATE,
   LOCAL_SPEECH_MIN_RECORDING_SECONDS,
   LOCAL_SPEECH_MIN_THREADS,
@@ -48,6 +46,7 @@ import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';
 import ThemedSelect from '@/shared/components/ui/ThemedSelect';
 
+import MicrophoneDiagnostics, { type MicrophoneDiagnosticRecording } from './MicrophoneDiagnostics';
 import RealtimeVoiceSettings from './RealtimeVoiceSettings';
 import VoiceInputDiagnostics from './VoiceInputDiagnostics';
 import VoiceOutputDiagnostics from './VoiceOutputDiagnostics';
@@ -141,6 +140,9 @@ const VoiceSettingsTab: React.FC<VoiceSettingsTabProps> = ({
   onManageRealtimeModels,
 }) => {
   const { statuses, loading, retry } = useLocalSpeechModels();
+  const [inputTab, setInputTab] = useState<'transcription' | 'conversation'>('transcription');
+  const [diagnosticRecording, setDiagnosticRecording] =
+    useState<MicrophoneDiagnosticRecording | null>(null);
   const [microphones, setMicrophones] = useState<MediaDeviceInfo[]>([]);
   const [microphoneRefreshKey, setMicrophoneRefreshKey] = useState(0);
   const [onlineStatus, setOnlineStatus] = useState<OnlineAsrStatus | null>(null);
@@ -329,7 +331,7 @@ const VoiceSettingsTab: React.FC<VoiceSettingsTabProps> = ({
   }, [value.synthesisMode]);
 
   useEffect(() => {
-    if (!value.inputEnabled || !navigator.mediaDevices?.enumerateDevices) return;
+    if (!navigator.mediaDevices?.enumerateDevices) return;
     let active = true;
     const refresh = () => {
       void navigator.mediaDevices
@@ -358,347 +360,411 @@ const VoiceSettingsTab: React.FC<VoiceSettingsTabProps> = ({
       active = false;
       navigator.mediaDevices.removeEventListener('devicechange', refresh);
     };
-  }, [microphoneRefreshKey, value.inputEnabled]);
+  }, [microphoneRefreshKey]);
 
   return (
     <div className="voice-settings min-w-0 space-y-6">
       <section className="space-y-5 rounded-xl border border-border bg-surface p-5">
-        <div className="flex items-start justify-between gap-6">
+        <div>
+          <h4 className="text-sm font-semibold text-foreground">
+            {i18nService.t('voiceInputTitle')}
+          </h4>
+          <p className="mt-1 text-xs leading-5 text-secondary">
+            {i18nService.t('voiceInputDescription')}
+          </p>
+        </div>
+        <div className="voice-setting-row">
           <div>
-            <h4 className="text-sm font-semibold text-foreground">
-              {i18nService.t('voiceInputTitle')}
-            </h4>
+            <label htmlFor="voice-input-device" className="text-sm font-medium text-foreground">
+              {i18nService.t('voiceInputDevice')}
+            </label>
             <p className="mt-1 text-xs leading-5 text-secondary">
-              {i18nService.t('voiceInputDescription')}
+              {i18nService.t('voiceInputDeviceDescription')}
             </p>
-            {onManageModels && (
+          </div>
+          <div className="voice-setting-control">
+            <ThemedSelect
+              id="voice-input-device"
+              value={value.inputDeviceId}
+              onChange={inputDeviceId => update({ inputDeviceId })}
+              options={[
+                { value: '', label: i18nService.t('voiceInputDeviceDefault') },
+                ...(value.inputDeviceId &&
+                !microphones.some(device => device.deviceId === value.inputDeviceId)
+                  ? [
+                      {
+                        value: value.inputDeviceId,
+                        label: i18nService.t('voiceInputDeviceDisconnected'),
+                      },
+                    ]
+                  : []),
+                ...microphones.map((device, index) => ({
+                  value: device.deviceId,
+                  label: device.label || i18nService.t('voiceInputDevice') + ' ' + (index + 1),
+                })),
+              ]}
+            />
+          </div>
+        </div>
+        <MicrophoneDiagnostics
+          deviceId={value.inputDeviceId}
+          contextKey={inputTab}
+          onMicrophoneAccess={() => setMicrophoneRefreshKey(current => current + 1)}
+          onRecordingChange={setDiagnosticRecording}
+        />
+        <div
+          role="tablist"
+          aria-label={i18nService.t('voiceInputFeatures')}
+          className="voice-input-tabs bg-surface-raised"
+        >
+          {(['transcription', 'conversation'] as const).map(tab => {
+            const selected = inputTab === tab;
+            const enabled = tab === 'transcription' ? value.inputEnabled : value.realtimeEnabled;
+            return (
               <button
                 type="button"
-                onClick={() =>
-                  value.recognitionMode === 'local'
-                    ? onManageModels(LocalSpeechModelKind.Asr)
-                    : onManageModels(LocalSpeechModelKind.Asr, {
-                        source: 'online',
-                        providerId: resolveOnlineSpeechModel(
-                          recognitionCategory,
-                          value.onlineAsrModelRef,
-                        )?.providerId,
-                      })
-                }
-                className="mt-2 text-xs font-medium text-primary hover:underline"
+                key={tab}
+                role="tab"
+                id={'voice-input-tab-' + tab}
+                aria-selected={selected}
+                tabIndex={selected ? 0 : -1}
+                aria-controls={'voice-input-panel-' + tab}
+                onClick={() => setInputTab(tab)}
+                onKeyDown={event => {
+                  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+                  event.preventDefault();
+                  const next =
+                    event.key === 'Home'
+                      ? 'transcription'
+                      : event.key === 'End'
+                        ? 'conversation'
+                        : tab === 'transcription'
+                          ? 'conversation'
+                          : 'transcription';
+                  setInputTab(next);
+                  event.currentTarget.parentElement
+                    ?.querySelector<HTMLButtonElement>('#voice-input-tab-' + next)
+                    ?.focus();
+                }}
+                className={`voice-input-tab ${selected ? 'bg-surface text-foreground' : 'text-secondary'}`}
               >
-                {i18nService.t('speechManageModels')}
+                <span>
+                  {i18nService.t(
+                    tab === 'transcription' ? 'voiceTranscriptionTitle' : 'voiceConversationTitle',
+                  )}
+                </span>
+                <span className={enabled ? 'text-primary' : 'text-muted'}>
+                  {i18nService.t(enabled ? 'voiceFeatureEnabled' : 'voiceFeatureDisabled')}
+                </span>
               </button>
-            )}
-          </div>
-          <SettingSwitch
-            checked={value.inputEnabled}
-            label={i18nService.t('voiceInputEnabled')}
-            onChange={inputEnabled => {
-              update({ inputEnabled });
-            }}
-          />
+            );
+          })}
         </div>
-        {value.recognitionMode === 'local' ? (
-          <ModelStatus
-            status={asrStatus}
-            loading={loading}
-            showInstallAction={false}
-            onRetry={retry}
-          />
+        {inputTab === 'transcription' ? (
+          <div
+            role="tabpanel"
+            id="voice-input-panel-transcription"
+            aria-labelledby="voice-input-tab-transcription"
+            className="space-y-5"
+          >
+            <div className="flex items-start justify-between gap-6">
+              <div>
+                <h4 className="text-sm font-semibold text-foreground">
+                  {i18nService.t('voiceTranscriptionTitle')}
+                </h4>
+                <p className="mt-1 text-xs leading-5 text-secondary">
+                  {i18nService.t('voiceTranscriptionDescription')}
+                </p>
+                {onManageModels && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      value.recognitionMode === 'local'
+                        ? onManageModels(LocalSpeechModelKind.Asr)
+                        : onManageModels(LocalSpeechModelKind.Asr, {
+                            source: 'online',
+                            providerId: resolveOnlineSpeechModel(
+                              recognitionCategory,
+                              value.onlineAsrModelRef,
+                            )?.providerId,
+                          })
+                    }
+                    className="mt-2 text-xs font-medium text-primary hover:underline"
+                  >
+                    {i18nService.t('speechManageModels')}
+                  </button>
+                )}
+              </div>
+              <SettingSwitch
+                checked={value.inputEnabled}
+                label={i18nService.t('voiceInputEnabled')}
+                onChange={inputEnabled => {
+                  update({ inputEnabled });
+                }}
+              />
+            </div>
+            {value.recognitionMode === 'local' ? (
+              <ModelStatus
+                status={asrStatus}
+                loading={loading}
+                showInstallAction={false}
+                onRetry={retry}
+              />
+            ) : (
+              <div
+                className="flex min-w-0 flex-wrap items-center gap-2 text-xs text-secondary"
+                role="status"
+              >
+                {onlineStatusLoading ? (
+                  <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                ) : onlineAsrConfigured ? (
+                  <CheckCircleIcon className="h-4 w-4 text-green-500" />
+                ) : (
+                  <ExclamationTriangleIcon className="h-4 w-4 text-amber-500" />
+                )}
+                <span>
+                  {onlineStatusLoading
+                    ? i18nService.t('voiceOnlineChecking')
+                    : onlineAsrConfigured && recognitionNeedsSave
+                      ? i18nService.t('speechSettingsNeedSave')
+                      : onlineAsrConfigured && onlineStatus?.available
+                        ? i18nService.t('voiceOnlineReady')
+                        : onlineAsrConfigured
+                          ? i18nService.t('voiceOnlineConfigured')
+                          : i18nService.t('voiceOnlineUnavailable')}
+                </span>
+              </div>
+            )}
+            <div className="border-t border-border pt-5">
+              <div className="mb-5 voice-setting-row">
+                <div>
+                  <label
+                    htmlFor="voice-recognition-mode"
+                    className="text-sm font-medium text-foreground"
+                  >
+                    {i18nService.t('voiceRecognitionMode')}
+                  </label>
+                  <p className="mt-1 text-xs leading-5 text-secondary">
+                    {i18nService.t('voiceRecognitionModeDescription')}
+                  </p>
+                </div>
+                <div className="voice-setting-control">
+                  <ThemedSelect
+                    id="voice-recognition-mode"
+                    value={value.recognitionMode}
+                    onChange={recognitionMode => {
+                      const nextMode = recognitionMode as LocalSpeechSettings['recognitionMode'];
+                      update({
+                        recognitionMode: nextMode,
+                        ...(nextMode === 'online' && value.inputLanguage === 'yue'
+                          ? { inputLanguage: 'app' as const }
+                          : {}),
+                      });
+                    }}
+                    options={[
+                      { value: 'local', label: i18nService.t('voiceRecognitionModeLocal') },
+                      { value: 'online', label: i18nService.t('voiceRecognitionModeOnline') },
+                    ]}
+                  />
+                </div>
+              </div>
+              {value.recognitionMode === 'local' ? (
+                <div className="mb-5 voice-setting-row">
+                  <div>
+                    <label
+                      htmlFor="voice-asr-model"
+                      className="text-sm font-medium text-foreground"
+                    >
+                      {i18nService.t('voiceRecognitionModel')}
+                    </label>
+                    <p className="mt-1 text-xs leading-5 text-secondary">
+                      {i18nService.t('speechModelCatalogDescription')}
+                    </p>
+                  </div>
+                  <div className="voice-setting-control">
+                    <ThemedSelect
+                      id="voice-asr-model"
+                      value={value.asrModelId}
+                      disabled={!value.inputEnabled}
+                      onChange={asrModelId => {
+                        const nextModelId = asrModelId as LocalAsrModelId;
+                        update({
+                          asrModelId: nextModelId,
+                          ...(!isLocalAsrLanguageSupported(nextModelId, value.inputLanguage)
+                            ? { inputLanguage: 'app' as const }
+                            : {}),
+                        });
+                      }}
+                      options={LOCAL_ASR_MODEL_IDS.map(modelId => ({
+                        value: modelId,
+                        label: i18nService.t(ASR_MODEL_KEYS[modelId]),
+                      }))}
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div className="mb-5 voice-setting-row">
+                  <div>
+                    <label
+                      htmlFor="voice-online-asr-model"
+                      className="text-sm font-medium text-foreground"
+                    >
+                      {i18nService.t('voiceRecognitionModel')}
+                    </label>
+                    <p className="mt-1 text-xs leading-5 text-secondary">
+                      {i18nService.t('voiceOnlineModelSelectionDescription')}
+                    </p>
+                  </div>
+                  <div className="voice-setting-control">
+                    <ThemedSelect
+                      id="voice-online-asr-model"
+                      value={selectedRecognitionModel}
+                      disabled={!value.inputEnabled || recognitionModelOptions.length === 0}
+                      onChange={applyOnlineRecognitionModel}
+                      options={
+                        recognitionModelOptions.length > 0
+                          ? [
+                              { value: '', label: i18nService.t('voiceSelectModel') },
+                              ...recognitionModelOptions,
+                            ]
+                          : [{ value: '', label: i18nService.t('voiceNoOnlineModelsConfigured') }]
+                      }
+                    />
+                  </div>
+                </div>
+              )}
+              {value.recognitionMode === 'online' && value.onlineAsrModelRef.trim() ? (
+                <p className="mb-5 text-xs leading-5 text-secondary">
+                  {recognitionBinding
+                    ? i18nService
+                        .t('speechCurrentProtocol')
+                        .replace(
+                          '{protocol}',
+                          getSpeechProtocolLabel(recognitionBinding.binding.protocolId),
+                        )
+                    : i18nService.t('speechConfigureInterfaceInModels')}
+                </p>
+              ) : null}
+              <div className="mb-5 voice-setting-row">
+                <div>
+                  <label
+                    htmlFor="voice-input-source"
+                    className="text-sm font-medium text-foreground"
+                  >
+                    {i18nService.t('voiceInputSource')}
+                  </label>
+                  <p className="mt-1 text-xs leading-5 text-secondary">
+                    {i18nService.t('voiceInputSourceDescription')}
+                  </p>
+                </div>
+                <div className="voice-setting-control">
+                  <ThemedSelect
+                    id="voice-input-source"
+                    value={value.inputSource}
+                    disabled={!value.inputEnabled}
+                    onChange={inputSource =>
+                      update({ inputSource: inputSource as LocalSpeechSettings['inputSource'] })
+                    }
+                    options={[
+                      { value: 'microphone', label: i18nService.t('voiceInputSourceMicrophone') },
+                      { value: 'system', label: i18nService.t('voiceInputSourceSystem') },
+                      { value: 'microphone-system', label: i18nService.t('voiceInputSourceMixed') },
+                    ]}
+                  />
+                </div>
+              </div>
+              {
+                <div className="voice-setting-row">
+                  <div>
+                    <label
+                      htmlFor="voice-input-language"
+                      className="text-sm font-medium text-foreground"
+                    >
+                      {i18nService.t('voiceRecognitionLanguage')}
+                    </label>
+                    <p className="mt-1 text-xs leading-5 text-secondary">
+                      {i18nService.t('voiceRecognitionLanguageDescription')}
+                    </p>
+                  </div>
+                  <div className="voice-setting-control">
+                    <ThemedSelect
+                      id="voice-input-language"
+                      value={value.inputLanguage}
+                      disabled={!value.inputEnabled}
+                      onChange={inputLanguage =>
+                        update({
+                          inputLanguage: inputLanguage as LocalSpeechSettings['inputLanguage'],
+                        })
+                      }
+                      options={[
+                        { value: 'auto', label: i18nService.t('voiceLanguageAuto') },
+                        { value: 'app', label: i18nService.t('voiceLanguageFollowApp') },
+                        { value: 'zh', label: i18nService.t('chinese') },
+                        { value: 'en', label: i18nService.t('english') },
+                        ...(value.recognitionMode === 'local' &&
+                        value.asrModelId.includes('sense-voice')
+                          ? [{ value: 'yue', label: i18nService.t('cantonese') }]
+                          : []),
+                        { value: 'ja', label: i18nService.t('japanese') },
+                        { value: 'ko', label: i18nService.t('korean') },
+                      ]}
+                    />
+                  </div>
+                </div>
+              }
+            </div>
+            {value.inputEnabled &&
+            value.recognitionMode === 'local' &&
+            (value.inputSource === 'microphone' || value.inputSource === 'microphone-system') ? (
+              <VoiceInputDiagnostics
+                settings={value}
+                modelReady={asrStatus?.phase === 'ready'}
+                recording={
+                  diagnosticRecording?.deviceId === value.inputDeviceId
+                    ? diagnosticRecording.blob
+                    : null
+                }
+              />
+            ) : null}
+            <NumberSetting
+              id="voice-max-recording"
+              label={i18nService.t('voiceMaxRecording')}
+              description={i18nService.t('voiceMaxRecordingDescription')}
+              value={value.maxRecordingSeconds}
+              min={LOCAL_SPEECH_MIN_RECORDING_SECONDS}
+              max={LOCAL_SPEECH_MAX_RECORDING_SECONDS}
+              suffix={i18nService.t('seconds')}
+              disabled={!value.inputEnabled}
+              onChange={maxRecordingSeconds => update({ maxRecordingSeconds })}
+            />
+            {value.recognitionMode === 'local' ? (
+              <NumberSetting
+                id="voice-recognition-threads"
+                label={i18nService.t('voiceRecognitionThreads')}
+                description={i18nService.t('voiceThreadsDescription')}
+                value={value.recognitionThreads}
+                min={LOCAL_SPEECH_MIN_THREADS}
+                max={LOCAL_SPEECH_MAX_THREADS}
+                suffix={i18nService.t('voiceThreadsUnit')}
+                disabled={!value.inputEnabled}
+                onChange={recognitionThreads => update({ recognitionThreads })}
+              />
+            ) : null}
+          </div>
         ) : (
           <div
-            className="flex min-w-0 flex-wrap items-center gap-2 text-xs text-secondary"
-            role="status"
+            role="tabpanel"
+            id="voice-input-panel-conversation"
+            aria-labelledby="voice-input-tab-conversation"
           >
-            {onlineStatusLoading ? (
-              <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent" />
-            ) : onlineAsrConfigured ? (
-              <CheckCircleIcon className="h-4 w-4 text-green-500" />
-            ) : (
-              <ExclamationTriangleIcon className="h-4 w-4 text-amber-500" />
-            )}
-            <span>
-              {onlineStatusLoading
-                ? i18nService.t('voiceOnlineChecking')
-                : onlineAsrConfigured && recognitionNeedsSave
-                  ? i18nService.t('speechSettingsNeedSave')
-                  : onlineAsrConfigured && onlineStatus?.available
-                    ? i18nService.t('voiceOnlineReady')
-                    : onlineAsrConfigured
-                      ? i18nService.t('voiceOnlineConfigured')
-                      : i18nService.t('voiceOnlineUnavailable')}
-            </span>
+            <RealtimeVoiceSettings
+              value={value}
+              onChange={onChange}
+              category={onlineModelProviders?.['realtime-voice']}
+              onManageModels={onManageRealtimeModels}
+            />
           </div>
         )}
-        <div className="border-t border-border pt-5">
-          <div className="mb-5 voice-setting-row">
-            <div>
-              <label
-                htmlFor="voice-recognition-mode"
-                className="text-sm font-medium text-foreground"
-              >
-                {i18nService.t('voiceRecognitionMode')}
-              </label>
-              <p className="mt-1 text-xs leading-5 text-secondary">
-                {i18nService.t('voiceRecognitionModeDescription')}
-              </p>
-            </div>
-            <div className="voice-setting-control">
-              <ThemedSelect
-                id="voice-recognition-mode"
-                value={value.recognitionMode}
-                onChange={recognitionMode => {
-                  const nextMode = recognitionMode as LocalSpeechSettings['recognitionMode'];
-                  update({
-                    recognitionMode: nextMode,
-                    ...(nextMode === 'online' && value.inputLanguage === 'yue'
-                      ? { inputLanguage: 'app' as const }
-                      : {}),
-                  });
-                }}
-                options={[
-                  { value: 'local', label: i18nService.t('voiceRecognitionModeLocal') },
-                  { value: 'online', label: i18nService.t('voiceRecognitionModeOnline') },
-                ]}
-              />
-            </div>
-          </div>
-          {value.recognitionMode === 'local' ? (
-            <div className="mb-5 voice-setting-row">
-              <div>
-                <label htmlFor="voice-asr-model" className="text-sm font-medium text-foreground">
-                  {i18nService.t('voiceRecognitionModel')}
-                </label>
-                <p className="mt-1 text-xs leading-5 text-secondary">
-                  {i18nService.t('speechModelCatalogDescription')}
-                </p>
-              </div>
-              <div className="voice-setting-control">
-                <ThemedSelect
-                  id="voice-asr-model"
-                  value={value.asrModelId}
-                  disabled={!value.inputEnabled}
-                  onChange={asrModelId => {
-                    const nextModelId = asrModelId as LocalAsrModelId;
-                    update({
-                      asrModelId: nextModelId,
-                      ...(!isLocalAsrLanguageSupported(nextModelId, value.inputLanguage)
-                        ? { inputLanguage: 'app' as const }
-                        : {}),
-                    });
-                  }}
-                  options={LOCAL_ASR_MODEL_IDS.map(modelId => ({
-                    value: modelId,
-                    label: i18nService.t(ASR_MODEL_KEYS[modelId]),
-                  }))}
-                />
-              </div>
-            </div>
-          ) : (
-            <div className="mb-5 voice-setting-row">
-              <div>
-                <label
-                  htmlFor="voice-online-asr-model"
-                  className="text-sm font-medium text-foreground"
-                >
-                  {i18nService.t('voiceRecognitionModel')}
-                </label>
-                <p className="mt-1 text-xs leading-5 text-secondary">
-                  {i18nService.t('voiceOnlineModelSelectionDescription')}
-                </p>
-              </div>
-              <div className="voice-setting-control">
-                <ThemedSelect
-                  id="voice-online-asr-model"
-                  value={selectedRecognitionModel}
-                  disabled={!value.inputEnabled || recognitionModelOptions.length === 0}
-                  onChange={applyOnlineRecognitionModel}
-                  options={
-                    recognitionModelOptions.length > 0
-                      ? [
-                          { value: '', label: i18nService.t('voiceSelectModel') },
-                          ...recognitionModelOptions,
-                        ]
-                      : [{ value: '', label: i18nService.t('voiceNoOnlineModelsConfigured') }]
-                  }
-                />
-              </div>
-            </div>
-          )}
-          {value.recognitionMode === 'online' && value.onlineAsrModelRef.trim() ? (
-            <p className="mb-5 text-xs leading-5 text-secondary">
-              {recognitionBinding
-                ? i18nService
-                    .t('speechCurrentProtocol')
-                    .replace(
-                      '{protocol}',
-                      getSpeechProtocolLabel(recognitionBinding.binding.protocolId),
-                    )
-                : i18nService.t('speechConfigureInterfaceInModels')}
-            </p>
-          ) : null}
-          <div className="mb-5 voice-setting-row">
-            <div>
-              <label htmlFor="voice-input-source" className="text-sm font-medium text-foreground">
-                {i18nService.t('voiceInputSource')}
-              </label>
-              <p className="mt-1 text-xs leading-5 text-secondary">
-                {i18nService.t('voiceInputSourceDescription')}
-              </p>
-            </div>
-            <div className="voice-setting-control">
-              <ThemedSelect
-                id="voice-input-source"
-                value={value.inputSource}
-                disabled={!value.inputEnabled}
-                onChange={inputSource =>
-                  update({ inputSource: inputSource as LocalSpeechSettings['inputSource'] })
-                }
-                options={[
-                  { value: 'microphone', label: i18nService.t('voiceInputSourceMicrophone') },
-                  { value: 'system', label: i18nService.t('voiceInputSourceSystem') },
-                  { value: 'microphone-system', label: i18nService.t('voiceInputSourceMixed') },
-                ]}
-              />
-            </div>
-          </div>
-          {(value.inputSource === 'microphone' || value.inputSource === 'microphone-system') && (
-            <div className="mb-5 voice-setting-row">
-              <div>
-                <label htmlFor="voice-input-device" className="text-sm font-medium text-foreground">
-                  {i18nService.t('voiceInputDevice')}
-                </label>
-                <p className="mt-1 text-xs leading-5 text-secondary">
-                  {i18nService.t('voiceInputDeviceDescription')}
-                </p>
-              </div>
-              <div className="voice-setting-control">
-                <ThemedSelect
-                  id="voice-input-device"
-                  value={value.inputDeviceId}
-                  disabled={!value.inputEnabled}
-                  onChange={inputDeviceId => update({ inputDeviceId })}
-                  options={[
-                    { value: '', label: i18nService.t('voiceInputDeviceDefault') },
-                    ...(value.inputDeviceId &&
-                    !microphones.some(device => device.deviceId === value.inputDeviceId)
-                      ? [
-                          {
-                            value: value.inputDeviceId,
-                            label: i18nService.t('voiceInputDeviceDisconnected'),
-                          },
-                        ]
-                      : []),
-                    ...microphones.map((device, index) => ({
-                      value: device.deviceId,
-                      label: device.label || `${i18nService.t('voiceInputDevice')} ${index + 1}`,
-                    })),
-                  ]}
-                />
-              </div>
-            </div>
-          )}
-          {
-            <div className="voice-setting-row">
-              <div>
-                <label
-                  htmlFor="voice-input-language"
-                  className="text-sm font-medium text-foreground"
-                >
-                  {i18nService.t('voiceRecognitionLanguage')}
-                </label>
-                <p className="mt-1 text-xs leading-5 text-secondary">
-                  {i18nService.t('voiceRecognitionLanguageDescription')}
-                </p>
-              </div>
-              <div className="voice-setting-control">
-                <ThemedSelect
-                  id="voice-input-language"
-                  value={value.inputLanguage}
-                  disabled={!value.inputEnabled}
-                  onChange={inputLanguage =>
-                    update({ inputLanguage: inputLanguage as LocalSpeechSettings['inputLanguage'] })
-                  }
-                  options={[
-                    { value: 'auto', label: i18nService.t('voiceLanguageAuto') },
-                    { value: 'app', label: i18nService.t('voiceLanguageFollowApp') },
-                    { value: 'zh', label: i18nService.t('chinese') },
-                    { value: 'en', label: i18nService.t('english') },
-                    ...(value.recognitionMode === 'local' &&
-                    value.asrModelId.includes('sense-voice')
-                      ? [{ value: 'yue', label: i18nService.t('cantonese') }]
-                      : []),
-                    { value: 'ja', label: i18nService.t('japanese') },
-                    { value: 'ko', label: i18nService.t('korean') },
-                  ]}
-                />
-              </div>
-            </div>
-          }
-        </div>
-        {value.inputEnabled &&
-        value.recognitionMode === 'local' &&
-        (value.inputSource === 'microphone' || value.inputSource === 'microphone-system') ? (
-          <VoiceInputDiagnostics
-            settings={value}
-            modelReady={asrStatus?.phase === 'ready'}
-            onMicrophoneAccess={() => setMicrophoneRefreshKey(current => current + 1)}
-          />
-        ) : null}
-        <NumberSetting
-          id="voice-max-recording"
-          label={i18nService.t('voiceMaxRecording')}
-          description={i18nService.t('voiceMaxRecordingDescription')}
-          value={value.maxRecordingSeconds}
-          min={LOCAL_SPEECH_MIN_RECORDING_SECONDS}
-          max={LOCAL_SPEECH_MAX_RECORDING_SECONDS}
-          suffix={i18nService.t('seconds')}
-          disabled={!value.inputEnabled || value.meetingMode}
-          onChange={maxRecordingSeconds => update({ maxRecordingSeconds })}
-        />
-        <div className="flex items-start justify-between gap-6">
-          <div>
-            <div className="text-sm font-medium text-foreground">
-              {i18nService.t('voiceMeetingMode')}
-            </div>
-            <p className="mt-1 text-xs leading-5 text-secondary">
-              {i18nService.t('voiceMeetingModeDescription')}
-            </p>
-          </div>
-          <SettingSwitch
-            checked={value.meetingMode}
-            label={i18nService.t('voiceMeetingMode')}
-            disabled={!value.inputEnabled}
-            onChange={meetingMode => update({ meetingMode })}
-          />
-        </div>
-        {value.meetingMode && value.recognitionMode === 'local' && (
-          <NumberSetting
-            id="voice-meeting-segment"
-            label={i18nService.t('voiceMeetingSegment')}
-            description={i18nService.t('voiceMeetingSegmentDescription')}
-            value={value.meetingSegmentSeconds}
-            min={LOCAL_SPEECH_MIN_MEETING_SEGMENT_SECONDS}
-            max={LOCAL_SPEECH_MAX_MEETING_SEGMENT_SECONDS}
-            suffix={i18nService.t('seconds')}
-            disabled={!value.inputEnabled}
-            onChange={meetingSegmentSeconds => update({ meetingSegmentSeconds })}
-          />
-        )}
-        {value.recognitionMode === 'local' ? (
-          <NumberSetting
-            id="voice-recognition-threads"
-            label={i18nService.t('voiceRecognitionThreads')}
-            description={i18nService.t('voiceThreadsDescription')}
-            value={value.recognitionThreads}
-            min={LOCAL_SPEECH_MIN_THREADS}
-            max={LOCAL_SPEECH_MAX_THREADS}
-            suffix={i18nService.t('voiceThreadsUnit')}
-            disabled={!value.inputEnabled}
-            onChange={recognitionThreads => update({ recognitionThreads })}
-          />
-        ) : null}
       </section>
 
       <section className="space-y-5 rounded-xl border border-border bg-surface p-5">
@@ -987,12 +1053,6 @@ const VoiceSettingsTab: React.FC<VoiceSettingsTabProps> = ({
           />
         ) : null}
       </section>
-      <RealtimeVoiceSettings
-        value={value}
-        onChange={onChange}
-        category={onlineModelProviders?.['realtime-voice']}
-        onManageModels={onManageRealtimeModels}
-      />
     </div>
   );
 };

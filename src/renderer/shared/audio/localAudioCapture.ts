@@ -1,4 +1,5 @@
 export const LOCAL_ASR_SAMPLE_RATE = 16_000;
+const IMPORTED_AUDIO_CHUNK_SECONDS = 30;
 
 function downmixAudioBuffer(audio: AudioBuffer): Float32Array {
   const channelCount = audio.numberOfChannels;
@@ -89,31 +90,28 @@ export async function recordedAudioToWav(blob: Blob): Promise<Uint8Array> {
   }
 }
 
-export async function recordedAudioToWavSegments(
-  blob: Blob,
-  segmentSeconds: number,
-): Promise<Uint8Array[]> {
+/** Keep imported audio within a fixed recognition window, independent of capture preferences. */
+export async function recordedAudioToWavChunks(blob: Blob): Promise<Uint8Array[]> {
   const context = new AudioContext();
   try {
     const decoded = await context.decodeAudioData(await blob.arrayBuffer());
-    const framesPerSegment = Math.max(1, Math.floor(decoded.sampleRate * segmentSeconds));
-    const segments: Uint8Array[] = [];
-    for (let offset = 0; offset < decoded.length; offset += framesPerSegment) {
-      const frameCount = Math.min(framesPerSegment, decoded.length - offset);
-      const segment = context.createBuffer(
-        decoded.numberOfChannels,
-        frameCount,
-        decoded.sampleRate,
-      );
+    const framesPerChunk = Math.max(
+      1,
+      Math.floor(decoded.sampleRate * IMPORTED_AUDIO_CHUNK_SECONDS),
+    );
+    const chunks: Uint8Array[] = [];
+    for (let offset = 0; offset < decoded.length; offset += framesPerChunk) {
+      const frameCount = Math.min(framesPerChunk, decoded.length - offset);
+      const chunk = context.createBuffer(decoded.numberOfChannels, frameCount, decoded.sampleRate);
       for (let channel = 0; channel < decoded.numberOfChannels; channel += 1) {
-        segment.copyToChannel(
+        chunk.copyToChannel(
           decoded.getChannelData(channel).subarray(offset, offset + frameCount),
           channel,
         );
       }
-      segments.push(encodeAudioBufferToWav(segment));
+      chunks.push(encodeAudioBufferToWav(chunk));
     }
-    return segments;
+    return chunks;
   } finally {
     await context.close();
   }

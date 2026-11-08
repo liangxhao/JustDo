@@ -1,234 +1,150 @@
 // @vitest-environment jsdom
 
 import { defaultLocalSpeechSettings } from '@shared/speech/localSpeechSettings';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { i18nService } from '@/services/i18n';
 
 import VoiceInputDiagnostics from './VoiceInputDiagnostics';
 
-const { recordedAudioToWav } = vi.hoisted(() => ({
-  recordedAudioToWav: vi.fn().mockResolvedValue(new Uint8Array([1, 2, 3])),
-}));
-
-vi.mock('@/shared/audio/localAudioCapture', () => ({
-  recordedAudioToWav,
-}));
-
-class TestMediaRecorder {
-  static instances: TestMediaRecorder[] = [];
-
-  state: RecordingState = 'inactive';
-  mimeType = 'audio/webm';
-  ondataavailable: ((event: BlobEvent) => void) | null = null;
-  onstop: (() => void) | null = null;
-  onerror: ((event: Event) => void) | null = null;
-
-  constructor() {
-    TestMediaRecorder.instances.push(this);
-  }
-
-  start(): void {
-    this.state = 'recording';
-  }
-
-  stop(): void {
-    this.state = 'inactive';
-    this.ondataavailable?.({ data: new Blob(['recording'], { type: this.mimeType }) } as BlobEvent);
-    this.onstop?.();
-  }
-}
-
-describe('VoiceInputDiagnostics', () => {
-  const stopTrack = vi.fn();
-  const closeAudioContext = vi.fn().mockResolvedValue(undefined);
-  const transcribe = vi.fn().mockResolvedValue({ success: true, text: '测试识别成功' });
-
-  beforeEach(() => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    stopTrack.mockClear();
-    closeAudioContext.mockClear();
-    transcribe.mockClear();
-    recordedAudioToWav.mockClear();
-    TestMediaRecorder.instances = [];
-    vi.stubGlobal('MediaRecorder', TestMediaRecorder);
-    vi.stubGlobal(
-      'AudioContext',
-      class {
-        state: AudioContextState = 'running';
-        createAnalyser() {
-          return {
-            fftSize: 0,
-            getFloatTimeDomainData: (samples: Float32Array) => samples.fill(0.1),
-          };
-        }
-        createMediaStreamSource() {
-          return { connect: vi.fn() };
-        }
-        close = closeAudioContext;
-      },
-    );
-    Object.defineProperty(URL, 'createObjectURL', {
-      configurable: true,
-      value: vi.fn().mockReturnValue('blob:test-recording'),
-    });
-    Object.defineProperty(URL, 'revokeObjectURL', {
-      configurable: true,
-      value: vi.fn(),
-    });
-    Object.defineProperty(navigator, 'mediaDevices', {
-      configurable: true,
-      value: {
-        getUserMedia: vi.fn().mockResolvedValue({
-          getTracks: () => [{ stop: stopTrack }],
-        }),
-      },
-    });
-    Object.defineProperty(window, 'electron', {
-      configurable: true,
-      value: { localAsr: { transcribe } },
-    });
+const { recordedAudioToWav } = vi.hoisted(() => ({ recordedAudioToWav: vi.fn() }));
+vi.mock('@/shared/audio/localAudioCapture', () => ({ recordedAudioToWav }));
+const recording = new Blob(['shared microphone sample']);
+const transcribe = vi.fn();
+const getUserMedia = vi.fn();
+beforeEach(() => {
+  recordedAudioToWav.mockReset().mockResolvedValue(new Uint8Array([1, 2, 3]));
+  transcribe.mockReset().mockResolvedValue({ success: true, text: 'recognized sample' });
+  getUserMedia.mockReset();
+  Object.defineProperty(document, 'hidden', { configurable: true, value: false });
+  Object.defineProperty(navigator, 'mediaDevices', { configurable: true, value: { getUserMedia } });
+  Object.defineProperty(window, 'electron', {
+    configurable: true,
+    value: { localAsr: { transcribe } },
   });
+});
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 
-  afterEach(() => {
-    cleanup();
-    vi.useRealTimers();
-    vi.unstubAllGlobals();
-  });
-
-  it('records, preserves playback, and transcribes with the selected local model', async () => {
+describe('recognition of the shared microphone recording', () => {
+  it('recognizes the supplied sample only on request without acquiring another microphone', async () => {
     render(
       <VoiceInputDiagnostics
-        settings={{
-          ...defaultLocalSpeechSettings,
-          inputEnabled: true,
-          inputLanguage: 'zh',
-          recognitionThreads: 4,
-        }}
+        settings={{ ...defaultLocalSpeechSettings, inputLanguage: 'zh', recognitionThreads: 4 }}
         modelReady
+        recording={recording}
       />,
     );
-
+    expect(transcribe).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: i18nService.t('voiceDiagnosticStart') }));
-    expect(
-      await screen.findByRole('button', { name: i18nService.t('voiceDiagnosticStop') }),
-    ).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: i18nService.t('voiceDiagnosticStop') }));
-
-    expect(await screen.findByText('测试识别成功')).toBeTruthy();
-    expect(screen.getByLabelText(i18nService.t('voiceDiagnosticPlayback'))).toBeTruthy();
-    expect(recordedAudioToWav).toHaveBeenCalledOnce();
+    expect(await screen.findByText('recognized sample')).toBeTruthy();
+    expect(recordedAudioToWav).toHaveBeenCalledExactlyOnceWith(recording);
     expect(transcribe).toHaveBeenCalledWith(new Uint8Array([1, 2, 3]), {
       modelId: defaultLocalSpeechSettings.asrModelId,
       language: 'zh',
       numThreads: 4,
     });
-    expect(stopTrack).toHaveBeenCalled();
+    expect(getUserMedia).not.toHaveBeenCalled();
   });
 
-  it('disables testing until the selected model is ready', () => {
-    render(<VoiceInputDiagnostics settings={defaultLocalSpeechSettings} modelReady={false} />);
-
-    expect(
-      (
-        screen.getByRole('button', {
-          name: i18nService.t('voiceDiagnosticStart'),
-        }) as HTMLButtonElement
-      ).disabled,
-    ).toBe(true);
-    expect(screen.getByText(i18nService.t('voiceDiagnosticNeedsModel'))).toBeTruthy();
-  });
-
-  it('ignores a stale microphone rejection after settings change and a new recording starts', async () => {
-    let rejectFirstRequest: (reason: Error) => void = () => undefined;
-    const firstRequest = new Promise<MediaStream>((_, reject) => {
-      rejectFirstRequest = reject;
-    });
-    const secondStream = { getTracks: () => [{ stop: stopTrack }] } as unknown as MediaStream;
-    const getUserMedia = vi
-      .fn()
-      .mockReturnValueOnce(firstRequest)
-      .mockResolvedValueOnce(secondStream);
-    Object.defineProperty(navigator, 'mediaDevices', {
-      configurable: true,
-      value: { getUserMedia },
-    });
-    const { rerender } = render(
-      <VoiceInputDiagnostics settings={defaultLocalSpeechSettings} modelReady />,
+  it('requires both a ready local model and a completed sample', () => {
+    const view = render(
+      <VoiceInputDiagnostics settings={defaultLocalSpeechSettings} modelReady recording={null} />,
     );
-
-    fireEvent.click(screen.getByRole('button', { name: i18nService.t('voiceDiagnosticStart') }));
-    expect(
-      (
-        await screen.findByRole('button', {
-          name: i18nService.t('voiceDiagnosticRequesting'),
-        })
-      ).getAttribute('disabled'),
-    ).not.toBeNull();
-
-    rerender(
+    expect(screen.getByRole('button')).toHaveProperty('disabled', true);
+    expect(screen.getByText(i18nService.t('voiceDiagnosticNeedsRecording'))).toBeTruthy();
+    view.rerender(
       <VoiceInputDiagnostics
-        settings={{ ...defaultLocalSpeechSettings, inputDeviceId: 'second-device' }}
-        modelReady
+        settings={defaultLocalSpeechSettings}
+        modelReady={false}
+        recording={recording}
       />,
     );
-    fireEvent.click(
-      await screen.findByRole('button', { name: i18nService.t('voiceDiagnosticStart') }),
-    );
-    expect(
-      await screen.findByRole('button', { name: i18nService.t('voiceDiagnosticStop') }),
-    ).toBeTruthy();
-
-    rejectFirstRequest(new DOMException('denied', 'NotAllowedError'));
-    await Promise.resolve();
-
-    expect(screen.queryByRole('alert')).toBeNull();
-    expect(screen.getByRole('button', { name: i18nService.t('voiceDiagnosticStop') })).toBeTruthy();
+    expect(screen.getByRole('button')).toHaveProperty('disabled', true);
+    expect(screen.getByText(i18nService.t('voiceDiagnosticNeedsModel'))).toBeTruthy();
+    expect(getUserMedia).not.toHaveBeenCalled();
   });
 
-  it('does not transcribe if MediaRecorder reports an error before stopping', async () => {
-    render(<VoiceInputDiagnostics settings={defaultLocalSpeechSettings} modelReady />);
-    fireEvent.click(screen.getByRole('button', { name: i18nService.t('voiceDiagnosticStart') }));
-    expect(
-      await screen.findByRole('button', { name: i18nService.t('voiceDiagnosticStop') }),
-    ).toBeTruthy();
-    const recorder = TestMediaRecorder.instances[TestMediaRecorder.instances.length - 1]!;
-
-    recorder.onerror?.(new Event('error'));
-    recorder.onstop?.();
-
-    expect((await screen.findByRole('alert')).textContent).toContain(
-      i18nService.t('voiceDiagnosticRecordingFailed'),
+  it('does not dispatch decoded audio after the recognition panel is closed', async () => {
+    let finish!: (value: Uint8Array) => void;
+    recordedAudioToWav.mockReturnValue(
+      new Promise(resolve => {
+        finish = resolve;
+      }),
     );
-    expect(recordedAudioToWav).not.toHaveBeenCalled();
+    const view = render(
+      <VoiceInputDiagnostics
+        settings={defaultLocalSpeechSettings}
+        modelReady
+        recording={recording}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button'));
+    view.unmount();
+    await act(async () => {
+      finish(new Uint8Array([1, 2]));
+    });
     expect(transcribe).not.toHaveBeenCalled();
   });
 
-  it('warns when a completed recording is completely silent', async () => {
-    vi.stubGlobal(
-      'AudioContext',
-      class {
-        state: AudioContextState = 'running';
-        createAnalyser() {
-          return {
-            fftSize: 0,
-            getFloatTimeDomainData: (samples: Float32Array) => samples.fill(0),
-          };
-        }
-        createMediaStreamSource() {
-          return { connect: vi.fn() };
-        }
-        close = closeAudioContext;
-      },
+  it('does not replace a newer sample result with an old recognition response', async () => {
+    let finish!: (value: { success: boolean; text: string }) => void;
+    transcribe
+      .mockReturnValueOnce(
+        new Promise(resolve => {
+          finish = resolve;
+        }),
+      )
+      .mockResolvedValueOnce({ success: true, text: 'new sample result' });
+    const view = render(
+      <VoiceInputDiagnostics
+        settings={defaultLocalSpeechSettings}
+        modelReady
+        recording={recording}
+      />,
     );
-    render(<VoiceInputDiagnostics settings={defaultLocalSpeechSettings} modelReady />);
-
-    fireEvent.click(screen.getByRole('button', { name: i18nService.t('voiceDiagnosticStart') }));
-    fireEvent.click(
-      await screen.findByRole('button', { name: i18nService.t('voiceDiagnosticStop') }),
+    fireEvent.click(screen.getByRole('button'));
+    await waitFor(() => expect(transcribe).toHaveBeenCalledOnce());
+    view.rerender(
+      <VoiceInputDiagnostics
+        settings={defaultLocalSpeechSettings}
+        modelReady
+        recording={new Blob(['new sample'])}
+      />,
     );
+    fireEvent.click(screen.getByRole('button'));
+    expect(await screen.findByText('new sample result')).toBeTruthy();
+    await act(async () => {
+      finish({ success: true, text: 'old response' });
+    });
+    expect(screen.queryByText('old response')).toBeNull();
+    expect(screen.getByText('new sample result')).toBeTruthy();
+  });
 
-    expect(await screen.findByText(i18nService.t('voiceDiagnosticTooQuiet'))).toBeTruthy();
+  it('discards a recognition response after the window becomes hidden', async () => {
+    let finish!: (value: { success: boolean; text: string }) => void;
+    transcribe.mockReturnValueOnce(
+      new Promise(resolve => {
+        finish = resolve;
+      }),
+    );
+    render(
+      <VoiceInputDiagnostics
+        settings={defaultLocalSpeechSettings}
+        modelReady
+        recording={recording}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button'));
+    await waitFor(() => expect(transcribe).toHaveBeenCalledOnce());
+    Object.defineProperty(document, 'hidden', { configurable: true, value: true });
+    act(() => document.dispatchEvent(new Event('visibilitychange')));
+    await act(async () => {
+      finish({ success: true, text: 'hidden response' });
+    });
+    expect(screen.queryByText('hidden response')).toBeNull();
   });
 });

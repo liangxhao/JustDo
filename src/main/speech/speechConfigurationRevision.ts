@@ -59,8 +59,6 @@ function keys(value: unknown): Record<Scope, string> {
       settings.inputDeviceId,
       settings.inputLanguage,
       settings.recognitionThreads,
-      settings.meetingMode,
-      settings.meetingSegmentSeconds,
       settings.maxRecordingSeconds,
       settings.onlineAsrModelRef,
       settings.onlineAsrBindingId,

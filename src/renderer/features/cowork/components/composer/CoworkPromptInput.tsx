@@ -56,6 +56,7 @@ import {
   type SlashCommandDef,
 } from '@/features/cowork/components/composer/slashCommands';
 import { SpeechInputControls } from '@/features/cowork/components/composer/speech/SpeechInputControls';
+import { useSpeechTranscriptionActivity } from '@/features/cowork/components/composer/speech/useSpeechTranscriptionActivity';
 import { RunControlButton } from '@/features/cowork/components/composer/submission/RunControlButton';
 import { useSessionStop } from '@/features/cowork/components/composer/submission/useSessionStop';
 import { runGoalActionSingleFlight } from '@/features/cowork/components/goals/goalActionSingleFlight';
@@ -603,6 +604,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         goalExecution?.phase === GoalExecutionPhase.Retrying);
     const isRunActive =
       isStopping || goalAutoRunning || isCoworkRunActive(isStreaming, goalRunProgress);
+    const transcriptionActivity = useSpeechTranscriptionActivity();
     const realtimeVoice = useRealtimeVoiceSession({
       sessionId,
       allowRealtime: supportsSpeechInput && !remoteManaged && !isSideChat,
@@ -2847,6 +2849,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                       <SpeechInputControls
                         key={`speech:${draftKey}`}
                         realtime={realtimeVoice}
+                        transcription={transcriptionActivity}
                         disabled={(disabled && !allowDraftWhileDisabled) || isRunActive}
                         onTranscript={insertSpeechTranscript}
                       />
@@ -2977,6 +2980,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                       <SpeechInputControls
                         key={`speech:${draftKey}`}
                         realtime={realtimeVoice}
+                        transcription={transcriptionActivity}
                         disabled={(disabled && !allowDraftWhileDisabled) || isRunActive}
                         onTranscript={insertSpeechTranscript}
                       />

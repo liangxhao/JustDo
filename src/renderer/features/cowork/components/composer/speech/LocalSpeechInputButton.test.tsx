@@ -18,7 +18,97 @@ afterEach(() => {
 });
 
 describe('LocalSpeechInputButton', () => {
-  it('keeps the new realtime capture active when a cancelled Stop closes late', async () => {
+  it('records microphone and system audio once and stops at the ordinary duration limit', async () => {
+    const config = configService.getConfig();
+    vi.spyOn(configService, 'getConfig').mockReturnValue({
+      ...config,
+      voice: {
+        ...config.voice,
+        inputEnabled: true,
+        recognitionMode: 'local',
+        inputSource: 'microphone-system',
+        maxRecordingSeconds: 5,
+        ...({ meetingMode: true, meetingSegmentSeconds: 1 } as object),
+      },
+    });
+    const microphone = { readyState: 'live', stop: vi.fn(), addEventListener: vi.fn() };
+    const system = { readyState: 'live', stop: vi.fn(), addEventListener: vi.fn() };
+    const stream = (track: typeof microphone) => ({
+      active: true,
+      getTracks: () => [track],
+      getAudioTracks: () => [track],
+    });
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: {
+        getUserMedia: vi.fn().mockResolvedValue(stream(microphone)),
+        getDisplayMedia: vi.fn().mockResolvedValue({ ...stream(system), getVideoTracks: () => [] }),
+      },
+    });
+    vi.stubGlobal(
+      'MediaStream',
+      class {
+        active = true;
+        constructor(private tracks: (typeof microphone)[]) {}
+        getTracks() {
+          return this.tracks;
+        }
+        getAudioTracks() {
+          return this.tracks;
+        }
+      },
+    );
+    const recorders: Recorder[] = [];
+    class Recorder {
+      state = 'inactive';
+      ondataavailable?: (event: { data: Blob }) => void;
+      onstop?: () => void;
+      start = vi.fn(() => {
+        this.state = 'recording';
+      });
+      stop = vi.fn(() => {
+        this.state = 'inactive';
+        this.ondataavailable?.({ data: new Blob(['recorded']) });
+        this.onstop?.();
+      });
+      constructor() {
+        recorders.push(this);
+      }
+    }
+    vi.stubGlobal('MediaRecorder', Recorder);
+    const transcribe = vi
+      .fn()
+      .mockResolvedValueOnce({ success: true, text: 'Microphone words' })
+      .mockResolvedValueOnce({ success: true, text: 'System words' });
+    vi.stubGlobal('electron', {
+      mediaCapture: { armSystemAudio: vi.fn().mockResolvedValue(undefined) },
+      localAsr: { getStatus: vi.fn().mockResolvedValue({ available: true }), transcribe },
+      localSpeechModels: { onChanged: () => () => {} },
+    });
+    vi.spyOn(localAudioCapture, 'recordedAudioToWav').mockResolvedValue(new Uint8Array([1]));
+    const timers = vi.spyOn(globalThis, 'setTimeout');
+    const onTranscript = vi.fn();
+    render(<LocalSpeechInputButton disabled={false} onTranscript={onTranscript} />);
+    const button = await screen.findByRole('button', { name: i18nService.t('localAsrStart') });
+    await vi.waitFor(() => expect(button).toHaveProperty('disabled', false));
+    fireEvent.click(button);
+    await screen.findByRole('button', { name: i18nService.t('localAsrStop') });
+    expect(recorders).toHaveLength(2);
+    expect(recorders.every(recorder => recorder.start.mock.calls.length === 1)).toBe(true);
+    expect(transcribe).not.toHaveBeenCalled();
+    const limit = timers.mock.calls.find(([, delay]) => delay === 5000)?.[0];
+    expect(limit).toBeTypeOf('function');
+    await act(async () => {
+      if (typeof limit === 'function') limit();
+    });
+    await screen.findByRole('button', { name: i18nService.t('localAsrStart') });
+    expect(recorders).toHaveLength(2);
+    expect(recorders.every(recorder => recorder.stop.mock.calls.length === 1)).toBe(true);
+    expect(microphone.stop).toHaveBeenCalledOnce();
+    expect(system.stop).toHaveBeenCalledOnce();
+    expect(onTranscript.mock.calls).toEqual([['Microphone words'], ['System words']]);
+  });
+  it('waits for a cancelled realtime Stop to finish before starting another capture', async () => {
     const config = configService.getConfig();
     vi.spyOn(configService, 'getConfig').mockReturnValue({
       ...config,
@@ -27,7 +117,6 @@ describe('LocalSpeechInputButton', () => {
         inputEnabled: true,
         recognitionMode: 'online',
         inputSource: 'microphone',
-        meetingMode: false,
       },
     });
     const track = () => ({ readyState: 'live', stop: vi.fn(), addEventListener: vi.fn() });
@@ -84,6 +173,16 @@ describe('LocalSpeechInputButton', () => {
     fireEvent.click(await screen.findByRole('button', { name: i18nService.t('localAsrStop') }));
     await vi.waitFor(() => expect(close).toHaveBeenCalledWith('old-session'));
     fireEvent.click(screen.getByRole('button', { name: i18nService.t('localAsrCancel') }));
+    expect(
+      (
+        screen.getByRole('button', {
+          name: i18nService.t('voiceInputFinishing'),
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
+    await act(async () => {
+      finishClose();
+    });
     fireEvent.click(await screen.findByRole('button', { name: i18nService.t('localAsrStart') }));
     await screen.findByRole('button', { name: i18nService.t('localAsrStop') });
     act(() =>
@@ -93,9 +192,6 @@ describe('LocalSpeechInputButton', () => {
         text: 'new live words',
       }),
     );
-    await act(async () => {
-      finishClose();
-    });
     act(() =>
       emit({
         transcriptionSessionId: 'old-transcription',
@@ -121,7 +217,6 @@ describe('LocalSpeechInputButton', () => {
           ...config.voice,
           inputEnabled: true,
           recognitionMode: 'online',
-          meetingMode: false,
           onlineAsrModelRef: 'private/recording',
           onlineAsrBindingId: 'recorded',
         },
@@ -232,10 +327,13 @@ describe('LocalSpeechInputButton', () => {
       const requestId = transcribe.mock.calls[0]?.[0].requestId;
       if (cancel) {
         fireEvent.click(screen.getByRole('button', { name: i18nService.t('localAsrCancel') }));
-        fireEvent.click(
-          await screen.findByRole('button', { name: i18nService.t('localAsrStart') }),
-        );
-        await screen.findByRole('button', { name: i18nService.t('localAsrStop') });
+        expect(
+          (
+            screen.getByRole('button', {
+              name: i18nService.t('voiceInputFinishing'),
+            }) as HTMLButtonElement
+          ).disabled,
+        ).toBe(true);
         if (action === 'cancel-during-decode') {
           await act(async () => {
             finishDecode(wav);
@@ -248,6 +346,10 @@ describe('LocalSpeechInputButton', () => {
             finish({ requestId, text: 'late cancelled words' });
           });
         }
+        fireEvent.click(
+          await screen.findByRole('button', { name: i18nService.t('localAsrStart') }),
+        );
+        await screen.findByRole('button', { name: i18nService.t('localAsrStop') });
         expect(screen.getByRole('button', { name: i18nService.t('localAsrStop') })).toBeTruthy();
         expect(nextTrack.stop).not.toHaveBeenCalled();
         expect(onTranscript).not.toHaveBeenCalled();
@@ -379,12 +481,11 @@ describe('LocalSpeechInputButton', () => {
         ...currentConfig.voice,
         inputEnabled: true,
         recognitionMode: 'local',
-        meetingMode: false,
       },
     });
     const segments = [new Uint8Array([1]), new Uint8Array([2])];
     const decode = vi
-      .spyOn(localAudioCapture, 'recordedAudioToWavSegments')
+      .spyOn(localAudioCapture, 'recordedAudioToWavChunks')
       .mockResolvedValue(segments);
     let finishFirst!: (value: { success: boolean; text: string }) => void;
     const transcribe = vi
@@ -411,7 +512,7 @@ describe('LocalSpeechInputButton', () => {
     const file = new File(['audio'], 'recording.mp3', { type: 'audio/mpeg' });
     fireEvent.change(document.querySelector('input[type="file"]')!, { target: { files: [file] } });
     await vi.waitFor(() => expect(transcribe).toHaveBeenCalledTimes(1));
-    expect(decode).toHaveBeenCalledWith(file, currentConfig.voice.meetingSegmentSeconds);
+    expect(decode).toHaveBeenCalledWith(file);
     fireEvent.contextMenu(microphone);
     expect(screen.queryByRole('menu')).toBeNull();
     if (cancel)
@@ -427,7 +528,7 @@ describe('LocalSpeechInputButton', () => {
     }
   });
 
-  it('does not let a cancelled import reset a newer import or report its stale failure', async () => {
+  it('waits for a cancelled import to finish and ignores its stale failure', async () => {
     const currentConfig = configService.getConfig();
     vi.spyOn(configService, 'getConfig').mockReturnValue({
       ...currentConfig,
@@ -435,10 +536,9 @@ describe('LocalSpeechInputButton', () => {
         ...currentConfig.voice,
         inputEnabled: true,
         recognitionMode: 'local',
-        meetingMode: false,
       },
     });
-    vi.spyOn(localAudioCapture, 'recordedAudioToWavSegments').mockResolvedValue([
+    vi.spyOn(localAudioCapture, 'recordedAudioToWavChunks').mockResolvedValue([
       new Uint8Array([1]),
     ]);
     let finishOld!: (value: { success: boolean; error: string }) => void;
@@ -474,12 +574,21 @@ describe('LocalSpeechInputButton', () => {
     await vi.waitFor(() => expect(transcribe).toHaveBeenCalledTimes(1));
     fireEvent.click(screen.getByRole('button', { name: i18nService.t('localAsrCancel') }));
     fireEvent.change(input, { target: { files: [file] } });
-    await vi.waitFor(() => expect(transcribe).toHaveBeenCalledTimes(2));
+    expect(transcribe).toHaveBeenCalledTimes(1);
+    expect(
+      (
+        screen.getByRole('button', {
+          name: i18nService.t('voiceInputFinishing'),
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
     await act(async () => {
       finishOld({ success: false, error: 'Old request failed' });
     });
-    expect(screen.getByRole('button', { name: i18nService.t('localAsrCancel') })).toBeTruthy();
+    await screen.findByRole('button', { name: i18nService.t('localAsrStart') });
     expect(dispatch.mock.calls.some(([event]) => event.type === 'app:showToast')).toBe(false);
+    fireEvent.change(input, { target: { files: [file] } });
+    await vi.waitFor(() => expect(transcribe).toHaveBeenCalledTimes(2));
     await act(async () => {
       finishNew({ success: true, text: 'New recording' });
     });

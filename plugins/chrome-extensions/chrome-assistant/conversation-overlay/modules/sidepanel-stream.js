@@ -110,10 +110,10 @@ function readableToolValue(value) {
   if (typeof value === "string") return value;
   if (Array.isArray(value)) {
     const parts = value.flatMap((entry) => {
-      const record4 = asRecord2(entry);
-      if (!record4) return typeof entry === "string" ? [entry] : [];
-      if (typeof record4.text === "string") return [record4.text];
-      return record4.content === void 0 ? [] : [readableToolValue(record4.content)];
+      const record5 = asRecord2(entry);
+      if (!record5) return typeof entry === "string" ? [entry] : [];
+      if (typeof record5.text === "string") return [record5.text];
+      return record5.content === void 0 ? [] : [readableToolValue(record5.content)];
     });
     if (parts.length > 0) return parts.join("\n");
   }
@@ -150,12 +150,12 @@ function outputIndicatesToolFailure(output) {
   }
   try {
     const parsed = JSON.parse(trimmed);
-    const record4 = asRecord2(parsed);
-    if (!record4) return false;
-    if (record4.isError === true || record4.is_error === true) return true;
-    if (typeof record4.error === "string") return Boolean(record4.error.trim());
-    if (record4.error === true || record4.error && typeof record4.error === "object") return true;
-    const status = typeof record4.status === "string" ? record4.status.trim().toLowerCase() : "";
+    const record5 = asRecord2(parsed);
+    if (!record5) return false;
+    if (record5.isError === true || record5.is_error === true) return true;
+    if (typeof record5.error === "string") return Boolean(record5.error.trim());
+    if (record5.error === true || record5.error && typeof record5.error === "object") return true;
+    const status = typeof record5.status === "string" ? record5.status.trim().toLowerCase() : "";
     return status === "error" || status === "failed" || status === "timeout";
   } catch {
     return false;
@@ -516,8 +516,8 @@ var readQuestionResult = (value) => {
 function asRecord3(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : null;
 }
-function readCanonicalTranscriptMedia(record4) {
-  const metadata = asRecord3(record4.__openclaw);
+function readCanonicalTranscriptMedia(record5) {
+  const metadata = asRecord3(record5.__openclaw);
   if (!Array.isArray(metadata?.media)) return [];
   return metadata.media.map((value) => {
     const media = asRecord3(value);
@@ -542,25 +542,25 @@ function readTrimmedString(value) {
 }
 function getTranscriptMedia(message) {
   if (!message || typeof message !== "object" || Array.isArray(message)) return [];
-  const record4 = message;
-  const canonical = readCanonicalTranscriptMedia(record4);
-  const paths = readStringArray(record4.MediaPaths);
-  const urls = readStringArray(record4.MediaUrls);
-  const types = readStringArray(record4.MediaTypes);
+  const record5 = message;
+  const canonical = readCanonicalTranscriptMedia(record5);
+  const paths = readStringArray(record5.MediaPaths);
+  const urls = readStringArray(record5.MediaUrls);
+  const types = readStringArray(record5.MediaTypes);
   const count2 = Math.max(
     canonical.length,
     paths.length,
     urls.length,
     types.length,
-    record4.MediaPath || record4.MediaUrl || record4.MediaType ? 1 : 0
+    record5.MediaPath || record5.MediaUrl || record5.MediaType ? 1 : 0
   );
   return Array.from({ length: count2 }, (_, index) => {
     const fact = canonical[index];
-    const legacyPath = readTrimmedString(paths[index] ?? (index === 0 ? record4.MediaPath : null));
-    const legacyUrl = readTrimmedString(urls[index] ?? (index === 0 ? record4.MediaUrl : null));
+    const legacyPath = readTrimmedString(paths[index] ?? (index === 0 ? record5.MediaPath : null));
+    const legacyUrl = readTrimmedString(urls[index] ?? (index === 0 ? record5.MediaUrl : null));
     const path = fact?.path || legacyPath || legacyUrl;
     if (!path) return void 0;
-    const legacyType = readTrimmedString(types[index] ?? (index === 0 ? record4.MediaType : null));
+    const legacyType = readTrimmedString(types[index] ?? (index === 0 ? record5.MediaType : null));
     return {
       path,
       ...fact?.mimeType || legacyType ? { mimeType: fact?.mimeType || legacyType } : {},
@@ -6582,9 +6582,9 @@ function asToolRecord(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : null;
 }
 function unwrapToolMessage(value) {
-  const record4 = asToolRecord(value);
-  if (!record4) return null;
-  return asToolRecord(record4.message) ?? record4;
+  const record5 = asToolRecord(value);
+  if (!record5) return null;
+  return asToolRecord(record5.message) ?? record5;
 }
 
 // src/renderer/libs/openclaw-chat/model/tools/tool-presentation.ts
@@ -7694,11 +7694,11 @@ function reduceAgentEvent(state, event, dependencies, options = {}) {
 function extractMessageText(message) {
   if (typeof message === "string") return message;
   if (!message || typeof message !== "object" || Array.isArray(message)) return "";
-  const record4 = message;
-  if (typeof record4.text === "string") return record4.text;
-  if (typeof record4.content === "string") return record4.content;
-  if (!Array.isArray(record4.content)) return "";
-  return record4.content.map((block2) => {
+  const record5 = message;
+  if (typeof record5.text === "string") return record5.text;
+  if (typeof record5.content === "string") return record5.content;
+  if (!Array.isArray(record5.content)) return "";
+  return record5.content.map((block2) => {
     if (!block2 || typeof block2 !== "object" || Array.isArray(block2)) return "";
     const value = block2;
     return typeof value.text === "string" ? value.text : "";
@@ -8659,14 +8659,14 @@ var BROWSER_DISPLAY_LENGTH_PREFIX = "display-metadata-length:";
 var boundedDisplayString = (value, maxLength) => typeof value === "string" ? value.replace(/\s+/g, " ").trim().slice(0, maxLength) : "";
 var parseDisplayRect = (value) => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  const record4 = value;
-  const values = [record4.x, record4.y, record4.width, record4.height];
+  const record5 = value;
+  const values = [record5.x, record5.y, record5.width, record5.height];
   if (!values.every((item) => typeof item === "number" && Number.isFinite(item))) return null;
   return {
-    x: Math.max(-1e5, Math.min(1e5, record4.x)),
-    y: Math.max(-1e5, Math.min(1e5, record4.y)),
-    width: Math.max(0, Math.min(1e5, record4.width)),
-    height: Math.max(0, Math.min(1e5, record4.height))
+    x: Math.max(-1e5, Math.min(1e5, record5.x)),
+    y: Math.max(-1e5, Math.min(1e5, record5.y)),
+    width: Math.max(0, Math.min(1e5, record5.width)),
+    height: Math.max(0, Math.min(1e5, record5.height))
   };
 };
 var parseDisplayAnnotations = (value) => {
@@ -8675,8 +8675,8 @@ var parseDisplayAnnotations = (value) => {
     if (!Array.isArray(parsed)) return [];
     return parsed.slice(0, 4).flatMap((item) => {
       if (!item || typeof item !== "object" || Array.isArray(item)) return [];
-      const record4 = item;
-      const elementRecord = record4.element && typeof record4.element === "object" && !Array.isArray(record4.element) ? record4.element : null;
+      const record5 = item;
+      const elementRecord = record5.element && typeof record5.element === "object" && !Array.isArray(record5.element) ? record5.element : null;
       const rect = elementRecord ? parseDisplayRect(elementRecord.rect) : null;
       const element = elementRecord && rect ? {
         tag: boundedDisplayString(elementRecord.tag, 40).toLowerCase(),
@@ -8689,11 +8689,11 @@ var parseDisplayAnnotations = (value) => {
       } : void 0;
       return [
         {
-          id: boundedDisplayString(record4.id, 80),
-          title: boundedDisplayString(record4.title, 120),
-          displayUrl: boundedDisplayString(record4.displayUrl, 300),
-          markedRegionCount: typeof record4.markedRegionCount === "number" && Number.isFinite(record4.markedRegionCount) ? Math.max(0, Math.min(8, Math.floor(record4.markedRegionCount))) : 0,
-          ...boundedDisplayString(record4.comment, 2e3) ? { comment: boundedDisplayString(record4.comment, 2e3) } : {},
+          id: boundedDisplayString(record5.id, 80),
+          title: boundedDisplayString(record5.title, 120),
+          displayUrl: boundedDisplayString(record5.displayUrl, 300),
+          markedRegionCount: typeof record5.markedRegionCount === "number" && Number.isFinite(record5.markedRegionCount) ? Math.max(0, Math.min(8, Math.floor(record5.markedRegionCount))) : 0,
+          ...boundedDisplayString(record5.comment, 2e3) ? { comment: boundedDisplayString(record5.comment, 2e3) } : {},
           ...element?.tag ? { element } : {}
         }
       ];
@@ -9055,6 +9055,22 @@ var getLocalTtsVoiceCount = (modelId) => LOCAL_TTS_VOICE_COUNTS[modelId];
 var getLocalTtsDefaultVoiceId = (modelId) => modelId === LOCAL_TTS_MODEL_ID ? LOCAL_TTS_DEFAULT_VOICE_ID : 0;
 var isLocalTtsVoiceId = (modelId, value) => typeof value === "number" && Number.isInteger(value) && value >= 0 && value < getLocalTtsVoiceCount(modelId);
 
+// plugins/sdk/speech-protocols/index.ts
+var MAX_TRANSCRIPTION_AUDIO_BYTES = 25 * 1024 * 1024;
+
+// src/shared/speech/onlineSpeechModels.ts
+var record3 = (value) => value && typeof value === "object" && !Array.isArray(value) ? value : null;
+var boundedText = (value, limit = 256) => typeof value === "string" && Boolean(value.trim()) && value.length <= limit && !/[\u0000-\u001f\u007f]/.test(value);
+var normalizeOnlineSpeechVoiceSelection = (value, legacyVoice) => {
+  if (value === void 0)
+    return boundedText(legacyVoice) ? { kind: "preset", voiceId: legacyVoice.trim() } : null;
+  const input = record3(value);
+  if (!input) return null;
+  if (input.kind === "preset" && boundedText(input.voiceId) && Object.keys(input).length === 2)
+    return { kind: "preset", voiceId: input.voiceId.trim() };
+  return null;
+};
+
 // src/shared/speech/localSpeechExtensionSettings.ts
 var defaultLocalSpeechExtensionSettings = {
   sttModelId: LOCAL_ASR_DEFAULT_MODEL_ID,
@@ -9064,11 +9080,18 @@ var defaultLocalSpeechExtensionSettings = {
   onlineSttModelRef: "",
   ttsMode: "local",
   onlineTtsModelRef: "",
-  onlineTtsVoice: ""
+  onlineTtsVoice: "",
+  onlineSttBindingId: "",
+  onlineTtsBindingId: "",
+  onlineTtsVoiceSelection: null
 };
 function normalizeLocalSpeechExtensionSettings(value) {
   const input = value && typeof value === "object" && !Array.isArray(value) ? value : {};
   const ttsModelId = LOCAL_TTS_MODEL_IDS.includes(input.ttsModelId) ? input.ttsModelId : LOCAL_TTS_MODEL_ID;
+  const onlineTtsVoiceSelection = normalizeOnlineSpeechVoiceSelection(
+    input.onlineTtsVoiceSelection,
+    typeof input.onlineTtsVoice === "string" ? input.onlineTtsVoice : void 0
+  );
   return {
     sttModelId: LOCAL_ASR_MODEL_IDS.includes(input.sttModelId) ? input.sttModelId : LOCAL_ASR_DEFAULT_MODEL_ID,
     ttsModelId,
@@ -9077,7 +9100,10 @@ function normalizeLocalSpeechExtensionSettings(value) {
     ttsMode: input.ttsMode === "online" ? "online" : "local",
     onlineSttModelRef: typeof input.onlineSttModelRef === "string" ? input.onlineSttModelRef.trim() : "",
     onlineTtsModelRef: typeof input.onlineTtsModelRef === "string" ? input.onlineTtsModelRef.trim() : "",
-    onlineTtsVoice: typeof input.onlineTtsVoice === "string" ? input.onlineTtsVoice.trim() : ""
+    onlineTtsVoice: onlineTtsVoiceSelection?.kind === "preset" ? onlineTtsVoiceSelection.voiceId : "",
+    onlineSttBindingId: typeof input.onlineSttBindingId === "string" ? input.onlineSttBindingId.trim() : "",
+    onlineTtsBindingId: typeof input.onlineTtsBindingId === "string" ? input.onlineTtsBindingId.trim() : "",
+    onlineTtsVoiceSelection
   };
 }
 function parseLocalSpeechExtensionSettingsPatch(value, current) {
@@ -9094,7 +9120,10 @@ function parseLocalSpeechExtensionSettingsPatch(value, current) {
       "ttsMode",
       "onlineSttModelRef",
       "onlineTtsModelRef",
-      "onlineTtsVoice"
+      "onlineTtsVoice",
+      "onlineSttBindingId",
+      "onlineTtsBindingId",
+      "onlineTtsVoiceSelection"
     ].includes(key)
   ) || "sttModelId" in input && !LOCAL_ASR_MODEL_IDS.includes(input.sttModelId) || "ttsModelId" in input && !LOCAL_TTS_MODEL_IDS.includes(input.ttsModelId)) {
     throw new Error("Invalid local speech extension model.");
@@ -9103,10 +9132,18 @@ function parseLocalSpeechExtensionSettingsPatch(value, current) {
     if (key in input && input[key] !== "local" && input[key] !== "online")
       throw new Error("Invalid speech mode.");
   }
-  for (const key of ["onlineSttModelRef", "onlineTtsModelRef", "onlineTtsVoice"]) {
+  for (const key of [
+    "onlineSttModelRef",
+    "onlineTtsModelRef",
+    "onlineTtsVoice",
+    "onlineSttBindingId",
+    "onlineTtsBindingId"
+  ]) {
     if (key in input && (typeof input[key] !== "string" || input[key].length > (key === "onlineTtsVoice" ? 256 : 512) || /[\r\n\0]/.test(input[key])))
       throw new Error("Invalid online speech selection.");
   }
+  if ("onlineTtsVoiceSelection" in input && input.onlineTtsVoiceSelection !== null && !normalizeOnlineSpeechVoiceSelection(input.onlineTtsVoiceSelection))
+    throw new Error("Invalid online speech voice selection.");
   const ttsModelId = input.ttsModelId ?? normalizeLocalSpeechExtensionSettings(current).ttsModelId;
   if ("ttsVoiceId" in input && !isLocalTtsVoiceId(ttsModelId, input.ttsVoiceId)) {
     throw new Error("Invalid local speech extension voice.");
@@ -9122,8 +9159,6 @@ function parseLocalSpeechExtensionSettingsPatch(value, current) {
 // src/shared/speech/localSpeechSettings.ts
 var LOCAL_SPEECH_MIN_RECORDING_SECONDS = 5;
 var LOCAL_SPEECH_MAX_RECORDING_SECONDS = 120;
-var LOCAL_SPEECH_MIN_MEETING_SEGMENT_SECONDS = 15;
-var LOCAL_SPEECH_MAX_MEETING_SEGMENT_SECONDS = 60;
 var LOCAL_SPEECH_MIN_THREADS = 1;
 var LOCAL_SPEECH_MAX_THREADS = 8;
 var LOCAL_SPEECH_MIN_RATE = 0.5;
@@ -9133,18 +9168,23 @@ var defaultLocalSpeechSettings = {
   recognitionMode: "local",
   asrModelId: LOCAL_ASR_DEFAULT_MODEL_ID,
   onlineAsrModelRef: "",
+  onlineAsrBindingId: "",
   inputSource: "microphone",
   inputDeviceId: "",
   inputLanguage: "app",
   maxRecordingSeconds: 60,
-  meetingMode: false,
-  meetingSegmentSeconds: 30,
   recognitionThreads: 2,
   outputEnabled: false,
   synthesisMode: "local",
   ttsModelId: LOCAL_TTS_MODEL_ID,
   onlineTtsModelRef: "",
   onlineTtsVoice: "",
+  onlineTtsBindingId: "",
+  onlineTtsVoiceSelection: null,
+  realtimeEnabled: false,
+  realtimeModelRef: "",
+  realtimeBindingId: "",
+  realtimeVoiceSelection: null,
   voiceId: LOCAL_TTS_DEFAULT_VOICE_ID,
   speechRate: 1,
   synthesisThreads: 2
@@ -9164,11 +9204,16 @@ var normalizeLocalSpeechSettings = (value) => {
   const asrModelId = LOCAL_ASR_MODEL_IDS.includes(candidate.asrModelId) ? candidate.asrModelId : defaultLocalSpeechSettings.asrModelId;
   const ttsModelId = LOCAL_TTS_MODEL_IDS.includes(candidate.ttsModelId) ? candidate.ttsModelId : defaultLocalSpeechSettings.ttsModelId;
   const maximumVoiceId = getLocalTtsVoiceCount(ttsModelId) - 1;
+  const onlineTtsVoiceSelection = normalizeOnlineSpeechVoiceSelection(
+    candidate.onlineTtsVoiceSelection,
+    typeof candidate.onlineTtsVoice === "string" ? candidate.onlineTtsVoice : void 0
+  );
   return {
     inputEnabled: typeof candidate.inputEnabled === "boolean" ? candidate.inputEnabled : defaultLocalSpeechSettings.inputEnabled,
     recognitionMode,
     asrModelId,
     onlineAsrModelRef: typeof candidate.onlineAsrModelRef === "string" ? candidate.onlineAsrModelRef : "",
+    onlineAsrBindingId: typeof candidate.onlineAsrBindingId === "string" ? candidate.onlineAsrBindingId : "",
     inputSource,
     inputDeviceId: typeof candidate.inputDeviceId === "string" ? candidate.inputDeviceId : "",
     inputLanguage,
@@ -9177,13 +9222,6 @@ var normalizeLocalSpeechSettings = (value) => {
       defaultLocalSpeechSettings.maxRecordingSeconds,
       LOCAL_SPEECH_MIN_RECORDING_SECONDS,
       LOCAL_SPEECH_MAX_RECORDING_SECONDS
-    ),
-    meetingMode: typeof candidate.meetingMode === "boolean" ? candidate.meetingMode : defaultLocalSpeechSettings.meetingMode,
-    meetingSegmentSeconds: clampInteger(
-      candidate.meetingSegmentSeconds,
-      defaultLocalSpeechSettings.meetingSegmentSeconds,
-      LOCAL_SPEECH_MIN_MEETING_SEGMENT_SECONDS,
-      LOCAL_SPEECH_MAX_MEETING_SEGMENT_SECONDS
     ),
     recognitionThreads: clampInteger(
       candidate.recognitionThreads,
@@ -9195,7 +9233,13 @@ var normalizeLocalSpeechSettings = (value) => {
     synthesisMode,
     ttsModelId,
     onlineTtsModelRef: typeof candidate.onlineTtsModelRef === "string" ? candidate.onlineTtsModelRef : "",
-    onlineTtsVoice: typeof candidate.onlineTtsVoice === "string" ? candidate.onlineTtsVoice : "",
+    onlineTtsVoice: onlineTtsVoiceSelection?.kind === "preset" ? onlineTtsVoiceSelection.voiceId : "",
+    onlineTtsBindingId: typeof candidate.onlineTtsBindingId === "string" ? candidate.onlineTtsBindingId : "",
+    onlineTtsVoiceSelection,
+    realtimeEnabled: candidate.realtimeEnabled === true,
+    realtimeModelRef: typeof candidate.realtimeModelRef === "string" ? candidate.realtimeModelRef : "",
+    realtimeBindingId: typeof candidate.realtimeBindingId === "string" ? candidate.realtimeBindingId : "",
+    realtimeVoiceSelection: normalizeOnlineSpeechVoiceSelection(candidate.realtimeVoiceSelection),
     voiceId: clampInteger(
       candidate.voiceId,
       getLocalTtsDefaultVoiceId(ttsModelId),
@@ -9953,6 +9997,70 @@ var browserRecordingTranslations = {
     recordingopenTab: "Enter page",
     recordingcloseTab: "Close tab",
     recordinggap: "Resume recording (intervening actions not recorded)"
+  }
+};
+
+// src/renderer/features/speech/realtime/realtimeVoiceTranslations.ts
+var realtimeVoiceTranslations = {
+  zh: {
+    realtimeVoiceTitle: "\u5B9E\u65F6\u8BED\u97F3\u5BF9\u8BDD",
+    realtimeVoiceStart: "\u5F00\u59CB\u8BED\u97F3\u5BF9\u8BDD",
+    realtimeVoiceEnd: "\u9000\u51FA\u8BED\u97F3",
+    realtimeVoiceInterrupt: "\u6253\u65AD\u5F53\u524D\u56DE\u5E94",
+    realtimeVoiceMuteMicrophone: "\u9EA6\u514B\u98CE\u9759\u97F3",
+    realtimeVoiceUnmuteMicrophone: "\u6253\u5F00\u9EA6\u514B\u98CE",
+    realtimeVoiceMuteSpeaker: "\u5173\u95ED\u8BED\u97F3\uFF0C\u4EC5\u663E\u793A\u6587\u5B57",
+    realtimeVoiceUnmuteSpeaker: "\u6253\u5F00\u626C\u58F0\u5668",
+    realtimeVoiceSettings: "\u8BED\u97F3\u8BBE\u7F6E",
+    realtimeVoiceRefresh: "\u91CD\u65B0\u68C0\u67E5",
+    realtimeVoiceIdle: "\u8BED\u97F3\u5DF2\u7ED3\u675F",
+    realtimeVoiceListening: "\u6B63\u5728\u8046\u542C",
+    realtimeVoiceResponding: "\u6B63\u5728\u56DE\u590D",
+    realtimeVoiceMicrophonePaused: "\u9EA6\u514B\u98CE\u5DF2\u9759\u97F3",
+    realtimeVoiceStarting: "\u6B63\u5728\u8BF7\u6C42\u9EA6\u514B\u98CE\u5E76\u51C6\u5907\u4F1A\u8BDD\u2026",
+    realtimeVoiceConnecting: "\u6B63\u5728\u8FDE\u63A5\u8BED\u97F3\u670D\u52A1\u2026",
+    realtimeVoiceActive: "\u8BED\u97F3\u5BF9\u8BDD\u8FDB\u884C\u4E2D",
+    realtimeVoiceEnding: "\u6B63\u5728\u7ED3\u675F\u8BED\u97F3\u2026",
+    realtimeVoiceError: "\u8BED\u97F3\u5BF9\u8BDD\u5DF2\u505C\u6B62\u3002\u8BF7\u68C0\u67E5\u8BBE\u5907\u3001\u914D\u7F6E\u548C\u5F15\u64CE\u540E\u91CD\u65B0\u5F00\u59CB\u3002",
+    realtimeVoiceUnknown: "\u4F1A\u8BDD\u521B\u5EFA\u7ED3\u679C\u672A\u77E5\uFF0C\u8BF7\u91CD\u65B0\u8FDE\u63A5\u5F15\u64CE\u540E\u518D\u5F00\u59CB\u3002",
+    realtimeVoiceUnavailable: "\u5B9E\u65F6\u8BED\u97F3\u6682\u4E0D\u53EF\u7528\uFF0C\u8BF7\u68C0\u67E5\u8BED\u97F3\u8BBE\u7F6E\u53CA\u5F15\u64CE\u72B6\u6001\u3002",
+    realtimeVoiceUnconfigured: "\u8BF7\u5148\u4FDD\u5B58\u5B9E\u65F6\u8BED\u97F3\u6A21\u578B\u3001\u97F3\u8272\u548C\u8F93\u5165\u8F6C\u5F55\u6A21\u578B\u3002",
+    realtimeVoiceDisabled: "\u8BF7\u5148\u5728\u8BED\u97F3\u8BBE\u7F6E\u4E2D\u542F\u7528\u5B9E\u65F6\u8BED\u97F3\u5BF9\u8BDD\u3002",
+    realtimeVoiceBusy: "\u6B64\u7A97\u53E3\u5DF2\u6709\u8BED\u97F3\u4F1A\u8BDD\u6216\u6B63\u5728\u7B49\u5F85\u521B\u5EFA\u7ED3\u679C\u3002",
+    realtimeVoiceTaskEffect: "\u9759\u97F3\u53EA\u5F71\u54CD\u672C\u5730\u58F0\u97F3\u3002\u6253\u65AD\u6216\u7ED3\u675F\u8BED\u97F3\u53EF\u80FD\u540C\u65F6\u4E2D\u6B62\u5173\u8054\u52A9\u624B\u4EFB\u52A1\uFF1B\u6267\u884C\u7ED3\u679C\u4EE5\u804A\u5929\u4E2D\u7684\u6700\u7EC8\u72B6\u6001\u4E3A\u51C6\u3002",
+    realtimeVoiceCaptionHint: "\u6B64\u5904\u4EC5\u663E\u793A\u672C\u6B21\u8BED\u97F3\u5B57\u5E55\uFF0C\u5B8C\u6574\u5BF9\u8BDD\u4FDD\u5B58\u5728\u5F53\u524D\u804A\u5929\u4E2D\u3002",
+    realtimeVoiceUser: "\u4F60",
+    realtimeVoiceAssistant: "\u52A9\u624B"
+  },
+  en: {
+    realtimeVoiceTitle: "Realtime voice conversation",
+    realtimeVoiceStart: "Start voice conversation",
+    realtimeVoiceEnd: "Exit voice",
+    realtimeVoiceInterrupt: "Interrupt current response",
+    realtimeVoiceMuteMicrophone: "Mute microphone",
+    realtimeVoiceUnmuteMicrophone: "Unmute microphone",
+    realtimeVoiceMuteSpeaker: "Turn off audio and keep text",
+    realtimeVoiceUnmuteSpeaker: "Unmute speaker",
+    realtimeVoiceSettings: "Voice settings",
+    realtimeVoiceRefresh: "Check again",
+    realtimeVoiceIdle: "Voice ended",
+    realtimeVoiceListening: "Listening",
+    realtimeVoiceResponding: "Responding",
+    realtimeVoiceMicrophonePaused: "Microphone muted",
+    realtimeVoiceStarting: "Requesting microphone and preparing session\u2026",
+    realtimeVoiceConnecting: "Connecting to voice service\u2026",
+    realtimeVoiceActive: "Voice conversation is active",
+    realtimeVoiceEnding: "Ending voice\u2026",
+    realtimeVoiceError: "Voice conversation stopped. Check the device, saved settings and engine before restarting.",
+    realtimeVoiceUnknown: "Session creation outcome is unknown. Reconnect the engine before starting again.",
+    realtimeVoiceUnavailable: "Realtime voice is unavailable. Check voice settings and engine status.",
+    realtimeVoiceUnconfigured: "Save a realtime voice model, voice and input transcription model first.",
+    realtimeVoiceDisabled: "Enable realtime voice conversation in voice settings first.",
+    realtimeVoiceBusy: "This window already has a voice session or is awaiting a creation result.",
+    realtimeVoiceTaskEffect: "Mute only controls local audio. Interrupting or ending voice may also stop associated assistant tasks. Chat final status determines their outcome.",
+    realtimeVoiceCaptionHint: "Only live captions appear here. The complete conversation stays in the current chat.",
+    realtimeVoiceUser: "You",
+    realtimeVoiceAssistant: "Assistant"
   }
 };
 
@@ -11287,23 +11395,19 @@ var chatTranslations = {
     localTtsPlay: "\u6717\u8BFB\u56DE\u590D",
     localTtsStop: "\u505C\u6B62\u6717\u8BFB",
     localTtsPlaybackFailed: "\u8BED\u97F3\u751F\u6210\u6216\u64AD\u653E\u5931\u8D25\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BD5",
-    localAsrStart: "\u8BED\u97F3\u8F93\u5165",
-    localAsrStartMeeting: "\u5F00\u59CB\u4F1A\u8BAE\u8BB0\u5F55",
+    localAsrStart: "\u8BED\u97F3\u8F6C\u6587\u5B57",
     localAsrAttachmentCopyFailed: "\u65E0\u6CD5\u5C06\u97F3\u9891\u9644\u4EF6\u590D\u5236\u5230\u9879\u76EE\u76EE\u5F55\uFF0C\u8BF7\u68C0\u67E5\u6587\u4EF6\u5927\u5C0F\uFF08\u6700\u5927 256 MiB\uFF09\u548C\u76EE\u5F55\u6743\u9650\u3002",
-    localAsrSourceMicrophoneShort: "\u6211",
-    localAsrSourceSystemShort: "\u4F1A\u8BAE\u58F0\u97F3",
     localAsrStop: "\u505C\u6B62\u5F55\u97F3\u5E76\u8F6C\u5199",
-    localAsrCancel: "\u53D6\u6D88\u8BED\u97F3\u8BC6\u522B",
+    localAsrCancel: "\u53D6\u6D88\u8BED\u97F3\u8F6C\u6587\u5B57",
     localAsrPermissionDenied: "\u65E0\u6CD5\u83B7\u53D6\u6240\u9009\u58F0\u97F3\u6765\u6E90\uFF0C\u8BF7\u68C0\u67E5\u7CFB\u7EDF\u5F55\u97F3\u6216\u5C4F\u5E55\u6355\u83B7\u6743\u9650",
     localAsrSourceUnavailable: "\u6CA1\u6709\u627E\u5230\u53EF\u7528\u7684\u58F0\u97F3\u6765\u6E90\uFF0C\u8BF7\u68C0\u67E5\u8BBE\u5907\u6216\u7CFB\u7EDF\u58F0\u97F3\u5171\u4EAB\u9009\u9879",
     localAsrSourceBusy: "\u58F0\u97F3\u8BBE\u5907\u6B63\u88AB\u5360\u7528\u6216\u6682\u65F6\u65E0\u6CD5\u8BFB\u53D6\uFF0C\u8BF7\u5173\u95ED\u5176\u4ED6\u5F55\u97F3\u7A0B\u5E8F\u540E\u91CD\u8BD5",
     localAsrSelectedDeviceUnavailable: "\u6240\u9009\u9EA6\u514B\u98CE\u5DF2\u65AD\u5F00\uFF0C\u8BF7\u5728\u8BED\u97F3\u8BBE\u7F6E\u4E2D\u9009\u62E9\u7CFB\u7EDF\u9ED8\u8BA4\u9EA6\u514B\u98CE",
     localAsrNoSpeech: "\u6CA1\u6709\u8BC6\u522B\u5230\u6E05\u6670\u8BED\u97F3\uFF0C\u8BF7\u9760\u8FD1\u9EA6\u514B\u98CE\u540E\u91CD\u8BD5",
-    localAsrQueueFull: "\u4F1A\u8BAE\u8F6C\u5199\u901F\u5EA6\u8DDF\u4E0D\u4E0A\u5F55\u97F3\uFF0C\u90E8\u5206\u65B0\u7247\u6BB5\u5DF2\u8DF3\u8FC7",
+    localAsrQueueFull: "\u97F3\u9891\u4E0A\u4F20\u901F\u5EA6\u8DDF\u4E0D\u4E0A\u91C7\u96C6\uFF0C\u8BED\u97F3\u8F6C\u6587\u5B57\u5DF2\u505C\u6B62\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BD5",
     localAsrFailed: "\u8BED\u97F3\u8BC6\u522B\u5931\u8D25\uFF0C\u8BF7\u91CD\u8BD5",
     onlineAsrFailed: "\u5728\u7EBF\u8BED\u97F3\u8BC6\u522B\u5931\u8D25\uFF0C\u8BF7\u68C0\u67E5\u8BC6\u522B\u670D\u52A1\u914D\u7F6E",
     onlineAsrDisconnected: "\u5728\u7EBF\u8BED\u97F3\u8BC6\u522B\u8FDE\u63A5\u5DF2\u7ED3\u675F\uFF0C\u8BF7\u91CD\u65B0\u5F00\u59CB\u5F55\u97F3",
-    onlineAsrSourceShort: "\u5728\u7EBF\u8BED\u97F3",
     showCode: "\u663E\u793A Mermaid \u6E90\u7801",
     renderDiagram: "\u6E32\u67D3 Mermaid \u56FE\u8868",
     mermaidRenderFailed: "Mermaid \u56FE\u8868\u6E32\u67D3\u5931\u8D25",
@@ -11566,6 +11670,8 @@ var chatTranslations = {
     coworkQuestionTimeoutCountdown: "\u5269\u4F59 {countdown}",
     coworkQuestionDefaultChoice: "\u9ED8\u8BA4",
     coworkQuestionWizardTitle: "\u9700\u8981\u56DE\u5E94",
+    coworkPendingQuestions: "\u5F85\u56DE\u7B54\u7684\u95EE\u9898",
+    coworkQuestionQueueItem: "\u95EE\u9898 {index}",
     coworkQuestionWizardSkip: "\u8DF3\u8FC7",
     coworkQuestionWizardSkipped: "\u5DF2\u8DF3\u8FC7",
     coworkQuestionWizardPrevious: "\u4E0A\u4E00\u4E2A",
@@ -11998,23 +12104,19 @@ var chatTranslations = {
     localTtsPlay: "Read response aloud",
     localTtsStop: "Stop reading",
     localTtsPlaybackFailed: "Speech generation or playback failed. Please try again.",
-    localAsrStart: "Voice input",
-    localAsrStartMeeting: "Start meeting notes",
+    localAsrStart: "Speech to text",
     localAsrAttachmentCopyFailed: "Could not copy the audio attachment into the project. Check its size (maximum 256 MiB) and directory permissions.",
-    localAsrSourceMicrophoneShort: "Me",
-    localAsrSourceSystemShort: "Meeting audio",
     localAsrStop: "Stop recording and transcribe",
-    localAsrCancel: "Cancel speech recognition",
+    localAsrCancel: "Cancel speech transcription",
     localAsrPermissionDenied: "The selected audio source was denied. Check recording or screen-capture permissions.",
     localAsrSourceUnavailable: "No usable audio source was found. Check the device or system-audio sharing option.",
     localAsrSourceBusy: "The audio device is busy or temporarily unreadable. Close other recording apps and retry.",
     localAsrSelectedDeviceUnavailable: "The selected microphone is disconnected. Choose the system default microphone in Voice settings.",
     localAsrNoSpeech: "No clear speech was recognized. Move closer to the microphone and retry.",
-    localAsrQueueFull: "Transcription is falling behind the meeting recording. Some new segments were skipped.",
+    localAsrQueueFull: "Audio upload cannot keep up with capture. Speech transcription has stopped. Try again later.",
     localAsrFailed: "Speech recognition failed. Please try again.",
     onlineAsrFailed: "Online speech recognition failed. Check the recognition service settings.",
     onlineAsrDisconnected: "The online speech recognition session ended. Start recording again.",
-    onlineAsrSourceShort: "Online audio",
     showCode: "Show Mermaid source",
     renderDiagram: "Render Mermaid diagram",
     mermaidRenderFailed: "Failed to render Mermaid diagram",
@@ -12277,6 +12379,8 @@ var chatTranslations = {
     coworkQuestionTimeoutCountdown: "{countdown} remaining",
     coworkQuestionDefaultChoice: "Default",
     coworkQuestionWizardTitle: "Response Needed",
+    coworkPendingQuestions: "Pending questions",
+    coworkQuestionQueueItem: "Question {index}",
     coworkQuestionWizardSkip: "Skip",
     coworkQuestionWizardSkipped: "Skipped",
     coworkQuestionWizardPrevious: "Previous",
@@ -16512,8 +16616,21 @@ var settingsTranslations = {
     voiceOnlineModelSelectionDescription: "\u4ECE\u201C\u6A21\u578B\u201D\u4E2D\u5DF2\u6DFB\u52A0\u7684\u4F9B\u5E94\u5546\u548C\u6A21\u578B\u4E2D\u9009\u62E9\u3002",
     voiceNoOnlineModelsConfigured: "\u5C1A\u672A\u6DFB\u52A0\u53EF\u7528\u7684\u5728\u7EBF\u6A21\u578B",
     voiceInputTitle: "\u8BED\u97F3\u8F93\u5165",
-    voiceInputDescription: "\u5728\u6D88\u606F\u8F93\u5165\u6846\u663E\u793A\u9EA6\u514B\u98CE\u6309\u94AE\uFF0C\u5E76\u5C06\u5F55\u97F3\u8F6C\u6362\u4E3A\u53EF\u7F16\u8F91\u6587\u5B57\u3002",
-    voiceInputEnabled: "\u542F\u7528\u8BED\u97F3\u8F93\u5165",
+    voiceInputFeatures: "\u8BED\u97F3\u8F93\u5165\u529F\u80FD",
+    voiceTranscriptionTitle: "\u8BED\u97F3\u8F6C\u6587\u5B57",
+    voiceTranscriptionDescription: "\u70B9\u51FB\u8F93\u5165\u6846\u7684\u9EA6\u514B\u98CE\u5F55\u97F3\uFF0C\u8BC6\u522B\u7ED3\u679C\u8FDB\u5165\u53EF\u7F16\u8F91\u8349\u7A3F\uFF0C\u4E0D\u4F1A\u81EA\u52A8\u53D1\u9001\u3002",
+    voiceConversationTitle: "\u8BED\u97F3\u5BF9\u8BDD",
+    voiceFeatureEnabled: "\u5DF2\u542F\u7528",
+    voiceFeatureDisabled: "\u672A\u542F\u7528",
+    voiceMicrophoneCheckTitle: "\u9EA6\u514B\u98CE\u68C0\u6D4B",
+    voiceMicrophoneCheckDescription: "\u624B\u52A8\u5F55\u5236\u6700\u591A 10 \u79D2\uFF0C\u67E5\u770B\u7535\u5E73\u5E76\u8BD5\u542C\uFF1B\u4E0D\u4F1A\u53D1\u9001\u6D88\u606F\u6216\u81EA\u52A8\u8BC6\u522B\u3002",
+    voiceMicrophoneCheckStart: "\u68C0\u6D4B\u9EA6\u514B\u98CE",
+    voiceMicrophoneCheckStop: "\u505C\u6B62\u68C0\u6D4B",
+    voiceDiagnosticNeedsRecording: "\u5148\u5728\u4E0A\u65B9\u5B8C\u6210\u4E00\u6BB5\u9EA6\u514B\u98CE\u68C0\u6D4B\u5F55\u97F3\u3002",
+    realtimeVoiceTranscriptionBusy: "\u8BF7\u5148\u5B8C\u6210\u6216\u53D6\u6D88\u8BED\u97F3\u8F6C\u6587\u5B57",
+    voiceInputFinishing: "\u6B63\u5728\u7ED3\u675F\u8BED\u97F3\u8F93\u5165\u2026",
+    voiceInputDescription: "\u4E24\u79CD\u529F\u80FD\u5171\u7528\u9EA6\u514B\u98CE\uFF0C\u53EF\u5206\u522B\u542F\u7528\uFF1B\u4E0B\u65B9\u6807\u7B7E\u53EA\u7528\u4E8E\u67E5\u770B\u548C\u7F16\u8F91\u8BBE\u7F6E\u3002",
+    voiceInputEnabled: "\u542F\u7528\u8BED\u97F3\u8F6C\u6587\u5B57",
     voiceRecognitionMode: "\u8BC6\u522B\u65B9\u5F0F",
     voiceRecognitionModeDescription: "\u79BB\u7EBF\u6A21\u5F0F\u4E0D\u4E0A\u4F20\u5F55\u97F3\uFF1B\u5728\u7EBF\u6A21\u5F0F\u4F1A\u5C06\u97F3\u9891\u53D1\u9001\u7ED9\u6240\u9009\u670D\u52A1\u5546\uFF0C\u53EF\u80FD\u4EA7\u751F\u670D\u52A1\u8D39\u7528\u3002",
     voiceRecognitionModeLocal: "\u672C\u5730\u79BB\u7EBF",
@@ -16526,22 +16643,21 @@ var settingsTranslations = {
     voiceOnlineShowApiKey: "\u663E\u793A API Key",
     voiceOnlineHideApiKey: "\u9690\u85CF API Key",
     voiceRecognitionModel: "\u8BED\u97F3\u8BC6\u522B\u6A21\u578B",
-    voiceInputSource: "\u58F0\u97F3\u6765\u6E90",
-    voiceInputSourceDescription: "\u53EF\u5F55\u5236\u9EA6\u514B\u98CE\u6216 Windows \u7CFB\u7EDF\u64AD\u653E\u58F0\u97F3\u3002\u53F3\u952E\u70B9\u51FB\u8F93\u5165\u6846\u7684\u9EA6\u514B\u98CE\u6309\u94AE\u53EF\u5BFC\u5165\u5F55\u97F3\u3002",
+    voiceInputSource: "\u8F6C\u5199\u97F3\u6E90",
+    voiceInputSourceDescription: "\u4EC5\u7528\u4E8E\u8BED\u97F3\u8F6C\u6587\u5B57\uFF0C\u53EF\u5F55\u5236\u9EA6\u514B\u98CE\u3001\u7CFB\u7EDF\u58F0\u97F3\u6216\u4E24\u8005\u3002\u53F3\u952E\u70B9\u51FB\u8F93\u5165\u6846\u7684\u9EA6\u514B\u98CE\u53EF\u5BFC\u5165\u5F55\u97F3\u3002",
     voiceInputSourceMicrophone: "\u9EA6\u514B\u98CE",
     voiceInputSourceSystem: "\u7CFB\u7EDF\u58F0\u97F3",
     voiceInputSourceMixed: "\u9EA6\u514B\u98CE + \u7CFB\u7EDF\u58F0\u97F3",
     voiceInputSourceFile: "\u5BFC\u5165\u97F3\u9891\u6216\u89C6\u9891\u6587\u4EF6",
     voiceImportRequiresLocal: "\u5BFC\u5165\u6587\u4EF6\u9700\u8981\u4F7F\u7528\u672C\u5730\u8BED\u97F3\u8BC6\u522B\u6A21\u5F0F",
     voiceInputDevice: "\u9EA6\u514B\u98CE\u8BBE\u5907",
-    voiceInputDeviceDescription: "\u672A\u6307\u5B9A\u65F6\u8DDF\u968F Windows \u9ED8\u8BA4\u5F55\u97F3\u8BBE\u5907\u3002",
+    voiceInputDeviceDescription: "\u4E24\u79CD\u529F\u80FD\u5171\u7528\u6B64\u8BBE\u5907\uFF0C\u4FDD\u5B58\u540E\u7528\u4E8E\u804A\u5929\uFF1B\u9EA6\u514B\u98CE\u68C0\u6D4B\u4F7F\u7528\u5F53\u524D\u9009\u62E9\u3002",
     voiceInputDeviceDefault: "\u7CFB\u7EDF\u9ED8\u8BA4\u9EA6\u514B\u98CE",
     voiceInputDeviceDisconnected: "\u5DF2\u65AD\u5F00\u7684\u9EA6\u514B\u98CE\uFF08\u8BF7\u91CD\u65B0\u9009\u62E9\uFF09",
-    voiceDiagnosticTitle: "\u9EA6\u514B\u98CE\u4E0E\u8BC6\u522B\u6D4B\u8BD5",
-    voiceDiagnosticDescription: "\u5F55\u5236\u6700\u591A 10 \u79D2\uFF0C\u68C0\u67E5\u8F93\u5165\u7535\u5E73\u3001\u8BD5\u542C\u539F\u59CB\u5F55\u97F3\u5E76\u7528\u5F53\u524D\u6A21\u578B\u8F6C\u5199\u3002",
-    voiceDiagnosticStart: "\u5F00\u59CB\u6D4B\u8BD5",
+    voiceDiagnosticTitle: "\u8BC6\u522B\u6D4B\u8BD5",
+    voiceDiagnosticDescription: "\u4F7F\u7528\u4E0A\u65B9\u7684\u9EA6\u514B\u98CE\u68C0\u6D4B\u5F55\u97F3\uFF0C\u6D4B\u8BD5\u5F53\u524D\u672C\u5730\u8BC6\u522B\u6A21\u578B\u3002",
+    voiceDiagnosticStart: "\u8BC6\u522B\u8FD9\u6BB5\u5F55\u97F3",
     voiceDiagnosticRequesting: "\u6B63\u5728\u8BF7\u6C42\u9EA6\u514B\u98CE",
-    voiceDiagnosticStop: "\u505C\u6B62\u5E76\u8BC6\u522B",
     voiceDiagnosticRecognizing: "\u6B63\u5728\u8BC6\u522B",
     voiceDiagnosticLevel: "\u8F93\u5165\u7535\u5E73",
     voiceDiagnosticPlayback: "\u6D4B\u8BD5\u5F55\u97F3\u8BD5\u542C",
@@ -16550,7 +16666,7 @@ var settingsTranslations = {
     voiceDiagnosticTooQuiet: "\u5F55\u97F3\u7535\u5E73\u8FC7\u4F4E\uFF1B\u5F53\u524D\u9EA6\u514B\u98CE\u53EF\u80FD\u6CA1\u6709\u6536\u5230\u6709\u6548\u58F0\u97F3\u3002",
     voiceDiagnosticNeedsModel: "\u8BF7\u5148\u4E0B\u8F7D\u5F53\u524D\u9009\u62E9\u7684\u672C\u5730\u8BC6\u522B\u6A21\u578B\u3002",
     voiceDiagnosticNoAudio: "\u6CA1\u6709\u6536\u5230\u5F55\u97F3\u6570\u636E\uFF0C\u8BF7\u68C0\u67E5\u9EA6\u514B\u98CE\u8BBE\u5907\u3002",
-    voiceDiagnosticPermissionDenied: "\u65E0\u6CD5\u8BBF\u95EE\u9EA6\u514B\u98CE\uFF0C\u8BF7\u68C0\u67E5 Windows \u9EA6\u514B\u98CE\u6743\u9650\u3002",
+    voiceDiagnosticPermissionDenied: "\u65E0\u6CD5\u8BBF\u95EE\u9EA6\u514B\u98CE\uFF0C\u8BF7\u68C0\u67E5\u7CFB\u7EDF\u9EA6\u514B\u98CE\u6743\u9650\u3002",
     voiceDiagnosticRecordingFailed: "\u5F55\u97F3\u5931\u8D25\uFF0C\u8BF7\u91CD\u65B0\u9009\u62E9\u9EA6\u514B\u98CE\u540E\u91CD\u8BD5\u3002",
     voiceDiagnosticRecognitionFailed: "\u672C\u5730\u8BC6\u522B\u5931\u8D25",
     voiceRecognitionLanguage: "\u8BC6\u522B\u8BED\u8A00",
@@ -16562,16 +16678,12 @@ var settingsTranslations = {
     korean: "\u97E9\u8BED",
     voiceMaxRecording: "\u6700\u957F\u5F55\u97F3\u65F6\u95F4",
     voiceMaxRecordingDescription: "\u8FBE\u5230\u65F6\u9650\u540E\u81EA\u52A8\u505C\u6B62\u5E76\u5F00\u59CB\u8BC6\u522B\u3002",
-    voiceMeetingMode: "\u4F1A\u8BAE\u8BB0\u5F55\u6A21\u5F0F",
-    voiceMeetingModeDescription: "\u6301\u7EED\u5F55\u97F3\u5E76\u6574\u7406\u5206\u6BB5\u8F6C\u5199\u3002",
-    voiceMeetingSegment: "\u4F1A\u8BAE\u8F6C\u5199\u5206\u6BB5",
-    voiceMeetingSegmentDescription: "\u8F83\u77ED\u5206\u6BB5\u663E\u793A\u66F4\u53CA\u65F6\uFF0C\u8F83\u957F\u5206\u6BB5\u901A\u5E38\u4E0A\u4E0B\u6587\u66F4\u5B8C\u6574\u3002",
     voiceRecognitionThreads: "\u8BC6\u522B\u7EBF\u7A0B\u6570",
     voiceThreadsDescription: "\u7EBF\u7A0B\u8D8A\u591A\u901A\u5E38\u8D8A\u5FEB\uFF0C\u4F46\u4F1A\u5360\u7528\u66F4\u591A CPU\u3002",
     voiceThreadsUnit: "\u7EBF\u7A0B",
     seconds: "\u79D2",
     voiceOutputTitle: "\u56DE\u590D\u6717\u8BFB",
-    voiceOutputDescription: "\u5728\u52A9\u624B\u56DE\u590D\u53F3\u4E0B\u89D2\u663E\u793A\u6717\u8BFB\u6309\u94AE\uFF0C\u53EF\u9009\u62E9\u672C\u5730\u6216\u5728\u7EBF\u670D\u52A1\u751F\u6210\u8BED\u97F3\u3002",
+    voiceOutputDescription: "\u624B\u52A8\u6717\u8BFB\u666E\u901A\u6587\u5B57\u56DE\u590D\uFF0C\u53EF\u4F7F\u7528\u672C\u5730\u6216\u5728\u7EBF\u6A21\u578B\uFF1B\u4E0D\u63A7\u5236\u8BED\u97F3\u5BF9\u8BDD\u7684\u626C\u58F0\u5668\u3002",
     voiceOutputEnabled: "\u542F\u7528\u56DE\u590D\u6717\u8BFB",
     voiceSynthesisMode: "\u6717\u8BFB\u65B9\u5F0F",
     voiceSynthesisModeDescription: "\u9009\u62E9\u672C\u5730\u79BB\u7EBF\u6A21\u578B\u6216\u5728\u7EBF\u8BED\u97F3\u670D\u52A1\u3002",
@@ -16712,6 +16824,45 @@ var settingsTranslations = {
     modelTypeLanguage: "\u8BED\u8A00\u6A21\u578B",
     modelTypeSpeechRecognition: "\u8BED\u97F3\u8BC6\u522B",
     modelTypeSpeechSynthesis: "\u8BED\u97F3\u5408\u6210",
+    modelTypeRealtimeVoice: "\u8BED\u97F3\u5BF9\u8BDD",
+    customRealtimeVoiceProtocolHint: "\u4F7F\u7528\u5DF2\u914D\u7F6E\u7684 Realtime \u517C\u5BB9\u53CC\u5411\u8BED\u97F3\u63A5\u53E3\uFF1B\u8F6C\u5F55\u6A21\u578B\u548C\u97F3\u8272\u5747\u9700\u660E\u786E\u914D\u7F6E\u3002",
+    speechProtocolRecorded: "\u5F55\u97F3\u8F6C\u5199\uFF08OpenAI \u517C\u5BB9\uFF09",
+    speechProtocolSynthesis: "\u8BED\u97F3\u5408\u6210\uFF08OpenAI \u517C\u5BB9\uFF09",
+    speechProtocolRealtimeTranscription: "\u5B9E\u65F6\u8F6C\u5F55\uFF08Realtime \u517C\u5BB9\uFF09",
+    speechProtocolRealtimeVoice: "\u5B9E\u65F6\u8BED\u97F3\u5BF9\u8BDD\uFF08Realtime \u517C\u5BB9\uFF09",
+    speechCurrentProtocol: "\u5F53\u524D\u63A5\u53E3\uFF1A{protocol}\uFF08\u5728\u6A21\u578B\u8BBE\u7F6E\u4E2D\u7BA1\u7406\uFF09",
+    speechConfigureInterfaceInModels: "\u6240\u9009\u6A21\u578B\u6216\u63A5\u53E3\u4E0D\u53EF\u7528\uFF0C\u8BF7\u5728\u6A21\u578B\u8BBE\u7F6E\u4E2D\u68C0\u67E5\u914D\u7F6E\u3002",
+    speechProviderProtocol: "\u63A5\u53E3\u7C7B\u578B",
+    speechProviderProtocolChoose: "\u8BF7\u9009\u62E9\u7EDF\u4E00\u63A5\u53E3",
+    speechProviderProtocolLegacy: "\u4FDD\u7559\u5DF2\u6709\u63A5\u53E3\u8BBE\u7F6E\uFF1B\u9009\u62E9\u540E\uFF0C\u6B64\u4F9B\u5E94\u5546\u4E0B\u6240\u6709\u6A21\u578B\u7EDF\u4E00\u7EE7\u627F\u8BE5\u63A5\u53E3\u3002",
+    speechProviderProtocolInvalid: "\u63A5\u53E3\u914D\u7F6E\u65E0\u6548\uFF0C\u8BF7\u91CD\u65B0\u9009\u62E9\u3002",
+    speechProviderProtocolConnectionInvalid: "\u670D\u52A1\u5730\u5740\u6216\u51ED\u8BC1\u4E0D\u7B26\u5408\u6240\u9009\u63A5\u53E3\u8981\u6C42\uFF0C\u8BF7\u68C0\u67E5\u3002",
+    speechProviderProtocolModelsHint: "\u6B64\u4F9B\u5E94\u5546\u4E0B\u6240\u6709\u6A21\u578B\u7EE7\u627F\u4E0A\u65B9\u9009\u62E9\u7684\u63A5\u53E3\u3002",
+    speechProviderProtocolRecordedHint: "\u5B8C\u6574\u5F55\u97F3\u6216\u6587\u4EF6\u8F6C\u5199\uFF0C\u4F7F\u7528 HTTP /audio/transcriptions\u3002",
+    speechProviderProtocolTranscriptionHint: "\u5B9E\u65F6\u542C\u5199\uFF0C\u4F7F\u7528 WebSocket /realtime?intent=transcription\u3002",
+    speechProviderProtocolSynthesisHint: "\u6587\u5B57\u5408\u6210\u8BED\u97F3\uFF0C\u4F7F\u7528 HTTP /audio/speech\uFF0C\u5B8C\u6574\u8FD4\u56DE\u97F3\u9891\u3002",
+    speechProviderProtocolVoiceHint: "\u53CC\u5411\u8BED\u97F3\u5BF9\u8BDD\uFF0C\u4F7F\u7528 WebSocket /realtime \u548C\u81EA\u52A8\u8F6E\u6B21\u68C0\u6D4B\u3002",
+    speechModelOptionsChooseProtocol: "\u6A21\u578B\u4FDD\u7559\u5DF2\u6709\u53C2\u6570\uFF1B\u8BF7\u5148\u5728\u4F9B\u5E94\u5546\u8FDE\u63A5\u4E2D\u9009\u62E9\u7EDF\u4E00\u63A5\u53E3\u3002",
+    speechModelParametersReview: "\u6A21\u578B\u53C2\u6570\u4E0D\u5B8C\u6574\u6216\u5DF2\u4E0D\u518D\u652F\u6301\uFF0C\u8BF7\u91CD\u65B0\u914D\u7F6E\u6216\u5220\u9664\u540E\u91CD\u65B0\u6DFB\u52A0\u3002",
+    speechModelParametersInvalid: "\u8BF7\u68C0\u67E5\u6A21\u578B\u7684\u97F3\u8272\u8981\u6C42\u6216\u8F93\u5165\u8F6C\u5F55\u6A21\u578B\u3002",
+    speechModelBindings: "\u6A21\u578B\u63A5\u53E3",
+    speechAddBinding: "\u6DFB\u52A0\u63A5\u53E3",
+    speechLegacyBindingHint: "\u6B64\u6A21\u578B\u6CBF\u7528\u539F\u6709\u914D\u7F6E\uFF1A\u8F93\u5165\u6846\u4F7F\u7528\u5B9E\u65F6\u8F6C\u5F55\uFF0C\u9644\u4EF6\u5DE5\u5177\u4F7F\u7528\u5F55\u97F3\u8F6C\u5199\u3002\u53EF\u6DFB\u52A0\u660E\u786E\u7684\u63A5\u53E3\u914D\u7F6E\u3002",
+    speechNoBindingsHint: "\u5C1A\u672A\u914D\u7F6E\u53EF\u7528\u63A5\u53E3",
+    speechProtocolType: "\u63A5\u53E3\u7C7B\u578B",
+    speechBindingInvalid: "\u8BF7\u68C0\u67E5\u6A21\u578B\u63A5\u53E3\u3001\u517C\u5BB9\u914D\u7F6E\u548C\u5B9E\u65F6\u8BED\u97F3\u6240\u9700\u7684\u8F93\u5165\u8F6C\u5F55\u6A21\u578B\u3002",
+    speechInputTranscriptionModel: "\u8F93\u5165\u8F6C\u5F55\u6A21\u578B",
+    speechInputTranscriptionModelHint: "\u5B9E\u65F6\u5BF9\u8BDD\u5411\u5F53\u524D\u52A9\u624B\u59D4\u6258\u4EFB\u52A1\u65F6\u4F7F\u7528\u6B64\u6A21\u578B\u8F6C\u5F55\u8F93\u5165\u8BED\u97F3\uFF1B\u8BF7\u586B\u5199\u670D\u52A1\u5B9E\u9645\u652F\u6301\u7684\u6A21\u578B ID\u3002",
+    speechRemoveBinding: "\u79FB\u9664\u6B64\u63A5\u53E3",
+    speechEndpointPerBinding: "\u5B9E\u9645\u8BF7\u6C42\u8DEF\u5F84\u7531\u6A21\u578B\u6240\u9009\u63A5\u53E3\u51B3\u5B9A",
+    speechSettingsNeedSave: "\u9009\u62E9\u5DF2\u66F4\u6539\uFF0C\u4FDD\u5B58\u540E\u751F\u6548",
+    voiceInputUnavailable: "\u8BED\u97F3\u8F93\u5165\u6682\u4E0D\u53EF\u7528\uFF0C\u8BF7\u68C0\u67E5\u8BED\u97F3\u8BBE\u7F6E",
+    voiceImportRequiresRecording: "\u5BFC\u5165\u6587\u4EF6\u9700\u8981\u672C\u5730\u8BC6\u522B\u6216\u5F55\u97F3\u8F6C\u5199\u63A5\u53E3",
+    realtimeVoiceSettingsDescription: "\u5728\u5F53\u524D\u804A\u5929\u4E2D\u6301\u7EED\u6536\u97F3\u5E76\u7531\u52A9\u624B\u56DE\u590D\uFF0C\u4F7F\u7528\u72EC\u7ACB\u7684\u5BF9\u8BDD\u6A21\u578B\u548C\u97F3\u8272\u3002",
+    realtimeVoiceEnable: "\u542F\u7528\u8BED\u97F3\u5BF9\u8BDD",
+    realtimeVoiceModel: "\u5BF9\u8BDD\u6A21\u578B",
+    realtimeVoiceSpeaker: "\u5BF9\u8BDD\u97F3\u8272",
+    realtimeVoiceSettingsSaveHint: "\u4FDD\u5B58\u540E\u751F\u6548\u3002\u914D\u7F6E\u5B8C\u6574\u4E0D\u4EE3\u8868\u5DF2\u8FDE\u901A\uFF0C\u5F00\u59CB\u5BF9\u8BDD\u65F6\u4F1A\u68C0\u67E5\u539F\u751F\u80FD\u529B\u4E0E\u5B9E\u9645\u8FDE\u63A5\u3002",
     modelTypeImage: "\u56FE\u50CF\u751F\u6210",
     modelTypeVideo: "\u89C6\u9891\u6A21\u578B",
     modelTypeDecision: "\u51B3\u7B56\u6A21\u578B",
@@ -17410,8 +17561,21 @@ var settingsTranslations = {
     voiceOnlineModelSelectionDescription: "Choose from the providers and models you added under Models.",
     voiceNoOnlineModelsConfigured: "No online models have been added",
     voiceInputTitle: "Voice input",
-    voiceInputDescription: "Show a microphone in the message composer and convert recordings into editable text.",
-    voiceInputEnabled: "Enable voice input",
+    voiceInputFeatures: "Voice input features",
+    voiceTranscriptionTitle: "Speech to text",
+    voiceTranscriptionDescription: "Use the composer microphone to record into an editable draft. It does not send automatically.",
+    voiceConversationTitle: "Voice conversation",
+    voiceFeatureEnabled: "Enabled",
+    voiceFeatureDisabled: "Not enabled",
+    voiceMicrophoneCheckTitle: "Microphone check",
+    voiceMicrophoneCheckDescription: "Record up to 10 seconds to check the level and play it back. No message is sent or recognition started.",
+    voiceMicrophoneCheckStart: "Check microphone",
+    voiceMicrophoneCheckStop: "Stop check",
+    voiceDiagnosticNeedsRecording: "Complete a microphone check recording above first.",
+    realtimeVoiceTranscriptionBusy: "Finish or cancel speech transcription first.",
+    voiceInputFinishing: "Finishing speech input\u2026",
+    voiceInputDescription: "Both features share a microphone and can be enabled independently. The tabs only view and edit settings.",
+    voiceInputEnabled: "Enable speech to text",
     voiceRecognitionMode: "Recognition mode",
     voiceRecognitionModeDescription: "Offline mode keeps recordings on this device. Online mode sends audio to the selected provider and may incur service charges.",
     voiceRecognitionModeLocal: "Local offline",
@@ -17424,22 +17588,21 @@ var settingsTranslations = {
     voiceOnlineShowApiKey: "Show API key",
     voiceOnlineHideApiKey: "Hide API key",
     voiceRecognitionModel: "Speech recognition model",
-    voiceInputSource: "Audio source",
-    voiceInputSourceDescription: "Record a microphone or Windows system playback. Right-click the microphone button in the composer to import a recording.",
+    voiceInputSource: "Transcription audio source",
+    voiceInputSourceDescription: "Used only for speech to text. Record a microphone, system audio, or both. Right-click the composer microphone to import a recording.",
     voiceInputSourceMicrophone: "Microphone",
     voiceInputSourceSystem: "System audio",
     voiceInputSourceMixed: "Microphone + system audio",
     voiceInputSourceFile: "Import audio or video",
     voiceImportRequiresLocal: "File import requires local speech recognition mode",
     voiceInputDevice: "Microphone device",
-    voiceInputDeviceDescription: "Uses the Windows default recording device when unspecified.",
+    voiceInputDeviceDescription: "Shared by both features after saving. The microphone check uses the current selection.",
     voiceInputDeviceDefault: "System default microphone",
     voiceInputDeviceDisconnected: "Disconnected microphone (select another)",
-    voiceDiagnosticTitle: "Microphone and recognition test",
-    voiceDiagnosticDescription: "Record up to 10 seconds, check the input level, play the raw recording, and transcribe it with the current model.",
-    voiceDiagnosticStart: "Start test",
+    voiceDiagnosticTitle: "Recognition test",
+    voiceDiagnosticDescription: "Use the microphone check recording above to test the selected local recognition model.",
+    voiceDiagnosticStart: "Recognize this recording",
     voiceDiagnosticRequesting: "Requesting microphone",
-    voiceDiagnosticStop: "Stop and recognize",
     voiceDiagnosticRecognizing: "Recognizing",
     voiceDiagnosticLevel: "Input level",
     voiceDiagnosticPlayback: "Play test recording",
@@ -17448,7 +17611,7 @@ var settingsTranslations = {
     voiceDiagnosticTooQuiet: "The recording level is too low; this microphone may not be receiving usable audio.",
     voiceDiagnosticNeedsModel: "Download the selected local recognition model first.",
     voiceDiagnosticNoAudio: "No recorded audio was received. Check the microphone device.",
-    voiceDiagnosticPermissionDenied: "The microphone could not be accessed. Check Windows microphone permissions.",
+    voiceDiagnosticPermissionDenied: "The microphone could not be accessed. Check system microphone permissions.",
     voiceDiagnosticRecordingFailed: "Recording failed. Select another microphone and try again.",
     voiceDiagnosticRecognitionFailed: "Local recognition failed",
     voiceRecognitionLanguage: "Recognition language",
@@ -17460,16 +17623,12 @@ var settingsTranslations = {
     korean: "Korean",
     voiceMaxRecording: "Maximum recording length",
     voiceMaxRecordingDescription: "Stop and begin transcription automatically at this limit.",
-    voiceMeetingMode: "Meeting notes mode",
-    voiceMeetingModeDescription: "Keep recording and organize the transcription in segments.",
-    voiceMeetingSegment: "Meeting segment length",
-    voiceMeetingSegmentDescription: "Shorter segments appear sooner; longer segments usually preserve more context.",
     voiceRecognitionThreads: "Recognition threads",
     voiceThreadsDescription: "More threads are usually faster but use more CPU.",
     voiceThreadsUnit: "threads",
     seconds: "sec",
     voiceOutputTitle: "Read responses aloud",
-    voiceOutputDescription: "Show a read-aloud button at the lower-right of assistant responses and use a local or online speech service.",
+    voiceOutputDescription: "Read ordinary text responses using a local or online model. This does not control the voice conversation speaker.",
     voiceOutputEnabled: "Enable response reading",
     voiceSynthesisMode: "Reading mode",
     voiceSynthesisModeDescription: "Choose a local offline model or an online speech service.",
@@ -17610,6 +17769,45 @@ var settingsTranslations = {
     modelTypeLanguage: "Language models",
     modelTypeSpeechRecognition: "Speech recognition",
     modelTypeSpeechSynthesis: "Speech synthesis",
+    modelTypeRealtimeVoice: "Voice conversation",
+    customRealtimeVoiceProtocolHint: "Use a configured Realtime-compatible conversation endpoint with an explicit transcription model and voice.",
+    speechProtocolRecorded: "Recorded transcription (OpenAI compatible)",
+    speechProtocolSynthesis: "Speech synthesis (OpenAI compatible)",
+    speechProtocolRealtimeTranscription: "Live transcription (Realtime compatible)",
+    speechProtocolRealtimeVoice: "Voice conversation (Realtime compatible)",
+    speechCurrentProtocol: "Current interface: {protocol} (managed in model settings)",
+    speechConfigureInterfaceInModels: "The selected model or interface is unavailable. Check its configuration in model settings.",
+    speechProviderProtocol: "Interface type",
+    speechProviderProtocolChoose: "Select a shared interface",
+    speechProviderProtocolLegacy: "Existing interface settings are preserved. Selecting an interface applies it to all models under this provider.",
+    speechProviderProtocolInvalid: "The interface configuration is invalid. Select an interface again.",
+    speechProviderProtocolConnectionInvalid: "The service address or credential does not meet the selected interface requirements.",
+    speechProviderProtocolModelsHint: "All models under this provider inherit the interface selected above.",
+    speechProviderProtocolRecordedHint: "Recorded audio or file transcription via HTTP /audio/transcriptions.",
+    speechProviderProtocolTranscriptionHint: "Live dictation via WebSocket /realtime?intent=transcription.",
+    speechProviderProtocolSynthesisHint: "Text-to-speech via HTTP /audio/speech, returning complete audio.",
+    speechProviderProtocolVoiceHint: "Two-way voice via WebSocket /realtime with automatic turn detection.",
+    speechModelOptionsChooseProtocol: "Existing model parameters are preserved. Select a shared interface in the provider connection first.",
+    speechModelParametersReview: "Model parameters are incomplete or unsupported. Reconfigure or remove and add the model again.",
+    speechModelParametersInvalid: "Check the model voice requirement or input transcription model.",
+    speechModelBindings: "Model interfaces",
+    speechAddBinding: "Add interface",
+    speechLegacyBindingHint: "This model uses its existing configuration: realtime transcription for dictation and recorded transcription for attachments. Add an explicit interface to change this.",
+    speechNoBindingsHint: "No interface configured",
+    speechProtocolType: "Interface type",
+    speechBindingInvalid: "Check the model interfaces, compatibility profile, and input transcription model required for realtime voice.",
+    speechInputTranscriptionModel: "Input transcription model",
+    speechInputTranscriptionModelHint: "Transcribes input audio when delegating to your current assistant. Enter a model ID supported by the configured service.",
+    speechRemoveBinding: "Remove interface",
+    speechEndpointPerBinding: "The selected model interface determines the request path",
+    speechSettingsNeedSave: "Selection changed; save to apply",
+    voiceInputUnavailable: "Voice input is unavailable. Check speech settings.",
+    voiceImportRequiresRecording: "File import requires local recognition or a recorded transcription interface.",
+    realtimeVoiceSettingsDescription: "Listen and reply continuously in the current chat using a separate conversation model and voice.",
+    realtimeVoiceEnable: "Enable voice conversation",
+    realtimeVoiceModel: "Conversation model",
+    realtimeVoiceSpeaker: "Conversation voice",
+    realtimeVoiceSettingsSaveHint: "Save to apply. Complete configuration does not confirm connectivity; native capabilities and the connection are checked when a conversation starts.",
     modelTypeImage: "Image generation",
     modelTypeVideo: "Video models",
     modelTypeDecision: "Decision models",
@@ -19073,6 +19271,7 @@ var translations = {
     ...browserTranslations.zh,
     ...browserInterventionTranslations.zh,
     ...browserRecordingTranslations.zh,
+    ...realtimeVoiceTranslations.zh,
     ...chatTranslations.zh,
     ...chromeTranslations.zh,
     ...filePreviewTranslations.zh,
@@ -19102,6 +19301,7 @@ var translations = {
     ...browserTranslations.en,
     ...browserInterventionTranslations.en,
     ...browserRecordingTranslations.en,
+    ...realtimeVoiceTranslations.en,
     ...chatTranslations.en,
     ...chromeTranslations.en,
     ...filePreviewTranslations.en,
@@ -19955,23 +20155,23 @@ function readScalar(value) {
   return null;
 }
 function readTranscriptIdentity(message) {
-  const record4 = asRecord7(message);
-  if (!record4) return null;
-  const interruptedOverlayId = readScalar(record4.__justdoInterruptedOverlayId);
+  const record5 = asRecord7(message);
+  if (!record5) return null;
+  const interruptedOverlayId = readScalar(record5.__justdoInterruptedOverlayId);
   if (interruptedOverlayId) {
     return { kind: "durable-id", value: `interrupted:${interruptedOverlayId}` };
   }
-  const failedRunMessageId = readScalar(record4[FAILED_RUN_MESSAGE_ID]);
+  const failedRunMessageId = readScalar(record5[FAILED_RUN_MESSAGE_ID]);
   if (failedRunMessageId) {
     return { kind: "durable-id", value: `failed-run:${failedRunMessageId}` };
   }
-  const marker = asRecord7(record4.__openclaw);
+  const marker = asRecord7(record5.__openclaw);
   const openClawId = readScalar(marker?.id);
   if (openClawId) return { kind: "openclaw-id", value: openClawId };
   const openClawSeq = readScalar(marker?.seq);
   if (openClawSeq) return { kind: "openclaw-seq", value: openClawSeq };
   for (const key of ["entryId", "messageId", "id", "seq"]) {
-    const value = readScalar(record4[key]);
+    const value = readScalar(record5[key]);
     if (value) return { kind: "durable-id", value: `${key}:${value}` };
   }
   return null;
@@ -19982,17 +20182,17 @@ function asRecord8(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : null;
 }
 function readActiveTurnMessageRunId(message) {
-  const record4 = asRecord8(message);
-  const nested = asRecord8(record4?.message);
+  const record5 = asRecord8(message);
+  const nested = asRecord8(record5?.message);
   const nestedOpenClaw = asRecord8(nested?.__openclaw);
-  const openClaw = asRecord8(record4?.__openclaw);
+  const openClaw = asRecord8(record5?.__openclaw);
   for (const candidate of [
     nested?.runId,
     nested?.run_id,
     nestedOpenClaw?.runId,
     nestedOpenClaw?.run_id,
-    record4?.runId,
-    record4?.run_id,
+    record5?.runId,
+    record5?.run_id,
     openClaw?.runId,
     openClaw?.run_id
   ]) {
@@ -20336,13 +20536,13 @@ function prepareVisibleTimelineRows(items, options) {
 }
 
 // src/renderer/libs/openclaw-chat/model/chrome-extension/chrome-extension-timeline.ts
-function record3(value) {
+function record4(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : null;
 }
 function isChromeQuestionTool(item) {
   if (item.toolName !== ASK_USER_QUESTION_TOOL_NAME) return false;
   if (item.status === "completed") return item.isError !== true && parseQuestionResult(item.questionResult) !== null;
-  return ["running", "inProgress", "cancelled", "interrupted", "failed"].includes(String(item.status)) && parseQuestions(record3(item.input)?.questions) !== null;
+  return ["running", "inProgress", "cancelled", "interrupted", "failed"].includes(String(item.status)) && parseQuestions(record4(item.input)?.questions) !== null;
 }
 function processStatus(value) {
   if (value === "completed") return "completed";
@@ -20374,7 +20574,7 @@ function asProcessItem(item) {
 }
 function historyMessage(entry) {
   const outer = entry.rawMessage ?? {};
-  const nested = record3(outer.message);
+  const nested = record4(outer.message);
   const source = nested ?? outer;
   const display = entry.display;
   const message = {
@@ -20386,7 +20586,7 @@ function historyMessage(entry) {
   };
   if (entry.role === "compaction" && display?.kind) {
     message.__openclaw = {
-      ...record3(source.__openclaw),
+      ...record4(source.__openclaw),
       kind: display.kind,
       ...display.phase ? { phase: display.phase } : {}
     };

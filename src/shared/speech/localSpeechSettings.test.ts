@@ -10,6 +10,25 @@ import {
 import { resolveOnlineSpeechBinding } from './onlineSpeechModels';
 
 describe('local speech settings', () => {
+  it('ignores retired meeting settings without restoring them after persistence', () => {
+    const settings = normalizeLocalSpeechSettings({
+      inputEnabled: true,
+      realtimeEnabled: true,
+      inputSource: 'microphone-system',
+      inputDeviceId: 'shared-microphone',
+      meetingMode: true,
+      meetingSegmentSeconds: 15,
+    });
+    expect(settings).toMatchObject({
+      inputEnabled: true,
+      realtimeEnabled: true,
+      inputSource: 'microphone-system',
+      inputDeviceId: 'shared-microphone',
+    });
+    expect(settings).not.toHaveProperty('meetingMode');
+    expect(settings).not.toHaveProperty('meetingSegmentSeconds');
+    expect(normalizeLocalSpeechSettings(JSON.parse(JSON.stringify(settings)))).toEqual(settings);
+  });
   it('does not recover a legacy preset from an explicitly removed voice selection after persistence', () => {
     const settings = normalizeLocalSpeechSettings({
       onlineTtsVoice: 'legacy-speaker',
@@ -18,7 +37,9 @@ describe('local speech settings', () => {
     });
     expect(settings.onlineTtsVoiceSelection).toBeNull();
     expect(settings.onlineTtsVoice).toBe('');
-    expect(normalizeLocalSpeechSettings(JSON.parse(JSON.stringify(settings))).onlineTtsVoiceSelection).toBeNull();
+    expect(
+      normalizeLocalSpeechSettings(JSON.parse(JSON.stringify(settings))).onlineTtsVoiceSelection,
+    ).toBeNull();
   });
   it('does not turn a missing explicit binding into legacy protocol admission after catalog replacement', () => {
     const legacy = {
@@ -97,7 +118,9 @@ describe('local speech settings', () => {
   });
 
   it('preserves the selected online synthesis voice', () => {
-    expect(normalizeLocalSpeechSettings({ onlineTtsVoice: 'voice-three' }).onlineTtsVoice).toBe('voice-three');
+    expect(normalizeLocalSpeechSettings({ onlineTtsVoice: 'voice-three' }).onlineTtsVoice).toBe(
+      'voice-three',
+    );
   });
 
   it('clamps persisted and untrusted numeric values', () => {
@@ -149,8 +172,6 @@ describe('local speech settings', () => {
         inputSource: 'microphone-system',
         recognitionMode: 'online',
         inputDeviceId: 'usb-microphone',
-        meetingMode: true,
-        meetingSegmentSeconds: 5,
       }),
     ).toMatchObject({
       asrModelId: 'sherpa-onnx-whisper-base',
@@ -158,8 +179,6 @@ describe('local speech settings', () => {
       inputSource: 'microphone-system',
       recognitionMode: 'online',
       inputDeviceId: 'usb-microphone',
-      meetingMode: true,
-      meetingSegmentSeconds: 15,
     });
 
     expect(

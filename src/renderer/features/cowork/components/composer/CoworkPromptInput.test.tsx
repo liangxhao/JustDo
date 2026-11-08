@@ -160,6 +160,80 @@ test('keeps inline voice alive across task start and both composer layouts with 
   expect(voice.instances[0].dispose).toHaveBeenCalledOnce();
 });
 
+test.each(['granted', 'rejected'] as const)(
+  'keeps voice admission locked across a layout change until a pending permission is %s',
+  async outcome => {
+    const config = configService.getConfig();
+    vi.spyOn(configService, 'getConfig').mockReturnValue({
+      ...config,
+      voice: {
+        ...config.voice,
+        inputEnabled: true,
+        realtimeEnabled: true,
+        recognitionMode: 'local',
+        inputSource: 'microphone',
+      },
+    });
+    let resolvePermission!: (stream: MediaStream) => void;
+    let rejectPermission!: (error: Error) => void;
+    const getUserMedia = vi.fn(
+      () =>
+        new Promise<MediaStream>((resolve, reject) => {
+          resolvePermission = resolve;
+          rejectPermission = reject;
+        }),
+    );
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: { getUserMedia },
+    });
+    vi.stubGlobal('electron', {
+      extensions: {
+        list: vi.fn().mockResolvedValue({ success: true, extensions: [] }),
+        onChanged: () => () => {},
+      },
+      realtimeVoice: { getStatus: vi.fn().mockResolvedValue({ available: true }) },
+      cowork: {
+        getSessionGoal: vi.fn().mockResolvedValue({ success: true, goal: null }),
+        getGoalExecution: vi.fn().mockResolvedValue({ success: true }),
+        onSessionGoalChanged: () => () => {},
+        onGoalExecutionChanged: () => () => {},
+      },
+      localAsr: { getStatus: vi.fn().mockResolvedValue({ available: true }) },
+      localSpeechModels: { onChanged: () => () => {} },
+    });
+    const composer = (size: 'normal' | 'large') => (
+      <Provider store={store}>
+        <CoworkPromptInput sessionId="voice-layout-pending" size={size} onSubmit={vi.fn()} />
+      </Provider>
+    );
+    const view = render(composer('normal'));
+    const microphone = await screen.findByRole('button', { name: i18nService.t('localAsrStart') });
+    await waitFor(() => expect(microphone).toHaveProperty('disabled', false));
+    fireEvent.click(microphone);
+    const phone = () => screen.getByRole('button', { name: i18nService.t('realtimeVoiceStart') });
+    expect(phone()).toHaveProperty('disabled', true);
+    view.rerender(composer('large'));
+    expect(phone()).toHaveProperty('disabled', true);
+    expect(
+      await screen.findByRole('button', { name: i18nService.t('localAsrStart') }),
+    ).toHaveProperty('disabled', true);
+    fireEvent.click(phone());
+    expect(voice.instances[0].start).not.toHaveBeenCalled();
+    const stop = vi.fn();
+    await act(async () => {
+      if (outcome === 'granted')
+        resolvePermission({ getTracks: () => [{ stop }] } as unknown as MediaStream);
+      else rejectPermission(new DOMException('Denied', 'NotAllowedError'));
+    });
+    if (outcome === 'granted') expect(stop).toHaveBeenCalledOnce();
+    await waitFor(() => expect(phone()).toHaveProperty('disabled', false));
+    expect(getUserMedia).toHaveBeenCalledOnce();
+    fireEvent.click(phone());
+    expect(voice.instances[0].start).toHaveBeenCalledOnce();
+  },
+);
+
 test('keeps a running conversation draft growing, capped and shrinkable across idle transition', () => {
   vi.stubGlobal('electron', {
     extensions: {
