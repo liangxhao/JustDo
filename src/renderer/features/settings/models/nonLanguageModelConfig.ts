@@ -3,6 +3,13 @@ import {
   findNativeVideoProvider,
   isNativeVideoModelSupported,
 } from '@shared/providers/nativeVideoProviders';
+import {
+  isOnlineSpeechBindingEndpointValid,
+  isOnlineSpeechModelKind,
+  parseOnlineSpeechModelBindings,
+  parseOnlineSpeechModelParameters,
+  parseOnlineSpeechProviderProtocol,
+} from '@shared/speech/onlineSpeechModels';
 
 import type { AppConfig } from '@/app/config';
 import { i18nService } from '@/services/i18n';
@@ -11,6 +18,7 @@ import {
   type NonLanguageModelKind,
   normalizeNonLanguageModelBaseUrl,
 } from './nonLanguageModelUrls';
+import { assertNoRetiredSpeechProfile } from './retiredSpeechConfiguration';
 
 export type NonLanguageModelProviders = NonNullable<AppConfig['onlineModelProviders']>;
 export type NonLanguageModelCategory = NonNullable<NonLanguageModelProviders[NonLanguageModelKind]>;
@@ -18,6 +26,7 @@ export type NonLanguageModelCategory = NonNullable<NonLanguageModelProviders[Non
 export const NON_LANGUAGE_MODEL_KINDS: readonly NonLanguageModelKind[] = [
   'speech-recognition',
   'speech-synthesis',
+  'realtime-voice',
   'image',
   'video',
   'decision',
@@ -31,6 +40,15 @@ export const normalizeNonLanguageModelCategory = (
   kind: NonLanguageModelKind,
   category: NonLanguageModelCategory,
 ): NonLanguageModelCategory => {
+  assertNoRetiredSpeechProfile(category);
+  for (const provider of Object.values(category.providers)) {
+    assertNoRetiredSpeechProfile(provider);
+    for (const model of provider.models) {
+      assertNoRetiredSpeechProfile(model);
+      model.voices?.forEach(assertNoRetiredSpeechProfile);
+      model.bindings?.forEach(assertNoRetiredSpeechProfile);
+    }
+  }
   if (kind === 'video') return category;
   const supportsCatalogDefault = kind === 'image' || kind === 'decision';
   const defaultProviderId =
@@ -41,26 +59,39 @@ export const normalizeNonLanguageModelCategory = (
       : undefined;
   return {
     providers: Object.fromEntries(
-      Object.entries(category.providers).map(([id, provider]) => [
-        id,
-        supportsCatalogDefault
-          ? {
-              ...provider,
-              baseUrl: normalizeNonLanguageModelBaseUrl(kind, provider.baseUrl),
-            }
-          : {
-              displayName: provider.displayName,
-              baseUrl: normalizeNonLanguageModelBaseUrl(kind, provider.baseUrl),
-              apiKey: provider.apiKey,
-              models: provider.models.map(model => ({
-                id: model.id,
-                name: model.name,
-                ...(kind === 'speech-synthesis' && model.voices?.length
-                  ? { voices: model.voices }
-                  : {}),
-              })),
-            },
-      ]),
+      Object.entries(category.providers).map(([id, provider]) => {
+        const protocol = isOnlineSpeechModelKind(kind)
+          ? parseOnlineSpeechProviderProtocol(provider, kind)
+          : undefined;
+        return [
+          id,
+          supportsCatalogDefault
+            ? {
+                ...provider,
+                baseUrl: normalizeNonLanguageModelBaseUrl(kind, provider.baseUrl),
+              }
+            : {
+                displayName: provider.displayName,
+                ...(protocol ?? {}),
+                baseUrl: normalizeNonLanguageModelBaseUrl(kind, provider.baseUrl, protocol),
+                apiKey: provider.apiKey,
+                models: provider.models.map(model => ({
+                  id: model.id,
+                  name: model.name,
+                  ...(isOnlineSpeechModelKind(kind)
+                    ? parseOnlineSpeechModelParameters(model, protocol)
+                    : {}),
+                  ...((kind === 'speech-synthesis' || kind === 'realtime-voice') &&
+                  model.voices?.length
+                    ? { voices: model.voices }
+                    : {}),
+                  ...(isOnlineSpeechModelKind(kind) && model.bindings !== undefined
+                    ? { bindings: parseOnlineSpeechModelBindings(model.bindings, kind) }
+                    : {}),
+                })),
+              },
+        ];
+      }),
     ),
     ...(defaultProviderId ? { defaultProviderId } : {}),
   };
@@ -115,13 +146,44 @@ const getProviderValidationError = (
     providerId,
   );
   if (nameError) return nameError;
+  let speechProtocol: ReturnType<typeof parseOnlineSpeechProviderProtocol>;
   try {
-    const url = new URL(normalizeNonLanguageModelBaseUrl(kind, provider.baseUrl));
+    speechProtocol = isOnlineSpeechModelKind(kind)
+      ? parseOnlineSpeechProviderProtocol(provider, kind)
+      : undefined;
+  } catch {
+    return i18nService.t('speechBindingInvalid');
+  }
+  try {
+    const url = new URL(normalizeNonLanguageModelBaseUrl(kind, provider.baseUrl, speechProtocol));
     const protocols =
-      kind === 'speech-recognition' ? ['http:', 'https:', 'ws:', 'wss:'] : ['http:', 'https:'];
+      kind === 'speech-recognition' || kind === 'realtime-voice'
+        ? ['http:', 'https:', 'ws:', 'wss:']
+        : ['http:', 'https:'];
     if (!protocols.includes(url.protocol) || url.username || url.password) throw new Error();
   } catch {
     return i18nService.t('customModelProviderUrlInvalid');
+  }
+  if (isOnlineSpeechModelKind(kind)) {
+    try {
+      const protocol = speechProtocol;
+      if (
+        protocol &&
+        !isOnlineSpeechBindingEndpointValid(provider, { id: 'provider', ...protocol })
+      )
+        throw new Error('Invalid speech endpoint.');
+      provider.models.forEach(model => {
+        const bindings = parseOnlineSpeechModelBindings(model.bindings, kind);
+        parseOnlineSpeechModelParameters(model, protocol);
+        if (
+          !protocol &&
+          bindings?.some(binding => !isOnlineSpeechBindingEndpointValid(provider, binding))
+        )
+          throw new Error('Invalid speech endpoint.');
+      });
+    } catch {
+      return i18nService.t('speechBindingInvalid');
+    }
   }
   if (kind === 'decision' && !provider.apiKey.trim())
     return i18nService.t('decisionApiKeyRequired');

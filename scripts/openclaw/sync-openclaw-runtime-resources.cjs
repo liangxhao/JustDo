@@ -369,7 +369,7 @@ function cleanInterruptedExtensionStaging(targetDir) {
 // before staging so packaged plugins never resolve ../../src against OpenClaw.
 function bundleProductExtension(sourceDir, targetDir, runtimeRoot) {
   const pkg = readJsonFile(path.join(sourceDir, 'package.json'));
-  if (!pkg?.app && pkg?.justdo?.bundle !== true) return;
+  if (!pkg?.app && pkg?.justdo?.bundle !== true && pkg?.openclaw?.build?.bundleFromSource !== true) return;
   if (pkg.app) {
     const repo = path.resolve(sourceDir, '../../..');
     const catalog = readJsonFile(path.join(repo, 'build/app-plugins/catalog.json'));
@@ -384,9 +384,7 @@ function bundleProductExtension(sourceDir, targetDir, runtimeRoot) {
   const entries = pkg.openclaw?.extensions;
   if (!Array.isArray(entries) || entries.length !== 1)
     throw new Error('Bundled product extension must have one entry');
-  require('esbuild').buildSync({
-    entryPoints: [path.resolve(sourceDir, entries[0])],
-    outfile: path.join(targetDir, 'index.js'),
+  const bundleOptions = {
     bundle: true,
     platform: 'node',
     format: 'esm',
@@ -402,7 +400,35 @@ function bundleProductExtension(sourceDir, targetDir, runtimeRoot) {
           },
         }
       : { packages: 'external' }),
+  };
+  require('esbuild').buildSync({
+    ...bundleOptions,
+    entryPoints: [path.resolve(sourceDir, entries[0])],
+    outfile: path.join(targetDir, 'index.js'),
   });
+  if (pkg.openclaw?.build?.bundleFromSource === true) {
+    // Catalogs/workers also import the package's pure SDK sources. Compile every
+    // declared entry before relocation, not only the normal registration entry.
+    const manifestPath = path.join(targetDir, 'openclaw.plugin.json');
+    const manifest = readJsonFile(manifestPath) ?? {};
+    const extraEntries = [manifest.capabilityCatalogEntry, ...(pkg.openclaw.build.workerEntries ?? [])];
+    for (const entry of extraEntries) {
+      if (typeof entry !== 'string' || !/\.(?:ts|mts|cts)$/.test(entry)) continue;
+      const source = path.resolve(sourceDir, entry);
+      const relative = path.relative(sourceDir, source);
+      if (!relative || relative.startsWith('..') || path.isAbsolute(relative) || path.isAbsolute(entry))
+        throw new Error('Invalid source-bundled extension entry');
+      const extension = entry.endsWith('.cts') ? '.cjs' : entry.endsWith('.mts') ? '.mjs' : '.js';
+      const output = entry.replace(/\.(?:ts|mts|cts)$/, extension);
+      require('esbuild').buildSync({ ...bundleOptions, format: extension === '.cjs' ? 'cjs' : 'esm', entryPoints: [source], outfile: path.resolve(targetDir, output) });
+      if (manifest.capabilityCatalogEntry === entry) manifest.capabilityCatalogEntry = output;
+      if (pkg.openclaw.build.workerEntries?.includes(entry))
+        pkg.openclaw.build.workerEntries = pkg.openclaw.build.workerEntries.map(candidate => candidate === entry ? output : candidate);
+      const stagedSource = path.resolve(targetDir, entry);
+      if (fs.existsSync(stagedSource)) fs.unlinkSync(stagedSource);
+    }
+    fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+  }
   if (isRuntimeServices && runtimeRoot)
     require('./managed-execution-profile.cjs').emitManagedExecutionProfile(runtimeRoot, targetDir);
   fs.writeFileSync(

@@ -2,9 +2,8 @@ import { Cog6ToothIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outl
 import { normalizeLocalSpeechExtensionSettings } from '@shared/speech/localSpeechExtensionSettings';
 import { LocalSpeechModelKind } from '@shared/speech/localSpeechModels';
 import {
-  getOnlineSpeechModelOptions,
-  getOnlineSpeechVoiceOptions,
-  resolveOnlineSpeechModel,
+  resolveOnlineSpeechBinding,
+  resolveOnlineSpeechVoiceSelection,
 } from '@shared/speech/onlineSpeechModels';
 import { type MouseEvent, useEffect, useState } from 'react';
 
@@ -45,15 +44,21 @@ export default function LocalSpeechExtensionSettingsButton({
   const online = (asr ? settings.sttMode : settings.ttsMode) === 'online';
   const reference = asr ? settings.onlineSttModelRef : settings.onlineTtsModelRef;
   const category = catalog?.[asr ? 'speech-recognition' : 'speech-synthesis'];
-  const selection = resolveOnlineSpeechModel(category, reference);
-  const onlineValid =
-    getOnlineSpeechModelOptions(category, { requireVoice: !asr, fileTranscription: asr }).some(
-      option => option.value === reference,
-    ) &&
+  const selection = resolveOnlineSpeechBinding(
+    category,
+    reference,
+    asr ? settings.onlineSttBindingId : settings.onlineTtsBindingId,
+    asr ? 'stt-tool' : 'tts',
+  );
+  const onlineValid = Boolean(
+    selection &&
     (asr ||
-      getOnlineSpeechVoiceOptions(selection?.model).some(
-        option => option.value === settings.onlineTtsVoice,
-      ));
+      resolveOnlineSpeechVoiceSelection(
+        selection.model,
+        selection.binding,
+        settings.onlineTtsVoiceSelection,
+      )),
+  );
   const status = models.statuses.find(model => model.kind === kind && model.id === modelId);
   const needsModel = online
     ? !onlineValid

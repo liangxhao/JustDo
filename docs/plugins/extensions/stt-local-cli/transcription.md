@@ -1,6 +1,8 @@
 # 附件转录工具合同
 
-`stt-local-cli` 保留唯一的 `transcribe_audio` 工具。显式 `mode: local` 使用已安装 Sherpa；`mode: online` 使用模型目录所配置 HTTP(S) 服务的 `/audio/transcriptions`，逐段提交 PCM 音频及所选模型。麦克风实时识别仍走 Talk WebSocket；仅有 WS(S) 地址的目录项不能作为附件转录服务，界面说明这一区别。两种模式均限制 256 MiB、一小时、一次一个转录，使用受限本地解码、有效 fsPolicy root/workspaceOnly 和 sandbox 准入；宿主应先把外部附件按其权限策略 staging 到当前项目再传入真实路径；插件不从消息文字授予文件权限。
+`stt-local-cli` 保留唯一的 `transcribe_audio` 工具。显式 `mode: local` 使用已安装 Sherpa；`mode: online` 使用宿主明确配置的 HTTP 转写协议、模型与服务。麦克风实时识别仍走 Talk WebSocket；仅有实时转录绑定或 WS(S) 地址的目录项不能作为附件服务。两种模式均限制 256 MiB、一小时、一次一个转录，使用受限本地解码、有效 fsPolicy root/workspaceOnly 和 sandbox 准入；宿主应先把外部附件按其权限策略 staging 到当前项目再传入真实路径；插件不从消息文字授予文件权限。
+
+在线模式支持 `openai-transcription-http`，向 `/audio/transcriptions` multipart 提交 WAV/model 和可选 language，读取完整 JSON 的 `text`。协议编解码复用纯 `speech-protocols` SDK；语言按通用转录字段传递，不增加供应商私有字段或限制。没有 SSE 消费或实时麦克风模拟。缺协议按既有 HTTP 转写语义处理，显式未知协议或废弃兼容字段拒绝执行，不清洗后降为默认。
 
 在线路径只请求显式配置的服务，可使用内网地址和无认证服务；不读取环境凭据、不添加公共默认服务，不跟随重定向，也不在失败时改用另一模型或本地路径。工具执行与每次发送前核对当前配置和调用权限，中止终止本地解码及在线请求并清理临时文件。
 
@@ -17,6 +19,8 @@
 
 ## 验证
 
-包内 `tests/tool.test.ts` 与 `tests/online.test.ts` 覆盖真实选中配置、原生 multipart／origin trust／零重定向、无认证服务、工作区限制、并发拒绝、撤权／取消和 busy 释放。测试工作区须提供匹配的 OpenClaw SDK 和平台解码依赖；单测不代表真实设备、真实内网服务或最终分发产物已验收。
+包内 `tests/tool.test.ts` 与 `tests/online.test.ts` 覆盖真实选中配置、标准 multipart、废弃协议/字段零请求、origin trust／零重定向、无认证服务、工作区限制、并发拒绝、撤权／取消和 busy 释放。测试工作区须提供匹配的 OpenClaw SDK 和平台解码依赖；单测不代表真实设备、真实内网服务或最终分发产物已验收。
+
+跨插件的[原生 SDK 探针](../tts-local-cli/synthesis.md#分发与验证)另用真实本机 HTTP 端点调用本插件的 `requestOnlineTranscription`，不替换网络或 SDK 响应读取。标准 multipart 校验文件名称/MIME、模型、语言与完整 WAV 字节；还覆盖错误 schema/HTTP、无 Content-Length 的超限响应，以及完整上传已被服务接收后的 AbortSignal 与真实断链。重定向目标是第二个本机端点，断言它未收到音频或 Authorization。合成返回和短 WAV 只证明接口与字节传输，不证明识别质量或完整解码链。
 
 宿主应另行验证附件 staging、fsPolicy／sandbox、配置轮换、缺失模型、损坏文件、256 MiB／一小时限制和取消后的进程／临时文件回收。来源与包目录见[插件说明](../../../../plugins/extensions/stt-local-cli/README.md)。

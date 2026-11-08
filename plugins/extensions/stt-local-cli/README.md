@@ -10,6 +10,12 @@ HTTP/SSRF SDK, trust only the configured origin, and reject redirects. There is
 no environment credential lookup, public endpoint default or alternate model
 fallback. A failed segment fails the complete transcription without a retry.
 
+Online requests use `protocolId: openai-transcription-http` for multipart
+`/audio/transcriptions` uploads and complete JSON text responses. Missing protocol
+retains this tool's legacy multipart meaning; unknown explicit protocols and
+removed configuration fields fail. File admission, cancellation and microphone
+selection remain independent of the configured service.
+
 Tool input: `{ "audio_path": "C:\\project\\meeting.mp3" }`.
 Local model assets must first be installed in model settings. The microphone enable
 switch is independent of this tool. The plugin can be disabled in Plugins.

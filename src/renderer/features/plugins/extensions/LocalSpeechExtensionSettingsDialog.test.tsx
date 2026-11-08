@@ -15,7 +15,11 @@ const { storedExtensions, storedOnlineProviders } = vi.hoisted(() => ({
   storedOnlineProviders: { value: {} as unknown },
 }));
 
-vi.mock('@/services/i18n', () => ({ i18nService: { t: (key: string) => key } }));
+vi.mock('@/services/i18n', () => ({
+  i18nService: {
+    t: (key: string) => (key === 'speechCurrentProtocol' ? 'Current interface: {protocol}' : key),
+  },
+}));
 vi.mock('@/services/config', () => ({
   configService: {
     getConfig: () => ({
@@ -74,6 +78,346 @@ afterEach(() => {
 });
 
 describe('extension speech model dialog', () => {
+  it.each(['asr', 'tts'] as const)(
+    'shows no interface control for %s without a selected model',
+    kind => {
+      storedExtensions.value = {
+        ...defaultLocalSpeechExtensionSettings,
+        sttMode: 'online',
+        ttsMode: 'online',
+      };
+      render(<LocalSpeechExtensionSettingsDialog kind={kind} onClose={close} />);
+      expect(screen.queryByRole('combobox', { name: 'speechProtocolType' })).toBeNull();
+      expect(document.getElementById('speech-extension-online-binding')).toBeNull();
+      expect(screen.queryByText(/Current interface:/)).toBeNull();
+      expect(screen.queryByText('speechConfigureInterfaceInModels')).toBeNull();
+      expect(screen.getByRole('button', { name: 'save' })).toHaveProperty('disabled', true);
+      expect(configService.updateConfig).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(['asr', 'tts'] as const)(
+    'preserves the saved legacy %s interface and voice when the same model is reselected and saved',
+    async kind => {
+      const asr = kind === 'asr';
+      storedExtensions.value = {
+        ...defaultLocalSpeechExtensionSettings,
+        sttMode: 'online',
+        ttsMode: 'online',
+        onlineSttModelRef: 'office/one',
+        onlineSttBindingId: 'saved-interface',
+        onlineTtsModelRef: 'office/one',
+        onlineTtsBindingId: 'saved-interface',
+        onlineTtsVoiceSelection: { kind: 'preset', voiceId: 'calm' },
+      };
+      storedOnlineProviders.value = {
+        [asr ? 'speech-recognition' : 'speech-synthesis']: {
+          providers: {
+            office: {
+              displayName: 'Office',
+              baseUrl: 'http://speech.lan/v1',
+              apiKey: '',
+              models: [
+                {
+                  id: 'one',
+                  name: 'one',
+                  voices: [{ id: 'calm', name: 'Calm' }],
+                  bindings: [
+                    {
+                      id: 'saved-interface',
+                      protocolId: asr ? 'openai-transcription-http' : 'openai-speech-http',
+                    },
+                  ],
+                },
+              ],
+            },
+          },
+        },
+      };
+      list.mockResolvedValue({ supported: false, models: [] });
+      render(<LocalSpeechExtensionSettingsDialog kind={kind} onClose={close} />);
+      expect(
+        screen.getByText(
+          `Current interface: ${asr ? 'speechProtocolRecorded' : 'speechProtocolSynthesis'}`,
+        ),
+      ).toBeTruthy();
+      expect(screen.queryByRole('combobox', { name: 'speechProtocolType' })).toBeNull();
+      fireEvent.click(
+        screen.getByRole('combobox', {
+          name: asr ? 'voiceRecognitionModel' : 'voiceSynthesisModel',
+        }),
+      );
+      fireEvent.click(screen.getByRole('option', { name: 'Office / one' }));
+      fireEvent.click(screen.getByRole('button', { name: 'save' }));
+      await waitFor(() => expect(close).toHaveBeenCalledOnce());
+      expect(configService.updateConfig).toHaveBeenCalledWith({
+        localSpeechExtensions: expect.objectContaining(
+          asr
+            ? { onlineSttModelRef: 'office/one', onlineSttBindingId: 'saved-interface' }
+            : {
+                onlineTtsModelRef: 'office/one',
+                onlineTtsBindingId: 'saved-interface',
+                onlineTtsVoiceSelection: { kind: 'preset', voiceId: 'calm' },
+              },
+        ),
+      });
+    },
+  );
+
+  it('shows the implicit legacy attachment interface without choosing the microphone realtime protocol', async () => {
+    storedExtensions.value = {
+      ...defaultLocalSpeechExtensionSettings,
+      sttMode: 'online',
+      onlineSttModelRef: 'office/one',
+    };
+    storedOnlineProviders.value = {
+      'speech-recognition': {
+        providers: {
+          office: {
+            displayName: 'Office',
+            baseUrl: 'http://speech.lan/v1',
+            apiKey: '',
+            models: [{ id: 'one', name: 'one' }],
+          },
+        },
+      },
+    };
+    render(<LocalSpeechExtensionSettingsDialog kind="asr" onClose={close} />);
+    expect(screen.getByText('Current interface: speechProtocolRecorded')).toBeTruthy();
+    expect(screen.queryByRole('combobox', { name: 'speechProtocolType' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'save' }));
+    await waitFor(() => expect(close).toHaveBeenCalledOnce());
+    expect(configService.updateConfig).toHaveBeenCalledWith({
+      localSpeechExtensions: expect.objectContaining({ onlineSttBindingId: '' }),
+    });
+  });
+
+  it('retains an unknown inherited interface ID when reselecting the same TTS model', () => {
+    storedExtensions.value = {
+      ...defaultLocalSpeechExtensionSettings,
+      ttsMode: 'online',
+      onlineTtsModelRef: 'office/one',
+      onlineTtsBindingId: 'deleted-interface',
+      onlineTtsVoiceSelection: { kind: 'preset', voiceId: 'calm' },
+    };
+    storedOnlineProviders.value = {
+      'speech-synthesis': {
+        providers: {
+          office: {
+            displayName: 'Office',
+            baseUrl: 'http://speech.lan/v1',
+            apiKey: '',
+            protocolId: 'openai-speech-http',
+            models: [{ id: 'one', name: 'one', voices: [{ id: 'calm', name: 'Calm' }] }],
+          },
+        },
+      },
+    };
+    const onManageModels = vi.fn();
+    render(
+      <LocalSpeechExtensionSettingsDialog
+        kind="tts"
+        onClose={close}
+        onManageModels={onManageModels}
+      />,
+    );
+    expect(screen.getByRole('alert').textContent).toBe('speechConfigureInterfaceInModels');
+    fireEvent.click(screen.getByRole('combobox', { name: 'voiceSynthesisModel' }));
+    fireEvent.click(screen.getByRole('option', { name: 'Office / one' }));
+    expect(screen.getByRole('button', { name: 'save' })).toHaveProperty('disabled', true);
+    expect(screen.getByRole('alert').textContent).toBe('speechConfigureInterfaceInModels');
+    expect(configService.updateConfig).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'speechManageModels' }));
+    expect(onManageModels).toHaveBeenCalled();
+  });
+
+  it('does not select the only legacy interface after changing the STT model', () => {
+    storedExtensions.value = {
+      ...defaultLocalSpeechExtensionSettings,
+      sttMode: 'online',
+      onlineSttModelRef: 'office/one',
+      onlineSttBindingId: 'saved-interface',
+    };
+    storedOnlineProviders.value = {
+      'speech-recognition': {
+        providers: {
+          office: {
+            displayName: 'Office',
+            baseUrl: 'http://speech.lan/v1',
+            apiKey: '',
+            models: ['one', 'two'].map(id => ({
+              id,
+              name: id,
+              bindings: [{ id: 'saved-interface', protocolId: 'openai-transcription-http' }],
+            })),
+          },
+        },
+      },
+    };
+    render(<LocalSpeechExtensionSettingsDialog kind="asr" onClose={close} />);
+    fireEvent.click(screen.getByRole('combobox', { name: 'voiceRecognitionModel' }));
+    fireEvent.click(screen.getByRole('option', { name: 'Office / two' }));
+    expect(screen.getByRole('alert').textContent).toBe('speechConfigureInterfaceInModels');
+    expect(screen.getByRole('button', { name: 'save' })).toHaveProperty('disabled', true);
+    expect(configService.updateConfig).not.toHaveBeenCalled();
+  });
+
+  it.each(['asr', 'tts'] as const)(
+    'inherits the provider interface for %s while saving its own model selection',
+    async kind => {
+      const asr = kind === 'asr';
+      storedExtensions.value = {
+        ...defaultLocalSpeechExtensionSettings,
+        ...(asr
+          ? { sttMode: 'online', onlineSttModelRef: 'office/one' }
+          : {
+              ttsMode: 'online',
+              onlineTtsModelRef: 'office/one',
+              onlineTtsVoiceSelection: { kind: 'preset', voiceId: 'calm' },
+            }),
+      };
+      storedOnlineProviders.value = {
+        [asr ? 'speech-recognition' : 'speech-synthesis']: {
+          providers: {
+            office: {
+              displayName: 'Office',
+              baseUrl: 'http://speech.lan/v1',
+              apiKey: '',
+              protocolId: asr ? 'openai-transcription-http' : 'openai-speech-http',
+              models: ['one', 'two'].map(id => ({
+                id,
+                name: id,
+                voices: [{ id: 'calm', name: 'Calm' }],
+              })),
+            },
+          },
+        },
+      };
+      list.mockResolvedValue({ supported: false, models: [] });
+      render(<LocalSpeechExtensionSettingsDialog kind={kind} onClose={close} />);
+      expect(screen.queryByRole('combobox', { name: 'speechProtocolType' })).toBeNull();
+      expect(
+        screen.getByText(
+          `Current interface: ${asr ? 'speechProtocolRecorded' : 'speechProtocolSynthesis'}`,
+        ),
+      ).toBeTruthy();
+      fireEvent.click(
+        screen.getByRole('combobox', {
+          name: asr ? 'voiceRecognitionModel' : 'voiceSynthesisModel',
+        }),
+      );
+      fireEvent.click(screen.getByRole('option', { name: 'Office / two' }));
+      if (!asr) {
+        fireEvent.click(screen.getByRole('combobox', { name: 'voiceSpeaker' }));
+        fireEvent.click(screen.getByRole('option', { name: 'Calm' }));
+      }
+      fireEvent.click(screen.getByRole('button', { name: 'save' }));
+      await waitFor(() => expect(close).toHaveBeenCalledOnce());
+      expect(configService.updateConfig).toHaveBeenCalledWith({
+        localSpeechExtensions: expect.objectContaining(
+          asr
+            ? {
+                sttMode: 'online',
+                sttModelId: defaultLocalSpeechExtensionSettings.sttModelId,
+                onlineSttModelRef: 'office/two',
+                onlineSttBindingId: 'provider',
+              }
+            : {
+                ttsMode: 'online',
+                ttsModelId: defaultLocalSpeechExtensionSettings.ttsModelId,
+                ttsVoiceId: defaultLocalSpeechExtensionSettings.ttsVoiceId,
+                onlineTtsModelRef: 'office/two',
+                onlineTtsBindingId: 'provider',
+                onlineTtsVoiceSelection: { kind: 'preset', voiceId: 'calm' },
+              },
+        ),
+      });
+      expect(install).not.toHaveBeenCalled();
+    },
+  );
+
+  it('retains an incompatible inherited STT selection without revealing a legacy interface or changing mode', () => {
+    storedExtensions.value = {
+      ...defaultLocalSpeechExtensionSettings,
+      sttMode: 'online',
+      onlineSttModelRef: 'office/one',
+      onlineSttBindingId: 'old-http',
+    };
+    storedOnlineProviders.value = {
+      'speech-recognition': {
+        providers: {
+          office: {
+            displayName: 'Office',
+            baseUrl: 'http://speech.lan/v1',
+            apiKey: '',
+            protocolId: 'openai-transcription-realtime',
+            models: [
+              {
+                id: 'one',
+                name: 'One',
+                bindings: [{ id: 'old-http', protocolId: 'openai-transcription-http' }],
+              },
+            ],
+          },
+        },
+      },
+    };
+    render(<LocalSpeechExtensionSettingsDialog kind="asr" onClose={close} />);
+    expect(screen.queryByRole('combobox', { name: 'speechProtocolType' })).toBeNull();
+    expect(screen.getByText('speechConfigureInterfaceInModels')).toBeTruthy();
+    expect(screen.getByRole('combobox', { name: 'voiceRecognitionMode' }).textContent).toBe(
+      'voiceRecognitionModeOnline',
+    );
+    expect((screen.getByRole('button', { name: 'save' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(configService.updateConfig).not.toHaveBeenCalled();
+  });
+
+  it('requires an explicit preset choice for a retired stored voice selection', async () => {
+    storedExtensions.value = {
+      ...defaultLocalSpeechExtensionSettings,
+      ttsMode: 'online',
+      onlineTtsModelRef: 'office/reader',
+      onlineTtsBindingId: 'provider',
+      onlineTtsVoice: 'voice-one',
+      onlineTtsVoiceSelection: { kind: 'service-default' },
+    };
+    storedOnlineProviders.value = {
+      'speech-synthesis': {
+        providers: {
+          office: {
+            displayName: 'Office',
+            baseUrl: 'http://speech.lan/v1',
+            apiKey: '',
+            protocolId: 'openai-speech-http',
+            models: [
+              { id: 'reader', name: 'Reader', voices: [{ id: 'voice-one', name: 'Voice One' }] },
+            ],
+          },
+        },
+      },
+    };
+    list.mockResolvedValue({ supported: false, models: [] });
+    render(<LocalSpeechExtensionSettingsDialog kind="tts" onClose={close} />);
+    expect(screen.getByRole('alert').textContent).toBe('speechOnlineVoiceUnavailable');
+    expect(screen.getByRole('button', { name: 'save' })).toHaveProperty('disabled', true);
+    expect(configService.updateConfig).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('combobox', { name: 'voiceSpeaker' }));
+    fireEvent.click(screen.getByRole('option', { name: 'Voice One' }));
+    fireEvent.click(screen.getByRole('button', { name: 'save' }));
+    await waitFor(() => expect(close).toHaveBeenCalledOnce());
+    expect(configService.updateConfig).toHaveBeenCalledWith({
+      localSpeechExtensions: {
+        ttsMode: 'online',
+        ttsModelId: defaultLocalSpeechExtensionSettings.ttsModelId,
+        ttsVoiceId: defaultLocalSpeechExtensionSettings.ttsVoiceId,
+        onlineTtsModelRef: 'office/reader',
+        onlineTtsBindingId: 'provider',
+        onlineTtsVoice: 'voice-one',
+        onlineTtsVoiceSelection: { kind: 'preset', voiceId: 'voice-one' },
+      },
+    });
+    expect(install).not.toHaveBeenCalled();
+  });
   it('opens model management without saving and follows shared download status until ready', async () => {
     const onManageModels = vi.fn();
     render(
@@ -102,7 +446,11 @@ describe('extension speech model dialog', () => {
       localSpeechExtensions: {
         ttsMode: 'local',
         onlineTtsModelRef: '',
+
+        onlineTtsBindingId: '',
         onlineTtsVoice: '',
+
+        onlineTtsVoiceSelection: null,
         ttsModelId: status.id,
         ttsVoiceId: defaultLocalSpeechExtensionSettings.ttsVoiceId,
       },
@@ -135,7 +483,11 @@ describe('extension speech model dialog', () => {
         localSpeechExtensions: {
           ttsMode: 'local',
           onlineTtsModelRef: '',
+
+          onlineTtsBindingId: '',
           onlineTtsVoice: '',
+
+          onlineTtsVoiceSelection: null,
           ttsModelId,
           ttsVoiceId,
         },
@@ -187,7 +539,11 @@ describe('extension speech model dialog', () => {
       localSpeechExtensions: {
         ttsMode: 'local',
         onlineTtsModelRef: '',
+
+        onlineTtsBindingId: '',
         onlineTtsVoice: '',
+
+        onlineTtsVoiceSelection: null,
         ...saved,
       },
     });
@@ -247,7 +603,11 @@ describe('extension speech model dialog', () => {
       localSpeechExtensions: {
         ttsMode: 'local',
         onlineTtsModelRef: '',
+
+        onlineTtsBindingId: '',
         onlineTtsVoice: '',
+
+        onlineTtsVoiceSelection: null,
         ttsModelId: LOCAL_TTS_MODEL_ID,
         ttsVoiceId: 3,
       },
@@ -273,7 +633,11 @@ describe('extension speech model dialog', () => {
       localSpeechExtensions: {
         ttsMode: 'local',
         onlineTtsModelRef: '',
+
+        onlineTtsBindingId: '',
         onlineTtsVoice: '',
+
+        onlineTtsVoiceSelection: null,
         ttsModelId: LOCAL_TTS_MODEL_ID,
         ttsVoiceId: 102,
       },
@@ -333,6 +697,8 @@ describe('extension speech model dialog', () => {
       localSpeechExtensions: {
         sttMode: 'local',
         onlineSttModelRef: '',
+
+        onlineSttBindingId: '',
         sttModelId: 'sherpa-onnx-whisper-base',
       },
     });
@@ -416,8 +782,8 @@ describe('extension speech model dialog', () => {
                 id: 'speech',
                 name: 'Speech',
                 voices: [
-                  { id: ' echo ', name: ' Echo ' },
-                  { id: 'echo', name: 'Duplicate' },
+                  { id: ' voice-two ', name: ' Voice Two ' },
+                  { id: 'voice-two', name: 'Duplicate' },
                   { id: '', name: 'Invalid' },
                 ],
               },
@@ -439,11 +805,11 @@ describe('extension speech model dialog', () => {
     fireEvent.click(screen.getByRole('combobox', { name: 'voiceSynthesisMode' }));
     fireEvent.click(screen.getByRole('option', { name: 'voiceSynthesisModeOnline' }));
     fireEvent.click(screen.getByRole('combobox', { name: 'voiceSynthesisModel' }));
-    expect(screen.queryByRole('option', { name: 'Office / Empty' })).toBeNull();
+    expect(screen.getByRole('option', { name: 'Office / Empty' })).toBeTruthy();
     fireEvent.click(screen.getByRole('option', { name: 'Office / Speech' }));
     fireEvent.click(screen.getByRole('combobox', { name: 'voiceSpeaker' }));
     expect(screen.getAllByRole('option')).toHaveLength(2);
-    fireEvent.click(screen.getByRole('option', { name: 'Echo' }));
+    fireEvent.click(screen.getByRole('option', { name: 'Voice Two' }));
     expect(configService.updateConfig).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: 'speechManageModels' }));
     expect(onManageModels).toHaveBeenCalledExactlyOnceWith('tts', {
@@ -466,10 +832,10 @@ describe('extension speech model dialog', () => {
         onManageModels={onManageModels}
       />,
     );
-    expect(screen.getByRole('combobox', { name: 'voiceSpeaker' }).textContent).toBe('Echo');
+    expect(screen.getByRole('combobox', { name: 'voiceSpeaker' }).textContent).toBe('Voice Two');
     fireEvent.click(screen.getByRole('combobox', { name: 'voiceSynthesisModel' }));
     fireEvent.click(screen.getByRole('option', { name: 'Office / Speech' }));
-    expect(screen.getByRole('combobox', { name: 'voiceSpeaker' }).textContent).toBe('Echo');
+    expect(screen.getByRole('combobox', { name: 'voiceSpeaker' }).textContent).toBe('Voice Two');
     fireEvent.click(screen.getByRole('button', { name: 'save' }));
     await waitFor(() => expect(close).toHaveBeenCalledOnce());
     expect(configService.updateConfig).toHaveBeenCalledExactlyOnceWith({
@@ -478,7 +844,11 @@ describe('extension speech model dialog', () => {
         ttsModelId: LOCAL_TTS_MODEL_ID,
         ttsVoiceId: 3,
         onlineTtsModelRef: 'office/speech',
-        onlineTtsVoice: 'echo',
+
+        onlineTtsBindingId: '',
+        onlineTtsVoice: 'voice-two',
+
+        onlineTtsVoiceSelection: { kind: 'preset', voiceId: 'voice-two' },
       },
     });
     expect(install).not.toHaveBeenCalled();
@@ -519,6 +889,8 @@ describe('extension speech model dialog', () => {
         sttMode: 'online',
         sttModelId: defaultLocalSpeechExtensionSettings.sttModelId,
         onlineSttModelRef: 'files/asr',
+
+        onlineSttBindingId: '',
       },
     });
   });
@@ -528,13 +900,17 @@ describe('extension speech model dialog', () => {
       ...defaultLocalSpeechExtensionSettings,
       ttsMode: 'online',
       onlineTtsModelRef: 'office/speech',
-      onlineTtsVoice: 'echo',
+
+      onlineTtsBindingId: '',
+      onlineTtsVoice: 'voice-two',
+
+      onlineTtsVoiceSelection: { kind: 'preset', voiceId: 'voice-two' },
     };
     const provider = {
       displayName: 'Office',
       baseUrl: 'http://speech.lan/v1',
       apiKey: '',
-      models: [{ id: 'speech', name: 'Speech', voices: [{ id: 'echo', name: 'Echo' }] }],
+      models: [{ id: 'speech', name: 'Speech', voices: [{ id: 'voice-two', name: 'Voice Two' }] }],
     };
     storedOnlineProviders.value = { 'speech-synthesis': { providers: { office: provider } } };
     render(<LocalSpeechExtensionSettingsDialog kind="tts" onClose={close} />);
@@ -572,7 +948,11 @@ describe('extension speech model dialog', () => {
       ttsVoiceId: 102,
       ttsMode: 'online',
       onlineTtsModelRef: 'office/speech',
-      onlineTtsVoice: 'echo',
+
+      onlineTtsBindingId: '',
+      onlineTtsVoice: 'voice-two',
+
+      onlineTtsVoiceSelection: { kind: 'preset', voiceId: 'voice-two' },
     };
     storedOnlineProviders.value = {
       'speech-synthesis': {
@@ -581,7 +961,9 @@ describe('extension speech model dialog', () => {
             displayName: 'Office',
             baseUrl: 'http://speech.lan/v1',
             apiKey: '',
-            models: [{ id: 'speech', name: 'Speech', voices: [{ id: 'echo', name: 'Echo' }] }],
+            models: [
+              { id: 'speech', name: 'Speech', voices: [{ id: 'voice-two', name: 'Voice Two' }] },
+            ],
           },
         },
       },
@@ -592,7 +974,7 @@ describe('extension speech model dialog', () => {
     expect(screen.getByRole('combobox', { name: 'voiceSpeaker' }).textContent).toContain('zm_100');
     fireEvent.click(screen.getByRole('combobox', { name: 'voiceSynthesisMode' }));
     fireEvent.click(screen.getByRole('option', { name: 'voiceSynthesisModeOnline' }));
-    expect(screen.getByRole('combobox', { name: 'voiceSpeaker' }).textContent).toBe('Echo');
+    expect(screen.getByRole('combobox', { name: 'voiceSpeaker' }).textContent).toBe('Voice Two');
     fireEvent.click(screen.getByRole('button', { name: 'cancel' }));
     expect(configService.updateConfig).not.toHaveBeenCalled();
   });
@@ -602,7 +984,11 @@ describe('extension speech model dialog', () => {
       ...defaultLocalSpeechExtensionSettings,
       ttsMode: 'online',
       onlineTtsModelRef: 'office/first',
-      onlineTtsVoice: 'echo',
+
+      onlineTtsBindingId: '',
+      onlineTtsVoice: 'voice-two',
+
+      onlineTtsVoiceSelection: { kind: 'preset', voiceId: 'voice-two' },
     };
     storedOnlineProviders.value = {
       'speech-synthesis': {
@@ -612,8 +998,12 @@ describe('extension speech model dialog', () => {
             baseUrl: 'http://speech.lan/v1',
             apiKey: '',
             models: [
-              { id: 'first', name: 'First', voices: [{ id: 'echo', name: 'Echo' }] },
-              { id: 'second', name: 'Second', voices: [{ id: 'nova', name: 'Nova' }] },
+              { id: 'first', name: 'First', voices: [{ id: 'voice-two', name: 'Voice Two' }] },
+              {
+                id: 'second',
+                name: 'Second',
+                voices: [{ id: 'voice-three', name: 'Voice Three' }],
+              },
             ],
           },
         },
@@ -627,8 +1017,8 @@ describe('extension speech model dialog', () => {
     );
     expect((screen.getByRole('button', { name: 'save' }) as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(screen.getByRole('combobox', { name: 'voiceSpeaker' }));
-    expect(screen.queryByRole('option', { name: 'Echo' })).toBeNull();
-    fireEvent.click(screen.getByRole('option', { name: 'Nova' }));
+    expect(screen.queryByRole('option', { name: 'Voice Two' })).toBeNull();
+    fireEvent.click(screen.getByRole('option', { name: 'Voice Three' }));
     expect((screen.getByRole('button', { name: 'save' }) as HTMLButtonElement).disabled).toBe(
       false,
     );
@@ -640,6 +1030,8 @@ describe('extension speech model dialog', () => {
       ...defaultLocalSpeechExtensionSettings,
       sttMode: 'online',
       onlineSttModelRef: 'realtime/asr',
+
+      onlineSttBindingId: '',
     };
     storedOnlineProviders.value = {
       'speech-recognition': {

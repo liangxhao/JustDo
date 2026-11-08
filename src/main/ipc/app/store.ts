@@ -6,12 +6,7 @@ import {
   mergeLocalSpeechExtensionSettingsPatch,
   reconcileLocalSpeechExtensionCatalog,
 } from '../../../shared/speech/localSpeechExtensionSettings';
-import { normalizeLocalSpeechSettings } from '../../../shared/speech/localSpeechSettings';
-import {
-  getOnlineSpeechModelOptions,
-  getOnlineSpeechVoiceOptions,
-  resolveOnlineSpeechModel,
-} from '../../../shared/speech/onlineSpeechModels';
+import { reconcileLocalSpeechCatalog } from '../../../shared/speech/localSpeechSettings';
 import { enqueueAppConfigUpdate } from '../../data/appConfigUpdateQueue';
 import type { SqliteStore } from '../../data/sqliteStore';
 
@@ -101,29 +96,11 @@ export const registerStoreHandlers = ({
           previous?.localSpeechExtensions,
           categories,
         );
-        const voice = normalizeLocalSpeechSettings(next.voice);
-        const ttsExists = getOnlineSpeechModelOptions(categories.tts, {
-          requireHttp: true,
-        }).some(option => option.value === voice.onlineTtsModelRef);
-        const selectedTts = ttsExists
-          ? resolveOnlineSpeechModel(categories.tts, voice.onlineTtsModelRef)
-          : null;
-        next.voice = {
-          ...voice,
-          onlineAsrModelRef: getOnlineSpeechModelOptions(categories.stt).some(
-            option => option.value === voice.onlineAsrModelRef,
-          )
-            ? voice.onlineAsrModelRef
-            : '',
-          onlineTtsModelRef: selectedTts ? voice.onlineTtsModelRef : '',
-          onlineTtsVoice:
-            selectedTts &&
-            getOnlineSpeechVoiceOptions(selectedTts.model).some(
-              option => option.value === voice.onlineTtsVoice,
-            )
-              ? voice.onlineTtsVoice
-              : '',
-        };
+        next.voice = reconcileLocalSpeechCatalog(next.voice, {
+          recognition: categories.stt,
+          synthesis: categories.tts,
+          realtime: catalogs?.['realtime-voice'],
+        });
       }
       if ('localSpeechExtensions' in patch) {
         next.localSpeechExtensions = mergeLocalSpeechExtensionSettingsPatch(

@@ -13,6 +13,7 @@ type RuntimeAppConfig = {
     video?: unknown;
     'speech-recognition'?: unknown;
     'speech-synthesis'?: unknown;
+    'realtime-voice'?: unknown;
   };
   localSpeechExtensions?: unknown;
   language?: unknown;
@@ -32,6 +33,7 @@ export const getOpenClawAppConfigSignature = (config: unknown): string => {
     nativeVideoModels: appConfig.onlineModelProviders?.video,
     recognitionModels: appConfig.onlineModelProviders?.['speech-recognition'],
     synthesisModels: appConfig.onlineModelProviders?.['speech-synthesis'],
+    realtimeModels: appConfig.onlineModelProviders?.['realtime-voice'],
     localSpeechExtensions: normalizeLocalSpeechExtensionSettings(appConfig.localSpeechExtensions),
     // Match Main's language projection so persisting the initial Chinese
     // preference does not reapply an already equivalent Gateway configuration.
@@ -46,8 +48,15 @@ export const getOpenClawAppConfigSignature = (config: unknown): string => {
       speechRate: voice.speechRate,
       synthesisThreads: voice.synthesisThreads,
       onlineAsrModelRef: voice.onlineAsrModelRef,
+      onlineAsrBindingId: voice.onlineAsrBindingId,
       onlineTtsModelRef: voice.onlineTtsModelRef,
       onlineTtsVoice: voice.onlineTtsVoice,
+      onlineTtsBindingId: voice.onlineTtsBindingId,
+      onlineTtsVoiceSelection: voice.onlineTtsVoiceSelection,
+      realtimeEnabled: voice.realtimeEnabled,
+      realtimeModelRef: voice.realtimeModelRef,
+      realtimeBindingId: voice.realtimeBindingId,
+      realtimeVoiceSelection: voice.realtimeVoiceSelection,
     },
   });
 };

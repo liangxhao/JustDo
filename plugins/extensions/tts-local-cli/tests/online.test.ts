@@ -2,20 +2,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { readOnlineSpeechConfig, synthesizeOnlineSpeech } from '../online';
 
-const http = vi.hoisted(() => ({ fetch: vi.fn(), release: vi.fn(), read: vi.fn(), ok: vi.fn() }));
-vi.mock('openclaw/plugin-sdk/provider-http', () => ({
-  resolveProviderHttpRequestConfig: (input: { baseUrl: string; defaultHeaders: HeadersInit }) => ({
-    baseUrl: input.baseUrl,
-    headers: new Headers(input.defaultHeaders),
-  }),
-  assertOkOrThrowHttpError: (...args: unknown[]) => http.ok(...args),
-  readProviderBinaryResponse: (...args: unknown[]) => http.read(...args),
-}));
-vi.mock('openclaw/plugin-sdk/ssrf-runtime', () => ({
-  ssrfPolicyFromHttpBaseUrlAllowedOrigin: (baseUrl: string) => ({
-    allowedOrigins: [new URL(baseUrl).origin],
-  }),
-  fetchWithSsrFGuard: (...args: unknown[]) => http.fetch(...args),
+const native = vi.hoisted(() => ({ get: vi.fn(), configured: vi.fn(), synthesize: vi.fn() }));
+vi.mock('openclaw/plugin-sdk/speech-core', () => ({
+  getSpeechProvider: (...args: unknown[]) => native.get(...args),
 }));
 const config = {
   mode: 'online',
@@ -23,63 +12,101 @@ const config = {
   model: 'company-tts',
   speakerVoice: 'voice-42',
 };
-afterEach(() => {
-  vi.clearAllMocks();
+const request = () => ({
+  text: 'read this',
+  providerConfig: config,
+  cfg: {},
+  timeoutMs: 5000,
+  target: 'audio-file' as const,
 });
-function request(target: 'audio-file' | 'voice-note' = 'audio-file') {
-  return { text: 'read this', providerConfig: config, cfg: {}, timeoutMs: 5000, target };
+afterEach(() => vi.resetAllMocks());
+function adapter() {
+  native.configured.mockReturnValue(true);
+  native.get.mockReturnValue({
+    id: 'openai',
+    isConfigured: native.configured,
+    synthesize: native.synthesize,
+  });
+  native.synthesize.mockResolvedValue({
+    audioBuffer: Buffer.from('audio'),
+    outputFormat: 'mp3',
+    fileExtension: '.mp3',
+    voiceCompatible: false,
+  });
 }
 
-describe('configured online speech', () => {
+describe('configured online tool speech', () => {
   it('requires an explicit endpoint/model/voice and resolved key', () => {
     expect(readOnlineSpeechConfig(config).apiKey).toBe('');
     for (const value of [
       { mode: 'online' },
       { ...config, model: '' },
       { ...config, speakerVoice: '' },
+      { ...config, voicePolicy: null },
       { ...config, baseUrl: 'http://host/?key=secret' },
       { ...config, apiKey: { source: 'file' } },
+      { ...config, protocolId: 'chat-audio-speech' },
     ])
       expect(() => readOnlineSpeechConfig(value)).toThrow();
   });
-  it('sends the configured voice without requiring an API key and never follows redirects', async () => {
-    http.fetch.mockResolvedValue({ response: new Response(), release: http.release });
-    http.read.mockResolvedValue(Buffer.from('audio'));
-    expect(await synthesizeOnlineSpeech(request())).toMatchObject({
-      audioBuffer: Buffer.from('audio'),
-      outputFormat: 'mp3',
-      fileExtension: '.mp3',
-      voiceCompatible: false,
+  it('delegates through the public native registry with isolated tool settings', async () => {
+    adapter();
+    expect(await synthesizeOnlineSpeech(request())).toMatchObject({ outputFormat: 'mp3' });
+    expect(native.get).toHaveBeenCalledWith('openai', {});
+    expect(native.synthesize).toHaveBeenCalledOnce();
+    expect(native.synthesize.mock.calls[0][0]).toMatchObject({
+      ...request(),
+      providerConfig: {
+        ...config,
+        protocolId: 'openai-speech-http',
+        voicePolicy: 'preset',
+        voiceSelection: { kind: 'preset', voiceId: 'voice-42' },
+        apiKey: '',
+      },
     });
-    const sent = http.fetch.mock.calls[0][0];
-    expect(sent).toMatchObject({
-      url: 'https://speech.intranet/v1/audio/speech',
-      mode: 'strict',
-      maxRedirects: 0,
-      timeoutMs: 5000,
-      policy: { allowedOrigins: ['https://speech.intranet'] },
-    });
-    expect(sent.init.headers.has('Authorization')).toBe(false);
-    expect(JSON.parse(sent.init.body)).toEqual({
-      model: 'company-tts',
-      voice: 'voice-42',
-      input: 'read this',
-      response_format: 'mp3',
-    });
-    expect(http.read.mock.calls[0][3]).toMatchObject({ maxBytes: 50 * 1024 * 1024 });
-    expect(http.release).toHaveBeenCalledOnce();
   });
-  it('requests Opus for voice notes and releases errors without retry', async () => {
-    http.fetch.mockResolvedValue({ response: new Response(), release: http.release });
-    http.read.mockResolvedValue(Buffer.from('audio'));
-    expect(await synthesizeOnlineSpeech(request('voice-note'))).toMatchObject({
-      outputFormat: 'opus',
-      fileExtension: '.ogg',
-      voiceCompatible: true,
-    });
-    http.ok.mockRejectedValueOnce(new Error('unavailable'));
+  it('does not delegate without an explicit model, endpoint, voice or resolved credential', async () => {
+    adapter();
+    for (const fields of [
+      { model: undefined },
+      { model: '\ncustom-model' },
+      { baseUrl: undefined },
+      { speakerVoice: undefined },
+      { speakerVoice: '\ncustom-voice' },
+      { apiKey: { source: 'file' } },
+    ]) {
+      await expect(
+        synthesizeOnlineSpeech({
+          ...request(),
+          providerConfig: { ...config, ...fields },
+        }),
+      ).rejects.toThrow();
+    }
+    expect(native.get).not.toHaveBeenCalled();
+    expect(native.synthesize).not.toHaveBeenCalled();
+  });
+  it('rejects retired fields and default voice selection before native delegation', async () => {
+    adapter();
+    for (const fields of [
+      { protocolId: 'chat-audio-speech' },
+      { compatibilityProfile: 'removed' },
+      { protocolId: 'openai-speech-http', compatibilityProfile: undefined },
+      { voiceSelection: { kind: 'service-default' } },
+    ]) {
+      const providerConfig = { ...config, ...fields };
+      expect(() => readOnlineSpeechConfig(providerConfig)).toThrow();
+      await expect(synthesizeOnlineSpeech({ ...request(), providerConfig })).rejects.toThrow();
+    }
+    expect(native.get).not.toHaveBeenCalled();
+    expect(native.synthesize).not.toHaveBeenCalled();
+  });
+  it('refuses unavailable adapters without fallback', async () => {
+    adapter();
+    native.get.mockReturnValueOnce(undefined);
     await expect(synthesizeOnlineSpeech(request())).rejects.toThrow('unavailable');
-    expect(http.fetch).toHaveBeenCalledTimes(2);
-    expect(http.release).toHaveBeenCalledTimes(2);
+    expect(native.synthesize).not.toHaveBeenCalled();
+    native.synthesize.mockRejectedValueOnce(new Error('synthesis rejected'));
+    await expect(synthesizeOnlineSpeech(request())).rejects.toThrow('rejected');
+    expect(native.synthesize).toHaveBeenCalledOnce();
   });
 });

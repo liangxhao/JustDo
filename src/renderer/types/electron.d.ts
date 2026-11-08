@@ -1342,6 +1342,8 @@ interface IElectronAPI {
     ) => Promise<import('../../shared/speech/localAsr').LocalAsrTranscribeResult>;
   };
   onlineAsr: {
+    transcribe: (request: import('../../shared/speech/onlineAsr').OnlineAsrTranscribeRequest) => Promise<import('../../shared/speech/onlineAsr').OnlineAsrTranscribeResult>;
+    cancelTranscription: (requestId: string) => Promise<void>;
     getStatus: () => Promise<import('../../shared/speech/onlineAsr').OnlineAsrStatus>;
     getConfiguration: () => Promise<import('../../shared/speech/onlineAsr').OnlineAsrConfiguration>;
     saveConfiguration: (
@@ -1365,6 +1367,7 @@ interface IElectronAPI {
     ) => Promise<void>;
     clearConfiguration: () => Promise<void>;
   };
+  realtimeVoice: import('../../shared/speech/realtimeVoice').RealtimeVoiceBridge;
   speechSynthesis: {
     speak: (
       text: string,

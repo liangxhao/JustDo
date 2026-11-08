@@ -28,7 +28,10 @@ import {
   defaultLocalSpeechSettings,
   type LocalSpeechSettings,
 } from '@shared/speech/localSpeechSettings';
-import type { OnlineModelConfig } from '@shared/speech/onlineSpeechModels';
+import type {
+  OnlineModelConfig,
+  OnlineSpeechProviderProtocol,
+} from '@shared/speech/onlineSpeechModels';
 export type { OnlineModelConfig, OnlineModelVoiceConfig } from '@shared/speech/onlineSpeechModels';
 
 import { type AppearanceConfig, defaultAppearanceConfig } from '@/app/appearance';
@@ -91,7 +94,7 @@ export interface AppConfig {
   };
   onlineModelProviders?: Partial<
     Record<
-      'speech-recognition' | 'speech-synthesis' | 'image' | 'video' | 'decision',
+      'speech-recognition' | 'speech-synthesis' | 'realtime-voice' | 'image' | 'video' | 'decision',
       {
         defaultProviderId?: string;
         providers: Record<
@@ -101,6 +104,7 @@ export interface AppConfig {
             nativeVideoProvider?: import('@shared/providers/nativeVideoProviders').NativeVideoProviderId;
             baseUrl: string;
             apiKey: string;
+            protocolId?: OnlineSpeechProviderProtocol['protocolId'];
             defaultModel?: string;
             models: OnlineModelConfig[];
           }

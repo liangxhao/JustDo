@@ -1,32 +1,16 @@
+import {
+  buildSpeechRequest,
+  normalizeSpeechServiceBaseUrl,
+  parseSpeechResponse,
+  resolveSpeechProtocolSelection,
+  resolveSpeechVoiceSelection,
+  SPEECH_PROTOCOL_IDS,
+  type SpeechProtocolId,
+  type SpeechVoicePolicy,
+  type SpeechVoiceSelection,
+} from '../../sdk/speech-protocols/index.js';
 import { requireServiceBaseUrl } from './intranet-config.js';
-export const DEFAULT_OPENAI_BASE_URL = 'https://api.openai.com/v1';
 const DEFAULT_TTS_MAX_BYTES = 16 * 1024 * 1024;
-
-export const OPENAI_TTS_MODELS = [
-  'gpt-4o-mini-tts',
-  'gpt-4o-mini-tts-2025-12-15',
-  'tts-1',
-  'tts-1-hd',
-] as const;
-
-export const OPENAI_TTS_VOICES = [
-  'alloy',
-  'ash',
-  'ballad',
-  'cedar',
-  'coral',
-  'echo',
-  'fable',
-  'juniper',
-  'marin',
-  'onyx',
-  'nova',
-  'sage',
-  'shimmer',
-  'verse',
-] as const;
-
-type OpenAiTtsVoice = (typeof OPENAI_TTS_VOICES)[number];
 
 export function normalizeOpenAITtsBaseUrl(baseUrl?: string): string {
   const trimmed = baseUrl?.trim();
@@ -36,120 +20,62 @@ export function normalizeOpenAITtsBaseUrl(baseUrl?: string): string {
   return trimmed.replace(/\/+$/, '');
 }
 
-export function isCustomOpenAITtsBaseUrl(baseUrl?: string): boolean {
-  return normalizeOpenAITtsBaseUrl(baseUrl) !== DEFAULT_OPENAI_BASE_URL;
+export function isValidOpenAISpeechIdentifier(value: unknown): value is string {
+  return typeof value === 'string' && Boolean(value.trim()) && value.length <= 256 &&
+    !/[\u0000-\u001f\u007f]/.test(value);
 }
 
-export function isValidOpenAIModel(model: string, baseUrl?: string): boolean {
-  if (isCustomOpenAITtsBaseUrl(baseUrl)) {
-    return true;
-  }
-  return OPENAI_TTS_MODELS.some(candidate => candidate === model);
-}
-
-export function isValidOpenAIVoice(voice: string, baseUrl?: string): voice is OpenAiTtsVoice {
-  if (isCustomOpenAITtsBaseUrl(baseUrl)) {
-    return true;
-  }
-  return OPENAI_TTS_VOICES.some(candidate => candidate === voice);
-}
-
-function resolveOpenAITtsInstructions(
-  model: string,
-  instructions?: string,
-  baseUrl?: string,
-): string | undefined {
-  const next = instructions?.trim();
-  if (!next) {
-    return undefined;
-  }
-  if (baseUrl !== undefined && isCustomOpenAITtsBaseUrl(baseUrl)) {
-    return next;
-  }
-  return model.includes('gpt-4o-mini-tts') ? next : undefined;
-}
-
-function sanitizeExtraBodyRecord(value: Record<string, unknown>): Record<string, unknown> {
-  const sanitized: Record<string, unknown> = {};
-  for (const [key, entry] of Object.entries(value)) {
-    if (key === '__proto__' || key === 'constructor' || key === 'prototype') {
-      continue;
-    }
-    sanitized[key] = entry;
-  }
-  return sanitized;
-}
-
-export async function openaiTTS({
-  text,
-  apiKey,
-  baseUrl,
-  model,
-  voice,
-  speed,
-  instructions,
-  responseFormat,
-  extraBody,
-  timeoutMs,
-  maxBytes = DEFAULT_TTS_MAX_BYTES,
-}: {
+export async function openaiTTS(options: {
   text: string;
   apiKey: string;
   baseUrl: string;
   model: string;
-  voice: string;
+  voice?: string;
   speed?: number;
   instructions?: string;
   responseFormat: 'mp3' | 'opus' | 'pcm' | 'wav';
   extraBody?: Record<string, unknown>;
   timeoutMs: number;
   maxBytes?: number;
+  protocolId?: SpeechProtocolId;
+  voicePolicy?: SpeechVoicePolicy;
+  voiceSelection?: SpeechVoiceSelection;
 }): Promise<Buffer> {
+  const selection = resolveSpeechProtocolSelection(options, 'speech', SPEECH_PROTOCOL_IDS.SPEECH_HTTP);
+  let { baseUrl } = options;
+  const { text, apiKey, model, voice, speed, instructions, responseFormat, extraBody, timeoutMs,
+    maxBytes = DEFAULT_TTS_MAX_BYTES, voicePolicy, voiceSelection } = options;
+  if (typeof apiKey !== 'string' || apiKey.length > 16384 || /[\r\n\0]/.test(apiKey))
+    throw new Error('The speech credential has not been resolved.');
   baseUrl = requireServiceBaseUrl(baseUrl, 'Speech');
-  const effectiveInstructions = resolveOpenAITtsInstructions(model, instructions, baseUrl);
-
-  if (!isValidOpenAIModel(model, baseUrl)) {
-    throw new Error(`Invalid model: ${model}`);
-  }
-  if (!isValidOpenAIVoice(voice, baseUrl)) {
-    throw new Error(`Invalid voice: ${voice}`);
-  }
+  baseUrl = normalizeSpeechServiceBaseUrl(baseUrl, selection);
+  const selectedVoice = resolveSpeechVoiceSelection(voiceSelection, selection, voicePolicy, voice);
+  const plan = buildSpeechRequest({ selection, model, text, voiceSelection: selectedVoice, voicePolicy,
+    format: responseFormat, speed, instructions });
+  if (extraBody !== undefined)
+    throw new Error('Speech does not support arbitrary request fields.');
   const {
-    assertOkOrThrowProviderError,
+    assertOkOrThrowHttpError,
     readProviderBinaryResponse,
-    resolveProviderRequestHeaders,
+    resolveProviderHttpRequestConfig,
   } = await import('openclaw/plugin-sdk/provider-http');
-  const proxyCaptureSdk = await import('openclaw/plugin-sdk/proxy-capture');
-  // The shipped 2026.9.6 host lacks async diagnostics; remove optionality when the minimum advances.
-  const captureHost: Partial<Pick<typeof proxyCaptureSdk, 'captureHttpExchangeAsync'>> =
-    proxyCaptureSdk;
-  const { fetchWithSsrFGuard, ssrfPolicyFromHttpBaseUrlAllowedHostname } =
+  const { fetchWithSsrFGuard, ssrfPolicyFromHttpBaseUrlAllowedOrigin } =
     await import('openclaw/plugin-sdk/ssrf-runtime');
 
-  const requestHeaders = resolveProviderRequestHeaders({
+  const http = resolveProviderHttpRequestConfig({
     provider: 'openai',
     baseUrl,
+    defaultBaseUrl: baseUrl,
     capability: 'audio',
     transport: 'http',
     defaultHeaders: {
       ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
       'Content-Type': 'application/json',
     },
-  }) ?? {
-    ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
-    'Content-Type': 'application/json',
-  };
-  const requestBody = JSON.stringify({
-    model,
-    input: text,
-    voice,
-    response_format: responseFormat,
-    ...(speed != null && { speed }),
-    ...(effectiveInstructions != null && { instructions: effectiveInstructions }),
-    ...(extraBody == null ? {} : sanitizeExtraBodyRecord(extraBody)),
   });
-  const requestUrl = `${baseUrl}/audio/speech`;
-  const debugProxyFetchPatchInstalled = proxyCaptureSdk.isDebugProxyGlobalFetchPatchInstalled();
+  const requestHeaders = http.headers;
+  const requestBody = JSON.stringify(plan.body);
+  const requestUrl = `${http.baseUrl}${plan.path}`;
   const { response, release } = await fetchWithSsrFGuard({
     url: requestUrl,
     init: {
@@ -158,37 +84,22 @@ export async function openaiTTS({
       body: requestBody,
     },
     timeoutMs,
-    policy: ssrfPolicyFromHttpBaseUrlAllowedHostname(baseUrl),
+    policy: ssrfPolicyFromHttpBaseUrlAllowedOrigin(baseUrl),
+    dispatcherPolicy: http.dispatcherPolicy,
+    mode: 'strict',
+    maxRedirects: 0,
     capture: false,
-    pinDns: debugProxyFetchPatchInstalled ? false : undefined,
     auditContext: 'openai-tts',
   });
   try {
-    if (!debugProxyFetchPatchInstalled) {
-      // Finalization retains capture failures; observe the Promise returned by the SDK view.
-      void captureHost
-        .captureHttpExchangeAsync?.({
-          url: requestUrl,
-          method: 'POST',
-          requestHeaders,
-          requestBody,
-          response,
-          transport: 'http',
-          meta: {
-            provider: 'openai',
-            capability: 'tts',
-          },
-        })
-        .catch(() => {});
+    try {
+      await assertOkOrThrowHttpError(response, 'Speech synthesis failed', { requestHeaders });
+    } catch {
+      // Providers can echo submitted text/audio or credentials in error bodies.
+      throw new Error(`Speech synthesis failed (HTTP ${response.status}).`);
     }
-
-    await assertOkOrThrowProviderError(response, 'OpenAI TTS API error');
-
-    return await readProviderBinaryResponse(response, 'OpenAI TTS API error', 'audio', {
-      maxBytes,
-      onOverflow: ({ maxBytes: maxBytesLocal }) =>
-        new Error(`OpenAI TTS audio response exceeds ${maxBytesLocal} bytes`),
-    });
+    const result = await readProviderBinaryResponse(response, 'Speech synthesis failed', 'audio', { maxBytes, requestHeaders });
+    return Buffer.from(parseSpeechResponse(selection, result, maxBytes));
   } finally {
     await release();
   }

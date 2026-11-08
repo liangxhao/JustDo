@@ -9,13 +9,258 @@ import { i18nService } from '@/services/i18n';
 import * as localAudioCapture from '@/shared/audio/localAudioCapture';
 
 import { LocalSpeechInputButton } from './LocalSpeechInputButton';
+import { OnlineAsrAudioPump } from './onlineAudioCapture';
 
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe('LocalSpeechInputButton', () => {
+  it('keeps the new realtime capture active when a cancelled Stop closes late', async () => {
+    const config = configService.getConfig();
+    vi.spyOn(configService, 'getConfig').mockReturnValue({
+      ...config,
+      voice: {
+        ...config.voice,
+        inputEnabled: true,
+        recognitionMode: 'online',
+        inputSource: 'microphone',
+        meetingMode: false,
+      },
+    });
+    const track = () => ({ readyState: 'live', stop: vi.fn(), addEventListener: vi.fn() });
+    const oldTrack = track();
+    const nextTrack = track();
+    const stream = (audioTrack: typeof oldTrack) => ({
+      active: true,
+      getTracks: () => [audioTrack],
+      getAudioTracks: () => [audioTrack],
+    });
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: {
+        getUserMedia: vi
+          .fn()
+          .mockResolvedValueOnce(stream(oldTrack))
+          .mockResolvedValue(stream(nextTrack)),
+      },
+    });
+    vi.spyOn(OnlineAsrAudioPump.prototype, 'prepare').mockImplementation(() => {});
+    vi.spyOn(OnlineAsrAudioPump.prototype, 'start').mockResolvedValue(undefined);
+    vi.spyOn(OnlineAsrAudioPump.prototype, 'stop').mockImplementation(() => {});
+    let finishClose!: () => void;
+    const oldClose = new Promise<void>(resolve => {
+      finishClose = resolve;
+    });
+    const close = vi.fn((id: string) => (id === 'old-session' ? oldClose : Promise.resolve()));
+    let emit!: (event: import('@shared/speech/onlineAsr').OnlineAsrEvent) => void;
+    const session = (id: string) => ({
+      sessionId: `${id}-session`,
+      transcriptionSessionId: `${id}-transcription`,
+      provider: 'openai',
+      inputEncoding: 'g711_ulaw',
+      inputSampleRateHz: 8000,
+    });
+    Object.defineProperty(window, 'electron', {
+      configurable: true,
+      value: {
+        onlineAsr: {
+          getStatus: vi.fn().mockResolvedValue({ available: true, inputMode: 'realtime' }),
+          start: vi.fn().mockResolvedValueOnce(session('old')).mockResolvedValue(session('next')),
+          close,
+          onEvent: vi.fn(callback => {
+            emit = callback;
+            return () => {};
+          }),
+        },
+        localSpeechModels: { onChanged: vi.fn().mockReturnValue(() => {}) },
+      },
+    });
+    const onTranscript = vi.fn();
+    render(<LocalSpeechInputButton disabled={false} onTranscript={onTranscript} />);
+    fireEvent.click(await screen.findByRole('button', { name: i18nService.t('localAsrStart') }));
+    fireEvent.click(await screen.findByRole('button', { name: i18nService.t('localAsrStop') }));
+    await vi.waitFor(() => expect(close).toHaveBeenCalledWith('old-session'));
+    fireEvent.click(screen.getByRole('button', { name: i18nService.t('localAsrCancel') }));
+    fireEvent.click(await screen.findByRole('button', { name: i18nService.t('localAsrStart') }));
+    await screen.findByRole('button', { name: i18nService.t('localAsrStop') });
+    act(() =>
+      emit({
+        transcriptionSessionId: 'next-transcription',
+        type: 'partial',
+        text: 'new live words',
+      }),
+    );
+    await act(async () => {
+      finishClose();
+    });
+    act(() =>
+      emit({
+        transcriptionSessionId: 'old-transcription',
+        type: 'transcript',
+        text: 'stale words',
+        final: true,
+      }),
+    );
+    expect(screen.getByRole('button', { name: i18nService.t('localAsrStop') })).toBeTruthy();
+    expect(screen.getByRole('status').textContent).toBe('new live words');
+    expect(nextTrack.stop).not.toHaveBeenCalled();
+    expect(onTranscript).not.toHaveBeenCalled();
+  });
+
+  it.each(['stop', 'cancel-during-decode', 'cancel-during-upload'])(
+    'uses recorded HTTP speech with %s and protects the next capture',
+    async action => {
+      const cancel = action !== 'stop';
+      const config = configService.getConfig();
+      vi.spyOn(configService, 'getConfig').mockReturnValue({
+        ...config,
+        voice: {
+          ...config.voice,
+          inputEnabled: true,
+          recognitionMode: 'online',
+          meetingMode: false,
+          onlineAsrModelRef: 'private/recording',
+          onlineAsrBindingId: 'recorded',
+        },
+        onlineModelProviders: {
+          ...config.onlineModelProviders,
+          'speech-recognition': {
+            providers: {
+              private: {
+                displayName: 'Any compatible server',
+                baseUrl: 'http://speech.internal/v1',
+                apiKey: '',
+                models: [
+                  {
+                    id: 'recording',
+                    name: 'Recording',
+                    bindings: [{ id: 'recorded', protocolId: 'openai-transcription-http' }],
+                  },
+                ],
+              },
+            },
+          },
+        },
+      });
+      const track = { readyState: 'live', stop: vi.fn(), addEventListener: vi.fn() };
+      const stream = { active: true, getTracks: () => [track], getAudioTracks: () => [track] };
+      const nextTrack = { ...track, stop: vi.fn() };
+      const nextStream = {
+        active: true,
+        getTracks: () => [nextTrack],
+        getAudioTracks: () => [nextTrack],
+      };
+      Object.defineProperty(navigator, 'mediaDevices', {
+        configurable: true,
+        value: {
+          getUserMedia: vi.fn().mockResolvedValueOnce(stream).mockResolvedValue(nextStream),
+        },
+      });
+      class Recorder {
+        state = 'inactive';
+        ondataavailable: ((event: { data: Blob }) => void) | null = null;
+        onstop: (() => void) | null = null;
+        onerror = null;
+        start() {
+          this.state = 'recording';
+        }
+        stop() {
+          this.state = 'inactive';
+          this.ondataavailable?.({ data: new Blob(['recording']) });
+          this.onstop?.();
+        }
+      }
+      vi.stubGlobal('MediaRecorder', Recorder);
+      const wav = new Uint8Array([82, 73, 70, 70]);
+      let finishDecode!: (value: Uint8Array) => void;
+      const decode = vi.spyOn(localAudioCapture, 'recordedAudioToWav').mockImplementation(() =>
+        action === 'cancel-during-decode'
+          ? new Promise(resolve => {
+              finishDecode = resolve;
+            })
+          : Promise.resolve(wav),
+      );
+      let finish!: (value: { requestId: string; text: string }) => void;
+      const transcribe = vi.fn(request =>
+        cancel
+          ? new Promise(resolve => {
+              finish = resolve;
+            })
+          : Promise.resolve({ requestId: request.requestId, text: 'dictated words' }),
+      );
+      const cancelTranscription = vi.fn().mockResolvedValue(undefined);
+      const start = vi.fn();
+      const localTranscribe = vi.fn();
+      let engineChanged!: (value: OpenClawEngineStatus) => void;
+      Object.defineProperty(window, 'electron', {
+        configurable: true,
+        value: {
+          onlineAsr: {
+            getStatus: vi.fn().mockResolvedValue({ available: true, inputMode: 'recording' }),
+            transcribe,
+            cancelTranscription,
+            start,
+            onEvent: vi.fn().mockReturnValue(() => {}),
+          },
+          localAsr: { transcribe: localTranscribe },
+          localSpeechModels: { onChanged: vi.fn().mockReturnValue(() => {}) },
+          openclaw: {
+            engine: {
+              onProgress: vi.fn(callback => {
+                engineChanged = callback;
+                return () => {};
+              }),
+            },
+          },
+        },
+      });
+      const onTranscript = vi.fn();
+      render(<LocalSpeechInputButton disabled={false} onTranscript={onTranscript} />);
+      const microphone = await screen.findByRole('button', {
+        name: i18nService.t('localAsrStart'),
+      });
+      act(() => engineChanged({ phase: EnginePhase.Starting, canRetry: false, version: null }));
+      expect((microphone as HTMLButtonElement).disabled).toBe(false);
+      fireEvent.click(microphone);
+      fireEvent.click(await screen.findByRole('button', { name: i18nService.t('localAsrStop') }));
+      await vi.waitFor(() => expect(decode).toHaveBeenCalledOnce());
+      if (action !== 'cancel-during-decode')
+        await vi.waitFor(() => expect(transcribe).toHaveBeenCalledOnce());
+      const requestId = transcribe.mock.calls[0]?.[0].requestId;
+      if (cancel) {
+        fireEvent.click(screen.getByRole('button', { name: i18nService.t('localAsrCancel') }));
+        fireEvent.click(
+          await screen.findByRole('button', { name: i18nService.t('localAsrStart') }),
+        );
+        await screen.findByRole('button', { name: i18nService.t('localAsrStop') });
+        if (action === 'cancel-during-decode') {
+          await act(async () => {
+            finishDecode(wav);
+          });
+          expect(transcribe).not.toHaveBeenCalled();
+          expect(cancelTranscription).not.toHaveBeenCalled();
+        } else {
+          expect(cancelTranscription).toHaveBeenCalledWith(requestId);
+          await act(async () => {
+            finish({ requestId, text: 'late cancelled words' });
+          });
+        }
+        expect(screen.getByRole('button', { name: i18nService.t('localAsrStop') })).toBeTruthy();
+        expect(nextTrack.stop).not.toHaveBeenCalled();
+        expect(onTranscript).not.toHaveBeenCalled();
+      } else {
+        await vi.waitFor(() => expect(onTranscript).toHaveBeenCalledWith('dictated words'));
+        expect(cancelTranscription).not.toHaveBeenCalled();
+      }
+      expect(start).not.toHaveBeenCalled();
+      expect(localTranscribe).not.toHaveBeenCalled();
+      expect(track.stop).toHaveBeenCalled();
+    },
+  );
+
   it('refreshes online recognition after the engine starts and ignores stale readiness results', async () => {
     const currentConfig = configService.getConfig();
     vi.spyOn(configService, 'getConfig').mockReturnValue({
@@ -50,7 +295,13 @@ describe('LocalSpeechInputButton', () => {
       },
     });
     const { unmount } = render(<LocalSpeechInputButton disabled={false} onTranscript={vi.fn()} />);
-    expect(screen.queryByRole('button')).toBeNull();
+    expect(
+      (
+        screen.getByRole('button', {
+          name: i18nService.t('voiceInputUnavailable'),
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
 
     await act(async () => {
       engineChanged({ phase: EnginePhase.Running, canRetry: false, version: null });
@@ -63,7 +314,13 @@ describe('LocalSpeechInputButton', () => {
     expect(getStatus).toHaveBeenCalledTimes(2);
 
     act(() => engineChanged({ phase: EnginePhase.Starting, canRetry: false, version: null }));
-    expect(screen.queryByRole('button')).toBeNull();
+    expect(
+      (
+        screen.getByRole('button', {
+          name: i18nService.t('voiceInputUnavailable'),
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
     unmount();
     expect(unsubscribe).toHaveBeenCalledOnce();
   });
@@ -150,7 +407,7 @@ describe('LocalSpeechInputButton', () => {
     render(<LocalSpeechInputButton disabled={false} onTranscript={onTranscript} />);
     const microphone = await screen.findByRole('button', { name: i18nService.t('localAsrStart') });
     fireEvent.contextMenu(microphone);
-    fireEvent.click(screen.getByRole('menuitem'));
+    fireEvent.click(screen.getByRole('menuitem', { name: i18nService.t('voiceInputSourceFile') }));
     const file = new File(['audio'], 'recording.mp3', { type: 'audio/mpeg' });
     fireEvent.change(document.querySelector('input[type="file"]')!, { target: { files: [file] } });
     await vi.waitFor(() => expect(transcribe).toHaveBeenCalledTimes(1));
@@ -250,7 +507,13 @@ describe('LocalSpeechInputButton', () => {
     fireEvent.contextMenu(
       await screen.findByRole('button', { name: i18nService.t('localAsrStart') }),
     );
-    expect((screen.getByRole('menuitem') as HTMLButtonElement).disabled).toBe(true);
+    expect(
+      (
+        screen.getByRole('menuitem', {
+          name: i18nService.t('voiceInputSourceFile'),
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
     rerender(<LocalSpeechInputButton disabled onTranscript={vi.fn()} />);
     expect(screen.queryByRole('menu')).toBeNull();
   });

@@ -1,6 +1,6 @@
 # 剩余需求
 
-本目录仅保留运行计时终态证据和浏览器共存与同页接管两项计划。
+本目录保留运行计时终态证据、浏览器共存与同页接管、语音增量响应三项具体剩余工作。
 计划是候选方案或问题记录，不代表已排期或已经支持。
 
 ## 仍需处理的事项
@@ -11,6 +11,7 @@
 | ---- | ---- | ------------ | ------------- |
 | 1 | [运行计时终态证据](session-run-terminal-evidence.md) | 桌面计时仍以两次空闲、root 替换或宽松 `agent.wait` 结果结算；改为精确原生终态，证据不足保留未知 | 已确认代码缺口；先修正确性并改写旧规则测试 |
 | 2 | [浏览器共存与同页接管](browser-runtime-and-background-tasks.md) | 唯一工具门面及权限名过渡、Chrome 控制 grant、统一 WCV 页面宿主、后台页查看与停止后同页接管 | 候选设计；先验证 G0–G5，零新增/调整 OpenClaw patch |
+| 3 | [语音增量响应](speech-response-streaming.md) | HTTP ASR SSE、TTS 增量响应与有界播放；现行 HTTP 路径完整返回 | 未实施；先确认目标服务响应合同 |
 
 浏览器的[配套候选技术设计](browser-runtime-design.md)仍有未实施的权限与资源协议，
 不作为独立项目；保留其细节，实施门槛只在主计划维护。
@@ -19,6 +20,7 @@
 
 - **浏览器**：内置前后台执行、精确 run/toolCall 准入及 prepare/commit；见[浏览器设置](../features/browser/browser-settings-design.md)。同一网页前后台迁移仍未完成。
 - **外部执行回执**：只读 CLI/历史 app-server 会话已经跳过桌面观察结算；桌面其它会话的后备规则仍有缺口，见[执行引擎](../architecture/05-agent-engine.md)。
+- **语音**：四种通用接口、独立用途绑定和实时对话已接入，合同及验证限制见[通用语音接口](../features/speech/speech-protocols.md)；HTTP 增量响应仍未实现。
 
 ## 维护规则
 

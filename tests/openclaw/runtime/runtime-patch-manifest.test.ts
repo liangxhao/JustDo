@@ -1250,6 +1250,33 @@ module.exports = { applyPatch, verifyPatch };
     );
   });
 
+  test('binds speech protocol changes and removed consumer sources while excluding probes', () => {
+    const { repoRoot } = createFixture();
+    const speechSources = [
+      'plugins/sdk/speech-protocols/index.ts',
+      'plugins/extensions/stt-local-cli/online.ts',
+      'plugins/extensions/tts-local-cli/online.ts',
+      'plugins/extensions/runtime-services/speech.ts',
+    ].map(source => path.join(repoRoot, source));
+    for (const file of speechSources) {
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, '// original speech source\n');
+      expect(listBuildRecipeFiles(repoRoot)).toContain(file);
+    }
+    const original = buildOpenClawBuildRecipeFingerprint(repoRoot, 'v2026.6.11');
+    fs.appendFileSync(speechSources[0], '// changed protocol\n');
+    expect(buildOpenClawBuildRecipeFingerprint(repoRoot, 'v2026.6.11')).not.toBe(original);
+    fs.writeFileSync(speechSources[0], '// original speech source\n');
+    fs.unlinkSync(speechSources[1]);
+    expect(buildOpenClawBuildRecipeFingerprint(repoRoot, 'v2026.6.11')).not.toBe(original);
+    fs.writeFileSync(speechSources[1], '// original speech source\n');
+    const probe = path.join(repoRoot, 'plugins/sdk/speech-protocols/tests/native-probe.mjs');
+    fs.mkdirSync(path.dirname(probe), { recursive: true });
+    fs.writeFileSync(probe, '// verification only\n');
+    expect(listBuildRecipeFiles(repoRoot)).not.toContain(probe);
+    expect(buildOpenClawBuildRecipeFingerprint(repoRoot, 'v2026.6.11')).toBe(original);
+  });
+
   test('rejects a trusted Node CA preload producer changed after the runtime was built', () => {
     const { repoRoot, runtimeRoot } = createFixture();
     const certificateSource = path.join(repoRoot, 'src/main/core/network/trustedCertificates.ts');

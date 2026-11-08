@@ -323,8 +323,9 @@ describe('store IPC', () => {
       onlineTtsVoice: '',
     });
     expect(config.localSpeechExtensions).toMatchObject({
-      onlineTtsModelRef: '',
+      onlineTtsModelRef: 'internal/speech',
       onlineTtsVoice: '',
+      onlineTtsVoiceSelection: null,
     });
     expect(native.plugins).toMatchObject({
       entries: { 'runtime-services': { config: { replySpeech: null } } },

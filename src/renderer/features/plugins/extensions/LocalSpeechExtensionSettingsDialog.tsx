@@ -9,7 +9,9 @@ import {
 } from '@shared/speech/localTts';
 import {
   getOnlineSpeechModelOptions,
-  getOnlineSpeechVoiceOptions,
+  getOnlineSpeechVoiceSelectionOptions,
+  ONLINE_SPEECH_PROVIDER_BINDING_ID,
+  resolveOnlineSpeechBinding,
   resolveOnlineSpeechModel,
 } from '@shared/speech/onlineSpeechModels';
 import { useEffect, useRef, useState } from 'react';
@@ -17,6 +19,10 @@ import { createPortal } from 'react-dom';
 
 import { getLocalSpeechVoiceOptions } from '@/features/speech/localSpeechModelCatalog';
 import LocalSpeechModelStatusView from '@/features/speech/LocalSpeechModelStatusView';
+import {
+  getSpeechProtocolLabel,
+  getSpeechVoiceOptionValue,
+} from '@/features/speech/onlineSpeechPresentation';
 import type { SpeechModelCatalogTarget } from '@/features/speech/speechModelCatalogNavigation';
 import { useLocalSpeechModels } from '@/features/speech/useLocalSpeechModels';
 import { configService } from '@/services/config';
@@ -69,11 +75,24 @@ export default function LocalSpeechExtensionSettingsDialog({
     );
     return asr ? settings.onlineSttModelRef : settings.onlineTtsModelRef;
   });
-  const [onlineVoice, setOnlineVoice] = useState(
+  const [onlineVoiceSelection, setOnlineVoiceSelection] = useState(
     () =>
       normalizeLocalSpeechExtensionSettings(configService.getConfig().localSpeechExtensions)
-        .onlineTtsVoice,
+        .onlineTtsVoiceSelection,
   );
+  const [onlineVoiceUnavailable, setOnlineVoiceUnavailable] = useState(() => {
+    const raw = configService.getConfig().localSpeechExtensions;
+    return Boolean(
+      raw?.onlineTtsVoiceSelection &&
+      !normalizeLocalSpeechExtensionSettings(raw).onlineTtsVoiceSelection,
+    );
+  });
+  const [onlineBindingId, setOnlineBindingId] = useState(() => {
+    const settings = normalizeLocalSpeechExtensionSettings(
+      configService.getConfig().localSpeechExtensions,
+    );
+    return asr ? settings.onlineSttBindingId : settings.onlineTtsBindingId;
+  });
   const [catalog, setCatalog] = useState(() => configService.getConfig().onlineModelProviders);
   useEffect(() => {
     const refresh = () => setCatalog(configService.getConfig().onlineModelProviders);
@@ -83,22 +102,50 @@ export default function LocalSpeechExtensionSettingsDialog({
   }, [hidden]);
   const category = catalog?.[asr ? 'speech-recognition' : 'speech-synthesis'];
   const onlineOptions = getOnlineSpeechModelOptions(category, {
-    requireVoice: !asr,
-    fileTranscription: asr,
+    requireHttp: true,
+    purpose: asr ? 'stt-tool' : 'tts',
   });
-  const selectedOnlineModel = resolveOnlineSpeechModel(category, onlineModelRef);
-  const onlineVoiceOptions = getOnlineSpeechVoiceOptions(selectedOnlineModel?.model);
+  const selectedOnlineModel = resolveOnlineSpeechBinding(
+    category,
+    onlineModelRef,
+    onlineBindingId,
+    asr ? 'stt-tool' : 'tts',
+  );
+  const onlineModel = resolveOnlineSpeechModel(category, onlineModelRef);
+  const onlineVoiceOptions = getOnlineSpeechVoiceSelectionOptions(
+    selectedOnlineModel?.model,
+    selectedOnlineModel?.binding,
+  );
+  const onlineVoice =
+    getSpeechVoiceOptionValue(onlineVoiceOptions, onlineVoiceSelection) ||
+    (onlineVoiceSelection?.kind === 'preset'
+      ? JSON.stringify(['preset', onlineVoiceSelection.voiceId])
+      : '');
+  const setOnlineVoice = (value: string) => {
+    setOnlineVoiceUnavailable(false);
+    setOnlineVoiceSelection(
+      onlineVoiceOptions.find(voice => voice.value === value)?.selection ?? null,
+    );
+  };
   const modelAvailable = onlineOptions.some(option => option.value === onlineModelRef);
   const voiceAvailable = onlineVoiceOptions.some(option => option.value === onlineVoice);
   const onlineError = !onlineModelRef
     ? i18nService.t(onlineOptions.length ? 'voiceSelectModel' : 'voiceNoOnlineModelsConfigured')
     : !modelAvailable
-      ? i18nService.t('speechOnlineSelectionUnavailable')
-      : !asr && !voiceAvailable
-        ? i18nService.t(
-            onlineVoiceOptions.length ? 'voiceSelectSpeaker' : 'voiceNoSpeakersConfigured',
-          )
-        : '';
+      ? i18nService.t(
+          onlineModel ? 'speechConfigureInterfaceInModels' : 'speechOnlineSelectionUnavailable',
+        )
+      : !selectedOnlineModel
+        ? i18nService.t('speechConfigureInterfaceInModels')
+        : !asr && !voiceAvailable
+          ? i18nService.t(
+              onlineVoiceUnavailable
+                ? 'speechOnlineVoiceUnavailable'
+                : onlineVoiceOptions.length
+                  ? 'voiceSelectSpeaker'
+                  : 'voiceNoSpeakersConfigured',
+            )
+          : '';
   const models = useLocalSpeechModels();
   const status = models.statuses.find(candidate => candidate.id === modelId) ?? null;
   const [saving, setSaving] = useState(false);
@@ -130,13 +177,17 @@ export default function LocalSpeechExtensionSettingsDialog({
               sttMode: mode,
               sttModelId: modelId as LocalAsrModelId,
               onlineSttModelRef: onlineModelRef,
+              onlineSttBindingId: onlineBindingId,
             }
           : {
               ttsMode: mode,
               ttsModelId: modelId as LocalTtsModelId,
               ttsVoiceId,
               onlineTtsModelRef: onlineModelRef,
-              onlineTtsVoice: onlineVoice,
+              onlineTtsBindingId: onlineBindingId,
+              onlineTtsVoice:
+                onlineVoiceSelection?.kind === 'preset' ? onlineVoiceSelection.voiceId : '',
+              onlineTtsVoiceSelection: onlineVoiceSelection,
             },
       });
       if (mounted.current) onClose();
@@ -300,10 +351,31 @@ export default function LocalSpeechExtensionSettingsDialog({
                 ]}
                 onChange={reference => {
                   if (reference === onlineModelRef) return;
+                  const provider = resolveOnlineSpeechModel(category, reference)?.provider;
+                  const bindingId = Object.prototype.hasOwnProperty.call(
+                    provider ?? {},
+                    'protocolId',
+                  )
+                    ? ONLINE_SPEECH_PROVIDER_BINDING_ID
+                    : '';
                   setOnlineModelRef(reference);
-                  if (!asr) setOnlineVoice('');
+                  setOnlineBindingId(bindingId);
+                  if (!asr) {
+                    setOnlineVoiceSelection(null);
+                    setOnlineVoiceUnavailable(false);
+                  }
                 }}
               />
+              {selectedOnlineModel ? (
+                <p className="text-xs leading-5 text-secondary">
+                  {i18nService
+                    .t('speechCurrentProtocol')
+                    .replace(
+                      '{protocol}',
+                      getSpeechProtocolLabel(selectedOnlineModel.binding.protocolId),
+                    )}
+                </p>
+              ) : null}
               {!asr && (
                 <ThemedSelect
                   id="speech-extension-online-voice"
@@ -315,9 +387,11 @@ export default function LocalSpeechExtensionSettingsDialog({
                     {
                       value: '',
                       label: i18nService.t(
-                        onlineVoiceOptions.length
-                          ? 'voiceSelectSpeaker'
-                          : 'voiceNoSpeakersConfigured',
+                        onlineVoiceUnavailable
+                          ? 'speechOnlineVoiceUnavailable'
+                          : onlineVoiceOptions.length
+                            ? 'voiceSelectSpeaker'
+                            : 'voiceNoSpeakersConfigured',
                       ),
                     },
                     ...(!voiceAvailable && onlineVoice

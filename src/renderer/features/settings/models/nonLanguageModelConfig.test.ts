@@ -43,6 +43,152 @@ describe('non-language model configuration persistence', () => {
     });
   });
 
+  it('persists one provider protocol for multiple models without introducing model bindings', async () => {
+    const draft: NonLanguageModelProviders = {
+      'speech-recognition': {
+        providers: {
+          speech: {
+            displayName: 'Speech API',
+            baseUrl: 'http://speech.internal/v1/audio/transcriptions',
+            apiKey: '',
+            protocolId: 'openai-transcription-http',
+            models: [
+              { id: 'one', name: 'One' },
+              { id: 'two', name: 'Two' },
+            ],
+          },
+        },
+      },
+    };
+    const persist = vi.fn().mockResolvedValue(undefined);
+    const saved = await commitNonLanguageModelConfigurations({}, draft, persist);
+    expect(saved['speech-recognition']!.providers.speech).toEqual({
+      ...draft['speech-recognition']!.providers.speech,
+      baseUrl: 'http://speech.internal/v1',
+    });
+    expect(persist).toHaveBeenCalledWith(saved);
+    expect(
+      getNonLanguageModelCategoryValidationError(
+        'speech-recognition',
+        saved['speech-recognition']!,
+        'speech',
+      ),
+    ).toBe('');
+    expect(saveAsrConfiguration).not.toHaveBeenCalled();
+  });
+
+  it('retains provider and model speech parameters and rejects protocol endpoint mismatches', () => {
+    const category: NonNullable<NonLanguageModelProviders['speech-synthesis']> = {
+      providers: {
+        speech: {
+          displayName: 'Speech API',
+          baseUrl: 'http://speech.internal/v1/audio/speech',
+          apiKey: '',
+          protocolId: 'openai-speech-http',
+          models: [{ id: 'reader', name: 'Reader', voicePolicy: 'preset' }],
+        },
+      },
+    };
+    const saved = normalizeNonLanguageModelCategory('speech-synthesis', category);
+    expect(saved.providers.speech).toEqual({
+      ...category.providers.speech,
+      baseUrl: 'http://speech.internal/v1',
+    });
+    expect(getNonLanguageModelCategoryValidationError('speech-synthesis', saved, 'speech')).toBe(
+      '',
+    );
+    saved.providers.speech.baseUrl = 'http://speech.internal/v1/audio/transcriptions';
+    expect(
+      getNonLanguageModelCategoryValidationError('speech-synthesis', saved, 'speech'),
+    ).toBeTruthy();
+  });
+
+  it.each(['category', 'provider', 'model', 'binding', 'voice'] as const)(
+    'rejects an own retired field on %s before normalization can erase it',
+    async level => {
+      const voice = { id: 'voice', name: 'Voice' };
+      const binding = { id: 'speech', protocolId: 'openai-speech-http' as const };
+      const model = { id: 'reader', name: 'Reader', voices: [voice], bindings: [binding] };
+      const provider = {
+        displayName: 'Speech',
+        baseUrl: 'http://speech.internal/v1',
+        apiKey: '',
+        models: [model],
+      };
+      const category = { providers: { speech: provider } };
+      Object.assign({ category, provider, model, binding, voice }[level], {
+        compatibilityProfile: undefined,
+      });
+      const persist = vi.fn();
+      await expect(
+        commitNonLanguageModelConfigurations({}, { 'speech-synthesis': category }, persist),
+      ).rejects.toThrow();
+      expect(persist).not.toHaveBeenCalled();
+    },
+  );
+
+  it('rejects retired Chat protocols and voice policies without changing the authored data', async () => {
+    for (const retired of [
+      { protocolId: 'chat-audio-speech' },
+      { protocolId: 'openai-speech-http', voicePolicy: 'service-default' },
+    ]) {
+      const model = {
+        id: 'reader',
+        name: 'Reader',
+        ...('voicePolicy' in retired ? { voicePolicy: retired.voicePolicy } : {}),
+      };
+      const category = {
+        providers: {
+          speech: {
+            displayName: 'Speech',
+            baseUrl: 'http://speech.internal/v1',
+            apiKey: '',
+            protocolId: retired.protocolId,
+            models: [model],
+          },
+        },
+      };
+      const snapshot = structuredClone(category);
+      const persist = vi.fn();
+      await expect(
+        commitNonLanguageModelConfigurations(
+          {},
+          { 'speech-synthesis': category } as unknown as NonLanguageModelProviders,
+          persist,
+        ),
+      ).rejects.toThrow();
+      expect(category).toEqual(snapshot);
+      expect(persist).not.toHaveBeenCalled();
+    }
+  });
+
+  it('keeps legacy providers and all their different model bindings unchanged until an explicit protocol is chosen', () => {
+    const category: NonNullable<NonLanguageModelProviders['speech-recognition']> = {
+      providers: {
+        speech: {
+          displayName: 'Speech API',
+          baseUrl: 'http://speech.internal/v1',
+          apiKey: '',
+          models: [
+            {
+              id: 'asr',
+              name: 'ASR',
+              bindings: [
+                { id: 'recorded', protocolId: 'openai-transcription-http' },
+                { id: 'live', protocolId: 'openai-transcription-realtime' },
+              ],
+            },
+          ],
+        },
+      },
+    };
+    const saved = normalizeNonLanguageModelCategory('speech-recognition', category);
+    expect(saved.providers.speech).not.toHaveProperty('protocolId');
+    expect(saved.providers.speech.models[0].bindings).toEqual(
+      category.providers.speech.models[0].bindings,
+    );
+  });
+
   it.each(['decision', 'image', 'video'] as const)(
     'compares the saved and draft %s default identities without treating provider memory as a selection',
     kind => {
@@ -205,7 +351,7 @@ describe('non-language model configuration persistence', () => {
               {
                 id: 'tts-pro',
                 name: 'TTS Pro',
-                voices: [{ id: 'nova', name: 'Nova' }],
+                voices: [{ id: 'voice-three', name: 'Voice Three' }],
               },
             ],
           },
@@ -219,7 +365,7 @@ describe('non-language model configuration persistence', () => {
     expect(saveTtsConfiguration).not.toHaveBeenCalled();
     expect(normalized['speech-synthesis']?.providers.speech.baseUrl).toBe('http://speech.lan/v1');
     expect(normalized['speech-synthesis']?.providers.speech.models[0]?.voices).toEqual([
-      { id: 'nova', name: 'Nova' },
+      { id: 'voice-three', name: 'Voice Three' },
     ]);
     expect(persist).toHaveBeenCalledWith(normalized);
   });
@@ -258,7 +404,7 @@ describe('non-language model configuration persistence', () => {
             {
               id: 'tts-pro',
               name: 'TTS Pro',
-              voices: [{ id: 'nova', name: 'Nova' }],
+              voices: [{ id: 'voice-three', name: 'Voice Three' }],
             },
           ],
         },
@@ -453,7 +599,7 @@ describe('non-language model configuration persistence', () => {
               {
                 id: 'tts-pro',
                 name: 'TTS Pro',
-                voices: [{ id: 'nova', name: 'Nova' }],
+                voices: [{ id: 'voice-three', name: 'Voice Three' }],
               },
             ],
           },

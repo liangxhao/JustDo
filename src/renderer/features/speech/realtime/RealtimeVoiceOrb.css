@@ -1,0 +1,72 @@
+.realtime-voice-orb {
+  position: relative;
+  width: 72px;
+  height: 72px;
+  overflow: hidden;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle at 32% 20%,
+    #f0f9ff 4%,
+    #acd8ff 35%,
+    #5797ef 70%,
+    #386fe4 100%
+  );
+  box-shadow:
+    inset 0 0 18px #ffffff70,
+    0 5px 20px #4f8de51c;
+  isolation: isolate;
+}
+
+.realtime-voice-orb__cloud {
+  position: absolute;
+  inset: -22%;
+  border-radius: 42%;
+  background: conic-gradient(
+    from 30deg,
+    transparent,
+    #ffffffcc,
+    #ffffff18,
+    #2974e2a8,
+    transparent,
+    #e0f3ffe0,
+    transparent
+  );
+  filter: blur(7px);
+  animation: realtime-voice-orb-flow 6s linear infinite !important;
+}
+
+.realtime-voice-orb[data-activity='responding'] .realtime-voice-orb__cloud {
+  animation-duration: 2.5s !important;
+}
+
+.realtime-voice-orb[data-muted='true'][data-activity='listening'] {
+  filter: saturate(0.35);
+}
+
+.realtime-voice-orb--attention {
+  background: radial-gradient(circle at 32% 20%, #f6f8fc, #bdcce0 65%, #8ea8c8);
+}
+
+@keyframes realtime-voice-orb-flow {
+  from {
+    transform: rotate(0deg) scale(1);
+  }
+  50% {
+    transform: rotate(180deg) scale(1.12);
+  }
+  to {
+    transform: rotate(360deg) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .realtime-voice-orb .realtime-voice-orb__cloud {
+    animation-name: realtime-voice-orb-flow !important;
+    animation-duration: 6s !important;
+    animation-iteration-count: infinite !important;
+    animation-play-state: running !important;
+  }
+  .realtime-voice-orb[data-activity='responding'] .realtime-voice-orb__cloud {
+    animation-duration: 2.5s !important;
+  }
+}

@@ -9,6 +9,11 @@ import {
   resolveLocalSpeechInputLanguage,
 } from '@shared/speech/localSpeechSettings';
 import type { OnlineAsrEvent, OnlineAsrSession } from '@shared/speech/onlineAsr';
+import {
+  getSpeechProtocolCapability,
+  resolveOnlineSpeechBinding,
+} from '@shared/speech/onlineSpeechModels';
+import { SPEECH_SURFACE_HIDDEN_EVENT } from '@shared/speech/speechSettingsNavigation';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
@@ -17,6 +22,7 @@ import {
   floatToG711Ulaw,
   OnlineAsrAudioPump,
 } from '@/features/cowork/components/composer/speech/onlineAudioCapture';
+import { requestSpeechSettings } from '@/features/speech/speechSettingsNavigation';
 import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';
 import { recordedAudioToWav, recordedAudioToWavSegments } from '@/shared/audio/localAudioCapture';
@@ -29,6 +35,35 @@ const MAX_IMPORTED_MEDIA_BYTES = 256 * 1024 * 1024;
 const MAX_PENDING_MEETING_SEGMENTS = 8;
 const MAX_PENDING_ONLINE_AUDIO_CHUNKS = 16;
 const MAX_PENDING_ONLINE_STARTUP_SAMPLES = 80_000;
+
+const getCaptureSettingsKey = (settings: LocalSpeechSettings): string => {
+  const selection =
+    settings.recognitionMode === 'online'
+      ? resolveOnlineSpeechBinding(
+          configService.getConfig().onlineModelProviders?.['speech-recognition'],
+          settings.onlineAsrModelRef,
+          settings.onlineAsrBindingId,
+          'composer-asr',
+        )
+      : null;
+  return JSON.stringify([
+    settings.inputEnabled,
+    settings.asrModelId,
+    settings.recognitionMode,
+    settings.onlineAsrModelRef,
+    settings.onlineAsrBindingId,
+    settings.inputLanguage,
+    settings.recognitionThreads,
+    settings.inputDeviceId,
+    settings.inputSource,
+    settings.meetingMode,
+    settings.meetingSegmentSeconds,
+    settings.maxRecordingSeconds,
+    selection?.binding,
+    selection?.provider.baseUrl,
+    selection?.provider.apiKey,
+  ]);
+};
 
 interface LocalSpeechInputButtonProps {
   disabled: boolean;
@@ -114,6 +149,7 @@ export function LocalSpeechInputButton({
   const ownerDocument = useOwnerDocument();
   const ownerWindow = useOwnerWindow();
   const [available, setAvailable] = useState(false);
+  const [onlineInputMode, setOnlineInputMode] = useState<'recording' | 'realtime'>('realtime');
   const [settings, setSettings] = useState<LocalSpeechSettings>(() =>
     normalizeLocalSpeechSettings(configService.getConfig().voice),
   );
@@ -146,6 +182,9 @@ export function LocalSpeechInputButton({
   const onTranscriptRef = useRef(onTranscript);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const mountedRef = useRef(true);
+  const recordedRequestsRef = useRef(new Set<string>());
+  const onlineInputModeRef = useRef(onlineInputMode);
+  onlineInputModeRef.current = onlineInputMode;
   settingsRef.current = settings;
   onTranscriptRef.current = onTranscript;
 
@@ -163,6 +202,12 @@ export function LocalSpeechInputButton({
     activeRef.current = false;
     captureRequestRef.current += 1;
     transcriptionGenerationRef.current += 1;
+    transcriptQueueRef.current = Promise.resolve();
+    pendingTranscriptionsRef.current = 0;
+    activeCaptureSettingsKeyRef.current = '';
+    for (const requestId of recordedRequestsRef.current)
+      void window.electron.onlineAsr.cancelTranscription?.(requestId).catch(() => {});
+    recordedRequestsRef.current.clear();
     const onlineSession = onlineSessionRef.current;
     onlineSessionRef.current = null;
     onlinePendingAppendRef.current = null;
@@ -201,6 +246,26 @@ export function LocalSpeechInputButton({
       const requestId = statusRequestRef.current + 1;
       statusRequestRef.current = requestId;
       const nextSettings = normalizeLocalSpeechSettings(configService.getConfig().voice);
+      const binding =
+        nextSettings.recognitionMode === 'online'
+          ? resolveOnlineSpeechBinding(
+              configService.getConfig().onlineModelProviders?.['speech-recognition'],
+              nextSettings.onlineAsrModelRef,
+              nextSettings.onlineAsrBindingId,
+              'composer-asr',
+            )
+          : null;
+      const inputMode =
+        binding && getSpeechProtocolCapability(binding.binding.protocolId) === 'transcription'
+          ? 'recording'
+          : 'realtime';
+      onlineInputModeRef.current = inputMode;
+      setOnlineInputMode(inputMode);
+      if (
+        activeCaptureSettingsKeyRef.current &&
+        activeCaptureSettingsKeyRef.current !== getCaptureSettingsKey(nextSettings)
+      )
+        abortCapture();
       setSettings(nextSettings);
       const statusRequest =
         nextSettings.recognitionMode === 'online'
@@ -210,6 +275,11 @@ export function LocalSpeechInputButton({
         .then(status => {
           if (mountedRef.current && statusRequestRef.current === requestId) {
             setAvailable(status.available);
+            if (
+              'inputMode' in status &&
+              (status.inputMode === 'recording' || status.inputMode === 'realtime')
+            )
+              setOnlineInputMode(status.inputMode);
           }
         })
         .catch(() => {
@@ -218,8 +288,10 @@ export function LocalSpeechInputButton({
     };
     refresh();
     window.addEventListener('config-updated', refresh);
+    window.addEventListener(SPEECH_SURFACE_HIDDEN_EVENT, abortCapture);
     const unsubscribeEngine = window.electron.openclaw?.engine?.onProgress(status => {
       if (settingsRef.current.recognitionMode !== 'online') return;
+      if (onlineInputModeRef.current === 'recording') return;
       if (status.phase === EnginePhase.Running) {
         refresh();
       } else {
@@ -242,6 +314,7 @@ export function LocalSpeechInputButton({
       statusRequestRef.current += 1;
       transcriptionGenerationRef.current += 1;
       window.removeEventListener('config-updated', refresh);
+      window.removeEventListener(SPEECH_SURFACE_HIDDEN_EVENT, abortCapture);
       unsubscribeEngine?.();
       unsubscribeModels();
       abortCapture();
@@ -255,18 +328,41 @@ export function LocalSpeechInputButton({
       elapsed = 0,
       generation = transcriptionGenerationRef.current,
     ) => {
-      const result = await window.electron.localAsr.transcribe(wav, {
-        modelId: settings.asrModelId,
-        language: resolveLocalSpeechInputLanguage(
-          settings.inputLanguage,
-          i18nService.getLanguage(),
-        ),
-        numThreads: settings.recognitionThreads,
-      });
-      if (!result.success) throw new Error(result.error || 'Speech recognition failed.');
-      if (!result.text?.trim()) throw new Error('No speech was recognized.');
       if (!mountedRef.current || generation !== transcriptionGenerationRef.current) return;
-      const text = result.text.trim();
+      let text: string;
+      if (settings.recognitionMode === 'online') {
+        const requestId = crypto.randomUUID();
+        recordedRequestsRef.current.add(requestId);
+        try {
+          const result = await window.electron.onlineAsr.transcribe({
+            requestId,
+            audioWav: wav,
+            language: resolveLocalSpeechInputLanguage(
+              settings.inputLanguage,
+              i18nService.getLanguage(),
+            ),
+          });
+          if (result.requestId !== requestId)
+            throw new Error('Transcription response belongs to another request.');
+          text = result.text;
+        } finally {
+          recordedRequestsRef.current.delete(requestId);
+        }
+      } else {
+        const result = await window.electron.localAsr.transcribe(wav, {
+          modelId: settings.asrModelId,
+          language: resolveLocalSpeechInputLanguage(
+            settings.inputLanguage,
+            i18nService.getLanguage(),
+          ),
+          numThreads: settings.recognitionThreads,
+        });
+        if (!result.success) throw new Error(result.error || 'Speech recognition failed.');
+        text = result.text ?? '';
+      }
+      if (!text.trim()) throw new Error('No speech was recognized.');
+      if (!mountedRef.current || generation !== transcriptionGenerationRef.current) return;
+      text = text.trim();
       if (!settings.meetingMode || !source) {
         onTranscript(text);
         return;
@@ -295,9 +391,13 @@ export function LocalSpeechInputButton({
           if (generation !== transcriptionGenerationRef.current) return;
           await transcribeWav(await recordedAudioToWav(blob), source, elapsed, generation);
         })
-        .catch(showTranscriptionFailure)
+        .catch(error => {
+          if (mountedRef.current && generation === transcriptionGenerationRef.current)
+            showTranscriptionFailure(error);
+        })
         .finally(() => {
-          pendingTranscriptionsRef.current = Math.max(0, pendingTranscriptionsRef.current - 1);
+          if (generation === transcriptionGenerationRef.current)
+            pendingTranscriptionsRef.current = Math.max(0, pendingTranscriptionsRef.current - 1);
         });
     },
     [showTranscriptionFailure, transcribeWav],
@@ -313,6 +413,8 @@ export function LocalSpeechInputButton({
         return;
       }
       const recorder = new MediaRecorder(track.stream);
+      const captureRequest = captureRequestRef.current;
+      const generation = transcriptionGenerationRef.current;
       const chunks: Blob[] = [];
       const segmentStartedAt = Date.now() - startedAtRef.current;
       let markStopped: () => void = () => undefined;
@@ -324,13 +426,17 @@ export function LocalSpeechInputButton({
         if (event.data.size > 0) chunks.push(event.data);
       };
       recorder.onstop = () => {
-        if (chunks.length > 0) {
+        const current =
+          captureRequest === captureRequestRef.current &&
+          generation === transcriptionGenerationRef.current;
+        if (current && chunks.length > 0) {
           enqueueTranscription(new Blob(chunks), track.source, segmentStartedAt);
         }
         recordersRef.current = recordersRef.current.filter(candidate => candidate !== recorder);
         recorderStopsRef.current.delete(recorder);
         markStopped();
         if (
+          current &&
           activeRef.current &&
           settings.meetingMode &&
           track.stream.active &&
@@ -340,6 +446,11 @@ export function LocalSpeechInputButton({
         }
       };
       recorder.onerror = event => {
+        if (
+          captureRequest !== captureRequestRef.current ||
+          generation !== transcriptionGenerationRef.current
+        )
+          return;
         logCaptureDiagnostic('Media recorder failed.', describeCaptureError(event.error));
         showToast(i18nService.t('localAsrFailed'));
         abortCapture();
@@ -411,6 +522,7 @@ export function LocalSpeechInputButton({
   const stopOnlineRecording = useCallback(() => {
     const session = onlineSessionRef.current;
     if (!session) return false;
+    const generation = transcriptionGenerationRef.current;
     activeRef.current = false;
     timersRef.current.forEach(timer => clearTimeout(timer));
     timersRef.current = [];
@@ -435,8 +547,14 @@ export function LocalSpeechInputButton({
         if (onlineCloseWaiterRef.current?.sessionId === session.sessionId) {
           onlineCloseWaiterRef.current.resolve();
         }
-        logCaptureDiagnostic('Online transcription close failed.', describeCaptureError(error));
-        showToast(i18nService.t('onlineAsrFailed'));
+        if (
+          mountedRef.current &&
+          generation === transcriptionGenerationRef.current &&
+          onlineSessionRef.current === session
+        ) {
+          logCaptureDiagnostic('Online transcription close failed.', describeCaptureError(error));
+          showToast(i18nService.t('onlineAsrFailed'));
+        }
       })
       .finally(() => {
         if (onlineCloseWaiterRef.current?.sessionId === session.sessionId) {
@@ -447,7 +565,11 @@ export function LocalSpeechInputButton({
           onlineSessionRef.current = null;
           onlinePendingAppendRef.current = null;
         }
-        if (mountedRef.current) {
+        if (
+          mountedRef.current &&
+          completedCurrentSession &&
+          generation === transcriptionGenerationRef.current
+        ) {
           setOnlinePartial('');
           if (completedCurrentSession && onlineFinalCountRef.current === 0) {
             showToast(i18nService.t('localAsrNoSpeech'));
@@ -460,6 +582,8 @@ export function LocalSpeechInputButton({
 
   const stopRecording = useCallback(() => {
     if (stopOnlineRecording()) return;
+    const captureRequest = captureRequestRef.current;
+    const generation = transcriptionGenerationRef.current;
     activeRef.current = false;
     timersRef.current.forEach(timer => clearTimeout(timer));
     timersRef.current = [];
@@ -471,12 +595,22 @@ export function LocalSpeechInputButton({
       if (recorder.state === 'recording') recorder.stop();
     });
     setState('transcribing');
-    void Promise.all(stopped).then(() =>
-      transcriptQueueRef.current.finally(() => {
+    void Promise.all(stopped).then(() => {
+      if (
+        captureRequest !== captureRequestRef.current ||
+        generation !== transcriptionGenerationRef.current
+      )
+        return;
+      return transcriptQueueRef.current.finally(() => {
+        if (
+          captureRequest !== captureRequestRef.current ||
+          generation !== transcriptionGenerationRef.current
+        )
+          return;
         releaseCapture();
         if (mountedRef.current) setState('idle');
-      }),
-    );
+      });
+    });
   }, [releaseCapture, stopOnlineRecording]);
 
   useEffect(() => {
@@ -525,19 +659,11 @@ export function LocalSpeechInputButton({
   const startRecording = useCallback(async () => {
     const requestId = captureRequestRef.current + 1;
     captureRequestRef.current = requestId;
-    activeCaptureSettingsKeyRef.current = [
-      settings.asrModelId,
-      settings.recognitionMode,
-      settings.onlineAsrModelRef,
-      settings.inputDeviceId,
-      settings.inputSource,
-      settings.meetingMode,
-      settings.meetingSegmentSeconds,
-      settings.maxRecordingSeconds,
-    ].join('\0');
+    activeCaptureSettingsKeyRef.current = getCaptureSettingsKey(settings);
     setState('requesting');
     try {
-      if (settings.recognitionMode === 'online') onlinePumpRef.current.prepare();
+      const realtime = settings.recognitionMode === 'online' && onlineInputMode === 'realtime';
+      if (realtime) onlinePumpRef.current.prepare();
       const tracks = await openCaptureTracks(
         settings.inputSource,
         settings.inputDeviceId,
@@ -549,7 +675,7 @@ export function LocalSpeechInputButton({
       }
       tracksRef.current = tracks;
       startedAtRef.current = Date.now();
-      if (settings.recognitionMode === 'online') {
+      if (realtime) {
         activeRef.current = true;
         onlineStartupSamplesRef.current = [];
         onlineStartupSampleCountRef.current = 0;
@@ -557,6 +683,7 @@ export function LocalSpeechInputButton({
           tracks.map(track => track.stream),
           appendOnlineSamples,
         );
+        if (!mountedRef.current || captureRequestRef.current !== requestId) return;
         const resolvedLanguage = resolveLocalSpeechInputLanguage(
           settings.inputLanguage,
           i18nService.getLanguage(),
@@ -585,7 +712,7 @@ export function LocalSpeechInputButton({
           audioTrack.addEventListener(
             'ended',
             () => {
-              if (!activeRef.current) return;
+              if (!activeRef.current || captureRequestRef.current !== requestId) return;
               logCaptureDiagnostic('Audio capture track ended.', { source: track.source });
               showToast(i18nService.t('localAsrSourceUnavailable'));
               stopRecording();
@@ -595,7 +722,7 @@ export function LocalSpeechInputButton({
         });
       });
       setState('recording');
-      if (settings.recognitionMode === 'local') tracks.forEach(startRecorder);
+      if (!realtime) tracks.forEach(startRecorder);
       if (!settings.meetingMode) {
         timersRef.current.push(setTimeout(stopRecording, settings.maxRecordingSeconds * 1_000));
       }
@@ -624,15 +751,8 @@ export function LocalSpeechInputButton({
     }
   }, [
     abortCapture,
-    settings.inputDeviceId,
-    settings.inputLanguage,
-    settings.inputSource,
-    settings.asrModelId,
-    settings.maxRecordingSeconds,
-    settings.meetingSegmentSeconds,
-    settings.meetingMode,
-    settings.recognitionMode,
-    settings.onlineAsrModelRef,
+    settings,
+    onlineInputMode,
     appendOnlineSamples,
     startRecorder,
     stopRecording,
@@ -645,6 +765,7 @@ export function LocalSpeechInputButton({
       const isCurrent = () =>
         mountedRef.current && generation === transcriptionGenerationRef.current;
       setState('transcribing');
+      activeCaptureSettingsKeyRef.current = getCaptureSettingsKey(settings);
       try {
         if (file.size > MAX_IMPORTED_MEDIA_BYTES) {
           throw new Error('Imported media exceeds the local size limit.');
@@ -665,32 +786,19 @@ export function LocalSpeechInputButton({
         if (isCurrent()) setState('idle');
       }
     },
-    [settings.meetingSegmentSeconds, showTranscriptionFailure, transcribeWav],
+    [settings, showTranscriptionFailure, transcribeWav],
   );
 
   useEffect(() => {
     if (settings.inputEnabled && available && !disabled) return;
-    if (state === 'recording') {
-      stopRecording();
-      return;
-    }
-    if (state === 'requesting' || state === 'transcribing') {
+    if (state !== 'idle') {
       abortCapture();
     }
-  }, [abortCapture, available, disabled, settings.inputEnabled, state, stopRecording]);
+  }, [abortCapture, available, disabled, settings.inputEnabled, state]);
 
   useEffect(() => {
     if (state !== 'requesting' && state !== 'recording') return;
-    const settingsKey = [
-      settings.asrModelId,
-      settings.recognitionMode,
-      settings.onlineAsrModelRef,
-      settings.inputDeviceId,
-      settings.inputSource,
-      settings.meetingMode,
-      settings.meetingSegmentSeconds,
-      settings.maxRecordingSeconds,
-    ].join('\0');
+    const settingsKey = getCaptureSettingsKey(settings);
     if (activeCaptureSettingsKeyRef.current !== settingsKey) abortCapture();
   }, [abortCapture, settings, state]);
 
@@ -725,17 +833,20 @@ export function LocalSpeechInputButton({
     setMenuPosition(null);
   }, [disabled, available, settings.inputEnabled, settings.recognitionMode, state]);
 
-  if (!available || !settings.inputEnabled) return null;
+  if (!settings.inputEnabled) return null;
   const recording = state === 'recording';
-  const title = i18nService.t(
-    state === 'transcribing' || state === 'requesting'
-      ? 'localAsrCancel'
-      : recording
-        ? 'localAsrStop'
-        : settings.meetingMode
-          ? 'localAsrStartMeeting'
-          : 'localAsrStart',
-  );
+  const title =
+    !available && state === 'idle'
+      ? i18nService.t('voiceInputUnavailable')
+      : i18nService.t(
+          state === 'transcribing' || state === 'requesting'
+            ? 'localAsrCancel'
+            : recording
+              ? 'localAsrStop'
+              : settings.meetingMode
+                ? 'localAsrStartMeeting'
+                : 'localAsrStart',
+        );
   return (
     <>
       <input
@@ -746,27 +857,35 @@ export function LocalSpeechInputButton({
         onChange={event => {
           const file = event.target.files?.[0];
           event.target.value = '';
-          if (file && !disabled && state === 'idle' && settings.recognitionMode === 'local') {
+          if (
+            file &&
+            available &&
+            !disabled &&
+            state === 'idle' &&
+            (settings.recognitionMode === 'local' || onlineInputMode === 'recording')
+          ) {
             void transcribeFile(file);
           }
         }}
       />
-      <span className="relative inline-flex shrink-0">
+      <span
+        className="relative inline-flex shrink-0"
+        onContextMenu={event => {
+          event.preventDefault();
+          event.stopPropagation();
+          if (disabled || state !== 'idle') return;
+          const rect = event.currentTarget.getBoundingClientRect();
+          setMenuPosition({
+            x: Math.max(8, Math.min(rect.left, ownerWindow.innerWidth - 256)),
+            y: Math.max(8, rect.top - 48),
+          });
+        }}
+      >
         <button
           ref={buttonRef}
           type="button"
           aria-haspopup="menu"
           aria-expanded={menuPosition !== null}
-          onContextMenu={event => {
-            event.preventDefault();
-            event.stopPropagation();
-            if (disabled || state !== 'idle') return;
-            const rect = event.currentTarget.getBoundingClientRect();
-            setMenuPosition({
-              x: Math.max(8, Math.min(rect.left, ownerWindow.innerWidth - 256)),
-              y: Math.max(8, rect.top - 48),
-            });
-          }}
           onClick={() => {
             setMenuPosition(null);
             if (state === 'transcribing' || state === 'requesting') abortCapture();
@@ -782,7 +901,7 @@ export function LocalSpeechInputButton({
           aria-label={title}
           aria-pressed={recording}
           aria-busy={state === 'transcribing' || state === 'requesting'}
-          disabled={disabled}
+          disabled={disabled || (!available && state === 'idle')}
         >
           {state === 'transcribing' || state === 'requesting' ? (
             <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent" />
@@ -812,10 +931,13 @@ export function LocalSpeechInputButton({
             <button
               type="button"
               role="menuitem"
-              disabled={settings.recognitionMode !== 'local'}
+              disabled={
+                !available ||
+                (settings.recognitionMode === 'online' && onlineInputMode !== 'recording')
+              }
               title={
-                settings.recognitionMode !== 'local'
-                  ? i18nService.t('voiceImportRequiresLocal')
+                settings.recognitionMode === 'online' && onlineInputMode !== 'recording'
+                  ? i18nService.t('voiceImportRequiresRecording')
                   : undefined
               }
               className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-foreground hover:bg-surface-raised disabled:opacity-50"
@@ -827,6 +949,18 @@ export function LocalSpeechInputButton({
             >
               <DocumentArrowUpIcon className="h-4 w-4 shrink-0" />
               {i18nService.t('voiceInputSourceFile')}
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              className="flex w-full items-center px-3 py-1.5 text-left text-sm text-foreground hover:bg-surface-raised"
+              onClick={() => {
+                setMenuPosition(null);
+                abortCapture();
+                requestSpeechSettings();
+              }}
+            >
+              {i18nService.t('openSettings')}
             </button>
           </div>,
           ownerDocument.body,

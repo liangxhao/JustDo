@@ -1,12 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { OpenAiCompatibleMediaConfigProviderIds } from '../contracts/media-config';
-import manifest from '../openclaw.plugin.json';
 import {
   imageConfig,
   requireServiceBaseUrl,
   resolveTranscriptionUrl,
 } from '../intranet-config';
+import manifest from '../openclaw.plugin.json';
 
 vi.mock('openclaw/plugin-sdk/secret-input', () => ({
   normalizeResolvedSecretInputString: vi.fn(),
@@ -60,8 +60,11 @@ describe('OpenAI intranet configuration', () => {
     expect(resolveTranscriptionUrl('wss://speech.internal/v1/realtime')).toBe(
       'wss://speech.internal/v1/realtime?intent=transcription',
     );
-    expect(resolveTranscriptionUrl('https://example.test/v1/realtime?existing=1')).toBe(
-      'wss://example.test/v1/realtime?existing=1&intent=transcription',
+    expect(resolveTranscriptionUrl('https://example.test/v1/realtime?intent=transcription')).toBe(
+      'wss://example.test/v1/realtime?intent=transcription',
     );
+    for (const value of ['https://example.test/v1/realtime?existing=1',
+      'https://example.test/v1/audio/speech', 'https://example.test/v1/realtime?intent=transcription&intent=transcription'])
+      expect(() => resolveTranscriptionUrl(value)).toThrow();
   });
 });

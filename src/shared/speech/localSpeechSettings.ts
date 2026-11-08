@@ -7,6 +7,13 @@ import {
   LOCAL_TTS_MODEL_IDS,
   type LocalTtsModelId,
 } from './localTts';
+import {
+  normalizeOnlineSpeechVoiceSelection,
+  type OnlineSpeechVoiceSelection,
+  resolveOnlineSpeechBinding,
+  resolveOnlineSpeechModel,
+  resolveOnlineSpeechVoiceSelection,
+} from './onlineSpeechModels';
 
 export const LOCAL_SPEECH_MIN_RECORDING_SECONDS = 5;
 export const LOCAL_SPEECH_MAX_RECORDING_SECONDS = 120;
@@ -27,6 +34,7 @@ export interface LocalSpeechSettings {
   recognitionMode: SpeechRecognitionMode;
   asrModelId: LocalAsrModelId;
   onlineAsrModelRef: string;
+  onlineAsrBindingId: string;
   inputSource: LocalSpeechInputSource;
   inputDeviceId: string;
   inputLanguage: LocalSpeechInputLanguage;
@@ -39,6 +47,12 @@ export interface LocalSpeechSettings {
   ttsModelId: LocalTtsModelId;
   onlineTtsModelRef: string;
   onlineTtsVoice: string;
+  onlineTtsBindingId: string;
+  onlineTtsVoiceSelection: OnlineSpeechVoiceSelection | null;
+  realtimeEnabled: boolean;
+  realtimeModelRef: string;
+  realtimeBindingId: string;
+  realtimeVoiceSelection: OnlineSpeechVoiceSelection | null;
   voiceId: number;
   speechRate: number;
   synthesisThreads: number;
@@ -49,6 +63,7 @@ export const defaultLocalSpeechSettings: LocalSpeechSettings = {
   recognitionMode: 'local',
   asrModelId: LOCAL_ASR_DEFAULT_MODEL_ID,
   onlineAsrModelRef: '',
+  onlineAsrBindingId: '',
   inputSource: 'microphone',
   inputDeviceId: '',
   inputLanguage: 'app',
@@ -61,6 +76,12 @@ export const defaultLocalSpeechSettings: LocalSpeechSettings = {
   ttsModelId: LOCAL_TTS_MODEL_ID,
   onlineTtsModelRef: '',
   onlineTtsVoice: '',
+  onlineTtsBindingId: '',
+  onlineTtsVoiceSelection: null,
+  realtimeEnabled: false,
+  realtimeModelRef: '',
+  realtimeBindingId: '',
+  realtimeVoiceSelection: null,
   voiceId: LOCAL_TTS_DEFAULT_VOICE_ID,
   speechRate: 1,
   synthesisThreads: 2,
@@ -107,6 +128,10 @@ export const normalizeLocalSpeechSettings = (value: unknown): LocalSpeechSetting
     ? (candidate.ttsModelId as LocalTtsModelId)
     : defaultLocalSpeechSettings.ttsModelId;
   const maximumVoiceId = getLocalTtsVoiceCount(ttsModelId) - 1;
+  const onlineTtsVoiceSelection = normalizeOnlineSpeechVoiceSelection(
+    candidate.onlineTtsVoiceSelection,
+    typeof candidate.onlineTtsVoice === 'string' ? candidate.onlineTtsVoice : undefined,
+  );
 
   return {
     inputEnabled:
@@ -117,6 +142,8 @@ export const normalizeLocalSpeechSettings = (value: unknown): LocalSpeechSetting
     asrModelId,
     onlineAsrModelRef:
       typeof candidate.onlineAsrModelRef === 'string' ? candidate.onlineAsrModelRef : '',
+    onlineAsrBindingId:
+      typeof candidate.onlineAsrBindingId === 'string' ? candidate.onlineAsrBindingId : '',
     inputSource,
     inputDeviceId: typeof candidate.inputDeviceId === 'string' ? candidate.inputDeviceId : '',
     inputLanguage,
@@ -150,7 +177,17 @@ export const normalizeLocalSpeechSettings = (value: unknown): LocalSpeechSetting
     ttsModelId,
     onlineTtsModelRef:
       typeof candidate.onlineTtsModelRef === 'string' ? candidate.onlineTtsModelRef : '',
-    onlineTtsVoice: typeof candidate.onlineTtsVoice === 'string' ? candidate.onlineTtsVoice : '',
+    onlineTtsVoice:
+      onlineTtsVoiceSelection?.kind === 'preset' ? onlineTtsVoiceSelection.voiceId : '',
+    onlineTtsBindingId:
+      typeof candidate.onlineTtsBindingId === 'string' ? candidate.onlineTtsBindingId : '',
+    onlineTtsVoiceSelection,
+    realtimeEnabled: candidate.realtimeEnabled === true,
+    realtimeModelRef:
+      typeof candidate.realtimeModelRef === 'string' ? candidate.realtimeModelRef : '',
+    realtimeBindingId:
+      typeof candidate.realtimeBindingId === 'string' ? candidate.realtimeBindingId : '',
+    realtimeVoiceSelection: normalizeOnlineSpeechVoiceSelection(candidate.realtimeVoiceSelection),
     voiceId: clampInteger(
       candidate.voiceId,
       getLocalTtsDefaultVoiceId(ttsModelId),
@@ -184,6 +221,70 @@ export const getSpeechSynthesisSettingsKey = (value: unknown): string => {
     settings.synthesisMode,
     ...(settings.synthesisMode === 'local'
       ? [settings.ttsModelId, settings.voiceId, settings.speechRate, settings.synthesisThreads]
-      : [settings.onlineTtsModelRef, settings.onlineTtsVoice]),
+      : [
+          settings.onlineTtsModelRef,
+          settings.onlineTtsBindingId,
+          settings.onlineTtsVoiceSelection,
+        ]),
   ]);
+};
+
+export const getRealtimeVoiceSettingsKey = (value: unknown): string => {
+  const settings = normalizeLocalSpeechSettings(value);
+  return JSON.stringify([
+    settings.realtimeEnabled,
+    settings.realtimeModelRef,
+    settings.realtimeBindingId,
+    settings.realtimeVoiceSelection,
+  ]);
+};
+
+export const reconcileLocalSpeechCatalog = (
+  value: unknown,
+  categories: { recognition?: unknown; synthesis?: unknown; realtime?: unknown },
+): LocalSpeechSettings => {
+  const settings = normalizeLocalSpeechSettings(value);
+  const input = resolveOnlineSpeechModel(categories.recognition, settings.onlineAsrModelRef);
+  const output = resolveOnlineSpeechModel(categories.synthesis, settings.onlineTtsModelRef);
+  const realtime = resolveOnlineSpeechModel(categories.realtime, settings.realtimeModelRef);
+  const outputBinding = resolveOnlineSpeechBinding(
+    categories.synthesis,
+    settings.onlineTtsModelRef,
+    settings.onlineTtsBindingId,
+    'tts',
+  );
+  const realtimeBinding = resolveOnlineSpeechBinding(
+    categories.realtime,
+    settings.realtimeModelRef,
+    settings.realtimeBindingId,
+    'realtime-voice',
+  );
+  const outputVoice = outputBinding
+    ? resolveOnlineSpeechVoiceSelection(
+        outputBinding.model,
+        outputBinding.binding,
+        settings.onlineTtsVoiceSelection,
+      )
+    : null;
+  const realtimeVoice = realtimeBinding
+    ? resolveOnlineSpeechVoiceSelection(
+        realtimeBinding.model,
+        realtimeBinding.binding,
+        settings.realtimeVoiceSelection,
+      )
+    : null;
+  return {
+    ...settings,
+    // Retain missing explicit identities while their model exists. Clearing them
+    // would silently admit a legacy protocol after importing an older catalog.
+    onlineAsrModelRef: input ? settings.onlineAsrModelRef : '',
+    onlineAsrBindingId: input ? settings.onlineAsrBindingId : '',
+    onlineTtsModelRef: output ? settings.onlineTtsModelRef : '',
+    onlineTtsBindingId: output ? settings.onlineTtsBindingId : '',
+    onlineTtsVoice: outputVoice?.kind === 'preset' ? outputVoice.voiceId : '',
+    onlineTtsVoiceSelection: outputVoice,
+    realtimeModelRef: realtime ? settings.realtimeModelRef : '',
+    realtimeBindingId: realtime ? settings.realtimeBindingId : '',
+    realtimeVoiceSelection: realtimeVoice,
+  };
 };

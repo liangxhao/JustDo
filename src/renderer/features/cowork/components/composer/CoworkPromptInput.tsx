@@ -55,7 +55,7 @@ import {
   type SlashCommandCategory,
   type SlashCommandDef,
 } from '@/features/cowork/components/composer/slashCommands';
-import { LocalSpeechInputButton } from '@/features/cowork/components/composer/speech/LocalSpeechInputButton';
+import { SpeechInputControls } from '@/features/cowork/components/composer/speech/SpeechInputControls';
 import { RunControlButton } from '@/features/cowork/components/composer/submission/RunControlButton';
 import { useSessionStop } from '@/features/cowork/components/composer/submission/useSessionStop';
 import { runGoalActionSingleFlight } from '@/features/cowork/components/goals/goalActionSingleFlight';
@@ -111,6 +111,9 @@ import { blocksAppComposerSubmission } from '@/features/plugins/app/composerAdmi
 import { useAppComposer } from '@/features/plugins/app/useAppComposer';
 import { useExtensionEnablement } from '@/features/plugins/extensions/useExtensionEnablement';
 import { ActiveSkillBadge } from '@/features/plugins/skills';
+import { RealtimeVoiceOrb } from '@/features/speech/realtime/RealtimeVoiceOrb';
+import { useRealtimeVoiceSession } from '@/features/speech/realtime/useRealtimeVoiceSession';
+import { requestSpeechSettings } from '@/features/speech/speechSettingsNavigation';
 import type { ChatContextUsageSnapshot } from '@/libs/openclaw-chat/gateway/chat-controller';
 import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';
@@ -600,6 +603,11 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         goalExecution?.phase === GoalExecutionPhase.Retrying);
     const isRunActive =
       isStopping || goalAutoRunning || isCoworkRunActive(isStreaming, goalRunProgress);
+    const realtimeVoice = useRealtimeVoiceSession({
+      sessionId,
+      allowRealtime: supportsSpeechInput && !remoteManaged && !isSideChat,
+      startDisabled: (disabled && !allowDraftWhileDisabled) || isRunActive,
+    });
     const canQueue =
       Boolean(queuePrompt) && goalReadReady && !isSideChat && !isStopping && !hasSessionGoal;
     const canStopRun = goalAutoRunning || canStopCoworkRun(isStreaming, goalRunProgress);
@@ -2172,7 +2180,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     // OpenClaw owns Goal lifecycle state. Refresh from exact session events instead of polling
     // an idle active Goal, which cannot change without a Gateway event or a new run.
     useEffect(() => {
-      if (!engineReadiness.ready || isSideChat || !sessionId || sessionId.startsWith('temp-')) return;
+      if (!engineReadiness.ready || isSideChat || !sessionId || sessionId.startsWith('temp-'))
+        return;
       let cancelled = false;
       const retry = createGoalReadRetry(() => void fetchGoal());
       let executionRevision = 0;
@@ -2785,6 +2794,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
               )}
             </div>
           )}
+          <RealtimeVoiceOrb session={realtimeVoice} onOpenSettings={requestSpeechSettings} />
           <div
             className={enhancedContainerClass}
             onDragEnter={handleDragEnter}
@@ -2834,9 +2844,10 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                       />
                     )}
                     {supportsSpeechInput && (
-                      <LocalSpeechInputButton
+                      <SpeechInputControls
                         key={`speech:${draftKey}`}
-                        disabled={disabled || isRunActive}
+                        realtime={realtimeVoice}
+                        disabled={(disabled && !allowDraftWhileDisabled) || isRunActive}
                         onTranscript={insertSpeechTranscript}
                       />
                     )}
@@ -2963,9 +2974,10 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                       />
                     )}
                     {supportsSpeechInput && (
-                      <LocalSpeechInputButton
+                      <SpeechInputControls
                         key={`speech:${draftKey}`}
-                        disabled={disabled || isRunActive}
+                        realtime={realtimeVoice}
+                        disabled={(disabled && !allowDraftWhileDisabled) || isRunActive}
                         onTranscript={insertSpeechTranscript}
                       />
                     )}
@@ -3024,7 +3036,9 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
               disabled={goalReadPending || disabled}
               onClick={() => void retryGoalReadRef.current?.()}
             >
-              {i18nService.t(goalReadPending ? 'coworkSessionStateChecking' : 'coworkSessionStateRetry')}
+              {i18nService.t(
+                goalReadPending ? 'coworkSessionStateChecking' : 'coworkSessionStateRetry',
+              )}
             </button>
           </div>
         )}

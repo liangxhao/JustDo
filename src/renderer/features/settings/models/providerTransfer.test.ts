@@ -9,7 +9,10 @@ import {
   parseModelProvidersImportPayload,
   PROVIDERS_EXPORT_VERSION,
 } from '@/features/settings/models/providerTransfer';
-import { decryptWithPassword, encryptWithPassword } from '@/features/settings/models/providerTransferCrypto';
+import {
+  decryptWithPassword,
+  encryptWithPassword,
+} from '@/features/settings/models/providerTransferCrypto';
 
 const encryptedApiKey = {
   encrypted: 'encrypted',
@@ -25,8 +28,182 @@ const providerConfig = {
   models: [{ id: 'model', name: 'Model' }],
 };
 
+test('round-trips provider-level speech protocols and per-model parameters using a version that older readers reject', () => {
+  const config = {
+    displayName: 'Private speech',
+    baseUrl: 'http://speech.internal/v1',
+    apiKey: 'private-placeholder',
+    protocolId: 'openai-speech-http' as const,
+    models: [
+      { id: 'first', name: 'First', voicePolicy: 'preset' as const },
+      {
+        id: 'second',
+        name: 'Second',
+        voicePolicy: 'preset' as const,
+        voices: [{ id: 'v', name: 'Voice' }],
+      },
+    ],
+  };
+  const payload = createProvidersExportPayload([], {
+    'speech-synthesis': {
+      providers: [{ key: 'speech', config, apiKey: encryptedApiKey }],
+    },
+  });
+  expect(payload.version).toBe(5);
+  const parsed =
+    parseModelProvidersImportPayload(payload).onlineModelProviders['speech-synthesis']!
+      .providers[0];
+  expect(parsed).toEqual({ ...config, apiKey: encryptedApiKey });
+  expect(JSON.stringify(payload)).not.toContain('private-placeholder');
+  const invalid = structuredClone(payload);
+  (
+    invalid.onlineModelProviders['speech-synthesis']!.providers[0] as { protocolId: string }
+  ).protocolId = 'unknown';
+  expect(() => parseModelProvidersImportPayload(invalid)).toThrow();
+});
+
+test('continues importing version 4 catalogs without guessing one provider protocol for old ASR bindings', () => {
+  const provider = {
+    displayName: 'Legacy ASR',
+    baseUrl: 'http://speech.internal/v1',
+    apiKey: encryptedApiKey,
+    models: [{ id: 'asr', name: 'ASR' }],
+  };
+  const parsed = parseModelProvidersImportPayload({
+    type: EXPORT_FORMAT_TYPE,
+    version: 4,
+    providers: [],
+    onlineModelProviders: { 'speech-recognition': { providers: [provider] } },
+  });
+  expect(parsed.onlineModelProviders['speech-recognition']!.providers[0]).toEqual(provider);
+  expect(parsed.onlineModelProviders['speech-recognition']!.providers[0]).not.toHaveProperty(
+    'protocolId',
+  );
+});
+
+test.each(['category', 'provider', 'model', 'binding', 'voice'] as const)(
+  'rejects retired fields on %s before import or export serialization',
+  level => {
+    const voice = { id: 'voice', name: 'Voice' };
+    const binding = { id: 'speech', protocolId: 'openai-speech-http' as const };
+    const model = { id: 'reader', name: 'Reader', voices: [voice], bindings: [binding] };
+    const provider = {
+      displayName: 'Speech',
+      baseUrl: 'http://speech.internal/v1',
+      apiKey: encryptedApiKey,
+      models: [model],
+    };
+    const category = { providers: [provider] };
+    Object.assign({ category, provider, model, binding, voice }[level], {
+      compatibilityProfile: undefined,
+    });
+    for (const version of [4, PROVIDERS_EXPORT_VERSION]) {
+      expect(() =>
+        parseModelProvidersImportPayload({
+          type: EXPORT_FORMAT_TYPE,
+          version,
+          providers: [],
+          onlineModelProviders: { 'speech-synthesis': category },
+        }),
+      ).toThrow();
+    }
+    const exportCategory = {
+      ...category,
+      providers: [{ key: 'speech', config: { ...provider, apiKey: '' }, apiKey: encryptedApiKey }],
+    };
+    expect(() =>
+      createProvidersExportPayload([], { 'speech-synthesis': exportCategory }),
+    ).toThrow();
+  },
+);
+
+test.each(['chat-audio-transcription', 'chat-audio-speech'])(
+  'rejects the retired protocol %s without treating it as legacy',
+  protocolId => {
+    const kind = protocolId.endsWith('transcription') ? 'speech-recognition' : 'speech-synthesis';
+    expect(() =>
+      parseModelProvidersImportPayload({
+        type: EXPORT_FORMAT_TYPE,
+        version: PROVIDERS_EXPORT_VERSION,
+        providers: [],
+        onlineModelProviders: {
+          [kind]: {
+            providers: [
+              {
+                displayName: 'Speech',
+                baseUrl: 'http://speech.internal/v1',
+                apiKey: encryptedApiKey,
+                protocolId,
+                models: [{ id: 'custom/model', name: 'Model' }],
+              },
+            ],
+          },
+        },
+      }),
+    ).toThrow();
+  },
+);
+
 describe('provider transfer format', () => {
-  test('exports version 4 providers as a list without internal keys', () => {
+  test('preserves speech bindings and realtime parameters, and rejects unknown protocol metadata on import', () => {
+    const bindings = [
+      { id: 'recorded', protocolId: 'openai-transcription-http' },
+      { id: 'live', protocolId: 'openai-transcription-realtime' },
+    ];
+    const payload = {
+      type: EXPORT_FORMAT_TYPE,
+      version: PROVIDERS_EXPORT_VERSION,
+      providers: [],
+      onlineModelProviders: {
+        'speech-recognition': {
+          providers: [
+            {
+              displayName: 'Speech LAN',
+              baseUrl: 'http://speech.lan/v1',
+              apiKey: encryptedApiKey,
+              models: [{ id: 'group/model', name: 'Model', bindings }],
+            },
+          ],
+        },
+        'realtime-voice': {
+          providers: [
+            {
+              displayName: 'Voice LAN',
+              baseUrl: 'ws://voice.lan/v1',
+              apiKey: encryptedApiKey,
+              models: [
+                {
+                  id: 'conversation',
+                  name: 'Conversation',
+                  bindings: [
+                    {
+                      id: 'talk',
+                      protocolId: 'openai-voice-realtime',
+                      inputTranscriptionModel: 'internal/asr',
+                    },
+                  ],
+                  voices: [{ id: 'speaker', name: 'Speaker' }],
+                },
+              ],
+            },
+          ],
+        },
+      },
+    };
+    const parsed = parseModelProvidersImportPayload(payload);
+    expect(
+      parsed.onlineModelProviders['speech-recognition']?.providers[0].models[0].bindings,
+    ).toEqual(bindings);
+    expect(
+      parsed.onlineModelProviders['realtime-voice']?.providers[0].models[0].bindings?.[0]
+        .inputTranscriptionModel,
+    ).toBe('internal/asr');
+    payload.onlineModelProviders[
+      'speech-recognition'
+    ].providers[0].models[0].bindings[0].protocolId = 'unknown';
+    expect(() => parseModelProvidersImportPayload(payload)).toThrow();
+  });
+  test('exports current providers as a list without internal keys', () => {
     const payload = createProvidersExportPayload([
       {
         key: 'custom_7',
@@ -222,8 +399,8 @@ describe('provider transfer format', () => {
     expect(() =>
       parseModelProvidersImportPayload(
         payload([
-          { id: 'tts-1', name: 'First' },
-          { id: 'tts-1', name: 'Duplicate' },
+          { id: 'custom-speech-model', name: 'First' },
+          { id: 'custom-speech-model', name: 'Duplicate' },
         ]),
       ),
     ).toThrow('Duplicate online model id');
@@ -231,7 +408,7 @@ describe('provider transfer format', () => {
       parseModelProvidersImportPayload(
         payload([
           {
-            id: 'tts-1',
+            id: 'custom-speech-model',
             name: 'TTS One',
             voices: [
               { id: 'voice-1', name: 'First' },

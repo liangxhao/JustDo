@@ -1,4 +1,3 @@
-import { hasTranscriptionBaseUrl, resolveTranscriptionUrl } from './intranet-config.js';
 import type {
   RealtimeTranscriptionProviderConfig,
   RealtimeTranscriptionProviderPlugin,
@@ -11,6 +10,9 @@ import {
   asSafeIntegerInRange,
   normalizeOptionalString,
 } from 'openclaw/plugin-sdk/string-coerce-runtime';
+
+import { resolveSpeechProtocolSelection, SPEECH_PROTOCOL_IDS } from '../../sdk/speech-protocols/index.js';
+import { hasTranscriptionBaseUrl, requireSpeechIdentifier, resolveTranscriptionUrl } from './intranet-config.js';
 import type { OpenAIRealtimeHost } from './realtime-host.js';
 import {
   readRealtimeErrorDetail,
@@ -29,7 +31,6 @@ type RealtimeEvent = {
 
 const OPENAI_REALTIME_TRANSCRIPTION_AUDIO_BYTES_PER_MS = 8;
 const OPENAI_REALTIME_TRANSCRIPTION_MIN_COMMIT_DURATION_MS = 100;
-const OPENAI_REALTIME_TRANSCRIPTION_DEFAULT_MODEL = 'gpt-4o-transcribe';
 const OPENAI_REALTIME_TRANSCRIPTION_MAX_UNRESOLVED_ITEMS = 64;
 const OPENAI_REALTIME_TRANSCRIPTION_MAX_ITEM_ID_BYTES = 1024;
 const OPENAI_REALTIME_TRANSCRIPTION_MAX_RETAINED_TRANSCRIPT_BYTES = 256 * 1024;
@@ -59,24 +60,20 @@ function appendedUtf8ByteLength(previous: string, appended: string): number {
   return joinsSurrogatePair ? appendedBytes - 2 : appendedBytes;
 }
 
-function normalizeProviderConfig(
-  config: RealtimeTranscriptionProviderConfig,
-  credentialPath = 'plugins.entries.voice-call.config.streaming.providers.openai.apiKey',
-) {
-  const raw = resolveOpenAIProviderConfigRecord(config);
+function normalizeProviderConfig(config: RealtimeTranscriptionProviderConfig) {
+  const raw = resolveOpenAIProviderConfigRecord(config, SPEECH_PROTOCOL_IDS.TRANSCRIPTION_REALTIME);
+  resolveSpeechProtocolSelection(raw, 'realtime-transcription', SPEECH_PROTOCOL_IDS.TRANSCRIPTION_REALTIME);
+  if (Object.keys(raw ?? {}).some(key => !['protocolId', 'baseUrl', 'model', 'apiKey', 'configurationId',
+    'language', 'prompt', 'silenceDurationMs', 'vadThreshold'].includes(key)))
+    throw new Error('Unsupported transcription configuration field.');
   return {
     baseUrl: normalizeOptionalString(raw?.baseUrl),
-    apiKey:
-      normalizeResolvedSecretInputString({
-        value: raw?.apiKey,
-        path: credentialPath,
-      }) ??
-      normalizeResolvedSecretInputString({
-        value: raw?.openaiApiKey,
-        path: 'plugins.entries.voice-call.config.streaming.openaiApiKey',
-      }),
+    apiKey: normalizeResolvedSecretInputString({
+      value: raw?.apiKey,
+      path: 'plugins.entries.openai.config.transcription.apiKey',
+    }),
     language: normalizeOptionalString(raw?.language),
-    model: normalizeOptionalString(raw?.model) ?? normalizeOptionalString(raw?.sttModel),
+    model: raw?.model === undefined ? undefined : requireSpeechIdentifier(raw.model, 'transcription model'),
     prompt: normalizeOptionalString(raw?.prompt),
     silenceDurationMs: asSafeIntegerInRange(raw?.silenceDurationMs, { min: 0 }),
     vadThreshold: asFiniteNumberInRange(raw?.vadThreshold, { min: 0, max: 1 }),
@@ -90,7 +87,6 @@ export function buildOpenAIRealtimeTranscriptionProvider(
     id: 'openai',
     label: 'OpenAI Realtime Transcription',
     aliases: ['openai-realtime'],
-    defaultModel: OPENAI_REALTIME_TRANSCRIPTION_DEFAULT_MODEL,
     autoSelectOrder: 10,
     resolveConfig: ({ cfg, rawConfig }) => {
       const pluginConfig = cfg.plugins?.entries?.openai?.config;
@@ -98,20 +94,30 @@ export function buildOpenAIRealtimeTranscriptionProvider(
         return normalizeProviderConfig(rawConfig);
       }
       // An authored profile owns the endpoint and credentials together. A withdrawn
-      // or invalid profile must not borrow a stale voice-call service.
+      // or invalid profile must not borrow another service.
       const profile = asOptionalRecord(pluginConfig.transcription);
       if (!profile || !normalizeOptionalString(profile.model)) return normalizeProviderConfig({});
-      return normalizeProviderConfig(profile, 'plugins.entries.openai.config.transcription.apiKey');
+      try {
+        resolveSpeechProtocolSelection(profile, 'realtime-transcription', SPEECH_PROTOCOL_IDS.TRANSCRIPTION_REALTIME);
+      } catch {
+        return normalizeProviderConfig({});
+      }
+      return normalizeProviderConfig(profile);
     },
-    isConfigured: ({ providerConfig }) =>
-      hasTranscriptionBaseUrl(normalizeProviderConfig(providerConfig).baseUrl),
+    isConfigured: ({ providerConfig }) => {
+      try {
+        const configured = normalizeProviderConfig(providerConfig);
+        requireSpeechIdentifier(configured.model, 'transcription model');
+        return hasTranscriptionBaseUrl(configured.baseUrl);
+      } catch { return false; }
+    },
     createSession: req => {
       const normalized = normalizeProviderConfig(req.providerConfig);
       const url = resolveTranscriptionUrl(normalized.baseUrl);
       const config = {
         ...req,
         ...normalized,
-        model: normalized.model ?? OPENAI_REALTIME_TRANSCRIPTION_DEFAULT_MODEL,
+        model: requireSpeechIdentifier(normalized.model, 'transcription model'),
         silenceDurationMs: normalized.silenceDurationMs ?? 800,
         vadThreshold: normalized.vadThreshold ?? 0.5,
       };
@@ -512,6 +518,7 @@ export function buildOpenAIRealtimeTranscriptionProvider(
               } else {
                 config.onError?.(error);
               }
+              return;
             }
 
             default:

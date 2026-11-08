@@ -1,5 +1,6 @@
 import { browserInterventionTranslations } from '@/features/browser/intervention/browserInterventionTranslations';
 import { browserRecordingTranslations } from '@/features/browser/recording/browserRecordingTranslations';
+import { realtimeVoiceTranslations } from '@/features/speech/realtime/realtimeVoiceTranslations';
 import type { LanguageType } from '@/services/i18n';
 
 import { askUserQuestionTranslations } from '../../../../plugins/extensions/ask-user-question/browser/translations';
@@ -38,6 +39,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     ...browserTranslations.zh,
     ...browserInterventionTranslations.zh,
     ...browserRecordingTranslations.zh,
+    ...realtimeVoiceTranslations.zh,
     ...chatTranslations.zh,
     ...chromeTranslations.zh,
     ...filePreviewTranslations.zh,
@@ -67,6 +69,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     ...browserTranslations.en,
     ...browserInterventionTranslations.en,
     ...browserRecordingTranslations.en,
+    ...realtimeVoiceTranslations.en,
     ...chatTranslations.en,
     ...chromeTranslations.en,
     ...filePreviewTranslations.en,

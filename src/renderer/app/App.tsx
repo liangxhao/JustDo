@@ -6,6 +6,7 @@ import {
   type ApprovalRequest,
   type ApprovalResolved,
 } from '@shared/security/approvals';
+import { OPEN_SPEECH_SETTINGS_EVENT, SPEECH_SURFACE_HIDDEN_EVENT } from '@shared/speech/speechSettingsNavigation';
 import React, {
   useCallback,
   useEffect,
@@ -429,6 +430,7 @@ const InitializedApp: React.FC = () => {
   }, []);
 
   const handleShowSettings = useCallback((options?: SettingsOpenOptions) => {
+    window.dispatchEvent(new Event(SPEECH_SURFACE_HIDDEN_EVENT));
     setSettingsOptions({
       initialTab: options?.initialTab,
       speechModels: options?.speechModels,
@@ -438,6 +440,14 @@ const InitializedApp: React.FC = () => {
     });
     setShowSettings(true);
   }, []);
+  useEffect(() => {
+    window.dispatchEvent(new Event(SPEECH_SURFACE_HIDDEN_EVENT));
+  }, [mainView, appPageVisible]);
+  useEffect(() => {
+    const show = () => handleShowSettings({ initialTab: 'voice' });
+    window.addEventListener(OPEN_SPEECH_SETTINGS_EVENT, show);
+    return () => window.removeEventListener(OPEN_SPEECH_SETTINGS_EVENT, show);
+  }, [handleShowSettings]);
   useEffect(() => {
     const show = (event: Event) => {
       const options = (event as CustomEvent<Partial<AppSettingsNavigationRequest> | null>).detail;

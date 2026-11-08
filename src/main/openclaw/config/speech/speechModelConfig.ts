@@ -1,13 +1,17 @@
+import {
+  normalizeSpeechServiceBaseUrl,
+  SPEECH_PROTOCOL_IDS,
+} from '../../../../../plugins/sdk/speech-protocols';
 import { normalizeLocalSpeechExtensionSettings } from '../../../../shared/speech/localSpeechExtensionSettings';
 import { normalizeLocalSpeechSettings } from '../../../../shared/speech/localSpeechSettings';
 import { LOCAL_TTS_PROVIDER_ID } from '../../../../shared/speech/localTts';
 import {
-  getOnlineSpeechModelOptions,
-  getOnlineSpeechVoiceOptions,
-  normalizeOnlineSpeechBaseUrl,
-  resolveOnlineSpeechModel,
+  type OnlineSpeechVoiceSelection,
+  resolveOnlineSpeechBinding,
+  resolveOnlineSpeechVoiceSelection,
 } from '../../../../shared/speech/onlineSpeechModels';
 import { saveExtensionSecrets } from '../../../plugins/extensions/extensionSecretFile';
+import { resolveOnlineReplySpeechProfile } from '../../../speech/onlineReplySpeechProfile';
 import { mergeOpenClawPluginConfig } from '../plugins/pluginProjection';
 import {
   buildLocalSpeechExtensionSttConfig,
@@ -21,6 +25,7 @@ export interface ManagedSpeechModelSettings {
   voice: unknown;
   recognitionModels: unknown;
   synthesisModels: unknown;
+  realtimeModels?: unknown;
   language: 'zh' | 'en';
 }
 
@@ -37,16 +42,9 @@ export function applyManagedSpeechModelConfiguration(
   const extensions = normalizeLocalSpeechExtensionSettings(settings.extensions);
   const voice = normalizeLocalSpeechSettings(settings.voice);
   let secretsChanged = false;
-  const online = (kind: 'stt' | 'tts', reference: string, selectedVoice?: string) => {
+  const online = (kind: 'stt' | 'tts', reference: string, bindingId: string, selectedVoice?: OnlineSpeechVoiceSelection | null) => {
     const category = kind === 'stt' ? settings.recognitionModels : settings.synthesisModels;
-    if (
-      !getOnlineSpeechModelOptions(category, {
-        fileTranscription: true,
-        requireVoice: kind === 'tts',
-      }).some(option => option.value === reference)
-    )
-      return null;
-    const selection = resolveOnlineSpeechModel(category, reference);
+    const selection = resolveOnlineSpeechBinding(category, reference, bindingId, kind === 'stt' ? 'stt-tool' : 'tts');
     if (
       !selection ||
       selection.model.id.length > 256 ||
@@ -54,30 +52,27 @@ export function applyManagedSpeechModelConfiguration(
       /[\r\n\0]/.test(selection.provider.apiKey)
     )
       return null;
-    if (
-      kind === 'tts' &&
-      (!selectedVoice ||
-        selectedVoice.length > 256 ||
-        !getOnlineSpeechVoiceOptions(selection.model).some(
-          option => option.value === selectedVoice,
-        ))
-    )
-      return null;
+    const voiceSelection = kind === 'tts' ? resolveOnlineSpeechVoiceSelection(selection.model, selection.binding, selectedVoice) : null;
+    if (kind === 'tts' && !voiceSelection) return null;
     try {
-      const baseUrl = normalizeOnlineSpeechBaseUrl(selection.provider.baseUrl, kind);
+      const baseUrl = normalizeSpeechServiceBaseUrl(selection.provider.baseUrl, selection.binding);
       if (baseUrl.length > 2048) return null;
       return {
         baseUrl,
         model: selection.model.id,
         apiKey: selection.provider.apiKey.trim(),
-        ...(kind === 'tts' ? { speakerVoice: selectedVoice } : {}),
+        protocolId: selection.binding.protocolId,
+        ...(kind === 'tts' ? {
+          voicePolicy: selection.binding.voicePolicy ?? 'preset', voiceSelection,
+          ...(voiceSelection?.kind === 'preset' ? { speakerVoice: voiceSelection.voiceId } : {}),
+        } : {}),
       };
     } catch {
       return null;
     }
   };
-  const withSecret = (
-    target: Record<string, unknown> & { apiKey: string; baseUrl: string },
+  const withSecret = <T extends { apiKey: string; baseUrl: string }>(
+    target: T,
     owner: string,
     scope: string,
   ) => {
@@ -91,17 +86,17 @@ export function applyManagedSpeechModelConfiguration(
   const inputSelection =
     voice.inputEnabled &&
     voice.recognitionMode === 'online' &&
-    getOnlineSpeechModelOptions(settings.recognitionModels).some(
-      option => option.value === voice.onlineAsrModelRef,
-    )
-      ? resolveOnlineSpeechModel(settings.recognitionModels, voice.onlineAsrModelRef)
+    voice.onlineAsrModelRef
+      ? resolveOnlineSpeechBinding(settings.recognitionModels, voice.onlineAsrModelRef, voice.onlineAsrBindingId, 'composer-asr')
       : null;
-  const inputProfile = inputSelection
+  const inputProfile = inputSelection?.binding.protocolId === SPEECH_PROTOCOL_IDS.TRANSCRIPTION_REALTIME
     ? withSecret(
         {
           baseUrl: inputSelection.provider.baseUrl.trim(),
           model: inputSelection.model.id,
           apiKey: inputSelection.provider.apiKey.trim(),
+          protocolId: inputSelection.binding.protocolId,
+          configurationId: buildSpeechCredentialSlot('composerAsr', inputSelection.provider.baseUrl.trim(), inputSelection.provider.apiKey.trim()),
         },
         'openai',
         'composerAsr',
@@ -109,7 +104,7 @@ export function applyManagedSpeechModelConfiguration(
     : null;
 
   const sttSelection =
-    extensions.sttMode === 'online' ? online('stt', extensions.onlineSttModelRef) : null;
+    extensions.sttMode === 'online' ? online('stt', extensions.onlineSttModelRef, extensions.onlineSttBindingId) : null;
   const sttConfig =
     extensions.sttMode === 'online'
       ? {
@@ -130,7 +125,7 @@ export function applyManagedSpeechModelConfiguration(
 
   const ttsSelection =
     extensions.ttsMode === 'online'
-      ? online('tts', extensions.onlineTtsModelRef, extensions.onlineTtsVoice)
+      ? online('tts', extensions.onlineTtsModelRef, extensions.onlineTtsBindingId, extensions.onlineTtsVoiceSelection)
       : null;
   const local =
     extensions.ttsMode === 'local' ? buildLocalSpeechExtensionTtsConfig(extensions) : null;
@@ -158,21 +153,33 @@ export function applyManagedSpeechModelConfiguration(
     },
   };
 
-  const reply =
-    voice.outputEnabled && voice.synthesisMode === 'online'
-      ? online('tts', voice.onlineTtsModelRef, voice.onlineTtsVoice)
-      : null;
+  const reply = resolveOnlineReplySpeechProfile(voice, settings.synthesisModels);
+  const realtime = voice.realtimeEnabled
+    ? resolveOnlineSpeechBinding(settings.realtimeModels, voice.realtimeModelRef, voice.realtimeBindingId, 'realtime-voice')
+    : null;
+  const realtimeVoice = realtime
+    ? resolveOnlineSpeechVoiceSelection(realtime.model, realtime.binding, voice.realtimeVoiceSelection)
+    : null;
+  const realtimeProfile = realtime && realtimeVoice?.kind === 'preset' && realtime.binding.inputTranscriptionModel
+    ? withSecret({
+      baseUrl: realtime.provider.baseUrl.trim(), model: realtime.model.id,
+      speakerVoice: realtimeVoice.voiceId, apiKey: realtime.provider.apiKey.trim(),
+      protocolId: realtime.binding.protocolId, inputTranscriptionModel: realtime.binding.inputTranscriptionModel,
+      configurationId: buildSpeechCredentialSlot('realtimeVoice', realtime.provider.baseUrl.trim(), realtime.provider.apiKey.trim()),
+    }, 'openai', 'realtimeVoice')
+    : null;
   const nextPlugins = record(config.plugins);
   const nextEntries = record(nextPlugins.entries);
   const runtime = record(nextEntries['runtime-services']);
   const openai = record(nextEntries.openai);
+  const previousRealtime = record(record(openai.config).realtimeVoice);
   config.plugins = {
     ...nextPlugins,
     entries: {
       ...nextEntries,
       openai: {
         ...openai,
-        config: { ...record(openai.config), transcription: inputProfile },
+        config: { ...record(openai.config), transcription: inputProfile, realtimeVoice: realtimeProfile },
       },
       'runtime-services': {
         ...runtime,
@@ -183,7 +190,32 @@ export function applyManagedSpeechModelConfiguration(
       },
     },
   };
-  if (reply || inputProfile) {
+  if (realtimeProfile) {
+    const talk = record(config.talk);
+    config.talk = {
+      ...talk,
+      realtime: {
+        ...record(talk.realtime),
+        provider: 'openai', transport: 'gateway-relay', consultRouting: 'force-agent-consult',
+        model: realtimeProfile.model, speakerVoice: realtimeProfile.speakerVoice,
+      },
+    };
+  } else if (typeof previousRealtime.model === 'string' && typeof previousRealtime.speakerVoice === 'string') {
+    const talk = record(config.talk);
+    const managed = { provider: 'openai', transport: 'gateway-relay', consultRouting: 'force-agent-consult',
+      model: previousRealtime.model, speakerVoice: previousRealtime.speakerVoice };
+    const retained = { ...record(talk.realtime) };
+    for (const [field, value] of Object.entries(managed)) {
+      if (retained[field] === value) delete retained[field];
+    }
+    if (Object.keys(retained).length) config.talk = { ...talk, realtime: retained };
+    else {
+      const retainedTalk = { ...talk };
+      delete retainedTalk.realtime;
+      config.talk = retainedTalk;
+    }
+  }
+  if (reply || inputProfile || realtimeProfile || ttsSelection) {
     config.plugins = mergeOpenClawPluginConfig(record(config.plugins), {
       openai: { enabled: true },
     });

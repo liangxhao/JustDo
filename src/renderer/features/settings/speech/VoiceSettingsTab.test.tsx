@@ -48,6 +48,521 @@ describe('VoiceSettingsTab', () => {
     });
   });
 
+  const installOnlineBridges = () => {
+    Object.defineProperty(window, 'electron', {
+      configurable: true,
+      value: {
+        localSpeechModels: {
+          list: vi.fn().mockResolvedValue({ supported: false, models: [] }),
+          onChanged: vi.fn().mockReturnValue(() => {}),
+        },
+        onlineAsr: { getStatus: vi.fn().mockResolvedValue({ available: false }) },
+        onlineTts: { getStatus: vi.fn().mockResolvedValue({ available: false }) },
+      },
+    });
+  };
+
+  it('shows no interface row or selector before a model is selected, including realtime voice', async () => {
+    installOnlineBridges();
+    const onChange = vi.fn();
+    render(
+      <VoiceSettingsTab
+        value={{
+          ...defaultLocalSpeechSettings,
+          inputEnabled: true,
+          recognitionMode: 'online',
+          outputEnabled: true,
+          synthesisMode: 'online',
+          realtimeEnabled: true,
+        }}
+        onChange={onChange}
+      />,
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(
+      screen.queryByRole('combobox', { name: i18nService.t('speechProtocolType') }),
+    ).toBeNull();
+    for (const id of [
+      'voice-online-asr-binding',
+      'voice-online-tts-binding',
+      'voice-realtime-binding',
+    ])
+      expect(document.getElementById(id)).toBeNull();
+    expect(screen.queryByText(i18nService.t('speechConfigureInterfaceInModels'))).toBeNull();
+    expect(screen.queryByText(/当前接口：/)).toBeNull();
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('keeps saved legacy interfaces read-only and preserves their IDs and voices when reselecting the same model', async () => {
+    installOnlineBridges();
+    const provider = (bindings: unknown[]) => ({
+      displayName: 'Office',
+      baseUrl: 'http://speech.lan/v1',
+      apiKey: '',
+      models: [{ id: 'one', name: 'one', voices: [{ id: 'calm', name: 'Calm' }], bindings }],
+    });
+    mockConfig.onlineModelProviders = {
+      'speech-recognition': {
+        providers: {
+          office: provider([
+            { id: 'recorded', protocolId: 'openai-transcription-http' },
+            { id: 'saved-live', protocolId: 'openai-transcription-realtime' },
+          ]),
+        },
+      },
+      'speech-synthesis': {
+        providers: { office: provider([{ id: 'saved-speech', protocolId: 'openai-speech-http' }]) },
+      },
+      'realtime-voice': {
+        providers: {
+          office: provider([
+            {
+              id: 'saved-call',
+              protocolId: 'openai-voice-realtime',
+              inputTranscriptionModel: 'custom/input',
+            },
+          ]),
+        },
+      },
+    };
+    const value: LocalSpeechSettings = {
+      ...defaultLocalSpeechSettings,
+      inputEnabled: true,
+      recognitionMode: 'online',
+      onlineAsrModelRef: 'office/one',
+      onlineAsrBindingId: 'saved-live',
+      outputEnabled: true,
+      synthesisMode: 'online',
+      onlineTtsModelRef: 'office/one',
+      onlineTtsBindingId: 'saved-speech',
+      onlineTtsVoiceSelection: { kind: 'preset', voiceId: 'calm' },
+      realtimeEnabled: true,
+      realtimeModelRef: 'office/one',
+      realtimeBindingId: 'saved-call',
+      realtimeVoiceSelection: { kind: 'preset', voiceId: 'calm' },
+    };
+    const onChange = vi.fn();
+    render(<VoiceSettingsTab value={value} onChange={onChange} />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    for (const key of [
+      'speechProtocolRealtimeTranscription',
+      'speechProtocolSynthesis',
+      'speechProtocolRealtimeVoice',
+    ])
+      expect(
+        screen.getByText(
+          i18nService.t('speechCurrentProtocol').replace('{protocol}', i18nService.t(key)),
+        ),
+      ).toBeTruthy();
+    expect(
+      screen.queryByRole('combobox', { name: i18nService.t('speechProtocolType') }),
+    ).toBeNull();
+    for (const key of ['voiceRecognitionModel', 'voiceSynthesisModel', 'realtimeVoiceModel']) {
+      fireEvent.click(screen.getByRole('combobox', { name: i18nService.t(key) }));
+      fireEvent.click(screen.getByRole('option', { name: 'Office / one' }));
+    }
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('does not repair unknown saved IDs by reselecting the same inherited model', async () => {
+    installOnlineBridges();
+    const provider = (protocolId: string) => ({
+      displayName: 'Office',
+      baseUrl: 'http://speech.lan/v1',
+      apiKey: '',
+      protocolId,
+      models: [
+        {
+          id: 'one',
+          name: 'one',
+          inputTranscriptionModel:
+            protocolId === 'openai-voice-realtime' ? 'custom/input' : undefined,
+          voices: [{ id: 'calm', name: 'Calm' }],
+        },
+      ],
+    });
+    mockConfig.onlineModelProviders = {
+      'speech-recognition': { providers: { office: provider('openai-transcription-http') } },
+      'speech-synthesis': { providers: { office: provider('openai-speech-http') } },
+      'realtime-voice': { providers: { office: provider('openai-voice-realtime') } },
+    };
+    const onChange = vi.fn();
+    render(
+      <VoiceSettingsTab
+        value={{
+          ...defaultLocalSpeechSettings,
+          inputEnabled: true,
+          recognitionMode: 'online',
+          onlineAsrModelRef: 'office/one',
+          onlineAsrBindingId: 'deleted',
+          outputEnabled: true,
+          synthesisMode: 'online',
+          onlineTtsModelRef: 'office/one',
+          onlineTtsBindingId: 'deleted',
+          realtimeEnabled: true,
+          realtimeModelRef: 'office/one',
+          realtimeBindingId: 'deleted',
+        }}
+        onChange={onChange}
+      />,
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.getAllByText(i18nService.t('speechConfigureInterfaceInModels'))).toHaveLength(3);
+    for (const key of ['voiceRecognitionModel', 'voiceSynthesisModel', 'realtimeVoiceModel']) {
+      fireEvent.click(screen.getByRole('combobox', { name: i18nService.t(key) }));
+      fireEvent.click(screen.getByRole('option', { name: 'Office / one' }));
+    }
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('requires model settings after changing to a legacy model even when it has only one explicit interface', async () => {
+    installOnlineBridges();
+    mockConfig.onlineModelProviders = {
+      'speech-recognition': {
+        providers: {
+          office: {
+            displayName: 'Office',
+            baseUrl: 'http://speech.lan/v1',
+            apiKey: '',
+            models: ['one', 'two'].map(id => ({
+              id,
+              name: id,
+              bindings: [{ id: 'saved-recording', protocolId: 'openai-transcription-http' }],
+            })),
+          },
+        },
+      },
+    };
+    const onChange = vi.fn();
+    const onManageModels = vi.fn();
+    const value: LocalSpeechSettings = {
+      ...defaultLocalSpeechSettings,
+      inputEnabled: true,
+      recognitionMode: 'online',
+      onlineAsrModelRef: 'office/one',
+      onlineAsrBindingId: 'saved-recording',
+    };
+    const view = render(
+      <VoiceSettingsTab value={value} onChange={onChange} onManageModels={onManageModels} />,
+    );
+    fireEvent.click(screen.getByRole('combobox', { name: i18nService.t('voiceRecognitionModel') }));
+    fireEvent.click(screen.getByRole('option', { name: 'Office / two' }));
+    const next = onChange.mock.lastCall![0] as LocalSpeechSettings;
+    expect(next).toMatchObject({ onlineAsrModelRef: 'office/two', onlineAsrBindingId: '' });
+    view.rerender(
+      <VoiceSettingsTab value={next} onChange={onChange} onManageModels={onManageModels} />,
+    );
+    expect(screen.getByText(i18nService.t('speechConfigureInterfaceInModels'))).toBeTruthy();
+    fireEvent.click(
+      screen.getAllByRole('button', { name: i18nService.t('speechManageModels') })[0],
+    );
+    expect(onManageModels).toHaveBeenCalled();
+  });
+
+  it('inherits each provider protocol and keeps purpose model choices independent', async () => {
+    const provider = (protocolId: string, inputTranscriptionModel?: string) => ({
+      displayName: 'Office',
+      baseUrl: 'http://speech.lan/v1',
+      apiKey: '',
+      protocolId,
+      models: ['one', 'two'].map(id => ({
+        id,
+        name: id,
+        voices: [{ id: 'calm', name: 'Calm' }],
+        ...(inputTranscriptionModel ? { inputTranscriptionModel } : {}),
+      })),
+    });
+    mockConfig.onlineModelProviders = {
+      'speech-recognition': { providers: { office: provider('openai-transcription-http') } },
+      'speech-synthesis': { providers: { office: provider('openai-speech-http') } },
+      'realtime-voice': { providers: { office: provider('openai-voice-realtime', 'input-stt') } },
+    };
+    Object.defineProperty(window, 'electron', {
+      configurable: true,
+      value: {
+        localSpeechModels: {
+          list: vi.fn().mockResolvedValue({ supported: false, models: [] }),
+          onChanged: vi.fn().mockReturnValue(() => {}),
+        },
+        onlineAsr: { getStatus: vi.fn().mockResolvedValue({ available: false }) },
+        onlineTts: { getStatus: vi.fn().mockResolvedValue({ available: false }) },
+      },
+    });
+    const value: LocalSpeechSettings = {
+      ...defaultLocalSpeechSettings,
+      inputEnabled: true,
+      recognitionMode: 'online',
+      onlineAsrModelRef: 'office/one',
+      outputEnabled: true,
+      synthesisMode: 'online',
+      onlineTtsModelRef: 'office/one',
+      onlineTtsVoiceSelection: { kind: 'preset', voiceId: 'calm' },
+      realtimeEnabled: true,
+      realtimeModelRef: 'office/one',
+      realtimeVoiceSelection: { kind: 'preset', voiceId: 'calm' },
+    };
+    const onChange = vi.fn();
+    render(<VoiceSettingsTab value={value} onChange={onChange} />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    for (const id of [
+      'voice-online-asr-binding',
+      'voice-online-tts-binding',
+      'voice-realtime-binding',
+    ])
+      expect(document.getElementById(id)).toBeNull();
+    for (const key of [
+      'speechProtocolRecorded',
+      'speechProtocolSynthesis',
+      'speechProtocolRealtimeVoice',
+    ])
+      expect(
+        screen.getByText(
+          i18nService.t('speechCurrentProtocol').replace('{protocol}', i18nService.t(key)),
+        ),
+      ).toBeTruthy();
+    for (const [label, modelKey, bindingKey] of [
+      ['voiceRecognitionModel', 'onlineAsrModelRef', 'onlineAsrBindingId'],
+      ['voiceSynthesisModel', 'onlineTtsModelRef', 'onlineTtsBindingId'],
+      ['realtimeVoiceModel', 'realtimeModelRef', 'realtimeBindingId'],
+    ]) {
+      fireEvent.click(screen.getByRole('combobox', { name: i18nService.t(label) }));
+      fireEvent.click(screen.getByRole('option', { name: 'Office / two' }));
+      expect(onChange).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          [modelKey]: 'office/two',
+          [bindingKey]: 'provider',
+          asrModelId: value.asrModelId,
+          ttsModelId: value.ttsModelId,
+          voiceId: value.voiceId,
+        }),
+      );
+    }
+  });
+
+  it('does not offer legacy bindings when the selected provider protocol is invalid', async () => {
+    mockConfig.onlineModelProviders = {
+      'speech-recognition': {
+        providers: {
+          office: {
+            displayName: 'Office',
+            baseUrl: 'http://speech.lan/v1',
+            apiKey: '',
+            protocolId: 'invalid',
+            models: [
+              {
+                id: 'asr',
+                name: 'ASR',
+                bindings: [{ id: 'old', protocolId: 'openai-transcription-http' }],
+              },
+            ],
+          },
+        },
+      },
+    };
+    Object.defineProperty(window, 'electron', {
+      configurable: true,
+      value: {
+        localSpeechModels: {
+          list: vi.fn().mockResolvedValue({ supported: false, models: [] }),
+          onChanged: vi.fn().mockReturnValue(() => {}),
+        },
+        onlineAsr: { getStatus: vi.fn().mockResolvedValue({ available: false }) },
+      },
+    });
+    const onChange = vi.fn();
+    render(
+      <VoiceSettingsTab
+        value={{
+          ...defaultLocalSpeechSettings,
+          inputEnabled: true,
+          recognitionMode: 'online',
+          onlineAsrModelRef: 'office/asr',
+          onlineAsrBindingId: 'old',
+        }}
+        onChange={onChange}
+      />,
+    );
+    expect(document.getElementById('voice-online-asr-binding')).toBeNull();
+    expect(screen.getByText(i18nService.t('speechConfigureInterfaceInModels'))).toBeTruthy();
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('retains offline Japanese and Korean choices when a retired online interface is remembered', async () => {
+    mockConfig.onlineModelProviders = {
+      'speech-recognition': {
+        providers: {
+          office: {
+            displayName: 'Office',
+            baseUrl: 'http://speech.lan/v1',
+            apiKey: '',
+            models: [
+              {
+                id: 'recognizer',
+                name: 'Recognizer',
+                bindings: [
+                  {
+                    id: 'chat',
+                    protocolId: 'chat-audio-transcription',
+                    compatibilityProfile: 'retired-profile',
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      },
+    };
+    Object.defineProperty(window, 'electron', {
+      configurable: true,
+      value: {
+        localSpeechModels: {
+          list: vi.fn().mockResolvedValue({ supported: false, models: [] }),
+          onChanged: vi.fn().mockReturnValue(() => undefined),
+        },
+      },
+    });
+    render(
+      <VoiceSettingsTab
+        value={{
+          ...defaultLocalSpeechSettings,
+          inputEnabled: true,
+          recognitionMode: 'local',
+          onlineAsrModelRef: 'office/recognizer',
+          onlineAsrBindingId: 'chat',
+        }}
+        onChange={vi.fn()}
+      />,
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+    fireEvent.click(
+      screen.getByRole('combobox', { name: i18nService.t('voiceRecognitionLanguage') }),
+    );
+    expect(screen.getByRole('option', { name: i18nService.t('japanese') })).toBeTruthy();
+    expect(screen.getByRole('option', { name: i18nService.t('korean') })).toBeTruthy();
+  });
+
+  it('keeps a retired voice selection unavailable until a preset is explicitly selected', async () => {
+    mockConfig.onlineModelProviders = {
+      'speech-synthesis': {
+        providers: {
+          office: {
+            displayName: 'Office',
+            baseUrl: 'http://speech.lan/v1',
+            apiKey: '',
+            protocolId: 'openai-speech-http',
+            models: [
+              { id: 'reader', name: 'Reader', voices: [{ id: 'voice-one', name: 'Voice One' }] },
+            ],
+          },
+        },
+      },
+    };
+    const saveConfiguration = vi.fn();
+    Object.defineProperty(window, 'electron', {
+      configurable: true,
+      value: {
+        localSpeechModels: {
+          list: vi.fn().mockResolvedValue({ supported: false, models: [] }),
+          onChanged: vi.fn().mockReturnValue(() => undefined),
+        },
+        onlineTts: {
+          getStatus: vi.fn().mockResolvedValue({ available: false }),
+          saveConfiguration,
+        },
+      },
+    });
+    const onChange = vi.fn();
+    const value: LocalSpeechSettings = {
+      ...defaultLocalSpeechSettings,
+      outputEnabled: true,
+      synthesisMode: 'online',
+      onlineTtsModelRef: 'office/reader',
+      onlineTtsBindingId: 'provider',
+      onlineTtsVoice: 'voice-one',
+      onlineTtsVoiceSelection: {
+        kind: 'service-default',
+      } as unknown as LocalSpeechSettings['onlineTtsVoiceSelection'],
+    };
+    mockConfig.voice = value;
+    render(<VoiceSettingsTab value={value} onChange={onChange} />);
+    expect(screen.getByRole('combobox', { name: i18nService.t('voiceSpeaker') }).textContent).toBe(
+      i18nService.t('speechOnlineVoiceUnavailable'),
+    );
+    expect(onChange).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('combobox', { name: i18nService.t('voiceSpeaker') }));
+    fireEvent.click(screen.getByRole('option', { name: 'Voice One' }));
+    expect(onChange).toHaveBeenCalledWith({
+      ...value,
+      onlineTtsVoice: 'voice-one',
+      onlineTtsVoiceSelection: { kind: 'preset', voiceId: 'voice-one' },
+    });
+    expect(saveConfiguration).not.toHaveBeenCalled();
+  });
+
+  it('does not replace a retired realtime voice selection with a catalog voice', async () => {
+    mockConfig.onlineModelProviders = {
+      'realtime-voice': {
+        providers: {
+          office: {
+            displayName: 'Office',
+            baseUrl: 'http://speech.lan/v1',
+            apiKey: '',
+            protocolId: 'openai-voice-realtime',
+            models: [
+              {
+                id: 'call',
+                name: 'Call',
+                inputTranscriptionModel: 'internal/stt',
+                voices: [{ id: 'calm', name: 'Calm' }],
+              },
+            ],
+          },
+        },
+      },
+    };
+    Object.defineProperty(window, 'electron', {
+      configurable: true,
+      value: {
+        localSpeechModels: {
+          list: vi.fn().mockResolvedValue({ supported: false, models: [] }),
+          onChanged: vi.fn().mockReturnValue(() => undefined),
+        },
+      },
+    });
+    const onChange = vi.fn();
+    render(
+      <VoiceSettingsTab
+        value={{
+          ...defaultLocalSpeechSettings,
+          realtimeEnabled: true,
+          realtimeModelRef: 'office/call',
+          realtimeBindingId: 'provider',
+          realtimeVoiceSelection: {
+            kind: 'service-default',
+          } as unknown as LocalSpeechSettings['realtimeVoiceSelection'],
+        }}
+        onChange={onChange}
+      />,
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(
+      screen.getByRole('combobox', { name: i18nService.t('realtimeVoiceSpeaker') }).textContent,
+    ).toBe(i18nService.t('speechOnlineVoiceUnavailable'));
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
   it('shows local model status and exposes both feature switches', async () => {
     Object.defineProperty(window, 'electron', {
       configurable: true,
@@ -254,9 +769,7 @@ describe('VoiceSettingsTab', () => {
         recognitionMode: 'online',
         onlineAsrModelRef: 'office/sense-voice',
       });
-      expect(saveConfiguration).toHaveBeenCalledWith({
-        modelRef: 'office/sense-voice',
-      });
+      expect(saveConfiguration).not.toHaveBeenCalled();
     });
     expect(screen.queryByRole('button', { name: i18nService.t('voiceModelDownload') })).toBeNull();
   });
@@ -387,16 +900,16 @@ describe('VoiceSettingsTab', () => {
                 id: 'voice-small',
                 name: 'Voice Small',
                 voices: [
-                  { id: 'alloy', name: 'Alloy' },
-                  { id: 'echo', name: 'Echo' },
+                  { id: 'voice-one', name: 'Voice One' },
+                  { id: 'voice-two', name: 'Voice Two' },
                 ],
               },
               {
                 id: 'voice-hq',
                 name: 'Voice HQ',
                 voices: [
-                  { id: 'nova', name: 'Nova' },
-                  { id: 'shimmer', name: 'Shimmer' },
+                  { id: 'voice-three', name: 'Voice Three' },
+                  { id: 'voice-four', name: 'Voice Four' },
                 ],
               },
               { id: 'voice-unconfigured', name: 'Voice Missing' },
@@ -467,8 +980,8 @@ describe('VoiceSettingsTab', () => {
     });
     expect(speakerSelector.textContent).toContain(i18nService.t('voiceSelectSpeaker'));
     fireEvent.click(speakerSelector);
-    expect(screen.queryByRole('option', { name: 'Nova' })).toBeNull();
-    fireEvent.click(screen.getByRole('option', { name: 'Echo' }));
+    expect(screen.queryByRole('option', { name: 'Voice Three' })).toBeNull();
+    fireEvent.click(screen.getByRole('option', { name: 'Voice Two' }));
 
     await vi.waitFor(() => {
       expect(onChange).toHaveBeenCalledWith({
@@ -476,7 +989,8 @@ describe('VoiceSettingsTab', () => {
         outputEnabled: true,
         synthesisMode: 'online',
         onlineTtsModelRef: 'lan-tts/voice-small',
-        onlineTtsVoice: 'echo',
+        onlineTtsVoice: 'voice-two',
+        onlineTtsVoiceSelection: { kind: 'preset', voiceId: 'voice-two' },
       });
       expect(saveConfiguration).not.toHaveBeenCalled();
     });
@@ -551,6 +1065,7 @@ describe('VoiceSettingsTab', () => {
       synthesisMode: 'online',
       onlineTtsModelRef: 'office/reader',
       onlineTtsVoice: 'voice-a',
+      onlineTtsVoiceSelection: { kind: 'preset' as const, voiceId: 'voice-a' },
     };
     mockConfig.voice = savedVoice;
     mockConfig.onlineModelProviders = {
@@ -624,7 +1139,11 @@ describe('VoiceSettingsTab', () => {
       engineChanged({ phase: EnginePhase.Running, canRetry: false, version: null }),
     );
 
-    const draftVoice = { ...savedVoice, onlineTtsVoice: 'voice-b' };
+    const draftVoice = {
+      ...savedVoice,
+      onlineTtsVoice: 'voice-b',
+      onlineTtsVoiceSelection: { kind: 'preset' as const, voiceId: 'voice-b' },
+    };
     view.rerender(<VoiceSettingsTab value={draftVoice} onChange={onChange} />);
     expect(preview().disabled).toBe(true);
     expect(screen.getByText(i18nService.t('voiceOutputDiagnosticSaveFirst'))).toBeTruthy();
@@ -638,7 +1157,7 @@ describe('VoiceSettingsTab', () => {
     expect(unsubscribe).toHaveBeenCalledOnce();
   });
 
-  it('keeps the previous selection and reports a Gateway model switch failure', async () => {
+  it('keeps model selection in the draft even while Gateway configuration would fail', async () => {
     mockConfig.onlineModelProviders = {
       'speech-recognition': {
         providers: {
@@ -687,8 +1206,11 @@ describe('VoiceSettingsTab', () => {
     fireEvent.click(selector);
     fireEvent.click(screen.getByRole('option', { name: 'Office speech / Model B' }));
 
-    expect((await screen.findByRole('alert')).textContent).toContain('Gateway rejected config');
-    expect(onChange).not.toHaveBeenCalled();
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({ onlineAsrModelRef: 'office/model-b' }),
+    );
+    expect(window.electron.onlineAsr.saveConfiguration).not.toHaveBeenCalled();
+    expect(screen.queryByRole('alert')).toBeNull();
     expect(selector.textContent).toContain('Office speech / Model A');
   });
 });

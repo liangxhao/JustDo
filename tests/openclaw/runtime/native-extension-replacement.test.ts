@@ -91,7 +91,7 @@ test('replaces the entire native directory and compiles main, setup, policy, cat
   expect(fs.existsSync(path.join(target, 'index.js'))).toBe(true);
 });
 
-test('binds every local OpenAI production source, contract and worker to the runtime fingerprint', () => {
+test('binds retained speech production sources and contracts to the runtime fingerprint', () => {
   const files = listBuildRecipeFiles(path.resolve('.')).map((file: string) =>
     path.relative('.', file).replaceAll('\\', '/'),
   );
@@ -103,9 +103,18 @@ test('binds every local OpenAI production source, contract and worker to the run
     'contracts/media-config.ts',
     'package-lock.json',
     'upstream-source.json',
-    'realtime-quicksilver-audio.worker.ts',
+    'managed-realtime-voice-provider.ts',
+    'realtime-voice-bridge.ts',
   ])
     expect(files).toContain('plugins/extensions/openai/' + name);
+  for (const source of [
+    'plugins/sdk/speech-protocols/index.ts',
+    'plugins/extensions/stt-local-cli/online.ts',
+    'plugins/extensions/tts-local-cli/online.ts',
+    'plugins/extensions/runtime-services/speech.ts',
+    'plugins/extensions/runtime-services/contracts/speech.ts',
+  ])
+    expect(files).toContain(source);
   expect(files.some((file: string) => file.endsWith('sync-native-extension-overlay.cjs'))).toBe(
     false,
   );

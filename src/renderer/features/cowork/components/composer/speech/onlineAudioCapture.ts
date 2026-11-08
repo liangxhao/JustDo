@@ -56,6 +56,7 @@ export class OnlineAsrAudioPump {
     const context = this.context;
     if (!context) throw new Error('Online audio capture is unavailable.');
     await this.resumePromise;
+    if (this.context !== context) throw new Error('Online audio capture was cancelled.');
     if (context.state !== 'running') {
       this.stop();
       throw new Error('Online audio capture could not start.');

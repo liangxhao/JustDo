@@ -97,6 +97,8 @@ const BUILD_RECIPE_FILES = [
   'plugins/extensions/runtime-services/index.ts',
   'plugins/extensions/runtime-services/openclaw.plugin.json',
   'plugins/extensions/runtime-services/package.json',
+  'plugins/extensions/runtime-services/speech.ts',
+  'plugins/extensions/runtime-services/contracts/speech.ts',
   'plugins/extensions/runtime-services/contracts/external-mcp.ts',
   'plugins/extensions/runtime-services/external-mcp/index.ts',
   'plugins/extensions/runtime-services/external-mcp/registry.ts',
@@ -441,33 +443,49 @@ function buildOpenClawPatchSetFingerprint(repoRoot, version) {
 function listBuildRecipeFiles(repoRoot) {
   const smartCanvasRoot = path.join(repoRoot, 'plugins/extensions/smart-canvas');
   const smartCanvasFiles = fs.existsSync(smartCanvasRoot)
-    ? fs.readdirSync(smartCanvasRoot, { recursive: true, withFileTypes: true })
-        .filter(entry => entry.isFile() &&
-          !path.relative(smartCanvasRoot, entry.parentPath).split(path.sep)
-            .some(part => ['assets', 'node_modules', 'tests'].includes(part)) &&
-          !entry.name.endsWith('.md'))
-        .map(entry => path.join(entry.parentPath, entry.name)).sort()
-    : [];
-  const replacementRoot = path.join(repoRoot, 'plugins/extensions', 'openai');
-  const replacementFiles = fs.existsSync(replacementRoot)
     ? fs
-        .readdirSync(replacementRoot, { recursive: true, withFileTypes: true })
+        .readdirSync(smartCanvasRoot, { recursive: true, withFileTypes: true })
         .filter(
           entry =>
             entry.isFile() &&
             !path
-              .relative(replacementRoot, entry.parentPath)
+              .relative(smartCanvasRoot, entry.parentPath)
               .split(path.sep)
-              .includes('node_modules') &&
-            !entry.name.includes('.test.') &&
+              .some(part => ['assets', 'node_modules', 'tests'].includes(part)) &&
             !entry.name.endsWith('.md'),
         )
         .map(entry => path.join(entry.parentPath, entry.name))
         .sort()
     : [];
+  // These extensions inline the pure speech contract before relocation. Keep
+  // their complete production input trees in the same proof as the replacement.
+  const sourceFiles = [
+    'plugins/extensions/openai',
+    'plugins/sdk/speech-protocols',
+    'plugins/extensions/stt-local-cli',
+    'plugins/extensions/tts-local-cli',
+  ].flatMap(relativeRoot => {
+    const sourceRoot = path.join(repoRoot, relativeRoot);
+    return fs.existsSync(sourceRoot)
+      ? fs
+          .readdirSync(sourceRoot, { recursive: true, withFileTypes: true })
+          .filter(
+            entry =>
+              entry.isFile() &&
+              !path
+                .relative(sourceRoot, entry.parentPath)
+                .split(path.sep)
+                .some(part => ['node_modules', 'tests'].includes(part)) &&
+              !entry.name.includes('.test.') &&
+              !entry.name.endsWith('.md'),
+          )
+          .map(entry => path.join(entry.parentPath, entry.name))
+          .sort()
+      : [];
+  });
   return [
     ...BUILD_RECIPE_FILES.map(relativePath => path.join(repoRoot, relativePath)),
-    ...replacementFiles,
+    ...sourceFiles,
     ...smartCanvasFiles,
   ];
 }

@@ -23,7 +23,7 @@
 
 - 启动或历史恢复受阻：[启动分流](app/startup-and-history-upgrade.md#四类启动)、[初始化错误](app/startup-and-history-upgrade.md#初始化错误)。
 - 运行参数、授权与自动续跑：[执行控制](execution/README.md)；停止或无回复时看[会话诊断](execution/session-diagnostics.md#用户操作)。
-- 配置模型、使用语音或登录换证：分别看[模型配置](models/README.md)、[语音](speech/README.md)、[账号认证](account/README.md)。
+- 配置模型、使用语音或登录换证：分别看[模型配置](models/README.md)、[语音](speech/README.md)、[账号认证](account/README.md)；语音服务兼容范围见[通用接口](speech/speech-protocols.md)。
 - 插件安装或启停异常：[插件中心](plugins/plugin-hub.md)；插件业务见[插件文档](../plugins/README.md)。
 
 跨插件子 Agent 的来源、工具、问答与审批边界见[多 Agent 工具与交互](execution/multi-agent-tools.md)。

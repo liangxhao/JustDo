@@ -460,6 +460,69 @@ test('reuses locked target dependencies without reinstalling them', () => {
   }
 });
 
+test('removes obsolete worker files and dependencies after the locked package changes', () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'extension-resource-cleanup-'));
+  const repoRoot = path.join(tempRoot, 'repo');
+  const runtimeRoot = path.join(tempRoot, 'runtime');
+  const extensionRoot = path.join(repoRoot, 'plugins/extensions', 'configured-provider');
+  const targetRoot = path.join(runtimeRoot, 'dist/extensions', 'configured-provider');
+  const installTarget = { targetId: 'win-x64', os: 'win32', cpu: 'x64' };
+  const installProductionDependencies = vi.fn((extensionDir: string) => {
+    const pkg = JSON.parse(fs.readFileSync(path.join(extensionDir, 'package.json'), 'utf8'));
+    for (const name of Object.keys(pkg.dependencies)) {
+      const dependency = path.join(extensionDir, 'node_modules', name);
+      fs.mkdirSync(dependency, { recursive: true });
+      fs.writeFileSync(
+        path.join(dependency, 'package.json'),
+        JSON.stringify({ name, version: '1.0.0' }),
+      );
+    }
+  });
+  const writePackage = (obsolete: boolean) => {
+    const dependencies = {
+      'retained-transport': '1.0.0',
+      ...(obsolete ? { 'obsolete-codec': '1.0.0' } : {}),
+    };
+    const pkg = { name: 'configured-provider', dependencies };
+    fs.writeFileSync(path.join(extensionRoot, 'package.json'), JSON.stringify(pkg));
+    fs.writeFileSync(
+      path.join(extensionRoot, 'package-lock.json'),
+      JSON.stringify({ lockfileVersion: 3, packages: { '': pkg } }),
+    );
+  };
+  const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+  try {
+    fs.mkdirSync(extensionRoot, { recursive: true });
+    writePackage(true);
+    fs.writeFileSync(path.join(extensionRoot, 'index.js'), 'export const configured = true;');
+    const worker = path.join(extensionRoot, 'obsolete.worker.js');
+    fs.writeFileSync(worker, 'export const obsolete = true;');
+    syncLocalExtensions(repoRoot, runtimeRoot, 'test', {
+      installTarget,
+      installProductionDependencies,
+    });
+    expect(fs.existsSync(path.join(targetRoot, 'obsolete.worker.js'))).toBe(true);
+    expect(fs.existsSync(path.join(targetRoot, 'node_modules/obsolete-codec/package.json'))).toBe(
+      true,
+    );
+    fs.unlinkSync(worker);
+    writePackage(false);
+    syncLocalExtensions(repoRoot, runtimeRoot, 'test', {
+      installTarget,
+      installProductionDependencies,
+    });
+    expect(installProductionDependencies).toHaveBeenCalledTimes(2);
+    expect(fs.existsSync(path.join(targetRoot, 'obsolete.worker.js'))).toBe(false);
+    expect(fs.existsSync(path.join(targetRoot, 'node_modules/obsolete-codec'))).toBe(false);
+    expect(
+      fs.existsSync(path.join(targetRoot, 'node_modules/retained-transport/package.json')),
+    ).toBe(true);
+  } finally {
+    logSpy.mockRestore();
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test('rebuilds an assembly when its installed dependency is incomplete', () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-runtime-resources-'));
   const repoRoot = path.join(tempRoot, 'repo');

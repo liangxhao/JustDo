@@ -47,6 +47,7 @@ const settings = (): ManagedSpeechModelSettings => ({
     ttsMode: 'online',
     onlineTtsModelRef: 'internal/tool',
     onlineTtsVoice: 'tool-voice',
+    onlineTtsVoiceSelection: { kind: 'preset', voiceId: 'tool-voice' },
   },
   voice: {
     ...defaultLocalSpeechSettings,
@@ -54,6 +55,7 @@ const settings = (): ManagedSpeechModelSettings => ({
     synthesisMode: 'online',
     onlineTtsModelRef: 'replyProvider/reply',
     onlineTtsVoice: 'reply-voice',
+    onlineTtsVoiceSelection: { kind: 'preset', voiceId: 'reply-voice' },
   },
   recognitionModels: category('asr', 'recognition-secret'),
   synthesisModels: {
@@ -85,6 +87,29 @@ const toolConfig = (config: Record<string, unknown>) =>
   (config.tts as { providers: Record<string, Record<string, unknown>> }).providers['tts-local-cli'];
 
 describe('managed speech configuration', () => {
+  it('projects the inherited provider protocol and per-model voice policy through the existing native profiles', () => {
+    const input = settings();
+    input.recognitionModels = { providers: { internal: {
+      displayName: 'Private recognition', baseUrl: 'http://speech.internal/v1', apiKey: '',
+      protocolId: 'openai-transcription-http', models: [{ id: 'asr', name: 'ASR' }],
+    } } };
+    input.synthesisModels = { providers: {
+      internal: { displayName: 'Private synthesis', baseUrl: 'http://speech.internal/v1', apiKey: '',
+        protocolId: 'openai-speech-http', models: [{ id: 'tool', name: 'Tool', voices: [{ id: 'tool-voice', name: 'Voice' }] }] },
+      replyProvider: { displayName: 'Speech service', baseUrl: 'http://reply.internal/v1', apiKey: '',
+        protocolId: 'openai-speech-http',
+        models: [{ id: 'reply', name: 'Reply', voices: [{ id: 'reply-voice', name: 'Voice' }] }] },
+    } };
+    input.voice = { ...input.voice as object, onlineTtsVoiceSelection: { kind: 'preset', voiceId: 'reply-voice' } };
+    const config = nativeConfig();
+    applyManagedSpeechModelConfiguration(config, input, stateDir);
+    expect(pluginConfig(config, 'stt-local-cli')).toMatchObject({ mode: 'online', protocolId: 'openai-transcription-http', model: 'asr' });
+    expect(pluginConfig(config, 'runtime-services').replySpeech).toMatchObject({
+      protocolId: 'openai-speech-http', model: 'reply',
+      voicePolicy: 'preset', voiceSelection: { kind: 'preset', voiceId: 'reply-voice' },
+    });
+    expect(pluginConfig(config, 'runtime-services').replySpeech).toHaveProperty('speakerVoice', 'reply-voice');
+  });
   let stateDir: string;
   beforeEach(() => {
     vi.clearAllMocks();
@@ -308,12 +333,13 @@ describe('managed speech configuration', () => {
     expect(fs.existsSync(path.join(stateDir, 'extension-secrets.json'))).toBe(false);
   });
 
-  it('does not enable or disable the shared online adapter when reply reading is local or unavailable', () => {
+  it('preserves explicit adapter state when no selected consumer needs the shared online provider', () => {
     const config = nativeConfig();
     const plugins = config.plugins as { deny: string[]; entries: Record<string, unknown> };
     plugins.deny.push('openai');
     plugins.entries.openai = { enabled: false, config: { retained: true } };
     const input = settings();
+    input.extensions = { ...defaultLocalSpeechExtensionSettings, ttsMode: 'local' };
     input.voice = { ...defaultLocalSpeechSettings, synthesisMode: 'local' };
     applyManagedSpeechModelConfiguration(config, input, stateDir);
     expect(config.plugins).toMatchObject({
@@ -321,8 +347,102 @@ describe('managed speech configuration', () => {
       entries: { openai: { enabled: false, config: { retained: true } } },
     });
     expect(pluginConfig(config, 'runtime-services').replySpeech).toBeNull();
+    expect(toolConfig(config)).toMatchObject({ command: 'local-tts' });
+  });
+
+  it('enables the shared adapter for an online TTS tool without enabling the optional tool plugin', () => {
+    const input = settings();
+    input.voice = { ...defaultLocalSpeechSettings };
+    const config = nativeConfig();
+    applyManagedSpeechModelConfiguration(config, input, stateDir);
+    expect(config.plugins).toMatchObject({ entries: {
+      openai: { enabled: true }, 'tts-local-cli': { enabled: false },
+    } });
+    expect(pluginConfig(config, 'runtime-services').replySpeech).toBeNull();
     expect(toolConfig(config)).toMatchObject({ mode: 'online', model: 'tool' });
   });
+
+  it('withdraws a retired speech protocol rather than projecting it as a standard service', () => {
+    const input = settings();
+    const voice = { ...defaultLocalSpeechSettings, outputEnabled: true, synthesisMode: 'online',
+      onlineTtsModelRef: 'internal/chat', onlineTtsBindingId: 'chat',
+      onlineTtsVoiceSelection: { kind: 'service-default' } };
+    input.voice = voice;
+    input.synthesisModels = { providers: { internal: {
+      displayName: 'Private service', baseUrl: 'http://speech.internal/deployment/chat/completions', apiKey: '',
+      models: [{ id: 'chat', name: 'Chat', voices: [], bindings: [{ id: 'chat',
+        protocolId: 'chat-audio-speech', compatibilityProfile: 'removed', voicePolicy: 'service-default' }] }],
+    } } };
+    const config = nativeConfig();
+    applyManagedSpeechModelConfiguration(config, input, stateDir);
+    expect(pluginConfig(config, 'runtime-services').replySpeech).toBeNull();
+  });
+
+  it('withdraws a core-protocol provider carrying a deprecated configuration field', () => {
+    const input = settings();
+    const { providers } = input.synthesisModels as { providers: Record<string, Record<string, unknown>> };
+    providers.replyProvider = { ...providers.replyProvider, protocolId: 'openai-speech-http',
+      compatibilityProfile: 'removed' };
+    const config = nativeConfig();
+    applyManagedSpeechModelConfiguration(config, input, stateDir);
+    expect(pluginConfig(config, 'runtime-services').replySpeech).toBeNull();
+    expect(toolConfig(config)).toMatchObject({ mode: 'online', model: 'tool' });
+  });
+
+  it('isolates and withdraws the realtime conversation profile while preserving unrelated Talk settings', () => {
+    const input = settings();
+    input.voice = { ...defaultLocalSpeechSettings, realtimeEnabled: true, realtimeModelRef: 'internal/voice',
+      realtimeBindingId: 'conversation', realtimeVoiceSelection: { kind: 'preset', voiceId: 'private-voice' } };
+    input.realtimeModels = { providers: { internal: {
+      baseUrl: 'wss://voice.internal/service/v1', apiKey: 'voice-secret', displayName: 'Voice',
+      models: [{ id: 'voice', name: 'Voice', voices: [{ id: 'private-voice', name: 'Private' }],
+        bindings: [{ id: 'conversation', protocolId: 'openai-voice-realtime', inputTranscriptionModel: 'private-caption' }] }],
+    } } };
+    const config = { ...nativeConfig(), talk: { realtime: { silenceDurationMs: 10_000 } } };
+    applyManagedSpeechModelConfiguration(config, input, stateDir);
+    expect(pluginConfig(config, 'openai').realtimeVoice).toMatchObject({ model: 'voice', speakerVoice: 'private-voice',
+      inputTranscriptionModel: 'private-caption', apiKey: { source: 'file' } });
+    expect(config.talk.realtime).toMatchObject({ provider: 'openai', consultRouting: 'force-agent-consult', silenceDurationMs: 10_000 });
+    expect(JSON.stringify(config)).not.toContain('voice-secret');
+    input.voice = { ...input.voice as object, realtimeEnabled: false };
+    applyManagedSpeechModelConfiguration(config, input, stateDir);
+    expect(pluginConfig(config, 'openai').realtimeVoice).toBeNull();
+    expect(config.talk.realtime).toEqual({ silenceDurationMs: 10_000 });
+  });
+
+  it.each(['model', 'endpoint'] as const)(
+    'withdraws every online profile when its selected %s is missing without restoring service defaults', missing => {
+      const modelId = missing === 'model' ? '' : 'department/custom-model';
+      const baseUrl = missing === 'endpoint' ? '' : 'http://speech.internal/team/v1';
+      const provider = (protocolId: string) => ({ displayName: 'Configured connection', baseUrl, apiKey: '', protocolId,
+        models: [{ id: modelId, name: 'Configured model', voices: [{ id: 'custom-voice', name: 'Configured voice' }],
+          ...(protocolId === 'openai-voice-realtime' ? { inputTranscriptionModel: 'department/custom-transcriber' } : {}) }],
+      });
+      const reference = `connection/${modelId}`;
+      const input: ManagedSpeechModelSettings = {
+        language: 'zh',
+        extensions: { ...defaultLocalSpeechExtensionSettings, sttMode: 'online', ttsMode: 'online',
+          onlineSttModelRef: reference, onlineTtsModelRef: reference,
+          onlineTtsVoiceSelection: { kind: 'preset', voiceId: 'custom-voice' } },
+        voice: { ...defaultLocalSpeechSettings, inputEnabled: true, recognitionMode: 'online',
+          onlineAsrModelRef: `live/${modelId}`, outputEnabled: true, synthesisMode: 'online',
+          onlineTtsModelRef: reference, onlineTtsVoiceSelection: { kind: 'preset', voiceId: 'custom-voice' },
+          realtimeEnabled: true, realtimeModelRef: reference,
+          realtimeVoiceSelection: { kind: 'preset', voiceId: 'custom-voice' } },
+        recognitionModels: { providers: { connection: provider('openai-transcription-http'), live: provider('openai-transcription-realtime') } },
+        synthesisModels: { providers: { connection: provider('openai-speech-http') } },
+        realtimeModels: { providers: { connection: provider('openai-voice-realtime') } },
+      };
+      const config = nativeConfig();
+      applyManagedSpeechModelConfiguration(config, input, stateDir);
+      expect(pluginConfig(config, 'openai')).toMatchObject({ transcription: null, realtimeVoice: null });
+      expect(pluginConfig(config, 'runtime-services').replySpeech).toBeNull();
+      expect(pluginConfig(config, 'stt-local-cli')).toEqual({ mode: 'online', language: 'zh' });
+      expect(toolConfig(config)).toEqual({ mode: 'online' });
+      expect(buildLocalSpeechExtensionSttConfig).not.toHaveBeenCalled();
+      expect(buildLocalSpeechExtensionTtsConfig).not.toHaveBeenCalled();
+    },
+  );
 
   it('keeps the local model/voice CLI projection independent from online reply reading', () => {
     const config = nativeConfig();

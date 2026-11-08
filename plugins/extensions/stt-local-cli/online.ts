@@ -1,6 +1,14 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
+import {
+  buildTranscriptionRequest,
+  normalizeSpeechServiceBaseUrl,
+  parseTranscriptionResponse,
+  resolveSpeechProtocolSelection,
+  SPEECH_PROTOCOL_IDS,
+  type SpeechProtocolSelection,
+} from '../../sdk/speech-protocols/index.js';
 import { MAX_AUDIO_BYTES, transcribeAudioSegments, type TranscriptionOptions } from './transcribe';
 
 /** Snapshot the admitted file through the native root boundary before any remote upload. */
@@ -22,7 +30,7 @@ export async function stageOnlineInput(
   await fs.writeFile(target, opened.buffer, { signal, flag: 'wx' });
 }
 
-export type OnlineTranscriptionConfig = {
+export type OnlineTranscriptionConfig = SpeechProtocolSelection & {
   mode: 'online';
   baseUrl: string;
   model: string;
@@ -39,6 +47,8 @@ export function readOnlineConfig(value: unknown): OnlineTranscriptionConfig {
     !input.baseUrl.trim() ||
     typeof input.model !== 'string' ||
     !input.model.trim() ||
+    input.model.length > 256 ||
+    /[\u0000-\u001f\u007f]/.test(input.model) ||
     typeof input.language !== 'string' ||
     !['auto', 'zh', 'en', 'ja', 'ko', 'yue'].includes(input.language)
   ) {
@@ -46,25 +56,18 @@ export function readOnlineConfig(value: unknown): OnlineTranscriptionConfig {
       'The selected online transcription model is unavailable. Configure it in model settings.',
     );
   }
-  let url: URL;
-  try {
-    url = new URL(input.baseUrl);
-  } catch {
-    throw new Error('Invalid transcription service URL.');
-  }
-  if (
-    !['http:', 'https:'].includes(url.protocol) ||
-    url.username ||
-    url.password ||
-    url.search ||
-    url.hash
-  )
-    throw new Error('Invalid transcription service URL.');
+  const selection = resolveSpeechProtocolSelection(
+    input,
+    'transcription',
+    SPEECH_PROTOCOL_IDS.TRANSCRIPTION_HTTP,
+  );
+  const baseUrl = normalizeSpeechServiceBaseUrl(input.baseUrl, selection);
   if (input.apiKey !== undefined && typeof input.apiKey !== 'string')
     throw new Error('The transcription service credential has not been resolved.');
   return {
     mode: 'online',
-    baseUrl: url.toString().replace(/\/+$/, ''),
+    ...selection,
+    baseUrl,
     model: input.model.trim(),
     apiKey: input.apiKey ?? '',
     language: input.language,
@@ -81,64 +84,72 @@ export type OnlineTranscriptionRequest = {
 /** One bounded upload, with native multipart, HTTP policy, response and redaction helpers. */
 export async function requestOnlineTranscription({
   buffer,
-  config,
+  config: rawConfig,
   signal,
   assertCurrent,
 }: OnlineTranscriptionRequest): Promise<string> {
+  const config = readOnlineConfig(rawConfig);
   const {
     buildAudioTranscriptionFormData,
     resolveProviderHttpRequestConfig,
     assertOkOrThrowHttpError,
     readProviderJsonObjectResponse,
-    requireTranscriptionText,
   } = await import('openclaw/plugin-sdk/provider-http');
   const { fetchWithSsrFGuard, ssrfPolicyFromHttpBaseUrlAllowedOrigin } =
     await import('openclaw/plugin-sdk/ssrf-runtime');
   signal.throwIfAborted();
   assertCurrent?.();
+  const plan = buildTranscriptionRequest({
+    selection: config,
+    model: config.model,
+    audio: buffer,
+    language: config.language,
+  });
   const http = resolveProviderHttpRequestConfig({
     provider: 'openai',
     capability: 'audio',
     transport: 'media-understanding',
     baseUrl: config.baseUrl,
     defaultBaseUrl: config.baseUrl,
-    defaultHeaders: config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {},
-  });
-  const body = buildAudioTranscriptionFormData({
-    buffer,
-    fileName: 'audio.wav',
-    mime: 'audio/wav',
-    fields: {
-      model: config.model,
-      language: config.language === 'auto' ? undefined : config.language,
+    defaultHeaders: {
+      ...(config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {}),
     },
   });
+  const body = buildAudioTranscriptionFormData({
+    buffer: Buffer.from(plan.file.bytes),
+    fileName: plan.file.fileName,
+    mime: plan.file.mimeType,
+    fields: plan.fields,
+  });
   const { response, release } = await fetchWithSsrFGuard({
-    url: `${http.baseUrl}/audio/transcriptions`,
+    url: `${http.baseUrl}${plan.path}`,
     init: { method: 'POST', headers: http.headers, body, signal },
     timeoutMs: 120_000,
     policy: ssrfPolicyFromHttpBaseUrlAllowedOrigin(config.baseUrl),
     dispatcherPolicy: http.dispatcherPolicy,
     mode: 'strict',
     maxRedirects: 0,
+    capture: false,
     beforeRequest: () => {
       signal.throwIfAborted();
       assertCurrent?.();
     },
   });
   try {
-    await assertOkOrThrowHttpError(response, 'Audio transcription failed', {
-      requestHeaders: http.headers,
-    });
+    try {
+      await assertOkOrThrowHttpError(response, 'Audio transcription failed', {
+        requestHeaders: http.headers,
+      });
+    } catch {
+      throw new Error(`Audio transcription failed (HTTP ${response.status}).`);
+    }
     const result = await readProviderJsonObjectResponse(response, 'Audio transcription failed', {
       requestHeaders: http.headers,
+      maxBytes: 2 * 1024 * 1024,
     });
     signal.throwIfAborted();
     assertCurrent?.();
-    return requireTranscriptionText(
-      typeof result.text === 'string' ? result.text : undefined,
-      'No speech was recognized.',
-    );
+    return parseTranscriptionResponse(config, result);
   } finally {
     await release();
   }

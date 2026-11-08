@@ -9,6 +9,8 @@ export const OnlineAsrIpc = {
   AppendAudio: 'online-asr:append-audio',
   Close: 'online-asr:close',
   Event: 'online-asr:event',
+  Transcribe: 'online-asr:transcribe',
+  CancelTranscription: 'online-asr:cancel-transcription',
 } as const;
 
 export interface OnlineAsrProvider {
@@ -27,12 +29,25 @@ export interface OnlineAsrConfiguration extends OnlineAsrStatus {
 
 export interface OnlineAsrConfigurationUpdate {
   modelRef: string;
+  bindingId?: string;
 }
 
 export interface OnlineAsrStatus {
   available: boolean;
+  inputMode?: 'recording' | 'realtime';
   provider?: string;
   error?: string;
+}
+
+export interface OnlineAsrTranscribeRequest {
+  requestId: string;
+  audioWav: Uint8Array;
+  language: LocalAsrLanguage;
+}
+
+export interface OnlineAsrTranscribeResult {
+  requestId: string;
+  text: string;
 }
 
 export interface OnlineAsrSession {

@@ -21,6 +21,7 @@
     "additionalProperties": false,
     "properties": {
       "mode": { "type": "string", "enum": ["local", "online"] },
+      "protocolId": { "type": "string", "enum": ["openai-transcription-http"] },
       "baseUrl": { "type": "string" },
       "model": { "type": "string" },
       "apiKey": { "type": ["string", "object"] },

@@ -20,11 +20,13 @@ describe('terminal error text', () => {
     newline => {
       expect(
         formatTerminalErrorText(
-          String.raw`LLM request rejected: Unsupported model mimo\-v2\.5` +
+          String.raw`LLM request rejected: Unsupported model custom\-v2\.5` +
             newline +
-            '400 Unsupported model mimo-v2.5',
+            '400 Unsupported model custom-v2.5',
         ),
-      ).toBe('LLM request rejected: Unsupported model mimo-v2.5: 400 Unsupported model mimo-v2.5');
+      ).toBe(
+        'LLM request rejected: Unsupported model custom-v2.5: 400 Unsupported model custom-v2.5',
+      );
     },
   );
 

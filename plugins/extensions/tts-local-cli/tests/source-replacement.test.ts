@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
-import { createRequire } from 'node:module';
 import { existsSync } from 'node:fs';
 import fs from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -9,7 +9,12 @@ import { describe, expect, it, vi } from 'vitest';
 
 const repoRoot = process.cwd();
 const source = path.join(repoRoot, 'plugins/extensions/tts-local-cli');
-const upstream = path.resolve(repoRoot, '../openclaw/extensions/tts-local-cli/speech-provider.ts');
+const upstream = path.resolve(
+  process.env.SPEECH_TEST_UPSTREAM_ROOT ?? path.join(repoRoot, '../openclaw'),
+  'extensions/tts-local-cli/speech-provider.ts',
+);
+if (process.env.SPEECH_TEST_UPSTREAM_ROOT && !existsSync(upstream))
+  throw new Error('Invalid supplied upstream speech source.');
 const require = createRequire(import.meta.url);
 const {
   syncLocalExtensions,
@@ -24,6 +29,12 @@ describe('version-locked native speech replacement', () => {
     try {
       await fs.mkdir(path.join(repo, 'plugins/extensions'), { recursive: true });
       await fs.cp(source, path.join(repo, 'plugins/extensions/tts-local-cli'), { recursive: true });
+      await fs.mkdir(path.join(repo, 'plugins/sdk'), { recursive: true });
+      await fs.cp(
+        path.join(repoRoot, 'plugins/sdk/speech-protocols'),
+        path.join(repo, 'plugins/sdk/speech-protocols'),
+        { recursive: true },
+      );
       await fs.mkdir(target, { recursive: true });
       await fs.writeFile(path.join(target, 'stale-upstream.ts'), 'old');
       await fs.writeFile(
@@ -37,7 +48,10 @@ describe('version-locked native speech replacement', () => {
       ).toEqual(['tts-local-cli']);
       expect(installProductionDependencies).not.toHaveBeenCalled();
       expect(await fs.readFile(path.join(target, 'online.ts'), 'utf8')).toContain(
-        'maxRedirects: 0',
+        "getSpeechProvider('openai'",
+      );
+      expect(await fs.readFile(path.join(target, 'index.js'), 'utf8')).toContain(
+        'openai-speech-http',
       );
       expect(await fs.readFile(path.join(target, 'LICENSE'), 'utf8')).toContain('MIT License');
       expect(
@@ -69,7 +83,7 @@ describe('version-locked native speech replacement', () => {
         .replace(/\r\n/g, '\n')
         .replace('import { truncateUtf16Safe } from "openclaw/plugin-sdk/speech-provider";\n', '')
         .replace(
-          /  log\.debug\(\r?\n    `\$\{telephony \? "synthesizeTelephony" : "synthesize"\}: text=\$\{truncateUtf16Safe\(req\.text, 50\)\}\.\.\.`,\r?\n  \);\r?\n/,
+          / {2}log\.debug\(\r?\n {4}`\$\{telephony \? "synthesizeTelephony" : "synthesize"\}: text=\$\{truncateUtf16Safe\(req\.text, 50\)\}\.\.\.`,\r?\n {2}\);\r?\n/,
           '',
         );
       expect(

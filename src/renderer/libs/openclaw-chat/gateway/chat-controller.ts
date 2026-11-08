@@ -1,5 +1,7 @@
 import { createPropertyContext } from '@shared/app/propertyContext';
+import type { RealtimeVoiceTimelineUpdate } from '@shared/speech/realtimeVoice';
 
+import { RealtimeVoiceProjection } from '../model/voice/realtime-voice-projection';
 import {
   appendTerminalMessage,
   asRecord,
@@ -233,6 +235,7 @@ export class ChatController {
   private liveStateBySession = new Map<string, SessionLiveState>();
   private turnTimingBySession = new Map<string, AssistantTurnTiming>();
   private currentMessageHistory = new ChunkedMessageHistory();
+  private readonly realtimeVoiceProjection = new RealtimeVoiceProjection();
   private transcriptImageCache = new Map<string, Promise<string | null>>();
   private transcriptImageReadsActive = 0;
   private transcriptImageReadWaiters: Array<() => void> = [];
@@ -531,6 +534,26 @@ export class ChatController {
   subscribe(listener: ChatStateListener): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
+  }
+
+  /** Admitted Talk captions share this display owner, never the persisted transcript. */
+  acceptRealtimeVoiceUpdate(update: RealtimeVoiceTimelineUpdate): void {
+    if (this.realtimeVoiceProjection.accept(update, this.voiceProjectionContext())) this.notify();
+  }
+
+  clearRealtimeVoiceProjection(): void {
+    if (this.realtimeVoiceProjection.clear()) this.notify();
+  }
+
+  getLiveVoiceTranscripts() {
+    return this.realtimeVoiceProjection.entries(this.voiceProjectionContext());
+  }
+
+  private voiceProjectionContext() {
+    return { connected: this.state.connected, sessionKey: this.state.sessionKey,
+      sessionId: this.state.currentSessionId, client: this.state.client,
+      clientGeneration: this.state.client?.generation ?? 0,
+      historyGeneration: this.state.transcript.historyGeneration, messages: this.getLoadedMessages() };
   }
 
   /** Subscribe to stream updates (for real-time rendering) */

@@ -127,7 +127,7 @@ describe('configured online attachment transcription', () => {
         buffer: Buffer.from('audio'),
         signal: new AbortController().signal,
       }),
-    ).rejects.toThrow('service rejected');
+    ).rejects.toThrow('Audio transcription failed');
     expect(http.fetch.mock.calls[0][0].init.headers.get('Authorization')).toBe('Bearer test-key');
     expect(http.release).toHaveBeenCalledOnce();
     http.fetch.mockClear();
@@ -136,6 +136,41 @@ describe('configured online attachment transcription', () => {
     await expect(
       requestOnlineTranscription({ config, buffer: Buffer.from('audio'), signal: abort.signal }),
     ).rejects.toThrow();
+    expect(http.fetch).not.toHaveBeenCalled();
+  });
+  it('rejects retired protocol fields instead of restoring the legacy multipart default', async () => {
+    for (const fields of [
+      { protocolId: 'chat-audio-transcription' },
+      { compatibilityProfile: 'removed' },
+      { protocolId: 'openai-transcription-http', compatibilityProfile: undefined },
+    ]) {
+      expect(() => readOnlineConfig({ ...config, ...fields })).toThrow();
+      await expect(
+        requestOnlineTranscription({
+          config: { ...config, ...fields } as unknown as typeof config,
+          buffer: Buffer.from('audio'),
+          signal: new AbortController().signal,
+        }),
+      ).rejects.toThrow();
+    }
+    expect(http.fetch).not.toHaveBeenCalled();
+  });
+  it('revalidates explicit model, endpoint and resolved credentials at the public request boundary', async () => {
+    for (const fields of [
+      { model: undefined },
+      { model: '\ncustom-model' },
+      { baseUrl: undefined },
+      { apiKey: { source: 'file' } },
+    ]) {
+      await expect(
+        requestOnlineTranscription({
+          config: { ...config, ...fields } as unknown as typeof config,
+          buffer: Buffer.from('audio'),
+          signal: new AbortController().signal,
+        }),
+      ).rejects.toThrow();
+    }
+    expect(http.resolve).not.toHaveBeenCalled();
     expect(http.fetch).not.toHaveBeenCalled();
   });
   it('decodes bounded local segments and cancels without partial success or a fallback', async () => {

@@ -37,6 +37,8 @@ flowchart LR
 
 桌面主聊天由 Renderer 直接消费 Thinking/Tool/Content，Main 提供连接准备、权限、产品生命周期和受限详情读取。独立 app-server adapter 可以将当前认证流和按需原生历史转换为有界协议投影，仅供当前运行观察或请求，不构成持久正文存储。Redux 不保存 transcript；原生历史丢失时不能用产品消息缓存冒充恢复。外部入口的独立生命周期见[进程模型](03-process-model.md#扩展与外部客户端)。
 
+实时语音同样使用当前聊天。Talk 保存用户转录与实际说出的助手回复；助手委托的内部输入和隐藏最终答案仍遵守原生可见性。Main 通过公开 Talk RPC 完成委托和结果交付，不重复发送产品消息。媒体控制器核对本次请求与 Main 准备的物理来源后，只以无缓冲通知发送已准入的字幕与开始/退休事件；当前 ChatController 持有这条流的有界展示投影，普通消息组件负责渲染，不写入 `persistedMessages`、Main 或 Redux。只有最终字幕提供的真实 `transcriptId` 可以与原生 `session.message` / history 的 `__openclaw.id` 接替，不预测序号或按相同文本合并。原生行先到时也立即去掉对应临时投影。切换产品会话、原生 incarnation、聊天 client/generation 或 history generation 会退休投影；静音不撤销文字流，关闭语音不代表助手执行结算。完整媒体与协议合同见[语音功能](../features/speech/voice-and-transcription.md#8-实时语音对话)。
+
 展示可见性由纯共享规则 `shared/openclaw/messageVisibility.ts` 统一解释，不按正文前缀
 或不断追加的来源名称列表判断。以下消息保留在原生记录中，但不进入聊天展示：
 

@@ -23,10 +23,14 @@ export interface OnlineTtsConfiguration extends OnlineTtsStatus {
   baseUrl?: string;
   model?: string;
   voice?: string;
+  voiceSelection?: OnlineSpeechVoiceSelection;
   credentialConfigured: boolean;
 }
 
 export interface OnlineTtsConfigurationUpdate {
   modelRef: string;
-  voice: string;
+  voice?: string;
+  bindingId?: string;
+  voiceSelection?: OnlineSpeechVoiceSelection | null;
 }
+import type { OnlineSpeechVoiceSelection } from './onlineSpeechModels';

@@ -50,6 +50,7 @@ import { LocalSpeechModelKind } from '@shared/speech/localSpeechModels';
 import {
   type LocalSpeechSettings,
   normalizeLocalSpeechSettings,
+  reconcileLocalSpeechCatalog,
 } from '@shared/speech/localSpeechSettings';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useDispatch } from 'react-redux';
@@ -1291,38 +1292,11 @@ const Settings: React.FC<SettingsProps> = ({
             currentConfig.onlineModelProviders ?? {},
             nonLanguageModelProviders,
             async normalizedConfigurations => {
-              const resolveCatalogModel = (
-                kind: 'speech-recognition' | 'speech-synthesis',
-                reference: string,
-              ) => {
-                const separator = reference.indexOf('/');
-                if (separator <= 0) return undefined;
-                const provider =
-                  normalizedConfigurations[kind]?.providers[reference.slice(0, separator)];
-                return provider?.models.find(model => model.id === reference.slice(separator + 1));
-              };
-              const selectedAsrModel = resolveCatalogModel(
-                'speech-recognition',
-                voice.onlineAsrModelRef,
-              );
-              const selectedTtsModel = resolveCatalogModel(
-                'speech-synthesis',
-                voice.onlineTtsModelRef,
-              );
-              const selectedTtsVoiceExists = selectedTtsModel?.voices?.some(
-                candidate => candidate.id === voice.onlineTtsVoice,
-              );
-              normalizedVoice = {
-                ...voice,
-                ...(normalizedConfigurations['speech-recognition'] && !selectedAsrModel
-                  ? { onlineAsrModelRef: '' }
-                  : {}),
-                ...(normalizedConfigurations['speech-synthesis'] && !selectedTtsModel
-                  ? { onlineTtsModelRef: '', onlineTtsVoice: '' }
-                  : selectedTtsModel && !selectedTtsVoiceExists
-                    ? { onlineTtsVoice: '' }
-                    : {}),
-              };
+              normalizedVoice = reconcileLocalSpeechCatalog(voice, {
+                recognition: normalizedConfigurations['speech-recognition'],
+                synthesis: normalizedConfigurations['speech-synthesis'],
+                realtime: normalizedConfigurations['realtime-voice'],
+              });
               const currentProviders = normalizeProvidersForSave(
                 normalizeProvidersForSettings({
                   ...getDefaultProviders(),
@@ -1798,6 +1772,12 @@ const Settings: React.FC<SettingsProps> = ({
           <VoiceSettingsTab
             value={voice}
             onChange={setVoice}
+            onManageRealtimeModels={() => {
+              setActiveModelKind('realtime-voice');
+              setInitialBuiltinModels(false);
+              setInitialSpeechProviderId(undefined);
+              handleTabChange('model');
+            }}
             onManageModels={(kind, target) => {
               setActiveModelKind(
                 kind === LocalSpeechModelKind.Asr ? 'speech-recognition' : 'speech-synthesis',

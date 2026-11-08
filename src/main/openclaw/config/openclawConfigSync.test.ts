@@ -805,8 +805,8 @@ describe('OpenClaw managed ACP config', () => {
         ) => { entries: Record<string, Record<string, unknown>> };
       }
     ).buildAgentsEntries(
-      'custom4/oc/mimo-v2.5',
-      new Set(['custom4/oc/mimo-v2.5']),
+      'custom4/oc/arbitrary-model-v2',
+      new Set(['custom4/oc/arbitrary-model-v2']),
       'C:/workspace',
       settings,
     );

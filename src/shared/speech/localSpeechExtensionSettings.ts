@@ -7,9 +7,11 @@ import {
   type LocalTtsModelId,
 } from './localTts';
 import {
-  getOnlineSpeechModelOptions,
-  getOnlineSpeechVoiceOptions,
+  normalizeOnlineSpeechVoiceSelection,
+  type OnlineSpeechVoiceSelection,
+  resolveOnlineSpeechBinding,
   resolveOnlineSpeechModel,
+  resolveOnlineSpeechVoiceSelection,
 } from './onlineSpeechModels';
 
 export interface LocalSpeechExtensionSettings {
@@ -21,6 +23,9 @@ export interface LocalSpeechExtensionSettings {
   ttsMode: 'local' | 'online';
   onlineTtsModelRef: string;
   onlineTtsVoice: string;
+  onlineSttBindingId: string;
+  onlineTtsBindingId: string;
+  onlineTtsVoiceSelection: OnlineSpeechVoiceSelection | null;
 }
 
 export const defaultLocalSpeechExtensionSettings: LocalSpeechExtensionSettings = {
@@ -32,6 +37,9 @@ export const defaultLocalSpeechExtensionSettings: LocalSpeechExtensionSettings =
   ttsMode: 'local',
   onlineTtsModelRef: '',
   onlineTtsVoice: '',
+  onlineSttBindingId: '',
+  onlineTtsBindingId: '',
+  onlineTtsVoiceSelection: null,
 };
 
 export function normalizeLocalSpeechExtensionSettings(
@@ -44,6 +52,10 @@ export function normalizeLocalSpeechExtensionSettings(
   const ttsModelId = LOCAL_TTS_MODEL_IDS.includes(input.ttsModelId as LocalTtsModelId)
     ? (input.ttsModelId as LocalTtsModelId)
     : LOCAL_TTS_MODEL_ID;
+  const onlineTtsVoiceSelection = normalizeOnlineSpeechVoiceSelection(
+    input.onlineTtsVoiceSelection,
+    typeof input.onlineTtsVoice === 'string' ? input.onlineTtsVoice : undefined,
+  );
   return {
     sttModelId: LOCAL_ASR_MODEL_IDS.includes(input.sttModelId as LocalAsrModelId)
       ? (input.sttModelId as LocalAsrModelId)
@@ -58,7 +70,13 @@ export function normalizeLocalSpeechExtensionSettings(
       typeof input.onlineSttModelRef === 'string' ? input.onlineSttModelRef.trim() : '',
     onlineTtsModelRef:
       typeof input.onlineTtsModelRef === 'string' ? input.onlineTtsModelRef.trim() : '',
-    onlineTtsVoice: typeof input.onlineTtsVoice === 'string' ? input.onlineTtsVoice.trim() : '',
+    onlineTtsVoice:
+      onlineTtsVoiceSelection?.kind === 'preset' ? onlineTtsVoiceSelection.voiceId : '',
+    onlineSttBindingId:
+      typeof input.onlineSttBindingId === 'string' ? input.onlineSttBindingId.trim() : '',
+    onlineTtsBindingId:
+      typeof input.onlineTtsBindingId === 'string' ? input.onlineTtsBindingId.trim() : '',
+    onlineTtsVoiceSelection,
   };
 }
 
@@ -82,6 +100,9 @@ export function parseLocalSpeechExtensionSettingsPatch(
           'onlineSttModelRef',
           'onlineTtsModelRef',
           'onlineTtsVoice',
+          'onlineSttBindingId',
+          'onlineTtsBindingId',
+          'onlineTtsVoiceSelection',
         ].includes(key),
     ) ||
     ('sttModelId' in input && !LOCAL_ASR_MODEL_IDS.includes(input.sttModelId as LocalAsrModelId)) ||
@@ -93,7 +114,13 @@ export function parseLocalSpeechExtensionSettingsPatch(
     if (key in input && input[key] !== 'local' && input[key] !== 'online')
       throw new Error('Invalid speech mode.');
   }
-  for (const key of ['onlineSttModelRef', 'onlineTtsModelRef', 'onlineTtsVoice']) {
+  for (const key of [
+    'onlineSttModelRef',
+    'onlineTtsModelRef',
+    'onlineTtsVoice',
+    'onlineSttBindingId',
+    'onlineTtsBindingId',
+  ]) {
     if (
       key in input &&
       (typeof input[key] !== 'string' ||
@@ -102,6 +129,12 @@ export function parseLocalSpeechExtensionSettingsPatch(
     )
       throw new Error('Invalid online speech selection.');
   }
+  if (
+    'onlineTtsVoiceSelection' in input &&
+    input.onlineTtsVoiceSelection !== null &&
+    !normalizeOnlineSpeechVoiceSelection(input.onlineTtsVoiceSelection)
+  )
+    throw new Error('Invalid online speech voice selection.');
   const ttsModelId = (input.ttsModelId ??
     normalizeLocalSpeechExtensionSettings(current).ttsModelId) as LocalTtsModelId;
   if ('ttsVoiceId' in input && !isLocalTtsVoiceId(ttsModelId, input.ttsVoiceId)) {
@@ -132,28 +165,48 @@ export function mergeLocalSpeechExtensionSettingsPatch(
       ? { ttsVoiceId: getLocalTtsDefaultVoiceId(ttsModelId) }
       : {}),
   };
+  if ('onlineTtsVoice' in patch && !('onlineTtsVoiceSelection' in patch))
+    merged.onlineTtsVoiceSelection = normalizeOnlineSpeechVoiceSelection(
+      undefined,
+      patch.onlineTtsVoice,
+    );
+  if ('onlineTtsVoiceSelection' in patch)
+    merged.onlineTtsVoice =
+      merged.onlineTtsVoiceSelection?.kind === 'preset'
+        ? merged.onlineTtsVoiceSelection.voiceId
+        : '';
   if (categories) {
     if (
       merged.sttMode === 'online' &&
-      ('sttMode' in patch || 'onlineSttModelRef' in patch) &&
-      !getOnlineSpeechModelOptions(categories.stt, { fileTranscription: true }).some(
-        option => option.value === merged.onlineSttModelRef,
+      ('sttMode' in patch || 'onlineSttModelRef' in patch || 'onlineSttBindingId' in patch) &&
+      !resolveOnlineSpeechBinding(
+        categories.stt,
+        merged.onlineSttModelRef,
+        merged.onlineSttBindingId,
+        'stt-tool',
       )
     )
       throw new Error('Select a configured HTTP audio transcription model.');
     if (
       merged.ttsMode === 'online' &&
-      ('ttsMode' in patch || 'onlineTtsModelRef' in patch || 'onlineTtsVoice' in patch)
+      ('ttsMode' in patch ||
+        'onlineTtsModelRef' in patch ||
+        'onlineTtsVoice' in patch ||
+        'onlineTtsBindingId' in patch ||
+        'onlineTtsVoiceSelection' in patch)
     ) {
-      const selection = resolveOnlineSpeechModel(categories.tts, merged.onlineTtsModelRef);
+      const selection = resolveOnlineSpeechBinding(
+        categories.tts,
+        merged.onlineTtsModelRef,
+        merged.onlineTtsBindingId,
+        'tts',
+      );
       if (
         !selection ||
-        !getOnlineSpeechModelOptions(categories.tts, {
-          requireVoice: true,
-          fileTranscription: true,
-        }).some(option => option.value === merged.onlineTtsModelRef) ||
-        !getOnlineSpeechVoiceOptions(selection.model).some(
-          option => option.value === merged.onlineTtsVoice,
+        !resolveOnlineSpeechVoiceSelection(
+          selection.model,
+          selection.binding,
+          merged.onlineTtsVoiceSelection,
         )
       )
         throw new Error('Select a configured online speech model and voice.');
@@ -167,26 +220,26 @@ export function reconcileLocalSpeechExtensionCatalog(
   categories: { stt?: unknown; tts?: unknown },
 ): LocalSpeechExtensionSettings {
   const settings = normalizeLocalSpeechExtensionSettings(value);
-  const sttExists = getOnlineSpeechModelOptions(categories.stt, { fileTranscription: true }).some(
-    option => option.value === settings.onlineSttModelRef,
-  );
-  const ttsExists = getOnlineSpeechModelOptions(categories.tts, {
-    requireVoice: true,
-    fileTranscription: true,
-  }).some(option => option.value === settings.onlineTtsModelRef);
+  const sttExists = Boolean(resolveOnlineSpeechModel(categories.stt, settings.onlineSttModelRef));
+  const ttsExists = Boolean(resolveOnlineSpeechModel(categories.tts, settings.onlineTtsModelRef));
   const tts = ttsExists
-    ? resolveOnlineSpeechModel(categories.tts, settings.onlineTtsModelRef)
+    ? resolveOnlineSpeechBinding(
+        categories.tts,
+        settings.onlineTtsModelRef,
+        settings.onlineTtsBindingId,
+        'tts',
+      )
+    : null;
+  const voice = tts
+    ? resolveOnlineSpeechVoiceSelection(tts.model, tts.binding, settings.onlineTtsVoiceSelection)
     : null;
   return {
     ...settings,
     onlineSttModelRef: sttExists ? settings.onlineSttModelRef : '',
-    onlineTtsModelRef: tts ? settings.onlineTtsModelRef : '',
-    onlineTtsVoice:
-      tts &&
-      getOnlineSpeechVoiceOptions(tts.model).some(
-        option => option.value === settings.onlineTtsVoice,
-      )
-        ? settings.onlineTtsVoice
-        : '',
+    onlineSttBindingId: sttExists ? settings.onlineSttBindingId : '',
+    onlineTtsModelRef: ttsExists ? settings.onlineTtsModelRef : '',
+    onlineTtsBindingId: ttsExists ? settings.onlineTtsBindingId : '',
+    onlineTtsVoice: voice?.kind === 'preset' ? voice.voiceId : '',
+    onlineTtsVoiceSelection: voice,
   };
 }

@@ -32,8 +32,11 @@ vi.mock('../../plugins/extensions/extensionSecretFile', () => ({
   }),
 }));
 
+import { defaultLocalSpeechSettings } from '../../../shared/speech/localSpeechSettings';
 import { OnlineTtsIpc } from '../../../shared/speech/onlineTts';
 import { saveExtensionSecrets } from '../../plugins/extensions/extensionSecretFile';
+import { resolveOnlineReplySpeechProfile } from '../../speech/onlineReplySpeechProfile';
+import { advanceSpeechConfigurationRevision } from '../../speech/speechConfigurationRevision';
 import { registerOnlineTtsHandlers } from './onlineTts';
 
 describe('isolated online reply speech configuration', () => {
@@ -52,10 +55,21 @@ describe('isolated online reply speech configuration', () => {
   };
   let nativeConfig: Record<string, unknown>;
   let providers: unknown[];
+  let generation: number;
+  const client = { request: requestGateway };
+  const runtime = { getGatewayClient: () => client, getGatewayClientGeneration: () => generation };
+  const settings = {
+    ...defaultLocalSpeechSettings,
+    outputEnabled: true,
+    synthesisMode: 'online' as const,
+    onlineTtsModelRef: 'internal/tts/model',
+    onlineTtsVoiceSelection: { kind: 'preset' as const, voiceId: 'voice-1' },
+  };
 
   beforeEach(() => {
     handlers.clear();
     vi.clearAllMocks();
+    generation = 1;
     providers = [
       { id: 'openai', configured: false, models: ['vendor-default'], voices: ['vendor-voice'] },
     ];
@@ -79,11 +93,18 @@ describe('isolated online reply speech configuration', () => {
     };
     requestGateway.mockImplementation(async method => {
       if (method === 'tts.providers') return { active: 'tts-local-cli', providers };
-      if (method === 'config.get') return { hash: 'config-hash', config: nativeConfig };
+      if (method === 'config.get')
+        return {
+          hash: 'config-hash',
+          config: nativeConfig,
+          configRevisionHash: 'active-revision',
+          appliedConfigHash: 'active-revision',
+        };
       return { ok: true };
     });
     registerOnlineTtsHandlers({
-      getRuntime: () => ({}) as never,
+      getSettings: () => settings,
+      getRuntime: () => runtime as never,
       getModelCategory: () => category,
       getStateDir: () => 'private-state',
       requestGateway,
@@ -145,6 +166,34 @@ describe('isolated online reply speech configuration', () => {
     expect(requestGateway).not.toHaveBeenCalled();
   });
 
+  it.each(['', ' ', 'x'.repeat(257), 'bad\u0001model'])(
+    'rejects an invalid model identity before querying Gateway (%j)', async id => {
+      category.providers.internal.models[0].id = id;
+      await expect(save({ modelRef: `internal/${id.trim()}`, voice: 'voice-1' })).rejects.toThrow();
+      expect(requestGateway).not.toHaveBeenCalled();
+      expect(saveExtensionSecrets).not.toHaveBeenCalled();
+    },
+  );
+
+  it('rejects a mismatched legacy endpoint before querying Gateway', async () => {
+    category.providers.internal.baseUrl = 'http://speech.internal/v1/audio/transcriptions';
+    await expect(save()).rejects.toThrow();
+    expect(requestGateway).not.toHaveBeenCalled();
+    expect(saveExtensionSecrets).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { model: '' }, { model: 'other-model' }, { baseUrl: 'http://other.internal/v1' },
+    { speakerVoice: 'other-voice' }, { voiceSelection: { kind: 'preset', voiceId: 'other-voice' } },
+    { protocolId: undefined }, { voicePolicy: undefined },
+  ])('does not report a native profile with changed request parameters as ready (%j)', async changed => {
+    nativeConfig.plugins = { entries: { 'runtime-services': { config: { replySpeech: {
+      ...resolveOnlineReplySpeechProfile(settings, category), ...changed,
+    } } } } };
+    await expect(handlers.get(OnlineTtsIpc.GetStatus)?.()).resolves.toMatchObject({ available: false });
+    expect(requestGateway.mock.calls.some(([method]) => method === 'config.patch')).toBe(false);
+  });
+
   it('does not use unregistered adapter defaults', async () => {
     providers = [];
     await expect(save()).rejects.toThrow('Unknown online speech provider.');
@@ -157,9 +206,7 @@ describe('isolated online reply speech configuration', () => {
         'runtime-services': {
           config: {
             replySpeech: {
-              baseUrl: 'http://reader.internal/v1',
-              model: 'reader',
-              speakerVoice: 'reader-voice',
+              ...resolveOnlineReplySpeechProfile(settings, category),
               apiKey: { source: 'file', id: '/private-ref' },
             },
           },
@@ -172,8 +219,8 @@ describe('isolated online reply speech configuration', () => {
     });
     const configuration = await handlers.get(OnlineTtsIpc.GetConfiguration)?.();
     expect(configuration).toMatchObject({
-      model: 'reader',
-      voice: 'reader-voice',
+      model: 'tts/model',
+      voice: 'voice-1',
       available: true,
     });
     expect(JSON.stringify(configuration)).not.toContain('private-ref');
@@ -203,4 +250,53 @@ describe('isolated online reply speech configuration', () => {
     const second = patch().plugins.entries['runtime-services'].config.replySpeech.apiKey.id;
     expect(first).not.toBe(second);
   });
+
+  it('rejects pending apply and stale configuration or connection status responses', async () => {
+    const a = { voice: { outputEnabled: true, synthesisMode: 'online', onlineTtsModelRef: 'a' } };
+    const b = { voice: { ...a.voice, onlineTtsModelRef: 'b' } };
+    await expect(handlers.get(OnlineTtsIpc.GetStatus)?.()).resolves.toMatchObject({
+      available: false,
+    });
+    for (const change of ['generation', 'configuration']) {
+      let finish!: (value: unknown) => void;
+      requestGateway.mockImplementationOnce(
+        () =>
+          new Promise(resolve => {
+            finish = resolve;
+          }),
+      );
+      const pending = handlers.get(OnlineTtsIpc.GetConfiguration)?.();
+      if (change === 'generation') generation += 1;
+      else advanceSpeechConfigurationRevision(a, b);
+      finish({ providers });
+      await expect(pending).resolves.toMatchObject({ available: false, error: 'Error' });
+    }
+  });
+
+  it.each([undefined, null, 'old-revision'])(
+    'rejects unapplied native snapshots (%s) even when the saved profile matches',
+    async appliedConfigHash => {
+      nativeConfig.plugins = {
+        entries: {
+          'runtime-services': {
+            config: {
+              replySpeech: resolveOnlineReplySpeechProfile(settings, category),
+            },
+          },
+        },
+      };
+      requestGateway.mockImplementation(async method =>
+        method === 'tts.providers'
+          ? { providers }
+          : {
+              config: nativeConfig,
+              configRevisionHash: 'active-revision',
+              appliedConfigHash,
+            },
+      );
+      await expect(handlers.get(OnlineTtsIpc.GetStatus)?.()).resolves.toMatchObject({
+        available: false,
+      });
+    },
+  );
 });

@@ -6,6 +6,7 @@ import { afterEach, expect, test, vi } from 'vitest';
 
 import { setAvailableModels, setSelectedModel } from '@/features/models/modelSlice';
 import type { AppMode } from '@/features/plugins/app/browserRegistry';
+import type { RealtimeVoiceViewState } from '@/features/speech/realtime/realtimeVoiceController';
 import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';
 import { store } from '@/store';
@@ -18,6 +19,45 @@ const desktop = vi.hoisted(() => ({
   views: [],
   listeners: new Set<() => void>(),
   readiness: { ready: true, pending: false, failed: false },
+}));
+interface VoiceFixture {
+  start: ReturnType<typeof vi.fn>;
+  end: ReturnType<typeof vi.fn>;
+  dispose: ReturnType<typeof vi.fn>;
+  setMicrophoneMuted: ReturnType<typeof vi.fn>;
+  setSpeakerMuted: ReturnType<typeof vi.fn>;
+}
+const voice = vi.hoisted(() => ({ instances: [] as VoiceFixture[] }));
+vi.mock('@/features/speech/realtime/realtimeVoiceController', () => ({
+  RealtimeVoiceController: class {
+    private state: RealtimeVoiceViewState = {
+      phase: 'idle',
+      activity: 'listening',
+      microphoneMuted: false,
+      speakerMuted: false,
+      userCaption: 'native user caption',
+      assistantCaption: 'native assistant caption',
+    };
+    constructor(
+      _bridge: unknown,
+      private changed: (state: RealtimeVoiceViewState) => void,
+    ) {
+      voice.instances.push(this);
+    }
+    private publish(patch: Partial<RealtimeVoiceViewState>) {
+      this.state = { ...this.state, ...patch };
+      this.changed(this.state);
+    }
+    start = vi.fn(async () => {
+      this.publish({ phase: 'active' });
+    });
+    end = vi.fn(async () => {
+      this.publish({ phase: 'idle' });
+    });
+    dispose = vi.fn();
+    setMicrophoneMuted = vi.fn((muted: boolean) => this.publish({ microphoneMuted: muted }));
+    setSpeakerMuted = vi.fn((muted: boolean) => this.publish({ speakerMuted: muted }));
+  },
 }));
 vi.mock('@/features/plugins/app/runtime', () => ({
   appBrowserRegistry: {
@@ -43,12 +83,81 @@ const originalSelectedModel = store.getState().model.selectedModel;
 
 afterEach(() => {
   cleanup();
+  voice.instances.length = 0;
   desktop.modes = [];
   desktop.readiness = { ready: true, pending: false, failed: false };
   store.dispatch(setAvailableModels(originalModels));
   store.dispatch(setSelectedModel(originalSelectedModel));
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+});
+
+test('keeps inline voice alive across task start and both composer layouts with text editing intact', async () => {
+  const config = configService.getConfig();
+  vi.spyOn(configService, 'getConfig').mockReturnValue({
+    ...config,
+    voice: { ...config.voice, inputEnabled: false, realtimeEnabled: true },
+  });
+  vi.stubGlobal('electron', {
+    extensions: {
+      list: vi.fn().mockResolvedValue({ success: true, extensions: [] }),
+      onChanged: () => () => {},
+    },
+    realtimeVoice: { getStatus: vi.fn().mockResolvedValue({ available: true }) },
+    cowork: {
+      getSessionGoal: vi.fn().mockResolvedValue({ success: true, goal: null }),
+      getGoalExecution: vi.fn().mockResolvedValue({ success: true }),
+      onSessionGoalChanged: () => () => {},
+      onGoalExecutionChanged: () => () => {},
+    },
+    localAsr: { getStatus: vi.fn().mockResolvedValue({ available: false }) },
+    localSpeechModels: { onChanged: () => () => {} },
+  });
+  const composer = (size: 'normal' | 'large', isStreaming = false) => (
+    <Provider store={store}>
+      <CoworkPromptInput
+        sessionId="voice-composer-session"
+        size={size}
+        isStreaming={isStreaming}
+        onSubmit={vi.fn()}
+      />
+    </Provider>
+  );
+  const view = render(composer('normal'));
+  const start = screen.getByRole('button', { name: i18nService.t('realtimeVoiceStart') });
+  await waitFor(() => expect(start).toHaveProperty('disabled', false));
+  fireEvent.click(start);
+  expect(screen.getByText(i18nService.t('realtimeVoiceListening'))).toBeTruthy();
+  expect(screen.queryByRole('dialog')).toBeNull();
+  expect(screen.queryByText('native user caption')).toBeNull();
+  expect(screen.queryByText('native assistant caption')).toBeNull();
+  view.rerender(composer('large', true));
+  expect(voice.instances).toHaveLength(1);
+  expect(voice.instances[0].end).not.toHaveBeenCalled();
+  expect(voice.instances[0].dispose).not.toHaveBeenCalled();
+  expect(screen.getAllByRole('region', { name: i18nService.t('realtimeVoiceTitle') })).toHaveLength(
+    1,
+  );
+  const input = screen.getByRole('textbox') as HTMLTextAreaElement;
+  expect(input.disabled).toBe(false);
+  fireEvent.change(input, { target: { value: 'Keep a normal draft while talking' } });
+  fireEvent.click(screen.getByRole('button', { name: i18nService.t('realtimeVoiceMuteSpeaker') }));
+  expect(voice.instances[0].setSpeakerMuted).toHaveBeenCalledWith(true);
+  expect(voice.instances[0].end).not.toHaveBeenCalled();
+  view.rerender(composer('normal', true));
+  expect(
+    screen.getByRole('button', { name: i18nService.t('realtimeVoiceUnmuteSpeaker') }),
+  ).toHaveProperty('disabled', false);
+  expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toBe(
+    'Keep a normal draft while talking',
+  );
+  expect(voice.instances[0].start).toHaveBeenCalledOnce();
+  await act(async () =>
+    fireEvent.click(screen.getByRole('button', { name: i18nService.t('realtimeVoiceEnd') })),
+  );
+  expect(screen.queryByRole('region', { name: i18nService.t('realtimeVoiceTitle') })).toBeNull();
+  view.unmount();
+  expect(voice.instances[0].dispose).toHaveBeenCalledOnce();
 });
 
 test('keeps a running conversation draft growing, capped and shrinkable across idle transition', () => {
@@ -109,7 +218,9 @@ test('pastes multiline clipboard text from the context menu while a conversation
     get: () => input.value.split('\n').length * 24 + 16,
   });
   fireEvent.contextMenu(input, { clientX: 20, clientY: 20 });
-  const paste = screen.getByRole('menuitem', { name: i18nService.t('contextMenuPaste') }) as HTMLButtonElement;
+  const paste = screen.getByRole('menuitem', {
+    name: i18nService.t('contextMenuPaste'),
+  }) as HTMLButtonElement;
   expect(paste.disabled).toBe(false);
   fireEvent.click(paste);
 
@@ -279,7 +390,8 @@ test('the home composer keeps Apps out of the + menu', async () => {
 test('explains an unavailable session state and retries without submitting or changing the draft', async () => {
   store.dispatch(setAvailableModels([{ id: 'state-retry-model', name: 'Model' }]));
   const retry = deferredSessionState();
-  const getSessionGoal = vi.fn()
+  const getSessionGoal = vi
+    .fn()
     .mockResolvedValueOnce({ success: false })
     .mockImplementationOnce(() => retry.promise);
   const getGoalExecution = vi.fn().mockResolvedValue({ success: true });
@@ -307,15 +419,21 @@ test('explains an unavailable session state and retries without submitting or ch
   fireEvent.change(input, { target: { value: 'Keep this draft during recovery' } });
   const notice = await screen.findByText(i18nService.t('coworkSessionStateReadFailed'));
   expect(notice).toBeTruthy();
-  const send = screen.getByRole('button', { name: i18nService.t('coworkSendMessage') }) as HTMLButtonElement;
+  const send = screen.getByRole('button', {
+    name: i18nService.t('coworkSendMessage'),
+  }) as HTMLButtonElement;
   expect(send.disabled).toBe(true);
   fireEvent.click(screen.getByRole('button', { name: i18nService.t('coworkSessionStateRetry') }));
-  const checking = await screen.findByRole('button', { name: i18nService.t('coworkSessionStateChecking') }) as HTMLButtonElement;
+  const checking = (await screen.findByRole('button', {
+    name: i18nService.t('coworkSessionStateChecking'),
+  })) as HTMLButtonElement;
   expect(checking.disabled).toBe(true);
   expect(send.disabled).toBe(true);
   expect(input.value).toBe('Keep this draft during recovery');
   expect(onSubmit).not.toHaveBeenCalled();
-  await act(async () => { retry.resolve({ success: true, goal: null }); });
+  await act(async () => {
+    retry.resolve({ success: true, goal: null });
+  });
   await waitFor(() => expect(send.disabled).toBe(false));
   expect(screen.queryByText(i18nService.t('coworkSessionStateReadFailed'))).toBeNull();
   expect(getSessionGoal).toHaveBeenCalledTimes(2);
@@ -326,7 +444,9 @@ test('explains an unavailable session state and retries without submitting or ch
 
 function deferredSessionState() {
   let resolve!: (value: { success: boolean; goal: null }) => void;
-  const promise = new Promise<{ success: boolean; goal: null }>(done => { resolve = done; });
+  const promise = new Promise<{ success: boolean; goal: null }>(done => {
+    resolve = done;
+  });
   return { promise, resolve };
 }
 
@@ -334,7 +454,8 @@ test('waits for engine readiness and retires previous state failures while resta
   store.dispatch(setAvailableModels([{ id: 'state-startup-model', name: 'Model' }]));
   desktop.readiness = { ready: false, pending: true, failed: false };
   const resumed = deferredSessionState();
-  const getSessionGoal = vi.fn()
+  const getSessionGoal = vi
+    .fn()
     .mockResolvedValueOnce({ success: false })
     .mockImplementationOnce(() => resumed.promise);
   const getGoalExecution = vi.fn().mockResolvedValue({ success: true });
@@ -361,7 +482,9 @@ test('waits for engine readiness and retires previous state failures while resta
   const view = render(composer());
   const input = screen.getByRole('textbox') as HTMLTextAreaElement;
   fireEvent.change(input, { target: { value: 'Keep this draft while starting' } });
-  const send = screen.getByRole('button', { name: i18nService.t('coworkSendMessage') }) as HTMLButtonElement;
+  const send = screen.getByRole('button', {
+    name: i18nService.t('coworkSendMessage'),
+  }) as HTMLButtonElement;
   expect(getSessionGoal).not.toHaveBeenCalled();
   expect(getGoalExecution).not.toHaveBeenCalled();
   expect(screen.queryByText(i18nService.t('coworkSessionStateReadFailed'))).toBeNull();
@@ -382,7 +505,9 @@ test('waits for engine readiness and retires previous state failures while resta
   await waitFor(() => expect(getSessionGoal).toHaveBeenCalledTimes(2));
   expect(screen.queryByText(i18nService.t('coworkSessionStateReadFailed'))).toBeNull();
   expect(send.disabled).toBe(true);
-  await act(async () => { resumed.resolve({ success: true, goal: null }); });
+  await act(async () => {
+    resumed.resolve({ success: true, goal: null });
+  });
   await waitFor(() => expect(send.disabled).toBe(false));
   expect(input.value).toBe('Keep this draft while starting');
   expect(onSubmit).not.toHaveBeenCalled();

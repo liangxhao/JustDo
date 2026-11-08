@@ -5,6 +5,12 @@ import {
   validateModelProviderHeaderValue,
 } from '@shared/providers/modelProviderHeaders';
 import { findNativeVideoProvider } from '@shared/providers/nativeVideoProviders';
+import {
+  isOnlineSpeechModelKind,
+  parseOnlineSpeechModelBindings,
+  parseOnlineSpeechModelParameters,
+  parseOnlineSpeechProviderProtocol,
+} from '@shared/speech/onlineSpeechModels';
 
 import {
   type AppConfig,
@@ -16,17 +22,20 @@ import { EXPORT_FORMAT_TYPE } from '@/app/constants';
 import type { NonLanguageModelKind } from '@/features/settings/models/nonLanguageModelUrls';
 import type { PasswordEncryptedPayload } from '@/features/settings/models/providerTransferCrypto';
 
+import { assertNoRetiredSpeechProfile } from './retiredSpeechConfiguration';
+
 type ProvidersConfig = NonNullable<AppConfig['providers']>;
 type ProviderConfig = ProvidersConfig[string];
 type OnlineModelProviders = NonNullable<AppConfig['onlineModelProviders']>;
 type OnlineModelCategory = NonNullable<OnlineModelProviders[NonLanguageModelKind]>;
 type OnlineModelProvider = OnlineModelCategory['providers'][string];
 
-export const PROVIDERS_EXPORT_VERSION = 4;
+export const PROVIDERS_EXPORT_VERSION = 5;
 
 export const TRANSFERRED_NON_LANGUAGE_MODEL_KINDS: readonly NonLanguageModelKind[] = [
   'speech-recognition',
   'speech-synthesis',
+  'realtime-voice',
   'image',
   'video',
   'decision',
@@ -147,6 +156,7 @@ const validateUniqueProviderNames = (providers: Array<{ displayName: string }>):
 };
 
 const parseOnlineModel = (value: unknown): OnlineModelProvider['models'][number] => {
+  assertNoRetiredSpeechProfile(value);
   if (
     !isRecord(value) ||
     typeof value.id !== 'string' ||
@@ -160,6 +170,7 @@ const parseOnlineModel = (value: unknown): OnlineModelProvider['models'][number]
     if (!Array.isArray(value.voices)) throw new Error('Invalid online model voices');
     const voiceIds = new Set<string>();
     for (const voice of value.voices) {
+      assertNoRetiredSpeechProfile(voice);
       if (
         !isRecord(voice) ||
         typeof voice.id !== 'string' ||
@@ -173,6 +184,7 @@ const parseOnlineModel = (value: unknown): OnlineModelProvider['models'][number]
       voiceIds.add(voice.id);
     }
   }
+  if (Array.isArray(value.bindings)) value.bindings.forEach(assertNoRetiredSpeechProfile);
   return value as unknown as OnlineModelProvider['models'][number];
 };
 
@@ -181,6 +193,7 @@ const parseOnlineModelProvider = (
   kind: NonLanguageModelKind,
   defaultProvider?: string,
 ): SerializedOnlineModelProvider => {
+  assertNoRetiredSpeechProfile(value);
   if (
     !isRecord(value) ||
     typeof value.displayName !== 'string' ||
@@ -195,6 +208,17 @@ const parseOnlineModelProvider = (
     throw new Error('Invalid online model default');
   }
   const models = value.models.map(parseOnlineModel);
+  const protocol = isOnlineSpeechModelKind(kind)
+    ? parseOnlineSpeechProviderProtocol(value, kind)
+    : undefined;
+  if (!isOnlineSpeechModelKind(kind) && 'protocolId' in value)
+    throw new Error('Invalid speech provider protocol');
+  if (isOnlineSpeechModelKind(kind)) {
+    models.forEach(model => {
+      parseOnlineSpeechModelBindings(model.bindings, kind);
+      parseOnlineSpeechModelParameters(model, protocol);
+    });
+  }
   const modelIds = new Set<string>();
   for (const model of models) {
     if (modelIds.has(model.id)) throw new Error('Duplicate online model id');
@@ -219,6 +243,7 @@ const parseOnlineModelProvider = (
   }
   return {
     displayName: value.displayName.trim(),
+    ...(protocol ?? {}),
     ...(nativeVideoProvider ? { nativeVideoProvider: nativeVideoProvider.id } : {}),
     baseUrl: value.baseUrl,
     apiKey: value.apiKey as PasswordEncryptedPayload | string,
@@ -235,6 +260,7 @@ const parseOnlineModelCategories = (
   for (const kind of TRANSFERRED_NON_LANGUAGE_MODEL_KINDS) {
     const category = value[kind];
     if (category === undefined) continue;
+    assertNoRetiredSpeechProfile(category);
     if (!isRecord(category) || !Array.isArray(category.providers)) {
       throw new Error('Invalid online model category');
     }
@@ -291,6 +317,18 @@ export const createProvidersExportPayload = (
     TRANSFERRED_NON_LANGUAGE_MODEL_KINDS.flatMap(kind => {
       const category = onlineModelProviders[kind];
       if (!category) return [];
+      assertNoRetiredSpeechProfile(category);
+      for (const { config } of category.providers) {
+        assertNoRetiredSpeechProfile(config);
+        config.models.forEach(parseOnlineModel);
+        if (isOnlineSpeechModelKind(kind)) {
+          const protocol = parseOnlineSpeechProviderProtocol(config, kind);
+          config.models.forEach(model => {
+            parseOnlineSpeechModelBindings(model.bindings, kind);
+            parseOnlineSpeechModelParameters(model, protocol);
+          });
+        }
+      }
       const defaultProvider = category.defaultProviderId
         ? category.providers.find(provider => provider.key === category.defaultProviderId)?.config
             .displayName
@@ -319,7 +357,7 @@ export const parseModelProvidersImportPayload = (
     throw new Error('Invalid providers file');
   }
 
-  if (payload.version !== PROVIDERS_EXPORT_VERSION) {
+  if (payload.version !== PROVIDERS_EXPORT_VERSION && payload.version !== 4) {
     throw new Error('Unsupported providers file version');
   }
   if (!Array.isArray(payload.providers) || payload.onlineModelProviders === undefined) {

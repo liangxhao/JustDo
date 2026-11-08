@@ -17,13 +17,23 @@ vi.mock('../../openclaw/config/models/providerSecretFile', () => ({
   restrictCredentialFile: vi.fn(),
 }));
 
+import { normalizeLocalSpeechSettings } from '../../../shared/speech/localSpeechSettings';
 import { OnlineAsrIpc } from '../../../shared/speech/onlineAsr';
-import { EXTENSION_SECRET_PROVIDER } from '../../plugins/extensions/extensionSecretFile';
+import { buildSpeechCredentialSlot } from '../../openclaw/config/speech/speechCredentialSlot';
+import { EXTENSION_SECRET_PROVIDER, saveExtensionSecrets } from '../../plugins/extensions/extensionSecretFile';
+import { advanceSpeechConfigurationRevision } from '../../speech/speechConfigurationRevision';
 import { registerOnlineAsrHandlers } from './onlineAsr';
 
-const profile = () => ({ baseUrl: 'wss://speech.internal/v1', model: 'internal-asr', apiKey: '' });
+const profile = () => ({ baseUrl: 'wss://speech.internal/v1', model: 'internal-asr', apiKey: '',
+  configurationId: buildSpeechCredentialSlot('composerAsr', 'wss://speech.internal/v1', '') });
 const nativeConfig = (transcription: unknown = profile()) => ({
   plugins: { entries: { openai: { config: { transcription } } } },
+});
+const nativeSnapshot = (config: unknown = nativeConfig()) => ({
+  hash: 'config-hash',
+  configRevisionHash: 'applied-revision',
+  appliedConfigHash: 'applied-revision',
+  config,
 });
 const catalog = () => ({
   transcription: {
@@ -46,25 +56,42 @@ const category = () => ({
 describe('OpenClaw online transcription IPC', () => {
   const runtime = new EventEmitter();
   const requestGateway = vi.fn();
+  const initialClient = { request: (method: string, params?: unknown) => requestGateway(method, params) };
+  let client = initialClient;
+  let generation = 1;
+  Object.assign(runtime, {
+    getGatewayClient: () => client,
+    getGatewayClientGeneration: () => generation,
+    captureGatewayResponseContext: () => {
+      const captured = client;
+      const capturedGeneration = generation;
+      return { isCurrent: () => captured === client && capturedGeneration === generation,
+        isResponseError: (error: { code?: string }) => error?.code === 'NATIVE_RESPONSE' };
+    },
+  });
   const getModelCategory = vi.fn();
   const send = vi.fn();
-  const sender = { isDestroyed: () => false, once: vi.fn(), send };
+  const sender = { isDestroyed: () => false, getType: () => 'window', mainFrame: {}, once: vi.fn(), removeListener: vi.fn(), send };
   let stateDir: string;
-  const register = (runConfigMutationExclusive?: <T>(operation: () => Promise<T>) => Promise<T>) =>
+  const register = (runConfigMutationExclusive?: <T>(operation: () => Promise<T>) => Promise<T>, getSettings?: () => ReturnType<typeof normalizeLocalSpeechSettings>) =>
     registerOnlineAsrHandlers({
       getRuntime: () => runtime as never,
       getModelCategory,
       getStateDir: () => stateDir,
       requestGateway,
       runConfigMutationExclusive,
+      ...(getSettings ? { getSettings } : {}),
     });
-  const invoke = (channel: string, ...args: unknown[]) =>
-    handlers.get(channel)?.(...(args as never[]));
+  const invoke = (channel: string, ...args: unknown[]) => {
+    const event = args[0] as { sender?: typeof sender; senderFrame?: unknown } | undefined;
+    if (event?.sender === sender && !('senderFrame' in event)) event.senderFrame = sender.mainFrame;
+    return handlers.get(channel)?.(...(args as never[]));
+  };
   const mockReady = () => {
     requestGateway.mockImplementation((method: string) => {
       if (method === 'talk.catalog') return Promise.resolve(catalog());
       if (method === 'config.get')
-        return Promise.resolve({ hash: 'config-hash', config: nativeConfig() });
+        return Promise.resolve(nativeSnapshot());
       return Promise.resolve({
         sessionId: 'talk-1',
         transcriptionSessionId: 'transcription-1',
@@ -80,6 +107,7 @@ describe('OpenClaw online transcription IPC', () => {
 
   beforeEach(() => {
     handlers.clear();
+    client = initialClient;
     requestGateway.mockReset();
     getModelCategory.mockReset().mockReturnValue(category());
     send.mockReset();
@@ -89,6 +117,9 @@ describe('OpenClaw online transcription IPC', () => {
     register();
   });
   afterEach(() => {
+    generation += 1;
+    for (const [event, callback] of sender.once.mock.calls)
+      if (event === 'destroyed') callback();
     vi.useRealTimers();
     fs.rmSync(stateDir, { recursive: true, force: true });
   });
@@ -96,11 +127,12 @@ describe('OpenClaw online transcription IPC', () => {
   it('does not invent providers or models when no transcription plugin is registered', async () => {
     requestGateway
       .mockResolvedValueOnce({ transcription: { ready: false, providers: [] } })
-      .mockResolvedValueOnce({ config: {} });
+      .mockResolvedValueOnce(nativeSnapshot({}));
     expect(await invoke(OnlineAsrIpc.GetConfiguration)).toEqual({
       available: false,
       providers: [],
       credentialConfigured: false,
+      inputMode: 'realtime',
     });
   });
 
@@ -109,11 +141,13 @@ describe('OpenClaw online transcription IPC', () => {
     await expect(invoke(OnlineAsrIpc.GetStatus)).resolves.toEqual({
       available: true,
       provider: 'openai',
+      inputMode: 'realtime',
     });
     await expect(invoke(OnlineAsrIpc.GetConfiguration)).resolves.toEqual({
       available: true,
       provider: 'openai',
       selectedProvider: 'openai',
+      inputMode: 'realtime',
       providers: [{ id: 'openai', label: 'OpenAI', configured: true }],
       baseUrl: 'wss://speech.internal/v1',
       model: 'internal-asr',
@@ -134,8 +168,27 @@ describe('OpenClaw online transcription IPC', () => {
     await expect(invoke(OnlineAsrIpc.GetStatus)).resolves.toMatchObject({ available: true });
   });
 
+  it.each([
+    { configRevisionHash: undefined, appliedConfigHash: undefined },
+    { configRevisionHash: '', appliedConfigHash: '' },
+    { configRevisionHash: 'saved-b', appliedConfigHash: 'active-a' },
+  ])('rejects status and start without a matching applied native revision (%j)', async revisions => {
+    getModelCategory.mockReturnValue(keylessCategory());
+    register(undefined, productionSettings);
+    mockReady();
+    const ready = requestGateway.getMockImplementation()!;
+    requestGateway.mockImplementation((method: string) => method === 'config.get'
+      ? Promise.resolve({ ...nativeSnapshot(), ...revisions }) : ready(method));
+
+    await expect(invoke(OnlineAsrIpc.GetStatus)).resolves.toMatchObject({ available: false });
+    await expect(invoke(OnlineAsrIpc.GetConfiguration)).resolves.toMatchObject({ available: false });
+    await expect(invoke(OnlineAsrIpc.Start, { sender }, { language: 'auto' })).rejects.toThrow('have not finished applying');
+    expect(requestGateway.mock.calls.some(([method]) => method === 'talk.session.create')).toBe(false);
+  });
+
   it('does not borrow a registered preset or a legacy phone configuration', async () => {
     requestGateway.mockResolvedValueOnce(catalog()).mockResolvedValueOnce({
+      ...nativeSnapshot(),
       config: {
         plugins: {
           entries: {
@@ -155,7 +208,7 @@ describe('OpenClaw online transcription IPC', () => {
     'rejects absent or invalid native profiles (%j)',
     async transcription => {
       requestGateway.mockResolvedValueOnce(catalog()).mockResolvedValueOnce({
-        config: nativeConfig(transcription),
+        ...nativeSnapshot(nativeConfig(transcription)),
       });
       await expect(invoke(OnlineAsrIpc.Start, { sender }, { language: 'zh' })).rejects.toThrow(
         'Online transcription service is not configured for intranet use.',
@@ -172,6 +225,22 @@ describe('OpenClaw online transcription IPC', () => {
       credentialConfigured: false,
     });
   });
+
+  it.each(['model', 'endpoint'] as const)(
+    'keeps the microphone unavailable with a missing %s before contacting Gateway', async missing => {
+      const modelId = missing === 'model' ? '' : 'custom/transcriber';
+      getModelCategory.mockReturnValue({ providers: { office: {
+        displayName: 'Office', apiKey: '', protocolId: 'openai-transcription-http',
+        baseUrl: missing === 'endpoint' ? 'http://speech.internal/v1/audio/speech' : 'http://speech.internal/v1',
+        models: [{ id: modelId, name: 'Configured model' }],
+      } } });
+      const settings = normalizeLocalSpeechSettings({ inputEnabled: true, recognitionMode: 'online', onlineAsrModelRef: `office/${modelId}` });
+      register(undefined, () => settings);
+      await expect(invoke(OnlineAsrIpc.GetStatus)).resolves.toMatchObject({ available: false });
+      await expect(invoke(OnlineAsrIpc.Start, { sender }, { language: 'zh' })).rejects.toThrow();
+      expect(requestGateway).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([
     {},
@@ -223,6 +292,8 @@ describe('OpenClaw online transcription IPC', () => {
         config: {
           transcription: {
             ...profile(),
+            protocolId: 'openai-transcription-realtime',
+            configurationId: expect.any(String),
             apiKey: { source: 'file', provider: EXTENSION_SECRET_PROVIDER, id: expect.any(String) },
           },
         },
@@ -257,14 +328,14 @@ describe('OpenClaw online transcription IPC', () => {
 
   it('preserves the configured endpoint path and query when publishing the profile', async () => {
     const models = category();
-    models.providers.office.baseUrl = '  wss://speech.internal/v1/?route=/  ';
+    models.providers.office.baseUrl = '  wss://speech.internal/v1/realtime?intent=transcription  ';
     getModelCategory.mockReturnValue(models);
     mockReady();
 
     await invoke(OnlineAsrIpc.SaveConfiguration, { sender }, { modelRef: 'office/internal-asr' });
 
     expect(publishedPatch().plugins.entries.openai.config.transcription.baseUrl).toBe(
-      'wss://speech.internal/v1/?route=/',
+      'wss://speech.internal/v1/realtime?intent=transcription',
     );
   });
 
@@ -416,5 +487,155 @@ describe('OpenClaw online transcription IPC', () => {
       plugins: { entries: { openai: { config: { transcription: null } } } },
     });
     expect(exclusive).toHaveBeenCalledOnce();
+  });
+
+  const productionSettings = () => normalizeLocalSpeechSettings({ inputEnabled: true,
+    recognitionMode: 'online', onlineAsrModelRef: 'office/internal-asr' });
+  const keylessCategory = () => {
+    const value = category(); value.providers.office.apiKey = ''; return value;
+  };
+  const nativeSession = () => ({ sessionId: 'talk-1', transcriptionSessionId: 'transcription-1',
+    provider: 'openai', audio: { inputEncoding: 'g711_ulaw', inputSampleRateHz: 8000 } });
+
+  it('requires the actually applied model and immutable credential revision before advertising or creating a session', async () => {
+    register(undefined, productionSettings);
+    const config = nativeConfig();
+    const slot = buildSpeechCredentialSlot('composerAsr', profile().baseUrl, 'recognition-secret');
+    const reference = saveExtensionSecrets(config, stateDir, 'openai', { [slot]: 'recognition-secret' }).references[slot];
+    let applied: unknown = { ...profile(), model: 'stale-model', configurationId: slot, apiKey: reference };
+    requestGateway.mockImplementation((method: string) => Promise.resolve(method === 'talk.catalog' ? catalog() :
+      method === 'config.get' ? nativeSnapshot(nativeConfig(applied)) : nativeSession()));
+    expect(await invoke(OnlineAsrIpc.GetStatus)).toMatchObject({ available: false });
+    await expect(invoke(OnlineAsrIpc.Start, { sender }, { language: 'auto' })).rejects.toThrow('not configured');
+    applied = { ...profile(), configurationId: slot, apiKey: { ...reference, id: '/old-credential' } };
+    expect(await invoke(OnlineAsrIpc.GetStatus)).toMatchObject({ available: false });
+    applied = { ...profile(), configurationId: slot, apiKey: { ...reference, id: '__OPENCLAW_REDACTED__' } };
+    expect(await invoke(OnlineAsrIpc.GetStatus)).toMatchObject({ available: true });
+    applied = { ...profile(), configurationId: 'old-revision', apiKey: { ...reference, id: '__OPENCLAW_REDACTED__' } };
+    expect(await invoke(OnlineAsrIpc.GetStatus)).toMatchObject({ available: false });
+    expect(requestGateway.mock.calls.filter(([method]) => method === 'talk.session.create')).toHaveLength(0);
+  });
+
+  it('reserves a pending owner and rejects A → B → A before submission without a second create', async () => {
+    let settings = productionSettings();
+    const models = keylessCategory();
+    getModelCategory.mockReturnValue(models);
+    register(undefined, () => settings);
+    let release!: (value: unknown) => void;
+    const catalogResult = new Promise(resolve => { release = resolve; });
+    requestGateway.mockImplementation((method: string) => method === 'talk.catalog' ? catalogResult : Promise.resolve(nativeSnapshot()));
+    const starting = invoke(OnlineAsrIpc.Start, { sender }, { language: 'auto' });
+    await expect(invoke(OnlineAsrIpc.Start, { sender }, { language: 'auto' })).rejects.toThrow('already active');
+    const previous = settings;
+    settings = normalizeLocalSpeechSettings({ ...settings, inputEnabled: false });
+    advanceSpeechConfigurationRevision({ voice: settings }, { voice: previous });
+    settings = previous;
+    advanceSpeechConfigurationRevision({ voice: previous }, { voice: { ...previous, inputEnabled: false } });
+    release(catalog());
+    await expect(starting).rejects.toThrow('configuration or connection changed');
+    expect(requestGateway.mock.calls.some(([method]) => method === 'talk.session.create')).toBe(false);
+  });
+
+  it('does not close a stale create on an obsolete or replacement connection', async () => {
+    mockReady();
+    const ready = requestGateway.getMockImplementation()!;
+    let release!: (value: unknown) => void;
+    let creating!: () => void;
+    const started = new Promise<void>(resolve => { creating = resolve; });
+    const result = new Promise(resolve => { release = resolve; });
+    requestGateway.mockImplementation((method: string) => {
+      if (method === 'talk.session.create') { creating(); return result; }
+      return ready(method);
+    });
+    const starting = invoke(OnlineAsrIpc.Start, { sender }, { language: 'auto' });
+    await started;
+    const replacementRequest = vi.fn();
+    client = { request: replacementRequest };
+    generation += 1;
+    release(nativeSession());
+    await expect(starting).rejects.toThrow('cancelled');
+    expect(requestGateway.mock.calls.some(([method]) => method === 'talk.session.close')).toBe(false);
+    expect(replacementRequest).not.toHaveBeenCalled();
+  });
+
+  it('closes a known stale configuration result exactly once while its captured connection is current', async () => {
+    mockReady();
+    const ready = requestGateway.getMockImplementation()!;
+    let release!: (value: unknown) => void;
+    let creating!: () => void;
+    const started = new Promise<void>(resolve => { creating = resolve; });
+    const result = new Promise(resolve => { release = resolve; });
+    requestGateway.mockImplementation((method: string) => {
+      if (method === 'talk.session.create') { creating(); return result; }
+      return ready(method);
+    });
+    const starting = invoke(OnlineAsrIpc.Start, { sender }, { language: 'auto' });
+    await started;
+    advanceSpeechConfigurationRevision({ voice: { ...productionSettings(), inputLanguage: 'en' } }, { voice: productionSettings() });
+    release(nativeSession());
+    await expect(starting).rejects.toThrow('cancelled');
+    expect(requestGateway.mock.calls.filter(([method]) => method === 'talk.session.close')).toHaveLength(1);
+  });
+
+  it('keeps an unknown create blocked until the connection changes, without blind retry or close', async () => {
+    mockReady();
+    const ready = requestGateway.getMockImplementation()!;
+    requestGateway.mockImplementation((method: string) => method === 'talk.session.create'
+      ? Promise.reject(new Error('transport lost after submission')) : ready(method));
+    await expect(invoke(OnlineAsrIpc.Start, { sender }, { language: 'auto' })).rejects.toThrow('outcome is unknown');
+    await expect(invoke(OnlineAsrIpc.Start, { sender }, { language: 'auto' })).rejects.toThrow('already active');
+    expect(requestGateway.mock.calls.filter(([method]) => method === 'talk.session.create')).toHaveLength(1);
+    expect(requestGateway.mock.calls.some(([method]) => method === 'talk.session.close')).toBe(false);
+    generation += 1;
+    mockReady();
+    await expect(invoke(OnlineAsrIpc.Start, { sender }, { language: 'auto' })).resolves.toMatchObject({ sessionId: 'talk-1' });
+  });
+
+  it('releases a definitive native rejection without exposing its body or automatically retrying', async () => {
+    mockReady();
+    const ready = requestGateway.getMockImplementation()!;
+    let rejectCreate = true;
+    requestGateway.mockImplementation((method: string) => method === 'talk.session.create' && rejectCreate
+      ? Promise.reject(Object.assign(new Error('provider response containing private fields'), { code: 'NATIVE_RESPONSE' })) : ready(method));
+    await expect(invoke(OnlineAsrIpc.Start, { sender }, { language: 'auto' })).rejects.toThrow('Online transcription could not start.');
+    expect(requestGateway.mock.calls.filter(([method]) => method === 'talk.session.create')).toHaveLength(1);
+    rejectCreate = false;
+    await expect(invoke(OnlineAsrIpc.Start, { sender }, { language: 'auto' })).resolves.toMatchObject({ sessionId: 'talk-1' });
+  });
+
+  it('recognizes a native close received before the create response and releases the owner', async () => {
+    mockReady();
+    const ready = requestGateway.getMockImplementation()!;
+    let closeEarly = true;
+    requestGateway.mockImplementation((method: string) => {
+      if (method === 'talk.session.create' && closeEarly)
+        runtime.emit('gatewayEvent', { event: 'talk.event', payload: { transcriptionSessionId: 'transcription-1', type: 'close' } });
+      return ready(method);
+    });
+    await expect(invoke(OnlineAsrIpc.Start, { sender }, { language: 'auto' })).rejects.toThrow('closed before admission');
+    closeEarly = false;
+    await expect(invoke(OnlineAsrIpc.Start, { sender }, { language: 'auto' })).resolves.toMatchObject({ sessionId: 'talk-1' });
+  });
+
+  it('revokes active input on configuration changes and rejects stale connection events/audio', async () => {
+    getModelCategory.mockReturnValue(keylessCategory());
+    const settings = productionSettings();
+    register(undefined, () => settings);
+    mockReady();
+    await invoke(OnlineAsrIpc.Start, { sender }, { language: 'auto' });
+    advanceSpeechConfigurationRevision({ voice: { ...settings, inputLanguage: 'en' } }, { voice: settings });
+    send.mockClear();
+    runtime.emit('gatewayEvent', { event: 'talk.event', payload: { transcriptionSessionId: 'transcription-1', type: 'transcript', text: 'late result' } });
+    expect(send).not.toHaveBeenCalled();
+    await expect(invoke(OnlineAsrIpc.AppendAudio, { sender }, 'talk-1', 'AQ==')).rejects.toThrow('Invalid');
+    expect(requestGateway).toHaveBeenCalledWith('talk.session.close', { sessionId: 'talk-1' });
+    await invoke(OnlineAsrIpc.Start, { sender }, { language: 'auto' });
+    const closesBeforeGeneration = requestGateway.mock.calls.filter(([method]) => method === 'talk.session.close').length;
+    generation += 1;
+    send.mockClear();
+    runtime.emit('gatewayEvent', { event: 'talk.event', payload: { transcriptionSessionId: 'transcription-1', type: 'transcript', text: 'old connection' } });
+    expect(send.mock.calls.some(([, event]) => event.type === 'transcript')).toBe(false);
+    expect(requestGateway.mock.calls.filter(([method]) => method === 'talk.session.close')).toHaveLength(closesBeforeGeneration);
+    await expect(invoke(OnlineAsrIpc.AppendAudio, { sender }, 'talk-1', 'AQ==')).rejects.toThrow('Invalid');
   });
 });

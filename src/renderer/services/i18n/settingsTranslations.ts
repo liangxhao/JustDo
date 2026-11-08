@@ -304,6 +304,51 @@ export const settingsTranslations = {
     modelTypeLanguage: '语言模型',
     modelTypeSpeechRecognition: '语音识别',
     modelTypeSpeechSynthesis: '语音合成',
+    modelTypeRealtimeVoice: '实时语音',
+    customRealtimeVoiceProtocolHint:
+      '使用已配置的 Realtime 兼容双向语音接口；转录模型和音色均需明确配置。',
+    speechProtocolRecorded: '录音转写（OpenAI 兼容）',
+    speechProtocolSynthesis: '语音合成（OpenAI 兼容）',
+    speechProtocolRealtimeTranscription: '实时转录（Realtime 兼容）',
+    speechProtocolRealtimeVoice: '实时语音对话（Realtime 兼容）',
+    speechCurrentProtocol: '当前接口：{protocol}（在模型设置中管理）',
+    speechConfigureInterfaceInModels: '所选模型或接口不可用，请在模型设置中检查配置。',
+    speechProviderProtocol: '接口类型',
+    speechProviderProtocolChoose: '请选择统一接口',
+    speechProviderProtocolLegacy: '保留已有接口设置；选择后，此供应商下所有模型统一继承该接口。',
+    speechProviderProtocolInvalid: '接口配置无效，请重新选择。',
+    speechProviderProtocolConnectionInvalid: '服务地址或凭证不符合所选接口要求，请检查。',
+    speechProviderProtocolModelsHint: '此供应商下所有模型继承上方选择的接口。',
+    speechProviderProtocolRecordedHint: '完整录音或文件转写，使用 HTTP /audio/transcriptions。',
+    speechProviderProtocolTranscriptionHint:
+      '实时听写，使用 WebSocket /realtime?intent=transcription。',
+    speechProviderProtocolSynthesisHint: '文字合成语音，使用 HTTP /audio/speech，完整返回音频。',
+    speechProviderProtocolVoiceHint: '双向语音对话，使用 WebSocket /realtime 和自动轮次检测。',
+    speechModelOptionsChooseProtocol: '模型保留已有参数；请先在供应商连接中选择统一接口。',
+    speechModelParametersReview: '模型参数不完整或已不再支持，请重新配置或删除后重新添加。',
+    speechModelParametersInvalid: '请检查模型的音色要求或输入转录模型。',
+    speechModelBindings: '模型接口',
+    speechAddBinding: '添加接口',
+    speechLegacyBindingHint:
+      '此模型沿用原有配置：输入框使用实时转录，附件工具使用录音转写。可添加明确的接口配置。',
+    speechNoBindingsHint: '尚未配置可用接口',
+    speechProtocolType: '接口类型',
+    speechBindingInvalid: '请检查模型接口、兼容配置和实时语音所需的输入转录模型。',
+    speechInputTranscriptionModel: '输入转录模型',
+    speechInputTranscriptionModelHint:
+      '实时对话向当前助手委托任务时使用此模型转录输入语音；请填写服务实际支持的模型 ID。',
+    speechRemoveBinding: '移除此接口',
+    speechEndpointPerBinding: '实际请求路径由模型所选接口决定',
+    speechSettingsNeedSave: '选择已更改，保存后生效',
+    voiceInputUnavailable: '语音输入暂不可用，请检查语音设置',
+    voiceImportRequiresRecording: '导入文件需要本地识别或录音转写接口',
+    realtimeVoiceSettingsDescription:
+      '启用独立的语音对话入口，持续收音并语音回复；听写仍使用语音输入设置。',
+    realtimeVoiceEnable: '启用实时语音对话',
+    realtimeVoiceModel: '实时对话模型',
+    realtimeVoiceSpeaker: '实时对话音色',
+    realtimeVoiceSettingsSaveHint:
+      '保存后生效。配置完整不代表已连通，开始对话时会检查原生能力与实际连接。',
     modelTypeImage: '图像生成',
     modelTypeVideo: '视频模型',
     modelTypeDecision: '决策模型',
@@ -751,11 +796,14 @@ export const settingsTranslations = {
     modelDetectionFailed: '模型探测失败',
     settingsOperationFailed: '操作未完成',
     settingsNoticeTitle: '提示',
-    modelDiscoveryEndpointNotFound: '模型目录接口不存在，请检查 API Base URL，以及服务是否支持 /models 接口。',
-    modelDiscoveryConnectionClosed: '连接在收到 HTTP 响应前被关闭，请检查模型服务地址、服务状态或代理配置。',
+    modelDiscoveryEndpointNotFound:
+      '模型目录接口不存在，请检查 API Base URL，以及服务是否支持 /models 接口。',
+    modelDiscoveryConnectionClosed:
+      '连接在收到 HTTP 响应前被关闭，请检查模型服务地址、服务状态或代理配置。',
     modelDiscoveryHostNotFound: '无法解析模型服务的域名，请检查 API Base URL。',
     modelDiscoveryConnectionRefused: '模型服务拒绝连接，请检查 API Base URL、端口及服务状态。',
-    modelDiscoveryNoHttpResponse: '未收到模型服务的 HTTP 响应，请检查服务地址、服务状态或代理配置。',
+    modelDiscoveryNoHttpResponse:
+      '未收到模型服务的 HTTP 响应，请检查服务地址、服务状态或代理配置。',
     modelDetectionTimeout: '模型列表请求超时，请重试',
     noModelsDetected: '接口未返回可用模型。',
     emptyModelListHint: '使用上方按钮自动探测或手动添加模型。',
@@ -1283,6 +1331,63 @@ export const settingsTranslations = {
     modelTypeLanguage: 'Language models',
     modelTypeSpeechRecognition: 'Speech recognition',
     modelTypeSpeechSynthesis: 'Speech synthesis',
+    modelTypeRealtimeVoice: 'Realtime voice',
+    customRealtimeVoiceProtocolHint:
+      'Use a configured Realtime-compatible conversation endpoint with an explicit transcription model and voice.',
+    speechProtocolRecorded: 'Recorded transcription (OpenAI compatible)',
+    speechProtocolSynthesis: 'Speech synthesis (OpenAI compatible)',
+    speechProtocolRealtimeTranscription: 'Live transcription (Realtime compatible)',
+    speechProtocolRealtimeVoice: 'Voice conversation (Realtime compatible)',
+    speechCurrentProtocol: 'Current interface: {protocol} (managed in model settings)',
+    speechConfigureInterfaceInModels:
+      'The selected model or interface is unavailable. Check its configuration in model settings.',
+    speechProviderProtocol: 'Interface type',
+    speechProviderProtocolChoose: 'Select a shared interface',
+    speechProviderProtocolLegacy:
+      'Existing interface settings are preserved. Selecting an interface applies it to all models under this provider.',
+    speechProviderProtocolInvalid:
+      'The interface configuration is invalid. Select an interface again.',
+    speechProviderProtocolConnectionInvalid:
+      'The service address or credential does not meet the selected interface requirements.',
+    speechProviderProtocolModelsHint:
+      'All models under this provider inherit the interface selected above.',
+    speechProviderProtocolRecordedHint:
+      'Recorded audio or file transcription via HTTP /audio/transcriptions.',
+    speechProviderProtocolTranscriptionHint:
+      'Live dictation via WebSocket /realtime?intent=transcription.',
+    speechProviderProtocolSynthesisHint:
+      'Text-to-speech via HTTP /audio/speech, returning complete audio.',
+    speechProviderProtocolVoiceHint:
+      'Two-way voice via WebSocket /realtime with automatic turn detection.',
+    speechModelOptionsChooseProtocol:
+      'Existing model parameters are preserved. Select a shared interface in the provider connection first.',
+    speechModelParametersReview:
+      'Model parameters are incomplete or unsupported. Reconfigure or remove and add the model again.',
+    speechModelParametersInvalid: 'Check the model voice requirement or input transcription model.',
+    speechModelBindings: 'Model interfaces',
+    speechAddBinding: 'Add interface',
+    speechLegacyBindingHint:
+      'This model uses its existing configuration: realtime transcription for dictation and recorded transcription for attachments. Add an explicit interface to change this.',
+    speechNoBindingsHint: 'No interface configured',
+    speechProtocolType: 'Interface type',
+    speechBindingInvalid:
+      'Check the model interfaces, compatibility profile, and input transcription model required for realtime voice.',
+    speechInputTranscriptionModel: 'Input transcription model',
+    speechInputTranscriptionModelHint:
+      'Transcribes input audio when delegating to your current assistant. Enter a model ID supported by the configured service.',
+    speechRemoveBinding: 'Remove interface',
+    speechEndpointPerBinding: 'The selected model interface determines the request path',
+    speechSettingsNeedSave: 'Selection changed; save to apply',
+    voiceInputUnavailable: 'Voice input is unavailable. Check speech settings.',
+    voiceImportRequiresRecording:
+      'File import requires local recognition or a recorded transcription interface.',
+    realtimeVoiceSettingsDescription:
+      'Enable a separate voice conversation entry that listens and speaks continuously. Dictation keeps its own input settings.',
+    realtimeVoiceEnable: 'Enable realtime voice conversation',
+    realtimeVoiceModel: 'Realtime conversation model',
+    realtimeVoiceSpeaker: 'Realtime conversation voice',
+    realtimeVoiceSettingsSaveHint:
+      'Save to apply. Complete configuration does not confirm connectivity; native capabilities and the connection are checked when a conversation starts.',
     modelTypeImage: 'Image generation',
     modelTypeVideo: 'Video models',
     modelTypeDecision: 'Decision models',
@@ -1457,7 +1562,8 @@ export const settingsTranslations = {
       'New settings saved. Restart the app to apply them, then copy the connection configuration again.',
     appServerWebSocketPortInUse:
       'The listening port is already in use. Save a different port, then restart the app.',
-    appServerWebSocketUnavailable: 'The WebSocket service could not start. Restart the app and try again.',
+    appServerWebSocketUnavailable:
+      'The WebSocket service could not start. Restart the app and try again.',
     appServerWebSocketLoading: 'Checking…',
     appServerWebSocketReady: 'Service is ready',
     appServerWebSocketNotReady: 'Service is unavailable',
@@ -1759,11 +1865,16 @@ export const settingsTranslations = {
     modelDetectionFailed: 'Model detection failed',
     settingsOperationFailed: 'Operation could not be completed',
     settingsNoticeTitle: 'Notice',
-    modelDiscoveryEndpointNotFound: 'The model catalog endpoint was not found. Check the API Base URL and whether the service supports /models.',
-    modelDiscoveryConnectionClosed: 'The connection closed before an HTTP response was received. Check the model service URL, service status, or proxy settings.',
-    modelDiscoveryHostNotFound: 'The model service hostname could not be resolved. Check the API Base URL.',
-    modelDiscoveryConnectionRefused: 'The model service refused the connection. Check the API Base URL, port, and service status.',
-    modelDiscoveryNoHttpResponse: 'No HTTP response was received from the model service. Check the service URL, service status, or proxy settings.',
+    modelDiscoveryEndpointNotFound:
+      'The model catalog endpoint was not found. Check the API Base URL and whether the service supports /models.',
+    modelDiscoveryConnectionClosed:
+      'The connection closed before an HTTP response was received. Check the model service URL, service status, or proxy settings.',
+    modelDiscoveryHostNotFound:
+      'The model service hostname could not be resolved. Check the API Base URL.',
+    modelDiscoveryConnectionRefused:
+      'The model service refused the connection. Check the API Base URL, port, and service status.',
+    modelDiscoveryNoHttpResponse:
+      'No HTTP response was received from the model service. Check the service URL, service status, or proxy settings.',
     modelDetectionTimeout: 'The model list request timed out. Try again.',
     noModelsDetected: 'The API returned no available models.',
     emptyModelListHint: 'Detect models above or add one manually.',
@@ -1880,11 +1991,9 @@ export const settingsTranslations = {
     permissionModeAsk: 'Ask for approval',
     permissionModeAskDescription: 'A human reviews requests beyond the session root.',
     permissionModeAuto: 'Smart approval',
-    permissionModeAutoDescription:
-      'An AI reviewer checks requests beyond the session root.',
+    permissionModeAutoDescription: 'An AI reviewer checks requests beyond the session root.',
     permissionModeFull: 'Full access',
-    permissionModeFullDescription:
-      'No reviewer; files and commands are unrestricted.',
+    permissionModeFullDescription: 'No reviewer; files and commands are unrestricted.',
     permissionModeFullConfirmTitle: 'Enable full access?',
     permissionModeFullConfirmDescription:
       'This conversation can access files outside the task folder and run host commands without approval.',

@@ -252,6 +252,8 @@ import {
   registerLocalTtsHandlers,
   registerOnlineAsrHandlers,
   registerOnlineTtsHandlers,
+  registerRealtimeVoiceHandlers,
+  registerRecordedOnlineAsrHandlers,
   registerSpeechSynthesisHandlers,
 } from './ipc/speech';
 import { removeLegacyWorkspaceSetupFile } from './openclaw/config/agents/legacyWorkspaceSetupCleanup';
@@ -329,6 +331,7 @@ import {
 } from './providers/providerApiConfig';
 import { WindowsSandboxService } from './security/windowsSandboxService';
 import { LocalSpeechModelService } from './speech/localSpeechModelService';
+import { advanceSpeechConfigurationRevision } from './speech/speechConfigurationRevision';
 import { registerHistoryRecoveryHandlers } from './startup/history/historyRecovery';
 import { NativeHistoryRuntime } from './startup/history/nativeHistoryRuntime';
 import { StartupEnginePreparation } from './startup/initialization/startupEnginePreparation';
@@ -920,6 +923,7 @@ const getOpenClawConfigSyncService = (): OpenClawConfigSyncService => {
           voice: config?.voice,
           recognitionModels: config?.onlineModelProviders?.['speech-recognition'],
           synthesisModels: config?.onlineModelProviders?.['speech-synthesis'],
+          realtimeModels: config?.onlineModelProviders?.['realtime-voice'],
           language: config?.language === 'en' ? 'en' : 'zh',
         };
       },
@@ -1411,6 +1415,7 @@ type AppConfigSettings = {
     video?: unknown;
     'speech-recognition'?: unknown;
     'speech-synthesis'?: unknown;
+    'realtime-voice'?: unknown;
   };
   voice?: unknown;
   localSpeechExtensions?: unknown;
@@ -1536,6 +1541,7 @@ if (agentBridgeArgv) {
   registerStoreHandlers({
     getStore,
     onAppConfigChanged: async (nextConfig, previousConfig, context) => {
+      advanceSpeechConfigurationRevision(nextConfig, previousConfig);
       if (
         getOpenClawAppConfigSignature(nextConfig) === getOpenClawAppConfigSignature(previousConfig)
       ) {
@@ -1650,6 +1656,7 @@ if (agentBridgeArgv) {
   registerOpenClawModelHandlers({ getRuntime: getOpenClawRuntimeAdapter });
   registerOnlineAsrHandlers({
     getRuntime: getOpenClawRuntimeAdapter,
+    getSettings: () => normalizeLocalSpeechSettings(getStore().get<AppConfigSettings>('app_config')?.voice),
     getModelCategory: () =>
       getStore().get<AppConfigSettings>('app_config')?.onlineModelProviders?.['speech-recognition'],
     getStateDir: () => getOpenClawEngineManager().getStateDir(),
@@ -1659,6 +1666,7 @@ if (agentBridgeArgv) {
       getOpenClawConfigSyncService().runConfigMutationExclusive(operation),
   });
   registerOnlineTtsHandlers({
+    getSettings: () => normalizeLocalSpeechSettings(getStore().get<AppConfigSettings>('app_config')?.voice),
     getRuntime: getOpenClawRuntimeAdapter,
     getModelCategory: () =>
       getStore().get<AppConfigSettings>('app_config')?.onlineModelProviders?.['speech-synthesis'],
@@ -1668,11 +1676,28 @@ if (agentBridgeArgv) {
     runConfigMutationExclusive: operation =>
       getOpenClawConfigSyncService().runConfigMutationExclusive(operation),
   });
+  registerRecordedOnlineAsrHandlers({
+    getSettings: () => normalizeLocalSpeechSettings(getStore().get<AppConfigSettings>('app_config')?.voice),
+    getModelCategory: () => getStore().get<AppConfigSettings>('app_config')?.onlineModelProviders?.['speech-recognition'],
+  });
+  registerRealtimeVoiceHandlers({
+    getRuntime: getOpenClawRuntimeAdapter,
+    getSettings: () => normalizeLocalSpeechSettings(getStore().get<AppConfigSettings>('app_config')?.voice),
+    getModelCategory: () => getStore().get<AppConfigSettings>('app_config')?.onlineModelProviders?.['realtime-voice'],
+    getSessionIdentity: id => {
+      const session = getCoworkStore().getSession(id);
+      if (!session || session.external || session.source || session.branchCreationPending) return null;
+      return JSON.stringify([session.agentId, session.nativeSessionKey, session.historyBinding,
+        session.cwd, session.executionMode, session.permissionMode, session.activeSkillIds]);
+    },
+    runConfigMutationExclusive: operation => getOpenClawConfigSyncService().runConfigMutationExclusive(operation),
+  });
   registerSpeechSynthesisHandlers({
+    getModelCategory: () => getStore().get<AppConfigSettings>('app_config')?.onlineModelProviders?.['speech-synthesis'],
     getSettings: () =>
       normalizeLocalSpeechSettings(getStore().get<AppConfigSettings>('app_config')?.voice),
-    requestGateway: <T>(method: string, params?: unknown) =>
-      getCoworkEngineService().requestGateway<T>(method, params),
+    requestGateway: (method, params, options) =>
+      getCoworkEngineService().requestGateway(method, params, options),
   });
   registerMediaGenerationModelHandlers({
     getRuntime: getOpenClawRuntimeAdapter,

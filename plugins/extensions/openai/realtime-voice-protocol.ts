@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+
 import type {
   RealtimeVoiceAudioFormat,
   RealtimeVoiceBargeInOptions,
@@ -9,17 +10,16 @@ import {
   REALTIME_VOICE_AUDIO_FORMAT_G711_ULAW_8KHZ,
   realtimeVoiceAudioDurationMs,
 } from 'openclaw/plugin-sdk/realtime-voice-provider';
+
 import type { OpenAIRealtimeHost } from './realtime-host.js';
 import {
-  AZURE_OPENAI_REALTIME_TOOL_NAME_MAX_LENGTH,
-  OPENAI_REALTIME_DEFAULT_MIN_BARGE_IN_AUDIO_END_MS,
-  OPENAI_REALTIME_DEFAULT_MODEL,
   buildOpenAIRealtimeGaSessionPolicy,
   buildOpenAIRealtimeTurnDetectionConfig,
   normalizeOpenAIRealtimeTools,
-  parsePlaybackMarkSequence,
+  OPENAI_REALTIME_DEFAULT_MIN_BARGE_IN_AUDIO_END_MS,
   type OpenAIRealtimeUserMessageOptions,
   type OpenAIRealtimeVoiceBridgeConfig,
+  parsePlaybackMarkSequence,
 } from './realtime-voice-session-policy.js';
 
 export abstract class OpenAIRealtimeProtocol {
@@ -111,81 +111,34 @@ export abstract class OpenAIRealtimeProtocol {
   }
 
   protected sendSessionUpdate(): void {
-    if (this.usesAzureDeploymentRealtimeApi()) {
-      this.sendEvent(this.buildAzureDeploymentSessionUpdate());
-      return;
-    }
-
     const cfg = this.config;
     this.sendEvent({
       type: 'session.update' as const,
-      session:
-        cfg.gaSessionPolicy ??
-        buildOpenAIRealtimeGaSessionPolicy({
+      session: buildOpenAIRealtimeGaSessionPolicy({
           audioFormat: this.audioFormat,
           autoRespondToAudio: cfg.autoRespondToAudio,
           instructions: cfg.instructions,
           interruptResponseOnInputAudio: cfg.interruptResponseOnInputAudio,
           language: cfg.language,
-          model: cfg.model ?? OPENAI_REALTIME_DEFAULT_MODEL,
+          inputTranscriptionModel: cfg.inputTranscriptionModel,
+          model: cfg.model,
           noiseReduction: null,
           prefixPaddingMs: cfg.prefixPaddingMs,
           reasoningEffort: cfg.reasoningEffort,
           silenceDurationMs: cfg.silenceDurationMs,
           tools: normalizeOpenAIRealtimeTools(cfg.tools, this.runtime.warn),
           vadThreshold: cfg.vadThreshold,
-          voice: cfg.voice ?? 'alloy',
+          voice: cfg.voice,
         }),
     });
   }
 
-  protected usesAzureDeploymentRealtimeApi(): boolean {
-    return Boolean(this.config.azureEndpoint && this.config.azureDeployment);
-  }
-
-  protected buildAzureDeploymentSessionUpdate() {
-    const cfg = this.config;
-    const format = this.audioFormat.encoding === 'pcm16' ? 'pcm16' : 'g711_ulaw';
-    const tools = normalizeOpenAIRealtimeTools(
-      cfg.tools,
-      this.runtime.warn,
-      AZURE_OPENAI_REALTIME_TOOL_NAME_MAX_LENGTH,
-    );
-    return {
-      type: 'session.update' as const,
-      session: {
-        modalities: ['text', 'audio'],
-        instructions: cfg.instructions,
-        voice: cfg.voice ?? 'alloy',
-        input_audio_format: format,
-        output_audio_format: format,
-        input_audio_transcription: {
-          model: 'whisper-1',
-          ...(cfg.language ? { language: cfg.language } : {}),
-        },
-        turn_detection: buildOpenAIRealtimeTurnDetectionConfig(cfg),
-        temperature: cfg.temperature ?? 0.8,
-        ...(tools
-          ? {
-              tools,
-              tool_choice: 'auto',
-            }
-          : {}),
-      },
-    };
-  }
-
   protected sendAutoResponseSessionUpdate(createResponse: boolean): void {
-    const azureDeployment = this.usesAzureDeploymentRealtimeApi();
     const turnDetection = buildOpenAIRealtimeTurnDetectionConfig({
       ...this.config,
       createResponse,
-      includeInterruptResponse: !azureDeployment,
+      includeInterruptResponse: true,
     });
-    if (azureDeployment) {
-      this.sendEvent({ type: 'session.update', session: { turn_detection: turnDetection } });
-      return;
-    }
     this.sendEvent({
       type: 'session.update',
       session: { type: 'realtime', audio: { input: { turn_detection: turnDetection } } },

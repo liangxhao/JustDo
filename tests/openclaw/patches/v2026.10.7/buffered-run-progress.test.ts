@@ -113,7 +113,7 @@ describe.skipIf(!available)('real native SDK buffered request progress', () => {
 
   test.each(['modern', 'legacy'] as const)('%s tool_call arguments retain real progress without exposing their contents', async kind => {
     const model = {
-      id: 'synthetic', name: 'Synthetic', api: 'openai-completions', provider: 'mimo',
+      id: 'synthetic', name: 'Synthetic', api: 'openai-completions', provider: 'custom-provider',
       baseUrl: 'http://127.0.0.1:1/v1', reasoning: false, input: ['text'],
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 200_000, maxTokens: 10_000,
     };

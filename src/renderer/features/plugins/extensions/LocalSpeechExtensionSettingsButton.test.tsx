@@ -267,7 +267,11 @@ describe('local speech extension readiness warning', () => {
       ...settings,
       ttsMode: 'online',
       onlineTtsModelRef: 'office/speech',
+
+      onlineTtsBindingId: '',
       onlineTtsVoice: 'echo',
+
+      onlineTtsVoiceSelection: { kind: 'preset', voiceId: 'echo' },
     };
     onlineModelProviders = {
       'speech-synthesis': {

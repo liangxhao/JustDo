@@ -8,6 +8,7 @@
     "opencc-js": "1.4.2"
   },
   "openclaw": {
+    "build": { "bundleFromSource": true },
     "extensions": [
       "./index.ts"
     ]

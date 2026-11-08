@@ -18,7 +18,10 @@ vi.mock('openclaw/plugin-sdk/secret-input', () => ({
   },
 }));
 
+const configurationId = 'a'.repeat(64);
+const nextConfigurationId = 'b'.repeat(64);
 const profile = () => ({
+  configurationId,
   baseUrl: 'http://voice.internal/v1',
   model: 'reader-model',
   speakerVoice: 'reader-voice',
@@ -57,7 +60,7 @@ function fixture() {
     respond,
     registerGatewayMethod,
     resolveStateDir,
-    invoke: (params: unknown = { text: ' hello ' }, extra = {}) =>
+    invoke: (params: unknown = { text: ' hello ', configurationId }, extra = {}) =>
       handler!({ params, respond, ...extra }),
   };
 }
@@ -153,10 +156,12 @@ describe('managed reply speech RPC', () => {
   );
 
   it.each([
-    { text: '' },
-    { text: 'x'.repeat(10_001) },
-    { text: 'hello', baseUrl: 'http://other.invalid' },
-    { text: 'hello', model: 'another-model' },
+    { text: '', configurationId },
+    { text: 'x'.repeat(10_001), configurationId },
+    { text: 'hello', configurationId, baseUrl: 'http://other.invalid' },
+    { text: 'hello', configurationId, model: 'another-model' },
+    { text: 'hello' },
+    { text: 'hello', configurationId: 'not-a-managed-profile' },
   ])('rejects arbitrary request targets and invalid text', async params => {
     const f = fixture();
     await f.invoke(params);
@@ -182,6 +187,73 @@ describe('managed reply speech RPC', () => {
       }),
     );
     expect(f.respond.mock.calls[0][0]).toBe(true);
+  });
+
+  it('rejects the requested profile until that exact configuration is native current', async () => {
+    const f = fixture();
+    const request = { text: 'selected reply', configurationId: nextConfigurationId };
+
+    await f.invoke(request);
+
+    expect(synthesizeSpeech).not.toHaveBeenCalled();
+    expect(resolveExplicitTtsOverrides).not.toHaveBeenCalled();
+    expect(f.respond.mock.calls[0][0]).toBe(false);
+
+    Object.assign(f.cfg.plugins.entries['runtime-services'].config.replySpeech, {
+      configurationId: nextConfigurationId,
+      protocolId: 'openai-speech-http',
+      model: 'next-reader-model',
+      voicePolicy: 'preset',
+      voiceSelection: { kind: 'preset', voiceId: 'next-reader-voice' },
+      apiKey: '',
+    });
+    await f.invoke(request);
+
+    expect(synthesizeSpeech).toHaveBeenCalledOnce();
+    expect(resolveExplicitTtsOverrides).toHaveBeenCalledWith(
+      expect.objectContaining({ voiceId: 'next-reader-voice' }),
+    );
+    expect(vi.mocked(synthesizeSpeech).mock.calls[0][0].cfg.tts?.providers).toEqual({
+      openai: expect.objectContaining({
+        model: 'next-reader-model',
+        protocolId: 'openai-speech-http',
+        voiceSelection: { kind: 'preset', voiceId: 'next-reader-voice' },
+        apiKey: '',
+      }),
+    });
+    expect(f.respond.mock.calls[1][0]).toBe(true);
+  });
+
+  it('does not delegate retired protocol fields or an unspecified voice', async () => {
+    for (const fields of [
+      { protocolId: 'chat-audio-speech' },
+      { compatibilityProfile: 'removed' },
+      { protocolId: 'openai-speech-http', compatibilityProfile: undefined },
+      { voiceSelection: { kind: 'service-default' } },
+    ]) {
+      const f = fixture();
+      Object.assign(f.cfg.plugins.entries['runtime-services'].config.replySpeech, fields);
+      await f.invoke();
+      expect(f.respond.mock.calls[0][0]).toBe(false);
+    }
+    expect(synthesizeSpeech).not.toHaveBeenCalled();
+    expect(resolveExplicitTtsOverrides).not.toHaveBeenCalled();
+  });
+  it('does not delegate a profile missing its explicit model, endpoint or voice', async () => {
+    for (const fields of [
+      { model: undefined },
+      { model: '\ncustom-model' },
+      { baseUrl: undefined },
+      { speakerVoice: undefined },
+      { speakerVoice: '\ncustom-voice' },
+    ]) {
+      const f = fixture();
+      Object.assign(f.cfg.plugins.entries['runtime-services'].config.replySpeech, fields);
+      await f.invoke();
+      expect(f.respond.mock.calls[0][0]).toBe(false);
+    }
+    expect(synthesizeSpeech).not.toHaveBeenCalled();
+    expect(resolveExplicitTtsOverrides).not.toHaveBeenCalled();
   });
 
   it('does not invoke a provider when authority has been revoked', async () => {

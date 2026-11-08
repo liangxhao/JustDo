@@ -1,4 +1,3 @@
-import { hasServiceBaseUrl } from './intranet-config.js';
 import type { ProviderDefaultThinkingPolicyContext } from 'openclaw/plugin-sdk/core';
 import type { ProviderNormalizeResolvedModelContext } from 'openclaw/plugin-sdk/plugin-entry';
 import {
@@ -13,16 +12,18 @@ import type {
   ProviderModelRouteResolution,
   ProviderModelRouteSource,
   ProviderNormalizeModelCatalogIdContext,
-  ProviderResponseModelEquivalenceContext,
   ProviderResolveModelRoutesContext,
+  ProviderResponseModelEquivalenceContext,
 } from 'openclaw/plugin-sdk/provider-model-types';
 import { normalizeOptionalString } from 'openclaw/plugin-sdk/string-coerce-runtime';
+
 import {
   classifyOpenAIBaseUrl,
   isOpenAICodexBaseUrl,
   OPENAI_API_BASE_URL,
   OPENAI_CODEX_RESPONSES_BASE_URL,
 } from './base-url.js';
+import { hasServiceBaseUrl } from './intranet-config.js';
 import {
   isOpenAIDualRouteModelId,
   isOpenAIPlatformOnlyRouteModelId,
@@ -31,7 +32,6 @@ import {
   OPENAI_GPT_56_MODEL_ID,
   OPENAI_GPT_56_SOL_MODEL_ID,
 } from './model-route-contract.js';
-import { isOpenAIGptLiveModel, isSupportedOpenAIGptLiveModel } from './realtime-quicksilver.js';
 import { resolveOpenAIModelServiceTiers } from './service-tier-policy.js';
 import { resolveUnifiedOpenAIThinkingProfile } from './thinking-policy.js';
 
@@ -136,43 +136,6 @@ export function projectConfiguredModelRow(ctx: ProviderNormalizeResolvedModelCon
     return undefined;
   }
   return null;
-}
-
-export function projectRealtimeVoicePublicProjection(ctx: {
-  providerConfig: Record<string, unknown>;
-  config: Record<string, unknown>;
-}): {
-  config: Record<string, unknown>;
-  clientHints?: { modelSource?: 'gateway'; gatewayRelaySupported: boolean };
-} {
-  const model = normalizeOptionalString(ctx.config.model) ?? ctx.providerConfig.model;
-  const modelId = typeof model === 'string' ? model : undefined;
-  if (!isOpenAIGptLiveModel(modelId)) {
-    return { config: ctx.config };
-  }
-  if (isSupportedOpenAIGptLiveModel(modelId)) {
-    // Advertise model/transport support, not credential readiness. Session creation
-    // still resolves the selected agent's auth and validates the relay launch.
-    return {
-      config: ctx.config,
-      // GPT-Live owns delegation; forced consult and Azure configs require native Talk.
-      clientHints: {
-        gatewayRelaySupported:
-          ctx.config.consultRouting !== 'force-agent-consult' &&
-          !normalizeOptionalString(ctx.providerConfig.baseUrl) &&
-          !normalizeOptionalString(ctx.providerConfig.azureEndpoint) &&
-          !normalizeOptionalString(ctx.providerConfig.azureDeployment),
-      },
-    };
-  }
-  const { model: _model, ...publicConfig } = ctx.config;
-  return {
-    config: publicConfig,
-    clientHints: {
-      modelSource: 'gateway',
-      gatewayRelaySupported: false,
-    },
-  };
 }
 
 function firstRouteBaseUrl(...values: unknown[]): unknown {

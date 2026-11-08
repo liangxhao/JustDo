@@ -93,17 +93,16 @@ function retainedConfig(canonicalVoice: boolean) {
       { providerId: 'discord-voice', guildId: 'guild', channelId: 'voice' },
     ] },
     skills: { entries: { 'private-skill': { enabled: false } },
-      workshop: { approvalPolicy: 'manual', maxPending: 12, autonomous: { mode: 'auto' }, maxSkillBytes: 60_000 } },
+      workshop: { autonomous: { mode: 'auto' }, maxSkillBytes: 60_000 } },
     plugins: { entries: { 'agent-team': { enabled: false }, 'swarm-workflow': { enabled: false },
       'stt-local-cli': { enabled: false }, 'tts-local-cli': { enabled: false } } },
     cron: { skipMissedJobs: false },
-    tts: { auto: 'off', enabled: true, provider: 'openai',
+    tts: { auto: 'off', provider: 'openai',
       maxTextLength: 1400, timeoutMs: 25_000,
       providers: { openai: { baseUrl: 'http://speech.example.test/v1', model: 'internal-speech',
-        voice: 'obsolete-voice', voiceName: 'obsolete-name', voiceId: 'obsolete-id',
         ...(canonicalVoice ? { speakerVoice: 'chosen-current', speakerVoiceId: 'current-id' } : {}) } },
       personas: { narrator: { label: 'Retained narrator', providers: { openai: {
-        voice: 'obsolete-persona', ...(canonicalVoice ? { speakerVoice: 'current-narrator' } : {}),
+        ...(canonicalVoice ? { speakerVoice: 'current-narrator' } : {}),
       } } } },
     },
   };
@@ -172,7 +171,7 @@ nativeTest.each([false, true])('built-in login and logout stay hot-reloadable wi
   }
 }, 120_000);
 
-nativeTest('real schema alone accepts TTS legacy keys, while the actual load-time detector refuses every retired input', () => {
+nativeTest('native schema and load-time validation reject unsupported external workshop and TTS inputs', () => {
   const base = { agents: { ownership: 'explicit', entries: { main: {} } } };
   const cases = [
     { label: 'current canonical', config: { ...base, tts: { auto: 'off', provider: 'openai',
@@ -184,6 +183,7 @@ nativeTest('real schema alone accepts TTS legacy keys, while the actual load-tim
       config: { ...base, tts: { providers: { openai: { [key]: 'obsolete' } } } } })),
     ...['voice', 'voiceName', 'voiceId'].map(key => ({ label: 'persona.' + key,
       config: { ...base, tts: { personas: { narrator: { providers: { openai: { [key]: 'obsolete' } } } } } } })),
+    { label: 'tts.prefsPath', config: { ...base, tts: { prefsPath: 'external-preferences.json' } } },
   ];
   const results = assess(cases);
   expect(results[0]).toMatchObject({ schemaSuccess: true, legacyIssues: [] });
@@ -193,15 +193,43 @@ nativeTest('real schema alone accepts TTS legacy keys, while the actual load-tim
       expect.objectContaining({ path: 'skills.workshop', keys: expect.arrayContaining([result.label]) }),
     ]));
   }
-  for (const result of results.slice(3)) {
+  for (const result of results.slice(3, -1)) {
     expect(result.schemaSuccess, result.label).toBe(true);
     expect(result.legacyIssues, result.label).toEqual(expect.arrayContaining([
       expect.objectContaining({ path: 'tts', message: expect.stringMatching(/legacy/) }),
     ]));
   }
+  expect(results.at(-1)).toMatchObject({ label: 'tts.prefsPath', schemaSuccess: false });
 }, 90_000);
 
-nativeTest('persisted login, logout and minimal startup projections prune obsolete keys without migrating their values or changing unrelated state', () => {
+nativeTest('preserving unsupported external fields during synchronization does not establish native admission', () => {
+  const directory = temporary();
+  const configPath = path.join(directory, 'openclaw.json');
+  const existing = retainedConfig(true);
+  Object.assign(existing.skills.workshop, { approvalPolicy: 'manual', maxPending: 12 });
+  Object.assign(existing.tts, { prefsPath: path.join(directory, 'external-preferences.json') });
+  fs.writeFileSync(configPath, JSON.stringify(existing));
+  setStoreGetter(() => ({ get: () => ({}) }) as never);
+  const sync = new OpenClawConfigSync({
+    engineManager: { getConfigPath: () => configPath, getStateDir: () => directory,
+      getDesiredVersion: () => targetVersion.slice(1) },
+    getCoworkConfig: () => ({ workingDirectory: path.join(directory, 'project'),
+      executionMode: 'local', agentEngine: 'openclaw' }),
+    getAgents: () => [], getBrowserMode: () => BrowserMode.User,
+  } as never);
+
+  expect(sync.sync('startup')).toMatchObject({ ok: true });
+
+  const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  expect(config.skills.workshop).toEqual(existing.skills.workshop);
+  expect(config.tts.prefsPath).toBe((existing.tts as Record<string, unknown>).prefsPath);
+  const [result] = assess([{ label: 'unsupported external configuration preserved', config }]);
+  expect(result.schemaSuccess).toBe(false);
+  const rejectedKeys = result.schemaIssues.flatMap(issue => issue.keys ?? []);
+  expect(rejectedKeys).toEqual(expect.arrayContaining(['approvalPolicy', 'maxPending', 'prefsPath']));
+}, 90_000);
+
+nativeTest('full and minimal model projections preserve valid native settings without generating retired TTS keys', () => {
   const cases: { label: string; config: unknown }[] = [];
   for (const mode of ['full-login', 'full-logout', 'minimal-logout', 'minimal-startup'] as const) {
     for (const canonicalVoice of [false, true]) {
@@ -257,6 +285,7 @@ nativeTest('persisted login, logout and minimal startup projections prune obsole
       expect(config.tts).toMatchObject({ auto: 'off', provider: 'openai',
         maxTextLength: 1400, timeoutMs: 25_000 });
       expect(config.tts).not.toHaveProperty('enabled');
+      expect(config.tts).not.toHaveProperty('prefsPath');
       const selected = config.tts.providers.openai;
       expect(selected).toMatchObject({ baseUrl: 'http://speech.example.test/v1', model: 'internal-speech' });
       for (const key of ['voice', 'voiceName', 'voiceId']) {
@@ -282,7 +311,7 @@ nativeTest('persisted login, logout and minimal startup projections prune obsole
       // Replaying configuration synchronization is observation/projection, not a model or file mutation RPC.
       expect(sync.sync(reason).ok).toBe(true);
       expect(JSON.parse(fs.readFileSync(configPath, 'utf8'))).toEqual(config);
-      cases.push({ label: mode + (canonicalVoice ? ' canonical voice retained' : ' obsolete voice not promoted'), config });
+      cases.push({ label: mode + (canonicalVoice ? ' canonical voice retained' : ' optional voice omitted'), config });
     }
   }
   for (const result of assess(cases)) {
@@ -291,14 +320,13 @@ nativeTest('persisted login, logout and minimal startup projections prune obsole
   }
 }, 120_000);
 
-nativeTest('production speech projections remove the invalid preferences key before full or minimal startup admission', () => {
+nativeTest('full and minimal speech projections keep preferences outside valid native TTS configuration', () => {
   const cases: { label: string; config: unknown }[] = [];
   for (const mode of ['full-login', 'full-logout', 'minimal-logout', 'minimal-startup'] as const) {
     clearActiveBuiltinModelCredential();
     const directory = temporary();
     const configPath = path.join(directory, 'openclaw.json');
     const existing = retainedConfig(true);
-    Object.assign(existing.tts, { prefsPath: path.join(directory, 'previous-invalid-preferences.json') });
     fs.writeFileSync(configPath, JSON.stringify(existing));
     if (mode === 'full-login') {
       const now = Math.floor(Date.now() / 1000);
@@ -358,7 +386,7 @@ nativeTest('production speech projections remove the invalid preferences key bef
   }
 }, 120_000);
 
-nativeTest('online speech profiles survive full and minimal configuration sync without voice-call', () => {
+nativeTest('generic speech bindings survive full and minimal configuration sync without voice-call', () => {
   const cases: { label: string; config: unknown }[] = [];
   for (const withChatModel of [false, true]) {
     const directory = temporary();
@@ -372,15 +400,25 @@ nativeTest('online speech profiles survive full and minimal configuration sync w
       language: 'zh',
       extensions: defaultLocalSpeechExtensionSettings,
       voice: { ...defaultLocalSpeechSettings, inputEnabled: true,
-        recognitionMode: 'online', onlineAsrModelRef: 'internal/asr',
+        recognitionMode: 'online', onlineAsrModelRef: 'internal/asr', onlineAsrBindingId: 'live',
         outputEnabled: true, synthesisMode: 'online',
-        onlineTtsModelRef: 'internal/reader', onlineTtsVoice: 'voice-1' },
+        onlineTtsModelRef: 'internal/reader', onlineTtsBindingId: 'read',
+        onlineTtsVoiceSelection: { kind: 'preset', voiceId: 'voice-1' },
+        realtimeEnabled: true, realtimeModelRef: 'internal/voice', realtimeBindingId: 'duplex',
+        realtimeVoiceSelection: { kind: 'preset', voiceId: 'voice-1' } },
       recognitionModels: { providers: { internal: {
-        baseUrl: 'wss://asr.example.test/v1', apiKey: '', models: [{ id: 'asr', name: 'ASR' }],
+        baseUrl: 'wss://asr.example.test/v1', apiKey: '', models: [{ id: 'asr', name: 'ASR',
+          bindings: [{ id: 'live', protocolId: 'openai-transcription-realtime' }] }],
       } } },
       synthesisModels: { providers: { internal: {
         baseUrl: 'http://tts.example.test/v1', apiKey: '',
-        models: [{ id: 'reader', name: 'Reader', voices: [{ id: 'voice-1', name: 'Voice' }] }],
+        models: [{ id: 'reader', name: 'Reader', voices: [{ id: 'voice-1', name: 'Voice' }], bindings: [{ id: 'read',
+          protocolId: 'openai-speech-http', voicePolicy: 'preset' }] }],
+      } } },
+      realtimeModels: { providers: { internal: {
+        baseUrl: 'wss://voice.example.test/v1', apiKey: '',
+        models: [{ id: 'voice', name: 'Duplex', bindings: [{ id: 'duplex', protocolId: 'openai-voice-realtime',
+          inputTranscriptionModel: 'configured-transcriber' }], voices: [{ id: 'voice-1', name: 'Voice' }] }],
       } } },
     };
     const sync = new OpenClawConfigSync({
@@ -399,15 +437,24 @@ nativeTest('online speech profiles survive full and minimal configuration sync w
         transcription: { baseUrl: 'wss://asr.example.test/v1', model: 'asr', apiKey: '' },
       } });
       expect(config.plugins.entries['runtime-services'].config.replySpeech).toMatchObject({
-        baseUrl: 'http://tts.example.test/v1', model: 'reader', speakerVoice: 'voice-1', apiKey: '',
+        baseUrl: 'http://tts.example.test/v1', model: 'reader', apiKey: '',
+        protocolId: 'openai-speech-http', voiceSelection: { kind: 'preset', voiceId: 'voice-1' },
+        configurationId: expect.stringMatching(/^[a-f0-9]{64}$/),
       });
+      expect(config.plugins.entries['runtime-services'].config.replySpeech.speakerVoice).toBe('voice-1');
+      expect(config.plugins.entries.openai.config.realtimeVoice).toMatchObject({
+        baseUrl: 'wss://voice.example.test/v1', model: 'voice', speakerVoice: 'voice-1',
+        inputTranscriptionModel: 'configured-transcriber',
+      });
+      expect(config.talk.realtime).toMatchObject({ provider: 'openai', transport: 'gateway-relay', consultRouting: 'force-agent-consult' });
       cases.push({ label: `${withChatModel ? 'full' : 'minimal'} ${reason} speech`, config });
     }
-    speech.voice = { ...(speech.voice as object), inputEnabled: false, outputEnabled: false };
+    speech.voice = { ...(speech.voice as object), inputEnabled: false, outputEnabled: false, realtimeEnabled: false };
     expect(sync.sync('settings')).toMatchObject({ ok: true });
     const disabled = JSON.parse(fs.readFileSync(configPath, 'utf8'));
     expect(disabled.plugins.entries.openai.config.transcription).toBeNull();
     expect(disabled.plugins.entries['runtime-services'].config.replySpeech).toBeNull();
+    expect(disabled.plugins.entries.openai.config.realtimeVoice).toBeNull();
     cases.push({ label: `${withChatModel ? 'full' : 'minimal'} disabled speech`, config: disabled });
   }
   for (const result of assess(cases)) {

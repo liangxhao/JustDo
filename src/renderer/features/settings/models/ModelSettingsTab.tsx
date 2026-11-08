@@ -72,6 +72,10 @@ const ModelSettingsTab: React.FC<ModelSettingsTabProps> = ({
       label: i18nService.t('modelTypeSpeechSynthesis'),
     },
     {
+      id: 'realtime-voice',
+      label: i18nService.t('modelTypeRealtimeVoice'),
+    },
+    {
       id: 'image',
       label: i18nService.t('modelTypeImage'),
     },

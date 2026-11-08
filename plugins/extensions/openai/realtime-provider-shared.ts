@@ -1,21 +1,6 @@
-import { resolveExpiresAtMsFromEpochSeconds } from 'openclaw/plugin-sdk/number-runtime';
-import type { SsrFPolicy } from 'openclaw/plugin-sdk/ssrf-runtime';
-import {
-  asOptionalRecord,
-  asOptionalObjectRecord,
-  normalizeOptionalString,
-} from 'openclaw/plugin-sdk/string-coerce-runtime';
-import type { OpenAIRealtimeHost } from './realtime-host.js';
+import { asOptionalRecord } from 'openclaw/plugin-sdk/string-coerce-runtime';
 
-const OPENAI_REALTIME_API_BASE_URL = 'https://api.openai.com/v1';
-const OPENAI_REALTIME_SSRF_POLICY = {
-  allowRfc2544BenchmarkRange: true,
-  allowIpv6UniqueLocalRange: true,
-  hostnameAllowlist: [new URL(OPENAI_REALTIME_API_BASE_URL).hostname],
-} satisfies SsrFPolicy;
-// Secret minting blocks interactive Talk setup; keep this absolute budget aligned
-// with the maintained realtime Talk live smoke.
-const OPENAI_REALTIME_CLIENT_SECRET_REQUEST_TIMEOUT_MS = 30_000;
+import type { SpeechProtocolId } from '../../sdk/speech-protocols/index.js';
 
 export function readRealtimeErrorDetail(error: unknown): string {
   if (typeof error === 'string' && error) {
@@ -30,83 +15,23 @@ export function readRealtimeErrorDetail(error: unknown): string {
 
 export function resolveOpenAIProviderConfigRecord(
   config: Record<string, unknown>,
+  expectedProtocol: SpeechProtocolId,
 ): Record<string, unknown> | undefined {
+  if (Object.hasOwn(config, 'compatibilityProfile'))
+    throw new Error('Unsupported speech configuration field.');
   const providers = asOptionalRecord(config.providers);
-  return (
+  const resolved = (
     asOptionalRecord(providers?.openai) ??
     asOptionalRecord(config.openai) ??
     asOptionalRecord(config)
   );
-}
-
-type OpenAIRealtimeClientSecretRequest = {
-  authToken: string;
-  auditContext: string;
-  session: Record<string, unknown>;
-  authRejectedMessage?: string;
-};
-
-export async function createOpenAIRealtimeClientSecret(
-  params: OpenAIRealtimeClientSecretRequest,
-  {
-    createProviderHttpError,
-    readProviderJsonResponse,
-    resolveProviderRequestHeaders,
-    fetchWithSsrFGuard,
-  }: OpenAIRealtimeHost,
-  label = 'OpenAI Realtime',
-) {
-  const url = `${OPENAI_REALTIME_API_BASE_URL}/realtime/client_secrets`;
-  const { response, release } = await fetchWithSsrFGuard({
-    url,
-    init: {
-      method: 'POST',
-      headers: resolveProviderRequestHeaders({
-        provider: 'openai',
-        baseUrl: url,
-        capability: 'audio',
-        transport: 'http',
-        defaultHeaders: {
-          Authorization: `Bearer ${params.authToken}`,
-          'Content-Type': 'application/json',
-        },
-      }) ?? {
-        Authorization: `Bearer ${params.authToken}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ session: params.session }),
-    },
-    policy: OPENAI_REALTIME_SSRF_POLICY,
-    timeoutMs: OPENAI_REALTIME_CLIENT_SECRET_REQUEST_TIMEOUT_MS,
-    auditContext: params.auditContext,
-  });
-  let payload: unknown;
-  try {
-    if (!response.ok) {
-      const error = await createProviderHttpError(response, `${label} client secret failed`);
-      // Provider details can echo a masked credential while hiding which
-      // OpenClaw auth source won. Keep the status metadata, but give callers
-      // a bounded remediation for an explicitly configured key.
-      if (response.status === 401 && params.authRejectedMessage) {
-        error.message = params.authRejectedMessage;
-      }
-      throw error;
-    }
-    payload = await readProviderJsonResponse<unknown>(response, 'openai.realtime-session');
-  } finally {
-    await release();
+  if (resolved && Object.hasOwn(resolved, 'compatibilityProfile'))
+    throw new Error('Unsupported speech configuration field.');
+  for (const input of [config, resolved]) {
+    if (input && Object.hasOwn(input, 'protocolId') && input.protocolId !== undefined && input.protocolId !== expectedProtocol)
+      throw new Error('Unsupported speech protocol.');
   }
-  const record = asOptionalObjectRecord(payload);
-  const nestedSecret = record?.client_secret;
-  const clientSecret =
-    normalizeOptionalString(asOptionalRecord(payload)?.value) ??
-    normalizeOptionalString(asOptionalRecord(nestedSecret)?.value);
-  if (!clientSecret) {
-    throw new Error(`${label} client secret response did not include a value`);
-  }
-  const expiresAtMs = resolveExpiresAtMsFromEpochSeconds(record?.expires_at);
-  return {
-    value: clientSecret,
-    ...(expiresAtMs === undefined ? {} : { expiresAt: expiresAtMs }),
-  };
+  // A wrapper cannot hide an authored protocol or turn a managed choice into legacy defaults.
+  return resolved && resolved !== config && config.protocolId !== undefined && Object.hasOwn(config, 'protocolId')
+    ? { ...resolved, protocolId: config.protocolId } : resolved;
 }

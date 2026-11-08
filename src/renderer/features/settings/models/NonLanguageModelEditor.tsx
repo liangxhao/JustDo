@@ -17,10 +17,24 @@ import {
   type NATIVE_VIDEO_PROVIDERS,
 } from '@shared/providers/nativeVideoProviders';
 import { LocalSpeechModelKind } from '@shared/speech/localSpeechModels';
+import {
+  isOnlineSpeechBindingEndpointValid,
+  isOnlineSpeechModelKind,
+  type OnlineSpeechModelParameters,
+  type OnlineSpeechProviderProtocol,
+  parseOnlineSpeechModelParameters,
+  parseOnlineSpeechProviderProtocol,
+} from '@shared/speech/onlineSpeechModels';
 import React, { useEffect, useRef, useState } from 'react';
 
 import type { AppConfig, OnlineModelVoiceConfig } from '@/app/config';
+import {
+  getDefaultSpeechProviderProtocol,
+  getSpeechProviderProtocolHint,
+  getSpeechProviderProtocolOptions,
+} from '@/features/speech/onlineSpeechPresentation';
 import { i18nService } from '@/services/i18n';
+import ThemedSelect from '@/shared/components/ui/ThemedSelect';
 
 import BuiltinSpeechModelCatalog from './BuiltinSpeechModelCatalog';
 import {
@@ -36,6 +50,7 @@ import {
   type NonLanguageModelKind,
   normalizeNonLanguageModelBaseUrl,
 } from './nonLanguageModelUrls';
+import SpeechModelOptionsEditor from './SpeechModelOptionsEditor';
 
 export type { NonLanguageModelKind } from './nonLanguageModelUrls';
 export {
@@ -50,6 +65,7 @@ type Provider = NonNullable<Category>['providers'][string];
 const PROTOCOL_HINT_KEYS = {
   'speech-recognition': 'customRecognitionProtocolHint',
   'speech-synthesis': 'customSynthesisProtocolHint',
+  'realtime-voice': 'customRealtimeVoiceProtocolHint',
   image: 'customImageProtocolHint',
   video: 'customVideoProtocolHint',
   decision: 'customDecisionProtocolHint',
@@ -219,8 +235,9 @@ export const parseOpenApiDefaultModels = (
   const operation = toRecord(toRecord(paths[endpointPath])?.post);
   const content = toRecord(toRecord(operation?.requestBody)?.content);
   const mediaType = toRecord(
-    (kind === 'video' ? content?.['multipart/form-data'] : undefined) ??
-      content?.['application/json'],
+    (kind === 'video' || endpointPath.endsWith('/audio/transcriptions')
+      ? content?.['multipart/form-data']
+      : undefined) ?? content?.['application/json'],
   );
   const schema = resolveOpenApiSchema(root, mediaType?.schema);
   const properties = toRecord(schema?.properties);
@@ -287,6 +304,8 @@ const NonLanguageModelEditor: React.FC<NonLanguageModelEditorProps> = ({
   const [modelDialog, setModelDialog] = useState<{ previousId?: string } | null>(null);
   const [modelId, setModelId] = useState('');
   const [modelName, setModelName] = useState('');
+  const [modelParameters, setModelParameters] = useState<OnlineSpeechModelParameters>({});
+  const [modelParametersError, setModelParametersError] = useState('');
   const [showApiKey, setShowApiKey] = useState(false);
   const [formError, setFormError] = useState('');
   const [detectingModels, setDetectingModels] = useState(false);
@@ -389,6 +408,23 @@ const NonLanguageModelEditor: React.FC<NonLanguageModelEditorProps> = ({
   };
 
   const activeProvider = activeProviderVisible ? category.providers[activeProviderId] : undefined;
+  let speechProviderProtocol: OnlineSpeechProviderProtocol | undefined;
+  let speechProviderProtocolInvalid = false;
+  if (activeProvider && isOnlineSpeechModelKind(kind)) {
+    try {
+      speechProviderProtocol = parseOnlineSpeechProviderProtocol(activeProvider, kind);
+    } catch {
+      speechProviderProtocolInvalid = true;
+    }
+  }
+  const speechConnectionInvalid = Boolean(
+    speechProviderProtocol &&
+    activeProvider?.baseUrl.trim() &&
+    !isOnlineSpeechBindingEndpointValid(activeProvider, {
+      id: 'provider',
+      ...speechProviderProtocol,
+    }),
+  );
   const nativeVideoProvider =
     kind === 'video' ? findNativeVideoProvider(activeProvider?.nativeVideoProvider) : undefined;
   const canEditModels = kind !== 'video' || Boolean(nativeVideoProvider);
@@ -407,8 +443,11 @@ const NonLanguageModelEditor: React.FC<NonLanguageModelEditorProps> = ({
       ? 'catalogDefaultConfiguredHint'
       : 'catalogDefaultSelectHint';
   const endpointPreview =
-    activeProvider && canEditModels
-      ? buildNonLanguageModelEndpointPreview(kind, activeProvider.baseUrl)
+    activeProvider &&
+    canEditModels &&
+    !speechConnectionInvalid &&
+    (!isOnlineSpeechModelKind(kind) || speechProviderProtocol)
+      ? buildNonLanguageModelEndpointPreview(kind, activeProvider.baseUrl, speechProviderProtocol)
       : '';
 
   const providerNameError = (name: string, currentId?: string): string =>
@@ -459,6 +498,7 @@ const NonLanguageModelEditor: React.FC<NonLanguageModelEditorProps> = ({
           baseUrl: '',
           apiKey: '',
           models: [],
+          ...(isOnlineSpeechModelKind(kind) ? getDefaultSpeechProviderProtocol(kind) : {}),
           ...(videoProvider ? { nativeVideoProvider: videoProvider.id } : {}),
         },
       },
@@ -497,6 +537,17 @@ const NonLanguageModelEditor: React.FC<NonLanguageModelEditorProps> = ({
     setModelDialog(model ? { previousId: model.id } : {});
     setModelId(model?.id ?? '');
     setModelName(model?.name ?? '');
+    setModelParametersError('');
+    if (model && speechProviderProtocol) {
+      try {
+        setModelParameters(parseOnlineSpeechModelParameters(model, speechProviderProtocol));
+      } catch {
+        setModelParameters({});
+        setModelParametersError(i18nService.t('speechModelParametersReview'));
+      }
+    } else {
+      setModelParameters({});
+    }
     setDetectedVoices(model?.voices ?? []);
     setManualVoiceId('');
     setVoiceDetectionMessage('');
@@ -521,11 +572,33 @@ const NonLanguageModelEditor: React.FC<NonLanguageModelEditorProps> = ({
       setFormError(i18nService.t('mediaModelAlreadyExists'));
       return;
     }
+    const previousModel = activeProvider.models.find(model => model.id === modelDialog?.previousId);
+    let parameters: OnlineSpeechModelParameters = {};
+    if (isOnlineSpeechModelKind(kind) && speechProviderProtocol) {
+      if (modelParametersError) {
+        setFormError(modelParametersError);
+        return;
+      }
+      try {
+        parameters = parseOnlineSpeechModelParameters(
+          { ...previousModel, ...modelParameters },
+          speechProviderProtocol,
+        );
+      } catch {
+        setFormError(i18nService.t('speechModelParametersInvalid'));
+        return;
+      }
+    }
     const nextModel = {
+      ...previousModel,
       id,
       name,
-      ...(kind === 'speech-synthesis' && detectedVoices.length > 0
-        ? { voices: detectedVoices }
+      ...(kind === 'speech-synthesis' || kind === 'realtime-voice'
+        ? { voices: detectedVoices.length ? detectedVoices : undefined }
+        : {}),
+      ...parameters,
+      ...(!previousModel && isOnlineSpeechModelKind(kind) && !speechProviderProtocol
+        ? { bindings: [] }
         : {}),
     };
     const models = modelDialog?.previousId
@@ -597,7 +670,9 @@ const NonLanguageModelEditor: React.FC<NonLanguageModelEditorProps> = ({
       !activeProvider?.baseUrl.trim() ||
       !canEditModels ||
       (requiresApiKey && !activeProvider.apiKey.trim()) ||
-      detectingModels
+      detectingModels ||
+      speechProviderProtocolInvalid ||
+      speechConnectionInvalid
     )
       return;
     const generation = ++modelDetectionGenerationRef.current;
@@ -616,7 +691,7 @@ const NonLanguageModelEditor: React.FC<NonLanguageModelEditorProps> = ({
       try {
         const response = await fetchWithDiscoveryTimeout(
           {
-            url: buildNonLanguageModelModelsUrl(kind, baseUrl),
+            url: buildNonLanguageModelModelsUrl(kind, baseUrl, speechProviderProtocol),
             method: 'GET',
             headers,
             purpose: NetworkFetchPurpose.NonLanguageModelDiscovery,
@@ -641,7 +716,7 @@ const NonLanguageModelEditor: React.FC<NonLanguageModelEditorProps> = ({
         try {
           const response = await fetchWithDiscoveryTimeout(
             {
-              url: buildNonLanguageModelOpenApiUrl(kind, baseUrl),
+              url: buildNonLanguageModelOpenApiUrl(kind, baseUrl, speechProviderProtocol),
               method: 'GET',
               headers,
               purpose: NetworkFetchPurpose.NonLanguageModelDiscovery,
@@ -654,7 +729,7 @@ const NonLanguageModelEditor: React.FC<NonLanguageModelEditorProps> = ({
             discovered = parseOpenApiDefaultModels(
               response.data,
               kind,
-              buildNonLanguageModelEndpointPreview(kind, baseUrl),
+              buildNonLanguageModelEndpointPreview(kind, baseUrl, speechProviderProtocol),
             );
           } else {
             lastError = `${response.status} ${response.statusText}`.trim();
@@ -672,7 +747,13 @@ const NonLanguageModelEditor: React.FC<NonLanguageModelEditorProps> = ({
       }
       setCategory(current => {
         const provider = current.providers[providerId];
-        if (provider?.baseUrl !== baseUrl || provider.apiKey !== apiKey) return current;
+        if (
+          provider?.baseUrl !== baseUrl ||
+          provider.apiKey !== apiKey ||
+          provider.protocolId !== activeProvider.protocolId ||
+          Object.prototype.hasOwnProperty.call(provider, 'compatibilityProfile')
+        )
+          return current;
         const existingIds = new Set(provider.models.map(model => model.id));
         const discoveredById = new Map(discovered.map(model => [model.id, model]));
         return {
@@ -696,6 +777,9 @@ const NonLanguageModelEditor: React.FC<NonLanguageModelEditorProps> = ({
                   .map(model => ({
                     id: model.id,
                     name: model.name,
+                    ...(isOnlineSpeechModelKind(kind) && !speechProviderProtocol
+                      ? { bindings: [] }
+                      : {}),
                     ...(model.voices?.length ? { voices: model.voices } : {}),
                   })),
               ],
@@ -719,7 +803,14 @@ const NonLanguageModelEditor: React.FC<NonLanguageModelEditorProps> = ({
   };
 
   const detectVoices = async (): Promise<void> => {
-    if (!activeProvider?.baseUrl.trim() || !modelId.trim() || detectingVoices) return;
+    if (
+      !activeProvider?.baseUrl.trim() ||
+      !modelId.trim() ||
+      detectingVoices ||
+      speechProviderProtocolInvalid ||
+      speechConnectionInvalid
+    )
+      return;
     const generation = ++voiceDetectionGenerationRef.current;
     const providerId = activeProviderId;
     const baseUrl = activeProvider.baseUrl;
@@ -733,7 +824,7 @@ const NonLanguageModelEditor: React.FC<NonLanguageModelEditorProps> = ({
     let receivedValidResponse = false;
     let lastError = '';
     try {
-      for (const url of buildVoiceDiscoveryUrls(baseUrl)) {
+      for (const url of buildVoiceDiscoveryUrls(baseUrl, speechProviderProtocol)) {
         try {
           const response = await fetchWithDiscoveryTimeout(
             {
@@ -941,10 +1032,65 @@ const NonLanguageModelEditor: React.FC<NonLanguageModelEditorProps> = ({
                   <h3 className="shrink-0 text-xs font-semibold text-foreground">
                     {i18nService.t('providerCredentials')}
                   </h3>
-                  <span className="truncate text-[10px] text-muted">
-                    {i18nService.t(PROTOCOL_HINT_KEYS[kind])}
-                  </span>
+                  {!isOnlineSpeechModelKind(kind) ? (
+                    <span className="truncate text-[10px] text-muted">
+                      {i18nService.t(PROTOCOL_HINT_KEYS[kind])}
+                    </span>
+                  ) : null}
                 </div>
+                {isOnlineSpeechModelKind(kind) ? (
+                  <div className="mb-3 space-y-1.5">
+                    <ThemedSelect
+                      id={`${activeProviderId}-speech-protocol`}
+                      value={speechProviderProtocol?.protocolId ?? ''}
+                      label={i18nService.t('speechProviderProtocol')}
+                      options={[
+                        {
+                          value: '',
+                          label: i18nService.t('speechProviderProtocolChoose'),
+                          disabled: true,
+                        },
+                        ...getSpeechProviderProtocolOptions(kind),
+                      ]}
+                      onChange={protocolId => {
+                        if (
+                          !getSpeechProviderProtocolOptions(kind).some(
+                            option => option.value === protocolId,
+                          )
+                        )
+                          return;
+                        invalidateModelDetection();
+                        invalidateVoiceDetection();
+                        // Only an explicit user selection may replace retired connection metadata.
+                        setCategory(current => ({
+                          ...current,
+                          providers: {
+                            ...current.providers,
+                            [activeProviderId]: {
+                              ...Object.fromEntries(
+                                Object.entries(current.providers[activeProviderId]).filter(
+                                  ([key]) => key !== 'compatibilityProfile',
+                                ),
+                              ),
+                              protocolId: protocolId as OnlineSpeechProviderProtocol['protocolId'],
+                            } as Provider,
+                          },
+                        }));
+                        setDetectionMessage('');
+                        setFormError('');
+                      }}
+                    />
+                    <p
+                      className={`text-[10px] ${speechProviderProtocolInvalid ? 'text-red-500' : 'text-muted'}`}
+                    >
+                      {speechProviderProtocolInvalid
+                        ? i18nService.t('speechProviderProtocolInvalid')
+                        : speechProviderProtocol
+                          ? getSpeechProviderProtocolHint(speechProviderProtocol.protocolId)
+                          : i18nService.t('speechProviderProtocolLegacy')}
+                    </p>
+                  </div>
+                ) : null}
                 <div className="grid grid-cols-2 gap-2.5">
                   <div className="text-xs text-secondary">
                     <label htmlFor={`${activeProviderId}-base-url`}>
@@ -963,9 +1109,13 @@ const NonLanguageModelEditor: React.FC<NonLanguageModelEditorProps> = ({
                         setDetectionMessage('');
                       }}
                       onBlur={event => {
-                        if (nativeVideoProvider) {
+                        if (nativeVideoProvider || speechProviderProtocol) {
                           updateProvider({
-                            baseUrl: normalizeNonLanguageModelBaseUrl(kind, event.target.value),
+                            baseUrl: normalizeNonLanguageModelBaseUrl(
+                              kind,
+                              event.target.value,
+                              speechProviderProtocol,
+                            ),
                           });
                         }
                       }}
@@ -1018,6 +1168,11 @@ const NonLanguageModelEditor: React.FC<NonLanguageModelEditorProps> = ({
                     </div>
                   </div>
                 </div>
+                {speechConnectionInvalid ? (
+                  <p className="mt-1.5 text-[10px] text-red-500" role="alert">
+                    {i18nService.t('speechProviderProtocolConnectionInvalid')}
+                  </p>
+                ) : null}
               </div>
               <div className="rounded-xl border border-border bg-surface p-3">
                 <div className="mb-2 flex items-center justify-between">
@@ -1032,7 +1187,9 @@ const NonLanguageModelEditor: React.FC<NonLanguageModelEditorProps> = ({
                         disabled={
                           !activeProvider.baseUrl.trim() ||
                           (requiresApiKey && !activeProvider.apiKey.trim()) ||
-                          detectingModels
+                          detectingModels ||
+                          speechProviderProtocolInvalid ||
+                          speechConnectionInvalid
                         }
                         aria-describedby={
                           activeProvider.baseUrl.trim()
@@ -1059,6 +1216,11 @@ const NonLanguageModelEditor: React.FC<NonLanguageModelEditorProps> = ({
                     </button>
                   </div>
                 </div>
+                {isOnlineSpeechModelKind(kind) && speechProviderProtocol ? (
+                  <p className="mb-2 text-[10px] text-muted">
+                    {i18nService.t('speechProviderProtocolModelsHint')}
+                  </p>
+                ) : null}
                 {!activeProvider.baseUrl.trim() ? (
                   <p
                     id={`${activeProviderId}-model-detection-help`}
@@ -1094,7 +1256,8 @@ const NonLanguageModelEditor: React.FC<NonLanguageModelEditorProps> = ({
                               </span>
                             ) : null}
                           </div>
-                          {kind === 'speech-synthesis' && model.voices?.length ? (
+                          {(kind === 'speech-synthesis' || kind === 'realtime-voice') &&
+                          model.voices?.length ? (
                             <div className="truncate text-[10px] text-muted">
                               {i18nService
                                 .t('availableVoiceCount')
@@ -1207,7 +1370,7 @@ const NonLanguageModelEditor: React.FC<NonLanguageModelEditorProps> = ({
             aria-modal="true"
             aria-labelledby="custom-model-dialog-title"
             tabIndex={-1}
-            className="w-full max-w-md rounded-2xl border border-border bg-background p-5"
+            className="max-h-[90dvh] w-full max-w-md overflow-y-auto rounded-2xl border border-border bg-background p-5"
             onKeyDown={event => {
               if (handleDialogConfirmKey(event, applyModel)) return;
               if (event.key === 'Escape') closeModelDialog();
@@ -1241,7 +1404,23 @@ const NonLanguageModelEditor: React.FC<NonLanguageModelEditorProps> = ({
                   className={inputClass}
                 />
               </label>
-              {kind === 'speech-synthesis' ? (
+              {isOnlineSpeechModelKind(kind) ? (
+                <SpeechModelOptionsEditor
+                  protocol={speechProviderProtocol}
+                  value={modelParameters}
+                  onChange={value => {
+                    setModelParameters(value);
+                    setModelParametersError('');
+                    setFormError('');
+                  }}
+                />
+              ) : null}
+              {modelParametersError ? (
+                <p className="text-xs text-red-500" role="alert">
+                  {modelParametersError}
+                </p>
+              ) : null}
+              {kind === 'speech-synthesis' || kind === 'realtime-voice' ? (
                 <div className="text-xs text-secondary">
                   <div className="flex items-center justify-between gap-2">
                     <span>{i18nService.t('availableVoices')}</span>
@@ -1249,7 +1428,11 @@ const NonLanguageModelEditor: React.FC<NonLanguageModelEditorProps> = ({
                       type="button"
                       onClick={() => void detectVoices()}
                       disabled={
-                        !activeProvider?.baseUrl.trim() || !modelId.trim() || detectingVoices
+                        !activeProvider?.baseUrl.trim() ||
+                        !modelId.trim() ||
+                        detectingVoices ||
+                        speechProviderProtocolInvalid ||
+                        speechConnectionInvalid
                       }
                       title={
                         !activeProvider?.baseUrl.trim()

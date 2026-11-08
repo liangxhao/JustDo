@@ -12,11 +12,16 @@ Local configuration uses the native `command`, `args`, `outputFormat`, `timeoutM
 `upstream-source.json` for original file hashes and `LICENSE` for its MIT license.
 
 Online configuration requires `mode: "online"`, an explicit HTTP(S) `baseUrl`,
-`model`, and `speakerVoice`. `apiKey` is optional; native secret preparation must
-resolve a SecretRef before execution. There is no environment credential lookup,
-public endpoint default, local retry or alternate provider inside this extension.
-Requests use the native HTTP and SSRF SDK with trust limited to the configured
-origin, zero redirects, and a 50 MiB response limit. Online telephony is unsupported.
+`model`, the standard Speech protocol and structured `voiceSelection`. It delegates
+to the registered OpenAI speech provider through the public provider registry.
+An explicit voice ID is required; `speakerVoice` is retained for valid legacy
+configuration. Retired protocols, compatibility fields and default-voice selections
+are rejected rather than converted to a supported request. `apiKey` is optional and native
+secret preparation must resolve a SecretRef before execution. There is no
+environment credential lookup, public endpoint default, local retry or alternate
+provider. The delegated transport limits trust to the configured origin, rejects
+redirects and buffers a bounded complete response. Online telephony, SSE playback
+and voice cloning/design are unsupported.
 
 The application owns the native strict persona and isolated preference path that
 prevent native TTS from falling back to another configured provider. Native TTS

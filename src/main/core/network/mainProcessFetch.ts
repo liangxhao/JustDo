@@ -23,6 +23,19 @@ const resolveConfiguredProxy = async (requestUrl: string): Promise<string | null
   return resolveSystemProxyUrl(requestUrl);
 };
 
+const prepareProxy = (requestUrl: string, signal?: AbortSignal | null): Promise<string | null> => {
+  if (!signal) return resolveConfiguredProxy(requestUrl);
+  return new Promise((resolve, reject) => {
+    const aborted = () => reject(new DOMException('Request was cancelled.', 'AbortError'));
+    if (signal.aborted) { aborted(); return; }
+    signal.addEventListener('abort', aborted, { once: true });
+    void resolveConfiguredProxy(requestUrl).then(
+      value => { signal.removeEventListener('abort', aborted); resolve(value); },
+      error => { signal.removeEventListener('abort', aborted); reject(error); },
+    );
+  });
+};
+
 export const MainProcessOutboundHeaderSource = {
   ModelProbe: 'model-probe',
   SessionTitle: 'session-title',
@@ -36,9 +49,10 @@ export type MainProcessOutboundHeaderSource =
 export const mainProcessFetch = async (
   requestUrl: string,
   init?: RequestInit,
-  options?: { maxResponseBytes?: number },
+  options?: { maxResponseBytes?: number; beforeDispatch?: () => void },
 ): Promise<Response> => {
-  const proxyUrl = await resolveConfiguredProxy(requestUrl);
+  const proxyUrl = await prepareProxy(requestUrl, init?.signal);
+  options?.beforeDispatch?.();
   if (!proxyUrl) return globalThis.fetch(requestUrl, init);
 
   const url = new URL(requestUrl);

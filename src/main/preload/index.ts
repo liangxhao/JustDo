@@ -302,8 +302,10 @@ import {
   type OnlineAsrEvent,
   OnlineAsrIpc,
   type OnlineAsrStartOptions,
+  type OnlineAsrTranscribeRequest,
 } from '../../shared/speech/onlineAsr';
 import { type OnlineTtsConfigurationUpdate, OnlineTtsIpc } from '../../shared/speech/onlineTts';
+import { type RealtimeVoiceBridge, type RealtimeVoiceEvent, RealtimeVoiceIpc } from '../../shared/speech/realtimeVoice';
 import {
   type BuiltinSpeechPreviewRequest,
   SpeechSynthesisIpc,
@@ -1105,6 +1107,8 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke(LocalAsrIpc.Transcribe, audio, options),
   },
   onlineAsr: {
+    transcribe: (request: OnlineAsrTranscribeRequest) => ipcRenderer.invoke(OnlineAsrIpc.Transcribe, request),
+    cancelTranscription: (requestId: string) => ipcRenderer.invoke(OnlineAsrIpc.CancelTranscription, requestId),
     getStatus: () => ipcRenderer.invoke(OnlineAsrIpc.GetStatus),
     getConfiguration: () => ipcRenderer.invoke(OnlineAsrIpc.GetConfiguration),
     saveConfiguration: (update: OnlineAsrConfigurationUpdate) =>
@@ -1120,6 +1124,19 @@ contextBridge.exposeInMainWorld('electron', {
       return () => ipcRenderer.removeListener(OnlineAsrIpc.Event, handler);
     },
   },
+  realtimeVoice: {
+    getStatus: () => ipcRenderer.invoke(RealtimeVoiceIpc.GetStatus),
+    start: request => ipcRenderer.invoke(RealtimeVoiceIpc.Start, request),
+    appendAudio: request => ipcRenderer.invoke(RealtimeVoiceIpc.AppendAudio, request),
+    interrupt: request => ipcRenderer.invoke(RealtimeVoiceIpc.Interrupt, request),
+    acknowledgeMark: request => ipcRenderer.invoke(RealtimeVoiceIpc.AcknowledgeMark, request),
+    close: request => ipcRenderer.invoke(RealtimeVoiceIpc.Close, request),
+    onEvent: callback => {
+      const handler = (_event: Electron.IpcRendererEvent, event: RealtimeVoiceEvent) => callback(event);
+      ipcRenderer.on(RealtimeVoiceIpc.Event, handler);
+      return () => ipcRenderer.removeListener(RealtimeVoiceIpc.Event, handler);
+    },
+  } satisfies RealtimeVoiceBridge,
   onlineTts: {
     getStatus: () => ipcRenderer.invoke(OnlineTtsIpc.GetStatus),
     getConfiguration: () => ipcRenderer.invoke(OnlineTtsIpc.GetConfiguration),

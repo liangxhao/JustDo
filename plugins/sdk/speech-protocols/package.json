@@ -1,0 +1,7 @@
+{
+  "name": "@speech/protocols",
+  "version": "1.0.0",
+  "private": true,
+  "license": "MIT",
+  "exports": { ".": "./index.ts" }
+}

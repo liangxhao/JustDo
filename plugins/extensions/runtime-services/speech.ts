@@ -4,6 +4,12 @@ import type { OpenClawConfig, OpenClawPluginApi } from 'openclaw/plugin-sdk/core
 import { normalizeResolvedSecretInputString } from 'openclaw/plugin-sdk/secret-input';
 import { resolveExplicitTtsOverrides, synthesizeSpeech } from 'openclaw/plugin-sdk/tts-runtime';
 
+import {
+  normalizeSpeechServiceBaseUrl,
+  resolveSpeechProtocolSelection,
+  resolveSpeechVoiceSelection,
+  SPEECH_PROTOCOL_IDS,
+} from '../../sdk/speech-protocols/index.js';
 import { SPEECH_SYNTHESIS_METHOD } from './contracts/speech';
 
 const MAX_TEXT_LENGTH = 10_000;
@@ -23,7 +29,9 @@ export function registerSpeechSynthesis(api: OpenClawPluginApi): void {
         if (
           !text ||
           text.length > MAX_TEXT_LENGTH ||
-          Object.keys(params).some(key => key !== 'text')
+          typeof params.configurationId !== 'string' ||
+          !/^[a-f0-9]{64}$/.test(params.configurationId) ||
+          Object.keys(params).some(key => !['text', 'configurationId'].includes(key))
         )
           throw new Error('Invalid speech text.');
         const cfg = api.runtime.config.current();
@@ -33,19 +41,24 @@ export function registerSpeechSynthesis(api: OpenClawPluginApi): void {
           typeof profile.baseUrl !== 'string' ||
           typeof profile.model !== 'string' ||
           !profile.model.trim() ||
-          typeof profile.speakerVoice !== 'string' ||
-          !profile.speakerVoice.trim()
+          profile.model.length > 256 ||
+          /[\u0000-\u001f\u007f]/.test(profile.model) ||
+          profile.configurationId !== params.configurationId
         )
           throw new Error('Reply speech is not configured.');
-        const endpoint = new URL(profile.baseUrl);
-        if (
-          !['http:', 'https:'].includes(endpoint.protocol) ||
-          endpoint.username ||
-          endpoint.password ||
-          endpoint.search ||
-          endpoint.hash
-        )
-          throw new Error('Invalid reply speech endpoint.');
+        const selection = resolveSpeechProtocolSelection(
+          profile,
+          'speech',
+          SPEECH_PROTOCOL_IDS.SPEECH_HTTP,
+        );
+        const voicePolicy = profile.voicePolicy === undefined ? 'preset' : profile.voicePolicy;
+        const voiceSelection = resolveSpeechVoiceSelection(
+          profile.voiceSelection,
+          selection,
+          voicePolicy,
+          profile.speakerVoice,
+        );
+        const baseUrl = normalizeSpeechServiceBaseUrl(profile.baseUrl, selection);
         const fingerprint = JSON.stringify(profile);
         const assertCurrent = () => {
           const current = api.runtime.config.current();
@@ -69,9 +82,12 @@ export function registerSpeechSynthesis(api: OpenClawPluginApi): void {
           throw new Error('Managed speech preferences are unavailable.');
         const prefsPath = path.join(stateDir, 'speech-tools', 'reply-preferences.json');
         const providerConfig = {
-          baseUrl: endpoint.toString().replace(/\/+$/, ''),
+          baseUrl,
           model: profile.model.trim(),
-          speakerVoice: profile.speakerVoice.trim(),
+          ...selection,
+          voicePolicy: 'preset',
+          voiceSelection,
+          speakerVoice: voiceSelection.voiceId,
           apiKey: apiKey ?? '',
           responseFormat: 'wav',
         };
@@ -100,7 +116,7 @@ export function registerSpeechSynthesis(api: OpenClawPluginApi): void {
           prefsPath,
           provider: 'openai',
           modelId: profile.model.trim(),
-          voiceId: profile.speakerVoice.trim(),
+          ...(voiceSelection.kind === 'preset' ? { voiceId: voiceSelection.voiceId } : {}),
         });
         assertCurrent();
         const result = await synthesizeSpeech({

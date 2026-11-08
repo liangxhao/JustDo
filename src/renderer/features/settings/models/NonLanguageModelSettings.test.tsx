@@ -34,7 +34,10 @@ import NonLanguageModelSettings, {
 } from './NonLanguageModelSettings';
 import { buildVoiceDiscoveryUrls } from './nonLanguageModelUrls';
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 
 describe('NonLanguageModelSettings', () => {
   const saveConfiguration = vi.fn();
@@ -66,6 +69,298 @@ describe('NonLanguageModelSettings', () => {
     };
     return { ...render(<Host />), onSubmit, getCategory: () => observedCategory };
   };
+
+  it('inherits a visible HTTP provider interface for new recognition models', () => {
+    const { getCategory } = renderSettings('speech-recognition');
+    fireEvent.click(screen.getByRole('button', { name: /addCustomProvider/ }));
+    fireEvent.change(screen.getByLabelText('customDisplayName'), {
+      target: { value: 'Recorded Audio' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'confirm' }));
+    expect(Object.values(getCategory().providers)[0].protocolId).toBe('openai-transcription-http');
+    expect(screen.getByRole('combobox', { name: 'speechProviderProtocol' }).textContent).toContain(
+      'speechProtocolRecorded',
+    );
+    fireEvent.change(screen.getByLabelText('baseUrl'), {
+      target: { value: 'http://speech.lan/deploy/v1' },
+    });
+    expect(screen.getByText('http://speech.lan/deploy/v1/audio/transcriptions')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /manualAddModel/ }));
+    const dialog = screen.getByRole('dialog');
+    expect(within(dialog).queryByRole('combobox')).toBeNull();
+    fireEvent.change(within(dialog).getByLabelText('mediaModelId'), {
+      target: { value: 'asr-one' },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'confirm' }));
+    expect(Object.values(getCategory().providers)[0].models).toEqual([
+      { id: 'asr-one', name: 'asr-one' },
+    ]);
+  });
+
+  it('keeps legacy provider data unchanged until a shared interface is selected', () => {
+    const bindings = [{ id: 'retained', protocolId: 'openai-transcription-http' as const }];
+    const provider = {
+      displayName: 'Office',
+      baseUrl: 'http://speech.lan/v1',
+      apiKey: '',
+      models: [{ id: 'asr', name: 'ASR', bindings }],
+    };
+    currentConfig.onlineModelProviders = {
+      'speech-recognition': { providers: { office: provider } },
+    };
+    const { getCategory } = renderSettings('speech-recognition');
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      top: 20,
+      bottom: 60,
+      left: 20,
+      right: 320,
+      width: 300,
+      height: 40,
+      x: 20,
+      y: 20,
+      toJSON: () => ({}),
+    });
+    expect(getCategory().providers.office).toEqual(provider);
+    expect(screen.getByText('speechProviderProtocolLegacy')).toBeTruthy();
+    fireEvent.click(screen.getByRole('combobox', { name: 'speechProviderProtocol' }));
+    fireEvent.click(screen.getByRole('option', { name: 'speechProtocolRealtimeTranscription' }));
+    expect(getCategory().providers.office).toMatchObject({
+      protocolId: 'openai-transcription-realtime',
+      models: provider.models,
+    });
+    expect(screen.getByText('ws://speech.lan/v1/realtime?intent=transcription')).toBeTruthy();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('requires an explicit core interface choice and retains unsupported model metadata', () => {
+    const model = {
+      id: 'reader',
+      name: 'Reader',
+      voicePolicy: 'service-default',
+      bindings: [{ id: 'retired', protocolId: 'chat-audio-speech' }],
+    };
+    const provider = {
+      displayName: 'Office',
+      baseUrl: 'http://speech.lan/v1',
+      apiKey: '',
+      protocolId: 'chat-audio-speech',
+      compatibilityProfile: 'retired-profile',
+      models: [model],
+    };
+    currentConfig.onlineModelProviders = {
+      'speech-synthesis': { providers: { office: provider } },
+    };
+    const { getCategory } = renderSettings('speech-synthesis');
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      top: 20,
+      bottom: 60,
+      left: 20,
+      right: 320,
+      width: 300,
+      height: 40,
+      x: 20,
+      y: 20,
+      toJSON: () => ({}),
+    });
+    expect(screen.getByText('speechProviderProtocolInvalid')).toBeTruthy();
+    expect(getCategory().providers.office).toEqual(provider);
+    expect(fetch).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('combobox', { name: 'speechProviderProtocol' }));
+    fireEvent.click(screen.getByRole('option', { name: 'speechProtocolSynthesis' }));
+    expect(getCategory().providers.office).not.toHaveProperty('compatibilityProfile');
+    expect(getCategory().providers.office).toMatchObject({
+      protocolId: 'openai-speech-http',
+      models: [model],
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'editModel: Reader' }));
+    expect(
+      within(screen.getByRole('dialog')).getByText('speechModelParametersReview'),
+    ).toBeTruthy();
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'confirm' }));
+    expect(screen.getByRole('dialog')).toBeTruthy();
+    expect(getCategory().providers.office.models[0]).toEqual(model);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('preserves legacy binding aliases when editing inherited model parameters', () => {
+    const bindings = [
+      {
+        id: 'old-call',
+        protocolId: 'openai-voice-realtime' as const,
+        inputTranscriptionModel: 'transcriber-one',
+      },
+    ];
+    currentConfig.onlineModelProviders = {
+      'realtime-voice': {
+        providers: {
+          office: {
+            displayName: 'Office',
+            baseUrl: 'http://speech.lan/v1',
+            apiKey: '',
+            protocolId: 'openai-voice-realtime',
+            models: [{ id: 'call', name: 'Call', bindings }],
+          },
+        },
+      },
+    };
+    const { getCategory } = renderSettings('realtime-voice');
+    fireEvent.click(screen.getByRole('button', { name: 'editModel: Call' }));
+    const dialog = screen.getByRole('dialog');
+    expect(within(dialog).queryByRole('combobox')).toBeNull();
+    expect(
+      within(dialog).getByLabelText('speechInputTranscriptionModel', { exact: false }),
+    ).toHaveProperty('value', 'transcriber-one');
+    fireEvent.change(within(dialog).getByLabelText('modelName'), {
+      target: { value: 'Call renamed' },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'confirm' }));
+    expect(getCategory().providers.office.models[0]).toMatchObject({
+      name: 'Call renamed',
+      inputTranscriptionModel: 'transcriber-one',
+      bindings,
+    });
+  });
+
+  it('requires ambiguous realtime parameters to be entered without deleting old binding data', () => {
+    const bindings = ['first', 'second'].map(id => ({
+      id,
+      protocolId: 'openai-voice-realtime' as const,
+      inputTranscriptionModel: id,
+    }));
+    currentConfig.onlineModelProviders = {
+      'realtime-voice': {
+        providers: {
+          office: {
+            displayName: 'Office',
+            baseUrl: 'http://speech.lan/v1',
+            apiKey: '',
+            protocolId: 'openai-voice-realtime',
+            models: [{ id: 'call', name: 'Call', bindings }],
+          },
+        },
+      },
+    };
+    const { getCategory } = renderSettings('realtime-voice');
+    fireEvent.click(screen.getByRole('button', { name: 'editModel: Call' }));
+    const dialog = screen.getByRole('dialog');
+    expect(within(dialog).getByText('speechModelParametersReview')).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'confirm' }));
+    expect(getCategory().providers.office.models[0].inputTranscriptionModel).toBeUndefined();
+    fireEvent.change(
+      within(dialog).getByLabelText('speechInputTranscriptionModel', { exact: false }),
+      { target: { value: 'chosen-transcriber' } },
+    );
+    fireEvent.click(within(dialog).getByRole('button', { name: 'confirm' }));
+    expect(getCategory().providers.office.models[0]).toMatchObject({
+      inputTranscriptionModel: 'chosen-transcriber',
+      bindings,
+    });
+  });
+
+  it('adds a user-defined synthesis model without guessing a voice or policy', () => {
+    currentConfig.onlineModelProviders = {
+      'speech-synthesis': {
+        providers: {
+          office: {
+            displayName: 'Office',
+            baseUrl: 'http://speech.lan/v1',
+            apiKey: '',
+            protocolId: 'openai-speech-http',
+            models: [],
+          },
+        },
+      },
+    };
+    const { getCategory } = renderSettings('speech-synthesis');
+    fireEvent.click(screen.getByRole('button', { name: /manualAddModel/ }));
+    const dialog = screen.getByRole('dialog');
+    fireEvent.change(within(dialog).getByLabelText('mediaModelId'), {
+      target: { value: 'company/reader-v7' },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'confirm' }));
+    expect(getCategory().providers.office.models[0]).toEqual({
+      id: 'company/reader-v7',
+      name: 'company/reader-v7',
+    });
+  });
+
+  it.each(['http://speech.lan/v1/audio/transcriptions', 'http://speech.lan/v1#fragment'])(
+    'does not discover voices through an invalid explicit Speech endpoint: %s',
+    endpoint => {
+      currentConfig.onlineModelProviders = {
+        'speech-synthesis': {
+          providers: {
+            office: {
+              displayName: 'Office',
+              baseUrl: endpoint,
+              apiKey: 'configured-key',
+              protocolId: 'openai-speech-http',
+              models: [{ id: 'speech', name: 'Speech' }],
+            },
+          },
+        },
+      };
+      renderSettings('speech-synthesis');
+      fireEvent.click(screen.getByRole('button', { name: 'editModel: Speech' }));
+      const detect = within(screen.getByRole('dialog')).getByRole('button', {
+        name: 'detectVoices',
+      });
+      expect(detect).toHaveProperty('disabled', true);
+      fireEvent.click(detect);
+      expect(fetch).not.toHaveBeenCalled();
+    },
+  );
+
+  it('discovers recorded transcription models from a multipart OpenAPI schema', () => {
+    expect(
+      parseOpenApiDefaultModels(
+        {
+          paths: {
+            '/deploy/v1/audio/transcriptions': {
+              post: {
+                requestBody: {
+                  content: {
+                    'multipart/form-data': {
+                      schema: { properties: { model: { enum: ['recorded-asr'] } } },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        'speech-recognition',
+        'http://speech.lan/deploy/v1/audio/transcriptions',
+      ),
+    ).toEqual([{ id: 'recorded-asr', name: 'recorded-asr' }]);
+  });
+
+  it('previews the selected speech protocol and preserves invalid explicit endpoints for validation', () => {
+    const protocol = { protocolId: 'openai-transcription-http' } as const;
+    expect(
+      buildNonLanguageModelEndpointPreview(
+        'speech-recognition',
+        'http://speech.lan/deploy/v2',
+        protocol,
+      ),
+    ).toBe('http://speech.lan/deploy/v2/audio/transcriptions');
+    expect(
+      normalizeNonLanguageModelBaseUrl(
+        'speech-recognition',
+        'http://speech.lan/deploy/v2/audio/transcriptions',
+        protocol,
+      ),
+    ).toBe('http://speech.lan/deploy/v2');
+    for (const endpoint of [
+      'http://speech.lan/v1/audio/speech',
+      'http://speech.lan/v1?token=private',
+      'http://speech.lan/v1#fragment',
+    ]) {
+      expect(normalizeNonLanguageModelBaseUrl('speech-recognition', endpoint, protocol)).toBe(
+        endpoint,
+      );
+    }
+  });
 
   it('shows decision provider URL and key as required and detects with Bearer auth', async () => {
     currentConfig.onlineModelProviders = {
@@ -691,14 +986,14 @@ describe('NonLanguageModelSettings', () => {
       parseDiscoveredVoices(
         {
           data: [
-            { id: 'tts-pro', voices: ['nova', { id: 'calm', name: 'Calm' }] },
+            { id: 'tts-pro', voices: ['voice-three', { id: 'calm', name: 'Calm' }] },
             { id: 'other-model', voices: ['ignored'] },
           ],
         },
         'tts-pro',
       ),
     ).toEqual([
-      { id: 'nova', name: 'nova' },
+      { id: 'voice-three', name: 'voice-three' },
       { id: 'calm', name: 'Calm' },
     ]);
     expect(
@@ -1062,7 +1357,7 @@ describe('NonLanguageModelSettings', () => {
               {
                 id: 'tts-pro',
                 name: 'TTS Pro',
-                voices: [{ id: 'nova', name: 'Nova' }],
+                voices: [{ id: 'voice-three', name: 'Voice Three' }],
               },
             ],
           },
@@ -1073,7 +1368,7 @@ describe('NonLanguageModelSettings', () => {
 
     expect(screen.getByText('availableVoiceCount')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'editModel: TTS Pro' }));
-    expect(screen.getByRole('listitem', { name: /Nova/ })).toBeTruthy();
+    expect(screen.getByRole('listitem', { name: /Voice Three/ })).toBeTruthy();
     fireEvent.change(screen.getByLabelText('manualVoiceId'), {
       target: { value: 'manual-voice' },
     });

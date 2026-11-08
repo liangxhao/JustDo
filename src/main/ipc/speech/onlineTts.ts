@@ -1,9 +1,16 @@
 import { ipcMain } from 'electron';
 
 import {
-  getOnlineSpeechVoiceOptions,
-  normalizeOnlineSpeechBaseUrl,
-  resolveOnlineSpeechModel,
+  normalizeSpeechServiceBaseUrl,
+  resolveSpeechProtocolSelection,
+  resolveSpeechVoiceSelection,
+  SPEECH_PROTOCOL_IDS,
+} from '../../../../plugins/sdk/speech-protocols';
+import type { LocalSpeechSettings } from '../../../shared/speech/localSpeechSettings';
+import {
+  normalizeOnlineSpeechVoiceSelection,
+  resolveOnlineSpeechBinding,
+  resolveOnlineSpeechVoiceSelection,
 } from '../../../shared/speech/onlineSpeechModels';
 import {
   type OnlineTtsConfiguration,
@@ -17,8 +24,14 @@ import {
   EXTENSION_SECRET_PROVIDER,
   saveExtensionSecrets,
 } from '../../plugins/extensions/extensionSecretFile';
+import {
+  resolveOnlineReplySpeechProfile,
+  withReplySpeechConfigurationId,
+} from '../../speech/onlineReplySpeechProfile';
+import { getSpeechConfigurationRevision } from '../../speech/speechConfigurationRevision';
 
 interface Dependencies {
+  getSettings: () => LocalSpeechSettings;
   getRuntime: () => OpenClawRuntimeAdapter | null;
   getModelCategory: () => unknown;
   getStateDir: () => string;
@@ -43,6 +56,7 @@ const parseProviders = (catalog: TtsCatalog): OnlineTtsConfiguration['providers'
     : [];
 
 export function registerOnlineTtsHandlers({
+  getSettings,
   getRuntime,
   getModelCategory,
   getStateDir,
@@ -53,17 +67,67 @@ export function registerOnlineTtsHandlers({
     if (!getRuntime()) throw new Error('OpenClaw Gateway is unavailable.');
   };
   const loadConfiguration = async (): Promise<OnlineTtsConfiguration> => {
-    requireRuntime();
+    const expected = resolveOnlineReplySpeechProfile(getSettings(), getModelCategory());
+    if (!expected) throw new Error('Reply speech is not configured.');
+    const runtime = getRuntime();
+    const client = runtime?.getGatewayClient();
+    if (!runtime || !client) throw new Error('OpenClaw Gateway is unavailable.');
+    const generation = runtime.getGatewayClientGeneration();
+    const revision = getSpeechConfigurationRevision('output');
     const [catalog, snapshot] = await Promise.all([
-      requestGateway<TtsCatalog>('tts.providers', {}),
-      requestGateway<{ config?: unknown }>('config.get'),
+      client.request<TtsCatalog>('tts.providers', {}, { timeoutMs: 5000 }),
+      client.request<{
+        config?: unknown;
+        configRevisionHash?: unknown;
+        appliedConfigHash?: unknown;
+      }>('config.get', {}, { timeoutMs: 5000 }),
     ]);
+    if (
+      getRuntime() !== runtime ||
+      runtime.getGatewayClient() !== client ||
+      runtime.getGatewayClientGeneration() !== generation ||
+      getSpeechConfigurationRevision('output') !== revision ||
+      resolveOnlineReplySpeechProfile(getSettings(), getModelCategory())?.configurationId !==
+        expected.configurationId
+    )
+      throw new Error('Online speech configuration or connection changed.');
+    if (
+      typeof snapshot.configRevisionHash !== 'string' ||
+      !snapshot.configRevisionHash.trim() ||
+      snapshot.appliedConfigHash !== snapshot.configRevisionHash
+    )
+      throw new Error('Speech settings have not finished applying.');
     const providers = parseProviders(catalog);
     const profile = readReplyProfile(snapshot.config);
+    if (profile.configurationId !== expected.configurationId)
+      throw new Error('Speech settings have not finished applying.');
     const baseUrl = typeof profile.baseUrl === 'string' ? profile.baseUrl.trim() : '';
     const model = typeof profile.model === 'string' ? profile.model.trim() : '';
-    const voice = typeof profile.speakerVoice === 'string' ? profile.speakerVoice.trim() : '';
-    const configured = Boolean(baseUrl && model && voice);
+    let voiceSelection;
+    try {
+      const protocol = resolveSpeechProtocolSelection(
+        profile,
+        'speech',
+        SPEECH_PROTOCOL_IDS.SPEECH_HTTP,
+      );
+      normalizeSpeechServiceBaseUrl(baseUrl, protocol);
+      voiceSelection = resolveSpeechVoiceSelection(
+        profile.voiceSelection,
+        protocol,
+        profile.voicePolicy ?? 'preset',
+        profile.speakerVoice,
+      );
+    } catch {
+      voiceSelection = undefined;
+    }
+    const voice = voiceSelection?.kind === 'preset' ? voiceSelection.voiceId : '';
+    const configured = Boolean(
+      baseUrl === expected.baseUrl && model === expected.model &&
+      profile.protocolId === expected.protocolId &&
+      profile.voicePolicy === expected.voicePolicy &&
+      voice === expected.speakerVoice && profile.speakerVoice === expected.speakerVoice &&
+      voiceSelection,
+    );
     const available = configured && providers.length > 0;
     return {
       available,
@@ -73,6 +137,7 @@ export function registerOnlineTtsHandlers({
       ...(baseUrl ? { baseUrl } : {}),
       ...(model ? { model } : {}),
       ...(voice ? { voice } : {}),
+      ...(voiceSelection ? { voiceSelection } : {}),
       credentialConfigured: Boolean(profile.apiKey),
     };
   };
@@ -107,21 +172,35 @@ export function registerOnlineTtsHandlers({
         !update ||
         typeof update.modelRef !== 'string' ||
         update.modelRef.length > 512 ||
-        typeof update.voice !== 'string' ||
-        !update.voice.trim() ||
-        update.voice.length > 256 ||
-        Object.keys(update).some(key => key !== 'modelRef' && key !== 'voice')
+        (update.voice !== undefined &&
+          (typeof update.voice !== 'string' || update.voice.length > 256)) ||
+        (update.bindingId !== undefined &&
+          (typeof update.bindingId !== 'string' || update.bindingId.length > 64)) ||
+        Object.keys(update).some(
+          key => !['modelRef', 'bindingId', 'voice', 'voiceSelection'].includes(key),
+        )
       )
         throw new Error('Invalid online speech configuration.');
       const mutate = async () => {
-        const selection = resolveOnlineSpeechModel(getModelCategory(), update.modelRef);
-        const voice = update.voice.trim();
-        if (
-          !selection ||
-          !getOnlineSpeechVoiceOptions(selection.model).some(option => option.value === voice)
-        )
+        const selection = resolveOnlineSpeechBinding(
+          getModelCategory(),
+          update.modelRef,
+          update.bindingId ?? '',
+          'tts',
+        );
+        const voiceSelection = selection
+          ? resolveOnlineSpeechVoiceSelection(
+              selection.model,
+              selection.binding,
+              normalizeOnlineSpeechVoiceSelection(update.voiceSelection, update.voice),
+            )
+          : null;
+        if (!selection || !voiceSelection)
           throw new Error('The selected online speech model or voice is unavailable.');
-        const baseUrl = normalizeOnlineSpeechBaseUrl(selection.provider.baseUrl, 'tts');
+        const baseUrl = normalizeSpeechServiceBaseUrl(
+          selection.provider.baseUrl,
+          selection.binding,
+        );
         const catalog = await requestGateway<TtsCatalog>('tts.providers', {});
         if (!parseProviders(catalog).length) throw new Error('Unknown online speech provider.');
         const snapshot = await requestGateway<{ hash?: unknown; config?: unknown }>('config.get');
@@ -153,9 +232,15 @@ export function registerOnlineTtsHandlers({
                 'runtime-services': {
                   config: {
                     replySpeech: {
-                      baseUrl,
-                      model: selection.model.id,
-                      speakerVoice: voice,
+                      ...withReplySpeechConfigurationId({
+                        baseUrl,
+                        model: selection.model.id,
+                        protocolId: selection.binding.protocolId,
+                        voicePolicy: selection.binding.voicePolicy ?? 'preset',
+                        voiceSelection,
+                        speakerVoice: voiceSelection.voiceId,
+                        apiKey,
+                      }),
                       apiKey: references[slot] ?? '',
                     },
                   },

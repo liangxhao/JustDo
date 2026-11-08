@@ -3,16 +3,23 @@ import type {
   MediaUnderstandingProvider,
 } from 'openclaw/plugin-sdk/media-understanding';
 import { transcribeOpenAiCompatibleAudio } from 'openclaw/plugin-sdk/media-understanding';
-import { requireServiceBaseUrl, resolveServiceApiKey } from './intranet-config.js';
-import { OPENAI_DEFAULT_AUDIO_TRANSCRIPTION_MODEL } from './default-models.js';
+
+import { normalizeSpeechServiceBaseUrl, SPEECH_PROTOCOL_IDS } from '../../sdk/speech-protocols/index.js';
+import { requireServiceBaseUrl, requireSpeechIdentifier, resolveServiceApiKey } from './intranet-config.js';
 export async function transcribeOpenAiAudio(params: AudioTranscriptionRequest) {
-  const baseUrl = requireServiceBaseUrl(params.baseUrl, 'Audio transcription');
+  const baseUrl = normalizeSpeechServiceBaseUrl(requireServiceBaseUrl(params.baseUrl, 'Audio transcription'),
+    { protocolId: SPEECH_PROTOCOL_IDS.TRANSCRIPTION_HTTP });
+  const model = requireSpeechIdentifier(params.model, 'audio transcription model');
+  const apiKey = resolveServiceApiKey(params.apiKey, 'models.providers.openai.apiKey') ?? '';
   return transcribeOpenAiCompatibleAudio({
     ...params,
     provider: 'openai',
     baseUrl,
     defaultBaseUrl: baseUrl,
-    defaultModel: OPENAI_DEFAULT_AUDIO_TRANSCRIPTION_MODEL,
+    model,
+    defaultModel: model,
+    apiKey,
+    auth: { kind: 'api-key', apiKey },
   });
 }
 export const transcribeOpenAiAudioWithContext: NonNullable<

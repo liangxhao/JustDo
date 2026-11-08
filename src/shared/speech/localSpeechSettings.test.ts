@@ -2,11 +2,88 @@ import { describe, expect, it } from 'vitest';
 
 import {
   defaultLocalSpeechSettings,
+  getRealtimeVoiceSettingsKey,
   normalizeLocalSpeechSettings,
+  reconcileLocalSpeechCatalog,
   resolveLocalSpeechInputLanguage,
 } from './localSpeechSettings';
+import { resolveOnlineSpeechBinding } from './onlineSpeechModels';
 
 describe('local speech settings', () => {
+  it('does not recover a legacy preset from an explicitly removed voice selection after persistence', () => {
+    const settings = normalizeLocalSpeechSettings({
+      onlineTtsVoice: 'legacy-speaker',
+      onlineTtsVoiceSelection: { kind: 'service-default' },
+      synthesisMode: 'online',
+    });
+    expect(settings.onlineTtsVoiceSelection).toBeNull();
+    expect(settings.onlineTtsVoice).toBe('');
+    expect(normalizeLocalSpeechSettings(JSON.parse(JSON.stringify(settings))).onlineTtsVoiceSelection).toBeNull();
+  });
+  it('does not turn a missing explicit binding into legacy protocol admission after catalog replacement', () => {
+    const legacy = {
+      providers: {
+        office: {
+          displayName: 'Office',
+          baseUrl: 'http://speech.lan/v1',
+          apiKey: '',
+          models: [{ id: 'shared', name: 'Shared' }],
+        },
+      },
+    };
+    const next = reconcileLocalSpeechCatalog(
+      {
+        ...defaultLocalSpeechSettings,
+        inputEnabled: true,
+        recognitionMode: 'online',
+        onlineAsrModelRef: 'office/shared',
+        onlineAsrBindingId: 'recorded-chat',
+      },
+      { recognition: legacy },
+    );
+    expect(next.onlineAsrModelRef).toBe('office/shared');
+    expect(next.onlineAsrBindingId).toBe('recorded-chat');
+    expect(
+      resolveOnlineSpeechBinding(
+        legacy,
+        next.onlineAsrModelRef,
+        next.onlineAsrBindingId,
+        'composer-asr',
+      ),
+    ).toBeNull();
+  });
+  it('loads legacy preset voices while preserving explicit empty selections and independent offline choices', () => {
+    expect(
+      normalizeLocalSpeechSettings({ onlineTtsVoice: 'speaker' }).onlineTtsVoiceSelection,
+    ).toEqual({ kind: 'preset', voiceId: 'speaker' });
+    expect(
+      normalizeLocalSpeechSettings({ onlineTtsVoice: 'speaker', onlineTtsVoiceSelection: null })
+        .onlineTtsVoiceSelection,
+    ).toBeNull();
+    const settings = normalizeLocalSpeechSettings({
+      asrModelId: 'sherpa-onnx-whisper-base',
+      ttsModelId: 'vits-icefall-zh-aishell3',
+      voiceId: 12,
+      speechRate: 1.2,
+      realtimeEnabled: true,
+      realtimeModelRef: 'office/voice',
+      realtimeBindingId: 'conversation',
+      realtimeVoiceSelection: { kind: 'preset', voiceId: 'speaker' },
+    });
+    expect(reconcileLocalSpeechCatalog(settings, {})).toMatchObject({
+      asrModelId: 'sherpa-onnx-whisper-base',
+      ttsModelId: 'vits-icefall-zh-aishell3',
+      voiceId: 12,
+      speechRate: 1.2,
+      realtimeEnabled: true,
+      realtimeModelRef: '',
+      realtimeBindingId: '',
+      realtimeVoiceSelection: null,
+    });
+    expect(getRealtimeVoiceSettingsKey(settings)).not.toBe(
+      getRealtimeVoiceSettingsKey({ ...settings, realtimeBindingId: 'another' }),
+    );
+  });
   it('uses stable defaults for missing settings', () => {
     expect(normalizeLocalSpeechSettings(undefined)).toEqual(defaultLocalSpeechSettings);
     expect(defaultLocalSpeechSettings.asrModelId).toBe(
@@ -20,7 +97,7 @@ describe('local speech settings', () => {
   });
 
   it('preserves the selected online synthesis voice', () => {
-    expect(normalizeLocalSpeechSettings({ onlineTtsVoice: 'nova' }).onlineTtsVoice).toBe('nova');
+    expect(normalizeLocalSpeechSettings({ onlineTtsVoice: 'voice-three' }).onlineTtsVoice).toBe('voice-three');
   });
 
   it('clamps persisted and untrusted numeric values', () => {

@@ -31,6 +31,7 @@ import {
 } from '@/features/cowork/components/goals/goalRunProgress';
 import { selectCurrentSession } from '@/features/cowork/coworkSelectors';
 import type { CoworkAttachmentPayload, CoworkSession } from '@/features/cowork/coworkTypes';
+import { subscribeRealtimeVoiceTimeline } from '@/features/speech/realtime/realtimeVoiceEvents';
 import type { JustDoChatElement } from '@/libs/openclaw-chat/components/justdo-chat';
 import type { McpAppViewContext } from '@/libs/openclaw-chat/components/mcp-app/view';
 import { registerSendMotion, type SendMotionOrigin } from '@/libs/openclaw-chat/components/message/send-motion';
@@ -797,6 +798,12 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
       const controller = new ChatController();
       controllerRef.current = controller;
       setController(controller);
+      const unsubscribeVoice = subscribeRealtimeVoiceTimeline(update => {
+        const source = update.type === 'event' ? update.event.source : update.session.source;
+        if (activeProductSessionId.current !== source.productSessionId ||
+          canonicalSessionKeyRef.current !== source.sessionKey || branchCreationPendingRef.current) return;
+        controller.acceptRealtimeVoiceUpdate(update);
+      });
 
       let lastHistoryReady = '';
       const summaryObserver = new ChatSummaryResourceObserver(
@@ -943,6 +950,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
           publishHistoryPresentationRef.current = null;
         }
         unsubscribeState();
+        unsubscribeVoice();
         unsubscribeStream();
         unsubscribeSideChat();
         unsubscribeSideChatStream();
@@ -1030,6 +1038,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
       const previousSessionId = previousProductSessionId.current;
       previousProductSessionId.current = currentSessionId;
       if (!controller) return;
+      if (previousSessionId !== currentSessionId) controller.clearRealtimeVoiceProjection();
       if (!currentSessionId) {
         if (previousSessionId) controller.mcpApps.invalidate(true);
         setLoadingHistorySessionKey(null);

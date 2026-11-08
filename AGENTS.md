@@ -224,6 +224,12 @@ npm test
   Application-managed adapters follow their owning settings; generic extension
   controls must enforce their protection. Do not add public-service defaults,
   fallback catalogs or retired custom-video configuration migration.
+- Speech adapters implement documented generic protocol contracts only. Service
+  endpoints, model IDs, voices and credentials come from explicit user settings.
+  Do not retain service-specific account headers, subscription/OAuth flows,
+  private endpoints or model routing in speech code, even as unused upstream
+  modules. Remove their workers, dependencies and packaging entries together.
+  Keep the supported contracts in `docs/features/speech/speech-protocols.md`.
 - Assistant role homes remain `stateDir/agent-workspaces/<agentId>`;
   native `agents.files` owns role text. Switching assistants creates a new
   conversation without moving history or rewriting project rules.

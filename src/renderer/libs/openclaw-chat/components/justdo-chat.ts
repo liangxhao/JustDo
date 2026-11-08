@@ -15,8 +15,8 @@ import {
   normalizeLocalSpeechSettings,
 } from '@shared/speech/localSpeechSettings';
 import {
-  getOnlineSpeechVoiceOptions,
-  resolveOnlineSpeechModel,
+  resolveOnlineSpeechBinding,
+  resolveOnlineSpeechVoiceSelection,
 } from '@shared/speech/onlineSpeechModels';
 import { html, LitElement, nothing, type TemplateResult } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
@@ -534,9 +534,11 @@ export class JustDoChatElement extends LitElement {
       const settings = normalizeLocalSpeechSettings(config.voice);
       const selection =
         settings.synthesisMode === 'online'
-          ? resolveOnlineSpeechModel(
+          ? resolveOnlineSpeechBinding(
               config.onlineModelProviders?.['speech-synthesis'],
               settings.onlineTtsModelRef,
+              settings.onlineTtsBindingId,
+              'tts',
             )
           : null;
       const configurationKey = JSON.stringify([
@@ -546,9 +548,8 @@ export class JustDoChatElement extends LitElement {
               selection?.provider.baseUrl,
               selection?.provider.apiKey,
               selection?.model.id,
-              getOnlineSpeechVoiceOptions(selection?.model).some(
-                voice => voice.value === settings.onlineTtsVoice,
-              ),
+              selection?.binding,
+              selection ? resolveOnlineSpeechVoiceSelection(selection.model, selection.binding, settings.onlineTtsVoiceSelection) : null,
             ]
           : []),
       ]);
@@ -935,6 +936,21 @@ export class JustDoChatElement extends LitElement {
               timelineView.activeRows,
               row => row.item.key,
               row => this.renderVisibleTimelineItem(row.item, row.showAvatar, row.showFooter),
+            )}
+            ${repeat(
+              ctrl?.getLiveVoiceTranscripts() ?? [],
+              entry => entry.key,
+              entry => renderMessageBlock({
+                kind: 'group', key: entry.key, role: entry.role,
+                messages: [{ key: entry.key, message: { role: entry.role,
+                  content: [{ type: 'text', text: entry.text }], timestamp: entry.timestamp } }],
+                timestamp: entry.timestamp, isStreaming: !entry.final,
+              }, {
+                assistantName: this.assistantName, assistantAvatar: this.assistantAvatar,
+                showFooter: false,
+                workingDirectory: this.workingDirectory, sessionKey: this.mediaSessionKey,
+                onOpenFile: this.onOpenFile,
+              }),
             )}
             ${
               interruptedTerminalFallback
