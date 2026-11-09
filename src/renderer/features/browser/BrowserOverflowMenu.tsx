@@ -4,8 +4,8 @@ import {
   CameraIcon,
   CircleStackIcon,
   ClockIcon,
+  CodeBracketSquareIcon,
   Cog6ToothIcon,
-  DevicePhoneMobileIcon,
   MagnifyingGlassIcon,
   MinusIcon,
   PlusIcon,
@@ -69,7 +69,7 @@ export default function BrowserOverflowMenu({
     {
       action: 'device-tools',
       label: i18nService.t('browserMenuDeviceTools'),
-      icon: <DevicePhoneMobileIcon className={iconClass} />,
+      icon: <CodeBracketSquareIcon className={iconClass} />,
     },
     {
       action: 'screenshot',

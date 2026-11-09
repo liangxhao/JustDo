@@ -285,6 +285,8 @@ profile 管理动作在修改 Renderer 前取得 scope lease。无 Tab 时可先
 
 ### guest 权限与认证
 
+浏览器更多菜单中的“开发者工具”打开当前网页的原生 DevTools，可在 Console 的页面主执行环境中检查网页全局变量，并在 Network 中查看实际响应。浏览器会话只允许同 session、存活且请求身份一致的原生 `remote` 内容加载 `devtools://devtools/bundled/` 资源；首次加载时被检查页面的 `devToolsWebContents` 尚不可用，不能依赖该 getter 准入。普通网页、后台页面和受限嵌入仍不能借此访问开发者工具协议，应用主窗口的开发者工具开关保持独立。可运行 `node scripts/test/browser/browser-devtools-smoke.cjs` 验证真实 webview 首次打开及普通页面不能导航到同一内置地址。
+
 Main 强制固定 guest preload、sandbox、context isolation、无 Node/嵌套 webview；guest 支持 HTTP(S)、原生 file 和浏览器生成的 data/Blob/about 文档，应用私有协议不开放给 guest。主窗口仍只能停留应用范围。
 
 低风险聚焦全屏和净化剪贴板按明确规则授权；摄像头、麦克风、定位和通知经 Main 来源确认，audio/video 分开。授权绑定 guest、frame origin 和能力，非同文档导航失效，不能用旧页面确认批准新页面。

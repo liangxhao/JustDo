@@ -2931,7 +2931,7 @@ describe('BrowserPanel embedded webview', () => {
     expect(stopFind).toHaveBeenCalledWith('clearSelection');
 
     fireEvent.click(screen.getByLabelText('More browser options'));
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Show device toolbar' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Developer tools' }));
     expect(openDevTools).toHaveBeenCalledOnce();
 
     fireEvent.click(screen.getByLabelText('More browser options'));

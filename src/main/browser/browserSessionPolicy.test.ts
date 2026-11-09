@@ -110,6 +110,33 @@ const fixture = () => {
 const item = () => Object.assign(new EventEmitter(), { cancel: vi.fn(), setSavePath: vi.fn() });
 
 describe('shared browser session policy ownership', () => {
+  test('admits bundled DevTools only for live native remote contents in this profile', () => {
+    const f = fixture();
+    const url = 'devtools://devtools/bundled/devtools_app.html';
+    const tools = Object.assign(f.guest(), { getType: () => 'remote' });
+    expect(f.inspect(url, tools, 'mainFrame')).toHaveBeenCalledExactlyOnceWith({ cancel: false });
+    expect(f.inspect('devtools://devtools/bundled/panels/network/network.js', tools, 'script'))
+      .toHaveBeenCalledExactlyOnceWith({ cancel: false });
+    for (const source of [f.foreground, f.background, undefined]) {
+      expect(f.inspect(url, source, 'mainFrame')).toHaveBeenCalledExactlyOnceWith({ cancel: true });
+    }
+    expect(f.inspectDetails({ url, resourceType: 'mainFrame', webContentsId: tools.id + 1, webContents: tools }))
+      .toHaveBeenCalledExactlyOnceWith({ cancel: true });
+    for (const invalidUrl of [
+      'devtools://other/bundled/devtools_app.html',
+      'devtools://devtools/remote/devtools_app.html',
+      'devtools://user@devtools/bundled/devtools_app.html',
+      'devtools://devtools:123/bundled/devtools_app.html',
+    ]) {
+      expect(f.inspect(invalidUrl, tools, 'mainFrame')).toHaveBeenCalledExactlyOnceWith({ cancel: true });
+    }
+    Object.assign(tools, { session: { storagePath: '/another-profile' } });
+    expect(f.inspect(url, tools, 'mainFrame')).toHaveBeenCalledExactlyOnceWith({ cancel: true });
+    Object.assign(tools, { session: f.nativeSession, isDestroyed: () => true });
+    expect(f.inspect(url, tools, 'mainFrame')).toHaveBeenCalledExactlyOnceWith({ cancel: true });
+    f.owner.release();
+  });
+
   test('installs handlers once regardless of foreground/headless registration order', () => {
     const f = fixture();
     ensureBrowserSessionPolicy(f.nativeSession);

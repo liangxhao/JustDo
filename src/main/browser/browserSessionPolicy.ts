@@ -130,6 +130,30 @@ export const ensureBrowserSessionPolicy = (browserSession: Electron.Session): vo
       }
       return;
     }
+    // Chromium opens the bundled inspector in the inspected page's session.
+    // The page's devToolsWebContents getter is still null during this first
+    // request. Require native remote contents, never a page URL alone.
+    if (details.url.startsWith('devtools:')) {
+      let allowed = false;
+      try {
+        const url = new URL(details.url);
+        const contents = details.webContents;
+        allowed = Boolean(
+          url.protocol === 'devtools:' &&
+          url.hostname === 'devtools' &&
+          url.pathname.startsWith('/bundled/') &&
+          !url.username && !url.password && !url.port &&
+          guestId !== undefined && guestId > 0 &&
+          contents && !contents.isDestroyed() && contents.id === guestId &&
+          contents.getType() === 'remote' &&
+          isSameBrowserSession(contents.session, browserSession),
+        );
+      } catch {
+        // Malformed URLs and unavailable native contents remain blocked.
+      }
+      callback({ cancel: !allowed });
+      return;
+    }
     // A worker without a page identity belongs to the profile. Its requests use
     // the browser baseline, never a tool run or its filesystem authority.
     const isCurrentPage = captureBackgroundBrowserRequest(browserSession, details);
