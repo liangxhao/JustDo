@@ -1,13 +1,10 @@
 /**
  * Message normalization utilities for chat rendering.
  */
-import {
-  type BrowserAnnotationDisplay,
-  parseBrowserAnnotationPrompt,
-} from '@shared/browser/browser';
+import { type BrowserAnnotationDisplay } from '@shared/browser/browserAnnotation';
+import { parseBrowserAnnotationPrompt } from '@shared/browser/browserMessageContext';
 import { parseRecordingContext, serializeRecording } from '@shared/browser/browserRecording';
 import { parseCoworkSessionKey } from '@shared/cowork/sessionKey';
-import { stripSwarmInstruction } from '@shared/cowork/swarm';
 import { modelRefFromIdentity, normalizeModelRef } from '@shared/providers/modelRef';
 
 import {
@@ -665,10 +662,8 @@ function expandUserDisplayContent(
   text: string,
   includeLegacyTextFields = false,
 ): MessageContentItem[] {
-  const displayText = stripSwarmInstruction(
-    // Preserve exact authored suffix boundaries before generic whitespace cleanup.
-    // Browser-only prompts may project to a text part containing just that suffix.
-    stripAppInput(stripInboundMetadata(pluginMessageText(stripAppInput(text)))),
+  const displayText = stripAppInput(
+    stripInboundMetadata(pluginMessageText(stripAppInput(text))),
   );
   const browserPrompt = parseBrowserAnnotationPrompt(displayText);
   if (!browserPrompt) return expandUserTextMediaContent(displayText, includeLegacyTextFields);

@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
+import type { MessageQuote } from '@app-plugin/sdk/metadata';
 import { beforeEach, expect, it, vi } from 'vitest';
 
-import type { MessageQuote } from '../quote';
+import { toAppQuote } from '../quote';
 import {
   appendDiscussionReference,
   appendTeamResultDraft,
@@ -39,7 +40,7 @@ it('adds only a reference card without touching existing text and deduplicates r
     }),
   );
   expect(mock.state.cowork.draftPrompts.source).toBe('My requirement');
-  mock.state.cowork.draftMessageQuotes.source = [quote];
+  mock.state.cowork.draftMessageQuotes.source = [toAppQuote(quote)];
   appendDiscussionReference('source', quote);
   expect(mock.dispatch).toHaveBeenCalledOnce();
 });
@@ -48,7 +49,7 @@ it('rejects stale source navigation and reports a full reference tray without re
   const quote = buildDiscussionReference('room', 'batch', 'Design');
   expect(() => appendDiscussionReference('other', quote)).toThrow('teamDiscussionNotFound');
   mock.state.cowork.draftMessageQuotes.source = Array.from({ length: 8 }, (_, index) =>
-    buildDiscussionReference('room', `batch-${index}`, 'Design'),
+    toAppQuote(buildDiscussionReference('room', `batch-${index}`, 'Design')),
   );
   expect(() => appendDiscussionReference('source', quote)).toThrow('teamReferenceLimit');
   expect(mock.dispatch).not.toHaveBeenCalled();

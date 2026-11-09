@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest';
 
-import { composeBrowserGatewayPrompt } from '../browser/browser';
+import { composeBrowserGatewayPrompt } from '../browser/browserMessageContext';
 import { getMessageTitleInput, hasMessageInput } from './messageInput';
 
 const attachments = [{ name: 'diagram.png', mimeType: 'image/png', base64Data: 'aGVsbG8=' }];

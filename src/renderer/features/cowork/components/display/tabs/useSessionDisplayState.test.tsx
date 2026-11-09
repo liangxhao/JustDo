@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 
-import { REVIEW_TAB_ID } from '@shared/cowork/sessionReview';
 import { act, renderHook } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
+
+import { REVIEW_TAB_ID } from '@/features/cowork/components/review/reviewNavigation';
 
 import {
   fileDisplayTabId,

@@ -1,5 +1,5 @@
 import { createSlice, original, PayloadAction } from '@reduxjs/toolkit';
-import type { BrowserAnnotationDraft } from '@shared/browser/browser';
+import type { BrowserAnnotationDraft } from '@shared/browser/browserAnnotation';
 import type { BrowserRecordingDraft } from '@shared/browser/browserRecording';
 import { DEFAULT_MAX_RETAINED_DISPLAY_TABS } from '@shared/cowork/displayTabRetention';
 import type { SessionDirectoryEntry } from '@shared/cowork/sessionDirectory';
@@ -22,10 +22,7 @@ import type {
 import type { Model } from '@/features/models/modelSlice';
 
 import type { MessageQuote } from './components/composer/draft/messageQuote';
-import {
-  MESSAGE_QUOTE_KIND,
-  validCollaborationQuote,
-} from './components/composer/draft/messageQuote';
+import { MESSAGE_QUOTE_KIND } from './components/composer/draft/messageQuote';
 
 export interface DraftAttachment {
   path: string;
@@ -388,6 +385,12 @@ const coworkSlice = createSlice({
     addDraftMessageQuote(state, action: PayloadAction<{ draftKey: string; quote: MessageQuote }>) {
       const { draftKey, quote } = action.payload;
       const quotes = state.draftMessageQuotes[draftKey] ?? [];
+      if (
+        quote.kind !== undefined &&
+        quote.kind !== MESSAGE_QUOTE_KIND.MESSAGE &&
+        quote.kind !== MESSAGE_QUOTE_KIND.EXTENSION
+      )
+        return;
       if (quotes.length >= 8 || !quote.text.trim()) return;
       if (
         quote.kind === MESSAGE_QUOTE_KIND.EXTENSION &&
@@ -398,33 +401,7 @@ const coworkSlice = createSlice({
           quote.context.length > 8192)
       )
         return;
-      if (quote.kind === MESSAGE_QUOTE_KIND.DISCUSSION) {
-        if (
-          !quote.roomId ||
-          !quote.discussionId ||
-          quotes.some(
-            item =>
-              item.kind === MESSAGE_QUOTE_KIND.DISCUSSION &&
-              item.roomId === quote.roomId &&
-              item.discussionId === quote.discussionId,
-          )
-        )
-          return;
-      } else if (quote.kind === MESSAGE_QUOTE_KIND.COLLABORATION) {
-        if (
-          !validCollaborationQuote(quote) ||
-          quote.sourceSessionId !== draftKey ||
-          quotes.some(
-            item =>
-              item.kind === MESSAGE_QUOTE_KIND.COLLABORATION &&
-              item.roomId === quote.roomId &&
-              item.targetSessionKey === quote.targetSessionKey &&
-              item.priorRoundId === quote.priorRoundId &&
-              item.deliveryId === quote.deliveryId,
-          )
-        )
-          return;
-      } else if (quote.kind !== MESSAGE_QUOTE_KIND.EXTENSION && !quote.sessionKey) return;
+      if (quote.kind !== MESSAGE_QUOTE_KIND.EXTENSION && !quote.sessionKey) return;
       state.draftMessageQuotes[draftKey] = [
         ...quotes,
         { ...quote, text: quote.text.slice(0, 12_000) },

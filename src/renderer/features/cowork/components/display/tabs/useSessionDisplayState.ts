@@ -3,7 +3,6 @@ import {
   DEFAULT_MAX_RETAINED_DISPLAY_TABS,
   normalizeMaxRetainedDisplayTabs,
 } from '@shared/cowork/displayTabRetention';
-import { REVIEW_TAB_ID } from '@shared/cowork/sessionReview';
 import {
   type Dispatch,
   type SetStateAction,
@@ -20,6 +19,7 @@ import {
 } from '@/features/browser/browserPanelRetention';
 import type { SideChatMessage } from '@/features/cowork/components/chat/SideChatPanel';
 import type { FilePreview } from '@/features/cowork/components/preview/FilePreviewDrawer';
+import { REVIEW_TAB_ID } from '@/features/cowork/components/review/reviewNavigation';
 import type { Subtask } from '@/features/cowork/components/subagents/subtaskPresentation';
 
 import {

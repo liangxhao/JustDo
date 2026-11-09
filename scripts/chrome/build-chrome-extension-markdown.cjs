@@ -33,7 +33,7 @@ esbuild.buildSync({
 
 // Share desktop parsing and cards without the Electron-backed config service.
 esbuild.buildSync({
-  entryPoints: [path.join(__dirname, 'chrome-extension-rich-content.ts')],
+  entryPoints: [path.join(repoRoot, 'src/renderer/chrome/chat/chrome-extension-rich-content.ts')],
   outfile: path.join(
     repoRoot,
     'plugins/chrome-extensions/chrome-assistant/conversation-overlay/modules/sidepanel-rich-content.js',
@@ -44,7 +44,7 @@ esbuild.buildSync({
   loader: { '.md': 'text' },
   minify: true,
   tsconfig: path.join(repoRoot, 'tsconfig.json'),
-  alias: { '@/services/i18n': path.join(__dirname, 'chrome-extension-i18n.ts') },
+  alias: { '@/services/i18n': path.join(repoRoot, 'src/renderer/chrome/chat/chrome-extension-i18n.ts') },
   target: ['chrome125'],
 });
 const fs = require('fs');
@@ -96,7 +96,7 @@ fs.writeFileSync(
       .replaceAll('--justdo-chat-error', '--chat-error')
       .replaceAll('--justdo-chat-text', '--chat-text') +
     fs.readFileSync(
-      path.join(repoRoot, 'src/renderer/features/browser/recording/browserRecording.css'),
+      path.join(repoRoot, 'src/renderer/libs/openclaw-chat/components/message/browser-recording-presentation.css'),
       'utf8',
     ),
 );

@@ -86,7 +86,7 @@ export type {
  * omits from bounded history payloads.
  */
 
-import { parseBrowserAnnotationPrompt } from '@shared/browser/browser';
+import { parseBrowserAnnotationPrompt } from '@shared/browser/browserMessageContext';
 import { type CoworkAttachmentPayload, toGatewayAttachment } from '@shared/cowork/attachments';
 import {
   isDefinitiveSessionGoalGatewayError,

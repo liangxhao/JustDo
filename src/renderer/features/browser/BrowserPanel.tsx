@@ -12,19 +12,7 @@ import {
   RectangleGroupIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
-import type {
-  BrowserAgentInteractionState,
-  BrowserAnnotationDraft,
-  BrowserAnnotationPoint,
-  BrowserAnnotationRegion,
-  BrowserAnnotationStroke,
-  BrowserGuestCommand,
-  BrowserInspectedElement,
-  BrowserPanelFrame,
-  BrowserPanelHttpAuthRequest,
-  BrowserPanelHttpAuthResponse,
-  BrowserPanelTab,
-} from '@shared/browser/browser';
+import type { BrowserAgentInteractionState, BrowserGuestCommand, BrowserPanelFrame, BrowserPanelHttpAuthRequest, BrowserPanelHttpAuthResponse, BrowserPanelTab } from '@shared/browser/browser';
 import {
   BROWSER_AGENT_PANEL_TARGET_ID,
   BROWSER_GUEST_COMMAND_CHANNEL,
@@ -41,6 +29,7 @@ import {
   resolveBrowserPanelShortcutAction,
   stepBrowserZoomFactor,
 } from '@shared/browser/browser';
+import type { BrowserAnnotationDraft, BrowserAnnotationPoint, BrowserAnnotationRegion, BrowserAnnotationStroke, BrowserInspectedElement } from '@shared/browser/browserAnnotation';
 import { getBrowserLocalFilePath } from '@shared/browser/browserHistory';
 import type { BrowserContinueResult } from '@shared/browser/browserIntervention';
 import { RecordingStatus } from '@shared/browser/browserRecording';

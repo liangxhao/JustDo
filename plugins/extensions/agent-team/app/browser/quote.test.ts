@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest';
 
-import { toAppQuote, type CollaborationQuote } from './quote';
+import { type CollaborationQuote,hasTeamQuote, toAppQuote } from './quote';
 
 it('preserves discussion labels, identities and read locators in the generic quote', () => {
   expect(
@@ -61,4 +61,13 @@ it('keeps collaboration context and body unchanged while declaring its display l
     entryId: 'entry',
   };
   expect(toAppQuote(ordinary)).toBe(ordinary);
+});
+
+it('deduplicates the same plugin locator after generic conversion, without conflating other owners', () => {
+  const quote = { kind: 'discussion' as const, id: 'original', text: 'Design', roomId: 'room', discussionId: 'round' };
+  const stored = toAppQuote(quote);
+  expect(hasTeamQuote([stored], { ...quote, id: 'different-card-id' })).toBe(true);
+  expect(hasTeamQuote([stored], { ...quote, discussionId: 'other-round' })).toBe(false);
+  expect(hasTeamQuote([{ ...stored, kind: 'extension', pluginId: 'other-plugin', context: 'context' }], quote)).toBe(false);
+  expect(hasTeamQuote([{ id: quote.id, text: 'Native', sessionKey: 'key', entryId: 'entry' }], quote)).toBe(false);
 });

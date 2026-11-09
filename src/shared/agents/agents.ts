@@ -20,6 +20,22 @@ export const AgentFiles = [
 ] as const;
 export type AgentFileName = (typeof AgentFiles)[number];
 
+export interface Agent {
+  id: string;
+  name: string;
+  description: string;
+  systemPrompt: string;
+  identity: string;
+  model: string;
+  icon: string;
+  skillIds: string[];
+  enabled: boolean;
+  deletedAt?: number;
+  isDefault: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
 export interface AgentProfileInput {
   id?: string;
   name: string;

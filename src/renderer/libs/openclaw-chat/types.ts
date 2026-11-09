@@ -2,7 +2,7 @@
  * Gateway message format types matching OpenClaw's internal types.
  * These are the types used by the rendering pipeline and ordinary Content renderer.
  */
-import type { BrowserAnnotationDisplay } from '@shared/browser/browser';
+import type { BrowserAnnotationDisplay } from '@shared/browser/browserAnnotation';
 import type { BrowserRecordingDraft } from '@shared/browser/browserRecording';
 
 import type { WebpageEmbedPreview } from './pipeline/embed-presentation';

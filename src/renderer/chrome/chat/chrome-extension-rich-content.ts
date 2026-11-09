@@ -1,24 +1,26 @@
 import { render } from 'lit';
-import {
-  questionPresentationResponse,
-  renderQuestionPresentation,
-} from '../../plugins/extensions/ask-user-question/browser/presentation';
-import {
-  parseQuestionResult,
-  parseQuestions,
-} from '../../plugins/extensions/ask-user-question/contracts/result';
-import { renderCompactionMessage } from '../../src/renderer/libs/openclaw-chat/components/timeline/compaction-divider';
-import { projectProgressReceipt } from '../../src/renderer/libs/openclaw-chat/model/tools/progress-receipt';
-import type { GatewayMessage } from '../../src/renderer/libs/openclaw-chat/types';
-import { normalizeMessage } from '../../src/renderer/libs/openclaw-chat/pipeline/message-normalizer';
+
 import {
   getTranscriptMedia,
   isTranscriptImage,
-} from '../../src/renderer/libs/openclaw-chat/attachments';
-import { renderBrowserAnnotation } from '../../src/renderer/libs/openclaw-chat/components/message/browser-annotation-message';
-import { renderBrowserRecording } from '../../src/renderer/libs/openclaw-chat/components/message/browser-recording-message';
+} from '@/libs/openclaw-chat/attachments';
+import { renderBrowserAnnotation } from '@/libs/openclaw-chat/components/message/browser-annotation-message';
+import { renderBrowserRecording } from '@/libs/openclaw-chat/components/message/browser-recording-message';
+import { renderCompactionMessage } from '@/libs/openclaw-chat/components/timeline/compaction-divider';
+import { projectProgressReceipt } from '@/libs/openclaw-chat/model/tools/progress-receipt';
+import { normalizeMessage } from '@/libs/openclaw-chat/pipeline/message-normalizer';
+import type { GatewayMessage } from '@/libs/openclaw-chat/types';
+
+import { renderMarkdownHtml } from '../../../../plugins/chrome-extensions/chrome-assistant/scripts/chrome-extension-markdown-entry.mjs';
+import {
+  questionPresentationResponse,
+  renderQuestionPresentation,
+} from '../../../../plugins/extensions/ask-user-question/browser/presentation';
+import {
+  parseQuestionResult,
+  parseQuestions,
+} from '../../../../plugins/extensions/ask-user-question/contracts/result';
 import { i18nService } from './chrome-extension-i18n';
-import { renderMarkdownHtml } from '../../plugins/chrome-extensions/chrome-assistant/scripts/chrome-extension-markdown-entry.mjs';
 
 const imageRetries = new WeakMap<HTMLImageElement, () => void>();
 export function pendingInputLabel(

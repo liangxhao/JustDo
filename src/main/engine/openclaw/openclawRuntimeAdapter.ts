@@ -42,7 +42,7 @@ import * as runtimeSessionStatus from './runtimeSessionStatus';
 import { type RuntimeSessionStatusContext } from './runtimeSessionStatus';
 export { mergeGatewayHistoryPages } from './runtimeAdapterSupport';
 
-import { parseBrowserAnnotationPrompt } from '../../../shared/browser/browser';
+import { parseBrowserAnnotationPrompt } from '../../../shared/browser/browserMessageContext';
 import {
   type CoworkAttachmentPayload,
   toGatewayAttachment,

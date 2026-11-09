@@ -1141,7 +1141,7 @@ test('registers the exact explicit input before the source run and fences native
     return { ...input, id: 'receipt', state: 'running' };
   });
   registerCoworkSessionHandlers({
-    getAgentTeamLaunch: () => launch as unknown as BehaviorSubmissionParticipant,
+    getSubmissionParticipant: () => launch as unknown as BehaviorSubmissionParticipant,
     getCoworkStore: () =>
       ({
         getSession: () => ({ agentId: 'main' }),
@@ -1183,7 +1183,7 @@ test('registers the exact explicit input before the source run and fences native
   expect(launch.markSubmissionStarted).toHaveBeenCalledWith('source', 'client');
 });
 
-function registerTeamFollowupFixture() {
+function registerPluginFollowupFixture() {
   const launch = {
     releaseIfSettled: vi.fn().mockResolvedValue(false),
     register: vi.fn(),
@@ -1191,12 +1191,12 @@ function registerTeamFollowupFixture() {
   };
   const beginSessionRun = vi.fn(input => ({ ...input, id: 'followup', state: 'running' }));
   registerCoworkSessionHandlers({
-    getAgentTeamLaunch: () => launch as unknown as BehaviorSubmissionParticipant,
+    getSubmissionParticipant: () => launch as unknown as BehaviorSubmissionParticipant,
     getCoworkStore: () =>
       ({
         getSession: () => ({ agentId: 'main' }),
         getAgent: () => ({ enabled: true }),
-        getLatestSessionRun: () => ({ state: 'completed', clientTurnId: 'previous-team' }),
+        getLatestSessionRun: () => ({ state: 'completed', clientTurnId: 'previous-plugin' }),
         beginSessionRun,
       }) as unknown as CoworkStore,
     getCoworkEngineRouter: () => ({}) as CoworkEngineRouter,
@@ -1210,9 +1210,9 @@ function registerTeamFollowupFixture() {
 }
 
 test.each(['settled', 'unsettled', 'unavailable'])(
-  'admits an ordinary main follow-up while the previous Team launch cleanup is %s',
+  'admits an ordinary main follow-up while the previous plugin launch cleanup is %s',
   async condition => {
-    const { launch, beginSessionRun, handler, input } = registerTeamFollowupFixture();
+    const { launch, beginSessionRun, handler, input } = registerPluginFollowupFixture();
     if (condition === 'settled') launch.releaseIfSettled.mockResolvedValue(true);
     if (condition === 'unavailable')
       launch.releaseIfSettled.mockRejectedValue(new Error('Gateway disconnected'));
@@ -1229,11 +1229,11 @@ test.each(['settled', 'unsettled', 'unavailable'])(
 );
 
 test.each(['task', 'group'] as const)(
-  'keeps a new explicit %s Team launch blocked until the previous launch is settled',
+  'keeps a new explicit %s plugin launch blocked until the previous launch is settled',
   async mode => {
-    const { launch, beginSessionRun, handler, input } = registerTeamFollowupFixture();
+    const { launch, beginSessionRun, handler, input } = registerPluginFollowupFixture();
     await expect(
-      handler(null, { ...input, pluginPrompt: appendBehaviorPluginPrompt('New team', mode) }),
+      handler(null, { ...input, pluginPrompt: appendBehaviorPluginPrompt('New plugin request', mode) }),
     ).resolves.toMatchObject({ success: false });
     expect(launch.releaseIfSettled).toHaveBeenCalledWith('source');
     expect(launch.register).not.toHaveBeenCalled();
@@ -1241,8 +1241,8 @@ test.each(['task', 'group'] as const)(
   },
 );
 
-test('preserves the active user-run rejection independently of previous Team launch cleanup', async () => {
-  const { launch, beginSessionRun, handler, input } = registerTeamFollowupFixture();
+test('preserves the active user-run rejection independently of previous plugin launch cleanup', async () => {
+  const { launch, beginSessionRun, handler, input } = registerPluginFollowupFixture();
   beginSessionRun.mockImplementation(() => {
     throw new Error('This session already has an active user run.');
   });
@@ -1257,7 +1257,7 @@ test('preserves the active user-run rejection independently of previous Team lau
 test('does not let a failed guard cancellation prevent stopping the actual source run', async () => {
   const stopSession = vi.fn().mockResolvedValue(undefined);
   registerCoworkSessionHandlers({
-    getAgentTeamLaunch: () =>
+    getSubmissionParticipant: () =>
       ({
         cancel: vi.fn().mockRejectedValue(new Error('disconnected')),
       }) as unknown as BehaviorSubmissionParticipant,
@@ -1284,7 +1284,7 @@ test('stops the source immediately while guard cancellation is still awaiting Ga
   );
   const stopSession = vi.fn().mockResolvedValue(undefined);
   registerCoworkSessionHandlers({
-    getAgentTeamLaunch: () => ({ cancel }) as unknown as BehaviorSubmissionParticipant,
+    getSubmissionParticipant: () => ({ cancel }) as unknown as BehaviorSubmissionParticipant,
     getCoworkStore: () => ({}) as CoworkStore,
     getCoworkEngineRouter: () => ({ stopSession }) as unknown as CoworkEngineRouter,
     setSessionPermissionMode: vi.fn(),
@@ -1305,7 +1305,7 @@ test('stops the source immediately while guard cancellation is still awaiting Ga
 test('releases a closed pre-send sender only through the exact guard client contract', async () => {
   const abortBeforeSend = vi.fn().mockResolvedValue(true);
   registerCoworkSessionHandlers({
-    getAgentTeamLaunch: () => ({ abortBeforeSend }) as unknown as BehaviorSubmissionParticipant,
+    getSubmissionParticipant: () => ({ abortBeforeSend }) as unknown as BehaviorSubmissionParticipant,
     getCoworkStore: () => ({}) as CoworkStore,
     getCoworkEngineRouter: () => ({}) as CoworkEngineRouter,
     setSessionPermissionMode: vi.fn(),
@@ -3404,11 +3404,11 @@ test('a local specialist conversation is not remotely managed', async () => {
 function registerCoworkSessionHandlers(
   input: Parameters<typeof registerGenericHandlers>[0] & {
     getCollaboration?: () => BehaviorResourceParticipant;
-    getAgentTeamLaunch?: () => BehaviorSubmissionParticipant;
+    getSubmissionParticipant?: () => BehaviorSubmissionParticipant;
   },
 ) {
   const collaboration = input.getCollaboration?.();
-  const launch = input.getAgentTeamLaunch?.();
+  const launch = input.getSubmissionParticipant?.();
   registerGenericHandlers({
     ...input,
     ...(collaboration || launch

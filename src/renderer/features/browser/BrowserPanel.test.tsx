@@ -1,15 +1,7 @@
 // @vitest-environment jsdom
 
-import {
-  BROWSER_AGENT_PANEL_TARGET_ID,
-  BROWSER_GUEST_COMMAND_CHANNEL,
-  BROWSER_GUEST_ZOOM_CHANNEL,
-  type BrowserAgentInteractionState,
-  type BrowserAnnotationDraft,
-  type BrowserLocalHtmlPreviewResult,
-  type BrowserPanelFaviconUpdatedEvent,
-  type BrowserPanelTab,
-} from '@shared/browser/browser';
+import { BROWSER_AGENT_PANEL_TARGET_ID, BROWSER_GUEST_COMMAND_CHANNEL, BROWSER_GUEST_ZOOM_CHANNEL, type BrowserAgentInteractionState, type BrowserLocalHtmlPreviewResult, type BrowserPanelFaviconUpdatedEvent, type BrowserPanelTab } from '@shared/browser/browser';
+import { type BrowserAnnotationDraft } from '@shared/browser/browserAnnotation';
 import { BrowserRecordingChannel } from '@shared/browser/browserRecording';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { type ComponentProps, StrictMode, useEffect, useRef, useState } from 'react';

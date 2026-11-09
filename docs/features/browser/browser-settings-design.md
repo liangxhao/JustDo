@@ -4,6 +4,15 @@
 
 源码保持两侧各自的生命周期入口：Main 的 `browser/browserAgentBridge.ts` 持有内置 guest、连接和操作上下文，辅助能力归 `agent`、`downloads`、`history`、`data`、`recording`、`pdf` 和 `preview`；Renderer 的 `features/browser/BrowserPanel.tsx` 持有网页面板，标注、录制、人工介入、数据对话框与 PDF 分别归对应领域目录。Chrome 扩展接入、Native Messaging 和设置动作由独立的 `src/main/chrome/` 维护，专属共享合同位于 `src/shared/chrome/`。测试与实现相邻；原生 OpenClaw 的 browser Tool、配对接口及通用页面标注/录制格式保留原生名称。
 
+Chrome 客户端复用宿主聊天与问答的浏览器适配集中在 `src/renderer/chrome/`。
+桌面上的扩展安装、版本、配对和连接测试继续由 `features/settings/browser/` 拥有，
+相应管理文案留在 `services/i18n/chromeTranslations.ts`；这些桌面功能不归入 Chrome 客户端模块。
+
+共享浏览器契约按消费者区分：`shared/browser/browserAnnotation.ts` 保存元素检查和
+标注数据，`browserMessageContext.ts` 拥有标注／录制消息上下文的编码、长度边界和解析。
+聊天、草稿恢复和 Main 执行适配直接引用这些窄模块；连接、面板及数据操作契约继续由
+`browser.ts` 提供。此次归属划分不改变消息标记、长度限制或网页内容的不可信边界。
+
 ## 1. 模式和提供方
 
 | 模式       | 持久值    | 提供方                       | 用途                              |

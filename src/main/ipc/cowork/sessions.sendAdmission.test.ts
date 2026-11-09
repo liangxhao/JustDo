@@ -20,7 +20,7 @@ beforeEach(() => handlers.clear());
 
 function fixture(
   getStartupEngineNotReadyResponse?: () => { success: boolean; code: string; error: string } | undefined,
-  getAgentTeamLaunch?: () => BehaviorSubmissionParticipant,
+  getSubmissionParticipant?: () => BehaviorSubmissionParticipant,
 ) {
   const sessionId = '43795fc3-437a-4f60-b731-1d115d2b8787';
   const key = `agent:main:justdo:${sessionId}`;
@@ -59,8 +59,8 @@ function fixture(
   } as unknown as RuntimeSessionStatusContext;
   registerCoworkSessionHandlers({ getCoworkStore: () => store,
     getStartupEngineNotReadyResponse,
-    ...(getAgentTeamLaunch ? {
-      getSessionPlugins: () => behaviorSessionParticipants(undefined, getAgentTeamLaunch()),
+    ...(getSubmissionParticipant ? {
+      getSessionPlugins: () => behaviorSessionParticipants(undefined, getSubmissionParticipant()),
     } : {}),
     getCoworkEngineRouter: () => ({ getSessionRuntimeStatus: (id: string, options: Parameters<typeof getSessionRuntimeStatus>[1]) =>
       getSessionRuntimeStatus.call(context, id, options) }) as CoworkEngineRouter,
@@ -124,7 +124,7 @@ test('rechecks the prepared workspace after asynchronous plugin admission', asyn
   expect(f.beginSessionRun).not.toHaveBeenCalled();
 });
 
-test('retires the exact Team reservation if startup admission changes while registration is in flight', async () => {
+test('retires the exact plugin reservation if startup admission changes while registration is in flight', async () => {
   let pending = false;
   const launch = {
     releaseIfSettled: vi.fn().mockResolvedValue(true),

@@ -29,8 +29,6 @@ import {
 import { useId, useState } from 'react';
 
 import { IMAGE_PREVIEW_EVENT } from '@/features/cowork/components/preview/imageFilePreview';
-import { i18nService } from '@/services/i18n';
-
 import {
   hasRecordingElement,
   recordingActionValue,
@@ -39,7 +37,8 @@ import {
   recordingPageLabel,
   recordingSummary,
   recordingTargetLabel,
-} from './browserRecordingPresentation';
+} from '@/libs/openclaw-chat/components/message/browser-recording-presentation';
+import { i18nService } from '@/services/i18n';
 
 function ActionIcon({ action }: { action: BrowserRecordingStep['action'] }) {
   const Icon =

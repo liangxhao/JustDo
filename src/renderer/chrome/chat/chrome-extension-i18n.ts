@@ -1,4 +1,4 @@
-import { translations } from '../../src/renderer/services/i18n/translations';
+import { translations } from '../../services/i18n/translations';
 export type LanguageType = 'zh' | 'en';
 
 export const i18nService = {

@@ -8,6 +8,14 @@ Main 处理器按能力归入 `ipc/app`、`cowork`、`openclaw`、`plugins`、`s
 
 本页按“信任域 → 通道 → 请求寿命 → 各类资源 → 失败”的顺序阅读。产品流程见[Cowork](04-cowork-system.md)，用户可见操作见[功能索引](../features/README.md)。同一个资源即使在多个窗口展示，执行和删除 owner 仍保持唯一。
 
+跨进程的助手档案与 MCP 公共输入、配置分别引用 `shared/agents/agents.ts` 和
+`shared/plugins/mcp.ts` 的同一份类型。Renderer 桥接声明不从界面功能目录导入这些契约；
+Main 可在公共类型之上保留自己的存储字段，不能借此扩大公共输入或替代入站验证。
+
+会话复制和分支通道在 IPC 层归一化并验证输入后，调用 `main/cowork/sessions/` 的领域操作。
+领域操作按每次调用取得当前 Store 与 Router，并在异步边界继续核验插件管理归属；
+创建是否发出、是否收到原生响应及恢复判断保持请求局部，不由 IPC 响应或当前空闲状态推断成功。
+
 ## 1. 运行实体和信任范围
 
 | 实体                          | 可访问资源                                  | 通信边界                                                                                     |
@@ -397,6 +405,14 @@ shell，窗口状态回传同一个 owner；不使用主窗口按钮的控制通
 发起，并限定到本次选择的主框架或精确 workspace 框架，不能授权任意页面。
 
 ### 工作区审阅 IPC
+
+IPC 入口只在原有窗口来源检查通过后调用 `main/cowork/review/sessionReviewService.ts`。
+服务持有差异读取与文件授权逻辑，通过实时 session/runtime 访问器核验身份；系统
+编辑器选择作为显式能力由入口注入，文件校验与最终身份复核完成后才调用。
+
+审查标签标识和聊天触发的打开事件只属于 Renderer，分别由 Cowork `review/` 与聊天库
+`components/timeline/review-navigation.ts` 维护；`shared/cowork/sessionReview.ts` 保留
+IPC、差异数据和文件动作契约，不承担界面导航。
 
 `cowork:sessionReview:load` 和 `cowork:sessionReview:file` 由主窗口 preload 的
 `cowork.review` 暴露。Renderer 仅提交产品 session ID、比较范围、可选 commit

@@ -1,4 +1,4 @@
-import { composeBrowserGatewayPrompt } from '@shared/browser/browser';
+import { composeBrowserGatewayPrompt } from '@shared/browser/browserMessageContext';
 import { ProgressCardStepStatus } from '@shared/openclaw/progressCard';
 import { buildGoalFollowUpPrompt } from '@shared/prompts/goalFollowUpPrompt';
 import { afterEach, expect, test, vi } from 'vitest';

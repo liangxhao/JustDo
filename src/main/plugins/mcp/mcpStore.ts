@@ -1,42 +1,18 @@
 import Database from 'better-sqlite3';
 import crypto from 'crypto';
 
-import { isValidMcpRequestTimeoutSeconds } from '../../../shared/plugins/mcp';
+import {
+  isValidMcpRequestTimeoutSeconds,
+  type McpServerConfig,
+  type McpServerFormData as PublicMcpServerFormData,
+} from '../../../shared/plugins/mcp';
 
-export interface McpServerRecord {
-  id: string;
-  name: string;
-  description: string;
-  enabled: boolean;
-  transportType: 'stdio' | 'sse' | 'http';
-  command?: string;
-  args?: string[];
-  env?: Record<string, string>;
-  url?: string;
-  headers?: Record<string, string>;
-  requestTimeoutSeconds?: number;
-  isBuiltIn: boolean;
-  githubUrl?: string;
-  registryId?: string;
+export interface McpServerRecord extends Omit<McpServerConfig, 'scope' | 'management'> {
   /** Native OpenClaw fields that the JustDo form does not currently model. */
   openClawConfig?: Record<string, unknown>;
-  createdAt: number;
-  updatedAt: number;
 }
 
-export interface McpServerFormData {
-  name: string;
-  description?: string;
-  transportType: 'stdio' | 'sse' | 'http';
-  command?: string;
-  args?: string[];
-  env?: Record<string, string>;
-  url?: string;
-  headers?: Record<string, string>;
-  requestTimeoutSeconds?: number | null;
-  isBuiltIn?: boolean;
-  githubUrl?: string;
-  registryId?: string;
+export interface McpServerFormData extends PublicMcpServerFormData {
   openClawConfig?: Record<string, unknown>;
 }
 

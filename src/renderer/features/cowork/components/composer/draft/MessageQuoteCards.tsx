@@ -3,14 +3,7 @@ import { i18nService } from '@/services/i18n';
 import { MESSAGE_QUOTE_KIND, type MessageQuote } from './messageQuote';
 
 function quoteLabel(quote: MessageQuote): string {
-  const key =
-    quote.kind === MESSAGE_QUOTE_KIND.EXTENSION
-      ? quote.labelKey
-      : quote.kind === MESSAGE_QUOTE_KIND.DISCUSSION
-        ? 'extensionDiscussionReference'
-        : quote.kind === MESSAGE_QUOTE_KIND.COLLABORATION
-          ? 'extensionCollaborationReference'
-          : undefined;
+  const key = quote.kind === MESSAGE_QUOTE_KIND.EXTENSION ? quote.labelKey : undefined;
   if (key) {
     const label = i18nService.t(key);
     if (label !== key) return label;

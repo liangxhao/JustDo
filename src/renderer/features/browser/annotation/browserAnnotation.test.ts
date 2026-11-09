@@ -1,10 +1,4 @@
-import {
-  BROWSER_ANNOTATION_CONTEXT_MAX_LENGTH,
-  composeBrowserGatewayPrompt,
-  extractBrowserAnnotationUserText,
-  parseBrowserAnnotationPrompt,
-  serializeBrowserAnnotationContext,
-} from '@shared/browser/browser';
+import { BROWSER_ANNOTATION_CONTEXT_MAX_LENGTH, composeBrowserGatewayPrompt, extractBrowserAnnotationUserText, parseBrowserAnnotationPrompt, serializeBrowserAnnotationContext } from '@shared/browser/browserMessageContext';
 import { describe, expect, test } from 'vitest';
 
 import { browserAnnotationDataBytes, buildBrowserAnnotationDraft } from './browserAnnotation';

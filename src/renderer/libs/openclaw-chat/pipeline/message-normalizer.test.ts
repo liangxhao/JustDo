@@ -1,4 +1,4 @@
-import { composeBrowserGatewayPrompt } from '@shared/browser/browser';
+import { composeBrowserGatewayPrompt } from '@shared/browser/browserMessageContext';
 import { describe, expect, test } from 'vitest';
 
 import {

@@ -1,8 +1,11 @@
 import type { ComponentType, ReactNode } from 'react';
 
-import type { AppPluginBridge, AppPluginSnapshot } from './contracts';
 import type { AppServices, CoworkSessionSummary } from './application';
+import type { AppPluginBridge, AppPluginSnapshot } from './contracts';
+import type { AppMessagePresentationContext } from './history-presentation';
 import type { AppResourceScope } from './resources';
+
+export type { AppMessagePresentationContext } from './history-presentation';
 
 /** A mounted native view exposes guarded effects, never its controller or credentials. */
 export interface AppNativeHistoryState {
@@ -155,6 +158,8 @@ export interface AppBrowserHost {
 export interface AppMessagePresentation {
   replyMirror?(message: unknown): boolean;
   text?(source: string): string;
+  /** Visible text only, after transport framing has been decoded. Never used for drafts. */
+  displayText?(source: string, context?: AppMessagePresentationContext): string;
   nativeInput?(message: unknown): { senderLabel: string; senderId: string } | undefined;
 }
 /** UI hints never authorize a copy, deletion, native send, or history read. */

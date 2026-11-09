@@ -7,6 +7,7 @@ import {
   type ExtensionProvidedMcpServer,
   isValidMcpRequestTimeoutSeconds,
   MCP_NAME_CONFLICT_ERROR,
+  type McpServerFormData,
 } from '../../../shared/plugins/mcp';
 import {
   PluginOperationAction,
@@ -20,7 +21,6 @@ import { PluginInstallOrigin } from '../../plugins/installation';
 import type {
   McpProbeResult,
   McpReadResourceResult,
-  McpServerFormData,
   McpStore,
 } from '../../plugins/mcp';
 import {

@@ -2,8 +2,6 @@ export const SessionReviewIpc = {
   Load: 'cowork:sessionReview:load',
   File: 'cowork:sessionReview:file',
 } as const;
-export const REVIEW_TAB_ID = 'session-review';
-export const REVIEW_OPEN_EVENT = 'cowork:open-review';
 export const ReviewScope = { All: 'all', Uncommitted: 'uncommitted', Commit: 'commit' } as const;
 export type SessionReviewQuery = {
   sessionId: string;

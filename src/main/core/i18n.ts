@@ -11,6 +11,7 @@ import { appPluginTranslations } from '../../shared/plugins/app/appPluginTransla
  *   const label = t('trayStartConversation'); // "Start Conversation"
  */
 import { PRODUCT_NAME } from '../../shared/productMetadata';
+import { browserTranslations } from '../browser/browserTranslations';
 import { startupWindowTranslations } from './window/startupWindowTranslations';
 
 export type LanguageType = 'zh' | 'en';
@@ -62,10 +63,6 @@ const translations: Record<LanguageType, Record<string, string>> = {
     coworkInitialDispatchInvalid: '首条消息的提交身份无效。',
     coworkInitialDispatchUncertain: '首条消息的提交结果尚未确认，正在恢复原生状态。',
     coworkInitialDispatchFailed: '无法提交首条消息。',
-    teamLaunchUnconfirmed: '上次 Agent Team 请求尚未完成核实，请等待执行和队列清理后重试。',
-    teamLaunchContractUnavailable: '当前会话暂不支持发起 Agent Team，请在普通可执行会话中重试。',
-    teamFeatureBusy: '请等待当前执行结束后再发起 Agent Team；草稿和所选模式已保留。',
-    teamFeatureStatusUnknown: '暂时无法确认当前会话的执行状态，请稍后重试；草稿和所选模式已保留。',
     windowsSandboxSystemDriveInvalid: 'Windows 系统盘路径无效。',
     windowsSandboxPrepResultInvalid: '系统盘准备程序未返回有效结果。',
     windowsSandboxPrepExitCodeMissing: '提权后的系统盘准备程序未返回退出码。',
@@ -214,31 +211,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
       '无法访问{resource}：\n{path}\n\n请检查 Windows 所有者和权限后重试。\n\n详细信息：{detail}',
     managedDirectoryRuntimeBusy: 'Gateway 仍有活动任务，无法安全释放目录锁。请等待任务结束后重试。',
     managedDirectoryRuntimeRecoveryFailed: 'Gateway 恢复失败：{detail}',
-    browserAgentImportTitle: '导入浏览器资料',
-    browserAgentImportMessage: '是否将 {source} 的 Cookie 导入内置浏览器？',
-    browserAgentImportDetail: '数据只保存在本机，可能需要使用当前 Windows 账户解密。',
-    browserAgentImportConfirm: '导入',
-    browserAgentImportCancel: '取消',
-    browserExternalProtocolTitle: '打开外部应用',
-    browserExternalProtocolMessage: '此网页想要打开外部应用：',
-    browserExternalProtocolConfirm: '允许打开',
-    browserExternalProtocolCancel: '取消',
-    browserExternalProtocolFailed: '无法打开关联应用，请检查是否已安装支持此链接的应用。',
-    browserPermissionTitle: '网页权限请求',
-    browserPermissionMessage: '{site} 想要使用{permission}',
-    browserPermissionAllow: '本页允许',
-    browserPermissionDeny: '拒绝',
-    browserPermissionCamera: '摄像头',
-    browserPermissionMicrophone: '麦克风',
-    browserPermissionCameraAndMicrophone: '摄像头和麦克风',
-    browserPermissionLocation: '位置信息',
-    browserPermissionNotifications: '系统通知',
-    browserContextBack: '后退',
-    browserContextForward: '前进',
-    browserContextReload: '重新加载',
-    browserContextOpenLinkNewTab: '在新标签页中打开链接',
-    browserContextCopyLink: '复制链接地址',
-    browserContextSaveImage: '图片另存为…',
+    ...browserTranslations.zh,
   },
   en: {
     coworkReservedSession: 'This session is reserved for internal storage and cannot be opened as a chat.',
@@ -293,14 +266,6 @@ const translations: Record<LanguageType, Record<string, string>> = {
     coworkInitialDispatchUncertain:
       'The first message submission is still unconfirmed. Recovering native state.',
     coworkInitialDispatchFailed: 'The first message could not be submitted.',
-    teamLaunchUnconfirmed:
-      'The previous Agent Team request is still being verified. Wait for execution and queue cleanup before retrying.',
-    teamLaunchContractUnavailable:
-      'Agent Team cannot start in this conversation. Use a normal conversation with execution available.',
-    teamFeatureBusy:
-      'Wait for the current execution to finish before starting Agent Team. Your draft and selected mode are preserved.',
-    teamFeatureStatusUnknown:
-      'The current session’s execution status could not be confirmed. Try again shortly. Your draft and mode are preserved.',
     windowsSandboxSystemDriveInvalid: 'The Windows system drive is invalid.',
     windowsSandboxPrepResultInvalid:
       'The MXC host preparation launcher did not return a valid result.',
@@ -494,33 +459,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     managedDirectoryRuntimeBusy:
       'The Gateway still has active work, so its directory lock cannot be released safely. Wait for the work to finish and try again.',
     managedDirectoryRuntimeRecoveryFailed: 'Gateway recovery failed: {detail}',
-    browserAgentImportTitle: 'Import browser profile',
-    browserAgentImportMessage: 'Import cookies from {source} into the embedded browser?',
-    browserAgentImportDetail:
-      'The data stays on this device and may require decryption with the current Windows account.',
-    browserAgentImportConfirm: 'Import',
-    browserAgentImportCancel: 'Cancel',
-    browserExternalProtocolTitle: 'Open External Application',
-    browserExternalProtocolMessage: 'This page wants to open an external application:',
-    browserExternalProtocolConfirm: 'Open',
-    browserExternalProtocolCancel: 'Cancel',
-    browserExternalProtocolFailed:
-      'Unable to open the associated application. Check that an app supporting this link is installed.',
-    browserPermissionTitle: 'Website permission request',
-    browserPermissionMessage: '{site} wants to use {permission}',
-    browserPermissionAllow: 'Allow for this page',
-    browserPermissionDeny: 'Deny',
-    browserPermissionCamera: 'your camera',
-    browserPermissionMicrophone: 'your microphone',
-    browserPermissionCameraAndMicrophone: 'your camera and microphone',
-    browserPermissionLocation: 'your location',
-    browserPermissionNotifications: 'system notifications',
-    browserContextBack: 'Back',
-    browserContextForward: 'Forward',
-    browserContextReload: 'Reload',
-    browserContextOpenLinkNewTab: 'Open Link in New Tab',
-    browserContextCopyLink: 'Copy Link Address',
-    browserContextSaveImage: 'Save Image As…',
+    ...browserTranslations.en,
   },
 };
 

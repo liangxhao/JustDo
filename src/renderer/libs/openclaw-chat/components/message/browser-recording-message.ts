@@ -2,6 +2,8 @@ import type { BrowserRecordingDraft } from '@shared/browser/browserRecording';
 import { hasRecordingValue } from '@shared/browser/browserRecording';
 import { html, nothing } from 'lit';
 
+import { i18nService } from '@/services/i18n';
+
 import {
   hasRecordingElement,
   recordingActionValue,
@@ -10,8 +12,7 @@ import {
   recordingPageLabel,
   recordingSummary,
   recordingTargetLabel,
-} from '@/features/browser/recording/browserRecordingPresentation';
-import { i18nService } from '@/services/i18n';
+} from './browser-recording-presentation';
 
 const icon = (path: string) =>
   html`<svg

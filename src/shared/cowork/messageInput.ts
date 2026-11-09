@@ -1,4 +1,4 @@
-import { parseBrowserAnnotationPrompt } from '../browser/browser';
+import { parseBrowserAnnotationPrompt } from '../browser/browserMessageContext';
 import { type CoworkAttachmentPayload, parseCoworkAttachments } from './attachments';
 
 /** Validate content independently of the optional user-written text. */

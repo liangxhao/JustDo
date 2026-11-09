@@ -23,7 +23,7 @@
     "test": "vitest run --config vitest.config.ts"
   },
   "dependencies": {
-    "@app-plugin/sdk": "^1.3.0",
+    "@app-plugin/sdk": "^1.5.0",
     "@runtime-services/sdk": "^1.0.0",
     "@heroicons/react": "^2.1.1",
     "@tanstack/react-virtual": "^3.14.13",

@@ -993,6 +993,12 @@ contains 判定替代文本归属。Shadow DOM 优先使用 getComposedRanges，
 
 ### 插件展示和原生补取
 
+Core 输入草稿和引用卡片只认识 SDK 的原生／通用扩展引用。插件的传输清理在原有
+`text` 阶段执行，显示标签通过 `displayText` 在消息正文解码后、通用原生引用投影前
+执行；编辑恢复和长度分隔的浏览器上下文不经过显示投影。显示上下文只携带当前语言，
+语言变化复用现有模板失效通知，不另建正文缓存或历史权威。业务关闭可保留已批准
+产物的纯展示租约，卸载后回到原文显示；具体业务格式随插件分发。
+
 可选插件的业务面板、功能草稿、引用、时间线及资源设置由包内 Browser 入口提供。Core 只组合通用插槽与原生历史，不维护业务组件或第二份 transcript。关闭撤回交互，卸载或换包后旧规则及异步结果失效。详见[应用插件宿主](../plugins/sdk/app-plugin-runtime.md)。
 
 各业务视图的展示规则由[插件文档](../plugins/README.md)维护；final、idle 和视图卸载均不能建立执行终态。
@@ -1005,6 +1011,12 @@ contains 判定替代文本归属。Shadow DOM 优先使用 getComposedRanges，
 `chat-transcript-state.ts` 状态契约及 `chat-timeline-trace.ts` 诊断入口；各分组继续由
 现有 ChatController 持有生命周期，不新增状态所有者或消息缓存。
 
+聊天中的浏览器标注显示类型与消息上下文解析分别消费 Shared 的
+`browser/browserAnnotation.ts`、`browser/browserMessageContext.ts`，不经浏览器连接与面板
+总入口。原生 Swarm 快照与 IPC 留在 Shared。
+时间线发起的工作区审查打开事件由 `components/timeline/review-navigation.ts` 定义，
+桌面页面消费该事件，聊天库不为界面导航反向导入审查功能组件。
+
 | 分组                | 职责与主要入口                                                                                                                                                             |
 | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `turn/`             | 原生事件归约、正文作用域、压缩与运行状态：agent-event-reducer、assistant-text-scope、compaction-item、run-activity、failed-run-message                                     |
@@ -1012,15 +1024,20 @@ contains 判定替代文本归属。Shadow DOM 优先使用 getComposedRanges，
 | `timeline/`         | 实时与历史时间线投影、过程折叠、展示缓存、页脚、minimap 及摘要资源                                                                                                         |
 | `tools/`            | 工具消息适配、生命周期与展示、文件差异及子任务跳转                                                                                                                         |
 | `input/`            | 草稿恢复、待发送用户消息匹配及提示标记的显示投影                                                                                                                           |
-| `chrome-extension/` | 浏览器扩展流的归约与显示适配，构建入口直接指向该分组                                                                                                                       |
 
-扩展的 `chrome-extension-timeline` 将经过认证的历史和实时显示项适配为同类时间线行，
+Chrome 扩展作为独立客户端，其浏览器侧宿主适配位于 `src/renderer/chrome/`，不归入
+聊天库 model 分组或桌面 features。`chat/` 拥有流、活动、显示、时间线、富内容和
+侧栏国际化适配；`questions/` 通过适配器复用桌面问答向导，并拥有侧栏专属样式。
+测试与实现相邻，宿主构建脚本直接消费新位置，扩展包主体仍位于
+`plugins/chrome-extensions/chrome-assistant/`。
+
+`chrome/chat/chrome-extension-timeline` 将经过认证的历史和实时显示项适配为同类时间线行，
 复用 `foldCompletedProcessRows`，再保留原始侧栏条目及顺序返回插件。其可选
 `keepVisibleKeys` 只增加显示边界，不伪造原生停止原因、run state 或执行回执；
 它不切分受保护的末尾轮次。Main 透传的最小 `display` 白名单保留错误、压缩、
 阶段及原生显示来源，纯未支持交互只产生本地化可见占位。
 
-宿主构建适配复用桌面的
+`scripts/chrome/` 负责将适配器组装为扩展的离线模块，继续复用桌面的
 压缩展示器、样式和进度回执文案；插件不 import 应用 `src`。桌面与 Main 共用
 `shared/openclaw/runFailureDisplay` 的原生失败识别及公共文本选择，私有错误报告不进入侧栏。
 批量／单项折叠、活动保护及仍存在的物理历史作用域差异见[扩展侧栏](../plugins/chrome-extensions/chrome-assistant/side-panel.md)。
@@ -1040,6 +1057,16 @@ contains 判定替代文本归属。Shadow DOM 优先使用 getComposedRanges，
 
 `libs/openclaw-chat/components/` 根层保留聊天主组件 `justdo-chat.ts`、配套样式和入口测试，
 其余展示模块与测试按职责相邻存放；已有 `native-widget/`、`mcp-app/` 和 `fixtures/` 保留。
+
+聊天库的 `message-actions.ts` 拥有引用选区和文件链接打开的通用回调契约，
+原生引用形状以公开 SDK 的纯 `NativeMessageQuote` 类型为准。聊天库直接消费自己的契约，
+桌面输入框和预览模块保留类型转出、React Context 与具体导航实现；历史引用解析和
+插件业务引用的处理位置不因此改变，不通过这些回调类型引入桌面功能的运行依赖。
+
+`message-actions.ts` 同时定义图片预览请求事件。消息内容交互只发出既有请求，
+桌面文件预览继续拥有资源解析和监听生命周期。录制卡片的文字投影及公共样式归
+`components/message/browser-recording-presentation.*`，由桌面编辑器、聊天卡片和 Chrome
+构建适配共用；录制编辑器与草稿控制样式留在浏览器功能目录。
 
 | 分组        | 职责与主要入口                                                 |
 | ----------- | -------------------------------------------------------------- |

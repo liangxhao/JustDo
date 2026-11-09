@@ -15,6 +15,7 @@ type DiagnosticExportResult =
   import('../../shared/cowork/diagnostics/sessionDiagnostics').DiagnosticExportResult;
 
 import type {
+  Agent,
   AgentFileName,
   AgentFileSnapshot,
   AgentProfileInput,
@@ -329,25 +330,6 @@ type CoworkInteractionResult =
       feedback?: string;
     };
 
-interface McpServerConfigIPC {
-  id: string;
-  name: string;
-  description: string;
-  enabled: boolean;
-  transportType: 'stdio' | 'sse' | 'http';
-  command?: string;
-  args?: string[];
-  env?: Record<string, string>;
-  url?: string;
-  headers?: Record<string, string>;
-  requestTimeoutSeconds?: number;
-  isBuiltIn: boolean;
-  githubUrl?: string;
-  registryId?: string;
-  createdAt: number;
-  updatedAt: number;
-}
-
 interface McpProbeResultIPC {
   available: boolean;
   serverName?: string;
@@ -451,6 +433,7 @@ import type {
   MarketplaceUpdateCheckRequest,
   MarketplaceUpdateCheckResponse,
 } from '@shared/plugins/marketplace';
+import type { McpServerConfig, McpServerFormData } from '@shared/plugins/mcp';
 import type {
   ScheduledTask,
   ScheduledTaskChannelOption,
@@ -466,9 +449,6 @@ import type {
   ScheduledTaskUnreadCountEvent,
   ScheduledTaskUpdateInput,
 } from '@shared/scheduledTask/types';
-
-import type { Agent } from '@/features/agents/agentTypes';
-import type { McpServerFormData } from '@/features/plugins/mcp/mcp';
 
 interface IElectronAPI {
   webpageEmbed: import('../../shared/browser/webpageEmbed').WebpageEmbedApi;
@@ -720,7 +700,7 @@ interface IElectronAPI {
   mcp: {
     list: () => Promise<{
       success: boolean;
-      servers?: McpServerConfigIPC[];
+      servers?: McpServerConfig[];
       error?: string;
     }>;
     listExtensionServers: () => Promise<{
@@ -739,20 +719,20 @@ interface IElectronAPI {
       data: McpServerFormData,
       context?: PluginOperationContext,
     ) => Promise<
-      PluginOperationFeedback & { success: boolean; servers?: McpServerConfigIPC[]; error?: string }
+      PluginOperationFeedback & { success: boolean; servers?: McpServerConfig[]; error?: string }
     >;
     update: (
       id: string,
       data: Partial<McpServerFormData>,
       context?: PluginOperationContext,
     ) => Promise<
-      PluginOperationFeedback & { success: boolean; servers?: McpServerConfigIPC[]; error?: string }
+      PluginOperationFeedback & { success: boolean; servers?: McpServerConfig[]; error?: string }
     >;
     delete: (
       id: string,
       context?: PluginOperationContext,
     ) => Promise<
-      PluginOperationFeedback & { success: boolean; servers?: McpServerConfigIPC[]; error?: string }
+      PluginOperationFeedback & { success: boolean; servers?: McpServerConfig[]; error?: string }
     >;
     setEnabled: (
       options: {
@@ -761,7 +741,7 @@ interface IElectronAPI {
       },
       context?: PluginOperationContext,
     ) => Promise<
-      PluginOperationFeedback & { success: boolean; servers?: McpServerConfigIPC[]; error?: string }
+      PluginOperationFeedback & { success: boolean; servers?: McpServerConfig[]; error?: string }
     >;
     syncConfig: (
       context?: PluginOperationContext,

@@ -2,9 +2,10 @@ import type { ChromeExtensionMessageDisplay } from '@shared/chrome/chromeExtensi
 import type { ChromeExtensionStreamEvent } from '@shared/chrome/chromeExtensionStream';
 import { readTerminalGuardObservation } from '@shared/openclaw/agentEvent';
 
-import { createChatTranscriptState, type TurnItem } from '../chat-transcript-state';
-import { reduceAgentEvent, reduceChatEvent } from '../turn/agent-event-reducer';
-import { createRunActivity, type RunActivity } from '../turn/run-activity';
+import { createChatTranscriptState, type TurnItem } from '@/libs/openclaw-chat/model/chat-transcript-state';
+import { reduceAgentEvent, reduceChatEvent } from '@/libs/openclaw-chat/model/turn/agent-event-reducer';
+import { createRunActivity, type RunActivity } from '@/libs/openclaw-chat/model/turn/run-activity';
+
 import { projectChromeExtensionActivity } from './chrome-extension-activity';
 import { prepareChromeExtensionStreamEvent } from './chrome-extension-display';
 

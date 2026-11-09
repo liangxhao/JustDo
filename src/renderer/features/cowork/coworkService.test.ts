@@ -185,6 +185,41 @@ describe('cowork session startup', () => {
     vi.unstubAllGlobals();
   });
 
+  test.each([
+    ['fixturePluginAdmissionFailed', 'The extension request is still being verified.'],
+    ['Native session: permission denied (EACCES)', 'Native session: permission denied (EACCES)'],
+  ])('localizes the initial-start toast while preserving the returned error: %s', async (error, display) => {
+    const previousLanguage = i18nService.getLanguage();
+    const release = i18nService.registerPluginTranslations('startup-error-fixture', {
+      en: { fixturePluginAdmissionFailed: 'The extension request is still being verified.' },
+      zh: { fixturePluginAdmissionFailed: '扩展请求尚未完成核实。' },
+    });
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const dispatchEvent = vi.fn();
+    vi.stubGlobal('CustomEvent', class {
+      constructor(public readonly type: string, public readonly init: { detail: string }) {}
+      get detail() { return this.init.detail; }
+    });
+    vi.stubGlobal('window', {
+      dispatchEvent,
+      electron: { cowork: { startSession: vi.fn().mockResolvedValue({ success: false, error }) } },
+    });
+    try {
+      i18nService.setLanguage('en', { persist: false });
+      const result = await coworkService.startSession({ prompt: 'Start a request' });
+      expect(result).toMatchObject({ session: null, error });
+      expect(dispatchEvent).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ type: 'app:showToast', detail: display }),
+      );
+    } finally {
+      release();
+      i18nService.setLanguage(previousLanguage, { persist: false });
+      log.mockRestore();
+      warn.mockRestore();
+    }
+  });
+
   test('registers session promotion before selecting the canonical session', async () => {
     const session: CoworkSession = {
       id: 'session-1',

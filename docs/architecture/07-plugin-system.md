@@ -30,6 +30,10 @@ Plugin Hub 有四类插件概念；市场当前只开放 extension、skill、mcp
 
 ### 源码和构建归属
 
+MCP 的公共配置、传输方式与写入输入由 `shared/plugins/mcp.ts` 定义，Main、preload
+声明和 Renderer 使用同一契约。Main 存储的原生配置保留字段不属于公共表单输入；
+界面探测、注册表与表单交互类型继续归 Renderer 功能模块。
+
 内置插件源码统一位于仓库根目录的 `plugins/`，按 `extensions/`、`skills/`、`mcp-servers/`、`hooks/`、`chrome-extensions/` 分类。OpenClaw 扩展位于 `plugins/extensions/<plugin-id>/`，独立技能及筛选清单位于 `plugins/skills/`；扩展自带的技能保留在所属扩展内部。`mcp-servers/`、`hooks/` 当前仅预留目录，尚无内置加载逻辑。
 
 构建仍将 OpenClaw 扩展和选中技能组装到原生的 `dist/extensions/`、`skills/`、`custodian-skills/`，开发源码发现读取对应扩展目录。应用图标和原生文档模板位于 `resources/`；下载缓存使用仓库根 `cache/`，工具运行时准备和打包中间产物使用 `build/`，不反向写回资源源码目录。现行 OpenClaw 冻结运行包仍位于 `vendor/openclaw-runtime/`，具体以[构建链](12-tech-stack.md#5-openclaw-供应链)为准。源码与资源约定见[内置插件说明](../../plugins/README.md)和[资源说明](../../resources/README.md)。
@@ -37,6 +41,10 @@ Plugin Hub 有四类插件概念；市场当前只开放 extension、skill、mcp
 `plugins/sdk/` 保存公开 App SDK 和构建工具开发包，使用 npm workspace 或打包制品接入；扩展发现仍只扫描 `plugins/extensions/`。源码位置、发布和消费契约见[应用插件宿主](../plugins/sdk/app-plugin-runtime.md)。
 
 Chrome Assistant 位于 `plugins/chrome-extensions/chrome-assistant/`，由 Chrome 安装和加载，不进入 Plugin Hub 的 OpenClaw 扩展管理。它保留上游基线及产品侧栏补充，自有组装脚本、Markdown 源码和单元测试随包维护；复用应用聊天代码的构建适配与 Native Messaging helper 留在宿主，Main 继续拥有连接、权限和会话。
+
+宿主的 Chrome 客户端浏览器适配位于 `src/renderer/chrome/`，复用聊天库和桌面问答组件，
+由 `scripts/chrome/` 构建到扩展离线模块；专属运行代码和样式不放在构建脚本目录。
+桌面扩展管理仍属于 `features/settings/browser/`，不随 Chrome 客户端适配迁移。
 
 构建生成 `build/chrome-extension/chrome-extension/`，打包后位于安装资源目录的 `chrome-extension/chrome-extension/`；此安装目录不是仓库 `resources/` 下的源码。显示名称和固定扩展身份独立于源码包目录。详见[侧栏对话](../plugins/chrome-extensions/chrome-assistant/side-panel.md)。
 

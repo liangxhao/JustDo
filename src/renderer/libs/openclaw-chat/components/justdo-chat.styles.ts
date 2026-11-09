@@ -2,10 +2,9 @@ import katexStyles from 'katex/dist/katex.min.css?inline';
 import { css, unsafeCSS } from 'lit';
 import monacoEditorStyles from 'monaco-editor/min/vs/editor/editor.main.css?inline';
 
-import browserRecordingStyles from '@/features/browser/recording/browserRecording.css?inline';
-
 import questionAnswerStyles from '../../../../../plugins/extensions/ask-user-question/browser/presentation.css?inline';
 import codeBlockStyles from './markdown/code-block.css?inline';
+import browserRecordingStyles from './message/browser-recording-presentation.css?inline';
 import chatAvatarStyles from './message/chat-avatar.css?inline';
 import processMotionStyles from './timeline/process-motion.css?inline';
 

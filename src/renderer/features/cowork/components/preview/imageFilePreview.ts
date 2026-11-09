@@ -1,4 +1,4 @@
-export const IMAGE_PREVIEW_EVENT = 'cowork:preview-image';
+export { IMAGE_PREVIEW_EVENT } from '@/libs/openclaw-chat/message-actions';
 
 export interface ImageFilePreview {
   kind: 'image';

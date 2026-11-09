@@ -2,6 +2,7 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 
 import type { CollaborationDelivery, CollaborationRoom } from '../../contracts/collaboration';
+import { toAppQuote } from '../quote';
 import { prepareCollaborationReference } from './collaborationReference';
 
 const mock = vi.hoisted(() => ({
@@ -128,4 +129,22 @@ it('does not use the source assistant as an owned peer', async () => {
     prepareCollaborationReference(room, room.members[0], 'Organizer', undefined, () => true),
   ).rejects.toThrow('collaborationInvalidRecipient');
   expect(mock.read).not.toHaveBeenCalled();
+});
+
+it('deduplicates a stored generic collaboration locator before applying the tray limit', async () => {
+  mock.state.cowork.draftMessageQuotes.source = [toAppQuote({
+    kind: 'collaboration',
+    id: 'older-card-id',
+    text: 'Worker',
+    roomId: 'room',
+    sourceSessionId: 'source',
+    targetAgentId: member.agentId,
+    targetSessionId: member.sessionId,
+    targetSessionKey: member.sessionKey,
+    priorRoundId: delivery.roundId,
+    deliveryId: delivery.id,
+  }), ...Array.from({ length: 7 }, (_, id) => ({ id: String(id) }))];
+  await prepareCollaborationReference(room, member, 'Worker', delivery, () => true);
+  expect(mock.dispatch).not.toHaveBeenCalled();
+  expect(mock.state.cowork.draftMessageQuotes.source).toHaveLength(8);
 });

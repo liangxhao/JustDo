@@ -6,7 +6,6 @@ import {
   type ApprovalRequest,
   type ApprovalResolved,
 } from '@shared/security/approvals';
-import { OPEN_SPEECH_SETTINGS_EVENT, SPEECH_SURFACE_HIDDEN_EVENT } from '@shared/speech/speechSettingsNavigation';
 import React, {
   useCallback,
   useEffect,
@@ -81,6 +80,7 @@ import {
   type AppUpdateToastState,
   selectAppUpdateToastState,
 } from '@/features/settings/updates/appUpdateToastState';
+import { OPEN_SPEECH_SETTINGS_EVENT, SPEECH_SURFACE_HIDDEN_EVENT } from '@/features/speech/speechSettingsNavigation';
 import WorkboardView from '@/features/workboard/components/WorkboardView';
 import { useWorkboardAvailability } from '@/features/workboard/useWorkboardAvailability';
 import { configService } from '@/services/config';

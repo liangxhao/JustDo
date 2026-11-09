@@ -14,19 +14,14 @@ import {
 } from '@heroicons/react/24/outline';
 import { MAIN_USER_AGENT_ID } from '@shared/agents/agents';
 import { SaveTextFileErrorCode } from '@shared/app/dialogIpc';
-import {
-  BROWSER_ANNOTATION_CONTEXT_MAX_LENGTH,
-  type BrowserAgentInteractionState,
-  type BrowserAnnotationDraft,
-  composeBrowserGatewayPrompt,
-  serializeBrowserAnnotationContext,
-} from '@shared/browser/browser';
+import { type BrowserAgentInteractionState } from '@shared/browser/browser';
+import { type BrowserAnnotationDraft } from '@shared/browser/browserAnnotation';
 import { BrowserLinkTarget, isWebBrowserLink } from '@shared/browser/browserLinkOpening';
+import { BROWSER_ANNOTATION_CONTEXT_MAX_LENGTH, composeBrowserGatewayPrompt, serializeBrowserAnnotationContext } from '@shared/browser/browserMessageContext';
 import { recordingImagesInStepOrder } from '@shared/browser/browserRecording';
 import { DEFAULT_MAX_RETAINED_DISPLAY_TABS } from '@shared/cowork/displayTabRetention';
 import { CoworkInteractionKind } from '@shared/cowork/interactions/interactions';
 import { getMessageTitleInput } from '@shared/cowork/messageInput';
-import { REVIEW_OPEN_EVENT, REVIEW_TAB_ID } from '@shared/cowork/sessionReview';
 import type { SessionRunTiming } from '@shared/cowork/sessionRun';
 import { isGoalEditCommand } from '@shared/cowork/slashCommands';
 import { ExternalSessionSource } from '@shared/integrations/externalSession';
@@ -140,6 +135,7 @@ import UnsupportedFilePreview from '@/features/cowork/components/preview/Unsuppo
 import { useFilePreviewEvents } from '@/features/cowork/components/preview/useFilePreviewEvents';
 import { useMessageFileLinkNavigation } from '@/features/cowork/components/preview/useMessageFileLinkNavigation';
 import WorkspaceFilesPanel from '@/features/cowork/components/preview/WorkspaceFilesPanel';
+import { REVIEW_TAB_ID } from '@/features/cowork/components/review/reviewNavigation';
 import ExportSessionModal from '@/features/cowork/components/sessions/ExportSessionModal';
 import { getCompactFolderName, getLastPathSegment } from '@/features/cowork/components/shared/path';
 import WorkspaceFileIcon from '@/features/cowork/components/shared/WorkspaceFileIcon';
@@ -197,6 +193,7 @@ import { useAppWorkspace } from '@/features/plugins/app/useAppWorkspace';
 import { clearActiveSkills } from '@/features/plugins/skills/skillSlice';
 import type { SettingsOpenOptions } from '@/features/settings/Settings';
 import type { SendMotionOrigin } from '@/libs/openclaw-chat/components/message/send-motion';
+import { REVIEW_OPEN_EVENT } from '@/libs/openclaw-chat/components/timeline/review-navigation';
 import type {
   ChatContextUsageSnapshot,
   RewindEditorDraft,
@@ -2554,7 +2551,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
             });
           }
           if ((goalEdit && !requestUnknown) || cancelled) return;
-          const message = err instanceof Error ? err.message : String(err);
+          const message = i18nService.t(err instanceof Error ? err.message : String(err));
           window.dispatchEvent(
             new CustomEvent('app:showToast', {
               detail: requestUnknown

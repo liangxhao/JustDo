@@ -24,8 +24,6 @@ import { guard } from 'lit/directives/guard.js';
 import { ref } from 'lit/directives/ref.js';
 import { repeat } from 'lit/directives/repeat.js';
 
-import type { MessageQuoteHandler } from '@/features/cowork/components/composer/draft/messageQuote';
-import type { OpenMessageFileLink } from '@/features/cowork/components/preview/messageFileLinks';
 import { subscribeMessagePresentation } from '@/features/plugins/app/messagePresentation';
 import {
   renderMessageBlock,
@@ -57,6 +55,7 @@ import {
   nativePendingInputState,
   projectNativePendingInputs,
 } from '@/libs/openclaw-chat/gateway/input/chat-pending-inputs';
+import type { MessageQuoteHandler, OpenMessageFileLink } from '@/libs/openclaw-chat/message-actions';
 import {
   traceTimelineDom,
   traceTimelineProjection,

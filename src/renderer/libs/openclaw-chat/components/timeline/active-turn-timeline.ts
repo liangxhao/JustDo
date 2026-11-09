@@ -3,12 +3,11 @@ import '../native-widget/anchor';
 import '../mcp-app/view';
 import './terminal-error-message';
 
-import { REVIEW_OPEN_EVENT } from '@shared/cowork/sessionReview';
 import { PRODUCT_NAME } from '@shared/productMetadata';
 import { html, nothing, type TemplateResult } from 'lit';
 import { repeat } from 'lit/directives/repeat.js';
 
-import type { OpenMessageFileLink } from '@/features/cowork/components/preview/messageFileLinks';
+import type { OpenMessageFileLink } from '@/libs/openclaw-chat/message-actions';
 import {
   COWORK_PLAN_PREVIEW_EVENT,
   extractPresentPlanPreview,
@@ -65,6 +64,7 @@ import { type EditDiffMonacoData, resolveEditDiffLanguage } from '../tools/edit-
 import { resolveToolDisplay } from '../tools/tool-display';
 import { renderCompactionMessage } from './compaction-divider';
 import { disclosureContent } from './disclosure-content';
+import { REVIEW_OPEN_EVENT } from './review-navigation';
 import { runProgressDetail, runProgressLabelKeys } from './run-progress-label';
 
 function summaryLabel(item: ProcessSummaryTimelineItem): string {

@@ -1,5 +1,5 @@
 import { CheckCircleIcon, CursorArrowRaysIcon } from '@heroicons/react/24/outline';
-import type { BrowserInspectedElement } from '@shared/browser/browser';
+import type { BrowserInspectedElement } from '@shared/browser/browserAnnotation';
 import type { CSSProperties, ReactNode } from 'react';
 
 import { i18nService } from '@/services/i18n';

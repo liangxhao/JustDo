@@ -1,8 +1,7 @@
+import { type DiscussionQuote, hasTeamQuote, MESSAGE_QUOTE_KIND } from '../quote';
 import { addDraftMessageQuote, setDraftPrompt } from '../state';
-import { i18nService } from '../ui';
 import { store } from '../state';
-
-import { type DiscussionQuote, MESSAGE_QUOTE_KIND } from '../quote';
+import { i18nService } from '../ui';
 
 export function buildDiscussionReference(
   roomId: string,
@@ -22,7 +21,7 @@ export function appendDiscussionReference(sessionId: string, quote: DiscussionQu
   if (store.getState().cowork.currentSession?.id !== sessionId)
     throw new Error('teamDiscussionNotFound');
   const quotes = store.getState().cowork.draftMessageQuotes?.[sessionId] ?? [];
-  if (quotes.some(item => item.id === quote.id)) return;
+  if (hasTeamQuote(quotes, quote)) return;
   if (quotes.length >= 8) throw new Error('teamReferenceLimit');
   store.dispatch(addDraftMessageQuote({ draftKey: sessionId, quote }));
 }

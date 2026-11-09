@@ -13,7 +13,7 @@ import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 
 import { openMessageHtmlLink, openMessageWebLink } from '@/features/browser/messageBrowserLinks';
 import { renderMessageQuoteText } from '@/features/cowork/components/composer/draft/messageQuote';
-import type { OpenMessageFileLink } from '@/features/cowork/components/preview/messageFileLinks';
+import { pluginMessageDisplayText } from '@/features/plugins/app/messagePresentation';
 import {
   getTranscriptMedia,
   isTranscriptImage,
@@ -24,6 +24,7 @@ import {
   toStreamingMarkdownHtml,
 } from '@/libs/openclaw-chat/components/markdown/markdown';
 import { renderChatAvatar } from '@/libs/openclaw-chat/components/message/chat-avatar';
+import type { OpenMessageFileLink } from '@/libs/openclaw-chat/message-actions';
 import { formatActiveTurnDuration } from '@/libs/openclaw-chat/model/timeline/active-turn-footer';
 import { extractTextCached } from '@/libs/openclaw-chat/pipeline/message-extract';
 import { normalizeMessage } from '@/libs/openclaw-chat/pipeline/message-normalizer';
@@ -977,7 +978,7 @@ function renderUserMessage(
       {
         type: 'text',
         text: item.text
-          ? renderMessageQuoteText(item.text, i18nService.t('messageQuoteLabel'))
+          ? renderMessageQuoteText(pluginMessageDisplayText(item.text), i18nService.t('messageQuoteLabel'))
           : item.text,
       },
     ];

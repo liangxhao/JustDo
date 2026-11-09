@@ -1,9 +1,9 @@
 import { EnginePhase } from '@shared/openclaw/engineStatus';
 import { normalizeLocalSpeechSettings } from '@shared/speech/localSpeechSettings';
 import type { RealtimeVoiceStatus } from '@shared/speech/realtimeVoice';
-import { SPEECH_SURFACE_HIDDEN_EVENT } from '@shared/speech/speechSettingsNavigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { SPEECH_SURFACE_HIDDEN_EVENT } from '@/features/speech/speechSettingsNavigation';
 import { configService } from '@/services/config';
 
 import { getRealtimeVoiceConfigurationKey } from './realtimeVoiceConfiguration';

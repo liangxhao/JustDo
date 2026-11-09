@@ -13,7 +13,6 @@ import {
   getSpeechProtocolCapability,
   resolveOnlineSpeechBinding,
 } from '@shared/speech/onlineSpeechModels';
-import { SPEECH_SURFACE_HIDDEN_EVENT } from '@shared/speech/speechSettingsNavigation';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
@@ -22,7 +21,7 @@ import {
   floatToG711Ulaw,
   OnlineAsrAudioPump,
 } from '@/features/cowork/components/composer/speech/onlineAudioCapture';
-import { requestSpeechSettings } from '@/features/speech/speechSettingsNavigation';
+import { requestSpeechSettings, SPEECH_SURFACE_HIDDEN_EVENT } from '@/features/speech/speechSettingsNavigation';
 import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';
 import { recordedAudioToWav, recordedAudioToWavChunks } from '@/shared/audio/localAudioCapture';

@@ -6,7 +6,7 @@ const repoRoot = path.resolve(__dirname, '../..');
 
 esbuild.buildSync({
   entryPoints: [
-    path.join(repoRoot, 'src/renderer/libs/openclaw-chat/model/chrome-extension/chrome-extension-stream.ts'),
+    path.join(repoRoot, 'src/renderer/chrome/chat/chrome-extension-stream.ts'),
   ],
   outfile: path.join(
     repoRoot,

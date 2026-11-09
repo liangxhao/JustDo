@@ -1,5 +1,5 @@
-import { composeBrowserGatewayPrompt } from '@shared/browser/browser';
 import { BrowserLinkTarget } from '@shared/browser/browserLinkOpening';
+import { composeBrowserGatewayPrompt, parseBrowserAnnotationPrompt } from '@shared/browser/browserMessageContext';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
 vi.mock('../markdown/markdown', () => ({
@@ -8,6 +8,7 @@ vi.mock('../markdown/markdown', () => ({
 }));
 
 import { defaultConfig } from '@/app/config';
+import { pluginMessageText, registerMessagePresentation } from '@/features/plugins/app/messagePresentation';
 import {
   formatGroupTimestamp,
   getGroupFooterLabel,
@@ -18,6 +19,7 @@ import {
   shouldRenderGroupFooterByNextItem,
 } from '@/libs/openclaw-chat/components/message/message-render';
 import { ChatController } from '@/libs/openclaw-chat/gateway/chat-controller';
+import { parseEditorDraftPayload } from '@/libs/openclaw-chat/model/input/editor-draft';
 import type { MessageGroup } from '@/libs/openclaw-chat/types';
 import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';
@@ -60,6 +62,47 @@ function collectTemplateFunctions(value: unknown): Array<(event: Event) => unkno
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+});
+
+test('display projections run only on decoded user text and never rewrite framed context or restored drafts', () => {
+  const source = 'Visible [display-token]';
+  const modelContext = 'Untrusted page [display-token]';
+  const wire = composeBrowserGatewayPrompt(source, [{
+    id: 'annotation',
+    modelContext,
+    title: 'Selected page',
+    displayUrl: 'https://example.test/',
+    markedRegionCount: 1,
+    inspectedElement: false,
+    dataUrl: 'data:image/png;base64,YQ==',
+    fileName: 'page.png',
+    addedAt: 1,
+  }]);
+  const display = vi.fn((text: string) => text.replace('[display-token]', 'Readable reference'));
+  const release = registerMessagePresentation('visible-text-fixture', { displayText: display });
+  try {
+    expect(pluginMessageText(wire)).toBe(wire);
+    expect(parseBrowserAnnotationPrompt(wire)?.modelContext).toBe(modelContext);
+    expect(parseEditorDraftPayload(wire, []).text).toBe(source);
+    expect(display).not.toHaveBeenCalled();
+
+    const group = createGroup('user');
+    group.messages = [{ key: 'visible', message: { role: 'user', content: wire } }];
+    const rendered = stringifyTemplate(renderMessageBlock(group));
+    expect(rendered).toContain('Visible Readable reference');
+    expect(rendered).toContain('browser-annotation-message');
+    expect(display.mock.calls.map(([text]) => text)).toEqual([source]);
+
+    const assistant = createGroup('assistant');
+    assistant.messages = [{ key: 'assistant', message: { role: 'assistant', content: source } }];
+    expect(stringifyTemplate(renderMessageBlock(assistant))).toContain(source);
+    expect(display).toHaveBeenCalledOnce();
+
+    release();
+    expect(stringifyTemplate(renderMessageBlock(group))).toContain(source);
+  } finally {
+    release();
+  }
 });
 
 describe('independent webpage presentation', () => {

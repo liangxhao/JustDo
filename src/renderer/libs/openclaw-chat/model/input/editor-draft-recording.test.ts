@@ -1,4 +1,5 @@
-import { type BrowserAnnotationDraft, composeBrowserGatewayPrompt } from '@shared/browser/browser';
+import { type BrowserAnnotationDraft } from '@shared/browser/browserAnnotation';
+import { composeBrowserGatewayPrompt } from '@shared/browser/browserMessageContext';
 import { type BrowserRecordingDraft, recordingImagesInStepOrder } from '@shared/browser/browserRecording';
 import { expect, it } from 'vitest';
 

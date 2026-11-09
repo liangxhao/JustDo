@@ -1,10 +1,10 @@
-import { type BrowserAnnotationDraft, parseBrowserAnnotationPrompt } from '@shared/browser/browser';
+import { type BrowserAnnotationDraft } from '@shared/browser/browserAnnotation';
+import { parseBrowserAnnotationPrompt } from '@shared/browser/browserMessageContext';
 import {
   type BrowserRecordingDraft,
   recordingImageFingerprint,
 } from '@shared/browser/browserRecording';
 import type { CoworkAttachmentPayload } from '@shared/cowork/attachments';
-import { stripSwarmInstruction } from '@shared/cowork/swarm';
 import { extractGoalFollowUpRequest } from '@shared/prompts/goalFollowUpPrompt';
 
 import { pluginMessageText } from '@/features/plugins/app/messagePresentation';
@@ -25,8 +25,8 @@ export function parseEditorDraftPayload(
   editorAttachments: unknown,
   options: { restoreBrowserAnnotations?: boolean } = {},
 ): EditorDraftPayload {
-  const rawEditorText = stripSwarmInstruction(
-    pluginMessageText(stripAppInput(typeof editorText === 'string' ? editorText : '')),
+  const rawEditorText = pluginMessageText(
+    stripAppInput(typeof editorText === 'string' ? editorText : ''),
   );
   const browserPrompt = parseBrowserAnnotationPrompt(rawEditorText);
   const visibleText = browserPrompt?.userText ?? rawEditorText;

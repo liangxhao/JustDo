@@ -1,10 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-  type BrowserAnnotationDraft,
-  composeBrowserGatewayPrompt,
-  parseBrowserAnnotationPrompt,
-} from './browser';
+import { type BrowserAnnotationDraft } from './browserAnnotation';
+import { composeBrowserGatewayPrompt, parseBrowserAnnotationPrompt } from './browserMessageContext';
 import {
   type BrowserRecordingDraft,
   hasRecordingValue,

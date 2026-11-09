@@ -99,7 +99,7 @@ export interface AppStateSnapshot {
       };
     }[];
     draftPrompts: Record<string, string>;
-    draftMessageQuotes: Record<string, { id: string; text: string; kind?: string }[]>;
+    draftMessageQuotes: Record<string, readonly MessageQuote[]>;
     sessionRuntimeActivity: Record<string, boolean>;
   };
 }

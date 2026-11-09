@@ -1,5 +1,46 @@
+import type { PluginHubScope, PluginManagementCapabilities } from './management';
+
 export const DEFAULT_MCP_REQUEST_TIMEOUT_SECONDS = 60;
 export const MCP_NAME_CONFLICT_ERROR = 'mcpNameExists';
+
+export type McpTransportType = 'stdio' | 'sse' | 'http';
+
+export interface McpServerConfig {
+  id: string;
+  name: string;
+  description: string;
+  enabled: boolean;
+  transportType: McpTransportType;
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  url?: string;
+  headers?: Record<string, string>;
+  requestTimeoutSeconds?: number;
+  isBuiltIn: boolean;
+  githubUrl?: string;
+  registryId?: string;
+  createdAt: number;
+  updatedAt: number;
+  scope?: PluginHubScope;
+  management?: PluginManagementCapabilities;
+}
+
+/** Public MCP create/update input; native-only configuration stays in Main. */
+export interface McpServerFormData {
+  name: string;
+  description?: string;
+  transportType: McpTransportType;
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  url?: string;
+  headers?: Record<string, string>;
+  requestTimeoutSeconds?: number | null;
+  isBuiltIn?: boolean;
+  githubUrl?: string;
+  registryId?: string;
+}
 
 export const ExtensionMcpIpc = {
   SetEnabled: 'mcp:extension:setEnabled',
@@ -58,4 +99,3 @@ export type ExtensionProvidedMcpServer = {
   scope?: PluginHubScope;
   management?: PluginManagementCapabilities;
 };
-import type { PluginHubScope, PluginManagementCapabilities } from './management';

@@ -1,4 +1,4 @@
-import { parseBrowserAnnotationPrompt } from '@shared/browser/browser';
+import { parseBrowserAnnotationPrompt } from '@shared/browser/browserMessageContext';
 import { appendErrorDisplayDetail } from '@shared/openclaw/errorDisplay';
 import { OPENCLAW_HISTORY_DETAIL_MAX_IDS } from '@shared/openclaw/historyIpc';
 import { isInternalManagedSubagentHandoffError } from '@shared/openclaw/internalRunError';

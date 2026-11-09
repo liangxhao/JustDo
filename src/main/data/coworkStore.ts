@@ -9,7 +9,7 @@ import {
   parseAgentRuntimeSettings,
   validateAgentRuntimeSettings,
 } from '../../shared/agents/agentRuntimeSettings';
-import type { AgentProfileInput } from '../../shared/agents/agents';
+import type { Agent, AgentProfileInput } from '../../shared/agents/agents';
 import type { HistorySessionBinding } from '../../shared/app/startup/history';
 import {
   DEFAULT_MAX_RETAINED_DISPLAY_TABS,
@@ -89,21 +89,7 @@ const normalizeCoworkExecutionModeValue = (value: unknown): CoworkExecutionMode 
   value === 'sandbox' ? 'sandbox' : 'local';
 export type CoworkAgentEngine = 'openclaw';
 
-export interface Agent {
-  deletedAt?: number;
-  id: string;
-  name: string;
-  description: string;
-  systemPrompt: string;
-  identity: string;
-  model: string;
-  icon: string;
-  skillIds: string[];
-  enabled: boolean;
-  isDefault: boolean;
-  createdAt: number;
-  updatedAt: number;
-}
+export type { Agent } from '../../shared/agents/agents';
 
 export interface UpdateAgentRequest {
   name?: string;

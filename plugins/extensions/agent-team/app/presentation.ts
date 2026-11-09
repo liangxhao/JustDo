@@ -3,11 +3,13 @@ import type { AppHistoryPresentation } from '@app-plugin/sdk/history-presentatio
 import { TEAM_DISCUSSION_CHANNEL } from '../contracts/teamDiscussion';
 import { stripAgentTeamInstruction } from '../prompt/agentTeamPrompt';
 import { isTeamDiscussionReplyMirror } from './history/messagePresentation';
+import { renderTeamQuoteText } from './history/quotePresentation';
 import { agentTeamTranslations } from './history/translations';
 
 /** Static installed-artifact display rules; no business host or native authority is captured. */
 export const presentation: AppHistoryPresentation = {
   text: stripAgentTeamInstruction,
+  displayText: (source, context) => renderTeamQuoteText(source, context?.language),
   replyMirror: isTeamDiscussionReplyMirror,
   nativeInput: message => {
     if (!message || typeof message !== 'object') return;

@@ -15,7 +15,7 @@ export { appendMediaDirectiveLines } from './draft/composerMedia';
 import { ChevronDownIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import { FolderIcon } from '@heroicons/react/24/solid';
 import { MAIN_USER_AGENT_ID } from '@shared/agents/agents';
-import { composeBrowserGatewayPrompt } from '@shared/browser/browser';
+import { composeBrowserGatewayPrompt } from '@shared/browser/browserMessageContext';
 import { recordingImagesInStepOrder } from '@shared/browser/browserRecording';
 import {
   GoalExecutionPhase,

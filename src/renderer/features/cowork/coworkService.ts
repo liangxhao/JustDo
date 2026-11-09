@@ -946,7 +946,7 @@ export class CoworkService {
         const errorContent =
           result.code === 'ENGINE_NOT_READY'
             ? i18nService.t('coworkErrorEngineNotReady')
-            : result.error;
+            : i18nService.t(result.error);
         window.dispatchEvent(new CustomEvent('app:showToast', { detail: errorContent }));
       }
 

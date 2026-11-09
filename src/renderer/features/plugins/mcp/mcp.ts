@@ -1,43 +1,11 @@
-// MCP Server type definitions
-export type McpTransportType = 'stdio' | 'sse' | 'http';
+import type { McpTransportType } from '@shared/plugins/mcp';
 
-export interface McpServerConfig {
-  id: string;
-  name: string;
-  description: string;
-  enabled: boolean;
-  transportType: McpTransportType;
-  command?: string; // stdio
-  args?: string[]; // stdio
-  env?: Record<string, string>; // stdio
-  url?: string; // sse / http
-  headers?: Record<string, string>; // sse / http
-  requestTimeoutSeconds?: number; // per-server override; undefined inherits the global default
-  isBuiltIn: boolean; // installed from built-in registry
-  githubUrl?: string; // GitHub repository URL
-  registryId?: string; // matching registry entry ID
-  createdAt: number;
-  updatedAt: number;
-  scope?: PluginHubScope;
-  management?: PluginManagementCapabilities;
-}
-
-export type { ExtensionProvidedMcpServer } from '@shared/plugins/mcp';
-
-export interface McpServerFormData {
-  name: string;
-  description?: string;
-  transportType: McpTransportType;
-  command?: string;
-  args?: string[];
-  env?: Record<string, string>;
-  url?: string;
-  headers?: Record<string, string>;
-  requestTimeoutSeconds?: number | null;
-  isBuiltIn?: boolean;
-  githubUrl?: string;
-  registryId?: string;
-}
+export type {
+  ExtensionProvidedMcpServer,
+  McpServerConfig,
+  McpServerFormData,
+  McpTransportType,
+} from '@shared/plugins/mcp';
 
 // Built-in MCP registry entry (pure frontend definition)
 export interface McpRegistryEntry {
@@ -109,4 +77,3 @@ export interface McpResourceContent {
 export interface McpReadResourceResult {
   contents: McpResourceContent[];
 }
-import type { PluginHubScope, PluginManagementCapabilities } from '@shared/plugins/management';

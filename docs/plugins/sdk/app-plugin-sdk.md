@@ -2,6 +2,16 @@
 
 This package defines the public contract between a trusted app companion and its application host. Native, Electron Main, and React code are built as independent artifacts through public SDK contracts.
 
+SDK 1.5 adds the optional `displayText(source, context)` message/history presentation
+hook. It runs on decoded visible user text, before the generic native selection
+quote projection. `context.language` is the current host language, read for each
+display call; a locale change invalidates existing display templates. The context
+is plain readonly data, not a retained host, business epoch or translation service.
+Existing `text(source)` keeps its transport-cleanup role before normalization and
+draft restoration. Keep display labels out of that hook so framed payload lengths,
+editable references and submitted text remain exact. Plugins requiring this API
+must declare `@app-plugin/sdk` with a minimum version that includes it.
+
 For a step-by-step tutorial and a complete minimal example, start with the [app plugin development guide](app-plugin-development/README.md).
 
 ## Build and package

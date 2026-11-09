@@ -46,6 +46,12 @@ Custody 存储会话使用原生 harness 命名空间，以 `agentHarnessId` 和
 
 ### 纯历史展示入口
 
+文本投影分为两个阶段：`text(source)` 处理归一化和草稿恢复前的传输包裹；
+SDK 1.5 的可选 `displayText(source, context)` 只处理解码后的可见用户正文，
+随后再由宿主应用通用原生选区引用投影。显示钩子不能改写发送、编辑恢复或原生历史。
+宿主每次传入当前语言的只读上下文，并通过既有展示失效通知响应语言和字典变化；
+没有显示贡献时不为此保留语言订阅。纯入口仍不获得命令、发送或其他业务能力。
+
 可选 `entries.presentation` 对应独立的纯历史展示入口，源码由 `package.json.app.presentation` 指定，仅导出 `presentation`。它可提供文本清洗、原生输入身份展示、精确镜像识别和双语词典，不取得 Browser host、React、命令、导航、数据或发送端口。构建与模块图校验拒绝其引用 Main、Browser 入口或 Browser runtime；普通 Browser 图也拒绝引用 Main 入口。
 
 独立浏览器模块与 `new URL('./worker.mjs', import.meta.url)` 的本地资源边继续验证和发布，Main 私有图不作为 HTTP 资源根。

@@ -167,6 +167,10 @@ app-server 客户端审批复用原生 owner，并区分逻辑 turn 与 ACK 确�
 
 ## 9. 历史、分支、复制与删除
 
+Main 的分支业务由 `cowork/sessions/sessionBranchOperations.ts` 组合，IPC 仅在输入归一化
+与必填校验后委托。历史运行身份读取、未知创建恢复和精确原生删除辅助同属该领域；
+创建响应、Goal 清理与读回、权限准备的原有顺序和身份核验不因分层改变。
+
 历史由 Gateway 加载，Renderer 有界分页并与 live state 按身份合并。分支从稳定、已完成的原生助手 entry 创建，不根据屏幕数组索引推导切点。Plan reset 前后及 Goal 会话的操作门禁必须与原生语义一致。
 
 侧栏搜索将本地标题匹配与原生 `sessions.search` 合并。标题支持多个关键词同时匹配；

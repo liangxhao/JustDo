@@ -1,13 +1,13 @@
 import type { ChromeExtensionStreamEvent } from '@shared/chrome/chromeExtensionStream';
 import { readTerminalGuardObservation } from '@shared/openclaw/agentEvent';
 
-import type { AssistantTurn } from '../chat-transcript-state';
-import { advanceRunActivity, createRunActivity, type RunActivity } from '../turn/run-activity';
+import type { AssistantTurn } from '@/libs/openclaw-chat/model/chat-transcript-state';
+import { advanceRunActivity, createRunActivity, type RunActivity } from '@/libs/openclaw-chat/model/turn/run-activity';
 import {
   readCommandOutputActivity,
   readRunningToolActivity,
   readRunProgress,
-} from '../turn/run-progress';
+} from '@/libs/openclaw-chat/model/turn/run-progress';
 
 /** Called only after transcript identity and sequence admission. No execution outcomes. */
 export function projectChromeExtensionActivity(

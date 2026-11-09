@@ -1,4 +1,4 @@
-import { composeBrowserGatewayPrompt } from '@shared/browser/browser';
+import { composeBrowserGatewayPrompt } from '@shared/browser/browserMessageContext';
 import { afterEach, expect, test, vi } from 'vitest';
 
 import { ChatController } from '@/libs/openclaw-chat/gateway/chat-controller';

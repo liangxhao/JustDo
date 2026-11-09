@@ -1,5 +1,11 @@
 # 浏览器操作演示
 
+可复用的录制文字投影和消息展示样式位于
+`src/renderer/libs/openclaw-chat/components/message/browser-recording-presentation.*`，
+桌面 React 审阅界面与 Lit 消息卡片共用。桌面编辑器和草稿控制样式仍由
+`features/browser/recording/browserRecording.css` 拥有，并引用公共展示样式；
+Chrome 离线模块只组装可复用消息展示部分，不携带桌面编辑控制样式。
+
 侧边栏浏览器的“录制操作”将一次人工演示整理成步骤与关键截图。用户停止后编辑、检查并添加到原会话输入框，再通过普通消息发送。它提供模型参考材料，不训练模型，也不是确定性脚本回放。
 
 ## 交互与归属

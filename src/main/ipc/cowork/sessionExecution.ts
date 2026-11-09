@@ -337,14 +337,14 @@ export const registerCoworkSessionExecutionHandlers = ({
       const pluginSubmission = getSessionPlugins?.().matches(outbound) === true;
       if (pluginSubmission) {
         if (!getSessionPlugins || !options.clientTurnId || options.planMode)
-          throw new Error('teamLaunchContractUnavailable');
+          throw new Error('appPluginLaunchContractUnavailable');
         if (operation) operation.sessionId = session.id;
         await getSessionPlugins().register({
           sessionId: session.id,
           clientTurnId: options.clientTurnId,
           prompt: outbound.trim(),
           assertCurrent: () => {
-            if (operation?.cancelled) throw new Error('teamLaunchContractUnavailable');
+            if (operation?.cancelled) throw new Error('appPluginLaunchContractUnavailable');
           },
         });
         if (operation?.cancelled) {
@@ -408,7 +408,7 @@ export const registerCoworkSessionExecutionHandlers = ({
             ? {
                 beforeNativeSend: async () => {
                   assertInitialModelAvailable();
-                  if (operation?.cancelled) throw new Error('teamLaunchContractUnavailable');
+                  if (operation?.cancelled) throw new Error('appPluginLaunchContractUnavailable');
                   await getSessionPlugins!().markSubmissionStarted(
                     session.id,
                     options.clientTurnId!,

@@ -1,4 +1,4 @@
-import { composeBrowserGatewayPrompt } from '@shared/browser/browser';
+import { composeBrowserGatewayPrompt } from '@shared/browser/browserMessageContext';
 import { OPENCLAW_HISTORY_DETAIL_MAX_IDS } from '@shared/openclaw/historyIpc';
 import { buildGoalFollowUpPrompt } from '@shared/prompts/goalFollowUpPrompt';
 import { afterEach, describe, expect, test, vi } from 'vitest';

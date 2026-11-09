@@ -274,6 +274,11 @@ Native manifest 只允许固定公钥派生的扩展 ID。app-server 校验 capa
 
 本包的 `openclaw/` 保留锁定上游 relay，`conversation-overlay/` 提供侧栏与客户端模块，`scripts/` 和 `tests/` 保存本包组装及验证入口。桌面运行时、Native Host 及共享聊天构建适配由集成宿主提供；本包迁仓不表示这些宿主依赖已经实现独立构建。
 
+宿主浏览器适配集中在 `src/renderer/chrome/`：`chat/` 复用聊天库提供流、活动、
+显示、时间线和富内容适配，`questions/` 复用桌面问答向导并维护侧栏专属样式。
+宿主 `scripts/chrome/` 保留构建与 Native Host 准备入口，将适配器构建为本包的离线模块；
+本包不直接导入应用 `src`。桌面扩展管理页面和文案仍归桌面功能，不属于侧栏客户端。
+
 `chrome-extension:prepare` 从该包生成 `build/chrome-extension/chrome-extension/`，安装包继续交付到 `resources/chrome-extension/chrome-extension/`，显示名称从产品元数据注入，扩展 ID 与配对身份保持既有值。详见[源码包说明](overview.md)。
 
 产品组装保留锁定上游的 `manifest.version`，不将应用发布版本注入扩展 `version_name`。桌面“扩展版本”仅读取实际组装产物的 `manifest.version`，用户可在 Chrome 扩展管理页 → 详情 → 版本查看已安装版本并核对。应用版本与扩展版本分别维护；版本号不参与协议兼容判定，版本相同也不能代替连接验证，桌面不据此推断已安装扩展版本。

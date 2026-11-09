@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
-import { SPEECH_SURFACE_HIDDEN_EVENT } from '@shared/speech/speechSettingsNavigation';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 
 import type { RealtimeVoiceComposerSession } from '@/features/speech/realtime/useRealtimeVoiceSession';
+import { SPEECH_SURFACE_HIDDEN_EVENT } from '@/features/speech/speechSettingsNavigation';
 import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';
 import * as audio from '@/shared/audio/localAudioCapture';

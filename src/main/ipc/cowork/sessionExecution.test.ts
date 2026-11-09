@@ -71,7 +71,7 @@ test('rechecks engine preparation after config waiting without silently queuing 
   expect(ensureEngineRunning).not.toHaveBeenCalled();
 });
 
-test('keeps Team launch hooks when the first message is delegated to its current viewer', async () => {
+test('keeps plugin launch hooks when the first message is delegated to its current viewer', async () => {
   const created = session('ask');
   const frame = { url: 'http://127.0.0.1:43127/' };
   const owner = Object.assign(new EventEmitter(), {
@@ -104,7 +104,7 @@ test('keeps Team launch hooks when the first message is delegated to its current
   );
   registerCoworkSessionExecutionHandlers({
     getMainWindow: () => window as never,
-    getAgentTeamLaunch: () => launch as unknown as BehaviorSubmissionParticipant,
+    getSubmissionParticipant: () => launch as unknown as BehaviorSubmissionParticipant,
     ensureEngineRunning: vi.fn().mockResolvedValue({ phase: 'running' }),
     getCoworkStore: () =>
       ({
@@ -126,7 +126,7 @@ test('keeps Team launch hooks when the first message is delegated to its current
       {
         prompt,
         rendererDispatch: true,
-        clientTurnId: 'team-initial-viewer',
+        clientTurnId: 'plugin-initial-viewer',
       },
     ),
   ).resolves.toMatchObject({ success: true });
@@ -134,15 +134,15 @@ test('keeps Team launch hooks when the first message is delegated to its current
   expect(launch.register).toHaveBeenCalledWith(
     expect.objectContaining({
       sessionId: created.id,
-      clientTurnId: 'team-initial-viewer',
+      clientTurnId: 'plugin-initial-viewer',
       prompt,
     }),
   );
   expect(launch.markSubmissionStarted).toHaveBeenCalledExactlyOnceWith(
     created.id,
-    'team-initial-viewer',
+    'plugin-initial-viewer',
   );
-  expect(launch.abortBeforeSend).toHaveBeenCalledExactlyOnceWith(created.id, 'team-initial-viewer');
+  expect(launch.abortBeforeSend).toHaveBeenCalledExactlyOnceWith(created.id, 'plugin-initial-viewer');
   expect(owner.listenerCount('did-start-navigation')).toBe(0);
 });
 
@@ -377,7 +377,7 @@ describe('initial admission cancellation', () => {
         : Promise.resolve({ phase: 'running' as const, message: '' }),
     );
     registerCoworkSessionExecutionHandlers({
-      getAgentTeamLaunch: () => ({ cancel: cancelLaunch }) as unknown as BehaviorSubmissionParticipant,
+      getSubmissionParticipant: () => ({ cancel: cancelLaunch }) as unknown as BehaviorSubmissionParticipant,
       ensureEngineRunning: ensureEngineRunning as never,
       waitForConfigUpdates: () =>
         preparation === 'config' ? new Promise<void>(() => undefined) : Promise.resolve(),
@@ -420,7 +420,7 @@ describe('initial admission cancellation', () => {
   });
 
   test.each([false, true])(
-    'stops an initial run while Team guard cancellation is pending (admitted=%s)',
+    'stops an initial run while plugin guard cancellation is pending (admitted=%s)',
     async admitted => {
       const fixture = setup();
       let finishGuard!: () => void;
@@ -952,7 +952,7 @@ describe('homepage App adoption at first-message admission', () => {
     registerCoworkSessionExecutionHandlers({
       workspaceAppSessions: workspaces,
       getMainWindow: () => ({ webContents: owner, isDestroyed: () => false }) as never,
-      ...(launch ? { getAgentTeamLaunch: () => launch as BehaviorSubmissionParticipant } : {}),
+      ...(launch ? { getSubmissionParticipant: () => launch as BehaviorSubmissionParticipant } : {}),
       ensureEngineRunning: async () => ({ phase: 'running' }) as never,
       getCoworkStore: () => store as unknown as CoworkStore,
       getCoworkEngineRouter: () =>
@@ -1003,7 +1003,7 @@ describe('homepage App adoption at first-message admission', () => {
     expect(f.startSession).not.toHaveBeenCalled();
   });
 
-  test('returns the adopted conversation when Team preparation is cancelled', async () => {
+  test('returns the adopted conversation when plugin preparation is cancelled', async () => {
     let finishRegistration!: () => void;
     const registration = new Promise<void>(resolve => {
       finishRegistration = resolve;
@@ -1032,11 +1032,11 @@ describe('homepage App adoption at first-message admission', () => {
 function registerCoworkSessionExecutionHandlers(
   input: Parameters<typeof registerGenericHandlers>[0] & {
     getCollaboration?: () => BehaviorResourceParticipant;
-    getAgentTeamLaunch?: () => BehaviorSubmissionParticipant;
+    getSubmissionParticipant?: () => BehaviorSubmissionParticipant;
   },
 ) {
   const collaboration = input.getCollaboration?.();
-  const launch = input.getAgentTeamLaunch?.();
+  const launch = input.getSubmissionParticipant?.();
   registerGenericHandlers({
     ...input,
     ...(collaboration || launch

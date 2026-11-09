@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { i18nService } from '@/services/i18n';
 
-import { recordingActionValue, recordingElementKind } from './browserRecordingPresentation';
+import { recordingActionValue, recordingElementKind } from './browser-recording-presentation';
 
 const step: BrowserRecordingStep = {
   id: 's',

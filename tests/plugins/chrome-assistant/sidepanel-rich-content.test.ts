@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from 'vitest';
-import { composeBrowserGatewayPrompt } from '../../../src/shared/browser/browser';
+
 import {
   pendingInputLabel,
   renderRichContent,
   retryRichImages,
 } from '../../../plugins/chrome-extensions/chrome-assistant/conversation-overlay/modules/sidepanel-rich-content.js';
+import { composeBrowserGatewayPrompt } from '../../../src/shared/browser/browserMessageContext';
 
 const recording = {
   id: 'r',
@@ -71,7 +72,7 @@ describe('side panel desktop rich content', () => {
     const paths = Array.from({ length: 6 }, (_, i) => `media://inbound/shot-${i}.jpg`);
     const { host, load } = mount({
       role: 'user',
-      content: composeBrowserGatewayPrompt('Learn this workflow', { recording }),
+      content: composeBrowserGatewayPrompt('Learn this workflow', [], recording),
       __openclaw: { media: paths.map(url => ({ url, contentType: 'image/jpeg', kind: 'image' })) },
     });
     await vi.waitFor(() => expect(host.querySelectorAll('img[src]')).toHaveLength(6));

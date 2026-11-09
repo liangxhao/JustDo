@@ -50,6 +50,17 @@ Team 恢复准备时，保存的 attempt 锁必须仍匹配当前草稿。只有
 
 ## 摘要、详情和纯历史投影
 
+讨论／协作引用的类型、定位校验、规范序列化和去重规则由本包
+`app/contracts/messageQuote.ts` 拥有。Browser 适配在转换为 SDK 通用引用前核对来源
+草稿与协作来源一致，向宿主只提交 `NativeMessageQuote` 或 `ExtensionMessageQuote`。
+宿主不再识别 Team 专属草稿类型或定位字段。
+
+历史协作引用的精确格式识别归 `app/history/quotePresentation.ts`，由纯展示入口的
+`displayText` 在正文解码后调用，保留代码围栏、普通 JSON 和非规范定位的原样展示。
+它使用调用时语言和本包字典，不捕获 Browser host；原有 `text` 只清理传输指令，
+不将定位器改成显示标签。已安装且获批的插件停用后仍使用纯展示租约；真正卸载、
+替换或身份未知时撤回投影，宿主显示原始历史内容，不保留 Team 解析副本。
+
 Team 的常驻 `application.page` observer 按需读取协作和讨论元数据，通过 `session.presentation.summaryAvailable` 报告摘要存在。发现不依赖摘要是否已展开；宿主只根据通用提示执行一次摘要展开。当前会话第一次出现新的协作或讨论时，插件可打开 Team Tab；已有基线、后台会话和用户关闭后的旧记录不重复触发。
 
 完整会话目录只有轻量身份元数据，标题通过有界 `ensureSummaries` 按需取得。分页标题列表不能证明来源或锚点不存在。只有真实协作锚点替换普通详情；成员详情请宿主重新读取实际产品会话，保留原生身份、统计和返回动作，不导航到主聊天，也不把失效贡献的旧读取继续提交。

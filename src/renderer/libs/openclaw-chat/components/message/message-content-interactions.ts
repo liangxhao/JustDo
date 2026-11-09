@@ -2,8 +2,7 @@ import { isLocalHtmlFilePath, isWebBrowserLink } from '@shared/browser/browserLi
 import { MessageFileLinkSourceKind } from '@shared/preview/messageFileLink';
 
 import { openMessageHtmlLink, openMessageWebLink } from '@/features/browser/messageBrowserLinks';
-import { IMAGE_PREVIEW_EVENT } from '@/features/cowork/components/preview/imageFilePreview';
-import type { OpenMessageFileLink } from '@/features/cowork/components/preview/messageFileLinks';
+import { IMAGE_PREVIEW_EVENT, type OpenMessageFileLink } from '@/libs/openclaw-chat/message-actions';
 import { i18nService } from '@/services/i18n';
 import { isDomHTMLElement } from '@/shared/dom/ownerDocument';
 

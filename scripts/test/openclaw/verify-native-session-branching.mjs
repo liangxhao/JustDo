@@ -85,7 +85,7 @@ async function verifyGateway(scope) {
   const compiled = path.join(state, 'branching-reader.cjs');
   const lifecycle = path.join(state, 'host-lifecycle.cjs');
   for (const [input, output] of [
-    ['src/main/ipc/cowork/sessionBranching.ts', compiled],
+    ['src/main/cowork/sessions/sessionBranching.ts', compiled],
     ['src/main/openclaw/runtime/launch/openclawLauncher.ts', lifecycle],
   ])
     buildSync({

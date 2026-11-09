@@ -4,10 +4,9 @@ import { CoworkInteractionKind } from '@shared/cowork/interactions/interactions'
 import { flushSync } from 'react-dom';
 import { createRoot } from 'react-dom/client';
 
+import CoworkQuestionWizard from '@/features/cowork/components/questions/CoworkQuestionWizard';
 import type { CoworkInteractionResult } from '@/features/cowork/coworkTypes';
 import { OwnerDocumentContext } from '@/shared/dom/ownerDocument';
-
-import CoworkQuestionWizard from './CoworkQuestionWizard';
 
 export interface ChromeQuestion {
   requestId: string;

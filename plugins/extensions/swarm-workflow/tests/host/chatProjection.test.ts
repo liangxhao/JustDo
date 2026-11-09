@@ -10,7 +10,7 @@ const hostRoot = process.env.APP_PLUGIN_HOST_ROOT;
 const test = hostRoot ? defineTest : defineTest.skip;
 const host = (file: string) =>
   hostRoot ? import(/* @vite-ignore */ `${hostRoot}/${file}`) : Promise.resolve({});
-const { composeBrowserGatewayPrompt } = await host('src/shared/browser/browser.ts');
+const { composeBrowserGatewayPrompt } = await host('src/shared/browser/browserMessageContext.ts');
 const { parseEditorDraftPayload } = await host(
   'src/renderer/libs/openclaw-chat/model/input/editor-draft.ts',
 );

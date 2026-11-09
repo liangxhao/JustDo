@@ -8116,7 +8116,7 @@ function readRunProgress(stream, data) {
   return stage ? { stage } : null;
 }
 
-// src/renderer/libs/openclaw-chat/model/chrome-extension/chrome-extension-activity.ts
+// src/renderer/chrome/chat/chrome-extension-activity.ts
 function projectChromeExtensionActivity(activity, value, turn, previousHighWater) {
   if (!turn) return activity;
   const tools = turn.toolById;
@@ -8631,25 +8631,7 @@ function parseRecordingContext(text3) {
   }
 }
 
-// src/shared/browser/browser.ts
-var BROWSER_FAVICON_MAX_DATA_URL_LENGTH = 512 * 1024;
-var BrowserMode = {
-  Isolated: "isolated",
-  User: "user",
-  Extension: "extension",
-  Embedded: "embedded"
-};
-var normalizeBrowserMode = (value) => value === BrowserMode.Isolated || value === BrowserMode.User || value === BrowserMode.Extension ? value : BrowserMode.Embedded;
-var BrowserSearchEngine = {
-  Baidu: "baidu",
-  Google: "google"
-};
-var normalizeBrowserSearchEngine = (value) => value === BrowserSearchEngine.Google ? BrowserSearchEngine.Google : BrowserSearchEngine.Baidu;
-var normalizeBrowserDownloadSettings = (value) => ({
-  directory: typeof value.directory === "string" ? value.directory.trim().slice(0, 4096) : "",
-  // Preserve the app's existing behavior for users who do not have this setting yet.
-  askWhereToSave: typeof value.askWhereToSave === "boolean" ? value.askWhereToSave : true
-});
+// src/shared/browser/browserMessageContext.ts
 var EXTERNAL_BROWSER_CONTEXT_START = "EXTERNAL_UNTRUSTED_CONTENT";
 var EXTERNAL_BROWSER_CONTEXT_END = "END_EXTERNAL_UNTRUSTED_CONTENT";
 var EXTERNAL_BROWSER_CONTEXT_SOURCE = "Source: Browser";
@@ -8847,69 +8829,6 @@ function parseCoworkSessionKey(sessionKey) {
   return agentId && sessionId ? { agentId, sessionId } : null;
 }
 
-// src/shared/cowork/swarm.ts
-function buildLegacySwarmInstruction(options) {
-  const strategy = {
-    auto: "Decompose independent parts of this task where parallel work is useful.",
-    research: "Research independent aspects in parallel and preserve sources and disagreements.",
-    review: "Have independent reviewers inspect different aspects and report evidence-backed findings."
-  }[options.mode];
-  return [
-    "<parallel-collaboration-request>",
-    "The user explicitly requested native OpenClaw Swarm for this turn.",
-    strategy,
-    "Use native collector subagents: sessions_spawn with collect:true and a shared groupId, then agents_wait; or agents.run if the native Code Mode API is available.",
-    "Use short descriptive labels. Keep all collectors for this request in the same native group. Obey effective tool policies and configured concurrency. Do not enable settings or substitute peer team messages.",
-    "Collect every accepted child, preserve partial successes, and report failures honestly. Do not automatically repeat side effects or failed launches.",
-    options.verify ? "After collecting results, run an independent collector to check the evidence before synthesizing. Report whether this check actually ran and any remaining issues." : "Synthesize the collected evidence and disclose limitations.",
-    "If Swarm is unavailable or this task cannot usefully be split, explain that no parallel work started. Never claim a tool ran without an accepted native receipt.",
-    "Keep the final answer and deliverables in this main conversation.",
-    "</parallel-collaboration-request>"
-  ].join("\n");
-}
-function stripSwarmInstruction(text3) {
-  if (!text3.endsWith("</parallel-collaboration-request>")) return text3;
-  for (const mode of ["auto", "research", "review"]) {
-    for (const verify of [true, false]) {
-      const suffix = "\n\n" + buildLegacySwarmInstruction({ mode, verify });
-      if (text3.endsWith(suffix)) return text3.slice(0, -suffix.length);
-    }
-  }
-  return text3;
-}
-
-// src/renderer/features/plugins/app/messagePresentation.ts
-var contributors = /* @__PURE__ */ new Map();
-function pluginMessagePresentation(message) {
-  for (const contribution of contributors.values()) {
-    try {
-      const value = contribution.nativeInput?.(message);
-      if (value) return value;
-    } catch {
-    }
-  }
-  return void 0;
-}
-function pluginMessageText(source) {
-  for (const contribution of contributors.values()) {
-    try {
-      source = contribution.text?.(source) ?? source;
-    } catch {
-    }
-  }
-  return source;
-}
-
-// src/renderer/libs/openclaw-chat/shims/media-core.ts
-function mediaKindFromMime(mime) {
-  if (!mime || typeof mime !== "string") return void 0;
-  const lower = mime.toLowerCase();
-  if (lower.startsWith("image/")) return "image";
-  if (lower.startsWith("audio/")) return "audio";
-  if (lower.startsWith("video/")) return "video";
-  return "document";
-}
-
 // src/renderer/app/shell/startup/initialization/startupLanguage.ts
 async function resolveStartupLanguage(readLocale) {
   const fallback = () => navigator.language.toLowerCase().startsWith("zh") ? "zh" : "en";
@@ -8928,6 +8847,26 @@ async function resolveStartupLanguage(readLocale) {
     window.clearTimeout(timer);
   }
 }
+
+// src/shared/browser/browser.ts
+var BROWSER_FAVICON_MAX_DATA_URL_LENGTH = 512 * 1024;
+var BrowserMode = {
+  Isolated: "isolated",
+  User: "user",
+  Extension: "extension",
+  Embedded: "embedded"
+};
+var normalizeBrowserMode = (value) => value === BrowserMode.Isolated || value === BrowserMode.User || value === BrowserMode.Extension ? value : BrowserMode.Embedded;
+var BrowserSearchEngine = {
+  Baidu: "baidu",
+  Google: "google"
+};
+var normalizeBrowserSearchEngine = (value) => value === BrowserSearchEngine.Google ? BrowserSearchEngine.Google : BrowserSearchEngine.Baidu;
+var normalizeBrowserDownloadSettings = (value) => ({
+  directory: typeof value.directory === "string" ? value.directory.trim().slice(0, 4096) : "",
+  // Preserve the app's existing behavior for users who do not have this setting yet.
+  askWhereToSave: typeof value.askWhereToSave === "boolean" ? value.askWhereToSave : true
+});
 
 // src/shared/browser/browserLinkOpening.ts
 var BrowserLinkTarget = {
@@ -10105,49 +10044,45 @@ var appPluginTranslations = {
   zh: {
     sessionExportMain: "\u5BFC\u51FA\u5BF9\u8BDD",
     nativePeerIncomingMessage: "\u6765\u81EA\u5176\u4ED6\u52A9\u624B",
-    extensionDiscussionReference: "\u8BA8\u8BBA\u5F15\u7528",
-    extensionCollaborationReference: "\u4EFB\u52A1\u5F15\u7528",
-    extensionBatchReferenceDisplay: "\u534F\u4F5C\u5F15\u7528 \xB7 {member} \xB7 \u539F\u6279\u6B21",
-    extensionCollaborationReferenceDisplay: "\u534F\u4F5C\u5F15\u7528 \xB7 {member}",
     appPluginReview: "\u5BA1\u67E5\u5E94\u7528\u6269\u5C55",
-    appPluginSubmitUnavailable: "\u5F53\u524D\u63D2\u4EF6\u6A21\u5F0F\u65E0\u6CD5\u63D0\u4EA4\uFF0C\u8BF7\u68C0\u67E5\u63D2\u4EF6\u72B6\u6001\u548C\u4F1A\u8BDD\u72B6\u6001\u3002",
-    appPluginRemoveMode: "\u53D6\u6D88\u672C\u6B21\u63D2\u4EF6\u6A21\u5F0F",
+    appPluginSubmitUnavailable: "\u5F53\u524D\u65E0\u6CD5\u4F7F\u7528\u6240\u9009\u529F\u80FD\u53D1\u9001\u6D88\u606F\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BD5\u3002",
+    appPluginLaunchUnconfirmed: "\u4E0A\u4E00\u6B21\u64CD\u4F5C\u7684\u72B6\u6001\u5C1A\u672A\u786E\u8BA4\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BD5\u3002",
+    appPluginLaunchContractUnavailable: "\u5F53\u524D\u5BF9\u8BDD\u6682\u65F6\u65E0\u6CD5\u5F00\u59CB\u6B64\u4EFB\u52A1\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BD5\u3002",
+    appPluginRemoveMode: "\u53D6\u6D88\u672C\u6B21\u6A21\u5F0F",
     appPluginTrustDescription: "\u8FD9\u4E2A\u6269\u5C55\u5C06\u5728\u5E94\u7528\u5185\u8FD0\u884C\uFF0C\u5E76\u80FD\u8BBF\u95EE\u672C\u673A\u8D44\u6E90\u3002\u8BF7\u786E\u8BA4\u4F60\u4FE1\u4EFB\u8FD9\u4EFD\u4EE3\u7801\u3002\u6279\u51C6\u540E\u4F1A\u5728\u540E\u53F0\u91CD\u65B0\u52A0\u8F7D\u8FDE\u63A5\u670D\u52A1\uFF0C\u65E0\u9700\u9000\u51FA\u5E94\u7528\u3002",
     appPluginApprove: "\u4FE1\u4EFB\u8FD9\u4EFD\u4EE3\u7801",
     appPluginApproved: "\u4EE3\u7801\u5DF2\u6279\u51C6\u3002",
     appPluginApprovalRequired: "\u8BF7\u5148\u5BA1\u67E5\u5E76\u4FE1\u4EFB\u5F53\u524D\u63D2\u4EF6\u4EE3\u7801\uFF0C\u518D\u542F\u7528\u63D2\u4EF6\u3002",
     appPluginReviewChanged: "\u6269\u5C55\u5185\u5BB9\u6216\u5BA1\u67E5\u5DF2\u53D8\u5316\uFF0C\u8BF7\u91CD\u65B0\u6253\u5F00\u5BA1\u67E5\u3002",
     appPluginRestartRequired: "\u63D2\u4EF6\u6B63\u5728\u7B49\u5F85\u540E\u53F0\u8FDE\u63A5\u670D\u52A1\u91CD\u65B0\u52A0\u8F7D\uFF0C\u65E0\u9700\u9000\u51FA\u5E94\u7528\u3002",
-    appPluginCleanupUnresolved: "\u63D2\u4EF6\u4EFB\u52A1\u7684\u505C\u6B62\u6216\u6E05\u7406\u5C1A\u672A\u786E\u8BA4\uFF0C\u8BF7\u68C0\u67E5\u4EFB\u52A1\u72B6\u6001\u3002",
+    appPluginCleanupUnresolved: "\u4ECD\u6709\u64CD\u4F5C\u5C1A\u672A\u786E\u8BA4\u7ED3\u675F\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BD5\u3002",
     appPluginSkillSyncFailed: "\u63D2\u4EF6\u7684\u6280\u80FD\u72B6\u6001\u672A\u80FD\u540C\u6B65\uFF0C\u8BF7\u91CD\u65B0\u8BBE\u7F6E\u63D2\u4EF6\u72B6\u6001\u3002",
-    appPluginUnavailable: "\u63D2\u4EF6\u5F53\u524D\u4E0D\u53EF\u7528\uFF0C\u8BF7\u68C0\u67E5\u63D2\u4EF6\u72B6\u6001\u3002",
-    appPluginRetired: "\u63D2\u4EF6\u72B6\u6001\u5DF2\u53D8\u5316\uFF0C\u8BF7\u91CD\u65B0\u6253\u5F00\u5165\u53E3\u3002",
-    appPluginInvalidRequest: "\u63D2\u4EF6\u8BF7\u6C42\u65E0\u6548\u3002",
-    appPluginIncompatible: "\u63D2\u4EF6\u4E0E\u5F53\u524D\u5E94\u7528\u63A5\u53E3\u4E0D\u517C\u5BB9\u3002",
+    appPluginUnavailable: "\u6B64\u529F\u80FD\u6682\u4E0D\u53EF\u7528\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BD5\u3002",
+    appPluginRetired: "\u6B64\u529F\u80FD\u7684\u72B6\u6001\u5DF2\u53D8\u5316\uFF0C\u8BF7\u91CD\u65B0\u6253\u5F00\u540E\u91CD\u8BD5\u3002",
+    appPluginInvalidRequest: "\u64CD\u4F5C\u8BF7\u6C42\u65E0\u6548\uFF0C\u8BF7\u91CD\u8BD5\u3002",
+    appPluginIncompatible: "\u6B64\u529F\u80FD\u4E0E\u5F53\u524D\u5E94\u7528\u7248\u672C\u4E0D\u517C\u5BB9\u3002",
     appPluginResourceConflict: "\u591A\u4E2A\u63D2\u4EF6\u58F0\u660E\u4E86\u76F8\u540C\u8D44\u6E90\uFF0C\u6682\u65F6\u65E0\u6CD5\u5220\u9664\u3002"
   },
   en: {
     sessionExportMain: "Export conversation",
     nativePeerIncomingMessage: "From another assistant",
-    extensionDiscussionReference: "Discussion reference",
-    extensionCollaborationReference: "Task reference",
-    extensionBatchReferenceDisplay: "Collaboration reference \xB7 {member} \xB7 Prior batch",
-    extensionCollaborationReferenceDisplay: "Collaboration reference \xB7 {member}",
     appPluginReview: "Review app extension",
-    appPluginSubmitUnavailable: "The plugin mode cannot submit in the current plugin or conversation state.",
-    appPluginRemoveMode: "Remove this plugin mode",
+    appPluginSubmitUnavailable: "The selected feature cannot send messages right now. Please try again later.",
+    appPluginLaunchUnconfirmed: "The status of the previous operation is not yet confirmed. Please try again later.",
+    appPluginLaunchContractUnavailable: "This conversation cannot start this task right now. Please try again later.",
+    appPluginRemoveMode: "Remove this mode",
     appPluginTrustDescription: "This extension runs inside the application and can access local resources. Approve only code you trust. Approval reloads the connection service in the background without closing the application.",
     appPluginApprove: "Trust this code",
     appPluginApproved: "Code approved.",
     appPluginApprovalRequired: "Review and trust the current plugin code before enabling it.",
     appPluginReviewChanged: "The extension or review changed. Open a new review.",
     appPluginRestartRequired: "The plugin is waiting for the background connection service to reload. Keep the application open.",
-    appPluginCleanupUnresolved: "Plugin execution cleanup is not confirmed. Check the task status.",
+    appPluginCleanupUnresolved: "Some operations have not been confirmed finished. Please try again later.",
     appPluginSkillSyncFailed: "Plugin skill state could not be synchronized. Set the plugin state again.",
-    appPluginUnavailable: "The plugin is unavailable. Check its status.",
-    appPluginRetired: "The plugin state changed. Open the entry again.",
-    appPluginInvalidRequest: "The plugin request is invalid.",
-    appPluginIncompatible: "The plugin is incompatible with this application interface.",
+    appPluginUnavailable: "This feature is unavailable right now. Please try again later.",
+    appPluginRetired: "The feature state has changed. Reopen it and try again.",
+    appPluginInvalidRequest: "The operation request is invalid. Please try again.",
+    appPluginIncompatible: "This feature is incompatible with the current application version.",
     appPluginResourceConflict: "Multiple plugins claim this resource. Deletion is blocked."
   }
 };
@@ -10858,7 +10793,7 @@ var browserTranslations = {
     browserMenuZoomOut: "\u7F29\u5C0F",
     browserMenuZoomIn: "\u653E\u5927",
     browserMenuZoomReset: "\u6062\u590D\u9ED8\u8BA4\u7F29\u653E",
-    browserMenuDeviceTools: "\u663E\u793A\u8BBE\u5907\u5DE5\u5177\u680F",
+    browserMenuDeviceTools: "\u5F00\u53D1\u8005\u5DE5\u5177",
     browserMenuScreenshot: "\u622A\u53D6\u5C4F\u5E55\u622A\u56FE",
     browserMenuScreenshotSaved: "\u7F51\u9875\u622A\u56FE\u5DF2\u4FDD\u5B58",
     browserMenuImportData: "\u5BFC\u5165 Cookie \u548C\u5BC6\u7801",
@@ -11151,7 +11086,7 @@ var browserTranslations = {
     browserMenuZoomOut: "Zoom out",
     browserMenuZoomIn: "Zoom in",
     browserMenuZoomReset: "Reset zoom",
-    browserMenuDeviceTools: "Show device toolbar",
+    browserMenuDeviceTools: "Developer tools",
     browserMenuScreenshot: "Capture screenshot",
     browserMenuScreenshotSaved: "Page screenshot saved",
     browserMenuImportData: "Import cookies and passwords",
@@ -19378,6 +19313,38 @@ var I18nService = class {
 };
 var i18nService = new I18nService();
 
+// src/renderer/features/plugins/app/messagePresentation.ts
+var contributors = /* @__PURE__ */ new Map();
+function pluginMessagePresentation(message) {
+  for (const contribution of contributors.values()) {
+    try {
+      const value = contribution.nativeInput?.(message);
+      if (value) return value;
+    } catch {
+    }
+  }
+  return void 0;
+}
+function pluginMessageText(source) {
+  for (const contribution of contributors.values()) {
+    try {
+      source = contribution.text?.(source) ?? source;
+    } catch {
+    }
+  }
+  return source;
+}
+
+// src/renderer/libs/openclaw-chat/shims/media-core.ts
+function mediaKindFromMime(mime) {
+  if (!mime || typeof mime !== "string") return void 0;
+  const lower = mime.toLowerCase();
+  if (lower.startsWith("image/")) return "image";
+  if (lower.startsWith("audio/")) return "audio";
+  if (lower.startsWith("video/")) return "video";
+  return "document";
+}
+
 // plugins/extensions/runtime-services/sdk/app-input.ts
 var OPEN = "\n\n<app-plugin-input>\n";
 var CLOSE = "\n</app-plugin-input>";
@@ -19860,10 +19827,8 @@ function expandUserTextMediaContent(text3, includeLegacyTextFields = false) {
   return content;
 }
 function expandUserDisplayContent(text3, includeLegacyTextFields = false) {
-  const displayText = stripSwarmInstruction(
-    // Preserve exact authored suffix boundaries before generic whitespace cleanup.
-    // Browser-only prompts may project to a text part containing just that suffix.
-    stripAppInput(stripInboundMetadata(pluginMessageText(stripAppInput(text3))))
+  const displayText = stripAppInput(
+    stripInboundMetadata(pluginMessageText(stripAppInput(text3)))
   );
   const browserPrompt = parseBrowserAnnotationPrompt(displayText);
   if (!browserPrompt) return expandUserTextMediaContent(displayText, includeLegacyTextFields);
@@ -20081,7 +20046,7 @@ var isTruncatedHistoryMessage = (message) => {
   return metadata?.truncated === true;
 };
 
-// src/renderer/libs/openclaw-chat/model/chrome-extension/chrome-extension-display.ts
+// src/renderer/chrome/chat/chrome-extension-display.ts
 function hidden(text3) {
   const trimmed = text3.trim();
   return Boolean(trimmed) && ("NO_REPLY".startsWith(trimmed.toUpperCase()) || stripHeartbeatTokenForDisplay(trimmed).shouldSkip);
@@ -20535,7 +20500,7 @@ function prepareVisibleTimelineRows(items, options) {
   return rows;
 }
 
-// src/renderer/libs/openclaw-chat/model/chrome-extension/chrome-extension-timeline.ts
+// src/renderer/chrome/chat/chrome-extension-timeline.ts
 function record4(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : null;
 }
@@ -20672,7 +20637,7 @@ function foldChromeExtensionEntries(entries, options = {}) {
   });
 }
 
-// src/renderer/libs/openclaw-chat/model/chrome-extension/chrome-extension-stream.ts
+// src/renderer/chrome/chat/chrome-extension-stream.ts
 var MAX_PENDING_STREAM_EVENTS = 64;
 var MAX_PENDING_STREAM_CHARS = 1e6;
 var MAX_DISPLAY_ITEM_KEYS = 2048;

@@ -8,6 +8,7 @@ import type {
   AppBrowserHost,
   AppBrowserModule,
   AppComposerMode,
+  AppMessagePresentationContext,
   AppSessionPresentation,
   AppViewContext,
 } from '../../../../../plugins/sdk/app-plugin-sdk/browser';
@@ -517,6 +518,12 @@ export class AppBrowserRegistry {
                 assertCurrent();
                 return presentation.text?.(source) ?? source;
               },
+              ...(presentation.displayText
+                ? { displayText: (source: string, context?: AppMessagePresentationContext) => {
+                    assertCurrent();
+                    return presentation.displayText?.(source, context) ?? source;
+                  } }
+                : {}),
               nativeInput: message => {
                 assertCurrent();
                 return presentation.nativeInput?.(message);
@@ -593,9 +600,9 @@ export class AppBrowserRegistry {
             !value ||
             typeof value !== 'object' ||
             Object.keys(value).some(
-              key => !['text', 'nativeInput', 'replyMirror', 'translations'].includes(key),
+              key => !['text', 'displayText', 'nativeInput', 'replyMirror', 'translations'].includes(key),
             ) ||
-            ['text', 'nativeInput', 'replyMirror'].some(
+            ['text', 'displayText', 'nativeInput', 'replyMirror'].some(
               key =>
                 value[key as keyof typeof value] !== undefined &&
                 typeof value[key as keyof typeof value] !== 'function',
@@ -625,6 +632,13 @@ export class AppBrowserRegistry {
                 const result = value.text?.(source);
                 return current() && typeof result === 'string' ? result : source;
               },
+              ...(value.displayText
+                ? { displayText: (source: string, context?: AppMessagePresentationContext) => {
+                    if (!current()) return source;
+                    const result = value.displayText?.(source, context);
+                    return current() && typeof result === 'string' ? result : source;
+                  } }
+                : {}),
               replyMirror: message => {
                 if (!current()) return false;
                 const result = value.replyMirror?.(message);

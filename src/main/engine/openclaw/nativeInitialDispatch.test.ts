@@ -703,19 +703,19 @@ describe('Main initial turn delegated to the presenting Renderer', () => {
     expect(s.request.mock.calls.some(([method]) => method === 'chat.send')).toBe(false);
   });
 
-  it('does not delegate an initial input when the Team launch boundary has been revoked', async () => {
+  it('does not delegate an initial input when the plugin launch boundary has been revoked', async () => {
     const s = setup();
     const dispatch = vi.fn<NonNullable<CoworkStartOptions['dispatchChatSend']>>();
-    const beforeNativeSend = vi.fn().mockRejectedValue(new Error('Team launch was cancelled'));
+    const beforeNativeSend = vi.fn().mockRejectedValue(new Error('plugin launch was cancelled'));
     const onNativeSendAbandoned = vi.fn().mockResolvedValue(undefined);
     await expect(
-      s.adapter.startSession(sessionId, 'Start a team', {
+      s.adapter.startSession(sessionId, 'Start a plugin request', {
         clientTurnId,
         dispatchChatSend: dispatch,
         beforeNativeSend,
         onNativeSendAbandoned,
       }),
-    ).rejects.toThrow('Team launch was cancelled');
+    ).rejects.toThrow('plugin launch was cancelled');
 
     expect(dispatch).not.toHaveBeenCalled();
     expect(onNativeSendAbandoned).toHaveBeenCalledOnce();

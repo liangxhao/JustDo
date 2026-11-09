@@ -8,10 +8,10 @@ import {
   removeDraftBrowserRecording,
   setDraftBrowserRecording,
 } from '@/features/cowork/coworkSlice';
+import { recordingSummary } from '@/libs/openclaw-chat/components/message/browser-recording-presentation';
 import { i18nService } from '@/services/i18n';
 import { store } from '@/store';
 
-import { recordingSummary } from './browserRecordingPresentation';
 import { openDraftRecordingReviewTab } from './BrowserRecordingReviewTab';
 
 export function BrowserRecordingDraftCard({

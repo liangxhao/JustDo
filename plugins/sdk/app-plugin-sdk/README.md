@@ -8,6 +8,15 @@ Import public npm exports such as `@app-plugin/sdk/main`, `@app-plugin/sdk/brows
 
 Native, Main and Browser entries are separate artifacts. A companion declares its capabilities, commands and slots in its manifest; the host validates them and withdraws stale callbacks when its lifetime ends. Do not import application source or create a transcript cache.
 
+SDK 1.5 adds optional `displayText(source, context)` to message and pure history
+presentation contracts. It formats visible user text after transport decoding;
+`context.language` is the current host language (`zh` or `en`). Keep `text(source)`
+for pre-normalization transport cleanup: it also participates in draft restoration,
+so it must preserve length-delimited payloads and editable reference identities.
+Display projections receive no application ports and never change send text or
+native history. An installed, approved pure presentation remains available while
+business features are disabled; uninstalling or replacing it restores raw text.
+
 Main `onEnable(resources)` and Browser `host.resources` provide local resource scopes for listeners, timers and cooperative tasks. Dispose component child scopes during effect cleanup. These helpers manage local lifetimes; they do not grant native execution authority or prove task completion.
 
 Installing the SDK does not install a plugin or provide Runtime Services. Managed execution requires a compatible, explicitly admitted runtime. Main and Browser modules run trusted code; the SDK is not a hostile-code sandbox.

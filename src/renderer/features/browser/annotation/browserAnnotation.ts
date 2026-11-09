@@ -1,11 +1,5 @@
-import type {
-  BrowserAnnotationDraft,
-  BrowserAnnotationRegion,
-  BrowserAnnotationStroke,
-  BrowserInspectedElement,
-  BrowserPanelFrame,
-  BrowserPanelTabs,
-} from '@shared/browser/browser';
+import type { BrowserPanelFrame, BrowserPanelTabs } from '@shared/browser/browser';
+import type { BrowserAnnotationDraft, BrowserAnnotationRegion, BrowserAnnotationStroke, BrowserInspectedElement } from '@shared/browser/browserAnnotation';
 
 export const BROWSER_ANNOTATION_MAX_COUNT = 4;
 export const BROWSER_ANNOTATION_MAX_IMAGE_BYTES = 20 * 1024 * 1024;

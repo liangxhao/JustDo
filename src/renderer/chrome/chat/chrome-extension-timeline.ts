@@ -1,17 +1,18 @@
 import type { ChromeExtensionMessageDisplay } from '@shared/chrome/chromeExtensionDisplay';
 
+import type { ProcessStatus, ThinkingItem, ToolItem } from '@/libs/openclaw-chat/model/chat-transcript-state';
+import { foldCompletedProcessRows, type ProcessFoldOptions } from '@/libs/openclaw-chat/model/timeline/completed-process';
+import type { SourceTimelineItem } from '@/libs/openclaw-chat/model/timeline/timeline-avatar-state';
+import { prepareVisibleTimelineRows } from '@/libs/openclaw-chat/model/timeline/timeline-avatar-state';
+import { FAILED_RUN_MESSAGE_FLAG } from '@/libs/openclaw-chat/model/turn/failed-run-message';
+import type { GatewayMessage } from '@/libs/openclaw-chat/types';
+
 import {
   ASK_USER_QUESTION_TOOL_NAME,
   parseQuestionResult,
   parseQuestions,
   type QuestionResult,
-} from '../../../../../../plugins/extensions/ask-user-question/contracts/result';
-import type { GatewayMessage } from '../../types';
-import type { ProcessStatus, ThinkingItem, ToolItem } from '../chat-transcript-state';
-import { foldCompletedProcessRows, type ProcessFoldOptions } from '../timeline/completed-process';
-import type { SourceTimelineItem } from '../timeline/timeline-avatar-state';
-import { prepareVisibleTimelineRows } from '../timeline/timeline-avatar-state';
-import { FAILED_RUN_MESSAGE_FLAG } from '../turn/failed-run-message';
+} from '../../../../plugins/extensions/ask-user-question/contracts/result';
 
 export interface ChromeExtensionProcessItem {
   questionResult?: QuestionResult;

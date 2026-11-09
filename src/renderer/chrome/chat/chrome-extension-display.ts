@@ -1,8 +1,8 @@
 import type { ChromeExtensionStreamEvent } from '@shared/chrome/chromeExtensionStream';
 
-import { isTruncatedHistoryMessage } from '../../gateway/history/chat-history-protocol';
-import { stripHeartbeatTokenForDisplay } from '../../pipeline/heartbeat-display';
-import { stripSilentReplySuffixFromText } from '../../pipeline/history-display-normalizer';
+import { isTruncatedHistoryMessage } from '@/libs/openclaw-chat/gateway/history/chat-history-protocol';
+import { stripHeartbeatTokenForDisplay } from '@/libs/openclaw-chat/pipeline/heartbeat-display';
+import { stripSilentReplySuffixFromText } from '@/libs/openclaw-chat/pipeline/history-display-normalizer';
 
 function hidden(text: string): boolean {
   const trimmed = text.trim();

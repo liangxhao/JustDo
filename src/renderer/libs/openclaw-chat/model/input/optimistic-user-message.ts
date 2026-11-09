@@ -1,6 +1,5 @@
-import { parseBrowserAnnotationPrompt } from '@shared/browser/browser';
+import { parseBrowserAnnotationPrompt } from '@shared/browser/browserMessageContext';
 import { parseGoalStartObjective } from '@shared/cowork/slashCommands';
-import { stripSwarmInstruction } from '@shared/cowork/swarm';
 
 import { pluginMessageText } from '@/features/plugins/app/messagePresentation';
 import { getTranscriptMedia } from '@/libs/openclaw-chat/attachments';
@@ -94,7 +93,7 @@ function messageContentIdentity(message: GatewayMessage): {
     recordings.push(steps.map(step => [step?.id, step?.action, step?.pageId]));
   };
   const textPart = (source: string) => {
-    const text = stripSwarmInstruction(pluginMessageText(stripAppInput(source)));
+    const text = pluginMessageText(stripAppInput(source));
     const browser = parseBrowserAnnotationPrompt(text);
     if (browser?.recording) addRecording(browser.recording);
     browser?.annotations.forEach(addAnnotation);

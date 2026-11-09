@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import WebSocket from 'ws';
 
-import { ChromeExtensionStream } from '../../renderer/libs/openclaw-chat/model/chrome-extension/chrome-extension-stream';
+import { ChromeExtensionStream } from '../../renderer/chrome/chat/chrome-extension-stream';
 import type { ChromeExtensionStreamEvent } from '../../shared/chrome/chromeExtensionStream';
 import { CoworkSessionSource } from '../../shared/cowork/sessionSource';
 import { ChromeExtensionChatController } from './chromeExtensionChatController';

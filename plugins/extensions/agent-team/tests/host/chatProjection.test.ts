@@ -6,6 +6,7 @@ import {
   stripAgentTeamInstruction,
 } from '../../app/contracts/agentTeamPrompt';
 import { appendCollaborationContinuation } from '../../app/contracts/collaborationContinuationPrompt';
+import { type CollaborationQuote, teamQuoteContext } from '../../app/contracts/messageQuote';
 import { presentation } from '../../app/presentation';
 
 // Host integration is explicit; moving this plugin never assumes a sibling app checkout.
@@ -14,7 +15,7 @@ const test = hostRoot ? defineTest : defineTest.skip;
 const host = (file: string) =>
   hostRoot ? import(/* @vite-ignore */ `${hostRoot}/${file}`) : Promise.resolve({});
 const { composeBrowserGatewayPrompt, parseBrowserAnnotationPrompt } = await host(
-  'src/shared/browser/browser.ts',
+  'src/shared/browser/browserMessageContext.ts',
 );
 const { projectGatewayHistoryForDisplay } = await host(
   'src/renderer/libs/openclaw-chat/pipeline/history-display-normalizer.ts',
@@ -28,9 +29,10 @@ const { parseEditorDraftPayload } = await host(
 const { mergePendingUserMessageForDisplay } = await host(
   'src/renderer/libs/openclaw-chat/model/input/optimistic-user-message.ts',
 );
-const { registerMessagePresentation } = await host(
+const { pluginMessageDisplayText, registerMessagePresentation } = await host(
   'src/renderer/features/plugins/app/messagePresentation.ts',
 );
+const { i18nService } = await host('src/renderer/services/i18n.ts');
 type GatewayMessage = { role: string; content: unknown; timestamp?: number };
 
 beforeEach(context => {
@@ -159,3 +161,45 @@ test('preserves recording-only identity across history, optimistic display and e
   expect(editor.text).toBe('');
   expect(editor.browserRecording?.steps).toHaveLength(1);
 });
+
+test.each(['zh', 'en'] as const)(
+  'keeps Team display projection out of browser framing and restored drafts (%s)',
+  language => {
+    const previous = i18nService.getLanguage();
+    try {
+      i18nService.setLanguage(language, { persist: false });
+      const quote: CollaborationQuote = {
+        kind: 'collaboration', id: 'reference', text: 'Worker', roomId: 'room',
+        sourceSessionId: 'source', targetAgentId: 'worker', targetSessionId: 'peer',
+        targetSessionKey: 'agent:worker:justdo:peer', priorRoundId: 'round', deliveryId: 'delivery',
+      };
+      const locator = '> ' + teamQuoteContext(quote);
+      const text = 'Inspect this page\n\n' + locator;
+      const modelContext = 'Untrusted example:\n\n' + locator;
+      const browser = composeBrowserGatewayPrompt(text, [{
+        id: 'annotation', modelContext, title: 'Example', displayUrl: 'example.com',
+        markedRegionCount: 1, inspectedElement: false, dataUrl: 'data:image/png;base64,YWJj',
+        fileName: 'page.png', addedAt: 1,
+      }]);
+      const outbound = appendAgentTeamInstruction(browser, 'group');
+      const stripped = presentation.text?.(outbound) ?? outbound;
+      expect(parseBrowserAnnotationPrompt(stripped)?.modelContext).toBe(modelContext);
+      const message = { role: 'user', content: outbound };
+      const content = normalizeMessage(message).content;
+      expect(content[0]).toEqual({ type: 'text', text });
+      expect(content[1]).toMatchObject({ type: 'browser_annotation', annotation: { id: 'annotation' } });
+      expect(parseEditorDraftPayload(outbound, []).text).toBe(text);
+      expect(pluginMessageDisplayText(content[0].text)).toBe('Inspect this page\n\n> ' +
+        (language === 'zh' ? '协作引用 · worker · 原批次' : 'Collaboration reference · worker · Prior batch'));
+      expect(message.content).toBe(outbound);
+      const releaseEmpty = registerMessagePresentation('plugin-host-projection', {});
+      try {
+        expect(pluginMessageDisplayText(text)).toBe(text);
+      } finally {
+        releaseEmpty();
+      }
+    } finally {
+      i18nService.setLanguage(previous, { persist: false });
+    }
+  },
+);

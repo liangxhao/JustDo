@@ -1,14 +1,12 @@
 import { teamApi } from '../ports';
+import { type CollaborationQuote, hasTeamQuote, MESSAGE_QUOTE_KIND, validCollaborationQuote } from '../quote';
+import { addDraftMessageQuote } from '../state';
+import { store } from '../state';
 import type {
   CollaborationDelivery,
   CollaborationMember,
   CollaborationRoom,
 } from '../teamContracts';
-
-import { addDraftMessageQuote } from '../state';
-import { store } from '../state';
-
-import { type CollaborationQuote, MESSAGE_QUOTE_KIND, validCollaborationQuote } from '../quote';
 
 /** Read-only fallback: fresh managed identities, no direct peer send or source submission. */
 export async function prepareCollaborationReference(
@@ -62,8 +60,7 @@ export async function prepareCollaborationReference(
   )
     throw new Error('collaborationInvalidRecipient');
   const quotes = store.getState().cowork.draftMessageQuotes[room.anchorSessionId] ?? [];
-  if (quotes.some(item => item.kind === MESSAGE_QUOTE_KIND.COLLABORATION && item.id === quote.id))
-    return;
+  if (hasTeamQuote(quotes, quote)) return;
   if (quotes.length >= 8) throw new Error('teamReferenceLimit');
   store.dispatch(addDraftMessageQuote({ draftKey: room.anchorSessionId, quote }));
 }
