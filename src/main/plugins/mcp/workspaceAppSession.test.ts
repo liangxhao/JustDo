@@ -14,6 +14,17 @@ beforeEach(() => {
 });
 afterEach(() => vi.restoreAllMocks());
 
+function logCalls(method: 'info' | 'warn') {
+  return vi.mocked(console[method]).mock.calls.map(args => {
+    expect(args).toHaveLength(1);
+    const [line] = args;
+    expect(line).toBeTypeOf('string');
+    expect(line).not.toMatch(/[\r\n]/);
+    const separator = line.indexOf(': ');
+    return [line.slice(0, separator + 1), JSON.parse(line.slice(separator + 2))];
+  });
+}
+
 function fixture() {
   const cwd = path.resolve('workspace-fixture');
   let config = { workingDirectory: cwd, permissionMode: 'auto', allowMainAgentSwitch: false };
@@ -100,9 +111,9 @@ describe('homepage native App workspace ownership', () => {
     );
     expect(f.created()).toHaveLength(12);
     expect(f.owner.listenerCount('did-start-navigation')).toBe(1);
-    expect(console.info).toHaveBeenCalledWith('[WorkspaceAppSessions] Retiring document:', {
+    expect(logCalls('info')).toContainEqual(['[WorkspaceAppSessions] Retiring document:', {
       ownerId: 17, reason: 'navigation-start', count: 1,
-    });
+    }]);
   });
 
   it('retains the active document quota and logs its concrete refusal without raw input', async () => {
@@ -110,10 +121,10 @@ describe('homepage native App workspace ownership', () => {
     for (let i = 0; i < 8; i++)
       await f.service.prepare(f.owner, { ...f.input, requestId: crypto.randomUUID() });
     await expect(f.service.prepare(f.owner, f.input)).rejects.toThrow('Too many App workspaces');
-    expect(console.warn).toHaveBeenLastCalledWith('[WorkspaceAppSessions] Preparation failed:', {
+    expect(logCalls('warn').at(-1)).toEqual(['[WorkspaceAppSessions] Preparation failed:', {
       ownerId: 17, requestId: f.input.requestId, stage: 'admission', count: 8, limit: 8,
-      createIssued: false, reason: 'Too many App workspaces', code: undefined,
-    });
+      createIssued: false, reason: 'Too many App workspaces',
+    }]);
   });
 
   it('ignores App iframe and same-document navigation', async () => {
@@ -140,8 +151,8 @@ describe('homepage native App workspace ownership', () => {
     await expect(first).resolves.toEqual(binding);
     reads[1].reject(new Error('verification rejected'));
     await rejected;
-    expect(console.warn).toHaveBeenLastCalledWith('[WorkspaceAppSessions] Preparation failed:',
-      expect.objectContaining({ requestId: f.input.requestId, stage: 'verification', createIssued: true }));
+    expect(logCalls('warn').at(-1)).toEqual(['[WorkspaceAppSessions] Preparation failed:',
+      expect.objectContaining({ requestId: f.input.requestId, stage: 'verification', createIssued: true })]);
   });
 
   it('admits a new document while old deletion is pending and keeps its ownership after late cleanup', async () => {
@@ -160,9 +171,9 @@ describe('homepage native App workspace ownership', () => {
     const next = await f.service.prepare(f.owner, f.input);
     expect(next.sessionKey).not.toBe(first.sessionKey);
     finish();
-    await vi.waitFor(() => expect(console.info).toHaveBeenCalledWith(
+    await vi.waitFor(() => expect(logCalls('info')).toContainEqual([
       '[WorkspaceAppSessions] Cleanup acknowledged:', { ownerId: 17, requestId: f.input.requestId },
-    ));
+    ]));
     expect(await f.service.prepare(f.owner, f.input)).toEqual(next);
     (f.owner as unknown as EventEmitter).emit('destroyed');
     await vi.waitFor(() => expect(f.request).toHaveBeenLastCalledWith(
@@ -196,11 +207,11 @@ describe('homepage native App workspace ownership', () => {
     });
     (f.owner as unknown as EventEmitter).emit('render-process-gone');
     (f.owner as unknown as EventEmitter).emit('destroyed');
-    await vi.waitFor(() => expect(console.warn).toHaveBeenCalledWith(
+    await vi.waitFor(() => expect(logCalls('warn')).toContainEqual([
       '[WorkspaceAppSessions] Cleanup unconfirmed; no retry:', expect.objectContaining({
         ownerId: 17, requestId: f.input.requestId, stage: 'deletion', reason: 'Native or transport failure',
       }),
-    ));
+    ]));
     expect(f.request.mock.calls.filter(([method]) => method === 'sessions.delete')).toHaveLength(1);
     expect(JSON.stringify(vi.mocked(console.warn).mock.calls)).not.toContain('credential-fixture');
     await expect(f.service.prepare(f.owner, f.input)).resolves.toBeDefined();
@@ -349,8 +360,8 @@ describe('homepage native App workspace ownership', () => {
     else (f.owner as unknown as EventEmitter).emit('destroyed');
     finish();
     await expect(pending).rejects.toThrow('changed');
-    expect(console.warn).toHaveBeenCalledWith('[WorkspaceAppSessions] Preparation failed:',
-      expect.objectContaining({ stage: 'creation', createIssued: true }));
+    expect(logCalls('warn')).toContainEqual(['[WorkspaceAppSessions] Preparation failed:',
+      expect.objectContaining({ stage: 'creation', createIssued: true })]);
     await vi.waitFor(() =>
       expect(f.request.mock.calls.some(([method]) => method === 'sessions.delete')).toBe(true),
     );
@@ -506,8 +517,8 @@ describe('homepage native App workspace ownership', () => {
     expect(f.created()).toHaveLength(0);
     reject(failure);
     expect((await observed).every(result => result.status === 'rejected' && result.reason === failure)).toBe(true);
-    expect(console.warn).toHaveBeenCalledWith('[WorkspaceAppSessions] Preparation failed:',
-      expect.objectContaining({ stage: 'inspection', createIssued: false, code: 'UNAVAILABLE' }));
+    expect(logCalls('warn')).toContainEqual(['[WorkspaceAppSessions] Preparation failed:',
+      expect.objectContaining({ stage: 'inspection', createIssued: false, code: 'UNAVAILABLE' })]);
     expect(f.request).toHaveBeenCalledTimes(1);
     const [a, b] = await Promise.all([f.service.prepare(f.owner, f.input), f.service.prepare(f.owner, f.input)]);
     expect(a).toEqual(b);

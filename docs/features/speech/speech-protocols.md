@@ -103,6 +103,8 @@ Main 管理输入框完整录音 HTTP 的权限、代理、取消和请求归属
 
 [Main 录音服务测试](../../../src/main/speech/recordedOnlineAsrService.test.ts)覆盖录音/响应上限、取消、迟到结果及代理准备后的发送前复核。原生插件的 HTTP 和 profile 测试覆盖 provider 委托、当前 SDK schema、SecretRef 与受管注册；[Realtime 控制器](../../../src/renderer/features/speech/realtime/realtimeVoiceController.test.ts)和[音频测试](../../../src/renderer/features/speech/realtime/realtimeVoiceAudio.test.ts)覆盖并发关闭、换代和媒体失败清理。资源构建另验证纯协议代码进入各消费制品，不留下指向源码 SDK 的运行时导入。
 
+标记 `bundleFromSource` 的扩展在仓库源码位置编译主入口、能力目录、Worker，以及根目录或 `dist/` 下原生独立发现的 `setup-api`、`provider-policy-api`、`provider-contract-api` 入口，再搬移到运行包；这些独立入口同样内联纯协议 SDK，不能留到搬移后才编译。
+
 ### 本机假模型端点验证
 
 下面的用例会启动仅监听 `127.0.0.1` 随机端口的 HTTP 或 WebSocket 服务，实际传输请求和响应；假服务使用固定测试模型与凭据，不读取或改写用户当前的模型设置，不启动用户 Gateway。服务端独立校验请求，不复用生产编解码生成期望结果。

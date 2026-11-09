@@ -75,9 +75,9 @@ export class WorkspaceAppSessions {
   private retireDocument(owner: WebContents, reason: string): void {
     const entries = this.owners.get(owner);
     if (!entries) return;
-    console.info('[WorkspaceAppSessions] Retiring document:', {
+    console.info(`[WorkspaceAppSessions] Retiring document: ${JSON.stringify({
       ownerId: owner.id, reason, count: entries.size,
-    });
+    })}`);
     // release synchronously revokes each entry before its first await. Detach
     // this map now so a new document does not wait for native cleanup or inherit
     // the old quota. Each cleanup retains its captured entry/map, never a successor.
@@ -192,11 +192,11 @@ export class WorkspaceAppSessions {
       // Navigation may already have installed a successor map with the same ID.
       // Report this attempt's receipt, never the current document's state.
       const { entries, entry } = attempt;
-      console.warn('[WorkspaceAppSessions] Preparation failed:', {
+      console.warn(`[WorkspaceAppSessions] Preparation failed: ${JSON.stringify({
         ownerId: owner.id, requestId, stage: attempt.stage ?? entry?.stage ?? 'admission',
         count: entries?.size ?? 0, limit: MAX_WORKSPACES_PER_DOCUMENT,
         createIssued: entry?.createIssued ?? false, ...failureDetails(error),
-      });
+      })}`);
       throw error;
     }
   }
@@ -265,9 +265,9 @@ export class WorkspaceAppSessions {
       };
       entries.set(scope.requestId, next);
       attempt.entry = next;
-      console.info('[WorkspaceAppSessions] Reserved workspace:', {
+      console.info(`[WorkspaceAppSessions] Reserved workspace: ${JSON.stringify({
         ownerId: owner.id, requestId: scope.requestId, count: entries.size,
-      });
+      })}`);
       entry = next;
     }
     const { binding } = await entry.task;
@@ -325,9 +325,9 @@ export class WorkspaceAppSessions {
       session.permissionMode !== scope.permissionMode
     )
       throw new Error('Native App workspace changed');
-    console.info('[WorkspaceAppSessions] Workspace ready:', {
+    console.info(`[WorkspaceAppSessions] Workspace ready: ${JSON.stringify({
       ownerId: owner.id, requestId: scope.requestId, count: entries.size,
-    });
+    })}`);
     return binding;
   }
 
@@ -362,12 +362,12 @@ export class WorkspaceAppSessions {
           deleteTranscript: true,
           emitLifecycleHooks: false,
         });
-        console.info('[WorkspaceAppSessions] Cleanup acknowledged:', { ownerId: owner.id, requestId });
+        console.info(`[WorkspaceAppSessions] Cleanup acknowledged: ${JSON.stringify({ ownerId: owner.id, requestId })}`);
       } catch (error) {
-        console.warn('[WorkspaceAppSessions] Cleanup unconfirmed; no retry:', {
+        console.warn(`[WorkspaceAppSessions] Cleanup unconfirmed; no retry: ${JSON.stringify({
           ownerId: owner.id, requestId, stage, createIssued: entry.createIssued,
           ...failureDetails(error),
-        });
+        })}`);
         throw error;
       } finally {
         if (entries?.get(requestId) === entry) entries.delete(requestId);
@@ -412,7 +412,7 @@ export class WorkspaceAppSessions {
     entry.released = true;
     entries.delete(scope.requestId);
     if (!entries.size) this.owners.delete(owner);
-    console.info('[WorkspaceAppSessions] Workspace adopted:', { ownerId: owner.id, requestId: scope.requestId });
+    console.info(`[WorkspaceAppSessions] Workspace adopted: ${JSON.stringify({ ownerId: owner.id, requestId: scope.requestId })}`);
     return { value, binding };
   }
 }

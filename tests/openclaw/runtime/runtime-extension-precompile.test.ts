@@ -51,6 +51,11 @@ function createFixture() {
   fs.cpSync(path.join(process.cwd(), 'plugins/extensions/runtime-services'), sourceDir, {
     recursive: true,
   });
+  fs.cpSync(
+    path.join(process.cwd(), 'plugins/sdk/speech-protocols'),
+    path.join(repoRoot, 'plugins/sdk/speech-protocols'),
+    { recursive: true },
+  );
   fs.cpSync(path.join(process.cwd(), 'src/shared'), path.join(repoRoot, 'src/shared'), {
     recursive: true,
   });

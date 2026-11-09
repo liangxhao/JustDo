@@ -407,12 +407,20 @@ function bundleProductExtension(sourceDir, targetDir, runtimeRoot) {
     outfile: path.join(targetDir, 'index.js'),
   });
   if (pkg.openclaw?.build?.bundleFromSource === true) {
-    // Catalogs/workers also import the package's pure SDK sources. Compile every
-    // declared entry before relocation, not only the normal registration entry.
+    // Native discovery loads setup/policy/contract entries independently. Like
+    // catalogs/workers, they must resolve pure SDK sources before relocation.
     const manifestPath = path.join(targetDir, 'openclaw.plugin.json');
     const manifest = readJsonFile(manifestPath) ?? {};
     const extraEntries = [manifest.capabilityCatalogEntry, ...(pkg.openclaw.build.workerEntries ?? [])];
-    for (const entry of extraEntries) {
+    for (const directory of ['', 'dist']) {
+      for (const extension of ['ts', 'mts', 'cts']) {
+        for (const module of ['setup-api', 'provider-policy-api', 'provider-contract-api']) {
+          const entry = `./${directory ? directory + '/' : ''}${module}.${extension}`;
+          if (fs.existsSync(path.resolve(sourceDir, entry))) extraEntries.push(entry);
+        }
+      }
+    }
+    for (const entry of new Set(extraEntries)) {
       if (typeof entry !== 'string' || !/\.(?:ts|mts|cts)$/.test(entry)) continue;
       const source = path.resolve(sourceDir, entry);
       const relative = path.relative(sourceDir, source);
