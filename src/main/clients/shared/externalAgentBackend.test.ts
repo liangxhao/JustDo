@@ -5,8 +5,9 @@ import path from 'node:path';
 
 import { afterEach, expect, it, vi } from 'vitest';
 
-import { ExternalSessionSource } from '../../../shared/integrations/externalSession';
+import { ExternalSessionSource, ExternalSessionStatus } from '../../../shared/integrations/externalSession';
 import { OpenClawProviderId } from '../../../shared/providers/constants';
+import { getLanguage, setLanguage, t } from '../../core/i18n';
 import { CoworkStore } from '../../data/coworkStore';
 import { SqliteStore } from '../../data/sqliteStore';
 import { buildManagedSessionKey } from '../../openclaw/sessions/openclawSessionKeys';
@@ -22,7 +23,11 @@ import { reserveExternalSession } from './externalSessionReservations';
 import { ExternalSessionStore } from './externalSessionStore';
 
 const cleanup: Array<() => void> = [];
-afterEach(() => cleanup.splice(0).forEach(dispose => dispose()));
+const initialLanguage = getLanguage();
+afterEach(() => {
+  cleanup.splice(0).forEach(dispose => dispose());
+  setLanguage(initialLanguage);
+});
 
 function fixture() {
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'external-agent-backend-'));
@@ -61,13 +66,17 @@ function fixture() {
   };
 }
 
-it('uses per-session directories and opaque IDs without client credentials or rollout markers', async () => {
+it('uses the application session ID across clients without client credentials or rollout markers', async () => {
   const f = fixture();
   const other = path.join(f.cwd, '另一个 项目');
   fs.mkdirSync(other);
-  const first = await f.backend.start({ cwd: f.cwd });
+  const onCreated = vi.fn();
+  const first = await f.backend.start({ cwd: f.cwd, onCreated });
   const second = await f.backend.start({ cwd: other, model: 'other/selected' });
   expect(first.id).not.toBe(second.id);
+  expect(f.store.getSession(first.id)?.id).toBe(first.id);
+  expect(f.external.get(first.id)?.coworkSessionId).toBe(first.id);
+  expect(onCreated).toHaveBeenCalledExactlyOnceWith(first);
   expect(second.cwd).toBe(fs.realpathSync(other));
   expect(f.store.listSessions().every(session => session.external?.origin === 'cli')).toBe(true);
   expect(fs.existsSync(path.join(f.cwd, 'sessions'))).toBe(false);
@@ -75,6 +84,58 @@ it('uses per-session directories and opaque IDs without client credentials or ro
   await expect(f.backend.resume(first.id, { cwd: other })).rejects.toThrow('directory');
   await expect(f.backend.resume('agent:main:native-key', {})).rejects.toThrow('identity');
   expect(second.modelRef).toBe('other/selected');
+  expect(f.execute).not.toHaveBeenCalled();
+});
+
+it('keeps existing external IDs without treating their application IDs as resume aliases', async () => {
+  const f = fixture();
+  const session = f.store.createSession('Existing client task', f.cwd, 'local', [], 'main', 'ask', 'provider/default');
+  const previousThreadId = randomUUID();
+  f.external.create({
+    externalSessionKey: previousThreadId, coworkSessionId: session.id,
+    agentId: session.agentId, cwd: session.cwd, openclawSessionKey: '',
+  });
+  f.external.setStatus(previousThreadId, ExternalSessionStatus.Completed);
+  const backend = f.factory.connect();
+
+  const resumed = await backend.resume(previousThreadId, {});
+  expect(resumed.id).toBe(previousThreadId);
+  expect(backend.list!().map(thread => thread.id)).toEqual([previousThreadId]);
+  await expect(backend.history!(previousThreadId)).resolves.toMatchObject({ threadId: previousThreadId, messages: [] });
+  await expect(backend.resume(session.id, {})).rejects.toThrow('unavailable');
+  const runId = randomUUID();
+  await backend.run(resumed, runId, 'Continue the task', vi.fn(), new AbortController().signal);
+  expect(f.execute).toHaveBeenCalledWith(expect.objectContaining({ sessionId: session.id, runId }));
+});
+
+it('requires an external mapping even when thread and application IDs use the same format', async () => {
+  const f = fixture();
+  const desktopSession = f.store.createSession('Desktop task', f.cwd);
+  await expect(f.backend.resume(desktopSession.id, {})).rejects.toThrow('unavailable');
+  const thread = await f.backend.start({ cwd: f.cwd });
+
+  f.store.deleteSession(thread.id);
+
+  expect(f.external.get(thread.id)).toBeNull();
+  expect(f.external.wasDeleted(thread.id)).toBe(true);
+  await expect(f.factory.connect().resume(thread.id, {})).rejects.toThrow('unavailable');
+});
+
+it('rolls back the new shared ID when creation metadata setup fails', async () => {
+  const f = fixture();
+  let createdId: string | undefined;
+
+  await expect(f.backend.start({ cwd: f.cwd, onCreated: thread => {
+    createdId = thread.id;
+    expect(f.store.getSession(thread.id)?.id).toBe(thread.id);
+    throw new Error('Cannot save client metadata');
+  } })).rejects.toThrow('Cannot save client metadata');
+
+  expect(createdId).toBeDefined();
+  expect(f.store.getSession(createdId!)).toBeNull();
+  expect(f.external.get(createdId!)).toBeNull();
+  expect(f.external.wasDeleted(createdId!)).toBe(true);
+  expect(f.execute).not.toHaveBeenCalled();
 });
 
 it('passes real image-only attachments to execution without inventing prompt text or changing text-only callers', async () => {
@@ -86,6 +147,119 @@ it('passes real image-only attachments to execution without inventing prompt tex
   expect(f.execute).toHaveBeenCalledWith(expect.objectContaining({ message: '', attachments }));
   await expect(f.backend.run(thread, randomUUID(), '', vi.fn(), new AbortController().signal))
     .rejects.toThrow('bounded text');
+});
+
+it('names a new conversation from the first nonempty message line and retains it across connections', async () => {
+  const f = fixture();
+  const agent = f.store.saveAgentProfile({
+    id: 'reviewer', name: 'Reviewer', description: '', icon: '', model: '', enabled: true, isDefault: false,
+  });
+  const thread = await f.backend.start({ cwd: f.cwd, agentId: agent.id });
+  expect(f.backend.describe!(thread.id).name).toBe(t('externalAgentNewSession'));
+  const sessionId = f.external.get(thread.id)!.coworkSessionId;
+  const expectedTitle = 'Review changes 😀';
+  const titles: string[] = [];
+  f.onSessionsChanged.mockImplementation(() => titles.push(f.store.getSession(sessionId)!.title));
+  f.execute.mockImplementation(async () => {
+    expect(f.store.getSession(sessionId)!.title).toBe(expectedTitle);
+    return 'Answer';
+  });
+
+  await f.backend.run(thread, randomUUID(), '\r\n  Review\tchanges 😀  \r\nMore details', vi.fn(), new AbortController().signal);
+  const next = f.factory.connect();
+  const resumed = await next.resume(thread.id, {});
+  await next.run(resumed, randomUUID(), 'A different follow-up task', vi.fn(), new AbortController().signal);
+
+  expect(next.describe!(thread.id).name).toBe(expectedTitle);
+  expect(titles[0]).toBe(expectedTitle);
+  expect(f.store.readSessionSummaries([sessionId])[0]?.title).toBe(expectedTitle);
+});
+
+it('limits automatic names to 50 Unicode characters without cutting an emoji', async () => {
+  const f = fixture();
+  const thread = await f.backend.start({ cwd: f.cwd });
+
+  await f.backend.run(thread, randomUUID(), '😀'.repeat(51), vi.fn(), new AbortController().signal);
+
+  expect(f.backend.describe!(thread.id).name).toBe('😀'.repeat(50));
+});
+
+it('recognizes a pending default name after switching languages and names image-only conversations', async () => {
+  const f = fixture();
+  setLanguage('zh');
+  const thread = await f.backend.start({ cwd: f.cwd });
+  expect(f.backend.describe!(thread.id).name).toBe('新对话');
+  setLanguage('en');
+  const emptyThread = await f.backend.start({ cwd: f.cwd });
+  expect(f.backend.describe!(emptyThread.id).name).toBe('New conversation');
+  const resumedBackend = f.factory.connect();
+  const resumed = await resumedBackend.resume(thread.id, {});
+
+  await resumedBackend.run(resumed, randomUUID(), '', vi.fn(), new AbortController().signal, {
+    attachments: [{ name: 'image.png', mimeType: 'image/png', base64Data: 'aW1hZ2U=' }],
+  });
+  await resumedBackend.run(resumed, randomUUID(), 'Explain another image', vi.fn(), new AbortController().signal);
+
+  expect(resumedBackend.describe!(thread.id).name).toBe('Image conversation');
+  expect(f.execute.mock.calls[0][0].message).toBe('');
+});
+
+it('preserves client and desktop names set before the first task', async () => {
+  const f = fixture();
+  const clientThread = await f.backend.start({ cwd: f.cwd });
+  f.backend.setName!(clientThread.id, 'Client project');
+  const desktopThread = await f.backend.start({ cwd: f.cwd });
+  f.store.updateSession(f.external.get(desktopThread.id)!.coworkSessionId, { title: 'Desktop project' });
+
+  await f.backend.run(clientThread, randomUUID(), 'First client task', vi.fn(), new AbortController().signal);
+  await f.backend.run(desktopThread, randomUUID(), 'First desktop task', vi.fn(), new AbortController().signal);
+
+  expect(f.backend.describe!(clientThread.id).name).toBe('Client project');
+  expect(f.backend.describe!(desktopThread.id).name).toBe('Desktop project');
+});
+
+it('does not rename rejected tasks or overwrite names that are reset to the default after a run', async () => {
+  const f = fixture();
+  const thread = await f.backend.start({ cwd: f.cwd });
+  const sessionId = f.external.get(thread.id)!.coworkSessionId;
+  const originalTitle = f.backend.describe!(thread.id).name;
+  await expect(f.backend.run(thread, randomUUID(), '   ', vi.fn(), new AbortController().signal))
+    .rejects.toThrow('bounded text');
+  const release = reserveExternalSession(sessionId);
+  try {
+    await expect(f.backend.run(thread, randomUUID(), 'Blocked task', vi.fn(), new AbortController().signal))
+      .rejects.toThrow('active task');
+  } finally {
+    release();
+  }
+  expect(f.backend.describe!(thread.id).name).toBe(originalTitle);
+  const begin = vi.spyOn(f.external, 'beginExecution').mockImplementationOnce(() => {
+    throw new Error('Cannot reserve execution');
+  });
+  await expect(f.backend.run(thread, randomUUID(), 'Unreserved task', vi.fn(), new AbortController().signal))
+    .rejects.toThrow('Cannot reserve execution');
+  begin.mockRestore();
+  expect(f.backend.describe!(thread.id).name).toBe(originalTitle);
+  expect(f.execute).not.toHaveBeenCalled();
+
+  await f.backend.run(thread, randomUUID(), 'The first admitted task', vi.fn(), new AbortController().signal);
+  f.backend.setName!(thread.id, originalTitle);
+  await f.factory.connect().run(thread, randomUUID(), 'Later task', vi.fn(), new AbortController().signal);
+
+  expect(f.backend.describe!(thread.id).name).toBe(originalTitle);
+});
+
+it('does not infer an empty conversation from a default name when product history already exists', async () => {
+  const f = fixture();
+  const thread = await f.backend.start({ cwd: f.cwd });
+  const sessionId = f.external.get(thread.id)!.coworkSessionId;
+  const title = f.backend.describe!(thread.id).name;
+  const timing = f.store.beginSessionRun({ sessionId, clientTurnId: randomUUID(), startedAt: 1_000 });
+  f.store.finishSessionRun(timing.id, 'completed', 2_000);
+
+  await f.backend.run(thread, randomUUID(), 'New follow-up', vi.fn(), new AbortController().signal);
+
+  expect(f.backend.describe!(thread.id).name).toBe(title);
 });
 
 it('retains a selected assistant and confirmed model route while rejecting unavailable identities', async () => {

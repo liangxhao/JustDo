@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -7,6 +7,7 @@ import {
   ExternalSessionStatus,
 } from '../../../shared/integrations/externalSession';
 import { matchesModelSelectionIdentity } from '../../../shared/providers/modelSelectionIdentity';
+import { matchesTranslation, t } from '../../core/i18n';
 import type { CoworkSession, CoworkStore } from '../../data/coworkStore';
 import { buildManagedSessionKey } from '../../openclaw/sessions/openclawSessionKeys';
 import {
@@ -43,6 +44,7 @@ export interface ExternalAgentBackendOptions {
 
 const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_THREAD_NAME_LENGTH = 500;
+const MAX_AUTOMATIC_THREAD_NAME_LENGTH = 50;
 
 const canonicalDirectory = (value: string): string => {
   if (typeof value !== 'string' || !path.isAbsolute(value) || !fs.statSync(value).isDirectory())
@@ -222,9 +224,8 @@ export class ExternalAgentBackendFactory {
         if (!agent?.enabled || agent.deletedAt)
           throw new Error('The selected assistant is unavailable.');
         const modelRef = selectModel(params.model);
-        const id = randomUUID();
         const session = store().createSession(
-          agent.name,
+          t('externalAgentNewSession'),
           cwd,
           'local',
           [],
@@ -232,6 +233,7 @@ export class ExternalAgentBackendFactory {
           store().getConfig().permissionMode,
           modelRef,
         );
+        const id = session.id;
         const created = { id, cwd, agentId, modelRef };
         try {
           externalStore().create({
@@ -292,8 +294,21 @@ export class ExternalAgentBackendFactory {
               : ExternalSessionStatus.Error;
         this.active.add(external.coworkSessionId);
         try {
+          const session = store().getSession(external.coworkSessionId)!;
+          const shouldNameSession =
+            matchesTranslation('externalAgentNewSession', session.title) &&
+            !external.executionRunId && !external.openclawSessionKey &&
+            !external.nativeSessionId && !external.lifecycleRevision &&
+            !session.nativeSessionKey && !session.historyBinding &&
+            !store().getLatestSessionRun(session.id);
           receipts.beginExecution(current.id, runId);
           started = true;
+          if (shouldNameSession) {
+            const firstLine = message.trim().split(/\r\n?|\n/u)[0].replace(/\s+/gu, ' ').trim();
+            const title = Array.from(firstLine).slice(0, MAX_AUTOMATIC_THREAD_NAME_LENGTH).join('') ||
+              t('externalAgentImageSession');
+            store().updateSession(session.id, { title });
+          }
           this.options.onSessionsChanged();
           const result = await this.options.execute({
             sessionId: external.coworkSessionId,

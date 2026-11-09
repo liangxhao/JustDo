@@ -135,8 +135,9 @@ type ModelListResult = {
 `model` 使用 `model/list` 返回的 ID。工作目录的默认值由调用上下文和桌面配置确定。
 
 `thread/resume` 额外要求 `threadId`，必须是同一应用 profile 下 CLI 来源、可恢复的
-外部会话 ID，可来自普通 CLI、ACP 或 app-server。不能填入桌面产品会话 ID 或原生
-session key。省略 `cwd` 时保留该会话的目录；
+外部会话 ID，可来自普通 CLI、ACP 或 app-server。新建外部会话的 `thread.id` 与对应应用会话 ID 相同；
+已有会话保留原来的外部 ID。仍须存在对应的 CLI 来源映射，不能用普通桌面或 Chrome 会话 ID、
+OpenClaw 原生 `sessionId` 或 session key 跨入口恢复。省略 `cwd` 时保留该会话的目录；
 显式提供时也必须与原目录一致，不能借恢复操作切换工作目录。
 服务端仍会校验原生身份、所有权与尚未结算的运行，恢复不等于可以重发未知输入。
 默认读取经身份校验的原生历史；`excludeTurns: true` 可跳过回放。历史读取失败时返回错误，

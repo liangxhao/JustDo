@@ -46,7 +46,7 @@ codex app-server generate-json-schema --out build/test-dependencies/app-server-o
 所属能力 binding，撤销后续任务和元数据修改准入；不会继续执行而静默丢弃结果。
 
 列表、默认读取和改名只使用元数据，不启动 Gateway、不写客户端标记文件，也不取得被查询
-会话的执行所有权。开始／恢复线程和执行仍按既有外部 UUID、助手、工作目录、原生身份、
+会话的执行所有权。开始／恢复线程和执行仍按已有外部会话映射、助手、工作目录、原生身份、
 执行预约与 unknown 规则校验。
 
 ## 有意保留的宿主边界

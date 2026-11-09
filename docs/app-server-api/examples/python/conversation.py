@@ -15,7 +15,7 @@ from app_server_client import (
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--config', required=True, help='Connection JSON copied to a file outside the repository')
+    parser.add_argument('--config', required=True, help='Path to the WebSocket connection JSON copied from desktop settings')
     parser.add_argument('--message', action='append', required=True, help='New message; repeat for each conversation turn')
     parser.add_argument('--model', action='append', default=[], help='One model for all turns, or repeat once per message')
     parser.add_argument('--thread-id', help='Explicit external thread ID to resume; existing inputs are never replayed')

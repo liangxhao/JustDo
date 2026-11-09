@@ -33,6 +33,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
     gatewayStartupUnconfirmed: 'AI 引擎未能在时限内完成启动，请查看引擎状态与启动原因。',
     legacyWorkspaceSetupCleanupFailed: '无法清理工作区的历史初始化文件：{path}。请检查该路径及文件权限后重试。',
     externalAgentModel: '模型',
+    externalAgentNewSession: '新对话',
+    externalAgentImageSession: '图片对话',
     externalAgentAllowOnce: '允许一次',
     externalAgentReject: '拒绝',
     externalAgentToolPermission: '工具权限',
@@ -256,6 +258,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
     gatewayStartupUnconfirmed: 'The AI engine did not finish starting within the time limit. Check its status and startup reason.',
     legacyWorkspaceSetupCleanupFailed: 'Could not remove the legacy workspace setup file: {path}. Check the path and file permissions, then retry.',
     externalAgentModel: 'Model',
+    externalAgentNewSession: 'New conversation',
+    externalAgentImageSession: 'Image conversation',
     externalAgentAllowOnce: 'Allow once',
     externalAgentReject: 'Reject',
     externalAgentToolPermission: 'Tool permission',
@@ -529,6 +533,11 @@ export function setLanguage(language: LanguageType): void {
 
 export function getLanguage(): LanguageType {
   return currentLanguage;
+}
+
+/** Recognize persisted labels even when the application language has changed. */
+export function matchesTranslation(key: string, value: string): boolean {
+  return Object.values(translations).some(dictionary => dictionary[key] === value);
 }
 
 /**

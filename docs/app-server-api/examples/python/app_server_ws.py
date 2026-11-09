@@ -152,7 +152,7 @@ class AppServerClient:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--config', required=True, help='JSON copied from desktop WebSocket settings')
+    parser.add_argument('--config', required=True, help='Path to the WebSocket connection JSON copied from desktop settings')
     parser.add_argument('--message', help='Text to send to the assistant')
     parser.add_argument('--list-models', action='store_true', help='List models and exit without creating a thread')
     parser.add_argument('--model', help='Model ID from --list-models; otherwise use the desktop default')

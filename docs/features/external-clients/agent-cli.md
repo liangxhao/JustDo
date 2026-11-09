@@ -90,11 +90,23 @@ CLI、ACP、app-server 共用 `ExternalAgentBackendFactory`、`createExternalAge
 该分组与浏览器扩展的 `Chrome` 分组在中英文界面均使用上述英文名称；内部来源标识保持不变。
 来源通过分组展示，会话标题旁不再重复显示外部来源徽标。
 
+新建外部会话直接使用应用会话 ID 作为对外 ID，app-server 的 `threadId`、ACP 的 `sessionId`
+与该应用记录使用同一个值，不再额外生成外部 UUID。已有外部会话保留原 ID 和映射，恢复不新增别名，
+也不将普通桌面、Chrome 或 OpenClaw 原生 ID 自动视为外部会话。
+
+查询内置模型日志时使用 OpenClaw 会话 ID，而不是 `threadId`。应用会话菜单的“复制主会话 ID”
+和“会话详情 → 基本信息 → Session ID”已经提供 OpenClaw 原生 ID。
+
+新建的空会话显示“新对话”。首次提交任务时，若标题仍为“新对话”占位，则用首条消息的第一个非空行命名，最多保留 50 个字符；
+纯图片任务使用“图片对话”。之后继续对话不会覆盖标题，客户端或桌面已设置的自定义标题也会保留。
+CLI、ACP 和 app-server 使用同一规则，不再用助手名字命名会话，也不额外调用模型生成标题。
+已有历史会话的标题保持原样，不读取或回填历史正文。
+
 历史客户端的 scoped ID、tombstone 和原生映射保持原样，作为只读外部客户端历史展示。
 新协议不会推测旧 scope、扫描 marker 获取授权或用裸 UUID 认领旧记录。
 
 恢复必须核对来源、仍存在的产品会话、助手、真实 cwd 和已固定的原生会话身份。
-外部 UUID 不能替换成任意 Gateway key。普通文本及图文的原生 `agent` 准入接收预期 SID 和
+外部会话 ID 不能替换成任意 Gateway key。普通文本及图文的原生 `agent` 准入接收预期 SID 和
 lifecycle revision，准备与派发之间发生 reset 时拒绝发送。app-server 纯图片使用支持空文本的
 原生 `chat.send`；该方法没有原子 revision CAS，宿主在派发前后核对精确身份、连接代次与 ACK，
 无法确认时保留 unknown，不重发。所有协议按产品会话 ID 共用执行预留。

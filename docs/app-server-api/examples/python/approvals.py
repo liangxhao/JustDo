@@ -213,7 +213,7 @@ def main() -> int:
     )
 
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--config', required=True, help='Copied desktop WebSocket connection JSON')
+    parser.add_argument('--config', required=True, help='Path to the WebSocket connection JSON copied from desktop settings')
     parser.add_argument('--message', required=True, help='Text for the assistant; tools may require approval')
     parser.add_argument('--model', help='Model ID returned by model/list')
     parser.add_argument('--cwd', help='Absolute working directory on the desktop machine')

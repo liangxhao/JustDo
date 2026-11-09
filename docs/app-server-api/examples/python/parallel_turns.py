@@ -20,7 +20,7 @@ MAX_THREADS = 32
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--config', required=True, help='Connection JSON copied to a file outside the repository')
+    parser.add_argument('--config', required=True, help='Path to the WebSocket connection JSON copied from desktop settings')
     parser.add_argument('--message', action='append', required=True, help='Independent task; repeat for each new thread')
     parser.add_argument('--model', action='append', default=[], help='One model for all tasks, or repeat once per message')
     parser.add_argument('--cwd', help='Shared absolute working directory on the desktop app machine')

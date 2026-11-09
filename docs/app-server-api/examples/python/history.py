@@ -22,7 +22,7 @@ def page_count(value: str) -> int:
 
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--config', required=True, help='Copied WebSocket connection JSON saved outside the repository')
+    parser.add_argument('--config', required=True, help='Path to the WebSocket connection JSON copied from desktop settings')
     parser.add_argument('--thread-id', help='External thread ID; omit to list thread metadata')
     parser.add_argument('--view', choices=('turns', 'items', 'full'), default='turns', help='History view for --thread-id (default: turns)')
     parser.add_argument('--limit', type=page_limit, default=50, help='Entries per page, 1 to 200 (default: 50)')

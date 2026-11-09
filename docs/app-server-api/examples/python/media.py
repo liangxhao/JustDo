@@ -63,7 +63,7 @@ def _notification(event):
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--config', required=True, help='Connection JSON stored outside the repository')
+    parser.add_argument('--config', required=True, help='Path to the WebSocket connection JSON copied from desktop settings')
     parser.add_argument('--message', help='Optional text; omit for image-only input')
     parser.add_argument('--image-file', action=_MediaArgument, help='Read an image on this client and send its bytes')
     parser.add_argument('--local-image', action=_MediaArgument, help='Image path inside the desktop thread working directory')

@@ -10,7 +10,7 @@ from app_server_client import open_client, positive_timeout, print_notification,
 
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--config', required=True, help='Copied WebSocket connection JSON saved outside the repository')
+    parser.add_argument('--config', required=True, help='Path to the WebSocket connection JSON copied from desktop settings')
     parser.add_argument('--thread-id', required=True, help='Existing external thread ID to observe')
     parser.add_argument('--timeout', type=positive_timeout, default=300.0, help='Observation duration in seconds (default: 300)')
     args = parser.parse_args(argv)

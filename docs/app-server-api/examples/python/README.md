@@ -1,58 +1,29 @@
 # Python WebSocket 调用示例
 
-本目录包含一个入门示例和六个进阶示例，连接桌面应用提供的本机 app-server。
-入门示例完成：
+用 Python 连接桌面应用的 app-server，发送消息并接收流式回复。
+先启动桌面应用并配置好模型；示例需要 Python 3.10 或更新版本。
 
-`initialize` → `model/list` → `thread/start`（或 `thread/resume`）→ `turn/start` → 流式通知 → `turn/completed`。
+## 快速开始
 
-需要 Python 3.10 或更新版本。桌面应用须已运行或驻留托盘，并已配置可用模型。
-脚本只连接已运行的应用，不会启动另一套服务。
+### 1. 安装依赖
 
-| 文件                                   | 场景                                         |
-| -------------------------------------- | -------------------------------------------- |
-| [app_server_ws.py](app_server_ws.py)   | 单次文本流式回复、模型查询、显式恢复         |
-| [conversation.py](conversation.py)     | 同一会话连续多轮，逐轮选择模型               |
-| [parallel_turns.py](parallel_turns.py) | 一个连接中的多会话并发，分别收集结果         |
-| [history.py](history.py)               | 只读会话目录、Turn／Item 分页和完整历史      |
-| [subscribe.py](subscribe.py)           | 独立客户端观察现有会话，不发送任务或停止请求 |
-| [approvals.py](approvals.py)           | 流式接收期间逐次手动审批，支持实验插件确认   |
-| [media.py](media.py)                   | 标准 image／localImage、图文及纯图片输入     |
-
-进阶脚本共用 [app_server_client.py](app_server_client.py)，使用相同配置和依赖。
-复制示例时保留这些文件在同一目录。公共客户端只有一个接收循环，等待 RPC 时保留通知，
-审批输入通过后台线程返回 Future，不阻塞 WebSocket 接收。
-
-## 1. 安装依赖
-
-在仓库根目录的 PowerShell 中运行：
-
-下面使用已有的 `py313` Conda 环境；也可直接使用其他 Python 3.10 以上环境。
+在仓库根目录打开 PowerShell，进入示例目录并安装依赖：
 
 ```powershell
 conda activate py313
-python -m pip install -r docs/app-server-api/examples/python/requirements.txt
+cd docs/app-server-api/examples/python
+python -m pip install -r requirements.txt
 ```
 
-公司内网可使用已配置的内部 pip 源，或预先准备 wheel 后离线安装：
+没有 `py313` 环境时，使用其他 Python 3.10 以上环境即可。
+后面的命令都在这个目录运行。
 
-```powershell
-python -m pip install --no-index --find-links "E:\offline-wheels" -r docs/app-server-api/examples/python/requirements.txt
-```
+### 2. 保存连接配置
 
-依赖是 `websocket-client`，导入名为 `websocket`。它属于示例客户端的依赖，
-不会改变桌面应用的运行时或安装包。连接参数参考该库的
-[官方文档](https://websocket-client.readthedocs.io/en/latest/core.html#websocket._core.WebSocket.connect)。
+在桌面应用的“设置 → 外部连接 → 应用接入 → WebSocket”中复制配置。
+在当前目录新建 `app-server-connection.json`，粘贴配置并保存。
 
-## 2. 复制连接配置
-
-在“设置 → 外部连接 → 应用接入 → WebSocket”点击复制当前配置，
-将剪贴板中的完整 JSON 保存到仓库外。例如，在复制后执行：
-
-```powershell
-Get-Clipboard | Set-Content -LiteralPath "$env:TEMP\app-server-connection.json" -Encoding utf8
-```
-
-配置的结构如下，实际地址和令牌使用复制出的值：
+文件内容如下，地址和令牌以应用中复制的值为准：
 
 ```json
 {
@@ -61,201 +32,225 @@ Get-Clipboard | Set-Content -LiteralPath "$env:TEMP\app-server-connection.json" 
 }
 ```
 
-该文件含连接凭据，不要提交到 Git 或输出到日志。不要开启库的 `enableTrace`，
-它会打印认证请求头。示例只使用 `Authorization`，并限制连接到上述本机入口。
-`suppress_origin=True` 必须保留：该入口拒绝包含 `Origin` 的请求。
-示例先用标准库 socket 直连 `127.0.0.1`，再交给 websocket-client，避免环境代理接收连接凭据；
-同时用 `redirect_limit=0` 禁止带令牌跳转。配置中的其他主机、查询参数和 URL 凭据均拒绝。
+这个文件含连接令牌，已加入 Git 忽略规则。不要把令牌发给他人或写进日志。
+自动分配的端口可能在应用重启后变化，届时重新复制配置。
+修改固定端口或重新生成令牌后，也需要重启应用，再复制配置。
 
-自动端口模式下，应用重启后地址可能变化，需要重新复制。保存固定端口或重新生成令牌后，
-重启应用再复制配置；复制按钮始终返回当前正在运行的服务配置。
-
-## 3. 运行
-
-发送一条消息，实时打印助手正文，并等待本轮完成：
+### 3. 发送消息
 
 ```powershell
-python docs/app-server-api/examples/python/app_server_ws.py --config "$env:TEMP\app-server-connection.json" --message "你好，请用一句话介绍你能做什么。"
+python app_server_ws.py --config app-server-connection.json --message "你好，请用一句话介绍你能做什么。"
 ```
 
-仅查询模型目录的第一页，不创建会话或发起模型任务：
+脚本会实时打印助手回复，等本轮结束后退出。Thread ID（会话 ID）、Turn ID（本轮 ID）和状态也会显示在终端。
+入门示例会拒绝工具审批；需要手动批准工具时，使用下面的 [approvals.py](#手动审批)。
+
+## 选择示例
+
+所有示例使用同一份配置文件和依赖。
+
+| 文件                                   | 用途                                                 |
+| -------------------------------------- | ---------------------------------------------------- |
+| [app_server_ws.py](app_server_ws.py)   | 发送一条消息，接收流式回复；也可查询模型或继续旧会话 |
+| [conversation.py](conversation.py)     | 在同一会话中连续发送多条消息                         |
+| [parallel_turns.py](parallel_turns.py) | 同时运行多个独立会话                                 |
+| [history.py](history.py)               | 查看会话列表和历史记录                               |
+| [subscribe.py](subscribe.py)           | 在另一个终端观察会话的后续消息                       |
+| [approvals.py](approvals.py)           | 手动批准或拒绝工具请求                               |
+| [media.py](media.py)                   | 发送图片或图文消息                                   |
+
+进阶示例共用 [app_server_client.py](app_server_client.py)。复制示例时，请把它和
+[app_server_ws.py](app_server_ws.py) 一起保留在同一目录。
+
+## 查询模型与常用参数
+
+查看可用模型：
 
 ```powershell
-python docs/app-server-api/examples/python/app_server_ws.py --config "$env:TEMP\app-server-connection.json" --list-models
+python app_server_ws.py --config app-server-connection.json --list-models
 ```
 
-该入门脚本没有自动翻模型页，默认最多返回 50 项；若 `nextCursor` 非空，完整客户端应继续调用
-`model/list` 并传入该游标，直到为 `null`。模型 ID 和 `inputModalities` 使用真实目录结果。
+这条命令只查询模型，不发送对话。最多显示前 50 项；开发完整客户端时，若返回的 `nextCursor` 不为空，
+应继续调用 `model/list` 读取下一页。
 
-可选参数：
+| 参数                           | 用途                                                      |
+| ------------------------------ | --------------------------------------------------------- |
+| `--model "<model-id>"`         | 选择查询结果中的模型；不传则使用桌面默认模型              |
+| `--cwd "E:\workspace\project"` | 设置工作目录；不传则使用服务端默认目录                    |
+| `--thread-id "<thread-id>"`    | 继续以前的 CLI、ACP 或 app-server 会话，并发送新消息      |
+| `--timeout 600`                | 等待本轮结果的秒数，默认 300；每次 RPC 调用另有 60 秒超时 |
 
-| 参数                           | 用途                                                                              |
-| ------------------------------ | --------------------------------------------------------------------------------- |
-| `--model "<model-id>"`         | 使用 `model/list` 返回的模型 ID；不传则沿用桌面默认值                             |
-| `--cwd "E:\workspace\project"` | 指定工作目录；不传则使用服务端默认目录                                            |
-| `--thread-id "<thread-id>"`    | 明确恢复以前的 CLI、ACP 或 app-server 外部会话，并发送这次的新消息                |
-| `--timeout 600`                | 收到 `turn/start` 响应后，等待整轮结果的总秒数，默认 300；每个 RPC 另有 60 秒超时 |
+`--thread-id` 使用脚本输出的 Thread ID。新建外部会话的 Thread ID 与应用会话 ID 相同；
+已有会话继续使用原来的 Thread ID。普通桌面或 Chrome 会话 ID、OpenClaw 原生 ID 不能用于恢复外部会话。
+继续旧会话时，若传入 `--cwd`，必须与原会话目录一致。
 
-脚本将 Thread ID、Turn ID 和状态打印到 stderr，将助手正文打印到 stdout。
-恢复时使用之前输出的 Thread ID；不能用桌面产品会话 ID 或原生 session key 替代。
-此脚本演示一个会话，恢复时发送 `excludeTurns: true`，跳过脚本未展示的过去历史。
-服务端支持同连接多线程和逐轮模型选择；本示例在创建／恢复时选择模型。
-恢复时若传 `cwd`，必须与原会话目录一致。
+## 多轮对话
 
-收到服务端命令审批时，示例明确回复 `decline`，不会等待至超时或自动授权。
-若要支持需要审批的工具，客户端应先向用户展示精确请求，再将用户选择返回到同一请求 ID。
-本示例不启用实验插件确认；收到 `item/tool/requestUserInput` 时回复空 `answers`，
-未知服务端方法回复 `-32601`。它不提供交互审批界面。
-
-## 4. 多轮对话与逐轮模型
-
-重复 `--message` 表示明确提交的多轮新输入；每轮完成后才发送下一轮：
+每个 `--message` 是一条新消息，前一轮完成后再发送下一条：
 
 ```powershell
-python docs/app-server-api/examples/python/conversation.py --config "$env:TEMP\app-server-connection.json" --message "不要使用工具。设计一个简单的待办事项数据结构。" --message "在刚才的结构上补充截止日期。"
+python conversation.py --config app-server-connection.json --message "不要使用工具。设计一个待办事项数据结构。" --message "在刚才的结构上补充截止日期。"
 ```
 
-添加 `--thread-id "<thread-id>"` 可在旧会话继续发送这些新消息，历史输入不会被重发。
-`--model "<model-id>"` 指定所有轮次使用的模型，也可重复 `--model` 并与消息逐项对应；
-ID 使用入门脚本 `--list-models` 的真实结果。`--timeout` 是每一轮的等待秒数，默认 300。
-失败、取消或 `EXECUTION_UNKNOWN:` 均停止后续轮次。
+添加 `--thread-id "<thread-id>"` 可继续旧会话，不会重发历史消息。
+传一个 `--model` 时，所有轮次使用同一模型；也可以为每条消息分别传一个 `--model`，按顺序对应。
+`--timeout` 按每一轮计算，默认 300 秒。某轮失败、取消或结果未知时，脚本停止发送后续消息。
 
-## 5. 一个连接并发多个会话
+## 并发对话
 
-每个 `--message` 创建一个独立会话；脚本先提交各轮，再按精确 Thread／Turn ID 收集全部结果：
+每个 `--message` 创建一个独立会话，脚本提交所有消息后等待各自的结果：
 
 ```powershell
-python docs/app-server-api/examples/python/parallel_turns.py --config "$env:TEMP\app-server-connection.json" --message "不要使用工具。用三句话介绍 SQLite。" --message "不要使用工具。用三句话介绍 WebSocket。" --timeout 180
+python parallel_turns.py --config app-server-connection.json --message "不要使用工具。用三句话介绍 SQLite。" --message "不要使用工具。用三句话介绍 WebSocket。" --timeout 180
 ```
 
-最多 32 个会话，`--cwd` 为各会话的公共工作目录。`--model` 的单值／逐项对应规则与多轮示例相同。
-某个明确拒绝的任务不会重发，也不会取消其他已接纳任务；脚本仍收集它们的结果。
-所有准入调用结束后，等待使用一个总期限；每个准入 RPC 仍有独立的 60 秒期限。
-超时输出已经完成的结果和仍未核实的 ID。Ctrl+C 立即关闭连接，
-不把取消请求当作执行已经停止。
+最多同时创建 32 个会话。`--cwd` 对所有会话生效，`--model` 的用法与多轮示例相同。
+某个任务被拒绝时，脚本仍会等待其他已接收的任务。
+所有提交调用结束后，按 `--timeout` 等待结果；每次提交另有 60 秒超时。
+超时后会列出已完成的结果和结果未知的 ID。按 Ctrl+C 关闭连接，并不代表任务已经停止。
 
-## 6. 历史读取与分页
+## 查看历史
 
-只列外部会话元数据，不创建或恢复会话：
+列出会话，每页 10 条，最多读取 2 页：
 
 ```powershell
-python docs/app-server-api/examples/python/history.py --config "$env:TEMP\app-server-connection.json" --limit 10 --pages 2
+python history.py --config app-server-connection.json --limit 10 --pages 2
 ```
 
-读取某个会话的 Turn 摘要页，或读取指定 Turn 的 Item：
+查看某个会话的轮次列表：
 
 ```powershell
-python docs/app-server-api/examples/python/history.py --config "$env:TEMP\app-server-connection.json" --thread-id "<thread-id>" --view turns --limit 2 --pages 3
-python docs/app-server-api/examples/python/history.py --config "$env:TEMP\app-server-connection.json" --thread-id "<thread-id>" --view items --turn-id "<turn-id>" --limit 10
+python history.py --config app-server-connection.json --thread-id "<thread-id>" --view turns --limit 2 --pages 3
 ```
 
-每页输出独立 JSON，并保留 `nextCursor`。达到 `--pages` 后可用 `--cursor "<nextCursor>"`
-接着查询；线程、视图、排序和筛选条件须保持一致。历史发生变化使游标失效时，脚本直接报错，
-不会自动从头重读。`--limit` 范围为 1 到 200，默认 50；`--pages` 默认 1。
-
-`--view full` 使用一次 `thread/read(includeTurns: true)`，不分页，也不受 `--limit`／`--pages` 控制。
-完整历史超限时改用分页视图。所有结果只打印到 stdout，不自动写入历史文件或取得执行所有权。
-
-## 7. 独立观察客户端
-
-在第二个终端运行，使用对话脚本输出的外部 Thread ID：
+查看某一轮的消息和工具记录：
 
 ```powershell
-python docs/app-server-api/examples/python/subscribe.py --config "$env:TEMP\app-server-connection.json" --thread-id "<thread-id>" --timeout 120
+python history.py --config app-server-connection.json --thread-id "<thread-id>" --view items --turn-id "<turn-id>" --limit 10
 ```
 
-它使用 `thread/resume(excludeTurns: true)` 订阅后续通知，不回放错过的实时事件，也不提交新轮次。
-然后在第一个终端使用 `conversation.py --thread-id "<thread-id>" --message "<new-message>"` 继续对话，
-两个客户端都可接收后续结果。观察者不会取得其他连接的执行或审批权限。
-观察期限结束或 Ctrl+C 时先尽力退订，再关闭自己的连接；不会向拥有者的轮次发送停止请求。
+每页输出一条 JSON。结果中的 `nextCursor` 不为空时，可添加 `--cursor "<nextCursor>"` 继续查询，
+会话、视图、排序和筛选条件须保持一致。游标失效时会报错，不会自动从头读取。
+`--limit` 为每页条数，范围 1～200，默认 50；`--pages` 默认为 1。
 
-## 8. 手动审批
+`--view full` 一次读取完整会话，不受 `--limit` 和 `--pages` 控制；历史过大时请改用分页。
+这个示例只读取历史，不创建会话、不执行任务，也不会把结果自动保存到文件。
 
-使用需要工具的明确任务，逐次展示原生命令、目录、原因和对应 Thread／Turn：
+## 观察会话
+
+在另一个终端进入示例目录，用已有的 Thread ID 运行：
 
 ```powershell
-python docs/app-server-api/examples/python/approvals.py --config "$env:TEMP\app-server-connection.json" --message "请在当前目录运行只读命令 pwd 并告诉我结果。"
+python subscribe.py --config app-server-connection.json --thread-id "<thread-id>" --timeout 120
 ```
 
-命令提示输入 `accept`、`decline` 或 `cancel`；回车、EOF 或不支持的请求均拒绝。
-`accept` 只允许这一次请求，`cancel` 还请求取消对应轮次，仍须等待原生结果。
-开启 `--experimental` 且服务端明确提供时，也可输入 `acceptForSession`，
-只复用该连接中同一原生会话的精确相同命令／环境，不写永久命令规则。
-该许可可跨本连接已结算的轮次复用，空闲退订本身不清除；关闭连接、`cancel` 或身份／代次变化会撤回，
-也可能因有界缓存回收而重新提示。新连接不继承旧连接的命令许可。
-是否触发审批由真实权限模式和工具决定，`on-request` 不保证每条命令都会出现提示。
-`--thread-id`、`--model`、`--cwd` 和 `--timeout` 与其他对话示例含义一致。
-
-添加 `--experimental` 才开启本产品的实验插件确认。脚本逐项展示真实选项，
-输入对应序号回传服务端标签，不根据中文／英文文字猜测允许项。
-只有原生明确提供时才出现“始终允许此 App”，它是原生 App 持久授权，范围与命令会话授权不同。
-此选择可在原生 App 权限设置中管理；脚本不创建或模拟永久命令规则。
-
-等待用户输入时继续接收回复及审批撤销。标准输入无法跨平台强制中断：若旧请求已撤销或过期，
-之后输入的选择会被丢弃；旧输入线程仍在等待时，新请求直接拒绝。按 Enter 结束旧提示后，
-才能显示下一次提示。最多使用一个后台输入线程，关闭连接后不会发送迟到选择。
-本地审批等待上限为 60 秒，服务器可更早撤销；`--timeout` 不会延长审批许可。
-
-## 9. 标准图片输入
-
-读取客户端图片，转换成标准 image data URL；不把客户端本地路径传给宿主：
+然后在原终端继续向同一会话发送消息：
 
 ```powershell
-python docs/app-server-api/examples/python/media.py --config "$env:TEMP\app-server-connection.json" --image-file "E:\images\diagram.png" --message "解释这张图。"
+python conversation.py --config app-server-connection.json --thread-id "<thread-id>" --message "继续刚才的话题。"
 ```
 
-省略 `--message` 即纯图片输入，不生成占位 prompt。`--image-file`、`--local-image` 和
-`--image-url` 可混用／重复，图片相对顺序保留。`--local-image` 指桌面线程 cwd 内的真实图片路径；
-`--image-url` 仅支持宿主允许的私网 IP 字面地址 HTTP(S) 资源，不带 Cookie 或模型凭据。
-不接受域名、loopback／链路本地地址、URL 用户名／密码或 fragment，也不跟随重定向；
-使用宿主已有代理设置，每张远程图片读取上限 15 秒。
-域名图片可先由客户端获取为本地文件，再用 `--image-file`。
-格式为 PNG／JPEG／GIF／WebP，最多 5 张、解码后合计 4 MiB；真实模型必须声明 image 模态。
-文本按 UTF-8 最多 2 MiB，规范化 content 编码后最多 6 MiB，完整 JSON 消息仍须低于 8 MiB。
-`--image-file` 的读取范围由客户端机器权限决定；`--local-image` 在宿主解析真实路径，必须位于线程 cwd 内。
-文本和图片在原生侧归一为合并文字和有序图片，实时通知与历史使用相同含义，不承诺交错位置。
-当前不支持 audio／localAudio、fileId 和非 auto 的图片 detail。
-此脚本仍默认拒绝工具审批；终端省略含完整图片字节的 userMessage 通知，继续输出模型进度和结果。
-纯图片走原生 chat.send：保留 SID、连接代次和发送前后身份核对，但没有带文字图片使用的原生 revision CAS。
-身份或 ACK 不匹配仍为 unknown，不能重发。长回复仅凭认证历史中的唯一精确执行 final_answer
-与原生截断摘要匹配恢复；恢复失败是输出错误，不代表已确认完成的原生执行变成失败。
+两个终端都会收到后续消息。观察示例只订阅运行期间的新通知，不补发之前的通知，也不会取得其他连接的执行或审批权限。
+达到观察时间或按 Ctrl+C 后，它会尝试退订并关闭自己的连接，不会停止另一个终端的任务。
 
-## 10. 验证示例
+## 手动审批
 
-本地测试不连接桌面应用、不读取凭据或启动模型，覆盖提前通知、并发结果、未知状态、
-超时、分页游标、观察者退订、审批撤销和媒体参数构造：
+这个示例会展示工具请求的命令、工作目录、原因和对应的会话／轮次，等待你选择：
 
 ```powershell
-conda activate py313
-python -B -m unittest discover -s docs/app-server-api/examples/python/tests -v
+python approvals.py --config app-server-connection.json --message "请在当前目录运行只读命令 pwd 并告诉我结果。"
 ```
 
-进阶脚本的 stdout 使用 JSON 行输出通知及结果，stderr 输出运行 ID、审批提示和错误。
-公共客户端对帧、通知队列、文本及审批身份设有容量上限；超限明确失败，不静默丢掉终态。
-单帧仍限制 8 MiB，等待其他 RPC 时的聚合缓存为 16 MiB，能够同时保留大图片的 started／completed 两份通知。
-队列还限制通知数量、审批请求与已见 ID 数量，长期运行到上限会明确退出；该示例客户端不是无界常驻服务。
-JSON 输出可能包含用户输入、工具结果、图片字节及真实图片引用路径；只有 `media.py` 主动省略 userMessage 通知，
-只读历史和观察脚本仍会按请求输出它们。不应将这些结果当作已脱敏日志。
-这些示例均不自动重连、重发任务或批准工具。
+| 输入      | 行为                                             |
+| --------- | ------------------------------------------------ |
+| `accept`  | 允许这一次请求                                   |
+| `decline` | 拒绝这一次请求                                   |
+| `cancel`  | 拒绝请求，并请求取消本轮；仍需等待服务端确认结果 |
+| 直接回车  | 拒绝请求                                         |
 
-验证记录：六个进阶入口均完成命令帮助和本地测试；审批另经真实本机 WebSocket 测试服务验证
-允许、拒绝、实验插件选项和输入等待时撤销，执行后端为替身。
-协议统一前的真实桌面文本／历史联调不能替代本轮图片与审批整链验收。
-当前已验证和未验证的范围统一维护在[兼容性说明](../../compatibility.md#已验证与未验证)。
+是否出现审批提示，取决于应用的权限设置和实际调用的工具。`on-request` 不保证每条命令都需要审批。
+`--thread-id`、`--model`、`--cwd` 和 `--timeout` 与其他对话示例相同。
 
-## 结果判断
+添加 `--experimental` 可使用服务端提供的实验审批选项：
 
-- `turn/start` 返回的 ID 只表示本地准入，仍须接收异步通知。
-- 示例按 `threadId` 和 `turnId` 匹配通知，正文来自 `item/agentMessage/delta`。
-  `item/completed` 的完整正文不会再次追加；没有 delta 时则直接显示完整正文。
-  正文可能包含执行中的 commentary，最终回答 item 的 `phase` 为 `final_answer`。
-- 发送任务的示例只有全部请求匹配 `turn/completed` 且 `status: completed` 时才以退出码 `0` 结束；
-  模型查询、历史读取和观察脚本按自身查询／观察是否正常完成退出。
-  `interrupted` 表示后端确认取消；`failed` 可能是执行、输出或结果核对错误。
-- `EXECUTION_UNKNOWN:` 表示执行结果未知，不能当作原生执行已失败。超时、断线、正文结束
-  也不能证明任务已停止。示例不会自动重连或重发输入；结果未知后先在桌面端核对。
-- Ctrl+C 或超时会关闭连接，服务端请求取消所属执行；连接关闭不等于取消已经完成。
-  如需显式停止，可发送 `turn/interrupt` 并带上精确的 `threadId`、`turnId`；其 ACK 也只表示取消请求。
+- **命令会话授权**：只有服务端提供 `acceptForSession` 时才能选择。只对当前连接、同一原生会话中完全相同的命令和环境生效，不保存永久命令规则。
+  授权可跨轮次使用；空闲退订不会清除。关闭连接、取消或会话身份变化时撤回，缓存回收后也可能再次询问。新连接不继承旧授权。
+- **插件确认**：按提示输入选项序号。只有服务端提供时才会出现“始终允许此 App”；该授权由原生 App 权限设置管理，与上面的命令会话授权不同。
 
-字段与能力范围见[通用客户端规范](../../external-clients.md)，其中包含原生历史分页及
-交互审批的完整边界。入门脚本 app_server_ws.py 只展示文本流，历史、图片和手动审批分别见对应进阶示例。
+等待输入期间，脚本仍会接收消息和审批撤销。审批过期或撤销后，迟到的选择会被丢弃。
+旧提示仍在等输入时，新请求会被拒绝；按 Enter 结束旧提示后才能显示新提示。
+审批最多等待 60 秒，服务端可能更早撤销，`--timeout` 不会延长审批时间。
+输入结束（EOF）或不支持的请求也会被拒绝。
+
+## 发送图片
+
+发送本机图片和文字：
+
+```powershell
+python media.py --config app-server-connection.json --image-file "E:\images\diagram.png" --message "解释这张图。"
+```
+
+省略 `--message` 就是只发送图片。三种图片参数可以混用、重复，图片顺序与参数顺序一致：
+
+| 参数                                               | 读取位置和要求                                         |
+| -------------------------------------------------- | ------------------------------------------------------ |
+| `--image-file "E:\images\diagram.png"`             | Python 所在电脑上的文件，脚本读出后转为 data URL 发送  |
+| `--local-image "E:\workspace\project\diagram.png"` | 桌面应用所在电脑上的文件，真实路径必须在会话工作目录内 |
+| `--image-url "http://<private-ip>/diagram.png"`    | 由桌面应用读取，只支持允许的私网 IP 地址，不支持域名   |
+
+模型必须支持图片输入。图片支持 PNG、JPEG、GIF、WebP，最多 5 张，原始字节合计不超过 4 MiB。
+文字最多 2 MiB（UTF-8）；编码后的输入内容最多 6 MiB，完整 JSON 消息须小于 8 MiB。
+当前不支持音频、`fileId` 或非 `auto` 的图片 `detail`。
+
+远程图片请求不带 Cookie 或模型凭据，不允许回环／链路本地地址、URL 用户名密码、fragment 或重定向。
+请求使用桌面应用已有的代理设置，每张图片最多读取 15 秒。域名图片可先下载，再用 `--image-file` 发送。
+文字会合并，图片保留顺序，不保证文字与图片交错的位置。
+
+这个示例默认拒绝工具审批。终端会显示模型进度和结果，但会省略含完整图片数据的 `userMessage` 通知。
+纯图片发送的身份核对和长回复恢复边界见[兼容性说明](../../compatibility.md#有意保留的宿主边界)。
+
+## 输出与结果判断
+
+入门脚本将助手正文输出到 stdout，将运行 ID 和状态输出到 stderr。
+进阶脚本在 stdout 中按行输出 JSON，在 stderr 中显示运行 ID、审批提示和错误。
+JSON 可能包含用户输入、工具结果、图片数据和路径，不能当作已脱敏日志。
+只有 `media.py` 省略 `userMessage`，历史和观察示例仍可能输出这些内容。
+
+- `turn/start` 返回 ID 只表示请求已接收。还要等到对应会话和轮次的 `turn/completed`，才能判断结果。
+- 发送任务的示例只有所有任务都以 `status: completed` 结束时才返回退出码 `0`。查询和观察示例按各自操作是否正常完成退出。
+- `interrupted` 表示服务端已确认取消；`failed` 可能是执行失败，也可能是输出或结果核对出错。
+- `EXECUTION_UNKNOWN:` 表示结果未知。超时、断线或回复文字结束，都不能证明任务已停止。先在桌面应用中核对，不要直接重发。
+- Ctrl+C 或超时会关闭连接，服务端会请求取消该连接的任务。关闭连接不代表取消完成；`turn/interrupt` 的响应也只表示收到取消请求。
+
+所有示例都不会自动重连、自动重发任务或自动批准工具。
+
+## 实现说明
+
+需要修改客户端时，再查看这些细节和[通用客户端规范](../../external-clients.md)：
+
+- 调用顺序为 `initialize` → `initialized` → `model/list` → `thread/start` 或 `thread/resume` → `turn/start` → 接收通知，直到 `turn/completed`。
+- 入门示例一次处理一个会话，在创建或恢复会话时选择模型。恢复时使用 `excludeTurns: true`，不读取旧历史；服务端也支持同连接多会话和逐轮选择模型。
+- 入门示例不启用实验插件确认：命令审批返回 `decline`，`item/tool/requestUserInput` 返回空 `answers`，未知服务端方法返回 `-32601`。交互审批见 `approvals.py`。
+- 进阶示例共用一个接收循环，等待 RPC 时会保留通知；审批使用一个后台输入线程，避免阻塞消息接收。关闭连接后不再发送迟到的审批选择。
+- 回复按 `threadId`、`turnId` 匹配。正文来自 `item/agentMessage/delta`；`item/completed` 只在没有 delta 时补充完整正文，避免重复输出。执行中的文字可能是 commentary，最终回答的 `phase` 为 `final_answer`。
+- 示例只接受设置中复制的本机 `127.0.0.1` 地址。连接先用标准库 socket 直连，再交给 `websocket-client`，避开环境代理；`redirect_limit=0` 禁止带令牌跳转，`suppress_origin=True` 避免发送服务端不接受的 `Origin`。不接受其他主机、查询参数或 URL 凭据。
+- 不要开启 `websocket.enableTrace`，它会打印认证请求头。连接参数可查阅 `websocket-client` 的[官方文档](https://websocket-client.readthedocs.io/en/latest/core.html#websocket._core.WebSocket.connect)。
+- 客户端限制单帧 8 MiB、等待 RPC 时的通知缓存合计 16 MiB，可同时保留图片的 started／completed 通知。通知、文本和审批记录也有数量上限，超限时会报错退出，不会悄悄丢弃完成通知。示例适合学习和短期调用，不适合直接作为长期运行的服务。
+
+## 离线安装与本地测试
+
+内网环境可使用已配置的内部 pip 源。如果已准备好依赖 wheel，也可以离线安装：
+
+```powershell
+python -m pip install --no-index --find-links "E:\offline-wheels" -r requirements.txt
+```
+
+运行本地测试：
+
+```powershell
+python -B -m unittest discover -s tests -v
+```
+
+测试不连接桌面应用、不读取令牌，也不调用模型。覆盖提前到达的通知、并发结果、未知状态、超时、分页、退订、审批撤销和图片参数。
+六个进阶示例已检查命令帮助并通过本地测试；审批还使用本机 WebSocket 测试服务验证过允许、拒绝、插件选项和等待输入时撤销，执行后端为测试替身。
+这些测试不能代替真实桌面应用的图片和审批完整联调，当前验证范围见[兼容性说明](../../compatibility.md#已验证与未验证)。

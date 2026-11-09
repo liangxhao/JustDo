@@ -49,6 +49,7 @@ devtool.log
 logs/
 run_log.log
 run_log.ps1
+/docs/app-server-api/examples/python/app-server-connection.json
 
 # Accidentally committed git hook files outside git-hooks/
 **/**/post-commit
