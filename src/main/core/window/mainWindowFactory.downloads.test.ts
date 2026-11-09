@@ -7,6 +7,7 @@ import {
   BROWSER_GUEST_COMMAND_CHANNEL,
   BROWSER_PANEL_PARTITION,
   BrowserIpc,
+  BrowserTabPresentation,
 } from '../../../shared/browser/browser';
 import { registerBackgroundBrowserGuest } from '../../browser/backgroundBrowserGuestRegistry';
 
@@ -24,6 +25,7 @@ const mocks = vi.hoisted(() => ({
   attachWebpage: vi.fn(),
   automating: vi.fn(),
   menuPopup: vi.fn(),
+  menuTemplate: vi.fn(),
 }));
 vi.mock('electron', () => ({
   app: { getPath: mocks.getPath },
@@ -35,7 +37,7 @@ vi.mock('electron', () => ({
   dialog: { showSaveDialog: mocks.showSaveDialog },
   ipcMain: { on: vi.fn(), off: vi.fn(), handle: vi.fn(), removeHandler: vi.fn() },
   session: { fromPartition: mocks.fromPartition },
-  Menu: { buildFromTemplate: () => ({ popup: mocks.menuPopup }) },
+  Menu: { buildFromTemplate: mocks.menuTemplate },
 }));
 vi.mock('../../browser/data/browserDataImportService', () => ({
   recordBrowserDownload: mocks.record,
@@ -98,6 +100,7 @@ let origin: EventEmitter & {
   id: number;
   session: typeof browserSession;
   isDestroyed: () => boolean;
+  setWindowOpenHandler: ReturnType<typeof vi.fn>;
 };
 
 beforeEach(() => {
@@ -106,6 +109,7 @@ beforeEach(() => {
   mocks.claim.mockReset();
   mocks.attachWidget.mockReturnValue(false);
   mocks.attachWebpage.mockReturnValue(false);
+  mocks.menuTemplate.mockReset().mockImplementation(() => ({ popup: mocks.menuPopup }));
   const sessions = new Map<string, ReturnType<typeof makeSession>>();
   mocks.fromPartition.mockImplementation((partition: string) => {
     if (!sessions.has(partition)) sessions.set(partition, makeSession());
@@ -206,6 +210,70 @@ test('keeps an automated guest input out of shell shortcuts and native menus unt
   expect(mocks.menuPopup).toHaveBeenCalledOnce();
   expect(preventDefault).toHaveBeenCalledTimes(2);
 });
+
+test.each([
+  { disposition: 'foreground-tab', automating: false, presentation: BrowserTabPresentation.Foreground },
+  { disposition: 'background-tab', automating: false, presentation: BrowserTabPresentation.Background },
+  { disposition: 'foreground-tab', automating: true, presentation: BrowserTabPresentation.Background },
+])('captures popup presentation at dispatch: %j', ({ disposition, automating, presentation }) => {
+  const handler = origin.setWindowOpenHandler.mock.calls[0]![0] as (
+    details: Record<string, unknown>,
+  ) => { action: string };
+  const host = (window as unknown as { webContents: { send: ReturnType<typeof vi.fn> } }).webContents;
+  mocks.automating.mockReturnValue(automating);
+
+  expect(handler({ url: 'https://example.com/popup', disposition })).toEqual({ action: 'deny' });
+  mocks.automating.mockReturnValue(false);
+
+  expect(host.send).toHaveBeenCalledWith(BrowserIpc.PanelOpenTab, {
+    url: 'https://example.com/popup',
+    openerGuestId: origin.id,
+    presentation,
+  });
+});
+
+test('keeps an Agent-triggered rejected POST popup in the background', () => {
+  const handler = origin.setWindowOpenHandler.mock.calls[0]![0] as (
+    details: Record<string, unknown>,
+  ) => { action: string };
+  mocks.automating.mockReturnValue(true);
+  const host = (window as unknown as { webContents: { send: ReturnType<typeof vi.fn> } }).webContents;
+
+  handler({ url: 'https://example.com/submit', disposition: 'foreground-tab', postBody: {} });
+
+  expect(host.send).toHaveBeenCalledWith(BrowserIpc.PanelOpenTab, {
+    url: 'https://example.com/submit',
+    openerGuestId: origin.id,
+    presentation: BrowserTabPresentation.Background,
+    errorCode: 'post-navigation-blocked',
+  });
+});
+
+test.each(['live', 'automating', 'destroyed'] as const)(
+  'rechecks a retained native link-menu action when its source is %s', state => {
+    Object.assign(origin, {
+      navigationHistory: { canGoBack: () => false, canGoForward: () => false },
+    });
+    const host = (window as unknown as { webContents: { send: ReturnType<typeof vi.fn> } }).webContents;
+    origin.emit('context-menu', {}, { linkURL: 'https://example.com/link' });
+    const template = mocks.menuTemplate.mock.calls.at(-1)![0] as Array<{ click?: () => void }>;
+    const click = template[0]!.click!;
+    if (state === 'automating') mocks.automating.mockReturnValue(true);
+    if (state === 'destroyed') {
+      origin.isDestroyed = () => true;
+      origin.emit('destroyed');
+    }
+
+    click();
+
+    if (state === 'live') expect(host.send).toHaveBeenCalledWith(BrowserIpc.PanelOpenTab, {
+      url: 'https://example.com/link',
+      openerGuestId: origin.id,
+      presentation: BrowserTabPresentation.Foreground,
+    });
+    else expect(host.send).not.toHaveBeenCalledWith(BrowserIpc.PanelOpenTab, expect.anything());
+  },
+);
 
 afterEach(() => {
   window.emit('closed');

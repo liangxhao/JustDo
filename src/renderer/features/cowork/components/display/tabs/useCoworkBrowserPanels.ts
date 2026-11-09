@@ -133,7 +133,13 @@ export function useCoworkBrowserPanels({
   );
   const initializingTabSessionRef = useRef<string | null>(null);
   const previousDisplayTabsRef = useRef({ displaySessionKey, hasDisplayTabs });
-  const messageNavigationScopeRef = useRef<object | null>(null);
+  const messageNavigationScopeRef = useRef({ displaySessionKey });
+  if (messageNavigationScopeRef.current.displaySessionKey !== displaySessionKey) {
+    messageNavigationScopeRef.current = { displaySessionKey };
+  }
+  const messageOwnerLifetimeRef = useRef<object | null>(null);
+  const messageOwnersRef = useRef(new Set<string>());
+  messageOwnersRef.current = new Set(sessions.map(session => session.id));
   const openBrowserTabRef = useRef(openBrowserTab);
   openBrowserTabRef.current = openBrowserTab;
   const displayControlsRef = useRef({
@@ -147,13 +153,13 @@ export function useCoworkBrowserPanels({
   useLayoutEffect(() => {
     messageTabAdmissionsRef.current.clear();
   });
-  useEffect(() => {
-    const scope = {};
-    messageNavigationScopeRef.current = scope;
+  useLayoutEffect(() => {
+    const lifetime = {};
+    messageOwnerLifetimeRef.current = lifetime;
     return () => {
-      if (messageNavigationScopeRef.current === scope) messageNavigationScopeRef.current = null;
+      if (messageOwnerLifetimeRef.current === lifetime) messageOwnerLifetimeRef.current = null;
     };
-  }, [displaySessionKey]);
+  }, []);
   const createBrowserTab = useCallback(
     (url?: string, invalidatePendingNavigation = false) => {
       setIsDisplayPanelOpen(true);
@@ -484,7 +490,14 @@ export function useCoworkBrowserPanels({
   const openLocalHtml = useCallback(
     async (detail: OpenLocalHtmlOptions) => {
       const navigationScope = messageNavigationScopeRef.current;
-      if (!detail?.filePath || detail.isCurrent?.() === false) return;
+      const ownerLifetime = messageOwnerLifetimeRef.current;
+      const ownerIsCurrent = () =>
+        ownerLifetime !== null &&
+        messageOwnerLifetimeRef.current === ownerLifetime &&
+        (currentSessionId
+          ? messageOwnersRef.current.has(currentSessionId)
+          : messageNavigationScopeRef.current === navigationScope);
+      if (!detail?.filePath || !ownerIsCurrent() || detail.isCurrent?.() === false) return;
       const navigationSuffix = detail.navigationSuffix;
       if (
         navigationSuffix !== undefined &&
@@ -496,6 +509,7 @@ export function useCoworkBrowserPanels({
       }
       const requestId = filePreviewRequestIdRef ? ++filePreviewRequestIdRef.current : undefined;
       const requestIsCurrent = () =>
+        ownerIsCurrent() &&
         (!detail.currentSessionOnly || messageNavigationScopeRef.current === navigationScope) &&
         detail.isCurrent?.() !== false &&
         (requestId === undefined || filePreviewRequestIdRef?.current === requestId);
@@ -503,6 +517,7 @@ export function useCoworkBrowserPanels({
         detail.displayTarget ?? configService.getConfig().browserHtmlLinkTarget,
         BrowserLinkTarget.Embedded,
       );
+      if (!requestIsCurrent()) return;
       try {
         const result = await window.electron.browser.createLocalHtmlPreview(
           detail.filePath,
@@ -558,18 +573,20 @@ export function useCoworkBrowserPanels({
         );
       }
     },
-    [filePreviewRequestIdRef, openMessageBrowserTab],
+    [currentSessionId, filePreviewRequestIdRef, openMessageBrowserTab],
   );
+  const messageEventHandlersRef = useRef({ openLocalHtml, openMessageBrowserTab });
+  messageEventHandlersRef.current = { openLocalHtml, openMessageBrowserTab };
   useEffect(() => {
     const handleOpenWebUrl = (event: Event) => {
       const detail = (event as CustomEvent<{ url?: unknown }>).detail;
       if (!isWebBrowserLink(detail?.url)) return;
       if (filePreviewRequestIdRef) filePreviewRequestIdRef.current += 1;
-      openMessageBrowserTab(createBrowserPanelTab(detail.url));
+      messageEventHandlersRef.current.openMessageBrowserTab(createBrowserPanelTab(detail.url));
     };
     const handleOpenLocalHtml = (event: Event) => {
       const detail = (event as CustomEvent<OpenLocalHtmlOptions>).detail;
-      if (detail) void openLocalHtml(detail);
+      if (detail) void messageEventHandlersRef.current.openLocalHtml(detail);
     };
     window.addEventListener(MessageBrowserEvent.OpenWebUrl, handleOpenWebUrl);
     window.addEventListener(MessageBrowserEvent.OpenLocalHtml, handleOpenLocalHtml);
@@ -577,6 +594,6 @@ export function useCoworkBrowserPanels({
       window.removeEventListener(MessageBrowserEvent.OpenWebUrl, handleOpenWebUrl);
       window.removeEventListener(MessageBrowserEvent.OpenLocalHtml, handleOpenLocalHtml);
     };
-  }, [filePreviewRequestIdRef, openLocalHtml, openMessageBrowserTab]);
+  }, [filePreviewRequestIdRef]);
   return { handleCreateBrowserTab, openLocalHtml };
 }

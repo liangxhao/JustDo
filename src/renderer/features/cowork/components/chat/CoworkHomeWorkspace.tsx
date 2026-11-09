@@ -70,7 +70,7 @@ interface CoworkHomeWorkspaceProps {
     panels: (activeId: string | null) => React.JSX.Element[];
   };
   hasRetainedRuntimePanels: boolean;
-  activeDisplayTabId: string;
+  activeDisplayTabId: string | null;
   closeDisplayPanel: () => void;
   browserPanelWidth: number;
   setSessionField: <K extends keyof SessionDisplayState>(

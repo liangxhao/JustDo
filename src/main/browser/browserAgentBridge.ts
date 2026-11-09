@@ -1160,15 +1160,7 @@ export class BrowserAgentBridge {
     await waitForBrowserGuestReady(guest, signal);
     signal?.throwIfAborted();
     options.assertCurrent?.();
-    const currentTab = this.tabsBySession.get(scopeId)?.get(tab.targetId);
-    if (
-      !currentTab ||
-      currentTab.webContentsId !== tab.webContentsId ||
-      currentTab.ownerId !== tab.ownerId ||
-      this.resolveRegisteredGuest(currentTab) !== guest
-    )
-      throw new Error('The browser page is no longer available.');
-    return currentTab;
+    return this.requireCurrentRegisteredGuest(tab, guest);
   }
 
   private async execute(
@@ -1554,19 +1546,29 @@ export class BrowserAgentBridge {
               ownerSessionId: executionScope?.ownerSessionId,
             },
           );
-          assertActive();
-          if (label) {
-            const labels = this.labelsBySession.get(scopeId) ?? new Map<string, string>();
-            labels.set(label, tab.targetId);
-            this.labelsBySession.set(scopeId, labels);
-          }
-          const guest = resolveGuest(tab);
-          activeGuest = guest;
-          activeGuestId = tab.webContentsId;
-          if (guest.getURL() !== url) await guest.loadURL(url);
-          assertActive();
-          this.activeTargets.set(scopeId, tab.targetId);
-          return { ok: true, ...describeTab(tab) };
+          return this.enqueue(tab.webContentsId, async () => {
+            assertActive();
+            if (!headless) {
+              this.assertNoRecording(profile);
+              if (this.listLiveTabsForSession(sessionId).some(candidate =>
+                this.userInteractionLocks.has(candidate.webContentsId),
+              )) throw new Error('The user is annotating the browser. Retry after they finish.');
+            }
+            const guest = resolveGuest(tab);
+            this.requireCurrentRegisteredGuest(tab, guest);
+            if (label) {
+              const labels = this.labelsBySession.get(scopeId) ?? new Map<string, string>();
+              labels.set(label, tab.targetId);
+              this.labelsBySession.set(scopeId, labels);
+            }
+            activeGuest = guest;
+            activeGuestId = tab.webContentsId;
+            if (guest.getURL() !== url) await guest.loadURL(url);
+            assertActive();
+            this.requireCurrentRegisteredGuest(tab, guest);
+            this.activeTargets.set(scopeId, tab.targetId);
+            return { ok: true, ...describeTab(tab) };
+          });
         });
       }
 
@@ -2081,6 +2083,20 @@ export class BrowserAgentBridge {
     const failure = tab.headless ? this.backgroundHost.getFailure(tab.webContentsId) : null;
     if (failure) throw new Error(failure);
     return guest;
+  }
+
+  private requireCurrentRegisteredGuest(
+    tab: RegisteredTab,
+    guest: Electron.WebContents,
+  ): RegisteredTab {
+    const current = this.tabsBySession.get(browserScopeId(tab.sessionId, tab.profile))?.get(tab.targetId);
+    if (
+      !current ||
+      current.webContentsId !== tab.webContentsId ||
+      current.ownerId !== tab.ownerId ||
+      this.resolveRegisteredGuest(current) !== guest
+    ) throw new Error('The browser page is no longer available.');
+    return current;
   }
 
   private isRegisteredGuestAvailable(tab: RegisteredTab): boolean {
@@ -2839,7 +2855,7 @@ export class BrowserAgentBridge {
     );
   }
 
-  private executeOnGuest(
+  private async executeOnGuest(
     command: AgentBrowserCommand,
     tab: RegisteredTab,
     guest: Electron.WebContents,
@@ -2848,6 +2864,15 @@ export class BrowserAgentBridge {
     profile: BrowserAgentProfile,
     signal?: AbortSignal,
   ): Promise<unknown> {
+    if (command.action === 'navigate' && !tab.headless) {
+      const initialUrl = guest.getURL();
+      if (!initialUrl || initialUrl === 'about:blank') {
+        await waitForBrowserGuestReady(guest, signal);
+        signal?.throwIfAborted();
+        assertActive();
+        this.requireCurrentRegisteredGuest(tab, guest);
+      }
+    }
     return browserAgentActions.executeOnGuest.call(
       this.browserAgentActionsContext,
       command,

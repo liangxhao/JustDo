@@ -24,6 +24,7 @@ import {
   type BrowserDownloadSettings,
   BrowserIpc,
   browserProfileFromPartition,
+  BrowserTabPresentation,
   DEFAULT_BROWSER_PANEL_SHORTCUTS,
   normalizeBrowserPanelHttpAuthResponse,
   normalizeBrowserPanelShortcutSettings,
@@ -640,10 +641,16 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
           requestExternalProtocol(url);
           return { action: 'deny' };
         }
+        const presentation =
+          details.disposition === 'background-tab' ||
+          options.isBrowserGuestAutomating?.(guestContents.id)
+            ? BrowserTabPresentation.Background
+            : BrowserTabPresentation.Foreground;
         if (details.postBody) {
           mainWindow.webContents.send(BrowserIpc.PanelOpenTab, {
             url,
             openerGuestId: guestContents.id,
+            presentation,
             errorCode: 'post-navigation-blocked',
           });
           return { action: 'deny' };
@@ -652,6 +659,7 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
           mainWindow.webContents.send(BrowserIpc.PanelOpenTab, {
             url: url || 'about:blank',
             openerGuestId: guestContents.id,
+            presentation,
           });
         }
         return { action: 'deny' };
@@ -725,9 +733,16 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
             {
               label: t('browserContextOpenLinkNewTab'),
               click: () => {
+                if (
+                  mainWindow.isDestroyed() ||
+                  guestContents.isDestroyed() ||
+                  !browserGuests.has(guestContents) ||
+                  options.isBrowserGuestAutomating?.(guestContents.id)
+                ) return;
                 mainWindow.webContents.send(BrowserIpc.PanelOpenTab, {
                   url: params.linkURL,
                   openerGuestId: guestContents.id,
+                  presentation: BrowserTabPresentation.Foreground,
                 });
               },
             },

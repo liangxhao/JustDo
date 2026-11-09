@@ -236,6 +236,114 @@ test('opens, labels, resolves, and closes a distinct internal tab', async () => 
   });
 });
 
+test('serializes the first open with a parallel navigation to the same guest', async () => {
+  const sendToRenderer = vi.fn();
+  bridge = new BrowserAgentBridge(sendToRenderer, () => true);
+  bridge.registerIpc();
+  const firstUrl = 'https://example.com/first';
+  const nextUrl = 'https://example.com/next';
+  const opening = bridge.executeCommand('justdo:session-1', {
+    action: 'open', url: firstUrl,
+  });
+  await vi.waitFor(() => expect(sendToRenderer).toHaveBeenCalledWith(
+    BrowserIpc.AgentEnsureTab, expect.objectContaining({ targetId: expect.any(String) }),
+  ));
+  const targetId = sendToRenderer.mock.calls.find(
+    ([channel]) => channel === BrowserIpc.AgentEnsureTab,
+  )![1].targetId;
+  let url = 'about:blank';
+  let finishFirstLoad!: () => void;
+  const firstLoad = new Promise<void>(resolve => { finishFirstLoad = resolve; });
+  const guest = Object.assign(new EventEmitter(), {
+    id: 7,
+    getType: () => 'webview',
+    isDestroyed: () => false,
+    isLoadingMainFrame: () => false,
+    session: electron.partition,
+    hostWebContents: { id: 10 },
+    getTitle: () => 'Report',
+    getURL: () => url,
+    loadURL: vi.fn(async (value: string) => {
+      url = value;
+      if (value === firstUrl) await firstLoad;
+    }),
+    executeJavaScriptInIsolatedWorld: vi.fn(async () => ({
+      title: 'Report', url, text: '', elements: [],
+    })),
+  });
+  electron.guests.set(7, guest);
+  registerGuest(7, targetId);
+  await vi.waitFor(() => expect(guest.loadURL).toHaveBeenCalledExactlyOnceWith(firstUrl));
+
+  const navigating = bridge.executeCommand('justdo:session-1', {
+    action: 'navigate', targetId, url: nextUrl,
+  });
+  // Drain the second command's admission microtasks while the first actual
+  // navigation remains pending; neither command waits for a fixed delay.
+  await new Promise<void>(resolve => setImmediate(resolve));
+  const loadsBeforeFirstCompletion = guest.loadURL.mock.calls.map(([value]) => value);
+  finishFirstLoad();
+  const [firstResult, nextResult] = await Promise.all([opening, navigating]);
+
+  expect(loadsBeforeFirstCompletion).toEqual([firstUrl]);
+  expect(firstResult).toMatchObject({ ok: true, targetId, url: firstUrl });
+  expect(nextResult).toMatchObject({
+    details: expect.objectContaining({ ok: true, targetId, url: nextUrl }),
+  });
+  expect(guest.loadURL.mock.calls.map(([value]) => value)).toEqual([firstUrl, nextUrl]);
+});
+
+test('rechecks manual protection when a first open reaches its guest queue', async () => {
+  const sendToRenderer = vi.fn();
+  bridge = new BrowserAgentBridge(sendToRenderer, () => true);
+  bridge.registerIpc();
+  const opening = bridge.executeCommand('justdo:session-1', {
+    action: 'open', url: 'https://example.com/open',
+  }).catch(error => error as Error);
+  await vi.waitFor(() => expect(sendToRenderer).toHaveBeenCalledWith(
+    BrowserIpc.AgentEnsureTab, expect.objectContaining({ targetId: expect.any(String) }),
+  ));
+  const targetId = sendToRenderer.mock.calls.find(
+    ([channel]) => channel === BrowserIpc.AgentEnsureTab,
+  )![1].targetId;
+  let url = 'about:blank';
+  let loading = true;
+  let finishNavigation!: () => void;
+  const navigation = new Promise<void>(resolve => { finishNavigation = resolve; });
+  const guest = Object.assign(new EventEmitter(), {
+    id: 7,
+    getType: () => 'webview',
+    isDestroyed: () => false,
+    isLoadingMainFrame: () => loading,
+    session: electron.partition,
+    hostWebContents: { id: 10 },
+    getTitle: () => 'Report',
+    getURL: () => url,
+    loadURL: vi.fn(async (value: string) => { url = value; await navigation; }),
+  });
+  electron.guests.set(7, guest);
+  registerGuest(7, targetId);
+  await vi.waitFor(() => expect(guest.listenerCount('did-stop-loading')).toBe(1));
+  const navigating = bridge.executeCommand('justdo:session-1', {
+    action: 'navigate', targetId, url: 'https://example.com/direct',
+  }).catch(error => error as Error);
+  await vi.waitFor(() => expect(guest.listenerCount('did-stop-loading')).toBe(2));
+  loading = false;
+  guest.emit('did-stop-loading');
+  await vi.waitFor(() => expect(guest.loadURL).toHaveBeenCalledExactlyOnceWith('https://example.com/direct'));
+
+  electron.handlers.get(BrowserIpc.UserInteractionState)!(trustedEvent(), {
+    sessionId: 'session-1', targetId, busy: true,
+  });
+  finishNavigation();
+  const [opened, navigated] = await Promise.all([opening, navigating]);
+
+  expect(opened).toBeInstanceOf(Error);
+  expect((opened as Error).message).toContain('user is annotating');
+  expect(navigated).toBeInstanceOf(Error);
+  expect(guest.loadURL).toHaveBeenCalledExactlyOnceWith('https://example.com/direct');
+});
+
 test.each([
   { action: 'open', urlField: 'url', outcome: 'loaded' },
   { action: 'open', urlField: 'targetUrl', outcome: 'loaded' },
@@ -324,6 +432,69 @@ test.each([
     ).toHaveLength(1);
   },
 );
+
+test.each([
+  { initialUrl: 'about:blank', outcome: 'loaded' },
+  { initialUrl: 'about:blank', outcome: 'withdrawn' },
+  { initialUrl: 'about:blank', outcome: 'cancelled' },
+  { initialUrl: 'https://example.com/old', outcome: 'loaded' },
+])('navigates an existing loading target without bootstrap bypass or replay: %j', async ({ initialUrl, outcome }) => {
+  const sendToRenderer = vi.fn();
+  bridge = new BrowserAgentBridge(sendToRenderer, () => true);
+  bridge.registerIpc();
+  let url = initialUrl;
+  let loading = true;
+  const guest = Object.assign(new EventEmitter(), {
+    id: 7,
+    getType: () => 'webview',
+    isDestroyed: () => false,
+    isLoadingMainFrame: () => loading,
+    session: electron.partition,
+    hostWebContents: { id: 10 },
+    getTitle: () => 'Report',
+    getURL: () => url,
+    loadURL: vi.fn(async (value: string) => {
+      url = value;
+      loading = false;
+    }),
+    executeJavaScriptInIsolatedWorld: vi.fn(async () => ({
+      title: 'Report', url, text: '', elements: [],
+    })),
+  });
+  electron.guests.set(7, guest);
+  registerGuest(7, 'existing');
+  const controller = new AbortController();
+  const pending = bridge.executeCommand('justdo:session-1', {
+    action: 'navigate', targetId: 'existing', url: 'https://example.com/report',
+  }, controller.signal);
+  if (initialUrl === 'about:blank') {
+    await vi.waitFor(() => expect(guest.listenerCount('did-stop-loading')).toBeGreaterThan(0));
+    guest.emit('did-finish-load');
+    expect(guest.loadURL).not.toHaveBeenCalled();
+    if (outcome === 'cancelled') {
+      const failure = expect(pending).rejects.toThrow('cancelled');
+      controller.abort();
+      await failure;
+      expect(guest.loadURL).not.toHaveBeenCalled();
+      return;
+    }
+    if (outcome === 'withdrawn') electron.handlers.get(BrowserIpc.AgentUnregisterTab)!(trustedEvent(), {
+      sessionId: 'session-1', targetId: 'existing',
+    });
+    loading = false;
+    guest.emit('did-stop-loading');
+  }
+  if (outcome === 'withdrawn') {
+    await expect(pending).rejects.toThrow('no longer available');
+    expect(guest.loadURL).not.toHaveBeenCalled();
+    return;
+  }
+  await expect(pending).resolves.toMatchObject({
+    details: expect.objectContaining({ url: 'https://example.com/report', targetId: 'existing' }),
+  });
+  expect(guest.loadURL).toHaveBeenCalledExactlyOnceWith('https://example.com/report');
+  expect(sendToRenderer.mock.calls.some(([channel]) => channel === BrowserIpc.AgentEnsureTab)).toBe(false);
+});
 
 test('reads the current configured tab limit for agent creation and preserves existing tabs when lowered', async () => {
   let limit = 10;

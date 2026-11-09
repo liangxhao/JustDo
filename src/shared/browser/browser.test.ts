@@ -3,6 +3,7 @@ import { describe, expect, test } from 'vitest';
 import {
   BrowserMode,
   BrowserSearchEngine,
+  BrowserTabPresentation,
   DEFAULT_BROWSER_PANEL_SHORTCUTS,
   isBrowserAgentProfile,
   isBrowserProfileRunning,
@@ -197,6 +198,25 @@ describe('isBrowserProfileRunning', () => {
 });
 
 describe('normalizeBrowserPanelOpenTabEvent', () => {
+  test.each([BrowserTabPresentation.Foreground, BrowserTabPresentation.Background])(
+    'preserves the trusted %s presentation hint across preload', presentation => {
+      expect(normalizeBrowserPanelOpenTabEvent({
+        url: 'https://example.com/page', openerGuestId: 42, presentation,
+      })).toEqual({ url: 'https://example.com/page', openerGuestId: 42, presentation });
+    },
+  );
+
+  test.each([
+    { presentation: 'unknown' },
+    { presentation: true },
+    { openerGuestId: '42' },
+    { openerGuestId: 0 },
+    { openerGuestId: -1 },
+    { openerGuestId: 1.5 },
+  ])('rejects malformed presentation or source rather than dropping it: %j', fields => {
+    expect(normalizeBrowserPanelOpenTabEvent({ url: 'https://example.com', ...fields })).toBeNull();
+  });
+
   test('preserves the whitelisted POST-blocked marker across preload', () => {
     expect(
       normalizeBrowserPanelOpenTabEvent({

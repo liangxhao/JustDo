@@ -159,9 +159,18 @@ export const browserProfileFromPartition = (partition: string): BrowserAgentProf
   return isBrowserAgentProfile(profile) ? profile : null;
 };
 
+export const BrowserTabPresentation = {
+  Foreground: 'foreground',
+  Background: 'background',
+} as const;
+export type BrowserTabPresentation =
+  (typeof BrowserTabPresentation)[keyof typeof BrowserTabPresentation];
+
 export type BrowserPanelOpenTabEvent = {
   url: string;
   openerGuestId?: number;
+  /** A trusted Main presentation hint; it does not grant page or tool ownership. */
+  presentation?: BrowserTabPresentation;
   errorCode?: 'post-navigation-blocked';
 };
 
@@ -306,11 +315,22 @@ export const normalizeBrowserPanelOpenTabEvent = (
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const record = value as Record<string, unknown>;
   if (typeof record.url !== 'string') return null;
+  const presentation = record.presentation;
+  if (
+    presentation !== undefined &&
+    presentation !== BrowserTabPresentation.Foreground &&
+    presentation !== BrowserTabPresentation.Background
+  ) return null;
+  if (
+    record.openerGuestId !== undefined &&
+    (!Number.isInteger(record.openerGuestId) || (record.openerGuestId as number) <= 0)
+  ) return null;
   return {
     url: record.url,
     ...(typeof record.openerGuestId === 'number' && Number.isInteger(record.openerGuestId)
       ? { openerGuestId: record.openerGuestId }
       : {}),
+    ...(presentation !== undefined ? { presentation: presentation as BrowserTabPresentation } : {}),
     ...(record.errorCode === 'post-navigation-blocked'
       ? { errorCode: 'post-navigation-blocked' as const }
       : {}),

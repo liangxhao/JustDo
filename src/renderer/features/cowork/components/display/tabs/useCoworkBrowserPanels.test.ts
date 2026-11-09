@@ -85,7 +85,7 @@ test.each([BrowserLinkTarget.Embedded, BrowserLinkTarget.Chrome])(
       setBrowserAgentPanelStates: vi.fn(),
       setSessionField: vi.fn(),
       pendingBrowserAgentPanelStatesRef: { current: new Map() },
-      sessions: [],
+      sessions: [{ id: 'clicked-session', status: 'idle' }],
       availableAgentBrowserSessionIdsRef: { current: [] },
       handleBrowserTargetChange: vi.fn(),
       openBrowserTab,
@@ -243,7 +243,10 @@ function createOptions(overrides: Partial<Options> = {}): Options {
     setBrowserAgentPanelStates: vi.fn(),
     setSessionField: vi.fn(),
     pendingBrowserAgentPanelStatesRef: { current: new Map() },
-    sessions: [],
+    sessions: [
+      { id: 'session', status: 'idle' },
+      { id: 'other-session', status: 'idle' },
+    ],
     availableAgentBrowserSessionIdsRef: { current: [] },
     handleBrowserTargetChange: vi.fn(),
     openBrowserTab: vi.fn(),
@@ -364,6 +367,37 @@ test('does not reveal an old conversation page while switching, before listeners
       ].includes(field),
     ),
   ).toBe(false);
+});
+
+test('routes a message link to the new workspace before old passive listeners are replaced', () => {
+  const { options, openTab } = createMessageLinkOptions(true, true);
+  const otherOpenTab = vi.fn(() => true);
+  options.browserPanelRefs.current.set('other-session', {
+    openTab: otherOpenTab,
+    closeTab: vi.fn(),
+    openTabContextMenu: vi.fn(),
+    promoteRecordingSession: vi.fn(),
+  });
+  const { rerender } = renderHook(props => {
+    useCoworkBrowserPanels(props);
+    useLayoutEffect(() => {
+      if (props.displaySessionKey === 'other-session') {
+        window.dispatchEvent(new CustomEvent(MessageBrowserEvent.OpenWebUrl, {
+          detail: { url: 'https://current.example/' },
+        }));
+      }
+    }, [props.displaySessionKey]);
+  }, { initialProps: options });
+
+  rerender({ ...options, displaySessionKey: 'other-session', currentSessionId: 'other-session' });
+
+  expect(openTab).not.toHaveBeenCalled();
+  expect(otherOpenTab).toHaveBeenCalledExactlyOnceWith(
+    'https://current.example/', expect.objectContaining({ targetId: 'user-tab' }),
+  );
+  expect(options.openBrowserTab).toHaveBeenCalledWith(
+    'other-session', expect.objectContaining({ url: 'https://current.example/' }), DEFAULT_BROWSER_TAB_LIMIT,
+  );
 });
 
 test('routes sibling execution resources into their owner sidebar without changing their resource identity', () => {
@@ -851,6 +885,59 @@ test('keeps a pending summary HTML preview when another session updates the tab 
   );
 });
 
+test.each([BrowserLinkTarget.Embedded, BrowserLinkTarget.Chrome])(
+  'drops an ordinary pending HTML preview in %s after its workspace unmounts',
+  async displayTarget => {
+    const { options, createLocalHtmlPreview, openTab, openInChrome } = createMessageLinkOptions(true, true);
+    let resolve!: (value: typeof localHtmlPreview) => void;
+    createLocalHtmlPreview.mockImplementation(() => new Promise(done => (resolve = done)));
+    const hook = renderHook(useCoworkBrowserPanels, { initialProps: options });
+    act(() => window.dispatchEvent(new CustomEvent(MessageBrowserEvent.OpenLocalHtml, {
+      detail: { filePath: 'report.html', displayTarget },
+    })));
+    hook.unmount();
+    await act(async () => resolve(localHtmlPreview));
+    expect(openTab).not.toHaveBeenCalled();
+    expect(openInChrome).not.toHaveBeenCalled();
+    expect(options.openBrowserTab).not.toHaveBeenCalled();
+  },
+);
+
+test('a retired workspace callback cannot invalidate a newer navigation', async () => {
+  const { options, createLocalHtmlPreview } = createMessageLinkOptions(true, true);
+  const requestId = { current: 7 };
+  const { result, unmount } = renderHook(useCoworkBrowserPanels, {
+    initialProps: { ...options, filePreviewRequestIdRef: requestId },
+  });
+  const retiredOpen = result.current.openLocalHtml;
+  unmount();
+
+  await retiredOpen({ filePath: 'report.html' });
+
+  expect(requestId.current).toBe(7);
+  expect(createLocalHtmlPreview).not.toHaveBeenCalled();
+});
+
+test('does not recreate a deleted source conversation from a pending HTML preview', async () => {
+  const { options, createLocalHtmlPreview, openTab, openInChrome } = createMessageLinkOptions(true, true);
+  let resolve!: (value: typeof localHtmlPreview) => void;
+  createLocalHtmlPreview.mockImplementation(() => new Promise(done => (resolve = done)));
+  const hook = renderHook(useCoworkBrowserPanels, { initialProps: options });
+  act(() => window.dispatchEvent(new CustomEvent(MessageBrowserEvent.OpenLocalHtml, {
+    detail: { filePath: 'report.html' },
+  })));
+  hook.rerender({
+    ...options,
+    displaySessionKey: 'other-session',
+    currentSessionId: 'other-session',
+    sessions: [{ id: 'other-session', status: 'idle' }],
+  });
+  await act(async () => resolve(localHtmlPreview));
+  expect(openTab).not.toHaveBeenCalled();
+  expect(openInChrome).not.toHaveBeenCalled();
+  expect(options.openBrowserTab).not.toHaveBeenCalled();
+});
+
 test('drops a pending summary HTML preview after the workspace owner unmounts', async () => {
   const { options, createLocalHtmlPreview, openTab } = createMessageLinkOptions(true, true);
   let resolve!: (value: typeof localHtmlPreview) => void;
@@ -1271,7 +1358,10 @@ test('waits for a temporary conversation to become available before creating its
 
 test('a late capacity rejection preserves the active conversation and its retained pages', async () => {
   vi.spyOn(configService, 'getConfig').mockReturnValue({ ...defaultConfig, browserTabLimit: 1 });
-  const options = createOptions({ hasDisplayTabs: true });
+  const options = createOptions({
+    hasDisplayTabs: true,
+    sessions: [{ id: 'session-a', status: 'idle' }, { id: 'session-b', status: 'idle' }],
+  });
   let finishPreview!: (value: typeof localHtmlPreview) => void;
   window.electron.browser.createLocalHtmlPreview = vi.fn().mockReturnValue(
     new Promise(resolve => {

@@ -104,6 +104,7 @@ import { useSessionSummaryVisibility } from '@/features/cowork/components/displa
 import { getAdjacentDisplayTabId } from '@/features/cowork/components/display/tabs/displayTabSelection';
 import NewDisplayTabButton from '@/features/cowork/components/display/tabs/NewDisplayTabButton';
 import { useDisplayTabOrder } from '@/features/cowork/components/display/tabs/useDisplayTabOrder';
+import { useDisplayTabSelection } from '@/features/cowork/components/display/tabs/useDisplayTabSelection';
 import { useMcpAppTabs } from '@/features/cowork/components/display/tabs/useMcpAppTabs';
 import { useRecordingReviewTabs } from '@/features/cowork/components/display/tabs/useRecordingReviewTabs';
 import {
@@ -744,10 +745,12 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     window.addEventListener(REVIEW_OPEN_EVENT, listener);
     return () => window.removeEventListener(REVIEW_OPEN_EVENT, listener);
   }, [currentSessionId, openReview]);
-  const activeDisplayTabId =
-    preferredDisplayTabId && availableDisplayTabIds.includes(preferredDisplayTabId)
-      ? preferredDisplayTabId
-      : (availableDisplayTabIds[availableDisplayTabIds.length - 1] ?? null);
+  const activeDisplayTabId = useDisplayTabSelection(
+    displayStates[displaySessionKey]?.runtimeId ?? displaySessionKey,
+    availableDisplayTabIds,
+    preferredDisplayTabId,
+    setPreferredDisplayTabId,
+  );
   const activeFilePreview = filePreviews.find(
     preview => fileDisplayTabId(preview.filePath) === activeDisplayTabId,
   );

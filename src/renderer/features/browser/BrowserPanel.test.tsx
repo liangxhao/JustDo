@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { BROWSER_AGENT_PANEL_TARGET_ID, BROWSER_GUEST_COMMAND_CHANNEL, BROWSER_GUEST_ZOOM_CHANNEL, type BrowserAgentInteractionState, type BrowserLocalHtmlPreviewResult, type BrowserPanelFaviconUpdatedEvent, type BrowserPanelTab } from '@shared/browser/browser';
+import { BROWSER_AGENT_PANEL_TARGET_ID, BROWSER_GUEST_COMMAND_CHANNEL, BROWSER_GUEST_ZOOM_CHANNEL, type BrowserAgentInteractionState, type BrowserLocalHtmlPreviewResult, type BrowserPanelFaviconUpdatedEvent, type BrowserPanelOpenTabEvent, type BrowserPanelTab,BrowserTabPresentation } from '@shared/browser/browser';
 import { type BrowserAnnotationDraft } from '@shared/browser/browserAnnotation';
 import { BrowserRecordingChannel } from '@shared/browser/browserRecording';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
@@ -17,18 +17,14 @@ import BrowserPanel, {
   getBrowserTabAddress,
   getBrowserTabDisplayTitle,
 } from './BrowserPanel';
-import { promoteBrowserPanelTabs } from './browserPanelRetention';
+import { getRetainedBrowserPanelTabs, promoteBrowserPanelTabs } from './browserPanelRetention';
 import { BROWSER_TAB_CAPACITY_EVENT } from './browserTabCapacity';
 
 vi.mock('@/features/cowork/components/composer/speech/LocalSpeechInputButton', () => ({
   LocalSpeechInputButton: () => null,
 }));
 
-type PanelOpenTabListener = (event: {
-  url: string;
-  openerGuestId?: number;
-  errorCode?: 'post-navigation-blocked';
-}) => void;
+type PanelOpenTabListener = (event: BrowserPanelOpenTabEvent) => void;
 type PanelPdfDetectedListener = (event: { url: string; guestId: number }) => void;
 type PanelHttpAuthListener = (event: {
   id: string;
@@ -1991,43 +1987,148 @@ describe('BrowserPanel embedded webview', () => {
     expect(focus).toHaveBeenCalledWith({ preventScroll: true });
   });
 
-  it.each([true, false])(
-    'adds a popup from a visible=%s opener without selecting it',
-    async isOpen => {
-      const select = vi.fn();
+  it.each([
+    { scenario: 'visible user page', isOpen: true, resource: undefined, busy: 'none', select: true },
+    { scenario: 'visible idle member page', isOpen: true, resource: 'popup-child', busy: 'none', select: true },
+    { scenario: 'hidden member page', isOpen: false, resource: 'popup-child', busy: 'none', select: false },
+    { scenario: 'Agent-controlled page', isOpen: true, resource: 'popup-child', busy: 'target', select: false },
+    { scenario: 'Agent-controlled panel', isOpen: true, resource: 'popup-child', busy: 'panel', select: false },
+  ])(
+    'routes a popup from a $scenario with selection=$select',
+    async ({ isOpen, resource, busy, select }) => {
       const onTabsChange = vi.fn();
-      const tab: BrowserPanelTab = { ...pageTab, resourceSessionId: 'popup-child' };
+      const tab: BrowserPanelTab = { ...pageTab, resourceSessionId: resource };
       const view = render(
-        <BrowserPanel
+        <BrowserPanelHarness
           draftKey="popup-background-owner"
           isOpen={isOpen}
-          width={520}
-          activeTargetId="page"
-          onClose={vi.fn()}
-          onWidthChange={vi.fn()}
-          onActiveTargetChange={select}
-          onAddAnnotation={() => true}
           initialTabs={[tab]}
           onTabsChange={onTabsChange}
+          agentInteractionStates={busy === 'panel' ? [{
+            sessionId: resource!,
+            ownerSessionId: 'popup-background-owner',
+            targetId: BROWSER_AGENT_PANEL_TARGET_ID,
+            busy: true,
+            operationId: 'popup-panel-operation',
+          }] : []}
           embedded
         />,
       );
-      select.mockClear();
+      if (busy === 'target') {
+        act(() => agentInteractionListener?.({
+          sessionId: resource!,
+          ownerSessionId: 'popup-background-owner',
+          targetId: 'page',
+          busy: true,
+          operationId: 'popup-target-operation',
+        }));
+      }
       act(() => panelOpenTabListener?.({ url: 'https://popup.example', openerGuestId: 7 }));
       await waitFor(() => expect(view.container.querySelectorAll('webview')).toHaveLength(2));
-      expect(select).not.toHaveBeenCalled();
       expect(onTabsChange).toHaveBeenLastCalledWith([
         expect.objectContaining({ targetId: 'page' }),
         expect.objectContaining({
           url: 'https://popup.example/',
-          resourceSessionId: 'popup-child',
+          ...(resource ? { resourceSessionId: resource } : {}),
         }),
       ]);
       const guests = [...view.container.querySelectorAll('webview')] as HTMLElement[];
-      expect(guests[0].style.opacity).toBe(isOpen ? '1' : '0');
-      expect(guests[1].style.opacity).toBe('0');
+      expect(guests[0].style.opacity).toBe(isOpen && !select ? '1' : '0');
+      expect(guests[1].style.opacity).toBe(select ? '1' : '0');
     },
   );
+
+  it('appends a popup from an inactive sibling without switching the visible page', () => {
+    const { container } = render(<BrowserPanelHarness initialTabs={[
+      pageTab,
+      { ...pageTab, id: 'member', targetId: 'member', resourceSessionId: 'member-resource' },
+    ]} />);
+    const guests = [...container.querySelectorAll('webview')];
+    Object.defineProperty(guests[1], 'getWebContentsId', { value: () => 8 });
+    const address = screen.getByLabelText('Browser address') as HTMLInputElement;
+    const previousAddress = address.value;
+    act(() => panelOpenTabListener?.({ url: 'https://member.example/popup', openerGuestId: 8 }));
+    const nextGuests = [...container.querySelectorAll('webview')] as HTMLElement[];
+    expect(nextGuests).toHaveLength(3);
+    expect(nextGuests[0].style.opacity).toBe('1');
+    expect(nextGuests.slice(1).every(guest => guest.style.opacity === '0')).toBe(true);
+    expect(address).toHaveProperty('value', previousAddress);
+    expect(registerAgentTab).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 'member-resource',
+      targetId: expect.stringContaining('browser-tab-'),
+    }));
+  });
+
+  it('honors a captured background popup hint after Agent control ends and presents a later foreground popup', () => {
+    const view = render(<BrowserPanelHarness draftKey="delayed-popup-presentation" initialTabs={[pageTab]} />);
+    act(() => agentInteractionListener?.({
+      sessionId: 'delayed-popup-presentation', targetId: pageTab.targetId,
+      busy: true, operationId: 'popup-creating-operation',
+    }));
+    act(() => agentInteractionListener?.({
+      sessionId: 'delayed-popup-presentation', targetId: pageTab.targetId,
+      busy: false, operationId: 'popup-creating-operation',
+    }));
+    expect(screen.queryByTestId('browser-agent-interaction-lock')).toBeNull();
+    act(() => panelOpenTabListener?.({
+      url: 'https://background.example/', openerGuestId: 7,
+      presentation: BrowserTabPresentation.Background,
+    }));
+    const guests = [...view.container.querySelectorAll('webview')] as HTMLElement[];
+    expect(guests).toHaveLength(2);
+    expect(guests[0].style.opacity).toBe('1');
+    expect(guests[1].style.opacity).toBe('0');
+    act(() => panelOpenTabListener?.({
+      url: 'https://foreground.example/', openerGuestId: 7,
+      presentation: BrowserTabPresentation.Foreground,
+    }));
+    const updatedGuests = [...view.container.querySelectorAll('webview')] as HTMLElement[];
+    expect(updatedGuests).toHaveLength(3);
+    expect(updatedGuests.slice(0, 2).every(guest => guest.style.opacity === '0')).toBe(true);
+    expect(updatedGuests[2].style.opacity).toBe('1');
+  });
+
+  it.each(['inactive', 'Agent-controlled'])(
+    'keeps an unsupported POST popup from an %s source out of the current page notices',
+    source => {
+      const view = render(<BrowserPanelHarness draftKey="post-popup-owner" initialTabs={[
+        pageTab, { ...pageTab, id: 'member', targetId: 'member', resourceSessionId: 'member-resource' },
+      ]} />);
+      const guests = [...view.container.querySelectorAll('webview')];
+      Object.defineProperty(guests[1], 'getWebContentsId', { value: () => 8 });
+      if (source === 'Agent-controlled') act(() => agentInteractionListener?.({
+        sessionId: 'post-popup-owner', targetId: pageTab.targetId,
+        busy: true, operationId: 'blocked-post-operation',
+      }));
+      act(() => panelOpenTabListener?.({
+        url: 'https://submit.example/', openerGuestId: source === 'inactive' ? 8 : 7,
+        errorCode: 'post-navigation-blocked',
+      }));
+      expect(screen.queryByRole('status')).toBeNull();
+      expect(view.container.querySelectorAll('webview')).toHaveLength(2);
+      expect((guests[0] as HTMLElement).style.opacity).toBe('1');
+    },
+  );
+
+  it('allows a visible user popup while a different execution resource owns a panel operation', () => {
+    const onTabsChange = vi.fn();
+    const view = render(<BrowserPanelHarness draftKey="unrelated-popup-operation"
+      initialTabs={[pageTab]} onTabsChange={onTabsChange}
+      agentInteractionStates={[{
+        sessionId: 'background-member-resource', ownerSessionId: 'unrelated-popup-operation',
+        targetId: BROWSER_AGENT_PANEL_TARGET_ID, busy: true, operationId: 'other-member-operation',
+      }]} />);
+    expect(screen.queryByTestId('browser-agent-interaction-lock')).toBeNull();
+    act(() => panelOpenTabListener?.({
+      url: 'https://user-popup.example/', openerGuestId: 7,
+      presentation: BrowserTabPresentation.Foreground,
+    }));
+    const guests = [...view.container.querySelectorAll('webview')] as HTMLElement[];
+    expect(guests).toHaveLength(2);
+    expect(guests[0].style.opacity).toBe('0');
+    expect(guests[1].style.opacity).toBe('1');
+    expect((onTabsChange.mock.lastCall![0] as BrowserPanelTab[])[1].resourceSessionId).toBeUndefined();
+  });
 
   it('ignores shell shortcuts from inactive guests and from an Agent controlling the visible guest', () => {
     const tabs: BrowserPanelTab[] = ['b', 'c'].map(id => ({
@@ -3411,6 +3512,268 @@ describe('BrowserPanel embedded webview', () => {
     const secondView = render(<BrowserPanelHarness embedded onTabsChange={remountTabsChange} />);
     await waitFor(() => expect(remountTabsChange).toHaveBeenCalledWith([]));
     expect(secondView.container.querySelectorAll('webview')).toHaveLength(0);
+  });
+
+  it.each([
+    { transition: 'switch', success: true },
+    { transition: 'hide', success: true },
+    { transition: 'switch', success: false },
+  ])('retires a delayed local preview after $transition (success=$success)', async ({ transition, success }) => {
+    let complete!: (value: BrowserLocalHtmlPreviewResult) => void;
+    createLocalHtmlPreview.mockReturnValue(new Promise<BrowserLocalHtmlPreviewResult>(resolve => {
+      complete = resolve;
+    }));
+    const source: BrowserPanelTab = {
+      id: 'source', targetId: 'source', title: 'Report',
+      url: 'http://127.0.0.1:43128/old/report.html',
+      sourceFilePath: 'C:\\reports\\report.html',
+      sourcePreviewUrl: 'http://127.0.0.1:43128/old/report.html',
+      sourceRootPath: 'C:\\reports',
+      sourcePreviewRootUrl: 'http://127.0.0.1:43128/old/',
+    };
+    const props = {
+      draftKey: `preview-scope-${transition}-${success}`,
+      isOpen: true, width: 520, activeTargetId: 'source',
+      initialTabs: [source, pageTab],
+      onClose: vi.fn(), onWidthChange: vi.fn(), onActiveTargetChange: vi.fn(),
+      onAddAnnotation: () => true,
+    };
+    const view = render(<BrowserPanel {...props} embedded />);
+    const address = screen.getByLabelText('Browser address');
+    fireEvent.change(address, { target: { value: 'C:\\reports\\next.html' } });
+    fireEvent.submit(address.closest('form')!);
+    expect(createLocalHtmlPreview).toHaveBeenCalledWith('C:\\reports\\next.html');
+    view.rerender(<BrowserPanel {...props} embedded
+      activeTargetId={transition === 'switch' ? 'page' : 'source'}
+      isOpen={transition !== 'hide'} />);
+    props.onActiveTargetChange.mockClear();
+    await act(async () => complete(success ? {
+      success: true,
+      url: 'http://127.0.0.1:43128/new/next.html',
+      filePath: 'C:\\reports\\next.html', rootPath: 'C:\\reports',
+      previewRootUrl: 'http://127.0.0.1:43128/new/',
+    } : { success: false, errorCode: 'not_found' }));
+    expect(view.container.querySelectorAll('webview')).toHaveLength(2);
+    expect(loadUrl).not.toHaveBeenCalled();
+    expect(props.onActiveTargetChange).not.toHaveBeenCalled();
+    expect(screen.queryByRole('alert')).toBeNull();
+    if (transition === 'switch') {
+      expect((view.container.querySelectorAll('webview')[1] as HTMLElement).style.opacity).toBe('1');
+    }
+  });
+
+  it('retires a local preview when its same selected guest navigates to a newer document', async () => {
+    let complete!: (value: BrowserLocalHtmlPreviewResult) => void;
+    createLocalHtmlPreview.mockReturnValue(new Promise<BrowserLocalHtmlPreviewResult>(resolve => {
+      complete = resolve;
+    }));
+    const onTabsChange = vi.fn();
+    const view = render(<BrowserPanelHarness draftKey="same-guest-preview-navigation"
+      initialTabs={[pageTab]} onTabsChange={onTabsChange} />);
+    const guest = view.container.querySelector('webview')!;
+    fireEvent(guest, new Event('dom-ready'));
+    const address = screen.getByLabelText('Browser address');
+    fireEvent.change(address, { target: { value: 'C:\\reports\\slow.html' } });
+    fireEvent.submit(address.closest('form')!);
+    expect(createLocalHtmlPreview).toHaveBeenCalledWith('C:\\reports\\slow.html');
+
+    const newerUrl = 'https://newer-document.example/report';
+    guest.setAttribute('src', newerUrl);
+    fireEvent(guest, new Event('did-start-loading'));
+    const navigation = new Event('did-navigate');
+    Object.assign(navigation, { url: newerUrl, isMainFrame: true });
+    fireEvent(guest, navigation);
+    await act(async () => complete({
+      success: true,
+      url: 'http://127.0.0.1:43128/slow/slow.html',
+      filePath: 'C:\\reports\\slow.html', rootPath: 'C:\\reports',
+      previewRootUrl: 'http://127.0.0.1:43128/slow/',
+    }));
+
+    expect(loadUrl).not.toHaveBeenCalled();
+    expect(view.container.querySelectorAll('webview')).toHaveLength(1);
+    expect(view.container.querySelector('webview')).toBe(guest);
+    expect(onTabsChange).toHaveBeenLastCalledWith([
+      expect.objectContaining({ targetId: pageTab.targetId, url: newerUrl }),
+    ]);
+    expect(address.getAttribute('title')).toBe(newerUrl);
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('uses live native handlers and the current retention key after session promotion', () => {
+    const previousSelect = vi.fn();
+    const currentSelect = vi.fn();
+    const props = {
+      draftKey: 'native-handler-before', isOpen: true, width: 520,
+      activeTargetId: pageTab.targetId, initialTabs: [pageTab],
+      onClose: vi.fn(), onWidthChange: vi.fn(), onAddAnnotation: () => true,
+    };
+    const view = render(<BrowserPanel {...props} onActiveTargetChange={previousSelect} embedded />);
+    const guest = view.container.querySelector('webview')!;
+    promoteBrowserPanelTabs(props.draftKey, 'native-handler-after');
+    view.rerender(<BrowserPanel {...props} draftKey="native-handler-after"
+      onActiveTargetChange={currentSelect} embedded />);
+    previousSelect.mockClear();
+    currentSelect.mockClear();
+    const command = new Event('ipc-message');
+    Object.assign(command, { channel: BROWSER_GUEST_COMMAND_CHANNEL, args: ['new-tab'] });
+    fireEvent(guest, command);
+    expect(currentSelect).toHaveBeenCalled();
+    expect(previousSelect).not.toHaveBeenCalled();
+    const title = new Event('page-title-updated');
+    Object.assign(title, { title: 'Promoted page' });
+    fireEvent(guest, title);
+    expect(getRetainedBrowserPanelTabs('native-handler-before')).toBeUndefined();
+    expect(getRetainedBrowserPanelTabs('native-handler-after')?.[0].title).toBe('Promoted page');
+  });
+
+  it('ignores bootstrap blank events but accepts an intentional blank navigation on a ready guest', () => {
+    const onTabsChange = vi.fn();
+    const view = render(<BrowserPanelHarness draftKey="blank-navigation-boundary"
+      initialTabs={[pageTab]} onTabsChange={onTabsChange} />);
+    const guest = view.container.querySelector('webview')!;
+    guest.setAttribute('src', 'about:blank');
+    const navigate = () => {
+      const event = new Event('did-navigate');
+      Object.assign(event, { url: 'about:blank', isMainFrame: true });
+      fireEvent(guest, event);
+    };
+    navigate();
+    expect(onTabsChange).toHaveBeenLastCalledWith([expect.objectContaining({ url: pageTab.url })]);
+    fireEvent(guest, new Event('dom-ready'));
+    expect(onTabsChange).toHaveBeenLastCalledWith([expect.objectContaining({ url: pageTab.url })]);
+    navigate();
+    expect(onTabsChange).toHaveBeenLastCalledWith([expect.objectContaining({ url: 'about:blank' })]);
+  });
+
+  it('closes a retained tab even when its native URL getter is unavailable', () => {
+    let panel: BrowserPanelHandle | null = null;
+    const view = render(<BrowserPanelHarness draftKey="unavailable-close"
+      initialTabs={[pageTab]} panelRef={value => { panel = value; }} />);
+    const guest = view.container.querySelector('webview')!;
+    Object.defineProperty(guest, 'getURL', { value: () => { throw new Error('guest detached'); } });
+    expect(() => act(() => panel!.closeTab(pageTab.targetId))).not.toThrow();
+    expect(view.container.querySelectorAll('webview')).toHaveLength(0);
+  });
+
+  it('continues popup routing past an unrelated guest with an unavailable native ID', () => {
+    const view = render(<BrowserPanelHarness draftKey="unavailable-popup-id" initialTabs={[
+      pageTab, { ...pageTab, id: 'member', targetId: 'member', resourceSessionId: 'member-resource' },
+    ]} />);
+    const [first, second] = [...view.container.querySelectorAll('webview')];
+    Object.defineProperty(first, 'getWebContentsId', { value: () => { throw new Error('guest detached'); } });
+    Object.defineProperty(second, 'getWebContentsId', { value: () => 8 });
+    expect(() => act(() => panelOpenTabListener?.({
+      url: 'https://member.example/popup', openerGuestId: 8,
+    }))).not.toThrow();
+    expect(view.container.querySelectorAll('webview')).toHaveLength(3);
+    expect((view.container.querySelectorAll('webview')[0] as HTMLElement).style.opacity).toBe('1');
+  });
+
+  it('ignores late native events from a removed guest after the same target is reopened', () => {
+    let panel: BrowserPanelHandle | null = null;
+    const onTabsChange = vi.fn();
+    const view = render(<BrowserPanelHarness draftKey="native-instance-boundary"
+      initialTabs={[pageTab]} onTabsChange={onTabsChange}
+      panelRef={value => { panel = value; }} />);
+    const oldGuest = view.container.querySelector('webview')!;
+    act(() => panel!.closeTab(pageTab.targetId, { preserveFocus: true }));
+    act(() => panel!.openTab('https://replacement.example/', { targetId: pageTab.targetId }));
+    const replacement = view.container.querySelector('webview')!;
+    expect(replacement).not.toBe(oldGuest);
+    const title = new Event('page-title-updated');
+    Object.assign(title, { title: 'Stale title' });
+    fireEvent(oldGuest, title);
+    const failure = new Event('did-fail-load');
+    Object.assign(failure, { errorCode: -105, errorDescription: 'Stale failure', isMainFrame: true });
+    fireEvent(oldGuest, failure);
+    fireEvent(oldGuest, new Event('close'));
+    expect(view.container.querySelector('webview')).toBe(replacement);
+    expect(onTabsChange).toHaveBeenLastCalledWith([
+      expect.objectContaining({ url: 'https://replacement.example/', title: '' }),
+    ]);
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('does not run delayed blank-address focus after Agent control begins', () => {
+    const callbacks: FrameRequestCallback[] = [];
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation(callback => {
+      callbacks.push(callback);
+      return callbacks.length;
+    });
+    let panel: BrowserPanelHandle | null = null;
+    const onTabsChange = vi.fn();
+    render(<><input aria-label="Retained user draft" />
+      <BrowserPanelHarness draftKey="deferred-address-owner" initialTabs={[pageTab]}
+        onTabsChange={onTabsChange} panelRef={value => { panel = value; }} /></>);
+    act(() => panel!.openTab());
+    const newTarget = (onTabsChange.mock.lastCall![0] as BrowserPanelTab[]).at(-1)!.targetId;
+    const draft = screen.getByLabelText('Retained user draft');
+    draft.focus();
+    const address = screen.getByLabelText('Browser address');
+    const focus = vi.spyOn(address, 'focus');
+    act(() => agentInteractionListener?.({
+      sessionId: 'deferred-address-owner', targetId: newTarget,
+      busy: true, operationId: 'new-agent-operation',
+    }));
+    act(() => callbacks.forEach(callback => callback(0)));
+    expect(document.activeElement).toBe(draft);
+    expect(focus).not.toHaveBeenCalled();
+  });
+
+  it('uses the promoted session selection callback when a recorded close finishes draining', async () => {
+    let panel: BrowserPanelHandle | null = null;
+    const previousSelect = vi.fn();
+    const currentSelect = vi.fn();
+    const props = {
+      draftKey: 'recorded-close-before', isOpen: true, width: 520,
+      activeTargetId: pageTab.targetId,
+      initialTabs: [pageTab, { id: 'next', targetId: 'next', title: 'Next', url: 'https://next.example/' }],
+      onClose: vi.fn(), onWidthChange: vi.fn(), onAddAnnotation: () => true,
+    };
+    const assignPanel = (value: BrowserPanelHandle | null) => { panel = value; };
+    const view = render(<BrowserPanel {...props} ref={assignPanel}
+      onActiveTargetChange={previousSelect} />);
+    const guest = view.container.querySelector('webview')!;
+    fireEvent(guest, new Event('dom-ready'));
+    fireEvent.click(screen.getByRole('button', { name: 'Record actions' }));
+    await screen.findByRole('button', { name: 'Pause recording' });
+
+    let pendingControl: { recordingId: string; requestId: string } | undefined;
+    Object.defineProperty(guest, 'send', { value: function (
+      this: HTMLElement,
+      channel: string,
+      control: { active?: boolean; recordingId: string; requestId?: string },
+    ) {
+      if (channel === BrowserRecordingChannel.Control && control.active === false && control.requestId) {
+        pendingControl = { recordingId: control.recordingId, requestId: control.requestId };
+        return;
+      }
+      guestSend.call(this, channel, control);
+    } });
+    act(() => panel!.closeTab(pageTab.targetId, { preserveFocus: true }));
+    expect(pendingControl).toBeDefined();
+    expect(view.container.querySelectorAll('webview')).toHaveLength(2);
+
+    act(() => panel!.promoteRecordingSession(props.draftKey, 'recorded-close-after'));
+    promoteBrowserPanelTabs(props.draftKey, 'recorded-close-after');
+    view.rerender(<BrowserPanel {...props} draftKey="recorded-close-after" ref={assignPanel}
+      onActiveTargetChange={currentSelect} />);
+    previousSelect.mockClear();
+    currentSelect.mockClear();
+    await act(async () => {
+      const ready = new Event('ipc-message');
+      Object.assign(ready, {
+        channel: BrowserRecordingChannel.Ready,
+        args: [{ ...pendingControl!, documentId: 'recording-document', active: false }],
+      });
+      fireEvent(guest, ready);
+    });
+
+    expect(view.container.querySelectorAll('webview')).toHaveLength(1);
+    expect(currentSelect).toHaveBeenCalledWith('next');
+    expect(previousSelect).not.toHaveBeenCalled();
+    expect(view.container.querySelector('webview')?.getAttribute('src')).toBe('https://next.example/');
   });
 
   it('isolates retained tabs by session and moves them when a session is promoted', async () => {

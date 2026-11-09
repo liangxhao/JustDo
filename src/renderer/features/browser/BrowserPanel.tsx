@@ -74,6 +74,7 @@ import Tooltip from '@/shared/components/ui/Tooltip';
 import { isDomElement, useOwnerDocument, useOwnerWindow } from '@/shared/dom/ownerDocument';
 
 import { type BrowserPanelFocusBinding, retainBrowserPanelFocus } from './browserPanelFocus';
+import { canPresentBrowserPage, shouldPresentBrowserPopup } from './browserPanelPresentation';
 import { reportBrowserTabCapacity } from './browserTabCapacity';
 import BrowserTabIcon from './BrowserTabIcon';
 import {
@@ -131,6 +132,11 @@ type LiveWebview = HTMLElement & {
     deltaY: number;
     canScroll: boolean;
   }) => Promise<void>;
+};
+
+const readGuestUrl = (guest: LiveWebview | undefined, fallback: string): string => {
+  try { return guest?.getURL() || fallback; }
+  catch { return fallback; }
 };
 
 const BROWSER_PANEL_MIN_WIDTH = 320;
@@ -462,6 +468,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
   const registeredDraftKeyRef = useRef(draftKey);
   const registeredResourceSessionsRef = useRef(new Map<string, string>());
   const readyGuestsRef = useRef(new WeakSet<LiveWebview>());
+  const guestNavigationEpochsRef = useRef(new WeakMap<LiveWebview, number>());
   const initialUrlsRef = useRef(new Map(tabs.map(tab => [tab.targetId, tab.url])));
   const tabsRef = useRef(tabs);
   const onTabsChangeRef = useRef(onTabsChange);
@@ -472,6 +479,8 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
   );
   const gestureRef = useRef<Gesture | null>(null);
   const activeTargetRef = useRef(activeTargetId);
+  const onActiveTargetChangeRef = useRef(onActiveTargetChange);
+  onActiveTargetChangeRef.current = onActiveTargetChange;
   const panelVisibleRef = useRef(isOpen);
   panelVisibleRef.current = isOpen;
   const browserOperationRunningRef = useRef(false);
@@ -493,15 +502,46 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
   const activeTab = tabs.find(tab => tab.targetId === activeTargetId) ?? tabs[0] ?? null;
   activeTargetRef.current = activeTab?.targetId ?? null;
   const activeWebview = activeTab ? (webviewsRef.current.get(activeTab.targetId) ?? null) : null;
+  const presentationState = useCallback(() => ({
+    visible: panelVisibleRef.current,
+    activeTargetId: activeTargetRef.current,
+    agentControlling: browserOperationRunningRef.current,
+  }), []);
+  const canPresentPage = useCallback(
+    (targetId: string | null | undefined) => canPresentBrowserPage(targetId, presentationState()),
+    [presentationState],
+  );
+  const focusDocumentRef = useRef(ownerDocument);
+  focusDocumentRef.current = ownerDocument;
+  const queuePageFocus = useCallback((targetId: string, focus: () => void) => {
+    const anchor = ownerDocument.activeElement;
+    ownerWindow.requestAnimationFrame(() => {
+      if (
+        focusDocumentRef.current !== ownerDocument || ownerWindow.closed ||
+        !canPresentPage(targetId) ||
+        (ownerDocument.activeElement !== anchor && ownerDocument.activeElement !== ownerDocument.body)
+      ) return;
+      focus();
+    });
+  }, [canPresentPage, ownerDocument, ownerWindow]);
+  const browserViewRef = useRef({ draftKey, targetId: activeTargetRef.current, isOpen, ownerDocument });
+  const previousView = browserViewRef.current;
+  if (
+    previousView.draftKey !== draftKey || previousView.targetId !== activeTargetRef.current ||
+    previousView.isOpen !== isOpen || previousView.ownerDocument !== ownerDocument
+  ) browserViewRef.current = { draftKey, targetId: activeTargetRef.current, isOpen, ownerDocument };
+  const browserLifetimeRef = useRef<object | null>(null);
+  useEffect(() => {
+    const lifetime = {};
+    browserLifetimeRef.current = lifetime;
+    return () => { if (browserLifetimeRef.current === lifetime) browserLifetimeRef.current = null; };
+  }, []);
   const registerGuestFocus = useCallback((targetId: string, guest: LiveWebview) => {
     focusBindingRef.current?.registerGuest(
       guest,
-      () =>
-        panelVisibleRef.current &&
-        activeTargetRef.current === targetId &&
-        !browserOperationRunningRef.current,
+      () => canPresentPage(targetId),
     );
-  }, []);
+  }, [canPresentPage]);
   useLayoutEffect(() => {
     const binding = retainBrowserPanelFocus(document, ownerDocument);
     focusBindingRef.current = binding;
@@ -643,7 +683,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
     onTabsChangeRef.current?.(tabs);
   }, [draftKey, tabs]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     setAgentBusyTargets(new Set());
     pendingAgentInteractionAcksRef.current.clear();
     return window.electron.browser.onAgentInteractionState(event => {
@@ -930,15 +970,14 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
       setUrlDraft(getBrowserTabAddress(tab));
       clearAnnotations();
       if (tab.url === 'about:blank') {
-        ownerWindow.requestAnimationFrame(() => {
-          if (!panelVisibleRef.current || activeTargetRef.current !== tab.targetId) return;
+        queuePageFocus(tab.targetId, () => {
           addressInputRef.current?.focus();
           addressInputRef.current?.select();
         });
       }
       return true;
     },
-    [capacityFeedbackEnabled, clearAnnotations, draftKey, onActiveTargetChange, ownerWindow],
+    [capacityFeedbackEnabled, clearAnnotations, draftKey, onActiveTargetChange, queuePageFocus],
   );
 
   useEffect(
@@ -948,31 +987,33 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
           event.openerGuestId === undefined
             ? undefined
             : [...webviewsRef.current.entries()].find(
-                ([, webview]) => webview.getWebContentsId?.() === event.openerGuestId,
+                ([, webview]) => {
+                  try { return webview.getWebContentsId?.() === event.openerGuestId; }
+                  catch { return false; }
+                },
               )?.[0];
         if (event.openerGuestId !== undefined && !openerTargetId) {
           return;
         }
-        if (event.openerGuestId === undefined && !isOpen) return;
-        if (event.errorCode === 'post-navigation-blocked') {
-          setNotice(i18nService.t('browserPanelPostNavigationBlocked'));
-          return;
-        }
+        if (event.openerGuestId === undefined && !panelVisibleRef.current) return;
         const openerTab = openerTargetId
           ? tabsRef.current.find(tab => tab.targetId === openerTargetId)
           : undefined;
-        openTab(event.url, {
+        const present = shouldPresentBrowserPopup(
+          openerTargetId, event.presentation, presentationState(),
+        );
+        if (event.errorCode === 'post-navigation-blocked') {
+          if (present) setNotice(i18nService.t('browserPanelPostNavigationBlocked'));
+          return;
+        }
+        guestHandlersRef.current.openTab(event.url, {
           profile: openerTab?.profile,
           resourceSessionId: openerTab?.resourceSessionId,
-          preserveSelection: event.openerGuestId !== undefined,
-          notifyOnCapacity:
-            event.openerGuestId === undefined ||
-            (panelVisibleRef.current &&
-              activeTargetRef.current === openerTargetId &&
-              !browserOperationRunningRef.current),
+          preserveSelection: !present,
+          notifyOnCapacity: present,
         });
       }),
-    [isOpen, openTab],
+    [presentationState],
   );
 
   useEffect(
@@ -985,9 +1026,9 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
             return false;
           }
         })?.[0];
-        if (targetId) updateTab(targetId, { faviconUrl: event.faviconUrl });
+        if (targetId) guestHandlersRef.current.updateTab(targetId, { faviconUrl: event.faviconUrl });
       }),
-    [updateTab],
+    [],
   );
 
   const respondToHttpAuth = useCallback((response: BrowserPanelHttpAuthResponse) => {
@@ -1032,9 +1073,9 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
           }
         })?.[0];
         if (!targetId) return;
-        updateTab(targetId, { pdfUrl: event.url });
+        guestHandlersRef.current.updateTab(targetId, { pdfUrl: event.url });
       }),
-    [updateTab],
+    [],
   );
 
   const closeTab = useCallback(
@@ -1046,9 +1087,16 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
         resourceSessionId?: string;
       },
     ) => {
+      const closingGuest = webviewsRef.current.get(targetId);
+      const closingIdentity = tabsRef.current.find(tab => tab.targetId === targetId);
       const performClose = () => {
         const currentTabs = tabsRef.current;
         const closingIndex = currentTabs.findIndex(tab => tab.targetId === targetId);
+        if (
+          webviewsRef.current.get(targetId) !== closingGuest ||
+          currentTabs[closingIndex]?.resourceSessionId !== closingIdentity?.resourceSessionId ||
+          currentTabs[closingIndex]?.profile !== closingIdentity?.profile
+        ) return;
         if (
           options?.resourceSessionId &&
           currentTabs[closingIndex]?.resourceSessionId !== options.resourceSessionId
@@ -1057,7 +1105,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
         if (closingIndex < 0) return;
         const closingTab = currentTabs[closingIndex]!;
         const closingWebview = webviewsRef.current.get(targetId);
-        const closingUrl = closingWebview?.getURL() || closingTab.url;
+        const closingUrl = readGuestUrl(closingWebview, closingTab.url);
         if (closingUrl && closingUrl !== 'about:blank') {
           closedTabsRef.current = [
             ...closedTabsRef.current.slice(-9),
@@ -1090,7 +1138,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
         const nextTab = nextTabs[Math.min(closingIndex, nextTabs.length - 1)] ?? null;
         activeTargetRef.current = nextTab?.targetId ?? null;
         if (!options?.preserveSelection && panelVisibleRef.current)
-          onActiveTargetChange(nextTab?.targetId ?? null);
+          onActiveTargetChangeRef.current(nextTab?.targetId ?? null);
         setUrlDraft(getBrowserTabAddress(nextTab));
         if (
           nextTab &&
@@ -1098,17 +1146,14 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
           !options?.preserveFocus &&
           panelVisibleRef.current
         ) {
-          setTimeout(() => {
-            if (panelVisibleRef.current && activeTargetRef.current === nextTab.targetId)
-              webviewsRef.current.get(nextTab.targetId)?.focus();
-          }, 0);
+          queuePageFocus(nextTab.targetId, () => webviewsRef.current.get(nextTab.targetId)?.focus());
         }
       };
       if (recorderRef.current.session?.status === RecordingStatus.Recording)
         void recorderRef.current.drain().then(performClose);
       else performClose();
     },
-    [clearAnnotations, onActiveTargetChange],
+    [clearAnnotations, queuePageFocus],
   );
 
   const openTabContextMenu = useCallback(
@@ -1182,10 +1227,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
         onActiveTargetChange(nextTab.targetId);
         setUrlDraft(getBrowserTabAddress(nextTab));
         clearAnnotations();
-        setTimeout(() => {
-          if (panelVisibleRef.current && activeTargetRef.current === nextTab.targetId)
-            webviewsRef.current.get(nextTab.targetId)?.focus();
-        }, 0);
+        queuePageFocus(nextTab.targetId, () => webviewsRef.current.get(nextTab.targetId)?.focus());
         return;
       }
       const webview = sourceTargetId ? webviewsRef.current.get(sourceTargetId) : null;
@@ -1198,7 +1240,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
         // The guest can detach between the toolbar render and the command.
       }
     },
-    [clearAnnotations, closeTab, onActiveTargetChange, openTab],
+    [clearAnnotations, closeTab, onActiveTargetChange, openTab, queuePageFocus],
   );
 
   const handleNavigation = useCallback(
@@ -1209,15 +1251,23 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
       title?: string,
       authoritative = false,
     ) => {
-      const nextUrl = url || webview.getURL() || 'about:blank';
+      const nextUrl = url || readGuestUrl(webview, 'about:blank');
       const retainedTab = tabsRef.current.find(tab => tab.targetId === targetId);
       // A newly attached Electron webview can briefly report its bootstrap
       // about:blank document before loading the retained URL. Treat that event
       // as transient so hiding/reopening the panel cannot erase the real page.
-      if (nextUrl === 'about:blank' && retainedTab?.url !== 'about:blank') return;
+      if (
+        nextUrl === 'about:blank' && retainedTab?.url !== 'about:blank' &&
+        (!authoritative || !readyGuestsRef.current.has(webview))
+      ) return;
+      let nextTitle = title ?? retainedTab?.title ?? '';
+      if (title === undefined) {
+        try { nextTitle = webview.getTitle() || ''; }
+        catch { /* Retain the last title while the native guest detaches. */ }
+      }
       updateTab(targetId, {
         url: nextUrl,
-        title: title || webview.getTitle() || '',
+        title: nextTitle,
         pdfUrl: matchesPdfResponseUrl(retainedTab?.pdfUrl, nextUrl)
           ? retainedTab?.pdfUrl
           : undefined,
@@ -1243,6 +1293,12 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
     [clearAnnotations, updateTab],
   );
 
+  const guestHandlersRef = useRef({
+    closeTab, handleNavigation, invalidateAnnotationGeometry, openTab, runBrowserCommand, updateTab,
+  });
+  guestHandlersRef.current = {
+    closeTab, handleNavigation, invalidateAnnotationGeometry, openTab, runBrowserCommand, updateTab,
+  };
   const installGuest = useCallback(
     (targetId: string, webview: LiveWebview | null) => {
       if (!webview) {
@@ -1269,7 +1325,13 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
       }
       webviewsRef.current.set(targetId, webview);
       registerGuestFocus(targetId, webview);
+      const isCurrentGuest = () =>
+        webview.isConnected && webviewsRef.current.get(targetId) === webview &&
+        tabsRef.current.some(tab => tab.targetId === targetId);
+      const onGuest = (name: string, handle: (event: Event) => void) =>
+        webview.addEventListener(name, event => { if (isCurrentGuest()) handle(event); });
       const registerAgentTab = () => {
+        if (!isCurrentGuest()) return;
         try {
           const webContentsId = webview.getWebContentsId?.();
           if (Number.isInteger(webContentsId)) {
@@ -1296,9 +1358,14 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
       registerAgentTab();
       if (installedGuestsRef.current.has(webview)) return;
       installedGuestsRef.current.add(webview);
-      webview.addEventListener('did-start-loading', () => {
+      onGuest('did-start-loading', () => {
+        if (readyGuestsRef.current.has(webview)) {
+          guestNavigationEpochsRef.current.set(
+            webview, (guestNavigationEpochsRef.current.get(webview) ?? 0) + 1,
+          );
+        }
         registerAgentTab();
-        updateTab(targetId, { pdfUrl: undefined });
+        guestHandlersRef.current.updateTab(targetId, { pdfUrl: undefined });
         setLoadingTargets(current => new Set(current).add(targetId));
         setLoadErrors(current => {
           const next = new Map(current);
@@ -1306,23 +1373,22 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
           return next;
         });
       });
-      webview.addEventListener('did-attach', registerAgentTab);
-      webview.addEventListener('did-stop-loading', () => {
+      onGuest('did-attach', registerAgentTab);
+      onGuest('did-stop-loading', () => {
         registerAgentTab();
         setLoadingTargets(current => {
           const next = new Set(current);
           next.delete(targetId);
           return next;
         });
-        handleNavigation(targetId, webview);
+        guestHandlersRef.current.handleNavigation(targetId, webview);
       });
-      webview.addEventListener('dom-ready', () => {
-        if (webviewsRef.current.get(targetId) !== webview || !webview.isConnected) return;
+      onGuest('dom-ready', () => {
         recorderRef.current.onReady(targetId);
         registerAgentTab();
         readyGuestsRef.current.add(webview);
         const retainedTab = tabsRef.current.find(tab => tab.targetId === targetId);
-        const currentUrl = webview.getURL() || retainedTab?.url || 'about:blank';
+        const currentUrl = readGuestUrl(webview, retainedTab?.url || 'about:blank');
         if (retainedTab && isAtSourcePreview({ ...retainedTab, url: currentUrl })) {
           try {
             // Start local documents at their default zoom so a previously visited
@@ -1334,20 +1400,18 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
           }
         }
         setReadyTargets(current => new Set(current).add(targetId));
-        handleNavigation(targetId, webview);
+        guestHandlersRef.current.handleNavigation(targetId, webview);
       });
-      webview.addEventListener('ipc-message', event => {
+      onGuest('ipc-message', event => {
         const details = event as GuestEvent;
         recorderRef.current.onMessage(targetId, details.channel ?? '', details.args?.[0]);
         if (details.channel === BROWSER_GUEST_COMMAND_CHANNEL) {
           const [command] = details.args ?? [];
           if (
             isBrowserGuestCommand(command) &&
-            panelVisibleRef.current &&
-            activeTargetRef.current === targetId &&
-            !browserOperationRunningRef.current
+            canPresentPage(targetId)
           )
-            runBrowserCommand(command, targetId);
+            guestHandlersRef.current.runBrowserCommand(command, targetId);
           return;
         }
         if (details.channel === BROWSER_GUEST_ZOOM_CHANNEL) {
@@ -1363,7 +1427,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
           return;
         }
         if (details.channel === 'justdo-browser-viewport-changed') {
-          if (activeTargetRef.current === targetId) invalidateAnnotationGeometry();
+          if (activeTargetRef.current === targetId) guestHandlersRef.current.invalidateAnnotationGeometry();
           return;
         }
         if (details.channel === BROWSER_GUEST_CREDENTIALS_OFFER_CHANNEL) {
@@ -1383,17 +1447,21 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
         );
       });
       for (const eventName of ['did-navigate', 'did-navigate-in-page']) {
-        webview.addEventListener(eventName, event => {
+        onGuest(eventName, event => {
           const details = event as GuestEvent;
           if (details.isMainFrame === false) return;
-          recorderRef.current.onNavigation(targetId, details.url ?? webview.getURL());
-          handleNavigation(targetId, webview, details.url, undefined, true);
+          guestNavigationEpochsRef.current.set(
+            webview, (guestNavigationEpochsRef.current.get(webview) ?? 0) + 1,
+          );
+          recorderRef.current.onNavigation(targetId, details.url ?? readGuestUrl(webview, 'about:blank'));
+          guestHandlersRef.current.handleNavigation(targetId, webview, details.url, undefined, true);
         });
       }
-      webview.addEventListener('page-title-updated', event => {
-        updateTab(targetId, { title: (event as GuestEvent).title ?? webview.getTitle() });
+      onGuest('page-title-updated', event => {
+        const title = (event as GuestEvent).title;
+        if (title !== undefined) guestHandlersRef.current.updateTab(targetId, { title });
       });
-      webview.addEventListener('found-in-page', event => {
+      onGuest('found-in-page', event => {
         if (activeTargetRef.current !== targetId) return;
         const result = (event as GuestEvent).result;
         setFindResult({
@@ -1401,8 +1469,8 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
           matches: Math.max(0, result?.matches ?? 0),
         });
       });
-      webview.addEventListener('close', () => closeTab(targetId, { preserveFocus: true }));
-      webview.addEventListener('did-fail-load', event => {
+      onGuest('close', () => guestHandlersRef.current.closeTab(targetId, { preserveFocus: true }));
+      onGuest('did-fail-load', event => {
         const details = event as GuestEvent;
         if (details.errorCode === -3 || details.isMainFrame === false) return;
         setLoadingTargets(current => {
@@ -1419,12 +1487,8 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
       });
     },
     [
-      closeTab,
-      handleNavigation,
-      invalidateAnnotationGeometry,
+      canPresentPage,
       registerGuestFocus,
-      runBrowserCommand,
-      updateTab,
     ],
   );
   const installGuestRef = useRef(installGuest);
@@ -1699,8 +1763,20 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
 
   const submitUrl = async (rawAddress = urlDraft, useNativeFileUrl = false) => {
     const submissionSequence = ++addressSubmissionSequenceRef.current;
+    const view = browserViewRef.current;
+    const lifetime = browserLifetimeRef.current;
     const targetId = activeTargetRef.current;
     const activeTab = tabsRef.current.find(tab => tab.targetId === targetId);
+    const submittedGuest = targetId ? webviewsRef.current.get(targetId) : undefined;
+    const navigationEpoch = submittedGuest
+      ? guestNavigationEpochsRef.current.get(submittedGuest) ?? 0 : 0;
+    const isCurrentSubmission = () =>
+      lifetime !== null && browserLifetimeRef.current === lifetime &&
+      browserViewRef.current === view && submissionSequence === addressSubmissionSequenceRef.current &&
+      canPresentPage(targetId) && targetId !== null &&
+      webviewsRef.current.get(targetId) === submittedGuest &&
+      (submittedGuest ? guestNavigationEpochsRef.current.get(submittedGuest) ?? 0 : 0) === navigationEpoch &&
+      tabsRef.current.some(tab => tab.targetId === targetId);
     const address = rawAddress.trim();
     let source: BrowserLocalHtmlSource | undefined;
     let url: string | null;
@@ -1712,7 +1788,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
     } else if (isLocalFileAddress(address)) {
       try {
         const preview = await window.electron.browser.createLocalHtmlPreview(address);
-        if (submissionSequence !== addressSubmissionSequenceRef.current) return;
+        if (!isCurrentSubmission()) return;
         if (!preview.success) {
           setError(
             preview.errorCode === 'not_found'
@@ -1731,13 +1807,14 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
           sourcePreviewRootUrl: preview.previewRootUrl,
         };
       } catch {
-        if (submissionSequence !== addressSubmissionSequenceRef.current) return;
+        if (!isCurrentSubmission()) return;
         setError(i18nService.t('coworkFilePreviewFailed'));
         return;
       }
     } else {
       url = resolveAddressInput(address);
     }
+    if (!isCurrentSubmission()) return;
     if (!url) {
       setError(i18nService.t('browserPanelInvalidUrl'));
       return;
@@ -1767,6 +1844,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
     try {
       await webview.loadURL(url);
     } catch (loadError) {
+      if (webviewsRef.current.get(targetId) !== webview || !webview.isConnected) return;
       setLoadingTargets(current => {
         const next = new Set(current);
         next.delete(targetId);
@@ -1916,7 +1994,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
     const tab = tabsRef.current.find(candidate => candidate.targetId === targetId);
     if (!tab) return;
     const webview = webviewsRef.current.get(targetId);
-    const url = webview?.getURL() || tab.url;
+    const url = readGuestUrl(webview, tab.url);
 
     if (action === 'new-right') {
       openTab('about:blank', {
@@ -2053,7 +2131,8 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
     }
     if (action === 'find') {
       setFindVisible(true);
-      ownerWindow.requestAnimationFrame(() => findInputRef.current?.focus());
+      if (activeTargetRef.current)
+        queuePageFocus(activeTargetRef.current, () => findInputRef.current?.focus());
       return;
     }
     if (action === 'print') {
@@ -2351,10 +2430,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
                       activeTargetRef.current = tab.targetId;
                       setUrlDraft(getBrowserTabAddress(tab));
                       clearAnnotations();
-                      setTimeout(() => {
-                        if (panelVisibleRef.current && activeTargetRef.current === tab.targetId)
-                          webviewsRef.current.get(tab.targetId)?.focus();
-                      }, 0);
+                      queuePageFocus(tab.targetId, () => webviewsRef.current.get(tab.targetId)?.focus());
                     }}
                     className="min-w-0 flex-1 truncate text-left"
                     title={getBrowserTabDisplayTitle(tab)}
