@@ -487,7 +487,10 @@ foreach($case in $cases){
       if($case -eq 'inner'){
         $expectedMode='all'
         $expectedPath=Normalized-Path (Join-Path $FixtureRoot 'selected machine')
-      }else{$expectedPath=Normalized-Path (Join-Path $FixtureRoot 'fresh location')}
+      }else{
+        $expectedMode='all'
+        $expectedPath=Normalized-Path (Join-Path $FixtureRoot 'machine existing')
+      }
     } else {
       Wait-Page 'setup'
       Assert-Condition ($pageState[1] -eq '1') 'More than one setup page was materialized.'

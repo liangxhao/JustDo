@@ -39,13 +39,15 @@ const scenarios = [
   { id: 'forced-all-over-user', mode: 'all', user: true, machine: false, forced: 'all', locked: '' },
 ] as const;
 
-test('resolves interactive scope only after elevated and updater handoff branches', () => {
+test('resolves scope after authenticated handoff and before skipping updater setup', () => {
   const create = sourceFunction(setup, 'InstallerCombinedCreate');
-  const resolve = create.indexOf('Call InstallerCombinedResolveUpgradeMode');
+  const resolve = create.indexOf('Call InstallerCombinedPrepareUpgradeMode');
   expect(resolve).toBeGreaterThan(create.indexOf('${If} ${UAC_IsInnerInstance}'));
-  expect(resolve).toBeGreaterThan(create.indexOf('${If} ${isUpdated}'));
-  expect(resolve).toBeGreaterThan(create.indexOf('StrCpy $InstallerCombinedForcedMode ""'));
+  expect(resolve).toBeLessThan(create.indexOf('${If} ${isUpdated}'));
   expect(resolve).toBeLessThan(create.indexOf('nsDialogs::Create'));
+  const prepare = sourceFunction(setup, 'InstallerCombinedPrepareUpgradeMode');
+  expect(prepare.indexOf('Call InstallerCombinedResolveUpgradeMode'))
+    .toBeGreaterThan(prepare.indexOf('StrCpy $InstallerCombinedForcedMode ""'));
   const resolver = sourceFunction(setup, 'InstallerCombinedResolveUpgradeMode');
   expect(resolver).not.toMatch(/hasPerUserInstallation|hasPerMachineInstallation/);
 });

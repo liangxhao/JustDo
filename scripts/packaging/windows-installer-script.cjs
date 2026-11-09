@@ -89,7 +89,18 @@ function createWindowsInstallerScript(templatesDir) {
   const files = installerFiles
     .replace(cacheCopy, '; Installer caching is deferred to the running updater.')
     .replace('!include "extractAppPackage.nsh"', extraction);
-  let section = read('installSection.nsh').replace('!include installer.nsh', files);
+  const installSection = read('installSection.nsh');
+  if (installSection.split('InitPluginsDir').length !== 2) {
+    throw new Error('The upstream NSIS install-section entry seam changed; review the template.');
+  }
+  let section = installSection.replace('!include installer.nsh', files)
+    .replace('InitPluginsDir', [
+      '; Silent elevation re-applies the upstream mode macro after customInit.',
+      '; Restore verified registration before process checks or old-file removal.',
+      'Call InstallerRestoreUpgradeDirectory',
+      '',
+      'InitPluginsDir',
+    ].join('\n'));
   for (const root of ['SHELL_CONTEXT', 'HKEY_CURRENT_USER']) {
     const removal = `!insertmacro uninstallOldVersion ${root}`;
     if (section.split(removal).length !== 2) {

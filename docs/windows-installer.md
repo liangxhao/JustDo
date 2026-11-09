@@ -90,8 +90,21 @@ helper. Its authenticated inner instance reads the accepted selection from the
 outer instance through the helper, rechecks the registered target and advances
 directly to writing. Cancelled or unsuccessful elevation restores the same
 settings page and draft; no second settings page appears after approval.
-Silent installation retains its upstream elevation flow, and updater invocations
-retain their skipped setup page. The uninstaller's separate mode page is unchanged.
+Before an updater invocation skips setup, it verifies existing product files in
+both registry scopes, rather than trusting non-empty `InstallLocation` values.
+A uniquely confirmed installation selects its registered scope and exact path
+before deciding whether elevation is needed. An explicit scope flag selects that
+scope, but the target still needs confirmation. This prevents an abandoned
+current-user registration from diverting an all-users update to a different drive.
+Ambiguous interactive updates show the combined setup page; silent updates with
+an unconfirmed target stop before removing old files. Silent updates align the
+upstream scope flags with the verified selection and retain the upstream elevation
+flow. An authenticated silent elevated instance re-confirms the all-users target
+without reselecting from the administrator account's current-user registration.
+The install section restores the verified registered directory again after the
+upstream silent mode macro, before process checks and old-version removal, so a
+directory recovered from the paired uninstaller cannot revert to a stale path.
+The uninstaller's separate mode page is unchanged.
 
 The setup header uses a separate square logo asset, preserving the mark's
 proportions. Passive card decoration does not own radio state or commands.

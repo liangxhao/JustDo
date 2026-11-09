@@ -965,6 +965,21 @@ FunctionEnd
   ClearErrors
   !insertmacro JustDoLogInstallEvent "phase=installer-init-complete"
   ${If} ${Silent}
+    ${If} ${isUpdated}
+      ${If} ${UAC_IsInnerInstance}
+        ; The upstream silent UAC handoff only elevates all-users installs.
+        ; Re-confirm that scope, without selecting the administrator's HKCU.
+        StrCpy $InstallerCombinedMode "all"
+        Call InstallerCombinedApplyUpgradeMode
+      ${Else}
+        Call InstallerCombinedPrepareUpgradeMode
+      ${EndIf}
+      ${If} $InstallerCombinedUpgradeReady != "1"
+        !insertmacro JustDoLogInstallEvent "phase=installer-abort reason=update-target-unconfirmed"
+        SetErrorLevel 2
+        Abort "The update installation target could not be confirmed."
+      ${EndIf}
+    ${EndIf}
     ; Silent installs do not visit the install page, so its PRE callback cannot
     ; capture the final mode or prepare an elevated inner upgrade. initMultiUser
     ; has already resolved command-line/registry mode and $INSTDIR here.

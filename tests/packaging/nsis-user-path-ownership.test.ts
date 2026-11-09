@@ -65,6 +65,7 @@ describe.runIf(process.platform === 'win32' && Boolean(compiler))('installer ini
         .replace('"$TEMP"', `"${nsisPath(path.join(credentialProfile, 'Temp'))}"`)
         .replace(/^.*\$\{StdUtils\.ExecShellAsUser\}.*$/m, 'StrCpy $1 "unexpected-bootstrap"');
       const customInit = installerMacro('customInit')
+        .replaceAll('${isUpdated}', '0 == 1')
         .replaceAll('${UAC_IsInnerInstance}', `${Number(scenario.inner)} == 1`)
         .replaceAll('${Silent}', `${Number(scenario.silent)} == 1`)
         .replace(/^\s*ReadRegStr (\$\w+) .*$/gm, (_, variable: string) => `StrCpy ${variable} ""`);
@@ -76,7 +77,7 @@ describe.runIf(process.platform === 'win32' && Boolean(compiler))('installer ini
         customInit,
       ].join('\n');
       const variables = [...new Set(Array.from(
-        body.matchAll(/\$(JustDo[A-Za-z0-9_]+|hasPerUserInstallation|hasPerMachineInstallation|installMode)/g),
+        body.matchAll(/\$(JustDo[A-Za-z0-9_]+|hasPerUserInstallation|hasPerMachineInstallation|installMode|InstallerCombinedUpgradeReady|InstallerCombinedMode)/g),
         match => match[1],
       ))];
       const source = [
@@ -87,6 +88,8 @@ describe.runIf(process.platform === 'win32' && Boolean(compiler))('installer ini
         '!define APP_FILENAME "ReviewFixture"', '!define APP_EXECUTABLE_FILENAME "ReviewFixture.exe"',
         '!define INSTALL_REGISTRY_KEY "unused"', '!define UAC_SYNCREGISTERS 1',
         ...variables.map(name => `Var ${name}`),
+        'Function InstallerCombinedPrepareUpgradeMode', 'FunctionEnd',
+        'Function InstallerCombinedApplyUpgradeMode', 'FunctionEnd',
         '!macro JustDoLogInstallEvent TEXT', 'DetailPrint "${TEXT}"', '!macroend',
         '!macro UAC_AsUser_Call KIND TARGET FLAGS',
         `StrCpy $0 "${nsisPath(initiatingRoaming)}"`,

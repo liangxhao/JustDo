@@ -56,6 +56,7 @@ Var InstallerCombinedElevationResult
 Var InstallerCombinedHintIsError
 Var InstallerCombinedHandoffReady
 Var InstallerCombinedHandoffPath
+Var InstallerCombinedUpgradeReady
 
 ; Reserve enough script-buffer space for a slash and the longest allowed
 ; product filename when the existing first-install normalizer appends it.
@@ -553,8 +554,8 @@ Function InstallerCombinedRefreshFacts
   !insertmacro InstallerSetupRestore
 FunctionEnd
 
-; Interactive upgrades retain a uniquely confirmed scope. Explicit deployment flags
-; continue to select a scope, and the UAC inner/updater paths skip this resolver.
+; Upgrades retain a uniquely confirmed scope. Explicit deployment flags
+; continue to select a scope; UAC inner instances consume the outer selection.
 Function InstallerCombinedResolveUpgradeMode
   !insertmacro InstallerSetupSave
   StrCpy $InstallerCombinedLockedMode ""
@@ -583,6 +584,68 @@ Function InstallerCombinedResolveUpgradeMode
     StrCpy $InstallerCombinedMode "$InstallerCombinedLockedMode"
   ${EndIf}
   !insertmacro JustDoLogInstallEvent "phase=setup-target-resolution current-user-state=$0 current-user-dir=$2 all-users-state=$1 all-users-dir=$3 selected-mode=$InstallerCombinedMode locked-mode=$InstallerCombinedLockedMode"
+  !insertmacro InstallerSetupRestore
+FunctionEnd
+
+; initMultiUser trusts raw registration strings, including abandoned installs.
+; Resolve real product files before an updater skips setup or requests elevation.
+Function InstallerCombinedPrepareUpgradeMode
+  !insertmacro InstallerSetupSave
+  StrCpy $InstallerCombinedUpgradeReady "0"
+  StrCpy $InstallerCombinedMode "$installMode"
+  ${If} $InstallerCombinedMode != "all"
+    StrCpy $InstallerCombinedMode "CurrentUser"
+  ${EndIf}
+  StrCpy $InstallerCombinedForcedMode ""
+  !ifdef INSTALL_MODE_PER_ALL_USERS
+    StrCpy $InstallerCombinedForcedMode "all"
+  !else
+    ${If} ${isForCurrentUser}
+      StrCpy $InstallerCombinedForcedMode "CurrentUser"
+    ${ElseIf} ${isForAllUsers}
+      StrCpy $InstallerCombinedForcedMode "all"
+    ${EndIf}
+  !endif
+  ${If} $InstallerCombinedForcedMode != ""
+    StrCpy $InstallerCombinedMode "$InstallerCombinedForcedMode"
+  ${EndIf}
+  Call InstallerCombinedResolveUpgradeMode
+  ${If} $InstallerCombinedLockedMode != ""
+  ${OrIf} $InstallerCombinedForcedMode != ""
+    Call InstallerCombinedApplyUpgradeMode
+  ${EndIf}
+  !insertmacro JustDoLogInstallEvent "phase=upgrade-target-prepared ready=$InstallerCombinedUpgradeReady mode=$installMode install-dir=$INSTDIR"
+  !insertmacro InstallerSetupRestore
+FunctionEnd
+
+; Apply an already selected scope and re-confirm its registered product files.
+Function InstallerCombinedApplyUpgradeMode
+  !insertmacro InstallerSetupSave
+  StrCpy $InstallerCombinedUpgradeReady "0"
+  ${If} $InstallerCombinedMode == "all"
+    !ifmacrodef setInstallModePerAllUsers
+      !insertmacro setInstallModePerAllUsers
+    !endif
+  ${Else}
+    !ifmacrodef setInstallModePerUser
+      !insertmacro setInstallModePerUser
+    !endif
+  ${EndIf}
+  Call InstallerRestoreUpgradeDirectory
+  ${If} $InstallerUpgradeDirectory != ""
+    StrCpy $InstallerCombinedUpgradeReady "1"
+    ; The silent section uses these flags for elevation. A stale registration
+    ; in the other scope must not override the verified selection again.
+    !ifndef INSTALL_MODE_PER_ALL_USERS
+      StrCpy $hasPerMachineInstallation "0"
+      StrCpy $hasPerUserInstallation "0"
+      ${If} $installMode == "all"
+        StrCpy $hasPerMachineInstallation "1"
+      ${Else}
+        StrCpy $hasPerUserInstallation "1"
+      ${EndIf}
+    !endif
+  ${EndIf}
   !insertmacro InstallerSetupRestore
 FunctionEnd
 
@@ -918,13 +981,11 @@ Function InstallerCombinedCreate
     !insertmacro InstallerSetupRestore
     Quit
   ${EndIf}
-  StrCpy $InstallerCombinedMode "$installMode"
-  ${If} $InstallerCombinedMode != "all"
-    StrCpy $InstallerCombinedMode "CurrentUser"
-  ${EndIf}
+  Call InstallerCombinedPrepareUpgradeMode
   ${If} ${isUpdated}
-    ; Updaters retain their skipped setup UI. Only a machine update needs this
-    ; interactive handoff; silent elevation remains the upstream section's job.
+  ${AndIf} $InstallerCombinedUpgradeReady == "1"
+    ; Skip setup only for a verified target. Ambiguous updates use the same
+    ; scope/location page as manual installation instead of guessing a scope.
     StrCpy $InstallerCombinedSelectionPath "$INSTDIR"
     StrCpy $InstallerCombinedSelectionReady "1"
     Call InstallerCombinedEnsureElevation
@@ -936,20 +997,6 @@ Function InstallerCombinedCreate
     !insertmacro InstallerSetupRestore
     Abort
   ${EndIf}
-  StrCpy $InstallerCombinedForcedMode ""
-  !ifdef INSTALL_MODE_PER_ALL_USERS
-    StrCpy $InstallerCombinedForcedMode "all"
-  !else
-    ${If} ${isForCurrentUser}
-      StrCpy $InstallerCombinedForcedMode "CurrentUser"
-    ${ElseIf} ${isForAllUsers}
-      StrCpy $InstallerCombinedForcedMode "all"
-    ${EndIf}
-  !endif
-  ${If} $InstallerCombinedForcedMode != ""
-    StrCpy $InstallerCombinedMode "$InstallerCombinedForcedMode"
-  ${EndIf}
-  Call InstallerCombinedResolveUpgradeMode
   nsDialogs::Create 1018
   Pop $InstallerCombinedPage
   ${If} $InstallerCombinedPage == "error"
