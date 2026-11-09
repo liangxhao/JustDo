@@ -86,7 +86,7 @@ flowchart LR
 
 CLI、ACP、app-server 共用 `ExternalAgentBackendFactory`、`createExternalAgentExecution`
 和 `ExternalSessionStore`，新会话 `source='cli'`。`cowork_external_sessions` 只保留
-外部/原生身份与执行回执，不保存消息；新会话显示在 `Clients` 来源分组。
+外部/原生身份与执行回执，不保存消息；新会话显示在 `External` 来源分组。
 该分组与浏览器扩展的 `Chrome` 分组在中英文界面均使用上述英文名称；内部来源标识保持不变。
 来源通过分组展示，会话标题旁不再重复显示外部来源徽标。
 

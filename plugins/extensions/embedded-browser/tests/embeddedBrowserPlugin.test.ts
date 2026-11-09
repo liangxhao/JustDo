@@ -170,7 +170,7 @@ describe('embedded browser trusted execution integration', () => {
     expect(f.requested()[0].command).not.toHaveProperty('ownerPluginId');
   });
   it('forwards only the exact initiator binding and rejects a retained foreign incarnation', async () => {
-    const sessionKey = 'agent:worker:justdo-team:group:room';
+    const sessionKey = 'agent:worker:agent-team:group:room';
     const toolBindings = createAppExecutionSourceBindings({
       ownerPluginId: 'agent-team',
       sessionKey,

@@ -58,7 +58,7 @@ function fixture(identity = desktop) {
 }
 
 describe('embedded browser native run admission', () => {
-  it.each(['agent:worker:subagent:work', 'agent:worker:justdo-team:group:room'])(
+  it.each(['agent:worker:subagent:work', 'agent:worker:agent-team:group:room'])(
     'admits %s only with finalized authority and an exact current native call',
     sessionKey => {
       const identity = { ...desktop, sessionKey };

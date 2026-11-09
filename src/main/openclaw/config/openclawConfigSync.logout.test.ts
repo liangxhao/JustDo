@@ -3058,7 +3058,7 @@ describe('OpenClaw auth logout config sync', () => {
 test.each([true, false])(
   'keeps the optional agent-team enabled=%s across full minimal config synchronization',
   enabled => {
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-agent-team-config-'));
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-team-config-'));
     temporaryDirectories.push(directory);
     const configPath = path.join(directory, 'openclaw.json');
     expect(writeMinimalConfig(configPath, 'startup').ok).toBe(true);

@@ -950,7 +950,7 @@ describe('authenticated embedded browser Gateway boundary', () => {
       epoch: 'active',
       label: 'Standalone',
     });
-    const run = { ...userRun, sessionKey: 'agent:worker:justdo-team:group:standalone' };
+    const run = { ...userRun, sessionKey: 'agent:worker:agent-team:group:standalone' };
     const executionSource = {
       version: 1,
       ownerPluginId: 'agent-team',
@@ -1043,7 +1043,7 @@ describe('authenticated embedded browser Gateway boundary', () => {
     };
     const second = {
       ...first,
-      sessionKey: 'agent:worker:justdo-team:group:room',
+      sessionKey: 'agent:worker:agent-team:group:room',
       sessionId: 'child-two',
       runId: 'run-two',
       lifecycleRevision: 'life-two',
@@ -1097,7 +1097,7 @@ describe('authenticated embedded browser Gateway boundary', () => {
     options.getDesktopSession.mockReturnValue(null);
     const run = {
       ...userRun,
-      sessionKey: 'agent:worker:justdo-team:group:standalone',
+      sessionKey: 'agent:worker:agent-team:group:standalone',
       lifecycleRevision: 'life',
     };
     bridge.handleEvent(request(run, 'foreground'));
@@ -1208,7 +1208,7 @@ describe('authenticated embedded browser Gateway boundary', () => {
     });
     const run = {
       ...userRun,
-      sessionKey: 'agent:worker:justdo-team:group:standalone',
+      sessionKey: 'agent:worker:agent-team:group:standalone',
       lifecycleRevision: 'one',
     };
     const source = {

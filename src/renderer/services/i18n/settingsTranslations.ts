@@ -465,7 +465,7 @@ export const settingsTranslations = {
     toolIntegrationInboundDescription:
       '通过命令行或本机 WebSocket 调用助手，按客户端支持的协议选择接入方式。',
     agentCliTitle: '命令行入口（CLI）',
-    agentCliSessionGroup: 'Clients',
+    agentCliSessionGroup: 'External',
     agentCliSessionReadOnly:
       '此会话由外部客户端创建，仅供查看。请在发起会话的命令行或客户端中继续或停止任务。',
     agentCliDescription: '用于命令行任务和通过命令行连接的客户端。',
@@ -490,8 +490,8 @@ export const settingsTranslations = {
     agentProtocolStdioTitle: 'stdio（命令行）',
     agentProtocolStdioDescription: '由客户端启动命令，通过标准输入输出连接。',
     agentProtocolArguments: '启动参数',
-    agentProtocolCodexCopyConfig: '复制 stdio 配置',
-    agentProtocolCodexCopied: '已复制 stdio 配置',
+    agentProtocolCodexCopyConfig: '复制配置',
+    agentProtocolCodexCopied: '已复制配置',
     appServerWebSocketTitle: 'WebSocket',
     appServerWebSocketDescription: '连接本机客户端',
     appServerWebSocketAddress: '当前连接地址',
@@ -523,8 +523,8 @@ export const settingsTranslations = {
     appServerWebSocketNotReady: '服务暂不可用',
     appServerWebSocketRefresh: '重新检测 WebSocket',
     appServerWebSocketStatusFailed: '无法读取 WebSocket 状态，请重新检测。',
-    appServerWebSocketCopyConfig: '复制当前配置',
-    appServerWebSocketCopied: '已复制当前配置',
+    appServerWebSocketCopyConfig: '复制配置',
+    appServerWebSocketCopied: '已复制配置',
     appServerWebSocketCopyFailed: '无法复制连接配置，请重新检测后重试。',
     applicationConnectionExamplesDescription:
       '在客户端中填写下方各项。此示例使用 Codex app-server 协议。',
@@ -1524,7 +1524,7 @@ export const settingsTranslations = {
     toolIntegrationInboundDescription:
       'Invoke the assistant through the command line or a local WebSocket. Choose the protocol supported by your client.',
     agentCliTitle: 'Command-line entry (CLI)',
-    agentCliSessionGroup: 'Clients',
+    agentCliSessionGroup: 'External',
     agentCliSessionReadOnly:
       'This session was started by an external client and is read-only here. Continue or stop the task in the originating terminal or client.',
     agentCliDescription: 'For command-line tasks and clients launched through this command.',
@@ -1551,8 +1551,8 @@ export const settingsTranslations = {
     agentProtocolStdioDescription:
       'The client launches the command and connects through standard input and output.',
     agentProtocolArguments: 'Launch arguments',
-    agentProtocolCodexCopyConfig: 'Copy stdio configuration',
-    agentProtocolCodexCopied: 'stdio configuration copied',
+    agentProtocolCodexCopyConfig: 'Copy configuration',
+    agentProtocolCodexCopied: 'Configuration copied',
     appServerWebSocketTitle: 'WebSocket',
     appServerWebSocketDescription: 'Connect local clients',
     appServerWebSocketAddress: 'Current connection address',
@@ -1587,8 +1587,8 @@ export const settingsTranslations = {
     appServerWebSocketNotReady: 'Service is unavailable',
     appServerWebSocketRefresh: 'Recheck WebSocket',
     appServerWebSocketStatusFailed: 'Unable to read WebSocket status. Please recheck.',
-    appServerWebSocketCopyConfig: 'Copy current configuration',
-    appServerWebSocketCopied: 'Current configuration copied',
+    appServerWebSocketCopyConfig: 'Copy configuration',
+    appServerWebSocketCopied: 'Configuration copied',
     appServerWebSocketCopyFailed:
       'Unable to copy the connection configuration. Recheck and try again.',
     applicationConnectionExamplesDescription:

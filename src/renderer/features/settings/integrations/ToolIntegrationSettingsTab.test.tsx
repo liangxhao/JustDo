@@ -68,6 +68,7 @@ test('groups ACP under CLI and keeps both app-server transports at the same leve
   expect(api.getWebSocketStatus).toHaveBeenCalledOnce();
   expect(api.getConnectionConfig).not.toHaveBeenCalled();
   const stdio = codex.getByRole('region', { name: text.agentProtocolStdioTitle });
+  const stdioActions = within(stdio);
   expect(within(stdio).getByRole('heading', { level: 5, name: text.agentProtocolStdioTitle })).toBeTruthy();
   expect(within(stdio).getByText(text.agentProtocolStdioDescription)).toBeTruthy();
   expect(stdio.contains(details)).toBe(true);
@@ -91,7 +92,7 @@ test('groups ACP under CLI and keeps both app-server transports at the same leve
   expect(api.writeText).toHaveBeenLastCalledWith(command);
   await click(cli.getByRole('button', { name: text.agentCliCopyConfig }));
   expect(JSON.parse(api.writeText.mock.lastCall![0])).toEqual({ command, args: ['acp'] });
-  await click(codex.getByRole('button', { name: text.agentProtocolCodexCopyConfig }));
+  await click(stdioActions.getByRole('button', { name: text.agentProtocolCodexCopyConfig }));
   expect(JSON.parse(api.writeText.mock.lastCall![0])).toEqual({
     command, args: ['app-server', '--listen', 'stdio://'],
   });
@@ -103,7 +104,7 @@ test('groups ACP under CLI and keeps both app-server transports at the same leve
   expect(api.writeText).toHaveBeenLastCalledWith(command);
   expect(cli.getByRole('button', { name: text.agentCliCopyCommand })).toBeTruthy();
   expect(cli.getByRole('button', { name: text.agentCliCopied })).toBeTruthy();
-  expect(codex.getByRole('button', { name: text.agentProtocolCodexCopied })).toBeTruthy();
+  expect(stdioActions.getByRole('button', { name: text.agentProtocolCodexCopied })).toBeTruthy();
   expect(api.getStatus).toHaveBeenCalledOnce();
 
   const nextCommand = 'D:\\其他配置\\assistant-cli.exe';
@@ -115,13 +116,13 @@ test('groups ACP under CLI and keeps both app-server transports at the same leve
   expect(example.getByText(nextCommand)).toBeTruthy();
   expect(cli.getByRole('button', { name: text.agentCliCopyCommand })).toBeTruthy();
   expect(cli.getByRole('button', { name: text.agentCliCopyConfig })).toBeTruthy();
-  expect(codex.getByRole('button', { name: text.agentProtocolCodexCopyConfig })).toBeTruthy();
+  expect(stdioActions.getByRole('button', { name: text.agentProtocolCodexCopyConfig })).toBeTruthy();
   expect(example.getByRole('button', { name: exampleCopyName })).toBeTruthy();
   expect(vi.getTimerCount()).toBe(0);
 
   await click(cli.getByRole('button', { name: text.agentCliCopyConfig }));
   expect(JSON.parse(api.writeText.mock.lastCall![0])).toEqual({ command: nextCommand, args: ['acp'] });
-  await click(codex.getByRole('button', { name: text.agentProtocolCodexCopyConfig }));
+  await click(stdioActions.getByRole('button', { name: text.agentProtocolCodexCopyConfig }));
   expect(JSON.parse(api.writeText.mock.lastCall![0])).toEqual({
     command: nextCommand, args: ['app-server', '--listen', 'stdio://'],
   });
@@ -134,13 +135,14 @@ test('ACP, stdio and the example wait for the shared initial command without the
   render(<ToolIntegrationSettingsTab />);
   const cli = within(screen.getByRole('region', { name: text.agentCliTitle }));
   const codex = within(screen.getByRole('region', { name: text.agentProtocolCodexTitle }));
+  const stdioActions = within(codex.getByRole('region', { name: text.agentProtocolStdioTitle }));
   const summary = codex.getByText(text.applicationConnectionExampleSummary);
   await click(summary);
   const example = within(summary.closest('details')!);
   const name = text.applicationConnectionCopyValue.replace('{field}', text.agentCliCommand);
 
   expect(cli.getByRole<HTMLButtonElement>('button', { name: text.agentCliCopyConfig }).disabled).toBe(true);
-  expect(codex.getByRole<HTMLButtonElement>('button', { name: text.agentProtocolCodexCopyConfig }).disabled).toBe(true);
+  expect(stdioActions.getByRole<HTMLButtonElement>('button', { name: text.agentProtocolCodexCopyConfig }).disabled).toBe(true);
   expect(example.getByRole<HTMLButtonElement>('button', { name }).disabled).toBe(true);
   expect(within(screen.getByRole('region', { name: text.agentCliTitle })).getByRole('status').textContent).toBe(text.agentCliLoading);
   expect(api.getStatus).toHaveBeenCalledOnce();
@@ -148,7 +150,7 @@ test('ACP, stdio and the example wait for the shared initial command without the
 
   expect(example.getByRole<HTMLButtonElement>('button', { name }).disabled).toBe(false);
   expect(cli.getByRole<HTMLButtonElement>('button', { name: text.agentCliCopyConfig }).disabled).toBe(false);
-  expect(codex.getByRole<HTMLButtonElement>('button', { name: text.agentProtocolCodexCopyConfig }).disabled).toBe(false);
+  expect(stdioActions.getByRole<HTMLButtonElement>('button', { name: text.agentProtocolCodexCopyConfig }).disabled).toBe(false);
   expect(example.getByText(command)).toBeTruthy();
   expect(api.getStatus).toHaveBeenCalledOnce();
 });
@@ -159,12 +161,13 @@ test('keeps CLI ACP copy errors isolated from the app-server configuration', asy
   await act(async () => { render(<ToolIntegrationSettingsTab />); });
   const cli = within(screen.getByRole('region', { name: text.agentCliTitle }));
   const codex = within(screen.getByRole('region', { name: text.agentProtocolCodexTitle }));
+  const stdioActions = within(codex.getByRole('region', { name: text.agentProtocolStdioTitle }));
 
   await click(cli.getByRole('button', { name: text.agentCliCopyConfig }));
   expect(cli.getByRole('alert').textContent).toBe(text.agentCliCopyFailed);
   expect(codex.queryByRole('alert')).toBeNull();
-  await click(codex.getByRole('button', { name: text.agentProtocolCodexCopyConfig }));
-  expect(codex.getByRole('button', { name: text.agentProtocolCodexCopied })).toBeTruthy();
+  await click(stdioActions.getByRole('button', { name: text.agentProtocolCodexCopyConfig }));
+  expect(stdioActions.getByRole('button', { name: text.agentProtocolCodexCopied })).toBeTruthy();
   expect(cli.getByRole('alert').textContent).toBe(text.agentCliCopyFailed);
   await click(cli.getByRole('button', { name: text.agentCliCopyCommand }));
   expect(cli.queryByRole('alert')).toBeNull();

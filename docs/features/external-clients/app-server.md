@@ -163,14 +163,14 @@ Bearer token；令牌首次生成后持久保存，正常重启保持有效。�
 浏览器使用自己的扩展入口。客户端名称或扩展凭据不能改变能力绑定。
 
 每连接通过 `AgentCommandService.connectAppServer` 使用与 stdio 相同的
-`ExternalAppServerBinding`、外部会话命名空间、预留和 `Clients` 来源分组。WebSocket 不读取客户端
+`ExternalAppServerBinding`、外部会话命名空间、预留和 `External` 来源分组。WebSocket 不读取客户端
 `CODEX_HOME` 或环境变量。认证时捕获应用配置的默认工作目录；`thread/start.cwd` 可以明确覆盖，
 resume 未传 cwd 时保留已存目录。
 
 ### 设置页与复制配置
 
 “设置 → 外部连接 → 应用接入”提供 CLI/ACP 入口，并将 app-server 的 stdio 与 WebSocket
-作为并列面板；Multica 示例归 stdio 面板。WebSocket 默认显示当前连接地址和复制当前配置，
+作为并列面板；Multica 示例归 stdio 面板。两种连接方式的按钮统一显示“复制配置”，成功后显示“已复制配置”。WebSocket 默认显示当前连接地址和复制按钮，
 “连接设置”按需展开。监听端口的标签、自动/固定选择和固定端口输入位于同一行；自动模式在
 提交时映射为 `0`，界面不要求用户填写 `0`，固定端口范围为 `1..65535`。
 仅有草稿变更时显示保存/取消，固定端口错误在失焦或保存时提示；取消恢复已保存设置。
