@@ -263,6 +263,13 @@ and UI unit tests in `plugins/chrome-extensions/chrome-assistant/`. The stable
 `chrome/` retains adapters that reuse application chat rendering, translations
 and streaming, together with the desktop Native Messaging helper and registration.
 
+`npm run chrome-extension:build-questions` rebuilds the offline question wizard
+from the desktop React components, their used translations, and scoped styles.
+Run it after changing the wizard or wait-policy presentation, then run
+`npm run chrome-extension:prepare` to assemble the updated extension. Its generated
+JavaScript/CSS are tracked alongside the other Chrome content bundles; the
+distributed extension never imports application source or downloads UI libraries.
+
 Chrome Assistant assembly and operator-driven webpage probes belong to the distributed plugin. The host Markdown command also builds rich-content and styles from application chat code, so that composite adapter remains in `chrome/`. Commands, prerequisites and validation limits are in the [side panel](../docs/plugins/chrome-extensions/chrome-assistant/side-panel.md) and [webpage entry](../docs/plugins/chrome-extensions/chrome-assistant/website-launch.md) documentation.
 
 Run the isolated native run/result probe with `<runtime>/node-runtime/node[.exe] scripts/test/openclaw/verify-browser-web-result.cjs --runtime-dir <prepared-runtime>`. It requires that selected runtime's bundled Node and verifies its frozen proof before using a disposable Gateway and deterministic loopback model. It never uses an existing user profile, Gateway or real provider; artifacts remain under `.agent-tasks/browser-artifacts/` and private fixture state under `build/`. This is a native capability probe; the Chrome integration's findings and limits remain in the webpage entry documentation.

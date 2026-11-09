@@ -13,6 +13,9 @@ import { ChromeExtensionStream } from './modules/sidepanel-stream.js';
 import { createMessageRenderer } from './modules/sidepanel-messages.js';
 import { createRunActivityView } from './modules/sidepanel-activity.js';
 import { createApprovalPanel } from './modules/sidepanel-approvals.js';
+import { createQuestionPanel } from './modules/sidepanel-questions.js';
+import { createWorkspacePicker } from './modules/sidepanel-workspace.js';
+import { createComposerAddMenu } from './modules/sidepanel-add-menu.js';
 import {
   localizeSidePanel,
   sidePanelConnectionError,
@@ -65,6 +68,71 @@ let subscribedThreadId = '';
 const streamViews = new Map();
 const pendingCompletions = new Map();
 let streamRenderTimer = null;
+let draftId = crypto.randomUUID();
+let draftWorkspaceSelection = null;
+let currentCwd = '';
+let recentCwds = [];
+let choosingWorkspace = false;
+let questionGeneration = 0;
+let questionsReady = false;
+
+const questions = createQuestionPanel(document.getElementById('questions'), {
+  respond: async (threadId, requestId, response) => {
+    if (!transportReady || sessionSelect.value !== threadId || stoppingThreadId === threadId)
+      throw new Error(t('reconnecting'));
+    await client.request('chrome/questions/respond', { threadId, requestId, ...response });
+    void refreshQuestions(threadId);
+  },
+  onError: showError,
+});
+const workspace = createWorkspacePicker(document.getElementById('workspace'), {
+  anchor: attachButton,
+  request: (method, params) => client.request(method, params),
+  onSelected: selection => {
+    currentCwd = selection.cwd;
+    if (!sessionSelect.value) draftWorkspaceSelection = selection;
+    updateComposerDisabledState();
+    if (sessionSelect.value) void refreshAll(sessionSelect.value);
+  },
+  onBusyChange: busy => { choosingWorkspace = busy; updateComposerDisabledState(); },
+  onError: showError,
+});
+const addMenu = createComposerAddMenu(attachButton, document.getElementById('addMenu'), {
+  onAttach: () => fileInput.click(),
+});
+
+function clearQuestions() {
+  questionGeneration += 1;
+  questionsReady = false;
+  questions.clear();
+  syncQuestionVisibility();
+}
+
+function syncQuestionVisibility() {
+  questions.setSuspended(!questionsReady ||
+    !document.getElementById('approvals').classList.contains('hidden'));
+}
+
+async function refreshQuestions(threadId) {
+  const generation = ++questionGeneration;
+  questionsReady = false;
+  syncQuestionVisibility();
+  if (!threadId || stoppingThreadId === threadId) { questions.clear(); return; }
+  try {
+    const result = await client.request('chrome/questions/list', { threadId });
+    if (generation === questionGeneration && threadId === sessionSelect.value && stoppingThreadId !== threadId) {
+      questions.setQuestions(threadId, result.questions);
+      questionsReady = true;
+      syncQuestionVisibility();
+    }
+  } catch (error) {
+    if (generation === questionGeneration && threadId === sessionSelect.value && transportReady)
+      showError(error);
+  }
+}
+
+const approvalObserver = new MutationObserver(syncQuestionVisibility);
+approvalObserver.observe(document.getElementById('approvals'), { attributes: true, attributeFilter: ['class'] });
 
 function streamView(threadId) {
   if (!streamViews.has(threadId)) {
@@ -122,6 +190,10 @@ const approvals = createApprovalPanel(document.getElementById('approvals'), {
 });
 
 const client = new AppServerClient((method, params) => {
+  if (method === 'chrome/thread/workspace/changed' && params?.threadId === sessionSelect.value)
+    void refreshAll(params.threadId);
+  if (method === 'chrome/questions/changed' && params?.threadId === sessionSelect.value)
+    void refreshQuestions(params.threadId);
   // Standard item notifications serve the protocol's core history. This rich
   // viewer consumes its explicit browser lane once, without appending both.
   if (method === 'chrome/thread/stream') {
@@ -138,6 +210,9 @@ const client = new AppServerClient((method, params) => {
     }
   }
   if (method === 'connection/closed') {
+    clearQuestions();
+    workspace.invalidate();
+    draftWorkspaceSelection = null;
     approvals.cancelAll();
     refreshGeneration += 1;
     transportReady = false;
@@ -147,6 +222,9 @@ const client = new AppServerClient((method, params) => {
     updateActivity();
   }
   if (method === 'connection/failed') {
+    clearQuestions();
+    workspace.invalidate();
+    draftWorkspaceSelection = null;
     approvals.cancelAll();
     transportReady = false;
     setComposerReady(false);
@@ -261,14 +339,21 @@ function updateComposerDisabledState() {
   const pending =
     pendingSubmissions.get(sessionSelect.value)?.uncertain === true ||
     knownTurns.get(sessionSelect.value)?.uncertain === true;
-  sessionSelect.disabled = sending;
+  sessionSelect.disabled = sending || choosingWorkspace;
   const externalInput = webLaunchPanel?.inputAssociated() === true;
+  workspace.update({
+    threadId: sessionSelect.value, draftId, cwd: currentCwd, recentCwds,
+    disabled: !composerReady || !transportReady || sending || pending || externalInput ||
+      currentThreadRunning || Boolean(stoppingThreadId && stoppingThreadId === sessionSelect.value),
+  });
   attachButton.disabled = externalInput || sending || pending || attachmentReadsInFlight > 0;
+  addMenu.update();
   fileInput.disabled = externalInput || sending || pending || attachmentReadsInFlight > 0;
   includePage.disabled = externalInput || sending || pending;
   permissionSelect.disabled = !composerReady || sending || pending;
   modelSelect.disabled = !composerReady || sending || pending;
   send.disabled =
+    choosingWorkspace ||
     sending ||
     !transportReady ||
     pending ||
@@ -345,7 +430,7 @@ async function refreshSessions(preferredSessionId, generation) {
   if ([...sessionSelect.options].some(option => option.value === current)) {
     sessionSelect.value = current;
   }
-  if (previousSelection !== sessionSelect.value) approvals.cancelAll();
+  if (previousSelection !== sessionSelect.value) { approvals.cancelAll(); clearQuestions(); }
   const selectedThread = (result.data ?? []).find(entry => entry.id === sessionSelect.value);
   if (selectedThread?.status?.type === 'active') {
     setRunningTurn(
@@ -387,6 +472,8 @@ async function refreshComposerOptions(threadId, generation) {
   // standard catalog performs its read-only access to the connected runtime.
   const result = await client.request('chrome/composer/options', { ...(threadId ? { threadId } : {}) });
   if (generation !== refreshGeneration || sessionSelect.value !== threadId) return;
+  currentCwd = (!threadId && draftWorkspaceSelection?.cwd) || result.cwd || '';
+  recentCwds = result.recentCwds ?? [];
   const models = await readModelCatalog(generation);
   if (generation !== refreshGeneration || sessionSelect.value !== threadId) return;
   permissionSelect.value = webLaunchPanel?.inputAssociated()
@@ -445,6 +532,7 @@ async function refreshMessages(threadId, generation) {
   }
   const previousThreadId = subscribedThreadId;
   subscribedThreadId = threadId;
+  void refreshQuestions(threadId);
   if (previousThreadId && previousThreadId !== threadId) {
     void client.request('thread/unsubscribe', { threadId: previousThreadId }).catch(() => {});
   }
@@ -648,6 +736,7 @@ async function submit() {
   const message = prompt.value.trim();
   if (
     (!message && pendingAttachments.length === 0) ||
+    choosingWorkspace ||
     sending ||
     !composerReady ||
     !transportReady ||
@@ -680,10 +769,17 @@ async function submit() {
     let threadId = sessionSelect.value;
     if (!threadId) {
       const started = await client.request('thread/start', {
-        chrome: { title: message.split(/\r?\n/u)[0] || attachments[0]?.name || t('untitled') },
+        ...(draftWorkspaceSelection ? { cwd: draftWorkspaceSelection.cwd } : {}),
+        chrome: {
+          title: message.split(/\r?\n/u)[0] || attachments[0]?.name || t('untitled'),
+          ...(draftWorkspaceSelection ? { workspaceSelectionToken: draftWorkspaceSelection.selectionToken, draftId } : {}),
+        },
       });
       threadId = started.thread.id;
       createdThreadId = threadId;
+      currentCwd = started.thread.cwd || currentCwd;
+      draftWorkspaceSelection = null;
+      draftId = crypto.randomUUID();
       const option = document.createElement('option');
       option.value = threadId;
       option.textContent = started.thread.name || message.split(/\r?\n/u)[0] || t('untitled');
@@ -771,7 +867,7 @@ async function submit() {
     updateActivity();
     // A server request can arrive before admission returns. Keep subsequent
     // typing inside its answer field, especially when the answer is secret.
-    if (!document.getElementById('approvals').contains(document.activeElement)) prompt.focus();
+    if (!questions.hasPending && !document.getElementById('approvals').contains(document.activeElement)) prompt.focus();
   }
 }
 
@@ -790,6 +886,7 @@ async function stopCurrentTurn() {
     return;
   const threadId = activeThreadId;
   approvals.cancelTurn(threadId, activeTurnId);
+  clearQuestions();
   stoppingThreadId = threadId;
   sending = true;
   updateComposerDisabledState();
@@ -813,6 +910,10 @@ async function stopCurrentTurn() {
 
 sessionSelect.addEventListener('change', () => {
   approvals.cancelAll();
+  clearQuestions();
+  workspace.invalidate();
+  draftWorkspaceSelection = null;
+  draftId = crypto.randomUUID();
   const nextThread = sessionSelect.value;
   if (!webLaunchPanel.inputAssociated()) {
     clearAttachments();
@@ -841,7 +942,6 @@ modelSelect.addEventListener('change', () => {
   modelSelect.title = modelSelect.selectedOptions[0]?.textContent || '';
   webLaunchPanel?.edit('model');
 });
-attachButton.addEventListener('click', () => fileInput.click());
 fileInput.addEventListener('change', () => {
   void addAttachments(fileInput.files ?? [])
     .catch(showError)
@@ -874,6 +974,10 @@ document.addEventListener('visibilitychange', () => {
   if (!document.hidden) void refreshAll();
 });
 window.addEventListener('unload', () => {
+  addMenu.dispose();
+  approvalObserver.disconnect();
+  workspace.dispose();
+  questions.dispose();
   approvals.dispose();
   webLaunchPanel?.dispose();
   client.disconnect();
@@ -894,6 +998,12 @@ webLaunchPanel = createWebLaunchPanel({
     ready: composerReady && transportReady,
   }),
   installComposer: input => {
+    if (input.threadId !== undefined && input.threadId !== sessionSelect.value) {
+      clearQuestions();
+      workspace.invalidate();
+      draftWorkspaceSelection = null;
+      draftId = crypto.randomUUID();
+    }
     if (input.threadId !== undefined && input.threadId !== sessionSelect.value) approvals.cancelAll();
     if (input.clearPrompt) prompt.value = '';
     if (typeof input.prompt === 'string') prompt.value = input.prompt;

@@ -52,7 +52,9 @@ Chrome app-server 发现版本为 4，Native Messaging 版本保持 2；不保�
   read／resume 的 includeDisplay、turnId，以及 thread/start 的 title。
 - 标准 Thread 的 `chrome.display` 和 `chrome.activeTurn`。
   display 的本地分组只含 id／items，不是标准 Turn，也没有合成 completed／final 状态。
-- `chrome/composer/options`、`chrome/thread/image`、`chrome/extension/pair`。
+- `chrome/composer/options`（含目录）、`chrome/thread/image`、`chrome/extension/pair`。
+- `chrome/workspace/select`、`chrome/thread/workspace/set` 与 `chrome/thread/workspace/changed`；新建目录凭据位于 `thread/start.chrome`。
+- `chrome/questions/list`、`chrome/questions/respond` 与 `chrome/questions/changed`；普通 Chrome 会话原生问答复用桌面向导与回答入口。
 - `chrome/thread/stream` 与 `chrome/thread/updated`。
 - 既有 `chrome/webLaunch/*`、Native Host 发现及 connection/* 客户端状态。
 
@@ -62,7 +64,7 @@ Chrome app-server 发现版本为 4，Native Messaging 版本保持 2；不保�
 ## 尚未完成的适配
 
 当前原生命令和插件审批已有真实界面，标准图片输入也已接入。
-原生未提供的独立文件变更审批、策略修订、复杂原生问答、音频、fileId、
+原生未提供的独立文件变更审批、策略修订、插件或子执行问答、音频、fileId、
 账户／配置／MCP 管理及 fork／archive／delete 等仍未实现。
 不以空成功结果冒充支持，观察者和新连接也不能继承原审批 owner 或命令授权。
 

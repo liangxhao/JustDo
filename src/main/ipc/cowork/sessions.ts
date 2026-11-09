@@ -36,6 +36,7 @@ import {
 import { t } from '../../core/i18n';
 import type { CoworkStore } from '../../data/coworkStore';
 import type { CoworkEngineRouter } from '../../engine';
+import type { SessionWorkspaceUpdater } from '../../engine/cowork/sessionWorkspace';
 import { isWorkspacePathWithin } from '../../engine/openclaw/runtimeAdapterSupport';
 import type { PermissionModeOperationResult } from '../../openclaw/permissions/sessionPermissionModeCoordinator';
 import {
@@ -147,7 +148,7 @@ export const registerCoworkSessionHandlers = ({
   workspaceAppSessions,
   onSessionsChanged,
   getSessionPlugins,
-}: SessionHandlerDependencies): void => {
+}: SessionHandlerDependencies): SessionWorkspaceUpdater => {
   const discoverNativeWorktrees = createNativeWorktreeDiscovery({
     getCoworkStore,
     requestGateway,
@@ -161,7 +162,7 @@ export const registerCoworkSessionHandlers = ({
   });
   const unknownAdmissions = new Map<string, { id: string; runId: string; cancelled: boolean }>();
   const stoppingSessions = new Map<string, Promise<{ success: boolean; error?: string }>>();
-  registerSessionWorkspaceHandler({
+  const setSessionWorkspace = registerSessionWorkspaceHandler({
     getCoworkStore,
     getCoworkEngineRouter,
     isAllowedSender: event => isAllowedWorkspaceSender?.(event) === true,
@@ -1624,4 +1625,5 @@ export const registerCoworkSessionHandlers = ({
       }
     },
   );
+  return setSessionWorkspace;
 };

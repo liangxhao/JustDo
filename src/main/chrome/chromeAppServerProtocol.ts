@@ -3,6 +3,10 @@ import { AppServerErrorCode, type AppServerOperation,AppServerRpcError, isAppSer
 
 /** Chrome-owned extensions to the shared app-server protocol. */
 export const ChromeAppServerMethod = {
+  QuestionsList: 'chrome/questions/list',
+  QuestionsRespond: 'chrome/questions/respond',
+  WorkspaceSelect: 'chrome/workspace/select',
+  ThreadWorkspaceSet: 'chrome/thread/workspace/set',
   ThreadImage: 'chrome/thread/image',
   ComposerOptions: 'chrome/composer/options',
   ChromePair: 'chrome/extension/pair',
@@ -20,6 +24,8 @@ export const ChromeAppServerMethod = {
 } as const;
 
 export const ChromeAppServerNotificationMethod = {
+  QuestionsChanged: 'chrome/questions/changed',
+  ThreadWorkspaceChanged: 'chrome/thread/workspace/changed',
   WebLaunchChanged: 'chrome/webLaunch/changed',
   ThreadUpdated: 'chrome/thread/updated',
   ThreadStream: 'chrome/thread/stream',

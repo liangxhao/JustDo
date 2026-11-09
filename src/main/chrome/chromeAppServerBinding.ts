@@ -30,6 +30,7 @@ import type {
 } from './chromeAppServerTypes';
 import { readThreadImage } from './chromeExtensionImage';
 import type { ChromeWebLaunchService } from './chromeWebLaunchService';
+import { type ChromeWorkspaceScope,ChromeWorkspaceSelections } from './chromeWorkspaceSelections';
 
 const POLL_INTERVAL_MS = 500;
 const FULL_SNAPSHOT_POLL_INTERVAL = 20;
@@ -64,6 +65,7 @@ interface ChromePeer {
   unloadTokens: Map<string, symbol>;
   approvals: Map<string, { controller: AbortController; scope: ExternalApprovalSessionScope }>;
   opening: number;
+  workspaceSelections: ChromeWorkspaceSelections;
 }
 
 /** Chrome domain observations outlive a socket; disconnect only detaches that viewer. */
@@ -110,7 +112,7 @@ export class ChromeAppServerHub {
       context, controller: new AbortController(), subscriptions: new Set(), generation: this.generation,
       models: new Map(), subscriptionTokens: new Map(),
       unloadTokens: new Map(), approvals: new Map(),
-      opening: 0,
+      opening: 0, workspaceSelections: new ChromeWorkspaceSelections(),
     };
     this.peers.add(peer);
     const operation =
@@ -144,6 +146,10 @@ export class ChromeAppServerHub {
         interrupt: operation(params => this.interruptTurn(peer, params)),
       },
       extensions: {
+        [ChromeAppServerMethod.WorkspaceSelect]: operation(params => this.selectWorkspace(peer, params)),
+        [ChromeAppServerMethod.ThreadWorkspaceSet]: operation(params => this.setThreadWorkspace(peer, params)),
+        [ChromeAppServerMethod.QuestionsList]: operation(params => this.listQuestions(peer, params)),
+        [ChromeAppServerMethod.QuestionsRespond]: operation(params => this.respondQuestion(peer, params)),
         [ChromeAppServerMethod.ComposerOptions]: operation(params => this.composerOptions(peer, params)),
         [ChromeAppServerMethod.ThreadImage]: operation(params => this.readImage(peer, params)),
         [ChromeAppServerMethod.ChromePair]: operation(params => this.pairBrowser(peer, params)),
@@ -342,6 +348,7 @@ export class ChromeAppServerHub {
   private detach(peer: ChromePeer): void {
     this.peers.delete(peer);
     peer.controller.abort();
+    peer.workspaceSelections.clear();
     for (const approval of peer.approvals.values()) {
       approval.controller.abort();
       approval.scope.close();
@@ -433,17 +440,29 @@ export class ChromeAppServerHub {
 
     let stream = this.streamSubscriptions.get(threadId);
     if (!stream) {
-      stream = this.api.subscribeThreadEvents(threadId, event => {
-        if (epoch === this.observationEpoch) {
-          this.broadcast(
-            ChromeAppServerNotificationMethod.ThreadStream,
-            { threadId, ...event },
-            threadId,
-            peer.generation,
-          );
-          this.projection(threadId).accept(event);
+      stream = (async () => {
+        const dispose = await this.api.subscribeThreadEvents(threadId, event => {
+          if (epoch === this.observationEpoch) {
+            this.broadcast(
+              ChromeAppServerNotificationMethod.ThreadStream,
+              { threadId, ...event },
+              threadId,
+              peer.generation,
+            );
+            this.projection(threadId).accept(event);
+          }
+        });
+        try {
+          const disposeQuestions = await this.api.subscribeQuestions?.(threadId, () => {
+            if (epoch === this.observationEpoch)
+              this.broadcast(ChromeAppServerNotificationMethod.QuestionsChanged, { threadId }, threadId, peer.generation);
+          });
+          return () => { dispose(); disposeQuestions?.(); };
+        } catch (error) {
+          dispose();
+          throw error;
         }
-      });
+      })();
       this.streamSubscriptions.set(threadId, stream);
     }
     try {
@@ -570,8 +589,17 @@ export class ChromeAppServerHub {
     const chrome = this.chromeParams(params);
     const title = optionalString(chrome, 'title');
     const model = optionalString(params, 'model');
-    const cwd = optionalString(params, 'cwd');
-    const thread = await this.api.startThread(title, { model, cwd });
+    const requestedCwd = optionalString(params, 'cwd');
+    const selectionToken = optionalString(chrome, 'workspaceSelectionToken');
+    let cwd = requestedCwd;
+    let selectedWorkspace: { assertCurrent: () => void } | undefined;
+    if (selectionToken !== undefined) {
+      const scope = this.workspaceScope(peer, { draftId: chrome.draftId });
+      cwd = peer.workspaceSelections.consume(selectionToken, scope);
+      if (requestedCwd !== undefined && requestedCwd !== cwd) invalidParams('The selected folder changed.');
+      selectedWorkspace = { assertCurrent: () => this.assertPeerActive(peer) };
+    }
+    const thread = await this.api.startThread(title, { model, cwd, ...(selectedWorkspace ? { selectedWorkspace } : {}) });
     this.assertPeerActive(peer);
     const result = await this.openResult(peer, thread);
     await this.subscribeStream(peer, thread.id);
@@ -647,12 +675,101 @@ export class ChromeAppServerHub {
     }
   }
 
+  private workspaceScope(peer: ChromePeer, params: AppServerParams): ChromeWorkspaceScope {
+    const threadId = optionalString(params, 'threadId');
+    const draftId = optionalString(params, 'draftId');
+    if (Boolean(threadId) === Boolean(draftId)) invalidParams('Select a draft or conversation.');
+    if (draftId && (draftId.length > 128 || !/^[A-Za-z0-9_-]+$/u.test(draftId)))
+      invalidParams('Invalid draft identity.');
+    if (!threadId) return { key: JSON.stringify(['draft', draftId]) };
+    const expectedCwd = optionalString(params, 'expectedCwd');
+    const subscription = peer.subscriptionTokens.get(threadId);
+    if (!subscription || !peer.subscriptions.has(threadId)) invalidParams('Load this conversation before selecting its folder.');
+    if (expectedCwd === undefined) invalidParams('expectedCwd is required.');
+    return { key: JSON.stringify(['thread', threadId, expectedCwd]), subscription };
+  }
+
+  private async selectWorkspace(peer: ChromePeer, params: AppServerParams): Promise<AppServerResult> {
+    if (!this.api.selectWorkspace) return this.unsupported(ChromeAppServerMethod.WorkspaceSelect);
+    const scope = this.workspaceScope(peer, params);
+    const threadId = optionalString(params, 'threadId');
+    const expectedCwd = optionalString(params, 'expectedCwd');
+    const recentCwd = optionalString(params, 'recentCwd');
+    const thread = threadId ? await this.requireThread(threadId) : undefined;
+    const assertCurrent = () => {
+      this.assertPeerActive(peer);
+      if (threadId && (!peer.subscriptions.has(threadId) ||
+        peer.subscriptionTokens.get(threadId) !== scope.subscription))
+        throw new Error('The conversation changed during folder selection.');
+    };
+    assertCurrent();
+    if (thread && thread.cwd !== expectedCwd) invalidParams('The conversation folder changed.');
+    const options = thread ? { cwd: thread.cwd } : await this.api.getComposerOptions();
+    assertCurrent();
+    return peer.workspaceSelections.select(scope,
+      () => this.api.selectWorkspace!({ defaultPath: options.cwd, recentCwd }), assertCurrent);
+  }
+
+  private async setThreadWorkspace(peer: ChromePeer, params: AppServerParams): Promise<AppServerResult> {
+    if (!this.api.setThreadWorkspace) return this.unsupported(ChromeAppServerMethod.ThreadWorkspaceSet);
+    const scope = this.workspaceScope(peer, params);
+    const threadId = this.threadId(params);
+    const expectedCwd = optionalString(params, 'expectedCwd')!;
+    const token = optionalString(params, 'selectionToken');
+    if (!token) invalidParams('selectionToken is required.');
+    const cwd = peer.workspaceSelections.consume(token, scope);
+    await this.requireThread(threadId);
+    const current = () => this.peers.has(peer) && !peer.context.isClosed() &&
+      this.phase === HubPhase.Active && peer.generation === this.generation &&
+      peer.subscriptions.has(threadId) && peer.subscriptionTokens.get(threadId) === scope.subscription;
+    if (!current()) throw new Error('The conversation is no longer current.');
+    const result = await this.api.setThreadWorkspace({ sessionId: threadId, expectedCwd, cwd }, current);
+    this.assertPeerActive(peer);
+    if (result.success) this.afterResponse(() => this.broadcast(
+      ChromeAppServerNotificationMethod.ThreadWorkspaceChanged,
+      { threadId, cwd: result.cwd }, threadId, peer.generation), peer.generation);
+    return { ...result };
+  }
+
   private async composerOptions(
     _peer: ChromePeer,
     params: AppServerParams,
   ): Promise<AppServerResult> {
     const threadId = typeof params.threadId === 'string' ? params.threadId : undefined;
     return { ...(await this.api.getComposerOptions(threadId)) };
+  }
+
+  private questionScope(peer: ChromePeer, threadId: string): () => void {
+    const token = peer.subscriptionTokens.get(threadId);
+    const assertCurrent = () => {
+      this.assertPeerActive(peer);
+      if (!token || !peer.subscriptions.has(threadId) || peer.subscriptionTokens.get(threadId) !== token)
+        invalidParams('Subscribe to the conversation before reading or answering its questions.');
+    };
+    assertCurrent();
+    return assertCurrent;
+  }
+
+  private async listQuestions(peer: ChromePeer, params: AppServerParams): Promise<AppServerResult> {
+    const threadId = this.threadId(params);
+    const assertCurrent = this.questionScope(peer, threadId);
+    if (!this.api.listQuestions) return this.unsupported(ChromeAppServerMethod.QuestionsList);
+    const questions = await this.api.listQuestions(threadId, assertCurrent);
+    assertCurrent();
+    return { questions };
+  }
+
+  private async respondQuestion(peer: ChromePeer, params: AppServerParams): Promise<AppServerResult> {
+    const threadId = this.threadId(params);
+    const assertCurrent = this.questionScope(peer, threadId);
+    const requestId = optionalString(params, 'requestId');
+    if (!requestId || requestId.length > 256) invalidParams('requestId is required.');
+    if (params.behavior !== 'submit' && params.behavior !== 'cancel') invalidParams('Invalid question response.');
+    if (!this.api.respondQuestion) return this.unsupported(ChromeAppServerMethod.QuestionsRespond);
+    await this.api.respondQuestion(threadId, requestId, params.behavior === 'submit'
+      ? { behavior: 'submit', answers: params.answers } : { behavior: 'cancel' }, assertCurrent);
+    assertCurrent();
+    return {};
   }
 
   private async unsubscribeThread(
@@ -662,6 +779,7 @@ export class ChromeAppServerHub {
     const threadId = this.threadId(params);
     const subscriptions = peer.subscriptions;
     peer.subscriptionTokens.delete(threadId);
+    peer.workspaceSelections.clear();
     peer.models.delete(threadId);
     const approval = peer.approvals.get(threadId);
     approval?.controller.abort();
@@ -797,6 +915,7 @@ export class ChromeAppServerHub {
       admission.dispatchStarted = true;
       turn = await this.api.sendMessage({
         clientTurnId, attachments, message, modelRef, pageContext, permissionMode, sessionId: threadId,
+        expectedWorkspaceRoot: sourceThread.cwd,
       }, { assertCurrent, ...(this.api.supportsClientApprovals === true && peer.context.request ? {
         approvals: { context: peer.context, signal: approval.controller.signal, scope: approval.scope },
       } : {}) });

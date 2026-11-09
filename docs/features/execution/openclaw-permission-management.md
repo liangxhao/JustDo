@@ -33,6 +33,11 @@ SessionPermissionModeCoordinator 按 session 串行，而非全局阻塞所有�
 
 sessionRoot 来自产品任务 cwd，并规范化验证。变更项目路径、模型或恢复旧会话时仍需准备，不能只比较模式字符串。原生身份与 root 不匹配就拒绝发送，不能用修改助手角色 workspace 代替任务权限。
 
+Chrome 侧栏通过受认证的浏览器能力绑定选择新会话目录或更改已有目录，与桌面共用
+下述领域校验；桌面 IPC 的主窗口来源限制保持独立。Chrome 选择凭据绑定连接及
+草稿／会话，不能通过任意 cwd 覆盖或网页 SDK 扩大文件根。近期列表只含默认目录及
+Chrome 来源会话目录，发送准备全程复核原工作根。
+
 已有普通会话（含已绑定的历史会话）可通过标题栏“更改工作目录”选择现有文件夹。
 Main 仅接受主窗口主 frame 的类型化请求；拒绝外部来源、原生 Worktree、插件托管、
 副本创建中、停止中、未知发送、未结算运行、在途准备和待处理计划（含仍可恢复的
@@ -88,7 +93,7 @@ app-server 复用同一原生审批路由，标准 presenter 位于 `main/client
 
 App 持久授权与上述内存缓存不同：其效果和持久化由原生 App 权限管理，连接关闭不会撤销已明确保存的原生授权。其他插件的持久选项、execpolicy／network policy amendment 和独立文件修改审批没有对应的真实映射，不伪装成已支持能力。
 
-原生 resolved、到期、断线和 UI 撤回使等待响应失效，迟到允许不能提交；断线或切换界面本身不请求取消借用的原生运行。Chrome 审批面板不默认勾选答案，秘密输入只保留在当前表单，撤回时清空，`turn/start` 响应不会将焦点从秘密输入移回普通草稿。界面可呈现标准多题、自由输入和秘密问题，但这不表示已接入原生所有复杂 `ask_user_question` 流程。当前字段与限制见[统一 app-server](../external-clients/app-server.md)。
+原生 resolved、到期、断线和 UI 撤回使等待响应失效，迟到允许不能提交；断线或切换界面本身不请求取消借用的原生运行。Chrome 审批面板不默认勾选答案，秘密输入只保留在当前表单，撤回时清空，`turn/start` 响应不会将焦点从秘密输入移回普通草稿。审批表单的多题、自由输入和秘密字段仅服务标准权限确认；普通 Chrome 会话的 `ask_user_question` 使用独立问答桥，复用桌面问答向导及统一回答锁，不继承审批发送 owner。插件或子执行问答暂不开放。当前字段与限制见[Chrome 侧栏](../../plugins/chrome-extensions/chrome-assistant/side-panel.md)。
 
 当前桌面只加载无业务联网能力的 pinned HTML 卡片；声明非空 `netOrigins`、工具能力或
 使用不支持注册类型的 board 卡片，在审批、HTML 读取及执行前显示不支持。即使原生已

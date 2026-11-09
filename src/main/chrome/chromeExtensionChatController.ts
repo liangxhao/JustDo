@@ -8,6 +8,7 @@ import { parseCoworkAttachments } from '../../shared/cowork/attachments';
 import { hasMessageInput } from '../../shared/cowork/messageInput';
 import type { SessionRunTiming } from '../../shared/cowork/sessionRun';
 import { CoworkSessionSource } from '../../shared/cowork/sessionSource';
+import { SessionWorkspaceFailure, type SetSessionWorkspaceInput } from '../../shared/cowork/sessionWorkspace';
 import { normalizeAgentEvent, normalizeChatEvent } from '../../shared/openclaw/agentEvent';
 import type {
   OpenClawAssistantMediaRequest,
@@ -30,6 +31,7 @@ import { resolveTaskWorkingDirectory } from '../core/filesystem/taskWorkspace';
 import { t } from '../core/i18n';
 import type { CoworkSession, CoworkStore } from '../data/coworkStore';
 import type { CoworkEngineRouter } from '../engine';
+import type { SessionWorkspaceUpdater } from '../engine/cowork/sessionWorkspace';
 import type { GatewayClientLike, GatewayEventFrame, NativeRunTerminalReceipt } from '../engine/gateway/types';
 import type { OpenClawRuntimeAdapter } from '../engine/openclaw/openclawRuntimeAdapter';
 import type { OpenClawEngineStatus } from '../openclaw/runtime/openclawEngineManager';
@@ -42,11 +44,13 @@ import type {
   ChromeExtensionChatApi,
   ChromeExtensionChatRequest,
   ChromeExtensionPageContext,
+  ChromeExtensionQuestionResponse,
   ChromeExtensionThread,
   ChromeExtensionTrustedSendHooks,
   ChromeExtensionTurnState,
 } from './chromeAppServerTypes';
 import { readChromeExtensionHistoryDisplay, readChromeQuestionResult } from './chromeExtensionHistoryDisplay';
+import { ChromeExtensionQuestions } from './chromeExtensionQuestions';
 
 const MAX_PROMPT_LENGTH = 32_000;
 const MAX_TITLE_LENGTH = 500;
@@ -79,6 +83,8 @@ type ChromeExtensionChatControllerDependencies = {
   getRuntime: () => OpenClawRuntimeAdapter | null;
   getDefaultModelRef?: () => string | undefined;
   onSessionsChanged?: () => void;
+  selectDirectory?: (defaultPath?: string) => Promise<string | null>;
+  setSessionWorkspace?: SessionWorkspaceUpdater;
   readAssistantMedia?: (
     request: OpenClawAssistantMediaRequest,
   ) => Promise<OpenClawAssistantMediaResult>;
@@ -399,6 +405,22 @@ export const buildChromeExtensionContext = (
 };
 
 export class ChromeExtensionChatController implements ChromeExtensionChatApi {
+  private readonly questions = new ChromeExtensionQuestions({
+    getSession: sessionId => this.requireChromeSession(sessionId),
+    getRuntime: () => this.deps.getRuntime(),
+  });
+
+  listQuestions(sessionId: string, assertCurrent: () => void) {
+    return this.questions.list(sessionId, assertCurrent);
+  }
+
+  respondQuestion(sessionId: string, requestId: string, response: ChromeExtensionQuestionResponse, assertCurrent: () => void) {
+    return this.questions.respond(sessionId, requestId, response, assertCurrent);
+  }
+
+  subscribeQuestions(sessionId: string, listener: () => void) {
+    return this.questions.subscribe(sessionId, listener);
+  }
   readonly supportsClientApprovals = true;
   private readonly pendingAdmissions = new Map<string, symbol>();
   private readonly activeTurns = new Map<
@@ -777,12 +799,17 @@ export class ChromeExtensionChatController implements ChromeExtensionChatApi {
     );
   }
 
-  async startThread(title?: string, options: { cwd?: string; model?: string } = {}) {
+  async startThread(title?: string, options: {
+    cwd?: string;
+    model?: string;
+    selectedWorkspace?: { assertCurrent: () => void };
+  } = {}) {
     if (options.model !== undefined && !(await this.getModels()).some(model => model.id === options.model))
       throw new AppServerRpcError(AppServerErrorCode.InvalidParams, 'Selected model is unavailable.');
     // Resolve the actual workspace after asynchronous catalog validation, so an
     // intervening desktop setting change cannot replace an explicit requested cwd.
-    if (options.cwd !== undefined) {
+    options.selectedWorkspace?.assertCurrent();
+    if (options.cwd !== undefined && !options.selectedWorkspace) {
       const configured = resolveTaskWorkingDirectory(this.deps.getStore().getConfig().workingDirectory.trim());
       if (!configured) throw new Error('Select a task folder in the desktop app first.');
       let matches = false;
@@ -794,9 +821,52 @@ export class ChromeExtensionChatController implements ChromeExtensionChatApi {
       if (!matches) throw new AppServerRpcError(AppServerErrorCode.InvalidParams,
         'Browser conversations use the task directory selected in the desktop app.');
     }
-    const session = this.createSession(limit(title, 50) || `New ${PRODUCT_NAME} chat`);
+    const selectedCwd = options.selectedWorkspace ? this.canonicalWorkspace(options.cwd ?? '') : undefined;
+    options.selectedWorkspace?.assertCurrent();
+    const session = this.createSession(limit(title, 50) || `New ${PRODUCT_NAME} chat`, selectedCwd);
     if (options.model) this.deps.getStore().updateSession(session.id, { modelRef: options.model });
     return this.getThread(session.id);
+  }
+
+  private canonicalWorkspace(cwd: string): string {
+    if (!path.isAbsolute(cwd) || cwd.includes('\0')) throw new Error('Select an existing task folder.');
+    const canonical = fs.realpathSync.native(cwd);
+    if (!fs.statSync(canonical).isDirectory() ||
+      (process.platform === 'win32' && path.parse(canonical).root === canonical))
+      throw new Error('Select an existing task folder.');
+    return canonical;
+  }
+
+  private recentWorkspaces(): string[] {
+    const store = this.deps.getStore();
+    const configured = store.getConfig().workingDirectory?.trim() ?? '';
+    const recent = (store.listSessions?.() ?? []).flatMap(summary => {
+      const session = this.findChromeSession(summary.id);
+      return session?.cwd ? [session.cwd] : [];
+    });
+    return [...new Set([configured, ...recent].filter(Boolean))].slice(0, 8);
+  }
+
+  async selectWorkspace(options: { defaultPath?: string; recentCwd?: string }): Promise<string | null> {
+    if (options.recentCwd !== undefined) {
+      if (!this.recentWorkspaces().includes(options.recentCwd))
+        throw new Error('This folder is no longer in recent browser workspaces.');
+      return this.canonicalWorkspace(options.recentCwd);
+    }
+    if (!this.deps.selectDirectory) throw new Error('Folder selection is unavailable.');
+    const selected = await this.deps.selectDirectory(options.defaultPath);
+    return selected ? this.canonicalWorkspace(selected) : null;
+  }
+
+  async setThreadWorkspace(input: SetSessionWorkspaceInput, isCurrent: () => boolean) {
+    this.requireChromeSession(input.sessionId);
+    if (this.pendingAdmissions.has(input.sessionId) || this.activeTurns.has(input.sessionId))
+      return { success: false as const, reason: SessionWorkspaceFailure.Busy };
+    if (!this.deps.setSessionWorkspace)
+      return { success: false as const, reason: SessionWorkspaceFailure.Unavailable };
+    return this.deps.setSessionWorkspace(input, () =>
+      isCurrent() && Boolean(this.findChromeSession(input.sessionId)) &&
+      !this.pendingAdmissions.has(input.sessionId) && !this.activeTurns.has(input.sessionId));
   }
 
   async getComposerOptions(sessionId?: string) {
@@ -839,7 +909,9 @@ export class ChromeExtensionChatController implements ChromeExtensionChatApi {
     }
     addStoredModel(defaultModelRef);
     addStoredModel(session?.modelRef);
+    const cwd = session?.cwd ?? store.getConfig().workingDirectory?.trim();
     return {
+      ...(cwd ? { cwd, recentCwds: this.recentWorkspaces() } : {}),
       modelRef: session?.modelRef ?? defaultModelRef,
       models,
       permissionMode: resolvePermissionMode(
@@ -1054,11 +1126,17 @@ export class ChromeExtensionChatController implements ChromeExtensionChatApi {
   async sendMessage(request: ChromeExtensionChatRequest, trusted?: ChromeExtensionTrustedSendHooks) {
     let dispatchStarted = false;
     let releaseAdmission: (() => void) | undefined;
+    let expectedWorkspaceRoot = request.expectedWorkspaceRoot;
+    const assertWorkspaceCurrent = (session: CoworkSession): void => {
+      trusted?.assertCurrent();
+      if (expectedWorkspaceRoot !== undefined && session.cwd !== expectedWorkspaceRoot)
+        throw Object.assign(new Error(t('sessionWorkspaceChanged')), { requestSent: false });
+    };
     try {
       trusted?.assertCurrent();
       if (request.sessionId) {
         const sessionId = request.sessionId;
-        this.requireChromeSession(sessionId);
+        expectedWorkspaceRoot ??= this.requireChromeSession(sessionId).cwd;
         if (this.pendingAdmissions.has(sessionId))
           throw new Error('This conversation already has a pending submission.');
         const token = Symbol();
@@ -1104,6 +1182,7 @@ export class ChromeExtensionChatController implements ChromeExtensionChatApi {
         session = this.createSession(title);
       }
 
+      assertWorkspaceCurrent(session);
       const permissionMode = request.permissionMode;
       if (permissionMode !== undefined && !isPermissionMode(permissionMode)) {
         throw new Error('Invalid permission mode.');
@@ -1152,7 +1231,8 @@ export class ChromeExtensionChatController implements ChromeExtensionChatApi {
       if (requestedModelRef && session.modelRef !== requestedModelRef) {
         const availableModels = await this.getComposerOptions(session.id);
         trusted?.assertCurrent();
-        if (assertVisionCurrent) session = assertVisionCurrent();
+        session = assertVisionCurrent ? assertVisionCurrent() : this.requireChromeSession(session.id);
+        assertWorkspaceCurrent(session);
         if (!availableModels.models.some(model => model.id === requestedModelRef)) {
           throw new Error('Selected model is unavailable.');
         }
@@ -1163,6 +1243,7 @@ export class ChromeExtensionChatController implements ChromeExtensionChatApi {
         });
         trusted?.assertCurrent();
         session = assertVisionCurrent ? assertVisionCurrent() : this.requireChromeSession(session.id);
+        assertWorkspaceCurrent(session);
         const result = await router.patchSessionModel(
           session.id,
           requestedModelRef,
@@ -1202,6 +1283,7 @@ export class ChromeExtensionChatController implements ChromeExtensionChatApi {
           throw Object.assign(new Error(t('appServerImageModelChanged')), { requestSent: false });
         expectedVisionModel = session.modelRef;
       }
+      assertWorkspaceCurrent(session);
       const timing = store.beginSessionRun({
         sessionId: session.id,
         clientTurnId: runId,
@@ -1261,12 +1343,12 @@ export class ChromeExtensionChatController implements ChromeExtensionChatApi {
           if (!accepted) approvals?.release();
           await trusted?.onNativeSendAbandoned?.();
         },
-        ...(approvals || trusted?.finalSyncAdmission || assertVisionCurrent ? { finalSyncAdmission: binding => {
-          trusted?.assertCurrent();
+        finalSyncAdmission: binding => {
+          assertWorkspaceCurrent(this.requireChromeSession(session.id));
           assertVisionCurrent?.(expectedVisionModel ? [expectedVisionModel] : [undefined, visionModelRef]);
           trusted?.finalSyncAdmission?.(binding);
           approvals?.prepare(binding);
-        } } : {}),
+        },
         ...(approvals || trusted?.onNativeAccepted ? { onNativeAccepted: binding => {
           approvals?.accepted(binding);
           trusted?.onNativeAccepted?.(binding);
@@ -1341,10 +1423,10 @@ export class ChromeExtensionChatController implements ChromeExtensionChatApi {
     }
   }
 
-  private createSession(title: string) {
+  private createSession(title: string, selectedCwd?: string) {
     const store = this.deps.getStore();
     const config = store.getConfig();
-    const workspaceRoot = resolveTaskWorkingDirectory(config.workingDirectory.trim());
+    const workspaceRoot = selectedCwd ?? resolveTaskWorkingDirectory(config.workingDirectory.trim());
     if (!workspaceRoot) throw new Error('Select a task folder in the desktop app first.');
     const agentId = 'main';
     return store.createSession(

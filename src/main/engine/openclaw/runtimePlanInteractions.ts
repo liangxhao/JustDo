@@ -7,6 +7,7 @@ import path from 'path';
 import { type CoworkAttachmentPayload } from '../../../shared/cowork/attachments';
 import {
   type AskUserInteractionEnvelope,
+  AskUserInteractionEvent,
   AskUserQuestionGateway,
   type AskUserRequest,
   parseAskUserAnswers,
@@ -56,6 +57,7 @@ export type ExecutionSessionResolver = (
   (AppExecutionSessionOwner & { pluginId?: string; nativePluginId?: string; epoch?: string }) | null
 >;
 export interface RuntimePlanInteractionsContext {
+  readonly emit: (eventName: string, ...args: unknown[]) => boolean;
   readonly resolveSessionIdBySessionKey: (sessionKey: string) => string | null;
   readonly resolvePlanModeSessionId: (request: PlanModeRequest) => string;
   readonly resolveAskUserSessionId: (request: AskUserRequest) => string;
@@ -273,6 +275,8 @@ export function sendCoworkInteraction(
   this: RuntimePlanInteractionsContext,
   interaction: CoworkInteractionEnvelope,
 ): void {
+  if (interaction.request.interactionKind === CoworkInteractionKind.STRUCTURED_QUESTION)
+    this.emit(AskUserInteractionEvent.Changed, { sessionId: interaction.sessionId });
   for (const window of BrowserWindow.getAllWindows()) {
     if (!window.isDestroyed()) {
       window.webContents.send(CoworkInteractionIpc.Stream, interaction);
@@ -281,6 +285,7 @@ export function sendCoworkInteraction(
 }
 
 export function sendAskUserDismiss(this: RuntimePlanInteractionsContext, requestId: string): void {
+  this.emit(AskUserInteractionEvent.Changed, { requestId });
   for (const window of BrowserWindow.getAllWindows()) {
     if (!window.isDestroyed()) {
       window.webContents.send(CoworkInteractionIpc.Dismiss, { requestId });
@@ -1352,6 +1357,14 @@ export async function listPendingAskUserInteractions(
   return interactions;
 }
 
+/** Read structured questions without recovering or projecting plan approvals. */
+export async function listPendingStructuredQuestions(
+  this: RuntimePlanInteractionsContext,
+): Promise<AskUserInteractionEnvelope[]> {
+  await this.ensureGatewayClientReady();
+  return this.readPendingAskUserInteractions(this.requireGatewayClient());
+}
+
 export async function resolveAskUserInteraction(
   this: RuntimePlanInteractionsContext,
   requestId: string,
@@ -1363,7 +1376,9 @@ export async function resolveAskUserInteraction(
         decision: 'implement' | 'revise' | 'cancel';
         feedback?: string;
       },
+  options?: { assertCurrent: () => void },
 ): Promise<{ sessionId: string }> {
+  options?.assertCurrent();
   const normalizedRequestId = requestId.trim();
   const pendingPlan = this.pendingPlanModeRequests.get(normalizedRequestId);
   if (pendingPlan) {
@@ -1446,6 +1461,7 @@ export async function resolveAskUserInteraction(
     }
     const client = binding.client;
     const ownerSessionId = binding.origin.ownerSessionId ?? '';
+    options?.assertCurrent();
     nativeSendStarted = true;
     const result = await client.request(AskUserQuestionGateway.RESOLVE, {
       requestId: normalizedRequestId,

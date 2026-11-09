@@ -563,7 +563,7 @@ describe('extension streaming DOM', () => {
     );
     expect((submitted?.chrome as Record<string, unknown>)?.clientTurnId).toEqual(expect.any(String));
     expect(prompt.value).toBe('');
-    expect(document.querySelector('.message.user:last-of-type')?.textContent).toContain(
+    expect([...document.querySelectorAll('.message.user')].at(-1)?.textContent).toContain(
       'Only once',
     );
     expect((document.getElementById('send') as HTMLButtonElement).disabled).toBe(true);

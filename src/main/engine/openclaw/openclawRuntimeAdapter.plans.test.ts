@@ -19,7 +19,7 @@ vi.mock('../../cowork/coworkLogger', () => ({
 }));
 
 import { createDefaultAgentRuntimeSettings } from '../../../shared/agents/agentRuntimeSettings';
-import { AskUserQuestionGateway } from '../../../shared/cowork/interactions/askUserQuestion';
+import { AskUserInteractionEvent, AskUserQuestionGateway } from '../../../shared/cowork/interactions/askUserQuestion';
 import { CoworkInteractionIpc } from '../../../shared/cowork/interactions/interactions';
 import { PlanModeGateway } from '../../../shared/cowork/interactions/planMode';
 import { PRODUCT_NAME_LOWERCASE } from '../../../shared/productMetadata';
@@ -717,6 +717,36 @@ async function ownedAnswerRaceFixture() {
   resolver.mockClear();
   return { adapter, pending, request, resolver, owner };
 }
+
+test('external question views read only structured pending questions and receive validated invalidations', async () => {
+  const f = await ownedAnswerRaceFixture();
+  const changed = vi.fn();
+  f.adapter.on(AskUserInteractionEvent.Changed, changed);
+  await f.adapter.listPendingStructuredQuestions();
+  expect(f.request).toHaveBeenCalledExactlyOnceWith(AskUserQuestionGateway.LIST, {});
+  const next = createChildQuestion('live-question');
+  f.adapter.handleGatewayEvent({ event: AskUserQuestionGateway.REQUESTED_EVENT, payload: next });
+  await vi.waitFor(() => expect(changed).toHaveBeenCalledWith({ sessionId: 'session-1' }));
+  f.adapter.handleGatewayEvent({ event: AskUserQuestionGateway.RESOLVED_EVENT,
+    payload: { requestId: next.requestId, status: 'answered' } });
+  expect(changed).toHaveBeenCalledWith({ requestId: next.requestId });
+});
+
+test('a withdrawn external question view cannot submit after asynchronous source verification', async () => {
+  const f = await ownedAnswerRaceFixture();
+  let project!: (value: typeof f.owner) => void;
+  f.resolver.mockImplementationOnce(() => new Promise(resolve => { project = resolve; }));
+  let current = true;
+  const reply = f.adapter.resolveAskUserInteraction(f.pending.requestId, { behavior: 'cancel' }, {
+    assertCurrent: () => { if (!current) throw new Error('View withdrawn'); },
+  });
+  current = false;
+  project(f.owner);
+  await expect(reply).rejects.toThrow('View withdrawn');
+  expect(f.request).not.toHaveBeenCalled();
+  await expect(f.adapter.resolveAskUserInteraction(f.pending.requestId, { behavior: 'cancel' }))
+    .resolves.toEqual({ sessionId: 'session-1' });
+});
 
 test('two windows cannot send conflicting answers to the same question while a sibling remains independent', async () => {
   const f = await ownedAnswerRaceFixture();

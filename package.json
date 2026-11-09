@@ -86,6 +86,7 @@
     "chrome-extension:prepare": "node plugins/chrome-extensions/chrome-assistant/scripts/prepare.cjs",
     "chrome-extension:build-markdown": "node scripts/chrome/build-chrome-extension-markdown.cjs",
     "chrome-extension:build-stream": "node scripts/chrome/build-chrome-extension-stream.cjs",
+    "chrome-extension:build-questions": "node scripts/chrome/build-chrome-extension-questions.cjs",
     "chrome-extension:prepare-dev-host": "node scripts/chrome/prepare-chrome-extension-dev-host.cjs",
     "preopenclaw:resources": "npm run plugins:app:build",
     "openclaw:resources": "node scripts/openclaw/sync-openclaw-runtime-resources.cjs",

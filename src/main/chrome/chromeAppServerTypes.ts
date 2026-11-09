@@ -2,6 +2,8 @@ import type { QuestionResult } from '../../../plugins/extensions/ask-user-questi
 import type { ChromeExtensionMessageDisplay } from '../../shared/chrome/chromeExtensionDisplay';
 import type { ChromeExtensionStreamEvent } from '../../shared/chrome/chromeExtensionStream';
 import type { CoworkAttachmentPayload } from '../../shared/cowork/attachments';
+import type { AskUserRequest } from '../../shared/cowork/interactions/askUserQuestion';
+import type { SetSessionWorkspaceInput, SetSessionWorkspaceResult } from '../../shared/cowork/sessionWorkspace';
 import type { PermissionMode } from '../../shared/security/approvals';
 import type { AppServerConnectionContext } from '../clients/appServer/protocol/appServerProtocol';
 import type { AppServerModel, AppServerThreadHistory } from '../clients/appServer/protocol/appServerTypes';
@@ -27,6 +29,7 @@ export interface ChromeExtensionChatRequest {
   modelRef?: string;
   permissionMode?: PermissionMode;
   sessionId?: string;
+  expectedWorkspaceRoot?: string;
   pageContext?: ChromeExtensionPageContext;
 }
 
@@ -90,6 +93,11 @@ export type ChromeExtensionAppServerStreamEvent = ChromeExtensionStreamEvent & {
 };
 
 export interface ChromeExtensionChatApi {
+  listQuestions?: (sessionId: string, assertCurrent: () => void) => Promise<ChromeExtensionQuestion[]>;
+  respondQuestion?: (
+    sessionId: string, requestId: string, response: ChromeExtensionQuestionResponse, assertCurrent: () => void,
+  ) => Promise<void>;
+  subscribeQuestions?: (sessionId: string, listener: () => void) => Promise<() => void>;
   readonly supportsClientApprovals?: true;
   subscribeThreadEvents: (
     sessionId: string,
@@ -105,7 +113,14 @@ export interface ChromeExtensionChatApi {
     options?: { forceFullSnapshot?: boolean },
   ) => Promise<ChromeExtensionMessage[]>;
   readManagedImage?: (sessionId: string, source: string) => Promise<string>;
-  startThread: (title?: string, options?: { cwd?: string; model?: string }) => Promise<ChromeExtensionThread>;
+  startThread: (title?: string, options?: {
+    cwd?: string;
+    model?: string;
+    /** Main-only proof that cwd came from this viewer's directory selection. */
+    selectedWorkspace?: { assertCurrent: () => void };
+  }) => Promise<ChromeExtensionThread>;
+  selectWorkspace?: (options: { defaultPath?: string; recentCwd?: string }) => Promise<string | null>;
+  setThreadWorkspace?: (input: SetSessionWorkspaceInput, isCurrent: () => boolean) => Promise<SetSessionWorkspaceResult>;
   getComposerOptions: (sessionId?: string) => Promise<ChromeExtensionComposerOptions>;
   sendMessage: (request: ChromeExtensionChatRequest, trusted?: ChromeExtensionTrustedSendHooks) => Promise<ChromeExtensionTurnResult>;
   getThreadRuntimeStatus: (
@@ -117,7 +132,15 @@ export interface ChromeExtensionChatApi {
   interruptThread: (sessionId: string, turnId: string) => Promise<void>;
 }
 
+export type ChromeExtensionQuestion = Pick<AskUserRequest,
+  'requestId' | 'questions' | 'waitPolicy' | 'expiresAt' | 'createdAt'>;
+export type ChromeExtensionQuestionResponse =
+  | { behavior: 'submit'; answers: unknown }
+  | { behavior: 'cancel' };
+
 export interface ChromeExtensionComposerOptions {
+  cwd?: string;
+  recentCwds?: string[];
   modelRef?: string;
   models: Array<{ id: string; name: string }>;
   permissionMode: PermissionMode;

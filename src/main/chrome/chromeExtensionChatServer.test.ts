@@ -746,6 +746,7 @@ describe('ChromeExtensionChatServer', () => {
     });
     expect(api.sendMessage).toHaveBeenCalledWith({
       clientTurnId: fixtureTurnId,
+      expectedWorkspaceRoot: 'C:\\workspace',
       attachments: [{ base64Data: 'aGVsbG8=', mimeType: 'text/plain', name: 'note.txt' }],
       message: 'Question',
       modelRef: 'provider/model',

@@ -64,7 +64,7 @@ describe('side panel process presentation matches the desktop', () => {
   const disclosure = (key: string) => summary(key).parentElement as HTMLDetailsElement;
   const history = () => messages.querySelector<HTMLDetailsElement>('.completed-process')!;
 
-  it('keeps compact pending states inside their own user bubbles with accessible explanations', () => {
+  it('keeps pending states outside their user bubbles with accessible explanations', () => {
     const languageGetter = vi.spyOn(navigator, 'language', 'get').mockReturnValue('en-US');
     try {
       const inputs = [
@@ -77,18 +77,52 @@ describe('side panel process presentation matches the desktop', () => {
         role: 'user', key: `pending:${index}`, text: `Prompt ${index}`,
         pendingInput: { state: input.state, incomplete: input.incomplete },
       })), 'pending-statuses');
-      const labels = messages.querySelectorAll<HTMLElement>('.message.user .pending-input-status');
+      const labels = messages.querySelectorAll<HTMLElement>('.user-message > .pending-input-status');
       expect(labels).toHaveLength(inputs.length);
+      expect(messages.querySelector('.message.user .pending-input-status')).toBeNull();
       inputs.forEach((input, index) => {
         expect(labels[index].textContent).toBe(input.label);
         expect(labels[index].title).toBe(input.description);
         expect(labels[index].getAttribute('aria-label')).toBe(input.description);
         expect(labels[index].parentElement?.textContent).toContain(`Prompt ${index}`);
+        expect(labels[index].previousElementSibling?.textContent?.trim()).toBe(`Prompt ${index}`);
         expect(messages.textContent).not.toContain(input.description);
       });
     } finally {
       languageGetter.mockRestore();
     }
+  });
+
+  it('retains the user content and selection when only the pending status changes or disappears', () => {
+    const entry = { role: 'user', key: 'input', text: 'Original user message' };
+    renderer.render([{ ...entry, pendingInput: { state: 'queued' } }], 'one');
+    const bubble = messages.querySelector('.message.user')!;
+    const paragraph = bubble.querySelector('p')!;
+    const selection = document.getSelection()!;
+    const range = document.createRange();
+    range.selectNodeContents(paragraph);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    renderer.render([{ ...entry, pendingInput: { state: 'interrupted' } }], 'one');
+    expect(messages.querySelector('.message.user')).toBe(bubble);
+    expect(bubble.querySelector('p')).toBe(paragraph);
+    expect(selection.toString()).toBe(entry.text);
+    renderer.render([entry], 'one');
+    expect(messages.querySelector('.pending-input-status')).toBeNull();
+    expect(bubble.querySelector('p')).toBe(paragraph);
+    expect(selection.toString()).toBe(entry.text);
+    renderer.render([{ ...entry, text: 'Changed native content' }], 'one');
+    expect(bubble.textContent?.trim()).toBe('Changed native content');
+  });
+
+  it('shows incomplete input metadata without creating an empty visible bubble', () => {
+    renderer.render([{ role: 'user', key: 'incomplete', text: '',
+      pendingInput: { state: 'queued', incomplete: true } }], 'one');
+    expect(messages.querySelector<HTMLElement>('.message.user')!.hidden).toBe(true);
+    expect(messages.querySelector('.pending-input-status')?.textContent).toBeTruthy();
+    renderer.render([{ role: 'user', key: 'incomplete', text: 'Recovered content' }], 'one');
+    expect(messages.querySelector<HTMLElement>('.message.user')!.hidden).toBe(false);
+    expect(messages.querySelector('.message.user')!.textContent?.trim()).toBe('Recovered content');
   });
 
   it('renders question answers inside the existing disclosure and updates the same Lit host after timeout', () => {

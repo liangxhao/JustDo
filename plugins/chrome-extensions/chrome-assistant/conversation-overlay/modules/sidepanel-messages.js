@@ -478,6 +478,40 @@ export function createMessageRenderer(
     return entry.key || `${entry.role}:${entry.id || index}`;
   }
 
+  function patchUserMessage(node, entry) {
+    node.className = 'user-message';
+    let bubble = node.querySelector(':scope > .message.user');
+    if (!bubble) {
+      bubble = document.createElement('div');
+      bubble.className = 'message user markdown-content';
+      node.prepend(bubble);
+    }
+    // Pending metadata changes independently of the native message content.
+    // Keep text selection, image loading and rich-content nodes through those updates.
+    const { pendingInput, ...content } = entry;
+    const signature = JSON.stringify(content);
+    if (signature !== node.renderSignature) {
+      bubble.replaceChildren();
+      const scope = currentScope;
+      renderRichContent(bubble, content, source => readImage(scope, source));
+      bubble.hidden = !bubble.hasChildNodes();
+      node.renderSignature = signature;
+    } else retryRichImages(bubble);
+
+    let label = node.querySelector(':scope > .pending-input-status');
+    if (pendingInput) {
+      if (!label) {
+        label = document.createElement('small');
+        label.className = 'pending-input-status';
+        node.append(label);
+      }
+      const status = pendingInputLabel(pendingInput.state, pendingInput.incomplete);
+      label.textContent = status.label;
+      label.title = status.description;
+      label.setAttribute('aria-label', status.description);
+    } else label?.remove();
+  }
+
   function renderEntry(entry, index) {
     const key = entryKey(entry, index);
     let node = entryNodes.get(key);
@@ -494,6 +528,7 @@ export function createMessageRenderer(
     }
     if (entry.role === 'completed-process') patchCompletedProcess(node, entry, key);
     else if (entry.role === 'process') patchProcessSummary(node, entry, key);
+    else if (entry.role === 'user') patchUserMessage(node, entry);
     else if (entry.role === 'live-process') {
       node.className = `message process-live process-live-${entry.item.type}`;
       let list = node.firstElementChild;
@@ -512,18 +547,6 @@ export function createMessageRenderer(
         if (entry.role !== 'compaction' && entry.role !== 'question-presentation') node.replaceChildren();
         const scope = currentScope;
         renderRichContent(node, entry, source => readImage(scope, source));
-        if (entry.pendingInput) {
-          const label = document.createElement('small');
-          label.className = 'pending-input-status';
-          const status = pendingInputLabel(
-            entry.pendingInput.state,
-            entry.pendingInput.incomplete,
-          );
-          label.textContent = status.label;
-          label.title = status.description;
-          label.setAttribute('aria-label', status.description);
-          node.append(label);
-        }
         node.renderSignature = signature;
       } else retryRichImages(node);
     }

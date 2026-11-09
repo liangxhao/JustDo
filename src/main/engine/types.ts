@@ -1,3 +1,4 @@
+import { AskUserInteractionEvent } from '../../shared/cowork/interactions/askUserQuestion';
 import type { OpenClawSkillSource } from '../../shared/plugins/skills';
 import type { PermissionMode } from '../../shared/security/approvals';
 
@@ -106,6 +107,7 @@ export interface SkillRpcResult {
 // ============================================================
 
 export interface CoworkRuntimeEvents {
+  [AskUserInteractionEvent.Changed]: (event: { sessionId?: string; requestId?: string }) => void;
   gatewayReady: () => void;
   gatewayDisconnected: () => void;
   gatewayEvent: (event: import('./gateway/types').GatewayEventFrame) => void;

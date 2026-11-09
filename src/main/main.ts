@@ -4,6 +4,7 @@ import type { WebContents } from 'electron';
 import {
   app,
   BrowserWindow,
+  dialog,
   Menu,
   nativeTheme,
   powerMonitor,
@@ -1897,7 +1898,7 @@ if (agentBridgeArgv) {
       getCoworkEngineService().requestGateway<T>(method, params),
   });
 
-  registerCoworkSessionHandlers({
+  const setSessionWorkspace = registerCoworkSessionHandlers({
     isAllowedWorkspaceSender: event =>
       !!mainWindow &&
       !mainWindow.isDestroyed() &&
@@ -2535,6 +2536,17 @@ if (agentBridgeArgv) {
     const startChromeExtensionIngress = async (): Promise<boolean> => {
       const chromeExtensionChatToken = randomBytes(32).toString('hex');
       const extensionChatController = new ChromeExtensionChatController({
+        setSessionWorkspace,
+        selectDirectory: async defaultPath => {
+          const options: Electron.OpenDialogOptions = {
+            defaultPath,
+            properties: ['openDirectory', 'createDirectory'],
+          };
+          const result = mainWindow && !mainWindow.isDestroyed()
+            ? await dialog.showOpenDialog(mainWindow, options)
+            : await dialog.showOpenDialog(options);
+          return result.canceled ? null : result.filePaths[0] ?? null;
+        },
         onSessionsChanged: notifyCoworkSessionsChanged,
         ensureEngineRunning: ensureOpenClawRunningForCowork,
         getStore: getCoworkStore,

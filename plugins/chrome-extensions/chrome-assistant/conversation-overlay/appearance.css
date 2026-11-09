@@ -14,8 +14,9 @@
   --chat-error-bg: #2b1d1a;
   --chat-error-border: #65352c;
   --chat-accent: #ff784f;
-  --chat-send-bg: #d7d7d7;
-  --chat-send-text: #252525;
+  --chat-send-bg: #3b82f6;
+  --chat-send-hover: #60a5fa;
+  --chat-send-text: #ffffff;
 }
 :root,
 :root[data-theme='light'] {
@@ -33,7 +34,8 @@
   --chat-error-bg: #fff1f0;
   --chat-error-border: #e2b5b0;
   --chat-accent: #ae3b17;
-  --chat-send-bg: #252b35;
+  --chat-send-bg: #4f78e6;
+  --chat-send-hover: #3d67d5;
   --chat-send-text: #ffffff;
 }
 :root[data-theme='warm'] {
@@ -51,8 +53,9 @@
   --chat-error-bg: #fff0e6;
   --chat-error-border: #ddb2a1;
   --chat-accent: #9a431d;
-  --chat-send-bg: #514435;
-  --chat-send-text: #fffaf1;
+  --chat-send-bg: #4f78e6;
+  --chat-send-hover: #3d67d5;
+  --chat-send-text: #ffffff;
 }
 :root[data-theme='blue'] {
   --chat-scheme: light;
@@ -69,7 +72,8 @@
   --chat-error-bg: #fff1f0;
   --chat-error-border: #e2b5b0;
   --chat-accent: #a3461c;
-  --chat-send-bg: #2c4d70;
+  --chat-send-bg: #4f78e6;
+  --chat-send-hover: #3d67d5;
   --chat-send-text: #ffffff;
 }
 .appearance-settings {

@@ -8,6 +8,11 @@ export const AskUserQuestionGateway = {
   RESOLVED_EVENT: 'plugin.ask-user-question.resolved',
 } as const;
 
+/** Main-only invalidation after a validated pending question changes. */
+export const AskUserInteractionEvent = {
+  Changed: 'structured-question-changed',
+} as const;
+
 export type AskUserQuestionOption = {
   id: string;
   label: string;

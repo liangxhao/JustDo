@@ -68,6 +68,8 @@ export function createRunActivityView(element) {
     detail.textContent = parts.join(' · ');
     detail.hidden = !parts.length;
     detail.title = detail.textContent;
+    element.title = [label.textContent, detail.textContent, `${t('elapsed')}: ${elapsed.textContent}`]
+      .filter(Boolean).join(' · ');
   }
 
   return {
@@ -87,6 +89,7 @@ export function createRunActivityView(element) {
       const stage = fallback?.stage ?? activity?.stage ?? 'checking';
       const nextLabel = t(stage);
       if (label.textContent !== nextLabel) label.textContent = nextLabel;
+      label.title = nextLabel;
       element.dataset.stage = stage;
       element.classList.remove('hidden');
       updateClock();

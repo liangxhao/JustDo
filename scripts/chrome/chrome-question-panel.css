@@ -1,0 +1,58 @@
+/* The host-built desktop wizard follows the extension's selected palette. */
+#questions {
+  --justdo-background: var(--chat-bg);
+  --justdo-foreground: var(--chat-text);
+  --justdo-surface: var(--chat-bg);
+  --justdo-surface-raised: var(--chat-surface);
+  --justdo-border: var(--chat-border);
+  --justdo-text-secondary: var(--chat-muted);
+  --justdo-primary: var(--chat-link);
+  --justdo-primary-hover: var(--chat-link);
+}
+#questions *, #questions ::before, #questions ::after {
+  box-sizing: border-box;
+  border-width: 0;
+  border-style: solid;
+  border-color: var(--chat-border);
+  --tw-translate-x: 0;
+  --tw-translate-y: 0;
+  --tw-rotate: 0;
+  --tw-skew-x: 0;
+  --tw-skew-y: 0;
+  --tw-scale-x: 1;
+  --tw-scale-y: 1;
+  --tw-ring-inset: ;
+  --tw-ring-offset-width: 0px;
+  --tw-ring-offset-color: var(--chat-bg);
+  --tw-ring-color: var(--chat-link);
+  --tw-ring-offset-shadow: 0 0 #0000;
+  --tw-ring-shadow: 0 0 #0000;
+  --tw-shadow: 0 0 #0000;
+  --tw-shadow-colored: 0 0 #0000;
+}
+#questions [hidden] { display: none !important; }
+#questions button, #questions input, #questions textarea { font: inherit; }
+#questions button { cursor: pointer; background: transparent; }
+#questions button:disabled { cursor: default; }
+#questions h2, #questions h3 { margin: 0; }
+#questions textarea { color: var(--chat-text); }
+#questions .modal-backdrop {
+  padding: 8px;
+  background: rgb(0 0 0 / 40%);
+  backdrop-filter: blur(4px);
+  animation: question-fade-in 0.2s ease-out;
+}
+#questions .modal-content { animation: question-scale-in 0.2s ease-out; }
+#questions .question-dialog-panel.question-dialog-body { margin: 0; max-width: 42rem; }
+#questions .question-dialog-body { font-size: 14px; }
+#questions .question-dialog-header { padding: 12px 16px; }
+#questions .question-dialog-body > .px-6 { padding-left: 16px; padding-right: 16px; }
+#questions .question-dialog-body .py-6 { padding-top: 16px; padding-bottom: 16px; }
+#questions svg { display: block; }
+@keyframes question-fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes question-scale-in { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
+/* Product animations remain active with the Windows animation setting disabled. */
+@media (prefers-reduced-motion: reduce) {
+  #questions .modal-backdrop { animation: question-fade-in 0.2s ease-out; }
+  #questions .modal-content { animation: question-scale-in 0.2s ease-out; }
+}

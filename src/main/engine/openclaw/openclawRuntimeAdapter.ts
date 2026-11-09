@@ -1997,17 +1997,23 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     );
   }
 
+  listPendingStructuredQuestions(): Promise<AskUserInteractionEnvelope[]> {
+    return runtimePlanInteractions.listPendingStructuredQuestions.call(this.runtimePlanInteractionsContext);
+  }
+
   resolveAskUserInteraction(
     requestId: string,
     response:
       | { behavior: 'submit'; answers: unknown }
       | { behavior: 'cancel' }
       | { behavior: 'plan'; decision: 'implement' | 'revise' | 'cancel'; feedback?: string },
+    options?: { assertCurrent: () => void },
   ): Promise<{ sessionId: string }> {
     return runtimePlanInteractions.resolveAskUserInteraction.call(
       this.runtimePlanInteractionsContext,
       requestId,
       response,
+      options,
     );
   }
 
@@ -3441,6 +3447,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   // Resolve dependencies at call time so cancellation, session changes, and teardown stay authoritative.
   private readonly runtimePlanInteractionsContext: RuntimePlanInteractionsContext =
     createPropertyContext<RuntimePlanInteractionsContext>({
+      emit: { get: () => this.emit.bind(this) },
       resolveSessionIdBySessionKey: { get: () => this.resolveSessionIdBySessionKey.bind(this) },
       resolvePlanModeSessionId: { get: () => this.resolvePlanModeSessionId.bind(this) },
       resolveAskUserSessionId: { get: () => this.resolveAskUserSessionId.bind(this) },

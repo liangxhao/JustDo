@@ -172,7 +172,33 @@ actual run 后才展示匹配的审批，不能根据待审批请求的 runId �
 `serverRequest/resolved`、超时、切换会话、停止及断线撤回对应交互；旧按钮／旧 socket 不能迟到授权。
 显式 Cancel 先拒绝审批再请求精确停止；普通拒绝、关闭、退订不自动停止原生执行。
 未安装交互 handler 时仍默认拒绝；未知服务端方法返回 method-not-found。
-原生独立文件变更审批和复杂 ask_user_question 桥仍未实现，不能用普通插件确认伪造。
+原生独立文件变更审批仍未实现；结构化问答使用下面的独立能力，不能用普通插件确认伪造。
+
+## 工作目录与结构化问答
+
+以下能力仅注册到 Chrome binding，不为通用 app-server 或网页 SDK 开放。
+
+| 方法／通知 | 参数与结果 |
+| --- | --- |
+| `chrome/composer/options` | 额外返回 `cwd`、`recentCwds`（默认与 Chrome 会话近期目录，最多八项） |
+| `chrome/workspace/select` | `{draftId}` 或 `{threadId,expectedCwd}`，可选 `recentCwd` 必须属于服务端近期列表；省略则打开 Main 系统选择器。返回 `{cancelled:true}` 或 `{cwd,selectionToken}` |
+| `chrome/thread/workspace/set` | `{threadId,expectedCwd,selectionToken}`；返回 `{success:true,cwd}` 或 `{success:false,reason}`，原因与桌面目录修改合同一致 |
+| `chrome/thread/workspace/changed` | `{threadId,cwd}`，目录保存后通知当前订阅者刷新元数据 |
+| `chrome/questions/list` | `{threadId}` → `{questions:[{requestId,questions,waitPolicy,expiresAt?,createdAt?}]}` |
+| `chrome/questions/respond` | `{threadId,requestId,behavior:'submit',answers}` 或 `{threadId,requestId,behavior:'cancel'}` → `{}` |
+| `chrome/questions/changed` | `{threadId}`，只作快照失效信号，重新 list 后才能恢复交互 |
+
+新会话选目录后，`thread/start` 携带 `cwd` 以及
+`chrome:{draftId,workspaceSelectionToken}`；凭据绑定本连接与草稿，短期、单次使用。
+省略选择沿用全局默认目录；无凭据的 cwd 只能与默认目录一致。
+已有会话的选择和保存要求当前显式订阅，凭据另绑定 subscription 与 expectedCwd。
+目录取消无副作用，保存复用桌面的空闲、后代、未知准备、计划和身份比较检查。
+
+问答要求显式订阅并核实普通 Chrome 会话来源、原生 key／物理 SID／revision、
+run／toolCall 来源和当前 Gateway 代次；插件托管和子执行请求不透传。
+题目和答案保留原生稳定 ID、multiSelect、optionInputs、other、skipped 以及等待策略。
+此接口复用桌面统一回答锁，允许已验证的多视图回答，不转移命令审批 owner。
+断线、切会话和关闭只撤界面；提交结果未知时核对原生 pending，不重放答案。
 
 Chrome 连接关闭只退订该观察者，已接纳的原生工作继续。通用原生客户端关闭仍取消自己拥有的工作。
 停止 ACK、侧栏消失、idle、最终正文和历史分组均不能替代精确终态。

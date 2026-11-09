@@ -95,3 +95,26 @@ describe('browser image model admission', () => {
     expect(h.router.startSession).not.toHaveBeenCalled();
   });
 });
+
+describe('browser workspace send admission', () => {
+  it('rejects a directory change during text-only native preparation before recording or sending a run', async () => {
+    const h = fixture(plain);
+    h.router.prepareSession.mockImplementationOnce(async () => {
+      h.session.cwd = '/replacement';
+      return { sessionKey: 'native-key', gatewaySessionId: 'physical' };
+    });
+    await expect(h.controller.sendMessage({ sessionId: 'thread', message: 'Input' }))
+      .rejects.toMatchObject({ requestSent: false });
+    expect(h.store.beginSessionRun).not.toHaveBeenCalled();
+    expect(h.router.startSession).not.toHaveBeenCalled();
+  });
+
+  it('rejects the workspace captured by the binding if it changed while preparing input or history', async () => {
+    const h = fixture(plain);
+    await expect(h.controller.sendMessage({
+      sessionId: 'thread', message: 'Input', expectedWorkspaceRoot: '/previous',
+    })).rejects.toMatchObject({ requestSent: false });
+    expect(h.router.prepareSession).not.toHaveBeenCalled();
+    expect(h.store.beginSessionRun).not.toHaveBeenCalled();
+  });
+});
