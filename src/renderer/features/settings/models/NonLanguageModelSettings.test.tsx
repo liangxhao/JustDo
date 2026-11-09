@@ -4,13 +4,17 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { type FormEvent, useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { currentConfig } = vi.hoisted(() => ({
+const { currentConfig, engineReadiness } = vi.hoisted(() => ({
   currentConfig: { onlineModelProviders: {}, voice: {} } as Record<string, unknown>,
+  engineReadiness: { ready: true, failed: false, listeners: new Set<() => void>() },
 }));
 
 vi.mock('@/app/shell/startup/routing/useEngineReadiness', () => ({
-  getEngineReadinessSnapshot: () => ({ ready: true }),
-  subscribeEngineReadiness: () => vi.fn(),
+  getEngineReadinessSnapshot: () => engineReadiness,
+  subscribeEngineReadiness: (listener: () => void) => {
+    engineReadiness.listeners.add(listener);
+    return () => engineReadiness.listeners.delete(listener);
+  },
 }));
 
 vi.mock('@/services/i18n', () => ({
@@ -466,6 +470,9 @@ describe('NonLanguageModelSettings', () => {
   });
 
   beforeEach(() => {
+    engineReadiness.ready = true;
+    engineReadiness.failed = false;
+    engineReadiness.listeners.clear();
     currentConfig.onlineModelProviders = {};
     currentConfig.voice = {};
     saveConfiguration.mockReset().mockResolvedValue(undefined);
@@ -745,31 +752,70 @@ describe('NonLanguageModelSettings', () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
-  it('hides unavailable video configurations and disables adding providers', async () => {
+  it('keeps saved video configurations editable without a runtime inventory and across Gateway recovery', async () => {
+    engineReadiness.ready = false;
+    engineReadiness.failed = true;
     vi.mocked(window.electron.extensions.list).mockResolvedValue({ success: true, extensions: [] });
     currentConfig.onlineModelProviders = {
       video: {
         defaultProviderId: 'native',
         providers: {
           native: {
-            displayName: 'Unavailable API',
+            displayName: 'Retained API',
             nativeVideoProvider: 'video-openai',
             baseUrl: 'http://video.lan/v1',
             apiKey: 'retained-key',
             defaultModel: 'internal-video',
-            models: [],
+            models: [{ id: 'internal-video', name: 'Internal Video' }],
           },
         },
       },
     };
-    renderSettings('video');
-    await screen.findByText('nativeVideoProvidersUnavailable');
-    expect(screen.getByRole('button', { name: 'addCustomProvider' }).hasAttribute('disabled')).toBe(
-      true,
-    );
-    expect(screen.queryByRole('button', { name: 'Unavailable API' })).toBeNull();
-    expect(screen.queryByLabelText(/baseUrl/)).toBeNull();
-    expect(screen.queryByLabelText(/apiKey/)).toBeNull();
+    const { getCategory } = renderSettings('video');
+    expect(screen.getByRole('button', { name: 'Retained API' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'addCustomProvider' })).toHaveProperty('disabled', false);
+    expect(screen.getByText('Internal Video')).toBeTruthy();
+    expect(screen.getByLabelText('apiKey')).toHaveProperty('value', 'retained-key');
+    expect(screen.getByLabelText('apiKey')).toHaveProperty('type', 'password');
+    fireEvent.change(screen.getByLabelText('baseUrl *'), {
+      target: { value: 'http://edited-video.lan/v1' },
+    });
+
+    await act(async () => {
+      engineReadiness.ready = true;
+      engineReadiness.failed = false;
+      engineReadiness.listeners.forEach(listener => listener());
+      window.dispatchEvent(new Event('focus'));
+    });
+
+    expect(screen.getByLabelText('baseUrl *')).toHaveProperty('value', 'http://edited-video.lan/v1');
+    expect(getCategory().providers.native).toMatchObject({
+      baseUrl: 'http://edited-video.lan/v1',
+      defaultModel: 'internal-video',
+      models: [{ id: 'internal-video', name: 'Internal Video' }],
+    });
+    expect(screen.queryByText('loading')).toBeNull();
+    expect(screen.queryByText('nativeVideoProvidersUnavailable')).toBeNull();
+    expect(window.electron.extensions.list).not.toHaveBeenCalled();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('allows configuring video models when Gateway startup fails and the runtime catalog cannot settle', async () => {
+    engineReadiness.ready = false;
+    engineReadiness.failed = true;
+    vi.mocked(window.electron.extensions.list).mockImplementation(() => new Promise(() => undefined));
+
+    const { getCategory } = renderSettings('video');
+
+    expect(screen.queryByText('loading')).toBeNull();
+    expect(screen.getByText('customModelNoProviders')).toBeTruthy();
+    await addVideoProvider('Offline Video API');
+    addVideoModel('internal-video');
+    expect(Object.values(getCategory().providers)[0]).toMatchObject({
+      nativeVideoProvider: 'video-openai',
+      models: [{ id: 'internal-video', name: 'internal-video' }],
+    });
+    expect(window.electron.extensions.list).not.toHaveBeenCalled();
     expect(fetch).not.toHaveBeenCalled();
   });
 

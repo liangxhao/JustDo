@@ -268,7 +268,6 @@ export interface NonLanguageModelEditorProps {
   initialBuiltinModels?: boolean;
   initialProviderId?: string;
   videoProviders?: readonly (typeof NATIVE_VIDEO_PROVIDERS)[number][];
-  videoProvidersLoaded?: boolean;
 }
 
 const NonLanguageModelEditor: React.FC<NonLanguageModelEditorProps> = ({
@@ -278,7 +277,6 @@ const NonLanguageModelEditor: React.FC<NonLanguageModelEditorProps> = ({
   initialBuiltinModels,
   initialProviderId,
   videoProviders = [],
-  videoProvidersLoaded = false,
 }) => {
   const supportsCatalogDefault = kind === 'image' || kind === 'video' || kind === 'decision';
   const builtinKind =
@@ -885,7 +883,7 @@ const NonLanguageModelEditor: React.FC<NonLanguageModelEditorProps> = ({
   return (
     <div className="space-y-4">
       {supportsCatalogDefault &&
-      (kind !== 'video' || (videoProvidersLoaded && videoProviders.length > 0)) ? (
+      (kind !== 'video' || videoProviders.length > 0) ? (
         <p className="text-xs leading-5 text-secondary" aria-live="polite">
           {i18nService.t(defaultHintKey)}
         </p>
@@ -974,7 +972,7 @@ const NonLanguageModelEditor: React.FC<NonLanguageModelEditorProps> = ({
               setProviderName('');
               setFormError('');
             }}
-            disabled={kind === 'video' && (!videoProvidersLoaded || videoProviders.length === 0)}
+            disabled={kind === 'video' && videoProviders.length === 0}
             className="mt-2 h-9 w-full rounded-xl border border-dashed border-border px-3 text-xs font-medium text-secondary transition hover:border-primary/50 hover:bg-primary-muted/40 hover:text-primary disabled:opacity-50"
           >
             <PlusIcon className="mr-1 inline h-3.5 w-3.5" />
@@ -990,15 +988,13 @@ const NonLanguageModelEditor: React.FC<NonLanguageModelEditorProps> = ({
               <CubeIcon className="mb-3 h-7 w-7 text-muted" />
               <p className="text-sm font-medium text-secondary">
                 {i18nService.t(
-                  kind === 'video' && !videoProvidersLoaded
-                    ? 'loading'
-                    : kind === 'video' && videoProviders.length === 0
-                      ? 'nativeVideoProvidersUnavailable'
-                      : 'customModelNoProviders',
+                  kind === 'video' && videoProviders.length === 0
+                    ? 'nativeVideoProvidersUnavailable'
+                    : 'customModelNoProviders',
                 )}
               </p>
               <p className="mt-1 text-xs text-muted">
-                {kind !== 'video' || (videoProvidersLoaded && videoProviders.length > 0)
+                {kind !== 'video' || videoProviders.length > 0
                   ? i18nService.t('customModelNoProvidersHint')
                   : null}
               </p>

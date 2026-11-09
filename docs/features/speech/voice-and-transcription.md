@@ -59,6 +59,11 @@ STT 依据自己的模式、模型、绑定和应用语言生成附件转录配�
 
 配置同步只发布应用拥有的当前字段，不负责迁移外部写入的旧原生配置。写入成功不等于原生准入成功；含非法旧字段的外部配置仍由原生 schema 与加载校验拒绝，不能靠删除未知字段将其报告为已就绪。测试分别验证合法配置投影和非法输入拒绝，不要求同步器修复任意旧文件。
 
+实时语音未启用或所选配置失效时，同步器移除自己管理的
+`plugins.entries.openai.config.realtimeVoice`，而不是写入 `null`；已有空值也在下一次同步时撤下。
+同时保留其它插件设置，并按原有规则撤下匹配旧配置的受管 Talk 字段。未使用的新增功能不应
+留下旧插件严格 schema 无法识别的空字段；实际使用的新语音协议和配置仍不承诺可直接回退旧版。
+
 ## 3. 离线模型与安装事务
 
 当前目录包含 SenseVoice Small INT8、Whisper Base INT8、Kokoro、AISHELL3 VITS 和 Piper Lessac 等输入/输出布局。模型 ID 与运行合约在 `shared/speech/`，发布文件、大小和 hash 以 Main 的 `localSpeechModelService.ts` 目录为准，不在多篇文档重复维护下载数字。

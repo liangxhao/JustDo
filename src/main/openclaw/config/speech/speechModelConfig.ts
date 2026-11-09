@@ -172,14 +172,19 @@ export function applyManagedSpeechModelConfiguration(
   const nextEntries = record(nextPlugins.entries);
   const runtime = record(nextEntries['runtime-services']);
   const openai = record(nextEntries.openai);
-  const previousRealtime = record(record(openai.config).realtimeVoice);
+  const { realtimeVoice: previousRealtimeValue, ...retainedOpenaiConfig } = record(openai.config);
+  const previousRealtime = record(previousRealtimeValue);
   config.plugins = {
     ...nextPlugins,
     entries: {
       ...nextEntries,
       openai: {
         ...openai,
-        config: { ...record(openai.config), transcription: inputProfile, realtimeVoice: realtimeProfile },
+        config: {
+          ...retainedOpenaiConfig,
+          transcription: inputProfile,
+          ...(realtimeProfile ? { realtimeVoice: realtimeProfile } : {}),
+        },
       },
       'runtime-services': {
         ...runtime,

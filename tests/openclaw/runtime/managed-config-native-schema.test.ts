@@ -454,7 +454,7 @@ nativeTest('generic speech bindings survive full and minimal configuration sync 
     const disabled = JSON.parse(fs.readFileSync(configPath, 'utf8'));
     expect(disabled.plugins.entries.openai.config.transcription).toBeNull();
     expect(disabled.plugins.entries['runtime-services'].config.replySpeech).toBeNull();
-    expect(disabled.plugins.entries.openai.config.realtimeVoice).toBeNull();
+    expect(disabled.plugins.entries.openai.config).not.toHaveProperty('realtimeVoice');
     cases.push({ label: `${withChatModel ? 'full' : 'minimal'} disabled speech`, config: disabled });
   }
   for (const result of assess(cases)) {

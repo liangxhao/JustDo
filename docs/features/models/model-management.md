@@ -115,6 +115,11 @@ HTTP 识别和合成当前使用完整、受限的请求/响应缓冲。尚未�
 
 仅点击“自动识别模型”时查询所配置服务的 `/models`，空目录时再尝试服务根路径下的 `/openapi.json`，支持 Videos multipart 请求体中的模型枚举；不会提交测试生成任务。完整 `/videos` 地址在失焦和保存时规范化为基础地址。所有视频供应商条目均使用同一个 OpenAI 兼容适配器；添加时只填写名称，不提供厂商选择或固定模型目录。
 
+视频设置按应用支持的协议编辑本地模型目录，不等待 Gateway 插件清单。引擎未启动、启动失败或
+插件清单不可用时，已有供应商、模型及未保存草稿仍可查看和编辑，也可添加配置；不会持续显示
+“加载中”或据此隐藏本地数据。协议支持不代表当前插件已注册或服务可用，配置发布、凭据及实际
+执行继续遵守 Main 的插件清单和原生准入检查。
+
 ### 视频请求与不确定结果
 
 该适配器使用 OpenAI-compatible 异步 Videos API：`POST <baseUrl>/videos` 以 multipart 提交 `model`、`prompt`、可选 `seconds` 和 `size`；通过 `GET <baseUrl>/videos/{id}` 查询 queued/in_progress/completed/failed 状态，完成后从 `GET <baseUrl>/videos/{id}/content` 下载视频。

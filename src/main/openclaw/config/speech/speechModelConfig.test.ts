@@ -350,6 +350,28 @@ describe('managed speech configuration', () => {
     expect(toolConfig(config)).toMatchObject({ command: 'local-tts' });
   });
 
+  it.each([{}, { realtimeVoice: null }])(
+    'omits an unused realtime profile without changing unrelated adapter settings: %j', previous => {
+      const config = nativeConfig();
+      const entries = (config.plugins as { entries: Record<string, unknown> }).entries;
+      entries.openai = { enabled: false, config: { personality: 'off', ...previous } };
+      const input: ManagedSpeechModelSettings = {
+        language: 'zh',
+        extensions: defaultLocalSpeechExtensionSettings,
+        voice: defaultLocalSpeechSettings,
+        recognitionModels: { providers: {} },
+        synthesisModels: { providers: {} },
+      };
+
+      applyManagedSpeechModelConfiguration(config, input, stateDir);
+
+      expect(pluginConfig(config, 'openai')).toEqual({ personality: 'off', transcription: null });
+      expect(entries.openai).toEqual({ enabled: false, config: { personality: 'off', ...previous } });
+      expect(config.plugins).toMatchObject({ entries: { openai: { enabled: false } } });
+      expect(JSON.stringify(config)).not.toContain('realtimeVoice');
+    },
+  );
+
   it('enables the shared adapter for an online TTS tool without enabling the optional tool plugin', () => {
     const input = settings();
     input.voice = { ...defaultLocalSpeechSettings };
@@ -406,7 +428,7 @@ describe('managed speech configuration', () => {
     expect(JSON.stringify(config)).not.toContain('voice-secret');
     input.voice = { ...input.voice as object, realtimeEnabled: false };
     applyManagedSpeechModelConfiguration(config, input, stateDir);
-    expect(pluginConfig(config, 'openai').realtimeVoice).toBeNull();
+    expect(pluginConfig(config, 'openai')).not.toHaveProperty('realtimeVoice');
     expect(config.talk.realtime).toEqual({ silenceDurationMs: 10_000 });
   });
 
@@ -435,7 +457,8 @@ describe('managed speech configuration', () => {
       };
       const config = nativeConfig();
       applyManagedSpeechModelConfiguration(config, input, stateDir);
-      expect(pluginConfig(config, 'openai')).toMatchObject({ transcription: null, realtimeVoice: null });
+      expect(pluginConfig(config, 'openai')).toMatchObject({ transcription: null });
+      expect(pluginConfig(config, 'openai')).not.toHaveProperty('realtimeVoice');
       expect(pluginConfig(config, 'runtime-services').replySpeech).toBeNull();
       expect(pluginConfig(config, 'stt-local-cli')).toEqual({ mode: 'online', language: 'zh' });
       expect(toolConfig(config)).toEqual({ mode: 'online' });

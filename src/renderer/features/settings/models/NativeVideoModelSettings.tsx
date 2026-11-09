@@ -1,23 +1,11 @@
 import { NATIVE_VIDEO_PROVIDERS } from '@shared/providers/nativeVideoProviders';
 import React from 'react';
 
-import { useExtensionEnablement } from '@/features/plugins/extensions/useExtensionEnablement';
-
 import NonLanguageModelEditor, { type NonLanguageModelEditorProps } from './NonLanguageModelEditor';
 
-type Props = Omit<NonLanguageModelEditorProps, 'kind' | 'videoProviders' | 'videoProvidersLoaded'>;
+type Props = Omit<NonLanguageModelEditorProps, 'kind' | 'videoProviders'>;
 
-export const NativeVideoModelSettings: React.FC<Props> = props => {
-  const extensions = useExtensionEnablement();
-  const providers = NATIVE_VIDEO_PROVIDERS.filter(entry =>
-    extensions.enabled.has(entry.extensionId),
-  );
-  return (
-    <NonLanguageModelEditor
-      {...props}
-      kind="video"
-      videoProviders={providers}
-      videoProvidersLoaded={extensions.loaded}
-    />
-  );
-};
+/** Local catalog editing does not require live Gateway plugin discovery. */
+export const NativeVideoModelSettings: React.FC<Props> = props => (
+  <NonLanguageModelEditor {...props} kind="video" videoProviders={NATIVE_VIDEO_PROVIDERS} />
+);
