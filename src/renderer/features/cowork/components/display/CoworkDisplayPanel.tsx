@@ -134,6 +134,12 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
   const onWidthChangeRef = useRef(onWidthChange);
   onWidthChangeRef.current = onWidthChange;
   const [isWorkspaceFullscreen, setIsWorkspaceFullscreen] = useState(false);
+  const [fullscreenSessionKey, setFullscreenSessionKey] = useState(browserSessionKey);
+  // Reset before committing geometry, while retaining the workspace and its guests.
+  if (fullscreenSessionKey !== browserSessionKey || (!visible && isWorkspaceFullscreen)) {
+    setFullscreenSessionKey(browserSessionKey);
+    setIsWorkspaceFullscreen(false);
+  }
   const [tabMenu, setTabMenu] = useState<{ tabId: string; x: number; y: number } | null>(null);
   const mainPromptRef = useRef<HTMLDialogElement>(null);
   useLayoutEffect(() => {
@@ -898,7 +904,15 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
             opacity: isOpen && !portal.detached ? 1 : 0,
             pointerEvents: isOpen && !portal.detached ? undefined : 'none',
             ...(isWorkspaceFullscreen
-              ? { width: '100%', maxWidth: 'none', inset: 0, transition: 'none', transform: 'none' }
+              ? {
+                  width: '100%',
+                  maxWidth: 'none',
+                  position: 'absolute',
+                  inset: 0,
+                  zIndex: 50,
+                  transition: 'none',
+                  transform: 'none',
+                }
               : {
                   width,
                   '--display-panel-width': `${width}px`,
